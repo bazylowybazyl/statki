@@ -21,6 +21,9 @@
   </div>
   <canvas id="c"></canvas>
 
+<script src="https://unpkg.com/three@0.156.1/build/three.min.js"></script>
+<script src="planet3d.js"></script>
+
 <script>
 // =============== Canvas & utils ===============
 const canvas = document.getElementById('c');
@@ -176,6 +179,7 @@ function initNPCs(){
   }
 }
 initNPCs();
+initPlanets3D(stations);
 
 // =============== Bullets & effects ===============
 const bullets = [];
@@ -831,6 +835,7 @@ function loop(now){
   }
   const alpha = acc / PHYS_DT;
   frameId++;
+  updatePlanets3D(frame);
   render(alpha);
   requestAnimationFrame(loop);
 }
@@ -901,6 +906,8 @@ function render(alpha){
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(s.x, s.y, w.r * camera.zoom, 0, Math.PI*2); ctx.stroke();
   }
+
+  drawPlanets3D(ctx, cam);
 
   // Stacje
   for(const st of stations){
