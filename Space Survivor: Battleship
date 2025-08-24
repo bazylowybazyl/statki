@@ -185,7 +185,7 @@ function spawnDefaultHit(x,y,scale=1){
 }
 
 // =============== Input ===============
-const SHORT_BURST_TIME = 0.2;
+const SHORT_BURST_TIME = 1.0;
 const input = { main:0, leftSide:0, rightSide:0, torque:0, shortBurst:0 };
 const keys = {};
 window.addEventListener('keydown', e=>{
@@ -630,13 +630,18 @@ function physicsStep(dt){
     if(input.main>0 || input.shortBurst>0){
       const e = ship.engines.main;
       const throttle = input.shortBurst>0 ? 1 : input.main;
-      const thrust = e.maxThrust * throttle * (input.shortBurst>0?1.8:1);
+      const thrust = e.maxThrust * throttle * (input.shortBurst>0?6:1);
       const wo = rotate(e.offset, ship.angle);
       const wf = rotate(forwardLocal, ship.angle);
       totalF.x += wf.x * thrust; totalF.y += wf.y * thrust;
       totalTorque += (wo.x * (wf.y * thrust) - wo.y * (wf.x * thrust));
-      // niebieski exhaust (plazma)
-      spawnBlueExhaust( add(ship.pos,wo), {x: ship.vel.x - wf.x*100, y: ship.vel.y - wf.y*100}, 0.5, 6 );
+      const exhaustPos = add(ship.pos, wo);
+      const exhaustVel = {x: ship.vel.x - wf.x*100, y: ship.vel.y - wf.y*100};
+      if(input.shortBurst>0){
+        spawnRedBoost(exhaustPos, exhaustVel, 0.9, 8);
+      } else {
+        spawnBlueExhaust(exhaustPos, exhaustVel, 0.5, 6);
+      }
     }
     // mały krótki ślad przy poruszaniu (bez gazu)
     const spd = len(ship.vel);
@@ -734,6 +739,16 @@ function spawnBlueExhaust(pos, baseVel, life=0.5, count=6){
     spawnParticle({x:pos.x + (Math.random()-0.5)*6, y:pos.y + (Math.random()-0.5)*6},
                   {x: baseVel.x + Math.cos(a)*sp, y: baseVel.y + Math.sin(a)*sp},
                   life*0.6 + Math.random()*life*0.4, '#bfe7ff', 1.4 + Math.random()*1.2, true);
+  }
+}
+
+function spawnRedBoost(pos, baseVel, life=0.8, count=8){
+  for(let i=0;i<count;i++){
+    const a = Math.random()*Math.PI*2;
+    const sp = 90 + Math.random()*120;
+    spawnParticle({x:pos.x + (Math.random()-0.5)*8, y:pos.y + (Math.random()-0.5)*8},
+                  {x: baseVel.x + Math.cos(a)*sp, y: baseVel.y + Math.sin(a)*sp},
+                  life*0.6 + Math.random()*life*0.4, '#ff4d4d', 1.8 + Math.random()*1.4, true);
   }
 }
 
