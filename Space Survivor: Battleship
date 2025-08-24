@@ -16,7 +16,7 @@
   <div id="ui">
     <div><strong>Space Survivors — gwiazdy na całej mapie + duży silnik plazmowy</strong></div>
     <div class="stat">W — ciąg (duży silnik plazmowy) · Q/E — strafe · A/D — obrót</div>
-    <div class="stat">LPM — rail (A→B, A→B) · PPM — boczne rakiety · F — superbroń · SHIFT — warp</div>
+    <div class="stat">LPM — rail (A→B, A→B) · PPM — boczne rakiety · F — superbroń · SHIFT — warp · SPACJA — dopalacz</div>
     <div style="margin-top:6px"><small>Gwiazdy są proceduralne w całej galaktyce. Silnik: niebieski exhaust + krótki ślad przy ruchu.</small></div>
   </div>
   <canvas id="c"></canvas>
@@ -209,19 +209,25 @@ function spawnDefaultHit(x,y,scale=1){
 }
 
 // =============== Input ===============
-const SHORT_BURST_TIME = 1.0;
-const input = { main:0, leftSide:0, rightSide:0, torque:0, shortBurst:0 };
+const input = { main:0, leftSide:0, rightSide:0, torque:0 };
 const keys = {};
 window.addEventListener('keydown', e=>{
   if(e.repeat) return;
   const k = e.key.toLowerCase();
   keys[k] = true;
-  if(e.key === ' ') input.shortBurst = SHORT_BURST_TIME;
+  if(e.key === ' '){
+    if(boost.state==='idle' && boost.fuel>=boost.cost){ boost.state='charging'; boost.charge=0; }
+  }
   if(k === 'x') triggerScanWave();
   if(k === 'r') lockedTarget = scan.scanned || null;
   updateInput();
 });
-window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; updateInput(); });
+window.addEventListener('keyup', e=>{
+  const k = e.key.toLowerCase();
+  keys[k] = false;
+  if(e.key === ' ' && boost.state==='charging'){ boost.state='idle'; boost.charge=0; }
+  updateInput();
+});
 function updateInput(){
   input.main = keys['w']?1:0;
   input.leftSide  = keys['q']?1:0;
@@ -507,6 +513,27 @@ const warp = {
   dir:{x:0,y:0},
   isBusy(){ return this.state!=='idle'; }
 };
+
+const boost = {
+  state:'idle',
+  charge:0, chargeTime:0.6,
+  speed:1600,
+  fuelMax:3, fuel:3, cost:1, regenRate:0.5,
+  effectTime:0, effectDuration:0.4, effectDir:{x:0,y:0}
+};
+function engageBoost(){
+  const speed = len(ship.vel);
+  let dir;
+  if(speed > 1) dir = {x: ship.vel.x/speed, y: ship.vel.y/speed};
+  else dir = rotate({x:0,y:-1}, ship.angle);
+  ship.vel.x += dir.x * boost.speed;
+  ship.vel.y += dir.y * boost.speed;
+  boost.fuel = clamp(boost.fuel - boost.cost, 0, boost.fuelMax);
+  boost.state = 'idle';
+  boost.charge = 0;
+  boost.effectTime = boost.effectDuration;
+  boost.effectDir = {x: dir.x, y: dir.y};
+}
 window.addEventListener('keydown', (e)=>{
   if(e.key.toLowerCase() === 'shift'){
     if(warp.state==='idle' && warp.fuel>0){ warp.state='charging'; warp.charge=0; }
@@ -534,7 +561,12 @@ function engageWarp(dir){
 function physicsStep(dt){
   // regen paliwa gdy nie warpuje
   if(warp.state!=='active') warp.fuel = clamp(warp.fuel + warp.regenRate*dt, 0, warp.fuelMax);
-  input.shortBurst = Math.max(0, input.shortBurst - dt);
+  if(boost.state==='idle' && boost.effectTime<=0) boost.fuel = clamp(boost.fuel + boost.regenRate*dt, 0, boost.fuelMax);
+  if(boost.state==='charging'){
+    boost.charge += dt;
+    if(boost.charge >= boost.chargeTime && boost.fuel>=boost.cost){ engageBoost(); }
+  }
+  if(boost.effectTime>0) boost.effectTime = Math.max(0, boost.effectTime - dt);
 
   // rail queue/cd
   rail.cd[0] = Math.max(0, rail.cd[0]-dt);
@@ -653,21 +685,13 @@ function physicsStep(dt){
   }
   else {
     // GŁÓWNY DUŻY SILNIK — ciąg do przodu
-    if(input.main>0 || input.shortBurst>0){
+    if(input.main>0){
       const e = ship.engines.main;
-      const throttle = input.shortBurst>0 ? 1 : input.main;
-      const thrust = e.maxThrust * throttle * (input.shortBurst>0?6:1);
+      const thrust = e.maxThrust * input.main;
       const wo = rotate(e.offset, ship.angle);
       const wf = rotate(forwardLocal, ship.angle);
       totalF.x += wf.x * thrust; totalF.y += wf.y * thrust;
       totalTorque += (wo.x * (wf.y * thrust) - wo.y * (wf.x * thrust));
-      const exhaustPos = add(ship.pos, wo);
-      const exhaustVel = {x: ship.vel.x - wf.x*100, y: ship.vel.y - wf.y*100};
-      if(input.shortBurst>0){
-        spawnRedBoost(exhaustPos, exhaustVel, 0.9, 8);
-      } else {
-        spawnBlueExhaust(exhaustPos, exhaustVel, 0.5, 6);
-      }
     }
     // mały krótki ślad przy poruszaniu (bez gazu)
     const spd = len(ship.vel);
@@ -757,31 +781,19 @@ function physicsStep(dt){
   npcShootingStep(dt);
 }
 
-// Niebieski exhaust z glow (główny silnik)
-function spawnBlueExhaust(pos, baseVel, life=0.5, count=6){
-  for(let i=0;i<count;i++){
-    const a = Math.random()*Math.PI*2;
-    const sp = 60 + Math.random()*80;
-    spawnParticle({x:pos.x + (Math.random()-0.5)*6, y:pos.y + (Math.random()-0.5)*6},
-                  {x: baseVel.x + Math.cos(a)*sp, y: baseVel.y + Math.sin(a)*sp},
-                  life*0.6 + Math.random()*life*0.4, '#bfe7ff', 1.4 + Math.random()*1.2, true);
-  }
-}
-
-function spawnRedBoost(pos, baseVel, life=0.8, count=8){
-  for(let i=0;i<count;i++){
-    const a = Math.random()*Math.PI*2;
-    const sp = 90 + Math.random()*120;
-    spawnParticle({x:pos.x + (Math.random()-0.5)*8, y:pos.y + (Math.random()-0.5)*8},
-                  {x: baseVel.x + Math.cos(a)*sp, y: baseVel.y + Math.sin(a)*sp},
-                  life*0.6 + Math.random()*life*0.4, '#ff4d4d', 1.8 + Math.random()*1.4, true);
-  }
-}
+// ======= Efekty VFX =======
+function glowDot(ctx,x,y,r,color,alpha=1){ ctx.save(); ctx.globalAlpha=alpha; ctx.shadowBlur=r*1.6; ctx.shadowColor=color; ctx.fillStyle=color; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.restore(); }
+function plumeGradient(ctx,x,y,len,wide,c1,c2){ const g=ctx.createLinearGradient(x,y,x,y-len); g.addColorStop(0,c1); g.addColorStop(1,c2); ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(x-wide/2,y); ctx.quadraticCurveTo(x,y-len*0.5,x,y-len); ctx.quadraticCurveTo(x,y-len*0.5,x+wide/2,y); ctx.closePath(); ctx.fill(); }
+function drawBraided(state,ctx,o){ const L=180,A=20,t=state.t*2.5;ctx.lineWidth=3.2;ctx.lineCap='round'; for(let k=0;k<3;k++){ const phase=k*2.1;ctx.beginPath();ctx.strokeStyle=`hsla(${200+20*k},100%,75%,0.85)`; for(let y=0;y<=L;y+=4){const p=y/L;const x=o.x+Math.sin(t+p*8+phase)*A*(1-p*0.8);ctx[p?'lineTo':'moveTo'](x,o.y-y);}ctx.stroke(); } plumeGradient(ctx,o.x,o.y,L,80,'rgba(100,180,255,0.25)','rgba(100,180,255,0)'); glowDot(ctx,o.x,o.y,10,'#dff',0.9); }
+function drawPhotonBeamLocal(alpha){ const L=200; ctx.save(); ctx.lineCap='round'; ctx.shadowBlur=28; ctx.shadowColor=`rgba(230,250,255,${0.95*alpha})`; ctx.strokeStyle=`rgba(255,255,255,${0.95*alpha})`; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-L*0.96); ctx.stroke(); ctx.restore(); plumeGradient(ctx,0,0,L,100,`rgba(160,210,255,${0.25*alpha})`,`rgba(160,210,255,0)`); for(let i=0;i<4;i++){ const phase=((vfxTime*0.8)+i*0.25)%1; const y=-phase*L; const r=20+40*(1-phase); ctx.strokeStyle=`rgba(200,240,255,${(1-phase)*alpha})`; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(0,y,r,0,Math.PI*2); ctx.stroke(); } glowDot(ctx,0,0,12,'#fff',alpha); }
+function drawMainEngineVfx(pos, forward, cam){ const s=worldToScreen(pos.x,pos.y,cam); ctx.save(); ctx.translate(s.x,s.y); ctx.scale(camera.zoom,camera.zoom); ctx.rotate(Math.atan2(-forward.x, forward.y)); ctx.globalCompositeOperation='lighter'; drawBraided({t:vfxTime},ctx,{x:0,y:0}); ctx.restore(); }
+function drawBoostBeam(pos, dir, cam, alpha){ const s=worldToScreen(pos.x,pos.y,cam); ctx.save(); ctx.translate(s.x,s.y); ctx.scale(camera.zoom,camera.zoom); ctx.rotate(Math.atan2(-dir.x, dir.y)); ctx.globalCompositeOperation='lighter'; drawPhotonBeamLocal(alpha); ctx.restore(); }
 
 // =============== Main loop ===============
 let lastTime = performance.now();
 const PHYS_DT = 1/120;
 let acc = 0;
+let vfxTime = 0;
 let prevState = null;
 function saveState(){ prevState = { pos:{...ship.pos}, angle: ship.angle, turretAngle: ship.turret.angle }; }
 saveState();
@@ -789,6 +801,7 @@ function loop(now){
   const frame = Math.min(0.033, (now - lastTime)/1000);
   lastTime = now;
   acc += frame;
+  vfxTime += frame;
   saveState();
   let steps = 0;
   while(acc >= PHYS_DT && steps < 10){
@@ -977,6 +990,19 @@ function render(alpha){
     ctx.globalAlpha = 1;
   }
 
+  // Efekty silnika i dopalacza
+  if(input.main>0){
+    const e = ship.engines.main;
+    const origin = add(interpPos, rotate(e.offset, interpAngle));
+    const forward = rotate({x:0,y:-1}, interpAngle);
+    drawMainEngineVfx(origin, forward, cam);
+  }
+  if(boost.effectTime>0){
+    const e = ship.engines.main;
+    const origin = add(interpPos, rotate(e.offset, interpAngle));
+    drawBoostBeam(origin, boost.effectDir, cam, boost.effectTime/boost.effectDuration);
+  }
+
   // ======= STATEK =======
   const shipS = worldToScreen(interpPos.x, interpPos.y, cam);
   ctx.save(); ctx.translate(shipS.x, shipS.y); ctx.scale(camera.zoom, camera.zoom); ctx.rotate(interpAngle);
@@ -1064,6 +1090,8 @@ function render(alpha){
   ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.strokeRect(12-1, H-52-fh, fw+2, fh+2);
   ctx.fillStyle = '#60a5fa'; ctx.fillRect(12, H-52-fh, fw*ffrac, fh);
   ctx.fillStyle = '#dfe7ff'; ctx.fillText(`${warp.fuel.toFixed(1)}s / ${warp.fuelMax}s`, 12 + fw + 8, H-42-fh);
+  const boostText = boost.state==='charging' ? `CHARGING ${(Math.min(1,boost.charge/boost.chargeTime)*100).toFixed(0)}%` : 'READY';
+  ctx.fillText(`Boost: ${boostText} (${boost.fuel.toFixed(1)}/${boost.fuelMax})`, 12, H-44);
   const railTimerHUD = Math.min(rail.cd[0], rail.cd[1]);
   ctx.fillText(`Rail: ${railTimerHUD>0?railTimerHUD.toFixed(2)+'s':'READY'}  Special: ${ship.special.cooldownTimer>0?ship.special.cooldownTimer.toFixed(1)+'s':'READY'}`, 12, H-28);
 
@@ -1084,7 +1112,7 @@ function roundRectScreen(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arc
 
 // init
 initStars(true);
-console.log('Gwiazdy: proceduralne kafelki 1024px na całej mapie. Silnik: jeden duży, niebieski exhaust + krótki ślad przy ruchu.');
+console.log('Gwiazdy: proceduralne kafelki 1024px na całej mapie. Silnik: warkocz jonowy, dopalacz: wiązka fotonów.');
 </script>
 </body>
 </html>
