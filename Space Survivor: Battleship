@@ -238,13 +238,25 @@ function updateInput(){
 
 // targeting / scanning
 const SCAN_TIME = 1.0;
+const SCAN_RANGE = 10000;
 const scan = { target:null, progress:0, scanned:null };
 let lockedTarget = null;
 const radarPings = [];
 const scanWaves = [];
+const scanArrows = [];
 function spawnRadarPing(x,y){ radarPings.push({x,y,age:0,life:1}); }
 function triggerScanWave(){
-  scanWaves.push({x:ship.pos.x,y:ship.pos.y,r:0,speed:800,max:3000,hit:new Set()});
+  scanWaves.push({x:ship.pos.x,y:ship.pos.y,r:0,speed:800,max:SCAN_RANGE,hit:new Set()});
+  scanArrows.length = 0;
+  for(const st of stations){
+    const dx = st.x - ship.pos.x;
+    const dy = st.y - ship.pos.y;
+    const dist = Math.hypot(dx, dy);
+    if(dist <= SCAN_RANGE){
+      scanArrows.push({target:st,age:0,life:3});
+      spawnRadarPing(st.x, st.y);
+    }
+  }
 }
 
 const mouse = { x: W/2, y: H/2, left:false, right:false };
@@ -639,6 +651,13 @@ function physicsStep(dt){
       if(!w.hit.has(st) && Math.hypot(st.x-w.x, st.y-w.y) <= w.r){ w.hit.add(st); spawnRadarPing(st.x,st.y); }
     }
     if(w.r > w.max) scanWaves.splice(i,1);
+  }
+
+  // update scan arrows
+  for(let i=scanArrows.length-1;i>=0;i--){
+    const a = scanArrows[i];
+    a.age += dt;
+    if(a.age > a.life) scanArrows.splice(i,1);
   }
 
   // turret aim (poza warp active)
@@ -1055,6 +1074,41 @@ function render(alpha){
   roundRect(ctx, 6 - recoil,  gap/2 - barrelH/2, barrelLen, barrelH, 3); ctx.fill(); ctx.stroke();
   ctx.restore(); // turret
   ctx.restore(); // ship
+
+  // scan arrows pointing to stations
+  const shieldR = Math.max(ship.w, ship.h) * 0.6;
+  for(const a of scanArrows){
+    const st = a.target;
+    const dx = st.x - ship.pos.x;
+    const dy = st.y - ship.pos.y;
+    const ang = Math.atan2(dy, dx);
+    const baseR = shieldR + 20;
+    const ax = ship.pos.x + Math.cos(ang) * baseR;
+    const ay = ship.pos.y + Math.sin(ang) * baseR;
+    const s = worldToScreen(ax, ay, cam);
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate(ang);
+    const size = 18 * camera.zoom;
+    ctx.beginPath();
+    ctx.fillStyle = 'rgba(120,200,255,0.9)';
+    ctx.moveTo(0, -size*0.5);
+    ctx.lineTo(size, 0);
+    ctx.lineTo(0, size*0.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    const tx = ship.pos.x + Math.cos(ang) * (baseR + size + 6);
+    const ty = ship.pos.y + Math.sin(ang) * (baseR + size + 6);
+    const ts = worldToScreen(tx, ty, cam);
+    ctx.save();
+    ctx.fillStyle = '#dfe7ff';
+    ctx.font = `${10*camera.zoom}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${Math.round(Math.hypot(dx,dy))}u`, ts.x, ts.y);
+    ctx.restore();
+  }
 
   // Particles typu "flash" na samym wierzchu
   for(const p of particles){
