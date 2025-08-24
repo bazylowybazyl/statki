@@ -238,6 +238,9 @@ function updateInput(){
 
 // targeting / scanning
 const SCAN_TIME = 1.0;
+const SCAN_RANGE = 10000;
+const SCAN_VFX_SPEED = 4000;
+const SCAN_ARROW_LIFE = 1.5;
 const scan = { target:null, progress:0, scanned:null };
 let lockedTarget = null;
 const radarPings = [];
@@ -245,11 +248,14 @@ const scanWaves = [];
 const scanArrows = [];
 function spawnRadarPing(x,y){ radarPings.push({x,y,age:0,life:1}); }
 function triggerScanWave(){
-  scanWaves.push({x:ship.pos.x,y:ship.pos.y,r:0,speed:800,max:10000,hit:new Set()});
+  scanWaves.push({x:ship.pos.x,y:ship.pos.y,r:0,speed:SCAN_VFX_SPEED,max:SCAN_RANGE,hit:new Set()});
   scanArrows.length = 0;
   for(const st of stations){
-    scanArrows.push({target:st,age:0,life:3});
-    spawnRadarPing(st.x, st.y);
+    const dist = Math.hypot(st.x - ship.pos.x, st.y - ship.pos.y);
+    if(dist <= SCAN_RANGE){
+      scanArrows.push({target:st,age:0,life:SCAN_ARROW_LIFE});
+      spawnRadarPing(st.x, st.y);
+    }
   }
 }
 
