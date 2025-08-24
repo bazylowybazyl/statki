@@ -16,7 +16,7 @@
   <div id="ui">
     <div><strong>Space Survivors — gwiazdy na całej mapie + duży silnik plazmowy</strong></div>
     <div class="stat">W — ciąg (duży silnik plazmowy) · Q/E — strafe · A/D — obrót</div>
-    <div class="stat">LPM — rail (A→B, A→B) · PPM — boczna plazma · F — superbroń · SHIFT — warp</div>
+    <div class="stat">LPM — rail (A→B, A→B) · PPM — boczne rakiety · F — superbroń · SHIFT — warp</div>
     <div style="margin-top:6px"><small>Gwiazdy są proceduralne w całej galaktyce. Silnik: niebieski exhaust + krótki ślad przy ruchu.</small></div>
   </div>
   <canvas id="c"></canvas>
@@ -215,15 +215,16 @@ canvas.addEventListener('mouseup', e=>{ if(e.button===0) mouse.left=false; if(e.
 canvas.addEventListener('contextmenu', e=>e.preventDefault());
 canvas.addEventListener('wheel', e=>{ e.preventDefault(); const f = 1 - e.deltaY * camera.wheelSpeed; camera.zoom *= f; camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom); }, {passive:false});
 
-// =============== Side guns (jak było) ===============
+// =============== Side rockets ===============
 const SIDE_RELOAD_TIME = 5.0; let reloadLeft = 1.0, reloadRight = 1.0;
 const SIDE_BULLET_SPEED = 760, SIDE_BULLET_DAMAGE = 20;
 const SIDE_PLASMA_EXPLODE_RADIUS = 48;
+const SIDE_ROCKET_TURN_RATE = 6;
+const SIDE_ROCKET_HOMING_DELAY = 0.25;
 const SPECIAL_COOLDOWN = 10; ship.special.cooldownTimer = 0;
 
 const activeSalvos = [];
 const SALVO_DEFAULT = { rounds: 6 * 4, burstInterval: 0.11, gunsPerBurst: 1 };
-const SIDE_AIM_HITBOX_RADIUS = 40;
 
 function requestSalvo(side){
   if(side==='left' && reloadLeft < 1) return;
@@ -235,21 +236,14 @@ function requestSalvo(side){
   if(side==='left') reloadLeft = 0; else reloadRight = 0;
 }
 
-function fireSideGunAtOffset(gunOff, side, targetWorld){
+function fireSideGunAtOffset(gunOff, side){
   const gunWorld = add(ship.pos, rotate(gunOff, ship.angle));
-  const r = SIDE_AIM_HITBOX_RADIUS * Math.sqrt(Math.random());
-  const a = Math.random() * Math.PI * 2;
-  const aim = { x: targetWorld.x + Math.cos(a) * r, y: targetWorld.y + Math.sin(a) * r };
-  const dir = norm({ x: aim.x - gunWorld.x, y: aim.y - gunWorld.y });
-  if(dir.x === 0 && dir.y === 0){
-    const dl = side === 'left' ? -1 : 1;
-    const sideWorld = rotate({x:dl,y:0}, ship.angle);
-    dir.x = sideWorld.x; dir.y = sideWorld.y;
-  }
+  const dl = side === 'left' ? -1 : 1;
+  const dir = rotate({x:dl, y:0}, ship.angle);
   bullets.push({ x: gunWorld.x, y: gunWorld.y, px: gunWorld.x, py: gunWorld.y,
     vx: dir.x*SIDE_BULLET_SPEED + ship.vel.x, vy: dir.y*SIDE_BULLET_SPEED + ship.vel.y,
-    life:2.4, r:5, owner:'player', damage:SIDE_BULLET_DAMAGE, penetration:0, type:'plasma',
-    explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS });
+    life:2.4, r:5, owner:'player', damage:SIDE_BULLET_DAMAGE, penetration:0, type:'rocket',
+    explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS, homingDelay: SIDE_ROCKET_HOMING_DELAY });
   spawnParticle({x:gunWorld.x, y:gunWorld.y}, {x:dir.x*120 + ship.vel.x*0.1, y:dir.y*120 + ship.vel.y*0.1}, 0.14, '#b4ffb4', 3.2, true);
   for(let k=0;k<6;k++){
     const aa = Math.atan2(dir.y, dir.x) + (Math.random()-0.5)*0.9;
@@ -331,9 +325,35 @@ function bulletsAndCollisionsStep(dt){
     b.x += b.vx * dt; b.y += b.vy * dt;
     b.life -= dt;
 
-    if(b.type === 'plasma'){
+    if(b.type === 'plasma' || b.type === 'rocket'){
       const trailVel = { x: -b.vx*0.02 + (Math.random()-0.5)*10, y: -b.vy*0.02 + (Math.random()-0.5)*10 };
       spawnParticle({x:b.x + (Math.random()-0.5)*3, y:b.y + (Math.random()-0.5)*3}, trailVel, 0.28, '#8cff8c', 1.0, false);
+      if(b.type === 'rocket'){
+        if(b.homingDelay > 0){
+          b.homingDelay -= dt;
+        } else {
+          let target = null, dist = Infinity;
+          for(const npc of npcs){
+            if(npc.dead) continue;
+            const d = Math.hypot(npc.x - b.x, npc.y - b.y);
+            if(d < dist){ dist = d; target = {x:npc.x, y:npc.y}; }
+          }
+          if(!target){
+            target = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom,
+                       y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
+          }
+          const speed = Math.hypot(b.vx, b.vy);
+          const dir = norm({x:target.x - b.x, y:target.y - b.y});
+          const current = Math.atan2(b.vy, b.vx);
+          const desired = Math.atan2(dir.y, dir.x);
+          const diff = wrapAngle(desired - current);
+          const maxTurn = SIDE_ROCKET_TURN_RATE * dt;
+          const turn = Math.abs(diff) < maxTurn ? diff : Math.sign(diff) * maxTurn;
+          const newAng = current + turn;
+          b.vx = Math.cos(newAng) * speed;
+          b.vy = Math.sin(newAng) * speed;
+        }
+      }
     }
 
     if(b.life <= 0){ bullets.splice(i,1); continue; }
@@ -347,7 +367,7 @@ function bulletsAndCollisionsStep(dt){
     }
 
     if(hitNPC){
-      if(b.type === 'plasma'){
+      if(b.type === 'plasma' || b.type === 'rocket'){
         const ex = b.x, ey = b.y;
         spawnExplosionPlasma(ex, ey, 1.0);
         for(const npc of npcs){
@@ -610,7 +630,6 @@ function physicsStep(dt){
 
   // salwy boczne (idle)
   if(warp.state==='idle'){
-    const mouseWorldPos = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom, y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
     for(let si = activeSalvos.length - 1; si >= 0; si--){
       const salvo = activeSalvos[si];
       salvo.timeToNext -= dt;
@@ -618,7 +637,7 @@ function physicsStep(dt){
         for(let g=0; g < salvo.gunsPerBurst; g++){
           const idx = (salvo.nextIndex + g) % salvo.guns.length;
           const gunOff = salvo.guns[idx];
-          fireSideGunAtOffset(gunOff, salvo.side, mouseWorldPos);
+          fireSideGunAtOffset(gunOff, salvo.side);
         }
         salvo.nextIndex = (salvo.nextIndex + salvo.gunsPerBurst) % salvo.guns.length;
         salvo.roundsLeft--;
