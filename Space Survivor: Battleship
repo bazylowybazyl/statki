@@ -190,8 +190,11 @@ const input = { main:0, leftSide:0, rightSide:0, torque:0, shortBurst:0 };
 const keys = {};
 window.addEventListener('keydown', e=>{
   if(e.repeat) return;
-  keys[e.key.toLowerCase()] = true;
+  const k = e.key.toLowerCase();
+  keys[k] = true;
   if(e.key === ' ') input.shortBurst = SHORT_BURST_TIME;
+  if(k === 'x') triggerScanWave();
+  if(k === 'r') lockedTarget = scan.scanned || null;
   updateInput();
 });
 window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; updateInput(); });
@@ -201,6 +204,17 @@ function updateInput(){
   input.rightSide = keys['e']?1:0;
   let torque = 0; if(keys['a']) torque -= 1; if(keys['d']) torque += 1; input.torque = torque;
   if(keys['f']) tryFireSpecial();
+}
+
+// targeting / scanning
+const SCAN_TIME = 1.0;
+const scan = { target:null, progress:0, scanned:null };
+let lockedTarget = null;
+const radarPings = [];
+const scanWaves = [];
+function spawnRadarPing(x,y){ radarPings.push({x,y,age:0,life:1}); }
+function triggerScanWave(){
+  scanWaves.push({x:ship.pos.x,y:ship.pos.y,r:0,speed:800,max:3000,hit:new Set()});
 }
 
 const mouse = { x: W/2, y: H/2, left:false, right:false };
@@ -337,15 +351,20 @@ function bulletsAndCollisionsStep(dt){
         if(b.homingDelay > 0){
           b.homingDelay -= dt;
         } else {
-          let target = null, dist = Infinity;
-          for(const npc of npcs){
-            if(npc.dead) continue;
-            const d = Math.hypot(npc.x - b.x, npc.y - b.y);
-            if(d < dist){ dist = d; target = {x:npc.x, y:npc.y}; }
-          }
-          if(!target){
-            target = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom,
-                       y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
+          let target = null;
+          if(lockedTarget && !lockedTarget.dead){
+            target = {x:lockedTarget.x, y:lockedTarget.y};
+          } else {
+            let dist = Infinity;
+            for(const npc of npcs){
+              if(npc.dead) continue;
+              const d = Math.hypot(npc.x - b.x, npc.y - b.y);
+              if(d < dist){ dist = d; target = {x:npc.x, y:npc.y}; }
+            }
+            if(!target){
+              target = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom,
+                         y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
+            }
           }
           const speed = Math.hypot(b.vx, b.vy);
           const dir = norm({x:target.x - b.x, y:target.y - b.y});
@@ -517,11 +536,59 @@ function physicsStep(dt){
   else ship.shield.val = clamp(ship.shield.val + ship.shield.regenRate * dt, 0, ship.shield.max);
   reloadLeft = clamp(reloadLeft + dt/SIDE_RELOAD_TIME, 0, 1);
   reloadRight = clamp(reloadRight + dt/SIDE_RELOAD_TIME, 0, 1);
+  // mouse world position
+  const mouseWorld = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom, y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
+
+  // hover scanning
+  let hover = null;
+  for(const npc of npcs){
+    if(npc.dead) continue;
+    if(Math.hypot(npc.x - mouseWorld.x, npc.y - mouseWorld.y) < npc.radius + 20){ hover = npc; break; }
+  }
+  if(!hover){
+    for(const st of stations){
+      if(Math.hypot(st.x - mouseWorld.x, st.y - mouseWorld.y) < st.r + 20){ hover = st; break; }
+    }
+  }
+  if(hover !== scan.target){ scan.target = hover; scan.progress = 0; }
+  if(scan.target){
+    if(scan.progress < SCAN_TIME){
+      scan.progress += dt;
+      if(scan.progress >= SCAN_TIME){
+        scan.progress = SCAN_TIME;
+        scan.scanned = scan.target;
+        spawnRadarPing(scan.target.x, scan.target.y);
+      }
+    }
+  } else {
+    scan.scanned = null;
+    scan.progress = 0;
+  }
+  if(lockedTarget && lockedTarget.dead) lockedTarget = null;
+
+  // update radar pings
+  for(let i=radarPings.length-1;i>=0;i--){
+    const p = radarPings[i];
+    p.age += dt; if(p.age>p.life) radarPings.splice(i,1);
+  }
+  // update scan waves
+  for(let i=scanWaves.length-1;i>=0;i--){
+    const w = scanWaves[i];
+    w.r += w.speed*dt;
+    for(const npc of npcs){
+      if(npc.dead) continue;
+      if(!w.hit.has(npc) && Math.hypot(npc.x-w.x, npc.y-w.y) <= w.r){ w.hit.add(npc); spawnRadarPing(npc.x,npc.y); }
+    }
+    for(const st of stations){
+      if(!w.hit.has(st) && Math.hypot(st.x-w.x, st.y-w.y) <= w.r){ w.hit.add(st); spawnRadarPing(st.x,st.y); }
+    }
+    if(w.r > w.max) scanWaves.splice(i,1);
+  }
 
   // turret aim (poza warp active)
-  const mouseWorld = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom, y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
+  const aimPos = (lockedTarget && !lockedTarget.dead) ? {x:lockedTarget.x, y:lockedTarget.y} : mouseWorld;
   if(warp.state!=='active'){
-    let diffT = wrapAngle(Math.atan2(mouseWorld.y - ship.pos.y, mouseWorld.x - ship.pos.x) - ship.turret.angle);
+    let diffT = wrapAngle(Math.atan2(aimPos.y - ship.pos.y, aimPos.x - ship.pos.x) - ship.turret.angle);
     let desiredVel = clamp(diffT * 6.5, -ship.turret.maxSpeed, ship.turret.maxSpeed);
     const velDelta = desiredVel - ship.turret.angVel;
     const maxDelta = ship.turret.maxAccel * dt;
@@ -752,6 +819,14 @@ function render(alpha){
   // Gwiazdy (proceduralne kafelki na całej mapie)
   drawStars(cam);
 
+  // scan waves
+  for(const w of scanWaves){
+    const s = worldToScreen(w.x, w.y, cam);
+    ctx.strokeStyle = 'rgba(120,200,255,0.18)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, w.r * camera.zoom, 0, Math.PI*2); ctx.stroke();
+  }
+
   // Stacje
   for(const st of stations){
     const s = worldToScreen(st.x, st.y, cam);
@@ -820,6 +895,34 @@ function render(alpha){
     ctx.fillStyle = '#ff6b6b';
     ctx.fillRect(-npc.radius*camera.zoom, -npc.radius*camera.zoom - 8*camera.zoom, hpw, 4*camera.zoom);
     ctx.restore();
+  }
+
+  // radar pings
+  for(const ping of radarPings){
+    const s = worldToScreen(ping.x, ping.y, cam);
+    const t = ping.age/ping.life;
+    ctx.strokeStyle = `rgba(120,200,255,${1-t})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, 40 * t * camera.zoom, 0, Math.PI*2); ctx.stroke();
+  }
+
+  // scan indicator and lock
+  if(scan.target){
+    const obj = scan.target;
+    const s = worldToScreen(obj.x, obj.y, cam);
+    const rad = ((obj.radius||obj.r) + 10) * camera.zoom;
+    const t = scan.progress/SCAN_TIME;
+    ctx.strokeStyle = 'rgba(120,200,255,0.7)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, rad, -Math.PI/2, -Math.PI/2 + Math.PI*2*t); ctx.stroke();
+  }
+  if(lockedTarget){
+    const obj = lockedTarget;
+    const s = worldToScreen(obj.x, obj.y, cam);
+    const rad = ((obj.radius||obj.r) + 14) * camera.zoom;
+    ctx.strokeStyle = 'rgba(255,80,80,0.8)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, rad, 0, Math.PI*2); ctx.stroke();
   }
 
   // Particles (za statkiem)
