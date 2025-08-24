@@ -185,16 +185,21 @@ function spawnDefaultHit(x,y,scale=1){
 }
 
 // =============== Input ===============
-const input = { main:0, leftSide:0, rightSide:0, torque:0, shortBurst:false };
+const SHORT_BURST_TIME = 0.2;
+const input = { main:0, leftSide:0, rightSide:0, torque:0, shortBurst:0 };
 const keys = {};
-window.addEventListener('keydown', e=>{ if(e.repeat) return; keys[e.key.toLowerCase()] = true; updateInput(); });
+window.addEventListener('keydown', e=>{
+  if(e.repeat) return;
+  keys[e.key.toLowerCase()] = true;
+  if(e.key === ' ') input.shortBurst = SHORT_BURST_TIME;
+  updateInput();
+});
 window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; updateInput(); });
 function updateInput(){
   input.main = keys['w']?1:0;
   input.leftSide  = keys['q']?1:0;
   input.rightSide = keys['e']?1:0;
   let torque = 0; if(keys['a']) torque -= 1; if(keys['d']) torque += 1; input.torque = torque;
-  input.shortBurst = !!keys[' '];
   if(keys['f']) tryFireSpecial();
 }
 
@@ -466,6 +471,7 @@ function engageWarp(dir){
 function physicsStep(dt){
   // regen paliwa gdy nie warpuje
   if(warp.state!=='active') warp.fuel = clamp(warp.fuel + warp.regenRate*dt, 0, warp.fuelMax);
+  input.shortBurst = Math.max(0, input.shortBurst - dt);
 
   // rail queue/cd
   rail.cd[0] = Math.max(0, rail.cd[0]-dt);
@@ -534,9 +540,10 @@ function physicsStep(dt){
   }
   else {
     // GŁÓWNY DUŻY SILNIK — ciąg do przodu
-    if(input.main>0){
+    if(input.main>0 || input.shortBurst>0){
       const e = ship.engines.main;
-      const thrust = e.maxThrust * input.main * (input.shortBurst?1.8:1);
+      const throttle = input.shortBurst>0 ? 1 : input.main;
+      const thrust = e.maxThrust * throttle * (input.shortBurst>0?1.8:1);
       const wo = rotate(e.offset, ship.angle);
       const wf = rotate(forwardLocal, ship.angle);
       totalF.x += wf.x * thrust; totalF.y += wf.y * thrust;
