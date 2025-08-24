@@ -38,6 +38,30 @@ function rotateInv(world,a){ return rotate(world, -a); }
 function wrapAngle(a){ while(a>Math.PI) a-=2*Math.PI; while(a<-Math.PI) a+=2*Math.PI; return a; }
 function interpAngleShort(prev,curr,t){ const d = wrapAngle(curr - prev); return wrapAngle(prev + d * t); }
 function shuffleArray(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
+function leadTarget(shooter, shooterVel, target, speed){
+  const tx = target.x, ty = target.y;
+  const tvx = target.vx || 0, tvy = target.vy || 0;
+  const rx = tx - shooter.x, ry = ty - shooter.y;
+  const rvx = tvx - shooterVel.x, rvy = tvy - shooterVel.y;
+  const a = rvx*rvx + rvy*rvy - speed*speed;
+  const b = 2*(rx*rvx + ry*rvy);
+  const c = rx*rx + ry*ry;
+  let t = 0;
+  if(Math.abs(a) < 1e-6){
+    if(Math.abs(b) > 1e-6) t = -c / b;
+  } else {
+    const disc = b*b - 4*a*c;
+    if(disc >= 0){
+      const sqrtDisc = Math.sqrt(disc);
+      const t1 = (-b - sqrtDisc)/(2*a);
+      const t2 = (-b + sqrtDisc)/(2*a);
+      t = Math.min(t1, t2);
+      if(t < 0) t = Math.max(t1, t2);
+    }
+  }
+  if(!isFinite(t) || t < 0) t = 0;
+  return { x: tx + tvx*t, y: ty + tvy*t };
+}
 
 // =============== World / camera ===============
 const WORLD = { w: 120000, h: 80000 };
@@ -586,7 +610,9 @@ function physicsStep(dt){
   }
 
   // turret aim (poza warp active)
-  const aimPos = (lockedTarget && !lockedTarget.dead) ? {x:lockedTarget.x, y:lockedTarget.y} : mouseWorld;
+  const aimPos = (lockedTarget && !lockedTarget.dead)
+    ? leadTarget(ship.pos, ship.vel, lockedTarget, RAIL_SPEED)
+    : mouseWorld;
   if(warp.state!=='active'){
     let diffT = wrapAngle(Math.atan2(aimPos.y - ship.pos.y, aimPos.x - ship.pos.x) - ship.turret.angle);
     let desiredVel = clamp(diffT * 6.5, -ship.turret.maxSpeed, ship.turret.maxSpeed);
