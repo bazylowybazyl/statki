@@ -238,6 +238,9 @@ function updateInput(){
 
 // targeting / scanning
 const SCAN_TIME = 1.0;
+const SCAN_RANGE = 10000;
+const SCAN_VFX_SPEED = 4000;
+const SCAN_ARROW_LIFE = 1.5;
 const scan = { target:null, progress:0, scanned:null };
 let lockedTarget = null;
 const radarPings = [];
@@ -245,11 +248,16 @@ const scanWaves = [];
 const scanArrows = [];
 function spawnRadarPing(x,y){ radarPings.push({x,y,age:0,life:1}); }
 function triggerScanWave(){
-  scanWaves.push({x:ship.pos.x,y:ship.pos.y,r:0,speed:800,max:10000,hit:new Set()});
+  const wave = {x:ship.pos.x,y:ship.pos.y,r:0,speed:SCAN_VFX_SPEED,max:SCAN_RANGE,hit:new Set()};
+  scanWaves.push(wave);
   scanArrows.length = 0;
   for(const st of stations){
-    scanArrows.push({target:st,age:0,life:3});
+    const dist = Math.hypot(st.x - ship.pos.x, st.y - ship.pos.y);
     spawnRadarPing(st.x, st.y);
+    if(dist <= SCAN_RANGE){
+      scanArrows.push({target:st,age:0,life:SCAN_ARROW_LIFE});
+      wave.hit.add(st);
+    }
   }
 }
 
@@ -650,7 +658,7 @@ function physicsStep(dt){
   // update scan arrows
   for(let i=scanArrows.length-1;i>=0;i--){
     const a = scanArrows[i];
-    a.age += dt;
+    if(warp.state !== 'active') a.age += dt;
     if(a.age > a.life) scanArrows.splice(i,1);
   }
 
@@ -1070,38 +1078,40 @@ function render(alpha){
   ctx.restore(); // ship
 
   // scan arrows pointing to stations
-  const shieldR = Math.max(ship.w, ship.h) * 0.6;
-  for(const a of scanArrows){
-    const st = a.target;
-    const dx = st.x - ship.pos.x;
-    const dy = st.y - ship.pos.y;
-    const ang = Math.atan2(dy, dx);
-    const baseR = shieldR + 10;
-    const ax = ship.pos.x + Math.cos(ang) * baseR;
-    const ay = ship.pos.y + Math.sin(ang) * baseR;
-    const s = worldToScreen(ax, ay, cam);
-    ctx.save();
-    ctx.translate(s.x, s.y);
-    ctx.rotate(ang);
-    const size = 12 * camera.zoom;
-    ctx.beginPath();
-    ctx.fillStyle = 'rgba(120,200,255,0.9)';
-    ctx.moveTo(0, -size*0.5);
-    ctx.lineTo(size, 0);
-    ctx.lineTo(0, size*0.5);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-    const tx = ship.pos.x + Math.cos(ang) * (baseR + 14);
-    const ty = ship.pos.y + Math.sin(ang) * (baseR + 14);
-    const ts = worldToScreen(tx, ty, cam);
-    ctx.save();
-    ctx.fillStyle = '#dfe7ff';
-    ctx.font = `${10*camera.zoom}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`${Math.round(Math.hypot(dx,dy))}u`, ts.x, ts.y);
-    ctx.restore();
+  if(warp.state !== 'active'){
+    const shieldR = Math.max(ship.w, ship.h) * 0.6;
+    for(const a of scanArrows){
+      const st = a.target;
+      const dx = st.x - ship.pos.x;
+      const dy = st.y - ship.pos.y;
+      const ang = Math.atan2(dy, dx);
+      const baseR = shieldR + 10;
+      const ax = ship.pos.x + Math.cos(ang) * baseR;
+      const ay = ship.pos.y + Math.sin(ang) * baseR;
+      const s = worldToScreen(ax, ay, cam);
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(ang);
+      const size = 18 * camera.zoom;
+      ctx.beginPath();
+      ctx.fillStyle = 'rgba(120,200,255,0.9)';
+      ctx.moveTo(0, -size*0.5);
+      ctx.lineTo(size, 0);
+      ctx.lineTo(0, size*0.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+      const tx = ship.pos.x + Math.cos(ang) * (baseR + 14);
+      const ty = ship.pos.y + Math.sin(ang) * (baseR + 14);
+      const ts = worldToScreen(tx, ty, cam);
+      ctx.save();
+      ctx.fillStyle = '#dfe7ff';
+      ctx.font = `${12*camera.zoom}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${Math.round(Math.hypot(dx,dy))}u`, ts.x, ts.y);
+      ctx.restore();
+    }
   }
 
   // Particles typu "flash" na samym wierzchu
