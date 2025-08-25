@@ -587,6 +587,7 @@ const PLANET_FRAG = `// Terrain generation parameters
     }
 
     render(dt) {
+      dt = Number.isFinite(dt) ? dt : 0;
       if (!this.scene || !this.camera) return;
       this.time += dt;
       this.uniforms.uTime.value = this.time;
