@@ -190,7 +190,8 @@ const PLANET_DATA = (() => {
     const au = AU[i];
     const orbitRadius = BASE_ORBIT * Math.pow(au, 0.6);
     const angle = Math.random() * Math.PI * 2;
-    const periodHours = 24 * Math.pow(au, 1.5); // Kepler scaling
+    // Orbital period scaled so that a planet at 1 AU orbits in 365 days
+    const periodHours = 24 * 365 * Math.pow(au, 1.5); // Kepler scaling
     const speed = (2 * Math.PI) / (periodHours * 3600); // rad per game second
     const r = (48 + Math.floor(Math.random() * 36)) * 3; // powiększone ~3×
     list.push({ id: i, orbitRadius, angle, speed, r, type: TYPES[i], x: 0, y: 0 });
