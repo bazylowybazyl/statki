@@ -747,16 +747,38 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       this.mesh.instanceMatrix.needsUpdate = true;
       this.scene.add(this.mesh);
       this.rotationSpeed = 0.02;
+      const innerPx = inner * (this.canvas.width / 2);
+      const outerPx = this.canvas.width / 2;
+      this.asteroids = [];
+      for (let i = 0; i < count; i++) {
+        const radius = innerPx + Math.random() * (outerPx - innerPx);
+        this.asteroids.push({
+          angle: Math.random() * TAU,
+          radius,
+          size: 1 + Math.random() * 2,
+        });
+      }
+      this.rotation = 0;
     }
 
     render(dt) {
       if (!this.scene || !this.camera) return;
       this.mesh.rotation.z += this.rotationSpeed * dt;
+      this.rotation += this.rotationSpeed * dt;
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r) return;
       r.render(this.scene, this.camera);
       this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
       this.ctx2d.drawImage(r.domElement, 0, 0);
+      this.ctx2d.fillStyle = "#888";
+      for (const a of this.asteroids) {
+        const ang = a.angle + this.rotation;
+        const x = this.canvas.width / 2 + Math.cos(ang) * a.radius;
+        const y = this.canvas.height / 2 + Math.sin(ang) * a.radius;
+        this.ctx2d.beginPath();
+        this.ctx2d.arc(x, y, a.size, 0, TAU);
+        this.ctx2d.fill();
+      }
     }
   }
 
@@ -776,9 +798,9 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       sun.y = sunObj.y;
     }
     asteroidBelt = null;
-    if (list[4] && list[5]) {
-      const r1 = list[4].orbitRadius;
-      const r2 = list[5].orbitRadius;
+    if (list[3] && list[4]) {
+      const r1 = list[3].orbitRadius;
+      const r2 = list[4].orbitRadius;
       const inner = r1 + (r2 - r1) * 0.1;
       const outer = r2 - (r2 - r1) * 0.1;
       asteroidBelt = new AsteroidBelt3D(inner, outer);
