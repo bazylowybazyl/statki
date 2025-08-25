@@ -4,7 +4,7 @@
   const TAU = Math.PI * 2;
   const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 
-  // Prosty PRNG + value noise (jak w Twojej wersji)
+  // PRNG + value noise
   function makePRNG(seed = 1337) {
     let s = seed >>> 0;
     return () => {
@@ -33,7 +33,7 @@
     return Math.exp(-((du * du) / (sx * sx) + (dv * dv) / (sy * sy)));
   };
 
-  // ======= GENERATOR TEKSTUR DZIEN/ NOC =======
+  // ======= GENERATOR TEKSTUR DZIEN/NOC =======
   function generateEarthTextures(sizeX = 1024, sizeY = 512) {
     const rand = makePRNG(1337421);
     const baseNoise = makeValueNoise(rand, 256, 128);
@@ -77,25 +77,35 @@
         let landMask = base * 0.6 + detail * 0.25 + guide * 0.35;
         landMask -= 0.52 + (latAbs - 0.5) * 0.05;
 
-        const i = (y * sizeX + x) * 4;
         // Dzień
+        let rD, gD, bD;
         const land = landMask > 0;
-        const oceanCol = [30, 80, 150];
-        const landCol = [40 + detail * 30, 120 + detail * 40, 40];
-        const r = land ? landCol[0] : oceanCol[0];
-        const g = land ? landCol[1] : oceanCol[1];
-        const b = land ? landCol[2] : oceanCol[2];
-        dimg.data[i + 0] = r;
-        dimg.data[i + 1] = g;
-        dimg.data[i + 2] = b;
-        dimg.data[i + 3] = 255;
+        if (land) {
+          const green = 0.45 + 0.30 * (detail - 0.5);
+          rD = 0.20 + 0.12 * (detail - 0.5);
+          gD = 0.45 + 0.35 * (detail - 0.5) + green * 0.2;
+          bD = 0.18 + 0.10 * (detail - 0.5);
+        } else {
+          const ocean = 0.55 + 0.18 * (roughNoise(u * 0.5, v * 0.5) - 0.5);
+          rD = 0.10 * ocean; gD = 0.30 * ocean; bD = 0.65 * ocean;
+        }
+        const di = (y * sizeX + x) * 4;
+        dimg.data[di] = (clamp(rD) * 255) | 0;
+        dimg.data[di + 1] = (clamp(gD) * 255) | 0;
+        dimg.data[di + 2] = (clamp(bD) * 255) | 0;
+        dimg.data[di + 3] = 255;
 
-        // Noc — miasta na lądzie (prosto)
-        const nightVal = land ? (0.65 + detail * 0.35) : 0.0;
-        nimg.data[i + 0] = 255 * nightVal;
-        nimg.data[i + 1] = 200 * nightVal;
-        nimg.data[i + 2] = 120 * nightVal;
-        nimg.data[i + 3] = 255 * (nightVal > 0 ? 1 : 0);
+        // Noc – miasta
+        let city = 0;
+        if (land && latAbs < 0.85) {
+          const urban = roughNoise(u * 8, v * 8);
+          if (urban > 0.72 && Math.random() > 0.6) city = Math.pow(clamp(urban), 4);
+        }
+        const ni = (y * sizeX + x) * 4;
+        nimg.data[ni] = 255 * city;
+        nimg.data[ni + 1] = 220 * city;
+        nimg.data[ni + 2] = 180 * city;
+        nimg.data[ni + 3] = 255;
       }
     }
     dctx.putImageData(dimg, 0, 0);
@@ -105,33 +115,26 @@
 
   function addZones(dctx, sizeX, sizeY, isLand) {
     const placements = [
-      { count: 50, color: "#bbbbbb", rMin: 2, rMax: 3 }, // miasta
-      { count: 25, color: "#5ac1ff", rMin: 4, rMax: 8 }, // komercyjne
-      { count: 25, color: "#caa15a", rMin: 4, rMax: 8 }  // fabryczne
+      { count: 50, color: "#bbbbbb", rMin: 2, rMax: 3 },
+      { count: 25, color: "#5ac1ff", rMin: 4, rMax: 8 },
+      { count: 25, color: "#caa15a", rMin: 4, rMax: 8 }
     ];
     for (const p of placements) {
       for (let i = 0; i < p.count; i++) {
-        let u, v;
-        do { u = Math.random(); v = Math.random(); } while (!isLand(u, v));
-        const x = u * sizeX, y = v * sizeY;
-        const r = p.rMin + Math.random() * (p.rMax - p.rMin);
-        dctx.beginPath();
-        dctx.fillStyle = p.color;
-        dctx.globalAlpha = 0.8;
-        dctx.arc(x, y, r, 0, TAU);
-        dctx.fill();
+        let u, v; do { u = Math.random(); v = Math.random(); } while (!isLand(u, v));
+        const x = u * sizeX, y = v * sizeY, r = p.rMin + Math.random() * (p.rMax - p.rMin);
+        dctx.beginPath(); dctx.fillStyle = p.color; dctx.globalAlpha = 0.8;
+        dctx.arc(x, y, r, 0, TAU); dctx.fill();
       }
     }
     dctx.globalAlpha = 1;
   }
 
-  // Zbuduj atlas dzien/noc raz
+  // Tekstury (raz)
   const tex = generateEarthTextures(1024, 512);
   addZones(tex.day.getContext("2d"), tex.day.width, tex.day.height, tex.isLand);
 
-  // ======= WSPÓŁDZIELONY RENDERER WEBGL =======
-  // Reużywamy JEDEN renderer dla wszystkich planet.
-  // Jeśli THREE nie istnieje, włączamy tryb "ciszy" (brak 3D).
+  // ======= WSPÓLNY RENDERER WEBGL (1 kontekst) =======
   let sharedRenderer = null;
   function getSharedRenderer(width, height) {
     if (typeof THREE === "undefined") return null;
@@ -142,11 +145,11 @@
     return sharedRenderer;
   }
 
-  // ======= KLASA PLANETY =======
+  // ======= PLANETA =======
   class Planet3D {
     constructor(size) {
       this.size = size;
-      // Prywatny canvas 2D, do którego będziemy wklejać wynik z sharedRenderer
+      // prywatny canvas 2D; będziemy wklejać bitmapę z sharedRenderer
       this.canvas = document.createElement("canvas");
       this.canvas.width = 256;
       this.canvas.height = 256;
@@ -155,56 +158,44 @@
       this.scene = null;
       this.camera = null;
       this.mesh = null;
-      this.spin = 0.2 + Math.random() * 0.4; // losowy obrót
+      this.spin = 0.2 + Math.random() * 0.4;
 
-      // Jeśli nie ma THREE — zakończ łagodnie (stub)
       if (typeof THREE === "undefined") return;
 
-      // Scena i kamera
       this.scene = new THREE.Scene();
       this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
       this.camera.position.z = 3;
 
-      // Światła
-      const key = new THREE.DirectionalLight(0xffffff, 1.0);
-      key.position.set(2, 1, 2);
-      const fill = new THREE.AmbientLight(0x404040, 0.6);
-      this.scene.add(key, fill);
+      const dayTex = new THREE.CanvasTexture(tex.day); dayTex.wrapS = THREE.RepeatWrapping;
+      const nightTex = new THREE.CanvasTexture(tex.night); nightTex.wrapS = THREE.RepeatWrapping;
 
-      // Tekstury z canvasa (dzień/noc)
-      const dayTex = new THREE.CanvasTexture(tex.day);
-      dayTex.wrapS = THREE.RepeatWrapping;
-      const nightTex = new THREE.CanvasTexture(tex.night);
-      nightTex.wrapS = THREE.RepeatWrapping;
-
-      // Prosty materiał: kolor z dnia + emisja z mapy nocy (symulacja świateł)
       const mat = new THREE.MeshStandardMaterial({
         map: dayTex,
         emissive: new THREE.Color(0xffffff),
         emissiveMap: nightTex,
         emissiveIntensity: 0.8,
-        roughness: 1.0,
-        metalness: 0.0,
+        roughness: 1.0, metalness: 0.0,
       });
 
       const geom = new THREE.SphereGeometry(1, 48, 32);
       this.mesh = new THREE.Mesh(geom, mat);
       this.scene.add(this.mesh);
+
+      const key = new THREE.DirectionalLight(0xffffff, 1.0); key.position.set(2, 1, 2);
+      const fill = new THREE.AmbientLight(0x404040, 0.6);
+      this.scene.add(key, fill);
     }
 
     render(dt) {
-      // Bez THREE? nic nie robimy, ale nie psujemy gry
       if (!this.scene || !this.camera) return;
-
       this.mesh.rotation.y += this.spin * dt;
 
-      // Wspólny renderer
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
-      if (!r) return; // brak THREE — cicho wychodzimy
+      if (!r) return;
 
       r.render(this.scene, this.camera);
 
-      // Kopiujemy zawartość wspólnego renderera do prywatnego canvasa 2D
+      // kopiuj wynik z jedynego renderera do prywatnego canvasa 2D
       this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
       this.ctx2d.drawImage(r.domElement, 0, 0);
     }
@@ -213,39 +204,26 @@
   // ======= API =======
   function initPlanets3D(stations) {
     planets.length = 0;
-    // Utwórz wyciszone stuby, jeżeli nie ma THREE:
-    const can3D = typeof THREE !== "undefined";
-
-    for (const s of stations) {
-      const p = new Planet3D((s.size || 48));
-      // Zakładam, że stacja ma pozycję światową s.x, s.y (jak w Twojej grze)
-      p.x = s.x;
-      p.y = s.y;
-      // rozmiar do rysowania w 2D (możesz dopasować do skali gry)
-      p.size = (s.size || 48);
+    for (const st of stations) {
+      const p = new Planet3D(st.r * 2.0); // mniejsze niż wcześniej, ale wyraźne "halo"
+      p.x = st.x; p.y = st.y;
       planets.push(p);
     }
-
-    if (!can3D) {
-      console.warn("3D planets disabled: THREE not found.");
-    }
+    if (typeof THREE === "undefined") console.warn("3D planets disabled: THREE not found.");
   }
 
   function updatePlanets3D(dt) {
     for (const p of planets) p.render(dt);
   }
 
-  // worldToScreen jest globalne (gra); tu tylko używamy
   function drawPlanets3D(ctx, cam) {
     for (const p of planets) {
       const s = worldToScreen(p.x, p.y, cam);
-      // Uwaga: odwołanie do globalnego `camera.zoom` zachowuję, bo tak masz w grze
-      const size = p.size * camera.zoom;
+      const size = p.size * camera.zoom; // w Twojej grze camera jest globalna – zostawiam
       ctx.drawImage(p.canvas, s.x - size / 2, s.y - size / 2, size, size);
     }
   }
 
-  // ======= EXPORTY =======
   window.initPlanets3D = initPlanets3D;
   window.updatePlanets3D = updatePlanets3D;
   window.drawPlanets3D = drawPlanets3D;
