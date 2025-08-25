@@ -139,8 +139,7 @@ const NOISE_FUNCTIONS = `const float PI = 3.14159265;
       // Multiply by amplitude and adjust offset
       return max(0.0, h + offset);
     }`;
-const PLANET_VERT = `attribute vec3 tangent;
-
+const PLANET_VERT = `
     // Terrain generation parameters
     uniform int type;
     uniform float radius;
@@ -178,9 +177,17 @@ const PLANET_VERT = `attribute vec3 tangent;
 
       gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
       fragPosition = position;
-      fragNormal = normal;
-      fragTangent = tangent;
-      fragBitangent = cross(normal, tangent);
+
+      // Sfera: normalna ~ znormalizowana pozycja
+      vec3 N = normalize(position);
+      fragNormal = N;
+
+      // Zbuduj bazę TBN w shaderze (bez atrybutu tangent z geometrii)
+      vec3 up = (abs(N.y) > 0.99) ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+      vec3 T = normalize(cross(up, N));
+      vec3 B = normalize(cross(N, T));
+      fragTangent = T;
+      fragBitangent = B;
     }`;
 const PLANET_FRAG = `// Terrain generation parameters
     uniform int type;
@@ -605,17 +612,24 @@ const PLANET_FRAG = `// Terrain generation parameters
       r.toneMapping = THREE.ACESFilmicToneMapping;
       r.toneMappingExposure = 1.1;
       r.outputColorSpace = THREE.SRGBColorSpace;
-      if (!this.composer || this._renderer !== r) {
-        this._renderer = r;
-        this.composer = new EffectComposer(r);
-        this.composer.setSize(this.canvas.width, this.canvas.height);
-        const rp = new RenderPass(this.scene, this.camera);
-        this.bloom = new UnrealBloomPass(new THREE.Vector2(this.canvas.width, this.canvas.height), 1.14, 1.04, 0.0);
-        this.composer.addPass(rp);
-        this.composer.addPass(this.bloom);
-      }
-      this.composer.render();
-      this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
+      const hasPP = (typeof EffectComposer !== 'undefined') &&
+               (typeof RenderPass !== 'undefined') &&
+               (typeof UnrealBloomPass !== 'undefined');
+if (hasPP && (!this.composer || this._renderer !== r)) {
+  this._renderer = r;
+  this.composer = new EffectComposer(r);
+  this.composer.setSize(this.canvas.width, this.canvas.height);
+  const rp = new RenderPass(this.scene, this.camera);
+  this.bloom = new UnrealBloomPass(new THREE.Vector2(this.canvas.width, this.canvas.height), 1.14, 1.04, 0.0);
+  this.composer.addPass(rp);
+  this.composer.addPass(this.bloom);
+}
+if (this.composer) {
+  this.composer.render();
+} else {
+  r.render(this.scene, this.camera);
+}
+this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       this.ctx2d.drawImage(r.domElement,0,0);
     }
   }
