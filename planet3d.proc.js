@@ -317,6 +317,7 @@ const PLANET_FRAG = `// Terrain generation parameters
 
 (function(){
   const planets = [];
+  let sun = null;
   // Default sun position in sector/world space (center)
   let SUN_POS = { x: 0, y: 0, z: 0 };
 
@@ -444,20 +445,131 @@ const PLANET_FRAG = `// Terrain generation parameters
     }
   }
 
+  class Sun3D {
+    constructor(size) {
+      this.size = size || 256;
+      this.canvas = document.createElement("canvas");
+      this.canvas.width = 256;
+      this.canvas.height = 256;
+      this.ctx2d = this.canvas.getContext("2d");
+
+      if (typeof THREE === "undefined") return;
+
+      this.scene = new THREE.Scene();
+      this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+      this.camera.position.z = 3;
+
+      const uniforms = { time: { value: 0 } };
+
+      const vertexShader = `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+        }`;
+
+      const fragmentShader = `
+        uniform float time;
+        varying vec2 vUv;
+
+        float rand(vec2 co){
+          return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+        }
+        float noise(vec2 uv){
+          vec2 i = floor(uv);
+          vec2 f = fract(uv);
+          float a = rand(i);
+          float b = rand(i + vec2(1.0,0.0));
+          float c = rand(i + vec2(0.0,1.0));
+          float d = rand(i + vec2(1.0,1.0));
+          vec2 u = f*f*(3.0-2.0*f);
+          return mix(a,b,u.x) + (c-a)*u.y*(1.0-u.x) + (d-b)*u.x*u.y;
+        }
+
+        void main(){
+          vec2 uv = vUv*4.0;
+          float n = noise(uv + time*0.5);
+          float r = distance(vUv, vec2(0.5));
+          float brightness = smoothstep(0.5, 0.0, r);
+          vec3 col = mix(vec3(1.0,0.8,0.2), vec3(1.0,0.5,0.0), n);
+          gl_FragColor = vec4(col * brightness, brightness);
+        }`;
+
+      const mat = new THREE.ShaderMaterial({
+        uniforms,
+        vertexShader,
+        fragmentShader,
+        blending: THREE.AdditiveBlending,
+        transparent: true
+      });
+
+      const geom = new THREE.SphereGeometry(1, 64, 32);
+      this.mesh = new THREE.Mesh(geom, mat);
+      this.scene.add(this.mesh);
+
+      const glowTex = new THREE.CanvasTexture(makeGlowTexture());
+      const glowMat = new THREE.SpriteMaterial({
+        map: glowTex,
+        blending: THREE.AdditiveBlending,
+        transparent: true
+      });
+      this.glow = new THREE.Sprite(glowMat);
+      this.glow.scale.set(2.5, 2.5, 1);
+      this.scene.add(this.glow);
+    }
+
+    render(dt) {
+      if (!this.scene || !this.camera) return;
+      if (this.mesh.material.uniforms) {
+        this.mesh.material.uniforms.time.value += dt;
+      }
+      const r = getSharedRenderer(this.canvas.width, this.canvas.height);
+      if (!r) return;
+      r.render(this.scene, this.camera);
+      this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      this.ctx2d.drawImage(r.domElement, 0, 0);
+    }
+  }
+
+  function makeGlowTexture() {
+    const size = 256;
+    const c = document.createElement("canvas");
+    c.width = c.height = size;
+    const ctx = c.getContext("2d");
+    const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+    return c;
+  }
+
   // === Public API (keeps your game's calls intact) ===
   let _planets = [];
-  function initPlanets3D(stations) {
+  function initPlanets3D(list, sunObj) {
     _planets.length = 0;
-    for (const s of stations) {
+    for (const s of list) {
       const size = (s.r || 30) * 2.0;
       const p = new ProcPlanet(s.x, s.y, size);
       _planets.push(p);
     }
+    if (sunObj) {
+      SUN_POS = { x: sunObj.x || 0, y: sunObj.y || 0, z: 0 };
+      sun = new Sun3D((sunObj.r || 200) * 2.5);
+      sun.x = sunObj.x;
+      sun.y = sunObj.y;
+    }
   }
   function updatePlanets3D(dt) {
+    if (sun) sun.render(dt);
     for (const p of _planets) p.render(dt);
   }
   function drawPlanets3D(ctx, cam) {
+    if (sun) {
+      const ss = worldToScreen(sun.x, sun.y, cam);
+      const sizeS = sun.size * camera.zoom;
+      ctx.drawImage(sun.canvas, ss.x - sizeS/2, ss.y - sizeS/2, sizeS, sizeS);
+    }
     for (const p of _planets) {
       const s = worldToScreen(p.x, p.y, cam);
       const size = p.size * camera.zoom;
@@ -465,9 +577,11 @@ const PLANET_FRAG = `// Terrain generation parameters
     }
   }
 
-  
-  function setPlanetsSunPos(x,y,z){ SUN_POS = {x:x||0,y:y||0,z:z||0}; }
-window.initPlanets3D = initPlanets3D;
+  function setPlanetsSunPos(x,y,z){
+    SUN_POS = {x:x||0,y:y||0,z:z||0};
+    if (sun) { sun.x = SUN_POS.x; sun.y = SUN_POS.y; }
+  }
+  window.initPlanets3D = initPlanets3D;
   window.setPlanetsSunPos = setPlanetsSunPos;
   window.updatePlanets3D = updatePlanets3D;
   window.drawPlanets3D = drawPlanets3D;
