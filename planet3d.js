@@ -2,6 +2,7 @@
   // ======= USTAWIENIA / NARZĘDZIA =======
   const planets = [];
   let sun = null;
+  let asteroidBelt = null;
   const TAU = Math.PI * 2;
   const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 
@@ -406,6 +407,58 @@
     }
   }
 
+  class AsteroidBelt3D {
+    constructor(innerRadius, outerRadius, count = 400) {
+      this.size = outerRadius * 2;
+      this.canvas = document.createElement("canvas");
+      this.canvas.width = 512;
+      this.canvas.height = 512;
+      this.ctx2d = this.canvas.getContext("2d");
+
+      this.scene = null;
+      this.camera = null;
+      this.mesh = null;
+      if (typeof THREE === "undefined") return;
+
+      this.scene = new THREE.Scene();
+      this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+      this.camera.position.z = 5;
+
+      const light = new THREE.AmbientLight(0xffffff, 1.0);
+      this.scene.add(light);
+
+      const geom = new THREE.IcosahedronGeometry(1, 1);
+      const mat = new THREE.MeshStandardMaterial({ color: 0x888888, flatShading: true });
+      this.mesh = new THREE.InstancedMesh(geom, mat, count);
+      const m = new THREE.Matrix4();
+      const inner = innerRadius / outerRadius;
+      for (let i = 0; i < count; i++) {
+        const radius = inner + Math.random() * (1 - inner);
+        const angle = Math.random() * TAU;
+        const x = Math.cos(angle) * radius;
+        const y = Math.sin(angle) * radius;
+        const z = (Math.random() - 0.5) * 0.1;
+        const scale = 0.02 + Math.random() * 0.04;
+        m.makeTranslation(x, y, z);
+        m.multiply(new THREE.Matrix4().makeScale(scale, scale, scale));
+        this.mesh.setMatrixAt(i, m);
+      }
+      this.mesh.instanceMatrix.needsUpdate = true;
+      this.scene.add(this.mesh);
+      this.rotationSpeed = 0.02;
+    }
+
+    render(dt) {
+      if (!this.scene || !this.camera) return;
+      this.mesh.rotation.z += this.rotationSpeed * dt;
+      const r = getSharedRenderer(this.canvas.width, this.canvas.height);
+      if (!r) return;
+      r.render(this.scene, this.camera);
+      this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      this.ctx2d.drawImage(r.domElement, 0, 0);
+    }
+  }
+
   // ======= API =======
   function initPlanets3D(planetList, sunPos) {
     planets.length = 0;
@@ -417,15 +470,29 @@
     sun = new Sun3D(sunPos.r * 2.5);
     sun.x = sunPos.x;
     sun.y = sunPos.y;
+    asteroidBelt = null;
+    if (planetList[4] && planetList[5]) {
+      const r1 = planetList[4].orbitRadius;
+      const r2 = planetList[5].orbitRadius;
+      const inner = r1 + (r2 - r1) * 0.1;
+      const outer = r2 - (r2 - r1) * 0.1;
+      asteroidBelt = new AsteroidBelt3D(inner, outer);
+    }
     if (typeof THREE === "undefined") console.warn("3D planets disabled: THREE not found.");
   }
 
   function updatePlanets3D(dt) {
     if (sun) sun.render(dt);
+    if (asteroidBelt) asteroidBelt.render(dt);
     for (const p of planets) p.render(dt);
   }
 
   function drawPlanets3D(ctx, cam) {
+    if (asteroidBelt && sun) {
+      const sB = worldToScreen(sun.x, sun.y, cam);
+      const sizeB = asteroidBelt.size * cam.zoom;
+      ctx.drawImage(asteroidBelt.canvas, sB.x - sizeB / 2, sB.y - sizeB / 2, sizeB, sizeB);
+    }
     for (const p of planets) {
       const s = worldToScreen(p.body.x, p.body.y, cam);
       const size = p.size * cam.zoom;
