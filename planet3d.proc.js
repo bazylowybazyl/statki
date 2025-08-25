@@ -412,6 +412,9 @@ const PLANET_FRAG = `// Terrain generation parameters
       this.material = buildPlanetMaterial();
       this.mesh = new THREE.Mesh(geom, this.material);
       this.scene.add(this.mesh);
+
+      // Rotate once every 24 in‑game minutes (24 real seconds)
+      this.spin = (2 * Math.PI) / (24 * 60); // rad per game second
     }
 
     // Update lightDir uniform from sector sun (0,0,0) toward this planet
@@ -428,6 +431,9 @@ const PLANET_FRAG = `// Terrain generation parameters
     render(dt) {
       if (!this.scene || !this.camera) return;
       this.updateLightDirection();
+
+      const ts = typeof TIME_SCALE !== 'undefined' ? TIME_SCALE : 60;
+      this.mesh.rotation.y += this.spin * dt * ts;
 
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r) return;

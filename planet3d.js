@@ -160,7 +160,8 @@
       this.scene = null;
       this.camera = null;
       this.mesh = null;
-      this.spin = 0.2 + Math.random() * 0.4;
+      // Rotate once every 24 in‑game minutes (24 real seconds)
+      this.spin = (2 * Math.PI) / (24 * 60); // rad per game second
 
       if (typeof THREE === "undefined") return;
 
@@ -201,7 +202,8 @@
 
     render(dt) {
       if (!this.scene || !this.camera) return;
-      this.mesh.rotation.y += this.spin * dt;
+      const ts = typeof TIME_SCALE !== 'undefined' ? TIME_SCALE : 60;
+      this.mesh.rotation.y += this.spin * dt * ts;
 
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r) return;
