@@ -1,0 +1,52 @@
+*** a/planet3d.proc.js
+--- b/planet3d.proc.js
+@@
+-      const r = getSharedRenderer(this.canvas.width, this.canvas.height);
+-      if (!r) return;
+-      r.toneMapping = THREE.ACESFilmicToneMapping;
+-      r.toneMappingExposure = 1.1;
+-      r.outputColorSpace = THREE.SRGBColorSpace;
+-      if (!this.composer || this._renderer !== r) {
+-        this._renderer = r;
+-        this.composer = new EffectComposer(r);
+-        this.composer.setSize(this.canvas.width, this.canvas.height);
+-        const rp = new RenderPass(this.scene, this.camera);
+-        this.bloom = new UnrealBloomPass(new THREE.Vector2(this.canvas.width, this.canvas.height), 1.14, 1.04, 0.0);
+-        this.composer.addPass(rp);
+-        this.composer.addPass(this.bloom);
+-      }
+-      this.composer.render();
+-      this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
+-      this.ctx2d.drawImage(r.domElement,0,0);
++      const r = getSharedRenderer(this.canvas.width, this.canvas.height);
++      if (!r) return;
++      r.toneMapping = THREE.ACESFilmicToneMapping;
++      r.toneMappingExposure = 1.1;
++      r.outputColorSpace = THREE.SRGBColorSpace;
++
++      // Fallback: jeśli postprocessing (ESM) nie jest dostępny,
++      // renderuj bezpośrednio, zamiast wywalać ReferenceError.
++      const hasPP =
++        (typeof EffectComposer  !== 'undefined') &&
++        (typeof RenderPass      !== 'undefined') &&
++        (typeof UnrealBloomPass !== 'undefined');
++
++      if (hasPP) {
++        if (!this.composer || this._renderer !== r) {
++          this._renderer = r;
++          this.composer = new EffectComposer(r);
++          this.composer.setSize(this.canvas.width, this.canvas.height);
++          const rp = new RenderPass(this.scene, this.camera);
++          this.bloom = new UnrealBloomPass(
++            new THREE.Vector2(this.canvas.width, this.canvas.height),
++            1.14, 1.04, 0.0
++          );
++          this.composer.addPass(rp);
++          this.composer.addPass(this.bloom);
++        }
++        this.composer.render();
++      } else {
++        r.render(this.scene, this.camera);
++      }
++      this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
++      this.ctx2d.drawImage(r.domElement, 0, 0);
