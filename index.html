@@ -231,24 +231,71 @@ let stations = planets.map(pl => {
   return { id: pl.id, planet: pl, orbitRadius, angle, speed, r: 40, x, y };
 });
 
-const NPC_COUNT = 200;
 let npcs = [];
 function pickNextStation(npcId, lastStationId){ let idx = Math.floor(Math.random()*stations.length); if(stations.length>1 && stations[idx].id === lastStationId) idx = (idx+1)%stations.length; return stations[idx].id; }
+const NPC_TYPES = {
+  'freighter-small':  { radius:24, speed:60, hp:200, color:'#8ab4d6', weapon:null },
+  'freighter-medium': { radius:30, speed:55, hp:300, color:'#769cb8', weapon:null },
+  'freighter-large':  { radius:38, speed:50, hp:420, color:'#5d829c', weapon:null },
+  'freighter-capital':{ radius:48, speed:40, hp:650, color:'#45667d', weapon:null },
+  'police':           { radius:26, speed:100, hp:180, color:'#44aaff', weapon:'railgun' },
+  'civilian-small':   { radius:14, speed:100, hp:60, color:'#cccccc', weapon:null },
+  'civilian-large':   { radius:22, speed:80, hp:100, color:'#bbbbbb', weapon:null },
+  'guard':            { radius:18, speed:95, hp:140, color:'#ff9933', weapon:'gun' },
+  'mercenary':        { radius:18, speed:95, hp:160, color:'#ff6633', weapon:'gun' }
+};
 function initNPCs(){
   npcs = [];
-  for(let i=0;i<NPC_COUNT;i++){
-    const start = stations[Math.floor(Math.random()*stations.length)];
-    const targetId = pickNextStation(i, start.id);
+  let npcId = 0, groupCounter = 0;
+  function spawnNPC(type, start, targetId, group){
+    const cfg = NPC_TYPES[type];
     const target = stations.find(s=>s.id===targetId);
     const t = Math.random();
     const x = start.x + (target.x - start.x) * t + (Math.random()-0.5)*60;
     const y = start.y + (target.y - start.y) * t + (Math.random()-0.5)*60;
-    npcs.push({ id:i, x, y,
+    npcs.push({ id:npcId++, type, group,
+      x, y,
       vx:(Math.random()-0.5)*40, vy:(Math.random()-0.5)*40, angle:Math.random()*Math.PI*2,
-      target: targetId, speed:70+Math.random()*90, radius:16+Math.random()*8,
-      hp:40+Math.random()*80, maxHp:80, color:`hsl(${Math.random()*360},70%,60%)`,
+      target: targetId, speed:cfg.speed, radius:cfg.radius,
+      hp:cfg.hp, maxHp:cfg.hp, color:cfg.color, weapon:cfg.weapon,
       dead:false, respawnTimer:0, fade:1, docking:false, lastStation:start.id });
   }
+  function spawnFreighterEscortGroup(fType, escortMin, escortMax){
+    const start = stations[Math.floor(Math.random()*stations.length)];
+    const targetId = pickNextStation(npcId, start.id);
+    const group = groupCounter++;
+    spawnNPC(fType, start, targetId, group);
+    const escortCount = escortMin + Math.floor(Math.random()*(escortMax-escortMin+1));
+    for(let i=0;i<escortCount;i++){
+      const eType = Math.random()<0.5?'guard':'mercenary';
+      spawnNPC(eType, start, targetId, group);
+    }
+  }
+  function spawnCivilianGroup(min, max){
+    const start = stations[Math.floor(Math.random()*stations.length)];
+    const targetId = pickNextStation(npcId, start.id);
+    const group = groupCounter++;
+    spawnNPC('freighter-small', start, targetId, group);
+    const count = min + Math.floor(Math.random()*(max-min+1));
+    for(let i=0;i<count;i++){
+      const type = Math.random()<0.5?'civilian-small':'civilian-large';
+      spawnNPC(type, start, targetId, group);
+    }
+  }
+  function spawnPolicePatrol(min, max){
+    const start = stations[Math.floor(Math.random()*stations.length)];
+    const targetId = pickNextStation(npcId, start.id);
+    const group = groupCounter++;
+    const count = min + Math.floor(Math.random()*(max-min+1));
+    for(let i=0;i<count;i++) spawnNPC('police', start, targetId, group);
+  }
+  spawnFreighterEscortGroup('freighter-small',2,3);
+  spawnFreighterEscortGroup('freighter-medium',4,5);
+  spawnFreighterEscortGroup('freighter-large',6,7);
+  spawnFreighterEscortGroup('freighter-capital',10,13);
+  spawnCivilianGroup(3,5);
+  spawnCivilianGroup(6,8);
+  spawnPolicePatrol(3,5);
 }
 initNPCs();
 // Ensure Three.js modules are loaded before initializing 3D objects
@@ -346,7 +393,12 @@ function triggerScanWave(){
   const wave = {x:ship.pos.x,y:ship.pos.y,r:0,speed:SCAN_VFX_SPEED,max:SCAN_RANGE,hit:new Set()};
   scanWaves.push(wave);
   scanArrows.length = 0;
-  highlightedEnemies = npcs.filter(n=>!n.dead && Math.hypot(n.x - ship.pos.x, n.y - ship.pos.y) <= HIGHLIGHT_RANGE);
+ // Merge of branches:
+  // 1) codex/add-various-npc-types-and-groups → prefer enemies that have weapons
+  // 2) main → only highlight those within HIGHLIGHT_RANGE
+  const inRange = (n) => Math.hypot(n.x - ship.pos.x, n.y - ship.pos.y) <= HIGHLIGHT_RANGE;
+  const armed = npcs.filter(n => !n.dead && n.weapon && inRange(n));
+  highlightedEnemies = armed.length ? armed : npcs.filter(n => !n.dead && inRange(n));
   highlightTimer = HIGHLIGHT_TIME;
   for(const st of stations){
     const dist = Math.hypot(st.x - ship.pos.x, st.y - ship.pos.y);
@@ -603,12 +655,16 @@ function npcShootingStep(dt){
   npcFireTimer -= dt;
   if(npcFireTimer <= 0){
     npcFireTimer = 0.45 + Math.random()*0.8;
-    const candidates = npcs.filter(n=>!n.dead && Math.hypot(n.x-ship.pos.x, n.y-ship.pos.y) < 900);
+    const candidates = npcs.filter(n=>!n.dead && n.weapon && Math.hypot(n.x-ship.pos.x, n.y-ship.pos.y) < 900);
     if(candidates.length){
       const shooter = candidates[Math.floor(Math.random()*candidates.length)];
       const dir = norm({x: ship.pos.x - shooter.x, y: ship.pos.y - shooter.y});
       const bx = shooter.x + dir.x*(shooter.radius+6), by = shooter.y + dir.y*(shooter.radius+6);
-      bullets.push({ x:bx, y:by, vx: dir.x*220 + shooter.vx, vy: dir.y*220 + shooter.vy, life: 4, r:3, owner:'npc', damage:12 });
+      if(shooter.weapon === 'railgun'){
+        bullets.push({ x:bx, y:by, vx: dir.x*600 + shooter.vx, vy: dir.y*600 + shooter.vy, life: 2.0, r:4, owner:'npc', damage:40, type:'rail', penetration:1 });
+      } else {
+        bullets.push({ x:bx, y:by, vx: dir.x*220 + shooter.vx, vy: dir.y*220 + shooter.vy, life: 4, r:3, owner:'npc', damage:12 });
+      }
     }
   }
 }
