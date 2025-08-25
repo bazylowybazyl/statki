@@ -300,7 +300,16 @@ window.addEventListener('keydown', e=>{
     if(boost.state==='idle' && boost.fuel>=boost.cost){ boost.state='charging'; boost.charge=0; }
   }
   if(k === 'x') triggerScanWave();
-  if(k === 'r') lockedTarget = scan.scanned || null;
+  if(k === 'r'){
+    if(highlightedEnemies.length){
+      lockedTargets = highlightedEnemies.filter(n=>!n.dead)
+        .sort((a,b)=>Math.hypot(a.x-ship.pos.x,a.y-ship.pos.y) - Math.hypot(b.x-ship.pos.x,b.y-ship.pos.y));
+      highlightTimer = 0;
+      highlightedEnemies = [];
+    } else {
+      lockedTarget = scan.scanned || null;
+    }
+  }
   updateInput();
 });
 window.addEventListener('keyup', e=>{
@@ -324,6 +333,10 @@ const SCAN_VFX_SPEED = 4000;
 const SCAN_ARROW_LIFE = 1.5;
 const scan = { target:null, progress:0, scanned:null };
 let lockedTarget = null;
+let lockedTargets = [];
+let highlightedEnemies = [];
+let highlightTimer = 0;
+const HIGHLIGHT_TIME = 3;
 const radarPings = [];
 const scanWaves = [];
 const scanArrows = [];
@@ -332,6 +345,8 @@ function triggerScanWave(){
   const wave = {x:ship.pos.x,y:ship.pos.y,r:0,speed:SCAN_VFX_SPEED,max:SCAN_RANGE,hit:new Set()};
   scanWaves.push(wave);
   scanArrows.length = 0;
+  highlightedEnemies = npcs.filter(n=>!n.dead);
+  highlightTimer = HIGHLIGHT_TIME;
   for(const st of stations){
     const dist = Math.hypot(st.x - ship.pos.x, st.y - ship.pos.y);
     spawnRadarPing(st.x, st.y);
@@ -376,18 +391,24 @@ function requestSalvo(side){
   if(activeSalvos.some(s=>s.side===side)) return;
   const set = (side==='left') ? ship.sideGunsLeft.slice() : ship.sideGunsRight.slice();
   shuffleArray(set);
-  activeSalvos.push({ side, guns: set, nextIndex: 0, timeToNext: 0.0, roundsLeft: SALVO_DEFAULT.rounds, burstInterval: SALVO_DEFAULT.burstInterval, gunsPerBurst: SALVO_DEFAULT.gunsPerBurst });
+  const baseTargets = lockedTargets.length ? lockedTargets.slice() : (lockedTarget ? [lockedTarget] : []);
+  const targets = baseTargets.filter(n=>!n.dead)
+    .sort((a,b)=>Math.hypot(a.x-ship.pos.x,a.y-ship.pos.y) - Math.hypot(b.x-ship.pos.x,b.y-ship.pos.y));
+  const queue = [];
+  for(const t of targets){ for(let i=0;i<3;i++) queue.push(t); }
+  const rounds = queue.length ? queue.length : SALVO_DEFAULT.rounds;
+  activeSalvos.push({ side, guns: set, nextIndex: 0, timeToNext: 0.0, roundsLeft: rounds, burstInterval: SALVO_DEFAULT.burstInterval, gunsPerBurst: SALVO_DEFAULT.gunsPerBurst, targets: queue, targetIdx:0 });
   if(side==='left') reloadLeft = 0; else reloadRight = 0;
 }
 
-function fireSideGunAtOffset(gunOff, side){
+function fireSideGunAtOffset(gunOff, side, target=null){
   const gunWorld = add(ship.pos, rotate(gunOff, ship.angle));
   const dl = side === 'left' ? -1 : 1;
   const dir = rotate({x:dl, y:0}, ship.angle);
   bullets.push({ x: gunWorld.x, y: gunWorld.y, px: gunWorld.x, py: gunWorld.y,
     vx: dir.x*SIDE_BULLET_SPEED + ship.vel.x, vy: dir.y*SIDE_BULLET_SPEED + ship.vel.y,
     life:2.4, r:5, owner:'player', damage:SIDE_BULLET_DAMAGE, penetration:0, type:'rocket',
-    explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS, homingDelay: SIDE_ROCKET_HOMING_DELAY });
+    explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS, homingDelay: SIDE_ROCKET_HOMING_DELAY, target });
   spawnParticle({x:gunWorld.x, y:gunWorld.y}, {x:dir.x*120 + ship.vel.x*0.1, y:dir.y*120 + ship.vel.y*0.1}, 0.14, '#b4ffb4', 3.2, true);
   for(let k=0;k<6;k++){
     const aa = Math.atan2(dir.y, dir.x) + (Math.random()-0.5)*0.9;
@@ -477,7 +498,17 @@ function bulletsAndCollisionsStep(dt){
           b.homingDelay -= dt;
         } else {
           let target = null;
-          if(lockedTarget && !lockedTarget.dead){
+          if(b.target && !b.target.dead){
+            target = {x:b.target.x, y:b.target.y};
+          } else if(lockedTargets.length){
+            let dist = Infinity; let chosen = null;
+            for(const t of lockedTargets){
+              if(t.dead) continue;
+              const d = Math.hypot(t.x - b.x, t.y - b.y);
+              if(d < dist){ dist = d; chosen = t; }
+            }
+            if(chosen) target = {x:chosen.x, y:chosen.y};
+          } else if(lockedTarget && !lockedTarget.dead){
             target = {x:lockedTarget.x, y:lockedTarget.y};
           } else {
             let dist = Infinity;
@@ -755,6 +786,7 @@ function physicsStep(dt){
         scan.progress = SCAN_TIME;
         scan.scanned = scan.target;
         spawnRadarPing(scan.target.x, scan.target.y);
+        lockedTarget = scan.scanned;
       }
     }
   } else {
@@ -762,6 +794,11 @@ function physicsStep(dt){
     scan.progress = 0;
   }
   if(lockedTarget && lockedTarget.dead) lockedTarget = null;
+  lockedTargets = lockedTargets.filter(t=>!t.dead);
+  if(highlightTimer > 0){
+    highlightTimer -= dt;
+    if(highlightTimer <= 0){ highlightTimer = 0; highlightedEnemies = []; }
+  }
 
   // update radar pings
   for(let i=radarPings.length-1;i>=0;i--){
@@ -914,7 +951,9 @@ function physicsStep(dt){
         for(let g=0; g < salvo.gunsPerBurst; g++){
           const idx = (salvo.nextIndex + g) % salvo.guns.length;
           const gunOff = salvo.guns[idx];
-          fireSideGunAtOffset(gunOff, salvo.side);
+          const target = salvo.targets ? salvo.targets[salvo.targetIdx] : null;
+          if(salvo.targets) salvo.targetIdx++;
+          fireSideGunAtOffset(gunOff, salvo.side, target);
         }
         salvo.nextIndex = (salvo.nextIndex + salvo.gunsPerBurst) % salvo.guns.length;
         salvo.roundsLeft--;
@@ -1126,7 +1165,26 @@ function render(alpha){
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(s.x, s.y, rad, -Math.PI/2, -Math.PI/2 + Math.PI*2*t); ctx.stroke();
   }
-  if(lockedTarget){
+  if(highlightedEnemies.length){
+    for(const obj of highlightedEnemies){
+      if(obj.dead) continue;
+      const s = worldToScreen(obj.x, obj.y, cam);
+      const rad = ((obj.radius||obj.r) + 12) * camera.zoom;
+      ctx.strokeStyle = 'rgba(255,255,0,0.8)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(s.x, s.y, rad, 0, Math.PI*2); ctx.stroke();
+    }
+  }
+  if(lockedTargets.length){
+    for(const obj of lockedTargets){
+      if(obj.dead) continue;
+      const s = worldToScreen(obj.x, obj.y, cam);
+      const rad = ((obj.radius||obj.r) + 14) * camera.zoom;
+      ctx.strokeStyle = 'rgba(255,80,80,0.8)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(s.x, s.y, rad, 0, Math.PI*2); ctx.stroke();
+    }
+  } else if(lockedTarget){
     const obj = lockedTarget;
     const s = worldToScreen(obj.x, obj.y, cam);
     const rad = ((obj.radius||obj.r) + 14) * camera.zoom;
