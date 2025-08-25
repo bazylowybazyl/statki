@@ -250,6 +250,7 @@ function initNPCs(){
   npcs = [];
   let npcId = 0, groupCounter = 0;
   const desiredCount = 1000;
+  const ESCORT_RADIUS = 80;
   function spawnNPC(type, start, targetId, group){
     if(npcs.length >= desiredCount) return null;
     const cfg = NPC_TYPES[type];
@@ -281,7 +282,7 @@ function initNPCs(){
       if(!escort) continue;
       escort.leader = leader.id;
       escort.orbitAngle = angle;
-      escort.orbitRadius = leader.radius + 40;
+      escort.orbitRadius = leader.radius + ESCORT_RADIUS;
       escort.x = leader.x + Math.cos(angle) * escort.orbitRadius;
       escort.y = leader.y + Math.sin(angle) * escort.orbitRadius;
     }
@@ -719,7 +720,6 @@ function npcStep(dt){
     if(npc.leader != null){
       const leader = npcs.find(n=>n.id===npc.leader && !n.dead);
       if(leader){
-        npc.orbitAngle += 0.5 * dt;
         targetPos = {
           x: leader.x + Math.cos(npc.orbitAngle) * npc.orbitRadius,
           y: leader.y + Math.sin(npc.orbitAngle) * npc.orbitRadius
