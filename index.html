@@ -249,7 +249,7 @@ const NPC_TYPES = {
 function initNPCs(){
   npcs = [];
   let npcId = 0, groupCounter = 0;
-  const desiredCount = 180;
+  const desiredCount = 1000;
   function spawnNPC(type, start, targetId, group){
     if(npcs.length >= desiredCount) return;
     const cfg = NPC_TYPES[type];
