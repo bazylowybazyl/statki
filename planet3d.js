@@ -137,13 +137,19 @@
 
   // ======= WSPÓLNY RENDERER WEBGL (1 kontekst) =======
   let sharedRenderer = null;
+  let rendererWidth = 0;
+  let rendererHeight = 0;
   function getSharedRenderer(width, height) {
     if (typeof THREE === "undefined") return null;
     if (!sharedRenderer) {
       sharedRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
       sharedRenderer.setClearColor(0x000000, 0);
     }
-    sharedRenderer.setSize(width, height, false);
+    if (width !== rendererWidth || height !== rendererHeight) {
+      sharedRenderer.setSize(width, height, false);
+      rendererWidth = width;
+      rendererHeight = height;
+    }
     return sharedRenderer;
   }
 
@@ -361,6 +367,7 @@
     }
 
     render(dt) {
+      dt = Number.isFinite(dt) ? dt : 0;
       if (!this.scene || !this.camera) return;
       this.time += dt;
       this.uniforms.uTime.value = this.time;
@@ -409,12 +416,12 @@
   function drawPlanets3D(ctx, cam) {
     for (const p of planets) {
       const s = worldToScreen(p.body.x, p.body.y, cam);
-      const size = p.size * camera.zoom; // w Twojej grze camera jest globalna – zostawiam
+      const size = p.size * cam.zoom;
       ctx.drawImage(p.canvas, s.x - size / 2, s.y - size / 2, size, size);
     }
     if (sun) {
       const sSun = worldToScreen(sun.x, sun.y, cam);
-      const sizeSun = sun.size * camera.zoom;
+      const sizeSun = sun.size * cam.zoom;
       ctx.drawImage(sun.canvas, sSun.x - sizeSun / 2, sSun.y - sizeSun / 2, sizeSun, sizeSun);
     }
   }
