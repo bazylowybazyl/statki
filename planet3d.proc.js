@@ -402,18 +402,78 @@ const PLANET_FRAG = `// Terrain generation parameters
     return mat;
   }
 
+  // ---- Presety wyglądu planet ---------------------------------------------
+  function applyPlanetPreset(uniforms, name) {
+    if (!uniforms) return;
+    switch ((name||'').toLowerCase()) {
+      case 'terran':
+      case 'terrania':
+      case 'terran': {
+        // Szum/teren – duże „kontynenty”, sporo poziomów
+        uniforms.type.value         = 2;     // fractal
+        uniforms.amplitude.value    = 1.02;
+        uniforms.sharpness.value    = 1.56;
+        uniforms.offset.value       = -0.088; // lekko w dół => woda
+        uniforms.period.value       = 0.526;  // rozmiar plam/mas lądowych
+        uniforms.persistence.value  = 0.58;
+        uniforms.lacunarity.value   = 1.95;
+        uniforms.octaves.value      = 10;
+
+        // Kolory warstw (od najniższego „h” do najwyższego)
+        // 1-2: woda (głęboka -> płytka), 3: plaża, 4: zieleń/góry, 5: śnieg
+        uniforms.color1.value.set('#0a366f'); // deep water
+        uniforms.color2.value.set('#2aaed6'); // shallow / laguny
+        uniforms.color3.value.set('#e8d6b3'); // piasek / plaża
+        uniforms.color4.value.set('#4a9a40'); // trawa/las / niskie góry
+        uniforms.color5.value.set('#e6f2ff'); // śnieg
+
+        // Progi przejść między warstwami (skalowane do „h” z shaderów)
+        uniforms.transition2.value  = 0.035;  // deep->shallow
+        uniforms.transition3.value  = 0.058;  // shallow->beach
+        uniforms.transition4.value  = 0.110;  // beach->green
+        uniforms.transition5.value  = 0.200;  // green->snow
+        uniforms.blend12.value      = 0.010;
+        uniforms.blend23.value      = 0.012;
+        uniforms.blend34.value      = 0.030;
+        uniforms.blend45.value      = 0.060;
+
+        // Światło / połysk / bump
+        uniforms.ambientIntensity.value  = 0.08;
+        uniforms.diffuseIntensity.value  = 1.10;
+        uniforms.specularIntensity.value = 0.20;
+        uniforms.shininess.value         = 10.0;
+        uniforms.bumpStrength.value      = 1.0;
+        uniforms.bumpOffset.value        = 0.001;
+        uniforms.lightColor.value.set('#ffffff');
+        break;
+      }
+      default:
+        // Zostaw domyślne – zawsze można dodać kolejne presety (volcanic/frozen itp.)
+        break;
+    }
+  }
+
   class ProcPlanet {
-    constructor(worldX, worldY, pixelSize) {
+    constructor(worldX, worldY, pixelSize, opts={}) {
       this.x = worldX; 
       this.y = worldY;
       // target size on screen in world units (used only when drawing to 2D)
       this.size = pixelSize || 64;
+      this.style = opts.style || null;
 
       // own 2D canvas to blit the rendered planet
       this.canvas = document.createElement("canvas");
       this.canvas.width = 256;
       this.canvas.height = 256;
       this.ctx2d = this.canvas.getContext("2d");
+      // mały offscreen do „halo” atmosfery
+      this.atmo = document.createElement('canvas');
+      this.atmo.width = this.atmo.height = 256;
+      const ag = this.atmo.getContext('2d');
+      const rg = ag.createRadialGradient(128,128,110, 128,128,128);
+      rg.addColorStop(0.75, 'rgba(160,200,255,0.10)');
+      rg.addColorStop(1.00, 'rgba(160,200,255,0.00)');
+      ag.fillStyle = rg; ag.beginPath(); ag.arc(128,128,128,0,Math.PI*2); ag.fill();
 
       // build scene
       if (typeof THREE === "undefined") return;
@@ -425,6 +485,8 @@ const PLANET_FRAG = `// Terrain generation parameters
       geom.computeTangents?.();
 
       this.material = buildPlanetMaterial();
+      // zastosuj preset (jeśli jest)
+      applyPlanetPreset(this.material.uniforms, this.style);
       this.mesh = new THREE.Mesh(geom, this.material);
       this.scene.add(this.mesh);
 
@@ -456,6 +518,10 @@ const PLANET_FRAG = `// Terrain generation parameters
 
       this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
       this.ctx2d.drawImage(r.domElement, 0, 0);
+      // delikatna atmosfera na wierzchu
+      this.ctx2d.globalCompositeOperation = 'lighter';
+      this.ctx2d.drawImage(this.atmo, 0, 0);
+      this.ctx2d.globalCompositeOperation = 'source-over';
     }
   }
 
@@ -650,7 +716,7 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
     _planets.length = 0;
     for (const s of list) {
       const size = (s.r || 30) * 2.0;
-      const p = new ProcPlanet(s.x, s.y, size);
+      const p = new ProcPlanet(s.x, s.y, size, { style: s.type || null });
       _planets.push(p);
     }
     if (sunObj) {
