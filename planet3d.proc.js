@@ -566,17 +566,17 @@ const PLANET_FRAG = `// Terrain generation parameters
     for (const p of _planets) p.render(dt);
   }
   function drawPlanets3D(ctx, cam) {
-    if (sun) {
-      const ss = worldToScreen(sun.x, sun.y, cam);
-      const sizeS = sun.size * camera.zoom;
-      ctx.drawImage(sun.canvas, ss.x - sizeS/2, ss.y - sizeS/2, sizeS, sizeS);
+      for (const p of _planets) {
+        const s = worldToScreen(p.x, p.y, cam);
+        const size = p.size * camera.zoom;
+        ctx.drawImage(p.canvas, s.x - size/2, s.y - size/2, size, size);
+      }
+      if (sun) {
+        const ss = worldToScreen(sun.x, sun.y, cam);
+        const sizeS = sun.size * camera.zoom;
+        ctx.drawImage(sun.canvas, ss.x - sizeS/2, ss.y - sizeS/2, sizeS, sizeS);
+      }
     }
-    for (const p of _planets) {
-      const s = worldToScreen(p.x, p.y, cam);
-      const size = p.size * camera.zoom;
-      ctx.drawImage(p.canvas, s.x - size/2, s.y - size/2, size, size);
-    }
-  }
 
   function setPlanetsSunPos(x,y,z){
     SUN_POS = {x:x||0,y:y||0,z:z||0};
