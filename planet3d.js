@@ -148,8 +148,9 @@
 
   // ======= PLANETA =======
   class Planet3D {
-    constructor(size) {
+    constructor(size, type) {
       this.size = size;
+      this.type = type;
       // prywatny canvas 2D; będziemy wklejać bitmapę z sharedRenderer
       this.canvas = document.createElement("canvas");
       this.canvas.width = 256;
@@ -167,16 +168,27 @@
       this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
       this.camera.position.z = 3;
 
-      const dayTex = new THREE.CanvasTexture(tex.day); dayTex.wrapS = THREE.RepeatWrapping;
-      const nightTex = new THREE.CanvasTexture(tex.night); nightTex.wrapS = THREE.RepeatWrapping;
-
-      const mat = new THREE.MeshStandardMaterial({
-        map: dayTex,
-        emissive: new THREE.Color(0xffffff),
-        emissiveMap: nightTex,
-        emissiveIntensity: 0.8,
-        roughness: 1.0, metalness: 0.0,
-      });
+      let mat;
+      if (type === 'terran') {
+        const dayTex = new THREE.CanvasTexture(tex.day); dayTex.wrapS = THREE.RepeatWrapping;
+        const nightTex = new THREE.CanvasTexture(tex.night); nightTex.wrapS = THREE.RepeatWrapping;
+        mat = new THREE.MeshStandardMaterial({
+          map: dayTex,
+          emissive: new THREE.Color(0xffffff),
+          emissiveMap: nightTex,
+          emissiveIntensity: 0.8,
+          roughness: 1.0, metalness: 0.0,
+        });
+      } else {
+        const colors = {
+          volcanic: 0xaa5533,
+          frozen: 0x88ccff,
+          gas: 0xffd27f,
+          barren: 0x888888,
+        };
+        const color = colors[type] || 0x888888;
+        mat = new THREE.MeshStandardMaterial({ color });
+      }
 
       const geom = new THREE.SphereGeometry(1, 48, 32);
       this.mesh = new THREE.Mesh(geom, mat);
@@ -238,11 +250,11 @@
   }
 
   // ======= API =======
-  function initPlanets3D(stations, sunPos) {
+  function initPlanets3D(planetList, sunPos) {
     planets.length = 0;
-    for (const st of stations) {
-      const p = new Planet3D(st.r * 2.0); // mniejsze niż wcześniej, ale wyraźne "halo"
-      p.station = st;
+    for (const pl of planetList) {
+      const p = new Planet3D(pl.r * 2.0, pl.type); // mniejsze niż wcześniej, ale wyraźne "halo"
+      p.body = pl;
       planets.push(p);
     }
     sun = new Sun3D(sunPos.r * 2.5);
@@ -263,7 +275,7 @@
       ctx.drawImage(sun.canvas, sSun.x - sizeSun / 2, sSun.y - sizeSun / 2, sizeSun, sizeSun);
     }
     for (const p of planets) {
-      const s = worldToScreen(p.station.x, p.station.y, cam);
+      const s = worldToScreen(p.body.x, p.body.y, cam);
       const size = p.size * camera.zoom; // w Twojej grze camera jest globalna – zostawiam
       ctx.drawImage(p.canvas, s.x - size / 2, s.y - size / 2, size, size);
     }
