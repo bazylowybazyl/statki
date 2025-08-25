@@ -137,13 +137,19 @@
 
   // ======= WSPÓLNY RENDERER WEBGL (1 kontekst) =======
   let sharedRenderer = null;
+  let rendererWidth = 0;
+  let rendererHeight = 0;
   function getSharedRenderer(width, height) {
     if (typeof THREE === "undefined") return null;
     if (!sharedRenderer) {
       sharedRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
       sharedRenderer.setClearColor(0x000000, 0);
     }
-    sharedRenderer.setSize(width, height, false);
+    if (width !== rendererWidth || height !== rendererHeight) {
+      sharedRenderer.setSize(width, height, false);
+      rendererWidth = width;
+      rendererHeight = height;
+    }
     return sharedRenderer;
   }
 
