@@ -1,6 +1,7 @@
 (function () {
   // ======= USTAWIENIA / NARZĘDZIA =======
   const planets = [];
+  let sun = null;
   const TAU = Math.PI * 2;
   const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 
@@ -201,24 +202,68 @@
     }
   }
 
+  class Sun3D {
+    constructor(size) {
+      this.size = size;
+      this.canvas = document.createElement("canvas");
+      this.canvas.width = 256;
+      this.canvas.height = 256;
+      this.ctx2d = this.canvas.getContext("2d");
+
+      this.scene = null;
+      this.camera = null;
+      this.mesh = null;
+
+      if (typeof THREE === "undefined") return;
+
+      this.scene = new THREE.Scene();
+      this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+      this.camera.position.z = 3;
+
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+      const geom = new THREE.SphereGeometry(1, 48, 32);
+      this.mesh = new THREE.Mesh(geom, mat);
+      this.scene.add(this.mesh);
+    }
+
+    render(dt) {
+      if (!this.scene || !this.camera) return;
+      this.mesh.rotation.y += 0.05 * dt;
+      const r = getSharedRenderer(this.canvas.width, this.canvas.height);
+      if (!r) return;
+      r.render(this.scene, this.camera);
+      this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      this.ctx2d.drawImage(r.domElement, 0, 0);
+    }
+  }
+
   // ======= API =======
-  function initPlanets3D(stations) {
+  function initPlanets3D(stations, sunPos) {
     planets.length = 0;
     for (const st of stations) {
       const p = new Planet3D(st.r * 2.0); // mniejsze niż wcześniej, ale wyraźne "halo"
-      p.x = st.x; p.y = st.y;
+      p.station = st;
       planets.push(p);
     }
+    sun = new Sun3D(sunPos.r * 2.5);
+    sun.x = sunPos.x;
+    sun.y = sunPos.y;
     if (typeof THREE === "undefined") console.warn("3D planets disabled: THREE not found.");
   }
 
   function updatePlanets3D(dt) {
+    if (sun) sun.render(dt);
     for (const p of planets) p.render(dt);
   }
 
   function drawPlanets3D(ctx, cam) {
+    if (sun) {
+      const sSun = worldToScreen(sun.x, sun.y, cam);
+      const sizeSun = sun.size * camera.zoom;
+      ctx.drawImage(sun.canvas, sSun.x - sizeSun / 2, sSun.y - sizeSun / 2, sizeSun, sizeSun);
+    }
     for (const p of planets) {
-      const s = worldToScreen(p.x, p.y, cam);
+      const s = worldToScreen(p.station.x, p.station.y, cam);
       const size = p.size * camera.zoom; // w Twojej grze camera jest globalna – zostawiam
       ctx.drawImage(p.canvas, s.x - size / 2, s.y - size / 2, size, size);
     }
