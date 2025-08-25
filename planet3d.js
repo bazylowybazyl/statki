@@ -390,7 +390,19 @@
       }
       this.composer.render();
       this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
-      this.ctx2d.drawImage(r.domElement,0,0);
+      // powiększ obraz, aby słońce wypełniało większą część canvasa
+      const zoom = 1.3;
+      const srcW = this.canvas.width / zoom;
+      const srcH = this.canvas.height / zoom;
+      const srcX = (this.canvas.width - srcW) / 2;
+      const srcY = (this.canvas.height - srcH) / 2;
+      this.ctx2d.drawImage(r.domElement, srcX, srcY, srcW, srcH, 0, 0, this.canvas.width, this.canvas.height);
+      // przytnij kwadratowe brzegi, pozostawiając okrągłą teksturę
+      this.ctx2d.globalCompositeOperation = "destination-in";
+      this.ctx2d.beginPath();
+      this.ctx2d.arc(this.canvas.width/2, this.canvas.height/2, this.canvas.width/2, 0, Math.PI*2);
+      this.ctx2d.fill();
+      this.ctx2d.globalCompositeOperation = "source-over";
     }
   }
 
