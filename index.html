@@ -10,6 +10,7 @@
   canvas{display:block;width:100vw;height:100vh}
   .stat{font-family:monospace;font-size:13px}
   small{color:#a8b4d9}
+  #loading{position:fixed;left:0;top:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#030417;z-index:50;color:#dfe7ff;font-size:32px;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
 </style>
 </head>
 <body>
@@ -21,6 +22,7 @@
     <div style="margin-top:6px"><small>Gwiazdy są proceduralne w całej galaktyce. Silnik: niebieski exhaust + krótki ślad przy ruchu.</small></div>
   </div>
 <canvas id="c"></canvas>
+<div id="loading">Ładowanie...</div>
 <script type="importmap">
 {
   "imports": {
@@ -247,7 +249,9 @@ const NPC_TYPES = {
 function initNPCs(){
   npcs = [];
   let npcId = 0, groupCounter = 0;
+  const desiredCount = 180;
   function spawnNPC(type, start, targetId, group){
+    if(npcs.length >= desiredCount) return;
     const cfg = NPC_TYPES[type];
     const target = stations.find(s=>s.id===targetId);
     const t = Math.random();
@@ -289,15 +293,16 @@ function initNPCs(){
     const count = min + Math.floor(Math.random()*(max-min+1));
     for(let i=0;i<count;i++) spawnNPC('police', start, targetId, group);
   }
-  spawnFreighterEscortGroup('freighter-small',2,3);
-  spawnFreighterEscortGroup('freighter-medium',4,5);
-  spawnFreighterEscortGroup('freighter-large',6,7);
-  spawnFreighterEscortGroup('freighter-capital',10,13);
-  spawnCivilianGroup(3,5);
-  spawnCivilianGroup(6,8);
-  spawnPolicePatrol(3,5);
+  while(npcs.length < desiredCount){
+    spawnFreighterEscortGroup('freighter-small',2,3);
+    spawnFreighterEscortGroup('freighter-medium',4,5);
+    spawnFreighterEscortGroup('freighter-large',6,7);
+    spawnFreighterEscortGroup('freighter-capital',10,13);
+    spawnCivilianGroup(3,5);
+    spawnCivilianGroup(6,8);
+    spawnPolicePatrol(3,5);
+  }
 }
-initNPCs();
 // Ensure Three.js modules are loaded before initializing 3D objects
 window.addEventListener('DOMContentLoaded', () => {
   initPlanets3D(planets, SUN);
@@ -1058,7 +1063,6 @@ function loop(now){
   render(alpha);
   requestAnimationFrame(loop);
 }
-requestAnimationFrame(loop);
 
 // =============== Render ===============
 function worldToScreen(wx,wy,cam){ return { x: (wx - cam.x)*camera.zoom + W/2, y: (wy - cam.y)*camera.zoom + H/2 }; }
@@ -1130,6 +1134,23 @@ function render(alpha){
   }
 
   drawPlanets3D(ctx, cam);
+
+  // drogi między stacjami
+  const drawn = new Set();
+  for(const npc of npcs){
+    if(npc.dead) continue;
+    const start = stations.find(s=>s.id===npc.lastStation);
+    const target = stations.find(s=>s.id===npc.target);
+    if(!start || !target) continue;
+    const key = start.id < target.id ? start.id+'-'+target.id : target.id+'-'+start.id;
+    if(drawn.has(key)) continue;
+    drawn.add(key);
+    const s1 = worldToScreen(start.x, start.y, cam);
+    const s2 = worldToScreen(target.x, target.y, cam);
+    ctx.strokeStyle = 'rgba(120,180,255,0.15)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.stroke();
+  }
 
   // Stacje
   for(const st of stations){
@@ -1457,8 +1478,17 @@ function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo
 function roundRectScreen(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
 
 // init
-initStars(true);
-console.log('Gwiazdy: proceduralne kafelki 1024px na całej mapie. Silnik: warkocz jonowy, dopalacz: wiązka fotonów.');
+const loadingEl = document.getElementById('loading');
+function startGame(){
+  initStars(true);
+  initNPCs();
+  for(let i=0;i<120;i++) npcStep(PHYS_DT);
+  loadingEl.style.display = 'none';
+  lastTime = performance.now();
+  requestAnimationFrame(loop);
+  console.log('Gwiazdy: proceduralne kafelki 1024px na całej mapie. Silnik: warkocz jonowy, dopalacz: wiązka fotonów.');
+}
+setTimeout(startGame, 500);
 </script>
 </body>
 </html>
