@@ -251,28 +251,39 @@ function initNPCs(){
   let npcId = 0, groupCounter = 0;
   const desiredCount = 1000;
   function spawnNPC(type, start, targetId, group){
-    if(npcs.length >= desiredCount) return;
+    if(npcs.length >= desiredCount) return null;
     const cfg = NPC_TYPES[type];
     const target = stations.find(s=>s.id===targetId);
     const t = Math.random();
     const x = start.x + (target.x - start.x) * t + (Math.random()-0.5)*60;
     const y = start.y + (target.y - start.y) * t + (Math.random()-0.5)*60;
-    npcs.push({ id:npcId++, type, group,
+    const npc = { id:npcId++, type, group,
       x, y,
       vx:(Math.random()-0.5)*40, vy:(Math.random()-0.5)*40, angle:Math.random()*Math.PI*2,
       target: targetId, speed:cfg.speed, radius:cfg.radius,
       hp:cfg.hp, maxHp:cfg.hp, color:cfg.color, weapon:cfg.weapon,
-      dead:false, respawnTimer:0, fade:1, docking:false, lastStation:start.id });
+      dead:false, respawnTimer:0, fade:1, docking:false, lastStation:start.id,
+      leader:null, orbitAngle:0, orbitRadius:0 };
+    npcs.push(npc);
+    return npc;
   }
   function spawnFreighterEscortGroup(fType, escortMin, escortMax){
     const start = stations[Math.floor(Math.random()*stations.length)];
     const targetId = pickNextStation(npcId, start.id);
     const group = groupCounter++;
-    spawnNPC(fType, start, targetId, group);
+    const leader = spawnNPC(fType, start, targetId, group);
+    if(!leader) return;
     const escortCount = escortMin + Math.floor(Math.random()*(escortMax-escortMin+1));
     for(let i=0;i<escortCount;i++){
       const eType = Math.random()<0.5?'guard':'mercenary';
-      spawnNPC(eType, start, targetId, group);
+      const angle = (i / escortCount) * Math.PI * 2;
+      const escort = spawnNPC(eType, start, targetId, group);
+      if(!escort) continue;
+      escort.leader = leader.id;
+      escort.orbitAngle = angle;
+      escort.orbitRadius = leader.radius + 40;
+      escort.x = leader.x + Math.cos(angle) * escort.orbitRadius;
+      escort.y = leader.y + Math.sin(angle) * escort.orbitRadius;
     }
   }
   function spawnCivilianGroup(min, max){
@@ -704,18 +715,35 @@ function npcStep(dt){
       }
       continue;
     }
-    const st = stations.find(s=>s.id===npc.target);
-    if(!st){ npc.target = pickNextStation(npc.id, -1); continue; }
-    const to = { x: st.x - npc.x, y: st.y - npc.y }; const d = Math.hypot(to.x,to.y);
+    let targetPos, st = null;
+    if(npc.leader != null){
+      const leader = npcs.find(n=>n.id===npc.leader && !n.dead);
+      if(leader){
+        npc.orbitAngle += 0.5 * dt;
+        targetPos = {
+          x: leader.x + Math.cos(npc.orbitAngle) * npc.orbitRadius,
+          y: leader.y + Math.sin(npc.orbitAngle) * npc.orbitRadius
+        };
+      } else {
+        npc.leader = null;
+      }
+    }
+    if(!targetPos){
+      st = stations.find(s=>s.id===npc.target);
+      if(!st){ npc.target = pickNextStation(npc.id, -1); continue; }
+      targetPos = { x: st.x, y: st.y };
+    }
+    const to = { x: targetPos.x - npc.x, y: targetPos.y - npc.y };
+    const d = Math.hypot(to.x,to.y);
     const dir = d?{x:to.x/d,y:to.y/d}:{x:0,y:0};
-    const desiredSpeed = npc.speed * (d < 120 ? (d/120) : 1);
+    const desiredSpeed = npc.leader != null ? npc.speed : npc.speed * (d < 120 ? (d/120) : 1);
     const desiredV = { x: dir.x*desiredSpeed, y: dir.y*desiredSpeed };
     npc.vx += (desiredV.x - (npc.vx||0)) * clamp(1.5*dt,0,1);
     npc.vy += (desiredV.y - (npc.vy||0)) * clamp(1.5*dt,0,1);
     const toP = { x: ship.pos.x - npc.x, y: ship.pos.y - npc.y }; const dp = Math.hypot(toP.x,toP.y);
     if(dp < 120){ npc.vx -= (toP.x/dp) * 40*dt; npc.vy -= (toP.y/dp) * 40*dt; }
     npc.x += npc.vx*dt; npc.y += npc.vy*dt; npc.angle = Math.atan2(npc.vy||0, npc.vx||0);
-    if(d < 20){
+    if(npc.leader == null && st && d < 20){
       npc.docking = true;
       npc.x = st.x; npc.y = st.y;
       npc.vx = 0; npc.vy = 0;
