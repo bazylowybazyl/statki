@@ -636,12 +636,12 @@ const PLANET_FRAG = `// Terrain generation parameters
   function drawPlanets3D(ctx, cam) {
       for (const p of _planets) {
         const s = worldToScreen(p.x, p.y, cam);
-        const size = p.size * camera.zoom;
+        const size = p.size * cam.zoom;
         ctx.drawImage(p.canvas, s.x - size/2, s.y - size/2, size, size);
       }
       if (sun) {
         const ss = worldToScreen(sun.x, sun.y, cam);
-        const sizeS = sun.size * camera.zoom;
+        const sizeS = sun.size * cam.zoom;
         ctx.drawImage(sun.canvas, ss.x - sizeS/2, ss.y - sizeS/2, sizeS, sizeS);
       }
     }
