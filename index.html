@@ -21,7 +21,32 @@
     <div style="margin-top:6px"><small>Gwiazdy są proceduralne w całej galaktyce. Silnik: niebieski exhaust + krótki ślad przy ruchu.</small></div>
   </div>
 <canvas id="c"></canvas>
+<!-- Mapowanie modułów -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./node_modules/three/build/three.module.js",
+    "three/addons/": "./node_modules/three/examples/jsm/"
+  }
+}
+</script>
 
+<!-- Wstrzyknięcie THREE i dodatków do window dla skryptów niemieszkających w ESM -->
+<script type="module">
+  import * as THREE from 'three';
+  import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
+  import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
+  import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+  // 👇 to jest kluczowe dla planet3d*.js, które oczekują globali:
+  window.THREE = THREE;
+  window.EffectComposer  = EffectComposer;
+  window.RenderPass      = RenderPass;
+  window.UnrealBloomPass = UnrealBloomPass;
+</script>
+
+<!-- dopiero teraz ładujemy logikę 2D/kanwy -->
+<script src="planet3d.proc.js"></script>
 
 <script type="importmap">
 {
