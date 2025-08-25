@@ -327,6 +327,7 @@ const PLANET_FRAG = `// Terrain generation parameters
     if (typeof THREE === "undefined") return null;
     if (!sharedRenderer) {
       sharedRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
+      sharedRenderer.setClearColor(0x000000, 0);
     }
     sharedRenderer.setSize(width, height, false);
     return sharedRenderer;
