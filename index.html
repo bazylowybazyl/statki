@@ -23,6 +23,14 @@
   <canvas id="c"></canvas>
 
 <script src="./node_modules/three/build/three.min.js"></script>
+<script type="module">
+  import { EffectComposer } from './node_modules/three/examples/jsm/postprocessing/EffectComposer.js';
+  import { RenderPass } from './node_modules/three/examples/jsm/postprocessing/RenderPass.js';
+  import { UnrealBloomPass } from './node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js';
+  window.EffectComposer = EffectComposer;
+  window.RenderPass = RenderPass;
+  window.UnrealBloomPass = UnrealBloomPass;
+</script>
 <script src="planet3d.proc.js"></script>
 
 <script>

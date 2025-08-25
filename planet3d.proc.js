@@ -448,11 +448,19 @@ const PLANET_FRAG = `// Terrain generation parameters
 
   class Sun3D {
     constructor(size) {
-      this.size = size || 256;
+      this.size = size;
       this.canvas = document.createElement("canvas");
       this.canvas.width = 256;
       this.canvas.height = 256;
       this.ctx2d = this.canvas.getContext("2d");
+
+      this.scene = null;
+      this.camera = null;
+      this.sun = null;
+      this.corona = null;
+      this.protubGroup = null;
+      this.time = 0;
+      this.composer = null;
 
       if (typeof THREE === "undefined") return;
 
@@ -460,89 +468,149 @@ const PLANET_FRAG = `// Terrain generation parameters
       this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
       this.camera.position.z = 3;
 
-      const uniforms = { time: { value: 0 } };
-
-      const vertexShader = `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
-        }`;
-
-      const fragmentShader = `
-        uniform float time;
-        varying vec2 vUv;
-
-        float rand(vec2 co){
-          return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
-        }
-        float noise(vec2 uv){
-          vec2 i = floor(uv);
-          vec2 f = fract(uv);
-          float a = rand(i);
-          float b = rand(i + vec2(1.0,0.0));
-          float c = rand(i + vec2(0.0,1.0));
-          float d = rand(i + vec2(1.0,1.0));
-          vec2 u = f*f*(3.0-2.0*f);
-          return mix(a,b,u.x) + (c-a)*u.y*(1.0-u.x) + (d-b)*u.x*u.y;
-        }
-
+      const photosphereVertex = `
+        varying vec3 vNormalW;
+        varying vec3 vWorldPos;
+        varying vec3 vNormalO;
         void main(){
-          vec2 uv = vUv*4.0;
-          float n = noise(uv + time*0.5);
-          float r = distance(vUv, vec2(0.5));
-          float brightness = smoothstep(0.5, 0.0, r);
-          vec3 col = mix(vec3(1.0,0.8,0.2), vec3(1.0,0.5,0.0), n);
-          gl_FragColor = vec4(col * brightness, brightness);
-        }`;
-
-      const mat = new THREE.ShaderMaterial({
-        uniforms,
-        vertexShader,
-        fragmentShader,
-        blending: THREE.AdditiveBlending,
-        transparent: true
+          vNormalO = normal;
+          vec4 wp = modelMatrix * vec4(position,1.0);
+          vWorldPos = wp.xyz;
+          vNormalW = normalize(mat3(modelMatrix) * normal);
+          gl_Position = projectionMatrix * viewMatrix * wp;
+        }
+      `;
+      const simplexNoise3D = `
+        vec3 mod289(vec3 x){return x - floor(x*(1.0/289.0))*289.0;}
+        vec4 mod289(vec4 x){return x - floor(x*(1.0/289.0))*289.0;}
+        vec4 permute(vec4 x){return mod289(((x*34.0)+1.0)*x);}
+        vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314*r;}
+        float snoise(vec3 v){const vec2 C=vec2(1.0/6.0,1.0/3.0);const vec4 D=vec4(0.0,0.5,1.0,2.0);vec3 i=floor(v+dot(v,C.yyy));vec3 x0=v-i+dot(i,C.xxx);vec3 g=step(x0.yzx,x0.xyz);vec3 l=1.0-g;vec3 i1=min(g.xyz,l.zxy);vec3 i2=max(g.xyz,l.zxy);vec3 x1=x0-i1+1.0*C.xxx;vec3 x2=x0-i2+2.0*C.xxx;vec3 x3=x0-1.0+3.0*C.xxx;i=mod289(i);vec4 p=permute(permute(permute(i.z+vec4(0.0,i1.z,i2.z,1.0))+i.y+vec4(0.0,i1.y,i2.y,1.0))+i.x+vec4(0.0,i1.x,i2.x,1.0));float n_=0.142857142857;vec3 ns=n_*D.wyz-D.xzx;vec4 j=p-49.0*floor(p*ns.z*ns.z);vec4 x_=floor(j*ns.z);vec4 y_=floor(j-7.0*x_);vec4 x=x_*ns.x+ns.yyyy;vec4 y=y_*ns.x+ns.yyyy;vec4 h=1.0-abs(x)-abs(y);vec4 b0=vec4(x.xy,y.xy);vec4 b1=vec4(x.zw,y.zw);vec4 s0=floor(b0)*2.0+1.0;vec4 s1=floor(b1)*2.0+1.0;vec4 sh=-step(h,vec4(0.0));vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy;vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;vec3 p0=vec3(a0.xy,h.x);vec3 p1=vec3(a0.zw,h.y);vec3 p2=vec3(a1.xy,h.z);vec3 p3=vec3(a1.zw,h.w);vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));p0*=norm.x;p1*=norm.y;p2*=norm.z;p3*=norm.w;vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0);m=m*m;return 42.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));}
+        float fbm(vec3 p){float f=0.0;float a=0.5;for(int i=0;i<6;i++){f+=a*snoise(p);p*=2.04;a*=0.5;}return f;}
+      `;
+      const photosphereFragment = `
+        uniform float uTime;
+        uniform float uGranulationScale;
+        uniform float uGranulationSpeed;
+        uniform float uSpotStrength;
+        uniform float uSpotThreshold;
+        uniform vec3 uColorA;
+        uniform vec3 uColorB;
+        varying vec3 vNormalW;
+        varying vec3 vWorldPos;
+        varying vec3 vNormalO;
+        ${simplexNoise3D}
+        void main(){
+          vec3 p = normalize(vNormalO) * uGranulationScale;
+          float t = uTime * uGranulationSpeed;
+          float g1 = fbm(p + vec3(0.0,0.0,t*0.75));
+          float g2 = fbm(p*1.8 + vec3(t*0.25,-t*0.2,t*0.15));
+          float gran = clamp(0.6*g1 + 0.4*g2,0.0,1.0);
+          float spotsBase = fbm(p*0.55 + vec3(-t*0.08,t*0.05,0.0));
+          float spotsMask = smoothstep(uSpotThreshold+0.05,uSpotThreshold-0.12,spotsBase);
+          vec3 color = mix(uColorA,uColorB,smoothstep(0.25,0.85,gran));
+          float spotDarken = mix(1.0,0.25,spotsMask*uSpotStrength);
+          color *= spotDarken;
+          float filaments = fbm(p*3.5 + vec3(t*0.6,t*0.4,-t*0.3));
+          color += 0.07 * smoothstep(0.6,1.0,filaments);
+          vec3 viewDir = normalize(cameraPosition - vWorldPos);
+          float ndv = clamp(dot(normalize(vNormalW), viewDir), 0.0, 1.0);
+          float limb = pow(ndv, 0.55);
+          color *= mix(0.78,1.0,limb);
+          gl_FragColor = vec4(color,1.0);
+        }
+      `;
+      this.uniforms = {
+        uTime: { value: 0 },
+        uGranulationScale: { value: 4.02 },
+        uGranulationSpeed: { value: 0.99 },
+        uSpotStrength: { value: 0.67 },
+        uSpotThreshold: { value: 0.485 },
+        uColorA: { value: new THREE.Color("#ff6a00") },
+        uColorB: { value: new THREE.Color("#fff6c4") },
+      };
+      const sunMat = new THREE.ShaderMaterial({
+        uniforms: this.uniforms,
+        vertexShader: photosphereVertex,
+        fragmentShader: photosphereFragment,
       });
+      this.sun = new THREE.Mesh(new THREE.SphereGeometry(1.0, 192, 128), sunMat);
+      this.scene.add(this.sun);
 
-      const geom = new THREE.SphereGeometry(1, 64, 32);
-      this.mesh = new THREE.Mesh(geom, mat);
-      this.scene.add(this.mesh);
-
-      const glowTex = new THREE.CanvasTexture(makeGlowTexture());
-      const glowMat = new THREE.SpriteMaterial({
-        map: glowTex,
+      const coronaVertex = `
+        varying vec3 vNormalW;
+        varying vec3 vWorldPos;
+        void main(){vec4 wp=modelMatrix*vec4(position,1.0);vWorldPos=wp.xyz;vNormalW=normalize(mat3(modelMatrix)*normal);gl_Position=projectionMatrix*viewMatrix*wp;}
+      `;
+      const coronaFragment = `
+        uniform float uIntensity;
+        uniform float uPower;
+        uniform vec3 uColorInner;
+        uniform vec3 uColorOuter;
+        varying vec3 vNormalW;
+        varying vec3 vWorldPos;
+        void main(){vec3 V=normalize(cameraPosition - vWorldPos);float fres=pow(1.0-clamp(dot(normalize(vNormalW),V),0.0,1.0),uPower);vec3 col=mix(uColorInner,uColorOuter,smoothstep(0.0,1.0,fres));float alpha=clamp(fres*uIntensity,0.0,1.0);gl_FragColor=vec4(col,alpha);}
+      `;
+      this.coronaUniforms = {
+        uIntensity: { value: 1.83 },
+        uPower: { value: 2.19 },
+        uColorInner: { value: new THREE.Color("#ffae34") },
+        uColorOuter: { value: new THREE.Color("#fffbe6") },
+      };
+      const coronaMat = new THREE.ShaderMaterial({
+        uniforms: this.coronaUniforms,
+        vertexShader: coronaVertex,
+        fragmentShader: coronaFragment,
         blending: THREE.AdditiveBlending,
-        transparent: true
+        transparent: true,
+        depthWrite: false,
+        side: THREE.FrontSide,
       });
-      this.glow = new THREE.Sprite(glowMat);
-      this.glow.scale.set(2.5, 2.5, 1);
-      this.scene.add(this.glow);
+      this.corona = new THREE.Mesh(new THREE.SphereGeometry(1.18, 128, 96), coronaMat);
+      this.scene.add(this.corona);
+
+      this.protubGroup = new THREE.Group();
+      const makeProtuberance = (angle, lat, scale) => {
+        const tor = new THREE.TorusGeometry(0.18*scale, 0.035*scale, 16, 64);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff6f2e, transparent:true, opacity:0.9, blending:THREE.AdditiveBlending, depthWrite:false });
+        const m = new THREE.Mesh(tor, mat);
+        const r = 1.02;
+        const x = r*Math.cos(lat)*Math.cos(angle);
+        const y = r*Math.sin(lat);
+        const z = r*Math.cos(lat)*Math.sin(angle);
+        m.position.set(x,y,z);
+        m.lookAt(new THREE.Vector3(x,y,z).multiplyScalar(1.35));
+        this.protubGroup.add(m);
+      };
+      for(let i=0;i<10;i++){ makeProtuberance(Math.random()*Math.PI*2,(Math.random()*0.9-0.45)*Math.PI,0.8+Math.random()*0.6); }
+      this.scene.add(this.protubGroup);
     }
 
     render(dt) {
       if (!this.scene || !this.camera) return;
-      if (this.mesh.material.uniforms) {
-        this.mesh.material.uniforms.time.value += dt;
-      }
+      this.time += dt;
+      this.uniforms.uTime.value = this.time;
+      this.sun.rotation.y += 0.004 * dt;
+      this.corona.rotation.y = this.sun.rotation.y;
+      this.protubGroup.rotation.y = this.sun.rotation.y * 0.9;
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r) return;
-      r.render(this.scene, this.camera);
-      this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      this.ctx2d.drawImage(r.domElement, 0, 0);
+      r.toneMapping = THREE.ACESFilmicToneMapping;
+      r.toneMappingExposure = 1.1;
+      r.outputColorSpace = THREE.SRGBColorSpace;
+      if (!this.composer || this._renderer !== r) {
+        this._renderer = r;
+        this.composer = new EffectComposer(r);
+        this.composer.setSize(this.canvas.width, this.canvas.height);
+        const rp = new RenderPass(this.scene, this.camera);
+        this.bloom = new UnrealBloomPass(new THREE.Vector2(this.canvas.width, this.canvas.height), 1.14, 1.04, 0.0);
+        this.composer.addPass(rp);
+        this.composer.addPass(this.bloom);
+      }
+      this.composer.render();
+      this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
+      this.ctx2d.drawImage(r.domElement,0,0);
     }
-  }
-
-  function makeGlowTexture() {
-    const size = 256;
-    const c = document.createElement("canvas");
-    c.width = c.height = size;
-    const ctx = c.getContext("2d");
-    const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
-    g.addColorStop(0, "rgba(255,255,255,1)");
-    g.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, size, size);
-    return c;
   }
 
   // === Public API (keeps your game's calls intact) ===
