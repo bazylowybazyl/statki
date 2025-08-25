@@ -224,10 +224,12 @@ function spawnDefaultHit(x,y,scale=1){
 // =============== Input ===============
 const input = { main:0, leftSide:0, rightSide:0, torque:0 };
 const keys = {};
+let showMap = false;
 window.addEventListener('keydown', e=>{
   if(e.repeat) return;
   const k = e.key.toLowerCase();
   keys[k] = true;
+  if(k === 'm') showMap = !showMap;
   if(e.key === ' '){
     if(boost.state==='idle' && boost.fuel>=boost.cost){ boost.state='charging'; boost.charge=0; }
   }
@@ -1184,6 +1186,44 @@ function render(alpha){
   ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.strokeRect(12-1, H-12, bw+2, bh+2);
   ctx.fillStyle = '#ef4444'; ctx.fillRect(12, H-12, bw*reloadRight, bh);
   ctx.fillStyle = '#dfe7ff'; ctx.fillText('Right salvos', 12 + bw + 8, H-12 + bh - 2);
+
+  if(showMap) drawSectorMap();
+}
+
+function drawSectorMap(){
+  const mapW = 400;
+  const mapH = Math.round(mapW * WORLD.h / WORLD.w);
+  const x0 = (W - mapW) / 2;
+  const y0 = (H - mapH) / 2;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(x0, y0, mapW, mapH);
+  ctx.strokeStyle = '#dfe7ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x0, y0, mapW, mapH);
+  const sx = mapW / WORLD.w;
+  const sy = mapH / WORLD.h;
+
+  ctx.fillStyle = '#ffd966';
+  ctx.beginPath();
+  ctx.arc(x0 + SUN.x * sx, y0 + SUN.y * sy, 6, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle = '#60a5fa';
+  for(const st of stations){
+    ctx.beginPath();
+    ctx.arc(x0 + st.x * sx, y0 + st.y * sy, 4, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(x0 + ship.pos.x * sx, y0 + ship.pos.y * sy, 4, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.restore();
 }
 
 // =============== Helpers ===============
