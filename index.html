@@ -384,6 +384,7 @@ let lockedTargets = [];
 let highlightedEnemies = [];
 let highlightTimer = 0;
 const HIGHLIGHT_TIME = 3;
+const HIGHLIGHT_RANGE = 2000;
 const radarPings = [];
 const scanWaves = [];
 const scanArrows = [];
@@ -392,7 +393,12 @@ function triggerScanWave(){
   const wave = {x:ship.pos.x,y:ship.pos.y,r:0,speed:SCAN_VFX_SPEED,max:SCAN_RANGE,hit:new Set()};
   scanWaves.push(wave);
   scanArrows.length = 0;
-  highlightedEnemies = npcs.filter(n=>!n.dead && n.weapon);
+ // Merge of branches:
+  // 1) codex/add-various-npc-types-and-groups → prefer enemies that have weapons
+  // 2) main → only highlight those within HIGHLIGHT_RANGE
+  const inRange = (n) => Math.hypot(n.x - ship.pos.x, n.y - ship.pos.y) <= HIGHLIGHT_RANGE;
+  const armed = npcs.filter(n => !n.dead && n.weapon && inRange(n));
+  highlightedEnemies = armed.length ? armed : npcs.filter(n => !n.dead && inRange(n));
   highlightTimer = HIGHLIGHT_TIME;
   for(const st of stations){
     const dist = Math.hypot(st.x - ship.pos.x, st.y - ship.pos.y);
