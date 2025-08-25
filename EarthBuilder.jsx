@@ -152,11 +152,33 @@ function generateEarthTextures(sizeX = 1024, sizeY = 512) {
 // ---------- komponenty sceny ----------
 function Earth({ radius = 2, onPlace }) {
   const group = useRef();
-  const { dayTex, nightTex, cloudTex } = useMemo(() => generateEarthTextures(1024, 512), []);
+  const [textures, setTextures] = useState(null);
 
-  const earthMat = useMemo(() => new THREE.MeshStandardMaterial({ map: dayTex, roughness: 0.95, metalness: 0.0 }), [dayTex]);
-  const nightMat = useMemo(() => new THREE.MeshBasicMaterial({ map: nightTex }), [nightTex]);
-  const cloudMat = useMemo(() => new THREE.MeshStandardMaterial({ color: new THREE.Color(1,1,1), transparent: true, alphaMap: cloudTex, depthWrite: false, roughness: 1, metalness: 0 }), [cloudTex]);
+  useEffect(() => {
+    // generowanie tekstur musi odbywać się po stronie klienta,
+    // dlatego odpalamy je dopiero po zamontowaniu komponentu
+    setTextures(generateEarthTextures(1024, 512));
+  }, []);
+
+  const { dayTex, nightTex, cloudTex } = textures || {};
+
+  const earthMat = useMemo(
+    () => dayTex && new THREE.MeshStandardMaterial({ map: dayTex, roughness: 0.95, metalness: 0.0 }),
+    [dayTex]
+  );
+  const cloudMat = useMemo(
+    () =>
+      cloudTex &&
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color(1, 1, 1),
+        transparent: true,
+        alphaMap: cloudTex,
+        depthWrite: false,
+        roughness: 1,
+        metalness: 0,
+      }),
+    [cloudTex]
+  );
 
   // subtelna atmosfera
   const atmosphereMat = useMemo(() => new THREE.MeshBasicMaterial({ color: new THREE.Color(0.2, 0.5, 1.0), transparent: true, opacity: 0.12, side: THREE.BackSide }), []);
@@ -174,19 +196,20 @@ function Earth({ radius = 2, onPlace }) {
     const { lat, lon } = vec3ToLatLon(p);
     onPlace({ lat, lon, normal, worldPoint: p, radius });
   };
+  if (!textures) return null;
 
   return (
     <group ref={group}>
       {/* nocna półkula jako delikatny add – mieszamy w shaderze prostym poprzez Multiply w postprocessie; tu po prostu lekko dodamy */}
       <mesh position={[0,0,0]} onClick={handleClick}>
         <sphereGeometry args={[radius, 128, 128]} />
-        <primitive object={earthMat} attach="material" />
+        {earthMat && <primitive object={earthMat} attach="material" />}
       </mesh>
 
       {/* Chmury */}
       <mesh scale={[1.01, 1.01, 1.01]}>
         <sphereGeometry args={[radius, 128, 128]} />
-        <primitive object={cloudMat} attach="material" />
+        {cloudMat && <primitive object={cloudMat} attach="material" />}
       </mesh>
 
       {/* Atmosfera */}
