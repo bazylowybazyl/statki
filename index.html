@@ -251,7 +251,10 @@ function initNPCs(){
   }
 }
 initNPCs();
-initPlanets3D(planets, SUN);
+// Ensure Three.js modules are loaded before initializing 3D objects
+window.addEventListener('DOMContentLoaded', () => {
+  initPlanets3D(planets, SUN);
+});
 
 // =============== Bullets & effects ===============
 const bullets = [];
