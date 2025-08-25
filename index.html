@@ -20,9 +20,27 @@
     <div class="stat">LPM — rail (A→B, A→B) · PPM — boczne rakiety · F — superbroń · SHIFT — warp · SPACJA — dopalacz</div>
     <div style="margin-top:6px"><small>Gwiazdy są proceduralne w całej galaktyce. Silnik: niebieski exhaust + krótki ślad przy ruchu.</small></div>
   </div>
-  <canvas id="c"></canvas>
+<canvas id="c"></canvas>
 
-<script src="./node_modules/three/build/three.min.js"></script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./node_modules/three/build/three.module.js",
+    "three/addons/": "./node_modules/three/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+  import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
+  import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
+  import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+  // udostępnienie globalnie dla planet3d.proc.js
+  window.EffectComposer  = EffectComposer;
+  window.RenderPass      = RenderPass;
+  window.UnrealBloomPass = UnrealBloomPass;
+</script>
 <script type="module">
   import { EffectComposer } from './node_modules/three/examples/jsm/postprocessing/EffectComposer.js';
   import { RenderPass } from './node_modules/three/examples/jsm/postprocessing/RenderPass.js';
