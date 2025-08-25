@@ -490,17 +490,17 @@
   function drawPlanets3D(ctx, cam) {
     if (asteroidBelt && sun) {
       const sB = worldToScreen(sun.x, sun.y, cam);
-      const sizeB = asteroidBelt.size * cam.zoom;
+      const sizeB = asteroidBelt.size * camera.zoom;
       ctx.drawImage(asteroidBelt.canvas, sB.x - sizeB / 2, sB.y - sizeB / 2, sizeB, sizeB);
     }
     for (const p of planets) {
       const s = worldToScreen(p.body.x, p.body.y, cam);
-      const size = p.size * cam.zoom;
+      const size = p.size * camera.zoom;
       ctx.drawImage(p.canvas, s.x - size / 2, s.y - size / 2, size, size);
     }
     if (sun) {
       const sSun = worldToScreen(sun.x, sun.y, cam);
-      const sizeSun = sun.size * cam.zoom;
+      const sizeSun = sun.size * camera.zoom;
       ctx.drawImage(sun.canvas, sSun.x - sizeSun / 2, sSun.y - sizeSun / 2, sizeSun, sizeSun);
     }
   }
