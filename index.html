@@ -297,53 +297,8 @@ function initNPCs(){
     npcs.push(npc);
     return npc;
   }
-  function spawnFreighterEscortGroup(fType, escortMin, escortMax){
-    const start = stations[Math.floor(Math.random()*stations.length)];
-    const targetId = pickNextStation(npcId, start.id);
-    const group = groupCounter++;
-    const leader = spawnNPC(fType, start, targetId, group);
-    if(!leader) return;
-    const escortCount = escortMin + Math.floor(Math.random()*(escortMax-escortMin+1));
-    for(let i=0;i<escortCount;i++){
-      const eType = Math.random()<0.5?'guard':'mercenary';
-      const angle = (i / escortCount) * Math.PI * 2;
-      const escort = spawnNPC(eType, start, targetId, group);
-      if(!escort) continue;
-      escort.leader = leader.id;
-      escort.orbitAngle = angle;
-      escort.orbitRadius = leader.radius + ESCORT_RADIUS;
-      escort.x = leader.x + Math.cos(angle) * escort.orbitRadius;
-      escort.y = leader.y + Math.sin(angle) * escort.orbitRadius;
-    }
-  }
-  function spawnCivilianGroup(min, max){
-    const start = stations[Math.floor(Math.random()*stations.length)];
-    const targetId = pickNextStation(npcId, start.id);
-    const group = groupCounter++;
-    spawnNPC('freighter-small', start, targetId, group);
-    const count = min + Math.floor(Math.random()*(max-min+1));
-    for(let i=0;i<count;i++){
-      const type = Math.random()<0.5?'civilian-small':'civilian-large';
-      spawnNPC(type, start, targetId, group);
-    }
-  }
-  function spawnPolicePatrol(min, max){
-    const start = stations[Math.floor(Math.random()*stations.length)];
-    const targetId = pickNextStation(npcId, start.id);
-    const group = groupCounter++;
-    const count = min + Math.floor(Math.random()*(max-min+1));
-    for(let i=0;i<count;i++) spawnNPC('police', start, targetId, group);
-  }
-  while(npcs.length < desiredCount){
-    spawnFreighterEscortGroup('freighter-small',1,2);
-    spawnFreighterEscortGroup('freighter-medium',2,3);
-    spawnFreighterEscortGroup('freighter-large',3,5);
-    spawnFreighterEscortGroup('freighter-capital',5,8);
-    spawnCivilianGroup(3,5);
-    spawnCivilianGroup(6,8);
-    spawnPolicePatrol(3,5);
-  }
-}
+ 
+ 
 // Ensure Three.js modules are loaded before initializing 3D objects
 window.addEventListener('DOMContentLoaded', () => {
   initPlanets3D(planets, SUN);
