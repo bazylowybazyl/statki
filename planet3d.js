@@ -533,4 +533,5 @@
   window.initPlanets3D = initPlanets3D;
   window.updatePlanets3D = updatePlanets3D;
   window.drawPlanets3D = drawPlanets3D;
+  window.getSharedRenderer = getSharedRenderer;
 })();
