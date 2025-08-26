@@ -1099,7 +1099,8 @@ function getEngineVFX() {
       render(time) {
         const r = getSharedRenderer(canvas.width, canvas.height);
         if (!r) return;
-
+r.setRenderTarget(null);                        // <- NAJWAŻNIEJSZE: wróć na default framebuffer
+r.setViewport(0, 0, canvas.width, canvas.height); // upewnij się, że viewport pokrywa cały offscreen
         r.state.reset();            // najważniejsze – wyczyść GL po scenie planet
         r.setScissorTest(false);
         r.setClearColor(0x000000, 0);   // przezroczyste tło (alfa=0)
