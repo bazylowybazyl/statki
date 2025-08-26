@@ -1,210 +1,173 @@
-// engineEffects.js
+// Engineeffects.js
+// Minimal-no-deps (poza three) VFX: igłowy niebieski exhaust + wariant warp.
+// Eksportuje: createShortNeedleExhaust, createWarpExhaustBlue
+
 import * as THREE from "three";
 
-// Wspólny shader igły (taper + flicker). Y: 0 przy dyszy (góra quad'a), 1 na końcu.
-function makeNeedleMaterial({
-  colorA = 0xffffff,       // kolor przy końcu (dalej od dyszy) – zwykle biały
-  colorB = 0xffffff,       // kolor przy dyszy (mocny start)
-  intensity = 3.0,         // mnożnik jasności (additive)
-  widthNear = 0.65,        // szerokość przy dyszy (większe = grubiej u wylotu)
-  widthFar = 0.18,         // szerokość na końcu
-  lengthFadeStart = 0.0,   // gdzie zaczyna się fade (0..1)
-  lengthFadeEnd = 0.4,     // gdzie gaśnie (0..1) — krótsze = bardziej „krótki płomień”
-  flickHz = 50.0,          // częstotliwość drgania
-  extraBands = 0.0,        // 0=brak, 0..1 subtelne „shock bands”
-  bandsFreq = 25.0,
-  bandsSpeed = 15.0,
-  phase = 0.0              // różnicowanie sąsiednich igieł
-} = {}) {
-  return new THREE.ShaderMaterial({
+/* ================== Helpers ================== */
+
+// Tworzy 1D gradient (używany jako alpha/cutout na sprite'ach)
+function makeGradientTex({ w = 64, h = 256, stops = [] }) {
+  const cnv = document.createElement("canvas");
+  cnv.width = w;
+  cnv.height = h;
+  const g = cnv.getContext("2d");
+
+  const grad = g.createLinearGradient(0, 0, 0, h);
+  if (!stops.length) {
+    grad.addColorStop(0.0, "rgba(255,255,255,1)");
+    grad.addColorStop(1.0, "rgba(255,255,255,0)");
+  } else {
+    for (const [t, a] of stops) grad.addColorStop(t, `rgba(255,255,255,${a})`);
+  }
+  g.fillStyle = grad;
+  g.fillRect(0, 0, w, h);
+
+  const tex = new THREE.CanvasTexture(cnv);
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+// delikatny additive niebieski kolor
+function engineColor(alpha = 0.85) {
+  return new THREE.Color(`rgba(170,210,255,${alpha})`);
+}
+function coreColor(alpha = 1) {
+  return new THREE.Color(`rgba(255,255,255,${alpha})`);
+}
+
+/* ================== Exhaust: igłowy (domyślny) ================== */
+
+export function createShortNeedleExhaust(opts = {}) {
+  const group = new THREE.Group();
+  group.name = "ExhaustGroup";
+
+  // Gradienty
+  const texLong = makeGradientTex({
+    w: 64,
+    h: 256,
+    stops: [
+      [0.00, 0.95],
+      [0.15, 0.85],
+      [0.60, 0.25],
+      [1.00, 0.00],
+    ],
+  });
+  const texCore = makeGradientTex({
+    w: 32,
+    h: 128,
+    stops: [
+      [0.00, 1.00],
+      [0.45, 0.50],
+      [1.00, 0.00],
+    ],
+  });
+
+  // Materiały (additive, przezroczyste)
+  const matPlume = new THREE.SpriteMaterial({
+    map: texLong,
+    color: engineColor(0.9),
     transparent: true,
     depthWrite: false,
-    depthTest: false,           // ważne przy współdzielonym rendererze
+    depthTest: true,
     blending: THREE.AdditiveBlending,
-    side: THREE.DoubleSide,   // ważne przy kamerze patrzącej w -Z
-    toneMapped: false,        // uniknij przygaszenia
-    uniforms: {
-      uTime:       { value: 0 },
-      uColorA:     { value: new THREE.Color(colorA) },
-      uColorB:     { value: new THREE.Color(colorB) },
-      uIntensity:  { value: intensity },
-      uWidthNear:  { value: widthNear },
-      uWidthFar:   { value: widthFar },
-      uFadeA:      { value: lengthFadeStart },
-      uFadeB:      { value: lengthFadeEnd },
-      uFlickHz:    { value: flickHz },
-      uBandsAmp:   { value: extraBands },
-      uBandsFreq:  { value: bandsFreq },
-      uBandsSpeed: { value: bandsSpeed },
-      uPhase:      { value: phase }
-    },
-    vertexShader: `
-      varying vec2 vUv;
-      void main() {
-        vUv = uv;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      precision highp float;
-      varying vec2 vUv;
-      uniform float uTime, uIntensity, uWidthNear, uWidthFar, uFadeA, uFadeB, uFlickHz;
-      uniform float uBandsAmp, uBandsFreq, uBandsSpeed, uPhase;
-      uniform vec3  uColorA, uColorB;
-
-      void main() {
-        float y = vUv.y;                     // 0 = przy dyszy (góra quad'a)
-        float x = abs(vUv.x - 0.5);
-
-        // Szerzej przy dyszy, wężej na końcu
-        float width = mix(uWidthNear, uWidthFar, y);
-        float cross = smoothstep(1.0, 0.0, x / width);
-
-        // Krótki zanik po długości (miękkie wejście + fade)
-        float along = 1.0 - y;
-        along *= smoothstep(0.0, 0.12, y);
-        along *= smoothstep(uFadeB, uFadeA, y);
-
-        // Subtelny flicker
-        float flick = 0.9 + 0.1 * sin(uTime * uFlickHz + uPhase);
-
-        // Opcjonalne delikatne pasma
-        float bands = 1.0;
-        if (uBandsAmp > 0.0) {
-          float ph = y * uBandsFreq - uTime * uBandsSpeed + uPhase;
-          bands = mix(1.0, 0.5 + 0.5 * sin(ph), clamp(uBandsAmp, 0.0, 1.0));
-        }
-
-        float a = cross * along * flick * bands;
-
-        // Kolor: mocniejszy przy dyszy -> blend do bieli/końcowego
-        vec3 col = mix(uColorB, uColorA, 1.0 - y);
-        gl_FragColor = vec4(col * a * uIntensity, a);
-      }
-    `
   });
-}
-
-// Buduje zestaw równoległych „igieł” w dół lokalnej osi +Y.
-// Każda igła to PlaneGeometry(needleWidth, needleLen).
-function buildNeedles({
-  count = 4,
-  spacing = 12,       // odstęp między igłami w jednostkach sceny (ortho)
-  needleWidth = 14,
-  needleLen = 60,
-  materialFactory
-}) {
-  const group = new THREE.Group();
-  const geo = new THREE.PlaneGeometry(needleWidth, needleLen, 1, 1);
-
-  for (let i = 0; i < count; i++) {
-    const mat = materialFactory(i);
-    const m = new THREE.Mesh(geo, mat);
-    const offsetIndex = i - (count - 1) / 2;
-    m.position.set(offsetIndex * spacing, -5, 0); // -5 żeby górna krawędź była blisko dyszy
-    group.add(m);
-  }
-  return { group, geo };
-}
-
-// Public API – efekt 1: krótki biały strumień
-export function createShortNeedleExhaust(opts = {}) {
-  const {
-    count = 4,
-    spacing = 12,
-    needleWidth = 14,
-    needleLen = 60,
-    colorNear = 0xffffff,      // przy dyszy
-    colorFar  = 0xffffff,      // dalej w strumieniu
-    intensity = 3.5
-  } = opts;
-
-  const { group, geo } = buildNeedles({
-    count, spacing, needleWidth, needleLen,
-    materialFactory: (i) => makeNeedleMaterial({
-      colorA: colorFar,
-      colorB: colorNear,
-      intensity,
-      widthNear: 0.65,
-      widthFar:  0.18,
-      lengthFadeStart: 0.15,
-      lengthFadeEnd:   0.55,    // KRÓTKO
-      flickHz: 50,
-      extraBands: 0.0,
-      phase: i * 0.45
-    })
+  const matCore = new THREE.SpriteMaterial({
+    map: texCore,
+    color: coreColor(1.0),
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
   });
 
-  function update(t) {
-    group.traverse(o => {
-      if (o.material && o.material.uniforms) {
-        o.material.uniforms.uTime.value = t;
-      }
-    });
+  // Długi pióropusz
+  const plume = new THREE.Sprite(matPlume);
+  plume.center.set(0.5, 1.0);         // kotwica na górnej krawędzi (tuż przy dyszy)
+  plume.scale.set(22, 120, 1);        // X, Y
+  plume.position.set(0, -4, 0);       // minimalne cofnięcie
+  group.add(plume);
+
+  // Jasny rdzeń przy wylocie
+  const core = new THREE.Sprite(matCore);
+  core.center.set(0.5, 1.0);
+  core.scale.set(16, 54, 1);
+  core.position.set(0, -2, 0.1);
+  group.add(core);
+
+  // Subtle „streaks” – dwa cieńsze sprite’y z fazą, dające pulsowanie
+  const streakMat = matPlume.clone();
+  streakMat.color = engineColor(0.6);
+  const streak1 = new THREE.Sprite(streakMat);
+  streak1.center.set(0.5, 1.0);
+  streak1.scale.set(10, 100, 1);
+  streak1.position.set(-3, -4, 0.05);
+  group.add(streak1);
+
+  const streak2 = new THREE.Sprite(streakMat.clone());
+  streak2.center.set(0.5, 1.0);
+  streak2.scale.set(10, 92, 1);
+  streak2.position.set(3, -4, 0.04);
+  group.add(streak2);
+
+  // API sterujące
+  let throttle = 0; // 0..1
+  let warpBoost = 0; // 0..1 (dodatkowy „dopalenie” przy warp/boost)
+  function setThrottle(t) { throttle = THREE.MathUtils.clamp(t, 0, 1); }
+  function setWarpBoost(t) { warpBoost = THREE.MathUtils.clamp(t, 0, 1); }
+
+  function update(time = 0) {
+    const base = throttle;
+    const over = Math.max(0, warpBoost * 0.8);
+    const amp = THREE.MathUtils.lerp(0.35, 1.0, base) + over; // skala jasności/długości
+
+    // miękkie pulsowanie
+    const pulse = 0.08 * Math.sin(time * 12.0) + 0.04 * Math.sin(time * 19.0 + 1.7);
+
+    const coreLen = 44 * (0.65 + 0.6 * amp) * (1 + pulse);
+    const plumeLen = 110 * (0.6 + 1.0 * amp) * (1 + pulse * 0.6);
+
+    core.scale.set(16, coreLen, 1);
+    plume.scale.set(22, plumeLen, 1);
+
+    streak1.scale.set(10, Math.max(72, plumeLen * 0.78), 1);
+    streak2.scale.set(10, Math.max(68, plumeLen * 0.72), 1);
+
+    // delikatne rozjechanie X dla „życia”
+    streak1.position.x = -3 + Math.sin(time * 6.3) * 0.8;
+    streak2.position.x = 3 + Math.cos(time * 7.1) * 0.8;
+
+    // kolory (trochę jaśniejsze przy dużym amp)
+    const c = new THREE.Color().setHSL(0.58, 0.75, THREE.MathUtils.clamp(0.55 + amp * 0.25, 0, 1));
+    matPlume.color.copy(c);
+    streakMat.color.copy(c);
+    const cc = new THREE.Color().setHSL(0.58, 0.2, THREE.MathUtils.clamp(0.7 + amp * 0.18, 0, 1));
+    matCore.color.copy(cc);
   }
 
-  function dispose() {
-    group.traverse(o => {
-      if (o.isMesh) {
-        o.geometry?.dispose?.();
-        o.material?.dispose?.();
-      }
-    });
-    geo?.dispose?.();
-  }
-
-  return { group, update, dispose };
+  return { group, setThrottle, setWarpBoost, update };
 }
 
-// Public API – efekt 2: dłuższy, niebieski warp/boost
+/* ================== Exhaust: warpowy (szerszy pióropusz) ================== */
+
 export function createWarpExhaustBlue(opts = {}) {
-  const {
-    count = 6,
-    spacing = 12,
-    needleWidth = 16,
-    needleLen = 110,            // DŁUŻSZY ogon do warp
-    colorNear = 0x99ccff,       // turkus/niebieski przy dyszy
-    colorFar  = 0xffffff,       // końcówki wpadające w biel
-    intensity = 3.8,
-  } = opts;
-
-  const { group, geo } = buildNeedles({
-    count, spacing, needleWidth, needleLen,
-    materialFactory: (i) => makeNeedleMaterial({
-      colorA: colorFar,
-      colorB: colorNear,
-      intensity,
-      widthNear: 0.70,
-      widthFar:  0.12,
-      // dłuższy fade: zacznie się później i wygaśnie dalej
-      lengthFadeStart: 0.05,
-      lengthFadeEnd:   0.85,
-      flickHz: 42.0,
-      // delikatne „shock bands” jak w referencjach
-      extraBands: 0.35,
-      bandsFreq:  28.0,
-      bandsSpeed: 12.0,
-      phase: i * 0.5
-    })
+  const ex = createShortNeedleExhaust(opts);
+  // szersze, dłuższe domyślne proporcje
+  ex.group.children.forEach((s, i) => {
+    if (s instanceof THREE.Sprite) {
+      s.scale.x *= (i === 0 ? 1.4 : 1.2); // plume bardziej rozlany
+      s.scale.y *= (i === 0 ? 1.6 : 1.4);
+    }
   });
-
-  function update(t) {
-    group.traverse(o => {
-      if (o.material && o.material.uniforms) {
-        o.material.uniforms.uTime.value = t;
-      }
-    });
-  }
-
-  function dispose() {
-    group.traverse(o => {
-      if (o.isMesh) {
-        o.geometry?.dispose?.();
-        o.material?.dispose?.();
-      }
-    });
-    geo?.dispose?.();
-  }
-
-  return { group, update, dispose };
+  // mocniej reaguje na warpBoost
+  const baseUpdate = ex.update;
+  ex.update = (time) => {
+    baseUpdate(time);
+    // lekkie „falowanie” całej grupy
+    ex.group.scale.x = 1 + 0.02 * Math.sin(time * 8.0);
+    ex.group.scale.y = 1 + 0.03 * Math.cos(time * 6.3);
+  };
+  return ex;
 }
