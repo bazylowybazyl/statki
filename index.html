@@ -1310,23 +1310,7 @@ ctx.restore();
 }
 
 
-function drawMainEngineVfx(pos, forward, cam) {
-  const s = worldToScreen(pos.x, pos.y, cam);
-  ctx.save();
-  ctx.translate(s.x, s.y);
-  ctx.scale(camera.zoom, camera.zoom);
-  ctx.rotate(Math.atan2(-forward.x, forward.y));
-  ctx.globalCompositeOperation = 'lighter';
 
-  const evfx = getEngineVFX();
-  if (evfx) {
-    evfx.render(vfxTime);
-    const w = evfx.canvas.width, h = evfx.canvas.height;
-    ctx.drawImage(evfx.canvas, -w / 2, 0, w, h);
-  }
-
-  ctx.restore();
-}
 
 function drawBoostBeam(pos, dir, cam, alpha){ const s=worldToScreen(pos.x,pos.y,cam); ctx.save(); ctx.translate(s.x,s.y); ctx.scale(camera.zoom,camera.zoom); ctx.rotate(Math.atan2(-dir.x, dir.y)); ctx.globalCompositeOperation='lighter'; drawPhotonBeamLocal(alpha); ctx.restore(); }
 
