@@ -227,6 +227,7 @@ let planets = PLANET_DATA.map(p => {
   return p;
 });
 
+// ===== STACJE + BRAMY WARP =====
 let stations = planets.map(pl => {
   const orbitRadius = pl.r + 300;
   const angle = Math.random() * Math.PI * 2;
@@ -234,34 +235,38 @@ let stations = planets.map(pl => {
   const speed = (2 * Math.PI) / (periodHours * 3600);
   const x = pl.x + Math.cos(angle) * orbitRadius;
   const y = pl.y + Math.sin(angle) * orbitRadius;
-  return { id: pl.id, planet: pl, orbitRadius, angle, speed, r: 40, x, y };
+
+  const gateOffset = 220; // odległość bram od środka stacji
+  return {
+    id: pl.id, planet: pl, orbitRadius, angle, speed, r: 40, x, y,
+    warpGateOut: { x: x + gateOffset, y },
+    warpGateIn:  { x: x - gateOffset, y }
+  };
 });
 
-// Warp routes between stations
-let warpRoutes = {};
-function initWarpRoutes(){
-  warpRoutes = {};
-  for(const from of stations){
-    for(const to of stations){
-      if(from.id === to.id) continue;
-      const sx = from.x + (to.x - from.x) * 0.2;
-      const sy = from.y + (to.y - from.y) * 0.2;
-      const ex = from.x + (to.x - from.x) * 0.8;
-      const ey = from.y + (to.y - from.y) * 0.8;
-      warpRoutes[from.id + '-' + to.id] = {
-        from: from.id,
-        to: to.id,
-        start: { x: sx, y: sy, queue: [], busy:false },
-        end: { x: ex, y: ey }
-      };
-    }
-  }
+// ===== ROUTING WARP =====
+function getWarpRoute(fromId, toId){
+  const from = stations.find(s => s.id === fromId);
+  const to   = stations.find(s => s.id === toId);
+  if (!from || !to || from.id === to.id) return null;
+  return { from: from.id, to: to.id, out: from.warpGateOut, in: to.warpGateIn };
 }
-function getWarpRoute(fromId, toId){ return warpRoutes[fromId + '-' + toId]; }
-initWarpRoutes();
 
+// ===== KOLEJKI DO BRAM (per stacja) =====
+const warpQueues = new Map();
+function getQueue(stationId){
+  let q = warpQueues.get(stationId);
+  if (!q) { q = []; warpQueues.set(stationId, q); }
+  return q;
+}
+
+// ===== NPC (BEZ GRUP) + FAZY WARP =====
 let npcs = [];
-function pickNextStation(npcId, lastStationId){ let idx = Math.floor(Math.random()*stations.length); if(stations.length>1 && stations[idx].id === lastStationId) idx = (idx+1)%stations.length; return stations[idx].id; }
+function pickNextStation(_, lastStationId){
+  let idx = Math.floor(Math.random() * stations.length);
+  if (stations.length > 1 && stations[idx].id === lastStationId) idx = (idx + 1) % stations.length;
+  return stations[idx].id;
+}
 const NPC_TYPES = {
   'freighter-small':  { radius:12, speed:60, hp:200, color:'#8ab4d6', weapon:null },
   'freighter-medium': { radius:24, speed:55, hp:400, color:'#769cb8', weapon:null },
@@ -273,31 +278,51 @@ const NPC_TYPES = {
   'guard':            { radius:20, speed:95, hp:2000, color:'#ff9933', weapon:'gun' },
   'mercenary':        { radius:25, speed:95, hp:4000, color:'#ff6633', weapon:'gun' }
 };
+
 function initNPCs(){
   npcs = [];
-  let npcId = 0, groupCounter = 0;
+  let npcId = 0;
   const desiredCount = 1000;
-  const ESCORT_RADIUS = 80;
-  function spawnNPC(type, start, targetId, group){
-    if(npcs.length >= desiredCount) return null;
+
+  function spawnNPC(type, start, targetId){
+    if (npcs.length >= desiredCount) return null;
     const cfg = NPC_TYPES[type];
-    const target = stations.find(s=>s.id===targetId);
+    const target = stations.find(s => s.id === targetId);
     const t = Math.random();
+
     const x = start.x + (target.x - start.x) * t + (Math.random()-0.5)*60;
     const y = start.y + (target.y - start.y) * t + (Math.random()-0.5)*60;
+
     const route = getWarpRoute(start.id, targetId);
-    const npc = { id:npcId++, type, group,
-      x, y,
-      vx:(Math.random()-0.5)*40, vy:(Math.random()-0.5)*40, angle:Math.random()*Math.PI*2,
-      target: targetId, speed:cfg.speed, radius:cfg.radius,
-      hp:cfg.hp, maxHp:cfg.hp, color:cfg.color, weapon:cfg.weapon,
+    const npc = {
+      id: npcId++, type,
+      x, y, vx:(Math.random()-0.5)*40, vy:(Math.random()-0.5)*40,
+      angle: Math.random()*Math.PI*2,
+      target: targetId, speed: cfg.speed, radius: cfg.radius,
+      hp: cfg.hp, maxHp: cfg.hp, color: cfg.color, weapon: cfg.weapon,
       dead:false, respawnTimer:0, fade:1, docking:false, lastStation:start.id,
       leader:null, orbitAngle:0, orbitRadius:0,
-      warpRoute: route, phase: 'toGate', lane: Math.floor(Math.random()*2) };
+      warpRoute: route, phase: 'queue', lane: Math.floor(Math.random()*2),
+      warpTimer: 0
+    };
+
+    // do kolejki przy stacji startowej
+    getQueue(start.id).push(npc.id);
     npcs.push(npc);
     return npc;
   }
+
+  // proste rozmnożenie: miks typów, bez „grup”
+  const types = Object.keys(NPC_TYPES);
+  while (npcs.length < desiredCount) {
+    const start = stations[Math.floor(Math.random()*stations.length)];
+    let targetId = pickNextStation(0, start.id);
+    if (targetId === start.id) targetId = pickNextStation(0, start.id);
+    const type = types[Math.floor(Math.random()*types.length)];
+    spawnNPC(type, start, targetId);
   }
+}
+
  
  
 // Ensure Three.js modules are loaded before initializing 3D objects
