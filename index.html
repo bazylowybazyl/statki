@@ -1080,9 +1080,57 @@ const engineVFX = (typeof THREE!=="undefined" && typeof getSharedRenderer==="fun
     ctx2d.drawImage(r.domElement,0,0,canvas.width,canvas.height);
   }};
 })() : null;
-function glowDot(ctx,x,y,r,color,alpha=1){ ctx.save(); ctx.globalAlpha=alpha; ctx.shadowBlur=r*1.6; ctx.shadowColor=color; ctx.fillStyle=color; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.restore(); }
-function plumeGradient(ctx,x,y,len,wide,c1,c2){ const g=ctx.createLinearGradient(x,y,x,y-len); g.addColorStop(0,c1); g.addColorStop(1,c2); ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(x-wide/2,y); ctx.quadraticCurveTo(x,y-len*0.5,x,y-len); ctx.quadraticCurveTo(x,y-len*0.5,x+wide/2,y); ctx.closePath(); ctx.fill(); }
-function drawPhotonBeamLocal(alpha){ const L=200; ctx.save(); ctx.lineCap='round'; ctx.shadowBlur=28; ctx.shadowColor=`rgba(230,250,255,${0.95*alpha})`; ctx.strokeStyle=`rgba(255,255,255,${0.95*alpha})`; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-L*0.96); ctx.stroke(); ctx.restore(); plumeGradient(ctx,0,0,L,100,`rgba(160,210,255,${0.25*alpha})`,`rgba(160,210,255,0)`); for(let i=0;i<4;i++){ const phase=((vfxTime*0.8)+i*0.25)%1; const y=-phase*L; const r=20+40*(1-phase); ctx.strokeStyle=`rgba(200,240,255,${(1-phase)*alpha})`; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(0,y,r,0,Math.PI*2); ctx.stroke(); } glowDot(ctx,0,0,12,'#fff',alpha); }
+function drawPhotonBeamLocal(alpha){
+  const L = 200;
+
+  // central beam
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.shadowBlur = 28;
+  ctx.shadowColor = `rgba(230,250,255,${0.95 * alpha})`;
+  ctx.strokeStyle = `rgba(255,255,255,${0.95 * alpha})`;
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, -L * 0.96);
+  ctx.stroke();
+  ctx.restore();
+
+  // soft plume
+  const g = ctx.createLinearGradient(0, 0, 0, -L);
+  g.addColorStop(0, `rgba(160,210,255,${0.25 * alpha})`);
+  g.addColorStop(1, `rgba(160,210,255,0)`);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(-50, 0);
+  ctx.quadraticCurveTo(0, -L * 0.5, 0, -L);
+  ctx.quadraticCurveTo(0, -L * 0.5, 50, 0);
+  ctx.closePath();
+  ctx.fill();
+
+  // moving rings
+  for (let i = 0; i < 4; i++) {
+    const phase = ((vfxTime * 0.8) + i * 0.25) % 1;
+    const y = -phase * L;
+    const r = 20 + 40 * (1 - phase);
+    ctx.strokeStyle = `rgba(200,240,255,${(1 - phase) * alpha})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, y, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // bright origin
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.shadowBlur = 19.2; // 12 * 1.6
+  ctx.shadowColor = '#fff';
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(0, 0, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
 
 function drawMainEngineVfx(pos, forward, cam) {
   const s = worldToScreen(pos.x, pos.y, cam);
