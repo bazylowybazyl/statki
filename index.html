@@ -1064,13 +1064,22 @@ function physicsStep(dt){
 
 // ======= Efekty VFX =======
 let _engineVFX = null;
+let _engineVFXLoading = false;
 function getEngineVFX() {
   if (_engineVFX) return _engineVFX;
-  if (
-    typeof THREE !== "undefined" &&
-    typeof getSharedRenderer === "function" &&
-    typeof window.createShortNeedleExhaust === "function"
-  ) {
+  if (typeof THREE !== "undefined" && typeof getSharedRenderer === "function") {
+    if (typeof window.createShortNeedleExhaust !== "function") {
+      if (!_engineVFXLoading) {
+        _engineVFXLoading = true;
+        import("./Engineeffects.js").then(mod => {
+          window.createShortNeedleExhaust = mod.createShortNeedleExhaust;
+          window.createWarpExhaustBlue = mod.createWarpExhaustBlue;
+        }).catch(err => console.warn("Engineeffects.js failed to load", err))
+          .finally(() => { _engineVFXLoading = false; });
+      }
+      return null;
+    }
+
     const canvas = document.createElement("canvas");
     canvas.width = 80; canvas.height = 120;
     const ctx2d = canvas.getContext("2d");
@@ -1081,7 +1090,6 @@ function getEngineVFX() {
     camera.position.z = 10;               // oddal kamerę od z=0
     camera.lookAt(0, 0, 0);
 
-    // UWAGA: bierzemy z window – moduł może się zainicjalizować dopiero po parsowaniu
     const exhaust = window.createShortNeedleExhaust({ /* opcjonalne tweaki */ });
     exhaust.group.position.y = 15;
     scene.add(exhaust.group);
@@ -1092,7 +1100,8 @@ function getEngineVFX() {
         const r = getSharedRenderer(canvas.width, canvas.height);
         if (!r) return;
 
-        // ważne przy reuse renderera między scenami
+        r.state.reset();            // najważniejsze – wyczyść GL po scenie planet
+        r.setScissorTest(false);
         r.setClearColor(0x000000, 0);   // przezroczyste tło (alfa=0)
         r.clear(true, true, false);     // kolor + depth (stencil niepotrzebny)
 
