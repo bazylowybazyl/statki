@@ -837,4 +837,5 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
   window.setPlanetsSunPos = setPlanetsSunPos;
   window.updatePlanets3D = updatePlanets3D;
   window.drawPlanets3D = drawPlanets3D;
+  window.getSharedRenderer = getSharedRenderer;
 })();
