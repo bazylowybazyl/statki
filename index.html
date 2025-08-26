@@ -240,15 +240,15 @@ let stations = planets.map(pl => {
 let npcs = [];
 function pickNextStation(npcId, lastStationId){ let idx = Math.floor(Math.random()*stations.length); if(stations.length>1 && stations[idx].id === lastStationId) idx = (idx+1)%stations.length; return stations[idx].id; }
 const NPC_TYPES = {
-  'freighter-small':  { radius:12, speed:60, hp:400, color:'#8ab4d6', weapon:null },
-  'freighter-medium': { radius:24, speed:55, hp:800, color:'#769cb8', weapon:null },
-  'freighter-large':  { radius:48, speed:50, hp:2500, color:'#5d829c', weapon:null },
-  'freighter-capital':{ radius:128, speed:35, hp:10000, color:'#45667d', weapon:null },
-  'police':           { radius:48, speed:100, hp:7000, color:'#44aaff', weapon:'railgun' },
+  'freighter-small':  { radius:12, speed:60, hp:200, color:'#8ab4d6', weapon:null },
+  'freighter-medium': { radius:24, speed:55, hp:400, color:'#769cb8', weapon:null },
+  'freighter-large':  { radius:48, speed:50, hp:800, color:'#5d829c', weapon:null },
+  'freighter-capital':{ radius:128, speed:35, hp:2000, color:'#45667d', weapon:null },
+  'police':           { radius:24, speed:100, hp:1000, color:'#44aaff', weapon:'railgun' },
   'civilian-small':   { radius:6, speed:100, hp:60, color:'#cccccc', weapon:null },
   'civilian-large':   { radius:12, speed:80, hp:100, color:'#bbbbbb', weapon:null },
-  'guard':            { radius:25, speed:95, hp:2000, color:'#ff9933', weapon:'gun' },
-  'mercenary':        { radius:50, speed:95, hp:4000, color:'#ff6633', weapon:'gun' }
+  'guard':            { radius:20, speed:95, hp:2000, color:'#ff9933', weapon:'gun' },
+  'mercenary':        { radius:25, speed:95, hp:4000, color:'#ff6633', weapon:'gun' }
 };
 function initNPCs(){
   npcs = [];
