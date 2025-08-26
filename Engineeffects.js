@@ -19,6 +19,7 @@ function makeNeedleMaterial({
   return new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
+    depthTest: false,           // ważne przy współdzielonym rendererze
     blending: THREE.AdditiveBlending,
     uniforms: {
       uTime:       { value: 0 },
