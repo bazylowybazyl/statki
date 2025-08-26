@@ -1075,7 +1075,11 @@ function getEngineVFX() {
     canvas.width = 80; canvas.height = 120;
     const ctx2d = canvas.getContext("2d");
     const scene = new THREE.Scene();
+    scene.background = null;              // transparent
+
     const camera = new THREE.OrthographicCamera(-40, 40, 40, -80, -1000, 1000);
+    camera.position.z = 10;               // oddal kamerę od z=0
+    camera.lookAt(0, 0, 0);
 
     // UWAGA: bierzemy z window – moduł może się zainicjalizować dopiero po parsowaniu
     const exhaust = window.createShortNeedleExhaust({ /* opcjonalne tweaki */ });
@@ -1087,6 +1091,11 @@ function getEngineVFX() {
       render(time) {
         const r = getSharedRenderer(canvas.width, canvas.height);
         if (!r) return;
+
+        // ważne przy reuse renderera między scenami
+        r.setClearColor(0x000000, 0);   // przezroczyste tło (alfa=0)
+        r.clearDepth();                 // czyści bufor głębokości po planetach
+
         exhaust.update(time);
         r.render(scene, camera);
         ctx2d.clearRect(0, 0, canvas.width, canvas.height);
