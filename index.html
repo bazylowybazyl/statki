@@ -43,6 +43,7 @@
   window.UnrealBloomPass = UnrealBloomPass;
   window.createShortNeedleExhaust = createShortNeedleExhaust;
   window.createWarpExhaustBlue = createWarpExhaustBlue;
+
 </script>
 <script src="planet3d.proc.js"></script>
 
@@ -1062,24 +1063,39 @@ function physicsStep(dt){
 }
 
 // ======= Efekty VFX =======
-const engineVFX = (typeof THREE!=="undefined" && typeof getSharedRenderer==="function" && typeof createShortNeedleExhaust==="function") ? (()=>{
-  const canvas = document.createElement('canvas');
-  canvas.width = 80; canvas.height = 120;
-  const ctx2d = canvas.getContext('2d');
-  const scene = new THREE.Scene();
-  const camera = new THREE.OrthographicCamera(-40,40,40,-80,-1000,1000);
-  const exhaust = createShortNeedleExhaust();
-  exhaust.group.position.y = 15;
-  scene.add(exhaust.group);
-  return {canvas, ctx2d, camera, scene, render(time){
-    const r = getSharedRenderer(canvas.width, canvas.height);
-    if(!r) return;
-    exhaust.update(time);
-    r.render(scene,camera);
-    ctx2d.clearRect(0,0,canvas.width,canvas.height);
-    ctx2d.drawImage(r.domElement,0,0,canvas.width,canvas.height);
-  }};
-})() : null;
+let _engineVFX = null;
+function getEngineVFX() {
+  if (_engineVFX) return _engineVFX;
+  if (
+    typeof THREE !== "undefined" &&
+    typeof getSharedRenderer === "function" &&
+    typeof window.createShortNeedleExhaust === "function"
+  ) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 80; canvas.height = 120;
+    const ctx2d = canvas.getContext("2d");
+    const scene = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera(-40, 40, 40, -80, -1000, 1000);
+
+    // UWAGA: bierzemy z window – moduł może się zainicjalizować dopiero po parsowaniu
+    const exhaust = window.createShortNeedleExhaust({ /* opcjonalne tweaki */ });
+    exhaust.group.position.y = 15;
+    scene.add(exhaust.group);
+
+    _engineVFX = {
+      canvas, ctx2d, camera, scene, exhaust,
+      render(time) {
+        const r = getSharedRenderer(canvas.width, canvas.height);
+        if (!r) return;
+        exhaust.update(time);
+        r.render(scene, camera);
+        ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+        ctx2d.drawImage(r.domElement, 0, 0, canvas.width, canvas.height);
+      }
+    };
+  }
+  return _engineVFX;
+}
 function drawPhotonBeamLocal(alpha){
   const L = 200;
 
@@ -1140,10 +1156,11 @@ function drawMainEngineVfx(pos, forward, cam) {
   ctx.rotate(Math.atan2(-forward.x, forward.y));
   ctx.globalCompositeOperation = 'lighter';
 
-  if (engineVFX) {
-    engineVFX.render(vfxTime);
-    const w = engineVFX.canvas.width, h = engineVFX.canvas.height;
-    ctx.drawImage(engineVFX.canvas, -w / 2, 0, w, h);
+  const evfx = getEngineVFX();
+  if (evfx) {
+    evfx.render(vfxTime);
+    const w = evfx.canvas.width, h = evfx.canvas.height;
+    ctx.drawImage(evfx.canvas, -w / 2, 0, w, h);
   }
 
   ctx.restore();
