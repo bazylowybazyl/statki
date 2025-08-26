@@ -227,7 +227,6 @@ let planets = PLANET_DATA.map(p => {
   return p;
 });
 
-// ===== STACJE + BRAMY WARP =====
 let stations = planets.map(pl => {
   const orbitRadius = pl.r + 300;
   const angle = Math.random() * Math.PI * 2;
@@ -235,38 +234,34 @@ let stations = planets.map(pl => {
   const speed = (2 * Math.PI) / (periodHours * 3600);
   const x = pl.x + Math.cos(angle) * orbitRadius;
   const y = pl.y + Math.sin(angle) * orbitRadius;
-
-  const gateOffset = 220; // odległość bram od środka stacji
-  return {
-    id: pl.id, planet: pl, orbitRadius, angle, speed, r: 40, x, y,
-    warpGateOut: { x: x + gateOffset, y },
-    warpGateIn:  { x: x - gateOffset, y }
-  };
+  return { id: pl.id, planet: pl, orbitRadius, angle, speed, r: 40, x, y };
 });
 
-// ===== ROUTING WARP =====
-function getWarpRoute(fromId, toId){
-  const from = stations.find(s => s.id === fromId);
-  const to   = stations.find(s => s.id === toId);
-  if (!from || !to || from.id === to.id) return null;
-  return { from: from.id, to: to.id, out: from.warpGateOut, in: to.warpGateIn };
+// Warp routes between stations
+let warpRoutes = {};
+function initWarpRoutes(){
+  warpRoutes = {};
+  for(const from of stations){
+    for(const to of stations){
+      if(from.id === to.id) continue;
+      const sx = from.x + (to.x - from.x) * 0.2;
+      const sy = from.y + (to.y - from.y) * 0.2;
+      const ex = from.x + (to.x - from.x) * 0.8;
+      const ey = from.y + (to.y - from.y) * 0.8;
+      warpRoutes[from.id + '-' + to.id] = {
+        from: from.id,
+        to: to.id,
+        start: { x: sx, y: sy, queue: [], busy:false },
+        end: { x: ex, y: ey }
+      };
+    }
+  }
 }
+function getWarpRoute(fromId, toId){ return warpRoutes[fromId + '-' + toId]; }
+initWarpRoutes();
 
-// ===== KOLEJKI DO BRAM (per stacja) =====
-const warpQueues = new Map();
-function getQueue(stationId){
-  let q = warpQueues.get(stationId);
-  if (!q) { q = []; warpQueues.set(stationId, q); }
-  return q;
-}
-
-// ===== NPC (BEZ GRUP) + FAZY WARP =====
 let npcs = [];
-function pickNextStation(_, lastStationId){
-  let idx = Math.floor(Math.random() * stations.length);
-  if (stations.length > 1 && stations[idx].id === lastStationId) idx = (idx + 1) % stations.length;
-  return stations[idx].id;
-}
+function pickNextStation(npcId, lastStationId){ let idx = Math.floor(Math.random()*stations.length); if(stations.length>1 && stations[idx].id === lastStationId) idx = (idx+1)%stations.length; return stations[idx].id; }
 const NPC_TYPES = {
   'freighter-small':  { radius:12, speed:60, hp:200, color:'#8ab4d6', weapon:null },
   'freighter-medium': { radius:24, speed:55, hp:400, color:'#769cb8', weapon:null },
@@ -278,53 +273,77 @@ const NPC_TYPES = {
   'guard':            { radius:20, speed:95, hp:2000, color:'#ff9933', weapon:'gun' },
   'mercenary':        { radius:25, speed:95, hp:4000, color:'#ff6633', weapon:'gun' }
 };
-
 function initNPCs(){
   npcs = [];
-  let npcId = 0;
+  let npcId = 0, groupCounter = 0;
   const desiredCount = 1000;
-
-  function spawnNPC(type, start, targetId){
-    if (npcs.length >= desiredCount) return null;
+  const ESCORT_RADIUS = 80;
+  function spawnNPC(type, start, targetId, group){
+    if(npcs.length >= desiredCount) return null;
     const cfg = NPC_TYPES[type];
-    const target = stations.find(s => s.id === targetId);
+    const target = stations.find(s=>s.id===targetId);
     const t = Math.random();
-
     const x = start.x + (target.x - start.x) * t + (Math.random()-0.5)*60;
     const y = start.y + (target.y - start.y) * t + (Math.random()-0.5)*60;
-
     const route = getWarpRoute(start.id, targetId);
-    const npc = {
-      id: npcId++, type,
-      x, y, vx:(Math.random()-0.5)*40, vy:(Math.random()-0.5)*40,
-      angle: Math.random()*Math.PI*2,
-      target: targetId, speed: cfg.speed, radius: cfg.radius,
-      hp: cfg.hp, maxHp: cfg.hp, color: cfg.color, weapon: cfg.weapon,
+    const npc = { id:npcId++, type, group,
+      x, y,
+      vx:(Math.random()-0.5)*40, vy:(Math.random()-0.5)*40, angle:Math.random()*Math.PI*2,
+      target: targetId, speed:cfg.speed, radius:cfg.radius,
+      hp:cfg.hp, maxHp:cfg.hp, color:cfg.color, weapon:cfg.weapon,
       dead:false, respawnTimer:0, fade:1, docking:false, lastStation:start.id,
       leader:null, orbitAngle:0, orbitRadius:0,
-      warpRoute: route, phase: 'queue', lane: Math.floor(Math.random()*2),
-      warpTimer: 0
-    };
-
-    // do kolejki przy stacji startowej
-    getQueue(start.id).push(npc.id);
+      warpRoute: route, phase: 'toGate', lane: Math.floor(Math.random()*2) };
     npcs.push(npc);
     return npc;
   }
-
-  // proste rozmnożenie: miks typów, bez „grup”
-  const types = Object.keys(NPC_TYPES);
-  while (npcs.length < desiredCount) {
+  function spawnFreighterEscortGroup(fType, escortMin, escortMax){
     const start = stations[Math.floor(Math.random()*stations.length)];
-    let targetId = pickNextStation(0, start.id);
-    if (targetId === start.id) targetId = pickNextStation(0, start.id);
-    const type = types[Math.floor(Math.random()*types.length)];
-    spawnNPC(type, start, targetId);
+    const targetId = pickNextStation(npcId, start.id);
+    const group = groupCounter++;
+    const leader = spawnNPC(fType, start, targetId, group);
+    if(!leader) return;
+    const escortCount = escortMin + Math.floor(Math.random()*(escortMax-escortMin+1));
+    for(let i=0;i<escortCount;i++){
+      const eType = Math.random()<0.5?'guard':'mercenary';
+      const angle = (i / escortCount) * Math.PI * 2;
+      const escort = spawnNPC(eType, start, targetId, group);
+      if(!escort) continue;
+      escort.leader = leader.id;
+      escort.orbitAngle = angle;
+      escort.orbitRadius = leader.radius + ESCORT_RADIUS;
+      escort.x = leader.x + Math.cos(angle) * escort.orbitRadius;
+      escort.y = leader.y + Math.sin(angle) * escort.orbitRadius;
+    }
+  }
+  function spawnCivilianGroup(min, max){
+    const start = stations[Math.floor(Math.random()*stations.length)];
+    const targetId = pickNextStation(npcId, start.id);
+    const group = groupCounter++;
+    spawnNPC('freighter-small', start, targetId, group);
+    const count = min + Math.floor(Math.random()*(max-min+1));
+    for(let i=0;i<count;i++){
+      const type = Math.random()<0.5?'civilian-small':'civilian-large';
+      spawnNPC(type, start, targetId, group);
+    }
+  }
+  function spawnPolicePatrol(min, max){
+    const start = stations[Math.floor(Math.random()*stations.length)];
+    const targetId = pickNextStation(npcId, start.id);
+    const group = groupCounter++;
+    const count = min + Math.floor(Math.random()*(max-min+1));
+    for(let i=0;i<count;i++) spawnNPC('police', start, targetId, group);
+  }
+  while(npcs.length < desiredCount){
+    spawnFreighterEscortGroup('freighter-small',1,2);
+    spawnFreighterEscortGroup('freighter-medium',2,3);
+    spawnFreighterEscortGroup('freighter-large',3,5);
+    spawnFreighterEscortGroup('freighter-capital',5,8);
+    spawnCivilianGroup(3,5);
+    spawnCivilianGroup(6,8);
+    spawnPolicePatrol(3,5);
   }
 }
-
- 
- 
 // Ensure Three.js modules are loaded before initializing 3D objects
 window.addEventListener('DOMContentLoaded', () => {
   initPlanets3D(planets, SUN);
@@ -696,125 +715,120 @@ function npcShootingStep(dt){
   }
 }
 function npcStep(dt){
-  // stałe „tunelu”
-  const WARP_APPROACH_SPEED = 1.0;     // jak szybko „zapinamy” się w prędkość docelową
-  const WARP_QUEUE_SPACING = 18;       // odstęp między czekającymi w kolejce (px świata)
-  const WARP_GATE_RADIUS   = 12;       // promień uznania „dotarł do bramy”
-  const WARP_TUNNEL_TIME   = 0.45;     // czas „zniknięcia”
-  const DOCK_RADIUS_EXTRA  = 16;       // próg dokowania przy stacji
-
-  for (const npc of npcs){
-    if (npc.dead){
+  for(const npc of npcs){
+    if(npc.dead){
       npc.respawnTimer -= dt;
-      if (npc.respawnTimer <= 0){
-        // respawn: losowa para stacji + requeue
+      if(npc.respawnTimer<=0){
         const start = stations[Math.floor(Math.random()*stations.length)];
-        let targetId = pickNextStation(npc.id, start.id);
-        const route = getWarpRoute(start.id, targetId);
-        npc.x = start.x; npc.y = start.y;
+        const targetId = pickNextStation(npc.id, start.id);
+        const target = stations.find(s=>s.id===targetId);
+        const t = Math.random();
+        npc.x = start.x + (target.x - start.x)*t + (Math.random()-0.5)*60;
+        npc.y = start.y + (target.y - start.y)*t + (Math.random()-0.5)*60;
         npc.vx = (Math.random()-0.5)*40; npc.vy = (Math.random()-0.5)*40;
-        npc.hp = npc.maxHp; npc.dead=false; npc.target = targetId;
-        npc.fade = 1; npc.docking=false; npc.lastStation=start.id;
-        npc.warpRoute = route; npc.phase='queue'; npc.warpTimer=0;
-        getQueue(start.id).push(npc.id);
+        npc.hp = npc.maxHp; npc.dead=false; npc.target = targetId; npc.fade = 1; npc.docking=false; npc.lastStation=start.id;
+        npc.warpRoute = getWarpRoute(start.id, targetId); npc.phase = 'toGate'; npc.lane = Math.floor(Math.random()*2);
       }
       continue;
     }
-
-    // docelowy punkt w zależności od fazy
-    let targetPos = null;
-
-    if (!npc.warpRoute || npc.warpRoute.from !== npc.lastStation || npc.warpRoute.to !== npc.target){
-      npc.warpRoute = getWarpRoute(npc.lastStation, npc.target);
+    if(npc.docking){
+      const st = stations.find(s=>s.id===npc.lastStation);
+      if(st){ npc.x = st.x; npc.y = st.y; }
+      npc.fade -= dt / 0.6;
+      if(npc.fade <= 0 && st){
+        const targetId = pickNextStation(npc.id, npc.lastStation);
+        const target = stations.find(s=>s.id===targetId);
+        const t = Math.random();
+        npc.x = st.x + (target.x - st.x)*t + (Math.random()-0.5)*60;
+        npc.y = st.y + (target.y - st.y)*t + (Math.random()-0.5)*60;
+        npc.vx = (Math.random()-0.5)*40; npc.vy = (Math.random()-0.5)*40;
+        npc.target = targetId; npc.fade = 1; npc.docking=false; npc.lastStation=st.id;
+        npc.warpRoute = getWarpRoute(st.id, targetId); npc.phase = 'toGate'; npc.lane = Math.floor(Math.random()*2);
+      }
+      continue;
     }
-
-    const q = getQueue(npc.lastStation);
-
-    switch (npc.phase){
-      case 'queue': {
-        // pozycja w kolejce → stajemy w „ogonku” przed warpGateOut
-        const gate = stations.find(s => s.id === npc.lastStation)?.warpGateOut;
-        if (gate){
-          const idx = q.indexOf(npc.id);
-          const lateral = (npc.lane ? 1 : -1) * 8; // dwa „pasy”
-          targetPos = { x: gate.x - (idx+1)*WARP_QUEUE_SPACING, y: gate.y + lateral };
-          // jeśli pierwszy i blisko → jedziemy do samej bramy
-          if (idx === 0){
-            const d = Math.hypot(npc.x - gate.x, npc.y - gate.y);
-            if (d < WARP_QUEUE_SPACING * 0.6) npc.phase = 'toGate';
-          }
-        }
-        break;
+    if(npc.phase === 'warping'){
+      npc.warpTimer -= dt;
+      if(npc.warpTimer <= 0){
+        npc.phase = 'toStation';
+        npc.x = npc.warpRoute.end.x; npc.y = npc.warpRoute.end.y;
+        npc.vx = 0; npc.vy = 0;
+        npc.warpRoute.start.busy = false;
       }
-
-      case 'toGate': {
-        const gate = stations.find(s => s.id === npc.lastStation)?.warpGateOut;
-        if (gate){
-          targetPos = { x: gate.x, y: gate.y };
-          const d = Math.hypot(npc.x - gate.x, npc.y - gate.y);
-          if (d < WARP_GATE_RADIUS){
-            // wjazd w tunel: znikamy, zwalniamy kolejkę
-            if (q[0] === npc.id) q.shift();
-            npc.phase = 'warp';
-            npc.warpTimer = WARP_TUNNEL_TIME;
-            npc.fade = 0;
-            // zatrzymaj ruch
-            npc.vx = 0; npc.vy = 0;
-          }
-        }
-        break;
-      }
-
-      case 'warp': {
-        npc.warpTimer -= dt;
-        if (npc.warpTimer <= 0){
-          // pojaw na bramie docelowej
-          const dest = stations.find(s => s.id === npc.target);
-          if (dest){
-            npc.x = dest.warpGateIn.x + (Math.random()-0.5)*6;
-            npc.y = dest.warpGateIn.y + (Math.random()-0.5)*6;
-            npc.lastStation = dest.id;
-            npc.phase = 'fromGate';
-            npc.fade = 1;
-          } else {
-            npc.phase = 'queue';
-          }
-        }
-        break;
-      }
-
-      case 'fromGate': {
-        const dest = stations.find(s => s.id === npc.lastStation);
-        if (dest){
-          targetPos = { x: dest.x, y: dest.y };
-          const d = Math.hypot(npc.x - dest.x, npc.y - dest.y);
-          if (d < dest.r + DOCK_RADIUS_EXTRA){
-            // „dokowanie” → wybierz kolejną stację i ustaw się do kolejki
-            const nextId = pickNextStation(npc.id, dest.id);
-            npc.target = nextId;
-            npc.warpRoute = getWarpRoute(dest.id, nextId);
-            npc.phase = 'queue';
-            getQueue(dest.id).push(npc.id);
-          }
-        }
-        break;
-      }
+      continue;
     }
-
-    // proste sterowanie prędkością do targetPos (jeśli jest)
-    if (targetPos){
+    if(npc.phase === 'toGate'){
+      const gate = npc.warpRoute.start;
+      const start = stations.find(s=>s.id===npc.lastStation);
+      const gv = { x: gate.x - start.x, y: gate.y - start.y };
+      const gd = Math.hypot(gv.x, gv.y) || 1;
+      const perp = { x: -gv.y/gd, y: gv.x/gd };
+      const offset = npc.lane ? 20 : -20;
+      const targetPos = { x: gate.x + perp.x*offset, y: gate.y + perp.y*offset };
       const to = { x: targetPos.x - npc.x, y: targetPos.y - npc.y };
-      const d = Math.hypot(to.x, to.y);
-      const dir = d ? { x: to.x/d, y: to.y/d } : { x: 0, y: 0 };
-      const desiredV = { x: dir.x * npc.speed, y: dir.y * npc.speed };
-      npc.vx += (desiredV.x - (npc.vx||0)) * clamp(WARP_APPROACH_SPEED*dt, 0, 1);
-      npc.vy += (desiredV.y - (npc.vy||0)) * clamp(WARP_APPROACH_SPEED*dt, 0, 1);
+      const d = Math.hypot(to.x,to.y);
+      if(d < 5){
+        if(!gate.queue.includes(npc)) gate.queue.push(npc);
+        npc.vx = 0; npc.vy = 0;
+        if(gate.queue[0] === npc && !gate.busy){
+          gate.busy = true;
+          gate.queue.shift();
+          npc.phase = 'warping';
+          npc.warpTimer = 0.5;
+          npc.x = gate.x; npc.y = gate.y;
+        }
+        continue;
+      }
+      const dir = { x: to.x/d, y: to.y/d };
+      const desiredV = { x: dir.x*npc.speed, y: dir.y*npc.speed };
+      npc.vx += (desiredV.x - (npc.vx||0)) * clamp(1.5*dt,0,1);
+      npc.vy += (desiredV.y - (npc.vy||0)) * clamp(1.5*dt,0,1);
+      npc.x += npc.vx*dt; npc.y += npc.vy*dt; npc.angle = Math.atan2(npc.vy||0, npc.vx||0);
+      continue;
     }
-
-    // update pozycji + orientacja
-    npc.x += (npc.vx||0) * dt;
-    npc.y += (npc.vy||0) * dt;
-    npc.angle = Math.atan2(npc.vy||0, npc.vx||0);
+    let targetPos, st = null;
+    if(npc.leader != null){
+      const leader = npcs.find(n=>n.id===npc.leader && !n.dead);
+      if(leader){
+        targetPos = {
+          x: leader.x + Math.cos(npc.orbitAngle) * npc.orbitRadius,
+          y: leader.y + Math.sin(npc.orbitAngle) * npc.orbitRadius
+        };
+      } else {
+        npc.leader = null;
+      }
+    }
+    if(!targetPos){
+      st = stations.find(s=>s.id===npc.target);
+      if(!st){ npc.target = pickNextStation(npc.id, -1); npc.warpRoute = getWarpRoute(npc.lastStation, npc.target); npc.phase='toGate'; continue; }
+      if(npc.phase === 'toStation'){
+        const gate = npc.warpRoute.end;
+        const gv = { x: st.x - gate.x, y: st.y - gate.y };
+        const gd = Math.hypot(gv.x, gv.y) || 1;
+        const perp = { x: -gv.y/gd, y: gv.x/gd };
+        const offset = npc.lane ? 20 : -20;
+        targetPos = { x: st.x + perp.x*offset, y: st.y + perp.y*offset };
+      } else {
+        targetPos = { x: st.x, y: st.y };
+      }
+    }
+    const to = { x: targetPos.x - npc.x, y: targetPos.y - npc.y };
+    const d = Math.hypot(to.x,to.y);
+    const dir = d?{x:to.x/d,y:to.y/d}:{x:0,y:0};
+    const desiredSpeed = npc.leader != null ? npc.speed : npc.speed * (d < 120 ? (d/120) : 1);
+    const desiredV = { x: dir.x*desiredSpeed, y: dir.y*desiredSpeed };
+    npc.vx += (desiredV.x - (npc.vx||0)) * clamp(1.5*dt,0,1);
+    npc.vy += (desiredV.y - (npc.vy||0)) * clamp(1.5*dt,0,1);
+    const toP = { x: ship.pos.x - npc.x, y: ship.pos.y - npc.y }; const dp = Math.hypot(toP.x,toP.y);
+    if(dp < 120){ npc.vx -= (toP.x/dp) * 40*dt; npc.vy -= (toP.y/dp) * 40*dt; }
+    npc.x += npc.vx*dt; npc.y += npc.vy*dt; npc.angle = Math.atan2(npc.vy||0, npc.vx||0);
+    const distToStation = st ? Math.hypot(st.x - npc.x, st.y - npc.y) : Infinity;
+    if(npc.leader == null && st && distToStation < 20){
+      npc.docking = true;
+      npc.x = st.x; npc.y = st.y;
+      npc.vx = 0; npc.vy = 0;
+      npc.lastStation = st.id;
+    }
   }
 }
 
@@ -1160,18 +1174,13 @@ function getEngineVFX() {
       canvas, ctx2d, camera, scene, exhaust,
       render(time) {
         const r = getSharedRenderer(canvas.width, canvas.height);
-if (!r) return;
-
-// upewnij się, że rysujemy do domyślnego FBO i na pełny obszar 80×120
-r.setRenderTarget(null);
-r.setPixelRatio(1);                                   // <— NOWE: stałe DPR dla małego offscreen
-r.setSize(canvas.width, canvas.height, false);        // <— NOWE: wymuś rozmiar bufora
-r.setViewport(0, 0, canvas.width, canvas.height);
-
-r.state.reset();
-r.setScissorTest(false);
-r.setClearColor(0x000000, 0);
-r.clear(true, true, false);
+        if (!r) return;
+r.setRenderTarget(null);                        // <- NAJWAŻNIEJSZE: wróć na default framebuffer
+r.setViewport(0, 0, canvas.width, canvas.height); // upewnij się, że viewport pokrywa cały offscreen
+        r.state.reset();            // najważniejsze – wyczyść GL po scenie planet
+        r.setScissorTest(false);
+        r.setClearColor(0x000000, 0);   // przezroczyste tło (alfa=0)
+        r.clear(true, true, false);     // kolor + depth (stencil niepotrzebny)
 
         exhaust.update(time);
         r.render(scene, camera);
@@ -1368,14 +1377,15 @@ function render(alpha){
     ctx.beginPath(); ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.stroke();
   }
 
-  // Warp gates (nowy system: bramy są przy każdej stacji)
-for (const st of stations) {
-  const sOut = worldToScreen(st.warpGateOut.x, st.warpGateOut.y, cam);
-  const sIn  = worldToScreen(st.warpGateIn.x,  st.warpGateIn.y,  cam);
-  ctx.fillStyle = '#88aaff';
-  ctx.beginPath(); ctx.arc(sOut.x, sOut.y, 6*camera.zoom, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(sIn.x,  sIn.y,  6*camera.zoom, 0, Math.PI*2); ctx.fill();
-}
+  // Warp gates
+  for(const key in warpRoutes){
+    const route = warpRoutes[key];
+    const s1 = worldToScreen(route.start.x, route.start.y, cam);
+    const s2 = worldToScreen(route.end.x, route.end.y, cam);
+    ctx.fillStyle = '#88aaff';
+    ctx.beginPath(); ctx.arc(s1.x, s1.y, 6*camera.zoom, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(s2.x, s2.y, 6*camera.zoom, 0, Math.PI*2); ctx.fill();
+  }
 
   // Stacje
   for(const st of stations){
