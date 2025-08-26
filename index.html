@@ -1299,13 +1299,6 @@ function drawPhotonBeamLocal(alpha){
 
 function drawMainEngineVfx(pos, forward, cam) {
   const s = worldToScreen(pos.x, pos.y, cam);
-
-  // 🔶 debug: upewnijmy się, że w ogóle wchodzimy do funkcji
-  ctx.save();
-  ctx.fillStyle = 'orange';
-  ctx.fillRect(s.x, s.y, 2, 2);
-  ctx.restore();
-
   ctx.save();
   ctx.translate(s.x, s.y);
   ctx.scale(camera.zoom, camera.zoom);
@@ -1314,10 +1307,17 @@ function drawMainEngineVfx(pos, forward, cam) {
 
   const evfx = getEngineVFX();
   if (evfx) {
+    // DEBUG marker
+    ctx.save();
+    ctx.fillStyle = 'magenta';
+    ctx.fillRect(-2, -2, 4, 4);
+    ctx.restore();
+
     evfx.render(vfxTime);
     const w = evfx.canvas.width, h = evfx.canvas.height;
     ctx.drawImage(evfx.canvas, -w / 2, 0, w, h);
   }
+
   ctx.restore();
 }
 
