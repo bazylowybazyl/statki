@@ -113,37 +113,40 @@ export function createShortNeedleExhaust(opts = {}) {
   group.add(streak2);
 
   // API sterujące
-  let throttle = 0; // 0..1
-  let warpBoost = 0; // 0..1 (dodatkowy „dopalenie” przy warp/boost)
-  function setThrottle(t) { throttle = THREE.MathUtils.clamp(t, 0, 1); }
+  let throttle = 0;       // bieżące wysterowanie (0..1)
+  let throttleTarget = 0; // docelowe wysterowanie
+  let warpBoost = 0;      // 0..1 (dodatkowe „dopalenie” przy warp/boost)
+  function setThrottle(t) { throttleTarget = THREE.MathUtils.clamp(t, 0, 1); }
   function setWarpBoost(t) { warpBoost = THREE.MathUtils.clamp(t, 0, 1); }
 
   function update(time = 0) {
+    // płynne przejście do docelowego throttle
+    throttle = THREE.MathUtils.lerp(throttle, throttleTarget, 0.1);
     const base = throttle;
     const over = Math.max(0, warpBoost * 0.8);
-    const amp = THREE.MathUtils.lerp(0.35, 1.0, base) + over; // skala jasności/długości
+    const amp = THREE.MathUtils.lerp(0.05, 1.0, base) + over; // skala jasności/długości
 
     // miękkie pulsowanie
     const pulse = 0.08 * Math.sin(time * 12.0) + 0.04 * Math.sin(time * 19.0 + 1.7);
 
-    const coreLen = 44 * (0.65 + 0.6 * amp) * (1 + pulse);
-    const plumeLen = 110 * (0.6 + 1.0 * amp) * (1 + pulse * 0.6);
+    const coreLen = THREE.MathUtils.lerp(8, 88, amp) * (1 + pulse);
+    const plumeLen = THREE.MathUtils.lerp(16, 180, amp) * (1 + pulse * 0.6);
 
     core.scale.set(16, coreLen, 1);
     plume.scale.set(22, plumeLen, 1);
 
-    streak1.scale.set(10, Math.max(72, plumeLen * 0.78), 1);
-    streak2.scale.set(10, Math.max(68, plumeLen * 0.72), 1);
+    streak1.scale.set(10, Math.max(20, plumeLen * 0.78), 1);
+    streak2.scale.set(10, Math.max(16, plumeLen * 0.72), 1);
 
     // delikatne rozjechanie X dla „życia”
     streak1.position.x = -3 + Math.sin(time * 6.3) * 0.8;
     streak2.position.x = 3 + Math.cos(time * 7.1) * 0.8;
 
     // kolory (trochę jaśniejsze przy dużym amp)
-    const c = new THREE.Color().setHSL(0.58, 0.75, THREE.MathUtils.clamp(0.55 + amp * 0.25, 0, 1));
+    const c = new THREE.Color().setHSL(0.58, 0.75, THREE.MathUtils.clamp(0.35 + amp * 0.45, 0, 1));
     matPlume.color.copy(c);
     streakMat.color.copy(c);
-    const cc = new THREE.Color().setHSL(0.58, 0.2, THREE.MathUtils.clamp(0.7 + amp * 0.18, 0, 1));
+    const cc = new THREE.Color().setHSL(0.58, 0.2, THREE.MathUtils.clamp(0.5 + amp * 0.3, 0, 1));
     matCore.color.copy(cc);
   }
 
