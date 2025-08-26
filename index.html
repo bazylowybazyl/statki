@@ -1162,18 +1162,20 @@ function getEngineVFX() {
 
   // 2) Offscreen canvas i scena
   const canvas = document.createElement("canvas");
-  canvas.width = 80; canvas.height = 120;
+  // więcej miejsca, żeby ogon nie był ścinany
+  canvas.width = 128;
+  canvas.height = 256;
   const ctx2d = canvas.getContext("2d");
 
   const scene = new THREE.Scene();
   scene.background = null;
 
-  const camera = new THREE.OrthographicCamera(-40, 40, 40, -80, -1000, 1000);
+  const camera = new THREE.OrthographicCamera(-64, 64, 64, -192, -1000, 1000);
   camera.position.z = 10;
   camera.lookAt(0, 0, 0);
 
-  const exhaust = window.createShortNeedleExhaust({});
-  exhaust.group.position.y = 15;
+  const exhaust = window.createShortNeedleExhaust();
+  exhaust.group.position.y = 0; // zero — unikamy clipu przy obrocie
   scene.add(exhaust.group);
 
   // 3) Renderer: użyj współdzielonego jeśli jest, w przeciwnym razie lokalnego
@@ -1204,11 +1206,11 @@ function getEngineVFX() {
       const r = pickRenderer(canvas.width, canvas.height);
       if (!r) return;
       // pełny reset i przezroczyste czyszczenie
+      r.setRenderTarget(null);
+      r.setViewport(0, 0, canvas.width, canvas.height);
       if (r.state && r.state.reset) r.state.reset();
       r.setScissorTest(false);
-      r.setClearColor(0x000000, 0);
-      r.setViewport(0, 0, canvas.width, canvas.height);
-      r.setRenderTarget(null);
+      r.setClearColor(0x000000, 0); // przeźroczyste tło
       r.clear(true, true, false);
 
       // dynamiczny throttle
@@ -1297,32 +1299,24 @@ function drawPhotonBeamLocal(alpha){
   ctx.restore();
 }
 
-function drawMainEngineVfx(pos, forward, cam) {
-  const s = worldToScreen(pos.x, pos.y, cam);
+function drawMainEngineVfxLocal(localPos, forward, widen = 1.5, yNudge = -6) {
   ctx.save();
-  ctx.translate(s.x, s.y);
-  ctx.scale(camera.zoom, camera.zoom);
+  // przechodzimy w lokal statku
+  ctx.translate(localPos.x, localPos.y);
+  // dopasowanie szerokości do kadłuba
+  ctx.scale(widen, 1);
+  // igła w dół statku (dysza na dole) — oś Y płomienia w dół
   ctx.rotate(Math.atan2(forward.y, forward.x) + Math.PI/2);
   ctx.globalCompositeOperation = 'lighter';
 
   const evfx = getEngineVFX();
   if (evfx) {
-    // DEBUG marker
-    ctx.save();
-    ctx.fillStyle = 'magenta';
-    ctx.fillRect(-2, -2, 4, 4);
-    ctx.restore();
-
     evfx.render(vfxTime);
     const w = evfx.canvas.width, h = evfx.canvas.height;
-    ctx.drawImage(evfx.canvas, -w / 2, 0, w, h);
+    ctx.drawImage(evfx.canvas, -w / 2, yNudge, w, h);
   }
-
   ctx.restore();
 }
-
-
-
 
 function drawBoostBeam(pos, dir, cam, alpha){ const s=worldToScreen(pos.x,pos.y,cam); ctx.save(); ctx.translate(s.x,s.y); ctx.scale(camera.zoom,camera.zoom); ctx.rotate(Math.atan2(-dir.x, dir.y)); ctx.globalCompositeOperation='lighter'; drawPhotonBeamLocal(alpha); ctx.restore(); }
 
@@ -1581,13 +1575,7 @@ function render(alpha){
     ctx.globalAlpha = 1;
   }
 
-  // Efekty silnika i dopalacza
-  if(input.main>0){
-    const e = ship.engines.main;
-    const origin = add(interpPos, rotate(e.offset, interpAngle));
-    const forward = rotate({x:0,y:-1}, interpAngle);
-    drawMainEngineVfx(origin, forward, cam);
-  }
+  // Efekt dopalacza
   if(boost.effectTime>0){
     const e = ship.engines.main;
     const origin = add(interpPos, rotate(e.offset, interpAngle));
@@ -1626,6 +1614,18 @@ function render(alpha){
   ctx.fillStyle = '#cbd6ff';
   for(const off of ship.sideGunsLeft){ ctx.save(); ctx.translate(off.x, off.y); roundRect(ctx, -12,-3,8,6,3); ctx.fill(); ctx.restore(); }
   for(const off of ship.sideGunsRight){ ctx.save(); ctx.translate(off.x, off.y); roundRect(ctx, 4,-3,8,6,3); ctx.fill(); ctx.restore(); }
+
+  // VFX głównego silnika – pod tarczą, wyrasta z dyszy
+  {
+    const e = ship.engines.main;
+    const forward = { x: 0, y: -1 }; // lokalny "w dół statku"
+    // szerokość zależna od gazu/ruchu
+    const spd = Math.hypot(ship.vel.x, ship.vel.y);
+    const moveGlow = Math.min(spd / 900, 0.6) * 0.8;
+    const throttle = Math.max(input.main || 0, moveGlow);
+    const widen = 1.2 + 0.6 * throttle; // 1.2..1.8
+    drawMainEngineVfxLocal(e.offset, forward, widen, -6);
+  }
 
   // tarcza
   const sp = ship.shield.val / ship.shield.max;
