@@ -266,7 +266,7 @@ const NPC_TYPES = {
   'freighter-small':  { radius:12, speed:60, hp:200, color:'#8ab4d6', weapon:null },
   'freighter-medium': { radius:24, speed:55, hp:400, color:'#769cb8', weapon:null },
   'freighter-large':  { radius:48, speed:50, hp:800, color:'#5d829c', weapon:null },
-  'freighter-capital':{ radius:128, speed:35, hp:2000, color:'#45667d', weapon:null },
+  'freighter-capital':{ radius:96, speed:45, hp:2000, color:'#45667d', weapon:null },
   'police':           { radius:24, speed:100, hp:1000, color:'#44aaff', weapon:'railgun' },
   'civilian-small':   { radius:6, speed:100, hp:60, color:'#cccccc', weapon:null },
   'civilian-large':   { radius:12, speed:80, hp:100, color:'#bbbbbb', weapon:null },
@@ -1141,73 +1141,101 @@ function physicsStep(dt){
 // ======= Efekty VFX =======
 let _engineVFX = null;
 let _engineVFXLoading = false;
+
 function getEngineVFX() {
   if (_engineVFX) return _engineVFX;
-  if (typeof THREE !== "undefined" && typeof getSharedRenderer === "function") {
-    if (typeof window.createShortNeedleExhaust !== "function") {
-      if (!_engineVFXLoading) {
-        _engineVFXLoading = true;
-        import("./Engineeffects.js").then(mod => {
-          window.createShortNeedleExhaust = mod.createShortNeedleExhaust;
-          window.createWarpExhaustBlue = mod.createWarpExhaustBlue;
-        }).catch(err => console.warn("Engineeffects.js failed to load", err))
-          .finally(() => { _engineVFXLoading = false; });
-      }
-      return null;
-    }
 
-    const canvas = document.createElement("canvas");
-    canvas.width = 80; canvas.height = 120;
-    const ctx2d = canvas.getContext("2d");
-    const scene = new THREE.Scene();
-    scene.background = null;              // transparent
-
-    const camera = new THREE.OrthographicCamera(-40, 40, 40, -80, -1000, 1000);
-    camera.position.z = 10;               // oddal kamerę od z=0
-    camera.lookAt(0, 0, 0);
-
-    const exhaust = window.createShortNeedleExhaust({ /* opcjonalne tweaki */ });
-    exhaust.group.position.y = 15;
-    scene.add(exhaust.group);
-
-    _engineVFX = {
-      canvas, ctx2d, camera, scene, exhaust,
-      render(time) {
-        const r = getSharedRenderer(canvas.width, canvas.height);
-        if (!r) return;
-r.setRenderTarget(null);                        // <- NAJWAŻNIEJSZE: wróć na default framebuffer
-r.setViewport(0, 0, canvas.width, canvas.height); // upewnij się, że viewport pokrywa cały offscreen
-        r.state.reset();            // najważniejsze – wyczyść GL po scenie planet
-        r.setScissorTest(false);
-        r.setClearColor(0x000000, 0);   // przezroczyste tło (alfa=0)
-        r.clear(true, true, false);   
-        // wylicz dynamiczny throttle
-const spd = Math.hypot(ship.vel.x, ship.vel.y);
-const moveGlow = THREE ? THREE.MathUtils.clamp(spd / 900, 0, 0.6) : Math.min(spd / 900, 0.6);
-const thrust = input.main > 0 ? input.main : 0;
-const boostAmp = (boost.effectTime > 0) ? 1.0 : 0.0;
-const warpAmp  = (warp.state === 'active') ? 1.0 : 0.0;
-
-// throttle = gaz + trochę od samego ruchu (lekki „ogon” gdy szybki lot)
-const throttle = Math.max(thrust, moveGlow * 0.8);
-
-// podaj do efektu
-exhaust.setThrottle(throttle);
-exhaust.setWarpBoost(Math.max(boostAmp, warpAmp));// kolor + depth (stencil niepotrzebny)
-
-        exhaust.update(time);
-        r.render(scene, camera);
-        ctx2d.clearRect(0, 0, canvas.width, canvas.height);
-        ctx2d.drawImage(r.domElement, 0, 0, canvas.width, canvas.height);
-      }
-    };
+  // 1) Czekaj aż mamy renderera od planet
+  if (typeof getSharedRenderer !== "function" || typeof THREE === "undefined") {
+    return null; // spróbujemy w następnej klatce
   }
+
+  // 2) Dociągnij fabrykę efektu jeśli jeszcze nie ma
+  if (typeof window.createShortNeedleExhaust !== "function") {
+    if (!_engineVFXLoading) {
+      _engineVFXLoading = true;
+      import("./Engineeffects.js").then(mod => {
+        window.createShortNeedleExhaust = mod.createShortNeedleExhaust;
+        window.createWarpExhaustBlue   = mod.createWarpExhaustBlue;
+      }).catch(err => console.warn("Engineeffects.js failed to load", err))
+        .finally(() => { _engineVFXLoading = false; });
+    }
+    return null;
+  }
+
+  // 3) Zbuduj offscreen scenę 80×120
+  const canvas = document.createElement("canvas");
+  canvas.width = 80; canvas.height = 120;
+  const ctx2d = canvas.getContext("2d");
+
+  const scene = new THREE.Scene();
+  scene.background = null;
+
+  const vfxCam = new THREE.OrthographicCamera(-40, 40, 40, -80, -1000, 1000);
+  vfxCam.position.z = 10;
+  vfxCam.lookAt(0, 0, 0);
+
+  const exhaust = window.createShortNeedleExhaust({});
+  exhaust.group.position.y = 15;
+  scene.add(exhaust.group);
+
+  _engineVFX = {
+    canvas, ctx2d, vfxCam, scene, exhaust,
+    render(time) {
+      const r = getSharedRenderer(canvas.width, canvas.height);
+      if (!r) return;
+
+      // >>> KLUCZ: poprawny rozmiar/viewport/PPR + czyszczenie
+      r.setRenderTarget(null);
+      r.setPixelRatio(1);
+      r.setSize(canvas.width, canvas.height, false);
+      r.setViewport(0, 0, canvas.width, canvas.height);
+      r.state.reset();
+      r.setScissorTest(false);
+      r.setClearColor(0x000000, 0);
+      r.clear(true, true, false);
+
+      // throttle i boost/warp
+      const spd = Math.hypot(ship.vel.x, ship.vel.y);
+      const moveGlow = Math.min(spd / 900, 0.6);
+      const thrust = input.main > 0 ? input.main : 0;
+      const throttle = Math.max(thrust, moveGlow * 0.8);
+      const boostAmp = (boost.effectTime > 0) ? 1.0 : 0.0;
+      const warpAmp  = (warp.state === 'active') ? 1.0 : 0.0;
+
+      if (typeof exhaust.setThrottle === "function")   exhaust.setThrottle(throttle);
+      if (typeof exhaust.setWarpBoost === "function")  exhaust.setWarpBoost(Math.max(boostAmp, warpAmp));
+
+      exhaust.update(time);
+      r.render(scene, vfxCam);
+
+      // skopiuj do 2D
+      ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+      ctx2d.drawImage(r.domElement, 0, 0, canvas.width, canvas.height);
+    }
+  };
+
   return _engineVFX;
 }
+
+// Prosty fallback 2D — żeby ZAWSZE coś było widać, gdy evfx==null
+function drawEngineFallback2D() {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createLinearGradient(0, 0, 0, 90);
+  g.addColorStop(0, 'rgba(170,210,255,0.55)');
+  g.addColorStop(1, 'rgba(170,210,255,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(-14, 0);
+  ctx.quadraticCurveTo(0, 70, 14, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawPhotonBeamLocal(alpha){
   const L = 200;
-
-  // central beam
   ctx.save();
   ctx.lineCap = 'round';
   ctx.shadowBlur = 28;
@@ -1220,7 +1248,6 @@ function drawPhotonBeamLocal(alpha){
   ctx.stroke();
   ctx.restore();
 
-  // soft plume
   const g = ctx.createLinearGradient(0, 0, 0, -L);
   g.addColorStop(0, `rgba(160,210,255,${0.25 * alpha})`);
   g.addColorStop(1, `rgba(160,210,255,0)`);
@@ -1232,7 +1259,6 @@ function drawPhotonBeamLocal(alpha){
   ctx.closePath();
   ctx.fill();
 
-  // moving rings
   for (let i = 0; i < 4; i++) {
     const phase = ((vfxTime * 0.8) + i * 0.25) % 1;
     const y = -phase * L;
@@ -1244,10 +1270,9 @@ function drawPhotonBeamLocal(alpha){
     ctx.stroke();
   }
 
-  // bright origin
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.shadowBlur = 19.2; // 12 * 1.6
+  ctx.shadowBlur = 19.2;
   ctx.shadowColor = '#fff';
   ctx.fillStyle = '#fff';
   ctx.beginPath();
@@ -1255,6 +1280,28 @@ function drawPhotonBeamLocal(alpha){
   ctx.fill();
   ctx.restore();
 }
+
+function drawMainEngineVfx(pos, forward, cam) {
+  const s = worldToScreen(pos.x, pos.y, cam);
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.scale(camera.zoom, camera.zoom);
+  ctx.rotate(Math.atan2(-forward.x, forward.y));
+  ctx.globalCompositeOperation = 'lighter';
+
+  const evfx = getEngineVFX();
+  if (evfx) {
+    evfx.render(vfxTime);
+    const w = evfx.canvas.width, h = evfx.canvas.height;
+    ctx.drawImage(evfx.canvas, -w / 2, 0, w, h);
+  } else {
+    // fallback, zanim 3D się podniesie
+    drawEngineFallback2D();
+  }
+
+  ctx.restore();
+}
+
 
 function drawMainEngineVfx(pos, forward, cam) {
   const s = worldToScreen(pos.x, pos.y, cam);
