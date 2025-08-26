@@ -1174,13 +1174,18 @@ function getEngineVFX() {
       canvas, ctx2d, camera, scene, exhaust,
       render(time) {
         const r = getSharedRenderer(canvas.width, canvas.height);
-        if (!r) return;
-r.setRenderTarget(null);                        // <- NAJWAŻNIEJSZE: wróć na default framebuffer
-r.setViewport(0, 0, canvas.width, canvas.height); // upewnij się, że viewport pokrywa cały offscreen
-        r.state.reset();            // najważniejsze – wyczyść GL po scenie planet
-        r.setScissorTest(false);
-        r.setClearColor(0x000000, 0);   // przezroczyste tło (alfa=0)
-        r.clear(true, true, false);     // kolor + depth (stencil niepotrzebny)
+if (!r) return;
+
+// upewnij się, że rysujemy do domyślnego FBO i na pełny obszar 80×120
+r.setRenderTarget(null);
+r.setPixelRatio(1);                                   // <— NOWE: stałe DPR dla małego offscreen
+r.setSize(canvas.width, canvas.height, false);        // <— NOWE: wymuś rozmiar bufora
+r.setViewport(0, 0, canvas.width, canvas.height);
+
+r.state.reset();
+r.setScissorTest(false);
+r.setClearColor(0x000000, 0);
+r.clear(true, true, false);
 
         exhaust.update(time);
         r.render(scene, camera);
