@@ -1302,7 +1302,7 @@ function drawMainEngineVfx(pos, forward, cam) {
   ctx.save();
   ctx.translate(s.x, s.y);
   ctx.scale(camera.zoom, camera.zoom);
-  ctx.rotate(Math.atan2(-forward.x, forward.y));
+  ctx.rotate(Math.atan2(forward.y, forward.x) + Math.PI/2);
   ctx.globalCompositeOperation = 'lighter';
 
   const evfx = getEngineVFX();
@@ -1410,17 +1410,6 @@ function render(alpha){
   // Czyścimy ekran
   ctx.clearRect(0,0,W,H);
 
-// 🔍 SMOKE-TEST: renderuj offscreen VFX i pokaż jego canvas w rogu ekranu
-(() => {
-  const ev = getEngineVFX();
-  if (ev) {
-    ev.render(vfxTime);                 // wymuś render offscreen
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.drawImage(ev.canvas, 20, 20);   // powinieneś zobaczyć niebieski „płomień” w lewym górnym rogu
-    ctx.restore();
-  }
-})();
 
   // Gwiazdy (proceduralne kafelki na całej mapie)
   drawStars(cam);
