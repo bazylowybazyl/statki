@@ -1180,7 +1180,20 @@ r.setViewport(0, 0, canvas.width, canvas.height); // upewnij się, że viewport 
         r.state.reset();            // najważniejsze – wyczyść GL po scenie planet
         r.setScissorTest(false);
         r.setClearColor(0x000000, 0);   // przezroczyste tło (alfa=0)
-        r.clear(true, true, false);     // kolor + depth (stencil niepotrzebny)
+        r.clear(true, true, false);   
+        // wylicz dynamiczny throttle
+const spd = Math.hypot(ship.vel.x, ship.vel.y);
+const moveGlow = THREE ? THREE.MathUtils.clamp(spd / 900, 0, 0.6) : Math.min(spd / 900, 0.6);
+const thrust = input.main > 0 ? input.main : 0;
+const boostAmp = (boost.effectTime > 0) ? 1.0 : 0.0;
+const warpAmp  = (warp.state === 'active') ? 1.0 : 0.0;
+
+// throttle = gaz + trochę od samego ruchu (lekki „ogon” gdy szybki lot)
+const throttle = Math.max(thrust, moveGlow * 0.8);
+
+// podaj do efektu
+exhaust.setThrottle(throttle);
+exhaust.setWarpBoost(Math.max(boostAmp, warpAmp));// kolor + depth (stencil niepotrzebny)
 
         exhaust.update(time);
         r.render(scene, camera);
