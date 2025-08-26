@@ -21,6 +21,8 @@ function makeNeedleMaterial({
     depthWrite: false,
     depthTest: false,           // ważne przy współdzielonym rendererze
     blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,    // oglądany z obu stron
+    toneMapped: false,         // bez mapowania tonów (np. ACES)
     uniforms: {
       uTime:       { value: 0 },
       uColorA:     { value: new THREE.Color(colorA) },
