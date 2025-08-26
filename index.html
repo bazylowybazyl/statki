@@ -1368,15 +1368,14 @@ function render(alpha){
     ctx.beginPath(); ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.stroke();
   }
 
-  // Warp gates
-  for(const key in warpRoutes){
-    const route = warpRoutes[key];
-    const s1 = worldToScreen(route.start.x, route.start.y, cam);
-    const s2 = worldToScreen(route.end.x, route.end.y, cam);
-    ctx.fillStyle = '#88aaff';
-    ctx.beginPath(); ctx.arc(s1.x, s1.y, 6*camera.zoom, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(s2.x, s2.y, 6*camera.zoom, 0, Math.PI*2); ctx.fill();
-  }
+  // Warp gates (nowy system: bramy są przy każdej stacji)
+for (const st of stations) {
+  const sOut = worldToScreen(st.warpGateOut.x, st.warpGateOut.y, cam);
+  const sIn  = worldToScreen(st.warpGateIn.x,  st.warpGateIn.y,  cam);
+  ctx.fillStyle = '#88aaff';
+  ctx.beginPath(); ctx.arc(sOut.x, sOut.y, 6*camera.zoom, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(sIn.x,  sIn.y,  6*camera.zoom, 0, Math.PI*2); ctx.fill();
+}
 
   // Stacje
   for(const st of stations){
