@@ -1145,12 +1145,9 @@ let _engineVFXLoading = false;
 function getEngineVFX() {
   if (_engineVFX) return _engineVFX;
 
-  // 1) Czekaj aż mamy renderera od planet
-  if (typeof getSharedRenderer !== "function" || typeof THREE === "undefined") {
-    return null; // spróbujemy w następnej klatce
-  }
+  if (typeof THREE === "undefined") return null;
 
-  // 2) Dociągnij fabrykę efektu jeśli jeszcze nie ma
+  // 1) Upewnij się, że mamy konstruktory efektów
   if (typeof window.createShortNeedleExhaust !== "function") {
     if (!_engineVFXLoading) {
       _engineVFXLoading = true;
@@ -1163,7 +1160,7 @@ function getEngineVFX() {
     return null;
   }
 
-  // 3) Zbuduj offscreen scenę 80×120
+  // 2) Offscreen canvas i scena
   const canvas = document.createElement("canvas");
   canvas.width = 80; canvas.height = 120;
   const ctx2d = canvas.getContext("2d");
@@ -1171,47 +1168,62 @@ function getEngineVFX() {
   const scene = new THREE.Scene();
   scene.background = null;
 
-  const vfxCam = new THREE.OrthographicCamera(-40, 40, 40, -80, -1000, 1000);
-  vfxCam.position.z = 10;
-  vfxCam.lookAt(0, 0, 0);
+  const camera = new THREE.OrthographicCamera(-40, 40, 40, -80, -1000, 1000);
+  camera.position.z = 10;
+  camera.lookAt(0, 0, 0);
 
   const exhaust = window.createShortNeedleExhaust({});
   exhaust.group.position.y = 15;
   scene.add(exhaust.group);
 
-  _engineVFX = {
-    canvas, ctx2d, vfxCam, scene, exhaust,
-    render(time) {
-      const r = getSharedRenderer(canvas.width, canvas.height);
-      if (!r) return;
-      if (!getEngineVFX._once) {
-  console.log('[VFX] renderer OK, createShortNeedleExhaust =', typeof window.createShortNeedleExhaust);
-  getEngineVFX._once = true;
-}
+  // 3) Renderer: użyj współdzielonego jeśli jest, w przeciwnym razie lokalnego
+  let localRenderer = null;
+  function pickRenderer(w, h) {
+    if (typeof window.getSharedRenderer === "function") {
+      const r = window.getSharedRenderer(w, h);
+      return r || null;
+    }
+    if (!localRenderer) {
+      localRenderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: true,
+        premultipliedAlpha: true,
+        preserveDrawingBuffer: true
+      });
+      localRenderer.setPixelRatio(1);
+    }
+    // dopasuj rozmiar jeśli się zmienił
+    const d = localRenderer.getSize(new THREE.Vector2());
+    if (d.x !== w || d.y !== h) localRenderer.setSize(w, h, false);
+    return localRenderer;
+  }
 
-      // >>> KLUCZ: poprawny rozmiar/viewport/PPR + czyszczenie
-      r.setRenderTarget(null);
-      r.setPixelRatio(1);
-      r.setSize(canvas.width, canvas.height, false);
-      r.setViewport(0, 0, canvas.width, canvas.height);
-      r.state.reset();
+  _engineVFX = {
+    canvas, ctx2d, camera, scene, exhaust,
+    render(time) {
+      const r = pickRenderer(canvas.width, canvas.height);
+      if (!r) return;
+      // pełny reset i przezroczyste czyszczenie
+      if (r.state && r.state.reset) r.state.reset();
       r.setScissorTest(false);
       r.setClearColor(0x000000, 0);
+      r.setViewport(0, 0, canvas.width, canvas.height);
+      r.setRenderTarget(null);
       r.clear(true, true, false);
 
-      // throttle i boost/warp
+      // dynamiczny throttle
       const spd = Math.hypot(ship.vel.x, ship.vel.y);
       const moveGlow = Math.min(spd / 900, 0.6);
       const thrust = input.main > 0 ? input.main : 0;
-      const throttle = Math.max(thrust, moveGlow * 0.8);
       const boostAmp = (boost.effectTime > 0) ? 1.0 : 0.0;
       const warpAmp  = (warp.state === 'active') ? 1.0 : 0.0;
+      const throttle = Math.max(thrust, moveGlow * 0.8);
 
-      if (typeof exhaust.setThrottle === "function")   exhaust.setThrottle(throttle);
-      if (typeof exhaust.setWarpBoost === "function")  exhaust.setWarpBoost(Math.max(boostAmp, warpAmp));
+      exhaust.setThrottle(throttle);
+      exhaust.setWarpBoost(Math.max(boostAmp, warpAmp));
 
       exhaust.update(time);
-      r.render(scene, vfxCam);
+      r.render(scene, camera);
 
       // skopiuj do 2D
       ctx2d.clearRect(0, 0, canvas.width, canvas.height);
