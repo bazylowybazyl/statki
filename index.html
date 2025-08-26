@@ -1095,6 +1095,7 @@ function glowDot(ctx,x,y,r,color,alpha=1){ ctx.save(); ctx.globalAlpha=alpha; ct
 function plumeGradient(ctx,x,y,len,wide,c1,c2){ const g=ctx.createLinearGradient(x,y,x,y-len); g.addColorStop(0,c1); g.addColorStop(1,c2); ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(x-wide/2,y); ctx.quadraticCurveTo(x,y-len*0.5,x,y-len); ctx.quadraticCurveTo(x,y-len*0.5,x+wide/2,y); ctx.closePath(); ctx.fill(); }
 function drawBraided(state,ctx,o){ const L=120,A=20,t=state.t*2.5;ctx.lineWidth=3.2;ctx.lineCap='round'; for(let k=0;k<3;k++){ const phase=k*2.1;ctx.beginPath();ctx.strokeStyle=`hsla(${200+20*k},100%,75%,0.85)`; for(let y=0;y<=L;y+=4){const p=y/L;const x=o.x+Math.sin(-t+p*8+phase)*A*(1-p*0.8);ctx[p?'lineTo':'moveTo'](x,o.y-y);}ctx.stroke(); } plumeGradient(ctx,o.x,o.y,L,60,'rgba(100,180,255,0.25)','rgba(100,180,255,0)'); glowDot(ctx,o.x,o.y,10,'#dff',0.9); }
 function drawPhotonBeamLocal(alpha){ const L=200; ctx.save(); ctx.lineCap='round'; ctx.shadowBlur=28; ctx.shadowColor=`rgba(230,250,255,${0.95*alpha})`; ctx.strokeStyle=`rgba(255,255,255,${0.95*alpha})`; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-L*0.96); ctx.stroke(); ctx.restore(); plumeGradient(ctx,0,0,L,100,`rgba(160,210,255,${0.25*alpha})`,`rgba(160,210,255,0)`); for(let i=0;i<4;i++){ const phase=((vfxTime*0.8)+i*0.25)%1; const y=-phase*L; const r=20+40*(1-phase); ctx.strokeStyle=`rgba(200,240,255,${(1-phase)*alpha})`; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(0,y,r,0,Math.PI*2); ctx.stroke(); } glowDot(ctx,0,0,12,'#fff',alpha); }
+
 function drawMainEngineVfx(pos, forward, cam) {
   const s = worldToScreen(pos.x, pos.y, cam);
   ctx.save();
@@ -1113,6 +1114,7 @@ function drawMainEngineVfx(pos, forward, cam) {
 
   ctx.restore();
 }
+
 function drawBoostBeam(pos, dir, cam, alpha){ const s=worldToScreen(pos.x,pos.y,cam); ctx.save(); ctx.translate(s.x,s.y); ctx.scale(camera.zoom,camera.zoom); ctx.rotate(Math.atan2(-dir.x, dir.y)); ctx.globalCompositeOperation='lighter'; drawPhotonBeamLocal(alpha); ctx.restore(); }
 
 // =============== Main loop ===============
