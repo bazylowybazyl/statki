@@ -1285,6 +1285,13 @@ function drawMainEngineVfx(pos, forward, cam) {
   const s = worldToScreen(pos.x, pos.y, cam);
   ctx.save();
   ctx.translate(s.x, s.y);
+// DEBUG: żółta kropka w miejscu dyszy — jeśli jej nie widzisz, funkcja nie jest wołana
+ctx.save();
+ctx.fillStyle = 'rgba(255,255,0,0.9)';
+ctx.beginPath();
+ctx.arc(0, 0, 4, 0, Math.PI*2);
+ctx.fill();
+ctx.restore();
   ctx.scale(camera.zoom, camera.zoom);
   ctx.rotate(Math.atan2(-forward.x, forward.y));
   ctx.globalCompositeOperation = 'lighter';
