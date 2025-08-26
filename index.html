@@ -1184,6 +1184,10 @@ function getEngineVFX() {
     render(time) {
       const r = getSharedRenderer(canvas.width, canvas.height);
       if (!r) return;
+      if (!getEngineVFX._once) {
+  console.log('[VFX] renderer OK, createShortNeedleExhaust =', typeof window.createShortNeedleExhaust);
+  getEngineVFX._once = true;
+}
 
       // >>> KLUCZ: poprawny rozmiar/viewport/PPR + czyszczenie
       r.setRenderTarget(null);
