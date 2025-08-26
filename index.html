@@ -1299,7 +1299,7 @@ function drawPhotonBeamLocal(alpha){
   ctx.restore();
 }
 
-function drawMainEngineVfxLocal(localPos, forward, widen = 1.5, yNudge = -6) {
+function drawMainEngineVfxLocal(localPos, forward, widen = 1.5, yNudge = -68) {
   ctx.save();
   // przechodzimy w lokal statku
   ctx.translate(localPos.x, localPos.y);
@@ -1624,7 +1624,7 @@ function render(alpha){
     const moveGlow = Math.min(spd / 900, 0.6) * 0.8;
     const throttle = Math.max(input.main || 0, moveGlow);
     const widen = 1.2 + 0.6 * throttle; // 1.2..1.8
-    drawMainEngineVfxLocal(e.offset, forward, widen, -6);
+    drawMainEngineVfxLocal(e.offset, forward, widen);
   }
 
   // tarcza
