@@ -428,7 +428,7 @@
       this.scene.add(light);
 
       const geom = new THREE.IcosahedronGeometry(1, 1);
-      const mat = new THREE.MeshStandardMaterial({ color: 0x888888, flatShading: true });
+      const mat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, flatShading: true });
       this.mesh = new THREE.InstancedMesh(geom, mat, count);
       const m = new THREE.Matrix4();
       const inner = innerRadius / outerRadius;
@@ -472,7 +472,7 @@
       this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
       this.ctx2d.drawImage(r.domElement, 0, 0);
       // Overlay 2D dots to ensure asteroids are visible
-      this.ctx2d.fillStyle = "#888";
+      this.ctx2d.fillStyle = "#bbb";
       for (const a of this.asteroids) {
         const ang = a.angle + this.rotation;
         const x = this.canvas.width / 2 + Math.cos(ang) * a.radius;
@@ -499,8 +499,10 @@
     if (planetList[3] && planetList[4]) {
       const r1 = planetList[3].orbitRadius;
       const r2 = planetList[4].orbitRadius;
-      const inner = r1 + (r2 - r1) * 0.1;
-      const outer = r2 - (r2 - r1) * 0.1;
+      const mid = (r1 + r2) / 2;
+      const width = (r2 - r1) * 0.2; // węższy, bardziej realistyczny pas
+      const inner = mid - width / 2;
+      const outer = mid + width / 2;
       asteroidBelt = new AsteroidBelt3D(inner, outer);
     }
     if (typeof THREE === "undefined") console.warn("3D planets disabled: THREE not found.");
