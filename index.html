@@ -112,7 +112,9 @@ const ship = {
   linearDamping:0.9, angularDamping:1.6,
   engines:{},
   turret:{ angle:0, angVel:0, maxSpeed:1.8, maxAccel:8.0, damping:2.0,
-           recoil:0, recoilMax:12, recoilRecover:48, recoilKick:14 },
+           recoil:0, recoilMax:12, recoilRecover:48, recoilKick:14, offset:{x:0,y:0} },
+  turret2:{ angle:0, angVel:0, maxSpeed:1.8, maxAccel:8.0, damping:2.0,
+            recoil:0, recoilMax:12, recoilRecover:48, recoilKick:14, offset:{x:0,y:0} },
   shield:{ max:120, val:120, regenRate:6, regenDelay:2, regenTimer:0 },
   hull:{ max:200, val:200 },
   special:{ cooldown:10, cooldownTimer:0 }
@@ -136,6 +138,8 @@ ship.inertia = (1/12) * ship.mass * ((ship.w*ship.w)+(ship.h*ship.h));
     ship.sideGunsLeft.push({ x: -Math.round(hw - inset), y: Math.round(yLocal) });
     ship.sideGunsRight.push({ x:  Math.round(hw - inset), y: Math.round(yLocal) });
   }
+  ship.turret.offset = {x:0,y:0};
+  ship.turret2.offset = {x:0,y:-Math.round(hh*0.5)};
 })();
 
 // =============== Proceduralne gwiazdy na CAŁEJ MAPIE ===============
@@ -553,20 +557,24 @@ function triggerRailVolley(){
   }
 }
 function fireRailBarrel(barIndex){
-  const a = ship.turret.angle;
-  const f = {x:Math.cos(a), y:Math.sin(a)};
-  const p = {x:-Math.sin(a), y:Math.cos(a)};
   const forwardLen = Math.min(ship.h*0.36, 46);
   const gap = 10;
   const sign = (barIndex===0) ? -1 : +1;
-  const px = ship.pos.x + f.x * forwardLen + p.x * (sign * gap/2);
-  const py = ship.pos.y + f.y * forwardLen + p.y * (sign * gap/2);
-  bullets.push({ x:px, y:py, vx: f.x*RAIL_SPEED + ship.vel.x, vy: f.y*RAIL_SPEED + ship.vel.y, life: 2.0, r:4, owner:'player', damage:RAIL_DAMAGE, penetration:RAIL_PEN, type:'rail' });
-  ship.turret.recoil = Math.min(ship.turret.recoil + ship.turret.recoilKick, ship.turret.recoilMax);
-  spawnParticle({x:px, y:py}, {x:0,y:0}, 0.10, '#bfe7ff', 6, true);
-  for(let i=0;i<5;i++){
-    const aa = a + (Math.random()-0.5)*0.14;
-    spawnParticle({x:px + Math.cos(aa)*6, y:py + Math.sin(aa)*6},{x:Math.cos(aa)*220 + ship.vel.x*0.2, y:Math.sin(aa)*220 + ship.vel.y*0.2},0.12,'#bfe7ff',1.6,true);
+  const turrets = [ship.turret, ship.turret2];
+  for(const t of turrets){
+    const a = t.angle;
+    const f = {x:Math.cos(a), y:Math.sin(a)};
+    const p = {x:-Math.sin(a), y:Math.cos(a)};
+    const off = rotate(t.offset, ship.angle);
+    const px = ship.pos.x + off.x + f.x * forwardLen + p.x * (sign * gap/2);
+    const py = ship.pos.y + off.y + f.y * forwardLen + p.y * (sign * gap/2);
+    bullets.push({ x:px, y:py, vx: f.x*RAIL_SPEED + ship.vel.x, vy: f.y*RAIL_SPEED + ship.vel.y, life: 2.0, r:4, owner:'player', damage:RAIL_DAMAGE, penetration:RAIL_PEN, type:'rail' });
+    t.recoil = Math.min(t.recoil + t.recoilKick, t.recoilMax);
+    spawnParticle({x:px, y:py}, {x:0,y:0}, 0.10, '#bfe7ff', 6, true);
+    for(let i=0;i<5;i++){
+      const aa = a + (Math.random()-0.5)*0.14;
+      spawnParticle({x:px + Math.cos(aa)*6, y:py + Math.sin(aa)*6},{x:Math.cos(aa)*220 + ship.vel.x*0.2, y:Math.sin(aa)*220 + ship.vel.y*0.2},0.12,'#bfe7ff',1.6,true);
+    }
   }
   rail.cd[barIndex] = rail.cdMax;
 }
@@ -1032,16 +1040,19 @@ function physicsStep(dt){
     ? leadTarget(ship.pos, ship.vel, lockedTarget, RAIL_SPEED)
     : mouseWorld;
   if(warp.state!=='active'){
-    let diffT = wrapAngle(Math.atan2(aimPos.y - ship.pos.y, aimPos.x - ship.pos.x) - ship.turret.angle);
-    let desiredVel = clamp(diffT * 6.5, -ship.turret.maxSpeed, ship.turret.maxSpeed);
-    const velDelta = desiredVel - ship.turret.angVel;
-    const maxDelta = ship.turret.maxAccel * dt;
-    ship.turret.angVel += clamp(velDelta, -maxDelta, maxDelta);
-    ship.turret.angVel *= Math.exp(-ship.turret.damping * dt);
-    ship.turret.angVel = clamp(ship.turret.angVel, -ship.turret.maxSpeed, ship.turret.maxSpeed);
-    ship.turret.angle = wrapAngle(ship.turret.angle + ship.turret.angVel * dt);
+    for(const t of [ship.turret, ship.turret2]){
+      let diffT = wrapAngle(Math.atan2(aimPos.y - ship.pos.y, aimPos.x - ship.pos.x) - t.angle);
+      let desiredVel = clamp(diffT * 6.5, -t.maxSpeed, t.maxSpeed);
+      const velDelta = desiredVel - t.angVel;
+      const maxDelta = t.maxAccel * dt;
+      t.angVel += clamp(velDelta, -maxDelta, maxDelta);
+      t.angVel *= Math.exp(-t.damping * dt);
+      t.angVel = clamp(t.angVel, -t.maxSpeed, t.maxSpeed);
+      t.angle = wrapAngle(t.angle + t.angVel * dt);
+    }
   }
   ship.turret.recoil = Math.max(0, ship.turret.recoil - ship.turret.recoilRecover * dt);
+  ship.turret2.recoil = Math.max(0, ship.turret2.recoil - ship.turret2.recoilRecover * dt);
 
   // siły
   let totalF = {x:0,y:0}, totalTorque = 0;
@@ -1357,7 +1368,7 @@ const PHYS_DT = 1/120;
 let acc = 0;
 let vfxTime = 0;
 let prevState = null;
-function saveState(){ prevState = { pos:{...ship.pos}, angle: ship.angle, turretAngle: ship.turret.angle }; }
+function saveState(){ prevState = { pos:{...ship.pos}, angle: ship.angle, turretAngle: ship.turret.angle, turretAngle2: ship.turret2.angle }; }
 saveState();
 function loop(now){
   const frame = Math.min(0.033, (now - lastTime)/1000);
@@ -1425,6 +1436,7 @@ function render(alpha){
   };
   const interpAngle = prevState.angle*(1-alpha) + ship.angle*alpha;
   const interpTurretAngle = interpAngleShort(prevState.turretAngle, ship.turret.angle, alpha);
+  const interpTurretAngle2 = interpAngleShort(prevState.turretAngle2, ship.turret2.angle, alpha);
 
   // Kamera
   const cam = { x: interpPos.x, y: interpPos.y };
@@ -1674,17 +1686,24 @@ function render(alpha){
     ctx.lineWidth = 3; ctx.arc(0,0, Math.max(ship.w,ship.h)*0.6, 0, Math.PI*2); ctx.stroke();
   }
 
-  // wieżyczka podwójna z recoilem
-  ctx.save();
-  ctx.rotate(interpTurretAngle - interpAngle);
+  // wieżyczki podwójne z recoilem
   const baseW = 16, baseH = 24, barrelLen = Math.max(22, Math.round(ship.h * 0.24)), barrelH = 6, gap = 10;
-  const recoil = ship.turret.recoil;
-  ctx.fillStyle = '#9ab7ff'; roundRect(ctx, -baseW/2, -baseH/2, baseW, baseH, 5); ctx.fill();
-  ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(30,50,90,0.45)'; ctx.stroke();
-  ctx.fillStyle = '#f1f6ff';
-  roundRect(ctx, 6 - recoil, -gap/2 - barrelH/2, barrelLen, barrelH, 3); ctx.fill(); ctx.stroke();
-  roundRect(ctx, 6 - recoil,  gap/2 - barrelH/2, barrelLen, barrelH, 3); ctx.fill(); ctx.stroke();
-  ctx.restore(); // turret
+  const turrets = [
+    { t: ship.turret, ang: interpTurretAngle },
+    { t: ship.turret2, ang: interpTurretAngle2 }
+  ];
+  for(const {t, ang} of turrets){
+    ctx.save();
+    ctx.translate(t.offset.x, t.offset.y);
+    ctx.rotate(ang - interpAngle);
+    const recoil = t.recoil;
+    ctx.fillStyle = '#9ab7ff'; roundRect(ctx, -baseW/2, -baseH/2, baseW, baseH, 5); ctx.fill();
+    ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(30,50,90,0.45)'; ctx.stroke();
+    ctx.fillStyle = '#f1f6ff';
+    roundRect(ctx, 6 - recoil, -gap/2 - barrelH/2, barrelLen, barrelH, 3); ctx.fill(); ctx.stroke();
+    roundRect(ctx, 6 - recoil,  gap/2 - barrelH/2, barrelLen, barrelH, 3); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
   ctx.restore(); // ship
 
   // scan arrows pointing to stations
