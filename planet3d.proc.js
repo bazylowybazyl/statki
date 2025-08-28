@@ -713,7 +713,7 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
   }
 
   class AsteroidBelt3D {
-    constructor(innerRadius, outerRadius, count = 400) {
+    constructor(innerRadius, outerRadius, count = 200) {
       this.size = outerRadius * 2;
       this.canvas = document.createElement("canvas");
       this.canvas.width = 512;
@@ -729,9 +729,18 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       this.scene.add(light);
 
       const geom = new THREE.IcosahedronGeometry(1, 1);
+      const pos = geom.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        const rand = 0.8 + Math.random() * 0.4;
+        pos.setXYZ(i, pos.getX(i) * rand, pos.getY(i) * rand, pos.getZ(i) * rand);
+      }
+      geom.computeVertexNormals();
       const mat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, flatShading: true });
       this.mesh = new THREE.InstancedMesh(geom, mat, count);
       const m = new THREE.Matrix4();
+      const rotM = new THREE.Matrix4();
+      const scaleM = new THREE.Matrix4();
+      const euler = new THREE.Euler();
       const inner = innerRadius / outerRadius;
       for (let i = 0; i < count; i++) {
         const radius = inner + Math.random() * (1 - inner);
@@ -741,7 +750,11 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
         const z = (Math.random() - 0.5) * 0.1;
         const scale = 0.02 + Math.random() * 0.04;
         m.makeTranslation(x, y, z);
-        m.multiply(new THREE.Matrix4().makeScale(scale, scale, scale));
+        euler.set(Math.random() * TAU, Math.random() * TAU, Math.random() * TAU);
+        rotM.makeRotationFromEuler(euler);
+        scaleM.makeScale(scale, scale, scale);
+        m.multiply(rotM);
+        m.multiply(scaleM);
         this.mesh.setMatrixAt(i, m);
       }
       this.mesh.instanceMatrix.needsUpdate = true;
@@ -755,7 +768,7 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
         this.asteroids.push({
           angle: Math.random() * TAU,
           radius,
-          size: 1 + Math.random() * 2,
+          size: 0.5 + Math.random(),
         });
       }
       this.rotation = 0;
