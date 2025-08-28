@@ -237,13 +237,24 @@ let stations = planets.map(pl => {
   return { id: pl.id, planet: pl, orbitRadius, angle, speed, r: 40, x, y };
 });
 
+// oznacz stacje wewnątrz pasa asteroid
+(() => {
+  if (planets[3] && planets[4]) {
+    const beltRadius = (planets[3].orbitRadius + planets[4].orbitRadius) / 2;
+    for (const st of stations) st.inner = st.orbitRadius < beltRadius;
+  } else {
+    for (const st of stations) st.inner = true;
+  }
+})();
+
 // Warp routes between stations
 let warpRoutes = {};
 function initWarpRoutes(){
   warpRoutes = {};
   for(const from of stations){
+    if(!from.inner) continue;
     for(const to of stations){
-      if(from.id === to.id) continue;
+      if(!to.inner || from.id === to.id) continue;
       const sx = from.x + (to.x - from.x) * 0.2;
       const sy = from.y + (to.y - from.y) * 0.2;
       const ex = from.x + (to.x - from.x) * 0.8;
@@ -266,7 +277,12 @@ function getWarpRoute(fromId, toId){ return warpRoutes[fromId + '-' + toId]; }
 initWarpRoutes();
 
 let npcs = [];
-function pickNextStation(npcId, lastStationId){ let idx = Math.floor(Math.random()*stations.length); if(stations.length>1 && stations[idx].id === lastStationId) idx = (idx+1)%stations.length; return stations[idx].id; }
+function pickNextStation(npcId, lastStationId){
+  const inner = stations.filter(s=>s.inner);
+  let idx = Math.floor(Math.random()*inner.length);
+  if(inner.length>1 && inner[idx].id === lastStationId) idx = (idx+1)%inner.length;
+  return inner[idx].id;
+}
 const NPC_TYPES = {
   'freighter-small':  { radius:12, speed:60, hp:200, color:'#8ab4d6', weapon:null },
   'freighter-medium': { radius:24, speed:55, hp:400, color:'#769cb8', weapon:null },
@@ -301,7 +317,8 @@ function initNPCs(){
     return npc;
   }
   function spawnFreighterEscortGroup(fType, escortMin, escortMax){
-    const start = stations[Math.floor(Math.random()*stations.length)];
+    const inner = stations.filter(s=>s.inner);
+    const start = inner[Math.floor(Math.random()*inner.length)];
     const targetId = pickNextStation(npcId, start.id);
     const group = groupCounter++;
     const leader = spawnNPC(fType, start, targetId, group);
@@ -320,7 +337,8 @@ function initNPCs(){
     }
   }
   function spawnCivilianGroup(min, max){
-    const start = stations[Math.floor(Math.random()*stations.length)];
+    const inner = stations.filter(s=>s.inner);
+    const start = inner[Math.floor(Math.random()*inner.length)];
     const targetId = pickNextStation(npcId, start.id);
     const group = groupCounter++;
     spawnNPC('freighter-small', start, targetId, group);
@@ -331,7 +349,8 @@ function initNPCs(){
     }
   }
   function spawnPolicePatrol(min, max){
-    const start = stations[Math.floor(Math.random()*stations.length)];
+    const inner = stations.filter(s=>s.inner);
+    const start = inner[Math.floor(Math.random()*inner.length)];
     const targetId = pickNextStation(npcId, start.id);
     const group = groupCounter++;
     const count = min + Math.floor(Math.random()*(max-min+1));
@@ -722,7 +741,8 @@ function npcStep(dt){
     if(npc.dead){
       npc.respawnTimer -= dt;
       if(npc.respawnTimer<=0){
-        const start = stations[Math.floor(Math.random()*stations.length)];
+        const inner = stations.filter(s=>s.inner);
+        const start = inner[Math.floor(Math.random()*inner.length)];
         const targetId = pickNextStation(npc.id, start.id);
         npc.x = start.x + (Math.random()-0.5)*40;
         npc.y = start.y + (Math.random()-0.5)*40;
