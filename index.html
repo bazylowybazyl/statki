@@ -51,6 +51,8 @@
 // =============== Canvas & utils ===============
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
+const policeShipImg = new Image();
+policeShipImg.src = 'assets/policja.svg';
 let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
 window.addEventListener('resize', ()=>{ W = canvas.width = innerWidth; H = canvas.height = innerHeight; initStars(true); });
 
@@ -1638,14 +1640,18 @@ function render(alpha){
   const shipS = worldToScreen(interpPos.x, interpPos.y, cam);
   ctx.save(); ctx.translate(shipS.x, shipS.y); ctx.scale(camera.zoom, camera.zoom); ctx.rotate(interpAngle);
 
-  // cień + kadłub
-  ctx.fillStyle = 'rgba(3,8,18,0.8)';
-  ctx.fillRect(-ship.w/2 + 6, -ship.h/2 + 8, ship.w, ship.h);
-  const g = ctx.createLinearGradient(-ship.w/2, -ship.h/2, ship.w/2, ship.h/2);
-  g.addColorStop(0, '#1d2740'); g.addColorStop(1, '#2d3b55');
-  ctx.fillStyle = g; roundRect(ctx, -ship.w/2, -ship.h/2, ship.w, ship.h, 10); ctx.fill();
-  ctx.fillStyle = '#a8d1ff'; ctx.beginPath();
-  ctx.ellipse(0, -6, ship.w*0.22, ship.h*0.22, 0, 0, Math.PI*2); ctx.fill();
+  if (policeShipImg.complete) {
+    ctx.drawImage(policeShipImg, -ship.w/2, -ship.h/2, ship.w, ship.h);
+  } else {
+    // cień + kadłub
+    ctx.fillStyle = 'rgba(3,8,18,0.8)';
+    ctx.fillRect(-ship.w/2 + 6, -ship.h/2 + 8, ship.w, ship.h);
+    const g = ctx.createLinearGradient(-ship.w/2, -ship.h/2, ship.w/2, ship.h/2);
+    g.addColorStop(0, '#1d2740'); g.addColorStop(1, '#2d3b55');
+    ctx.fillStyle = g; roundRect(ctx, -ship.w/2, -ship.h/2, ship.w, ship.h, 10); ctx.fill();
+    ctx.fillStyle = '#a8d1ff'; ctx.beginPath();
+    ctx.ellipse(0, -6, ship.w*0.22, ship.h*0.22, 0, 0, Math.PI*2); ctx.fill();
+  }
 
   // główny niebieski nozzle
   const mainE = ship.engines.main;
