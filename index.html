@@ -295,15 +295,15 @@ function pickNextStation(npcId, lastStationId){
   return inner[idx].id;
 }
 const NPC_TYPES = {
-  'freighter-small':  { radius:12, speed:60, hp:200, color:'#8ab4d6', weapon:null },
-  'freighter-medium': { radius:24, speed:55, hp:400, color:'#769cb8', weapon:null },
-  'freighter-large':  { radius:48, speed:50, hp:800, color:'#5d829c', weapon:null },
-  'freighter-capital':{ radius:96, speed:45, hp:2000, color:'#45667d', weapon:null },
-  'police':           { radius:24, speed:100, hp:1000, color:'#44aaff', weapon:'railgun' },
-  'civilian-small':   { radius:6, speed:100, hp:60, color:'#cccccc', weapon:null },
-  'civilian-large':   { radius:12, speed:80, hp:100, color:'#bbbbbb', weapon:null },
-  'guard':            { radius:20, speed:95, hp:2000, color:'#ff9933', weapon:'gun' },
-  'mercenary':        { radius:25, speed:95, hp:4000, color:'#ff6633', weapon:'gun' }
+  'freighter-small':  { radius:10, speed:60, hp:100, color:'#8ab4d6', weapon:null },
+  'freighter-medium': { radius:15, speed:55, hp:150, color:'#769cb8', weapon:null },
+  'freighter-large':  { radius:25, speed:50, hp:200, color:'#5d829c', weapon:null },
+  'freighter-capital':{ radius:48, speed:45, hp:400, color:'#45667d', weapon:null },
+  'police':           { radius:24, speed:100, hp:200, color:'#44aaff', weapon:'railgun' },
+  'civilian-small':   { radius:6, speed:100, hp:10, color:'#cccccc', weapon:null },
+  'civilian-large':   { radius:12, speed:80, hp:50, color:'#bbbbbb', weapon:null },
+  'guard':            { radius:20, speed:95, hp:100, color:'#ff9933', weapon:'gun' },
+  'mercenary':        { radius:25, speed:95, hp:100, color:'#ff6633', weapon:'gun' }
 };
 function initNPCs(){
   npcs = [];
@@ -368,13 +368,13 @@ function initNPCs(){
     for(let i=0;i<count;i++) spawnNPC('police', start, targetId, group);
   }
   while(npcs.length < desiredCount){
-    spawnFreighterEscortGroup('freighter-small',1,2);
-    spawnFreighterEscortGroup('freighter-medium',2,3);
-    spawnFreighterEscortGroup('freighter-large',3,5);
-    spawnFreighterEscortGroup('freighter-capital',5,8);
-    spawnCivilianGroup(3,5);
-    spawnCivilianGroup(6,8);
-    spawnPolicePatrol(3,5);
+    spawnFreighterEscortGroup('freighter-small',0,0);
+    spawnFreighterEscortGroup('freighter-medium',0,0);
+    spawnFreighterEscortGroup('freighter-large',0,0);
+    spawnFreighterEscortGroup('freighter-capital',0,0);
+    spawnCivilianGroup(1,2);
+    spawnCivilianGroup(1,2);
+    spawnPolicePatrol(1,2);
   }
 }
 // Ensure Three.js modules are loaded before initializing 3D objects
