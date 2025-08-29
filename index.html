@@ -606,8 +606,8 @@ function tryFireSpecial(){
   const length = 2000;
   const end = { x: start.x + dir.x*length, y: start.y + dir.y*length };
   const width = ship.w;
-  for(const npc of npcs){
-    if(npc.dead) continue;
+  const npcsInRange = npcs.filter(npc => !npc.dead && Math.hypot(npc.x - start.x, npc.y - start.y) < length + npc.radius);
+  for(const npc of npcsInRange){
     const vx = npc.x - start.x;
     const vy = npc.y - start.y;
     const proj = vx*dir.x + vy*dir.y;
