@@ -1659,7 +1659,7 @@ function render(alpha){
 
   // Particles (za statkiem)
   for(const p of particles){
-    if(p.flash) continue;
+    if(p.flash || p.beam) continue;
     const s = worldToScreen(p.pos.x, p.pos.y, cam);
     const t = clamp(1 - p.age/p.life, 0, 1);
     ctx.globalAlpha = t;
