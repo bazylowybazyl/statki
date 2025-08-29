@@ -413,6 +413,10 @@ function spawnDefaultHit(x,y,scale=1){
   spawnParticle({x,y}, {x:0,y:0}, 0.08, '#ffffff', 4 * scale, true);
 }
 
+function spawnLaserBeam(start, end, width){
+  particles.push({ beam:true, start:{...start}, end:{...end}, width, age:0, life:0.15 });
+}
+
 // =============== Input ===============
 const input = { main:0, leftSide:0, rightSide:0, torque:0 };
 const keys = {};
@@ -590,19 +594,30 @@ function fireRailBarrel(barIndex){
 function tryFireSpecial(){
   if(ship.special.cooldownTimer>0) return;
   ship.special.cooldownTimer = SPECIAL_COOLDOWN;
-  const a = ship.turret.angle;
-  const cx = ship.pos.x + Math.cos(a)*160;
-  const cy = ship.pos.y + Math.sin(a)*160;
-  const radius = 160;
+  const dir = rotate({x:0,y:-1}, ship.angle);
+  const start = add(ship.pos, rotate({x:0, y:-ship.h/2}, ship.angle));
+  const length = 2000;
+  const end = { x: start.x + dir.x*length, y: start.y + dir.y*length };
+  const width = ship.w;
   for(const npc of npcs){
     if(npc.dead) continue;
-    const d = Math.hypot(npc.x-cx, npc.y-cy);
-    if(d < radius + npc.radius){
+    const vx = npc.x - start.x;
+    const vy = npc.y - start.y;
+    const proj = vx*dir.x + vy*dir.y;
+    if(proj < 0 || proj > length) continue;
+    const perp = Math.abs(vx*dir.y - vy*dir.x);
+    if(perp <= npc.radius + width*0.5){
       applyDamageToNPC(npc,80,'none');
-      spawnExplosionPlasma(npc.x,npc.y,1.2);
+      spawnParticle({x:npc.x, y:npc.y}, {x:0,y:0}, 0.12, '#9ccfff', 6, true);
     }
   }
-  spawnExplosionPlasma(cx,cy,2);
+  spawnLaserBeam(start, end, width);
+  for(let i=0;i<8;i++){
+    const t = i/7;
+    const px = start.x + dir.x*length*t + (Math.random()-0.5)*width*0.3;
+    const py = start.y + dir.y*length*t + (Math.random()-0.5)*width*0.3;
+    spawnParticle({x:px, y:py}, {x:(Math.random()-0.5)*120, y:(Math.random()-0.5)*120}, 0.2, '#9ccfff', 2.5, true);
+  }
 }
 function applyDamageToPlayer(amount){
   if(ship.shield.val>0){ const s = Math.min(ship.shield.val, amount); ship.shield.val -= s; amount -= s; ship.shield.regenTimer = ship.shield.regenDelay; }
@@ -727,6 +742,7 @@ function bulletsAndCollisionsStep(dt){
   for(let i=particles.length-1;i>=0;i--){
     const p = particles[i];
     p.age += dt; if(p.age >= p.life){ particles.splice(i,1); continue; }
+    if(p.beam) continue;
     p.vel.x *= 0.98; p.vel.y *= 0.98; p.vel.y += 8*dt;
     p.pos.x += p.vel.x*dt; p.pos.y += p.vel.y*dt;
   }
@@ -1514,6 +1530,27 @@ function render(alpha){
     ctx.beginPath(); ctx.arc(s.x, s.y, rr*1.05, 0, Math.PI*2); ctx.stroke();
     ctx.fillStyle = '#dfe7ff'; ctx.font = `${12*camera.zoom}px monospace`;
     ctx.fillText('ST'+st.id, s.x - rr*0.35, s.y + 4*camera.zoom);
+  }
+
+  // Laser beams
+  for(const p of particles){
+    if(!p.beam) continue;
+    const s1 = worldToScreen(p.start.x, p.start.y, cam);
+    const s2 = worldToScreen(p.end.x, p.end.y, cam);
+    const t = clamp(1 - p.age/p.life, 0, 1);
+    ctx.save();
+    ctx.globalAlpha = t;
+    ctx.lineCap = 'round';
+    ctx.shadowBlur = 30 * camera.zoom;
+    ctx.shadowColor = 'rgba(120,180,255,0.9)';
+    ctx.strokeStyle = 'rgba(160,210,255,0.7)';
+    ctx.lineWidth = p.width * camera.zoom * 1.4;
+    ctx.beginPath(); ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.stroke();
+    ctx.restore();
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = 'rgba(220,240,255,1.0)';
+    ctx.lineWidth = p.width * camera.zoom * 0.6;
+    ctx.beginPath(); ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.stroke();
   }
 
   // Pociski
