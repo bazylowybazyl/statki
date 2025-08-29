@@ -716,8 +716,9 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
     constructor(innerRadius, outerRadius, count = 200) {
       this.size = outerRadius * 2;
       this.canvas = document.createElement("canvas");
-      this.canvas.width = 512;
-      this.canvas.height = 512;
+      // wyższa rozdzielczość, żeby nie było "mgły" po skalowaniu
+      this.canvas.width = 1024;
+      this.canvas.height = 1024;
       this.ctx2d = this.canvas.getContext("2d");
       if (typeof THREE === "undefined") return;
 
@@ -725,8 +726,12 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
       this.camera.position.z = 5;
 
-      const light = new THREE.AmbientLight(0xffffff, 1.0);
-      this.scene.add(light);
+      // subtelne tło + kierunkowe "od słońca"
+      this.scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+      const sunDir = new THREE.DirectionalLight(0xffffff, 1.35);
+      // kierunek lekko z góry i z boku (ładne kontrasty bez przepaleń)
+      sunDir.position.set(1, 1, 2).normalize();
+      this.scene.add(sunDir);
 
       const geom = new THREE.IcosahedronGeometry(1, 1);
       const pos = geom.attributes.position;
@@ -735,7 +740,13 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
         pos.setXYZ(i, pos.getX(i) * rand, pos.getY(i) * rand, pos.getZ(i) * rand);
       }
       geom.computeVertexNormals();
-      const mat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, flatShading: true });
+      // kamienna, matowa powierzchnia; kolor łatwo zmienisz .color.set(...)
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xD9D9D9,        // jasnoszary (możesz podmienić na #ffffff dla "białych")
+        roughness: 0.92,
+        metalness: 0.0,
+        flatShading: true
+      });
       this.mesh = new THREE.InstancedMesh(geom, mat, count);
       const m = new THREE.Matrix4();
       const rotM = new THREE.Matrix4();
@@ -760,17 +771,7 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       this.mesh.instanceMatrix.needsUpdate = true;
       this.scene.add(this.mesh);
       this.rotationSpeed = 0.02;
-      const innerPx = inner * (this.canvas.width / 2);
-      const outerPx = this.canvas.width / 2;
-      this.asteroids = [];
-      for (let i = 0; i < count; i++) {
-        const radius = innerPx + Math.random() * (outerPx - innerPx);
-        this.asteroids.push({
-          angle: Math.random() * TAU,
-          radius,
-          size: 0.5 + Math.random(),
-        });
-      }
+      // usuwamy generator "kropek 2D" — nie będzie drugiego pasa
       this.rotation = 0;
     }
 
@@ -783,15 +784,7 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       r.render(this.scene, this.camera);
       this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
       this.ctx2d.drawImage(r.domElement, 0, 0);
-      this.ctx2d.fillStyle = "#bbb";
-      for (const a of this.asteroids) {
-        const ang = a.angle + this.rotation;
-        const x = this.canvas.width / 2 + Math.cos(ang) * a.radius;
-        const y = this.canvas.height / 2 + Math.sin(ang) * a.radius;
-        this.ctx2d.beginPath();
-        this.ctx2d.arc(x, y, a.size, 0, TAU);
-        this.ctx2d.fill();
-      }
+      // bez nakładki kropek 2D
     }
   }
 
