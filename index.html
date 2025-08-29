@@ -497,7 +497,9 @@ canvas.addEventListener('mousedown', e=>{
     if(!warp.isBusy()){
       const mouseWorld = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom, y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
       const local = rotateInv({ x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y }, ship.angle);
-      const side = (local.x >= 0) ? 'right' : 'left'; requestSalvo(side);
+      const side = (local.x >= 0) ? 'right' : 'left';
+      fireRocket(side);
+      rocketCooldown = ROCKET_FIRE_INTERVAL;
     }
   }
   if(e.button===1){ e.preventDefault(); camera.zoom = Math.abs(camera.zoom - camera.defaultZoom) < 0.03 ? camera.altZoom : camera.defaultZoom; }
@@ -507,30 +509,27 @@ canvas.addEventListener('contextmenu', e=>e.preventDefault());
 canvas.addEventListener('wheel', e=>{ e.preventDefault(); const f = 1 - e.deltaY * camera.wheelSpeed; camera.zoom *= f; camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom); }, {passive:false});
 
 // =============== Side rockets ===============
-const SIDE_RELOAD_TIME = 5.0; let reloadLeft = 1.0, reloadRight = 1.0;
+const ROCKET_FIRE_INTERVAL = 0.11;
+const ROCKET_AMMO_MAX = 100;
+let rocketAmmo = ROCKET_AMMO_MAX;
+let rocketCooldown = 0;
+let nextRocketIndexLeft = 0, nextRocketIndexRight = 0;
 const SIDE_BULLET_SPEED = 760, SIDE_BULLET_DAMAGE = 20;
 const SIDE_PLASMA_EXPLODE_RADIUS = 48;
 const SIDE_ROCKET_TURN_RATE = 6;
 const SIDE_ROCKET_HOMING_DELAY = 0.25;
 const SPECIAL_COOLDOWN = 10; ship.special.cooldownTimer = 0;
 
-const activeSalvos = [];
-const SALVO_DEFAULT = { rounds: 6 * 4, burstInterval: 0.11, gunsPerBurst: 1 };
-
-function requestSalvo(side){
-  if(side==='left' && reloadLeft < 1) return;
-  if(side==='right' && reloadRight < 1) return;
-  if(activeSalvos.some(s=>s.side===side)) return;
-  const set = (side==='left') ? ship.sideGunsLeft.slice() : ship.sideGunsRight.slice();
-  shuffleArray(set);
-  const baseTargets = lockedTargets.length ? lockedTargets.slice() : (lockedTarget ? [lockedTarget] : []);
-  const targets = baseTargets.filter(n=>!n.dead)
-    .sort((a,b)=>Math.hypot(a.x-ship.pos.x,a.y-ship.pos.y) - Math.hypot(b.x-ship.pos.x,b.y-ship.pos.y));
-  const queue = [];
-  for(const t of targets){ for(let i=0;i<3;i++) queue.push(t); }
-  const rounds = queue.length ? queue.length : SALVO_DEFAULT.rounds;
-  activeSalvos.push({ side, guns: set, nextIndex: 0, timeToNext: 0.0, roundsLeft: rounds, burstInterval: SALVO_DEFAULT.burstInterval, gunsPerBurst: SALVO_DEFAULT.gunsPerBurst, targets: queue, targetIdx:0 });
-  if(side==='left') reloadLeft = 0; else reloadRight = 0;
+function fireRocket(side){
+  if(rocketAmmo <= 0) return;
+  const guns = side === 'left' ? ship.sideGunsLeft : ship.sideGunsRight;
+  const idx = side === 'left' ? nextRocketIndexLeft : nextRocketIndexRight;
+  const gunOff = guns[idx % guns.length];
+  const target = (lockedTarget && !lockedTarget.dead) ? lockedTarget : null;
+  fireSideGunAtOffset(gunOff, side, target);
+  if(side === 'left') nextRocketIndexLeft = (idx + 1) % guns.length;
+  else nextRocketIndexRight = (idx + 1) % guns.length;
+  rocketAmmo--;
 }
 
 function fireSideGunAtOffset(gunOff, side, target=null){
@@ -978,10 +977,15 @@ function physicsStep(dt){
   ship.special.cooldownTimer = Math.max(0, ship.special.cooldownTimer - dt);
   if(ship.shield.regenTimer > 0) ship.shield.regenTimer -= dt;
   else ship.shield.val = clamp(ship.shield.val + ship.shield.regenRate * dt, 0, ship.shield.max);
-  reloadLeft = clamp(reloadLeft + dt/SIDE_RELOAD_TIME, 0, 1);
-  reloadRight = clamp(reloadRight + dt/SIDE_RELOAD_TIME, 0, 1);
+  rocketCooldown = Math.max(0, rocketCooldown - dt);
   // mouse world position
   const mouseWorld = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom, y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
+  if(mouse.right && !warp.isBusy() && rocketAmmo > 0 && rocketCooldown <= 0){
+    const local = rotateInv({ x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y }, ship.angle);
+    const side = (local.x >= 0) ? 'right' : 'left';
+    fireRocket(side);
+    rocketCooldown = ROCKET_FIRE_INTERVAL;
+  }
 
   // hover scanning
   let hover = null;
@@ -1160,27 +1164,6 @@ function physicsStep(dt){
   ship.angVel += angAcc*dt;
   ship.angVel *= Math.exp(-ship.angularDamping*dt);
   ship.angle += ship.angVel*dt;
-
-  // salwy boczne (idle)
-  if(warp.state==='idle'){
-    for(let si = activeSalvos.length - 1; si >= 0; si--){
-      const salvo = activeSalvos[si];
-      salvo.timeToNext -= dt;
-      if(salvo.timeToNext <= 0 && salvo.roundsLeft > 0){
-        for(let g=0; g < salvo.gunsPerBurst; g++){
-          const idx = (salvo.nextIndex + g) % salvo.guns.length;
-          const gunOff = salvo.guns[idx];
-          const target = salvo.targets ? salvo.targets[salvo.targetIdx] : null;
-          if(salvo.targets) salvo.targetIdx++;
-          fireSideGunAtOffset(gunOff, salvo.side, target);
-        }
-        salvo.nextIndex = (salvo.nextIndex + salvo.gunsPerBurst) % salvo.guns.length;
-        salvo.roundsLeft--;
-        salvo.timeToNext += salvo.burstInterval;
-      }
-      if(salvo.roundsLeft <= 0) activeSalvos.splice(si,1);
-    }
-  }
 
   npcStep(dt);
   bulletsAndCollisionsStep(dt);
@@ -1799,15 +1782,12 @@ function render(alpha){
   const railTimerHUD = Math.min(rail.cd[0], rail.cd[1]);
   ctx.fillText(`Rail: ${railTimerHUD>0?railTimerHUD.toFixed(2)+'s':'READY'}  Special: ${ship.special.cooldownTimer>0?ship.special.cooldownTimer.toFixed(1)+'s':'READY'}`, 12, H-28);
 
-  // paski bocznych
+  // rocket ammo
   const bw = 160, bh = 10;
+  const ammoFrac = rocketAmmo / ROCKET_AMMO_MAX;
   ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.strokeRect(12-1, H-12-bh-12, bw+2, bh+2);
-  ctx.fillStyle = '#3b82f6'; ctx.fillRect(12, H-12-bh-12, bw*reloadLeft, bh);
-  ctx.fillStyle = '#dfe7ff'; ctx.fillText('Left salvos', 12 + bw + 8, H-12-bh-6-12);
-
-  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.strokeRect(12-1, H-12, bw+2, bh+2);
-  ctx.fillStyle = '#ef4444'; ctx.fillRect(12, H-12, bw*reloadRight, bh);
-  ctx.fillStyle = '#dfe7ff'; ctx.fillText('Right salvos', 12 + bw + 8, H-12 + bh - 2);
+  ctx.fillStyle = '#3b82f6'; ctx.fillRect(12, H-12-bh-12, bw*ammoFrac, bh);
+  ctx.fillStyle = '#dfe7ff'; ctx.fillText(`Rockets: ${rocketAmmo}`, 12 + bw + 8, H-12-bh-6-12);
 
   if(showMap) drawSectorMap();
 }
