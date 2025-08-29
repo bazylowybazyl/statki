@@ -138,8 +138,15 @@ ship.inertia = (1/12) * ship.mass * ((ship.w*ship.w)+(ship.h*ship.h));
     ship.sideGunsLeft.push({ x: -Math.round(hw - inset), y: Math.round(yLocal) });
     ship.sideGunsRight.push({ x:  Math.round(hw - inset), y: Math.round(yLocal) });
   }
-  ship.turret.offset = {x:0,y:0};
-  ship.turret2.offset = {x:0,y:-Math.round(hh*0.5)};
+  const podW = 30, podH = 60;
+  const podX = Math.round(hw + podW/2 - 6);
+  const podY = Math.round(hh - podH/2 - 20);
+  ship.pods = [
+    { offset:{ x: -podX, y: podY }, w: podW, h: podH },
+    { offset:{ x:  podX, y: podY }, w: podW, h: podH }
+  ];
+  ship.turret.offset = { x: -podX, y: podY };
+  ship.turret2.offset = { x:  podX, y: podY };
 })();
 
 // =============== Proceduralne gwiazdy na CAŁEJ MAPIE ===============
@@ -1646,6 +1653,16 @@ function render(alpha){
   ctx.fillStyle = g; roundRect(ctx, -ship.w/2, -ship.h/2, ship.w, ship.h, 10); ctx.fill();
   ctx.fillStyle = '#a8d1ff'; ctx.beginPath();
   ctx.ellipse(0, -6, ship.w*0.22, ship.h*0.22, 0, 0, Math.PI*2); ctx.fill();
+
+  // boczne dobudówki
+  for(const pod of ship.pods){
+    ctx.save();
+    ctx.translate(pod.offset.x, pod.offset.y);
+    const pg = ctx.createLinearGradient(-pod.w/2, -pod.h/2, pod.w/2, pod.h/2);
+    pg.addColorStop(0, '#1d2740'); pg.addColorStop(1, '#2d3b55');
+    ctx.fillStyle = pg; roundRect(ctx, -pod.w/2, -pod.h/2, pod.w, pod.h, 6); ctx.fill();
+    ctx.restore();
+  }
 
   // główny niebieski nozzle
   const mainE = ship.engines.main;
