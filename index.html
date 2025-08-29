@@ -393,8 +393,18 @@ window.addEventListener('DOMContentLoaded', () => {
 // =============== Bullets & effects ===============
 const bullets = [];
 const particles = [];
+const MAX_PARTICLES = 8000;          // twardy sufit (dobry balans)
+const MAX_PARTICLES_DRAW = 4500;     // ile maks. rysujemy na ekranie
+
+function pushParticleSafe(p){
+  if (particles.length < MAX_PARTICLES) particles.push(p);
+}
+
 function spawnParticle(pos, vel, life, color, size, flash){
-  particles.push({ pos:{...pos}, vel:{...vel}, life, age:0, color: color||'#ffb677', size: size||2, flash: !!flash });
+  pushParticleSafe({
+    pos:{...pos}, vel:{...vel}, life, age:0,
+    color: color||'#ffb677', size: size||2, flash: !!flash
+  });
 }
 function spawnExplosionPlasma(x,y,scale=1){
   const count = Math.round(22 * scale);
@@ -422,7 +432,7 @@ function spawnDefaultHit(x,y,scale=1){
 }
 
 function spawnLaserBeam(start, end, width){
-  particles.push({ beam:true, start:{...start}, end:{...end}, width, age:0, life:0.15 });
+  pushParticleSafe({ beam:true, start:{...start}, end:{...end}, width, age:0, life:0.12 });
 }
 
 // =============== Input ===============
@@ -607,15 +617,18 @@ function tryFireSpecial(){
   const end = { x: start.x + dir.x*length, y: start.y + dir.y*length };
   const width = ship.w;
   const npcsInRange = npcs.filter(npc => !npc.dead && Math.hypot(npc.x - start.x, npc.y - start.y) < length + npc.radius);
-  for(const npc of npcsInRange){
-    const vx = npc.x - start.x;
-    const vy = npc.y - start.y;
+  let hits = 0;
+  const HIT_CAP = 80; // wystarczająco dużo, by czuć „miotłę”, ale bez zgonu CPU
+  for (const npc of npcsInRange){
+    if (hits >= HIT_CAP) break;
+    const vx = npc.x - start.x, vy = npc.y - start.y;
     const proj = vx*dir.x + vy*dir.y;
-    if(proj < 0 || proj > length) continue;
+    if (proj < 0 || proj > length) continue;
     const perp = Math.abs(vx*dir.y - vy*dir.x);
-    if(perp <= npc.radius + width*0.5){
-      applyDamageToNPC(npc,80,'none');
-      spawnParticle({x:npc.x, y:npc.y}, {x:0,y:0}, 0.12, '#9ccfff', 6, true);
+    if (perp <= npc.radius + width*0.5){
+      applyDamageToNPC(npc, 80, 'none');
+      if ((hits & 1) === 0) spawnParticle({x:npc.x, y:npc.y}, {x:0,y:0}, 0.10, '#9ccfff', 5, true);
+      hits++;
     }
   }
   spawnLaserBeam(start, end, width);
@@ -1657,15 +1670,20 @@ function render(alpha){
     ctx.beginPath(); ctx.arc(s.x, s.y, rad, 0, Math.PI*2); ctx.stroke();
   }
 
-  // Particles (za statkiem)
-  for(const p of particles){
-    if(p.flash || p.beam) continue;
-    const s = worldToScreen(p.pos.x, p.pos.y, cam);
-    const t = clamp(1 - p.age/p.life, 0, 1);
-    ctx.globalAlpha = t;
-    ctx.beginPath(); ctx.fillStyle = p.color;
-    ctx.arc(s.x, s.y, p.size * camera.zoom, 0, Math.PI*2); ctx.fill();
-    ctx.globalAlpha = 1;
+  // Particles (za statkiem) — zwykłe
+  {
+    let drawn = 0;
+    for (let i = particles.length - 1; i >= 0 && drawn < MAX_PARTICLES_DRAW; i--){
+      const p = particles[i];
+      if (p.flash || p.beam) continue;
+      drawn++;
+      const s = worldToScreen(p.pos.x, p.pos.y, cam);
+      const t = clamp(1 - p.age/p.life, 0, 1);
+      ctx.globalAlpha = t;
+      ctx.beginPath(); ctx.fillStyle = p.color;
+      ctx.arc(s.x, s.y, p.size * camera.zoom, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
   }
 
   // Efekt dopalacza
@@ -1797,25 +1815,30 @@ function render(alpha){
   }
 
   // Particles typu "flash" na samym wierzchu
-  for(const p of particles){
-    if(!p.flash) continue;
-    const s = worldToScreen(p.pos.x, p.pos.y, cam);
-    const t = clamp(1 - p.age/p.life, 0, 1);
-    ctx.globalAlpha = t;
-    ctx.save();
-    ctx.shadowBlur = 20 * camera.zoom * (p.size/2);
-    let shadowColor = p.color;
-    if(p.color === '#bfe7ff') shadowColor = 'rgba(120,200,255,0.9)';
-    if(p.color === '#ffd8c4') shadowColor = 'rgba(255,180,120,0.9)';
-    if(p.color === '#7CFF7C' || p.color === '#a8ff9a') shadowColor = 'rgba(120,255,140,0.95)';
-    if(p.color === '#ffffff') shadowColor = 'rgba(255,255,255,0.95)';
-    ctx.shadowColor = shadowColor;
-    ctx.beginPath(); ctx.fillStyle = p.color;
-    ctx.arc(s.x, s.y, (p.size * 3) * camera.zoom, 0, Math.PI*2); ctx.fill();
-    ctx.restore();
-    ctx.beginPath(); ctx.fillStyle = p.color;
-    ctx.arc(s.x, s.y, p.size * camera.zoom, 0, Math.PI*2); ctx.fill();
-    ctx.globalAlpha = 1;
+  {
+    let drawn = 0;
+    for (let i = particles.length - 1; i >= 0 && drawn < MAX_PARTICLES_DRAW; i--){
+      const p = particles[i];
+      if (!p.flash) continue;
+      drawn++;
+      const s = worldToScreen(p.pos.x, p.pos.y, cam);
+      const t = clamp(1 - p.age/p.life, 0, 1);
+      ctx.globalAlpha = t;
+      ctx.save();
+      ctx.shadowBlur = 20 * camera.zoom * (p.size/2);
+      let shadowColor = p.color;
+      if(p.color === '#bfe7ff') shadowColor = 'rgba(120,200,255,0.9)';
+      if(p.color === '#ffd8c4') shadowColor = 'rgba(255,180,120,0.9)';
+      if(p.color === '#7CFF7C' || p.color === '#a8ff9a') shadowColor = 'rgba(120,255,140,0.95)';
+      if(p.color === '#ffffff') shadowColor = 'rgba(255,255,255,0.95)';
+      ctx.shadowColor = shadowColor;
+      ctx.beginPath(); ctx.fillStyle = p.color;
+      ctx.arc(s.x, s.y, (p.size * 3) * camera.zoom, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+      ctx.beginPath(); ctx.fillStyle = p.color;
+      ctx.arc(s.x, s.y, p.size * camera.zoom, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
   }
 
   // HUD
