@@ -1750,6 +1750,31 @@ function render(alpha){
     drawMainEngineVfxLocal(e.offset, forward, widen);
   }
 
+  // status circle (hull/shield/speed/rockets) behind shield
+  {
+    const hullFrac = ship.hull.val / ship.hull.max;
+    const shieldFrac = ship.shield.val / ship.shield.max;
+    const r = Math.max(ship.w, ship.h) * 0.6;
+    ctx.save();
+    ctx.rotate(-interpAngle);
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    ctx.beginPath(); ctx.arc(0,0,r,-Math.PI/2,-Math.PI/2 - Math.PI,true); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0,0,r,-Math.PI/2,-Math.PI/2 + Math.PI,false); ctx.stroke();
+    ctx.strokeStyle = '#ef4444';
+    ctx.beginPath(); ctx.arc(0,0,r,-Math.PI/2,-Math.PI/2 - Math.PI*hullFrac,true); ctx.stroke();
+    ctx.strokeStyle = '#3b82f6';
+    ctx.beginPath(); ctx.arc(0,0,r,-Math.PI/2,-Math.PI/2 + Math.PI*shieldFrac,false); ctx.stroke();
+    ctx.fillStyle = '#dfe7ff';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const speed = Math.round(Math.hypot(ship.vel.x, ship.vel.y));
+    ctx.fillText(`${speed}`, 0, -r - 8);
+    if(rocketAmmo < ROCKET_AMMO_MAX) ctx.fillText(`${rocketAmmo}`, 0, r + 8);
+    ctx.restore();
+  }
+
   // tarcza
   const sp = ship.shield.val / ship.shield.max;
   if(sp > 0.005){
