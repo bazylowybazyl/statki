@@ -1087,12 +1087,14 @@ function physicsStep(dt){
   }
 
   // turret aim (poza warp active)
-  const aimPos = (lockedTarget && !lockedTarget.dead)
-    ? leadTarget(ship.pos, ship.vel, lockedTarget, RAIL_SPEED)
-    : mouseWorld;
   if(warp.state!=='active'){
     for(const t of [ship.turret, ship.turret2, ship.turret3, ship.turret4]){
-      let diffT = wrapAngle(Math.atan2(aimPos.y - ship.pos.y, aimPos.x - ship.pos.x) - t.angle);
+      const off = rotate(t.offset, ship.angle);
+      const base = { x: ship.pos.x + off.x, y: ship.pos.y + off.y };
+      const aimPos = (lockedTarget && !lockedTarget.dead)
+        ? leadTarget(base, ship.vel, lockedTarget, RAIL_SPEED)
+        : mouseWorld;
+      let diffT = wrapAngle(Math.atan2(aimPos.y - base.y, aimPos.x - base.x) - t.angle);
       let desiredVel = clamp(diffT * 6.5, -t.maxSpeed, t.maxSpeed);
       const velDelta = desiredVel - t.angVel;
       const maxDelta = t.maxAccel * dt;
