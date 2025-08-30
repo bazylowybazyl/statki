@@ -633,7 +633,8 @@ function ciwsStep(dt){
       if(d < dist){ dist = d; target = npc; }
     }
     if(target){
-      const desired = Math.atan2(target.y - base.y, target.x - base.x);
+      const aim = leadTarget(base, ship.vel, target, CIWS_BULLET_SPEED);
+      const desired = Math.atan2(aim.y - base.y, aim.x - base.x);
       let diff = wrapAngle(desired - gun.angle);
       let desiredVel = clamp(diff * 8, -6, 6);
       const velDelta = desiredVel - gun.angVel;
