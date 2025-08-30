@@ -155,6 +155,14 @@ ship.inertia = (1/12) * ship.mass * ((ship.w*ship.w)+(ship.h*ship.h));
   ship.turret2.offset = { x:  podX, y:  podY };
   ship.turret3.offset = { x: -podX, y: -podY };
   ship.turret4.offset = { x:  podX, y: -podY };
+
+  const ciwsOff = 20;
+  ship.ciws = [
+    { offset:{ x:-ciwsOff, y:-ciwsOff }, angle:0, angVel:0, cd:0 },
+    { offset:{ x: ciwsOff, y:-ciwsOff }, angle:0, angVel:0, cd:0 },
+    { offset:{ x:-ciwsOff, y: ciwsOff }, angle:0, angVel:0, cd:0 },
+    { offset:{ x: ciwsOff, y: ciwsOff }, angle:0, angVel:0, cd:0 }
+  ];
 })();
 
 // =============== Proceduralne gwiazdy na CAŁEJ MAPIE ===============
@@ -603,8 +611,47 @@ function fireRailBarrel(barIndex){
       const aa = a + (Math.random()-0.5)*0.14;
       spawnParticle({x:px + Math.cos(aa)*6, y:py + Math.sin(aa)*6},{x:Math.cos(aa)*220 + ship.vel.x*0.2, y:Math.sin(aa)*220 + ship.vel.y*0.2},0.12,'#bfe7ff',1.6,true);
     }
-  }
+}
   rail.cd[barIndex] = rail.cdMax;
+}
+
+// =============== CIWS (point-defence) ===============
+const CIWS_FIRE_INTERVAL = 0.06;
+const CIWS_BULLET_SPEED = 900;
+const CIWS_DAMAGE = 8;
+const CIWS_RANGE = 600;
+
+function ciwsStep(dt){
+  for(const gun of ship.ciws){
+    gun.cd = Math.max(0, gun.cd - dt);
+    const off = rotate(gun.offset, ship.angle);
+    const base = { x: ship.pos.x + off.x, y: ship.pos.y + off.y };
+    let target = null; let dist = CIWS_RANGE;
+    for(const npc of npcs){
+      if(npc.dead) continue;
+      const d = Math.hypot(npc.x - base.x, npc.y - base.y);
+      if(d < dist){ dist = d; target = npc; }
+    }
+    if(target){
+      const desired = Math.atan2(target.y - base.y, target.x - base.x);
+      let diff = wrapAngle(desired - gun.angle);
+      let desiredVel = clamp(diff * 8, -6, 6);
+      const velDelta = desiredVel - gun.angVel;
+      const maxDelta = 40 * dt;
+      gun.angVel += clamp(velDelta, -maxDelta, maxDelta);
+      gun.angVel *= Math.exp(-8 * dt);
+      gun.angVel = clamp(gun.angVel, -6, 6);
+      gun.angle = wrapAngle(gun.angle + gun.angVel * dt);
+      if(Math.abs(diff) < 0.15 && gun.cd === 0){
+        const dir = { x: Math.cos(gun.angle), y: Math.sin(gun.angle) };
+        const px = base.x + dir.x * 6;
+        const py = base.y + dir.y * 6;
+        bullets.push({ x:px, y:py, vx: dir.x*CIWS_BULLET_SPEED + ship.vel.x, vy: dir.y*CIWS_BULLET_SPEED + ship.vel.y, life:1.2, r:2, owner:'player', damage:CIWS_DAMAGE, type:'ciws' });
+        spawnParticle({x:px, y:py}, {x:dir.x*120 + ship.vel.x*0.1, y:dir.y*120 + ship.vel.y*0.1}, 0.06, '#ffdf9e', 2.0, true);
+        gun.cd = CIWS_FIRE_INTERVAL;
+      }
+    }
+  }
 }
 
 // =============== Specjal & dmg ===============
@@ -1209,6 +1256,7 @@ function physicsStep(dt){
   ship.angle += ship.angVel*dt;
 
   npcStep(dt);
+  ciwsStep(dt);
   bulletsAndCollisionsStep(dt);
   npcShootingStep(dt);
 }
@@ -1401,7 +1449,7 @@ const PHYS_DT = 1/120;
 let acc = 0;
 let vfxTime = 0;
 let prevState = null;
-function saveState(){ prevState = { pos:{...ship.pos}, angle: ship.angle, turretAngle: ship.turret.angle, turretAngle2: ship.turret2.angle, turretAngle3: ship.turret3.angle, turretAngle4: ship.turret4.angle }; }
+function saveState(){ prevState = { pos:{...ship.pos}, angle: ship.angle, turretAngle: ship.turret.angle, turretAngle2: ship.turret2.angle, turretAngle3: ship.turret3.angle, turretAngle4: ship.turret4.angle, ciwsAngles: ship.ciws.map(c=>c.angle) }; }
 saveState();
 function loop(now){
   const frame = Math.min(0.033, (now - lastTime)/1000);
@@ -1472,6 +1520,7 @@ function render(alpha){
   const interpTurretAngle2 = interpAngleShort(prevState.turretAngle2, ship.turret2.angle, alpha);
   const interpTurretAngle3 = interpAngleShort(prevState.turretAngle3, ship.turret3.angle, alpha);
   const interpTurretAngle4 = interpAngleShort(prevState.turretAngle4, ship.turret4.angle, alpha);
+  const interpCIWSAngles = ship.ciws.map((c,i)=>interpAngleShort(prevState.ciwsAngles[i], c.angle, alpha));
 
   // Kamera
   const cam = { x: interpPos.x, y: interpPos.y };
@@ -1781,6 +1830,21 @@ function render(alpha){
     ctx.beginPath(); ctx.strokeStyle = `rgba(120,200,255,${0.18 + 0.4*sp})`;
     ctx.lineWidth = 3; ctx.arc(0,0, Math.max(ship.w,ship.h)*0.6, 0, Math.PI*2); ctx.stroke();
   }
+
+  // CIWS turrets
+  const ciwsBase = 8, ciwsBarrelLen = 12, ciwsBarrelH = 4;
+  ship.ciws.forEach((c,i)=>{
+    const ang = interpCIWSAngles[i];
+    ctx.save();
+    ctx.translate(c.offset.x, c.offset.y);
+    ctx.rotate(ang - interpAngle);
+    ctx.fillStyle = '#b8bcc6';
+    roundRect(ctx, -ciwsBase/2, -ciwsBase/2, ciwsBase, ciwsBase, 2); ctx.fill();
+    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(30,50,90,0.45)'; ctx.stroke();
+    ctx.fillStyle = '#d0d0d0';
+    roundRect(ctx, ciwsBase/2, -ciwsBarrelH/2, ciwsBarrelLen, ciwsBarrelH, 2); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  });
 
   // wieżyczki podwójne z recoilem
   const baseW = 16, baseH = 24, barrelLen = Math.max(11, Math.round(ship.h * 0.12)) / 2, barrelH = 6, gap = 10;
