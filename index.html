@@ -102,7 +102,7 @@ function leadTarget(shooter, shooterVel, target, speed){
 
 // =============== World / camera ===============
 const WORLD = { w: 120000, h: 80000 };
-const camera = { zoom: 1.0, defaultZoom:1.0, altZoom:0.7, minZoom:0.35, maxZoom:2.2, wheelSpeed:0.002 };
+const camera = { zoom: 1.0, defaultZoom:1.0, altZoom:0.7, minZoom:0.35, maxZoom:3.2, wheelSpeed:0.002 };
 
 // =============== Ship ===============
 const ship = {
@@ -120,19 +120,19 @@ const ship = {
   turret4:{ angle:0, angVel:0, maxSpeed:1.8, maxAccel:8.0, damping:2.0,
             recoil:0, recoilMax:12, recoilRecover:48, recoilKick:14, offset:{x:0,y:0} },
   shield:{ max:120, val:120, regenRate:6, regenDelay:2, regenTimer:0 },
-  hull:{ max:200, val:200 },
+  hull:{ max:1000, val:1000 },
   special:{ cooldown:10, cooldownTimer:0 }
 };
 ship.inertia = (1/12) * ship.mass * ((ship.w*ship.w)+(ship.h*ship.h));
 (function configureShip(){
   const hw = ship.w/2, hh = ship.h/2;
   // Jeden DUŻY engine na środku rufy (moc ≈ suma poprzednich)
-  ship.engines.main = { offset:{x:0, y: Math.round(hh-8)}, maxThrust: 6400 };
+  ship.engines.main = { offset:{x:0, y: Math.round(hh-8)}, maxThrust: 12800 };
 
-  ship.engines.sideLeft  =  { offset:{x:-Math.round(hw-8), y: 0}, maxThrust:1400 };
-  ship.engines.sideRight =  { offset:{x: Math.round(hw-8), y: 0}, maxThrust:1400 };
-  ship.engines.torqueLeft  =  { offset:{x:0,y:-Math.round(hh-8)}, maxThrust:1200 };
-  ship.engines.torqueRight =  { offset:{x:0,y: Math.round(hh-8)}, maxThrust:1200 };
+  ship.engines.sideLeft  =  { offset:{x:-Math.round(hw-8), y: 0}, maxThrust:3000 };
+  ship.engines.sideRight =  { offset:{x: Math.round(hw-8), y: 0}, maxThrust:3000 };
+  ship.engines.torqueLeft  =  { offset:{x:0,y:-Math.round(hh-8)}, maxThrust:3000 };
+  ship.engines.torqueRight =  { offset:{x:0,y: Math.round(hh-8)}, maxThrust:3000 };
 
   ship.sideGunsLeft = []; ship.sideGunsRight = [];
   const gunsPer = 8, inset=6, margin=12;
