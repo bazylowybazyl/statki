@@ -626,6 +626,7 @@ function ciwsStep(dt){
     gun.cd = Math.max(0, gun.cd - dt);
     const off = rotate(gun.offset, ship.angle);
     const base = { x: ship.pos.x + off.x, y: ship.pos.y + off.y };
+    const baseVel = { x: ship.vel.x - ship.angVel * off.y, y: ship.vel.y + ship.angVel * off.x };
     let target = null; let dist = CIWS_RANGE;
     for(const npc of npcs){
       if(npc.dead) continue;
@@ -633,7 +634,7 @@ function ciwsStep(dt){
       if(d < dist){ dist = d; target = npc; }
     }
     if(target){
-      const aim = leadTarget(base, ship.vel, target, CIWS_BULLET_SPEED);
+      const aim = leadTarget(base, baseVel, target, CIWS_BULLET_SPEED);
       const desired = Math.atan2(aim.y - base.y, aim.x - base.x);
       let diff = wrapAngle(desired - gun.angle);
       let desiredVel = clamp(diff * 8, -6, 6);
@@ -647,8 +648,8 @@ function ciwsStep(dt){
         const dir = { x: Math.cos(gun.angle), y: Math.sin(gun.angle) };
         const px = base.x + dir.x * 6;
         const py = base.y + dir.y * 6;
-        bullets.push({ x:px, y:py, vx: dir.x*CIWS_BULLET_SPEED + ship.vel.x, vy: dir.y*CIWS_BULLET_SPEED + ship.vel.y, life:1.2, r:2, owner:'player', damage:CIWS_DAMAGE, type:'ciws' });
-        spawnParticle({x:px, y:py}, {x:dir.x*120 + ship.vel.x*0.1, y:dir.y*120 + ship.vel.y*0.1}, 0.06, '#ffdf9e', 2.0, true);
+        bullets.push({ x:px, y:py, vx: dir.x*CIWS_BULLET_SPEED + baseVel.x, vy: dir.y*CIWS_BULLET_SPEED + baseVel.y, life:1.2, r:2, owner:'player', damage:CIWS_DAMAGE, type:'ciws' });
+        spawnParticle({x:px, y:py}, {x:dir.x*120 + baseVel.x*0.1, y:dir.y*120 + baseVel.y*0.1}, 0.06, '#ffdf9e', 2.0, true);
         gun.cd = CIWS_FIRE_INTERVAL;
       }
     }
