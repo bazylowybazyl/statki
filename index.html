@@ -982,10 +982,7 @@ const boost = {
   effectTime:0, effectDuration:0.4, effectDir:{x:0,y:0}
 };
 function engageBoost(){
-  const speed = len(ship.vel);
-  let dir;
-  if(speed > 1) dir = {x: ship.vel.x/speed, y: ship.vel.y/speed};
-  else dir = rotate({x:0,y:-1}, ship.angle);
+  const dir = rotate({x:0,y:-1}, ship.angle);
   ship.vel.x += dir.x * boost.speed;
   ship.vel.y += dir.y * boost.speed;
   boost.fuel = clamp(boost.fuel - boost.cost, 0, boost.fuelMax);
