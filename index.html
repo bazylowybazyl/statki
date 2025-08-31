@@ -293,9 +293,9 @@ let warpRoutes = {};
 function initWarpRoutes(){
   warpRoutes = {};
   for(const from of stations){
-    if(!from.inner) continue;
     for(const to of stations){
-      if(!to.inner || from.id === to.id) continue;
+      if(from.id === to.id) continue;
+      if(from.inner !== to.inner) continue;
       const sx = from.x + (to.x - from.x) * 0.2;
       const sy = from.y + (to.y - from.y) * 0.2;
       const ex = from.x + (to.x - from.x) * 0.8;
@@ -401,11 +401,17 @@ function spawnGunship(pos){
   };
   MISSION_NPCS.push(n);
 }
-function pickNextStation(npcId, lastStationId){
-  const inner = stations.filter(s=>s.inner);
-  let idx = Math.floor(Math.random()*inner.length);
-  if(inner.length>1 && inner[idx].id === lastStationId) idx = (idx+1)%inner.length;
-  return inner[idx].id;
+function pickNextStation(startStationId, type){
+  const start = stations.find(s=>s.id===startStationId);
+  if(!start) return startStationId;
+  let candidates = stations.filter(s=>s.inner === start.inner);
+  if(type && (type.startsWith('civilian') || type.startsWith('freighter'))){
+    const other = stations.filter(s=>s.inner !== start.inner);
+    if(other.length && Math.random() < 0.5) candidates = other;
+  }
+  let idx = Math.floor(Math.random()*candidates.length);
+  if(candidates.length>1 && candidates[idx].id === startStationId) idx = (idx+1)%candidates.length;
+  return candidates[idx].id;
 }
 const NPC_TYPES = {
   'freighter-small':  { radius:10, speed:60, hp:100, color:'#8ab4d6', weapon:null },
@@ -428,7 +434,8 @@ function initNPCs(){
     const cfg = NPC_TYPES[type];
     const x = start.x + (Math.random()-0.5)*40;
     const y = start.y + (Math.random()-0.5)*40;
-    const route = getWarpRoute(start.id, targetId);
+    const target = stations.find(s=>s.id===targetId);
+    const sameSphere = start.inner === target.inner;
     const npc = { id:npcId++, type, group,
       x, y,
       vx:0, vy:0, angle:Math.random()*Math.PI*2,
@@ -436,17 +443,21 @@ function initNPCs(){
       hp:cfg.hp, maxHp:cfg.hp, color:cfg.color, weapon:cfg.weapon,
       dead:false, respawnTimer:0, fade:1, docking:false, lastStation:start.id,
       leader:null, orbitAngle:0, orbitRadius:0,
-      warpRoute: route, phase: 'toGate', lane: Math.floor(Math.random()*2) };
+      warpRoute: sameSphere?getWarpRoute(start.id, targetId):null,
+      phase: sameSphere?'toGate':'direct',
+      lane: sameSphere?Math.floor(Math.random()*2):0 };
     npcs.push(npc);
     return npc;
   }
-  function spawnFreighterEscortGroup(fType, escortMin, escortMax){
-    const inner = stations.filter(s=>s.inner);
-    const start = inner[Math.floor(Math.random()*inner.length)];
-    const targetId = pickNextStation(npcId, start.id);
+  function spawnFreighterEscortGroup(fType, escortMin, escortMax, sphere){
+    const cand = stations.filter(s=>s.inner === (sphere==='inner'));
+    const start = cand[Math.floor(Math.random()*cand.length)];
+    const targetId = pickNextStation(start.id, fType);
     const group = groupCounter++;
     const leader = spawnNPC(fType, start, targetId, group);
     if(!leader) return;
+    const target = stations.find(s=>s.id===targetId);
+    if(start.inner !== target.inner) return;
     const escortCount = escortMin + Math.floor(Math.random()*(escortMax-escortMin+1));
     for(let i=0;i<escortCount;i++){
       const eType = Math.random()<0.5?'guard':'mercenary';
@@ -460,10 +471,10 @@ function initNPCs(){
       escort.y = leader.y + Math.sin(angle) * escort.orbitRadius;
     }
   }
-  function spawnCivilianGroup(min, max){
-    const inner = stations.filter(s=>s.inner);
-    const start = inner[Math.floor(Math.random()*inner.length)];
-    const targetId = pickNextStation(npcId, start.id);
+  function spawnCivilianGroup(min, max, sphere){
+    const cand = stations.filter(s=>s.inner === (sphere==='inner'));
+    const start = cand[Math.floor(Math.random()*cand.length)];
+    const targetId = pickNextStation(start.id, 'civilian-small');
     const group = groupCounter++;
     spawnNPC('freighter-small', start, targetId, group);
     const count = min + Math.floor(Math.random()*(max-min+1));
@@ -472,22 +483,29 @@ function initNPCs(){
       spawnNPC(type, start, targetId, group);
     }
   }
-  function spawnPolicePatrol(min, max){
-    const inner = stations.filter(s=>s.inner);
-    const start = inner[Math.floor(Math.random()*inner.length)];
-    const targetId = pickNextStation(npcId, start.id);
+  function spawnPolicePatrol(min, max, sphere){
+    const cand = stations.filter(s=>s.inner === (sphere==='inner'));
+    const start = cand[Math.floor(Math.random()*cand.length)];
+    const targetId = pickNextStation(start.id, 'police');
     const group = groupCounter++;
     const count = min + Math.floor(Math.random()*(max-min+1));
     for(let i=0;i<count;i++) spawnNPC('police', start, targetId, group);
   }
   while(npcs.length < desiredCount){
-    spawnFreighterEscortGroup('freighter-small',0,0);
-    spawnFreighterEscortGroup('freighter-medium',0,0);
-    spawnFreighterEscortGroup('freighter-large',0,0);
-    spawnFreighterEscortGroup('freighter-capital',0,0);
-    spawnCivilianGroup(1,2);
-    spawnCivilianGroup(1,2);
-    spawnPolicePatrol(1,2);
+    spawnFreighterEscortGroup('freighter-small',0,0,'inner');
+    spawnFreighterEscortGroup('freighter-small',0,0,'outer');
+    spawnFreighterEscortGroup('freighter-medium',0,0,'inner');
+    spawnFreighterEscortGroup('freighter-medium',0,0,'outer');
+    spawnFreighterEscortGroup('freighter-large',0,0,'inner');
+    spawnFreighterEscortGroup('freighter-large',0,0,'outer');
+    spawnFreighterEscortGroup('freighter-capital',0,0,'inner');
+    spawnFreighterEscortGroup('freighter-capital',0,0,'outer');
+    spawnCivilianGroup(1,2,'inner');
+    spawnCivilianGroup(1,2,'outer');
+    spawnCivilianGroup(1,2,'inner');
+    spawnCivilianGroup(1,2,'outer');
+    spawnPolicePatrol(1,2,'inner');
+    spawnPolicePatrol(1,2,'outer');
   }
 }
 // Ensure Three.js modules are loaded before initializing 3D objects
@@ -1205,14 +1223,20 @@ function npcStep(dt){
     if(npc.dead){
       npc.respawnTimer -= dt;
       if(npc.respawnTimer<=0){
-        const inner = stations.filter(s=>s.inner);
-        const start = inner[Math.floor(Math.random()*inner.length)];
-        const targetId = pickNextStation(npc.id, start.id);
+        const base = stations.find(s=>s.id===npc.lastStation) || stations[0];
+        const group = stations.filter(s=>s.inner === base.inner);
+        const start = group[Math.floor(Math.random()*group.length)];
+        const targetId = pickNextStation(start.id, npc.type);
         npc.x = start.x + (Math.random()-0.5)*40;
         npc.y = start.y + (Math.random()-0.5)*40;
         npc.vx = 0; npc.vy = 0;
         npc.hp = npc.maxHp; npc.dead=false; npc.target = targetId; npc.fade = 1; npc.docking=false; npc.lastStation=start.id;
-        npc.warpRoute = getWarpRoute(start.id, targetId); npc.phase = 'toGate'; npc.lane = Math.floor(Math.random()*2);
+        const target = stations.find(s=>s.id===targetId);
+        if(start.inner === target.inner){
+          npc.warpRoute = getWarpRoute(start.id, targetId); npc.phase = 'toGate'; npc.lane = Math.floor(Math.random()*2);
+        } else {
+          npc.warpRoute = null; npc.phase = 'direct'; npc.lane = 0;
+        }
       }
       continue;
     }
@@ -1221,12 +1245,17 @@ function npcStep(dt){
       if(st){ npc.x = st.x; npc.y = st.y; }
       npc.fade -= dt / 0.6;
       if(npc.fade <= 0 && st){
-        const targetId = pickNextStation(npc.id, npc.lastStation);
+        const targetId = pickNextStation(npc.lastStation, npc.type);
         npc.x = st.x + (Math.random()-0.5)*40;
         npc.y = st.y + (Math.random()-0.5)*40;
         npc.vx = 0; npc.vy = 0;
         npc.target = targetId; npc.fade = 1; npc.docking=false; npc.lastStation=st.id;
-        npc.warpRoute = getWarpRoute(st.id, targetId); npc.phase = 'toGate'; npc.lane = Math.floor(Math.random()*2);
+        const target = stations.find(s=>s.id===targetId);
+        if(st.inner === target.inner){
+          npc.warpRoute = getWarpRoute(st.id, targetId); npc.phase = 'toGate'; npc.lane = Math.floor(Math.random()*2);
+        } else {
+          npc.warpRoute = null; npc.phase = 'direct'; npc.lane = 0;
+        }
       }
       continue;
     }
@@ -1295,7 +1324,21 @@ function npcStep(dt){
     }
     if(!targetPos){
       st = stations.find(s=>s.id===npc.target);
-      if(!st){ npc.target = pickNextStation(npc.id, -1); npc.warpRoute = getWarpRoute(npc.lastStation, npc.target); npc.phase='toGate'; continue; }
+      if(!st){
+        npc.target = pickNextStation(npc.lastStation, npc.type);
+        const start = stations.find(s=>s.id===npc.lastStation);
+        const target = stations.find(s=>s.id===npc.target);
+        if(start && target && start.inner === target.inner){
+          npc.warpRoute = getWarpRoute(start.id, npc.target);
+          npc.phase = 'toGate';
+          npc.lane = Math.floor(Math.random()*2);
+        } else {
+          npc.warpRoute = null;
+          npc.phase = 'direct';
+          npc.lane = 0;
+        }
+        continue;
+      }
       if(npc.phase === 'toStation'){
         const gate = npc.warpRoute.end;
         const gv = { x: st.x - gate.x, y: st.y - gate.y };
