@@ -138,6 +138,11 @@ const ship = {
   input:{ thrustX:0, thrustY:0, aimX:0, aimY:0 }
 };
 ship.inertia = (1/12) * ship.mass * ((ship.w*ship.w)+(ship.h*ship.h));
+const BASE_SHIP = {
+  hullMax: ship.hull.max,
+  cargoCap: 20,
+  maxSpeed: 0
+};
 (function configureShip(){
   const hw = ship.w/2, hh = ship.h/2;
   // Jeden DUŻY engine na środku rufy (moc ≈ suma poprzednich)
@@ -292,23 +297,22 @@ let stations = planets.map(pl => {
 let warpRoutes = {};
 function initWarpRoutes(){
   warpRoutes = {};
-  for(const from of stations){
-    if(!from.inner) continue;
-    for(const to of stations){
-      if(!to.inner || from.id === to.id) continue;
+  for (const from of stations){
+    for (const to of stations){
+      if (from.id === to.id) continue;
+      // ❗️ bramy tylko w obrębie tej samej sfery
+      if (from.inner !== to.inner) continue;
       const sx = from.x + (to.x - from.x) * 0.2;
       const sy = from.y + (to.y - from.y) * 0.2;
       const ex = from.x + (to.x - from.x) * 0.8;
       const ey = from.y + (to.y - from.y) * 0.8;
-      const dx = ex - sx;
-      const dy = ey - sy;
+      const dx = ex - sx, dy = ey - sy;
       const dist = Math.hypot(dx, dy) || 1;
       warpRoutes[from.id + '-' + to.id] = {
-        from: from.id,
-        to: to.id,
+        from: from.id, to: to.id,
         start: { x: sx, y: sy, queues: [[], []] },
-        end: { x: ex, y: ey },
-        dir: { x: dx / dist, y: dy / dist },
+        end:   { x: ex, y: ey },
+        dir:   { x: dx / dist, y: dy / dist },
         length: dist
       };
     }
@@ -349,16 +353,9 @@ function makeNPCBase(pos, stats){
   };
 }
 
-function chaseEvadeAI(){/* stub */}
-function battleshipAI(){/* stub */}
-function dogfightAI(){/* stub */}
 function makeRailgun(cfg){ return { ...cfg }; }
 function makeRocketPod(cfg){ return { ...cfg }; }
 function makeGatling(cfg){ return { ...cfg }; }
-function useRailPair(){/* stub */}
-function useRocketsPair(){/* stub */}
-function useCIWSPair(){/* stub */}
-function maybeFireRockets(){/* stub */}
 
 function spawnInterceptor(pos){
   const n = makeNPCBase(pos, { hp: 160, accel: 90, maxSpeed: 540, turn: 4.0, radius: 22 });
@@ -401,11 +398,14 @@ function spawnGunship(pos){
   };
   MISSION_NPCS.push(n);
 }
+function getStationById(id){ return stations.find(s=>s.id===id); }
 function pickNextStation(npcId, lastStationId){
-  const inner = stations.filter(s=>s.inner);
-  let idx = Math.floor(Math.random()*inner.length);
-  if(inner.length>1 && inner[idx].id === lastStationId) idx = (idx+1)%inner.length;
-  return inner[idx].id;
+  // wybieraj w obrębie tej samej sfery co ostatnia stacja
+  const last = getStationById(lastStationId) || stations[0];
+  const sameSphere = stations.filter(s => s.inner === last.inner);
+  let idx = Math.floor(Math.random()*sameSphere.length);
+  if(sameSphere.length>1 && sameSphere[idx].id === lastStationId) idx = (idx+1)%sameSphere.length;
+  return sameSphere[idx].id;
 }
 const NPC_TYPES = {
   'freighter-small':  { radius:10, speed:60, hp:100, color:'#8ab4d6', weapon:null },
@@ -423,12 +423,12 @@ function initNPCs(){
   let npcId = 0, groupCounter = 0;
   const desiredCount = 1000;
   const ESCORT_RADIUS = 80;
-  function spawnNPC(type, start, targetId, group){
+  function spawnNPC(type, start, targetId, group, opts={}){
     if(npcs.length >= desiredCount) return null;
     const cfg = NPC_TYPES[type];
     const x = start.x + (Math.random()-0.5)*40;
     const y = start.y + (Math.random()-0.5)*40;
-    const route = getWarpRoute(start.id, targetId);
+    const route = (opts.direct ? null : getWarpRoute(start.id, targetId));
     const npc = { id:npcId++, type, group,
       x, y,
       vx:0, vy:0, angle:Math.random()*Math.PI*2,
@@ -436,12 +436,16 @@ function initNPCs(){
       hp:cfg.hp, maxHp:cfg.hp, color:cfg.color, weapon:cfg.weapon,
       dead:false, respawnTimer:0, fade:1, docking:false, lastStation:start.id,
       leader:null, orbitAngle:0, orbitRadius:0,
-      warpRoute: route, phase: 'toGate', lane: Math.floor(Math.random()*2) };
+      warpRoute: route,
+      // jeśli nie ma warpRoute (direct) – lecimy od razu „do stacji”
+      phase: route ? 'toGate' : 'direct',
+      lane: Math.floor(Math.random()*2) };
     npcs.push(npc);
     return npc;
   }
   function spawnFreighterEscortGroup(fType, escortMin, escortMax){
     const inner = stations.filter(s=>s.inner);
+    if(!inner.length) return;
     const start = inner[Math.floor(Math.random()*inner.length)];
     const targetId = pickNextStation(npcId, start.id);
     const group = groupCounter++;
@@ -462,6 +466,7 @@ function initNPCs(){
   }
   function spawnCivilianGroup(min, max){
     const inner = stations.filter(s=>s.inner);
+    if(!inner.length) return;
     const start = inner[Math.floor(Math.random()*inner.length)];
     const targetId = pickNextStation(npcId, start.id);
     const group = groupCounter++;
@@ -474,21 +479,89 @@ function initNPCs(){
   }
   function spawnPolicePatrol(min, max){
     const inner = stations.filter(s=>s.inner);
+    if(!inner.length) return;
     const start = inner[Math.floor(Math.random()*inner.length)];
     const targetId = pickNextStation(npcId, start.id);
     const group = groupCounter++;
     const count = min + Math.floor(Math.random()*(max-min+1));
     for(let i=0;i<count;i++) spawnNPC('police', start, targetId, group);
   }
-  while(npcs.length < desiredCount){
+  // helpery sfer
+  const innerStations = stations.filter(s=>s.inner);
+  const outerStations = stations.filter(s=>!s.inner);
+  const pickFrom = arr => arr[Math.floor(Math.random()*arr.length)];
+
+  // INNER: 50% puli
+  while(innerStations.length && npcs.length < desiredCount * 0.5){
     spawnFreighterEscortGroup('freighter-small',0,0);
     spawnFreighterEscortGroup('freighter-medium',0,0);
-    spawnFreighterEscortGroup('freighter-large',0,0);
-    spawnFreighterEscortGroup('freighter-capital',0,0);
-    spawnCivilianGroup(1,2);
     spawnCivilianGroup(1,2);
     spawnPolicePatrol(1,2);
   }
+  // OUTER: analogiczne grupy, startują w outer
+  function spawnOuterFreighterEscortGroup(fType, escortMin, escortMax){
+    if(!outerStations.length) return;
+    const start = pickFrom(outerStations);
+    const targetId = (()=>{ // cel w tej samej sferze
+      const same = outerStations.filter(s=>s.id!==start.id);
+      return (same.length?pickFrom(same):start).id;
+    })();
+    const group = groupCounter++;
+    const leader = spawnNPC(fType, start, targetId, group);
+    if(!leader) return;
+    const escortCount = escortMin + Math.floor(Math.random()*(escortMax-escortMin+1));
+    for(let i=0;i<escortCount;i++){
+      const eType = Math.random()<0.5?'guard':'mercenary';
+      const angle = (i / Math.max(1,escortCount)) * Math.PI * 2;
+      const escort = spawnNPC(eType, start, targetId, group);
+      if(!escort) continue;
+      escort.leader = leader.id;
+      escort.orbitAngle = angle;
+      escort.orbitRadius = leader.radius + 80;
+      escort.x = leader.x + Math.cos(angle) * escort.orbitRadius;
+      escort.y = leader.y + Math.sin(angle) * escort.orbitRadius;
+    }
+  }
+  function spawnOuterCivilianGroup(min, max){
+    if(!outerStations.length) return;
+    const start = pickFrom(outerStations);
+    const others = outerStations.filter(s=>s.id!==start.id);
+    const targetId = (others.length?pickFrom(others):start).id;
+    const group = groupCounter++;
+    spawnNPC('freighter-small', start, targetId, group);
+    const count = min + Math.floor(Math.random()*(max-min+1));
+    for(let i=0;i<count;i++){
+      const type = Math.random()<0.5?'civilian-small':'civilian-large';
+      spawnNPC(type, start, targetId, group);
+    }
+  }
+  function spawnOuterPolicePatrol(min, max){
+    if(!outerStations.length) return;
+    const start = pickFrom(outerStations);
+    const others = outerStations.filter(s=>s.id!==start.id);
+    const targetId = (others.length?pickFrom(others):start).id;
+    const group = groupCounter++;
+    const count = min + Math.floor(Math.random()*(max-min+1));
+    for(let i=0;i<count;i++) spawnNPC('police', start, targetId, group);
+  }
+  if(outerStations.length){
+    while(npcs.length < desiredCount){
+      spawnOuterFreighterEscortGroup('freighter-medium',0,0);
+      spawnOuterFreighterEscortGroup('freighter-large',0,0);
+      spawnOuterCivilianGroup(1,2);
+      spawnOuterPolicePatrol(1,2);
+    }
+  } else {
+    while(npcs.length < desiredCount){
+      spawnFreighterEscortGroup('freighter-small',0,0);
+      spawnFreighterEscortGroup('freighter-medium',0,0);
+      spawnCivilianGroup(1,2);
+      spawnPolicePatrol(1,2);
+    }
+  }
+
+  // --- POJEDYNCZE cywilne loty między sferami (bez warpa) ---
+  window._crossSphereTimer = 0; // zainicjalizujemy w fizyce
 }
 // Ensure Three.js modules are loaded before initializing 3D objects
 window.addEventListener('DOMContentLoaded', () => {
@@ -1212,7 +1285,10 @@ function npcStep(dt){
         npc.y = start.y + (Math.random()-0.5)*40;
         npc.vx = 0; npc.vy = 0;
         npc.hp = npc.maxHp; npc.dead=false; npc.target = targetId; npc.fade = 1; npc.docking=false; npc.lastStation=start.id;
-        npc.warpRoute = getWarpRoute(start.id, targetId); npc.phase = 'toGate'; npc.lane = Math.floor(Math.random()*2);
+        const route = getWarpRoute(start.id, targetId);
+        npc.warpRoute = route;
+        npc.phase = route ? 'toGate' : 'direct';
+        npc.lane = Math.floor(Math.random()*2);
       }
       continue;
     }
@@ -1226,11 +1302,15 @@ function npcStep(dt){
         npc.y = st.y + (Math.random()-0.5)*40;
         npc.vx = 0; npc.vy = 0;
         npc.target = targetId; npc.fade = 1; npc.docking=false; npc.lastStation=st.id;
-        npc.warpRoute = getWarpRoute(st.id, targetId); npc.phase = 'toGate'; npc.lane = Math.floor(Math.random()*2);
+        const route = getWarpRoute(st.id, targetId);
+        npc.warpRoute = route;
+        npc.phase = route ? 'toGate' : 'direct';
+        npc.lane = Math.floor(Math.random()*2);
       }
       continue;
     }
     if(npc.phase === 'warping'){
+      if(!npc.warpRoute){ npc.phase='direct'; continue; }
       npc.x += npc.vx*dt; npc.y += npc.vy*dt;
       npc.angle = Math.atan2(npc.vy||0, npc.vx||0);
       const route = npc.warpRoute;
@@ -1241,7 +1321,36 @@ function npcStep(dt){
       }
       continue;
     }
+    if(npc.phase === 'direct'){
+      const st = stations.find(s=>s.id===npc.target);
+      if(!st){
+        npc.target = pickNextStation(npc.id, npc.lastStation);
+        const route = getWarpRoute(npc.lastStation, npc.target);
+        npc.warpRoute = route;
+        npc.phase = route ? 'toGate' : 'direct';
+        continue;
+      }
+      const to = { x: st.x - npc.x, y: st.y - npc.y };
+      const d = Math.hypot(to.x, to.y);
+      const dir = d ? { x: to.x/d, y: to.y/d } : { x:0, y:0 };
+      const desiredSpeed = npc.speed * (d < 120 ? (d/120) : 1);
+      const desiredV = { x: dir.x*desiredSpeed, y: dir.y*desiredSpeed };
+      npc.vx += (desiredV.x - (npc.vx||0)) * clamp(1.5*dt,0,1);
+      npc.vy += (desiredV.y - (npc.vy||0)) * clamp(1.5*dt,0,1);
+      const toP = { x: ship.pos.x - npc.x, y: ship.pos.y - npc.y }; const dp = Math.hypot(toP.x,toP.y);
+      if(dp < 120){ npc.vx -= (toP.x/dp) * 40*dt; npc.vy -= (toP.y/dp) * 40*dt; }
+      npc.x += npc.vx*dt; npc.y += npc.vy*dt; npc.angle = Math.atan2(npc.vy||0, npc.vx||0);
+      const dist = Math.hypot(st.x - npc.x, st.y - npc.y);
+      if(dist < 20){
+        npc.docking = true;
+        npc.x = st.x; npc.y = st.y;
+        npc.vx = 0; npc.vy = 0;
+        npc.lastStation = st.id;
+      }
+      continue;
+    }
     if(npc.phase === 'toGate'){
+      if(!npc.warpRoute){ npc.phase='direct'; continue; }
       const gate = npc.warpRoute.start;
       const start = stations.find(s=>s.id===npc.lastStation);
       const gv = { x: gate.x - start.x, y: gate.y - start.y };
@@ -1295,8 +1404,15 @@ function npcStep(dt){
     }
     if(!targetPos){
       st = stations.find(s=>s.id===npc.target);
-      if(!st){ npc.target = pickNextStation(npc.id, -1); npc.warpRoute = getWarpRoute(npc.lastStation, npc.target); npc.phase='toGate'; continue; }
+      if(!st){
+        npc.target = pickNextStation(npc.id, -1);
+        const route = getWarpRoute(npc.lastStation, npc.target);
+        npc.warpRoute = route;
+        npc.phase = route ? 'toGate' : 'direct';
+        continue;
+      }
       if(npc.phase === 'toStation'){
+        if(!npc.warpRoute){ npc.phase='direct'; continue; }
         const gate = npc.warpRoute.end;
         const gv = { x: st.x - gate.x, y: st.y - gate.y };
         const gd = Math.hypot(gv.x, gv.y) || 1;
@@ -1407,6 +1523,26 @@ function physicsStep(dt){
     if(boost.charge >= boost.chargeTime && boost.fuel>=boost.cost){ engageBoost(); }
   }
   if(boost.effectTime>0) boost.effectTime = Math.max(0, boost.effectTime - dt);
+
+  // spawn pojedynczego cywila między sferami co pewien czas
+  if (window._crossSphereTimer == null) window._crossSphereTimer = 6 + Math.random()*10;
+  window._crossSphereTimer -= dt;
+  if (window._crossSphereTimer <= 0){
+    window._crossSphereTimer = 10 + Math.random()*18; // 10–28 s
+    const inners = stations.filter(s=>s.inner);
+    const outers = stations.filter(s=>!s.inner);
+    if(inners.length && outers.length){
+      const startIsInner = Math.random()<0.5;
+      const start = startIsInner ? inners[Math.floor(Math.random()*inners.length)]
+                                 : outers[Math.floor(Math.random()*outers.length)];
+      const destArr = startIsInner ? outers : inners;
+      const dest = destArr[Math.floor(Math.random()*destArr.length)];
+      const type = Math.random()<0.5?'civilian-small':'civilian-large';
+      // ❗ direct=true => bez warpRoute, faza 'direct'
+      const solo = spawnNPC(type, start, dest.id, /*group*/null, { direct:true });
+      if (solo){ solo.color = '#cccccc'; solo.weapon = null; }
+    }
+  }
 
   // rail queue/cd
   rail.cd[0] = Math.max(0, rail.cd[0]-dt);
@@ -2446,24 +2582,40 @@ function slider(label, min,max, step, obj, key){
   // Możesz podpiąć realny input według swojej architektury.
 }
 function toast(t){ /* opcjonalnie dopisz do kolejki komunikatów HUD */ }
-function applyShipStats(s){ ship.hpMax*=s.hp; ship.maxSpeed*=s.speed; ship.cargoCap=(ship.cargoCap||20)*s.cargo; }
+function applyShipStats(s){
+  ship.hull.max = Math.round(BASE_SHIP.hullMax * (s.hp || 1));
+  ship.hull.val = Math.min(ship.hull.val, ship.hull.max);
+  if (BASE_SHIP.maxSpeed > 0) {
+    ship.maxSpeed = BASE_SHIP.maxSpeed * (s.speed || 1);
+  }
+  ship.cargoCap = Math.round((BASE_SHIP.cargoCap || 20) * (s.cargo || 1));
+}
 
 function dist(x1,y1,x2,y2){ return Math.hypot(x2-x1, y2-y1); }
-function limitSpeed(n, max){ const v=Math.hypot(n.vel.x, n.vel.y); if(v>max){ const s=max/v; n.vel.x*=s; n.vel.y*=s; } }
+function limitSpeed(n, max){ const v=Math.hypot(n.vx, n.vy); if(v>max){ const s=max/v; n.vx*=s; n.vy*=s; } }
 function chaseEvadeAI(n, target, opts={}){
   // prosta pogoń z unikami
-  const dx=target.pos.x-n.pos.x, dy=target.pos.y-n.pos.y;
-  const ang=Math.atan2(dy,dx), da=wrapAngle(ang-n.rot);
-  n.rot += clamp(da,-n.turn*0.016,n.turn*0.016);
-  n.vel.x += Math.cos(n.rot)*n.accel*0.016;
-  n.vel.y += Math.sin(n.rot)*n.accel*0.016;
+  const tx = target.pos ? target.pos.x : target.x;
+  const ty = target.pos ? target.pos.y : target.y;
+  const dx = tx - n.x, dy = ty - n.y;
+  const ang = Math.atan2(dy, dx);
+  const da = wrapAngle(ang - n.angle);
+  n.angle += clamp(da, -n.turn*0.016, n.turn*0.016);
+  n.vx += Math.cos(n.angle) * n.accel * 0.016;
+  n.vy += Math.sin(n.angle) * n.accel * 0.016;
   limitSpeed(n, n.maxSpeed);
 }
 function dogfightAI(n, target){ return chaseEvadeAI(n,target,{strafe:true}); }
 function battleshipAI(n, target){ // wolniejszy obrót – trzyma dystans
-  const d = dist(n.pos.x,n.pos.y,target.pos.x,target.pos.y);
-  if(d<600){ n.vel.x -= Math.cos(n.rot)*n.accel*0.016; n.vel.y -= Math.sin(n.rot)*n.accel*0.016; }
-  else chaseEvadeAI(n,target);
+  const tx = target.pos ? target.pos.x : target.x;
+  const ty = target.pos ? target.pos.y : target.y;
+  const d = dist(n.x,n.y,tx,ty);
+  if(d<600){
+    n.vx -= Math.cos(n.angle)*n.accel*0.016;
+    n.vy -= Math.sin(n.angle)*n.accel*0.016;
+  } else {
+    chaseEvadeAI(n,target);
+  }
 }
 function useRailPair(n, target){ /* sprawdź kąt i cooldown, odpal pary */ }
 function useRocketsPair(n, target){ /* salwy */ }
