@@ -411,8 +411,8 @@
     constructor(innerRadius, outerRadius, count = 200) {
       this.size = outerRadius * 2;
       this.canvas = document.createElement("canvas");
-      this.canvas.width = 512;
-      this.canvas.height = 512;
+      this.canvas.width = 1024;
+      this.canvas.height = 1024;
       this.ctx2d = this.canvas.getContext("2d");
 
       this.scene = null;
@@ -460,19 +460,17 @@
       this.scene.add(this.mesh);
       this.rotationSpeed = 0.02;
 
-      // Pre-generate simple 2D asteroids for extra visibility
-      const innerPx = inner * (this.canvas.width / 2);
-      const outerPx = this.canvas.width / 2;
+      this.rotation = 0;
+
+      // Pre-compute asteroid positions in world units for 2D overlay
       this.asteroids = [];
-      for (let i = 0; i < count; i++) {
-        const radius = innerPx + Math.random() * (outerPx - innerPx);
+      for (let i = 0; i < 2000; i++) {
         this.asteroids.push({
           angle: Math.random() * TAU,
-          radius,
-          size: 0.5 + Math.random(),
+          radius: innerRadius + Math.random() * (outerRadius - innerRadius),
+          size: 20 + Math.random() * 40,
         });
       }
-      this.rotation = 0;
     }
 
     render(dt) {
@@ -484,15 +482,23 @@
       r.render(this.scene, this.camera);
       this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
       this.ctx2d.drawImage(r.domElement, 0, 0);
-      // Overlay 2D dots to ensure asteroids are visible
-      this.ctx2d.fillStyle = "#bbb";
+    }
+
+    draw(ctx, cam) {
+      if (!this.asteroids) return;
+      const w = ctx.canvas.width;
+      const h = ctx.canvas.height;
+      ctx.fillStyle = "#bbb";
       for (const a of this.asteroids) {
         const ang = a.angle + this.rotation;
-        const x = this.canvas.width / 2 + Math.cos(ang) * a.radius;
-        const y = this.canvas.height / 2 + Math.sin(ang) * a.radius;
-        this.ctx2d.beginPath();
-        this.ctx2d.arc(x, y, a.size, 0, TAU);
-        this.ctx2d.fill();
+        const x = sun.x + Math.cos(ang) * a.radius;
+        const y = sun.y + Math.sin(ang) * a.radius;
+        const s = worldToScreen(x, y, cam);
+        const size = a.size * camera.zoom;
+        if (s.x < -size || s.y < -size || s.x > w + size || s.y > h + size) continue;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, size / 2, 0, TAU);
+        ctx.fill();
       }
     }
   }
@@ -532,6 +538,7 @@
       const sB = worldToScreen(sun.x, sun.y, cam);
       const sizeB = asteroidBelt.size * camera.zoom;
       ctx.drawImage(asteroidBelt.canvas, sB.x - sizeB / 2, sB.y - sizeB / 2, sizeB, sizeB);
+      asteroidBelt.draw(ctx, cam);
     }
     for (const p of planets) {
       const s = worldToScreen(p.body.x, p.body.y, cam);

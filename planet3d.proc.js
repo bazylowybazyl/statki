@@ -771,8 +771,17 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       this.mesh.instanceMatrix.needsUpdate = true;
       this.scene.add(this.mesh);
       this.rotationSpeed = 0.02;
-      // usuwamy generator "kropek 2D" — nie będzie drugiego pasa
       this.rotation = 0;
+
+      // Losowe asteroidy w jednostkach świata do rysowania bezpośrednio na canvasie 2D
+      this.asteroids = [];
+      for (let i = 0; i < 2000; i++) {
+        this.asteroids.push({
+          angle: Math.random() * TAU,
+          radius: innerRadius + Math.random() * (outerRadius - innerRadius),
+          size: 20 + Math.random() * 40,
+        });
+      }
     }
 
     render(dt) {
@@ -784,7 +793,25 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       r.render(this.scene, this.camera);
       this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
       this.ctx2d.drawImage(r.domElement, 0, 0);
-      // bez nakładki kropek 2D
+    }
+
+    // Rysuje pojedyncze asteroidy jako małe kropki na głównym canvasie
+    draw(ctx, cam) {
+      if (!this.asteroids) return;
+      const w = ctx.canvas.width;
+      const h = ctx.canvas.height;
+      ctx.fillStyle = "#bbb";
+      for (const a of this.asteroids) {
+        const ang = a.angle + this.rotation;
+        const x = SUN_POS.x + Math.cos(ang) * a.radius;
+        const y = SUN_POS.y + Math.sin(ang) * a.radius;
+        const s = worldToScreen(x, y, cam);
+        const size = a.size * camera.zoom;
+        if (s.x < -size || s.y < -size || s.x > w + size || s.y > h + size) continue;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, size / 2, 0, TAU);
+        ctx.fill();
+      }
     }
   }
 
@@ -824,6 +851,7 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
         const ss = worldToScreen(sun.x, sun.y, cam);
         const sizeB = asteroidBelt.size * camera.zoom;
         ctx.drawImage(asteroidBelt.canvas, ss.x - sizeB/2, ss.y - sizeB/2, sizeB, sizeB);
+        asteroidBelt.draw(ctx, cam);
       }
       for (const p of _planets) {
         const s = worldToScreen(p.x, p.y, cam);
