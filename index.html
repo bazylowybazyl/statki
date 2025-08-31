@@ -439,6 +439,118 @@ function spawnDefaultHit(x,y,scale=1){
   spawnParticle({x,y}, {x:0,y:0}, 0.08, '#ffffff', 4 * scale, true);
 }
 
+// =============== Station UI ===============
+const STATIONS = stations; // istniejące lub generowane
+let stationUI = { open:false, tab:'upgrades', station:null, cursorOver:false, hoverId:null };
+
+const OPTIONS = {
+  vfx: { colorTempK: 8000, bloomGain: 1.1 },
+  audio: { master: 0.8, sfx: 1.0, music: 0.7 },
+  controls: { mouseSensitivity: 1.0 } // bez odwracania osi
+};
+
+function stationUnderCursor(){
+  const world = screenToWorld(mouse.x, mouse.y);
+  for(const s of STATIONS){
+    const d = Math.hypot(world.x - s.x, world.y - s.y);
+    if(d < (s.r||120)) return s;
+  }
+  return null;
+}
+
+window.addEventListener('keydown', (e)=>{
+  if(e.code==='Enter' && !stationUI.open){
+    const s = stationUnderCursor();
+    if(s){ stationUI.open = true; stationUI.station = s; stationUI.tab='upgrades'; e.preventDefault(); }
+  }
+  if(stationUI.open){
+    if(e.code==='Escape'){ stationUI.open=false; stationUI.station=null; }
+    if(e.code==='Digit1') stationUI.tab='upgrades';
+    if(e.code==='Digit2') stationUI.tab='trade';
+    if(e.code==='Digit3') stationUI.tab='cantina';
+    if(e.code==='Digit4') stationUI.tab='hangar';
+  }
+});
+
+function renderStationUI(){
+  if(!stationUI.open) return;
+  hudBeginPanel();
+  hudTabs(['upgrades','trade','cantina','hangar'], stationUI.tab);
+  if(stationUI.tab==='upgrades') renderUpgradesTab();
+  if(stationUI.tab==='trade')    renderTradeTab();
+  if(stationUI.tab==='cantina')  renderCantinaTab();
+  if(stationUI.tab==='hangar')   renderHangarTab();
+  hudEndPanel();
+}
+
+// --- Zakładki ---
+const PLAYER = { credits: 1200, cargo: {}, shipId: 'starter', hull: 0.86 };
+const BLUEPRINTS = {
+  upgrades: [
+    { id:'rail_cooler', name:'Chłodzenie raila', cost:600, apply(){ rail.heatCap *= 1.25; rail.coolRate *= 1.15; } },
+    { id:'boost_core',  name:'Wzmocniony boost', cost:700, apply(){ boost.speed *= 1.15; boost.duration *= 1.1; } },
+    { id:'agility',     name:'Zwrotność +',      cost:500, apply(){ ship.turnRate = (ship.turnRate||1)*1.12; } },
+  ],
+  ships: [
+    { id:'scout', name:'Scout', cost:2500, stats:{ hp:0.8, speed:1.3, cargo:0.6 } },
+    { id:'frigate', name:'Fregata', cost:4200, stats:{ hp:1.6, speed:0.85, cargo:1.4 } },
+  ],
+};
+
+function renderUpgradesTab(){
+  uiTitle('Ulepszenia statku');
+  for(const u of BLUEPRINTS.upgrades){
+    if(uiRowButton(`${u.name} — ${u.cost} cr`, 'Kup')){
+      if(PLAYER.credits>=u.cost){ PLAYER.credits-=u.cost; u.apply(); toast('Zainstalowano: '+u.name); }
+      else toast('Za mało kredytów');
+    }
+  }
+}
+const MARKET = { // ceny przykładowe
+  buy:{ ruda: 22, paliwo: 15, żywność: 8 },
+  sell:{ ruda: 18, paliwo: 12, żywność: 6 }
+};
+function renderTradeTab(){
+  uiTitle('Handel towarami');
+  for(const [k,price] of Object.entries(MARKET.buy)){
+    if(uiRowButton(`${k} — kup: ${price} cr`, 'Kup')){
+      if(PLAYER.credits>=price){ PLAYER.credits-=price; PLAYER.cargo[k]=(PLAYER.cargo[k]||0)+1; }
+    }
+  }
+  for(const [k,price] of Object.entries(MARKET.sell)){
+    if(uiRowButton(`${k} — sprzedaj: ${price} cr`, 'Sprzedaj')){
+      if((PLAYER.cargo[k]||0)>0){ PLAYER.cargo[k]-=1; PLAYER.credits+=price; }
+    }
+  }
+}
+function renderCantinaTab(){
+  uiTitle('Kantyna');
+  section('Misje najemnik');
+  if(uiRowButton('Zlikwiduj cel (BOSS Interceptor)', 'Przyjmij')){
+    startAssassinationMission();
+  }
+  section('Misje żołnierz');
+  if(uiRowButton('Wojna o terytorium (punkt kontrolny)', 'Dołącz')){
+    startTerritoryWarMission();
+  }
+}
+function renderHangarTab(){
+  uiTitle('Hangar');
+  if(uiRowButton(`Napraw kadłub (${Math.ceil((1-PLAYER.hull)*100)}% uszk.)`, 'Napraw')){
+    const cost = Math.ceil((1-PLAYER.hull)*600);
+    if(PLAYER.credits>=cost){ PLAYER.credits-=cost; PLAYER.hull=1.0; toast('Naprawiono kadłub.'); } else toast('Za mało kredytów');
+  }
+  section('Nowe statki');
+  for(const s of BLUEPRINTS.ships){
+    if(uiRowButton(`${s.name} — ${s.cost} cr`, 'Kup')){
+      if(PLAYER.credits>=s.cost){ PLAYER.credits-=s.cost; PLAYER.shipId=s.id; applyShipStats(s.stats); toast('Zakupiono: '+s.name); }
+      else toast('Za mało kredytów');
+    }
+  }
+}
+function startAssassinationMission(){ toast('Misja najemnik rozpoczęta'); }
+function startTerritoryWarMission(){ toast('Dołączono do wojny terytorialnej'); }
+
 function spawnLaserBeam(start, end, width){
   pushParticleSafe({ beam:true, start:{...start}, end:{...end}, width, age:0, life:0.12 });
 }
@@ -519,12 +631,15 @@ function triggerScanWave(){
   }
 }
 
-const mouse = { x: W/2, y: H/2, left:false, right:false };
+const mouse = { x: W/2, y: H/2, left:false, right:false, click:false };
 canvas.addEventListener('mousemove', e=>{ mouse.x = e.clientX; mouse.y = e.clientY; });
 canvas.addEventListener('mousedown', e=>{
-  if(e.button===0){ mouse.left=true; if(!warp.isBusy()) triggerRailVolley(); }
+  if(e.button===0){
+    mouse.left=true; mouse.click=true;
+    if(!stationUI.open && !warp.isBusy()) triggerRailVolley();
+  }
   if(e.button===2){ e.preventDefault(); mouse.right=true;
-    if(!warp.isBusy()){
+    if(!stationUI.open && !warp.isBusy()){
       const mouseWorld = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom, y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
       const local = rotateInv({ x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y }, ship.angle);
       const side = (local.x >= 0) ? 'right' : 'left';
@@ -1956,6 +2071,8 @@ function render(alpha){
   ctx.fillStyle = '#dfe7ff'; ctx.fillText(`Rockets: ${rocketAmmo}`, 12 + bw + 8, H-12-bh-6-12);
 
   if(showMap) drawSectorMap();
+  renderStationUI();
+  mouse.click=false;
 }
 
 function drawSectorMap(){
@@ -1997,6 +2114,58 @@ function drawSectorMap(){
 // =============== Helpers ===============
 function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
 function roundRectScreen(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+
+function screenToWorld(sx, sy){
+  return { x: ship.pos.x + (sx - W/2)/camera.zoom, y: ship.pos.y + (sy - H/2)/camera.zoom };
+}
+
+// --- Minimal UI helpers ---
+let uiLayout = {x:0,y:0,w:0,line:0};
+function hudBeginPanel(){
+  const w = 360, h = 300;
+  uiLayout = { x:(W-w)/2, y:(H-h)/2, w, line:32 };
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  ctx.fillRect(uiLayout.x, uiLayout.y, w, h);
+  ctx.translate(uiLayout.x, uiLayout.y);
+}
+function hudEndPanel(){ ctx.restore(); }
+function hudTabs(tabs, active){
+  const tabW = uiLayout.w / tabs.length;
+  ctx.fillStyle='rgba(22,22,40,0.8)';
+  ctx.fillRect(0,0,uiLayout.w,24);
+  ctx.textBaseline='top';
+  tabs.forEach((t,i)=>{
+    ctx.fillStyle = t===active?'#dfe7ff':'#777';
+    ctx.fillText(t, i*tabW+6, 6);
+  });
+  uiLayout.line = 40;
+}
+function uiTitle(text){
+  ctx.fillStyle='#dfe7ff';
+  ctx.fillText(text,8,uiLayout.line);
+  uiLayout.line += 24;
+}
+function section(text){ uiTitle(text); }
+function uiRowButton(label, btn){
+  const y = uiLayout.line;
+  ctx.fillStyle='#dfe7ff';
+  ctx.fillText(label,8,y+4);
+  const bw=80,bh=20,bx=uiLayout.w-bw-8,by=y;
+  const over = mouse.x>=uiLayout.x+bx && mouse.x<=uiLayout.x+bx+bw && mouse.y>=uiLayout.y+by && mouse.y<=uiLayout.y+by+bh;
+  ctx.fillStyle=over?'#3b82f6':'#1e3a8a';
+  ctx.fillRect(bx,by,bw,bh);
+  ctx.fillStyle='#fff';
+  ctx.fillText(btn,bx+8,by+4);
+  uiLayout.line += bh+8;
+  return over && mouse.click;
+}
+function toast(msg){ console.log(msg); }
+function applyShipStats(stats){
+  if(stats.hp && ship.hull){ ship.hull.max*=stats.hp; ship.hull.val=ship.hull.max; }
+  if(stats.speed){ ship.speedMod = (ship.speedMod||1) * stats.speed; }
+  if(stats.cargo){ ship.cargoCapacity = (ship.cargoCapacity||1) * stats.cargo; }
+}
 
 // init
 const loadingEl = document.getElementById('loading');
