@@ -1608,6 +1608,9 @@ function getEngineVFX() {
 
       exhaust.setThrottle(throttle);
       exhaust.setWarpBoost(Math.max(boostAmp, warpAmp));
+      // Możesz dopasować temperaturę i bloom z poziomu opcji (D3):
+      exhaust.setColorTemp(OPTIONS.vfx.colorTempK);
+      exhaust.setBloomGain(OPTIONS.vfx.bloomGain);
 
       exhaust.update(time);
       r.render(scene, camera);
