@@ -537,7 +537,20 @@ function spawnShockwave(x, y, opts = {}){
 
 // =============== Station UI ===============
 const STATIONS = stations; // istniejące lub generowane
-let stationUI = { open:false, tab:'upgrades', station:null, cursorOver:false, hoverId:null };
+let stationUI = {
+  open:false,
+  tab:'upgrades',
+  station:null,
+  cursorOver:false,
+  hoverId:null,
+  x:(W-450)/2,
+  y:(H-520)/2,
+  w:450,
+  h:520,
+  dragging:false,
+  dragDX:0,
+  dragDY:0
+};
 
 const OPTIONS = {
   vfx: { colorTempK: 8000, bloomGain: 1.1 },
@@ -558,10 +571,18 @@ function stationUnderCursor(){
 window.addEventListener('keydown', (e)=>{
   if(e.code==='Enter' && !stationUI.open){
     const s = stationUnderCursor();
-    if(s){ stationUI.open = true; stationUI.station = s; stationUI.tab='upgrades'; e.preventDefault(); }
+    if(s){
+      stationUI.open = true;
+      stationUI.station = s;
+      stationUI.tab='upgrades';
+      stationUI.x = (W - stationUI.w) / 2;
+      stationUI.y = (H - stationUI.h) / 2;
+      stationUI.dragging = false;
+      e.preventDefault();
+    }
   }
   if(stationUI.open){
-    if(e.code==='Escape'){ stationUI.open=false; stationUI.station=null; }
+    if(e.code==='Escape'){ stationUI.open=false; stationUI.station=null; stationUI.dragging=false; }
     if(e.code==='Digit1') stationUI.tab='upgrades';
     if(e.code==='Digit2') stationUI.tab='trade';
     if(e.code==='Digit3') stationUI.tab='cantina';
@@ -575,7 +596,7 @@ window.addEventListener('keydown', (e)=>{
 
 function renderStationUI(){
   if(!stationUI.open) return;
-  hudBeginPanel();
+  hudBeginPanel(stationUI.x, stationUI.y, stationUI.w, stationUI.h);
   hudTabs(['upgrades','trade','cantina','hangar'], stationUI.tab);
   if(stationUI.tab==='upgrades') renderUpgradesTab();
   if(stationUI.tab==='trade')    renderTradeTab();
@@ -748,10 +769,26 @@ function triggerScanWave(){
 }
 
 const mouse = { x: W/2, y: H/2, left:false, right:false, click:false };
-canvas.addEventListener('mousemove', e=>{ mouse.x = e.clientX; mouse.y = e.clientY; });
+canvas.addEventListener('mousemove', e=>{
+  mouse.x = e.clientX; mouse.y = e.clientY;
+  if(stationUI.open && stationUI.dragging){
+    stationUI.x = mouse.x - stationUI.dragDX;
+    stationUI.y = mouse.y - stationUI.dragDY;
+  }
+});
 canvas.addEventListener('mousedown', e=>{
   if(e.button===0){
     mouse.left=true; mouse.click=true;
+    if(stationUI.open){
+      const inX = mouse.x >= stationUI.x && mouse.x <= stationUI.x + stationUI.w;
+      const inY = mouse.y >= stationUI.y && mouse.y <= stationUI.y + stationUI.h;
+      if(inX && inY && mouse.y <= stationUI.y + 24){
+        stationUI.dragging = true;
+        stationUI.dragDX = mouse.x - stationUI.x;
+        stationUI.dragDY = mouse.y - stationUI.y;
+        mouse.click = false;
+      }
+    }
     if(!stationUI.open && !warp.isBusy()) triggerRailVolley();
   }
   if(e.button===2){ e.preventDefault(); mouse.right=true;
@@ -765,7 +802,13 @@ canvas.addEventListener('mousedown', e=>{
   }
   if(e.button===1){ e.preventDefault(); camera.zoom = Math.abs(camera.zoom - camera.defaultZoom) < 0.03 ? camera.altZoom : camera.defaultZoom; }
 });
-canvas.addEventListener('mouseup', e=>{ if(e.button===0) mouse.left=false; if(e.button===2) mouse.right=false; });
+canvas.addEventListener('mouseup', e=>{
+  if(e.button===0){
+    mouse.left=false;
+    stationUI.dragging=false;
+  }
+  if(e.button===2) mouse.right=false;
+});
 canvas.addEventListener('contextmenu', e=>e.preventDefault());
 canvas.addEventListener('wheel', e=>{ e.preventDefault(); const f = 1 - e.deltaY * camera.wheelSpeed; camera.zoom *= f; camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom); }, {passive:false});
 
@@ -2303,7 +2346,20 @@ function screenToWorld(sx, sy){
 }
 
 // --- MINI UI HELPERS (HUD) ---
-function hudBeginPanel(){ ctx.save(); ctx.resetTransform(); ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(24,24, 450, 520); ctx.translate(40,46); ctx.fillStyle='#E6F2FF'; ctx.font='16px monospace'; }
+let hudOffset = {x:40, y:46};
+function hudBeginPanel(x=24, y=24, w=450, h=520){
+  ctx.save();
+  ctx.resetTransform();
+  ctx.fillStyle='rgba(0,0,0,0.55)';
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle='rgba(255,255,255,0.08)';
+  ctx.fillRect(x, y, w, 24);
+  ctx.translate(x+16, y+46);
+  hudOffset.x = x+16;
+  hudOffset.y = y+46;
+  ctx.fillStyle='#E6F2FF';
+  ctx.font='16px monospace';
+}
 function hudEndPanel(){ ctx.restore(); }
 function uiTitle(t){ ctx.font='20px monospace'; ctx.fillText(t,0,0); ctx.translate(0,28); ctx.font='16px monospace'; }
 function section(t){ ctx.translate(0,12); ctx.globalAlpha=0.8; ctx.fillText('— '+t,0,0); ctx.globalAlpha=1; ctx.translate(0,18); }
@@ -2316,7 +2372,9 @@ function uiRowButton(label, btn){
   ctx.fillText(btn, x+10, 0);
   ctx.translate(0,22);
   // super-proste: klik dowolny = aktywacja, można podpiąć realny hit test
-  return mouse.click && mouse.x>40+x && mouse.x<40+x+w && mouse.y>46+y && mouse.y<46+y+h;
+  return mouse.click &&
+    mouse.x > hudOffset.x + x && mouse.x < hudOffset.x + x + w &&
+    mouse.y > hudOffset.y + y && mouse.y < hudOffset.y + y + h;
 }
 function slider(label, min,max, step, obj, key){
   ctx.fillText(`${label}: ${obj[key].toFixed(2)}`,0,0); ctx.translate(0,18);
