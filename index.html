@@ -277,7 +277,7 @@ let stations = planets.map(pl => {
   const speed = (2 * Math.PI) / (periodHours * 3600);
   const x = pl.x + Math.cos(angle) * orbitRadius;
   const y = pl.y + Math.sin(angle) * orbitRadius;
-  const r = 60;
+  const r = 120;
   const portOffset = r + 40;
   const ports = [
     {x: portOffset, y: 0},
@@ -817,6 +817,7 @@ const HIGHLIGHT_RANGE = 2000;
 const radarPings = [];
 const scanWaves = [];
 const scanArrows = [];
+const NPC_DESPAWN_RADIUS = 20000;
 function spawnRadarPing(x,y){ radarPings.push({x,y,age:0,life:1}); }
 function triggerScanWave(){
   const wave = {x:ship.pos.x,y:ship.pos.y,r:0,speed:SCAN_VFX_SPEED,max:SCAN_RANGE,hit:new Set()};
@@ -1240,7 +1241,17 @@ function npcShootingStep(dt){
   }
 }
 function npcStep(dt){
+  const DESPAWN_RADIUS_SQ = NPC_DESPAWN_RADIUS * NPC_DESPAWN_RADIUS;
   for(const npc of npcs){
+    if(!npc.mission){
+      const dx = npc.x - ship.pos.x;
+      const dy = npc.y - ship.pos.y;
+      if(dx*dx + dy*dy > DESPAWN_RADIUS_SQ){
+        npc.dead = true;
+        npc.respawnTimer = 5;
+        continue;
+      }
+    }
     if(npc.mission){
       if(npc.dead) continue;
       if(npc.ai) npc.ai(dt);
@@ -1967,7 +1978,7 @@ function drawStationVFX(ctx, st, x, y, r, t){
   switch(st.style){
     case 'ringGate':
       ctx.strokeStyle = '#273447';
-      ctx.lineWidth = r*0.2;
+      ctx.lineWidth = Math.max(1, r*0.2);
       ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.stroke();
       ctx.save(); ctx.rotate(t*0.6);
       for(let i=0;i<6;i++){ ctx.rotate(Math.PI/3); glowCircle(ctx, r*0.6, 0, r*0.12, '#6dd6ff'); }
@@ -2002,10 +2013,14 @@ function drawStationVFX(ctx, st, x, y, r, t){
       ctx.fillStyle='#3b517d'; ctx.fillRect(-r*0.1,-r,r*0.2,r*2);
       for(let i=-3;i<=3;i++){ ctx.fillStyle='#6ea0ff'; ctx.fillRect(r*0.3, i*r*0.2 - r*0.05, r*0.3, r*0.1); ctx.fillRect(-r*0.6, i*r*0.2 - r*0.05, r*0.3, r*0.1); }
       break;
+    default:
+      ctx.fillStyle = '#273447';
+      ctx.beginPath(); ctx.arc(0,0,r*0.6,0,Math.PI*2); ctx.fill();
+      break;
   }
   ctx.restore();
   ctx.strokeStyle = 'rgba(175,210,255,0.12)';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = Math.max(1, 2);
   ctx.beginPath(); ctx.arc(x, y, r*1.05, 0, Math.PI*2); ctx.stroke();
 }
 
