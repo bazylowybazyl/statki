@@ -121,7 +121,8 @@ const ship = {
             recoil:0, recoilMax:12, recoilRecover:48, recoilKick:14, offset:{x:0,y:0} },
   shield:{ max:120, val:120, regenRate:6, regenDelay:2, regenTimer:0 },
   hull:{ max:1000, val:1000 },
-  special:{ cooldown:10, cooldownTimer:0 }
+  special:{ cooldown:10, cooldownTimer:0 },
+  input:{ thrustX:0, thrustY:0, aimX:0, aimY:0 }
 };
 ship.inertia = (1/12) * ship.mass * ((ship.w*ship.w)+(ship.h*ship.h));
 (function configureShip(){
@@ -559,6 +560,7 @@ function spawnLaserBeam(start, end, width){
 const input = { main:0, leftSide:0, rightSide:0, torque:0 };
 const keys = {};
 let showMap = false;
+let PAUSED = false;
 window.addEventListener('keydown', e=>{
   if(e.repeat) return;
   const k = e.key.toLowerCase();
@@ -652,6 +654,33 @@ canvas.addEventListener('mousedown', e=>{
 canvas.addEventListener('mouseup', e=>{ if(e.button===0) mouse.left=false; if(e.button===2) mouse.right=false; });
 canvas.addEventListener('contextmenu', e=>e.preventDefault());
 canvas.addEventListener('wheel', e=>{ e.preventDefault(); const f = 1 - e.deltaY * camera.wheelSpeed; camera.zoom *= f; camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom); }, {passive:false});
+
+const GAMEPAD = { enabled:true, dead:0.15, last:{} };
+
+function applyGamepad(){
+  const pads = navigator.getGamepads?.() || [];
+  const p = pads[0];
+  if(!p) return;
+  const ax = (v)=> (Math.abs(v)<GAMEPAD.dead?0:v);
+  const lx = ax(p.axes[0]||0), ly = ax(p.axes[1]||0);
+  const rx = ax(p.axes[2]||0), ry = ax(p.axes[3]||0);
+  // ruch/rotacja
+  ship.input.thrustX = lx;
+  ship.input.thrustY = ly*-1; // bez odwracania osi (standard)
+  ship.input.aimX = rx;
+  ship.input.aimY = ry*-1;
+  input.main = Math.max(0, ship.input.thrustY);
+  input.torque = ship.input.thrustX;
+  input.leftSide = 0;
+  input.rightSide = 0;
+  // przyciski
+  const btn = (i)=>!!(p.buttons[i]&&p.buttons[i].pressed);
+  if(btn(0)) triggerRailVolley();      // A / Cross
+  if(btn(1)) fireRocket();             // B / Circle
+  if(btn(2)) engageBoost();            // X / Square
+  if(btn(3)) attemptWarp();            // Y / Triangle
+  if(btn(9)) PAUSED = !PAUSED;         // START
+}
 
 // =============== Side rockets ===============
 const ROCKET_FIRE_INTERVAL = 0.11;
@@ -1568,6 +1597,8 @@ saveState();
 function loop(now){
   const frame = Math.min(0.033, (now - lastTime)/1000);
   lastTime = now;
+  applyGamepad();
+  if(PAUSED){ requestAnimationFrame(loop); return; }
   acc += frame;
   vfxTime += frame;
   saveState();
