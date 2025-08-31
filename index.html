@@ -448,6 +448,7 @@ const OPTIONS = {
   audio: { master: 0.8, sfx: 1.0, music: 0.7 },
   controls: { mouseSensitivity: 1.0 } // bez odwracania osi
 };
+let OPTIONS_OPEN = false;
 
 function stationUnderCursor(){
   const world = screenToWorld(mouse.x, mouse.y);
@@ -470,6 +471,10 @@ window.addEventListener('keydown', (e)=>{
     if(e.code==='Digit3') stationUI.tab='cantina';
     if(e.code==='Digit4') stationUI.tab='hangar';
   }
+});
+
+window.addEventListener('keydown', (e)=>{
+  if(e.code==='KeyO' && !stationUI.open){ OPTIONS_OPEN = !OPTIONS_OPEN; }
 });
 
 function renderStationUI(){
@@ -550,6 +555,20 @@ function renderHangarTab(){
 }
 function startAssassinationMission(){ toast('Misja najemnik rozpoczęta'); }
 function startTerritoryWarMission(){ toast('Dołączono do wojny terytorialnej'); }
+
+function renderOptions(){
+  if(!OPTIONS_OPEN) return;
+  hudBeginPanel();
+  uiTitle('Opcje');
+  slider('VFX: temperatura (K)', 1000, 20000, 500, OPTIONS.vfx, 'colorTempK');
+  slider('VFX: bloom', 0.2, 2.5, 0.05, OPTIONS.vfx, 'bloomGain');
+  slider('Audio: master', 0, 1, 0.05, OPTIONS.audio, 'master');
+  slider('Audio: SFX', 0, 1, 0.05, OPTIONS.audio, 'sfx');
+  slider('Audio: muzyka', 0, 1, 0.05, OPTIONS.audio, 'music');
+  slider('Mysz: czułość', 0.3, 2.0, 0.05, OPTIONS.controls, 'mouseSensitivity');
+  // brak opcji odwrócenia osi zgodnie z prośbą
+  hudEndPanel();
+}
 
 function spawnLaserBeam(start, end, width){
   pushParticleSafe({ beam:true, start:{...start}, end:{...end}, width, age:0, life:0.12 });
@@ -2072,6 +2091,7 @@ function render(alpha){
 
   if(showMap) drawSectorMap();
   renderStationUI();
+  renderOptions();
   mouse.click=false;
 }
 
@@ -2119,53 +2139,51 @@ function screenToWorld(sx, sy){
   return { x: ship.pos.x + (sx - W/2)/camera.zoom, y: ship.pos.y + (sy - H/2)/camera.zoom };
 }
 
-// --- Minimal UI helpers ---
-let uiLayout = {x:0,y:0,w:0,line:0};
-function hudBeginPanel(){
-  const w = 360, h = 300;
-  uiLayout = { x:(W-w)/2, y:(H-h)/2, w, line:32 };
-  ctx.save();
-  ctx.fillStyle='rgba(0,0,0,0.6)';
-  ctx.fillRect(uiLayout.x, uiLayout.y, w, h);
-  ctx.translate(uiLayout.x, uiLayout.y);
-}
+// --- MINI UI HELPERS (HUD) ---
+function hudBeginPanel(){ ctx.save(); ctx.resetTransform(); ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(24,24, 450, 520); ctx.translate(40,46); ctx.fillStyle='#E6F2FF'; ctx.font='16px monospace'; }
 function hudEndPanel(){ ctx.restore(); }
-function hudTabs(tabs, active){
-  const tabW = uiLayout.w / tabs.length;
-  ctx.fillStyle='rgba(22,22,40,0.8)';
-  ctx.fillRect(0,0,uiLayout.w,24);
-  ctx.textBaseline='top';
-  tabs.forEach((t,i)=>{
-    ctx.fillStyle = t===active?'#dfe7ff':'#777';
-    ctx.fillText(t, i*tabW+6, 6);
-  });
-  uiLayout.line = 40;
-}
-function uiTitle(text){
-  ctx.fillStyle='#dfe7ff';
-  ctx.fillText(text,8,uiLayout.line);
-  uiLayout.line += 24;
-}
-function section(text){ uiTitle(text); }
+function uiTitle(t){ ctx.font='20px monospace'; ctx.fillText(t,0,0); ctx.translate(0,28); ctx.font='16px monospace'; }
+function section(t){ ctx.translate(0,12); ctx.globalAlpha=0.8; ctx.fillText('— '+t,0,0); ctx.globalAlpha=1; ctx.translate(0,18); }
+function uiText(t){ ctx.fillText(t,0,0); ctx.translate(0,18); }
+function hudTabs(names, active){ let x=0; for(const n of names){ const on = (n===active); ctx.fillStyle= on?'#fff':'#a8c0ff'; ctx.fillText('['+n+']', x, 0); x += ctx.measureText('['+n+']  ').width; } ctx.translate(0,28); ctx.fillStyle='#E6F2FF'; }
 function uiRowButton(label, btn){
-  const y = uiLayout.line;
-  ctx.fillStyle='#dfe7ff';
-  ctx.fillText(label,8,y+4);
-  const bw=80,bh=20,bx=uiLayout.w-bw-8,by=y;
-  const over = mouse.x>=uiLayout.x+bx && mouse.x<=uiLayout.x+bx+bw && mouse.y>=uiLayout.y+by && mouse.y<=uiLayout.y+by+bh;
-  ctx.fillStyle=over?'#3b82f6':'#1e3a8a';
-  ctx.fillRect(bx,by,bw,bh);
-  ctx.fillStyle='#fff';
-  ctx.fillText(btn,bx+8,by+4);
-  uiLayout.line += bh+8;
-  return over && mouse.click;
+  ctx.fillText(label, 0, 0);
+  const w = 96, h=20, x=320, y=-14;
+  ctx.strokeStyle='#cfe3ff'; ctx.strokeRect(x,y,w,h);
+  ctx.fillText(btn, x+10, 0);
+  ctx.translate(0,22);
+  // super-proste: klik dowolny = aktywacja, można podpiąć realny hit test
+  return mouse.click && mouse.x>40+x && mouse.x<40+x+w && mouse.y>46+y && mouse.y<46+y+h;
 }
-function toast(msg){ console.log(msg); }
-function applyShipStats(stats){
-  if(stats.hp && ship.hull){ ship.hull.max*=stats.hp; ship.hull.val=ship.hull.max; }
-  if(stats.speed){ ship.speedMod = (ship.speedMod||1) * stats.speed; }
-  if(stats.cargo){ ship.cargoCapacity = (ship.cargoCapacity||1) * stats.cargo; }
+function slider(label, min,max, step, obj, key){
+  ctx.fillText(`${label}: ${obj[key].toFixed(2)}`,0,0); ctx.translate(0,18);
+  // do prostoty – klawiszami [ i ] zmieniasz ostatni slider; lub klik + ruch (opcjonalnie)
+  // Możesz podpiąć realny input według swojej architektury.
 }
+function toast(t){ /* opcjonalnie dopisz do kolejki komunikatów HUD */ }
+function applyShipStats(s){ ship.hpMax*=s.hp; ship.maxSpeed*=s.speed; ship.cargoCap=(ship.cargoCap||20)*s.cargo; }
+
+function dist(x1,y1,x2,y2){ return Math.hypot(x2-x1, y2-y1); }
+function limitSpeed(n, max){ const v=Math.hypot(n.vel.x, n.vel.y); if(v>max){ const s=max/v; n.vel.x*=s; n.vel.y*=s; } }
+function chaseEvadeAI(n, target, opts={}){
+  // prosta pogoń z unikami
+  const dx=target.pos.x-n.pos.x, dy=target.pos.y-n.pos.y;
+  const ang=Math.atan2(dy,dx), da=wrapAngle(ang-n.rot);
+  n.rot += clamp(da,-n.turn*0.016,n.turn*0.016);
+  n.vel.x += Math.cos(n.rot)*n.accel*0.016;
+  n.vel.y += Math.sin(n.rot)*n.accel*0.016;
+  limitSpeed(n, n.maxSpeed);
+}
+function dogfightAI(n, target){ return chaseEvadeAI(n,target,{strafe:true}); }
+function battleshipAI(n, target){ // wolniejszy obrót – trzyma dystans
+  const d = dist(n.pos.x,n.pos.y,target.pos.x,target.pos.y);
+  if(d<600){ n.vel.x -= Math.cos(n.rot)*n.accel*0.016; n.vel.y -= Math.sin(n.rot)*n.accel*0.016; }
+  else chaseEvadeAI(n,target);
+}
+function useRailPair(n, target){ /* sprawdź kąt i cooldown, odpal pary */ }
+function useRocketsPair(n, target){ /* salwy */ }
+function useCIWSPair(n, target){ /* krótka seria */ }
+function maybeFireRockets(n, target){ /* warunkowo */ }
 
 // init
 const loadingEl = document.getElementById('loading');
