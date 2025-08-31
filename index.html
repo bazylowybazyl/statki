@@ -409,6 +409,7 @@ function pickNextStation(startStationId, type){
     const other = stations.filter(s=>s.inner !== start.inner);
     if(other.length && Math.random() < 0.5) candidates = other;
   }
+  if(!candidates.length) return startStationId;
   let idx = Math.floor(Math.random()*candidates.length);
   if(candidates.length>1 && candidates[idx].id === startStationId) idx = (idx+1)%candidates.length;
   return candidates[idx].id;
@@ -449,11 +450,13 @@ function initNPCs(){
     npcs.push(npc);
     return npc;
   }
-  function spawnFreighterEscortGroup(fType, escortMin, escortMax, sphere){
+function spawnFreighterEscortGroup(fType, escortMin, escortMax, sphere){
     const cand = stations.filter(s=>s.inner === (sphere==='inner'));
     if (!cand.length) return;
     const start = cand[Math.floor(Math.random()*cand.length)];
+    if(!start) return;
     const targetId = pickNextStation(start.id, fType);
+    if(targetId === undefined) return;
     const group = groupCounter++;
     const leader = spawnNPC(fType, start, targetId, group);
     if(!leader) return;
