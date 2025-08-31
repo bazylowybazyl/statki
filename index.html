@@ -136,6 +136,11 @@ const ship = {
   input:{ thrustX:0, thrustY:0, aimX:0, aimY:0 }
 };
 ship.inertia = (1/12) * ship.mass * ((ship.w*ship.w)+(ship.h*ship.h));
+const BASE_SHIP = {
+  hullMax: ship.hull.max,
+  cargoCap: 20,
+  maxSpeed: 0
+};
 (function configureShip(){
   const hw = ship.w/2, hh = ship.h/2;
   // Jeden DUŻY engine na środku rufy (moc ≈ suma poprzednich)
@@ -426,6 +431,7 @@ function initNPCs(){
   }
   function spawnFreighterEscortGroup(fType, escortMin, escortMax){
     const inner = stations.filter(s=>s.inner);
+    if(!inner.length) return;
     const start = inner[Math.floor(Math.random()*inner.length)];
     const targetId = pickNextStation(npcId, start.id);
     const group = groupCounter++;
@@ -446,6 +452,7 @@ function initNPCs(){
   }
   function spawnCivilianGroup(min, max){
     const inner = stations.filter(s=>s.inner);
+    if(!inner.length) return;
     const start = inner[Math.floor(Math.random()*inner.length)];
     const targetId = pickNextStation(npcId, start.id);
     const group = groupCounter++;
@@ -458,6 +465,7 @@ function initNPCs(){
   }
   function spawnPolicePatrol(min, max){
     const inner = stations.filter(s=>s.inner);
+    if(!inner.length) return;
     const start = inner[Math.floor(Math.random()*inner.length)];
     const targetId = pickNextStation(npcId, start.id);
     const group = groupCounter++;
@@ -470,7 +478,7 @@ function initNPCs(){
   const pickFrom = arr => arr[Math.floor(Math.random()*arr.length)];
 
   // INNER: 50% puli
-  while(npcs.length < desiredCount * 0.5){
+  while(innerStations.length && npcs.length < desiredCount * 0.5){
     spawnFreighterEscortGroup('freighter-small',0,0);
     spawnFreighterEscortGroup('freighter-medium',0,0);
     spawnCivilianGroup(1,2);
@@ -2511,10 +2519,12 @@ function slider(label, min,max, step, obj, key){
 }
 function toast(t){ /* opcjonalnie dopisz do kolejki komunikatów HUD */ }
 function applyShipStats(s){
-  ship.hull.max *= s.hp;
+  ship.hull.max = Math.round(BASE_SHIP.hullMax * (s.hp || 1));
   ship.hull.val = Math.min(ship.hull.val, ship.hull.max);
-  ship.maxSpeed = (ship.maxSpeed || 0) * s.speed;
-  ship.cargoCap = (ship.cargoCap || 20) * s.cargo;
+  if (BASE_SHIP.maxSpeed > 0) {
+    ship.maxSpeed = BASE_SHIP.maxSpeed * (s.speed || 1);
+  }
+  ship.cargoCap = Math.round((BASE_SHIP.cargoCap || 20) * (s.cargo || 1));
 }
 
 function dist(x1,y1,x2,y2){ return Math.hypot(x2-x1, y2-y1); }
