@@ -451,13 +451,14 @@ function initNPCs(){
   }
   function spawnFreighterEscortGroup(fType, escortMin, escortMax, sphere){
     const cand = stations.filter(s=>s.inner === (sphere==='inner'));
+    if (!cand.length) return;
     const start = cand[Math.floor(Math.random()*cand.length)];
     const targetId = pickNextStation(start.id, fType);
     const group = groupCounter++;
     const leader = spawnNPC(fType, start, targetId, group);
     if(!leader) return;
     const target = stations.find(s=>s.id===targetId);
-    if(start.inner !== target.inner) return;
+    if(!target || start.inner !== target.inner) return;
     const escortCount = escortMin + Math.floor(Math.random()*(escortMax-escortMin+1));
     for(let i=0;i<escortCount;i++){
       const eType = Math.random()<0.5?'guard':'mercenary';
@@ -473,6 +474,7 @@ function initNPCs(){
   }
   function spawnCivilianGroup(min, max, sphere){
     const cand = stations.filter(s=>s.inner === (sphere==='inner'));
+    if (!cand.length) return;
     const start = cand[Math.floor(Math.random()*cand.length)];
     const targetId = pickNextStation(start.id, 'civilian-small');
     const group = groupCounter++;
@@ -485,13 +487,16 @@ function initNPCs(){
   }
   function spawnPolicePatrol(min, max, sphere){
     const cand = stations.filter(s=>s.inner === (sphere==='inner'));
+    if (!cand.length) return;
     const start = cand[Math.floor(Math.random()*cand.length)];
     const targetId = pickNextStation(start.id, 'police');
     const group = groupCounter++;
     const count = min + Math.floor(Math.random()*(max-min+1));
     for(let i=0;i<count;i++) spawnNPC('police', start, targetId, group);
   }
-  while(npcs.length < desiredCount){
+  let attempts = 0;
+  while(npcs.length < desiredCount && attempts < desiredCount * 10){
+    attempts++;
     spawnFreighterEscortGroup('freighter-small',0,0,'inner');
     spawnFreighterEscortGroup('freighter-small',0,0,'outer');
     spawnFreighterEscortGroup('freighter-medium',0,0,'inner');
