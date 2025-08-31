@@ -435,7 +435,7 @@ function initNPCs(){
     const x = start.x + (Math.random()-0.5)*40;
     const y = start.y + (Math.random()-0.5)*40;
     const target = stations.find(s=>s.id===targetId);
-    const sameSphere = start.inner === target.inner;
+    const route = (target && start.inner === target.inner) ? getWarpRoute(start.id, targetId) : null;
     const npc = { id:npcId++, type, group,
       x, y,
       vx:0, vy:0, angle:Math.random()*Math.PI*2,
@@ -443,9 +443,9 @@ function initNPCs(){
       hp:cfg.hp, maxHp:cfg.hp, color:cfg.color, weapon:cfg.weapon,
       dead:false, respawnTimer:0, fade:1, docking:false, lastStation:start.id,
       leader:null, orbitAngle:0, orbitRadius:0,
-      warpRoute: sameSphere?getWarpRoute(start.id, targetId):null,
-      phase: sameSphere?'toGate':'direct',
-      lane: sameSphere?Math.floor(Math.random()*2):0 };
+      warpRoute: route,
+      phase: route?'toGate':'direct',
+      lane: route?Math.floor(Math.random()*2):0 };
     npcs.push(npc);
     return npc;
   }
@@ -1232,8 +1232,10 @@ function npcStep(dt){
         npc.vx = 0; npc.vy = 0;
         npc.hp = npc.maxHp; npc.dead=false; npc.target = targetId; npc.fade = 1; npc.docking=false; npc.lastStation=start.id;
         const target = stations.find(s=>s.id===targetId);
-        if(start.inner === target.inner){
-          npc.warpRoute = getWarpRoute(start.id, targetId); npc.phase = 'toGate'; npc.lane = Math.floor(Math.random()*2);
+        if(target && start.inner === target.inner){
+          const route = getWarpRoute(start.id, targetId);
+          if(route){ npc.warpRoute = route; npc.phase = 'toGate'; npc.lane = Math.floor(Math.random()*2); }
+          else { npc.warpRoute = null; npc.phase = 'direct'; npc.lane = 0; }
         } else {
           npc.warpRoute = null; npc.phase = 'direct'; npc.lane = 0;
         }
@@ -1251,8 +1253,10 @@ function npcStep(dt){
         npc.vx = 0; npc.vy = 0;
         npc.target = targetId; npc.fade = 1; npc.docking=false; npc.lastStation=st.id;
         const target = stations.find(s=>s.id===targetId);
-        if(st.inner === target.inner){
-          npc.warpRoute = getWarpRoute(st.id, targetId); npc.phase = 'toGate'; npc.lane = Math.floor(Math.random()*2);
+        if(target && st.inner === target.inner){
+          const route = getWarpRoute(st.id, targetId);
+          if(route){ npc.warpRoute = route; npc.phase = 'toGate'; npc.lane = Math.floor(Math.random()*2); }
+          else { npc.warpRoute = null; npc.phase = 'direct'; npc.lane = 0; }
         } else {
           npc.warpRoute = null; npc.phase = 'direct'; npc.lane = 0;
         }
@@ -1329,9 +1333,16 @@ function npcStep(dt){
         const start = stations.find(s=>s.id===npc.lastStation);
         const target = stations.find(s=>s.id===npc.target);
         if(start && target && start.inner === target.inner){
-          npc.warpRoute = getWarpRoute(start.id, npc.target);
-          npc.phase = 'toGate';
-          npc.lane = Math.floor(Math.random()*2);
+          const route = getWarpRoute(start.id, npc.target);
+          if(route){
+            npc.warpRoute = route;
+            npc.phase = 'toGate';
+            npc.lane = Math.floor(Math.random()*2);
+          } else {
+            npc.warpRoute = null;
+            npc.phase = 'direct';
+            npc.lane = 0;
+          }
         } else {
           npc.warpRoute = null;
           npc.phase = 'direct';
