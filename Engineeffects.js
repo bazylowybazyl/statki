@@ -116,15 +116,35 @@ export function createShortNeedleExhaust(opts = {}) {
   let throttle = 0;       // bieżące wysterowanie (0..1)
   let throttleTarget = 0; // docelowe wysterowanie
   let warpBoost = 0;      // 0..1 (dodatkowe „dopalenie” przy warp/boost)
+  let colorTemp = opts.colorTempK || 6500; // K
+  let bloomGain = opts.bloomGain || 1.0;   // strojenie bloom
   function setThrottle(t) { throttleTarget = THREE.MathUtils.clamp(t, 0, 1); }
   function setWarpBoost(t) { warpBoost = THREE.MathUtils.clamp(t, 0, 1); }
+  function setColorTemp(k) { colorTemp = THREE.MathUtils.clamp(k | 0, 1000, 20000); }
+  function setBloomGain(g) { bloomGain = THREE.MathUtils.clamp(g || 1, 0.2, 2.5); }
+
+  function kelvinToRGB(k) {
+    k = k / 100;
+    let r, g, b;
+    if (k <= 66) { r = 255; g = 99.47 * Math.log(k) - 161.12; }
+    else { r = 329.7 * Math.pow(k - 60, -0.133); g = 288.1 * Math.pow(k - 60, -0.0755); }
+    if (k >= 66) { b = 255; }
+    else if (k <= 19) { b = 0; }
+    else { b = 138.5 * Math.log(k - 10) - 305.0; }
+    return new THREE.Color(
+      Math.max(0, Math.min(1, r / 255)),
+      Math.max(0, Math.min(1, g / 255)),
+      Math.max(0, Math.min(1, b / 255))
+    );
+  }
 
   function update(time = 0) {
     // płynne przejście do docelowego throttle
     throttle = THREE.MathUtils.lerp(throttle, throttleTarget, 0.1);
     const base = throttle;
     const over = Math.max(0, warpBoost * 0.8);
-    const amp = THREE.MathUtils.lerp(0.05, 1.0, base) + over; // skala jasności/długości
+    const idle = 0.12 + 0.08 * Math.sin(time * 2.2);
+    const amp = idle + THREE.MathUtils.lerp(0.05, 1.0, base) + over; // skala jasności/długości
 
     // miękkie pulsowanie
     const pulse = 0.08 * Math.sin(time * 12.0) + 0.04 * Math.sin(time * 19.0 + 1.7);
@@ -142,15 +162,16 @@ export function createShortNeedleExhaust(opts = {}) {
     streak1.position.x = -3 + Math.sin(time * 6.3) * 0.8;
     streak2.position.x = 3 + Math.cos(time * 7.1) * 0.8;
 
-    // kolory (trochę jaśniejsze przy dużym amp)
-    const c = new THREE.Color().setHSL(0.58, 0.75, THREE.MathUtils.clamp(0.35 + amp * 0.45, 0, 1));
-    matPlume.color.copy(c);
-    streakMat.color.copy(c);
-    const cc = new THREE.Color().setHSL(0.58, 0.2, THREE.MathUtils.clamp(0.5 + amp * 0.3, 0, 1));
-    matCore.color.copy(cc);
+    // kolory zależne od temperatury i bloomGain
+    const heat = base * 2500 + warpBoost * 3000;
+    const col = kelvinToRGB(colorTemp + heat);
+    const intensity = (0.7 + base * 1.3 + warpBoost * 0.6) * bloomGain;
+    matPlume.color.copy(col).multiplyScalar(intensity);
+    streakMat.color.copy(col).multiplyScalar(intensity * 0.8);
+    matCore.color.copy(col).multiplyScalar(intensity * 1.2);
   }
 
-  return { group, setThrottle, setWarpBoost, update };
+  return { group, setThrottle, setWarpBoost, setColorTemp, setBloomGain, update };
 }
 
 /* ================== Exhaust: warpowy (szerszy pióropusz) ================== */
