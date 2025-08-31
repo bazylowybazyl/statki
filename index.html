@@ -556,9 +556,14 @@ function stationUnderCursor(){
 }
 
 window.addEventListener('keydown', (e)=>{
-  if(e.code==='Enter' && !stationUI.open){
-    const s = stationUnderCursor();
-    if(s){ stationUI.open = true; stationUI.station = s; stationUI.tab='upgrades'; e.preventDefault(); }
+  if(e.code==='Enter'){
+    e.preventDefault();
+    if(!stationUI.open){
+      const s = stationUnderCursor();
+      if(s){ stationUI.open = true; stationUI.station = s; stationUI.tab='upgrades'; }
+    } else {
+      stationUI.open=false; stationUI.station=null;
+    }
   }
   if(stationUI.open){
     if(e.code==='Escape'){ stationUI.open=false; stationUI.station=null; }
