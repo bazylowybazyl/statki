@@ -1273,7 +1273,10 @@ function npcStep(dt){
         npc.y = start.y + (Math.random()-0.5)*40;
         npc.vx = 0; npc.vy = 0;
         npc.hp = npc.maxHp; npc.dead=false; npc.target = targetId; npc.fade = 1; npc.docking=false; npc.lastStation=start.id;
-        npc.warpRoute = getWarpRoute(start.id, targetId); npc.phase = 'toGate'; npc.lane = Math.floor(Math.random()*2);
+        const route = getWarpRoute(start.id, targetId);
+        npc.warpRoute = route;
+        npc.phase = route ? 'toGate' : 'direct';
+        npc.lane = Math.floor(Math.random()*2);
       }
       continue;
     }
@@ -1287,7 +1290,10 @@ function npcStep(dt){
         npc.y = st.y + (Math.random()-0.5)*40;
         npc.vx = 0; npc.vy = 0;
         npc.target = targetId; npc.fade = 1; npc.docking=false; npc.lastStation=st.id;
-        npc.warpRoute = getWarpRoute(st.id, targetId); npc.phase = 'toGate'; npc.lane = Math.floor(Math.random()*2);
+        const route = getWarpRoute(st.id, targetId);
+        npc.warpRoute = route;
+        npc.phase = route ? 'toGate' : 'direct';
+        npc.lane = Math.floor(Math.random()*2);
       }
       continue;
     }
@@ -1299,6 +1305,34 @@ function npcStep(dt){
       if(traveled >= route.length){
         npc.phase = 'toStation';
         npc.x = route.end.x; npc.y = route.end.y;
+      }
+      continue;
+    }
+    if(npc.phase === 'direct'){
+      const st = stations.find(s=>s.id===npc.target);
+      if(!st){
+        npc.target = pickNextStation(npc.id, npc.lastStation);
+        const route = getWarpRoute(npc.lastStation, npc.target);
+        npc.warpRoute = route;
+        npc.phase = route ? 'toGate' : 'direct';
+        continue;
+      }
+      const to = { x: st.x - npc.x, y: st.y - npc.y };
+      const d = Math.hypot(to.x, to.y);
+      const dir = d ? { x: to.x/d, y: to.y/d } : { x:0, y:0 };
+      const desiredSpeed = npc.speed * (d < 120 ? (d/120) : 1);
+      const desiredV = { x: dir.x*desiredSpeed, y: dir.y*desiredSpeed };
+      npc.vx += (desiredV.x - (npc.vx||0)) * clamp(1.5*dt,0,1);
+      npc.vy += (desiredV.y - (npc.vy||0)) * clamp(1.5*dt,0,1);
+      const toP = { x: ship.pos.x - npc.x, y: ship.pos.y - npc.y }; const dp = Math.hypot(toP.x,toP.y);
+      if(dp < 120){ npc.vx -= (toP.x/dp) * 40*dt; npc.vy -= (toP.y/dp) * 40*dt; }
+      npc.x += npc.vx*dt; npc.y += npc.vy*dt; npc.angle = Math.atan2(npc.vy||0, npc.vx||0);
+      const dist = Math.hypot(st.x - npc.x, st.y - npc.y);
+      if(dist < 20){
+        npc.docking = true;
+        npc.x = st.x; npc.y = st.y;
+        npc.vx = 0; npc.vy = 0;
+        npc.lastStation = st.id;
       }
       continue;
     }
@@ -1356,7 +1390,13 @@ function npcStep(dt){
     }
     if(!targetPos){
       st = stations.find(s=>s.id===npc.target);
-      if(!st){ npc.target = pickNextStation(npc.id, -1); npc.warpRoute = getWarpRoute(npc.lastStation, npc.target); npc.phase='toGate'; continue; }
+      if(!st){
+        npc.target = pickNextStation(npc.id, -1);
+        const route = getWarpRoute(npc.lastStation, npc.target);
+        npc.warpRoute = route;
+        npc.phase = route ? 'toGate' : 'direct';
+        continue;
+      }
       if(npc.phase === 'toStation'){
         const gate = npc.warpRoute.end;
         const gv = { x: st.x - gate.x, y: st.y - gate.y };
