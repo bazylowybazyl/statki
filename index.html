@@ -334,16 +334,9 @@ function makeNPCBase(pos, stats){
   };
 }
 
-function chaseEvadeAI(){/* stub */}
-function battleshipAI(){/* stub */}
-function dogfightAI(){/* stub */}
 function makeRailgun(cfg){ return { ...cfg }; }
 function makeRocketPod(cfg){ return { ...cfg }; }
 function makeGatling(cfg){ return { ...cfg }; }
-function useRailPair(){/* stub */}
-function useRocketsPair(){/* stub */}
-function useCIWSPair(){/* stub */}
-function maybeFireRockets(){/* stub */}
 
 function spawnInterceptor(pos){
   const n = makeNPCBase(pos, { hp: 160, accel: 90, maxSpeed: 540, turn: 4.0, radius: 22 });
@@ -476,8 +469,8 @@ function initNPCs(){
   const outerStations = stations.filter(s=>!s.inner);
   const pickFrom = arr => arr[Math.floor(Math.random()*arr.length)];
 
-  // INNER: jak dotąd
-  while(innerStations.length && npcs.length < desiredCount * 0.5){
+  // INNER: 50% puli
+  while(npcs.length < desiredCount * 0.5){
     spawnFreighterEscortGroup('freighter-small',0,0);
     spawnFreighterEscortGroup('freighter-medium',0,0);
     spawnCivilianGroup(1,2);
@@ -1246,6 +1239,7 @@ function npcStep(dt){
       continue;
     }
     if(npc.phase === 'warping'){
+      if(!npc.warpRoute){ npc.phase='direct'; continue; }
       npc.x += npc.vx*dt; npc.y += npc.vy*dt;
       npc.angle = Math.atan2(npc.vy||0, npc.vx||0);
       const route = npc.warpRoute;
@@ -1285,6 +1279,7 @@ function npcStep(dt){
       continue;
     }
     if(npc.phase === 'toGate'){
+      if(!npc.warpRoute){ npc.phase='direct'; continue; }
       const gate = npc.warpRoute.start;
       const start = stations.find(s=>s.id===npc.lastStation);
       const gv = { x: gate.x - start.x, y: gate.y - start.y };
@@ -1346,6 +1341,7 @@ function npcStep(dt){
         continue;
       }
       if(npc.phase === 'toStation'){
+        if(!npc.warpRoute){ npc.phase='direct'; continue; }
         const gate = npc.warpRoute.end;
         const gv = { x: st.x - gate.x, y: st.y - gate.y };
         const gd = Math.hypot(gv.x, gv.y) || 1;
@@ -2514,24 +2510,38 @@ function slider(label, min,max, step, obj, key){
   // Możesz podpiąć realny input według swojej architektury.
 }
 function toast(t){ /* opcjonalnie dopisz do kolejki komunikatów HUD */ }
-function applyShipStats(s){ ship.hpMax*=s.hp; ship.maxSpeed*=s.speed; ship.cargoCap=(ship.cargoCap||20)*s.cargo; }
+function applyShipStats(s){
+  ship.hull.max *= s.hp;
+  ship.hull.val = Math.min(ship.hull.val, ship.hull.max);
+  ship.maxSpeed = (ship.maxSpeed || 0) * s.speed;
+  ship.cargoCap = (ship.cargoCap || 20) * s.cargo;
+}
 
 function dist(x1,y1,x2,y2){ return Math.hypot(x2-x1, y2-y1); }
-function limitSpeed(n, max){ const v=Math.hypot(n.vel.x, n.vel.y); if(v>max){ const s=max/v; n.vel.x*=s; n.vel.y*=s; } }
+function limitSpeed(n, max){ const v=Math.hypot(n.vx, n.vy); if(v>max){ const s=max/v; n.vx*=s; n.vy*=s; } }
 function chaseEvadeAI(n, target, opts={}){
   // prosta pogoń z unikami
-  const dx=target.pos.x-n.pos.x, dy=target.pos.y-n.pos.y;
-  const ang=Math.atan2(dy,dx), da=wrapAngle(ang-n.rot);
-  n.rot += clamp(da,-n.turn*0.016,n.turn*0.016);
-  n.vel.x += Math.cos(n.rot)*n.accel*0.016;
-  n.vel.y += Math.sin(n.rot)*n.accel*0.016;
+  const tx = target.pos ? target.pos.x : target.x;
+  const ty = target.pos ? target.pos.y : target.y;
+  const dx = tx - n.x, dy = ty - n.y;
+  const ang = Math.atan2(dy, dx);
+  const da = wrapAngle(ang - n.angle);
+  n.angle += clamp(da, -n.turn*0.016, n.turn*0.016);
+  n.vx += Math.cos(n.angle) * n.accel * 0.016;
+  n.vy += Math.sin(n.angle) * n.accel * 0.016;
   limitSpeed(n, n.maxSpeed);
 }
 function dogfightAI(n, target){ return chaseEvadeAI(n,target,{strafe:true}); }
 function battleshipAI(n, target){ // wolniejszy obrót – trzyma dystans
-  const d = dist(n.pos.x,n.pos.y,target.pos.x,target.pos.y);
-  if(d<600){ n.vel.x -= Math.cos(n.rot)*n.accel*0.016; n.vel.y -= Math.sin(n.rot)*n.accel*0.016; }
-  else chaseEvadeAI(n,target);
+  const tx = target.pos ? target.pos.x : target.x;
+  const ty = target.pos ? target.pos.y : target.y;
+  const d = dist(n.x,n.y,tx,ty);
+  if(d<600){
+    n.vx -= Math.cos(n.angle)*n.accel*0.016;
+    n.vy -= Math.sin(n.angle)*n.accel*0.016;
+  } else {
+    chaseEvadeAI(n,target);
+  }
 }
 function useRailPair(n, target){ /* sprawdź kąt i cooldown, odpal pary */ }
 function useRocketsPair(n, target){ /* salwy */ }
