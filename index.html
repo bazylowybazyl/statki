@@ -102,7 +102,18 @@ function leadTarget(shooter, shooterVel, target, speed){
 
 // =============== World / camera ===============
 const WORLD = { w: 120000, h: 80000 };
-const camera = { zoom: 1.0, defaultZoom:1.0, altZoom:0.7, minZoom:0.35, maxZoom:3.2, wheelSpeed:0.002 };
+const camera = {
+  zoom: 1.0,
+  defaultZoom: 1.0,
+  altZoom: 0.7,
+  minZoom: 0.35,
+  maxZoom: 3.2,
+  wheelSpeed: 0.002,
+  shakeMag: 0,
+  shakeTime: 0,
+  shakeDur: 0,
+  addShake(mag, dur){ this.shakeMag = mag; this.shakeTime = dur; this.shakeDur = dur; }
+};
 
 // =============== Ship ===============
 const ship = {
@@ -401,6 +412,7 @@ window.addEventListener('DOMContentLoaded', () => {
 // =============== Bullets & effects ===============
 const bullets = [];
 const particles = [];
+const shockwaves = [];
 const MAX_PARTICLES = 8000;          // twardy sufit (dobry balans)
 const MAX_PARTICLES_DRAW = 4500;     // ile maks. rysujemy na ekranie
 
@@ -437,6 +449,18 @@ function spawnDefaultHit(x,y,scale=1){
     spawnParticle({x,y}, {x:Math.cos(a)*s, y:Math.sin(a)*s}, 0.24 + Math.random()*0.36, '#ffb36b', 1 + Math.random()*2, true);
   }
   spawnParticle({x,y}, {x:0,y:0}, 0.08, '#ffffff', 4 * scale, true);
+}
+
+function spawnShockwave(x, y, opts = {}){
+  shockwaves.push({
+    x, y,
+    r: opts.r || 20,
+    maxR: opts.maxR || 800,
+    w: opts.w || 8,
+    life: 0,
+    maxLife: opts.maxLife || 0.6,
+    color: opts.color || 'rgba(180,200,255,'
+  });
 }
 
 // =============== Station UI ===============
@@ -1089,6 +1113,11 @@ const warp = {
   isBusy(){ return this.state!=='idle'; }
 };
 
+function exitWarp(){
+  spawnShockwave(ship.pos.x, ship.pos.y, { maxR: 1200, maxLife: 0.7 });
+  camera.addShake(18, 0.22);
+}
+
 const boost = {
   state:'idle',
   charge:0, chargeTime:0.6,
@@ -1114,7 +1143,7 @@ window.addEventListener('keydown', (e)=>{
 window.addEventListener('keyup', (e)=>{
   if(e.key.toLowerCase() === 'shift'){
     if(warp.state==='charging'){ warp.state='idle'; warp.charge=0; }
-    else if(warp.state==='active'){ warp.state='idle'; }
+    else if(warp.state==='active'){ warp.state='idle'; exitWarp(); }
   }
 });
 function engageWarp(dir){
@@ -1280,7 +1309,7 @@ function physicsStep(dt){
     ship.vel.y += (targetV.y - ship.vel.y) * clamp(6*dt,0,1);
     ship.angVel *= Math.exp(-8*dt);
     warp.fuel = clamp(warp.fuel - warp.consumeRate*dt, 0, warp.fuelMax);
-    if(warp.fuel<=0) warp.state='idle';
+    if(warp.fuel<=0){ warp.state='idle'; exitWarp(); }
   }
   else if(warp.state==='charging'){
     const dirToMouse = norm({x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y});
@@ -1579,6 +1608,19 @@ function loop(now){
   const alpha = acc / PHYS_DT;
   frameId++;
   updatePlanets3D(frame);
+  // Shockwaves
+  for(let i=shockwaves.length-1;i>=0;i--){
+    const s = shockwaves[i];
+    s.life += frame;
+    const k = Math.min(1, s.life/s.maxLife);
+    s.r = s.maxR * k;
+    s.w = Math.max(1, (1-k) * (s.maxR*0.06));
+    if(s.life >= s.maxLife) shockwaves.splice(i,1);
+  }
+  if(camera.shakeTime > 0){
+    camera.shakeTime -= frame;
+    if(camera.shakeTime <= 0) camera.shakeMag = 0;
+  }
   render(alpha);
   requestAnimationFrame(loop);
 }
@@ -1638,6 +1680,12 @@ function render(alpha){
 
   // Kamera
   const cam = { x: interpPos.x, y: interpPos.y };
+  if(camera.shakeMag > 0){
+    const t = camera.shakeTime / camera.shakeDur;
+    const mag = camera.shakeMag * Math.max(0, t);
+    cam.x += (Math.random()*2 - 1) * mag;
+    cam.y += (Math.random()*2 - 1) * mag;
+  }
 
   // aktualizuj wyświetlanie czasu
   gameTimeEl.textContent = formatGameTime(gameTime);
@@ -1692,6 +1740,16 @@ function render(alpha){
     ctx.beginPath();
     ctx.moveTo(s2.x - perp.x*w, s2.y - perp.y*w);
     ctx.lineTo(s2.x + perp.x*w, s2.y + perp.y*w);
+    ctx.stroke();
+  }
+
+  // Shockwaves (na warstwie świata, pod HUD)
+  for(const s of shockwaves){
+    const sw = worldToScreen(s.x, s.y, cam);
+    ctx.beginPath();
+    ctx.lineWidth = s.w * camera.zoom;
+    ctx.strokeStyle = s.color + (1 - s.life/s.maxLife) + ')';
+    ctx.arc(sw.x, sw.y, s.r * camera.zoom, 0, Math.PI*2);
     ctx.stroke();
   }
 
