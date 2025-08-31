@@ -317,6 +317,18 @@ initWarpRoutes();
 
 let npcs = [];
 const MISSION_NPCS = [];
+let mercMission = null;
+
+function spawnMissionFighter(pos){
+  const n = makeNPCBase(pos, { hp: 120, accel: 90, maxSpeed: 540, turn: 4.0, radius: 22 });
+  n.type = 'pirate';
+  n.color = '#ff5533';
+  n.ai = function(dt){
+    chaseEvadeAI(n, ship, { strafe:true });
+  };
+  n.mission = true;
+  npcs.push(n);
+}
 
 function makeNPCBase(pos, stats){
   return {
@@ -648,8 +660,8 @@ function renderTradeTab(){
 function renderCantinaTab(){
   uiTitle('Kantyna');
   section('Misje najemnik');
-  if(uiRowButton('Zlikwiduj cel (BOSS Interceptor)', 'Przyjmij')){
-    startAssassinationMission();
+  if(uiRowButton('Najemnik: piracka stacja', 'Przyjmij')){
+    startMercenaryMission();
   }
   section('Misje żołnierz');
   if(uiRowButton('Wojna o terytorium (punkt kontrolny)', 'Dołącz')){
@@ -670,7 +682,17 @@ function renderHangarTab(){
     }
   }
 }
-function startAssassinationMission(){ toast('Misja najemnik rozpoczęta'); }
+function startMercenaryMission(){
+  if(mercMission) return;
+  const beltRadius = (planets[3].orbitRadius + planets[4].orbitRadius) / 2;
+  const angle = Math.random() * Math.PI * 2;
+  const x = SUN.x + Math.cos(angle) * beltRadius;
+  const y = SUN.y + Math.sin(angle) * beltRadius;
+  const station = { id:'PIR', x, y, r:80, hp:10000, maxHp:10000, static:true, mission:true };
+  stations.push(station);
+  mercMission = { station, npcsSpawned:false };
+  toast('Misja najemnik rozpoczęta');
+}
 function startTerritoryWarMission(){ toast('Dołączono do wojny terytorialnej'); }
 
 function renderOptions(){
@@ -778,7 +800,7 @@ canvas.addEventListener('mousemove', e=>{
 });
 canvas.addEventListener('mousedown', e=>{
   if(e.button===0){
-    mouse.left=true; mouse.click=true;
+    mouse.left=true;
     if(stationUI.open){
       const inX = mouse.x >= stationUI.x && mouse.x <= stationUI.x + stationUI.w;
       const inY = mouse.y >= stationUI.y && mouse.y <= stationUI.y + stationUI.h;
@@ -786,7 +808,6 @@ canvas.addEventListener('mousedown', e=>{
         stationUI.dragging = true;
         stationUI.dragDX = mouse.x - stationUI.x;
         stationUI.dragDY = mouse.y - stationUI.y;
-        mouse.click = false;
       }
     }
     if(!stationUI.open && !warp.isBusy()) triggerRailVolley();
@@ -805,7 +826,11 @@ canvas.addEventListener('mousedown', e=>{
 canvas.addEventListener('mouseup', e=>{
   if(e.button===0){
     mouse.left=false;
-    stationUI.dragging=false;
+    if(stationUI.dragging){
+      stationUI.dragging=false;
+    } else {
+      mouse.click=true;
+    }
   }
   if(e.button===2) mouse.right=false;
 });
@@ -1095,6 +1120,34 @@ function bulletsAndCollisionsStep(dt){
       }
     }
 
+    // hit mission station
+    for(const st of stations){
+      if(!st.hp) continue;
+      const d = Math.hypot(st.x - b.x, st.y - b.y);
+      if(d < st.r + b.r){
+        st.hp -= b.damage || 0;
+        if(mercMission && mercMission.station === st && !mercMission.npcsSpawned){
+          mercMission.npcsSpawned = true;
+          for(let k=0;k<50;k++){
+            const a = Math.random()*Math.PI*2;
+            const dist = st.r + 200 + Math.random()*200;
+            spawnMissionFighter({ x: st.x + Math.cos(a)*dist, y: st.y + Math.sin(a)*dist });
+          }
+        }
+        if(st.hp <= 0){
+          if(mercMission && mercMission.station === st){
+            PLAYER.credits += 10000;
+            stations.splice(stations.indexOf(st),1);
+            mercMission = null;
+            toast('Misja zakończona: +10000 cr');
+          }
+        }
+        spawnExplosionPlasma(b.x, b.y, 1.0);
+        bullets.splice(i,1);
+        break;
+      }
+    }
+
     // hit player
     if(b.owner !== 'player'){
       const hitR = Math.max(ship.w, ship.h) * 0.45;
@@ -1139,6 +1192,14 @@ function npcShootingStep(dt){
 }
 function npcStep(dt){
   for(const npc of npcs){
+    if(npc.mission){
+      if(npc.dead) continue;
+      if(npc.ai) npc.ai(dt);
+      npc.x += (npc.vx||0)*dt;
+      npc.y += (npc.vy||0)*dt;
+      npc.angle = Math.atan2(npc.vy||0, npc.vx||0);
+      continue;
+    }
     if(npc.dead){
       npc.respawnTimer -= dt;
       if(npc.respawnTimer<=0){
@@ -1331,6 +1392,7 @@ function physicsStep(dt){
     pl.y = SUN.y + Math.sin(pl.angle) * pl.orbitRadius;
   }
   for(const st of stations){
+    if(st.static) continue;
     st.angle += st.speed * dt * TIME_SCALE;
     st.x = st.planet.x + Math.cos(st.angle) * st.orbitRadius;
     st.y = st.planet.y + Math.sin(st.angle) * st.orbitRadius;
