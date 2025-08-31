@@ -304,6 +304,77 @@ function getWarpRoute(fromId, toId){ return warpRoutes[fromId + '-' + toId]; }
 initWarpRoutes();
 
 let npcs = [];
+const MISSION_NPCS = [];
+
+function makeNPCBase(pos, stats){
+  return {
+    x: pos.x, y: pos.y,
+    vx: 0, vy: 0,
+    angle: 0,
+    hp: stats.hp || 100,
+    maxHp: stats.hp || 100,
+    accel: stats.accel || 0,
+    maxSpeed: stats.maxSpeed || 0,
+    turn: stats.turn || 0,
+    radius: stats.radius || 20,
+    dead: false,
+    ai: null,
+    weapons: {}
+  };
+}
+
+function chaseEvadeAI(){/* stub */}
+function battleshipAI(){/* stub */}
+function dogfightAI(){/* stub */}
+function makeRailgun(cfg){ return { ...cfg }; }
+function makeRocketPod(cfg){ return { ...cfg }; }
+function makeGatling(cfg){ return { ...cfg }; }
+function useRailPair(){/* stub */}
+function useRocketsPair(){/* stub */}
+function useCIWSPair(){/* stub */}
+function maybeFireRockets(){/* stub */}
+
+function spawnInterceptor(pos){
+  const n = makeNPCBase(pos, { hp: 160, accel: 90, maxSpeed: 540, turn: 4.0, radius: 22 });
+  n.type = 'interceptor';
+  n.ai = function(dt){
+    chaseEvadeAI(n, ship, { strafe:true, dodgeRails:true, rocketBurst:false });
+  };
+  MISSION_NPCS.push(n);
+}
+
+function spawnDestroyer(pos){
+  const n = makeNPCBase(pos, { hp: 1200, accel: 40, maxSpeed: 260, turn: 1.2, radius: 60 });
+  n.type = 'destroyer';
+  n.weapons = {
+    railL: makeRailgun({ dmg: 85, cooldown: 0.85, spread: 0.004 }),
+    railR: makeRailgun({ dmg: 85, cooldown: 0.85, spread: 0.004 }),
+    rocketL: makeRocketPod({ salvo: 3, cooldown: 2.8 }),
+    rocketR: makeRocketPod({ salvo: 3, cooldown: 2.8 })
+  };
+  n.ai = function(dt){
+    battleshipAI(n, ship);
+    useRailPair(n, ship);
+    useRocketsPair(n, ship);
+  };
+  MISSION_NPCS.push(n);
+}
+
+function spawnGunship(pos){
+  const n = makeNPCBase(pos, { hp: 520, accel: 60, maxSpeed: 360, turn: 2.4, radius: 40 });
+  n.type = 'gunship';
+  n.weapons = {
+    ciwsL: makeGatling({ dps: 65, heat: 0.3 }),
+    ciwsR: makeGatling({ dps: 65, heat: 0.3 }),
+    rockets: makeRocketPod({ salvo: 2, cooldown: 3.2 })
+  };
+  n.ai = function(dt){
+    dogfightAI(n, ship);
+    useCIWSPair(n, ship);
+    maybeFireRockets(n, ship);
+  };
+  MISSION_NPCS.push(n);
+}
 function pickNextStation(npcId, lastStationId){
   const inner = stations.filter(s=>s.inner);
   let idx = Math.floor(Math.random()*inner.length);
