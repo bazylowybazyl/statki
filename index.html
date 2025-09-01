@@ -2696,7 +2696,21 @@ function toast(t){ /* opcjonalnie dopisz do kolejki komunikatów HUD */ }
 function applyShipStats(s){ ship.hpMax*=s.hp; ship.maxSpeed*=s.speed; ship.cargoCap=(ship.cargoCap||20)*s.cargo; }
 
 function dist(x1,y1,x2,y2){ return Math.hypot(x2-x1, y2-y1); }
-function limitSpeed(n, max){ const v=Math.hypot(n.vel.x, n.vel.y); if(v>max){ const s=max/v; n.vel.x*=s; n.vel.y*=s; } }
+function limitSpeed(n, max){
+  const vx = n.vel ? n.vel.x : n.vx;
+  const vy = n.vel ? n.vel.y : n.vy;
+  const v = Math.hypot(vx, vy);
+  if(v > max){
+    const s = max / v;
+    if(n.vel){
+      n.vel.x *= s;
+      n.vel.y *= s;
+    } else {
+      n.vx *= s;
+      n.vy *= s;
+    }
+  }
+}
 function chaseEvadeAI(n, target, opts={}){
   // prosta pogoń z unikami
   const dx=target.pos.x-n.pos.x, dy=target.pos.y-n.pos.y;
