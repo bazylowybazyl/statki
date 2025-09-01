@@ -779,7 +779,7 @@ window.addEventListener('keydown', e=>{
   }
   if(k === 'x') triggerScanWave();
   if(k === 'z'){
-    for(let i=0;i<8;i++) spawnFighter();
+    for(let i=0;i<FIGHTERS_PER_LAUNCH;i++) spawnFighter();
   }
   if(k === 'r'){
     if(highlightedEnemies.length){
@@ -959,10 +959,10 @@ function fireSideGunAtOffset(gunOff, side, target=null){
 }
 
 // =============== Fighters ===============
-const FIGHTER_LAUNCH_SPEED = 300;
 const FIGHTER_ORBIT_RADIUS = 180;
 const FIGHTER_ORBIT_SPEED = 1.5;
 const FIGHTER_ATTACK_RANGE = 1000;
+const FIGHTERS_PER_LAUNCH = 10;
 
 function fighterAI(dt){
   const target = (scan.scanned && !scan.scanned.dead &&
@@ -1033,14 +1033,13 @@ function spawnFighter(){
   const pod = ship.pods[ship.nextFighterPod % ship.pods.length];
   ship.nextFighterPod = (ship.nextFighterPod + 1) % ship.pods.length;
   const off = rotate(pod.offset, ship.angle);
-  const dir = norm(off);
   const orbit = ship.nextFighterOrbit;
-  ship.nextFighterOrbit = (ship.nextFighterOrbit + Math.PI/4) % (Math.PI*2);
+  ship.nextFighterOrbit = (ship.nextFighterOrbit + Math.PI*2 / FIGHTERS_PER_LAUNCH) % (Math.PI*2);
   npcs.push({
     x: ship.pos.x + off.x,
     y: ship.pos.y + off.y,
-    vx: ship.vel.x + dir.x*FIGHTER_LAUNCH_SPEED,
-    vy: ship.vel.y + dir.y*FIGHTER_LAUNCH_SPEED,
+    vx: ship.vel.x,
+    vy: ship.vel.y,
     accel:600, maxSpeed:900, turn:6,
     radius:12, hp:40, maxHp:40, color:'#9edfff', fade:1,
     ai: fighterAI, mission:true, friendly:true,
