@@ -177,6 +177,7 @@ ship.inertia = (1/12) * ship.mass * ((ship.w*ship.w)+(ship.h*ship.h));
     { offset:{ x:-ciwsOff, y: ciwsOff }, angle:0, angVel:0, cd:0 },
     { offset:{ x: ciwsOff, y: ciwsOff }, angle:0, angVel:0, cd:0 }
   ];
+  ship.nextFighterPod = 0;
 })();
 
 // =============== Proceduralne gwiazdy na CAŁEJ MAPIE ===============
@@ -776,6 +777,7 @@ window.addEventListener('keydown', e=>{
     if(boost.state==='idle' && boost.fuel>=boost.cost){ boost.state='charging'; boost.charge=0; }
   }
   if(k === 'x') triggerScanWave();
+  if(k === 'z') spawnFighter();
   if(k === 'r'){
     if(highlightedEnemies.length){
       lockedTargets = highlightedEnemies.filter(n=>!n.dead)
@@ -953,6 +955,65 @@ function fireSideGunAtOffset(gunOff, side, target=null){
   }
 }
 
+// =============== Fighters ===============
+function fighterAI(dt){
+  const hasTarget = (lockedTarget && !lockedTarget.dead);
+  const tx = hasTarget ? lockedTarget.x : ship.pos.x;
+  const ty = hasTarget ? lockedTarget.y : ship.pos.y;
+  const dx = tx - this.x;
+  const dy = ty - this.y;
+  const desired = Math.atan2(dy, dx);
+  const current = Math.atan2(this.vy, this.vx);
+  const diff = wrapAngle(desired - current);
+  const turn = clamp(diff, -this.turn*dt, this.turn*dt);
+  const ang = current + turn;
+  this.vx += Math.cos(ang) * this.accel * dt;
+  this.vy += Math.sin(ang) * this.accel * dt;
+  limitSpeed(this, this.maxSpeed);
+  for(const e of this.engines){
+    const off = rotate(e, ang + Math.PI);
+    spawnParticle({x:this.x + off.x, y:this.y + off.y},
+                  {x:this.vx - Math.cos(ang)*80, y:this.vy - Math.sin(ang)*80},
+                  0.10, '#cfe7ff', 0.8);
+  }
+  if(hasTarget){
+    this.ciwsCd = Math.max(0, this.ciwsCd - dt);
+    this.missileCd = Math.max(0, this.missileCd - dt);
+    const dir = {x:Math.cos(ang), y:Math.sin(ang)};
+    if(this.ciwsCd === 0){
+      bullets.push({ x:this.x + dir.x*8, y:this.y + dir.y*8,
+        vx: dir.x*CIWS_BULLET_SPEED + this.vx, vy: dir.y*CIWS_BULLET_SPEED + this.vy,
+        life:1.2, r:2, owner:'player', damage:CIWS_DAMAGE, type:'ciws' });
+      this.ciwsCd = CIWS_FIRE_INTERVAL;
+    }
+    if(this.missiles>0 && this.missileCd === 0){
+      bullets.push({ x:this.x + dir.x*8, y:this.y + dir.y*8,
+        vx: dir.x*SIDE_BULLET_SPEED + this.vx, vy: dir.y*SIDE_BULLET_SPEED + this.vy,
+        life:2.4, r:5, owner:'player', damage:SIDE_BULLET_DAMAGE, penetration:0,
+        type:'rocket', explodeRadius:SIDE_PLASMA_EXPLODE_RADIUS,
+        homingDelay:SIDE_ROCKET_HOMING_DELAY, target: lockedTarget });
+      this.missiles--; this.missileCd = 1.5;
+    }
+  }
+}
+function spawnFighter(){
+  const pod = ship.pods[ship.nextFighterPod % ship.pods.length];
+  ship.nextFighterPod = (ship.nextFighterPod + 1) % ship.pods.length;
+  const off = rotate(pod.offset, ship.angle);
+  const forward = rotate({x:0, y:-1}, ship.angle);
+  npcs.push({
+    x: ship.pos.x + off.x,
+    y: ship.pos.y + off.y,
+    vx: ship.vel.x + forward.x*300,
+    vy: ship.vel.y + forward.y*300,
+    accel:600, maxSpeed:900, turn:6,
+    radius:12, hp:40, maxHp:40, color:'#9edfff', fade:1,
+    ai: fighterAI, mission:true, friendly:true,
+    ciwsCd:0, missileCd:0, missiles:2,
+    engines:[{x:-3,y:8},{x:3,y:8}]
+  });
+}
+
 // =============== Rail (2 lufy: serie A→B, A→B) ===============
 const rail = { cd:[0,0], cdMax:0.38, shotGap:0.07, burstGap:0.18, burstsPerClick:2, queue:[], nextStart:0 };
 let railTimer = 0;
@@ -1005,7 +1066,7 @@ function ciwsStep(dt){
     const baseVel = { x: ship.vel.x - ship.angVel * off.y, y: ship.vel.y + ship.angVel * off.x };
     let target = null; let dist = CIWS_RANGE;
     for(const npc of npcs){
-      if(npc.dead) continue;
+      if(npc.dead || npc.friendly) continue;
       const d = Math.hypot(npc.x - base.x, npc.y - base.y);
       if(d < dist){ dist = d; target = npc; }
     }
@@ -1109,7 +1170,7 @@ function bulletsAndCollisionsStep(dt){
           } else {
             let dist = Infinity;
             for(const npc of npcs){
-              if(npc.dead) continue;
+              if(npc.dead || npc.friendly) continue;
               const d = Math.hypot(npc.x - b.x, npc.y - b.y);
               if(d < dist){ dist = d; target = {x:npc.x, y:npc.y}; }
             }
@@ -1138,6 +1199,7 @@ function bulletsAndCollisionsStep(dt){
     let hitNPC = null;
     for(const npc of npcs){
       if(npc.dead) continue;
+      if(b.owner === 'player' && npc.friendly) continue;
       const d = Math.hypot(npc.x - b.x, npc.y - b.y);
       if(d < npc.radius + b.r){ hitNPC = npc; break; }
     }
@@ -1147,7 +1209,7 @@ function bulletsAndCollisionsStep(dt){
         const ex = b.x, ey = b.y;
         spawnExplosionPlasma(ex, ey, 1.0);
         for(const npc of npcs){
-          if(npc.dead) continue;
+          if(npc.dead || (b.owner==='player' && npc.friendly)) continue;
           const d2 = Math.hypot(npc.x - ex, npc.y - ey);
           if(d2 <= b.explodeRadius + npc.radius){
             const falloff = 1 - (d2 / (b.explodeRadius + npc.radius));
@@ -1227,7 +1289,7 @@ function npcShootingStep(dt){
   npcFireTimer -= dt;
   if(npcFireTimer <= 0){
     npcFireTimer = 0.45 + Math.random()*0.8;
-    const candidates = npcs.filter(n=>!n.dead && n.weapon && Math.hypot(n.x-ship.pos.x, n.y-ship.pos.y) < 900);
+    const candidates = npcs.filter(n=>!n.dead && n.weapon && !n.friendly && Math.hypot(n.x-ship.pos.x, n.y-ship.pos.y) < 900);
     if(candidates.length){
       const shooter = candidates[Math.floor(Math.random()*candidates.length)];
       const dir = norm({x: ship.pos.x - shooter.x, y: ship.pos.y - shooter.y});
@@ -2235,13 +2297,30 @@ function render(alpha){
     ctx.save();
     ctx.globalAlpha = npc.fade;
     ctx.translate(s.x,s.y); ctx.rotate(npc.angle);
-    ctx.fillStyle = npc.color;
-    roundRectScreen(-npc.radius*camera.zoom, -npc.radius*camera.zoom,
-                    npc.radius*2*camera.zoom, npc.radius*1.2*camera.zoom, 4*camera.zoom);
-    ctx.fill();
-    const hpw = (npc.hp / npc.maxHp) * (npc.radius*2*camera.zoom);
-    ctx.fillStyle = '#ff6b6b';
-    ctx.fillRect(-npc.radius*camera.zoom, -npc.radius*camera.zoom - 8*camera.zoom, hpw, 4*camera.zoom);
+    if(npc.type === 'fighter'){
+      const z = camera.zoom;
+      ctx.fillStyle = npc.color;
+      ctx.beginPath();
+      ctx.moveTo(12*z,0);
+      ctx.lineTo(-8*z,-6*z);
+      ctx.lineTo(-8*z,6*z);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#ff6b6b';
+      const hpw = (npc.hp / npc.maxHp) * 20*z;
+      ctx.fillRect(-10*z, -12*z, hpw, 2*z);
+      ctx.fillStyle = '#dfe7ff';
+      ctx.fillRect(-6*z,-2*z,2*z,2*z);
+      ctx.fillRect(-6*z,0,2*z,2*z);
+    } else {
+      ctx.fillStyle = npc.color;
+      roundRectScreen(-npc.radius*camera.zoom, -npc.radius*camera.zoom,
+                      npc.radius*2*camera.zoom, npc.radius*1.2*camera.zoom, 4*camera.zoom);
+      ctx.fill();
+      const hpw = (npc.hp / npc.maxHp) * (npc.radius*2*camera.zoom);
+      ctx.fillStyle = '#ff6b6b';
+      ctx.fillRect(-npc.radius*camera.zoom, -npc.radius*camera.zoom - 8*camera.zoom, hpw, 4*camera.zoom);
+    }
     ctx.restore();
   }
 
