@@ -178,6 +178,7 @@ ship.inertia = (1/12) * ship.mass * ((ship.w*ship.w)+(ship.h*ship.h));
     { offset:{ x: ciwsOff, y: ciwsOff }, angle:0, angVel:0, cd:0 }
   ];
   ship.nextFighterPod = 0;
+  ship.nextFighterOrbit = 0;
 })();
 
 // =============== Proceduralne gwiazdy na CAŁEJ MAPIE ===============
@@ -777,7 +778,9 @@ window.addEventListener('keydown', e=>{
     if(boost.state==='idle' && boost.fuel>=boost.cost){ boost.state='charging'; boost.charge=0; }
   }
   if(k === 'x') triggerScanWave();
-  if(k === 'z') spawnFighter();
+  if(k === 'z'){
+    for(let i=0;i<8;i++) spawnFighter();
+  }
   if(k === 'r'){
     if(highlightedEnemies.length){
       lockedTargets = highlightedEnemies.filter(n=>!n.dead)
@@ -956,10 +959,58 @@ function fireSideGunAtOffset(gunOff, side, target=null){
 }
 
 // =============== Fighters ===============
+const FIGHTER_LAUNCH_SPEED = 300;
+const FIGHTER_ORBIT_RADIUS = 180;
+const FIGHTER_ORBIT_SPEED = 1.5;
+const FIGHTER_ATTACK_RANGE = 1000;
+
 function fighterAI(dt){
-  const hasTarget = (lockedTarget && !lockedTarget.dead);
-  const tx = hasTarget ? lockedTarget.x : ship.pos.x;
-  const ty = hasTarget ? lockedTarget.y : ship.pos.y;
+  const target = (scan.scanned && !scan.scanned.dead &&
+    Math.hypot(scan.scanned.x - ship.pos.x, scan.scanned.y - ship.pos.y) < FIGHTER_ATTACK_RANGE)
+    ? scan.scanned : null;
+
+  if(target){
+    // attack behaviour
+    const dx = target.x - this.x;
+    const dy = target.y - this.y;
+    const desired = Math.atan2(dy, dx);
+    const current = Math.atan2(this.vy, this.vx);
+    const diff = wrapAngle(desired - current);
+    const turn = clamp(diff, -this.turn*dt, this.turn*dt);
+    const ang = current + turn;
+    this.vx += Math.cos(ang) * this.accel * dt;
+    this.vy += Math.sin(ang) * this.accel * dt;
+    limitSpeed(this, this.maxSpeed);
+    for(const e of this.engines){
+      const off = rotate(e, ang + Math.PI);
+      spawnParticle({x:this.x + off.x, y:this.y + off.y},
+                    {x:this.vx - Math.cos(ang)*80, y:this.vy - Math.sin(ang)*80},
+                    0.10, '#cfe7ff', 0.8);
+    }
+    this.ciwsCd = Math.max(0, this.ciwsCd - dt);
+    this.missileCd = Math.max(0, this.missileCd - dt);
+    const dir = {x:Math.cos(ang), y:Math.sin(ang)};
+    if(this.ciwsCd === 0){
+      bullets.push({ x:this.x + dir.x*8, y:this.y + dir.y*8,
+        vx: dir.x*CIWS_BULLET_SPEED + this.vx, vy: dir.y*CIWS_BULLET_SPEED + this.vy,
+        life:1.2, r:2, owner:'player', damage:CIWS_DAMAGE, type:'ciws' });
+      this.ciwsCd = CIWS_FIRE_INTERVAL;
+    }
+    if(this.missiles>0 && this.missileCd === 0){
+      bullets.push({ x:this.x + dir.x*8, y:this.y + dir.y*8,
+        vx: dir.x*SIDE_BULLET_SPEED + this.vx, vy: dir.y*SIDE_BULLET_SPEED + this.vy,
+        life:2.4, r:5, owner:'player', damage:SIDE_BULLET_DAMAGE, penetration:0,
+        type:'rocket', explodeRadius:SIDE_PLASMA_EXPLODE_RADIUS,
+        homingDelay:SIDE_ROCKET_HOMING_DELAY, target });
+      this.missiles--; this.missileCd = 1.5;
+    }
+    return;
+  }
+
+  // orbit behaviour
+  this.orbitAngle += this.orbitSpeed * dt;
+  const tx = ship.pos.x + Math.cos(this.orbitAngle) * this.orbitRadius;
+  const ty = ship.pos.y + Math.sin(this.orbitAngle) * this.orbitRadius;
   const dx = tx - this.x;
   const dy = ty - this.y;
   const desired = Math.atan2(dy, dx);
@@ -976,41 +1027,28 @@ function fighterAI(dt){
                   {x:this.vx - Math.cos(ang)*80, y:this.vy - Math.sin(ang)*80},
                   0.10, '#cfe7ff', 0.8);
   }
-  if(hasTarget){
-    this.ciwsCd = Math.max(0, this.ciwsCd - dt);
-    this.missileCd = Math.max(0, this.missileCd - dt);
-    const dir = {x:Math.cos(ang), y:Math.sin(ang)};
-    if(this.ciwsCd === 0){
-      bullets.push({ x:this.x + dir.x*8, y:this.y + dir.y*8,
-        vx: dir.x*CIWS_BULLET_SPEED + this.vx, vy: dir.y*CIWS_BULLET_SPEED + this.vy,
-        life:1.2, r:2, owner:'player', damage:CIWS_DAMAGE, type:'ciws' });
-      this.ciwsCd = CIWS_FIRE_INTERVAL;
-    }
-    if(this.missiles>0 && this.missileCd === 0){
-      bullets.push({ x:this.x + dir.x*8, y:this.y + dir.y*8,
-        vx: dir.x*SIDE_BULLET_SPEED + this.vx, vy: dir.y*SIDE_BULLET_SPEED + this.vy,
-        life:2.4, r:5, owner:'player', damage:SIDE_BULLET_DAMAGE, penetration:0,
-        type:'rocket', explodeRadius:SIDE_PLASMA_EXPLODE_RADIUS,
-        homingDelay:SIDE_ROCKET_HOMING_DELAY, target: lockedTarget });
-      this.missiles--; this.missileCd = 1.5;
-    }
-  }
 }
+
 function spawnFighter(){
   const pod = ship.pods[ship.nextFighterPod % ship.pods.length];
   ship.nextFighterPod = (ship.nextFighterPod + 1) % ship.pods.length;
   const off = rotate(pod.offset, ship.angle);
-  const forward = rotate({x:0, y:-1}, ship.angle);
+  const dir = norm(off);
+  const orbit = ship.nextFighterOrbit;
+  ship.nextFighterOrbit = (ship.nextFighterOrbit + Math.PI/4) % (Math.PI*2);
   npcs.push({
     x: ship.pos.x + off.x,
     y: ship.pos.y + off.y,
-    vx: ship.vel.x + forward.x*300,
-    vy: ship.vel.y + forward.y*300,
+    vx: ship.vel.x + dir.x*FIGHTER_LAUNCH_SPEED,
+    vy: ship.vel.y + dir.y*FIGHTER_LAUNCH_SPEED,
     accel:600, maxSpeed:900, turn:6,
     radius:12, hp:40, maxHp:40, color:'#9edfff', fade:1,
     ai: fighterAI, mission:true, friendly:true,
     ciwsCd:0, missileCd:0, missiles:2,
-    engines:[{x:-3,y:8},{x:3,y:8}]
+    engines:[{x:-3,y:8},{x:3,y:8}],
+    orbitAngle: orbit,
+    orbitRadius: FIGHTER_ORBIT_RADIUS,
+    orbitSpeed: FIGHTER_ORBIT_SPEED
   });
 }
 
