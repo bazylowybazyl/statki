@@ -2715,14 +2715,23 @@ function uiText(t){ ctx.fillText(t,0,0); ctx.translate(0,18); }
 function hudTabs(names, active){ let x=0; for(const n of names){ const on = (n===active); ctx.fillStyle= on?'#fff':'#a8c0ff'; ctx.fillText('['+n+']', x, 0); x += ctx.measureText('['+n+']  ').width; } ctx.translate(0,28); ctx.fillStyle='#E6F2FF'; }
 function uiRowButton(label, btn){
   ctx.fillText(label, 0, 0);
-  const w = 96, h=20, x=320, y=-14;
-  ctx.strokeStyle='#cfe3ff'; ctx.strokeRect(x,y,w,h);
+  const w = 96, h = 20, x = 320, y = -14;
+  ctx.strokeStyle = '#cfe3ff';
+  ctx.strokeRect(x, y, w, h);
   ctx.fillText(btn, x+10, 0);
-  ctx.translate(0,22);
-  // super-proste: klik dowolny = aktywacja, można podpiąć realny hit test
-  return mouse.click &&
-    mouse.x > hudOffset.x + x && mouse.x < hudOffset.x + x + w &&
-    mouse.y > hudOffset.y + y && mouse.y < hudOffset.y + y + h;
+
+  const transform = ctx.getTransform();
+  const hitLeft = transform.e + x;
+  const hitTop = transform.f + y;
+  const hitRight = hitLeft + w;
+  const hitBottom = hitTop + h;
+
+  const clicked = mouse.click &&
+    mouse.x > hitLeft && mouse.x < hitRight &&
+    mouse.y > hitTop && mouse.y < hitBottom;
+
+  ctx.translate(0, 22);
+  return clicked;
 }
 function slider(label, min,max, step, obj, key){
   ctx.fillText(`${label}: ${obj[key].toFixed(2)}`,0,0); ctx.translate(0,18);
