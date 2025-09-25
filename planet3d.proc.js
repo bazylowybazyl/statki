@@ -91,10 +91,15 @@ const NOISE_FUNCTIONS = `const float PI = 3.14159265;
       float P = period;  // Period for current octave
 
       for(int i = 0; i < octaves; i++) {
+          max_amp += a;
           n += a * simplex3(v / P);
           a *= persistence;
-          max_amp += a;
           P /= lacunarity;
+      }
+
+      // Avoid division by zero if octaves <= 0 or persistence killed amplitude
+      if (max_amp <= 0.0) {
+          return 0.0;
       }
 
       // Normalize noise between [0.0, amplitude]
