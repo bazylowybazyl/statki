@@ -337,6 +337,44 @@ initWarpRoutes();
 let npcs = [];
 const MISSION_NPCS = [];
 let mercMission = null;
+const missionCompleteBanner = {
+  active: false,
+  text: '',
+  timer: 0,
+  duration: 5,
+  fadeIn: 0.75,
+  fadeOut: 1.25,
+  trigger(text){
+    this.text = text;
+    this.timer = 0;
+    this.active = true;
+  },
+  update(dt){
+    if(!this.active) return;
+    this.timer += dt;
+    if(this.timer >= this.duration){
+      this.active = false;
+      this.timer = 0;
+    }
+  },
+  alpha(){
+    if(!this.active) return 0;
+    const { timer, duration, fadeIn, fadeOut } = this;
+    if(timer < fadeIn){
+      const t = clamp(timer / fadeIn, 0, 1);
+      return 1 - Math.pow(1 - t, 3);
+    }
+    if(timer > duration - fadeOut){
+      const t = clamp((duration - timer) / fadeOut, 0, 1);
+      return t * t * t;
+    }
+    return 1;
+  },
+  progress(){
+    if(!this.active) return 0;
+    return clamp(this.timer / Math.max(0.0001, this.duration), 0, 1);
+  }
+};
 
 // === Missions / Journal ===
 const MISSIONS = {
@@ -1697,6 +1735,7 @@ function bulletsAndCollisionsStep(dt){
             const m = MISSIONS.active.find(mm => mm.id === 'merc_pirate_station' && mm.status === 'active');
             if(m) m.status = 'completed';
 
+            missionCompleteBanner.trigger('misja zakończona');
             toast('Misja zakończona: +10000 cr');
           }
         }
@@ -2540,6 +2579,7 @@ function loop(now){
   const alpha = acc / PHYS_DT;
   frameId++;
   updatePlanets3D(frame);
+  missionCompleteBanner.update(frame);
   // Shockwaves
   for(let i=shockwaves.length-1;i>=0;i--){
     const s = shockwaves[i];
@@ -3151,7 +3191,39 @@ function render(alpha){
   renderStationUI();
   renderOptions();
   renderMissionJournal();
+  renderMissionCompleteBanner();
   mouse.click=false;
+}
+
+function renderMissionCompleteBanner(){
+  if(!missionCompleteBanner.active) return;
+  const alpha = missionCompleteBanner.alpha();
+  if(alpha <= 0) return;
+
+  ctx.save();
+  ctx.resetTransform();
+  ctx.translate(W/2, H*0.32);
+  const scale = 1 + 0.08 * Math.sin(missionCompleteBanner.progress() * Math.PI);
+  ctx.scale(scale, scale);
+  ctx.globalAlpha = alpha;
+
+  const fontSize = Math.round(Math.min(W, H) * 0.12);
+  ctx.font = `700 ${fontSize}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(80,180,255,0.85)';
+  ctx.shadowBlur = Math.max(20, fontSize * 0.25);
+  ctx.lineJoin = 'round';
+
+  const strokeWidth = Math.max(2, fontSize * 0.06);
+  ctx.lineWidth = strokeWidth;
+  ctx.strokeStyle = 'rgba(10,20,40,0.6)';
+  ctx.strokeText(missionCompleteBanner.text, 0, 0);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(missionCompleteBanner.text, 0, 0);
+
+  ctx.restore();
 }
 
 function drawSectorMap(){
