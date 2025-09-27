@@ -402,6 +402,13 @@ function spawnDestroyer(pos){
   MISSION_NPCS.push(n);
 }
 
+function spawnFrigate(pos){
+  const n = makeNPCBase(pos, { hp: 650, accel: 60, maxSpeed: 360, turn: 2.0, radius: 44 });
+  n.type = 'frigate';
+  armPirate(n, 'mid'); // AI i uzbrojenie jak w piratach
+  MISSION_NPCS.push(n);
+}
+
 function spawnGunship(pos){
   const n = makeNPCBase(pos, { hp: 520, accel: 60, maxSpeed: 360, turn: 2.4, radius: 40 });
   n.type = 'gunship';
@@ -765,11 +772,33 @@ function startMercenaryMission(){
     hp: 10000, maxHp: 10000,
     static: true, mission: true,
     ports,
-    style: STATION_STYLES[Math.floor(Math.random()*STATION_STYLES.length)]
+    style: STATION_STYLES[Math.floor(Math.random()*STATION_STYLES.length)],
+    // --- UZBROJENIE ---
+    weapons: {
+      rails: Array.from({length:6}, (_,i)=>({
+        offsetAngle: i * (Math.PI*2/6),
+        cd: 0,
+        cdMax: 1.0 + Math.random()*0.5
+      })),
+      rockets: [
+        { offsetAngle:  Math.PI/3, cd:0, cdMax: 3.0 },
+        { offsetAngle: -Math.PI/3, cd:0, cdMax: 3.0 }
+      ]
+    }
   };
 
   stations.push(station);
-  mercMission = { station, npcsSpawned:false };
+  mercMission = {
+    station,
+    npcsSpawned:false,
+    // --- SWARM control ---
+    swarm: {
+      active:false,
+      maxAlive: 200,     // <- zwiększony limit
+      timer: 0,
+      baseInterval: 1.0  // skraca się wraz z utratą HP stacji
+    }
+  };
 
   // Zapis do dziennika + koordy do markera mapy
   const exists = MISSIONS.active.find(m => m.id === 'merc_pirate_station' && m.status === 'active');
@@ -1225,6 +1254,103 @@ function fighterAI(dt){
                   0.08, '#cfe7ff', 0.7);
   }
 }
+
+// === PIRATE AI (strzela jak myśliwce) + SPAWN SWARM ===
+function armPirate(n, tier='light'){
+  n.friendly = false;
+  n.mission  = true;
+  n.color    = '#ff5533';
+  n.ciwsCd   = 0;
+  n.missileCd= 0;
+  n.missiles = (tier==='heavy') ? 4 : (tier==='mid' ? 3 : 2);
+  n.ai = function(dt){ pirateAI(n, dt); };
+  return n;
+}
+
+function pirateAI(n, dt){
+  // prosta pogoń + lekkie strafe (jak myśliwce)
+  const dx = ship.pos.x - n.x;
+  const dy = ship.pos.y - n.y;
+  const desired = Math.atan2(dy, dx);
+  const diff = wrapAngle(desired - n.angle);
+  const turn = clamp(diff, -n.turn*dt, n.turn*dt);
+  n.angle = wrapAngle(n.angle + turn);
+
+  // przyspieszanie w kierunku
+  n.vx += Math.cos(n.angle) * n.accel * dt;
+  n.vy += Math.sin(n.angle) * n.accel * dt;
+  // lekkie strafe
+  const side = (Math.random()<0.5?-1:1);
+  const angS = n.angle + side * Math.PI/2;
+  n.vx += Math.cos(angS) * n.accel * 0.004;
+  n.vy += Math.sin(angS) * n.accel * 0.004;
+
+  limitSpeed(n, n.maxSpeed);
+
+  // VFX skromnie
+  const ang = Math.atan2(n.vy, n.vx);
+  spawnParticle({x:n.x - Math.cos(ang)*6, y:n.y - Math.sin(ang)*6},
+                {x:n.vx - Math.cos(ang)*80, y:n.vy - Math.sin(ang)*80},
+                0.08, '#ffc9c0', 0.8);
+
+  // STRZELANIE jak myśliwce (CIWS + rakiety)
+  n.ciwsCd    = Math.max(0, n.ciwsCd - dt);
+  n.missileCd = Math.max(0, n.missileCd - dt);
+  const dist  = Math.hypot(dx, dy);
+
+  // CIWS
+  if(n.ciwsCd===0 && dist < 900){
+    const dir = {x:Math.cos(n.angle), y:Math.sin(n.angle)};
+    const px = n.x + dir.x* (n.radius*0.6);
+    const py = n.y + dir.y* (n.radius*0.6);
+    bullets.push({
+      x:px, y:py,
+      vx: dir.x*CIWS_BULLET_SPEED + (n.vx||0),
+      vy: dir.y*CIWS_BULLET_SPEED + (n.vy||0),
+      life:1.2, r:2, owner:'npc', damage:CIWS_DAMAGE, type:'ciws'
+    });
+    n.ciwsCd = CIWS_FIRE_INTERVAL;
+  }
+
+  // RAKIETY
+  if(n.missiles>0 && n.missileCd===0 && dist < 1400){
+    const dir = {x:Math.cos(n.angle), y:Math.sin(n.angle)};
+    const px = n.x + dir.x* (n.radius*0.8);
+    const py = n.y + dir.y* (n.radius*0.8);
+    bullets.push({
+      x:px, y:py, px, py,
+      vx: dir.x*SIDE_BULLET_SPEED + (n.vx||0),
+      vy: dir.y*SIDE_BULLET_SPEED + (n.vy||0),
+      life:2.4, r:5, owner:'npc', damage:SIDE_BULLET_DAMAGE, penetration:0,
+      type:'rocket', explodeRadius:SIDE_PLASMA_EXPLODE_RADIUS,
+      homingDelay:SIDE_ROCKET_HOMING_DELAY
+    });
+    n.missiles--; n.missileCd = 1.8;
+  }
+}
+
+// uniwersalne spawnowanie pirata przy stacji (swarm)
+function spawnPirate(kind, station){
+  const a = Math.random()*Math.PI*2;
+  const r = station.r + 18;
+  const pos = { x: station.x + Math.cos(a)*r, y: station.y + Math.sin(a)*r };
+  let n;
+  if(kind==='interceptor'){
+    n = makeNPCBase(pos, { hp: 160, accel: 90,  maxSpeed: 540, turn: 4.0, radius: 22 });
+    armPirate(n, 'light');
+  } else if(kind==='frigate'){
+    // nowa fregata (mid)
+    n = makeNPCBase(pos, { hp: 650, accel: 60,  maxSpeed: 360, turn: 2.0, radius: 44 });
+    armPirate(n, 'mid');
+  } else { // 'destroyer'
+    n = makeNPCBase(pos, { hp: 1200, accel: 40, maxSpeed: 260, turn: 1.2, radius: 60 });
+    armPirate(n, 'heavy');
+  }
+  n.type = kind;
+  npcs.push(n);
+  return n;
+}
+
 // === FIGHTER SQUAD STATE ===
 const SQUAD = {
   order: 'idle',       // 'idle' | 'escort' | 'attack' | 'return'
@@ -1409,23 +1535,30 @@ function bulletsAndCollisionsStep(dt){
         if(b.homingDelay > 0){
           b.homingDelay -= dt;
         } else {
+          // HOMING: NPC -> gracz, player -> cele (NPC)
           let target = null;
-          if(b.target && !b.target.dead){
-            target = {x:b.target.x, y:b.target.y};
-          } else if(lockedTargets.length){
-            let dist = Infinity; let chosen = null;
+
+          if (b.owner !== 'player') {
+            // rakiety piratów zawsze gonią gracza
+            target = { x: ship.pos.x, y: ship.pos.y };
+          } else if (b.target && !b.target.dead) {
+            target = { x: b.target.x, y: b.target.y };
+          } else if (lockedTargets.length){
+            let dist = Infinity, chosen = null;
             for(const t of lockedTargets){
               if(t.dead) continue;
               const d = Math.hypot(t.x - b.x, t.y - b.y);
               if(d < dist){ dist = d; chosen = t; }
             }
-            if(chosen) target = {x:chosen.x, y:chosen.y};
-          } else if(lockedTarget && !lockedTarget.dead){
-            target = {x:lockedTarget.x, y:lockedTarget.y};
+            if(chosen) target = { x: chosen.x, y: chosen.y };
+          } else if (lockedTarget && !lockedTarget.dead){
+            target = { x: lockedTarget.x, y: lockedTarget.y };
           } else {
             let dist = Infinity;
             for(const npc of npcs){
-              if(npc.dead || npc.friendly) continue;
+              if(npc.dead) continue;
+              // graczowe rakiety nie strzelają w sojusznicze (friendly) cele
+              if (b.owner==='player' && npc.friendly) continue;
               const d = Math.hypot(npc.x - b.x, npc.y - b.y);
               if(d < dist){ dist = d; target = {x:npc.x, y:npc.y}; }
             }
@@ -1434,6 +1567,7 @@ function bulletsAndCollisionsStep(dt){
                          y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
             }
           }
+
           const speed = Math.hypot(b.vx, b.vy);
           const dir = norm({x:target.x - b.x, y:target.y - b.y});
           const current = Math.atan2(b.vy, b.vx);
@@ -1493,13 +1627,8 @@ function bulletsAndCollisionsStep(dt){
       const d = Math.hypot(st.x - b.x, st.y - b.y);
       if(d < st.r + b.r){
         st.hp -= b.damage || 0;
-        if(mercMission && mercMission.station === st && !mercMission.npcsSpawned){
-          mercMission.npcsSpawned = true;
-          for(let k=0;k<50;k++){
-            const a = Math.random()*Math.PI*2;
-            const dist = st.r + 200 + Math.random()*200;
-            spawnMissionFighter({ x: st.x + Math.cos(a)*dist, y: st.y + Math.sin(a)*dist });
-          }
+        if(mercMission && mercMission.station === st && !mercMission.swarm.active){
+          mercMission.swarm.active = true; // start „swarm”
         }
         if(st.hp <= 0){
           if(mercMission && mercMission.station === st){
@@ -1745,6 +1874,80 @@ function npcStep(dt){
       npc.vx = 0; npc.vy = 0;
       npc.lastStation = st.id;
     }
+  }
+}
+
+function pirateMissionStep(dt){
+  if(!mercMission) return;
+  const st = mercMission.station;
+  if(!st) return;
+
+  // --- Stacja strzela ---
+  if(st.hp > 0 && st.weapons){
+    // railguny
+    for(const g of st.weapons.rails){
+      g.cd = Math.max(0, g.cd - dt);
+      if(g.cd===0){
+        const mount = { x: st.x + Math.cos(g.offsetAngle)*st.r, y: st.y + Math.sin(g.offsetAngle)*st.r };
+        const d = Math.hypot(ship.pos.x - mount.x, ship.pos.y - mount.y);
+        if(d < 2200){ // zasięg
+          const aim = Math.atan2(ship.pos.y - mount.y, ship.pos.x - mount.x);
+          const dir = {x:Math.cos(aim), y:Math.sin(aim)};
+          const bx = mount.x + dir.x*8, by = mount.y + dir.y*8;
+          bullets.push({
+            x:bx, y:by,
+            vx: dir.x*(RAIL_SPEED*0.9), vy: dir.y*(RAIL_SPEED*0.9),
+            life:2.0, r:4, owner:'npc', damage:60, type:'rail', penetration:2
+          });
+          spawnParticle({x:bx,y:by}, {x:0,y:0}, 0.10, '#bfe7ff', 6, true);
+          g.cd = g.cdMax;
+        }
+      }
+    }
+    // rakiety
+    for(const r of st.weapons.rockets){
+      r.cd = Math.max(0, r.cd - dt);
+      if(r.cd===0){
+        const mount = { x: st.x + Math.cos(r.offsetAngle)*st.r, y: st.y + Math.sin(r.offsetAngle)*st.r };
+        const d = Math.hypot(ship.pos.x - mount.x, ship.pos.y - mount.y);
+        if(d < 2600){
+          const aim = Math.atan2(ship.pos.y - mount.y, ship.pos.x - mount.x);
+          const dir = {x:Math.cos(aim), y:Math.sin(aim)};
+          const bx = mount.x + dir.x*10, by = mount.y + dir.y*10;
+          bullets.push({
+            x:bx, y:by, px:bx, py:by,
+            vx: dir.x*SIDE_BULLET_SPEED, vy: dir.y*SIDE_BULLET_SPEED,
+            life:2.6, r:5, owner:'npc', damage:SIDE_BULLET_DAMAGE,
+            type:'rocket', explodeRadius:SIDE_PLASMA_EXPLODE_RADIUS,
+            homingDelay:SIDE_ROCKET_HOMING_DELAY
+          });
+          r.cd = r.cdMax;
+        }
+      }
+    }
+  }
+
+  // --- SWARM spawnowanie falowo ---
+  const swarm = mercMission.swarm;
+  if(!swarm) return;
+  if(!swarm.active) return;
+
+  // ilu piratów żyje
+  const alive = npcs.reduce((a,n)=>a + (n.mission && !n.friendly && !n.dead ? 1:0), 0);
+  const hpFrac = Math.max(0, st.hp / st.maxHp);
+  // im mniej HP, tym szybciej i więcej
+  const interval = Math.max(0.35, swarm.baseInterval - (1 - hpFrac)*0.6);
+  const batch = (hpFrac>0.66)?2 : (hpFrac>0.33)?4 : 6;
+
+  swarm.timer -= dt;
+  if(swarm.timer <= 0 && alive < swarm.maxAlive){
+    const toSpawn = Math.min(batch, swarm.maxAlive - alive);
+    for(let i=0;i<toSpawn;i++){
+      const roll = Math.random();
+      const kind = (roll<0.5)?'interceptor' : (roll<0.8)?'frigate' : 'destroyer';
+      spawnPirate(kind, st);
+    }
+    swarm.timer = interval;
   }
 }
 
@@ -2062,6 +2265,7 @@ function physicsStep(dt){
   ship.angle += ship.angVel*dt;
 
   npcStep(dt);
+  pirateMissionStep(dt);
   ciwsStep(dt);
   bulletsAndCollisionsStep(dt);
   npcShootingStep(dt);
