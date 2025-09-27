@@ -3315,8 +3315,8 @@ function render(alpha){
       const ax = shipScreen.x + Math.cos(ang) * arrowRadius;
       const ay = shipScreen.y + Math.sin(ang) * arrowRadius;
 
-      const baseArrowLength = (ship.h / camera.zoom) * 0.7;
-      const arrowLength = clamp(baseArrowLength, ship.h * 0.45, Math.min(Math.min(W, H) * 0.45, ship.h * 1.8));
+      const baseArrowLength = (ship.h / camera.zoom) * 0.2;
+      const arrowLength = clamp(baseArrowLength, ship.h * 0.45, Math.min(Math.min(W, H) * 0.2, ship.h * 0.7));
       const arrowWidth = arrowLength * 0.28;
       const strokeW = clamp(4 / camera.zoom, 1.6, 9);
 
