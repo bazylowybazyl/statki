@@ -63,6 +63,10 @@ const len = v=>Math.hypot(v.x,v.y);
 const norm = v=>{ const L=len(v); return L?{x:v.x/L,y:v.y/L}:{x:0,y:0}; };
 function rotate(local,a){ const c=Math.cos(a), s=Math.sin(a); return {x: local.x*c - local.y*s, y: local.x*s + local.y*c}; }
 function rotateInv(world,a){ return rotate(world, -a); }
+function muzzlePosFor(entity, dir, extra = 8){
+  const rad = (entity.radius != null) ? entity.radius : (entity.r != null ? entity.r : 12);
+  return { x: entity.x + dir.x * (rad + extra), y: entity.y + dir.y * (rad + extra) };
+}
 
 // =============== Game time (1 min real = 1 h game) ===============
 const TIME_SCALE = 60; // game seconds per real second
@@ -800,6 +804,12 @@ function startMercenaryMission(){
     }
   };
 
+  mercMission.guards = [];
+  for (let i = 0; i < 6; i++)
+    mercMission.guards.push( spawnStationGuard(station, 'interceptor', i * (Math.PI*2/6)) );
+  for (let i = 0; i < 2; i++)
+    mercMission.guards.push( spawnStationGuard(station, 'frigate', i * Math.PI) );
+
   // Zapis do dziennika + koordy do markera mapy
   const exists = MISSIONS.active.find(m => m.id === 'merc_pirate_station' && m.status === 'active');
   if(!exists){
@@ -1084,7 +1094,8 @@ function fireSideGunAtOffset(gunOff, side, target=null){
   bullets.push({ x: gunWorld.x, y: gunWorld.y, px: gunWorld.x, py: gunWorld.y,
     vx: dir.x*SIDE_BULLET_SPEED + ship.vel.x, vy: dir.y*SIDE_BULLET_SPEED + ship.vel.y,
     life:2.4, r:5, owner:'player', damage:SIDE_BULLET_DAMAGE, penetration:0, type:'rocket',
-    explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS, homingDelay: SIDE_ROCKET_HOMING_DELAY, target });
+    explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS, homingDelay: SIDE_ROCKET_HOMING_DELAY, target,
+    source: ship, spawnGrace: 0.08 });
   spawnParticle({x:gunWorld.x, y:gunWorld.y}, {x:dir.x*120 + ship.vel.x*0.1, y:dir.y*120 + ship.vel.y*0.1}, 0.14, '#b4ffb4', 3.2, true);
   for(let k=0;k<6;k++){
     const aa = Math.atan2(dir.y, dir.x) + (Math.random()-0.5)*0.9;
@@ -1268,65 +1279,109 @@ function armPirate(n, tier='light'){
 }
 
 function pirateAI(n, dt){
-  // prosta pogoń + lekkie strafe (jak myśliwce)
-  const dx = ship.pos.x - n.x;
-  const dy = ship.pos.y - n.y;
-  const desired = Math.atan2(dy, dx);
+  const drag = Math.exp(-1.2 * dt);
+  n.vx *= drag; n.vy *= drag;
+
+  const st = mercMission && mercMission.station;
+  const dShip = Math.hypot(ship.pos.x - n.x, ship.pos.y - n.y);
+  const dSt   = st ? Math.hypot(st.x - n.x, st.y - n.y) : Infinity;
+  const leashR = st ? (st.r + 3500) : 3500;
+
+  let targetPos;
+  if (st && dSt > leashR && dShip > 2000){
+    targetPos = { x: st.x, y: st.y };
+  } else {
+    targetPos = leadTarget(
+      {x:n.x, y:n.y},
+      {x:n.vx||0, y:n.vy||0},
+      {x:ship.pos.x, y:ship.pos.y, vx:ship.vel.x, vy:ship.vel.y},
+      Math.max(300, n.maxSpeed*0.9)
+    );
+  }
+
+  const desired = Math.atan2(targetPos.y - n.y, targetPos.x - n.x);
   const diff = wrapAngle(desired - n.angle);
   const turn = clamp(diff, -n.turn*dt, n.turn*dt);
   n.angle = wrapAngle(n.angle + turn);
 
-  // przyspieszanie w kierunku
   n.vx += Math.cos(n.angle) * n.accel * dt;
   n.vy += Math.sin(n.angle) * n.accel * dt;
-  // lekkie strafe
   const side = (Math.random()<0.5?-1:1);
   const angS = n.angle + side * Math.PI/2;
   n.vx += Math.cos(angS) * n.accel * 0.004;
   n.vy += Math.sin(angS) * n.accel * 0.004;
 
+  if (dShip < 280){ n.vx -= n.vx * 0.65 * dt; n.vy -= n.vy * 0.65 * dt; }
+
   limitSpeed(n, n.maxSpeed);
 
-  // VFX skromnie
   const ang = Math.atan2(n.vy, n.vx);
   spawnParticle({x:n.x - Math.cos(ang)*6, y:n.y - Math.sin(ang)*6},
                 {x:n.vx - Math.cos(ang)*80, y:n.vy - Math.sin(ang)*80},
                 0.08, '#ffc9c0', 0.8);
 
-  // STRZELANIE jak myśliwce (CIWS + rakiety)
   n.ciwsCd    = Math.max(0, n.ciwsCd - dt);
   n.missileCd = Math.max(0, n.missileCd - dt);
-  const dist  = Math.hypot(dx, dy);
 
-  // CIWS
-  if(n.ciwsCd===0 && dist < 900){
-    const dir = {x:Math.cos(n.angle), y:Math.sin(n.angle)};
-    const px = n.x + dir.x* (n.radius*0.6);
-    const py = n.y + dir.y* (n.radius*0.6);
+  const dir = {x:Math.cos(n.angle), y:Math.sin(n.angle)};
+
+  if(n.ciwsCd===0 && dShip < 900){
+    const m = muzzlePosFor(n, dir, 10);
     bullets.push({
-      x:px, y:py,
+      x:m.x, y:m.y,
       vx: dir.x*CIWS_BULLET_SPEED + (n.vx||0),
       vy: dir.y*CIWS_BULLET_SPEED + (n.vy||0),
-      life:1.2, r:2, owner:'npc', damage:CIWS_DAMAGE, type:'ciws'
+      life:1.2, r:2, owner:'npc', damage:CIWS_DAMAGE, type:'ciws',
+      source:n, spawnGrace:0.1
     });
     n.ciwsCd = CIWS_FIRE_INTERVAL;
   }
 
-  // RAKIETY
-  if(n.missiles>0 && n.missileCd===0 && dist < 1400){
-    const dir = {x:Math.cos(n.angle), y:Math.sin(n.angle)};
-    const px = n.x + dir.x* (n.radius*0.8);
-    const py = n.y + dir.y* (n.radius*0.8);
+  if(n.missiles>0 && n.missileCd===0 && dShip < 1400){
+    const m = muzzlePosFor(n, dir, 14);
     bullets.push({
-      x:px, y:py, px, py,
+      x:m.x, y:m.y, px:m.x, py:m.y,
       vx: dir.x*SIDE_BULLET_SPEED + (n.vx||0),
       vy: dir.y*SIDE_BULLET_SPEED + (n.vy||0),
       life:2.4, r:5, owner:'npc', damage:SIDE_BULLET_DAMAGE, penetration:0,
       type:'rocket', explodeRadius:SIDE_PLASMA_EXPLODE_RADIUS,
-      homingDelay:SIDE_ROCKET_HOMING_DELAY
+      homingDelay:SIDE_ROCKET_HOMING_DELAY,
+      source:n, spawnGrace:0.12
     });
     n.missiles--; n.missileCd = 1.8;
   }
+}
+
+function guardAI(n, dt){
+  const st = n.home;
+  if(!st){ n.ai = (dt)=>pirateAI(n,dt); return; }
+
+  const playerNear = Math.hypot(ship.pos.x - st.x, ship.pos.y - st.y) < 1600;
+  const underAttack = (mercMission && mercMission.swarm && mercMission.swarm.active) || (st.hp < st.maxHp);
+
+  if(playerNear || underAttack){
+    n.guard = false;
+    n.ai = (dt)=>pirateAI(n, dt);
+    return;
+  }
+
+  const w = 0.6; // rad/s
+  n.orbitAngle = (n.orbitAngle + w*dt) % (Math.PI*2);
+  const target = { x: st.x + Math.cos(n.orbitAngle)*n.orbitRadius,
+                   y: st.y + Math.sin(n.orbitAngle)*n.orbitRadius };
+  steerToward(n, target.x, target.y, dt, n.accel*0.8, n.turn*0.8);
+  const drag = Math.exp(-0.8*dt);
+  n.vx *= drag; n.vy *= drag;
+}
+
+function spawnStationGuard(st, kind, angle){
+  const orbitR = st.r + 180;
+  const pos = { x: st.x + Math.cos(angle)*orbitR, y: st.y + Math.sin(angle)*orbitR };
+  const n = spawnPirate(kind, st);
+  n.x = pos.x; n.y = pos.y; n.vx = 0; n.vy = 0;
+  n.guard = true; n.home = st; n.orbitAngle = angle; n.orbitRadius = orbitR;
+  n.ai = (dt)=>guardAI(n, dt);
+  return n;
 }
 
 // uniwersalne spawnowanie pirata przy stacji (swarm)
@@ -1527,6 +1582,7 @@ function bulletsAndCollisionsStep(dt){
     b.px = b.x; b.py = b.y;
     b.x += b.vx * dt; b.y += b.vy * dt;
     b.life -= dt;
+    b.age = (b.age || 0) + dt; // krótki „grace” po wystrzale
 
     if(b.type === 'plasma' || b.type === 'rocket'){
       const trailVel = { x: -b.vx*0.02 + (Math.random()-0.5)*10, y: -b.vy*0.02 + (Math.random()-0.5)*10 };
@@ -1584,13 +1640,14 @@ function bulletsAndCollisionsStep(dt){
 
     if(b.life <= 0){ bullets.splice(i,1); continue; }
 
-    // hit NPC
+    // hit NPC (z pominięciem własnego źródła w czasie grace)
     let hitNPC = null;
-    for(const npc of npcs){
-      if(npc.dead) continue;
-      if(b.owner === 'player' && npc.friendly) continue;
+    for (const npc of npcs){
+      if (npc.dead) continue;
+      if (b.owner === 'player' && npc.friendly) continue;
+      if (b.source && b.source === npc && b.age < (b.spawnGrace || 0)) continue;
       const d = Math.hypot(npc.x - b.x, npc.y - b.y);
-      if(d < npc.radius + b.r){ hitNPC = npc; break; }
+      if (d < npc.radius + b.r){ hitNPC = npc; break; }
     }
 
     if(hitNPC){
@@ -1624,6 +1681,7 @@ function bulletsAndCollisionsStep(dt){
     // hit mission station
     for(const st of stations){
       if(!st.hp) continue;
+      if (b.source && b.source === st && b.age < (b.spawnGrace || 0)) continue;
       const d = Math.hypot(st.x - b.x, st.y - b.y);
       if(d < st.r + b.r){
         st.hp -= b.damage || 0;
@@ -1893,13 +1951,14 @@ function pirateMissionStep(dt){
         if(d < 2200){ // zasięg
           const aim = Math.atan2(ship.pos.y - mount.y, ship.pos.x - mount.x);
           const dir = {x:Math.cos(aim), y:Math.sin(aim)};
-          const bx = mount.x + dir.x*8, by = mount.y + dir.y*8;
+          const muzzle = muzzlePosFor(st, dir, 14);
           bullets.push({
-            x:bx, y:by,
+            x:muzzle.x, y:muzzle.y,
             vx: dir.x*(RAIL_SPEED*0.9), vy: dir.y*(RAIL_SPEED*0.9),
-            life:2.0, r:4, owner:'npc', damage:60, type:'rail', penetration:2
+            life:2.0, r:4, owner:'npc', damage:60, type:'rail', penetration:2,
+            source: st, spawnGrace: 0.08
           });
-          spawnParticle({x:bx,y:by}, {x:0,y:0}, 0.10, '#bfe7ff', 6, true);
+          spawnParticle({x:muzzle.x,y:muzzle.y}, {x:0,y:0}, 0.10, '#bfe7ff', 6, true);
           g.cd = g.cdMax;
         }
       }
@@ -1913,13 +1972,14 @@ function pirateMissionStep(dt){
         if(d < 2600){
           const aim = Math.atan2(ship.pos.y - mount.y, ship.pos.x - mount.x);
           const dir = {x:Math.cos(aim), y:Math.sin(aim)};
-          const bx = mount.x + dir.x*10, by = mount.y + dir.y*10;
+          const muzzleR = muzzlePosFor(st, dir, 16);
           bullets.push({
-            x:bx, y:by, px:bx, py:by,
+            x:muzzleR.x, y:muzzleR.y, px:muzzleR.x, py:muzzleR.y,
             vx: dir.x*SIDE_BULLET_SPEED, vy: dir.y*SIDE_BULLET_SPEED,
             life:2.6, r:5, owner:'npc', damage:SIDE_BULLET_DAMAGE,
             type:'rocket', explodeRadius:SIDE_PLASMA_EXPLODE_RADIUS,
-            homingDelay:SIDE_ROCKET_HOMING_DELAY
+            homingDelay:SIDE_ROCKET_HOMING_DELAY,
+            source: st, spawnGrace: 0.12
           });
           r.cd = r.cdMax;
         }
