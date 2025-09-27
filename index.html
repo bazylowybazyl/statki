@@ -3155,10 +3155,10 @@ function render(alpha){
       const ax = shipScreen.x + Math.cos(ang) * arrowRadius;
       const ay = shipScreen.y + Math.sin(ang) * arrowRadius;
 
-      const baseArrowLength = ship.h / camera.zoom;
-      const arrowLength = clamp(baseArrowLength, ship.h * 0.6, Math.min(Math.min(W, H) * 0.6, ship.h * 2.6));
-      const arrowWidth = arrowLength * 0.35;
-      const strokeW = clamp(6 / camera.zoom, 2, 12);
+      const baseArrowLength = (ship.h / camera.zoom) * 0.7;
+      const arrowLength = clamp(baseArrowLength, ship.h * 0.45, Math.min(Math.min(W, H) * 0.45, ship.h * 1.8));
+      const arrowWidth = arrowLength * 0.28;
+      const strokeW = clamp(4 / camera.zoom, 1.6, 9);
 
       ctx.save();
       ctx.translate(ax, ay);
@@ -3177,10 +3177,10 @@ function render(alpha){
       ctx.stroke();
       ctx.restore();
 
-      const labelDist = arrowLength * 0.55;
+      const labelDist = arrowLength * 0.45;
       const labelX = ax + Math.cos(ang) * labelDist;
       const labelY = ay + Math.sin(ang) * labelDist;
-      const fontSize = Math.round(clamp(20 / camera.zoom, 14, 34));
+      const fontSize = Math.round(clamp(16 / camera.zoom, 10, 26));
       ctx.save();
       ctx.fillStyle = '#ffd1d1';
       ctx.font = `bold ${fontSize}px monospace`;
@@ -3264,15 +3264,15 @@ function renderMissionCompleteBanner(){
   ctx.scale(scale, scale);
   ctx.globalAlpha = alpha;
 
-  const fontSize = Math.round(Math.min(W, H) * 0.12);
+  const fontSize = Math.round(Math.min(W, H) * 0.08);
   ctx.font = `700 ${fontSize}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.shadowColor = 'rgba(80,180,255,0.85)';
-  ctx.shadowBlur = Math.max(20, fontSize * 0.25);
+  ctx.shadowBlur = Math.max(14, fontSize * 0.2);
   ctx.lineJoin = 'round';
 
-  const strokeWidth = Math.max(2, fontSize * 0.06);
+  const strokeWidth = Math.max(2, fontSize * 0.05);
   ctx.lineWidth = strokeWidth;
   ctx.strokeStyle = 'rgba(10,20,40,0.6)';
   ctx.strokeText(missionCompleteBanner.text, 0, 0);
