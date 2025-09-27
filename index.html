@@ -2712,6 +2712,30 @@ function getNPCSprite(npc){
   const key = npc.type + '|' + npc.radius + '|' + (npc.friendly?1:0);
   if (npcSpriteCache.has(key)) return npcSpriteCache.get(key);
 
+  if (npc.radius <= 8) {
+    const can = document.createElement('canvas');
+    const size = Math.ceil(npc.radius*2 + 10);
+    can.width = can.height = size * 2;
+    const g = can.getContext('2d');
+    g.translate(can.width/2, can.height/2); g.scale(2,2);
+
+    const r = npc.radius;
+    // kadłub: klin
+    g.fillStyle = npc.friendly ? '#b7ccf7' : '#ffb7a8';
+    g.beginPath(); g.moveTo(r*0.9,0); g.lineTo(-r*0.7,-r*0.55); g.lineTo(-r*0.7,r*0.55); g.closePath(); g.fill();
+    // mostek
+    g.fillStyle = '#e6f2ff';
+    g.fillRect(-r*0.15, -r*0.22, r*0.35, r*0.44);
+    // dysze
+    g.globalCompositeOperation='lighter';
+    g.fillStyle = npc.friendly ? 'rgba(150,200,255,0.9)' : 'rgba(255,170,130,0.9)';
+    g.beginPath(); g.ellipse(-r*0.7, -r*0.25, 1.8, 2.6, 0, 0, Math.PI*2); g.fill();
+    g.beginPath(); g.ellipse(-r*0.7,  r*0.25, 1.8, 2.6, 0, 0, Math.PI*2); g.fill();
+
+    npcSpriteCache.set(key, can);
+    return can;
+  }
+
   const size = Math.ceil(npc.radius*2 + 16);
   const can = document.createElement('canvas');
   can.width = can.height = size * 2;              // hi-res dla ładnego obrotu
@@ -2769,6 +2793,28 @@ function getNPCSprite(npc){
 }
 
 function drawNPCPretty(ctx, npc, screenPos){
+  const pixR = npc.radius * camera.zoom;
+  if (pixR < 9) {
+    ctx.save();
+    ctx.globalAlpha = npc.fade ?? 1;
+    ctx.translate(screenPos.x, screenPos.y);
+    ctx.rotate(npc.angle);
+    // „shuttle”: klin + 2 silniczki
+    ctx.fillStyle = npc.friendly ? '#bfd8ff' : '#ffc7bd';
+    ctx.beginPath();
+    ctx.moveTo( pixR, 0);
+    ctx.lineTo(-pixR*0.7, -pixR*0.6);
+    ctx.lineTo(-pixR*0.7,  pixR*0.6);
+    ctx.closePath(); ctx.fill();
+    // dysze
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = npc.friendly ? 'rgba(150,200,255,0.9)' : 'rgba(255,160,120,0.9)';
+    ctx.beginPath(); ctx.ellipse(-pixR*0.7, -pixR*0.25, 2, 3, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(-pixR*0.7,  pixR*0.25, 2, 3, 0, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+    return;
+  }
+
   ctx.save();
   ctx.globalAlpha = npc.fade ?? 1;
   ctx.translate(screenPos.x, screenPos.y);
