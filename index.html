@@ -1504,7 +1504,7 @@ function triggerRailVolley(){
   }
 }
 function fireRailBarrel(barIndex){
-  const forwardLen = Math.min(ship.h*0.36, 46);
+  const forwardLen = Math.min(ship.h*0.40, 52); // było 0.36 i 46
   const gap = 10;
   const sign = (barIndex===0) ? -1 : +1;
   const turrets = [ship.turret, ship.turret2, ship.turret3, ship.turret4];
@@ -1605,6 +1605,8 @@ function applyDamageToPlayer(amount){
 }
 function applyDamageToNPC(npc, dmg, cause='default'){
   if(npc.dead) return;
+  npc.hitFlash = 0.12;
+  npc.damageHue = (npc.damageHue || 0) + dmg;
   npc.hp -= dmg;
   if(npc.hp<=0){
     npc.dead = true; npc.respawnTimer = 3 + Math.random()*6;
@@ -1790,6 +1792,7 @@ function npcShootingStep(dt){
 function npcStep(dt){
   const DESPAWN_RADIUS_SQ = NPC_DESPAWN_RADIUS * NPC_DESPAWN_RADIUS;
   for(const npc of npcs){
+    if (npc.hitFlash) npc.hitFlash = Math.max(0, npc.hitFlash - dt);
     if(!npc.mission){
       const dx = npc.x - ship.pos.x;
       const dy = npc.y - ship.pos.y;
@@ -2703,6 +2706,109 @@ function drawStars(cam){
   pruneStarCells();
 }
 
+const npcSpriteCache = new Map();
+
+function getNPCSprite(npc){
+  const key = npc.type + '|' + npc.radius + '|' + (npc.friendly?1:0);
+  if (npcSpriteCache.has(key)) return npcSpriteCache.get(key);
+
+  const size = Math.ceil(npc.radius*2 + 16);
+  const can = document.createElement('canvas');
+  can.width = can.height = size * 2;              // hi-res dla ładnego obrotu
+  const g = can.getContext('2d');
+  g.translate(can.width/2, can.height/2);
+  g.scale(2,2);                                   // hi-res skala
+
+  const w = npc.radius*2, h = npc.radius*1.6;
+  const r = Math.min(10, npc.radius*0.4);
+
+  // baza: gradient „metal”
+  const grad = g.createLinearGradient(-w/2,-h/2, w/2,h/2);
+  grad.addColorStop(0, '#1e2a46');
+  grad.addColorStop(1, '#30425f');
+  g.fillStyle = grad;
+  roundRect(g, -w/2, -h/2, w, h, r); g.fill();
+  g.lineWidth = 1.5; g.strokeStyle = 'rgba(255,255,255,0.06)'; g.stroke();
+
+  // pasek frakcji (piraci – czerwony, sojusznicy – niebieski)
+  g.globalAlpha = 0.85;
+  g.fillStyle = npc.friendly ? '#60a5fa' : '#ff6b57';
+  g.fillRect(-w*0.45, -h*0.12, w*0.90, h*0.24);
+  g.globalAlpha = 1;
+
+  // nos/skrzydła zależne od typu
+  if (npc.type === 'interceptor' || npc.radius <= 24){
+    g.fillStyle = '#9fb3d9';
+    g.beginPath(); g.moveTo(w*0.55,0); g.lineTo(-w*0.25,-h*0.45); g.lineTo(-w*0.25,h*0.45); g.closePath(); g.fill();
+  } else {
+    g.fillStyle = '#2a3754';
+    g.fillRect(-w*0.65,-h*0.55, w*0.4, h*0.25);
+    g.fillRect(-w*0.65, h*0.30, w*0.4, h*0.25);
+    g.fillStyle = '#bcd7ff';                       // mostek
+    g.fillRect(-w*0.1, -h*0.15, w*0.22, h*0.30);
+  }
+
+  // okna
+  g.fillStyle = '#cfe7ff';
+  const win = Math.max(3, Math.round(npc.radius/6));
+  for (let i=0;i<win;i++){
+    const yy = -h*0.25 + i*(h*0.5)/(win-1 || 1);
+    g.fillRect(w*0.05, yy, 3, 2);
+  }
+
+  // dysze
+  g.fillStyle = '#2c3a58';
+  const noz = Math.max(2, Math.round(npc.radius/10));
+  for(let i=0;i<noz;i++){
+    const t = noz===1 ? 0 : (i/(noz-1) - 0.5);
+    roundRect(g, -w*0.55, t*h*0.6 - 3, 8, 6, 2); g.fill();
+  }
+
+  npcSpriteCache.set(key, can);
+  return can;
+}
+
+function drawNPCPretty(ctx, npc, screenPos){
+  ctx.save();
+  ctx.globalAlpha = npc.fade ?? 1;
+  ctx.translate(screenPos.x, screenPos.y);
+  ctx.rotate(npc.angle);
+
+  const sprite = getNPCSprite(npc);
+  const drawSize = Math.ceil(npc.radius*2 + 16) * camera.zoom;
+  ctx.drawImage(sprite, -drawSize/2, -drawSize/2, drawSize, drawSize);
+
+  // glow z dysz (moc rośnie wraz z prędkością)
+  const sp = Math.hypot(npc.vx||0, npc.vy||0);
+  const thrust = Math.min(1, sp / (npc.maxSpeed || 1));
+  if (thrust > 0.05){
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.shadowBlur = 14*camera.zoom;
+    ctx.shadowColor = npc.friendly ? 'rgba(120,200,255,0.9)' : 'rgba(255,160,120,0.95)';
+    ctx.fillStyle   = npc.friendly ? 'rgba(160,210,255,0.7)' : 'rgba(255,180,130,0.8)';
+    ctx.beginPath();
+    ctx.ellipse(-npc.radius*0.9*camera.zoom, 0, 9*camera.zoom*(0.8+thrust), 20*camera.zoom*(0.8+thrust), 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // „hit-flash” (ekranowa poświata)
+  if (npc.hitFlash > 0){
+    ctx.globalCompositeOperation = 'screen';
+    ctx.globalAlpha = npc.hitFlash;
+    ctx.drawImage(sprite, -drawSize/2, -drawSize/2, drawSize, drawSize);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // pasek HP
+  const hpw = (npc.hp / npc.maxHp) * (npc.radius*2*camera.zoom);
+  ctx.fillStyle = '#ff6b6b';
+  ctx.fillRect(-npc.radius*camera.zoom, -npc.radius*camera.zoom - 8*camera.zoom, hpw, 4*camera.zoom);
+
+  ctx.restore();
+}
+
 function render(alpha){
   canvas.style.cursor = 'default';
   // Interpolacja stanu
@@ -2875,34 +2981,7 @@ function render(alpha){
   for(const npc of npcs){
     if(npc.dead) continue;
     const s = worldToScreen(npc.x, npc.y, cam);
-    ctx.save();
-    ctx.globalAlpha = npc.fade;
-    ctx.translate(s.x,s.y); ctx.rotate(npc.angle);
-    if(npc.type === 'fighter'){
-      const z = camera.zoom;
-      ctx.fillStyle = npc.color;
-      ctx.beginPath();
-      ctx.moveTo(12*z,0);
-      ctx.lineTo(-8*z,-6*z);
-      ctx.lineTo(-8*z,6*z);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = '#ff6b6b';
-      const hpw = (npc.hp / npc.maxHp) * 20*z;
-      ctx.fillRect(-10*z, -12*z, hpw, 2*z);
-      ctx.fillStyle = '#dfe7ff';
-      ctx.fillRect(-6*z,-2*z,2*z,2*z);
-      ctx.fillRect(-6*z,0,2*z,2*z);
-    } else {
-      ctx.fillStyle = npc.color;
-      roundRectScreen(-npc.radius*camera.zoom, -npc.radius*camera.zoom,
-                      npc.radius*2*camera.zoom, npc.radius*1.2*camera.zoom, 4*camera.zoom);
-      ctx.fill();
-      const hpw = (npc.hp / npc.maxHp) * (npc.radius*2*camera.zoom);
-      ctx.fillStyle = '#ff6b6b';
-      ctx.fillRect(-npc.radius*camera.zoom, -npc.radius*camera.zoom - 8*camera.zoom, hpw, 4*camera.zoom);
-    }
-    ctx.restore();
+    drawNPCPretty(ctx, npc, s);
   }
 
   // radar pings
@@ -2985,8 +3064,35 @@ function render(alpha){
   const g = ctx.createLinearGradient(-ship.w/2, -ship.h/2, ship.w/2, ship.h/2);
   g.addColorStop(0, '#1d2740'); g.addColorStop(1, '#2d3b55');
   ctx.fillStyle = g; roundRect(ctx, -ship.w/2, -ship.h/2, ship.w, ship.h, 10); ctx.fill();
+
+  // delikatny outline + podziały paneli
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1.5;
+  roundRect(ctx, -ship.w/2, -ship.h/2, ship.w, ship.h, 10);
+  ctx.stroke();
+  ctx.globalAlpha = 0.25;
+  ctx.beginPath();
+  ctx.moveTo(-ship.w*0.35, -ship.h*0.20); ctx.lineTo(ship.w*0.35, -ship.h*0.20);
+  ctx.moveTo(-ship.w*0.35,  ship.h*0.20); ctx.lineTo(ship.w*0.35,  ship.h*0.20);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
   ctx.fillStyle = '#a8d1ff'; ctx.beginPath();
   ctx.ellipse(0, -6, ship.w*0.22, ship.h*0.22, 0, 0, Math.PI*2); ctx.fill();
+
+  // „szkło” kokpitu – specular glare
+  ctx.save();
+  ctx.rotate(-interpAngle);
+  const glare = ctx.createRadialGradient(0, -ship.h*0.18, 6, 0, -ship.h*0.18, ship.w*0.5);
+  glare.addColorStop(0, 'rgba(255,255,255,0.25)');
+  glare.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = glare;
+  ctx.beginPath();
+  ctx.ellipse(0, -6, ship.w*0.22, ship.h*0.22, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
 
   // boczne dobudówki
   for(const pod of ship.pods){
@@ -3058,6 +3164,14 @@ function render(alpha){
   // tarcza
   const sp = ship.shield.val / ship.shield.max;
   if(sp > 0.005){
+    const rr = Math.max(ship.w, ship.h) * 0.62;
+    ctx.save();
+    const fresnel = ctx.createRadialGradient(0,0, rr*0.78, 0,0, rr);
+    fresnel.addColorStop(0, 'rgba(120,200,255,0)');
+    fresnel.addColorStop(1, `rgba(120,200,255,${0.18 + 0.4*sp})`);
+    ctx.fillStyle = fresnel;
+    ctx.beginPath(); ctx.arc(0,0, rr, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
     ctx.beginPath(); ctx.strokeStyle = `rgba(120,200,255,${0.18 + 0.4*sp})`;
     ctx.lineWidth = 3; ctx.arc(0,0, Math.max(ship.w,ship.h)*0.6, 0, Math.PI*2); ctx.stroke();
   }
@@ -3078,7 +3192,7 @@ function render(alpha){
   });
 
   // wieżyczki podwójne z recoilem
-  const baseW = 16, baseH = 24, barrelLen = Math.max(11, Math.round(ship.h * 0.12)) / 2, barrelH = 6, gap = 10;
+  const baseW = 16, baseH = 24, barrelLen = Math.max(14, Math.round(ship.h * 0.16)) / 2, barrelH = 6, gap = 10; // trochę dłuższe
   const turrets = [
     { t: ship.turret,  ang: interpTurretAngle },
     { t: ship.turret2, ang: interpTurretAngle2 },
