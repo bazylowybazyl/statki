@@ -632,6 +632,8 @@ window.addEventListener('keydown', (e)=>{
       stationUI.x = (W - stationUI.w) / 2;
       stationUI.y = (H - stationUI.h) / 2;
       stationUI.dragging = false;
+      mouse.left = false;
+      mouse.right = false;
       e.preventDefault();
     }
   }
@@ -855,7 +857,6 @@ canvas.addEventListener('mousemove', e=>{
 });
 canvas.addEventListener('mousedown', e=>{
   if(e.button===0){
-    mouse.left=true;
     if(stationUI.open){
       const inX = mouse.x >= stationUI.x && mouse.x <= stationUI.x + stationUI.w;
       const inY = mouse.y >= stationUI.y && mouse.y <= stationUI.y + stationUI.h;
@@ -864,10 +865,15 @@ canvas.addEventListener('mousedown', e=>{
         stationUI.dragDX = mouse.x - stationUI.x;
         stationUI.dragDY = mouse.y - stationUI.y;
       }
+      return;
     }
+    mouse.left=true;
     if(!stationUI.open && !warp.isBusy()) triggerRailVolley();
   }
-  if(e.button===2){ e.preventDefault(); mouse.right=true;
+  if(e.button===2){
+    e.preventDefault();
+    if(stationUI.open) return;
+    mouse.right=true;
     if(!stationUI.open && !warp.isBusy()){
       const mouseWorld = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom, y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
       const local = rotateInv({ x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y }, ship.angle);
@@ -880,17 +886,33 @@ canvas.addEventListener('mousedown', e=>{
 });
 canvas.addEventListener('mouseup', e=>{
   if(e.button===0){
-    mouse.left=false;
+    const wasDragging = stationUI.dragging;
     if(stationUI.dragging){
       stationUI.dragging=false;
-    } else {
+    }
+    if(stationUI.open){
+      if(!wasDragging){
+        mouse.click=true;
+      }
+      return;
+    }
+    mouse.left=false;
+    if(!wasDragging){
       mouse.click=true;
     }
   }
-  if(e.button===2) mouse.right=false;
+  if(e.button===2){
+    if(stationUI.open) return;
+    mouse.right=false;
+  }
 });
 canvas.addEventListener('contextmenu', e=>e.preventDefault());
-canvas.addEventListener('wheel', e=>{ e.preventDefault(); const f = 1 - e.deltaY * camera.wheelSpeed; camera.zoom *= f; camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom); }, {passive:false});
+canvas.addEventListener('wheel', e=>{
+  if (stationUI.open) return;
+  e.preventDefault();
+  const f = 1 - e.deltaY * camera.wheelSpeed;
+  camera.zoom = clamp(camera.zoom * f, camera.minZoom, camera.maxZoom);
+}, {passive:false});
 
 const GAMEPAD = { enabled:true, dead:0.15, last:{} };
 
@@ -1609,9 +1631,7 @@ function physicsStep(dt){
   // rail queue/cd
   rail.cd[0] = Math.max(0, rail.cd[0]-dt);
   rail.cd[1] = Math.max(0, rail.cd[1]-dt);
-  if(mouse.left && rail.queue.length===0 && rail.cd[0]<=0 && rail.cd[1]<=0 && !warp.isBusy()){
-    triggerRailVolley();
-  }
+  if (!stationUI.open && mouse.left  && rail.queue.length===0 && rail.cd[0]<=0 && rail.cd[1]<=0 && !warp.isBusy()) { triggerRailVolley(); }
   for(const q of rail.queue) q.timer -= dt;
   let firedSomething = true;
   while(firedSomething){
@@ -1634,7 +1654,7 @@ function physicsStep(dt){
   rocketCooldown = Math.max(0, rocketCooldown - dt);
   // mouse world position
   const mouseWorld = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom, y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
-  if(mouse.right && !warp.isBusy() && rocketAmmo > 0 && rocketCooldown <= 0){
+  if (!stationUI.open && mouse.right && !warp.isBusy() && rocketAmmo>0 && rocketCooldown<=0) {
     const local = rotateInv({ x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y }, ship.angle);
     const side = (local.x >= 0) ? 'right' : 'left';
     fireRocket(side);
@@ -2161,6 +2181,7 @@ function drawStars(cam){
 }
 
 function render(alpha){
+  canvas.style.cursor = 'default';
   // Interpolacja stanu
   const interpPos = {
     x: prevState.pos.x*(1-alpha) + ship.pos.x*alpha,
@@ -2712,25 +2733,40 @@ function hudEndPanel(){ ctx.restore(); }
 function uiTitle(t){ ctx.font='20px monospace'; ctx.fillText(t,0,0); ctx.translate(0,28); ctx.font='16px monospace'; }
 function section(t){ ctx.translate(0,12); ctx.globalAlpha=0.8; ctx.fillText('— '+t,0,0); ctx.globalAlpha=1; ctx.translate(0,18); }
 function uiText(t){ ctx.fillText(t,0,0); ctx.translate(0,18); }
-function hudTabs(names, active){ let x=0; for(const n of names){ const on = (n===active); ctx.fillStyle= on?'#fff':'#a8c0ff'; ctx.fillText('['+n+']', x, 0); x += ctx.measureText('['+n+']  ').width; } ctx.translate(0,28); ctx.fillStyle='#E6F2FF'; }
+function hudTabs(names, active){
+  let x = 0, clicked = null;
+  for (let i = 0; i < names.length; i++) {
+    const label = '[' + names[i] + ']';
+    const w = ctx.measureText(label).width;
+    const t = ctx.getTransform();
+    const L = t.e + x, T = t.f - 14, R = L + w, B = T + 20;
+
+    ctx.fillStyle = names[i]===active ? '#fff' : '#a8c0ff';
+    ctx.fillText(label, x, 0);
+
+    const over = mouse.x>L && mouse.x<R && mouse.y>T && mouse.y<B;
+    if (over) canvas.style.cursor = 'pointer';
+    if (over && mouse.click) clicked = names[i];
+
+    x += ctx.measureText(label+'  ').width;
+  }
+  ctx.translate(0, 28);
+  ctx.fillStyle = '#E6F2FF';
+  if (clicked){ stationUI.tab = clicked; mouse.click = false; }
+}
 function uiRowButton(label, btn){
   ctx.fillText(label, 0, 0);
-  const w = 96, h = 20, x = 320, y = -14;
-  ctx.strokeStyle = '#cfe3ff';
-  ctx.strokeRect(x, y, w, h);
-  ctx.fillText(btn, x+10, 0);
+  const w=96,h=20,x=320,y=-14;
+  ctx.strokeStyle='#cfe3ff'; ctx.strokeRect(x,y,w,h); ctx.fillText(btn, x+10, 0);
 
-  const transform = ctx.getTransform();
-  const hitLeft = transform.e + x;
-  const hitTop = transform.f + y;
-  const hitRight = hitLeft + w;
-  const hitBottom = hitTop + h;
+  const t = ctx.getTransform();
+  const L=t.e+x, T=t.f+y, R=L+w, B=T+h;
+  const over = mouse.x>L && mouse.x<R && mouse.y>T && mouse.y<B;
+  if (over) canvas.style.cursor = 'pointer';
+  const clicked = over && mouse.click;
 
-  const clicked = mouse.click &&
-    mouse.x > hitLeft && mouse.x < hitRight &&
-    mouse.y > hitTop && mouse.y < hitBottom;
-
-  ctx.translate(0, 22);
+  ctx.translate(0,22);
+  if (clicked) mouse.click = false;
   return clicked;
 }
 function slider(label, min,max, step, obj, key){
