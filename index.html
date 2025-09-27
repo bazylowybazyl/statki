@@ -334,6 +334,12 @@ let npcs = [];
 const MISSION_NPCS = [];
 let mercMission = null;
 
+// === Missions / Journal ===
+const MISSIONS = {
+  active: [],   // {id, title, type, stationId?, pos:{x,y}, status:'active'|'completed'}
+  show: false
+};
+
 function spawnMissionFighter(pos){
   const n = makeNPCBase(pos, { hp: 120, accel: 90, maxSpeed: 540, turn: 4.0, radius: 22 });
   n.type = 'pirate';
@@ -737,11 +743,13 @@ function renderHangarTab(){
   }
 }
 function startMercenaryMission(){
-  if(mercMission) return;
+  if(mercMission) { toast('Misja już aktywna. Wciśnij J aby zobaczyć dziennik.'); return; }
+
   const beltRadius = (planets[3].orbitRadius + planets[4].orbitRadius) / 2;
   const angle = Math.random() * Math.PI * 2;
   const x = SUN.x + Math.cos(angle) * beltRadius;
   const y = SUN.y + Math.sin(angle) * beltRadius;
+
   const r = 100;
   const portOffset = r + 40;
   const ports = [
@@ -750,11 +758,33 @@ function startMercenaryMission(){
     {x: -portOffset, y: 0},
     {x: 0, y: -portOffset}
   ];
-  const station = { id:'PIR', x, y, r, hp:10000, maxHp:10000, static:true, mission:true,
-    ports, style: STATION_STYLES[Math.floor(Math.random()*STATION_STYLES.length)] };
+
+  const station = {
+    id: 'PIR',
+    x, y, r,
+    hp: 10000, maxHp: 10000,
+    static: true, mission: true,
+    ports,
+    style: STATION_STYLES[Math.floor(Math.random()*STATION_STYLES.length)]
+  };
+
   stations.push(station);
   mercMission = { station, npcsSpawned:false };
-  toast('Misja najemnik rozpoczęta');
+
+  // Zapis do dziennika + koordy do markera mapy
+  const exists = MISSIONS.active.find(m => m.id === 'merc_pirate_station' && m.status === 'active');
+  if(!exists){
+    MISSIONS.active.push({
+      id: 'merc_pirate_station',
+      title: 'Najemnik: piracka stacja',
+      type: 'mercenary',
+      stationId: station.id,
+      pos: { x, y },
+      status: 'active'
+    });
+  }
+
+  toast('Misja najemnik rozpoczęta. Wciśnij M aby otworzyć mapę — cel oznaczony X. Dziennik: J.');
 }
 function startTerritoryWarMission(){ toast('Dołączono do wojny terytorialnej'); }
 
@@ -769,6 +799,23 @@ function renderOptions(){
   slider('Audio: muzyka', 0, 1, 0.05, OPTIONS.audio, 'music');
   slider('Mysz: czułość', 0.3, 2.0, 0.05, OPTIONS.controls, 'mouseSensitivity');
   // brak opcji odwrócenia osi zgodnie z prośbą
+  hudEndPanel();
+}
+
+function renderMissionJournal(){
+  if(!MISSIONS.show) return;
+  const w = 420, h = 260;
+  const x = (W - w)/2, y = 60;
+  hudBeginPanel(x, y, w, h);
+  uiTitle('Dziennik misji [J]');
+  if(MISSIONS.active.length === 0){
+    uiText('Brak przyjętych misji.');
+  } else {
+    for(const m of MISSIONS.active){
+      const status = m.status === 'active' ? 'AKTYWNA' : 'ZAKOŃCZONA';
+      uiText(`${m.title} — ${status}`);
+    }
+  }
   hudEndPanel();
 }
 
@@ -788,6 +835,7 @@ window.addEventListener('keydown', e=>{
   const k = e.key.toLowerCase();
   keys[k] = true;
   if(k === 'm') showMap = !showMap;
+  if(k === 'j') MISSIONS.show = !MISSIONS.show;
   if(e.key === ' '){
     e.preventDefault();
     if(boost.state==='idle' && boost.fuel>=boost.cost){ boost.state='charging'; boost.charge=0; }
@@ -1458,6 +1506,10 @@ function bulletsAndCollisionsStep(dt){
             PLAYER.credits += 10000;
             stations.splice(stations.indexOf(st),1);
             mercMission = null;
+
+            const m = MISSIONS.active.find(mm => mm.id === 'merc_pirate_station' && mm.status === 'active');
+            if(m) m.status = 'completed';
+
             toast('Misja zakończona: +10000 cr');
           }
         }
@@ -2834,6 +2886,7 @@ function render(alpha){
   if(showMap) drawSectorMap();
   renderStationUI();
   renderOptions();
+  renderMissionJournal();
   mouse.click=false;
 }
 
@@ -2869,6 +2922,20 @@ function drawSectorMap(){
   ctx.beginPath();
   ctx.arc(x0 + ship.pos.x * sx, y0 + ship.pos.y * sy, 4, 0, Math.PI*2);
   ctx.fill();
+
+  // Markery misji (X) dla aktywnych z pozycją
+  ctx.strokeStyle = '#ff4d4d';
+  ctx.lineWidth = 3;
+  for(const m of MISSIONS.active){
+    if(m.status !== 'active' || !m.pos) continue;
+    const px = x0 + m.pos.x * sx;
+    const py = y0 + m.pos.y * sy;
+    const s = 8;
+    ctx.beginPath();
+    ctx.moveTo(px - s, py - s); ctx.lineTo(px + s, py + s);
+    ctx.moveTo(px - s, py + s); ctx.lineTo(px + s, py - s);
+    ctx.stroke();
+  }
 
   ctx.restore();
 }
