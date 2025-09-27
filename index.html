@@ -386,6 +386,7 @@ function spawnMissionFighter(pos){
   const n = makeNPCBase(pos, { hp: 120, accel: 90, maxSpeed: 540, turn: 4.0, radius: 22 });
   n.type = 'pirate';
   n.color = '#ff5533';
+  n.isPirate = true;
   n.ai = function(dt){
     chaseEvadeAI(n, ship, { strafe:true });
   };
@@ -1309,6 +1310,7 @@ function armPirate(n, tier='light'){
   n.friendly = false;
   n.mission  = true;
   n.color    = '#ff5533';
+  n.isPirate = true;
   n.ciwsCd   = 0;
   n.missileCd= 0;
   n.missiles = (tier==='heavy') ? 4 : (tier==='mid' ? 3 : 2);
@@ -1540,7 +1542,7 @@ function ciwsStep(dt){
     const baseVel = { x: ship.vel.x - ship.angVel * off.y, y: ship.vel.y + ship.angVel * off.x };
     let target = null; let dist = CIWS_RANGE;
     for(const npc of npcs){
-      if(npc.dead || npc.friendly) continue;
+      if(npc.dead || npc.friendly || !npc.isPirate) continue;
       const d = Math.hypot(npc.x - base.x, npc.y - base.y);
       if(d < dist){ dist = d; target = npc; }
     }
