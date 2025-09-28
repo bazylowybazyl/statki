@@ -800,8 +800,8 @@ function startMercenaryMission(){
   const x = SUN.x + Math.cos(angle) * beltRadius;
   const y = SUN.y + Math.sin(angle) * beltRadius;
 
-  const r = 100;
-  const portOffset = r + 40;
+  const r = 220;
+  const portOffset = r + 60;
   const ports = [
     {x: portOffset, y: 0},
     {x: 0, y: portOffset},
@@ -816,6 +816,13 @@ function startMercenaryMission(){
     static: true, mission: true,
     ports,
     style: STATION_STYLES[Math.floor(Math.random()*STATION_STYLES.length)],
+    shield: {
+      max: 9000,
+      val: 9000,
+      regenRate: 650,
+      regenDelay: 4.5,
+      regenTimer: 0
+    },
     // --- UZBROJENIE ---
     weapons: {
       rails: Array.from({length:6}, (_,i)=>({
@@ -1397,7 +1404,8 @@ function guardAI(n, dt){
   if(!st){ n.ai = (dt)=>pirateAI(n,dt); return; }
 
   const playerNear = Math.hypot(ship.pos.x - st.x, ship.pos.y - st.y) < 1600;
-  const underAttack = (mercMission && mercMission.swarm && mercMission.swarm.active) || (st.hp < st.maxHp);
+  const shieldDamaged = st.shield && st.shield.val < st.shield.max;
+  const underAttack = (mercMission && mercMission.swarm && mercMission.swarm.active) || (st.hp < st.maxHp) || shieldDamaged;
 
   if(playerNear || underAttack){
     n.guard = false;
@@ -1427,7 +1435,7 @@ function spawnStationGuard(st, kind, angle){
 // uniwersalne spawnowanie pirata przy stacji (swarm)
 function spawnPirate(kind, station){
   const a = Math.random()*Math.PI*2;
-  const r = station.r + 18;
+  const r = station.r + 32;
   const pos = { x: station.x + Math.cos(a)*r, y: station.y + Math.sin(a)*r };
   let n;
   if(kind==='interceptor'){
@@ -1617,6 +1625,21 @@ function applyDamageToNPC(npc, dmg, cause='default'){
   }
 }
 
+function applyDamageToStation(station, amount){
+  let dmg = amount || 0;
+  if(dmg <= 0) return 0;
+  if(station.shield){
+    station.shield.regenTimer = station.shield.regenDelay;
+    const absorbed = Math.min(station.shield.val, dmg);
+    station.shield.val -= absorbed;
+    dmg -= absorbed;
+  }
+  if(dmg > 0){
+    station.hp = Math.max(0, station.hp - dmg);
+  }
+  return dmg;
+}
+
 // =============== Collisions & particles ===============
 function bulletsAndCollisionsStep(dt){
   for(let i=bullets.length-1;i>=0;i--){
@@ -1726,7 +1749,7 @@ function bulletsAndCollisionsStep(dt){
       if (b.source && b.source === st && b.age < (b.spawnGrace || 0)) continue;
       const d = Math.hypot(st.x - b.x, st.y - b.y);
       if(d < st.r + b.r){
-        st.hp -= b.damage || 0;
+        applyDamageToStation(st, b.damage || 0);
         if(mercMission && mercMission.station === st && !mercMission.swarm.active){
           mercMission.swarm.active = true; // start „swarm”
         }
@@ -2144,6 +2167,14 @@ function physicsStep(dt){
     st.angle += st.speed * dt * TIME_SCALE;
     st.x = st.planet.x + Math.cos(st.angle) * st.orbitRadius;
     st.y = st.planet.y + Math.sin(st.angle) * st.orbitRadius;
+  }
+  for(const st of stations){
+    if(!st.shield) continue;
+    if(st.shield.regenTimer > 0){
+      st.shield.regenTimer = Math.max(0, st.shield.regenTimer - dt);
+    } else {
+      st.shield.val = clamp(st.shield.val + st.shield.regenRate * dt, 0, st.shield.max);
+    }
   }
   // regen paliwa gdy nie warpuje
   if(warp.state!=='active') warp.fuel = clamp(warp.fuel + warp.regenRate*dt, 0, warp.fuelMax);
@@ -2665,6 +2696,25 @@ function drawStationVFX(ctx, st, x, y, r, t){
       ctx.beginPath(); ctx.arc(0,0,r*0.6,0,Math.PI*2); ctx.fill();
       break;
   }
+
+  if(st.shield && st.shield.val > 0){
+    const frac = clamp(st.shield.val / st.shield.max, 0, 1);
+    const pulse = (Math.sin(t * 1.6) + 1) * 0.5;
+    const shieldR = r * (1.18 + 0.04 * pulse);
+    const fresnel = ctx.createRadialGradient(0, 0, shieldR * 0.72, 0, 0, shieldR);
+    fresnel.addColorStop(0, 'rgba(120,200,255,0)');
+    fresnel.addColorStop(1, `rgba(120,200,255,${0.22 + 0.25 * frac})`);
+    ctx.save();
+    ctx.fillStyle = fresnel;
+    ctx.globalAlpha = 0.45 + 0.25 * pulse * frac;
+    ctx.beginPath(); ctx.arc(0,0, shieldR, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = Math.max(3, r * 0.08);
+    ctx.strokeStyle = `rgba(120,200,255,${0.32 + 0.4 * frac})`;
+    ctx.beginPath(); ctx.arc(0,0, shieldR, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
+
   ctx.restore();
   ctx.strokeStyle = 'rgba(175,210,255,0.12)';
   ctx.lineWidth = Math.max(1, 2);
@@ -3405,6 +3455,40 @@ function render(alpha){
   ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.strokeRect(12-1, H-12-bh-12, bw+2, bh+2);
   ctx.fillStyle = '#3b82f6'; ctx.fillRect(12, H-12-bh-12, bw*ammoFrac, bh);
   ctx.fillStyle = '#dfe7ff'; ctx.fillText(`Rockets: ${rocketAmmo}`, 12 + bw + 8, H-12-bh-6-12);
+
+  if(mercMission && mercMission.station){
+    const st = mercMission.station;
+    const panelPadding = 24;
+    const barW = 220;
+    const barH = 10;
+    let y = 36;
+    const xRight = W - panelPadding;
+    ctx.save();
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#ffd1d1';
+    ctx.fillText('Piracka stacja', xRight, y);
+    ctx.fillStyle = '#dfe7ff';
+    y += 8;
+    if(st.shield){
+      const shieldFrac = clamp(st.shield.val / st.shield.max, 0, 1);
+      ctx.fillText(`Osłony: ${Math.round(st.shield.val)}/${st.shield.max}`, xRight, y + 10);
+      const bx = xRight - barW;
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      ctx.strokeRect(bx - 1, y + 14, barW + 2, barH + 2);
+      ctx.fillStyle = '#60a5fa';
+      ctx.fillRect(bx, y + 15, barW * shieldFrac, barH);
+      ctx.fillStyle = '#dfe7ff';
+      y += 32;
+    }
+    const hullFrac = clamp(st.hp / st.maxHp, 0, 1);
+    ctx.fillText(`Kadłub: ${Math.round(st.hp)}/${st.maxHp}`, xRight, y + 10);
+    const bx = xRight - barW;
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.strokeRect(bx - 1, y + 14, barW + 2, barH + 2);
+    ctx.fillStyle = '#ef4444';
+    ctx.fillRect(bx, y + 15, barW * hullFrac, barH);
+    ctx.restore();
+  }
 
   if(showMap) drawSectorMap();
   renderStationUI();
