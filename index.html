@@ -68,6 +68,105 @@ function muzzlePosFor(entity, dir, extra = 8){
   return { x: entity.x + dir.x * (rad + extra), y: entity.y + dir.y * (rad + extra) };
 }
 
+// =============== Floating HUD state ===============
+const HUD_SHOW_LEGACY = false; // stary HUD w lewym dolnym rogu – zostaw false
+
+const HUD = {
+  dmg: [],       // popupy obrażeń: {x,y,txt,color,vy,life,max}
+  navArrows: [], // niebieskie strzałki po X: {x,y,age,life}
+};
+
+function hudSpawnDMG(x,y,amount,kind='npc'){
+  const color = (kind==='player') ? '#f87171' : '#a7f3d0';
+  HUD.dmg.push({ x, y, txt: Math.round(amount), color, vy: -14, life: 1.15, max: 1.15 });
+}
+function hudUpdateDMG(dt){
+  for(const d of HUD.dmg){ d.y += d.vy*dt; d.life -= dt; }
+  HUD.dmg = HUD.dmg.filter(d=>d.life>0);
+}
+function hudRenderDMG(cam){
+  ctx.save();
+  ctx.font = 'bold 13px system-ui,monospace';
+  ctx.textAlign = 'center';
+  for(const d of HUD.dmg){
+    const s = worldToScreen(d.x, d.y, cam);
+    ctx.globalAlpha = Math.max(0, d.life/d.max);
+    ctx.fillStyle = d.color;
+    ctx.fillText(d.txt, s.x, s.y);
+  }
+  ctx.restore();
+}
+
+function hudPingNpcStations(){
+  // Niebieskie strzałki do stacji nie-misyjnych; gasną po 4s
+  const targets = stations.filter(s=>!s.mission).slice(0, 8);
+  HUD.navArrows = targets.map(s=>({ x:s.x, y:s.y, age:0, life:4.0 }));
+}
+function hudUpdateNav(dt){
+  for(const p of HUD.navArrows) p.age += dt;
+  HUD.navArrows = HUD.navArrows.filter(p=>p.age < p.life);
+}
+
+function drawArrowOnRing(cx, cy, R, ang, size, color){
+  const x = cx + Math.cos(ang)*R, y = cy + Math.sin(ang)*R;
+  ctx.save(); ctx.translate(x,y); ctx.rotate(ang);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(size, 0);
+  ctx.lineTo(-size*0.6, size*0.6);
+  ctx.lineTo(-size*0.2, 0);
+  ctx.lineTo(-size*0.6, -size*0.6);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function hudRenderNav(ship, cam){
+  if(!HUD.navArrows.length) return;
+  const s = worldToScreen(ship.pos.x, ship.pos.y, cam);
+  const R = Math.max(ship.w, ship.h) * camera.zoom * 0.6 + 30;
+  for(const p of HUD.navArrows){
+    const ang = Math.atan2(p.y - ship.pos.y, p.x - ship.pos.x);
+    const a = Math.max(0, 1 - p.age/p.life);
+    ctx.save(); ctx.globalAlpha = 0.3 + 0.7*a;
+    drawArrowOnRing(s.x, s.y, R, ang, 12, '#60a5fa');
+    ctx.restore();
+  }
+}
+
+function hudRenderFloatingBars(ship, cam){
+  const center = worldToScreen(ship.pos.x, ship.pos.y, cam);
+  const cx = center.x, cy = center.y;
+  const R0 = Math.max(ship.w, ship.h) * camera.zoom * 0.8 + 32;
+
+  // BOOST – pokazuj przy ładowaniu lub krótkim efekcie
+  if (boost.state === 'charging' || boost.effectTime > 0){
+    const t = (boost.state==='charging')
+      ? Math.min(1, boost.charge/boost.chargeTime)
+      : Math.max(0, boost.effectTime/boost.effectDuration);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(41,52,65,0.9)'; ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.arc(cx, cy, R0, -Math.PI/2, -Math.PI/2 + Math.PI*1.1); ctx.stroke();
+    ctx.strokeStyle = '#60a5fa';
+    ctx.beginPath(); ctx.arc(cx, cy, R0, -Math.PI/2, -Math.PI/2 + Math.PI*1.1*t); ctx.stroke();
+    ctx.fillStyle = '#bcd7ff'; ctx.font = '12px system-ui,monospace'; ctx.textAlign = 'center';
+    ctx.fillText('BOOST', cx, cy - R0 - 10);
+    ctx.restore();
+  }
+
+  // WARP – pokazuj przy charge/active
+  if (warp.state === 'charging' || warp.state === 'active'){
+    const t = (warp.state==='charging') ? Math.min(1, warp.charge/warp.chargeTime) : 1;
+    const R1 = R0 + 16;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(30,41,59,0.9)'; ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.arc(cx, cy, R1,  Math.PI/2,  Math.PI/2 - Math.PI*1.1, true); ctx.stroke();
+    ctx.strokeStyle = '#7dd3fc';
+    ctx.beginPath(); ctx.arc(cx, cy, R1,  Math.PI/2,  Math.PI/2 - Math.PI*1.1*t, true); ctx.stroke();
+    ctx.fillStyle = '#d0f0ff'; ctx.font = '12px system-ui,monospace'; ctx.textAlign = 'center';
+    ctx.fillText('WARP', cx, cy + R1 + 26);
+    ctx.restore();
+  }
+}
+
 // =============== Game time (1 min real = 1 h game) ===============
 const TIME_SCALE = 60; // game seconds per real second
 let gameTime = 0; // seconds
@@ -940,7 +1039,7 @@ window.addEventListener('keydown', e=>{
     e.preventDefault();
     if(boost.fuel>0){ boost.state='active'; }
   }
-  if(k === 'x') triggerScanWave();
+  if(k === 'x'){ triggerScanWave(); hudPingNpcStations(); }
   if (k === 'z') {
     if (SQUAD.order === 'idle' || SQUAD.list.length === 0) {
       // start + ESKORTA
@@ -1640,14 +1739,23 @@ function tryFireSpecial(){
   }
 }
 function applyDamageToPlayer(amount){
-  if(ship.shield.val>0){ const s = Math.min(ship.shield.val, amount); ship.shield.val -= s; amount -= s; ship.shield.regenTimer = ship.shield.regenDelay; }
-  if(amount>0) ship.hull.val = Math.max(0, ship.hull.val - amount);
+  let remaining = amount;
+  let absorbed = 0;
+  if(ship.shield.val>0){
+    const s = Math.min(ship.shield.val, remaining);
+    ship.shield.val -= s; remaining -= s; absorbed += s;
+    ship.shield.regenTimer = ship.shield.regenDelay;
+  }
+  if(remaining>0) ship.hull.val = Math.max(0, ship.hull.val - remaining);
+  const totalDealt = absorbed + Math.max(0, remaining);
+  if(totalDealt>0) hudSpawnDMG(ship.pos.x, ship.pos.y - ship.h*0.4, totalDealt, 'player');
 }
 function applyDamageToNPC(npc, dmg, cause='default'){
   if(npc.dead) return;
   npc.hitFlash = 0.12;
   npc.damageHue = (npc.damageHue || 0) + dmg;
   npc.hp -= dmg;
+  if(dmg>0) hudSpawnDMG(npc.x, npc.y - (npc.radius||20)*0.8, dmg, 'npc');
   if(npc.hp<=0){
     npc.dead = true; npc.respawnTimer = 3 + Math.random()*6;
     if(cause === 'plasma'){ spawnExplosionPlasma(npc.x, npc.y, 1.2); }
@@ -2449,6 +2557,8 @@ function physicsStep(dt){
   ciwsStep(dt);
   bulletsAndCollisionsStep(dt);
   npcShootingStep(dt);
+  hudUpdateDMG(dt);
+  hudUpdateNav(dt);
 }
 
 // ======= Efekty VFX =======
@@ -3129,6 +3239,10 @@ function render(alpha){
     drawNPCPretty(ctx, npc, s);
   }
 
+  hudRenderNav(ship, cam);
+  hudRenderDMG(cam);
+  hudRenderFloatingBars(ship, cam);
+
   // radar pings
   for(const ping of radarPings){
     const s = worldToScreen(ping.x, ping.y, cam);
@@ -3445,7 +3559,7 @@ function render(alpha){
     const dx = st.x - ship.pos.x;
     const dy = st.y - ship.pos.y;
     const dist = Math.hypot(dx, dy);
-    if(dist > 1){
+    if(dist > 1 && st.hp > 0){
       const ang = Math.atan2(dy, dx);
       const shipScreen = worldToScreen(ship.pos.x, ship.pos.y, cam);
       const distScreen = dist * camera.zoom;
@@ -3458,41 +3572,44 @@ function render(alpha){
       const ax = shipScreen.x + Math.cos(ang) * arrowRadius;
       const ay = shipScreen.y + Math.sin(ang) * arrowRadius;
 
-      const baseArrowLength = (ship.h / camera.zoom) * 0.2;
-      const arrowLength = clamp(baseArrowLength, ship.h * 0.45, Math.min(Math.min(W, H) * 0.2, ship.h * 0.7));
-      const arrowWidth = arrowLength * 0.28;
-      const strokeW = clamp(4 / camera.zoom, 1.6, 9);
+      const HIDE_DIST = st.r + 600; // znikaj przy podejściu
+      if (dist > HIDE_DIST) {
+        const baseArrowLength = (ship.h / camera.zoom) * 0.45;
+        const arrowLength = clamp(baseArrowLength, 18, 42);
+        const arrowWidth = arrowLength * 0.26;
+        const strokeW = clamp(2.5 / camera.zoom, 1.2, 5);
 
-      ctx.save();
-      ctx.translate(ax, ay);
-      ctx.rotate(ang);
-      ctx.beginPath();
-      ctx.moveTo(arrowLength * 0.5, 0);
-      ctx.lineTo(-arrowLength * 0.5, -arrowWidth * 0.5);
-      ctx.lineTo(-arrowLength * 0.5, arrowWidth * 0.5);
-      ctx.closePath();
-      ctx.fillStyle = 'rgba(255,90,90,0.92)';
-      ctx.shadowColor = 'rgba(255,120,120,0.6)';
-      ctx.shadowBlur = 14;
-      ctx.fill();
-      ctx.lineWidth = strokeW;
-      ctx.strokeStyle = 'rgba(10,0,0,0.55)';
-      ctx.stroke();
-      ctx.restore();
+        ctx.save();
+        ctx.translate(ax, ay);
+        ctx.rotate(ang);
+        ctx.beginPath();
+        ctx.moveTo(arrowLength * 0.5, 0);
+        ctx.lineTo(-arrowLength * 0.5, -arrowWidth * 0.5);
+        ctx.lineTo(-arrowLength * 0.5, arrowWidth * 0.5);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(255,90,90,0.92)';
+        ctx.shadowColor = 'rgba(255,120,120,0.6)';
+        ctx.shadowBlur = 14;
+        ctx.fill();
+        ctx.lineWidth = strokeW;
+        ctx.strokeStyle = 'rgba(10,0,0,0.55)';
+        ctx.stroke();
+        ctx.restore();
 
-      const labelDist = arrowLength * 0.45;
-      const labelX = ax + Math.cos(ang) * labelDist;
-      const labelY = ay + Math.sin(ang) * labelDist;
-      const fontSize = Math.round(clamp(16 / camera.zoom, 10, 26));
-      ctx.save();
-      ctx.fillStyle = '#ffd1d1';
-      ctx.font = `bold ${fontSize}px monospace`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      ctx.fillText('PIRACKA STACJA', labelX, labelY - 6);
-      ctx.textBaseline = 'top';
-      ctx.fillText(`${Math.round(dist)} u`, labelX, labelY + 6);
-      ctx.restore();
+        const labelDist = arrowLength * 0.45;
+        const labelX = ax + Math.cos(ang) * labelDist;
+        const labelY = ay + Math.sin(ang) * labelDist;
+        const fontSize = Math.round(clamp(16 / camera.zoom, 10, 26));
+        ctx.save();
+        ctx.fillStyle = '#ffd1d1';
+        ctx.font = `bold ${fontSize}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText('PIRACKA STACJA', labelX, labelY - 6);
+        ctx.textBaseline = 'top';
+        ctx.fillText(`${Math.round(dist)} u`, labelX, labelY + 6);
+        ctx.restore();
+      }
     }
   }
 
@@ -3523,31 +3640,33 @@ function render(alpha){
     }
   }
 
-  // HUD
-  ctx.fillStyle = '#dfe7ff'; ctx.font = '12px monospace';
-  ctx.fillText(`HP: ${Math.round(ship.hull.val)}/${ship.hull.max}`, 12, H-100);
-  ctx.fillText(`Shield: ${Math.round(ship.shield.val)}/${ship.shield.max}`, 12, H-84);
-  const warpText = warp.state==='active' ? `ACTIVE`
-                  : warp.state==='charging' ? `CHARGING ${(Math.min(1,warp.charge/warp.chargeTime)*100).toFixed(0)}%`
-                  : 'READY';
-  ctx.fillText(`Warp: ${warpText}`, 12, H-68);
-  const fw = 200, fh = 10, ffrac = warp.fuel/warp.fuelMax;
-  ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.strokeRect(12-1, H-52-fh, fw+2, fh+2);
-  ctx.fillStyle = '#60a5fa'; ctx.fillRect(12, H-52-fh, fw*ffrac, fh);
-  ctx.fillStyle = '#dfe7ff'; ctx.fillText(`${warp.fuel.toFixed(1)}s / ${warp.fuelMax}s`, 12 + fw + 8, H-42-fh);
-  const boosting = boost.state==='active' && boost.fuel > 0;
-  const fullyCharged = boost.fuel >= boost.fuelMax - 0.01;
-  const boostText = boosting ? 'ACTIVE' : (fullyCharged ? 'READY' : 'REFILLING');
-  ctx.fillText(`Boost: ${boostText} (${boost.fuel.toFixed(1)}/${boost.fuelMax})`, 12, H-44);
-  const railTimerHUD = Math.min(rail.cd[0], rail.cd[1]);
-  ctx.fillText(`Rail: ${railTimerHUD>0?railTimerHUD.toFixed(2)+'s':'READY'}  Special: ${ship.special.cooldownTimer>0?ship.special.cooldownTimer.toFixed(1)+'s':'READY'}`, 12, H-28);
+  if (HUD_SHOW_LEGACY) {
+    // HUD
+    ctx.fillStyle = '#dfe7ff'; ctx.font = '12px monospace';
+    ctx.fillText(`HP: ${Math.round(ship.hull.val)}/${ship.hull.max}`, 12, H-100);
+    ctx.fillText(`Shield: ${Math.round(ship.shield.val)}/${ship.shield.max}`, 12, H-84);
+    const warpText = warp.state==='active' ? `ACTIVE`
+                    : warp.state==='charging' ? `CHARGING ${(Math.min(1,warp.charge/warp.chargeTime)*100).toFixed(0)}%`
+                    : 'READY';
+    ctx.fillText(`Warp: ${warpText}`, 12, H-68);
+    const fw = 200, fh = 10, ffrac = warp.fuel/warp.fuelMax;
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.strokeRect(12-1, H-52-fh, fw+2, fh+2);
+    ctx.fillStyle = '#60a5fa'; ctx.fillRect(12, H-52-fh, fw*ffrac, fh);
+    ctx.fillStyle = '#dfe7ff'; ctx.fillText(`${warp.fuel.toFixed(1)}s / ${warp.fuelMax}s`, 12 + fw + 8, H-42-fh);
+    const boosting = boost.state==='active' && boost.fuel > 0;
+    const fullyCharged = boost.fuel >= boost.fuelMax - 0.01;
+    const boostText = boosting ? 'ACTIVE' : (fullyCharged ? 'READY' : 'REFILLING');
+    ctx.fillText(`Boost: ${boostText} (${boost.fuel.toFixed(1)}/${boost.fuelMax})`, 12, H-44);
+    const railTimerHUD = Math.min(rail.cd[0], rail.cd[1]);
+    ctx.fillText(`Rail: ${railTimerHUD>0?railTimerHUD.toFixed(2)+'s':'READY'}  Special: ${ship.special.cooldownTimer>0?ship.special.cooldownTimer.toFixed(1)+'s':'READY'}`, 12, H-28);
 
-  // rocket ammo
-  const bw = 160, bh = 10;
-  const ammoFrac = rocketAmmo / ROCKET_AMMO_MAX;
-  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.strokeRect(12-1, H-12-bh-12, bw+2, bh+2);
-  ctx.fillStyle = '#3b82f6'; ctx.fillRect(12, H-12-bh-12, bw*ammoFrac, bh);
-  ctx.fillStyle = '#dfe7ff'; ctx.fillText(`Rockets: ${rocketAmmo}`, 12 + bw + 8, H-12-bh-6-12);
+    // rocket ammo
+    const bw = 160, bh = 10;
+    const ammoFrac = rocketAmmo / ROCKET_AMMO_MAX;
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.strokeRect(12-1, H-12-bh-12, bw+2, bh+2);
+    ctx.fillStyle = '#3b82f6'; ctx.fillRect(12, H-12-bh-12, bw*ammoFrac, bh);
+    ctx.fillStyle = '#dfe7ff'; ctx.fillText(`Rockets: ${rocketAmmo}`, 12 + bw + 8, H-12-bh-6-12);
+  }
 
   if(mercMission && mercMission.station){
     const st = mercMission.station;
