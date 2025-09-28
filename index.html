@@ -718,7 +718,11 @@ const PLAYER = { credits: 1200, cargo: {}, shipId: 'starter' };
 const BLUEPRINTS = {
   upgrades: [
     { id:'rail_cooler', name:'Chłodzenie raila', cost:600, apply(){ rail.heatCap *= 1.25; rail.coolRate *= 1.15; } },
-    { id:'boost_core',  name:'Wzmocniony boost', cost:700, apply(){ boost.speed *= 1.15; boost.duration *= 1.1; } },
+    { id:'boost_core',  name:'Wzmocniony boost', cost:700, apply(){
+      boost.extraThrustMul *= 1.15;
+      boost.consumeRate *= 0.9;
+      boost.handlingMultiplier *= 1.05;
+    } },
     { id:'agility',     name:'Zwrotność +',      cost:500, apply(){
       ship.angularDamping *= 0.9;
       ship.engines.torqueLeft.maxThrust  = Math.round(ship.engines.torqueLeft.maxThrust * 1.12);
@@ -923,7 +927,7 @@ window.addEventListener('keydown', e=>{
   if(k === 'j') MISSIONS.show = !MISSIONS.show;
   if(e.key === ' '){
     e.preventDefault();
-    if(boost.state==='idle' && boost.fuel>=boost.cost){ boost.state='charging'; boost.charge=0; }
+    if(boost.fuel>0){ boost.state='active'; }
   }
   if(k === 'x') triggerScanWave();
   if (k === 'z') {
@@ -966,7 +970,7 @@ window.addEventListener('keydown', e=>{
 window.addEventListener('keyup', e=>{
   const k = e.key.toLowerCase();
   keys[k] = false;
-  if(e.key === ' ' && boost.state==='charging'){ boost.state='idle'; boost.charge=0; }
+  if(e.key === ' ' && boost.state==='active'){ boost.state='idle'; }
   updateInput();
 });
 function updateInput(){
@@ -1104,7 +1108,11 @@ function applyGamepad(){
   const btn = (i)=>!!(p.buttons[i]&&p.buttons[i].pressed);
   if(btn(0)) triggerRailVolley();      // A / Cross
   if(btn(1)) fireRocket();             // B / Circle
-  if(btn(2)) engageBoost();            // X / Square
+  if(btn(2)){
+    if(boost.fuel>0) boost.state='active';
+  } else if(boost.state==='active' && !keys[' ']){
+    boost.state='idle';
+  }
   if(btn(3)) attemptWarp();            // Y / Triangle
   if(btn(9)) PAUSED = !PAUSED;         // START
 }
@@ -2107,10 +2115,14 @@ function exitWarp(){
 
 const boost = {
   state:'idle',
-  charge:0, chargeTime:0.6,
-  speed:1600,
-  fuelMax:3, fuel:3, cost:1, regenRate:0.5,
-  effectTime:0, effectDuration:0.4, effectDir:{x:0,y:0}
+  fuelMax:3, fuel:3,
+  regenRate:0.5,
+  consumeRate:1.5,
+  extraThrustMul:0.8,
+  handlingMultiplier:1.35,
+  dampingFactor:0.55,
+  angularDampingFactor:0.65,
+  effectTime:0, effectDuration:0.25, effectDir:{x:0,y:-1}
 };
 
 function attemptWarp(){
@@ -2130,16 +2142,6 @@ function attemptWarp(){
   }
 }
 
-function engageBoost(){
-  const dir = rotate({x:0,y:-1}, ship.angle);
-  ship.vel.x += dir.x * boost.speed;
-  ship.vel.y += dir.y * boost.speed;
-  boost.fuel = clamp(boost.fuel - boost.cost, 0, boost.fuelMax);
-  boost.state = 'idle';
-  boost.charge = 0;
-  boost.effectTime = boost.effectDuration;
-  boost.effectDir = {x: dir.x, y: dir.y};
-}
 window.addEventListener('keydown', (e)=>{
   if(e.key.toLowerCase() === 'shift'){
     if(warp.state==='idle' && warp.fuel>0){ warp.state='charging'; warp.charge=0; }
@@ -2189,12 +2191,22 @@ function physicsStep(dt){
   }
   // regen paliwa gdy nie warpuje
   if(warp.state!=='active') warp.fuel = clamp(warp.fuel + warp.regenRate*dt, 0, warp.fuelMax);
-  if(boost.state==='idle' && boost.effectTime<=0) boost.fuel = clamp(boost.fuel + boost.regenRate*dt, 0, boost.fuelMax);
-  if(boost.state==='charging'){
-    boost.charge += dt;
-    if(boost.charge >= boost.chargeTime && boost.fuel>=boost.cost){ engageBoost(); }
+  let boostActive = boost.state === 'active';
+  if(boost.state === 'active'){
+    boost.fuel = clamp(boost.fuel - boost.consumeRate*dt, 0, boost.fuelMax);
+    if(boost.fuel <= 0){
+      boost.state = 'idle';
+      boostActive = false;
+    } else {
+      boostActive = true;
+    }
+  } else {
+    boostActive = false;
+    if(boost.effectTime <= 0){
+      boost.fuel = clamp(boost.fuel + boost.regenRate*dt, 0, boost.fuelMax);
+    }
   }
-  if(boost.effectTime>0) boost.effectTime = Math.max(0, boost.effectTime - dt);
+  if(!boostActive && boost.effectTime>0) boost.effectTime = Math.max(0, boost.effectTime - dt);
 
   // rail queue/cd
   rail.cd[0] = Math.max(0, rail.cd[0]-dt);
@@ -2337,12 +2349,23 @@ function physicsStep(dt){
     }
   }
   else {
+    const handlingMul = boostActive ? boost.handlingMultiplier : 1;
+    const forwardWorld = rotate(forwardLocal, ship.angle);
+
+    if(boostActive){
+      boost.effectTime = boost.effectDuration;
+      boost.effectDir = {x: forwardWorld.x, y: forwardWorld.y};
+    }
+
     // GŁÓWNY DUŻY SILNIK — ciąg do przodu
     if(input.main>0){
       const e = ship.engines.main;
-      const thrust = e.maxThrust * input.main;
       const wo = rotate(e.offset, ship.angle);
-      const wf = rotate(forwardLocal, ship.angle);
+      const wf = forwardWorld;
+      let thrust = e.maxThrust * input.main;
+      if(boostActive){
+        thrust *= (1 + boost.extraThrustMul);
+      }
       totalF.x += wf.x * thrust; totalF.y += wf.y * thrust;
       totalTorque += (wo.x * (wf.y * thrust) - wo.y * (wf.x * thrust));
     }
@@ -2360,7 +2383,7 @@ function physicsStep(dt){
     // boczne i moment
     if(input.leftSide>0){
       const e = ship.engines.sideLeft;
-      const thrust = e.maxThrust * input.leftSide;
+      const thrust = e.maxThrust * input.leftSide * handlingMul;
       const wo = rotate(e.offset, ship.angle);
       const lateral = rotate({x:1,y:0}, ship.angle);
       const worldForce = {x: lateral.x * thrust, y: lateral.y * thrust};
@@ -2370,7 +2393,7 @@ function physicsStep(dt){
     }
     if(input.rightSide>0){
       const e = ship.engines.sideRight;
-      const thrust = e.maxThrust * input.rightSide;
+      const thrust = e.maxThrust * input.rightSide * handlingMul;
       const wo = rotate(e.offset, ship.angle);
       const lateral = rotate({x:-1,y:0}, ship.angle);
       const worldForce = {x: lateral.x * thrust, y: lateral.y * thrust};
@@ -2381,7 +2404,7 @@ function physicsStep(dt){
     if(input.torque !== 0){
       const sign = Math.sign(input.torque);
       const left = ship.engines.torqueLeft; const right = ship.engines.torqueRight;
-      const thrust = left.maxThrust * Math.abs(input.torque);
+      const thrust = left.maxThrust * Math.abs(input.torque) * handlingMul;
       const o1 = rotate(left.offset, ship.angle), o2 = rotate(right.offset, ship.angle);
       const lateral1 = rotate({x:1,y:0}, ship.angle), lateral2 = rotate({x:-1,y:0}, ship.angle);
       const f1 = mul(lateral1, thrust * sign), f2 = mul(lateral2, thrust * sign);
@@ -2395,7 +2418,7 @@ function physicsStep(dt){
   // integracja ruchu
   const ax = totalF.x / ship.mass, ay = totalF.y / ship.mass;
   ship.vel.x += ax*dt; ship.vel.y += ay*dt;
-  const linDamp = Math.exp(-ship.linearDamping*dt);
+  const linDamp = Math.exp(-ship.linearDamping * (boostActive ? boost.dampingFactor : 1) * dt);
   if(warp.state!=='active'){ ship.vel.x *= linDamp; ship.vel.y *= linDamp; }
   ship.pos.x += ship.vel.x*dt; ship.pos.y += ship.vel.y*dt;
 
@@ -2407,7 +2430,7 @@ function physicsStep(dt){
   // obrót
   const angAcc = totalTorque / ship.inertia;
   ship.angVel += angAcc*dt;
-  ship.angVel *= Math.exp(-ship.angularDamping*dt);
+  ship.angVel *= Math.exp(-ship.angularDamping * (boostActive ? boost.angularDampingFactor : 1) * dt);
   ship.angle += ship.angVel*dt;
 
   npcStep(dt);
@@ -2496,7 +2519,9 @@ function getEngineVFX() {
       const spd = Math.hypot(ship.vel.x, ship.vel.y);
       const moveGlow = Math.min(spd / 900, 0.6);
       const thrust = input.main > 0 ? input.main : 0;
-      const boostAmp = (boost.effectTime > 0) ? 1.0 : 0.0;
+      const boostAmp = (boost.effectDuration > 0)
+        ? clamp(boost.effectTime / boost.effectDuration, 0, 1)
+        : 0;
       const warpAmp  = (warp.state === 'active') ? 1.0 : 0.0;
       const throttle = Math.max(thrust, moveGlow * 0.8);
 
@@ -3157,10 +3182,13 @@ function render(alpha){
   }
 
   // Efekt dopalacza
-  if(boost.effectTime>0){
+  const boostAlpha = (boost.effectDuration > 0)
+    ? clamp(boost.effectTime / boost.effectDuration, 0, 1)
+    : 0;
+  if(boostAlpha>0){
     const e = ship.engines.main;
     const origin = add(interpPos, rotate(e.offset, interpAngle));
-    drawBoostBeam(origin, boost.effectDir, cam, boost.effectTime/boost.effectDuration);
+    drawBoostBeam(origin, boost.effectDir, cam, boostAlpha);
   }
 
   // ======= STATEK =======
@@ -3455,7 +3483,9 @@ function render(alpha){
   ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.strokeRect(12-1, H-52-fh, fw+2, fh+2);
   ctx.fillStyle = '#60a5fa'; ctx.fillRect(12, H-52-fh, fw*ffrac, fh);
   ctx.fillStyle = '#dfe7ff'; ctx.fillText(`${warp.fuel.toFixed(1)}s / ${warp.fuelMax}s`, 12 + fw + 8, H-42-fh);
-  const boostText = boost.state==='charging' ? `CHARGING ${(Math.min(1,boost.charge/boost.chargeTime)*100).toFixed(0)}%` : 'READY';
+  const boosting = boost.state==='active' && boost.fuel > 0;
+  const fullyCharged = boost.fuel >= boost.fuelMax - 0.01;
+  const boostText = boosting ? 'ACTIVE' : (fullyCharged ? 'READY' : 'REFILLING');
   ctx.fillText(`Boost: ${boostText} (${boost.fuel.toFixed(1)}/${boost.fuelMax})`, 12, H-44);
   const railTimerHUD = Math.min(rail.cd[0], rail.cd[1]);
   ctx.fillText(`Rail: ${railTimerHUD>0?railTimerHUD.toFixed(2)+'s':'READY'}  Special: ${ship.special.cooldownTimer>0?ship.special.cooldownTimer.toFixed(1)+'s':'READY'}`, 12, H-28);
