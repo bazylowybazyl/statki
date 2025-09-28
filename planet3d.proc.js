@@ -454,6 +454,68 @@ const PLANET_FRAG = `// Terrain generation parameters
         uniforms.lightColor.value.set('#ffffff');
         break;
       }
+      case 'gas': {
+        uniforms.type.value         = 2;
+        uniforms.amplitude.value    = 0.3;
+        uniforms.sharpness.value    = 1.2;
+        uniforms.offset.value       = -0.05;
+        uniforms.period.value       = 0.85;
+        uniforms.persistence.value  = 0.62;
+        uniforms.lacunarity.value   = 1.6;
+        uniforms.octaves.value      = 8;
+        uniforms.color1.value.set('#3c2f5a');
+        uniforms.color2.value.set('#6d4e9c');
+        uniforms.color3.value.set('#c89bd9');
+        uniforms.color4.value.set('#f0d7ba');
+        uniforms.color5.value.set('#fff6e8');
+        uniforms.transition2.value  = 0.06;
+        uniforms.transition3.value  = 0.12;
+        uniforms.transition4.value  = 0.18;
+        uniforms.transition5.value  = 0.28;
+        uniforms.blend12.value      = 0.02;
+        uniforms.blend23.value      = 0.02;
+        uniforms.blend34.value      = 0.025;
+        uniforms.blend45.value      = 0.05;
+        uniforms.ambientIntensity.value  = 0.12;
+        uniforms.diffuseIntensity.value  = 0.9;
+        uniforms.specularIntensity.value = 0.14;
+        uniforms.shininess.value         = 8.0;
+        uniforms.bumpStrength.value      = 0.2;
+        uniforms.bumpOffset.value        = 0.0005;
+        uniforms.lightColor.value.set('#ffe7d6');
+        break;
+      }
+      case 'ice': {
+        uniforms.type.value         = 2;
+        uniforms.amplitude.value    = 0.6;
+        uniforms.sharpness.value    = 1.4;
+        uniforms.offset.value       = -0.02;
+        uniforms.period.value       = 0.68;
+        uniforms.persistence.value  = 0.55;
+        uniforms.lacunarity.value   = 1.8;
+        uniforms.octaves.value      = 9;
+        uniforms.color1.value.set('#0a1a3a');
+        uniforms.color2.value.set('#3b7fbf');
+        uniforms.color3.value.set('#a9d6ff');
+        uniforms.color4.value.set('#dff3ff');
+        uniforms.color5.value.set('#ffffff');
+        uniforms.transition2.value  = 0.05;
+        uniforms.transition3.value  = 0.09;
+        uniforms.transition4.value  = 0.16;
+        uniforms.transition5.value  = 0.24;
+        uniforms.blend12.value      = 0.015;
+        uniforms.blend23.value      = 0.02;
+        uniforms.blend34.value      = 0.03;
+        uniforms.blend45.value      = 0.05;
+        uniforms.ambientIntensity.value  = 0.1;
+        uniforms.diffuseIntensity.value  = 1.0;
+        uniforms.specularIntensity.value = 0.18;
+        uniforms.shininess.value         = 16.0;
+        uniforms.bumpStrength.value      = 0.35;
+        uniforms.bumpOffset.value        = 0.0006;
+        uniforms.lightColor.value.set('#dff3ff');
+        break;
+      }
       default:
         // Zostaw domyślne – zawsze można dodać kolejne presety (volcanic/frozen itp.)
         break;
@@ -462,11 +524,14 @@ const PLANET_FRAG = `// Terrain generation parameters
 
   class ProcPlanet {
     constructor(worldX, worldY, pixelSize, opts={}) {
-      this.x = worldX; 
+      this.x = worldX;
       this.y = worldY;
       // target size on screen in world units (used only when drawing to 2D)
       this.size = pixelSize || 64;
       this.style = opts.style || null;
+      this.orbitRadius = opts.orbitRadius || 0;
+      this.orbitSpeed = opts.orbitSpeed || 0;
+      this.orbitPhase = opts.orbitPhase || 0;
 
       // own 2D canvas to blit the rendered planet
       this.canvas = document.createElement("canvas");
@@ -514,9 +579,16 @@ const PLANET_FRAG = `// Terrain generation parameters
 
     render(dt) {
       if (!this.scene || !this.camera) return;
+      const ts = typeof TIME_SCALE !== 'undefined' ? TIME_SCALE : 60;
+      if (this.orbitRadius > 0 && this.orbitSpeed) {
+        this.orbitPhase += this.orbitSpeed * dt * ts;
+        const ang = this.orbitPhase;
+        this.x = SUN_POS.x + Math.cos(ang) * this.orbitRadius;
+        this.y = SUN_POS.y + Math.sin(ang) * this.orbitRadius;
+      }
+
       this.updateLightDirection();
 
-      const ts = typeof TIME_SCALE !== 'undefined' ? TIME_SCALE : 60;
       this.mesh.rotation.y += this.spin * dt * ts;
 
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
@@ -718,7 +790,11 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
   }
 
   class AsteroidBelt3D {
-    constructor(innerRadius, outerRadius, count = 200) {
+    constructor(innerRadius, outerRadius, count = null) {
+      const clampCount = (v, min, max) => Math.max(min, Math.min(max, v));
+      const dynamicCount = clampCount(Math.round((outerRadius || 1) / 20), 200, 1600);
+      const finalCount = count != null ? count : dynamicCount;
+
       this.size = outerRadius * 2;
       this.canvas = document.createElement("canvas");
       // wyższa rozdzielczość, żeby nie było "mgły" po skalowaniu
@@ -753,13 +829,13 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
         metalness: 0.0,
         flatShading: true
       });
-      this.mesh = new THREE.InstancedMesh(geom, mat, count);
+      this.mesh = new THREE.InstancedMesh(geom, mat, finalCount);
       const m = new THREE.Matrix4();
       const rotM = new THREE.Matrix4();
       const scaleM = new THREE.Matrix4();
       const euler = new THREE.Euler();
       const inner = innerRadius / outerRadius;
-      for (let i = 0; i < count; i++) {
+      for (let i = 0; i < finalCount; i++) {
         const radius = inner + Math.random() * (1 - inner);
         const angle = Math.random() * TAU;
         const x = Math.cos(angle) * radius;
@@ -781,7 +857,8 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
 
       // Losowe asteroidy w jednostkach świata do rysowania bezpośrednio na canvasie 2D
       this.asteroids = [];
-      for (let i = 0; i < 2000; i++) {
+      const dotCount = clampCount(Math.round(finalCount * 6), 600, 3600);
+      for (let i = 0; i < dotCount; i++) {
         this.asteroids.push({
           angle: Math.random() * TAU,
           radius: innerRadius + Math.random() * (outerRadius - innerRadius),
@@ -836,7 +913,12 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
     _planets.length = 0;
     for (const s of list) {
       const size = (s.r || 30) * 2.0;
-      const p = new ProcPlanet(s.x, s.y, size, { style: s.type || null });
+      const p = new ProcPlanet(s.x, s.y, size, {
+        style: s.type || null,
+        orbitRadius: s.orbitRadius || 0,
+        orbitSpeed: s.orbitSpeed || s.speed || 0,
+        orbitPhase: s.orbitPhase != null ? s.orbitPhase : (s.angle || 0),
+      });
       _planets.push(p);
     }
     if (sunObj) {
