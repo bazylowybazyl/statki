@@ -1169,7 +1169,7 @@ function fireSideGunAtOffset(gunOff, side, target=null){
 }
 
 // =============== Fighters ===============
-const FIGHTER_ORBIT_RADIUS = 110;
+const FIGHTER_ORBIT_RADIUS = 200;  // były zbyt blisko
 const FIGHTER_ORBIT_SPEED = 1.8;
 const FIGHTER_ATTACK_RANGE = 1000;
 const FIGHTERS_PER_LAUNCH = 10;
@@ -1182,55 +1182,71 @@ const FIGHTER_ESCORT_FOLLOW_GAIN = 7.5;
 
 // Bliska eskorta - lokalne offsety względem kadłuba (w pikselach)
 const FIGHTER_FORMATION = [
-  {x:-90,  y:-70}, {x:90,  y:-70},
-  {x:-120, y:-30}, {x:120, y:-30},
-  {x:-120, y: 10}, {x:120, y: 10},
-  {x:-90,  y: 50}, {x:90,  y: 50},
-  {x:-50,  y:-110},{x:50,  y:-110}
+  {x:-150, y:-120}, {x:150, y:-120},
+  {x:-190, y:-70},  {x:190, y:-70},
+  {x:-190, y:-10},  {x:190, y:-10},
+  {x:-150, y: 60},  {x:150, y: 60},
+  {x:-100, y:-180}, {x:100, y:-180}
 ];
 
 function fighterAI(dt){
-  // lekkie tłumienie, by nie „ciągnęły” bez końca
-  const drag = Math.exp(-FIGHTER_DRAG_COEFF * dt);
-  this.vx *= drag;
-  this.vy *= drag;
+  // lekkie tłumienie
+  const drag = Math.exp(-3 * dt);
+  this.vx *= drag; this.vy *= drag;
 
-  // 1) POWRÓT (dokowanie)
-  if (SQUAD.order === 'return') {
-    const dx = ship.pos.x - this.x;
-    const dy = ship.pos.y - this.y;
-    const desired = Math.atan2(dy, dx);
+  // helpery
+  const limit = (e, vmax)=>{ const s = Math.hypot(e.vx, e.vy); if(s>vmax){ const k=vmax/s; e.vx*=k; e.vy*=k; } };
+  const faceAndThrust = (tx, ty, accelMul=1.0)=>{
+    const desired = Math.atan2(ty - this.y, tx - this.x);
     const current = Math.atan2(this.vy, this.vx);
     const diff = wrapAngle(desired - current);
     const turn = clamp(diff, -this.turn*dt, this.turn*dt);
     const ang = current + turn;
-
-    this.vx += Math.cos(ang) * this.accel * dt;
-    this.vy += Math.sin(ang) * this.accel * dt;
-
-    // dopasuj prędkość do statku gdy blisko (łatwiejsze dokowanie)
-    const d = Math.hypot(dx, dy);
-    if (d < 220) {
-      const match = Math.min(1, 6*dt);
-      this.vx += (ship.vel.x - this.vx) * match;
-      this.vy += (ship.vel.y - this.vy) * match;
-    }
-
-    limitSpeed(this, this.maxSpeed);
-
-    // światełka silników
+    this.vx += Math.cos(ang) * this.accel * accelMul * dt;
+    this.vy += Math.sin(ang) * this.accel * accelMul * dt;
+    // VFX silników
     for (const e of this.engines){
       const off = rotate(e, ang + Math.PI);
       spawnParticle({x:this.x + off.x, y:this.y + off.y},
                     {x:this.vx - Math.cos(ang)*80, y:this.vy - Math.sin(ang)*80},
-                    0.10, '#cfe7ff', 0.8);
+                    0.10, this.friendly ? '#cfe7ff' : '#ffc9c0', 0.8);
     }
+    return ang;
+  };
+  const canGunsFire = (target)=>{
+    const dx = target.x - this.x, dy = target.y - this.y;
+    const dist = Math.hypot(dx, dy);
+    const facing = Math.atan2(this.vy, this.vx);
+    const aim = Math.atan2(dy, dx);
+    const align = Math.abs(wrapAngle(aim - facing));
+    const closing = (this.vx*dx + this.vy*dy) > 0; // lecimy w stronę celu
+    const MIN = 260, MAX = 820, ALIGN_OK = 0.28; // ~16°
+    return (dist >= MIN && dist <= MAX && align < ALIGN_OK && closing);
+  };
 
-    if (d < 40) {
+  // === POWRÓT DO STATKU (despawn) ===
+  if (SQUAD.order === 'return'){
+    // bardziej „miękka” nawigacja + większy promień dokowania
+    const dx = ship.pos.x - this.x, dy = ship.pos.y - this.y;
+    const d  = Math.hypot(dx, dy) || 1;
+    const ang = faceAndThrust(ship.pos.x, ship.pos.y, 1.0);
+
+    // dopasowanie prędkości kiedy blisko – silniejsze niż było
+    if (d < 260){
+      this.vx += (ship.vel.x - this.vx) * Math.min(1, 8*dt);
+      this.vy += (ship.vel.y - this.vy) * Math.min(1, 8*dt);
+    }
+    limit(this, this.maxSpeed);
+
+    // fallback timer: jak utkną — wymuś dokowanie
+    this._retT = (this._retT||0) + dt;
+
+    const DOCK_R = 70; // było ~40
+    if (d < DOCK_R || (this._retT > 8 && d < 300)){
       this.dead = true;
       const i = SQUAD.list.indexOf(this);
       if (i !== -1) SQUAD.list.splice(i, 1);
-      if (SQUAD.list.length === 0) {
+      if (SQUAD.list.length === 0){
         SQUAD.order = 'idle';
         SQUAD.targets = [];
         toast('Myśliwce: ZADOKOWANE');
@@ -1239,98 +1255,129 @@ function fighterAI(dt){
     return;
   }
 
-  // 2) ATAK
-  if (SQUAD.order === 'attack') {
-    // wybór celu
+  // === ATAK: nalot (ingress -> pass -> egress) ===
+  if (SQUAD.order === 'attack'){
+    // wybór celu (jak wcześniej)
     let target = null;
-    if (SQUAD.targets.length) {
+    if (SQUAD.targets.length){
       const idx = Math.max(0, SQUAD.list.indexOf(this));
       const t = SQUAD.targets[idx % SQUAD.targets.length];
       if (t && !t.dead) target = t;
     }
-    if (!target) {
+    if (!target){
       let best=null, bd=Infinity;
-      for (const n of npcs) {
+      for (const n of npcs){
         if (n.dead || n.friendly) continue;
         const d = Math.hypot(n.x - this.x, n.y - this.y);
-        if (d < bd) { bd = d; best = n; }
+        if (d < bd){ bd = d; best = n; }
       }
       target = best;
     }
-    // jeśli brak celu — przejdź do eskorty
-    if (!target) {
-      SQUAD.order = 'escort';
-    } else {
-      // pogoń
-      const dx = target.x - this.x;
-      const dy = target.y - this.y;
-      const desired = Math.atan2(dy, dx);
-      const current = Math.atan2(this.vy, this.vx);
-      const diff = wrapAngle(desired - current);
-      const turn = clamp(diff, -this.turn*dt, this.turn*dt);
-      const ang = current + turn;
+    if (!target){ SQUAD.order = 'escort'; return; }
 
-      this.vx += Math.cos(ang) * this.accel * dt;
-      this.vy += Math.sin(ang) * this.accel * dt;
-      limitSpeed(this, this.maxSpeed);
+    // inicjalizacja stanu „pass”
+    if (!this._pass || this._pass.targetId !== target.id){
+      this._pass = {
+        phase: 'ingress',   // ingress | attack | egress
+        t: 0,
+        targetId: target.id,
+        egressT: 0,
+      };
+      this.ciwsCd = 0; this.missileCd = 0; // bez natychmiastowego strzału
+    }
+    this._pass.t += dt;
 
-      // VFX
-      for(const e of this.engines){
-        const off = rotate(e, ang + Math.PI);
-        spawnParticle({x:this.x + off.x, y:this.y + off.y},
-                      {x:this.vx - Math.cos(ang)*80, y:this.vy - Math.sin(ang)*80},
-                      0.10, '#cfe7ff', 0.8);
+    // metryki względem celu
+    const dx = target.x - this.x, dy = target.y - this.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const lead = leadTarget({x:this.x,y:this.y},{x:this.vx||0,y:this.vy||0}, target, Math.max(300, this.maxSpeed*0.9));
+
+    if (this._pass.phase === 'ingress'){
+      // zbliż się do punktu wyprzedzenia, bez ognia
+      faceAndThrust(lead.x, lead.y, 1.0);
+      limit(this, this.maxSpeed);
+      // warunki otwarcia ognia: w zasięgu + wyrównanie
+      const facing = Math.atan2(this.vy, this.vx);
+      const aim = Math.atan2(dy, dx);
+      const align = Math.abs(wrapAngle(aim - facing));
+      const APPROACH = 900, ALIGN_OK = 0.35;
+      if (dist < APPROACH && align < ALIGN_OK){
+        this._pass.phase = 'attack';
+        this._pass.t = 0;
+      }
+      return;
+    }
+
+    if (this._pass.phase === 'attack'){
+      // krótka prosta z ogniem (nalot)
+      const ang = faceAndThrust(lead.x, lead.y, 1.0);
+      limit(this, this.maxSpeed);
+
+      // Strzelaj tylko w „oknie”
+      if (canGunsFire(target)){
+        this.ciwsCd = Math.max(0, this.ciwsCd - dt);
+        this.missileCd = Math.max(0, this.missileCd - dt);
+        const dir = {x:Math.cos(ang), y:Math.sin(ang)};
+        if (this.ciwsCd === 0){
+          bullets.push({
+            x:this.x + dir.x*8, y:this.y + dir.y*8,
+            vx: dir.x*CIWS_BULLET_SPEED + this.vx,
+            vy: dir.y*CIWS_BULLET_SPEED + this.vy,
+            life:1.2, r:2, owner:'player', damage:CIWS_DAMAGE, type:'ciws'
+          });
+          this.ciwsCd = CIWS_FIRE_INTERVAL;
+        }
+        if (this.missiles>0 && this.missileCd === 0){
+          bullets.push({
+            x:this.x + dir.x*8, y:this.y + dir.y*8,
+            vx: dir.x*SIDE_BULLET_SPEED + this.vx,
+            vy: dir.y*SIDE_BULLET_SPEED + this.vy,
+            life:2.4, r:5, owner:'player', damage:SIDE_BULLET_DAMAGE,
+            penetration:0, type:'rocket',
+            explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS,
+            homingDelay: SIDE_ROCKET_HOMING_DELAY,
+            target
+          });
+          this.missiles--; this.missileCd = 1.5;
+        }
       }
 
-      // strzelanie TYLKO w ataku
-      this.ciwsCd = Math.max(0, this.ciwsCd - dt);
-      this.missileCd = Math.max(0, this.missileCd - dt);
-      const dir = {x:Math.cos(ang), y:Math.sin(ang)};
-      if(this.ciwsCd === 0){
-        bullets.push({ x:this.x + dir.x*8, y:this.y + dir.y*8,
-          vx: dir.x*CIWS_BULLET_SPEED + this.vx, vy: dir.y*CIWS_BULLET_SPEED + this.vy,
-          life:1.2, r:2, owner:'player', damage:CIWS_DAMAGE, type:'ciws' });
-        this.ciwsCd = CIWS_FIRE_INTERVAL;
+      // warunki zakończenia przelotu
+      const passed = (this.vx*dx + this.vy*dy) < 0; // minęliśmy cel
+      if (this._pass.t > 1.6 || dist < 180 || passed){
+        this._pass.phase = 'egress';
+        this._pass.egressT = 0;
       }
-      if(this.missiles>0 && this.missileCd === 0){
-        bullets.push({ x:this.x + dir.x*8, y:this.y + dir.y*8,
-          vx: dir.x*SIDE_BULLET_SPEED + this.vx, vy: dir.y*SIDE_BULLET_SPEED + this.vy,
-          life:2.4, r:5, owner:'player', damage:SIDE_BULLET_DAMAGE, penetration:0,
-          type:'rocket', explodeRadius:SIDE_PLASMA_EXPLODE_RADIUS,
-          homingDelay:SIDE_ROCKET_HOMING_DELAY, target });
-        this.missiles--; this.missileCd = 1.5;
+      return;
+    }
+
+    if (this._pass.phase === 'egress'){
+      // odejście po przelocie – odskocz od celu
+      this._pass.egressT += dt;
+      const awayX = this.x - dx, awayY = this.y - dy; // kierunek od celu
+      faceAndThrust(awayX, awayY, 0.9);
+      limit(this, this.maxSpeed);
+      if (this._pass.egressT > 0.9){
+        this._pass.phase = 'ingress';
+        this._pass.t = 0;
       }
       return;
     }
   }
 
-  // 3) ESKORTA (domyślnie)
-  // pozycja kotwicy w układzie statku -> świat
-  const local = FIGHTER_FORMATION[this.formIndex % FIGHTER_FORMATION.length] || {x:-80, y:-40};
+  // === ESKORTA (domyślnie) ===
+  const local = FIGHTER_FORMATION[this.formIndex % FIGHTER_FORMATION.length] || {x:-140, y:-90};
   const off = rotate(local, ship.angle);
   const anchor = { x: ship.pos.x + off.x, y: ship.pos.y + off.y };
 
-  // PD-follow: dopasuj prędkość do statku + sprężyna na pozycję
   const to = { x: anchor.x - this.x, y: anchor.y - this.y };
-  const desiredVel = {
-    x: ship.vel.x + to.x * FIGHTER_ESCORT_POSITION_GAIN,
-    y: ship.vel.y + to.y * FIGHTER_ESCORT_POSITION_GAIN,
-  };
-
-  // ogranicz żądaną prędkość
+  const desiredVel = { x: ship.vel.x + to.x * 2.2, y: ship.vel.y + to.y * 2.2 };
   const spd = Math.hypot(desiredVel.x, desiredVel.y);
-  const vmax = this.maxSpeed;
-  if (spd > vmax){
-    const s = vmax / spd;
-    desiredVel.x *= s; desiredVel.y *= s;
-  }
+  const vmax = this.maxSpeed * 0.95;
+  if (spd > vmax){ const s = vmax/spd; desiredVel.x*=s; desiredVel.y*=s; }
+  this.vx += (desiredVel.x - this.vx) * Math.min(1, 5.5*dt);
+  this.vy += (desiredVel.y - this.vy) * Math.min(1, 5.5*dt);
 
-  // płynne zbieganie do desiredVel
-  const followGain = FIGHTER_ESCORT_FOLLOW_GAIN; // sztywność „sprężyny”
-  this.vx += (desiredVel.x - this.vx) * Math.min(1, followGain*dt);
-  this.vy += (desiredVel.y - this.vy) * Math.min(1, followGain*dt);
-
-  // VFX silników (lekko)
   const ang = Math.atan2(this.vy, this.vx);
   for(const e of this.engines){
     const eo = rotate(e, ang + Math.PI);
@@ -1339,7 +1386,6 @@ function fighterAI(dt){
                   0.08, '#cfe7ff', 0.7);
   }
 }
-
 // === PIRATE AI (strzela jak myśliwce) + SPAWN SWARM ===
 function armPirate(n, tier='light'){
   n.friendly = false;
