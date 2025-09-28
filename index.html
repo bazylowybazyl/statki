@@ -1326,7 +1326,7 @@ function armPirate(n, tier='light'){
 }
 
 function pirateAI(n, dt){
-  const drag = Math.exp(-1.2 * dt);
+  const drag = Math.exp(-0.9 * dt);
   n.vx *= drag; n.vy *= drag;
 
   const st = mercMission && mercMission.station;
@@ -1355,8 +1355,8 @@ function pirateAI(n, dt){
   n.vy += Math.sin(n.angle) * n.accel * dt;
   const side = (Math.random()<0.5?-1:1);
   const angS = n.angle + side * Math.PI/2;
-  n.vx += Math.cos(angS) * n.accel * 0.004;
-  n.vy += Math.sin(angS) * n.accel * 0.004;
+  n.vx += Math.cos(angS) * n.accel * 0.008;
+  n.vy += Math.sin(angS) * n.accel * 0.008;
 
   if (dShip < 280){ n.vx -= n.vx * 0.65 * dt; n.vy -= n.vy * 0.65 * dt; }
 
@@ -1439,14 +1439,14 @@ function spawnPirate(kind, station){
   const pos = { x: station.x + Math.cos(a)*r, y: station.y + Math.sin(a)*r };
   let n;
   if(kind==='interceptor'){
-    n = makeNPCBase(pos, { hp: 160, accel: 90,  maxSpeed: 540, turn: 4.0, radius: 22 });
+    n = makeNPCBase(pos, { hp: 160, accel: 110,  maxSpeed: 640, turn: 5.2, radius: 22 });
     armPirate(n, 'light');
   } else if(kind==='frigate'){
     // nowa fregata (mid)
-    n = makeNPCBase(pos, { hp: 650, accel: 60,  maxSpeed: 360, turn: 2.0, radius: 44 });
+    n = makeNPCBase(pos, { hp: 650, accel: 80,  maxSpeed: 430, turn: 2.6, radius: 44 });
     armPirate(n, 'mid');
   } else { // 'destroyer'
-    n = makeNPCBase(pos, { hp: 1200, accel: 40, maxSpeed: 260, turn: 1.2, radius: 60 });
+    n = makeNPCBase(pos, { hp: 1200, accel: 60, maxSpeed: 320, turn: 1.8, radius: 60 });
     armPirate(n, 'heavy');
   }
   n.type = kind;
