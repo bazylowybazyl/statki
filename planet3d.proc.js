@@ -725,6 +725,7 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       this.canvas.width = 1024;
       this.canvas.height = 1024;
       this.ctx2d = this.canvas.getContext("2d");
+      this.drawOverlayDots = true;
       if (typeof THREE === "undefined") return;
 
       this.scene = new THREE.Scene();
@@ -795,14 +796,19 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       this.rotation += this.rotationSpeed * dt;
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r) return;
+      r.setScissorTest(true);
+      r.setViewport(0, 0, this.canvas.width, this.canvas.height);
+      r.setScissor(0, 0, this.canvas.width, this.canvas.height);
+      r.clear();
       r.render(this.scene, this.camera);
+      r.setScissorTest(false);
       this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
       this.ctx2d.drawImage(r.domElement, 0, 0);
     }
 
     // Rysuje pojedyncze asteroidy jako małe kropki na głównym canvasie
     draw(ctx, cam) {
-      if (!this.asteroids) return;
+      if (!this.asteroids || !this.drawOverlayDots) return;
       const w = ctx.canvas.width;
       const h = ctx.canvas.height;
       ctx.fillStyle = "#bbb";
@@ -811,7 +817,7 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
         const x = SUN_POS.x + Math.cos(ang) * a.radius;
         const y = SUN_POS.y + Math.sin(ang) * a.radius;
         const s = worldToScreen(x, y, cam);
-        const size = a.size * camera.zoom;
+        const size = a.size * cam.zoom;
         if (s.x < -size || s.y < -size || s.x > w + size || s.y > h + size) continue;
         ctx.beginPath();
         ctx.arc(s.x, s.y, size / 2, 0, TAU);
@@ -854,18 +860,18 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
   function drawPlanets3D(ctx, cam) {
       if (asteroidBelt && sun) {
         const ss = worldToScreen(sun.x, sun.y, cam);
-        const sizeB = asteroidBelt.size * camera.zoom;
+        const sizeB = asteroidBelt.size * cam.zoom;
         ctx.drawImage(asteroidBelt.canvas, ss.x - sizeB/2, ss.y - sizeB/2, sizeB, sizeB);
         asteroidBelt.draw(ctx, cam);
       }
       for (const p of _planets) {
         const s = worldToScreen(p.x, p.y, cam);
-        const size = p.size * camera.zoom;
+        const size = p.size * cam.zoom;
         ctx.drawImage(p.canvas, s.x - size/2, s.y - size/2, size, size);
       }
       if (sun) {
         const ss = worldToScreen(sun.x, sun.y, cam);
-        const sizeS = sun.size * camera.zoom;
+        const sizeS = sun.size * cam.zoom;
         ctx.drawImage(sun.canvas, ss.x - sizeS/2, ss.y - sizeS/2, sizeS, sizeS);
       }
     }
