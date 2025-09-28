@@ -1154,6 +1154,12 @@ const FIGHTER_ORBIT_RADIUS = 110;
 const FIGHTER_ORBIT_SPEED = 1.8;
 const FIGHTER_ATTACK_RANGE = 1000;
 const FIGHTERS_PER_LAUNCH = 10;
+const FIGHTER_ACCEL = 720;
+const FIGHTER_MAX_SPEED = 1020;
+const FIGHTER_TURN_RATE = 7.2;
+const FIGHTER_DRAG_COEFF = 2.6;
+const FIGHTER_ESCORT_POSITION_GAIN = 3.0;
+const FIGHTER_ESCORT_FOLLOW_GAIN = 7.5;
 
 // Bliska eskorta - lokalne offsety względem kadłuba (w pikselach)
 const FIGHTER_FORMATION = [
@@ -1166,7 +1172,7 @@ const FIGHTER_FORMATION = [
 
 function fighterAI(dt){
   // lekkie tłumienie, by nie „ciągnęły” bez końca
-  const drag = Math.exp(-3 * dt);
+  const drag = Math.exp(-FIGHTER_DRAG_COEFF * dt);
   this.vx *= drag;
   this.vy *= drag;
 
@@ -1287,7 +1293,10 @@ function fighterAI(dt){
 
   // PD-follow: dopasuj prędkość do statku + sprężyna na pozycję
   const to = { x: anchor.x - this.x, y: anchor.y - this.y };
-  const desiredVel = { x: ship.vel.x + to.x * 2.5, y: ship.vel.y + to.y * 2.5 };
+  const desiredVel = {
+    x: ship.vel.x + to.x * FIGHTER_ESCORT_POSITION_GAIN,
+    y: ship.vel.y + to.y * FIGHTER_ESCORT_POSITION_GAIN,
+  };
 
   // ogranicz żądaną prędkość
   const spd = Math.hypot(desiredVel.x, desiredVel.y);
@@ -1298,7 +1307,7 @@ function fighterAI(dt){
   }
 
   // płynne zbieganie do desiredVel
-  const followGain = 6.0; // sztywność „sprężyny”
+  const followGain = FIGHTER_ESCORT_FOLLOW_GAIN; // sztywność „sprężyny”
   this.vx += (desiredVel.x - this.vx) * Math.min(1, followGain*dt);
   this.vy += (desiredVel.y - this.vy) * Math.min(1, followGain*dt);
 
@@ -1481,7 +1490,9 @@ function spawnFighter(){
     y: ship.pos.y + off.y,
     vx: ship.vel.x,
     vy: ship.vel.y,
-    accel:600, maxSpeed:900, turn:6,
+    accel: FIGHTER_ACCEL,
+    maxSpeed: FIGHTER_MAX_SPEED,
+    turn: FIGHTER_TURN_RATE,
     radius:12, hp:40, maxHp:40, color:'#9edfff', fade:1,
     ai: fighterAI, mission:true, friendly:true,
     fighter: true,
