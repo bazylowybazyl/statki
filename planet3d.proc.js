@@ -809,6 +809,10 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
     // Rysuje pojedyncze asteroidy jako małe kropki na głównym canvasie
     draw(ctx, cam) {
       if (!this.asteroids || !this.drawOverlayDots) return;
+      // Bezpieczny fallback na globalny camera i zoom=1
+      const _cam = cam || (typeof camera !== 'undefined' ? camera : null);
+      if (!_cam) return;
+      const zoom = (typeof _cam.zoom === 'number' && isFinite(_cam.zoom)) ? _cam.zoom : 1;
       const w = ctx.canvas.width;
       const h = ctx.canvas.height;
       ctx.fillStyle = "#bbb";
@@ -816,8 +820,8 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
         const ang = a.angle + this.rotation;
         const x = SUN_POS.x + Math.cos(ang) * a.radius;
         const y = SUN_POS.y + Math.sin(ang) * a.radius;
-        const s = worldToScreen(x, y, cam);
-        const size = a.size * cam.zoom;
+        const s = worldToScreen(x, y, _cam);
+        const size = a.size * zoom;
         if (s.x < -size || s.y < -size || s.x > w + size || s.y > h + size) continue;
         ctx.beginPath();
         ctx.arc(s.x, s.y, size / 2, 0, TAU);
@@ -858,20 +862,25 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
     for (const p of _planets) p.render(dt);
   }
   function drawPlanets3D(ctx, cam) {
+      // Bezpieczny fallback na globalny camera i zoom=1
+      const _cam = cam || (typeof camera !== 'undefined' ? camera : null);
+      if (!_cam) return;
+      const zoom = (typeof _cam.zoom === 'number' && isFinite(_cam.zoom)) ? _cam.zoom : 1;
+
       if (asteroidBelt && sun) {
-        const ss = worldToScreen(sun.x, sun.y, cam);
-        const sizeB = asteroidBelt.size * cam.zoom;
+        const ss = worldToScreen(sun.x, sun.y, _cam);
+        const sizeB = asteroidBelt.size * zoom;
         ctx.drawImage(asteroidBelt.canvas, ss.x - sizeB/2, ss.y - sizeB/2, sizeB, sizeB);
-        asteroidBelt.draw(ctx, cam);
+        asteroidBelt.draw(ctx, _cam);
       }
       for (const p of _planets) {
-        const s = worldToScreen(p.x, p.y, cam);
-        const size = p.size * cam.zoom;
+        const s = worldToScreen(p.x, p.y, _cam);
+        const size = p.size * zoom;
         ctx.drawImage(p.canvas, s.x - size/2, s.y - size/2, size, size);
       }
       if (sun) {
-        const ss = worldToScreen(sun.x, sun.y, cam);
-        const sizeS = sun.size * cam.zoom;
+        const ss = worldToScreen(sun.x, sun.y, _cam);
+        const sizeS = sun.size * zoom;
         ctx.drawImage(sun.canvas, ss.x - sizeS/2, ss.y - sizeS/2, sizeS, sizeS);
       }
     }
