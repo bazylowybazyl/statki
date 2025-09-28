@@ -1,0 +1,64 @@
+{
+  "star": {
+    "name": "Sun",
+    "radiusKm": 695700
+  },
+  "planets": [
+    {
+      "name": "Mercury",
+      "type": "terrestrial",
+      "radiusKm": 2439.7,
+      "orbitRadiusAU": 0.387,
+      "orbitalPeriodDays": 87.97
+    },
+    {
+      "name": "Venus",
+      "type": "terrestrial",
+      "radiusKm": 6051.8,
+      "orbitRadiusAU": 0.723,
+      "orbitalPeriodDays": 224.7
+    },
+    {
+      "name": "Earth",
+      "type": "terrestrial",
+      "radiusKm": 6371,
+      "orbitRadiusAU": 1,
+      "orbitalPeriodDays": 365.256
+    },
+    {
+      "name": "Mars",
+      "type": "terrestrial",
+      "radiusKm": 3389.5,
+      "orbitRadiusAU": 1.524,
+      "orbitalPeriodDays": 686.98
+    },
+    {
+      "name": "Jupiter",
+      "type": "gas giant",
+      "radiusKm": 69911,
+      "orbitRadiusAU": 5.203,
+      "orbitalPeriodDays": 4332.59
+    },
+    {
+      "name": "Saturn",
+      "type": "gas giant",
+      "radiusKm": 58232,
+      "orbitRadiusAU": 9.537,
+      "orbitalPeriodDays": 10759.22
+    },
+    {
+      "name": "Uranus",
+      "type": "ice giant",
+      "radiusKm": 25362,
+      "orbitRadiusAU": 19.191,
+      "orbitalPeriodDays": 30688.5
+    },
+    {
+      "name": "Neptune",
+      "type": "ice giant",
+      "radiusKm": 24622,
+      "orbitRadiusAU": 30.07,
+      "orbitalPeriodDays": 60182
+    }
+  ]
+}
