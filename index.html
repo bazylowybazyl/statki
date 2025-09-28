@@ -142,39 +142,74 @@ const ship = {
   input:{ thrustX:0, thrustY:0, aimX:0, aimY:0 }
 };
 ship.inertia = (1/12) * ship.mass * ((ship.w*ship.w)+(ship.h*ship.h));
+const SHIP_SPRITE_SCALE = 1.22;
+const SHIP_VISUAL_BASE = {
+  turretTop:    { x: 38.18587785469991, y: -52.448366304887465 },
+  turretBottom: { x: 42.60145666564039, y:  43.668730035791256 },
+  engineY: 119.44796580188681
+};
 (function configureShip(){
   const hw = ship.w/2, hh = ship.h/2;
-  // Jeden DUŻY engine na środku rufy (moc ≈ suma poprzednich)
-  ship.engines.main = { offset:{x:0, y: Math.round(hh-8)}, maxThrust: 12800 };
+  ship.visual = {
+    spriteScale: SHIP_SPRITE_SCALE,
+    turretTop: {
+      x: SHIP_VISUAL_BASE.turretTop.x * SHIP_SPRITE_SCALE,
+      y: SHIP_VISUAL_BASE.turretTop.y * SHIP_SPRITE_SCALE
+    },
+    turretBottom: {
+      x: SHIP_VISUAL_BASE.turretBottom.x * SHIP_SPRITE_SCALE,
+      y: SHIP_VISUAL_BASE.turretBottom.y * SHIP_SPRITE_SCALE
+    },
+    mainEngine: {
+      x: 0,
+      y: Math.round(SHIP_VISUAL_BASE.engineY * SHIP_SPRITE_SCALE)
+    }
+  };
 
-  ship.engines.sideLeft  =  { offset:{x:-Math.round(hw-8), y: 0}, maxThrust:3000 };
-  ship.engines.sideRight =  { offset:{x: Math.round(hw-8), y: 0}, maxThrust:3000 };
-  ship.engines.torqueLeft  =  { offset:{x:0,y:-Math.round(hh-8)}, maxThrust:3000 };
-  ship.engines.torqueRight =  { offset:{x:0,y: Math.round(hh-8)}, maxThrust:3000 };
+  // Silniki — fizyczne offsety pozostają takie jak wcześniej
+  ship.engines.main = {
+    offset: { x: 0, y: Math.round(hh-8) },
+    visualOffset: { x: 0, y: ship.visual.mainEngine.y },
+    maxThrust: 12800
+  };
+
+  const sidePhysX = Math.round(hw-8);
+  const sideVisualX = Math.round((hw-8) * ship.visual.spriteScale);
+  ship.engines.sideLeft  =  { offset:{x:-sidePhysX, y: 0}, visualOffset:{x:-sideVisualX, y:0}, maxThrust:3000 };
+  ship.engines.sideRight =  { offset:{x: sidePhysX, y: 0}, visualOffset:{x: sideVisualX, y:0}, maxThrust:3000 };
+
+  const torquePhysY = Math.round(hh-8);
+  const torqueVisualY = Math.round((hh-8) * ship.visual.spriteScale);
+  ship.engines.torqueLeft  =  { offset:{x:0,y:-torquePhysY}, visualOffset:{x:0,y:-torqueVisualY}, maxThrust:3000 };
+  ship.engines.torqueRight =  { offset:{x:0,y: torquePhysY}, visualOffset:{x:0,y: torqueVisualY}, maxThrust:3000 };
 
   ship.sideGunsLeft = []; ship.sideGunsRight = [];
-  const gunsPer = 8, inset=6, margin=12;
+  const gunsPer = 8, inset = 6 * ship.visual.spriteScale, margin = 12 * ship.visual.spriteScale;
+  const visualHH = hh * ship.visual.spriteScale;
+  const visualHW = hw * ship.visual.spriteScale;
   for(let i=0;i<gunsPer;i++){
     const t = gunsPer===1?0.5:(i/(gunsPer-1));
-    const yLocal = -hh + margin + t * ((hh - margin) - (-hh + margin));
-    ship.sideGunsLeft.push({ x: -Math.round(hw - inset), y: Math.round(yLocal) });
-    ship.sideGunsRight.push({ x:  Math.round(hw - inset), y: Math.round(yLocal) });
+    const yLocal = -visualHH + margin + t * ((visualHH - margin) - (-visualHH + margin));
+    ship.sideGunsLeft.push({ x: -Math.round(visualHW - inset), y: Math.round(yLocal) });
+    ship.sideGunsRight.push({ x:  Math.round(visualHW - inset), y: Math.round(yLocal) });
   }
-  const podW = 30, podH = 60;
-  const podX = Math.round(hw + podW/2 - 6);
-  const podY = Math.round(hh - podH/2 - 20);
-  ship.pods = [
-    { offset:{ x: -podX, y:  podY }, w: podW, h: podH },
-    { offset:{ x:  podX, y:  podY }, w: podW, h: podH },
-    { offset:{ x: -podX, y: -podY }, w: podW, h: podH },
-    { offset:{ x:  podX, y: -podY }, w: podW, h: podH }
-  ];
-  ship.turret.offset  = { x: -podX, y:  podY };
-  ship.turret2.offset = { x:  podX, y:  podY };
-  ship.turret3.offset = { x: -podX, y: -podY };
-  ship.turret4.offset = { x:  podX, y: -podY };
 
-  const ciwsOff = 20;
+  const podW = Math.round(30 * ship.visual.spriteScale);
+  const podH = Math.round(60 * ship.visual.spriteScale);
+  const bottomTurret = ship.visual.turretBottom;
+  const topTurret = ship.visual.turretTop;
+  ship.pods = [
+    { offset:{ x: -bottomTurret.x, y:  bottomTurret.y }, w: podW, h: podH },
+    { offset:{ x:  bottomTurret.x, y:  bottomTurret.y }, w: podW, h: podH },
+    { offset:{ x: -topTurret.x,    y:  topTurret.y },    w: podW, h: podH },
+    { offset:{ x:  topTurret.x,    y:  topTurret.y },    w: podW, h: podH }
+  ];
+  ship.turret.offset  = { x: -bottomTurret.x, y:  bottomTurret.y };
+  ship.turret2.offset = { x:  bottomTurret.x, y:  bottomTurret.y };
+  ship.turret3.offset = { x: -topTurret.x,    y:  topTurret.y };
+  ship.turret4.offset = { x:  topTurret.x,    y:  topTurret.y };
+
+  const ciwsOff = 20 * ship.visual.spriteScale;
   ship.ciws = [
     { offset:{ x:-ciwsOff, y:-ciwsOff }, angle:0, angVel:0, cd:0 },
     { offset:{ x: ciwsOff, y:-ciwsOff }, angle:0, angVel:0, cd:0 },
@@ -1544,8 +1579,9 @@ function triggerRailVolley(){
   }
 }
 function fireRailBarrel(barIndex){
-  const forwardLen = Math.min(ship.h*0.40, 52); // było 0.36 i 46
-  const gap = 10;
+  const spriteScale = ship.visual?.spriteScale || 1;
+  const forwardLen = Math.min((ship.h * spriteScale) * 0.40, 52 * spriteScale); // było 0.36 i 46
+  const gap = 10 * spriteScale;
   const sign = (barIndex===0) ? -1 : +1;
   const turrets = [ship.turret, ship.turret2, ship.turret3, ship.turret4];
   for(const t of turrets){
@@ -3198,17 +3234,21 @@ function render(alpha){
     : 0;
   if(boostAlpha>0){
     const e = ship.engines.main;
-    const origin = add(interpPos, rotate(e.offset, interpAngle));
+    const mainVisual = e.visualOffset || e.offset;
+    const origin = add(interpPos, rotate(mainVisual, interpAngle));
     drawBoostBeam(origin, boost.effectDir, cam, boostAlpha);
   }
 
   // ======= STATEK =======
   const shipS = worldToScreen(interpPos.x, interpPos.y, cam);
+  const spriteScale = ship.visual?.spriteScale || 1;
+  const visualW = ship.w * spriteScale;
+  const visualH = ship.h * spriteScale;
   ctx.save(); ctx.translate(shipS.x, shipS.y); ctx.scale(camera.zoom, camera.zoom); ctx.rotate(interpAngle);
 
   // --- KADŁUB: sprite lub fallback ---
   if (USE_SHIP_SPRITE && ship.spriteReady) {
-    const scale = ship.h / ship.spriteH;
+    const scale = (ship.h / ship.spriteH) * spriteScale;
     const drawW = ship.spriteW * scale;
     const drawH = ship.spriteH * scale;
 
@@ -3221,39 +3261,39 @@ function render(alpha){
     ctx.drawImage(shipSprite, -drawW/2, -drawH/2, drawW, drawH);
   } else {
     ctx.fillStyle = 'rgba(3,8,18,0.8)';
-    ctx.fillRect(-ship.w/2 + 6, -ship.h/2 + 8, ship.w, ship.h);
-    const g = ctx.createLinearGradient(-ship.w/2, -ship.h/2, ship.w/2, ship.h/2);
+    ctx.fillRect(-visualW/2 + 6*spriteScale, -visualH/2 + 8*spriteScale, visualW, visualH);
+    const g = ctx.createLinearGradient(-visualW/2, -visualH/2, visualW/2, visualH/2);
     g.addColorStop(0, '#1d2740'); g.addColorStop(1, '#2d3b55');
     ctx.fillStyle = g;
-    roundRect(ctx, -ship.w/2, -ship.h/2, ship.w, ship.h, 10);
+    roundRect(ctx, -visualW/2, -visualH/2, visualW, visualH, 10 * spriteScale);
     ctx.fill();
 
     ctx.save();
     ctx.strokeStyle = 'rgba(255,255,255,0.06)';
     ctx.lineWidth = 1.5;
-    roundRect(ctx, -ship.w/2, -ship.h/2, ship.w, ship.h, 10);
+    roundRect(ctx, -visualW/2, -visualH/2, visualW, visualH, 10 * spriteScale);
     ctx.stroke();
     ctx.globalAlpha = 0.25;
     ctx.beginPath();
-    ctx.moveTo(-ship.w*0.35, -ship.h*0.20); ctx.lineTo(ship.w*0.35, -ship.h*0.20);
-    ctx.moveTo(-ship.w*0.35,  ship.h*0.20); ctx.lineTo(ship.w*0.35,  ship.h*0.20);
+    ctx.moveTo(-visualW*0.35, -visualH*0.20); ctx.lineTo(visualW*0.35, -visualH*0.20);
+    ctx.moveTo(-visualW*0.35,  visualH*0.20); ctx.lineTo(visualW*0.35,  visualH*0.20);
     ctx.stroke();
     ctx.globalAlpha = 1;
     ctx.restore();
 
     ctx.fillStyle = '#a8d1ff';
     ctx.beginPath();
-    ctx.ellipse(0, -6, ship.w*0.22, ship.h*0.22, 0, 0, Math.PI*2);
+    ctx.ellipse(0, -6*spriteScale, visualW*0.22, visualH*0.22, 0, 0, Math.PI*2);
     ctx.fill();
 
     ctx.save();
     ctx.rotate(-interpAngle);
-    const glare = ctx.createRadialGradient(0, -ship.h*0.18, 6, 0, -ship.h*0.18, ship.w*0.5);
+    const glare = ctx.createRadialGradient(0, -visualH*0.18, 6*spriteScale, 0, -visualH*0.18, visualW*0.5);
     glare.addColorStop(0, 'rgba(255,255,255,0.25)');
     glare.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = glare;
     ctx.beginPath();
-    ctx.ellipse(0, -6, ship.w*0.22, ship.h*0.22, 0, 0, Math.PI*2);
+    ctx.ellipse(0, -6*spriteScale, visualW*0.22, visualH*0.22, 0, 0, Math.PI*2);
     ctx.fill();
     ctx.restore();
   }
@@ -3265,23 +3305,24 @@ function render(alpha){
       const pg = ctx.createLinearGradient(-pod.w/2, -pod.h/2, pod.w/2, pod.h/2);
       pg.addColorStop(0, '#1d2740'); pg.addColorStop(1, '#2d3b55');
       ctx.fillStyle = pg;
-      roundRect(ctx, -pod.w/2, -pod.h/2, pod.w, pod.h, 6);
+      roundRect(ctx, -pod.w/2, -pod.h/2, pod.w, pod.h, 6 * spriteScale);
       ctx.fill();
       ctx.restore();
     }
 
     const mainE = ship.engines.main;
     ctx.save();
-    ctx.translate(mainE.offset.x, mainE.offset.y);
+    const mainVisual = mainE.visualOffset || mainE.offset;
+    ctx.translate(mainVisual.x, mainVisual.y);
     ctx.fillStyle = '#2a3a56';
-    roundRect(ctx, -14, -9, 28, 18, 6);
+    roundRect(ctx, -14*spriteScale, -9*spriteScale, 28*spriteScale, 18*spriteScale, 6*spriteScale);
     ctx.fill();
     ctx.save();
     ctx.globalAlpha = 0.8;
     ctx.shadowBlur = 20;
     ctx.shadowColor = 'rgba(150,200,255,0.9)';
     ctx.fillStyle = 'rgba(160,210,255,0.75)';
-    roundRect(ctx, -8, -6, 16, 12, 4);
+    roundRect(ctx, -8*spriteScale, -6*spriteScale, 16*spriteScale, 12*spriteScale, 4*spriteScale);
     ctx.fill();
     ctx.restore();
     ctx.restore();
@@ -3289,9 +3330,10 @@ function render(alpha){
     for (const k of ['sideLeft','sideRight','torqueLeft','torqueRight']) {
       const e = ship.engines[k];
       ctx.save();
-      ctx.translate(e.offset.x, e.offset.y);
+      const vis = e.visualOffset || e.offset;
+      ctx.translate(vis.x, vis.y);
       ctx.fillStyle = '#2f3b57';
-      roundRect(ctx, -6, -6, 12, 12, 3);
+      roundRect(ctx, -6*spriteScale, -6*spriteScale, 12*spriteScale, 12*spriteScale, 3*spriteScale);
       ctx.fill();
       ctx.restore();
     }
@@ -3300,14 +3342,14 @@ function render(alpha){
     for (const off of ship.sideGunsLeft) {
       ctx.save();
       ctx.translate(off.x, off.y);
-      roundRect(ctx, -12, -3, 8, 6, 3);
+      roundRect(ctx, -12*spriteScale, -3*spriteScale, 8*spriteScale, 6*spriteScale, 3*spriteScale);
       ctx.fill();
       ctx.restore();
     }
     for (const off of ship.sideGunsRight) {
       ctx.save();
       ctx.translate(off.x, off.y);
-      roundRect(ctx, 4, -3, 8, 6, 3);
+      roundRect(ctx, 4*spriteScale, -3*spriteScale, 8*spriteScale, 6*spriteScale, 3*spriteScale);
       ctx.fill();
       ctx.restore();
     }
@@ -3316,20 +3358,21 @@ function render(alpha){
   // VFX głównego silnika – pod tarczą, wyrasta z dyszy
   {
     const e = ship.engines.main;
+    const visualOffset = e.visualOffset || e.offset;
     const forward = { x: 0, y: -1 }; // lokalny "w dół statku"
     // szerokość zależna od gazu/ruchu
     const spd = Math.hypot(ship.vel.x, ship.vel.y);
     const moveGlow = Math.min(spd / 900, 0.6) * 0.8;
     const throttle = Math.max(input.main || 0, moveGlow);
     const widen = 2.4 + 0.6 * throttle; // 1.2..1.8
-    drawMainEngineVfxLocal(e.offset, forward, widen);
+    drawMainEngineVfxLocal(visualOffset, forward, widen, -68 * spriteScale);
   }
 
   // status circle (hull/shield/speed/rockets) behind shield
   {
     const hullFrac = ship.hull.val / ship.hull.max;
     const shieldFrac = ship.shield.val / ship.shield.max;
-    const r = Math.max(ship.w, ship.h) * 0.6;
+    const r = Math.max(visualW, visualH) * 0.6;
     ctx.save();
     ctx.rotate(-interpAngle);
     ctx.lineWidth = 4;
@@ -3353,7 +3396,7 @@ function render(alpha){
   // tarcza
   const sp = ship.shield.val / ship.shield.max;
   if(sp > 0.005){
-    const rr = Math.max(ship.w, ship.h) * 0.62;
+    const rr = Math.max(visualW, visualH) * 0.62;
     ctx.save();
     const fresnel = ctx.createRadialGradient(0,0, rr*0.78, 0,0, rr);
     fresnel.addColorStop(0, 'rgba(120,200,255,0)');
@@ -3362,11 +3405,11 @@ function render(alpha){
     ctx.beginPath(); ctx.arc(0,0, rr, 0, Math.PI*2); ctx.fill();
     ctx.restore();
     ctx.beginPath(); ctx.strokeStyle = `rgba(120,200,255,${0.18 + 0.4*sp})`;
-    ctx.lineWidth = 3; ctx.arc(0,0, Math.max(ship.w,ship.h)*0.6, 0, Math.PI*2); ctx.stroke();
+    ctx.lineWidth = 3; ctx.arc(0,0, Math.max(visualW,visualH)*0.6, 0, Math.PI*2); ctx.stroke();
   }
 
   // CIWS turrets
-  const ciwsBase = 8, ciwsBarrelLen = 12, ciwsBarrelH = 4;
+  const ciwsBase = 8 * spriteScale, ciwsBarrelLen = 12 * spriteScale, ciwsBarrelH = 4 * spriteScale;
   ship.ciws.forEach((c,i)=>{
     const ang = interpCIWSAngles[i];
     ctx.save();
@@ -3381,7 +3424,11 @@ function render(alpha){
   });
 
   // wieżyczki podwójne z recoilem
-  const baseW = 16, baseH = 24, barrelLen = Math.max(14, Math.round(ship.h * 0.16)) / 2, barrelH = 6, gap = 10; // trochę dłuższe
+  const baseW = 16 * spriteScale,
+        baseH = 24 * spriteScale,
+        barrelLen = Math.max(14 * spriteScale, Math.round(visualH * 0.16)) / 2,
+        barrelH = 6 * spriteScale,
+        gap = 10 * spriteScale; // trochę dłuższe
   const turrets = [
     { t: ship.turret,  ang: interpTurretAngle },
     { t: ship.turret2, ang: interpTurretAngle2 },
@@ -3392,19 +3439,19 @@ function render(alpha){
     ctx.save();
     ctx.translate(t.offset.x, t.offset.y);
     ctx.rotate(ang - interpAngle);
-    const recoil = t.recoil;
-    ctx.fillStyle = '#9ab7ff'; roundRect(ctx, -baseW/2, -baseH/2, baseW, baseH, 5); ctx.fill();
+    const recoil = t.recoil * spriteScale;
+    ctx.fillStyle = '#9ab7ff'; roundRect(ctx, -baseW/2, -baseH/2, baseW, baseH, 5 * spriteScale); ctx.fill();
     ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(30,50,90,0.45)'; ctx.stroke();
     ctx.fillStyle = '#c0c0c0';
-    roundRect(ctx, 6 - recoil, -gap/2 - barrelH/2, barrelLen, barrelH, 3); ctx.fill(); ctx.stroke();
-    roundRect(ctx, 6 - recoil,  gap/2 - barrelH/2, barrelLen, barrelH, 3); ctx.fill(); ctx.stroke();
+    roundRect(ctx, 6*spriteScale - recoil, -gap/2 - barrelH/2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
+    roundRect(ctx, 6*spriteScale - recoil,  gap/2 - barrelH/2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
     ctx.restore();
   }
   ctx.restore(); // ship
 
   // scan arrows pointing to stations
   if(warp.state !== 'active'){
-    const shieldR = Math.max(ship.w, ship.h) * 0.6;
+    const shieldR = Math.max(visualW, visualH) * 0.6;
     for(const a of scanArrows){
       const st = a.target;
       const dx = st.x - ship.pos.x;
@@ -3450,7 +3497,7 @@ function render(alpha){
       const shipScreen = worldToScreen(ship.pos.x, ship.pos.y, cam);
       const distScreen = dist * camera.zoom;
       const maxRadius = Math.max(160, Math.min(W, H) * 0.5 - 60);
-      const baseMinRadius = (ship.h * 0.5 + 80) * camera.zoom;
+      const baseMinRadius = (visualH * 0.5 + 80) * camera.zoom;
       const minRadius = Math.min(baseMinRadius, maxRadius);
       let arrowRadius = distScreen;
       arrowRadius = Math.max(arrowRadius, minRadius);
@@ -3458,8 +3505,8 @@ function render(alpha){
       const ax = shipScreen.x + Math.cos(ang) * arrowRadius;
       const ay = shipScreen.y + Math.sin(ang) * arrowRadius;
 
-      const baseArrowLength = (ship.h / camera.zoom) * 0.2;
-      const arrowLength = clamp(baseArrowLength, ship.h * 0.45, Math.min(Math.min(W, H) * 0.2, ship.h * 0.7));
+      const baseArrowLength = (visualH / camera.zoom) * 0.2;
+      const arrowLength = clamp(baseArrowLength, visualH * 0.45, Math.min(Math.min(W, H) * 0.2, visualH * 0.7));
       const arrowWidth = arrowLength * 0.28;
       const strokeW = clamp(4 / camera.zoom, 1.6, 9);
 
