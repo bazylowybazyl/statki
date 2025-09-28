@@ -13,6 +13,28 @@
   .stat{font-family:monospace;font-size:13px}
   small{color:#a8b4d9}
   #loading{position:fixed;left:0;top:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#030417;z-index:50;color:#dfe7ff;font-size:32px;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
+  .hidden{display:none !important;}
+  .station-overlay{position:absolute;top:60px;right:40px;max-width:420px;max-height:80vh;overflow-y:auto;padding:16px;background:rgba(9,13,24,0.92);border:1px solid #1b2337;border-radius:12px;z-index:60;color:#dfe7ff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;backdrop-filter:blur(12px);box-shadow:0 18px 36px rgba(0,0,0,0.45);}
+  .station-overlay h3{margin:0 0 12px 0;font-size:18px;letter-spacing:0.04em;text-transform:uppercase;color:#8fb5ff;}
+  .station-overlay ul{list-style:none;padding:0;margin:0 0 12px 0;display:flex;gap:8px;}
+  .station-overlay li{padding:6px 12px;border:1px solid #2a3a5a;border-radius:8px;background:#0a1020;cursor:pointer;color:#a8b4d9;font-size:14px;transition:background 0.2s,border-color 0.2s,color 0.2s;}
+  .station-overlay li:hover{background:#131b2f;border-color:#3b4a6d;color:#e6f2ff;}
+  .station-overlay li.active{background:#1f2c49;border-color:#3b82f6;color:#fff;}
+  .station-tab.hidden{display:none;}
+  .mechanic-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:14px;}
+  .mechanic-toolbar label{font-weight:600;letter-spacing:0.03em;color:#b8c9f3;}
+  .mechanic-toolbar select{flex:1;background:#0b1224;color:#dfe7ff;border:1px solid #2a3a5a;border-radius:8px;padding:6px 10px;font-size:14px;}
+  .hp-groups { display:grid; gap:12px; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); }
+  .hp-group { background:#0b0f1a; border:1px solid #1b2337; border-radius:10px; padding:10px; }
+  .hp-group h4 { margin:0 0 6px 0; font-weight:600; }
+  .hp-item { display:flex; justify-content:space-between; align-items:center; padding:6px 8px; border-radius:8px; margin:6px 0; background:#121a2a; }
+  .hp-item button { padding:4px 8px; border:1px solid #2a3a5a; background:#0a1020; border-radius:6px; cursor:pointer; color:#dfe7ff; }
+  .hp-item button:hover{background:#18233c;}
+  .hp-main   h4, .hp-main .hp-item   { outline:1px solid #3b82f6; }
+  .hp-miss   h4, .hp-miss .hp-item   { outline:1px solid #10b981; }
+  .hp-aux    h4, .hp-aux .hp-item    { outline:1px solid #f59e0b; }
+  .hp-hangar h4, .hp-hangar .hp-item { outline:1px solid #a78bfa; }
+  .hp-spec   h4, .hp-spec .hp-item   { outline:1px solid #ef4444; }
 </style>
 </head>
 <body>
@@ -25,6 +47,19 @@
   </div>
 <canvas id="c"></canvas>
 <div id="loading">Ładowanie...</div>
+<div id="mechanic-overlay" class="station-overlay hidden">
+  <h3>Station Mechanic</h3>
+  <ul>
+    <li data-tab="mechanic">Mechanic</li>
+  </ul>
+  <div id="tab-mechanic" class="station-tab hidden">
+    <div class="mechanic-toolbar">
+      <label>Ship frame:</label>
+      <select id="ship-frame-select"></select>
+    </div>
+    <div id="hp-groups" class="hp-groups"></div>
+  </div>
+</div>
 <script type="importmap">
 {
   "imports": {
@@ -66,6 +101,245 @@ function rotateInv(world,a){ return rotate(world, -a); }
 function muzzlePosFor(entity, dir, extra = 8){
   const rad = (entity.radius != null) ? entity.radius : (entity.r != null ? entity.r : 12);
   return { x: entity.x + dir.x * (rad + extra), y: entity.y + dir.y * (rad + extra) };
+}
+
+// === HARDPOINTS: enums ===
+const HP = {
+  MAIN: 'main',
+  MISSILE: 'missile',
+  AUX: 'aux',
+  HANGAR: 'hangar',
+  SPECIAL: 'special'
+};
+
+// === definicje broni ===
+const WEAPONS = {
+  railgun_mk1:  { id:'railgun_mk1',  type:HP.MAIN,    name:'Railgun Mk I',  dps:40, energy:6,  ammo:null },
+  railgun_mk2:  { id:'railgun_mk2',  type:HP.MAIN,    name:'Railgun Mk II', dps:60, energy:8,  ammo:null },
+  missile_rack: { id:'missile_rack', type:HP.MISSILE, name:'Missile Rack',  dps:0,  energy:2,  ammo:20 },
+  ciws_mk1:     { id:'ciws_mk1',     type:HP.AUX,     name:'CIWS Mk I',     dps:12, energy:2,  ammo:null },
+  fighter_bay:  { id:'fighter_bay',  type:HP.HANGAR,  name:'Fighter Bay',   dps:0,  energy:5,  ammo:null },
+  super_f:      { id:'super_f',      type:HP.SPECIAL, name:'Super Weapon',  dps:300,energy:20, ammo:null },
+};
+
+// === definicje statków / ram ===
+const SHIPS = {
+  atlas: {
+    id:'atlas', name:'Atlas-class',
+    spec: { [HP.MAIN]:4, [HP.MISSILE]:8, [HP.AUX]:8, [HP.HANGAR]:4, [HP.SPECIAL]:1 },
+    genHardpoints(bounds){
+      const hp = [];
+      const w = bounds.w, h = bounds.h;
+      placeLine(hp, HP.MAIN,    4, {x:-w*0.25,y:-h*0.48}, {x:w*0.25,y:-h*0.48});
+      placeLine(hp, HP.MISSILE, 4, {x:-w*0.48,y:-h*0.15}, {x:-w*0.48,y:h*0.15});
+      placeLine(hp, HP.MISSILE, 4, {x:w*0.48, y:-h*0.15}, {x:w*0.48, y:h*0.15});
+      placeLine(hp, HP.AUX,     4, {x:-w*0.35,y:-h*0.35}, {x:-w*0.35,y:h*0.35});
+      placeLine(hp, HP.AUX,     4, {x:w*0.35, y:-h*0.35}, {x:w*0.35, y:h*0.35});
+      placeLine(hp, HP.HANGAR,  2, {x:-w*0.20,y:h*0.48},  {x:w*0.20, y:h*0.48});
+      placeLine(hp, HP.HANGAR,  2, {x:-w*0.20,y:h*0.40},  {x:w*0.20, y:h*0.40});
+      hp.push({id:uid(), type:HP.SPECIAL, pos:{x:0,y:0,rot:0}, mount:null, ammo:null, maxAmmo:null});
+      return hp;
+    }
+  },
+  corvus: {
+    id:'corvus', name:'Corvus-class',
+    spec: { [HP.MAIN]:2, [HP.MISSILE]:12, [HP.AUX]:4, [HP.HANGAR]:2, [HP.SPECIAL]:1 },
+    genHardpoints(bounds){
+      const hp=[]; const w=bounds.w, h=bounds.h;
+      placeLine(hp, HP.MAIN, 2, {x:-w*0.2,y:-h*0.5}, {x:w*0.2,y:-h*0.5});
+      placeLine(hp, HP.MISSILE,6,{x:-w*0.5,y:-h*0.25},{x:-w*0.5,y:h*0.25});
+      placeLine(hp, HP.MISSILE,6,{x:w*0.5,y:-h*0.25},{x:w*0.5,y:h*0.25});
+      placeLine(hp, HP.AUX,4,{x:0,y:-h*0.2},{x:0,y:h*0.2});
+      placeLine(hp, HP.HANGAR,2,{x:-w*0.15,y:h*0.5},{x:w*0.15,y:h*0.5});
+      hp.push({id:uid(), type:HP.SPECIAL, pos:{x:0,y:0,rot:0}, mount:null, ammo:null, maxAmmo:null});
+      return hp;
+    }
+  }
+};
+
+function placeLine(out, type, count, a, b){
+  for (let i=0;i<count;i++){
+    const t = count===1 ? 0.5 : (i/(count-1));
+    out.push({ id:uid(), type, pos:{ x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t, rot:0 }, mount:null, ammo:null, maxAmmo:null });
+  }
+}
+function uid(){ return 'hp_'+Math.random().toString(36).slice(2,9); }
+
+const Game = window.Game || (window.Game={});
+Game.player = Game.player || {};
+const defaultInventory = ['railgun_mk1','railgun_mk2','missile_rack','ciws_mk1','fighter_bay','super_f'];
+const existingInventory = Game.player.inventory ? Array.from(Game.player.inventory) : [];
+Game.player.inventory = new Set([...existingInventory, ...defaultInventory]);
+Game.player.shipFrame = Game.player.shipFrame || 'atlas';
+Game.player.hardpoints = Game.player.hardpoints || [];
+Game.player.weapons = Game.player.weapons || {};
+Game.player.spriteW = Game.player.spriteW || 260;
+Game.player.spriteH = Game.player.spriteH || 520;
+
+let rocketAmmo = 0;
+let rocketAmmoMax = 0;
+
+function setHardpointMount(hp, weaponId, opts={}){
+  if(!hp) return;
+  const weapon = weaponId ? WEAPONS[weaponId] : null;
+  const inventory = Game.player?.inventory;
+  if(!weapon || (inventory && weaponId && !inventory.has(weaponId)) || weapon.type !== hp.type){
+    hp.mount = null;
+    hp.ammo = null;
+    hp.maxAmmo = null;
+    return;
+  }
+  hp.mount = weaponId;
+  const baseMax = weapon.ammo != null ? weapon.ammo : null;
+  hp.maxAmmo = opts.hasOwnProperty('maxAmmo') ? opts.maxAmmo : baseMax;
+  if(weapon.ammo != null){
+    const desiredAmmo = opts.hasOwnProperty('ammo') ? opts.ammo : weapon.ammo;
+    hp.ammo = Math.max(0, desiredAmmo);
+  } else {
+    hp.ammo = null;
+  }
+}
+
+function rebuildHardpointsForFrame(){
+  const frame = SHIPS[Game.player.shipFrame];
+  if(!frame) return;
+  const spriteSize = { w: Game.player.spriteW || 260, h: Game.player.spriteH || 520 };
+  Game.player.hardpoints = frame.genHardpoints(spriteSize);
+  autoMountDefaults();
+  syncWeaponSystems();
+}
+
+function autoMountDefaults(){
+  mountFirstFree(HP.MAIN, 'railgun_mk2', 4);
+  mountFirstFree(HP.MISSILE, 'missile_rack', 8);
+  mountFirstFree(HP.AUX, 'ciws_mk1', 8);
+  mountFirstFree(HP.HANGAR, 'fighter_bay', 4);
+  mountFirstFree(HP.SPECIAL, 'super_f', 1);
+}
+
+function mountFirstFree(type, weaponId, howMany){
+  if(!Game.player.inventory.has(weaponId)) return;
+  for (const hp of Game.player.hardpoints){
+    if (howMany<=0) break;
+    if (hp.type===type && !hp.mount){
+      setHardpointMount(hp, weaponId);
+      howMany--;
+    }
+  }
+}
+
+function syncWeaponSystems(){
+  const byType = {};
+  for (const type of Object.values(HP)) byType[type] = [];
+  for (const hp of Game.player.hardpoints){
+    if (!hp.mount) continue;
+    const weapon = WEAPONS[hp.mount];
+    if(weapon) byType[hp.type].push({ hp, weapon });
+  }
+  Game.player.weapons = byType;
+  rocketAmmoMax = missileAmmoCapacity();
+  rocketAmmo = missileAmmoTotal();
+}
+
+function missileAmmoTotal(){
+  let total = 0;
+  for (const hp of Game.player.hardpoints){
+    if(hp.type===HP.MISSILE && hp.mount){
+      if(typeof hp.ammo === 'number') total += hp.ammo;
+    }
+  }
+  return total;
+}
+
+function missileAmmoCapacity(){
+  let total = 0;
+  for (const hp of Game.player.hardpoints){
+    if(hp.type===HP.MISSILE && hp.mount){
+      if(typeof hp.maxAmmo === 'number') total += hp.maxAmmo;
+    }
+  }
+  return total;
+}
+
+function tryPreserveMounts(previous){
+  if(!previous) return;
+  const byType = new Map();
+  for (const hp of previous){
+    if(!hp.mount) continue;
+    const entry = { weaponId: hp.mount, ammo: hp.ammo, maxAmmo: hp.maxAmmo };
+    if(!byType.has(hp.type)) byType.set(hp.type, []);
+    byType.get(hp.type).push(entry);
+  }
+  for (const hp of Game.player.hardpoints){
+    const arr = byType.get(hp.type);
+    if(arr && arr.length){
+      const entry = arr.shift();
+      setHardpointMount(hp, entry.weaponId, { ammo: entry.ammo, maxAmmo: entry.maxAmmo });
+    }
+  }
+}
+
+function saveLoadout(){
+  try{
+    localStorage.setItem('loadout', JSON.stringify({
+      shipFrame: Game.player.shipFrame,
+      hardpoints: Game.player.hardpoints.map(h=>({ id:h.id, type:h.type, mount:h.mount, ammo:h.ammo, maxAmmo:h.maxAmmo }))
+    }));
+  }catch(e){ console.warn('Loadout save error', e); }
+}
+
+function loadLoadout(){
+  const raw = localStorage.getItem('loadout');
+  if(!raw){ syncWeaponSystems(); return; }
+  try{
+    const data = JSON.parse(raw);
+    if(data.shipFrame && SHIPS[data.shipFrame]){
+      Game.player.shipFrame = data.shipFrame;
+    }
+    const frame = SHIPS[Game.player.shipFrame];
+    if(frame){
+      const spriteSize = { w: Game.player.spriteW || 260, h: Game.player.spriteH || 520 };
+      const fresh = frame.genHardpoints(spriteSize);
+      const savedByType = new Map();
+      for(const saved of (data.hardpoints||[])){
+        if(!saved.mount) continue;
+        if(!savedByType.has(saved.type)) savedByType.set(saved.type, []);
+        savedByType.get(saved.type).push(saved);
+      }
+      for(const hp of fresh){
+        const arr = savedByType.get(hp.type);
+        if(arr && arr.length){
+          const saved = arr.shift();
+          setHardpointMount(hp, saved.mount, { ammo: saved.ammo, maxAmmo: saved.maxAmmo });
+        }
+      }
+      Game.player.hardpoints = fresh;
+    }
+  }catch(e){
+    console.warn('Loadout parse error', e);
+  }
+  syncWeaponSystems();
+  if(typeof renderMechanic === 'function') renderMechanic();
+}
+
+rebuildHardpointsForFrame();
+loadLoadout();
+window.addEventListener('beforeunload', saveLoadout);
+
+function drawHardpointGizmos(ctx, worldPos){
+  if(!window.DEBUG_DRAW_HARDPOINTS) return;
+  ctx.save();
+  const screenX = (worldPos.x - ship.pos.x) * camera.zoom + W/2;
+  const screenY = (worldPos.y - ship.pos.y) * camera.zoom + H/2;
+  ctx.translate(screenX, screenY);
+  for (const h of Game.player.hardpoints){
+    ctx.beginPath();
+    ctx.arc(h.pos.x*camera.zoom, h.pos.y*camera.zoom, 6, 0, Math.PI*2);
+    ctx.strokeStyle = ({main:'#3b82f6', missile:'#10b981', aux:'#f59e0b', hangar:'#a78bfa', special:'#ef4444'})[h.type] || '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 // =============== Game time (1 min real = 1 h game) ===============
@@ -212,8 +486,12 @@ const SHIP_VISUAL_BASE = {
   const ciwsOff = 20 * ship.visual.spriteScale;
   ship.ciws = [
     { offset:{ x:-ciwsOff, y:-ciwsOff }, angle:0, angVel:0, cd:0 },
+    { offset:{ x:0,         y:-ciwsOff }, angle:0, angVel:0, cd:0 },
     { offset:{ x: ciwsOff, y:-ciwsOff }, angle:0, angVel:0, cd:0 },
+    { offset:{ x:-ciwsOff, y:0 },        angle:0, angVel:0, cd:0 },
+    { offset:{ x: ciwsOff, y:0 },        angle:0, angVel:0, cd:0 },
     { offset:{ x:-ciwsOff, y: ciwsOff }, angle:0, angVel:0, cd:0 },
+    { offset:{ x:0,         y: ciwsOff }, angle:0, angVel:0, cd:0 },
     { offset:{ x: ciwsOff, y: ciwsOff }, angle:0, angVel:0, cd:0 }
   ];
   ship.nextFighterPod = 0;
@@ -228,6 +506,14 @@ shipSprite.onload = () => {
   ship.spriteReady = true;
   ship.spriteW = shipSprite.naturalWidth;
   ship.spriteH = shipSprite.naturalHeight;
+  Game.player.spriteW = ship.spriteW;
+  Game.player.spriteH = ship.spriteH;
+  const prev = Game.player.hardpoints.map(h=>({ type:h.type, mount:h.mount, ammo:h.ammo, maxAmmo:h.maxAmmo }));
+  rebuildHardpointsForFrame();
+  tryPreserveMounts(prev);
+  syncWeaponSystems();
+  if(typeof renderMechanic === 'function') renderMechanic();
+  saveLoadout();
 };
 shipSprite.src = "assets/capital_ship_rect_v1.png"; // <- ścieżka do pliku
 
@@ -741,6 +1027,7 @@ window.addEventListener('keydown', (e)=>{
     if(e.code==='Digit2') stationUI.tab='trade';
     if(e.code==='Digit3') stationUI.tab='cantina';
     if(e.code==='Digit4') stationUI.tab='hangar';
+    if(e.code==='Digit5') stationUI.tab='mechanic';
   }
 });
 
@@ -749,14 +1036,123 @@ window.addEventListener('keydown', (e)=>{
 });
 
 function renderStationUI(){
-  if(!stationUI.open) return;
+  if(!stationUI.open){
+    setMechanicUIVisible(false);
+    return;
+  }
+  setMechanicUIVisible(stationUI.tab==='mechanic');
   hudBeginPanel(stationUI.x, stationUI.y, stationUI.w, stationUI.h);
-  hudTabs(['upgrades','trade','cantina','hangar'], stationUI.tab);
+  hudTabs(['upgrades','trade','cantina','hangar','mechanic'], stationUI.tab);
   if(stationUI.tab==='upgrades') renderUpgradesTab();
   if(stationUI.tab==='trade')    renderTradeTab();
   if(stationUI.tab==='cantina')  renderCantinaTab();
   if(stationUI.tab==='hangar')   renderHangarTab();
+  if(stationUI.tab==='mechanic') renderMechanicTab();
   hudEndPanel();
+}
+
+function setMechanicUIVisible(visible){
+  const overlay = document.getElementById('mechanic-overlay');
+  if(!overlay) return;
+  const panel = document.getElementById('tab-mechanic');
+  const tabBtn = overlay.querySelector('li[data-tab="mechanic"]');
+  const active = !!visible;
+  overlay.classList.toggle('hidden', !active);
+  if(panel) panel.classList.toggle('hidden', !active);
+  if(tabBtn) tabBtn.classList.toggle('active', active);
+}
+
+function renderMechanicTab(){
+  uiTitle('Mechanic');
+  uiText('Zarządzaj hardpointami i uzbrojeniem w panelu obok.');
+}
+
+function initMechanicUI(){
+  const overlay = document.getElementById('mechanic-overlay');
+  if(!overlay) return;
+  const tabBtn = overlay.querySelector('li[data-tab="mechanic"]');
+  if(tabBtn){
+    tabBtn.addEventListener('click', ()=>{
+      stationUI.open = true;
+      stationUI.tab = 'mechanic';
+      setMechanicUIVisible(true);
+    });
+  }
+  const sel = document.getElementById('ship-frame-select');
+  if(sel){
+    sel.innerHTML = Object.values(SHIPS).map(s=>
+      `<option value="${s.id}" ${Game.player.shipFrame===s.id?'selected':''}>${s.name}</option>`
+    ).join('');
+    sel.value = Game.player.shipFrame;
+    sel.onchange = () => {
+      Game.player.shipFrame = sel.value;
+      const prev = Game.player.hardpoints.map(h=>({ type:h.type, mount:h.mount, ammo:h.ammo, maxAmmo:h.maxAmmo }));
+      rebuildHardpointsForFrame();
+      tryPreserveMounts(prev);
+      syncWeaponSystems();
+      renderMechanic();
+      saveLoadout();
+    };
+  }
+  renderMechanic();
+  setMechanicUIVisible(false);
+}
+
+function renderMechanic(){
+  const root = document.getElementById('hp-groups');
+  if(!root) return;
+  const groups = {
+    [HP.MAIN]:    { title:'Broń główna', css:'hp-main' },
+    [HP.MISSILE]: { title:'Rakiety', css:'hp-miss' },
+    [HP.AUX]:     { title:'Broń dodatkowa', css:'hp-aux' },
+    [HP.HANGAR]:  { title:'Hangary', css:'hp-hangar' },
+    [HP.SPECIAL]: { title:'Broń specjalna', css:'hp-spec' },
+  };
+  const listByType = {};
+  for (const t of Object.values(HP)) listByType[t] = [];
+  for (const hp of Game.player.hardpoints) listByType[hp.type].push(hp);
+  root.innerHTML = Object.entries(groups).map(([type, meta])=>{
+    const slots = listByType[type];
+    const items = slots.map((hp,idx)=>{
+      const weaponName = hp.mount ? (WEAPONS[hp.mount]?.name || hp.mount) : '— empty —';
+      return `<div class="hp-item">
+        <span>#${idx+1} &nbsp; ${weaponName}</span>
+        <button data-hp="${hp.id}">Change</button>
+      </div>`;
+    }).join('');
+    const content = items || '<div class="hp-item"><span>Brak slotów</span></div>';
+    return `<div class="hp-group ${meta.css}">
+      <h4>${meta.title} (${slots.length})</h4>
+      ${content}
+    </div>`;
+  }).join('');
+  root.querySelectorAll('button[data-hp]').forEach(btn=>{
+    btn.onclick = ()=> openWeaponPicker(btn.getAttribute('data-hp'));
+  });
+  const sel = document.getElementById('ship-frame-select');
+  if(sel && sel.value !== Game.player.shipFrame){
+    sel.value = Game.player.shipFrame;
+  }
+}
+
+function openWeaponPicker(hpId){
+  const hp = Game.player.hardpoints.find(h=>h.id===hpId);
+  if(!hp) return;
+  const available = Object.values(WEAPONS).filter(w=>w.type===hp.type && Game.player.inventory.has(w.id));
+  if(!available.length){
+    alert('Brak dostępnych broni dla tego slotu.');
+    return;
+  }
+  const choice = prompt('Choose weapon:\n' + available.map((w,i)=>`${i+1}. ${w.name}`).join('\n'));
+  if(choice === null) return;
+  const idx = Number.parseInt(choice, 10) - 1;
+  if(!Number.isInteger(idx) || idx < 0 || idx >= available.length) return;
+  const weapon = available[idx];
+  setHardpointMount(hp, weapon.id);
+  if(weapon.ammo != null){ hp.ammo = weapon.ammo; hp.maxAmmo = weapon.ammo; }
+  syncWeaponSystems();
+  renderMechanic();
+  saveLoadout();
 }
 
 // --- Zakładki ---
@@ -842,6 +1238,8 @@ function renderHangarTab(){
     }
   }
 }
+
+initMechanicUI();
 function startMercenaryMission(){
   if(mercMission) { toast('Misja już aktywna. Wciśnij J aby zobaczyć dziennik.'); return; }
 
@@ -977,6 +1375,7 @@ window.addEventListener('keydown', e=>{
   }
   if(k === 'x') triggerScanWave();
   if (k === 'z') {
+    if(!(Game.player.weapons?.[HP.HANGAR]?.length)) { toast('Brak dostępnych hangarów.'); return; }
     if (SQUAD.order === 'idle' || SQUAD.list.length === 0) {
       // start + ESKORTA
       SQUAD.list = [];
@@ -1165,8 +1564,6 @@ function applyGamepad(){
 
 // =============== Side rockets ===============
 const ROCKET_FIRE_INTERVAL = 0.11;
-const ROCKET_AMMO_MAX = 100;
-let rocketAmmo = ROCKET_AMMO_MAX;
 let rocketCooldown = 0;
 let nextRocketIndexLeft = 0, nextRocketIndexRight = 0;
 const SIDE_BULLET_SPEED = 760, SIDE_BULLET_DAMAGE = 20;
@@ -1175,16 +1572,37 @@ const SIDE_ROCKET_TURN_RATE = 6;
 const SIDE_ROCKET_HOMING_DELAY = 0.25;
 const SPECIAL_COOLDOWN = 10; ship.special.cooldownTimer = 0;
 
+function consumeMissileAmmo(side){
+  const entries = (Game.player.weapons?.[HP.MISSILE] || []).map(e=>e.hp);
+  if(!entries.length) return false;
+  const available = entries.filter(hp => hp.mount && (hp.ammo === null || hp.ammo > 0));
+  if(!available.length) return false;
+  let preferred = null;
+  if(side === 'left'){
+    preferred = available.find(hp => (hp.pos?.x || 0) <= 0);
+  } else if(side === 'right'){
+    preferred = available.find(hp => (hp.pos?.x || 0) >= 0);
+  }
+  const target = preferred || available[0];
+  if(typeof target.ammo === 'number'){
+    target.ammo = Math.max(0, target.ammo - 1);
+  }
+  rocketAmmo = missileAmmoTotal();
+  saveLoadout();
+  return true;
+}
+
 function fireRocket(side){
-  if(rocketAmmo <= 0) return;
+  if(!(Game.player.weapons?.[HP.MISSILE]?.length)) return;
+  if(rocketAmmoMax > 0 && rocketAmmo <= 0) return;
   const guns = side === 'left' ? ship.sideGunsLeft : ship.sideGunsRight;
   const idx = side === 'left' ? nextRocketIndexLeft : nextRocketIndexRight;
   const gunOff = guns[idx % guns.length];
   const target = (lockedTarget && !lockedTarget.dead) ? lockedTarget : null;
+  if(!consumeMissileAmmo(side)) return;
   fireSideGunAtOffset(gunOff, side, target);
   if(side === 'left') nextRocketIndexLeft = (idx + 1) % guns.length;
   else nextRocketIndexRight = (idx + 1) % guns.length;
-  rocketAmmo--;
 }
 
 function fireSideGunAtOffset(gunOff, side, target=null){
@@ -1615,6 +2033,7 @@ let railTimer = 0;
 const RAIL_SPEED = 2600, RAIL_PEN = 3, RAIL_DAMAGE = 60;
 
 function triggerRailVolley(){
+  if(!(Game.player.weapons?.[HP.MAIN]?.length)) return;
   if(rail.queue.length) return;
   const start = rail.nextStart; rail.nextStart ^= 1;
   const orderPair = [start, 1-start];
@@ -1625,26 +2044,32 @@ function triggerRailVolley(){
   }
 }
 function fireRailBarrel(barIndex){
+  const mainWeapons = Game.player.weapons?.[HP.MAIN] || [];
+  if(!mainWeapons.length) return;
   const spriteScale = ship.visual?.spriteScale || 1;
   const forwardLen = Math.min((ship.h * spriteScale) * 0.40, 52 * spriteScale); // było 0.36 i 46
   const gap = 10 * spriteScale;
   const sign = (barIndex===0) ? -1 : +1;
   const turrets = [ship.turret, ship.turret2, ship.turret3, ship.turret4];
-  for(const t of turrets){
+  const activeCount = Math.min(mainWeapons.length, turrets.length);
+  for(let i=0;i<activeCount;i++){
+    const t = turrets[i];
+    const weaponData = mainWeapons[i]?.weapon;
+    const damage = weaponData?.dps ?? RAIL_DAMAGE;
     const a = t.angle;
     const f = {x:Math.cos(a), y:Math.sin(a)};
     const p = {x:-Math.sin(a), y:Math.cos(a)};
     const off = rotate(t.offset, ship.angle);
     const px = ship.pos.x + off.x + f.x * forwardLen + p.x * (sign * gap/2);
     const py = ship.pos.y + off.y + f.y * forwardLen + p.y * (sign * gap/2);
-    bullets.push({ x:px, y:py, vx: f.x*RAIL_SPEED + ship.vel.x, vy: f.y*RAIL_SPEED + ship.vel.y, life: 2.0, r:4, owner:'player', damage:RAIL_DAMAGE, penetration:RAIL_PEN, type:'rail' });
+    bullets.push({ x:px, y:py, vx: f.x*RAIL_SPEED + ship.vel.x, vy: f.y*RAIL_SPEED + ship.vel.y, life: 2.0, r:4, owner:'player', damage:damage, penetration:RAIL_PEN, type:'rail' });
     t.recoil = Math.min(t.recoil + t.recoilKick, t.recoilMax);
     spawnParticle({x:px, y:py}, {x:0,y:0}, 0.10, '#bfe7ff', 6, true);
     for(let i=0;i<5;i++){
       const aa = a + (Math.random()-0.5)*0.14;
       spawnParticle({x:px + Math.cos(aa)*6, y:py + Math.sin(aa)*6},{x:Math.cos(aa)*220 + ship.vel.x*0.2, y:Math.sin(aa)*220 + ship.vel.y*0.2},0.12,'#bfe7ff',1.6,true);
     }
-}
+  }
   rail.cd[barIndex] = rail.cdMax;
 }
 
@@ -1655,7 +2080,10 @@ const CIWS_DAMAGE = 8;
 const CIWS_RANGE = 600;
 
 function ciwsStep(dt){
-  for(const gun of ship.ciws){
+  const auxWeapons = Game.player.weapons?.[HP.AUX] || [];
+  for(let i=0;i<ship.ciws.length;i++){
+    if(i >= auxWeapons.length) break;
+    const gun = ship.ciws[i];
     gun.cd = Math.max(0, gun.cd - dt);
     const off = rotate(gun.offset, ship.angle);
     const base = { x: ship.pos.x + off.x, y: ship.pos.y + off.y };
@@ -1691,6 +2119,7 @@ function ciwsStep(dt){
 
 // =============== Specjal & dmg ===============
 function tryFireSpecial(){
+  if(!(Game.player.weapons?.[HP.SPECIAL]?.length)) return;
   if(ship.special.cooldownTimer>0) return;
   ship.special.cooldownTimer = SPECIAL_COOLDOWN;
   const dir = rotate({x:0,y:-1}, ship.angle);
@@ -2327,7 +2756,8 @@ function physicsStep(dt){
   rocketCooldown = Math.max(0, rocketCooldown - dt);
   // mouse world position
   const mouseWorld = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom, y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
-  if (!stationUI.open && mouse.right && !warp.isBusy() && rocketAmmo>0 && rocketCooldown<=0) {
+  const hasMissilesEquipped = (Game.player.weapons?.[HP.MISSILE]?.length || 0) > 0;
+  if (!stationUI.open && mouse.right && !warp.isBusy() && hasMissilesEquipped && (rocketAmmoMax === 0 || rocketAmmo > 0) && rocketCooldown<=0) {
     const local = rotateInv({ x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y }, ship.angle);
     const side = (local.x >= 0) ? 'right' : 'left';
     fireRocket(side);
@@ -3435,7 +3865,7 @@ function render(alpha){
     ctx.textBaseline = 'middle';
     const speed = Math.round(Math.hypot(ship.vel.x, ship.vel.y));
     ctx.fillText(`${speed}`, 0, -r - 8);
-    if(rocketAmmo < ROCKET_AMMO_MAX) ctx.fillText(`${rocketAmmo}`, 0, r + 8);
+    if(rocketAmmoMax > 0 && rocketAmmo < rocketAmmoMax) ctx.fillText(`${rocketAmmo}`, 0, r + 8);
     ctx.restore();
   }
 
@@ -3456,7 +3886,9 @@ function render(alpha){
 
   // CIWS turrets
   const ciwsBase = 8 * spriteScale, ciwsBarrelLen = 12 * spriteScale, ciwsBarrelH = 4 * spriteScale;
+  const activeCIWS = (Game.player.weapons?.[HP.AUX]?.length || 0);
   ship.ciws.forEach((c,i)=>{
+    if(i >= activeCIWS) return;
     const ang = interpCIWSAngles[i];
     ctx.save();
     ctx.translate(c.offset.x, c.offset.y);
@@ -3637,7 +4069,7 @@ function render(alpha){
 
   // rocket ammo
   const bw = 160, bh = 10;
-  const ammoFrac = rocketAmmo / ROCKET_AMMO_MAX;
+  const ammoFrac = rocketAmmoMax > 0 ? rocketAmmo / rocketAmmoMax : 0;
   ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.strokeRect(12-1, H-12-bh-12, bw+2, bh+2);
   ctx.fillStyle = '#3b82f6'; ctx.fillRect(12, H-12-bh-12, bw*ammoFrac, bh);
   ctx.fillStyle = '#dfe7ff'; ctx.fillText(`Rockets: ${rocketAmmo}`, 12 + bw + 8, H-12-bh-6-12);
