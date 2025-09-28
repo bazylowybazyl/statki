@@ -543,7 +543,15 @@ const ship = {
             recoil:0, recoilMax:12, recoilRecover:48, recoilKick:14, offset:{x:0,y:0} },
   shield:{ max:15000, val:120, regenRate:100, regenDelay:2, regenTimer:0 },
   hull:{ max:10000, val:1000 },
-  special:{ cooldown:10, cooldownTimer:0 },
+  special:{
+    state:'idle',
+    chargeTime:3.0,
+    chargeStart:0,
+    cooldown:6.0,
+    cooldownUntil:0,
+    preview:{ angle:0, maxLen:1600, hitPt:{x:0,y:0}, width:18, start:{x:0,y:0}, length:0 },
+    _flashUntil:0
+  },
   input:{ thrustX:0, thrustY:0, aimX:0, aimY:0 }
 };
 ship.inertia = (1/12) * ship.mass * ((ship.w*ship.w)+(ship.h*ship.h));
@@ -1497,7 +1505,12 @@ window.addEventListener('keydown', e=>{
   if(e.code==='Space'){ e.preventDefault(); }
   if(e.code==='ShiftLeft' || e.code==='ShiftRight'){ e.preventDefault(); }
   const k = e.key.toLowerCase();
+  const wasDown = !!keys[k];
   keys[k] = true;
+  const nowSec = performance.now() * 0.001;
+  if(k === 'f' && !wasDown){
+    attemptStartSpecial(nowSec);
+  }
   if(k === 'm') showMap = !showMap;
   if(k === 'j') MISSIONS.show = !MISSIONS.show;
   if(e.key === ' '){
@@ -1545,7 +1558,12 @@ window.addEventListener('keydown', e=>{
 });
 window.addEventListener('keyup', e=>{
   const k = e.key.toLowerCase();
+  const wasDown = !!keys[k];
   keys[k] = false;
+  const nowSec = performance.now() * 0.001;
+  if(k === 'f' && wasDown){
+    releaseSpecial(nowSec);
+  }
   if(e.key === ' ' && boost.state==='active'){ boost.state='idle'; }
   updateInput();
 });
@@ -1554,7 +1572,6 @@ function updateInput(){
   input.leftSide  = keys['q']?1:0;
   input.rightSide = keys['e']?1:0;
   let torque = 0; if(keys['a']) torque -= 1; if(keys['d']) torque += 1; input.torque = torque;
-  if(keys['f']) tryFireSpecial();
 }
 
 // targeting / scanning
@@ -1701,7 +1718,6 @@ const SIDE_BULLET_SPEED = 760, SIDE_BULLET_DAMAGE = 20;
 const SIDE_PLASMA_EXPLODE_RADIUS = 48;
 const SIDE_ROCKET_TURN_RATE = 6;
 const SIDE_ROCKET_HOMING_DELAY = 0.25;
-const SPECIAL_COOLDOWN = 10; ship.special.cooldownTimer = 0;
 const SPECIAL_DAMAGE = 1500;
 
 function consumeMissileAmmo(side){
@@ -2250,36 +2266,270 @@ function ciwsStep(dt){
 }
 
 // =============== Specjal & dmg ===============
-function tryFireSpecial(){
+const SPECIAL_TMP_HIT = { t:0, x:0, y:0 };
+const chargeVFX = { active:false, parts:[] };
+const SPECIAL_HIT_CAP = 80;
+
+function attemptStartSpecial(now){
   if(!(Game.player.weapons?.[HP.SPECIAL]?.length)) return;
-  if(ship.special.cooldownTimer>0) return;
-  ship.special.cooldownTimer = SPECIAL_COOLDOWN;
-  const dir = rotate({x:0,y:-1}, ship.angle);
-  const start = add(ship.pos, rotate({x:0, y:-ship.h/2}, ship.angle));
-  const length = 2000;
-  const end = { x: start.x + dir.x*length, y: start.y + dir.y*length };
-  const width = ship.w;
-  const npcsInRange = npcs.filter(npc => !npc.dead && Math.hypot(npc.x - start.x, npc.y - start.y) < length + npc.radius);
+  const spec = ship.special;
+  if(spec.state !== 'idle') return;
+  if(now < spec.cooldownUntil) return;
+  spec.state = 'charging';
+  spec.chargeStart = now;
+  startChargeVFX();
+  if(typeof playSfx === 'function'){ try{ playSfx('charge_start'); }catch(_){} }
+}
+
+function releaseSpecial(now){
+  const spec = ship.special;
+  if(spec.state === 'charging'){
+    spec.state = 'idle';
+    stopChargeVFX();
+    if(typeof stopSfx === 'function'){ try{ stopSfx('charge_loop'); }catch(_){} }
+  }
+}
+
+function getSpecialAimAngle(){
+  if(ship.turret && ship.turret.angle != null) return ship.turret.angle;
+  const forward = rotate({x:0,y:-1}, ship.angle);
+  return Math.atan2(forward.y, forward.x);
+}
+
+function lineCircleHit(px,py, vx,vy, cx,cy, r){
+  const len = Math.hypot(vx,vy) || 1;
+  const dx = vx/len, dy = vy/len;
+  const fx = cx - px, fy = cy - py;
+  const t = fx*dx + fy*dy;
+  const closestX = px + dx*t, closestY = py + dy*t;
+  const dist2 = (closestX - cx)*(closestX - cx) + (closestY - cy)*(closestY - cy);
+  const rr = r*r;
+  if(dist2 > rr) return null;
+  const dt = Math.sqrt(Math.max(0, rr - dist2));
+  const tHit = t - dt;
+  if(tHit < 0) return null;
+  SPECIAL_TMP_HIT.t = tHit;
+  SPECIAL_TMP_HIT.x = px + dx*tHit;
+  SPECIAL_TMP_HIT.y = py + dy*tHit;
+  return SPECIAL_TMP_HIT;
+}
+
+function computeSpecialPreview(){
+  const spec = ship.special;
+  const preview = spec.preview;
+  const ang = getSpecialAimAngle();
+  preview.angle = ang;
+  const startOffset = rotate({x:0, y:-ship.h/2}, ship.angle);
+  const startX = ship.pos.x + startOffset.x;
+  const startY = ship.pos.y + startOffset.y;
+  preview.start.x = startX;
+  preview.start.y = startY;
+  const dirX = Math.cos(ang);
+  const dirY = Math.sin(ang);
+  const L = preview.maxLen;
+  let bestT = L;
+  let bestX = startX + dirX * L;
+  let bestY = startY + dirY * L;
+  for(const npc of npcs){
+    if(npc.dead) continue;
+    const r = npc.radius || 20;
+    const hit = lineCircleHit(startX, startY, dirX*L, dirY*L, npc.x, npc.y, r);
+    if(hit && hit.t < bestT){
+      bestT = hit.t;
+      bestX = hit.x;
+      bestY = hit.y;
+    }
+  }
+  for(const st of stations){
+    const hit = lineCircleHit(startX, startY, dirX*L, dirY*L, st.x, st.y, st.r);
+    if(hit && hit.t < bestT){
+      bestT = hit.t;
+      bestX = hit.x;
+      bestY = hit.y;
+    }
+  }
+  preview.hitPt.x = bestX;
+  preview.hitPt.y = bestY;
+  preview.length = bestT;
+}
+
+function startChargeVFX(){
+  chargeVFX.active = true;
+  const parts = chargeVFX.parts;
+  parts.length = 0;
+  const N = 60;
+  for(let i=0;i<N;i++){
+    parts.push({
+      a: (i/N) * Math.PI * 2,
+      r: 80 + Math.random()*40,
+      w: 3 + Math.random()*3,
+      life: 1 + Math.random()*0.5
+    });
+  }
+}
+
+function stopChargeVFX(){
+  chargeVFX.active = false;
+}
+
+function updateChargeVFX(dt, now){
+  if(!chargeVFX.active) return;
+  const parts = chargeVFX.parts;
+  const spec = ship.special;
+  const progress = Math.min(1, Math.max(0, (now - spec.chargeStart) / spec.chargeTime));
+  const pull = 0.3 + 0.6 * progress;
+  const fade = 0.5 + 0.4 * progress;
+  for(let i=0;i<parts.length;i++){
+    const p = parts[i];
+    p.a += p.w * dt;
+    p.r *= (1 - pull * dt);
+    if(p.r < 4) p.r = 4;
+    p.life -= dt * fade;
+    if(p.life <= 0){
+      p.life = 1 + Math.random()*0.5;
+      p.r = 80 + Math.random()*40;
+      p.a = Math.random()*Math.PI*2;
+      p.w = 3 + Math.random()*3;
+    }
+  }
+}
+
+function drawChargeVFX(ctx, cam){
+  if(!chargeVFX.active) return;
+  const c = worldToScreen(ship.pos.x, ship.pos.y, cam);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const parts = chargeVFX.parts;
+  for(let i=0;i<parts.length;i++){
+    const s = parts[i];
+    const alpha = Math.max(0, Math.min(1, s.life));
+    if(alpha <= 0) continue;
+    const x = c.x + Math.cos(s.a) * s.r * camera.zoom;
+    const y = c.y + Math.sin(s.a) * s.r * camera.zoom;
+    ctx.fillStyle = `rgba(120,200,255,${0.15*alpha})`;
+    ctx.beginPath();
+    ctx.arc(x, y, 3 * camera.zoom, 0, Math.PI*2);
+    ctx.fill();
+  }
+  const glow = 16 * camera.zoom;
+  const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, glow*5);
+  g.addColorStop(0, 'rgba(255,255,255,0.35)');
+  g.addColorStop(1, 'rgba(120,200,255,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, glow*5, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawSpecialPreview(ctx, cam, now){
+  const spec = ship.special;
+  if(spec.state !== 'charging') return;
+  computeSpecialPreview();
+  const preview = spec.preview;
+  const progress = Math.min(1, (now - spec.chargeStart) / spec.chargeTime);
+  const start = worldToScreen(preview.start.x, preview.start.y, cam);
+  const end = worldToScreen(preview.hitPt.x, preview.hitPt.y, cam);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const zoom = camera.zoom;
+  ctx.lineWidth = (2 + 10 * progress) * zoom;
+  ctx.strokeStyle = `rgba(120,200,255,${0.15 + 0.35 * progress})`;
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
+  ctx.stroke();
+  ctx.lineWidth = (1 + 5 * progress) * zoom;
+  ctx.strokeStyle = `rgba(255,255,255,${0.2 + 0.5 * progress})`;
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
+  ctx.stroke();
+  const r = (8 + 20 * progress) * zoom;
+  ctx.beginPath();
+  ctx.arc(end.x, end.y, r, 0, Math.PI*2);
+  ctx.strokeStyle = `rgba(160,220,255,${0.25 + 0.35 * progress})`;
+  ctx.lineWidth = 2 * zoom;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawSpecialFlash(ctx, cam, now){
+  if(!ship.special._flashUntil || now >= ship.special._flashUntil) return;
+  const preview = ship.special.preview;
+  const start = worldToScreen(preview.start.x, preview.start.y, cam);
+  const end = worldToScreen(preview.hitPt.x, preview.hitPt.y, cam);
+  const zoom = camera.zoom;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineWidth = 18 * zoom;
+  ctx.strokeStyle = 'rgba(180,230,255,0.85)';
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
+  ctx.stroke();
+  ctx.lineWidth = 8 * zoom;
+  ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
+  ctx.stroke();
+  const r = 26 * zoom;
+  ctx.beginPath();
+  ctx.arc(end.x, end.y, r, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(200,240,255,0.9)';
+  ctx.fill();
+  ctx.restore();
+}
+
+function doFireSpecial(now){
+  computeSpecialPreview();
+  const preview = ship.special.preview;
+  const startX = preview.start.x;
+  const startY = preview.start.y;
+  const endX = preview.hitPt.x;
+  const endY = preview.hitPt.y;
+  const length = Math.hypot(endX - startX, endY - startY);
+  preview.length = length;
+  const dirX = (endX - startX) / (length || 1);
+  const dirY = (endY - startY) / (length || 1);
+  const width = preview.width;
   let hits = 0;
-  const HIT_CAP = 80; // wystarczająco dużo, by czuć „miotłę”, ale bez zgonu CPU
-  for (const npc of npcsInRange){
-    if (hits >= HIT_CAP) break;
-    const vx = npc.x - start.x, vy = npc.y - start.y;
-    const proj = vx*dir.x + vy*dir.y;
-    if (proj < 0 || proj > length) continue;
-    const perp = Math.abs(vx*dir.y - vy*dir.x);
-    if (perp <= npc.radius + width*0.5){
+  for(let i=0;i<npcs.length;i++){
+    if(hits >= SPECIAL_HIT_CAP) break;
+    const npc = npcs[i];
+    if(npc.dead) continue;
+    const vx = npc.x - startX;
+    const vy = npc.y - startY;
+    const proj = vx*dirX + vy*dirY;
+    if(proj < 0 || proj > length) continue;
+    const perp = Math.abs(vx*dirY - vy*dirX);
+    if(perp <= (npc.radius || 20) + width*0.5){
       applyDamageToNPC(npc, SPECIAL_DAMAGE, 'none');
-      if ((hits & 1) === 0) spawnParticle({x:npc.x, y:npc.y}, {x:0,y:0}, 0.10, '#9ccfff', 5, true);
+      if((hits & 1) === 0){
+        spawnParticle({x:npc.x, y:npc.y}, {x:0,y:0}, 0.10, '#9ccfff', 5, true);
+      }
       hits++;
     }
   }
-  spawnLaserBeam(start, end, width);
-  for(let i=0;i<8;i++){
-    const t = i/7;
-    const px = start.x + dir.x*length*t + (Math.random()-0.5)*width*0.3;
-    const py = start.y + dir.y*length*t + (Math.random()-0.5)*width*0.3;
-    spawnParticle({x:px, y:py}, {x:(Math.random()-0.5)*120, y:(Math.random()-0.5)*120}, 0.2, '#9ccfff', 2.5, true);
+  spawnExplosionPlasma(endX, endY, 1.2);
+  ship.special._flashUntil = now + 0.08;
+  stopChargeVFX();
+  if(typeof stopSfx === 'function'){ try{ stopSfx('charge_loop'); }catch(_){} }
+  if(typeof playSfx === 'function'){ try{ playSfx('laser_fire'); }catch(_){} }
+}
+
+function updateSpecialState(dt, now){
+  updateChargeVFX(dt, now);
+  const spec = ship.special;
+  if(spec.state === 'charging'){
+    if(now - spec.chargeStart >= spec.chargeTime){
+      spec.state = 'firing';
+      doFireSpecial(now);
+      spec.state = 'cooldown';
+      spec.cooldownUntil = now + spec.cooldown;
+      spec.state = 'idle';
+    }
   }
 }
 function applyDamageToPlayer(amount){
@@ -2884,7 +3134,7 @@ function physicsStep(dt){
   }
   railTimer = Math.min(rail.cd[0], rail.cd[1]);
 
-  ship.special.cooldownTimer = Math.max(0, ship.special.cooldownTimer - dt);
+  updateSpecialState(dt, currentTimeSec);
   if(ship.shield.regenTimer > 0) ship.shield.regenTimer -= dt;
   else ship.shield.val = clamp(ship.shield.val + ship.shield.regenRate * dt, 0, ship.shield.max);
   rocketCooldown = Math.max(0, rocketCooldown - dt);
@@ -3288,6 +3538,7 @@ function drawBoostBeam(pos, dir, cam, alpha){ const s=worldToScreen(pos.x,pos.y,
 
 // =============== Main loop ===============
 let lastTime = performance.now();
+let currentTimeSec = lastTime * 0.001;
 const PHYS_DT = 1/120;
 let acc = 0;
 let vfxTime = 0;
@@ -3295,6 +3546,7 @@ let prevState = null;
 function saveState(){ prevState = { pos:{...ship.pos}, angle: ship.angle, turretAngle: ship.turret.angle, turretAngle2: ship.turret2.angle, turretAngle3: ship.turret3.angle, turretAngle4: ship.turret4.angle, ciwsAngles: ship.ciws.map(c=>c.angle) }; }
 saveState();
 function loop(now){
+  currentTimeSec = now * 0.001;
   const frame = Math.min(0.033, (now - lastTime)/1000);
   lastTime = now;
   applyGamepad();
@@ -3717,6 +3969,10 @@ function render(alpha){
     ctx.fillStyle = '#dfe7ff'; ctx.font = `${12*camera.zoom}px monospace`;
     ctx.fillText('ST'+st.id, s.x - rr*0.35, s.y + 4*camera.zoom);
   }
+
+  drawChargeVFX(ctx, cam);
+  drawSpecialPreview(ctx, cam, currentTimeSec);
+  drawSpecialFlash(ctx, cam, currentTimeSec);
 
   // Laser beams
   for(const p of particles){
@@ -4222,7 +4478,8 @@ function render(alpha){
     const boostText = boosting ? 'ACTIVE' : (fullyCharged ? 'READY' : 'REFILLING');
     ctx.fillText(`Boost: ${boostText} (${boost.fuel.toFixed(1)}/${boost.fuelMax})`, 12, H-44);
     const railTimerHUD = Math.min(rail.cd[0], rail.cd[1]);
-    ctx.fillText(`Rail: ${railTimerHUD>0?railTimerHUD.toFixed(2)+'s':'READY'}  Special: ${ship.special.cooldownTimer>0?ship.special.cooldownTimer.toFixed(1)+'s':'READY'}`, 12, H-28);
+    const specialCooldown = Math.max(0, ship.special.cooldownUntil - currentTimeSec);
+    ctx.fillText(`Rail: ${railTimerHUD>0?railTimerHUD.toFixed(2)+'s':'READY'}  Special: ${specialCooldown>0?specialCooldown.toFixed(1)+'s':'READY'}`, 12, H-28);
 
     // rocket ammo
     const bw = 160, bh = 10;
