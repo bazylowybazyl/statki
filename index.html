@@ -185,6 +185,17 @@ ship.inertia = (1/12) * ship.mass * ((ship.w*ship.w)+(ship.h*ship.h));
   ship.nextFighterOrbit = 0;
 })();
 
+// === Ship sprite ===
+const USE_SHIP_SPRITE = true;
+const shipSprite = new Image();
+ship.spriteReady = false;
+shipSprite.onload = () => {
+  ship.spriteReady = true;
+  ship.spriteW = shipSprite.naturalWidth;
+  ship.spriteH = shipSprite.naturalHeight;
+};
+shipSprite.src = "assets/capital_ship_rect_v1.png"; // <- ścieżka do pliku
+
 // =============== Proceduralne gwiazdy na CAŁEJ MAPIE ===============
 // Generujemy je "na żądanie" w kafelkach 1024×1024 z deterministycznym seedem.
 // Dzięki temu gwiazdy są wszędzie, ale pamięć i CPU trzymamy w ryzach.
@@ -3167,71 +3178,112 @@ function render(alpha){
   const shipS = worldToScreen(interpPos.x, interpPos.y, cam);
   ctx.save(); ctx.translate(shipS.x, shipS.y); ctx.scale(camera.zoom, camera.zoom); ctx.rotate(interpAngle);
 
-  // cień + kadłub
-  ctx.fillStyle = 'rgba(3,8,18,0.8)';
-  ctx.fillRect(-ship.w/2 + 6, -ship.h/2 + 8, ship.w, ship.h);
-  const g = ctx.createLinearGradient(-ship.w/2, -ship.h/2, ship.w/2, ship.h/2);
-  g.addColorStop(0, '#1d2740'); g.addColorStop(1, '#2d3b55');
-  ctx.fillStyle = g; roundRect(ctx, -ship.w/2, -ship.h/2, ship.w, ship.h, 10); ctx.fill();
+  // --- KADŁUB: sprite lub fallback ---
+  if (USE_SHIP_SPRITE && ship.spriteReady) {
+    const scale = ship.h / ship.spriteH;
+    const drawW = ship.spriteW * scale;
+    const drawH = ship.spriteH * scale;
 
-  // delikatny outline + podziały paneli
-  ctx.save();
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-  ctx.lineWidth = 1.5;
-  roundRect(ctx, -ship.w/2, -ship.h/2, ship.w, ship.h, 10);
-  ctx.stroke();
-  ctx.globalAlpha = 0.25;
-  ctx.beginPath();
-  ctx.moveTo(-ship.w*0.35, -ship.h*0.20); ctx.lineTo(ship.w*0.35, -ship.h*0.20);
-  ctx.moveTo(-ship.w*0.35,  ship.h*0.20); ctx.lineTo(ship.w*0.35,  ship.h*0.20);
-  ctx.stroke();
-  ctx.globalAlpha = 1;
-  ctx.restore();
-
-  ctx.fillStyle = '#a8d1ff'; ctx.beginPath();
-  ctx.ellipse(0, -6, ship.w*0.22, ship.h*0.22, 0, 0, Math.PI*2); ctx.fill();
-
-  // „szkło” kokpitu – specular glare
-  ctx.save();
-  ctx.rotate(-interpAngle);
-  const glare = ctx.createRadialGradient(0, -ship.h*0.18, 6, 0, -ship.h*0.18, ship.w*0.5);
-  glare.addColorStop(0, 'rgba(255,255,255,0.25)');
-  glare.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = glare;
-  ctx.beginPath();
-  ctx.ellipse(0, -6, ship.w*0.22, ship.h*0.22, 0, 0, Math.PI*2);
-  ctx.fill();
-  ctx.restore();
-
-  // boczne dobudówki
-  for(const pod of ship.pods){
     ctx.save();
-    ctx.translate(pod.offset.x, pod.offset.y);
-    const pg = ctx.createLinearGradient(-pod.w/2, -pod.h/2, pod.w/2, pod.h/2);
-    pg.addColorStop(0, '#1d2740'); pg.addColorStop(1, '#2d3b55');
-    ctx.fillStyle = pg; roundRect(ctx, -pod.w/2, -pod.h/2, pod.w, pod.h, 6); ctx.fill();
+    ctx.globalAlpha = 0.33;
+    ctx.filter = 'blur(2px)';
+    ctx.drawImage(shipSprite, -drawW/2 + 6, -drawH/2 + 8, drawW, drawH);
+    ctx.restore();
+
+    ctx.drawImage(shipSprite, -drawW/2, -drawH/2, drawW, drawH);
+  } else {
+    ctx.fillStyle = 'rgba(3,8,18,0.8)';
+    ctx.fillRect(-ship.w/2 + 6, -ship.h/2 + 8, ship.w, ship.h);
+    const g = ctx.createLinearGradient(-ship.w/2, -ship.h/2, ship.w/2, ship.h/2);
+    g.addColorStop(0, '#1d2740'); g.addColorStop(1, '#2d3b55');
+    ctx.fillStyle = g;
+    roundRect(ctx, -ship.w/2, -ship.h/2, ship.w, ship.h, 10);
+    ctx.fill();
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1.5;
+    roundRect(ctx, -ship.w/2, -ship.h/2, ship.w, ship.h, 10);
+    ctx.stroke();
+    ctx.globalAlpha = 0.25;
+    ctx.beginPath();
+    ctx.moveTo(-ship.w*0.35, -ship.h*0.20); ctx.lineTo(ship.w*0.35, -ship.h*0.20);
+    ctx.moveTo(-ship.w*0.35,  ship.h*0.20); ctx.lineTo(ship.w*0.35,  ship.h*0.20);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    ctx.fillStyle = '#a8d1ff';
+    ctx.beginPath();
+    ctx.ellipse(0, -6, ship.w*0.22, ship.h*0.22, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.save();
+    ctx.rotate(-interpAngle);
+    const glare = ctx.createRadialGradient(0, -ship.h*0.18, 6, 0, -ship.h*0.18, ship.w*0.5);
+    glare.addColorStop(0, 'rgba(255,255,255,0.25)');
+    glare.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = glare;
+    ctx.beginPath();
+    ctx.ellipse(0, -6, ship.w*0.22, ship.h*0.22, 0, 0, Math.PI*2);
+    ctx.fill();
     ctx.restore();
   }
 
-  // główny niebieski nozzle
-  const mainE = ship.engines.main;
-  ctx.save(); ctx.translate(mainE.offset.x, mainE.offset.y);
-  ctx.fillStyle = '#2a3a56'; roundRect(ctx, -14, -9, 28, 18, 6); ctx.fill();
-  ctx.save(); ctx.globalAlpha = 0.8; ctx.shadowBlur = 20; ctx.shadowColor = 'rgba(150,200,255,0.9)';
-  ctx.fillStyle = 'rgba(160,210,255,0.75)'; roundRect(ctx, -8, -6, 16, 12, 4); ctx.fill();
-  ctx.restore(); ctx.restore();
+  if (!(USE_SHIP_SPRITE && ship.spriteReady)) {
+    for (const pod of ship.pods) {
+      ctx.save();
+      ctx.translate(pod.offset.x, pod.offset.y);
+      const pg = ctx.createLinearGradient(-pod.w/2, -pod.h/2, pod.w/2, pod.h/2);
+      pg.addColorStop(0, '#1d2740'); pg.addColorStop(1, '#2d3b55');
+      ctx.fillStyle = pg;
+      roundRect(ctx, -pod.w/2, -pod.h/2, pod.w, pod.h, 6);
+      ctx.fill();
+      ctx.restore();
+    }
 
-  // boczne/torque nozzles
-  for(const k of ['sideLeft','sideRight','torqueLeft','torqueRight']){
-    const e = ship.engines[k];
-    ctx.save(); ctx.translate(e.offset.x, e.offset.y);
-    ctx.fillStyle = '#2f3b57'; roundRect(ctx, -6,-6,12,12,3); ctx.fill(); ctx.restore();
+    const mainE = ship.engines.main;
+    ctx.save();
+    ctx.translate(mainE.offset.x, mainE.offset.y);
+    ctx.fillStyle = '#2a3a56';
+    roundRect(ctx, -14, -9, 28, 18, 6);
+    ctx.fill();
+    ctx.save();
+    ctx.globalAlpha = 0.8;
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = 'rgba(150,200,255,0.9)';
+    ctx.fillStyle = 'rgba(160,210,255,0.75)';
+    roundRect(ctx, -8, -6, 16, 12, 4);
+    ctx.fill();
+    ctx.restore();
+    ctx.restore();
+
+    for (const k of ['sideLeft','sideRight','torqueLeft','torqueRight']) {
+      const e = ship.engines[k];
+      ctx.save();
+      ctx.translate(e.offset.x, e.offset.y);
+      ctx.fillStyle = '#2f3b57';
+      roundRect(ctx, -6, -6, 12, 12, 3);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    ctx.fillStyle = '#cbd6ff';
+    for (const off of ship.sideGunsLeft) {
+      ctx.save();
+      ctx.translate(off.x, off.y);
+      roundRect(ctx, -12, -3, 8, 6, 3);
+      ctx.fill();
+      ctx.restore();
+    }
+    for (const off of ship.sideGunsRight) {
+      ctx.save();
+      ctx.translate(off.x, off.y);
+      roundRect(ctx, 4, -3, 8, 6, 3);
+      ctx.fill();
+      ctx.restore();
+    }
   }
-
-  // krótkie lufy boczne
-  ctx.fillStyle = '#cbd6ff';
-  for(const off of ship.sideGunsLeft){ ctx.save(); ctx.translate(off.x, off.y); roundRect(ctx, -12,-3,8,6,3); ctx.fill(); ctx.restore(); }
-  for(const off of ship.sideGunsRight){ ctx.save(); ctx.translate(off.x, off.y); roundRect(ctx, 4,-3,8,6,3); ctx.fill(); ctx.restore(); }
 
   // VFX głównego silnika – pod tarczą, wyrasta z dyszy
   {
