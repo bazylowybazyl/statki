@@ -1206,6 +1206,7 @@ const SIDE_PLASMA_EXPLODE_RADIUS = 48;
 const SIDE_ROCKET_TURN_RATE = 6;
 const SIDE_ROCKET_HOMING_DELAY = 0.25;
 const SPECIAL_COOLDOWN = 10; ship.special.cooldownTimer = 0;
+const SPECIAL_DAMAGE = 1500;
 
 function fireRocket(side){
   if(rocketAmmo <= 0) return;
@@ -1740,7 +1741,7 @@ function tryFireSpecial(){
     if (proj < 0 || proj > length) continue;
     const perp = Math.abs(vx*dir.y - vy*dir.x);
     if (perp <= npc.radius + width*0.5){
-      applyDamageToNPC(npc, 80, 'none');
+      applyDamageToNPC(npc, SPECIAL_DAMAGE, 'none');
       if ((hits & 1) === 0) spawnParticle({x:npc.x, y:npc.y}, {x:0,y:0}, 0.10, '#9ccfff', 5, true);
       hits++;
     }
