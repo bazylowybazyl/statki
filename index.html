@@ -3607,7 +3607,7 @@ function render(alpha, frameDt){
   const interpCIWSAngles = ship.ciws.map((c,i)=>interpAngleShort(prevState.ciwsAngles[i], c.angle, alpha));
 
   // Kamera
-  const cam = { x: interpPos.x, y: interpPos.y };
+  const cam = { x: interpPos.x, y: interpPos.y, zoom: camera.zoom };
   if(camera.shakeMag > 0){
     const t = camera.shakeTime / camera.shakeDur;
     const mag = camera.shakeMag * Math.max(0, t);
