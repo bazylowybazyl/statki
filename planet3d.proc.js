@@ -830,6 +830,10 @@ const PLANET_FRAG = `// Terrain generation parameters
               if (o.isMesh && o.geometry) {
                 const g = o.geometry.clone();
                 g.computeVertexNormals();
+                g.computeBoundingSphere();
+                const r = g.boundingSphere?.radius || 1;
+                if (r > 0) g.scale(1 / r, 1 / r, 1 / r);
+                g.center?.();
                 geos.push(g);
               }
             });
