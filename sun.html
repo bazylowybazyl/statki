@@ -32,7 +32,18 @@
       import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
       import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
       import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+      import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+      import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+      import { CopyShader } from 'three/addons/shaders/CopyShader.js';
       import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+      window.THREE = THREE;
+      window.EffectComposer = EffectComposer;
+      window.RenderPass = RenderPass;
+      window.UnrealBloomPass = UnrealBloomPass;
+      window.ShaderPass = ShaderPass;
+      window.OutputPass = OutputPass;
+      THREE.CopyShader = CopyShader;
 
       // --- Scena / kamera / renderer ---
       const app = document.getElementById('app');
@@ -310,6 +321,17 @@
       composer.addPass(renderPass);
       const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), params.bloomStrength, params.bloomRadius, params.bloomThreshold);
       composer.addPass(bloom);
+      let finalPass = null;
+      if (OutputPass) {
+        finalPass = new OutputPass();
+      } else if (ShaderPass && CopyShader) {
+        finalPass = new ShaderPass(CopyShader);
+        if (finalPass.renderToScreen !== undefined) finalPass.renderToScreen = true;
+      }
+      if (finalPass) {
+        console.debug('Final pass:', finalPass?.constructor?.name);
+        composer.addPass(finalPass);
+      }
 
       // --- GUI ---
       const gui = new GUI({ title: 'Słońce — ustawienia' });
@@ -339,7 +361,9 @@
         corona.rotation.y = sun.rotation.y;
         protubGroup.rotation.y = sun.rotation.y * 0.9;
         controls.update();
+        renderer.autoClear = false;
         composer.render();
+        renderer.autoClear = true;
         requestAnimationFrame(animate);
       }
       animate();
