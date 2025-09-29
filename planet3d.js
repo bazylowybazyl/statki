@@ -146,11 +146,16 @@
       sharedRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
       sharedRenderer.setClearColor(0x000000, 0);
     }
+    if (typeof window !== "undefined") {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      sharedRenderer.setPixelRatio(dpr);
+    }
     if (width !== rendererWidth || height !== rendererHeight) {
       sharedRenderer.setSize(width, height, false);
       rendererWidth = width;
       rendererHeight = height;
     }
+    sharedRenderer.autoClear = true;
     return sharedRenderer;
   }
 
@@ -408,98 +413,187 @@
   }
 
   class AsteroidBelt3D {
-    constructor(innerRadius, outerRadius, count = 200) {
+    constructor(innerRadius, outerRadius, count = 2500) {
       this.size = outerRadius * 2;
-      this.canvas = document.createElement("canvas");
-      this.canvas.width = 1024;
-      this.canvas.height = 1024;
-      this.ctx2d = this.canvas.getContext("2d");
+      this.canvas = document.createElement('canvas');
+      this.canvas.width = 1024; this.canvas.height = 1024;
+      this.ctx2d = this.canvas.getContext('2d');
 
-      this.scene = null;
-      this.camera = null;
-      this.mesh = null;
-      if (typeof THREE === "undefined") return;
-
+      if (typeof THREE === 'undefined') return;
       this.scene = new THREE.Scene();
-      this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-      this.camera.position.z = 5;
 
-      const light = new THREE.AmbientLight(0xffffff, 1.0);
-      this.scene.add(light);
+      this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
+      this.camera.position.set(0, 0.6, 4.2);
+      this.camera.lookAt(0, 0, 0);
 
-      const geom = new THREE.IcosahedronGeometry(1, 1);
-      const pos = geom.attributes.position;
-      for (let i = 0; i < pos.count; i++) {
-        const rand = 0.8 + Math.random() * 0.4;
-        pos.setXYZ(i, pos.getX(i) * rand, pos.getY(i) * rand, pos.getZ(i) * rand);
-      }
-      geom.computeVertexNormals();
-      const mat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, flatShading: true });
-      this.mesh = new THREE.InstancedMesh(geom, mat, count);
-      const m = new THREE.Matrix4();
-      const rotM = new THREE.Matrix4();
-      const scaleM = new THREE.Matrix4();
-      const euler = new THREE.Euler();
-      const inner = innerRadius / outerRadius;
-      for (let i = 0; i < count; i++) {
-        const radius = inner + Math.random() * (1 - inner);
-        const angle = Math.random() * TAU;
-        const x = Math.cos(angle) * radius;
-        const y = Math.sin(angle) * radius;
-        const z = (Math.random() - 0.5) * 0.1;
-        const scale = 0.02 + Math.random() * 0.04;
-        m.makeTranslation(x, y, z);
-        euler.set(Math.random() * TAU, Math.random() * TAU, Math.random() * TAU);
-        rotM.makeRotationFromEuler(euler);
-        scaleM.makeScale(scale, scale, scale);
-        m.multiply(rotM);
-        m.multiply(scaleM);
-        this.mesh.setMatrixAt(i, m);
-      }
-      this.mesh.instanceMatrix.needsUpdate = true;
+      this.scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+      const sunDir = new THREE.DirectionalLight(0xffffff, 1.25);
+      sunDir.position.set(1, 1, 2).normalize();
+      this.scene.add(sunDir);
+
+      this.mesh = new THREE.Group();
       this.scene.add(this.mesh);
-      this.rotationSpeed = 0.02;
 
+      this._instanced = [];
+      this.rotationSpeed = 0.03;
       this.rotation = 0;
 
-      // Pre-compute asteroid positions in world units for 2D overlay
-      this.asteroids = [];
-      for (let i = 0; i < 2000; i++) {
-        this.asteroids.push({
-          angle: Math.random() * TAU,
-          radius: innerRadius + Math.random() * (outerRadius - innerRadius),
-          size: 20 + Math.random() * 40,
-        });
-      }
+      const inner = innerRadius / outerRadius;
+      const COUNT = count;
+
+      const makeTransforms = (imesh, startIdx, endIdx) => {
+        const m = new THREE.Matrix4();
+        const rotM = new THREE.Matrix4();
+        const scaleM = new THREE.Matrix4();
+        const euler = new THREE.Euler();
+
+        for (let i = startIdx; i < endIdx; i++) {
+          const radius = inner + Math.random() * (1 - inner);
+          const angle = Math.random() * TAU;
+          const x = Math.cos(angle) * radius;
+          const y = Math.sin(angle) * radius;
+          const z = (Math.random() - 0.5) * 0.22;
+          const s = 0.018 + Math.random() * 0.045;
+
+          m.makeTranslation(x, y, z);
+          euler.set(Math.random() * TAU, Math.random() * TAU, Math.random() * TAU);
+          rotM.makeRotationFromEuler(euler);
+          scaleM.makeScale(s, s, s);
+          m.multiply(rotM); m.multiply(scaleM);
+          imesh.setMatrixAt(i - startIdx, m);
+        }
+        imesh.instanceMatrix.needsUpdate = true;
+      };
+
+      const buildFromGeos = (geos) => {
+        if (!geos.length) return;
+        const per = Math.max(1, Math.floor(COUNT / geos.length));
+        let placed = 0;
+        for (let gi = 0; gi < geos.length; gi++) {
+          const left = COUNT - placed;
+          const n = gi === geos.length - 1 ? left : Math.min(per, left);
+          if (n <= 0) break;
+
+          const mat = new THREE.MeshStandardMaterial({
+            color: 0xbfc4c9, roughness: 0.93, metalness: 0.02, flatShading: true
+          });
+          const imesh = new THREE.InstancedMesh(geos[gi], mat, n);
+          makeTransforms(imesh, placed, placed + n);
+          this.mesh.add(imesh);
+          this._instanced.push(imesh);
+          placed += n;
+        }
+      };
+
+      const tryLoadGLTF = () => {
+        const Loader = (typeof window !== 'undefined') && window.GLTFLoader;
+        if (!Loader) { requestAnimationFrame(tryLoadGLTF); return; }
+        const loader = new Loader();
+        loader.load(
+          'assets/planety/asteroids/asteroidPack.glb',
+          (gltf) => {
+            const geos = [];
+            gltf.scene.traverse((o) => {
+              if (o.isMesh && o.geometry) {
+                const g = o.geometry.clone();
+                g.computeVertexNormals();
+                geos.push(g);
+              }
+            });
+            if (!geos.length) return buildFromGeos([new THREE.IcosahedronGeometry(1, 1)]);
+            buildFromGeos(geos);
+          },
+          undefined,
+          () => buildFromGeos([new THREE.IcosahedronGeometry(1, 1)])
+        );
+      };
+
+      tryLoadGLTF();
+
+      this._renderer = null;
+      this.composer = null;
+      this.bloom = null;
+      this._savedAutoClear = undefined;
+      this._composerWidth = 0;
+      this._composerHeight = 0;
     }
 
     render(dt) {
       if (!this.scene || !this.camera) return;
       this.mesh.rotation.z += this.rotationSpeed * dt;
       this.rotation += this.rotationSpeed * dt;
+
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r) return;
-      r.render(this.scene, this.camera);
-      this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      this.ctx2d.drawImage(r.domElement, 0, 0);
+      r.toneMapping = THREE.ACESFilmicToneMapping;
+      r.toneMappingExposure = 1.0;
+      r.outputColorSpace = THREE.SRGBColorSpace;
+
+      const hasPP = (typeof EffectComposer !== 'undefined') &&
+                    (typeof RenderPass !== 'undefined') &&
+                    (typeof UnrealBloomPass !== 'undefined');
+
+      if (hasPP && (!this.composer || this._renderer !== r)) {
+        this._renderer = r;
+        this._savedAutoClear = r.autoClear;
+        this.composer = new EffectComposer(r);
+        this.composer.setSize(this.canvas.width, this.canvas.height);
+        this.composer.addPass(new RenderPass(this.scene, this.camera));
+        this.bloom = new UnrealBloomPass(new THREE.Vector2(this.canvas.width, this.canvas.height), 0.35, 0.9, 0.0);
+        this.composer.addPass(this.bloom);
+        this._composerWidth = this.canvas.width;
+        this._composerHeight = this.canvas.height;
+      }
+      if (this.composer && this._renderer === r) {
+        if (this._composerWidth !== this.canvas.width || this._composerHeight !== this.canvas.height) {
+          this.composer.setSize(this.canvas.width, this.canvas.height);
+          if (this.bloom && typeof this.bloom.setSize === 'function') {
+            this.bloom.setSize(this.canvas.width, this.canvas.height);
+          }
+          this._composerWidth = this.canvas.width;
+          this._composerHeight = this.canvas.height;
+        }
+      }
+
+      const restoreAutoClear = (this._savedAutoClear !== undefined) ? this._savedAutoClear : r.autoClear;
+      if (this.composer) {
+        r.autoClear = false;
+        this.composer.render();
+        r.autoClear = restoreAutoClear;
+      } else {
+        r.render(this.scene, this.camera);
+        r.autoClear = restoreAutoClear;
+      }
+
+      const ctx = this.ctx2d;
+      ctx.clearRect(0,0,this.canvas.width,this.canvas.height);
+      const zoom = 1.18;
+      const srcW = this.canvas.width / zoom, srcH = this.canvas.height / zoom;
+      const srcX = (this.canvas.width - srcW)/2, srcY = (this.canvas.height - srcH)/2;
+      ctx.drawImage(r.domElement, srcX, srcY, srcW, srcH, 0, 0, this.canvas.width, this.canvas.height);
+
+      ctx.globalCompositeOperation = 'destination-in';
+      const grd = ctx.createRadialGradient(this.canvas.width/2, this.canvas.height/2, this.canvas.width*0.47,
+                                           this.canvas.width/2, this.canvas.height/2, this.canvas.width*0.50);
+      grd.addColorStop(0.0, 'rgba(255,255,255,1)');
+      grd.addColorStop(1.0, 'rgba(255,255,255,0)');
+      ctx.beginPath();
+      ctx.fillStyle = grd;
+      ctx.arc(this.canvas.width/2, this.canvas.height/2, this.canvas.width/2, 0, TAU);
+      ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
     }
 
     draw(ctx, cam) {
-      if (!this.asteroids) return;
-      const w = ctx.canvas.width;
-      const h = ctx.canvas.height;
-      ctx.fillStyle = "#bbb";
-      for (const a of this.asteroids) {
-        const ang = a.angle + this.rotation;
-        const x = sun.x + Math.cos(ang) * a.radius;
-        const y = sun.y + Math.sin(ang) * a.radius;
-        const s = worldToScreen(x, y, cam);
-        const size = a.size * camera.zoom;
-        if (s.x < -size || s.y < -size || s.x > w + size || s.y > h + size) continue;
-        ctx.beginPath();
-        ctx.arc(s.x, s.y, size / 2, 0, TAU);
-        ctx.fill();
-      }
+      const sunX = sun ? sun.x : 0;
+      const sunY = sun ? sun.y : 0;
+      const s = worldToScreen(sunX, sunY, cam);
+      const size = this.size * cam.zoom;
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.scale(1.0, 0.72);
+      ctx.drawImage(this.canvas, -size/2, -size/2, size, size);
+      ctx.restore();
     }
   }
 
@@ -515,15 +609,17 @@
     sun.x = sunPos.x;
     sun.y = sunPos.y;
     asteroidBelt = null;
-    if (planetList[3] && planetList[4]) {
-      const r1 = planetList[3].orbitRadius;
-      const r2 = planetList[4].orbitRadius;
-      const mid = (r1 + r2) / 2;
-      const width = (r2 - r1) * 0.2; // węższy, bardziej realistyczny pas
-      const inner = mid - width / 2;
-      const outer = mid + width / 2;
-      asteroidBelt = new AsteroidBelt3D(inner, outer);
+    const baseSunRadius = (sunPos && sunPos.r) ? sunPos.r : 200;
+    let inner = baseSunRadius * 4.0;
+    let outer = inner * 1.18;
+    if (planetList && planetList.length >= 5 && planetList[3].orbitRadius && planetList[4].orbitRadius) {
+      const r1 = planetList[3].orbitRadius, r2 = planetList[4].orbitRadius;
+      const mid = (r1 + r2) * 0.5;
+      const width = (r2 - r1) * 0.22;
+      inner = Math.max(50, mid - width * 0.5);
+      outer = inner + width;
     }
+    asteroidBelt = new AsteroidBelt3D(inner, outer, 2800);
     if (typeof THREE === "undefined") console.warn("3D planets disabled: THREE not found.");
   }
 
@@ -534,20 +630,15 @@
   }
 
   function drawPlanets3D(ctx, cam) {
-    if (asteroidBelt && sun) {
-      const sB = worldToScreen(sun.x, sun.y, cam);
-      const sizeB = asteroidBelt.size * camera.zoom;
-      ctx.drawImage(asteroidBelt.canvas, sB.x - sizeB / 2, sB.y - sizeB / 2, sizeB, sizeB);
-      asteroidBelt.draw(ctx, cam);
-    }
+    if (asteroidBelt) asteroidBelt.draw(ctx, cam);
     for (const p of planets) {
       const s = worldToScreen(p.body.x, p.body.y, cam);
-      const size = p.size * camera.zoom;
+      const size = p.size * cam.zoom;
       ctx.drawImage(p.canvas, s.x - size / 2, s.y - size / 2, size, size);
     }
     if (sun) {
       const sSun = worldToScreen(sun.x, sun.y, cam);
-      const sizeSun = sun.size * camera.zoom;
+      const sizeSun = sun.size * cam.zoom;
       ctx.drawImage(sun.canvas, sSun.x - sizeSun / 2, sSun.y - sizeSun / 2, sizeSun, sizeSun);
     }
   }
