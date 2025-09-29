@@ -725,6 +725,7 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       this.canvas.width = 1024;
       this.canvas.height = 1024;
       this.ctx2d = this.canvas.getContext("2d");
+      this.drawOverlayDots = false;
       if (typeof THREE === "undefined") return;
 
       this.scene = new THREE.Scene();
@@ -738,45 +739,91 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       sunDir.position.set(1, 1, 2).normalize();
       this.scene.add(sunDir);
 
-      const geom = new THREE.IcosahedronGeometry(1, 1);
-      const pos = geom.attributes.position;
-      for (let i = 0; i < pos.count; i++) {
-        const rand = 0.8 + Math.random() * 0.4;
-        pos.setXYZ(i, pos.getX(i) * rand, pos.getY(i) * rand, pos.getZ(i) * rand);
-      }
-      geom.computeVertexNormals();
-      // kamienna, matowa powierzchnia; kolor łatwo zmienisz .color.set(...)
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0xD9D9D9,        // jasnoszary (możesz podmienić na #ffffff dla "białych")
-        roughness: 0.92,
-        metalness: 0.0,
-        flatShading: true
-      });
-      this.mesh = new THREE.InstancedMesh(geom, mat, count);
-      const m = new THREE.Matrix4();
-      const rotM = new THREE.Matrix4();
-      const scaleM = new THREE.Matrix4();
-      const euler = new THREE.Euler();
-      const inner = innerRadius / outerRadius;
-      for (let i = 0; i < count; i++) {
-        const radius = inner + Math.random() * (1 - inner);
-        const angle = Math.random() * TAU;
-        const x = Math.cos(angle) * radius;
-        const y = Math.sin(angle) * radius;
-        const z = (Math.random() - 0.5) * 0.1;
-        const scale = 0.02 + Math.random() * 0.04;
-        m.makeTranslation(x, y, z);
-        euler.set(Math.random() * TAU, Math.random() * TAU, Math.random() * TAU);
-        rotM.makeRotationFromEuler(euler);
-        scaleM.makeScale(scale, scale, scale);
-        m.multiply(rotM);
-        m.multiply(scaleM);
-        this.mesh.setMatrixAt(i, m);
-      }
-      this.mesh.instanceMatrix.needsUpdate = true;
+      this.mesh = new THREE.Group();
       this.scene.add(this.mesh);
+
+      this._instanced = [];
       this.rotationSpeed = 0.02;
       this.rotation = 0;
+
+      const inner = innerRadius / outerRadius;
+      const COUNT = count;
+
+      const makeTransforms = (imesh, startIdx, endIdx) => {
+        const m = new THREE.Matrix4();
+        const rotM = new THREE.Matrix4();
+        const scaleM = new THREE.Matrix4();
+        const euler = new THREE.Euler();
+        for (let i = startIdx; i < endIdx; i++) {
+          const radius = inner + Math.random() * (1 - inner);
+          const angle = Math.random() * TAU;
+          const x = Math.cos(angle) * radius;
+          const y = Math.sin(angle) * radius;
+          const z = (Math.random() - 0.5) * 0.1;
+          const scale = 0.02 + Math.random() * 0.04;
+          m.makeTranslation(x, y, z);
+          euler.set(Math.random() * TAU, Math.random() * TAU, Math.random() * TAU);
+          rotM.makeRotationFromEuler(euler);
+          scaleM.makeScale(scale, scale, scale);
+          m.multiply(rotM);
+          m.multiply(scaleM);
+          imesh.setMatrixAt(i - startIdx, m);
+        }
+        imesh.instanceMatrix.needsUpdate = true;
+      };
+
+      const buildFromGeos = (geos) => {
+        if (!geos.length) return;
+        const per = Math.max(1, Math.floor(COUNT / geos.length));
+        let placed = 0;
+        for (let gi = 0; gi < geos.length; gi++) {
+          const left = COUNT - placed;
+          const n = gi === geos.length - 1 ? left : Math.min(per, left);
+          if (n <= 0) break;
+          const mat = new THREE.MeshStandardMaterial({
+            color: 0xD9D9D9,
+            roughness: 0.92,
+            metalness: 0.0,
+            flatShading: true
+          });
+          const imesh = new THREE.InstancedMesh(geos[gi], mat, n);
+          makeTransforms(imesh, placed, placed + n);
+          this.mesh.add(imesh);
+          this._instanced.push(imesh);
+          placed += n;
+        }
+      };
+
+      const tryLoadGLTF = () => {
+        const Loader = (typeof window !== "undefined") && window.GLTFLoader;
+        if (!Loader) {
+          requestAnimationFrame(tryLoadGLTF);
+          return;
+        }
+        const loader = new Loader();
+        loader.load(
+          "assets/planety/asteroids/asteroidPack.glb",
+          (gltf) => {
+            const geos = [];
+            gltf.scene.traverse((o) => {
+              if (o.isMesh && o.geometry) {
+                const g = o.geometry.clone();
+                g.computeVertexNormals();
+                geos.push(g);
+              }
+            });
+            if (geos.length === 0) {
+              console.warn("GLTF asteroid pack: no meshes found, skipping.");
+              return;
+            }
+            buildFromGeos(geos);
+          },
+          undefined,
+          (err) => console.error("GLTF asteroid load error:", err)
+        );
+      };
+
+      tryLoadGLTF();
 
       // Losowe asteroidy w jednostkach świata do rysowania bezpośrednio na canvasie 2D
       this.asteroids = [];
@@ -795,14 +842,19 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       this.rotation += this.rotationSpeed * dt;
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r) return;
+      r.setScissorTest(true);
+      r.setViewport(0, 0, this.canvas.width, this.canvas.height);
+      r.setScissor(0, 0, this.canvas.width, this.canvas.height);
+      r.clear();
       r.render(this.scene, this.camera);
+      r.setScissorTest(false);
       this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
       this.ctx2d.drawImage(r.domElement, 0, 0);
     }
 
     // Rysuje pojedyncze asteroidy jako małe kropki na głównym canvasie
     draw(ctx, cam) {
-      if (!this.asteroids) return;
+      if (!this.asteroids || !this.drawOverlayDots) return;
       const w = ctx.canvas.width;
       const h = ctx.canvas.height;
       ctx.fillStyle = "#bbb";
@@ -811,7 +863,7 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
         const x = SUN_POS.x + Math.cos(ang) * a.radius;
         const y = SUN_POS.y + Math.sin(ang) * a.radius;
         const s = worldToScreen(x, y, cam);
-        const size = a.size * camera.zoom;
+        const size = a.size * cam.zoom;
         if (s.x < -size || s.y < -size || s.x > w + size || s.y > h + size) continue;
         ctx.beginPath();
         ctx.arc(s.x, s.y, size / 2, 0, TAU);
