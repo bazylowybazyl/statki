@@ -354,6 +354,7 @@ const PLANET_FRAG = `// Terrain generation parameters
       rendererWidth = width;
       rendererHeight = height;
     }
+    sharedRenderer.autoClear = true;
     return sharedRenderer;
   }
 
@@ -862,7 +863,14 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
         }
       }
 
-      if (this.composer) this.composer.render(); else r.render(this.scene, this.camera);
+      const prevAutoClear = r.autoClear;
+      if (this.composer) {
+        r.autoClear = false;
+        this.composer.render();
+      } else {
+        r.render(this.scene, this.camera);
+      }
+      r.autoClear = prevAutoClear;
 
       const ctx = this.ctx2d;
       ctx.clearRect(0,0,this.canvas.width,this.canvas.height);
