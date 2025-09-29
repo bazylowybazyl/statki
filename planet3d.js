@@ -391,10 +391,19 @@
         this.composer.setSize(this.canvas.width, this.canvas.height);
         const rp = new RenderPass(this.scene, this.camera);
         this.bloom = new UnrealBloomPass(new THREE.Vector2(this.canvas.width, this.canvas.height), 1.14, 1.04, 0.0);
+        this.bloom.renderToScreen = true;
         this.composer.addPass(rp);
         this.composer.addPass(this.bloom);
       }
-      this.composer.render();
+      if (this.composer) {
+        r.autoClear = false;
+        this.composer.render();
+        r.autoClear = true;
+      } else {
+        r.autoClear = true;
+        r.render(this.scene, this.camera);
+      }
+      r.autoClear = true;
       this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       // powiększ obraz, aby słońce wypełniało większą część canvasa
       const zoom = 1.3;
@@ -513,7 +522,6 @@
       this._renderer = null;
       this.composer = null;
       this.bloom = null;
-      this._savedAutoClear = undefined;
       this._composerWidth = 0;
       this._composerHeight = 0;
     }
@@ -535,11 +543,11 @@
 
       if (hasPP && (!this.composer || this._renderer !== r)) {
         this._renderer = r;
-        this._savedAutoClear = r.autoClear;
         this.composer = new EffectComposer(r);
         this.composer.setSize(this.canvas.width, this.canvas.height);
         this.composer.addPass(new RenderPass(this.scene, this.camera));
         this.bloom = new UnrealBloomPass(new THREE.Vector2(this.canvas.width, this.canvas.height), 0.35, 0.9, 0.0);
+        this.bloom.renderToScreen = true;
         this.composer.addPass(this.bloom);
         this._composerWidth = this.canvas.width;
         this._composerHeight = this.canvas.height;
@@ -555,15 +563,15 @@
         }
       }
 
-      const restoreAutoClear = (this._savedAutoClear !== undefined) ? this._savedAutoClear : r.autoClear;
       if (this.composer) {
         r.autoClear = false;
         this.composer.render();
-        r.autoClear = restoreAutoClear;
+        r.autoClear = true;
       } else {
+        r.autoClear = true;
         r.render(this.scene, this.camera);
-        r.autoClear = restoreAutoClear;
       }
+      r.autoClear = true;
 
       const ctx = this.ctx2d;
       ctx.clearRect(0,0,this.canvas.width,this.canvas.height);
