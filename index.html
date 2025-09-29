@@ -2731,6 +2731,8 @@ const warp = {
   speed:3800,
   fuelMax:6, fuel:6, consumeRate:1.0, regenRate:0.5,
   dir:{x:0,y:0},
+  turnRate: Math.PI / 5, // maksymalna prędkość skrętu w rad/s podczas warpa
+  alignRate: Math.PI / 2.5, // szybkość zgrywania kadłuba do kierunku lotu
   isBusy(){ return this.state!=='idle'; }
 };
 
@@ -2780,8 +2782,10 @@ window.addEventListener('keyup', (e)=>{
   }
 });
 function engageWarp(dir){
-  warp.dir = dir;
-  ship.angle = Math.atan2(dir.y, dir.x) + Math.PI/2;
+  const ndir = norm(dir);
+  warp.dir.x = ndir.x;
+  warp.dir.y = ndir.y;
+  ship.angle = Math.atan2(ndir.y, ndir.x) + Math.PI/2;
   ship.angVel = 0;
   warp.state='active';
   spawnParticle({x:ship.pos.x, y:ship.pos.y}, {x:0,y:0}, 0.14, '#bfe7ff', 8, true);
@@ -2954,11 +2958,24 @@ function physicsStep(dt){
   const forwardLocal = {x:0, y:-1};
 
   if(warp.state==='active'){
-    const dirToMouse = norm({x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y});
+    const turnInput = clamp(input.torque, -1, 1);
+    if(Math.abs(turnInput) > 1e-3){
+      const currentAngle = Math.atan2(warp.dir.y, warp.dir.x);
+      const maxTurn = warp.turnRate * dt;
+      const delta = clamp(turnInput * warp.turnRate * dt, -maxTurn, maxTurn);
+      const newAngle = currentAngle + delta;
+      warp.dir.x = Math.cos(newAngle);
+      warp.dir.y = Math.sin(newAngle);
+    }
+    const desiredBodyAngle = Math.atan2(warp.dir.y, warp.dir.x) + Math.PI/2;
+    const diffBody = wrapAngle(desiredBodyAngle - ship.angle);
+    const maxAlign = warp.alignRate * dt;
+    ship.angle = wrapAngle(ship.angle + clamp(diffBody, -maxAlign, maxAlign));
+    ship.angVel = 0;
+
     const targetV = { x: warp.dir.x*warp.speed, y: warp.dir.y*warp.speed };
     ship.vel.x += (targetV.x - ship.vel.x) * clamp(6*dt,0,1);
     ship.vel.y += (targetV.y - ship.vel.y) * clamp(6*dt,0,1);
-    ship.angVel *= Math.exp(-8*dt);
     warp.fuel = clamp(warp.fuel - warp.consumeRate*dt, 0, warp.fuelMax);
     if(warp.fuel<=0){ warp.state='idle'; exitWarp(); }
   }
