@@ -93,38 +93,6 @@ const ctx = canvas.getContext('2d');
 let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
 window.addEventListener('resize', ()=>{ W = canvas.width = innerWidth; H = canvas.height = innerHeight; initStars(true); });
 
-let belt3d = null;
-// === BELT 3D SETUP ===
-(function initBelt3D(){
-  function setup(){
-    if (belt3d) return;
-    if (typeof createAsteroidBelt3D !== 'function'){
-      requestAnimationFrame(setup);
-      return;
-    }
-    const glCanvas = document.createElement('canvas');
-    glCanvas.width = canvas.width;
-    glCanvas.height = canvas.height;
-    const gl = glCanvas.getContext('webgl2') || glCanvas.getContext('webgl');
-    if (!gl){
-      console.warn('Asteroid belt 3D: WebGL context unavailable.');
-      return;
-    }
-    window.__glBeltCanvas = glCanvas;
-    try {
-      belt3d = createAsteroidBelt3D(gl);
-    } catch (err){
-      console.error('Asteroid belt 3D init failed:', err);
-      belt3d = null;
-    }
-  }
-  if (document.readyState === 'complete' || document.readyState === 'interactive'){
-    requestAnimationFrame(setup);
-  } else {
-    window.addEventListener('DOMContentLoaded', setup, { once: true });
-  }
-})();
-
 const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
 const add = (a,b)=>({x:a.x+b.x,y:a.y+b.y});
 const mul = (v,s)=>({x:v.x*s,y:v.y*s});
@@ -4505,6 +4473,5 @@ function startGame(){
 }
 setTimeout(startGame, 500);
 </script>
-<script src="belt3d.js"></script>
 </body>
 </html>
