@@ -43,7 +43,7 @@
       window.UnrealBloomPass = UnrealBloomPass;
       window.ShaderPass = ShaderPass;
       window.OutputPass = OutputPass;
-      THREE.CopyShader = CopyShader;
+      window.CopyShader = CopyShader;
 
       // --- Scena / kamera / renderer ---
       const app = document.getElementById('app');
@@ -326,7 +326,6 @@
         finalPass = new OutputPass();
       } else if (ShaderPass && CopyShader) {
         finalPass = new ShaderPass(CopyShader);
-        if (finalPass.renderToScreen !== undefined) finalPass.renderToScreen = true;
       }
       if (finalPass) {
         console.debug('Final pass:', finalPass?.constructor?.name);
