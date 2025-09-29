@@ -385,26 +385,52 @@
       r.toneMapping = THREE.ACESFilmicToneMapping;
       r.toneMappingExposure = 1.1;
       r.outputColorSpace = THREE.SRGBColorSpace;
-      if (!this.composer || this._renderer !== r) {
+
+      const hasPostProcessing =
+        typeof EffectComposer !== "undefined" &&
+        typeof RenderPass !== "undefined" &&
+        typeof UnrealBloomPass !== "undefined";
+
+      if (!hasPostProcessing) {
+        this.composer = null;
+        this._renderer = null;
+        this.bloom = null;
+      }
+
+      if (hasPostProcessing && (!this.composer || this._renderer !== r)) {
         this._renderer = r;
         this.composer = new EffectComposer(r);
         this.composer.setSize(this.canvas.width, this.canvas.height);
         const rp = new RenderPass(this.scene, this.camera);
-        this.bloom = new UnrealBloomPass(new THREE.Vector2(this.canvas.width, this.canvas.height), 1.14, 1.04, 0.0);
+        this.bloom = new UnrealBloomPass(
+          new THREE.Vector2(this.canvas.width, this.canvas.height),
+          1.14,
+          1.04,
+          0.0
+        );
         this.composer.addPass(rp);
         this.composer.addPass(this.bloom);
+
         let finalPass = null;
-        if (typeof OutputPass !== 'undefined') {
+        if (typeof OutputPass !== "undefined") {
           finalPass = new OutputPass();
-        } else if (typeof ShaderPass !== 'undefined' && typeof THREE !== 'undefined' && THREE && THREE.CopyShader) {
+        } else if (
+          typeof ShaderPass !== "undefined" &&
+          typeof THREE !== "undefined" &&
+          THREE &&
+          THREE.CopyShader
+        ) {
           finalPass = new ShaderPass(THREE.CopyShader);
           if (finalPass.renderToScreen !== undefined) finalPass.renderToScreen = true;
         }
+
         if (finalPass) {
-          console.debug('Final pass:', finalPass?.constructor?.name);
           this.composer.addPass(finalPass);
+        } else if (this.bloom && this.bloom.renderToScreen !== undefined) {
+          this.bloom.renderToScreen = true;
         }
       }
+
       if (this.composer) {
         r.autoClear = false;
         this.composer.render();
@@ -670,6 +696,13 @@
       ctx.drawImage(sun.canvas, sSun.x - sizeSun / 2, sSun.y - sizeSun / 2, sizeSun, sizeSun);
     }
   }
+
+  window.setPlanetsSunPos = function (x, y) {
+    if (sun) {
+      sun.x = x || 0;
+      sun.y = y || 0;
+    }
+  };
 
   window.initPlanets3D = initPlanets3D;
   window.updatePlanets3D = updatePlanets3D;
