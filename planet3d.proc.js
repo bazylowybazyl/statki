@@ -693,26 +693,36 @@ const PLANET_FRAG = `// Terrain generation parameters
       const hasPP = (typeof EffectComposer !== 'undefined') &&
                (typeof RenderPass !== 'undefined') &&
                (typeof UnrealBloomPass !== 'undefined');
-if (hasPP && (!this.composer || this._renderer !== r)) {
-  this._renderer = r;
-  this.composer = new EffectComposer(r);
-  this.composer.setSize(this.canvas.width, this.canvas.height);
-  const rp = new RenderPass(this.scene, this.camera);
-  this.bloom = new UnrealBloomPass(new THREE.Vector2(this.canvas.width, this.canvas.height), 1.14, 1.04, 0.0);
-  this.bloom.renderToScreen = true;
-  this.composer.addPass(rp);
-  this.composer.addPass(this.bloom);
-}
-if (this.composer) {
-  r.autoClear = false;
-  this.composer.render();
-  r.autoClear = true;
-} else {
-  r.autoClear = true;
-  r.render(this.scene, this.camera);
-}
-r.autoClear = true;
-this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
+      if (hasPP && (!this.composer || this._renderer !== r)) {
+        this._renderer = r;
+        this.composer = new EffectComposer(r);
+        this.composer.setSize(this.canvas.width, this.canvas.height);
+        const rp = new RenderPass(this.scene, this.camera);
+        this.bloom = new UnrealBloomPass(new THREE.Vector2(this.canvas.width, this.canvas.height), 1.14, 1.04, 0.0);
+        this.composer.addPass(rp);
+        this.composer.addPass(this.bloom);
+        let finalPass = null;
+        if (typeof OutputPass !== 'undefined') {
+          finalPass = new OutputPass();
+        } else if (typeof ShaderPass !== 'undefined' && typeof THREE !== 'undefined' && THREE && THREE.CopyShader) {
+          finalPass = new ShaderPass(THREE.CopyShader);
+          if (finalPass.renderToScreen !== undefined) finalPass.renderToScreen = true;
+        }
+        if (finalPass) {
+          console.debug('Final pass:', finalPass?.constructor?.name);
+          this.composer.addPass(finalPass);
+        }
+      }
+      if (this.composer) {
+        r.autoClear = false;
+        this.composer.render();
+        r.autoClear = true;
+      } else {
+        r.autoClear = true;
+        r.render(this.scene, this.camera);
+      }
+      r.autoClear = true;
+      this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       const zoom = 1.3;
       const srcW = this.canvas.width / zoom;
       const srcH = this.canvas.height / zoom;
@@ -853,8 +863,18 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
         this.composer.setSize(this.canvas.width, this.canvas.height);
         this.composer.addPass(new RenderPass(this.scene, this.camera));
         this.bloom = new UnrealBloomPass(new THREE.Vector2(this.canvas.width, this.canvas.height), 0.35, 0.9, 0.0);
-        this.bloom.renderToScreen = true;
         this.composer.addPass(this.bloom);
+        let finalPass = null;
+        if (typeof OutputPass !== 'undefined') {
+          finalPass = new OutputPass();
+        } else if (typeof ShaderPass !== 'undefined' && typeof THREE !== 'undefined' && THREE && THREE.CopyShader) {
+          finalPass = new ShaderPass(THREE.CopyShader);
+          if (finalPass.renderToScreen !== undefined) finalPass.renderToScreen = true;
+        }
+        if (finalPass) {
+          console.debug('Final pass:', finalPass?.constructor?.name);
+          this.composer.addPass(finalPass);
+        }
         this._composerWidth = this.canvas.width;
         this._composerHeight = this.canvas.height;
       }

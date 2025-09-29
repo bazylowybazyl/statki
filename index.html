@@ -73,15 +73,21 @@
   import { EffectComposer }  from "three/addons/postprocessing/EffectComposer.js";
   import { RenderPass }      from "three/addons/postprocessing/RenderPass.js";
   import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+  import { ShaderPass }      from "three/addons/postprocessing/ShaderPass.js";
+  import { OutputPass }      from "three/addons/postprocessing/OutputPass.js";
+  import { CopyShader }      from "three/addons/shaders/CopyShader.js";
   import { createShortNeedleExhaust, createWarpExhaustBlue } from "./Engineeffects.js";
   import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
   window.THREE = THREE;
   window.EffectComposer  = EffectComposer;
   window.RenderPass      = RenderPass;
   window.UnrealBloomPass = UnrealBloomPass;
+  window.ShaderPass      = ShaderPass;
+  window.OutputPass      = OutputPass;
   window.createShortNeedleExhaust = createShortNeedleExhaust;
   window.createWarpExhaustBlue = createWarpExhaustBlue;
   window.GLTFLoader = GLTFLoader;
+  THREE.CopyShader = CopyShader;
 
 </script>
 <script src="planet3d.proc.js"></script>
