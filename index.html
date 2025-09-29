@@ -655,7 +655,7 @@ function pruneStarCells(){
   // Trzymajmy ~ 600 ostatnio widzianych komórek (wystarczy z zapasem)
   if(starCells.size <= 600) return;
   // Proste LRU: wyrzucamy najstarsze
-  const arr = [...starCells.entries()];
+  const arr = Array.from(starCells.entries());
   arr.sort((a,b)=>a[1].lastSeen - b[1].lastSeen);
   const toDrop = arr.slice(0, Math.max(0, arr.length - 600));
   for(const [k] of toDrop) starCells.delete(k);
@@ -3279,7 +3279,6 @@ function loop(now){
   }
   const alpha = acc / PHYS_DT;
   frameId++;
-  updatePlanets3D(frame);
   missionCompleteBanner.update(frame);
   // Shockwaves
   for(let i=shockwaves.length-1;i>=0;i--){
@@ -3294,7 +3293,7 @@ function loop(now){
     camera.shakeTime -= frame;
     if(camera.shakeTime <= 0) camera.shakeMag = 0;
   }
-  render(alpha);
+  render(alpha, frame);
   requestAnimationFrame(loop);
 }
 
@@ -3572,7 +3571,7 @@ function drawNPCPretty(ctx, npc, screenPos){
   ctx.restore();
 }
 
-function render(alpha){
+function render(alpha, frameDt){
   canvas.style.cursor = 'default';
   // Interpolacja stanu
   const interpPos = {
@@ -3600,22 +3599,10 @@ function render(alpha){
 
   // Czyścimy ekran
   ctx.clearRect(0,0,W,H);
-
-  const nowMs = performance.now();
-
+  updatePlanets3D(frameDt);
 
   // Gwiazdy (proceduralne kafelki na całej mapie)
   drawStars(cam);
-
-  // Pas asteroid 3D do offscreen
-  if (belt3d && window.__glBeltCanvas){
-    belt3d.render({
-      cam: { x: cam.x, y: cam.y, zoom: camera.zoom, angle: 0 },
-      viewport: { w: canvas.width, h: canvas.height },
-      time: nowMs * 0.001
-    });
-    ctx.drawImage(window.__glBeltCanvas, 0, 0, canvas.width, canvas.height);
-  }
 
   // scan waves
   for(const w of scanWaves){
