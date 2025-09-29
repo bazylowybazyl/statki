@@ -704,9 +704,8 @@ const PLANET_FRAG = `// Terrain generation parameters
         let finalPass = null;
         if (typeof OutputPass !== 'undefined') {
           finalPass = new OutputPass();
-        } else if (typeof ShaderPass !== 'undefined' && typeof THREE !== 'undefined' && THREE && THREE.CopyShader) {
-          finalPass = new ShaderPass(THREE.CopyShader);
-          if (finalPass.renderToScreen !== undefined) finalPass.renderToScreen = true;
+        } else if (typeof ShaderPass !== 'undefined' && typeof CopyShader !== 'undefined') {
+          finalPass = new ShaderPass(CopyShader);
         }
         if (finalPass) {
           console.debug('Final pass:', finalPass?.constructor?.name);
@@ -867,9 +866,8 @@ const PLANET_FRAG = `// Terrain generation parameters
         let finalPass = null;
         if (typeof OutputPass !== 'undefined') {
           finalPass = new OutputPass();
-        } else if (typeof ShaderPass !== 'undefined' && typeof THREE !== 'undefined' && THREE && THREE.CopyShader) {
-          finalPass = new ShaderPass(THREE.CopyShader);
-          if (finalPass.renderToScreen !== undefined) finalPass.renderToScreen = true;
+        } else if (typeof ShaderPass !== 'undefined' && typeof CopyShader !== 'undefined') {
+          finalPass = new ShaderPass(CopyShader);
         }
         if (finalPass) {
           console.debug('Final pass:', finalPass?.constructor?.name);
