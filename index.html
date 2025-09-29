@@ -413,16 +413,14 @@ function hudRenderFloatingBars(ship, cam){
   const cx = center.x, cy = center.y;
   const R0 = Math.max(ship.w, ship.h) * camera.zoom * 0.8 + 32;
 
-  // BOOST – pokazuj przy ładowaniu lub krótkim efekcie
-  if (boost.state === 'charging' || boost.effectTime > 0){
-    const t = (boost.state==='charging')
-      ? Math.min(1, boost.charge/boost.chargeTime)
-      : Math.max(0, boost.effectTime/boost.effectDuration);
+  // BOOST – pokazuj jako poziom paliwa dopalacza
+  const boostFuelRatio = clamp(boost.fuel / boost.fuelMax, 0, 1);
+  if (boostFuelRatio < 1 || (boost.state === 'active' && boost.fuel > 0)){
     ctx.save();
     ctx.strokeStyle = 'rgba(41,52,65,0.9)'; ctx.lineWidth = 8;
     ctx.beginPath(); ctx.arc(cx, cy, R0, -Math.PI/2, -Math.PI/2 + Math.PI*1.1); ctx.stroke();
     ctx.strokeStyle = '#60a5fa';
-    ctx.beginPath(); ctx.arc(cx, cy, R0, -Math.PI/2, -Math.PI/2 + Math.PI*1.1*t); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, R0, -Math.PI/2, -Math.PI/2 + Math.PI*1.1*boostFuelRatio); ctx.stroke();
     ctx.fillStyle = '#bcd7ff'; ctx.font = '12px system-ui,monospace'; ctx.textAlign = 'center';
     ctx.fillText('BOOST', cx, cy - R0 - 10);
     ctx.restore();
