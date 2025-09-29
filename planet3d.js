@@ -1,5 +1,6 @@
 (function () {
   // ======= USTAWIENIA / NARZĘDZIA =======
+  const USE_PP = false; // tymczasowo
   const planets = [];
   let sun = null;
   let asteroidBelt = null;
@@ -386,18 +387,19 @@
       r.toneMappingExposure = 1.1;
       r.outputColorSpace = THREE.SRGBColorSpace;
 
-      const hasPostProcessing =
+      const hasPP =
+        USE_PP &&
         typeof EffectComposer !== "undefined" &&
         typeof RenderPass !== "undefined" &&
         typeof UnrealBloomPass !== "undefined";
 
-      if (!hasPostProcessing) {
+      if (!hasPP) {
         this.composer = null;
         this._renderer = null;
         this.bloom = null;
       }
 
-      if (hasPostProcessing && (!this.composer || this._renderer !== r)) {
+      if (hasPP && (!this.composer || this._renderer !== r)) {
         this._renderer = r;
         this.composer = new EffectComposer(r);
         this.composer.setSize(this.canvas.width, this.canvas.height);
@@ -573,7 +575,8 @@
       r.toneMappingExposure = 1.0;
       r.outputColorSpace = THREE.SRGBColorSpace;
 
-      const hasPP = (typeof EffectComposer !== 'undefined') &&
+      const hasPP = USE_PP &&
+                    (typeof EffectComposer !== 'undefined') &&
                     (typeof RenderPass !== 'undefined') &&
                     (typeof UnrealBloomPass !== 'undefined');
 

@@ -1,4 +1,6 @@
 
+const USE_PP = false; // tymczasowo wyłącz postprocessing, aby zachować pełną przezroczystość tła
+
 const NOISE_FUNCTIONS = `const float PI = 3.14159265;
 
     //	Simplex 3D Noise 
@@ -690,9 +692,15 @@ const PLANET_FRAG = `// Terrain generation parameters
       r.toneMapping = THREE.ACESFilmicToneMapping;
       r.toneMappingExposure = 1.1;
       r.outputColorSpace = THREE.SRGBColorSpace;
-      const hasPP = (typeof EffectComposer !== 'undefined') &&
+      const hasPP = USE_PP &&
+               (typeof EffectComposer !== 'undefined') &&
                (typeof RenderPass !== 'undefined') &&
                (typeof UnrealBloomPass !== 'undefined');
+      if (!hasPP && this.composer) {
+        this.composer = null;
+        this._renderer = null;
+        this.bloom = null;
+      }
       if (hasPP && (!this.composer || this._renderer !== r)) {
         this._renderer = r;
         this.composer = new EffectComposer(r);
@@ -853,9 +861,18 @@ const PLANET_FRAG = `// Terrain generation parameters
       r.toneMappingExposure = 1.0;
       r.outputColorSpace = THREE.SRGBColorSpace;
 
-      const hasPP = (typeof EffectComposer !== 'undefined') &&
+      const hasPP = USE_PP &&
+                    (typeof EffectComposer !== 'undefined') &&
                     (typeof RenderPass !== 'undefined') &&
                     (typeof UnrealBloomPass !== 'undefined');
+
+      if (!hasPP && this.composer) {
+        this.composer = null;
+        this._renderer = null;
+        this.bloom = null;
+        this._composerWidth = 0;
+        this._composerHeight = 0;
+      }
 
       if (hasPP && (!this.composer || this._renderer !== r)) {
         this._renderer = r;
