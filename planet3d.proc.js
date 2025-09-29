@@ -726,6 +726,7 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       this.canvas.height = 1024;
       this.ctx2d = this.canvas.getContext("2d");
       this.drawOverlayDots = false;
+      this.asteroids = null;
       if (typeof THREE === "undefined") return;
 
       this.scene = new THREE.Scene();
@@ -819,21 +820,16 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
             buildFromGeos(geos);
           },
           undefined,
-          (err) => console.error("GLTF asteroid load error:", err)
+          (err) => {
+            console.warn("GLTF asteroid load error, using fallback:", err);
+            const g = new THREE.IcosahedronGeometry(1, 1);
+            g.computeVertexNormals();
+            buildFromGeos([g]);
+          }
         );
       };
 
       tryLoadGLTF();
-
-      // Losowe asteroidy w jednostkach świata do rysowania bezpośrednio na canvasie 2D
-      this.asteroids = [];
-      for (let i = 0; i < 2000; i++) {
-        this.asteroids.push({
-          angle: Math.random() * TAU,
-          radius: innerRadius + Math.random() * (outerRadius - innerRadius),
-          size: 20 + Math.random() * 40,
-        });
-      }
     }
 
     render(dt) {
@@ -895,7 +891,7 @@ this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       const width = (r2 - r1) * 0.2;
       const inner = mid - width / 2;
       const outer = mid + width / 2;
-      asteroidBelt = new AsteroidBelt3D(inner, outer);
+      asteroidBelt = new AsteroidBelt3D(inner, outer, 1800);
     }
   }
   function updatePlanets3D(dt) {
