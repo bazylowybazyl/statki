@@ -1,1 +1,10 @@
 node_modules
+
+# do not commit binaries via PR
+assets/planety/**/*.psd
+planets/**
+*.glb
+*.jpg
+*.png
+*.exr
+
