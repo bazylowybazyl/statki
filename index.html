@@ -90,7 +90,8 @@
   THREE.CopyShader = CopyShader;
 
 </script>
-<script src="planet3d.proc.js"></script>
+<!-- przełącznik: aktywuj assetowy renderer planet -->
+<script src="planet3d.assets.js"></script>
 
 <script>
 // =============== Canvas & utils ===============
@@ -693,7 +694,29 @@ const PLANET_TYPES = {
   BARREN: 'barren'
 };
 
-const PLANET_DATA = (() => {
+// --- Tryb układu Słonecznego (param z URL: ?solar=1) ---
+const USE_SOLAR = new URLSearchParams(location.search).has('solar');
+
+function makeSolarPlanets() {
+  // Skala: 1 AU ≈ 3000 jednostek świata (Neptun ~ 90k, mieści się w WORLD)
+  const AU = 3000;
+  const rand = () => Math.random() * Math.PI * 2;
+  const P = [];
+  // r – promień planety w logice gry (48..~160) wpływa na rozmiar renderu 3D i orbity stacji
+  P.push({ id:'mercury', name:'Mercury', r:  44, orbitRadius: 0.39*AU, angle: rand(), speed: 0 });
+  P.push({ id:'venus',   name:'Venus',   r:  60, orbitRadius: 0.72*AU, angle: rand(), speed: 0 });
+  P.push({ id:'earth',   name:'Earth',   r:  64, orbitRadius: 1.00*AU, angle: rand(), speed: 0 });
+  P.push({ id:'mars',    name:'Mars',    r:  54, orbitRadius: 1.52*AU, angle: rand(), speed: 0 });
+  P.push({ id:'jupiter', name:'Jupiter', r: 160, orbitRadius: 5.20*AU, angle: rand(), speed: 0 });
+  P.push({ id:'saturn',  name:'Saturn',  r: 140, orbitRadius: 9.58*AU, angle: rand(), speed: 0 });
+  P.push({ id:'uranus',  name:'Uranus',  r: 108, orbitRadius:19.20*AU, angle: rand(), speed: 0 });
+  P.push({ id:'neptune', name:'Neptune', r: 104, orbitRadius:30.00*AU, angle: rand(), speed: 0 });
+  // Opcjonalnie: Pluton (komentuj/odkomentuj)
+  // P.push({ id:'pluto',   name:'Pluto',   r:  30, orbitRadius:39.50*AU, angle: rand(), speed: 0 });
+  return P;
+}
+
+function makeProceduralPlanets() {
   const NUM_PLANETS = 7;
   const TYPES = [
     PLANET_TYPES.VOLCANIC,
@@ -717,7 +740,9 @@ const PLANET_DATA = (() => {
     list.push({ id: i, orbitRadius, angle, speed, r, type: TYPES[i], x: 0, y: 0 });
   }
   return list;
-})();
+}
+
+const PLANET_DATA = USE_SOLAR ? makeSolarPlanets() : makeProceduralPlanets();
 
 let planets = PLANET_DATA.map(p => {
   p.x = SUN.x + Math.cos(p.angle) * p.orbitRadius;
