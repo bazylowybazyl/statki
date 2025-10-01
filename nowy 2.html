@@ -1,0 +1,506 @@
+
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <title>Pirate Station – Single-file Preview v6 (import map)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body { margin:0; height:100%; background:#05070d; color:#d9e1f2; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    #ui { position: fixed; top: 12px; left: 12px; display:flex; gap:8px; align-items:center; z-index:10; }
+    button {
+      border: 1px solid #5a6a8a; background:#0d1320; color:#eaf1ff; padding:8px 12px; border-radius:8px;
+      cursor:pointer; font-weight:600; letter-spacing:.02em;
+    }
+    button:hover { background:#13203a; }
+    #c { width:100%; height:100%; display:block; }
+    .badge { padding:6px 10px; border:1px solid #2b344a; border-radius:999px; background:#0a0f1a; color:#9ab0d0; }
+    .slider { accent-color:#79a6ff; }
+  </style>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="ui">
+    <span class="badge">Pirate Station – v6</span>
+    <button id="export">Pobierz GLB</button>
+    <label>Ekspozycja <input id="exp" type="range" min="0.6" max="2.2" step="0.01" value="1.25" class="slider"></label>
+  </div>
+  <canvas id="c"></canvas>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+    import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+    import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+
+    function buildPirateStation(THREE, opts = {}) {
+      const scale = opts.scale ?? 1.0;
+      const group = new THREE.Group();
+      group.name = opts.name || 'PirateStation';
+
+      // ---------- helper textures ----------
+      function makePanelTexture(size = 256) {
+        const c = document.createElement('canvas');
+        c.width = c.height = size;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#616775';
+        ctx.fillRect(0, 0, size, size);
+        for (let i = 0; i < 220; i++) {
+          const w = Math.floor(8 + Math.random() * 28);
+          const h = Math.floor(6 + Math.random() * 26);
+          const x = Math.floor(Math.random() * (size - w));
+          const y = Math.floor(Math.random() * (size - h));
+          const g = 150 + Math.floor(Math.random() * 70);
+          ctx.fillStyle = `rgb(${g},${g},${g})`;
+          ctx.fillRect(x, y, w, h);
+          ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+          ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+        }
+        const tex = new THREE.CanvasTexture(c);
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.anisotropy = 8;
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
+      }
+
+      function makeGlowTexture(s = 128) {
+        const c = document.createElement('canvas');
+        c.width = c.height = s;
+        const ctx = c.getContext('2d');
+        const g = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+        g.addColorStop(0.0, 'rgba(255,255,255,1)');
+        g.addColorStop(0.25,'rgba(255,255,255,0.6)');
+        g.addColorStop(1.0, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0,0,s,s);
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
+      }
+
+      function makeArrowTexture(txt='>>>') {
+        const w=256, h=128;
+        const c = document.createElement('canvas'); c.width=w; c.height=h;
+        const ctx = c.getContext('2d');
+        ctx.clearRect(0,0,w,h);
+        ctx.shadowColor = 'rgba(255,70,70,0.95)';
+        ctx.shadowBlur = 26;
+        ctx.fillStyle = '#ff4a4a';
+        ctx.font = 'bold 86px system-ui,Segoe UI,Arial';
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(txt, w/2, h/2+2);
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
+      }
+
+      function makeTickerTexture() {
+        const W = 2048, H = 256;
+        const c = document.createElement('canvas'); c.width=W; c.height=H;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle='#001015'; ctx.fillRect(0,0,W,H);
+        const messages = [
+          '☠   BLACK FLAG  ☠',
+          'NO QUARTER',
+          'DEAD MEN TELL NO TALES',
+          'WANTED: MERCHANT CONVOY',
+          'RAID TONIGHT 22:00 GST',
+          'BOUNTY 50 000 CR'
+        ];
+        ctx.font='bold 140px system-ui,Segoe UI,Arial';
+        ctx.textBaseline='middle'; ctx.textAlign='left';
+        let x=40;
+        for (let i=0;i<messages.length;i++) {
+          const msg = messages[i];
+          ctx.save();
+          ctx.shadowColor = i % 2 ? '#2bf0ff' : '#ff3b3b';
+          ctx.shadowBlur = 24;
+          ctx.fillStyle = i % 2 ? '#8ef5ff' : '#ff7a7a';
+          ctx.fillText(msg, x, H/2);
+          ctx.restore();
+          x += ctx.measureText(msg).width + 120;
+        }
+        const tex = new THREE.CanvasTexture(c);
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.repeat.set(2,1);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
+      }
+
+      const panelTex = makePanelTexture(256);
+
+      // ---------- materials ----------
+      const metal = new THREE.MeshStandardMaterial({
+        map: panelTex, color: 0x9aa2ad, metalness: 0.7, roughness: 0.38
+      });
+      const darkMetal = new THREE.MeshStandardMaterial({
+        color: 0x2c3138, metalness: 0.85, roughness: 0.55
+      });
+      const matteDark = new THREE.MeshStandardMaterial({
+        color: 0x1b1f26, metalness: 0.35, roughness: 0.9
+      });
+
+      // ---------- core (closed) ----------
+      const coreRadius = 6 * scale;
+      const coreHeight = 22 * scale;
+      const core = new THREE.Mesh(new THREE.CylinderGeometry(coreRadius, coreRadius, coreHeight, 28, 1, false), metal);
+      core.castShadow = core.receiveShadow = true;
+      group.add(core);
+
+      // bottom cap
+      const capBot = new THREE.Mesh(new THREE.CylinderGeometry(coreRadius, coreRadius * 0.35, 4 * scale, 24), darkMetal);
+      capBot.position.y = -coreHeight * 0.5 - 2 * scale;
+      group.add(capBot);
+
+      // ---------- residential module ----------
+      const resR = coreRadius * 1.25;
+      const resH = 6 * scale;
+      const res = new THREE.Mesh(new THREE.CylinderGeometry(resR, resR * 0.98, resH, 32, 1, false), metal);
+      res.position.y = coreHeight * 0.5 + resH * 0.5 + 0.5 * scale;
+      res.castShadow = res.receiveShadow = true;
+      group.add(res);
+
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(resR * 0.92, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2), darkMetal);
+      dome.position.y = res.position.y + resH * 0.5 - 0.2 * scale;
+      group.add(dome);
+
+      // ---- helper for curved window bands around a given radius ----
+      function addCurvedWindowBands(radius, yLevels, palette, offProb=0.15, segLen=Math.PI/28) {
+        const rWin = radius + 0.02*scale;
+        const litGeo = new THREE.CylinderGeometry(rWin, rWin, 0.22*scale, 8, 1, true, 0, segLen);
+        const darkGeo = litGeo.clone();
+
+        const litMat  = new THREE.MeshBasicMaterial({ transparent:true, opacity:0.95, blending:THREE.AdditiveBlending, depthWrite:false, color:0xffffff, side:THREE.DoubleSide });
+        const darkMat = new THREE.MeshBasicMaterial({ transparent:true, opacity:0.85, blending:THREE.NormalBlending, depthWrite:false, color:0x05070a, side:THREE.DoubleSide });
+
+        const maxSeg = yLevels.length * 128;
+        const litInst  = new THREE.InstancedMesh(litGeo,  litMat,  maxSeg);
+        const darkInst = new THREE.InstancedMesh(darkGeo, darkMat, maxSeg);
+        const m = new THREE.Matrix4();
+        const color = new THREE.Color();
+        let li = 0, di = 0;
+
+        function pickColor() {
+          const p = palette[Math.floor(Math.random()*palette.length)];
+          if (Array.isArray(p)) return new THREE.Color().setHSL(p[0], p[1], p[2]);
+          return new THREE.Color(p);
+        }
+
+        for (const yOff of yLevels) {
+          const count = 72;
+          for (let i=0;i<count;i++) {
+            const theta = (i / count) * Math.PI*2;
+            // create gaps by skipping some segments
+            if (Math.random() < 0.28) continue;
+            m.identity();
+            m.makeRotationY(theta);
+            m.setPosition(0, yOff, 0);
+            if (Math.random() < offProb) {
+              darkInst.setMatrixAt(di++, m);
+            } else {
+              litInst.setMatrixAt(li, m);
+              litInst.setColorAt(li++, pickColor());
+            }
+          }
+        }
+        litInst.count = li;
+        darkInst.count = di;
+        group.add(darkInst);
+        group.add(litInst);
+        return { litInst, darkInst };
+      }
+
+      // ---- UPPER windows (around residential + just under it): red & white + some black
+      const upperLevels = [
+        res.position.y + 0.0*scale,
+        res.position.y - 0.6*scale,
+        res.position.y + 0.6*scale
+      ];
+      addCurvedWindowBands(resR, upperLevels, [0xff5a5a, 0xffffff], 0.15);
+
+      // ---- CORE windows DOWNWARD below ring: red/violet/white mix + off black
+      // ring roughly at y=0, extend downwards to near bottom
+      const lowerY = [];
+      for (let i=0;i<8;i++) lowerY.push( (0 - 0.8*scale) - i*1.2*scale );
+      addCurvedWindowBands(coreRadius, lowerY, [0xff4040, 0xff77ff, 0xc24bff, 0x8e2bff, 0xffffff], 0.2);
+
+      // ---------- ring habitat (main) ----------
+      const ringR = 18 * scale;
+      const ringT = 2.4 * scale;
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(ringR, ringT, 20, 72), metal);
+      ring.rotation.x = Math.PI / 2;
+      ring.castShadow = ring.receiveShadow = true;
+      group.add(ring);
+
+      const spokeGeo = new THREE.CylinderGeometry(0.9 * scale, 0.9 * scale, ringR * 2 - 4 * scale, 12);
+      for (let i = 0; i < 4; i++) {
+        const g = new THREE.Group();
+        g.rotation.y = i * Math.PI / 2;
+        const spoke = new THREE.Mesh(spokeGeo, darkMetal);
+        spoke.rotation.z = Math.PI / 2;
+        g.add(spoke);
+        group.add(g);
+      }
+
+      // ---------- secondary "hangar ring" above main ----------
+      const hRingY = 3.2 * scale;
+      const hangarRingR = ringR;
+      const hangarRing = new THREE.Mesh(new THREE.TorusGeometry(hangarRingR, 1.0 * scale, 16, 64), darkMetal);
+      hangarRing.position.y = hRingY;
+      hangarRing.rotation.x = Math.PI / 2;
+      group.add(hangarRing);
+
+      // ---------- beacons and ticker ----------
+      const glowTex = makeGlowTexture(256);
+      const beacons = [];
+      function addBeacon(position, color = 0xff3b3b, phase = 0) {
+        const beacon = new THREE.Group();
+        beacon.position.copy(position);
+        const light = new THREE.PointLight(color, 0, 80 * scale, 2.0);
+        const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.26 * scale, 12, 12), new THREE.MeshBasicMaterial({ color }));
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false }));
+        sprite.scale.set(2.4 * scale, 2.4 * scale, 1);
+        beacon.add(light, bulb, sprite);
+        group.add(beacon);
+        beacons.push({ light, sprite, phase });
+      }
+      addBeacon(new THREE.Vector3(0, res.position.y + resH * 0.6, 0), 0xff3b3b, 0.0);
+      addBeacon(new THREE.Vector3(0, -coreHeight * 0.5 - 4.2 * scale, 0), 0x39a3ff, 0.7);
+
+      // ticker
+      const tickerTex = makeTickerTexture();
+      const screenH = 2.6 * scale;
+      const screenR = ringR + ringT + 2.8 * scale;
+      const screenGeo = new THREE.CylinderGeometry(screenR, screenR, screenH, 128, 1, true);
+      const screenMat = new THREE.MeshBasicMaterial({ map: tickerTex, transparent: true, opacity: 0.92, side: THREE.DoubleSide, depthWrite: false });
+      const screen = new THREE.Mesh(screenGeo, screenMat);
+      screen.rotation.y = Math.PI;
+      screen.renderOrder = 0;
+      group.add(screen);
+
+      // ---------- Horizontal arrow guidance (laying flat) ----------
+      const arrowTexFwd = makeArrowTexture('>>>');
+      const arrowTexBack = makeArrowTexture('<<<');
+      const guidance = [];
+      const planeGeo = new THREE.PlaneGeometry(3.2*scale, 1.5*scale);
+
+      function addDoorOnCore(angle, y) {
+        const wDoor = 3.2*scale, hDoor = 3.2*scale;
+        const door = new THREE.Mesh(new THREE.PlaneGeometry(wDoor, hDoor), new THREE.MeshBasicMaterial({ color: 0x05070a, transparent: true, opacity: 0.95 }));
+        const dir = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle));
+        door.position.set(Math.cos(angle)*(coreRadius+0.03*scale), y, Math.sin(angle)*(coreRadius+0.03*scale));
+        // orient plane normal along radial dir:
+        const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), dir);
+        door.quaternion.copy(quat);
+        door.renderOrder = 3; door.material.depthWrite = false; // appear as hole
+        group.add(door);
+
+        // glow frame (thin additive planes)
+        const frameMat = new THREE.MeshBasicMaterial({ color: 0xff4444, transparent:true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite:false });
+        const fw = wDoor, fh = 0.1*scale, fd = 0.001;
+        const top = new THREE.Mesh(new THREE.PlaneGeometry(fw, fh), frameMat);
+        const bot = top.clone(), left = new THREE.Mesh(new THREE.PlaneGeometry(fh, hDoor), frameMat), right = left.clone();
+        top.position.copy(door.position); top.quaternion.copy(door.quaternion); top.position.y += hDoor*0.5 + fd;
+        bot.position.copy(door.position); bot.quaternion.copy(door.quaternion); bot.position.y -= hDoor*0.5 - fd;
+        left.position.copy(door.position); left.quaternion.copy(door.quaternion); left.position.x += (-Math.sin(angle))* (0.5*wDoor - fh*0.5) + Math.cos(angle)*0;
+        left.position.z += ( Math.cos(angle))* (0.5*wDoor - fh*0.5) + Math.sin(angle)*0; left.scale.set(1,1,1);
+        right.position.copy(door.position); right.quaternion.copy(door.quaternion); right.position.x -= (-Math.sin(angle))* (0.5*wDoor - fh*0.5);
+        right.position.z -= ( Math.cos(angle))* (0.5*wDoor - fh*0.5);
+        group.add(top, bot, left, right);
+      }
+
+      function addGuidanceArrows(angle) {
+        const dir = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle)).normalize();
+        const base = new THREE.Vector3().copy(dir).multiplyScalar(hangarRingR).add(new THREE.Vector3(0, hRingY, 0));
+
+        // Connector from hangar ring to core (box)
+        const distToCore = hangarRingR - coreRadius - 1.2*scale;
+        const bridge = new THREE.Mesh(new THREE.BoxGeometry(2.2*scale, 1.2*scale, distToCore), darkMetal);
+        // place bridge between ring and core
+        const bridgePos = new THREE.Vector3().copy(dir).multiplyScalar(coreRadius + distToCore*0.5 + 0.6*scale);
+        bridge.position.set(bridgePos.x, hRingY + 0.5*scale, bridgePos.z);
+        bridge.lookAt(0, hRingY + 0.5*scale, 0);
+        group.add(bridge);
+
+        // Door/portal on core aligned with this direction
+        addDoorOnCore(angle + Math.PI, hRingY + 0.8*scale);
+
+        // horizontal arrow lanes (laying flat) - closer to core
+        const laneOffset = 1.8 * scale;
+        const up = new THREE.Vector3(0,1,0);
+        const side = new THREE.Vector3().crossVectors(up, dir).normalize();
+        const count = 8;
+        const startDist = 10 * scale; // start closer to core
+        const endDist = 20 * scale;   // end at moderate distance
+
+        // inbound (outer -> core) >>>
+        for (let i=0;i<count;i++) {
+          const m = new THREE.Mesh(planeGeo, new THREE.MeshBasicMaterial({
+            map: arrowTexFwd, color: 0xff4040, blending: THREE.AdditiveBlending,
+            transparent: true, depthWrite: false, side: THREE.DoubleSide, opacity: 0.6
+          }));
+          const t = i/(count-1);
+          const dist = endDist * (1.0 - t) + startDist * t; // from far to close
+          const pos = new THREE.Vector3().copy(dir).multiplyScalar(dist).add(side.clone().multiplyScalar(laneOffset));
+          m.position.set(pos.x, hRingY + 0.02*scale, pos.z);
+          // lay flat - rotate to be horizontal
+          m.rotation.x = -Math.PI/2;
+          // then rotate around Y to point towards core
+          m.rotation.z = Math.atan2(-dir.z, -dir.x);
+          group.add(m);
+          guidance.push({ mesh: m, phase: i*0.22, speed: 6.0 });
+        }
+
+        // outbound (core -> outer) <<<
+        for (let i=0;i<count;i++) {
+          const m = new THREE.Mesh(planeGeo, new THREE.MeshBasicMaterial({
+            map: arrowTexBack, color: 0xff4040, blending: THREE.AdditiveBlending,
+            transparent: true, depthWrite: false, side: THREE.DoubleSide, opacity: 0.6
+          }));
+          const t = i/(count-1);
+          const dist = startDist + (endDist - startDist) * t; // from close to far
+          const pos = new THREE.Vector3().copy(dir).multiplyScalar(dist).add(side.clone().multiplyScalar(-laneOffset));
+          m.position.set(pos.x, hRingY + 0.02*scale, pos.z);
+          // lay flat
+          m.rotation.x = -Math.PI/2;
+          // rotate to point outward
+          m.rotation.z = Math.atan2(dir.z, dir.x);
+          group.add(m);
+          guidance.push({ mesh: m, phase: i*0.22 + 1.0, speed: 6.0 });
+        }
+      }
+
+      // Add guidance arrows for 4 directions (no hangars)
+      addGuidanceArrows(0);
+      addGuidanceArrows(Math.PI/2);
+      addGuidanceArrows(Math.PI);
+      addGuidanceArrows(3*Math.PI/2);
+
+      // ---------- update loop ----------
+      function update(time, dt) {
+        // beacon pulse
+        for (const b of beacons) {
+          const pulse = 0.45 + 0.55 * Math.max(0, Math.sin(time * 3.0 + b.phase));
+          b.sprite.material.opacity = 0.25 + 0.75 * pulse;
+          b.sprite.scale.setScalar((1.7 + 1.3 * pulse) * scale);
+          b.light.intensity = 12 * pulse;
+        }
+        // ticker scroll
+        tickerTex.offset.x = (tickerTex.offset.x - dt * 0.12) % 1;
+
+        // guidance chase
+        for (const g of guidance) {
+          const p = Math.sin(time * g.speed + g.phase);
+          const sc = 1.0 + 0.1 * Math.max(0, p);
+          g.mesh.material.opacity = 0.25 + 0.75 * Math.max(0, p);
+          g.mesh.scale.set(sc, sc, 1);
+        }
+      }
+
+      const radius = ringR + 30 * scale;
+      group.userData.update = update;
+      group.userData.radius = radius;
+      return { group, update, radius };
+    }
+
+    // --------------- SCENE ---------------
+    const canvas = document.getElementById('c');
+    const renderer = new THREE.WebGLRenderer({ antialias: true, canvas, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.25;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x070a12);
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 4000);
+    camera.position.set(60, 26, 60);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.minDistance = 25;
+    controls.maxDistance = 420;
+
+    scene.add(new THREE.AmbientLight(0x223244, 0.35));
+    const hemi = new THREE.HemisphereLight(0xaab8cc, 0x1a1e28, 1.2);
+    scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffffff, 1.1);
+    dir.position.set(80, 120, 60);
+    scene.add(dir);
+
+    const { group: station, update } = buildPirateStation(THREE, { scale: 1.0 });
+    scene.add(station);
+
+    const starsGeom = new THREE.BufferGeometry();
+    const starCount = 4500;
+    const stars = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      const r = 800 * Math.pow(Math.random(), 0.5);
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      stars[i*3]   = r * Math.sin(phi) * Math.cos(theta);
+      stars[i*3+1] = r * Math.cos(phi);
+      stars[i*3+2] = r * Math.sin(phi) * Math.sin(theta);
+    }
+    starsGeom.setAttribute('position', new THREE.BufferAttribute(stars, 3));
+    const starsMat = new THREE.PointsMaterial({ size: 0.7, sizeAttenuation: true, color: 0xa3b8ff, opacity: 0.9, transparent: true });
+    scene.add(new THREE.Points(starsGeom, starsMat));
+
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.95, 0.45, 0.22);
+    composer.addPass(bloom);
+    composer.addPass(new OutputPass());
+
+    const exp = document.getElementById('exp');
+    exp.addEventListener('input', () => {
+      renderer.toneMappingExposure = parseFloat(exp.value);
+    });
+
+    document.getElementById('export').addEventListener('click', () => {
+      const exporter = new GLTFExporter();
+      exporter.parse(station, (gltf) => {
+        const blob = new Blob([gltf], { type: 'model/gltf-binary' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'pirate_station.glb';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+      }, { binary: true });
+    });
+
+    const clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+      const t = clock.elapsedTime;
+      if (update) update(t, dt);
+      controls.update();
+      composer.render();
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+      composer.setSize(w, h);
+    });
+  </script>
+</body>
+</html>
