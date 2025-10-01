@@ -45,6 +45,10 @@
   let sun = null;
   let asteroidBelt = null;
   const TAU = Math.PI * 2;
+  const PLANET_SIZE_MULTIPLIER = 4.5;
+  const SUN_SIZE_MULTIPLIER = 6.0;
+  const ASTEROID_SCALE_MIN = 0.01;
+  const ASTEROID_SCALE_MAX = 0.035;
 
   // ======= PLANETA Z TEKSTUR =======
   class AssetPlanet3D {
@@ -250,7 +254,7 @@
               const z = (Math.random() - 0.5) * 0.12; // grubość pasa w jednostkach sceny
               const x = Math.cos(a) * r;
               const y = Math.sin(a) * r;
-              const s = 0.018 + Math.random() * 0.045;
+              const s = ASTEROID_SCALE_MIN + Math.random() * (ASTEROID_SCALE_MAX - ASTEROID_SCALE_MIN);
               m.makeTranslation(x, y, z);
               euler.set(Math.random() * TAU, Math.random() * TAU, Math.random() * TAU);
               rotM.makeRotationFromEuler(euler);
@@ -295,13 +299,13 @@
   window.initPlanets3D = function initPlanets3D(list, sunObj) {
     _planets.length = 0;
     for (const s of list) {
-      const size = (s.r || 30) * 2.0;
+      const size = (s.r || 30) * PLANET_SIZE_MULTIPLIER;
       const planet = new AssetPlanet3D(s.x, s.y, size, { name: s.name || s.id || null, type: s.type });
       _planets.push(planet);
     }
 
     if (sunObj) {
-      sun = new Sun3D((sunObj.r || 200) * 2.5);
+      sun = new Sun3D((sunObj.r || 200) * SUN_SIZE_MULTIPLIER);
       sun.x = sunObj.x; sun.y = sunObj.y;
     }
 

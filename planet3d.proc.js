@@ -334,6 +334,10 @@ const PLANET_FRAG = `// Terrain generation parameters
   let sun = null;
   let asteroidBelt = null;
   const TAU = Math.PI * 2;
+  const PLANET_SIZE_MULTIPLIER = 4.5;
+  const SUN_SIZE_MULTIPLIER = 6.0;
+  const ASTEROID_SCALE_MIN = 0.01;
+  const ASTEROID_SCALE_MAX = 0.035;
   // Default sun position in sector/world space (center)
   let SUN_POS = { x: 0, y: 0, z: 0 };
 
@@ -786,7 +790,7 @@ const PLANET_FRAG = `// Terrain generation parameters
           const x = Math.cos(angle) * radius;
           const y = Math.sin(angle) * radius;
           const z = (Math.random() - 0.5) * 0.22;
-          const s = 0.018 + Math.random() * 0.045;
+          const s = ASTEROID_SCALE_MIN + Math.random() * (ASTEROID_SCALE_MAX - ASTEROID_SCALE_MIN);
 
           m.makeTranslation(x, y, z);
           euler.set(Math.random() * TAU, Math.random() * TAU, Math.random() * TAU);
@@ -955,13 +959,13 @@ const PLANET_FRAG = `// Terrain generation parameters
   function initPlanets3D(list, sunObj) {
     _planets.length = 0;
     for (const s of list) {
-      const size = (s.r || 30) * 2.0;
+      const size = (s.r || 30) * PLANET_SIZE_MULTIPLIER;
       const p = new ProcPlanet(s.x, s.y, size, { style: s.type || null });
       _planets.push(p);
     }
     if (sunObj) {
       SUN_POS = { x: sunObj.x || 0, y: sunObj.y || 0, z: 0 };
-      sun = new Sun3D((sunObj.r || 200) * 2.5);
+      sun = new Sun3D((sunObj.r || 200) * SUN_SIZE_MULTIPLIER);
       sun.x = sunObj.x;
       sun.y = sunObj.y;
     }
