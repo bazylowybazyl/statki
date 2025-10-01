@@ -41,9 +41,6 @@
     // pluto: { color:'assets/planety/images/plutomap.jpg', bump:'assets/planety/images/plutobump2k.jpg' }
   };
 
-  // helper SRGB dla map kolorów/alfy
-  const setSRGB = (t) => { if (t) { t.colorSpace = THREE.SRGBColorSpace; t.needsUpdate = true; } return t; };
-
   const _planets = [];
   let sun = null;
   let asteroidBelt = null;
@@ -74,33 +71,67 @@
 
         const geom = new THREE.SphereGeometry(1, 96, 64);
         const loader = new THREE.TextureLoader();
+        const tryTex = (p, srgb = false) => {
+          if (!p) return null;
+          const t = loader.load(p, undefined, undefined, (e)=>console.warn('Texture load failed:', p, e));
+          if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+          return t;
+        };
         const tex = TEX[this._name] || {};
-        const tryTex = (p) => (p ? loader.load(p) : null);
 
-        const matParams = {};
-        if (tex.color)   matParams.map         = setSRGB(tryTex(tex.color));
-        if (tex.normal)  matParams.normalMap   = tryTex(tex.normal);
-        if (tex.bump)   { matParams.bumpMap    = tryTex(tex.bump);   matParams.bumpScale = 0.6; }
-        if (tex.spec)    matParams.specularMap = setSRGB(tryTex(tex.spec));
+        const matParams = {
+          color: 0xffffff,
+          shininess: 10
+        };
+        // mapy kolorów w sRGB:
+        if (tex.color)   matParams.map         = tryTex(tex.color,  true);
+        // linear:
+        if (tex.normal)  matParams.normalMap   = tryTex(tex.normal, false);
+        if (tex.bump)   { matParams.bumpMap    = tryTex(tex.bump,   false); matParams.bumpScale = 0.45; }
+        if (tex.spec)    matParams.specularMap = tryTex(tex.spec,   false);
 
         this.material = new THREE.MeshPhongMaterial(matParams);
-        const light = new THREE.DirectionalLight(0xffffff, 1.0);
-        light.position.set(2, 1, 2);
-        this.scene.add(light);
+
+        // doświetlenie – brak „pełnej czerni”
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.22));
+        const hemi = new THREE.HemisphereLight(0xbfdfff, 0x0b0f1a, 0.18);
+        hemi.position.set(0, 1, 0);
+        this.scene.add(hemi);
+
+        // główne światło kierunkowe (jak Słońce)
+        const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+        dir.position.set(2, 1, 2);
+        this.scene.add(dir);
 
         this.mesh = new THREE.Mesh(geom, this.material);
         this.scene.add(this.mesh);
 
-        if (this._name === 'earth' && tex.clouds) {
-          const clouds = new THREE.Mesh(
-            new THREE.SphereGeometry(1.008, 64, 48),
-            new THREE.MeshPhongMaterial({ map: setSRGB(tryTex(tex.clouds)), transparent: true, depthWrite: false })
-          );
-          this.scene.add(clouds);
-          this.clouds = clouds;
+        if (this._name === 'earth') {
+          // nocne światła – świecą niezależnie od światła kierunkowego
+          if (tex.night) {
+            this.material.emissive = new THREE.Color(0x111111);
+            this.material.emissiveMap = tryTex(tex.night, true); // sRGB
+            this.material.emissiveIntensity = 1.0;
+          }
+          // półprzezroczyste chmury
+          if (tex.clouds) {
+            const clouds = new THREE.Mesh(
+              new THREE.SphereGeometry(1.008, 64, 48),
+              new THREE.MeshPhongMaterial({
+                map: tryTex(tex.clouds, true),
+                transparent: true,
+                depthWrite: false,
+                blending: THREE.NormalBlending,
+                opacity: 0.9
+              })
+            );
+            this.scene.add(clouds);
+            this.clouds = clouds;
+          }
         }
         if (tex.ring) {
-          const ringTex = setSRGB(tryTex(tex.ring));
+          const ringTex = tryTex(tex.ring, true);
+          if (ringTex) ringTex.anisotropy = 4;
           const ringGeo = new THREE.RingGeometry(1.35, 2.4, 256, 1);
           const ringMat = new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, side: THREE.DoubleSide });
           const ring = new THREE.Mesh(ringGeo, ringMat);
@@ -228,6 +259,8 @@
               imesh.setMatrixAt(i, m);
             }
             imesh.instanceMatrix.needsUpdate = true;
+            this.imesh = imesh;
+            this.spin = 0.04; // rad/s, bardzo wolno
             this.root.add(imesh);
           }
         );
@@ -243,6 +276,7 @@
       if (this.root) this.root.rotation.z += this.spin * dt;
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r || !this.scene || !this.camera) return;
+      if (this.imesh) this.imesh.rotation.z += (this.spin * dt);
       r.setClearColor(0x000000, 0);
       r.render(this.scene, this.camera);
       this.scene.rotation.z += this.rotSpeed * dt;
