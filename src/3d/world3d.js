@@ -153,7 +153,7 @@ export function attachPirateStation3D(sceneOverride, station2D) {
   }
   ensureScene();
   ensureCamera();
-  pirateStation3D = createPirateStation({ scale: 1.0 });
+  pirateStation3D = createPirateStation({ worldRadius: 120 });
   pirateStation2D = station2D || null;
   pirateStation3D.object3d.position.set(station2D?.x || 0, 0, station2D?.y || 0);
   scene.add(pirateStation3D.object3d);
