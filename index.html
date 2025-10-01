@@ -87,11 +87,13 @@
   window.createShortNeedleExhaust = createShortNeedleExhaust;
   window.createWarpExhaustBlue = createWarpExhaustBlue;
   window.GLTFLoader = GLTFLoader;
-  THREE.CopyShader = CopyShader;
+  // Nie modyfikujemy namespace'u modułu THREE (jest niemodyfikowalny).
+  // Jeśli coś potrzebuje CopyShader globalnie, wystawiamy go przez window:
+  window.CopyShader = CopyShader;
 
 </script>
-<!-- przełącznik: aktywuj assetowy renderer planet -->
-<script type="module" src="planet3d.assets.js"></script>
+<!-- przełącznik: aktywuj assetowy renderer planet (klasyczny skrypt, aby globalne API było gotowe zanim ruszy pętla gry) -->
+<script src="planet3d.assets.js"></script>
 
 <script>
 // =============== Canvas & utils ===============
@@ -3740,7 +3742,7 @@ function render(alpha, frameDt){
 
   // Czyścimy ekran
   ctx.clearRect(0,0,W,H);
-  updatePlanets3D(frameDt);
+  if (window.updatePlanets3D) updatePlanets3D(frameDt);
 
   // Gwiazdy (proceduralne kafelki na całej mapie)
   drawStars(cam);
@@ -3756,7 +3758,7 @@ function render(alpha, frameDt){
     ctx.beginPath(); ctx.arc(s.x, s.y, w.r * camera.zoom, 0, Math.PI*2); ctx.stroke();
   }
 
-  drawPlanets3D(ctx, cam);
+  if (window.drawPlanets3D)   drawPlanets3D(ctx, cam);
 
   // drogi między stacjami
   const drawn = new Set();
