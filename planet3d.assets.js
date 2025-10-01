@@ -33,6 +33,31 @@
     pluto:   { color: 'assets/planety/images/plutomap.jpg',           bump:   'assets/planety/images/plutobump2k.jpg' }
   };
 
+  // Typ → nazwa tekstury (dla układu proceduralnego)
+  const TYPE_ALIAS = {
+    terran:   'earth',
+    volcanic: 'venus',
+    frozen:   'neptune',
+    gas:      'jupiter',
+    barren:   'mercury',
+  };
+
+  // Wylicz klucz tekstury z name/type/id
+  function texKeyFrom(opts) {
+    const n = String(opts?.name ?? '').toLowerCase();
+    if (n && TEX[n]) return n;
+
+    const t = String(opts?.type ?? '').toLowerCase();
+    const a = TYPE_ALIAS[t];
+    if (a && TEX[a]) return a;
+
+    const id = String(opts?.id ?? '').toLowerCase();
+    if (id && TEX[id]) return id;
+
+    // sensowny fallback zamiast „szarej” kuli
+    return 'earth';
+  }
+
   const _planets = [];
   let sun = null;
   let asteroidBelt = null;
@@ -47,12 +72,7 @@
       this.canvas = document.createElement("canvas");
       this.canvas.width = 256; this.canvas.height = 256;
       this.ctx2d = this.canvas.getContext("2d");
-      // Wyznacz klucz tekstur z name / id / type + aliasy dla trybu proceduralnego.
-      const ALIAS = { terran: 'earth', volcanic: 'venus', frozen: 'neptune', gas: 'jupiter', barren: 'mercury' };
-      const raw = (opts && (opts.name ?? opts.id ?? opts.type)) ?? "";
-      let key = String(raw).toLowerCase();
-      if (!TEX[key] && ALIAS[key]) key = ALIAS[key];
-      this._name = key; // np. 'earth', 'venus', 'jupiter'...
+      this._texKey = texKeyFrom(opts);
       this._needsInit = true;
       this.spin = 0.04 + Math.random() * 0.06;
     }
@@ -67,7 +87,7 @@
 
         const geom = new THREE.SphereGeometry(1, 96, 64);
         const loader = new THREE.TextureLoader();
-        const tex = TEX[this._name] || {};
+        const tex = TEX[this._texKey] || {};
         const tryTex = (p) => (p ? loader.load(p) : null);
 
         const matParams = {};
@@ -89,7 +109,7 @@
         this.mesh = new THREE.Mesh(geom, this.material);
         this.scene.add(this.mesh);
 
-        if (this._name === 'earth' && tex.clouds) {
+        if (this._texKey === 'earth' && tex.clouds) {
           const clouds = new THREE.Mesh(
             new THREE.SphereGeometry(1.008, 64, 48),
             new THREE.MeshPhongMaterial({ map: tryTex(tex.clouds), transparent: true, depthWrite: false })
@@ -178,11 +198,14 @@
       this.canvas = document.createElement('canvas');
       this.canvas.width = 1024; this.canvas.height = 1024;
       this.ctx2d = this.canvas.getContext('2d');
+      this.spin = 0.02;
 
       if (typeof THREE === 'undefined') return;
       this.scene = new THREE.Scene();
       this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
       this.camera.position.set(0, 0.6, 4.2);
+      this.root = new THREE.Group();
+      this.scene.add(this.root);
       this.camera.lookAt(0, 0, 0);
       // Normalizacja geometrii do przestrzeni offscreen (0..~2), a nie tysięcy jednostek:
       const _norm = 1 / outerRadius;
@@ -225,7 +248,7 @@
               imesh.setMatrixAt(i, m);
             }
             imesh.instanceMatrix.needsUpdate = true;
-            this.scene.add(imesh);
+            this.root.add(imesh);
           }
         );
       };
@@ -237,6 +260,7 @@
     }
 
     render(dt) {
+      if (this.root) this.root.rotation.z += this.spin * dt;
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r || !this.scene || !this.camera) return;
       r.setClearColor(0x000000, 0);
