@@ -5,6 +5,10 @@
   let sun = null;
   let asteroidBelt = null;
   const TAU = Math.PI * 2;
+  const PLANET_SIZE_MULTIPLIER = 4.5;
+  const SUN_SIZE_MULTIPLIER = 6.0;
+  const ASTEROID_SCALE_MIN = 0.01;
+  const ASTEROID_SCALE_MAX = 0.035;
   const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 
   // PRNG + value noise
@@ -500,7 +504,7 @@
           const x = Math.cos(angle) * radius;
           const y = Math.sin(angle) * radius;
           const z = (Math.random() - 0.5) * 0.22;
-          const s = 0.018 + Math.random() * 0.045;
+          const s = ASTEROID_SCALE_MIN + Math.random() * (ASTEROID_SCALE_MAX - ASTEROID_SCALE_MIN);
 
           m.makeTranslation(x, y, z);
           euler.set(Math.random() * TAU, Math.random() * TAU, Math.random() * TAU);
@@ -658,11 +662,11 @@
   function initPlanets3D(planetList, sunPos) {
     planets.length = 0;
     for (const pl of planetList) {
-      const p = new Planet3D(pl.r * 2.0, pl.type); // mniejsze niż wcześniej, ale wyraźne "halo"
+      const p = new Planet3D(pl.r * PLANET_SIZE_MULTIPLIER, pl.type);
       p.body = pl;
       planets.push(p);
     }
-    sun = new Sun3D(sunPos.r * 2.5);
+    sun = new Sun3D(sunPos.r * SUN_SIZE_MULTIPLIER);
     sun.x = sunPos.x;
     sun.y = sunPos.y;
     asteroidBelt = null;
