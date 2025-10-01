@@ -428,8 +428,11 @@ function buildPirateStation(THREE, opts = {}) {
 }
 
 export function createPirateStation(opts = {}) {
+  const baseRadius = 48; // geometry radius when scale === 1
+  const requestedRadius = typeof opts.worldRadius === 'number' ? opts.worldRadius : null;
+  const scale = requestedRadius ? requestedRadius / baseRadius : opts.scale ?? 1;
   const { group, update, radius } = buildPirateStation(THREE, {
-    scale: opts.scale ?? 1,
+    scale,
     name: opts.name || 'PirateStation'
   });
   return {
