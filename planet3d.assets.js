@@ -17,46 +17,32 @@
     return sharedRenderer;
   }
 
-  // ======= MAPOWANIE TEKSTUR (tylko ścieżki tekstowe – zero binarek w PR) =======
+  // === Tekstury dla realnego układu (same ścieżki, bez binarek w PR) ===
   const TEX = {
-    mercury: { color: 'assets/planety/solar/mercury/mercury_color.jpg', normal: 'assets/planety/solar/mercury/mercury_normal.jpg' },
-    venus:   { color: 'assets/planety/solar/venus/venus_color.jpg',   bump:   'assets/planety/images/venusbump.jpg',
+    mercury: { color: 'assets/planety/solar/mercury/mercury_color.jpg',
+               normal:'assets/planety/solar/mercury/mercury_normal.jpg' },
+    venus:   { color: 'assets/planety/solar/venus/venus_color.jpg',
+               bump:  'assets/planety/images/venusbump.jpg',
                atmo:  'assets/planety/images/venus_atmosphere.jpg' },
-    earth:   { color: 'assets/planety/solar/earth/earth_color.jpg',   normal: 'assets/planety/solar/earth/earth_normal.jpg',
-               spec:  'assets/planety/images/earth_specularmap.jpg',   night:  'assets/planety/images/earth_nightmap.jpg',
+    earth:   { color: 'assets/planety/solar/earth/earth_color.jpg',
+               normal:'assets/planety/solar/earth/earth_normal.jpg',
+               spec:  'assets/planety/images/earth_specularmap.jpg',
+               night: 'assets/planety/images/earth_nightmap.jpg',
                clouds:'assets/planety/solar/earth/earth_clouds.jpg' },
-    mars:    { color: 'assets/planety/solar/mars/mars_color.jpg',     bump:   'assets/planety/images/marsbump.jpg' },
+    mars:    { color: 'assets/planety/solar/mars/mars_color.jpg',
+               bump:  'assets/planety/images/marsbump.jpg' },
     jupiter: { color: 'assets/planety/solar/jupiter/jupiter_color.jpg' },
-    saturn:  { color: 'assets/planety/solar/saturn/saturn_color.jpg', ring:   'assets/planety/solar/saturn/rings_alpha.png' },
-    uranus:  { color: 'assets/planety/solar/uranus/uranus_color.jpg', ring:   'assets/planety/images/uranus_ring.png' },
+    saturn:  { color: 'assets/planety/solar/saturn/saturn_color.jpg',
+               ring:  'assets/planety/solar/saturn/rings_alpha.png' },
+    uranus:  { color: 'assets/planety/solar/uranus/uranus_color.jpg',
+               ring:  'assets/planety/images/uranus_ring.png' },
     neptune: { color: 'assets/planety/solar/neptune/neptune_color.jpg' },
-    pluto:   { color: 'assets/planety/images/plutomap.jpg',           bump:   'assets/planety/images/plutobump2k.jpg' }
+    // pluto opcjonalnie:
+    // pluto: { color:'assets/planety/images/plutomap.jpg', bump:'assets/planety/images/plutobump2k.jpg' }
   };
 
-  // Typ → nazwa tekstury (dla układu proceduralnego)
-  const TYPE_ALIAS = {
-    terran:   'earth',
-    volcanic: 'venus',
-    frozen:   'neptune',
-    gas:      'jupiter',
-    barren:   'mercury',
-  };
-
-  // Wylicz klucz tekstury z name/type/id
-  function texKeyFrom(opts) {
-    const n = String(opts?.name ?? '').toLowerCase();
-    if (n && TEX[n]) return n;
-
-    const t = String(opts?.type ?? '').toLowerCase();
-    const a = TYPE_ALIAS[t];
-    if (a && TEX[a]) return a;
-
-    const id = String(opts?.id ?? '').toLowerCase();
-    if (id && TEX[id]) return id;
-
-    // sensowny fallback zamiast „szarej” kuli
-    return 'earth';
-  }
+  // helper SRGB dla map kolorów/alfy
+  const setSRGB = (t) => { if (t) { t.colorSpace = THREE.SRGBColorSpace; t.needsUpdate = true; } return t; };
 
   const _planets = [];
   let sun = null;
@@ -72,7 +58,8 @@
       this.canvas = document.createElement("canvas");
       this.canvas.width = 256; this.canvas.height = 256;
       this.ctx2d = this.canvas.getContext("2d");
-      this._texKey = texKeyFrom(opts);
+      this._name = String((opts && (opts.name ?? opts.id)) ?? "").toLowerCase();
+      if (!this._name || !TEX[this._name]) this._name = 'earth';
       this._needsInit = true;
       this.spin = 0.04 + Math.random() * 0.06;
     }
@@ -87,19 +74,14 @@
 
         const geom = new THREE.SphereGeometry(1, 96, 64);
         const loader = new THREE.TextureLoader();
-        const tex = TEX[this._texKey] || {};
+        const tex = TEX[this._name] || {};
         const tryTex = (p) => (p ? loader.load(p) : null);
 
         const matParams = {};
-        if (tex.color) {
-          matParams.map = tryTex(tex.color);
-          if (matParams.map && THREE && THREE.SRGBColorSpace) {
-            matParams.map.colorSpace = THREE.SRGBColorSpace;
-          }
-        }
-        if (tex.normal)  matParams.normalMap  = tryTex(tex.normal);
-        if (tex.bump)   { matParams.bumpMap   = tryTex(tex.bump);   matParams.bumpScale = 0.6; }
-        if (tex.spec)    matParams.specularMap= tryTex(tex.spec);
+        if (tex.color)   matParams.map         = setSRGB(tryTex(tex.color));
+        if (tex.normal)  matParams.normalMap   = tryTex(tex.normal);
+        if (tex.bump)   { matParams.bumpMap    = tryTex(tex.bump);   matParams.bumpScale = 0.6; }
+        if (tex.spec)    matParams.specularMap = setSRGB(tryTex(tex.spec));
 
         this.material = new THREE.MeshPhongMaterial(matParams);
         const light = new THREE.DirectionalLight(0xffffff, 1.0);
@@ -109,19 +91,16 @@
         this.mesh = new THREE.Mesh(geom, this.material);
         this.scene.add(this.mesh);
 
-        if (this._texKey === 'earth' && tex.clouds) {
+        if (this._name === 'earth' && tex.clouds) {
           const clouds = new THREE.Mesh(
             new THREE.SphereGeometry(1.008, 64, 48),
-            new THREE.MeshPhongMaterial({ map: tryTex(tex.clouds), transparent: true, depthWrite: false })
+            new THREE.MeshPhongMaterial({ map: setSRGB(tryTex(tex.clouds)), transparent: true, depthWrite: false })
           );
-          if (clouds.material.map && THREE && THREE.SRGBColorSpace) {
-            clouds.material.map.colorSpace = THREE.SRGBColorSpace;
-          }
           this.scene.add(clouds);
           this.clouds = clouds;
         }
         if (tex.ring) {
-          const ringTex = tryTex(tex.ring);
+          const ringTex = setSRGB(tryTex(tex.ring));
           const ringGeo = new THREE.RingGeometry(1.35, 2.4, 256, 1);
           const ringMat = new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, side: THREE.DoubleSide });
           const ring = new THREE.Mesh(ringGeo, ringMat);
@@ -199,6 +178,7 @@
       this.canvas.width = 1024; this.canvas.height = 1024;
       this.ctx2d = this.canvas.getContext('2d');
       this.spin = 0.02;
+      this.rotSpeed = 0.05;
 
       if (typeof THREE === 'undefined') return;
       this.scene = new THREE.Scene();
@@ -265,6 +245,7 @@
       if (!r || !this.scene || !this.camera) return;
       r.setClearColor(0x000000, 0);
       r.render(this.scene, this.camera);
+      this.scene.rotation.z += this.rotSpeed * dt;
       this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       this.ctx2d.drawImage(r.domElement, 0, 0, this.canvas.width, this.canvas.height);
     }
