@@ -47,61 +47,57 @@
       this.canvas = document.createElement("canvas");
       this.canvas.width = 256; this.canvas.height = 256;
       this.ctx2d = this.canvas.getContext("2d");
-
-      if (typeof THREE === "undefined") return;
-
-      this.scene = new THREE.Scene();
-      this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
-      this.camera.position.z = 3;
-
-      const geom = new THREE.SphereGeometry(1, 96, 64);
-      const loader = new THREE.TextureLoader();
-      const name = (opts.name || opts.id || "").toLowerCase();
-      const tex = TEX[name] || {};
-
-      const tryTex = (p) => (p ? loader.load(p) : null);
-
-      const matParams = {};
-      if (tex.color)   matParams.map        = tryTex(tex.color);
-      if (tex.normal)  matParams.normalMap  = tryTex(tex.normal);
-      if (tex.bump)   { matParams.bumpMap   = tryTex(tex.bump);   matParams.bumpScale = 0.6; }
-      if (tex.spec)    matParams.specularMap= tryTex(tex.spec);
-
-      // Phong bo ładnie działa z mapami
-      this.material = new THREE.MeshPhongMaterial(matParams);
-      const light = new THREE.DirectionalLight(0xffffff, 1.0);
-      light.position.set(2, 1, 2);
-      this.scene.add(light);
-
-      this.mesh = new THREE.Mesh(geom, this.material);
-      this.scene.add(this.mesh);
-
-      // Chmury Ziemi (jeśli dostępne)
-      if (name === 'earth' && tex.clouds) {
-        const clouds = new THREE.Mesh(
-          new THREE.SphereGeometry(1.008, 64, 48),
-          new THREE.MeshPhongMaterial({ map: tryTex(tex.clouds), transparent: true, depthWrite: false })
-        );
-        this.scene.add(clouds);
-        this.clouds = clouds;
-      }
-
-      // Pierścienie Saturn/Uran
-      if (tex.ring) {
-        const ringTex = tryTex(tex.ring);
-        const ringGeo = new THREE.RingGeometry(1.35, 2.4, 256, 1);
-        const ringMat = new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, side: THREE.DoubleSide });
-        const ring = new THREE.Mesh(ringGeo, ringMat);
-        ring.rotation.x = Math.PI / 2;
-        this.scene.add(ring);
-        this.ring = ring;
-      }
-
-      // delikatny obrót
+      // Zapisz nazwę i odłóż tworzenie sceny do chwili, gdy THREE będzie gotowe.
+      this._name = (opts.name || opts.id || "").toLowerCase();
+      this._needsInit = true;
       this.spin = 0.04 + Math.random() * 0.06;
     }
 
     render(dt) {
+      // Lazy init: zainicjuj scenę dopiero kiedy THREE jest dostępne
+      if (this._needsInit && typeof THREE !== "undefined") {
+        this._needsInit = false;
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+        this.camera.position.z = 3;
+
+        const geom = new THREE.SphereGeometry(1, 96, 64);
+        const loader = new THREE.TextureLoader();
+        const tex = TEX[this._name] || {};
+        const tryTex = (p) => (p ? loader.load(p) : null);
+
+        const matParams = {};
+        if (tex.color)   matParams.map        = tryTex(tex.color);
+        if (tex.normal)  matParams.normalMap  = tryTex(tex.normal);
+        if (tex.bump)   { matParams.bumpMap   = tryTex(tex.bump);   matParams.bumpScale = 0.6; }
+        if (tex.spec)    matParams.specularMap= tryTex(tex.spec);
+
+        this.material = new THREE.MeshPhongMaterial(matParams);
+        const light = new THREE.DirectionalLight(0xffffff, 1.0);
+        light.position.set(2, 1, 2);
+        this.scene.add(light);
+
+        this.mesh = new THREE.Mesh(geom, this.material);
+        this.scene.add(this.mesh);
+
+        if (this._name === 'earth' && tex.clouds) {
+          const clouds = new THREE.Mesh(
+            new THREE.SphereGeometry(1.008, 64, 48),
+            new THREE.MeshPhongMaterial({ map: tryTex(tex.clouds), transparent: true, depthWrite: false })
+          );
+          this.scene.add(clouds);
+          this.clouds = clouds;
+        }
+        if (tex.ring) {
+          const ringTex = tryTex(tex.ring);
+          const ringGeo = new THREE.RingGeometry(1.35, 2.4, 256, 1);
+          const ringMat = new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, side: THREE.DoubleSide });
+          const ring = new THREE.Mesh(ringGeo, ringMat);
+          ring.rotation.x = Math.PI / 2;
+          this.scene.add(ring);
+          this.ring = ring;
+        }
+      }
       if (!this.scene || !this.camera) return;
       this.mesh.rotation.y += this.spin * dt;
       if (this.clouds) this.clouds.rotation.y += this.spin * dt * 1.3;
@@ -130,20 +126,20 @@
       this.canvas = document.createElement('canvas');
       this.canvas.width = 256; this.canvas.height = 256;
       this.ctx2d = this.canvas.getContext('2d');
-
-      if (typeof THREE === "undefined") return;
-      this.scene = new THREE.Scene();
-      this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-      this.camera.position.z = 3;
-
-      const loader = new THREE.TextureLoader();
-      const tex = loader.load('assets/planety/solar/sun/sun_color.jpg');
-      const mat = new THREE.MeshBasicMaterial({ map: tex });
-      const mesh = new THREE.Mesh(new THREE.SphereGeometry(1.0, 128, 96), mat);
-      this.scene.add(mesh);
-      this.mesh = mesh;
+      this._needsInit = true;
     }
     render(dt){
+      if (this._needsInit && typeof THREE !== "undefined") {
+        this._needsInit = false;
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+        this.camera.position.z = 3;
+        const loader = new THREE.TextureLoader();
+        const tex = loader.load('assets/planety/solar/sun/sun_color.jpg');
+        const mat = new THREE.MeshBasicMaterial({ map: tex });
+        this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1.0, 128, 96), mat);
+        this.scene.add(this.mesh);
+      }
       if (!this.scene || !this.camera) return;
       this.mesh.rotation.y += 0.02*dt;
 
