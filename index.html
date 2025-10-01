@@ -745,12 +745,46 @@ function makeProceduralPlanets(){
 
 const PLANET_DATA = USE_SOLAR ? makeSolarPlanets() : makeProceduralPlanets();
 
+function formatPlanetLabel(planet, index){
+  if (typeof planet.label === 'string' && planet.label.trim().length) {
+    return planet.label.trim();
+  }
+  const candidates = [];
+  if (typeof planet.name === 'string') candidates.push(planet.name);
+  if (typeof planet.id === 'string') candidates.push(planet.id);
+  if (typeof planet.type === 'string') candidates.push(planet.type);
+
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const pretty = raw
+      .replace(/[_-]+/g, ' ')
+      .trim()
+      .replace(/\b\w/g, ch => ch.toUpperCase());
+    if (pretty) return pretty;
+  }
+  return `Planet ${index + 1}`;
+}
+
 // wylicz pozycje
-let planets = PLANET_DATA.map(p => {
+let planets = PLANET_DATA.map((p, index) => {
   p.x = SUN.x + Math.cos(p.angle) * p.orbitRadius;
   p.y = SUN.y + Math.sin(p.angle) * p.orbitRadius;
+  p.label = formatPlanetLabel(p, index);
   return p;
 });
+
+const ASTEROID_BELT = (() => {
+  const innerPlanet = planets[3];
+  const outerPlanet = planets[4];
+  if (innerPlanet && outerPlanet && innerPlanet.orbitRadius && outerPlanet.orbitRadius) {
+    const r1 = innerPlanet.orbitRadius;
+    const r2 = outerPlanet.orbitRadius;
+    const inner = r1 + 0.25 * (r2 - r1);
+    const outer = r1 + 0.55 * (r2 - r1);
+    return { inner, outer, mid: (inner + outer) / 2 };
+  }
+  return null;
+})();
 
 const STATION_STYLES = ['ringGate','hexHub','triRing','solarPetals','shipyard','tradeSpindle'];
 
@@ -775,8 +809,8 @@ let stations = planets.map(pl => {
 
 // oznacz stacje wewnątrz pasa asteroid
 (() => {
-  if (planets[3] && planets[4]) {
-    const beltRadius = (planets[3].orbitRadius + planets[4].orbitRadius) / 2;
+  if (ASTEROID_BELT) {
+    const beltRadius = ASTEROID_BELT.mid;
     for (const st of stations) st.inner = st.orbitRadius < beltRadius;
   } else {
     for (const st of stations) st.inner = true;
@@ -1389,7 +1423,11 @@ initMechanicUI();
 function startMercenaryMission(){
   if(mercMission) { toast('Misja już aktywna. Wciśnij J aby zobaczyć dziennik.'); return; }
 
-  const beltRadius = (planets[3].orbitRadius + planets[4].orbitRadius) / 2;
+  const beltRadius = ASTEROID_BELT
+    ? ASTEROID_BELT.mid
+    : (planets[3] && planets[4])
+      ? (planets[3].orbitRadius + planets[4].orbitRadius) / 2
+      : Math.max(12000, planets[planets.length - 1]?.orbitRadius || 0);
   const angle = Math.random() * Math.PI * 2;
   const x = SUN.x + Math.cos(angle) * beltRadius;
   const y = SUN.y + Math.sin(angle) * beltRadius;
@@ -3528,6 +3566,32 @@ function drawStationVFX(ctx, st, x, y, r, t){
   ctx.beginPath(); ctx.arc(x, y, r*1.05, 0, Math.PI*2); ctx.stroke();
 }
 
+function drawPlanetLabels(ctx, cam){
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  const fontSize = Math.round(clamp(18 * camera.zoom, 12, 30));
+  ctx.font = `600 ${fontSize}px Inter,system-ui,monospace`;
+  ctx.lineJoin = 'round';
+  for(const pl of planets){
+    if(!pl || !pl.label) continue;
+    const screen = worldToScreen(pl.x, pl.y, cam);
+    if(screen.x < -160 || screen.x > W + 160 || screen.y < -160 || screen.y > H + 160) continue;
+    const offset = ((pl.r || 0) + 40) * camera.zoom;
+    const y = screen.y - offset;
+    ctx.save();
+    ctx.shadowColor = 'rgba(12, 22, 42, 0.7)';
+    ctx.shadowBlur = fontSize * 0.4;
+    ctx.lineWidth = Math.max(2, fontSize * 0.18);
+    ctx.strokeStyle = 'rgba(10, 20, 36, 0.85)';
+    ctx.fillStyle = 'rgba(223, 231, 255, 0.95)';
+    ctx.strokeText(pl.label, screen.x, y);
+    ctx.fillText(pl.label, screen.x, y);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
 function drawStars(cam){
   // jak daleko poza ekran ładować komórki
   const marginW = (W/2)/camera.zoom + 2000;
@@ -3759,23 +3823,7 @@ function render(alpha, frameDt){
   }
 
   if (window.drawPlanets3D)   drawPlanets3D(ctx, cam);
-
-  // drogi między stacjami
-  const drawn = new Set();
-  for(const npc of npcs){
-    if(npc.dead) continue;
-    const start = stations.find(s=>s.id===npc.lastStation);
-    const target = stations.find(s=>s.id===npc.target);
-    if(!start || !target) continue;
-    const key = start.id < target.id ? start.id+'-'+target.id : target.id+'-'+start.id;
-    if(drawn.has(key)) continue;
-    drawn.add(key);
-    const s1 = worldToScreen(start.x, start.y, cam);
-    const s2 = worldToScreen(target.x, target.y, cam);
-    ctx.strokeStyle = 'rgba(120,180,255,0.15)';
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.stroke();
-  }
+  drawPlanetLabels(ctx, cam);
 
   // Warp gates
   for(const key in warpRoutes){
@@ -4428,6 +4476,26 @@ function drawSectorMap(){
   ctx.beginPath();
   ctx.arc(x0 + SUN.x * sx, y0 + SUN.y * sy, 6, 0, Math.PI*2);
   ctx.fill();
+
+  if (ASTEROID_BELT) {
+    const cx = x0 + SUN.x * sx;
+    const cy = y0 + SUN.y * sy;
+    const outerRx = ASTEROID_BELT.outer * sx;
+    const outerRy = ASTEROID_BELT.outer * sy;
+    const innerRx = ASTEROID_BELT.inner * sx;
+    const innerRy = ASTEROID_BELT.inner * sy;
+    ctx.save();
+    ctx.fillStyle = 'rgba(168, 182, 204, 0.18)';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, outerRx, outerRy, 0, 0, Math.PI*2);
+    ctx.ellipse(cx, cy, innerRx, innerRy, 0, 0, Math.PI*2);
+    ctx.fill('evenodd');
+    ctx.strokeStyle = 'rgba(168, 182, 204, 0.35)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(cx, cy, outerRx, outerRy, 0, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(cx, cy, innerRx, innerRy, 0, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
 
   ctx.fillStyle = '#60a5fa';
   for(const st of stations){
