@@ -184,6 +184,8 @@
       this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
       this.camera.position.set(0, 0.6, 4.2);
       this.camera.lookAt(0, 0, 0);
+      // Normalizacja geometrii do przestrzeni offscreen (0..~2), a nie tysięcy jednostek:
+      const _norm = 1 / outerRadius;
 
       // Ładowanie paczki asteroid z assets (już w repo)
       const tryLoadGLTF = () => {
@@ -209,8 +211,9 @@
             for (let i = 0; i < count; i++) {
               // losowa pozycja w torusie
               const a = Math.random() * TAU;
-              const r = innerRadius + Math.random() * (outerRadius - innerRadius);
-              const z = (Math.random() - 0.5) * 0.12 * outerRadius;
+              const rWorld = innerRadius + Math.random() * (outerRadius - innerRadius);
+              const r = rWorld * _norm;               // 0..~2 w scenie offscreen
+              const z = (Math.random() - 0.5) * 0.12; // grubość pasa w jednostkach sceny
               const x = Math.cos(a) * r;
               const y = Math.sin(a) * r;
               const s = 0.018 + Math.random() * 0.045;
@@ -254,7 +257,7 @@
     _planets.length = 0;
     for (const s of list) {
       const size = (s.r || 30) * 2.0;
-      const planet = new AssetPlanet3D(s.x, s.y, size, { name: s.name || s.id || null });
+      const planet = new AssetPlanet3D(s.x, s.y, size, { name: s.name || s.id || null, type: s.type });
       _planets.push(planet);
     }
 
