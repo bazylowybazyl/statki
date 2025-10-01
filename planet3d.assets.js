@@ -48,7 +48,7 @@
       this.canvas.width = 256; this.canvas.height = 256;
       this.ctx2d = this.canvas.getContext("2d");
       // Zapisz nazwę i odłóż tworzenie sceny do chwili, gdy THREE będzie gotowe.
-      this._name = (opts.name || opts.id || "").toLowerCase();
+      this._name = String((opts && (opts.name ?? opts.id)) ?? "").toLowerCase();
       this._needsInit = true;
       this.spin = 0.04 + Math.random() * 0.06;
     }
