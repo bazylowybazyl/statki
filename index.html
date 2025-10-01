@@ -78,6 +78,7 @@
   import { CopyShader }      from "three/addons/shaders/CopyShader.js";
   import { createShortNeedleExhaust, createWarpExhaustBlue } from "./Engineeffects.js";
   import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+  import { initWorld3D, attachPirateStation3D, dettachPirateStation3D, updateWorld3D, drawWorld3D } from "./src/3d/world3d.js";
   window.THREE = THREE;
   window.EffectComposer  = EffectComposer;
   window.RenderPass      = RenderPass;
@@ -87,6 +88,11 @@
   window.createShortNeedleExhaust = createShortNeedleExhaust;
   window.createWarpExhaustBlue = createWarpExhaustBlue;
   window.GLTFLoader = GLTFLoader;
+  window.initWorld3D = initWorld3D;
+  window.attachPirateStation3D = attachPirateStation3D;
+  window.dettachPirateStation3D = dettachPirateStation3D;
+  window.updateWorld3D = updateWorld3D;
+  window.drawWorld3D = drawWorld3D;
   // Nie modyfikujemy namespace'u modułu THREE (jest niemodyfikowalny).
   // Jeśli coś potrzebuje CopyShader globalnie, wystawiamy go przez window:
   window.CopyShader = CopyShader;
@@ -101,6 +107,8 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
 window.addEventListener('resize', ()=>{ W = canvas.width = innerWidth; H = canvas.height = innerHeight; initStars(true); });
+
+let mainScene3D = null;
 
 const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
 const add = (a,b)=>({x:a.x+b.x,y:a.y+b.y});
@@ -1098,6 +1106,10 @@ function initNPCs(){
 // Ensure Three.js modules are loaded before initializing 3D objects
 window.addEventListener('DOMContentLoaded', () => {
   initPlanets3D(planets, SUN);
+  if (typeof window.initWorld3D === 'function') {
+    const res = initWorld3D();
+    mainScene3D = res?.scene || null;
+  }
 });
 
 // =============== Bullets & effects ===============
@@ -1470,6 +1482,13 @@ function startMercenaryMission(){
   };
 
   stations.push(station);
+  if (typeof window.attachPirateStation3D === 'function') {
+    if (!mainScene3D && typeof window.initWorld3D === 'function') {
+      const res = initWorld3D();
+      mainScene3D = res?.scene || mainScene3D;
+    }
+    window.attachPirateStation3D(mainScene3D, station);
+  }
   mercMission = {
     station,
     npcsSpawned:false,
@@ -2485,6 +2504,9 @@ function bulletsAndCollisionsStep(dt){
           if(mercMission && mercMission.station === st){
             PLAYER.credits += 10000;
             stations.splice(stations.indexOf(st),1);
+            if (typeof window.dettachPirateStation3D === 'function') {
+              window.dettachPirateStation3D(mainScene3D);
+            }
             mercMission = null;
 
             const m = MISSIONS.active.find(mm => mm.id === 'merc_pirate_station' && mm.status === 'active');
@@ -3807,6 +3829,7 @@ function render(alpha, frameDt){
   // Czyścimy ekran
   ctx.clearRect(0,0,W,H);
   if (window.updatePlanets3D) updatePlanets3D(frameDt);
+  if (window.updateWorld3D) updateWorld3D(frameDt, vfxTime);
 
   // Gwiazdy (proceduralne kafelki na całej mapie)
   drawStars(cam);
@@ -3823,6 +3846,7 @@ function render(alpha, frameDt){
   }
 
   if (window.drawPlanets3D)   drawPlanets3D(ctx, cam);
+  if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen);
   drawPlanetLabels(ctx, cam);
 
   // Warp gates
