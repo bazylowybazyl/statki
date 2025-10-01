@@ -47,8 +47,12 @@
       this.canvas = document.createElement("canvas");
       this.canvas.width = 256; this.canvas.height = 256;
       this.ctx2d = this.canvas.getContext("2d");
-      // Zapisz nazwę i odłóż tworzenie sceny do chwili, gdy THREE będzie gotowe.
-      this._name = String((opts && (opts.name ?? opts.id)) ?? "").toLowerCase();
+      // Wyznacz klucz tekstur z name / id / type + aliasy dla trybu proceduralnego.
+      const ALIAS = { terran: 'earth', volcanic: 'venus', frozen: 'neptune', gas: 'jupiter', barren: 'mercury' };
+      const raw = (opts && (opts.name ?? opts.id ?? opts.type)) ?? "";
+      let key = String(raw).toLowerCase();
+      if (!TEX[key] && ALIAS[key]) key = ALIAS[key];
+      this._name = key; // np. 'earth', 'venus', 'jupiter'...
       this._needsInit = true;
       this.spin = 0.04 + Math.random() * 0.06;
     }
@@ -67,7 +71,12 @@
         const tryTex = (p) => (p ? loader.load(p) : null);
 
         const matParams = {};
-        if (tex.color)   matParams.map        = tryTex(tex.color);
+        if (tex.color) {
+          matParams.map = tryTex(tex.color);
+          if (matParams.map && THREE && THREE.SRGBColorSpace) {
+            matParams.map.colorSpace = THREE.SRGBColorSpace;
+          }
+        }
         if (tex.normal)  matParams.normalMap  = tryTex(tex.normal);
         if (tex.bump)   { matParams.bumpMap   = tryTex(tex.bump);   matParams.bumpScale = 0.6; }
         if (tex.spec)    matParams.specularMap= tryTex(tex.spec);
@@ -85,6 +94,9 @@
             new THREE.SphereGeometry(1.008, 64, 48),
             new THREE.MeshPhongMaterial({ map: tryTex(tex.clouds), transparent: true, depthWrite: false })
           );
+          if (clouds.material.map && THREE && THREE.SRGBColorSpace) {
+            clouds.material.map.colorSpace = THREE.SRGBColorSpace;
+          }
           this.scene.add(clouds);
           this.clouds = clouds;
         }
