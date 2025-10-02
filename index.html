@@ -3517,6 +3517,29 @@ function drawSunWithCorona(ctx, cam, t) {
   ctx.restore();
 }
 
+function drawStationShadow(ctx, st, cam){
+  const s = worldToScreen(st.x, st.y, cam);
+  const toSun = { x: (SUN.x - st.x), y: (SUN.y - st.y) };
+  const ang = Math.atan2(toSun.y, toSun.x) + Math.PI; // cień „od” Słońca
+  const base = st.r || 120;
+  const off  = base * 1.2 * cam.zoom;
+  const w = base * 1.6 * cam.zoom;
+  const h = base * 0.7 * cam.zoom;
+
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.rotate(ang);
+  const g = ctx.createRadialGradient(off, 0, 0, off, 0, w);
+  g.addColorStop(0.00, 'rgba(0,0,0,0.35)');
+  g.addColorStop(1.00, 'rgba(0,0,0,0.00)');
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.beginPath();
+  ctx.ellipse(off, 0, w, h, 0, 0, Math.PI*2);
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawStationVFX(ctx, st, x, y, r, t){
   ctx.save();
   ctx.translate(x, y);
@@ -3880,6 +3903,7 @@ function render(alpha, frameDt){
 
   // Stacje
   for(const st of stations){
+    drawStationShadow(ctx, st, cam);
     const s = worldToScreen(st.x, st.y, cam);
     const rr = st.r * camera.zoom;
     drawStationVFX(ctx, st, s.x, s.y, rr, gameTime);
