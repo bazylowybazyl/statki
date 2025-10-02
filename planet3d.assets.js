@@ -117,7 +117,7 @@
         const d = sunDirFor(this.x, this.y);
         const sunDL = new THREE.DirectionalLight(0xffffff, 1.15);
         sunDL.castShadow = true;
-        sunDL.position.set(-d.x * 10, -d.y * 10, -d.z * 10);
+        sunDL.position.set(d.x * 10, d.y * 10, d.z * 10);
         sunDL.target.position.set(0, 0, 0);
         this.scene.add(sunDL.target);
         // budżet shadowmap per planeta
@@ -301,7 +301,7 @@
       const d = sunDirFor((window.SUN?.x ?? 0), (window.SUN?.y ?? 0));
       const beltDL = new THREE.DirectionalLight(0xffffff, 1.1);
       beltDL.castShadow = true;
-      beltDL.position.set(-d.x * 50, -d.y * 50, -d.z * 50);
+      beltDL.position.set(d.x * 50, d.y * 50, d.z * 50);
       beltDL.target.position.set(0, 0, 0);
       this.scene.add(beltDL.target);
       // większa projekcja — pas jest duży
