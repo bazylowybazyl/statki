@@ -3521,7 +3521,8 @@ function drawStationShadow(ctx, st, cam){
   const s = worldToScreen(st.x, st.y, cam);
   const toSun = { x: (SUN.x - st.x), y: (SUN.y - st.y) };
   const ang = Math.atan2(toSun.y, toSun.x) + Math.PI; // cień „od” Słońca
-  const base = st.r || 120;
+  const pirate = (st.style === 'pirate') || (st.name && st.name.toLowerCase().includes('pir'));
+  const base = (st.r || 120) * (pirate ? (window.DevConfig?.pirateScale || 1) : 1);
   const off  = base * 1.2 * cam.zoom;
   const w = base * 1.6 * cam.zoom;
   const h = base * 0.7 * cam.zoom;
@@ -3825,6 +3826,8 @@ function drawNPCPretty(ctx, npc, screenPos){
 
 function render(alpha, frameDt){
   canvas.style.cursor = 'default';
+  // DevTools cheats (np. nielimitowany warp)
+  if (window.devtoolsApplyCheats) devtoolsApplyCheats();
   // Interpolacja stanu
   const interpPos = {
     x: prevState.pos.x + (ship.pos.x - prevState.pos.x) * alpha,
@@ -3871,6 +3874,8 @@ function render(alpha, frameDt){
   if (window.drawPlanets3D)   drawPlanets3D(ctx, cam);
   if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen);
   drawPlanetLabels(ctx, cam);
+  // Miarka dystansu (jeśli włączona)
+  if (window.drawRangeRings) drawRangeRings(ctx, cam);
 
   // Warp gates
   for(const key in warpRoutes){
@@ -3905,7 +3910,9 @@ function render(alpha, frameDt){
   for(const st of stations){
     drawStationShadow(ctx, st, cam);
     const s = worldToScreen(st.x, st.y, cam);
-    const rr = st.r * camera.zoom;
+    const pirate = (st.style === 'pirate') || (st.name && st.name.toLowerCase().includes('pir'));
+    const visR = st.r * (pirate ? (window.DevConfig?.pirateScale || 1) : 1);
+    const rr = visR * camera.zoom;
     drawStationVFX(ctx, st, s.x, s.y, rr, gameTime);
     for(let i=0;i<st.ports.length;i++){
       const pw = stationPortWorld(st, i);
@@ -4722,5 +4729,290 @@ function startGame(){
 }
 setTimeout(startGame, 500);
 </script>
+
+<!-- === DEVTOOLS (F10) =================================================== -->
+<style>
+  #devtools{position:fixed; right:16px; top:16px; width:340px; max-height:80vh;
+    overflow:auto; padding:14px; border-radius:12px; background:rgba(10,14,25,.92);
+    border:1px solid #1b2337; color:#dfe7ff; z-index:1000; font-family:Inter, system-ui, Segoe UI, Roboto, Arial; display:none}
+  #devtools h3{margin:0 0 8px 0; font-size:16px; letter-spacing:.04em; text-transform:uppercase; color:#8fb5ff}
+  #devtools .group{margin:12px 0; padding:10px; background:#0b0f1a; border:1px solid #1b2337; border-radius:10px}
+  #devtools .row{display:flex; align-items:center; gap:8px; margin:6px 0}
+  #devtools .row label{flex:1}
+  #devtools input[type=range]{width:180px}
+  #devtools .val{min-width:64px; text-align:right; font-variant-numeric: tabular-nums}
+  #devtools .small{opacity:.7; font-size:12px}
+  #devtools .pill{display:inline-block; padding:2px 8px; border:1px solid #2a3a5a; border-radius:999px; background:#0a1020}
+  #devtools textarea{width:100%; height:90px; background:#0b1224; color:#dfe7ff; border:1px solid #2a3a5a; border-radius:8px; padding:8px}
+  #devtools .muted{color:#9fb0d8}
+</style>
+
+<div id="devtools">
+  <h3>DevTools</h3>
+
+  <div class="group">
+    <div class="row"><strong>Wszechświat</strong></div>
+    <div class="row">
+      <label>Słońce – promień (R)</label>
+      <input id="sunR" type="range" min="50" max="600" step="1">
+      <div class="val" id="sunRVal"></div>
+    </div>
+    <div class="row">
+      <label>Planety – skala globalna (×)</label>
+      <input id="planetScaleAll" type="range" min="0.5" max="3" step="0.01">
+      <div class="val" id="planetScaleAllVal"></div>
+    </div>
+  </div>
+
+  <div class="group" id="planetsGroup">
+    <div class="row"><strong>Planety (R)</strong> <span class="small muted">(per-planeta)</span></div>
+    <!-- Tu JS doda po 1 wierszu na planetę -->
+  </div>
+
+  <div class="group">
+    <div class="row"><strong>Stacje</strong></div>
+    <div class="row">
+      <label>Skala stacji pirackiej (×)</label>
+      <input id="pirScale" type="range" min="0.4" max="5" step="0.01">
+      <div class="val" id="pirScaleVal"></div>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="row">
+      <label><input id="toggleRuler" type="checkbox"> Miarka (okręgi dystansu) <span class="pill">F11</span></label>
+    </div>
+    <div class="row">
+      <label><input id="toggleUnlimitedWarp" type="checkbox"> Nielimitowany warp <span class="pill">F9</span></label>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="row"><strong>Konfiguracja</strong></div>
+    <div class="row">
+      <button id="btnCopy">Kopiuj aktualną konfigurację</button>
+      <button id="btnReset" style="margin-left:auto">Reset</button>
+    </div>
+    <div class="row"><textarea id="cfgOut" readonly></textarea></div>
+    <div class="small muted">Skopiuj JSON i wklej do kodu (np. stałe R), gdy chcesz utrwalić w repo.</div>
+  </div>
+
+  <div class="small muted">F10 — pokaż/ukryj panel</div>
+</div>
+<!-- ====================================================================== -->
+
+<script>
+(function(){
+  // === Wczytaj podstawowe obiekty gry (muszą już istnieć globalnie): SUN, planets, initPlanets3D ===
+  // Zakładamy: let SUN = {...}, let planets = [...]; render pętla już działa.
+
+  // ---- Stan & persistencja ------------------------------------------------
+  const DevConfig = {
+    sunR: null,                 // liczba — promień Słońca (SUN.r)
+    planetRById: {},            // { [id or name]: R }
+    planetScaleAll: 1,          // mnożnik globalny ×R
+    pirateScale: 1.0,           // mnożnik rysowania stacji pirackiej
+  };
+  const DevFlags = { showRuler:false, unlimitedWarp:false };
+  window.DevConfig = DevConfig;
+  window.DevFlags  = DevFlags;
+
+  // ---- Elementy UI --------------------------------------------------------
+  const el = (id)=>document.getElementById(id);
+  const ui = {
+    root: el('devtools'),
+    sunR: el('sunR'), sunRVal: el('sunRVal'),
+    planetScaleAll: el('planetScaleAll'), planetScaleAllVal: el('planetScaleAllVal'),
+    pirScale: el('pirScale'), pirScaleVal: el('pirScaleVal'),
+    planetsGroup: el('planetsGroup'),
+    cbRuler: el('toggleRuler'),
+    cbUnlimited: el('toggleUnlimitedWarp'),
+    btnCopy: el('btnCopy'), btnReset: el('btnReset'),
+    cfgOut: el('cfgOut')
+  };
+
+  // ---- Inicjalne odczyty z gry -------------------------------------------
+  function bootstrapFromGame(){
+    if (DevConfig.sunR == null) DevConfig.sunR = SUN.r;
+    // domyślne per-planeta (key = name lub id)
+    for (const p of planets) {
+      const key = (p.name || p.id || String(p.index)||'').toString().toLowerCase();
+      if (!DevConfig.planetRById[key]) DevConfig.planetRById[key] = p.r;
+    }
+  }
+
+  // ---- Persistencja -------------------------------------------------------
+  function loadLS(){
+    try {
+      const cfg = JSON.parse(localStorage.getItem('devConfig')||'null');
+      const flags = JSON.parse(localStorage.getItem('devFlags')||'null');
+      if (cfg && typeof cfg==='object'){
+        Object.assign(DevConfig, cfg);
+      }
+      if (flags && typeof flags==='object'){
+        Object.assign(DevFlags, flags);
+      }
+    } catch {}
+  }
+  function saveLS(){
+    localStorage.setItem('devConfig', JSON.stringify(DevConfig));
+    localStorage.setItem('devFlags', JSON.stringify(DevFlags));
+  }
+
+  // ---- Rebuild 3D (throttle) ---------------------------------------------
+  let rebuildTimer = null;
+  function scheduleRebuild3D(){
+    if (rebuildTimer) cancelAnimationFrame(rebuildTimer);
+    rebuildTimer = requestAnimationFrame(()=> {
+      // aktualizujemy struktury gry na podstawie DevConfig
+      SUN.r = DevConfig.sunR|0;
+      const scaleAll = +DevConfig.planetScaleAll || 1;
+      for (const p of planets) {
+        const key = (p.name || p.id || String(p.index)||'').toString().toLowerCase();
+        const base = DevConfig.planetRById[key] ?? p.r;
+        p.r = Math.max(1, Math.round(base * scaleAll));
+      }
+      // Odbudowa warstwy 3D
+      if (typeof initPlanets3D === 'function') initPlanets3D(planets, SUN);
+    });
+  }
+
+  // ---- Rysowanie miarki ---------------------------------------------------
+  function niceStep(pxPerUnit){
+    const targetPx = 150;
+    const raw = targetPx / pxPerUnit; // w jednostkach świata
+    const p10 = Math.pow(10, Math.floor(Math.log10(raw)));
+    const mant = raw / p10;
+    let m = 1; if (mant>2) m=2; if (mant>5) m=5;
+    return m*p10;
+  }
+  function fmtU(u){ if (u>=1e6) return (u/1e6).toFixed(1)+'M'; if (u>=1e3) return (u/1e3).toFixed(1)+'k'; return u.toFixed(0); }
+
+  // WSTRZYKNIJ hak rysujący w globalny scope (wywołasz w render())
+  window.drawRangeRings = function drawRangeRings(ctx, cam){
+    if (!DevFlags.showRuler || !window.ship) return;
+    const pxPerUnit = cam.zoom;
+    const step = niceStep(pxPerUnit);
+    const maxRWorld = Math.min(window.W, window.H) * 0.48 / cam.zoom;
+    const C = window.worldToScreen(window.ship.pos.x, window.ship.pos.y, cam);
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(150,190,255,0.25)'; ctx.lineWidth = 1;
+    ctx.fillStyle = 'rgba(190,220,255,0.95)';
+    ctx.font = '12px Inter, system-ui, Segoe UI, Roboto, Arial'; ctx.textBaseline='middle';
+
+    for (let r=step; r<maxRWorld; r+=step){
+      const R = r * cam.zoom;
+      ctx.beginPath(); ctx.arc(C.x, C.y, R, 0, Math.PI*2); ctx.stroke();
+      ctx.fillText(fmtU(r), C.x + R + 6, C.y);
+    }
+    ctx.globalAlpha = 0.7;
+    ctx.beginPath(); ctx.moveTo(C.x-8,C.y); ctx.lineTo(C.x+8,C.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(C.x, C.y-8); ctx.lineTo(C.x, C.y+8); ctx.stroke();
+    ctx.restore();
+  };
+
+  // ---- Cheat: unlimited warp ---------------------------------------------
+  window.devtoolsApplyCheats = function devtoolsApplyCheats(){
+    if (!DevFlags.unlimitedWarp) return;
+    const s = window.ship;
+    if (s && s.warp){
+      if ('cooldown' in s.warp) s.warp.cooldown = 0;
+      if ('charge'   in s.warp) s.warp.charge   = s.warp.chargeMax ?? s.warp.maxCharge ?? 1;
+      if ('energy'   in s.warp) s.warp.energy   = s.warp.energyMax ?? s.warp.maxEnergy ?? 1;
+    }
+    if (typeof window.warpCooldown === 'number') window.warpCooldown = 0;
+    if (typeof window.warpEnergy === 'number' && typeof window.warpEnergyMax === 'number'){
+      window.warpEnergy = window.warpEnergyMax;
+    }
+  };
+
+  // ---- Hook na stację piracką (rysowanie) --------------------------------
+  // W drawStation*(...) gdzie skalujesz sprite/canvas po st.r — zamień na:
+  //   const R = st.r * (st.style==='pirate' || st.name?.toLowerCase().includes('pir') ? DevConfig.pirateScale : 1);
+  // Jeśli jest osobna funkcja wyliczająca promień — użyj jej (patrz Krok 4: „diff”).
+
+  // ---- UI init ------------------------------------------------------------
+  function buildPlanetsUI(){
+    // wyczyść stare
+    ui.planetsGroup.querySelectorAll('.row.p').forEach(n=>n.remove());
+    // dołóż po 1 wierszu per planeta
+    for (const p of planets){
+      const key = (p.name || p.id || String(p.index)||'').toString().toLowerCase();
+      const row = document.createElement('div');
+      row.className = 'row p';
+      row.innerHTML = `
+        <label>${p.name||('Planet '+(p.id??''))}</label>
+        <input data-k="${key}" class="plR" type="range" min="20" max="400" step="1">
+        <div class="val" id="val_${key}"></div>
+      `;
+      ui.planetsGroup.appendChild(row);
+    }
+    // podpinki
+    ui.planetsGroup.querySelectorAll('input.plR').forEach(inp=>{
+      const k = inp.dataset.k;
+      inp.value = DevConfig.planetRById[k] ?? 100;
+      el('val_'+k).textContent = inp.value;
+      inp.addEventListener('input', ()=>{
+        DevConfig.planetRById[k] = +inp.value;
+        el('val_'+k).textContent = inp.value;
+        saveLS(); scheduleRebuild3D(); reflectToCfg();
+      });
+    });
+  }
+
+  function reflectToUI(){
+    ui.sunR.value = DevConfig.sunR|0; ui.sunRVal.textContent = ui.sunR.value;
+    ui.planetScaleAll.value = DevConfig.planetScaleAll; ui.planetScaleAllVal.textContent = '×'+(+DevConfig.planetScaleAll).toFixed(2);
+    ui.pirScale.value = DevConfig.pirateScale; ui.pirScaleVal.textContent = '×'+(+DevConfig.pirateScale).toFixed(2);
+    ui.cbRuler.checked = DevFlags.showRuler;
+    ui.cbUnlimited.checked = DevFlags.unlimitedWarp;
+  }
+  function reflectToCfg(){
+    const out = {
+      sunR: DevConfig.sunR|0,
+      planetRById: DevConfig.planetRById,
+      planetScaleAll: +DevConfig.planetScaleAll,
+      pirateScale: +DevConfig.pirateScale
+    };
+    ui.cfgOut.value = JSON.stringify(out, null, 2);
+  }
+
+  // listeners
+  ui.sunR.addEventListener('input', ()=>{ DevConfig.sunR = +ui.sunR.value; ui.sunRVal.textContent = ui.sunR.value; saveLS(); scheduleRebuild3D(); reflectToCfg(); });
+  ui.planetScaleAll.addEventListener('input', ()=>{ DevConfig.planetScaleAll = +ui.planetScaleAll.value; ui.planetScaleAllVal.textContent = '×'+(+DevConfig.planetScaleAll).toFixed(2); saveLS(); scheduleRebuild3D(); reflectToCfg(); });
+  ui.pirScale.addEventListener('input', ()=>{ DevConfig.pirateScale = +ui.pirScale.value; ui.pirScaleVal.textContent = '×'+(+DevConfig.pirateScale).toFixed(2); saveLS(); reflectToCfg(); });
+
+  ui.cbRuler.addEventListener('change', ()=>{ DevFlags.showRuler = ui.cbRuler.checked; saveLS(); });
+  ui.cbUnlimited.addEventListener('change', ()=>{ DevFlags.unlimitedWarp = ui.cbUnlimited.checked; saveLS(); });
+
+  ui.btnCopy.addEventListener('click', async ()=>{
+    try { await navigator.clipboard.writeText(ui.cfgOut.value); ui.btnCopy.textContent='Skopiowano!'; setTimeout(()=>ui.btnCopy.textContent='Kopiuj aktualną konfigurację', 1200); } catch{}
+  });
+  ui.btnReset.addEventListener('click', ()=>{
+    localStorage.removeItem('devConfig'); localStorage.removeItem('devFlags');
+    location.reload();
+  });
+
+  // skróty klawiaturowe
+  window.addEventListener('keydown', (e)=>{
+    if (e.key === 'F10'){ ui.root.style.display = (ui.root.style.display==='none' || !ui.root.style.display) ? 'block' : 'none'; }
+    if (e.key === 'F11'){ DevFlags.showRuler = !DevFlags.showRuler; ui.cbRuler.checked = DevFlags.showRuler; saveLS(); }
+    if (e.key === 'F9' ){ DevFlags.unlimitedWarp = !DevFlags.unlimitedWarp; ui.cbUnlimited.checked = DevFlags.unlimitedWarp; saveLS(); }
+  });
+
+  // boot
+  loadLS();
+  bootstrapFromGame();
+  buildPlanetsUI();
+  reflectToUI();
+  reflectToCfg();
+  scheduleRebuild3D();
+
+  // Upewnij się, że panel można włączyć na starcie (dev wygoda)
+  // ui.root.style.display = 'block';
+})();
+</script>
+
 </body>
 </html>
