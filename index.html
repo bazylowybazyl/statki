@@ -113,7 +113,8 @@ let mainScene3D = null;
 // Dev flags/tuning (persisted via devtools where available)
 window.DevFlags = Object.assign({
   showRuler: false,
-  unlimitedWarp: false
+  unlimitedWarp: false,
+  use3DPirateStation: false
 }, window.DevFlags || {});
 
 window.DevTuning = Object.assign({
@@ -3985,13 +3986,21 @@ function render(alpha, frameDt){
 
   // Stacje
   for(const st of stations){
-    drawStationShadow(ctx, st, cam);
     const s = worldToScreen(st.x, st.y, cam);
     const pirate = st.isPirate || st.type === 'pirate' || st.style === 'pirate' || (st.name && st.name.toLowerCase().includes('pir'));
+    const use3D = !!(window.DevFlags && DevFlags.use3DPirateStation);
+    const ready3D = typeof window.isPirate3DReady === 'function' ? window.isPirate3DReady() : false;
+    const skip2D = use3D && ready3D && pirate;
     const scale = pirate ? DevTuning.pirateStationScale : 1.0;
     const visR = (st.baseR || st.r) * scale;
     const rr = visR * camera.zoom;
-    drawStationVFX(ctx, st, s.x, s.y, rr, gameTime);
+
+    if (skip2D) {
+      // Pomijamy rysowanie 2D – model 3D dokleja się w drawPlanets3D(...)
+    } else {
+      drawStationShadow(ctx, st, cam);
+      drawStationVFX(ctx, st, s.x, s.y, rr, gameTime);
+    }
     for(let i=0;i<st.ports.length;i++){
       const pw = stationPortWorld(st, i);
       const ps = worldToScreen(pw.x, pw.y, cam);
@@ -4812,6 +4821,7 @@ setTimeout(startGame, 500);
   const elRuler     = document.getElementById('dt-show-ruler');
   const elScale     = document.getElementById('dt-pirate-scale');
   const elScaleVal  = document.getElementById('dt-pirate-scale-value');
+  const elPir3D     = document.getElementById('dt-use-3d-pirate');
 
   if (elUnlimited) {
     elUnlimited.checked = !!DevFlags.unlimitedWarp;
@@ -4854,6 +4864,14 @@ setTimeout(startGame, 500);
     applyScale();
   } else if (elScaleVal) {
     elScaleVal.textContent = DevTuning.pirateStationScale.toFixed(2);
+  }
+
+  if (elPir3D){
+    elPir3D.checked = !!(window.DevFlags && DevFlags.use3DPirateStation);
+    elPir3D.addEventListener('change', e=>{
+      if (!window.DevFlags) window.DevFlags = {};
+      DevFlags.use3DPirateStation = e.target.checked;
+    });
   }
 })();
 </script>
@@ -4904,6 +4922,10 @@ setTimeout(startGame, 500);
       <input id="pirScale" type="range" min="0.4" max="5" step="0.01">
       <div class="val" id="pirScaleVal"></div>
     </div>
+    <label style="display:flex;gap:6px;align-items:center;margin-top:8px">
+      <input id="dt-use-3d-pirate" type="checkbox" />
+      3D Pirate Station (hide 2D)
+    </label>
   </div>
 
   <div class="group">
@@ -4954,6 +4976,7 @@ setTimeout(startGame, 500);
     planetsGroup: el('planetsGroup'),
     cbRuler: el('toggleRuler'),
     cbUnlimited: el('toggleUnlimitedWarp'),
+    cbPirate3D: el('dt-use-3d-pirate'),
     btnCopy: el('btnCopy'), btnReset: el('btnReset'),
     cfgOut: el('cfgOut')
   };
@@ -5071,6 +5094,7 @@ setTimeout(startGame, 500);
     ui.pirScale.value = DevConfig.pirateScale; ui.pirScaleVal.textContent = '×'+(+DevConfig.pirateScale).toFixed(2);
     ui.cbRuler.checked = DevFlags.showRuler;
     ui.cbUnlimited.checked = DevFlags.unlimitedWarp;
+    if (ui.cbPirate3D) ui.cbPirate3D.checked = DevFlags.use3DPirateStation;
   }
   function reflectToCfg(){
     const out = {
@@ -5095,6 +5119,9 @@ setTimeout(startGame, 500);
 
   ui.cbRuler.addEventListener('change', ()=>{ DevFlags.showRuler = ui.cbRuler.checked; saveLS(); });
   ui.cbUnlimited.addEventListener('change', ()=>{ DevFlags.unlimitedWarp = ui.cbUnlimited.checked; saveLS(); });
+  if (ui.cbPirate3D) {
+    ui.cbPirate3D.addEventListener('change', ()=>{ DevFlags.use3DPirateStation = ui.cbPirate3D.checked; saveLS(); });
+  }
 
   ui.btnCopy.addEventListener('click', async ()=>{
     try { await navigator.clipboard.writeText(ui.cfgOut.value); ui.btnCopy.textContent='Skopiowano!'; setTimeout(()=>ui.btnCopy.textContent='Kopiuj aktualną konfigurację', 1200); } catch{}

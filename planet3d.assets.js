@@ -47,6 +47,7 @@
   const _planets = [];
   let sun = null;
   let asteroidBelt = null;
+  let pirate3D = null;
   const TAU = Math.PI * 2;
   const PLANET_SIZE_MULTIPLIER = 4.5;
   const SUN_SIZE_MULTIPLIER = 6.0;
@@ -340,6 +341,99 @@
     }
   }
 
+  class PirateStation3D {
+    constructor(stationRef, sunRef){
+      this.ref = stationRef;
+      this.sunRef = sunRef;
+      this.canvas = document.createElement('canvas');
+      this.canvas.width = 512;
+      this.canvas.height = 512;
+      this.ctx2d = this.canvas.getContext('2d');
+      this._ready = false;
+      this.spin = 0.15;
+      this._needsInit = true;
+    }
+
+    _initIfNeeded(){
+      if (!this._needsInit || typeof THREE === 'undefined') return;
+      this._needsInit = false;
+
+      this.scene = new THREE.Scene();
+      this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
+      this.camera.position.set(0, 0.6, 4.2);
+      this.camera.lookAt(0, 0, 0);
+
+      const amb = new THREE.AmbientLight(0x8899aa, 0.5);
+      this.scene.add(amb);
+      const dir = new THREE.DirectionalLight(0xffffff, 1.1);
+      this.scene.add(dir);
+      this._dirLight = dir;
+
+      const coreMat  = new THREE.MeshStandardMaterial({ color: 0x66ccff, emissive: 0x2277ff, emissiveIntensity: 1.0, roughness: 0.3, metalness: 0.1 });
+      const ringMat  = new THREE.MeshStandardMaterial({ color: 0x2b3a55, metalness: 0.6, roughness: 0.4 });
+
+      const core = new THREE.Mesh(new THREE.SphereGeometry(0.55, 48, 32), coreMat);
+      this.scene.add(core);
+
+      const ringOuter = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.08, 24, 128), ringMat);
+      this.scene.add(ringOuter);
+      const ringInner = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.06, 24, 128), ringMat);
+      this.scene.add(ringInner);
+
+      this.docks = [];
+      for(let i=0;i<6;i++){
+        const a = i * Math.PI*2/6;
+        const m = new THREE.Mesh(new THREE.SphereGeometry(0.22, 32, 24), coreMat);
+        m.position.set(Math.cos(a)*0.9, 0, Math.sin(a)*0.9);
+        this.scene.add(m);
+        this.docks.push(m);
+      }
+
+      const halo = new THREE.Mesh(new THREE.RingGeometry(0.65, 1.65, 64, 1), new THREE.MeshBasicMaterial({ color: 0x5ec8ff, transparent: true, opacity: 0.12, side: THREE.DoubleSide }));
+      halo.rotation.x = Math.PI/2;
+      this.scene.add(halo);
+
+      this.core = core;
+      this.ringOuter = ringOuter;
+      this.ringInner = ringInner;
+
+      this._ready = true;
+    }
+
+    render(dt){
+      this._initIfNeeded();
+      if (!this._ready) return;
+
+      if (this.sunRef && this._dirLight && this.ref){
+        const dx = this.ref.x - this.sunRef.x;
+        const dy = this.ref.y - this.sunRef.y;
+        const len = Math.hypot(dx, dy) || 1;
+        this._dirLight.position.set(dx/len, 0.4, dy/len);
+      }
+
+      this.ringOuter.rotation.y += this.spin * dt * 0.5;
+      this.ringInner.rotation.y -= this.spin * dt * 0.7;
+
+      const r = getSharedRenderer(this.canvas.width, this.canvas.height);
+      if (!r) return;
+      r.setClearColor(0x000000, 0);
+      r.render(this.scene, this.camera);
+
+      this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
+      this.ctx2d.drawImage(r.domElement, 0, 0, this.canvas.width, this.canvas.height);
+    }
+
+    draw(ctx, cam){
+      if (!this._ready || !this.ref) return;
+      const s = worldToScreen(this.ref.x, this.ref.y, cam);
+      const scale = (window.DevTuning?.pirateStationScale ?? 1.0);
+      const pxSize = (this.ref.baseR || this.ref.r) * 2 * scale * cam.zoom;
+      ctx.drawImage(this.canvas, s.x - pxSize/2, s.y - pxSize/2, pxSize, pxSize);
+    }
+
+    get ready(){ return this._ready; }
+  }
+
   // ======= API zgodne z proceduralnym rendererem =======
   window.initPlanets3D = function initPlanets3D(list, sunObj) {
     _planets.length = 0;
@@ -363,19 +457,34 @@
     } else {
       asteroidBelt = null;
     }
+
+    const stList = (typeof window !== 'undefined' ? window.stations : null) || [];
+    const pirate = stList.find(s => s.isPirate || s.type === 'pirate' || /pir/i.test(s?.name || s?.label || ''));
+    if (pirate) {
+      if (pirate.baseR == null) pirate.baseR = pirate.r;
+      pirate3D = new PirateStation3D(pirate, sunObj || {x:0,y:0});
+    } else {
+      pirate3D = null;
+    }
   };
 
   window.updatePlanets3D = function updatePlanets3D(dt) {
     if (sun) sun.render(dt);
     if (asteroidBelt) asteroidBelt.render(dt);
     for (const p of _planets) p.render(dt);
+    if (pirate3D) pirate3D.render(dt);
   };
 
   window.drawPlanets3D = function drawPlanets3D(ctx, cam) {
     if (asteroidBelt) asteroidBelt.draw(ctx, cam);
     for (const p of _planets) p.draw(ctx, cam);
     if (sun) sun.draw(ctx, cam);
+    if (pirate3D && pirate3D.ready && window.DevFlags?.use3DPirateStation) {
+      pirate3D.draw(ctx, cam);
+    }
   };
+
+  window.isPirate3DReady = () => !!(pirate3D && pirate3D.ready);
 
   window.getSharedRenderer = getSharedRenderer;
 })();
