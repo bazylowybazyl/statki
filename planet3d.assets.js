@@ -9,6 +9,9 @@
       sharedRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
       sharedRenderer.setClearColor(0x000000, 0);
       sharedRenderer.outputColorSpace = THREE.SRGBColorSpace;
+      // cienie
+      sharedRenderer.shadowMap.enabled = true;
+      sharedRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
     }
     if (rendererWidth !== width || rendererHeight !== height) {
       sharedRenderer.setSize(width, height, false);
@@ -51,6 +54,14 @@
   const ASTEROID_SCALE_MAX = 0.035;
 
   // ======= PLANETA Z TEKSTUR =======
+  function sunDirFor(worldX, worldY) {
+    const sx = (window.SUN?.x ?? 0) - worldX;
+    const sy = (window.SUN?.y ?? 0) - worldY;
+    const L = Math.hypot(sx, sy) || 1;
+    // delikatne nachylenie w Z, żeby cienie były widoczne
+    return { x: sx / L, y: sy / L, z: 0.35 };
+  }
+
   class AssetPlanet3D {
     constructor(worldX, worldY, pixelSize, opts = {}) {
       this.x = worldX; this.y = worldY;
@@ -96,19 +107,33 @@
 
         this.material = new THREE.MeshPhongMaterial(matParams);
 
-        // doświetlenie – brak „pełnej czerni”
+        // światła ogólne, żeby nie było pełnej czerni
         this.scene.add(new THREE.AmbientLight(0xffffff, 0.22));
         const hemi = new THREE.HemisphereLight(0xbfdfff, 0x0b0f1a, 0.18);
         hemi.position.set(0, 1, 0);
         this.scene.add(hemi);
 
-        // główne światło kierunkowe (jak Słońce)
-        const dir = new THREE.DirectionalLight(0xffffff, 1.0);
-        dir.position.set(2, 1, 2);
-        this.scene.add(dir);
+        // „Słońce” jako DirectionalLight z cieniami
+        const d = sunDirFor(this.x, this.y);
+        const sunDL = new THREE.DirectionalLight(0xffffff, 1.15);
+        sunDL.castShadow = true;
+        sunDL.position.set(-d.x * 10, -d.y * 10, -d.z * 10);
+        sunDL.target.position.set(0, 0, 0);
+        this.scene.add(sunDL.target);
+        // budżet shadowmap per planeta
+        sunDL.shadow.mapSize.set(1024, 1024);
+        sunDL.shadow.camera.near = 0.1;
+        sunDL.shadow.camera.far = 30;
+        const S = 4;
+        sunDL.shadow.camera.left = -S;
+        sunDL.shadow.camera.right = S;
+        sunDL.shadow.camera.top = S;
+        sunDL.shadow.camera.bottom = -S;
+        this.scene.add(sunDL);
 
         this.mesh = new THREE.Mesh(geom, this.material);
         this.scene.add(this.mesh);
+        this.mesh.receiveShadow = true;    // planeta przyjmuje cienie (np. od chmur)
 
         if (this._name === 'earth') {
           // nocne światła – świecą niezależnie od światła kierunkowego
@@ -125,12 +150,12 @@
                 map: tryTex(tex.clouds, true),
                 transparent: true,
                 depthWrite: false,
-                blending: THREE.NormalBlending,
                 opacity: 0.9
               })
             );
             this.scene.add(clouds);
             this.clouds = clouds;
+            this.clouds.castShadow = true;   // chmury rzucają cień na planetę
           }
         }
         if (tex.ring) {
@@ -263,17 +288,32 @@
               imesh.setMatrixAt(i, m);
             }
             imesh.instanceMatrix.needsUpdate = true;
-            this.imesh = imesh;
-            this.spin = 0.04; // rad/s, bardzo wolno
+            imesh.castShadow = true;
+            imesh.receiveShadow = true;
             this.root.add(imesh);
+            this.imesh = imesh;
+            this.spin = 0.04; // bardzo wolna rotacja
           }
         );
       };
       tryLoadGLTF();
 
-      const light = new THREE.DirectionalLight(0xffffff, 1.0);
-      light.position.set(2, 2, 3);
-      this.scene.add(light);
+      const d = sunDirFor((window.SUN?.x ?? 0), (window.SUN?.y ?? 0));
+      const beltDL = new THREE.DirectionalLight(0xffffff, 1.1);
+      beltDL.castShadow = true;
+      beltDL.position.set(-d.x * 50, -d.y * 50, -d.z * 50);
+      beltDL.target.position.set(0, 0, 0);
+      this.scene.add(beltDL.target);
+      // większa projekcja — pas jest duży
+      beltDL.shadow.mapSize.set(1024, 1024);
+      beltDL.shadow.camera.near = 1;
+      beltDL.shadow.camera.far = 200;
+      const R = 20;
+      beltDL.shadow.camera.left = -R;
+      beltDL.shadow.camera.right = R;
+      beltDL.shadow.camera.top = R;
+      beltDL.shadow.camera.bottom = -R;
+      this.scene.add(beltDL);
     }
 
     render(dt) {
