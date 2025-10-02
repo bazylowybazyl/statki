@@ -298,7 +298,12 @@
       };
       tryLoadGLTF();
 
-      const d = sunDirFor((window.SUN?.x ?? 0), (window.SUN?.y ?? 0));
+      const sunWorldX = (window.SUN?.x ?? 0);
+      const sunWorldY = (window.SUN?.y ?? 0);
+      const beltMidRadius = (innerRadius + outerRadius) * 0.5;
+      const sampleX = sunWorldX + beltMidRadius;
+      const sampleY = sunWorldY;
+      const d = sunDirFor(sampleX, sampleY);
       const beltDL = new THREE.DirectionalLight(0xffffff, 1.1);
       beltDL.castShadow = true;
       beltDL.position.set(d.x * 50, d.y * 50, d.z * 50);
