@@ -110,6 +110,19 @@ window.addEventListener('resize', ()=>{ W = canvas.width = innerWidth; H = canva
 
 let mainScene3D = null;
 
+// Dev flags/tuning (persisted via devtools where available)
+window.DevFlags = Object.assign({
+  showRuler: false,
+  unlimitedWarp: false
+}, window.DevFlags || {});
+
+window.DevTuning = Object.assign({
+  pirateStationScale: 1.0
+}, window.DevTuning || {});
+
+const DevFlags = window.DevFlags;
+const DevTuning = window.DevTuning;
+
 const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
 const add = (a,b)=>({x:a.x+b.x,y:a.y+b.y});
 const mul = (v,s)=>({x:v.x*s,y:v.y*s});
@@ -812,8 +825,12 @@ let stations = planets.map(pl => {
     {x: 0, y: -portOffset}
   ];
   const style = STATION_STYLES[Math.floor(Math.random()*STATION_STYLES.length)];
-  return { id: pl.id, planet: pl, orbitRadius, angle, speed, r, x, y, ports, style };
+  return { id: pl.id, planet: pl, orbitRadius, angle, speed, r, baseR: r, x, y, ports, style };
 });
+
+for (const st of stations) {
+  if (st.baseR == null) st.baseR = st.r;
+}
 
 // oznacz stacje wewnątrz pasa asteroid
 (() => {
@@ -1456,6 +1473,8 @@ function startMercenaryMission(){
   const station = {
     id: 'PIR',
     x, y, r,
+    baseR: r,
+    isPirate: true,
     hp: 10000, maxHp: 10000,
     static: true, mission: true,
     ports,
@@ -2859,7 +2878,7 @@ const boost = {
 };
 
 function attemptWarp(){
-  if (warp.state === 'idle' && warp.fuel > 0) {
+  if (warp.state === 'idle' && (DevFlags.unlimitedWarp || warp.fuel > 0)) {
     warp.state = 'charging';
     warp.charge = 0;
     return;
@@ -2877,7 +2896,10 @@ function attemptWarp(){
 
 window.addEventListener('keydown', (e)=>{
   if(e.key.toLowerCase() === 'shift'){
-    if(warp.state==='idle' && warp.fuel>0){ warp.state='charging'; warp.charge=0; }
+    if(warp.state==='idle' && (DevFlags.unlimitedWarp || warp.fuel>0)){
+      warp.state='charging';
+      warp.charge=0;
+    }
   }
 });
 window.addEventListener('keyup', (e)=>{
@@ -2893,6 +2915,9 @@ function engageWarp(dir){
   ship.angle = Math.atan2(ndir.y, ndir.x) + Math.PI/2;
   ship.angVel = 0;
   warp.state='active';
+  if (DevFlags.unlimitedWarp) {
+    warp.fuel = warp.fuelMax;
+  }
   spawnParticle({x:ship.pos.x, y:ship.pos.y}, {x:0,y:0}, 0.14, '#bfe7ff', 8, true);
   for(let i=0;i<18;i++){
     const a = Math.random()*Math.PI*2;
@@ -2924,8 +2949,17 @@ function physicsStep(dt){
       st.shield.val = clamp(st.shield.val + st.shield.regenRate * dt, 0, st.shield.max);
     }
   }
+  for (const st of stations) {
+    if (st.baseR == null) st.baseR = st.r;
+    const pirate = st.isPirate || st.type === 'pirate' || st.style === 'pirate' || (st.name && st.name.toLowerCase().includes('pir'));
+    const scale = pirate ? DevTuning.pirateStationScale : 1.0;
+    st.r = (st.baseR || st.r) * scale;
+  }
   // regen paliwa gdy nie warpuje
-  if(warp.state!=='active') warp.fuel = clamp(warp.fuel + warp.regenRate*dt, 0, warp.fuelMax);
+  if(warp.state!=='active'){
+    warp.fuel = clamp(warp.fuel + warp.regenRate*dt, 0, warp.fuelMax);
+    if(DevFlags.unlimitedWarp) warp.fuel = warp.fuelMax;
+  }
   let boostActive = boost.state === 'active';
   if(boost.state === 'active'){
     boost.fuel = clamp(boost.fuel - boost.consumeRate*dt, 0, boost.fuelMax);
@@ -3081,8 +3115,12 @@ function physicsStep(dt){
     const targetV = { x: warp.dir.x*warp.speed, y: warp.dir.y*warp.speed };
     ship.vel.x += (targetV.x - ship.vel.x) * clamp(6*dt,0,1);
     ship.vel.y += (targetV.y - ship.vel.y) * clamp(6*dt,0,1);
-    warp.fuel = clamp(warp.fuel - warp.consumeRate*dt, 0, warp.fuelMax);
-    if(warp.fuel<=0){ warp.state='idle'; exitWarp(); }
+    if(!DevFlags.unlimitedWarp){
+      warp.fuel = Math.max(0, warp.fuel - warp.consumeRate*dt);
+      if(warp.fuel<=0){ warp.state='idle'; exitWarp(); }
+    } else {
+      warp.fuel = warp.fuelMax;
+    }
   }
   else if(warp.state==='charging'){
     const dirToMouse = norm({x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y});
@@ -3093,7 +3131,7 @@ function physicsStep(dt){
     const delta = clamp(desiredSpin - ship.angVel, -accel*dt, accel*dt);
     ship.angVel += delta;
     if(warp.charge < warp.chargeTime) warp.charge += dt;
-    if(warp.charge >= warp.chargeTime && Math.abs(diffB) <= warp.orientTolerance && warp.fuel>0){
+    if(warp.charge >= warp.chargeTime && Math.abs(diffB) <= warp.orientTolerance && (DevFlags.unlimitedWarp || warp.fuel>0)){
       engageWarp(dirToMouse);
     }
   }
@@ -3521,8 +3559,9 @@ function drawStationShadow(ctx, st, cam){
   const s = worldToScreen(st.x, st.y, cam);
   const toSun = { x: (SUN.x - st.x), y: (SUN.y - st.y) };
   const ang = Math.atan2(toSun.y, toSun.x) + Math.PI; // cień „od” Słońca
-  const pirate = (st.style === 'pirate') || (st.name && st.name.toLowerCase().includes('pir'));
-  const base = (st.r || 120) * (pirate ? (window.DevConfig?.pirateScale || 1) : 1);
+  const pirate = st.isPirate || st.type === 'pirate' || st.style === 'pirate' || (st.name && st.name.toLowerCase().includes('pir'));
+  const scale = pirate ? DevTuning.pirateStationScale : 1.0;
+  const base = (st.baseR || st.r || 120) * scale;
   const off  = base * 1.2 * cam.zoom;
   const w = base * 1.6 * cam.zoom;
   const h = base * 0.7 * cam.zoom;
@@ -3673,6 +3712,44 @@ function drawStars(cam){
     }
   }
   pruneStarCells();
+}
+
+function drawRangeRuler(ctx, cam){
+  if (!DevFlags.showRuler) return;
+
+  const cx = W / 2;
+  const cy = H / 2;
+  const zoom = cam?.zoom ?? camera.zoom ?? 1;
+
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = '#6db6ff';
+
+  const step = 500;
+  const maxWorldR = Math.min(W, H) / zoom * 0.5 * 0.95;
+
+  for (let r = step; r < maxWorldR; r += step) {
+    const rr = r * zoom;
+    ctx.beginPath();
+    ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+    ctx.stroke();
+
+    if (r % 1000 === 0) {
+      ctx.fillStyle = '#cfe6ff';
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${r}`, cx + rr + 4, cy);
+    }
+  }
+
+  ctx.globalAlpha = 0.25;
+  const axisR = maxWorldR * zoom;
+  ctx.beginPath(); ctx.moveTo(cx - axisR, cy); ctx.lineTo(cx + axisR, cy); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx, cy - axisR); ctx.lineTo(cx, cy + axisR); ctx.stroke();
+
+  ctx.restore();
 }
 
 const npcSpriteCache = new Map();
@@ -3875,7 +3952,7 @@ function render(alpha, frameDt){
   if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen);
   drawPlanetLabels(ctx, cam);
   // Miarka dystansu (jeśli włączona)
-  if (window.drawRangeRings) drawRangeRings(ctx, cam);
+  drawRangeRuler(ctx, cam);
 
   // Warp gates
   for(const key in warpRoutes){
@@ -3910,8 +3987,9 @@ function render(alpha, frameDt){
   for(const st of stations){
     drawStationShadow(ctx, st, cam);
     const s = worldToScreen(st.x, st.y, cam);
-    const pirate = (st.style === 'pirate') || (st.name && st.name.toLowerCase().includes('pir'));
-    const visR = st.r * (pirate ? (window.DevConfig?.pirateScale || 1) : 1);
+    const pirate = st.isPirate || st.type === 'pirate' || st.style === 'pirate' || (st.name && st.name.toLowerCase().includes('pir'));
+    const scale = pirate ? DevTuning.pirateStationScale : 1.0;
+    const visR = (st.baseR || st.r) * scale;
     const rr = visR * camera.zoom;
     drawStationVFX(ctx, st, s.x, s.y, rr, gameTime);
     for(let i=0;i<st.ports.length;i++){
@@ -4728,6 +4806,56 @@ function startGame(){
   console.log('Gwiazdy: proceduralne kafelki 1024px na całej mapie. Silnik: warkocz jonowy, dopalacz: wiązka fotonów.');
 }
 setTimeout(startGame, 500);
+
+(function wireDevTools(){
+  const elUnlimited = document.getElementById('dt-unlimited-warp');
+  const elRuler     = document.getElementById('dt-show-ruler');
+  const elScale     = document.getElementById('dt-pirate-scale');
+  const elScaleVal  = document.getElementById('dt-pirate-scale-value');
+
+  if (elUnlimited) {
+    elUnlimited.checked = !!DevFlags.unlimitedWarp;
+    elUnlimited.addEventListener('change', e => {
+      DevFlags.unlimitedWarp = e.target.checked;
+      if (DevFlags.unlimitedWarp) warp.fuel = warp.fuelMax;
+      const legacyUnlimited = document.getElementById('toggleUnlimitedWarp');
+      if (legacyUnlimited) legacyUnlimited.checked = DevFlags.unlimitedWarp;
+    });
+  }
+  if (elRuler) {
+    elRuler.checked = !!DevFlags.showRuler;
+    elRuler.addEventListener('change', e => {
+      DevFlags.showRuler = e.target.checked;
+      const legacyRuler = document.getElementById('toggleRuler');
+      if (legacyRuler) legacyRuler.checked = DevFlags.showRuler;
+    });
+  }
+
+  const applyScale = () => {
+    if (!elScale) return;
+    const v = parseFloat(elScale.value);
+    DevTuning.pirateStationScale = isFinite(v) ? v : 1.0;
+    if (window.DevConfig) {
+      window.DevConfig.pirateScale = DevTuning.pirateStationScale;
+    }
+    const legacyScale = document.getElementById('pirScale');
+    if (legacyScale) legacyScale.value = String(DevTuning.pirateStationScale);
+    const legacyScaleVal = document.getElementById('pirScaleVal');
+    if (legacyScaleVal) legacyScaleVal.textContent = '×' + DevTuning.pirateStationScale.toFixed(2);
+    if (elScaleVal) elScaleVal.textContent = DevTuning.pirateStationScale.toFixed(2);
+  };
+
+  if (elScale) {
+    if (!isFinite(parseFloat(elScale.value))) {
+      elScale.value = String(DevTuning.pirateStationScale);
+    }
+    elScale.addEventListener('input', applyScale);
+    elScale.addEventListener('change', applyScale);
+    applyScale();
+  } else if (elScaleVal) {
+    elScaleVal.textContent = DevTuning.pirateStationScale.toFixed(2);
+  }
+})();
 </script>
 
 <!-- === DEVTOOLS (F10) =================================================== -->
@@ -4813,9 +4941,8 @@ setTimeout(startGame, 500);
     planetScaleAll: 1,          // mnożnik globalny ×R
     pirateScale: 1.0,           // mnożnik rysowania stacji pirackiej
   };
-  const DevFlags = { showRuler:false, unlimitedWarp:false };
+  const DevFlags = window.DevFlags;
   window.DevConfig = DevConfig;
-  window.DevFlags  = DevFlags;
 
   // ---- Elementy UI --------------------------------------------------------
   const el = (id)=>document.getElementById(id);
@@ -4848,11 +4975,17 @@ setTimeout(startGame, 500);
       const flags = JSON.parse(localStorage.getItem('devFlags')||'null');
       if (cfg && typeof cfg==='object'){
         Object.assign(DevConfig, cfg);
+        if (typeof DevConfig.pirateScale === 'number') {
+          DevTuning.pirateStationScale = DevConfig.pirateScale;
+        }
       }
       if (flags && typeof flags==='object'){
         Object.assign(DevFlags, flags);
       }
     } catch {}
+    if (typeof DevConfig.pirateScale !== 'number') {
+      DevConfig.pirateScale = DevTuning.pirateStationScale;
+    }
   }
   function saveLS(){
     localStorage.setItem('devConfig', JSON.stringify(DevConfig));
@@ -4878,38 +5011,8 @@ setTimeout(startGame, 500);
   }
 
   // ---- Rysowanie miarki ---------------------------------------------------
-  function niceStep(pxPerUnit){
-    const targetPx = 150;
-    const raw = targetPx / pxPerUnit; // w jednostkach świata
-    const p10 = Math.pow(10, Math.floor(Math.log10(raw)));
-    const mant = raw / p10;
-    let m = 1; if (mant>2) m=2; if (mant>5) m=5;
-    return m*p10;
-  }
-  function fmtU(u){ if (u>=1e6) return (u/1e6).toFixed(1)+'M'; if (u>=1e3) return (u/1e3).toFixed(1)+'k'; return u.toFixed(0); }
-
-  // WSTRZYKNIJ hak rysujący w globalny scope (wywołasz w render())
   window.drawRangeRings = function drawRangeRings(ctx, cam){
-    if (!DevFlags.showRuler || !window.ship) return;
-    const pxPerUnit = cam.zoom;
-    const step = niceStep(pxPerUnit);
-    const maxRWorld = Math.min(window.W, window.H) * 0.48 / cam.zoom;
-    const C = window.worldToScreen(window.ship.pos.x, window.ship.pos.y, cam);
-
-    ctx.save();
-    ctx.strokeStyle = 'rgba(150,190,255,0.25)'; ctx.lineWidth = 1;
-    ctx.fillStyle = 'rgba(190,220,255,0.95)';
-    ctx.font = '12px Inter, system-ui, Segoe UI, Roboto, Arial'; ctx.textBaseline='middle';
-
-    for (let r=step; r<maxRWorld; r+=step){
-      const R = r * cam.zoom;
-      ctx.beginPath(); ctx.arc(C.x, C.y, R, 0, Math.PI*2); ctx.stroke();
-      ctx.fillText(fmtU(r), C.x + R + 6, C.y);
-    }
-    ctx.globalAlpha = 0.7;
-    ctx.beginPath(); ctx.moveTo(C.x-8,C.y); ctx.lineTo(C.x+8,C.y); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(C.x, C.y-8); ctx.lineTo(C.x, C.y+8); ctx.stroke();
-    ctx.restore();
+    drawRangeRuler(ctx, cam);
   };
 
   // ---- Cheat: unlimited warp ---------------------------------------------
@@ -4962,6 +5065,7 @@ setTimeout(startGame, 500);
   }
 
   function reflectToUI(){
+    DevConfig.pirateScale = DevTuning.pirateStationScale;
     ui.sunR.value = DevConfig.sunR|0; ui.sunRVal.textContent = ui.sunR.value;
     ui.planetScaleAll.value = DevConfig.planetScaleAll; ui.planetScaleAllVal.textContent = '×'+(+DevConfig.planetScaleAll).toFixed(2);
     ui.pirScale.value = DevConfig.pirateScale; ui.pirScaleVal.textContent = '×'+(+DevConfig.pirateScale).toFixed(2);
@@ -4981,7 +5085,13 @@ setTimeout(startGame, 500);
   // listeners
   ui.sunR.addEventListener('input', ()=>{ DevConfig.sunR = +ui.sunR.value; ui.sunRVal.textContent = ui.sunR.value; saveLS(); scheduleRebuild3D(); reflectToCfg(); });
   ui.planetScaleAll.addEventListener('input', ()=>{ DevConfig.planetScaleAll = +ui.planetScaleAll.value; ui.planetScaleAllVal.textContent = '×'+(+DevConfig.planetScaleAll).toFixed(2); saveLS(); scheduleRebuild3D(); reflectToCfg(); });
-  ui.pirScale.addEventListener('input', ()=>{ DevConfig.pirateScale = +ui.pirScale.value; ui.pirScaleVal.textContent = '×'+(+DevConfig.pirateScale).toFixed(2); saveLS(); reflectToCfg(); });
+  ui.pirScale.addEventListener('input', ()=>{
+    DevTuning.pirateStationScale = +ui.pirScale.value;
+    DevConfig.pirateScale = DevTuning.pirateStationScale;
+    ui.pirScaleVal.textContent = '×'+(+DevConfig.pirateScale).toFixed(2);
+    saveLS();
+    reflectToCfg();
+  });
 
   ui.cbRuler.addEventListener('change', ()=>{ DevFlags.showRuler = ui.cbRuler.checked; saveLS(); });
   ui.cbUnlimited.addEventListener('change', ()=>{ DevFlags.unlimitedWarp = ui.cbUnlimited.checked; saveLS(); });
