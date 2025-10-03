@@ -349,29 +349,16 @@
   const _stations3D = [];
 
   class PirateStation3D {
-    constructor(ref, opts = {}) {
-      this.ref = ref;
-      this.x = ref?.x ?? 0;
-      this.y = ref?.y ?? 0;
-      this.r = ref?.baseR ?? ref?.r ?? 260;
+    constructor(stationRef, opts = {}) {
+      this.ref = stationRef;
       this.spin = 0.08;
-      this.size = this.r * 2;
+      this.baseSize = (opts && opts.size) || 256;
       this.canvas = document.createElement('canvas');
       this.canvas.width = 512; this.canvas.height = 512;
       this.ctx2d = this.canvas.getContext('2d', { alpha: true });
       this.canvas.style.background = 'transparent';
       this._needsInit = true;
       this._ready = false;
-    }
-
-    syncFromRef(){
-      const st = this.ref;
-      if (!st) return;
-      this.x = st.x;
-      this.y = st.y;
-      const radius = st.baseR ?? st.r ?? this.r;
-      this.r = radius;
-      this.size = radius * 2;
     }
 
     _lazyInit() {
@@ -427,7 +414,6 @@
     }
 
     render(dt){
-      this.syncFromRef?.();
       this._lazyInit();
       if(!this.scene || !this.camera) return;
 
@@ -446,11 +432,11 @@
 
     draw(ctx, cam){
       if (!this._ready || !this.ref) return;
-      const s = worldToScreen(this.x, this.y, cam);
+      const s = worldToScreen(this.ref.x, this.ref.y, cam);
       const rawScale = Number(window.DevTuning?.pirateStationScale ?? 1);
       const scale = Number.isFinite(rawScale) ? rawScale : 1;
-      const rLogical = (this.ref.baseR || this.ref.r || (this.size ? this.size / 2 : this.r));
-      const pxSize = rLogical * 2 * scale * cam.zoom;
+      const radius = this.ref.baseR ?? this.ref.r ?? (this.baseSize / 2);
+      const pxSize = radius * 2 * scale * cam.zoom;
       ctx.drawImage(this.canvas, s.x - pxSize/2, s.y - pxSize/2, pxSize, pxSize);
     }
   }
