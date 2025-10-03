@@ -10,7 +10,7 @@ export function initOverlay({ host, getView }) {
     position: "absolute",
     inset: "0",
     pointerEvents: "none",
-    zIndex: 5,
+    zIndex: 15,
   });
   host.appendChild(canvas);
 
