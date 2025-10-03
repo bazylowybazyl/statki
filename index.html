@@ -5179,6 +5179,7 @@ setTimeout(startGame, 500);
     localStorage.setItem('devConfig', JSON.stringify(DevConfig));
     localStorage.setItem('devFlags', JSON.stringify(DevFlags));
   }
+  window.__devtoolsSaveLS = saveLS;
 
   // ---- Rebuild 3D (throttle) ---------------------------------------------
   let rebuildTimer = null;
@@ -5276,6 +5277,7 @@ setTimeout(startGame, 500);
     };
     ui.cfgOut.value = JSON.stringify(out, null, 2);
   }
+  window.__devtoolsReflectToCfg = reflectToCfg;
 
   // listeners
   ui.sunR.addEventListener('input', ()=>{ DevConfig.sunR = +ui.sunR.value; ui.sunRVal.textContent = ui.sunR.value; saveLS(); scheduleRebuild3D(); reflectToCfg(); });
@@ -5287,19 +5289,6 @@ setTimeout(startGame, 500);
     saveLS();
     reflectToCfg();
   });
-  if (ui.station3DScale) {
-    ui.station3DScale.addEventListener('input', ()=>{
-      Dev.station3DScale = +ui.station3DScale.value;
-      DevConfig.station3DScale = Dev.station3DScale;
-      if (ui.station3DScaleVal) ui.station3DScaleVal.textContent = '×'+(+DevConfig.station3DScale).toFixed(2);
-      if (window.__setStation3DScale && window.USE_STATION_3D) {
-        __setStation3DScale(Dev.station3DScale);
-      }
-      saveLS();
-      reflectToCfg();
-    });
-  }
-
   ui.cbRuler.addEventListener('change', ()=>{ DevFlags.showRuler = ui.cbRuler.checked; saveLS(); });
   ui.cbUnlimited.addEventListener('change', ()=>{ DevFlags.unlimitedWarp = ui.cbUnlimited.checked; saveLS(); });
   if (ui.cbPirate3D) {
@@ -5339,6 +5328,51 @@ setTimeout(startGame, 500);
   // Upewnij się, że panel można włączyć na starcie (dev wygoda)
   // ui.root.style.display = 'block';
 })();
+</script>
+
+<script>
+  // === DevTools: API + handler skali stacji 3D ===
+  (function(){
+    // API dostępne globalnie — zapisuje skalę w dwóch miejscach, aby
+    // 1) logika 3D miała natychmiastową wartość, 2) devtools mógł ją odczytać.
+    if (!window.__setStation3DScale) {
+      window.__setStation3DScale = (v) => {
+        const n = Number(v);
+        if (!Number.isFinite(n)) return;
+        window.Dev       = window.Dev       || {};
+        window.DevTuning = window.DevTuning || {};
+        window.Dev.station3DScale           = n;
+        window.DevTuning.pirateStationScale = n;
+        const cfg = window.DevConfig;
+        if (cfg && typeof cfg === 'object') cfg.station3DScale = n;
+        try { localStorage.setItem('station3DScale', String(n)); } catch {}
+      };
+    }
+
+    // Podpięcie suwaka i wyświetlacza wartości (×1.00, ×1.25 itd.)
+    const s  = document.getElementById('station3DScale');
+    const sv = document.getElementById('station3DScaleVal');
+    if (s) {
+      // inicjalizacja z LS (opcjonalnie)
+      const saved = Number(localStorage.getItem('station3DScale'));
+      if (Number.isFinite(saved)) {
+        s.value = String(saved);
+        if (sv) sv.textContent = '×' + saved.toFixed(2);
+        window.__setStation3DScale(saved);
+      }
+
+      s.addEventListener('input', () => {
+        const v = +s.value;
+        window.__setStation3DScale(v);
+        if (sv) sv.textContent = '×' + v.toFixed(2);
+        if (window.DevConfig && typeof window.DevConfig === 'object') {
+          window.DevConfig.station3DScale = v;
+        }
+        window.__devtoolsSaveLS?.();
+        window.__devtoolsReflectToCfg?.();
+      });
+    }
+  })();
 </script>
 
 </body>
