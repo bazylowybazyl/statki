@@ -19,7 +19,7 @@ export function createRailgunExplosionFactory(scene) {
 
   return function spawn({ x = 0, y = 0, z } = {}) {
     const group = new THREE.Group();
-    group.position.set(x, 0, z !== undefined ? z : y);
+    group.position.set(x, y, z !== undefined ? z : 0);
     scene.add(group);
 
     const flashMaterial = new THREE.SpriteMaterial({
