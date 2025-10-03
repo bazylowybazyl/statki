@@ -112,31 +112,13 @@
 <script>
 // =============== Canvas & utils ===============
 const canvas = document.getElementById('c');
-const gameRoot = document.getElementById('game-root');
 const ctx = canvas.getContext('2d');
 let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
-
-const overlayView = {
-  center: { x: 0, y: 0 },
-  viewport: { w: W, h: H },
-  zoom: 1,
-};
-
-let overlay3D = null;
-let railgunExplosionFactory = null;
-
-function triggerRailgunExplosion3D(x, y) {
-  if (!overlay3D || !railgunExplosionFactory) return;
-  const effect = railgunExplosionFactory({ x, y });
-  overlay3D.spawn(effect);
-}
 
 window.addEventListener('resize', ()=>{
   W = canvas.width = innerWidth;
   H = canvas.height = innerHeight;
-  overlayView.viewport.w = W;
-  overlayView.viewport.h = H;
-  if (overlay3D) overlay3D.resize();
+  resizeOverlay3D();
   initStars(true);
 });
 
@@ -557,19 +539,41 @@ const camera = {
   addShake(mag, dur){ this.shakeMag = mag; this.shakeTime = dur; this.shakeDur = dur; }
 };
 
-overlayView.zoom = camera.zoom;
-if (window.initOverlay3D && window.createRailgunExplosionFactory && gameRoot) {
-  overlay3D = window.initOverlay3D({
-    host: gameRoot,
-    getView() {
-      return overlayView;
-    }
-  });
-  if (overlay3D) {
-    railgunExplosionFactory = window.createRailgunExplosionFactory(overlay3D.scene);
-    overlay3D.resize();
-  }
+const gameRoot = document.getElementById('game-root');
+
+// Model widoku overlayu (ortho nad światem 2D)
+const overlayView = {
+  center: { x: 0, y: 0 },
+  viewport: { w: innerWidth, h: innerHeight },
+  zoom: camera.zoom
+};
+
+// Start overlayu (kanwa z alpha, nad #c)
+const overlay3D = window.initOverlay3D && gameRoot ? window.initOverlay3D({
+  host: gameRoot,
+  getView: () => overlayView
+}) : null;
+
+// Fabryka efektu railguna
+const makeRailgunExplosion = overlay3D && window.createRailgunExplosionFactory
+  ? window.createRailgunExplosionFactory(overlay3D.scene)
+  : null;
+
+// Helper do spawnu eksplozji 3D
+function triggerRailgunExplosion3D(x, y){
+  if (!overlay3D || !makeRailgunExplosion) return;
+  const fx = makeRailgunExplosion({ x, y });
+  overlay3D.spawn(fx);
 }
+
+// Resize: utrzymuj rozmiar overlayu = okna
+function resizeOverlay3D(){
+  overlayView.viewport.w = innerWidth;
+  overlayView.viewport.h = innerHeight;
+  if (overlay3D) overlay3D.resize();
+}
+
+if (overlay3D) resizeOverlay3D();
 
 // =============== Ship ===============
 const ship = {
