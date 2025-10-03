@@ -47,7 +47,6 @@
   const _planets = [];
   let sun = null;
   let asteroidBelt = null;
-  let pirate3D = null;
   const TAU = Math.PI * 2;
   const PLANET_SIZE_MULTIPLIER = 4.5;
   const SUN_SIZE_MULTIPLIER = 6.0;
@@ -341,81 +340,89 @@
     }
   }
 
+  const _stations3D = [];
+
   class PirateStation3D {
-    constructor(stationRef, sunRef){
-      this.ref = stationRef;
-      this.sunRef = sunRef;
+    constructor(ref, opts = {}) {
+      this.ref = ref;
+      this.x = ref?.x ?? 0;
+      this.y = ref?.y ?? 0;
+      this.r = ref?.baseR ?? ref?.r ?? 260;
+      this.spin = 0.08;
       this.canvas = document.createElement('canvas');
-      this.canvas.width = 512;
-      this.canvas.height = 512;
+      this.canvas.width = 512; this.canvas.height = 512;
       this.ctx2d = this.canvas.getContext('2d');
-      this._ready = false;
-      this.spin = 0.15;
       this._needsInit = true;
     }
 
-    _initIfNeeded(){
+    syncFromRef(){
+      const st = this.ref;
+      if (!st) return;
+      this.x = st.x;
+      this.y = st.y;
+      this.r = st.baseR ?? st.r ?? this.r;
+    }
+
+    _lazyInit() {
       if (!this._needsInit || typeof THREE === 'undefined') return;
       this._needsInit = false;
 
       this.scene = new THREE.Scene();
-      this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
-      this.camera.position.set(0, 0.6, 4.2);
-      this.camera.lookAt(0, 0, 0);
+      this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+      this.camera.position.z = 4.2;
 
-      const amb = new THREE.AmbientLight(0x8899aa, 0.5);
-      this.scene.add(amb);
-      const dir = new THREE.DirectionalLight(0xffffff, 1.1);
-      this.scene.add(dir);
-      this._dirLight = dir;
+      this.scene.add(new THREE.AmbientLight(0x334455, 0.6));
+      const key = new THREE.DirectionalLight(0xffffff, 1.1);
+      key.position.set(2.5, 3.5, 5.0);
+      this.scene.add(key);
 
-      const coreMat  = new THREE.MeshStandardMaterial({ color: 0x66ccff, emissive: 0x2277ff, emissiveIntensity: 1.0, roughness: 0.3, metalness: 0.1 });
-      const ringMat  = new THREE.MeshStandardMaterial({ color: 0x2b3a55, metalness: 0.6, roughness: 0.4 });
+      const ringMat    = new THREE.MeshStandardMaterial({ color: 0x7fb2ff, metalness: 0.2, roughness: 0.35, emissive: 0x0a1e3a, emissiveIntensity: 0.7 });
+      const innerMat   = new THREE.MeshStandardMaterial({ color: 0x2a3a5a, metalness: 0.1, roughness: 0.8 });
+      const hubMat     = new THREE.MeshStandardMaterial({ color: 0x9fd3ff, emissive: 0x164b8c, emissiveIntensity: 1.1, metalness: 0.0, roughness: 0.9 });
+      const spokeMat   = new THREE.MeshStandardMaterial({ color: 0x6da8ff, metalness: 0.3, roughness: 0.6 });
 
-      const core = new THREE.Mesh(new THREE.SphereGeometry(0.55, 48, 32), coreMat);
-      this.scene.add(core);
+      const outerRing = new THREE.Mesh(new THREE.TorusGeometry(1.35, 0.07, 20, 128), ringMat);
+      outerRing.rotation.x = Math.PI/2;
+      this.scene.add(outerRing);
 
-      const ringOuter = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.08, 24, 128), ringMat);
-      this.scene.add(ringOuter);
-      const ringInner = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.06, 24, 128), ringMat);
-      this.scene.add(ringInner);
+      const innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.06, 16, 96), ringMat);
+      innerRing.rotation.x = Math.PI/2;
+      this.scene.add(innerRing);
 
-      this.docks = [];
-      for(let i=0;i<6;i++){
-        const a = i * Math.PI*2/6;
-        const m = new THREE.Mesh(new THREE.SphereGeometry(0.22, 32, 24), coreMat);
-        m.position.set(Math.cos(a)*0.9, 0, Math.sin(a)*0.9);
-        this.scene.add(m);
-        this.docks.push(m);
+      const disk = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.08, 72), innerMat);
+      disk.rotation.x = Math.PI/2;
+      this.scene.add(disk);
+
+      const hub = new THREE.Mesh(new THREE.SphereGeometry(0.28, 48, 32), hubMat);
+      this.scene.add(hub);
+
+      const spokes = 8;
+      for (let i=0;i<spokes;i++){
+        const a = i*(Math.PI*2/spokes);
+        const r = 1.12;
+        const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, r, 12), spokeMat);
+        cyl.position.set(Math.cos(a)*r/2, Math.sin(a)*r/2, 0);
+        cyl.rotation.z = a + Math.PI/2;
+        this.scene.add(cyl);
+        const pod = new THREE.Mesh(new THREE.SphereGeometry(0.18, 36, 24), hubMat);
+        pod.position.set(Math.cos(a)*r, Math.sin(a)*r, 0);
+        this.scene.add(pod);
       }
 
-      const halo = new THREE.Mesh(new THREE.RingGeometry(0.65, 1.65, 64, 1), new THREE.MeshBasicMaterial({ color: 0x5ec8ff, transparent: true, opacity: 0.12, side: THREE.DoubleSide }));
-      halo.rotation.x = Math.PI/2;
-      this.scene.add(halo);
-
-      this.core = core;
-      this.ringOuter = ringOuter;
-      this.ringInner = ringInner;
-
-      this._ready = true;
+      this.root = new THREE.Group();
+      this.root.add(outerRing, innerRing, disk, hub);
+      this.scene.add(this.root);
     }
 
     render(dt){
-      this._initIfNeeded();
-      if (!this._ready) return;
+      this.syncFromRef();
+      this._lazyInit();
+      if(!this.scene || !this.camera) return;
 
-      if (this.sunRef && this._dirLight && this.ref){
-        const dx = this.ref.x - this.sunRef.x;
-        const dy = this.ref.y - this.sunRef.y;
-        const len = Math.hypot(dx, dy) || 1;
-        this._dirLight.position.set(dx/len, 0.4, dy/len);
-      }
-
-      this.ringOuter.rotation.y += this.spin * dt * 0.5;
-      this.ringInner.rotation.y -= this.spin * dt * 0.7;
+      if (this.root) this.root.rotation.z += this.spin * dt;
 
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
-      if (!r) return;
+      if(!r) return;
       r.setClearColor(0x000000, 0);
       r.render(this.scene, this.camera);
 
@@ -424,14 +431,12 @@
     }
 
     draw(ctx, cam){
-      if (!this._ready || !this.ref) return;
-      const s = worldToScreen(this.ref.x, this.ref.y, cam);
+      if (!this.ref) return;
+      const s = worldToScreen(this.x, this.y, cam);
       const scale = (window.DevTuning?.pirateStationScale ?? 1.0);
-      const pxSize = (this.ref.baseR || this.ref.r) * 2 * scale * cam.zoom;
+      const pxSize = this.r * 2 * scale * cam.zoom;
       ctx.drawImage(this.canvas, s.x - pxSize/2, s.y - pxSize/2, pxSize, pxSize);
     }
-
-    get ready(){ return this._ready; }
   }
 
   // ======= API zgodne z proceduralnym rendererem =======
@@ -458,33 +463,41 @@
       asteroidBelt = null;
     }
 
-    const stList = (typeof window !== 'undefined' ? window.stations : null) || [];
-    const pirate = stList.find(s => s.isPirate || s.type === 'pirate' || /pir/i.test(s?.name || s?.label || ''));
-    if (pirate) {
-      if (pirate.baseR == null) pirate.baseR = pirate.r;
-      pirate3D = new PirateStation3D(pirate, sunObj || {x:0,y:0});
-    } else {
-      pirate3D = null;
-    }
   };
 
   window.updatePlanets3D = function updatePlanets3D(dt) {
     if (sun) sun.render(dt);
     if (asteroidBelt) asteroidBelt.render(dt);
     for (const p of _planets) p.render(dt);
-    if (pirate3D) pirate3D.render(dt);
   };
 
   window.drawPlanets3D = function drawPlanets3D(ctx, cam) {
     if (asteroidBelt) asteroidBelt.draw(ctx, cam);
     for (const p of _planets) p.draw(ctx, cam);
     if (sun) sun.draw(ctx, cam);
-    if (pirate3D && pirate3D.ready && window.DevFlags?.use3DPirateStation) {
-      pirate3D.draw(ctx, cam);
+  };
+
+  window.initStations3D = function initStations3D(list){
+    _stations3D.length = 0;
+    if (!Array.isArray(list)) return;
+    for (const st of list){
+      const s3d = new PirateStation3D(st, {});
+      _stations3D.push(s3d);
     }
   };
 
-  window.isPirate3DReady = () => !!(pirate3D && pirate3D.ready);
+  window.updateStations3D = function updateStations3D(dt){
+    for (const s of _stations3D) s.render(dt);
+  };
+
+  window.drawStations3D = function drawStations3D(ctx, cam){
+    for (const s of _stations3D) s.draw(ctx, cam);
+  };
+
+  window.__setStation3DScale = function(k){
+    if (!window.DevTuning) window.DevTuning = {};
+    window.DevTuning.pirateStationScale = Number(k) || 1;
+  };
 
   window.getSharedRenderer = getSharedRenderer;
 })();
