@@ -554,8 +554,6 @@ const camera = {
   addShake(mag, dur){ this.shakeMag = mag; this.shakeTime = dur; this.shakeDur = dur; }
 };
 
-const gameRoot = document.getElementById('game-root');
-
 // Model widoku overlayu (ortho nad światem 2D)
 const overlayView = {
   center: { x: 0, y: 0 },
@@ -563,22 +561,43 @@ const overlayView = {
   zoom: camera.zoom
 };
 
-// Start overlayu (kanwa z alpha, nad #c)
-const overlay3D = window.initOverlay3D && gameRoot ? window.initOverlay3D({
-  host: gameRoot,
-  getView: () => overlayView
-}) : null;
+// Bezpieczna, odroczona inicjalizacja overlayu 3D
+let overlay3D = null;
 
-// Fabryka efektu railguna
-const makeRailgunExplosion = overlay3D && window.createRailgunExplosionFactory
-  ? window.createRailgunExplosionFactory(overlay3D.scene)
-  : null;
+function startOverlay3D() {
+  const init = window.initOverlay3D;
+  const factory = window.createRailgunExplosionFactory;
+  const host = document.getElementById('game-root');
+
+  // Musimy mieć: API z modułu + host z DOM + overlayView z tego skryptu
+  if (!init || !factory || !host || typeof overlayView === 'undefined') return false;
+
+  const ov = init({ host, getView: () => overlayView });
+  overlay3D = ov;
+  window.overlay3D = ov;
+  window.makeRailgunExplosion = factory(ov.scene);
+  resizeOverlay3D();
+  return true;
+}
+
+// Moduły <script type="module"> wykonują się po parsowaniu DOM, więc
+// DOMContentLoaded zwykle wystarczy. Dla pewności dodajemy krótki polling.
+window.addEventListener('DOMContentLoaded', () => {
+  if (startOverlay3D()) return;
+  let tries = 0;
+  const maxTries = 120; // ~2 sekundy przy 60 FPS
+  (function poll() {
+    if (startOverlay3D() || tries++ > maxTries) return;
+    requestAnimationFrame(poll);
+  })();
+});
 
 // Helper do spawnu eksplozji 3D
 function triggerRailgunExplosion3D(x, y){
-  if (!overlay3D || !makeRailgunExplosion) return;
-  const fx = makeRailgunExplosion({ x, y });
-  overlay3D.spawn(fx);
+  if (overlay3D && window.makeRailgunExplosion) {
+    const fx = window.makeRailgunExplosion({ x, y });
+    overlay3D.spawn(fx);
+  }
 }
 
 // Resize: utrzymuj rozmiar overlayu = okna
@@ -588,7 +607,7 @@ function resizeOverlay3D(){
   if (overlay3D) overlay3D.resize();
 }
 
-if (overlay3D) resizeOverlay3D();
+resizeOverlay3D();
 
 // =============== Ship ===============
 const ship = {
