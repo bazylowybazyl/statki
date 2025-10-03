@@ -20,7 +20,7 @@ let composer = null;
 let bloomPass = null;
 let renderPass = null;
 let finalPass = null;
-let rendererSize = { w: 0, h: 0 };
+let localRenderer = null;
 
 let ambientLight = null;
 let hemiLight = null;
@@ -30,6 +30,17 @@ let lightsAdded = false;
 let pirateStation3D = null;
 let pirateStation2D = null;
 let lastRenderInfo = null;
+let initialRadius = null;
+
+function rendererHasAlpha(r) {
+  try {
+    const gl = r.getContext && r.getContext();
+    const attrs = gl && gl.getContextAttributes && gl.getContextAttributes();
+    return !!(attrs && attrs.alpha);
+  } catch {
+    return false;
+  }
+}
 
 function ensureScene() {
   if (!scene) {
@@ -58,20 +69,33 @@ function ensureCamera() {
 }
 
 function getRenderer() {
-  if (typeof window === 'undefined' || typeof window.getSharedRenderer !== 'function') {
-    return null;
+  const r = (typeof window !== 'undefined' && typeof window.getSharedRenderer === 'function')
+    ? window.getSharedRenderer(RENDER_SIZE, RENDER_SIZE)
+    : null;
+
+  if (r && rendererHasAlpha(r)) {
+    r.toneMapping = THREE.ACESFilmicToneMapping;
+    r.toneMappingExposure = 1.25;
+    r.outputColorSpace = THREE.SRGBColorSpace;
+    r.setClearColor(0x000000, 0);
+    return r;
   }
-  const r = window.getSharedRenderer(RENDER_SIZE, RENDER_SIZE);
-  if (!r) return null;
-  if (rendererSize.w !== RENDER_SIZE || rendererSize.h !== RENDER_SIZE) {
-    r.setSize(RENDER_SIZE, RENDER_SIZE, false);
-    rendererSize = { w: RENDER_SIZE, h: RENDER_SIZE };
+
+  if (!localRenderer) {
+    localRenderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true,
+      premultipliedAlpha: true,
+      preserveDrawingBuffer: true
+    });
+    localRenderer.setPixelRatio(1);
+    localRenderer.setSize(RENDER_SIZE, RENDER_SIZE, false);
+    localRenderer.outputColorSpace = THREE.SRGBColorSpace;
+    localRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+    localRenderer.toneMappingExposure = 1.25;
+    localRenderer.setClearColor(0x000000, 0);
   }
-  r.toneMapping = THREE.ACESFilmicToneMapping;
-  r.toneMappingExposure = 1.25;
-  r.outputColorSpace = THREE.SRGBColorSpace;
-  r.setClearColor(0x000000, 0);
-  return r;
+  return localRenderer;
 }
 
 function ensureComposer(renderer) {
@@ -80,9 +104,17 @@ function ensureComposer(renderer) {
     return;
   }
   if (!composer) {
-    composer = new EffectComposer(renderer);
+    const rt = new THREE.WebGLRenderTarget(RENDER_SIZE, RENDER_SIZE, {
+      format: THREE.RGBAFormat,
+      type: THREE.UnsignedByteType,
+      depthBuffer: true,
+      stencilBuffer: false
+    });
+    composer = new EffectComposer(renderer, rt);
     composer.setSize(RENDER_SIZE, RENDER_SIZE);
     renderPass = new RenderPass(scene, camera);
+    renderPass.clear = true;
+    renderPass.clearAlpha = 0;
     bloomPass = new UnrealBloomPass(new THREE.Vector2(RENDER_SIZE, RENDER_SIZE), 0.95, 0.45, 0.2);
     composer.addPass(renderPass);
     composer.addPass(bloomPass);
@@ -116,7 +148,8 @@ function renderScene(dt, t) {
   ensureComposer(renderer);
   updateCameraTarget();
   if (pirateStation3D.update) pirateStation3D.update(t ?? 0, dt ?? 0);
-  renderer.autoClear = true;
+  renderer.setClearColor(0x000000, 0);
+  if (renderer.setClearAlpha) renderer.setClearAlpha(0);
   if (composer) {
     renderer.autoClear = false;
     composer.render();
@@ -157,6 +190,7 @@ export function attachPirateStation3D(sceneOverride, station2D) {
   pirateStation2D = station2D || null;
   pirateStation3D.object3d.position.set(station2D?.x || 0, 0, station2D?.y || 0);
   scene.add(pirateStation3D.object3d);
+  initialRadius = pirateStation3D.radius;
   updateCameraTarget();
 }
 
@@ -170,6 +204,7 @@ export function dettachPirateStation3D(sceneOverride) {
   pirateStation3D = null;
   pirateStation2D = null;
   lastRenderInfo = null;
+  initialRadius = null;
 }
 
 export function updateWorld3D(dt, t) {
@@ -192,4 +227,26 @@ export function drawWorld3D(ctx, cam, worldToScreen) {
 
 export function getPirateStationSprite() {
   return lastRenderInfo;
+}
+
+export function setPirateStationScale(s) {
+  if (!pirateStation3D || !initialRadius) return;
+  const k = Number(s);
+  if (!Number.isFinite(k) || k <= 0) return;
+  pirateStation3D.object3d.scale.setScalar(k);
+  pirateStation3D.radius = initialRadius * k;
+  updateCameraTarget();
+}
+
+export function setPirateStationWorldRadius(r) {
+  if (!pirateStation3D || !initialRadius) return;
+  const R = Number(r);
+  if (!Number.isFinite(R) || R <= 0) return;
+  const k = R / initialRadius;
+  setPirateStationScale(k);
+}
+
+if (typeof window !== 'undefined') {
+  window.__setStation3DScale = setPirateStationScale;
+  window.__setStation3DWorldRadius = setPirateStationWorldRadius;
 }
