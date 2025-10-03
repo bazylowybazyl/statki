@@ -38,6 +38,15 @@
   .hp-hangar h4, .hp-hangar .hp-item { outline:1px solid #a78bfa; }
   .hp-spec   h4, .hp-spec .hp-item   { outline:1px solid #ef4444; }
 </style>
+<style>
+  /* Overlay 3D musi być nad głównym canvasem (#c) */
+  canvas.overlay3d {
+    position: absolute;
+    inset: 0;
+    pointer-events: none !important;
+    z-index: 20;
+  }
+</style>
 </head>
 <body>
   <div id="ui">
