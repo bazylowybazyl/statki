@@ -128,7 +128,7 @@ let mainScene3D = null;
 window.DevFlags = Object.assign({
   showRuler: false,
   unlimitedWarp: false,
-  use3DPirateStation: false
+  use3DPirateStation: true
 }, window.DevFlags || {});
 
 window.DevTuning = Object.assign({
@@ -137,6 +137,8 @@ window.DevTuning = Object.assign({
 
 const DevFlags = window.DevFlags;
 const DevTuning = window.DevTuning;
+const Dev = window.Dev = window.Dev || {};
+if (typeof Dev.station3DScale !== 'number') Dev.station3DScale = 1.0;
 
 const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
 const add = (a,b)=>({x:a.x+b.x,y:a.y+b.y});
@@ -883,6 +885,15 @@ let stations = planets.map(pl => {
 
 for (const st of stations) {
   if (st.baseR == null) st.baseR = st.r;
+}
+
+if (window.initStations3D) initStations3D(stations);
+window.USE_STATION_3D = true;
+if (window.__setStation3DScale) {
+  window.__lastStationScale = 1;
+  if (window.Dev && typeof Dev.station3DScale === 'number') {
+    __setStation3DScale(Dev.station3DScale);
+  }
 }
 
 // oznacz stacje wewnątrz pasa asteroid
@@ -3995,6 +4006,7 @@ function render(alpha, frameDt){
   // Czyścimy ekran
   ctx.clearRect(0,0,W,H);
   if (window.updatePlanets3D) updatePlanets3D(frameDt);
+  if (window.USE_STATION_3D && window.updateStations3D) updateStations3D(frameDt);
   if (window.updateWorld3D) updateWorld3D(frameDt, vfxTime);
 
   // Gwiazdy (proceduralne kafelki na całej mapie)
@@ -4012,6 +4024,7 @@ function render(alpha, frameDt){
   }
 
   if (window.drawPlanets3D)   drawPlanets3D(ctx, cam);
+  if (window.USE_STATION_3D && window.drawStations3D) drawStations3D(ctx, cam);
   if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen);
   drawPlanetLabels(ctx, cam);
   // Miarka dystansu (jeśli włączona)
@@ -4046,31 +4059,26 @@ function render(alpha, frameDt){
     ctx.stroke();
   }
 
-  // Stacje
-  for(const st of stations){
-    const s = worldToScreen(st.x, st.y, cam);
-    const pirate = st.isPirate || st.type === 'pirate' || st.style === 'pirate' || (st.name && st.name.toLowerCase().includes('pir'));
-    const use3D = !!(window.DevFlags && DevFlags.use3DPirateStation);
-    const ready3D = typeof window.isPirate3DReady === 'function' ? window.isPirate3DReady() : false;
-    const skip2D = use3D && ready3D && pirate;
-    const scale = pirate ? DevTuning.pirateStationScale : 1.0;
-    const visR = (st.baseR || st.r) * scale;
-    const rr = visR * camera.zoom;
+  if (!window.USE_STATION_3D) {
+    for (const st of stations){
+      const s = worldToScreen(st.x, st.y, cam);
+      const pirate = st.isPirate || st.type === 'pirate' || st.style === 'pirate' || (st.name && st.name.toLowerCase().includes('pir'));
+      const scale = pirate ? DevTuning.pirateStationScale : 1.0;
+      const visR = (st.baseR || st.r) * scale;
+      const rr = visR * camera.zoom;
 
-    if (skip2D) {
-      // Pomijamy rysowanie 2D – model 3D dokleja się w drawPlanets3D(...)
-    } else {
       drawStationShadow(ctx, st, cam);
       drawStationVFX(ctx, st, s.x, s.y, rr, gameTime);
+
+      for (let i=0;i<st.ports.length;i++){
+        const pw = stationPortWorld(st, i);
+        const ps = worldToScreen(pw.x, pw.y, cam);
+        ctx.fillStyle = '#60a5fa';
+        ctx.beginPath(); ctx.arc(ps.x, ps.y, 4*camera.zoom, 0, Math.PI*2); ctx.fill();
+      }
+      ctx.fillStyle = '#dfe7ff'; ctx.font = `${12*camera.zoom}px monospace`;
+      ctx.fillText('ST'+st.id, s.x - rr*0.35, s.y + 4*camera.zoom);
     }
-    for(let i=0;i<st.ports.length;i++){
-      const pw = stationPortWorld(st, i);
-      const ps = worldToScreen(pw.x, pw.y, cam);
-      ctx.fillStyle = '#60a5fa';
-      ctx.beginPath(); ctx.arc(ps.x, ps.y, 4*camera.zoom, 0, Math.PI*2); ctx.fill();
-    }
-    ctx.fillStyle = '#dfe7ff'; ctx.font = `${12*camera.zoom}px monospace`;
-    ctx.fillText('ST'+st.id, s.x - rr*0.35, s.y + 4*camera.zoom);
   }
 
   // Laser beams
@@ -4883,6 +4891,8 @@ setTimeout(startGame, 500);
   const elRuler     = document.getElementById('dt-show-ruler');
   const elScale     = document.getElementById('dt-pirate-scale');
   const elScaleVal  = document.getElementById('dt-pirate-scale-value');
+  const elStation3DScale = document.getElementById('dt-station3d-scale');
+  const elStation3DScaleVal = document.getElementById('dt-station3d-scale-value');
   const elPir3D     = document.getElementById('dt-use-3d-pirate');
 
   if (elUnlimited) {
@@ -4917,6 +4927,23 @@ setTimeout(startGame, 500);
     if (elScaleVal) elScaleVal.textContent = DevTuning.pirateStationScale.toFixed(2);
   };
 
+  const applyStation3DScale = () => {
+    if (!elStation3DScale) return;
+    const v = parseFloat(elStation3DScale.value);
+    Dev.station3DScale = isFinite(v) ? v : 1.0;
+    if (window.DevConfig) {
+      window.DevConfig.station3DScale = Dev.station3DScale;
+    }
+    if (window.__setStation3DScale && window.USE_STATION_3D) {
+      __setStation3DScale(Dev.station3DScale);
+    }
+    if (elStation3DScaleVal) elStation3DScaleVal.textContent = Dev.station3DScale.toFixed(2);
+    const legacy = document.getElementById('station3DScale');
+    const legacyVal = document.getElementById('station3DScaleVal');
+    if (legacy) legacy.value = String(Dev.station3DScale);
+    if (legacyVal) legacyVal.textContent = '×' + Dev.station3DScale.toFixed(2);
+  };
+
   if (elScale) {
     if (!isFinite(parseFloat(elScale.value))) {
       elScale.value = String(DevTuning.pirateStationScale);
@@ -4928,11 +4955,29 @@ setTimeout(startGame, 500);
     elScaleVal.textContent = DevTuning.pirateStationScale.toFixed(2);
   }
 
+  if (elStation3DScale) {
+    if (!isFinite(parseFloat(elStation3DScale.value))) {
+      elStation3DScale.value = String(Dev.station3DScale);
+    }
+    elStation3DScale.addEventListener('input', applyStation3DScale);
+    elStation3DScale.addEventListener('change', applyStation3DScale);
+    applyStation3DScale();
+  } else if (elStation3DScaleVal) {
+    elStation3DScaleVal.textContent = Dev.station3DScale.toFixed(2);
+  }
+
   if (elPir3D){
-    elPir3D.checked = !!(window.DevFlags && DevFlags.use3DPirateStation);
+    if (typeof DevFlags.use3DPirateStation === 'boolean') {
+      window.USE_STATION_3D = DevFlags.use3DPirateStation;
+    }
+    elPir3D.checked = window.USE_STATION_3D !== false;
     elPir3D.addEventListener('change', e=>{
       if (!window.DevFlags) window.DevFlags = {};
       DevFlags.use3DPirateStation = e.target.checked;
+      window.USE_STATION_3D = e.target.checked;
+      if (window.USE_STATION_3D && window.__setStation3DScale && typeof Dev.station3DScale === 'number') {
+        __setStation3DScale(Dev.station3DScale);
+      }
     });
   }
 })();
@@ -4984,6 +5029,11 @@ setTimeout(startGame, 500);
       <input id="pirScale" type="range" min="0.4" max="5" step="0.01">
       <div class="val" id="pirScaleVal"></div>
     </div>
+    <div class="row">
+      <label>Skala stacji 3D (×)</label>
+      <input id="station3DScale" type="range" min="0.2" max="3.0" step="0.05" value="1.0">
+      <div class="val" id="station3DScaleVal"></div>
+    </div>
     <label style="display:flex;gap:6px;align-items:center;margin-top:8px">
       <input id="dt-use-3d-pirate" type="checkbox" />
       3D Pirate Station (hide 2D)
@@ -5024,6 +5074,7 @@ setTimeout(startGame, 500);
     planetRById: {},            // { [id or name]: R }
     planetScaleAll: 1,          // mnożnik globalny ×R
     pirateScale: 1.0,           // mnożnik rysowania stacji pirackiej
+    station3DScale: 1.0,        // mnożnik nakładki 3D
   };
   const DevFlags = window.DevFlags;
   window.DevConfig = DevConfig;
@@ -5035,6 +5086,7 @@ setTimeout(startGame, 500);
     sunR: el('sunR'), sunRVal: el('sunRVal'),
     planetScaleAll: el('planetScaleAll'), planetScaleAllVal: el('planetScaleAllVal'),
     pirScale: el('pirScale'), pirScaleVal: el('pirScaleVal'),
+    station3DScale: el('station3DScale'), station3DScaleVal: el('station3DScaleVal'),
     planetsGroup: el('planetsGroup'),
     cbRuler: el('toggleRuler'),
     cbUnlimited: el('toggleUnlimitedWarp'),
@@ -5063,6 +5115,9 @@ setTimeout(startGame, 500);
         if (typeof DevConfig.pirateScale === 'number') {
           DevTuning.pirateStationScale = DevConfig.pirateScale;
         }
+        if (typeof DevConfig.station3DScale === 'number') {
+          Dev.station3DScale = DevConfig.station3DScale;
+        }
       }
       if (flags && typeof flags==='object'){
         Object.assign(DevFlags, flags);
@@ -5070,6 +5125,13 @@ setTimeout(startGame, 500);
     } catch {}
     if (typeof DevConfig.pirateScale !== 'number') {
       DevConfig.pirateScale = DevTuning.pirateStationScale;
+    }
+    if (typeof DevConfig.station3DScale !== 'number') {
+      DevConfig.station3DScale = Dev.station3DScale;
+    }
+    if (window.__setStation3DScale && window.USE_STATION_3D) {
+      window.__lastStationScale = 1;
+      __setStation3DScale(Dev.station3DScale);
     }
   }
   function saveLS(){
@@ -5151,9 +5213,14 @@ setTimeout(startGame, 500);
 
   function reflectToUI(){
     DevConfig.pirateScale = DevTuning.pirateStationScale;
+    DevConfig.station3DScale = Dev.station3DScale;
     ui.sunR.value = DevConfig.sunR|0; ui.sunRVal.textContent = ui.sunR.value;
     ui.planetScaleAll.value = DevConfig.planetScaleAll; ui.planetScaleAllVal.textContent = '×'+(+DevConfig.planetScaleAll).toFixed(2);
     ui.pirScale.value = DevConfig.pirateScale; ui.pirScaleVal.textContent = '×'+(+DevConfig.pirateScale).toFixed(2);
+    if (ui.station3DScale) {
+      ui.station3DScale.value = DevConfig.station3DScale;
+      if (ui.station3DScaleVal) ui.station3DScaleVal.textContent = '×'+(+DevConfig.station3DScale).toFixed(2);
+    }
     ui.cbRuler.checked = DevFlags.showRuler;
     ui.cbUnlimited.checked = DevFlags.unlimitedWarp;
     if (ui.cbPirate3D) ui.cbPirate3D.checked = DevFlags.use3DPirateStation;
@@ -5163,7 +5230,8 @@ setTimeout(startGame, 500);
       sunR: DevConfig.sunR|0,
       planetRById: DevConfig.planetRById,
       planetScaleAll: +DevConfig.planetScaleAll,
-      pirateScale: +DevConfig.pirateScale
+      pirateScale: +DevConfig.pirateScale,
+      station3DScale: +DevConfig.station3DScale
     };
     ui.cfgOut.value = JSON.stringify(out, null, 2);
   }
@@ -5178,11 +5246,30 @@ setTimeout(startGame, 500);
     saveLS();
     reflectToCfg();
   });
+  if (ui.station3DScale) {
+    ui.station3DScale.addEventListener('input', ()=>{
+      Dev.station3DScale = +ui.station3DScale.value;
+      DevConfig.station3DScale = Dev.station3DScale;
+      if (ui.station3DScaleVal) ui.station3DScaleVal.textContent = '×'+(+DevConfig.station3DScale).toFixed(2);
+      if (window.__setStation3DScale && window.USE_STATION_3D) {
+        __setStation3DScale(Dev.station3DScale);
+      }
+      saveLS();
+      reflectToCfg();
+    });
+  }
 
   ui.cbRuler.addEventListener('change', ()=>{ DevFlags.showRuler = ui.cbRuler.checked; saveLS(); });
   ui.cbUnlimited.addEventListener('change', ()=>{ DevFlags.unlimitedWarp = ui.cbUnlimited.checked; saveLS(); });
   if (ui.cbPirate3D) {
-    ui.cbPirate3D.addEventListener('change', ()=>{ DevFlags.use3DPirateStation = ui.cbPirate3D.checked; saveLS(); });
+    ui.cbPirate3D.addEventListener('change', ()=>{
+      DevFlags.use3DPirateStation = ui.cbPirate3D.checked;
+      window.USE_STATION_3D = ui.cbPirate3D.checked;
+      if (window.USE_STATION_3D && window.__setStation3DScale && typeof Dev.station3DScale === 'number') {
+        __setStation3DScale(Dev.station3DScale);
+      }
+      saveLS();
+    });
   }
 
   ui.btnCopy.addEventListener('click', async ()=>{
