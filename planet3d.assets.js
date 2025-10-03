@@ -353,6 +353,7 @@
       this.ref = stationRef;
       this.spin = 0.08;
       this.baseSize = (opts && opts.size) || 256;
+      this.size = this.baseSize;
       this.canvas = document.createElement('canvas');
       this.canvas.width = 512; this.canvas.height = 512;
       this.ctx2d = this.canvas.getContext('2d', { alpha: true });
@@ -410,33 +411,50 @@
       this.root = new THREE.Group();
       this.root.add(outerRing, innerRing, disk, hub);
       this.scene.add(this.root);
+      this.mesh = this.root;
       this._ready = true;
     }
 
-    render(dt){
+    render(dt) {
       this._lazyInit();
-      if(!this.scene || !this.camera) return;
+      const r = getSharedRenderer(this.canvas.width, this.canvas.height);
+      if (!r || !this.scene || !this.camera) return;
 
-      if (this.root) this.root.rotation.z += this.spin * dt;
+      // 1) pełna przezroczystość tła
+      r.setClearColor(0x000000, 0);
+      if (r.setClearAlpha) r.setClearAlpha(0);
       this.scene.background = null;
 
-      const r = getSharedRenderer(this.canvas.width, this.canvas.height);
-      if(!r) return;
-      r.setClearColor(0x000000, 0);
+      // 2) animacje/obroty (jeśli masz jakikolwiek spin)
+      if (this.mesh) this.mesh.rotation.y += 0.02 * dt;
+
+      // 3) render + deterministyczne czyszczenie
       r.clear(true, true, true);
       r.render(this.scene, this.camera);
 
-      this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
-      this.ctx2d.drawImage(r.domElement, 0, 0, this.canvas.width, this.canvas.height);
+      // 4) kopiowanie z zachowaniem kanału alfa
+      const ctx2d = this.ctx2d;
+      ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      ctx2d.globalCompositeOperation = 'copy';
+      ctx2d.drawImage(r.domElement, 0, 0, this.canvas.width, this.canvas.height);
+      ctx2d.globalCompositeOperation = 'source-over';
     }
 
-    draw(ctx, cam){
-      if (!this._ready || !this.ref) return;
+    draw(ctx, cam) {
+      // Używamy aktualnych współrzędnych stacji z referencji (bez cache!).
+      if (!this.ref) return;
       const s = worldToScreen(this.ref.x, this.ref.y, cam);
-      const rawScale = Number(window.DevTuning?.pirateStationScale ?? 1);
+
+      // Skala: z Dev lub DevTuning; fallback = 1.0
+      const rawScale =
+        Number(window.Dev?.station3DScale ?? window.DevTuning?.pirateStationScale ?? 1);
       const scale = Number.isFinite(rawScale) ? rawScale : 1;
-      const radius = this.ref.baseR ?? this.ref.r ?? (this.baseSize / 2);
-      const pxSize = radius * 2 * scale * cam.zoom;
+
+      // Promień bazowy: preferuj baseR jeżeli istnieje, w innym wypadku r
+      const baseRadius = this.ref.baseR ?? this.ref.r ?? (this.size ? this.size/2 : 128);
+      const pxSize = baseRadius * 2 * scale * cam.zoom;
+
+      // Rysujemy offscreen’owy canvas z WebGL (ma już alfę)
       ctx.drawImage(this.canvas, s.x - pxSize/2, s.y - pxSize/2, pxSize, pxSize);
     }
   }
@@ -499,9 +517,13 @@
   window.__setStation3DScale = function(k){
     const value = Number(k);
     const v = Number.isFinite(value) ? value : 1;
-    if (!window.DevTuning) window.DevTuning = {};
+    window.Dev = window.Dev || {};
+    window.DevTuning = window.DevTuning || {};
+    window.Dev.station3DScale = v;
     window.DevTuning.pirateStationScale = v;
-    if (window.Dev) window.Dev.station3DScale = v;
+    const cfg = window.DevConfig;
+    if (cfg && typeof cfg === 'object') cfg.station3DScale = v;
+    try { localStorage.setItem('station3DScale', String(v)); } catch {}
   };
 
   window.getSharedRenderer = getSharedRenderer;
