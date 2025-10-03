@@ -563,15 +563,18 @@ const overlayView = {
   zoom: camera.zoom
 };
 
-// Start overlayu (kanwa z alpha, nad #c)
-const overlay3D = window.initOverlay3D && gameRoot ? window.initOverlay3D({
-  host: gameRoot,
+// Start overlayu 3D (nakładka Three.js nad Canvas 2D)
+const host = gameRoot;
+
+// 1) Najpierw inicjalizujemy overlay, żeby mieć scenę:
+const overlay3D = window.initOverlay3D && host ? window.initOverlay3D({
+  host,
   getView: () => overlayView
 }) : null;
 
-// Fabryka efektu railguna
+// 2) Fabryka efektów musi dostać SCENĘ overlayu:
 const makeRailgunExplosion = overlay3D && window.createRailgunExplosionFactory
-  ? window.createRailgunExplosionFactory(overlay3D.scene)
+  ? (window.makeRailgunExplosion = window.createRailgunExplosionFactory(overlay3D.scene))
   : null;
 
 // Helper do spawnu eksplozji 3D
