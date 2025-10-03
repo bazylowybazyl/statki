@@ -6,9 +6,15 @@
   function getSharedRenderer(width = 256, height = 256) {
     if (typeof THREE === "undefined") return null;
     if (!sharedRenderer) {
-      sharedRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
-      sharedRenderer.setClearColor(0x000000, 0);
+      sharedRenderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: true,
+        premultipliedAlpha: true,
+        preserveDrawingBuffer: false
+      });
       sharedRenderer.outputColorSpace = THREE.SRGBColorSpace;
+      sharedRenderer.autoClear = true;
+      sharedRenderer.setClearColor(0x000000, 0);
       // cienie
       sharedRenderer.shadowMap.enabled = true;
       sharedRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -349,10 +355,13 @@
       this.y = ref?.y ?? 0;
       this.r = ref?.baseR ?? ref?.r ?? 260;
       this.spin = 0.08;
+      this.size = this.r * 2;
       this.canvas = document.createElement('canvas');
       this.canvas.width = 512; this.canvas.height = 512;
-      this.ctx2d = this.canvas.getContext('2d');
+      this.ctx2d = this.canvas.getContext('2d', { alpha: true });
+      this.canvas.style.background = 'transparent';
       this._needsInit = true;
+      this._ready = false;
     }
 
     syncFromRef(){
@@ -360,7 +369,9 @@
       if (!st) return;
       this.x = st.x;
       this.y = st.y;
-      this.r = st.baseR ?? st.r ?? this.r;
+      const radius = st.baseR ?? st.r ?? this.r;
+      this.r = radius;
+      this.size = radius * 2;
     }
 
     _lazyInit() {
@@ -412,18 +423,21 @@
       this.root = new THREE.Group();
       this.root.add(outerRing, innerRing, disk, hub);
       this.scene.add(this.root);
+      this._ready = true;
     }
 
     render(dt){
-      this.syncFromRef();
+      this.syncFromRef?.();
       this._lazyInit();
       if(!this.scene || !this.camera) return;
 
       if (this.root) this.root.rotation.z += this.spin * dt;
+      this.scene.background = null;
 
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if(!r) return;
       r.setClearColor(0x000000, 0);
+      r.clear(true, true, true);
       r.render(this.scene, this.camera);
 
       this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
@@ -431,10 +445,12 @@
     }
 
     draw(ctx, cam){
-      if (!this.ref) return;
+      if (!this._ready || !this.ref) return;
       const s = worldToScreen(this.x, this.y, cam);
-      const scale = (window.DevTuning?.pirateStationScale ?? 1.0);
-      const pxSize = this.r * 2 * scale * cam.zoom;
+      const rawScale = Number(window.DevTuning?.pirateStationScale ?? 1);
+      const scale = Number.isFinite(rawScale) ? rawScale : 1;
+      const rLogical = (this.ref.baseR || this.ref.r || (this.size ? this.size / 2 : this.r));
+      const pxSize = rLogical * 2 * scale * cam.zoom;
       ctx.drawImage(this.canvas, s.x - pxSize/2, s.y - pxSize/2, pxSize, pxSize);
     }
   }
@@ -495,8 +511,11 @@
   };
 
   window.__setStation3DScale = function(k){
+    const value = Number(k);
+    const v = Number.isFinite(value) ? value : 1;
     if (!window.DevTuning) window.DevTuning = {};
-    window.DevTuning.pirateStationScale = Number(k) || 1;
+    window.DevTuning.pirateStationScale = v;
+    if (window.Dev) window.Dev.station3DScale = v;
   };
 
   window.getSharedRenderer = getSharedRenderer;
