@@ -5,23 +5,29 @@ export function initOverlay({ host, getView }) {
     throw new Error("initOverlay: host element is required");
   }
 
-  const canvas = document.createElement("canvas");
-  Object.assign(canvas.style, {
-    position: "absolute",
-    inset: "0",
-    pointerEvents: "none",
-    zIndex: 15,
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    alpha: true,
+    premultipliedAlpha: true,
   });
-  host.appendChild(canvas);
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.setSize(host.clientWidth, host.clientHeight, false);
 
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.autoClear = true;
   renderer.setClearColor(0x000000, 0);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
-  renderer.setSize(host.clientWidth, host.clientHeight, false);
+
+  const dom = renderer.domElement;
+  dom.classList.add("overlay3d");
+  dom.style.pointerEvents = "none";
+  dom.style.position = "absolute";
+  dom.style.inset = "0";
+  dom.style.zIndex = "20";
+  dom.style.background = "transparent";
+
+  host.appendChild(dom);
 
   const scene = new THREE.Scene();
 
@@ -98,8 +104,8 @@ export function initOverlay({ host, getView }) {
 
   function dispose() {
     effects.length = 0;
-    if (canvas.parentElement === host) {
-      host.removeChild(canvas);
+    if (dom.parentElement === host) {
+      host.removeChild(dom);
     }
     renderer.dispose();
   }
