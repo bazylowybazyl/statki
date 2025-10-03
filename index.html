@@ -147,7 +147,11 @@ window.DevTuning = Object.assign({
 const DevFlags = window.DevFlags;
 const DevTuning = window.DevTuning;
 const Dev = window.Dev = window.Dev || {};
-if (typeof Dev.station3DScale !== 'number') Dev.station3DScale = 1.0;
+if (typeof Dev.station3DScale === 'number' && Number.isFinite(Dev.station3DScale)) {
+  DevTuning.pirateStationScale = Dev.station3DScale;
+} else {
+  Dev.station3DScale = DevTuning.pirateStationScale;
+}
 
 const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
 const add = (a,b)=>({x:a.x+b.x,y:a.y+b.y});
@@ -4032,6 +4036,8 @@ function render(alpha, frameDt){
     ctx.beginPath(); ctx.arc(s.x, s.y, w.r * camera.zoom, 0, Math.PI*2); ctx.stroke();
   }
 
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.imageSmoothingEnabled = true;
   if (window.drawPlanets3D)   drawPlanets3D(ctx, cam);
   if (window.USE_STATION_3D && window.drawStations3D) drawStations3D(ctx, cam);
   if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen);
@@ -4936,21 +4942,22 @@ setTimeout(startGame, 500);
     if (elScaleVal) elScaleVal.textContent = DevTuning.pirateStationScale.toFixed(2);
   };
 
-  const applyStation3DScale = () => {
-    if (!elStation3DScale) return;
-    const v = parseFloat(elStation3DScale.value);
-    Dev.station3DScale = isFinite(v) ? v : 1.0;
+  const applyStation3DScale = (inputValue) => {
+    const parsed = Number(inputValue);
+    const value = Number.isFinite(parsed) ? parsed : 1;
+    DevTuning.pirateStationScale = value;
+    Dev.station3DScale = value;
     if (window.DevConfig) {
-      window.DevConfig.station3DScale = Dev.station3DScale;
+      window.DevConfig.station3DScale = value;
     }
-    if (window.__setStation3DScale && window.USE_STATION_3D) {
-      __setStation3DScale(Dev.station3DScale);
+    if (window.USE_STATION_3D && typeof window.__setStation3DScale === 'function') {
+      __setStation3DScale(value);
     }
-    if (elStation3DScaleVal) elStation3DScaleVal.textContent = Dev.station3DScale.toFixed(2);
+    if (elStation3DScaleVal) elStation3DScaleVal.textContent = value.toFixed(2);
     const legacy = document.getElementById('station3DScale');
     const legacyVal = document.getElementById('station3DScaleVal');
-    if (legacy) legacy.value = String(Dev.station3DScale);
-    if (legacyVal) legacyVal.textContent = '×' + Dev.station3DScale.toFixed(2);
+    if (legacy) legacy.value = String(value);
+    if (legacyVal) legacyVal.textContent = '×' + value.toFixed(2);
   };
 
   if (elScale) {
@@ -4966,13 +4973,13 @@ setTimeout(startGame, 500);
 
   if (elStation3DScale) {
     if (!isFinite(parseFloat(elStation3DScale.value))) {
-      elStation3DScale.value = String(Dev.station3DScale);
+      elStation3DScale.value = String(DevTuning.pirateStationScale);
     }
-    elStation3DScale.addEventListener('input', applyStation3DScale);
-    elStation3DScale.addEventListener('change', applyStation3DScale);
-    applyStation3DScale();
+    applyStation3DScale(elStation3DScale.value);
+    elStation3DScale.addEventListener('input', e => applyStation3DScale(e.target.value));
+    elStation3DScale.addEventListener('change', e => applyStation3DScale(e.target.value));
   } else if (elStation3DScaleVal) {
-    elStation3DScaleVal.textContent = Dev.station3DScale.toFixed(2);
+    elStation3DScaleVal.textContent = DevTuning.pirateStationScale.toFixed(2);
   }
 
   if (elPir3D){
