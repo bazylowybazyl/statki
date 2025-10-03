@@ -343,14 +343,24 @@
   const _stations3D = [];
 
   class PirateStation3D {
-    constructor(worldX, worldY, pixelSize, opts = {}) {
-      this.x = worldX; this.y = worldY;
-      this.size = pixelSize || 900;
+    constructor(ref, opts = {}) {
+      this.ref = ref;
+      this.x = ref?.x ?? 0;
+      this.y = ref?.y ?? 0;
+      this.r = ref?.baseR ?? ref?.r ?? 260;
       this.spin = 0.08;
       this.canvas = document.createElement('canvas');
       this.canvas.width = 512; this.canvas.height = 512;
       this.ctx2d = this.canvas.getContext('2d');
       this._needsInit = true;
+    }
+
+    syncFromRef(){
+      const st = this.ref;
+      if (!st) return;
+      this.x = st.x;
+      this.y = st.y;
+      this.r = st.baseR ?? st.r ?? this.r;
     }
 
     _lazyInit() {
@@ -405,6 +415,7 @@
     }
 
     render(dt){
+      this.syncFromRef();
       this._lazyInit();
       if(!this.scene || !this.camera) return;
 
@@ -420,9 +431,11 @@
     }
 
     draw(ctx, cam){
+      if (!this.ref) return;
       const s = worldToScreen(this.x, this.y, cam);
-      const size = this.size * cam.zoom;
-      ctx.drawImage(this.canvas, s.x - size/2, s.y - size/2, size, size);
+      const scale = (window.DevTuning?.pirateStationScale ?? 1.0);
+      const pxSize = this.r * 2 * scale * cam.zoom;
+      ctx.drawImage(this.canvas, s.x - pxSize/2, s.y - pxSize/2, pxSize, pxSize);
     }
   }
 
@@ -468,9 +481,7 @@
     _stations3D.length = 0;
     if (!Array.isArray(list)) return;
     for (const st of list){
-      const px = st.x ?? 0, py = st.y ?? 0;
-      const size = (st.r || 260) * 2.8;
-      const s3d = new PirateStation3D(px, py, size, {});
+      const s3d = new PirateStation3D(st, {});
       _stations3D.push(s3d);
     }
   };
@@ -484,8 +495,8 @@
   };
 
   window.__setStation3DScale = function(k){
-    for (const s of _stations3D) s.size = (s.size||800) * (k / (window.__lastStationScale||1));
-    window.__lastStationScale = k;
+    if (!window.DevTuning) window.DevTuning = {};
+    window.DevTuning.pirateStationScale = Number(k) || 1;
   };
 
   window.getSharedRenderer = getSharedRenderer;
