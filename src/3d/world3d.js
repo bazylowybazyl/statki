@@ -227,6 +227,7 @@ function ensureComposer(renderer) {
     composer.addPass(renderPass);
     composer.addPass(bloomPass);
     preserveAlphaPass = createPreserveAlphaOutputPass();
+    preserveAlphaPass.renderToScreen = true;
     composer.addPass(preserveAlphaPass);
     updatePreserveAlphaOutputPass(renderer);
   } else {
