@@ -46,17 +46,14 @@ const PreserveAlphaOutputShader = {
   name: 'PreserveAlphaOutputShader',
   uniforms: {
     tDiffuse: { value: null },
+    // UWAGA: exposure ustawiamy z JS, ale w GLSL NIE deklarujemy go drugi raz,
+    // bo pochodzi z THREE.ShaderChunk['tonemapping_pars_fragment'].
     toneMappingExposure: { value: 1 }
   },
   vertexShader: /* glsl */`
     precision highp float;
 
-    uniform mat4 modelViewMatrix;
-    uniform mat4 projectionMatrix;
-
-    attribute vec3 position;
-    attribute vec2 uv;
-
+    // 'position' i 'uv' dostarcza Three.js — nie deklarujemy ich ponownie.
     varying vec2 vUv;
 
     void main() {
@@ -68,7 +65,7 @@ const PreserveAlphaOutputShader = {
     precision highp float;
 
     uniform sampler2D tDiffuse;
-    uniform float toneMappingExposure;
+    // NIE deklarujemy tu ponownie: uniform float toneMappingExposure;
 
     ${THREE.ShaderChunk['tonemapping_pars_fragment']}
     ${THREE.ShaderChunk['colorspace_pars_fragment']}
