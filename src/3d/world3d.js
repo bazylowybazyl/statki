@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { createPirateStation } from '../space/pirateStation/pirateStationFactory.js';
 
 const RENDER_SIZE = 1024;
@@ -19,7 +19,7 @@ let camera = null;
 let composer = null;
 let bloomPass = null;
 let renderPass = null;
-let finalPass = null;
+let preserveAlphaPass = null;
 let localRenderer = null;
 
 let ambientLight = null;
@@ -39,6 +39,114 @@ function rendererHasAlpha(r) {
     return !!(attrs && attrs.alpha);
   } catch {
     return false;
+  }
+}
+
+const PreserveAlphaOutputShader = {
+  name: 'PreserveAlphaOutputShader',
+  uniforms: {
+    tDiffuse: { value: null },
+    toneMappingExposure: { value: 1 }
+  },
+  vertexShader: /* glsl */`
+    precision highp float;
+
+    uniform mat4 modelViewMatrix;
+    uniform mat4 projectionMatrix;
+
+    attribute vec3 position;
+    attribute vec2 uv;
+
+    varying vec2 vUv;
+
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */`
+    precision highp float;
+
+    uniform sampler2D tDiffuse;
+    uniform float toneMappingExposure;
+
+    ${THREE.ShaderChunk['tonemapping_pars_fragment']}
+    ${THREE.ShaderChunk['colorspace_pars_fragment']}
+
+    varying vec2 vUv;
+
+    void main() {
+      vec4 texel = texture2D(tDiffuse, vUv);
+      vec3 color = texel.rgb;
+
+      #ifdef LINEAR_TONE_MAPPING
+        color = LinearToneMapping(color);
+      #elif defined( REINHARD_TONE_MAPPING )
+        color = ReinhardToneMapping(color);
+      #elif defined( CINEON_TONE_MAPPING )
+        color = OptimizedCineonToneMapping(color);
+      #elif defined( ACES_FILMIC_TONE_MAPPING )
+        color = ACESFilmicToneMapping(color);
+      #endif
+
+      vec4 outputColor = vec4(color, texel.a);
+
+      #ifdef SRGB_COLOR_SPACE
+        outputColor = LinearTosRGB(outputColor);
+      #endif
+
+      gl_FragColor = outputColor;
+    }
+  `
+};
+
+function createPreserveAlphaOutputPass() {
+  return new ShaderPass(PreserveAlphaOutputShader);
+}
+
+function updatePreserveAlphaOutputPass(renderer) {
+  if (!preserveAlphaPass || !renderer) return;
+
+  if (preserveAlphaPass.uniforms?.toneMappingExposure) {
+    preserveAlphaPass.uniforms.toneMappingExposure.value = renderer.toneMappingExposure ?? 1;
+  }
+
+  const material = preserveAlphaPass.material;
+  const defines = material.defines || (material.defines = {});
+  let needsUpdate = false;
+
+  if (preserveAlphaPass._outputColorSpace !== renderer.outputColorSpace) {
+    preserveAlphaPass._outputColorSpace = renderer.outputColorSpace;
+    if (renderer.outputColorSpace === THREE.SRGBColorSpace) {
+      defines.SRGB_COLOR_SPACE = '';
+    } else {
+      delete defines.SRGB_COLOR_SPACE;
+    }
+    needsUpdate = true;
+  }
+
+  if (preserveAlphaPass._toneMapping !== renderer.toneMapping) {
+    preserveAlphaPass._toneMapping = renderer.toneMapping;
+    delete defines.LINEAR_TONE_MAPPING;
+    delete defines.REINHARD_TONE_MAPPING;
+    delete defines.CINEON_TONE_MAPPING;
+    delete defines.ACES_FILMIC_TONE_MAPPING;
+
+    if (renderer.toneMapping === THREE.LinearToneMapping) {
+      defines.LINEAR_TONE_MAPPING = '';
+    } else if (renderer.toneMapping === THREE.ReinhardToneMapping) {
+      defines.REINHARD_TONE_MAPPING = '';
+    } else if (renderer.toneMapping === THREE.CineonToneMapping) {
+      defines.CINEON_TONE_MAPPING = '';
+    } else if (renderer.toneMapping === THREE.ACESFilmicToneMapping) {
+      defines.ACES_FILMIC_TONE_MAPPING = '';
+    }
+
+    needsUpdate = true;
+  }
+
+  if (needsUpdate) {
+    material.needsUpdate = true;
   }
 }
 
@@ -118,13 +226,14 @@ function ensureComposer(renderer) {
     bloomPass = new UnrealBloomPass(new THREE.Vector2(RENDER_SIZE, RENDER_SIZE), 0.95, 0.45, 0.2);
     composer.addPass(renderPass);
     composer.addPass(bloomPass);
-    if (OutputPass) {
-      finalPass = new OutputPass();
-      composer.addPass(finalPass);
-    }
+    preserveAlphaPass = createPreserveAlphaOutputPass();
+    preserveAlphaPass.renderToScreen = true;
+    composer.addPass(preserveAlphaPass);
+    updatePreserveAlphaOutputPass(renderer);
   } else {
     composer.setSize(RENDER_SIZE, RENDER_SIZE);
     if (bloomPass) bloomPass.setSize(RENDER_SIZE, RENDER_SIZE);
+    if (preserveAlphaPass?.setSize) preserveAlphaPass.setSize(RENDER_SIZE, RENDER_SIZE);
   }
 }
 
@@ -146,6 +255,7 @@ function renderScene(dt, t) {
   const renderer = getRenderer();
   if (!renderer) return;
   ensureComposer(renderer);
+  updatePreserveAlphaOutputPass(renderer);
   updateCameraTarget();
   if (pirateStation3D.update) pirateStation3D.update(t ?? 0, dt ?? 0);
   renderer.setClearColor(0x000000, 0);
