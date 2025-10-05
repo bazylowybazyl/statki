@@ -124,7 +124,16 @@
 <!-- przełącznik: aktywuj assetowy renderer planet (klasyczny skrypt, aby globalne API było gotowe zanim ruszy pętla gry) -->
 <script src="planet3d.assets.js"></script>
 
-<script>
+<script type="module">
+import {
+  steerToward,
+  chaseEvadeAI,
+  dogfightAI,
+  battleshipAI,
+  limitSpeed,
+  wrapAngle,
+  leadTarget,
+} from "./src/ai/ai.js";
 // =============== Canvas & utils ===============
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
@@ -517,34 +526,8 @@ function formatGameTime(sec){
   const m = Math.floor((t % 3600) / 60);
   return `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}`;
 }
-function wrapAngle(a){ while(a>Math.PI) a-=2*Math.PI; while(a<-Math.PI) a+=2*Math.PI; return a; }
 function interpAngleShort(prev,curr,t){ const d = wrapAngle(curr - prev); return wrapAngle(prev + d * t); }
 function shuffleArray(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
-function leadTarget(shooter, shooterVel, target, speed){
-  const tx = target.x, ty = target.y;
-  const tvx = target.vx || 0, tvy = target.vy || 0;
-  const rx = tx - shooter.x, ry = ty - shooter.y;
-  const rvx = tvx - shooterVel.x, rvy = tvy - shooterVel.y;
-  const a = rvx*rvx + rvy*rvy - speed*speed;
-  const b = 2*(rx*rvx + ry*rvy);
-  const c = rx*rx + ry*ry;
-  let t = 0;
-  if(Math.abs(a) < 1e-6){
-    if(Math.abs(b) > 1e-6) t = -c / b;
-  } else {
-    const disc = b*b - 4*a*c;
-    if(disc >= 0){
-      const sqrtDisc = Math.sqrt(disc);
-      const t1 = (-b - sqrtDisc)/(2*a);
-      const t2 = (-b + sqrtDisc)/(2*a);
-      t = Math.min(t1, t2);
-      if(t < 0) t = Math.max(t1, t2);
-    }
-  }
-  if(!isFinite(t) || t < 0) t = 0;
-  return { x: tx + tvx*t, y: ty + tvy*t };
-}
-
 // =============== World / camera ===============
 const WORLD = { w: 120000, h: 80000 };
 const camera = {
@@ -1077,7 +1060,7 @@ function spawnDestroyer(pos){
     rocketR: makeRocketPod({ salvo: 3, cooldown: 2.8 })
   };
   n.ai = function(dt){
-    battleshipAI(n, ship);
+    battleshipAI(n, ship, WORLD);
     useRailPair(n, ship);
     useRocketsPair(n, ship);
   };
@@ -1100,7 +1083,7 @@ function spawnGunship(pos){
     rockets: makeRocketPod({ salvo: 2, cooldown: 3.2 })
   };
   n.ai = function(dt){
-    dogfightAI(n, ship);
+    dogfightAI(n, ship, WORLD);
     useCIWSPair(n, ship);
     maybeFireRockets(n, ship);
   };
@@ -2265,7 +2248,7 @@ function guardAI(n, dt){
   n.orbitAngle = (n.orbitAngle + w*dt) % (Math.PI*2);
   const target = { x: st.x + Math.cos(n.orbitAngle)*n.orbitRadius,
                    y: st.y + Math.sin(n.orbitAngle)*n.orbitRadius };
-  steerToward(n, target.x, target.y, dt, n.accel*0.8, n.turn*0.8);
+  steerToward(n, target, { dt, accel: n.accel*0.8, turnRate: n.turn*0.8 });
   const drag = Math.exp(-0.8*dt);
   n.vx *= drag; n.vy *= drag;
 }
@@ -4857,52 +4840,6 @@ function applyShipStats(s){
 }
 
 function dist(x1,y1,x2,y2){ return Math.hypot(x2-x1, y2-y1); }
-function limitSpeed(n, max){
-  const vx = n.vel ? n.vel.x : n.vx;
-  const vy = n.vel ? n.vel.y : n.vy;
-  const v = Math.hypot(vx, vy);
-  if(v>max){
-    const s = max/v;
-    if(n.vel){ n.vel.x*=s; n.vel.y*=s; }
-    else { n.vx*=s; n.vy*=s; }
-  }
-}
-function steerToward(n, tx, ty, dt, accel = n.accel, turnRate = n.turn) {
-  const desired = Math.atan2(ty - n.y, tx - n.x);
-  const diff = wrapAngle(desired - n.angle);
-  const turn = clamp(diff, -turnRate * dt, turnRate * dt);
-  n.angle = wrapAngle(n.angle + turn);
-  n.vx += Math.cos(n.angle) * accel * dt;
-  n.vy += Math.sin(n.angle) * accel * dt;
-  limitSpeed(n, n.maxSpeed);
-}
-
-function chaseEvadeAI(n, target, opts = {}) {
-  steerToward(n, target.pos.x, target.pos.y, 0.016);
-
-  if (opts.strafe) {
-    const side = (Math.random() < 0.5 ? -1 : 1);
-    const ang = n.angle + side * Math.PI / 2;
-    n.vx += Math.cos(ang) * n.accel * 0.004;
-    n.vy += Math.sin(ang) * n.accel * 0.004;
-  }
-}
-
-function dogfightAI(n, target) {
-  chaseEvadeAI(n, target, { strafe: true });
-}
-
-function battleshipAI(n, target) {
-  const d = Math.hypot(target.pos.x - n.x, target.pos.y - n.y);
-  if (d < 600) {
-    const ang = Math.atan2(n.y - target.pos.y, n.x - target.pos.x);
-    n.vx += Math.cos(ang) * n.accel * 0.016;
-    n.vy += Math.sin(ang) * n.accel * 0.016;
-    limitSpeed(n, n.maxSpeed);
-  } else {
-    chaseEvadeAI(n, target);
-  }
-}
 function useRailPair(n, target){ /* sprawdź kąt i cooldown, odpal pary */ }
 function useRocketsPair(n, target){ /* salwy */ }
 function useCIWSPair(n, target){ /* krótka seria */ }
