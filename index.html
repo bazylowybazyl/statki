@@ -599,9 +599,9 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // Helper do spawnu eksplozji 3D
-function triggerRailgunExplosion3D(x, y){
+function triggerRailgunExplosion3D(x, y, size = ship.h * 0.22){
   if (overlay3D && window.makeRailgunExplosion) {
-    const fx = window.makeRailgunExplosion({ x, y });
+    const fx = window.makeRailgunExplosion({ x, y, size });
     overlay3D.spawn(fx);
   }
 }
@@ -1257,13 +1257,8 @@ function spawnExplosionPlasma(x,y,scale=1){
   }
 }
 function spawnRailHitEffect(x,y,scale=1){
-  for(let i=0;i<12 * scale;i++){
-    const a = Math.random()*Math.PI*2;
-    const s = 80 + Math.random()*220 * scale;
-    spawnParticle({x,y}, {x:Math.cos(a)*s, y:Math.sin(a)*s}, 0.25 + Math.random()*0.35, '#bfe7ff', 1 + Math.random()*2, true);
-  }
-  spawnParticle({x,y}, {x:0,y:0}, 0.12, '#ffffff', 6 * scale, true);
-  triggerRailgunExplosion3D(x, y);
+  // Tylko 3D (skalowane parametrem efektu)
+  triggerRailgunExplosion3D(x, y, ship.h * 0.22 * scale);
 }
 function spawnDefaultHit(x,y,scale=1){
   for(let i=0;i<14*scale;i++){

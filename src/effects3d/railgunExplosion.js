@@ -17,9 +17,10 @@ function ensureTextures() {
 export function createRailgunExplosionFactory(scene) {
   ensureTextures();
 
-  return function spawn({ x = 0, y = 0, z } = {}) {
+  return function spawn({ x = 0, y = 0, z, size = 50 } = {}) {
     const group = new THREE.Group();
     group.position.set(x, 0, z !== undefined ? z : y);
+    group.scale.setScalar(size);
     scene.add(group);
 
     const flashMaterial = new THREE.SpriteMaterial({
@@ -119,13 +120,14 @@ export function createRailgunExplosionFactory(scene) {
       group.add(smoke);
     }
 
-    const light = new THREE.PointLight(0x9ad9ff, 120, 110, 2);
+    const light = new THREE.PointLight(0x9ad9ff, 120, 110 * size, 2);
     light.position.set(0, 6, 0);
     group.add(light);
 
     const duration = 0.6;
     let time = 0;
     let disposed = false;
+    const sizeBoost = Math.sqrt(size / 50);
 
     function update(dt) {
       if (disposed) return;
@@ -178,7 +180,7 @@ export function createRailgunExplosionFactory(scene) {
         }
       }
 
-      light.intensity = 140 * Math.max(0, 1 - time / 0.12);
+      light.intensity = 140 * sizeBoost * Math.max(0, 1 - time / 0.12);
 
       if (time > duration + 0.6) {
         dispose();
