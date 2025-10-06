@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Space Survivors — gwiazdy na całej mapie + duży silnik plazmowy</title>
+<link rel="icon" href="data:," />
 <style>
   html,body{height:100%;margin:0;background:#030417;color:#dfe7ff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
   #ui{position:absolute;left:12px;top:12px;z-index:20;background:rgba(8,10,20,0.6);padding:10px;border-radius:8px;backdrop-filter:blur(6px)}
@@ -4840,10 +4841,6 @@ function applyShipStats(s){
 }
 
 function dist(x1,y1,x2,y2){ return Math.hypot(x2-x1, y2-y1); }
-function useRailPair(n, target){ /* sprawdź kąt i cooldown, odpal pary */ }
-function useRocketsPair(n, target){ /* salwy */ }
-function useCIWSPair(n, target){ /* krótka seria */ }
-function maybeFireRockets(n, target){ /* warunkowo */ }
 
 // init
 const loadingEl = document.getElementById('loading');
@@ -5249,13 +5246,24 @@ setTimeout(startGame, 500);
     if (e.key === 'F9' ){ DevFlags.unlimitedWarp = !DevFlags.unlimitedWarp; ui.cbUnlimited.checked = DevFlags.unlimitedWarp; saveLS(); }
   });
 
-  // boot
-  loadLS();
-  bootstrapFromGame();
-  buildPlanetsUI();
-  reflectToUI();
-  reflectToCfg();
-  scheduleRebuild3D();
+  function waitForGameReady(){
+    const hasSun = typeof window.SUN === 'object' && window.SUN;
+    const hasPlanets = Array.isArray(window.planets);
+    const hasInit3D = typeof window.initPlanets3D === 'function';
+    if (!hasSun || !hasPlanets || !hasInit3D){
+      requestAnimationFrame(waitForGameReady);
+      return;
+    }
+
+    loadLS();
+    bootstrapFromGame();
+    buildPlanetsUI();
+    reflectToUI();
+    reflectToCfg();
+    scheduleRebuild3D();
+  }
+
+  waitForGameReady();
 
   // Upewnij się, że panel można włączyć na starcie (dev wygoda)
   // ui.root.style.display = 'block';
