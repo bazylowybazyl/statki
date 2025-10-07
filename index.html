@@ -5050,10 +5050,23 @@ setTimeout(startGame, 500);
       pirateScale: 1.0,           // mnożnik rysowania stacji pirackiej
       station3DScale: 1.0,        // mnożnik nakładki 3D
   };
-  const DevFlags = window.DevFlags;
-  const DevTuning = window.DevTuning;
-  const Dev = window.Dev;
+  let DevFlags = window.DevFlags;
+  let DevTuning = window.DevTuning;
+  let Dev = window.Dev;
   window.DevConfig = DevConfig;
+
+  function syncDevGlobals(){
+    if (window.DevFlags !== DevFlags) {
+      DevFlags = window.DevFlags || (window.DevFlags = {});
+    }
+    if (window.DevTuning !== DevTuning) {
+      DevTuning = window.DevTuning || (window.DevTuning = {});
+    }
+    if (window.Dev !== Dev) {
+      Dev = window.Dev || (window.Dev = {});
+    }
+  }
+  syncDevGlobals();
 
   // ---- Elementy UI --------------------------------------------------------
   const el = (id)=>document.getElementById(id);
@@ -5083,6 +5096,7 @@ setTimeout(startGame, 500);
 
   // ---- Persistencja -------------------------------------------------------
   function loadLS(){
+    syncDevGlobals();
     try {
       const cfg = JSON.parse(localStorage.getItem('devConfig')||'null');
       const flags = JSON.parse(localStorage.getItem('devFlags')||'null');
@@ -5253,6 +5267,7 @@ setTimeout(startGame, 500);
   });
 
   function waitForGameReady(){
+    syncDevGlobals();
     const hasSun = typeof window.SUN === 'object' && window.SUN;
     const hasPlanets = Array.isArray(window.planets);
     const hasInit3D = typeof window.initPlanets3D === 'function';
