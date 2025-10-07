@@ -486,7 +486,7 @@
       this.scene.add(this.mesh);
 
       this._instanced = [];
-      this.rotationSpeed = 0.03;
+      this.rotationSpeed = 0.006;
       this.rotation = 0;
 
       const inner = innerRadius / outerRadius;
