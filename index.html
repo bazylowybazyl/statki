@@ -5486,6 +5486,19 @@ setTimeout(startGame, 500);
     if (typeof BASE_ORBIT !== 'number' || BASE_ORBIT <= 0) return '? AU';
     return (worldDist / BASE_ORBIT).toFixed(2) + ' AU';
   }
+  function fmtU(worldDist){
+    if (typeof worldDist !== 'number' || !Number.isFinite(worldDist)) return '?';
+    const abs = Math.abs(worldDist);
+    if (abs >= 1e6) return worldDist.toExponential(2).replace('+', '');
+    if (abs >= 1000){
+      const rounded = Math.round(worldDist);
+      return rounded.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    }
+    if (abs >= 10) return worldDist.toFixed(0);
+    if (abs >= 1) return worldDist.toFixed(1);
+    if (abs >= 0.01) return worldDist.toFixed(2);
+    return worldDist.toExponential(2).replace('+', '');
+  }
   function updateDistancesUI(){
     if (!ui.distancesList || !window.SUN || !Array.isArray(window.planets)) return;
     const S = window.SUN;
