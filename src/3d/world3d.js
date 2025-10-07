@@ -68,8 +68,8 @@ const PreserveAlphaOutputShader = {
 
     varying vec2 vUv;
 
-    #include <tonemapping_pars_fragment>
-    #include <colorspace_pars_fragment>
+    ${THREE.ShaderChunk['tonemapping_pars_fragment']}
+    ${THREE.ShaderChunk['colorspace_pars_fragment']}
 
     void main() {
       gl_FragColor = texture2D(tDiffuse, vUv);
