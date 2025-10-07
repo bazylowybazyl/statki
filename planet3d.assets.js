@@ -243,8 +243,8 @@
       this.canvas = document.createElement('canvas');
       this.canvas.width = 1024; this.canvas.height = 1024;
       this.ctx2d = this.canvas.getContext('2d');
-      this.spin = 0.02;
-      this.rotSpeed = 0.05;
+      this.spin = 0.004;
+      this.rotSpeed = 0.01;
 
       if (typeof THREE === 'undefined') return;
       this.scene = new THREE.Scene();
@@ -298,7 +298,7 @@
             imesh.receiveShadow = true;
             this.root.add(imesh);
             this.imesh = imesh;
-            this.spin = 0.04; // bardzo wolna rotacja
+            this.spin = 0.008; // bardzo wolna rotacja
           }
         );
       };
