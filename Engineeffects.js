@@ -4,6 +4,9 @@
 
 import * as THREE from "three";
 
+const ENGINE_TINT = 0xAAD2FF;
+const CORE_TINT = 0xFFFFFF;
+
 /* ================== Helpers ================== */
 
 // Tworzy 1D gradient (używany jako alpha/cutout na sprite'ach)
@@ -28,14 +31,6 @@ function makeGradientTex({ w = 64, h = 256, stops = [] }) {
   tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.needsUpdate = true;
   return tex;
-}
-
-// delikatny additive niebieski kolor
-function engineColor(alpha = 0.85) {
-  return new THREE.Color(`rgba(170,210,255,${alpha})`);
-}
-function coreColor(alpha = 1) {
-  return new THREE.Color(`rgba(255,255,255,${alpha})`);
 }
 
 /* ================== Exhaust: igłowy (domyślny) ================== */
@@ -68,16 +63,18 @@ export function createShortNeedleExhaust(opts = {}) {
   // Materiały (additive, przezroczyste)
   const matPlume = new THREE.SpriteMaterial({
     map: texLong,
-    color: engineColor(0.9),
+    color: ENGINE_TINT,
     transparent: true,
+    opacity: 0.9,
     depthWrite: false,
     depthTest: true,
     blending: THREE.AdditiveBlending,
   });
   const matCore = new THREE.SpriteMaterial({
     map: texCore,
-    color: coreColor(1.0),
+    color: CORE_TINT,
     transparent: true,
+    opacity: 1.0,
     depthWrite: false,
     depthTest: true,
     blending: THREE.AdditiveBlending,
@@ -99,7 +96,9 @@ export function createShortNeedleExhaust(opts = {}) {
 
   // Subtle „streaks” – dwa cieńsze sprite’y z fazą, dające pulsowanie
   const streakMat = matPlume.clone();
-  streakMat.color = engineColor(0.6);
+  streakMat.color.setHex(ENGINE_TINT);
+  streakMat.transparent = true;
+  streakMat.opacity = 0.6;
   const streak1 = new THREE.Sprite(streakMat);
   streak1.center.set(0.5, 1.0);
   streak1.scale.set(10, 100, 1);

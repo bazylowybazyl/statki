@@ -65,34 +65,16 @@ const PreserveAlphaOutputShader = {
     precision highp float;
 
     uniform sampler2D tDiffuse;
-    // NIE deklarujemy tu ponownie: uniform float toneMappingExposure;
-
-    ${THREE.ShaderChunk['tonemapping_pars_fragment']}
-    ${THREE.ShaderChunk['colorspace_pars_fragment']}
 
     varying vec2 vUv;
 
+    #include <tonemapping_pars_fragment>
+    #include <colorspace_pars_fragment>
+
     void main() {
-      vec4 texel = texture2D(tDiffuse, vUv);
-      vec3 color = texel.rgb;
-
-      #ifdef LINEAR_TONE_MAPPING
-        color = LinearToneMapping(color);
-      #elif defined( REINHARD_TONE_MAPPING )
-        color = ReinhardToneMapping(color);
-      #elif defined( CINEON_TONE_MAPPING )
-        color = OptimizedCineonToneMapping(color);
-      #elif defined( ACES_FILMIC_TONE_MAPPING )
-        color = ACESFilmicToneMapping(color);
-      #endif
-
-      vec4 outputColor = vec4(color, texel.a);
-
-      #ifdef SRGB_COLOR_SPACE
-        outputColor = LinearTosRGB(outputColor);
-      #endif
-
-      gl_FragColor = outputColor;
+      gl_FragColor = texture2D(tDiffuse, vUv);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
     }
   `
 };
