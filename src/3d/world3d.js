@@ -21,7 +21,14 @@ let bloomPass = null;
 let renderPass = null;
 let preserveAlphaPass = null;
 let localRenderer = null;
-let sceneMaskRT = null;
+let maskRT = null;
+
+const maskMaterial = new THREE.MeshBasicMaterial({
+  color: 0xffffff,
+  transparent: true,
+  opacity: 1.0,
+  depthWrite: true
+});
 
 let ambientLight = null;
 let hemiLight = null;
@@ -47,7 +54,7 @@ const PreserveAlphaOutputShader = {
   name: 'PreserveAlphaOutputShader',
   uniforms: {
     tDiffuse: { value: null },
-    tScene: { value: null }
+    tMask: { value: null }
   },
   vertexShader: /* glsl */`
     precision highp float;
@@ -60,7 +67,7 @@ const PreserveAlphaOutputShader = {
   fragmentShader: /* glsl */`
     precision highp float;
     uniform sampler2D tDiffuse; // kolor po bloomie (linear)
-    uniform sampler2D tScene;   // surowa scena (dla ALFA)
+    uniform sampler2D tMask;    // maska alfa sceny bez post FX
     varying vec2 vUv;
 
     // --- lokalny enkoder sRGB (unikalne nazwy, zero kolizji) ---
@@ -76,7 +83,7 @@ const PreserveAlphaOutputShader = {
 
     void main() {
       vec3  colorPost = texture2D( tDiffuse, vUv ).rgb; // linear RGB po bloomie
-      float a         = texture2D( tScene,   vUv ).a;   // alfa sprzed bloom
+      float a         = texture2D( tMask,    vUv ).r;   // alfa z maski
 
       // premultiply w przestrzeni liniowej
       vec4 outLinear = vec4( colorPost * a, a );
@@ -125,20 +132,17 @@ function updatePreserveAlphaOutputPass(renderer) {
   }
 }
 
-function createSceneMaskRenderTarget() {
-  if (sceneMaskRT) {
-    sceneMaskRT.dispose();
-  }
-  sceneMaskRT = new THREE.WebGLRenderTarget(RENDER_SIZE, RENDER_SIZE, {
-    format: THREE.RGBAFormat,
-    type: THREE.UnsignedByteType,
-    depthBuffer: true,
-    stencilBuffer: false
-  });
-  sceneMaskRT.texture.name = 'world3d.sceneMask';
-  sceneMaskRT.texture.generateMipmaps = false;
-  if (preserveAlphaPass) {
-    preserveAlphaPass.uniforms.tScene.value = sceneMaskRT.texture;
+function ensureMaskRT(renderer) {
+  if (!renderer) return;
+  if (!maskRT) {
+    maskRT = new THREE.WebGLRenderTarget(RENDER_SIZE, RENDER_SIZE, {
+      format: THREE.RGBAFormat,
+      type: THREE.UnsignedByteType,
+      depthBuffer: true,
+      stencilBuffer: false
+    });
+    maskRT.texture.name = 'world3d.alphaMask';
+    maskRT.texture.generateMipmaps = false;
   }
 }
 
@@ -201,12 +205,12 @@ function getRenderer() {
 function ensureComposer(renderer) {
   if (!renderer) {
     composer = null;
-    if (sceneMaskRT) {
-      sceneMaskRT.dispose();
-      sceneMaskRT = null;
+    if (maskRT) {
+      maskRT.dispose();
+      maskRT = null;
     }
     if (preserveAlphaPass) {
-      preserveAlphaPass.uniforms.tScene.value = null;
+      preserveAlphaPass.uniforms.tMask.value = null;
     }
     return;
   }
@@ -229,19 +233,10 @@ function ensureComposer(renderer) {
     preserveAlphaPass.renderToScreen = true;
     composer.addPass(preserveAlphaPass);
     updatePreserveAlphaOutputPass(renderer);
-    createSceneMaskRenderTarget();
   } else {
     composer.setSize(RENDER_SIZE, RENDER_SIZE);
     if (bloomPass) bloomPass.setSize(RENDER_SIZE, RENDER_SIZE);
     if (preserveAlphaPass?.setSize) preserveAlphaPass.setSize(RENDER_SIZE, RENDER_SIZE);
-    if (sceneMaskRT) {
-      sceneMaskRT.setSize(RENDER_SIZE, RENDER_SIZE);
-      if (preserveAlphaPass) {
-        preserveAlphaPass.uniforms.tScene.value = sceneMaskRT.texture;
-      }
-    } else {
-      createSceneMaskRenderTarget();
-    }
   }
 }
 
@@ -263,6 +258,7 @@ function renderScene(dt, t) {
   const renderer = getRenderer();
   if (!renderer) return;
   ensureComposer(renderer);
+  ensureMaskRT(renderer);
   updatePreserveAlphaOutputPass(renderer);
   updateCameraTarget();
   if (pirateStation3D.update) pirateStation3D.update(t ?? 0, dt ?? 0);
@@ -270,18 +266,17 @@ function renderScene(dt, t) {
   if (renderer.setClearAlpha) renderer.setClearAlpha(0);
   if (composer) {
     const prevAutoClear = renderer.autoClear;
-    const prevTarget = renderer.getRenderTarget();
-    if (sceneMaskRT) {
-      renderer.autoClear = true;
-      renderer.setRenderTarget(sceneMaskRT);
-      renderer.setClearColor(0x000000, 0);
-      if (renderer.setClearAlpha) renderer.setClearAlpha(0);
-      renderer.clear(true, true, true);
-      renderer.render(scene, camera);
-      renderer.setRenderTarget(prevTarget || null);
-    }
-    if (preserveAlphaPass) {
-      preserveAlphaPass.uniforms.tScene.value = sceneMaskRT ? sceneMaskRT.texture : null;
+    const prevTarget = renderer.getRenderTarget ? renderer.getRenderTarget() : null;
+    const prevOverride = scene.overrideMaterial;
+    renderer.autoClear = true;
+    scene.overrideMaterial = maskMaterial;
+    renderer.setRenderTarget(maskRT);
+    renderer.clear(true, true, true);
+    renderer.render(scene, camera);
+    scene.overrideMaterial = prevOverride;
+    renderer.setRenderTarget(prevTarget || null);
+    if (preserveAlphaPass?.uniforms?.tMask) {
+      preserveAlphaPass.uniforms.tMask.value = maskRT ? maskRT.texture : null;
     }
     renderer.autoClear = false;
     composer.render();
@@ -352,8 +347,10 @@ export function drawWorld3D(ctx, cam, worldToScreen) {
   const sizePx = sizeWorld * (cam?.zoom ?? 1);
   const offsetY = sizePx * 0.55;
   ctx.save();
-  ctx.globalAlpha = 1;
+  const prevOp = ctx.globalCompositeOperation;
+  ctx.globalCompositeOperation = 'copy';
   ctx.drawImage(lastRenderInfo.canvas, screen.x - sizePx / 2, screen.y - offsetY, sizePx, sizePx);
+  ctx.globalCompositeOperation = prevOp;
   ctx.restore();
 }
 
