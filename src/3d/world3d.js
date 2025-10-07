@@ -83,9 +83,14 @@ const PreserveAlphaOutputShader = {
 
 function createPreserveAlphaOutputPass() {
   const p = new ShaderPass(PreserveAlphaOutputShader);
-  if (p.material) {
-    p.material.toneMapped = false;
-    p.material.transparent = true;
+  const m = p.material;
+  if (m) {
+    // final pass ma NADPISYWAĆ, nie blendować:
+    m.toneMapped = false;
+    m.transparent = false;              // <-- kluczowe
+    m.blending = THREE.NoBlending;      // <-- wyłącz blending jawnie
+    m.depthTest = false;
+    m.depthWrite = false;
   }
   return p;
 }
