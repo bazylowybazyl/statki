@@ -5035,18 +5035,24 @@ setTimeout(startGame, 500);
 
 <script>
 (function(){
+  // Upewnij się, że obiekty DevTools (DevFlags, DevTuning, Dev) istnieją
+  window.DevFlags = window.DevFlags || {};
+  window.DevTuning = window.DevTuning || {};
+  window.Dev = window.Dev || {};
   // === Wczytaj podstawowe obiekty gry (muszą już istnieć globalnie): SUN, planets, initPlanets3D ===
   // Zakładamy: let SUN = {...}, let planets = [...]; render pętla już działa.
 
   // ---- Stan & persistencja ------------------------------------------------
   const DevConfig = {
-    sunR: null,                 // liczba — promień Słońca (SUN.r)
-    planetRById: {},            // { [id or name]: R }
-    planetScaleAll: 1,          // mnożnik globalny ×R
-    pirateScale: 1.0,           // mnożnik rysowania stacji pirackiej
-    station3DScale: 1.0,        // mnożnik nakładki 3D
+      sunR: null,                 // liczba — promień Słońca (SUN.r)
+      planetRById: {},            // { [id or name]: R }
+      planetScaleAll: 1,          // mnożnik globalny ×R
+      pirateScale: 1.0,           // mnożnik rysowania stacji pirackiej
+      station3DScale: 1.0,        // mnożnik nakładki 3D
   };
   const DevFlags = window.DevFlags;
+  const DevTuning = window.DevTuning;
+  const Dev = window.Dev;
   window.DevConfig = DevConfig;
 
   // ---- Elementy UI --------------------------------------------------------
