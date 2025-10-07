@@ -147,7 +147,7 @@ window.DevFlags = Object.assign({
 }, window.DevFlags || {});
 
 const DEFAULT_PLANET_SCALE = 3;
-const DEFAULT_STATION_SCALE = 3;
+const DEFAULT_STATION_SCALE = 6;
 
 window.DevTuning = Object.assign({
   pirateStationScale: DEFAULT_STATION_SCALE
@@ -5237,12 +5237,12 @@ setTimeout(startGame, 500);
     <div class="row"><strong>Stacje</strong></div>
     <div class="row">
       <label>Skala stacji pirackiej (×)</label>
-      <input id="pirScale" type="range" min="0.4" max="5" step="0.01">
+      <input id="pirScale" type="range" min="0.4" max="12" step="0.01">
       <div class="val" id="pirScaleVal"></div>
     </div>
     <div class="row">
       <label>Skala stacji 3D (×)</label>
-      <input id="station3DScale" type="range" min="0.2" max="3.0" step="0.05" value="3.0">
+      <input id="station3DScale" type="range" min="0.2" max="12.0" step="0.05" value="6.0">
       <div class="val" id="station3DScaleVal"></div>
     </div>
     <label style="display:flex;gap:6px;align-items:center;margin-top:8px">
