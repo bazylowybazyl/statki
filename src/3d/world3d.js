@@ -59,11 +59,11 @@ const PreserveAlphaOutputShader = {
   `,
   fragmentShader: /* glsl */`
     precision highp float;
-    uniform sampler2D tDiffuse;
-    uniform sampler2D tScene;
+    uniform sampler2D tDiffuse; // kolor po bloomie (linear)
+    uniform sampler2D tScene;   // surowa scena (dla ALFA)
     varying vec2 vUv;
 
-    // --- local sRGB encoder (unique names to avoid collisions) ---
+    // --- lokalny enkoder sRGB (unikalne nazwy, zero kolizji) ---
     vec3 _srgbEncode3( in vec3 linearRGB ) {
       vec3 cutoff = step( vec3(0.0031308), linearRGB );
       vec3 lower  = 12.92 * linearRGB;
@@ -75,26 +75,30 @@ const PreserveAlphaOutputShader = {
     }
 
     void main() {
-      vec4 colorPost = texture2D( tDiffuse, vUv );
-      vec4 scenePre = texture2D( tScene, vUv );
+      vec3  colorPost = texture2D( tDiffuse, vUv ).rgb; // linear RGB po bloomie
+      float a         = texture2D( tScene,   vUv ).a;   // alfa sprzed bloom
+
+      // premultiply w przestrzeni liniowej
+      vec4 outLinear = vec4( colorPost * a, a );
+
+      // enkodowanie do sRGB DOPIERO po premultiply
       #ifdef SRGB_COLOR_SPACE
-        colorPost = _srgbEncode4( colorPost );
+        outLinear = _srgbEncode4( outLinear );
       #endif
-      gl_FragColor = vec4( colorPost.rgb, scenePre.a );
+
+      gl_FragColor = outLinear; // premultiplied RGBA
     }
   `
 };
 
 function createPreserveAlphaOutputPass() {
   const p = new ShaderPass(PreserveAlphaOutputShader);
-  const m = p.material;
-  if (m) {
-    // final pass ma NADPISYWAĆ, nie blendować:
-    m.toneMapped = false;
-    m.transparent = false;              // <-- kluczowe
-    m.blending = THREE.NoBlending;      // <-- wyłącz blending jawnie
-    m.depthTest = false;
-    m.depthWrite = false;
+  if (p.material) {
+    p.material.toneMapped = false;
+    p.material.transparent = false;           // bez domyślnego alpha-blend
+    p.material.blending    = THREE.NoBlending; // nadpisanie 1:1
+    p.material.depthTest   = false;
+    p.material.depthWrite  = false;
   }
   return p;
 }
