@@ -21,6 +21,7 @@ let bloomPass = null;
 let renderPass = null;
 let preserveAlphaPass = null;
 let localRenderer = null;
+let sceneMaskRT = null;
 
 let ambientLight = null;
 let hemiLight = null;
@@ -45,7 +46,8 @@ function rendererHasAlpha(r) {
 const PreserveAlphaOutputShader = {
   name: 'PreserveAlphaOutputShader',
   uniforms: {
-    tDiffuse: { value: null }
+    tDiffuse: { value: null },
+    tScene: { value: null }
   },
   vertexShader: /* glsl */`
     precision highp float;
@@ -58,6 +60,7 @@ const PreserveAlphaOutputShader = {
   fragmentShader: /* glsl */`
     precision highp float;
     uniform sampler2D tDiffuse;
+    uniform sampler2D tScene;
     varying vec2 vUv;
 
     // --- local sRGB encoder (unique names to avoid collisions) ---
@@ -72,11 +75,12 @@ const PreserveAlphaOutputShader = {
     }
 
     void main() {
-      vec4 texel = texture2D( tDiffuse, vUv );
+      vec4 colorPost = texture2D( tDiffuse, vUv );
+      vec4 scenePre = texture2D( tScene, vUv );
       #ifdef SRGB_COLOR_SPACE
-        texel = _srgbEncode4( texel );
+        colorPost = _srgbEncode4( colorPost );
       #endif
-      gl_FragColor = texel; // zachowujemy alpha 1:1
+      gl_FragColor = vec4( colorPost.rgb, scenePre.a );
     }
   `
 };
@@ -114,6 +118,23 @@ function updatePreserveAlphaOutputPass(renderer) {
 
   if (needsUpdate) {
     material.needsUpdate = true;
+  }
+}
+
+function createSceneMaskRenderTarget() {
+  if (sceneMaskRT) {
+    sceneMaskRT.dispose();
+  }
+  sceneMaskRT = new THREE.WebGLRenderTarget(RENDER_SIZE, RENDER_SIZE, {
+    format: THREE.RGBAFormat,
+    type: THREE.UnsignedByteType,
+    depthBuffer: true,
+    stencilBuffer: false
+  });
+  sceneMaskRT.texture.name = 'world3d.sceneMask';
+  sceneMaskRT.texture.generateMipmaps = false;
+  if (preserveAlphaPass) {
+    preserveAlphaPass.uniforms.tScene.value = sceneMaskRT.texture;
   }
 }
 
@@ -176,6 +197,13 @@ function getRenderer() {
 function ensureComposer(renderer) {
   if (!renderer) {
     composer = null;
+    if (sceneMaskRT) {
+      sceneMaskRT.dispose();
+      sceneMaskRT = null;
+    }
+    if (preserveAlphaPass) {
+      preserveAlphaPass.uniforms.tScene.value = null;
+    }
     return;
   }
   if (!composer) {
@@ -197,10 +225,19 @@ function ensureComposer(renderer) {
     preserveAlphaPass.renderToScreen = true;
     composer.addPass(preserveAlphaPass);
     updatePreserveAlphaOutputPass(renderer);
+    createSceneMaskRenderTarget();
   } else {
     composer.setSize(RENDER_SIZE, RENDER_SIZE);
     if (bloomPass) bloomPass.setSize(RENDER_SIZE, RENDER_SIZE);
     if (preserveAlphaPass?.setSize) preserveAlphaPass.setSize(RENDER_SIZE, RENDER_SIZE);
+    if (sceneMaskRT) {
+      sceneMaskRT.setSize(RENDER_SIZE, RENDER_SIZE);
+      if (preserveAlphaPass) {
+        preserveAlphaPass.uniforms.tScene.value = sceneMaskRT.texture;
+      }
+    } else {
+      createSceneMaskRenderTarget();
+    }
   }
 }
 
@@ -228,9 +265,23 @@ function renderScene(dt, t) {
   renderer.setClearColor(0x000000, 0);
   if (renderer.setClearAlpha) renderer.setClearAlpha(0);
   if (composer) {
+    const prevAutoClear = renderer.autoClear;
+    const prevTarget = renderer.getRenderTarget();
+    if (sceneMaskRT) {
+      renderer.autoClear = true;
+      renderer.setRenderTarget(sceneMaskRT);
+      renderer.setClearColor(0x000000, 0);
+      if (renderer.setClearAlpha) renderer.setClearAlpha(0);
+      renderer.clear(true, true, true);
+      renderer.render(scene, camera);
+      renderer.setRenderTarget(prevTarget || null);
+    }
+    if (preserveAlphaPass) {
+      preserveAlphaPass.uniforms.tScene.value = sceneMaskRT ? sceneMaskRT.texture : null;
+    }
     renderer.autoClear = false;
     composer.render();
-    renderer.autoClear = true;
+    renderer.autoClear = prevAutoClear;
   } else {
     renderer.render(scene, camera);
   }
