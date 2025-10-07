@@ -174,6 +174,18 @@ function muzzlePosFor(entity, dir, extra = 8){
   return { x: entity.x + dir.x * (rad + extra), y: entity.y + dir.y * (rad + extra) };
 }
 
+function isPirateStation(st){
+  if (!st) return false;
+  const name = typeof st.name === 'string' ? st.name.toLowerCase() : '';
+  return st.isPirate || st.type === 'pirate' || st.style === 'pirate' || name.includes('pir');
+}
+
+function stationScaleFor(st){
+  const globalScale = Number.isFinite(Dev.station3DScale) ? Dev.station3DScale : 1.0;
+  const pirateScale = Number.isFinite(DevTuning.pirateStationScale) ? DevTuning.pirateStationScale : globalScale;
+  return isPirateStation(st) ? pirateScale : globalScale;
+}
+
 // === HARDPOINTS: enums ===
 const HP = {
   MAIN: 'main',
@@ -814,6 +826,10 @@ function makeSolarPlanets(){
   const AU = 3000;
   const MIN_SUN_GAP = 600;
   const MIN_PLANET_GAP = 800;
+  const INNER_PLANET_COUNT = 4;
+  const INNER_EXTRA_ORBIT = 600;
+  const INNER_EXTRA_SUN_GAP = 600;
+  const INNER_EXTRA_PLANET_GAP = 600;
   const rand = () => Math.random() * Math.PI * 2;
   const defs = [
     { id:'mercury', name:'mercury', baseR:  44, orbitAU: 0.39 },
@@ -828,13 +844,17 @@ function makeSolarPlanets(){
   ];
 
   let minOrbitEdge = SUN.r;
-  return defs.map((def) => {
+  return defs.map((def, index) => {
     const effectiveR = def.baseR * DEFAULT_PLANET_SCALE;
     const baseOrbit = def.orbitAU * AU;
+    const isInner = index < INNER_PLANET_COUNT;
+    const extraOrbit = isInner ? INNER_EXTRA_ORBIT : 0;
+    const sunGap = SUN.r + effectiveR + MIN_SUN_GAP + (isInner ? INNER_EXTRA_SUN_GAP : 0);
+    const neighborGap = minOrbitEdge + effectiveR + MIN_PLANET_GAP + (isInner ? INNER_EXTRA_PLANET_GAP : 0);
     const orbitRadius = Math.max(
-      baseOrbit,
-      SUN.r + effectiveR + MIN_SUN_GAP,
-      minOrbitEdge + effectiveR + MIN_PLANET_GAP
+      baseOrbit + extraOrbit,
+      sunGap,
+      neighborGap
     );
 
     minOrbitEdge = orbitRadius + effectiveR;
@@ -3224,8 +3244,7 @@ function physicsStep(dt){
   }
   for (const st of stations) {
     if (st.baseR == null) st.baseR = st.r;
-    const pirate = st.isPirate || st.type === 'pirate' || st.style === 'pirate' || (st.name && st.name.toLowerCase().includes('pir'));
-    const scale = pirate ? DevTuning.pirateStationScale : 1.0;
+    const scale = stationScaleFor(st);
     st.r = (st.baseR || st.r) * scale;
   }
   // regen paliwa gdy nie warpuje
@@ -3835,8 +3854,7 @@ function drawStationShadow(ctx, st, cam){
   const s = worldToScreen(st.x, st.y, cam);
   const toSun = { x: (SUN.x - st.x), y: (SUN.y - st.y) };
   const ang = Math.atan2(toSun.y, toSun.x) + Math.PI; // cień „od” Słońca
-  const pirate = st.isPirate || st.type === 'pirate' || st.style === 'pirate' || (st.name && st.name.toLowerCase().includes('pir'));
-  const scale = pirate ? DevTuning.pirateStationScale : 1.0;
+  const scale = stationScaleFor(st);
   const base = (st.baseR || st.r || 120) * scale;
   const off  = base * 1.2 * cam.zoom;
   const w = base * 1.6 * cam.zoom;
@@ -4272,9 +4290,7 @@ function render(alpha, frameDt){
   if (!window.USE_STATION_3D) {
     for (const st of stations){
       const s = worldToScreen(st.x, st.y, cam);
-      const pirate = st.isPirate || st.type === 'pirate' || st.style === 'pirate' || (st.name && st.name.toLowerCase().includes('pir'));
-      const scale = pirate ? DevTuning.pirateStationScale : 1.0;
-      const visR = (st.baseR || st.r) * scale;
+      const visR = (st.baseR || st.r) * stationScaleFor(st);
       const rr = visR * camera.zoom;
 
       drawStationShadow(ctx, st, cam);
