@@ -60,22 +60,39 @@ const PreserveAlphaOutputShader = {
     uniform sampler2D tDiffuse;
     varying vec2 vUv;
 
-    ${THREE.ShaderChunk['colorspace_pars_fragment']}
+    // --- local sRGB encoder (unique names to avoid collisions) ---
+    vec3 _srgbEncode3( in vec3 linearRGB ) {
+      vec3 cutoff = step( vec3(0.0031308), linearRGB );
+      vec3 lower  = 12.92 * linearRGB;
+      vec3 higher = 1.055 * pow( linearRGB, vec3(1.0/2.4) ) - 0.055;
+      return mix( lower, higher, cutoff );
+    }
+    vec4 _srgbEncode4( in vec4 linearRGBA ) {
+      return vec4( _srgbEncode3( linearRGBA.rgb ), linearRGBA.a );
+    }
 
     void main() {
       vec4 texel = texture2D( tDiffuse, vUv );
-
       #ifdef SRGB_COLOR_SPACE
-        texel = LinearTosRGB( texel );
+        texel = _srgbEncode4( texel );
       #endif
-
-      gl_FragColor = texel; // zachowujemy alpha z tDiffuse
+      gl_FragColor = texel; // zachowujemy alpha 1:1
     }
   `
 };
 
 function createPreserveAlphaOutputPass() {
-  return new ShaderPass(PreserveAlphaOutputShader);
+  const p = new ShaderPass(PreserveAlphaOutputShader);
+  const m = p.material;
+  if (m) {
+    // final pass ma NADPISYWAĆ, nie blendować:
+    m.toneMapped = false;
+    m.transparent = false;              // <-- kluczowe
+    m.blending = THREE.NoBlending;      // <-- wyłącz blending jawnie
+    m.depthTest = false;
+    m.depthWrite = false;
+  }
+  return p;
 }
 
 function updatePreserveAlphaOutputPass(renderer) {
