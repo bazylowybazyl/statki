@@ -45,17 +45,11 @@ function rendererHasAlpha(r) {
 const PreserveAlphaOutputShader = {
   name: 'PreserveAlphaOutputShader',
   uniforms: {
-    tDiffuse: { value: null },
-    // UWAGA: exposure ustawiamy z JS, ale w GLSL NIE deklarujemy go drugi raz,
-    // bo pochodzi z THREE.ShaderChunk['tonemapping_pars_fragment'].
-    toneMappingExposure: { value: 1 }
+    tDiffuse: { value: null }
   },
   vertexShader: /* glsl */`
     precision highp float;
-
-    // 'position' i 'uv' dostarcza Three.js — nie deklarujemy ich ponownie.
     varying vec2 vUv;
-
     void main() {
       vUv = uv;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
@@ -63,18 +57,19 @@ const PreserveAlphaOutputShader = {
   `,
   fragmentShader: /* glsl */`
     precision highp float;
-
     uniform sampler2D tDiffuse;
-
     varying vec2 vUv;
 
-    ${THREE.ShaderChunk['tonemapping_pars_fragment']}
     ${THREE.ShaderChunk['colorspace_pars_fragment']}
 
     void main() {
-      gl_FragColor = texture2D(tDiffuse, vUv);
-      #include <tonemapping_fragment>
-      #include <colorspace_fragment>
+      vec4 texel = texture2D( tDiffuse, vUv );
+
+      #ifdef SRGB_COLOR_SPACE
+        texel = LinearTosRGB( texel );
+      #endif
+
+      gl_FragColor = texel; // zachowujemy alpha z tDiffuse
     }
   `
 };
@@ -85,10 +80,6 @@ function createPreserveAlphaOutputPass() {
 
 function updatePreserveAlphaOutputPass(renderer) {
   if (!preserveAlphaPass || !renderer) return;
-
-  if (preserveAlphaPass.uniforms?.toneMappingExposure) {
-    preserveAlphaPass.uniforms.toneMappingExposure.value = renderer.toneMappingExposure ?? 1;
-  }
 
   const material = preserveAlphaPass.material;
   const defines = material.defines || (material.defines = {});
@@ -101,26 +92,6 @@ function updatePreserveAlphaOutputPass(renderer) {
     } else {
       delete defines.SRGB_COLOR_SPACE;
     }
-    needsUpdate = true;
-  }
-
-  if (preserveAlphaPass._toneMapping !== renderer.toneMapping) {
-    preserveAlphaPass._toneMapping = renderer.toneMapping;
-    delete defines.LINEAR_TONE_MAPPING;
-    delete defines.REINHARD_TONE_MAPPING;
-    delete defines.CINEON_TONE_MAPPING;
-    delete defines.ACES_FILMIC_TONE_MAPPING;
-
-    if (renderer.toneMapping === THREE.LinearToneMapping) {
-      defines.LINEAR_TONE_MAPPING = '';
-    } else if (renderer.toneMapping === THREE.ReinhardToneMapping) {
-      defines.REINHARD_TONE_MAPPING = '';
-    } else if (renderer.toneMapping === THREE.CineonToneMapping) {
-      defines.CINEON_TONE_MAPPING = '';
-    } else if (renderer.toneMapping === THREE.ACESFilmicToneMapping) {
-      defines.ACES_FILMIC_TONE_MAPPING = '';
-    }
-
     needsUpdate = true;
   }
 
