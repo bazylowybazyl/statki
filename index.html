@@ -3196,8 +3196,12 @@ function physicsStep(dt){
   // aktualizacja orbit planet i stacji
   for(const pl of planets){
     pl.angle += pl.speed * dt * TIME_SCALE;
-    pl.x = SUN.x + Math.cos(pl.angle) * pl.orbitRadius;
-    pl.y = SUN.y + Math.sin(pl.angle) * pl.orbitRadius;
+    const R = pl.devOrbitOverrideR ?? pl.orbitRadius ?? pl.orbit?.radius ?? pl.orbitR ?? BASE_ORBIT;
+    if ('orbitRadius' in pl) pl.orbitRadius = R;
+    if (pl.orbit && 'radius' in pl.orbit) pl.orbit.radius = R;
+    if ('orbitR' in pl) pl.orbitR = R;
+    pl.x = SUN.x + Math.cos(pl.angle) * R;
+    pl.y = SUN.y + Math.sin(pl.angle) * R;
   }
   for(const st of stations){
     if(st.static) continue;
@@ -5251,10 +5255,8 @@ setTimeout(startGame, 500);
 
   <!-- === Dystanse od Słońca ================================================= -->
   <div class="group" id="distancesGroup">
-    <div class="row"><strong>Dystanse od Słońca</strong> <span class="small muted">(AU i jednostki świata)</span></div>
-    <div class="row">
-      <div id="distancesList" class="small" style="font-variant-numeric: tabular-nums; white-space: pre;"></div>
-    </div>
+    <div class="row"><strong>Dystanse od Słońca</strong> <span class="small muted">(AU → promień orbity)</span></div>
+    <!-- JS doda tu po jednym wierszu na planetę -->
   </div>
 
   <div class="group">
@@ -5307,6 +5309,7 @@ setTimeout(startGame, 500);
   const DevConfig = {
     sunR: null,                 // liczba — promień Słońca (SUN.r)
     planetRById: {},            // { [id or name]: R }
+    planetOrbitAUById: {},      // { [id or name]: AU }
     planetScaleAll: DEFAULT_PLANET_SCALE,          // mnożnik globalny ×R
     pirateScale: DEFAULT_STATION_SCALE,           // mnożnik rysowania stacji pirackiej
     station3DScale: DEFAULT_STATION_SCALE,        // mnożnik nakładki 3D
@@ -5323,7 +5326,7 @@ setTimeout(startGame, 500);
     pirScale: el('pirScale'), pirScaleVal: el('pirScaleVal'),
     station3DScale: el('station3DScale'), station3DScaleVal: el('station3DScaleVal'),
     planetsGroup: el('planetsGroup'),
-    distancesList: el('distancesList'),
+    distancesGroup: el('distancesGroup'),
     cbRuler: el('toggleRuler'),
     cbUnlimited: el('toggleUnlimitedWarp'),
     cbPirate3D: el('dt-use-3d-pirate'),
@@ -5360,6 +5363,9 @@ setTimeout(startGame, 500);
         Object.assign(DevFlags, flags);
       }
     } catch {}
+    if (!DevConfig.planetOrbitAUById || typeof DevConfig.planetOrbitAUById !== 'object') {
+      DevConfig.planetOrbitAUById = {};
+    }
     if (typeof DevConfig.planetScaleAll !== 'number') {
       DevConfig.planetScaleAll = DEFAULT_PLANET_SCALE;
     }
@@ -5475,17 +5481,13 @@ setTimeout(startGame, 500);
       planetRById: DevConfig.planetRById,
       planetScaleAll: +DevConfig.planetScaleAll,
       pirateScale: +DevConfig.pirateScale,
-      station3DScale: +DevConfig.station3DScale
+      station3DScale: +DevConfig.station3DScale,
+      planetOrbitAUById: DevConfig.planetOrbitAUById
     };
     ui.cfgOut.value = JSON.stringify(out, null, 2);
   }
   window.__devtoolsReflectToCfg = reflectToCfg;
 
-  // ---- Dystanse od Słońca (AU + world units) ------------------------------
-  function formatAU(worldDist){
-    if (typeof BASE_ORBIT !== 'number' || BASE_ORBIT <= 0) return '? AU';
-    return (worldDist / BASE_ORBIT).toFixed(2) + ' AU';
-  }
   function fmtU(worldDist){
     if (typeof worldDist !== 'number' || !Number.isFinite(worldDist)) return '?';
     const abs = Math.abs(worldDist);
@@ -5499,29 +5501,85 @@ setTimeout(startGame, 500);
     if (abs >= 0.01) return worldDist.toFixed(2);
     return worldDist.toExponential(2).replace('+', '');
   }
-  function updateDistancesUI(){
-    if (!ui.distancesList || !window.SUN || !Array.isArray(window.planets)) return;
-    const S = window.SUN;
-    const Sx = typeof S.x === 'number' ? S.x : 0;
-    const Sy = typeof S.y === 'number' ? S.y : 0;
-    const lines = window.planets.map(p => {
-      const px = typeof p.x === 'number' ? p.x : 0;
-      const py = typeof p.y === 'number' ? p.y : 0;
-      const d = Math.hypot(px - Sx, py - Sy);
-      const name = (p.name || p.id || '').toString();
-      return `${name.padEnd(10)} ${formatAU(d).padStart(9)}   (${fmtU(d)} u)`;
-    });
-    if (window.ASTEROID_BELT){
-      const ab = window.ASTEROID_BELT;
-      const inner = ab.inner ?? 0;
-      const outer = ab.outer ?? 0;
-      const mid = ab.center ?? ((inner + outer) * 0.5);
-      lines.push('', 'Asteroid Belt:');
-      lines.push(`  inner:   ${formatAU(inner).padStart(9)}   (${fmtU(inner)} u)`);
-      lines.push(`  center:  ${formatAU(mid).padStart(9)}   (${fmtU(mid)} u)`);
-      lines.push(`  outer:   ${formatAU(outer).padStart(9)}   (${fmtU(outer)} u)`);
+  // ---- Dystanse od Słońca (AU) — suwaki sterujące promieniem orbity ---------
+  function formatAUValue(worldDist){
+    if (typeof BASE_ORBIT !== 'number' || BASE_ORBIT <= 0) return 0;
+    return worldDist / BASE_ORBIT;
+  }
+  function keyFor(p){
+    return (p.name || p.id || String(p.index) || '').toString().toLowerCase();
+  }
+  function buildDistancesUI(){
+    if (!ui.distancesGroup) return;
+    ui.distancesGroup.querySelectorAll('.row.dist').forEach(n => n.remove());
+    if (!Array.isArray(window.planets) || !window.SUN) return;
+    for (const p of window.planets){
+      const k = keyFor(p);
+      const dWorld = Math.hypot((p.x||0)-SUN.x, (p.y||0)-SUN.y);
+      const dAU = DevConfig.planetOrbitAUById?.[k] ?? formatAUValue(dWorld);
+      const row = document.createElement('div');
+      row.className = 'row dist';
+      row.innerHTML = `
+        <label style="min-width:80px">${p.name||('Planet '+(p.id??''))}</label>
+        <input data-k="${k}" class="plAU" type="range" min="0.20" max="600" step="0.01">
+        <div class="val" id="au_val_${k}" style="min-width:160px; text-align:right; font-variant-numeric: tabular-nums;"></div>
+      `;
+      ui.distancesGroup.appendChild(row);
+      const inp = row.querySelector('input.plAU');
+      if (!DevConfig.planetOrbitAUById) DevConfig.planetOrbitAUById = {};
+      inp.value = dAU;
+      const slot = el('au_val_'+k);
+      if (slot){
+        const worldR = dAU * BASE_ORBIT;
+        slot.textContent = `${dAU.toFixed(2)} AU (${fmtU(worldR)} u)`;
+      }
+      inp.addEventListener('input', ()=>{
+        const au = +inp.value;
+        setPlanetOrbitAU(k, au);
+        if (slot){
+          const worldR = au * BASE_ORBIT;
+          slot.textContent = `${au.toFixed(2)} AU (${fmtU(worldR)} u)`;
+        }
+        saveLS();
+        reflectToCfg();
+      });
     }
-    ui.distancesList.textContent = lines.join('\n');
+  }
+  function setPlanetOrbitAU(key, au){
+    DevConfig.planetOrbitAUById = DevConfig.planetOrbitAUById || {};
+    DevConfig.planetOrbitAUById[key] = +au;
+    applyOrbitOverrides();
+  }
+  function applyOrbitOverrides(){
+    if (!Array.isArray(window.planets) || !window.SUN) return;
+    const Sx = +SUN.x||0, Sy = +SUN.y||0;
+    const map = DevConfig.planetOrbitAUById || {};
+    for (const p of window.planets){
+      const k = keyFor(p);
+      const au = +map[k];
+      if (!(au>0)) continue;
+      const R = au * BASE_ORBIT;
+      const ang = Math.atan2((p.y||0)-Sy, (p.x||0)-Sx);
+      p.devOrbitOverrideR = R;
+      if ('orbitRadius' in p) p.orbitRadius = R;
+      if (p.orbit && 'radius' in p.orbit) p.orbit.radius = R;
+      if ('orbitR' in p) p.orbitR = R;
+      p.x = Sx + Math.cos(ang)*R;
+      p.y = Sy + Math.sin(ang)*R;
+    }
+    if (typeof scheduleRebuild3D === 'function') scheduleRebuild3D();
+  }
+  function refreshDistancesReadout(){
+    if (!Array.isArray(window.planets) || !window.SUN) return;
+    for (const p of window.planets){
+      const k = keyFor(p);
+      const slot = el('au_val_'+k);
+      if (!slot) continue;
+      const dWorld = Math.hypot((p.x||0)-SUN.x, (p.y||0)-SUN.y);
+      const au = DevConfig.planetOrbitAUById?.[k] ?? formatAUValue(dWorld);
+      const worldR = au * BASE_ORBIT;
+      slot.textContent = `${au.toFixed(2)} AU (${fmtU(worldR)} u)`;
+    }
   }
 
   // listeners
@@ -5565,12 +5623,14 @@ setTimeout(startGame, 500);
   // boot
   loadLS();
   bootstrapFromGame();
-  buildPlanetsUI();
+  buildPlanetsUI();        // promienie planet (R)
+  buildDistancesUI();      // suwaki AU
   reflectToUI();
   reflectToCfg();
   scheduleRebuild3D();
-  updateDistancesUI();
-  setInterval(updateDistancesUI, 250);
+  applyOrbitOverrides();   // przywróć zapisane AU
+  refreshDistancesReadout();
+  setInterval(refreshDistancesReadout, 250);
 
   // Upewnij się, że panel można włączyć na starcie (dev wygoda)
   // ui.root.style.display = 'block';
