@@ -13,6 +13,8 @@
         preserveDrawingBuffer: false
       });
       sharedRenderer.outputColorSpace = THREE.SRGBColorSpace;
+      sharedRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+      sharedRenderer.toneMappingExposure = 1.25;
       sharedRenderer.autoClear = true;
       sharedRenderer.setClearColor(0x000000, 0);
       // cienie
@@ -181,6 +183,8 @@
 
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r) return;
+      if (r.state && r.state.reset) r.state.reset();
+      r.setScissorTest(false);
       r.setClearColor(0x000000, 0);
       r.render(this.scene, this.camera);
 
