@@ -5148,14 +5148,6 @@ setTimeout(startGame, 500);
     });
   }
 
-  if (elSunDir) {
-    elSunDir.checked = !!DevFlags.showSunDir;
-    elSunDir.addEventListener('change', e => {
-      DevFlags.showSunDir = e.target.checked;
-      saveLS();
-    });
-  }
-
   const applyScale = () => {
     if (!elScale) return;
     const v = parseFloat(elScale.value);
@@ -5647,6 +5639,12 @@ setTimeout(startGame, 500);
   });
   ui.cbRuler.addEventListener('change', ()=>{ DevFlags.showRuler = ui.cbRuler.checked; saveLS(); });
   ui.cbUnlimited.addEventListener('change', ()=>{ DevFlags.unlimitedWarp = ui.cbUnlimited.checked; saveLS(); });
+  if (ui.cbSunDir) {
+    ui.cbSunDir.addEventListener('change', ()=>{
+      DevFlags.showSunDir = ui.cbSunDir.checked;
+      saveLS();
+    });
+  }
   if (ui.cbPirate3D) {
     ui.cbPirate3D.addEventListener('change', ()=>{
       DevFlags.use3DPirateStation = ui.cbPirate3D.checked;
