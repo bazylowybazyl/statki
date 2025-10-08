@@ -143,6 +143,7 @@ let mainScene3D = null;
 window.DevFlags = Object.assign({
   showRuler: false,
   unlimitedWarp: false,
+  showSunDir: false,
   use3DPirateStation: true
 }, window.DevFlags || {});
 
@@ -4260,7 +4261,9 @@ function render(alpha, frameDt){
   if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen);
   drawPlanetLabels(ctx, cam);
   // Miarka dystansu (jeśli włączona)
-  drawRangeRuler(ctx, cam);
+  if (window.drawRangeRings) drawRangeRings(ctx, cam);
+  // Kierunek Słońca (jeśli włączony w DevTools)
+  if (window.drawSunDirection) drawSunDirection(ctx, cam);
 
   // Warp gates
   for(const key in warpRoutes){
@@ -5117,6 +5120,7 @@ function startGame(){
 setTimeout(startGame, 500);
 
 (function wireDevTools(){
+  const saveLS = () => { window.__devtoolsSaveLS?.(); };
   const elUnlimited = document.getElementById('dt-unlimited-warp');
   const elRuler     = document.getElementById('dt-show-ruler');
   const elScale     = document.getElementById('dt-pirate-scale');
@@ -5124,6 +5128,7 @@ setTimeout(startGame, 500);
   const elStation3DScale = document.getElementById('dt-station3d-scale');
   const elStation3DScaleVal = document.getElementById('dt-station3d-scale-value');
   const elPir3D     = document.getElementById('dt-use-3d-pirate');
+  const elSunDir    = document.getElementById('dt-show-sundir');
 
   if (elUnlimited) {
     elUnlimited.checked = !!DevFlags.unlimitedWarp;
@@ -5140,6 +5145,14 @@ setTimeout(startGame, 500);
       DevFlags.showRuler = e.target.checked;
       const legacyRuler = document.getElementById('toggleRuler');
       if (legacyRuler) legacyRuler.checked = DevFlags.showRuler;
+    });
+  }
+
+  if (elSunDir) {
+    elSunDir.checked = !!DevFlags.showSunDir;
+    elSunDir.addEventListener('change', e => {
+      DevFlags.showSunDir = e.target.checked;
+      saveLS();
     });
   }
 
@@ -5246,6 +5259,12 @@ setTimeout(startGame, 500);
       <input id="planetScaleAll" type="range" min="0.5" max="3" step="0.01">
       <div class="val" id="planetScaleAllVal"></div>
     </div>
+    <div class="row">
+      <label style="display:flex;align-items:center;gap:8px">
+        <input id="dt-show-sundir" type="checkbox">
+        Pokaż kierunek Słońca <span class="pill">F8</span>
+      </label>
+    </div>
   </div>
 
   <div class="group" id="planetsGroup">
@@ -5329,6 +5348,7 @@ setTimeout(startGame, 500);
     distancesGroup: el('distancesGroup'),
     cbRuler: el('toggleRuler'),
     cbUnlimited: el('toggleUnlimitedWarp'),
+    cbSunDir: el('dt-show-sundir'),
     cbPirate3D: el('dt-use-3d-pirate'),
     btnCopy: el('btnCopy'), btnReset: el('btnReset'),
     cfgOut: el('cfgOut')
@@ -5412,6 +5432,38 @@ setTimeout(startGame, 500);
     drawRangeRuler(ctx, cam);
   };
 
+  window.drawSunDirection = function drawSunDirection(ctx, cam){
+    if (!DevFlags.showSunDir) return;
+    const planets = window.planets;
+    const sun = window.SUN || SUN;
+    if (!Array.isArray(planets) || !sun) return;
+
+    const arrow = (A, B, color = '#ffd36d') => {
+      ctx.save();
+      ctx.globalAlpha = 0.9;
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = color;
+      ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+      const ang = Math.atan2(B.y - A.y, B.x - A.x);
+      const L = 8;
+      ctx.beginPath();
+      ctx.moveTo(B.x, B.y);
+      ctx.lineTo(B.x - Math.cos(ang - 0.35) * L, B.y - Math.sin(ang - 0.35) * L);
+      ctx.lineTo(B.x - Math.cos(ang + 0.35) * L, B.y - Math.sin(ang + 0.35) * L);
+      ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+      ctx.restore();
+    };
+
+    for (const p of planets){
+      const toSun = { x: (sun.x - (p.x || 0)), y: (sun.y - (p.y || 0)) };
+      const len = Math.hypot(toSun.x, toSun.y) || 1;
+      const dir = { x: toSun.x / len, y: toSun.y / len };
+      const P = window.worldToScreen(p.x || 0, p.y || 0, cam);
+      const Q = { x: P.x + dir.x * 40, y: P.y + dir.y * 40 };
+      arrow(P, Q);
+    }
+  };
+
   // ---- Cheat: unlimited warp ---------------------------------------------
   window.devtoolsApplyCheats = function devtoolsApplyCheats(){
     if (!DevFlags.unlimitedWarp) return;
@@ -5473,6 +5525,7 @@ setTimeout(startGame, 500);
     }
     ui.cbRuler.checked = DevFlags.showRuler;
     ui.cbUnlimited.checked = DevFlags.unlimitedWarp;
+    if (ui.cbSunDir) ui.cbSunDir.checked = DevFlags.showSunDir;
     if (ui.cbPirate3D) ui.cbPirate3D.checked = DevFlags.use3DPirateStation;
   }
   function reflectToCfg(){
@@ -5618,6 +5671,13 @@ setTimeout(startGame, 500);
     if (e.key === 'F10'){ ui.root.style.display = (ui.root.style.display==='none' || !ui.root.style.display) ? 'block' : 'none'; }
     if (e.key === 'F11'){ DevFlags.showRuler = !DevFlags.showRuler; ui.cbRuler.checked = DevFlags.showRuler; saveLS(); }
     if (e.key === 'F9' ){ DevFlags.unlimitedWarp = !DevFlags.unlimitedWarp; ui.cbUnlimited.checked = DevFlags.unlimitedWarp; saveLS(); }
+    if (e.key === 'F8' ){ 
+      DevFlags.showSunDir = !DevFlags.showSunDir; 
+      if (ui.cbSunDir) ui.cbSunDir.checked = DevFlags.showSunDir; 
+      const el = document.getElementById('dt-show-sundir'); 
+      if (el) el.checked = DevFlags.showSunDir; 
+      saveLS(); 
+    }
   });
 
   // boot
