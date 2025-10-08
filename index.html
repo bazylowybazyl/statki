@@ -5624,7 +5624,7 @@ setTimeout(startGame, 500);
   loadLS();
   bootstrapFromGame();
   buildPlanetsUI();        // promienie planet (R)
-  buildDistancesUI();      // suwaki AU
+  if (typeof buildDistancesUI === 'function') buildDistancesUI();      // suwaki AU
   reflectToUI();
   reflectToCfg();
   scheduleRebuild3D();
