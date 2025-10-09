@@ -3588,18 +3588,25 @@ function getEngineVFX() {
     return localRenderer;
   }
 
+  function resetRendererForVFX(renderer, width, height) {
+    if (!renderer) return;
+    if (typeof renderer.setRenderTarget === 'function') renderer.setRenderTarget(null);
+    if (typeof renderer.setPixelRatio === 'function') renderer.setPixelRatio(1);
+    if (typeof renderer.setSize === 'function') renderer.setSize(width, height, false);
+    if (typeof renderer.setViewport === 'function') renderer.setViewport(0, 0, width, height);
+    if (renderer.state && typeof renderer.state.reset === 'function') renderer.state.reset();
+    if (typeof renderer.setScissorTest === 'function') renderer.setScissorTest(false);
+    if (typeof renderer.setClearColor === 'function') renderer.setClearColor(0x000000, 0);
+    if (typeof renderer.clear === 'function') renderer.clear(true, true, false);
+  }
+
   _engineVFX = {
     canvas, ctx2d, camera, scene, exhaust,
     render(time) {
       const r = pickRenderer(canvas.width, canvas.height);
       if (!r) return;
       // pełny reset i przezroczyste czyszczenie
-      r.setRenderTarget(null);
-      r.setViewport(0, 0, canvas.width, canvas.height);
-      if (r.state && r.state.reset) r.state.reset();
-      r.setScissorTest(false);
-      r.setClearColor(0x000000, 0); // przeźroczyste tło
-      r.clear(true, true, false);
+      resetRendererForVFX(r, canvas.width, canvas.height);
 
       // dynamiczny throttle
       const spd = Math.hypot(ship.vel.x, ship.vel.y);
@@ -4263,7 +4270,7 @@ function render(alpha, frameDt){
   // Miarka dystansu (jeśli włączona)
   if (window.drawRangeRings) drawRangeRings(ctx, cam);
   // Kierunek Słońca (jeśli włączony w DevTools)
-  if (window.drawSunDirection) drawSunDirection(ctx, cam);
+  if (DevFlags.showSunDir) drawSunDirection(ctx, cam);
 
   // Warp gates
   for(const key in warpRoutes){
@@ -5259,12 +5266,6 @@ setTimeout(startGame, 500);
       <input id="planetScaleAll" type="range" min="0.5" max="3" step="0.01">
       <div class="val" id="planetScaleAllVal"></div>
     </div>
-    <div class="row">
-      <label style="display:flex;align-items:center;gap:8px">
-        <input id="dt-show-sundir" type="checkbox">
-        Pokaż kierunek Słońca <span class="pill">F8</span>
-      </label>
-    </div>
   </div>
 
   <div class="group" id="planetsGroup">
@@ -5302,6 +5303,9 @@ setTimeout(startGame, 500);
     </div>
     <div class="row">
       <label><input id="toggleUnlimitedWarp" type="checkbox"> Nielimitowany warp <span class="pill">F9</span></label>
+    </div>
+    <div class="row">
+      <label><input id="dt-show-sundir" type="checkbox"> Pokaż kierunek słońca</label>
     </div>
   </div>
 
@@ -5432,37 +5436,51 @@ setTimeout(startGame, 500);
     drawRangeRuler(ctx, cam);
   };
 
-  window.drawSunDirection = function drawSunDirection(ctx, cam){
+  function drawSunDirection(ctx, cam){
     if (!DevFlags.showSunDir) return;
     const planets = window.planets;
     const sun = window.SUN || SUN;
     if (!Array.isArray(planets) || !sun) return;
 
-    const arrow = (A, B, color = '#ffd36d') => {
-      ctx.save();
-      ctx.globalAlpha = 0.9;
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = color;
-      ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
-      const ang = Math.atan2(B.y - A.y, B.x - A.x);
-      const L = 8;
-      ctx.beginPath();
-      ctx.moveTo(B.x, B.y);
-      ctx.lineTo(B.x - Math.cos(ang - 0.35) * L, B.y - Math.sin(ang - 0.35) * L);
-      ctx.lineTo(B.x - Math.cos(ang + 0.35) * L, B.y - Math.sin(ang + 0.35) * L);
-      ctx.closePath(); ctx.fillStyle = color; ctx.fill();
-      ctx.restore();
-    };
+    const earth = planets.find(p => p.id === 'earth') || planets[0];
+    if (!earth) return;
 
-    for (const p of planets){
-      const toSun = { x: (sun.x - (p.x || 0)), y: (sun.y - (p.y || 0)) };
-      const len = Math.hypot(toSun.x, toSun.y) || 1;
-      const dir = { x: toSun.x / len, y: toSun.y / len };
-      const P = window.worldToScreen(p.x || 0, p.y || 0, cam);
-      const Q = { x: P.x + dir.x * 40, y: P.y + dir.y * 40 };
-      arrow(P, Q);
-    }
-  };
+    const dx = sun.x - earth.x;
+    const dy = sun.y - earth.y;
+    const L  = Math.hypot(dx, dy) || 1;
+    const ux = dx / L;
+    const uy = dy / L;
+
+    const sx = (earth.x - cam.x) * cam.zoom + canvas.width / 2;
+    const sy = (earth.y - cam.y) * cam.zoom + canvas.height / 2;
+
+    const len = Math.min(200, L * 0.25) * cam.zoom;
+    const ex = sx + ux * len;
+    const ey = sy + uy * len;
+
+    ctx.save();
+    ctx.strokeStyle = '#66c2ff';
+    ctx.lineWidth = Math.max(1, 2 * cam.zoom);
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+
+    const ang = Math.atan2(uy, ux);
+    const a = 12 * cam.zoom;
+    ctx.beginPath();
+    ctx.moveTo(ex, ey);
+    ctx.lineTo(ex - Math.cos(ang - 0.3) * a, ey - Math.sin(ang - 0.3) * a);
+    ctx.lineTo(ex - Math.cos(ang + 0.3) * a, ey - Math.sin(ang + 0.3) * a);
+    ctx.closePath();
+    ctx.fillStyle = '#66c2ff';
+    ctx.fill();
+
+    ctx.font = `${Math.max(10, 12 * cam.zoom) | 0}px monospace`;
+    ctx.fillStyle = '#cfe3ff';
+    ctx.fillText('Sun →', ex + 6 * cam.zoom, ey - 6 * cam.zoom);
+    ctx.restore();
+  }
 
   // ---- Cheat: unlimited warp ---------------------------------------------
   window.devtoolsApplyCheats = function devtoolsApplyCheats(){
@@ -5647,6 +5665,12 @@ setTimeout(startGame, 500);
   });
   ui.cbRuler.addEventListener('change', ()=>{ DevFlags.showRuler = ui.cbRuler.checked; saveLS(); });
   ui.cbUnlimited.addEventListener('change', ()=>{ DevFlags.unlimitedWarp = ui.cbUnlimited.checked; saveLS(); });
+  if (ui.cbSunDir) {
+    ui.cbSunDir.addEventListener('change', ()=>{
+      DevFlags.showSunDir = ui.cbSunDir.checked;
+      saveLS();
+    });
+  }
   if (ui.cbPirate3D) {
     ui.cbPirate3D.addEventListener('change', ()=>{
       DevFlags.use3DPirateStation = ui.cbPirate3D.checked;

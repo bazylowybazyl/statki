@@ -40,6 +40,18 @@ let pirateStation2D = null;
 let lastRenderInfo = null;
 let initialRadius = null;
 
+function resetRendererState(renderer, width, height) {
+  if (!renderer) return;
+  if (typeof renderer.setRenderTarget === 'function') renderer.setRenderTarget(null);
+  if (typeof renderer.setPixelRatio === 'function') renderer.setPixelRatio(1);
+  if (typeof renderer.setSize === 'function') renderer.setSize(width, height, false);
+  if (typeof renderer.setViewport === 'function') renderer.setViewport(0, 0, width, height);
+  if (renderer.state && typeof renderer.state.reset === 'function') renderer.state.reset();
+  if (typeof renderer.setScissorTest === 'function') renderer.setScissorTest(false);
+  if (typeof renderer.setClearColor === 'function') renderer.setClearColor(0x000000, 0);
+  if (typeof renderer.clear === 'function') renderer.clear(true, true, false);
+}
+
 function rendererHasAlpha(r) {
   try {
     const gl = r.getContext && r.getContext();
@@ -257,6 +269,7 @@ function renderScene(dt, t) {
   if (!scene || !camera || !pirateStation3D || !canvas2d || !ctx2d) return;
   const renderer = getRenderer();
   if (!renderer) return;
+  resetRendererState(renderer, RENDER_SIZE, RENDER_SIZE);
   ensureComposer(renderer);
   ensureMaskRT(renderer);
   updatePreserveAlphaOutputPass(renderer);
