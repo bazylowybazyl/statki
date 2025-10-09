@@ -28,6 +28,33 @@
     return sharedRenderer;
   }
 
+  function resetRendererState(renderer, width, height) {
+    if (!renderer) return;
+    if (typeof renderer.setRenderTarget === 'function') renderer.setRenderTarget(null);
+    if (typeof renderer.setPixelRatio === 'function') renderer.setPixelRatio(1);
+    if (typeof renderer.setSize === 'function') renderer.setSize(width, height, false);
+    if (typeof renderer.setViewport === 'function') renderer.setViewport(0, 0, width, height);
+    if (renderer.state && typeof renderer.state.reset === 'function') renderer.state.reset();
+    if (typeof renderer.setScissorTest === 'function') renderer.setScissorTest(false);
+    if (typeof renderer.setClearColor === 'function') renderer.setClearColor(0x000000, 0);
+    if (typeof renderer.clear === 'function') renderer.clear(true, true, false);
+  }
+
+  function updateSunLightForPlanet(light, planetWorldX, planetWorldY) {
+    if (!light || typeof THREE === 'undefined') return;
+    const sunObj = (typeof window !== 'undefined' ? window.SUN : null) || { x: 0, y: 0 };
+    const dx = (sunObj.x ?? 0) - planetWorldX;
+    const dy = (sunObj.y ?? 0) - planetWorldY;
+    const v = new THREE.Vector3(dx, 280, dy);
+    if (v.lengthSq() === 0) return;
+    v.normalize().multiplyScalar(600);
+    light.position.copy(v);
+    if (light.target) {
+      light.target.position.set(0, 0, 0);
+      light.target.updateMatrixWorld();
+    }
+  }
+
   // === Tekstury dla realnego układu (same ścieżki, bez binarek w PR) ===
   const TEX = {
     mercury: { color: 'assets/planety/solar/mercury/mercury_color.jpg',
@@ -138,6 +165,7 @@
         sunDL.shadow.camera.top = S;
         sunDL.shadow.camera.bottom = -S;
         this.scene.add(sunDL);
+        this.sunLight = sunDL;
 
         this.mesh = new THREE.Mesh(geom, this.material);
         this.scene.add(this.mesh);
@@ -183,9 +211,8 @@
 
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r) return;
-      if (r.state && r.state.reset) r.state.reset();
-      r.setScissorTest(false);
-      r.setClearColor(0x000000, 0);
+      resetRendererState(r, this.canvas.width, this.canvas.height);
+      if (this.sunLight) updateSunLightForPlanet(this.sunLight, this.x, this.y);
       r.render(this.scene, this.camera);
 
       // skopiuj piksele do prywatnego canvasa 2D
@@ -226,7 +253,7 @@
 
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if(!r) return;
-      r.setClearColor(0x000000, 0);
+      resetRendererState(r, this.canvas.width, this.canvas.height);
       r.render(this.scene, this.camera);
 
       this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
@@ -249,6 +276,8 @@
       this.ctx2d = this.canvas.getContext('2d');
       this.spin = 0.004;
       this.rotSpeed = 0.01;
+      this.innerRadius = innerRadius;
+      this.outerRadius = outerRadius;
 
       if (typeof THREE === 'undefined') return;
       this.scene = new THREE.Scene();
@@ -329,6 +358,7 @@
       beltDL.shadow.camera.top = R;
       beltDL.shadow.camera.bottom = -R;
       this.scene.add(beltDL);
+      this.sunLight = beltDL;
     }
 
     render(dt) {
@@ -336,7 +366,14 @@
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r || !this.scene || !this.camera) return;
       if (this.imesh) this.imesh.rotation.z += (this.spin * dt);
-      r.setClearColor(0x000000, 0);
+      resetRendererState(r, this.canvas.width, this.canvas.height);
+      if (this.sunLight) {
+        const sunObj = (typeof window !== 'undefined' ? window.SUN : null) || { x: 0, y: 0 };
+        const mid = ((this.innerRadius || 0) + (this.outerRadius || 0)) * 0.5;
+        const sampleX = (sunObj.x ?? 0) + mid;
+        const sampleY = sunObj.y ?? 0;
+        updateSunLightForPlanet(this.sunLight, sampleX, sampleY);
+      }
       r.render(this.scene, this.camera);
       this.scene.rotation.z += this.rotSpeed * dt;
       this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
@@ -425,7 +462,7 @@
       if (!r || !this.scene || !this.camera) return;
 
       // 1) pełna przezroczystość tła
-      r.setClearColor(0x000000, 0);
+      resetRendererState(r, this.canvas.width, this.canvas.height);
       if (r.setClearAlpha) r.setClearAlpha(0);
       this.scene.background = null;
 
@@ -433,7 +470,6 @@
       if (this.mesh) this.mesh.rotation.y += 0.02 * dt;
 
       // 3) render + deterministyczne czyszczenie
-      r.clear(true, true, true);
       r.render(this.scene, this.camera);
 
       // 4) kopiowanie z zachowaniem kanału alfa
