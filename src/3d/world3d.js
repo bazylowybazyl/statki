@@ -40,6 +40,13 @@ let pirateStation2D = null;
 let lastRenderInfo = null;
 let initialRadius = null;
 
+function resetRendererState2D(ctx){
+  if (!ctx) return;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.imageSmoothingEnabled = true;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
 function resetRendererState(renderer, width, height) {
   if (!renderer) return;
   if (typeof renderer.setRenderTarget === 'function') renderer.setRenderTarget(null);
@@ -60,6 +67,14 @@ function rendererHasAlpha(r) {
   } catch {
     return false;
   }
+}
+
+function updateSunLightForPlanet(dirLightInstance, planet, sun){
+  if (!dirLightInstance || !planet || !sun) return;
+  const dx = (sun.x ?? 0) - (planet.x ?? 0);
+  const dy = (sun.y ?? 0) - (planet.y ?? 0);
+  const L = Math.hypot(dx, dy) || 1;
+  dirLightInstance.position.set(dx / L, 0.6, dy / L);
 }
 
 const PreserveAlphaOutputShader = {
@@ -171,7 +186,10 @@ function ensureScene() {
     scene.add(ambientLight);
     scene.add(hemiLight);
     scene.add(dirLight);
-    if (dirLight.target) scene.add(dirLight.target);
+    if (dirLight.target) {
+      dirLight.target.position.set(0, 0, 0);
+      scene.add(dirLight.target);
+    }
     lightsAdded = true;
   }
 }
@@ -258,11 +276,6 @@ function updateCameraTarget() {
   const dist = Math.max(60, pirateStation3D.radius * 2.4);
   camera.position.set(target.x + dist, target.y + dist * 0.62, target.z + dist);
   camera.lookAt(target);
-  if (dirLight) {
-    dirLight.position.set(target.x + dist * 0.8, target.y + dist * 1.4, target.z - dist * 0.8);
-    dirLight.target.position.set(target.x, target.y, target.z);
-    dirLight.target.updateMatrixWorld();
-  }
 }
 
 function renderScene(dt, t) {
@@ -274,6 +287,13 @@ function renderScene(dt, t) {
   ensureMaskRT(renderer);
   updatePreserveAlphaOutputPass(renderer);
   updateCameraTarget();
+  if (dirLight) {
+    const sun = (typeof window !== 'undefined' ? window.SUN : null) || null;
+    if (pirateStation2D && sun) {
+      updateSunLightForPlanet(dirLight, pirateStation2D, sun);
+      if (dirLight.target) dirLight.target.updateMatrixWorld();
+    }
+  }
   if (pirateStation3D.update) pirateStation3D.update(t ?? 0, dt ?? 0);
   renderer.setClearColor(0x000000, 0);
   if (renderer.setClearAlpha) renderer.setClearAlpha(0);
@@ -359,12 +379,10 @@ export function drawWorld3D(ctx, cam, worldToScreen) {
   const sizeWorld = lastRenderInfo.radius * 2;
   const sizePx = sizeWorld * (cam?.zoom ?? 1);
   const offsetY = sizePx * 0.55;
-  ctx.save();
-  const prevOp = ctx.globalCompositeOperation;
-  ctx.globalCompositeOperation = 'copy';
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.imageSmoothingEnabled = true;
   ctx.drawImage(lastRenderInfo.canvas, screen.x - sizePx / 2, screen.y - offsetY, sizePx, sizePx);
-  ctx.globalCompositeOperation = prevOp;
-  ctx.restore();
+  resetRendererState2D(ctx);
 }
 
 export function getPirateStationSprite() {
