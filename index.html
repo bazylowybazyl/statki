@@ -4267,10 +4267,8 @@ function render(alpha, frameDt){
   if (window.USE_STATION_3D && window.drawStations3D) drawStations3D(ctx, cam);
   if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen);
   drawPlanetLabels(ctx, cam);
-  // Miarka dystansu (jeśli włączona)
-  if (window.drawRangeRings) drawRangeRings(ctx, cam);
-  // Kierunek Słońca (jeśli włączony w DevTools)
-  if (DevFlags.showSunDir) drawSunDirection(ctx, cam);
+  drawRangeRuler(ctx, cam);
+  if (window.drawSunDirection) drawSunDirection(ctx, cam);
 
   // Warp gates
   for(const key in warpRoutes){
@@ -5156,9 +5154,11 @@ setTimeout(startGame, 500);
   }
 
   if (elSunDir) {
-    elSunDir.checked = !!DevFlags.showSunDir;
+    elSunDir.checked = !!(window.DevFlags && DevFlags.showSunDir);
     elSunDir.addEventListener('change', e => {
-      DevFlags.showSunDir = e.target.checked;
+      if (!window.DevFlags) window.DevFlags = {};
+      DevFlags.showSunDir = !!e.target.checked;
+      if (typeof scheduleRebuild3D === 'function') scheduleRebuild3D();
       saveLS();
     });
   }
@@ -5438,49 +5438,71 @@ setTimeout(startGame, 500);
 
   function drawSunDirection(ctx, cam){
     if (!DevFlags.showSunDir) return;
-    const planets = window.planets;
-    const sun = window.SUN || SUN;
-    if (!Array.isArray(planets) || !sun) return;
+    const planets = Array.isArray(window.planets) ? window.planets : null;
+    const sun = (window.SUN || SUN);
+    if (!planets || !sun) return;
 
-    const earth = planets.find(p => p.id === 'earth') || planets[0];
-    if (!earth) return;
-
-    const dx = sun.x - earth.x;
-    const dy = sun.y - earth.y;
-    const L  = Math.hypot(dx, dy) || 1;
-    const ux = dx / L;
-    const uy = dy / L;
-
-    const sx = (earth.x - cam.x) * cam.zoom + canvas.width / 2;
-    const sy = (earth.y - cam.y) * cam.zoom + canvas.height / 2;
-
-    const len = Math.min(200, L * 0.25) * cam.zoom;
-    const ex = sx + ux * len;
-    const ey = sy + uy * len;
+    const camX = cam?.x ?? 0;
+    const camY = cam?.y ?? 0;
+    const zoom = cam?.zoom ?? 1;
+    const halfW = canvas.width / 2;
+    const halfH = canvas.height / 2;
 
     ctx.save();
     ctx.strokeStyle = '#66c2ff';
-    ctx.lineWidth = Math.max(1, 2 * cam.zoom);
-    ctx.beginPath();
-    ctx.moveTo(sx, sy);
-    ctx.lineTo(ex, ey);
-    ctx.stroke();
-
-    const ang = Math.atan2(uy, ux);
-    const a = 12 * cam.zoom;
-    ctx.beginPath();
-    ctx.moveTo(ex, ey);
-    ctx.lineTo(ex - Math.cos(ang - 0.3) * a, ey - Math.sin(ang - 0.3) * a);
-    ctx.lineTo(ex - Math.cos(ang + 0.3) * a, ey - Math.sin(ang + 0.3) * a);
-    ctx.closePath();
-    ctx.fillStyle = '#66c2ff';
-    ctx.fill();
-
-    ctx.font = `${Math.max(10, 12 * cam.zoom) | 0}px monospace`;
     ctx.fillStyle = '#cfe3ff';
-    ctx.fillText('Sun →', ex + 6 * cam.zoom, ey - 6 * cam.zoom);
+    ctx.lineWidth = Math.max(1, 2 * zoom);
+    ctx.font = `${Math.max(10, Math.round(12 * zoom))}px monospace`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+
+    const dash = Math.max(6, 12 * zoom);
+    const labelOffset = 6 * zoom;
+    const arrowSize = Math.max(8, 14 * zoom);
+
+    for (const planet of planets) {
+      if (!planet || typeof planet.x !== 'number' || typeof planet.y !== 'number') continue;
+
+      const dx = (sun.x ?? 0) - planet.x;
+      const dy = (sun.y ?? 0) - planet.y;
+      const dist = Math.hypot(dx, dy);
+      if (!isFinite(dist) || dist <= 0.0001) continue;
+
+      const ux = dx / dist;
+      const uy = dy / dist;
+
+      const sx = (planet.x - camX) * zoom + halfW;
+      const sy = (planet.y - camY) * zoom + halfH;
+
+      const segWorld = Math.min(Math.max(dist * 0.25, 80), 240);
+      const len = segWorld * zoom;
+      const ex = sx + ux * len;
+      const ey = sy + uy * len;
+
+      ctx.setLineDash([dash, dash]);
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+
+      ctx.setLineDash([]);
+
+      const ang = Math.atan2(uy, ux);
+      ctx.beginPath();
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(ex - Math.cos(ang - 0.4) * arrowSize, ey - Math.sin(ang - 0.4) * arrowSize);
+      ctx.lineTo(ex - Math.cos(ang + 0.4) * arrowSize, ey - Math.sin(ang + 0.4) * arrowSize);
+      ctx.closePath();
+      ctx.fillStyle = '#66c2ff';
+      ctx.fill();
+
+      ctx.fillStyle = '#cfe3ff';
+      ctx.fillText('Sun →', ex + labelOffset, ey - labelOffset);
+    }
+
     ctx.restore();
   }
+  window.drawSunDirection = drawSunDirection;
 
   // ---- Cheat: unlimited warp ---------------------------------------------
   window.devtoolsApplyCheats = function devtoolsApplyCheats(){
