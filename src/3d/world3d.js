@@ -360,10 +360,9 @@ export function drawWorld3D(ctx, cam, worldToScreen) {
   const sizePx = sizeWorld * (cam?.zoom ?? 1);
   const offsetY = sizePx * 0.55;
   ctx.save();
-  const prevOp = ctx.globalCompositeOperation;
-  ctx.globalCompositeOperation = 'copy';
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
   ctx.drawImage(lastRenderInfo.canvas, screen.x - sizePx / 2, screen.y - offsetY, sizePx, sizePx);
-  ctx.globalCompositeOperation = prevOp;
   ctx.restore();
 }
 

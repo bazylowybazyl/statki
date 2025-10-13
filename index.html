@@ -5437,49 +5437,76 @@ setTimeout(startGame, 500);
   };
 
   function drawSunDirection(ctx, cam){
-    if (!DevFlags.showSunDir) return;
+    if (!DevFlags.showSunDir || !window.SUN || !Array.isArray(window.planets)) return;
+    if (!ctx || !cam) return;
+
+    const sun = window.SUN;
     const planets = window.planets;
-    const sun = window.SUN || SUN;
-    if (!Array.isArray(planets) || !sun) return;
+    const baseCanvas = ctx.canvas || (typeof canvas !== 'undefined' ? canvas : null);
+    if (!baseCanvas) return;
 
-    const earth = planets.find(p => p.id === 'earth') || planets[0];
-    if (!earth) return;
+    const halfW = baseCanvas.width / 2;
+    const halfH = baseCanvas.height / 2;
+    const zoom = typeof cam.zoom === 'number' && Number.isFinite(cam.zoom) ? cam.zoom : 1;
+    const camX = typeof cam.x === 'number' && Number.isFinite(cam.x) ? cam.x : 0;
+    const camY = typeof cam.y === 'number' && Number.isFinite(cam.y) ? cam.y : 0;
 
-    const dx = sun.x - earth.x;
-    const dy = sun.y - earth.y;
-    const L  = Math.hypot(dx, dy) || 1;
-    const ux = dx / L;
-    const uy = dy / L;
+    for (const planet of planets){
+      if (!planet || typeof planet.x !== 'number' || typeof planet.y !== 'number') continue;
 
-    const sx = (earth.x - cam.x) * cam.zoom + canvas.width / 2;
-    const sy = (earth.y - cam.y) * cam.zoom + canvas.height / 2;
+      const dx = sun.x - planet.x;
+      const dy = sun.y - planet.y;
+      const dist = Math.hypot(dx, dy);
+      if (!Number.isFinite(dist) || dist <= 0) continue;
 
-    const len = Math.min(200, L * 0.25) * cam.zoom;
-    const ex = sx + ux * len;
-    const ey = sy + uy * len;
+      const ux = dx / dist;
+      const uy = dy / dist;
 
-    ctx.save();
-    ctx.strokeStyle = '#66c2ff';
-    ctx.lineWidth = Math.max(1, 2 * cam.zoom);
-    ctx.beginPath();
-    ctx.moveTo(sx, sy);
-    ctx.lineTo(ex, ey);
-    ctx.stroke();
+      const sx = (planet.x - camX) * zoom + halfW;
+      const sy = (planet.y - camY) * zoom + halfH;
 
-    const ang = Math.atan2(uy, ux);
-    const a = 12 * cam.zoom;
-    ctx.beginPath();
-    ctx.moveTo(ex, ey);
-    ctx.lineTo(ex - Math.cos(ang - 0.3) * a, ey - Math.sin(ang - 0.3) * a);
-    ctx.lineTo(ex - Math.cos(ang + 0.3) * a, ey - Math.sin(ang + 0.3) * a);
-    ctx.closePath();
-    ctx.fillStyle = '#66c2ff';
-    ctx.fill();
+      const lenWorld = Math.min(200, dist * 0.25);
+      const len = lenWorld * zoom;
+      if (!Number.isFinite(len) || len <= 0) continue;
 
-    ctx.font = `${Math.max(10, 12 * cam.zoom) | 0}px monospace`;
-    ctx.fillStyle = '#cfe3ff';
-    ctx.fillText('Sun →', ex + 6 * cam.zoom, ey - 6 * cam.zoom);
-    ctx.restore();
+      const ex = sx + ux * len;
+      const ey = sy + uy * len;
+
+      ctx.save();
+      if (typeof ctx.setLineDash === 'function'){
+        const dash = Math.max(6, 12 * zoom);
+        ctx.setLineDash([dash, dash]);
+      }
+      ctx.strokeStyle = 'rgba(102, 194, 255, 0.45)';
+      ctx.lineWidth = Math.max(1, zoom);
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+
+      if (typeof ctx.setLineDash === 'function') ctx.setLineDash([]);
+      ctx.strokeStyle = '#66c2ff';
+      ctx.lineWidth = Math.max(1, 2 * zoom);
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+
+      const ang = Math.atan2(uy, ux);
+      const head = Math.max(8, 12 * zoom);
+      ctx.beginPath();
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(ex - Math.cos(ang - 0.35) * head, ey - Math.sin(ang - 0.35) * head);
+      ctx.lineTo(ex - Math.cos(ang + 0.35) * head, ey - Math.sin(ang + 0.35) * head);
+      ctx.closePath();
+      ctx.fillStyle = '#66c2ff';
+      ctx.fill();
+
+      ctx.font = `${Math.max(10, 12 * zoom) | 0}px monospace`;
+      ctx.fillStyle = '#cfe3ff';
+      ctx.fillText('Sun →', ex + 6 * zoom, ey - 6 * zoom);
+      ctx.restore();
+    }
   }
 
   // ---- Cheat: unlimited warp ---------------------------------------------
