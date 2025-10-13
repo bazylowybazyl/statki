@@ -4270,7 +4270,7 @@ function render(alpha, frameDt){
   // Miarka dystansu (jeśli włączona)
   if (window.drawRangeRings) drawRangeRings(ctx, cam);
   // Kierunek Słońca (jeśli włączony w DevTools)
-  if (DevFlags.showSunDir) drawSunDirection(ctx, cam);
+  if (window.drawSunDirection) drawSunDirection(ctx, cam);
 
   // Warp gates
   for(const key in warpRoutes){
@@ -5480,6 +5480,10 @@ setTimeout(startGame, 500);
     ctx.fillStyle = '#cfe3ff';
     ctx.fillText('Sun →', ex + 6 * cam.zoom, ey - 6 * cam.zoom);
     ctx.restore();
+  }
+
+  if (!window.drawSunDirection) {
+    window.drawSunDirection = drawSunDirection;
   }
 
   // ---- Cheat: unlimited warp ---------------------------------------------
