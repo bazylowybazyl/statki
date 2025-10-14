@@ -5195,6 +5195,16 @@ setTimeout(startGame, 500);
     if (legacyVal) legacyVal.textContent = '×' + value.toFixed(2);
   };
 
+  // Ustaw wartość z DevConfig (jeśli jest) i natychmiast zastosuj na starcie
+  if (elStation3DScale) {
+    const initial =
+      (window.DevConfig && Number.isFinite(DevConfig.station3DScale) && DevConfig.station3DScale) ||
+      (Number.isFinite(+elStation3DScale.value) ? +elStation3DScale.value : 1);
+    elStation3DScale.value = String(initial);
+    applyStation3DScale(initial);
+    if (typeof scheduleRebuild3D === 'function') scheduleRebuild3D();
+  }
+
   if (elScale) {
     if (!isFinite(parseFloat(elScale.value))) {
       elScale.value = String(DevTuning.pirateStationScale);
