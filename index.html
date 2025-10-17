@@ -5283,10 +5283,13 @@ setTimeout(startGame, 500);
     <!-- Tu JS doda po 1 wierszu na planetę -->
   </div>
 
-  <!-- === Dystanse od Słońca ================================================= -->
+  <!-- === Dystanse od Słońca (AU → promień orbity) ======================== -->
   <div class="group" id="distancesGroup">
-    <div class="row"><strong>Dystanse od Słońca</strong> <span class="small muted">(AU → promień orbity)</span></div>
-    <!-- JS doda tu po jednym wierszu na planetę -->
+    <div class="row">
+      <strong>Dystanse od Słońca</strong>
+      <span class="small muted">(AU → promień orbity)</span>
+    </div>
+    <!-- Wiersze z suwakami będą dodane przez buildDistancesUI() -->
   </div>
 
   <div class="group">
@@ -5594,23 +5597,20 @@ setTimeout(startGame, 500);
   function fmtU(worldDist){
     if (typeof worldDist !== 'number' || !Number.isFinite(worldDist)) return '?';
     const abs = Math.abs(worldDist);
-    if (abs >= 1e6) return worldDist.toExponential(2).replace('+', '');
-    if (abs >= 1000){
-      const rounded = Math.round(worldDist);
-      return rounded.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-    }
-    if (abs >= 10) return worldDist.toFixed(0);
-    if (abs >= 1) return worldDist.toFixed(1);
-    if (abs >= 0.01) return worldDist.toFixed(2);
+    if (abs >= 100000) return worldDist.toFixed(0);
+    if (abs >= 10000)  return worldDist.toFixed(1);
+    if (abs >= 1000)   return worldDist.toFixed(1);
+    if (abs >= 100)    return worldDist.toFixed(2);
+    if (abs >= 1)      return worldDist.toFixed(2);
+    if (abs >= 0.01)   return worldDist.toFixed(2);
     return worldDist.toExponential(2).replace('+', '');
-  }
-  // ---- Dystanse od Słońca (AU) — suwaki sterujące promieniem orbity ---------
-  function formatAUValue(worldDist){
-    if (typeof BASE_ORBIT !== 'number' || BASE_ORBIT <= 0) return 0;
-    return worldDist / BASE_ORBIT;
   }
   function keyFor(p){
     return (p.name || p.id || String(p.index) || '').toString().toLowerCase();
+  }
+  function formatAUValue(worldDist){
+    if (typeof BASE_ORBIT !== 'number' || BASE_ORBIT <= 0) return 0;
+    return worldDist / BASE_ORBIT;
   }
   function buildDistancesUI(){
     if (!ui.distancesGroup) return;
@@ -5619,7 +5619,7 @@ setTimeout(startGame, 500);
     for (const p of window.planets){
       const k = keyFor(p);
       const dWorld = Math.hypot((p.x||0)-SUN.x, (p.y||0)-SUN.y);
-      const dAU = DevConfig.planetOrbitAUById?.[k] ?? formatAUValue(dWorld);
+      const dAU = (DevConfig.planetOrbitAUById?.[k] ?? formatAUValue(dWorld));
       const row = document.createElement('div');
       row.className = 'row dist';
       row.innerHTML = `
@@ -5631,18 +5631,16 @@ setTimeout(startGame, 500);
       const inp = row.querySelector('input.plAU');
       if (!DevConfig.planetOrbitAUById) DevConfig.planetOrbitAUById = {};
       inp.value = dAU;
-      const slot = el('au_val_'+k);
-      if (slot){
-        const worldR = dAU * BASE_ORBIT;
-        slot.textContent = `${dAU.toFixed(2)} AU (${fmtU(worldR)} u)`;
-      }
+      const slot = document.getElementById('au_val_'+k);
+      const renderVal = (au)=>{
+        const worldR = au * BASE_ORBIT;
+        if (slot) slot.textContent = `${au.toFixed(2)} AU (${fmtU(worldR)} u)`;
+      };
+      renderVal(dAU);
       inp.addEventListener('input', ()=>{
         const au = +inp.value;
         setPlanetOrbitAU(k, au);
-        if (slot){
-          const worldR = au * BASE_ORBIT;
-          slot.textContent = `${au.toFixed(2)} AU (${fmtU(worldR)} u)`;
-        }
+        renderVal(au);
         saveLS();
         reflectToCfg();
       });
@@ -5676,12 +5674,11 @@ setTimeout(startGame, 500);
     if (!Array.isArray(window.planets) || !window.SUN) return;
     for (const p of window.planets){
       const k = keyFor(p);
-      const slot = el('au_val_'+k);
+      const slot = document.getElementById('au_val_'+k);
       if (!slot) continue;
       const dWorld = Math.hypot((p.x||0)-SUN.x, (p.y||0)-SUN.y);
       const au = DevConfig.planetOrbitAUById?.[k] ?? formatAUValue(dWorld);
-      const worldR = au * BASE_ORBIT;
-      slot.textContent = `${au.toFixed(2)} AU (${fmtU(worldR)} u)`;
+      slot.textContent = `${(+au).toFixed(2)} AU (${fmtU(au*BASE_ORBIT)} u)`;
     }
   }
 
@@ -5739,12 +5736,15 @@ setTimeout(startGame, 500);
   // boot
   loadLS();
   bootstrapFromGame();
+  if (!DevConfig.planetOrbitAUById || typeof DevConfig.planetOrbitAUById !== 'object') {
+    DevConfig.planetOrbitAUById = {};
+  }
 
   // Planety (R)
   buildPlanetsUI();
 
   // Sekcja: Dystanse od Słońca (AU → promień orbity)
-  if (typeof buildDistancesUI === 'function') buildDistancesUI();
+  buildDistancesUI();
 
   // Odbicie stanu
   reflectToUI();
@@ -5754,13 +5754,11 @@ setTimeout(startGame, 500);
   scheduleRebuild3D();
 
   // Przywróć zapisane AU i przelicz promienie orbit
-  if (typeof applyOrbitOverrides === 'function') applyOrbitOverrides();
+  applyOrbitOverrides();
 
   // Aktualizuj readout AU/world-units w panelu
-  if (typeof refreshDistancesReadout === 'function') {
-    refreshDistancesReadout();
-    setInterval(refreshDistancesReadout, 250);
-  }
+  refreshDistancesReadout();
+  setInterval(refreshDistancesReadout, 250);
 
   // Upewnij się, że panel można włączyć na starcie (dev wygoda)
   // ui.root.style.display = 'block';
