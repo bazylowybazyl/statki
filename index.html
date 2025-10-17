@@ -5283,10 +5283,13 @@ setTimeout(startGame, 500);
     <!-- Tu JS doda po 1 wierszu na planetę -->
   </div>
 
-  <!-- === Dystanse od Słońca ================================================= -->
+  <!-- === Dystanse od Słońca (AU → promień orbity) ======================== -->
   <div class="group" id="distancesGroup">
-    <div class="row"><strong>Dystanse od Słońca</strong> <span class="small muted">(AU → promień orbity)</span></div>
-    <!-- JS doda tu po jednym wierszu na planetę -->
+    <div class="row">
+      <strong>Dystanse od Słońca</strong>
+      <span class="small muted">(AU → promień orbity)</span>
+    </div>
+    <!-- Wiersze z suwakami będą dodane przez buildDistancesUI() -->
   </div>
 
   <div class="group">
@@ -5733,6 +5736,9 @@ setTimeout(startGame, 500);
   // boot
   loadLS();
   bootstrapFromGame();
+  if (!DevConfig.planetOrbitAUById || typeof DevConfig.planetOrbitAUById !== 'object') {
+    DevConfig.planetOrbitAUById = {};
+  }
 
   // Planety (R)
   buildPlanetsUI();
