@@ -5739,14 +5739,28 @@ setTimeout(startGame, 500);
   // boot
   loadLS();
   bootstrapFromGame();
-  buildPlanetsUI();        // promienie planet (R)
-  if (typeof buildDistancesUI === 'function') buildDistancesUI();      // suwaki AU
+
+  // Planety (R)
+  buildPlanetsUI();
+
+  // Sekcja: Dystanse od Słońca (AU → promień orbity)
+  if (typeof buildDistancesUI === 'function') buildDistancesUI();
+
+  // Odbicie stanu
   reflectToUI();
   reflectToCfg();
+
+  // Rebuild 3D po zmianach
   scheduleRebuild3D();
-  applyOrbitOverrides();   // przywróć zapisane AU
-  refreshDistancesReadout();
-  setInterval(refreshDistancesReadout, 250);
+
+  // Przywróć zapisane AU i przelicz promienie orbit
+  if (typeof applyOrbitOverrides === 'function') applyOrbitOverrides();
+
+  // Aktualizuj readout AU/world-units w panelu
+  if (typeof refreshDistancesReadout === 'function') {
+    refreshDistancesReadout();
+    setInterval(refreshDistancesReadout, 250);
+  }
 
   // Upewnij się, że panel można włączyć na starcie (dev wygoda)
   // ui.root.style.display = 'block';
