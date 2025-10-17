@@ -5628,7 +5628,7 @@ setTimeout(startGame, 500);
       row.className = 'row dist';
       row.innerHTML = `
         <label style="min-width:80px">${p.name||('Planet '+(p.id??''))}</label>
-        <input data-k="${k}" class="plAU" type="range" min="0.20" max="600" step="0.01">
+        <input data-k="${k}" class="plAU" type="range" min="0" max="60" step="0.01">
         <div class="val" id="au_val_${k}" style="min-width:160px; text-align:right; font-variant-numeric: tabular-nums;"></div>
       `;
       ui.distancesGroup.appendChild(row);
