@@ -817,6 +817,7 @@ const SUN = { x: WORLD.w/2, y: WORLD.h/2, r: 1000,
   },
   seed: 93731
 };
+window.SUN = SUN;
 
 // --- tryb: REALNY UKŁAD SŁONECZNY (domyślnie włączony) ---
 const solarParams = new URLSearchParams(location.search);
@@ -825,6 +826,7 @@ const USE_SOLAR = solarParams.has('solar') ? solarParams.get('solar') !== '0' : 
 function makeSolarPlanets(){
   // Skala: 1 AU ≈ 3000 jednostek świata (Neptun ~ 90k)
   const AU = 3000;
+  window.BASE_ORBIT = AU;
   const MIN_SUN_GAP = 600;
   const MIN_PLANET_GAP = 800;
   const INNER_PLANET_COUNT = 4;
@@ -893,6 +895,7 @@ function makeProceduralPlanets(){
     PLANET_TYPES.FROZEN
   ];
   const BASE_ORBIT = 7000;
+  window.BASE_ORBIT = BASE_ORBIT;
   const list = [];
   for (let i = 0; i < NUM_PLANETS; i++) {
     const orbitRadius = BASE_ORBIT * (i + 1);
@@ -939,6 +942,7 @@ let planets = PLANET_DATA.map((p, index) => {
   p.label = formatPlanetLabel(p, index);
   return p;
 });
+window.planets = planets;
 
 const ASTEROID_BELT = (() => {
   const innerPlanet = planets[3];
