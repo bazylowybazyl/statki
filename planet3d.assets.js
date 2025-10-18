@@ -537,22 +537,28 @@
     if (sun) sun.draw(ctx, cam);
   };
 
-  window.initStations3D = function initStations3D(list){
-    _stations3D.length = 0;
-    if (!Array.isArray(list)) return;
-    for (const st of list){
-      const s3d = new PirateStation3D(st, {});
-      _stations3D.push(s3d);
-    }
-  };
+  if (!window.initStations3D) {
+    window.initStations3D = function initStations3D(list){
+      _stations3D.length = 0;
+      if (!Array.isArray(list)) return;
+      for (const st of list){
+        const s3d = new PirateStation3D(st, {});
+        _stations3D.push(s3d);
+      }
+    };
+  }
 
-  window.updateStations3D = function updateStations3D(dt){
-    for (const s of _stations3D) s.render(dt);
-  };
+  if (!window.updateStations3D) {
+    window.updateStations3D = function updateStations3D(dt){
+      for (const s of _stations3D) s.render(dt);
+    };
+  }
 
-  window.drawStations3D = function drawStations3D(ctx, cam){
-    for (const s of _stations3D) s.draw(ctx, cam);
-  };
+  if (!window.drawStations3D) {
+    window.drawStations3D = function drawStations3D(ctx, cam){
+      for (const s of _stations3D) s.draw(ctx, cam);
+    };
+  }
 
   window.__setStation3DScale = function(k){
     const value = Number(k);
