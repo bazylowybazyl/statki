@@ -142,6 +142,72 @@ window.addEventListener('resize', ()=>{
 });
 
 let mainScene3D = null;
+let planetScene3D = null;
+let planetStationsReady = false;
+
+function asThreeScene(candidate){
+  if (!candidate) return null;
+  if (candidate.isScene) return candidate;
+  if (candidate.scene && candidate.scene.isScene) return candidate.scene;
+  if (candidate.scene3D && candidate.scene3D.isScene) return candidate.scene3D;
+  if (candidate.planetScene && candidate.planetScene.isScene) return candidate.planetScene;
+  if (candidate.sceneObject && candidate.sceneObject.isScene) return candidate.sceneObject;
+  return null;
+}
+
+function findPlanetScene3D(){
+  const directCandidates = [
+    planetScene3D,
+    window.planetsScene3D,
+    window.planetsScene,
+    window.planetScene3D,
+    window.PlanetScene3D,
+    window.PlanetsScene3D,
+    window.planets3DScene,
+    window.planets3D
+  ];
+  for (const candidate of directCandidates){
+    const scene = asThreeScene(candidate);
+    if (scene) return scene;
+  }
+  const lazyCandidates = [
+    typeof window.getPlanetsScene3D === 'function' ? window.getPlanetsScene3D() : null,
+    typeof window.getPlanetScene3D === 'function' ? window.getPlanetScene3D() : null
+  ];
+  for (const candidate of lazyCandidates){
+    const scene = asThreeScene(candidate);
+    if (scene) return scene;
+  }
+  return null;
+}
+
+function ensurePlanetStationsInit(stationsList){
+  const resolvedScene = findPlanetScene3D();
+  if (resolvedScene && planetScene3D && resolvedScene !== planetScene3D && typeof window.detachPlanetStations3D === 'function'){
+    window.detachPlanetStations3D(planetScene3D);
+    planetStationsReady = false;
+  }
+  if (resolvedScene) {
+    planetScene3D = resolvedScene;
+  }
+  if (!planetScene3D || typeof window.initStations3D !== 'function') return false;
+  if (!Array.isArray(stationsList)) return false;
+  if (!planetStationsReady) {
+    window.initStations3D(planetScene3D, stationsList);
+    planetStationsReady = true;
+  }
+  return planetStationsReady;
+}
+
+function detachPlanetStationsIfNeeded(){
+  if (planetScene3D && typeof window.detachPlanetStations3D === 'function'){
+    window.detachPlanetStations3D(planetScene3D);
+  }
+  planetScene3D = null;
+  planetStationsReady = false;
+}
+
+window.addEventListener('beforeunload', detachPlanetStationsIfNeeded);
 
 // Dev flags/tuning (persisted via devtools where available)
 window.DevFlags = Object.assign({
@@ -1394,13 +1460,22 @@ function initNPCs(){
 }
 // Ensure Three.js modules are loaded before initializing 3D objects
 window.addEventListener('DOMContentLoaded', () => {
-  initPlanets3D(planets, SUN);
+  const planetInitResult = initPlanets3D(planets, SUN);
+  const sceneFromInit = asThreeScene(planetInitResult);
+  if (sceneFromInit) {
+    planetScene3D = sceneFromInit;
+  }
+  if (!ensurePlanetStationsInit(stations)) {
+    let tries = 0;
+    const maxTries = 240;
+    (function poll(){
+      if (ensurePlanetStationsInit(stations) || tries++ > maxTries) return;
+      requestAnimationFrame(poll);
+    })();
+  }
   if (typeof window.initWorld3D === 'function') {
     const res = initWorld3D();
     mainScene3D = res?.scene || null;
-    if (window.initStations3D && mainScene3D) {
-      window.initStations3D(mainScene3D, stations);
-    }
   }
 });
 
@@ -4249,6 +4324,7 @@ function render(alpha, frameDt){
 
   // Czyścimy ekran
   ctx.clearRect(0,0,W,H);
+  ensurePlanetStationsInit(stations);
   if (window.updatePlanets3D) updatePlanets3D(frameDt);
   if (window.updateStations3D) window.updateStations3D(stations);
   if (window.updateWorld3D) updateWorld3D(frameDt, vfxTime);
