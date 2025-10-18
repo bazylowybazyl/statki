@@ -38,8 +38,15 @@ function getStationKey(station) {
 }
 
 function getModelUrlsForStation(station) {
-  const id = typeof station?.id === 'string' ? station.id.toLowerCase() : '';
-  return MODEL_URLS[id] || null;
+  const tryStr = (v) => (typeof v === 'string' ? v.toLowerCase() : '');
+  const id = tryStr(station?.id);
+  const name = tryStr(station?.name);
+  const style = tryStr(station?.style);
+  const planet = tryStr(station?.planet || station?.host || station?.home || station?.orbit?.name);
+  const candidates = [id, name, style, planet].join(' ');
+  const keys = ['earth', 'mars', 'jupiter', 'neptune'];
+  const hit = keys.find((k) => candidates.includes(k));
+  return hit ? MODEL_URLS[hit] : null;
 }
 
 function isPirateStation(station) {
@@ -78,13 +85,13 @@ function disableShadows(object) {
 
 function elevateOverlay(object) {
   object.traverse?.((node) => {
-    if (node && node.isMesh && node.material) {
+    if (node && (node.isMesh || node.isPoints || node.isLine)) {
       const mats = Array.isArray(node.material) ? node.material : [node.material];
       for (const m of mats) {
+        if (!m) continue;
         m.depthTest = false;
         m.depthWrite = false;
-        // transparent nie jest konieczne, ale pomaga w deterministycznym sortowaniu
-        m.transparent = true;
+        m.transparent = true; // stabilniejsze sortowanie
       }
       node.renderOrder = 10000;
     }
@@ -178,14 +185,13 @@ function ensureStationObject(record, station) {
       if (!template || !stationRecords.has(record.key)) return null;
       const clone = SkeletonUtils.clone(template);
       disableShadows(clone);
-      // Rysuj zawsze nad geometrią planet:
-      elevateOverlay(clone);
+      elevateOverlay(clone); // <-- NOWE: stacje zawsze nad planetami
 
       const wrapper = new THREE.Group();
       wrapper.name = `station3d:${station.id ?? record.key}`;
       wrapper.add(clone);
-      // (opcjonalne) renderOrder może zostać, ale nie jest wymagany
-      wrapper.renderOrder = 10;
+      // gwarantuj, że cała grupa ma priorytet nad resztą sceny
+      wrapper.renderOrder = 10001;
 
       const bbox = new THREE.Box3().setFromObject(wrapper);
       const center = bbox.getCenter(new THREE.Vector3());
