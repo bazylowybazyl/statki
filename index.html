@@ -4270,6 +4270,7 @@ function render(alpha, frameDt){
   ctx.globalCompositeOperation = 'source-over';
   ctx.imageSmoothingEnabled = true;
   if (window.drawPlanets3D)   drawPlanets3D(ctx, cam);
+  if (window.drawStations3D)  drawStations3D(ctx, cam);
   if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen);
   drawPlanetLabels(ctx, cam);
   drawRangeRuler(ctx, cam);
