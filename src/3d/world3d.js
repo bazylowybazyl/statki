@@ -39,6 +39,9 @@ let pirateStation3D = null;
 let pirateStation2D = null;
 let lastRenderInfo = null;
 let initialRadius = null;
+const fallbackCameraTarget = new THREE.Vector3();
+const lastCameraState = { x: 0, y: 0, zoom: 1 };
+let hasCameraState = false;
 
 function resetRendererState2D(ctx){
   if (!ctx) return;
@@ -271,17 +274,31 @@ function ensureComposer(renderer) {
 }
 
 function updateCameraTarget() {
-  if (!camera || !pirateStation3D) return;
-  const target = pirateStation3D.object3d.position;
-  const dist = Math.max(60, pirateStation3D.radius * 2.4);
+  if (!camera) return;
+  if (pirateStation3D) {
+    const target = pirateStation3D.object3d.position;
+    const dist = Math.max(60, pirateStation3D.radius * 2.4);
+    camera.position.set(target.x + dist, target.y + dist * 0.62, target.z + dist);
+    camera.lookAt(target);
+    return;
+  }
+  if (!hasCameraState) return;
+  const target = fallbackCameraTarget;
+  target.set(lastCameraState.x || 0, 0, lastCameraState.y || 0);
+  const zoom = Math.max(0.0001, lastCameraState.zoom || 1);
+  const baseRadius = initialRadius || 120;
+  const dist = Math.max(60, baseRadius * 2.0 / zoom);
   camera.position.set(target.x + dist, target.y + dist * 0.62, target.z + dist);
   camera.lookAt(target);
 }
 
-function renderScene(dt, t) {
-  if (!scene || !camera || !pirateStation3D || !canvas2d || !ctx2d) return;
-  const renderer = getRenderer();
-  if (!renderer) return;
+function renderScene(dt, t, rendererOverride) {
+  if (!scene || !camera || !canvas2d || !ctx2d) return;
+  const renderer = rendererOverride || getRenderer();
+  if (!renderer) {
+    ensureComposer(null);
+    return;
+  }
   resetRendererState(renderer, RENDER_SIZE, RENDER_SIZE);
   ensureComposer(renderer);
   ensureMaskRT(renderer);
@@ -294,7 +311,7 @@ function renderScene(dt, t) {
       if (dirLight.target) dirLight.target.updateMatrixWorld();
     }
   }
-  if (pirateStation3D.update) pirateStation3D.update(t ?? 0, dt ?? 0);
+  if (pirateStation3D?.update) pirateStation3D.update(t ?? 0, dt ?? 0);
   renderer.setClearColor(0x000000, 0);
   if (renderer.setClearAlpha) renderer.setClearAlpha(0);
   if (composer) {
@@ -319,11 +336,15 @@ function renderScene(dt, t) {
   }
   ctx2d.clearRect(0, 0, canvas2d.width, canvas2d.height);
   ctx2d.drawImage(renderer.domElement, 0, 0, canvas2d.width, canvas2d.height);
-  lastRenderInfo = {
-    canvas: canvas2d,
-    radius: pirateStation3D.radius,
-    world: pirateStation2D ? { x: pirateStation2D.x, y: pirateStation2D.y } : { x: 0, y: 0 }
-  };
+  if (pirateStation3D && pirateStation2D) {
+    lastRenderInfo = {
+      canvas: canvas2d,
+      radius: pirateStation3D.radius,
+      world: { x: pirateStation2D.x, y: pirateStation2D.y }
+    };
+  } else {
+    lastRenderInfo = null;
+  }
 }
 
 export function initWorld3D({ scene: externalScene } = {}) {
@@ -333,8 +354,15 @@ export function initWorld3D({ scene: externalScene } = {}) {
   }
   ensureScene();
   ensureCamera();
-  ensureScene();
-  return { scene, camera, canvas: canvas2d };
+  const renderer = getRenderer();
+  if (renderer) {
+    ensureComposer(renderer);
+    ensureMaskRT(renderer);
+    updatePreserveAlphaOutputPass(renderer);
+  } else {
+    ensureComposer(null);
+  }
+  return { scene, camera, composer, renderer, canvas: canvas2d };
 }
 
 export function attachPirateStation3D(sceneOverride, station2D) {
@@ -368,11 +396,33 @@ export function dettachPirateStation3D(sceneOverride) {
 }
 
 export function updateWorld3D(dt, t) {
-  if (!pirateStation3D) return;
-  renderScene(dt, t);
+  const resources = initWorld3D();
+  renderScene(dt, t, resources?.renderer || null);
 }
 
 export function drawWorld3D(ctx, cam, worldToScreen) {
+  initWorld3D();
+  if (cam) {
+    let updated = false;
+    if (Number.isFinite(cam.x) && Number.isFinite(cam.y)) {
+      lastCameraState.x = cam.x;
+      lastCameraState.y = cam.y;
+      updated = true;
+    }
+    if (Number.isFinite(cam.zoom)) {
+      lastCameraState.zoom = cam.zoom;
+      updated = true;
+    }
+    if (updated) hasCameraState = true;
+  }
+  if (camera) {
+    const zoom = Math.max(0.0001, Number.isFinite(lastCameraState.zoom) ? lastCameraState.zoom : 1);
+    if (camera.zoom !== zoom) {
+      camera.zoom = zoom;
+      camera.updateProjectionMatrix();
+    }
+  }
+  updateCameraTarget();
   if (!lastRenderInfo || !pirateStation2D || typeof worldToScreen !== 'function') return;
   if (!lastRenderInfo.canvas) return;
   const screen = worldToScreen(lastRenderInfo.world.x, lastRenderInfo.world.y, cam);
