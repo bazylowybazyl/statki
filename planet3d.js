@@ -9,6 +9,7 @@
   const SUN_SIZE_MULTIPLIER = 6.0;
   const ASTEROID_SCALE_MIN = 0.01;
   const ASTEROID_SCALE_MAX = 0.035;
+  const ASTEROIDS_GLB = new URL('./src/assets/planety/asteroids/asteroidPack.glb', import.meta.url).href;
   const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 
   // PRNG + value noise
@@ -541,7 +542,7 @@
         if (!Loader) { requestAnimationFrame(tryLoadGLTF); return; }
         const loader = new Loader();
         loader.load(
-          'assets/planety/asteroids/asteroidPack.glb',
+          ASTEROIDS_GLB,
           (gltf) => {
             const geos = [];
             gltf.scene.traverse((o) => {
