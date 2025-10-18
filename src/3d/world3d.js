@@ -45,7 +45,7 @@ let hasCameraState = false;
 
 function isOverlayEnabled() {
   if (typeof window === 'undefined') return false;
-  // Domyślnie OFF — to był debug
+  // Domyślnie wyłączone (to był debug). Włącz ręcznie: window.USE_WORLD3D_OVERLAY = true
   return window.USE_WORLD3D_OVERLAY === true;
 }
 
@@ -396,7 +396,7 @@ export function attachPirateStation3D(sceneOverride, station2D) {
   scene.add(pirateStation3D.object3d);
   initialRadius = pirateStation3D.radius;
   updateCameraTarget();
-  // Domyślna skala ×6, wraz z korektą promienia:
+  // Domyślna skala ×6
   setPirateStationScale(6);
 }
 
@@ -419,7 +419,7 @@ export function updateWorld3D(dt, t) {
 }
 
 export function drawWorld3D(ctx, cam, worldToScreen) {
-  if (!isOverlayEnabled()) return; // wyłączony domyślnie
+  if (!isOverlayEnabled()) return; // wyłączone domyślnie
   initWorld3D();
   if (cam) {
     let updated = false;
@@ -448,7 +448,7 @@ export function drawWorld3D(ctx, cam, worldToScreen) {
   const sizeWorld = lastRenderInfo.radius * 2;
   const sizePx = sizeWorld * (cam?.zoom ?? 1);
   const offsetY = sizePx * (pirateStation3D ? 0.55 : 0.5);
-  // Zawsze POD statkiem / HUDem:
+  // Rysuj overlay POD statkiem/HUDem:
   ctx.globalCompositeOperation = 'destination-over';
   ctx.imageSmoothingEnabled = true;
   ctx.drawImage(lastRenderInfo.canvas, screen.x - sizePx / 2, screen.y - offsetY, sizePx, sizePx);
