@@ -59,7 +59,8 @@ function getDevScale() {
 
 function isUse3DEnabled() {
   if (typeof window === 'undefined') return true;
-  return !!window.USE_STATION_3D;
+  // domyślnie ON; ustaw window.USE_STATION_3D=false aby wyłączyć
+  return window.USE_STATION_3D !== false;
 }
 
 function disableShadows(object) {
