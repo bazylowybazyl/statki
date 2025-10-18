@@ -59,7 +59,7 @@ function getDevScale() {
 
 function isUse3DEnabled() {
   if (typeof window === 'undefined') return true;
-  // domyślnie ON; ustaw window.USE_STATION_3D=false aby wyłączyć
+  // domyślnie ON (ustaw window.USE_STATION_3D=false aby wyłączyć)
   return window.USE_STATION_3D !== false;
 }
 
@@ -163,7 +163,8 @@ function ensureStationObject(record, station) {
       const wrapper = new THREE.Group();
       wrapper.name = `station3d:${station.id ?? record.key}`;
       wrapper.add(clone);
-      wrapper.renderOrder = 10; // zabezpiecza przed efektami z głębi
+      // (opcjonalne) renderOrder może zostać, ale nie jest wymagany
+      wrapper.renderOrder = 10;
 
       const bbox = new THREE.Box3().setFromObject(wrapper);
       const center = bbox.getCenter(new THREE.Vector3());
@@ -183,11 +184,11 @@ function ensureStationObject(record, station) {
 
       const devScale = getDevScale();
       wrapper.scale.setScalar(baseScale * devScale);
-      // Uzgodnienie z world3d: 2D (x,y) → 3D (x, z). Oś Y = "up".
+      // Płaszczyzna planet jest w XY → ustawiamy 2D (x,y) → 3D (x,y,0)
       wrapper.position.set(
         Number.isFinite(station.x) ? station.x : 0,
-        0,
-        Number.isFinite(station.y) ? station.y : 0
+        Number.isFinite(station.y) ? station.y : 0,
+        0
       );
       wrapper.visible = isUse3DEnabled();
 
@@ -229,13 +230,13 @@ function updateRecordTransform(record, station, devScale, visible) {
 
   const px = Number.isFinite(station.x) ? station.x : 0;
   const py = Number.isFinite(station.y) ? station.y : 0;
-  // 2D (x,y) → 3D (x, z)
-  group.position.set(px, 0, py);
+  // 2D (x,y) → 3D (x,y,0) – taka sama płaszczyzna jak planety
+  group.position.set(px, py, 0);
 
   const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
   record.spinOffset = (record.spinOffset ?? 0) + 0.002;
-  // Kręcimy wokół osi Y (pion), zgodnie z world3d
-  group.rotation.y = baseAngle + record.spinOffset;
+  // Dla sceny planetarnej kręcimy wokół Z (kamera top-down)
+  group.rotation.z = baseAngle + record.spinOffset;
 
   group.visible = visible;
   station._mesh3d = group;
