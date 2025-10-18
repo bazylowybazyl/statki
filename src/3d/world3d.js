@@ -433,16 +433,11 @@ export function drawWorld3D(ctx, cam, worldToScreen) {
     }
   }
   updateCameraTarget();
-  // <— tu renderujemy świeżą klatkę world3D, żeby lastRenderInfo było aktualne
-  const nowSeconds = typeof performance !== 'undefined' ? performance.now() / 1000 : 0;
-  updateWorld3D(0, nowSeconds);
   if (!lastRenderInfo || typeof worldToScreen !== 'function') return;
   if (!lastRenderInfo.canvas) return;
   const screen = worldToScreen(lastRenderInfo.world.x, lastRenderInfo.world.y, cam);
   const sizeWorld = lastRenderInfo.radius * 2;
-  // clamp: żeby overlay nie znikał przy ekstremalnych zoomach
-  let sizePx = sizeWorld * (cam?.zoom ?? 1);
-  sizePx = Math.max(64, Math.min(512, sizePx));
+  const sizePx = sizeWorld * (cam?.zoom ?? 1);
   const offsetY = sizePx * (pirateStation3D ? 0.55 : 0.5);
   ctx.globalCompositeOperation = 'source-over';
   ctx.imageSmoothingEnabled = true;
