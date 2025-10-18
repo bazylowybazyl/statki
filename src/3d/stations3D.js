@@ -150,7 +150,8 @@ function ensureStationObject(record, station) {
   if (!activeScene) return null;
   const urls = getModelUrlsForStation(station);
   if (!urls) return null;
-  const targetRadiusRaw = station.baseR ?? station.r ?? 1;
+  // Preferuj runtime'owy promień (po skalowaniu), potem bazowy:
+  const targetRadiusRaw = (Number.isFinite(station.r) ? station.r : station.baseR) ?? 1;
   const targetRadius = Number.isFinite(targetRadiusRaw) && targetRadiusRaw > 0 ? targetRadiusRaw : 1;
   const promise = loadTemplateWithFallback(urls)
     .then((template) => {
@@ -161,6 +162,7 @@ function ensureStationObject(record, station) {
       const wrapper = new THREE.Group();
       wrapper.name = `station3d:${station.id ?? record.key}`;
       wrapper.add(clone);
+      wrapper.renderOrder = 10; // zabezpiecza przed efektami z głębi
 
       const bbox = new THREE.Box3().setFromObject(wrapper);
       const center = bbox.getCenter(new THREE.Vector3());
@@ -180,10 +182,11 @@ function ensureStationObject(record, station) {
 
       const devScale = getDevScale();
       wrapper.scale.setScalar(baseScale * devScale);
+      // Uzgodnienie z world3d: 2D (x,y) → 3D (x, z). Oś Y = "up".
       wrapper.position.set(
         Number.isFinite(station.x) ? station.x : 0,
-        Number.isFinite(station.y) ? station.y : 0,
-        0
+        0,
+        Number.isFinite(station.y) ? station.y : 0
       );
       wrapper.visible = isUse3DEnabled();
 
@@ -213,7 +216,7 @@ function updateRecordTransform(record, station, devScale, visible) {
     activeScene.add(group);
   }
   const geometryRadius = record.geometryRadius || group.userData.geometryRadius || 1;
-  const desiredRadiusRaw = station.baseR ?? station.r ?? 1;
+  const desiredRadiusRaw = (Number.isFinite(station.r) ? station.r : station.baseR) ?? 1;
   const desiredRadius = Number.isFinite(desiredRadiusRaw) && desiredRadiusRaw > 0 ? desiredRadiusRaw : 1;
   const baseScale = desiredRadius / geometryRadius;
   group.userData.baseScale = baseScale;
@@ -225,11 +228,13 @@ function updateRecordTransform(record, station, devScale, visible) {
 
   const px = Number.isFinite(station.x) ? station.x : 0;
   const py = Number.isFinite(station.y) ? station.y : 0;
-  group.position.set(px, py, 0);
+  // 2D (x,y) → 3D (x, z)
+  group.position.set(px, 0, py);
 
   const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
   record.spinOffset = (record.spinOffset ?? 0) + 0.002;
-  group.rotation.z = baseAngle + record.spinOffset;
+  // Kręcimy wokół osi Y (pion), zgodnie z world3d
+  group.rotation.y = baseAngle + record.spinOffset;
 
   group.visible = visible;
   station._mesh3d = group;
