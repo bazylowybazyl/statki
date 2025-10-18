@@ -55,28 +55,62 @@
     }
   }
 
+  const assetUrl = (path) => new URL(`./src/assets/${path}`, import.meta.url).href;
+
+  let _sharedTextureLoader = null;
+  function getTextureLoader() {
+    if (typeof THREE === 'undefined') return null;
+    if (!_sharedTextureLoader) {
+      _sharedTextureLoader = new THREE.TextureLoader();
+    }
+    return _sharedTextureLoader;
+  }
+
+  function loadTextureSafe(url, { srgb = false } = {}) {
+    return new Promise((resolve) => {
+      if (!url) { resolve(null); return; }
+      const loader = getTextureLoader();
+      if (!loader) { resolve(null); return; }
+      loader.load(
+        url,
+        (tex) => {
+          if (tex && srgb) tex.colorSpace = THREE.SRGBColorSpace;
+          resolve(tex || null);
+        },
+        undefined,
+        () => {
+          console.warn('Texture missing:', url);
+          resolve(null);
+        }
+      );
+    });
+  }
+
+  const SUN_COLOR = assetUrl('planety/solar/sun/sun_color.jpg');
+  const ASTEROIDS_GLB = assetUrl('planety/asteroids/asteroidPack.glb');
+
   // === Tekstury dla realnego układu (same ścieżki, bez binarek w PR) ===
   const TEX = {
-    mercury: { color: 'assets/planety/solar/mercury/mercury_color.jpg',
-               normal:'assets/planety/solar/mercury/mercury_normal.jpg' },
-    venus:   { color: 'assets/planety/solar/venus/venus_color.jpg',
-               bump:  'assets/planety/images/venusbump.jpg',
-               atmo:  'assets/planety/images/venus_atmosphere.jpg' },
-    earth:   { color: 'assets/planety/solar/earth/earth_color.jpg',
-               normal:'assets/planety/solar/earth/earth_normal.jpg',
-               spec:  'assets/planety/images/earth_specularmap.jpg',
-               night: 'assets/planety/images/earth_nightmap.jpg',
-               clouds:'assets/planety/solar/earth/earth_clouds.jpg' },
-    mars:    { color: 'assets/planety/solar/mars/mars_color.jpg',
-               bump:  'assets/planety/images/marsbump.jpg' },
-    jupiter: { color: 'assets/planety/solar/jupiter/jupiter_color.jpg' },
-    saturn:  { color: 'assets/planety/solar/saturn/saturn_color.jpg',
-               ring:  'assets/planety/solar/saturn/rings_alpha.png' },
-    uranus:  { color: 'assets/planety/solar/uranus/uranus_color.jpg',
-               ring:  'assets/planety/images/uranus_ring.png' },
-    neptune: { color: 'assets/planety/solar/neptune/neptune_color.jpg' },
+    mercury: { color: assetUrl('planety/solar/mercury/mercury_color.jpg'),
+               normal:assetUrl('planety/solar/mercury/mercury_normal.jpg') },
+    venus:   { color: assetUrl('planety/solar/venus/venus_color.jpg'),
+               bump:  assetUrl('planety/images/venusbump.jpg'),
+               atmo:  assetUrl('planety/images/venus_atmosphere.jpg') },
+    earth:   { color: assetUrl('planety/solar/earth/earth_color.jpg'),
+               normal:assetUrl('planety/solar/earth/earth_normal.jpg'),
+               spec:  assetUrl('planety/images/earth_specularmap.jpg'),
+               night: assetUrl('planety/images/earth_nightmap.jpg'),
+               clouds:assetUrl('planety/solar/earth/earth_clouds.jpg') },
+    mars:    { color: assetUrl('planety/solar/mars/mars_color.jpg'),
+               bump:  assetUrl('planety/images/marsbump.jpg') },
+    jupiter: { color: assetUrl('planety/solar/jupiter/jupiter_color.jpg') },
+    saturn:  { color: assetUrl('planety/solar/saturn/saturn_color.jpg'),
+               ring:  assetUrl('planety/solar/saturn/rings_alpha.png') },
+    uranus:  { color: assetUrl('planety/solar/uranus/uranus_color.jpg'),
+               ring:  assetUrl('planety/images/uranus_ring.png') },
+    neptune: { color: assetUrl('planety/solar/neptune/neptune_color.jpg') },
     // pluto opcjonalnie:
-    // pluto: { color:'assets/planety/images/plutomap.jpg', bump:'assets/planety/images/plutobump2k.jpg' }
+    // pluto: { color:assetUrl('planety/images/plutomap.jpg'), bump:assetUrl('planety/images/plutobump2k.jpg') }
   };
 
   const _planets = [];
@@ -108,104 +142,123 @@
       this._name = String((opts && (opts.name ?? opts.id)) ?? "").toLowerCase();
       if (!this._name || !TEX[this._name]) this._name = 'earth';
       this._needsInit = true;
+      this._initPromise = null;
       this.spin = 0.04 + Math.random() * 0.06;
+    }
+
+    async _initThree() {
+      if (typeof THREE === "undefined") return;
+
+      this.scene = new THREE.Scene();
+      this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+      this.camera.position.z = 3;
+
+      const geom = new THREE.SphereGeometry(1, 96, 64);
+      const tex = TEX[this._name] || {};
+
+      const [
+        colorMap,
+        normalMap,
+        bumpMap,
+        specMap,
+        nightMap,
+        cloudsMap,
+        ringMap
+      ] = await Promise.all([
+        loadTextureSafe(tex.color,  { srgb: true }),
+        loadTextureSafe(tex.normal, { srgb: false }),
+        loadTextureSafe(tex.bump,   { srgb: false }),
+        loadTextureSafe(tex.spec,   { srgb: false }),
+        loadTextureSafe(tex.night,  { srgb: true }),
+        loadTextureSafe(tex.clouds, { srgb: true }),
+        loadTextureSafe(tex.ring,   { srgb: true })
+      ]);
+
+      const matParams = {
+        color: 0xffffff,
+        shininess: 10
+      };
+
+      if (colorMap) matParams.map = colorMap;
+      if (normalMap) matParams.normalMap = normalMap;
+      if (bumpMap) {
+        matParams.bumpMap = bumpMap;
+        matParams.bumpScale = 0.45;
+      }
+      if (specMap) matParams.specularMap = specMap;
+
+      this.material = new THREE.MeshPhongMaterial(matParams);
+
+      if (nightMap) {
+        this.material.emissive = new THREE.Color(0x111111);
+        this.material.emissiveMap = nightMap;
+        this.material.emissiveIntensity = 1.0;
+      }
+
+      this.scene.add(new THREE.AmbientLight(0xffffff, 0.22));
+      const hemi = new THREE.HemisphereLight(0xbfdfff, 0x0b0f1a, 0.18);
+      hemi.position.set(0, 1, 0);
+      this.scene.add(hemi);
+
+      const d = sunDirFor(this.x, this.y);
+      const sunDL = new THREE.DirectionalLight(0xffffff, 1.15);
+      sunDL.castShadow = true;
+      sunDL.position.set(d.x * 10, d.y * 10, d.z * 10);
+      sunDL.target.position.set(0, 0, 0);
+      this.scene.add(sunDL.target);
+      sunDL.shadow.mapSize.set(1024, 1024);
+      sunDL.shadow.camera.near = 0.1;
+      sunDL.shadow.camera.far = 30;
+      const S = 4;
+      sunDL.shadow.camera.left = -S;
+      sunDL.shadow.camera.right = S;
+      sunDL.shadow.camera.top = S;
+      sunDL.shadow.camera.bottom = -S;
+      this.scene.add(sunDL);
+      this.sunLight = sunDL;
+
+      this.mesh = new THREE.Mesh(geom, this.material);
+      this.mesh.receiveShadow = true;
+      this.scene.add(this.mesh);
+
+      if (cloudsMap) {
+        const clouds = new THREE.Mesh(
+          new THREE.SphereGeometry(1.008, 64, 48),
+          new THREE.MeshPhongMaterial({
+            map: cloudsMap,
+            transparent: true,
+            depthWrite: false,
+            opacity: 0.9
+          })
+        );
+        clouds.castShadow = true;
+        this.scene.add(clouds);
+        this.clouds = clouds;
+      }
+
+      if (ringMap) {
+        ringMap.anisotropy = 4;
+        const ringGeo = new THREE.RingGeometry(1.35, 2.4, 256, 1);
+        const ringMat = new THREE.MeshBasicMaterial({ map: ringMap, transparent: true, side: THREE.DoubleSide });
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.rotation.x = Math.PI / 2;
+        this.scene.add(ring);
+        this.ring = ring;
+      }
+
+      this._initPromise = null;
     }
 
     render(dt) {
       // Lazy init: zainicjuj scenę dopiero kiedy THREE jest dostępne
       if (this._needsInit && typeof THREE !== "undefined") {
         this._needsInit = false;
-        this.scene = new THREE.Scene();
-        this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
-        this.camera.position.z = 3;
-
-        const geom = new THREE.SphereGeometry(1, 96, 64);
-        const loader = new THREE.TextureLoader();
-        const tryTex = (p, srgb = false) => {
-          if (!p) return null;
-          const t = loader.load(p, undefined, undefined, (e)=>console.warn('Texture load failed:', p, e));
-          if (srgb) t.colorSpace = THREE.SRGBColorSpace;
-          return t;
-        };
-        const tex = TEX[this._name] || {};
-
-        const matParams = {
-          color: 0xffffff,
-          shininess: 10
-        };
-        // mapy kolorów w sRGB:
-        if (tex.color)   matParams.map         = tryTex(tex.color,  true);
-        // linear:
-        if (tex.normal)  matParams.normalMap   = tryTex(tex.normal, false);
-        if (tex.bump)   { matParams.bumpMap    = tryTex(tex.bump,   false); matParams.bumpScale = 0.45; }
-        if (tex.spec)    matParams.specularMap = tryTex(tex.spec,   false);
-
-        this.material = new THREE.MeshPhongMaterial(matParams);
-
-        // światła ogólne, żeby nie było pełnej czerni
-        this.scene.add(new THREE.AmbientLight(0xffffff, 0.22));
-        const hemi = new THREE.HemisphereLight(0xbfdfff, 0x0b0f1a, 0.18);
-        hemi.position.set(0, 1, 0);
-        this.scene.add(hemi);
-
-        // „Słońce” jako DirectionalLight z cieniami
-        const d = sunDirFor(this.x, this.y);
-        const sunDL = new THREE.DirectionalLight(0xffffff, 1.15);
-        sunDL.castShadow = true;
-        sunDL.position.set(d.x * 10, d.y * 10, d.z * 10);
-        sunDL.target.position.set(0, 0, 0);
-        this.scene.add(sunDL.target);
-        // budżet shadowmap per planeta
-        sunDL.shadow.mapSize.set(1024, 1024);
-        sunDL.shadow.camera.near = 0.1;
-        sunDL.shadow.camera.far = 30;
-        const S = 4;
-        sunDL.shadow.camera.left = -S;
-        sunDL.shadow.camera.right = S;
-        sunDL.shadow.camera.top = S;
-        sunDL.shadow.camera.bottom = -S;
-        this.scene.add(sunDL);
-        this.sunLight = sunDL;
-
-        this.mesh = new THREE.Mesh(geom, this.material);
-        this.scene.add(this.mesh);
-        this.mesh.receiveShadow = true;    // planeta przyjmuje cienie (np. od chmur)
-
-        if (this._name === 'earth') {
-          // nocne światła – świecą niezależnie od światła kierunkowego
-          if (tex.night) {
-            this.material.emissive = new THREE.Color(0x111111);
-            this.material.emissiveMap = tryTex(tex.night, true); // sRGB
-            this.material.emissiveIntensity = 1.0;
-          }
-          // półprzezroczyste chmury
-          if (tex.clouds) {
-            const clouds = new THREE.Mesh(
-              new THREE.SphereGeometry(1.008, 64, 48),
-              new THREE.MeshPhongMaterial({
-                map: tryTex(tex.clouds, true),
-                transparent: true,
-                depthWrite: false,
-                opacity: 0.9
-              })
-            );
-            this.scene.add(clouds);
-            this.clouds = clouds;
-            this.clouds.castShadow = true;   // chmury rzucają cień na planetę
-          }
-        }
-        if (tex.ring) {
-          const ringTex = tryTex(tex.ring, true);
-          if (ringTex) ringTex.anisotropy = 4;
-          const ringGeo = new THREE.RingGeometry(1.35, 2.4, 256, 1);
-          const ringMat = new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, side: THREE.DoubleSide });
-          const ring = new THREE.Mesh(ringGeo, ringMat);
-          ring.rotation.x = Math.PI / 2;
-          this.scene.add(ring);
-          this.ring = ring;
+        this._initPromise = this._initThree();
+        if (this._initPromise && typeof this._initPromise.catch === 'function') {
+          this._initPromise.catch((err) => console.error('AssetPlanet3D init failed', err));
         }
       }
-      if (!this.scene || !this.camera) return;
+      if (!this.scene || !this.camera || !this.mesh) return;
       this.mesh.rotation.y += this.spin * dt;
       if (this.clouds) this.clouds.rotation.y += this.spin * dt * 1.3;
 
@@ -235,20 +288,29 @@
       this.canvas.width = 256; this.canvas.height = 256;
       this.ctx2d = this.canvas.getContext('2d');
       this._needsInit = true;
+      this._initPromise = null;
+    }
+    async _initThree(){
+      if (typeof THREE === "undefined") return;
+      this.scene = new THREE.Scene();
+      this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+      this.camera.position.z = 3;
+      const tex = await loadTextureSafe(SUN_COLOR, { srgb: true });
+      const matParams = tex ? { map: tex } : { color: 0xffffff };
+      const mat = new THREE.MeshBasicMaterial(matParams);
+      this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1.0, 128, 96), mat);
+      this.scene.add(this.mesh);
+      this._initPromise = null;
     }
     render(dt){
       if (this._needsInit && typeof THREE !== "undefined") {
         this._needsInit = false;
-        this.scene = new THREE.Scene();
-        this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-        this.camera.position.z = 3;
-        const loader = new THREE.TextureLoader();
-        const tex = loader.load('assets/planety/solar/sun/sun_color.jpg');
-        const mat = new THREE.MeshBasicMaterial({ map: tex });
-        this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1.0, 128, 96), mat);
-        this.scene.add(this.mesh);
+        this._initPromise = this._initThree();
+        if (this._initPromise && typeof this._initPromise.catch === 'function') {
+          this._initPromise.catch((err) => console.error('Sun3D init failed', err));
+        }
       }
-      if (!this.scene || !this.camera) return;
+      if (!this.scene || !this.camera || !this.mesh) return;
       this.mesh.rotation.y += 0.02*dt;
 
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
@@ -295,7 +357,7 @@
         if (!Loader) { requestAnimationFrame(tryLoadGLTF); return; }
         const loader = new Loader();
         loader.load(
-          'assets/planety/asteroids/asteroidPack.glb',
+          ASTEROIDS_GLB,
           (gltf) => {
             const geos = [];
             gltf.scene.traverse((o) => {
