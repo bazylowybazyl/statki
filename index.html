@@ -98,6 +98,7 @@
   import { createShortNeedleExhaust, createWarpExhaustBlue } from "./Engineeffects.js";
   import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
   import { initWorld3D, attachPirateStation3D, dettachPirateStation3D, updateWorld3D, drawWorld3D } from "./src/3d/world3d.js";
+  import { initStations3D, updateStations3D, detachPlanetStations3D } from "./src/3d/stations3D.js";
   import { initOverlay } from "./src/effects3d/overlay.js";
   import { createRailgunExplosionFactory } from "./src/effects3d/railgunExplosion.js";
   window.THREE = THREE;
@@ -114,6 +115,9 @@
   window.dettachPirateStation3D = dettachPirateStation3D;
   window.updateWorld3D = updateWorld3D;
   window.drawWorld3D = drawWorld3D;
+  window.initStations3D = initStations3D;
+  window.updateStations3D = updateStations3D;
+  window.detachPlanetStations3D = detachPlanetStations3D;
   window.initOverlay3D = initOverlay;
   window.createRailgunExplosionFactory = createRailgunExplosionFactory;
   // Nie modyfikujemy namespace'u modułu THREE (jest niemodyfikowalny).
@@ -993,11 +997,6 @@ let stations = planets.map(pl => {
   };
 });
 
-for (const st of stations) {
-  if (st.baseR == null) st.baseR = st.r;
-}
-
-if (window.initStations3D) initStations3D(stations);
 window.USE_STATION_3D = true;
 if (window.__setStation3DScale) {
   window.__lastStationScale = 1;
@@ -1399,6 +1398,9 @@ window.addEventListener('DOMContentLoaded', () => {
   if (typeof window.initWorld3D === 'function') {
     const res = initWorld3D();
     mainScene3D = res?.scene || null;
+    if (window.initStations3D && mainScene3D) {
+      window.initStations3D(mainScene3D, stations);
+    }
   }
 });
 
@@ -4248,7 +4250,7 @@ function render(alpha, frameDt){
   // Czyścimy ekran
   ctx.clearRect(0,0,W,H);
   if (window.updatePlanets3D) updatePlanets3D(frameDt);
-  if (window.USE_STATION_3D && window.updateStations3D) updateStations3D(frameDt);
+  if (window.updateStations3D) window.updateStations3D(stations);
   if (window.updateWorld3D) updateWorld3D(frameDt, vfxTime);
 
   // Gwiazdy (proceduralne kafelki na całej mapie)
@@ -4268,7 +4270,6 @@ function render(alpha, frameDt){
   ctx.globalCompositeOperation = 'source-over';
   ctx.imageSmoothingEnabled = true;
   if (window.drawPlanets3D)   drawPlanets3D(ctx, cam);
-  if (window.USE_STATION_3D && window.drawStations3D) drawStations3D(ctx, cam);
   if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen);
   drawPlanetLabels(ctx, cam);
   drawRangeRuler(ctx, cam);
