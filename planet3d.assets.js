@@ -622,6 +622,10 @@
     };
   }
 
+  const _applyStationScale = typeof window.__setStation3DScale === 'function'
+    ? window.__setStation3DScale.bind(window)
+    : null;
+
   window.__setStation3DScale = function(k){
     const value = Number(k);
     const v = Number.isFinite(value) ? value : 1;
@@ -632,6 +636,7 @@
     const cfg = window.DevConfig;
     if (cfg && typeof cfg === 'object') cfg.station3DScale = v;
     try { localStorage.setItem('station3DScale', String(v)); } catch {}
+    if (_applyStationScale) _applyStationScale(v);
   };
 
   window.getSharedRenderer = getSharedRenderer;
