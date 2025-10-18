@@ -158,13 +158,17 @@ function asThreeScene(candidate){
 function findPlanetScene3D(){
   const directCandidates = [
     planetScene3D,
+    mainScene3D,
     window.planetsScene3D,
     window.planetsScene,
     window.planetScene3D,
     window.PlanetScene3D,
     window.PlanetsScene3D,
     window.planets3DScene,
-    window.planets3D
+    window.planets3D,
+    window.mainScene3D,
+    window.worldScene3D,
+    window.world3DScene
   ];
   for (const candidate of directCandidates){
     const scene = asThreeScene(candidate);
@@ -172,11 +176,20 @@ function findPlanetScene3D(){
   }
   const lazyCandidates = [
     typeof window.getPlanetsScene3D === 'function' ? window.getPlanetsScene3D() : null,
-    typeof window.getPlanetScene3D === 'function' ? window.getPlanetScene3D() : null
+    typeof window.getPlanetScene3D === 'function' ? window.getPlanetScene3D() : null,
+    typeof window.getWorldScene3D === 'function' ? window.getWorldScene3D() : null
   ];
   for (const candidate of lazyCandidates){
     const scene = asThreeScene(candidate);
     if (scene) return scene;
+  }
+  if (!mainScene3D && typeof window.initWorld3D === 'function'){
+    const initResult = window.initWorld3D();
+    const scene = asThreeScene(initResult);
+    if (scene) {
+      mainScene3D = scene;
+      return scene;
+    }
   }
   return null;
 }
