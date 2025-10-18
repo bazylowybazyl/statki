@@ -306,8 +306,10 @@ function renderScene(dt, t, rendererOverride) {
   updateCameraTarget();
   if (dirLight) {
     const sun = (typeof window !== 'undefined' ? window.SUN : null) || null;
-    if (pirateStation2D && sun) {
-      updateSunLightForPlanet(dirLight, pirateStation2D, sun);
+    if (sun) {
+      // planetRef = piracka stacja albo punkt kamery w widoku planetarnym
+      const planetRef = pirateStation2D || { x: lastCameraState.x || 0, y: lastCameraState.y || 0 };
+      updateSunLightForPlanet(dirLight, planetRef, sun);
       if (dirLight.target) dirLight.target.updateMatrixWorld();
     }
   }
@@ -336,14 +338,22 @@ function renderScene(dt, t, rendererOverride) {
   }
   ctx2d.clearRect(0, 0, canvas2d.width, canvas2d.height);
   ctx2d.drawImage(renderer.domElement, 0, 0, canvas2d.width, canvas2d.height);
-  if (pirateStation3D && pirateStation2D) {
-    lastRenderInfo = {
-      canvas: canvas2d,
-      radius: pirateStation3D.radius,
-      world: { x: pirateStation2D.x, y: pirateStation2D.y }
-    };
-  } else {
-    lastRenderInfo = null;
+  if (canvas2d) {
+    if (pirateStation3D && pirateStation2D) {
+      lastRenderInfo = {
+        canvas: canvas2d,
+        radius: pirateStation3D.radius,
+        world: { x: pirateStation2D.x, y: pirateStation2D.y }
+      };
+    } else {
+      // Tryb ogólny (bez pirackiej) – kotwiczymy na pozycji kamery
+      const baseRadius = initialRadius || 120;
+      lastRenderInfo = {
+        canvas: canvas2d,
+        radius: baseRadius,
+        world: { x: lastCameraState.x || 0, y: lastCameraState.y || 0 }
+      };
+    }
   }
 }
 
@@ -423,12 +433,12 @@ export function drawWorld3D(ctx, cam, worldToScreen) {
     }
   }
   updateCameraTarget();
-  if (!lastRenderInfo || !pirateStation2D || typeof worldToScreen !== 'function') return;
+  if (!lastRenderInfo || typeof worldToScreen !== 'function') return;
   if (!lastRenderInfo.canvas) return;
   const screen = worldToScreen(lastRenderInfo.world.x, lastRenderInfo.world.y, cam);
   const sizeWorld = lastRenderInfo.radius * 2;
   const sizePx = sizeWorld * (cam?.zoom ?? 1);
-  const offsetY = sizePx * 0.55;
+  const offsetY = sizePx * (pirateStation3D ? 0.55 : 0.5);
   ctx.globalCompositeOperation = 'source-over';
   ctx.imageSmoothingEnabled = true;
   ctx.drawImage(lastRenderInfo.canvas, screen.x - sizePx / 2, screen.y - offsetY, sizePx, sizePx);
