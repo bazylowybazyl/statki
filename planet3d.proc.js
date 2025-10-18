@@ -1,6 +1,8 @@
 
 const USE_PP = false; // tymczasowo wyłącz postprocessing, aby zachować pełną przezroczystość tła
 
+const ASTEROIDS_GLB = new URL('./src/assets/planety/asteroids/asteroidPack.glb', import.meta.url).href;
+
 const NOISE_FUNCTIONS = `const float PI = 3.14159265;
 
     //	Simplex 3D Noise 
@@ -827,7 +829,7 @@ const PLANET_FRAG = `// Terrain generation parameters
         if (!Loader) { requestAnimationFrame(tryLoadGLTF); return; }
         const loader = new Loader();
         loader.load(
-          'assets/planety/asteroids/asteroidPack.glb',
+          ASTEROIDS_GLB,
           (gltf) => {
             const geos = [];
             gltf.scene.traverse((o) => {
