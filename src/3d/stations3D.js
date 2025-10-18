@@ -46,7 +46,11 @@ function isPirateStation(station) {
   if (!station) return false;
   const name = typeof station.name === 'string' ? station.name.toLowerCase() : '';
   const style = typeof station.style === 'string' ? station.style.toLowerCase() : '';
-  return station.isPirate === true || station.type === 'pirate' || style === 'pirate' || name.includes('pir');
+  const piratey = /\bpir(?:ate)?\b/;
+  return station.isPirate === true
+    || String(station.type).toLowerCase() === 'pirate'
+    || style === 'pirate'
+    || piratey.test(name);
 }
 
 function getDevScale() {
@@ -68,6 +72,21 @@ function disableShadows(object) {
     if (node && (node.isMesh || node.isPoints || node.isLine)) {
       node.castShadow = false;
       node.receiveShadow = false;
+    }
+  });
+}
+
+function elevateOverlay(object) {
+  object.traverse?.((node) => {
+    if (node && node.isMesh && node.material) {
+      const mats = Array.isArray(node.material) ? node.material : [node.material];
+      for (const m of mats) {
+        m.depthTest = false;
+        m.depthWrite = false;
+        // transparent nie jest konieczne, ale pomaga w deterministycznym sortowaniu
+        m.transparent = true;
+      }
+      node.renderOrder = 10000;
     }
   });
 }
@@ -159,6 +178,8 @@ function ensureStationObject(record, station) {
       if (!template || !stationRecords.has(record.key)) return null;
       const clone = SkeletonUtils.clone(template);
       disableShadows(clone);
+      // Rysuj zawsze nad geometrią planet:
+      elevateOverlay(clone);
 
       const wrapper = new THREE.Group();
       wrapper.name = `station3d:${station.id ?? record.key}`;
