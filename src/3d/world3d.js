@@ -43,9 +43,9 @@ const fallbackCameraTarget = new THREE.Vector3();
 const lastCameraState = { x: 0, y: 0, zoom: 1 };
 let hasCameraState = false;
 
-function isOverlayEnabled() {
+function isWorldOverlayEnabled() {
   if (typeof window === 'undefined') return false;
-  // Domyślnie wyłączone (to był debug). Włącz ręcznie: window.USE_WORLD3D_OVERLAY = true
+  // domyślnie OFF; włącz ręcznie: window.USE_WORLD3D_OVERLAY = true
   return window.USE_WORLD3D_OVERLAY === true;
 }
 
@@ -395,9 +395,9 @@ export function attachPirateStation3D(sceneOverride, station2D) {
   pirateStation3D.object3d.position.set(station2D?.x || 0, 0, station2D?.y || 0);
   scene.add(pirateStation3D.object3d);
   initialRadius = pirateStation3D.radius;
-  updateCameraTarget();
-  // Domyślna skala ×6
+  // Domyślnie ×6:
   setPirateStationScale(6);
+  updateCameraTarget();
 }
 
 export function dettachPirateStation3D(sceneOverride) {
@@ -419,8 +419,9 @@ export function updateWorld3D(dt, t) {
 }
 
 export function drawWorld3D(ctx, cam, worldToScreen) {
-  if (!isOverlayEnabled()) return; // wyłączone domyślnie
   initWorld3D();
+  // Debug overlay domyślnie wyłączony
+  if (!isWorldOverlayEnabled()) return;
   if (cam) {
     let updated = false;
     if (Number.isFinite(cam.x) && Number.isFinite(cam.y)) {
