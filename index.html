@@ -157,6 +157,7 @@ function asThreeScene(candidate){
 
 function findPlanetScene3D(){
   const directCandidates = [
+    mainScene3D,
     planetScene3D,
     window.planetsScene3D,
     window.planetsScene,
@@ -182,7 +183,8 @@ function findPlanetScene3D(){
 }
 
 function ensurePlanetStationsInit(stationsList){
-  const resolvedScene = findPlanetScene3D();
+  const overlayScene = asThreeScene(mainScene3D);
+  const resolvedScene = overlayScene || findPlanetScene3D();
   if (resolvedScene && planetScene3D && resolvedScene !== planetScene3D && typeof window.detachPlanetStations3D === 'function'){
     window.detachPlanetStations3D(planetScene3D);
     planetStationsReady = false;
@@ -1465,17 +1467,30 @@ window.addEventListener('DOMContentLoaded', () => {
   if (sceneFromInit) {
     planetScene3D = sceneFromInit;
   }
-  if (!ensurePlanetStationsInit(stations)) {
+  let overlayScene = null;
+  if (typeof window.initWorld3D === 'function') {
+    const res = initWorld3D();
+    const candidate = asThreeScene(res?.scene || res);
+    if (candidate) {
+      mainScene3D = candidate;
+      overlayScene = candidate;
+    } else if (res?.scene) {
+      mainScene3D = res.scene;
+      overlayScene = res.scene;
+    }
+  }
+  if (overlayScene && typeof window.initStations3D === 'function') {
+    window.initStations3D(overlayScene, stations);
+    planetScene3D = overlayScene;
+    planetStationsReady = true;
+  }
+  if (!planetStationsReady && !ensurePlanetStationsInit(stations)) {
     let tries = 0;
     const maxTries = 240;
     (function poll(){
       if (ensurePlanetStationsInit(stations) || tries++ > maxTries) return;
       requestAnimationFrame(poll);
     })();
-  }
-  if (typeof window.initWorld3D === 'function') {
-    const res = initWorld3D();
-    mainScene3D = res?.scene || null;
   }
 });
 
@@ -4326,8 +4341,8 @@ function render(alpha, frameDt){
   ctx.clearRect(0,0,W,H);
   ensurePlanetStationsInit(stations);
   if (window.updatePlanets3D) updatePlanets3D(frameDt);
-  if (window.updateStations3D) window.updateStations3D(stations);
   if (window.updateWorld3D) updateWorld3D(frameDt, vfxTime);
+  if (window.updateStations3D) window.updateStations3D(stations);
 
   // Gwiazdy (proceduralne kafelki na całej mapie)
   drawStars(cam);
@@ -4346,7 +4361,6 @@ function render(alpha, frameDt){
   ctx.globalCompositeOperation = 'source-over';
   ctx.imageSmoothingEnabled = true;
   if (window.drawPlanets3D)   drawPlanets3D(ctx, cam);
-  if (window.drawStations3D)  drawStations3D(ctx, cam);
   if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen);
   drawPlanetLabels(ctx, cam);
   drawRangeRuler(ctx, cam);

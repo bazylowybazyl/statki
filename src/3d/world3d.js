@@ -44,9 +44,10 @@ const lastCameraState = { x: 0, y: 0, zoom: 1 };
 let hasCameraState = false;
 
 function isWorldOverlayEnabled() {
-  if (typeof window === 'undefined') return false;
-  // domyślnie OFF; włącz ręcznie: window.USE_WORLD3D_OVERLAY = true
-  return window.USE_WORLD3D_OVERLAY === true;
+  if (typeof window === 'undefined') return true;
+  // Domyślnie ON; aby wyłączyć globalnie:
+  // window.USE_WORLD3D_OVERLAY = false
+  return window.USE_WORLD3D_OVERLAY !== false;
 }
 
 function resetRendererState2D(ctx){
@@ -395,7 +396,7 @@ export function attachPirateStation3D(sceneOverride, station2D) {
   pirateStation3D.object3d.position.set(station2D?.x || 0, 0, station2D?.y || 0);
   scene.add(pirateStation3D.object3d);
   initialRadius = pirateStation3D.radius;
-  // Domyślnie ×6:
+  // Domyślnie ×6 (wymuszamy zanim ustawimy kamerę)
   setPirateStationScale(6);
   updateCameraTarget();
 }
@@ -420,8 +421,12 @@ export function updateWorld3D(dt, t) {
 
 export function drawWorld3D(ctx, cam, worldToScreen) {
   initWorld3D();
-  // Debug overlay domyślnie wyłączony
   if (!isWorldOverlayEnabled()) return;
+  // Izoluj stan canvasa, żeby overlay NA PEWNO był nad planetami:
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.imageSmoothingEnabled = true;
   if (cam) {
     let updated = false;
     if (Number.isFinite(cam.x) && Number.isFinite(cam.y)) {
@@ -449,11 +454,9 @@ export function drawWorld3D(ctx, cam, worldToScreen) {
   const sizeWorld = lastRenderInfo.radius * 2;
   const sizePx = sizeWorld * (cam?.zoom ?? 1);
   const offsetY = sizePx * (pirateStation3D ? 0.55 : 0.5);
-  // Rysuj overlay POD statkiem/HUDem:
-  ctx.globalCompositeOperation = 'destination-over';
-  ctx.imageSmoothingEnabled = true;
   ctx.drawImage(lastRenderInfo.canvas, screen.x - sizePx / 2, screen.y - offsetY, sizePx, sizePx);
-  resetRendererState2D(ctx);
+  // przywróć poprzedni stan canvasa — nie „zanieczyszczaj” dalszych warstw (statek/HUD)
+  ctx.restore();
 }
 
 export function getPirateStationSprite() {
