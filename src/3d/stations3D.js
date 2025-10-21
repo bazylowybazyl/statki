@@ -83,6 +83,7 @@ function disableShadows(object) {
   });
 }
 
+// rysuj zawsze "jak overlay" (nad inną geometrią 3D)
 function elevateOverlay(object) {
   object.traverse?.((node) => {
     if (node && (node.isMesh || node.isPoints || node.isLine)) {
@@ -191,7 +192,7 @@ function ensureStationObject(record, station) {
       wrapper.name = `station3d:${station.id ?? record.key}`;
       wrapper.add(clone);
       // gwarantuj, że cała grupa ma priorytet nad resztą sceny
-      wrapper.renderOrder = 10001;
+      wrapper.renderOrder = 10001; // grupa też ma priorytet
 
       const bbox = new THREE.Box3().setFromObject(wrapper);
       const center = bbox.getCenter(new THREE.Vector3());
