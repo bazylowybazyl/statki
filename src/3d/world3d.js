@@ -422,6 +422,11 @@ export function updateWorld3D(dt, t) {
 export function drawWorld3D(ctx, cam, worldToScreen) {
   initWorld3D();
   if (!isWorldOverlayEnabled()) return;
+  // Izoluj stan canvasa, żeby overlay NA PEWNO był nad planetami:
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.imageSmoothingEnabled = true;
   if (cam) {
     let updated = false;
     if (Number.isFinite(cam.x) && Number.isFinite(cam.y)) {
@@ -449,11 +454,9 @@ export function drawWorld3D(ctx, cam, worldToScreen) {
   const sizeWorld = lastRenderInfo.radius * 2;
   const sizePx = sizeWorld * (cam?.zoom ?? 1);
   const offsetY = sizePx * (pirateStation3D ? 0.55 : 0.5);
-  // Rysuj overlay POD statkiem/HUDem:
-  ctx.globalCompositeOperation = 'destination-over';
-  ctx.imageSmoothingEnabled = true;
   ctx.drawImage(lastRenderInfo.canvas, screen.x - sizePx / 2, screen.y - offsetY, sizePx, sizePx);
-  resetRendererState2D(ctx);
+  // przywróć poprzedni stan canvasa — nie „zanieczyszczaj” dalszych warstw (statek/HUD)
+  ctx.restore();
 }
 
 export function getPirateStationSprite() {
