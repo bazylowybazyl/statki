@@ -221,11 +221,11 @@ function ensureStationObject(record, station) {
 
       const devScale = getDevScale();
       wrapper.scale.setScalar(baseScale * devScale);
-      // Płaszczyzna planet jest w XY → ustawiamy 2D (x,y) → 3D (x,y,0)
+      // Płaszczyzna overlay'a to XZ (Y jest osią "w górę") → mapuj 2D (x,y) → 3D (x,0,y)
       wrapper.position.set(
         Number.isFinite(station.x) ? station.x : 0,
-        Number.isFinite(station.y) ? station.y : 0,
-        0
+        0,
+        Number.isFinite(station.y) ? station.y : 0
       );
       wrapper.visible = isUse3DEnabled();
 
@@ -267,13 +267,13 @@ function updateRecordTransform(record, station, devScale, visible) {
 
   const px = Number.isFinite(station.x) ? station.x : 0;
   const py = Number.isFinite(station.y) ? station.y : 0;
-  // 2D (x,y) → 3D (x,y,0) – taka sama płaszczyzna jak planety
-  group.position.set(px, py, 0);
+  // 2D (x,y) → 3D (x,0,y) – taka sama płaszczyzna jak reszta sceny overlay
+  group.position.set(px, 0, py);
 
   const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
   record.spinOffset = (record.spinOffset ?? 0) + 0.002;
-  // Dla sceny planetarnej kręcimy wokół Z (kamera top-down)
-  group.rotation.z = baseAngle + record.spinOffset;
+  // Dla sceny planetarnej kręcimy wokół osi Y (kamera top-down w układzie XZ)
+  group.rotation.y = baseAngle + record.spinOffset;
 
   group.visible = visible;
   station._mesh3d = group;
