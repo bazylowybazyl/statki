@@ -1467,6 +1467,7 @@ window.addEventListener('DOMContentLoaded', () => {
   if (sceneFromInit) {
     planetScene3D = sceneFromInit;
   }
+  // overlay main scene
   let overlayScene = null;
   if (typeof window.initWorld3D === 'function') {
     const res = initWorld3D();
@@ -1479,6 +1480,7 @@ window.addEventListener('DOMContentLoaded', () => {
       overlayScene = res.scene;
     }
   }
+  // stacje – podczep do sceny overlay
   if (overlayScene && typeof window.initStations3D === 'function') {
     window.initStations3D(overlayScene, stations);
     planetScene3D = overlayScene;
@@ -4341,8 +4343,10 @@ function render(alpha, frameDt){
   ctx.clearRect(0,0,W,H);
   ensurePlanetStationsInit(stations);
   if (window.updatePlanets3D) updatePlanets3D(frameDt);
-  if (window.updateWorld3D) updateWorld3D(frameDt, vfxTime);
+  // najpierw zaktualizuj pozycje stacji 3D...
   if (window.updateStations3D) window.updateStations3D(stations);
+  // ...a potem wyrenderuj overlay sceny 3D
+  if (window.updateWorld3D) updateWorld3D(frameDt, vfxTime);
 
   // Gwiazdy (proceduralne kafelki na całej mapie)
   drawStars(cam);
@@ -4360,8 +4364,8 @@ function render(alpha, frameDt){
 
   ctx.globalCompositeOperation = 'source-over';
   ctx.imageSmoothingEnabled = true;
-  if (window.drawPlanets3D)   drawPlanets3D(ctx, cam);
-  if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen);
+  if (window.drawPlanets3D)   drawPlanets3D(ctx, cam);              // planety
+  if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen); // STACJE 3D NAD PLANETAMI
   drawPlanetLabels(ctx, cam);
   drawRangeRuler(ctx, cam);
   if (window.drawSunDirection) drawSunDirection(ctx, cam);
