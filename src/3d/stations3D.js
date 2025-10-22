@@ -12,13 +12,22 @@ const STATION_KEY_PROP = '__station3DKey';
 let stationKeySequence = 0;
 
 const MODEL_URLS = {
-  earth: [new URL('../stations/earth-station.glb', import.meta.url).href],
-  mars: [new URL('../stations/mars-station.glb', import.meta.url).href],
+  earth: [
+    new URL('../stations/earth-station.glb', import.meta.url).href,
+    new URL('../stations/Earth-station.glb', import.meta.url).href
+  ],
+  mars: [
+    new URL('../stations/mars-station.glb', import.meta.url).href,
+    new URL('../stations/Mars-station.glb', import.meta.url).href
+  ],
   jupiter: [
     new URL('../stations/jupiter-station.glb', import.meta.url).href,
     new URL('../stations/Jupiter-station.glb', import.meta.url).href
   ],
-  neptune: [new URL('../stations/neptune-station.glb', import.meta.url).href]
+  neptune: [
+    new URL('../stations/neptune-station.glb', import.meta.url).href,
+    new URL('../stations/Neptune-station.glb', import.meta.url).href
+  ]
 };
 
 function getStationKey(station) {
