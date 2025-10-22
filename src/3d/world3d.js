@@ -396,7 +396,7 @@ export function attachPirateStation3D(sceneOverride, station2D) {
   pirateStation3D.object3d.position.set(station2D?.x || 0, 0, station2D?.y || 0);
   scene.add(pirateStation3D.object3d);
   initialRadius = pirateStation3D.radius;
-  // Domyślnie ×6 (wymuszamy zanim ustawimy kamerę)
+  // Domyślna skala ×6 przed ustawieniem kamery:
   setPirateStationScale(6);
   updateCameraTarget();
 }
@@ -422,11 +422,6 @@ export function updateWorld3D(dt, t) {
 export function drawWorld3D(ctx, cam, worldToScreen) {
   initWorld3D();
   if (!isWorldOverlayEnabled()) return;
-  // Izoluj stan canvasa, żeby overlay NA PEWNO był nad planetami:
-  ctx.save();
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.globalAlpha = 1;
-  ctx.imageSmoothingEnabled = true;
   if (cam) {
     let updated = false;
     if (Number.isFinite(cam.x) && Number.isFinite(cam.y)) {
@@ -450,13 +445,14 @@ export function drawWorld3D(ctx, cam, worldToScreen) {
   updateCameraTarget();
   if (!lastRenderInfo || typeof worldToScreen !== 'function') return;
   if (!lastRenderInfo.canvas) return;
-  const screen = worldToScreen(lastRenderInfo.world.x, lastRenderInfo.world.y, cam);
-  const sizeWorld = lastRenderInfo.radius * 2;
-  const sizePx = sizeWorld * (cam?.zoom ?? 1);
-  const offsetY = sizePx * (pirateStation3D ? 0.55 : 0.5);
-  ctx.drawImage(lastRenderInfo.canvas, screen.x - sizePx / 2, screen.y - offsetY, sizePx, sizePx);
-  // przywróć poprzedni stan canvasa — nie „zanieczyszczaj” dalszych warstw (statek/HUD)
-  ctx.restore();
+  const center = worldToScreen(lastRenderInfo.world.x, lastRenderInfo.world.y, cam);
+  const sizePx = Math.max(ctx.canvas.width, ctx.canvas.height);
+  const x = center.x - sizePx / 2;
+  const y = center.y - sizePx / 2;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(lastRenderInfo.canvas, x, y, sizePx, sizePx);
+  resetRendererState2D(ctx);
 }
 
 export function getPirateStationSprite() {

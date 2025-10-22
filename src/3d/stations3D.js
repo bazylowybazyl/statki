@@ -83,7 +83,7 @@ function disableShadows(object) {
   });
 }
 
-// rysuj zawsze "jak overlay" (nad inną geometrią 3D)
+// zawsze rysuj "jak overlay" (ponad geometrią planet)
 function elevateOverlay(object) {
   object.traverse?.((node) => {
     if (node && (node.isMesh || node.isPoints || node.isLine)) {
@@ -92,9 +92,9 @@ function elevateOverlay(object) {
         if (!m) continue;
         m.depthTest = false;
         m.depthWrite = false;
-        m.transparent = true; // stabilniejsze sortowanie
+        m.transparent = true; // stabilniejsza kolejność
       }
-      node.renderOrder = 10000;
+      node.renderOrder = 10000; // ponad planetami
     }
   });
 }
@@ -186,13 +186,13 @@ function ensureStationObject(record, station) {
       if (!template || !stationRecords.has(record.key)) return null;
       const clone = SkeletonUtils.clone(template);
       disableShadows(clone);
-      elevateOverlay(clone); // <-- NOWE: stacje zawsze nad planetami
+      elevateOverlay(clone); // <- stacje zawsze nad planetami
 
       const wrapper = new THREE.Group();
       wrapper.name = `station3d:${station.id ?? record.key}`;
       wrapper.add(clone);
       // gwarantuj, że cała grupa ma priorytet nad resztą sceny
-      wrapper.renderOrder = 10001; // grupa też ma priorytet
+      wrapper.renderOrder = 10001;
 
       const bbox = new THREE.Box3().setFromObject(wrapper);
       const center = bbox.getCenter(new THREE.Vector3());
