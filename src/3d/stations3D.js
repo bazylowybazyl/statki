@@ -6,7 +6,40 @@ const loader = new GLTFLoader();
 const templateCache = new Map();
 const stationRecords = new Map();
 
-let activeScene = null;
+// Własna warstwa 3D dla stacji (nie używamy sceny world3D)
+let ownScene = null;
+let orthoCam = null;
+let activeScene = null; // wskazuje na ownScene dla zgodności z istniejącym kodem
+let sharedRendererWarned = false;
+
+const TMP_COLOR = new THREE.Color();
+const TMP_VIEWPORT = new THREE.Vector4();
+const TMP_SCISSOR = new THREE.Vector4();
+
+function ensureOwnScene() {
+  if (!ownScene) {
+    ownScene = new THREE.Scene();
+    // światła minimalistyczne, wystarczające dla GLB
+    ownScene.add(new THREE.AmbientLight(0xffffff, 0.85));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+    dir.position.set(500, 800, 1000);
+    ownScene.add(dir);
+  }
+  return ownScene;
+}
+
+function getSharedRenderer(width, height) {
+  if (typeof window === 'undefined') return null;
+  const getter = window.getSharedRenderer;
+  if (typeof getter !== 'function') {
+    if (!sharedRendererWarned) {
+      console.warn('Stations3D: shared renderer unavailable');
+      sharedRendererWarned = true;
+    }
+    return null;
+  }
+  return getter(width, height);
+}
 
 const STATION_KEY_PROP = '__station3DKey';
 let stationKeySequence = 0;
@@ -223,11 +256,11 @@ function ensureStationObject(record, station) {
 
       const devScale = getDevScale();
       wrapper.scale.setScalar(baseScale * devScale);
-      // Płaszczyzna overlay'a to XZ (Y jest osią "w górę") → mapuj 2D (x,y) → 3D (x,0,y)
+      // Płaszczyzna świata to XY → 2D (x,y) → 3D (x,y,0)
       wrapper.position.set(
         Number.isFinite(station.x) ? station.x : 0,
-        0,
-        Number.isFinite(station.y) ? station.y : 0
+        Number.isFinite(station.y) ? station.y : 0,
+        0
       );
       wrapper.visible = isUse3DEnabled();
 
@@ -269,20 +302,20 @@ function updateRecordTransform(record, station, devScale, visible) {
 
   const px = Number.isFinite(station.x) ? station.x : 0;
   const py = Number.isFinite(station.y) ? station.y : 0;
-  // 2D (x,y) → 3D (x,0,y) – taka sama płaszczyzna jak reszta sceny overlay
-  group.position.set(px, 0, py);
+  // 2D (x,y) → 3D (x,y,0) – stała głębokość, brak perspektywicznego „pompowania”
+  group.position.set(px, py, 0);
 
   const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
   record.spinOffset = (record.spinOffset ?? 0) + 0.002;
-  // Dla sceny planetarnej kręcimy wokół osi Y (kamera top-down w układzie XZ)
-  group.rotation.y = baseAngle + record.spinOffset;
+  // top-down w XY → rotacja wokół Z
+  group.rotation.z = baseAngle + record.spinOffset;
 
   group.visible = visible;
   station._mesh3d = group;
 }
 
-export function initStations3D(scene, stations) {
-  activeScene = scene || null;
+export function initStations3D(_sceneIgnored, stations) {
+  activeScene = ensureOwnScene();
   if (!activeScene || !Array.isArray(stations)) return;
 
   const activeKeys = new Set();
@@ -343,8 +376,116 @@ export function updateStations3D(stations) {
   }
 }
 
+// --- RENDERING: pełnoekranowa ortograficzna kamera dopasowana do kamery 2D ---
+function updateOrthoFromCam(cam, width, height) {
+  const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
+  const halfW = width / (2 * zoom);
+  const halfH = height / (2 * zoom);
+  if (!orthoCam) {
+    orthoCam = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, 0.1, 20000);
+  } else {
+    orthoCam.left = -halfW;
+    orthoCam.right = halfW;
+    orthoCam.top = halfH;
+    orthoCam.bottom = -halfH;
+    orthoCam.updateProjectionMatrix();
+  }
+  const cx = Number(cam?.x) || 0;
+  const cy = Number(cam?.y) || 0;
+  orthoCam.position.set(cx, cy, 1000);
+  orthoCam.up.set(0, -1, 0); // dopasuj do 2D: Y rośnie w dół
+  orthoCam.lookAt(cx, cy, 0);
+}
+
+export function drawStations3D(ctx, cam) {
+  if (!isUse3DEnabled()) return;
+  if (!ctx || !ctx.canvas) return;
+  const canvasWidth = ctx.canvas.width || 0;
+  const canvasHeight = ctx.canvas.height || 0;
+  if (canvasWidth <= 0 || canvasHeight <= 0) return;
+
+  const renderer = getSharedRenderer(canvasWidth, canvasHeight);
+  if (!renderer) return;
+
+  const scene = ensureOwnScene();
+  updateOrthoFromCam(cam, canvasWidth, canvasHeight);
+
+  const prevAutoClear = renderer.autoClear;
+  const prevRenderTarget = typeof renderer.getRenderTarget === 'function' ? renderer.getRenderTarget() : null;
+  const hasViewport = typeof renderer.getViewport === 'function' && typeof renderer.setViewport === 'function';
+  const hasScissor = typeof renderer.getScissor === 'function' && typeof renderer.setScissor === 'function';
+  const prevViewport = hasViewport ? renderer.getViewport(TMP_VIEWPORT) : null;
+  const prevViewportX = prevViewport ? prevViewport.x : null;
+  const prevViewportY = prevViewport ? prevViewport.y : null;
+  const prevViewportW = prevViewport ? prevViewport.z : null;
+  const prevViewportH = prevViewport ? prevViewport.w : null;
+  const prevScissor = hasScissor ? renderer.getScissor(TMP_SCISSOR) : null;
+  const prevScissorX = prevScissor ? prevScissor.x : null;
+  const prevScissorY = prevScissor ? prevScissor.y : null;
+  const prevScissorW = prevScissor ? prevScissor.z : null;
+  const prevScissorH = prevScissor ? prevScissor.w : null;
+  const prevScissorTest = typeof renderer.getScissorTest === 'function'
+    ? renderer.getScissorTest()
+    : (renderer.state?.scissor?.test ?? false);
+  const hadSetClear = typeof renderer.setClearColor === 'function';
+  const prevAlpha = typeof renderer.getClearAlpha === 'function' ? renderer.getClearAlpha() : undefined;
+  let prevColorR = null;
+  let prevColorG = null;
+  let prevColorB = null;
+  if (typeof renderer.getClearColor === 'function') {
+    const color = renderer.getClearColor(TMP_COLOR);
+    if (color) {
+      prevColorR = color.r;
+      prevColorG = color.g;
+      prevColorB = color.b;
+    }
+  }
+
+  if (typeof renderer.setRenderTarget === 'function') {
+    renderer.setRenderTarget(null);
+  }
+  if (hasViewport) {
+    renderer.setViewport(0, 0, canvasWidth, canvasHeight);
+  }
+  if (typeof renderer.setScissorTest === 'function') {
+    renderer.setScissorTest(false);
+  }
+
+  if (hadSetClear) renderer.setClearColor(0x000000, 0);
+  if (typeof renderer.clear === 'function') renderer.clear(true, true, true);
+
+  renderer.autoClear = true;
+  renderer.render(scene, orthoCam);
+
+  const dom = renderer.domElement;
+  if (dom) {
+    const srcW = dom.width || canvasWidth;
+    const srcH = dom.height || canvasHeight;
+    ctx.drawImage(dom, 0, 0, srcW, srcH, 0, 0, canvasWidth, canvasHeight);
+  }
+
+  if (prevColorR !== null && hadSetClear) {
+    TMP_COLOR.setRGB(prevColorR, prevColorG, prevColorB);
+    renderer.setClearColor(TMP_COLOR, prevAlpha ?? 0);
+  }
+
+  renderer.autoClear = prevAutoClear;
+  if (typeof renderer.setScissorTest === 'function') {
+    renderer.setScissorTest(!!prevScissorTest);
+  }
+  if (prevScissor !== null && typeof renderer.setScissor === 'function') {
+    renderer.setScissor(prevScissorX, prevScissorY, prevScissorW, prevScissorH);
+  }
+  if (prevViewport !== null && typeof renderer.setViewport === 'function') {
+    renderer.setViewport(prevViewportX, prevViewportY, prevViewportW, prevViewportH);
+  }
+  if (typeof renderer.setRenderTarget === 'function') {
+    renderer.setRenderTarget(prevRenderTarget);
+  }
+}
+
 export function detachPlanetStations3D(sceneOverride) {
-  const targetScene = sceneOverride || activeScene;
+  const targetScene = ownScene || sceneOverride || activeScene;
   for (const record of stationRecords.values()) {
     if (record.group && targetScene && record.group.parent === targetScene) {
       targetScene.remove(record.group);
