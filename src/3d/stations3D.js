@@ -393,7 +393,7 @@ function updateOrthoFromCam(cam, width, height) {
   const cx = Number(cam?.x) || 0;
   const cy = Number(cam?.y) || 0;
   orthoCam.position.set(cx, cy, 1000);
-  orthoCam.up.set(0, 1, 0);
+  orthoCam.up.set(0, -1, 0); // dopasuj do 2D: Y rośnie w dół
   orthoCam.lookAt(cx, cy, 0);
 }
 
@@ -427,7 +427,8 @@ export function drawStations3D(ctx, cam) {
   const prevScissorTest = typeof renderer.getScissorTest === 'function'
     ? renderer.getScissorTest()
     : (renderer.state?.scissor?.test ?? false);
-  const prevClearAlpha = typeof renderer.getClearAlpha === 'function' ? renderer.getClearAlpha() : undefined;
+  const hadSetClear = typeof renderer.setClearColor === 'function';
+  const prevAlpha = typeof renderer.getClearAlpha === 'function' ? renderer.getClearAlpha() : undefined;
   let prevColorR = null;
   let prevColorG = null;
   let prevColorB = null;
@@ -450,6 +451,9 @@ export function drawStations3D(ctx, cam) {
     renderer.setScissorTest(false);
   }
 
+  if (hadSetClear) renderer.setClearColor(0x000000, 0);
+  if (typeof renderer.clear === 'function') renderer.clear(true, true, true);
+
   renderer.autoClear = true;
   renderer.render(scene, orthoCam);
 
@@ -460,15 +464,9 @@ export function drawStations3D(ctx, cam) {
     ctx.drawImage(dom, 0, 0, srcW, srcH, 0, 0, canvasWidth, canvasHeight);
   }
 
-  if (typeof renderer.setClearColor === 'function') {
-    renderer.setClearColor(0x000000, 0);
-  }
-  if (typeof renderer.clear === 'function') {
-    renderer.clear(true, true, true);
-  }
-  if (prevColorR !== null && typeof renderer.setClearColor === 'function') {
+  if (prevColorR !== null && hadSetClear) {
     TMP_COLOR.setRGB(prevColorR, prevColorG, prevColorB);
-    renderer.setClearColor(TMP_COLOR, prevClearAlpha ?? 0);
+    renderer.setClearColor(TMP_COLOR, prevAlpha ?? 0);
   }
 
   renderer.autoClear = prevAutoClear;
