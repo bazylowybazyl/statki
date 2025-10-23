@@ -51,9 +51,11 @@ function getModelUrlsForStation(station) {
   const id = tryStr(station?.id);
   const name = tryStr(station?.name);
   const style = tryStr(station?.style);
-  const planet = tryStr(station?.planet || station?.host || station?.home || station?.orbit?.name);
-  const candidates = [id, name, style, planet].join(' ');
-  const keys = ['earth', 'mars', 'jupiter', 'neptune'];
+  const planet = tryStr(station?.planet?.name) || tryStr(station?.planet?.id);
+  const orbit = tryStr(station?.orbit?.name);
+  const host = tryStr(station?.host) || tryStr(station?.home);
+  const candidates = [id, name, style, planet, orbit, host].filter(Boolean).join(' ');
+  const keys = Object.keys(MODEL_URLS);
   const hit = keys.find((k) => candidates.includes(k));
   return hit ? MODEL_URLS[hit] : null;
 }
