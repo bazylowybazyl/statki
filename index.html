@@ -98,7 +98,7 @@
   import { createShortNeedleExhaust, createWarpExhaustBlue } from "./Engineeffects.js";
   import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
   import { initWorld3D, attachPirateStation3D, dettachPirateStation3D, updateWorld3D, drawWorld3D } from "./src/3d/world3d.js";
-  import { initStations3D, updateStations3D, detachPlanetStations3D } from "./src/3d/stations3D.js";
+  import { initStations3D, updateStations3D, detachPlanetStations3D, drawStations3D } from "./src/3d/stations3D.js";
   import { initOverlay } from "./src/effects3d/overlay.js";
   import { createRailgunExplosionFactory } from "./src/effects3d/railgunExplosion.js";
   window.THREE = THREE;
@@ -117,6 +117,7 @@
   window.drawWorld3D = drawWorld3D;
   window.initStations3D = initStations3D;
   window.updateStations3D = updateStations3D;
+  window.drawStations3D = drawStations3D;
   window.detachPlanetStations3D = detachPlanetStations3D;
   window.initOverlay3D = initOverlay;
   window.createRailgunExplosionFactory = createRailgunExplosionFactory;
@@ -183,26 +184,17 @@ function findPlanetScene3D(){
 }
 
 function ensurePlanetStationsInit(stationsList){
-  const overlayScene = asThreeScene(mainScene3D);
-  const resolvedScene = overlayScene || findPlanetScene3D();
-  if (resolvedScene && planetScene3D && resolvedScene !== planetScene3D && typeof window.detachPlanetStations3D === 'function'){
-    window.detachPlanetStations3D(planetScene3D);
-    planetStationsReady = false;
-  }
-  if (resolvedScene) {
-    planetScene3D = resolvedScene;
-  }
-  if (!planetScene3D || typeof window.initStations3D !== 'function') return false;
+  if (typeof window.initStations3D !== 'function') return false;
   if (!Array.isArray(stationsList)) return false;
   if (!planetStationsReady) {
-    window.initStations3D(planetScene3D, stationsList);
+    window.initStations3D(null, stationsList);
     planetStationsReady = true;
   }
   return planetStationsReady;
 }
 
 function detachPlanetStationsIfNeeded(){
-  if (planetScene3D && typeof window.detachPlanetStations3D === 'function'){
+  if (typeof window.detachPlanetStations3D === 'function'){
     window.detachPlanetStations3D(planetScene3D);
   }
   planetScene3D = null;
@@ -1480,9 +1472,9 @@ window.addEventListener('DOMContentLoaded', () => {
       overlayScene = res.scene;
     }
   }
-  // stacje – podczep do sceny overlay
-  if (overlayScene && typeof window.initStations3D === 'function') {
-    window.initStations3D(overlayScene, stations);
+  // stacje – własna warstwa 3D (ortho), bez world3D
+  if (typeof window.initStations3D === 'function') {
+    window.initStations3D(null, stations);
     planetScene3D = overlayScene;
     planetStationsReady = true;
   }
@@ -4364,8 +4356,9 @@ function render(alpha, frameDt){
 
   ctx.globalCompositeOperation = 'source-over';
   ctx.imageSmoothingEnabled = true;
-  if (window.drawPlanets3D)   drawPlanets3D(ctx, cam);              // planety
-  if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen); // STACJE 3D NAD PLANETAMI
+  if (window.drawPlanets3D)   drawPlanets3D(ctx, cam);      // planety
+  if (window.drawStations3D)  drawStations3D(ctx, cam);     // STACJE 3D NAD PLANETAMI (osobna ortho-warstwa)
+  if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen); // np. piracka stacja (spotlight)
   drawPlanetLabels(ctx, cam);
   drawRangeRuler(ctx, cam);
   if (window.drawSunDirection) drawSunDirection(ctx, cam);
