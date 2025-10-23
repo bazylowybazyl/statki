@@ -6,7 +6,34 @@ const loader = new GLTFLoader();
 const templateCache = new Map();
 const stationRecords = new Map();
 
-let activeScene = null;
+// Własna warstwa 3D dla stacji (nie używamy sceny world3D)
+let ownScene = null;
+let orthoCam = null;
+let renderer = null; // WebGLRenderer z własnym <canvas class="overlay3d stations3d">
+let activeScene = null; // wskazuje na ownScene dla zgodności z istniejącym kodem
+
+function ensureOwnScene() {
+  if (!ownScene) {
+    ownScene = new THREE.Scene();
+    // światła minimalistyczne, wystarczające dla GLB
+    ownScene.add(new THREE.AmbientLight(0xffffff, 0.85));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+    dir.position.set(500, 800, 1000);
+    ownScene.add(dir);
+  }
+  return ownScene;
+}
+
+function getRenderer() {
+  if (renderer) return renderer;
+  const canvas = document.createElement('canvas');
+  canvas.className = 'overlay3d stations3d';
+  (document.getElementById('game-root') || document.body).appendChild(canvas);
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, premultipliedAlpha: true });
+  renderer.setClearColor(0x000000, 0);
+  if (typeof devicePixelRatio === 'number') renderer.setPixelRatio(devicePixelRatio);
+  return renderer;
+}
 
 const STATION_KEY_PROP = '__station3DKey';
 let stationKeySequence = 0;
@@ -223,11 +250,11 @@ function ensureStationObject(record, station) {
 
       const devScale = getDevScale();
       wrapper.scale.setScalar(baseScale * devScale);
-      // Płaszczyzna overlay'a to XZ (Y jest osią "w górę") → mapuj 2D (x,y) → 3D (x,0,y)
+      // Płaszczyzna świata to XY → 2D (x,y) → 3D (x,y,0)
       wrapper.position.set(
         Number.isFinite(station.x) ? station.x : 0,
-        0,
-        Number.isFinite(station.y) ? station.y : 0
+        Number.isFinite(station.y) ? station.y : 0,
+        0
       );
       wrapper.visible = isUse3DEnabled();
 
@@ -269,20 +296,20 @@ function updateRecordTransform(record, station, devScale, visible) {
 
   const px = Number.isFinite(station.x) ? station.x : 0;
   const py = Number.isFinite(station.y) ? station.y : 0;
-  // 2D (x,y) → 3D (x,0,y) – taka sama płaszczyzna jak reszta sceny overlay
-  group.position.set(px, 0, py);
+  // 2D (x,y) → 3D (x,y,0) – stała głębokość, brak perspektywicznego „pompowania”
+  group.position.set(px, py, 0);
 
   const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
   record.spinOffset = (record.spinOffset ?? 0) + 0.002;
-  // Dla sceny planetarnej kręcimy wokół osi Y (kamera top-down w układzie XZ)
-  group.rotation.y = baseAngle + record.spinOffset;
+  // top-down w XY → rotacja wokół Z
+  group.rotation.z = baseAngle + record.spinOffset;
 
   group.visible = visible;
   station._mesh3d = group;
 }
 
-export function initStations3D(scene, stations) {
-  activeScene = scene || null;
+export function initStations3D(_sceneIgnored, stations) {
+  activeScene = ensureOwnScene();
   if (!activeScene || !Array.isArray(stations)) return;
 
   const activeKeys = new Set();
@@ -343,8 +370,41 @@ export function updateStations3D(stations) {
   }
 }
 
+// --- RENDERING: pełnoekranowa ortograficzna kamera dopasowana do kamery 2D ---
+function updateOrthoFromCam(cam, width, height) {
+  const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
+  const halfW = width / (2 * zoom);
+  const halfH = height / (2 * zoom);
+  if (!orthoCam) {
+    orthoCam = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, 0.1, 20000);
+  } else {
+    orthoCam.left = -halfW;
+    orthoCam.right = halfW;
+    orthoCam.top = halfH;
+    orthoCam.bottom = -halfH;
+    orthoCam.updateProjectionMatrix();
+  }
+  const cx = Number(cam?.x) || 0;
+  const cy = Number(cam?.y) || 0;
+  orthoCam.position.set(cx, cy, 1000);
+  orthoCam.up.set(0, 1, 0);
+  orthoCam.lookAt(cx, cy, 0);
+}
+
+export function drawStations3D(cam) {
+  if (!isUse3DEnabled()) return;
+  const scene = ensureOwnScene();
+  const r = getRenderer();
+  const cssW = window.innerWidth || r.domElement.clientWidth || 0;
+  const cssH = window.innerHeight || r.domElement.clientHeight || 0;
+  r.setSize(cssW, cssH, false);
+  updateOrthoFromCam(cam, cssW, cssH);
+  r.clearDepth();
+  r.render(scene, orthoCam);
+}
+
 export function detachPlanetStations3D(sceneOverride) {
-  const targetScene = sceneOverride || activeScene;
+  const targetScene = ownScene || sceneOverride || activeScene;
   for (const record of stationRecords.values()) {
     if (record.group && targetScene && record.group.parent === targetScene) {
       targetScene.remove(record.group);
