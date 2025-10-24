@@ -4357,7 +4357,7 @@ function render(alpha, frameDt){
   ctx.globalCompositeOperation = 'source-over';
   ctx.imageSmoothingEnabled = true;
   if (window.drawPlanets3D)   drawPlanets3D(ctx, cam);      // planety
-  if (window.drawStations3D)  drawStations3D(ctx, cam);     // STACJE 3D NAD PLANETAMI (osobna ortho-warstwa)
+  if (window.drawStations3D)  drawStations3D(ctx, cam, worldToScreen); // STACJE 3D NAD PLANETAMI (sprite per-stacja)
   if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen); // np. piracka stacja (spotlight)
   drawPlanetLabels(ctx, cam);
   drawRangeRuler(ctx, cam);
