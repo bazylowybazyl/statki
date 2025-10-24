@@ -6,11 +6,12 @@ const loader = new GLTFLoader();
 const templateCache = new Map();
 const stationRecords = new Map();
 
-// Własna warstwa 3D dla stacji (nie używamy sceny world3D), render przez współdzielony renderer
+// Sprites per-station: render 3D->2D jak piracka stacja
 let ownScene = null;
-let orthoCam = null;
-let activeScene = null; // wskazuje na ownScene dla zgodności z istniejącym kodem
+let previewCam = null;            // mała kamera do renderu pojedynczej stacji
+let activeScene = null;           // = ownScene
 let sharedRendererWarned = false;
+const SPRITE_SIZE = 512;
 
 const TMP_COLOR = new THREE.Color();
 const TMP_VIEWPORT = new THREE.Vector4();
@@ -39,6 +40,15 @@ function getSharedRenderer(width, height) {
     return null;
   }
   return getter(width, height);
+}
+
+function ensurePreviewCamera() {
+  if (!previewCam) {
+    previewCam = new THREE.PerspectiveCamera(45, 1, 0.1, 4000);
+    previewCam.position.set(60, 28, 60);
+    previewCam.lookAt(0, 0, 0);
+  }
+  return previewCam;
 }
 
 const STATION_KEY_PROP = '__station3DKey';
@@ -194,6 +204,9 @@ function removeRecord(record) {
   }
   record.group = null;
   record.stationRef = null;
+  record.spriteCanvas = null;
+  record.spriteCtx = null;
+  record.lastSpriteTime = 0;
 }
 
 function ensureStationRecord(station) {
@@ -205,9 +218,13 @@ function ensureStationRecord(station) {
       key,
       stationRef: station,
       group: null,
-      geometryRadius: null,
+      template: null,
+      geometryRadius: 1,
       loadingPromise: null,
-      spinOffset: Math.random() * Math.PI * 2
+      spinOffset: Math.random() * Math.PI * 2,
+      spriteCanvas: null,
+      spriteCtx: null,
+      lastSpriteTime: 0
     };
     stationRecords.set(key, record);
   } else {
@@ -228,6 +245,7 @@ function ensureStationObject(record, station) {
   const promise = loadTemplateWithFallback(urls)
     .then((template) => {
       if (!template || !stationRecords.has(record.key)) return null;
+      record.template = template;
       const clone = SkeletonUtils.clone(template);
       disableShadows(clone);
       elevateOverlay(clone); // <- stacje zawsze nad planetami
@@ -256,12 +274,8 @@ function ensureStationObject(record, station) {
 
       const devScale = getDevScale();
       wrapper.scale.setScalar(baseScale * devScale);
-      // Płaszczyzna świata to XZ → 2D (x,y) → 3D (x,0,y)
-      wrapper.position.set(
-        Number.isFinite(station.x) ? station.x : 0,
-        0,
-        Number.isFinite(station.y) ? station.y : 0
-      );
+      // MODEL w (0,0,0). Pozycjonowanie na ekranie robi 2D drawImage.
+      wrapper.position.set(0, 0, 0);
       const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
       wrapper.rotation.y = baseAngle + (record.spinOffset ?? 0);
       wrapper.visible = isUse3DEnabled();
@@ -301,16 +315,6 @@ function updateRecordTransform(record, station, devScale, visible) {
 
   const devScalar = Number.isFinite(devScale) && devScale > 0 ? devScale : 1;
   group.scale.setScalar(baseScale * devScalar);
-
-  const px = Number.isFinite(station.x) ? station.x : 0;
-  const py = Number.isFinite(station.y) ? station.y : 0;
-  // 2D (x,y) → 3D (x,0,y) – stała głębokość, brak perspektywicznego „pompowania”
-  group.position.set(px, 0, py);
-
-  const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
-  record.spinOffset = (record.spinOffset ?? 0) + 0.002;
-  // top-down na płaszczyźnie XZ → rotacja wokół osi Y
-  group.rotation.y = baseAngle + record.spinOffset;
 
   group.visible = visible;
   station._mesh3d = group;
@@ -378,46 +382,38 @@ export function updateStations3D(stations) {
   }
 }
 
-// --- RENDERING: pełnoekranowa ortograficzna kamera dopasowana do kamery 2D ---
-function updateOrthoFromCam(cam, width, height) {
-  const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
-  const halfW = width / (2 * zoom);
-  const halfH = height / (2 * zoom);
-  if (!orthoCam) {
-    orthoCam = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, 0.1, 20000);
-  } else {
-    orthoCam.left = -halfW;
-    orthoCam.right = halfW;
-    orthoCam.top = halfH;
-    orthoCam.bottom = -halfH;
-    orthoCam.updateProjectionMatrix();
+function ensureSpriteTarget(record) {
+  if (!record.spriteCanvas) {
+    record.spriteCanvas = document.createElement('canvas');
+    record.spriteCanvas.width = SPRITE_SIZE;
+    record.spriteCanvas.height = SPRITE_SIZE;
+    record.spriteCtx = record.spriteCanvas.getContext('2d');
   }
-  const cx = Number(cam?.x) || 0;
-  const cz = Number(cam?.y) || 0;
-  const H = 1000;
-  orthoCam.position.set(cx, H, cz);
-  orthoCam.up.set(0, 0, -1); // dopasuj do 2D: Y rośnie w dół ekranu
-  orthoCam.lookAt(cx, 0, cz);
+  return record.spriteCanvas;
 }
 
-export function drawStations3D(ctx, cam) {
-  if (!isUse3DEnabled()) return;
-  if (!ctx || !ctx.canvas) return;
-  const canvasWidth = ctx.canvas.width || 0;
-  const canvasHeight = ctx.canvas.height || 0;
-  if (canvasWidth <= 0 || canvasHeight <= 0) return;
+function resetRenderer(renderer, w, h) {
+  if (!renderer) return;
+  if (typeof renderer.setRenderTarget === 'function') renderer.setRenderTarget(null);
+  if (typeof renderer.setSize === 'function') renderer.setSize(w, h, false);
+  if (typeof renderer.setViewport === 'function') renderer.setViewport(0, 0, w, h);
+  if (typeof renderer.setScissorTest === 'function') renderer.setScissorTest(false);
+  if (typeof renderer.setClearColor === 'function') renderer.setClearColor(0x000000, 0);
+  if (typeof renderer.clear === 'function') renderer.clear(true, true, false);
+}
 
-  const renderer = getSharedRenderer(canvasWidth, canvasHeight);
+function renderStationSprite(record) {
+  if (!record.group) return;
+  const scene = ensureOwnScene();
+  const cam = ensurePreviewCamera();
+  const renderer = getSharedRenderer(SPRITE_SIZE, SPRITE_SIZE);
   if (!renderer) return;
 
-  const scene = ensureOwnScene();
-  updateOrthoFromCam(cam, canvasWidth, canvasHeight);
-
   const prevAutoClear = renderer.autoClear;
-  const prevRenderTarget = typeof renderer.getRenderTarget === 'function' ? renderer.getRenderTarget() : null;
+  const prevTarget = typeof renderer.getRenderTarget === 'function' ? renderer.getRenderTarget() : null;
   const hasViewport = typeof renderer.getViewport === 'function' && typeof renderer.setViewport === 'function';
-  const hasScissor = typeof renderer.getScissor === 'function' && typeof renderer.setScissor === 'function';
   const prevViewport = hasViewport ? renderer.getViewport(TMP_VIEWPORT) : null;
+  const hasScissor = typeof renderer.getScissor === 'function' && typeof renderer.setScissor === 'function';
   const prevScissor = hasScissor ? renderer.getScissor(TMP_SCISSOR) : null;
   const prevScissorTest = typeof renderer.getScissorTest === 'function'
     ? renderer.getScissorTest()
@@ -435,49 +431,93 @@ export function drawStations3D(ctx, cam) {
     }
   }
 
-  if (typeof renderer.setRenderTarget === 'function') {
-    renderer.setRenderTarget(null);
+  // pokaż tylko tę jedną stację
+  const prevVis = [];
+  for (const [, rec] of stationRecords) {
+    if (!rec.group) continue;
+    prevVis.push([rec.group, rec.group.visible]);
+    rec.group.visible = rec === record;
   }
-  if (hasViewport) {
-    renderer.setViewport(0, 0, canvasWidth, canvasHeight);
+
+  const R = Math.max(1, record.geometryRadius || record.group.userData.geometryRadius || 1);
+  const dist = Math.max(60, R * 2.4);
+  cam.position.set(dist, dist * 0.62, dist);
+  cam.lookAt(0, 0, 0);
+
+  resetRenderer(renderer, SPRITE_SIZE, SPRITE_SIZE);
+  renderer.autoClear = true;
+  renderer.render(scene, cam);
+
+  const spriteCanvas = ensureSpriteTarget(record);
+  const spriteCtx = record.spriteCtx;
+  if (spriteCanvas && spriteCtx && renderer.domElement) {
+    spriteCtx.clearRect(0, 0, SPRITE_SIZE, SPRITE_SIZE);
+    spriteCtx.drawImage(renderer.domElement, 0, 0, SPRITE_SIZE, SPRITE_SIZE);
+    record.lastSpriteTime = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+  }
+
+  // przywróć widoczności
+  for (const [group, visible] of prevVis) {
+    group.visible = visible;
+  }
+
+  // przywróć ustawienia renderera
+  renderer.autoClear = prevAutoClear;
+  if (prevViewport && typeof renderer.setViewport === 'function') {
+    renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
+  }
+  if (prevScissor && typeof renderer.setScissor === 'function') {
+    renderer.setScissor(prevScissor.x, prevScissor.y, prevScissor.z, prevScissor.w);
   }
   if (typeof renderer.setScissorTest === 'function') {
-    renderer.setScissorTest(false);
-  }
-
-  renderer.autoClear = true;
-  renderer.render(scene, orthoCam);
-
-  const dom = renderer.domElement;
-  if (dom) {
-    const srcW = dom.width || canvasWidth;
-    const srcH = dom.height || canvasHeight;
-    ctx.drawImage(dom, 0, 0, srcW, srcH, 0, 0, canvasWidth, canvasHeight);
-  }
-
-  if (typeof renderer.setClearColor === 'function') {
-    renderer.setClearColor(0x000000, 0);
-  }
-  if (typeof renderer.clear === 'function') {
-    renderer.clear(true, true, true);
+    renderer.setScissorTest(!!prevScissorTest);
   }
   if (prevColorR !== null && typeof renderer.setClearColor === 'function') {
     TMP_COLOR.setRGB(prevColorR, prevColorG, prevColorB);
     renderer.setClearColor(TMP_COLOR, prevAlpha ?? 0);
   }
-
-  renderer.autoClear = prevAutoClear;
-  if (typeof renderer.setScissorTest === 'function') {
-    renderer.setScissorTest(!!prevScissorTest);
-  }
-  if (prevScissor && typeof renderer.setScissor === 'function') {
-    renderer.setScissor(prevScissor.x, prevScissor.y, prevScissor.z, prevScissor.w);
-  }
-  if (prevViewport && typeof renderer.setViewport === 'function') {
-    renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
-  }
   if (typeof renderer.setRenderTarget === 'function') {
-    renderer.setRenderTarget(prevRenderTarget);
+    renderer.setRenderTarget(prevTarget || null);
+  }
+}
+
+export function drawStations3D(ctx, cam, worldToScreen) {
+  if (!isUse3DEnabled()) return;
+  if (!ctx || !ctx.canvas) return;
+  const devScale = getDevScale();
+  const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
+  if (!Number.isFinite(zoom) || zoom <= 0) return;
+  const hasW2S = typeof worldToScreen === 'function';
+  const canvasWidth = ctx.canvas?.width ?? 0;
+  const canvasHeight = ctx.canvas?.height ?? 0;
+
+  for (const [, record] of stationRecords) {
+    const st = record.stationRef;
+    if (!st || !record.group) continue;
+
+    // aktualizacja rotacji (spin)
+    const baseAngle = typeof st.angle === 'number' ? st.angle : 0;
+    record.spinOffset = (record.spinOffset ?? 0) + 0.002;
+    record.group.rotation.y = baseAngle + record.spinOffset;
+
+    const radiusWorld = Math.max(1, (Number.isFinite(st.r) ? st.r : st.baseR) || 1) * devScale;
+    const sizePx = radiusWorld * 2 * zoom;
+    if (!hasW2S) continue;
+    const screen = worldToScreen(st.x || 0, st.y || 0, cam);
+    if (!screen) continue;
+    if (canvasWidth > 0 && canvasHeight > 0) {
+      const half = sizePx / 2;
+      if (screen.x + half < 0 || screen.x - half > canvasWidth || screen.y + half < 0 || screen.y - half > canvasHeight) {
+        continue;
+      }
+    }
+
+    renderStationSprite(record);
+    if (!record.spriteCanvas) continue;
+    const offsetY = sizePx * 0.55;
+    ctx.drawImage(record.spriteCanvas, screen.x - sizePx / 2, screen.y - offsetY, sizePx, sizePx);
   }
 }
 
