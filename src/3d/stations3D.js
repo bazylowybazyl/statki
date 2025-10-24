@@ -6,7 +6,7 @@ const loader = new GLTFLoader();
 const templateCache = new Map();
 const stationRecords = new Map();
 
-// Własna warstwa 3D dla stacji (nie używamy sceny world3D)
+// Własna warstwa 3D dla stacji (nie używamy sceny world3D), render przez współdzielony renderer
 let ownScene = null;
 let orthoCam = null;
 let activeScene = null; // wskazuje na ownScene dla zgodności z istniejącym kodem
@@ -256,12 +256,14 @@ function ensureStationObject(record, station) {
 
       const devScale = getDevScale();
       wrapper.scale.setScalar(baseScale * devScale);
-      // Płaszczyzna świata to XY → 2D (x,y) → 3D (x,y,0)
+      // Płaszczyzna świata to XZ → 2D (x,y) → 3D (x,0,y)
       wrapper.position.set(
         Number.isFinite(station.x) ? station.x : 0,
-        Number.isFinite(station.y) ? station.y : 0,
-        0
+        0,
+        Number.isFinite(station.y) ? station.y : 0
       );
+      const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
+      wrapper.rotation.y = baseAngle + (record.spinOffset ?? 0);
       wrapper.visible = isUse3DEnabled();
 
       record.group = wrapper;
@@ -302,13 +304,13 @@ function updateRecordTransform(record, station, devScale, visible) {
 
   const px = Number.isFinite(station.x) ? station.x : 0;
   const py = Number.isFinite(station.y) ? station.y : 0;
-  // 2D (x,y) → 3D (x,y,0) – stała głębokość, brak perspektywicznego „pompowania”
-  group.position.set(px, py, 0);
+  // 2D (x,y) → 3D (x,0,y) – stała głębokość, brak perspektywicznego „pompowania”
+  group.position.set(px, 0, py);
 
   const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
   record.spinOffset = (record.spinOffset ?? 0) + 0.002;
-  // top-down w XY → rotacja wokół Z
-  group.rotation.z = baseAngle + record.spinOffset;
+  // top-down na płaszczyźnie XZ → rotacja wokół osi Y
+  group.rotation.y = baseAngle + record.spinOffset;
 
   group.visible = visible;
   station._mesh3d = group;
@@ -391,10 +393,11 @@ function updateOrthoFromCam(cam, width, height) {
     orthoCam.updateProjectionMatrix();
   }
   const cx = Number(cam?.x) || 0;
-  const cy = Number(cam?.y) || 0;
-  orthoCam.position.set(cx, cy, 1000);
-  orthoCam.up.set(0, -1, 0); // dopasuj do 2D: Y rośnie w dół
-  orthoCam.lookAt(cx, cy, 0);
+  const cz = Number(cam?.y) || 0;
+  const H = 1000;
+  orthoCam.position.set(cx, H, cz);
+  orthoCam.up.set(0, 0, -1); // dopasuj do 2D: Y rośnie w dół ekranu
+  orthoCam.lookAt(cx, 0, cz);
 }
 
 export function drawStations3D(ctx, cam) {
@@ -415,19 +418,10 @@ export function drawStations3D(ctx, cam) {
   const hasViewport = typeof renderer.getViewport === 'function' && typeof renderer.setViewport === 'function';
   const hasScissor = typeof renderer.getScissor === 'function' && typeof renderer.setScissor === 'function';
   const prevViewport = hasViewport ? renderer.getViewport(TMP_VIEWPORT) : null;
-  const prevViewportX = prevViewport ? prevViewport.x : null;
-  const prevViewportY = prevViewport ? prevViewport.y : null;
-  const prevViewportW = prevViewport ? prevViewport.z : null;
-  const prevViewportH = prevViewport ? prevViewport.w : null;
   const prevScissor = hasScissor ? renderer.getScissor(TMP_SCISSOR) : null;
-  const prevScissorX = prevScissor ? prevScissor.x : null;
-  const prevScissorY = prevScissor ? prevScissor.y : null;
-  const prevScissorW = prevScissor ? prevScissor.z : null;
-  const prevScissorH = prevScissor ? prevScissor.w : null;
   const prevScissorTest = typeof renderer.getScissorTest === 'function'
     ? renderer.getScissorTest()
     : (renderer.state?.scissor?.test ?? false);
-  const hadSetClear = typeof renderer.setClearColor === 'function';
   const prevAlpha = typeof renderer.getClearAlpha === 'function' ? renderer.getClearAlpha() : undefined;
   let prevColorR = null;
   let prevColorG = null;
@@ -451,9 +445,6 @@ export function drawStations3D(ctx, cam) {
     renderer.setScissorTest(false);
   }
 
-  if (hadSetClear) renderer.setClearColor(0x000000, 0);
-  if (typeof renderer.clear === 'function') renderer.clear(true, true, true);
-
   renderer.autoClear = true;
   renderer.render(scene, orthoCam);
 
@@ -464,7 +455,13 @@ export function drawStations3D(ctx, cam) {
     ctx.drawImage(dom, 0, 0, srcW, srcH, 0, 0, canvasWidth, canvasHeight);
   }
 
-  if (prevColorR !== null && hadSetClear) {
+  if (typeof renderer.setClearColor === 'function') {
+    renderer.setClearColor(0x000000, 0);
+  }
+  if (typeof renderer.clear === 'function') {
+    renderer.clear(true, true, true);
+  }
+  if (prevColorR !== null && typeof renderer.setClearColor === 'function') {
     TMP_COLOR.setRGB(prevColorR, prevColorG, prevColorB);
     renderer.setClearColor(TMP_COLOR, prevAlpha ?? 0);
   }
@@ -473,11 +470,11 @@ export function drawStations3D(ctx, cam) {
   if (typeof renderer.setScissorTest === 'function') {
     renderer.setScissorTest(!!prevScissorTest);
   }
-  if (prevScissor !== null && typeof renderer.setScissor === 'function') {
-    renderer.setScissor(prevScissorX, prevScissorY, prevScissorW, prevScissorH);
+  if (prevScissor && typeof renderer.setScissor === 'function') {
+    renderer.setScissor(prevScissor.x, prevScissor.y, prevScissor.z, prevScissor.w);
   }
-  if (prevViewport !== null && typeof renderer.setViewport === 'function') {
-    renderer.setViewport(prevViewportX, prevViewportY, prevViewportW, prevViewportH);
+  if (prevViewport && typeof renderer.setViewport === 'function') {
+    renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
   }
   if (typeof renderer.setRenderTarget === 'function') {
     renderer.setRenderTarget(prevRenderTarget);
