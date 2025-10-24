@@ -126,6 +126,19 @@ function getDevScale() {
   return Number.isFinite(value) && value > 0 ? value : 1;
 }
 
+function getPerStationScaleMap() {
+  if (typeof window === 'undefined') return {};
+  const cfg = (window.DevConfig && window.DevConfig.stationScaleById) || {};
+  const tun = (window.DevTuning && window.DevTuning.stationScaleById) || {};
+  const fb = window.stationScaleById || {};
+  return Object.assign({}, fb, tun, cfg);
+}
+
+function getStationIdKey(station) {
+  const raw = station?.id ?? station?.planet?.id ?? station?.planet?.name ?? '';
+  return String(raw).toLowerCase();
+}
+
 function isUse3DEnabled() {
   if (typeof window === 'undefined') return true;
   // domyślnie ON (ustaw window.USE_STATION_3D=false aby wyłączyć)
@@ -276,15 +289,17 @@ function ensureStationObject(record, station) {
       wrapper.userData.stationId = station.id ?? record.key;
       wrapper.userData.targetRadius = targetRadius;
 
+      record.group = wrapper;
+
       const devScale = getDevScale();
-      wrapper.scale.setScalar(baseScale * devScale);
+      const visible = isUse3DEnabled();
+      updateRecordTransform(record, station, devScale, visible);
+
       // MODEL w (0,0,0). Pozycjonowanie na ekranie robi 2D drawImage.
       wrapper.position.set(0, 0, 0);
       const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
       wrapper.rotation.y = baseAngle + (record.spinOffset ?? 0);
-      wrapper.visible = isUse3DEnabled();
 
-      record.group = wrapper;
       if (activeScene && !wrapper.parent) {
         activeScene.add(wrapper);
       }
@@ -317,7 +332,12 @@ function updateRecordTransform(record, station, devScale, visible) {
   group.userData.geometryRadius = geometryRadius;
   group.userData.targetRadius = desiredRadius;
 
-  const devScalar = Number.isFinite(devScale) && devScale > 0 ? devScale : 1;
+  const perMap = getPerStationScaleMap();
+  const idKey = getStationIdKey(station);
+  const perScale = Number(perMap[idKey]) || 1;
+
+  const globalScalar = Number.isFinite(devScale) && devScale > 0 ? devScale : 1;
+  const devScalar = globalScalar * perScale;
   group.scale.setScalar(baseScale * devScalar);
 
   group.visible = visible;
@@ -508,6 +528,8 @@ export function drawStations3D(ctx, cam, worldToScreen) {
   if (!isUse3DEnabled()) return;
   if (!ctx || !ctx.canvas) return;
   const devScale = getDevScale();
+  const globalScalar = Number.isFinite(devScale) && devScale > 0 ? devScale : 1;
+  const perMap = getPerStationScaleMap();
   const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
   if (!Number.isFinite(zoom) || zoom <= 0) return;
   const hasW2S = typeof worldToScreen === 'function';
@@ -523,7 +545,10 @@ export function drawStations3D(ctx, cam, worldToScreen) {
     record.spinOffset = (record.spinOffset ?? 0) + 0.002;
     record.group.rotation.y = baseAngle + record.spinOffset;
 
-    const radiusWorld = Math.max(1, (Number.isFinite(st.r) ? st.r : st.baseR) || 1) * devScale;
+    const idKey = getStationIdKey(st);
+    const perScale = Number(perMap[idKey]) || 1;
+    const effectiveScalar = globalScalar * perScale;
+    const radiusWorld = Math.max(1, (Number.isFinite(st.r) ? st.r : st.baseR) || 1) * effectiveScalar;
     const sizePx = radiusWorld * 2 * zoom;
     if (!hasW2S) continue;
     const screen = worldToScreen(st.x || 0, st.y || 0, cam);
@@ -561,4 +586,46 @@ export function detachPlanetStations3D(sceneOverride) {
   if (!sceneOverride || sceneOverride === activeScene) {
     activeScene = null;
   }
+}
+
+export function setStationScale(id, scale = 1) {
+  if (typeof window === 'undefined') return;
+  const key = String(id ?? '').toLowerCase();
+  if (!key) return;
+  if (!window.DevConfig) window.DevConfig = {};
+  if (!window.DevConfig.stationScaleById) window.DevConfig.stationScaleById = {};
+  window.DevConfig.stationScaleById[key] = Number(scale) || 1;
+
+  const devScale = getDevScale();
+  for (const rec of stationRecords.values()) {
+    const st = rec.stationRef;
+    if (!st) continue;
+    if (getStationIdKey(st) === key && rec.group) {
+      updateRecordTransform(rec, st, devScale, rec.group.visible !== false);
+    }
+  }
+
+  if (typeof document !== 'undefined') {
+    const slider = document.getElementById(`dt-scale-station-${key}`);
+    if (slider) {
+      const numeric = Number(window.DevConfig.stationScaleById[key]) || 1;
+      slider.value = String(numeric);
+      const valEl = slider.nextElementSibling;
+      if (valEl && typeof valEl.textContent === 'string') {
+        valEl.textContent = numeric.toFixed(2);
+      }
+    }
+  }
+
+  if (typeof window.__devtoolsSaveLS === 'function') window.__devtoolsSaveLS();
+  if (typeof window.__saveDevLS === 'function') window.__saveDevLS();
+}
+
+export function getStationScales() {
+  return getPerStationScaleMap();
+}
+
+if (typeof window !== 'undefined') {
+  window.setStationScale = setStationScale;
+  window.getStationScales = getStationScales;
 }
