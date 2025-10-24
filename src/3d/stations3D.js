@@ -25,6 +25,10 @@ function ensureOwnScene() {
     const dir = new THREE.DirectionalLight(0xffffff, 0.6);
     dir.position.set(500, 800, 1000);
     ownScene.add(dir);
+    if (dir.target && !dir.target.parent) {
+      ownScene.add(dir.target);
+    }
+    ownScene.userData.dirLight = dir;
   }
   return ownScene;
 }
@@ -443,6 +447,23 @@ function renderStationSprite(record) {
   const dist = Math.max(60, R * 2.4);
   cam.position.set(dist, dist * 0.62, dist);
   cam.lookAt(0, 0, 0);
+
+  // Ustaw kierunek światła na podstawie pozycji Słońca i stacji (XY świata -> XZ Three.js)
+  const dirLight = scene.userData?.dirLight || null;
+  const stRef = record.stationRef;
+  if (dirLight && stRef && typeof window !== 'undefined' && window.SUN) {
+    const dx = (window.SUN.x ?? 0) - (stRef.x ?? 0);
+    const dy = (window.SUN.y ?? 0) - (stRef.y ?? 0);
+    const v = new THREE.Vector3(dx, 0.6, dy);
+    if (v.lengthSq() > 0) {
+      v.normalize().multiplyScalar(Math.max(200, dist));
+      dirLight.position.copy(v);
+      if (dirLight.target) {
+        dirLight.target.position.set(0, 0, 0);
+        dirLight.target.updateMatrixWorld();
+      }
+    }
+  }
 
   resetRenderer(renderer, SPRITE_SIZE, SPRITE_SIZE);
   renderer.autoClear = true;
