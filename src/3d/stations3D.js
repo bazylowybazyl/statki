@@ -11,7 +11,27 @@ let ownScene = null;
 let previewCam = null;            // mała kamera do renderu pojedynczej stacji
 let activeScene = null;           // = ownScene
 let sharedRendererWarned = false;
-const SPRITE_SIZE = 512;
+const DEFAULT_STATION_SPRITE_SIZE = 512;
+
+function getStationSpriteSize() {
+  let fromCfg = NaN;
+  let fromLS = NaN;
+  if (typeof window !== 'undefined') {
+    if (window.DevConfig && typeof window.DevConfig === 'object') {
+      fromCfg = Number(window.DevConfig.stationSpriteSize);
+    }
+    try {
+      fromLS = Number(window.localStorage?.getItem('stationSpriteSize'));
+    } catch {}
+  }
+  let v = Number.isFinite(fromCfg)
+    ? fromCfg
+    : Number.isFinite(fromLS)
+      ? fromLS
+      : DEFAULT_STATION_SPRITE_SIZE;
+  v = Math.max(64, Math.min(4096, Math.round(v)));
+  return v;
+}
 
 const TMP_COLOR = new THREE.Color();
 const TMP_VIEWPORT = new THREE.Vector4();
@@ -406,12 +426,15 @@ export function updateStations3D(stations) {
   }
 }
 
-function ensureSpriteTarget(record) {
+function ensureSpriteTarget(record, sizeOverride) {
+  const size = sizeOverride ?? getStationSpriteSize();
   if (!record.spriteCanvas) {
     record.spriteCanvas = document.createElement('canvas');
-    record.spriteCanvas.width = SPRITE_SIZE;
-    record.spriteCanvas.height = SPRITE_SIZE;
     record.spriteCtx = record.spriteCanvas.getContext('2d');
+  }
+  if (record.spriteCanvas.width !== size || record.spriteCanvas.height !== size) {
+    record.spriteCanvas.width = size;
+    record.spriteCanvas.height = size;
   }
   return record.spriteCanvas;
 }
@@ -430,7 +453,8 @@ function renderStationSprite(record) {
   if (!record.group) return;
   const scene = ensureOwnScene();
   const cam = ensurePreviewCamera();
-  const renderer = getSharedRenderer(SPRITE_SIZE, SPRITE_SIZE);
+  const size = getStationSpriteSize();
+  const renderer = getSharedRenderer(size, size);
   if (!renderer) return;
 
   const prevAutoClear = renderer.autoClear;
@@ -485,15 +509,15 @@ function renderStationSprite(record) {
     }
   }
 
-  resetRenderer(renderer, SPRITE_SIZE, SPRITE_SIZE);
+  resetRenderer(renderer, size, size);
   renderer.autoClear = true;
   renderer.render(scene, cam);
 
-  const spriteCanvas = ensureSpriteTarget(record);
+  const spriteCanvas = ensureSpriteTarget(record, size);
   const spriteCtx = record.spriteCtx;
   if (spriteCanvas && spriteCtx && renderer.domElement) {
-    spriteCtx.clearRect(0, 0, SPRITE_SIZE, SPRITE_SIZE);
-    spriteCtx.drawImage(renderer.domElement, 0, 0, SPRITE_SIZE, SPRITE_SIZE);
+    spriteCtx.clearRect(0, 0, size, size);
+    spriteCtx.drawImage(renderer.domElement, 0, 0, size, size);
     record.lastSpriteTime = typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
       : Date.now();
