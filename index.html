@@ -5041,6 +5041,40 @@ function drawSectorMap(){
     ctx.restore();
   }
 
+  if (Array.isArray(planets) && planets.length) {
+    ctx.save();
+
+    const markerRadius = 6;
+    ctx.fillStyle = '#7dd3fc';
+    for (const planet of planets) {
+      const px = x0 + planet.x * sx;
+      const py = y0 + planet.y * sy;
+      ctx.beginPath();
+      ctx.arc(px, py, markerRadius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const labelFont = Math.max(12, Math.round(mapW * 0.028));
+    ctx.font = `600 ${labelFont}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.lineWidth = Math.max(1.5, labelFont * 0.12);
+    ctx.strokeStyle = 'rgba(10, 16, 34, 0.85)';
+    ctx.fillStyle = '#f8fafc';
+
+    for (const planet of planets) {
+      const name = typeof planet.label === 'string' ? planet.label.trim() : '';
+      if (!name) continue;
+      const px = x0 + planet.x * sx;
+      const py = y0 + planet.y * sy;
+      const labelY = py + markerRadius + 6;
+      ctx.strokeText(name, px, labelY);
+      ctx.fillText(name, px, labelY);
+    }
+
+    ctx.restore();
+  }
+
   ctx.fillStyle = '#60a5fa';
   for(const st of stations){
     ctx.beginPath();
