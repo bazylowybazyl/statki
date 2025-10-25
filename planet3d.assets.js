@@ -1,31 +1,66 @@
 // planet3d.assets.js
+
+if (typeof window !== 'undefined' && !window.getSharedRenderer) {
+  window.getSharedRenderer = (w = 512, h = 512) => {
+    const THREE_NS = window.THREE;
+    if (!THREE_NS) return null;
+    let renderer = window.__sharedRenderer;
+    if (!renderer) {
+      renderer = new THREE_NS.WebGLRenderer({
+        antialias: true,
+        alpha: true,
+        premultipliedAlpha: true,
+        preserveDrawingBuffer: true
+      });
+      renderer.outputColorSpace = THREE_NS.SRGBColorSpace;
+      renderer.toneMapping = THREE_NS.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.5;
+      renderer.autoClear = true;
+      renderer.setClearColor(0x000000, 0);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE_NS.PCFSoftShadowMap;
+      window.__sharedRenderer = renderer;
+    }
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    if (typeof renderer.setPixelRatio === 'function') renderer.setPixelRatio(pixelRatio);
+    if (typeof renderer.setSize === 'function') renderer.setSize(w, h, false);
+    return renderer;
+  };
+}
+
 (function () {
   // ======= WSPÓŁDZIELONY RENDERER (kopiuj z proc, drobna adaptacja) =======
-  let sharedRenderer = null;
-  let rendererWidth = 0, rendererHeight = 0;
   function getSharedRenderer(width = 256, height = 256) {
+    if (typeof window !== 'undefined' && typeof window.getSharedRenderer === 'function') {
+      return window.getSharedRenderer(width, height);
+    }
     if (typeof THREE === "undefined") return null;
-    if (!sharedRenderer) {
-      sharedRenderer = new THREE.WebGLRenderer({
-        alpha: true,
-        antialias: true,
-        premultipliedAlpha: true,
-        preserveDrawingBuffer: false
-      });
-      sharedRenderer.outputColorSpace = THREE.SRGBColorSpace;
-      sharedRenderer.toneMapping = THREE.ACESFilmicToneMapping;
-      sharedRenderer.toneMappingExposure = 1.5;
-      sharedRenderer.autoClear = true;
-      sharedRenderer.setClearColor(0x000000, 0);
-      // cienie
-      sharedRenderer.shadowMap.enabled = true;
-      sharedRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    const renderer = new THREE.WebGLRenderer({
+      alpha: true,
+      antialias: true,
+      premultipliedAlpha: true,
+      preserveDrawingBuffer: true
+    });
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.5;
+    renderer.autoClear = true;
+    renderer.setClearColor(0x000000, 0);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    if (typeof window !== 'undefined') {
+      window.__sharedRenderer = renderer;
+      window.getSharedRenderer = (w = width, h = height) => {
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+        if (typeof renderer.setPixelRatio === 'function') renderer.setPixelRatio(pixelRatio);
+        if (typeof renderer.setSize === 'function') renderer.setSize(w, h, false);
+        return renderer;
+      };
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      if (typeof renderer.setPixelRatio === 'function') renderer.setPixelRatio(pixelRatio);
+      if (typeof renderer.setSize === 'function') renderer.setSize(width, height, false);
     }
-    if (rendererWidth !== width || rendererHeight !== height) {
-      sharedRenderer.setSize(width, height, false);
-      rendererWidth = width; rendererHeight = height;
-    }
-    return sharedRenderer;
+    return renderer;
   }
 
   function resetRendererState(renderer, width, height) {
@@ -635,5 +670,7 @@
     try { localStorage.setItem('station3DScale', String(v)); } catch {}
   };
 
-  window.getSharedRenderer = getSharedRenderer;
+  if (typeof window !== 'undefined' && typeof window.getSharedRenderer !== 'function') {
+    window.getSharedRenderer = getSharedRenderer;
+  }
 })();

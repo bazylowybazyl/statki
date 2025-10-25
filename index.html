@@ -208,7 +208,8 @@ window.DevFlags = Object.assign({
   showRuler: false,
   unlimitedWarp: false,
   showSunDir: false,
-  use3DPirateStation: true
+  use3DPirateStation: true,
+  usePlanetStations3D: true
 }, window.DevFlags || {});
 
 const DEFAULT_PLANET_SCALE = 3;
@@ -5225,6 +5226,7 @@ setTimeout(startGame, 500);
   const elScaleVal  = document.getElementById('dt-pirate-scale-value');
   const elStation3DScale = document.getElementById('dt-station3d-scale');
   const elStation3DScaleVal = document.getElementById('dt-station3d-scale-value');
+  const elPlanet3D  = document.getElementById('dt-use-planet-stations');
   const elPir3D     = document.getElementById('dt-use-3d-pirate');
   const elSunDir    = document.getElementById('dt-show-sundir');
 
@@ -5318,6 +5320,25 @@ setTimeout(startGame, 500);
     elStation3DScale.addEventListener('change', e => applyStation3DScale(e.target.value));
   } else if (elStation3DScaleVal) {
     elStation3DScaleVal.textContent = DevTuning.pirateStationScale.toFixed(2);
+  }
+
+  if (elPlanet3D) {
+    const stored = typeof DevFlags.usePlanetStations3D === 'boolean'
+      ? DevFlags.usePlanetStations3D
+      : window.USE_PLANET_STATIONS_3D !== false;
+    const enabled = stored !== false;
+    DevFlags.usePlanetStations3D = enabled;
+    window.USE_PLANET_STATIONS_3D = enabled;
+    elPlanet3D.checked = enabled;
+    elPlanet3D.addEventListener('change', (e) => {
+      const value = !!e.target.checked;
+      DevFlags.usePlanetStations3D = value;
+      window.USE_PLANET_STATIONS_3D = value;
+      if (Array.isArray(window.stations) && typeof window.updateStations3D === 'function') {
+        window.updateStations3D(window.stations);
+      }
+      saveLS();
+    });
   }
 
   if (elPir3D){
@@ -5415,6 +5436,10 @@ setTimeout(startGame, 500);
       </div>
     </div>
     <label style="display:flex;gap:6px;align-items:center;margin-top:8px">
+      <input id="dt-use-planet-stations" type="checkbox" />
+      Planet Stations 3D (overlay)
+    </label>
+    <label style="display:flex;gap:6px;align-items:center;margin-top:8px">
       <input id="dt-use-3d-pirate" type="checkbox" />
       3D Pirate Station (hide 2D)
     </label>
@@ -5487,6 +5512,7 @@ setTimeout(startGame, 500);
     cbRuler: el('toggleRuler'),
     cbUnlimited: el('toggleUnlimitedWarp'),
     cbSunDir: el('dt-show-sundir'),
+    cbPlanetStations3D: el('dt-use-planet-stations'),
     cbPirate3D: el('dt-use-3d-pirate'),
     btnCopy: el('btnCopy'), btnReset: el('btnReset'),
     cfgOut: el('cfgOut')
@@ -5528,6 +5554,12 @@ setTimeout(startGame, 500);
         Object.assign(DevFlags, flags);
       }
     } catch {}
+    if (typeof DevFlags.usePlanetStations3D !== 'boolean') {
+      DevFlags.usePlanetStations3D = true;
+    }
+    if (typeof window !== 'undefined') {
+      window.USE_PLANET_STATIONS_3D = DevFlags.usePlanetStations3D !== false;
+    }
     if (!DevConfig.planetOrbitAUById || typeof DevConfig.planetOrbitAUById !== 'object') {
       DevConfig.planetOrbitAUById = {};
     }
@@ -5732,6 +5764,7 @@ setTimeout(startGame, 500);
     ui.cbRuler.checked = DevFlags.showRuler;
     ui.cbUnlimited.checked = DevFlags.unlimitedWarp;
     if (ui.cbSunDir) ui.cbSunDir.checked = DevFlags.showSunDir;
+    if (ui.cbPlanetStations3D) ui.cbPlanetStations3D.checked = DevFlags.usePlanetStations3D !== false;
     if (ui.cbPirate3D) ui.cbPirate3D.checked = DevFlags.use3DPirateStation;
   }
   function reflectToCfg(){
@@ -5956,6 +5989,16 @@ setTimeout(startGame, 500);
   if (ui.cbSunDir) {
     ui.cbSunDir.addEventListener('change', ()=>{
       DevFlags.showSunDir = ui.cbSunDir.checked;
+      saveLS();
+    });
+  }
+  if (ui.cbPlanetStations3D) {
+    ui.cbPlanetStations3D.addEventListener('change', () => {
+      DevFlags.usePlanetStations3D = ui.cbPlanetStations3D.checked;
+      window.USE_PLANET_STATIONS_3D = ui.cbPlanetStations3D.checked;
+      if (Array.isArray(window.stations) && typeof window.updateStations3D === 'function') {
+        window.updateStations3D(window.stations);
+      }
       saveLS();
     });
   }
