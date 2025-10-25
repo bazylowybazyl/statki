@@ -13,6 +13,8 @@ let activeScene = null;           // = ownScene
 let sharedRendererWarned = false;
 const DEFAULT_STATION_SPRITE_SIZE = 512;
 const DEFAULT_STATION_SPRITE_FRAME = 1.25;
+const MIN_SPRITE_RENDER_INTERVAL = 180; // ms
+const FRAME_EPSILON = 0.001;
 
 function getStationSpriteSize() {
   let fromCfg = NaN;
@@ -37,6 +39,16 @@ function getStationSpriteSize() {
 const TMP_COLOR = new THREE.Color();
 const TMP_VIEWPORT = new THREE.Vector4();
 const TMP_SCISSOR = new THREE.Vector4();
+
+function approxEqual(a, b, eps = FRAME_EPSILON) {
+  return Math.abs((a ?? 0) - (b ?? 0)) <= eps;
+}
+
+function markSpriteDirty(record) {
+  if (!record) return;
+  record.forceSpriteRefresh = true;
+  record.lastSpriteTime = 0;
+}
 
 function ensureOwnScene() {
   if (!ownScene) {
@@ -269,6 +281,11 @@ function removeRecord(record) {
   record.spriteCanvas = null;
   record.spriteCtx = null;
   record.lastSpriteTime = 0;
+  record.lastSpriteSize = 0;
+  record.lastSpriteFrame = NaN;
+  record.lastRenderedScale = null;
+  record.lastTargetRadius = null;
+  record.forceSpriteRefresh = true;
 }
 
 function ensureStationRecord(station) {
@@ -286,7 +303,12 @@ function ensureStationRecord(station) {
       spinOffset: Math.random() * Math.PI * 2,
       spriteCanvas: null,
       spriteCtx: null,
-      lastSpriteTime: 0
+      lastSpriteTime: 0,
+      lastSpriteSize: 0,
+      lastSpriteFrame: NaN,
+      lastRenderedScale: null,
+      lastTargetRadius: null,
+      forceSpriteRefresh: true
     };
     stationRecords.set(key, record);
   } else {
@@ -340,6 +362,12 @@ function ensureStationObject(record, station) {
       const visible = isUse3DEnabled();
       updateRecordTransform(record, station, devScale, visible);
 
+      record.lastRenderedScale = null;
+      record.lastTargetRadius = desiredRadius;
+      record.lastSpriteFrame = NaN;
+      record.lastSpriteSize = 0;
+      markSpriteDirty(record);
+
       // MODEL w (0,0,0). Pozycjonowanie na ekranie robi 2D drawImage.
       wrapper.position.set(0, 0, 0);
       const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
@@ -383,10 +411,17 @@ function updateRecordTransform(record, station, devScale, visible) {
 
   const globalScalar = Number.isFinite(devScale) && devScale > 0 ? devScale : 1;
   const devScalar = globalScalar * perScale;
-  group.scale.setScalar(baseScale * devScalar);
+  const effectiveScale = baseScale * devScalar;
+  const scaleChanged = !approxEqual(record.lastRenderedScale, effectiveScale);
+  const radiusChanged = !approxEqual(record.lastTargetRadius, desiredRadius);
+  group.scale.setScalar(effectiveScale);
+  if (scaleChanged || radiusChanged) {
+    markSpriteDirty(record);
+  }
 
   group.visible = visible;
   station._mesh3d = group;
+  record.lastTargetRadius = desiredRadius;
 }
 
 export function initStations3D(_sceneIgnored, stations) {
@@ -476,11 +511,24 @@ function resetRenderer(renderer, w, h) {
 
 function renderStationSprite(record) {
   if (!record.group) return;
+  const size = getStationSpriteSize();
+  const frame = getPerStationSpriteFrame(record.stationRef);
+  const scale = record.group?.scale?.x || 1;
+  const sizeChanged = record.lastSpriteSize !== size;
+  const frameChanged = !approxEqual(record.lastSpriteFrame, frame);
+  const scaleChanged = !approxEqual(record.lastRenderedScale, scale);
+  const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+  const elapsed = record.lastSpriteTime ? now - record.lastSpriteTime : Infinity;
+  if (!record.forceSpriteRefresh && !sizeChanged && !frameChanged && !scaleChanged && elapsed < MIN_SPRITE_RENDER_INTERVAL) {
+    return;
+  }
+
   const scene = ensureOwnScene();
   const cam = ensurePreviewCamera();
-  const size = getStationSpriteSize();
   const renderer = getSharedRenderer(size, size);
-  if (!renderer) return;
+  if (!scene || !cam || !renderer) return;
 
   const prevAutoClear = renderer.autoClear;
   const prevTarget = typeof renderer.getRenderTarget === 'function' ? renderer.getRenderTarget() : null;
@@ -516,8 +564,6 @@ function renderStationSprite(record) {
   const s = record.group?.scale?.x || 1;
   const R_eff = Math.max(1, R_geom * s);
 
-  const frame = getPerStationSpriteFrame(record.stationRef);
-
   const fovRad = cam.fov * Math.PI / 180;
   const distFit = R_eff / Math.tan(fovRad * 0.5);
   const dist = Math.max(10, distFit * frame);
@@ -547,12 +593,11 @@ function renderStationSprite(record) {
 
   const spriteCanvas = ensureSpriteTarget(record, size);
   const spriteCtx = record.spriteCtx;
+  let rendered = false;
   if (spriteCanvas && spriteCtx && renderer.domElement) {
     spriteCtx.clearRect(0, 0, size, size);
     spriteCtx.drawImage(renderer.domElement, 0, 0, size, size);
-    record.lastSpriteTime = typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ? performance.now()
-      : Date.now();
+    rendered = true;
   }
 
   // przywróć widoczności
@@ -577,6 +622,14 @@ function renderStationSprite(record) {
   }
   if (typeof renderer.setRenderTarget === 'function') {
     renderer.setRenderTarget(prevTarget || null);
+  }
+
+  if (rendered) {
+    record.lastSpriteTime = now;
+    record.lastSpriteSize = size;
+    record.lastSpriteFrame = frame;
+    record.lastRenderedScale = scale;
+    record.forceSpriteRefresh = false;
   }
 }
 
