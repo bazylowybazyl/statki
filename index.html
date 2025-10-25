@@ -5420,6 +5420,11 @@ setTimeout(startGame, 500);
     </label>
   </div>
 
+  <div class="group" id="stationsFramesGroup">
+    <div class="row"><strong>Stacje (kadr per stacja)</strong></div>
+    <!-- Wiersze z suwakami per stacja będą dodane dynamicznie przez buildStationFramesUI() -->
+  </div>
+
   <div class="group">
     <div class="row">
       <label><input id="toggleRuler" type="checkbox"> Miarka (okręgi dystansu) <span class="pill">F11</span></label>
@@ -5460,6 +5465,8 @@ setTimeout(startGame, 500);
     pirateScale: DEFAULT_STATION_SCALE,           // mnożnik rysowania stacji pirackiej
     station3DScale: DEFAULT_STATION_SCALE,        // mnożnik nakładki 3D
     stationSpriteSize: 512,
+    stationSpriteFrame: 1.25,
+    stationSpriteFrameById: {},
     stationScaleById: {},
   };
   const DevFlags = window.DevFlags;
@@ -5474,6 +5481,7 @@ setTimeout(startGame, 500);
     pirScale: el('pirScale'), pirScaleVal: el('pirScaleVal'),
     station3DScale: el('station3DScale'), station3DScaleVal: el('station3DScaleVal'),
     stationSpritePx: el('stationSpritePx'),
+    stationsFramesGroup: el('stationsFramesGroup'),
     planetsGroup: el('planetsGroup'),
     distancesGroup: el('distancesGroup'),
     cbRuler: el('toggleRuler'),
@@ -5493,6 +5501,13 @@ setTimeout(startGame, 500);
       const baseR = p.baseR ?? p.r;
       if (baseR != null && !DevConfig.planetRById[key]) DevConfig.planetRById[key] = baseR;
     }
+  }
+
+  function stationKey(st) {
+    if (!st) return null;
+    if (st.id != null) return String(st.id).toLowerCase();
+    if (st.name) return String(st.name).toLowerCase();
+    return null;
   }
 
   // ---- Persistencja -------------------------------------------------------
@@ -5531,6 +5546,20 @@ setTimeout(startGame, 500);
         saved = Number(localStorage.getItem('stationSpriteSize'));
       } catch {}
       DevConfig.stationSpriteSize = Number.isFinite(saved) ? saved : 512;
+    }
+    if (typeof DevConfig.stationSpriteFrame !== 'number') {
+      let saved = NaN;
+      try {
+        saved = Number(localStorage.getItem('stationSpriteFrame'));
+      } catch {}
+      DevConfig.stationSpriteFrame = Number.isFinite(saved) ? saved : 1.25;
+    }
+    if (!DevConfig.stationSpriteFrameById || typeof DevConfig.stationSpriteFrameById !== 'object') {
+      try {
+        DevConfig.stationSpriteFrameById = JSON.parse(localStorage.getItem('stationSpriteFrameById') || '{}') || {};
+      } catch {
+        DevConfig.stationSpriteFrameById = {};
+      }
     }
     if (!DevConfig.stationScaleById || typeof DevConfig.stationScaleById !== 'object') {
       DevConfig.stationScaleById = {};
@@ -5713,6 +5742,8 @@ setTimeout(startGame, 500);
       pirateScale: +DevConfig.pirateScale,
       station3DScale: +DevConfig.station3DScale,
       stationSpriteSize: +DevConfig.stationSpriteSize,
+      stationSpriteFrame: +DevConfig.stationSpriteFrame,
+      stationSpriteFrameById: DevConfig.stationSpriteFrameById,
       planetOrbitAUById: collectAUForExport(),
       stationScaleById: DevConfig.stationScaleById
     };
@@ -5753,6 +5784,57 @@ setTimeout(startGame, 500);
       map[k] = +(+au).toFixed(2);
     }
     return map;
+  }
+  function buildStationFramesUI() {
+    const root = ui.stationsFramesGroup;
+    if (!root) return;
+    root.querySelectorAll('.row.sf').forEach(n => n.remove());
+
+    const list = Array.isArray(window.stations) ? window.stations : [];
+    for (const st of list) {
+      const name = st?.name || `Stacja ${st?.id ?? ''}`;
+      const key = stationKey(st);
+      if (!key) continue;
+      const isPirate = (String(st?.style || '').toLowerCase() === 'pirate') ||
+        /pir(?:ate)?/i.test(String(st?.name || '')) ||
+        st?.isPirate === true;
+      if (isPirate) continue;
+
+      const row = document.createElement('div');
+      row.className = 'row sf';
+      row.style.alignItems = 'center';
+      const initial = Number(DevConfig.stationSpriteFrameById[key]);
+      const value = Number.isFinite(initial) ? initial : (Number(DevConfig.stationSpriteFrame) || 1.25);
+      const safeValue = Math.max(0.8, Math.min(3.0, value));
+      row.innerHTML = `
+      <label style="min-width:140px">${name}</label>
+      <input class="sfSlider" data-k="${key}" type="range" min="0.8" max="3.0" step="0.01" value="${safeValue}">
+      <input class="sfNum" data-k="${key}" type="number" min="0.8" max="3.0" step="0.01" value="${safeValue}"
+             style="width:72px; margin-left:8px">
+      <span class="val" style="min-width:60px; text-align:right">×${(+safeValue).toFixed(2)}</span>
+    `;
+      root.appendChild(row);
+
+      const slider = row.querySelector('input.sfSlider');
+      const num = row.querySelector('input.sfNum');
+      const val = row.querySelector('.val');
+      const apply = (vRaw) => {
+        let v = Number(vRaw);
+        if (!Number.isFinite(v)) v = 1.25;
+        v = Math.max(0.8, Math.min(3.0, v));
+        DevConfig.stationSpriteFrameById[key] = v;
+        if (num) num.value = String(v);
+        if (slider) slider.value = String(v);
+        if (val) val.textContent = '×' + v.toFixed(2);
+        try { localStorage.setItem('stationSpriteFrameById', JSON.stringify(DevConfig.stationSpriteFrameById)); } catch {}
+        __devtoolsReflectToCfg?.();
+        __devtoolsSaveLS?.();
+      };
+      slider?.addEventListener('input', e => apply(e.target.value));
+      slider?.addEventListener('change', e => apply(e.target.value));
+      num?.addEventListener('input', e => apply(e.target.value));
+      num?.addEventListener('change', e => apply(e.target.value));
+    }
   }
   function buildDistancesUI(){
     if (!ui.distancesGroup) return;
@@ -5893,6 +5975,7 @@ setTimeout(startGame, 500);
   });
   ui.btnReset.addEventListener('click', ()=>{
     localStorage.removeItem('devConfig'); localStorage.removeItem('devFlags'); localStorage.removeItem('stationSpriteSize');
+    localStorage.removeItem('stationSpriteFrame'); localStorage.removeItem('stationSpriteFrameById');
     location.reload();
   });
 
@@ -5923,6 +6006,9 @@ setTimeout(startGame, 500);
   // Sekcja: Dystanse od Słońca (AU → promień orbity)
   buildDistancesUI();
 
+  // Sekcja: Kadr sprite per stacja
+  buildStationFramesUI();
+
   // Odbicie stanu
   reflectToUI();
   reflectToCfg();
@@ -5936,6 +6022,7 @@ setTimeout(startGame, 500);
   // Aktualizuj readout AU/world-units w panelu
   refreshDistancesReadout();
   setInterval(refreshDistancesReadout, 250);
+  setInterval(buildStationFramesUI, 2000);
 
   // Upewnij się, że panel można włączyć na starcie (dev wygoda)
   // ui.root.style.display = 'block';

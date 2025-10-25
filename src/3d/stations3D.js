@@ -12,6 +12,7 @@ let previewCam = null;            // mała kamera do renderu pojedynczej stacji
 let activeScene = null;           // = ownScene
 let sharedRendererWarned = false;
 const DEFAULT_STATION_SPRITE_SIZE = 512;
+const DEFAULT_STATION_SPRITE_FRAME = 1.25;
 
 function getStationSpriteSize() {
   let fromCfg = NaN;
@@ -155,8 +156,31 @@ function getPerStationScaleMap() {
 }
 
 function getStationIdKey(station) {
-  const raw = station?.id ?? station?.planet?.id ?? station?.planet?.name ?? '';
-  return String(raw).toLowerCase();
+  if (!station) return null;
+  if (station.id != null) return String(station.id).toLowerCase();
+  if (station.name) return String(station.name).toLowerCase();
+  if (station?.planet?.id != null) return String(station.planet.id).toLowerCase();
+  if (station?.planet?.name) return String(station.planet.name).toLowerCase();
+  return null;
+}
+
+function getPerStationSpriteFrame(station) {
+  const key = getStationIdKey(station);
+  const map = (typeof window !== 'undefined' && window.DevConfig && window.DevConfig.stationSpriteFrameById)
+    ? window.DevConfig.stationSpriteFrameById
+    : {};
+  const per = Number(map && key != null ? map[key] : undefined);
+  if (Number.isFinite(per)) return Math.max(0.8, Math.min(3.0, per));
+  let global = Number(typeof window !== 'undefined' ? window.DevConfig?.stationSpriteFrame : NaN);
+  if (!Number.isFinite(global) && typeof window !== 'undefined') {
+    let saved = NaN;
+    try {
+      saved = Number(window.localStorage?.getItem('stationSpriteFrame'));
+    } catch {}
+    global = saved;
+  }
+  if (Number.isFinite(global)) return Math.max(0.8, Math.min(3.0, global));
+  return DEFAULT_STATION_SPRITE_FRAME;
 }
 
 function isUse3DEnabled() {
@@ -487,8 +511,15 @@ function renderStationSprite(record) {
     rec.group.visible = rec === record;
   }
 
-  const R = Math.max(1, record.geometryRadius || record.group.userData.geometryRadius || 1);
-  const dist = Math.max(60, R * 2.4);
+  const R_geom = Math.max(1, record.geometryRadius || record.group?.userData?.geometryRadius || 1);
+  const s = record.group?.scale?.x || 1;
+  const R_eff = Math.max(1, R_geom * s);
+
+  const frame = getPerStationSpriteFrame(record.stationRef);
+
+  const fovRad = cam.fov * Math.PI / 180;
+  const distFit = R_eff / Math.tan(fovRad * 0.5);
+  const dist = Math.max(10, distFit * frame);
   cam.position.set(dist, dist * 0.62, dist);
   cam.lookAt(0, 0, 0);
 
