@@ -4392,7 +4392,7 @@ function render(alpha, frameDt){
     ctx.stroke();
   }
 
-  if (!window.USE_STATION_3D) {
+  if (!window.USE_STATION_3D || window.USE_PLANET_STATIONS_3D === false) {
     for (const st of stations){
       const s = worldToScreen(st.x, st.y, cam);
       const visR = (st.baseR || st.r) * stationScaleFor(st);
