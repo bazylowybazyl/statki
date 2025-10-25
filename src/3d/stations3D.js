@@ -683,4 +683,10 @@ export function getStationScales() {
 if (typeof window !== 'undefined') {
   window.setStationScale = setStationScale;
   window.getStationScales = getStationScales;
+
+  // ⬇⬇⬇ BACK-COMPAT: globalne API używane przez index/loop ⬇⬇⬇
+  window.initStations3D = initStations3D;
+  window.updateStations3D = updateStations3D;
+  window.drawStations3D = drawStations3D;
+  window.detachPlanetStations3D = detachPlanetStations3D;
 }
