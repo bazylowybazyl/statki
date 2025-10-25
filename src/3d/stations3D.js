@@ -185,8 +185,9 @@ function getPerStationSpriteFrame(station) {
 
 function isUse3DEnabled() {
   if (typeof window === 'undefined') return true;
-  // domyślnie ON (ustaw window.USE_STATION_3D=false aby wyłączyć)
-  return window.USE_STATION_3D !== false;
+  // Uwaga: oddzielna flaga dla planetarnych stacji 3D (nie mylić z "3D Pirate Station").
+  // Domyślnie: WŁĄCZONE (true), wyłączysz ustawiając window.USE_PLANET_STATIONS_3D = false.
+  return window.USE_PLANET_STATIONS_3D !== false;
 }
 
 function disableShadows(object) {
@@ -689,4 +690,9 @@ if (typeof window !== 'undefined') {
   window.updateStations3D = updateStations3D;
   window.drawStations3D = drawStations3D;
   window.detachPlanetStations3D = detachPlanetStations3D;
+
+  // Domyślna aktywacja stacji 3D (planetarnych), niezależnie od przełącznika pirackiej stacji 3D.
+  if (typeof window.USE_PLANET_STATIONS_3D === 'undefined') {
+    window.USE_PLANET_STATIONS_3D = true;
+  }
 }
