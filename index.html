@@ -6168,22 +6168,39 @@ setTimeout(startGame, 500);
       val.style.marginLeft = '8px';
       val.textContent = initial.toFixed(2);
 
-      range.addEventListener('input', () => {
-        const v = Number(range.value);
-        val.textContent = v.toFixed(2);
+      const num = document.createElement('input');
+      num.type = 'number';
+      num.min = '0.2';
+      num.max = '5';
+      num.step = '0.01';
+      num.value = String(initial);
+      num.id = `dt-scale-station-${id}-num`;
+      num.style.width = '72px';
+      num.style.marginLeft = '8px';
 
-        if (!window.DevConfig) window.DevConfig = {};
+      const apply = (vRaw) => {
+        let v = Number(vRaw);
+        if (!Number.isFinite(v)) v = 1;
+        v = Math.max(0.2, Math.min(5, v));
+        if (!window.DevConfig || typeof window.DevConfig !== 'object') window.DevConfig = {};
         if (!window.DevConfig.stationScaleById || typeof window.DevConfig.stationScaleById !== 'object') {
           window.DevConfig.stationScaleById = {};
         }
         window.DevConfig.stationScaleById[id] = v;
+        range.value = String(v);
+        num.value = String(v);
+        val.textContent = v.toFixed(2);
+        if (typeof window.setStationScale === 'function') window.setStationScale(id, v);
+        window.__devtoolsSaveLS?.();
+      };
 
-        if (typeof window.setStationScale === 'function') {
-          window.setStationScale(id, v);
-        }
-      });
+      range.addEventListener('input', () => apply(range.value));
+      num.addEventListener('input', () => apply(num.value));
+      num.addEventListener('change', () => apply(num.value));
+      num.addEventListener('keyup', (e) => { if (e.key === 'Enter') apply(num.value); });
 
       col.appendChild(range);
+      col.appendChild(num);
       col.appendChild(val);
       wrap.appendChild(label);
       wrap.appendChild(col);

@@ -715,14 +715,14 @@ export function setStationScale(id, scale = 1) {
   }
 
   if (typeof document !== 'undefined') {
+    const numeric = Number(window.DevConfig.stationScaleById[key]) || 1;
     const slider = document.getElementById(`dt-scale-station-${key}`);
-    if (slider) {
-      const numeric = Number(window.DevConfig.stationScaleById[key]) || 1;
-      slider.value = String(numeric);
-      const valEl = slider.nextElementSibling;
-      if (valEl && typeof valEl.textContent === 'string') {
-        valEl.textContent = numeric.toFixed(2);
-      }
+    const num = document.getElementById(`dt-scale-station-${key}-num`);
+    if (slider) slider.value = String(numeric);
+    if (num) num.value = String(numeric);
+    const valEl = slider?.nextElementSibling?.nextElementSibling || num?.nextElementSibling;
+    if (valEl && typeof valEl.textContent === 'string') {
+      valEl.textContent = numeric.toFixed(2);
     }
   }
 
