@@ -512,10 +512,10 @@ function resetRenderer(renderer, w, h) {
 function renderStationSprite(record) {
   if (!record.group) return;
   const size = getStationSpriteSize();
-  const frame = getPerStationSpriteFrame(record.stationRef);
+  const zoomMul = getPerStationSpriteFrame(record.stationRef); // 0.8..3.0
   const scale = record.group?.scale?.x || 1;
   const sizeChanged = record.lastSpriteSize !== size;
-  const frameChanged = !approxEqual(record.lastSpriteFrame, frame);
+  const frameChanged = !approxEqual(record.lastSpriteFrame, zoomMul);
   const scaleChanged = !approxEqual(record.lastRenderedScale, scale);
   const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
     ? performance.now()
@@ -566,7 +566,8 @@ function renderStationSprite(record) {
 
   const fovRad = cam.fov * Math.PI / 180;
   const distFit = R_eff / Math.tan(fovRad * 0.5);
-  const dist = Math.max(10, distFit * frame);
+  // Większy zoomMul => bliżej => większy sprite:
+  const dist = Math.max(10, distFit / zoomMul);
   cam.position.set(dist, dist * 0.62, dist);
   cam.lookAt(0, 0, 0);
 
@@ -627,7 +628,7 @@ function renderStationSprite(record) {
   if (rendered) {
     record.lastSpriteTime = now;
     record.lastSpriteSize = size;
-    record.lastSpriteFrame = frame;
+    record.lastSpriteFrame = zoomMul;
     record.lastRenderedScale = scale;
     record.forceSpriteRefresh = false;
   }
