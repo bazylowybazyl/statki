@@ -2199,10 +2199,11 @@ canvas.addEventListener('mousedown', e=>{
       }
       return;
     }
-    mouse.left=true;
     if(scan.targetType === 'station' && mouse.overCanvas){
+      mouse.left = false;
       return;
     }
+    mouse.left=true;
     if(!stationUI.open && !warp.isBusy()) triggerRailVolley();
   }
   if(e.button===2){
