@@ -323,9 +323,6 @@ function ensureStationObject(record, station) {
   if (!activeScene) return null;
   const urls = getModelUrlsForStation(station);
   if (!urls) return null;
-  // Preferuj runtime'owy promień (po skalowaniu), potem bazowy:
-  const targetRadiusRaw = (Number.isFinite(station.r) ? station.r : station.baseR) ?? 1;
-  const targetRadius = Number.isFinite(targetRadiusRaw) && targetRadiusRaw > 0 ? targetRadiusRaw : 1;
   const promise = loadTemplateWithFallback(urls)
     .then((template) => {
       if (!template || !stationRecords.has(record.key)) return null;
@@ -349,6 +346,10 @@ function ensureStationObject(record, station) {
       const sphere = bbox.getBoundingSphere(new THREE.Sphere());
       const geometryRadius = sphere?.radius && sphere.radius > 0 ? sphere.radius : 1;
 
+      // promień docelowy stacji w jednostkach świata (jak w updateRecordTransform)
+      const desiredRadiusRaw = (Number.isFinite(station.r) ? station.r : station.baseR) ?? 1;
+      const targetRadius = Number.isFinite(desiredRadiusRaw) && desiredRadiusRaw > 0 ? desiredRadiusRaw : 1;
+
       record.geometryRadius = geometryRadius;
       wrapper.userData.geometryRadius = geometryRadius;
       const baseScale = targetRadius / geometryRadius;
@@ -363,7 +364,7 @@ function ensureStationObject(record, station) {
       updateRecordTransform(record, station, devScale, visible);
 
       record.lastRenderedScale = null;
-      record.lastTargetRadius = desiredRadius;
+      record.lastTargetRadius = targetRadius;
       record.lastSpriteFrame = NaN;
       record.lastSpriteSize = 0;
       markSpriteDirty(record);
