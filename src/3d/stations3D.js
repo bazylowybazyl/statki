@@ -577,7 +577,9 @@ function renderStationSprite(record) {
   if (dirLight && stRef && typeof window !== 'undefined' && window.SUN) {
     const dx = (window.SUN.x ?? 0) - (stRef.x ?? 0);
     const dy = (window.SUN.y ?? 0) - (stRef.y ?? 0);
-    const v = new THREE.Vector3(dx, 0.6, dy);
+    // 2D (x,y ekranowe; y w dół) -> 3D (x,z; z do "przodu"):
+    // dy trzeba odwrócić, żeby "góra ekranu" była dodatnim Z.
+    const v = new THREE.Vector3(dx, 0.6, -dy);
     if (v.lengthSq() > 0) {
       v.normalize().multiplyScalar(Math.max(200, dist));
       dirLight.position.copy(v);
