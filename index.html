@@ -43,6 +43,15 @@
   .hp-aux    h4, .hp-aux .hp-item    { outline:1px solid #f59e0b; }
   .hp-hangar h4, .hp-hangar .hp-item { outline:1px solid #a78bfa; }
   .hp-spec   h4, .hp-spec .hp-item   { outline:1px solid #ef4444; }
+  .hover-info{position:absolute;top:120px;right:40px;min-width:220px;max-width:320px;background:rgba(9,13,24,0.88);border:1px solid rgba(91,116,178,0.45);border-radius:14px;padding:14px 18px;z-index:55;color:#e4ecff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;pointer-events:none;backdrop-filter:blur(12px);box-shadow:0 14px 32px rgba(0,0,0,0.45);}
+  .hover-info.hidden{display:none !important;}
+  .hover-info .hover-title{font-size:16px;font-weight:600;letter-spacing:0.04em;margin:0 0 4px 0;}
+  .hover-info .hover-subtitle{display:block;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#8fb5ff;margin-bottom:12px;}
+  .hover-info .hover-section{font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#94a9d6;margin-bottom:6px;}
+  .hover-info .hover-tags{display:flex;flex-wrap:wrap;gap:6px;}
+  .hover-info .hover-tag{padding:4px 10px;border-radius:999px;background:rgba(63,88,144,0.38);color:#dfe7ff;font-size:12px;}
+  .hover-info .hover-line{font-size:13px;margin-bottom:6px;display:flex;align-items:center;gap:6px;}
+  .hover-info .hover-line strong{font-weight:600;color:#8fb5ff;letter-spacing:0.05em;}
 </style>
 <style>
   /* Overlay 3D musi być nad głównym canvasem (#c) */
@@ -78,6 +87,11 @@
     </div>
     <div id="hp-groups" class="hp-groups"></div>
   </div>
+</div>
+<div id="hover-info" class="hover-info hidden">
+  <div class="hover-title"></div>
+  <span class="hover-subtitle"></span>
+  <div class="hover-content"></div>
 </div>
 <script type="importmap">
 {
@@ -1571,21 +1585,131 @@ function stationUnderCursor(){
   return null;
 }
 
-window.addEventListener('keydown', (e)=>{
-  if(e.code==='Enter' && !stationUI.open){
-    const s = stationUnderCursor();
-    if(s){
-      stationUI.open = true;
-      stationUI.station = s;
-      stationUI.tab='upgrades';
-      stationUI.x = (W - stationUI.w) / 2;
-      stationUI.y = (H - stationUI.h) / 2;
-      stationUI.dragging = false;
-      mouse.left = false;
-      mouse.right = false;
-      e.preventDefault();
+function openStationUI(station){
+  if(!station) return;
+  stationUI.open = true;
+  stationUI.station = station;
+  stationUI.tab = 'upgrades';
+  stationUI.x = (W - stationUI.w) / 2;
+  stationUI.y = (H - stationUI.h) / 2;
+  stationUI.dragging = false;
+  mouse.left = false;
+  mouse.right = false;
+}
+
+const hoverInfoState = {
+  el: document.getElementById('hover-info'),
+  title: document.querySelector('#hover-info .hover-title'),
+  subtitle: document.querySelector('#hover-info .hover-subtitle'),
+  content: document.querySelector('#hover-info .hover-content'),
+  type: null,
+  target: null
+};
+
+function toTitleCaseFromKey(value){
+  return String(value || '')
+    .split(/[-_\s]+/g)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function availableStationTabs(station){
+  if (Array.isArray(station?.tabs) && station.tabs.length) {
+    return station.tabs.map(toTitleCaseFromKey);
+  }
+  return ['Upgrades', 'Trade', 'Cantina', 'Hangar', 'Mechanic'];
+}
+
+function formatNpcName(npc){
+  if(!npc) return '';
+  if(typeof npc.name === 'string' && npc.name.trim()) return npc.name;
+  if(typeof npc.callsign === 'string' && npc.callsign.trim()) return npc.callsign;
+  if(npc.type) return toTitleCaseFromKey(npc.type);
+  if(npc.id != null) return `Jednostka #${npc.id}`;
+  return 'Jednostka';
+}
+
+function formatShieldValue(entity){
+  const shield = entity?.shield;
+  if(shield && typeof shield.val === 'number' && typeof shield.max === 'number'){
+    return `${Math.max(0, Math.round(shield.val))}/${Math.max(0, Math.round(shield.max))}`;
+  }
+  return 'Brak';
+}
+
+function formatWeaponName(weapon){
+  if(!weapon) return 'Brak';
+  if(typeof weapon === 'string') return toTitleCaseFromKey(weapon);
+  if(weapon.name) return toTitleCaseFromKey(weapon.name);
+  return 'Brak';
+}
+
+function hideHoverInfo(){
+  const { el, content } = hoverInfoState;
+  if(!el) return;
+  if(content) content.innerHTML = '';
+  if(!el.classList.contains('hidden')) el.classList.add('hidden');
+  hoverInfoState.type = null;
+  hoverInfoState.target = null;
+}
+
+function updateHoverInfo(target, type){
+  const { el, title, subtitle, content } = hoverInfoState;
+  if(!el) return;
+  if(!target || !type){
+    hideHoverInfo();
+    return;
+  }
+  hoverInfoState.type = type;
+  hoverInfoState.target = target;
+  el.classList.remove('hidden');
+  if(content) content.innerHTML = '';
+
+  if(type === 'station'){
+    if(title) title.textContent = target.name || (target.id ? `Stacja ${String(target.id).toUpperCase()}` : 'Stacja');
+    if(subtitle) subtitle.textContent = 'STACJA ORBITALNA';
+    if(content){
+      const section = document.createElement('div');
+      section.className = 'hover-section';
+      section.textContent = 'Zakładki';
+      content.appendChild(section);
+
+      const tags = document.createElement('div');
+      tags.className = 'hover-tags';
+      for(const tab of availableStationTabs(target)){
+        const span = document.createElement('span');
+        span.className = 'hover-tag';
+        span.textContent = tab;
+        tags.appendChild(span);
+      }
+      content.appendChild(tags);
+    }
+  } else if(type === 'npc'){
+    if(title) title.textContent = formatNpcName(target);
+    if(subtitle) subtitle.textContent = target.friendly ? 'SOJUSZNIK' : 'CELE NPC';
+    if(content){
+      const lines = [
+        { label:'HP', value: `${Math.max(0, Math.round(target.hp ?? 0))}/${Math.max(0, Math.round(target.maxHp ?? target.hp ?? 0))}` },
+        { label:'Tarcza', value: formatShieldValue(target) },
+        { label:'Broń', value: formatWeaponName(target.weapon) }
+      ];
+      for(const line of lines){
+        const row = document.createElement('div');
+        row.className = 'hover-line';
+        const strong = document.createElement('strong');
+        strong.textContent = `${line.label}:`;
+        const span = document.createElement('span');
+        span.textContent = line.value;
+        row.appendChild(strong);
+        row.appendChild(span);
+        content.appendChild(row);
+      }
     }
   }
+}
+
+window.addEventListener('keydown', (e)=>{
   if(stationUI.open){
     if(e.code==='Escape'){ stationUI.open=false; stationUI.station=null; stationUI.dragging=false; }
     if(e.code==='Digit1') stationUI.tab='upgrades';
@@ -2005,11 +2129,10 @@ function updateInput(){
 }
 
 // targeting / scanning
-const SCAN_TIME = 1.0;
 const SCAN_RANGE = 10000;
 const SCAN_VFX_SPEED = 4000;
 const SCAN_ARROW_LIFE = 1.5;
-const scan = { target:null, progress:0, scanned:null };
+const scan = { target:null, scanned:null, targetType:null };
 let lockedTarget = null;
 let lockedTargets = [];
 let highlightedEnemies = [];
@@ -2042,13 +2165,27 @@ function triggerScanWave(){
   }
 }
 
-const mouse = { x: W/2, y: H/2, left:false, right:false, click:false };
+const mouse = { x: W/2, y: H/2, left:false, right:false, click:false, overCanvas:false };
 canvas.addEventListener('mousemove', e=>{
   mouse.x = e.clientX; mouse.y = e.clientY;
+  mouse.overCanvas = true;
   if(stationUI.open && stationUI.dragging){
     stationUI.x = mouse.x - stationUI.dragDX;
     stationUI.y = mouse.y - stationUI.dragDY;
   }
+});
+canvas.addEventListener('mouseenter', ()=>{
+  mouse.overCanvas = true;
+});
+canvas.addEventListener('mouseleave', ()=>{
+  mouse.overCanvas = false;
+  mouse.left = false;
+  mouse.right = false;
+  mouse.click = false;
+  scan.target = null;
+  scan.scanned = null;
+  scan.targetType = null;
+  hideHoverInfo();
 });
 canvas.addEventListener('mousedown', e=>{
   if(e.button===0){
@@ -2063,6 +2200,9 @@ canvas.addEventListener('mousedown', e=>{
       return;
     }
     mouse.left=true;
+    if(scan.targetType === 'station' && mouse.overCanvas){
+      return;
+    }
     if(!stationUI.open && !warp.isBusy()) triggerRailVolley();
   }
   if(e.button===2){
@@ -3401,29 +3541,52 @@ function physicsStep(dt){
 
   // hover scanning
   let hover = null;
-  for(const npc of npcs){
-    if(npc.dead) continue;
-    if(Math.hypot(npc.x - mouseWorld.x, npc.y - mouseWorld.y) < npc.radius + 20){ hover = npc; break; }
-  }
-  if(!hover){
-    for(const st of stations){
-      if(Math.hypot(st.x - mouseWorld.x, st.y - mouseWorld.y) < st.r + 20){ hover = st; break; }
-    }
-  }
-  if(hover !== scan.target){ scan.target = hover; scan.progress = 0; }
-  if(scan.target){
-    if(scan.progress < SCAN_TIME){
-      scan.progress += dt;
-      if(scan.progress >= SCAN_TIME){
-        scan.progress = SCAN_TIME;
-        scan.scanned = scan.target;
-        spawnRadarPing(scan.target.x, scan.target.y);
-        lockedTarget = scan.scanned;
+  let hoverType = null;
+  if(mouse.overCanvas){
+    let bestDistSq = Infinity;
+    const npcMargin = 20;
+    for(const npc of npcs){
+      if(npc.dead) continue;
+      const radius = (npc.radius || 0) + npcMargin;
+      const dx = npc.x - mouseWorld.x;
+      const dy = npc.y - mouseWorld.y;
+      const distSq = dx*dx + dy*dy;
+      if(distSq <= radius*radius && distSq < bestDistSq){
+        bestDistSq = distSq;
+        hover = npc;
+        hoverType = 'npc';
       }
     }
+    const stationMargin = 24;
+    for(const st of stations){
+      const baseR = ((st.r ?? st.baseR) || 120) + stationMargin;
+      const dx = st.x - mouseWorld.x;
+      const dy = st.y - mouseWorld.y;
+      const distSq = dx*dx + dy*dy;
+      if(distSq <= baseR*baseR && distSq < bestDistSq){
+        bestDistSq = distSq;
+        hover = st;
+        hoverType = 'station';
+      }
+    }
+  }
+
+  if(hover){
+    scan.target = hover;
+    scan.targetType = hoverType;
+    scan.scanned = hover;
+    updateHoverInfo(hover, hoverType);
+    if(!stationUI.open && mouse.click && hoverType === 'station'){
+      openStationUI(hover);
+      mouse.click = false;
+    }
   } else {
-    scan.scanned = null;
-    scan.progress = 0;
+    if(scan.target || scan.scanned || scan.targetType){
+      scan.target = null;
+      scan.scanned = null;
+      scan.targetType = null;
+    }
+    hideHoverInfo();
   }
   if(lockedTarget && lockedTarget.dead) lockedTarget = null;
   lockedTargets = lockedTargets.filter(t=>!t.dead);
@@ -4498,14 +4661,35 @@ function render(alpha, frameDt){
   }
 
   // scan indicator and lock
-  if(scan.target){
+  if(scan.target && scan.targetType && mouse.overCanvas){
     const obj = scan.target;
     const s = worldToScreen(obj.x, obj.y, cam);
-    const rad = ((obj.radius||obj.r) + 10) * camera.zoom;
-    const t = scan.progress/SCAN_TIME;
-    ctx.strokeStyle = 'rgba(120,200,255,0.7)';
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(s.x, s.y, rad, -Math.PI/2, -Math.PI/2 + Math.PI*2*t); ctx.stroke();
+    const base = (obj.radius || obj.r || 60);
+    const outerExtra = scan.targetType === 'station' ? 28 : 14;
+    const innerExtra = scan.targetType === 'station' ? 12 : 8;
+    const outerR = (base + outerExtra) * camera.zoom;
+    const innerR = Math.max(2, (base + innerExtra) * camera.zoom);
+    const color = scan.targetType === 'station'
+      ? 'rgba(143,181,255,0.95)'
+      : (obj.friendly ? 'rgba(96,192,255,0.95)' : 'rgba(255,160,122,0.95)');
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(camera.zoom));
+    ctx.shadowBlur = 18 * camera.zoom;
+    ctx.shadowColor = color;
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath(); ctx.arc(s.x, s.y, outerR, 0, Math.PI*2); ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 0.55;
+    ctx.setLineDash([6 * camera.zoom, 6 * camera.zoom]);
+    ctx.beginPath(); ctx.arc(s.x, s.y, innerR, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+
+    if(scan.targetType === 'station' && !stationUI.open){
+      canvas.style.cursor = 'pointer';
+    }
   }
   if(highlightedEnemies.length){
     for(const obj of highlightedEnemies){
