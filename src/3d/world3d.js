@@ -84,7 +84,7 @@ function updateSunLightForPlanet(dirLightInstance, planet, sun){
   const dx = (sun.x ?? 0) - (planet.x ?? 0);
   const dy = (sun.y ?? 0) - (planet.y ?? 0);
   const L = Math.hypot(dx, dy) || 1;
-  dirLightInstance.position.set(dx / L, 0.6, dy / L);
+  dirLightInstance.position.set(dx / L, 0.6, -dy / L);
 }
 
 const PreserveAlphaOutputShader = {
