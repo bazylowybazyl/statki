@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "Space Survivor: Battleship - prosta gra w HTML/JS",
   "scripts": {
-    "start": "npx http-server ./ -p 8080"
+    "start": "npx http-server ./ -p 8080",
+    "test": "node tests/build_economy.test.js"
   },
   "devDependencies": {
     "http-server": "^14.1.1"
