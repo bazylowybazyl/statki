@@ -488,6 +488,8 @@
     Build._activeStation = st;
     const cam = window.camera || { x: st.x, y: st.y, zoom: 1 };
     Build._camPrev = { x: cam.x || st.x || 0, y: cam.y || st.y || 0, zoom: cam.zoom || 1 };
+    // PRZEŁĄCZ na free-camera (nie śledzimy statku)
+    if (window.camera) camera.followShip = false;
     if (window.stationUI){
       window.stationUI.open = false;
       window.stationUI.dragging = false;
@@ -513,6 +515,8 @@
     const cam = window.camera;
     const t = Build._camPrev;
     if (cam && t) tweenCameraTo(t, 250);
+    // WRÓĆ do śledzenia statku
+    if (window.camera) camera.followShip = true;
     Build._drag = { active: false, type: null, gx: -1, gy: -1, valid: false, affordable: false, area: null };
     Build._hover = { inside: false, gx: -1, gy: -1, valid: false, affordable: false, area: null };
     Build.mode = 'idle';
