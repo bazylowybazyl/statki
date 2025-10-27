@@ -202,29 +202,19 @@
   }
 
   function toScreen(wx, wy){
-    if (typeof window.worldToScreen === 'function'){
-      return window.worldToScreen(wx, wy, window.camera || getCamera());
-    }
+    // ZAWSZE względem tweenowanej kamery edytora
     const cam = getCamera();
     const W = typeof window.W === 'number' ? window.W : window.innerWidth;
     const H = typeof window.H === 'number' ? window.H : window.innerHeight;
-    return {
-      x: (wx - cam.x) * cam.zoom + W / 2,
-      y: (wy - cam.y) * cam.zoom + H / 2,
-    };
+    return { x: (wx - cam.x) * cam.zoom + W/2, y: (wy - cam.y) * cam.zoom + H/2 };
   }
 
   function toWorld(sx, sy){
-    if (typeof window.screenToWorld === 'function'){
-      return window.screenToWorld(sx, sy);
-    }
+    // ZAWSZE względem tweenowanej kamery edytora
     const cam = getCamera();
     const W = typeof window.W === 'number' ? window.W : window.innerWidth;
     const H = typeof window.H === 'number' ? window.H : window.innerHeight;
-    return {
-      x: cam.x + (sx - W / 2) / cam.zoom,
-      y: cam.y + (sy - H / 2) / cam.zoom,
-    };
+    return { x: cam.x + (sx - W/2) / cam.zoom, y: cam.y + (sy - H/2) / cam.zoom };
   }
 
   function resetGrid(area){

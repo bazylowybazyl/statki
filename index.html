@@ -6513,9 +6513,26 @@ setTimeout(startGame, 500);
 </script>
 
 <script src="src/build/economy.js"></script>
-<script src="src/build/editor.js"></script>
 <script>
   window.__ECON = window.__ECON || new BuildEconomy();
+</script>
+<script src="src/build/editor.js"></script>
+<script>
+  // Podłącz edytor do pętli animacji niezależnie od UI stacji
+  (function hookBuildEditor(){
+    let last = performance.now();
+    function step(){
+      const now = performance.now(); const dt = (now - last)/1000; last = now;
+      if (window.Build && Build.tick) Build.tick(dt, { stations: window.stations || [] });
+      requestAnimationFrame(step);
+    }
+    function drawOverlay(){
+      if (window.Build && Build.draw) Build.draw(ctx);
+      requestAnimationFrame(drawOverlay);
+    }
+    requestAnimationFrame(step);
+    requestAnimationFrame(drawOverlay);
+  })();
 </script>
 
 </body>
