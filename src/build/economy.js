@@ -68,6 +68,9 @@ const BUILDINGS = {
   },
 };
 
+BUILDINGS.ShipyardC = BUILDINGS.ShipyardCapital;
+BUILDINGS.StoreC    = BUILDINGS.StoreCapital;
+
 function defaultAreaResources(res = {}) {
   return {
     energyNet: 0,
@@ -304,7 +307,7 @@ if (typeof module !== 'undefined') {
 
 if (typeof window !== 'undefined') {
   window.BuildEconomy = BuildEconomy;
-  window.BUILDINGS = BUILDINGS;
+  window.ECON_BUILDINGS = BUILDINGS;
   window.GLB_PLANETS = GLB_PLANETS;
   window.ECON = ECON;
 }
