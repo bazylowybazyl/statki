@@ -659,6 +659,22 @@ const camera = {
   addShake(mag, dur){ this.shakeMag = mag; this.shakeTime = dur; this.shakeDur = dur; }
 };
 
+// Free camera – kompatybilny init
+(function ensureFreeCamera(){
+  if (!window.camera) {
+    window.camera = camera;
+  } else if (window.camera !== camera) {
+    Object.assign(camera, window.camera);
+    window.camera = camera;
+  }
+  const shipPos = (typeof ship !== 'undefined' && ship && ship.pos) ? ship.pos : null;
+  const fallbackX = shipPos && Number.isFinite(shipPos.x) ? shipPos.x : 0;
+  const fallbackY = shipPos && Number.isFinite(shipPos.y) ? shipPos.y : 0;
+  if (!Number.isFinite(camera.x)) camera.x = fallbackX;
+  if (!Number.isFinite(camera.y)) camera.y = fallbackY;
+  if (typeof camera.followShip !== 'boolean') camera.followShip = true;
+})();
+
 // Model widoku overlayu (ortho nad światem 2D)
 const overlayView = {
   center: { x: 0, y: 0 },
@@ -4049,7 +4065,13 @@ function loop(now){
 }
 
 // =============== Render ===============
-function worldToScreen(wx,wy,cam){ return { x: (wx - cam.x)*camera.zoom + W/2, y: (wy - cam.y)*camera.zoom + H/2 }; }
+function worldToScreen(x, y, cam){
+  const c = cam || window.camera || {};
+  const zoom = (c.zoom ?? camera.zoom ?? 1);
+  const anchorX = (c.followShip === false && Number.isFinite(c.x)) ? c.x : (ship?.pos?.x ?? 0);
+  const anchorY = (c.followShip === false && Number.isFinite(c.y)) ? c.y : (ship?.pos?.y ?? 0);
+  return { x: (x - anchorX) * zoom + W/2, y: (y - anchorY) * zoom + H/2 };
+}
 
 function stationPortWorld(st, idx){
   const off = st.ports[idx % st.ports.length];
@@ -4508,7 +4530,14 @@ function render(alpha, frameDt){
   const interpCIWSAngles = ship.ciws.map((c,i)=>interpAngleShort(prevState.ciwsAngles[i], c.angle, alpha));
 
   // Kamera
-  const cam = { x: interpPos.x, y: interpPos.y, zoom: camera.zoom };
+  const followShip = camera.followShip !== false;
+  const anchorX = followShip ? interpPos.x : (Number.isFinite(camera.x) ? camera.x : interpPos.x);
+  const anchorY = followShip ? interpPos.y : (Number.isFinite(camera.y) ? camera.y : interpPos.y);
+  if (followShip) {
+    camera.x = anchorX;
+    camera.y = anchorY;
+  }
+  const cam = { x: anchorX, y: anchorY, zoom: camera.zoom ?? 1 };
   if(camera.shakeMag > 0){
     const t = camera.shakeTime / camera.shakeDur;
     const mag = camera.shakeMag * Math.max(0, t);
@@ -5325,7 +5354,10 @@ function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo
 function roundRectScreen(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
 
 function screenToWorld(sx, sy){
-  return { x: ship.pos.x + (sx - W/2)/camera.zoom, y: ship.pos.y + (sy - H/2)/camera.zoom };
+  const zoom = camera.zoom ?? 1;
+  const anchorX = (camera.followShip === false && Number.isFinite(camera.x)) ? camera.x : (ship?.pos?.x ?? 0);
+  const anchorY = (camera.followShip === false && Number.isFinite(camera.y)) ? camera.y : (ship?.pos?.y ?? 0);
+  return { x: anchorX + (sx - W/2)/zoom, y: anchorY + (sy - H/2)/zoom };
 }
 
 // --- MINI UI HELPERS (HUD) ---
@@ -6517,23 +6549,5 @@ setTimeout(startGame, 500);
   window.__ECON = window.__ECON || new BuildEconomy();
 </script>
 <script src="src/build/editor.js"></script>
-<script>
-  // Podłącz edytor do pętli animacji niezależnie od UI stacji
-  (function hookBuildEditor(){
-    let last = performance.now();
-    function step(){
-      const now = performance.now(); const dt = (now - last)/1000; last = now;
-      if (window.Build && Build.tick) Build.tick(dt, { stations: window.stations || [] });
-      requestAnimationFrame(step);
-    }
-    function drawOverlay(){
-      if (window.Build && Build.draw) Build.draw(ctx);
-      requestAnimationFrame(drawOverlay);
-    }
-    requestAnimationFrame(step);
-    requestAnimationFrame(drawOverlay);
-  })();
-</script>
-
 </body>
 </html>
