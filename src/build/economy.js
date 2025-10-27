@@ -81,6 +81,18 @@ function defaultAreaResources(res = {}) {
   };
 }
 
+function cloneBuilding(building = {}) {
+  return { ...building };
+}
+
+function cloneArea(area) {
+  return {
+    id: area.id,
+    buildings: Array.isArray(area.buildings) ? area.buildings.map(cloneBuilding) : [],
+    res: defaultAreaResources(area.res),
+  };
+}
+
 class BuildEconomy {
   constructor(options = {}) {
     this.credits = Number.isFinite(options.credits) ? options.credits : ECON.START_CR;
@@ -88,7 +100,17 @@ class BuildEconomy {
     this._lastCRTick = options._lastCRTick || 0;
     this.creditLedger = Array.isArray(options.ledger) ? options.ledger.slice() : [];
     this.areas = new Map();
-    this._lastCRDeltaPerMin = 0;
+    this._lastCRDeltaPerMin = Number.isFinite(options.deltaPerMin) ? options.deltaPerMin : 0;
+
+    if (options.areas instanceof Map) {
+      for (const [id, area] of options.areas.entries()) {
+        this.addArea(cloneArea({ id, ...area }));
+      }
+    } else if (Array.isArray(options.areas)) {
+      for (const area of options.areas) {
+        if (area && area.id) this.addArea(cloneArea(area));
+      }
+    }
   }
 
   static createArea(id, opts = {}) {
@@ -247,11 +269,18 @@ class BuildEconomy {
   }
 
   serialize() {
+    const areas = [];
+    for (const area of this.areas.values()) {
+      areas.push(cloneArea(area));
+    }
     return {
       economy: {
         credits: this.credits,
         ledger: this.creditLedger.slice(),
         deltaPerMin: this._lastCRDeltaPerMin,
+        _crAcc: this._crAcc,
+        _lastCRTick: this._lastCRTick,
+        areas,
       },
     };
   }
@@ -261,6 +290,10 @@ class BuildEconomy {
     return new BuildEconomy({
       credits: econ.credits,
       ledger: econ.ledger,
+      deltaPerMin: econ.deltaPerMin,
+      _crAcc: econ._crAcc,
+      _lastCRTick: econ._lastCRTick,
+      areas: econ.areas,
     });
   }
 }

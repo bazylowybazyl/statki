@@ -79,4 +79,21 @@ function getArea(state, id = 'earth_area') {
   assert.ok(state.credits < 0, 'credits should drop below zero');
 })();
 
+(function testSerializeAndRestoreAreas(){
+  const state = createState(3000);
+  const area = getArea(state);
+  area.buildings.push({ type: 'StoreM', state: 'active', wfNeed: 5, wfHave: 5 });
+  area.res.metal = 450;
+  area.res.gas = 123;
+  const payload = state.serialize();
+  const restored = BuildEconomy.fromSerialized(payload);
+  const restoredArea = restored.getArea('earth_area');
+  assert.ok(restoredArea, 'restored economy should keep areas');
+  assert.strictEqual(restoredArea.buildings.length, 1, 'buildings should persist');
+  assert.strictEqual(restoredArea.buildings[0].type, 'StoreM');
+  assert.strictEqual(restoredArea.res.metal, 450);
+  assert.strictEqual(restoredArea.res.gas, 123);
+  assert.strictEqual(restored.credits, state.credits);
+})();
+
 console.log('build_economy.test.js passed');
