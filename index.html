@@ -147,6 +147,10 @@
 // =============== Canvas & utils ===============
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
+window.Build = window.Build || {};
+const Build = window.Build;
+window.canvas = canvas;
+window.ctx = ctx;
 let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
 
 window.addEventListener('resize', ()=>{
@@ -1568,6 +1572,7 @@ let stationUI = {
   dragDX:0,
   dragDY:0
 };
+window.stationUI = stationUI;
 
 const OPTIONS = {
   vfx: { colorTempK: 8000, bloomGain: 1.1 },
@@ -1717,6 +1722,7 @@ window.addEventListener('keydown', (e)=>{
     if(e.code==='Digit3') stationUI.tab='cantina';
     if(e.code==='Digit4') stationUI.tab='hangar';
     if(e.code==='Digit5') stationUI.tab='mechanic';
+    if(e.code==='Digit6') stationUI.tab='build';
   }
 });
 
@@ -1731,12 +1737,13 @@ function renderStationUI(){
   }
   setMechanicUIVisible(stationUI.tab==='mechanic');
   hudBeginPanel(stationUI.x, stationUI.y, stationUI.w, stationUI.h);
-  hudTabs(['upgrades','trade','cantina','hangar','mechanic'], stationUI.tab);
+  hudTabs(['upgrades','trade','cantina','hangar','mechanic','build'], stationUI.tab);
   if(stationUI.tab==='upgrades') renderUpgradesTab();
   if(stationUI.tab==='trade')    renderTradeTab();
   if(stationUI.tab==='cantina')  renderCantinaTab();
   if(stationUI.tab==='hangar')   renderHangarTab();
   if(stationUI.tab==='mechanic') renderMechanicTab();
+  if(stationUI.tab==='build' && typeof Build.renderBuildTab === 'function') Build.renderBuildTab();
   hudEndPanel();
 }
 
@@ -2166,12 +2173,16 @@ function triggerScanWave(){
 }
 
 const mouse = { x: W/2, y: H/2, left:false, right:false, click:false, overCanvas:false };
+window.mouse = mouse;
 canvas.addEventListener('mousemove', e=>{
   mouse.x = e.clientX; mouse.y = e.clientY;
   mouse.overCanvas = true;
   if(stationUI.open && stationUI.dragging){
     stationUI.x = mouse.x - stationUI.dragDX;
     stationUI.y = mouse.y - stationUI.dragDY;
+  }
+  if(stationUI.open && stationUI.tab === 'build' && typeof Build.onMouseMove === 'function'){
+    Build.onMouseMove(e);
   }
 });
 canvas.addEventListener('mouseenter', ()=>{
@@ -2189,6 +2200,7 @@ canvas.addEventListener('mouseleave', ()=>{
 });
 canvas.addEventListener('mousedown', e=>{
   if(e.button===0){
+    if(stationUI.open && stationUI.tab === 'build' && typeof Build.onMouseDown === 'function'){ Build.onMouseDown(e); return; }
     if(stationUI.open){
       const inX = mouse.x >= stationUI.x && mouse.x <= stationUI.x + stationUI.w;
       const inY = mouse.y >= stationUI.y && mouse.y <= stationUI.y + stationUI.h;
@@ -2206,6 +2218,7 @@ canvas.addEventListener('mousedown', e=>{
     if(!stationUI.open && !warp.isBusy()) triggerRailVolley();
   }
   if(e.button===2){
+    if(stationUI.open && stationUI.tab === 'build' && typeof Build.onMouseDown === 'function'){ Build.onMouseDown(e); return; }
     e.preventDefault();
     if(stationUI.open) return;
     mouse.right=true;
@@ -2221,6 +2234,7 @@ canvas.addEventListener('mousedown', e=>{
 });
 canvas.addEventListener('mouseup', e=>{
   if(e.button===0){
+    if(stationUI.open && stationUI.tab === 'build' && typeof Build.onMouseUp === 'function'){ Build.onMouseUp(e); return; }
     const wasDragging = stationUI.dragging;
     if(stationUI.dragging){
       stationUI.dragging=false;
@@ -2237,11 +2251,17 @@ canvas.addEventListener('mouseup', e=>{
     }
   }
   if(e.button===2){
+    if(stationUI.open && stationUI.tab === 'build' && typeof Build.onMouseUp === 'function'){ Build.onMouseUp(e); return; }
     if(stationUI.open) return;
     mouse.right=false;
   }
 });
-canvas.addEventListener('contextmenu', e=>e.preventDefault());
+canvas.addEventListener('contextmenu', e=>{
+  if(stationUI.open && stationUI.tab === 'build' && typeof Build.onContextMenu === 'function'){
+    if(Build.onContextMenu(e)) return;
+  }
+  e.preventDefault();
+});
 canvas.addEventListener('wheel', e=>{
   if (stationUI.open) return;
   e.preventDefault();
@@ -3998,6 +4018,7 @@ function loop(now){
   const alpha = acc / PHYS_DT;
   frameId++;
   missionCompleteBanner.update(frame);
+  if (typeof Build.tick === 'function') Build.tick(frame, { stations });
   // Shockwaves
   for(let i=shockwaves.length-1;i>=0;i--){
     const s = shockwaves[i];
@@ -4575,6 +4596,8 @@ function render(alpha, frameDt){
       ctx.fillText('ST'+st.id, s.x - rr*0.35, s.y + 4*camera.zoom);
     }
   }
+
+  if (typeof Build.draw === 'function') Build.draw(ctx);
 
   // Laser beams
   for(const p of particles){
@@ -6479,6 +6502,12 @@ setTimeout(startGame, 500);
 
   })();
 </script>
+
+<script src="src/build/economy.js"></script>
+<script>
+  window.__ECON = window.__ECON || new BuildEconomy({ credits: ECON.START_CR });
+</script>
+<script src="src/build/editor.js"></script>
 
 </body>
 </html>
