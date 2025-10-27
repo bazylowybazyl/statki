@@ -1727,11 +1727,27 @@ window.addEventListener('keydown', (e)=>{
 });
 
 window.addEventListener('keydown', (e)=>{
+  if(e.key === 'Escape' && window.Build && Build.mode === 'editor'){
+    if (typeof Build.exitEditor === 'function') Build.exitEditor();
+  }
+});
+
+window.addEventListener('keydown', (e)=>{
   if(e.code==='KeyO' && !stationUI.open){ OPTIONS_OPEN = !OPTIONS_OPEN; }
 });
 
 function renderStationUI(){
   if(!stationUI.open){
+    setMechanicUIVisible(false);
+    return;
+  }
+  if(stationUI.tab === 'build'){
+    if (typeof Build.enterEditor === 'function'){
+      Build.enterEditor(stationUI.station);
+    }
+    stationUI.tab = 'upgrades';
+    stationUI.open = false;
+    stationUI.dragging = false;
     setMechanicUIVisible(false);
     return;
   }
@@ -1743,7 +1759,6 @@ function renderStationUI(){
   if(stationUI.tab==='cantina')  renderCantinaTab();
   if(stationUI.tab==='hangar')   renderHangarTab();
   if(stationUI.tab==='mechanic') renderMechanicTab();
-  if(stationUI.tab==='build' && typeof Build.renderBuildTab === 'function') Build.renderBuildTab();
   hudEndPanel();
 }
 
@@ -2177,12 +2192,10 @@ window.mouse = mouse;
 canvas.addEventListener('mousemove', e=>{
   mouse.x = e.clientX; mouse.y = e.clientY;
   mouse.overCanvas = true;
+  if(typeof Build.onMouseMove === 'function') Build.onMouseMove(e);
   if(stationUI.open && stationUI.dragging){
     stationUI.x = mouse.x - stationUI.dragDX;
     stationUI.y = mouse.y - stationUI.dragDY;
-  }
-  if(stationUI.open && stationUI.tab === 'build' && typeof Build.onMouseMove === 'function'){
-    Build.onMouseMove(e);
   }
 });
 canvas.addEventListener('mouseenter', ()=>{
@@ -2199,8 +2212,8 @@ canvas.addEventListener('mouseleave', ()=>{
   hideHoverInfo();
 });
 canvas.addEventListener('mousedown', e=>{
+  if(typeof Build.onMouseDown === 'function' && Build.onMouseDown(e)) return;
   if(e.button===0){
-    if(stationUI.open && stationUI.tab === 'build' && typeof Build.onMouseDown === 'function'){ Build.onMouseDown(e); return; }
     if(stationUI.open){
       const inX = mouse.x >= stationUI.x && mouse.x <= stationUI.x + stationUI.w;
       const inY = mouse.y >= stationUI.y && mouse.y <= stationUI.y + stationUI.h;
@@ -2218,7 +2231,6 @@ canvas.addEventListener('mousedown', e=>{
     if(!stationUI.open && !warp.isBusy()) triggerRailVolley();
   }
   if(e.button===2){
-    if(stationUI.open && stationUI.tab === 'build' && typeof Build.onMouseDown === 'function'){ Build.onMouseDown(e); return; }
     e.preventDefault();
     if(stationUI.open) return;
     mouse.right=true;
@@ -2233,8 +2245,8 @@ canvas.addEventListener('mousedown', e=>{
   if(e.button===1){ e.preventDefault(); camera.zoom = Math.abs(camera.zoom - camera.defaultZoom) < 0.03 ? camera.altZoom : camera.defaultZoom; }
 });
 canvas.addEventListener('mouseup', e=>{
+  if(typeof Build.onMouseUp === 'function' && Build.onMouseUp(e)) return;
   if(e.button===0){
-    if(stationUI.open && stationUI.tab === 'build' && typeof Build.onMouseUp === 'function'){ Build.onMouseUp(e); return; }
     const wasDragging = stationUI.dragging;
     if(stationUI.dragging){
       stationUI.dragging=false;
@@ -2251,15 +2263,12 @@ canvas.addEventListener('mouseup', e=>{
     }
   }
   if(e.button===2){
-    if(stationUI.open && stationUI.tab === 'build' && typeof Build.onMouseUp === 'function'){ Build.onMouseUp(e); return; }
     if(stationUI.open) return;
     mouse.right=false;
   }
 });
 canvas.addEventListener('contextmenu', e=>{
-  if(stationUI.open && stationUI.tab === 'build' && typeof Build.onContextMenu === 'function'){
-    if(Build.onContextMenu(e)) return;
-  }
+  if(typeof Build.onContextMenu === 'function' && Build.onContextMenu(e)) return;
   e.preventDefault();
 });
 canvas.addEventListener('wheel', e=>{
@@ -6504,10 +6513,10 @@ setTimeout(startGame, 500);
 </script>
 
 <script src="src/build/economy.js"></script>
-<script>
-  window.__ECON = window.__ECON || new BuildEconomy({ credits: ECON.START_CR });
-</script>
 <script src="src/build/editor.js"></script>
+<script>
+  window.__ECON = window.__ECON || new BuildEconomy();
+</script>
 
 </body>
 </html>
