@@ -113,16 +113,26 @@
   };
 
   const areas = new Map();
-  let selectedType = palette[0];
-  let hoverCell = { stationId: null, gx: -1, gy: -1, valid: false, affordable: false };
   let lastEconResult = null;
+
+  Build.mode = Build.mode || 'idle';
+  Build._camPrev = { x: 0, y: 0, zoom: 1 };
+  Build._drag = { active: false, type: null, gx: -1, gy: -1, valid: false, affordable: false, area: null };
+  Build._hover = { inside: false, gx: -1, gy: -1, valid: false, affordable: false, area: null };
+  Build._paletteBoxes = [];
+  Build._panelRect = null;
+  Build._exitButtonRect = null;
+  Build._activeStation = Build._activeStation || null;
 
   const state = {
     get areas(){ return areas; },
-    get selected(){ return selectedType; },
-    get hover(){ return hoverCell; },
+    get drag(){ return Build._drag; },
+    get hover(){ return Build._hover; },
+    get mode(){ return Build.mode; },
     get lastEcon(){ return lastEconResult; },
   };
+
+  let cameraTween = null;
 
   function defaultRes(){
     return {
@@ -183,16 +193,19 @@
   }
 
   function getCamera(){
-    const pos = window.ship && window.ship.pos ? window.ship.pos : { x: 0, y: 0 };
-    const cam = window.camera || { zoom: 1 };
-    return { x: pos.x, y: pos.y, zoom: cam.zoom || 1 };
+    const cam = window.camera || { x: 0, y: 0, zoom: 1 };
+    return {
+      x: cam.x || 0,
+      y: cam.y || 0,
+      zoom: cam.zoom || 1,
+    };
   }
 
   function toScreen(wx, wy){
-    const cam = getCamera();
     if (typeof window.worldToScreen === 'function'){
-      return window.worldToScreen(wx, wy, cam);
+      return window.worldToScreen(wx, wy, window.camera || getCamera());
     }
+    const cam = getCamera();
     const W = typeof window.W === 'number' ? window.W : window.innerWidth;
     const H = typeof window.H === 'number' ? window.H : window.innerHeight;
     return {
@@ -281,20 +294,6 @@
     }
   }
 
-  function pointerToCell(sx, sy){
-    const stationUI = window.stationUI;
-    if (!stationUI || !stationUI.station) return null;
-    const area = ensureAreaForStation(stationUI.station);
-    if (!area) return null;
-    const world = toWorld(sx, sy);
-    const relX = world.x - area.origin.x;
-    const relY = world.y - area.origin.y;
-    const gx = Math.floor(relX / TILE);
-    const gy = Math.floor(relY / TILE);
-    const inside = gx >= 0 && gy >= 0 && gx < GRID_W && gy < GRID_H;
-    return { area, gx, gy, inside };
-  }
-
   function buildingAt(area, gx, gy){
     if (!area || gx < 0 || gy < 0 || gx >= GRID_W || gy >= GRID_H) return null;
     return area.grid[gy * GRID_W + gx] || null;
@@ -351,7 +350,10 @@
         state: building.state,
       });
     }
-    hoverCell = { ...hoverCell, valid: false };
+    Build._drag.active = false;
+    Build._drag.type = null;
+    Build._drag.area = null;
+    Build._hover = { inside: false, gx: -1, gy: -1, valid: false, affordable: false, area: null };
     Build.state = state;
     return true;
   }
@@ -368,140 +370,242 @@
       econ.remove(econAreaId, idx);
     }
     recomputeArea(area);
-    hoverCell = { ...hoverCell, valid: false };
+    Build._hover = { inside: false, gx: -1, gy: -1, valid: false, affordable: false, area: null };
     Build.state = state;
     return true;
   }
 
-  function updateHover(sx, sy){
-    const pointer = pointerToCell(sx, sy);
-    if (!pointer || !pointer.area || !pointer.inside){
-      hoverCell = { stationId: null, gx: -1, gy: -1, valid: false, affordable: false };
-      Build.state = state;
+  function pointerToCell(sx, sy){
+    const station = Build._activeStation || (window.stationUI && window.stationUI.station);
+    if (!station) return null;
+    const area = ensureAreaForStation(station);
+    if (!area) return null;
+    const world = toWorld(sx, sy);
+    const relX = world.x - area.origin.x;
+    const relY = world.y - area.origin.y;
+    const gx = Math.floor(relX / TILE);
+    const gy = Math.floor(relY / TILE);
+    const inside = gx >= 0 && gy >= 0 && gx < GRID_W && gy < GRID_H;
+    return { area, gx, gy, inside, world };
+  }
+
+  function tweenCameraTo(target, ms){
+    const cam = window.camera;
+    if (!cam) return;
+    const now = performance.now();
+    cameraTween = {
+      start: { x: cam.x || 0, y: cam.y || 0, zoom: cam.zoom || 1 },
+      target: {
+        x: target && Number.isFinite(target.x) ? target.x : cam.x || 0,
+        y: target && Number.isFinite(target.y) ? target.y : cam.y || 0,
+        zoom: target && Number.isFinite(target.zoom) ? target.zoom : cam.zoom || 1,
+      },
+      startTime: now,
+      duration: Math.max(1, ms || 300),
+    };
+  }
+
+  function stepCameraTween(){
+    if (!cameraTween) return;
+    const cam = window.camera;
+    if (!cam){
+      cameraTween = null;
       return;
     }
+    const now = performance.now();
+    const t = Math.min(1, (now - cameraTween.startTime) / cameraTween.duration);
+    const ease = t;
+    cam.x = cameraTween.start.x + (cameraTween.target.x - cameraTween.start.x) * ease;
+    cam.y = cameraTween.start.y + (cameraTween.target.y - cameraTween.start.y) * ease;
+    cam.zoom = cameraTween.start.zoom + (cameraTween.target.zoom - cameraTween.start.zoom) * ease;
+    if (t >= 1){
+      cameraTween = null;
+    }
+  }
+
+  function updateHoverFromPointer(sx, sy){
+    if (Build.mode !== 'editor'){
+      Build._hover = { inside: false, gx: -1, gy: -1, valid: false, affordable: false, area: null };
+      return;
+    }
+    const pointer = pointerToCell(sx, sy);
+    if (!pointer){
+      Build._hover = { inside: false, gx: -1, gy: -1, valid: false, affordable: false, area: null };
+      return;
+    }
+    const dragType = Build._drag.active ? Build._drag.type : null;
+    const type = dragType || null;
     const area = pointer.area;
-    const valid = canPlace(area, selectedType, pointer.gx, pointer.gy);
-    const affordable = canAfford(selectedType);
-    hoverCell = {
-      stationId: area.stationId,
+    const valid = type ? canPlace(area, type, pointer.gx, pointer.gy) : false;
+    const affordable = type ? canAfford(type) : false;
+    Build._hover = {
+      inside: pointer.inside,
       gx: pointer.gx,
       gy: pointer.gy,
       valid,
       affordable,
+      area,
     };
-    Build.state = state;
-  }
-
-  function ensureSelectedType(){
-    if (!palette.includes(selectedType)){
-      selectedType = palette[0];
+    if (Build._drag.active){
+      Build._drag.gx = pointer.gx;
+      Build._drag.gy = pointer.gy;
+      Build._drag.area = area;
+      Build._drag.valid = pointer.inside && valid;
+      Build._drag.affordable = affordable;
     }
   }
 
-  function renderPalette(){
-    ensureSelectedType();
-    const baseFill = '#E6F2FF';
-    for (const type of palette){
-      const isSelected = type === selectedType;
-      const t = window.ctx ? window.ctx.getTransform() : null;
-      if (!t) break;
-      const label = type;
-      const textWidth = window.ctx.measureText(label).width;
-      const padding = 8;
-      const w = textWidth + padding * 2;
-      const h = 20;
-      const L = t.e - padding;
-      const T = t.f - 16;
-      const R = L + w;
-      const B = T + h;
-      const over = window.mouse && window.mouse.x >= L && window.mouse.x <= R && window.mouse.y >= T && window.mouse.y <= B;
-      if (over && window.canvas) window.canvas.style.cursor = 'pointer';
-      window.ctx.fillStyle = isSelected ? 'rgba(96,165,250,0.35)' : 'rgba(15,23,42,0.55)';
-      window.ctx.fillRect(L, T, w, h);
-      window.ctx.fillStyle = isSelected ? '#f8fafc' : '#b8c9f3';
-      window.ctx.fillText(label, 0, 0);
-      if (over && window.mouse && window.mouse.click){
-        selectedType = type;
-        window.mouse.click = false;
+  function paletteAffordable(type){
+    try {
+      return canAfford(type);
+    } catch {
+      return true;
+    }
+  }
+
+  function isMouseOverRect(mouse, rect){
+    if (!mouse || !rect) return false;
+    return mouse.x >= rect.x && mouse.x <= rect.x + rect.w && mouse.y >= rect.y && mouse.y <= rect.y + rect.h;
+  }
+
+  function refreshCursor(){
+    const canvas = window.canvas;
+    if (!canvas) return;
+    let cursor = 'default';
+    const mouse = window.mouse;
+    if (Build.mode === 'editor'){
+      if (Build._drag.active){
+        cursor = 'grabbing';
+      } else if (mouse){
+        if (isMouseOverRect(mouse, Build._exitButtonRect)){
+          cursor = 'pointer';
+        } else {
+          const paletteHit = Build._paletteBoxes.find(box => isMouseOverRect(mouse, box));
+          if (paletteHit){
+            cursor = 'pointer';
+          } else if (Build._hover.inside){
+            cursor = 'crosshair';
+          }
+        }
       }
-      window.ctx.translate(0, 24);
     }
-    if (window.ctx) window.ctx.fillStyle = baseFill;
+    canvas.style.cursor = cursor;
   }
 
-  function formatSigned(val){
-    if (!Number.isFinite(val)) return '0';
-    if (val > 0) return `+${Math.round(val)}`;
-    return String(Math.round(val));
-  }
-
-  Build.renderBuildTab = function(){
-    const stationUI = window.stationUI;
-    window.ctx.fillStyle = '#E6F2FF';
-    uiTitle('Budowa');
-    if (!stationUI || !stationUI.station){
-      uiText('Brak stacji w zasięgu.');
-      return;
+  Build.enterEditor = function(station){
+    const st = station || (window.stationUI && window.stationUI.station);
+    if (!st) return;
+    Build._activeStation = st;
+    const cam = window.camera || { x: st.x, y: st.y, zoom: 1 };
+    Build._camPrev = { x: cam.x || st.x || 0, y: cam.y || st.y || 0, zoom: cam.zoom || 1 };
+    if (window.stationUI){
+      window.stationUI.open = false;
+      window.stationUI.dragging = false;
     }
 
-    if (window.__ECON){
-      const econSnapshot = window.__ECON.serialize().economy || {};
-      const credits = Math.floor(econSnapshot.credits || 0);
-      const delta = Math.floor(econSnapshot.deltaPerMin || 0);
-      uiText(`Kredyty: ${credits}  (Δ ${delta}/min)`);
-    }
+    const pad = (st.r || 160) + 80;
+    const W = window.W || window.innerWidth;
+    const H = window.H || window.innerHeight;
+    const targetZoom = Math.min(1.6, Math.max(0.8, (H * 0.75) / (GRID_H * TILE)));
+    const worldLeft = st.x - (W * 0.35) / targetZoom;
+    const worldY = st.y;
+    tweenCameraTo({ x: worldLeft, y: worldY, zoom: targetZoom }, 300);
 
-    const area = ensureAreaForStation(stationUI.station);
-    recomputeArea(area);
-
-    section('Paleta');
-    renderPalette();
-    window.ctx.translate(0, 8);
-
-    section('Podsumowanie obszaru');
-    uiText(`Energia netto: ${formatSigned(area.res.energyNet)} (prod ${Math.round(area.summary.energyProd)} / zużycie ${Math.round(area.summary.energyUse)})`);
-    uiText(`Workforce: ${Math.round(area.res.wfHave)}/${Math.round(area.res.wfNeed)} (${formatSigned(area.res.workforce)})`);
-    uiText(`Metale: ${Math.round(area.res.metal)}/${Math.round(area.res.capM)}`);
-    uiText(`Gazy: ${Math.round(area.res.gas)}/${Math.round(area.res.capG)}`);
-    uiText(`Stocznie: ${area.summary.shipyards}`);
-
-    section('Wybrany budynek');
-    ensureSelectedType();
-    const meta = buildingMeta[selectedType];
-    const econDefs = window.ECON_BUILDINGS || {};
-    const econDef = econDefs[selectedType];
-    if (meta && econDef){
-      uiText(`${meta.label} — koszt: ${econDef.costCR || 0} CR`);
-      uiText(`Koszt surowców: metal ${econDef.cost?.metal || 0}, gaz ${econDef.cost?.gas || 0}`);
-      const energyLine = meta.energy.produce ? `+${meta.energy.produce}` : meta.energy.consume ? `-${meta.energy.consume}` : '0';
-      const wfProvide = (meta.workforce && meta.workforce.provide) || 0;
-      const wfNeed = (meta.workforce && meta.workforce.need) || 0;
-      uiText(`Energia: ${energyLine}  Workforce: ${wfProvide}/${wfNeed}`);
-      uiText(`Poj. metal: ${meta.storage.metal || 0}  gaz: ${meta.storage.gas || 0}`);
-    } else {
-      uiText(selectedType);
-    }
-
-    uiText('Sterowanie: LPM — buduj · PPM — usuń');
-
+    Build.mode = 'editor';
+    Build._drag = { active: false, type: null, gx: -1, gy: -1, valid: false, affordable: false, area: null };
+    Build._hover = { inside: false, gx: -1, gy: -1, valid: false, affordable: false, area: null };
+    const area = ensureAreaForStation(st);
+    if (area) recomputeArea(area);
     Build.state = state;
   };
 
-  Build.draw = function(ctx){
-    if (!ctx) return;
-    const stationUI = window.stationUI;
-    if (!stationUI || !stationUI.open || stationUI.tab !== 'build' || !stationUI.station) return;
-    const area = ensureAreaForStation(stationUI.station);
-    recomputeArea(area);
-    const cam = getCamera();
-    const topLeft = toScreen(area.origin.x, area.origin.y);
-    const tilePx = TILE * cam.zoom;
+  Build.exitEditor = function(){
+    const cam = window.camera;
+    const t = Build._camPrev;
+    if (cam && t) tweenCameraTo(t, 250);
+    Build._drag = { active: false, type: null, gx: -1, gy: -1, valid: false, affordable: false, area: null };
+    Build._hover = { inside: false, gx: -1, gy: -1, valid: false, affordable: false, area: null };
+    Build.mode = 'idle';
+    Build._activeStation = null;
+    Build._paletteBoxes = [];
+    Build._panelRect = null;
+    Build._exitButtonRect = null;
+    Build.state = state;
+    refreshCursor();
+  };
+
+  function getPaletteMetrics(panelW){
+    const tileW = 148;
+    const tileH = 64;
+    const gap = 12;
+    const cols = Math.max(1, Math.floor((panelW - gap) / (tileW + gap)));
+    const rows = Math.ceil(palette.length / cols);
+    const height = rows * (tileH + gap);
+    return { tileW, tileH, gap, cols, rows, height };
+  }
+
+  function drawPalette(ctx, originX, originY, panelW, metrics){
+    const mouse = window.mouse;
+    const defs = window.ECON_BUILDINGS || {};
+    const { tileW, tileH, gap, cols, rows } = metrics;
+    const innerCols = Math.min(cols, palette.length);
+    const startX = originX + (panelW - innerCols * (tileW + gap) + gap) / 2;
+    const startY = originY;
+    Build._paletteBoxes = [];
+
+    ctx.save();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = '600 14px Inter,system-ui,Segoe UI,Roboto,Arial';
+    for (let i = 0; i < palette.length; i++){
+      const type = palette[i];
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const x = startX + col * (tileW + gap);
+      const y = startY + row * (tileH + gap);
+      const box = { type, x, y, w: tileW, h: tileH };
+      Build._paletteBoxes.push(box);
+      const meta = buildingMeta[type];
+      const def = defs[type] || {};
+      const affordable = paletteAffordable(type);
+      const isHover = mouse ? isMouseOverRect(mouse, box) : false;
+      const isDragging = Build._drag.active && Build._drag.type === type;
+
+      ctx.fillStyle = isDragging
+        ? 'rgba(59,130,246,0.32)'
+        : isHover
+          ? 'rgba(30,41,59,0.88)'
+          : 'rgba(15,23,42,0.82)';
+      ctx.fillRect(x, y, tileW, tileH);
+      ctx.strokeStyle = affordable ? 'rgba(125,211,252,0.55)' : 'rgba(239,68,68,0.6)';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x + 0.75, y + 0.75, tileW - 1.5, tileH - 1.5);
+
+      ctx.fillStyle = '#e2e8ff';
+      ctx.fillText(meta.label, x + 12, y + 8);
+      ctx.font = '12px Inter,system-ui,Segoe UI,Roboto,Arial';
+      ctx.fillStyle = '#9fb5ff';
+      ctx.fillText(`${def.costCR || 0} CR`, x + 12, y + 28);
+      const energyLine = meta.energy?.produce ? `+${meta.energy.produce}` : meta.energy?.consume ? `-${meta.energy.consume}` : '0';
+      const wfProvide = meta.workforce?.provide || 0;
+      const wfNeed = meta.workforce?.need || 0;
+      ctx.fillStyle = '#8fa2d9';
+      ctx.fillText(`E ${energyLine}  WF ${wfProvide}/${wfNeed}`, x + 12, y + 44);
+
+      ctx.fillStyle = meta.color || '#60a5fa';
+      ctx.globalAlpha = 0.15;
+      ctx.fillRect(x + tileW - 40, y + 12, 24, 24);
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+  }
+
+  function drawGrid(ctx, area, topLeft, tilePx){
     const widthPx = GRID_W * tilePx;
     const heightPx = GRID_H * tilePx;
 
     ctx.save();
-    ctx.fillStyle = 'rgba(12,16,32,0.62)';
+    ctx.fillStyle = 'rgba(12,16,32,0.68)';
     ctx.fillRect(topLeft.x, topLeft.y, widthPx, heightPx);
     ctx.strokeStyle = 'rgba(148,163,209,0.35)';
     ctx.lineWidth = 1;
@@ -523,43 +627,163 @@
     for (const b of area.buildings){
       const meta = buildingMeta[b.type];
       if (!meta) continue;
-      const bx = topLeft.x + b.x * tilePx;
-      const by = topLeft.y + b.y * tilePx;
+      const sx = topLeft.x + b.x * tilePx;
+      const sy = topLeft.y + b.y * tilePx;
       const bw = (meta.size?.w || b.w || 1) * tilePx;
       const bh = (meta.size?.h || b.h || 1) * tilePx;
-      ctx.globalAlpha = b.state === 'active' ? 0.95 : 0.55;
-      ctx.fillStyle = meta.color || 'rgba(96,165,250,0.8)';
-      ctx.fillRect(bx + 1, by + 1, bw - 2, bh - 2);
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = 'rgba(15,23,42,0.7)';
-      ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
-      ctx.fillStyle = '#dbeafe';
-      ctx.font = `${Math.max(10, tilePx * 0.28)}px Inter,system-ui,monospace`;
+      ctx.fillStyle = (meta.color || '#60a5fa') + '80';
+      ctx.fillRect(sx + 1, sy + 1, bw - 2, bh - 2);
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(sx + 1, sy + 1, bw - 2, bh - 2);
+      ctx.fillStyle = '#0f172a';
+      ctx.font = `${Math.max(12, Math.round(12 * Math.min(2, tilePx / TILE)))}px Inter,system-ui,Segoe UI,Roboto,Arial`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(meta.shortLabel || b.type, bx + bw / 2, by + bh / 2);
+      ctx.fillText(meta.shortLabel || b.type, sx + bw / 2, sy + bh / 2);
     }
 
-    if (hoverCell && hoverCell.stationId === area.stationId && hoverCell.gx >= 0 && hoverCell.gy >= 0){
-      const meta = buildingMeta[selectedType];
-      if (meta){
-        const bx = topLeft.x + hoverCell.gx * tilePx;
-        const by = topLeft.y + hoverCell.gy * tilePx;
+    if (Build._hover.inside && !Build._drag.active){
+      const meta = buildingMeta[Build._drag.type || ''];
+      const hx = topLeft.x + Build._hover.gx * tilePx;
+      const hy = topLeft.y + Build._hover.gy * tilePx;
+      const hw = (meta?.size?.w || 1) * tilePx;
+      const hh = (meta?.size?.h || 1) * tilePx;
+      ctx.strokeStyle = 'rgba(125,211,252,0.5)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(hx + 1, hy + 1, hw - 2, hh - 2);
+    }
+
+    if (Build._drag.active && Build._drag.type){
+      const meta = buildingMeta[Build._drag.type];
+      if (meta && Build._drag.gx >= -1 && Build._drag.gy >= -1){
+        const gx = Math.max(Build._drag.gx, 0);
+        const gy = Math.max(Build._drag.gy, 0);
+        const sx = topLeft.x + gx * tilePx;
+        const sy = topLeft.y + gy * tilePx;
         const bw = (meta.size?.w || 1) * tilePx;
         const bh = (meta.size?.h || 1) * tilePx;
-        const valid = hoverCell.valid && hoverCell.affordable;
-        ctx.fillStyle = valid ? 'rgba(56,189,248,0.22)' : 'rgba(239,68,68,0.28)';
-        ctx.fillRect(bx + 1, by + 1, bw - 2, bh - 2);
-        ctx.strokeStyle = valid ? 'rgba(56,189,248,0.9)' : 'rgba(239,68,68,0.85)';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(bx + 1, by + 1, bw - 2, bh - 2);
+        const valid = Build._drag.valid && Build._drag.affordable;
+        ctx.save();
+        ctx.globalAlpha = 0.35;
+        ctx.fillStyle = valid ? 'rgba(74,222,128,0.45)' : 'rgba(248,113,113,0.35)';
+        ctx.fillRect(sx + 1, sy + 1, bw - 2, bh - 2);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = valid ? 'rgba(74,222,128,0.9)' : 'rgba(248,113,113,0.9)';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(sx + 1.5, sy + 1.5, bw - 3, bh - 3);
+        ctx.restore();
       }
     }
 
     ctx.restore();
+  }
+
+  function drawHud(ctx, station){
+    const mouse = window.mouse;
+    const econ = window.__ECON;
+    let credits = 0;
+    let delta = 0;
+    if (econ && typeof econ.serialize === 'function'){
+      try {
+        const snapshot = econ.serialize().economy || {};
+        credits = Math.floor(snapshot.credits || 0);
+        delta = Math.floor(snapshot.deltaPerMin || 0);
+      } catch {}
+    }
+    const info = `Kredyty: ${credits}   Δ ${delta}/min`;
+    const cam = getCamera();
+    const leftWorldX = station.x - ((station.r || 160) + 60) / (cam.zoom || 1);
+    const anchor = toScreen(leftWorldX, station.y - (station.r || 160) * 0.75);
+    const pad = 14;
+
+    ctx.save();
+    ctx.font = '600 16px Inter,system-ui,Segoe UI,Roboto,Arial';
+    const measured = ctx.measureText ? ctx.measureText(info) : null;
+    const width = measured ? Math.max(180, measured.width + pad * 2) : 240;
+    const height = 64;
+    const x = anchor.x - width;
+    const y = anchor.y - height / 2;
+
+    ctx.fillStyle = 'rgba(8,12,24,0.82)';
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = 'rgba(59,130,246,0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x + 0.75, y + 0.75, width - 1.5, height - 1.5);
+    ctx.fillStyle = '#dbe5ff';
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    ctx.fillText('TRYB EDYTORA', x + pad, y + pad - 2);
+    ctx.font = '13px Inter,system-ui,Segoe UI,Roboto,Arial';
+    ctx.fillStyle = '#9fb5ff';
+    ctx.fillText(info, x + pad, y + pad + 18);
+
+    const btnW = 120;
+    const btnH = 28;
+    const btnX = x + pad;
+    const btnY = y + height - btnH - pad + 6;
+    const overBtn = mouse ? (mouse.x >= btnX && mouse.x <= btnX + btnW && mouse.y >= btnY && mouse.y <= btnY + btnH) : false;
+    ctx.fillStyle = overBtn ? 'rgba(239,68,68,0.85)' : 'rgba(248,113,113,0.75)';
+    ctx.fillRect(btnX, btnY, btnW, btnH);
+    ctx.fillStyle = '#0f172a';
+    ctx.font = '600 13px Inter,system-ui,Segoe UI,Roboto,Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Wyjdź (Esc)', btnX + btnW / 2, btnY + btnH / 2);
+
+    Build._exitButtonRect = { x: btnX, y: btnY, w: btnW, h: btnH };
+    ctx.restore();
+  }
+
+  Build.draw = function(ctx){
+    if (!ctx || Build.mode !== 'editor'){
+      refreshCursor();
+      return;
+    }
+    const station = Build._activeStation || (window.stationUI && window.stationUI.station);
+    if (!station){
+      refreshCursor();
+      return;
+    }
+    const area = ensureAreaForStation(station);
+    if (!area){
+      refreshCursor();
+      return;
+    }
+    recomputeArea(area);
+    const cam = getCamera();
+    const topLeft = toScreen(area.origin.x, area.origin.y);
+    const tilePx = TILE * (cam.zoom || 1);
+    const gridWidth = GRID_W * tilePx;
+    const gridHeight = GRID_H * tilePx;
+    const margin = 16;
+    const gap = 12;
+    const panelW = gridWidth + margin * 2;
+    const innerWidth = panelW - margin * 2;
+    const paletteMetrics = getPaletteMetrics(innerWidth);
+    const paletteHeight = paletteMetrics.height;
+    const panelH = margin + paletteHeight + gap + gridHeight + margin;
+    const panelX = topLeft.x - margin;
+    const panelY = topLeft.y - (margin + paletteHeight + gap);
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(7,11,22,0.78)';
+    ctx.fillRect(panelX, panelY, panelW, panelH);
+    ctx.strokeStyle = 'rgba(59,130,246,0.55)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(panelX + 1, panelY + 1, panelW - 2, panelH - 2);
+    ctx.restore();
+
+    Build._panelRect = { x: panelX, y: panelY, w: panelW, h: panelH };
+
+    drawPalette(ctx, panelX + margin, panelY + margin, innerWidth, paletteMetrics);
+    drawGrid(ctx, area, topLeft, tilePx);
+    drawHud(ctx, station);
+    refreshCursor();
   };
 
   Build.tick = function(dt, ctx){
+    stepCameraTween();
     const econ = window.__ECON;
     const stations = Array.isArray(ctx?.stations) ? ctx.stations : getStations();
     for (const area of areas.values()){
@@ -596,80 +820,101 @@
   };
 
   Build.onMouseDown = function(e){
-    const stationUI = window.stationUI;
-    if (!stationUI || stationUI.tab !== 'build') return false;
+    if (Build.mode !== 'editor') return false;
+    const mouse = window.mouse;
+    if (!mouse) return true;
     if (e.button === 0){
-      const mouse = window.mouse;
-      if (mouse){
-        const inX = mouse.x >= stationUI.x && mouse.x <= stationUI.x + stationUI.w;
-        const inY = mouse.y >= stationUI.y && mouse.y <= stationUI.y + stationUI.h;
-        if (inX && inY && mouse.y <= stationUI.y + 24){
-          stationUI.dragging = true;
-          stationUI.dragDX = mouse.x - stationUI.x;
-          stationUI.dragDY = mouse.y - stationUI.y;
-          return true;
-        }
+      mouse.left = true;
+      const exit = Build._exitButtonRect && isMouseOverRect(mouse, Build._exitButtonRect);
+      if (exit){
+        Build.exitEditor();
+        return true;
       }
-      const pointer = pointerToCell(mouse?.x ?? 0, mouse?.y ?? 0);
-      if (pointer && pointer.inside){
-        if (placeBuilding(pointer.area, selectedType, pointer.gx, pointer.gy)){
-          return true;
-        }
+      const paletteHit = Build._paletteBoxes.find(box => isMouseOverRect(mouse, box));
+      if (paletteHit){
+        Build._drag = {
+          active: true,
+          type: paletteHit.type,
+          gx: -1,
+          gy: -1,
+          valid: false,
+          affordable: paletteAffordable(paletteHit.type),
+          area: null,
+        };
+        updateHoverFromPointer(mouse.x, mouse.y);
+        refreshCursor();
+        return true;
       }
+      updateHoverFromPointer(mouse.x, mouse.y);
       return true;
     }
     if (e.button === 2){
-      e.preventDefault();
-      const mouse = window.mouse;
-      const pointer = pointerToCell(mouse?.x ?? 0, mouse?.y ?? 0);
+      mouse.right = true;
+      const pointer = pointerToCell(mouse.x, mouse.y);
       if (pointer && pointer.inside){
         removeBuilding(pointer.area, pointer.gx, pointer.gy);
       }
+      refreshCursor();
       return true;
     }
-    return false;
+    return Build.mode === 'editor';
   };
 
   Build.onMouseUp = function(e){
-    const stationUI = window.stationUI;
-    if (!stationUI || stationUI.tab !== 'build') return false;
+    if (Build.mode !== 'editor') return false;
+    const mouse = window.mouse;
     if (e.button === 0){
-      const wasDragging = stationUI.dragging;
-      if (stationUI.dragging) stationUI.dragging = false;
-      if (!wasDragging && window.mouse){
-        window.mouse.click = true;
+      if (mouse) mouse.left = false;
+      if (Build._drag.active){
+        const pointer = mouse ? pointerToCell(mouse.x, mouse.y) : null;
+        if (pointer && pointer.inside && Build._drag.valid && Build._drag.affordable){
+          placeBuilding(pointer.area, Build._drag.type, pointer.gx, pointer.gy);
+        }
+        Build._drag = { active: false, type: null, gx: -1, gy: -1, valid: false, affordable: false, area: null };
+        Build._hover = { inside: false, gx: -1, gy: -1, valid: false, affordable: false, area: null };
+        refreshCursor();
+        return true;
       }
-      if (window.mouse) window.mouse.left = false;
+      refreshCursor();
       return true;
     }
     if (e.button === 2){
-      if (window.mouse) window.mouse.right = false;
+      if (mouse) mouse.right = false;
       return true;
     }
     return false;
   };
 
   Build.onMouseMove = function(e){
-    const stationUI = window.stationUI;
-    if (!stationUI || stationUI.tab !== 'build') return false;
-    const mouse = window.mouse;
-    if (mouse){
-      updateHover(mouse.x, mouse.y);
+    if (!window.mouse) return false;
+    if (Build.mode !== 'editor'){
+      refreshCursor();
+      return false;
     }
-    return false;
+    updateHoverFromPointer(window.mouse.x, window.mouse.y);
+    refreshCursor();
+    return true;
   };
 
   Build.onContextMenu = function(e){
-    const stationUI = window.stationUI;
-    if (!stationUI || stationUI.tab !== 'build') return false;
+    if (Build.mode !== 'editor') return false;
     const mouse = window.mouse;
-    const pointer = pointerToCell(mouse?.x ?? 0, mouse?.y ?? 0);
+    const pointer = mouse ? pointerToCell(mouse.x, mouse.y) : null;
     if (pointer && pointer.inside && buildingAt(pointer.area, pointer.gx, pointer.gy)){
       e.preventDefault();
+      removeBuilding(pointer.area, pointer.gx, pointer.gy);
+      refreshCursor();
       return true;
     }
-    return false;
+    e.preventDefault();
+    return true;
   };
 
+  Build.ensureAreaForStation = ensureAreaForStation;
+  Build.recomputeArea = recomputeArea;
+  Build.canPlace = canPlace;
+  Build.canAfford = canAfford;
+  Build.placeBuilding = placeBuilding;
+  Build.removeBuilding = removeBuilding;
   Build.state = state;
 })();
