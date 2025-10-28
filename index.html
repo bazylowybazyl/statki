@@ -647,6 +647,10 @@ function leadTarget(shooter, shooterVel, target, speed){
 // =============== World / camera ===============
 const WORLD = { w: 240000, h: 160000 };
 const camera = {
+  x: 0,
+  y: 0,
+  followShip: true,
+  panSpeed: 9000,
   zoom: 1.0,
   defaultZoom: 1.0,
   altZoom: 0.7,
@@ -674,6 +678,24 @@ const camera = {
   if (!Number.isFinite(camera.y)) camera.y = fallbackY;
   if (typeof camera.followShip !== 'boolean') camera.followShip = true;
 })();
+
+const CAM_KEYS = Object.create(null);
+window.addEventListener('keydown',(e)=>{
+  CAM_KEYS[e.code] = true;
+  if (e.code === 'KeyF') {
+    camera.followShip = !camera.followShip;
+    if (camera.followShip === false) {
+      const sp = (window.ship && window.ship.pos) ? window.ship.pos : {x:camera.x||0,y:camera.y||0};
+      camera.x = Number.isFinite(camera.x) ? camera.x : sp.x;
+      camera.y = Number.isFinite(camera.y) ? camera.y : sp.y;
+    }
+  }
+  if (e.code === 'KeyR') {
+    const sp = (window.ship && window.ship.pos) ? window.ship.pos : {x:0,y:0};
+    camera.x = sp.x; camera.y = sp.y;
+  }
+});
+window.addEventListener('keyup',(e)=>{ CAM_KEYS[e.code] = false; });
 
 // Model widoku overlayu (ortho nad światem 2D)
 const overlayView = {
@@ -4057,6 +4079,18 @@ function loop(now){
     camera.shakeTime -= frame;
     if(camera.shakeTime <= 0) camera.shakeMag = 0;
   }
+  if (camera.followShip === false) {
+    const speed = (camera.panSpeed || 9000) * (1 / (camera.zoom || 1));
+    let dx = (CAM_KEYS['ArrowLeft']?-1:0) + (CAM_KEYS['ArrowRight']?1:0);
+    let dy = (CAM_KEYS['ArrowUp']?-1:0) + (CAM_KEYS['ArrowDown']?1:0);
+    if (dx || dy) {
+      const len = Math.hypot(dx,dy)||1; dx/=len; dy/=len;
+      camera.x += dx * speed * frame;
+      camera.y += dy * speed * frame;
+      camera.x = Math.max(0, Math.min(WORLD.w, camera.x));
+      camera.y = Math.max(0, Math.min(WORLD.h, camera.y));
+    }
+  }
   render(alpha, frame);
   if (overlay3D) {
     overlay3D.tick(frame);
@@ -4065,11 +4099,12 @@ function loop(now){
 }
 
 // =============== Render ===============
-function worldToScreen(x, y, cam){
+function worldToScreen(x,y,cam){
   const c = cam || window.camera || {};
   const zoom = (c.zoom ?? camera.zoom ?? 1);
-  const anchorX = (c.followShip === false && Number.isFinite(c.x)) ? c.x : (ship?.pos?.x ?? 0);
-  const anchorY = (c.followShip === false && Number.isFinite(c.y)) ? c.y : (ship?.pos?.y ?? 0);
+  const sp = (window.ship && window.ship.pos) ? window.ship.pos : null;
+  const anchorX = (c.followShip === false && Number.isFinite(c.x)) ? c.x : (sp && Number.isFinite(sp.x) ? sp.x : 0);
+  const anchorY = (c.followShip === false && Number.isFinite(c.y)) ? c.y : (sp && Number.isFinite(sp.y) ? sp.y : 0);
   return { x: (x - anchorX) * zoom + W/2, y: (y - anchorY) * zoom + H/2 };
 }
 
@@ -4087,86 +4122,8 @@ function glowCircle(ctx, x, y, r, color){
   ctx.restore();
 }
 
-function drawSunWithCorona(ctx, cam, t) {
-  const s = worldToScreen(SUN.x, SUN.y, cam);
-  const R = SUN.r * camera.zoom;
+function drawSunWithCorona(){ /* disabled in hotfix */ }
 
-  ctx.save();
-  ctx.translate(s.x, s.y);
-
-  // --- miękka poświata daleko w tle (nebula-like) ---
-  ctx.globalCompositeOperation = 'lighter';
-  const hazeR = R * SUN.corona.haze;
-  const gH = ctx.createRadialGradient(0,0, R*0.6, 0,0, hazeR);
-  gH.addColorStop(0, 'rgba(255,220,120,0.25)');
-  gH.addColorStop(1, 'rgba(50,80,140,0.00)');
-  ctx.fillStyle = gH;
-  ctx.beginPath(); ctx.arc(0,0,hazeR,0,Math.PI*2); ctx.fill();
-
-  // --- korona: promieniste igły z lekkim szumem i pulsem ---
-  const rays = SUN.corona.rays | 0;
-  const baseLen = R * (1.0 + SUN.corona.length);
-  const pulse = 1 + SUN.corona.pulse * Math.sin(t*1.6);
-  const jitterAmp = SUN.corona.jitter;
-
-  // deterministyczny „szum” bez biblioteki
-  function n1(i, k=1) {
-    const x = Math.sin((i*374761.0 + SUN.seed*1.123 + k)*0.0000131) * 43758.5453;
-    return x - Math.floor(x);
-  }
-
-  ctx.beginPath();
-  for (let i=0;i<rays;i++){
-    const a = (i / rays) * Math.PI*2;
-    const w = (Math.PI*2 / rays) * (0.6 + n1(i,2)*0.6);  // szerokość klina
-    const j = (n1(i) - 0.5) * 2 * jitterAmp;
-    const len = baseLen * (0.82 + 0.18*n1(i,3)) * pulse;
-    const r1 = R * (1.02 + 0.03*n1(i,4));
-    const r2 = len * (1 + j);
-
-    const aL = a - w*0.5, aR = a + w*0.5;
-    // mały klin (trójkąt) – od krawędzi tarczy na zewnątrz
-    ctx.moveTo(Math.cos(aL)*r1, Math.sin(aL)*r1);
-    ctx.lineTo(Math.cos(a)*r2,  Math.sin(a)*r2);
-    ctx.lineTo(Math.cos(aR)*r1, Math.sin(aR)*r1);
-  }
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(255,210,120,0.25)';
-  ctx.shadowColor = 'rgba(255,235,170,0.9)';
-  ctx.shadowBlur = Math.max(6, R*0.22);
-  ctx.fill();
-
-  // --- obwód korony (fresnel) ---
-  const fresR = R * (1.2 + 0.06*Math.sin(t*1.1));
-  const gF = ctx.createRadialGradient(0,0, fresR*0.7, 0,0, fresR);
-  gF.addColorStop(0, 'rgba(255,240,180,0)');
-  gF.addColorStop(1, 'rgba(255,235,170,0.32)');
-  ctx.fillStyle = gF;
-  ctx.beginPath(); ctx.arc(0,0, fresR, 0, Math.PI*2); ctx.fill();
-
-  // --- tarcza gwiazdy (żółta z „rimem”) ---
-  const g = ctx.createRadialGradient(0,0, R*0.1, 0,0, R);
-  g.addColorStop(0, SUN.color.core);
-  g.addColorStop(0.55, SUN.color.mid);
-  g.addColorStop(1, SUN.color.rim);
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.fillStyle = g;
-  ctx.beginPath(); ctx.arc(0,0,R,0,Math.PI*2); ctx.fill();
-
-  // delikatne „plamy” (granulacja) — kilka półprzezroczystych kół
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.fillStyle = 'rgba(200,90,0,0.06)';
-  for(let i=0;i<8;i++){
-    const a = (i*0.79 + t*0.15) % (Math.PI*2);
-    const rr = R*(0.12 + 0.15*n1(i,5));
-    const d  = R*(0.15 + 0.55*n1(i,6));
-    ctx.beginPath();
-    ctx.arc(Math.cos(a)*d, Math.sin(a)*d, rr, 0, Math.PI*2);
-    ctx.fill();
-  }
-
-  ctx.restore();
-}
 
 function drawStationShadow(ctx, st, cam){
   const s = worldToScreen(st.x, st.y, cam);
@@ -5212,6 +5169,18 @@ function render(alpha, frameDt){
   renderMissionJournal();
   renderMissionCompleteBanner();
   mouse.click=false;
+
+  function drawCameraBadge(){
+    const text = camera.followShip ? 'CAM: FOLLOW  (F: free)' : 'CAM: FREE  (F: follow, Arrows: pan, R: recenter)';
+    ctx.save(); ctx.resetTransform();
+    ctx.font = '13px monospace';
+    const wText = ctx.measureText(text).width, pad=8, w=wText+pad*2, h=24, x=16, y=H-h-16;
+    ctx.fillStyle='rgba(7,11,22,0.7)'; ctx.fillRect(x,y,w,h);
+    ctx.strokeStyle='rgba(59,130,246,0.55)'; ctx.strokeRect(x+0.5,y+0.5,w-1,h-1);
+    ctx.fillStyle='#dbe5ff'; ctx.fillText(text, x+pad, y+h/2+4-8);
+    ctx.restore();
+  }
+  drawCameraBadge();
 }
 
 function renderMissionCompleteBanner(){
@@ -5355,8 +5324,9 @@ function roundRectScreen(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arc
 
 function screenToWorld(sx, sy){
   const zoom = camera.zoom ?? 1;
-  const anchorX = (camera.followShip === false && Number.isFinite(camera.x)) ? camera.x : (ship?.pos?.x ?? 0);
-  const anchorY = (camera.followShip === false && Number.isFinite(camera.y)) ? camera.y : (ship?.pos?.y ?? 0);
+  const sp = (window.ship && window.ship.pos) ? window.ship.pos : null;
+  const anchorX = (camera.followShip === false && Number.isFinite(camera.x)) ? camera.x : (sp && Number.isFinite(sp.x) ? sp.x : 0);
+  const anchorY = (camera.followShip === false && Number.isFinite(camera.y)) ? camera.y : (sp && Number.isFinite(sp.y) ? sp.y : 0);
   return { x: anchorX + (sx - W/2)/zoom, y: anchorY + (sy - H/2)/zoom };
 }
 
