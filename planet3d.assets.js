@@ -173,7 +173,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.size = pixelSize || 64;
 
       this.canvas = document.createElement("canvas");
-      this.canvas.width = 256; this.canvas.height = 256;
+      this.canvas.width = 512; this.canvas.height = 512;
       this.ctx2d = this.canvas.getContext("2d");
       this._name = String((opts && (opts.name ?? opts.id)) ?? "").toLowerCase();
       if (!this._name || !TEX[this._name]) this._name = 'earth';
