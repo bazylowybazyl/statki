@@ -4978,7 +4978,7 @@ function render(alpha, frameDt){
     const s = worldToScreen(b.x, b.y, cam);
     if(b.type === 'rail'){
       const a = Math.atan2(b.vy, b.vx);
-      const lenPx = 28;
+      const lenPx = 28 * camera.zoom;
       const dx = Math.cos(a) * (lenPx*0.5);
       const dy = Math.sin(a) * (lenPx*0.5);
 
@@ -5000,7 +5000,7 @@ function render(alpha, frameDt){
       ctx.lineCap = 'butt';
     } else if(b.type === 'armata'){
       const a = Math.atan2(b.vy, b.vx);
-      const lenPx = 36;
+      const lenPx = 36 * camera.zoom;
       const dx = Math.cos(a) * (lenPx * 0.6);
       const dy = Math.sin(a) * (lenPx * 0.6);
 
