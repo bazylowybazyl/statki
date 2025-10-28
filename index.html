@@ -410,6 +410,7 @@ function getMainWeaponBehaviorForWeaponId(id){
 function updateMainWeaponBehavior(){
   const mainWeapons = Game.player.weapons?.[HP.MAIN] || [];
   let behavior = MAIN_WEAPON_BEHAVIOR.default;
+  let maxBarrels = Math.max(1, behavior.barrelsPerShot ?? MAIN_WEAPON_BEHAVIOR.default.barrelsPerShot);
   if(mainWeapons.length){
     for(const loadout of mainWeapons){
       const id = loadout?.weapon?.id;
@@ -418,6 +419,10 @@ function updateMainWeaponBehavior(){
       if((candidate.cooldown ?? 0) > (behavior.cooldown ?? 0)){
         behavior = candidate;
       }
+      const candidateBarrels = Math.max(1, candidate.barrelsPerShot ?? MAIN_WEAPON_BEHAVIOR.default.barrelsPerShot);
+      if(candidateBarrels > maxBarrels){
+        maxBarrels = candidateBarrels;
+      }
     }
   }
   rail.behaviorId = behavior.id || 'default';
@@ -425,7 +430,7 @@ function updateMainWeaponBehavior(){
   rail.shotGap = behavior.shotGap ?? MAIN_WEAPON_BEHAVIOR.default.shotGap;
   rail.burstGap = behavior.burstGap ?? MAIN_WEAPON_BEHAVIOR.default.burstGap;
   rail.burstsPerClick = behavior.burstsPerClick ?? MAIN_WEAPON_BEHAVIOR.default.burstsPerClick;
-  rail.barrelsPerShot = behavior.barrelsPerShot ?? MAIN_WEAPON_BEHAVIOR.default.barrelsPerShot;
+  rail.barrelsPerShot = maxBarrels;
 }
 
 function missileAmmoTotal(){
@@ -2965,15 +2970,27 @@ rebuildHardpointsForFrame();
 loadLoadout();
 
 function triggerRailVolley(){
-  if(!(Game.player.weapons?.[HP.MAIN]?.length)) return;
+  const mainLoadouts = Game.player.weapons?.[HP.MAIN] || [];
+  if(!mainLoadouts.length) return;
   if(rail.queue.length) return;
-  const start = rail.nextStart; rail.nextStart ^= 1;
-  const barrels = Math.max(1, rail.barrelsPerShot || 2);
-  const orderPair = barrels === 1 ? [0] : [start, 1 - start];
+  const turrets = [ship.turret, ship.turret2, ship.turret3, ship.turret4];
+  const activeCount = Math.min(mainLoadouts.length, turrets.length);
+  let maxBarrels = 1;
+  for(let i=0;i<activeCount;i++){
+    const loadout = mainLoadouts[i];
+    const behavior = getMainWeaponBehaviorForWeaponId(loadout?.weapon?.id);
+    const barrels = Math.max(1, behavior.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot);
+    if(barrels > maxBarrels) maxBarrels = barrels;
+  }
+  if(maxBarrels <= 0) maxBarrels = 1;
+  const start = rail.nextStart % maxBarrels;
+  rail.nextStart = (start + 1) % maxBarrels;
+  const order = [];
+  for(let i=0;i<maxBarrels;i++) order.push((start + i) % maxBarrels);
   for(let b=0;b<rail.burstsPerClick;b++){
-    const baseDelay = b * (orderPair.length * rail.shotGap + rail.burstGap);
-    for(let idx = 0; idx < orderPair.length; idx++){
-      rail.queue.push({ timer: baseDelay + idx * rail.shotGap, barrel: orderPair[idx] });
+    const baseDelay = b * (order.length * rail.shotGap + rail.burstGap);
+    for(let idx = 0; idx < order.length; idx++){
+      rail.queue.push({ timer: baseDelay + idx * rail.shotGap, barrel: order[idx] });
     }
   }
 }
@@ -2992,7 +3009,8 @@ function fireRailBarrel(barIndex){
     const behavior = getMainWeaponBehaviorForWeaponId(weaponData?.id);
     const projectile = behavior.projectile || BASE_MAIN_BEHAVIOR.projectile;
     const barrelsPerShot = Math.max(1, behavior.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot);
-    const normalizedIndex = Math.min(barIndex, barrelsPerShot - 1);
+    if(barIndex >= barrelsPerShot) continue;
+    const normalizedIndex = barrelsPerShot === 1 ? 0 : barIndex;
     const offsetFrac = barrelsPerShot === 1 ? 0 : (normalizedIndex / (barrelsPerShot - 1) - 0.5) * 2;
     const lateralOffset = (gap * 0.5) * offsetFrac;
     const damage = weaponData?.damage ?? weaponData?.dps ?? RAIL_DAMAGE;
