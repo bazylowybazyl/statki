@@ -151,13 +151,6 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
 
-window.addEventListener('resize', ()=>{
-  W = canvas.width = innerWidth;
-  H = canvas.height = innerHeight;
-  resizeOverlay3D();
-  initStars(true);
-});
-
 let mainScene3D = null;
 let planetScene3D = null;
 let planetStationsReady = false;
@@ -515,8 +508,6 @@ function loadLoadout(){
   if(typeof renderMechanic === 'function') renderMechanic();
 }
 
-rebuildHardpointsForFrame();
-loadLoadout();
 window.addEventListener('beforeunload', saveLoadout);
 
 function drawHardpointGizmos(ctx, worldPos){
@@ -694,6 +685,13 @@ const overlayView = {
 
 // Bezpieczna, odroczona inicjalizacja overlayu 3D
 let overlay3D = null;
+
+window.addEventListener('resize', ()=>{
+  W = canvas.width = innerWidth;
+  H = canvas.height = innerHeight;
+  resizeOverlay3D();
+  initStars(true);
+});
 
 function startOverlay3D() {
   const init = window.initOverlay3D;
@@ -2954,6 +2952,9 @@ const rail = {
   behaviorId: MAIN_WEAPON_BEHAVIOR.default.id,
 };
 let railTimer = 0;
+
+rebuildHardpointsForFrame();
+loadLoadout();
 
 function triggerRailVolley(){
   if(!(Game.player.weapons?.[HP.MAIN]?.length)) return;
@@ -6111,9 +6112,11 @@ setTimeout(startGame, 500);
 
   // ---- Inicjalne odczyty z gry -------------------------------------------
   function bootstrapFromGame(){
-    if (DevConfig.sunR == null) DevConfig.sunR = SUN.r;
+    const sun = window.SUN;
+    if (DevConfig.sunR == null && sun) DevConfig.sunR = sun.r;
     // domyślne per-planeta (key = name lub id)
-    for (const p of planets) {
+    const planetList = Array.isArray(window.planets) ? window.planets : [];
+    for (const p of planetList) {
       const key = (p.name || p.id || String(p.index)||'').toString().toLowerCase();
       const baseR = p.baseR ?? p.r;
       if (baseR != null && !DevConfig.planetRById[key]) DevConfig.planetRById[key] = baseR;
