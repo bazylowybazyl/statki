@@ -115,6 +115,7 @@
   import { initStations3D, updateStations3D, detachPlanetStations3D, drawStations3D } from "./src/3d/stations3D.js";
   import { initOverlay } from "./src/effects3d/overlay.js";
   import { createRailgunExplosionFactory } from "./src/effects3d/railgunExplosion.js";
+  import { createArmataImpactFactory } from "./src/effects3d/armataImpact.js";
   window.THREE = THREE;
   window.EffectComposer  = EffectComposer;
   window.RenderPass      = RenderPass;
@@ -135,6 +136,7 @@
   window.detachPlanetStations3D = detachPlanetStations3D;
   window.initOverlay3D = initOverlay;
   window.createRailgunExplosionFactory = createRailgunExplosionFactory;
+  window.createArmataImpactFactory = createArmataImpactFactory;
   // Nie modyfikujemy namespace'u modułu THREE (jest niemodyfikowalny).
   // Jeśli coś potrzebuje CopyShader globalnie, wystawiamy go przez window:
   window.CopyShader = CopyShader;
@@ -279,6 +281,7 @@ const HP = {
 const WEAPONS = {
   railgun_mk1:  { id:'railgun_mk1',  type:HP.MAIN,    name:'Railgun Mk I',  dps:40, energy:6,  ammo:null },
   railgun_mk2:  { id:'railgun_mk2',  type:HP.MAIN,    name:'Railgun Mk II', dps:60, energy:8,  ammo:null },
+  armata_mk1:   { id:'armata_mk1',   type:HP.MAIN,    name:'Armata Siege Cannon', damage:220, cooldown:1.8, energy:14, ammo:null },
   missile_rack: { id:'missile_rack', type:HP.MISSILE, name:'Missile Rack',  dps:0,  energy:2,  ammo:20 },
   ciws_mk1:     { id:'ciws_mk1',     type:HP.AUX,     name:'CIWS Mk I',     dps:12, energy:2,  ammo:null },
   laser_pd_mk1: { id:'laser_pd_mk1', type:HP.AUX,     name:'Helios PD Laser', dps:18, energy:3,  ammo:null },
@@ -331,7 +334,7 @@ function uid(){ return 'hp_'+Math.random().toString(36).slice(2,9); }
 
 const Game = window.Game || (window.Game={});
 Game.player = Game.player || {};
-const defaultInventory = ['railgun_mk1','railgun_mk2','missile_rack','ciws_mk1','laser_pd_mk1','fighter_bay','super_f'];
+const defaultInventory = ['railgun_mk1','railgun_mk2','armata_mk1','missile_rack','ciws_mk1','laser_pd_mk1','fighter_bay','super_f'];
 const existingInventory = Game.player.inventory ? Array.from(Game.player.inventory) : [];
 Game.player.inventory = new Set([...existingInventory, ...defaultInventory]);
 Game.player.shipFrame = Game.player.shipFrame || 'atlas';
@@ -403,6 +406,32 @@ function syncWeaponSystems(){
   Game.player.weapons = byType;
   rocketAmmoMax = missileAmmoCapacity();
   rocketAmmo = missileAmmoTotal();
+  updateMainWeaponBehavior();
+}
+
+function getMainWeaponBehaviorForWeaponId(id){
+  if(!id) return MAIN_WEAPON_BEHAVIOR.default;
+  return MAIN_WEAPON_BEHAVIOR[id] || MAIN_WEAPON_BEHAVIOR.default;
+}
+
+function updateMainWeaponBehavior(){
+  const mainWeapons = Game.player.weapons?.[HP.MAIN] || [];
+  let behavior = MAIN_WEAPON_BEHAVIOR.default;
+  if(mainWeapons.length){
+    for(const loadout of mainWeapons){
+      const id = loadout?.weapon?.id;
+      const candidate = getMainWeaponBehaviorForWeaponId(id);
+      if(!candidate) continue;
+      if((candidate.cooldown ?? 0) > (behavior.cooldown ?? 0)){
+        behavior = candidate;
+      }
+    }
+  }
+  rail.behaviorId = behavior.id || 'default';
+  rail.cdMax = behavior.cooldown ?? MAIN_WEAPON_BEHAVIOR.default.cooldown;
+  rail.shotGap = behavior.shotGap ?? MAIN_WEAPON_BEHAVIOR.default.shotGap;
+  rail.burstGap = behavior.burstGap ?? MAIN_WEAPON_BEHAVIOR.default.burstGap;
+  rail.burstsPerClick = behavior.burstsPerClick ?? MAIN_WEAPON_BEHAVIOR.default.burstsPerClick;
 }
 
 function missileAmmoTotal(){
@@ -668,16 +697,20 @@ let overlay3D = null;
 
 function startOverlay3D() {
   const init = window.initOverlay3D;
-  const factory = window.createRailgunExplosionFactory;
+  const railFactory = window.createRailgunExplosionFactory;
+  const armataFactory = window.createArmataImpactFactory;
   const host = document.getElementById('game-root');
 
   // Musimy mieć: API z modułu + host z DOM + overlayView z tego skryptu
-  if (!init || !factory || !host || typeof overlayView === 'undefined') return false;
+  if (!init || !railFactory || !host || typeof overlayView === 'undefined') return false;
 
   const ov = init({ host, getView: () => overlayView });
   overlay3D = ov;
   window.overlay3D = ov;
-  window.makeRailgunExplosion = factory(ov.scene);
+  window.makeRailgunExplosion = railFactory(ov.scene);
+  if (armataFactory) {
+    window.makeArmataImpact = armataFactory(ov.scene);
+  }
   resizeOverlay3D();
   return true;
 }
@@ -698,6 +731,13 @@ window.addEventListener('DOMContentLoaded', () => {
 function triggerRailgunExplosion3D(x, y, size = ship.h * 0.22){
   if (overlay3D && window.makeRailgunExplosion) {
     const fx = window.makeRailgunExplosion({ x, y, size });
+    overlay3D.spawn(fx);
+  }
+}
+
+function triggerArmataImpact3D(x, y, size = ship.h * 0.3){
+  if (overlay3D && window.makeArmataImpact) {
+    const fx = window.makeArmataImpact({ x, y, size });
     overlay3D.spawn(fx);
   }
 }
@@ -1532,6 +1572,84 @@ function spawnExplosionPlasma(x,y,scale=1){
 function spawnRailHitEffect(x,y,scale=1){
   // Tylko 3D (skalowane parametrem efektu)
   triggerRailgunExplosion3D(x, y, ship.h * 0.22 * scale);
+}
+
+function spawnArmataHitEffect(x, y, scale = 1){
+  triggerArmataImpact3D(x, y, ship.h * 0.3 * scale);
+  const count = Math.round(28 * scale);
+  for(let i=0;i<count;i++){
+    const a = Math.random() * Math.PI * 2;
+    const speed = 200 + Math.random() * 280;
+    const color = (Math.random() < 0.45) ? '#ffd2a0' : '#ff9f58';
+    spawnParticle(
+      { x, y },
+      { x: Math.cos(a) * speed, y: Math.sin(a) * speed },
+      0.22 + Math.random() * 0.18,
+      color,
+      2.2 + Math.random() * 2.6,
+      true
+    );
+  }
+  spawnParticle({ x, y }, { x: 0, y: 0 }, 0.12, '#fff2d0', 7.5 * scale, true);
+  spawnShockwave(x, y, { r: 14 * scale, maxR: 120 * scale, w: 3.2 * scale, maxLife: 0.42, color: 'rgba(255,170,90,' });
+}
+
+function spawnRailMuzzle(pos, dir, baseVel, scale = 1){
+  spawnParticle({ x: pos.x, y: pos.y }, { x: 0, y: 0 }, 0.1, '#bfe7ff', 6 * scale, true);
+  const angle = Math.atan2(dir.y, dir.x);
+  for(let i = 0; i < 5; i++){
+    const aa = angle + (Math.random() - 0.5) * 0.14;
+    const speed = 220 + Math.random() * 60;
+    spawnParticle(
+      { x: pos.x + Math.cos(aa) * 6 * scale, y: pos.y + Math.sin(aa) * 6 * scale },
+      { x: Math.cos(aa) * speed + baseVel.x * 0.2, y: Math.sin(aa) * speed + baseVel.y * 0.2 },
+      0.12,
+      '#bfe7ff',
+      1.6 * scale,
+      true
+    );
+  }
+}
+
+function spawnArmataMuzzle(pos, dir, baseVel, scale = 1){
+  const angle = Math.atan2(dir.y, dir.x);
+  spawnParticle(
+    { x: pos.x, y: pos.y },
+    { x: dir.x * 160 + baseVel.x * 0.12, y: dir.y * 160 + baseVel.y * 0.12 },
+    0.16,
+    '#ffd6a0',
+    9 * scale,
+    true
+  );
+  for(let i = 0; i < 10; i++){
+    const spread = (Math.random() - 0.5) * 0.38;
+    const aa = angle + spread;
+    const speed = 260 + Math.random() * 140;
+    const size = 2.6 + Math.random() * 2.8;
+    const life = 0.16 + Math.random() * 0.14;
+    const color = (Math.random() < 0.5) ? '#ffbe7a' : '#ffcfa0';
+    spawnParticle(
+      { x: pos.x + Math.cos(aa) * 8 * scale, y: pos.y + Math.sin(aa) * 8 * scale },
+      { x: Math.cos(aa) * speed + baseVel.x * 0.18, y: Math.sin(aa) * speed + baseVel.y * 0.18 },
+      life,
+      color,
+      size * scale,
+      true
+    );
+  }
+  for(let i = 0; i < 4; i++){
+    const aa = angle + (Math.random() - 0.5) * 0.25;
+    const speed = 120 + Math.random() * 60;
+    spawnParticle(
+      { x: pos.x + Math.cos(aa) * 4 * scale, y: pos.y + Math.sin(aa) * 4 * scale },
+      { x: Math.cos(aa) * speed + baseVel.x * 0.08, y: Math.sin(aa) * speed + baseVel.y * 0.08 },
+      0.3 + Math.random() * 0.18,
+      '#d76926',
+      1.8 * scale,
+      false
+    );
+  }
+  spawnShockwave(pos.x, pos.y, { r: 10 * scale, maxR: 80 * scale, w: 2.6 * scale, maxLife: 0.3, color: 'rgba(255,170,90,' });
 }
 function spawnDefaultHit(x,y,scale=1){
   for(let i=0;i<14*scale;i++){
@@ -2763,9 +2881,79 @@ function spawnFighter(){
 }
 
 // =============== Rail (2 lufy: serie A→B, A→B) ===============
-const rail = { cd:[0,0], cdMax:0.38, shotGap:0.07, burstGap:0.18, burstsPerClick:2, queue:[], nextStart:0 };
-let railTimer = 0;
 const RAIL_SPEED = 2600, RAIL_PEN = 3, RAIL_DAMAGE = 60;
+const BASE_MAIN_BEHAVIOR = {
+  id: 'default',
+  cooldown: 0.38,
+  burstsPerClick: 2,
+  shotGap: 0.07,
+  burstGap: 0.18,
+  recoilKick: 14,
+  recoilMax: 12,
+  muzzleFx: spawnRailMuzzle,
+  hitFx: spawnRailHitEffect,
+  projectile: {
+    type: 'rail',
+    speed: RAIL_SPEED,
+    life: 2.0,
+    radius: 4,
+    penetration: RAIL_PEN,
+    effectScale: 1.0,
+  },
+};
+
+function createMainWeaponBehavior(overrides = {}) {
+  const projectileOverrides = overrides.projectile || {};
+  const behavior = {
+    ...BASE_MAIN_BEHAVIOR,
+    ...overrides,
+    projectile: {
+      ...BASE_MAIN_BEHAVIOR.projectile,
+      ...projectileOverrides,
+    },
+    muzzleFx: overrides.muzzleFx || BASE_MAIN_BEHAVIOR.muzzleFx,
+    hitFx: overrides.hitFx || BASE_MAIN_BEHAVIOR.hitFx,
+  };
+  behavior.id = overrides.id || behavior.id;
+  return behavior;
+}
+
+const MAIN_WEAPON_BEHAVIOR = {
+  default: createMainWeaponBehavior(),
+  railgun_mk2: createMainWeaponBehavior({ id: 'railgun_mk2' }),
+  armata_mk1: createMainWeaponBehavior({
+    id: 'armata_mk1',
+    cooldown: 1.8,
+    burstsPerClick: 1,
+    shotGap: 0,
+    burstGap: 0.32,
+    recoilKick: 20,
+    recoilMax: 18,
+    muzzleFx: spawnArmataMuzzle,
+    hitFx: spawnArmataHitEffect,
+    projectile: {
+      type: 'armata',
+      speed: RAIL_SPEED * 0.78,
+      life: 2.6,
+      radius: 6,
+      penetration: 4,
+      effectScale: 1.4,
+    },
+  }),
+};
+MAIN_WEAPON_BEHAVIOR.railgun_mk1 = MAIN_WEAPON_BEHAVIOR.default;
+
+const rail = {
+  cd: [0, 0],
+  cdMax: MAIN_WEAPON_BEHAVIOR.default.cooldown,
+  shotGap: MAIN_WEAPON_BEHAVIOR.default.shotGap,
+  burstGap: MAIN_WEAPON_BEHAVIOR.default.burstGap,
+  burstsPerClick: MAIN_WEAPON_BEHAVIOR.default.burstsPerClick,
+  queue: [],
+  nextStart: 0,
+  behaviorId: MAIN_WEAPON_BEHAVIOR.default.id,
+};
+let railTimer = 0;
 
 function triggerRailVolley(){
   if(!(Game.player.weapons?.[HP.MAIN]?.length)) return;
@@ -2787,25 +2975,41 @@ function fireRailBarrel(barIndex){
   const sign = (barIndex===0) ? -1 : +1;
   const turrets = [ship.turret, ship.turret2, ship.turret3, ship.turret4];
   const activeCount = Math.min(mainWeapons.length, turrets.length);
+  let maxCooldown = 0;
   for(let i=0;i<activeCount;i++){
     const t = turrets[i];
     const weaponData = mainWeapons[i]?.weapon;
-    const damage = weaponData?.dps ?? RAIL_DAMAGE;
+    const behavior = getMainWeaponBehaviorForWeaponId(weaponData?.id);
+    const projectile = behavior.projectile || BASE_MAIN_BEHAVIOR.projectile;
+    const damage = weaponData?.damage ?? weaponData?.dps ?? RAIL_DAMAGE;
     const a = t.angle;
     const f = {x:Math.cos(a), y:Math.sin(a)};
     const p = {x:-Math.sin(a), y:Math.cos(a)};
     const off = rotate(t.offset, ship.angle);
     const px = ship.pos.x + off.x + f.x * forwardLen + p.x * (sign * gap/2);
     const py = ship.pos.y + off.y + f.y * forwardLen + p.y * (sign * gap/2);
-    bullets.push({ x:px, y:py, vx: f.x*RAIL_SPEED + ship.vel.x, vy: f.y*RAIL_SPEED + ship.vel.y, life: 2.0, r:4, owner:'player', damage:damage, penetration:RAIL_PEN, type:'rail' });
-    t.recoil = Math.min(t.recoil + t.recoilKick, t.recoilMax);
-    spawnParticle({x:px, y:py}, {x:0,y:0}, 0.10, '#bfe7ff', 6, true);
-    for(let i=0;i<5;i++){
-      const aa = a + (Math.random()-0.5)*0.14;
-      spawnParticle({x:px + Math.cos(aa)*6, y:py + Math.sin(aa)*6},{x:Math.cos(aa)*220 + ship.vel.x*0.2, y:Math.sin(aa)*220 + ship.vel.y*0.2},0.12,'#bfe7ff',1.6,true);
-    }
+    bullets.push({
+      x: px,
+      y: py,
+      vx: f.x * (projectile.speed ?? RAIL_SPEED) + ship.vel.x,
+      vy: f.y * (projectile.speed ?? RAIL_SPEED) + ship.vel.y,
+      life: projectile.life ?? 2.0,
+      r: projectile.radius ?? 4,
+      owner: 'player',
+      damage,
+      penetration: (projectile.penetration != null) ? projectile.penetration : RAIL_PEN,
+      type: projectile.type || 'rail',
+      weaponId: weaponData?.id,
+      effectScale: projectile.effectScale ?? 1.0,
+    });
+    const recoilKick = behavior.recoilKick ?? t.recoilKick;
+    const recoilMax = behavior.recoilMax ?? t.recoilMax;
+    t.recoil = Math.min(t.recoil + recoilKick, recoilMax);
+    const muzzleFx = behavior.muzzleFx || spawnRailMuzzle;
+    muzzleFx({ x: px, y: py }, f, ship.vel, projectile.effectScale ?? 1.0);
+    maxCooldown = Math.max(maxCooldown, behavior.cooldown ?? rail.cdMax);
   }
-  rail.cd[barIndex] = rail.cdMax;
+  rail.cd[barIndex] = maxCooldown || rail.cdMax;
 }
 
 // =============== CIWS (point-defence) ===============
@@ -3105,6 +3309,12 @@ function bulletsAndCollisionsStep(dt){
         }
         bullets.splice(i,1);
         continue;
+      } else if(b.type === 'armata'){
+        applyDamageToNPC(hitNPC, b.damage, 'armata');
+        spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
+        b.penetration = (b.penetration !== undefined) ? b.penetration - 1 : 1;
+        if(b.penetration <= 0){ bullets.splice(i,1); }
+        continue;
       } else if(b.type === 'rail'){
         applyDamageToNPC(hitNPC, b.damage, 'rail');
         spawnRailHitEffect(b.x, b.y, 1.0);
@@ -3145,7 +3355,13 @@ function bulletsAndCollisionsStep(dt){
             toast('Misja zakończona: +10000 cr');
           }
         }
-        spawnExplosionPlasma(b.x, b.y, 1.0);
+        if(b.type === 'armata'){
+          spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
+        } else if(b.type === 'rail'){
+          spawnRailHitEffect(b.x, b.y, 1.0);
+        } else {
+          spawnExplosionPlasma(b.x, b.y, 1.0);
+        }
         bullets.splice(i,1);
         break;
       }
@@ -4750,6 +4966,27 @@ function render(alpha, frameDt){
       ctx.lineWidth = 4 * camera.zoom;
       ctx.beginPath(); ctx.moveTo(s.x - dx*0.4, s.y - dy*0.4); ctx.lineTo(s.x + dx*0.9, s.y + dy*0.9); ctx.stroke();
       ctx.lineCap = 'butt';
+    } else if(b.type === 'armata'){
+      const a = Math.atan2(b.vy, b.vx);
+      const lenPx = 36;
+      const dx = Math.cos(a) * (lenPx * 0.6);
+      const dy = Math.sin(a) * (lenPx * 0.6);
+
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.shadowBlur = 30 * camera.zoom;
+      ctx.shadowColor = 'rgba(255,170,90,0.95)';
+      ctx.strokeStyle = 'rgba(255,190,120,0.75)';
+      ctx.lineWidth = 16 * camera.zoom;
+      ctx.beginPath(); ctx.moveTo(s.x - dx, s.y - dy); ctx.lineTo(s.x + dx, s.y + dy); ctx.stroke();
+      ctx.restore();
+
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = 'rgba(255,240,210,1.0)';
+      ctx.lineWidth = 6 * camera.zoom;
+      ctx.beginPath(); ctx.moveTo(s.x - dx*0.3, s.y - dy*0.3); ctx.lineTo(s.x + dx*1.1, s.y + dy*1.1); ctx.stroke();
+      ctx.restore();
     } else if(b.type === 'plasma'){
       const sp = worldToScreen(b.px, b.py, cam);
       ctx.save();
