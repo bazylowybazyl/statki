@@ -656,6 +656,7 @@ const camera = {
   shakeMag: 0,
   shakeTime: 0,
   shakeDur: 0,
+  lastFreeView: { x: 0, y: 0, zoom: 1 },
   addShake(mag, dur){ this.shakeMag = mag; this.shakeTime = dur; this.shakeDur = dur; }
 };
 
@@ -673,6 +674,9 @@ const camera = {
   if (!Number.isFinite(camera.x)) camera.x = fallbackX;
   if (!Number.isFinite(camera.y)) camera.y = fallbackY;
   if (typeof camera.followShip !== 'boolean') camera.followShip = true;
+  if (!camera.lastFreeView){
+    camera.lastFreeView = { x: camera.x, y: camera.y, zoom: camera.zoom ?? 1 };
+  }
 })();
 
 // Model widoku overlayu (ortho nad światem 2D)
@@ -1618,6 +1622,83 @@ function openStationUI(station){
   mouse.right = false;
 }
 
+const BUILD_INTERACT_RANGE = 600;
+
+function stationWithinBuildRange(st){
+  if(!st) return false;
+  const px = ship?.pos?.x ?? 0;
+  const py = ship?.pos?.y ?? 0;
+  const baseR = ((st.r ?? st.baseR) || 160) + BUILD_INTERACT_RANGE;
+  const dx = (st.x ?? 0) - px;
+  const dy = (st.y ?? 0) - py;
+  return Math.hypot(dx, dy) <= baseR;
+}
+
+function stationForBuildShortcut(){
+  if (stationUI.open && stationUI.station && stationWithinBuildRange(stationUI.station)){
+    return stationUI.station;
+  }
+  let best = null;
+  let bestDist = Infinity;
+  const px = ship?.pos?.x ?? 0;
+  const py = ship?.pos?.y ?? 0;
+  const list = Array.isArray(stations) ? stations : [];
+  for (const st of list){
+    if (!st) continue;
+    const baseR = ((st.r ?? st.baseR) || 160) + BUILD_INTERACT_RANGE;
+    const dx = (st.x ?? 0) - px;
+    const dy = (st.y ?? 0) - py;
+    const dist = Math.hypot(dx, dy);
+    if (dist <= baseR && dist < bestDist){
+      best = st;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+function tryEnterBuildMode(station){
+  if (typeof Build === 'undefined' || typeof Build.enterEditor !== 'function') return false;
+  const target = station || stationForBuildShortcut();
+  if (!target){
+    if (typeof toast === 'function') toast('Brak stacji w zasięgu budowy.');
+    return false;
+  }
+  if (!stationWithinBuildRange(target)){
+    if (typeof toast === 'function') toast('Oddalono się od stacji.');
+    return false;
+  }
+  Build.enterEditor(target);
+  if (stationUI.open){
+    stationUI.open = false;
+    stationUI.dragging = false;
+  }
+  return true;
+}
+
+function toggleCameraFollow(){
+  if (!camera) return;
+  if (typeof Build !== 'undefined' && Build.mode === 'editor') return;
+  const minZoom = Math.max(0.5, camera.minZoom || 0.5);
+  const maxZoom = Math.min(3.0, camera.maxZoom || 3.0);
+  if (camera.followShip === false){
+    camera.lastFreeView = { x: camera.x, y: camera.y, zoom: clamp(camera.zoom ?? 1, minZoom, maxZoom) };
+    camera.followShip = true;
+    return;
+  }
+  const fallbackX = ship?.pos?.x ?? camera.x ?? 0;
+  const fallbackY = ship?.pos?.y ?? camera.y ?? 0;
+  const saved = camera.lastFreeView || { x: fallbackX, y: fallbackY, zoom: camera.zoom ?? 1 };
+  camera.followShip = false;
+  camera.x = Number.isFinite(saved.x) ? saved.x : fallbackX;
+  camera.y = Number.isFinite(saved.y) ? saved.y : fallbackY;
+  camera.zoom = clamp(Number.isFinite(saved.zoom) ? saved.zoom : (camera.zoom ?? 1), minZoom, maxZoom);
+  camera.lastFreeView = { x: camera.x, y: camera.y, zoom: camera.zoom };
+  if (typeof Build !== 'undefined' && typeof Build.cancelCameraTween === 'function'){
+    Build.cancelCameraTween();
+  }
+}
+
 const hoverInfoState = {
   el: document.getElementById('hover-info'),
   title: document.querySelector('#hover-info .hover-title'),
@@ -1743,8 +1824,23 @@ window.addEventListener('keydown', (e)=>{
 });
 
 window.addEventListener('keydown', (e)=>{
-  if(e.key === 'Escape' && window.Build && Build.mode === 'editor'){
+  if(e.repeat) return;
+  if(e.code === 'Escape' && typeof Build !== 'undefined' && Build.mode === 'editor'){
     if (typeof Build.exitEditor === 'function') Build.exitEditor();
+    e.preventDefault();
+    return;
+  }
+  if(e.code === 'KeyB' && typeof Build !== 'undefined'){
+    if (Build.mode === 'editor'){
+      if (typeof Build.exitEditor === 'function') Build.exitEditor();
+    } else {
+      tryEnterBuildMode();
+    }
+    e.preventDefault();
+  }
+  if(e.code === 'KeyC'){
+    toggleCameraFollow();
+    e.preventDefault();
   }
 });
 
@@ -1775,7 +1871,48 @@ function renderStationUI(){
   if(stationUI.tab==='cantina')  renderCantinaTab();
   if(stationUI.tab==='hangar')   renderHangarTab();
   if(stationUI.tab==='mechanic') renderMechanicTab();
+  renderBuildShortcutButton();
   hudEndPanel();
+}
+
+function renderBuildShortcutButton(){
+  if (!stationUI.station) return;
+  const st = stationUI.station;
+  const btnW = 140;
+  const btnH = 30;
+  const margin = 24;
+  const x = stationUI.x + stationUI.w - btnW - margin;
+  const y = stationUI.y + stationUI.h - btnH - margin;
+  const over = mouse.x >= x && mouse.x <= x + btnW && mouse.y >= y && mouse.y <= y + btnH;
+  const inRange = stationWithinBuildRange(st);
+  const activeFill = over ? 'rgba(59,130,246,0.9)' : 'rgba(37,99,235,0.85)';
+  const disabledFill = 'rgba(71,85,105,0.7)';
+
+  ctx.save();
+  ctx.resetTransform();
+  ctx.fillStyle = inRange ? activeFill : disabledFill;
+  ctx.fillRect(x, y, btnW, btnH);
+  ctx.strokeStyle = inRange ? 'rgba(191,219,254,0.85)' : 'rgba(148,163,184,0.6)';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x + 0.75, y + 0.75, btnW - 1.5, btnH - 1.5);
+  ctx.fillStyle = inRange ? '#e2e8f0' : '#cbd5f5';
+  ctx.font = '600 13px Inter,system-ui,Segoe UI,Roboto,Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Budowa (B)', x + btnW / 2, y + btnH / 2);
+  ctx.restore();
+
+  if (inRange && over){
+    canvas.style.cursor = 'pointer';
+  }
+  if (over && mouse.click){
+    if (inRange){
+      tryEnterBuildMode(st);
+    } else if (typeof toast === 'function'){
+      toast('Oddalono się od stacji.');
+    }
+    mouse.click = false;
+  }
 }
 
 function setMechanicUIVisible(visible){
@@ -2205,15 +2342,43 @@ function triggerScanWave(){
 
 const mouse = { x: W/2, y: H/2, left:false, right:false, click:false, overCanvas:false };
 window.mouse = mouse;
+let isPanning = false;
+let panStart = null;
+let camStart = null;
+let panButton = null;
+let panMoved = false;
+
 canvas.addEventListener('mousemove', e=>{
   mouse.x = e.clientX; mouse.y = e.clientY;
   mouse.overCanvas = true;
-  if(typeof Build.onMouseMove === 'function') Build.onMouseMove(e);
+});
+
+window.addEventListener('mousemove', e=>{
+  mouse.x = e.clientX; mouse.y = e.clientY;
+
+  if (isPanning && camStart && panStart){
+    const dx = e.clientX - panStart.x;
+    const dy = e.clientY - panStart.y;
+    if (!panMoved && (Math.abs(dx) > 2 || Math.abs(dy) > 2)){
+      panMoved = true;
+    }
+    const invZoom = 1 / (camera.zoom || 1);
+    camera.x = camStart.x - dx * invZoom;
+    camera.y = camStart.y - dy * invZoom;
+    if (camera.followShip === false){
+      camera.lastFreeView = { x: camera.x, y: camera.y, zoom: camera.zoom };
+    }
+    e.preventDefault();
+  }
+
+  if(typeof Build !== 'undefined' && typeof Build.onMouseMove === 'function' && Build.onMouseMove(e)) return;
+
   if(stationUI.open && stationUI.dragging){
     stationUI.x = mouse.x - stationUI.dragDX;
     stationUI.y = mouse.y - stationUI.dragDY;
   }
 });
+
 canvas.addEventListener('mouseenter', ()=>{
   mouse.overCanvas = true;
 });
@@ -2222,13 +2387,37 @@ canvas.addEventListener('mouseleave', ()=>{
   mouse.left = false;
   mouse.right = false;
   mouse.click = false;
+  isPanning = false;
+  panStart = null;
+  panButton = null;
+  panMoved = false;
   scan.target = null;
   scan.scanned = null;
   scan.targetType = null;
   hideHoverInfo();
 });
 canvas.addEventListener('mousedown', e=>{
-  if(typeof Build.onMouseDown === 'function' && Build.onMouseDown(e)) return;
+  mouse.x = e.clientX; mouse.y = e.clientY;
+  mouse.overCanvas = true;
+  if(typeof Build.onMouseDown === 'function' && Build.onMouseDown(e)) { e.preventDefault(); return; }
+
+  const buildActive = typeof Build !== 'undefined' && Build.mode === 'editor';
+  const pointerOverUi = buildActive && typeof Build.isPointerOverUI === 'function' && Build.isPointerOverUI(mouse);
+  const draggingBuild = buildActive && typeof Build.isDragging === 'function' && Build.isDragging();
+  const canPan = !camera.followShip || buildActive;
+  if ((e.button === 1 || (e.button === 0 && e.altKey)) && canPan && !pointerOverUi && !draggingBuild){
+    if (typeof Build.cancelCameraTween === 'function') Build.cancelCameraTween();
+    isPanning = true;
+    panStart = { x: e.clientX, y: e.clientY };
+    camStart = {
+      x: Number.isFinite(camera.x) ? camera.x : (ship?.pos?.x ?? 0),
+      y: Number.isFinite(camera.y) ? camera.y : (ship?.pos?.y ?? 0)
+    };
+    panButton = e.button;
+    panMoved = false;
+    e.preventDefault();
+    return;
+  }
   if(e.button===0){
     if(stationUI.open){
       const inX = mouse.x >= stationUI.x && mouse.x <= stationUI.x + stationUI.w;
@@ -2258,10 +2447,33 @@ canvas.addEventListener('mousedown', e=>{
       rocketCooldown = ROCKET_FIRE_INTERVAL;
     }
   }
-  if(e.button===1){ e.preventDefault(); camera.zoom = Math.abs(camera.zoom - camera.defaultZoom) < 0.03 ? camera.altZoom : camera.defaultZoom; }
 });
-canvas.addEventListener('mouseup', e=>{
+window.addEventListener('mouseup', e=>{
+  mouse.x = e.clientX; mouse.y = e.clientY;
+  const endedPanButton = panButton;
+  const endedPanMoved = panMoved;
+  if (isPanning){
+    isPanning = false;
+  }
+  if (panButton !== null){
+    if (camera.followShip === false){
+      camera.lastFreeView = { x: camera.x, y: camera.y, zoom: camera.zoom };
+    }
+    panStart = null;
+    camStart = null;
+    panButton = null;
+    panMoved = false;
+  }
   if(typeof Build.onMouseUp === 'function' && Build.onMouseUp(e)) return;
+  if (e.button === 1 && endedPanButton === 1 && !endedPanMoved){
+    const minZoom = Math.max(0.5, camera.minZoom || 0.5);
+    const maxZoom = Math.min(3.0, camera.maxZoom || 3.0);
+    const targetZoom = Math.abs(camera.zoom - camera.defaultZoom) < 0.03 ? camera.altZoom : camera.defaultZoom;
+    camera.zoom = clamp(targetZoom, minZoom, maxZoom);
+    if (camera.followShip === false){
+      camera.lastFreeView = { x: camera.x, y: camera.y, zoom: camera.zoom };
+    }
+  }
   if(e.button===0){
     const wasDragging = stationUI.dragging;
     if(stationUI.dragging){
@@ -2283,15 +2495,48 @@ canvas.addEventListener('mouseup', e=>{
     mouse.right=false;
   }
 });
-canvas.addEventListener('contextmenu', e=>{
-  if(typeof Build.onContextMenu === 'function' && Build.onContextMenu(e)) return;
+
+window.addEventListener('contextmenu', e=>{
+  if(typeof Build !== 'undefined' && typeof Build.onContextMenu === 'function' && Build.onContextMenu(e)) return;
   e.preventDefault();
-});
+}, { capture: true });
+
 canvas.addEventListener('wheel', e=>{
   if (stationUI.open) return;
+  const buildActive = typeof Build !== 'undefined' && Build.mode === 'editor';
+  const pointerOverUi = buildActive && typeof Build.isPointerOverUI === 'function' && Build.isPointerOverUI(mouse);
+  const draggingBuild = buildActive && typeof Build.isDragging === 'function' && Build.isDragging();
+  if (pointerOverUi || draggingBuild){
+    e.preventDefault();
+    return;
+  }
+  const oldZoom = camera.zoom || 1;
+  const step = Math.exp(-e.deltaY * 0.0015);
+  const minZoom = Math.max(0.5, camera.minZoom || 0.5);
+  const maxZoom = Math.min(3.0, camera.maxZoom || 3.0);
+  const next = clamp(oldZoom * step, minZoom, maxZoom);
+  if (next === oldZoom){
+    e.preventDefault();
+    return;
+  }
+  if (typeof screenToWorld === 'function'){
+    const before = screenToWorld(e.clientX, e.clientY);
+    camera.zoom = next;
+    const after = screenToWorld(e.clientX, e.clientY);
+    if (camera.followShip === false){
+      camera.x += before.x - after.x;
+      camera.y += before.y - after.y;
+      camera.lastFreeView = { x: camera.x, y: camera.y, zoom: camera.zoom };
+    }
+  } else {
+    camera.zoom = next;
+  }
+  if (camera.followShip !== false){
+    const px = ship?.pos?.x ?? camera.x ?? 0;
+    const py = ship?.pos?.y ?? camera.y ?? 0;
+    camera.lastFreeView = { x: px, y: py, zoom: camera.zoom };
+  }
   e.preventDefault();
-  const f = 1 - e.deltaY * camera.wheelSpeed;
-  camera.zoom = clamp(camera.zoom * f, camera.minZoom, camera.maxZoom);
 }, {passive:false});
 
 const GAMEPAD = { enabled:true, dead:0.15, last:{} };

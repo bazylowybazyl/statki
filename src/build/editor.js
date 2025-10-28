@@ -116,12 +116,13 @@
   let lastEconResult = null;
 
   Build.mode = Build.mode || 'idle';
-  Build._camPrev = { x: 0, y: 0, zoom: 1 };
+  Build._camPrev = { x: 0, y: 0, zoom: 1, follow: true };
   Build._drag = { active: false, type: null, gx: -1, gy: -1, valid: false, affordable: false, area: null };
   Build._hover = { inside: false, gx: -1, gy: -1, valid: false, affordable: false, area: null };
   Build._paletteBoxes = [];
   Build._panelRect = null;
   Build._exitButtonRect = null;
+  Build._hudRect = null;
   Build._activeStation = Build._activeStation || null;
 
   const state = {
@@ -458,6 +459,14 @@
     return mouse.x >= rect.x && mouse.x <= rect.x + rect.w && mouse.y >= rect.y && mouse.y <= rect.y + rect.h;
   }
 
+  function isPointerOverUi(mouse){
+    const m = mouse || window.mouse;
+    if (!m) return false;
+    if (Build._exitButtonRect && isMouseOverRect(m, Build._exitButtonRect)) return true;
+    if (Build._hudRect && isMouseOverRect(m, Build._hudRect)) return true;
+    return Build._paletteBoxes.some(box => isMouseOverRect(m, box));
+  }
+
   function refreshCursor(){
     const canvas = window.canvas;
     if (!canvas) return;
@@ -487,7 +496,15 @@
     if (!st) return;
     Build._activeStation = st;
     const cam = window.camera || { x: st.x, y: st.y, zoom: 1 };
-    Build._camPrev = { x: cam.x || st.x || 0, y: cam.y || st.y || 0, zoom: cam.zoom || 1 };
+    Build._camPrev = {
+      x: Number.isFinite(cam.x) ? cam.x : (st.x || 0),
+      y: Number.isFinite(cam.y) ? cam.y : (st.y || 0),
+      zoom: Number.isFinite(cam.zoom) ? cam.zoom : 1,
+      follow: cam.followShip !== false,
+    };
+    if (window.camera){
+      camera.lastFreeView = { x: Build._camPrev.x, y: Build._camPrev.y, zoom: Build._camPrev.zoom };
+    }
     // PRZEŁĄCZ na free-camera (nie śledzimy statku)
     if (window.camera) camera.followShip = false;
     if (window.stationUI){
@@ -506,9 +523,14 @@
     Build.mode = 'editor';
     Build._drag = { active: false, type: null, gx: -1, gy: -1, valid: false, affordable: false, area: null };
     Build._hover = { inside: false, gx: -1, gy: -1, valid: false, affordable: false, area: null };
+    Build._paletteBoxes = [];
+    Build._panelRect = null;
+    Build._exitButtonRect = null;
+    Build._hudRect = null;
     const area = ensureAreaForStation(st);
     if (area) recomputeArea(area);
     Build.state = state;
+    refreshCursor();
   };
 
   Build.exitEditor = function(){
@@ -516,14 +538,15 @@
     const t = Build._camPrev;
     if (cam && t) tweenCameraTo(t, 250);
     // WRÓĆ do śledzenia statku
-    if (window.camera) camera.followShip = true;
+    if (window.camera) camera.followShip = t ? t.follow : true;
     Build._drag = { active: false, type: null, gx: -1, gy: -1, valid: false, affordable: false, area: null };
     Build._hover = { inside: false, gx: -1, gy: -1, valid: false, affordable: false, area: null };
-    Build.mode = 'idle';
-    Build._activeStation = null;
     Build._paletteBoxes = [];
     Build._panelRect = null;
     Build._exitButtonRect = null;
+    Build._hudRect = null;
+    Build.mode = 'idle';
+    Build._activeStation = null;
     Build.state = state;
     refreshCursor();
   };
@@ -673,7 +696,7 @@
     ctx.restore();
   }
 
-  function drawHud(ctx, station){
+  function drawHud(ctx, station, area){
     const mouse = window.mouse;
     const econ = window.__ECON;
     let credits = 0;
@@ -695,7 +718,7 @@
     ctx.font = '600 16px Inter,system-ui,Segoe UI,Roboto,Arial';
     const measured = ctx.measureText ? ctx.measureText(info) : null;
     const width = measured ? Math.max(180, measured.width + pad * 2) : 240;
-    const height = 64;
+    const height = 110;
     const x = anchor.x - width;
     const y = anchor.y - height / 2;
 
@@ -712,6 +735,24 @@
     ctx.fillStyle = '#9fb5ff';
     ctx.fillText(info, x + pad, y + pad + 18);
 
+    const res = area?.res || defaultRes();
+    const summary = area?.summary || { shipyards: 0 };
+    const energyOk = res.energyNet >= 0;
+    const wfOk = res.wfHave >= res.wfNeed;
+    const energyLine = `E net: ${res.energyNet >= 0 ? '+' : ''}${Math.round(res.energyNet)} MW`;
+    const wfLine = `WF: ${Math.round(res.wfHave)}/${Math.round(res.wfNeed)}`;
+    const storageLine = `Mag: M ${Math.round(res.metal)}/${Math.round(res.capM)}  G ${Math.round(res.gas)}/${Math.round(res.capG)}`;
+    const shipyardLine = `Stocznie: ${summary.shipyards || 0}`;
+
+    ctx.fillStyle = energyOk ? '#bef264' : '#fca5a5';
+    ctx.fillText(energyLine, x + pad, y + pad + 36);
+    ctx.fillStyle = wfOk ? '#bef264' : '#fca5a5';
+    ctx.fillText(wfLine, x + pad, y + pad + 52);
+    ctx.fillStyle = '#e0f2fe';
+    ctx.fillText(storageLine, x + pad, y + pad + 68);
+    ctx.fillStyle = '#e0f2fe';
+    ctx.fillText(shipyardLine, x + pad, y + pad + 84);
+
     const btnW = 120;
     const btnH = 28;
     const btnX = x + pad;
@@ -726,6 +767,7 @@
     ctx.fillText('Wyjdź (Esc)', btnX + btnW / 2, btnY + btnH / 2);
 
     Build._exitButtonRect = { x: btnX, y: btnY, w: btnW, h: btnH };
+    Build._hudRect = { x, y, w: width, h: height };
     ctx.restore();
   }
 
@@ -772,7 +814,7 @@
 
     drawPalette(ctx, panelX + margin, panelY + margin, innerWidth, paletteMetrics);
     drawGrid(ctx, area, topLeft, tilePx);
-    drawHud(ctx, station);
+    drawHud(ctx, station, area);
     refreshCursor();
   };
 
@@ -818,14 +860,20 @@
     const mouse = window.mouse;
     if (!mouse) return true;
     if (e.button === 0){
-      mouse.left = true;
       const exit = Build._exitButtonRect && isMouseOverRect(mouse, Build._exitButtonRect);
+      const paletteHit = Build._paletteBoxes.find(box => isMouseOverRect(mouse, box));
+      const hudHit = Build._hudRect && isMouseOverRect(mouse, Build._hudRect);
+      if (!exit && !paletteHit && e.altKey){
+        return false;
+      }
+      mouse.left = true;
       if (exit){
+        e.preventDefault();
         Build.exitEditor();
         return true;
       }
-      const paletteHit = Build._paletteBoxes.find(box => isMouseOverRect(mouse, box));
       if (paletteHit){
+        e.preventDefault();
         Build._drag = {
           active: true,
           type: paletteHit.type,
@@ -839,6 +887,12 @@
         refreshCursor();
         return true;
       }
+      if (hudHit){
+        e.preventDefault();
+        refreshCursor();
+        return true;
+      }
+      e.preventDefault();
       updateHoverFromPointer(mouse.x, mouse.y);
       return true;
     }
@@ -849,6 +903,7 @@
         removeBuilding(pointer.area, pointer.gx, pointer.gy);
       }
       refreshCursor();
+      e.preventDefault();
       return true;
     }
     return Build.mode === 'editor';
@@ -910,5 +965,8 @@
   Build.canAfford = canAfford;
   Build.placeBuilding = placeBuilding;
   Build.removeBuilding = removeBuilding;
+  Build.isPointerOverUI = isPointerOverUi;
+  Build.isDragging = function(){ return !!Build._drag.active; };
+  Build.cancelCameraTween = function(){ cameraTween = null; };
   Build.state = state;
 })();
