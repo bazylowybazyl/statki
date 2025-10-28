@@ -192,12 +192,20 @@
       if (type === 'terran') {
         const dayTex = new THREE.CanvasTexture(tex.day); dayTex.wrapS = THREE.RepeatWrapping;
         const nightTex = new THREE.CanvasTexture(tex.night); nightTex.wrapS = THREE.RepeatWrapping;
+        if (THREE.SRGBColorSpace) {
+          dayTex.colorSpace = THREE.SRGBColorSpace;
+          nightTex.colorSpace = THREE.SRGBColorSpace;
+        } else if (THREE.sRGBEncoding) {
+          dayTex.encoding = THREE.sRGBEncoding;
+          nightTex.encoding = THREE.sRGBEncoding;
+        }
         mat = new THREE.MeshStandardMaterial({
           map: dayTex,
           emissive: new THREE.Color(0xffffff),
           emissiveMap: nightTex,
-          emissiveIntensity: 0.8,
-          roughness: 1.0, metalness: 0.0,
+          emissiveIntensity: 1.0,
+          roughness: 0.95,
+          metalness: 0.0,
         });
       } else {
         const colors = {
@@ -214,15 +222,30 @@
       this.mesh = new THREE.Mesh(geom, mat);
       this.scene.add(this.mesh);
 
-      const key = new THREE.DirectionalLight(0xffffff, 1.0); key.position.set(2, 1, 2);
-      const fill = new THREE.AmbientLight(0x404040, 0.6);
-      this.scene.add(key, fill);
+      this.sunLight = new THREE.DirectionalLight(0xfff7d0, 1.35);
+      this.sunLight.position.set(2, 1, 1.5);
+      this.sunLight.target.position.set(0, 0, 0);
+      this.scene.add(this.sunLight);
+      this.scene.add(this.sunLight.target);
+
+      this.fillLight = new THREE.HemisphereLight(0x405070, 0x06070c, 0.35);
+      this.scene.add(this.fillLight);
+
+      this._sunDir = new THREE.Vector3();
     }
 
     render(dt) {
       if (!this.scene || !this.camera) return;
       const ts = typeof TIME_SCALE !== 'undefined' ? TIME_SCALE : 60;
       this.mesh.rotation.y += this.spin * dt * ts;
+
+      if (sun && this.body && this.sunLight) {
+        const dx = sun.x - this.body.x;
+        const dy = sun.y - this.body.y;
+        const len = Math.hypot(dx, dy) || 1;
+        this._sunDir.set(dx, dy, len * 0.35).normalize();
+        this.sunLight.position.copy(this._sunDir).multiplyScalar(5);
+      }
 
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r) return;
