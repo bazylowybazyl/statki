@@ -660,6 +660,25 @@ const camera = {
   addShake(mag, dur){ this.shakeMag = mag; this.shakeTime = dur; this.shakeDur = dur; }
 };
 
+// Hoisted overlay view to avoid TDZ in early resizeOverlay3D() calls
+var overlayView = window.overlayView || {
+  center:   { x: 0, y: 0 },
+  viewport: { w: innerWidth, h: innerHeight },
+  zoom:     (typeof camera?.zoom === 'number' ? camera.zoom : 1)
+};
+window.overlayView = overlayView;
+
+// Ensure SUN exists before bootstrap
+if (!('SUN' in window)) {
+  window.SUN = {
+    x: Math.floor(WORLD.w * 0.5),
+    y: Math.floor(WORLD.h * 0.5),
+    r: 4500,
+    color: '#FBBF24'
+  };
+}
+const SUN = window.SUN;
+
 // Free camera – kompatybilny init
 (function ensureFreeCamera(){
   if (!window.camera) {
@@ -668,7 +687,7 @@ const camera = {
     Object.assign(camera, window.camera);
     window.camera = camera;
   }
-  const shipPos = (typeof ship !== 'undefined' && ship && ship.pos) ? ship.pos : null;
+  const shipPos = (window.ship && window.ship.pos) ? window.ship.pos : null;
   const fallbackX = shipPos && Number.isFinite(shipPos.x) ? shipPos.x : 0;
   const fallbackY = shipPos && Number.isFinite(shipPos.y) ? shipPos.y : 0;
   if (!Number.isFinite(camera.x)) camera.x = fallbackX;
@@ -680,11 +699,10 @@ const camera = {
 })();
 
 // Model widoku overlayu (ortho nad światem 2D)
-const overlayView = {
-  center: { x: 0, y: 0 },
-  viewport: { w: innerWidth, h: innerHeight },
-  zoom: camera.zoom
-};
+overlayView.center   = { x: 0, y: 0 };
+overlayView.viewport = { w: innerWidth, h: innerHeight };
+overlayView.zoom     = camera.zoom;
+window.overlayView   = overlayView;
 
 // Bezpieczna, odroczona inicjalizacja overlayu 3D
 let overlay3D = null;
@@ -905,7 +923,10 @@ function initStars(reset=false){
 }
 
 // =============== Słońce, planety i stacje ===============
-const SUN = { x: WORLD.w/2, y: WORLD.h/2, r: 1000,
+Object.assign(SUN, {
+  x: WORLD.w/2,
+  y: WORLD.h/2,
+  r: 1000,
   color: {
     core:  '#ffe88a',   // jasno-żółty rdzeń
     mid:   '#ffbe3b',   // pomarańcz-żółć
@@ -919,7 +940,7 @@ const SUN = { x: WORLD.w/2, y: WORLD.h/2, r: 1000,
     haze:  2.8          // rozmiar miękkiej poświaty (×R)
   },
   seed: 93731
-};
+});
 window.SUN = SUN;
 
 // --- tryb: REALNY UKŁAD SŁONECZNY (domyślnie włączony) ---
@@ -1626,8 +1647,8 @@ const BUILD_INTERACT_RANGE = 600;
 
 function stationWithinBuildRange(st){
   if(!st) return false;
-  const px = ship?.pos?.x ?? 0;
-  const py = ship?.pos?.y ?? 0;
+  const px = window.ship?.pos?.x ?? 0;
+  const py = window.ship?.pos?.y ?? 0;
   const baseR = ((st.r ?? st.baseR) || 160) + BUILD_INTERACT_RANGE;
   const dx = (st.x ?? 0) - px;
   const dy = (st.y ?? 0) - py;
@@ -1640,8 +1661,8 @@ function stationForBuildShortcut(){
   }
   let best = null;
   let bestDist = Infinity;
-  const px = ship?.pos?.x ?? 0;
-  const py = ship?.pos?.y ?? 0;
+  const px = window.ship?.pos?.x ?? 0;
+  const py = window.ship?.pos?.y ?? 0;
   const list = Array.isArray(stations) ? stations : [];
   for (const st of list){
     if (!st) continue;
@@ -1686,8 +1707,8 @@ function toggleCameraFollow(){
     camera.followShip = true;
     return;
   }
-  const fallbackX = ship?.pos?.x ?? camera.x ?? 0;
-  const fallbackY = ship?.pos?.y ?? camera.y ?? 0;
+  const fallbackX = window.ship?.pos?.x ?? camera.x ?? 0;
+  const fallbackY = window.ship?.pos?.y ?? camera.y ?? 0;
   const saved = camera.lastFreeView || { x: fallbackX, y: fallbackY, zoom: camera.zoom ?? 1 };
   camera.followShip = false;
   camera.x = Number.isFinite(saved.x) ? saved.x : fallbackX;
