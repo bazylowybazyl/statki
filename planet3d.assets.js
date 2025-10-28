@@ -321,7 +321,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     constructor(pixelSize) {
       this.x = 0; this.y = 0; this.size = pixelSize || 512;
       this.canvas = document.createElement('canvas');
-      this.canvas.width = 256; this.canvas.height = 256;
+      this.canvas.width = 1024; this.canvas.height = 1024;
       this.ctx2d = this.canvas.getContext('2d');
       this._needsInit = true;
       this._initPromise = null;
