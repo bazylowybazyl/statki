@@ -244,7 +244,11 @@
         const dy = sun.y - this.body.y;
         const len = Math.hypot(dx, dy) || 1;
         this._sunDir.set(dx, dy, len * 0.35).normalize();
-        this.sunLight.position.copy(this._sunDir).multiplyScalar(5);
+        // DirectionalLight emituje z pozycji w stronę celu, dlatego ustawiamy ją
+        // po przeciwnej stronie planety niż słońce. Dzięki temu wektor
+        // (target - position) wskazuje z słońca na planetę, a oświetlenie zgadza
+        // się z faktyczną pozycją gwiazdy w świecie 2D.
+        this.sunLight.position.copy(this._sunDir).multiplyScalar(-5);
       }
 
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
