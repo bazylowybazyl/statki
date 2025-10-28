@@ -80,8 +80,8 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     const sunObj = (typeof window !== 'undefined' ? window.SUN : null) || { x: 0, y: 0 };
     const dx = (sunObj.x ?? 0) - planetWorldX;
     const dy = (sunObj.y ?? 0) - planetWorldY;
-    // (x,z) = (dx, dy), niewielkie podbicie w osi Y (up), by cienie były widoczne
-    const v = new THREE.Vector3(dx, 0.6, dy);
+    // (x, y_2D) -> (x, z = -y_2D); niewielkie podbicie w osi Y (up), by cienie były widoczne
+    const v = new THREE.Vector3(dx, 0.6, -dy);
     if (v.lengthSq() === 0) return;
     v.normalize().multiplyScalar(600);
     light.position.copy(v);
@@ -163,8 +163,8 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     const sx = (window.SUN?.x ?? 0) - worldX;
     const sy = (window.SUN?.y ?? 0) - worldY;
     const L = Math.hypot(sx, sy) || 1;
-    // Spójnie z world3d: mapujemy światowe Y na Three.js Z, a Y (up) lekko > 0 dla cieni
-    return { x: sx / L, y: 0.6, z: sy / L };
+    // Spójnie z world3d: mapujemy światowe Y na Three.js Z (odwrócone), a Y (up) lekko > 0 dla cieni
+    return { x: sx / L, y: 0.6, z: -sy / L };
   }
 
   class AssetPlanet3D {
