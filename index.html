@@ -425,6 +425,7 @@ function updateMainWeaponBehavior(){
   rail.shotGap = behavior.shotGap ?? MAIN_WEAPON_BEHAVIOR.default.shotGap;
   rail.burstGap = behavior.burstGap ?? MAIN_WEAPON_BEHAVIOR.default.burstGap;
   rail.burstsPerClick = behavior.burstsPerClick ?? MAIN_WEAPON_BEHAVIOR.default.burstsPerClick;
+  rail.barrelsPerShot = behavior.barrelsPerShot ?? MAIN_WEAPON_BEHAVIOR.default.barrelsPerShot;
 }
 
 function missileAmmoTotal(){
@@ -2880,6 +2881,8 @@ function spawnFighter(){
 
 // =============== Rail (2 lufy: serie A→B, A→B) ===============
 const RAIL_SPEED = 2600, RAIL_PEN = 3, RAIL_DAMAGE = 60;
+const ARMATA_SPLASH_RADIUS = 140;
+const ARMATA_SPLASH_FALLOFF_MIN = 0.2;
 const BASE_MAIN_BEHAVIOR = {
   id: 'default',
   cooldown: 0.38,
@@ -2888,6 +2891,7 @@ const BASE_MAIN_BEHAVIOR = {
   burstGap: 0.18,
   recoilKick: 14,
   recoilMax: 12,
+  barrelsPerShot: 2,
   muzzleFx: spawnRailMuzzle,
   hitFx: spawnRailHitEffect,
   projectile: {
@@ -2913,6 +2917,7 @@ function createMainWeaponBehavior(overrides = {}) {
     hitFx: overrides.hitFx || BASE_MAIN_BEHAVIOR.hitFx,
   };
   behavior.id = overrides.id || behavior.id;
+  behavior.barrelsPerShot = overrides.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot;
   return behavior;
 }
 
@@ -2927,6 +2932,7 @@ const MAIN_WEAPON_BEHAVIOR = {
     burstGap: 0.32,
     recoilKick: 20,
     recoilMax: 18,
+    barrelsPerShot: 1,
     muzzleFx: spawnArmataMuzzle,
     hitFx: spawnArmataHitEffect,
     projectile: {
@@ -2934,7 +2940,8 @@ const MAIN_WEAPON_BEHAVIOR = {
       speed: RAIL_SPEED * 0.78,
       life: 2.6,
       radius: 6,
-      penetration: 4,
+      penetration: 0,
+      explodeRadius: ARMATA_SPLASH_RADIUS,
       effectScale: 1.4,
     },
   }),
@@ -2947,6 +2954,7 @@ const rail = {
   shotGap: MAIN_WEAPON_BEHAVIOR.default.shotGap,
   burstGap: MAIN_WEAPON_BEHAVIOR.default.burstGap,
   burstsPerClick: MAIN_WEAPON_BEHAVIOR.default.burstsPerClick,
+  barrelsPerShot: MAIN_WEAPON_BEHAVIOR.default.barrelsPerShot,
   queue: [],
   nextStart: 0,
   behaviorId: MAIN_WEAPON_BEHAVIOR.default.id,
@@ -2960,11 +2968,13 @@ function triggerRailVolley(){
   if(!(Game.player.weapons?.[HP.MAIN]?.length)) return;
   if(rail.queue.length) return;
   const start = rail.nextStart; rail.nextStart ^= 1;
-  const orderPair = [start, 1-start];
+  const barrels = Math.max(1, rail.barrelsPerShot || 2);
+  const orderPair = barrels === 1 ? [0] : [start, 1 - start];
   for(let b=0;b<rail.burstsPerClick;b++){
-    const base = b*(rail.shotGap*2 + rail.burstGap);
-    rail.queue.push({ timer: base + 0*rail.shotGap, barrel: orderPair[0] });
-    rail.queue.push({ timer: base + 1*rail.shotGap, barrel: orderPair[1] });
+    const baseDelay = b * (orderPair.length * rail.shotGap + rail.burstGap);
+    for(let idx = 0; idx < orderPair.length; idx++){
+      rail.queue.push({ timer: baseDelay + idx * rail.shotGap, barrel: orderPair[idx] });
+    }
   }
 }
 function fireRailBarrel(barIndex){
@@ -2973,7 +2983,6 @@ function fireRailBarrel(barIndex){
   const spriteScale = ship.visual?.spriteScale || 1;
   const forwardLen = Math.min((ship.h * spriteScale) * 0.40, 52 * spriteScale); // było 0.36 i 46
   const gap = 10 * spriteScale;
-  const sign = (barIndex===0) ? -1 : +1;
   const turrets = [ship.turret, ship.turret2, ship.turret3, ship.turret4];
   const activeCount = Math.min(mainWeapons.length, turrets.length);
   let maxCooldown = 0;
@@ -2982,13 +2991,17 @@ function fireRailBarrel(barIndex){
     const weaponData = mainWeapons[i]?.weapon;
     const behavior = getMainWeaponBehaviorForWeaponId(weaponData?.id);
     const projectile = behavior.projectile || BASE_MAIN_BEHAVIOR.projectile;
+    const barrelsPerShot = Math.max(1, behavior.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot);
+    const normalizedIndex = Math.min(barIndex, barrelsPerShot - 1);
+    const offsetFrac = barrelsPerShot === 1 ? 0 : (normalizedIndex / (barrelsPerShot - 1) - 0.5) * 2;
+    const lateralOffset = (gap * 0.5) * offsetFrac;
     const damage = weaponData?.damage ?? weaponData?.dps ?? RAIL_DAMAGE;
     const a = t.angle;
     const f = {x:Math.cos(a), y:Math.sin(a)};
     const p = {x:-Math.sin(a), y:Math.cos(a)};
     const off = rotate(t.offset, ship.angle);
-    const px = ship.pos.x + off.x + f.x * forwardLen + p.x * (sign * gap/2);
-    const py = ship.pos.y + off.y + f.y * forwardLen + p.y * (sign * gap/2);
+    const px = ship.pos.x + off.x + f.x * forwardLen + p.x * lateralOffset;
+    const py = ship.pos.y + off.y + f.y * forwardLen + p.y * lateralOffset;
     bullets.push({
       x: px,
       y: py,
@@ -3002,6 +3015,7 @@ function fireRailBarrel(barIndex){
       type: projectile.type || 'rail',
       weaponId: weaponData?.id,
       effectScale: projectile.effectScale ?? 1.0,
+      explodeRadius: projectile.explodeRadius,
     });
     const recoilKick = behavior.recoilKick ?? t.recoilKick;
     const recoilMax = behavior.recoilMax ?? t.recoilMax;
@@ -3313,8 +3327,23 @@ function bulletsAndCollisionsStep(dt){
       } else if(b.type === 'armata'){
         applyDamageToNPC(hitNPC, b.damage, 'armata');
         spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
-        b.penetration = (b.penetration !== undefined) ? b.penetration - 1 : 1;
-        if(b.penetration <= 0){ bullets.splice(i,1); }
+        const radius = b.explodeRadius ?? ARMATA_SPLASH_RADIUS;
+        if(radius > 0){
+          for (const npc of npcs){
+            if (npc === hitNPC || npc.dead) continue;
+            if (b.owner === 'player' && npc.friendly) continue;
+            const d2 = Math.hypot(npc.x - b.x, npc.y - b.y);
+            if (d2 <= radius + npc.radius){
+              const falloff = 1 - Math.min(1, d2 / (radius + npc.radius));
+              const scaled = Math.max(ARMATA_SPLASH_FALLOFF_MIN, falloff);
+              const splashDmg = Math.round(b.damage * 0.6 * scaled);
+              if (splashDmg > 0){
+                applyDamageToNPC(npc, splashDmg, 'armata');
+              }
+            }
+          }
+        }
+        bullets.splice(i,1);
         continue;
       } else if(b.type === 'rail'){
         applyDamageToNPC(hitNPC, b.damage, 'rail');
@@ -3839,7 +3868,9 @@ function physicsStep(dt){
   // rail queue/cd
   rail.cd[0] = Math.max(0, rail.cd[0]-dt);
   rail.cd[1] = Math.max(0, rail.cd[1]-dt);
-  if (!stationUI.open && mouse.left  && rail.queue.length===0 && rail.cd[0]<=0 && rail.cd[1]<=0 && !warp.isBusy()) { triggerRailVolley(); }
+  const requiredBarrels = Math.max(1, rail.barrelsPerShot || 2);
+  const secondaryReady = requiredBarrels < 2 || rail.cd[1] <= 0;
+  if (!stationUI.open && mouse.left  && rail.queue.length===0 && rail.cd[0]<=0 && secondaryReady && !warp.isBusy()) { triggerRailVolley(); }
   for(const q of rail.queue) q.timer -= dt;
   let firedSomething = true;
   while(firedSomething){
@@ -3854,7 +3885,7 @@ function physicsStep(dt){
       }
     }
   }
-  railTimer = Math.min(rail.cd[0], rail.cd[1]);
+  railTimer = (requiredBarrels > 1) ? Math.min(rail.cd[0], rail.cd[1]) : rail.cd[0];
 
   ship.special.cooldownTimer = Math.max(0, ship.special.cooldownTimer - dt);
   if(ship.shield.regenTimer > 0) ship.shield.regenTimer -= dt;
@@ -5318,18 +5349,47 @@ function render(alpha, frameDt){
     { t: ship.turret3, ang: interpTurretAngle3 },
     { t: ship.turret4, ang: interpTurretAngle4 }
   ];
-  for(const {t, ang} of turrets){
+  const mainWeaponLoadouts = Game.player.weapons?.[HP.MAIN] || [];
+  turrets.forEach(({ t, ang }, index) => {
     ctx.save();
     ctx.translate(t.offset.x, t.offset.y);
     ctx.rotate(ang - interpAngle);
     const recoil = t.recoil * spriteScale;
-    ctx.fillStyle = '#9ab7ff'; roundRect(ctx, -baseW/2, -baseH/2, baseW, baseH, 5 * spriteScale); ctx.fill();
-    ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(30,50,90,0.45)'; ctx.stroke();
-    ctx.fillStyle = '#c0c0c0';
-    roundRect(ctx, 6*spriteScale - recoil, -gap/2 - barrelH/2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
-    roundRect(ctx, 6*spriteScale - recoil,  gap/2 - barrelH/2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
+    const loadout = mainWeaponLoadouts[index];
+    const behavior = getMainWeaponBehaviorForWeaponId(loadout?.weapon?.id);
+    const barrelsPerShot = Math.max(1, behavior.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot);
+
+    if(barrelsPerShot === 1){
+      const housingW = 20 * spriteScale;
+      const housingH = 30 * spriteScale;
+      const barrelL = Math.max(20 * spriteScale, Math.round(visualH * 0.22));
+      const barrelThickness = 8 * spriteScale;
+      ctx.fillStyle = '#7f8fb7';
+      roundRect(ctx, -housingW/2, -housingH/2, housingW, housingH, 6 * spriteScale); ctx.fill();
+      ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(24,38,68,0.55)'; ctx.stroke();
+      ctx.fillStyle = '#aebce0';
+      roundRect(ctx, -housingW/2 + 3 * spriteScale, -housingH/2 + 4 * spriteScale, housingW - 6 * spriteScale, housingH - 8 * spriteScale, 5 * spriteScale); ctx.fill();
+      ctx.fillStyle = 'rgba(255,180,110,0.8)';
+      roundRect(ctx, -housingW/2 + 2.5 * spriteScale, -2 * spriteScale, housingW * 0.42, 4 * spriteScale, 2 * spriteScale); ctx.fill();
+      ctx.strokeStyle = 'rgba(24,38,68,0.55)';
+      ctx.fillStyle = '#d9dde9';
+      roundRect(ctx, 8 * spriteScale - recoil, -barrelThickness/2, barrelL, barrelThickness, 3 * spriteScale); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#f0b97a';
+      ctx.beginPath();
+      ctx.moveTo(8 * spriteScale - recoil + barrelL, -barrelThickness/2);
+      ctx.lineTo(8 * spriteScale - recoil + barrelL + 6 * spriteScale, 0);
+      ctx.lineTo(8 * spriteScale - recoil + barrelL, barrelThickness/2);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      ctx.fillStyle = '#9ab7ff'; roundRect(ctx, -baseW/2, -baseH/2, baseW, baseH, 5 * spriteScale); ctx.fill();
+      ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(30,50,90,0.45)'; ctx.stroke();
+      ctx.fillStyle = '#c0c0c0';
+      roundRect(ctx, 6*spriteScale - recoil, -gap/2 - barrelH/2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
+      roundRect(ctx, 6*spriteScale - recoil,  gap/2 - barrelH/2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
+    }
     ctx.restore();
-  }
+  });
   ctx.restore(); // ship
 
   // scan arrows pointing to stations
@@ -5474,7 +5534,9 @@ function render(alpha, frameDt){
     const fullyCharged = boost.fuel >= boost.fuelMax - 0.01;
     const boostText = boosting ? 'ACTIVE' : (fullyCharged ? 'READY' : 'REFILLING');
     ctx.fillText(`Boost: ${boostText} (${boost.fuel.toFixed(1)}/${boost.fuelMax})`, 12, H-44);
-    const railTimerHUD = Math.min(rail.cd[0], rail.cd[1]);
+    const railTimerHUD = (Math.max(1, rail.barrelsPerShot || 2) > 1)
+      ? Math.min(rail.cd[0], rail.cd[1])
+      : rail.cd[0];
     ctx.fillText(`Rail: ${railTimerHUD>0?railTimerHUD.toFixed(2)+'s':'READY'}  Special: ${ship.special.cooldownTimer>0?ship.special.cooldownTimer.toFixed(1)+'s':'READY'}`, 12, H-28);
 
     // rocket ammo
