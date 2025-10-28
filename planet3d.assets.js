@@ -81,7 +81,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     const dx = (sunObj.x ?? 0) - planetWorldX;
     const dy = (sunObj.y ?? 0) - planetWorldY;
     // (x, y_2D) -> (x, z = -y_2D); niewielkie podbicie w osi Y (up), by cienie były widoczne
-    const v = new THREE.Vector3(dx, 0.6, dy);
+    const v = new THREE.Vector3(dx, 0.6, -dy);
     if (v.lengthSq() === 0) return;
     v.normalize().multiplyScalar(600);
     light.position.copy(v);
