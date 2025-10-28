@@ -13,7 +13,7 @@ let activeScene = null;           // = ownScene
 let sharedRendererWarned = false;
 const DEFAULT_STATION_SPRITE_SIZE = 512;
 const DEFAULT_STATION_SPRITE_FRAME = 1.25;
-const MIN_SPRITE_RENDER_INTERVAL = 180; // ms
+const MIN_SPRITE_RENDER_INTERVAL = 0; // ms
 const FRAME_EPSILON = 0.001;
 
 function getStationSpriteSize() {
