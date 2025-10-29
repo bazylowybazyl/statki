@@ -56,3 +56,7 @@ export function setBgOptions(partial){
 export function setBgSeed(seed){
   opts.seed = String(seed);
 }
+
+export function getBackgroundCanvas(){
+  return off;
+}
