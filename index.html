@@ -675,6 +675,7 @@ const camera = {
   minZoom: 0.12,
   maxZoom: 3.2,
   wheelSpeed: 0.002,
+  manualZoom: false,
   shakeMag: 0,
   shakeTime: 0,
   shakeDur: 0,
@@ -707,6 +708,7 @@ const camera = {
     this.mode = 'ship';
     this.focusStation = null;
     this.targetZoom = this.defaultZoom;
+    this.manualZoom = false;
     this.focusArrived = false;
     this.lastPointerX = null;
     this.lastPointerY = null;
@@ -717,6 +719,7 @@ const camera = {
   },
   beginTransition(x, y, zoom, duration = 0.8, onComplete){
     const targetZoom = clamp(zoom, this.minZoom, this.maxZoom);
+    this.manualZoom = false;
     this.transition = {
       kind: this.mode,
       startX: this.x,
@@ -753,6 +756,7 @@ const camera = {
       this.focusStation = null;
       this.mode = 'ship';
       this.focusArrived = false;
+      this.manualZoom = false;
       this.targetZoom = this.defaultZoom;
       this.targetX = ship.pos.x;
       this.targetY = ship.pos.y;
@@ -788,7 +792,7 @@ function updateCameraTarget(dt){
   if(camera.mode === 'ship'){
     camera.targetX = ship.pos.x;
     camera.targetY = ship.pos.y;
-    if(!camera.transition) camera.targetZoom = camera.defaultZoom;
+    if(!camera.transition && !camera.manualZoom) camera.targetZoom = camera.defaultZoom;
   } else if(camera.mode === 'focus'){
     const st = camera.focusStation;
     if(st){
@@ -2629,7 +2633,13 @@ canvas.addEventListener('mousedown', e=>{
       rocketCooldown = ROCKET_FIRE_INTERVAL;
     }
   }
-  if(e.button===1){ e.preventDefault(); camera.zoom = Math.abs(camera.zoom - camera.defaultZoom) < 0.03 ? camera.altZoom : camera.defaultZoom; }
+  if(e.button===1){
+    e.preventDefault();
+    camera.zoom = Math.abs(camera.zoom - camera.defaultZoom) < 0.03 ? camera.altZoom : camera.defaultZoom;
+    camera.targetZoom = camera.zoom;
+    camera.manualZoom = true;
+    if(camera.transition && camera.transition.kind === 'ship') camera.transition = null;
+  }
 });
 canvas.addEventListener('mouseup', e=>{
   if(e.button===0){
@@ -2659,6 +2669,9 @@ canvas.addEventListener('wheel', e=>{
   e.preventDefault();
   const f = 1 - e.deltaY * camera.wheelSpeed;
   camera.zoom = clamp(camera.zoom * f, camera.minZoom, camera.maxZoom);
+  camera.targetZoom = camera.zoom;
+  camera.manualZoom = true;
+  if(camera.transition && camera.transition.kind === 'ship') camera.transition = null;
 }, {passive:false});
 
 const GAMEPAD = { enabled:true, dead:0.15, last:{} };
