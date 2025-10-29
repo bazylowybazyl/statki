@@ -101,6 +101,7 @@
   }
 }
 </script>
+<script src="https://unpkg.com/regl/dist/regl.min.js"></script>
 <script type="module">
   import * as THREE from "three";
   import { EffectComposer }  from "three/addons/postprocessing/EffectComposer.js";
@@ -116,6 +117,7 @@
   import { initOverlay } from "./src/effects3d/overlay.js";
   import { createRailgunExplosionFactory } from "./src/effects3d/railgunExplosion.js";
   import { createArmataImpactFactory } from "./src/effects3d/armataImpact.js";
+  import { initSpaceBg, drawSpaceBg, resizeSpaceBg, setBgOptions, setBgSeed } from "./src/lib/space2d/tyroBackground.js";
   window.THREE = THREE;
   window.EffectComposer  = EffectComposer;
   window.RenderPass      = RenderPass;
@@ -140,6 +142,13 @@
   // Nie modyfikujemy namespace'u modułu THREE (jest niemodyfikowalny).
   // Jeśli coś potrzebuje CopyShader globalnie, wystawiamy go przez window:
   window.CopyShader = CopyShader;
+  window.Space2DBackground = {
+    initSpaceBg,
+    drawSpaceBg,
+    resizeSpaceBg,
+    setBgOptions,
+    setBgSeed
+  };
 
 </script>
 <!-- przełącznik: aktywuj assetowy renderer planet (klasyczny skrypt, aby globalne API było gotowe zanim ruszy pętla gry) -->
@@ -150,6 +159,19 @@
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
+
+const spaceBg = window.Space2DBackground || null;
+if (spaceBg) {
+  spaceBg.setBgOptions({
+    shortScale: true,
+    renderSun: false,
+    renderNebulae: true,
+    renderStars: true,
+    renderPointStars: true
+  });
+  spaceBg.initSpaceBg(String(window.SUN?.seed ?? 'statki'));
+  spaceBg.resizeSpaceBg(W, H);
+}
 
 let mainScene3D = null;
 let planetScene3D = null;
@@ -852,6 +874,9 @@ let overlay3D = null;
 window.addEventListener('resize', ()=>{
   W = canvas.width = innerWidth;
   H = canvas.height = innerHeight;
+  if (spaceBg) {
+    spaceBg.resizeSpaceBg(innerWidth, innerHeight);
+  }
   if(camera.mode === 'focus' && camera.focusStation){
     const target = computeStationFocusTarget(camera.focusStation);
     camera.focusZoom = target.zoom;
@@ -5218,6 +5243,9 @@ function render(alpha, frameDt){
 
   // Czyścimy ekran
   ctx.clearRect(0,0,W,H);
+  if (spaceBg) {
+    spaceBg.drawSpaceBg(ctx);
+  }
   ensurePlanetStationsInit(stations);
   if (window.updatePlanets3D) updatePlanets3D(frameDt);
   // najpierw zaktualizuj pozycje stacji 3D...

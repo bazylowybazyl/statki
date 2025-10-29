@@ -1,18 +1,17 @@
 "use strict";
 
-const REGL = require('regl');
-
-import * as pointStars from './point-stars';
-import * as star from './star';
-import * as nebula from './nebula';
-import * as copy from './copy';
-import * as random from './random';
+import createREGL from './regl.js';
+import * as pointStars from './point-stars.js';
+import * as star from './star.js';
+import * as nebula from './nebula.js';
+import * as copy from './copy.js';
+import * as random from './random.js';
 
 export default class Scene {
 
   constructor(canvas) {
     this.canvas = canvas;
-    let regl = this.regl = REGL({ canvas: this.canvas });
+    let regl = this.regl = createREGL({ canvas: this.canvas });
     this.pointStarTexture = regl.texture();
     this.ping = regl.framebuffer({color: regl.texture(), depth: false, stencil: false, depthStencil: false});
     this.pong = regl.framebuffer({color: regl.texture(), depth: false, stencil: false, depthStencil: false});

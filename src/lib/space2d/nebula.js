@@ -1,12 +1,14 @@
 "use strict";
 
-const vec2 = require('gl-vec2');
+import createREGL from './regl.js';
+import * as vec2 from './vec2.js';
 
-export function generateNoiseTexture(regl, rng, size) {
-  let l = size * size * 2;
-  let array = new Uint8Array(l);
-  for (let i = 0; i < l; i++) {
-    let r = vec2.random([]);
+export function generateNoiseTexture(regl, rng, size){
+  const l = size * size * 2;
+  const array = new Uint8Array(l);
+  const randomFunc = rng && typeof rng.random === 'function' ? rng.random.bind(rng) : null;
+  for (let i = 0; i < l; i++){
+    const r = vec2.random(randomFunc);
     array[i * 2 + 0] = Math.round(0.5 * (1.0 + r[0]) * 255);
     array[i * 2 + 1] = Math.round(0.5 * (1.0 + r[1]) * 255);
   }
