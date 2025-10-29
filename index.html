@@ -515,8 +515,8 @@ window.addEventListener('beforeunload', saveLoadout);
 function drawHardpointGizmos(ctx, worldPos){
   if(!window.DEBUG_DRAW_HARDPOINTS) return;
   ctx.save();
-  const screenX = (worldPos.x - ship.pos.x) * camera.zoom + W/2;
-  const screenY = (worldPos.y - ship.pos.y) * camera.zoom + H/2;
+  const screenX = (worldPos.x - camera.x) * camera.zoom + W/2;
+  const screenY = (worldPos.y - camera.y) * camera.zoom + H/2;
   ctx.translate(screenX, screenY);
   for (const h of Game.player.hardpoints){
     ctx.beginPath();
@@ -666,6 +666,8 @@ function leadTarget(shooter, shooterVel, target, speed){
 // =============== World / camera ===============
 const WORLD = { w: 240000, h: 160000 };
 const camera = {
+  x: WORLD.w / 2,
+  y: WORLD.h / 2,
   zoom: 1.0,
   defaultZoom: 1.0,
   altZoom: 0.7,
@@ -675,7 +677,47 @@ const camera = {
   shakeMag: 0,
   shakeTime: 0,
   shakeDur: 0,
-  addShake(mag, dur){ this.shakeMag = mag; this.shakeTime = dur; this.shakeDur = dur; }
+  mode: 'ship',
+  focusStation: null,
+  freePanSpeed: 1,
+  lastPointerX: null,
+  lastPointerY: null,
+  addShake(mag, dur){ this.shakeMag = mag; this.shakeTime = dur; this.shakeDur = dur; },
+  enterFreeMode(){
+    this.mode = 'free';
+    this.focusStation = null;
+    this.x = ship.pos.x;
+    this.y = ship.pos.y;
+    this.lastPointerX = null;
+    this.lastPointerY = null;
+  },
+  exitFreeMode(){
+    this.mode = 'ship';
+    this.focusStation = null;
+    this.lastPointerX = null;
+    this.lastPointerY = null;
+  },
+  toggleFreeMode(){
+    if(this.mode === 'free') this.exitFreeMode();
+    else this.enterFreeMode();
+  },
+  focusOnStation(station){
+    if(!station) return;
+    this.focusStation = station;
+    this.mode = 'focus';
+    this.x = station.x;
+    this.y = station.y;
+    this.lastPointerX = null;
+    this.lastPointerY = null;
+  },
+  clearFocus(){
+    if(this.mode === 'focus'){
+      this.focusStation = null;
+      this.mode = 'ship';
+      this.lastPointerX = null;
+      this.lastPointerY = null;
+    }
+  }
 };
 
 // Model widoku overlayu (ortho nad światem 2D)
@@ -684,6 +726,23 @@ const overlayView = {
   viewport: { w: innerWidth, h: innerHeight },
   zoom: camera.zoom
 };
+
+function updateCameraTarget(){
+  if(camera.mode === 'ship'){
+    camera.x = ship.pos.x;
+    camera.y = ship.pos.y;
+  } else if(camera.mode === 'focus'){
+    const st = camera.focusStation;
+    if(st){
+      camera.x = st.x;
+      camera.y = st.y;
+    } else {
+      camera.clearFocus();
+      camera.x = ship.pos.x;
+      camera.y = ship.pos.y;
+    }
+  }
+}
 
 // Bezpieczna, odroczona inicjalizacja overlayu 3D
 let overlay3D = null;
@@ -1714,6 +1773,15 @@ function openStationUI(station){
   stationUI.dragging = false;
   mouse.left = false;
   mouse.right = false;
+  camera.focusOnStation(station);
+}
+
+function closeStationUI(){
+  if(!stationUI.open) return;
+  stationUI.open = false;
+  stationUI.station = null;
+  stationUI.dragging = false;
+  camera.clearFocus();
 }
 
 const hoverInfoState = {
@@ -1830,7 +1898,7 @@ function updateHoverInfo(target, type){
 
 window.addEventListener('keydown', (e)=>{
   if(stationUI.open){
-    if(e.code==='Escape'){ stationUI.open=false; stationUI.station=null; stationUI.dragging=false; }
+    if(e.code==='Escape'){ closeStationUI(); return; }
     if(e.code==='Digit1') stationUI.tab='upgrades';
     if(e.code==='Digit2') stationUI.tab='trade';
     if(e.code==='Digit3') stationUI.tab='cantina';
@@ -2205,6 +2273,9 @@ window.addEventListener('keydown', e=>{
   keys[k] = true;
   if(k === 'm') showMap = !showMap;
   if(k === 'j') MISSIONS.show = !MISSIONS.show;
+  if(k === 'g' && !stationUI.open){
+    camera.toggleFreeMode();
+  }
   if(e.key === ' '){
     e.preventDefault();
     if(boost.fuel>0){ boost.state='active'; }
@@ -2303,13 +2374,27 @@ const mouse = { x: W/2, y: H/2, left:false, right:false, click:false, overCanvas
 canvas.addEventListener('mousemove', e=>{
   mouse.x = e.clientX; mouse.y = e.clientY;
   mouse.overCanvas = true;
+  const hasMovement = typeof e.movementX === 'number' && typeof e.movementY === 'number';
+  const movementX = hasMovement ? e.movementX : ((camera.lastPointerX == null) ? 0 : e.clientX - camera.lastPointerX);
+  const movementY = hasMovement ? e.movementY : ((camera.lastPointerY == null) ? 0 : e.clientY - camera.lastPointerY);
+  camera.lastPointerX = e.clientX;
+  camera.lastPointerY = e.clientY;
+  if(camera.mode === 'free' && !stationUI.open){
+    const panMul = camera.freePanSpeed / Math.max(0.0001, camera.zoom);
+    camera.x += movementX * panMul;
+    camera.y += movementY * panMul;
+  }
   if(stationUI.open && stationUI.dragging){
     stationUI.x = mouse.x - stationUI.dragDX;
     stationUI.y = mouse.y - stationUI.dragDY;
   }
 });
-canvas.addEventListener('mouseenter', ()=>{
+canvas.addEventListener('mouseenter', e=>{
   mouse.overCanvas = true;
+  if(e){
+    camera.lastPointerX = e.clientX;
+    camera.lastPointerY = e.clientY;
+  }
 });
 canvas.addEventListener('mouseleave', ()=>{
   mouse.overCanvas = false;
@@ -2320,6 +2405,8 @@ canvas.addEventListener('mouseleave', ()=>{
   scan.scanned = null;
   scan.targetType = null;
   hideHoverInfo();
+  camera.lastPointerX = null;
+  camera.lastPointerY = null;
 });
 canvas.addEventListener('mousedown', e=>{
   if(e.button===0){
@@ -2344,7 +2431,7 @@ canvas.addEventListener('mousedown', e=>{
     if(stationUI.open) return;
     mouse.right=true;
     if(!stationUI.open && !warp.isBusy()){
-      const mouseWorld = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom, y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
+      const mouseWorld = screenToWorld(mouse.x, mouse.y);
       const local = rotateInv({ x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y }, ship.angle);
       const side = (local.x >= 0) ? 'right' : 'left';
       fireRocket(side);
@@ -3280,8 +3367,8 @@ function bulletsAndCollisionsStep(dt){
               if(d < dist){ dist = d; target = {x:npc.x, y:npc.y}; }
             }
             if(!target){
-              target = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom,
-                         y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
+              const mouseWorld = screenToWorld(mouse.x, mouse.y);
+              target = { x: mouseWorld.x, y: mouseWorld.y };
             }
           }
 
@@ -3790,6 +3877,7 @@ function engageWarp(dir){
 
 // =============== Fizyk ===============
 function physicsStep(dt){
+  updateCameraTarget();
   // czas gry
   gameTime = (gameTime + dt * TIME_SCALE) % (24*3600);
   // aktualizacja orbit planet i stacji
@@ -3900,7 +3988,7 @@ function physicsStep(dt){
   else ship.shield.val = clamp(ship.shield.val + ship.shield.regenRate * dt, 0, ship.shield.max);
   rocketCooldown = Math.max(0, rocketCooldown - dt);
   // mouse world position
-  const mouseWorld = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom, y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
+  const mouseWorld = screenToWorld(mouse.x, mouse.y);
   const hasMissilesEquipped = (Game.player.weapons?.[HP.MISSILE]?.length || 0) > 0;
   if (!stationUI.open && mouse.right && !warp.isBusy() && hasMissilesEquipped && (rocketAmmoMax === 0 || rocketAmmo > 0) && rocketCooldown<=0) {
     const local = rotateInv({ x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y }, ship.angle);
@@ -4892,7 +4980,21 @@ function render(alpha, frameDt){
   const interpCIWSAngles = ship.ciws.map((c,i)=>interpAngleShort(prevState.ciwsAngles[i], c.angle, alpha));
 
   // Kamera
-  const cam = { x: interpPos.x, y: interpPos.y, zoom: camera.zoom };
+  if(camera.mode === 'ship'){
+    camera.x = interpPos.x;
+    camera.y = interpPos.y;
+  } else if(camera.mode === 'focus'){
+    const st = camera.focusStation;
+    if(st){
+      camera.x = st.x;
+      camera.y = st.y;
+    } else {
+      camera.clearFocus();
+      camera.x = interpPos.x;
+      camera.y = interpPos.y;
+    }
+  }
+  const cam = { x: camera.x, y: camera.y, zoom: camera.zoom };
   if(camera.shakeMag > 0){
     const t = camera.shakeTime / camera.shakeDur;
     const mag = camera.shakeMag * Math.max(0, t);
@@ -5792,7 +5894,7 @@ function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo
 function roundRectScreen(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
 
 function screenToWorld(sx, sy){
-  return { x: ship.pos.x + (sx - W/2)/camera.zoom, y: ship.pos.y + (sy - H/2)/camera.zoom };
+  return { x: camera.x + (sx - W/2)/camera.zoom, y: camera.y + (sy - H/2)/camera.zoom };
 }
 
 // --- MINI UI HELPERS (HUD) ---
