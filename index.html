@@ -117,7 +117,8 @@
   import { initOverlay } from "./src/effects3d/overlay.js";
   import { createRailgunExplosionFactory } from "./src/effects3d/railgunExplosion.js";
   import { createArmataImpactFactory } from "./src/effects3d/armataImpact.js";
-  import { initSpaceBg, drawSpaceBg, resizeSpaceBg, setBgOptions, setBgSeed } from "./src/lib/space2d/tyroBackground.js";
+  import { initSpaceBg, drawSpaceBg, resizeSpaceBg, setBgOptions, setBgSeed, getBackgroundCanvas } from "./src/lib/space2d/tyroBackground.js";
+  import { WarpBlackHole } from "./src/vfx/warpBlackHole.js";
   window.THREE = THREE;
   window.EffectComposer  = EffectComposer;
   window.RenderPass      = RenderPass;
@@ -147,8 +148,13 @@
     drawSpaceBg,
     resizeSpaceBg,
     setBgOptions,
-    setBgSeed
+    setBgSeed,
+    getCanvas: getBackgroundCanvas
   };
+
+  const warpFX = new WarpBlackHole();
+  warpFX.setEnabled(false);
+  window.warpBlackHoleFX = warpFX;
 
 </script>
 <!-- przełącznik: aktywuj assetowy renderer planet (klasyczny skrypt, aby globalne API było gotowe zanim ruszy pętla gry) -->
@@ -161,6 +167,41 @@ const ctx = canvas.getContext('2d');
 let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
 
 const spaceBg = window.Space2DBackground || null;
+const warpFX = window.warpBlackHoleFX || null;
+let warpLensMode = 'background';
+let warpLensSource = null;
+const WARP_LENS_THRESHOLD = 0.02;
+
+function configureWarpLensSource(){
+  if (!warpFX) return;
+  if (warpLensMode === 'background') {
+    if (spaceBg && typeof spaceBg.getCanvas === 'function') {
+      const src = spaceBg.getCanvas();
+      if (src && warpLensSource !== src) {
+        warpLensSource = src;
+        warpFX.setSourceCanvas(src);
+      }
+    }
+  } else if (warpLensMode === 'full') {
+    if (warpLensSource !== ctx.canvas) {
+      warpLensSource = ctx.canvas;
+      warpFX.setSourceCanvas(ctx.canvas);
+    }
+  }
+}
+
+if (warpFX) {
+  window.setWarpLensMode = function(mode){
+    const next = mode === 'full' ? 'full' : 'background';
+    if (warpLensMode !== next) {
+      warpLensMode = next;
+      warpLensSource = null;
+      configureWarpLensSource();
+    }
+  };
+  window.addEventListener('resize', configureWarpLensSource);
+}
+
 if (spaceBg) {
   spaceBg.setBgOptions({
     shortScale: true,
@@ -171,6 +212,7 @@ if (spaceBg) {
   });
   spaceBg.initSpaceBg(String(window.SUN?.seed ?? 'statki'));
   spaceBg.resizeSpaceBg(W, H);
+  configureWarpLensSource();
 }
 
 let mainScene3D = null;
@@ -5246,6 +5288,9 @@ function render(alpha, frameDt){
   if (spaceBg) {
     spaceBg.drawSpaceBg(ctx);
   }
+  if (warpFX) {
+    configureWarpLensSource();
+  }
   ensurePlanetStationsInit(stations);
   if (window.updatePlanets3D) updatePlanets3D(frameDt);
   // najpierw zaktualizuj pozycje stacji 3D...
@@ -5258,6 +5303,26 @@ function render(alpha, frameDt){
 
   // ★ SŁOŃCE Z KORONĄ
   drawSunWithCorona(ctx, cam, vfxTime);
+
+  const warpEffectPower = (warp.state === 'active') ? smoothstep01(warp.entryProgress) : 0;
+  if (warpFX) {
+    const hasSource = !!warpLensSource;
+    const active = hasSource && warpEffectPower > WARP_LENS_THRESHOLD;
+    warpFX.setEnabled(active);
+    if (active) {
+      const shipScreen = worldToScreen(interpPos.x, interpPos.y, cam);
+      const massBase = warpLensMode === 'full' ? 0.12 : 0.18;
+      const radiusBase = warpLensMode === 'full' ? 0.24 : 0.22;
+      const softnessBase = warpLensMode === 'full' ? 0.4 : 0.35;
+      warpFX.render({
+        centerX: shipScreen.x,
+        centerY: shipScreen.y,
+        mass: massBase * warpEffectPower,
+        radius: radiusBase,
+        softness: softnessBase
+      });
+    }
+  }
 
   // scan waves
   for(const w of scanWaves){
