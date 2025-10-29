@@ -80,8 +80,8 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     const sunObj = (typeof window !== 'undefined' ? window.SUN : null) || { x: 0, y: 0 };
     const dx = (sunObj.x ?? 0) - planetWorldX;
     const dy = (sunObj.y ?? 0) - planetWorldY;
-    // (x, y_2D) -> (x, z = -y_2D); niewielkie podbicie w osi Y (up), by cienie były widoczne
-    const v = new THREE.Vector3(dx, 0.6, -dy);
+    const L = Math.hypot(dx, dy) || 1;
+    const v = new THREE.Vector3(dx / L, -dy / L, 0.001);
     if (v.lengthSq() === 0) return;
     v.normalize().multiplyScalar(600);
     light.position.copy(v);
@@ -163,8 +163,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     const sx = (window.SUN?.x ?? 0) - worldX;
     const sy = (window.SUN?.y ?? 0) - worldY;
     const L = Math.hypot(sx, sy) || 1;
-    // Spójnie z world3d: mapujemy światowe Y na Three.js Z (odwrócone), a Y (up) lekko > 0 dla cieni
-    return { x: sx / L, y: 0.6, z: -sy / L };
+    return { x: sx / L, y: -sy / L, z: 0 };
   }
 
   class AssetPlanet3D {
@@ -210,51 +209,71 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         loadTextureSafe(tex.ring,   { srgb: true })
       ]);
 
-      const matParams = {
-        color: 0xffffff,
-        shininess: 10
+      const vert = `
+        varying vec2 vUv; varying vec3 vN;
+        void main() {
+          vUv = uv;
+          vN = normalize(normalMatrix * normal);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+        }`;
+
+      const fragDN = `
+        uniform sampler2D dayTexture;
+        uniform sampler2D nightTexture;
+        uniform vec3 uLightDir;
+        uniform float minAmbient;
+        varying vec2 vUv; varying vec3 vN;
+        void main(){
+          float ndl = max(dot(normalize(vN), normalize(uLightDir)), 0.0);
+          vec4 dayC   = texture2D(dayTexture,   vUv);
+          vec4 nightC = texture2D(nightTexture, vUv) * 0.20;
+          float k = clamp(minAmbient + (1.0 - minAmbient) * ndl, 0.0, 1.0);
+          gl_FragColor = mix(nightC, dayC, k);
+        }`;
+
+      const fragDay = `
+        uniform sampler2D dayTexture;
+        uniform vec3 uLightDir;
+        uniform float minAmbient;
+        varying vec2 vUv; varying vec3 vN;
+        void main(){
+          float ndl = max(dot(normalize(vN), normalize(uLightDir)), 0.0);
+          vec4 dayC = texture2D(dayTexture, vUv);
+          float k = clamp(minAmbient + (1.0 - minAmbient) * ndl, 0.0, 1.0);
+          gl_FragColor = vec4(dayC.rgb * k, dayC.a);
+        }`;
+
+      const useNight = !!nightMap;
+      const uniforms = {
+        dayTexture:   { value: colorMap || null },
+        nightTexture: { value: nightMap || null },
+        uLightDir:    { value: new THREE.Vector3(1, 0, 0) },
+        minAmbient:   { value: 0.08 }
       };
 
-      if (colorMap) matParams.map = colorMap;
-      if (normalMap) matParams.normalMap = normalMap;
-      if (bumpMap) {
-        matParams.bumpMap = bumpMap;
-        matParams.bumpScale = 0.45;
-      }
-      if (specMap) matParams.specularMap = specMap;
+      this.material = new THREE.ShaderMaterial({
+        uniforms,
+        vertexShader: vert,
+        fragmentShader: useNight ? fragDN : fragDay,
+        toneMapped: false
+      });
 
-      this.material = new THREE.MeshPhongMaterial(matParams);
-
-      if (nightMap) {
-        this.material.emissive = new THREE.Color(0x111111);
-        this.material.emissiveMap = nightMap;
-        this.material.emissiveIntensity = 1.0;
-      }
-
-      this.scene.add(new THREE.AmbientLight(0xffffff, 0.22));
-      const hemi = new THREE.HemisphereLight(0xbfdfff, 0x0b0f1a, 0.18);
+      this.scene.add(new THREE.AmbientLight(0xffffff, 0.08));
+      const hemi = new THREE.HemisphereLight(0xbfdfff, 0x0b0f1a, 0.12);
       hemi.position.set(0, 1, 0);
       this.scene.add(hemi);
 
       const d = sunDirFor(this.x, this.y);
       const sunDL = new THREE.DirectionalLight(0xffffff, 1.15);
-      sunDL.castShadow = true;
-      sunDL.position.set(d.x * 10, d.y * 10, d.z * 10);
+      sunDL.castShadow = false;
+      sunDL.position.set(d.x * 10, d.y * 10, 0.01);
       sunDL.target.position.set(0, 0, 0);
       this.scene.add(sunDL.target);
-      sunDL.shadow.mapSize.set(1024, 1024);
-      sunDL.shadow.camera.near = 0.1;
-      sunDL.shadow.camera.far = 30;
-      const S = 4;
-      sunDL.shadow.camera.left = -S;
-      sunDL.shadow.camera.right = S;
-      sunDL.shadow.camera.top = S;
-      sunDL.shadow.camera.bottom = -S;
       this.scene.add(sunDL);
       this.sunLight = sunDL;
 
       this.mesh = new THREE.Mesh(geom, this.material);
-      this.mesh.receiveShadow = true;
+      this.mesh.receiveShadow = false;
       this.scene.add(this.mesh);
 
       if (cloudsMap) {
@@ -267,7 +286,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
             opacity: 0.9
           })
         );
-        clouds.castShadow = true;
+        clouds.castShadow = false;
         this.scene.add(clouds);
         this.clouds = clouds;
       }
@@ -301,6 +320,15 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r) return;
       resetRendererState(r, this.canvas.width, this.canvas.height);
+      if (this.material?.uniforms?.uLightDir && typeof THREE !== 'undefined') {
+        if (!this._lightDirView) this._lightDirView = new THREE.Vector3();
+        if (!this._viewMatrix3) this._viewMatrix3 = new THREE.Matrix3();
+        const d = sunDirFor(this.x, this.y);
+        this._lightDirView.set(d.x, d.y, 0);
+        this._viewMatrix3.setFromMatrix4(this.camera.matrixWorldInverse);
+        this._lightDirView.applyMatrix3(this._viewMatrix3).normalize();
+        this.material.uniforms.uLightDir.value.copy(this._lightDirView);
+      }
       if (this.sunLight) updateSunLightForPlanet(this.sunLight, this.x, this.y);
       r.render(this.scene, this.camera);
 
