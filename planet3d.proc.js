@@ -967,12 +967,14 @@ const PLANET_FRAG = `// Terrain generation parameters
     }
     if (sunObj) {
       SUN_POS = { x: sunObj.x || 0, y: sunObj.y || 0, z: 0 };
-      sun = new Sun3D((sunObj.r || 200) * SUN_SIZE_MULTIPLIER);
+      const rawRadius = Number.isFinite(sunObj.r3D) ? sunObj.r3D : (sunObj.r || 200);
+      const safeRadius = Number.isFinite(rawRadius) ? rawRadius : 200;
+      sun = new Sun3D(safeRadius * SUN_SIZE_MULTIPLIER);
       sun.x = sunObj.x;
       sun.y = sunObj.y;
     }
     asteroidBelt = null;
-    const baseSunRadius = (sunObj && sunObj.r) ? sunObj.r : 200;
+    const baseSunRadius = Number.isFinite(sunObj?.r3D) ? sunObj.r3D : ((sunObj && sunObj.r) ? sunObj.r : 200);
     let inner = baseSunRadius * 4.0;
     let outer = inner * 1.18;
 
