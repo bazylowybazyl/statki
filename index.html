@@ -238,6 +238,7 @@ if (typeof Dev.station3DScale === 'number' && Number.isFinite(Dev.station3DScale
 }
 
 const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const lerp = (a,b,t)=>a + (b - a) * t;
 const add = (a,b)=>({x:a.x+b.x,y:a.y+b.y});
 const mul = (v,s)=>({x:v.x*s,y:v.y*s});
 const len = v=>Math.hypot(v.x,v.y);
@@ -682,18 +683,31 @@ const camera = {
   freePanSpeed: 1,
   lastPointerX: null,
   lastPointerY: null,
+  targetX: WORLD.w / 2,
+  targetY: WORLD.h / 2,
+  targetZoom: 1.0,
+  focusScreenXRatio: 0.3,
+  focusScreenYRatio: 0.5,
+  focusZoom: 1.0,
+  focusArrived: false,
+  transition: null,
   addShake(mag, dur){ this.shakeMag = mag; this.shakeTime = dur; this.shakeDur = dur; },
   enterFreeMode(){
     this.mode = 'free';
     this.focusStation = null;
-    this.x = ship.pos.x;
-    this.y = ship.pos.y;
+    this.targetX = this.x = ship.pos.x;
+    this.targetY = this.y = ship.pos.y;
+    this.targetZoom = this.zoom;
+    this.transition = null;
+    this.focusArrived = false;
     this.lastPointerX = null;
     this.lastPointerY = null;
   },
   exitFreeMode(){
     this.mode = 'ship';
     this.focusStation = null;
+    this.targetZoom = this.defaultZoom;
+    this.focusArrived = false;
     this.lastPointerX = null;
     this.lastPointerY = null;
   },
@@ -701,24 +715,67 @@ const camera = {
     if(this.mode === 'free') this.exitFreeMode();
     else this.enterFreeMode();
   },
+  beginTransition(x, y, zoom, duration = 0.8, onComplete){
+    const targetZoom = clamp(zoom, this.minZoom, this.maxZoom);
+    this.transition = {
+      kind: this.mode,
+      startX: this.x,
+      startY: this.y,
+      startZoom: this.zoom,
+      targetX: x,
+      targetY: y,
+      targetZoom,
+      elapsed: 0,
+      duration: Math.max(0.0001, duration),
+      onComplete
+    };
+  },
   focusOnStation(station){
     if(!station) return;
     this.focusStation = station;
     this.mode = 'focus';
-    this.x = station.x;
-    this.y = station.y;
+    this.focusArrived = false;
+    this.focusScreenXRatio = 0.3;
+    this.focusScreenYRatio = 0.5;
     this.lastPointerX = null;
     this.lastPointerY = null;
+    const target = computeStationFocusTarget(station);
+    this.focusZoom = target.zoom;
+    this.targetX = target.x;
+    this.targetY = target.y;
+    this.targetZoom = target.zoom;
+    this.beginTransition(target.x, target.y, target.zoom, 0.85, () => {
+      this.focusArrived = true;
+    });
   },
   clearFocus(){
     if(this.mode === 'focus'){
       this.focusStation = null;
       this.mode = 'ship';
+      this.focusArrived = false;
+      this.targetZoom = this.defaultZoom;
+      this.targetX = ship.pos.x;
+      this.targetY = ship.pos.y;
+      this.beginTransition(this.targetX, this.targetY, this.targetZoom, 0.6);
       this.lastPointerX = null;
       this.lastPointerY = null;
     }
   }
 };
+
+function computeStationFocusTarget(station){
+  if(!station) return { x: camera.x, y: camera.y, zoom: camera.zoom };
+  const ratioX = camera.focusScreenXRatio ?? 0.32;
+  const ratioY = camera.focusScreenYRatio ?? 0.52;
+  const baseRadius = ((station.r ?? station.baseR) || 120);
+  const desiredRadiusPx = clamp(Math.min(W, H) * 0.24, 180, 320);
+  const zoom = clamp(desiredRadiusPx / Math.max(60, baseRadius), camera.minZoom, camera.maxZoom);
+  const screenX = ratioX * W;
+  const screenY = ratioY * H;
+  const x = station.x - (screenX - W/2) / zoom;
+  const y = station.y - (screenY - H/2) / zoom;
+  return { x, y, zoom, screenX, screenY };
+}
 
 // Model widoku overlayu (ortho nad światem 2D)
 const overlayView = {
@@ -727,21 +784,62 @@ const overlayView = {
   zoom: camera.zoom
 };
 
-function updateCameraTarget(){
+function updateCameraTarget(dt){
   if(camera.mode === 'ship'){
-    camera.x = ship.pos.x;
-    camera.y = ship.pos.y;
+    camera.targetX = ship.pos.x;
+    camera.targetY = ship.pos.y;
+    if(!camera.transition) camera.targetZoom = camera.defaultZoom;
   } else if(camera.mode === 'focus'){
     const st = camera.focusStation;
     if(st){
-      camera.x = st.x;
-      camera.y = st.y;
+      const target = computeStationFocusTarget(st);
+      camera.focusZoom = target.zoom;
+      camera.targetX = target.x;
+      camera.targetY = target.y;
+      camera.targetZoom = target.zoom;
+      if(camera.transition && camera.transition.kind === 'focus'){
+        camera.transition.targetX = target.x;
+        camera.transition.targetY = target.y;
+        camera.transition.targetZoom = target.zoom;
+      }
     } else {
       camera.clearFocus();
-      camera.x = ship.pos.x;
-      camera.y = ship.pos.y;
+      camera.targetX = ship.pos.x;
+      camera.targetY = ship.pos.y;
+      camera.targetZoom = camera.defaultZoom;
     }
   }
+
+  if(camera.transition){
+    const tr = camera.transition;
+    tr.elapsed = Math.min(tr.elapsed + dt, tr.duration);
+    const t = tr.duration <= 0 ? 1 : tr.elapsed / tr.duration;
+    const eased = smoothstep01(t);
+    camera.x = lerp(tr.startX, tr.targetX, eased);
+    camera.y = lerp(tr.startY, tr.targetY, eased);
+    camera.zoom = lerp(tr.startZoom, tr.targetZoom, eased);
+    if(tr.elapsed >= tr.duration - 1e-6){
+      camera.x = tr.targetX;
+      camera.y = tr.targetY;
+      camera.zoom = tr.targetZoom;
+      const onComplete = tr.onComplete;
+      camera.transition = null;
+      if(typeof onComplete === 'function') onComplete();
+    }
+  } else {
+    if(camera.mode === 'ship'){
+      camera.x = camera.targetX;
+      camera.y = camera.targetY;
+    } else {
+      const posLerp = Math.min(1, dt * 6);
+      camera.x += (camera.targetX - camera.x) * posLerp;
+      camera.y += (camera.targetY - camera.y) * posLerp;
+    }
+    const zoomLerp = Math.min(1, dt * 4);
+    camera.zoom += (camera.targetZoom - camera.zoom) * zoomLerp;
+  }
+
+  camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom);
 }
 
 // Bezpieczna, odroczona inicjalizacja overlayu 3D
@@ -750,6 +848,18 @@ let overlay3D = null;
 window.addEventListener('resize', ()=>{
   W = canvas.width = innerWidth;
   H = canvas.height = innerHeight;
+  if(camera.mode === 'focus' && camera.focusStation){
+    const target = computeStationFocusTarget(camera.focusStation);
+    camera.focusZoom = target.zoom;
+    camera.targetX = target.x;
+    camera.targetY = target.y;
+    camera.targetZoom = target.zoom;
+    if(camera.transition && camera.transition.kind === 'focus'){
+      camera.transition.targetX = target.x;
+      camera.transition.targetY = target.y;
+      camera.transition.targetZoom = target.zoom;
+    }
+  }
   resizeOverlay3D();
   initStars(true);
 });
@@ -1734,6 +1844,10 @@ function spawnShockwave(x, y, opts = {}){
 // =============== Station UI ===============
 let stationUI = {
   open:false,
+  visible:false,
+  awaitingCamera:false,
+  appear:0,
+  autoPosition:true,
   tab:'upgrades',
   station:null,
   cursorOver:false,
@@ -1766,8 +1880,12 @@ function stationUnderCursor(){
 function openStationUI(station){
   if(!station) return;
   stationUI.open = true;
+  stationUI.visible = false;
+  stationUI.awaitingCamera = true;
   stationUI.station = station;
   stationUI.tab = 'upgrades';
+  stationUI.appear = 0;
+  stationUI.autoPosition = true;
   stationUI.x = (W - stationUI.w) / 2;
   stationUI.y = (H - stationUI.h) / 2;
   stationUI.dragging = false;
@@ -1779,9 +1897,55 @@ function openStationUI(station){
 function closeStationUI(){
   if(!stationUI.open) return;
   stationUI.open = false;
+  stationUI.visible = false;
+  stationUI.awaitingCamera = false;
   stationUI.station = null;
   stationUI.dragging = false;
+  stationUI.autoPosition = false;
   camera.clearFocus();
+}
+
+function updateStationUIState(dt){
+  if(!stationUI.open && stationUI.awaitingCamera){
+    stationUI.awaitingCamera = false;
+  }
+
+  if(stationUI.open && stationUI.awaitingCamera){
+    const sameStation = camera.mode === 'focus' && camera.focusStation === stationUI.station;
+    if(sameStation){
+      const dx = camera.x - camera.targetX;
+      const dy = camera.y - camera.targetY;
+      const closeEnough = Math.hypot(dx, dy) < 2.0 && Math.abs(camera.zoom - camera.targetZoom) < 0.02;
+      const arrived = camera.focusArrived || closeEnough;
+      if(!camera.transition && arrived){
+        stationUI.awaitingCamera = false;
+        stationUI.visible = true;
+        stationUI.appear = Math.max(0, stationUI.appear);
+        stationUI.autoPosition = true;
+        camera.focusArrived = false;
+      }
+    }
+    if(camera.mode !== 'focus' || camera.focusStation !== stationUI.station){
+      stationUI.awaitingCamera = false;
+    }
+  }
+
+  const shouldBeVisible = stationUI.open && stationUI.visible && !stationUI.awaitingCamera;
+  const targetAlpha = shouldBeVisible ? 1 : 0;
+  const fadeInSpeed = 4;
+  const fadeOutSpeed = 5;
+  if(targetAlpha > stationUI.appear){
+    stationUI.appear = Math.min(targetAlpha, stationUI.appear + dt * fadeInSpeed);
+  } else if(targetAlpha < stationUI.appear){
+    stationUI.appear = Math.max(targetAlpha, stationUI.appear - dt * fadeOutSpeed);
+  }
+
+  if(!stationUI.open && stationUI.appear <= 0.0001){
+    stationUI.appear = 0;
+    stationUI.visible = false;
+    stationUI.station = null;
+    stationUI.autoPosition = true;
+  }
 }
 
 const hoverInfoState = {
@@ -1912,11 +2076,21 @@ window.addEventListener('keydown', (e)=>{
 });
 
 function renderStationUI(){
-  if(!stationUI.open){
+  const alpha = clamp(stationUI.appear, 0, 1);
+  if(alpha <= 0.001){
     setMechanicUIVisible(false);
     return;
   }
-  setMechanicUIVisible(stationUI.tab==='mechanic');
+
+  if(stationUI.autoPosition && stationUI.station){
+    positionStationUIPanel();
+  }
+
+  const showMechanic = stationUI.open && stationUI.visible && !stationUI.awaitingCamera && stationUI.tab==='mechanic' && alpha > 0.25;
+  setMechanicUIVisible(showMechanic);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
   hudBeginPanel(stationUI.x, stationUI.y, stationUI.w, stationUI.h);
   hudTabs(['upgrades','trade','cantina','hangar','mechanic'], stationUI.tab);
   if(stationUI.tab==='upgrades') renderUpgradesTab();
@@ -1925,6 +2099,18 @@ function renderStationUI(){
   if(stationUI.tab==='hangar')   renderHangarTab();
   if(stationUI.tab==='mechanic') renderMechanicTab();
   hudEndPanel();
+  ctx.restore();
+}
+
+function positionStationUIPanel(){
+  const st = stationUI.station;
+  if(!st) return;
+  const screen = worldToScreen(st.x, st.y, camera);
+  const margin = 48;
+  const maxX = W - stationUI.w - margin;
+  stationUI.x = clamp(screen.x + margin, margin, maxX);
+  const centeredY = (H - stationUI.h) / 2;
+  stationUI.y = clamp(centeredY, margin, H - stationUI.h - margin);
 }
 
 function setMechanicUIVisible(visible){
@@ -2387,6 +2573,7 @@ canvas.addEventListener('mousemove', e=>{
   if(stationUI.open && stationUI.dragging){
     stationUI.x = mouse.x - stationUI.dragDX;
     stationUI.y = mouse.y - stationUI.dragDY;
+    stationUI.autoPosition = false;
   }
 });
 canvas.addEventListener('mouseenter', e=>{
@@ -2411,12 +2598,16 @@ canvas.addEventListener('mouseleave', ()=>{
 canvas.addEventListener('mousedown', e=>{
   if(e.button===0){
     if(stationUI.open){
-      const inX = mouse.x >= stationUI.x && mouse.x <= stationUI.x + stationUI.w;
-      const inY = mouse.y >= stationUI.y && mouse.y <= stationUI.y + stationUI.h;
-      if(inX && inY && mouse.y <= stationUI.y + 24){
-        stationUI.dragging = true;
-        stationUI.dragDX = mouse.x - stationUI.x;
-        stationUI.dragDY = mouse.y - stationUI.y;
+      const interactive = stationUI.visible && !stationUI.awaitingCamera && stationUI.appear > 0.05;
+      if(interactive){
+        const inX = mouse.x >= stationUI.x && mouse.x <= stationUI.x + stationUI.w;
+        const inY = mouse.y >= stationUI.y && mouse.y <= stationUI.y + stationUI.h;
+        if(inX && inY && mouse.y <= stationUI.y + 24){
+          stationUI.dragging = true;
+          stationUI.dragDX = mouse.x - stationUI.x;
+          stationUI.dragDY = mouse.y - stationUI.y;
+          stationUI.autoPosition = false;
+        }
       }
       return;
     }
@@ -3877,7 +4068,8 @@ function engageWarp(dir){
 
 // =============== Fizyk ===============
 function physicsStep(dt){
-  updateCameraTarget();
+  updateCameraTarget(dt);
+  updateStationUIState(dt);
   // czas gry
   gameTime = (gameTime + dt * TIME_SCALE) % (24*3600);
   // aktualizacja orbit planet i stacji
