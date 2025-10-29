@@ -124,7 +124,7 @@ export class WarpBlackHole {
 
       // sample
       vec4 col = texture2D(u_image, uv);
-      gl_FragColor = col;
+      gl_FragColor = vec4(col.rgb, edge);
     }
   `;}
 
