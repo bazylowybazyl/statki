@@ -808,6 +808,10 @@ function updateCameraTarget(dt){
       camera.targetY = ship.pos.y;
       camera.targetZoom = camera.defaultZoom;
     }
+  } else if(camera.mode === 'free'){
+    camera.targetX = camera.x;
+    camera.targetY = camera.y;
+    camera.targetZoom = camera.zoom;
   }
 
   if(camera.transition){
@@ -827,7 +831,7 @@ function updateCameraTarget(dt){
       if(typeof onComplete === 'function') onComplete();
     }
   } else {
-    if(camera.mode === 'ship'){
+    if(camera.mode === 'ship' || camera.mode === 'free'){
       camera.x = camera.targetX;
       camera.y = camera.targetY;
     } else {
