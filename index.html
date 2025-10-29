@@ -170,6 +170,7 @@ const spaceBg = window.Space2DBackground || null;
 const warpFX = window.warpBlackHoleFX || null;
 let warpLensMode = 'background';
 let warpLensSource = null;
+let warpFXFrameParams = null;
 const WARP_LENS_THRESHOLD = 0.02;
 
 function configureWarpLensSource(){
@@ -5314,14 +5315,18 @@ function render(alpha, frameDt){
       const massBase = warpLensMode === 'full' ? 0.12 : 0.18;
       const radiusBase = warpLensMode === 'full' ? 0.24 : 0.22;
       const softnessBase = warpLensMode === 'full' ? 0.4 : 0.35;
-      warpFX.render({
+      warpFXFrameParams = {
         centerX: shipScreen.x,
         centerY: shipScreen.y,
         mass: massBase * warpEffectPower,
         radius: radiusBase,
         softness: softnessBase
-      });
+      };
+    } else {
+      warpFXFrameParams = null;
     }
+  } else {
+    warpFXFrameParams = null;
   }
 
   // scan waves
@@ -6049,6 +6054,10 @@ function render(alpha, frameDt){
   renderOptions();
   renderMissionJournal();
   renderMissionCompleteBanner();
+  if (warpFX && warpFXFrameParams) {
+    warpFX.render(warpFXFrameParams);
+  }
+  warpFXFrameParams = null;
   mouse.click=false;
 }
 
