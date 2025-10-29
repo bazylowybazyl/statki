@@ -981,7 +981,7 @@ function initStars(reset=false){
 }
 
 // =============== Słońce, planety i stacje ===============
-const SUN = { x: WORLD.w/2, y: WORLD.h/2, r: 1000,
+const SUN = { x: WORLD.w/2, y: WORLD.h/2, r: 1000, r3D: 1000,
   color: {
     core:  '#ffe88a',   // jasno-żółty rdzeń
     mid:   '#ffbe3b',   // pomarańcz-żółć
@@ -6206,9 +6206,14 @@ setTimeout(startGame, 500);
   <div class="group">
     <div class="row"><strong>Wszechświat</strong></div>
     <div class="row">
-      <label>Słońce – promień (R)</label>
-      <input id="sunR" type="range" min="50" max="1500" step="1">
-      <div class="val" id="sunRVal"></div>
+      <label>Słońce – promień 2D (R)</label>
+      <input id="sunR2D" type="range" min="50" max="1500" step="1">
+      <div class="val" id="sunR2DVal"></div>
+    </div>
+    <div class="row">
+      <label>Słońce – promień 3D (R)</label>
+      <input id="sunR3D" type="range" min="50" max="1500" step="1">
+      <div class="val" id="sunR3DVal"></div>
     </div>
     <div class="row">
       <label>Planety – skala globalna (×)</label>
@@ -6302,7 +6307,8 @@ setTimeout(startGame, 500);
 
   // ---- Stan & persistencja ------------------------------------------------
   const DevConfig = {
-    sunR: null,                 // liczba — promień Słońca (SUN.r)
+    sunR2D: null,               // liczba — promień Słońca (warstwa 2D)
+    sunR3D: null,               // liczba — promień Słońca (warstwa 3D)
     planetRById: {},            // { [id or name]: R }
     planetOrbitAUById: {},      // { [id or name]: AU }
     planetScaleAll: DEFAULT_PLANET_SCALE,          // mnożnik globalny ×R
@@ -6320,7 +6326,8 @@ setTimeout(startGame, 500);
   const el = (id)=>document.getElementById(id);
   const ui = {
     root: el('devtools'),
-    sunR: el('sunR'), sunRVal: el('sunRVal'),
+    sunR2D: el('sunR2D'), sunR2DVal: el('sunR2DVal'),
+    sunR3D: el('sunR3D'), sunR3DVal: el('sunR3DVal'),
     planetScaleAll: el('planetScaleAll'), planetScaleAllVal: el('planetScaleAllVal'),
     pirScale: el('pirScale'), pirScaleVal: el('pirScaleVal'),
     station3DScale: el('station3DScale'), station3DScaleVal: el('station3DScaleVal'),
@@ -6340,7 +6347,13 @@ setTimeout(startGame, 500);
   // ---- Inicjalne odczyty z gry -------------------------------------------
   function bootstrapFromGame(){
     const sun = window.SUN;
-    if (DevConfig.sunR == null && sun) DevConfig.sunR = sun.r;
+    if (sun) {
+      if (DevConfig.sunR2D == null) DevConfig.sunR2D = sun.r;
+      if (DevConfig.sunR3D == null) {
+        const base3D = (typeof sun.r3D === 'number') ? sun.r3D : sun.r;
+        DevConfig.sunR3D = base3D;
+      }
+    }
     // domyślne per-planeta (key = name lub id)
     const planetList = Array.isArray(window.planets) ? window.planets : [];
     for (const p of planetList) {
@@ -6417,6 +6430,20 @@ setTimeout(startGame, 500);
     if (!DevConfig.stationScaleById || typeof DevConfig.stationScaleById !== 'object') {
       DevConfig.stationScaleById = {};
     }
+    const legacySun = Number.isFinite(DevConfig.sunR) ? +DevConfig.sunR : null;
+    if (!Number.isFinite(DevConfig.sunR2D) && legacySun != null) {
+      DevConfig.sunR2D = legacySun;
+    }
+    if (!Number.isFinite(DevConfig.sunR3D) && legacySun != null) {
+      DevConfig.sunR3D = legacySun;
+    }
+    if (!Number.isFinite(DevConfig.sunR2D)) {
+      DevConfig.sunR2D = null;
+    }
+    if (!Number.isFinite(DevConfig.sunR3D) && Number.isFinite(DevConfig.sunR2D)) {
+      DevConfig.sunR3D = DevConfig.sunR2D;
+    }
+    delete DevConfig.sunR;
     if (window.__setStation3DScale && window.USE_STATION_3D) {
       window.__lastStationScale = 1;
       __setStation3DScale(Dev.station3DScale);
@@ -6434,7 +6461,12 @@ setTimeout(startGame, 500);
     if (rebuildTimer) cancelAnimationFrame(rebuildTimer);
     rebuildTimer = requestAnimationFrame(()=> {
       // aktualizujemy struktury gry na podstawie DevConfig
-      SUN.r = DevConfig.sunR|0;
+      const numericSun2D = Number.isFinite(DevConfig.sunR2D) ? DevConfig.sunR2D : SUN.r;
+      const appliedSun2D = Math.max(1, Math.round(numericSun2D || 0));
+      SUN.r = appliedSun2D;
+      const numericSun3D = Number.isFinite(DevConfig.sunR3D) ? DevConfig.sunR3D : appliedSun2D;
+      const appliedSun3D = Math.max(1, Math.round(numericSun3D || 0));
+      SUN.r3D = appliedSun3D;
       const scaleAll = +DevConfig.planetScaleAll || DEFAULT_PLANET_SCALE;
       for (const p of planets) {
         const key = (p.name || p.id || String(p.index)||'').toString().toLowerCase();
@@ -6445,7 +6477,11 @@ setTimeout(startGame, 500);
         }
       }
       // Odbudowa warstwy 3D
-      if (typeof initPlanets3D === 'function') initPlanets3D(planets, SUN);
+      if (typeof initPlanets3D === 'function') {
+        const sunFor3D = Object.assign({}, SUN, { r: appliedSun3D });
+        if (!Number.isFinite(sunFor3D.r3D)) sunFor3D.r3D = appliedSun3D;
+        initPlanets3D(planets, sunFor3D);
+      }
     });
   }
 
@@ -6574,7 +6610,17 @@ setTimeout(startGame, 500);
   function reflectToUI(){
     DevConfig.pirateScale = DevTuning.pirateStationScale;
     DevConfig.station3DScale = Dev.station3DScale;
-    ui.sunR.value = DevConfig.sunR|0; ui.sunRVal.textContent = ui.sunR.value;
+    if (ui.sunR2D) {
+      const value2D = Number.isFinite(DevConfig.sunR2D) ? DevConfig.sunR2D|0 : SUN.r|0;
+      ui.sunR2D.value = value2D;
+      if (ui.sunR2DVal) ui.sunR2DVal.textContent = value2D;
+    }
+    if (ui.sunR3D) {
+      const fallback3D = Number.isFinite(DevConfig.sunR2D) ? DevConfig.sunR2D : SUN.r;
+      const value3D = Number.isFinite(DevConfig.sunR3D) ? DevConfig.sunR3D|0 : fallback3D|0;
+      ui.sunR3D.value = value3D;
+      if (ui.sunR3DVal) ui.sunR3DVal.textContent = value3D;
+    }
     ui.planetScaleAll.value = DevConfig.planetScaleAll; ui.planetScaleAllVal.textContent = '×'+(+DevConfig.planetScaleAll).toFixed(2);
     ui.pirScale.value = DevConfig.pirateScale; ui.pirScaleVal.textContent = '×'+(+DevConfig.pirateScale).toFixed(2);
     if (ui.station3DScale) {
@@ -6590,7 +6636,10 @@ setTimeout(startGame, 500);
   }
   function reflectToCfg(){
     const out = {
-      sunR: DevConfig.sunR|0,
+      sunR2D: Number.isFinite(DevConfig.sunR2D) ? DevConfig.sunR2D|0 : SUN.r|0,
+      sunR3D: Number.isFinite(DevConfig.sunR3D)
+        ? DevConfig.sunR3D|0
+        : (Number.isFinite(DevConfig.sunR2D) ? DevConfig.sunR2D|0 : SUN.r|0),
       planetRById: DevConfig.planetRById,
       planetScaleAll: +DevConfig.planetScaleAll,
       pirateScale: +DevConfig.pirateScale,
@@ -6782,7 +6831,26 @@ setTimeout(startGame, 500);
   }
 
   // listeners
-  ui.sunR.addEventListener('input', ()=>{ DevConfig.sunR = +ui.sunR.value; ui.sunRVal.textContent = ui.sunR.value; saveLS(); scheduleRebuild3D(); reflectToCfg(); });
+  if (ui.sunR2D) {
+    ui.sunR2D.addEventListener('input', () => {
+      const val = +ui.sunR2D.value;
+      DevConfig.sunR2D = val;
+      if (ui.sunR2DVal) ui.sunR2DVal.textContent = ui.sunR2D.value;
+      saveLS();
+      scheduleRebuild3D();
+      reflectToCfg();
+    });
+  }
+  if (ui.sunR3D) {
+    ui.sunR3D.addEventListener('input', () => {
+      const val = +ui.sunR3D.value;
+      DevConfig.sunR3D = val;
+      if (ui.sunR3DVal) ui.sunR3DVal.textContent = ui.sunR3D.value;
+      saveLS();
+      scheduleRebuild3D();
+      reflectToCfg();
+    });
+  }
   ui.planetScaleAll.addEventListener('input', ()=>{ DevConfig.planetScaleAll = +ui.planetScaleAll.value; ui.planetScaleAllVal.textContent = '×'+(+DevConfig.planetScaleAll).toFixed(2); saveLS(); scheduleRebuild3D(); reflectToCfg(); });
   ui.pirScale.addEventListener('input', ()=>{
     DevTuning.pirateStationScale = +ui.pirScale.value;
