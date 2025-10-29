@@ -149,6 +149,7 @@
     setBgOptions,
     setBgSeed
   };
+  window.dispatchEvent(new Event('space2dbackgroundready'));
 
 </script>
 <!-- przełącznik: aktywuj assetowy renderer planet (klasyczny skrypt, aby globalne API było gotowe zanim ruszy pętla gry) -->
@@ -160,8 +161,13 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
 
-const spaceBg = window.Space2DBackground || null;
-if (spaceBg) {
+let spaceBg = null;
+
+function setupSpaceBackground() {
+  const background = window.Space2DBackground;
+  if (!background || spaceBg === background) return;
+
+  spaceBg = background;
   spaceBg.setBgOptions({
     shortScale: true,
     renderSun: false,
@@ -171,6 +177,14 @@ if (spaceBg) {
   });
   spaceBg.initSpaceBg(String(window.SUN?.seed ?? 'statki'));
   spaceBg.resizeSpaceBg(W, H);
+}
+
+window.addEventListener('space2dbackgroundready', setupSpaceBackground, { once: true });
+
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', setupSpaceBackground, { once: true });
+} else {
+  setupSpaceBackground();
 }
 
 let mainScene3D = null;

@@ -5,7 +5,6 @@ import * as random from './random.js';
 
 let bg = null;
 let off = null;
-let ctx2d = null;
 let opts = {
   renderPointStars: true,
   renderStars: true,
@@ -20,7 +19,6 @@ export function initSpaceBg(seedStr = null){
     off = document.createElement('canvas');
     off.width = innerWidth;
     off.height = innerHeight;
-    ctx2d = off.getContext('2d');
   }
   if (!bg) bg = new Scene(off);
   opts.seed = String(seedStr ?? (window.SUN?.seed ?? random.generateRandomSeed()));
