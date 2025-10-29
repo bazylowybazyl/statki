@@ -635,7 +635,9 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     }
 
     if (sunObj) {
-      sun = new Sun3D((sunObj.r || 200) * SUN_SIZE_MULTIPLIER);
+      const rawRadius = Number.isFinite(sunObj.r3D) ? sunObj.r3D : (sunObj.r || 200);
+      const safeRadius = Number.isFinite(rawRadius) ? rawRadius : 200;
+      sun = new Sun3D(safeRadius * SUN_SIZE_MULTIPLIER);
       sun.x = sunObj.x; sun.y = sunObj.y;
     }
 

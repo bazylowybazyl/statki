@@ -694,11 +694,18 @@
       p.body = pl;
       planets.push(p);
     }
-    sun = new Sun3D(sunPos.r * SUN_SIZE_MULTIPLIER);
+    const candidate3D = Number.isFinite(sunPos?.r3D) ? sunPos.r3D : undefined;
+    const candidate2D = Number.isFinite(sunPos?.r) ? sunPos.r : undefined;
+    const safeRadius = Number.isFinite(candidate3D)
+      ? candidate3D
+      : (Number.isFinite(candidate2D) ? candidate2D : 200);
+    sun = new Sun3D(safeRadius * SUN_SIZE_MULTIPLIER);
     sun.x = sunPos.x;
     sun.y = sunPos.y;
     asteroidBelt = null;
-    const baseSunRadius = (sunPos && sunPos.r) ? sunPos.r : 200;
+    const baseSunRadius = Number.isFinite(sunPos?.r3D)
+      ? sunPos.r3D
+      : (Number.isFinite(sunPos?.r) ? sunPos.r : 200);
     let inner = baseSunRadius * 4.0;
     let outer = inner * 1.18;
     if (planetList && planetList.length >= 5 && planetList[3].orbitRadius && planetList[4].orbitRadius) {
