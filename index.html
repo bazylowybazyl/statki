@@ -159,17 +159,8 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
 
-const Space2DBackground = window.Space2DBackground || null;
-const spaceBg = Space2DBackground;
-spaceBg?.setBgOptions?.({
-  renderSun: false,
-  renderNebulae: true,
-  renderStars: true,
-  renderPointStars: true,
-  shortScale: true
-});
-spaceBg?.initSpaceBg?.(window.SUN?.seed ?? 12345);
-spaceBg?.resizeSpaceBg?.(innerWidth, innerHeight);
+let spaceBg = null;
+let spaceBgReady = false;
 const warpBlackHoleFX = window.warpBlackHoleFX || null;
 let warpLensMode = 'background';
 let warpLensSource = null;
@@ -207,6 +198,42 @@ if (warpBlackHoleFX) {
 
 if (typeof configureWarpLensSource === 'function') {
   configureWarpLensSource();
+}
+
+function tryInitSpaceBackground(){
+  if (spaceBgReady) return true;
+  const module = window.Space2DBackground;
+  if (!module) return false;
+  spaceBg = module;
+  try {
+    module.setBgOptions?.({
+      renderSun: false,
+      renderNebulae: true,
+      renderStars: true,
+      renderPointStars: true,
+      shortScale: true
+    });
+    module.initSpaceBg?.(window.SUN?.seed ?? 12345);
+    module.resizeSpaceBg?.(innerWidth, innerHeight);
+    spaceBgReady = true;
+    configureWarpLensSource();
+    window.removeEventListener('DOMContentLoaded', tryInitSpaceBackground);
+    window.removeEventListener('load', tryInitSpaceBackground);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+if (!tryInitSpaceBackground()) {
+  window.addEventListener('DOMContentLoaded', tryInitSpaceBackground);
+  window.addEventListener('load', tryInitSpaceBackground);
+  let spaceBgPollAttempts = 0;
+  const MAX_SPACE_BG_POLL_ATTEMPTS = 240;
+  (function pollSpaceBackground(){
+    if (tryInitSpaceBackground() || spaceBgPollAttempts++ >= MAX_SPACE_BG_POLL_ATTEMPTS) return;
+    requestAnimationFrame(pollSpaceBackground);
+  })();
 }
 
 let mainScene3D = null;
@@ -5278,7 +5305,7 @@ function render(alpha, frameDt){
 
   // Czyścimy ekran
   ctx.clearRect(0,0,W,H);
-  Space2DBackground?.drawSpaceBg?.(ctx);
+  spaceBg?.drawSpaceBg?.(ctx);
   if (warpBlackHoleFX) {
     configureWarpLensSource();
   }
