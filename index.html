@@ -168,12 +168,21 @@ const WARP_LENS_THRESHOLD = 0.02;
 
 function configureWarpLensSource(){
   if (!warpBlackHoleFX) return;
+  if (typeof warpBlackHoleFX.setSourceParallaxTransform === 'function') {
+    warpBlackHoleFX.setSourceParallaxTransform(null);
+  }
   if (warpLensMode === 'background') {
     if (spaceBg && typeof spaceBg.getBackgroundCanvas === 'function') {
-      const src = spaceBg.getBackgroundCanvas();
+      const descriptor = typeof spaceBg.getBackgroundSampleDescriptor === 'function'
+        ? spaceBg.getBackgroundSampleDescriptor()
+        : null;
+      const src = descriptor?.canvas ?? spaceBg.getBackgroundCanvas();
       if (src && warpLensSource !== src) {
         warpLensSource = src;
         warpBlackHoleFX.setSourceCanvas(src);
+      }
+      if (descriptor && typeof warpBlackHoleFX.setSourceParallaxTransform === 'function') {
+        warpBlackHoleFX.setSourceParallaxTransform(descriptor);
       }
     }
   } else if (warpLensMode === 'full') {
@@ -5305,7 +5314,7 @@ function render(alpha, frameDt){
 
   // Czyścimy ekran
   ctx.clearRect(0,0,W,H);
-  spaceBg?.drawSpaceBg?.(ctx);
+  spaceBg?.drawSpaceBg?.(ctx, cam);
   if (warpBlackHoleFX) {
     configureWarpLensSource();
   }

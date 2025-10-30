@@ -19,6 +19,9 @@ export class WarpBlackHole {
     this.u_radius      = gl.getUniformLocation(this.program, 'u_radius');
     this.u_softness    = gl.getUniformLocation(this.program, 'u_softness');
     this.u_image       = gl.getUniformLocation(this.program, 'u_image');
+    this.u_tileSize    = gl.getUniformLocation(this.program, 'u_tileSize');
+    this.u_tileOffset  = gl.getUniformLocation(this.program, 'u_tileOffset');
+    this.u_parallax    = gl.getUniformLocation(this.program, 'u_parallaxEnabled');
 
     // fullscreen quad
     const buf = gl.createBuffer();
@@ -44,6 +47,7 @@ export class WarpBlackHole {
     this._time0 = performance.now();
     this._srcCanvas = null; // co próbkujemy: tło lub całą scenę
     this._warnedNoSource = false;
+    this._parallax = null;
     this._resize();
     addEventListener('resize', () => this._resize());
   }
@@ -51,6 +55,23 @@ export class WarpBlackHole {
   setSourceCanvas(canvas) {
     this._srcCanvas = canvas;
     this._warnedNoSource = false;
+  }
+  setSourceParallaxTransform(descriptor) {
+    if (!descriptor) {
+      this._parallax = null;
+      return;
+    }
+    const { tileWidth, tileHeight, offsetX, offsetY, parallaxEnabled } = descriptor;
+    if (!parallaxEnabled || !tileWidth || !tileHeight) {
+      this._parallax = null;
+      return;
+    }
+    this._parallax = {
+      tileWidth,
+      tileHeight,
+      offsetX,
+      offsetY
+    };
   }
   setEnabled(flag)       { this.enabled = !!flag; this.canvas.style.display = this.enabled?'block':'none'; }
   destroy(){ this.canvas?.remove(); }
@@ -79,6 +100,13 @@ export class WarpBlackHole {
     const cx = centerX * dpr;
     const cy = centerY * dpr;
 
+    const parallax = this._parallax;
+    const useParallax = !!(parallax && parallax.tileWidth > 0 && parallax.tileHeight > 0);
+    const tileW = useParallax ? parallax.tileWidth * dpr : 1;
+    const tileH = useParallax ? parallax.tileHeight * dpr : 1;
+    const offsetX = useParallax ? parallax.offsetX * dpr : 0;
+    const offsetY = useParallax ? parallax.offsetY * dpr : 0;
+
     gl.useProgram(this.program);
 
     // upload source image (Twoja kanwa 2D – tło albo cała scena)
@@ -96,6 +124,9 @@ export class WarpBlackHole {
     gl.uniform1f(this.u_radius, radius);    // promień soczewki (0..1) — 0.25 ~ 25% ekranu
     gl.uniform1f(this.u_softness, softness);// miękkość brzegów (0..1)
     gl.uniform1i(this.u_image, 0);
+    gl.uniform1f(this.u_parallax, useParallax ? 1 : 0);
+    gl.uniform2f(this.u_tileSize, tileW, tileH);
+    gl.uniform2f(this.u_tileOffset, offsetX, offsetY);
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
@@ -115,6 +146,9 @@ export class WarpBlackHole {
     uniform float u_radius;       // promień soczewki (0..1 ekranu)
     uniform float u_softness;     // miękkie brzegi (0..1)
     uniform float u_time;
+    uniform vec2  u_tileSize;     // rozmiar kafla tła (w px, po dpr)
+    uniform vec2  u_tileOffset;   // przesunięcie kafla (w px, po dpr)
+    uniform float u_parallaxEnabled;
 
     // Prosta soczewka grawitacyjna:
     // - liczymy kierunek do centrum, wielkość odchylenia ~ u_mass / r^2
@@ -136,6 +170,13 @@ export class WarpBlackHole {
       // odchylenie (w kierunku do centrum)
       float pull = u_mass / r2;
       vec2  uv   = st - normalize(v) * pull * edge;
+
+      if (u_parallaxEnabled > 0.5) {
+        vec2 tileSize = max(u_tileSize, vec2(1.0));
+        vec2 samplePx = uv * u_resolution + u_tileOffset;
+        vec2 tileUv = fract(samplePx / tileSize);
+        uv = tileUv;
+      }
 
       // sample
       vec4 col = texture2D(u_image, uv);
