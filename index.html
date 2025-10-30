@@ -5305,6 +5305,7 @@ function render(alpha, frameDt){
   drawSunWithCorona(ctx, cam, vfxTime);
 
   const warpEffectPower = (warp.state === 'active') ? smoothstep01(warp.entryProgress) : 0;
+  let warpLensRequest = null;
   if (warpFX) {
     const hasSource = !!warpLensSource;
     const active = hasSource && warpEffectPower > WARP_LENS_THRESHOLD;
@@ -5314,13 +5315,13 @@ function render(alpha, frameDt){
       const massBase = warpLensMode === 'full' ? 0.12 : 0.18;
       const radiusBase = warpLensMode === 'full' ? 0.24 : 0.22;
       const softnessBase = warpLensMode === 'full' ? 0.4 : 0.35;
-      warpFX.render({
+      warpLensRequest = {
         centerX: shipScreen.x,
         centerY: shipScreen.y,
         mass: massBase * warpEffectPower,
         radius: radiusBase,
         softness: softnessBase
-      });
+      };
     }
   }
 
@@ -6049,6 +6050,9 @@ function render(alpha, frameDt){
   renderOptions();
   renderMissionJournal();
   renderMissionCompleteBanner();
+  if (warpFX && warpLensRequest) {
+    warpFX.render(warpLensRequest);
+  }
   mouse.click=false;
 }
 
