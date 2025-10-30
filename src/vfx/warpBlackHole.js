@@ -1,5 +1,5 @@
 export class WarpBlackHole {
-  constructor({ zIndex = 99998 } = {}) {
+  constructor({ zIndex = 999999 } = {}) {
     this.canvas = document.createElement('canvas');
     this.canvas.style.cssText = `position:fixed;inset:0;pointer-events:none;z-index:${zIndex}`;
     document.body.appendChild(this.canvas);
@@ -43,11 +43,15 @@ export class WarpBlackHole {
     this.enabled = false;
     this._time0 = performance.now();
     this._srcCanvas = null; // co próbkujemy: tło lub całą scenę
+    this._warnedNoSource = false;
     this._resize();
     addEventListener('resize', () => this._resize());
   }
 
-  setSourceCanvas(canvas) { this._srcCanvas = canvas; }
+  setSourceCanvas(canvas) {
+    this._srcCanvas = canvas;
+    this._warnedNoSource = false;
+  }
   setEnabled(flag)       { this.enabled = !!flag; this.canvas.style.display = this.enabled?'block':'none'; }
   destroy(){ this.canvas?.remove(); }
 
@@ -61,7 +65,14 @@ export class WarpBlackHole {
   }
 
   render({ centerX, centerY, mass = 0.15, radius = 0.25, softness = 0.25 }){
-    if (!this.enabled || !this._srcCanvas) return;
+    if (!this.enabled) return;
+    if (!this._srcCanvas) {
+      if (!this._warnedNoSource) {
+        console.warn('[WarpBlackHole] Missing source canvas for warp lens.');
+        this._warnedNoSource = true;
+      }
+      return;
+    }
     const gl = this.gl;
     const t = (performance.now() - this._time0) * 0.001;
 
