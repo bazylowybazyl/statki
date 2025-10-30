@@ -159,7 +159,7 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
 
-const spaceBg = Space2DBackground;
+const spaceBg = window.Space2DBackground;
 const warpFX = window.warpBlackHoleFX || null;
 let warpLensMode = 'background';
 let warpLensSource = null;
