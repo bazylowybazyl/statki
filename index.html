@@ -160,6 +160,15 @@ const ctx = canvas.getContext('2d');
 let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
 
 const spaceBg = window.Space2DBackground || null;
+spaceBg?.setBgOptions?.({
+  renderSun: false,
+  renderNebulae: true,
+  renderStars: true,
+  renderPointStars: true,
+  shortScale: true
+});
+spaceBg?.initSpaceBg?.(window.SUN?.seed ?? 12345);
+spaceBg?.resizeSpaceBg?.(innerWidth, innerHeight);
 const warpFX = window.warpBlackHoleFX || null;
 let warpLensMode = 'background';
 let warpLensSource = null;
@@ -195,16 +204,7 @@ if (warpFX) {
   window.addEventListener('resize', configureWarpLensSource);
 }
 
-if (spaceBg) {
-  spaceBg.setBgOptions({
-    shortScale: true,
-    renderSun: false,
-    renderNebulae: true,
-    renderStars: true,
-    renderPointStars: true
-  });
-  spaceBg.initSpaceBg(String(window.SUN?.seed ?? 'statki'));
-  spaceBg.resizeSpaceBg(W, H);
+if (typeof configureWarpLensSource === 'function') {
   configureWarpLensSource();
 }
 
@@ -909,9 +909,8 @@ let overlay3D = null;
 window.addEventListener('resize', ()=>{
   W = canvas.width = innerWidth;
   H = canvas.height = innerHeight;
-  if (spaceBg) {
-    spaceBg.resizeSpaceBg(innerWidth, innerHeight);
-  }
+  spaceBg?.resizeSpaceBg?.(innerWidth, innerHeight);
+  configureWarpLensSource?.();
   if(camera.mode === 'focus' && camera.focusStation){
     const target = computeStationFocusTarget(camera.focusStation);
     camera.focusZoom = target.zoom;
@@ -5278,9 +5277,7 @@ function render(alpha, frameDt){
 
   // Czyścimy ekran
   ctx.clearRect(0,0,W,H);
-  if (spaceBg) {
-    spaceBg.drawSpaceBg(ctx);
-  }
+  spaceBg?.drawSpaceBg?.(ctx);
   if (warpFX) {
     configureWarpLensSource();
   }
