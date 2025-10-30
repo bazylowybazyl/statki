@@ -117,7 +117,7 @@
   import { initOverlay } from "./src/effects3d/overlay.js";
   import { createRailgunExplosionFactory } from "./src/effects3d/railgunExplosion.js";
   import { createArmataImpactFactory } from "./src/effects3d/armataImpact.js";
-  import { initSpaceBg, drawSpaceBg, resizeSpaceBg, setBgOptions, setBgSeed, getBackgroundCanvas } from "./src/lib/space2d/tyroBackground.js";
+  import * as Space2DBackground from "./src/lib/space2d/tyroBackground.js";
   import { WarpBlackHole } from "./src/vfx/warpBlackHole.js";
   window.THREE = THREE;
   window.EffectComposer  = EffectComposer;
@@ -143,14 +143,7 @@
   // Nie modyfikujemy namespace'u modułu THREE (jest niemodyfikowalny).
   // Jeśli coś potrzebuje CopyShader globalnie, wystawiamy go przez window:
   window.CopyShader = CopyShader;
-  window.Space2DBackground = {
-    initSpaceBg,
-    drawSpaceBg,
-    resizeSpaceBg,
-    setBgOptions,
-    setBgSeed,
-    getCanvas: getBackgroundCanvas
-  };
+  window.Space2DBackground = Space2DBackground;
 
   const warpFX = new WarpBlackHole();
   warpFX.setEnabled(false);
@@ -166,7 +159,7 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
 
-const spaceBg = window.Space2DBackground || null;
+const spaceBg = Space2DBackground;
 const warpFX = window.warpBlackHoleFX || null;
 let warpLensMode = 'background';
 let warpLensSource = null;
@@ -175,8 +168,8 @@ const WARP_LENS_THRESHOLD = 0.02;
 function configureWarpLensSource(){
   if (!warpFX) return;
   if (warpLensMode === 'background') {
-    if (spaceBg && typeof spaceBg.getCanvas === 'function') {
-      const src = spaceBg.getCanvas();
+    if (spaceBg && typeof spaceBg.getBackgroundCanvas === 'function') {
+      const src = spaceBg.getBackgroundCanvas();
       if (src && warpLensSource !== src) {
         warpLensSource = src;
         warpFX.setSourceCanvas(src);
