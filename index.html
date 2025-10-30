@@ -43,6 +43,36 @@
   .hp-aux    h4, .hp-aux .hp-item    { outline:1px solid #f59e0b; }
   .hp-hangar h4, .hp-hangar .hp-item { outline:1px solid #a78bfa; }
   .hp-spec   h4, .hp-spec .hp-item   { outline:1px solid #ef4444; }
+  #infrastructure-overlay{max-width:720px;width:min(720px,calc(100vw - 80px));opacity:0;transform:translateY(12px);transition:opacity 0.25s ease,transform 0.25s ease;pointer-events:none;}
+  #infrastructure-overlay.infra-visible{opacity:1;transform:translateY(0);pointer-events:auto;}
+  .infrastructure-body{display:flex;flex-direction:row;gap:16px;align-items:flex-start;}
+  .infra-building-list{display:flex;flex-direction:column;gap:12px;width:240px;max-height:520px;overflow-y:auto;padding-right:4px;}
+  .infra-building{background:#0b1224;border:1px solid #1f2c49;border-radius:12px;padding:12px;display:flex;flex-direction:column;align-items:center;gap:8px;cursor:grab;transition:border-color 0.2s,transform 0.2s,box-shadow 0.2s;}
+  .infra-building:hover{border-color:#3b82f6;box-shadow:0 12px 24px rgba(16,38,84,0.45);}
+  .infra-building:active{cursor:grabbing;}
+  .infra-building.dragging{opacity:0.65;transform:scale(0.98);}
+  .infra-building-canvas{width:96px;height:96px;border-radius:12px;background:radial-gradient(circle at 50% 35%,rgba(79,112,180,0.45),rgba(12,18,36,0.95));}
+  .infra-building-name{font-weight:600;letter-spacing:0.04em;text-align:center;color:#cfe3ff;}
+  .infra-building-meta{font-size:12px;color:#94a9d6;text-align:center;}
+  .infra-editor{flex:1;display:flex;flex-direction:column;gap:12px;min-width:0;}
+  .infra-grid{--infra-cols:6;display:grid;gap:10px;grid-template-columns:repeat(var(--infra-cols),minmax(72px,1fr));padding:12px;background:rgba(8,12,24,0.6);border:1px solid #1f2c49;border-radius:12px;min-height:280px;}
+  .infra-cell{position:relative;min-height:96px;border:1px dashed rgba(99,124,180,0.5);border-radius:12px;display:flex;align-items:center;justify-content:center;background:rgba(3,6,16,0.7);transition:border-color 0.2s,background 0.2s,transform 0.2s;}
+  .infra-cell.empty:hover{border-color:#3b82f6;}
+  .infra-cell.drag-over{border-color:#60a5fa;background:rgba(37,63,128,0.35);}
+  .infra-cell.selected{box-shadow:0 0 0 2px #3b82f6 inset;}
+  .infra-cell.has-building{border-style:solid;border-color:rgba(94,146,255,0.65);background:rgba(12,18,38,0.85);}
+  .infra-cell.completed{border-color:rgba(16,185,129,0.85);background:rgba(12,29,24,0.92);}
+  .infra-cell canvas{width:80px;height:80px;pointer-events:none;}
+  .infra-progress-bar{position:absolute;top:8px;left:8px;right:8px;height:6px;border-radius:6px;background:rgba(47,68,128,0.45);overflow:hidden;}
+  .infra-progress-fill{height:100%;width:0%;background:linear-gradient(90deg,#3b82f6,#60a5fa);transition:width 0.2s ease-out;}
+  .infra-cell-status{position:absolute;bottom:8px;left:8px;right:8px;font-size:12px;color:#cfe3ff;text-align:center;text-shadow:0 0 4px rgba(0,0,0,0.8);}
+  .infra-info{background:rgba(8,12,24,0.6);border:1px solid #1f2c49;border-radius:12px;padding:12px 14px;min-height:120px;display:flex;flex-direction:column;gap:6px;}
+  .infra-info h4{margin:0;font-size:16px;color:#8fb5ff;letter-spacing:0.04em;}
+  .infra-info p{margin:0;font-size:14px;color:#cbd5ff;line-height:1.5;}
+  .infra-info .infra-info-progress{margin-top:4px;}
+  .infra-info .infra-info-progress strong{display:block;font-size:12px;letter-spacing:0.08em;color:#94a9d6;text-transform:uppercase;margin-bottom:4px;}
+  .infra-info .infra-info-progress .infra-progress-bar{position:relative;top:auto;left:auto;right:auto;margin-top:4px;}
+  .infra-info .infra-info-progress .infra-progress-fill{transition:width 0.15s ease-out;}
   .hover-info{position:absolute;top:120px;right:40px;min-width:220px;max-width:320px;background:rgba(9,13,24,0.88);border:1px solid rgba(91,116,178,0.45);border-radius:14px;padding:14px 18px;z-index:55;color:#e4ecff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;pointer-events:none;backdrop-filter:blur(12px);box-shadow:0 14px 32px rgba(0,0,0,0.45);}
   .hover-info.hidden{display:none !important;}
   .hover-info .hover-title{font-size:16px;font-weight:600;letter-spacing:0.04em;margin:0 0 4px 0;}
@@ -86,6 +116,22 @@
       <select id="ship-frame-select"></select>
     </div>
     <div id="hp-groups" class="hp-groups"></div>
+  </div>
+</div>
+<div id="infrastructure-overlay" class="station-overlay hidden">
+  <h3>Station Infrastructure</h3>
+  <ul>
+    <li data-tab="infrastructure">Infrastructure</li>
+  </ul>
+  <div class="infrastructure-body">
+    <div class="infra-building-list" id="infra-building-list"></div>
+    <div class="infra-editor">
+      <div class="infra-grid" id="infra-grid"></div>
+      <div class="infra-info" id="infra-info">
+        <h4>Budowa stacji</h4>
+        <p>Przeciągnij budynki z listy po lewej na siatkę, aby rozpocząć ich konstrukcję.</p>
+      </div>
+    </div>
   </div>
 </div>
 <div id="hover-info" class="hover-info hidden">
@@ -1991,6 +2037,7 @@ function openStationUI(station){
   stationUI.dragging = false;
   mouse.left = false;
   mouse.right = false;
+  setInfrastructureActiveStation(station);
   camera.focusOnStation(station);
 }
 
@@ -2002,6 +2049,8 @@ function closeStationUI(){
   stationUI.station = null;
   stationUI.dragging = false;
   stationUI.autoPosition = false;
+  setInfrastructureActiveStation(null);
+  setInfrastructureUIVisible(false);
   camera.clearFocus();
 }
 
@@ -2069,7 +2118,7 @@ function availableStationTabs(station){
   if (Array.isArray(station?.tabs) && station.tabs.length) {
     return station.tabs.map(toTitleCaseFromKey);
   }
-  return ['Upgrades', 'Trade', 'Cantina', 'Hangar', 'Mechanic'];
+  return ['Upgrades', 'Trade', 'Cantina', 'Hangar', 'Mechanic', 'Infrastructure'];
 }
 
 function formatNpcName(npc){
@@ -2168,6 +2217,7 @@ window.addEventListener('keydown', (e)=>{
     if(e.code==='Digit3') stationUI.tab='cantina';
     if(e.code==='Digit4') stationUI.tab='hangar';
     if(e.code==='Digit5') stationUI.tab='mechanic';
+    if(e.code==='Digit6') stationUI.tab='infrastructure';
   }
 });
 
@@ -2179,6 +2229,7 @@ function renderStationUI(){
   const alpha = clamp(stationUI.appear, 0, 1);
   if(alpha <= 0.001){
     setMechanicUIVisible(false);
+    setInfrastructureUIVisible(false);
     return;
   }
 
@@ -2188,16 +2239,19 @@ function renderStationUI(){
 
   const showMechanic = stationUI.open && stationUI.visible && !stationUI.awaitingCamera && stationUI.tab==='mechanic' && alpha > 0.25;
   setMechanicUIVisible(showMechanic);
+  const showInfrastructure = stationUI.open && stationUI.visible && !stationUI.awaitingCamera && stationUI.tab==='infrastructure' && alpha > 0.25;
+  setInfrastructureUIVisible(showInfrastructure);
 
   ctx.save();
   ctx.globalAlpha = alpha;
   hudBeginPanel(stationUI.x, stationUI.y, stationUI.w, stationUI.h);
-  hudTabs(['upgrades','trade','cantina','hangar','mechanic'], stationUI.tab);
+  hudTabs(['upgrades','trade','cantina','hangar','mechanic','infrastructure'], stationUI.tab);
   if(stationUI.tab==='upgrades') renderUpgradesTab();
   if(stationUI.tab==='trade')    renderTradeTab();
   if(stationUI.tab==='cantina')  renderCantinaTab();
   if(stationUI.tab==='hangar')   renderHangarTab();
   if(stationUI.tab==='mechanic') renderMechanicTab();
+  if(stationUI.tab==='infrastructure') renderInfrastructureTab();
   hudEndPanel();
   ctx.restore();
 }
@@ -2222,6 +2276,586 @@ function setMechanicUIVisible(visible){
   overlay.classList.toggle('hidden', !active);
   if(panel) panel.classList.toggle('hidden', !active);
   if(tabBtn) tabBtn.classList.toggle('active', active);
+}
+
+const INFRASTRUCTURE_BUILDINGS = [
+  { id:'solar_array', name:'Orbitalna Elektrownia Słoneczna', buildTime:75, icon:'solar' },
+  { id:'shipyard_s', name:'Orbitalna Stocznia (S)', buildTime:90, icon:'shipyard', tier:'S' },
+  { id:'shipyard_m', name:'Orbitalna Stocznia (M)', buildTime:110, icon:'shipyard', tier:'M' },
+  { id:'shipyard_l', name:'Orbitalna Stocznia (L)', buildTime:140, icon:'shipyard', tier:'L' },
+  { id:'shipyard_capital', name:'Orbitalna Stocznia (Capital)', buildTime:170, icon:'shipyard', tier:'C' },
+  { id:'shipyard_supercapital', name:'Orbitalna Stocznia (SuperCapital)', buildTime:210, icon:'shipyard', tier:'SC' },
+  { id:'storage_metal', name:'Magazyn Metali', buildTime:60, icon:'storage', label:'M', color:'#60a5fa' },
+  { id:'storage_fuel', name:'Magazyn Paliwa', buildTime:70, icon:'storage', label:'F', color:'#f97316' },
+  { id:'storage_gas', name:'Magazyn Gazów', buildTime:65, icon:'storage', label:'G', color:'#14b8a6' },
+  { id:'storage_plastics', name:'Magazyn Tworzyw Sztucznych', buildTime:85, icon:'storage', label:'P', color:'#a855f7' }
+];
+const INFRA_BUILDING_MAP = new Map(INFRASTRUCTURE_BUILDINGS.map(b => [b.id, b]));
+
+const infrastructureBuilder = {
+  overlay: document.getElementById('infrastructure-overlay'),
+  list: document.getElementById('infra-building-list'),
+  grid: document.getElementById('infra-grid'),
+  info: document.getElementById('infra-info'),
+  gridCols: 6,
+  gridRows: 4,
+  gridCells: [],
+  stationStates: new Map(),
+  selectedCell: null,
+  activeStationKey: null,
+  activeStationRef: null,
+  hideTimer: null,
+  isVisible: false,
+  needsRender: false
+};
+
+function getInfrastructureStationKey(station){
+  if(!station) return null;
+  if(station.id != null) return `station-${station.id}`;
+  if(station.name) return `station-${station.name}`;
+  const x = Math.round(station.x ?? 0);
+  const y = Math.round(station.y ?? 0);
+  return `station-${x}-${y}`;
+}
+
+function ensureInfrastructureState(station){
+  const key = getInfrastructureStationKey(station);
+  if(!key) return null;
+  let state = infrastructureBuilder.stationStates.get(key);
+  const totalCells = infrastructureBuilder.gridCols * infrastructureBuilder.gridRows;
+  if(!state){
+    state = {
+      stationKey: key,
+      cells: Array.from({ length: totalCells }, () => null)
+    };
+    infrastructureBuilder.stationStates.set(key, state);
+  } else if(state.cells.length < totalCells){
+    const diff = totalCells - state.cells.length;
+    state.cells = state.cells.concat(Array(diff).fill(null));
+  }
+  return state;
+}
+
+function setInfrastructureActiveStation(station){
+  const key = getInfrastructureStationKey(station);
+  if(infrastructureBuilder.activeStationKey === key){
+    infrastructureBuilder.activeStationRef = station || null;
+    return;
+  }
+  infrastructureBuilder.activeStationKey = key;
+  infrastructureBuilder.activeStationRef = station || null;
+  if(station) ensureInfrastructureState(station);
+  infrastructureBuilder.selectedCell = null;
+  infrastructureBuilder.needsRender = true;
+  if(infrastructureBuilder.isVisible){
+    renderInfrastructureOverlay();
+  }
+}
+
+function drawSolarIcon(ctx){
+  ctx.save();
+  const grad = ctx.createRadialGradient(0, 0, 6, 0, 0, 32);
+  grad.addColorStop(0, '#fff7cc');
+  grad.addColorStop(0.5, '#fde68a');
+  grad.addColorStop(1, '#f59e0b');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(0, 0, 22, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(79,129,255,0.9)';
+  ctx.fillStyle = 'rgba(59,89,178,0.85)';
+  ctx.lineWidth = 3;
+  for(let i=0;i<4;i++){
+    ctx.save();
+    ctx.rotate((Math.PI/2) * i);
+    ctx.beginPath();
+    ctx.rect(18, -9, 30, 18);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.strokeStyle = 'rgba(255,237,213,0.55)';
+  ctx.lineWidth = 2;
+  for(let i=0;i<8;i++){
+    const angle = (Math.PI / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(angle) * 12, Math.sin(angle) * 12);
+    ctx.lineTo(Math.cos(angle) * 32, Math.sin(angle) * 32);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawShipyardIcon(ctx, tier){
+  ctx.save();
+  const accent = ({
+    S:'#38bdf8',
+    M:'#34d399',
+    L:'#818cf8',
+    C:'#f97316',
+    SC:'#f472b6'
+  })[tier] || '#38bdf8';
+
+  ctx.fillStyle = 'rgba(20,28,52,0.95)';
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.rect(-32, -20, 64, 40);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(-32, -12); ctx.lineTo(-48, -20);
+  ctx.moveTo(-32, 12);  ctx.lineTo(-48, 20);
+  ctx.moveTo(32, -12);  ctx.lineTo(48, -20);
+  ctx.moveTo(32, 12);   ctx.lineTo(48, 20);
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(56,91,189,0.35)';
+  ctx.beginPath();
+  ctx.arc(0, 0, 16, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(0, 0, 16, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = '#e2e8f0';
+  ctx.font = tier === 'SC' ? 'bold 14px Inter, system-ui' : 'bold 16px Inter, system-ui';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(tier || 'S', 0, 0);
+  ctx.restore();
+}
+
+function drawStorageIcon(ctx, color, label){
+  ctx.save();
+  ctx.fillStyle = 'rgba(10,16,34,0.95)';
+  ctx.strokeStyle = color || '#60a5fa';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.rect(-30, -24, 60, 48);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = (color || '#60a5fa') + '33';
+  ctx.fillRect(-24, -6, 48, 12);
+
+  ctx.fillStyle = color || '#60a5fa';
+  ctx.fillRect(-28, 18, 56, 6);
+
+  ctx.fillStyle = '#dbeafe';
+  ctx.font = 'bold 18px Inter, system-ui';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label || 'S', 0, -4);
+  ctx.restore();
+}
+
+function drawGenericIcon(ctx){
+  ctx.save();
+  ctx.fillStyle = 'rgba(56,80,160,0.9)';
+  ctx.beginPath();
+  ctx.moveTo(0, -24);
+  ctx.lineTo(20, 0);
+  ctx.lineTo(0, 24);
+  ctx.lineTo(-20, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(160,200,255,0.8)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBuildingPreview(canvas, building){
+  if(!canvas || !building) return;
+  const ctx = canvas.getContext('2d');
+  if(!ctx) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = 'rgba(6,10,24,0.95)';
+  ctx.fillRect(0, 0, w, h);
+  ctx.translate(w / 2, h / 2);
+  ctx.shadowColor = 'rgba(32,64,128,0.45)';
+  ctx.shadowBlur = 12;
+  switch(building.icon){
+    case 'solar':
+      drawSolarIcon(ctx);
+      break;
+    case 'shipyard':
+      drawShipyardIcon(ctx, building.tier);
+      break;
+    case 'storage':
+      drawStorageIcon(ctx, building.color, building.label);
+      break;
+    default:
+      drawGenericIcon(ctx);
+  }
+  ctx.restore();
+}
+
+function infrastructureDragBuildingId(ev){
+  if(!ev || !ev.dataTransfer) return null;
+  const id = ev.dataTransfer.getData('text/infrastructure-building') || ev.dataTransfer.getData('text/plain');
+  if(!id) return null;
+  return INFRA_BUILDING_MAP.has(id) ? id : null;
+}
+
+function handleInfrastructureCellDragEnter(ev){
+  const id = infrastructureDragBuildingId(ev);
+  if(!id) return;
+  ev.preventDefault();
+  ev.currentTarget.classList.add('drag-over');
+}
+
+function handleInfrastructureCellDragOver(ev){
+  const id = infrastructureDragBuildingId(ev);
+  if(!id) return;
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'copy';
+}
+
+function handleInfrastructureCellDragLeave(ev){
+  ev.currentTarget.classList.remove('drag-over');
+}
+
+function handleInfrastructureCellDrop(ev){
+  ev.preventDefault();
+  const cellEl = ev.currentTarget;
+  cellEl.classList.remove('drag-over');
+  const id = infrastructureDragBuildingId(ev);
+  if(!id) return;
+  const idx = Number.parseInt(cellEl.dataset.index, 10);
+  if(!Number.isInteger(idx)) return;
+  const station = infrastructureBuilder.activeStationRef || stationUI.station;
+  const state = station ? ensureInfrastructureState(station) : null;
+  if(!state) return;
+  startInfrastructureBuildAtCell(state, idx, id);
+  renderInfrastructureOverlay();
+}
+
+function startInfrastructureBuildAtCell(state, idx, buildingId){
+  const building = INFRA_BUILDING_MAP.get(buildingId);
+  if(!state || !building) return false;
+  const totalCells = infrastructureBuilder.gridCols * infrastructureBuilder.gridRows;
+  if(idx < 0 || idx >= totalCells) return false;
+  state.cells[idx] = {
+    buildingId,
+    status:'building',
+    elapsed:0,
+    duration:Math.max(1, building.buildTime),
+    progress:0,
+    startedAt:performance.now()/1000
+  };
+  infrastructureBuilder.selectedCell = idx;
+  infrastructureBuilder.needsRender = true;
+  return true;
+}
+
+function initInfrastructureUI(){
+  const overlay = infrastructureBuilder.overlay;
+  if(!overlay) return;
+  const tabBtn = overlay.querySelector('li[data-tab="infrastructure"]');
+  if(tabBtn){
+    tabBtn.addEventListener('click', ()=>{
+      stationUI.open = true;
+      stationUI.tab = 'infrastructure';
+      setInfrastructureUIVisible(true);
+    });
+  }
+
+  const list = infrastructureBuilder.list;
+  if(list){
+    list.innerHTML = '';
+    for(const building of INFRASTRUCTURE_BUILDINGS){
+      const item = document.createElement('div');
+      item.className = 'infra-building';
+      item.draggable = true;
+      item.dataset.building = building.id;
+      const canvas = document.createElement('canvas');
+      canvas.width = 96;
+      canvas.height = 96;
+      canvas.className = 'infra-building-canvas';
+      item.appendChild(canvas);
+      const name = document.createElement('div');
+      name.className = 'infra-building-name';
+      name.textContent = building.name;
+      item.appendChild(name);
+      const meta = document.createElement('div');
+      meta.className = 'infra-building-meta';
+      meta.textContent = `Czas budowy: ${building.buildTime}s`;
+      item.appendChild(meta);
+      item.addEventListener('dragstart', (ev)=>{
+        item.classList.add('dragging');
+        if(ev.dataTransfer){
+          ev.dataTransfer.effectAllowed = 'copy';
+          ev.dataTransfer.setData('text/plain', building.id);
+          ev.dataTransfer.setData('text/infrastructure-building', building.id);
+        }
+      });
+      item.addEventListener('dragend', ()=>{
+        item.classList.remove('dragging');
+      });
+      list.appendChild(item);
+      drawBuildingPreview(canvas, building);
+    }
+  }
+
+  const grid = infrastructureBuilder.grid;
+  if(grid){
+    grid.style.setProperty('--infra-cols', infrastructureBuilder.gridCols);
+    grid.innerHTML = '';
+    infrastructureBuilder.gridCells = [];
+    const total = infrastructureBuilder.gridCols * infrastructureBuilder.gridRows;
+    for(let i=0;i<total;i++){
+      const cell = document.createElement('div');
+      cell.className = 'infra-cell empty';
+      cell.dataset.index = String(i);
+      const canvas = document.createElement('canvas');
+      canvas.width = 96;
+      canvas.height = 96;
+      cell.appendChild(canvas);
+      const progressBar = document.createElement('div');
+      progressBar.className = 'infra-progress-bar';
+      const fill = document.createElement('div');
+      fill.className = 'infra-progress-fill';
+      progressBar.appendChild(fill);
+      cell.appendChild(progressBar);
+      const status = document.createElement('div');
+      status.className = 'infra-cell-status';
+      status.textContent = 'Puste';
+      cell.appendChild(status);
+      cell.addEventListener('dragenter', handleInfrastructureCellDragEnter);
+      cell.addEventListener('dragover', handleInfrastructureCellDragOver);
+      cell.addEventListener('dragleave', handleInfrastructureCellDragLeave);
+      cell.addEventListener('drop', handleInfrastructureCellDrop);
+      cell.addEventListener('click', ()=>{
+        infrastructureBuilder.selectedCell = i;
+        renderInfrastructureOverlay();
+      });
+      infrastructureBuilder.gridCells.push(cell);
+      grid.appendChild(cell);
+    }
+  }
+
+  setInfrastructureUIVisible(false);
+  renderInfrastructureOverlay();
+}
+
+function setInfrastructureUIVisible(visible){
+  const overlay = infrastructureBuilder.overlay;
+  if(!overlay) return;
+  if(visible){
+    if(infrastructureBuilder.isVisible){
+      if(stationUI.station){
+        setInfrastructureActiveStation(stationUI.station);
+      }
+      if(infrastructureBuilder.needsRender){
+        renderInfrastructureOverlay();
+      }
+      return;
+    }
+    if(infrastructureBuilder.hideTimer){
+      clearTimeout(infrastructureBuilder.hideTimer);
+      infrastructureBuilder.hideTimer = null;
+    }
+    overlay.classList.remove('hidden');
+    void overlay.offsetWidth;
+    overlay.classList.add('infra-visible');
+    infrastructureBuilder.isVisible = true;
+    if(stationUI.station){
+      setInfrastructureActiveStation(stationUI.station);
+    }
+    renderInfrastructureOverlay();
+  } else {
+    if(!infrastructureBuilder.isVisible){
+      overlay.classList.add('hidden');
+      return;
+    }
+    overlay.classList.remove('infra-visible');
+    infrastructureBuilder.isVisible = false;
+    if(infrastructureBuilder.hideTimer){
+      clearTimeout(infrastructureBuilder.hideTimer);
+    }
+    infrastructureBuilder.hideTimer = setTimeout(()=>{
+      overlay.classList.add('hidden');
+    }, 220);
+  }
+}
+
+function renderInfrastructureInfo(state){
+  const info = infrastructureBuilder.info;
+  if(!info) return;
+  info.innerHTML = '';
+  const station = infrastructureBuilder.activeStationRef || stationUI.station;
+  const title = document.createElement('h4');
+  title.textContent = station?.name ? `Infrastruktura: ${station.name}` : 'Budowa stacji';
+  info.appendChild(title);
+
+  if(!state){
+    const p = document.createElement('p');
+    p.textContent = 'Brak aktywnej stacji. Wybierz stację, aby rozpocząć budowę.';
+    info.appendChild(p);
+    return;
+  }
+
+  const totalUsed = state.cells.filter(Boolean).length;
+  const completed = state.cells.filter(cell => cell && cell.status === 'completed').length;
+
+  if(infrastructureBuilder.selectedCell == null){
+    const p = document.createElement('p');
+    p.textContent = 'Przeciągnij budynek na siatkę, aby rozpocząć budowę. Kliknij pole, aby zobaczyć szczegóły.';
+    info.appendChild(p);
+    const summary = document.createElement('p');
+    summary.textContent = `Ukończone budynki: ${completed}/${totalUsed}.`;
+    summary.style.fontSize = '12px';
+    summary.style.color = '#94a9d6';
+    info.appendChild(summary);
+    return;
+  }
+
+  const idx = infrastructureBuilder.selectedCell;
+  const cell = state.cells[idx];
+  if(!cell){
+    const p = document.createElement('p');
+    p.textContent = 'Puste pole. Upuść budynek z listy po lewej, aby rozpocząć konstrukcję.';
+    info.appendChild(p);
+    return;
+  }
+
+  const building = INFRA_BUILDING_MAP.get(cell.buildingId);
+  const name = document.createElement('p');
+  name.textContent = building?.name || 'Budowa';
+  name.style.fontWeight = '600';
+  info.appendChild(name);
+
+  const status = document.createElement('p');
+  const progress = cell.status === 'completed' ? 1 : clamp(cell.progress ?? 0, 0, 1);
+  if(cell.status === 'completed'){
+    status.textContent = 'Status: Zakończono budowę.';
+  } else {
+    const remaining = Math.max(0, (cell.duration ?? 0) - (cell.elapsed ?? 0));
+    status.textContent = `Status: W budowie — ${Math.round(progress*100)}% (pozostało ${remaining.toFixed(1)}s).`;
+  }
+  info.appendChild(status);
+
+  const buildTime = document.createElement('p');
+  buildTime.textContent = `Czas budowy: ${building?.buildTime ?? '?'} s`;
+  buildTime.style.fontSize = '13px';
+  buildTime.style.color = '#a8b4d9';
+  info.appendChild(buildTime);
+
+  const progressWrap = document.createElement('div');
+  progressWrap.className = 'infra-info-progress';
+  const strong = document.createElement('strong');
+  strong.textContent = 'Postęp';
+  progressWrap.appendChild(strong);
+  const bar = document.createElement('div');
+  bar.className = 'infra-progress-bar';
+  const fill = document.createElement('div');
+  fill.className = 'infra-progress-fill';
+  fill.style.width = `${Math.round(progress * 100)}%`;
+  bar.appendChild(fill);
+  progressWrap.appendChild(bar);
+  info.appendChild(progressWrap);
+}
+
+function renderInfrastructureOverlay(){
+  if(!infrastructureBuilder.gridCells.length){
+    infrastructureBuilder.needsRender = true;
+    return;
+  }
+  const station = infrastructureBuilder.activeStationRef || stationUI.station;
+  const state = station ? ensureInfrastructureState(station) : null;
+  if(station && !infrastructureBuilder.activeStationRef){
+    infrastructureBuilder.activeStationRef = station;
+  }
+  const total = infrastructureBuilder.gridCols * infrastructureBuilder.gridRows;
+  if(state && state.cells.length < total){
+    const diff = total - state.cells.length;
+    state.cells = state.cells.concat(Array(diff).fill(null));
+  }
+
+  for(let i=0;i<infrastructureBuilder.gridCells.length;i++){
+    const cellEl = infrastructureBuilder.gridCells[i];
+    const cellData = state ? state.cells[i] : null;
+    const canvas = cellEl.querySelector('canvas');
+    const progressFill = cellEl.querySelector('.infra-progress-fill');
+    const status = cellEl.querySelector('.infra-cell-status');
+    cellEl.classList.toggle('selected', infrastructureBuilder.selectedCell === i);
+    if(cellData){
+      const building = INFRA_BUILDING_MAP.get(cellData.buildingId);
+      cellEl.classList.remove('empty');
+      cellEl.classList.add('has-building');
+      const done = cellData.status === 'completed';
+      cellEl.classList.toggle('completed', done);
+      const progress = done ? 1 : clamp(cellData.progress ?? 0, 0, 1);
+      if(canvas) drawBuildingPreview(canvas, building);
+      if(progressFill) progressFill.style.width = `${Math.round(progress * 100)}%`;
+      if(status) status.textContent = done ? 'Zakończono' : `${Math.round(progress * 100)}%`;
+    } else {
+      cellEl.classList.add('empty');
+      cellEl.classList.remove('has-building', 'completed');
+      if(canvas){
+        const ctx = canvas.getContext('2d');
+        if(ctx){ ctx.clearRect(0, 0, canvas.width, canvas.height); }
+      }
+      if(progressFill) progressFill.style.width = '0%';
+      if(status) status.textContent = 'Puste';
+    }
+  }
+  infrastructureBuilder.needsRender = false;
+  renderInfrastructureInfo(state || null);
+}
+
+function renderInfrastructureTab(){
+  uiTitle('Infrastruktura stacji');
+  const station = stationUI.station;
+  if(!station){
+    uiText('Brak aktywnej stacji.');
+    return;
+  }
+  const state = ensureInfrastructureState(station);
+  const totalUsed = state.cells.filter(Boolean).length;
+  const completed = state.cells.filter(cell => cell && cell.status === 'completed').length;
+  uiText('Zarządzaj infrastrukturą w panelu Infrastructure obok.');
+  uiText(`Budowy ukończone: ${completed}/${totalUsed}.`);
+  uiText('Przeciągnij budynek na siatkę, aby rozpocząć konstrukcję lub kliknij pole, by zobaczyć postęp.');
+}
+
+function updateInfrastructureState(dt){
+  let changed = false;
+  infrastructureBuilder.stationStates.forEach(state => {
+    if(!state || !state.cells) return;
+    for(const cell of state.cells){
+      if(!cell || cell.status !== 'building') continue;
+      const prev = cell.progress || 0;
+      cell.elapsed = (cell.elapsed || 0) + dt;
+      const duration = Math.max(0.1, cell.duration || 1);
+      cell.progress = clamp(cell.elapsed / duration, 0, 1);
+      if(cell.progress !== prev) changed = true;
+      if(cell.progress >= 1 && cell.status !== 'completed'){
+        cell.status = 'completed';
+        changed = true;
+      }
+    }
+  });
+  if(changed){
+    if(infrastructureBuilder.isVisible){
+      renderInfrastructureOverlay();
+    } else {
+      infrastructureBuilder.needsRender = true;
+    }
+  } else if(infrastructureBuilder.isVisible && infrastructureBuilder.needsRender){
+    renderInfrastructureOverlay();
+  }
 }
 
 function renderMechanicTab(){
@@ -2402,6 +3036,7 @@ function renderHangarTab(){
 }
 
 initMechanicUI();
+initInfrastructureUI();
 function startMercenaryMission(){
   if(mercMission) { toast('Misja już aktywna. Wciśnij J aby zobaczyć dziennik.'); return; }
 
@@ -4179,6 +4814,7 @@ function engageWarp(dir){
 function physicsStep(dt){
   updateCameraTarget(dt);
   updateStationUIState(dt);
+  updateInfrastructureState(dt);
   // czas gry
   gameTime = (gameTime + dt * TIME_SCALE) % (24*3600);
   // aktualizacja orbit planet i stacji
@@ -6254,17 +6890,18 @@ function uiText(t){ ctx.fillText(t,0,0); ctx.translate(0,18); }
 function hudTabs(names, active){
   let x = 0, clicked = null;
   for (let i = 0; i < names.length; i++) {
-    const label = '[' + names[i] + ']';
+    const key = names[i];
+    const label = '[' + toTitleCaseFromKey(key) + ']';
     const w = ctx.measureText(label).width;
     const t = ctx.getTransform();
     const L = t.e + x, T = t.f - 14, R = L + w, B = T + 20;
 
-    ctx.fillStyle = names[i]===active ? '#fff' : '#a8c0ff';
+    ctx.fillStyle = key===active ? '#fff' : '#a8c0ff';
     ctx.fillText(label, x, 0);
 
     const over = mouse.x>L && mouse.x<R && mouse.y>T && mouse.y<B;
     if (over) canvas.style.cursor = 'pointer';
-    if (over && mouse.click) clicked = names[i];
+    if (over && mouse.click) clicked = key;
 
     x += ctx.measureText(label+'  ').width;
   }
