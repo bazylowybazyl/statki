@@ -5305,7 +5305,7 @@ function render(alpha, frameDt){
 
   // Czyścimy ekran
   ctx.clearRect(0,0,W,H);
-  spaceBg?.drawSpaceBg?.(ctx);
+  spaceBg?.drawSpaceBg?.(ctx, cam);
   if (warpBlackHoleFX) {
     configureWarpLensSource();
   }
