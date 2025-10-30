@@ -1,5 +1,10 @@
+"use strict";
+
 export default function createREGL(opts){
-  const f = (typeof window !== 'undefined' && (window.createREGL || window.regl));
-  if (!f) throw new Error('createREGL not found on window');
+  const f = (window.createREGL || window.regl);
+  if (!f) {
+    throw new Error('[Tyro] REGL not loaded. Add <script src="https://unpkg.com/regl/dist/regl.min.js"></script> before modules.');
+  }
   return f(opts);
 }
+
