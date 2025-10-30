@@ -6,7 +6,7 @@ import * as random from './random.js';
 let bg = null;
 let offGL = null;
 let opts = {
-  renderPointStars: true,
+  renderPointStars: false,
   renderStars: true,
   renderNebulae: true,
   renderSun: false,
