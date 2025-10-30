@@ -22,7 +22,11 @@ const parallaxState = {
   offsetX: 0,
   offsetY: 0,
   targetX: 0,
-  targetY: 0
+  targetY: 0,
+  normalizedOffsetX: 0,
+  normalizedOffsetY: 0,
+  tileWidth: 0,
+  tileHeight: 0
 };
 
 export function initSpaceBg(seedStr = null){
@@ -30,6 +34,8 @@ export function initSpaceBg(seedStr = null){
     offGL = document.createElement('canvas');
     offGL.width = innerWidth;
     offGL.height = innerHeight;
+    parallaxState.tileWidth = offGL.width;
+    parallaxState.tileHeight = offGL.height;
   }
   if (!bg) bg = new Scene(offGL);
   opts.seed = String(seedStr ?? (window.SUN?.seed ?? random.generateRandomSeed()));
@@ -44,6 +50,10 @@ export function resizeSpaceBg(w, h){
   parallaxState.offsetY = 0;
   parallaxState.targetX = 0;
   parallaxState.targetY = 0;
+  parallaxState.normalizedOffsetX = 0;
+  parallaxState.normalizedOffsetY = 0;
+  parallaxState.tileWidth = offGL.width;
+  parallaxState.tileHeight = offGL.height;
 }
 
 export function drawSpaceBg(mainCtx, camera){
@@ -75,6 +85,10 @@ export function drawSpaceBg(mainCtx, camera){
 
   const normalizedOffsetX = wrapOffset(offsetX, tileW);
   const normalizedOffsetY = wrapOffset(offsetY, tileH);
+  parallaxState.normalizedOffsetX = normalizedOffsetX;
+  parallaxState.normalizedOffsetY = normalizedOffsetY;
+  parallaxState.tileWidth = tileW;
+  parallaxState.tileHeight = tileH;
 
   for (let drawX = -normalizedOffsetX; drawX < width; drawX += tileW) {
     for (let drawY = -normalizedOffsetY; drawY < height; drawY += tileH) {
@@ -116,6 +130,20 @@ export function setParallaxOptions(partial){
 
 export function getBackgroundCanvas(){
   return offGL;
+}
+
+export function getBackgroundSampleDescriptor(){
+  if (!offGL) return null;
+  const tileWidth = parallaxState.tileWidth || offGL.width || 1;
+  const tileHeight = parallaxState.tileHeight || offGL.height || 1;
+  return {
+    canvas: offGL,
+    tileWidth,
+    tileHeight,
+    offsetX: parallaxState.normalizedOffsetX || 0,
+    offsetY: parallaxState.normalizedOffsetY || 0,
+    parallaxEnabled: !!parallaxState.enabled
+  };
 }
 
 function wrapOffset(value, dimension){
