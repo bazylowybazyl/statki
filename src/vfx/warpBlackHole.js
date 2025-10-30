@@ -75,11 +75,15 @@ export class WarpBlackHole {
     }
     const gl = this.gl;
     const t = (performance.now() - this._time0) * 0.001;
+    const dpr = Math.min(devicePixelRatio||1, 2);
+    const cx = centerX * dpr;
+    const cy = centerY * dpr;
 
     gl.useProgram(this.program);
 
     // upload source image (Twoja kanwa 2D – tło albo cała scena)
     gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
     // UWAGA: texSubImage2D gdy rozmiar się nie zmienia – szybciej
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
                   gl.UNSIGNED_BYTE, this._srcCanvas);
@@ -87,7 +91,7 @@ export class WarpBlackHole {
     gl.uniform2f(this.u_resolution, this.canvas.width, this.canvas.height);
     gl.uniform1f(this.u_time, t);
     // przekazujemy środek w pikselach, shader sam przeskaluje
-    gl.uniform2f(this.u_center, centerX, this.canvas.height - centerY);
+    gl.uniform2f(this.u_center, cx, this.canvas.height - cy);
     gl.uniform1f(this.u_mass, mass);        // siła zakrzywienia (0..~0.5)
     gl.uniform1f(this.u_radius, radius);    // promień soczewki (0..1) — 0.25 ~ 25% ekranu
     gl.uniform1f(this.u_softness, softness);// miękkość brzegów (0..1)
