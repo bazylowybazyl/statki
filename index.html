@@ -5980,17 +5980,29 @@ function render(alpha, frameDt){
 
   if (warpBlackHoleFX) {
     const isWarpOn = (warp.state === 'charging' || warp.state === 'active');
-    warpBlackHoleFX.setEnabled(isWarpOn);
-    if (isWarpOn) {
+    const warpIntensity = isWarpOn
+      ? (warp.state === 'active'
+          ? 1
+          : Math.min(1, warp.charge / Math.max(0.001, warp.chargeTime)))
+      : 0;
+
+    const desiredLensMode = (warpIntensity >= WARP_LENS_THRESHOLD) ? 'full' : 'background';
+    if (desiredLensMode !== warpLensMode) {
+      warpLensMode = desiredLensMode;
+      warpLensSource = null;
+    }
+    if (!warpLensSource) {
+      configureWarpLensSource();
+    }
+
+    warpBlackHoleFX.setEnabled(isWarpOn && !!warpLensSource);
+    if (isWarpOn && warpLensSource) {
       const s = worldToScreen(ship.pos.x, ship.pos.y, camera);
-      const t = (warp.state === 'charging')
-        ? Math.min(1, warp.charge / Math.max(0.001, warp.chargeTime))
-        : 1;
       warpBlackHoleFX.render({
         centerX: s.x,
         centerY: s.y,
-        mass: 0.16 + 0.26 * t,
-        radius: 0.18,
+        mass: 0.16 + 0.26 * warpIntensity,
+        radius: 0.18 + 0.04 * warpIntensity,
         softness: 0.6
       });
     }
