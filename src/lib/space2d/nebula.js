@@ -42,8 +42,8 @@ export function createRenderer(regl) {
       uniform sampler2D source, tNoise;
       uniform vec3 color;
       uniform vec2 offset;
-      uniform vec2 resolution;
-      uniform float scale, density, falloff, tNoiseSize;
+      uniform vec2 domainScale;
+      uniform float density, falloff, tNoiseSize, domainPeriod;
       varying vec2 vUV;
 
       float smootherstep(float a, float b, float r) {
@@ -117,9 +117,8 @@ export function createRenderer(regl) {
 
       void main() {
         vec4 p = texture2D(source, vUV);
-        vec2 dims = resolution;
-        float repeat = tNoiseSize;
-        vec2 domain = (vUV * dims) * scale;
+        float repeat = domainPeriod;
+        vec2 domain = vUV * domainScale;
         float n = noise(domain, repeat);
         n = pow(n + density, falloff);
         gl_FragColor = vec4(mix(p.rgb, color, n), 1);
@@ -132,13 +131,13 @@ export function createRenderer(regl) {
     uniforms: {
       source: regl.prop('source'),
       offset: regl.prop('offset'),
-      scale: regl.prop('scale'),
+      domainScale: regl.prop('domainScale'),
       falloff: regl.prop('falloff'),
       color: regl.prop('color'),
       density: regl.prop('density'),
       tNoise: pgTexture,
       tNoiseSize: pgWidth,
-      resolution: regl.prop('resolution')
+      domainPeriod: regl.prop('domainPeriod')
     },
     framebuffer: regl.prop('destination'),
     viewport: regl.prop('viewport'),

@@ -67,16 +67,24 @@ export default class Scene {
     rand = random.rand(props.seed, 1000);
     let nebulaCount = 0;
     if (props.renderNebulae) nebulaCount = Math.round(rand.random() * 4 + 1);
+    const nebulaPeriodOptions = [16, 32, 64, 128, 256];
     let nebulaOut = pingPong(ping, ping, pong, nebulaCount, (source, destination) => {
+      const basePeriod = nebulaPeriodOptions[Math.floor(rand.random() * nebulaPeriodOptions.length)];
+      const baseRepeatFactor = rand.random() * 2 + 1;
+      const aspectMin = Math.max(1, Math.min(width, height));
+      const aspectScaleX = width / aspectMin;
+      const aspectScaleY = height / aspectMin;
+      const repeatX = basePeriod * Math.max(1, Math.round(baseRepeatFactor * aspectScaleX + rand.random()));
+      const repeatY = basePeriod * Math.max(1, Math.round(baseRepeatFactor * aspectScaleY + rand.random()));
       this.nebulaRenderer({
         source: source,
         destination: destination,
-        offset: [rand.random() * 100, rand.random() * 100],
-        scale: (rand.random() * 2 + 1) / scale,
+        offset: [rand.random() * basePeriod, rand.random() * basePeriod],
         color: [rand.random(), rand.random(), rand.random()],
         density: rand.random() * 0.2,
         falloff: rand.random() * 2.0 + 3.0,
-        resolution: [width, height],
+        domainScale: [repeatX, repeatY],
+        domainPeriod: basePeriod,
         viewport: viewport
       });
     });
