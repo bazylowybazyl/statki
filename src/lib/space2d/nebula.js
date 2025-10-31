@@ -40,10 +40,12 @@ export function createRenderer(regl) {
     frag: `
       precision highp float;
       uniform sampler2D source, tNoise;
-      uniform vec3 color;
+      uniform vec3 colorDeep;
+      uniform vec3 colorBright;
       uniform vec2 offset;
-      uniform vec2 resolution;
-      uniform float scale, density, falloff, tNoiseSize;
+      uniform vec2 domainScale;
+      uniform vec2 domainPeriod;
+      uniform float density, falloff, tNoiseSize, intensity;
       varying vec2 vUV;
 
       float smootherstep(float a, float b, float r) {
@@ -56,8 +58,8 @@ export function createRenderer(regl) {
           return mod(mod(value, period) + period, period);
       }
 
-      vec2 wrapPeriodic(vec2 value, float period) {
-          return vec2(wrapPeriodic(value.x, period), wrapPeriodic(value.y, period));
+      vec2 wrapPeriodic(vec2 value, vec2 period) {
+          return vec2(wrapPeriodic(value.x, period.x), wrapPeriodic(value.y, period.y));
       }
 
       vec2 gradient(vec2 lattice) {
@@ -66,15 +68,15 @@ export function createRenderer(regl) {
           return 2.0 * g - 1.0;
       }
 
-      float perlin_2d(vec2 p, float period) {
+      float perlin_2d(vec2 p, vec2 period) {
           vec2 cell = floor(p);
           vec2 local = fract(p);
 
           vec2 base = wrapPeriodic(cell, period);
           vec2 p0 = base;
-          vec2 p1 = vec2(wrapPeriodic(base.x + 1.0, period), base.y);
-          vec2 p2 = vec2(wrapPeriodic(base.x + 1.0, period), wrapPeriodic(base.y + 1.0, period));
-          vec2 p3 = vec2(base.x, wrapPeriodic(base.y + 1.0, period));
+          vec2 p1 = vec2(wrapPeriodic(base.x + 1.0, period.x), base.y);
+          vec2 p2 = vec2(wrapPeriodic(base.x + 1.0, period.x), wrapPeriodic(base.y + 1.0, period.y));
+          vec2 p3 = vec2(base.x, wrapPeriodic(base.y + 1.0, period.y));
 
           vec2 d0 = gradient(p0);
           vec2 d1 = gradient(p1);
@@ -99,30 +101,38 @@ export function createRenderer(regl) {
           return m01m32;
       }
 
-      float normalnoise(vec2 p, float period) {
+      float normalnoise(vec2 p, vec2 period) {
           return perlin_2d(p, period) * 0.5 + 0.5;
       }
 
-      float noise(vec2 p, float period) {
-          p += offset;
-          const int steps = 5;
-          float scale = pow(2.0, float(steps));
-          float displace = 0.0;
-          for (int i = 0; i < steps; i++) {
-              displace = normalnoise(p * scale + displace, period);
-              scale *= 0.5;
+      float fbm(vec2 p, vec2 period) {
+          float amplitude = 0.6;
+          float total = 0.0;
+          float sum = 0.0;
+          vec2 freq = vec2(1.0);
+          vec2 per = period;
+          for (int i = 0; i < 5; i++) {
+              total += normalnoise(p * freq, per) * amplitude;
+              sum += amplitude;
+              amplitude *= 0.55;
+              freq *= 2.0;
+              per *= 2.0;
           }
-          return normalnoise(p + displace, period);
+          return total / sum;
       }
 
       void main() {
         vec4 p = texture2D(source, vUV);
-        vec2 dims = resolution;
-        float repeat = tNoiseSize;
-        vec2 domain = (vUV * dims) * scale;
-        float n = noise(domain, repeat);
-        n = pow(n + density, falloff);
-        gl_FragColor = vec4(mix(p.rgb, color, n), 1);
+        vec2 repeat = domainPeriod;
+        vec2 domain = vUV * domainScale + offset;
+        float base = fbm(domain, repeat);
+        float maskBase = clamp(base + density, 0.0, 1.0);
+        float highlightBase = clamp(base + density * 0.5, 0.0, 1.0);
+        float mask = pow(maskBase, falloff);
+        float highlight = pow(highlightBase, max(1.0, falloff * 0.6));
+        vec3 tint = mix(colorDeep, colorBright, highlight);
+        vec3 finalColor = mix(p.rgb, tint, mask * intensity);
+        gl_FragColor = vec4(finalColor, 1);
       }
     `,
     attributes: {
@@ -132,13 +142,15 @@ export function createRenderer(regl) {
     uniforms: {
       source: regl.prop('source'),
       offset: regl.prop('offset'),
-      scale: regl.prop('scale'),
+      domainScale: regl.prop('domainScale'),
       falloff: regl.prop('falloff'),
-      color: regl.prop('color'),
+      colorDeep: regl.prop('colorDeep'),
+      colorBright: regl.prop('colorBright'),
       density: regl.prop('density'),
       tNoise: pgTexture,
       tNoiseSize: pgWidth,
-      resolution: regl.prop('resolution')
+      domainPeriod: regl.prop('domainPeriod'),
+      intensity: regl.prop('intensity')
     },
     framebuffer: regl.prop('destination'),
     viewport: regl.prop('viewport'),
