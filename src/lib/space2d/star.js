@@ -19,9 +19,16 @@ export function createRenderer(regl) {
       uniform vec2 center, resolution;
       uniform float coreRadius, haloFalloff, scale;
       varying vec2 vUV;
+
+      vec2 toroidalDelta(vec2 uv, vec2 center) {
+        vec2 delta = abs(uv - center);
+        return min(delta, 1.0 - delta);
+      }
+
       void main() {
         vec4 s = texture2D(source, vUV);
-        float d = length(gl_FragCoord.xy - center * resolution) / scale;
+        vec2 delta = toroidalDelta(vUV, center);
+        float d = length(delta * resolution) / scale;
         if (d <= coreRadius) {
           gl_FragColor = vec4(coreColor, 1);
           return;
