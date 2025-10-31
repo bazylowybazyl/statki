@@ -68,8 +68,10 @@ export function drawSpaceBg(mainCtx, camera){
   let offsetY = 0;
   if (parallaxState.enabled && camera) {
     const smooth = Math.max(0, Math.min(1, parallaxState.smoothing));
-    parallaxState.targetX = -(camera.x || 0) * parallaxState.factorX;
-    parallaxState.targetY = -(camera.y || 0) * parallaxState.factorY;
+    const camX = camera.x || 0;
+    const camY = camera.y || 0;
+    parallaxState.targetX = camX * parallaxState.factorX;
+    parallaxState.targetY = camY * parallaxState.factorY;
     if (smooth === 0) {
       parallaxState.offsetX = parallaxState.targetX;
       parallaxState.offsetY = parallaxState.targetY;
