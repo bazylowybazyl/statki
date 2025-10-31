@@ -3,6 +3,8 @@
 import Scene from './scene.js';
 import * as random from './random.js';
 
+const TILE_SCALE = 4;
+
 let bg = null;
 let offGL = null;
 let opts = {
@@ -29,31 +31,37 @@ const parallaxState = {
   tileHeight: 0
 };
 
-export function initSpaceBg(seedStr = null){
+function ensureOffscreenSize(w, h){
+  const width = Math.max(1, Math.round((w || 0) * TILE_SCALE));
+  const height = Math.max(1, Math.round((h || 0) * TILE_SCALE));
   if (!offGL) {
     offGL = document.createElement('canvas');
-    offGL.width = innerWidth;
-    offGL.height = innerHeight;
-    parallaxState.tileWidth = offGL.width;
-    parallaxState.tileHeight = offGL.height;
   }
+  if (offGL.width !== width) {
+    offGL.width = width;
+  }
+  if (offGL.height !== height) {
+    offGL.height = height;
+  }
+  parallaxState.tileWidth = offGL.width;
+  parallaxState.tileHeight = offGL.height;
+}
+
+export function initSpaceBg(seedStr = null){
+  ensureOffscreenSize(innerWidth, innerHeight);
   if (!bg) bg = new Scene(offGL);
   opts.seed = String(seedStr ?? (window.SUN?.seed ?? random.generateRandomSeed()));
   return true;
 }
 
 export function resizeSpaceBg(w, h){
-  if (!offGL) return;
-  offGL.width = Math.max(1, w | 0);
-  offGL.height = Math.max(1, h | 0);
+  ensureOffscreenSize(w, h);
   parallaxState.offsetX = 0;
   parallaxState.offsetY = 0;
   parallaxState.targetX = 0;
   parallaxState.targetY = 0;
   parallaxState.normalizedOffsetX = 0;
   parallaxState.normalizedOffsetY = 0;
-  parallaxState.tileWidth = offGL.width;
-  parallaxState.tileHeight = offGL.height;
 }
 
 export function drawSpaceBg(mainCtx, camera){
