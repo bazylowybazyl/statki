@@ -7,6 +7,54 @@ import * as nebula from './nebula.js';
 import * as copy from './copy.js';
 import * as random from './random.js';
 
+function clamp01(v) {
+  if (v < 0) return 0;
+  if (v > 1) return 1;
+  return v;
+}
+
+function mixColor(a, b, t) {
+  return [
+    a[0] + (b[0] - a[0]) * t,
+    a[1] + (b[1] - a[1]) * t,
+    a[2] + (b[2] - a[2]) * t
+  ];
+}
+
+function hslToRgb(h, s, l) {
+  h = ((h % 1) + 1) % 1;
+  s = clamp01(s);
+  l = clamp01(l);
+  if (s === 0) {
+    return [l, l, l];
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const toRGB = (t) => {
+    t = ((t % 1) + 1) % 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  return [toRGB(h + 1 / 3), toRGB(h), toRGB(h - 1 / 3)];
+}
+
+function createNebulaPalette(rand) {
+  const hue = rand.random();
+  const hueShift = 0.05 + rand.random() * 0.12;
+  const satBase = 0.45 + rand.random() * 0.2;
+  const satBright = clamp01(satBase + 0.15 + rand.random() * 0.2);
+  const deep = hslToRgb(hue, satBase * 0.55, 0.08 + rand.random() * 0.08);
+  const mid = hslToRgb(hue + hueShift * 0.5, satBase * 0.75, 0.22 + rand.random() * 0.14);
+  const bright = hslToRgb(hue + hueShift, satBright, 0.58 + rand.random() * 0.25);
+  const deepTint = mixColor(deep, mid, 0.5 + rand.random() * 0.3);
+  return {
+    deep: deepTint.map(clamp01),
+    bright: bright.map(clamp01)
+  };
+}
+
 export default class Scene {
 
   constructor(canvas) {
@@ -67,16 +115,35 @@ export default class Scene {
     rand = random.rand(props.seed, 1000);
     let nebulaCount = 0;
     if (props.renderNebulae) nebulaCount = Math.round(rand.random() * 4 + 1);
+    const nebulaPeriodOptions = [3, 4, 5, 6, 8, 10, 12, 14];
     let nebulaOut = pingPong(ping, ping, pong, nebulaCount, (source, destination) => {
+      const basePeriod = nebulaPeriodOptions[Math.floor(rand.random() * nebulaPeriodOptions.length)];
+      const aspectMin = Math.max(1, Math.min(width, height));
+      const aspectScaleX = width / aspectMin;
+      const aspectScaleY = height / aspectMin;
+      const periodJitter = 0.8 + rand.random() * 0.4;
+      const periodX = basePeriod;
+      const periodY = Math.max(3, Math.round(basePeriod * periodJitter));
+      const repeatBase = 1.4 + rand.random() * 1.8;
+      const repeatX = Math.max(1, Math.round(repeatBase * aspectScaleX));
+      const repeatY = Math.max(1, Math.round(repeatBase * aspectScaleY));
+      const domainPeriod = [periodX, periodY];
+      const domainScale = [periodX * repeatX, periodY * repeatY];
+      const palette = createNebulaPalette(rand);
+      const density = rand.random() * 0.35 - 0.25;
+      const falloff = rand.random() * 2.5 + 2.8;
+      const intensity = 0.3 + rand.random() * 0.45;
       this.nebulaRenderer({
         source: source,
         destination: destination,
-        offset: [rand.random() * 100, rand.random() * 100],
-        scale: (rand.random() * 2 + 1) / scale,
-        color: [rand.random(), rand.random(), rand.random()],
-        density: rand.random() * 0.2,
-        falloff: rand.random() * 2.0 + 3.0,
-        resolution: [width, height],
+        offset: [rand.random() * periodX, rand.random() * periodY],
+        colorDeep: palette.deep,
+        colorBright: palette.bright,
+        density,
+        falloff,
+        intensity,
+        domainScale,
+        domainPeriod,
         viewport: viewport
       });
     });
