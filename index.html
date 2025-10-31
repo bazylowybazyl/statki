@@ -358,7 +358,8 @@ window.DevFlags = Object.assign({
   unlimitedWarp: false,
   showSunDir: false,
   use3DPirateStation: true,
-  usePlanetStations3D: true
+  usePlanetStations3D: true,
+  disableCameraShake: false
 }, window.DevFlags || {});
 
 const DEFAULT_PLANET_SCALE = 3;
@@ -832,7 +833,17 @@ const camera = {
   focusZoom: 1.0,
   focusArrived: false,
   transition: null,
-  addShake(mag, dur){ this.shakeMag = mag; this.shakeTime = dur; this.shakeDur = dur; },
+  addShake(mag, dur){
+    if (DevFlags && DevFlags.disableCameraShake) {
+      this.shakeMag = 0;
+      this.shakeTime = 0;
+      this.shakeDur = 0;
+      return;
+    }
+    this.shakeMag = mag;
+    this.shakeTime = dur;
+    this.shakeDur = dur;
+  },
   enterFreeMode(){
     this.mode = 'free';
     this.focusStation = null;
@@ -5932,7 +5943,7 @@ function render(alpha, frameDt){
     }
   }
   const cam = { x: camera.x, y: camera.y, zoom: camera.zoom };
-  if(camera.shakeMag > 0){
+  if(!DevFlags.disableCameraShake && camera.shakeMag > 0){
     const t = camera.shakeTime / camera.shakeDur;
     const mag = camera.shakeMag * Math.max(0, t);
     cam.x += (Math.random()*2 - 1) * mag;
@@ -7256,6 +7267,9 @@ setTimeout(startGame, 500);
     <div class="row">
       <label><input id="dt-show-sundir" type="checkbox"> Pokaż kierunek słońca</label>
     </div>
+    <div class="row">
+      <label><input id="dt-disable-shake" type="checkbox"> Wyłącz wstrząsy kamery</label>
+    </div>
   </div>
 
   <div class="group">
@@ -7310,6 +7324,7 @@ setTimeout(startGame, 500);
     cbRuler: el('toggleRuler'),
     cbUnlimited: el('toggleUnlimitedWarp'),
     cbSunDir: el('dt-show-sundir'),
+    cbShake: el('dt-disable-shake'),
     cbPlanetStations3D: el('dt-use-planet-stations'),
     cbPirate3D: el('dt-use-3d-pirate'),
     btnCopy: el('btnCopy'), btnReset: el('btnReset'),
@@ -7362,6 +7377,9 @@ setTimeout(startGame, 500);
     } catch {}
     if (typeof DevFlags.usePlanetStations3D !== 'boolean') {
       DevFlags.usePlanetStations3D = true;
+    }
+    if (typeof DevFlags.disableCameraShake !== 'boolean') {
+      DevFlags.disableCameraShake = false;
     }
     if (typeof window !== 'undefined') {
       window.USE_PLANET_STATIONS_3D = DevFlags.usePlanetStations3D !== false;
@@ -7603,6 +7621,7 @@ setTimeout(startGame, 500);
     ui.cbRuler.checked = DevFlags.showRuler;
     ui.cbUnlimited.checked = DevFlags.unlimitedWarp;
     if (ui.cbSunDir) ui.cbSunDir.checked = DevFlags.showSunDir;
+    if (ui.cbShake) ui.cbShake.checked = DevFlags.disableCameraShake;
     if (ui.cbPlanetStations3D) ui.cbPlanetStations3D.checked = DevFlags.usePlanetStations3D !== false;
     if (ui.cbPirate3D) ui.cbPirate3D.checked = DevFlags.use3DPirateStation;
   }
@@ -7850,6 +7869,17 @@ setTimeout(startGame, 500);
   if (ui.cbSunDir) {
     ui.cbSunDir.addEventListener('change', ()=>{
       DevFlags.showSunDir = ui.cbSunDir.checked;
+      saveLS();
+    });
+  }
+  if (ui.cbShake) {
+    ui.cbShake.addEventListener('change', ()=>{
+      DevFlags.disableCameraShake = ui.cbShake.checked;
+      if (DevFlags.disableCameraShake) {
+        camera.shakeMag = 0;
+        camera.shakeTime = 0;
+        camera.shakeDur = 0;
+      }
       saveLS();
     });
   }
