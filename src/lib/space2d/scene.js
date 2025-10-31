@@ -53,8 +53,8 @@ export default class Scene {
         format: 'rgb',
         width: width,
         height: height,
-        wrapS: 'clamp',
-        wrapT: 'clamp',
+        wrapS: 'repeat',
+        wrapT: 'repeat',
         data: data
       });
       this.copyRenderer({
@@ -76,8 +76,7 @@ export default class Scene {
         color: [rand.random(), rand.random(), rand.random()],
         density: rand.random() * 0.2,
         falloff: rand.random() * 2.0 + 3.0,
-        width: width,
-        height: height,
+        resolution: [width, height],
         viewport: viewport
       });
     });
