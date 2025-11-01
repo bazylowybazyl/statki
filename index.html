@@ -165,6 +165,7 @@
   import { createArmataImpactFactory } from "./src/effects3d/armataImpact.js";
   import * as Space2DBackground from "./src/lib/space2d/tyroBackground.js";
   import { WarpBlackHole } from "./src/vfx/warpBlackHole.js";
+  import { createShipEntity, applyPlayerInput, runShipAI } from "./src/game/shipEntity.js";
   window.THREE = THREE;
   window.EffectComposer  = EffectComposer;
   window.RenderPass      = RenderPass;
@@ -469,15 +470,46 @@ function placeLine(out, type, count, a, b){
 function uid(){ return 'hp_'+Math.random().toString(36).slice(2,9); }
 
 const Game = window.Game || (window.Game={});
-Game.player = Game.player || {};
+const previousPlayer = Game.player || {};
 const defaultInventory = ['railgun_mk1','railgun_mk2','armata_mk1','missile_rack','ciws_mk1','laser_pd_mk1','fighter_bay','super_f'];
-const existingInventory = Game.player.inventory ? Array.from(Game.player.inventory) : [];
-Game.player.inventory = new Set([...existingInventory, ...defaultInventory]);
-Game.player.shipFrame = Game.player.shipFrame || 'atlas';
-Game.player.hardpoints = Game.player.hardpoints || [];
-Game.player.weapons = Game.player.weapons || {};
-Game.player.spriteW = Game.player.spriteW || 260;
-Game.player.spriteH = Game.player.spriteH || 520;
+const existingInventory = previousPlayer.inventory ? Array.from(previousPlayer.inventory) : [];
+const mergedInventory = new Set([...existingInventory, ...defaultInventory]);
+
+// =============== Ship ===============
+const shipOverrides = {};
+if (previousPlayer.pos) shipOverrides.pos = previousPlayer.pos;
+if (previousPlayer.vel) shipOverrides.vel = previousPlayer.vel;
+if (typeof previousPlayer.angle === 'number') shipOverrides.angle = previousPlayer.angle;
+if (typeof previousPlayer.angVel === 'number') shipOverrides.angVel = previousPlayer.angVel;
+if (typeof previousPlayer.mass === 'number') shipOverrides.mass = previousPlayer.mass;
+if (typeof previousPlayer.linearDamping === 'number') shipOverrides.linearDamping = previousPlayer.linearDamping;
+if (typeof previousPlayer.angularDamping === 'number') shipOverrides.angularDamping = previousPlayer.angularDamping;
+if (typeof previousPlayer.w === 'number') shipOverrides.w = previousPlayer.w;
+if (typeof previousPlayer.h === 'number') shipOverrides.h = previousPlayer.h;
+if (previousPlayer.controller) shipOverrides.controller = previousPlayer.controller;
+if (previousPlayer.aiController) shipOverrides.aiController = previousPlayer.aiController;
+
+Game.player = createShipEntity({ world: WORLD, overlayView, overrides: shipOverrides });
+const ship = Game.player;
+window.ship = ship;
+
+ship.inventory = mergedInventory;
+ship.shipFrame = previousPlayer.shipFrame || 'atlas';
+ship.hardpoints = previousPlayer.hardpoints || [];
+ship.weapons = previousPlayer.weapons || {};
+ship.spriteW = previousPlayer.spriteW || ship.spriteW || 260;
+ship.spriteH = previousPlayer.spriteH || ship.spriteH || 520;
+
+if (previousPlayer && typeof previousPlayer === 'object'){
+  for (const [key, value] of Object.entries(previousPlayer)){
+    if (ship[key] === undefined){
+      ship[key] = value;
+    }
+  }
+}
+
+overlayView.center.x = ship.pos.x;
+overlayView.center.y = ship.pos.y;
 
 let rocketAmmo = 0;
 let rocketAmmoMax = 0;
@@ -1076,111 +1108,6 @@ function resizeOverlay3D(){
 }
 
 resizeOverlay3D();
-
-// =============== Ship ===============
-const ship = {
-  w:100, h:300, mass:140,
-  pos:{x:WORLD.w/2, y:WORLD.h/2}, vel:{x:0,y:0},
-  angle:0, angVel:0, inertia:null,
-  linearDamping:0.9, angularDamping:1.6,
-  engines:{},
-  turret:{ angle:0, angVel:0, maxSpeed:1.8, maxAccel:8.0, damping:2.0,
-           recoil:0, recoilMax:12, recoilRecover:48, recoilKick:14, offset:{x:0,y:0} },
-  turret2:{ angle:0, angVel:0, maxSpeed:1.8, maxAccel:8.0, damping:2.0,
-            recoil:0, recoilMax:12, recoilRecover:48, recoilKick:14, offset:{x:0,y:0} },
-  turret3:{ angle:0, angVel:0, maxSpeed:1.8, maxAccel:8.0, damping:2.0,
-            recoil:0, recoilMax:12, recoilRecover:48, recoilKick:14, offset:{x:0,y:0} },
-  turret4:{ angle:0, angVel:0, maxSpeed:1.8, maxAccel:8.0, damping:2.0,
-            recoil:0, recoilMax:12, recoilRecover:48, recoilKick:14, offset:{x:0,y:0} },
-  shield:{ max:15000, val:120, regenRate:100, regenDelay:2, regenTimer:0 },
-  hull:{ max:10000, val:1000 },
-  special:{ cooldown:10, cooldownTimer:0 },
-  input:{ thrustX:0, thrustY:0, aimX:0, aimY:0 }
-};
-ship.inertia = (1/12) * ship.mass * ((ship.w*ship.w)+(ship.h*ship.h));
-const SHIP_SPRITE_SCALE = 1.22;
-const SHIP_VISUAL_BASE = {
-  turretTop:    { x: 38.18587785469991, y: -52.448366304887465 },
-  turretBottom: { x: 42.60145666564039, y:  43.668730035791256 },
-  engineY: 119.44796580188681
-};
-overlayView.center.x = ship.pos.x;
-overlayView.center.y = ship.pos.y;
-(function configureShip(){
-  const hw = ship.w/2, hh = ship.h/2;
-  ship.visual = {
-    spriteScale: SHIP_SPRITE_SCALE,
-    turretTop: {
-      x: SHIP_VISUAL_BASE.turretTop.x * SHIP_SPRITE_SCALE,
-      y: SHIP_VISUAL_BASE.turretTop.y * SHIP_SPRITE_SCALE
-    },
-    turretBottom: {
-      x: SHIP_VISUAL_BASE.turretBottom.x * SHIP_SPRITE_SCALE,
-      y: SHIP_VISUAL_BASE.turretBottom.y * SHIP_SPRITE_SCALE
-    },
-    mainEngine: {
-      x: 0,
-      y: Math.round(SHIP_VISUAL_BASE.engineY * SHIP_SPRITE_SCALE)
-    }
-  };
-
-  // Silniki — fizyczne offsety pozostają takie jak wcześniej
-  ship.engines.main = {
-    offset: { x: 0, y: Math.round(hh-8) },
-    visualOffset: { x: 0, y: ship.visual.mainEngine.y },
-    maxThrust: 12800
-  };
-
-  const sidePhysX = Math.round(hw-8);
-  const sideVisualX = Math.round((hw-8) * ship.visual.spriteScale);
-  ship.engines.sideLeft  =  { offset:{x:-sidePhysX, y: 0}, visualOffset:{x:-sideVisualX, y:0}, maxThrust:3000 };
-  ship.engines.sideRight =  { offset:{x: sidePhysX, y: 0}, visualOffset:{x: sideVisualX, y:0}, maxThrust:3000 };
-
-  const torquePhysY = Math.round(hh-8);
-  const torqueVisualY = Math.round((hh-8) * ship.visual.spriteScale);
-  ship.engines.torqueLeft  =  { offset:{x:0,y:-torquePhysY}, visualOffset:{x:0,y:-torqueVisualY}, maxThrust:3000 };
-  ship.engines.torqueRight =  { offset:{x:0,y: torquePhysY}, visualOffset:{x:0,y: torqueVisualY}, maxThrust:3000 };
-
-  ship.sideGunsLeft = []; ship.sideGunsRight = [];
-  const gunsPer = 8, inset = 6 * ship.visual.spriteScale, margin = 12 * ship.visual.spriteScale;
-  const visualHH = hh * ship.visual.spriteScale;
-  const visualHW = hw * ship.visual.spriteScale;
-  for(let i=0;i<gunsPer;i++){
-    const t = gunsPer===1?0.5:(i/(gunsPer-1));
-    const yLocal = -visualHH + margin + t * ((visualHH - margin) - (-visualHH + margin));
-    ship.sideGunsLeft.push({ x: -Math.round(visualHW - inset), y: Math.round(yLocal) });
-    ship.sideGunsRight.push({ x:  Math.round(visualHW - inset), y: Math.round(yLocal) });
-  }
-
-  const podW = Math.round(30 * ship.visual.spriteScale);
-  const podH = Math.round(60 * ship.visual.spriteScale);
-  const bottomTurret = ship.visual.turretBottom;
-  const topTurret = ship.visual.turretTop;
-  ship.pods = [
-    { offset:{ x: -bottomTurret.x, y:  bottomTurret.y }, w: podW, h: podH },
-    { offset:{ x:  bottomTurret.x, y:  bottomTurret.y }, w: podW, h: podH },
-    { offset:{ x: -topTurret.x,    y:  topTurret.y },    w: podW, h: podH },
-    { offset:{ x:  topTurret.x,    y:  topTurret.y },    w: podW, h: podH }
-  ];
-  ship.turret.offset  = { x: -bottomTurret.x, y:  bottomTurret.y };
-  ship.turret2.offset = { x:  bottomTurret.x, y:  bottomTurret.y };
-  ship.turret3.offset = { x: -topTurret.x,    y:  topTurret.y };
-  ship.turret4.offset = { x:  topTurret.x,    y:  topTurret.y };
-
-  const ciwsOff = 20 * ship.visual.spriteScale;
-  ship.ciws = [
-    { offset:{ x:-ciwsOff, y:-ciwsOff }, angle:0, angVel:0, cd:0 },
-    { offset:{ x:0,         y:-ciwsOff }, angle:0, angVel:0, cd:0 },
-    { offset:{ x: ciwsOff, y:-ciwsOff }, angle:0, angVel:0, cd:0 },
-    { offset:{ x:-ciwsOff, y:0 },        angle:0, angVel:0, cd:0 },
-    { offset:{ x: ciwsOff, y:0 },        angle:0, angVel:0, cd:0 },
-    { offset:{ x:-ciwsOff, y: ciwsOff }, angle:0, angVel:0, cd:0 },
-    { offset:{ x:0,         y: ciwsOff }, angle:0, angVel:0, cd:0 },
-    { offset:{ x: ciwsOff, y: ciwsOff }, angle:0, angVel:0, cd:0 }
-  ];
-  ship.nextFighterPod = 0;
-  ship.nextFighterOrbit = 0;
-})();
 
 // === Ship sprite ===
 const USE_SHIP_SPRITE = true;
@@ -3258,10 +3185,18 @@ window.addEventListener('keyup', e=>{
   updateInput();
 });
 function updateInput(){
-  input.main = keys['w']?1:0;
-  input.leftSide  = keys['q']?1:0;
-  input.rightSide = keys['e']?1:0;
-  let torque = 0; if(keys['a']) torque -= 1; if(keys['d']) torque += 1; input.torque = torque;
+  const main = keys['w'] ? 1 : 0;
+  const leftSide = keys['q'] ? 1 : 0;
+  const rightSide = keys['e'] ? 1 : 0;
+  let torque = 0; if(keys['a']) torque -= 1; if(keys['d']) torque += 1;
+  applyPlayerInput(ship, {
+    thrustX: torque,
+    thrustY: main,
+    main,
+    leftSide,
+    rightSide,
+    torque
+  }, input);
   if(keys['f']) tryFireSpecial();
 }
 
@@ -3425,15 +3360,17 @@ function applyGamepad(){
   const ax = (v)=> (Math.abs(v)<GAMEPAD.dead?0:v);
   const lx = ax(p.axes[0]||0), ly = ax(p.axes[1]||0);
   const rx = ax(p.axes[2]||0), ry = ax(p.axes[3]||0);
-  // ruch/rotacja
-  ship.input.thrustX = lx;
-  ship.input.thrustY = ly*-1; // bez odwracania osi (standard)
-  ship.input.aimX = rx;
-  ship.input.aimY = ry*-1;
-  input.main = Math.max(0, ship.input.thrustY);
-  input.torque = ship.input.thrustX;
-  input.leftSide = 0;
-  input.rightSide = 0;
+  const forward = ly * -1;
+  applyPlayerInput(ship, {
+    thrustX: lx,
+    thrustY: forward,
+    aimX: rx,
+    aimY: ry * -1,
+    main: Math.max(0, forward),
+    torque: lx,
+    leftSide: 0,
+    rightSide: 0
+  }, input);
   // przyciski
   const btn = (i)=>!!(p.buttons[i]&&p.buttons[i].pressed);
   if(btn(0)) triggerRailVolley();      // A / Cross
@@ -4891,6 +4828,12 @@ function physicsStep(dt){
     warp.fuel = clamp(warp.fuel + warp.regenRate*dt, 0, warp.fuelMax);
     if(DevFlags.unlimitedWarp) warp.fuel = warp.fuelMax;
     warp.entryProgress = 0;
+  }
+  if (ship.controller === 'ai'){
+    const aiControl = runShipAI(ship, dt);
+    if (aiControl){
+      applyPlayerInput(ship, aiControl, input);
+    }
   }
   let boostActive = boost.state === 'active';
   if(boost.state === 'active'){
