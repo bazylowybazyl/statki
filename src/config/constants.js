@@ -1,4 +1,4 @@
-export const DEFAULT_PLANET_SCALE = 1;
+export const DEFAULT_PLANET_SCALE = 3; // jak w starym index.html
 export const TIME_SCALE = 60;
 
 if (typeof window !== 'undefined') {
