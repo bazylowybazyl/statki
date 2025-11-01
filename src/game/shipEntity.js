@@ -276,7 +276,11 @@ export function createShipEntity(options = {}) {
 export function applyPlayerInput(ship, control = {}, thrusterTarget) {
   if (!ship) return thrusterTarget || null;
 
-  ship.controller = 'player';
+  if (Object.prototype.hasOwnProperty.call(control, 'controller')) {
+    if (control.controller) {
+      ship.controller = control.controller;
+    }
+  }
 
   if (typeof control.thrustX === 'number') ship.input.thrustX = control.thrustX;
   if (typeof control.thrustY === 'number') ship.input.thrustY = control.thrustY;
