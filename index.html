@@ -370,6 +370,8 @@ window.DevFlags = Object.assign({
 
 const DEFAULT_PLANET_SCALE = 3;
 const DEFAULT_STATION_SCALE = 6;
+window.DEFAULT_PLANET_SCALE = DEFAULT_PLANET_SCALE;
+window.DEFAULT_STATION_SCALE = DEFAULT_STATION_SCALE;
 
 window.DevTuning = Object.assign({
   pirateStationScale: DEFAULT_STATION_SCALE
@@ -1518,11 +1520,6 @@ function makeNPCBase(pos, stats){
 function makeRailgun(cfg){ return { ...cfg }; }
 function makeRocketPod(cfg){ return { ...cfg }; }
 function makeGatling(cfg){ return { ...cfg }; }
-function useRailPair(){/* stub */}
-function useRocketsPair(){/* stub */}
-function useCIWSPair(){/* stub */}
-function maybeFireRockets(){/* stub */}
-
 function spawnInterceptor(pos){
   const n = makeNPCBase(pos, { hp: 160, accel: 90, maxSpeed: 540, turn: 4.0, radius: 22 });
   n.type = 'interceptor';
