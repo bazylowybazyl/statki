@@ -203,7 +203,7 @@
 <!-- przełącznik: aktywuj assetowy renderer planet (klasyczny skrypt, aby globalne API było gotowe zanim ruszy pętla gry) -->
 <script type="module" src="planet3d.assets.js"></script>
 
-<script>
+<script type="module">
 // =============== Canvas & utils ===============
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
@@ -298,6 +298,8 @@ if (!tryInitSpaceBackground()) {
 let mainScene3D = null;
 let planetScene3D = null;
 let planetStationsReady = false;
+
+const { createShipEntity, applyPlayerInput, runShipAI } = window;
 
 function asThreeScene(candidate){
   if (!candidate) return null;
