@@ -3190,6 +3190,7 @@ function updateInput(){
   const rightSide = keys['e'] ? 1 : 0;
   let torque = 0; if(keys['a']) torque -= 1; if(keys['d']) torque += 1;
   applyPlayerInput(ship, {
+    controller: 'player',
     thrustX: torque,
     thrustY: main,
     main,
@@ -3362,6 +3363,7 @@ function applyGamepad(){
   const rx = ax(p.axes[2]||0), ry = ax(p.axes[3]||0);
   const forward = ly * -1;
   applyPlayerInput(ship, {
+    controller: 'player',
     thrustX: lx,
     thrustY: forward,
     aimX: rx,
