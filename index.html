@@ -212,10 +212,22 @@ window.DEFAULT_PLANET_SCALE ??= DEFAULT_PLANET_SCALE;
 window.TIME_SCALE ??= TIME_SCALE;
 window.WORLD ??= WORLD;
 
+// LOKALNY alias na potrzeby tego modułu (ESM nie widzi 'gołych' globali z window):
+const PLANET_SCALE =
+  (typeof window !== 'undefined' && typeof window.DEFAULT_PLANET_SCALE !== 'undefined')
+    ? window.DEFAULT_PLANET_SCALE : (DEFAULT_PLANET_SCALE ?? 3);
+
 // =============== Canvas & utils ===============
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
+
+// Model widoku overlayu (ortho nad światem 2D)
+const overlayView = {
+  center: { x: 0, y: 0 },
+  viewport: { w: innerWidth, h: innerHeight },
+  zoom: 1.0
+};
 
 let spaceBg = null;
 let spaceBgReady = false;
@@ -974,12 +986,8 @@ function computeStationFocusTarget(station){
   return { x, y, zoom, screenX, screenY };
 }
 
-// Model widoku overlayu (ortho nad światem 2D)
-const overlayView = {
-  center: { x: 0, y: 0 },
-  viewport: { w: innerWidth, h: innerHeight },
-  zoom: camera.zoom
-};
+// Model widoku overlayu już istnieje – dopasuj początkowy zoom do kamery
+overlayView.zoom = camera.zoom;
 
 function updateCameraTarget(dt){
   if(camera.mode === 'ship'){
@@ -1231,7 +1239,7 @@ function makeSolarPlanets(){
 
   let minOrbitEdge = SUN.r;
   return defs.map((def, index) => {
-    const effectiveR = def.baseR * DEFAULT_PLANET_SCALE;
+    const effectiveR = def.baseR * PLANET_SCALE;
     const baseOrbit = def.orbitAU * AU;
     const isInner = index < INNER_PLANET_COUNT;
     const extraOrbit = isInner ? INNER_EXTRA_ORBIT : 0;
@@ -1318,7 +1326,7 @@ function formatPlanetLabel(planet, index){
 let planets = PLANET_DATA.map((p, index) => {
   if (p.baseR == null) p.baseR = p.r;
   if (p.r == null && p.baseR != null) {
-    p.r = p.baseR * DEFAULT_PLANET_SCALE;
+    p.r = p.baseR * PLANET_SCALE;
   }
   p.x = SUN.x + Math.cos(p.angle) * p.orbitRadius;
   p.y = SUN.y + Math.sin(p.angle) * p.orbitRadius;
@@ -7247,7 +7255,7 @@ setTimeout(startGame, 500);
     sunR3D: null,               // liczba — promień Słońca (warstwa 3D)
     planetRById: {},            // { [id or name]: R }
     planetOrbitAUById: {},      // { [id or name]: AU }
-    planetScaleAll: DEFAULT_PLANET_SCALE,          // mnożnik globalny ×R
+    planetScaleAll: PLANET_SCALE,                  // mnożnik globalny ×R
     pirateScale: DEFAULT_STATION_SCALE,           // mnożnik rysowania stacji pirackiej
     station3DScale: DEFAULT_STATION_SCALE,        // mnożnik nakładki 3D
     stationSpriteSize: 512,
@@ -7338,7 +7346,7 @@ setTimeout(startGame, 500);
       DevConfig.planetOrbitAUById = {};
     }
     if (typeof DevConfig.planetScaleAll !== 'number') {
-      DevConfig.planetScaleAll = DEFAULT_PLANET_SCALE;
+      DevConfig.planetScaleAll = PLANET_SCALE;
     }
     if (typeof DevConfig.pirateScale !== 'number') {
       DevConfig.pirateScale = DevTuning.pirateStationScale;
@@ -7407,7 +7415,7 @@ setTimeout(startGame, 500);
       const numericSun3D = Number.isFinite(DevConfig.sunR3D) ? DevConfig.sunR3D : appliedSun2D;
       const appliedSun3D = Math.max(1, Math.round(numericSun3D || 0));
       SUN.r3D = appliedSun3D;
-      const scaleAll = +DevConfig.planetScaleAll || DEFAULT_PLANET_SCALE;
+      const scaleAll = +DevConfig.planetScaleAll || PLANET_SCALE;
       for (const p of planets) {
         const key = (p.name || p.id || String(p.index)||'').toString().toLowerCase();
         const base = DevConfig.planetRById[key] ?? p.baseR ?? p.r;
