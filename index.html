@@ -147,6 +147,7 @@
   }
 }
 </script>
+<script type="module" src="./src/config/constants.js"></script>
 <script src="https://unpkg.com/regl/dist/regl.min.js"></script>
 <script type="module">
   import * as THREE from "three";
@@ -204,6 +205,13 @@
 <script type="module" src="planet3d.assets.js"></script>
 
 <script type="module">
+import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
+import { WORLD } from './src/world/world.js';
+
+window.DEFAULT_PLANET_SCALE ??= DEFAULT_PLANET_SCALE;
+window.TIME_SCALE ??= TIME_SCALE;
+window.WORLD ??= WORLD;
+
 // =============== Canvas & utils ===============
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
@@ -367,10 +375,7 @@ window.DevFlags = Object.assign({
   usePlanetStations3D: true,
   disableCameraShake: false
 }, window.DevFlags || {});
-
-const DEFAULT_PLANET_SCALE = 3;
 const DEFAULT_STATION_SCALE = 6;
-window.DEFAULT_PLANET_SCALE = DEFAULT_PLANET_SCALE;
 window.DEFAULT_STATION_SCALE = DEFAULT_STATION_SCALE;
 
 window.DevTuning = Object.assign({
@@ -807,7 +812,6 @@ function hudRenderFloatingBars(ship, cam){
 }
 
 // =============== Game time (1 min real = 1 h game) ===============
-const TIME_SCALE = 60; // game seconds per real second
 let gameTime = 0; // seconds
 const gameTimeEl = document.getElementById('game-time');
 function formatGameTime(sec){
@@ -845,7 +849,6 @@ function leadTarget(shooter, shooterVel, target, speed){
 }
 
 // =============== World / camera ===============
-const WORLD = { w: 240000, h: 160000 };
 const camera = {
   x: WORLD.w / 2,
   y: WORLD.h / 2,
