@@ -6,7 +6,7 @@
 <title>Space Survivors — gwiazdy na całej mapie + duży silnik plazmowy</title>
 <style>
   html,body{height:100%;margin:0;background:#030417;color:#dfe7ff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
-  #ui{position:absolute;left:12px;top:12px;z-index:20;background:rgba(8,10,20,0.6);padding:10px;border-radius:8px;backdrop-filter:blur(6px)}
+  #ui{position:absolute;left:12px;top:12px;z-index:120;background:rgba(8,10,20,0.6);padding:10px;border-radius:8px;backdrop-filter:blur(6px)}
   canvas{display:block;width:100vw;height:100vh}
   #game-root{position:relative;width:100vw;height:100vh;}
   #game-root>canvas{display:block;width:100%;height:100%;}
@@ -196,7 +196,7 @@
   window.CopyShader = CopyShader;
   window.Space2DBackground = Space2DBackground;
 
-  const warpFX = new WarpBlackHole();
+  const warpFX = new WarpBlackHole({ zIndex: 45 });
   warpFX.setEnabled(false);
   window.warpBlackHoleFX = warpFX;
 
@@ -234,7 +234,35 @@ let spaceBgReady = false;
 const warpBlackHoleFX = window.warpBlackHoleFX || null;
 let warpLensMode = 'background';
 let warpLensSource = null;
-const WARP_LENS_THRESHOLD = 0.02;
+
+const WARP_LENS_DEFAULTS = Object.freeze({
+  threshold: 0.02,
+  radiusBase: 0.18,
+  radiusScale: 0.04,
+  massBase: 0.16,
+  massScale: 0.26,
+  softness: 0.6,
+  opacityBase: 0.55,
+  opacityScale: 0.35,
+  tailDepthExtra: 0.3
+});
+
+const DevVFX = window.DevVFX = window.DevVFX || {};
+DevVFX.warpLens = Object.assign({}, WARP_LENS_DEFAULTS, DevVFX.warpLens || {});
+window.__WARP_LENS_DEFAULTS = WARP_LENS_DEFAULTS;
+
+function warpLensParam(key){
+  const defaults = WARP_LENS_DEFAULTS;
+  const bag = DevVFX?.warpLens || defaults;
+  const raw = bag[key];
+  return Number.isFinite(raw) ? raw : defaults[key];
+}
+
+function getWarpLensThreshold(){
+  const v = warpLensParam('threshold');
+  if (!Number.isFinite(v)) return WARP_LENS_DEFAULTS.threshold;
+  return Math.min(1, Math.max(0, v));
+}
 
 function configureWarpLensSource(){
   if (!warpBlackHoleFX) return;
@@ -6207,6 +6235,57 @@ function render(alpha, frameDt){
     drawBoostBeam(origin, boost.effectDir, cam, boostAlpha);
   }
 
+  if (warpBlackHoleFX) {
+    const isWarpOn = (warp.state === 'charging' || warp.state === 'active');
+    const warpIntensity = isWarpOn
+      ? (warp.state === 'active'
+          ? 1
+          : Math.min(1, warp.charge / Math.max(0.001, warp.chargeTime)))
+      : 0;
+
+    const lensThreshold = getWarpLensThreshold();
+    const desiredLensMode = (warpIntensity >= lensThreshold) ? 'full' : 'background';
+    if (desiredLensMode !== warpLensMode) {
+      warpLensMode = desiredLensMode;
+      warpLensSource = null;
+    }
+    if (!warpLensSource) {
+      configureWarpLensSource();
+    }
+
+    warpBlackHoleFX.setEnabled(isWarpOn && !!warpLensSource);
+    if (isWarpOn && warpLensSource) {
+      const engineTail = ship.visual?.mainEngine?.y ?? (ship.h * 0.5);
+      const tailDepthExtra = warpLensParam('tailDepthExtra');
+      const warpDepth = engineTail + ship.h * tailDepthExtra;
+      const tailOffset = rotate({ x: 0, y: warpDepth }, ship.angle);
+      const fxPos = { x: ship.pos.x + tailOffset.x, y: ship.pos.y + tailOffset.y };
+      const s = worldToScreen(fxPos.x, fxPos.y, camera);
+
+      const radiusBase = warpLensParam('radiusBase');
+      const radiusScale = warpLensParam('radiusScale');
+      const massBase = warpLensParam('massBase');
+      const massScale = warpLensParam('massScale');
+      const softness = Math.min(1, Math.max(0, warpLensParam('softness')));
+      const opacityBase = warpLensParam('opacityBase');
+      const opacityScale = warpLensParam('opacityScale');
+
+      const radius = Math.min(1, Math.max(0.01, radiusBase + radiusScale * warpIntensity));
+      const mass = Math.min(0.6, Math.max(0, massBase + massScale * warpIntensity));
+      const opacity = Math.min(1, Math.max(0, opacityBase + opacityScale * warpIntensity));
+
+      warpBlackHoleFX.render({
+        centerX: s.x,
+        centerY: s.y,
+        mass,
+        radius,
+        softness,
+        rotation: ship.angle,
+        opacity
+      });
+    }
+  }
+
   // ======= STATEK =======
   const shipS = worldToScreen(interpPos.x, interpPos.y, cam);
   const spriteScale = ship.visual?.spriteScale || 1;
@@ -6589,43 +6668,6 @@ function render(alpha, frameDt){
       ctx.beginPath(); ctx.fillStyle = p.color;
       ctx.arc(s.x, s.y, p.size * camera.zoom, 0, Math.PI*2); ctx.fill();
       ctx.globalAlpha = 1;
-    }
-  }
-
-  if (warpBlackHoleFX) {
-    const isWarpOn = (warp.state === 'charging' || warp.state === 'active');
-    const warpIntensity = isWarpOn
-      ? (warp.state === 'active'
-          ? 1
-          : Math.min(1, warp.charge / Math.max(0.001, warp.chargeTime)))
-      : 0;
-
-    const desiredLensMode = (warpIntensity >= WARP_LENS_THRESHOLD) ? 'full' : 'background';
-    if (desiredLensMode !== warpLensMode) {
-      warpLensMode = desiredLensMode;
-      warpLensSource = null;
-    }
-    if (!warpLensSource) {
-      configureWarpLensSource();
-    }
-
-    warpBlackHoleFX.setEnabled(isWarpOn && !!warpLensSource);
-    if (isWarpOn && warpLensSource) {
-      const engineTail = ship.visual?.mainEngine?.y ?? (ship.h * 0.5);
-      const warpDepth = engineTail + ship.h * 0.3;
-      const tailOffset = rotate({ x: 0, y: warpDepth }, ship.angle);
-      const fxPos = { x: ship.pos.x + tailOffset.x, y: ship.pos.y + tailOffset.y };
-      const s = worldToScreen(fxPos.x, fxPos.y, camera);
-      const opacity = 0.55 + 0.35 * warpIntensity;
-      warpBlackHoleFX.render({
-        centerX: s.x,
-        centerY: s.y,
-        mass: 0.16 + 0.26 * warpIntensity,
-        radius: 0.18 + 0.04 * warpIntensity,
-        softness: 0.6,
-        rotation: ship.angle,
-        opacity
-      });
     }
   }
 
@@ -7222,6 +7264,64 @@ setTimeout(startGame, 500);
     <!-- Wiersze z suwakami per stacja będą dodane dynamicznie przez buildStationFramesUI() -->
   </div>
 
+  <div class="group" id="warpVfxGroup">
+    <div class="row"><strong>Warp Wormhole VFX</strong> <span class="small muted">(soczewka statku)</span></div>
+    <div class="row">
+      <label>Próg trybu pełnego</label>
+      <input id="warpLensThreshold" type="range" min="0" max="1" step="0.01">
+      <input id="warpLensThresholdNum" type="number" min="0" max="1" step="0.01" style="width:72px;">
+      <div class="val" id="warpLensThresholdVal"></div>
+    </div>
+    <div class="row">
+      <label>Promień bazowy</label>
+      <input id="warpRadiusBase" type="range" min="0.05" max="0.6" step="0.005">
+      <input id="warpRadiusBaseNum" type="number" min="0.05" max="0.6" step="0.005" style="width:72px;">
+      <div class="val" id="warpRadiusBaseVal"></div>
+    </div>
+    <div class="row">
+      <label>Promień — skala</label>
+      <input id="warpRadiusScale" type="range" min="0" max="0.3" step="0.005">
+      <input id="warpRadiusScaleNum" type="number" min="0" max="0.3" step="0.005" style="width:72px;">
+      <div class="val" id="warpRadiusScaleVal"></div>
+    </div>
+    <div class="row">
+      <label>Masa bazowa</label>
+      <input id="warpMassBase" type="range" min="0" max="0.5" step="0.005">
+      <input id="warpMassBaseNum" type="number" min="0" max="0.5" step="0.005" style="width:72px;">
+      <div class="val" id="warpMassBaseVal"></div>
+    </div>
+    <div class="row">
+      <label>Masa — skala</label>
+      <input id="warpMassScale" type="range" min="0" max="0.6" step="0.005">
+      <input id="warpMassScaleNum" type="number" min="0" max="0.6" step="0.005" style="width:72px;">
+      <div class="val" id="warpMassScaleVal"></div>
+    </div>
+    <div class="row">
+      <label>Miękkość krawędzi</label>
+      <input id="warpSoftness" type="range" min="0" max="1" step="0.01">
+      <input id="warpSoftnessNum" type="number" min="0" max="1" step="0.01" style="width:72px;">
+      <div class="val" id="warpSoftnessVal"></div>
+    </div>
+    <div class="row">
+      <label>Przezroczystość bazowa</label>
+      <input id="warpOpacityBase" type="range" min="0" max="1" step="0.01">
+      <input id="warpOpacityBaseNum" type="number" min="0" max="1" step="0.01" style="width:72px;">
+      <div class="val" id="warpOpacityBaseVal"></div>
+    </div>
+    <div class="row">
+      <label>Przezroczystość — skala</label>
+      <input id="warpOpacityScale" type="range" min="0" max="1" step="0.01">
+      <input id="warpOpacityScaleNum" type="number" min="0" max="1" step="0.01" style="width:72px;">
+      <div class="val" id="warpOpacityScaleVal"></div>
+    </div>
+    <div class="row">
+      <label>Offset wzdłuż kadłuba</label>
+      <input id="warpTailDepthExtra" type="range" min="-0.2" max="0.8" step="0.01">
+      <input id="warpTailDepthExtraNum" type="number" min="-0.2" max="0.8" step="0.01" style="width:72px;">
+      <div class="val" id="warpTailDepthExtraVal"></div>
+    </div>
+  </div>
+
   <div class="group">
     <div class="row">
       <label><input id="toggleRuler" type="checkbox"> Miarka (okręgi dystansu) <span class="pill">F11</span></label>
@@ -7293,6 +7393,25 @@ setTimeout(startGame, 500);
   };
   window.DevConfig = DevConfig;
 
+  const WarpLensDefaults = (window.__WARP_LENS_DEFAULTS && typeof window.__WARP_LENS_DEFAULTS === 'object')
+    ? window.__WARP_LENS_DEFAULTS
+    : {
+        threshold: 0.02,
+        radiusBase: 0.18,
+        radiusScale: 0.04,
+        massBase: 0.16,
+        massScale: 0.26,
+        softness: 0.6,
+        opacityBase: 0.55,
+        opacityScale: 0.35,
+        tailDepthExtra: 0.3
+      };
+  if (!window.__WARP_LENS_DEFAULTS) {
+    window.__WARP_LENS_DEFAULTS = WarpLensDefaults;
+  }
+  const DevVFX = window.DevVFX = window.DevVFX || {};
+  DevVFX.warpLens = Object.assign({}, WarpLensDefaults, DevVFX.warpLens || {});
+
   // ---- Elementy UI --------------------------------------------------------
   const el = (id)=>document.getElementById(id);
   const ui = {
@@ -7315,6 +7434,69 @@ setTimeout(startGame, 500);
     btnCopy: el('btnCopy'), btnReset: el('btnReset'),
     cfgOut: el('cfgOut')
   };
+
+  const warpLensUI = {
+    threshold: { slider: el('warpLensThreshold'), number: el('warpLensThresholdNum'), label: el('warpLensThresholdVal'), decimals: 2 },
+    radiusBase: { slider: el('warpRadiusBase'), number: el('warpRadiusBaseNum'), label: el('warpRadiusBaseVal'), decimals: 3 },
+    radiusScale: { slider: el('warpRadiusScale'), number: el('warpRadiusScaleNum'), label: el('warpRadiusScaleVal'), decimals: 3 },
+    massBase: { slider: el('warpMassBase'), number: el('warpMassBaseNum'), label: el('warpMassBaseVal'), decimals: 3 },
+    massScale: { slider: el('warpMassScale'), number: el('warpMassScaleNum'), label: el('warpMassScaleVal'), decimals: 3 },
+    softness: { slider: el('warpSoftness'), number: el('warpSoftnessNum'), label: el('warpSoftnessVal'), decimals: 2 },
+    opacityBase: { slider: el('warpOpacityBase'), number: el('warpOpacityBaseNum'), label: el('warpOpacityBaseVal'), decimals: 2 },
+    opacityScale: { slider: el('warpOpacityScale'), number: el('warpOpacityScaleNum'), label: el('warpOpacityScaleVal'), decimals: 2 },
+    tailDepthExtra: { slider: el('warpTailDepthExtra'), number: el('warpTailDepthExtraNum'), label: el('warpTailDepthExtraVal'), decimals: 2 }
+  };
+  ui.warpLens = warpLensUI;
+
+  const warpLensRanges = {
+    threshold: { min: 0, max: 1 },
+    radiusBase: { min: 0.01, max: 1 },
+    radiusScale: { min: 0, max: 0.6 },
+    massBase: { min: 0, max: 1 },
+    massScale: { min: 0, max: 1 },
+    softness: { min: 0, max: 1 },
+    opacityBase: { min: 0, max: 1 },
+    opacityScale: { min: 0, max: 1 },
+    tailDepthExtra: { min: -1, max: 1 }
+  };
+
+  function sanitizeWarpLensValue(key, raw){
+    const defaults = WarpLensDefaults;
+    const range = warpLensRanges[key] || {};
+    let v = Number(raw);
+    if (!Number.isFinite(v)) v = defaults[key];
+    if (typeof range.min === 'number') v = Math.max(range.min, v);
+    if (typeof range.max === 'number') v = Math.min(range.max, v);
+    return v;
+  }
+
+  function setWarpLensField(key, value){
+    const ctrl = warpLensUI[key];
+    if (!ctrl) return;
+    const decimals = typeof ctrl.decimals === 'number' ? ctrl.decimals : 2;
+    const formatted = value.toFixed(decimals);
+    if (ctrl.slider) ctrl.slider.value = String(value);
+    if (ctrl.number) ctrl.number.value = formatted;
+    if (ctrl.label) ctrl.label.textContent = formatted;
+  }
+
+  function reflectWarpLensToUI(){
+    for (const key in warpLensUI){
+      const value = DevVFX.warpLens?.[key];
+      const defaults = WarpLensDefaults;
+      const v = Number.isFinite(value) ? value : defaults[key];
+      setWarpLensField(key, v);
+    }
+  }
+
+  function applyWarpLensValue(key, raw){
+    const value = sanitizeWarpLensValue(key, raw);
+    if (!DevVFX.warpLens) DevVFX.warpLens = {};
+    DevVFX.warpLens[key] = value;
+    setWarpLensField(key, value);
+    saveLS();
+    reflectToCfg();
+  }
 
   // ---- Inicjalne odczyty z gry -------------------------------------------
   function bootstrapFromGame(){
@@ -7369,6 +7551,15 @@ setTimeout(startGame, 500);
     if (typeof DevFlags.disableCameraShake !== 'boolean') {
       DevFlags.disableCameraShake = false;
     }
+    try {
+      const savedVfx = JSON.parse(localStorage.getItem('devVfx') || 'null');
+      if (savedVfx && typeof savedVfx === 'object') {
+        const savedLens = savedVfx.warpLens;
+        if (savedLens && typeof savedLens === 'object') {
+          DevVFX.warpLens = Object.assign({}, WarpLensDefaults, savedLens);
+        }
+      }
+    } catch {}
     if (typeof window !== 'undefined') {
       window.USE_PLANET_STATIONS_3D = DevFlags.usePlanetStations3D !== false;
     }
@@ -7430,6 +7621,7 @@ setTimeout(startGame, 500);
   function saveLS(){
     localStorage.setItem('devConfig', JSON.stringify(DevConfig));
     localStorage.setItem('devFlags', JSON.stringify(DevFlags));
+    try { localStorage.setItem('devVfx', JSON.stringify({ warpLens: DevVFX.warpLens })); } catch {}
   }
   window.__devtoolsSaveLS = saveLS;
 
@@ -7616,6 +7808,7 @@ setTimeout(startGame, 500);
     if (ui.cbShake) ui.cbShake.checked = DevFlags.disableCameraShake;
     if (ui.cbPlanetStations3D) ui.cbPlanetStations3D.checked = DevFlags.usePlanetStations3D !== false;
     if (ui.cbPirate3D) ui.cbPirate3D.checked = DevFlags.use3DPirateStation;
+    reflectWarpLensToUI();
   }
   function reflectToCfg(){
     const out = {
@@ -7631,11 +7824,24 @@ setTimeout(startGame, 500);
       stationSpriteFrame: +DevConfig.stationSpriteFrame,
       stationSpriteFrameById: DevConfig.stationSpriteFrameById,
       planetOrbitAUById: collectAUForExport(),
-      stationScaleById: DevConfig.stationScaleById
+      stationScaleById: DevConfig.stationScaleById,
+      warpLens: collectWarpLensForExport()
     };
     ui.cfgOut.value = JSON.stringify(out, null, 2);
   }
   window.__devtoolsReflectToCfg = reflectToCfg;
+
+  function collectWarpLensForExport(){
+    const out = {};
+    const defaults = WarpLensDefaults;
+    const lens = DevVFX.warpLens || {};
+    for (const key in defaults){
+      const raw = lens[key];
+      const value = Number.isFinite(raw) ? raw : defaults[key];
+      out[key] = +value;
+    }
+    return out;
+  }
 
   function fmtU(worldDist){
     if (typeof worldDist !== 'number' || !Number.isFinite(worldDist)) return '?';
@@ -7856,6 +8062,18 @@ setTimeout(startGame, 500);
     ui.stationSpritePx.addEventListener('change', applySpriteSize);
     ui.stationSpritePx.addEventListener('input', applySpriteSize);
   }
+  for (const [key, ctrl] of Object.entries(warpLensUI)) {
+    if (!ctrl) continue;
+    if (ctrl.slider) {
+      ctrl.slider.addEventListener('input', () => applyWarpLensValue(key, ctrl.slider.value));
+      ctrl.slider.addEventListener('change', () => applyWarpLensValue(key, ctrl.slider.value));
+    }
+    if (ctrl.number) {
+      const commit = () => applyWarpLensValue(key, ctrl.number.value);
+      ctrl.number.addEventListener('change', commit);
+      ctrl.number.addEventListener('keyup', (e)=>{ if (e.key === 'Enter') commit(); });
+    }
+  }
   ui.cbRuler.addEventListener('change', ()=>{ DevFlags.showRuler = ui.cbRuler.checked; saveLS(); });
   ui.cbUnlimited.addEventListener('change', ()=>{ DevFlags.unlimitedWarp = ui.cbUnlimited.checked; saveLS(); });
   if (ui.cbSunDir) {
@@ -7902,6 +8120,7 @@ setTimeout(startGame, 500);
   ui.btnReset.addEventListener('click', ()=>{
     localStorage.removeItem('devConfig'); localStorage.removeItem('devFlags'); localStorage.removeItem('stationSpriteSize');
     localStorage.removeItem('stationSpriteFrame'); localStorage.removeItem('stationSpriteFrameById');
+    localStorage.removeItem('devVfx');
     location.reload();
   });
 
