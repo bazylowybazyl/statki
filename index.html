@@ -7246,6 +7246,13 @@ setTimeout(startGame, 500);
 
 <script>
 (function(){
+  // Klasyczny skrypt nie widzi stałych z ESM. Zapewnij aliasy:
+  const PLANET_SCALE = (
+    typeof window !== 'undefined' && typeof window.DEFAULT_PLANET_SCALE === 'number'
+  ) ? window.DEFAULT_PLANET_SCALE : 1;
+  const DEFAULT_STATION_SCALE = (
+    typeof window !== 'undefined' && typeof window.DEFAULT_STATION_SCALE === 'number'
+  ) ? window.DEFAULT_STATION_SCALE : 6;
   // === Wczytaj podstawowe obiekty gry (muszą już istnieć globalnie): SUN, planets, initPlanets3D ===
   // Zakładamy: let SUN = {...}, let planets = [...]; render pętla już działa.
 
