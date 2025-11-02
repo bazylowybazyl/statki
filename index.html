@@ -7246,24 +7246,26 @@ setTimeout(startGame, 500);
 
 <script>
 (function(){
-  window.DevFlags = Object.assign({
+  // Nie nadpisuj obiektu! Zachowaj referencję, bo gameplay trzyma do niej const.
+  const __devtoolsDefaults = {
     showRuler: false,
     unlimitedWarp: false,
     showSunDir: false,
     use3DPirateStation: true,
     usePlanetStations3D: true,
     disableCameraShake: false
-  }, window.DevFlags || {});
-  const DevFlags = window.DevFlags;
+  };
+  if (!window.DevFlags) window.DevFlags = {};
+  for (const k in __devtoolsDefaults) {
+    if (!(k in window.DevFlags)) window.DevFlags[k] = __devtoolsDefaults[k];
+  }
+  const DevFlags = window.DevFlags; // lokalny skrót do TEGO SAMEGO obiektu
 
   const DEFAULT_STATION_SCALE = (
     typeof window !== 'undefined' && typeof window.DEFAULT_STATION_SCALE === 'number'
   ) ? window.DEFAULT_STATION_SCALE : 6;
 
-  // Klasyczny skrypt nie widzi stałych z ESM. Zapewnij aliasy:
-  const PLANET_SCALE = (
-    typeof window !== 'undefined' && typeof window.DEFAULT_PLANET_SCALE === 'number'
-  ) ? window.DEFAULT_PLANET_SCALE : 1;
+  // Klasyczny skrypt nie widzi stałych z ESM — korzystaj z window.* w runtime.
   // === Wczytaj podstawowe obiekty gry (muszą już istnieć globalnie): SUN, planets, initPlanets3D ===
   // Zakładamy: let SUN = {...}, let planets = [...]; render pętla już działa.
 
@@ -7273,9 +7275,8 @@ setTimeout(startGame, 500);
     sunR3D: null,               // liczba — promień Słońca (warstwa 3D)
     planetRById: {},            // { [id or name]: R }
     planetOrbitAUById: {},      // { [id or name]: AU }
-    planetScaleAll: (typeof window.DEFAULT_PLANET_SCALE === 'number'
-      ? window.DEFAULT_PLANET_SCALE
-      : 1),                  // mnożnik globalny ×R
+    // Nie zależ od momentu ładowania modułów – czytaj z window w runtime.
+    planetScaleAll: (typeof window.DEFAULT_PLANET_SCALE === 'number' ? window.DEFAULT_PLANET_SCALE : 1),                  // mnożnik globalny ×R
     pirateScale: DEFAULT_STATION_SCALE,           // mnożnik rysowania stacji pirackiej
     station3DScale: DEFAULT_STATION_SCALE,        // mnożnik nakładki 3D
     stationSpriteSize: 512,
@@ -7348,9 +7349,11 @@ setTimeout(startGame, 500);
         }
       }
     } catch {}
+    // devFlags w osobnym bloku – defensywnie:
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem('devFlags') || 'null'); } catch {}
     if (saved && typeof saved === 'object') {
+      // Mutacja ISTNIEJĄCEGO obiektu, bez utraty referencji
       Object.assign(window.DevFlags, saved);
     }
     if (typeof DevFlags.usePlanetStations3D !== 'boolean') {
@@ -7366,9 +7369,7 @@ setTimeout(startGame, 500);
       DevConfig.planetOrbitAUById = {};
     }
     if (typeof DevConfig.planetScaleAll !== 'number') {
-      DevConfig.planetScaleAll = (typeof window.DEFAULT_PLANET_SCALE === 'number'
-        ? window.DEFAULT_PLANET_SCALE
-        : 1);
+      DevConfig.planetScaleAll = (typeof window.DEFAULT_PLANET_SCALE === 'number' ? window.DEFAULT_PLANET_SCALE : 1);
     }
     if (typeof DevConfig.pirateScale !== 'number') {
       DevConfig.pirateScale = DevTuning.pirateStationScale;
@@ -7437,7 +7438,10 @@ setTimeout(startGame, 500);
       const numericSun3D = Number.isFinite(DevConfig.sunR3D) ? DevConfig.sunR3D : appliedSun2D;
       const appliedSun3D = Math.max(1, Math.round(numericSun3D || 0));
       SUN.r3D = appliedSun3D;
-      const scaleAll = +DevConfig.planetScaleAll || PLANET_SCALE;
+      const defaultScale = (typeof window.DEFAULT_PLANET_SCALE === 'number' ? window.DEFAULT_PLANET_SCALE : 1);
+      const scaleAll = Number.isFinite(+DevConfig.planetScaleAll) && +DevConfig.planetScaleAll > 0
+        ? +DevConfig.planetScaleAll
+        : defaultScale;
       for (const p of planets) {
         const key = (p.name || p.id || String(p.index)||'').toString().toLowerCase();
         const base = DevConfig.planetRById[key] ?? p.baseR ?? p.r;
