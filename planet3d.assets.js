@@ -1,5 +1,17 @@
 // planet3d.assets.js
 
+// Bridge/shim dla worldToScreen w module:
+function worldToScreen(x, y, cam){
+  const fn = (typeof window !== 'undefined') ? window.worldToScreen : null;
+  if (typeof fn === 'function') return fn(x, y, cam);
+  const z  = cam?.zoom ?? 1;
+  const cx = cam?.x ?? 0;
+  const cy = cam?.y ?? 0;
+  const W  = (typeof window !== 'undefined' && typeof window.innerWidth  === 'number') ? window.innerWidth  : 0;
+  const H  = (typeof window !== 'undefined' && typeof window.innerHeight === 'number') ? window.innerHeight : 0;
+  return { x: (x - cx) * z + W/2, y: (y - cy) * z + H/2 };
+}
+
 if (typeof window !== 'undefined' && !window.getSharedRenderer) {
   window.getSharedRenderer = (w = 512, h = 512) => {
     const THREE_NS = window.THREE;
