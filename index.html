@@ -6611,13 +6611,20 @@ function render(alpha, frameDt){
 
     warpBlackHoleFX.setEnabled(isWarpOn && !!warpLensSource);
     if (isWarpOn && warpLensSource) {
-      const s = worldToScreen(ship.pos.x, ship.pos.y, camera);
+      const engineTail = ship.visual?.mainEngine?.y ?? (ship.h * 0.5);
+      const warpDepth = engineTail + ship.h * 0.3;
+      const tailOffset = rotate({ x: 0, y: warpDepth }, ship.angle);
+      const fxPos = { x: ship.pos.x + tailOffset.x, y: ship.pos.y + tailOffset.y };
+      const s = worldToScreen(fxPos.x, fxPos.y, camera);
+      const opacity = 0.55 + 0.35 * warpIntensity;
       warpBlackHoleFX.render({
         centerX: s.x,
         centerY: s.y,
         mass: 0.16 + 0.26 * warpIntensity,
         radius: 0.18 + 0.04 * warpIntensity,
-        softness: 0.6
+        softness: 0.6,
+        rotation: ship.angle,
+        opacity
       });
     }
   }
