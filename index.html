@@ -7246,13 +7246,24 @@ setTimeout(startGame, 500);
 
 <script>
 (function(){
+  window.DevFlags = Object.assign({
+    showRuler: false,
+    unlimitedWarp: false,
+    showSunDir: false,
+    use3DPirateStation: true,
+    usePlanetStations3D: true,
+    disableCameraShake: false
+  }, window.DevFlags || {});
+  const DevFlags = window.DevFlags;
+
+  const DEFAULT_STATION_SCALE = (
+    typeof window !== 'undefined' && typeof window.DEFAULT_STATION_SCALE === 'number'
+  ) ? window.DEFAULT_STATION_SCALE : 6;
+
   // Klasyczny skrypt nie widzi stałych z ESM. Zapewnij aliasy:
   const PLANET_SCALE = (
     typeof window !== 'undefined' && typeof window.DEFAULT_PLANET_SCALE === 'number'
   ) ? window.DEFAULT_PLANET_SCALE : 1;
-  const DEFAULT_STATION_SCALE = (
-    typeof window !== 'undefined' && typeof window.DEFAULT_STATION_SCALE === 'number'
-  ) ? window.DEFAULT_STATION_SCALE : 6;
   // === Wczytaj podstawowe obiekty gry (muszą już istnieć globalnie): SUN, planets, initPlanets3D ===
   // Zakładamy: let SUN = {...}, let planets = [...]; render pętla już działa.
 
@@ -7262,7 +7273,9 @@ setTimeout(startGame, 500);
     sunR3D: null,               // liczba — promień Słońca (warstwa 3D)
     planetRById: {},            // { [id or name]: R }
     planetOrbitAUById: {},      // { [id or name]: AU }
-    planetScaleAll: PLANET_SCALE,                  // mnożnik globalny ×R
+    planetScaleAll: (typeof window.DEFAULT_PLANET_SCALE === 'number'
+      ? window.DEFAULT_PLANET_SCALE
+      : 1),                  // mnożnik globalny ×R
     pirateScale: DEFAULT_STATION_SCALE,           // mnożnik rysowania stacji pirackiej
     station3DScale: DEFAULT_STATION_SCALE,        // mnożnik nakładki 3D
     stationSpriteSize: 512,
@@ -7270,7 +7283,6 @@ setTimeout(startGame, 500);
     stationSpriteFrameById: {},
     stationScaleById: {},
   };
-  const DevFlags = window.DevFlags;
   window.DevConfig = DevConfig;
 
   // ---- Elementy UI --------------------------------------------------------
@@ -7326,7 +7338,6 @@ setTimeout(startGame, 500);
   function loadLS(){
     try {
       const cfg = JSON.parse(localStorage.getItem('devConfig')||'null');
-      const flags = JSON.parse(localStorage.getItem('devFlags')||'null');
       if (cfg && typeof cfg==='object'){
         Object.assign(DevConfig, cfg);
         if (typeof DevConfig.pirateScale === 'number') {
@@ -7336,10 +7347,12 @@ setTimeout(startGame, 500);
           Dev.station3DScale = DevConfig.station3DScale;
         }
       }
-      if (flags && typeof flags==='object'){
-        Object.assign(DevFlags, flags);
-      }
     } catch {}
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem('devFlags') || 'null'); } catch {}
+    if (saved && typeof saved === 'object') {
+      Object.assign(window.DevFlags, saved);
+    }
     if (typeof DevFlags.usePlanetStations3D !== 'boolean') {
       DevFlags.usePlanetStations3D = true;
     }
@@ -7353,7 +7366,9 @@ setTimeout(startGame, 500);
       DevConfig.planetOrbitAUById = {};
     }
     if (typeof DevConfig.planetScaleAll !== 'number') {
-      DevConfig.planetScaleAll = PLANET_SCALE;
+      DevConfig.planetScaleAll = (typeof window.DEFAULT_PLANET_SCALE === 'number'
+        ? window.DEFAULT_PLANET_SCALE
+        : 1);
     }
     if (typeof DevConfig.pirateScale !== 'number') {
       DevConfig.pirateScale = DevTuning.pirateStationScale;
@@ -7515,7 +7530,8 @@ setTimeout(startGame, 500);
 
   // ---- Cheat: unlimited warp ---------------------------------------------
   window.devtoolsApplyCheats = function devtoolsApplyCheats(){
-    if (!DevFlags.unlimitedWarp) return;
+    const f = window.DevFlags || {};
+    if (!f.unlimitedWarp) return;
     const s = window.ship;
     if (s && s.warp){
       if ('cooldown' in s.warp) s.warp.cooldown = 0;
