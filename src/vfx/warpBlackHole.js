@@ -138,6 +138,7 @@ export class WarpBlackHole {
     gl.uniform2f(this.u_tileSize, tileW, tileH);
     gl.uniform2f(this.u_tileOffset, offsetX, offsetY);
 
+    gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
