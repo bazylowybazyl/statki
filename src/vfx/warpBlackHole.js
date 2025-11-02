@@ -7,6 +7,11 @@ export class WarpBlackHole {
     const gl = this.gl = this.canvas.getContext('webgl', { premultipliedAlpha: false, alpha: true });
     if (!gl) throw new Error('WebGL not available');
 
+    gl.enable(gl.BLEND);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.blendEquation(gl.FUNC_ADD);
+    gl.clearColor(0, 0, 0, 0);
+
     this.program = this._createProgram(
       this._vs(), this._fs()
     );
@@ -22,6 +27,8 @@ export class WarpBlackHole {
     this.u_tileSize    = gl.getUniformLocation(this.program, 'u_tileSize');
     this.u_tileOffset  = gl.getUniformLocation(this.program, 'u_tileOffset');
     this.u_parallax    = gl.getUniformLocation(this.program, 'u_parallaxEnabled');
+    this.u_rotation    = gl.getUniformLocation(this.program, 'u_rotation');
+    this.u_opacity     = gl.getUniformLocation(this.program, 'u_opacity');
 
     // fullscreen quad
     const buf = gl.createBuffer();
@@ -85,7 +92,7 @@ export class WarpBlackHole {
     this.gl.viewport(0,0,this.canvas.width, this.canvas.height);
   }
 
-  render({ centerX, centerY, mass = 0.15, radius = 0.25, softness = 0.25 }){
+  render({ centerX, centerY, mass = 0.15, radius = 0.25, softness = 0.25, rotation = 0, opacity = 0.85 }){
     if (!this.enabled) return;
     if (!this._srcCanvas) {
       if (!this._warnedNoSource) {
@@ -112,6 +119,7 @@ export class WarpBlackHole {
     // upload source image (Twoja kanwa 2D – tło albo cała scena)
     gl.bindTexture(gl.TEXTURE_2D, this.tex);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     // UWAGA: texSubImage2D gdy rozmiar się nie zmienia – szybciej
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
                   gl.UNSIGNED_BYTE, this._srcCanvas);
@@ -123,6 +131,8 @@ export class WarpBlackHole {
     gl.uniform1f(this.u_mass, mass);        // siła zakrzywienia (0..~0.5)
     gl.uniform1f(this.u_radius, radius);    // promień soczewki (0..1) — 0.25 ~ 25% ekranu
     gl.uniform1f(this.u_softness, softness);// miękkość brzegów (0..1)
+    if (this.u_rotation) gl.uniform1f(this.u_rotation, rotation);
+    if (this.u_opacity) gl.uniform1f(this.u_opacity, opacity);
     gl.uniform1i(this.u_image, 0);
     gl.uniform1f(this.u_parallax, useParallax ? 1 : 0);
     gl.uniform2f(this.u_tileSize, tileW, tileH);
@@ -149,6 +159,8 @@ export class WarpBlackHole {
     uniform vec2  u_tileSize;     // rozmiar kafla tła (w px, po dpr)
     uniform vec2  u_tileOffset;   // przesunięcie kafla (w px, po dpr)
     uniform float u_parallaxEnabled;
+    uniform float u_rotation;     // orientacja statku (rad)
+    uniform float u_opacity;      // globalna intensywność (0..1)
 
     // Prosta soczewka grawitacyjna:
     // - liczymy kierunek do centrum, wielkość odchylenia ~ u_mass / r^2
@@ -160,16 +172,26 @@ export class WarpBlackHole {
       vec2 c    = u_center / res;
 
       vec2 v  = st - c;
-      float r2 = dot(v, v) + 1e-4;
+
+      float cs = cos(u_rotation);
+      float sn = sin(u_rotation);
+      vec2 right = vec2(cs, sn);
+      vec2 forward = vec2(sn, -cs);
+      vec2 local = vec2(dot(v, right), dot(v, forward));
+      vec2 lensStretch = vec2(1.0, 0.55);
+      vec2 scaled = vec2(local.x / max(lensStretch.x, 1e-4), local.y / max(lensStretch.y, 1e-4));
+      float r2 = dot(scaled, scaled) + 1e-4;
       float r  = sqrt(r2);
 
       // maska w promieniu — bez ostrych krawędzi
       float R = u_radius;
-      float edge = smoothstep(R, R - (R*0.6*u_softness + 1e-3), r);
+      float falloff = R * (0.6 + 0.6 * u_softness) + 1e-3;
+      float lens = 1.0 - smoothstep(R, R + falloff, r);
 
       // odchylenie (w kierunku do centrum)
-      float pull = u_mass / r2;
-      vec2  uv   = st - normalize(v) * pull * edge;
+      float pull = clamp(u_mass / r2, 0.0, 0.45);
+      vec2 dir = (length(v) > 1e-4) ? normalize(v) : vec2(0.0);
+      vec2 uv   = st - dir * pull * lens;
 
       if (u_parallaxEnabled > 0.5) {
         vec2 tileSize = max(u_tileSize, vec2(1.0));
@@ -180,7 +202,11 @@ export class WarpBlackHole {
 
       // sample
       vec4 col = texture2D(u_image, uv);
-      gl_FragColor = col;
+      float alpha = pow(lens, 1.25) * clamp(u_opacity, 0.0, 1.0);
+      if (alpha <= 0.001) {
+        discard;
+      }
+      gl_FragColor = vec4(col.rgb, col.a * alpha);
     }
   `;}
 
