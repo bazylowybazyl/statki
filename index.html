@@ -236,15 +236,15 @@ let warpLensMode = 'background';
 let warpLensSource = null;
 
 const WARP_LENS_DEFAULTS = Object.freeze({
-  threshold: 0.02,
-  radiusBase: 0.18,
-  radiusScale: 0.04,
-  massBase: 0.16,
-  massScale: 0.26,
+  threshold: 0,
+  radiusBase: 0.05,
+  radiusScale: 0.01,
+  massBase: 0.32,
+  massScale: 0.365,
   softness: 0.6,
   opacityBase: 0.55,
-  opacityScale: 0.35,
-  tailDepthExtra: 0.3
+  opacityScale: 0.73,
+  tailDepthExtra: -0.2
 });
 
 const DevVFX = window.DevVFX = window.DevVFX || {};
@@ -415,20 +415,23 @@ window.DevFlags = Object.assign({
   usePlanetStations3D: true,
   disableCameraShake: false
 }, window.DevFlags || {});
-const DEFAULT_STATION_SCALE = 6;
-window.DEFAULT_STATION_SCALE = DEFAULT_STATION_SCALE;
+const DEFAULT_PIRATE_STATION_SCALE = 6;
+const DEFAULT_STATION_3D_SCALE = 2.85;
+window.DEFAULT_STATION_SCALE = DEFAULT_PIRATE_STATION_SCALE;
+window.DEFAULT_STATION_3D_SCALE = DEFAULT_STATION_3D_SCALE;
 
 window.DevTuning = Object.assign({
-  pirateStationScale: DEFAULT_STATION_SCALE
+  pirateStationScale: DEFAULT_PIRATE_STATION_SCALE
 }, window.DevTuning || {});
 
 const DevFlags = window.DevFlags;
 const DevTuning = window.DevTuning;
 const Dev = window.Dev = window.Dev || {};
-if (typeof Dev.station3DScale === 'number' && Number.isFinite(Dev.station3DScale)) {
-  DevTuning.pirateStationScale = Dev.station3DScale;
-} else {
-  Dev.station3DScale = DevTuning.pirateStationScale;
+if (!Number.isFinite(Dev.station3DScale)) {
+  Dev.station3DScale = DEFAULT_STATION_3D_SCALE;
+}
+if (!Number.isFinite(DevTuning.pirateStationScale)) {
+  DevTuning.pirateStationScale = DEFAULT_PIRATE_STATION_SCALE;
 }
 
 const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
@@ -1221,7 +1224,7 @@ function initStars(reset=false){
 }
 
 // =============== Słońce, planety i stacje ===============
-const SUN = { x: WORLD.w/2, y: WORLD.h/2, r: 1000, r3D: 1000,
+const SUN = { x: WORLD.w/2, y: WORLD.h/2, r: 823, r3D: 399,
   color: {
     core:  '#ffe88a',   // jasno-żółty rdzeń
     mid:   '#ffbe3b',   // pomarańcz-żółć
@@ -1254,10 +1257,10 @@ function makeSolarPlanets(){
   const INNER_EXTRA_PLANET_GAP = 600;
   const rand = () => Math.random() * Math.PI * 2;
   const defs = [
-    { id:'mercury', name:'mercury', baseR:  44, orbitAU: 0.39 },
-    { id:'venus',   name:'venus',   baseR:  60, orbitAU: 0.72 },
-    { id:'earth',   name:'earth',   baseR: 129, orbitAU: 1.00 },
-    { id:'mars',    name:'mars',    baseR: 191, orbitAU: 1.52 },
+    { id:'mercury', name:'mercury', baseR:  44, orbitAU: 0.84 },
+    { id:'venus',   name:'venus',   baseR:  60, orbitAU: 1.41 },
+    { id:'earth',   name:'earth',   baseR: 129, orbitAU: 2.07 },
+    { id:'mars',    name:'mars',    baseR: 191, orbitAU: 2.86 },
     { id:'jupiter', name:'jupiter', baseR: 400, orbitAU: 5.20 },
     { id:'saturn',  name:'saturn',  baseR: 180, orbitAU: 9.58 },
     { id:'uranus',  name:'uranus',  baseR: 108, orbitAU:19.20 },
@@ -7197,17 +7200,17 @@ setTimeout(startGame, 500);
     <div class="row"><strong>Wszechświat</strong></div>
     <div class="row">
       <label>Słońce – promień 2D (R)</label>
-      <input id="sunR2D" type="range" min="50" max="1500" step="1">
+      <input id="sunR2D" type="range" min="50" max="1500" step="1" value="823">
       <div class="val" id="sunR2DVal"></div>
     </div>
     <div class="row">
       <label>Słońce – promień 3D (R)</label>
-      <input id="sunR3D" type="range" min="50" max="1500" step="1">
+      <input id="sunR3D" type="range" min="50" max="1500" step="1" value="399">
       <div class="val" id="sunR3DVal"></div>
     </div>
     <div class="row">
       <label>Planety – skala globalna (×)</label>
-      <input id="planetScaleAll" type="range" min="0.5" max="3" step="0.01">
+      <input id="planetScaleAll" type="range" min="0.5" max="3" step="0.01" value="1.98">
       <div class="val" id="planetScaleAllVal"></div>
     </div>
   </div>
@@ -7230,17 +7233,17 @@ setTimeout(startGame, 500);
     <div class="row"><strong>Stacje</strong></div>
     <div class="row">
       <label>Skala stacji pirackiej (×)</label>
-      <input id="pirScale" type="range" min="0.4" max="12" step="0.01">
+      <input id="pirScale" type="range" min="0.4" max="12" step="0.01" value="6">
       <div class="val" id="pirScaleVal"></div>
     </div>
     <div class="row">
       <label>Skala stacji 3D (×)</label>
-      <input id="station3DScale" type="range" min="0.2" max="12.0" step="0.05" value="6.0">
+      <input id="station3DScale" type="range" min="0.2" max="12.0" step="0.05" value="2.85">
       <div class="val" id="station3DScaleVal"></div>
     </div>
     <div class="row">
       <label>Stacja 3D – rozmiar sprite (px)</label>
-      <input id="stationSpritePx" type="number" min="64" max="4096" step="32" value="512" style="width:96px;">
+      <input id="stationSpritePx" type="number" min="64" max="4096" step="32" value="1024" style="width:96px;">
     </div>
     <div class="dt-row">
       <div class="dt-col">
@@ -7368,9 +7371,12 @@ setTimeout(startGame, 500);
   }
   const DevFlags = window.DevFlags; // lokalny skrót do TEGO SAMEGO obiektu
 
-  const DEFAULT_STATION_SCALE = (
+  const DEFAULT_PIRATE_SCALE = (
     typeof window !== 'undefined' && typeof window.DEFAULT_STATION_SCALE === 'number'
   ) ? window.DEFAULT_STATION_SCALE : 6;
+  const DEFAULT_STATION3D_SCALE = (
+    typeof window !== 'undefined' && typeof window.DEFAULT_STATION_3D_SCALE === 'number'
+  ) ? window.DEFAULT_STATION_3D_SCALE : 2.85;
 
   // Klasyczny skrypt nie widzi stałych z ESM — korzystaj z window.* w runtime.
   // === Wczytaj podstawowe obiekty gry (muszą już istnieć globalnie): SUN, planets, initPlanets3D ===
@@ -7378,33 +7384,42 @@ setTimeout(startGame, 500);
 
   // ---- Stan & persistencja ------------------------------------------------
   const DevConfig = {
-    sunR2D: null,               // liczba — promień Słońca (warstwa 2D)
-    sunR3D: null,               // liczba — promień Słońca (warstwa 3D)
-    planetRById: {},            // { [id or name]: R }
-    planetOrbitAUById: {},      // { [id or name]: AU }
+    sunR2D: 823,               // liczba — promień Słońca (warstwa 2D)
+    sunR3D: 399,               // liczba — promień Słońca (warstwa 3D)
+    planetRById: {},           // { [id or name]: R }
+    planetOrbitAUById: {
+      mercury: 0.84,
+      venus: 1.41,
+      earth: 2.07,
+      mars: 2.86,
+      jupiter: 5.2,
+      saturn: 9.58,
+      uranus: 19.2,
+      neptune: 30
+    },      // { [id or name]: AU }
     // Nie zależ od momentu ładowania modułów – czytaj z window w runtime.
-    planetScaleAll: (typeof window.DEFAULT_PLANET_SCALE === 'number' ? window.DEFAULT_PLANET_SCALE : 1),                  // mnożnik globalny ×R
-    pirateScale: DEFAULT_STATION_SCALE,           // mnożnik rysowania stacji pirackiej
-    station3DScale: DEFAULT_STATION_SCALE,        // mnożnik nakładki 3D
-    stationSpriteSize: 512,
+    planetScaleAll: (typeof window.DEFAULT_PLANET_SCALE === 'number' ? window.DEFAULT_PLANET_SCALE : 1.98),                  // mnożnik globalny ×R
+    pirateScale: DEFAULT_PIRATE_SCALE,           // mnożnik rysowania stacji pirackiej
+    station3DScale: DEFAULT_STATION3D_SCALE,     // mnożnik nakładki 3D
+    stationSpriteSize: 1024,
     stationSpriteFrame: 1.25,
     stationSpriteFrameById: {},
-    stationScaleById: {},
+    stationScaleById: { earth: 1.14 },
   };
   window.DevConfig = DevConfig;
 
   const WarpLensDefaults = (window.__WARP_LENS_DEFAULTS && typeof window.__WARP_LENS_DEFAULTS === 'object')
     ? window.__WARP_LENS_DEFAULTS
     : {
-        threshold: 0.02,
-        radiusBase: 0.18,
-        radiusScale: 0.04,
-        massBase: 0.16,
-        massScale: 0.26,
+        threshold: 0,
+        radiusBase: 0.05,
+        radiusScale: 0.01,
+        massBase: 0.32,
+        massScale: 0.365,
         softness: 0.6,
         opacityBase: 0.55,
-        opacityScale: 0.35,
-        tailDepthExtra: 0.3
+        opacityScale: 0.73,
+        tailDepthExtra: -0.2
       };
   if (!window.__WARP_LENS_DEFAULTS) {
     window.__WARP_LENS_DEFAULTS = WarpLensDefaults;
