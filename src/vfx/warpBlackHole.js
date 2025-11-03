@@ -1,8 +1,15 @@
 export class WarpBlackHole {
-  constructor({ zIndex = 999999 } = {}) {
+  constructor({ zIndex = 999999, mode = 'overlay' } = {}) {
+    this.mode = mode === 'offscreen' ? 'offscreen' : 'overlay';
     this.canvas = document.createElement('canvas');
-    this.canvas.style.cssText = `position:fixed;inset:0;pointer-events:none;z-index:${zIndex}`;
-    document.body.appendChild(this.canvas);
+    if (this.mode === 'overlay') {
+      this.canvas.style.cssText = `position:fixed;inset:0;pointer-events:none;z-index:${zIndex}`;
+      document.body.appendChild(this.canvas);
+      this._appendedToDom = true;
+    } else {
+      this.canvas.style.cssText = 'display:none;pointer-events:none;';
+      this._appendedToDom = false;
+    }
 
     const gl = this.gl = this.canvas.getContext('webgl', { premultipliedAlpha: false, alpha: true });
     if (!gl) throw new Error('WebGL not available');
@@ -55,6 +62,10 @@ export class WarpBlackHole {
     this._srcCanvas = null; // co próbkujemy: tło lub całą scenę
     this._warnedNoSource = false;
     this._parallax = null;
+    this._outputCanvas = null;
+    this._outputCtx2D = null;
+    this._externalOutputCtx2D = null;
+    this._needsOutputUpdate = false;
     this._resize();
     addEventListener('resize', () => this._resize());
   }
@@ -80,8 +91,78 @@ export class WarpBlackHole {
       offsetY
     };
   }
-  setEnabled(flag)       { this.enabled = !!flag; this.canvas.style.display = this.enabled?'block':'none'; }
-  destroy(){ this.canvas?.remove(); }
+  setEnabled(flag) {
+    this.enabled = !!flag;
+    if (this.mode === 'overlay') {
+      this.canvas.style.display = this.enabled ? 'block' : 'none';
+    }
+  }
+  setOutputContext2D(ctx) {
+    this._externalOutputCtx2D = ctx || null;
+  }
+  getOutputCanvas() {
+    if (this._externalOutputCtx2D?.canvas) {
+      return this._externalOutputCtx2D.canvas;
+    }
+    if (this.mode === 'offscreen') {
+      this._ensureOutputCanvas();
+      return this._outputCanvas;
+    }
+    return this.canvas;
+  }
+  hasPendingOutput() {
+    return this._needsOutputUpdate;
+  }
+  updateOutputBuffer() {
+    if (!this._needsOutputUpdate) return false;
+    const srcCanvas = this.canvas;
+    if (!srcCanvas.width || !srcCanvas.height) {
+      this._needsOutputUpdate = false;
+      return false;
+    }
+
+    let updated = false;
+
+    if (this._externalOutputCtx2D?.canvas) {
+      const ctx2d = this._externalOutputCtx2D;
+      const dest = ctx2d.canvas;
+      ctx2d.save();
+      const prevOp = ctx2d.globalCompositeOperation;
+      ctx2d.setTransform(1, 0, 0, 1, 0, 0);
+      ctx2d.globalCompositeOperation = 'copy';
+      ctx2d.drawImage(srcCanvas, 0, 0, srcCanvas.width, srcCanvas.height, 0, 0, dest.width, dest.height);
+      ctx2d.globalCompositeOperation = prevOp;
+      ctx2d.restore();
+      updated = true;
+    } else {
+      this._ensureOutputCanvas();
+      if (this._outputCtx2D) {
+        const ctx2d = this._outputCtx2D;
+        const dest = this._outputCanvas;
+        ctx2d.save();
+        const prevOp = ctx2d.globalCompositeOperation;
+        ctx2d.setTransform(1, 0, 0, 1, 0, 0);
+        ctx2d.globalCompositeOperation = 'copy';
+        ctx2d.drawImage(srcCanvas, 0, 0);
+        ctx2d.globalCompositeOperation = prevOp;
+        ctx2d.restore();
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      this._needsOutputUpdate = false;
+    }
+    return updated;
+  }
+  destroy(){
+    if (this._appendedToDom) {
+      this.canvas?.remove();
+    }
+    this._outputCanvas = null;
+    this._outputCtx2D = null;
+    this._externalOutputCtx2D = null;
+  }
 
   _resize(){
     const dpr = Math.min(devicePixelRatio||1, 2);
@@ -90,6 +171,7 @@ export class WarpBlackHole {
     this.canvas.style.width  = innerWidth+'px';
     this.canvas.style.height = innerHeight+'px';
     this.gl.viewport(0,0,this.canvas.width, this.canvas.height);
+    this._syncOutputCanvasSize();
   }
 
   render({ centerX, centerY, mass = 0.15, radius = 0.25, softness = 0.25, rotation = 0, opacity = 0.85 }){
@@ -140,6 +222,7 @@ export class WarpBlackHole {
 
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
+    this._needsOutputUpdate = true;
   }
 
   // ———— SHADERS ————
@@ -222,5 +305,23 @@ export class WarpBlackHole {
     gl.attachShader(p,vs); gl.attachShader(p,fs);
     gl.linkProgram(p); gl.useProgram(p);
     return p;
+  }
+
+  _ensureOutputCanvas(){
+    if (!this._outputCanvas) {
+      this._outputCanvas = document.createElement('canvas');
+      this._outputCtx2D = this._outputCanvas.getContext('2d');
+    }
+    this._syncOutputCanvasSize();
+  }
+
+  _syncOutputCanvasSize(){
+    if (!this._outputCanvas) return;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    if (this._outputCanvas.width !== w || this._outputCanvas.height !== h) {
+      this._outputCanvas.width = w;
+      this._outputCanvas.height = h;
+    }
   }
 }
