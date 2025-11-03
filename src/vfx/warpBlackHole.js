@@ -262,20 +262,30 @@ export class WarpBlackHole {
       vec2 right = vec2(cs, sn);
       vec2 forward = vec2(sn, -cs);
       vec2 local = vec2(dot(v, right), dot(v, forward));
+
+      // Eliptyczne skalowanie soczewki – lekko rozciągamy względem kadłuba
       vec2 lensStretch = vec2(1.0, 0.55);
-      vec2 scaled = vec2(local.x / max(lensStretch.x, 1e-4), local.y / max(lensStretch.y, 1e-4));
-      float r2 = dot(scaled, scaled) + 1e-4;
+      vec2 stretchSq = max(lensStretch * lensStretch, vec2(1e-4));
+      vec2 stretchedLocal = vec2(local.x / stretchSq.x, local.y / stretchSq.y);
+      float r2 = dot(stretchedLocal, stretchedLocal) + 1e-4;
       float r  = sqrt(r2);
 
-      // maska w promieniu — bez ostrych krawędzi
+      // Maska z miękkim wygaszaniem przy krawędziach
       float R = u_radius;
       float falloff = R * (0.6 + 0.6 * u_softness) + 1e-3;
       float lens = 1.0 - smoothstep(R, R + falloff, r);
+      lens = clamp(lens, 0.0, 1.0);
 
-      // odchylenie (w kierunku do centrum)
+      // Kierunek odkształcenia: elipsa -> przestrzeń ekranu, bez ostrych skoków
+      vec2 dirLocal = (r > 1e-4) ? normalize(stretchedLocal) : vec2(0.0);
+      vec2 dirScreen = dirLocal.x * right + dirLocal.y * forward;
+      float dirLen = length(dirScreen);
+      vec2 dir = dirLen > 1e-4 ? dirScreen / dirLen : vec2(0.0);
+
+      // Odciągamy UV w stronę statku, z dodatkowym falloffem chroniącym przed artefaktami
       float pull = clamp(u_mass / r2, 0.0, 0.45);
-      vec2 dir = (length(v) > 1e-4) ? normalize(v) : vec2(0.0);
       vec2 uv   = st - dir * pull * lens;
+      uv = clamp(uv, vec2(0.001), vec2(0.999));
 
       if (u_parallaxEnabled > 0.5) {
         vec2 tileSize = max(u_tileSize, vec2(1.0));
