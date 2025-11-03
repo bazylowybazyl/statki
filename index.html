@@ -244,7 +244,8 @@ const WARP_LENS_DEFAULTS = Object.freeze({
   softness: 0.6,
   opacityBase: 0.55,
   opacityScale: 0.73,
-  tailDepthExtra: -0.2
+  tailDepthExtra: -0.2,
+  forwardStretch: 0.55
 });
 
 const DevVFX = window.DevVFX = window.DevVFX || {};
@@ -6178,14 +6179,33 @@ function render(alpha, frameDt){
       const mass = Math.min(0.6, Math.max(0, massBase + massScale * warpIntensity));
       const opacity = Math.min(1, Math.max(0, opacityBase + opacityScale * warpIntensity));
 
+      const shipForward = { x: Math.sin(ship.angle), y: -Math.cos(ship.angle) };
+      let lensForward = shipForward;
+      if (warp.state === 'active') {
+        lensForward = { x: warp.dir.x, y: warp.dir.y };
+      } else {
+        const speed = Math.hypot(ship.vel.x, ship.vel.y);
+        if (speed > 1) {
+          const inv = 1 / speed;
+          const velDir = { x: ship.vel.x * inv, y: ship.vel.y * inv };
+          const alignment = velDir.x * shipForward.x + velDir.y * shipForward.y;
+          if (alignment < 0.95) {
+            lensForward = velDir;
+          }
+        }
+      }
+      const lensAngle = Math.atan2(lensForward.y, lensForward.x) + Math.PI / 2;
+      const lensStretchForward = warpLensParam('forwardStretch');
+
       warpBlackHoleFX.render({
         centerX: s.x,
         centerY: s.y,
         mass,
         radius,
         softness,
-        rotation: ship.angle,
-        opacity
+        rotation: lensAngle,
+        opacity,
+        lensStretchForward
       });
       warpLensShouldDraw = typeof warpBlackHoleFX.hasPendingOutput === 'function'
         ? warpBlackHoleFX.hasPendingOutput()
@@ -7318,6 +7338,12 @@ setTimeout(startGame, 500);
       <div class="val" id="warpOpacityScaleVal"></div>
     </div>
     <div class="row">
+      <label>Wydłużenie wzdłuż lotu</label>
+      <input id="warpLensForwardStretch" type="range" min="0.1" max="2" step="0.01">
+      <input id="warpLensForwardStretchNum" type="number" min="0.1" max="2" step="0.01" style="width:72px;">
+      <div class="val" id="warpLensForwardStretchVal"></div>
+    </div>
+    <div class="row">
       <label>Offset wzdłuż kadłuba</label>
       <input id="warpTailDepthExtra" type="range" min="-0.2" max="0.8" step="0.01">
       <input id="warpTailDepthExtraNum" type="number" min="-0.2" max="0.8" step="0.01" style="width:72px;">
@@ -7419,7 +7445,8 @@ setTimeout(startGame, 500);
         softness: 0.6,
         opacityBase: 0.55,
         opacityScale: 0.73,
-        tailDepthExtra: -0.2
+        tailDepthExtra: -0.2,
+        forwardStretch: 0.55
       };
   if (!window.__WARP_LENS_DEFAULTS) {
     window.__WARP_LENS_DEFAULTS = WarpLensDefaults;
@@ -7459,6 +7486,7 @@ setTimeout(startGame, 500);
     softness: { slider: el('warpSoftness'), number: el('warpSoftnessNum'), label: el('warpSoftnessVal'), decimals: 2 },
     opacityBase: { slider: el('warpOpacityBase'), number: el('warpOpacityBaseNum'), label: el('warpOpacityBaseVal'), decimals: 2 },
     opacityScale: { slider: el('warpOpacityScale'), number: el('warpOpacityScaleNum'), label: el('warpOpacityScaleVal'), decimals: 2 },
+    forwardStretch: { slider: el('warpLensForwardStretch'), number: el('warpLensForwardStretchNum'), label: el('warpLensForwardStretchVal'), decimals: 2 },
     tailDepthExtra: { slider: el('warpTailDepthExtra'), number: el('warpTailDepthExtraNum'), label: el('warpTailDepthExtraVal'), decimals: 2 }
   };
   ui.warpLens = warpLensUI;
@@ -7472,6 +7500,7 @@ setTimeout(startGame, 500);
     softness: { min: 0, max: 1 },
     opacityBase: { min: 0, max: 1 },
     opacityScale: { min: 0, max: 1 },
+    forwardStretch: { min: 0.1, max: 3 },
     tailDepthExtra: { min: -1, max: 1 }
   };
 
