@@ -260,22 +260,34 @@ export class WarpBlackHole {
       float cs = cos(u_rotation);
       float sn = sin(u_rotation);
       vec2 right = vec2(cs, sn);
-      vec2 forward = vec2(sn, -cs);
+      vec2 forward = vec2(-sn, cs); // lokalne "do przodu" zgodne z obrotem statku
       vec2 local = vec2(dot(v, right), dot(v, forward));
+
+      // eliptyczna soczewka (rozciągnięta wzdłuż kadłuba statku)
       vec2 lensStretch = vec2(1.0, 0.55);
       vec2 scaled = vec2(local.x / max(lensStretch.x, 1e-4), local.y / max(lensStretch.y, 1e-4));
       float r2 = dot(scaled, scaled) + 1e-4;
       float r  = sqrt(r2);
 
-      // maska w promieniu — bez ostrych krawędzi
+      // maska w promieniu — miękkie wygaszenie na krawędzi
       float R = u_radius;
       float falloff = R * (0.6 + 0.6 * u_softness) + 1e-3;
       float lens = 1.0 - smoothstep(R, R + falloff, r);
 
-      // odchylenie (w kierunku do centrum)
+      // kierunek od piksela do środka po eliptycznej bazie
+      vec2 dirLocal = vec2(
+        local.x / max(lensStretch.x * lensStretch.x, 1e-4),
+        local.y / max(lensStretch.y * lensStretch.y, 1e-4)
+      );
+      float dirLen = length(dirLocal);
+      dirLocal = (dirLen > 1e-5) ? (-dirLocal / dirLen) : vec2(0.0);
+      vec2 dir = dirLocal.x * right + dirLocal.y * forward;
+      dir = (length(dir) > 1e-5) ? normalize(dir) : vec2(0.0);
+
+      // odchylenie ku statkowi z bezpiecznym limitem siły
       float pull = clamp(u_mass / r2, 0.0, 0.45);
-      vec2 dir = (length(v) > 1e-4) ? normalize(v) : vec2(0.0);
-      vec2 uv   = st - dir * pull * lens;
+      vec2 uv   = st + dir * pull * lens;
+      uv = clamp(uv, vec2(0.001), vec2(0.999));
 
       if (u_parallaxEnabled > 0.5) {
         vec2 tileSize = max(u_tileSize, vec2(1.0));
