@@ -6110,78 +6110,6 @@ function render(alpha, frameDt){
     drawNPCPretty(ctx, npc, s);
   }
 
-  hudRenderNav(ship, cam);
-  hudRenderDMG(cam);
-  hudRenderFloatingBars(ship, cam);
-
-  // radar pings
-  for(const ping of radarPings){
-    const s = worldToScreen(ping.x, ping.y, cam);
-    const t = ping.age/ping.life;
-    ctx.strokeStyle = `rgba(120,200,255,${1-t})`;
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(s.x, s.y, 40 * t * camera.zoom, 0, Math.PI*2); ctx.stroke();
-  }
-
-  // scan indicator and lock
-  if(scan.target && scan.targetType && mouse.overCanvas){
-    const obj = scan.target;
-    const s = worldToScreen(obj.x, obj.y, cam);
-    const base = (obj.radius || obj.r || 60);
-    const outerExtra = scan.targetType === 'station' ? 28 : 14;
-    const innerExtra = scan.targetType === 'station' ? 12 : 8;
-    const outerR = (base + outerExtra) * camera.zoom;
-    const innerR = Math.max(2, (base + innerExtra) * camera.zoom);
-    const color = scan.targetType === 'station'
-      ? 'rgba(143,181,255,0.95)'
-      : (obj.friendly ? 'rgba(96,192,255,0.95)' : 'rgba(255,160,122,0.95)');
-
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(camera.zoom));
-    ctx.shadowBlur = 18 * camera.zoom;
-    ctx.shadowColor = color;
-    ctx.globalAlpha = 0.9;
-    ctx.beginPath(); ctx.arc(s.x, s.y, outerR, 0, Math.PI*2); ctx.stroke();
-
-    ctx.shadowBlur = 0;
-    ctx.globalAlpha = 0.55;
-    ctx.setLineDash([6 * camera.zoom, 6 * camera.zoom]);
-    ctx.beginPath(); ctx.arc(s.x, s.y, innerR, 0, Math.PI*2); ctx.stroke();
-    ctx.restore();
-
-    if(scan.targetType === 'station' && !stationUI.open){
-      canvas.style.cursor = 'pointer';
-    }
-  }
-  if(highlightedEnemies.length){
-    for(const obj of highlightedEnemies){
-      if(obj.dead) continue;
-      const s = worldToScreen(obj.x, obj.y, cam);
-      const rad = ((obj.radius||obj.r) + 12) * camera.zoom;
-      ctx.strokeStyle = 'rgba(255,255,0,0.8)';
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(s.x, s.y, rad, 0, Math.PI*2); ctx.stroke();
-    }
-  }
-  if(lockedTargets.length){
-    for(const obj of lockedTargets){
-      if(obj.dead) continue;
-      const s = worldToScreen(obj.x, obj.y, cam);
-      const rad = ((obj.radius||obj.r) + 14) * camera.zoom;
-      ctx.strokeStyle = 'rgba(255,80,80,0.8)';
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(s.x, s.y, rad, 0, Math.PI*2); ctx.stroke();
-    }
-  } else if(lockedTarget){
-    const obj = lockedTarget;
-    const s = worldToScreen(obj.x, obj.y, cam);
-    const rad = ((obj.radius||obj.r) + 14) * camera.zoom;
-    ctx.strokeStyle = 'rgba(255,80,80,0.8)';
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(s.x, s.y, rad, 0, Math.PI*2); ctx.stroke();
-  }
-
   // Particles (za statkiem) — zwykłe
   {
     let drawn = 0;
@@ -6287,6 +6215,78 @@ function render(alpha, frameDt){
       0, 0, canvas.width, canvas.height
     );
     ctx.restore();
+  }
+
+  hudRenderNav(ship, cam);
+  hudRenderDMG(cam);
+  hudRenderFloatingBars(ship, cam);
+
+  // radar pings
+  for(const ping of radarPings){
+    const s = worldToScreen(ping.x, ping.y, cam);
+    const t = ping.age/ping.life;
+    ctx.strokeStyle = `rgba(120,200,255,${1-t})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, 40 * t * camera.zoom, 0, Math.PI*2); ctx.stroke();
+  }
+
+  // scan indicator and lock
+  if(scan.target && scan.targetType && mouse.overCanvas){
+    const obj = scan.target;
+    const s = worldToScreen(obj.x, obj.y, cam);
+    const base = (obj.radius || obj.r || 60);
+    const outerExtra = scan.targetType === 'station' ? 28 : 14;
+    const innerExtra = scan.targetType === 'station' ? 12 : 8;
+    const outerR = (base + outerExtra) * camera.zoom;
+    const innerR = Math.max(2, (base + innerExtra) * camera.zoom);
+    const color = scan.targetType === 'station'
+      ? 'rgba(143,181,255,0.95)'
+      : (obj.friendly ? 'rgba(96,192,255,0.95)' : 'rgba(255,160,122,0.95)');
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(camera.zoom));
+    ctx.shadowBlur = 18 * camera.zoom;
+    ctx.shadowColor = color;
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath(); ctx.arc(s.x, s.y, outerR, 0, Math.PI*2); ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 0.55;
+    ctx.setLineDash([6 * camera.zoom, 6 * camera.zoom]);
+    ctx.beginPath(); ctx.arc(s.x, s.y, innerR, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+
+    if(scan.targetType === 'station' && !stationUI.open){
+      canvas.style.cursor = 'pointer';
+    }
+  }
+  if(highlightedEnemies.length){
+    for(const obj of highlightedEnemies){
+      if(obj.dead) continue;
+      const s = worldToScreen(obj.x, obj.y, cam);
+      const rad = ((obj.radius||obj.r) + 12) * camera.zoom;
+      ctx.strokeStyle = 'rgba(255,255,0,0.8)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(s.x, s.y, rad, 0, Math.PI*2); ctx.stroke();
+    }
+  }
+  if(lockedTargets.length){
+    for(const obj of lockedTargets){
+      if(obj.dead) continue;
+      const s = worldToScreen(obj.x, obj.y, cam);
+      const rad = ((obj.radius||obj.r) + 14) * camera.zoom;
+      ctx.strokeStyle = 'rgba(255,80,80,0.8)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(s.x, s.y, rad, 0, Math.PI*2); ctx.stroke();
+    }
+  } else if(lockedTarget){
+    const obj = lockedTarget;
+    const s = worldToScreen(obj.x, obj.y, cam);
+    const rad = ((obj.radius||obj.r) + 14) * camera.zoom;
+    ctx.strokeStyle = 'rgba(255,80,80,0.8)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, rad, 0, Math.PI*2); ctx.stroke();
   }
 
   // ======= STATEK =======
