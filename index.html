@@ -196,7 +196,7 @@
   window.CopyShader = CopyShader;
   window.Space2DBackground = Space2DBackground;
 
-  const warpFX = new WarpBlackHole({ zIndex: 45 });
+  const warpFX = new WarpBlackHole({ zIndex: 45, mode: 'offscreen' });
   warpFX.setEnabled(false);
   window.warpBlackHoleFX = warpFX;
 
@@ -6209,6 +6209,8 @@ function render(alpha, frameDt){
     drawBoostBeam(origin, boost.effectDir, cam, boostAlpha);
   }
 
+  let warpLensShouldDraw = false;
+  let warpLensOutputCanvas = null;
   if (warpBlackHoleFX) {
     const isWarpOn = (warp.state === 'charging' || warp.state === 'active');
     const warpIntensity = isWarpOn
@@ -6257,7 +6259,34 @@ function render(alpha, frameDt){
         rotation: ship.angle,
         opacity
       });
+      warpLensShouldDraw = typeof warpBlackHoleFX.hasPendingOutput === 'function'
+        ? warpBlackHoleFX.hasPendingOutput()
+        : true;
     }
+  }
+
+  if (warpLensShouldDraw && warpBlackHoleFX) {
+    let outputUpdated = true;
+    if (typeof warpBlackHoleFX.updateOutputBuffer === 'function') {
+      outputUpdated = warpBlackHoleFX.updateOutputBuffer();
+    }
+    if (outputUpdated && typeof warpBlackHoleFX.getOutputCanvas === 'function') {
+      warpLensOutputCanvas = warpBlackHoleFX.getOutputCanvas();
+    } else if (!outputUpdated) {
+      warpLensShouldDraw = false;
+      warpLensOutputCanvas = null;
+    }
+  }
+
+  if (warpLensShouldDraw && warpLensOutputCanvas && warpLensOutputCanvas.width && warpLensOutputCanvas.height) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(
+      warpLensOutputCanvas,
+      0, 0, warpLensOutputCanvas.width, warpLensOutputCanvas.height,
+      0, 0, canvas.width, canvas.height
+    );
+    ctx.restore();
   }
 
   // ======= STATEK =======
