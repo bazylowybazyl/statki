@@ -196,7 +196,7 @@
   window.CopyShader = CopyShader;
   window.Space2DBackground = Space2DBackground;
 
-  const warpFX = new WarpBlackHole({ zIndex: 45 });
+  const warpFX = new WarpBlackHole({ zIndex: 45, mode: 'offscreen' });
   warpFX.setEnabled(false);
   window.warpBlackHoleFX = warpFX;
 
@@ -6110,6 +6110,113 @@ function render(alpha, frameDt){
     drawNPCPretty(ctx, npc, s);
   }
 
+  // Particles (za statkiem) — zwykłe
+  {
+    let drawn = 0;
+    for (let i = particles.length - 1; i >= 0 && drawn < MAX_PARTICLES_DRAW; i--){
+      const p = particles[i];
+      if (p.flash || p.beam) continue;
+      drawn++;
+      const s = worldToScreen(p.pos.x, p.pos.y, cam);
+      const t = clamp(1 - p.age/p.life, 0, 1);
+      ctx.globalAlpha = t;
+      ctx.beginPath(); ctx.fillStyle = p.color;
+      ctx.arc(s.x, s.y, p.size * camera.zoom, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // Efekt dopalacza
+  const boostAlpha = (boost.effectDuration > 0)
+    ? clamp(boost.effectTime / boost.effectDuration, 0, 1)
+    : 0;
+  if(boostAlpha>0){
+    const e = ship.engines.main;
+    const mainVisual = e.visualOffset || e.offset;
+    const origin = add(interpPos, rotate(mainVisual, interpAngle));
+    drawBoostBeam(origin, boost.effectDir, cam, boostAlpha);
+  }
+
+  let warpLensShouldDraw = false;
+  let warpLensOutputCanvas = null;
+  if (warpBlackHoleFX) {
+    const isWarpOn = (warp.state === 'charging' || warp.state === 'active');
+    const warpIntensity = isWarpOn
+      ? (warp.state === 'active'
+          ? 1
+          : Math.min(1, warp.charge / Math.max(0.001, warp.chargeTime)))
+      : 0;
+
+    const lensThreshold = getWarpLensThreshold();
+    const desiredLensMode = (warpIntensity >= lensThreshold) ? 'full' : 'background';
+    if (desiredLensMode !== warpLensMode) {
+      warpLensMode = desiredLensMode;
+      warpLensSource = null;
+    }
+    if (!warpLensSource) {
+      configureWarpLensSource();
+    }
+
+    warpBlackHoleFX.setEnabled(isWarpOn && !!warpLensSource);
+    if (isWarpOn && warpLensSource) {
+      const engineTail = ship.visual?.mainEngine?.y ?? (ship.h * 0.5);
+      const tailDepthExtra = warpLensParam('tailDepthExtra');
+      const warpDepth = engineTail + ship.h * tailDepthExtra;
+      const tailOffset = rotate({ x: 0, y: warpDepth }, ship.angle);
+      const fxPos = { x: ship.pos.x + tailOffset.x, y: ship.pos.y + tailOffset.y };
+      const s = worldToScreen(fxPos.x, fxPos.y, camera);
+
+      const radiusBase = warpLensParam('radiusBase');
+      const radiusScale = warpLensParam('radiusScale');
+      const massBase = warpLensParam('massBase');
+      const massScale = warpLensParam('massScale');
+      const softness = Math.min(1, Math.max(0, warpLensParam('softness')));
+      const opacityBase = warpLensParam('opacityBase');
+      const opacityScale = warpLensParam('opacityScale');
+
+      const radius = Math.min(1, Math.max(0.01, radiusBase + radiusScale * warpIntensity));
+      const mass = Math.min(0.6, Math.max(0, massBase + massScale * warpIntensity));
+      const opacity = Math.min(1, Math.max(0, opacityBase + opacityScale * warpIntensity));
+
+      warpBlackHoleFX.render({
+        centerX: s.x,
+        centerY: s.y,
+        mass,
+        radius,
+        softness,
+        rotation: ship.angle,
+        opacity
+      });
+      warpLensShouldDraw = typeof warpBlackHoleFX.hasPendingOutput === 'function'
+        ? warpBlackHoleFX.hasPendingOutput()
+        : true;
+    }
+  }
+
+  if (warpLensShouldDraw && warpBlackHoleFX) {
+    let outputUpdated = true;
+    if (typeof warpBlackHoleFX.updateOutputBuffer === 'function') {
+      outputUpdated = warpBlackHoleFX.updateOutputBuffer();
+    }
+    if (outputUpdated && typeof warpBlackHoleFX.getOutputCanvas === 'function') {
+      warpLensOutputCanvas = warpBlackHoleFX.getOutputCanvas();
+    } else if (!outputUpdated) {
+      warpLensShouldDraw = false;
+      warpLensOutputCanvas = null;
+    }
+  }
+
+  if (warpLensShouldDraw && warpLensOutputCanvas && warpLensOutputCanvas.width && warpLensOutputCanvas.height) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(
+      warpLensOutputCanvas,
+      0, 0, warpLensOutputCanvas.width, warpLensOutputCanvas.height,
+      0, 0, canvas.width, canvas.height
+    );
+    ctx.restore();
+  }
+
   hudRenderNav(ship, cam);
   hudRenderDMG(cam);
   hudRenderFloatingBars(ship, cam);
@@ -6180,84 +6287,6 @@ function render(alpha, frameDt){
     ctx.strokeStyle = 'rgba(255,80,80,0.8)';
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(s.x, s.y, rad, 0, Math.PI*2); ctx.stroke();
-  }
-
-  // Particles (za statkiem) — zwykłe
-  {
-    let drawn = 0;
-    for (let i = particles.length - 1; i >= 0 && drawn < MAX_PARTICLES_DRAW; i--){
-      const p = particles[i];
-      if (p.flash || p.beam) continue;
-      drawn++;
-      const s = worldToScreen(p.pos.x, p.pos.y, cam);
-      const t = clamp(1 - p.age/p.life, 0, 1);
-      ctx.globalAlpha = t;
-      ctx.beginPath(); ctx.fillStyle = p.color;
-      ctx.arc(s.x, s.y, p.size * camera.zoom, 0, Math.PI*2); ctx.fill();
-      ctx.globalAlpha = 1;
-    }
-  }
-
-  // Efekt dopalacza
-  const boostAlpha = (boost.effectDuration > 0)
-    ? clamp(boost.effectTime / boost.effectDuration, 0, 1)
-    : 0;
-  if(boostAlpha>0){
-    const e = ship.engines.main;
-    const mainVisual = e.visualOffset || e.offset;
-    const origin = add(interpPos, rotate(mainVisual, interpAngle));
-    drawBoostBeam(origin, boost.effectDir, cam, boostAlpha);
-  }
-
-  if (warpBlackHoleFX) {
-    const isWarpOn = (warp.state === 'charging' || warp.state === 'active');
-    const warpIntensity = isWarpOn
-      ? (warp.state === 'active'
-          ? 1
-          : Math.min(1, warp.charge / Math.max(0.001, warp.chargeTime)))
-      : 0;
-
-    const lensThreshold = getWarpLensThreshold();
-    const desiredLensMode = (warpIntensity >= lensThreshold) ? 'full' : 'background';
-    if (desiredLensMode !== warpLensMode) {
-      warpLensMode = desiredLensMode;
-      warpLensSource = null;
-    }
-    if (!warpLensSource) {
-      configureWarpLensSource();
-    }
-
-    warpBlackHoleFX.setEnabled(isWarpOn && !!warpLensSource);
-    if (isWarpOn && warpLensSource) {
-      const engineTail = ship.visual?.mainEngine?.y ?? (ship.h * 0.5);
-      const tailDepthExtra = warpLensParam('tailDepthExtra');
-      const warpDepth = engineTail + ship.h * tailDepthExtra;
-      const tailOffset = rotate({ x: 0, y: warpDepth }, ship.angle);
-      const fxPos = { x: ship.pos.x + tailOffset.x, y: ship.pos.y + tailOffset.y };
-      const s = worldToScreen(fxPos.x, fxPos.y, camera);
-
-      const radiusBase = warpLensParam('radiusBase');
-      const radiusScale = warpLensParam('radiusScale');
-      const massBase = warpLensParam('massBase');
-      const massScale = warpLensParam('massScale');
-      const softness = Math.min(1, Math.max(0, warpLensParam('softness')));
-      const opacityBase = warpLensParam('opacityBase');
-      const opacityScale = warpLensParam('opacityScale');
-
-      const radius = Math.min(1, Math.max(0.01, radiusBase + radiusScale * warpIntensity));
-      const mass = Math.min(0.6, Math.max(0, massBase + massScale * warpIntensity));
-      const opacity = Math.min(1, Math.max(0, opacityBase + opacityScale * warpIntensity));
-
-      warpBlackHoleFX.render({
-        centerX: s.x,
-        centerY: s.y,
-        mass,
-        radius,
-        softness,
-        rotation: ship.angle,
-        opacity
-      });
-    }
   }
 
   // ======= STATEK =======
