@@ -5751,92 +5751,6 @@ function drawRangeRuler(ctx, cam){
   ctx.restore();
 }
 
-const npcSpriteCache = new Map();
-
-function getNPCSprite(npc){
-  const key = npc.type + '|' + npc.radius + '|' + (npc.friendly?1:0);
-  if (npcSpriteCache.has(key)) return npcSpriteCache.get(key);
-
-  if (npc.radius <= 8) {
-    const can = document.createElement('canvas');
-    const size = Math.ceil(npc.radius*2 + 10);
-    can.width = can.height = size * 2;
-    const g = can.getContext('2d');
-    g.translate(can.width/2, can.height/2); g.scale(2,2);
-
-    const r = npc.radius;
-    // kadłub: klin
-    g.fillStyle = npc.friendly ? '#b7ccf7' : '#ffb7a8';
-    g.beginPath(); g.moveTo(r*0.9,0); g.lineTo(-r*0.7,-r*0.55); g.lineTo(-r*0.7,r*0.55); g.closePath(); g.fill();
-    // mostek
-    g.fillStyle = '#e6f2ff';
-    g.fillRect(-r*0.15, -r*0.22, r*0.35, r*0.44);
-    // dysze
-    g.globalCompositeOperation='lighter';
-    g.fillStyle = npc.friendly ? 'rgba(150,200,255,0.9)' : 'rgba(255,170,130,0.9)';
-    g.beginPath(); g.ellipse(-r*0.7, -r*0.25, 1.8, 2.6, 0, 0, Math.PI*2); g.fill();
-    g.beginPath(); g.ellipse(-r*0.7,  r*0.25, 1.8, 2.6, 0, 0, Math.PI*2); g.fill();
-
-    npcSpriteCache.set(key, can);
-    return can;
-  }
-
-  const size = Math.ceil(npc.radius*2 + 16);
-  const can = document.createElement('canvas');
-  can.width = can.height = size * 2;              // hi-res dla ładnego obrotu
-  const g = can.getContext('2d');
-  g.translate(can.width/2, can.height/2);
-  g.scale(2,2);                                   // hi-res skala
-
-  const w = npc.radius*2, h = npc.radius*1.6;
-  const r = Math.min(10, npc.radius*0.4);
-
-  // baza: gradient „metal”
-  const grad = g.createLinearGradient(-w/2,-h/2, w/2,h/2);
-  grad.addColorStop(0, '#1e2a46');
-  grad.addColorStop(1, '#30425f');
-  g.fillStyle = grad;
-  roundRect(g, -w/2, -h/2, w, h, r); g.fill();
-  g.lineWidth = 1.5; g.strokeStyle = 'rgba(255,255,255,0.06)'; g.stroke();
-
-  // pasek frakcji (piraci – czerwony, sojusznicy – niebieski)
-  g.globalAlpha = 0.85;
-  g.fillStyle = npc.friendly ? '#60a5fa' : '#ff6b57';
-  g.fillRect(-w*0.45, -h*0.12, w*0.90, h*0.24);
-  g.globalAlpha = 1;
-
-  // nos/skrzydła zależne od typu
-  if (npc.type === 'interceptor' || npc.radius <= 24){
-    g.fillStyle = '#9fb3d9';
-    g.beginPath(); g.moveTo(w*0.55,0); g.lineTo(-w*0.25,-h*0.45); g.lineTo(-w*0.25,h*0.45); g.closePath(); g.fill();
-  } else {
-    g.fillStyle = '#2a3754';
-    g.fillRect(-w*0.65,-h*0.55, w*0.4, h*0.25);
-    g.fillRect(-w*0.65, h*0.30, w*0.4, h*0.25);
-    g.fillStyle = '#bcd7ff';                       // mostek
-    g.fillRect(-w*0.1, -h*0.15, w*0.22, h*0.30);
-  }
-
-  // okna
-  g.fillStyle = '#cfe7ff';
-  const win = Math.max(3, Math.round(npc.radius/6));
-  for (let i=0;i<win;i++){
-    const yy = -h*0.25 + i*(h*0.5)/(win-1 || 1);
-    g.fillRect(w*0.05, yy, 3, 2);
-  }
-
-  // dysze
-  g.fillStyle = '#2c3a58';
-  const noz = Math.max(2, Math.round(npc.radius/10));
-  for(let i=0;i<noz;i++){
-    const t = noz===1 ? 0 : (i/(noz-1) - 0.5);
-    roundRect(g, -w*0.55, t*h*0.6 - 3, 8, 6, 2); g.fill();
-  }
-
-  npcSpriteCache.set(key, can);
-  return can;
-}
-
 function drawNPCPretty(ctx, npc, screenPos){
   const pixR = npc.radius * camera.zoom;
   if (pixR < 9) {
@@ -5865,9 +5779,63 @@ function drawNPCPretty(ctx, npc, screenPos){
   ctx.translate(screenPos.x, screenPos.y);
   ctx.rotate(npc.angle);
 
-  const sprite = getNPCSprite(npc);
-  const drawSize = Math.ceil(npc.radius*2 + 16) * camera.zoom;
-  ctx.drawImage(sprite, -drawSize/2, -drawSize/2, drawSize, drawSize);
+  const friendly = npc.friendly;
+  const hullColor = friendly ? '#91b8ff' : '#ffb5a5';
+  const spineColor = friendly ? '#1e2d4a' : '#3f1e23';
+  const stripeColor = friendly ? 'rgba(140,200,255,0.22)' : 'rgba(255,180,140,0.22)';
+  const detailColor = friendly ? 'rgba(240,248,255,0.85)' : 'rgba(255,235,220,0.85)';
+
+  const hullHalfHeight = pixR * 0.75;
+  const hullBack = -pixR * 1.05;
+  const nose = pixR * 1.1;
+
+  const drawHullPath = () => {
+    ctx.beginPath();
+    ctx.moveTo(nose, 0);
+    ctx.lineTo(hullBack, -hullHalfHeight);
+    ctx.lineTo(hullBack, hullHalfHeight);
+    ctx.closePath();
+  };
+
+  ctx.fillStyle = hullColor;
+  drawHullPath();
+  ctx.fill();
+
+  ctx.lineWidth = Math.max(1, pixR * 0.08);
+  ctx.strokeStyle = friendly ? 'rgba(70,110,170,0.4)' : 'rgba(170,90,70,0.4)';
+  drawHullPath();
+  ctx.stroke();
+
+  // centralny „kręgosłup” statku
+  const spineW = pixR * 0.9;
+  const spineH = hullHalfHeight * 1.6;
+  ctx.fillStyle = spineColor;
+  ctx.fillRect(-spineW * 0.5, -spineH * 0.5, spineW, spineH);
+
+  // boczne panele
+  const panelW = pixR * 0.45;
+  ctx.fillStyle = stripeColor;
+  ctx.fillRect(hullBack, -spineH * 0.5, panelW, spineH);
+  ctx.fillRect(hullBack + panelW * 1.3, -spineH * 0.55, panelW, spineH * 1.1);
+
+  // kabina / mostek
+  ctx.fillStyle = detailColor;
+  ctx.fillRect(pixR * 0.2, -pixR * 0.28, pixR * 0.35, pixR * 0.56);
+
+  // dysze silników
+  ctx.fillStyle = friendly ? '#a6d4ff' : '#ffaf92';
+  ctx.beginPath(); ctx.ellipse(hullBack + panelW * 0.3, -pixR * 0.35, pixR * 0.25, pixR * 0.32, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(hullBack + panelW * 0.3, pixR * 0.35, pixR * 0.25, pixR * 0.32, 0, 0, Math.PI * 2); ctx.fill();
+
+  // linie detali
+  ctx.strokeStyle = friendly ? 'rgba(200,230,255,0.25)' : 'rgba(255,210,190,0.25)';
+  ctx.lineWidth = Math.max(1, pixR * 0.05);
+  ctx.beginPath();
+  ctx.moveTo(-pixR * 0.4, -hullHalfHeight * 0.9);
+  ctx.lineTo(pixR * 0.35, -hullHalfHeight * 0.2);
+  ctx.lineTo(pixR * 0.35, hullHalfHeight * 0.2);
+  ctx.lineTo(-pixR * 0.4, hullHalfHeight * 0.9);
+  ctx.stroke();
 
   // glow z dysz (moc rośnie wraz z prędkością)
   const sp = Math.hypot(npc.vx||0, npc.vy||0);
@@ -5876,10 +5844,10 @@ function drawNPCPretty(ctx, npc, screenPos){
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     ctx.shadowBlur = 14*camera.zoom;
-    ctx.shadowColor = npc.friendly ? 'rgba(120,200,255,0.9)' : 'rgba(255,160,120,0.95)';
-    ctx.fillStyle   = npc.friendly ? 'rgba(160,210,255,0.7)' : 'rgba(255,180,130,0.8)';
+    ctx.shadowColor = friendly ? 'rgba(120,200,255,0.9)' : 'rgba(255,160,120,0.95)';
+    ctx.fillStyle   = friendly ? 'rgba(160,210,255,0.7)' : 'rgba(255,180,130,0.8)';
     ctx.beginPath();
-    ctx.ellipse(-npc.radius*0.9*camera.zoom, 0, 9*camera.zoom*(0.8+thrust), 20*camera.zoom*(0.8+thrust), 0, 0, Math.PI*2);
+    ctx.ellipse(hullBack - pixR * 0.1, 0, pixR * 0.5 * (0.8+thrust), pixR * 1.2 * (0.8+thrust), 0, 0, Math.PI*2);
     ctx.fill();
     ctx.restore();
   }
@@ -5888,8 +5856,11 @@ function drawNPCPretty(ctx, npc, screenPos){
   if (npc.hitFlash > 0){
     ctx.globalCompositeOperation = 'screen';
     ctx.globalAlpha = npc.hitFlash;
-    ctx.drawImage(sprite, -drawSize/2, -drawSize/2, drawSize, drawSize);
+    ctx.fillStyle = friendly ? '#cfe8ff' : '#ffd8d0';
+    drawHullPath();
+    ctx.fill();
     ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = npc.fade ?? 1;
   }
 
   // pasek HP
