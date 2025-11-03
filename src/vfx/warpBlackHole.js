@@ -36,6 +36,7 @@ export class WarpBlackHole {
     this.u_parallax    = gl.getUniformLocation(this.program, 'u_parallaxEnabled');
     this.u_rotation    = gl.getUniformLocation(this.program, 'u_rotation');
     this.u_opacity     = gl.getUniformLocation(this.program, 'u_opacity');
+    this.u_lensStretch = gl.getUniformLocation(this.program, 'u_lensStretch');
 
     // fullscreen quad
     const buf = gl.createBuffer();
@@ -174,7 +175,7 @@ export class WarpBlackHole {
     this._syncOutputCanvasSize();
   }
 
-  render({ centerX, centerY, mass = 0.15, radius = 0.25, softness = 0.25, rotation = 0, opacity = 0.85 }){
+  render({ centerX, centerY, mass = 0.15, radius = 0.25, softness = 0.25, rotation = 0, opacity = 0.85, lensStretchForward = 0.55 }){
     if (!this.enabled) return;
     if (!this._srcCanvas) {
       if (!this._warnedNoSource) {
@@ -215,6 +216,10 @@ export class WarpBlackHole {
     gl.uniform1f(this.u_softness, softness);// miękkość brzegów (0..1)
     if (this.u_rotation) gl.uniform1f(this.u_rotation, rotation);
     if (this.u_opacity) gl.uniform1f(this.u_opacity, opacity);
+    if (this.u_lensStretch) {
+      const forwardStretch = Math.max(0.01, lensStretchForward);
+      gl.uniform2f(this.u_lensStretch, 1.0, forwardStretch);
+    }
     gl.uniform1i(this.u_image, 0);
     gl.uniform1f(this.u_parallax, useParallax ? 1 : 0);
     gl.uniform2f(this.u_tileSize, tileW, tileH);
@@ -245,6 +250,7 @@ export class WarpBlackHole {
     uniform float u_parallaxEnabled;
     uniform float u_rotation;     // orientacja statku (rad)
     uniform float u_opacity;      // globalna intensywność (0..1)
+    uniform vec2  u_lensStretch;  // eliptyczne skalowanie soczewki (right, forward)
 
     // Prosta soczewka grawitacyjna:
     // - liczymy kierunek do centrum, wielkość odchylenia ~ u_mass / r^2
@@ -260,11 +266,11 @@ export class WarpBlackHole {
       float cs = cos(u_rotation);
       float sn = sin(u_rotation);
       vec2 right = vec2(cs, sn);
-      vec2 forward = vec2(sn, -cs);
+      vec2 forward = vec2(-sn, cs);
       vec2 local = vec2(dot(v, right), dot(v, forward));
 
       // Eliptyczne skalowanie soczewki – lekko rozciągamy względem kadłuba
-      vec2 lensStretch = vec2(1.0, 0.55);
+      vec2 lensStretch = max(u_lensStretch, vec2(1e-4));
       vec2 stretchSq = max(lensStretch * lensStretch, vec2(1e-4));
       vec2 stretchedLocal = vec2(local.x / stretchSq.x, local.y / stretchSq.y);
       float r2 = dot(stretchedLocal, stretchedLocal) + 1e-4;
