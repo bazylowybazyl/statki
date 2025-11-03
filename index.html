@@ -6194,7 +6194,8 @@ function render(alpha, frameDt){
           }
         }
       }
-      const lensAngle = Math.atan2(lensForward.y, lensForward.x) + Math.PI / 2;
+      // Align the shader's forward vector with the actual travel direction.
+      const lensAngle = Math.atan2(lensForward.y, lensForward.x) - Math.PI / 2;
       const lensStretchForward = warpLensParam('forwardStretch');
 
       warpBlackHoleFX.render({
