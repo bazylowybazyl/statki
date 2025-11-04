@@ -163,10 +163,10 @@ function configureShipGeometry(ship) {
   const torqueThrusterY = Math.round(54 * ship.visual.spriteScale);
   const torqueThrusterNudge = -Math.round(58 * ship.visual.spriteScale);
   ship.visual.torqueThrusters = [
-    { offset: { x: -torqueThrusterX, y: -torqueThrusterY }, forward: { x: -1, y: 0 }, side: 'left', yNudge: torqueThrusterNudge },
-    { offset: { x: -torqueThrusterX, y: torqueThrusterY }, forward: { x: -1, y: 0 }, side: 'left', yNudge: torqueThrusterNudge },
-    { offset: { x: torqueThrusterX, y: -torqueThrusterY }, forward: { x: 1, y: 0 }, side: 'right', yNudge: torqueThrusterNudge },
-    { offset: { x: torqueThrusterX, y: torqueThrusterY }, forward: { x: 1, y: 0 }, side: 'right', yNudge: torqueThrusterNudge }
+    { offset: { x: -torqueThrusterX, y: -torqueThrusterY }, forward: { x: 1, y: 0 }, side: 'left', yNudge: torqueThrusterNudge },
+    { offset: { x: -torqueThrusterX, y: torqueThrusterY }, forward: { x: 1, y: 0 }, side: 'left', yNudge: torqueThrusterNudge },
+    { offset: { x: torqueThrusterX, y: -torqueThrusterY }, forward: { x: -1, y: 0 }, side: 'right', yNudge: torqueThrusterNudge },
+    { offset: { x: torqueThrusterX, y: torqueThrusterY }, forward: { x: -1, y: 0 }, side: 'right', yNudge: torqueThrusterNudge }
   ];
 
   ship.sideGunsLeft = [];
