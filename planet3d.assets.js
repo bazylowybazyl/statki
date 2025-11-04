@@ -78,7 +78,6 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
   function resetRendererState(renderer, width, height) {
     if (!renderer) return;
     if (typeof renderer.setRenderTarget === 'function') renderer.setRenderTarget(null);
-    if (typeof renderer.setPixelRatio === 'function') renderer.setPixelRatio(1);
     if (typeof renderer.setSize === 'function') renderer.setSize(width, height, false);
     if (typeof renderer.setViewport === 'function') renderer.setViewport(0, 0, width, height);
     if (renderer.state && typeof renderer.state.reset === 'function') renderer.state.reset();
@@ -184,7 +183,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.size = pixelSize || 64;
 
       this.canvas = document.createElement("canvas");
-      this.canvas.width = 512; this.canvas.height = 512;
+      this.canvas.width = 1024; this.canvas.height = 1024;
       this.ctx2d = this.canvas.getContext("2d");
       this._name = String((opts && (opts.name ?? opts.id)) ?? "").toLowerCase();
       if (!this._name || !TEX[this._name]) this._name = 'earth';
@@ -229,18 +228,34 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
         }`;
 
+      const GLSL_COLOR = `
+        vec3 srgbToLinear(vec3 c){
+          bvec3 cutoff = lessThanEqual(c, vec3(0.04045));
+          vec3 low  = c / 12.92;
+          vec3 high = pow((c + 0.055)/1.055, vec3(2.4));
+          return mix(high, low, vec3(cutoff));
+        }
+        vec3 linearToSrgb(vec3 c){
+          bvec3 cutoff = lessThanEqual(c, vec3(0.0031308));
+          vec3 low  = 12.92 * c;
+          vec3 high = 1.055 * pow(max(c, vec3(0.0)), vec3(1.0/2.4)) - 0.055;
+          return mix(high, low, vec3(cutoff));
+        }`;
+
       const fragDN = `
         uniform sampler2D dayTexture;
         uniform sampler2D nightTexture;
         uniform vec3 uLightDir;
         uniform float minAmbient;
         varying vec2 vUv; varying vec3 vN;
+        ${GLSL_COLOR}
         void main(){
           float ndl = max(dot(normalize(vN), normalize(uLightDir)), 0.0);
-          vec4 dayC   = texture2D(dayTexture,   vUv);
-          vec4 nightC = texture2D(nightTexture, vUv) * 0.20;
+          vec3 dayLin = srgbToLinear(texture2D(dayTexture, vUv).rgb);
+          vec3 nLin   = srgbToLinear(texture2D(nightTexture, vUv).rgb) * 0.20;
           float k = clamp(minAmbient + (1.0 - minAmbient) * ndl, 0.0, 1.0);
-          gl_FragColor = mix(nightC, dayC, k);
+          vec3 colLin = mix(nLin, dayLin, k);
+          gl_FragColor = vec4(linearToSrgb(colLin), 1.0);
         }`;
 
       const fragDay = `
@@ -248,11 +263,13 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         uniform vec3 uLightDir;
         uniform float minAmbient;
         varying vec2 vUv; varying vec3 vN;
+        ${GLSL_COLOR}
         void main(){
           float ndl = max(dot(normalize(vN), normalize(uLightDir)), 0.0);
-          vec4 dayC = texture2D(dayTexture, vUv);
+          vec3 dayLin = srgbToLinear(texture2D(dayTexture, vUv).rgb);
           float k = clamp(minAmbient + (1.0 - minAmbient) * ndl, 0.0, 1.0);
-          gl_FragColor = vec4(dayC.rgb * k, dayC.a);
+          vec3 colLin = dayLin * k;
+          gl_FragColor = vec4(linearToSrgb(colLin), 1.0);
         }`;
 
       const useNight = !!nightMap;
@@ -260,7 +277,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         dayTexture:   { value: colorMap || null },
         nightTexture: { value: nightMap || null },
         uLightDir:    { value: new THREE.Vector3(1, 0, 0) },
-        minAmbient:   { value: 0.08 }
+        minAmbient:   { value: 0.16 }
       };
 
       this.material = new THREE.ShaderMaterial({
@@ -269,6 +286,10 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         fragmentShader: useNight ? fragDN : fragDay,
         toneMapped: false
       });
+
+      if (this._name === 'earth' && this.material.uniforms?.minAmbient) {
+        this.material.uniforms.minAmbient.value = 0.20;
+      }
 
       this.scene.add(new THREE.AmbientLight(0xffffff, 0.08));
       const hemi = new THREE.HemisphereLight(0xbfdfff, 0x0b0f1a, 0.12);
@@ -289,6 +310,8 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.scene.add(this.mesh);
 
       if (cloudsMap) {
+        cloudsMap.anisotropy = Math.max(cloudsMap.anisotropy || 0, 8);
+        cloudsMap.needsUpdate = true;
         const clouds = new THREE.Mesh(
           new THREE.SphereGeometry(1.008, 64, 48),
           new THREE.MeshPhongMaterial({
