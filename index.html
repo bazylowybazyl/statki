@@ -6492,10 +6492,35 @@ function render(alpha, frameDt){
     const thrusters = ship.visual.torqueThrusters;
     const strafeLeft = clamp(input.leftSide ?? 0, 0, 1);
     const strafeRight = clamp(input.rightSide ?? 0, 0, 1);
-    const torqueIntensity = clamp(Math.abs(input.torque ?? 0), 0, 1);
-    const leftIntensity = Math.max(strafeLeft, torqueIntensity);
-    const rightIntensity = Math.max(strafeRight, torqueIntensity);
-    const globalIntensity = Math.max(leftIntensity, rightIntensity);
+    const torqueInput = clamp(input.torque ?? 0, -1, 1);
+    const torqueIntensity = Math.abs(torqueInput);
+
+    const activeThrusters = [];
+    let globalIntensity = 0;
+
+    for (const thruster of thrusters) {
+      const strafeIntensity = thruster.side === 'left' ? strafeLeft : strafeRight;
+      let thrusterIntensity = strafeIntensity;
+
+      if (torqueIntensity > 0) {
+        const isTop = thruster.offset.y < 0;
+        const isBottom = thruster.offset.y > 0;
+
+        if (torqueInput < 0) {
+          const shouldFire = (thruster.side === 'right' && isTop) || (thruster.side === 'left' && isBottom);
+          if (shouldFire) thrusterIntensity = Math.max(thrusterIntensity, torqueIntensity);
+        } else if (torqueInput > 0) {
+          const shouldFire = (thruster.side === 'left' && isTop) || (thruster.side === 'right' && isBottom);
+          if (shouldFire) thrusterIntensity = Math.max(thrusterIntensity, torqueIntensity);
+        }
+      }
+
+      thrusterIntensity = clamp(thrusterIntensity, 0, 1);
+      if (thrusterIntensity <= 0) continue;
+
+      activeThrusters.push({ thruster, intensity: thrusterIntensity });
+      globalIntensity = Math.max(globalIntensity, thrusterIntensity);
+    }
 
     if (globalIntensity > 0) {
       const overrides = {
@@ -6505,13 +6530,10 @@ function render(alpha, frameDt){
         moveGlowOverride: 0
       };
 
-      for (const thruster of thrusters) {
-        const thrusterIntensity = thruster.side === 'left' ? leftIntensity : rightIntensity;
-        if (thrusterIntensity <= 0) continue;
-
-        const widthScale = spriteScale * (0.42 + thrusterIntensity * 0.4);
-        const lengthScale = spriteScale * (0.46 + thrusterIntensity * 0.36);
-        const alpha = 0.5 + thrusterIntensity * 0.45;
+      for (const { thruster, intensity } of activeThrusters) {
+        const widthScale = spriteScale * (0.42 + intensity * 0.4);
+        const lengthScale = spriteScale * (0.2 + intensity * 0.2);
+        const alpha = 0.5 + intensity * 0.45;
 
         drawNeedleEngineVfxLocal(thruster.offset, thruster.forward, {
           widthScale,
