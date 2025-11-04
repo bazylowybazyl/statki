@@ -6200,8 +6200,13 @@ function render(alpha, frameDt){
       const opacityBase = warpLensParam('opacityBase');
       const opacityScale = warpLensParam('opacityScale');
 
-      const radius = Math.min(1, Math.max(0.01, radiusBase + radiusScale * warpIntensity));
-      const mass = Math.min(0.6, Math.max(0, (massBase + massScale * warpIntensity) * warpIntensity));
+      const baseRadius = Math.max(0.01, radiusBase + radiusScale * warpIntensity);
+      const referenceZoom = Math.max(0.0001, camera.defaultZoom || 1);
+      const zoomFactor = camera.zoom / referenceZoom;
+      const radius = Math.min(1, baseRadius * zoomFactor);
+
+      const baseMass = Math.max(0, (massBase + massScale * warpIntensity) * warpIntensity);
+      const mass = Math.min(0.6, baseMass * zoomFactor * zoomFactor);
       const opacity = Math.min(1, Math.max(0, (opacityBase + opacityScale * warpIntensity) * warpIntensity));
 
       const lensForward = { x: warp.dir.x, y: warp.dir.y };
