@@ -217,8 +217,14 @@ export class WarpBlackHole {
     if (this.u_rotation) gl.uniform1f(this.u_rotation, rotation);
     if (this.u_opacity) gl.uniform1f(this.u_opacity, opacity);
     if (this.u_lensStretch) {
-      const forwardStretch = Math.max(0.01, lensStretchForward);
-      gl.uniform2f(this.u_lensStretch, 1.0, forwardStretch);
+      const rawForward = Number.isFinite(lensStretchForward) ? lensStretchForward : 1;
+      const clampedForward = Math.max(0.01, rawForward);
+      const forwardMajor = clampedForward >= 1
+        ? clampedForward
+        : 1 + (1 - clampedForward);
+      const forwardScale = Math.max(1.05, Math.min(8, forwardMajor));
+      const lateralScale = 1.0;
+      gl.uniform2f(this.u_lensStretch, lateralScale, forwardScale);
     }
     gl.uniform1i(this.u_image, 0);
     gl.uniform1f(this.u_parallax, useParallax ? 1 : 0);
@@ -269,10 +275,9 @@ export class WarpBlackHole {
       vec2 forward = vec2(-sn, cs);
       vec2 local = vec2(dot(v, right), dot(v, forward));
 
-      // Eliptyczne skalowanie soczewki – lekko rozciągamy względem kadłuba
+      // Eliptyczne skalowanie soczewki – rozciągamy ją w kierunku lotu statku
       vec2 lensStretch = max(u_lensStretch, vec2(1e-4));
-      vec2 stretchSq = max(lensStretch * lensStretch, vec2(1e-4));
-      vec2 stretchedLocal = vec2(local.x / stretchSq.x, local.y / stretchSq.y);
+      vec2 stretchedLocal = vec2(local.x / lensStretch.x, local.y / lensStretch.y);
       float r2 = dot(stretchedLocal, stretchedLocal) + 1e-4;
       float r  = sqrt(r2);
 
