@@ -6141,12 +6141,9 @@ function render(alpha, frameDt){
   let warpLensShouldDraw = false;
   let warpLensOutputCanvas = null;
   if (warpBlackHoleFX) {
-    const isWarpOn = (warp.state === 'charging' || warp.state === 'active');
-    const warpIntensity = isWarpOn
-      ? (warp.state === 'active'
-          ? 1
-          : Math.min(1, warp.charge / Math.max(0.001, warp.chargeTime)))
-      : 0;
+    const isWarpActive = (warp.state === 'active');
+    const entryProgress = isWarpActive ? clamp(warp.entryProgress, 0, 1) : 0;
+    const warpIntensity = isWarpActive ? smoothstep01(entryProgress) : 0;
 
     const lensThreshold = getWarpLensThreshold();
     const desiredLensMode = (warpIntensity >= lensThreshold) ? 'full' : 'background';
@@ -6158,8 +6155,9 @@ function render(alpha, frameDt){
       configureWarpLensSource();
     }
 
-    warpBlackHoleFX.setEnabled(isWarpOn && !!warpLensSource);
-    if (isWarpOn && warpLensSource) {
+    const shouldRenderWarpLens = isWarpActive && warpIntensity > 0.001;
+    warpBlackHoleFX.setEnabled(shouldRenderWarpLens && !!warpLensSource);
+    if (shouldRenderWarpLens && warpLensSource) {
       const engineTail = ship.visual?.mainEngine?.y ?? (ship.h * 0.5);
       const tailDepthExtra = warpLensParam('tailDepthExtra');
       const warpDepth = engineTail + ship.h * tailDepthExtra;
@@ -6176,27 +6174,17 @@ function render(alpha, frameDt){
       const opacityScale = warpLensParam('opacityScale');
 
       const radius = Math.min(1, Math.max(0.01, radiusBase + radiusScale * warpIntensity));
-      const mass = Math.min(0.6, Math.max(0, massBase + massScale * warpIntensity));
-      const opacity = Math.min(1, Math.max(0, opacityBase + opacityScale * warpIntensity));
+      const mass = Math.min(0.6, Math.max(0, (massBase + massScale * warpIntensity) * warpIntensity));
+      const opacity = Math.min(1, Math.max(0, (opacityBase + opacityScale * warpIntensity) * warpIntensity));
 
-      const shipForward = { x: Math.sin(ship.angle), y: -Math.cos(ship.angle) };
-      let lensForward = shipForward;
-      if (warp.state === 'active') {
-        lensForward = { x: warp.dir.x, y: warp.dir.y };
-      } else {
-        const speed = Math.hypot(ship.vel.x, ship.vel.y);
-        if (speed > 1) {
-          const inv = 1 / speed;
-          const velDir = { x: ship.vel.x * inv, y: ship.vel.y * inv };
-          const alignment = velDir.x * shipForward.x + velDir.y * shipForward.y;
-          if (alignment < 0.95) {
-            lensForward = velDir;
-          }
-        }
-      }
+      const lensForward = { x: warp.dir.x, y: warp.dir.y };
       // Align the shader's forward vector with the actual travel direction.
       const lensAngle = Math.atan2(lensForward.y, lensForward.x) - Math.PI / 2;
-      const lensStretchForward = warpLensParam('forwardStretch');
+      const forwardStretchParam = warpLensParam('forwardStretch');
+      const forwardStretchMajor = forwardStretchParam >= 1
+        ? forwardStretchParam
+        : 1 + (1 - forwardStretchParam);
+      const lensStretchForward = 1 + (forwardStretchMajor - 1) * warpIntensity;
 
       warpBlackHoleFX.render({
         centerX: s.x,
