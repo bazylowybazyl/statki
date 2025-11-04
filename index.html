@@ -3231,8 +3231,8 @@ window.addEventListener('keyup', e=>{
 });
 function updateInput(){
   const main = keys['w'] ? 1 : 0;
-  const leftSide = keys['q'] ? 1 : 0;
-  const rightSide = keys['e'] ? 1 : 0;
+  const leftSide = keys['e'] ? 1 : 0;
+  const rightSide = keys['q'] ? 1 : 0;
   let torque = 0; if(keys['a']) torque -= 1; if(keys['d']) torque += 1;
   applyPlayerInput(ship, {
     controller: 'player',
