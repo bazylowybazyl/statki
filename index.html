@@ -5255,7 +5255,7 @@ function getEngineVFX() {
 
   _engineVFX = {
     canvas, ctx2d, camera, scene, exhaust,
-    render(time) {
+    render(time, overrides = null) {
       const r = pickRenderer(canvas.width, canvas.height);
       if (!r) return;
       // pełny reset i przezroczyste czyszczenie
@@ -5263,17 +5263,29 @@ function getEngineVFX() {
 
       // dynamiczny throttle
       const spd = Math.hypot(ship.vel.x, ship.vel.y);
-      const moveGlow = Math.min(spd / 900, 0.6);
+      const moveGlowBase = Math.min(spd / 900, 0.6);
       const thrust = input.main > 0 ? input.main : 0;
-      const boostAmp = (boost.effectDuration > 0)
+      const boostAmpBase = (boost.effectDuration > 0)
         ? clamp(boost.effectTime / boost.effectDuration, 0, 1)
         : 0;
       const warpActiveAmp = (warp.state === 'active') ? smoothstep01(warp.entryProgress) : 0;
       const warpChargeAmp = (warp.state === 'charging')
         ? smoothstep01(Math.min(1, warp.charge/warp.chargeTime)) * 0.6
         : 0;
-      const warpAmp  = Math.max(warpActiveAmp, warpChargeAmp);
-      const throttle = Math.max(thrust, moveGlow * 0.8);
+      const warpAmpBase  = Math.max(warpActiveAmp, warpChargeAmp);
+      const moveGlow = (overrides && typeof overrides.moveGlowOverride === 'number')
+        ? clamp(overrides.moveGlowOverride, 0, 1)
+        : moveGlowBase;
+      const throttleBase = Math.max(thrust, moveGlow * 0.8);
+      const throttle = (overrides && typeof overrides.throttleOverride === 'number')
+        ? clamp(overrides.throttleOverride, 0, 1)
+        : throttleBase;
+      const boostAmp = (overrides && typeof overrides.boostOverride === 'number')
+        ? clamp(overrides.boostOverride, 0, 1)
+        : boostAmpBase;
+      const warpAmp = (overrides && typeof overrides.warpOverride === 'number')
+        ? clamp(overrides.warpOverride, 0, 1)
+        : warpAmpBase;
 
       exhaust.setThrottle(throttle);
       exhaust.setWarpBoost(Math.max(boostAmp, warpAmp));
@@ -5392,22 +5404,37 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale){
   ctx.restore();
 }
 
-function drawMainEngineVfxLocal(localPos, forward, widen = 1.5, yNudge = -68) {
+function drawNeedleEngineVfxLocal(localPos, forward, options = {}) {
+  const {
+    widthScale = 1.5,
+    lengthScale = 1,
+    yNudge = -68,
+    alpha = 1,
+    overrides = null,
+    fallback = true
+  } = options || {};
+
+  const safeWidth = Math.max(0.0001, widthScale);
+  const safeLength = Math.max(0.0001, lengthScale);
+
   ctx.save();
-  // przechodzimy w lokal statku
   ctx.translate(localPos.x, localPos.y);
-  // dopasowanie szerokości do kadłuba
-  ctx.scale(widen, 1);
-  // igła w dół statku (dysza na dole) — oś Y płomienia w dół
+  ctx.scale(safeWidth, safeLength);
   ctx.rotate(Math.atan2(forward.y, forward.x) + Math.PI/2);
   ctx.globalCompositeOperation = 'lighter';
+  const prevAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = prevAlpha * alpha;
 
   const evfx = getEngineVFX();
   if (evfx) {
-    evfx.render(vfxTime);
+    evfx.render(vfxTime, overrides);
     const w = evfx.canvas.width, h = evfx.canvas.height;
-    ctx.drawImage(evfx.canvas, -w / 2, yNudge, w, h);
+    ctx.drawImage(evfx.canvas, -w / 2, yNudge / safeLength, w, h);
+  } else if (fallback) {
+    drawEngineFallback2D();
   }
+
+  ctx.globalAlpha = prevAlpha;
   ctx.restore();
 }
 
@@ -6408,6 +6435,41 @@ function render(alpha, frameDt){
       ctx.restore();
     }
 
+    if (ship.visual?.torqueThrusters?.length) {
+      for (const thruster of ship.visual.torqueThrusters) {
+        ctx.save();
+        ctx.translate(thruster.offset.x, thruster.offset.y);
+        if (thruster.side === 'left') ctx.scale(-1, 1);
+
+        const podW = 16 * spriteScale;
+        const podH = 28 * spriteScale;
+        const nozzleW = 10 * spriteScale;
+        const nozzleH = 14 * spriteScale;
+        const podRadius = 5 * spriteScale;
+
+        const podGradient = ctx.createLinearGradient(-podW/2, -podH/2, podW/2, podH/2);
+        podGradient.addColorStop(0, '#1c263d');
+        podGradient.addColorStop(1, '#2f3f62');
+        ctx.fillStyle = podGradient;
+        roundRect(ctx, -podW/2, -podH/2, podW, podH, podRadius);
+        ctx.fill();
+        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = 'rgba(10,18,32,0.6)';
+        roundRect(ctx, -podW/2, -podH/2, podW, podH, podRadius);
+        ctx.stroke();
+
+        ctx.fillStyle = '#8fa7d6';
+        roundRect(ctx, podW/2 - 2 * spriteScale, -nozzleH/2, nozzleW, nozzleH, 3 * spriteScale);
+        ctx.fill();
+
+        ctx.fillStyle = 'rgba(255,255,255,0.12)';
+        roundRect(ctx, -podW/2 + 2 * spriteScale, -podH*0.35, podW * 0.3, podH * 0.7, 3 * spriteScale);
+        ctx.fill();
+
+        ctx.restore();
+      }
+    }
+
     ctx.fillStyle = '#cbd6ff';
     for (const off of ship.sideGunsLeft) {
       ctx.save();
@@ -6425,6 +6487,43 @@ function render(alpha, frameDt){
     }
   }
 
+  // VFX bocznych silników momentu/strafe
+  if (ship.visual?.torqueThrusters?.length) {
+    const thrusters = ship.visual.torqueThrusters;
+    const strafeLeft = clamp(input.leftSide ?? 0, 0, 1);
+    const strafeRight = clamp(input.rightSide ?? 0, 0, 1);
+    const torqueIntensity = clamp(Math.abs(input.torque ?? 0), 0, 1);
+    const leftIntensity = Math.max(strafeLeft, torqueIntensity);
+    const rightIntensity = Math.max(strafeRight, torqueIntensity);
+    const globalIntensity = Math.max(leftIntensity, rightIntensity);
+
+    if (globalIntensity > 0) {
+      const overrides = {
+        throttleOverride: globalIntensity,
+        warpOverride: 0,
+        boostOverride: 0,
+        moveGlowOverride: 0
+      };
+
+      for (const thruster of thrusters) {
+        const thrusterIntensity = thruster.side === 'left' ? leftIntensity : rightIntensity;
+        if (thrusterIntensity <= 0) continue;
+
+        const widthScale = spriteScale * (0.42 + thrusterIntensity * 0.4);
+        const lengthScale = spriteScale * (0.46 + thrusterIntensity * 0.36);
+        const alpha = 0.5 + thrusterIntensity * 0.45;
+
+        drawNeedleEngineVfxLocal(thruster.offset, thruster.forward, {
+          widthScale,
+          lengthScale,
+          yNudge: thruster.yNudge,
+          alpha,
+          overrides
+        });
+      }
+    }
+  }
+
   // VFX głównego silnika – pod tarczą, wyrasta z dyszy
   {
     const e = ship.engines.main;
@@ -6435,7 +6534,12 @@ function render(alpha, frameDt){
     const moveGlow = Math.min(spd / 900, 0.6) * 0.8;
     const throttle = Math.max(input.main || 0, moveGlow);
     const widen = 2.4 + 0.6 * throttle; // 1.2..1.8
-    drawMainEngineVfxLocal(visualOffset, forward, widen, -68 * spriteScale);
+    drawNeedleEngineVfxLocal(visualOffset, forward, {
+      widthScale: widen,
+      lengthScale: 1,
+      yNudge: -68 * spriteScale,
+      alpha: 1
+    });
   }
 
   // status circle (hull/shield/speed/rockets) behind shield
