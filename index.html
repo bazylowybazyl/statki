@@ -6536,9 +6536,25 @@ function render(alpha, frameDt){
       };
 
       for (const { thruster, intensity } of activeThrusters) {
-        const widthScale = spriteScale * (0.42 + intensity * 0.4);
-        const lengthScale = spriteScale * (0.2 + intensity * 0.2);
-        const alpha = 0.5 + intensity * 0.45;
+        const widthPxMin = thruster.vfxWidthMin != null
+          ? thruster.vfxWidthMin
+          : spriteScale * 128 * 0.42;
+        const widthPxMax = thruster.vfxWidthMax != null
+          ? thruster.vfxWidthMax
+          : spriteScale * 128 * 0.82;
+        const lengthPxMin = thruster.vfxLengthMin != null
+          ? thruster.vfxLengthMin
+          : spriteScale * 256 * 0.2;
+        const lengthPxMax = thruster.vfxLengthMax != null
+          ? thruster.vfxLengthMax
+          : spriteScale * 256 * 0.4;
+
+        const widthPx = lerp(widthPxMin, widthPxMax, intensity);
+        const lengthPx = lerp(lengthPxMin, lengthPxMax, intensity);
+
+        const widthScale = Math.max(0.0001, widthPx / 128);
+        const lengthScale = Math.max(0.0001, lengthPx / 256);
+        const alpha = 0.55 + intensity * 0.35;
 
         drawNeedleEngineVfxLocal(thruster.offset, thruster.forward, {
           widthScale,

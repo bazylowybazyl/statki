@@ -161,12 +161,60 @@ function configureShipGeometry(ship) {
 
   const torqueThrusterX = sideVisualX + Math.round(12 * ship.visual.spriteScale);
   const torqueThrusterY = Math.round(54 * ship.visual.spriteScale);
-  const torqueThrusterNudge = -Math.round(58 * ship.visual.spriteScale);
+
+  const torqueThrusterPodW = 16 * ship.visual.spriteScale;
+  const torqueThrusterNozzleInset = 2 * ship.visual.spriteScale;
+  const torqueThrusterNozzleW = 10 * ship.visual.spriteScale;
+  const torqueThrusterNozzleH = 14 * ship.visual.spriteScale;
+
+  const torqueThrusterExit = (torqueThrusterPodW / 2 - torqueThrusterNozzleInset) + torqueThrusterNozzleW * 0.85;
+  const torqueThrusterNudge = -Math.round(torqueThrusterExit);
+
+  const torqueThrusterVfxWidthMin = Math.round(torqueThrusterNozzleH * 0.75);
+  const torqueThrusterVfxWidthMax = Math.round(torqueThrusterNozzleH * 1.25);
+  const torqueThrusterVfxLengthMin = Math.round(torqueThrusterNozzleW * 1.4);
+  const torqueThrusterVfxLengthMax = Math.round(torqueThrusterNozzleW * 2.6);
   ship.visual.torqueThrusters = [
-    { offset: { x: -torqueThrusterX, y: -torqueThrusterY }, forward: { x: 1, y: 0 }, side: 'left', yNudge: torqueThrusterNudge },
-    { offset: { x: -torqueThrusterX, y: torqueThrusterY }, forward: { x: 1, y: 0 }, side: 'left', yNudge: torqueThrusterNudge },
-    { offset: { x: torqueThrusterX, y: -torqueThrusterY }, forward: { x: -1, y: 0 }, side: 'right', yNudge: torqueThrusterNudge },
-    { offset: { x: torqueThrusterX, y: torqueThrusterY }, forward: { x: -1, y: 0 }, side: 'right', yNudge: torqueThrusterNudge }
+    {
+      offset: { x: -torqueThrusterX, y: -torqueThrusterY },
+      forward: { x: 1, y: 0 },
+      side: 'left',
+      yNudge: torqueThrusterNudge,
+      vfxWidthMin: torqueThrusterVfxWidthMin,
+      vfxWidthMax: torqueThrusterVfxWidthMax,
+      vfxLengthMin: torqueThrusterVfxLengthMin,
+      vfxLengthMax: torqueThrusterVfxLengthMax
+    },
+    {
+      offset: { x: -torqueThrusterX, y: torqueThrusterY },
+      forward: { x: 1, y: 0 },
+      side: 'left',
+      yNudge: torqueThrusterNudge,
+      vfxWidthMin: torqueThrusterVfxWidthMin,
+      vfxWidthMax: torqueThrusterVfxWidthMax,
+      vfxLengthMin: torqueThrusterVfxLengthMin,
+      vfxLengthMax: torqueThrusterVfxLengthMax
+    },
+    {
+      offset: { x: torqueThrusterX, y: -torqueThrusterY },
+      forward: { x: -1, y: 0 },
+      side: 'right',
+      yNudge: torqueThrusterNudge,
+      vfxWidthMin: torqueThrusterVfxWidthMin,
+      vfxWidthMax: torqueThrusterVfxWidthMax,
+      vfxLengthMin: torqueThrusterVfxLengthMin,
+      vfxLengthMax: torqueThrusterVfxLengthMax
+    },
+    {
+      offset: { x: torqueThrusterX, y: torqueThrusterY },
+      forward: { x: -1, y: 0 },
+      side: 'right',
+      yNudge: torqueThrusterNudge,
+      vfxWidthMin: torqueThrusterVfxWidthMin,
+      vfxWidthMax: torqueThrusterVfxWidthMax,
+      vfxLengthMin: torqueThrusterVfxLengthMin,
+      vfxLengthMax: torqueThrusterVfxLengthMax
+    }
   ];
 
   ship.sideGunsLeft = [];
