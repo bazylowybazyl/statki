@@ -53,8 +53,8 @@ export default class Scene {
         format: 'rgb',
         width: width,
         height: height,
-        wrapS: 'clamp',
-        wrapT: 'clamp',
+        wrapS: 'repeat',
+        wrapT: 'repeat',
         data: data
       });
       this.copyRenderer({
@@ -68,16 +68,17 @@ export default class Scene {
     let nebulaCount = 0;
     if (props.renderNebulae) nebulaCount = Math.round(rand.random() * 4 + 1);
     let nebulaOut = pingPong(ping, ping, pong, nebulaCount, (source, destination) => {
+      const repeat = nebula.NOISE_PERIOD;
+      const octaveIndex = Math.floor(rand.random() * 4);
+      const frequency = Math.pow(2, octaveIndex);
       this.nebulaRenderer({
         source: source,
         destination: destination,
-        offset: [rand.random() * 100, rand.random() * 100],
-        scale: (rand.random() * 2 + 1) / scale,
+        offset: [rand.random() * repeat, rand.random() * repeat],
+        scale: frequency,
         color: [rand.random(), rand.random(), rand.random()],
         density: rand.random() * 0.2,
         falloff: rand.random() * 2.0 + 3.0,
-        width: width,
-        height: height,
         viewport: viewport
       });
     });
