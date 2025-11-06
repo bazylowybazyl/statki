@@ -8901,14 +8901,16 @@ setTimeout(startGame, 500);
 <script>
   // === DevTools: API + handler skali stacji 3D ===
   (function(){
+    const DEFAULT_STATION3D_SCALE = (
+      typeof window.DEFAULT_STATION_3D_SCALE === 'number' && window.DEFAULT_STATION_3D_SCALE > 0
+    ) ? window.DEFAULT_STATION_3D_SCALE : 2.70;
+
     // API dostępne globalnie — zapisuje skalę w dwóch miejscach, aby
     // 1) logika 3D miała natychmiastową wartość, 2) devtools mógł ją odczytać.
     if (!window.__setStation3DScale) {
       window.__setStation3DScale = (v) => {
         const raw = Number(v);
-        const fallback = (typeof window.DEFAULT_STATION_3D_SCALE === 'number' && window.DEFAULT_STATION_3D_SCALE > 0)
-          ? window.DEFAULT_STATION_3D_SCALE
-          : DEFAULT_STATION3D_SCALE;
+        const fallback = DEFAULT_STATION3D_SCALE;
         const n = (Number.isFinite(raw) && raw > 0) ? raw : fallback;
         window.Dev       = window.Dev       || {};
         window.DevTuning = window.DevTuning || {};
@@ -8931,9 +8933,7 @@ setTimeout(startGame, 500);
         if (sv) sv.textContent = '×' + saved.toFixed(2);
         window.__setStation3DScale(saved);
       } else {
-        const def = (typeof window.DEFAULT_STATION_3D_SCALE === 'number' && window.DEFAULT_STATION_3D_SCALE > 0)
-          ? window.DEFAULT_STATION_3D_SCALE
-          : DEFAULT_STATION3D_SCALE;
+        const def = DEFAULT_STATION3D_SCALE;
         s.value = String(def);
         if (sv) sv.textContent = '×' + def.toFixed(2);
         window.__setStation3DScale(def);
