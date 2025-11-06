@@ -3996,9 +3996,9 @@ const FIGHTER_ORBIT_RADIUS = 200;  // były zbyt blisko
 const FIGHTER_ORBIT_SPEED = 1.8;
 const FIGHTER_ATTACK_RANGE = 1000;
 const FIGHTERS_PER_LAUNCH = 10;
-const FIGHTER_ACCEL = 720;
-const FIGHTER_MAX_SPEED = 1020;
-const FIGHTER_TURN_RATE = 7.2;
+const FIGHTER_ACCEL = 880;
+const FIGHTER_MAX_SPEED = 1180;
+const FIGHTER_TURN_RATE = 9.6;
 const FIGHTER_DRAG_COEFF = 2.6;
 const FIGHTER_ESCORT_POSITION_GAIN = 3.0;
 const FIGHTER_ESCORT_FOLLOW_GAIN = 7.5;
@@ -4021,10 +4021,17 @@ function fighterAI(dt){
   const limit = (e, vmax)=>{ const s = Math.hypot(e.vx, e.vy); if(s>vmax){ const k=vmax/s; e.vx*=k; e.vy*=k; } };
   const faceAndThrust = (tx, ty, accelMul=1.0)=>{
     const desired = Math.atan2(ty - this.y, tx - this.x);
-    const current = Math.atan2(this.vy, this.vx);
+    if (typeof this.heading !== 'number' || Number.isNaN(this.heading)) {
+      this.heading = Math.atan2(this.vy, this.vx);
+      if (!Number.isFinite(this.heading)) this.heading = desired;
+    }
+    const speed = Math.hypot(this.vx, this.vy);
+    const current = speed > 4 ? Math.atan2(this.vy, this.vx) : this.heading;
     const diff = wrapAngle(desired - current);
-    const turn = clamp(diff, -this.turn*dt, this.turn*dt);
-    const ang = current + turn;
+    const maxTurn = this.turn * dt;
+    const turn = clamp(diff, -maxTurn, maxTurn);
+    this.heading = wrapAngle(current + turn);
+    const ang = this.heading;
     this.vx += Math.cos(ang) * this.accel * accelMul * dt;
     this.vy += Math.sin(ang) * this.accel * accelMul * dt;
     // VFX silników
@@ -4039,7 +4046,10 @@ function fighterAI(dt){
   const canGunsFire = (target)=>{
     const dx = target.x - this.x, dy = target.y - this.y;
     const dist = Math.hypot(dx, dy);
-    const facing = Math.atan2(this.vy, this.vx);
+    const speed = Math.hypot(this.vx, this.vy);
+    const facing = speed > 4
+      ? Math.atan2(this.vy, this.vx)
+      : (typeof this.heading === 'number' ? this.heading : Math.atan2(this.vy, this.vx));
     const aim = Math.atan2(dy, dx);
     const align = Math.abs(wrapAngle(aim - facing));
     const closing = (this.vx*dx + this.vy*dy) > 0; // lecimy w stronę celu
@@ -4381,6 +4391,9 @@ function spawnFighter(){
     accel: FIGHTER_ACCEL,
     maxSpeed: FIGHTER_MAX_SPEED,
     turn: FIGHTER_TURN_RATE,
+    heading: (Math.hypot(ship.vel.x, ship.vel.y) > 0.5)
+      ? Math.atan2(ship.vel.y, ship.vel.x)
+      : ship.angle,
     radius:12, hp:40, maxHp:40, color:'#9edfff', fade:1,
     ai: fighterAI, mission:true, friendly:true,
     fighter: true,
