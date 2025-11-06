@@ -2694,8 +2694,13 @@ function drawBuildingPreview(canvas, building){
 }
 
 function infrastructureDragBuildingId(ev){
-  if(!ev || !ev.dataTransfer) return null;
-  const id = ev.dataTransfer.getData('text/infrastructure-building') || ev.dataTransfer.getData('text/plain');
+  let id = null;
+  if(ev && ev.dataTransfer){
+    id = ev.dataTransfer.getData('text/infrastructure-building') || ev.dataTransfer.getData('text/plain');
+  }
+  if(!id){
+    id = infrastructureBuilder.draggingBuildingId;
+  }
   if(!id) return null;
   return INFRA_BUILDING_MAP.has(id) ? id : null;
 }
