@@ -7,6 +7,23 @@
 <style>
   html,body{height:100%;margin:0;background:#030417;color:#dfe7ff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
   #ui{position:absolute;left:12px;top:12px;z-index:120;background:rgba(8,10,20,0.6);padding:10px;border-radius:8px;backdrop-filter:blur(6px)}
+  #fleet-ui{position:absolute;left:12px;top:160px;width:260px;z-index:120;display:flex;flex-direction:column;gap:10px;background:rgba(8,10,20,0.55);padding:12px 14px;border-radius:12px;border:1px solid rgba(70,90,140,0.35);backdrop-filter:blur(6px);color:#dfe7ff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
+  #fleet-ui.hidden{display:none !important;}
+  #fleet-ui h3{margin:0;font-size:15px;letter-spacing:0.08em;text-transform:uppercase;color:#8fb5ff;}
+  #fleet-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;}
+  .fleet-ship{padding:10px 12px;background:rgba(6,10,20,0.75);border:1px solid rgba(70,90,140,0.35);border-radius:10px;display:flex;flex-direction:column;gap:8px;}
+  .fleet-ship-header{display:flex;flex-direction:column;gap:2px;}
+  .fleet-ship-name{font-weight:600;font-size:15px;color:#f1f7ff;}
+  .fleet-ship-meta{font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#8da4d8;}
+  .fleet-bars{display:flex;flex-direction:column;gap:6px;}
+  .fleet-bar-label{font-size:11px;color:#a7b6d8;display:flex;justify-content:space-between;}
+  .fleet-bar{height:8px;border-radius:999px;background:rgba(32,44,72,0.8);overflow:hidden;position:relative;}
+  .fleet-bar-fill{position:absolute;left:0;top:0;height:100%;border-radius:999px;transition:width 0.25s ease-out;}
+  .fleet-bar-fill.hull{background:linear-gradient(90deg,#f97362,#fbbf24);}
+  .fleet-bar-fill.shield{background:linear-gradient(90deg,#60a5fa,#a855f7);}
+  .fleet-fighters{font-size:12px;color:#cfe3ff;}
+  .fleet-hardpoints{display:flex;gap:8px;font-size:11px;color:#94a9d6;flex-wrap:wrap;}
+  .fleet-hardpoints span{padding:2px 8px;border-radius:999px;background:rgba(63,88,144,0.28);border:1px solid rgba(98,128,188,0.35);}
   canvas{display:block;width:100vw;height:100vh}
   #game-root{position:relative;width:100vw;height:100vh;}
   #game-root>canvas{display:block;width:100%;height:100%;}
@@ -106,6 +123,10 @@
     <div class="stat">W — ciąg (duży silnik plazmowy) · Q/E — strafe · A/D — obrót</div>
     <div class="stat">LPM — rail (A→B, A→B) · PPM — boczne rakiety · F — superbroń · SHIFT — warp · SPACJA — dopalacz</div>
     <div style="margin-top:6px"><small>Gwiazdy są proceduralne w całej galaktyce. Silnik: niebieski exhaust + krótki ślad przy ruchu.</small></div>
+  </div>
+  <div id="fleet-ui" class="hidden">
+    <h3>Flota</h3>
+    <ul id="fleet-list"></ul>
   </div>
 <div id="game-root">
   <canvas id="c"></canvas>
@@ -227,6 +248,21 @@ const PLANET_SCALE =
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
+
+const fleetUIRoot = document.getElementById('fleet-ui');
+const fleetListEl = document.getElementById('fleet-list');
+const Fleet = window.Fleet || (window.Fleet = {
+  ships: [],
+  dirty: true,
+  ui: {
+    root: fleetUIRoot || null,
+    list: fleetListEl || null,
+    lastUpdate: 0
+  }
+});
+if (!Fleet.ui.root && fleetUIRoot) Fleet.ui.root = fleetUIRoot;
+if (!Fleet.ui.list && fleetListEl) Fleet.ui.list = fleetListEl;
+function markFleetDirty(){ Fleet.dirty = true; }
 
 // Model widoku overlayu (ortho nad światem 2D)
 const overlayView = {
@@ -453,6 +489,100 @@ function rotateInv(world,a){ return rotate(world, -a); }
 function muzzlePosFor(entity, dir, extra = 8){
   const rad = (entity.radius != null) ? entity.radius : (entity.r != null ? entity.r : 12);
   return { x: entity.x + dir.x * (rad + extra), y: entity.y + dir.y * (rad + extra) };
+}
+
+const fleetNumberFormatter = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 0 });
+const FLEET_UI_REFRESH_MS = 250;
+
+function formatFleetNumber(value){
+  if (!Number.isFinite(value)) return '0';
+  return fleetNumberFormatter.format(Math.max(0, Math.round(value)));
+}
+
+function percent(value, max){
+  if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0) return 0;
+  return clamp(value / max, 0, 1);
+}
+
+function appendFleetBar(container, label, value, max, type){
+  const labelRow = document.createElement('div');
+  labelRow.className = 'fleet-bar-label';
+  const labelSpan = document.createElement('span');
+  labelSpan.textContent = label;
+  const valueSpan = document.createElement('span');
+  valueSpan.textContent = `${formatFleetNumber(value)}/${formatFleetNumber(max)}`;
+  labelRow.append(labelSpan, valueSpan);
+  container.appendChild(labelRow);
+
+  const bar = document.createElement('div');
+  bar.className = 'fleet-bar';
+  const fill = document.createElement('div');
+  fill.className = `fleet-bar-fill ${type}`;
+  fill.style.width = `${Math.round(percent(value, max) * 100)}%`;
+  bar.appendChild(fill);
+  container.appendChild(bar);
+}
+
+function renderFleetShip(entry){
+  const li = document.createElement('li');
+  li.className = 'fleet-ship';
+
+  const header = document.createElement('div');
+  header.className = 'fleet-ship-header';
+  const nameEl = document.createElement('div');
+  nameEl.className = 'fleet-ship-name';
+  nameEl.textContent = entry.displayName || entry.name || entry.type || 'Jednostka';
+  const metaEl = document.createElement('div');
+  metaEl.className = 'fleet-ship-meta';
+  metaEl.textContent = entry.roleText || entry.role || 'Flota';
+  header.append(nameEl, metaEl);
+  li.appendChild(header);
+
+  const bars = document.createElement('div');
+  bars.className = 'fleet-bars';
+  appendFleetBar(bars, 'Kadłub', entry.status?.hull ?? 0, entry.status?.hullMax ?? 1, 'hull');
+  appendFleetBar(bars, 'Tarcza', entry.status?.shield ?? 0, entry.status?.shieldMax ?? 1, 'shield');
+  li.appendChild(bars);
+
+  const fighters = document.createElement('div');
+  fighters.className = 'fleet-fighters';
+  const ready = Math.max(0, (entry.fighters?.ready ?? 0) - (entry.fighters?.deployed ?? 0));
+  const capacity = entry.fighters?.capacity ?? ready;
+  fighters.textContent = `Myśliwce: ${formatFleetNumber(ready)}/${formatFleetNumber(capacity)} gotowe`;
+  li.appendChild(fighters);
+
+  const hardpoints = document.createElement('div');
+  hardpoints.className = 'fleet-hardpoints';
+  const hpLarge = document.createElement('span');
+  hpLarge.textContent = `Duże ×${formatFleetNumber(entry.hardpoints?.large ?? 0)}`;
+  const hpMedium = document.createElement('span');
+  hpMedium.textContent = `Średnie ×${formatFleetNumber(entry.hardpoints?.medium ?? 0)}`;
+  hardpoints.append(hpLarge, hpMedium);
+  li.appendChild(hardpoints);
+
+  return li;
+}
+
+function updateFleetUI(){
+  const ui = Fleet.ui;
+  if (!ui || !ui.root || !ui.list) return;
+  const now = performance.now();
+  if (!Fleet.dirty && now - (ui.lastUpdate || 0) < FLEET_UI_REFRESH_MS) return;
+  ui.lastUpdate = now;
+
+  if (!Fleet.ships.length){
+    ui.root.classList.add('hidden');
+    ui.list.innerHTML = '';
+    Fleet.dirty = false;
+    return;
+  }
+
+  ui.root.classList.remove('hidden');
+  ui.list.innerHTML = '';
+  for (const ship of Fleet.ships){
+    ui.list.appendChild(renderFleetShip(ship));
+  }
+  Fleet.dirty = false;
 }
 
 function isPirateStation(st){
@@ -1638,6 +1768,182 @@ function makeNPCBase(pos, stats){
     ai: null,
     weapons: {}
   };
+}
+
+const CAPITAL_SHIP_TEMPLATES = {
+  carrier: {
+    id: 'capital_carrier',
+    displayName: 'CSV Aegis',
+    roleText: 'Carrier · Capital',
+    hull: 42000,
+    shield: 28000,
+    shieldRegen: 260,
+    shieldDelay: 6,
+    accel: 32,
+    maxSpeed: 220,
+    turn: 0.9,
+    radius: 150,
+    hardpoints: { large: 2, medium: 2 },
+    fighters: 100,
+    formationOffset: { x: -820, y: 380 },
+    profile: {
+      lengthScale: 3.6,
+      widthScale: 1.45,
+      hullColor: '#5a7dbe',
+      deckColor: '#243150',
+      accentColor: '#9dc5ff',
+      engineColor: 'rgba(130,200,255,0.9)',
+      hangarGlow: 'rgba(160,200,255,0.45)'
+    }
+  }
+};
+
+Fleet.templates = Object.assign(Fleet.templates || {}, { capital: CAPITAL_SHIP_TEMPLATES });
+
+function addFleetShip(entry){
+  if (!entry || !entry.entity) return null;
+  Fleet.ships.push(entry);
+  npcs.push(entry.entity);
+  markFleetDirty();
+  return entry;
+}
+
+function createCapitalShipEntry(templateKey, overrides = {}){
+  const template = CAPITAL_SHIP_TEMPLATES[templateKey];
+  if (!template) return null;
+  const offset = overrides.formationOffset || template.formationOffset || { x: -820, y: 420 };
+  const basePos = overrides.pos || { x: ship.pos.x + offset.x, y: ship.pos.y + offset.y };
+
+  const npc = makeNPCBase(basePos, {
+    hp: template.hull,
+    accel: template.accel,
+    maxSpeed: template.maxSpeed,
+    turn: template.turn,
+    radius: template.radius
+  });
+
+  npc.hp = template.hull;
+  npc.maxHp = template.hull;
+  npc.radius = template.radius;
+  npc.friendly = true;
+  npc.mission = true;
+  npc.type = template.id;
+  npc.color = template.profile?.accentColor || '#9ccfff';
+  npc.isCapitalShip = true;
+  npc.capitalProfile = Object.assign({
+    lengthScale: 3.4,
+    widthScale: 1.4
+  }, template.profile || {});
+  npc.shield = {
+    val: template.shield,
+    max: template.shield,
+    regenRate: template.shieldRegen,
+    regenDelay: template.shieldDelay,
+    regenTimer: 0
+  };
+  npc.hardpoints = { large: template.hardpoints.large, medium: template.hardpoints.medium };
+  npc.fleetFormationOffset = offset;
+  npc.vx = 0;
+  npc.vy = 0;
+  npc.angle = Math.atan2(ship.pos.y - npc.y, ship.pos.x - npc.x);
+  npc.desiredAngle = npc.angle;
+  npc.keepAngle = true;
+
+  const entry = {
+    id: overrides.id || `fleet_${templateKey}_${Math.random().toString(36).slice(2,8)}`,
+    type: templateKey,
+    displayName: overrides.displayName || template.displayName,
+    roleText: overrides.roleText || template.roleText,
+    entity: npc,
+    hardpoints: { large: template.hardpoints.large, medium: template.hardpoints.medium },
+    fighters: {
+      capacity: template.fighters,
+      ready: template.fighters,
+      deployed: 0
+    },
+    status: {
+      hull: template.hull,
+      hullMax: template.hull,
+      shield: template.shield,
+      shieldMax: template.shield
+    },
+    template
+  };
+
+  npc.fleetEntry = entry;
+  npc.ai = dt => updateCapitalCarrier(entry, dt);
+
+  return entry;
+}
+
+function updateCapitalCarrier(entry, dt){
+  const npc = entry?.entity;
+  if (!npc || npc.dead) return;
+
+  const formation = entry.template?.formationOffset || npc.fleetFormationOffset || { x: -800, y: 360 };
+  const rotated = rotate(formation, ship.angle);
+  const target = { x: ship.pos.x + rotated.x, y: ship.pos.y + rotated.y };
+  const toTarget = { x: target.x - npc.x, y: target.y - npc.y };
+  const dist = Math.hypot(toTarget.x, toTarget.y);
+  const desiredDir = dist > 0.0001 ? { x: toTarget.x / dist, y: toTarget.y / dist } : { x: 0, y: 0 };
+  const desiredSpeed = dist > 140 ? npc.maxSpeed : npc.maxSpeed * (dist / 140);
+  const desiredVel = { x: desiredDir.x * desiredSpeed, y: desiredDir.y * desiredSpeed };
+
+  const accel = npc.accel || 0;
+  npc.vx += clamp(desiredVel.x - npc.vx, -accel * dt, accel * dt);
+  npc.vy += clamp(desiredVel.y - npc.vy, -accel * dt, accel * dt);
+
+  if (dist < 90){
+    const slow = Math.exp(-1.5 * dt);
+    npc.vx *= slow;
+    npc.vy *= slow;
+  }
+
+  limitSpeed(npc, npc.maxSpeed || 0);
+  const spd = Math.hypot(npc.vx, npc.vy);
+  if (spd > 1){
+    npc.angle = Math.atan2(npc.vy, npc.vx);
+  } else {
+    const desiredAngle = Math.atan2(ship.pos.y - npc.y, ship.pos.x - npc.x);
+    const diff = wrapAngle(desiredAngle - npc.angle);
+    const turnLimit = (entry.template?.turn ?? npc.turn ?? 0) * dt;
+    npc.angle = wrapAngle(npc.angle + clamp(diff, -turnLimit, turnLimit));
+  }
+  npc.desiredAngle = npc.angle;
+
+  const shield = npc.shield;
+  if (shield){
+    if (shield.regenTimer > 0){
+      shield.regenTimer = Math.max(0, shield.regenTimer - dt);
+    } else if (shield.val < shield.max){
+      const before = shield.val;
+      shield.val = Math.min(shield.max, shield.val + shield.regenRate * dt);
+      if (Math.abs(before - shield.val) > 0.5){
+        entry.status.shield = shield.val;
+        markFleetDirty();
+      }
+    }
+    if (Math.abs(entry.status.shield - shield.val) > 0.5){
+      entry.status.shield = shield.val;
+      markFleetDirty();
+    }
+  } else if (entry.status.shield !== 0){
+    entry.status.shield = 0;
+    markFleetDirty();
+  }
+
+  if (Math.abs(entry.status.hull - npc.hp) > 0.5){
+    entry.status.hull = Math.max(0, npc.hp);
+    markFleetDirty();
+  }
+}
+
+function initFleet(){
+  Fleet.ships.length = 0;
+  markFleetDirty();
+  if (Fleet.ui?.root) Fleet.ui.root.classList.add('hidden');
+  const carrier = createCapitalShipEntry('carrier');
+  if (carrier) addFleetShip(carrier);
 }
 
 function makeRailgun(cfg){ return { ...cfg }; }
@@ -4740,10 +5046,34 @@ function applyDamageToPlayer(amount){
 }
 function applyDamageToNPC(npc, dmg, cause='default'){
   if(npc.dead) return;
+  if(!Number.isFinite(dmg) || dmg <= 0) return;
   npc.hitFlash = 0.12;
   npc.damageHue = (npc.damageHue || 0) + dmg;
-  npc.hp -= dmg;
-  hudSpawnDMG(npc.x, npc.y - (npc.radius||20)*0.8, dmg, 'npc');
+
+  let remaining = dmg;
+  if (npc.shield && npc.shield.max > 0){
+    npc.shield.regenTimer = npc.shield.regenDelay ?? 0;
+    const absorbed = Math.min(npc.shield.val, remaining);
+    if (absorbed > 0){
+      npc.shield.val -= absorbed;
+      remaining -= absorbed;
+      if (npc.fleetEntry){
+        npc.fleetEntry.status.shield = npc.shield.val;
+        markFleetDirty();
+      }
+    }
+  }
+
+  if(remaining <= 0){
+    return;
+  }
+
+  npc.hp -= remaining;
+  hudSpawnDMG(npc.x, npc.y - (npc.radius||20)*0.8, remaining, 'npc');
+  if (npc.fleetEntry){
+    npc.fleetEntry.status.hull = npc.hp;
+    markFleetDirty();
+  }
   if(npc.hp<=0){
     npc.dead = true; npc.respawnTimer = 3 + Math.random()*6;
     if(cause === 'plasma'){ spawnExplosionPlasma(npc.x, npc.y, 1.2); }
@@ -4989,7 +5319,13 @@ function npcStep(dt){
       if (npc.fighter) { const drag = Math.exp(-3*dt); npc.vx *= drag; npc.vy *= drag; }
       npc.x += (npc.vx||0)*dt;
       npc.y += (npc.vy||0)*dt;
-      npc.angle = Math.atan2(npc.vy||0, npc.vx||0);
+      if (npc.keepAngle){
+        if (typeof npc.desiredAngle === 'number'){
+          npc.angle = npc.desiredAngle;
+        }
+      } else {
+        npc.angle = Math.atan2(npc.vy||0, npc.vx||0);
+      }
       continue;
     }
     if(npc.dead){
@@ -6296,6 +6632,10 @@ function drawRangeRuler(ctx, cam){
 
 function drawNPCPretty(ctx, npc, screenPos){
   const pixR = npc.radius * camera.zoom;
+  if (npc.isCapitalShip && npc.capitalProfile){
+    drawCapitalShipSprite(ctx, npc, screenPos, pixR);
+    return;
+  }
   if (pixR < 9) {
     ctx.save();
     ctx.globalAlpha = npc.fade ?? 1;
@@ -6414,6 +6754,84 @@ function drawNPCPretty(ctx, npc, screenPos){
   ctx.restore();
 }
 
+function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
+  const profile = npc.capitalProfile || {};
+  const lengthScale = Number.isFinite(profile.lengthScale) ? profile.lengthScale : 3.2;
+  const widthScale = Number.isFinite(profile.widthScale) ? profile.widthScale : 1.2;
+  const length = Math.max(60, pixR * lengthScale);
+  const width = Math.max(30, pixR * widthScale);
+  const hullColor = profile.hullColor || (npc.friendly ? '#5477bf' : '#c85a5a');
+  const deckColor = profile.deckColor || '#1f2a46';
+  const accentColor = profile.accentColor || '#9dc5ff';
+  const engineColor = profile.engineColor || 'rgba(130,200,255,0.85)';
+  const hangarGlow = profile.hangarGlow || 'rgba(160,200,255,0.35)';
+
+  ctx.save();
+  ctx.globalAlpha = npc.fade ?? 1;
+  ctx.translate(screenPos.x, screenPos.y);
+  ctx.rotate(npc.angle || 0);
+
+  const halfL = length * 0.5;
+  const halfW = width * 0.5;
+  const radius = Math.max(width * 0.18, 18 * camera.zoom);
+
+  ctx.fillStyle = hullColor;
+  roundRect(ctx, -halfL, -halfW, length, width, radius);
+  ctx.fill();
+
+  ctx.fillStyle = deckColor;
+  roundRect(ctx, -halfL * 0.78, -halfW * 0.55, length * 0.82, width * 0.58, radius * 0.7);
+  ctx.fill();
+
+  ctx.fillStyle = hangarGlow;
+  roundRect(ctx, -length * 0.18, -halfW * 0.45, length * 0.36, width * 0.9, width * 0.18);
+  ctx.fill();
+
+  ctx.fillStyle = accentColor;
+  ctx.fillRect(-halfL * 0.2, -halfW * 0.05, length * 0.4, width * 0.1);
+
+  ctx.save();
+  ctx.translate(-halfL * 0.92, 0);
+  ctx.fillStyle = '#1a2338';
+  roundRect(ctx, -width * 0.18, -halfW * 0.6, width * 0.28, width * 1.2, width * 0.18);
+  ctx.fill();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = engineColor;
+  ctx.beginPath();
+  ctx.ellipse(-width * 0.02, -width * 0.3, width * 0.16, width * 0.22, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(-width * 0.02, width * 0.3, width * 0.16, width * 0.22, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  const shield = npc.shield;
+  if (shield && shield.max > 0 && shield.val > 0){
+    const shieldPct = clamp(shield.val / shield.max, 0, 1);
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.globalAlpha = 0.2 + shieldPct * 0.25;
+    ctx.strokeStyle = `rgba(110,190,255,${0.35 + shieldPct * 0.4})`;
+    ctx.lineWidth = Math.max(2, width * 0.12);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, halfL * 1.12, halfW * 1.18, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  if (npc.hitFlash > 0){
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.globalAlpha = clamp(npc.hitFlash * 6, 0, 1);
+    ctx.fillStyle = 'rgba(255,190,150,0.8)';
+    roundRect(ctx, -halfL, -halfW, length, width, radius);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
 function render(alpha, frameDt){
   canvas.style.cursor = 'default';
   // DevTools cheats (np. nielimitowany warp)
@@ -6468,6 +6886,7 @@ function render(alpha, frameDt){
 
   // aktualizuj wyświetlanie czasu
   gameTimeEl.textContent = formatGameTime(gameTime);
+  updateFleetUI();
 
   // Czyścimy ekran
   ctx.clearRect(0,0,W,H);
@@ -7705,6 +8124,7 @@ const loadingEl = document.getElementById('loading');
 function startGame(){
   initStars(true);
   initNPCs();
+  initFleet();
   for(let i=0;i<120;i++) npcStep(PHYS_DT);
   loadingEl.style.display = 'none';
   lastTime = performance.now();
