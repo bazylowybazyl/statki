@@ -2725,7 +2725,9 @@ function handleInfrastructureCellDragOver(ev){
   const meta = (state && Number.isInteger(idx)) ? state.cellMeta?.[idx] : null;
   if(!id || !state || !meta || meta.blocked) return;
   ev.preventDefault();
-  ev.dataTransfer.dropEffect = 'copy';
+  if(ev.dataTransfer){
+    ev.dataTransfer.dropEffect = 'copy';
+  }
   infrastructureBuilder.hoveredCell = idx;
 }
 
