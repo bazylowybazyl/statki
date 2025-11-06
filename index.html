@@ -2694,8 +2694,13 @@ function drawBuildingPreview(canvas, building){
 }
 
 function infrastructureDragBuildingId(ev){
-  if(!ev || !ev.dataTransfer) return null;
-  const id = ev.dataTransfer.getData('text/infrastructure-building') || ev.dataTransfer.getData('text/plain');
+  let id = null;
+  if(ev && ev.dataTransfer){
+    id = ev.dataTransfer.getData('text/infrastructure-building') || ev.dataTransfer.getData('text/plain');
+  }
+  if(!id){
+    id = infrastructureBuilder.draggingBuildingId;
+  }
   if(!id) return null;
   return INFRA_BUILDING_MAP.has(id) ? id : null;
 }
@@ -2720,7 +2725,9 @@ function handleInfrastructureCellDragOver(ev){
   const meta = (state && Number.isInteger(idx)) ? state.cellMeta?.[idx] : null;
   if(!id || !state || !meta || meta.blocked) return;
   ev.preventDefault();
-  ev.dataTransfer.dropEffect = 'copy';
+  if(ev.dataTransfer){
+    ev.dataTransfer.dropEffect = 'copy';
+  }
   infrastructureBuilder.hoveredCell = idx;
 }
 
