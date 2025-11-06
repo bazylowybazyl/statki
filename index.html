@@ -4668,10 +4668,15 @@ function armPirate(n, tier='light'){
 }
 
 function pirateAI(n, dt){
+  if (n.type === 'destroyer'){
+    pirateDestroyerAI(n, dt);
+    return;
+  }
+
   const drag = Math.exp(-0.9 * dt);
   n.vx *= drag; n.vy *= drag;
 
-  const st = mercMission && mercMission.station;
+  const st = (n.home && !n.home.destroyed) ? n.home : (mercMission && mercMission.station);
   const dShip = Math.hypot(ship.pos.x - n.x, ship.pos.y - n.y);
   const dSt   = st ? Math.hypot(st.x - n.x, st.y - n.y) : Infinity;
   const leashR = st ? (st.r + 3500) : 3500;
@@ -4738,6 +4743,166 @@ function pirateAI(n, dt){
       source:n, spawnGrace:0.12
     });
     n.missiles--; n.missileCd = 1.8;
+  }
+}
+
+function pirateDestroyerAI(n, dt){
+  const drag = Math.exp(-0.75 * dt);
+  n.vx *= drag; n.vy *= drag;
+
+  const st = (n.home && !n.home.destroyed) ? n.home : (mercMission && mercMission.station);
+  const dShip = Math.hypot(ship.pos.x - n.x, ship.pos.y - n.y);
+  const dSt   = st ? Math.hypot(st.x - n.x, st.y - n.y) : Infinity;
+  const leashR = st ? (st.r + 3500) : 3500;
+
+  const destroyer = n.destroyer || (n.destroyer = {});
+  if (!destroyer.orbitDir){
+    destroyer.orbitDir = (Math.random() < 0.5 ? -1 : 1);
+  }
+  if (!destroyer.rail){
+    const muzzleBase = (n.radius != null ? n.radius : 60) + 32;
+    destroyer.rail = {
+      cd: Math.random() * 0.6,
+      cooldown: 1.5,
+      scatter: 0.008,
+      speed: 2200,
+      damage: 48,
+      penetration: 2,
+      range: 1900,
+      life: 2.0,
+      muzzleForward: muzzleBase,
+      muzzleLateral: 18,
+      muzzleScale: 0.9,
+      next: 0
+    };
+  }
+  const rail = destroyer.rail;
+
+  const aim = leadTarget(
+    { x: n.x, y: n.y },
+    { x: n.vx || 0, y: n.vy || 0 },
+    { x: ship.pos.x, y: ship.pos.y, vx: ship.vel.x, vy: ship.vel.y },
+    rail.speed
+  );
+  const desired = Math.atan2(aim.y - n.y, aim.x - n.x);
+  const diff = wrapAngle(desired - n.angle);
+  const turn = clamp(diff, -n.turn * dt, n.turn * dt);
+  n.angle = wrapAngle(n.angle + turn);
+
+  const dir = { x: Math.cos(n.angle), y: Math.sin(n.angle) };
+  const right = { x: -dir.y, y: dir.x };
+
+  let returning = false;
+  if (st && dSt > leashR && dShip > 2000){
+    returning = true;
+    const toStation = { x: (st.x - n.x) / dSt, y: (st.y - n.y) / dSt };
+    n.vx += toStation.x * n.accel * dt;
+    n.vy += toStation.y * n.accel * dt;
+  }
+
+  if (!returning){
+    const optimalRange = 1500;
+    const tolerance = 220;
+    const dist = Math.max(1, dShip);
+    const toShip = { x: (ship.pos.x - n.x) / dist, y: (ship.pos.y - n.y) / dist };
+
+    let radialAccel = 0;
+    if (dShip > optimalRange + tolerance){
+      radialAccel = n.accel;
+    } else if (dShip < optimalRange - tolerance){
+      radialAccel = -n.accel;
+    } else {
+      const relVx = (n.vx || 0) - ship.vel.x;
+      const relVy = (n.vy || 0) - ship.vel.y;
+      const relSpeed = relVx * toShip.x + relVy * toShip.y;
+      radialAccel = -relSpeed * 0.4;
+    }
+
+    n.vx += toShip.x * radialAccel * dt;
+    n.vy += toShip.y * radialAccel * dt;
+
+    const orbitAccel = n.accel * 0.6;
+    n.vx += right.x * orbitAccel * dt * destroyer.orbitDir;
+    n.vy += right.y * orbitAccel * dt * destroyer.orbitDir;
+  }
+
+  limitSpeed(n, n.maxSpeed);
+
+  const trailAngle = Math.atan2(n.vy, n.vx);
+  spawnParticle(
+    { x: n.x - Math.cos(trailAngle) * 6, y: n.y - Math.sin(trailAngle) * 6 },
+    { x: n.vx - Math.cos(trailAngle) * 80, y: n.vy - Math.sin(trailAngle) * 80 },
+    0.08,
+    '#ffc9c0',
+    0.8
+  );
+
+  n.ciwsCd    = Math.max(0, n.ciwsCd - dt);
+  n.missileCd = Math.max(0, n.missileCd - dt);
+  rail.cd     = Math.max(0, rail.cd - dt);
+
+  if (rail.cd === 0 && dShip < rail.range){
+    const barrelSide = (rail.next % 2 === 0) ? -1 : 1;
+    const muzzle = {
+      x: n.x + dir.x * rail.muzzleForward + right.x * rail.muzzleLateral * barrelSide,
+      y: n.y + dir.y * rail.muzzleForward + right.y * rail.muzzleLateral * barrelSide
+    };
+    const lead = leadTarget(
+      { x: muzzle.x, y: muzzle.y },
+      { x: n.vx || 0, y: n.vy || 0 },
+      { x: ship.pos.x, y: ship.pos.y, vx: ship.vel.x, vy: ship.vel.y },
+      rail.speed
+    );
+    const shotAngle = Math.atan2(lead.y - muzzle.y, lead.x - muzzle.x) + (Math.random() - 0.5) * rail.scatter;
+    const shotDir = { x: Math.cos(shotAngle), y: Math.sin(shotAngle) };
+    bullets.push({
+      x: muzzle.x,
+      y: muzzle.y,
+      vx: shotDir.x * rail.speed + (n.vx || 0),
+      vy: shotDir.y * rail.speed + (n.vy || 0),
+      life: rail.life,
+      r: 4,
+      owner: 'npc',
+      damage: rail.damage,
+      penetration: rail.penetration,
+      type: 'rail',
+      source: n,
+      spawnGrace: 0.12
+    });
+    spawnRailMuzzle(muzzle, shotDir, { x: n.vx || 0, y: n.vy || 0 }, rail.muzzleScale);
+    rail.cd = rail.cooldown;
+    rail.next = (rail.next + 1) % 2;
+  }
+
+  if(n.ciwsCd===0 && dShip < 900){
+    const m = muzzlePosFor(n, dir, 10);
+    bullets.push({
+      x:m.x, y:m.y,
+      vx: dir.x*CIWS_BULLET_SPEED + (n.vx||0),
+      vy: dir.y*CIWS_BULLET_SPEED + (n.vy||0),
+      life:1.2, r:2, owner:'npc', damage:CIWS_DAMAGE, type:'ciws',
+      source:n, spawnGrace:0.1
+    });
+    n.ciwsCd = CIWS_FIRE_INTERVAL;
+  }
+
+  if(n.missiles>0 && n.missileCd===0 && dShip < 1700){
+    const m = muzzlePosFor(n, dir, 14);
+    bullets.push({
+      x:m.x, y:m.y, px:m.x, py:m.y,
+      vx: dir.x*SIDE_BULLET_SPEED + (n.vx||0),
+      vy: dir.y*SIDE_BULLET_SPEED + (n.vy||0),
+      life:2.4, r:5, owner:'npc', damage:SIDE_BULLET_DAMAGE, penetration:0,
+      type:'rocket', explodeRadius:SIDE_PLASMA_EXPLODE_RADIUS,
+      homingDelay:SIDE_ROCKET_HOMING_DELAY,
+      source:n, spawnGrace:0.12
+    });
+    n.missiles--; n.missileCd = 1.8;
+  }
+
+  if (dShip < 320){
+    n.vx -= (n.vx || 0) * 0.45 * dt;
+    n.vy -= (n.vy || 0) * 0.45 * dt;
   }
 }
 
