@@ -7821,7 +7821,8 @@ setTimeout(startGame, 500);
       const scaleAll = Number.isFinite(+DevConfig.planetScaleAll) && +DevConfig.planetScaleAll > 0
         ? +DevConfig.planetScaleAll
         : defaultScale;
-      for (const p of planets) {
+      const planetList = Array.isArray(window.planets) ? window.planets : [];
+      for (const p of planetList) {
         const key = (p.name || p.id || String(p.index)||'').toString().toLowerCase();
         const base = DevConfig.planetRById[key] ?? p.baseR ?? p.r;
         if (base != null) {
@@ -7833,7 +7834,7 @@ setTimeout(startGame, 500);
       if (typeof initPlanets3D === 'function') {
         const sunFor3D = Object.assign({}, SUN, { r: appliedSun3D });
         if (!Number.isFinite(sunFor3D.r3D)) sunFor3D.r3D = appliedSun3D;
-        initPlanets3D(planets, sunFor3D);
+        initPlanets3D(planetList, sunFor3D);
       }
     });
   }
@@ -7934,10 +7935,27 @@ setTimeout(startGame, 500);
 
   // ---- UI init ------------------------------------------------------------
   function buildPlanetsUI(){
+    if (!ui.planetsGroup) return;
     // wyczyść stare
     ui.planetsGroup.querySelectorAll('.row.p').forEach(n=>n.remove());
+
+    const planetList = Array.isArray(window.planets) ? window.planets : null;
+    if (!planetList || planetList.length === 0){
+      if (!buildPlanetsUI._retryTimer){
+        buildPlanetsUI._retryTimer = setTimeout(()=>{
+          buildPlanetsUI._retryTimer = null;
+          buildPlanetsUI();
+        }, 500);
+      }
+      return;
+    }
+    if (buildPlanetsUI._retryTimer){
+      clearTimeout(buildPlanetsUI._retryTimer);
+      buildPlanetsUI._retryTimer = null;
+    }
+
     // dołóż po 1 wierszu per planeta
-    for (const p of planets){
+    for (const p of planetList){
       const key = (p.name || p.id || String(p.index)||'').toString().toLowerCase();
       const row = document.createElement('div');
       row.className = 'row p';
