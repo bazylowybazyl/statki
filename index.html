@@ -2305,6 +2305,28 @@ function updateHoverInfo(target, type){
         content.appendChild(row);
       }
     }
+  } else if(type === 'platform'){
+    if(title) title.textContent = target.label || 'Platforma obronna';
+    if(subtitle) subtitle.textContent = 'PIRACKA OBRONA';
+    if(content){
+      const lines = [];
+      if(target.shield){
+        lines.push({ label:'Osłony', value: `${Math.max(0, Math.round(target.shield.val))}/${target.shield.max}` });
+      }
+      lines.push({ label:'Kadłub', value: `${Math.max(0, Math.round(target.hp ?? 0))}/${Math.max(0, Math.round(target.maxHp ?? target.hp ?? 0))}` });
+      lines.push({ label:'Orbita', value: `${Math.round(target.orbitRadius)} u` });
+      for(const line of lines){
+        const row = document.createElement('div');
+        row.className = 'hover-line';
+        const strong = document.createElement('strong');
+        strong.textContent = `${line.label}:`;
+        const span = document.createElement('span');
+        span.textContent = line.value;
+        row.appendChild(strong);
+        row.appendChild(span);
+        content.appendChild(row);
+      }
+    }
   }
 }
 
@@ -3556,18 +3578,6 @@ function startMercenaryMission(){
       regenRate: 650,
       regenDelay: 4.5,
       regenTimer: 0
-    },
-    // --- UZBROJENIE ---
-    weapons: {
-      rails: Array.from({length:6}, (_,i)=>({
-        offsetAngle: i * (Math.PI*2/6),
-        cd: 0,
-        cdMax: 1.0 + Math.random()*0.5
-      })),
-      rockets: [
-        { offsetAngle:  Math.PI/3, cd:0, cdMax: 3.0 },
-        { offsetAngle: -Math.PI/3, cd:0, cdMax: 3.0 }
-      ]
     }
   };
 
@@ -3582,6 +3592,7 @@ function startMercenaryMission(){
   mercMission = {
     station,
     npcsSpawned:false,
+    weaponPlatforms: [],
     // --- SWARM control ---
     swarm: {
       active:false,
@@ -3597,6 +3608,21 @@ function startMercenaryMission(){
   for (let i = 0; i < 2; i++)
     mercMission.guards.push( spawnStationGuard(station, 'frigate', i * Math.PI) );
 
+  const orbitBase = station.r + 220;
+  const baseAngle = Math.random() * Math.PI * 2;
+  const angleStep = Math.PI / 2;
+  const jitter = 0.25;
+  const platformConfigs = [
+    { angle: baseAngle + (Math.random()-0.5)*jitter, orbitRadius: orbitBase, label: 'Platforma A' },
+    { angle: baseAngle + angleStep + (Math.random()-0.5)*jitter, orbitRadius: orbitBase + 80, label: 'Platforma B', orbitSpeed: 0.18 },
+    { angle: baseAngle + angleStep*2 + (Math.random()-0.5)*jitter, orbitRadius: orbitBase + 40, label: 'Platforma C', orbitSpeed: -0.16 },
+    { angle: baseAngle + angleStep*3 + (Math.random()-0.5)*jitter, orbitRadius: orbitBase + 120, label: 'Platforma D', orbitSpeed: 0.14 }
+  ];
+  for(const cfg of platformConfigs){
+    const platform = spawnWeaponPlatform(station, cfg);
+    mercMission.weaponPlatforms.push(platform);
+  }
+
   // Zapis do dziennika + koordy do markera mapy
   const exists = MISSIONS.active.find(m => m.id === 'merc_pirate_station' && m.status === 'active');
   if(!exists){
@@ -3611,6 +3637,109 @@ function startMercenaryMission(){
   }
 
   toast('Misja najemnik rozpoczęta. Wciśnij M aby otworzyć mapę — cel oznaczony X. Dziennik: J.');
+}
+
+function spawnWeaponPlatform(station, config = {}){
+  const radius = config.radius ?? 52;
+  const canvasSize = Math.max(64, Math.ceil(radius * 2.6));
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = canvasSize;
+  const ctxPlatform = canvas.getContext('2d');
+  const center = canvasSize / 2;
+
+  // baza platformy
+  const baseR = canvasSize * 0.38;
+  const outerR = canvasSize * 0.46;
+  const innerR = canvasSize * 0.18;
+  const glowGrad = ctxPlatform.createRadialGradient(center, center, innerR, center, center, outerR);
+  glowGrad.addColorStop(0, 'rgba(120,180,255,0.4)');
+  glowGrad.addColorStop(1, 'rgba(0,20,40,0.02)');
+  ctxPlatform.fillStyle = glowGrad;
+  ctxPlatform.beginPath(); ctxPlatform.arc(center, center, outerR, 0, Math.PI*2); ctxPlatform.fill();
+
+  ctxPlatform.fillStyle = '#1c2338';
+  ctxPlatform.beginPath(); ctxPlatform.arc(center, center, baseR, 0, Math.PI*2); ctxPlatform.fill();
+
+  const plateGrad = ctxPlatform.createRadialGradient(center, center, innerR*0.4, center, center, baseR);
+  plateGrad.addColorStop(0, '#6f87c8');
+  plateGrad.addColorStop(0.6, '#3c4f7a');
+  plateGrad.addColorStop(1, '#2a3556');
+  ctxPlatform.fillStyle = plateGrad;
+  ctxPlatform.beginPath(); ctxPlatform.arc(center, center, baseR*0.88, 0, Math.PI*2); ctxPlatform.fill();
+
+  ctxPlatform.strokeStyle = 'rgba(184,196,255,0.28)';
+  ctxPlatform.lineWidth = Math.max(1.5, canvasSize * 0.02);
+  ctxPlatform.beginPath(); ctxPlatform.arc(center, center, baseR*0.72, 0, Math.PI*2); ctxPlatform.stroke();
+
+  ctxPlatform.strokeStyle = 'rgba(62,112,182,0.65)';
+  ctxPlatform.lineWidth = Math.max(1.2, canvasSize * 0.015);
+  ctxPlatform.beginPath(); ctxPlatform.arc(center, center, baseR*0.52, 0, Math.PI*2); ctxPlatform.stroke();
+
+  ctxPlatform.fillStyle = '#182030';
+  ctxPlatform.beginPath(); ctxPlatform.arc(center, center, innerR, 0, Math.PI*2); ctxPlatform.fill();
+
+  ctxPlatform.fillStyle = '#93b6ff';
+  for(let i=0;i<6;i++){
+    const a = (i/6) * Math.PI*2;
+    const slotR = innerR * 1.35;
+    const px = center + Math.cos(a) * slotR;
+    const py = center + Math.sin(a) * slotR;
+    ctxPlatform.save();
+    ctxPlatform.translate(px, py);
+    ctxPlatform.rotate(a);
+    ctxPlatform.fillRect(-canvasSize*0.02, -canvasSize*0.09, canvasSize*0.04, canvasSize*0.18);
+    ctxPlatform.restore();
+  }
+
+  ctxPlatform.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctxPlatform.lineWidth = Math.max(1.0, canvasSize * 0.01);
+  ctxPlatform.beginPath(); ctxPlatform.arc(center, center, innerR*0.65, 0, Math.PI*2); ctxPlatform.stroke();
+
+  const orbitRadius = config.orbitRadius ?? (station.r + 220 + Math.random()*120);
+  const orbitSpeed = config.orbitSpeed ?? ((Math.random() < 0.5 ? -1 : 1) * (0.14 + Math.random()*0.07));
+  const angle = config.angle ?? (Math.random() * Math.PI * 2);
+  const hpMax = config.hp ?? 1800;
+  const shieldMax = (config.shield && config.shield.max) || config.shieldMax || 720;
+  const shieldRegen = (config.shield && config.shield.regenRate) || config.shieldRegen || 240;
+  const shieldDelay = (config.shield && config.shield.regenDelay) || config.shieldDelay || 3.5;
+  const missileCd = config.missileCd ?? (3.2 + Math.random()*0.6);
+  const railCd = config.railCd ?? (1.2 + Math.random()*0.4);
+
+  const platform = {
+    id: config.id || uid(),
+    type: 'weapon_platform',
+    label: config.label || 'Platforma',
+    station,
+    radius,
+    canvas,
+    orbitRadius,
+    orbitSpeed,
+    angle,
+    rotation: Math.random() * Math.PI * 2,
+    spin: config.spin ?? (Math.random()*0.6 - 0.3),
+    hp: hpMax,
+    maxHp: hpMax,
+    shield: (shieldMax > 0) ? { max: shieldMax, val: shieldMax, regenRate: shieldRegen, regenDelay: shieldDelay, regenTimer: 0 } : null,
+    rail: { cd: railCd * Math.random(), cdMax: railCd, scatter: config.railScatter ?? 0.04, damage: config.railDamage ?? 60 },
+    missile: { cd: missileCd * Math.random(), cdMax: missileCd, damage: config.missileDamage ?? SIDE_BULLET_DAMAGE },
+    hitFlash: 0,
+    destroyed: false,
+    deathTimer: 0,
+    removed: false
+  };
+
+  platform.x = station.x + Math.cos(angle) * orbitRadius;
+  platform.y = station.y + Math.sin(angle) * orbitRadius;
+
+  return platform;
+}
+
+function resetMercMission(){
+  if(!mercMission) return;
+  if(mercMission.weaponPlatforms){
+    mercMission.weaponPlatforms.length = 0;
+  }
+  mercMission = null;
 }
 function startTerritoryWarMission(){ toast('Dołączono do wojny terytorialnej'); }
 
@@ -4766,6 +4895,30 @@ function applyDamageToStation(station, amount){
   return dmg;
 }
 
+function applyDamageToPlatform(platform, amount){
+  if(!platform || platform.destroyed) return 0;
+  let dmg = amount || 0;
+  if(dmg <= 0) return 0;
+  if(platform.shield){
+    platform.shield.regenTimer = platform.shield.regenDelay;
+    const absorbed = Math.min(platform.shield.val, dmg);
+    platform.shield.val -= absorbed;
+    dmg -= absorbed;
+  }
+  if(dmg > 0){
+    platform.hp = Math.max(0, platform.hp - dmg);
+  }
+  platform.hitFlash = 0.18;
+  hudSpawnDMG(platform.x, platform.y - platform.radius * 0.65, amount, 'npc');
+  if(platform.hp <= 0 && !platform.destroyed){
+    platform.destroyed = true;
+    platform.deathTimer = 0;
+    spawnExplosionPlasma(platform.x, platform.y, 1.4);
+    spawnShockwave(platform.x, platform.y, { maxR: 420, maxLife: 0.6, color: 'rgba(255,140,120,' });
+  }
+  return dmg;
+}
+
 // =============== Collisions & particles ===============
 function bulletsAndCollisionsStep(dt){
   for(let i=bullets.length-1;i>=0;i--){
@@ -4890,6 +5043,32 @@ function bulletsAndCollisionsStep(dt){
       }
     }
 
+    if(mercMission && mercMission.weaponPlatforms && mercMission.weaponPlatforms.length){
+      let hitPlatform = false;
+      for(const platform of mercMission.weaponPlatforms){
+        if(!platform || platform.destroyed) continue;
+        if (b.source && b.source === platform && b.age < (b.spawnGrace || 0)) continue;
+        const d = Math.hypot(platform.x - b.x, platform.y - b.y);
+        if(d < platform.radius + b.r){
+          applyDamageToPlatform(platform, b.damage || 0);
+          if(mercMission.swarm && !mercMission.swarm.active){
+            mercMission.swarm.active = true;
+          }
+          if(b.type === 'armata'){
+            spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
+          } else if(b.type === 'rail'){
+            spawnRailHitEffect(b.x, b.y, 1.0);
+          } else {
+            spawnExplosionPlasma(b.x, b.y, 1.0);
+          }
+          bullets.splice(i,1);
+          hitPlatform = true;
+          break;
+        }
+      }
+      if(hitPlatform) continue;
+    }
+
     // hit mission station
     for(const st of stations){
       if(!st.hp) continue;
@@ -4907,13 +5086,12 @@ function bulletsAndCollisionsStep(dt){
             if (typeof window.dettachPirateStation3D === 'function') {
               window.dettachPirateStation3D(mainScene3D);
             }
-            mercMission = null;
-
             const m = MISSIONS.active.find(mm => mm.id === 'merc_pirate_station' && mm.status === 'active');
             if(m) m.status = 'completed';
 
             missionCompleteBanner.trigger('misja zakończona');
             toast('Misja zakończona: +10000 cr');
+            resetMercMission();
           }
         }
         if(b.type === 'armata'){
@@ -5163,51 +5341,76 @@ function pirateMissionStep(dt){
   const st = mercMission.station;
   if(!st) return;
 
-  // --- Stacja strzela ---
-  if(st.hp > 0 && st.weapons){
-    // railguny
-    for(const g of st.weapons.rails){
-      g.cd = Math.max(0, g.cd - dt);
-      if(g.cd===0){
-        const mount = { x: st.x + Math.cos(g.offsetAngle)*st.r, y: st.y + Math.sin(g.offsetAngle)*st.r };
-        const d = Math.hypot(ship.pos.x - mount.x, ship.pos.y - mount.y);
-        if(d < 2200){ // zasięg
-          const aim = Math.atan2(ship.pos.y - mount.y, ship.pos.x - mount.x);
-          const dir = {x:Math.cos(aim), y:Math.sin(aim)};
-          const muzzle = muzzlePosFor(st, dir, 14);
-          bullets.push({
-            x:muzzle.x, y:muzzle.y,
-            vx: dir.x*(RAIL_SPEED*0.9), vy: dir.y*(RAIL_SPEED*0.9),
-            life:2.0, r:4, owner:'npc', damage:60, type:'rail', penetration:2,
-            source: st, spawnGrace: 0.08
-          });
-          spawnParticle({x:muzzle.x,y:muzzle.y}, {x:0,y:0}, 0.10, '#bfe7ff', 6, true);
-          g.cd = g.cdMax;
-        }
+  const platforms = mercMission.weaponPlatforms || [];
+  const target = { x: ship.pos.x, y: ship.pos.y, vx: ship.vel.x, vy: ship.vel.y };
+  for(const platform of platforms){
+    if(!platform) continue;
+    platform.hitFlash = Math.max(0, platform.hitFlash - dt);
+    if(platform.destroyed){
+      platform.deathTimer += dt;
+      if(platform.deathTimer > 3){
+        platform.removed = true;
+      }
+      continue;
+    }
+
+    platform.angle += platform.orbitSpeed * dt;
+    platform.rotation = wrapAngle(platform.rotation + platform.spin * dt);
+    platform.x = st.x + Math.cos(platform.angle) * platform.orbitRadius;
+    platform.y = st.y + Math.sin(platform.angle) * platform.orbitRadius;
+
+    const tangentialVel = {
+      x: -Math.sin(platform.angle) * platform.orbitRadius * platform.orbitSpeed,
+      y:  Math.cos(platform.angle) * platform.orbitRadius * platform.orbitSpeed
+    };
+
+    if(platform.shield){
+      if(platform.shield.regenTimer > 0){
+        platform.shield.regenTimer = Math.max(0, platform.shield.regenTimer - dt);
+      } else {
+        platform.shield.val = clamp(platform.shield.val + platform.shield.regenRate * dt, 0, platform.shield.max);
       }
     }
-    // rakiety
-    for(const r of st.weapons.rockets){
-      r.cd = Math.max(0, r.cd - dt);
-      if(r.cd===0){
-        const mount = { x: st.x + Math.cos(r.offsetAngle)*st.r, y: st.y + Math.sin(r.offsetAngle)*st.r };
-        const d = Math.hypot(ship.pos.x - mount.x, ship.pos.y - mount.y);
-        if(d < 2600){
-          const aim = Math.atan2(ship.pos.y - mount.y, ship.pos.x - mount.x);
-          const dir = {x:Math.cos(aim), y:Math.sin(aim)};
-          const muzzleR = muzzlePosFor(st, dir, 16);
-          bullets.push({
-            x:muzzleR.x, y:muzzleR.y, px:muzzleR.x, py:muzzleR.y,
-            vx: dir.x*SIDE_BULLET_SPEED, vy: dir.y*SIDE_BULLET_SPEED,
-            life:2.6, r:5, owner:'npc', damage:SIDE_BULLET_DAMAGE,
-            type:'rocket', explodeRadius:SIDE_PLASMA_EXPLODE_RADIUS,
-            homingDelay:SIDE_ROCKET_HOMING_DELAY,
-            source: st, spawnGrace: 0.12
-          });
-          r.cd = r.cdMax;
-        }
-      }
+
+    platform.rail.cd = Math.max(0, platform.rail.cd - dt);
+    platform.missile.cd = Math.max(0, platform.missile.cd - dt);
+
+    const distToPlayer = Math.hypot(target.x - platform.x, target.y - platform.y);
+
+    if(platform.rail.cd === 0 && distToPlayer < 2200){
+      const lead = leadTarget({ x: platform.x, y: platform.y }, tangentialVel, target, RAIL_SPEED * 0.9);
+      const aim = Math.atan2(lead.y - platform.y, lead.x - platform.x);
+      const jitter = (Math.random() - 0.5) * platform.rail.scatter;
+      const dir = { x: Math.cos(aim + jitter), y: Math.sin(aim + jitter) };
+      const muzzle = muzzlePosFor(platform, dir, 14);
+      bullets.push({
+        x:muzzle.x, y:muzzle.y,
+        vx: dir.x*(RAIL_SPEED*0.9), vy: dir.y*(RAIL_SPEED*0.9),
+        life:2.0, r:4, owner:'npc', damage:platform.rail.damage, type:'rail', penetration:2,
+        source: platform, spawnGrace: 0.08
+      });
+      spawnParticle({x:muzzle.x,y:muzzle.y}, {x:0,y:0}, 0.10, '#bfe7ff', 6, true);
+      platform.rail.cd = platform.rail.cdMax;
     }
+
+    if(platform.missile.cd === 0 && distToPlayer < 2600){
+      const lead = leadTarget({ x: platform.x, y: platform.y }, tangentialVel, target, SIDE_BULLET_SPEED);
+      const aim = Math.atan2(lead.y - platform.y, lead.x - platform.x);
+      const dir = {x:Math.cos(aim), y:Math.sin(aim)};
+      const muzzleR = muzzlePosFor(platform, dir, 16);
+      bullets.push({
+        x:muzzleR.x, y:muzzleR.y, px:muzzleR.x, py:muzzleR.y,
+        vx: dir.x*SIDE_BULLET_SPEED, vy: dir.y*SIDE_BULLET_SPEED,
+        life:2.6, r:5, owner:'npc', damage:platform.missile.damage,
+        type:'rocket', explodeRadius:SIDE_PLASMA_EXPLODE_RADIUS,
+        homingDelay:SIDE_ROCKET_HOMING_DELAY,
+        source: platform, spawnGrace: 0.12
+      });
+      platform.missile.cd = platform.missile.cdMax;
+    }
+  }
+  if(platforms.length){
+    mercMission.weaponPlatforms = platforms.filter(p => p && !p.removed);
   }
 
   // --- SWARM spawnowanie falowo ---
@@ -5480,6 +5683,21 @@ function physicsStep(dt){
         hoverType = 'station';
       }
     }
+    if(mercMission && mercMission.weaponPlatforms){
+      const platformMargin = 18;
+      for(const platform of mercMission.weaponPlatforms){
+        if(!platform || platform.removed) continue;
+        const radius = (platform.radius || 0) + platformMargin;
+        const dx = platform.x - mouseWorld.x;
+        const dy = platform.y - mouseWorld.y;
+        const distSq = dx*dx + dy*dy;
+        if(distSq <= radius*radius && distSq < bestDistSq){
+          bestDistSq = distSq;
+          hover = platform;
+          hoverType = 'platform';
+        }
+      }
+    }
   }
 
   if(hover){
@@ -5521,6 +5739,15 @@ function physicsStep(dt){
     }
     for(const st of stations){
       if(!w.hit.has(st) && Math.hypot(st.x-w.x, st.y-w.y) <= w.r){ w.hit.add(st); spawnRadarPing(st.x,st.y); }
+    }
+    if(mercMission && mercMission.weaponPlatforms){
+      for(const platform of mercMission.weaponPlatforms){
+        if(!platform || platform.destroyed || platform.removed) continue;
+        if(!w.hit.has(platform) && Math.hypot(platform.x - w.x, platform.y - w.y) <= w.r){
+          w.hit.add(platform);
+          spawnRadarPing(platform.x, platform.y);
+        }
+      }
     }
     if(w.r > w.max) scanWaves.splice(i,1);
   }
@@ -6559,6 +6786,40 @@ function render(alpha, frameDt){
     }
   }
 
+  if(mercMission && mercMission.weaponPlatforms){
+    for(const platform of mercMission.weaponPlatforms){
+      if(!platform || platform.removed) continue;
+      const s = worldToScreen(platform.x, platform.y, cam);
+      const size = platform.radius * 2 * camera.zoom;
+      const baseAlpha = platform.destroyed ? Math.max(0, 1 - platform.deathTimer / 1.5) : 1;
+      if(baseAlpha <= 0) continue;
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(platform.rotation);
+      ctx.globalAlpha = baseAlpha;
+      ctx.drawImage(platform.canvas, -size/2, -size/2, size, size);
+      if(platform.hitFlash > 0){
+        const flash = clamp(platform.hitFlash / 0.18, 0, 1);
+        ctx.globalAlpha = flash * baseAlpha;
+        const flashR = size * 0.34;
+        ctx.fillStyle = 'rgba(255,215,150,0.6)';
+        ctx.beginPath(); ctx.arc(0, 0, flashR, 0, Math.PI*2); ctx.fill();
+      }
+      ctx.restore();
+
+      if(platform.shield && !platform.destroyed && platform.shield.val > 0){
+        const frac = clamp(platform.shield.val / platform.shield.max, 0, 1);
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.globalAlpha = 0.45 + 0.35 * frac;
+        ctx.lineWidth = Math.max(1.2, 2.4 * camera.zoom);
+        ctx.strokeStyle = 'rgba(120,200,255,0.8)';
+        ctx.beginPath(); ctx.arc(0, 0, size*0.62, 0, Math.PI*2); ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
   // Laser beams
   for(const p of particles){
     if(!p.beam) continue;
@@ -7418,6 +7679,35 @@ function render(alpha, frameDt){
     ctx.strokeRect(bx - 1, y + 14, barW + 2, barH + 2);
     ctx.fillStyle = '#ef4444';
     ctx.fillRect(bx, y + 15, barW * hullFrac, barH);
+    y += 32;
+    const platforms = mercMission.weaponPlatforms || [];
+    if(platforms.length){
+      ctx.fillStyle = '#ffd1d1';
+      ctx.fillText('Platformy obronne', xRight, y);
+      y += 8;
+      for(const platform of platforms){
+        const label = platform.label || 'Platforma';
+        const entryBx = xRight - barW;
+        if(platform.shield && platform.shield.max > 0){
+          const shieldFrac = clamp(platform.shield.val / platform.shield.max, 0, 1);
+          ctx.fillStyle = '#dfe7ff';
+          ctx.fillText(`${label}: osłony ${Math.round(platform.shield.val)}/${platform.shield.max}`, xRight, y + 10);
+          ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+          ctx.strokeRect(entryBx - 1, y + 14, barW + 2, barH + 2);
+          ctx.fillStyle = '#60a5fa';
+          ctx.fillRect(entryBx, y + 15, barW * shieldFrac, barH);
+          y += 26;
+        }
+        const hpFrac = (platform.maxHp > 0) ? clamp(Math.max(0, platform.hp) / platform.maxHp, 0, 1) : 0;
+        ctx.fillStyle = '#dfe7ff';
+        ctx.fillText(`${label}: kadłub ${Math.max(0, Math.round(platform.hp))}/${platform.maxHp}`, xRight, y + 10);
+        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+        ctx.strokeRect(entryBx - 1, y + 14, barW + 2, barH + 2);
+        ctx.fillStyle = platform.destroyed ? '#4b5563' : '#f97316';
+        ctx.fillRect(entryBx, y + 15, barW * hpFrac, barH);
+        y += 28;
+      }
+    }
     ctx.restore();
   }
 
