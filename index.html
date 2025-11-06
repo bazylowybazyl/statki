@@ -4491,7 +4491,11 @@ function guardAI(n, dt){
 
   if(playerNear || underAttack){
     n.guard = false;
-    n.ai = (dt)=>pirateAI(n, dt);
+    if(n.type === 'destroyer'){
+      n.ai = (dt)=>destroyerPirateAI(n, dt);
+    } else {
+      n.ai = (dt)=>pirateAI(n, dt);
+    }
     return;
   }
 
