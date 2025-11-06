@@ -423,7 +423,7 @@ window.DevFlags = Object.assign({
   disableCameraShake: false
 }, window.DevFlags || {});
 const DEFAULT_PIRATE_STATION_SCALE = 6;
-const DEFAULT_STATION_3D_SCALE = 2.85;
+const DEFAULT_STATION_3D_SCALE = 2.70;
 window.DEFAULT_STATION_SCALE = DEFAULT_PIRATE_STATION_SCALE;
 window.DEFAULT_STATION_3D_SCALE = DEFAULT_STATION_3D_SCALE;
 
@@ -434,7 +434,7 @@ window.DevTuning = Object.assign({
 const DevFlags = window.DevFlags;
 const DevTuning = window.DevTuning;
 const Dev = window.Dev = window.Dev || {};
-if (!Number.isFinite(Dev.station3DScale)) {
+if (!Number.isFinite(Dev.station3DScale) || Dev.station3DScale <= 0) {
   Dev.station3DScale = DEFAULT_STATION_3D_SCALE;
 }
 if (!Number.isFinite(DevTuning.pirateStationScale)) {
@@ -462,8 +462,11 @@ function isPirateStation(st){
 }
 
 function stationScaleFor(st){
-  const globalScale = Number.isFinite(Dev.station3DScale) ? Dev.station3DScale : 1.0;
-  const pirateScale = Number.isFinite(DevTuning.pirateStationScale) ? DevTuning.pirateStationScale : globalScale;
+  const baseDefault = DEFAULT_STATION_3D_SCALE;
+  const rawGlobal = Number.isFinite(Dev.station3DScale) ? Dev.station3DScale : NaN;
+  const globalScale = (Number.isFinite(rawGlobal) && rawGlobal > 0) ? rawGlobal : baseDefault;
+  const rawPirate = Number.isFinite(DevTuning.pirateStationScale) ? DevTuning.pirateStationScale : NaN;
+  const pirateScale = (Number.isFinite(rawPirate) && rawPirate > 0) ? rawPirate : globalScale;
   return isPirateStation(st) ? pirateScale : globalScale;
 }
 
@@ -7753,7 +7756,10 @@ setTimeout(startGame, 500);
 
   const applyStation3DScale = (inputValue) => {
     const parsed = Number(inputValue);
-    const value = Number.isFinite(parsed) ? parsed : 1;
+    const fallback = (Number.isFinite(parsed) && parsed > 0)
+      ? parsed
+      : DEFAULT_STATION_3D_SCALE;
+    const value = fallback;
     DevTuning.pirateStationScale = value;
     Dev.station3DScale = value;
     if (window.DevConfig) {
@@ -7771,9 +7777,12 @@ setTimeout(startGame, 500);
 
   // Ustaw wartość z DevConfig (jeśli jest) i natychmiast zastosuj na starcie
   if (elStation3DScale) {
-    const initial =
+    const initialRaw =
       (window.DevConfig && Number.isFinite(DevConfig.station3DScale) && DevConfig.station3DScale) ||
-      (Number.isFinite(+elStation3DScale.value) ? +elStation3DScale.value : 1);
+      (Number.isFinite(+elStation3DScale.value) ? +elStation3DScale.value : NaN);
+    const initial = (Number.isFinite(initialRaw) && initialRaw > 0)
+      ? initialRaw
+      : DEFAULT_STATION_3D_SCALE;
     elStation3DScale.value = String(initial);
     applyStation3DScale(initial);
     if (typeof scheduleRebuild3D === 'function') scheduleRebuild3D();
@@ -7791,7 +7800,7 @@ setTimeout(startGame, 500);
   }
 
   if (elStation3DScale) {
-    if (!isFinite(parseFloat(elStation3DScale.value))) {
+    if (!isFinite(parseFloat(elStation3DScale.value)) || parseFloat(elStation3DScale.value) <= 0) {
       elStation3DScale.value = String(DevTuning.pirateStationScale);
     }
     applyStation3DScale(elStation3DScale.value);
@@ -7905,7 +7914,7 @@ setTimeout(startGame, 500);
     </div>
     <div class="row">
       <label>Skala stacji 3D (×)</label>
-      <input id="station3DScale" type="range" min="0.2" max="12.0" step="0.05" value="2.85">
+      <input id="station3DScale" type="range" min="0.2" max="12.0" step="0.05" value="2.70">
       <div class="val" id="station3DScaleVal"></div>
     </div>
     <div class="row">
@@ -8049,7 +8058,7 @@ setTimeout(startGame, 500);
   ) ? window.DEFAULT_STATION_SCALE : 6;
   const DEFAULT_STATION3D_SCALE = (
     typeof window !== 'undefined' && typeof window.DEFAULT_STATION_3D_SCALE === 'number'
-  ) ? window.DEFAULT_STATION_3D_SCALE : 2.85;
+  ) ? window.DEFAULT_STATION_3D_SCALE : 2.70;
 
   // Klasyczny skrypt nie widzi stałych z ESM — korzystaj z window.* w runtime.
   // === Wczytaj podstawowe obiekty gry (muszą już istnieć globalnie): SUN, planets, initPlanets3D ===
@@ -8225,7 +8234,12 @@ setTimeout(startGame, 500);
           DevTuning.pirateStationScale = DevConfig.pirateScale;
         }
         if (typeof DevConfig.station3DScale === 'number') {
-          Dev.station3DScale = DevConfig.station3DScale;
+          if (DevConfig.station3DScale > 0) {
+            Dev.station3DScale = DevConfig.station3DScale;
+          } else {
+            DevConfig.station3DScale = DEFAULT_STATION3D_SCALE;
+            Dev.station3DScale = DEFAULT_STATION3D_SCALE;
+          }
         }
       }
     } catch {}
@@ -8263,8 +8277,9 @@ setTimeout(startGame, 500);
     if (typeof DevConfig.pirateScale !== 'number') {
       DevConfig.pirateScale = DevTuning.pirateStationScale;
     }
-    if (typeof DevConfig.station3DScale !== 'number') {
-      DevConfig.station3DScale = Dev.station3DScale;
+    if (typeof DevConfig.station3DScale !== 'number' || DevConfig.station3DScale <= 0) {
+      const fallback = (Dev.station3DScale > 0) ? Dev.station3DScale : DEFAULT_STATION3D_SCALE;
+      DevConfig.station3DScale = fallback;
     }
     if (typeof DevConfig.stationSpriteSize !== 'number') {
       let saved = NaN;
@@ -8890,8 +8905,11 @@ setTimeout(startGame, 500);
     // 1) logika 3D miała natychmiastową wartość, 2) devtools mógł ją odczytać.
     if (!window.__setStation3DScale) {
       window.__setStation3DScale = (v) => {
-        const n = Number(v);
-        if (!Number.isFinite(n)) return;
+        const raw = Number(v);
+        const fallback = (typeof window.DEFAULT_STATION_3D_SCALE === 'number' && window.DEFAULT_STATION_3D_SCALE > 0)
+          ? window.DEFAULT_STATION_3D_SCALE
+          : DEFAULT_STATION3D_SCALE;
+        const n = (Number.isFinite(raw) && raw > 0) ? raw : fallback;
         window.Dev       = window.Dev       || {};
         window.DevTuning = window.DevTuning || {};
         window.Dev.station3DScale           = n;
@@ -8908,10 +8926,17 @@ setTimeout(startGame, 500);
     if (s) {
       // inicjalizacja z LS (opcjonalnie)
       const saved = Number(localStorage.getItem('station3DScale'));
-      if (Number.isFinite(saved)) {
+      if (Number.isFinite(saved) && saved > 0) {
         s.value = String(saved);
         if (sv) sv.textContent = '×' + saved.toFixed(2);
         window.__setStation3DScale(saved);
+      } else {
+        const def = (typeof window.DEFAULT_STATION_3D_SCALE === 'number' && window.DEFAULT_STATION_3D_SCALE > 0)
+          ? window.DEFAULT_STATION_3D_SCALE
+          : DEFAULT_STATION3D_SCALE;
+        s.value = String(def);
+        if (sv) sv.textContent = '×' + def.toFixed(2);
+        window.__setStation3DScale(def);
       }
 
       s.addEventListener('input', () => {
