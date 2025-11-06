@@ -623,10 +623,14 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       if (!this.ref) return;
       const s = worldToScreen(this.ref.x, this.ref.y, cam);
 
-      // Skala: z Dev lub DevTuning; fallback = 1.0
+      // Skala: z Dev lub DevTuning; fallback = domyślne 2.70
       const rawScale =
-        Number(window.Dev?.station3DScale ?? window.DevTuning?.pirateStationScale ?? 1);
-      const scale = Number.isFinite(rawScale) ? rawScale : 1;
+        Number(window.Dev?.station3DScale ?? window.DevTuning?.pirateStationScale ?? NaN);
+      const fallbackScale = (typeof window !== 'undefined' && typeof window.DEFAULT_STATION_3D_SCALE === 'number'
+        && window.DEFAULT_STATION_3D_SCALE > 0)
+        ? window.DEFAULT_STATION_3D_SCALE
+        : 2.70;
+      const scale = (Number.isFinite(rawScale) && rawScale > 0) ? rawScale : fallbackScale;
 
       // Promień bazowy: preferuj baseR jeżeli istnieje, w innym wypadku r
       const baseRadius = this.ref.baseR ?? this.ref.r ?? (this.size ? this.size/2 : 128);
@@ -702,7 +706,11 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
 
   window.__setStation3DScale = function(k){
     const value = Number(k);
-    const v = Number.isFinite(value) ? value : 1;
+    const fallback = (typeof window !== 'undefined' && typeof window.DEFAULT_STATION_3D_SCALE === 'number'
+      && window.DEFAULT_STATION_3D_SCALE > 0)
+      ? window.DEFAULT_STATION_3D_SCALE
+      : 2.70;
+    const v = (Number.isFinite(value) && value > 0) ? value : fallback;
     window.Dev = window.Dev || {};
     window.DevTuning = window.DevTuning || {};
     window.Dev.station3DScale = v;
