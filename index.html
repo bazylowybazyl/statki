@@ -2335,6 +2335,57 @@ function spawnArmataMuzzle(pos, dir, baseVel, scale = 1){
   }
   spawnShockwave(pos.x, pos.y, { r: 10 * scale, maxR: 80 * scale, w: 2.6 * scale, maxLife: 0.3, color: 'rgba(255,170,90,' });
 }
+
+function spawnSiegeMuzzle(pos, dir, baseVel, scale = 1){
+  const angle = Math.atan2(dir.y, dir.x);
+  spawnParticle(
+    { x: pos.x, y: pos.y },
+    { x: dir.x * 200 + baseVel.x * 0.15, y: dir.y * 200 + baseVel.y * 0.15 },
+    0.18,
+    '#ffe6b0',
+    12 * scale,
+    true
+  );
+  for(let i = 0; i < 14; i++){
+    const spread = (Math.random() - 0.5) * 0.32;
+    const aa = angle + spread;
+    const speed = 320 + Math.random() * 160;
+    const color = (Math.random() < 0.4) ? '#ffcf7f' : '#ffdca8';
+    const vel = {
+      x: Math.cos(aa) * speed + baseVel.x * 0.16,
+      y: Math.sin(aa) * speed + baseVel.y * 0.16
+    };
+    spawnParticle(
+      { x: pos.x + Math.cos(aa) * 10 * scale, y: pos.y + Math.sin(aa) * 10 * scale },
+      vel,
+      0.22 + Math.random() * 0.14,
+      color,
+      2.4 * scale,
+      true
+    );
+  }
+  spawnShockwave(pos.x, pos.y, { r: 12 * scale, maxR: 100 * scale, w: 3.0 * scale, maxLife: 0.32, color: 'rgba(255,190,110,' });
+}
+
+function spawnSiegeHitEffect(x, y, scale = 1){
+  triggerArmataImpact3D(x, y, ship.h * 0.36 * scale);
+  const count = Math.round(36 * scale);
+  for(let i = 0; i < count; i++){
+    const a = Math.random() * Math.PI * 2;
+    const speed = 240 + Math.random() * 320;
+    const color = (Math.random() < 0.45) ? '#ffd09a' : '#ffb670';
+    spawnParticle(
+      { x, y },
+      { x: Math.cos(a) * speed, y: Math.sin(a) * speed },
+      0.26 + Math.random() * 0.18,
+      color,
+      2.6 + Math.random() * 2.8,
+      true
+    );
+  }
+  spawnParticle({ x, y }, { x: 0, y: 0 }, 0.16, '#fff6d6', 9.5 * scale, true);
+  spawnShockwave(x, y, { r: 16 * scale, maxR: 150 * scale, w: 3.4 * scale, maxLife: 0.42, color: 'rgba(255,195,120,' });
+}
 function spawnDefaultHit(x,y,scale=1){
   for(let i=0;i<14*scale;i++){
     const a = Math.random()*Math.PI*2;
@@ -4741,6 +4792,130 @@ function pirateAI(n, dt){
   }
 }
 
+function destroyerPirateAI(n, dt){
+  const drag = Math.exp(-0.7 * dt);
+  n.vx *= drag; n.vy *= drag;
+
+  const toShip = { x: ship.pos.x - n.x, y: ship.pos.y - n.y };
+  const distShip = Math.hypot(toShip.x, toShip.y);
+
+  const desired = Math.atan2(toShip.y, toShip.x);
+  const diff = wrapAngle(desired - n.angle);
+  const turn = clamp(diff, -n.turn * dt, n.turn * dt);
+  n.angle = wrapAngle(n.angle + turn);
+
+  const forward = { x: Math.cos(n.angle), y: Math.sin(n.angle) };
+  const preferred = 1050;
+  if(distShip > preferred + 180){
+    n.vx += forward.x * n.accel * dt;
+    n.vy += forward.y * n.accel * dt;
+  } else if(distShip < preferred - 180){
+    n.vx -= forward.x * n.accel * dt;
+    n.vy -= forward.y * n.accel * dt;
+  } else {
+    const strafeAng = n.angle + (Math.random() < 0.5 ? -1 : 1) * Math.PI / 2;
+    n.vx += Math.cos(strafeAng) * n.accel * 0.0045;
+    n.vy += Math.sin(strafeAng) * n.accel * 0.0045;
+  }
+
+  limitSpeed(n, n.maxSpeed);
+
+  n.siegeCd = Math.max(0, (n.siegeCd || 0) - dt);
+  const baseVel = { x: n.vx || 0, y: n.vy || 0 };
+  if(n.siegeCd === 0 && distShip < (n.siegeRange || SIEGE_CANNON_RANGE)){
+    fireDestroyerSiege(n, baseVel);
+  }
+
+  updateDestroyerCIWS(n, dt, baseVel);
+
+  n.ciwsCd = 0;
+  n.missileCd = 0;
+}
+
+function fireDestroyerSiege(n, baseVel){
+  const aim = leadTarget(
+    { x: n.x, y: n.y },
+    baseVel,
+    { x: ship.pos.x, y: ship.pos.y, vx: ship.vel.x, vy: ship.vel.y },
+    SIEGE_CANNON_SPEED
+  );
+  let dir = { x: aim.x - n.x, y: aim.y - n.y };
+  const dirLen = Math.hypot(dir.x, dir.y);
+  if(dirLen > 0){ dir.x /= dirLen; dir.y /= dirLen; }
+  else { dir = { x: Math.cos(n.angle), y: Math.sin(n.angle) }; }
+  const baseAngle = Math.atan2(dir.y, dir.x);
+  const spread = (Math.random() - 0.5) * (n.siegeSpread || SIEGE_CANNON_SPREAD);
+  const shotAngle = baseAngle + spread;
+  const shotDir = { x: Math.cos(shotAngle), y: Math.sin(shotAngle) };
+  const muzzle = muzzlePosFor(n, shotDir, 22);
+  const vx = shotDir.x * SIEGE_CANNON_SPEED + baseVel.x;
+  const vy = shotDir.y * SIEGE_CANNON_SPEED + baseVel.y;
+  bullets.push({
+    x: muzzle.x,
+    y: muzzle.y,
+    vx,
+    vy,
+    life: n.siegeLife || SIEGE_CANNON_LIFE,
+    r: 7,
+    owner: 'npc',
+    damage: n.siegeDamage || SIEGE_CANNON_DAMAGE,
+    penetration: 1,
+    type: 'siege',
+    source: n,
+    spawnGrace: 0.14,
+    effectScale: 1.2
+  });
+  spawnSiegeMuzzle(muzzle, shotDir, baseVel, 1.2);
+  n.siegeCd = n.siegeCooldown || SIEGE_CANNON_COOLDOWN;
+}
+
+function updateDestroyerCIWS(n, dt, baseVel){
+  if(!Array.isArray(n.ciwsTurrets) || !n.ciwsTurrets.length) return;
+  const target = {
+    x: ship.pos.x,
+    y: ship.pos.y,
+    vx: ship.vel.x,
+    vy: ship.vel.y
+  };
+  for(const turret of n.ciwsTurrets){
+    turret.cd = Math.max(0, (turret.cd || 0) - dt);
+    if(turret.cd > 0) continue;
+    const offset = turret.offset ? rotate(turret.offset, n.angle) : { x: 0, y: 0 };
+    const base = { x: n.x + offset.x, y: n.y + offset.y };
+    const aim = leadTarget(base, baseVel, target, CIWS_BULLET_SPEED);
+    const toAim = { x: aim.x - base.x, y: aim.y - base.y };
+    const dist = Math.hypot(toAim.x, toAim.y);
+    const range = turret.range || CIWS_RANGE;
+    if(dist <= 0 || dist > range) continue;
+
+    const dir = { x: toAim.x / dist, y: toAim.y / dist };
+    const muzzleLen = turret.muzzleLength || 6;
+    const muzzle = { x: base.x + dir.x * muzzleLen, y: base.y + dir.y * muzzleLen };
+    bullets.push({
+      x: muzzle.x,
+      y: muzzle.y,
+      vx: dir.x * CIWS_BULLET_SPEED + baseVel.x,
+      vy: dir.y * CIWS_BULLET_SPEED + baseVel.y,
+      life: 1.2,
+      r: 2,
+      owner: 'npc',
+      damage: turret.damage || CIWS_DAMAGE,
+      type: 'ciws',
+      source: n,
+      spawnGrace: 0.06
+    });
+    spawnParticle(
+      { x: muzzle.x, y: muzzle.y },
+      { x: dir.x * 140 + baseVel.x * 0.1, y: dir.y * 140 + baseVel.y * 0.1 },
+      0.06,
+      turret.muzzleColor || '#ffcaa8',
+      2.1,
+      true
+    );
+    turret.cd = turret.interval || CIWS_FIRE_INTERVAL;
+  }
+}
+
 function guardAI(n, dt){
   const st = n.home;
   if(!st){ n.ai = (dt)=>pirateAI(n,dt); return; }
@@ -4751,7 +4926,11 @@ function guardAI(n, dt){
 
   if(playerNear || underAttack){
     n.guard = false;
-    n.ai = (dt)=>pirateAI(n, dt);
+    if(n.type === 'destroyer'){
+      n.ai = (dt)=>destroyerPirateAI(n, dt);
+    } else {
+      n.ai = (dt)=>pirateAI(n, dt);
+    }
     return;
   }
 
@@ -4790,6 +4969,18 @@ function spawnPirate(kind, station){
   } else { // 'destroyer'
     n = makeNPCBase(pos, { hp: 1200, accel: 60, maxSpeed: 320, turn: 1.8, radius: 60 });
     armPirate(n, 'heavy');
+    n.missiles = 0;
+    n.siegeCd = 0;
+    n.siegeCooldown = SIEGE_CANNON_COOLDOWN;
+    n.siegeRange = SIEGE_CANNON_RANGE;
+    n.siegeSpread = SIEGE_CANNON_SPREAD;
+    n.ciwsTurrets = [
+      { offset: { x: 42, y: 28 }, cd: 0, interval: CIWS_FIRE_INTERVAL * 1.5, muzzleLength: 8 },
+      { offset: { x: 42, y: -28 }, cd: 0, interval: CIWS_FIRE_INTERVAL * 1.5, muzzleLength: 8 },
+      { offset: { x: -40, y: 34 }, cd: 0, interval: CIWS_FIRE_INTERVAL * 1.5, muzzleLength: 8 },
+      { offset: { x: -40, y: -34 }, cd: 0, interval: CIWS_FIRE_INTERVAL * 1.5, muzzleLength: 8 }
+    ];
+    n.ai = function(dt){ destroyerPirateAI(n, dt); };
   }
   n.type = kind;
   npcs.push(n);
@@ -4998,6 +5189,13 @@ const CIWS_FIRE_INTERVAL = 0.06;
 const CIWS_BULLET_SPEED = 900;
 const CIWS_DAMAGE = 8;
 const CIWS_RANGE = 600;
+
+const SIEGE_CANNON_COOLDOWN = 5.2;
+const SIEGE_CANNON_DAMAGE = 200;
+const SIEGE_CANNON_SPEED = 1700;
+const SIEGE_CANNON_RANGE = 1800;
+const SIEGE_CANNON_SPREAD = 0.0045;
+const SIEGE_CANNON_LIFE = 1.1 * (SIEGE_CANNON_RANGE / SIEGE_CANNON_SPEED);
 
 const LASER_PD_FIRE_INTERVAL = 0.18;
 const LASER_PD_DAMAGE = 16;
@@ -5365,6 +5563,11 @@ function bulletsAndCollisionsStep(dt){
         b.penetration = (b.penetration !== undefined) ? b.penetration - 1 : (RAIL_PEN - 1);
         if(b.penetration <= 0){ bullets.splice(i,1); }
         continue;
+      } else if(b.type === 'siege'){
+        applyDamageToNPC(hitNPC, b.damage, 'siege');
+        spawnSiegeHitEffect(b.x, b.y, b.effectScale || 1.0);
+        bullets.splice(i,1);
+        continue;
       } else {
         applyDamageToNPC(hitNPC, b.damage, 'default');
         spawnDefaultHit(b.x, b.y, 1.0);
@@ -5428,6 +5631,8 @@ function bulletsAndCollisionsStep(dt){
           spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
         } else if(b.type === 'rail'){
           spawnRailHitEffect(b.x, b.y, 1.0);
+        } else if(b.type === 'siege'){
+          spawnSiegeHitEffect(b.x, b.y, b.effectScale || 1.0);
         } else {
           spawnExplosionPlasma(b.x, b.y, 1.0);
         }
@@ -5442,7 +5647,15 @@ function bulletsAndCollisionsStep(dt){
       const d = Math.hypot(ship.pos.x - b.x, ship.pos.y - b.y);
       if(d < hitR + b.r){
         applyDamageToPlayer(b.damage);
-        spawnDefaultHit(b.x, b.y, 1.0);
+        if(b.type === 'siege'){
+          spawnSiegeHitEffect(b.x, b.y, b.effectScale || 1.0);
+        } else if(b.type === 'armata'){
+          spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
+        } else if(b.type === 'rail'){
+          spawnRailHitEffect(b.x, b.y, 1.0);
+        } else {
+          spawnDefaultHit(b.x, b.y, 1.0);
+        }
         bullets.splice(i,1);
         continue;
       }
