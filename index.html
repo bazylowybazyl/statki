@@ -24,6 +24,10 @@
   .fleet-fighters{font-size:12px;color:#cfe3ff;}
   .fleet-hardpoints{display:flex;gap:8px;font-size:11px;color:#94a9d6;flex-wrap:wrap;}
   .fleet-hardpoints span{padding:2px 8px;border-radius:999px;background:rgba(63,88,144,0.28);border:1px solid rgba(98,128,188,0.35);}
+  .fleet-controls{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
+  .fleet-order-btn{flex:1 1 30%;padding:6px 8px;border-radius:8px;border:1px solid rgba(70,90,140,0.35);background:rgba(18,24,40,0.75);color:#dfe7ff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;transition:background 0.18s ease,border-color 0.18s ease,color 0.18s ease;}
+  .fleet-order-btn:hover{background:rgba(32,44,72,0.85);border-color:rgba(110,150,220,0.6);}
+  .fleet-order-btn.active{background:rgba(59,130,246,0.22);border-color:rgba(96,165,250,0.8);color:#f1f7ff;box-shadow:0 0 0 1px rgba(96,165,250,0.35) inset;}
   canvas{display:block;width:100vw;height:100vh}
   #game-root{position:relative;width:100vw;height:100vh;}
   #game-root>canvas{display:block;width:100%;height:100%;}
@@ -558,10 +562,33 @@ function renderFleetShip(entry){
 
   const fighters = document.createElement('div');
   fighters.className = 'fleet-fighters';
-  const ready = Math.max(0, (entry.fighters?.ready ?? 0) - (entry.fighters?.deployed ?? 0));
-  const capacity = entry.fighters?.capacity ?? ready;
-  fighters.textContent = `Myśliwce: ${formatFleetNumber(ready)}/${formatFleetNumber(capacity)} gotowe`;
+  const ready = Math.max(0, entry.fighters?.ready ?? 0);
+  const deployed = Math.max(0, entry.fighters?.deployed ?? 0);
+  const capacity = entry.fighters?.capacity ?? (ready + deployed);
+  const mode = (entry.fighterWing?.order || entry.fighterMode || 'idle');
+  const modeLabel = mode === 'engage' ? 'ATAK' : mode === 'guard' ? 'OSŁONA' : mode === 'return' ? 'POWRÓT' : mode.toUpperCase();
+  const deployedLabel = deployed > 0 ? ` · W polu: ${formatFleetNumber(deployed)}` : '';
+  fighters.textContent = `Myśliwce: ${formatFleetNumber(ready)}/${formatFleetNumber(capacity)} hangar${deployedLabel} · Tryb: ${modeLabel}`;
   li.appendChild(fighters);
+
+  if (entry.fighterWing) {
+    const controls = document.createElement('div');
+    controls.className = 'fleet-controls';
+    const orders = [
+      { id: 'engage', label: 'Engage' },
+      { id: 'guard',  label: 'Guard' },
+      { id: 'return', label: 'Return' }
+    ];
+    for (const { id, label } of orders) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'fleet-order-btn' + (mode === id ? ' active' : '');
+      btn.textContent = label;
+      btn.addEventListener('click', () => commandCarrierFighters(entry, id));
+      controls.appendChild(btn);
+    }
+    li.appendChild(controls);
+  }
 
   const hardpoints = document.createElement('div');
   hardpoints.className = 'fleet-hardpoints';
@@ -573,6 +600,50 @@ function renderFleetShip(entry){
   li.appendChild(hardpoints);
 
   return li;
+}
+
+function commandCarrierFighters(entry, order, opts = {}){
+  if (!entry) return;
+  ensureCarrierWing(entry);
+  const wing = entry.fighterWing;
+  if (!wing) return;
+
+  const normalized = (order === 'engage' || order === 'guard' || order === 'return') ? order : 'guard';
+  if (normalized === wing.order && !opts.force && !opts.auto) {
+    return;
+  }
+
+  if (opts.auto && normalized === 'return') {
+    if (!wing.autoReturnActive) {
+      wing.autoReturnActive = true;
+      wing.autoResumeOrder = wing.lastManualOrder || wing.order || 'guard';
+    }
+  } else {
+    wing.autoReturnActive = false;
+    wing.autoResumeOrder = null;
+    wing.lastManualOrder = normalized;
+  }
+
+  wing.order = normalized;
+  entry.fighterMode = normalized;
+
+  if (normalized === 'return') {
+    wing.launchPending = 0;
+    for (const fighter of wing.list){
+      if (fighter) fighter.orderOverride = 'return';
+    }
+  } else {
+    const ready = Math.max(0, entry.fighters?.ready ?? 0);
+    const batchSize = wing.launchBatch || ready;
+    const pending = Math.min(ready, batchSize);
+    wing.launchPending = pending;
+    wing.launchCooldown = 0;
+    for (const fighter of wing.list){
+      if (fighter) fighter.orderOverride = null;
+    }
+  }
+
+  if (!opts.silent) markFleetDirty();
 }
 
 function updateFleetUI(){
@@ -1852,6 +1923,18 @@ const CAPITAL_SHIP_TEMPLATES = {
     hardpoints: { large: 2, medium: 2 },
     fighters: 100,
     formationOffset: { x: -820, y: 380 },
+    fighterLaunchBatch: 12,
+    fighterLaunchInterval: 0.12,
+    weaponRange: 2300,
+    weapons: {
+      mainCannons: [
+        { id: 'port',   offset: { x: 0.42, y: -0.18 }, cooldown: 3.4, projectileSpeed: 1700, damage: 210, spread: 0.0038, arc: Math.PI / 2.2 },
+        { id: 'starboard', offset: { x: 0.42, y: 0.18 }, cooldown: 3.4, projectileSpeed: 1700, damage: 210, spread: 0.0038, arc: Math.PI / 2.2 }
+      ],
+      dorsalBatteries: [
+        { id: 'dorsal', offset: { x: 0.18, y: 0 }, cooldown: 1.6, projectileSpeed: 1300, damage: 38, spread: 0.012, arc: Math.PI / 1.6 }
+      ]
+    },
     profile: {
       lengthScale: 3.6,
       widthScale: 1.45,
@@ -1861,7 +1944,18 @@ const CAPITAL_SHIP_TEMPLATES = {
       engineColor: 'rgba(130,200,255,0.9)',
       hangarGlow: 'rgba(160,200,255,0.45)',
       spriteSrc: 'assets/carrier.png',
-      spriteScale: 1.05
+      spriteScale: 1.05,
+      spriteRotation: Math.PI / 2,
+      spriteOffset: { x: 0, y: -24 },
+      spriteLayer: 2,
+      spriteEngineGlow: false,
+      engineOffsets: [
+        { x: -0.38, y: 0.84 },
+        { x: 0, y: 0.88 },
+        { x: 0.38, y: 0.84 }
+      ],
+      engineGlowSize: 0.28,
+      engineOffsetMode: 'relative'
     }
   }
 };
@@ -1919,6 +2013,8 @@ function createCapitalShipEntry(templateKey, overrides = {}){
   npc.angle = Math.atan2(ship.pos.y - npc.y, ship.pos.x - npc.x);
   npc.desiredAngle = npc.angle;
   npc.keepAngle = true;
+  npc.drawLayer = template.profile?.spriteLayer ?? 0;
+  npc.carrierWeapons = createCarrierWeaponSystems(template.weapons || {});
 
   const entry = {
     id: overrides.id || `fleet_${templateKey}_${Math.random().toString(36).slice(2,8)}`,
@@ -1941,46 +2037,650 @@ function createCapitalShipEntry(templateKey, overrides = {}){
     template
   };
 
+  entry.fighterWing = createCarrierWing(entry, template);
+  entry.fighterMode = entry.fighterWing.order;
+
   npc.fleetEntry = entry;
   npc.ai = dt => updateCapitalCarrier(entry, dt);
 
   return entry;
 }
 
+const CARRIER_DEFAULT_LAUNCH_BATCH = 12;
+const CARRIER_DEFAULT_LAUNCH_INTERVAL = 0.12;
+const CARRIER_DEFAULT_WEAPON_RANGE = 2200;
+const CARRIER_FIGHTER_RETURN_RADIUS = 120;
+const CARRIER_FIGHTER_SOFT_RETURN_RADIUS = 320;
+const CARRIER_FIGHTER_ATTACK_RANGE = 1400;
+const CARRIER_FIGHTER_REJOIN_TIME = 8;
+
+function createCarrierWeaponSystems(cfg){
+  const systems = { mainCannons: [], dorsalBatteries: [] };
+  if (cfg && Array.isArray(cfg.mainCannons)){
+    for (const weapon of cfg.mainCannons){
+      systems.mainCannons.push({
+        id: weapon.id || `main_${systems.mainCannons.length}`,
+        offset: weapon.offset || { x: 0, y: 0 },
+        cooldown: Math.max(0.2, weapon.cooldown || 3.0),
+        timer: 0,
+        projectileSpeed: weapon.projectileSpeed || 1600,
+        damage: weapon.damage || 180,
+        spread: weapon.spread || 0,
+        arc: weapon.arc || Math.PI / 2,
+        muzzleForward: weapon.muzzleForward ?? 0.12,
+        type: 'main'
+      });
+    }
+  }
+  if (cfg && Array.isArray(cfg.dorsalBatteries)){
+    for (const weapon of cfg.dorsalBatteries){
+      systems.dorsalBatteries.push({
+        id: weapon.id || `aux_${systems.dorsalBatteries.length}`,
+        offset: weapon.offset || { x: 0, y: 0 },
+        cooldown: Math.max(0.1, weapon.cooldown || 1.4),
+        timer: 0,
+        projectileSpeed: weapon.projectileSpeed || 1100,
+        damage: weapon.damage || 28,
+        spread: weapon.spread || 0.01,
+        arc: weapon.arc || Math.PI / 1.6,
+        muzzleForward: weapon.muzzleForward ?? 0.06,
+        type: 'aux'
+      });
+    }
+  }
+  return systems;
+}
+
+function createCarrierWing(entry, template = {}){
+  const wing = {
+    entry,
+    order: 'guard',
+    list: [],
+    launchBatch: Math.max(1, Math.round(template.fighterLaunchBatch || CARRIER_DEFAULT_LAUNCH_BATCH)),
+    launchInterval: Math.max(0.05, template.fighterLaunchInterval || CARRIER_DEFAULT_LAUNCH_INTERVAL),
+    launchPending: 0,
+    launchCooldown: 0,
+    autoReturnActive: false,
+    autoResumeOrder: null,
+    lastManualOrder: 'guard',
+    targetRange: template.weaponRange || CARRIER_DEFAULT_WEAPON_RANGE,
+    nextFormIndex: 0,
+    primaryTarget: null
+  };
+  return wing;
+}
+
+function ensureCarrierWing(entry){
+  if (!entry) return null;
+  if (!entry.fighterWing){
+    entry.fighterWing = createCarrierWing(entry, entry.template || {});
+    entry.fighterMode = entry.fighterWing.order;
+  }
+  return entry.fighterWing;
+}
+
+function spawnCarrierFighter(entry){
+  const wing = ensureCarrierWing(entry);
+  if (!wing || !entry || !entry.entity) return null;
+  if (!entry.fighters || entry.fighters.ready <= 0) return null;
+
+  const carrier = entry.entity;
+  const formIndex = wing.nextFormIndex % FIGHTER_FORMATION.length;
+  const form = FIGHTER_FORMATION[formIndex] || { x: -150, y: -90 };
+  wing.nextFormIndex = (wing.nextFormIndex + 1) % FIGHTER_FORMATION.length;
+  const spawnOff = rotate(form, carrier.angle);
+  const spawnPos = { x: carrier.x + spawnOff.x, y: carrier.y + spawnOff.y };
+
+  const fighter = makeNPCBase(spawnPos, {
+    hp: 60,
+    accel: FIGHTER_ACCEL,
+    maxSpeed: FIGHTER_MAX_SPEED,
+    turn: FIGHTER_TURN_RATE,
+    radius: 14
+  });
+  fighter.maxHp = 60;
+  fighter.friendly = true;
+  fighter.mission = true;
+  fighter.fighter = true;
+  fighter.color = '#9edfff';
+  fighter.fade = 1;
+  fighter.heading = carrier.angle;
+  fighter.vx = carrier.vx;
+  fighter.vy = carrier.vy;
+  fighter.engines = [{ x: -3, y: 8 }, { x: 0, y: 9 }, { x: 3, y: 8 }];
+  fighter.ciwsCd = 0;
+  fighter.missileCd = 0;
+  fighter.missiles = 2;
+  fighter.formIndex = formIndex;
+  fighter.orbitAngle = Math.random() * Math.PI * 2;
+  fighter.orbitRadius = FIGHTER_ORBIT_RADIUS * 1.15;
+  fighter.carrierWing = wing;
+  fighter.carrierEntry = entry;
+  fighter.orderOverride = null;
+  fighter.ai = carrierFighterAI;
+  fighter.id = `carrier_fighter_${Math.random().toString(36).slice(2, 8)}`;
+
+  entry.fighters.ready = Math.max(0, entry.fighters.ready - 1);
+  entry.fighters.deployed = Math.min(entry.fighters.capacity, (entry.fighters.deployed || 0) + 1);
+  wing.list.push(fighter);
+  markFleetDirty();
+
+  npcs.push(fighter);
+  return fighter;
+}
+
+function carrierFighterAI(dt){
+  const wing = this.carrierWing;
+  const entry = wing?.entry;
+  const carrier = entry?.entity;
+  if (!wing || !entry || !carrier){
+    this.dead = true;
+    return;
+  }
+
+  if (this.hp <= 0 && !this.dead){
+    this.dead = true;
+    this.wasDestroyed = true;
+    return;
+  }
+
+  const limit = (e, vmax) => {
+    const speed = Math.hypot(e.vx || 0, e.vy || 0);
+    if (speed > vmax){
+      const k = vmax / speed;
+      e.vx *= k; e.vy *= k;
+    }
+  };
+
+  const faceAndThrust = (tx, ty, accelMul = 1.0) => {
+    const desired = Math.atan2(ty - this.y, tx - this.x);
+    if (typeof this.heading !== 'number' || Number.isNaN(this.heading)) {
+      this.heading = desired;
+    }
+    const speed = Math.hypot(this.vx, this.vy);
+    const current = speed > 4 ? Math.atan2(this.vy, this.vx) : this.heading;
+    const diff = wrapAngle(desired - current);
+    const turn = clamp(diff, -this.turn * dt, this.turn * dt);
+    this.heading = wrapAngle(current + turn);
+    this.vx += Math.cos(this.heading) * this.accel * accelMul * dt;
+    this.vy += Math.sin(this.heading) * this.accel * accelMul * dt;
+    return this.heading;
+  };
+
+  const canGunsFire = (target) => {
+    const dx = target.x - this.x;
+    const dy = target.y - this.y;
+    const dist = Math.hypot(dx, dy);
+    const speed = Math.hypot(this.vx, this.vy);
+    const facing = speed > 4 ? Math.atan2(this.vy, this.vx) : (typeof this.heading === 'number' ? this.heading : Math.atan2(this.vy, this.vx));
+    const aim = Math.atan2(dy, dx);
+    const align = Math.abs(wrapAngle(aim - facing));
+    const closing = (this.vx * dx + this.vy * dy) > 0;
+    const MIN = 260, MAX = 820, ALIGN_OK = 0.3;
+    return (dist >= MIN && dist <= MAX && align < ALIGN_OK && closing);
+  };
+
+  const drag = Math.exp(-FIGHTER_DRAG_COEFF * dt);
+  this.vx *= drag;
+  this.vy *= drag;
+
+  const order = this.orderOverride || wing.order || 'guard';
+
+  if (order === 'return'){
+    const dx = carrier.x - this.x;
+    const dy = carrier.y - this.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    faceAndThrust(carrier.x, carrier.y, 1.0);
+
+    if (dist < CARRIER_FIGHTER_SOFT_RETURN_RADIUS){
+      this.vx += (carrier.vx - this.vx) * Math.min(1, 6 * dt);
+      this.vy += (carrier.vy - this.vy) * Math.min(1, 6 * dt);
+    }
+    limit(this, this.maxSpeed);
+    this._retT = (this._retT || 0) + dt;
+    if (dist < CARRIER_FIGHTER_RETURN_RADIUS || (this._retT > CARRIER_FIGHTER_REJOIN_TIME && dist < CARRIER_FIGHTER_SOFT_RETURN_RADIUS)){
+      this.recalled = true;
+      this.dead = true;
+      this.mission = false;
+    }
+    spawnCarrierFighterEngines(this);
+    return;
+  }
+
+  let target = null;
+  if (order === 'engage'){
+    if (this.target && !this.target.dead){
+      target = this.target;
+    } else if (wing.primaryTarget && !wing.primaryTarget.dead){
+      target = wing.primaryTarget;
+    } else {
+      let best = null, bestDist = CARRIER_FIGHTER_ATTACK_RANGE;
+      for (const npc of npcs){
+        if (!npc || npc.dead || npc.friendly) continue;
+        const d = Math.hypot(npc.x - this.x, npc.y - this.y);
+        if (d < bestDist){
+          bestDist = d;
+          best = npc;
+        }
+      }
+      target = best;
+    }
+    if (target){
+      this.target = target;
+    }
+  }
+
+  if (order === 'engage' && target){
+    if (!this._pass || this._pass.targetId !== target.id){
+      this._pass = {
+        phase: 'ingress',
+        targetId: target.id,
+        timer: 0,
+        egress: 0
+      };
+      this.ciwsCd = Math.max(0, this.ciwsCd);
+      this.missileCd = Math.max(0, this.missileCd);
+    }
+    this._pass.timer += dt;
+
+    const dx = target.x - this.x;
+    const dy = target.y - this.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const lead = leadTarget({ x: this.x, y: this.y }, { x: this.vx, y: this.vy }, target, Math.max(300, this.maxSpeed * 0.9));
+
+    if (this._pass.phase === 'ingress'){
+      faceAndThrust(lead.x, lead.y, 1.0);
+      limit(this, this.maxSpeed);
+      const facing = Math.atan2(this.vy, this.vx);
+      const aim = Math.atan2(dy, dx);
+      const align = Math.abs(wrapAngle(aim - facing));
+      if (dist < CARRIER_FIGHTER_ATTACK_RANGE && align < 0.35){
+        this._pass.phase = 'attack';
+        this._pass.timer = 0;
+      }
+      spawnCarrierFighterEngines(this);
+      return;
+    }
+
+    if (this._pass.phase === 'attack'){
+      const ang = faceAndThrust(lead.x, lead.y, 1.0);
+      limit(this, this.maxSpeed);
+      if (canGunsFire(target)){
+        this.ciwsCd = Math.max(0, this.ciwsCd - dt);
+        this.missileCd = Math.max(0, this.missileCd - dt);
+        const dir = { x: Math.cos(ang), y: Math.sin(ang) };
+        if (this.ciwsCd === 0){
+          bullets.push({
+            x: this.x + dir.x * 8,
+            y: this.y + dir.y * 8,
+            vx: dir.x * CIWS_BULLET_SPEED + this.vx,
+            vy: dir.y * CIWS_BULLET_SPEED + this.vy,
+            life: 1.2,
+            r: 2,
+            owner: 'player',
+            damage: CIWS_DAMAGE,
+            type: 'ciws',
+            source: this
+          });
+          this.ciwsCd = CIWS_FIRE_INTERVAL;
+        }
+        if (this.missiles > 0 && this.missileCd === 0){
+          bullets.push({
+            x: this.x + dir.x * 8,
+            y: this.y + dir.y * 8,
+            vx: dir.x * SIDE_BULLET_SPEED + this.vx,
+            vy: dir.y * SIDE_BULLET_SPEED + this.vy,
+            life: 2.4,
+            r: 5,
+            owner: 'player',
+            damage: SIDE_BULLET_DAMAGE,
+            penetration: 0,
+            type: 'rocket',
+            explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS,
+            homingDelay: SIDE_ROCKET_HOMING_DELAY,
+            target,
+            source: this
+          });
+          this.missiles--;
+          this.missileCd = 1.6;
+        }
+      }
+      const passed = (this.vx * dx + this.vy * dy) < 0;
+      if (this._pass.timer > 1.6 || dist < 180 || passed){
+        this._pass.phase = 'egress';
+        this._pass.egress = 0;
+      }
+      spawnCarrierFighterEngines(this);
+      return;
+    }
+
+    if (this._pass.phase === 'egress'){
+      this._pass.egress += dt;
+      const awayX = this.x - dx;
+      const awayY = this.y - dy;
+      faceAndThrust(awayX, awayY, 0.9);
+      limit(this, this.maxSpeed);
+      if (this._pass.egress > 0.9){
+        this._pass.phase = 'ingress';
+        this._pass.timer = 0;
+      }
+      spawnCarrierFighterEngines(this);
+      return;
+    }
+  }
+
+  // Guard order – orbit around gracza
+  const local = FIGHTER_FORMATION[this.formIndex % FIGHTER_FORMATION.length] || { x: -140, y: -90 };
+  const off = rotate(local, ship.angle);
+  const anchor = { x: ship.pos.x + off.x, y: ship.pos.y + off.y };
+  const to = { x: anchor.x - this.x, y: anchor.y - this.y };
+  const desiredVel = { x: ship.vel.x + to.x * FIGHTER_ESCORT_POSITION_GAIN, y: ship.vel.y + to.y * FIGHTER_ESCORT_FOLLOW_GAIN };
+  const speed = Math.hypot(desiredVel.x, desiredVel.y);
+  const vmax = this.maxSpeed * 0.95;
+  if (speed > vmax){
+    const s = vmax / speed;
+    desiredVel.x *= s;
+    desiredVel.y *= s;
+  }
+  this.vx += (desiredVel.x - this.vx) * Math.min(1, 5.5 * dt);
+  this.vy += (desiredVel.y - this.vy) * Math.min(1, 5.5 * dt);
+  spawnCarrierFighterEngines(this);
+}
+
+function spawnCarrierFighterEngines(fighter){
+  const ang = Math.atan2(fighter.vy, fighter.vx);
+  for (const e of fighter.engines){
+    const eo = rotate(e, ang + Math.PI);
+    spawnParticle(
+      { x: fighter.x + eo.x, y: fighter.y + eo.y },
+      { x: fighter.vx - Math.cos(ang) * 60, y: fighter.vy - Math.sin(ang) * 60 },
+      0.08,
+      '#cfe7ff',
+      0.7
+    );
+  }
+}
+
+function updateCarrierWing(entry, dt){
+  const wing = ensureCarrierWing(entry);
+  if (!wing) return;
+  wing.launchCooldown = Math.max(0, (wing.launchCooldown || 0) - dt);
+
+  if (wing.launchPending > 0 && wing.launchCooldown <= 0 && entry.fighters.ready > 0){
+    spawnCarrierFighter(entry);
+    wing.launchPending = Math.max(0, wing.launchPending - 1);
+    wing.launchCooldown = wing.launchInterval;
+  }
+
+  if (wing.primaryTarget && wing.primaryTarget.dead){
+    wing.primaryTarget = null;
+  }
+
+  if (entry.fighters){
+    entry.fighters.ready = clamp(entry.fighters.ready, 0, entry.fighters.capacity ?? entry.fighters.ready);
+    entry.fighters.deployed = clamp(entry.fighters.deployed, 0, entry.fighters.capacity ?? entry.fighters.deployed);
+  }
+}
+
+function selectCarrierTarget(entry){
+  const wing = ensureCarrierWing(entry);
+  if (!wing || wing.order === 'return') return null;
+  const carrier = entry.entity;
+  const range = wing.targetRange || CARRIER_DEFAULT_WEAPON_RANGE;
+
+  if (wing.primaryTarget && !wing.primaryTarget.dead){
+    const dist = Math.hypot(wing.primaryTarget.x - carrier.x, wing.primaryTarget.y - carrier.y);
+    if (dist <= range * 1.15){
+      return wing.primaryTarget;
+    }
+  }
+
+  const focus = (wing.order === 'guard' && lockedTarget && !lockedTarget.dead)
+    ? lockedTarget
+    : null;
+  if (focus){
+    const dist = Math.hypot(focus.x - carrier.x, focus.y - carrier.y);
+    if (dist <= range * 1.2){
+      wing.primaryTarget = focus;
+      return focus;
+    }
+  }
+
+  let anchorX, anchorY;
+  if (wing.order === 'guard'){
+    anchorX = ship.pos.x;
+    anchorY = ship.pos.y;
+  } else {
+    anchorX = carrier.x;
+    anchorY = carrier.y;
+  }
+
+  let best = null, bestDist = range;
+  for (const npc of npcs){
+    if (!npc || npc.dead || npc.friendly) continue;
+    const dist = Math.hypot(npc.x - anchorX, npc.y - anchorY);
+    if (dist < bestDist){
+      best = npc;
+      bestDist = dist;
+    }
+  }
+  wing.primaryTarget = best;
+  return best;
+}
+
+function getCapitalDimensions(npc){
+  const profile = npc.capitalProfile || {};
+  const radius = npc.radius || 1;
+  const length = Math.max(60, radius * (profile.lengthScale || 3.2));
+  const width = Math.max(30, radius * (profile.widthScale || 1.2));
+  return { length, width, halfL: length * 0.5, halfW: width * 0.5 };
+}
+
+function capitalLocalFromNormalized(offset, dims){
+  if (!offset) return { x: 0, y: 0 };
+  if (offset.absolute) return { x: offset.x || 0, y: offset.y || 0 };
+  const nx = Number.isFinite(offset.x) ? offset.x : 0;
+  const ny = Number.isFinite(offset.y) ? offset.y : 0;
+  return { x: nx * dims.halfL, y: ny * dims.halfW };
+}
+
+function updateCarrierWeapons(entry, dt, order, target){
+  const npc = entry.entity;
+  if (!npc || !npc.carrierWeapons) return;
+  const profile = npc.capitalProfile || {};
+  const dims = getCapitalDimensions(npc);
+  const rotation = (npc.angle || 0) + (profile.spriteRotation || 0);
+  const systems = npc.carrierWeapons;
+  const range = entry.template?.weaponRange || CARRIER_DEFAULT_WEAPON_RANGE;
+  const shouldFire = !!target && order !== 'return';
+
+  const fireWeapon = (weapon, type) => {
+    weapon.timer = Math.max(0, (weapon.timer || 0) - dt);
+    if (!shouldFire || weapon.timer > 0) return;
+
+    const localBase = capitalLocalFromNormalized(weapon.offset, dims);
+    const forwardExtra = Number.isFinite(weapon.muzzleForward) ? weapon.muzzleForward * dims.halfL : 0;
+    const local = { x: localBase.x + forwardExtra, y: localBase.y };
+    const worldOff = rotate(local, rotation);
+    const muzzle = { x: npc.x + worldOff.x, y: npc.y + worldOff.y };
+    const lead = leadTarget(muzzle, { x: npc.vx, y: npc.vy }, target, weapon.projectileSpeed);
+    const aim = Math.atan2(lead.y - muzzle.y, lead.x - muzzle.x);
+    const forward = rotate({ x: 1, y: 0 }, rotation);
+    const dirToTarget = { x: Math.cos(aim), y: Math.sin(aim) };
+    const dot = forward.x * dirToTarget.x + forward.y * dirToTarget.y;
+    const angleDiff = Math.acos(clamp(dot, -1, 1));
+    const dist = Math.hypot(target.x - muzzle.x, target.y - muzzle.y);
+    if (angleDiff > (weapon.arc || Math.PI / 2) * 0.5 || dist > range * 1.1){
+      return;
+    }
+
+    const jitter = (Math.random() - 0.5) * (weapon.spread || 0);
+    const finalAngle = aim + jitter;
+    const dir = { x: Math.cos(finalAngle), y: Math.sin(finalAngle) };
+    const speed = weapon.projectileSpeed || 1500;
+    const life = Math.max(0.6, (range / speed) * 1.15);
+    const bullet = {
+      x: muzzle.x,
+      y: muzzle.y,
+      vx: dir.x * speed + npc.vx,
+      vy: dir.y * speed + npc.vy,
+      life,
+      r: type === 'main' ? 6 : 3,
+      owner: 'player',
+      damage: weapon.damage || (type === 'main' ? 180 : 32),
+      type: type === 'main' ? 'armata' : 'autocannon',
+      penetration: type === 'main' ? 2 : 0,
+      source: npc,
+      effectScale: type === 'main' ? 1.2 : 0.9
+    };
+    bullets.push(bullet);
+    if (type === 'main'){
+      spawnRailMuzzle(muzzle, dir, { x: npc.vx, y: npc.vy }, 1.2);
+      camera.addShake(6, 0.15);
+    } else {
+      spawnAutocannonMuzzle(muzzle, dir, { x: npc.vx, y: npc.vy }, 0.9);
+    }
+    weapon.timer = weapon.cooldown || 2.5;
+  };
+
+  if (Array.isArray(systems.mainCannons)){
+    for (const weapon of systems.mainCannons){
+      fireWeapon(weapon, 'main');
+    }
+  }
+  if (Array.isArray(systems.dorsalBatteries)){
+    for (const weapon of systems.dorsalBatteries){
+      fireWeapon(weapon, 'aux');
+    }
+  }
+}
+
+function spawnCarrierEngineFx(entry){
+  const npc = entry.entity;
+  if (!npc || !npc.capitalProfile) return;
+  const profile = npc.capitalProfile;
+  const offsets = Array.isArray(profile.engineOffsets) ? profile.engineOffsets : null;
+  if (!offsets || !offsets.length) return;
+
+  const dims = getCapitalDimensions(npc);
+  const rotation = (npc.angle || 0) + (profile.spriteRotation || 0);
+  const speed = Math.hypot(npc.vx || 0, npc.vy || 0);
+  const thrust = clamp(speed / Math.max(1, npc.maxSpeed || 1), 0, 1);
+  const color = profile.engineColor || 'rgba(130,200,255,0.9)';
+  const dir = rotate({ x: -1, y: 0 }, rotation);
+  const sizeMul = profile.engineGlowSize || 0.24;
+
+  for (const offset of offsets){
+    const local = capitalLocalFromNormalized(offset, dims);
+    const worldOff = rotate(local, rotation);
+    const pos = { x: npc.x + worldOff.x, y: npc.y + worldOff.y };
+    const vel = {
+      x: npc.vx - dir.x * (140 + thrust * 260),
+      y: npc.vy - dir.y * (140 + thrust * 260)
+    };
+    spawnParticle(pos, vel, 0.24 + thrust * 0.12, color, Math.max(2.6, dims.width * sizeMul), true);
+  }
+}
+
+function cleanupCarrierFighters(){
+  if (!Fleet || !Array.isArray(Fleet.ships)) return;
+  for (const entry of Fleet.ships){
+    const wing = entry?.fighterWing;
+    if (!wing || !Array.isArray(wing.list)) continue;
+    for (let i = wing.list.length - 1; i >= 0; i--){
+      const fighter = wing.list[i];
+      if (!fighter){
+        wing.list.splice(i, 1);
+        continue;
+      }
+      if (!fighter.dead) continue;
+      if (!fighter._counted){
+        entry.fighters.deployed = Math.max(0, (entry.fighters.deployed || 0) - 1);
+        if (fighter.recalled){
+          entry.fighters.ready = Math.min(entry.fighters.capacity, (entry.fighters.ready || 0) + 1);
+        }
+        fighter._counted = true;
+        markFleetDirty();
+      }
+      wing.list.splice(i, 1);
+      const idx = npcs.indexOf(fighter);
+      if (idx !== -1) npcs.splice(idx, 1);
+    }
+  }
+}
+
 function updateCapitalCarrier(entry, dt){
   const npc = entry?.entity;
   if (!npc || npc.dead) return;
 
+  const wing = ensureCarrierWing(entry);
   const formation = entry.template?.formationOffset || npc.fleetFormationOffset || { x: -800, y: 360 };
   const rotated = rotate(formation, ship.angle);
   const target = { x: ship.pos.x + rotated.x, y: ship.pos.y + rotated.y };
   const toTarget = { x: target.x - npc.x, y: target.y - npc.y };
   const dist = Math.hypot(toTarget.x, toTarget.y);
-  const desiredDir = dist > 0.0001 ? { x: toTarget.x / dist, y: toTarget.y / dist } : { x: 0, y: 0 };
-  const desiredSpeed = dist > 140 ? npc.maxSpeed : npc.maxSpeed * (dist / 140);
-  const desiredVel = { x: desiredDir.x * desiredSpeed, y: desiredDir.y * desiredSpeed };
 
-  const accel = npc.accel || 0;
-  npc.vx += clamp(desiredVel.x - npc.vx, -accel * dt, accel * dt);
-  npc.vy += clamp(desiredVel.y - npc.vy, -accel * dt, accel * dt);
+  if (warp.state === 'active'){
+    npc.x = target.x;
+    npc.y = target.y;
+    npc.vx = ship.vel.x;
+    npc.vy = ship.vel.y;
+    npc.angle = ship.angle;
+    npc.desiredAngle = npc.angle;
+  } else {
+    const desiredDir = dist > 0.0001 ? { x: toTarget.x / dist, y: toTarget.y / dist } : { x: 0, y: 0 };
+    const desiredSpeed = dist > 140 ? npc.maxSpeed : npc.maxSpeed * (dist / Math.max(140, 1));
+    const desiredVel = { x: desiredDir.x * desiredSpeed, y: desiredDir.y * desiredSpeed };
 
-  if (dist < 90){
-    const slow = Math.exp(-1.5 * dt);
-    npc.vx *= slow;
-    npc.vy *= slow;
+    const accel = npc.accel || 0;
+    npc.vx += clamp(desiredVel.x - npc.vx, -accel * dt, accel * dt);
+    npc.vy += clamp(desiredVel.y - npc.vy, -accel * dt, accel * dt);
+
+    if (dist < 90){
+      const slow = Math.exp(-1.5 * dt);
+      npc.vx *= slow;
+      npc.vy *= slow;
+    }
+
+    limitSpeed(npc, npc.maxSpeed || 0);
+    const spd = Math.hypot(npc.vx, npc.vy);
+    if (spd > 1){
+      npc.angle = Math.atan2(npc.vy, npc.vx);
+    } else {
+      const desiredAngle = Math.atan2(ship.pos.y - npc.y, ship.pos.x - npc.x);
+      const diff = wrapAngle(desiredAngle - npc.angle);
+      const turnLimit = (entry.template?.turn ?? npc.turn ?? 0) * dt;
+      npc.angle = wrapAngle(npc.angle + clamp(diff, -turnLimit, turnLimit));
+    }
+    npc.desiredAngle = npc.angle;
   }
 
-  limitSpeed(npc, npc.maxSpeed || 0);
-  const spd = Math.hypot(npc.vx, npc.vy);
-  if (spd > 1){
-    npc.angle = Math.atan2(npc.vy, npc.vx);
-  } else {
-    const desiredAngle = Math.atan2(ship.pos.y - npc.y, ship.pos.x - npc.x);
+  if (wing){
+    if (warp.state === 'charging' || warp.state === 'active'){
+      commandCarrierFighters(entry, 'return', { auto: true });
+    } else if (wing.autoReturnActive && wing.order === 'return' && wing.list.length === 0 && (entry.fighters.deployed || 0) === 0){
+      const resume = wing.autoResumeOrder && wing.autoResumeOrder !== 'return' ? wing.autoResumeOrder : (wing.lastManualOrder || 'guard');
+      wing.autoReturnActive = false;
+      wing.autoResumeOrder = null;
+      if (resume && resume !== 'return'){
+        commandCarrierFighters(entry, resume, { force: true, silent: true });
+        markFleetDirty();
+      }
+    }
+  }
+
+  updateCarrierWing(entry, dt);
+  const attackTarget = selectCarrierTarget(entry);
+  if (attackTarget){
+    const desiredAngle = Math.atan2(attackTarget.y - npc.y, attackTarget.x - npc.x);
     const diff = wrapAngle(desiredAngle - npc.angle);
     const turnLimit = (entry.template?.turn ?? npc.turn ?? 0) * dt;
     npc.angle = wrapAngle(npc.angle + clamp(diff, -turnLimit, turnLimit));
+    npc.desiredAngle = npc.angle;
   }
-  npc.desiredAngle = npc.angle;
+
+  updateCarrierWeapons(entry, dt, wing?.order || 'guard', attackTarget);
+  spawnCarrierEngineFx(entry);
 
   const shield = npc.shield;
   if (shield){
@@ -6679,6 +7379,7 @@ function physicsStep(dt){
   ship.angle += ship.angVel*dt;
 
   npcStep(dt);
+  cleanupCarrierFighters();
   pirateMissionStep(dt);
   ciwsStep(dt);
   bulletsAndCollisionsStep(dt);
@@ -7417,6 +8118,7 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
   const widthScale = Number.isFinite(profile.widthScale) ? profile.widthScale : 1.2;
   const length = Math.max(60, pixR * lengthScale);
   const width = Math.max(30, pixR * widthScale);
+  const dims = { length, width, halfL: length * 0.5, halfW: width * 0.5 };
   const hullColor = profile.hullColor || (npc.friendly ? '#5477bf' : '#c85a5a');
   const deckColor = profile.deckColor || '#1f2a46';
   const accentColor = profile.accentColor || '#9dc5ff';
@@ -7431,7 +8133,8 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
   ctx.save();
   ctx.globalAlpha = npc.fade ?? 1;
   ctx.translate(screenPos.x, screenPos.y);
-  ctx.rotate(npc.angle || 0);
+  const spriteRotation = Number.isFinite(profile.spriteRotation) ? profile.spriteRotation : 0;
+  ctx.rotate((npc.angle || 0) + spriteRotation);
 
   const halfL = length * 0.5;
   const halfW = width * 0.5;
@@ -7454,19 +8157,6 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     }
     const offset = profile.spriteOffset || { x: 0, y: 0 };
     ctx.drawImage(img, -drawW * 0.5 + offset.x, -drawH * 0.5 + offset.y, drawW, drawH);
-    if (profile.spriteEngineGlow !== false){
-      ctx.save();
-      ctx.translate(-halfL * 0.92, 0);
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.fillStyle = engineColor;
-      ctx.beginPath();
-      ctx.ellipse(-width * 0.02, -width * 0.3, width * 0.16, width * 0.22, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(-width * 0.02, width * 0.3, width * 0.16, width * 0.22, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
   } else {
     ctx.fillStyle = hullColor;
     drawHullPath = () => {
@@ -7486,19 +8176,23 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     ctx.fillStyle = accentColor;
     ctx.fillRect(-halfL * 0.2, -halfW * 0.05, length * 0.4, width * 0.1);
 
+  }
+
+  const engineOffsets = Array.isArray(profile.engineOffsets) ? profile.engineOffsets : null;
+  if (engineOffsets && engineOffsets.length){
+    const speed = Math.hypot(npc.vx || 0, npc.vy || 0);
+    const thrust = clamp(speed / Math.max(1, npc.maxSpeed || 1), 0, 1);
     ctx.save();
-    ctx.translate(-halfL * 0.92, 0);
-    ctx.fillStyle = '#1a2338';
-    roundRect(ctx, -width * 0.18, -halfW * 0.6, width * 0.28, width * 1.2, width * 0.18);
-    ctx.fill();
     ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.45 + thrust * 0.4;
     ctx.fillStyle = engineColor;
-    ctx.beginPath();
-    ctx.ellipse(-width * 0.02, -width * 0.3, width * 0.16, width * 0.22, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(-width * 0.02, width * 0.3, width * 0.16, width * 0.22, 0, 0, Math.PI * 2);
-    ctx.fill();
+    const glowSize = profile.engineGlowSize || 0.26;
+    for (const offset of engineOffsets){
+      const local = capitalLocalFromNormalized(offset, dims);
+      ctx.beginPath();
+      ctx.ellipse(local.x, local.y, width * glowSize * 0.45, width * glowSize * 0.75, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -7813,8 +8507,13 @@ function render(alpha, frameDt){
   }
 
   // NPC
-  for(const npc of npcs){
-    if(npc.dead) continue;
+  const npcDrawList = [];
+  for (const npc of npcs){
+    if (!npc || npc.dead) continue;
+    npcDrawList.push(npc);
+  }
+  npcDrawList.sort((a, b) => (a.drawLayer || 0) - (b.drawLayer || 0));
+  for (const npc of npcDrawList){
     const s = worldToScreen(npc.x, npc.y, cam);
     drawNPCPretty(ctx, npc, s);
   }
