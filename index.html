@@ -614,6 +614,7 @@ const WEAPONS = {
   railgun_mk1:  { id:'railgun_mk1',  type:HP.MAIN,    name:'Railgun Mk I',  dps:40, energy:6,  ammo:null },
   railgun_mk2:  { id:'railgun_mk2',  type:HP.MAIN,    name:'Railgun Mk II', dps:60, energy:8,  ammo:null },
   armata_mk1:   { id:'armata_mk1',   type:HP.MAIN,    name:'Armata Siege Cannon', damage:220, cooldown:1.8, energy:14, ammo:null },
+  heavy_autocannon: { id:'heavy_autocannon', type:HP.MAIN, name:'Heavy Autocannon', damage:28, cooldown:0.16, energy:9, ammo:null },
   missile_rack: { id:'missile_rack', type:HP.MISSILE, name:'Missile Rack',  dps:0,  energy:2,  ammo:20 },
   ciws_mk1:     { id:'ciws_mk1',     type:HP.AUX,     name:'CIWS Mk I',     dps:12, energy:2,  ammo:null },
   laser_pd_mk1: { id:'laser_pd_mk1', type:HP.AUX,     name:'Helios PD Laser', dps:18, energy:3,  ammo:null },
@@ -667,7 +668,7 @@ function uid(){ return 'hp_'+Math.random().toString(36).slice(2,9); }
 const Game = window.Game || (window.Game={});
 Game.infrastructure = Game.infrastructure || new Map();
 const previousPlayer = Game.player || {};
-const defaultInventory = ['railgun_mk1','railgun_mk2','armata_mk1','missile_rack','ciws_mk1','laser_pd_mk1','fighter_bay','super_f'];
+const defaultInventory = ['railgun_mk1','railgun_mk2','armata_mk1','heavy_autocannon','missile_rack','ciws_mk1','laser_pd_mk1','fighter_bay','super_f'];
 const existingInventory = previousPlayer.inventory ? Array.from(previousPlayer.inventory) : [];
 const mergedInventory = new Set([...existingInventory, ...defaultInventory]);
 
@@ -786,7 +787,13 @@ function updateMainWeaponBehavior(){
       const id = loadout?.weapon?.id;
       const candidate = getMainWeaponBehaviorForWeaponId(id);
       if(!candidate) continue;
-      if((candidate.cooldown ?? 0) > (behavior.cooldown ?? 0)){
+      const candidatePriority = candidate.priority ?? 0;
+      const currentPriority = behavior.priority ?? 0;
+      const candidateCooldown = candidate.cooldown ?? MAIN_WEAPON_BEHAVIOR.default.cooldown;
+      const currentCooldown = behavior.cooldown ?? MAIN_WEAPON_BEHAVIOR.default.cooldown;
+      const preferCandidate = (candidatePriority > currentPriority)
+        || (candidatePriority === currentPriority && candidateCooldown > currentCooldown);
+      if(preferCandidate){
         behavior = candidate;
       }
     }
@@ -2278,6 +2285,39 @@ function spawnArmataHitEffect(x, y, scale = 1){
   spawnShockwave(x, y, { r: 14 * scale, maxR: 120 * scale, w: 3.2 * scale, maxLife: 0.42, color: 'rgba(255,170,90,' });
 }
 
+function spawnAutocannonHitEffect(x, y, scale = 1){
+  triggerRailgunExplosion3D(x, y, ship.h * 0.18 * scale);
+  const sparkCount = Math.round(20 * scale);
+  for(let i = 0; i < sparkCount; i++){
+    const a = Math.random() * Math.PI * 2;
+    const speed = 280 + Math.random() * 240;
+    const color = (Math.random() < 0.5) ? '#ffe4a8' : '#ffba60';
+    spawnParticle(
+      { x, y },
+      { x: Math.cos(a) * speed, y: Math.sin(a) * speed },
+      0.18 + Math.random() * 0.14,
+      color,
+      1.6 + Math.random() * 1.4,
+      true
+    );
+  }
+  const smokeCount = Math.round(6 * scale);
+  for(let i = 0; i < smokeCount; i++){
+    const a = Math.random() * Math.PI * 2;
+    const speed = 60 + Math.random() * 80;
+    spawnParticle(
+      { x, y },
+      { x: Math.cos(a) * speed, y: Math.sin(a) * speed },
+      0.32 + Math.random() * 0.18,
+      'rgba(90,110,180,0.55)',
+      3.2 * scale,
+      false
+    );
+  }
+  spawnParticle({ x, y }, { x: 0, y: 0 }, 0.1, '#ffffff', 5.4 * scale, true);
+  spawnShockwave(x, y, { r: 10 * scale, maxR: 90 * scale, w: 2.6 * scale, maxLife: 0.28, color: 'rgba(255,205,140,' });
+}
+
 function spawnRailMuzzle(pos, dir, baseVel, scale = 1){
   spawnParticle({ x: pos.x, y: pos.y }, { x: 0, y: 0 }, 0.1, '#bfe7ff', 6 * scale, true);
   const angle = Math.atan2(dir.y, dir.x);
@@ -2334,6 +2374,46 @@ function spawnArmataMuzzle(pos, dir, baseVel, scale = 1){
     );
   }
   spawnShockwave(pos.x, pos.y, { r: 10 * scale, maxR: 80 * scale, w: 2.6 * scale, maxLife: 0.3, color: 'rgba(255,170,90,' });
+}
+
+function spawnAutocannonMuzzle(pos, dir, baseVel, scale = 1){
+  const angle = Math.atan2(dir.y, dir.x);
+  spawnParticle(
+    { x: pos.x, y: pos.y },
+    { x: dir.x * 220 + baseVel.x * 0.18, y: dir.y * 220 + baseVel.y * 0.18 },
+    0.12,
+    '#ffdba6',
+    7 * scale,
+    true
+  );
+  for(let i = 0; i < 8; i++){
+    const spread = (Math.random() - 0.5) * 0.32;
+    const aa = angle + spread;
+    const speed = 300 + Math.random() * 180;
+    const color = (Math.random() < 0.35) ? '#ffe6b0' : '#ffbf6b';
+    const size = 1.6 + Math.random() * 1.6;
+    spawnParticle(
+      { x: pos.x + Math.cos(aa) * 6 * scale, y: pos.y + Math.sin(aa) * 6 * scale },
+      { x: Math.cos(aa) * speed + baseVel.x * 0.16, y: Math.sin(aa) * speed + baseVel.y * 0.16 },
+      0.16 + Math.random() * 0.12,
+      color,
+      size * scale,
+      true
+    );
+  }
+  for(let i = 0; i < 4; i++){
+    const aa = angle + (Math.random() - 0.5) * 0.2;
+    const speed = 120 + Math.random() * 60;
+    spawnParticle(
+      { x: pos.x + Math.cos(aa) * 4 * scale, y: pos.y + Math.sin(aa) * 4 * scale },
+      { x: Math.cos(aa) * speed + baseVel.x * 0.08, y: Math.sin(aa) * speed + baseVel.y * 0.08 },
+      0.24 + Math.random() * 0.18,
+      '#6b7cff',
+      1.4 * scale,
+      false
+    );
+  }
+  spawnShockwave(pos.x, pos.y, { r: 8 * scale, maxR: 70 * scale, w: 2.2 * scale, maxLife: 0.22, color: 'rgba(255,200,120,' });
 }
 
 function spawnSiegeMuzzle(pos, dir, baseVel, scale = 1){
@@ -5042,6 +5122,7 @@ const ARMATA_SPLASH_RADIUS = 140;
 const ARMATA_SPLASH_FALLOFF_MIN = 0.2;
 const BASE_MAIN_BEHAVIOR = {
   id: 'default',
+  priority: 1,
   cooldown: 0.38,
   burstsPerClick: 2,
   shotGap: 0.07,
@@ -5074,15 +5155,17 @@ function createMainWeaponBehavior(overrides = {}) {
     hitFx: overrides.hitFx || BASE_MAIN_BEHAVIOR.hitFx,
   };
   behavior.id = overrides.id || behavior.id;
+  behavior.priority = overrides.priority ?? behavior.priority ?? BASE_MAIN_BEHAVIOR.priority;
   behavior.barrelsPerShot = overrides.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot;
   return behavior;
 }
 
 const MAIN_WEAPON_BEHAVIOR = {
   default: createMainWeaponBehavior(),
-  railgun_mk2: createMainWeaponBehavior({ id: 'railgun_mk2' }),
+  railgun_mk2: createMainWeaponBehavior({ id: 'railgun_mk2', priority: 2 }),
   armata_mk1: createMainWeaponBehavior({
     id: 'armata_mk1',
+    priority: 3,
     cooldown: 1.8,
     burstsPerClick: 1,
     shotGap: 0,
@@ -5101,6 +5184,26 @@ const MAIN_WEAPON_BEHAVIOR = {
       explodeRadius: ARMATA_SPLASH_RADIUS,
       effectScale: 1.4,
     },
+  }),
+  heavy_autocannon: createMainWeaponBehavior({
+    id: 'heavy_autocannon',
+    priority: 4,
+    cooldown: 0.16,
+    burstsPerClick: 1,
+    shotGap: 0.045,
+    burstGap: 0.1,
+    recoilKick: 8,
+    recoilMax: 10,
+    projectile: {
+      type: 'autocannon',
+      speed: RAIL_SPEED * 0.82,
+      life: 1.6,
+      radius: 3,
+      penetration: 1,
+      effectScale: 0.9,
+    },
+    muzzleFx: spawnAutocannonMuzzle,
+    hitFx: spawnAutocannonHitEffect,
   }),
 };
 MAIN_WEAPON_BEHAVIOR.railgun_mk1 = MAIN_WEAPON_BEHAVIOR.default;
@@ -5508,6 +5611,30 @@ function bulletsAndCollisionsStep(dt){
           b.vy = Math.sin(newAng) * speed;
         }
       }
+    } else if(b.type === 'autocannon'){
+      const trailVel = {
+        x: -b.vx * 0.015 + (Math.random() - 0.5) * 28,
+        y: -b.vy * 0.015 + (Math.random() - 0.5) * 28
+      };
+      const color = (Math.random() < 0.45) ? '#ffdca8' : '#ffb86b';
+      spawnParticle(
+        { x: b.x + (Math.random() - 0.5) * 2, y: b.y + (Math.random() - 0.5) * 2 },
+        trailVel,
+        0.18,
+        color,
+        1.1,
+        true
+      );
+      if(Math.random() < 0.35){
+        spawnParticle(
+          { x: b.x, y: b.y },
+          { x: -trailVel.x * 0.4, y: -trailVel.y * 0.4 },
+          0.26,
+          'rgba(90,110,180,0.4)',
+          1.8,
+          false
+        );
+      }
     }
 
     if(b.life <= 0){ bullets.splice(i,1); continue; }
@@ -5563,6 +5690,16 @@ function bulletsAndCollisionsStep(dt){
         b.penetration = (b.penetration !== undefined) ? b.penetration - 1 : (RAIL_PEN - 1);
         if(b.penetration <= 0){ bullets.splice(i,1); }
         continue;
+      } else if(b.type === 'autocannon'){
+        applyDamageToNPC(hitNPC, b.damage, 'autocannon');
+        spawnAutocannonHitEffect(b.x, b.y, b.effectScale || 1.0);
+        if(b.penetration != null){
+          b.penetration -= 1;
+          if(b.penetration <= 0){ bullets.splice(i,1); }
+        } else {
+          bullets.splice(i,1);
+        }
+        continue;
       } else if(b.type === 'siege'){
         applyDamageToNPC(hitNPC, b.damage, 'siege');
         spawnSiegeHitEffect(b.x, b.y, b.effectScale || 1.0);
@@ -5591,6 +5728,8 @@ function bulletsAndCollisionsStep(dt){
             spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
           } else if(b.type === 'rail'){
             spawnRailHitEffect(b.x, b.y, 1.0);
+          } else if(b.type === 'autocannon'){
+            spawnAutocannonHitEffect(b.x, b.y, b.effectScale || 1.0);
           } else {
             spawnExplosionPlasma(b.x, b.y, 1.0);
           }
@@ -5631,6 +5770,8 @@ function bulletsAndCollisionsStep(dt){
           spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
         } else if(b.type === 'rail'){
           spawnRailHitEffect(b.x, b.y, 1.0);
+        } else if(b.type === 'autocannon'){
+          spawnAutocannonHitEffect(b.x, b.y, b.effectScale || 1.0);
         } else if(b.type === 'siege'){
           spawnSiegeHitEffect(b.x, b.y, b.effectScale || 1.0);
         } else {
@@ -5653,6 +5794,8 @@ function bulletsAndCollisionsStep(dt){
           spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
         } else if(b.type === 'rail'){
           spawnRailHitEffect(b.x, b.y, 1.0);
+        } else if(b.type === 'autocannon'){
+          spawnAutocannonHitEffect(b.x, b.y, b.effectScale || 1.0);
         } else {
           spawnDefaultHit(b.x, b.y, 1.0);
         }
