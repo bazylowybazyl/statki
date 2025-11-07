@@ -1946,7 +1946,7 @@ const CAPITAL_SHIP_TEMPLATES = {
       spriteSrc: 'assets/carrier.png',
       spriteScale: 1.05,
       spriteRotation: Math.PI / 2,
-      spriteOffset: { x: 0, y: -24 },
+      spriteOffset: { x: 0, y: 0 },
       spriteLayer: 2,
       spriteEngineGlow: false,
       engineOffsets: [
@@ -2566,19 +2566,25 @@ function spawnCarrierEngineFx(entry){
   const rotation = (npc.angle || 0) + (profile.spriteRotation || 0);
   const speed = Math.hypot(npc.vx || 0, npc.vy || 0);
   const thrust = clamp(speed / Math.max(1, npc.maxSpeed || 1), 0, 1);
-  const color = profile.engineColor || 'rgba(130,200,255,0.9)';
+  if (thrust < 0.05 && speed < 12) return;
+
   const dir = rotate({ x: -1, y: 0 }, rotation);
-  const sizeMul = profile.engineGlowSize || 0.24;
+  const glowScale = Number.isFinite(profile.engineGlowSize) ? profile.engineGlowSize : 0.24;
+  const baseRadius = Math.max(6, npc.radius * glowScale * 0.32);
 
   for (const offset of offsets){
     const local = capitalLocalFromNormalized(offset, dims);
     const worldOff = rotate(local, rotation);
     const pos = { x: npc.x + worldOff.x, y: npc.y + worldOff.y };
+    const intensity = 0.32 + thrust * 0.55;
+    const particleSize = clamp(baseRadius * (0.7 + thrust * 0.9), 6, npc.radius * 0.3);
+    const particleLife = 0.16 + thrust * 0.14;
     const vel = {
-      x: npc.vx - dir.x * (140 + thrust * 260),
-      y: npc.vy - dir.y * (140 + thrust * 260)
+      x: npc.vx - dir.x * (100 + thrust * 220),
+      y: npc.vy - dir.y * (100 + thrust * 220)
     };
-    spawnParticle(pos, vel, 0.24 + thrust * 0.12, color, Math.max(2.6, dims.width * sizeMul), true);
+    const color = `rgba(135,205,255,${intensity})`;
+    spawnParticle(pos, vel, particleLife, color, particleSize, false);
   }
 }
 
@@ -8146,15 +8152,32 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     const spriteScale = Number.isFinite(profile.spriteScale) ? profile.spriteScale : 1;
     const naturalW = spriteInfo.width || img.naturalWidth || 1;
     const naturalH = spriteInfo.height || img.naturalHeight || 1;
-    const aspect = naturalH / naturalW;
-    let drawW = length * spriteScale;
-    let drawH = drawW * aspect;
-    const maxH = width * spriteScale;
-    if (maxH > 0 && drawH > maxH){
-      const adjust = maxH / drawH;
-      drawW *= adjust;
-      drawH = maxH;
+    const rawRotation = Number.isFinite(profile.spriteRotation) ? profile.spriteRotation : 0;
+    const halfPi = Math.PI / 2;
+    const approxSteps = Math.round(rawRotation / halfPi);
+    const alignedToStep = Math.abs(rawRotation - approxSteps * halfPi) < 0.0001;
+    const usesHeightForLength = alignedToStep && (Math.abs(approxSteps) % 2 === 1);
+    const targetLength = length * spriteScale;
+    const targetWidth = width * spriteScale;
+
+    let scale;
+    if (usesHeightForLength){
+      scale = targetLength / Math.max(1, naturalH);
+    } else {
+      scale = targetLength / Math.max(1, naturalW);
     }
+    let drawW = naturalW * scale;
+    let drawH = naturalH * scale;
+
+    if (targetWidth > 0){
+      const crossSize = usesHeightForLength ? drawW : drawH;
+      if (crossSize > targetWidth){
+        const adjust = targetWidth / crossSize;
+        drawW *= adjust;
+        drawH *= adjust;
+      }
+    }
+
     const offset = profile.spriteOffset || { x: 0, y: 0 };
     ctx.drawImage(img, -drawW * 0.5 + offset.x, -drawH * 0.5 + offset.y, drawW, drawH);
   } else {
