@@ -3781,6 +3781,7 @@ const BLUEPRINTS = {
   ships: [
     { id:'scout', name:'Scout', cost:2500, stats:{ hp:0.8, speed:1.3, cargo:0.6 } },
     { id:'frigate', name:'Fregata', cost:4200, stats:{ hp:1.6, speed:0.85, cargo:1.4 } },
+    { id:'battleship', name:'Pancernik', cost:9600, stats:{ hp:2.6, speed:0.7, cargo:2.0 } },
   ],
 };
 
@@ -3913,6 +3914,7 @@ function startMercenaryMission(){
     mercMission.guards.push( spawnStationGuard(station, 'interceptor', i * (Math.PI*2/6)) );
   for (let i = 0; i < 2; i++)
     mercMission.guards.push( spawnStationGuard(station, 'frigate', i * Math.PI) );
+  mercMission.guards.push( spawnStationGuard(station, 'battleship', Math.random() * Math.PI * 2) );
 
   const orbitBase = station.r + 220;
   const baseAngle = Math.random() * Math.PI * 2;
@@ -4655,7 +4657,16 @@ function fighterAI(dt){
   }
 }
 // === PIRATE AI (strzela jak myśliwce) + SPAWN SWARM ===
-function armPirate(n, tier='light'){
+function setPirateCombatAI(n){
+  if(!n) return;
+  if(n.type === 'battleship'){
+    n.ai = dt => pirateBattleshipAI(n, dt);
+  } else {
+    n.ai = dt => pirateAI(n, dt);
+  }
+}
+
+function armPirate(n, tier='light', kind){
   n.friendly = false;
   n.mission  = true;
   n.color    = '#ff5533';
@@ -4663,7 +4674,8 @@ function armPirate(n, tier='light'){
   n.ciwsCd   = 0;
   n.missileCd= 0;
   n.missiles = (tier==='heavy') ? 4 : (tier==='mid' ? 3 : 2);
-  n.ai = function(dt){ pirateAI(n, dt); };
+  if(kind && !n.type) n.type = kind;
+  setPirateCombatAI(n);
   return n;
 }
 
@@ -4741,9 +4753,162 @@ function pirateAI(n, dt){
   }
 }
 
+function firePirateBattleshipBroadside(n, dir, baseVel){
+  const offset = n.broadsideOffset || 24;
+  const spread = n.broadsideSpread || 0.01;
+  const speed = n.broadsideSpeed || (RAIL_SPEED * 0.9);
+  const damage = n.broadsideDamage || 105;
+  const muzzleExtra = Math.max(18, (n.radius || 60) * 0.3);
+  const lateral = { x: -dir.y, y: dir.x };
+  for(const lateralOffset of [-offset, offset]){
+    const muzzle = {
+      x: n.x + dir.x * ((n.radius || 60) + muzzleExtra) + lateral.x * lateralOffset,
+      y: n.y + dir.y * ((n.radius || 60) + muzzleExtra) + lateral.y * lateralOffset
+    };
+    const jitter = (Math.random() - 0.5) * spread;
+    const aimAngle = Math.atan2(dir.y, dir.x) + jitter;
+    const aimDir = { x: Math.cos(aimAngle), y: Math.sin(aimAngle) };
+    bullets.push({
+      x: muzzle.x,
+      y: muzzle.y,
+      vx: aimDir.x * speed + baseVel.x,
+      vy: aimDir.y * speed + baseVel.y,
+      life: 2.4,
+      r: 5,
+      owner: 'npc',
+      damage,
+      type: 'rail',
+      penetration: 3,
+      source: n,
+      spawnGrace: 0.12
+    });
+    spawnRailMuzzle(muzzle, aimDir, baseVel, 1.2);
+  }
+}
+
+function pirateBattleshipAI(n, dt){
+  const drag = Math.exp(-0.82 * dt);
+  n.vx *= drag; n.vy *= drag;
+
+  const st = mercMission && mercMission.station;
+  const dShip = Math.hypot(ship.pos.x - n.x, ship.pos.y - n.y);
+  const dSt   = st ? Math.hypot(st.x - n.x, st.y - n.y) : Infinity;
+  const leashR = st ? (st.r + 3600) : 3600;
+  const desiredRange = n.preferredRange || 1200;
+  const minRange = n.minRange || desiredRange * 0.6;
+
+  n.strafeTimer = (n.strafeTimer || 0) - dt;
+  if(n.strafeTimer <= 0){
+    n.strafeDir = (Math.random() < 0.5 ? -1 : 1);
+    n.strafeTimer = 2.6 + Math.random() * 2.4;
+  }
+
+  let targetPos;
+  if(st && dSt > leashR && dShip > desiredRange * 0.7){
+    targetPos = { x: st.x, y: st.y };
+  } else {
+    const toShip = { x: ship.pos.x - n.x, y: ship.pos.y - n.y };
+    const dist = Math.hypot(toShip.x, toShip.y) || 1;
+    const dirToShip = { x: toShip.x / dist, y: toShip.y / dist };
+    if(dShip < minRange){
+      targetPos = {
+        x: ship.pos.x - dirToShip.x * desiredRange,
+        y: ship.pos.y - dirToShip.y * desiredRange
+      };
+    } else if(dShip > desiredRange * 1.25){
+      targetPos = {
+        x: ship.pos.x + dirToShip.x * desiredRange,
+        y: ship.pos.y + dirToShip.y * desiredRange
+      };
+    } else {
+      const tangent = { x: -dirToShip.y * (n.strafeDir || 1), y: dirToShip.x * (n.strafeDir || 1) };
+      const lead = desiredRange * 0.65;
+      targetPos = {
+        x: ship.pos.x + dirToShip.x * lead + tangent.x * desiredRange * 0.9,
+        y: ship.pos.y + dirToShip.y * lead + tangent.y * desiredRange * 0.9
+      };
+    }
+  }
+
+  const desired = Math.atan2(targetPos.y - n.y, targetPos.x - n.x);
+  const diff = wrapAngle(desired - n.angle);
+  const turn = clamp(diff, -n.turn * dt, n.turn * dt);
+  n.angle = wrapAngle(n.angle + turn);
+
+  n.vx += Math.cos(n.angle) * n.accel * dt;
+  n.vy += Math.sin(n.angle) * n.accel * dt;
+  if(n.strafeDir){
+    const angS = n.angle + n.strafeDir * Math.PI/2;
+    n.vx += Math.cos(angS) * n.accel * 0.0065;
+    n.vy += Math.sin(angS) * n.accel * 0.0065;
+  }
+
+  limitSpeed(n, n.maxSpeed);
+
+  n.ciwsCd = Math.max(0, (n.ciwsCd || 0) - dt);
+  n.missileCd = Math.max(0, (n.missileCd || 0) - dt);
+  n.broadsideCd = Math.max(0, (n.broadsideCd || 0) - dt);
+
+  const dir = { x: Math.cos(n.angle), y: Math.sin(n.angle) };
+  const baseVel = { x: n.vx || 0, y: n.vy || 0 };
+
+  const ciwsRange = n.ciwsRange || 900;
+  if(n.ciwsCd === 0 && dShip < ciwsRange){
+    const m = muzzlePosFor(n, dir, 12);
+    bullets.push({
+      x:m.x, y:m.y,
+      vx: dir.x*CIWS_BULLET_SPEED + baseVel.x,
+      vy: dir.y*CIWS_BULLET_SPEED + baseVel.y,
+      life:1.3, r:2, owner:'npc', damage:CIWS_DAMAGE, type:'ciws',
+      source:n, spawnGrace:0.1
+    });
+    n.ciwsCd = CIWS_FIRE_INTERVAL * 1.4;
+  }
+
+  const missileRange = n.missileRange || 1800;
+  if(n.missiles>0 && n.missileCd===0 && dShip < missileRange){
+    const lead = leadTarget(
+      {x:n.x, y:n.y},
+      baseVel,
+      {x:ship.pos.x, y:ship.pos.y, vx:ship.vel.x, vy:ship.vel.y},
+      SIDE_BULLET_SPEED
+    );
+    const aim = Math.atan2(lead.y - n.y, lead.x - n.x);
+    const rocketDir = { x: Math.cos(aim), y: Math.sin(aim) };
+    const muzzle = muzzlePosFor(n, rocketDir, 18);
+    bullets.push({
+      x:muzzle.x, y:muzzle.y, px:muzzle.x, py:muzzle.y,
+      vx: rocketDir.x*SIDE_BULLET_SPEED + baseVel.x,
+      vy: rocketDir.y*SIDE_BULLET_SPEED + baseVel.y,
+      life:2.8, r:5, owner:'npc', damage:SIDE_BULLET_DAMAGE, penetration:0,
+      type:'rocket', explodeRadius:SIDE_PLASMA_EXPLODE_RADIUS,
+      homingDelay:SIDE_ROCKET_HOMING_DELAY,
+      source:n, spawnGrace:0.12
+    });
+    n.missiles--;
+    n.missileCd = 2.6;
+  }
+
+  const broadsideRange = (n.preferredRange || 1200) * 1.35;
+  if(n.broadsideCd === 0 && dShip < broadsideRange){
+    const lead = leadTarget(
+      {x:n.x, y:n.y},
+      baseVel,
+      {x:ship.pos.x, y:ship.pos.y, vx:ship.vel.x, vy:ship.vel.y},
+      n.broadsideSpeed || (RAIL_SPEED * 0.9)
+    );
+    const aim = Math.atan2(lead.y - n.y, lead.x - n.x);
+    const aimDiff = Math.abs(wrapAngle(aim - n.angle));
+    if(aimDiff < 0.2){
+      firePirateBattleshipBroadside(n, dir, baseVel);
+      n.broadsideCd = n.broadsideInterval || 2.8;
+    }
+  }
+}
+
 function guardAI(n, dt){
   const st = n.home;
-  if(!st){ n.ai = (dt)=>pirateAI(n,dt); return; }
+  if(!st){ setPirateCombatAI(n); return; }
 
   const playerNear = Math.hypot(ship.pos.x - st.x, ship.pos.y - st.y) < 1600;
   const shieldDamaged = st.shield && st.shield.val < st.shield.max;
@@ -4751,7 +4916,7 @@ function guardAI(n, dt){
 
   if(playerNear || underAttack){
     n.guard = false;
-    n.ai = (dt)=>pirateAI(n, dt);
+    setPirateCombatAI(n);
     return;
   }
 
@@ -4765,9 +4930,9 @@ function guardAI(n, dt){
 }
 
 function spawnStationGuard(st, kind, angle){
-  const orbitR = st.r + 180;
-  const pos = { x: st.x + Math.cos(angle)*orbitR, y: st.y + Math.sin(angle)*orbitR };
   const n = spawnPirate(kind, st);
+  const orbitR = st.r + Math.max(180, (n.radius || 0) + 120);
+  const pos = { x: st.x + Math.cos(angle)*orbitR, y: st.y + Math.sin(angle)*orbitR };
   n.x = pos.x; n.y = pos.y; n.vx = 0; n.vy = 0;
   n.guard = true; n.home = st; n.orbitAngle = angle; n.orbitRadius = orbitR;
   n.ai = (dt)=>guardAI(n, dt);
@@ -4782,13 +4947,35 @@ function spawnPirate(kind, station){
   let n;
   if(kind==='interceptor'){
     n = makeNPCBase(pos, { hp: 160, accel: 110,  maxSpeed: 640, turn: 5.2, radius: 22 });
+    n.type = 'interceptor';
     armPirate(n, 'light');
   } else if(kind==='frigate'){
     // nowa fregata (mid)
     n = makeNPCBase(pos, { hp: 650, accel: 80,  maxSpeed: 430, turn: 2.6, radius: 44 });
+    n.type = 'frigate';
     armPirate(n, 'mid');
+  } else if(kind==='battleship'){
+    n = makeNPCBase(pos, { hp: 2600, accel: 55, maxSpeed: 280, turn: 1.35, radius: 82 });
+    n.type = 'battleship';
+    armPirate(n, 'heavy');
+    n.color = '#ff6a50';
+    n.preferredRange = 1300;
+    n.minRange = 760;
+    n.broadsideInterval = 2.8;
+    n.broadsideSpread = 0.012;
+    n.broadsideDamage = 110;
+    n.broadsideSpeed = RAIL_SPEED * 0.9;
+    n.broadsideOffset = 26;
+    n.ciwsRange = 1100;
+    n.missileRange = 2100;
+    n.missiles = 6;
+    n.weapon = { id: 'pirate_battleship_battery', name: 'Bateria magnetyczna' };
+    n.radarColor = 'rgba(255,139,109,0.95)';
+    n.icon = 'pirate-battleship';
+    n.broadsideCd = 0;
   } else { // 'destroyer'
     n = makeNPCBase(pos, { hp: 1200, accel: 60, maxSpeed: 320, turn: 1.8, radius: 60 });
+    n.type = 'destroyer';
     armPirate(n, 'heavy');
   }
   n.type = kind;
@@ -5766,7 +5953,10 @@ function pirateMissionStep(dt){
     const toSpawn = Math.min(batch, swarm.maxAlive - alive);
     for(let i=0;i<toSpawn;i++){
       const roll = Math.random();
-      const kind = (roll<0.5)?'interceptor' : (roll<0.8)?'frigate' : 'destroyer';
+      const kind = (roll<0.45) ? 'interceptor'
+        : (roll<0.75) ? 'frigate'
+        : (roll<0.93) ? 'destroyer'
+        : 'battleship';
       spawnPirate(kind, st);
     }
     swarm.timer = interval;
@@ -6890,10 +7080,11 @@ function drawNPCPretty(ctx, npc, screenPos){
   ctx.rotate(npc.angle);
 
   const friendly = npc.friendly;
-  const hullColor = friendly ? '#91b8ff' : '#ffb5a5';
-  const spineColor = friendly ? '#1e2d4a' : '#3f1e23';
-  const stripeColor = friendly ? 'rgba(140,200,255,0.22)' : 'rgba(255,180,140,0.22)';
-  const detailColor = friendly ? 'rgba(240,248,255,0.85)' : 'rgba(255,235,220,0.85)';
+  const isPirateBattleship = !friendly && npc.type === 'battleship';
+  const hullColor = friendly ? '#91b8ff' : (isPirateBattleship ? '#ff8b6d' : '#ffb5a5');
+  const spineColor = friendly ? '#1e2d4a' : (isPirateBattleship ? '#331316' : '#3f1e23');
+  const stripeColor = friendly ? 'rgba(140,200,255,0.22)' : (isPirateBattleship ? 'rgba(255,132,92,0.32)' : 'rgba(255,180,140,0.22)');
+  const detailColor = friendly ? 'rgba(240,248,255,0.85)' : (isPirateBattleship ? 'rgba(255,228,214,0.9)' : 'rgba(255,235,220,0.85)');
 
   const hullHalfHeight = pixR * 0.75;
   const hullBack = -pixR * 1.05;
@@ -6933,7 +7124,7 @@ function drawNPCPretty(ctx, npc, screenPos){
   ctx.fillRect(pixR * 0.2, -pixR * 0.28, pixR * 0.35, pixR * 0.56);
 
   // dysze silników
-  ctx.fillStyle = friendly ? '#a6d4ff' : '#ffaf92';
+  ctx.fillStyle = friendly ? '#a6d4ff' : (isPirateBattleship ? '#ff8a64' : '#ffaf92');
   ctx.beginPath(); ctx.ellipse(hullBack + panelW * 0.3, -pixR * 0.35, pixR * 0.25, pixR * 0.32, 0, 0, Math.PI * 2); ctx.fill();
   ctx.beginPath(); ctx.ellipse(hullBack + panelW * 0.3, pixR * 0.35, pixR * 0.25, pixR * 0.32, 0, 0, Math.PI * 2); ctx.fill();
 
@@ -6947,6 +7138,28 @@ function drawNPCPretty(ctx, npc, screenPos){
   ctx.lineTo(-pixR * 0.4, hullHalfHeight * 0.9);
   ctx.stroke();
 
+  if(isPirateBattleship){
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = 'rgba(255,120,90,0.45)';
+    ctx.lineWidth = Math.max(1.2, pixR * 0.08);
+    ctx.beginPath();
+    ctx.moveTo(hullBack + pixR * 0.2, -hullHalfHeight * 0.6);
+    ctx.lineTo(nose - pixR * 0.1, -hullHalfHeight * 0.15);
+    ctx.moveTo(hullBack + pixR * 0.2, hullHalfHeight * 0.6);
+    ctx.lineTo(nose - pixR * 0.1, hullHalfHeight * 0.15);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = 'rgba(255,110,80,0.4)';
+    ctx.beginPath();
+    ctx.ellipse(hullBack + panelW * 0.9, 0, pixR * 0.35, hullHalfHeight * 0.7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   // glow z dysz (moc rośnie wraz z prędkością)
   const sp = Math.hypot(npc.vx||0, npc.vy||0);
   const thrust = Math.min(1, sp / (npc.maxSpeed || 1));
@@ -6954,8 +7167,12 @@ function drawNPCPretty(ctx, npc, screenPos){
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     ctx.shadowBlur = 14*camera.zoom;
-    ctx.shadowColor = friendly ? 'rgba(120,200,255,0.9)' : 'rgba(255,160,120,0.95)';
-    ctx.fillStyle   = friendly ? 'rgba(160,210,255,0.7)' : 'rgba(255,180,130,0.8)';
+    const engineShadow = friendly ? 'rgba(120,200,255,0.9)'
+      : (isPirateBattleship ? 'rgba(255,128,96,0.95)' : 'rgba(255,160,120,0.95)');
+    const engineFill = friendly ? 'rgba(160,210,255,0.7)'
+      : (isPirateBattleship ? 'rgba(255,150,110,0.82)' : 'rgba(255,180,130,0.8)');
+    ctx.shadowColor = engineShadow;
+    ctx.fillStyle   = engineFill;
     ctx.beginPath();
     ctx.ellipse(hullBack - pixR * 0.1, 0, pixR * 0.5 * (0.8+thrust), pixR * 1.2 * (0.8+thrust), 0, 0, Math.PI*2);
     ctx.fill();
@@ -7487,9 +7704,10 @@ function render(alpha, frameDt){
     const innerExtra = scan.targetType === 'station' ? 12 : 8;
     const outerR = (base + outerExtra) * camera.zoom;
     const innerR = Math.max(2, (base + innerExtra) * camera.zoom);
+    const enemyColor = obj.radarColor || 'rgba(255,160,122,0.95)';
     const color = scan.targetType === 'station'
       ? 'rgba(143,181,255,0.95)'
-      : (obj.friendly ? 'rgba(96,192,255,0.95)' : 'rgba(255,160,122,0.95)');
+      : (obj.friendly ? 'rgba(96,192,255,0.95)' : enemyColor);
 
     ctx.save();
     ctx.strokeStyle = color;
