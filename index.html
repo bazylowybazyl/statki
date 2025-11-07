@@ -1406,6 +1406,31 @@ resizeOverlay3D();
 // === Ship sprite ===
 const USE_SHIP_SPRITE = true;
 const shipSprite = new Image();
+const capitalShipSpriteCache = {};
+
+function getCapitalShipSprite(src){
+  if(!src) return null;
+  if(!capitalShipSpriteCache[src]){
+    const img = new Image();
+    const entry = capitalShipSpriteCache[src] = {
+      image: img,
+      ready: false,
+      error: false,
+      width: 0,
+      height: 0
+    };
+    img.onload = () => {
+      entry.ready = true;
+      entry.width = img.naturalWidth;
+      entry.height = img.naturalHeight;
+    };
+    img.onerror = () => {
+      entry.error = true;
+    };
+    img.src = src;
+  }
+  return capitalShipSpriteCache[src];
+}
 ship.spriteReady = false;
 shipSprite.onload = () => {
   ship.spriteReady = true;
@@ -1834,7 +1859,9 @@ const CAPITAL_SHIP_TEMPLATES = {
       deckColor: '#243150',
       accentColor: '#9dc5ff',
       engineColor: 'rgba(130,200,255,0.9)',
-      hangarGlow: 'rgba(160,200,255,0.45)'
+      hangarGlow: 'rgba(160,200,255,0.45)',
+      spriteSrc: 'assets/carrier.png',
+      spriteScale: 1.05
     }
   }
 };
@@ -1875,6 +1902,9 @@ function createCapitalShipEntry(templateKey, overrides = {}){
     lengthScale: 3.4,
     widthScale: 1.4
   }, template.profile || {});
+  if (npc.capitalProfile.spriteSrc) {
+    npc.capitalSprite = getCapitalShipSprite(npc.capitalProfile.spriteSrc);
+  }
   npc.shield = {
     val: template.shield,
     max: template.shield,
@@ -7392,6 +7422,11 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
   const accentColor = profile.accentColor || '#9dc5ff';
   const engineColor = profile.engineColor || 'rgba(130,200,255,0.85)';
   const hangarGlow = profile.hangarGlow || 'rgba(160,200,255,0.35)';
+  const spriteInfo = npc.capitalSprite || (profile.spriteSrc ? getCapitalShipSprite(profile.spriteSrc) : null);
+  if (!npc.capitalSprite && spriteInfo) {
+    npc.capitalSprite = spriteInfo;
+  }
+  const useSprite = !!(spriteInfo && spriteInfo.ready && !spriteInfo.error);
 
   ctx.save();
   ctx.globalAlpha = npc.fade ?? 1;
@@ -7401,36 +7436,71 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
   const halfL = length * 0.5;
   const halfW = width * 0.5;
   const radius = Math.max(width * 0.18, 18 * camera.zoom);
+  let drawHullPath = null;
 
-  ctx.fillStyle = hullColor;
-  roundRect(ctx, -halfL, -halfW, length, width, radius);
-  ctx.fill();
+  if (useSprite) {
+    const img = spriteInfo.image;
+    const spriteScale = Number.isFinite(profile.spriteScale) ? profile.spriteScale : 1;
+    const naturalW = spriteInfo.width || img.naturalWidth || 1;
+    const naturalH = spriteInfo.height || img.naturalHeight || 1;
+    const aspect = naturalH / naturalW;
+    let drawW = length * spriteScale;
+    let drawH = drawW * aspect;
+    const maxH = width * spriteScale;
+    if (maxH > 0 && drawH > maxH){
+      const adjust = maxH / drawH;
+      drawW *= adjust;
+      drawH = maxH;
+    }
+    const offset = profile.spriteOffset || { x: 0, y: 0 };
+    ctx.drawImage(img, -drawW * 0.5 + offset.x, -drawH * 0.5 + offset.y, drawW, drawH);
+    if (profile.spriteEngineGlow !== false){
+      ctx.save();
+      ctx.translate(-halfL * 0.92, 0);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = engineColor;
+      ctx.beginPath();
+      ctx.ellipse(-width * 0.02, -width * 0.3, width * 0.16, width * 0.22, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(-width * 0.02, width * 0.3, width * 0.16, width * 0.22, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  } else {
+    ctx.fillStyle = hullColor;
+    drawHullPath = () => {
+      roundRect(ctx, -halfL, -halfW, length, width, radius);
+    };
+    drawHullPath();
+    ctx.fill();
 
-  ctx.fillStyle = deckColor;
-  roundRect(ctx, -halfL * 0.78, -halfW * 0.55, length * 0.82, width * 0.58, radius * 0.7);
-  ctx.fill();
+    ctx.fillStyle = deckColor;
+    roundRect(ctx, -halfL * 0.78, -halfW * 0.55, length * 0.82, width * 0.58, radius * 0.7);
+    ctx.fill();
 
-  ctx.fillStyle = hangarGlow;
-  roundRect(ctx, -length * 0.18, -halfW * 0.45, length * 0.36, width * 0.9, width * 0.18);
-  ctx.fill();
+    ctx.fillStyle = hangarGlow;
+    roundRect(ctx, -length * 0.18, -halfW * 0.45, length * 0.36, width * 0.9, width * 0.18);
+    ctx.fill();
 
-  ctx.fillStyle = accentColor;
-  ctx.fillRect(-halfL * 0.2, -halfW * 0.05, length * 0.4, width * 0.1);
+    ctx.fillStyle = accentColor;
+    ctx.fillRect(-halfL * 0.2, -halfW * 0.05, length * 0.4, width * 0.1);
 
-  ctx.save();
-  ctx.translate(-halfL * 0.92, 0);
-  ctx.fillStyle = '#1a2338';
-  roundRect(ctx, -width * 0.18, -halfW * 0.6, width * 0.28, width * 1.2, width * 0.18);
-  ctx.fill();
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.fillStyle = engineColor;
-  ctx.beginPath();
-  ctx.ellipse(-width * 0.02, -width * 0.3, width * 0.16, width * 0.22, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(-width * 0.02, width * 0.3, width * 0.16, width * 0.22, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
+    ctx.save();
+    ctx.translate(-halfL * 0.92, 0);
+    ctx.fillStyle = '#1a2338';
+    roundRect(ctx, -width * 0.18, -halfW * 0.6, width * 0.28, width * 1.2, width * 0.18);
+    ctx.fill();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = engineColor;
+    ctx.beginPath();
+    ctx.ellipse(-width * 0.02, -width * 0.3, width * 0.16, width * 0.22, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(-width * 0.02, width * 0.3, width * 0.16, width * 0.22, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
 
   const shield = npc.shield;
   if (shield && shield.max > 0 && shield.val > 0){
@@ -7451,8 +7521,12 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     ctx.globalCompositeOperation = 'screen';
     ctx.globalAlpha = clamp(npc.hitFlash * 6, 0, 1);
     ctx.fillStyle = 'rgba(255,190,150,0.8)';
-    roundRect(ctx, -halfL, -halfW, length, width, radius);
-    ctx.fill();
+    if (drawHullPath){
+      drawHullPath();
+      ctx.fill();
+    } else {
+      ctx.fillRect(-halfL, -halfW, halfL * 2, halfW * 2);
+    }
     ctx.restore();
   }
 
