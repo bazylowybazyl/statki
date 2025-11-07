@@ -52,8 +52,18 @@
   .hp-groups { display:grid; gap:12px; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); }
   .hp-group { background:#0b0f1a; border:1px solid #1b2337; border-radius:10px; padding:10px; }
   .hp-group h4 { margin:0 0 6px 0; font-weight:600; }
-  .hp-item { display:flex; justify-content:space-between; align-items:center; padding:6px 8px; border-radius:8px; margin:6px 0; background:#121a2a; }
-  .hp-item button { padding:4px 8px; border:1px solid #2a3a5a; background:#0a1020; border-radius:6px; cursor:pointer; color:#dfe7ff; }
+  .hp-item { display:flex; align-items:center; gap:12px; padding:8px 10px; border-radius:10px; margin:6px 0; background:linear-gradient(145deg,rgba(14,20,36,0.92),rgba(9,13,24,0.88)); box-shadow:0 8px 18px rgba(4,8,20,0.45); }
+  .hp-weapon-info { flex:1; display:flex; align-items:center; gap:10px; min-width:0; }
+  .weapon-icon-wrap { width:46px; height:46px; border-radius:12px; background:rgba(20,28,46,0.95); border:1px solid rgba(74,104,164,0.45); box-shadow:0 10px 18px rgba(6,12,28,0.55); display:flex; align-items:center; justify-content:center; overflow:hidden; flex-shrink:0; }
+  .weapon-icon-wrap img { width:100%; height:100%; object-fit:contain; image-rendering:auto; }
+  .weapon-icon-placeholder { width:46px; height:46px; border-radius:12px; border:1px dashed rgba(88,108,170,0.45); background:rgba(10,16,30,0.8); box-shadow:inset 0 0 12px rgba(24,32,56,0.55); display:flex; align-items:center; justify-content:center; color:#6b7da8; font-size:11px; letter-spacing:0.12em; text-transform:uppercase; }
+  .weapon-icon-placeholder[data-type="main"] { border-color:rgba(58,130,246,0.55); color:#90b4ff; }
+  .weapon-icon-placeholder[data-type="missile"] { border-color:rgba(16,185,129,0.55); color:#6dd9b7; }
+  .weapon-icon-placeholder[data-type="aux"] { border-color:rgba(245,158,11,0.55); color:#f6c26a; }
+  .weapon-icon-placeholder[data-type="hangar"] { border-color:rgba(167,139,250,0.55); color:#cab5ff; }
+  .weapon-icon-placeholder[data-type="special"] { border-color:rgba(239,68,68,0.55); color:#fda4a4; }
+  .weapon-name { flex:1; font-weight:600; color:#dfe7ff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .hp-item button { margin-left:auto; padding:5px 10px; border:1px solid #2a3a5a; background:#0a1020; border-radius:8px; cursor:pointer; color:#dfe7ff; transition:background 0.18s ease,border-color 0.18s ease; }
   .hp-item button:hover{background:#18233c;}
   .hp-main   h4, .hp-main .hp-item   { outline:1px solid #3b82f6; }
   .hp-miss   h4, .hp-miss .hp-item   { outline:1px solid #10b981; }
@@ -191,6 +201,7 @@
   import { initOverlay } from "./src/effects3d/overlay.js";
   import { createRailgunExplosionFactory } from "./src/effects3d/railgunExplosion.js";
   import { createArmataImpactFactory } from "./src/effects3d/armataImpact.js";
+  import { createAutocannonImpactFactory } from "./src/effects3d/autocannonImpact.js";
   import * as Space2DBackground from "./src/lib/space2d/tyroBackground.js";
   import { WarpBlackHole } from "./src/vfx/warpBlackHole.js";
   import { createShipEntity, applyPlayerInput, runShipAI } from "./src/game/shipEntity.js";
@@ -215,6 +226,7 @@
   window.initOverlay3D = initOverlay;
   window.createRailgunExplosionFactory = createRailgunExplosionFactory;
   window.createArmataImpactFactory = createArmataImpactFactory;
+  window.createAutocannonImpactFactory = createAutocannonImpactFactory;
   window.createShipEntity = createShipEntity;
   window.applyPlayerInput = applyPlayerInput;
   window.runShipAI = runShipAI;
@@ -620,6 +632,10 @@ const WEAPONS = {
   laser_pd_mk1: { id:'laser_pd_mk1', type:HP.AUX,     name:'Helios PD Laser', dps:18, energy:3,  ammo:null },
   fighter_bay:  { id:'fighter_bay',  type:HP.HANGAR,  name:'Fighter Bay',   dps:0,  energy:5,  ammo:null },
   super_f:      { id:'super_f',      type:HP.SPECIAL, name:'Super Weapon',  dps:300,energy:20, ammo:null },
+};
+
+const WEAPON_ICON_PATHS = {
+  heavy_autocannon: 'assets/weapons/heavy_autocannon.svg',
 };
 
 // === definicje statków / ram ===
@@ -1324,6 +1340,7 @@ function startOverlay3D() {
   const init = window.initOverlay3D;
   const railFactory = window.createRailgunExplosionFactory;
   const armataFactory = window.createArmataImpactFactory;
+  const autocannonFactory = window.createAutocannonImpactFactory;
   const host = document.getElementById('game-root');
 
   // Musimy mieć: API z modułu + host z DOM + overlayView z tego skryptu
@@ -1335,6 +1352,9 @@ function startOverlay3D() {
   window.makeRailgunExplosion = railFactory(ov.scene);
   if (armataFactory) {
     window.makeArmataImpact = armataFactory(ov.scene);
+  }
+  if (autocannonFactory) {
+    window.makeAutocannonImpact = autocannonFactory(ov.scene);
   }
   resizeOverlay3D();
   return true;
@@ -1367,6 +1387,13 @@ function triggerArmataImpact3D(x, y, size = ship.h * 0.3){
   }
 }
 
+function triggerAutocannonImpact3D(x, y, size = ship.h * 0.2){
+  if (overlay3D && window.makeAutocannonImpact) {
+    const fx = window.makeAutocannonImpact({ x, y, size });
+    overlay3D.spawn(fx);
+  }
+}
+
 // Resize: utrzymuj rozmiar overlayu = okna
 function resizeOverlay3D(){
   overlayView.viewport.w = innerWidth;
@@ -1394,6 +1421,13 @@ shipSprite.onload = () => {
   saveLoadout();
 };
 shipSprite.src = "assets/capital_ship_rect_v1.png"; // <- ścieżka do pliku
+
+const heavyAutocannonSprite = new Image();
+let heavyAutocannonSpriteReady = false;
+heavyAutocannonSprite.onload = () => {
+  heavyAutocannonSpriteReady = true;
+};
+heavyAutocannonSprite.src = "assets/weapons/heavy_autocannon.svg";
 
 // =============== Proceduralne gwiazdy na CAŁEJ MAPIE ===============
 // Generujemy je "na żądanie" w kafelkach 1024×1024 z deterministycznym seedem.
@@ -2286,7 +2320,7 @@ function spawnArmataHitEffect(x, y, scale = 1){
 }
 
 function spawnAutocannonHitEffect(x, y, scale = 1){
-  triggerRailgunExplosion3D(x, y, ship.h * 0.18 * scale);
+  triggerAutocannonImpact3D(x, y, ship.h * 0.18 * scale);
   const sparkCount = Math.round(20 * scale);
   for(let i = 0; i < sparkCount; i++){
     const a = Math.random() * Math.PI * 2;
@@ -3852,9 +3886,18 @@ function renderMechanic(){
   root.innerHTML = Object.entries(groups).map(([type, meta])=>{
     const slots = listByType[type];
     const items = slots.map((hp,idx)=>{
-      const weaponName = hp.mount ? (WEAPONS[hp.mount]?.name || hp.mount) : '— empty —';
+      const weaponId = hp.mount || null;
+      const weaponName = weaponId ? (WEAPONS[weaponId]?.name || weaponId) : '— empty —';
+      const iconPath = weaponId ? WEAPON_ICON_PATHS[weaponId] : null;
+      const placeholderLabel = weaponId ? 'NO ART' : 'EMPTY';
+      const icon = iconPath
+        ? `<span class="weapon-icon-wrap"><img src="${iconPath}" alt="${weaponName}" loading="lazy" /></span>`
+        : `<span class="weapon-icon-placeholder" data-type="${hp.type}">${placeholderLabel}</span>`;
       return `<div class="hp-item">
-        <span>#${idx+1} &nbsp; ${weaponName}</span>
+        <div class="hp-weapon-info">
+          ${icon}
+          <span class="weapon-name">#${idx+1}&nbsp;${weaponName}</span>
+        </div>
         <button data-hp="${hp.id}">Change</button>
       </div>`;
     }).join('');
@@ -5194,6 +5237,7 @@ const MAIN_WEAPON_BEHAVIOR = {
     burstGap: 0.1,
     recoilKick: 8,
     recoilMax: 10,
+    barrelsPerShot: 1,
     projectile: {
       type: 'autocannon',
       speed: RAIL_SPEED * 0.82,
@@ -8236,27 +8280,63 @@ function render(alpha, frameDt){
     const barrelsPerShot = Math.max(1, behavior.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot);
 
     if(barrelsPerShot === 1){
-      const housingW = 20 * spriteScale;
-      const housingH = 30 * spriteScale;
-      const barrelL = Math.max(20 * spriteScale, Math.round(visualH * 0.22));
-      const barrelThickness = 8 * spriteScale;
-      ctx.fillStyle = '#7f8fb7';
-      roundRect(ctx, -housingW/2, -housingH/2, housingW, housingH, 6 * spriteScale); ctx.fill();
-      ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(24,38,68,0.55)'; ctx.stroke();
-      ctx.fillStyle = '#aebce0';
-      roundRect(ctx, -housingW/2 + 3 * spriteScale, -housingH/2 + 4 * spriteScale, housingW - 6 * spriteScale, housingH - 8 * spriteScale, 5 * spriteScale); ctx.fill();
-      ctx.fillStyle = 'rgba(255,180,110,0.8)';
-      roundRect(ctx, -housingW/2 + 2.5 * spriteScale, -2 * spriteScale, housingW * 0.42, 4 * spriteScale, 2 * spriteScale); ctx.fill();
-      ctx.strokeStyle = 'rgba(24,38,68,0.55)';
-      ctx.fillStyle = '#d9dde9';
-      roundRect(ctx, 8 * spriteScale - recoil, -barrelThickness/2, barrelL, barrelThickness, 3 * spriteScale); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#f0b97a';
-      ctx.beginPath();
-      ctx.moveTo(8 * spriteScale - recoil + barrelL, -barrelThickness/2);
-      ctx.lineTo(8 * spriteScale - recoil + barrelL + 6 * spriteScale, 0);
-      ctx.lineTo(8 * spriteScale - recoil + barrelL, barrelThickness/2);
-      ctx.closePath();
-      ctx.fill();
+      const weaponId = loadout?.weapon?.id;
+      if(weaponId === 'heavy_autocannon' && heavyAutocannonSpriteReady){
+        const naturalW = heavyAutocannonSprite.naturalWidth || 180;
+        const naturalH = heavyAutocannonSprite.naturalHeight || 120;
+        const scaleMul = spriteScale * 0.32;
+        const drawW = naturalW * scaleMul;
+        const drawH = naturalH * scaleMul;
+        const pivotOffset = drawW * 0.52;
+        const recoilOffset = recoil * 0.9;
+        ctx.save();
+        ctx.translate(-pivotOffset - recoilOffset, -drawH / 2);
+        ctx.drawImage(heavyAutocannonSprite, 0, 0, drawW, drawH);
+        ctx.restore();
+
+        const glowRadius = drawH * 0.34;
+        const glowLength = drawW * 0.32;
+        ctx.save();
+        ctx.translate(drawW * 0.36 - recoil * 0.55, 0);
+        const gradient = ctx.createRadialGradient(0, 0, glowRadius * 0.2, 0, 0, glowRadius);
+        gradient.addColorStop(0, 'rgba(255,214,160,0.55)');
+        gradient.addColorStop(1, 'rgba(255,166,70,0)');
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, glowLength, glowRadius * 0.55, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        ctx.fillStyle = 'rgba(255,194,120,0.22)';
+        ctx.beginPath();
+        ctx.moveTo(drawW * 0.34 - recoil * 0.4, -drawH * 0.18);
+        ctx.lineTo(drawW * 0.58 - recoil * 0.3, 0);
+        ctx.lineTo(drawW * 0.34 - recoil * 0.4, drawH * 0.18);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        const housingW = 20 * spriteScale;
+        const housingH = 30 * spriteScale;
+        const barrelL = Math.max(20 * spriteScale, Math.round(visualH * 0.22));
+        const barrelThickness = 8 * spriteScale;
+        ctx.fillStyle = '#7f8fb7';
+        roundRect(ctx, -housingW/2, -housingH/2, housingW, housingH, 6 * spriteScale); ctx.fill();
+        ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(24,38,68,0.55)'; ctx.stroke();
+        ctx.fillStyle = '#aebce0';
+        roundRect(ctx, -housingW/2 + 3 * spriteScale, -housingH/2 + 4 * spriteScale, housingW - 6 * spriteScale, housingH - 8 * spriteScale, 5 * spriteScale); ctx.fill();
+        ctx.fillStyle = 'rgba(255,180,110,0.8)';
+        roundRect(ctx, -housingW/2 + 2.5 * spriteScale, -2 * spriteScale, housingW * 0.42, 4 * spriteScale, 2 * spriteScale); ctx.fill();
+        ctx.strokeStyle = 'rgba(24,38,68,0.55)';
+        ctx.fillStyle = '#d9dde9';
+        roundRect(ctx, 8 * spriteScale - recoil, -barrelThickness/2, barrelL, barrelThickness, 3 * spriteScale); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#f0b97a';
+        ctx.beginPath();
+        ctx.moveTo(8 * spriteScale - recoil + barrelL, -barrelThickness/2);
+        ctx.lineTo(8 * spriteScale - recoil + barrelL + 6 * spriteScale, 0);
+        ctx.lineTo(8 * spriteScale - recoil + barrelL, barrelThickness/2);
+        ctx.closePath();
+        ctx.fill();
+      }
     } else {
       ctx.fillStyle = '#9ab7ff'; roundRect(ctx, -baseW/2, -baseH/2, baseW, baseH, 5 * spriteScale); ctx.fill();
       ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(30,50,90,0.45)'; ctx.stroke();
