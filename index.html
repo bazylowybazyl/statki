@@ -10586,7 +10586,7 @@ setTimeout(startGame, 500);
       row.className = 'row p';
       row.innerHTML = `
         <label>${p.name||('Planet '+(p.id??''))}</label>
-        <input data-k="${key}" class="plR" type="range" min="20" max="400" step="1">
+        <input data-k="${key}" class="plR" type="range" min="20" max="10000" step="1">
         <div class="val" id="val_${key}"></div>
       `;
       ui.planetsGroup.appendChild(row);
