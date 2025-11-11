@@ -8734,9 +8734,20 @@ function render(alpha, frameDt){
       const engineTail = ship.visual?.mainEngine?.y ?? (ship.h * 0.5);
       const tailDepthExtra = warpLensParam('tailDepthExtra');
       const warpDepth = engineTail + ship.h * tailDepthExtra;
-      const tailOffset = rotate({ x: 0, y: warpDepth }, ship.angle);
-      const fxPos = { x: ship.pos.x + tailOffset.x, y: ship.pos.y + tailOffset.y };
-      const s = worldToScreen(fxPos.x, fxPos.y, camera);
+      
+      // ==== [POPRAWKA START] ====
+      // Użyj 'interpAngle' (kąt renderowany), a nie 'ship.angle' (kąt fizyczny)
+      const tailOffset = rotate({ x: 0, y: warpDepth }, interpAngle); 
+      
+      // Oblicz pozycję na ekranie manualnie względem środka (W/2, H/2)
+      // Zamiast worldToScreen(ship.pos + offset, camera.pos)
+      // Robimy: (W/2, H/2) + (offset * zoom)
+      // To eliminuje "jitter"
+      const s = {
+        x: W/2 + tailOffset.x * camera.zoom,
+        y: H/2 + tailOffset.y * camera.zoom
+      };
+      // ==== [POPRAWKA KONIEC] ====
 
       const radiusBase = warpLensParam('radiusBase');
       const radiusScale = warpLensParam('radiusScale');
@@ -8807,7 +8818,6 @@ function render(alpha, frameDt){
   hudRenderNav(ship, cam);
   hudRenderDMG(cam);
   hudRenderFloatingBars(ship, cam);
-
   // radar pings
   for(const ping of radarPings){
     const s = worldToScreen(ping.x, ping.y, cam);
