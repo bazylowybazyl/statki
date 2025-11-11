@@ -7429,8 +7429,10 @@ function physicsStep(dt){
       warp.fuel = warp.fuelMax;
     }
   }
-  else if(warp.state==='charging'){
+ else if(warp.state==='charging'){
     const dirToMouse = norm({x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y});
+    warp.dir.x = dirToMouse.x;
+    warp.dir.y = dirToMouse.y;
     const desiredBodyAngle = Math.atan2(dirToMouse.y, dirToMouse.x) + Math.PI/2;
     const kp = 5.5, maxSpin=2.5, accel=8.0;
     const diffB = wrapAngle(desiredBodyAngle - ship.angle);
@@ -8730,24 +8732,17 @@ function render(alpha, frameDt){
 
     const shouldRenderWarpLens = isWarpActive && warpIntensity > 0.001;
     warpBlackHoleFX.setEnabled(shouldRenderWarpLens && !!warpLensSource);
-    if (shouldRenderWarpLens && warpLensSource) {
+ if (shouldRenderWarpLens && warpLensSource) {
       const engineTail = ship.visual?.mainEngine?.y ?? (ship.h * 0.5);
       const tailDepthExtra = warpLensParam('tailDepthExtra');
       const warpDepth = engineTail + ship.h * tailDepthExtra;
       
-      // ==== [POPRAWKA START] ====
-      // Użyj 'interpAngle' (kąt renderowany), a nie 'ship.angle' (kąt fizyczny)
       const tailOffset = rotate({ x: 0, y: warpDepth }, interpAngle); 
       
-      // Oblicz pozycję na ekranie manualnie względem środka (W/2, H/2)
-      // Zamiast worldToScreen(ship.pos + offset, camera.pos)
-      // Robimy: (W/2, H/2) + (offset * zoom)
-      // To eliminuje "jitter"
       const s = {
         x: W/2 + tailOffset.x * camera.zoom,
         y: H/2 + tailOffset.y * camera.zoom
       };
-      // ==== [POPRAWKA KONIEC] ====
 
       const radiusBase = warpLensParam('radiusBase');
       const radiusScale = warpLensParam('radiusScale');
@@ -8767,8 +8762,12 @@ function render(alpha, frameDt){
       const opacity = Math.min(1, Math.max(0, (opacityBase + opacityScale * warpIntensity) * warpIntensity));
 
       const lensForward = { x: warp.dir.x, y: warp.dir.y };
-      // Align the shader's forward vector with the actual travel direction.
-      const lensAngle = Math.atan2(lensForward.y, lensForward.x) - Math.PI / 2;
+      // === POCZĄTEK POPRAWKI 2 ===
+      // Użyj TEGO SAMEGO offsetu kąta co statek (+PI/2),
+      // aby rotacja shadera idealnie pasowała do rotacji statku.
+      const lensAngle = Math.atan2(lensForward.y, lensForward.x) + Math.PI / 2;
+      // === KONIEC POPRAWKI 2 ===
+
       const forwardStretchParam = warpLensParam('forwardStretch');
       const forwardStretchMajor = forwardStretchParam >= 1
         ? forwardStretchParam
