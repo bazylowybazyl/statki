@@ -8732,7 +8732,7 @@ function render(alpha, frameDt){
 
     const shouldRenderWarpLens = isWarpActive && warpIntensity > 0.001;
     warpBlackHoleFX.setEnabled(shouldRenderWarpLens && !!warpLensSource);
-if (shouldRenderWarpLens && warpLensSource) {
+    if (shouldRenderWarpLens && warpLensSource) {
       const engineTail = ship.visual?.mainEngine?.y ?? (ship.h * 0.5);
       const tailDepthExtra = warpLensParam('tailDepthExtra');
       const warpDepth = engineTail + ship.h * tailDepthExtra;
@@ -8765,7 +8765,7 @@ if (shouldRenderWarpLens && warpLensSource) {
       
       // === POCZĄTEK POPRAWKI w index.html ===
       // Kąt shadera (rotation) musi być czystym kątem KIERUNKU LOTU (warp.dir),
-      // a NIE kątem obrotu statku (który ma dodane +PI/2).
+      // a NIE kątem obrotu statku (który ma +PI/2).
       const lensAngle = Math.atan2(lensForward.y, lensForward.x);
       // === KONIEC POPRAWKI w index.html ===
 
