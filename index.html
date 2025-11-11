@@ -1057,8 +1057,7 @@ function hudRenderNav(ship, cam){
 }
 
 function hudRenderFloatingBars(ship, cam){
-  const center = worldToScreen(ship.pos.x, ship.pos.y, cam);
-  const cx = center.x, cy = center.y;
+  const cx = W/2, cy = H/2; 
   const R0 = Math.max(ship.w, ship.h) * camera.zoom * 0.8 + 32;
 
   // BOOST – pokazuj jako poziom paliwa dopalacza
