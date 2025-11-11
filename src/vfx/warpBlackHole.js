@@ -295,7 +295,7 @@ export class WarpBlackHole {
 
       // Odciągamy UV w stronę statku, z dodatkowym falloffem chroniącym przed artefaktami
       float pull = clamp(u_mass / r2, 0.0, 0.45);
-      vec2 uv   = st - dir * pull * lens;
+      vec2 uv   = st + dir * pull * lens;
       uv = clamp(uv, vec2(0.001), vec2(0.999));
 
       if (u_parallaxEnabled > 0.5) {
