@@ -8732,7 +8732,7 @@ function render(alpha, frameDt){
 
     const shouldRenderWarpLens = isWarpActive && warpIntensity > 0.001;
     warpBlackHoleFX.setEnabled(shouldRenderWarpLens && !!warpLensSource);
- if (shouldRenderWarpLens && warpLensSource) {
+if (shouldRenderWarpLens && warpLensSource) {
       const engineTail = ship.visual?.mainEngine?.y ?? (ship.h * 0.5);
       const tailDepthExtra = warpLensParam('tailDepthExtra');
       const warpDepth = engineTail + ship.h * tailDepthExtra;
@@ -8763,13 +8763,18 @@ function render(alpha, frameDt){
 
       const lensForward = { x: warp.dir.x, y: warp.dir.y };
       
-  
+      // === POCZĄTEK POPRAWKI w index.html ===
+      // Kąt shadera (rotation) musi być czystym kątem KIERUNKU LOTU (warp.dir),
+      // a NIE kątem obrotu statku (który ma dodane +PI/2).
       const lensAngle = Math.atan2(lensForward.y, lensForward.x);
+      // === KONIEC POPRAWKI w index.html ===
+
       const forwardStretchParam = warpLensParam('forwardStretch');
       const forwardStretchMajor = forwardStretchParam >= 1
         ? forwardStretchParam
         : 1 + (1 - forwardStretchParam);
       
+      // 'lensStretchForward' to teraz ogólny "współczynnik rozciągnięcia", który wysyłamy do shadera
       const lensStretchFactor = 1 + (forwardStretchMajor - 1) * warpIntensity;
      
 
@@ -8779,15 +8784,14 @@ function render(alpha, frameDt){
         mass,
         radius,
         softness,
-        rotation: lensAngle, // Kąt wektora warp.dir
+        rotation: lensAngle, // Przekazujemy czysty kąt kierunku
         opacity,
-        lensStretchForward: lensStretchFactor // Teraz to jest 'factor' dla rozciągania LATERALNEGO
+        lensStretchForward: lensStretchFactor // Przekazujemy siłę rozciągnięcia
       });
       warpLensShouldDraw = typeof warpBlackHoleFX.hasPendingOutput === 'function'
         ? warpBlackHoleFX.hasPendingOutput()
         : true;
     }
-  }
 
   if (warpLensShouldDraw && warpBlackHoleFX) {
     let outputUpdated = true;
