@@ -175,7 +175,7 @@ export class WarpBlackHole {
     this._syncOutputCanvasSize();
   }
 
-  render({ centerX, centerY, mass = 0.15, radius = 0.25, softness = 0.25, rotation = 0, opacity = 0.85, lensStretchForward = 0.55 }){
+render({ centerX, centerY, mass = 0.15, radius = 0.25, softness = 0.25, rotation = 0, opacity = 0.85, lensStretchForward = 0.55 }){
     if (!this.enabled) return;
     if (!this._srcCanvas) {
       if (!this._warnedNoSource) {
@@ -217,7 +217,6 @@ export class WarpBlackHole {
     if (this.u_rotation) gl.uniform1f(this.u_rotation, rotation);
     if (this.u_opacity) gl.uniform1f(this.u_opacity, opacity);
     
-    // ==== [POPRAWKA START] ====
     if (this.u_lensStretch) {
       const rawForward = Number.isFinite(lensStretchForward) ? lensStretchForward : 1;
       const clampedForward = Math.max(0.01, rawForward);
@@ -225,16 +224,17 @@ export class WarpBlackHole {
         ? clampedForward
         : 1 + (1 - clampedForward);
       
-      // Obliczamy 'stretch' tak jak wcześniej
       const stretchAmount = Math.max(1.05, Math.min(8, forwardMajor)); 
 
-      // Zamieniamy osie. Chcemy rozciągać w bok (lateral), a nie w przód (forward).
-      const lateralScale = stretchAmount; // <-- Rozciągnięcie boczne (oś X shadera), np. 1.45
-      const forwardScale = 1.0;           // <-- Brak rozciągnięcia w przód (oś Y shadera)
+      // === POCZĄTEK POPRAWKI w warpBlackHole.js ===
+      // Musimy rozciągnąć oś X shadera (boki), a nie oś Y (przód).
+      // Przekazujemy (rozciągnięcie X, rozciągnięcie Y)
+      const lateralScale = stretchAmount; // Rozciągnij na boki (oś X shadera)
+      const forwardScale = 1.0;           // Nie rozciągaj do przodu (oś Y shadera)
       
-      gl.uniform2f(this.u_lensStretch, lateralScale, forwardScale); // <-- Wysyła (1.45, 1.0)
+      gl.uniform2f(this.u_lensStretch, lateralScale, forwardScale); // <-- Wysyła (stretchAmount, 1.0)
+      // === KONIEC POPRAWKI w warpBlackHole.js ===
     }
-    // ==== [POPRAWKA KONIEC] ====
     
     gl.uniform1i(this.u_image, 0);
     gl.uniform1f(this.u_parallax, useParallax ? 1 : 0);
@@ -245,7 +245,6 @@ export class WarpBlackHole {
     gl.drawArrays(gl.TRIANGLES, 0, 6);
     this._needsOutputUpdate = true;
   }
-
   // ———— SHADERS ————
   _vs(){ return `
     attribute vec2 a_position;
