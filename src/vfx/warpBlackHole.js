@@ -216,16 +216,26 @@ export class WarpBlackHole {
     gl.uniform1f(this.u_softness, softness);// miękkość brzegów (0..1)
     if (this.u_rotation) gl.uniform1f(this.u_rotation, rotation);
     if (this.u_opacity) gl.uniform1f(this.u_opacity, opacity);
+    
+    // ==== [POPRAWKA START] ====
     if (this.u_lensStretch) {
       const rawForward = Number.isFinite(lensStretchForward) ? lensStretchForward : 1;
       const clampedForward = Math.max(0.01, rawForward);
       const forwardMajor = clampedForward >= 1
         ? clampedForward
         : 1 + (1 - clampedForward);
-      const forwardScale = Math.max(1.05, Math.min(8, forwardMajor));
-      const lateralScale = 1.0;
-      gl.uniform2f(this.u_lensStretch, lateralScale, forwardScale);
+      
+      // Obliczamy 'stretch' tak jak wcześniej
+      const stretchAmount = Math.max(1.05, Math.min(8, forwardMajor)); 
+
+      // Zamieniamy osie. Chcemy rozciągać w bok (lateral), a nie w przód (forward).
+      const lateralScale = stretchAmount; // <-- Rozciągnięcie boczne (oś X shadera), np. 1.45
+      const forwardScale = 1.0;           // <-- Brak rozciągnięcia w przód (oś Y shadera)
+      
+      gl.uniform2f(this.u_lensStretch, lateralScale, forwardScale); // <-- Wysyła (1.45, 1.0)
     }
+    // ==== [POPRAWKA KONIEC] ====
+    
     gl.uniform1i(this.u_image, 0);
     gl.uniform1f(this.u_parallax, useParallax ? 1 : 0);
     gl.uniform2f(this.u_tileSize, tileW, tileH);
@@ -295,7 +305,11 @@ export class WarpBlackHole {
 
       // Odciągamy UV w stronę statku, z dodatkowym falloffem chroniącym przed artefaktami
       float pull = clamp(u_mass / r2, 0.0, 0.45);
+      
+      // ==== [POPRAWKA] ====
+      // Zmieniamy minus (-) na plus (+), aby "wciągać" piksele z zewnątrz, a nie "wypychać" z wewnątrz.
       vec2 uv   = st + dir * pull * lens;
+      
       uv = clamp(uv, vec2(0.001), vec2(0.999));
 
       if (u_parallaxEnabled > 0.5) {
