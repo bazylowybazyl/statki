@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="384" viewBox="0 0 512 384" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="glowB" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <g transform="translate(256,192)">
+    <path d="M 160 0 L -100 -64 L -80 -32 L -170 -20 L -180 -4 L -90 -8 L -110 0 L -90 8 L -180 4 L -170 20 L -80 32 L -100 64 Z"
+          fill="#6EA0FF" stroke="#557fcc" stroke-width="2"/>
+    <rect x="-150" y="-19" rx="16" ry="16" width="260" height="38" fill="rgba(20,20,28,0.62)"/>
+    <polygon points="-70,-28 80,-12 60,4 -88,-12" fill="rgba(40,70,140,0.5)"/>
+    <polygon points="-60,28 88,12 60,-4 -82,12" fill="rgba(40,70,140,0.5)"/>
+    <ellipse cx="24" cy="0" rx="18" ry="20" fill="rgba(255,255,255,0.35)" stroke="rgba(180,200,220,0.7)"/>
+    <g filter="url(#glowB)">
+      <circle cx="-150" cy="-24" r="18" fill="#3c3c46" stroke="#7e7ea0"/>
+      <circle cx="-150" cy="24" r="18" fill="#3c3c46" stroke="#7e7ea0"/>
+      <line x1="-120" y1="-14" x2="96" y2="-2" stroke="#78D0FF" stroke-width="6" stroke-linecap="round"/>
+      <line x1="-120" y1="14" x2="96" y2="2" stroke="#78D0FF" stroke-width="6" stroke-linecap="round"/>
+      <path d="M 120,-30 A 30,30 0 0 1 120,30" stroke="#78D0FF" stroke-width="6" fill="none"/>
+    </g>
+  </g>
+</svg>
