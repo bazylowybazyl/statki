@@ -3171,33 +3171,27 @@ let nextParticleIndex = 0;
 
 
 function pushParticleSafe(p){
-  // Ta funkcja nie jest już potrzebna, ale zostawiamy ją pustą,
-  // na wypadek gdyby inne części kodu ją wołały (jak spawnLaserBeam).
-  // spawnParticle jest teraz główną funkcją.
+  // no-op: pozostawione celowo dla zgodności wstecznej
 }
 
+// --- Nowy spawnParticle: używa puli particlePool ---
 function spawnParticle(pos, vel, life, color, size, flash){
-  const p = particlePool[nextParticleIndex]; // Weź następną cząsteczkę z puli
-  
-  // Ustaw jej właściwości
-  p.pos.x = pos.x;
-  p.pos.y = pos.y;
-  p.vel.x = vel.x;
-  p.vel.y = vel.y;
-  p.life = life;
-  p.age = 0;
-  p.color = color || '#ffb677';
-  p.size = size || 2;
-  p.flash = !!flash;
-  p.active = true; // <-- AKTYWUJ CZĄSTECZKĘ
-  
-  // Przesuń indeks na następne wolne miejsce
+  const p = particlePool[nextParticleIndex];
+
+  // Ustaw dane cząsteczki
+  p.pos.x = pos.x;  p.pos.y = pos.y;
+  p.vel.x = vel.x;  p.vel.y = vel.y;
+  p.life   = life;
+  p.age    = 0;
+  p.color  = color || '#ffb677';
+  p.size   = size  || 2;
+  p.flash  = !!flash;
+  p.active = true;
+
+  // Przesuń wskaźnik w puli (pierścień)
   nextParticleIndex = (nextParticleIndex + 1) % MAX_PARTICLES;
 }
- vel:{...vel}, life, age:0,
-    color: color||'#ffb677', size: size||2, flash: !!flash
-  });
-}
+ 
 function spawnExplosionPlasma(x,y,scale=1){
   const count = Math.round(22 * scale);
   for(let i=0;i<count;i++){
