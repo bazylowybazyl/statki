@@ -296,7 +296,7 @@ let warpLensSource = null;
 const WARP_LENS_DEFAULTS = Object.freeze({
   threshold: 0,
   radiusBase: 0.420,
-  radiusScale: 0.01,
+  radiusScale: 0.15,
   massBase: 0.32,
   massScale: 0.365,
   softness: 0.6,
@@ -508,7 +508,7 @@ function muzzlePosFor(entity, dir, extra = 8){
 }
 
 const fleetNumberFormatter = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 0 });
-const FLEET_UI_REFRESH_MS = 250;
+const FLEET_UI_REFRESH_MS = 1000;
 
 function formatFleetNumber(value){
   if (!Number.isFinite(value)) return '0';
@@ -2989,20 +2989,20 @@ function pickNextStation(startStationId, type){
   return target.id;
 }
 const NPC_TYPES = {
-  'freighter-small':  { radius:10, speed:60, hp:100, color:'#8ab4d6', weapon:null, isCollidable: false },
-  'freighter-medium': { radius:15, speed:55, hp:150, color:'#769cb8', weapon:null, isCollidable: false },
-  'freighter-large':  { radius:25, speed:50, hp:200, color:'#5d829c', weapon:null, isCollidable: false },
-  'freighter-capital':{ radius:48, speed:45, hp:400, color:'#45667d', weapon:null, isCollidable: false },
-  'police':           { radius:24, speed:100, hp:200, color:'#44aaff', weapon:'railgun', isCollidable: true },
+  'freighter-small':  { radius:10, speed:100, hp:100, color:'#8ab4d6', weapon:null, isCollidable: false },
+  'freighter-medium': { radius:15, speed:100, hp:150, color:'#769cb8', weapon:null, isCollidable: false },
+  'freighter-large':  { radius:25, speed:100, hp:200, color:'#5d829c', weapon:null, isCollidable: false },
+  'freighter-capital':{ radius:48, speed:100, hp:400, color:'#45667d', weapon:null, isCollidable: false },
+  'police':           { radius:24, speed:100, hp:200, color:'#44aaff', weapon:'null', isCollidable: true },
   'civilian-small':   { radius:6, speed:100, hp:10, color:'#cccccc', weapon:null, isCollidable: false },
-  'civilian-large':   { radius:12, speed:80, hp:50, color:'#bbbbbb', weapon:null, isCollidable: false },
-  'guard':            { radius:20, speed:95, hp:100, color:'#ff9933', weapon:'gun', isCollidable: true },
-  'mercenary':        { radius:25, speed:95, hp:100, color:'#ff6633', weapon:'gun', isCollidable: true }
+  'civilian-large':   { radius:12, speed:100, hp:50, color:'#bbbbbb', weapon:null, isCollidable: false },
+  'guard':            { radius:20, speed:100, hp:100, color:'#ff9933', weapon:'gun', isCollidable: true },
+  'mercenary':        { radius:25, speed:100, hp:100, color:'#ff6633', weapon:'gun', isCollidable: true }
 };
 function initNPCs(){
   npcs = [];
   let npcId = 0, groupCounter = 0;
-  const desiredCount = 1000;
+  const desiredCount = 300;
   const ESCORT_RADIUS = 80;
   function spawnNPC(type, start, targetId, group, opts = {}){
     if(npcs.length >= desiredCount) return null;
@@ -3095,14 +3095,14 @@ function initNPCs(){
   let attempts = 0;
   while(npcs.length < desiredCount && attempts < desiredCount * 10){
     attempts++;
-    spawnFreighterEscortGroup('freighter-small',0,0,'inner');
-    spawnFreighterEscortGroup('freighter-small',0,0,'outer');
-    spawnFreighterEscortGroup('freighter-medium',0,0,'inner');
-    spawnFreighterEscortGroup('freighter-medium',0,0,'outer');
-    spawnFreighterEscortGroup('freighter-large',0,0,'inner');
-    spawnFreighterEscortGroup('freighter-large',0,0,'outer');
-    spawnFreighterEscortGroup('freighter-capital',0,0,'inner');
-    spawnFreighterEscortGroup('freighter-capital',0,0,'outer');
+    spawnFreighterEscortGroup('freighter-small',1,2,'inner');
+    spawnFreighterEscortGroup('freighter-small',1,2,'outer');
+    spawnFreighterEscortGroup('freighter-medium',1,2,'inner');
+    spawnFreighterEscortGroup('freighter-medium',1,2,'outer');
+    spawnFreighterEscortGroup('freighter-large',1,2,'inner');
+    spawnFreighterEscortGroup('freighter-large',1,2,'outer');
+    spawnFreighterEscortGroup('freighter-capital',1,2,'inner');
+    spawnFreighterEscortGroup('freighter-capital',1,21,'outer');
     spawnCivilianGroup(1,2,'inner');
     spawnCivilianGroup(1,2,'outer');
     spawnCivilianGroup(1,2,'inner');
