@@ -10705,6 +10705,20 @@ setTimeout(startGame, 500);
     return out;
   }
 
+  function getBaseOrbit(){
+    const winOrbit = (typeof window !== 'undefined' && typeof window.BASE_ORBIT === 'number')
+      ? window.BASE_ORBIT
+      : NaN;
+    if (Number.isFinite(winOrbit) && winOrbit > 0) {
+      return winOrbit;
+    }
+    const localOrbit = (typeof BASE_ORBIT === 'number') ? BASE_ORBIT : NaN;
+    if (Number.isFinite(localOrbit) && localOrbit > 0) {
+      return localOrbit;
+    }
+    return NaN;
+  }
+
   function fmtU(worldDist){
     if (typeof worldDist !== 'number' || !Number.isFinite(worldDist)) return '?';
     const abs = Math.abs(worldDist);
@@ -10720,8 +10734,9 @@ setTimeout(startGame, 500);
     return (p.name || p.id || String(p.index) || '').toString().toLowerCase();
   }
   function formatAUValue(worldDist){
-    if (typeof BASE_ORBIT !== 'number' || BASE_ORBIT <= 0) return 0;
-    return worldDist / BASE_ORBIT;
+    const baseOrbit = getBaseOrbit();
+    if (!Number.isFinite(baseOrbit) || baseOrbit <= 0) return 0;
+    return worldDist / baseOrbit;
   }
   function collectAUForExport(){
     const map = {};
@@ -10816,7 +10831,8 @@ setTimeout(startGame, 500);
       const renderVal = (au)=>{
         let num = Number(au);
         if (!Number.isFinite(num)) num = 0;
-        const worldR = num * BASE_ORBIT;
+        const baseOrbit = getBaseOrbit();
+        const worldR = Number.isFinite(baseOrbit) ? num * baseOrbit : NaN;
         if (slot) slot.textContent = `${num.toFixed(2)} AU (${fmtU(worldR)} u)`;
         if (inpVal) inpVal.value = num.toFixed(2);
       };
@@ -10852,13 +10868,14 @@ setTimeout(startGame, 500);
   }
   function applyOrbitOverrides(){
     if (!Array.isArray(window.planets) || !window.SUN) return;
+    const baseOrbit = getBaseOrbit();
     const Sx = +SUN.x||0, Sy = +SUN.y||0;
     const map = DevConfig.planetOrbitAUById || {};
     for (const p of window.planets){
       const k = keyFor(p);
       const au = +map[k];
       if (!(au>0)) continue;
-      const R = au * BASE_ORBIT;
+      const R = Number.isFinite(baseOrbit) ? au * baseOrbit : au;
       const ang = Math.atan2((p.y||0)-Sy, (p.x||0)-Sx);
       p.devOrbitOverrideR = R;
       if ('orbitRadius' in p) p.orbitRadius = R;
@@ -10871,13 +10888,15 @@ setTimeout(startGame, 500);
   }
   function refreshDistancesReadout(){
     if (!Array.isArray(window.planets) || !window.SUN) return;
+    const baseOrbit = getBaseOrbit();
     for (const p of window.planets){
       const k = keyFor(p);
       const slot = document.getElementById('au_val_'+k);
       if (!slot) continue;
       const dWorld = Math.hypot((p.x||0)-SUN.x, (p.y||0)-SUN.y);
       const au = DevConfig.planetOrbitAUById?.[k] ?? formatAUValue(dWorld);
-      slot.textContent = `${(+au).toFixed(2)} AU (${fmtU(au*BASE_ORBIT)} u)`;
+      const distWorld = Number.isFinite(baseOrbit) ? au * baseOrbit : NaN;
+      slot.textContent = `${(+au).toFixed(2)} AU (${fmtU(distWorld)} u)`;
     }
   }
 
