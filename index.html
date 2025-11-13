@@ -1517,6 +1517,16 @@ shipSprite.onload = () => {
 };
 shipSprite.src = "assets/capital_ship_rect_v1.png"; // <- ścieżka do pliku
 
+const npcSpriteFriendly = new Image();
+const npcSpriteHostile = new Image();
+let npcSpritesReady = 0;
+
+npcSpriteFriendly.onload = () => { npcSpritesReady++; };
+npcSpriteHostile.onload = () => { npcSpritesReady++; };
+
+npcSpriteFriendly.src = "assets/npc_friendly.svg";
+npcSpriteHostile.src = "assets/npc_hostile.svg";
+
 const heavyAutocannonSprite = new Image();
 let heavyAutocannonSpriteReady = false;
 heavyAutocannonSprite.onload = () => {
@@ -1890,6 +1900,7 @@ function spawnMissionFighter(pos){
 }
 
 function makeNPCBase(pos, stats){
+  stats = stats || {};
   return {
     x: pos.x, y: pos.y,
     vx: 0, vy: 0,
@@ -1900,6 +1911,7 @@ function makeNPCBase(pos, stats){
     maxSpeed: stats.maxSpeed || 0,
     turn: stats.turn || 0,
     radius: stats.radius || 20,
+    isCollidable: stats.isCollidable !== false,
     dead: false,
     ai: null,
     weapons: {}
@@ -2977,15 +2989,15 @@ function pickNextStation(startStationId, type){
   return target.id;
 }
 const NPC_TYPES = {
-  'freighter-small':  { radius:10, speed:60, hp:100, color:'#8ab4d6', weapon:null },
-  'freighter-medium': { radius:15, speed:55, hp:150, color:'#769cb8', weapon:null },
-  'freighter-large':  { radius:25, speed:50, hp:200, color:'#5d829c', weapon:null },
-  'freighter-capital':{ radius:48, speed:45, hp:400, color:'#45667d', weapon:null },
-  'police':           { radius:24, speed:100, hp:200, color:'#44aaff', weapon:'railgun' },
-  'civilian-small':   { radius:6, speed:100, hp:10, color:'#cccccc', weapon:null },
-  'civilian-large':   { radius:12, speed:80, hp:50, color:'#bbbbbb', weapon:null },
-  'guard':            { radius:20, speed:95, hp:100, color:'#ff9933', weapon:'gun' },
-  'mercenary':        { radius:25, speed:95, hp:100, color:'#ff6633', weapon:'gun' }
+  'freighter-small':  { radius:10, speed:60, hp:100, color:'#8ab4d6', weapon:null, isCollidable: false },
+  'freighter-medium': { radius:15, speed:55, hp:150, color:'#769cb8', weapon:null, isCollidable: false },
+  'freighter-large':  { radius:25, speed:50, hp:200, color:'#5d829c', weapon:null, isCollidable: false },
+  'freighter-capital':{ radius:48, speed:45, hp:400, color:'#45667d', weapon:null, isCollidable: false },
+  'police':           { radius:24, speed:100, hp:200, color:'#44aaff', weapon:'railgun', isCollidable: true },
+  'civilian-small':   { radius:6, speed:100, hp:10, color:'#cccccc', weapon:null, isCollidable: false },
+  'civilian-large':   { radius:12, speed:80, hp:50, color:'#bbbbbb', weapon:null, isCollidable: false },
+  'guard':            { radius:20, speed:95, hp:100, color:'#ff9933', weapon:'gun', isCollidable: true },
+  'mercenary':        { radius:25, speed:95, hp:100, color:'#ff6633', weapon:'gun', isCollidable: true }
 };
 function initNPCs(){
   npcs = [];
@@ -3015,6 +3027,7 @@ function initNPCs(){
       vx, vy, angle:Math.random()*Math.PI*2,
       target: targetId, speed:cfg.speed, radius:cfg.radius,
       hp:cfg.hp, maxHp:cfg.hp, color:cfg.color, weapon:cfg.weapon,
+      isCollidable: cfg.isCollidable !== false,
       dead:false, respawnTimer:0, fade:1, docking:false, lastStation:start.id,
       leader:null, orbitAngle:0, orbitRadius:0,
       warpRoute: route,
@@ -3136,20 +3149,79 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // =============== Bullets & effects ===============
 const bullets = [];
-const particles = [];
+// const particles = []; // USUNIĘTE
 const shockwaves = [];
 const MAX_PARTICLES = 8000;          // twardy sufit (dobry balans)
 const MAX_PARTICLES_DRAW = 4500;     // ile maks. rysujemy na ekranie
 
+// === POCZĄTEK NOWEGO KODU (Pula Cząsteczek) ===
+const particlePool = [];
+let nextParticleIndex = 0;
+(function initParticlePool() { // Samowywołująca się funkcja do zainicjowania puli
+  for (let i = 0; i < MAX_PARTICLES; i++) {
+    particlePool.push({
+      pos: { x: 0, y: 0 },
+      vel: { x: 0, y: 0 },
+      life: 0,
+      age: 0,
+      color: '#fff',
+      size: 1,
+      flash: false,
+      beam: false,
+      start: { x: 0, y: 0 },
+      end: { x: 0, y: 0 },
+      width: 0,
+      alpha: 1,
+      fadeWithLife: true,
+      glowColor: null,
+      colorOuter: null,
+      colorInner: null,
+      glowBlur: 0,
+      outerWidthMul: 1,
+      innerWidthMul: 1,
+      active: false // Flaga 'aktywności' jest kluczowa
+    });
+  }
+})();
+// === KONIEC NOWEGO KODU ===
+
 function pushParticleSafe(p){
-  if (particles.length < MAX_PARTICLES) particles.push(p);
+  // Ta funkcja nie jest już potrzebna, ale zostawiamy ją pustą,
+  // na wypadek gdyby inne części kodu ją wołały (jak spawnLaserBeam).
+  // spawnParticle jest teraz główną funkcją.
 }
 
 function spawnParticle(pos, vel, life, color, size, flash){
-  pushParticleSafe({
-    pos:{...pos}, vel:{...vel}, life, age:0,
-    color: color||'#ffb677', size: size||2, flash: !!flash
-  });
+  const p = particlePool[nextParticleIndex]; // Weź następną cząsteczkę z puli
+
+  // Ustaw jej właściwości
+  p.pos.x = pos.x;
+  p.pos.y = pos.y;
+  p.vel.x = vel.x;
+  p.vel.y = vel.y;
+  p.life = life;
+  p.age = 0;
+  p.color = color || '#ffb677';
+  p.size = size || 2;
+  p.flash = !!flash;
+  p.beam = false;
+  p.start.x = 0;
+  p.start.y = 0;
+  p.end.x = 0;
+  p.end.y = 0;
+  p.width = 0;
+  p.alpha = 1;
+  p.fadeWithLife = true;
+  p.colorOuter = null;
+  p.colorInner = null;
+  p.glowColor = null;
+  p.glowBlur = 0;
+  p.outerWidthMul = 1;
+  p.innerWidthMul = 1;
+  p.active = true; // <-- AKTYWUJ CZĄSTECZKĘ
+
+  // Przesuń indeks na następne wolne miejsce
+  nextParticleIndex = (nextParticleIndex + 1) % MAX_PARTICLES;
 }
 function spawnExplosionPlasma(x,y,scale=1){
   const count = Math.round(22 * scale);
@@ -5120,22 +5192,32 @@ function renderMissionJournal(){
 }
 
 function spawnLaserBeam(start, end, width, opts={}){
-  pushParticleSafe({
-    beam:true,
-    start:{...start},
-    end:{...end},
-    width,
-    age:0,
-    life: (opts && opts.life != null) ? opts.life : 0.12,
-    colorOuter: opts?.colorOuter,
-    colorInner: opts?.colorInner,
-    glowColor: opts?.glowColor,
-    glowBlur: opts?.glowBlur,
-    outerWidthMul: opts?.outerWidthMul,
-    innerWidthMul: opts?.innerWidthMul,
-    alpha: opts?.alpha,
-    fadeWithLife: opts?.fadeWithLife
-  });
+  const p = particlePool[nextParticleIndex];
+  p.pos.x = start.x;
+  p.pos.y = start.y;
+  p.vel.x = 0;
+  p.vel.y = 0;
+  p.life = (opts && opts.life != null) ? opts.life : 0.12;
+  p.age = 0;
+  p.flash = false;
+  p.beam = true;
+  p.start.x = start.x;
+  p.start.y = start.y;
+  p.end.x = end.x;
+  p.end.y = end.y;
+  p.width = width;
+  p.alpha = opts?.alpha ?? 1;
+  p.fadeWithLife = (opts && Object.prototype.hasOwnProperty.call(opts, 'fadeWithLife')) ? opts.fadeWithLife : undefined;
+  p.colorOuter = opts?.colorOuter ?? null;
+  p.colorInner = opts?.colorInner ?? null;
+  p.glowColor = opts?.glowColor ?? null;
+  p.glowBlur = opts?.glowBlur ?? 0;
+  p.outerWidthMul = opts?.outerWidthMul ?? 1;
+  p.innerWidthMul = opts?.innerWidthMul ?? 1;
+  p.size = 0;
+  p.color = '#fff';
+  p.active = true;
+  nextParticleIndex = (nextParticleIndex + 1) % MAX_PARTICLES;
 }
 
 // =============== Input ===============
@@ -6565,7 +6647,7 @@ function bulletsAndCollisionsStep(dt){
     // hit NPC (z pominięciem własnego źródła w czasie grace)
     let hitNPC = null;
     for (const npc of npcs){
-      if (npc.dead) continue;
+      if (npc.dead || (npc.isCollidable === false && b.owner === 'player')) continue;
       if (b.owner === 'player' && npc.friendly) continue;
       if (b.source && b.source === npc && b.age < (b.spawnGrace || 0)) continue;
       const d = Math.hypot(npc.x - b.x, npc.y - b.y);
@@ -6729,12 +6811,18 @@ function bulletsAndCollisionsStep(dt){
   }
 
   // particles
-  for(let i=particles.length-1;i>=0;i--){
-    const p = particles[i];
-    p.age += dt; if(p.age >= p.life){ particles.splice(i,1); continue; }
-    if(p.beam) continue;
+  for (const p of particlePool) { // Iteruj po całej puli
+    if (!p.active) continue; // Pomiń nieaktywne
+
+    p.age += dt;
+    if (p.age >= p.life) {
+      p.active = false; // <-- Deaktywuj zamiast usuwać (splice)
+      continue;
+    }
+
+    if (p.beam) continue;
     p.vel.x *= 0.98; p.vel.y *= 0.98; p.vel.y += 8*dt;
-    p.pos.x += p.vel.x*dt; p.pos.y += p.vel.y*dt;
+    p.pos.x += p.vel.x * dt; p.pos.y += p.vel.y * dt;
   }
 }
 
@@ -8139,126 +8227,66 @@ function drawRangeRuler(ctx, cam){
   ctx.restore();
 }
 
-function drawNPCPretty(ctx, npc, screenPos){
+function drawNPCPretty(ctx, npc, screenPos) {
   const pixR = npc.radius * camera.zoom;
-  if (npc.isCapitalShip && npc.capitalProfile){
+
+  if (npc.isCapitalShip && npc.capitalProfile) {
     drawCapitalShipSprite(ctx, npc, screenPos, pixR);
     return;
   }
-  if (pixR < 9) {
+
+  // Wybierz odpowiedni sprite
+  const sprite = npc.friendly ? npcSpriteFriendly : npcSpriteHostile;
+
+  // Jeśli sprity się jeszcze nie załadowały, narysuj prosty kształt awaryjny
+  if (!sprite || !sprite.complete || sprite.naturalWidth === 0) {
     ctx.save();
     ctx.globalAlpha = npc.fade ?? 1;
     ctx.translate(screenPos.x, screenPos.y);
     ctx.rotate(npc.angle);
-    // „shuttle”: klin + 2 silniczki
     ctx.fillStyle = npc.friendly ? '#bfd8ff' : '#ffc7bd';
     ctx.beginPath();
     ctx.moveTo( pixR, 0);
     ctx.lineTo(-pixR*0.7, -pixR*0.6);
     ctx.lineTo(-pixR*0.7,  pixR*0.6);
     ctx.closePath(); ctx.fill();
-    // dysze
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.fillStyle = npc.friendly ? 'rgba(150,200,255,0.9)' : 'rgba(255,160,120,0.9)';
-    ctx.beginPath(); ctx.ellipse(-pixR*0.7, -pixR*0.25, 2, 3, 0, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(-pixR*0.7,  pixR*0.25, 2, 3, 0, 0, Math.PI*2); ctx.fill();
     ctx.restore();
     return;
   }
+
+  // Oblicz docelowy rozmiar na ekranie
+  // Te wartości bazują na SVG (viewBox="-40 -30 80 60")
+  const drawWidth = pixR * 2.66; // (Szerokość 80 / promień ~30)
+  const drawHeight = pixR * 2.0; // (Wysokość 60 / promień ~30)
 
   ctx.save();
   ctx.globalAlpha = npc.fade ?? 1;
   ctx.translate(screenPos.x, screenPos.y);
   ctx.rotate(npc.angle);
 
-  const friendly = npc.friendly;
-  const hullColor = friendly ? '#91b8ff' : '#ffb5a5';
-  const spineColor = friendly ? '#1e2d4a' : '#3f1e23';
-  const stripeColor = friendly ? 'rgba(140,200,255,0.22)' : 'rgba(255,180,140,0.22)';
-  const detailColor = friendly ? 'rgba(240,248,255,0.85)' : 'rgba(255,235,220,0.85)';
-
-  const hullHalfHeight = pixR * 0.75;
-  const hullBack = -pixR * 1.05;
-  const nose = pixR * 1.1;
-
-  const drawHullPath = () => {
-    ctx.beginPath();
-    ctx.moveTo(nose, 0);
-    ctx.lineTo(hullBack, -hullHalfHeight);
-    ctx.lineTo(hullBack, hullHalfHeight);
-    ctx.closePath();
-  };
-
-  ctx.fillStyle = hullColor;
-  drawHullPath();
-  ctx.fill();
-
-  ctx.lineWidth = Math.max(1, pixR * 0.08);
-  ctx.strokeStyle = friendly ? 'rgba(70,110,170,0.4)' : 'rgba(170,90,70,0.4)';
-  drawHullPath();
-  ctx.stroke();
-
-  // centralny „kręgosłup” statku
-  const spineW = pixR * 0.9;
-  const spineH = hullHalfHeight * 1.6;
-  ctx.fillStyle = spineColor;
-  ctx.fillRect(-spineW * 0.5, -spineH * 0.5, spineW, spineH);
-
-  // boczne panele
-  const panelW = pixR * 0.45;
-  ctx.fillStyle = stripeColor;
-  ctx.fillRect(hullBack, -spineH * 0.5, panelW, spineH);
-  ctx.fillRect(hullBack + panelW * 1.3, -spineH * 0.55, panelW, spineH * 1.1);
-
-  // kabina / mostek
-  ctx.fillStyle = detailColor;
-  ctx.fillRect(pixR * 0.2, -pixR * 0.28, pixR * 0.35, pixR * 0.56);
-
-  // dysze silników
-  ctx.fillStyle = friendly ? '#a6d4ff' : '#ffaf92';
-  ctx.beginPath(); ctx.ellipse(hullBack + panelW * 0.3, -pixR * 0.35, pixR * 0.25, pixR * 0.32, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(hullBack + panelW * 0.3, pixR * 0.35, pixR * 0.25, pixR * 0.32, 0, 0, Math.PI * 2); ctx.fill();
-
-  // linie detali
-  ctx.strokeStyle = friendly ? 'rgba(200,230,255,0.25)' : 'rgba(255,210,190,0.25)';
-  ctx.lineWidth = Math.max(1, pixR * 0.05);
-  ctx.beginPath();
-  ctx.moveTo(-pixR * 0.4, -hullHalfHeight * 0.9);
-  ctx.lineTo(pixR * 0.35, -hullHalfHeight * 0.2);
-  ctx.lineTo(pixR * 0.35, hullHalfHeight * 0.2);
-  ctx.lineTo(-pixR * 0.4, hullHalfHeight * 0.9);
-  ctx.stroke();
-
-  // glow z dysz (moc rośnie wraz z prędkością)
-  const sp = Math.hypot(npc.vx||0, npc.vy||0);
-  const thrust = Math.min(1, sp / (npc.maxSpeed || 1));
-  if (thrust > 0.05){
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.shadowBlur = 14*camera.zoom;
-    ctx.shadowColor = friendly ? 'rgba(120,200,255,0.9)' : 'rgba(255,160,120,0.95)';
-    ctx.fillStyle   = friendly ? 'rgba(160,210,255,0.7)' : 'rgba(255,180,130,0.8)';
-    ctx.beginPath();
-    ctx.ellipse(hullBack - pixR * 0.1, 0, pixR * 0.5 * (0.8+thrust), pixR * 1.2 * (0.8+thrust), 0, 0, Math.PI*2);
-    ctx.fill();
-    ctx.restore();
-  }
+  // Narysuj sprite! (To jest super szybkie)
+  ctx.drawImage(sprite, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
 
   // „hit-flash” (ekranowa poświata)
-  if (npc.hitFlash > 0){
+  if (npc.hitFlash > 0) {
     ctx.globalCompositeOperation = 'screen';
     ctx.globalAlpha = npc.hitFlash;
-    ctx.fillStyle = friendly ? '#cfe8ff' : '#ffd8d0';
-    drawHullPath();
-    ctx.fill();
+    ctx.fillStyle = npc.friendly ? '#cfe8ff' : '#ffd8d0';
+    ctx.fillRect(-drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = npc.fade ?? 1;
   }
 
-  // pasek HP
-  const hpw = (npc.hp / npc.maxHp) * (npc.radius*2*camera.zoom);
-  ctx.fillStyle = '#ff6b6b';
-  ctx.fillRect(-npc.radius*camera.zoom, -npc.radius*camera.zoom - 8*camera.zoom, hpw, 4*camera.zoom);
+  // Pasek HP (też tani)
+  const hpFrac = npc.maxHp ? (npc.hp / npc.maxHp) : 1;
+  if (hpFrac < 1.0) {
+    const hpBarWidth = Math.max(pixR * 1.5, 20);
+    const hpY = -drawHeight / 2 - Math.max(8, 8 * camera.zoom);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(-hpBarWidth/2, hpY, hpBarWidth, 4 * camera.zoom);
+    ctx.fillStyle = hpFrac > 0.5 ? '#60a5fa' : (hpFrac > 0.2 ? '#f59e0b' : '#ef4444');
+    ctx.fillRect(-hpBarWidth/2, hpY, hpBarWidth * hpFrac, 4 * camera.zoom);
+  }
 
   ctx.restore();
 }
@@ -8576,8 +8604,8 @@ function render(alpha, frameDt){
   }
 
   // Laser beams
-  for(const p of particles){
-    if(!p.beam) continue;
+  for(const p of particlePool){
+    if(!p.active || !p.beam) continue;
     const s1 = worldToScreen(p.start.x, p.start.y, cam);
     const s2 = worldToScreen(p.end.x, p.end.y, cam);
     const alphaFactor = clamp(1 - p.age/Math.max(p.life, 0.0001), 0, 1);
@@ -8689,9 +8717,9 @@ function render(alpha, frameDt){
   // Particles (za statkiem) — zwykłe
   {
     let drawn = 0;
-    for (let i = particles.length - 1; i >= 0 && drawn < MAX_PARTICLES_DRAW; i--){
-      const p = particles[i];
-      if (p.flash || p.beam) continue;
+    for (const p of particlePool) {
+      if (!p.active || p.flash || p.beam) continue;
+      if (drawn >= MAX_PARTICLES_DRAW) break;
       drawn++;
       const s = worldToScreen(p.pos.x, p.pos.y, cam);
       const t = clamp(1 - p.age/p.life, 0, 1);
@@ -9400,9 +9428,9 @@ function render(alpha, frameDt){
   // Particles typu "flash" na samym wierzchu
   {
     let drawn = 0;
-    for (let i = particles.length - 1; i >= 0 && drawn < MAX_PARTICLES_DRAW; i--){
-      const p = particles[i];
-      if (!p.flash) continue;
+    for (const p of particlePool) {
+      if (!p.active || !p.flash) continue;
+      if (drawn >= MAX_PARTICLES_DRAW) break;
       drawn++;
       const s = worldToScreen(p.pos.x, p.pos.y, cam);
       const t = clamp(1 - p.age/p.life, 0, 1);
