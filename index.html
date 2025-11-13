@@ -2985,15 +2985,15 @@ function pickNextStation(startStationId, type){
   return target.id;
 }
 const NPC_TYPES = {
-  'freighter-small':  { radius:10, speed:60, hp:100, color:'#8ab4d6', weapon:null,  isCollidable: false, }},
-  'freighter-medium': { radius:15, speed:55, hp:150, color:'#769cb8', weapon:null,  isCollidable: false, }},
-  'freighter-large':  { radius:25, speed:50, hp:200, color:'#5d829c', weapon:null,  isCollidable: false, }},
-  'freighter-capital':{ radius:48, speed:45, hp:400, color:'#45667d', weapon:null,  isCollidable: false, }},
-  'police':           { radius:24, speed:100, hp:200, color:'#44aaff', weapon:'railgun',  isCollidable: true, }},
-  'civilian-small':   { radius:6, speed:100, hp:10, color:'#cccccc', weapon:null,  isCollidable: false, }},
-  'civilian-large':   { radius:12, speed:80, hp:50, color:'#bbbbbb', weapon:null,  isCollidable: false, }},
-  'guard':            { radius:20, speed:95, hp:100, color:'#ff9933', weapon:'gun',  isCollidable: true, }},
-  'mercenary':        { radius:25, speed:95, hp:100, color:'#ff6633', weapon:'gun',  isCollidable: true, }}
+  'freighter-small':  { radius:10, speed:60, hp:100, color:'#8ab4d6', weapon:null,  isCollidable: false, },
+  'freighter-medium': { radius:15, speed:55, hp:150, color:'#769cb8', weapon:null,  isCollidable: false, },
+  'freighter-large':  { radius:25, speed:50, hp:200, color:'#5d829c', weapon:null,  isCollidable: false, },
+  'freighter-capital':{ radius:48, speed:45, hp:400, color:'#45667d', weapon:null,  isCollidable: false, },
+  'police':           { radius:24, speed:100, hp:200, color:'#44aaff', weapon:'railgun',  isCollidable: true, },
+  'civilian-small':   { radius:6, speed:100, hp:10, color:'#cccccc', weapon:null,  isCollidable: false, },
+  'civilian-large':   { radius:12, speed:80, hp:50, color:'#bbbbbb', weapon:null,  isCollidable: false, },
+  'guard':            { radius:20, speed:95, hp:100, color:'#ff9933', weapon:'gun',  isCollidable: true, },
+  'mercenary':        { radius:25, speed:95, hp:100, color:'#ff6633', weapon:'gun',  isCollidable: true, }
 };
 function initNPCs(){
   npcs = [];
@@ -10522,6 +10522,8 @@ setTimeout(startGame, 500);
     if (rebuildTimer) cancelAnimationFrame(rebuildTimer);
     rebuildTimer = requestAnimationFrame(()=> {
       // aktualizujemy struktury gry na podstawie DevConfig
+      const Sun = window.SUN;
+      if (!Sun) return;
       const numericSun2D = Number.isFinite(DevConfig.sunR2D) ? DevConfig.sunR2D : SUN.r;
       const appliedSun2D = Math.max(1, Math.round(numericSun2D || 0));
       SUN.r = appliedSun2D;
