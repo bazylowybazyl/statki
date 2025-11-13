@@ -11063,14 +11063,13 @@ function wireDevTools(){
 
   // Upewnij się, że panel można włączyć na starcie (dev wygoda)
   // ui.root.style.display = 'block';
-}
-
-  if (document.readyState === 'loading') {
-    window.addEventListener('DOMContentLoaded', wireDevTools);
-  } else {
-    wireDevTools();
-  }
 })();
+
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', wireDevTools);
+} else {
+  wireDevTools();
+}
   </script>
 
 <script>
