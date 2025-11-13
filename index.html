@@ -8702,7 +8702,7 @@ function render(alpha, frameDt){
     for (const p of particlePool) { // <-- ZMIANA
       if (!p.active || p.flash || p.beam) continue; // <-- ZMIANA
       if (drawn >= MAX_PARTICLES_DRAW) break; // <-- ZMIANA
- Efekt dopalacza
+ // Efekt dopalacza
   const boostAlpha = (boost.effectDuration > 0)
     ? clamp(boost.effectTime / boost.effectDuration, 0, 1)
     : 0;
