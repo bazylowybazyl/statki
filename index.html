@@ -8790,7 +8790,7 @@ function render(alpha, frameDt){
       const opacity = Math.min(1, Math.max(0, (opacityBase + opacityScale * warpIntensity) * warpIntensity));
 
       const lensForward = { x: warp.dir.x, y: warp.dir.y };
-      const lensAngle = interpAngle - Math.PI / 2;
+      const lensAngle = performance.now() * 0.002;
       const forwardStretchParam = warpLensParam('forwardStretch');
       const forwardStretchMajor = forwardStretchParam >= 1
         ? forwardStretchParam
