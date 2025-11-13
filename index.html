@@ -1900,6 +1900,7 @@ function spawnMissionFighter(pos){
 }
 
 function makeNPCBase(pos, stats){
+  stats = stats || {};
   return {
     x: pos.x, y: pos.y,
     vx: 0, vy: 0,
@@ -1910,6 +1911,7 @@ function makeNPCBase(pos, stats){
     maxSpeed: stats.maxSpeed || 0,
     turn: stats.turn || 0,
     radius: stats.radius || 20,
+    isCollidable: stats.isCollidable !== false,
     dead: false,
     ai: null,
     weapons: {}
@@ -6645,7 +6647,7 @@ function bulletsAndCollisionsStep(dt){
     // hit NPC (z pominięciem własnego źródła w czasie grace)
     let hitNPC = null;
     for (const npc of npcs){
-      if (npc.dead || !npc.isCollidable) continue;
+      if (npc.dead || npc.isCollidable === false) continue;
       if (b.owner === 'player' && npc.friendly) continue;
       if (b.source && b.source === npc && b.age < (b.spawnGrace || 0)) continue;
       const d = Math.hypot(npc.x - b.x, npc.y - b.y);
