@@ -9832,7 +9832,7 @@ function startGame(){
 }
 setTimeout(startGame, 500);
 
-(function wireDevTools(){
+function wireDevTools(){
   const saveLS = () => { window.__devtoolsSaveLS?.(); };
   const elUnlimited = document.getElementById('dt-unlimited-warp');
   const elRuler     = document.getElementById('dt-show-ruler');
@@ -11046,7 +11046,13 @@ setTimeout(startGame, 500);
 
   // Upewnij się, że panel można włączyć na starcie (dev wygoda)
   // ui.root.style.display = 'block';
-})();
+}
+
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', wireDevTools);
+} else {
+  wireDevTools();
+}
 </script>
 
 <script>
