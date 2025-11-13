@@ -10990,204 +10990,150 @@ setTimeout(startGame, 500);
 </script>
 
 <script>
-  // === DevTools: API + handler skali stacji 3D ===
-  (function(){
-    const DEFAULT_STATION3D_SCALE = (
-      typeof window.DEFAULT_STATION_3D_SCALE === 'number' && window.DEFAULT_STATION_3D_SCALE > 0
-    ) ? window.DEFAULT_STATION_3D_SCALE : 2.70;
+/* === DevTools: API + handler skali stacji 3D (pełny, samowystarczalny) === */
+(function(){
+  // Fallbacki (bezpieczne, krótkie — nie nadpisują istniejących)
+  const Dev       = (window.Dev       = window.Dev       || {});
+  const DevTuning = (window.DevTuning = window.DevTuning || {});
+  const DevFlags  = (window.DevFlags  = window.DevFlags  || {});
+  const DevConfig = (window.DevConfig = window.DevConfig || {});
 
-    // API dostępne globalnie — zapisuje skalę w dwóch miejscach, aby
-    // 1) logika 3D miała natychmiastową wartość, 2) devtools mógł ją odczytać.
-    if (!window.__setStation3DScale) {
-      window.__setStation3DScale = (v) => {
-        const raw = Number(v);
-        const fallback = DEFAULT_STATION3D_SCALE;
-        const n = (Number.isFinite(raw) && raw > 0) ? raw : fallback;
-        window.Dev       = window.Dev       || {};
-        window.DevTuning = window.DevTuning || {};
-        window.Dev.station3DScale           = n;
-        window.DevTuning.pirateStationScale = n;
-        const cfg = window.DevConfig;
-        if (cfg && typeof cfg === 'object') cfg.station3DScale = n;
-        try { localStorage.setItem('station3DScale', String(n)); } catch {}
-      };
+  const DEFAULT_STATION_3D_SCALE =
+    (typeof window.DEFAULT_STATION_3D_SCALE === 'number' && window.DEFAULT_STATION_3D_SCALE > 0)
+      ? window.DEFAULT_STATION_3D_SCALE
+      : 2.70;
+
+  // Globalne API do ustawiania skali stacji 3D (używane również w innych miejscach)
+  if (!window.__setStation3DScale) {
+    window.__setStation3DScale = (v) => {
+      const n = (Number.isFinite(+v) && +v > 0) ? +v : DEFAULT_STATION_3D_SCALE;
+      Dev.station3DScale           = n;
+      DevTuning.pirateStationScale = n; // trzymamy spójnie
+      if (typeof DevConfig === 'object') DevConfig.station3DScale = n;
+      try { localStorage.setItem('station3DScale', String(n)); } catch {}
+    };
+  }
+
+  // Uchwyty do elementów UI
+  const elScale              = document.getElementById('pirScale');
+  const elScaleVal           = document.getElementById('pirScaleVal');
+  const elStation3DScale     = document.getElementById('station3DScale');
+  const elStation3DScaleVal  = document.getElementById('station3DScaleVal');
+  const elPlanet3D           = document.getElementById('dt-use-planet-stations');
+  const elPir3D              = document.getElementById('dt-use-3d-pirate');
+
+  // Upewnij się, że startowe wartości istnieją
+  if (typeof DevTuning.pirateStationScale !== 'number') {
+    DevTuning.pirateStationScale =
+      (typeof DevConfig.pirateScale === 'number') ? DevConfig.pirateScale
+      : (typeof window.DEFAULT_STATION_SCALE === 'number') ? window.DEFAULT_STATION_SCALE
+      : 6;
+  }
+  if (typeof Dev.station3DScale !== 'number') {
+    Dev.station3DScale =
+      (typeof DevConfig.station3DScale === 'number' && DevConfig.station3DScale > 0)
+        ? DevConfig.station3DScale
+        : DEFAULT_STATION_3D_SCALE;
+  }
+
+  // ——— Handlery ———
+  const applyScale = () => {
+    if (!elScale) return;
+    let v = Number(elScale.value);
+    if (!Number.isFinite(v)) v = DevTuning.pirateStationScale;
+    v = Math.max(0.4, Math.min(12, v));
+    elScale.value = String(v);
+    DevTuning.pirateStationScale = v;
+    DevConfig.pirateScale = v;
+    if (elScaleVal) elScaleVal.textContent = '×' + v.toFixed(2);
+    try { localStorage.setItem('devConfig', JSON.stringify(DevConfig)); } catch {}
+  };
+
+  const applyStation3DScale = (inputValue) => {
+    const parsed = Number(inputValue);
+    const value = (Number.isFinite(parsed) && parsed > 0) ? parsed : DEFAULT_STATION_3D_SCALE;
+
+    DevTuning.pirateStationScale = value; // utrzymujemy zgodność
+    Dev.station3DScale = value;
+    if (window.DevConfig) window.DevConfig.station3DScale = value;
+
+    if (window.USE_STATION_3D && typeof window.__setStation3DScale === 'function') {
+      __setStation3DScale(value);
     }
+    if (elStation3DScaleVal) elStation3DScaleVal.textContent = '×' + value.toFixed(2);
 
-    // Podpięcie suwaka i wyświetlacza wartości (×1.00, ×1.25 itd.)
-    const s  = document.getElementById('station3DScale');
-    const sv = document.getElementById('station3DScaleVal');
-    if (s) {
-      // inicjalizacja z LS (opcjonalnie)
-      const saved = Number(localStorage.getItem('station3DScale'));
-      if (Number.isFinite(saved) && saved > 0) {
-        s.value = String(saved);
-        if (sv) sv.textContent = '×' + saved.toFixed(2);
-        window.__setStation3DScale(saved);
-      } else {
-        const def = DEFAULT_STATION3D_SCALE;
-        s.value = String(def);
-        if (sv) sv.textContent = '×' + def.toFixed(2);
-        window.__setStation3DScale(def);
+    // Dla zgodności z innym UI (jeśli gdzieś jest drugi suwak)
+    const legacy = document.getElementById('station3DScale');
+    const legacyVal = document.getElementById('station3DScaleVal');
+    if (legacy) legacy.value = String(value);
+    if (legacyVal) legacyVal.textContent = '×' + value.toFixed(2);
+
+    if (typeof window.__devtoolsSaveLS === 'function') window.__devtoolsSaveLS();
+    if (typeof window.__devtoolsReflectToCfg === 'function') window.__devtoolsReflectToCfg();
+  };
+
+  // ——— Inicjalizacja pól z istniejącej konfiguracji ———
+  if (elScale) {
+    if (!Number.isFinite(+elScale.value)) elScale.value = String(DevTuning.pirateStationScale);
+    applyScale();
+    elScale.addEventListener('input', applyScale);
+    elScale.addEventListener('change', applyScale);
+  } else if (elScaleVal) {
+    elScaleVal.textContent = '×' + DevTuning.pirateStationScale.toFixed(2);
+  }
+
+  if (elStation3DScale) {
+    const initialRaw =
+      (Number.isFinite(DevConfig.station3DScale) && DevConfig.station3DScale) ||
+      (Number.isFinite(+elStation3DScale.value) ? +elStation3DScale.value : NaN) ||
+      (Number.isFinite(+localStorage.getItem('station3DScale')) ? +localStorage.getItem('station3DScale') : NaN);
+    const initial = (Number.isFinite(initialRaw) && initialRaw > 0) ? initialRaw : DEFAULT_STATION_3D_SCALE;
+    elStation3DScale.value = String(initial);
+    applyStation3DScale(initial);
+    if (typeof window.scheduleRebuild3D === 'function') window.scheduleRebuild3D();
+
+    elStation3DScale.addEventListener('input',  e => applyStation3DScale(e.target.value));
+    elStation3DScale.addEventListener('change', e => applyStation3DScale(e.target.value));
+  } else if (elStation3DScaleVal) {
+    elStation3DScaleVal.textContent = '×' + (Dev.station3DScale || DEFAULT_STATION_3D_SCALE).toFixed(2);
+  }
+
+  if (elPlanet3D) {
+    const stored = (typeof DevFlags.usePlanetStations3D === 'boolean')
+      ? DevFlags.usePlanetStations3D
+      : (window.USE_PLANET_STATIONS_3D !== false);
+    const enabled = stored !== false;
+    DevFlags.usePlanetStations3D = enabled;
+    window.USE_PLANET_STATIONS_3D = enabled;
+    elPlanet3D.checked = enabled;
+    elPlanet3D.addEventListener('change', (e) => {
+      const value = !!e.target.checked;
+      DevFlags.usePlanetStations3D = value;
+      window.USE_PLANET_STATIONS_3D = value;
+      if (Array.isArray(window.stations) && typeof window.updateStations3D === 'function') {
+        window.updateStations3D(window.stations);
       }
+      if (typeof window.__devtoolsSaveLS === 'function') window.__devtoolsSaveLS();
+    });
+  }
 
-      s.addEventListener('input', () => {
-        const v = +s.value;
-        window.__setStation3DScale(v);
-        if (sv) sv.textContent = '×' + v.toFixed(2);
-        if (window.DevConfig && typeof window.DevConfig === 'object') {
-          window.DevConfig.station3DScale = v;
-        }
-        window.__devtoolsSaveLS?.();
-        window.__devtoolsReflectToCfg?.();
-      });
+  if (elPir3D){
+    if (typeof DevFlags.use3DPirateStation === 'boolean') {
+      window.USE_STATION_3D = DevFlags.use3DPirateStation;
     }
-  })();
-
-  (function setupPerStationScales(){
-    const root = document.getElementById('dt-stations-per-scale');
-    if (!root) return;
-
-    if (!window.DevConfig) window.DevConfig = {};
-    if (!window.DevConfig.stationScaleById || typeof window.DevConfig.stationScaleById !== 'object') {
-      window.DevConfig.stationScaleById = {};
-    }
-
-    function currentStations() {
-      if (Array.isArray(window.stations) && window.stations.length) return window.stations;
-      if (Array.isArray(window.planets)) {
-        return window.planets.map((pl) => ({ id: pl.id || pl.name || '', planet: pl }));
+    elPir3D.checked = (window.USE_STATION_3D !== false);
+    elPir3D.addEventListener('change', e=>{
+      DevFlags.use3DPirateStation = !!e.target.checked;
+      window.USE_STATION_3D = !!e.target.checked;
+      if (window.USE_STATION_3D && window.__setStation3DScale && typeof Dev.station3DScale === 'number') {
+        __setStation3DScale(Dev.station3DScale);
       }
-      return [];
-    }
-
-    function makeRow(st) {
-      const id = String(st?.id || st?.planet?.id || st?.planet?.name || '').toLowerCase();
-      if (!id) return null;
-
-      const map = typeof window.getStationScales === 'function' ? window.getStationScales() : null;
-      const rawInitial = (window.DevConfig.stationScaleById && window.DevConfig.stationScaleById[id])
-        ?? (map ? map[id] : undefined)
-        ?? 1;
-      const initial = Number(rawInitial) || 1;
-
-      const wrap = document.createElement('div');
-      wrap.className = 'dt-row';
-      wrap.style.alignItems = 'center';
-
-      const label = document.createElement('div');
-      label.className = 'dt-col';
-      label.style.minWidth = '120px';
-      label.textContent = id[0].toUpperCase() + id.slice(1);
-
-      const col = document.createElement('div');
-      col.className = 'dt-col';
-      col.style.flex = '1';
-
-      const range = document.createElement('input');
-      range.type = 'range';
-      range.min = '0.2';
-      range.max = '5';
-      range.step = '0.01';
-      range.value = String(initial);
-      range.id = `dt-scale-station-${id}`;
-
-      const val = document.createElement('span');
-      val.style.marginLeft = '8px';
-      val.textContent = initial.toFixed(2);
-
-      const num = document.createElement('input');
-      num.type = 'number';
-      num.min = '0.2';
-      num.max = '5';
-      num.step = '0.01';
-      num.value = String(initial);
-      num.id = `dt-scale-station-${id}-num`;
-      num.style.width = '72px';
-      num.style.marginLeft = '8px';
-
-      const apply = (vRaw) => {
-        let v = Number(vRaw);
-        if (!Number.isFinite(v)) v = 1;
-        v = Math.max(0.2, Math.min(5, v));
-        if (!window.DevConfig || typeof window.DevConfig !== 'object') window.DevConfig = {};
-        if (!window.DevConfig.stationScaleById || typeof window.DevConfig.stationScaleById !== 'object') {
-          window.DevConfig.stationScaleById = {};
-        }
-        window.DevConfig.stationScaleById[id] = v;
-        range.value = String(v);
-        num.value = String(v);
-        val.textContent = v.toFixed(2);
-        if (typeof window.setStationScale === 'function') window.setStationScale(id, v);
-        window.__devtoolsSaveLS?.();
-      };
-
-      range.addEventListener('input', () => apply(range.value));
-      num.addEventListener('input', () => apply(num.value));
-      num.addEventListener('change', () => apply(num.value));
-      num.addEventListener('keyup', (e) => { if (e.key === 'Enter') apply(num.value); });
-
-      col.appendChild(range);
-      col.appendChild(num);
-      col.appendChild(val);
-      wrap.appendChild(label);
-      wrap.appendChild(col);
-      return wrap;
-    }
-
-    function rebuild() {
-      root.innerHTML = '';
-      const list = currentStations();
-      const seen = new Set();
-      for (const st of list) {
-        const row = makeRow(st);
-        if (!row) continue;
-        const input = row.querySelector('input[type="range"]');
-        const key = input ? input.id : null;
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        root.appendChild(row);
-      }
-    }
-
-    const btnReset = document.getElementById('dt-reset-station-scales');
-    if (btnReset) {
-      btnReset.addEventListener('click', () => {
-        if (!window.DevConfig) window.DevConfig = {};
-        window.DevConfig.stationScaleById = {};
-        window.__devtoolsSaveLS?.();
-        if (typeof window.__saveDevLS === 'function') window.__saveDevLS();
-        rebuild();
-        if (Array.isArray(window.stations) && typeof window.updateStations3D === 'function') {
-          window.updateStations3D(window.stations);
-        }
-      });
-    }
-
-    rebuild();
-    let tries = 0;
-    const t = setInterval(() => {
-      tries++;
-      const count = root.querySelectorAll('input[type="range"]').length;
-      const stationCount = Array.isArray(window.stations) ? window.stations.length : 0;
-      if (stationCount > count || (count === 0 && tries < 120)) {
-        rebuild();
-      }
-      if (tries >= 120) clearInterval(t);
-    }, 500);
-
-    if (typeof window.__saveDevLS !== 'function') {
-      window.__saveDevLS = function __saveDevLSFallback(){
-        try {
-          const data = { DevFlags: window.DevFlags, DevTuning: window.DevTuning, DevConfig: window.DevConfig };
-          localStorage.setItem('#__dev', JSON.stringify(data));
-        } catch (err) {
-          console.warn('DevTools: failed to persist station scales', err);
-        }
-      };
-    }
-
-  })();
+      if (typeof window.__devtoolsSaveLS === 'function') window.__devtoolsSaveLS();
+    });
+  }
+})();
 </script>
+
 
 </body>
 </html>
