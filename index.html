@@ -10236,7 +10236,8 @@ setTimeout(startGame, 500);
     if (!(k in window.DevFlags)) window.DevFlags[k] = __devtoolsDefaults[k];
   }
   const DevFlags = window.DevFlags; // lokalny skrót do TEGO SAMEGO obiektu
-
+  const Dev       = (window.Dev       = window.Dev       || {});
+  const DevTuning = (window.DevTuning = window.DevTuning || {});
   const DEFAULT_PIRATE_SCALE = (
     typeof window !== 'undefined' && typeof window.DEFAULT_STATION_SCALE === 'number'
   ) ? window.DEFAULT_STATION_SCALE : 6;
@@ -10642,21 +10643,7 @@ setTimeout(startGame, 500);
   // W drawStation*(...) gdzie skalujesz sprite/canvas po st.r — zamień na:
   //   const R = st.r * (st.style==='pirate' || st.name?.toLowerCase().includes('pir') ? DevConfig.pirateScale : 1);
   // Jeśli jest osobna funkcja wyliczająca promień — użyj jej (patrz Krok 4: „diff”).
-/ === SAFETY FALLBACKS — muszą być zdefiniowane zanim cokolwiek ich użyje (loadLS/reflectToUI/listeners) ===
-window.Dev       = window.Dev       || {};
-window.DevTuning = window.DevTuning || {};
-window.DevFlags  = window.DevFlags  || {};
-window.DevConfig = window.DevConfig || {};
 
-// Minimalne domyślne wartości, żeby UI i reflectToUI() nie wybuchły
-if (typeof window.DevConfig.planetScaleAll    !== 'number') window.DevConfig.planetScaleAll    = (typeof window.DEFAULT_PLANET_SCALE      === 'number' ? window.DEFAULT_PLANET_SCALE      : 1);
-if (typeof window.DevConfig.pirateScale       !== 'number') window.DevConfig.pirateScale       = (typeof window.DEFAULT_STATION_SCALE     === 'number' ? window.DEFAULT_STATION_SCALE     : 6);
-if (typeof window.DevConfig.station3DScale    !== 'number') window.DevConfig.station3DScale    = (typeof window.DEFAULT_STATION_3D_SCALE  === 'number' ? window.DEFAULT_STATION_3D_SCALE  : 2.70);
-if (typeof window.DevConfig.stationSpriteSize !== 'number') window.DevConfig.stationSpriteSize = 1024;
-
-// Spójność pomiędzy Dev i DevTuning, żeby reflectToUI() miał dane
-if (typeof window.Dev.station3DScale !== 'number')            window.Dev.station3DScale            = window.DevConfig.station3DScale;
-if (typeof window.DevTuning.pirateStationScale !== 'number')  window.DevTuning.pirateStationScale  = window.DevConfig.pirateScale;
   // ---- UI init ------------------------------------------------------------
   function buildPlanetsUI(){
     if (!ui.planetsGroup) return;
