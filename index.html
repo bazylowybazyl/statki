@@ -9935,40 +9935,41 @@ function wireDevTools(){
     elStation3DScaleVal.textContent = DevTuning.pirateStationScale.toFixed(2);
   }
 
-  if (elPlanet3D) {
-    const stored = typeof DevFlags.usePlanetStations3D === 'boolean'
-      ? DevFlags.usePlanetStations3D
-      : window.USE_PLANET_STATIONS_3D !== false;
-    const enabled = stored !== false;
-    DevFlags.usePlanetStations3D = enabled;
-    window.USE_PLANET_STATIONS_3D = enabled;
-    elPlanet3D.checked = enabled;
-    elPlanet3D.addEventListener('change', (e) => {
-      const value = !!e.target.checked;
-      DevFlags.usePlanetStations3D = value;
-      window.USE_PLANET_STATIONS_3D = value;
-      if (Array.isArray(window.stations) && typeof window.updateStations3D === 'function') {
-        window.updateStations3D(window.stations);
-      }
-      saveLS();
-    });
-  }
-
-  if (elPir3D){
-    if (typeof DevFlags.use3DPirateStation === 'boolean') {
-      window.USE_STATION_3D = DevFlags.use3DPirateStation;
+    if (elPlanet3D) {
+      const stored = typeof DevFlags.usePlanetStations3D === 'boolean'
+        ? DevFlags.usePlanetStations3D
+        : window.USE_PLANET_STATIONS_3D !== false;
+      const enabled = stored !== false;
+      DevFlags.usePlanetStations3D = enabled;
+      window.USE_PLANET_STATIONS_3D = enabled;
+      elPlanet3D.checked = enabled;
+      elPlanet3D.addEventListener('change', (e) => {
+        const value = !!e.target.checked;
+        DevFlags.usePlanetStations3D = value;
+        window.USE_PLANET_STATIONS_3D = value;
+        if (Array.isArray(window.stations) && typeof window.updateStations3D === 'function') {
+          window.updateStations3D(window.stations);
+        }
+        saveLS();
+      });
     }
-    elPir3D.checked = window.USE_STATION_3D !== false;
-    elPir3D.addEventListener('change', e=>{
-      if (!window.DevFlags) window.DevFlags = {};
-      DevFlags.use3DPirateStation = e.target.checked;
-      window.USE_STATION_3D = e.target.checked;
-      if (window.USE_STATION_3D && window.__setStation3DScale && typeof Dev.station3DScale === 'number') {
-        __setStation3DScale(Dev.station3DScale);
+
+    if (elPir3D){
+      if (typeof DevFlags.use3DPirateStation === 'boolean') {
+        window.USE_STATION_3D = DevFlags.use3DPirateStation;
       }
-    });
+      elPir3D.checked = window.USE_STATION_3D !== false;
+      elPir3D.addEventListener('change', e=>{
+        if (!window.DevFlags) window.DevFlags = {};
+        DevFlags.use3DPirateStation = e.target.checked;
+        window.USE_STATION_3D = e.target.checked;
+        if (window.USE_STATION_3D && window.__setStation3DScale && typeof Dev.station3DScale === 'number') {
+          __setStation3DScale(Dev.station3DScale);
+        }
+      });
+    }
   }
-</script>
+  </script>
 
 <!-- === DEVTOOLS (F10) =================================================== -->
 <style>
@@ -11064,12 +11065,13 @@ function wireDevTools(){
   // ui.root.style.display = 'block';
 }
 
-if (document.readyState === 'loading') {
-  window.addEventListener('DOMContentLoaded', wireDevTools);
-} else {
-  wireDevTools();
-}
-</script>
+  if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', wireDevTools);
+  } else {
+    wireDevTools();
+  }
+})();
+  </script>
 
 <script>
   // === DevTools: API + handler skali stacji 3D ===
