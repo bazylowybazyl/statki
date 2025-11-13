@@ -3194,7 +3194,7 @@ function spawnParticle(pos, vel, life, color, size, flash){
   // Przesuń indeks na następne wolne miejsce
   nextParticleIndex = (nextParticleIndex + 1) % MAX_PARTICLES;
 }
-, vel:{...vel}, life, age:0,
+ vel:{...vel}, life, age:0,
     color: color||'#ffb677', size: size||2, flash: !!flash
   });
 }
