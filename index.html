@@ -9832,14 +9832,14 @@ function startGame(){
 }
 setTimeout(startGame, 500);
 
-(function wireDevTools(){
+function wireDevTools(){
   const saveLS = () => { window.__devtoolsSaveLS?.(); };
-  const elUnlimited = document.getElementById('dt-unlimited-warp');
-  const elRuler     = document.getElementById('dt-show-ruler');
-  const elScale     = document.getElementById('dt-pirate-scale');
-  const elScaleVal  = document.getElementById('dt-pirate-scale-value');
-  const elStation3DScale = document.getElementById('dt-station3d-scale');
-  const elStation3DScaleVal = document.getElementById('dt-station3d-scale-value');
+  const elUnlimited = document.getElementById('dt-unlimited-warp') || document.getElementById('toggleUnlimitedWarp');
+  const elRuler     = document.getElementById('dt-show-ruler') || document.getElementById('toggleRuler');
+  const elScale     = document.getElementById('dt-pirate-scale') || document.getElementById('pirScale');
+  const elScaleVal  = document.getElementById('dt-pirate-scale-value') || document.getElementById('pirScaleVal');
+  const elStation3DScale = document.getElementById('dt-station3d-scale') || document.getElementById('station3DScale');
+  const elStation3DScaleVal = document.getElementById('dt-station3d-scale-value') || document.getElementById('station3DScaleVal');
   const elPlanet3D  = document.getElementById('dt-use-planet-stations');
   const elPir3D     = document.getElementById('dt-use-3d-pirate');
   const elSunDir    = document.getElementById('dt-show-sundir');
@@ -9975,7 +9975,6 @@ setTimeout(startGame, 500);
       }
     });
   }
-})();
 </script>
 
 <!-- === DEVTOOLS (F10) =================================================== -->
@@ -10244,26 +10243,42 @@ setTimeout(startGame, 500);
 
   // ---- Elementy UI --------------------------------------------------------
   const el = (id)=>document.getElementById(id);
-  const ui = {
-    root: el('devtools'),
-    sunR2D: el('sunR2D'), sunR2DVal: el('sunR2DVal'),
-    sunR3D: el('sunR3D'), sunR3DVal: el('sunR3DVal'),
-    planetScaleAll: el('planetScaleAll'), planetScaleAllVal: el('planetScaleAllVal'),
-    pirScale: el('pirScale'), pirScaleVal: el('pirScaleVal'),
-    station3DScale: el('station3DScale'), station3DScaleVal: el('station3DScaleVal'),
-    stationSpritePx: el('stationSpritePx'),
-    stationsFramesGroup: el('stationsFramesGroup'),
-    planetsGroup: el('planetsGroup'),
-    distancesGroup: el('distancesGroup'),
-    cbRuler: el('toggleRuler'),
-    cbUnlimited: el('toggleUnlimitedWarp'),
-    cbSunDir: el('dt-show-sundir'),
-    cbShake: el('dt-disable-shake'),
-    cbPlanetStations3D: el('dt-use-planet-stations'),
-    cbPirate3D: el('dt-use-3d-pirate'),
-    btnCopy: el('btnCopy'), btnReset: el('btnReset'),
-    cfgOut: el('cfgOut')
+  const ui = {};
+  const uiIds = {
+    root: 'devtools',
+    sunR2D: 'sunR2D',
+    sunR2DVal: 'sunR2DVal',
+    sunR3D: 'sunR3D',
+    sunR3DVal: 'sunR3DVal',
+    planetScaleAll: 'planetScaleAll',
+    planetScaleAllVal: 'planetScaleAllVal',
+    pirScale: 'pirScale',
+    pirScaleVal: 'pirScaleVal',
+    station3DScale: 'station3DScale',
+    station3DScaleVal: 'station3DScaleVal',
+    stationSpritePx: 'stationSpritePx',
+    stationsFramesGroup: 'stationsFramesGroup',
+    planetsGroup: 'planetsGroup',
+    distancesGroup: 'distancesGroup',
+    cbRuler: 'toggleRuler',
+    cbUnlimited: 'toggleUnlimitedWarp',
+    cbSunDir: 'dt-show-sundir',
+    cbShake: 'dt-disable-shake',
+    cbPlanetStations3D: 'dt-use-planet-stations',
+    cbPirate3D: 'dt-use-3d-pirate',
+    btnCopy: 'btnCopy',
+    btnReset: 'btnReset',
+    cfgOut: 'cfgOut'
   };
+
+  function refreshUIRefs(){
+    for (const [key, id] of Object.entries(uiIds)) {
+      ui[key] = el(id);
+    }
+  }
+
+  refreshUIRefs();
+  window.__refreshDevUIRefs = refreshUIRefs;
 
   const warpLensUI = {
     threshold: { slider: el('warpLensThreshold'), number: el('warpLensThresholdNum'), label: el('warpLensThresholdVal'), decimals: 2 },
@@ -10593,9 +10608,11 @@ setTimeout(startGame, 500);
 
   // ---- UI init ------------------------------------------------------------
   function buildPlanetsUI(){
-    if (!ui.planetsGroup) return;
+    refreshUIRefs();
+    const root = ui.planetsGroup;
+    if (!root) return;
     // wyczyść stare
-    ui.planetsGroup.querySelectorAll('.row.p').forEach(n=>n.remove());
+    root.querySelectorAll('.row.p').forEach(n=>n.remove());
 
     const planetList = Array.isArray(window.planets) ? window.planets : null;
     if (!planetList || planetList.length === 0){
@@ -10622,10 +10639,10 @@ setTimeout(startGame, 500);
         <input data-k="${key}" class="plR" type="range" min="20" max="10000" step="1">
         <div class="val" id="val_${key}"></div>
       `;
-      ui.planetsGroup.appendChild(row);
+      root.appendChild(row);
     }
     // podpinki
-    ui.planetsGroup.querySelectorAll('input.plR').forEach(inp=>{
+    root.querySelectorAll('input.plR').forEach(inp=>{
       const k = inp.dataset.k;
       inp.value = DevConfig.planetRById[k] ?? 100;
       el('val_'+k).textContent = inp.value;
@@ -10638,6 +10655,7 @@ setTimeout(startGame, 500);
   }
 
   function reflectToUI(){
+    refreshUIRefs();
     DevConfig.pirateScale = DevTuning.pirateStationScale;
     DevConfig.station3DScale = Dev.station3DScale;
     if (ui.sunR2D) {
@@ -10749,6 +10767,7 @@ setTimeout(startGame, 500);
     return map;
   }
   function buildStationFramesUI() {
+    refreshUIRefs();
     const root = ui.stationsFramesGroup;
     if (!root) return;
     root.querySelectorAll('.row.sf').forEach(n => n.remove());
@@ -10800,8 +10819,10 @@ setTimeout(startGame, 500);
     }
   }
   function buildDistancesUI(){
-    if (!ui.distancesGroup) return;
-    ui.distancesGroup.querySelectorAll('.row.dist').forEach(n => n.remove());
+    refreshUIRefs();
+    const root = ui.distancesGroup;
+    if (!root) return;
+    root.querySelectorAll('.row.dist').forEach(n => n.remove());
     if (!Array.isArray(window.planets) || !window.SUN) return;
     for (const p of window.planets){
       const k = keyFor(p);
@@ -10815,7 +10836,7 @@ setTimeout(startGame, 500);
         <input data-k="${k}" class="plAUVal" type="number" min="0" max="60" step="0.01" style="width:72px; margin:0 6px;">
         <div class="val" id="au_val_${k}" style="min-width:160px; text-align:right; font-variant-numeric: tabular-nums;"></div>
       `;
-      ui.distancesGroup.appendChild(row);
+      root.appendChild(row);
       const inp = row.querySelector('input.plAU');
       const inpVal = row.querySelector('input.plAUVal');
       if (!DevConfig.planetOrbitAUById) DevConfig.planetOrbitAUById = {};
@@ -11020,6 +11041,8 @@ setTimeout(startGame, 500);
     DevConfig.planetOrbitAUById = {};
   }
 
+  refreshUIRefs();
+
   // Planety (R)
   buildPlanetsUI();
 
@@ -11046,7 +11069,13 @@ setTimeout(startGame, 500);
 
   // Upewnij się, że panel można włączyć na starcie (dev wygoda)
   // ui.root.style.display = 'block';
-})();
+}
+
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', wireDevTools);
+} else {
+  wireDevTools();
+}
 </script>
 
 <script>
