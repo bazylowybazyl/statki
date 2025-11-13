@@ -8187,182 +8187,92 @@ function drawRangeRuler(ctx, cam){
 }
 
 function drawNPCPretty(ctx, npc, screenPos) {
-  // Wybierz odpowiedni sprite
-  const sprite = npc.friendly ? npcSpriteFriendly : npcSpriteHostile;
+  // Promień w pikselach (skala ekranu)
+  const pixR = (npc.radius || 10) * (camera?.zoom || 1);
 
-  // Jeśli sprity się jeszcze nie załadowały, narysuj prosty kształt awaryjny
-  if (!sprite || !sprite.complete || sprite.naturalWidth === 0) {
-    const pixR = npc.radius * camera.zoom;
+  // Wybierz sprite na podstawie "friendly"
+  const sprite = npc.friendly ? window.npcSpriteFriendly : window.npcSpriteHostile;
+
+  // Funkcja prostego rysowania (fallback lub bardzo małe obiekty)
+  const drawFallback = (withThrusters = false) => {
     ctx.save();
-    ctx.globalAlpha = npc.fade ?? 1;
+    ctx.globalAlpha = (npc.fade ?? 1);
     ctx.translate(screenPos.x, screenPos.y);
-    ctx.rotate(npc.angle);
+    ctx.rotate(npc.angle || 0);
+
+    // Kształt „shuttle”: klin
     ctx.fillStyle = npc.friendly ? '#bfd8ff' : '#ffc7bd';
     ctx.beginPath();
     ctx.moveTo( pixR, 0);
     ctx.lineTo(-pixR*0.7, -pixR*0.6);
     ctx.lineTo(-pixR*0.7,  pixR*0.6);
-    ctx.closePath(); ctx.fill();
+    ctx.closePath();
+    ctx.fill();
+
+    if (withThrusters) {
+      // dysze (lekki glow)
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = npc.friendly ? 'rgba(150,200,255,0.9)' : 'rgba(255,160,120,0.9)';
+      ctx.beginPath(); ctx.ellipse(-pixR*0.7, -pixR*0.25, 2, 3, 0, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(-pixR*0.7,  pixR*0.25, 2, 3, 0, 0, Math.PI*2); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
     ctx.restore();
+  };
+
+  // 1) Jeżeli sprite niezaładowany — narysuj fallback i wyjdź
+  const spriteReady = sprite && sprite.complete && sprite.naturalWidth > 0;
+  if (!spriteReady) {
+    drawFallback(true);
     return;
   }
 
-  // Oblicz docelowy rozmiar na ekranie
-  const pixR = npc.radius * camera.zoom;
-  // Te wartości bazują na SVG (viewBox="-40 -30 80 60")
-  // Dostosuj je, jeśli Twoje sprite'y mają inne proporcje
-  const drawWidth = pixR * 2.66; // (Szerokość 80 / promień ~30)
-  const drawHeight = pixR * 2.0; // (Wysokość 60 / promień ~30)
+  // 2) Jeżeli obiekt jest bardzo mały — też fallback (prostszy i czytelniejszy przy małej skali)
+  if (pixR < 9) {
+    drawFallback(true);
+    return;
+  }
+
+  // 3) Rysowanie sprite’a
+  // Założone proporcje wg wcześniejszego komentarza (viewBox ~ 80x60, promień ~30):
+  const drawWidth  = pixR * 2.66; // 80 / 30 ≈ 2.66
+  const drawHeight = pixR * 2.00; // 60 / 30 = 2.0
 
   ctx.save();
-  ctx.globalAlpha = npc.fade ?? 1;
+  ctx.globalAlpha = (npc.fade ?? 1);
   ctx.translate(screenPos.x, screenPos.y);
-  ctx.rotate(npc.angle);
+  ctx.rotate(npc.angle || 0);
 
-  // Narysuj sprite! (To jest super szybkie)
   ctx.drawImage(sprite, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
 
   // „hit-flash” (ekranowa poświata)
-  if (npc.hitFlash > 0) {
+  if ((npc.hitFlash || 0) > 0) {
     ctx.globalCompositeOperation = 'screen';
     ctx.globalAlpha = npc.hitFlash;
     ctx.fillStyle = npc.friendly ? '#cfe8ff' : '#ffd8d0';
     ctx.fillRect(-drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
     ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = npc.fade ?? 1;
+    ctx.globalAlpha = (npc.fade ?? 1);
   }
-  
-  // Pasek HP (też tani)
-  const hpFrac = npc.hp / npc.maxHp;
-  if (hpFrac < 1.0) {
+
+  // Pasek HP (tylko jeśli maxHp dodatni)
+  const maxHp = Math.max(1, npc.maxHp || 1);
+  const hpFrac = Math.max(0, Math.min(1, (npc.hp || 0) / maxHp));
+  if (hpFrac < 1) {
+    const barH = 4 * (camera?.zoom || 1);
     const hpBarWidth = Math.max(pixR * 1.5, 20);
-    const hpY = -drawHeight / 2 - Math.max(8, 8 * camera.zoom);
+    const hpY = -drawHeight / 2 - Math.max(8, 8 * (camera?.zoom || 1));
+    // tło
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(-hpBarWidth/2, hpY, hpBarWidth, 4 * camera.zoom);
+    ctx.fillRect(-hpBarWidth/2, hpY, hpBarWidth, barH);
+    // wypełnienie
     ctx.fillStyle = hpFrac > 0.5 ? '#60a5fa' : (hpFrac > 0.2 ? '#f59e0b' : '#ef4444');
-    ctx.fillRect(-hpBarWidth/2, hpY, hpBarWidth * hpFrac, 4 * camera.zoom);
+    ctx.fillRect(-hpBarWidth/2, hpY, hpBarWidth * hpFrac, barH);
   }
 
   ctx.restore();
 }
-if (pixR < 9) {
-    ctx.save();
-    ctx.globalAlpha = npc.fade ?? 1;
-    ctx.translate(screenPos.x, screenPos.y);
-    ctx.rotate(npc.angle);
-    // „shuttle”: klin + 2 silniczki
-    ctx.fillStyle = npc.friendly ? '#bfd8ff' : '#ffc7bd';
-    ctx.beginPath();
-    ctx.moveTo( pixR, 0);
-    ctx.lineTo(-pixR*0.7, -pixR*0.6);
-    ctx.lineTo(-pixR*0.7,  pixR*0.6);
-    ctx.closePath(); ctx.fill();
-    // dysze
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.fillStyle = npc.friendly ? 'rgba(150,200,255,0.9)' : 'rgba(255,160,120,0.9)';
-    ctx.beginPath(); ctx.ellipse(-pixR*0.7, -pixR*0.25, 2, 3, 0, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(-pixR*0.7,  pixR*0.25, 2, 3, 0, 0, Math.PI*2); ctx.fill();
-    ctx.restore();
-    return;
-  }
-
-  ctx.save();
-  ctx.globalAlpha = npc.fade ?? 1;
-  ctx.translate(screenPos.x, screenPos.y);
-  ctx.rotate(npc.angle);
-
-  const friendly = npc.friendly;
-  const hullColor = friendly ? '#91b8ff' : '#ffb5a5';
-  const spineColor = friendly ? '#1e2d4a' : '#3f1e23';
-  const stripeColor = friendly ? 'rgba(140,200,255,0.22)' : 'rgba(255,180,140,0.22)';
-  const detailColor = friendly ? 'rgba(240,248,255,0.85)' : 'rgba(255,235,220,0.85)';
-
-  const hullHalfHeight = pixR * 0.75;
-  const hullBack = -pixR * 1.05;
-  const nose = pixR * 1.1;
-
-  const drawHullPath = () => {
-    ctx.beginPath();
-    ctx.moveTo(nose, 0);
-    ctx.lineTo(hullBack, -hullHalfHeight);
-    ctx.lineTo(hullBack, hullHalfHeight);
-    ctx.closePath();
-  };
-
-  ctx.fillStyle = hullColor;
-  drawHullPath();
-  ctx.fill();
-
-  ctx.lineWidth = Math.max(1, pixR * 0.08);
-  ctx.strokeStyle = friendly ? 'rgba(70,110,170,0.4)' : 'rgba(170,90,70,0.4)';
-  drawHullPath();
-  ctx.stroke();
-
-  // centralny „kręgosłup” statku
-  const spineW = pixR * 0.9;
-  const spineH = hullHalfHeight * 1.6;
-  ctx.fillStyle = spineColor;
-  ctx.fillRect(-spineW * 0.5, -spineH * 0.5, spineW, spineH);
-
-  // boczne panele
-  const panelW = pixR * 0.45;
-  ctx.fillStyle = stripeColor;
-  ctx.fillRect(hullBack, -spineH * 0.5, panelW, spineH);
-  ctx.fillRect(hullBack + panelW * 1.3, -spineH * 0.55, panelW, spineH * 1.1);
-
-  // kabina / mostek
-  ctx.fillStyle = detailColor;
-  ctx.fillRect(pixR * 0.2, -pixR * 0.28, pixR * 0.35, pixR * 0.56);
-
-  // dysze silników
-  ctx.fillStyle = friendly ? '#a6d4ff' : '#ffaf92';
-  ctx.beginPath(); ctx.ellipse(hullBack + panelW * 0.3, -pixR * 0.35, pixR * 0.25, pixR * 0.32, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(hullBack + panelW * 0.3, pixR * 0.35, pixR * 0.25, pixR * 0.32, 0, 0, Math.PI * 2); ctx.fill();
-
-  // linie detali
-  ctx.strokeStyle = friendly ? 'rgba(200,230,255,0.25)' : 'rgba(255,210,190,0.25)';
-  ctx.lineWidth = Math.max(1, pixR * 0.05);
-  ctx.beginPath();
-  ctx.moveTo(-pixR * 0.4, -hullHalfHeight * 0.9);
-  ctx.lineTo(pixR * 0.35, -hullHalfHeight * 0.2);
-  ctx.lineTo(pixR * 0.35, hullHalfHeight * 0.2);
-  ctx.lineTo(-pixR * 0.4, hullHalfHeight * 0.9);
-  ctx.stroke();
-
-  // glow z dysz (moc rośnie wraz z prędkością)
-  const sp = Math.hypot(npc.vx||0, npc.vy||0);
-  const thrust = Math.min(1, sp / (npc.maxSpeed || 1));
-  if (thrust > 0.05){
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.shadowBlur = 14*camera.zoom;
-    ctx.shadowColor = friendly ? 'rgba(120,200,255,0.9)' : 'rgba(255,160,120,0.95)';
-    ctx.fillStyle   = friendly ? 'rgba(160,210,255,0.7)' : 'rgba(255,180,130,0.8)';
-    ctx.beginPath();
-    ctx.ellipse(hullBack - pixR * 0.1, 0, pixR * 0.5 * (0.8+thrust), pixR * 1.2 * (0.8+thrust), 0, 0, Math.PI*2);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  // „hit-flash” (ekranowa poświata)
-  if (npc.hitFlash > 0){
-    ctx.globalCompositeOperation = 'screen';
-    ctx.globalAlpha = npc.hitFlash;
-    ctx.fillStyle = friendly ? '#cfe8ff' : '#ffd8d0';
-    drawHullPath();
-    ctx.fill();
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = npc.fade ?? 1;
-  }
-
-  // pasek HP
-  const hpw = (npc.hp / npc.maxHp) * (npc.radius*2*camera.zoom);
-  ctx.fillStyle = '#ff6b6b';
-  ctx.fillRect(-npc.radius*camera.zoom, -npc.radius*camera.zoom - 8*camera.zoom, hpw, 4*camera.zoom);
-
-  ctx.restore();
-}
-
 function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
   const profile = npc.capitalProfile || {};
   const lengthScale = Number.isFinite(profile.lengthScale) ? profile.lengthScale : 3.2;
