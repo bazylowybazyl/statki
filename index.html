@@ -1515,15 +1515,7 @@ shipSprite.onload = () => {
   if(typeof renderMechanic === 'function') renderMechanic();
   saveLoadout();
 };
-  
-const npcSpriteFriendly = new Image();
-const npcSpriteHostile = new Image();
-let npcSpritesReady = 0;
-npcSpriteFriendly.onload = () => { npcSpritesReady++; };
-npcSpriteHostile.onload = () => { npcSpritesReady++; };
-npcSpriteFriendly.src = "assets/npc_friendly.svg"; 
-npcSpriteHostile.src = "assets/npc_hostile.svg";  
- // <- ścieżka do pliku
+shipSprite.src = "assets/capital_ship_rect_v1.png"; // <- ścieżka do pliku
 
 const heavyAutocannonSprite = new Image();
 let heavyAutocannonSpriteReady = false;
@@ -2985,15 +2977,15 @@ function pickNextStation(startStationId, type){
   return target.id;
 }
 const NPC_TYPES = {
-  'freighter-small':  { radius:10, speed:60, hp:100, color:'#8ab4d6', weapon:null,  isCollidable: false, },
-  'freighter-medium': { radius:15, speed:55, hp:150, color:'#769cb8', weapon:null,  isCollidable: false, },
-  'freighter-large':  { radius:25, speed:50, hp:200, color:'#5d829c', weapon:null,  isCollidable: false, },
-  'freighter-capital':{ radius:48, speed:45, hp:400, color:'#45667d', weapon:null,  isCollidable: false, },
-  'police':           { radius:24, speed:100, hp:200, color:'#44aaff', weapon:'railgun',  isCollidable: true, },
-  'civilian-small':   { radius:6, speed:100, hp:10, color:'#cccccc', weapon:null,  isCollidable: false, },
-  'civilian-large':   { radius:12, speed:80, hp:50, color:'#bbbbbb', weapon:null,  isCollidable: false, },
-  'guard':            { radius:20, speed:95, hp:100, color:'#ff9933', weapon:'gun',  isCollidable: true, },
-  'mercenary':        { radius:25, speed:95, hp:100, color:'#ff6633', weapon:'gun',  isCollidable: true, }
+  'freighter-small':  { radius:10, speed:60, hp:100, color:'#8ab4d6', weapon:null },
+  'freighter-medium': { radius:15, speed:55, hp:150, color:'#769cb8', weapon:null },
+  'freighter-large':  { radius:25, speed:50, hp:200, color:'#5d829c', weapon:null },
+  'freighter-capital':{ radius:48, speed:45, hp:400, color:'#45667d', weapon:null },
+  'police':           { radius:24, speed:100, hp:200, color:'#44aaff', weapon:'railgun' },
+  'civilian-small':   { radius:6, speed:100, hp:10, color:'#cccccc', weapon:null },
+  'civilian-large':   { radius:12, speed:80, hp:50, color:'#bbbbbb', weapon:null },
+  'guard':            { radius:20, speed:95, hp:100, color:'#ff9933', weapon:'gun' },
+  'mercenary':        { radius:25, speed:95, hp:100, color:'#ff6633', weapon:'gun' }
 };
 function initNPCs(){
   npcs = [];
@@ -3023,7 +3015,6 @@ function initNPCs(){
       vx, vy, angle:Math.random()*Math.PI*2,
       target: targetId, speed:cfg.speed, radius:cfg.radius,
       hp:cfg.hp, maxHp:cfg.hp, color:cfg.color, weapon:cfg.weapon,
-      isCollidable: (cfg.isCollidable !== false),
       dead:false, respawnTimer:0, fade:1, docking:false, lastStation:start.id,
       leader:null, orbitAngle:0, orbitRadius:0,
       warpRoute: route,
@@ -3145,53 +3136,21 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // =============== Bullets & effects ===============
 const bullets = [];
-// const particles = []; // USUNIĘTE
+const particles = [];
 const shockwaves = [];
 const MAX_PARTICLES = 8000;          // twardy sufit (dobry balans)
 const MAX_PARTICLES_DRAW = 4500;     // ile maks. rysujemy na ekranie
 
-// === POCZĄTEK NOWEGO KODU (Pula Cząsteczek) ===
-const particlePool = [];
-let nextParticleIndex = 0;
-(function initParticlePool() { // Samowywołująca się funkcja do zainicjowania puli
-  for (let i = 0; i < MAX_PARTICLES; i++) {
-    particlePool.push({
-      pos: { x: 0, y: 0 },
-      vel: { x: 0, y: 0 },
-      life: 0,
-      age: 0,
-      color: '#fff',
-      size: 1,
-      flash: false,
-      active: false // Flaga 'aktywności' jest kluczowa
-    });
-  }
-})();
-// === KONIEC NOWEGO KODU ===
-
-
 function pushParticleSafe(p){
-  // no-op: pozostawione celowo dla zgodności wstecznej
+  if (particles.length < MAX_PARTICLES) particles.push(p);
 }
 
-// --- Nowy spawnParticle: używa puli particlePool ---
 function spawnParticle(pos, vel, life, color, size, flash){
-  const p = particlePool[nextParticleIndex];
-
-  // Ustaw dane cząsteczki
-  p.pos.x = pos.x;  p.pos.y = pos.y;
-  p.vel.x = vel.x;  p.vel.y = vel.y;
-  p.life   = life;
-  p.age    = 0;
-  p.color  = color || '#ffb677';
-  p.size   = size  || 2;
-  p.flash  = !!flash;
-  p.active = true;
-
-  // Przesuń wskaźnik w puli (pierścień)
-  nextParticleIndex = (nextParticleIndex + 1) % MAX_PARTICLES;
+  pushParticleSafe({
+    pos:{...pos}, vel:{...vel}, life, age:0,
+    color: color||'#ffb677', size: size||2, flash: !!flash
+  });
 }
- 
 function spawnExplosionPlasma(x,y,scale=1){
   const count = Math.round(22 * scale);
   for(let i=0;i<count;i++){
@@ -6551,7 +6510,7 @@ function bulletsAndCollisionsStep(dt){
           } else {
             let dist = Infinity;
             for(const npc of npcs){
-              if (npc.dead || !npc.isCollidable) continue;
+              if(npc.dead) continue;
               // graczowe rakiety nie strzelają w sojusznicze (friendly) cele
               if (b.owner==='player' && npc.friendly) continue;
               const d = Math.hypot(npc.x - b.x, npc.y - b.y);
@@ -6770,18 +6729,12 @@ function bulletsAndCollisionsStep(dt){
   }
 
   // particles
-  for (const p of particlePool) { // Iteruj po całej puli
-    if (!p.active) continue; // Pomiń nieaktywne
-    
-    p.age += dt;
-    if (p.age >= p.life) {
-      p.active = false; // <-- Deaktywuj zamiast usuwać (splice)
-      continue;
-    }
-    
-    if (p.beam) continue;
+  for(let i=particles.length-1;i>=0;i--){
+    const p = particles[i];
+    p.age += dt; if(p.age >= p.life){ particles.splice(i,1); continue; }
+    if(p.beam) continue;
     p.vel.x *= 0.98; p.vel.y *= 0.98; p.vel.y += 8*dt;
-    p.pos.x += p.vel.x * dt; p.pos.y += p.vel.y * dt;
+    p.pos.x += p.vel.x*dt; p.pos.y += p.vel.y*dt;
   }
 }
 
@@ -8186,93 +8139,130 @@ function drawRangeRuler(ctx, cam){
   ctx.restore();
 }
 
-function drawNPCPretty(ctx, npc, screenPos) {
-  // Promień w pikselach (skala ekranu)
-  const pixR = (npc.radius || 10) * (camera?.zoom || 1);
-
-  // Wybierz sprite na podstawie "friendly"
-  const sprite = npc.friendly ? window.npcSpriteFriendly : window.npcSpriteHostile;
-
-  // Funkcja prostego rysowania (fallback lub bardzo małe obiekty)
-  const drawFallback = (withThrusters = false) => {
+function drawNPCPretty(ctx, npc, screenPos){
+  const pixR = npc.radius * camera.zoom;
+  if (npc.isCapitalShip && npc.capitalProfile){
+    drawCapitalShipSprite(ctx, npc, screenPos, pixR);
+    return;
+  }
+  if (pixR < 9) {
     ctx.save();
-    ctx.globalAlpha = (npc.fade ?? 1);
+    ctx.globalAlpha = npc.fade ?? 1;
     ctx.translate(screenPos.x, screenPos.y);
-    ctx.rotate(npc.angle || 0);
-
-    // Kształt „shuttle”: klin
+    ctx.rotate(npc.angle);
+    // „shuttle”: klin + 2 silniczki
     ctx.fillStyle = npc.friendly ? '#bfd8ff' : '#ffc7bd';
     ctx.beginPath();
     ctx.moveTo( pixR, 0);
     ctx.lineTo(-pixR*0.7, -pixR*0.6);
     ctx.lineTo(-pixR*0.7,  pixR*0.6);
-    ctx.closePath();
-    ctx.fill();
-
-    if (withThrusters) {
-      // dysze (lekki glow)
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.fillStyle = npc.friendly ? 'rgba(150,200,255,0.9)' : 'rgba(255,160,120,0.9)';
-      ctx.beginPath(); ctx.ellipse(-pixR*0.7, -pixR*0.25, 2, 3, 0, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(-pixR*0.7,  pixR*0.25, 2, 3, 0, 0, Math.PI*2); ctx.fill();
-      ctx.globalCompositeOperation = 'source-over';
-    }
-
+    ctx.closePath(); ctx.fill();
+    // dysze
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = npc.friendly ? 'rgba(150,200,255,0.9)' : 'rgba(255,160,120,0.9)';
+    ctx.beginPath(); ctx.ellipse(-pixR*0.7, -pixR*0.25, 2, 3, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(-pixR*0.7,  pixR*0.25, 2, 3, 0, 0, Math.PI*2); ctx.fill();
     ctx.restore();
-  };
-
-  // 1) Jeżeli sprite niezaładowany — narysuj fallback i wyjdź
-  const spriteReady = sprite && sprite.complete && sprite.naturalWidth > 0;
-  if (!spriteReady) {
-    drawFallback(true);
     return;
   }
-
-  // 2) Jeżeli obiekt jest bardzo mały — też fallback (prostszy i czytelniejszy przy małej skali)
-  if (pixR < 9) {
-    drawFallback(true);
-    return;
-  }
-
-  // 3) Rysowanie sprite’a
-  // Założone proporcje wg wcześniejszego komentarza (viewBox ~ 80x60, promień ~30):
-  const drawWidth  = pixR * 2.66; // 80 / 30 ≈ 2.66
-  const drawHeight = pixR * 2.00; // 60 / 30 = 2.0
 
   ctx.save();
-  ctx.globalAlpha = (npc.fade ?? 1);
+  ctx.globalAlpha = npc.fade ?? 1;
   ctx.translate(screenPos.x, screenPos.y);
-  ctx.rotate(npc.angle || 0);
+  ctx.rotate(npc.angle);
 
-  ctx.drawImage(sprite, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+  const friendly = npc.friendly;
+  const hullColor = friendly ? '#91b8ff' : '#ffb5a5';
+  const spineColor = friendly ? '#1e2d4a' : '#3f1e23';
+  const stripeColor = friendly ? 'rgba(140,200,255,0.22)' : 'rgba(255,180,140,0.22)';
+  const detailColor = friendly ? 'rgba(240,248,255,0.85)' : 'rgba(255,235,220,0.85)';
+
+  const hullHalfHeight = pixR * 0.75;
+  const hullBack = -pixR * 1.05;
+  const nose = pixR * 1.1;
+
+  const drawHullPath = () => {
+    ctx.beginPath();
+    ctx.moveTo(nose, 0);
+    ctx.lineTo(hullBack, -hullHalfHeight);
+    ctx.lineTo(hullBack, hullHalfHeight);
+    ctx.closePath();
+  };
+
+  ctx.fillStyle = hullColor;
+  drawHullPath();
+  ctx.fill();
+
+  ctx.lineWidth = Math.max(1, pixR * 0.08);
+  ctx.strokeStyle = friendly ? 'rgba(70,110,170,0.4)' : 'rgba(170,90,70,0.4)';
+  drawHullPath();
+  ctx.stroke();
+
+  // centralny „kręgosłup” statku
+  const spineW = pixR * 0.9;
+  const spineH = hullHalfHeight * 1.6;
+  ctx.fillStyle = spineColor;
+  ctx.fillRect(-spineW * 0.5, -spineH * 0.5, spineW, spineH);
+
+  // boczne panele
+  const panelW = pixR * 0.45;
+  ctx.fillStyle = stripeColor;
+  ctx.fillRect(hullBack, -spineH * 0.5, panelW, spineH);
+  ctx.fillRect(hullBack + panelW * 1.3, -spineH * 0.55, panelW, spineH * 1.1);
+
+  // kabina / mostek
+  ctx.fillStyle = detailColor;
+  ctx.fillRect(pixR * 0.2, -pixR * 0.28, pixR * 0.35, pixR * 0.56);
+
+  // dysze silników
+  ctx.fillStyle = friendly ? '#a6d4ff' : '#ffaf92';
+  ctx.beginPath(); ctx.ellipse(hullBack + panelW * 0.3, -pixR * 0.35, pixR * 0.25, pixR * 0.32, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(hullBack + panelW * 0.3, pixR * 0.35, pixR * 0.25, pixR * 0.32, 0, 0, Math.PI * 2); ctx.fill();
+
+  // linie detali
+  ctx.strokeStyle = friendly ? 'rgba(200,230,255,0.25)' : 'rgba(255,210,190,0.25)';
+  ctx.lineWidth = Math.max(1, pixR * 0.05);
+  ctx.beginPath();
+  ctx.moveTo(-pixR * 0.4, -hullHalfHeight * 0.9);
+  ctx.lineTo(pixR * 0.35, -hullHalfHeight * 0.2);
+  ctx.lineTo(pixR * 0.35, hullHalfHeight * 0.2);
+  ctx.lineTo(-pixR * 0.4, hullHalfHeight * 0.9);
+  ctx.stroke();
+
+  // glow z dysz (moc rośnie wraz z prędkością)
+  const sp = Math.hypot(npc.vx||0, npc.vy||0);
+  const thrust = Math.min(1, sp / (npc.maxSpeed || 1));
+  if (thrust > 0.05){
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.shadowBlur = 14*camera.zoom;
+    ctx.shadowColor = friendly ? 'rgba(120,200,255,0.9)' : 'rgba(255,160,120,0.95)';
+    ctx.fillStyle   = friendly ? 'rgba(160,210,255,0.7)' : 'rgba(255,180,130,0.8)';
+    ctx.beginPath();
+    ctx.ellipse(hullBack - pixR * 0.1, 0, pixR * 0.5 * (0.8+thrust), pixR * 1.2 * (0.8+thrust), 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
 
   // „hit-flash” (ekranowa poświata)
-  if ((npc.hitFlash || 0) > 0) {
+  if (npc.hitFlash > 0){
     ctx.globalCompositeOperation = 'screen';
     ctx.globalAlpha = npc.hitFlash;
-    ctx.fillStyle = npc.friendly ? '#cfe8ff' : '#ffd8d0';
-    ctx.fillRect(-drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+    ctx.fillStyle = friendly ? '#cfe8ff' : '#ffd8d0';
+    drawHullPath();
+    ctx.fill();
     ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = (npc.fade ?? 1);
+    ctx.globalAlpha = npc.fade ?? 1;
   }
 
-  // Pasek HP (tylko jeśli maxHp dodatni)
-  const maxHp = Math.max(1, npc.maxHp || 1);
-  const hpFrac = Math.max(0, Math.min(1, (npc.hp || 0) / maxHp));
-  if (hpFrac < 1) {
-    const barH = 4 * (camera?.zoom || 1);
-    const hpBarWidth = Math.max(pixR * 1.5, 20);
-    const hpY = -drawHeight / 2 - Math.max(8, 8 * (camera?.zoom || 1));
-    // tło
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(-hpBarWidth/2, hpY, hpBarWidth, barH);
-    // wypełnienie
-    ctx.fillStyle = hpFrac > 0.5 ? '#60a5fa' : (hpFrac > 0.2 ? '#f59e0b' : '#ef4444');
-    ctx.fillRect(-hpBarWidth/2, hpY, hpBarWidth * hpFrac, barH);
-  }
+  // pasek HP
+  const hpw = (npc.hp / npc.maxHp) * (npc.radius*2*camera.zoom);
+  ctx.fillStyle = '#ff6b6b';
+  ctx.fillRect(-npc.radius*camera.zoom, -npc.radius*camera.zoom - 8*camera.zoom, hpw, 4*camera.zoom);
 
   ctx.restore();
 }
+
 function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
   const profile = npc.capitalProfile || {};
   const lengthScale = Number.isFinite(profile.lengthScale) ? profile.lengthScale : 3.2;
@@ -8699,10 +8689,20 @@ function render(alpha, frameDt){
   // Particles (za statkiem) — zwykłe
   {
     let drawn = 0;
-    for (const p of particlePool) { // <-- ZMIANA
-      if (!p.active || p.flash || p.beam) continue; // <-- ZMIANA
-      if (drawn >= MAX_PARTICLES_DRAW) break; // <-- ZMIANA
- // Efekt dopalacza
+    for (let i = particles.length - 1; i >= 0 && drawn < MAX_PARTICLES_DRAW; i--){
+      const p = particles[i];
+      if (p.flash || p.beam) continue;
+      drawn++;
+      const s = worldToScreen(p.pos.x, p.pos.y, cam);
+      const t = clamp(1 - p.age/p.life, 0, 1);
+      ctx.globalAlpha = t;
+      ctx.beginPath(); ctx.fillStyle = p.color;
+      ctx.arc(s.x, s.y, p.size * camera.zoom, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // Efekt dopalacza
   const boostAlpha = (boost.effectDuration > 0)
     ? clamp(boost.effectTime / boost.effectDuration, 0, 1)
     : 0;
@@ -9400,10 +9400,32 @@ function render(alpha, frameDt){
   // Particles typu "flash" na samym wierzchu
   {
     let drawn = 0;
-    for (const p of particlePool) { // <-- ZMIANA
-      if (!p.active || !p.flash) continue; // <-- ZMIANA
-      if (drawn >= MAX_PARTICLES_DRAW) break; // <-- ZMIANA
- HUD
+    for (let i = particles.length - 1; i >= 0 && drawn < MAX_PARTICLES_DRAW; i--){
+      const p = particles[i];
+      if (!p.flash) continue;
+      drawn++;
+      const s = worldToScreen(p.pos.x, p.pos.y, cam);
+      const t = clamp(1 - p.age/p.life, 0, 1);
+      ctx.globalAlpha = t;
+      ctx.save();
+      ctx.shadowBlur = 20 * camera.zoom * (p.size/2);
+      let shadowColor = p.color;
+      if(p.color === '#bfe7ff') shadowColor = 'rgba(120,200,255,0.9)';
+      if(p.color === '#ffd8c4') shadowColor = 'rgba(255,180,120,0.9)';
+      if(p.color === '#7CFF7C' || p.color === '#a8ff9a') shadowColor = 'rgba(120,255,140,0.95)';
+      if(p.color === '#ffffff') shadowColor = 'rgba(255,255,255,0.95)';
+      ctx.shadowColor = shadowColor;
+      ctx.beginPath(); ctx.fillStyle = p.color;
+      ctx.arc(s.x, s.y, (p.size * 3) * camera.zoom, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+      ctx.beginPath(); ctx.fillStyle = p.color;
+      ctx.arc(s.x, s.y, p.size * camera.zoom, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  if (HUD_SHOW_LEGACY) {
+    // HUD
     ctx.fillStyle = '#dfe7ff'; ctx.font = '12px monospace';
     ctx.fillText(`HP: ${Math.round(ship.hull.val)}/${ship.hull.max}`, 12, H-100);
     ctx.fillText(`Shield: ${Math.round(ship.shield.val)}/${ship.shield.max}`, 12, H-84);
@@ -10140,8 +10162,7 @@ setTimeout(startGame, 500);
     if (!(k in window.DevFlags)) window.DevFlags[k] = __devtoolsDefaults[k];
   }
   const DevFlags = window.DevFlags; // lokalny skrót do TEGO SAMEGO obiektu
-  const Dev       = (window.Dev       = window.Dev       || {});
-  const DevTuning = (window.DevTuning = window.DevTuning || {});
+
   const DEFAULT_PIRATE_SCALE = (
     typeof window !== 'undefined' && typeof window.DEFAULT_STATION_SCALE === 'number'
   ) ? window.DEFAULT_STATION_SCALE : 6;
@@ -10426,8 +10447,6 @@ setTimeout(startGame, 500);
     if (rebuildTimer) cancelAnimationFrame(rebuildTimer);
     rebuildTimer = requestAnimationFrame(()=> {
       // aktualizujemy struktury gry na podstawie DevConfig
-      const Sun = window.SUN;
-      if (!Sun) return;
       const numericSun2D = Number.isFinite(DevConfig.sunR2D) ? DevConfig.sunR2D : SUN.r;
       const appliedSun2D = Math.max(1, Math.round(numericSun2D || 0));
       SUN.r = appliedSun2D;
@@ -10990,150 +11009,204 @@ setTimeout(startGame, 500);
 </script>
 
 <script>
-/* === DevTools: API + handler skali stacji 3D (pełny, samowystarczalny) === */
-(function(){
-  // Fallbacki (bezpieczne, krótkie — nie nadpisują istniejących)
-  const Dev       = (window.Dev       = window.Dev       || {});
-  const DevTuning = (window.DevTuning = window.DevTuning || {});
-  const DevFlags  = (window.DevFlags  = window.DevFlags  || {});
-  const DevConfig = (window.DevConfig = window.DevConfig || {});
+  // === DevTools: API + handler skali stacji 3D ===
+  (function(){
+    const DEFAULT_STATION3D_SCALE = (
+      typeof window.DEFAULT_STATION_3D_SCALE === 'number' && window.DEFAULT_STATION_3D_SCALE > 0
+    ) ? window.DEFAULT_STATION_3D_SCALE : 2.70;
 
-  const DEFAULT_STATION_3D_SCALE =
-    (typeof window.DEFAULT_STATION_3D_SCALE === 'number' && window.DEFAULT_STATION_3D_SCALE > 0)
-      ? window.DEFAULT_STATION_3D_SCALE
-      : 2.70;
-
-  // Globalne API do ustawiania skali stacji 3D (używane również w innych miejscach)
-  if (!window.__setStation3DScale) {
-    window.__setStation3DScale = (v) => {
-      const n = (Number.isFinite(+v) && +v > 0) ? +v : DEFAULT_STATION_3D_SCALE;
-      Dev.station3DScale           = n;
-      DevTuning.pirateStationScale = n; // trzymamy spójnie
-      if (typeof DevConfig === 'object') DevConfig.station3DScale = n;
-      try { localStorage.setItem('station3DScale', String(n)); } catch {}
-    };
-  }
-
-  // Uchwyty do elementów UI
-  const elScale              = document.getElementById('pirScale');
-  const elScaleVal           = document.getElementById('pirScaleVal');
-  const elStation3DScale     = document.getElementById('station3DScale');
-  const elStation3DScaleVal  = document.getElementById('station3DScaleVal');
-  const elPlanet3D           = document.getElementById('dt-use-planet-stations');
-  const elPir3D              = document.getElementById('dt-use-3d-pirate');
-
-  // Upewnij się, że startowe wartości istnieją
-  if (typeof DevTuning.pirateStationScale !== 'number') {
-    DevTuning.pirateStationScale =
-      (typeof DevConfig.pirateScale === 'number') ? DevConfig.pirateScale
-      : (typeof window.DEFAULT_STATION_SCALE === 'number') ? window.DEFAULT_STATION_SCALE
-      : 6;
-  }
-  if (typeof Dev.station3DScale !== 'number') {
-    Dev.station3DScale =
-      (typeof DevConfig.station3DScale === 'number' && DevConfig.station3DScale > 0)
-        ? DevConfig.station3DScale
-        : DEFAULT_STATION_3D_SCALE;
-  }
-
-  // ——— Handlery ———
-  const applyScale = () => {
-    if (!elScale) return;
-    let v = Number(elScale.value);
-    if (!Number.isFinite(v)) v = DevTuning.pirateStationScale;
-    v = Math.max(0.4, Math.min(12, v));
-    elScale.value = String(v);
-    DevTuning.pirateStationScale = v;
-    DevConfig.pirateScale = v;
-    if (elScaleVal) elScaleVal.textContent = '×' + v.toFixed(2);
-    try { localStorage.setItem('devConfig', JSON.stringify(DevConfig)); } catch {}
-  };
-
-  const applyStation3DScale = (inputValue) => {
-    const parsed = Number(inputValue);
-    const value = (Number.isFinite(parsed) && parsed > 0) ? parsed : DEFAULT_STATION_3D_SCALE;
-
-    DevTuning.pirateStationScale = value; // utrzymujemy zgodność
-    Dev.station3DScale = value;
-    if (window.DevConfig) window.DevConfig.station3DScale = value;
-
-    if (window.USE_STATION_3D && typeof window.__setStation3DScale === 'function') {
-      __setStation3DScale(value);
+    // API dostępne globalnie — zapisuje skalę w dwóch miejscach, aby
+    // 1) logika 3D miała natychmiastową wartość, 2) devtools mógł ją odczytać.
+    if (!window.__setStation3DScale) {
+      window.__setStation3DScale = (v) => {
+        const raw = Number(v);
+        const fallback = DEFAULT_STATION3D_SCALE;
+        const n = (Number.isFinite(raw) && raw > 0) ? raw : fallback;
+        window.Dev       = window.Dev       || {};
+        window.DevTuning = window.DevTuning || {};
+        window.Dev.station3DScale           = n;
+        window.DevTuning.pirateStationScale = n;
+        const cfg = window.DevConfig;
+        if (cfg && typeof cfg === 'object') cfg.station3DScale = n;
+        try { localStorage.setItem('station3DScale', String(n)); } catch {}
+      };
     }
-    if (elStation3DScaleVal) elStation3DScaleVal.textContent = '×' + value.toFixed(2);
 
-    // Dla zgodności z innym UI (jeśli gdzieś jest drugi suwak)
-    const legacy = document.getElementById('station3DScale');
-    const legacyVal = document.getElementById('station3DScaleVal');
-    if (legacy) legacy.value = String(value);
-    if (legacyVal) legacyVal.textContent = '×' + value.toFixed(2);
-
-    if (typeof window.__devtoolsSaveLS === 'function') window.__devtoolsSaveLS();
-    if (typeof window.__devtoolsReflectToCfg === 'function') window.__devtoolsReflectToCfg();
-  };
-
-  // ——— Inicjalizacja pól z istniejącej konfiguracji ———
-  if (elScale) {
-    if (!Number.isFinite(+elScale.value)) elScale.value = String(DevTuning.pirateStationScale);
-    applyScale();
-    elScale.addEventListener('input', applyScale);
-    elScale.addEventListener('change', applyScale);
-  } else if (elScaleVal) {
-    elScaleVal.textContent = '×' + DevTuning.pirateStationScale.toFixed(2);
-  }
-
-  if (elStation3DScale) {
-    const initialRaw =
-      (Number.isFinite(DevConfig.station3DScale) && DevConfig.station3DScale) ||
-      (Number.isFinite(+elStation3DScale.value) ? +elStation3DScale.value : NaN) ||
-      (Number.isFinite(+localStorage.getItem('station3DScale')) ? +localStorage.getItem('station3DScale') : NaN);
-    const initial = (Number.isFinite(initialRaw) && initialRaw > 0) ? initialRaw : DEFAULT_STATION_3D_SCALE;
-    elStation3DScale.value = String(initial);
-    applyStation3DScale(initial);
-    if (typeof window.scheduleRebuild3D === 'function') window.scheduleRebuild3D();
-
-    elStation3DScale.addEventListener('input',  e => applyStation3DScale(e.target.value));
-    elStation3DScale.addEventListener('change', e => applyStation3DScale(e.target.value));
-  } else if (elStation3DScaleVal) {
-    elStation3DScaleVal.textContent = '×' + (Dev.station3DScale || DEFAULT_STATION_3D_SCALE).toFixed(2);
-  }
-
-  if (elPlanet3D) {
-    const stored = (typeof DevFlags.usePlanetStations3D === 'boolean')
-      ? DevFlags.usePlanetStations3D
-      : (window.USE_PLANET_STATIONS_3D !== false);
-    const enabled = stored !== false;
-    DevFlags.usePlanetStations3D = enabled;
-    window.USE_PLANET_STATIONS_3D = enabled;
-    elPlanet3D.checked = enabled;
-    elPlanet3D.addEventListener('change', (e) => {
-      const value = !!e.target.checked;
-      DevFlags.usePlanetStations3D = value;
-      window.USE_PLANET_STATIONS_3D = value;
-      if (Array.isArray(window.stations) && typeof window.updateStations3D === 'function') {
-        window.updateStations3D(window.stations);
+    // Podpięcie suwaka i wyświetlacza wartości (×1.00, ×1.25 itd.)
+    const s  = document.getElementById('station3DScale');
+    const sv = document.getElementById('station3DScaleVal');
+    if (s) {
+      // inicjalizacja z LS (opcjonalnie)
+      const saved = Number(localStorage.getItem('station3DScale'));
+      if (Number.isFinite(saved) && saved > 0) {
+        s.value = String(saved);
+        if (sv) sv.textContent = '×' + saved.toFixed(2);
+        window.__setStation3DScale(saved);
+      } else {
+        const def = DEFAULT_STATION3D_SCALE;
+        s.value = String(def);
+        if (sv) sv.textContent = '×' + def.toFixed(2);
+        window.__setStation3DScale(def);
       }
-      if (typeof window.__devtoolsSaveLS === 'function') window.__devtoolsSaveLS();
-    });
-  }
 
-  if (elPir3D){
-    if (typeof DevFlags.use3DPirateStation === 'boolean') {
-      window.USE_STATION_3D = DevFlags.use3DPirateStation;
+      s.addEventListener('input', () => {
+        const v = +s.value;
+        window.__setStation3DScale(v);
+        if (sv) sv.textContent = '×' + v.toFixed(2);
+        if (window.DevConfig && typeof window.DevConfig === 'object') {
+          window.DevConfig.station3DScale = v;
+        }
+        window.__devtoolsSaveLS?.();
+        window.__devtoolsReflectToCfg?.();
+      });
     }
-    elPir3D.checked = (window.USE_STATION_3D !== false);
-    elPir3D.addEventListener('change', e=>{
-      DevFlags.use3DPirateStation = !!e.target.checked;
-      window.USE_STATION_3D = !!e.target.checked;
-      if (window.USE_STATION_3D && window.__setStation3DScale && typeof Dev.station3DScale === 'number') {
-        __setStation3DScale(Dev.station3DScale);
+  })();
+
+  (function setupPerStationScales(){
+    const root = document.getElementById('dt-stations-per-scale');
+    if (!root) return;
+
+    if (!window.DevConfig) window.DevConfig = {};
+    if (!window.DevConfig.stationScaleById || typeof window.DevConfig.stationScaleById !== 'object') {
+      window.DevConfig.stationScaleById = {};
+    }
+
+    function currentStations() {
+      if (Array.isArray(window.stations) && window.stations.length) return window.stations;
+      if (Array.isArray(window.planets)) {
+        return window.planets.map((pl) => ({ id: pl.id || pl.name || '', planet: pl }));
       }
-      if (typeof window.__devtoolsSaveLS === 'function') window.__devtoolsSaveLS();
-    });
-  }
-})();
+      return [];
+    }
+
+    function makeRow(st) {
+      const id = String(st?.id || st?.planet?.id || st?.planet?.name || '').toLowerCase();
+      if (!id) return null;
+
+      const map = typeof window.getStationScales === 'function' ? window.getStationScales() : null;
+      const rawInitial = (window.DevConfig.stationScaleById && window.DevConfig.stationScaleById[id])
+        ?? (map ? map[id] : undefined)
+        ?? 1;
+      const initial = Number(rawInitial) || 1;
+
+      const wrap = document.createElement('div');
+      wrap.className = 'dt-row';
+      wrap.style.alignItems = 'center';
+
+      const label = document.createElement('div');
+      label.className = 'dt-col';
+      label.style.minWidth = '120px';
+      label.textContent = id[0].toUpperCase() + id.slice(1);
+
+      const col = document.createElement('div');
+      col.className = 'dt-col';
+      col.style.flex = '1';
+
+      const range = document.createElement('input');
+      range.type = 'range';
+      range.min = '0.2';
+      range.max = '5';
+      range.step = '0.01';
+      range.value = String(initial);
+      range.id = `dt-scale-station-${id}`;
+
+      const val = document.createElement('span');
+      val.style.marginLeft = '8px';
+      val.textContent = initial.toFixed(2);
+
+      const num = document.createElement('input');
+      num.type = 'number';
+      num.min = '0.2';
+      num.max = '5';
+      num.step = '0.01';
+      num.value = String(initial);
+      num.id = `dt-scale-station-${id}-num`;
+      num.style.width = '72px';
+      num.style.marginLeft = '8px';
+
+      const apply = (vRaw) => {
+        let v = Number(vRaw);
+        if (!Number.isFinite(v)) v = 1;
+        v = Math.max(0.2, Math.min(5, v));
+        if (!window.DevConfig || typeof window.DevConfig !== 'object') window.DevConfig = {};
+        if (!window.DevConfig.stationScaleById || typeof window.DevConfig.stationScaleById !== 'object') {
+          window.DevConfig.stationScaleById = {};
+        }
+        window.DevConfig.stationScaleById[id] = v;
+        range.value = String(v);
+        num.value = String(v);
+        val.textContent = v.toFixed(2);
+        if (typeof window.setStationScale === 'function') window.setStationScale(id, v);
+        window.__devtoolsSaveLS?.();
+      };
+
+      range.addEventListener('input', () => apply(range.value));
+      num.addEventListener('input', () => apply(num.value));
+      num.addEventListener('change', () => apply(num.value));
+      num.addEventListener('keyup', (e) => { if (e.key === 'Enter') apply(num.value); });
+
+      col.appendChild(range);
+      col.appendChild(num);
+      col.appendChild(val);
+      wrap.appendChild(label);
+      wrap.appendChild(col);
+      return wrap;
+    }
+
+    function rebuild() {
+      root.innerHTML = '';
+      const list = currentStations();
+      const seen = new Set();
+      for (const st of list) {
+        const row = makeRow(st);
+        if (!row) continue;
+        const input = row.querySelector('input[type="range"]');
+        const key = input ? input.id : null;
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        root.appendChild(row);
+      }
+    }
+
+    const btnReset = document.getElementById('dt-reset-station-scales');
+    if (btnReset) {
+      btnReset.addEventListener('click', () => {
+        if (!window.DevConfig) window.DevConfig = {};
+        window.DevConfig.stationScaleById = {};
+        window.__devtoolsSaveLS?.();
+        if (typeof window.__saveDevLS === 'function') window.__saveDevLS();
+        rebuild();
+        if (Array.isArray(window.stations) && typeof window.updateStations3D === 'function') {
+          window.updateStations3D(window.stations);
+        }
+      });
+    }
+
+    rebuild();
+    let tries = 0;
+    const t = setInterval(() => {
+      tries++;
+      const count = root.querySelectorAll('input[type="range"]').length;
+      const stationCount = Array.isArray(window.stations) ? window.stations.length : 0;
+      if (stationCount > count || (count === 0 && tries < 120)) {
+        rebuild();
+      }
+      if (tries >= 120) clearInterval(t);
+    }, 500);
+
+    if (typeof window.__saveDevLS !== 'function') {
+      window.__saveDevLS = function __saveDevLSFallback(){
+        try {
+          const data = { DevFlags: window.DevFlags, DevTuning: window.DevTuning, DevConfig: window.DevConfig };
+          localStorage.setItem('#__dev', JSON.stringify(data));
+        } catch (err) {
+          console.warn('DevTools: failed to persist station scales', err);
+        }
+      };
+    }
+
+  })();
 </script>
-
 
 </body>
 </html>
