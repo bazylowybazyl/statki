@@ -8790,13 +8790,7 @@ function render(alpha, frameDt){
       const opacity = Math.min(1, Math.max(0, (opacityBase + opacityScale * warpIntensity) * warpIntensity));
 
       const lensForward = { x: warp.dir.x, y: warp.dir.y };
-      
-      // === POCZĄTEK POPRAWKI w index.html ===
-      // Kąt shadera (rotation) musi być czystym kątem KIERUNKU LOTU (warp.dir),
-      // a NIE kątem obrotu statku (który ma +PI/2).
-      const lensAngle = Math.atan2(lensForward.y, lensForward.x);
-      // === KONIEC POPRAWKI w index.html ===
-
+      const lensAngle = interpAngle - Math.PI / 2;
       const forwardStretchParam = warpLensParam('forwardStretch');
       const forwardStretchMajor = forwardStretchParam >= 1
         ? forwardStretchParam
