@@ -10177,6 +10177,14 @@ function wireDevTools(){
     if (!(k in window.DevFlags)) window.DevFlags[k] = __devtoolsDefaults[k];
   }
   const DevFlags = window.DevFlags; // lokalny skrót do TEGO SAMEGO obiektu
+  const Dev = window.Dev = window.Dev || {};
+  const DevTuning = window.DevTuning = Object.assign({
+    pirateStationScale: DEFAULT_PIRATE_SCALE
+  }, window.DevTuning || {});
+
+  if (!Number.isFinite(Dev.station3DScale) || Dev.station3DScale <= 0) {
+    Dev.station3DScale = DEFAULT_STATION3D_SCALE;
+  }
 
   const DEFAULT_PIRATE_SCALE = (
     typeof window !== 'undefined' && typeof window.DEFAULT_STATION_SCALE === 'number'
