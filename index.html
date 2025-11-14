@@ -8153,8 +8153,9 @@ function drawPlanetLabels(ctx, cam){
 
 function drawStars(cam){
   // jak daleko poza ekran ładować komórki
-  const marginW = (W/2)/camera.zoom + 2000;
-  const marginH = (H/2)/camera.zoom + 2000;
+  const zoom = cam?.zoom ?? camera.zoom ?? 1;
+  const marginW = (W/2)/zoom + 2000;
+  const marginH = (H/2)/zoom + 2000;
   const minX = Math.floor((cam.x - marginW)/STAR_CELL);
   const maxX = Math.floor((cam.x + marginW)/STAR_CELL);
   const minY = Math.floor((cam.y - marginH)/STAR_CELL);
@@ -8164,23 +8165,28 @@ function drawStars(cam){
     for(let ix=minX; ix<=maxX; ix++){
       const cell = getCell(ix,iy);
       for(const s of cell.stars){
-        const sx = (s.x - cam.x) * camera.zoom + W/2;
-        const sy = (s.y - cam.y) * camera.zoom + H/2;
+        const sx = (s.x - cam.x) * zoom + W/2;
+        const sy = (s.y - cam.y) * zoom + H/2;
         if(sx < -50 || sx > W+50 || sy < -50 || sy > H+50) continue;
 
         if(warp.state==='active'){
           // Smugi przy warp
           const entry = smoothstep01(warp.entryProgress);
           const L = 24 * (0.25 + 0.75*entry) * (1 + 1.2*(warp.fuel/warp.fuelMax));
-          const dx = -warp.dir.x * L, dy = -warp.dir.y * L;
+          const dx = -warp.dir.x * L * zoom;
+          const dy = -warp.dir.y * L * zoom;
           ctx.strokeStyle = 'rgba(200,220,255,0.35)';
           ctx.lineWidth = 2;
           ctx.beginPath(); ctx.moveTo(sx+dx, sy+dy); ctx.lineTo(sx, sy); ctx.stroke();
         } else {
           ctx.globalAlpha = s.bright;
           ctx.fillStyle = '#ffffff';
-          const sz = Math.max(0.6, s.size * (0.8 + 0.2*Math.random()));
-          ctx.fillRect(Math.round(sx), Math.round(sy), Math.ceil(sz), Math.ceil(sz));
+          const flicker = 0.8 + 0.2 * Math.random();
+          const baseSize = s.size * flicker * zoom;
+          const minSize = 0.6 * zoom;
+          const sz = Math.max(minSize, baseSize);
+          const drawSize = Math.max(1, Math.ceil(sz));
+          ctx.fillRect(Math.round(sx), Math.round(sy), drawSize, drawSize);
           ctx.globalAlpha = 1;
         }
       }
@@ -8243,7 +8249,7 @@ function drawNPCPretty(ctx, npc, screenPos) {
     ctx.save();
     ctx.globalAlpha = npc.fade ?? 1;
     ctx.translate(screenPos.x, screenPos.y);
-    ctx.rotate(npc.angle);
+    ctx.rotate(npc.angle + Math.PI);
     ctx.fillStyle = npc.friendly ? '#bfd8ff' : '#ffc7bd';
     ctx.beginPath();
     ctx.moveTo( pixR, 0);
@@ -8265,6 +8271,8 @@ function drawNPCPretty(ctx, npc, screenPos) {
   ctx.rotate(npc.angle);
 
   // Narysuj sprite! (To jest super szybkie)
+  ctx.save();
+  ctx.rotate(Math.PI);
   ctx.drawImage(sprite, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
 
   // „hit-flash” (ekranowa poświata)
@@ -8276,6 +8284,7 @@ function drawNPCPretty(ctx, npc, screenPos) {
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = npc.fade ?? 1;
   }
+  ctx.restore();
 
   // Pasek HP (też tani)
   const hpFrac = npc.maxHp ? (npc.hp / npc.maxHp) : 1;
