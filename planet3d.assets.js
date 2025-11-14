@@ -311,7 +311,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       if (ringMap) {
         ringMap.anisotropy = 4;
         const ringGeo = new THREE.RingGeometry(1.35, 2.4, 256, 1);
-        const ringMat = new THREE.MeshBasicMaterial({ map: ringMap, transparent: true, side: THREE.DoubleSide, opacity: 0.7 });
+        const ringMat = new THREE.MeshBasicMaterial({ map: ringMap, transparent: true, side: THREE.DoubleSide, opacity: 0.7, alphaTest: 0.1 });
         const ring = new THREE.Mesh(ringGeo, ringMat);
         ring.rotation.x = Math.PI / 2;
         this.scene.add(ring);
