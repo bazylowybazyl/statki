@@ -267,7 +267,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         uniforms,
         vertexShader: vert,
         fragmentShader: useNight ? fragDN : fragDay,
-        toneMapped: false
+        toneMapped: true
       });
 
       this.scene.add(new THREE.AmbientLight(0xffffff, 0.08));
