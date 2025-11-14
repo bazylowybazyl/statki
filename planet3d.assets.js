@@ -238,7 +238,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         void main(){
           float ndl = max(dot(normalize(vN), normalize(uLightDir)), 0.0);
           vec4 dayC   = texture2D(dayTexture,   vUv);
-          vec4 nightC = texture2D(nightTexture, vUv) * 0.40;
+          vec4 nightC = texture2D(nightTexture, vUv) * 0.20;
           float k = clamp(minAmbient + (1.0 - minAmbient) * ndl, 0.0, 1.0);
           gl_FragColor = mix(nightC, dayC, k);
         }`;
@@ -260,7 +260,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         dayTexture:   { value: colorMap || null },
         nightTexture: { value: nightMap || null },
         uLightDir:    { value: new THREE.Vector3(1, 0, 0) },
-        minAmbient:   { value: 0.3 }
+        minAmbient:   { value: 0.08 }
       };
 
       this.material = new THREE.ShaderMaterial({
@@ -270,7 +270,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         toneMapped: false
       });
 
-      this.scene.add(new THREE.AmbientLight(0xffffff, 0.3));
+      this.scene.add(new THREE.AmbientLight(0xffffff, 0.08));
       const hemi = new THREE.HemisphereLight(0xbfdfff, 0x0b0f1a, 0.12);
       hemi.position.set(0, 1, 0);
       this.scene.add(hemi);
