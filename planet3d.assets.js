@@ -234,25 +234,28 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         uniform sampler2D nightTexture;
         uniform vec3 uLightDir;
         uniform float minAmbient;
+        uniform float uIntensity;
         varying vec2 vUv; varying vec3 vN;
         void main(){
           float ndl = max(dot(normalize(vN), normalize(uLightDir)), 0.0);
           vec4 dayC   = texture2D(dayTexture,   vUv);
-          vec4 nightC = texture2D(nightTexture, vUv) * 0.20;
+          vec4 nightC = texture2D(nightTexture, vUv) * 1.0;
           float k = clamp(minAmbient + (1.0 - minAmbient) * ndl, 0.0, 1.0);
-          gl_FragColor = mix(nightC, dayC, k);
+          vec4 mixedColor = mix(nightC, dayC, k);
+          gl_FragColor = vec4(mixedColor.rgb * uIntensity, mixedColor.a);
         }`;
 
       const fragDay = `
         uniform sampler2D dayTexture;
         uniform vec3 uLightDir;
         uniform float minAmbient;
+        uniform float uIntensity;
         varying vec2 vUv; varying vec3 vN;
         void main(){
           float ndl = max(dot(normalize(vN), normalize(uLightDir)), 0.0);
           vec4 dayC = texture2D(dayTexture, vUv);
           float k = clamp(minAmbient + (1.0 - minAmbient) * ndl, 0.0, 1.0);
-          gl_FragColor = vec4(dayC.rgb * k, dayC.a);
+          gl_FragColor = vec4(dayC.rgb * k * uIntensity, dayC.a);
         }`;
 
       const useNight = !!nightMap;
@@ -260,7 +263,8 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         dayTexture:   { value: colorMap || null },
         nightTexture: { value: nightMap || null },
         uLightDir:    { value: new THREE.Vector3(1, 0, 0) },
-        minAmbient:   { value: 0.08 }
+        minAmbient:   { value: 0.08 },
+        uIntensity:   { value: 1.5 }
       };
 
       this.material = new THREE.ShaderMaterial({
