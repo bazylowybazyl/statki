@@ -8743,15 +8743,16 @@ function render(alpha, frameDt){
 
   let warpLensShouldDraw = false;
 let warpLensOutputCanvas = null;
-if (warpBlackHoleFX) {
-  const isWarpActive = (warp.state === 'active');
-  const entryProgress = isWarpActive ? clamp(warp.entryProgress, 0, 1) : 0;
-  const warpIntensity = isWarpActive ? smoothstep01(entryProgress) : 0;
 
-  const lensThreshold = getWarpLensThreshold();
+if (warpBlackHoleFX) {
+  const isWarpActive   = (warp.state === 'active');
+  const entryProgress  = isWarpActive ? clamp(warp.entryProgress, 0, 1) : 0;
+  const warpIntensity  = isWarpActive ? smoothstep01(entryProgress) : 0;
+
+  const lensThreshold  = getWarpLensThreshold();
   const desiredLensMode = (warpIntensity >= lensThreshold) ? 'full' : 'background';
   if (desiredLensMode !== warpLensMode) {
-    warpLensMode = desiredLensMode;
+    warpLensMode  = desiredLensMode;
     warpLensSource = null;
   }
   if (!warpLensSource) {
@@ -8760,77 +8761,90 @@ if (warpBlackHoleFX) {
 
   const shouldRenderWarpLens = isWarpActive && warpIntensity > 0.001;
   warpBlackHoleFX.setEnabled(shouldRenderWarpLens && !!warpLensSource);
+
   if (shouldRenderWarpLens && warpLensSource) {
-    const engineTail = ship.visual?.mainEngine?.y ?? (ship.h * 0.5);
+    const engineTail     = ship.visual?.mainEngine?.y ?? (ship.h * 0.5);
     const tailDepthExtra = warpLensParam('tailDepthExtra');
-    const warpDepth = engineTail + ship.h * tailDepthExtra;
-    
-    const tailOffset = rotate({ x: 0, y: warpDepth }, interpAngle); 
-    
+    const warpDepth      = engineTail + ship.h * tailDepthExtra;
+
+    const tailOffset = rotate({ x: 0, y: warpDepth }, interpAngle);
+
     const s = {
-      x: W/2 + tailOffset.x * camera.zoom,
-      y: H/2 + tailOffset.y * camera.zoom
+      x: W / 2 + tailOffset.x * camera.zoom,
+      y: H / 2 + tailOffset.y * camera.zoom
     };
 
-    const radiusBase = warpLensParam('radiusBase');
-    const radiusScale = warpLensParam('radiusScale');
-    const massBase = warpLensParam('massBase');
-    const massScale = warpLensParam('massScale');
-    const softness = Math.min(1, Math.max(0, warpLensParam('softness')));
-    const opacityBase = warpLensParam('opacityBase');
-    const opacityScale = warpLensParam('opacityScale');
+    const radiusBase    = warpLensParam('radiusBase');
+    const radiusScale   = warpLensParam('radiusScale');
+    const massBase      = warpLensParam('massBase');
+    const massScale     = warpLensParam('massScale');
+    const softness      = Math.min(1, Math.max(0, warpLensParam('softness')));
+    const opacityBase   = warpLensParam('opacityBase');
+    const opacityScale  = warpLensParam('opacityScale');
 
-    const baseRadius = Math.max(0.01, radiusBase + radiusScale * warpIntensity);
+    const baseRadius    = Math.max(0.01, radiusBase + radiusScale * warpIntensity);
     const referenceZoom = Math.max(0.0001, camera.defaultZoom || 1);
-    const zoomFactor = camera.zoom / referenceZoom;
-    const radius = Math.min(1, baseRadius * zoomFactor);
+    const zoomFactor    = camera.zoom / referenceZoom;
+    const radius        = Math.min(1, baseRadius * zoomFactor);
 
-    const baseMass = Math.max(0, (massBase + massScale * warpIntensity) * warpIntensity);
-    const mass = Math.min(0.6, baseMass * zoomFactor * zoomFactor);
-    const opacity = Math.min(1, Math.max(0, (opacityBase + opacityScale * warpIntensity) * warpIntensity));
+    const baseMass      = Math.max(0, (massBase + massScale * warpIntensity) * warpIntensity);
+    const mass          = Math.min(0.6, baseMass * zoomFactor * zoomFactor);
+    const opacity       = Math.min(1, Math.max(0, (opacityBase + opacityScale * warpIntensity) * warpIntensity));
 
-    const lensForward = { x: warp.dir.x, y: warp.dir.y };
-    const lensAngle = ship.angle;  
-    const forwardStretchParam = warpLensParam('forwardStretch');
-    const forwardStretchMajor = forwardStretchParam >= 1
+    const forwardStretchParam  = warpLensParam('forwardStretch');
+    const forwardStretchMajor  = forwardStretchParam >= 1
       ? forwardStretchParam
       : 1 + (1 - forwardStretchParam);
-    
-    // 'lensStretchForward' to teraz ogólny "współczynnik rozciągnięcia", który wysyłamy do shadera
+
+    // ogólny współczynnik rozciągnięcia soczewki (skalujemy go z intensywnością warp)
     const lensStretchFactor = 1 + (forwardStretchMajor - 1) * warpIntensity;
 
-    // 👉 TU BYŁ BUG – wcześniej było s.angle (które NIE istnieje)
-    const shipAngleDeg = ship.angle || 0;              // kąt statku w stopniach
-    const shipAngleRad = shipAngleDeg * Math.PI / 180; // konwersja na radiany
-    const rotationForShader = -shipAngleRad;           // kompensacja osi Y
+    // ⬇️ WAŻNE: ship.angle jest JUŻ w radianach, nie przeliczamy go na stopnie
+    const lensAngle = ship.angle || 0;
 
+    // renderujemy do wewnętrznego WebGL canvasa
     warpBlackHoleFX.render({
       centerX: s.x,
       centerY: s.y,
       mass,
       radius,
       softness,
-      rotation: rotationForShader,  // poprawny kąt statku
+      rotation: lensAngle,         // soczewka obrócona razem ze statkiem
       opacity,
       lensStretchForward: lensStretchFactor
     });
-    warpLensShouldDraw = typeof warpBlackHoleFX.hasPendingOutput === 'function'
-      ? warpBlackHoleFX.hasPendingOutput()
-      : true;
+
+    // ⬇️ NOWE: przepisujemy wynik z WebGL na 2D canvas i pobieramy go
+    let updated = false;
+    if (typeof warpBlackHoleFX.updateOutputBuffer === 'function') {
+      updated = warpBlackHoleFX.updateOutputBuffer();
+    }
+
+    warpLensOutputCanvas = (typeof warpBlackHoleFX.getOutputCanvas === 'function')
+      ? warpBlackHoleFX.getOutputCanvas()
+      : null;
+
+    warpLensShouldDraw = !!(
+      updated &&
+      warpLensOutputCanvas &&
+      warpLensOutputCanvas.width &&
+      warpLensOutputCanvas.height
+    );
   }
 }
 
+// rysowanie efektu na główny canvas – to możesz zostawić dokładnie tak:
+if (warpLensShouldDraw && warpLensOutputCanvas && warpLensOutputCanvas.width && warpLensOutputCanvas.height) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(
+    warpLensOutputCanvas,
+    0, 0, warpLensOutputCanvas.width, warpLensOutputCanvas.height,
+    0, 0, canvas.width, canvas.height
+  );
+  ctx.restore();
+}
 
-  if (warpLensShouldDraw && warpLensOutputCanvas && warpLensOutputCanvas.width && warpLensOutputCanvas.height) {
-    ctx.save();
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.drawImage(
-      warpLensOutputCanvas,
-      0, 0, warpLensOutputCanvas.width, warpLensOutputCanvas.height,
-      0, 0, canvas.width, canvas.height
-    );
-    ctx.restore();
-  }
 
   hudRenderNav(ship, cam);
   hudRenderDMG(cam);
