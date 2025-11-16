@@ -218,6 +218,13 @@ function getTemplate(stationId, path) {
           // Zachowujemy oryginalny kolor materiału (ważne dla modeli bez tekstur)
           const color = oldMat.color || new THREE.Color(0xffffff);
 
+          // Niektóre sekcje stacji mają odwrócone normalne i z daleka
+          // znikają (backface culling). Upewniamy się, że geometria ma
+          // normalne oraz wymuszamy renderowanie obu stron materiału.
+          if (!o.geometry?.hasAttribute?.('normal')) {
+            o.geometry?.computeVertexNormals?.();
+          }
+
           const uniforms = {
             dayTexture:   { value: tex },
             uLightDirView:{ value: new THREE.Vector3(1, 0, 0) }, // Domyślny kierunek
