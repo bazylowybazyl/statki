@@ -2,6 +2,74 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
+// --- POCZĄTEK KODU DO WKLEJENIA (Krok 1) ---
+
+// Helper skopiowany z planet3d.assets.js
+function sunDirFor(worldX, worldY) {
+  const sx = (window.SUN?.x ?? 0) - worldX;
+  const sy = (window.SUN?.y ?? 0) - worldY;
+  const L = Math.hypot(sx, sy) || 1;
+  return { x: sx / L, y: -sy / L, z: 0 };
+}
+
+// Shadery skopiowane z planet3d.assets.js i lekko zmodyfikowane dla stacji
+
+const stationVertShader = `
+  varying vec2 vUv;
+  varying vec3 vNormalView;
+  varying vec3 vWorldPosition;
+  void main() {
+    vUv = uv;
+    vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+    vWorldPosition = worldPosition.xyz;
+    vNormalView = normalize(normalMatrix * normal);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }`;
+
+const stationFragShader = `
+  uniform sampler2D dayTexture;
+  uniform vec3 uLightDirView; // Kierunek światła w 'view space'
+  uniform float minAmbient;
+  uniform float uIntensity;
+  uniform vec3 uColor;       // Kolor bazowy (jeśli brak tekstury)
+  uniform bool hasTexture;   // Flaga
+
+  varying vec2 vUv;
+  varying vec3 vNormalView;
+  varying vec3 vWorldPosition;
+
+  void main(){
+    // Światło w 'view space' (tak jak robi to planet3d.assets.js)
+    float ndl = max(dot(vNormalView, uLightDirView), 0.0);
+
+    vec3 baseColor;
+    if (hasTexture) {
+      // sRGB do Linear (jeśli tekstura jest sRGB)
+      baseColor = pow(texture2D(dayTexture, vUv).rgb, vec3(2.2));
+    } else {
+      // Kolor materiału też jest sRGB
+      baseColor = pow(uColor, vec3(2.2));
+    }
+
+    // 'k' to współczynnik oświetlenia, 'minAmbient' to światło otoczenia
+    float k = clamp(ndl, 0.0, 1.0);
+    vec3 finalColor = baseColor * (minAmbient + (1.0 - minAmbient) * k);
+
+    // Prosty rim light (efekt krawędziowy), żeby krawędzie nie były czarne
+    vec3 vViewPosition = cameraPosition;
+    vec3 vViewDir = normalize(vViewPosition - vWorldPosition);
+    float rim = 1.0 - max(dot(normalize(vNormalView), vViewDir), 0.0);
+    float rimAmount = smoothstep(0.4, 1.0, rim) * 0.25; // Mniejsza moc
+
+    finalColor += rimAmount; // Rim light dodaje blasku
+
+    // Mnożymy przez intensywność i na koniec konwertujemy z powrotem do sRGB
+    // (Ponieważ toneMapped: true robi to automatycznie, możemy pominąć ręczną konwersję)
+    gl_FragColor = vec4(finalColor * uIntensity, 1.0);
+  }`;
+
+// --- KONIEC KODU DO WKLEJENIA (Krok 1) ---
+
 const loader = new GLTFLoader();
 const templateCache = new Map();
 const stationRecords = new Map();
@@ -10,6 +78,8 @@ const stationRecords = new Map();
 let ownScene = null;
 let previewCam = null;            // mała kamera do renderu pojedynczej stacji
 let activeScene = null;           // = ownScene
+let ambLight = null;
+let dirLight = null;
 let sharedRendererWarned = false;
 const DEFAULT_STATION_SPRITE_SIZE = 512;
 const DEFAULT_STATION_SPRITE_FRAME = 1.25;
@@ -50,21 +120,34 @@ function markSpriteDirty(record) {
   record.lastSpriteTime = 0;
 }
 
-function ensureOwnScene() {
-  if (!ownScene) {
-    ownScene = new THREE.Scene();
-    // światła minimalistyczne, wystarczające dla GLB
-    ownScene.add(new THREE.AmbientLight(0xffffff, 0.85));
-    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
-    dir.position.set(500, 800, 1000);
-    ownScene.add(dir);
-    if (dir.target && !dir.target.parent) {
-      ownScene.add(dir.target);
-    }
-    ownScene.userData.dirLight = dir;
-  }
+// --- POCZĄTEK KODU DO WKLEJENIA (Krok 4) ---
+
+function initScene() {
+  if (ownScene) return ownScene;
+  ownScene = new THREE.Scene();
+  activeScene = ownScene;
+
+  // Nasz shader ma własny ambient ('minAmbient'), więc ten może być słabszy
+  if (ambLight) ownScene.remove(ambLight);
+  ambLight = new THREE.AmbientLight(0xffffff, 0.15);
+  ownScene.add(ambLight);
+
+  // Usuwamy stare światło kierunkowe, shader ma własne
+  if (dirLight) ownScene.remove(dirLight);
+  // dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+  // dirLight.position.set(2.5, 5.0, 3.5);
+  // ownScene.add(dirLight);
+
+  // Kamera do renderowania sprite'ów
+  const S = getStationSpriteSize();
+  const H = S / 2;
+  previewCam = new THREE.PerspectiveCamera(30, 1, 1, H * 8);
+  previewCam.position.set(H * 1.0, H * 0.8, H * 1.9);
+  previewCam.lookAt(0, 0, 0);
+  ownScene.add(previewCam);
   return ownScene;
 }
+// --- KONIEC KODU DO WKLEJENIA (Krok 4) ---
 
 function getSharedRenderer(width, height) {
   if (typeof window === 'undefined') return null;
@@ -81,9 +164,7 @@ function getSharedRenderer(width, height) {
 
 function ensurePreviewCamera() {
   if (!previewCam) {
-    previewCam = new THREE.PerspectiveCamera(45, 1, 0.1, 4000);
-    previewCam.position.set(60, 28, 60);
-    previewCam.lookAt(0, 0, 0);
+    initScene();
   }
   return previewCam;
 }
@@ -109,6 +190,71 @@ const MODEL_URLS = {
     new URL('../stations/Neptune-station.glb', import.meta.url).href
   ]
 };
+
+// --- POCZĄTEK NOWEJ FUNKCJI getTemplate (Krok 2) ---
+
+function getTemplate(stationId, path) {
+  if (templateCache.has(path)) {
+    return templateCache.get(path);
+  }
+
+  // Obiekt tymczasowy, na wypadek gdyby wiele stacji prosiło o ten sam model
+  const placeholder = { scene: null, materials: [], error: false, loading: true };
+  templateCache.set(path, placeholder);
+
+  loader.load(path, (gltf) => {
+    // Kiedy model jest załadowany, przechodzimy po nim i podmieniamy materiały
+    
+    const customMaterials = []; // Tablica na nowe materiały
+    
+    gltf.scene.traverse(o => {
+      if (o.isMesh) {
+        o.castShadow = true;
+        o.receiveShadow = true;
+
+        if (o.material) {
+          const oldMat = o.material;
+          const tex = oldMat.map || null;
+          // Zachowujemy oryginalny kolor materiału (ważne dla modeli bez tekstur)
+          const color = oldMat.color || new THREE.Color(0xffffff);
+
+          const uniforms = {
+            dayTexture:   { value: tex },
+            uLightDirView:{ value: new THREE.Vector3(1, 0, 0) }, // Domyślny kierunek
+            minAmbient:   { value: 0.15 }, // Trochę jaśniej niż planety
+            uIntensity:   { value: 1.5 },  // Tak jak w planetach
+            uColor:       { value: color },
+            hasTexture:   { value: !!tex }
+          };
+
+          const newMat = new THREE.ShaderMaterial({
+            uniforms: uniforms,
+            vertexShader: stationVertShader,
+            fragmentShader: stationFragShader,
+            toneMapped: true,
+            side: THREE.DoubleSide // <--- TO JEST POPRAWKA NA "PRZENIKANIE"
+          });
+          
+          o.material = newMat;
+          customMaterials.push(newMat); // Zapisujemy materiał do aktualizacji
+        }
+      }
+    });
+
+    // Aktualizujemy placeholder o gotowe dane
+    placeholder.scene = gltf.scene;
+    placeholder.materials = customMaterials;
+    placeholder.loading = false;
+
+  }, undefined, (err) => {
+    console.error('GLTFLoader error loading station:', path, err);
+    placeholder.error = true;
+    placeholder.loading = false;
+  });
+
+  return placeholder; // Zwracamy placeholder (który zostanie wypełniony)
+}
+// --- KONIEC NOWEJ FUNKCJI getTemplate (Krok 2) ---
 
 function getStationKey(station) {
   if (!station) return null;
@@ -175,6 +321,29 @@ function getStationIdKey(station) {
   if (station?.planet?.name) return String(station.planet.name).toLowerCase();
   return null;
 }
+
+// --- POCZĄTEK KODU DO WKLEJENIA (Krok 3) ---
+
+function cloneTemplate(stationId, path) {
+  const cacheEntry = getTemplate(stationId, path);
+  if (!cacheEntry || cacheEntry.error || !cacheEntry.scene) {
+    // Jeśli jeszcze się ładuje, cacheEntry.scene będzie nullem
+    return null;
+  }
+
+  const scene = SkeletonUtils.clone(cacheEntry.scene);
+  
+  // Musimy też znaleźć referencje do NOWYCH, sklonowanych materiałów
+  const newMaterials = [];
+  scene.traverse(o => {
+    if (o.isMesh && o.material?.isShaderMaterial) {
+      newMaterials.push(o.material);
+    }
+  });
+
+  return { scene, materials: newMaterials }; // Zwracamy też materiały
+}
+// --- KONIEC KODU DO WKLEJENIA (Krok 3) ---
 
 function getPerStationSpriteFrame(station) {
   const key = getStationIdKey(station);
@@ -426,19 +595,22 @@ function updateRecordTransform(record, station, devScale, visible) {
 }
 
 export function initStations3D(_sceneIgnored, stations) {
-  activeScene = ensureOwnScene();
+  activeScene = initScene();
   if (!activeScene || !Array.isArray(stations)) return;
 
   const activeKeys = new Set();
   for (const station of stations) {
     if (!station || isPirateStation(station)) continue;
-    if (!getModelUrlsForStation(station)) {
+    const urls = getModelUrlsForStation(station);
+    if (!urls) {
       if (station._mesh3d) {
         if (station._mesh3d.parent) station._mesh3d.parent.remove(station._mesh3d);
         delete station._mesh3d;
       }
       continue;
     }
+    const path = urls.find(Boolean);
+    if (!path) continue;
     const record = ensureStationRecord(station);
     if (!record) continue;
     activeKeys.add(record.key);
@@ -447,9 +619,53 @@ export function initStations3D(_sceneIgnored, stations) {
         activeScene.add(record.group);
       }
       station._mesh3d = record.group;
-    } else {
-      ensureStationObject(record, station);
+      continue;
     }
+
+    const clone = cloneTemplate(station.id, path);
+    if (!clone) continue;
+
+    const { scene: group, materials } = clone; // <-- Odbierz materiały
+    group.visible = false;
+    activeScene.add(group);
+    elevateOverlay(group);
+
+    const bbox = new THREE.Box3().setFromObject(group);
+    const center = bbox.getCenter(new THREE.Vector3());
+    group.position.sub(center);
+    group.updateMatrixWorld(true);
+
+    bbox.setFromObject(group);
+    const sphere = bbox.getBoundingSphere(new THREE.Sphere());
+    const geometryRadius = sphere?.radius && sphere.radius > 0 ? sphere.radius : 1;
+
+    const desiredRadiusRaw = (Number.isFinite(station.r) ? station.r : station.baseR) ?? 1;
+    const targetRadius = Number.isFinite(desiredRadiusRaw) && desiredRadiusRaw > 0 ? desiredRadiusRaw : 1;
+    const baseScale = targetRadius / geometryRadius;
+
+    group.userData.geometryRadius = geometryRadius;
+    group.userData.baseScale = baseScale;
+    group.userData.stationId = station.id ?? record.key;
+    group.userData.targetRadius = targetRadius;
+
+    record.group = group;
+    record.geometryRadius = geometryRadius;
+    record.lastRenderedScale = null;
+    record.lastTargetRadius = targetRadius;
+    record.lastSpriteFrame = NaN;
+    record.lastSpriteSize = 0;
+    record.materials = materials || [];
+    record.camera = previewCam;
+    record._lightDirWorld = record._lightDirWorld || new THREE.Vector3();
+    record._lightDirView = record._lightDirView || new THREE.Vector3();
+    record._viewMatrix3 = record._viewMatrix3 || new THREE.Matrix3();
+    markSpriteDirty(record);
+
+    group.position.set(0, 0, 0);
+    const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
+    group.rotation.y = baseAngle + (record.spinOffset ?? 0);
+
+    station._mesh3d = group;
   }
 
   for (const [key, record] of stationRecords) {
@@ -468,14 +684,89 @@ export function updateStations3D(stations) {
 
   for (const station of stations) {
     if (!station || isPirateStation(station)) continue;
-    if (!getModelUrlsForStation(station)) continue;
+    const urls = getModelUrlsForStation(station);
+    if (!urls) continue;
+    const path = urls.find(Boolean);
+    if (!path) continue;
     const record = ensureStationRecord(station);
     if (!record) continue;
     activeKeys.add(record.key);
     if (!record.group) {
-      ensureStationObject(record, station);
-      continue;
+      const clone = cloneTemplate(station.id, path);
+      if (!clone) continue;
+
+      const { scene: group, materials } = clone;
+      group.visible = false;
+      activeScene.add(group);
+      elevateOverlay(group);
+
+      const bbox = new THREE.Box3().setFromObject(group);
+      const center = bbox.getCenter(new THREE.Vector3());
+      group.position.sub(center);
+      group.updateMatrixWorld(true);
+
+      bbox.setFromObject(group);
+      const sphere = bbox.getBoundingSphere(new THREE.Sphere());
+      const geometryRadius = sphere?.radius && sphere.radius > 0 ? sphere.radius : 1;
+
+      const desiredRadiusRaw = (Number.isFinite(station.r) ? station.r : station.baseR) ?? 1;
+      const targetRadius = Number.isFinite(desiredRadiusRaw) && desiredRadiusRaw > 0 ? desiredRadiusRaw : 1;
+      const baseScale = targetRadius / geometryRadius;
+
+      group.userData.geometryRadius = geometryRadius;
+      group.userData.baseScale = baseScale;
+      group.userData.stationId = station.id ?? record.key;
+      group.userData.targetRadius = targetRadius;
+
+      record.group = group;
+      record.geometryRadius = geometryRadius;
+      record.lastRenderedScale = null;
+      record.lastTargetRadius = targetRadius;
+      record.lastSpriteFrame = NaN;
+      record.lastSpriteSize = 0;
+      record.materials = materials || [];
+      record.camera = previewCam;
+      record._lightDirWorld = record._lightDirWorld || new THREE.Vector3();
+      record._lightDirView = record._lightDirView || new THREE.Vector3();
+      record._viewMatrix3 = record._viewMatrix3 || new THREE.Matrix3();
+      markSpriteDirty(record);
+
+      group.position.set(0, 0, 0);
+      const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
+      group.rotation.y = baseAngle + (record.spinOffset ?? 0);
     }
+
+    if (!record || !record.group) continue;
+
+    // === POCZĄTEK: AKTUALIZACJA SHADERA OŚWIETLENIA ===
+    if (record.materials && record.materials.length > 0) {
+      // 1. Oblicz kierunek słońca (w 'world space')
+      const sunDirWorld = sunDirFor(station.x, station.y);
+      
+      // 2. Przekonwertuj na 'view space' (tak jak robi to planetd3d.assets.js)
+      // Musimy pobrać kamerę, której używamy do renderowania sprite'a
+      const cam = record.camera || previewCam;
+      
+      if (cam) {
+        // Używamy wektorów z rekordu, aby uniknąć tworzenia nowych obiektów
+        record._lightDirWorld.set(sunDirWorld.x, sunDirWorld.y, 0.001); // (x, y, z)
+        record._viewMatrix3.setFromMatrix4(cam.matrixWorldInverse);
+        record._lightDirView.copy(record._lightDirWorld).applyMatrix3(record._viewMatrix3).normalize();
+
+        // 3. Zaktualizuj wszystkie materiały dla tej stacji
+        for (const mat of record.materials) {
+          if (mat.uniforms.uLightDirView) {
+            mat.uniforms.uLightDirView.value.copy(record._lightDirView);
+          }
+          // Możesz też zaktualizować intensywność, jeśli chcesz ją zmieniać w devtools
+          // if (mat.uniforms.uIntensity) {
+          //   mat.uniforms.uIntensity.value = 1.5; 
+          // }
+        }
+      }
+    }
+    // === KONIEC: AKTUALIZACJA SHADERA OŚWIETLENIA ===
+
     updateRecordTransform(record, station, devScale, visible);
   }
 
@@ -526,7 +817,7 @@ function renderStationSprite(record) {
     return;
   }
 
-  const scene = ensureOwnScene();
+  const scene = initScene();
   const cam = ensurePreviewCamera();
   const renderer = getSharedRenderer(size, size);
   if (!scene || !cam || !renderer) return;
