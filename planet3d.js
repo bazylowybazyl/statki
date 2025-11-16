@@ -12,6 +12,24 @@
   const ASTEROIDS_GLB = new URL('./src/assets/planety/asteroids/asteroidPack.glb', import.meta.url).href;
   const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 
+  let planetRenderConfig = { scales: {} };
+
+  function setPlanetRenderConfig(cfg) {
+    if (!cfg || typeof cfg !== 'object') {
+      planetRenderConfig = { scales: {} };
+      return;
+    }
+    planetRenderConfig = cfg;
+  }
+
+  function planetRenderKey(body, fallback) {
+    if (!body) return fallback;
+    if (body.renderKey != null) return body.renderKey;
+    if (body.id != null) return body.id;
+    if (body.name) return body.name;
+    return fallback;
+  }
+
   // PRNG + value noise
   function makePRNG(seed = 1337) {
     let s = seed >>> 0;
@@ -692,6 +710,7 @@
     for (const pl of planetList) {
       const p = new Planet3D(pl.r * PLANET_SIZE_MULTIPLIER, pl.type);
       p.body = pl;
+      pl.renderSize = p.size;
       planets.push(p);
     }
     const candidate3D = Number.isFinite(sunPos?.r3D) ? sunPos.r3D : undefined;
@@ -727,9 +746,17 @@
 
   function drawPlanets3D(ctx, cam) {
     if (asteroidBelt) asteroidBelt.draw(ctx, cam);
-    for (const p of planets) {
+    const cfg = planetRenderConfig || {};
+    const scales = cfg.scales || {};
+    for (let i = 0; i < planets.length; i++) {
+      const p = planets[i];
+      const key = planetRenderKey(p.body, i);
+      const override = (key != null && Object.prototype.hasOwnProperty.call(scales, key)) ? scales[key] : null;
+      const scale = Number.isFinite(override?.scale)
+        ? override.scale
+        : (Number.isFinite(override) ? override : 1);
       const s = worldToScreen(p.body.x, p.body.y, cam);
-      const size = p.size * cam.zoom;
+      const size = p.size * cam.zoom * (scale > 0 ? scale : 1);
       ctx.drawImage(p.canvas, s.x - size / 2, s.y - size / 2, size, size);
     }
     if (sun) {
@@ -749,5 +776,6 @@
   window.initPlanets3D = initPlanets3D;
   window.updatePlanets3D = updatePlanets3D;
   window.drawPlanets3D = drawPlanets3D;
+  window.setPlanetRenderConfig = setPlanetRenderConfig;
   window.getSharedRenderer = getSharedRenderer;
 })();

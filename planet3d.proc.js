@@ -3,6 +3,24 @@ const USE_PP = false; // tymczasowo wyłącz postprocessing, aby zachować pełn
 
 const ASTEROIDS_GLB = new URL('./src/assets/planety/asteroids/asteroidPack.glb', import.meta.url).href;
 
+let planetRenderConfig = { scales: {} };
+
+function setPlanetRenderConfig(cfg) {
+  if (!cfg || typeof cfg !== 'object') {
+    planetRenderConfig = { scales: {} };
+    return;
+  }
+  planetRenderConfig = cfg;
+}
+
+function planetRenderKey(body, fallback) {
+  if (!body) return fallback;
+  if (body.renderKey != null) return body.renderKey;
+  if (body.id != null) return body.id;
+  if (body.name) return body.name;
+  return fallback;
+}
+
 const NOISE_FUNCTIONS = `const float PI = 3.14159265;
 
     //	Simplex 3D Noise 
@@ -963,6 +981,8 @@ const PLANET_FRAG = `// Terrain generation parameters
     for (const s of list) {
       const size = (s.r || 30) * PLANET_SIZE_MULTIPLIER;
       const p = new ProcPlanet(s.x, s.y, size, { style: s.type || null });
+      p.body = s;
+      s.renderSize = size;
       _planets.push(p);
     }
     if (sunObj) {
@@ -994,9 +1014,17 @@ const PLANET_FRAG = `// Terrain generation parameters
   }
   function drawPlanets3D(ctx, cam) {
     if (asteroidBelt) asteroidBelt.draw(ctx, cam);
-    for (const p of _planets) {
+    const cfg = planetRenderConfig || {};
+    const scales = cfg.scales || {};
+    for (let i = 0; i < _planets.length; i++) {
+      const p = _planets[i];
+      const key = planetRenderKey(p.body, i);
+      const override = (key != null && Object.prototype.hasOwnProperty.call(scales, key)) ? scales[key] : null;
+      const scale = Number.isFinite(override?.scale)
+        ? override.scale
+        : (Number.isFinite(override) ? override : 1);
       const s = worldToScreen(p.x, p.y, cam);
-      const size = p.size * cam.zoom;
+      const size = p.size * cam.zoom * (scale > 0 ? scale : 1);
       ctx.drawImage(p.canvas, s.x - size/2, s.y - size/2, size, size);
     }
     if (sun) {
@@ -1014,5 +1042,6 @@ const PLANET_FRAG = `// Terrain generation parameters
   window.setPlanetsSunPos = setPlanetsSunPos;
   window.updatePlanets3D = updatePlanets3D;
   window.drawPlanets3D = drawPlanets3D;
+  window.setPlanetRenderConfig = setPlanetRenderConfig;
   window.getSharedRenderer = getSharedRenderer;
 })();
