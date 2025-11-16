@@ -249,11 +249,14 @@
 
 <script type="module">
 import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
-import { WORLD } from './src/world/world.js';
+import { GAME_STATE, ORBITAL_RADIUS, TRANSITION_RADIUS, WORLD } from './src/world/world.js';
 
 window.DEFAULT_PLANET_SCALE ??= DEFAULT_PLANET_SCALE;
 window.TIME_SCALE ??= TIME_SCALE;
 window.WORLD ??= WORLD;
+window.GAME_STATE ??= GAME_STATE;
+window.TRANSITION_RADIUS ??= TRANSITION_RADIUS;
+window.ORBITAL_RADIUS ??= ORBITAL_RADIUS;
 
 // LOKALNY alias na potrzeby tego modułu (ESM nie widzi 'gołych' globali z window):
 const PLANET_SCALE =
@@ -502,6 +505,15 @@ const norm = v=>{ const L=len(v); return L?{x:v.x/L,y:v.y/L}:{x:0,y:0}; };
 const smoothstep01 = t=>{ const x = clamp(t, 0, 1); return x*x*(3 - 2*x); };
 function rotate(local,a){ const c=Math.cos(a), s=Math.sin(a); return {x: local.x*c - local.y*s, y: local.x*s + local.y*c}; }
 function rotateInv(world,a){ return rotate(world, -a); }
+function planetTargetScale(planet, cam){
+  const baseSize = Math.max(1, (planet.renderSize || planet.r || 1) * (cam?.zoom ?? camera.zoom ?? 1));
+  const desiredSize = Math.max(W, H) * 1.2;
+  return desiredSize / baseSize;
+}
+function planetTransitionScale(planet, cam, t){
+  const clampedT = clamp(t, 0, 1);
+  return lerp(1, planetTargetScale(planet, cam), clampedT);
+}
 function muzzlePosFor(entity, dir, extra = 8){
   const rad = (entity.radius != null) ? entity.radius : (entity.r != null ? entity.r : 12);
   return { x: entity.x + dir.x * (rad + extra), y: entity.y + dir.y * (rad + extra) };
@@ -754,6 +766,8 @@ function uid(){ return 'hp_'+Math.random().toString(36).slice(2,9); }
 
 const Game = window.Game || (window.Game={});
 Game.infrastructure = Game.infrastructure || new Map();
+Game.currentState = Game.currentState || GAME_STATE.INTERPLANETARY;
+Game.activePlanet = Game.activePlanet || null;
 const previousPlayer = Game.player || {};
 const defaultInventory = ['railgun_mk1','railgun_mk2','armata_mk1','heavy_autocannon','missile_rack','ciws_mk1','laser_pd_mk1','fighter_bay','super_f'];
 const existingInventory = previousPlayer.inventory ? Array.from(previousPlayer.inventory) : [];
@@ -1710,6 +1724,16 @@ function formatPlanetLabel(planet, index){
   return `Planet ${index + 1}`;
 }
 
+function planetRenderKey(planet, index){
+  if (planet.renderKey != null) return planet.renderKey;
+  if (planet.id != null) return planet.id;
+  if (planet.name) return planet.name;
+  if (planet.label) return planet.label;
+  const fallback = typeof index === 'number' ? `planet-${index}` : 'planet';
+  planet.renderKey = fallback;
+  return planet.renderKey;
+}
+
 // wylicz pozycje
 let planets = PLANET_DATA.map((p, index) => {
   if (p.baseR == null) p.baseR = p.r;
@@ -1719,6 +1743,7 @@ let planets = PLANET_DATA.map((p, index) => {
   p.x = SUN.x + Math.cos(p.angle) * p.orbitRadius;
   p.y = SUN.y + Math.sin(p.angle) * p.orbitRadius;
   p.label = formatPlanetLabel(p, index);
+  p.renderKey = planetRenderKey(p, index);
   return p;
 });
 window.planets = planets;
@@ -3530,6 +3555,27 @@ function closeStationUI(){
   camera.clearFocus();
 }
 
+function stationForPlanet(planet){
+  if(!planet) return null;
+  return stations.find(st => st.planet === planet) || null;
+}
+
+function enterPlanetOrbit(planet){
+  Game.activePlanet = planet;
+  const station = stationForPlanet(planet);
+  if(station){
+    setInfrastructureActiveStation(station);
+  } else {
+    setInfrastructureActiveStation(null);
+  }
+}
+
+function exitPlanetOrbit(){
+  setInfrastructureActiveStation(null);
+  setInfrastructureUIVisible(false);
+  setStationEditorMode(false);
+}
+
 function setStationEditorMode(enabled){
   const body = document.body;
   const overlay = infrastructureBuilder.overlay;
@@ -4360,20 +4406,21 @@ function drawInfrastructureGrid(ctx, cam, station, state){
 
 function drawInfrastructureInstances(ctx, cam){
   if(!ctx || !cam || !Game.infrastructure) return;
-  const activeKey = (stationUI.editorMode && stationUI.station) ? getInfrastructureStationKey(stationUI.station) : null;
+  if(Game.currentState !== GAME_STATE.ORBITAL) return;
+  const activeKey = infrastructureBuilder.activeStationKey;
+  const activeList = activeKey ? Game.infrastructure.get(activeKey) : null;
+  if(!activeKey || !activeList || !activeList.length) return;
+  if(!findStationByKey(activeKey)) return;
   ctx.save();
-  Game.infrastructure.forEach((list, key) => {
-    if(activeKey && key === activeKey) return;
-    for(const inst of list){
-      if(!inst || !inst.worldPos || !inst.buildingId) continue;
-      const building = INFRA_BUILDING_MAP.get(inst.buildingId);
-      if(!building) continue;
-      const screen = worldToScreen(inst.worldPos.x, inst.worldPos.y, cam);
-      const size = INFRA_CELL_WORLD_SIZE * cam.zoom * 0.6;
-      ctx.globalAlpha = 0.9;
-      drawInfrastructureIcon(ctx, building, screen, size, 0.95);
-    }
-  });
+  for(const inst of activeList){
+    if(!inst || !inst.worldPos || !inst.buildingId || inst.hidden) continue;
+    const building = INFRA_BUILDING_MAP.get(inst.buildingId);
+    if(!building) continue;
+    const screen = worldToScreen(inst.worldPos.x, inst.worldPos.y, cam);
+    const size = INFRA_CELL_WORLD_SIZE * cam.zoom * 0.6;
+    ctx.globalAlpha = 0.9;
+    drawInfrastructureIcon(ctx, building, screen, size, 0.95);
+  }
   ctx.restore();
 }
 
@@ -4725,27 +4772,29 @@ function updateInfrastructureEditorState(dt){
 }
 
 function updateInfrastructureState(dt){
+  if(Game.currentState !== GAME_STATE.ORBITAL) return;
+  const activeKey = infrastructureBuilder.activeStationKey;
+  if(!activeKey) return;
+  const state = infrastructureBuilder.stationStates.get(activeKey);
+  if(!state || !state.cells) return;
   let changed = false;
-  infrastructureBuilder.stationStates.forEach(state => {
-    if(!state || !state.cells) return;
-    state.cells.forEach((cell, idx) => {
-      if(!cell) return;
-      if(cell.status === 'building'){
-        const prev = cell.progress || 0;
-        cell.elapsed = (cell.elapsed || 0) + dt;
-        const duration = Math.max(0.1, cell.duration || 1);
-        cell.progress = clamp(cell.elapsed / duration, 0, 1);
-        if(cell.progress !== prev) changed = true;
-        if(cell.progress >= 1 && cell.status !== 'completed'){
-          cell.status = 'completed';
-          changed = true;
-        }
-      }
-      if(cell.status === 'completed' && !cell.emitted){
-        emitInfrastructureCompletion(state, idx, cell);
+  state.cells.forEach((cell, idx) => {
+    if(!cell) return;
+    if(cell.status === 'building'){
+      const prev = cell.progress || 0;
+      cell.elapsed = (cell.elapsed || 0) + dt;
+      const duration = Math.max(0.1, cell.duration || 1);
+      cell.progress = clamp(cell.elapsed / duration, 0, 1);
+      if(cell.progress !== prev) changed = true;
+      if(cell.progress >= 1 && cell.status !== 'completed'){
+        cell.status = 'completed';
         changed = true;
       }
-    });
+    }
+    if(cell.status === 'completed' && !cell.emitted){
+      emitInfrastructureCompletion(state, idx, cell);
+      changed = true;
+    }
   });
   if(changed){
     if(infrastructureBuilder.isVisible){
@@ -4755,6 +4804,74 @@ function updateInfrastructureState(dt){
     }
   } else if(infrastructureBuilder.isVisible && infrastructureBuilder.needsRender){
     renderInfrastructureOverlay();
+  }
+}
+
+function applyGameState(nextState, nextPlanet){
+  const prevState = Game.currentState || GAME_STATE.INTERPLANETARY;
+  const prevPlanet = Game.activePlanet || null;
+  if(prevState === GAME_STATE.ORBITAL && prevPlanet && nextState !== GAME_STATE.ORBITAL){
+    exitPlanetOrbit();
+  }
+  if(nextState === GAME_STATE.ORBITAL && nextPlanet && (prevState !== GAME_STATE.ORBITAL || prevPlanet !== nextPlanet)){
+    enterPlanetOrbit(nextPlanet);
+  }
+  Game.currentState = nextState;
+  Game.activePlanet = nextPlanet;
+}
+
+function updatePlanetaryView(cam){
+  const cfg = { scales: {} };
+  let closestOrbitalPlanet = null;
+  let closestOrbitalDistance = Infinity;
+  let hasTransition = false;
+  for(let i=0;i<planets.length;i++){
+    const planet = planets[i];
+    const key = planet.renderKey ?? planetRenderKey(planet, i);
+    const dist = Math.hypot(ship.pos.x - planet.x, ship.pos.y - planet.y);
+    let scale = 1;
+    if(dist <= ORBITAL_RADIUS){
+      if(dist < closestOrbitalDistance){
+        closestOrbitalDistance = dist;
+        closestOrbitalPlanet = planet;
+      }
+      scale = planetTargetScale(planet, cam);
+    } else if(dist <= TRANSITION_RADIUS){
+      const t = 1 - ((dist - ORBITAL_RADIUS) / (TRANSITION_RADIUS - ORBITAL_RADIUS));
+      scale = planetTransitionScale(planet, cam, t);
+      hasTransition = true;
+    }
+    cfg.scales[key] = { scale };
+  }
+
+  let nextState = Game.currentState || GAME_STATE.INTERPLANETARY;
+  let nextPlanet = Game.activePlanet || null;
+  if(closestOrbitalPlanet){
+    nextPlanet = closestOrbitalPlanet;
+    nextState = GAME_STATE.ORBITAL;
+  } else {
+    nextPlanet = null;
+    nextState = hasTransition ? GAME_STATE.TRANSITIONING : GAME_STATE.INTERPLANETARY;
+  }
+
+  applyGameState(nextState, nextPlanet);
+  cfg.activePlanetId = nextPlanet?.id ?? nextPlanet?.renderKey ?? nextPlanet?.name ?? null;
+  if(typeof window.setPlanetRenderConfig === 'function'){
+    window.setPlanetRenderConfig(cfg);
+  }
+  return cfg;
+}
+
+function inOrbitalView(){
+  return Game.currentState === GAME_STATE.ORBITAL && !!Game.activePlanet;
+}
+
+function updateInfrastructureSystems(dt){
+  if(inOrbitalView()){
+    updateInfrastructureEditorState(dt);
+    updateInfrastructureState(dt);
+  } else if(infrastructureBuilder.isVisible){
+    setInfrastructureUIVisible(false);
   }
 }
 
@@ -7228,8 +7345,7 @@ function engageWarp(dir){
 function physicsStep(dt){
   updateCameraTarget(dt);
   updateStationUIState(dt);
-  updateInfrastructureEditorState(dt);
-  updateInfrastructureState(dt);
+  updateInfrastructureSystems(dt);
   // czas gry
   gameTime = (gameTime + dt * TIME_SCALE) % (24*3600);
   // aktualizacja orbit planet i stacji
@@ -8487,6 +8603,8 @@ function render(alpha, frameDt){
   // aktualizuj wyświetlanie czasu
   gameTimeEl.textContent = formatGameTime(gameTime);
   updateFleetUI();
+  updatePlanetaryView(cam);
+  const orbitalView = inOrbitalView();
 
   // Czyścimy ekran
   ctx.clearRect(0,0,W,H);
@@ -8520,11 +8638,13 @@ function render(alpha, frameDt){
   if (window.drawPlanets3D)   drawPlanets3D(ctx, cam);      // planety
   if (window.drawStations3D)  drawStations3D(ctx, cam, worldToScreen); // STACJE 3D NAD PLANETAMI (sprite per-stacja)
   if (window.drawWorld3D)     drawWorld3D(ctx, cam, worldToScreen); // np. piracka stacja (spotlight)
-  if(stationUI.editorMode && stationUI.station){
+  if(orbitalView && stationUI.editorMode && stationUI.station && stationUI.station.planet === Game.activePlanet){
     const infraState = ensureInfrastructureState(stationUI.station);
     if(infraState) drawInfrastructureGrid(ctx, cam, stationUI.station, infraState);
   }
-  drawInfrastructureInstances(ctx, cam);
+  if(orbitalView){
+    drawInfrastructureInstances(ctx, cam);
+  }
   drawPlanetLabels(ctx, cam);
   drawRangeRuler(ctx, cam);
   if (window.drawSunDirection) drawSunDirection(ctx, cam);
