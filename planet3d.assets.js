@@ -295,13 +295,12 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       if (cloudsMap) {
         const clouds = new THREE.Mesh(
           new THREE.SphereGeometry(1.008, 64, 48),
-          new THREE.MeshBasicMaterial({
-      map: cloudsMap,
-      transparent: true,
-      depthWrite: false,
-      opacity: 0.6, // Zmniejszyłem trochę opacity, możesz poeksperymentować
-      blending: THREE.AdditiveBlending 
-    })
+          new THREE.MeshPhongMaterial({
+            map: cloudsMap,
+            transparent: true,
+            depthWrite: false,
+            opacity: 0.9
+          })
         );
         clouds.castShadow = false;
         this.scene.add(clouds);
