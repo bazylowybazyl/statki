@@ -1144,6 +1144,7 @@ const camera = {
   freePanSpeed: 1,
   lastPointerX: null,
   lastPointerY: null,
+  freeKeyPanSpeed: 1400,
   targetX: WORLD.w / 2,
   targetY: WORLD.h / 2,
   targetZoom: 1.0,
@@ -1166,8 +1167,8 @@ const camera = {
   enterFreeMode(){
     this.mode = 'free';
     this.focusStation = null;
-    this.targetX = this.x = ship.pos.x;
-    this.targetY = this.y = ship.pos.y;
+    this.targetX = this.x;
+    this.targetY = this.y;
     this.targetZoom = this.zoom;
     this.transition = null;
     this.focusArrived = false;
@@ -1177,11 +1178,18 @@ const camera = {
   exitFreeMode(){
     this.mode = 'ship';
     this.focusStation = null;
-    this.targetZoom = this.defaultZoom;
     this.manualZoom = false;
     this.focusArrived = false;
     this.lastPointerX = null;
     this.lastPointerY = null;
+    const tx = ship.pos.x;
+    const ty = ship.pos.y;
+    const tz = this.defaultZoom;
+    this.beginTransition(tx, ty, tz, 0.75, () => {
+      this.targetX = tx;
+      this.targetY = ty;
+      this.targetZoom = tz;
+    });
   },
   toggleFreeMode(){
     if(this.mode === 'free') this.exitFreeMode();
@@ -1296,6 +1304,17 @@ function updateCameraTarget(dt){
     camera.targetX = ship.pos.x;
     camera.targetY = ship.pos.y;
     if(!camera.transition && !camera.manualZoom) camera.targetZoom = camera.defaultZoom;
+  } else if(camera.mode === 'free'){
+    const moveX = (keys['arrowright'] ? 1 : 0) - (keys['arrowleft'] ? 1 : 0);
+    const moveY = (keys['arrowdown'] ? 1 : 0) - (keys['arrowup'] ? 1 : 0);
+    if(moveX || moveY){
+      const len = Math.hypot(moveX, moveY) || 1;
+      const panSpeed = camera.freeKeyPanSpeed / Math.max(0.0001, camera.zoom);
+      camera.x += (moveX / len) * panSpeed * dt;
+      camera.y += (moveY / len) * panSpeed * dt;
+    }
+    camera.targetX = camera.x;
+    camera.targetY = camera.y;
   } else if(camera.mode === 'focus'){
     const st = camera.focusStation;
     if(st){
@@ -5366,6 +5385,8 @@ canvas.addEventListener('mousemove', e=>{
     const panMul = camera.freePanSpeed / Math.max(0.0001, camera.zoom);
     camera.x += movementX * panMul;
     camera.y += movementY * panMul;
+    camera.targetX = camera.x;
+    camera.targetY = camera.y;
   }
   if(stationUI.open && stationUI.dragging){
     stationUI.x = mouse.x - stationUI.dragDX;
