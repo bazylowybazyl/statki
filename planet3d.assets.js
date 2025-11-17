@@ -186,7 +186,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.size = pixelSize || 64;
 
       this.canvas = document.createElement("canvas");
-      this.canvas.width = 2048; this.canvas.height = 2048;
+      this.canvas.width = 4096; this.canvas.height = 4096;
       this.ctx2d = this.canvas.getContext("2d");
       this._name = String((opts && (opts.name ?? opts.id)) ?? "").toLowerCase();
       if (!this._name || !TEX[this._name]) this._name = 'earth';
@@ -202,7 +202,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
       this.camera.position.z = 3;
 
-      const geom = new THREE.SphereGeometry(1, 192, 128);
+      const geom = new THREE.SphereGeometry(1, 256, 192);
       const tex = TEX[this._name] || {};
 
       const [
