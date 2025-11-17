@@ -1665,6 +1665,7 @@ function makeSolarPlanets(){
       name: def.name,
       baseR: def.baseR,
       r: effectiveR,
+      orbitAU: def.orbitAU,
       orbitRadius,
       angle: rand(),
       speed: 0
@@ -1743,6 +1744,19 @@ let planets = PLANET_DATA.map((p, index) => {
 window.planets = planets;
 
 const ASTEROID_BELT = (() => {
+  const AU_TO_WORLD = (typeof BASE_ORBIT === 'number' && BASE_ORBIT > 0) ? BASE_ORBIT : 3000;
+  const neptuneBelt = (() => {
+    const neptune = planets.find(p => p.id === 'neptune' || p.name === 'neptune');
+    if (!neptune || !Number.isFinite(neptune.orbitAU)) return null;
+    const beltAU = neptune.orbitAU + 3;
+    const beltWidthAU = 2;
+    const mid = beltAU * AU_TO_WORLD;
+    const inner = Math.max(50, mid - (beltWidthAU * AU_TO_WORLD) / 2);
+    const outer = mid + (beltWidthAU * AU_TO_WORLD) / 2;
+    return { inner, outer, mid };
+  })();
+  if (neptuneBelt) return neptuneBelt;
+
   const innerPlanet = planets[3];
   const outerPlanet = planets[4];
   if (innerPlanet && outerPlanet && innerPlanet.orbitRadius && outerPlanet.orbitRadius) {
