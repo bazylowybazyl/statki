@@ -202,7 +202,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
       this.camera.position.z = 3;
 
-      const geom = new THREE.SphereGeometry(1, 256, 192);
+      const geom = new THREE.SphereGeometry(1, 192, 128);
       const tex = TEX[this._name] || {};
 
       const [
