@@ -1743,6 +1743,164 @@ let planets = PLANET_DATA.map((p, index) => {
 });
 window.planets = planets;
 
+// =============== Strefy (planety/słońce/pas asteroid) ===============
+const AU_IN_WORLD_UNITS = (typeof BASE_ORBIT === 'number' && BASE_ORBIT > 0) ? BASE_ORBIT : 3000;
+const ZONE_APPROACH_DISTANCE = AU_IN_WORLD_UNITS; // 1 AU przed granicą
+
+const zoneState = {
+  current: null,
+  approaching: null,
+  lastZoneKey: null,
+  lastApproachKey: null,
+  initialized: false,
+  messages: []
+};
+
+function makeInterplanetaryZone(){
+  return {
+    key: 'interplanetary',
+    id: 'interplanetary',
+    label: 'Interplanetary Zone',
+    enteringLabel: 'Interplanetary Zone',
+    warpMultiplier: 5,
+    wormholeVfx: true
+  };
+}
+
+const zonePriority = { planet: 3, sun: 2, asteroid_belt: 1 };
+
+function zonePropsForId(id){
+  if (id === 'planet' || id === 'sun' || id === 'asteroid_belt') {
+    return { warpMultiplier: 0.3, wormholeVfx: false };
+  }
+  if (id === 'interplanetary') {
+    return { warpMultiplier: 5, wormholeVfx: true };
+  }
+  return { warpMultiplier: 1, wormholeVfx: false };
+}
+
+function enhanceZoneDescriptor(zone){
+  if (!zone) return null;
+  const props = zonePropsForId(zone.id);
+  zone.warpMultiplier = props.warpMultiplier;
+  zone.wormholeVfx = props.wormholeVfx;
+  return zone;
+}
+
+function formatPlanetOrbitLabel(planet){
+  const name = typeof planet.label === 'string' && planet.label.trim().length
+    ? planet.label.trim()
+    : formatPlanetLabel(planet, 0);
+  return name;
+}
+
+function detectZones(pos){
+  const zones = [];
+
+  for (const [index, planet] of planets.entries()) {
+    if (!planet) continue;
+    const radius = Math.max(10, (planet.r || 0) * 2);
+    const dx = pos.x - planet.x;
+    const dy = pos.y - planet.y;
+    const dist = Math.hypot(dx, dy);
+    const edgeDist = dist - radius;
+    const labelName = formatPlanetOrbitLabel(planet) || `Planet ${index + 1}`;
+    zones.push({
+      key: `planet-${planet.id || planet.name || index}`,
+      id: 'planet',
+      label: `Orbit of ${labelName}`,
+      enteringLabel: `Entering Orbit of ${labelName}`,
+      edgeDist,
+      approachRange: ZONE_APPROACH_DISTANCE,
+      priority: zonePriority.planet
+    });
+  }
+
+  const sunRadius = Math.max(10, (SUN.r || 0) * 2);
+  const sunDist = Math.hypot(pos.x - SUN.x, pos.y - SUN.y);
+  const sunEdge = sunDist - sunRadius;
+  zones.push({
+    key: 'sun',
+    id: 'sun',
+    label: 'Sun',
+    enteringLabel: 'Entering Sun',
+    edgeDist: sunEdge,
+    approachRange: ZONE_APPROACH_DISTANCE,
+    priority: zonePriority.sun
+  });
+
+  if (ASTEROID_BELT) {
+    const radial = sunDist;
+    const inner = ASTEROID_BELT.inner;
+    const outer = ASTEROID_BELT.outer;
+    const inside = radial >= inner && radial <= outer;
+    const edgeDist = inside
+      ? Math.min(radial - inner, outer - radial) * -1
+      : Math.min(Math.abs(radial - inner), Math.abs(radial - outer));
+    zones.push({
+      key: 'asteroid-belt',
+      id: 'asteroid_belt',
+      label: 'Asteroid Belt',
+      enteringLabel: 'Entering Asteroid Belt',
+      edgeDist,
+      approachRange: ZONE_APPROACH_DISTANCE,
+      priority: zonePriority.asteroid_belt
+    });
+  }
+
+  const insideZones = zones.filter(z => z.edgeDist <= 0);
+  insideZones.sort((a, b) => (b.priority - a.priority) || (Math.abs(a.edgeDist) - Math.abs(b.edgeDist)));
+  let current = insideZones[0] || makeInterplanetaryZone();
+
+  const approachCandidates = zones
+    .filter(z => z.edgeDist > 0 && z.edgeDist <= z.approachRange)
+    .sort((a, b) => a.edgeDist - b.edgeDist);
+  const approaching = approachCandidates[0] || null;
+
+  return { current: enhanceZoneDescriptor(current), approaching: enhanceZoneDescriptor(approaching) };
+}
+
+function pushZoneMessage(text, duration = 3.5){
+  zoneState.messages.push({ text, life: duration, maxLife: duration });
+}
+
+function updateZoneMessages(dt){
+  for (const msg of zoneState.messages) {
+    msg.life -= dt;
+  }
+  zoneState.messages = zoneState.messages.filter(msg => msg.life > 0);
+}
+
+function updateZoneState(dt){
+  const prevZoneKey = zoneState.current?.key || zoneState.lastZoneKey;
+  const detection = detectZones(ship.pos);
+  zoneState.current = detection.current;
+  zoneState.approaching = detection.approaching;
+
+  if (!zoneState.initialized) {
+    zoneState.lastZoneKey = zoneState.current?.key || null;
+    zoneState.initialized = true;
+  } else if (zoneState.current && zoneState.current.key !== zoneState.lastZoneKey) {
+    if (zoneState.current.label) pushZoneMessage(zoneState.current.label);
+    zoneState.lastZoneKey = zoneState.current.key;
+  }
+
+  const approachKey = zoneState.approaching?.key || null;
+  if (
+    zoneState.initialized &&
+    approachKey &&
+    approachKey !== zoneState.lastApproachKey &&
+    approachKey !== zoneState.current?.key &&
+    approachKey !== prevZoneKey
+  ){
+    if (zoneState.approaching?.enteringLabel) pushZoneMessage(zoneState.approaching.enteringLabel);
+  }
+  zoneState.lastApproachKey = approachKey;
+
+  updateZoneMessages(dt);
+}
+
+
 const ASTEROID_BELT = (() => {
   const AU_TO_WORLD = (typeof BASE_ORBIT === 'number' && BASE_ORBIT > 0) ? BASE_ORBIT : 3000;
   const neptuneBelt = (() => {
@@ -7326,6 +7484,7 @@ function physicsStep(dt){
     const scale = stationScaleFor(st);
     st.r = (st.baseR || st.r) * scale;
   }
+  updateZoneState(dt);
   // regen paliwa gdy nie warpuje
   if(warp.state!=='active'){
     warp.fuel = clamp(warp.fuel + warp.regenRate*dt, 0, warp.fuelMax);
@@ -7541,7 +7700,10 @@ function physicsStep(dt){
 
     warp.entryProgress = Math.min(1, warp.entryProgress + dt / Math.max(0.001, warp.entryDuration));
     const entryEase = smoothstep01(warp.entryProgress);
-    const targetSpeed = warp.entryBaseSpeed + (warp.speed - warp.entryBaseSpeed) * entryEase;
+    const zoneWarpMul = zoneState.current?.warpMultiplier ?? 1;
+    const maxWarpSpeed = warp.speed * zoneWarpMul;
+    const entryStartSpeed = Math.min(warp.entryBaseSpeed, maxWarpSpeed);
+    const targetSpeed = entryStartSpeed + (maxWarpSpeed - entryStartSpeed) * entryEase;
     const targetV = { x: warp.dir.x*targetSpeed, y: warp.dir.y*targetSpeed };
     ship.vel.x += (targetV.x - ship.vel.x) * clamp(6*dt,0,1);
     ship.vel.y += (targetV.y - ship.vel.y) * clamp(6*dt,0,1);
@@ -8803,7 +8965,8 @@ if (warpBlackHoleFX) {
     configureWarpLensSource();
   }
 
-  const shouldRenderWarpLens = isWarpActive && warpIntensity > 0.001;
+  const zoneAllowsWarpLens = zoneState.current?.wormholeVfx ?? false;
+  const shouldRenderWarpLens = isWarpActive && warpIntensity > 0.001 && zoneAllowsWarpLens;
   warpBlackHoleFX.setEnabled(shouldRenderWarpLens && !!warpLensSource);
 
   if (shouldRenderWarpLens && warpLensSource) {
@@ -9594,8 +9757,43 @@ if (warpLensShouldDraw && warpLensOutputCanvas && warpLensOutputCanvas.width && 
   renderStationUI();
   renderOptions();
   renderMissionJournal();
+  renderZoneMessages();
   renderMissionCompleteBanner();
   mouse.click=false;
+}
+
+function renderZoneMessages(){
+  if (!zoneState.messages.length) return;
+
+  ctx.save();
+  ctx.resetTransform();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const baseY = 70;
+  const lineH = 32;
+
+  zoneState.messages.forEach((msg, i) => {
+    const progress = msg.maxLife - msg.life;
+    const fadeIn = clamp(progress / 0.35, 0, 1);
+    const fadeOut = clamp(msg.life / 0.5, 0, 1);
+    const alpha = Math.min(fadeIn, fadeOut);
+    if (alpha <= 0) return;
+
+    const fontSize = 22;
+    const y = baseY + i * lineH;
+    ctx.font = `600 ${fontSize}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+    ctx.shadowBlur = 12;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(12, 20, 36, 0.7)';
+    ctx.fillStyle = '#e5ecff';
+    ctx.globalAlpha = alpha;
+
+    ctx.strokeText(msg.text, W/2, y);
+    ctx.fillText(msg.text, W/2, y);
+  });
+
+  ctx.restore();
 }
 
 function renderMissionCompleteBanner(){
