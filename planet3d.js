@@ -708,7 +708,11 @@
       : (Number.isFinite(sunPos?.r) ? sunPos.r : 200);
     let inner = baseSunRadius * 4.0;
     let outer = inner * 1.18;
-    if (planetList && planetList.length >= 5 && planetList[3].orbitRadius && planetList[4].orbitRadius) {
+    const beltFromGlobal = (typeof ASTEROID_BELT !== 'undefined' && ASTEROID_BELT) ? ASTEROID_BELT : null;
+    if (beltFromGlobal && Number.isFinite(beltFromGlobal.inner) && Number.isFinite(beltFromGlobal.outer)) {
+      inner = beltFromGlobal.inner;
+      outer = beltFromGlobal.outer;
+    } else if (planetList && planetList.length >= 5 && planetList[3].orbitRadius && planetList[4].orbitRadius) {
       const r1 = planetList[3].orbitRadius, r2 = planetList[4].orbitRadius;
       const mid = (r1 + r2) * 0.5;
       const width = (r2 - r1) * 0.22;
