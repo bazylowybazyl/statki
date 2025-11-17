@@ -138,6 +138,8 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
   const ASTEROIDS_GLB = assetUrl('planety/asteroids/asteroidPack.glb');
 
   // === Tekstury dla realnego układu (same ścieżki, bez binarek w PR) ===
+  const EARTH_NORMAL_EXT = 'tif';
+  const EARTH_SPEC_EXT = 'tif';
   const TEX = {
     mercury: { color: assetUrl('planety/solar/mercury/mercury_color.jpg'),
                normal:assetUrl('planety/solar/mercury/mercury_normal.jpg') },
@@ -145,8 +147,8 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
                bump:  assetUrl('planety/images/venusbump.jpg'),
                atmo:  assetUrl('planety/images/venus_atmosphere.jpg') },
     earth:   { color: assetUrl('planety/solar/earth/earth_color.jpg'),
-               normal:assetUrl('planety/solar/earth/earth_normal.jpg'),
-               spec:  assetUrl('planety/images/earth_specularmap.jpg'),
+               normal:assetUrl(`planety/solar/earth/earth_normal.${EARTH_NORMAL_EXT}`),
+               spec:  assetUrl(`planety/images/earth_specularmap.${EARTH_SPEC_EXT}`),
                night: assetUrl('planety/images/earth_nightmap.jpg'),
                clouds:assetUrl('planety/solar/earth/earth_clouds.jpg') },
     mars:    { color: assetUrl('planety/solar/mars/mars_color.jpg'),
