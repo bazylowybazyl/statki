@@ -249,7 +249,7 @@
 
 <script type="module">
 import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
-import { WORLD } from './src/world/world.js';
+import { WORLD, setWorldSize } from './src/world/world.js';
 
 window.DEFAULT_PLANET_SCALE ??= DEFAULT_PLANET_SCALE;
 window.TIME_SCALE ??= TIME_SCALE;
@@ -315,6 +315,10 @@ function warpLensParam(key){
   const bag = DevVFX?.warpLens || defaults;
   const raw = bag[key];
   return Number.isFinite(raw) ? raw : defaults[key];
+}
+
+function getAuToWorldUnits(){
+  return (typeof BASE_ORBIT === 'number' && BASE_ORBIT > 0) ? BASE_ORBIT : 3000;
 }
 
 function getWarpLensThreshold(){
@@ -758,6 +762,7 @@ const previousPlayer = Game.player || {};
 const defaultInventory = ['railgun_mk1','railgun_mk2','armata_mk1','heavy_autocannon','missile_rack','ciws_mk1','laser_pd_mk1','fighter_bay','super_f'];
 const existingInventory = previousPlayer.inventory ? Array.from(previousPlayer.inventory) : [];
 const mergedInventory = new Set([...existingInventory, ...defaultInventory]);
+const hasSavedShipPosition = !!previousPlayer.pos;
 
 // =============== Ship ===============
 const shipOverrides = {};
@@ -1673,6 +1678,53 @@ function makeSolarPlanets(){
   });
 }
 
+function computeWorldDiameter(planets){
+  const auToWorld = getAuToWorldUnits();
+  const beltWidthAU = 2;
+  const beltHalfWidthAU = beltWidthAU / 2;
+  const safetyMarginAU = 2;
+  const beltCenterAU = (() => {
+    const neptune = planets.find(p => p.id === 'neptune' || p.name === 'neptune');
+    if (neptune && Number.isFinite(neptune.orbitAU)) return neptune.orbitAU + 3;
+
+    const maxOrbitAU = planets
+      .map(p => p.orbitAU)
+      .filter(Number.isFinite)
+      .reduce((max, v) => Math.max(max, v), -Infinity);
+    if (Number.isFinite(maxOrbitAU)) return maxOrbitAU + 3;
+
+    const maxOrbitRadius = planets
+      .map(p => p.orbitRadius)
+      .filter(Number.isFinite)
+      .reduce((max, v) => Math.max(max, v), -Infinity);
+    if (Number.isFinite(maxOrbitRadius)) return (maxOrbitRadius / auToWorld) + 3;
+
+    return 60;
+  })();
+
+  const outerRadiusWorld = (beltCenterAU + beltHalfWidthAU + safetyMarginAU) * auToWorld;
+  return outerRadiusWorld * 2;
+}
+
+function alignWorldToCenter(centerX, centerY){
+  SUN.x = centerX;
+  SUN.y = centerY;
+
+  if (camera) {
+    camera.x = centerX;
+    camera.y = centerY;
+    camera.targetX = centerX;
+    camera.targetY = centerY;
+  }
+
+  if (!hasSavedShipPosition && ship) {
+    ship.pos.x = centerX;
+    ship.pos.y = centerY;
+    overlayView.center.x = centerX;
+    overlayView.center.y = centerY;
+  }
+}
+
 // jeśli kiedyś będziemy chcieli wrócić do starych zasad, zostawiamy helper:
 function makeProceduralPlanets(){
   // stary kod może zostać, ale domyślnie nieużywany
@@ -1710,6 +1762,10 @@ function makeProceduralPlanets(){
 
 const PLANET_DATA = USE_SOLAR ? makeSolarPlanets() : makeProceduralPlanets();
 
+const WORLD_DIAMETER = computeWorldDiameter(PLANET_DATA);
+setWorldSize(WORLD, { width: WORLD_DIAMETER, height: WORLD_DIAMETER });
+alignWorldToCenter(WORLD.w / 2, WORLD.h / 2);
+
 function formatPlanetLabel(planet, index){
   if (typeof planet.label === 'string' && planet.label.trim().length) {
     return planet.label.trim();
@@ -1744,7 +1800,7 @@ let planets = PLANET_DATA.map((p, index) => {
 window.planets = planets;
 
 // =============== Strefy (planety/słońce/pas asteroid) ===============
-const AU_IN_WORLD_UNITS = (typeof BASE_ORBIT === 'number' && BASE_ORBIT > 0) ? BASE_ORBIT : 3000;
+const AU_IN_WORLD_UNITS = getAuToWorldUnits();
 const ZONE_APPROACH_DISTANCE = AU_IN_WORLD_UNITS; // 1 AU przed granicą
 
 const zoneState = {
@@ -1902,7 +1958,7 @@ function updateZoneState(dt){
 
 
 const ASTEROID_BELT = (() => {
-  const AU_TO_WORLD = (typeof BASE_ORBIT === 'number' && BASE_ORBIT > 0) ? BASE_ORBIT : 3000;
+  const AU_TO_WORLD = getAuToWorldUnits();
   const neptuneBelt = (() => {
     const neptune = planets.find(p => p.id === 'neptune' || p.name === 'neptune');
     if (!neptune || !Number.isFinite(neptune.orbitAU)) return null;
@@ -7804,7 +7860,7 @@ function physicsStep(dt){
   ship.pos.x += ship.vel.x*dt; ship.pos.y += ship.vel.y*dt;
 
   // granice
-  const margin = 50;
+  const margin = Math.max(50, Math.min(WORLD.w, WORLD.h) * 0.01);
   ship.pos.x = clamp(ship.pos.x, margin, WORLD.w - margin);
   ship.pos.y = clamp(ship.pos.y, margin, WORLD.h - margin);
 
