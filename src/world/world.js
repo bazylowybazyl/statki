@@ -1,8 +1,14 @@
-export function createWorld({ width = 240000, height = 160000 } = {}) {
+export function createWorld({ width = 0, height = 0 } = {}) {
   return {
     w: width,
     h: height,
   };
+}
+
+export function setWorldSize(world, { width, height }) {
+  if (!world || typeof world !== 'object') return;
+  if (Number.isFinite(width)) world.w = width;
+  if (Number.isFinite(height)) world.h = height;
 }
 
 export const WORLD = createWorld();
