@@ -1678,11 +1678,15 @@ function makeSolarPlanets(){
   });
 }
 
+const WORLD_BELT_WIDTH_AU = 2;
+const WORLD_SAFETY_MARGIN_AU = 2;
+const WORLD_EDGE_MARGIN_AU = WORLD_SAFETY_MARGIN_AU;
+
 function computeWorldDiameter(planets){
   const auToWorld = getAuToWorldUnits();
-  const beltWidthAU = 2;
+  const beltWidthAU = WORLD_BELT_WIDTH_AU;
   const beltHalfWidthAU = beltWidthAU / 2;
-  const safetyMarginAU = 2;
+  const safetyMarginAU = WORLD_SAFETY_MARGIN_AU;
   const beltCenterAU = (() => {
     const neptune = planets.find(p => p.id === 'neptune' || p.name === 'neptune');
     if (neptune && Number.isFinite(neptune.orbitAU)) return neptune.orbitAU + 3;
@@ -1963,7 +1967,7 @@ const ASTEROID_BELT = (() => {
     const neptune = planets.find(p => p.id === 'neptune' || p.name === 'neptune');
     if (!neptune || !Number.isFinite(neptune.orbitAU)) return null;
     const beltAU = neptune.orbitAU + 3;
-    const beltWidthAU = 2;
+    const beltWidthAU = WORLD_BELT_WIDTH_AU;
     const mid = beltAU * AU_TO_WORLD;
     const inner = Math.max(50, mid - (beltWidthAU * AU_TO_WORLD) / 2);
     const outer = mid + (beltWidthAU * AU_TO_WORLD) / 2;
@@ -7860,7 +7864,7 @@ function physicsStep(dt){
   ship.pos.x += ship.vel.x*dt; ship.pos.y += ship.vel.y*dt;
 
   // granice
-  const margin = Math.max(50, Math.min(WORLD.w, WORLD.h) * 0.01);
+  const margin = Math.max(50, getAuToWorldUnits() * WORLD_EDGE_MARGIN_AU);
   ship.pos.x = clamp(ship.pos.x, margin, WORLD.w - margin);
   ship.pos.y = clamp(ship.pos.y, margin, WORLD.h - margin);
 
