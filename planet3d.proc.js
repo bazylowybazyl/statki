@@ -510,8 +510,8 @@ const PLANET_FRAG = `// Terrain generation parameters
       this.mesh = new THREE.Mesh(geom, this.material);
       this.scene.add(this.mesh);
 
-      // Rotate once every 24 in‑game minutes (24 real seconds)
-      this.spin = (2 * Math.PI) / (24 * 60); // rad per game second
+      // Rotate once every 24 in‑game hours (24 real minutes with TIME_SCALE=60)
+      this.spin = (2 * Math.PI) / (24 * 60 * 60); // rad per game second
     }
 
     // Update lightDir uniform from sector sun (0,0,0) toward this planet
