@@ -1837,6 +1837,7 @@ window.planets = planets;
 // =============== Strefy (planety/słońce/pas asteroid) ===============
 const AU_IN_WORLD_UNITS = getAuToWorldUnits();
 const ZONE_APPROACH_DISTANCE = AU_IN_WORLD_UNITS; // 1 AU przed granicą
+window.ZONE_APPROACH_DISTANCE = ZONE_APPROACH_DISTANCE;
 
 const zoneState = {
   current: null,
@@ -1853,7 +1854,7 @@ function makeInterplanetaryZone(){
     id: 'interplanetary',
     label: 'Interplanetary Zone',
     enteringLabel: 'Interplanetary Zone',
-    warpMultiplier: 5,
+    warpMultiplier: 2,
     wormholeVfx: true
   };
 }
@@ -1865,7 +1866,7 @@ function zonePropsForId(id){
     return { warpMultiplier: 0.3, wormholeVfx: false };
   }
   if (id === 'interplanetary') {
-    return { warpMultiplier: 5, wormholeVfx: true };
+    return { warpMultiplier: 2, wormholeVfx: true };
   }
   return { warpMultiplier: 1, wormholeVfx: false };
 }
