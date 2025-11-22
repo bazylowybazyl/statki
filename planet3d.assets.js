@@ -12,6 +12,45 @@ function worldToScreen(x, y, cam){
   return { x: (x - cx) * z + W/2, y: (y - cy) * z + H/2 };
 }
 
+function clamp01(v){ return Math.min(1, Math.max(0, v)); }
+function smoothstep01(t){ const x = clamp01(t); return x * x * (3 - 2 * x); }
+function lerp(a, b, t){ return a + (b - a) * t; }
+
+function computeZoneScale(body){
+  const ship = (typeof window !== 'undefined') ? window.ship : null;
+  const pos = ship?.pos;
+  if (!pos || !body) return 1;
+
+  const bx = Number.isFinite(body.x) ? body.x : 0;
+  const by = Number.isFinite(body.y) ? body.y : 0;
+  const baseRadiusRaw =
+    Number.isFinite(body.baseR) ? body.baseR
+      : Number.isFinite(body.r) ? body.r
+      : Number.isFinite(body.radius) ? body.radius
+      : (Number.isFinite(body.size) ? body.size * 0.5 : 0);
+  const orbitRadius = Math.max(10, baseRadiusRaw * 2);
+
+  const dx = pos.x - bx;
+  const dy = pos.y - by;
+  const dist = Math.hypot(dx, dy);
+  const edgeDist = dist - orbitRadius;
+  const approachRange = (typeof window !== 'undefined' && typeof window.ZONE_APPROACH_DISTANCE === 'number')
+    ? window.ZONE_APPROACH_DISTANCE
+    : 0;
+  const transitionRange = Math.max(10, approachRange);
+
+  const shrinkMin = 0.6;
+  const growMax = 1.12;
+
+  if (edgeDist >= 0) {
+    const t = smoothstep01(1 - edgeDist / transitionRange);
+    return lerp(shrinkMin, 1, t);
+  }
+
+  const insideT = smoothstep01(Math.min(1, -edgeDist / (transitionRange * 0.75)));
+  return lerp(1, growMax, insideT);
+}
+
 if (typeof window !== 'undefined' && !window.getSharedRenderer) {
   window.getSharedRenderer = (w = 512, h = 512) => {
     const THREE_NS = window.THREE;
@@ -184,6 +223,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     constructor(worldX, worldY, pixelSize, opts = {}) {
       this.x = worldX; this.y = worldY;
       this.size = pixelSize || 64;
+      this.ref = opts.ref || null;
 
       this.canvas = document.createElement("canvas");
       this.canvas.width = 2048; this.canvas.height = 2048;
@@ -357,9 +397,16 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     }
 
     draw(ctx, cam) {
-      const s = worldToScreen(this.x, this.y, cam);
+      const ref = this.ref || {};
+      const cx = Number.isFinite(ref.x) ? ref.x : this.x;
+      const cy = Number.isFinite(ref.y) ? ref.y : this.y;
+      const s = worldToScreen(cx, cy, cam);
       const size = this.size * cam.zoom;
-      ctx.drawImage(this.canvas, s.x - size/2, s.y - size/2, size, size);
+
+      const baseRadius = ref.baseR ?? ref.r ?? (this.size ? this.size/2 : 128);
+      const zoneScale = computeZoneScale(ref.baseR || ref.r ? ref : { x: cx, y: cy, r: baseRadius });
+
+      ctx.drawImage(this.canvas, s.x - size * zoneScale/2, s.y - size * zoneScale/2, size * zoneScale, size * zoneScale);
     }
   }
 
@@ -405,8 +452,12 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.ctx2d.drawImage(r.domElement, 0, 0, this.canvas.width, this.canvas.height);
     }
     draw(ctx, cam){
-      const s = worldToScreen(this.x, this.y, cam);
-      const size = this.size * cam.zoom;
+      const sunRef = (typeof window !== 'undefined' && window.SUN) ? window.SUN : { x: this.x, y: this.y, r: this.size * 0.5 };
+      const cx = Number.isFinite(sunRef.x) ? sunRef.x : this.x;
+      const cy = Number.isFinite(sunRef.y) ? sunRef.y : this.y;
+      const s = worldToScreen(cx, cy, cam);
+      const zoneScale = computeZoneScale(sunRef);
+      const size = this.size * zoneScale * cam.zoom;
       ctx.drawImage(this.canvas, s.x - size/2, s.y - size/2, size, size);
     }
   }
@@ -653,7 +704,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     _planets.length = 0;
     for (const s of list) {
       const size = (s.r || 30) * PLANET_SIZE_MULTIPLIER;
-      const planet = new AssetPlanet3D(s.x, s.y, size, { name: s.name || s.id || null, type: s.type });
+      const planet = new AssetPlanet3D(s.x, s.y, size, { name: s.name || s.id || null, type: s.type, ref: s });
       _planets.push(planet);
     }
 
