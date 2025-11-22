@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <radialGradient id="venusGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffe4f3" stop-opacity="0.95" />
+      <stop offset="100%" stop-color="#f472b6" stop-opacity="0.08" />
+    </radialGradient>
+  </defs>
+  <circle cx="32" cy="32" r="30" fill="#0d0f25" fill-opacity="0.6" stroke="#f9a8d4" stroke-opacity="0.35" stroke-width="1.2" />
+  <circle cx="32" cy="32" r="23" stroke="#fb7185" stroke-opacity="0.45" stroke-width="1.5" stroke-dasharray="5 4" />
+  <circle cx="32" cy="32" r="16" stroke="#f472b6" stroke-opacity="0.25" stroke-width="1.2" />
+  <path d="M18 24c4-4.5 10-7.5 14-7.5" stroke="#f9a8d4" stroke-opacity="0.5" stroke-width="1.4" stroke-linecap="round" />
+  <path d="M21 44c2.4 4.5 7 7 13 7" stroke="#fb7185" stroke-opacity="0.35" stroke-width="1.3" stroke-linecap="round" />
+  <line x1="32" y1="8.5" x2="32" y2="14.5" stroke="#fb7185" stroke-width="1.2" stroke-opacity="0.55" />
+  <line x1="9.5" y1="32" x2="15.5" y2="32" stroke="#fb7185" stroke-width="1.2" stroke-opacity="0.55" />
+  <line x1="32" y1="49.5" x2="32" y2="55.5" stroke="#fb7185" stroke-width="1.2" stroke-opacity="0.55" />
+  <line x1="48.5" y1="32" x2="54.5" y2="32" stroke="#fb7185" stroke-width="1.2" stroke-opacity="0.55" />
+  <circle cx="32" cy="32" r="8" fill="url(#venusGlow)" stroke="#fb7185" stroke-width="1.2" />
+  <circle cx="46" cy="22" r="2.4" fill="#fda4af" fill-opacity="0.7" />
+  <circle cx="18" cy="40" r="1.8" fill="#fecdd3" fill-opacity="0.55" />
+</svg>
