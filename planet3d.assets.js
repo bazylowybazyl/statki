@@ -179,8 +179,8 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
   const ASTEROIDS_GLB = assetUrl('planety/asteroids/asteroidPack.glb');
 
   // === Tekstury dla realnego układu (same ścieżki, bez binarek w PR) ===
-  const EARTH_NORMAL_EXT = 'tif';
-  const EARTH_SPEC_EXT = 'tif';
+  const EARTH_NORMAL_EXT = 'jpg';
+  const EARTH_SPEC_EXT = 'jpg';
   const TEX = {
     mercury: { color: assetUrl('planety/solar/mercury/mercury_color.jpg'),
                normal:assetUrl('planety/solar/mercury/mercury_normal.jpg') },
