@@ -119,6 +119,8 @@
   .hover-info .hover-tag{padding:4px 10px;border-radius:999px;background:rgba(63,88,144,0.38);color:#dfe7ff;font-size:12px;}
   .hover-info .hover-line{font-size:13px;margin-bottom:6px;display:flex;align-items:center;gap:6px;}
   .hover-info .hover-line strong{font-weight:600;color:#8fb5ff;letter-spacing:0.05em;}
+  #zoom-indicator{position:absolute;right:24px;top:22px;padding:8px 12px;background:rgba(9,13,24,0.9);border:1px solid rgba(99,124,180,0.55);border-radius:10px;color:#e8f0ff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;font-size:14px;letter-spacing:0.12em;text-transform:uppercase;box-shadow:0 10px 22px rgba(0,0,0,0.35);opacity:0;transform:translateY(-6px);transition:opacity 0.22s ease,transform 0.22s ease;pointer-events:none;z-index:80;}
+  #zoom-indicator.visible{opacity:1;transform:translateY(0);}
 </style>
 <style>
   /* Overlay 3D musi być nad głównym canvasem (#c) */
@@ -175,6 +177,7 @@
     </div>
   </div>
 </div>
+<div id="zoom-indicator">ZOOM X1.00</div>
 <div id="hover-info" class="hover-info hidden">
   <div class="hover-title"></div>
   <span class="hover-subtitle"></span>
@@ -1062,7 +1065,7 @@ function hudRenderNav(ship, cam){
 }
 
 function hudRenderFloatingBars(ship, cam){
-  const cx = W/2, cy = H/2; 
+  const cx = W/2, cy = H/2;
   const R0 = Math.max(ship.w, ship.h) * camera.zoom * 0.8 + 32;
 
   // BOOST – pokazuj jako poziom paliwa dopalacza
@@ -1092,6 +1095,34 @@ function hudRenderFloatingBars(ship, cam){
     ctx.restore();
   }
 }
+
+// =============== Zoom indicator ===============
+const zoomIndicatorEl = document.getElementById('zoom-indicator');
+const zoomIndicator = {
+  el: zoomIndicatorEl,
+  timer: 0,
+  hold: 1.2,
+  visible: false,
+  update(dt){
+    if (!this.el) return;
+    if (this.timer > 0) {
+      this.timer -= dt;
+      if (this.timer <= 0 && this.visible) {
+        this.visible = false;
+        this.el.classList.remove('visible');
+      }
+    }
+  },
+  show(zoomValue){
+    if (!this.el) return;
+    const normalized = clamp(zoomValue / Math.max(0.0001, camera.maxZoom || 1), 0, 1);
+    const display = normalized >= 0.995 ? 1 : Math.max(0.01, normalized);
+    this.el.textContent = `ZOOM X${display.toFixed(display >= 1 ? 0 : 2)}`;
+    this.timer = this.hold;
+    this.visible = true;
+    this.el.classList.add('visible');
+  }
+};
 
 // =============== Game time (1 min real = 1 h game) ===============
 let gameTime = 0; // seconds
@@ -5685,6 +5716,7 @@ canvas.addEventListener('mousedown', e=>{
     camera.targetZoom = camera.zoom;
     camera.manualZoom = true;
     if(camera.transition && camera.transition.kind === 'ship') camera.transition = null;
+    zoomIndicator.show(camera.zoom);
   }
 });
 canvas.addEventListener('mouseup', e=>{
@@ -5718,6 +5750,7 @@ canvas.addEventListener('wheel', e=>{
   camera.targetZoom = camera.zoom;
   camera.manualZoom = true;
   if(camera.transition && camera.transition.kind === 'ship') camera.transition = null;
+  zoomIndicator.show(camera.zoom);
 }, {passive:false});
 
 const GAMEPAD = { enabled:true, dead:0.15, last:{} };
@@ -8182,6 +8215,7 @@ function loop(now){
     camera.shakeTime -= frame;
     if(camera.shakeTime <= 0) camera.shakeMag = 0;
   }
+  zoomIndicator.update(frame);
   render(alpha, frame);
   if (overlay3D) {
     overlay3D.tick(frame);
