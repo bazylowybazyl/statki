@@ -265,6 +265,18 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         loadTextureSafe(tex.ring,   { srgb: true })
       ]);
 
+      const renderer = getSharedRenderer();
+      // Pobierz maksymalną wartość wspieraną przez kartę graficzną (zwykle 16x)
+      const maxAnisotropy = renderer ? renderer.capabilities.getMaxAnisotropy() : 1;
+
+      // Zastosuj dla wszystkich map, które się załadowały
+      [colorMap, normalMap, bumpMap, specMap, nightMap, cloudsMap, ringMap].forEach(map => {
+        if (map) {
+          map.anisotropy = maxAnisotropy;
+          map.needsUpdate = true; // Dla pewności odświeżamy teksturę
+        }
+      });
+    
       const vert = `
         varying vec2 vUv; varying vec3 vN;
         void main() {
