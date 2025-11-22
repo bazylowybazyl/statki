@@ -41,7 +41,25 @@
   }
   .stat{font-family:monospace;font-size:13px}
   small{color:#a8b4d9}
-  #loading{position:fixed;left:0;top:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#030417;z-index:50;color:#dfe7ff;font-size:32px;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
+  #main-menu{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 30%,rgba(59,130,246,0.12),rgba(3,4,23,0.95));backdrop-filter:blur(8px);z-index:70;color:#e8f0ff;padding:20px;}
+  .menu-panel{width:min(460px,calc(100% - 24px));background:rgba(10,12,24,0.92);border:1px solid rgba(82,108,170,0.45);border-radius:18px;box-shadow:0 18px 40px rgba(0,0,0,0.55);padding:28px 32px;display:flex;flex-direction:column;gap:16px;}
+  .menu-panel h1{margin:0;font-size:28px;letter-spacing:0.08em;text-transform:uppercase;color:#9ab8ff;}
+  .menu-subtitle{margin:0;color:#c6d8ff;font-size:15px;line-height:1.5;}
+  .menu-actions{display:flex;flex-direction:column;gap:10px;}
+  .menu-actions button{width:100%;padding:12px 14px;font-size:15px;letter-spacing:0.08em;text-transform:uppercase;border-radius:12px;border:1px solid rgba(82,108,170,0.45);cursor:pointer;transition:background 0.18s ease,border-color 0.18s ease,transform 0.18s ease;}
+  .menu-actions button:disabled{opacity:0.55;cursor:not-allowed;}
+  .menu-actions button:not(:disabled):hover{transform:translateY(-1px);}
+  .menu-primary{background:linear-gradient(120deg,#2563eb,#4f46e5);color:#fff;border:none;box-shadow:0 10px 26px rgba(37,99,235,0.35);}
+  .menu-primary:hover{box-shadow:0 12px 32px rgba(37,99,235,0.45);}
+  .menu-secondary{background:rgba(18,24,40,0.85);color:#dfe7ff;}
+  .menu-secondary:not(:disabled):hover{background:rgba(32,44,72,0.9);border-color:rgba(120,150,210,0.65);}
+  .menu-hint{margin:0;color:#90a6d6;font-size:13px;}
+  #loading{position:fixed;left:0;top:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 40% 30%,rgba(59,130,246,0.10),rgba(3,4,23,0.96));z-index:80;color:#dfe7ff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;padding:20px;}
+  .loading-box{width:min(380px,calc(100% - 24px));background:rgba(8,12,24,0.9);border:1px solid rgba(82,108,170,0.45);border-radius:14px;padding:22px 24px;box-shadow:0 18px 40px rgba(0,0,0,0.55);display:flex;flex-direction:column;gap:12px;}
+  .loading-title{font-size:18px;letter-spacing:0.1em;text-transform:uppercase;color:#9ab8ff;margin:0;}
+  .loading-bar{position:relative;width:100%;height:12px;border-radius:999px;background:rgba(28,40,72,0.9);overflow:hidden;border:1px solid rgba(82,108,170,0.35);}
+  .loading-bar span{position:absolute;left:0;top:0;height:100%;width:0;background:linear-gradient(90deg,#2563eb,#22d3ee);box-shadow:0 8px 18px rgba(37,99,235,0.35);transition:width 0.18s ease-out;}
+  .loading-progress{font-size:14px;color:#cfe3ff;letter-spacing:0.08em;text-transform:uppercase;}
   .hidden{display:none !important;}
   .station-overlay{position:absolute;top:60px;right:40px;max-width:420px;max-height:80vh;overflow-y:auto;padding:16px;background:rgba(9,13,24,0.92);border:1px solid #1b2337;border-radius:12px;z-index:60;color:#dfe7ff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;backdrop-filter:blur(12px);box-shadow:0 18px 36px rgba(0,0,0,0.45);}
   .station-overlay h3{margin:0 0 12px 0;font-size:18px;letter-spacing:0.04em;text-transform:uppercase;color:#8fb5ff;}
@@ -133,7 +151,7 @@
 </style>
 </head>
 <body>
-  <div id="ui">
+  <div id="ui" class="hidden">
     <div><strong>Space Survivors — gwiazdy na całej mapie + duży silnik plazmowy</strong></div>
     <div class="stat">Czas gry: <span id="game-time">00:00</span></div>
     <div class="stat">W — ciąg (duży silnik plazmowy) · Q/E — strafe · A/D — obrót</div>
@@ -144,10 +162,28 @@
     <h3>Flota</h3>
     <ul id="fleet-list"></ul>
   </div>
+  <div id="main-menu">
+    <div class="menu-panel">
+      <h1>Space Survivors</h1>
+      <p class="menu-subtitle">Rozpocznij lot lub zajrzyj do nowych opcji.</p>
+      <div class="menu-actions">
+        <button id="btn-new-game" class="menu-primary">Nowa gra</button>
+        <button id="btn-load-game" class="menu-secondary" disabled>Wczytaj grę</button>
+        <button id="btn-options" class="menu-secondary" disabled>Opcje</button>
+      </div>
+      <p class="menu-hint">Wczytaj grę i opcje pojawią się w kolejnych aktualizacjach.</p>
+    </div>
+  </div>
 <div id="game-root">
   <canvas id="c"></canvas>
 </div>
-<div id="loading">Ładowanie...</div>
+<div id="loading" class="hidden">
+  <div class="loading-box">
+    <div class="loading-title">Ładowanie</div>
+    <div class="loading-bar"><span id="loading-fill"></span></div>
+    <div id="loading-progress" class="loading-progress">0%</div>
+  </div>
+</div>
 <div id="mechanic-overlay" class="station-overlay hidden">
   <h3>Station Mechanic</h3>
   <ul>
@@ -283,6 +319,46 @@ if (!Fleet.ui.root && fleetUIRoot) Fleet.ui.root = fleetUIRoot;
 if (!Fleet.ui.list && fleetListEl) Fleet.ui.list = fleetListEl;
 function markFleetDirty(){ Fleet.dirty = true; }
 
+const uiRoot = document.getElementById('ui');
+const mainMenuEl = document.getElementById('main-menu');
+const newGameButton = document.getElementById('btn-new-game');
+const loadGameButton = document.getElementById('btn-load-game');
+const optionsButton = document.getElementById('btn-options');
+const loadingEl = document.getElementById('loading');
+const loadingFillEl = document.getElementById('loading-fill');
+const loadingProgressEl = document.getElementById('loading-progress');
+let gameStarted = false;
+
+function setLoadingProgress(value, label){
+  const clamped = Math.max(0, Math.min(100, Math.round(value)));
+  if (loadingFillEl) loadingFillEl.style.width = `${clamped}%`;
+  if (loadingProgressEl) loadingProgressEl.textContent = label ? `${clamped}% · ${label}` : `${clamped}%`;
+}
+
+function showLoadingOverlay(progress = 0, label = ''){
+  if (loadingEl) loadingEl.classList.remove('hidden');
+  setLoadingProgress(progress, label);
+}
+
+function hideLoadingOverlay(){
+  if (loadingEl) loadingEl.classList.add('hidden');
+}
+
+function nextFrame(){
+  return new Promise(resolve => requestAnimationFrame(() => resolve()));
+}
+
+function waitForCondition(predicate, timeoutMs = 4000){
+  return new Promise(resolve => {
+    const start = performance.now();
+    (function poll(){
+      if (predicate()) return resolve();
+      if (performance.now() - start >= timeoutMs) return resolve();
+      requestAnimationFrame(poll);
+    })();
+  });
+}
+
 // Model widoku overlayu (ortho nad światem 2D)
 const overlayView = {
   center: { x: 0, y: 0 },
@@ -407,6 +483,11 @@ if (!tryInitSpaceBackground()) {
     if (tryInitSpaceBackground() || spaceBgPollAttempts++ >= MAX_SPACE_BG_POLL_ATTEMPTS) return;
     requestAnimationFrame(pollSpaceBackground);
   })();
+}
+
+function waitForSpaceBackgroundReady(){
+  if (spaceBgReady) return Promise.resolve();
+  return waitForCondition(() => spaceBgReady, 2500);
 }
 
 let mainScene3D = null;
@@ -3456,6 +3537,11 @@ window.addEventListener('DOMContentLoaded', () => {
     })();
   }
 });
+
+function waitForPlanetsReady(){
+  if (planetScene3D || planetStationsReady) return Promise.resolve();
+  return waitForCondition(() => planetScene3D || planetStationsReady, 2500);
+}
 
 // =============== Bullets & effects ===============
 const bullets = [];
@@ -8233,6 +8319,7 @@ const PHYS_DT = 1/120;
 let acc = 0;
 let vfxTime = 0;
 let prevState = null;
+let firstFrameResolver = null;
 function saveState(){ prevState = { pos:{...ship.pos}, angle: ship.angle, turretAngle: ship.turret.angle, turretAngle2: ship.turret2.angle, turretAngle3: ship.turret3.angle, turretAngle4: ship.turret4.angle, ciwsAngles: ship.ciws.map(c=>c.angle) }; }
 saveState();
 function loop(now){
@@ -8268,6 +8355,10 @@ function loop(now){
   render(alpha, frame);
   if (overlay3D) {
     overlay3D.tick(frame);
+  }
+  if (firstFrameResolver) {
+    firstFrameResolver();
+    firstFrameResolver = null;
   }
   requestAnimationFrame(loop);
 }
@@ -10306,18 +10397,57 @@ function useCIWSPair(n, target){ /* krótka seria */ }
 function maybeFireRockets(n, target){ /* warunkowo */ }
 
 // init
-const loadingEl = document.getElementById('loading');
-function startGame(){
+async function startGame(){
+  if (gameStarted) return;
+  gameStarted = true;
+  if (mainMenuEl) mainMenuEl.classList.add('hidden');
+
+  showLoadingOverlay(0, 'Przygotowanie świata');
   initStars(true);
+  setLoadingProgress(18, 'Generowanie gwiazd');
+  await nextFrame();
+
   initNPCs();
+  setLoadingProgress(36, 'Planowanie tras NPC');
+  await nextFrame();
+
   initFleet();
+  setLoadingProgress(54, 'Kalibracja floty');
+  await nextFrame();
+
   for(let i=0;i<120;i++) npcStep(PHYS_DT);
-  loadingEl.style.display = 'none';
+  setLoadingProgress(68, 'Symulacja startowa');
+
+  await waitForSpaceBackgroundReady();
+  setLoadingProgress(82, 'Tło gwiezdne gotowe');
+
+  await waitForPlanetsReady();
+  setLoadingProgress(92, 'Planety i stacje');
+
+  const firstFramePromise = new Promise(resolve => { firstFrameResolver = resolve; });
   lastTime = performance.now();
+  acc = 0;
+  vfxTime = 0;
+  uiRoot?.classList.remove('hidden');
   requestAnimationFrame(loop);
+
+  await firstFramePromise;
+  setLoadingProgress(100, 'Gotowe do lotu');
+  await nextFrame();
+  await new Promise(resolve => setTimeout(resolve, 180));
+  hideLoadingOverlay();
   console.log('Gwiazdy: proceduralne kafelki 1024px na całej mapie. Silnik: warkocz jonowy, dopalacz: wiązka fotonów.');
 }
-setTimeout(startGame, 500);
+
+if (newGameButton) {
+  newGameButton.addEventListener('click', () => startGame());
+}
+if (loadGameButton) {
+  loadGameButton.title = 'Wkrótce dostępne';
+}
+if (optionsButton) {
+  optionsButton.title = 'Wkrótce dostępne';
+}
 
 function wireDevTools(){
   const saveLS = () => { window.__devtoolsSaveLS?.(); };
