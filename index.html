@@ -5507,6 +5507,15 @@ function spawnLaserBeam(start, end, width, opts={}){
 const input = { main:0, leftSide:0, rightSide:0, torque:0 };
 const keys = {};
 let showMap = false;
+const mapView = {
+  zoom: 1,
+  targetZoom: 1,
+  minZoom: 0.6,
+  maxZoom: 6,
+  viewX: null,
+  viewY: null,
+  smoothness: 0.15,
+};
 let PAUSED = false;
 window.addEventListener('keydown', e=>{
   if(e.repeat) return;
@@ -5514,7 +5523,14 @@ window.addEventListener('keydown', e=>{
   if(e.code==='ShiftLeft' || e.code==='ShiftRight'){ e.preventDefault(); }
   const k = e.key.toLowerCase();
   keys[k] = true;
-  if(k === 'm') showMap = !showMap;
+  if(k === 'm'){
+    showMap = !showMap;
+    if (showMap) {
+      mapView.targetZoom = clamp(mapView.targetZoom, mapView.minZoom, mapView.maxZoom);
+      mapView.viewX = null;
+      mapView.viewY = null;
+    }
+  }
   if(k === 'j') MISSIONS.show = !MISSIONS.show;
   if(k === 'g' && !stationUI.open){
     camera.toggleFreeMode();
@@ -5746,6 +5762,11 @@ canvas.addEventListener('contextmenu', e=>e.preventDefault());
 canvas.addEventListener('wheel', e=>{
   if (stationUI.open) return;
   e.preventDefault();
+  if (showMap) {
+    const zoomFactor = 1 - e.deltaY * 0.0016;
+    mapView.targetZoom = clamp(mapView.targetZoom * zoomFactor, mapView.minZoom, mapView.maxZoom);
+    return;
+  }
   const f = 1 - e.deltaY * camera.wheelSpeed;
   camera.zoom = clamp(camera.zoom * f, camera.minZoom, camera.maxZoom);
   camera.targetZoom = camera.zoom;
@@ -9923,41 +9944,107 @@ function renderMissionCompleteBanner(){
 }
 
 function drawSectorMap(){
-  const mapW = 600;
-  const mapH = Math.round(mapW * WORLD.h / WORLD.w);
-  const x0 = (W - mapW) / 2;
-  const y0 = (H - mapH) / 2;
-  ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.4)';
-  ctx.fillRect(0,0,W,H);
-  ctx.fillStyle = 'rgba(26,26,26,0.8)';
-  ctx.fillRect(x0, y0, mapW, mapH);
-  ctx.strokeStyle = '#dfe7ff';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(x0, y0, mapW, mapH);
-  const sx = mapW / WORLD.w;
-  const sy = mapH / WORLD.h;
+  mapView.zoom += (mapView.targetZoom - mapView.zoom) * mapView.smoothness;
 
-  ctx.fillStyle = '#ffd966';
+  const padding = Math.max(28, Math.min(W, H) * 0.05);
+  const baseScale = Math.min((W - padding * 2) / WORLD.w, (H - padding * 2) / WORLD.h);
+  const scale = baseScale * mapView.zoom;
+  const mapW = WORLD.w * scale;
+  const mapH = WORLD.h * scale;
+
+  const clampPos = (value, content, view) => {
+    if (content <= view - padding * 2) return (view - content) / 2;
+    const min = view - content - padding;
+    const max = padding;
+    return clamp(value, min, max);
+  };
+
+  const targetX0 = clampPos(W / 2 - ship.pos.x * scale, mapW, W);
+  const targetY0 = clampPos(H / 2 - ship.pos.y * scale, mapH, H);
+
+  if (mapView.viewX == null || mapView.viewY == null) {
+    mapView.viewX = targetX0;
+    mapView.viewY = targetY0;
+  } else {
+    mapView.viewX += (targetX0 - mapView.viewX) * 0.18;
+    mapView.viewY += (targetY0 - mapView.viewY) * 0.18;
+  }
+
+  const toScreen = (x, y) => ({
+    x: mapView.viewX + x * scale,
+    y: mapView.viewY + y * scale,
+  });
+
+  ctx.save();
+  ctx.resetTransform();
+
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, 'rgba(6, 12, 24, 0.95)');
+  bg.addColorStop(1, 'rgba(4, 8, 16, 0.82)');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  const glow = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.12, W / 2, H / 2, Math.max(W, H) * 0.7);
+  glow.addColorStop(0, 'rgba(48, 168, 255, 0.2)');
+  glow.addColorStop(1, 'rgba(48, 168, 255, 0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = 1;
+  const gridStep = 4000;
+  const startX = Math.floor(-mapView.viewX / (gridStep * scale)) * gridStep;
+  const startY = Math.floor(-mapView.viewY / (gridStep * scale)) * gridStep;
+  ctx.save();
   ctx.beginPath();
-  ctx.arc(x0 + SUN.x * sx, y0 + SUN.y * sy, 6, 0, Math.PI*2);
-  ctx.fill();
+  for (let gx = startX; gx < WORLD.w; gx += gridStep) {
+    const px = toScreen(gx, 0).x;
+    if (px < padding || px > W - padding) continue;
+    ctx.moveTo(px, padding);
+    ctx.lineTo(px, H - padding);
+  }
+  for (let gy = startY; gy < WORLD.h; gy += gridStep) {
+    const py = toScreen(0, gy).y;
+    if (py < padding || py > H - padding) continue;
+    ctx.moveTo(padding, py);
+    ctx.lineTo(W - padding, py);
+  }
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(mapView.viewX, mapView.viewY, mapW, mapH);
+
+  const drawGlowDot = (pos, radius, fill, stroke) => {
+    ctx.save();
+    ctx.shadowColor = fill;
+    ctx.shadowBlur = radius * 2;
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = stroke || fill;
+    ctx.lineWidth = Math.max(1.5, radius * 0.25);
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  const sunPos = toScreen(SUN.x, SUN.y);
+  const sunRadius = Math.max(10, 12 * mapView.zoom);
+  drawGlowDot(sunPos, sunRadius, 'rgba(255, 200, 92, 0.9)', 'rgba(255, 243, 191, 0.9)');
 
   if (ASTEROID_BELT) {
-    const cx = x0 + SUN.x * sx;
-    const cy = y0 + SUN.y * sy;
-    const outerRx = ASTEROID_BELT.outer * sx;
-    const outerRy = ASTEROID_BELT.outer * sy;
-    const innerRx = ASTEROID_BELT.inner * sx;
-    const innerRy = ASTEROID_BELT.inner * sy;
+    const cx = sunPos.x;
+    const cy = sunPos.y;
+    const outerRx = ASTEROID_BELT.outer * scale;
+    const outerRy = ASTEROID_BELT.outer * scale;
+    const innerRx = ASTEROID_BELT.inner * scale;
+    const innerRy = ASTEROID_BELT.inner * scale;
     ctx.save();
-    ctx.fillStyle = 'rgba(168, 182, 204, 0.18)';
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, outerRx, outerRy, 0, 0, Math.PI*2);
-    ctx.ellipse(cx, cy, innerRx, innerRy, 0, 0, Math.PI*2);
-    ctx.fill('evenodd');
-    ctx.strokeStyle = 'rgba(168, 182, 204, 0.35)';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(168, 182, 204, 0.55)';
+    ctx.lineWidth = 3;
+    ctx.globalAlpha = 0.7;
     ctx.beginPath(); ctx.ellipse(cx, cy, outerRx, outerRy, 0, 0, Math.PI*2); ctx.stroke();
     ctx.beginPath(); ctx.ellipse(cx, cy, innerRx, innerRy, 0, 0, Math.PI*2); ctx.stroke();
     ctx.restore();
@@ -9966,62 +10053,91 @@ function drawSectorMap(){
   if (Array.isArray(planets) && planets.length) {
     ctx.save();
 
-    const markerRadius = 6;
+    const markerRadius = Math.max(8, 10 * Math.sqrt(mapView.zoom));
     ctx.fillStyle = '#7dd3fc';
     for (const planet of planets) {
-      const px = x0 + planet.x * sx;
-      const py = y0 + planet.y * sy;
-      ctx.beginPath();
-      ctx.arc(px, py, markerRadius, 0, Math.PI * 2);
-      ctx.fill();
+      const pos = toScreen(planet.x, planet.y);
+      drawGlowDot(pos, markerRadius, 'rgba(96, 199, 255, 0.85)', 'rgba(175, 232, 255, 0.8)');
     }
 
-    const labelFont = Math.max(12, Math.round(mapW * 0.028));
+    const labelFont = Math.max(12, Math.round(Math.min(W, H) * 0.022));
     ctx.font = `600 ${labelFont}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.lineWidth = Math.max(1.5, labelFont * 0.12);
-    ctx.strokeStyle = 'rgba(10, 16, 34, 0.85)';
-    ctx.fillStyle = '#f8fafc';
+    ctx.lineWidth = Math.max(2, labelFont * 0.14);
+    ctx.strokeStyle = 'rgba(8, 12, 22, 0.9)';
+    ctx.fillStyle = '#e2ecff';
 
     for (const planet of planets) {
       const name = typeof planet.label === 'string' ? planet.label.trim() : '';
       if (!name) continue;
-      const px = x0 + planet.x * sx;
-      const py = y0 + planet.y * sy;
-      const labelY = py + markerRadius + 6;
-      ctx.strokeText(name, px, labelY);
-      ctx.fillText(name, px, labelY);
+      const pos = toScreen(planet.x, planet.y);
+      const labelY = pos.y + markerRadius + 8;
+      ctx.strokeText(name, pos.x, labelY);
+      ctx.fillText(name, pos.x, labelY);
     }
 
     ctx.restore();
   }
 
-  ctx.fillStyle = '#60a5fa';
+  ctx.save();
+  ctx.fillStyle = '#75e1ff';
+  ctx.strokeStyle = 'rgba(71, 191, 255, 0.5)';
+  ctx.lineWidth = 2;
   for(const st of stations){
+    const pos = toScreen(st.x, st.y);
     ctx.beginPath();
-    ctx.arc(x0 + st.x * sx, y0 + st.y * sy, 4, 0, Math.PI*2);
+    ctx.arc(pos.x, pos.y, 5, 0, Math.PI*2);
     ctx.fill();
+    ctx.stroke();
   }
+  ctx.restore();
 
+  ctx.save();
+  const shipPos = toScreen(ship.pos.x, ship.pos.y);
+  const shipRadius = Math.max(7, 9 * Math.pow(mapView.zoom, 0.35));
+  const angle = ship.angle || 0;
+  ctx.translate(shipPos.x, shipPos.y);
+  ctx.rotate(angle);
   ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(x0 + ship.pos.x * sx, y0 + ship.pos.y * sy, 4, 0, Math.PI*2);
+  ctx.moveTo(shipRadius * 1.6, 0);
+  ctx.lineTo(-shipRadius * 0.9, shipRadius * 0.9);
+  ctx.lineTo(-shipRadius * 0.9, -shipRadius * 0.9);
+  ctx.closePath();
   ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 
-  // Markery misji (X) dla aktywnych z pozycją
-  ctx.strokeStyle = '#ff4d4d';
+  ctx.strokeStyle = '#ff8fa3';
   ctx.lineWidth = 3;
   for(const m of MISSIONS.active){
     if(m.status !== 'active' || !m.pos) continue;
-    const px = x0 + m.pos.x * sx;
-    const py = y0 + m.pos.y * sy;
-    const s = 8;
+    const pos = toScreen(m.pos.x, m.pos.y);
+    const s = Math.max(9, 10 * Math.sqrt(mapView.zoom));
     ctx.beginPath();
-    ctx.moveTo(px - s, py - s); ctx.lineTo(px + s, py + s);
-    ctx.moveTo(px - s, py + s); ctx.lineTo(px + s, py - s);
+    ctx.moveTo(pos.x - s, pos.y - s); ctx.lineTo(pos.x + s, pos.y + s);
+    ctx.moveTo(pos.x - s, pos.y + s); ctx.lineTo(pos.x + s, pos.y - s);
     ctx.stroke();
   }
+
+  ctx.save();
+  const titleY = padding * 0.7;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.font = `700 ${Math.max(18, Math.min(W, H) * 0.03)}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
+  ctx.fillStyle = '#e8f1ff';
+  ctx.shadowColor = 'rgba(42, 152, 255, 0.65)';
+  ctx.shadowBlur = 16;
+  ctx.fillText('Mapa Sektora', padding, titleY);
+
+  ctx.font = `500 ${Math.max(13, Math.min(W, H) * 0.018)}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(232, 241, 255, 0.8)';
+  ctx.fillText('Scroll — powiększenie · M — zamknij', padding, titleY + 28);
+  ctx.restore();
 
   ctx.restore();
 }
