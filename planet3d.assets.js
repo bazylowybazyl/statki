@@ -42,13 +42,15 @@ function computeZoneScale(body){
   const shrinkMin = 0.6;
   const growMax = 1.12;
 
-  if (edgeDist >= 0) {
-    const t = smoothstep01(1 - edgeDist / transitionRange);
-    return lerp(shrinkMin, 1, t);
+  // Maksymalne powiększenie w momencie przecięcia granicy "Orbit of".
+  // Po wejściu do orbity utrzymujemy maksymalną skalę; dopiero oddalanie się
+  // od krawędzi (w stronę przestrzeni międzyplanetarnej) zaczyna ją zmniejszać.
+  if (edgeDist <= 0) {
+    return growMax;
   }
 
-  const insideT = smoothstep01(Math.min(1, -edgeDist / (transitionRange * 0.75)));
-  return lerp(1, growMax, insideT);
+  const t = smoothstep01(1 - edgeDist / transitionRange);
+  return lerp(shrinkMin, growMax, t);
 }
 
 if (typeof window !== 'undefined' && !window.getSharedRenderer) {
