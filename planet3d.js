@@ -179,8 +179,8 @@
       this.scene = null;
       this.camera = null;
       this.mesh = null;
-      // Rotate once every 24 in‑game hours (24 real minutes with TIME_SCALE=60)
-      this.spin = (2 * Math.PI) / (24 * 60 * 60); // rad per game second
+      // Rotate once every 24 in‑game minutes (24 real seconds)
+      this.spin = (2 * Math.PI) / (24 * 60); // rad per game second
 
       if (typeof THREE === "undefined") return;
 
