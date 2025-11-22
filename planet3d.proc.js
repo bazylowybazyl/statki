@@ -1,4 +1,5 @@
 
+
 const USE_PP = false; // tymczasowo wyłącz postprocessing, aby zachować pełną przezroczystość tła
 
 const ASTEROIDS_GLB = new URL('./src/assets/planety/asteroids/asteroidPack.glb', import.meta.url).href;
@@ -510,8 +511,8 @@ const PLANET_FRAG = `// Terrain generation parameters
       this.mesh = new THREE.Mesh(geom, this.material);
       this.scene.add(this.mesh);
 
-      // Rotate once every 24 in‑game hours (24 real minutes with TIME_SCALE=60)
-      this.spin = (2 * Math.PI) / (24 * 60 * 60); // rad per game second
+      // Rotate once every 24 in‑game minutes (24 real seconds)
+      this.spin = (2 * Math.PI) / (24 * 60); // rad per game second
     }
 
     // Update lightDir uniform from sector sun (0,0,0) toward this planet
@@ -956,38 +957,6 @@ const PLANET_FRAG = `// Terrain generation parameters
     }
   }
 
-  const CULL_MARGIN = 1100;
-
-  function getActiveCamera(cam) {
-    if (cam) return cam;
-    if (typeof window !== 'undefined' && window.camera) return window.camera;
-    return null;
-  }
-
-  function getViewportHalfExtents(cam) {
-    if (!cam) return { halfW: null, halfH: null };
-    const zoom = cam.zoom || 1;
-    let w = Number.isFinite(cam.w) ? cam.w : 0;
-    let h = Number.isFinite(cam.h) ? cam.h : 0;
-    if ((!w || !h) && typeof window !== 'undefined') {
-      if (!w && Number.isFinite(window.innerWidth)) w = window.innerWidth;
-      if (!h && Number.isFinite(window.innerHeight)) h = window.innerHeight;
-    }
-    if (!w || !h) return { halfW: null, halfH: null };
-    return { halfW: w / (2 * zoom), halfH: h / (2 * zoom) };
-  }
-
-  function isNearCamera(obj, cam, extraMargin = CULL_MARGIN) {
-    const activeCam = getActiveCamera(cam);
-    if (!activeCam) return true;
-    const { halfW, halfH } = getViewportHalfExtents(activeCam);
-    if (!halfW || !halfH) return true;
-    const dx = Math.abs((obj.x ?? 0) - activeCam.x);
-    const dy = Math.abs((obj.y ?? 0) - activeCam.y);
-    const paddedSize = (obj.size || 0) * 0.5 + extraMargin;
-    return dx <= halfW + paddedSize && dy <= halfH + paddedSize;
-  }
-
   // === Public API (keeps your game's calls intact) ===
   let _planets = [];
   function initPlanets3D(list, sunObj) {
@@ -1024,31 +993,20 @@ const PLANET_FRAG = `// Terrain generation parameters
     asteroidBelt = new AsteroidBelt3D(inner, outer, 2800);
   }
   function updatePlanets3D(dt) {
-    const cam = getActiveCamera();
-    if (sun && isNearCamera(sun, cam, CULL_MARGIN * 1.2)) sun.render(dt);
-    if (asteroidBelt && isNearCamera({ x: SUN_POS.x, y: SUN_POS.y, size: asteroidBelt.size }, cam, CULL_MARGIN * 1.4)) {
-      asteroidBelt.render(dt);
-    }
-    for (const p of _planets) {
-      if (!cam || isNearCamera(p, cam)) p.render(dt);
-    }
+    if (sun) sun.render(dt);
+    if (asteroidBelt) asteroidBelt.render(dt);
+    for (const p of _planets) p.render(dt);
   }
   function drawPlanets3D(ctx, cam) {
-    const activeCam = getActiveCamera(cam) || cam;
-    if (!activeCam) return;
-    if (asteroidBelt && isNearCamera({ x: SUN_POS.x, y: SUN_POS.y, size: asteroidBelt.size }, activeCam, CULL_MARGIN * 1.4)) {
-      asteroidBelt.draw(ctx, activeCam);
-    }
+    if (asteroidBelt) asteroidBelt.draw(ctx, cam);
     for (const p of _planets) {
-      if (!activeCam || isNearCamera(p, activeCam)) {
-        const s = worldToScreen(p.x, p.y, activeCam);
-        const size = p.size * activeCam.zoom;
-        ctx.drawImage(p.canvas, s.x - size/2, s.y - size/2, size, size);
-      }
+      const s = worldToScreen(p.x, p.y, cam);
+      const size = p.size * cam.zoom;
+      ctx.drawImage(p.canvas, s.x - size/2, s.y - size/2, size, size);
     }
-    if (sun && (!activeCam || isNearCamera(sun, activeCam, CULL_MARGIN * 1.2))) {
-      const ss = worldToScreen(sun.x, sun.y, activeCam);
-      const sizeS = sun.size * activeCam.zoom;
+    if (sun) {
+      const ss = worldToScreen(sun.x, sun.y, cam);
+      const sizeS = sun.size * cam.zoom;
       ctx.drawImage(sun.canvas, ss.x - sizeS/2, ss.y - sizeS/2, sizeS, sizeS);
     }
   }
