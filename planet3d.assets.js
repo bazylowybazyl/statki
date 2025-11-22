@@ -234,7 +234,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       if (!this._name || !TEX[this._name]) this._name = 'earth';
       this._needsInit = true;
       this._initPromise = null;
-      this.spin = 0.04 + Math.random() * 0.06; 
+      this.spin = 0.01 + Math.random() * 0.02; 
     }
 
     async _initThree() {
