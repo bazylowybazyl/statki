@@ -2063,6 +2063,33 @@ if (window.__setStation3DScale) {
   }
 }
 
+if (!hasSavedShipPosition) {
+  const earthStation = stations.find(st => st.id === 'earth');
+  if (earthStation) {
+    const dockOffset = earthStation.ports?.[0] || { x: earthStation.r + 40, y: 0 };
+    const dockDir = Math.atan2(dockOffset.y, dockOffset.x);
+    const dockDist = Math.hypot(dockOffset.x, dockOffset.y);
+    const spawnGap = 140;
+    const spawnPos = {
+      x: earthStation.x + Math.cos(dockDir) * (dockDist + spawnGap),
+      y: earthStation.y + Math.sin(dockDir) * (dockDist + spawnGap)
+    };
+
+    ship.pos.x = spawnPos.x;
+    ship.pos.y = spawnPos.y;
+    ship.vel.x = 0;
+    ship.vel.y = 0;
+
+    camera.x = spawnPos.x;
+    camera.y = spawnPos.y;
+    camera.targetX = spawnPos.x;
+    camera.targetY = spawnPos.y;
+
+    overlayView.center.x = spawnPos.x;
+    overlayView.center.y = spawnPos.y;
+  }
+}
+
 // oznacz stacje wewnątrz pasa asteroid
 (() => {
   if (ASTEROID_BELT) {
