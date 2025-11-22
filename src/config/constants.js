@@ -1,4 +1,4 @@
-export const DEFAULT_PLANET_SCALE = 1.98; // zsynchronizowane z nową konfiguracją devtools
+export const DEFAULT_PLANET_SCALE = 1.0; // zsynchronizowane z nową konfiguracją devtools
 export const TIME_SCALE = 60;
 
 if (typeof window !== 'undefined') {
