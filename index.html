@@ -139,6 +139,12 @@
   .hover-info .hover-line strong{font-weight:600;color:#8fb5ff;letter-spacing:0.05em;}
   #zoom-indicator{position:absolute;right:24px;top:22px;padding:8px 12px;background:rgba(9,13,24,0.9);border:1px solid rgba(99,124,180,0.55);border-radius:10px;color:#e8f0ff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;font-size:14px;letter-spacing:0.12em;text-transform:uppercase;box-shadow:0 10px 22px rgba(0,0,0,0.35);opacity:0;transform:translateY(-6px);transition:opacity 0.22s ease,transform 0.22s ease;pointer-events:none;z-index:80;}
   #zoom-indicator.visible{opacity:1;transform:translateY(0);}
+  .planet-radar{position:fixed;inset:0;pointer-events:none;z-index:78;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;}
+  .planet-radar.hidden{display:none !important;}
+  .planet-radar-item{position:absolute;display:flex;flex-direction:column;align-items:center;gap:6px;transform:translate(-50%,-50%);color:#e2e8f8;text-shadow:0 2px 10px rgba(0,0,0,0.55);}
+  .planet-radar-icon{width:52px;height:52px;padding:8px;border-radius:14px;background:rgba(9,12,24,0.9);border:1px solid rgba(98,128,188,0.5);box-shadow:0 10px 26px rgba(0,0,0,0.55);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:transform 0.2s ease,opacity 0.2s ease;}
+  .planet-radar-icon img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 0 6px rgba(112,200,255,0.55));}
+  .planet-radar-label{padding:4px 10px;border-radius:999px;background:rgba(26,39,68,0.8);border:1px solid rgba(96,132,194,0.6);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;white-space:nowrap;}
 </style>
 <style>
   /* Overlay 3D musi być nad głównym canvasem (#c) */
@@ -214,6 +220,7 @@
   </div>
 </div>
 <div id="zoom-indicator">ZOOM X1.00</div>
+<div id="planet-radar" class="planet-radar"></div>
 <div id="hover-info" class="hover-info hidden">
   <div class="hover-title"></div>
   <span class="hover-subtitle"></span>
@@ -327,6 +334,7 @@ const optionsButton = document.getElementById('btn-options');
 const loadingEl = document.getElementById('loading');
 const loadingFillEl = document.getElementById('loading-fill');
 const loadingProgressEl = document.getElementById('loading-progress');
+const planetRadarRoot = document.getElementById('planet-radar');
 let gameStarted = false;
 
 function setLoadingProgress(value, label){
@@ -1088,6 +1096,149 @@ const HUD = {
   dmg: [],       // popupy obrażeń: {x,y,txt,color,vy,life,max}
   navArrows: [], // niebieskie strzałki po X: {x,y,age,life}
 };
+
+// =============== Planet radar UI ===============
+const PLANET_ICON_SRC = {
+  mercury: 'assets/planet-icons/mercury.svg',
+  venus: 'assets/planet-icons/venus.svg',
+  earth: 'assets/planet-icons/earth.svg',
+  mars: 'assets/planet-icons/mars.svg',
+  jupiter: 'assets/planet-icons/jupiter.svg',
+  saturn: 'assets/planet-icons/saturn.svg',
+  uranus: 'assets/planet-icons/uranus.svg',
+  neptune: 'assets/planet-icons/neptune.svg',
+  default: 'assets/planet-icons/earth.svg'
+};
+
+const planetRadarState = {
+  enabled: true,
+  visited: new Set(),
+  elements: new Map()
+};
+
+function formatAuDistance(distAu){
+  if (distAu >= 10) return `${distAu.toFixed(0)} AU`;
+  if (distAu >= 1) return `${distAu.toFixed(1)} AU`;
+  return `${distAu.toFixed(2)} AU`;
+}
+
+function projectToScreenEdge(dirX, dirY, margin){
+  const halfW = Math.max(1, W / 2 - margin);
+  const halfH = Math.max(1, H / 2 - margin);
+  const safeX = Math.abs(dirX) < 1e-3 ? 1e-3 : dirX;
+  const safeY = Math.abs(dirY) < 1e-3 ? 1e-3 : dirY;
+  const scale = Math.min(halfW / Math.abs(safeX), halfH / Math.abs(safeY));
+  return { x: W / 2 + safeX * scale, y: H / 2 + safeY * scale };
+}
+
+function ensurePlanetRadarItem(id, iconSrc){
+  if (!planetRadarRoot) return null;
+  let el = planetRadarState.elements.get(id);
+  if (el) return el;
+
+  const item = document.createElement('div');
+  item.className = 'planet-radar-item';
+
+  const icon = document.createElement('div');
+  icon.className = 'planet-radar-icon';
+  const img = document.createElement('img');
+  img.alt = id;
+  img.src = iconSrc;
+  icon.appendChild(img);
+
+  const label = document.createElement('div');
+  label.className = 'planet-radar-label';
+
+  item.append(icon, label);
+  planetRadarRoot.appendChild(item);
+  planetRadarState.elements.set(id, item);
+  return item;
+}
+
+function togglePlanetRadarVisibility(force){
+  const next = typeof force === 'boolean' ? force : !planetRadarState.enabled;
+  planetRadarState.enabled = next;
+  if (planetRadarRoot) {
+    planetRadarRoot.classList.toggle('hidden', !next);
+  }
+}
+
+function updatePlanetRadar(ship, cam){
+  if (!Array.isArray(planets)) return;
+  const auUnit = getAuToWorldUnits();
+  const margin = 32;
+  const maxScaleAu = 40;
+  const minScale = 0.58;
+  const maxScale = 1.4;
+  const shouldRender = !!planetRadarRoot && planetRadarState.enabled;
+
+  if (planetRadarRoot) {
+    planetRadarRoot.classList.toggle('hidden', !planetRadarState.enabled);
+  }
+
+  for (const planet of planets) {
+    if (!planet) continue;
+    const id = planet.id || planet.name || '';
+    if (!id) continue;
+
+    const dx = planet.x - ship.pos.x;
+    const dy = planet.y - ship.pos.y;
+    const distWorld = Math.hypot(dx, dy);
+    const arrivalRadius = Math.max(10, (planet.r || 0) * 2);
+    const iconSrc = PLANET_ICON_SRC[id] || PLANET_ICON_SRC[planet.name] || PLANET_ICON_SRC.default;
+
+    if (distWorld <= arrivalRadius) {
+      planetRadarState.visited.add(id);
+      const existing = planetRadarState.elements.get(id);
+      if (existing) {
+        existing.remove();
+        planetRadarState.elements.delete(id);
+      }
+      continue;
+    }
+
+    if (!shouldRender) continue;
+
+    const distAu = Math.max(0, (distWorld - Math.max(planet.r || 0, 0)) / auUnit);
+    const screenPos = worldToScreen(planet.x, planet.y, cam);
+    const dirX = screenPos.x - W / 2;
+    const dirY = screenPos.y - H / 2;
+    const edgePos = projectToScreenEdge(dirX, dirY, margin);
+
+    const item = ensurePlanetRadarItem(id, iconSrc);
+    if (!item) continue;
+    const iconEl = item.querySelector('.planet-radar-icon');
+    const labelEl = item.querySelector('.planet-radar-label');
+
+    const ratio = clamp(distAu / maxScaleAu, 0, 1);
+    const scale = maxScale - (maxScale - minScale) * ratio;
+    if (iconEl) {
+      const base = 62;
+      const size = base * scale;
+      iconEl.style.width = `${size}px`;
+      iconEl.style.height = `${size}px`;
+      iconEl.style.opacity = `${0.75 + 0.25 * (1 - ratio)}`;
+      iconEl.style.transform = `scale(${scale})`;
+    }
+    if (labelEl) {
+      const label = planet.label || formatPlanetLabel(planet, 0);
+      labelEl.textContent = `${label} · ${formatAuDistance(distAu)}`;
+    }
+
+    item.style.left = `${edgePos.x}px`;
+    item.style.top = `${edgePos.y}px`;
+  }
+
+  if (!shouldRender) return;
+
+  for (const [id, node] of planetRadarState.elements.entries()) {
+    const stillExists = planets.some(pl => (pl?.id || pl?.name) === id);
+    if (!stillExists || planetRadarState.visited.has(id)) {
+      node.remove();
+      planetRadarState.elements.delete(id);
+    }
+  }
+}
 
 function hudSpawnDMG(x,y,amount,kind='npc'){
   const color = (kind==='player') ? '#f87171' : '#a7f3d0';
@@ -5652,7 +5803,11 @@ window.addEventListener('keydown', e=>{
     e.preventDefault();
     if(boost.fuel>0){ boost.state='active'; }
   }
-  if(k === 'x'){ triggerScanWave(); hudPingNpcStations(); }
+  if(k === 'x'){
+    triggerScanWave();
+    hudPingNpcStations();
+    togglePlanetRadarVisibility();
+  }
   if (k === 'z') {
     if(!(Game.player.weapons?.[HP.HANGAR]?.length)) { toast('Brak dostępnych hangarów.'); return; }
     if (SQUAD.order === 'idle' || SQUAD.list.length === 0) {
@@ -8918,6 +9073,7 @@ function render(alpha, frameDt){
   // aktualizuj wyświetlanie czasu
   gameTimeEl.textContent = formatGameTime(gameTime);
   updateFleetUI();
+  updatePlanetRadar(ship, cam);
 
   // Czyścimy ekran
   ctx.clearRect(0,0,W,H);
