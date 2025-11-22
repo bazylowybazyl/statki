@@ -7,11 +7,12 @@
 ## Szybka mapa repozytorium
 
 - **`index.html`** — główna pętla gry i warstwa **2D (Canvas)** odpowiedzialna za sterowanie, fizykę, strzały, HUD itp. Tu jest większość logiki grywalnej.
-- **`planet3d.proc.js`** — integracja z nakładką **Three.js** (planety/słońce). Wystawia globalne API: `initPlanets3D`, `updatePlanets3D`, `drawPlanets3D`.
+- **`planet3d.proc.js`** — integracja z nakładką **Three.js** (planety/słońce). Wystawia globalne API: `initPlanets3D`, `updatePlanets3D`, `drawPlanets3D`. << obecnie proceduralne planety sa nieuzywane.
 - **`planet3d.js`** (wariant deweloperski) — implementacja klas 3D: `Planet3D`, `Sun3D`, współdzielony renderer WebGL i rysowanie do prywatnych canvasków.
 - **`package.json`** — minimalny serwer dev (`http-server`) i zależność `three`.
+- **`planet3d.assets.js`**
 
-> **Uruchomienie lokalne**: `npm ci && npm run start` i otworzyć `http://localhost:8080`.
+
 
 ---
 
@@ -137,6 +138,8 @@ W klasach `Planet3D`/`Sun3D` oraz w ich `render()`. Zachowaj API i współdzielo
 **Jak kontrolować kolejność rysowania?**  
 Używaj tylko `drawPlanets3D` do wklejenia bitmap 3D, reszta dzieje się w głównym rysowaniu gry.
 
+**Czy robić screenshot?**  |
+Nie, nie rób screenshota, gra jest za duza abyś mógł ją odpalić.
 ---
 
 > Masz pytania? Dodaj komentarz do PR lub zostaw TODO w kodzie z prefiksem `AGENT:` (np. `// AGENT: replace Sun3D material with shader`).
