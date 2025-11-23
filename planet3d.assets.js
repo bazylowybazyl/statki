@@ -264,7 +264,15 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         loadTextureSafe(tex.clouds, { srgb: true }),
         loadTextureSafe(tex.ring,   { srgb: true })
       ]);
-
+      const renderer = getSharedRenderer();
+      const maxAnisotropy = renderer ? renderer.capabilities.getMaxAnisotropy() : 1;
+      [colorMap, normalMap, bumpMap, specMap, nightMap, cloudsMap, ringMap].forEach(map => {
+        if (map) {
+          map.anisotropy = maxAnisotropy;
+          map.needsUpdate = true; // Dla pewności odświeżamy teksturę
+        }
+      });
+      // === KONIEC WKLEJANIA ===
   
     
       const vert = `
