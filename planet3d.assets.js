@@ -385,6 +385,47 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         }
       }
       if (!this.scene || !this.camera || !this.mesh) return;
+      const ship = (typeof window !== 'undefined') ? window.ship : null;
+      const pos = ship?.pos;
+      
+      const RES_LOW = 2048;
+      const RES_HIGH = 4096;
+      
+      // Inicjalizacja stanu, jeśli nie istnieje
+      if (typeof this.isHighRes === 'undefined') this.isHighRes = false;
+
+      if (pos) {
+        const dx = pos.x - this.x;
+        const dy = pos.y - this.y;
+        const dist = Math.hypot(dx, dy);
+        
+        const r = this.ref?.r || this.ref?.baseR || (this.size / 2) || 500;
+
+        // Dwa progi:
+        // ENTER: Kiedy włączamy 4K (bliżej)
+        const ENTER_HIGH_RES = r + 1800; 
+        // EXIT: Kiedy wracamy do 2K (musisz odlecieć trochę dalej, żeby wyłączyć)
+        const EXIT_HIGH_RES  = r + 2200; 
+
+        if (!this.isHighRes && dist < ENTER_HIGH_RES) {
+           // Jesteśmy w trybie LOW, ale podlecieliśmy blisko -> Włączamy HIGH
+           this.isHighRes = true;
+        } else if (this.isHighRes && dist > EXIT_HIGH_RES) {
+           // Jesteśmy w trybie HIGH, ale odlecieliśmy daleko -> Włączamy LOW
+           this.isHighRes = false;
+        }
+      }
+
+      const targetRes = this.isHighRes ? RES_HIGH : RES_LOW;
+
+      // Zmiana rozmiaru (Safe Resize)
+      if (this.canvas.width !== targetRes) {
+        this.canvas.width = targetRes;
+        this.canvas.height = targetRes;
+        // Canvas po zmianie width jest czyszczony automatycznie, 
+        // ale zaraz go zamalujemy w linijkach poniżej.
+      }
+      // --- KONIEC LOD ---
       this.mesh.rotation.y += this.spin * dt;
       if (this.clouds) this.clouds.rotation.y += this.spin * dt * 1.3;
 
