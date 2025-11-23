@@ -39,7 +39,7 @@ function computeZoneScale(body){
     : 0;
   const transitionRange = Math.max(10, approachRange);
 
-  const shrinkMin = 0.6;
+  const shrinkMin = 0.4;
   const growMax = 1.12;
 
   // Maksymalne powiększenie w momencie przecięcia granicy "Orbit of".
