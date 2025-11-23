@@ -60,7 +60,7 @@ export class WarpBlackHole {
 
     this.enabled = false;
     this._time0 = performance.now();
-    this._srcCanvas = null; // co próbkujemy: tło lub całą scenę
+    this._srcCanvas = null;
     this._warnedNoSource = false;
     this._parallax = null;
     this._outputCanvas = null;
@@ -85,12 +85,7 @@ export class WarpBlackHole {
       this._parallax = null;
       return;
     }
-    this._parallax = {
-      tileWidth,
-      tileHeight,
-      offsetX,
-      offsetY
-    };
+    this._parallax = { tileWidth, tileHeight, offsetX, offsetY };
   }
   setEnabled(flag) {
     this.enabled = !!flag;
@@ -175,7 +170,7 @@ export class WarpBlackHole {
     this._syncOutputCanvasSize();
   }
 
-render({ centerX, centerY, mass = 0.15, radius = 0.25, softness = 0.25, rotation = 0, opacity = 0.85, lensStretchForward = 0.55 }){
+  render({ centerX, centerY, mass = 0.15, radius = 0.25, softness = 0.25, rotation = 0, opacity = 0.85, lensStretchForward = 0.55 }){
     if (!this.enabled) return;
     if (!this._srcCanvas) {
       if (!this._warnedNoSource) {
@@ -199,41 +194,32 @@ render({ centerX, centerY, mass = 0.15, radius = 0.25, softness = 0.25, rotation
 
     gl.useProgram(this.program);
 
-    // upload source image (Twoja kanwa 2D – tło albo cała scena)
     gl.bindTexture(gl.TEXTURE_2D, this.tex);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-    // UWAGA: texSubImage2D gdy rozmiar się nie zmienia – szybciej
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
-                  gl.UNSIGNED_BYTE, this._srcCanvas);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this._srcCanvas);
 
     gl.uniform2f(this.u_resolution, this.canvas.width, this.canvas.height);
     gl.uniform1f(this.u_time, t);
-    // przekazujemy środek w pikselach, shader sam przeskaluje
     gl.uniform2f(this.u_center, cx, this.canvas.height - cy);
-    gl.uniform1f(this.u_mass, mass);        // siła zakrzywienia (0..~0.5)
-    gl.uniform1f(this.u_radius, radius);    // promień soczewki (0..1) — 0.25 ~ 25% ekranu
-    gl.uniform1f(this.u_softness, softness);// miękkość brzegów (0..1)
+    gl.uniform1f(this.u_mass, mass);
+    gl.uniform1f(this.u_radius, radius);
+    gl.uniform1f(this.u_softness, softness);
     if (this.u_rotation) gl.uniform1f(this.u_rotation, rotation);
     if (this.u_opacity) gl.uniform1f(this.u_opacity, opacity);
     
     if (this.u_lensStretch) {
       const rawForward = Number.isFinite(lensStretchForward) ? lensStretchForward : 1;
       const clampedForward = Math.max(0.01, rawForward);
-      const forwardMajor = clampedForward >= 1
-        ? clampedForward
-        : 1 + (1 - clampedForward);
-      
+      const forwardMajor = clampedForward >= 1 ? clampedForward : 1 + (1 - clampedForward);
       const stretchAmount = Math.max(1.05, Math.min(8, forwardMajor)); 
 
-      // === POCZĄTEK POPRAWKI w warpBlackHole.js ===
-      // Musimy rozciągnąć oś X shadera (boki), a nie oś Y (przód).
-      // Przekazujemy (rozciągnięcie X, rozciągnięcie Y)
-      const lateralScale = stretchAmount; // Rozciągnij na boki (oś X shadera)
-      const forwardScale = 1.0;           // Nie rozciągaj do przodu (oś Y shadera)
-      
-      gl.uniform2f(this.u_lensStretch, lateralScale, forwardScale); // <-- Wysyła (stretchAmount, 1.0)
-      // === KONIEC POPRAWKI w warpBlackHole.js ===
+      // Rozciągamy Oś X w lokalnej przestrzeni statku (Width),
+      // co po obróceniu zgodnie ze statkiem da efekt wzdłużny (lub poprzeczny zależnie od orientacji sprite'a).
+      // W tym shaderze 'stretchedLocal' dzieli przez tę wartość, więc im większa, tym węższy efekt w danej osi.
+      const lateralScale = stretchAmount; 
+      const forwardScale = 1.0;           
+      gl.uniform2f(this.u_lensStretch, lateralScale, forwardScale);
     }
     
     gl.uniform1i(this.u_image, 0);
@@ -245,6 +231,7 @@ render({ centerX, centerY, mass = 0.15, radius = 0.25, softness = 0.25, rotation
     gl.drawArrays(gl.TRIANGLES, 0, 6);
     this._needsOutputUpdate = true;
   }
+
   // ———— SHADERS ————
   _vs(){ return `
     attribute vec2 a_position;
@@ -254,76 +241,94 @@ render({ centerX, centerY, mass = 0.15, radius = 0.25, softness = 0.25, rotation
   _fs(){ return `
     precision mediump float;
     uniform sampler2D u_image;
-    uniform vec2  u_resolution;   // w px
-    uniform vec2  u_center;       // w px (od dołu)
-    uniform float u_mass;         // siła odchylenia
-    uniform float u_radius;       // promień soczewki (0..1 ekranu)
-    uniform float u_softness;     // miękkie brzegi (0..1)
+    uniform vec2  u_resolution;
+    uniform vec2  u_center;
+    uniform float u_mass;
+    uniform float u_radius;
+    uniform float u_softness;
     uniform float u_time;
-    uniform vec2  u_tileSize;     // rozmiar kafla tła (w px, po dpr)
-    uniform vec2  u_tileOffset;   // przesunięcie kafla (w px, po dpr)
+    uniform vec2  u_tileSize;
+    uniform vec2  u_tileOffset;
     uniform float u_parallaxEnabled;
-    uniform float u_rotation;     // orientacja statku (rad)
-    uniform float u_opacity;      // globalna intensywność (0..1)
-    uniform vec2  u_lensStretch;  // eliptyczne skalowanie soczewki (right, forward)
+    uniform float u_rotation;
+    uniform float u_opacity;
+    uniform vec2  u_lensStretch;
 
-    // Prosta soczewka grawitacyjna:
-    // - liczymy kierunek do centrum, wielkość odchylenia ~ u_mass / r^2
-    // - miękka maska w promieniu u_radius (współczynnik mix)
     void main(){
       vec2 frag = gl_FragCoord.xy;
       vec2 res  = u_resolution;
-      vec2 st   = frag / res;                 // 0..1
-      vec2 c    = u_center / res;
+      vec2 st   = frag / res;       // 0..1
+      vec2 c    = u_center / res;   // 0..1
 
-      vec2 v  = st - c;
+      // Wektor od środka efektu do piksela
+      vec2 v = st - c;
 
-      float cs = cos(u_rotation);
-      float sn = sin(u_rotation);
-      vec2 right = vec2(cs, sn);
-      vec2 forward = vec2(-sn, cs);
-      vec2 local = vec2(dot(v, right), dot(v, forward));
+      // [POPRAWKA 1] Korekcja proporcji ekranu (Aspect Ratio).
+      // Bez tego obrót "gniótłby" efekt (koło zmieniałoby się w elipsę podczas obrotu).
+      float aspect = res.x / res.y;
+      v.x *= aspect;
 
-      // Eliptyczne skalowanie soczewki – rozciągamy ją w kierunku lotu statku
-      vec2 lensStretch = max(u_lensStretch, vec2(1e-4));
-      vec2 stretchedLocal = vec2(local.x / lensStretch.x, local.y / lensStretch.y);
-      float r2 = dot(stretchedLocal, stretchedLocal) + 1e-4;
+      // [POPRAWKA 2] Odwrócenie kierunku obrotu.
+      // Gra 2D (Canvas) ma Y w dół (obrót CW), Shader (WebGL) ma Y w górę (obrót CCW).
+      // Negujemy kąt, aby zsynchronizować shader z grą.
+      float angle = -u_rotation;
+      
+      float cs = cos(angle);
+      float sn = sin(angle);
+
+      // Obrót układu współrzędnych (rzutowanie na osie lokalne statku)
+      // local.x = oś "wszerz" statku (Right)
+      // local.y = oś "wzdłuż" statku (Forward)
+      vec2 local;
+      local.x = v.x * cs - v.y * sn;
+      local.y = v.x * sn + v.y * cs;
+
+      // Skalowanie soczewki (rozciąganie/zgniatanie) w lokalnych osiach
+      // u_lensStretch.x to 'lateralScale'. Dzielenie przez >1 zwęża efekt w tej osi.
+      vec2 stretch = max(u_lensStretch, vec2(1e-4));
+      vec2 stretchedLocal = vec2(local.x / stretch.x, local.y / stretch.y);
+
+      // Odległość od centrum w przestrzeni zniekształconej (elipsa)
+      float r2 = dot(stretchedLocal, stretchedLocal) + 1e-6;
       float r  = sqrt(r2);
 
-      // Maska z miękkim wygaszaniem przy krawędziach
+      // Maska soczewki
       float R = u_radius;
       float falloff = R * (0.6 + 0.6 * u_softness) + 1e-3;
       float lens = 1.0 - smoothstep(R, R + falloff, r);
       lens = clamp(lens, 0.0, 1.0);
 
-      // Kierunek odkształcenia: elipsa -> przestrzeń ekranu, bez ostrych skoków
+      // Obliczanie wektora przesunięcia pikseli (deformacji)
+      // Musimy wrócić z przestrzeni lokalnej do ekranowej
       vec2 dirLocal = (r > 1e-4) ? normalize(stretchedLocal) : vec2(0.0);
-      vec2 dirScreen = dirLocal.x * right + dirLocal.y * forward;
-      float dirLen = length(dirScreen);
-      vec2 dir = dirLen > 1e-4 ? dirScreen / dirLen : vec2(0.0);
+      
+      // Obrót odwrotny (powrót do układu ekranu)
+      vec2 dirScreen;
+      dirScreen.x = dirLocal.x * cs + dirLocal.y * sn;
+      dirScreen.y = -dirLocal.x * sn + dirLocal.y * cs;
 
-      // Odciągamy UV w stronę statku, z dodatkowym falloffem chroniącym przed artefaktami
+      // Siła przyciągania/wypychania pikseli
       float pull = clamp(u_mass / r2, 0.0, 0.45);
       
-      // ==== [POPRAWKA] ====
-      // Zmieniamy minus (-) na plus (+), aby "wciągać" piksele z zewnątrz, a nie "wypychać" z wewnątrz.
-      vec2 uv   = st + dir * pull * lens;
-      
+      // Wektor deformacji na ekranie (z uwzględnieniem Aspect Ratio w drugą stronę!)
+      vec2 offset = dirScreen * pull * lens;
+      offset.x /= aspect; // Przywracamy proporcje UV
+
+      // Finalna współrzędna próbkowania
+      vec2 uv = st + offset; // '+' wciąga tło (Black Hole), '-' robiłoby lupę (Magnify)
       uv = clamp(uv, vec2(0.001), vec2(0.999));
 
       if (u_parallaxEnabled > 0.5) {
         vec2 tileSize = max(u_tileSize, vec2(1.0));
-        vec2 samplePx = uv * u_resolution + u_tileOffset;
+        vec2 samplePx = uv * res + u_tileOffset;
         vec2 tileUv = fract(samplePx / tileSize);
         uv = tileUv;
       }
 
-      // sample
       vec4 col = texture2D(u_image, uv);
       float alpha = pow(lens, 1.25) * clamp(u_opacity, 0.0, 1.0);
-      if (alpha <= 0.001) {
-        discard;
-      }
+      
+      if (alpha <= 0.001) discard;
       gl_FragColor = vec4(col.rgb, col.a * alpha);
     }
   `;}
