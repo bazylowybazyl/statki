@@ -1186,6 +1186,11 @@ function updatePlanetRadar(ship, cam){
     const distWorld = Math.hypot(dx, dy);
     const arrivalRadius = Math.max(10, (planet.r || 0) * 2);
     const iconSrc = PLANET_ICON_SRC[id] || PLANET_ICON_SRC[planet.name] || PLANET_ICON_SRC.default;
+    const distAu = Math.max(0, (distWorld - Math.max(planet.r || 0, 0)) / auUnit);
+
+    if (planetRadarState.visited.has(id) && distAu >= 2) {
+      planetRadarState.visited.delete(id);
+    }
 
     if (distWorld <= arrivalRadius) {
       planetRadarState.visited.add(id);
@@ -1197,9 +1202,17 @@ function updatePlanetRadar(ship, cam){
       continue;
     }
 
+    if (planetRadarState.visited.has(id)) {
+      const existing = planetRadarState.elements.get(id);
+      if (existing) {
+        existing.remove();
+        planetRadarState.elements.delete(id);
+      }
+      continue;
+    }
+
     if (!shouldRender) continue;
 
-    const distAu = Math.max(0, (distWorld - Math.max(planet.r || 0, 0)) / auUnit);
     const screenPos = worldToScreen(planet.x, planet.y, cam);
     const dirX = screenPos.x - W / 2;
     const dirY = screenPos.y - H / 2;
@@ -1223,6 +1236,29 @@ function updatePlanetRadar(ship, cam){
     if (labelEl) {
       const label = planet.label || formatPlanetLabel(planet, 0);
       labelEl.textContent = `${label} · ${formatAuDistance(distAu)}`;
+      labelEl.style.writingMode = '';
+      labelEl.style.transform = '';
+      labelEl.style.margin = '';
+    }
+
+    if (item) {
+      let flexDirection = 'column';
+      if (labelEl) {
+        if (Math.abs(dirX) > Math.abs(dirY)) {
+          labelEl.style.writingMode = 'vertical-rl';
+          labelEl.style.transform = dirX > 0 ? 'rotate(180deg)' : '';
+          labelEl.style.margin = '4px 0 0 0';
+        } else {
+          labelEl.style.writingMode = 'horizontal-tb';
+        }
+      }
+
+      if (edgePos.y > H - margin * 1.5) {
+        flexDirection = 'column-reverse';
+      }
+
+      item.style.flexDirection = flexDirection;
+      item.style.transform = 'translate(-50%, -50%)';
     }
 
     item.style.left = `${edgePos.x}px`;
