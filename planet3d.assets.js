@@ -376,7 +376,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     }
 
     render(dt) {
-      // Lazy init: zainicjuj scenę dopiero kiedy THREE jest dostępne
+      // Inicjalizacja Three.js (bez zmian)
       if (this._needsInit && typeof THREE !== "undefined") {
         this._needsInit = false;
         this._initPromise = this._initThree();
@@ -385,53 +385,69 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         }
       }
       if (!this.scene || !this.camera || !this.mesh) return;
+
+      // 1. ZAWSZE aktualizuj matematykę obrotu (żeby nie było skoków przy wznawianiu)
+      this.mesh.rotation.y += this.spin * dt;
+      if (this.clouds) this.clouds.rotation.y += this.spin * dt * 1.3;
+
+      // --- SYSTEM LOD (z poprzedniego kroku) ---
       const ship = (typeof window !== 'undefined') ? window.ship : null;
       const pos = ship?.pos;
       
       const RES_LOW = 2048;
-      const RES_HIGH = 4096;
+      const RES_HIGH = 4096; // 4K jest bardzo ciężkie, ale throttling pomoże
       
-      // Inicjalizacja stanu, jeśli nie istnieje
       if (typeof this.isHighRes === 'undefined') this.isHighRes = false;
 
       if (pos) {
         const dx = pos.x - this.x;
         const dy = pos.y - this.y;
         const dist = Math.hypot(dx, dy);
-        
         const r = this.ref?.r || this.ref?.baseR || (this.size / 2) || 500;
 
-        // Dwa progi:
-        // ENTER: Kiedy włączamy 4K (bliżej)
         const ENTER_HIGH_RES = r + 1800; 
-        // EXIT: Kiedy wracamy do 2K (musisz odlecieć trochę dalej, żeby wyłączyć)
         const EXIT_HIGH_RES  = r + 2200; 
 
-        if (!this.isHighRes && dist < ENTER_HIGH_RES) {
-           // Jesteśmy w trybie LOW, ale podlecieliśmy blisko -> Włączamy HIGH
-           this.isHighRes = true;
-        } else if (this.isHighRes && dist > EXIT_HIGH_RES) {
-           // Jesteśmy w trybie HIGH, ale odlecieliśmy daleko -> Włączamy LOW
-           this.isHighRes = false;
-        }
+        if (!this.isHighRes && dist < ENTER_HIGH_RES) this.isHighRes = true;
+        else if (this.isHighRes && dist > EXIT_HIGH_RES) this.isHighRes = false;
       }
 
       const targetRes = this.isHighRes ? RES_HIGH : RES_LOW;
 
-      // Zmiana rozmiaru (Safe Resize)
       if (this.canvas.width !== targetRes) {
         this.canvas.width = targetRes;
         this.canvas.height = targetRes;
-        // Canvas po zmianie width jest czyszczony automatycznie, 
-        // ale zaraz go zamalujemy w linijkach poniżej.
+        // Reset timera po zmianie rozdzielczości, żeby wymusić natychmiastowe odrysowanie
+        this.frameTimer = 100; 
       }
-      // --- KONIEC LOD ---
-      this.mesh.rotation.y += this.spin * dt;
-      if (this.clouds) this.clouds.rotation.y += this.spin * dt * 1.3;
 
+      // --- OPTYMALIZACJA: TEXTURE THROTTLING ---
+      // Jeśli jesteśmy w trybie High Res (4K), ograniczamy odświeżanie tekstury.
+      // 4K texture copy to gigantyczny koszt transferu.
+      
+      // Czas w sekundach między klatkami tekstury.
+      // 0.033 = 30 FPS (wystarczające dla wolno obracającej się planety)
+      // 0.050 = 20 FPS (jeszcze lżej, nadal wygląda ok)
+      const UPDATE_INTERVAL = this.isHighRes ? 0.04 : 0.0; // Low Res robimy co klatkę (jest lekkie), High Res dławimy
+
+      this.frameTimer = (this.frameTimer || 0) + dt;
+
+      if (this.frameTimer < UPDATE_INTERVAL) {
+        // SKIP! Nie rysujemy nowej tekstury, gra użyje starej z canvasa.
+        // To oszczędza 90% pracy CPU/GPU w tej klatce.
+        return;
+      }
+
+      // Reset timera (zachowując resztkę czasu dla płynności)
+      this.frameTimer %= UPDATE_INTERVAL;
+      if (this.frameTimer > 0.1) this.frameTimer = 0; // Safety check
+
+      // --- WŁAŚCIWE RENDEROWANIE (Ciężka praca) ---
+      
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r) return;
       resetRendererState(r, this.canvas.width, this.canvas.height);
+      
       if (this.material?.uniforms?.uLightDir && typeof THREE !== 'undefined') {
         if (!this._lightDirView) this._lightDirView = new THREE.Vector3();
         if (!this._viewMatrix3) this._viewMatrix3 = new THREE.Matrix3();
@@ -442,9 +458,9 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         this.material.uniforms.uLightDir.value.copy(this._lightDirView);
       }
       if (this.sunLight) updateSunLightForPlanet(this.sunLight, this.x, this.y);
+      
       r.render(this.scene, this.camera);
 
-      // skopiuj piksele do prywatnego canvasa 2D
       this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
       this.ctx2d.drawImage(r.domElement, 0, 0, this.canvas.width, this.canvas.height);
     }
