@@ -8196,7 +8196,7 @@ function physicsStep(dt){
   ship.angVel += angAcc*dt;
   ship.angVel *= Math.exp(-ship.angularDamping * (boostActive ? boost.angularDampingFactor : 1) * dt);
   ship.angle += ship.angVel*dt;
-
+  ship.angle = wrapAngle(ship.angle);
   npcStep(dt);
   cleanupCarrierFighters();
   pirateMissionStep(dt);
@@ -9027,7 +9027,7 @@ function render(alpha, frameDt){
     x: prevState.pos.x + (ship.pos.x - prevState.pos.x) * alpha,
     y: prevState.pos.y + (ship.pos.y - prevState.pos.y) * alpha
   };
-  const interpAngle = prevState.angle*(1-alpha) + ship.angle*alpha;
+  const interpAngle = interpAngleShort(prevState.angle, ship.angle, alpha);
   const interpTurretAngle = interpAngleShort(prevState.turretAngle, ship.turret.angle, alpha);
   const interpTurretAngle2 = interpAngleShort(prevState.turretAngle2, ship.turret2.angle, alpha);
   const interpTurretAngle3 = interpAngleShort(prevState.turretAngle3, ship.turret3.angle, alpha);
