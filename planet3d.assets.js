@@ -395,7 +395,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       const pos = ship?.pos;
       
       const RES_LOW = 1536;
-      const RES_HIGH = 2560; // 4K jest bardzo ciężkie, ale throttling pomoże
+      const RES_HIGH = 2048; // 4K jest bardzo ciężkie, ale throttling pomoże
       
       if (typeof this.isHighRes === 'undefined') this.isHighRes = false;
 
