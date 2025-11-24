@@ -161,7 +161,7 @@
     <div><strong>Space Survivors — gwiazdy na całej mapie + duży silnik plazmowy</strong></div>
     <div class="stat">Czas gry: <span id="game-time">00:00</span></div>
     <div class="stat">W — ciąg (duży silnik plazmowy) · Q/E — strafe · A/D — obrót</div>
-    <div class="stat">LPM — rail (A→B, A→B) · PPM — boczne rakiety · F — superbroń · SHIFT — warp · SPACJA — dopalacz</div>
+    <div class="stat">LPM — rail (A→B, A→B) · PPM — boczne rakiety · F — superbroń · SHIFT — warp / dopalacz na orbitach</div>
     <div style="margin-top:6px"><small>Gwiazdy są proceduralne w całej galaktyce. Silnik: niebieski exhaust + krótki ślad przy ruchu.</small></div>
   </div>
   <div id="fleet-ui" class="hidden">
@@ -2127,16 +2127,27 @@ function makeInterplanetaryZone(){
   };
 }
 
-const zonePriority = { planet: 3, sun: 2, asteroid_belt: 1 };
+const zonePriority = { planet_inner: 4, planet_outer: 3, sun: 2, asteroid_belt: 1 };
 
 function zonePropsForId(id){
-  if (id === 'planet' || id === 'sun' || id === 'asteroid_belt') {
+  if (id === 'planet_inner' || id === 'planet_outer' || id === 'sun' || id === 'asteroid_belt') {
     return { warpMultiplier: 0.3, wormholeVfx: false };
   }
   if (id === 'interplanetary') {
     return { warpMultiplier: 2, wormholeVfx: true };
   }
   return { warpMultiplier: 1, wormholeVfx: false };
+}
+
+function isPlanetOrbitZoneId(id){
+  return id === 'planet_inner' || id === 'planet_outer';
+}
+
+function planetOrbitRadii(planet){
+  const baseRadius = Math.max(10, (planet.r || 0) * 2);
+  const outerOrbitExtra = Math.max(1600, ZONE_APPROACH_DISTANCE * 0.6);
+  const outerRadius = baseRadius + outerOrbitExtra;
+  return { inner: baseRadius, outer: outerRadius };
 }
 
 function enhanceZoneDescriptor(zone){
@@ -2159,20 +2170,28 @@ function detectZones(pos){
 
   for (const [index, planet] of planets.entries()) {
     if (!planet) continue;
-    const radius = Math.max(10, (planet.r || 0) * 2);
+    const orbitRadii = planetOrbitRadii(planet);
     const dx = pos.x - planet.x;
     const dy = pos.y - planet.y;
     const dist = Math.hypot(dx, dy);
-    const edgeDist = dist - radius;
     const labelName = formatPlanetOrbitLabel(planet) || `Planet ${index + 1}`;
     zones.push({
-      key: `planet-${planet.id || planet.name || index}`,
-      id: 'planet',
-      label: `Orbit of ${labelName}`,
-      enteringLabel: `Entering Orbit of ${labelName}`,
-      edgeDist,
+      key: `planet-${planet.id || planet.name || index}-inner`,
+      id: 'planet_inner',
+      label: `${labelName} - Inner Orbit`,
+      enteringLabel: `${labelName} - Inner Orbit`,
+      edgeDist: dist - orbitRadii.inner,
       approachRange: ZONE_APPROACH_DISTANCE,
-      priority: zonePriority.planet
+      priority: zonePriority.planet_inner
+    });
+    zones.push({
+      key: `planet-${planet.id || planet.name || index}-outer`,
+      id: 'planet_outer',
+      label: `${labelName} - Outer Orbit`,
+      enteringLabel: `${labelName} - Outer Orbit`,
+      edgeDist: dist - orbitRadii.outer,
+      approachRange: ZONE_APPROACH_DISTANCE,
+      priority: zonePriority.planet_outer
     });
   }
 
@@ -5807,6 +5826,7 @@ function spawnLaserBeam(start, end, width, opts={}){
 const input = { main:0, leftSide:0, rightSide:0, torque:0 };
 const keys = {};
 let showMap = false;
+let shiftBinding = null;
 const mapView = {
   zoom: 1,
   targetZoom: 1,
@@ -5817,12 +5837,65 @@ const mapView = {
   smoothness: 0.15,
 };
 let PAUSED = false;
+
+function currentShiftMode(){
+  return isPlanetOrbitZoneId(zoneState.current?.id) ? 'boost' : 'warp';
+}
+
+function activateBoostIfAllowed(){
+  if (!isPlanetOrbitZoneId(zoneState.current?.id)) return false;
+  if (boost.fuel > 0) {
+    boost.state = 'active';
+    return true;
+  }
+  return false;
+}
+
+function stopBoost(){
+  if (boost.state === 'active') {
+    boost.state = 'idle';
+  }
+}
+
+function handleWarpKeyDown(){
+  if(warp.state==='idle' && (DevFlags.unlimitedWarp || warp.fuel>0)){
+    warp.state='charging';
+    warp.charge=0;
+  }
+}
+
+function handleWarpKeyUp(){
+  if(warp.state==='charging'){ warp.state='idle'; warp.charge=0; }
+  else if(warp.state==='active'){ warp.state='idle'; exitWarp(); }
+}
+
+function handleShiftDown(){
+  shiftBinding = currentShiftMode();
+  if (shiftBinding === 'boost') {
+    activateBoostIfAllowed();
+  } else {
+    handleWarpKeyDown();
+  }
+}
+
+function handleShiftUp(){
+  const mode = shiftBinding || currentShiftMode();
+  if (mode === 'boost') {
+    stopBoost();
+  } else {
+    handleWarpKeyUp();
+  }
+  shiftBinding = null;
+}
 window.addEventListener('keydown', e=>{
   if(e.repeat) return;
   if(e.code==='Space'){ e.preventDefault(); }
   if(e.code==='ShiftLeft' || e.code==='ShiftRight'){ e.preventDefault(); }
   const k = e.key.toLowerCase();
   keys[k] = true;
+  if (k === 'shift') {
+    handleShiftDown();
+  }
   if(k === 'm'){
     showMap = !showMap;
     if (showMap) {
@@ -5834,10 +5907,6 @@ window.addEventListener('keydown', e=>{
   if(k === 'j') MISSIONS.show = !MISSIONS.show;
   if(k === 'g' && !stationUI.open){
     camera.toggleFreeMode();
-  }
-  if(e.key === ' '){
-    e.preventDefault();
-    if(boost.fuel>0){ boost.state='active'; }
   }
   if(k === 'x'){
     triggerScanWave();
@@ -5887,7 +5956,9 @@ window.addEventListener('keydown', e=>{
 window.addEventListener('keyup', e=>{
   const k = e.key.toLowerCase();
   keys[k] = false;
-  if(e.key === ' ' && boost.state==='active'){ boost.state='idle'; }
+  if (k === 'shift') {
+    handleShiftUp();
+  }
   updateInput();
 });
 function updateInput(){
@@ -6105,9 +6176,9 @@ function applyGamepad(){
   if(btn(0)) triggerRailVolley();      // A / Cross
   if(btn(1)) fireRocket();             // B / Circle
   if(btn(2)){
-    if(boost.fuel>0) boost.state='active';
-  } else if(boost.state==='active' && !keys[' ']){
-    boost.state='idle';
+    activateBoostIfAllowed();
+  } else if(boost.state==='active' && !btn(2)){
+    stopBoost();
   }
   if(btn(3)) attemptWarp();            // Y / Triangle
   if(btn(9)) PAUSED = !PAUSED;         // START
@@ -7803,20 +7874,6 @@ function attemptWarp(){
   }
 }
 
-window.addEventListener('keydown', (e)=>{
-  if(e.key.toLowerCase() === 'shift'){
-    if(warp.state==='idle' && (DevFlags.unlimitedWarp || warp.fuel>0)){
-      warp.state='charging';
-      warp.charge=0;
-    }
-  }
-});
-window.addEventListener('keyup', (e)=>{
-  if(e.key.toLowerCase() === 'shift'){
-    if(warp.state==='charging'){ warp.state='idle'; warp.charge=0; }
-    else if(warp.state==='active'){ warp.state='idle'; exitWarp(); }
-  }
-});
 function engageWarp(dir){
   const ndir = norm(dir);
   warp.dir.x = ndir.x;
@@ -7904,6 +7961,9 @@ function physicsStep(dt){
     st.r = (st.baseR || st.r) * scale;
   }
   updateZoneState(dt);
+  if (boost.state === 'active' && !isPlanetOrbitZoneId(zoneState.current?.id)) {
+    boost.state = 'idle';
+  }
   // regen paliwa gdy nie warpuje
   if(warp.state!=='active'){
     warp.fuel = clamp(warp.fuel + warp.regenRate*dt, 0, warp.fuelMax);
@@ -7916,7 +7976,8 @@ function physicsStep(dt){
       applyPlayerInput(ship, aiControl, input);
     }
   }
-  let boostActive = boost.state === 'active';
+  const boostAllowed = isPlanetOrbitZoneId(zoneState.current?.id);
+  let boostActive = boost.state === 'active' && boostAllowed;
   if(boost.state === 'active'){
     boost.fuel = clamp(boost.fuel - boost.consumeRate*dt, 0, boost.fuelMax);
     if(boost.fuel <= 0){
@@ -8220,6 +8281,22 @@ function physicsStep(dt){
   ship.vel.x += ax*dt; ship.vel.y += ay*dt;
   const linDamp = Math.exp(-ship.linearDamping * (boostActive ? boost.dampingFactor : 1) * dt);
   if(warp.state!=='active'){ ship.vel.x *= linDamp; ship.vel.y *= linDamp; }
+  if (boostActive && warp.state !== 'active') {
+    const zoneId = zoneState.current?.id;
+    const boostCap = zoneId === 'planet_outer'
+      ? warp.speed * 0.4
+      : zoneId === 'planet_inner'
+        ? warp.speed * 0.3
+        : null;
+    if (boostCap) {
+      const speed = len(ship.vel);
+      if (speed > boostCap) {
+        const scale = boostCap / speed;
+        ship.vel.x *= scale;
+        ship.vel.y *= scale;
+      }
+    }
+  }
   ship.pos.x += ship.vel.x*dt; ship.pos.y += ship.vel.y*dt;
 
   // granice
