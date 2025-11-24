@@ -784,11 +784,18 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       sun.x = sunObj.x; sun.y = sunObj.y;
     }
 
-    // Pas asteroid między Marsem a Jowiszem (skalowany z istniejących orbit)
-    if (list && list.length >= 5 && list[2].orbitRadius && list[3].orbitRadius) {
-      const r1 = list[2].orbitRadius, r2 = list[3].orbitRadius;
-      const inner = r1 + 0.25*(r2 - r1);
-      const outer = r1 + 0.55*(r2 - r1);
+    // Pas asteroid — preferuj globalną definicję mapy (np. 3 AU za Neptunem)
+    const beltFromGlobal = (typeof ASTEROID_BELT !== 'undefined' && ASTEROID_BELT)
+      ? ASTEROID_BELT
+      : null;
+    if (beltFromGlobal && Number.isFinite(beltFromGlobal.inner) && Number.isFinite(beltFromGlobal.outer)) {
+      asteroidBelt = new AsteroidBelt3D(beltFromGlobal.inner, beltFromGlobal.outer, 2200);
+    } else if (list && list.length >= 5 && list[3].orbitRadius && list[4].orbitRadius) {
+      const r1 = list[3].orbitRadius, r2 = list[4].orbitRadius;
+      const mid = (r1 + r2) * 0.5;
+      const width = (r2 - r1) * 0.22;
+      const inner = Math.max(50, mid - width * 0.5);
+      const outer = inner + width;
       asteroidBelt = new AsteroidBelt3D(inner, outer, 2200);
     } else {
       asteroidBelt = null;
