@@ -785,9 +785,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     }
 
     // Pas asteroid — preferuj globalną definicję mapy (np. 3 AU za Neptunem)
-    const beltFromGlobal = (typeof ASTEROID_BELT !== 'undefined' && ASTEROID_BELT)
-      ? ASTEROID_BELT
-      : null;
+ const beltFromGlobal = (typeof ASTEROID_BELT !== 'undefined' && ASTEROID_BELT) ? ASTEROID_BELT : null;
     if (beltFromGlobal && Number.isFinite(beltFromGlobal.inner) && Number.isFinite(beltFromGlobal.outer)) {
       asteroidBelt = new AsteroidBelt3D(beltFromGlobal.inner, beltFromGlobal.outer, 2200);
     } else if (list && list.length >= 5 && list[3].orbitRadius && list[4].orbitRadius) {
