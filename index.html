@@ -5617,7 +5617,8 @@ function startMercenaryMission(){
       active:false,
       maxAlive: 200,     // <- zwiększony limit
       timer: 0,
-      baseInterval: 1.0  // skraca się wraz z utratą HP stacji
+      baseInterval: 1.0, // skraca się wraz z utratą HP stacji
+      queue: []
     }
   };
 
@@ -6472,6 +6473,362 @@ function fighterAI(dt){
                   0.08, '#cfe7ff', 0.7);
   }
 }
+// === AI / uzbrojenie z AISPACE (portowane offline) ===
+const AISPACE_GUNS = {
+  laserS:{ name:'Laser krótki', dps:40, dmg:8,  rps:5,   speed:520, range:380, spread:2,  color:'#86f7ff' },
+  pulse :{ name:'Pulse blaster', dps:55, dmg:14, rps:4,   speed:420, range:420, spread:3,  color:'#ffd36e' },
+  rail  :{ name:'Rail micro',    dps:65, dmg:26, rps:1.8, speed:900, range:560, spread:0.6,color:'#c0b7ff' },
+  gatling:{name:'Gatling',       dps:70, dmg:3,  rps:12,  speed:520, range:320, spread:4,  color:'#9fff75' }
+};
+const AISPACE_PD = {
+  pd_mk1  :{ name:'PD Mk1',   dmg:5,  rps:9,  speed:560,  range:380, spread:6,   color:'#8cffd0' },
+  pd_laser:{ name:'PD Laser', dmg:3,  rps:18, speed:1200, range:420, spread:0.7, color:'#ff77ff' }
+};
+const AISPACE_FLAK = {
+  flak_L  :{ name:'Flak L', burst:1, rps:0.8, speed:380, range:520, radius:48, dmg:28, color:'#ffef8a' }
+};
+const AISPACE_MISSILES = {
+  AF:{ name:'AIM-3',  speed:360, turn:600, life:4.0, dmg:45,  seek:'fighter', color:'#7cd7ff' },
+  AS:{ name:'ASM-6',  speed:300, turn:320, life:6.0, dmg:120, seek:'ship',    color:'#ffad7c' },
+  HE:{ name:'HET-4',  speed:280, turn:250, life:5.0, dmg:160, seek:'any',     color:'#ff7cf0' },
+  SW:{ name:'Swarm-8',speed:340, turn:550, life:3.0, dmg:18,  seek:'fighter', color:'#b3ff7c', swarm:6, spread:18 }
+};
+const AISPACE_GUNS_M = {
+  m_beam      :{ name:'M Beam',       dmg:24,  rps:1.8, speed:900,  range:820,  spread:0.4, color:'#8fd8ff' },
+  m_pulse     :{ name:'M Pulse',      dmg:40,  rps:1.1, speed:700,  range:760,  spread:0.8, color:'#ffd98a' },
+  m_rail      :{ name:'M Rail',       dmg:85,  rps:0.55,speed:1200, range:880,  spread:0.35,color:'#d0c9ff' },
+  m_autocannon:{ name:'M Auto',       dmg:22,  rps:3.2, speed:780,  range:680,  spread:1.2, color:'#b6ff9a' },
+  h_beam      :{ name:'Heavy Beam',   dmg:260, rps:0.22,speed:1500, range:1100, spread:0.1, color:'#ff0000' },
+  h_rapid     :{ name:'Rapid Laser L',dmg:45,  rps:5.0, speed:900,  range:750,  spread:1.0, color:'#00ff00' }
+};
+const AISPACE_BS_BROADSIDE = { dmg:80, rps:0.6, speed:620, range:650, spread:2.5, color:'#ff9b4b' };
+const AISPACE_DESTROYER_MEDIUM_DEFAULT = 'm_rail';
+
+const PirateSim = {
+  get squads(){ return this._squads || (this._squads = new Set()); },
+  get wrecks(){ return this._wrecks || (this._wrecks = []); },
+  teamCmd: { pirate: 'ENGAGE' },
+  guardSlotsWorld(team){
+    if(!mercMission?.station || team!=='pirate') return null;
+    const slots=[];
+    const baseR = mercMission.station.r + 260;
+    for(let i=0;i<8;i++){
+      const ang = (i/8)*Math.PI*2;
+      slots.push({ x: mercMission.station.x + Math.cos(ang)*baseR, y: mercMission.station.y + Math.sin(ang)*baseR });
+    }
+    return slots;
+  }
+};
+
+function aiClamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+function aiDist2(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return dx*dx+dy*dy; }
+function aiClampTurnAngle(currentAng, targetAng, maxRateRad, dt){
+  let d = targetAng - currentAng;
+  while(d >  Math.PI) d -= 2*Math.PI;
+  while(d < -Math.PI) d += 2*Math.PI;
+  const change = aiClamp(d, -maxRateRad * dt, maxRateRad * dt);
+  let out = currentAng + change;
+  if(out >  Math.PI) out -= 2*Math.PI;
+  if(out < -Math.PI) out += 2*Math.PI;
+  return out;
+}
+function aiLeadAim(shooter,target,projSpeed=180){
+  const vx=target.vx||0, vy=target.vy||0;
+  const px=target.x-shooter.x, py=target.y-shooter.y;
+  const A=(vx*vx+vy*vy)-projSpeed*projSpeed;
+  const B=2*(px*vx+py*vy);
+  const C=(px*px+py*py);
+  let t=0;
+  if(Math.abs(A)<1e-3){
+    t = -C/Math.max(B,-1e-3);
+  }else{
+    const disc=B*B-4*A*C;
+    t = (disc>0)?(-B-Math.sqrt(disc))/(2*A):0;
+  }
+  t = Math.max(0,Math.min(2.0,t));
+  return {x:target.x+vx*t,y:target.y+vy*t};
+}
+function aiSpawnBullet(owner,target,def,opts={}){
+  const dir = target ? aiLeadAim(owner,target,def.speed||400) : {x:owner.x + Math.cos(owner.angle||0), y: owner.y + Math.sin(owner.angle||0)};
+  const ang = Math.atan2(dir.y-owner.y, dir.x-owner.x);
+  const spread = (opts.spread ?? def.spread ?? 0) * (Math.PI/180 || 1);
+  const jitter = (Math.random()-0.5) * spread;
+  const vx = Math.cos(ang + jitter) * (def.speed||400) + (owner.vx||0);
+  const vy = Math.sin(ang + jitter) * (def.speed||400) + (owner.vy||0);
+  bullets.push({
+    x: owner.x,
+    y: owner.y,
+    vx, vy,
+    life: (def.range||400) / Math.max(1, def.speed||400),
+    r: 3,
+    owner: owner.friendly ? 'player' : 'npc',
+    damage: def.dmg || 8,
+    type: opts.type || 'npc',
+    color: def.color,
+    source: owner
+  });
+}
+function aiSpawnFlakShell(owner,target,def){
+  const aim = aiLeadAim(owner,target,def.speed||300);
+  const ang = Math.atan2(aim.y-owner.y, aim.x-owner.x);
+  const vx = Math.cos(ang)*(def.speed||300) + (owner.vx||0);
+  const vy = Math.sin(ang)*(def.speed||300) + (owner.vy||0);
+  bullets.push({
+    x: owner.x,
+    y: owner.y,
+    vx, vy,
+    life: (def.range||400) / Math.max(1, def.speed||300),
+    r: 6,
+    owner: owner.friendly ? 'player' : 'npc',
+    damage: def.dmg || 20,
+    type: 'flak',
+    explodeRadius: def.radius || 36,
+    source: owner
+  });
+}
+function aiPickTarget(self){
+  return { x: ship.pos.x, y: ship.pos.y, vx: ship.vel.x, vy: ship.vel.y, kind:'player' };
+}
+function aiGetNearestMissile(){ return null; }
+function aiCanFireAtCap(){ return true; }
+function aiIsLineOfFireClear(){ return true; }
+
+function aiApplyFriction(self){
+  if(typeof self.friction === 'number'){
+    self.vx *= self.friction;
+    self.vy *= self.friction;
+  }
+}
+
+function aiFighter(sim,self,dt){
+  self.gunCD = Math.max(0,(self.gunCD||0)-dt);
+  self.mslCD = Math.max(0,(self.mslCD||0)-dt);
+
+  const target = aiPickTarget(self);
+  const gun = AISPACE_GUNS[self.gun] || AISPACE_GUNS.laserS;
+  const msl = AISPACE_MISSILES[self.msl] || AISPACE_MISSILES.AF;
+
+  const dx=target.x-self.x, dy=target.y-self.y;
+  const dist=Math.hypot(dx,dy)||1;
+  const desiredAng=Math.atan2(dy,dx);
+  self.angle = aiClampTurnAngle(self.angle||0, desiredAng, self.turn||6.0, dt);
+
+  const accel = self.accel || 160;
+  const thrust = accel;
+  const strafe = Math.sin(sim.time||performance.now()*0.001 + (self.id||0)*0.3) * accel*0.4;
+  const c=Math.cos(self.angle), s=Math.sin(self.angle);
+  self.vx += (c*thrust - s*strafe)*dt;
+  self.vy += (s*thrust + c*strafe)*dt;
+  const maxv = self.maxSpeed || 640;
+  const v=Math.hypot(self.vx,self.vy);
+  if(v>maxv){ self.vx*=maxv/v; self.vy*=maxv/v; }
+  aiApplyFriction(self);
+
+  if(self.gunCD<=0 && dist < gun.range){
+    aiSpawnBullet(self,target,gun);
+    self.gunCD = 1.0/(gun.rps||5);
+  }
+  if(self.mslAmmo>0 && self.mslCD<=0 && dist < (msl.life||4)*(msl.speed||300)){
+    aiSpawnBullet(self,target,{dmg:msl.dmg||60,speed:msl.speed||340,range:(msl.speed||340)*(msl.life||3),spread:msl.spread||0.6,color:msl.color,type:'rocket'});
+    self.mslAmmo -= 1;
+    self.mslCD = 3.0;
+  }
+}
+
+function aiFrigate(sim,self,dt){
+  self.pdCD=Math.max(0,(self.pdCD||0)-dt);
+  self.flakCD=Math.max(0,(self.flakCD||0)-dt);
+  self.mCD=Math.max(0,(self.mCD||0)-dt);
+
+  const target=aiPickTarget(self);
+  const pd = AISPACE_PD[self.pd] || AISPACE_PD.pd_mk1;
+  const fl = AISPACE_FLAK[self.flak] || AISPACE_FLAK.flak_L;
+
+  const dx=target.x-self.x, dy=target.y-self.y;
+  const dist=Math.hypot(dx,dy)||1;
+  const wantRange=(target.kind==='fighter'?pd.range||380:fl.range||520)*0.85;
+  const desiredAng=Math.atan2(dy,dx);
+  let thrust=0, strafe=0;
+  if(dist<wantRange*0.95) thrust=-self.accel*0.7;
+  else if(dist>wantRange*1.05) thrust=self.accel*0.7;
+  strafe = Math.sin((sim.time||0)*0.7 + (self.id||0)*0.3)*self.accel*0.4;
+
+  self.angle = aiClampTurnAngle(self.angle||0, desiredAng, self.turn||2.0, dt);
+  const c=Math.cos(self.angle), s=Math.sin(self.angle);
+  self.vx += (c*thrust - s*strafe)*dt;
+  self.vy += (s*thrust + c*strafe)*dt;
+  const v=Math.hypot(self.vx,self.vy);
+  const maxv=self.maxSpeed||180;
+  if(v>maxv){ self.vx*=maxv/v; self.vy*=maxv/v; }
+  aiApplyFriction(self);
+
+  if(self.pdCD<=0 && aiDist2(self,target) < (pd.range||400)*(pd.range||400)){
+    const burst=6;
+    for(let i=0;i<burst;i++) aiSpawnBullet(self,target,pd,{type:'ciws'});
+    self.pdCD = 1.0/(pd.rps||9);
+  }
+  if(self.flakCD<=0 && aiDist2(self,target) < (fl.range||520)*(fl.range||520)){
+    aiSpawnFlakShell(self,target,fl);
+    self.flakCD = 1.0/(fl.rps||0.8);
+  }
+}
+
+function aiLaserFrigate(sim,self,dt){
+  self.pdCD=Math.max(0,(self.pdCD||0)-dt);
+  self.mCD=Math.max(0,(self.mCD||0)-dt);
+  const target=aiPickTarget(self);
+  const pd = AISPACE_PD[self.pd] || AISPACE_PD.pd_mk1;
+  const gun = AISPACE_GUNS_M[self.mGun] || AISPACE_GUNS_M.h_beam;
+
+  const dx=target.x-self.x, dy=target.y-self.y;
+  const dist=Math.hypot(dx,dy)||1;
+  const desiredAng=Math.atan2(dy,dx);
+  let thrust=0, strafe=0;
+  const wantRange=(gun.range||760)*0.8;
+  if(dist<wantRange*0.95) thrust=-self.accel*0.7;
+  else if(dist>wantRange*1.05) thrust=self.accel*0.7;
+  strafe = Math.sin((sim.time||0)*0.65 + (self.id||0)*0.3)*self.accel*0.35;
+
+  self.angle = aiClampTurnAngle(self.angle||0, desiredAng, self.turn||2.0, dt);
+  const c=Math.cos(self.angle), s=Math.sin(self.angle);
+  self.vx += (c*thrust - s*strafe)*dt;
+  self.vy += (s*thrust + c*strafe)*dt;
+  const v=Math.hypot(self.vx,self.vy);
+  const maxv=self.maxSpeed||180;
+  if(v>maxv){ self.vx*=maxv/v; self.vy*=maxv/v; }
+  aiApplyFriction(self);
+
+  if(aiDist2(self,target)<= (gun.range||760)*(gun.range||760) && self.mCD<=0){
+    aiSpawnBullet(self,target,gun);
+    self.mCD = 1.0/(gun.rps||1.2);
+  }
+  if(self.pdCD<=0 && aiDist2(self,target) < (pd.range||400)*(pd.range||400)){
+    const burst=8;
+    for(let i=0;i<burst;i++) aiSpawnBullet(self,target,pd,{type:'ciws'});
+    self.pdCD = 1.0/(pd.rps||9);
+  }
+}
+
+function aiDestroyer(sim,self,dt){
+  self.mCD=Math.max(0,(self.mCD||0)-dt);
+  self.pdCD=Math.max(0,(self.pdCD||0)-dt);
+  self.boostT=Math.max(0,(self.boostT||0)-dt);
+  self.boostCd=Math.max(0,(self.boostCd||0)-dt);
+
+  const target=aiPickTarget(self);
+  const gun=AISPACE_GUNS_M[self.mGun] || AISPACE_GUNS_M.m_rail;
+  const pd=AISPACE_PD[self.pd] || AISPACE_PD.pd_mk1;
+
+  const dx=target.x-self.x, dy=target.y-self.y;
+  const dist=Math.hypot(dx,dy)||1;
+  const desiredAng=Math.atan2(dy,dx);
+  const ux=Math.cos(self.angle||0), uy=Math.sin(self.angle||0);
+  const dot=(dx/dist)*ux+(dy/dist)*uy;
+  if(dist>gun.range*0.95 && self.boostCd<=0 && dot>0.9){
+    self.boostT=self.boostDur||1.8;
+    self.boostCd=self.boostCool||8.0;
+  }
+  if(dist < gun.range*0.75) self.boostT = 0;
+
+  let thrust=0, strafe=0;
+  const want = (gun.range||760)*0.8;
+  if(dist<want*0.95) thrust=-self.accel*1.1;
+  else if(dist>want*1.05) thrust=self.accel*0.9;
+  const strafeRange = want*1.1;
+  if(dist<strafeRange){
+    strafe = Math.sin((sim.time||0)*0.55 + (self.id||0)*0.2)*(self.boostT>0?24:16)*self.accel*0.5;
+  }
+
+  const speedBoost = (self.boostT>0)?1.7:1.0;
+  self.angle = aiClampTurnAngle(self.angle||0, desiredAng, (self.turn||2.0)*speedBoost, dt);
+  const c=Math.cos(self.angle), s=Math.sin(self.angle);
+  self.vx += (c*thrust - s*strafe)*speedBoost*dt;
+  self.vy += (s*thrust + c*strafe)*speedBoost*dt;
+  const v=Math.hypot(self.vx,self.vy);
+  const maxv=(self.maxSpeed||160)*speedBoost;
+  if(v>maxv){ self.vx*=maxv/v; self.vy*=maxv/v; }
+  aiApplyFriction(self);
+
+  if(aiDist2(self,target)<= (gun.range||760)*(gun.range||760) && aiCanFireAtCap(self,target,gun) && self.mCD<=0){
+    aiSpawnBullet(self,target,gun);
+    self.mSeq=(self.mSeq||0)+1;
+    self.mCD = 0.14;
+  }
+  if(self.pdCD<=0){
+    if(aiCanFireAtCap(self,target,pd)){
+      const burst=8;
+      for(let i=0;i<burst;i++) aiSpawnBullet(self,target,pd,{type:'ciws'});
+      self.pdCD = 1.0/(pd.rps||9);
+    }
+  }
+}
+
+function aiBattleship(sim,self,dt){
+  self.mCD=Math.max(0,(self.mCD||0)-dt);
+  self.pdCD=Math.max(0,(self.pdCD||0)-dt);
+  self.broadLeftCD=Math.max(0,(self.broadLeftCD||0)-dt);
+  self.broadRightCD=Math.max(0,(self.broadRightCD||0)-dt);
+  self.fwdBoostT=Math.max(0,(self.fwdBoostT||0)-dt);
+  self.rotBoostT=Math.max(0,(self.rotBoostT||0)-dt);
+  self.fwdBoostCd=Math.max(0,(self.fwdBoostCd||0)-dt);
+  self.rotBoostCd=Math.max(0,(self.rotBoostCd||0)-dt);
+
+  const target=aiPickTarget(self);
+  const gun=AISPACE_GUNS_M[self.mGun] || AISPACE_GUNS_M.h_rapid;
+  const pd=AISPACE_PD[self.pd] || AISPACE_PD.pd_laser;
+
+  const dx=target.x-self.x, dy=target.y-self.y;
+  const dist=Math.hypot(dx,dy)||1;
+  const desiredAng=Math.atan2(dy,dx);
+  if(dist>gun.range*0.9 && self.fwdBoostCd<=0){ self.fwdBoostT=self.fwdBoostDur||1.4; self.fwdBoostCd=self.fwdBoostCool||10; }
+  if(self.rotBoostCd<=0){ self.rotBoostT=self.rotBoostDur||0.9; self.rotBoostCd=self.rotBoostCool||8; }
+
+  let thrust=0, strafe=0;
+  const want=(gun.range||800)*0.85;
+  if(dist<want*0.9) thrust=-self.accel*0.7;
+  else if(dist>want*1.1) thrust=self.accel*0.7;
+  strafe = Math.sin((sim.time||0)*0.4 + (self.id||0)*0.25)*self.accel*0.35;
+
+  const rotBoost = (self.rotBoostT>0)?1.8:1.0;
+  const speedBoost = (self.fwdBoostT>0)?1.6:1.0;
+
+  self.angle = aiClampTurnAngle(self.angle||0, desiredAng, (self.turn||1.0)*rotBoost, dt);
+  const c=Math.cos(self.angle), s=Math.sin(self.angle);
+  self.vx += (c*thrust - s*strafe)*speedBoost*dt;
+  self.vy += (s*thrust + c*strafe)*speedBoost*dt;
+  const v=Math.hypot(self.vx,self.vy);
+  const maxv=(self.maxSpeed||90)*speedBoost;
+  if(v>maxv){ self.vx*=maxv/v; self.vy*=maxv/v; }
+  aiApplyFriction(self);
+
+  const leftDir=self.angle+Math.PI*0.5;
+  const rightDir=self.angle-Math.PI*0.5;
+  const toTarget=Math.atan2(dy,dx);
+  const diffLeft=Math.abs(Math.atan2(Math.sin(toTarget-leftDir),Math.cos(toTarget-leftDir)));
+  const diffRight=Math.abs(Math.atan2(Math.sin(toTarget-rightDir),Math.cos(toTarget-rightDir)));
+  const sideArc=Math.PI/3;
+  if(dist < (self.broadsideRange||650)){
+    if(diffRight < sideArc*0.5 && self.broadRightCD<=0){
+      for(let i=0;i<4;i++) aiSpawnBullet(self,target,AISPACE_BS_BROADSIDE);
+      self.broadRightCD=2.0;
+    }
+    if(diffLeft < sideArc*0.5 && self.broadLeftCD<=0){
+      for(let i=0;i<4;i++) aiSpawnBullet(self,target,AISPACE_BS_BROADSIDE);
+      self.broadLeftCD=2.0;
+    }
+  }
+
+  if(aiDist2(self,target)<= (gun.range||800)*(gun.range||800) && self.mCD<=0){
+    aiSpawnBullet(self,target,gun);
+    self.mCD = 1.0/(gun.rps||5);
+  }
+  if(self.pdCD<=0 && aiCanFireAtCap(self,target,pd)){
+    const burst=10;
+    for(let i=0;i<burst;i++) aiSpawnBullet(self,target,pd,{type:'ciws'});
+    self.pdCD = 1.0/(pd.rps||18);
+  }
+}
+
 // === PIRATE AI (strzela jak myśliwce) + SPAWN SWARM ===
 function armPirate(n, tier='light'){
   n.friendly = false;
@@ -6726,32 +7083,81 @@ function spawnPirate(kind, station){
   const r = station.r + 32;
   const pos = { x: station.x + Math.cos(a)*r, y: station.y + Math.sin(a)*r };
   let n;
-  if(kind==='interceptor'){
-    n = makeNPCBase(pos, { hp: 160, accel: 110,  maxSpeed: 640, turn: 5.2, radius: 22 });
+  if(kind==='interceptor' || kind==='fighter'){
+    n = makeNPCBase(pos, { hp: 120, accel: 160,  maxSpeed: 660, turn: 6.0, radius: 22 });
+    n.shield = { val:80, max:80 };
+    n.gun = 'laserS';
+    n.msl = 'AF';
+    n.mslAmmo = 1;
+    n.gunCD = 0;
+    n.mslCD = 0;
+    n.ai = dt => aiFighter(PirateSim, n, dt);
     armPirate(n, 'light');
-  } else if(kind==='frigate'){
-    // nowa fregata (mid)
-    n = makeNPCBase(pos, { hp: 650, accel: 80,  maxSpeed: 430, turn: 2.6, radius: 44 });
+  } else if(kind==='frigate' || kind==='frigate_pd'){
+    n = makeNPCBase(pos, { hp: 1800, accel: 150,  maxSpeed: 160, turn: (65*Math.PI/180), radius: 28 });
+    n.shield = { val:600, max:600 };
+    n.pd = 'pd_mk1';
+    n.flak = 'flak_L';
+    n.mass = 2.5;
+    n.size = { w:44, h:18 };
+    n.friction = 0.985;
+    n.separationRange = 90;
+    n.subType = 'pd';
+    n.pdCD = 0; n.flakCD = 0; n.mCD = 0;
+    n.ai = dt => aiFrigate(PirateSim, n, dt);
     armPirate(n, 'mid');
-  } else { // 'destroyer'
-    n = makeNPCBase(pos, { hp: 1200, accel: 60, maxSpeed: 320, turn: 1.8, radius: 60 });
+  } else if(kind==='frigate_laser'){
+    n = makeNPCBase(pos, { hp: 1800, accel: 150,  maxSpeed: 160, turn: (65*Math.PI/180), radius: 28 });
+    n.shield = { val:600, max:600 };
+    n.mGun = 'h_beam';
+    n.mass = 2.5;
+    n.size = { w:44, h:18 };
+    n.friction = 0.985;
+    n.separationRange = 90;
+    n.subType = 'laser';
+    n.pdCD = 0; n.flakCD = 0; n.mCD = 0;
+    n.ai = dt => aiLaserFrigate(PirateSim, n, dt);
+    armPirate(n, 'mid');
+  } else if(kind==='battleship'){
+    n = makeNPCBase(pos, { hp: 12000, accel: 45, maxSpeed: 90, turn: (12*Math.PI/180), radius: 70 });
+    n.shield = { val:6000, max:6000 };
+    n.mGun = 'h_rapid';
+    n.pd = 'pd_laser';
+    n.mCD = 0; n.pdCD = 0;
+    n.broadLeftCD = 0; n.broadRightCD = 0; n.broadsideRange = 650;
+    n.fwdBoostT = 0; n.fwdBoostCd = 0; n.fwdBoostDur = 1.4; n.fwdBoostCool = 10.0;
+    n.rotBoostT = 0; n.rotBoostCd = 0; n.rotBoostDur = 0.9; n.rotBoostCool = 8.0;
+    n.friction = 0.99;
+    n.separationRange = 220;
+    n.mass = 25.0;
+    n.ai = dt => aiBattleship(PirateSim, n, dt);
     armPirate(n, 'heavy');
-    n.missiles = 0;
-    n.siegeCd = 0;
-    n.siegeCooldown = SIEGE_CANNON_COOLDOWN;
-    n.siegeRange = SIEGE_CANNON_RANGE;
-    n.siegeSpread = SIEGE_CANNON_SPREAD;
-    n.ciwsTurrets = [
-      { offset: { x: 42, y: 28 }, cd: 0, interval: CIWS_FIRE_INTERVAL * 1.5, muzzleLength: 8 },
-      { offset: { x: 42, y: -28 }, cd: 0, interval: CIWS_FIRE_INTERVAL * 1.5, muzzleLength: 8 },
-      { offset: { x: -40, y: 34 }, cd: 0, interval: CIWS_FIRE_INTERVAL * 1.5, muzzleLength: 8 },
-      { offset: { x: -40, y: -34 }, cd: 0, interval: CIWS_FIRE_INTERVAL * 1.5, muzzleLength: 8 }
-    ];
-    n.ai = function(dt){ destroyerPirateAI(n, dt); };
+  } else { // destroyer
+    n = makeNPCBase(pos, { hp: 4200, accel: 120, maxSpeed: 140, turn: (25*Math.PI/180), radius: 45 });
+    armPirate(n, 'heavy');
+    n.mass = 8.0;
+    n.size = { w:86, h:26 };
+    n.friction = 0.986;
+    n.mGun = AISPACE_DESTROYER_MEDIUM_DEFAULT;
+    n.mCD = 0; n.mSeq = 0; n.pd = 'pd_mk1'; n.pdCD = 0;
+    n.separationRange = 150;
+    n.boostT = 0; n.boostCd = 0; n.boostDur = 1.8; n.boostCool = 8.0;
+    n.ai = dt => aiDestroyer(PirateSim, n, dt);
   }
   n.type = kind;
   npcs.push(n);
   return n;
+}
+
+function resetSwarmQueue(){
+  if(!mercMission?.swarm) return;
+  mercMission.swarm.queue = [
+    ...Array(10).fill('fighter'),
+    ...Array(5).fill('destroyer'),
+    ...Array(10).fill('frigate_pd'),
+    ...Array(5).fill('frigate_laser'),
+    'battleship'
+  ];
 }
 
 // === FIGHTER SQUAD STATE ===
@@ -7411,6 +7817,7 @@ function bulletsAndCollisionsStep(dt){
           applyDamageToPlatform(platform, b.damage || 0);
           if(mercMission.swarm && !mercMission.swarm.active){
             mercMission.swarm.active = true;
+            resetSwarmQueue();
           }
           if(b.type === 'armata'){
             spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
@@ -7438,6 +7845,7 @@ function bulletsAndCollisionsStep(dt){
         applyDamageToStation(st, b.damage || 0);
         if(mercMission && mercMission.station === st && !mercMission.swarm.active){
           mercMission.swarm.active = true; // start „swarm”
+          resetSwarmQueue();
         }
         if(st.hp <= 0){
           if(mercMission && mercMission.station === st){
@@ -7726,6 +8134,7 @@ function pirateMissionStep(dt){
   if(!mercMission) return;
   const st = mercMission.station;
   if(!st) return;
+  PirateSim.time = (PirateSim.time || 0) + dt;
 
   const platforms = mercMission.weaponPlatforms || [];
   const target = { x: ship.pos.x, y: ship.pos.y, vx: ship.vel.x, vy: ship.vel.y };
@@ -7815,8 +8224,12 @@ function pirateMissionStep(dt){
   if(swarm.timer <= 0 && alive < swarm.maxAlive){
     const toSpawn = Math.min(batch, swarm.maxAlive - alive);
     for(let i=0;i<toSpawn;i++){
-      const roll = Math.random();
-      const kind = (roll<0.5)?'interceptor' : (roll<0.8)?'frigate' : 'destroyer';
+      const queued = Array.isArray(swarm.queue) ? swarm.queue.shift() : null;
+      let kind = queued;
+      if(!kind){
+        const roll = Math.random();
+        kind = (roll<0.5)?'fighter' : (roll<0.8)?'frigate_pd' : 'destroyer';
+      }
       spawnPirate(kind, st);
     }
     swarm.timer = interval;
@@ -8932,6 +9345,57 @@ function drawRangeRuler(ctx, cam){
   ctx.restore();
 }
 
+function drawFrigateHull(ctx, npc, screenPos){
+  const w = (npc.size?.w || npc.radius*2.2) * (camera.zoom || 1);
+  const h = (npc.size?.h || npc.radius*0.9) * (camera.zoom || 1);
+  ctx.save();
+  ctx.globalAlpha = npc.fade ?? 1;
+  ctx.translate(screenPos.x, screenPos.y);
+  ctx.rotate(npc.angle || 0);
+  ctx.fillStyle = npc.subType === 'laser' ? '#3c2d54' : '#284b36';
+  ctx.strokeStyle = npc.friendly ? '#7cff91' : '#ff5c7c';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.rect(-w*0.5,-h*0.5,w,h);
+  ctx.fill(); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0,0); ctx.lineTo(w*0.6,0);
+  ctx.stroke();
+  if(npc.subType==='laser'){
+    ctx.strokeStyle='#f0f';
+    ctx.beginPath();
+    ctx.moveTo(w*0.1,-h*0.25); ctx.lineTo(w*0.5,-h*0.25);
+    ctx.moveTo(w*0.1,h*0.25);  ctx.lineTo(w*0.5,h*0.25);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawBattleshipHull(ctx, npc, screenPos){
+  const w = (npc.size?.w || npc.radius*2.0) * (camera.zoom || 1);
+  const h = (npc.size?.h || npc.radius*1.0) * (camera.zoom || 1);
+  ctx.save();
+  ctx.globalAlpha = npc.fade ?? 1;
+  ctx.translate(screenPos.x, screenPos.y);
+  ctx.rotate(npc.angle || 0);
+  ctx.fillStyle = npc.friendly ? '#1c2f46' : '#462c1c';
+  ctx.strokeStyle = npc.friendly ? '#7cff91' : '#ff5c7c';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(w*0.6,0);
+  ctx.lineTo(w*0.4,h*0.5);
+  ctx.lineTo(-w*0.5,h*0.5);
+  ctx.lineTo(-w*0.6,0);
+  ctx.lineTo(-w*0.5,-h*0.5);
+  ctx.lineTo(w*0.4,-h*0.5);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  ctx.beginPath();
+  ctx.rect(-w*0.2,-h*0.2,w*0.4,h*0.4);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawNPCPretty(ctx, npc, screenPos) {
   const pixR = npc.radius * camera.zoom;
 
@@ -8939,6 +9403,10 @@ function drawNPCPretty(ctx, npc, screenPos) {
     drawCapitalShipSprite(ctx, npc, screenPos, pixR);
     return;
   }
+
+  const typeName = String(npc.type || '').toLowerCase();
+  if(typeName.startsWith('frigate')){ drawFrigateHull(ctx, npc, screenPos); return; }
+  if(typeName === 'battleship'){ drawBattleshipHull(ctx, npc, screenPos); return; }
 
   // Wybierz odpowiedni sprite
   const sprite = npc.friendly ? npcSpriteFriendly : npcSpriteHostile;
