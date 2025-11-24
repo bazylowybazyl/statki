@@ -390,7 +390,7 @@ const WARP_LENS_DEFAULTS = Object.freeze({
   opacityBase: 0.55,
   opacityScale: 0.73,
   tailDepthExtra: -0.2,
-  forwardStretch: 0.55
+  forwardStretch: 1.0
 });
 
 const DevVFX = window.DevVFX = window.DevVFX || {};
@@ -11043,7 +11043,7 @@ function wireDevTools(){
     ? window.__WARP_LENS_DEFAULTS
     : {
         threshold: 0,
-        radiusBase: 0.05,
+        radiusBase: 0.350,
         radiusScale: 0.01,
         massBase: 0.32,
         massScale: 0.365,
@@ -11051,7 +11051,7 @@ function wireDevTools(){
         opacityBase: 0.55,
         opacityScale: 0.73,
         tailDepthExtra: -0.2,
-        forwardStretch: 0.55
+        forwardStretch: 1.0
       };
   if (!window.__WARP_LENS_DEFAULTS) {
     window.__WARP_LENS_DEFAULTS = WarpLensDefaults;
