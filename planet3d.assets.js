@@ -785,18 +785,28 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     }
 
     // Pas asteroid — preferuj globalną definicję mapy (np. 3 AU za Neptunem)
- const beltFromGlobal = (typeof ASTEROID_BELT !== 'undefined' && ASTEROID_BELT) ? ASTEROID_BELT : null;
+const beltFromGlobal = (typeof window !== 'undefined' && window.ASTEROID_BELT) ? window.ASTEROID_BELT : null;
+
     if (beltFromGlobal && Number.isFinite(beltFromGlobal.inner) && Number.isFinite(beltFromGlobal.outer)) {
       asteroidBelt = new AsteroidBelt3D(beltFromGlobal.inner, beltFromGlobal.outer, 2200);
-    } else if (list && list.length >= 5 && list[3].orbitRadius && list[4].orbitRadius) {
-      const r1 = list[3].orbitRadius, r2 = list[4].orbitRadius;
-      const mid = (r1 + r2) * 0.5;
-      const width = (r2 - r1) * 0.22;
-      const inner = Math.max(50, mid - width * 0.5);
-      const outer = inner + width;
-      asteroidBelt = new AsteroidBelt3D(inner, outer, 2200);
-    } else {
-      asteroidBelt = null;
+    } 
+    else {
+      // 2. Logika "Pas Kuipera" - szukamy Neptuna lub bierzemy ostatnią planetę
+      const lastPlanet = list.find(p => (p.name === 'neptune' || p.id === 'neptune')) || list[list.length - 1];
+      
+      if (lastPlanet && lastPlanet.orbitRadius) {
+        // Ustawiamy pas ZA ostatnią planetą
+        const startDistance = lastPlanet.orbitRadius + 3000; // 3000 jednostek za Neptunem
+        const width = 4000; // Szerokość pasa
+        
+        const inner = startDistance;
+        const outer = startDistance + width;
+        
+        // Tworzymy pas (zwiększyłem liczbę asteroid do 3500, bo pas jest szerszy)
+        asteroidBelt = new AsteroidBelt3D(inner, outer, 3500);
+      } else {
+        asteroidBelt = null;
+      }
     }
 
   };
