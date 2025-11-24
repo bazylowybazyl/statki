@@ -660,12 +660,21 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.spin = 0.08;
       this.baseSize = (opts && opts.size) || 256;
       this.size = this.baseSize;
+      
+      // Zmieniamy startowy rozmiar na większy (dla bezpieczeństwa), 
+      // ale render() i tak zaraz to dostosuje dynamicznie.
       this.canvas = document.createElement('canvas');
-      this.canvas.width = 512; this.canvas.height = 512;
+      this.canvas.width = 1024; 
+      this.canvas.height = 1024;
       this.ctx2d = this.canvas.getContext('2d', { alpha: true });
+      
       this.canvas.style.background = 'transparent';
       this._needsInit = true;
       this._ready = false;
+      
+      // Zmienne do systemu LOD
+      this._hiResActive = false;
+      this.frameTimer = 0;
     }
 
     _lazyInit() {
@@ -723,47 +732,105 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
 
     render(dt) {
       this._lazyInit();
-      const r = getSharedRenderer(this.canvas.width, this.canvas.height);
-      if (!r || !this.scene || !this.camera) return;
+      if (!this.scene || !this.camera || !this.mesh) return;
 
-      // 1) pełna przezroczystość tła
+      // 1. Animacja (zawsze płynna)
+      this.mesh.rotation.y += 0.02 * dt;
+
+      // 2. --- SMART LOD SYSTEM (Kopia logiki z planet) ---
+      const ship = (typeof window !== 'undefined') ? window.ship : null;
+      // Pobieramy zoom kamery globalnej
+      const camZoom = (typeof window !== 'undefined' && window.camera) ? window.camera.zoom : 1;
+      const pos = ship?.pos;
+
+      let targetRes = 512; // Domyślnie mała (oszczędna)
+      let isHighResMode = false;
+
+      if (pos && this.ref) {
+        // Ile pikseli zajmuje stacja na ekranie?
+        // Pobieramy promień stacji (z definicji lub domyślny 128)
+        const baseR = this.ref.baseR ?? this.ref.r ?? 128;
+        
+        // Pobieramy skalę globalną (z DevTools lub domyślną)
+        const rawScale = Number(window.Dev?.station3DScale ?? window.DevTuning?.pirateStationScale ?? NaN);
+        const scale = (Number.isFinite(rawScale) && rawScale > 0) ? rawScale : 2.70;
+
+        // Średnica w pikselach na ekranie
+        const visiblePixelSize = (baseR * 2 * scale) * camZoom;
+
+        // Progi przełączania jakości
+        const ENTER_HI = 400; // Jak zajmuje > 400px na ekranie -> High Res
+        const EXIT_HI  = 300; // Jak < 300px -> Low Res
+
+        if (!this._hiResActive && visiblePixelSize > ENTER_HI) this._hiResActive = true;
+        else if (this._hiResActive && visiblePixelSize < EXIT_HI) this._hiResActive = false;
+
+        if (this._hiResActive) {
+          isHighResMode = true;
+          const screenMax = Math.max(window.innerWidth, window.innerHeight) * (window.devicePixelRatio || 1);
+          // Stacje mają drobne detale, więc dajemy mnożnik 1.5x dla ostrości
+          const optimalRes = Math.min(visiblePixelSize * 1.5, screenMax * 1.5);
+          
+          // Zaokrąglamy do 256/512
+          targetRes = Math.min(2048, Math.ceil(optimalRes / 256) * 256); // Limit 2048 dla stacji wystarczy
+          targetRes = Math.max(512, targetRes);
+        } else {
+          targetRes = 512; // Wystarczy z daleka
+        }
+      }
+
+      // Zmiana rozmiaru Canvasa
+      if (this.canvas.width !== targetRes) {
+        this.canvas.width = targetRes;
+        this.canvas.height = targetRes;
+        this.frameTimer = 100; // Wymuś render
+      }
+
+      // 3. --- THROTTLING (Oszczędzanie FPS) ---
+      // Stacja obraca się wolno, więc 30 FPS dla tekstury wystarczy (0.033s)
+      // Z daleka (Low Res) możemy odświeżać rzadziej, np. 20 FPS (0.050s)
+      const UPDATE_INTERVAL = isHighResMode ? 0.033 : 0.050;
+
+      this.frameTimer = (this.frameTimer || 0) + dt;
+      if (this.frameTimer < UPDATE_INTERVAL) {
+        return; // Skip renderowania tekstury
+      }
+      this.frameTimer %= UPDATE_INTERVAL;
+      if (this.frameTimer > 0.1) this.frameTimer = 0;
+
+      // 4. --- RENDEROWANIE ---
+      const r = getSharedRenderer(this.canvas.width, this.canvas.height);
+      if (!r) return;
+
       resetRendererState(r, this.canvas.width, this.canvas.height);
       if (r.setClearAlpha) r.setClearAlpha(0);
       this.scene.background = null;
 
-      // 2) animacje/obroty (jeśli masz jakikolwiek spin)
-      if (this.mesh) this.mesh.rotation.y += 0.02 * dt;
-
-      // 3) render + deterministyczne czyszczenie
       r.render(this.scene, this.camera);
 
-      // 4) kopiowanie z zachowaniem kanału alfa
+      // Kopiowanie
       const ctx2d = this.ctx2d;
       ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      ctx2d.globalCompositeOperation = 'copy';
+      ctx2d.globalCompositeOperation = 'copy'; // Szybsze kopiowanie
       ctx2d.drawImage(r.domElement, 0, 0, this.canvas.width, this.canvas.height);
       ctx2d.globalCompositeOperation = 'source-over';
     }
 
     draw(ctx, cam) {
-      // Używamy aktualnych współrzędnych stacji z referencji (bez cache!).
       if (!this.ref) return;
       const s = worldToScreen(this.ref.x, this.ref.y, cam);
 
-      // Skala: z Dev lub DevTuning; fallback = domyślne 2.70
-      const rawScale =
-        Number(window.Dev?.station3DScale ?? window.DevTuning?.pirateStationScale ?? NaN);
-      const fallbackScale = (typeof window !== 'undefined' && typeof window.DEFAULT_STATION_3D_SCALE === 'number'
-        && window.DEFAULT_STATION_3D_SCALE > 0)
+      const rawScale = Number(window.Dev?.station3DScale ?? window.DevTuning?.pirateStationScale ?? NaN);
+      const fallbackScale = (typeof window !== 'undefined' && typeof window.DEFAULT_STATION_3D_SCALE === 'number' && window.DEFAULT_STATION_3D_SCALE > 0)
         ? window.DEFAULT_STATION_3D_SCALE
         : 2.70;
       const scale = (Number.isFinite(rawScale) && rawScale > 0) ? rawScale : fallbackScale;
 
-      // Promień bazowy: preferuj baseR jeżeli istnieje, w innym wypadku r
       const baseRadius = this.ref.baseR ?? this.ref.r ?? (this.size ? this.size/2 : 128);
       const pxSize = baseRadius * 2 * scale * cam.zoom;
 
-      // Rysujemy offscreen’owy canvas z WebGL (ma już alfę)
+      // Rysujemy canvas WebGL przeskalowany do rozmiaru na ekranie
+      // Dzięki wysokiej rozdzielczości wewn. canvasa, obraz będzie ostry
       ctx.drawImage(this.canvas, s.x - pxSize/2, s.y - pxSize/2, pxSize, pxSize);
     }
   }
