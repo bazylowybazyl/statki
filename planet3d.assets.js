@@ -784,32 +784,39 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       sun.x = sunObj.x; sun.y = sunObj.y;
     }
 
-    // Pas asteroid — preferuj globalną definicję mapy (np. 3 AU za Neptunem)
-const beltFromGlobal = (typeof window !== 'undefined' && window.ASTEROID_BELT) ? window.ASTEROID_BELT : null;
+    // Pas asteroid — synchronizacja z mapą (index.html)
+    // Mapa definiuje pas jako: Neptun Orbit + 3 AU.
+    // 1 AU w grze to zazwyczaj 3000 jednostek (BASE_ORBIT).
+    const AU_UNIT = (typeof window !== 'undefined' && window.BASE_ORBIT) ? window.BASE_ORBIT : 3000;
+    
+    // 1. Próba pobrania definicji globalnej (jeśli dostępna)
+    const beltFromGlobal = (typeof window !== 'undefined' && window.ASTEROID_BELT) ? window.ASTEROID_BELT : null;
 
     if (beltFromGlobal && Number.isFinite(beltFromGlobal.inner) && Number.isFinite(beltFromGlobal.outer)) {
-      asteroidBelt = new AsteroidBelt3D(beltFromGlobal.inner, beltFromGlobal.outer, 2200);
+      asteroidBelt = new AsteroidBelt3D(beltFromGlobal.inner, beltFromGlobal.outer, 3500);
     } 
     else {
-      // 2. Logika "Pas Kuipera" - szukamy Neptuna lub bierzemy ostatnią planetę
+      // 2. Fallback: Obliczamy dokładnie tak jak mapa (Neptun + 3 AU)
       const lastPlanet = list.find(p => (p.name === 'neptune' || p.id === 'neptune')) || list[list.length - 1];
       
       if (lastPlanet && lastPlanet.orbitRadius) {
-        // Ustawiamy pas ZA ostatnią planetą
-        const startDistance = lastPlanet.orbitRadius + 3000; // 3000 jednostek za Neptunem
-        const width = 4000; // Szerokość pasa
+        // Mapa ma offset +3 AU. W jednostkach świata to 3 * 3000 = 9000.
+        const offsetFromPlanet = 3 * AU_UNIT; // 9000
+        const width = 2 * AU_UNIT;            // 6000 (szerokość pasa 2 AU)
+        
+        const startDistance = lastPlanet.orbitRadius + offsetFromPlanet;
         
         const inner = startDistance;
         const outer = startDistance + width;
         
-        // Tworzymy pas (zwiększyłem liczbę asteroid do 3500, bo pas jest szerszy)
+        // Generujemy pas (3500 asteroid dla gęstości)
         asteroidBelt = new AsteroidBelt3D(inner, outer, 3500);
       } else {
         asteroidBelt = null;
       }
     }
-
   };
+ 
 
   window.updatePlanets3D = function updatePlanets3D(dt) {
     if (sun) sun.render(dt);
