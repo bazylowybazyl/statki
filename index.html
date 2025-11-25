@@ -296,7 +296,9 @@
 <script type="module">
 import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
 import { WORLD, setWorldSize } from './src/world/world.js';
-
+window.bullets = []; 
+// Aby stary kod działał, zrobimy alias:
+const bullets = window.bullets;
 window.DEFAULT_PLANET_SCALE ??= DEFAULT_PLANET_SCALE;
 window.TIME_SCALE ??= TIME_SCALE;
 window.WORLD ??= WORLD;
@@ -649,7 +651,7 @@ window.aiSpawnBullet = function(sim, from, to, weapon) {
   if(weapon.name && weapon.name.includes('Rail')) bType = 'rail';
   if(weapon.name && weapon.name.includes('Flak')) bType = 'armata';
 
-  bullets.push({
+  window.bullets.push({
     x: from.x,
     y: from.y,
     vx: Math.cos(a) * speed + (from.vx || 0) * 0.2,
@@ -3097,7 +3099,7 @@ function updateCarrierWeapons(entry, dt, order, target){
       source: npc,
       effectScale: type === 'main' ? 1.2 : 0.9
     };
-    bullets.push(bullet);
+    window.bullets.push(bullet);
     if (type === 'main'){
       spawnRailMuzzle(muzzle, dir, { x: npc.vx, y: npc.vy }, 1.2);
       camera.addShake(6, 0.15);
@@ -3400,7 +3402,12 @@ function spawnInterceptor(pos){
   };
   MISSION_NPCS.push(n);
 }
-
+function spawnPirate(kind, station) {
+  // ... (cały kod funkcji spawnPirate, który Ci podałem wcześniej) ...
+  return npc;
+}
+window.spawnPirate = spawnPirate;
+  
 function spawnDestroyer(pos){
   const n = makeNPCBase(pos, { hp: 1200, accel: 40, maxSpeed: 260, turn: 1.2, radius: 60 });
   n.type = 'destroyer';
@@ -4132,7 +4139,7 @@ function waitForPlanetsReady(){
 }
 
 // =============== Bullets & effects ===============
-const bullets = [];
+
 // const particles = []; // USUNIĘTE
 const shockwaves = [];
 const MAX_PARTICLES = 8000;          // twardy sufit (dobry balans)
@@ -6615,7 +6622,7 @@ function fireSideGunAtOffset(gunOff, side, target=null){
   const gunWorld = add(ship.pos, rotate(gunOff, ship.angle));
   const dl = side === 'left' ? -1 : 1;
   const dir = rotate({x:dl, y:0}, ship.angle);
-  bullets.push({ x: gunWorld.x, y: gunWorld.y, px: gunWorld.x, py: gunWorld.y,
+window.bullets.push({ x: gunWorld.x, y: gunWorld.y, px: gunWorld.x, py: gunWorld.y,
     vx: dir.x*SIDE_BULLET_SPEED + ship.vel.x, vy: dir.y*SIDE_BULLET_SPEED + ship.vel.y,
     life:2.4, r:5, owner:'player', damage:SIDE_BULLET_DAMAGE, penetration:0, type:'rocket',
     explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS, homingDelay: SIDE_ROCKET_HOMING_DELAY, target,
@@ -6788,7 +6795,7 @@ function fighterAI(dt){
         this.missileCd = Math.max(0, this.missileCd - dt);
         const dir = {x:Math.cos(ang), y:Math.sin(ang)};
         if (this.ciwsCd === 0){
-          bullets.push({
+          window.bullets.push({
             x:this.x + dir.x*8, y:this.y + dir.y*8,
             vx: dir.x*CIWS_BULLET_SPEED + this.vx,
             vy: dir.y*CIWS_BULLET_SPEED + this.vy,
@@ -6797,7 +6804,7 @@ function fighterAI(dt){
           this.ciwsCd = CIWS_FIRE_INTERVAL;
         }
         if (this.missiles>0 && this.missileCd === 0){
-          bullets.push({
+          window.bullets.push({
             x:this.x + dir.x*8, y:this.y + dir.y*8,
             vx: dir.x*SIDE_BULLET_SPEED + this.vx,
             vy: dir.y*SIDE_BULLET_SPEED + this.vy,
@@ -6885,7 +6892,13 @@ function aiLeadAim(shooter,target,projSpeed=180){
   t = Math.max(0,Math.min(2.0,t));
   return {x:target.x+vx*t,y:target.y+vy*t};
 }
-
+const SQUAD = {
+  id: 'player_squad',
+  list: [],      
+  order: 'idle', 
+  targets: []    
+};
+window.SQUAD = SQUAD;
 
 function spawnFighter(){
   // Sprawdź czy mamy broń w hangarze
@@ -7134,7 +7147,7 @@ function fireRailBarrel(barIndex){
     const off = rotate(t.offset, ship.angle);
     const px = ship.pos.x + off.x + f.x * forwardLen + p.x * lateralOffset;
     const py = ship.pos.y + off.y + f.y * forwardLen + p.y * lateralOffset;
-    bullets.push({
+    window.bullets.push({
       x: px,
       y: py,
       vx: f.x * (projectile.speed ?? RAIL_SPEED) + ship.vel.x,
@@ -7228,7 +7241,7 @@ function fireCIWSGun(gun, base, baseVel){
   const dir = { x: Math.cos(gun.angle), y: Math.sin(gun.angle) };
   const px = base.x + dir.x * 6;
   const py = base.y + dir.y * 6;
-  bullets.push({
+  window.bullets.push({
     x:px,
     y:py,
     vx: dir.x*CIWS_BULLET_SPEED + baseVel.x,
@@ -7714,9 +7727,9 @@ function npcShootingStep(dt){
       const dir = norm({x: ship.pos.x - shooter.x, y: ship.pos.y - shooter.y});
       const bx = shooter.x + dir.x*(shooter.radius+6), by = shooter.y + dir.y*(shooter.radius+6);
       if(shooter.weapon === 'railgun'){
-        bullets.push({ x:bx, y:by, vx: dir.x*600 + shooter.vx, vy: dir.y*600 + shooter.vy, life: 2.0, r:4, owner:'npc', damage:40, type:'rail', penetration:1 });
+        window.bullets.push({ x:bx, y:by, vx: dir.x*600 + shooter.vx, vy: dir.y*600 + shooter.vy, life: 2.0, r:4, owner:'npc', damage:40, type:'rail', penetration:1 });
       } else {
-        bullets.push({ x:bx, y:by, vx: dir.x*220 + shooter.vx, vy: dir.y*220 + shooter.vy, life: 4, r:3, owner:'npc', damage:12 });
+        window.bullets.push({ x:bx, y:by, vx: dir.x*220 + shooter.vx, vy: dir.y*220 + shooter.vy, life: 4, r:3, owner:'npc', damage:12 });
       }
     }
   }
@@ -7965,7 +7978,7 @@ function pirateMissionStep(dt){
       const jitter = (Math.random() - 0.5) * platform.rail.scatter;
       const dir = { x: Math.cos(aim + jitter), y: Math.sin(aim + jitter) };
       const muzzle = muzzlePosFor(platform, dir, 14);
-      bullets.push({
+      window.bullets.push({
         x:muzzle.x, y:muzzle.y,
         vx: dir.x*(RAIL_SPEED*0.9), vy: dir.y*(RAIL_SPEED*0.9),
         life:2.0, r:4, owner:'npc', damage:platform.rail.damage, type:'rail', penetration:2,
@@ -7980,7 +7993,7 @@ function pirateMissionStep(dt){
       const aim = Math.atan2(lead.y - platform.y, lead.x - platform.x);
       const dir = {x:Math.cos(aim), y:Math.sin(aim)};
       const muzzleR = muzzlePosFor(platform, dir, 16);
-      bullets.push({
+      window.bullets.push({
         x:muzzleR.x, y:muzzleR.y, px:muzzleR.x, py:muzzleR.y,
         vx: dir.x*SIDE_BULLET_SPEED, vy: dir.y*SIDE_BULLET_SPEED,
         life:2.6, r:5, owner:'npc', damage:platform.missile.damage,
@@ -11199,7 +11212,7 @@ function tryFire(npc, target, dt) {
      const spread = (gunDef.spread || 2) * (Math.PI/180);
      const a = Math.atan2(dir.y, dir.x) + (Math.random()-0.5)*spread;
      
-     bullets.push({
+     window.bullets.push({
         x: npc.x + Math.cos(a) * 12, 
         y: npc.y + Math.sin(a) * 12,
         vx: npc.vx + Math.cos(a) * speed,
@@ -11220,7 +11233,7 @@ function tryFire(npc, target, dt) {
   // Rakiety (jeśli ma)
   if (npc.mslAmmo > 0 && npc.mslCD <= 0 && dist < 1000 && diff < 0.5) {
       const mslDef = AISPACE_MISSILES[npc.msl || 'AF'];
-      bullets.push({
+      window.bullets.push({
         x: npc.x, y: npc.y,
         vx: npc.vx + Math.cos(myAngle)*100,
         vy: npc.vy + Math.sin(myAngle)*100,
