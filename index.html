@@ -2821,272 +2821,106 @@ function ensureCarrierWing(entry){
   return entry.fighterWing;
 }
 
+// === NOWY SPAWNER DLA LOTNISKOWCA (FRIENDLY CARRIER) ===
 function spawnCarrierFighter(entry){
   const wing = ensureCarrierWing(entry);
   if (!wing || !entry || !entry.entity) return null;
   if (!entry.fighters || entry.fighters.ready <= 0) return null;
 
   const carrier = entry.entity;
-  const formIndex = wing.nextFormIndex % FIGHTER_FORMATION.length;
-  const form = FIGHTER_FORMATION[formIndex] || { x: -150, y: -90 };
-  wing.nextFormIndex = (wing.nextFormIndex + 1) % FIGHTER_FORMATION.length;
-  const spawnOff = rotate(form, carrier.angle);
+  
+  // 1. Pozycja startowa
+  const formIndex = wing.nextFormIndex % 8; 
+  wing.nextFormIndex = (wing.nextFormIndex + 1) % 8;
+  const spawnOff = rotate({x: -20, y: 0}, carrier.angle);
   const spawnPos = { x: carrier.x + spawnOff.x, y: carrier.y + spawnOff.y };
 
-  const fighter = makeNPCBase(spawnPos, {
-    hp: 60,
-    accel: FIGHTER_ACCEL,
-    maxSpeed: FIGHTER_MAX_SPEED,
-    turn: FIGHTER_TURN_RATE,
-    radius: 14
+  // 2. Fizyka (Parametry z AI SPACE - szybkie i zwrotne)
+  const f = makeNPCBase(spawnPos, {
+    hp: 120, accel: 280, maxSpeed: 540, turn: 5.5, radius: 12
   });
-  fighter.maxHp = 60;
-  fighter.friendly = true;
-  fighter.mission = true;
-  fighter.fighter = true;
-  fighter.color = '#9edfff';
-  fighter.fade = 1;
-  fighter.heading = carrier.angle;
-  fighter.vx = carrier.vx;
-  fighter.vy = carrier.vy;
-  fighter.engines = [{ x: -3, y: 8 }, { x: 0, y: 9 }, { x: 3, y: 8 }];
-  fighter.ciwsCd = 0;
-  fighter.missileCd = 0;
-  fighter.missiles = 2;
-  fighter.formIndex = formIndex;
-  fighter.orbitAngle = Math.random() * Math.PI * 2;
-  fighter.orbitRadius = FIGHTER_ORBIT_RADIUS * 1.15;
-  fighter.carrierWing = wing;
-  fighter.carrierEntry = entry;
-  fighter.orderOverride = null;
-  fighter.ai = carrierFighterAI;
-  fighter.id = `carrier_fighter_${Math.random().toString(36).slice(2, 8)}`;
 
+  // 3. Konfiguracja Bojowa
+  f.friendly = true;
+  f.mission = true; 
+  f.fighter = true;
+  f.color = '#7cff91'; // Zielony sojusznik
+  f.vx = carrier.vx;
+  f.vy = carrier.vy;
+  
+  // Nowa broń (Laser + Rakiety)
+  f.gun = 'laserS'; 
+  f.msl = 'AF'; f.mslAmmo = 2;
+  f.gunCD = 0; f.mslCD = 0;
+  
+  // 4. Formacja (Względem GRACZA - leader: ship)
+  const row = Math.floor((formIndex + 1) / 2);
+  const side = (formIndex % 2 === 0) ? 1 : -1;
+  f.formationOffset = { x: -row * 50 - 100, y: side * row * 40 };
+  
+  f.squad = { leader: ship, type: 'fighter' }; 
+
+  // 5. MÓZG (Adapter AI)
+  f.carrierWing = wing;
+  f.carrierEntry = entry;
+  f.ai = (dt) => runCarrierFighterAdapter(f, dt);
+  
+  // Liczniki
+  f.id = `carrier_fighter_${Math.random().toString(36).slice(2, 8)}`;
   entry.fighters.ready = Math.max(0, entry.fighters.ready - 1);
   entry.fighters.deployed = Math.min(entry.fighters.capacity, (entry.fighters.deployed || 0) + 1);
-  wing.list.push(fighter);
+  wing.list.push(f);
   markFleetDirty();
 
-  npcs.push(fighter);
-  return fighter;
+  npcs.push(f);
+  return f;
 }
 
-function carrierFighterAI(dt){
-  const wing = this.carrierWing;
-  const entry = wing?.entry;
-  const carrier = entry?.entity;
-  if (!wing || !entry || !carrier){
-    this.dead = true;
-    return;
+// --- ADAPTER INTELIGENCJI CARRIERA ---
+function runCarrierFighterAdapter(npc, dt) {
+  const wing = npc.carrierWing;
+  if (!wing) { npc.dead = true; return; }
+
+  // A. DOKOWANIE (RETURN)
+  if (wing.order === 'return' || npc.orderOverride === 'return') {
+     const carrier = wing.entry.entity;
+     if(!carrier || carrier.dead) { npc.dead = true; return; }
+
+     const dx = carrier.x - npc.x, dy = carrier.y - npc.y;
+     const dist = Math.hypot(dx, dy);
+     const dir = norm({x:dx, y:dy});
+     
+     const turned = clampTurnVec(npc.vx, npc.vy, dir.x*npc.maxSpeed, dir.y*npc.maxSpeed, dt, 220);
+     npc.vx = turned.vx; npc.vy = turned.vy;
+     npc.angle = Math.atan2(npc.vy, npc.vx);
+
+     if(dist < 80) {
+        npc.dead = true; 
+        npc._counted = false; 
+        npc.recalled = true; 
+     }
+     return;
   }
 
-  if (this.hp <= 0 && !this.dead){
-    this.dead = true;
-    this.wasDestroyed = true;
-    return;
+  // B. GUARD - Wymuś formację jeśli wróg daleko
+  if (wing.order === 'guard') {
+     const target = window.aiPickBestTarget ? window.aiPickBestTarget(npc, 3000) : null;
+     const dist = target ? Math.hypot(target.x - npc.x, target.y - npc.y) : Infinity;
+     
+     if (dist > 1000) {
+        npc.state = 'guard';
+     }
   }
 
-  const limit = (e, vmax) => {
-    const speed = Math.hypot(e.vx || 0, e.vy || 0);
-    if (speed > vmax){
-      const k = vmax / speed;
-      e.vx *= k; e.vy *= k;
-    }
-  };
-
-  const faceAndThrust = (tx, ty, accelMul = 1.0) => {
-    const desired = Math.atan2(ty - this.y, tx - this.x);
-    if (typeof this.heading !== 'number' || Number.isNaN(this.heading)) {
-      this.heading = desired;
-    }
-    const speed = Math.hypot(this.vx, this.vy);
-    const current = speed > 4 ? Math.atan2(this.vy, this.vx) : this.heading;
-    const diff = wrapAngle(desired - current);
-    const turn = clamp(diff, -this.turn * dt, this.turn * dt);
-    this.heading = wrapAngle(current + turn);
-    this.vx += Math.cos(this.heading) * this.accel * accelMul * dt;
-    this.vy += Math.sin(this.heading) * this.accel * accelMul * dt;
-    return this.heading;
-  };
-
-  const canGunsFire = (target) => {
-    const dx = target.x - this.x;
-    const dy = target.y - this.y;
-    const dist = Math.hypot(dx, dy);
-    const speed = Math.hypot(this.vx, this.vy);
-    const facing = speed > 4 ? Math.atan2(this.vy, this.vx) : (typeof this.heading === 'number' ? this.heading : Math.atan2(this.vy, this.vx));
-    const aim = Math.atan2(dy, dx);
-    const align = Math.abs(wrapAngle(aim - facing));
-    const closing = (this.vx * dx + this.vy * dy) > 0;
-    const MIN = 260, MAX = 820, ALIGN_OK = 0.3;
-    return (dist >= MIN && dist <= MAX && align < ALIGN_OK && closing);
-  };
-
-  const drag = Math.exp(-FIGHTER_DRAG_COEFF * dt);
-  this.vx *= drag;
-  this.vy *= drag;
-
-  const order = this.orderOverride || wing.order || 'guard';
-
-  if (order === 'return'){
-    const dx = carrier.x - this.x;
-    const dy = carrier.y - this.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    faceAndThrust(carrier.x, carrier.y, 1.0);
-
-    if (dist < CARRIER_FIGHTER_SOFT_RETURN_RADIUS){
-      this.vx += (carrier.vx - this.vx) * Math.min(1, 6 * dt);
-      this.vy += (carrier.vy - this.vy) * Math.min(1, 6 * dt);
-    }
-    limit(this, this.maxSpeed);
-    this._retT = (this._retT || 0) + dt;
-    if (dist < CARRIER_FIGHTER_RETURN_RADIUS || (this._retT > CARRIER_FIGHTER_REJOIN_TIME && dist < CARRIER_FIGHTER_SOFT_RETURN_RADIUS)){
-      this.recalled = true;
-      this.dead = true;
-      this.mission = false;
-    }
-    spawnCarrierFighterEngines(this);
-    return;
+  // C. URUCHOM NOWE AI
+  if (window.runAdvancedFighterAI) {
+     window.runAdvancedFighterAI(npc, dt);
   }
-
-  let target = null;
-  if (order === 'engage'){
-    if (this.target && !this.target.dead){
-      target = this.target;
-    } else if (wing.primaryTarget && !wing.primaryTarget.dead){
-      target = wing.primaryTarget;
-    } else {
-      let best = null, bestDist = CARRIER_FIGHTER_ATTACK_RANGE;
-      for (const npc of npcs){
-        if (!npc || npc.dead || npc.friendly) continue;
-        const d = Math.hypot(npc.x - this.x, npc.y - this.y);
-        if (d < bestDist){
-          bestDist = d;
-          best = npc;
-        }
-      }
-      target = best;
-    }
-    if (target){
-      this.target = target;
-    }
+  
+  // D. EFEKTY SILNIKÓW
+  if (window.spawnCarrierFighterEngines) {
+     window.spawnCarrierFighterEngines(npc);
   }
-
-  if (order === 'engage' && target){
-    if (!this._pass || this._pass.targetId !== target.id){
-      this._pass = {
-        phase: 'ingress',
-        targetId: target.id,
-        timer: 0,
-        egress: 0
-      };
-      this.ciwsCd = Math.max(0, this.ciwsCd);
-      this.missileCd = Math.max(0, this.missileCd);
-    }
-    this._pass.timer += dt;
-
-    const dx = target.x - this.x;
-    const dy = target.y - this.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    const lead = leadTarget({ x: this.x, y: this.y }, { x: this.vx, y: this.vy }, target, Math.max(300, this.maxSpeed * 0.9));
-
-    if (this._pass.phase === 'ingress'){
-      faceAndThrust(lead.x, lead.y, 1.0);
-      limit(this, this.maxSpeed);
-      const facing = Math.atan2(this.vy, this.vx);
-      const aim = Math.atan2(dy, dx);
-      const align = Math.abs(wrapAngle(aim - facing));
-      if (dist < CARRIER_FIGHTER_ATTACK_RANGE && align < 0.35){
-        this._pass.phase = 'attack';
-        this._pass.timer = 0;
-      }
-      spawnCarrierFighterEngines(this);
-      return;
-    }
-
-    if (this._pass.phase === 'attack'){
-      const ang = faceAndThrust(lead.x, lead.y, 1.0);
-      limit(this, this.maxSpeed);
-      if (canGunsFire(target)){
-        this.ciwsCd = Math.max(0, this.ciwsCd - dt);
-        this.missileCd = Math.max(0, this.missileCd - dt);
-        const dir = { x: Math.cos(ang), y: Math.sin(ang) };
-        if (this.ciwsCd === 0){
-          bullets.push({
-            x: this.x + dir.x * 8,
-            y: this.y + dir.y * 8,
-            vx: dir.x * CIWS_BULLET_SPEED + this.vx,
-            vy: dir.y * CIWS_BULLET_SPEED + this.vy,
-            life: 1.2,
-            r: 2,
-            owner: 'player',
-            damage: CIWS_DAMAGE,
-            type: 'ciws',
-            source: this
-          });
-          this.ciwsCd = CIWS_FIRE_INTERVAL;
-        }
-        if (this.missiles > 0 && this.missileCd === 0){
-          bullets.push({
-            x: this.x + dir.x * 8,
-            y: this.y + dir.y * 8,
-            vx: dir.x * SIDE_BULLET_SPEED + this.vx,
-            vy: dir.y * SIDE_BULLET_SPEED + this.vy,
-            life: 2.4,
-            r: 5,
-            owner: 'player',
-            damage: SIDE_BULLET_DAMAGE,
-            penetration: 0,
-            type: 'rocket',
-            explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS,
-            homingDelay: SIDE_ROCKET_HOMING_DELAY,
-            target,
-            source: this
-          });
-          this.missiles--;
-          this.missileCd = 1.6;
-        }
-      }
-      const passed = (this.vx * dx + this.vy * dy) < 0;
-      if (this._pass.timer > 1.6 || dist < 180 || passed){
-        this._pass.phase = 'egress';
-        this._pass.egress = 0;
-      }
-      spawnCarrierFighterEngines(this);
-      return;
-    }
-
-    if (this._pass.phase === 'egress'){
-      this._pass.egress += dt;
-      const awayX = this.x - dx;
-      const awayY = this.y - dy;
-      faceAndThrust(awayX, awayY, 0.9);
-      limit(this, this.maxSpeed);
-      if (this._pass.egress > 0.9){
-        this._pass.phase = 'ingress';
-        this._pass.timer = 0;
-      }
-      spawnCarrierFighterEngines(this);
-      return;
-    }
-  }
-
-  // Guard order – orbit around gracza
-  const local = FIGHTER_FORMATION[this.formIndex % FIGHTER_FORMATION.length] || { x: -140, y: -90 };
-  const off = rotate(local, ship.angle);
-  const anchor = { x: ship.pos.x + off.x, y: ship.pos.y + off.y };
-  const to = { x: anchor.x - this.x, y: anchor.y - this.y };
-  const desiredVel = { x: ship.vel.x + to.x * FIGHTER_ESCORT_POSITION_GAIN, y: ship.vel.y + to.y * FIGHTER_ESCORT_FOLLOW_GAIN };
-  const speed = Math.hypot(desiredVel.x, desiredVel.y);
-  const vmax = this.maxSpeed * 0.95;
-  if (speed > vmax){
-    const s = vmax / speed;
-    desiredVel.x *= s;
-    desiredVel.y *= s;
-  }
-  this.vx += (desiredVel.x - this.vx) * Math.min(1, 5.5 * dt);
-  this.vy += (desiredVel.y - this.vy) * Math.min(1, 5.5 * dt);
-  spawnCarrierFighterEngines(this);
 }
 
 function spawnCarrierFighterEngines(fighter){
