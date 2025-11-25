@@ -3690,6 +3690,514 @@ const NPC_TYPES = {
   'guard':            { radius:20, speed:100, hp:100, color:'#ff9933', weapon:'gun', isCollidable: true },
   'mercenary':        { radius:25, speed:100, hp:100, color:'#ff6633', weapon:'gun', isCollidable: true }
 };
+// ==========================================================================================
+// 1. BAZA DANYCH AI SPACE (Statystyki broni i pocisków)
+// ==========================================================================================
+
+const AISPACE_GUNS = {
+  laserS: { name:'Laser krótki', dps:40, dmg:8,  rps:5,   speed:620, range:480, spread:1.5, color:'#86f7ff' },
+  pulse:  { name:'Pulse blaster', dps:55, dmg:14, rps:4,   speed:500, range:520, spread:2.5, color:'#ffd36e' },
+  rail:   { name:'Rail micro',    dps:65, dmg:26, rps:1.8, speed:1100,range:650, spread:0.4, color:'#c0b7ff' },
+  gatling:{ name:'Gatling',       dps:70, dmg:4,  rps:12,  speed:580, range:420, spread:4.0, color:'#9fff75' }
+};
+
+const AISPACE_PD = {
+  pd_mk1:   { name:'PD Mk1',   dmg:6,  rps:10, speed:700,  range:450, spread:5,   color:'#8cffd0' },
+  pd_laser: { name:'PD Laser', dmg:4,  rps:20, speed:1400, range:500, spread:0.5, color:'#ff77ff' }
+};
+
+const AISPACE_FLAK = {
+  flak_L:   { name:'Flak L', burst:1, rps:1.2, speed:450, range:650, radius:60, dmg:35, color:'#ffef8a' }
+};
+
+const AISPACE_MISSILES = {
+  AF: { name:'AIM-3',   speed:420, turn:9.0, life:5.0, dmg:50,  seek:'fighter', color:'#7cd7ff' },
+  AS: { name:'ASM-6',   speed:350, turn:4.5, life:7.0, dmg:140, seek:'ship',    color:'#ffad7c' },
+  HE: { name:'HET-4',   speed:320, turn:3.5, life:6.0, dmg:180, seek:'any',     color:'#ff7cf0' },
+  SW: { name:'Swarm-8', speed:380, turn:8.0, life:4.0, dmg:20,  seek:'fighter', color:'#b3ff7c', swarm:6, spread:15 }
+};
+
+const AISPACE_GUNS_M = {
+  m_beam:       { name:'M Beam',       dmg:25,  rps:2.0,  speed:1100, range:950,  spread:0.3, color:'#8fd8ff' },
+  m_pulse:      { name:'M Pulse',      dmg:45,  rps:1.5,  speed:800,  range:850,  spread:0.7, color:'#ffd98a' },
+  m_rail:       { name:'M Rail',       dmg:90,  rps:0.6,  speed:1400, range:1100, spread:0.2, color:'#d0c9ff' },
+  m_autocannon: { name:'M Auto',       dmg:24,  rps:3.5,  speed:900,  range:750,  spread:1.0, color:'#b6ff9a' },
+  h_beam:       { name:'Heavy Beam',   dmg:300, rps:0.25, speed:1800, range:1300, spread:0.1, color:'#ff0000' },
+  h_rapid:      { name:'Rapid Laser L',dmg:50,  rps:6.0,  speed:1000, range:900,  spread:0.8, color:'#00ff00' }
+};
+
+const AISPACE_BS_BROADSIDE = {
+  dmg:100, rps:0.8, speed:750, range:800, spread:2.0, color:'#ff9b4b'
+};
+
+// ==========================================================================================
+// 2. ADAPTER SYSTEMU (Most między AI SPACE a Space Survivors)
+// ==========================================================================================
+
+// Ten obiekt udaje silnik z AI Space, żebyśmy nie musieli przepisywać każdej linijki AI
+const PirateSim = {
+  time: 0,
+  get units() {
+    // Zwraca listę celów: Gracz + jego sojusznicy + wrodzy piraci (dla friendly fire check)
+    return [ship, ...npcs.filter(n => !n.dead)];
+  },
+  // Symulacja pocisków i eksplozji nie jest potrzebna tutaj, bo gra ma własną w main loop
+  projectiles: [], 
+  wrecks: []
+};
+
+// Funkcja strzelania - TŁUMACZY broń z AI Space na pociski w grze
+window.spawnBulletAdapter = function(owner, target, weaponDef, opts = {}) {
+  if (!weaponDef) return;
+
+  // 1. Obliczamy pozycję i kąt
+  // Jeśli jest target, używamy leadAim (przewidywanie), jeśli nie - strzelamy przed siebie
+  let aimPoint;
+  if (target) {
+     aimPoint = getLeadAim(owner, target, weaponDef.speed || 500);
+  } else {
+     const angle = owner.angle || 0;
+     aimPoint = { 
+         x: owner.x + Math.cos(angle) * 1000, 
+         y: owner.y + Math.sin(angle) * 1000 
+     };
+  }
+
+  const ang = Math.atan2(aimPoint.y - owner.y, aimPoint.x - owner.x);
+  
+  // 2. Rozrzut (Spread)
+  const spreadRad = (weaponDef.spread || 0) * (Math.PI / 180);
+  const finalAngle = ang + (Math.random() - 0.5) * spreadRad;
+  
+  // 3. Wygląd pocisku (Typ)
+  let bType = 'plasma';
+  let size = 3;
+  
+  // Wykrywanie typu po nazwie lub właściwościach
+  const name = (weaponDef.name || '').toLowerCase();
+  if (name.includes('rail') || name.includes('beam')) { bType = 'rail'; size = 4; }
+  if (name.includes('flak') || name.includes('armata')) { bType = 'armata'; size = 5; }
+  if (name.includes('auto') || name.includes('gatling')) { bType = 'autocannon'; size = 2; }
+  if (opts.type) bType = opts.type; // Override
+
+  // 4. Dodanie pocisku do gry
+  window.bullets.push({
+    x: owner.x,
+    y: owner.y,
+    // Dziedziczenie pędu statku (20%) dla realizmu
+    vx: Math.cos(finalAngle) * weaponDef.speed + (owner.vx || 0) * 0.2,
+    vy: Math.sin(finalAngle) * weaponDef.speed + (owner.vy || 0) * 0.2,
+    
+    life: (weaponDef.range || 800) / weaponDef.speed,
+    r: size,
+    owner: owner.friendly ? 'player' : 'npc', // Ważne dla kolizji!
+    damage: weaponDef.dmg || 10,
+    type: bType,
+    color: weaponDef.color || '#fff',
+    source: owner,
+    
+    // Specyficzne dla Flak/Armata
+    explodeRadius: (bType === 'armata' || name.includes('flak')) ? (weaponDef.radius || 50) : 0,
+    
+    // Specyficzne dla Rail (przebicie)
+    penetration: (bType === 'rail') ? 2 : 0
+  });
+  
+  // Opcjonalnie: odrzut lub efekt wizualny wystrzału (muzzle flash)
+  // spawnParticle({x: owner.x, y: owner.y}, {x:0,y:0}, 0.1, weaponDef.color, size*2, true);
+};
+
+// Funkcja pomocnicza do znajdowania celu (Używana przez AI dużych statków)
+window.aiPickBestTarget = function(self, weaponRange) {
+  let best = null;
+  let maxScore = -Infinity;
+  
+  // Kogo atakujemy?
+  const enemies = self.friendly 
+     ? npcs.filter(n => n.isPirate && !n.dead) // Sojusznik bije piratów
+     : [ship, ...npcs.filter(n => n.friendly && !n.dead)]; // Pirat bije gracza i sojuszników
+
+  for (const t of enemies) {
+    const distSq = (t.x - self.x)**2 + (t.y - self.y)**2;
+    
+    // Ignoruj cele poza zasięgiem radaru (np. 3500j)
+    if (distSq > 3500*3500) continue;
+
+    let score = -distSq; // Im bliżej tym lepiej
+    
+    // Priorytetyzacja
+    if (t === ship) score += 500000; // Gracz priorytetem
+    if (t.isCapitalShip) score += 200000; // Duże statki groźne
+
+    // Bonus jeśli jest w zasięgu broni (nie musi gonić)
+    if (weaponRange && distSq < weaponRange*weaponRange) score += 100000;
+
+    if (score > maxScore) {
+      maxScore = score;
+      best = t;
+    }
+  }
+  return best;
+};
+  // ==========================================================================================
+// 2. LOGIKA AI (MÓZGI STATKÓW - "AI SPACE PORT")
+// ==========================================================================================
+
+// Helper: Znajdowanie najlepszego celu (Gracz lub sojusznik)
+function aiPickTarget(npc) {
+  let best = null;
+  let maxScore = -Infinity;
+  
+  // Pirat atakuje: Gracza (ship) i sojusznicze NPC (friendly=true)
+  const targets = npc.friendly 
+    ? npcs.filter(n => n.isPirate && !n.dead) 
+    : [ship, ...npcs.filter(n => n.friendly && !n.dead)];
+
+  for (const t of targets) {
+    const tx = t.pos ? t.pos.x : t.x;
+    const ty = t.pos ? t.pos.y : t.y;
+    const distSq = (tx - npc.x)**2 + (ty - npc.y)**2;
+
+    if (distSq > 3500**2) continue; // Ignoruj cele poza zasięgiem radaru
+
+    // Punktacja: im bliżej tym lepiej, priorytet dla Gracza i Capital Ships
+    let score = -distSq;
+    if (t === ship) score += 10000000; 
+    if (t.isCapitalShip) score += 5000000;
+    
+    if (score > maxScore) {
+      maxScore = score;
+      best = t;
+    }
+  }
+  return best;
+}
+
+// --- A. AI MYŚLIWCA (FIGHTER / INTERCEPTOR) ---
+// Obsługuje: Formację, Dogfight, Nalot (Bombing Run)
+window.runAdvancedFighterAI = function(npc, dt) {
+  npc.gunCD = Math.max(0, (npc.gunCD || 0) - dt);
+  npc.mslCD = Math.max(0, (npc.mslCD || 0) - dt);
+
+  const target = aiPickTarget(npc);
+  
+  // 1. Brak celu lub cel daleko -> FORMACJA (GUARD)
+  if (!target) {
+    const leader = npc.squad ? npc.squad.leader : null;
+    if (leader && leader !== npc && !leader.dead) {
+      // Leć w szyku
+      const off = npc.formationOffset || {x:0, y:0};
+      const la = leader.angle;
+      // Pozycja w formacji (obrócona zgodnie z liderem)
+      const tx = leader.x + off.x*Math.cos(la) - off.y*Math.sin(la);
+      const ty = leader.y + off.x*Math.sin(la) + off.y*Math.cos(la);
+      
+      const dist = Math.hypot(tx - npc.x, ty - npc.y);
+      const wantSpeed = dist * 2.5; // Sprężynowanie do pozycji
+      
+      const dir = norm({x: tx - npc.x, y: ty - npc.y});
+      // Płynny zwrot (drift)
+      const turned = clampTurnVec(npc.vx, npc.vy, dir.x*wantSpeed, dir.y*wantSpeed, dt, 180);
+      npc.vx = turned.vx; 
+      npc.vy = turned.vy;
+      npc.angle = Math.atan2(npc.vy, npc.vx);
+    } else {
+      // Patroluj / leć powoli przed siebie
+      npc.vx *= 0.98; npc.vy *= 0.98;
+    }
+    return;
+  }
+
+  // 2. WALKA
+  const dist = Math.hypot(target.x - npc.x, target.y - npc.y);
+  const isCapitalTarget = target.isCapitalShip || target === ship;
+
+  // TRYB: BOMBING RUN (Nalot na duże cele)
+  if (isCapitalTarget && dist < 1200) {
+     if (!npc.bombardVec || npc.lastTargetId !== target.id) {
+        const a = Math.random() * 6.28;
+        npc.bombardVec = {x: Math.cos(a), y: Math.sin(a)};
+        npc.bombSide = 1;
+        npc.lastTargetId = target.id;
+     }
+     // Punkt nawrotu (szyna)
+     const wayX = target.x + npc.bombardVec.x * 900 * npc.bombSide;
+     const wayY = target.y + npc.bombardVec.y * 900 * npc.bombSide;
+     
+     // Jeśli dolatujemy do końca szyny -> nawrót
+     if (Math.hypot(wayX - npc.x, wayY - npc.y) < 150) npc.bombSide *= -1;
+
+     const dir = norm({x: wayX - npc.x, y: wayY - npc.y});
+     const turnRate = 160; // Mniejsza zwrotność przy dużej prędkości
+     const speed = npc.maxSpeed * 1.2; 
+
+     const turned = clampTurnVec(npc.vx, npc.vy, dir.x*speed, dir.y*speed, dt, turnRate);
+     npc.vx = turned.vx; npc.vy = turned.vy;
+     npc.angle = Math.atan2(npc.vy, npc.vx);
+     
+     // Strzelaj w cel (nie w waypoint)
+     tryFireFighter(npc, target, dt);
+  } 
+  // TRYB: DOGFIGHT (Walka kołowa z innymi myśliwcami)
+  else {
+     const aim = getLeadAim(npc, target, 500);
+     const dir = norm({x: aim.x - npc.x, y: aim.y - npc.y});
+     const turnRate = 280; // Wysoka zwrotność
+     
+     const turned = clampTurnVec(npc.vx, npc.vy, dir.x * npc.maxSpeed, dir.y * npc.maxSpeed, dt, turnRate);
+     npc.vx = turned.vx; npc.vy = turned.vy;
+     npc.angle = Math.atan2(npc.vy, npc.vx);
+     
+     tryFireFighter(npc, target, dt);
+  }
+};
+
+// --- B. AI FREGATY (FRIGATE) ---
+// Trzyma dystans, obraca się dziobem, używa PD i Flak
+window.aiFrigate = function(sim, npc, dt) {
+  npc.pdCD = Math.max(0, (npc.pdCD||0) - dt);
+  npc.flakCD = Math.max(0, (npc.flakCD||0) - dt);
+
+  const target = aiPickTarget(npc);
+  const pdDef = AISPACE_PD[npc.pd] || AISPACE_PD.pd_mk1;
+  const flakDef = AISPACE_FLAK[npc.flak] || AISPACE_FLAK.flak_L;
+
+  // Ruch (Obrót + Ciąg)
+  if (target) {
+    const dx = target.x - npc.x;
+    const dy = target.y - npc.y;
+    const dist = Math.hypot(dx, dy);
+    const desiredAng = Math.atan2(dy, dx);
+    
+    // Kiting: utrzymuj dystans ~400-500
+    let thrust = 0;
+    if (dist < 400) thrust = -npc.accel * 0.8; // Cofaj
+    else if (dist > 600) thrust = npc.accel;   // Goń
+
+    // Strafe (uniki na boki)
+    const strafe = Math.sin(performance.now() * 0.001 + npc.id) * npc.accel * 0.5;
+
+    // Fizyka obrotu (inercja kątowa jest symulowana przez clampTurnAngle w połączeniu z wektorem)
+    // Tutaj używamy prostej fizyki wektorowej symulującej silniki manewrowe
+    const c = Math.cos(npc.angle);
+    const s = Math.sin(npc.angle);
+    
+    // Obracaj się do celu
+    let dAng = desiredAng - npc.angle;
+    while(dAng > Math.PI) dAng -= 2*Math.PI;
+    while(dAng < -Math.PI) dAng += 2*Math.PI;
+    npc.angle += Math.max(-npc.turn*dt, Math.min(npc.turn*dt, dAng));
+
+    npc.vx += (c * thrust - s * strafe) * dt;
+    npc.vy += (s * thrust + c * strafe) * dt;
+  }
+  
+  // Tarcie (hamowanie w kosmosie)
+  npc.vx *= (npc.friction || 0.98);
+  npc.vy *= (npc.friction || 0.98);
+
+  // Strzelanie (Automatyczne wieżyczki)
+  if (target) {
+     const distSq = (target.x-npc.x)**2 + (target.y-npc.y)**2;
+     
+     // Flak (duży zasięg, wybucha)
+     if (npc.flakCD <= 0 && distSq < 700*700) {
+        window.spawnBulletAdapter(npc, target, flakDef, {type:'armata'});
+        npc.flakCD = 1.0 / (flakDef.rps || 1.0);
+     }
+     
+     // PD (Point Defense - bliski zasięg, szybkie)
+     if (npc.pdCD <= 0 && distSq < 450*450) {
+        // Seria 3 strzałów
+        for(let i=0; i<3; i++) {
+           window.spawnBulletAdapter(npc, target, pdDef, {type:'ciws'});
+        }
+        npc.pdCD = 1.0 / (pdDef.rps || 10);
+     }
+  }
+};
+
+// --- C. AI NISZCZYCIELA (DESTROYER) ---
+// Agresywne, używa głównego Railguna i Boosta
+window.aiDestroyer = function(sim, npc, dt) {
+  npc.mCD = Math.max(0, (npc.mCD||0) - dt);
+  npc.boostT = Math.max(0, (npc.boostT||0) - dt);
+  npc.boostCd = Math.max(0, (npc.boostCd||0) - dt);
+
+  const target = aiPickTarget(npc);
+  const gunDef = AISPACE_GUNS_M[npc.mGun] || AISPACE_GUNS_M.m_rail;
+  
+  if (target) {
+    const dx = target.x - npc.x;
+    const dy = target.y - npc.y;
+    const dist = Math.hypot(dx, dy);
+    const desiredAng = Math.atan2(dy, dx);
+
+    // Logika Boosta (szarża)
+    const facingTarget = Math.abs(wrapAngle(desiredAng - npc.angle)) < 0.2;
+    if (dist > 900 && npc.boostCd <= 0 && facingTarget) {
+       npc.boostT = npc.boostDur || 2.0;
+       npc.boostCd = 10.0;
+    }
+
+    let thrust = 0;
+    if (dist > 700) thrust = npc.accel; // Leć do
+    else if (dist < 500) thrust = -npc.accel * 0.5; // Za blisko
+
+    // Jeśli boost aktywny -> MOC SILNIKÓW x2
+    if (npc.boostT > 0) thrust *= 2.5;
+
+    // Obrót
+    let dAng = desiredAng - npc.angle;
+    while(dAng > Math.PI) dAng -= 2*Math.PI;
+    while(dAng < -Math.PI) dAng += 2*Math.PI;
+    npc.angle += Math.max(-npc.turn*dt, Math.min(npc.turn*dt, dAng));
+
+    const c = Math.cos(npc.angle);
+    const s = Math.sin(npc.angle);
+    npc.vx += c * thrust * dt;
+    npc.vy += s * thrust * dt;
+
+    // Strzał z głównego działa (Railgun)
+    if (npc.mCD <= 0 && dist < gunDef.range && facingTarget) {
+       window.spawnBulletAdapter(npc, target, gunDef, {type:'rail'});
+       // Efekt odrzutu (wizualny) można dodać tu
+       npc.mCD = 1.0 / (gunDef.rps || 0.5);
+       
+       // Niszczyciele często strzelają seriami 2-3 pocisków,
+       // ale uprośćmy: strzela raz, ale mocno.
+    }
+  }
+  
+  npc.vx *= (npc.friction || 0.985);
+  npc.vy *= (npc.friction || 0.985);
+};
+
+// --- D. AI PANCERNIKA (BATTLESHIP) ---
+// Powolny, ustawia się bokiem (Broadside), potężne salwy
+window.aiBattleship = function(sim, npc, dt) {
+  npc.broadLeftCD = Math.max(0, (npc.broadLeftCD||0) - dt);
+  npc.broadRightCD = Math.max(0, (npc.broadRightCD||0) - dt);
+  npc.pdCD = Math.max(0, (npc.pdCD||0) - dt);
+
+  const target = aiPickTarget(npc);
+  const broadsideDef = AISPACE_BS_BROADSIDE;
+  const pdDef = AISPACE_PD[npc.pd] || AISPACE_PD.pd_laser;
+
+  if (target) {
+    const dx = target.x - npc.x;
+    const dy = target.y - npc.y;
+    const dist = Math.hypot(dx, dy);
+    const angToTarget = Math.atan2(dy, dx);
+    
+    // Pancernik chce ustawić się BOKIEM (Broadside)
+    // Bok lewy: target angle + 90 stopni
+    // Bok prawy: target angle - 90 stopni
+    
+    const leftFlankAng = angToTarget + Math.PI/2;
+    const rightFlankAng = angToTarget - Math.PI/2;
+    
+    // Sprawdź do którego boku ma bliżej
+    const diffLeft = Math.abs(wrapAngle(leftFlankAng - npc.angle));
+    const diffRight = Math.abs(wrapAngle(rightFlankAng - npc.angle));
+    
+    const desiredAng = (diffLeft < diffRight) ? leftFlankAng : rightFlankAng;
+    
+    // Powolny obrót
+    let dAng = desiredAng - npc.angle;
+    while(dAng > Math.PI) dAng -= 2*Math.PI;
+    while(dAng < -Math.PI) dAng += 2*Math.PI;
+    npc.angle += Math.max(-npc.turn*dt, Math.min(npc.turn*dt, dAng));
+
+    // Napęd (utrzymywanie dystansu ~600-800)
+    let thrust = 0;
+    if (dist > 900) thrust = npc.accel;
+    else if (dist < 500) thrust = -npc.accel * 0.5;
+
+    // Pancernik porusza się wolno
+    npc.vx += Math.cos(npc.angle) * thrust * dt;
+    npc.vy += Math.sin(npc.angle) * thrust * dt;
+    
+    // --- STRZELANIE (BROADSIDE) ---
+    // Sprawdź czy bok jest wycelowany
+    const sideArc = 0.5; // ok. 30 stopni tolerancji
+    
+    // Prawa burta
+    if (diffRight < sideArc && npc.broadRightCD <= 0 && dist < broadsideDef.range) {
+       // Salwa 4 dział
+       for(let i=0; i<4; i++) {
+         // Symulacja różnych luf wzdłuż kadłuba
+         const offsetDist = (i - 1.5) * 20; 
+         const bx = npc.x + Math.cos(npc.angle)*offsetDist;
+         const by = npc.y + Math.sin(npc.angle)*offsetDist;
+         const fakeSource = { ...npc, x: bx, y: by }; // Hack dla pozycji startowej
+         
+         window.spawnBulletAdapter(fakeSource, target, broadsideDef, {type:'plasma'});
+       }
+       npc.broadRightCD = 2.0; // Wolne przeładowanie
+    }
+    
+    // Lewa burta
+    if (diffLeft < sideArc && npc.broadLeftCD <= 0 && dist < broadsideDef.range) {
+       for(let i=0; i<4; i++) {
+         const offsetDist = (i - 1.5) * 20; 
+         const bx = npc.x + Math.cos(npc.angle)*offsetDist;
+         const by = npc.y + Math.sin(npc.angle)*offsetDist;
+         const fakeSource = { ...npc, x: bx, y: by };
+         
+         window.spawnBulletAdapter(fakeSource, target, broadsideDef, {type:'plasma'});
+       }
+       npc.broadLeftCD = 2.0;
+    }
+
+    // PD (Obrona punktowa) - strzela niezależnie w najbliższy cel
+    if (npc.pdCD <= 0 && dist < 500) {
+       window.spawnBulletAdapter(npc, target, pdDef, {type:'ciws'});
+       npc.pdCD = 0.1;
+    }
+  }
+
+  npc.vx *= (npc.friction || 0.99);
+  npc.vy *= (npc.friction || 0.99);
+};
+
+// Helper strzelania dla myśliwców
+function tryFireFighter(npc, target, dt) {
+  if(!target) return;
+  const gunDef = AISPACE_GUNS[npc.gun] || AISPACE_GUNS.laserS;
+  
+  // Kąt
+  const angleToTarget = Math.atan2(target.y - npc.y, target.x - npc.x);
+  const myAngle = Math.atan2(npc.vy, npc.vx); // Myśliwce strzelają w kierunku lotu (drift)
+  const diff = Math.abs(wrapAngle(angleToTarget - myAngle));
+  const dist = Math.hypot(target.x - npc.x, target.y - npc.y);
+
+  // Strzał z działa
+  if (dist < gunDef.range && diff < 0.3 && npc.gunCD <= 0) {
+     window.spawnBulletAdapter(npc, target, gunDef);
+     npc.gunCD = 1.0 / (gunDef.rps || 5);
+  }
+  
+  // Strzał rakietą (rzadziej)
+  if (npc.mslAmmo > 0 && npc.mslCD <= 0 && dist < 1000 && diff < 0.5) {
+      const mslDef = AISPACE_MISSILES[npc.msl || 'AF'];
+      // Rakieta startuje z prędkością statku
+      window.bullets.push({
+        x: npc.x, y: npc.y,
+        vx: npc.vx, vy: npc.vy,
+        life: mslDef.life || 4, r: 4,
+        owner: npc.friendly ? 'player' : 'npc',
+        damage: mslDef.dmg || 40,
+        type: 'rocket',
+        target: target,
+        color: mslDef.color,
+        homingDelay: 0.2,
+        explodeRadius: 40
+      });
+      npc.mslAmmo--;
+      npc.mslCD = 4.0;
+  }
+}
 function initNPCs() {
   npcs = [];
   SQUADS.length = 0; // Reset eskadr
@@ -7118,97 +7626,57 @@ function spawnStationGuard(st, kind, angle){
 }
 
 // uniwersalne spawnowanie pirata przy stacji (swarm)
-function spawnPirate(kind, station){
+window.spawnPirate = function(kind, station){
   const a = Math.random()*Math.PI*2;
   const r = station.r + 60;
   const pos = { x: station.x + Math.cos(a)*r, y: station.y + Math.sin(a)*r };
   let n;
 
-  // --- MYŚLIWCE (Interceptors) ---
   if(kind==='interceptor' || kind==='fighter'){
     n = makeNPCBase(pos, { hp: 120, accel: 280, maxSpeed: 520, turn: 5.5, radius: 14 });
     n.shield = { val:80, max:80 };
-    
-    // Losowa broń z AI SPACE
     const weapons = ['laserS', 'pulse', 'gatling', 'rail'];
     n.gun = weapons[Math.floor(Math.random()*weapons.length)];
-    n.msl = 'AF'; 
-    n.mslAmmo = 2;
-    
-    // Przypisanie nowego, zaawansowanego AI
-    n.ai = dt => runAdvancedFighterAI(n, dt); 
-    
-    // Ręczne flagi pirata (zamiast psującego armPirate)
-    n.friendly = false;
-    n.mission = true;
-    n.color = '#ff5c7c';
-    n.isPirate = true;
-    n.gunCD = 0; n.mslCD = 0;
+    n.msl = 'AF'; n.mslAmmo = 2;
+    n.ai = dt => runAdvancedFighterAI(n, dt); // NOWE AI MYŚLIWCA
+    n.friendly = false; n.mission = true; n.color = '#ff5c7c'; n.isPirate = true;
+    n.gunCD = 0;
   } 
-  // --- FREGATY (Frigates) ---
   else if(kind==='frigate' || kind==='frigate_pd'){
     n = makeNPCBase(pos, { hp: 1800, accel: 120, maxSpeed: 180, turn: 1.2, radius: 32 });
     n.shield = { val:600, max:600 };
-    n.pd = 'pd_mk1';
-    n.flak = 'flak_L';
-    
-    n.ai = dt => aiFrigate(PirateSim, n, dt); // AI Fregaty
-    
-    n.friendly = false;
-    n.mission = true;
-    n.color = '#ff5c7c';
-    n.isPirate = true;
-    n.mass = 2.5;
+    n.pd = 'pd_mk1'; n.flak = 'flak_L';
+    n.ai = dt => aiFrigate(PirateSim, n, dt); // NOWE AI FREGATY
+    n.friendly = false; n.mission = true; n.color = '#ff5c7c'; n.isPirate = true; n.mass = 2.5;
+    n.friction = 0.985; // Ważne dla fizyki
     n.pdCD = 0; n.flakCD = 0;
   } 
   else if(kind==='frigate_laser'){
     n = makeNPCBase(pos, { hp: 1800, accel: 120, maxSpeed: 180, turn: 1.2, radius: 32 });
     n.shield = { val:600, max:600 };
-    n.mGun = 'h_beam';
-    n.subType = 'laser'; 
-    
-    n.ai = dt => aiLaserFrigate(PirateSim, n, dt); // AI Laserowe
-
-    n.friendly = false;
-    n.mission = true;
-    n.color = '#ff5c7c';
-    n.isPirate = true;
-    n.mass = 2.5;
+    n.mGun = 'h_beam'; n.subType = 'laser';
+    n.ai = dt => aiLaserFrigate(PirateSim, n, dt); // NOWE AI LASEROWE
+    n.friendly = false; n.mission = true; n.color = '#ff5c7c'; n.isPirate = true; n.mass = 2.5;
+    n.friction = 0.985;
     n.mCD = 0; n.pdCD = 0;
   } 
-  // --- NISZCZYCIELE (Destroyers) ---
   else if(kind==='destroyer'){
     n = makeNPCBase(pos, { hp: 4200, accel: 90, maxSpeed: 140, turn: 0.8, radius: 50 });
-    n.mGun = 'm_rail';
-    n.pd = 'pd_mk1';
-    
-    n.ai = dt => aiDestroyer(PirateSim, n, dt); // AI Niszczyciela
-
-    n.friendly = false;
-    n.mission = true;
-    n.color = '#ff5c7c';
-    n.isPirate = true;
-    n.mass = 8.0;
-    n.separationRange = 150;
-    n.mCD = 0; n.pdCD = 0;
+    n.mGun = 'm_rail'; n.pd = 'pd_mk1';
+    n.ai = dt => aiDestroyer(PirateSim, n, dt); // NOWE AI NISZCZYCIELA
+    n.friendly = false; n.mission = true; n.color = '#ff5c7c'; n.isPirate = true; n.mass = 8.0;
+    n.friction = 0.986;
+    n.mCD = 0; n.pdCD = 0; n.separationRange = 150;
     n.boostT = 0; n.boostCd = 0; n.boostDur = 1.8; n.boostCool = 8.0;
   }
-  // --- PANCERNIKI (Battleships) ---
   else if(kind==='battleship'){
     n = makeNPCBase(pos, { hp: 12000, accel: 40, maxSpeed: 90, turn: 0.4, radius: 80 });
-    n.mGun = 'h_rapid';
-    n.pd = 'pd_laser';
+    n.mGun = 'h_rapid'; n.pd = 'pd_laser';
     n.broadsideRange = 650; 
-    
-    n.ai = dt => aiBattleship(PirateSim, n, dt); // AI Pancernika
-
-    n.friendly = false;
-    n.mission = true;
-    n.color = '#ff5c7c';
-    n.isPirate = true;
-    n.mass = 25.0;
-    n.mCD = 0; n.pdCD = 0;
-    n.broadLeftCD = 0; n.broadRightCD = 0;
+    n.ai = dt => aiBattleship(PirateSim, n, dt); // NOWE AI PANCERNIKA
+    n.friendly = false; n.mission = true; n.color = '#ff5c7c'; n.isPirate = true; n.mass = 25.0;
+    n.friction = 0.99;
+    n.mCD = 0; n.pdCD = 0; n.broadLeftCD = 0; n.broadRightCD = 0;
   }
   else {
      return spawnPirate('fighter', station); // fallback
@@ -7219,31 +7687,24 @@ function spawnPirate(kind, station){
   return n;
 }
 
-function resetSwarmQueue(){
+// --- ULEPSZONA KOLEJKA (LOSOWANIE WROGÓW) ---
+window.resetSwarmQueue = function(){
   if(!mercMission?.swarm) return;
-  
-  // Pula jednostek do zespawnowania w jednej fali
   const pool = [
-    ...Array(8).fill('fighter'),       // 8 eskadr myśliwców
+    ...Array(8).fill('fighter'),       // 8 eskadr
     ...Array(4).fill('destroyer'),     // 4 niszczyciele
-    ...Array(6).fill('frigate_pd'),    // 6 fregat PD
-    ...Array(3).fill('frigate_laser'), // 3 fregaty laserowe
-    'battleship',                      // Boss
-    'battleship'                       // Drugi boss
+    ...Array(6).fill('frigate_pd'),    // 6 fregat
+    ...Array(3).fill('frigate_laser'), // 3 lasery
+    'battleship'                       // 1 Boss
   ];
-
-  // Tasowanie tablicy (Fisher-Yates shuffle)
+  // Shuffle
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
-
-  // Zawsze daj fightera na pierwszy ogień
-  pool.unshift('fighter');
-
+  pool.unshift('fighter'); // Na start zawsze myśliwce
   mercMission.swarm.queue = pool;
 }
-
 // === FIGHTER SQUAD STATE ===
 const SQUAD = {
   order: 'idle',       // 'idle' | 'escort' | 'attack' | 'return'
@@ -9493,17 +9954,23 @@ function drawDestroyer(ctx, npc, screenPos){
   ctx.save();
   ctx.translate(screenPos.x, screenPos.y);
   ctx.rotate(npc.angle);
-  ctx.fillStyle = '#563c2c'; 
+  ctx.fillStyle = '#563c2c'; // Brązowy (Pirat)
   ctx.strokeStyle = '#ff5c7c';
   ctx.lineWidth = 2;
+  
+  // Kadłub
   ctx.beginPath();
   ctx.rect(-w*0.5, -h*0.5, w*0.8, h); 
   ctx.fill(); ctx.stroke();
+  
   // Nadbudówka
   ctx.fillStyle = '#6e4d3d';
   ctx.beginPath();
-  ctx.moveTo(w*0.1, -h*0.3); ctx.lineTo(w*0.4, 0); ctx.lineTo(w*0.1, h*0.3);
+  ctx.moveTo(w*0.1, -h*0.3); 
+  ctx.lineTo(w*0.4, 0); 
+  ctx.lineTo(w*0.1, h*0.3);
   ctx.fill();
+  
   ctx.restore();
 }
 
@@ -9513,20 +9980,31 @@ function drawBattleship(ctx, npc, screenPos){
   ctx.save();
   ctx.translate(screenPos.x, screenPos.y);
   ctx.rotate(npc.angle);
-  ctx.fillStyle = '#462c1c';
-  ctx.strokeStyle = '#ff5c7c';
+  ctx.fillStyle = '#462c1c'; // Ciemny brąz
+  ctx.strokeStyle = '#ff5c7c'; // Czerwony obrys
   ctx.lineWidth = 3;
-  // Kadłub
+
+  // Główny kadłub (agresywny kształt)
   ctx.beginPath();
-  ctx.moveTo(w*0.5, 0); ctx.lineTo(w*0.3, h*0.5); ctx.lineTo(-w*0.5, h*0.5);
-  ctx.lineTo(-w*0.4, 0); ctx.lineTo(-w*0.5, -h*0.5); ctx.lineTo(w*0.3, -h*0.5);
-  ctx.closePath(); ctx.fill(); ctx.stroke();
-  // Wieżyczki boczne
-  ctx.fillStyle = '#ff9b4b';
-  ctx.fillRect(-w*0.2, -h*0.6, w*0.1, h*0.2); 
-  ctx.fillRect(-w*0.2, h*0.4, w*0.1, h*0.2);
+  ctx.moveTo(w*0.5, 0); 
+  ctx.lineTo(w*0.3, h*0.5); 
+  ctx.lineTo(-w*0.5, h*0.5);
+  ctx.lineTo(-w*0.4, 0); 
+  ctx.lineTo(-w*0.5, -h*0.5); 
+  ctx.lineTo(w*0.3, -h*0.5);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+
+  // Wieżyczki boczne (symboliczne)
+  ctx.fillStyle = '#ff9b4b'; // Pomarańczowe
+  ctx.fillRect(-w*0.2, -h*0.6, w*0.1, h*0.2); // Lewa burta
+  ctx.fillRect(-w*0.2, h*0.4, w*0.1, h*0.2);  // Prawa burta
+
   ctx.restore();
 }
+
+// --- PODMIANA GŁÓWNEJ FUNKCJI RYSOWANIA ---
+// Znajdź istniejącą funkcję drawNPCPretty i ZASTĄP ją tą wersją:
 
 window.drawNPCPretty = function(ctx, npc, screenPos) {
   const pixR = npc.radius * camera.zoom;
@@ -9538,31 +10016,28 @@ window.drawNPCPretty = function(ctx, npc, screenPos) {
 
   const typeName = String(npc.type || '').toLowerCase();
   
-  // Tutaj następuje przekierowanie do nowych funkcji rysowania
+  // Obsługa nowych typów z AI SPACE
   if(typeName.includes('frigate')) { drawFrigateHull(ctx, npc, screenPos); return; }
   if(typeName.includes('destroyer')) { drawDestroyer(ctx, npc, screenPos); return; }
   if(typeName.includes('battleship')) { drawBattleship(ctx, npc, screenPos); return; }
 
-  // Standardowe rysowanie (dla Fighters i innych)
+  // Standardowe rysowanie (dla Fighters) - reszta bez zmian
   const sprite = npc.friendly ? npcSpriteFriendly : npcSpriteHostile;
 
-  // Fallback jeśli sprite się nie załadował
   if (!sprite || !sprite.complete || sprite.naturalWidth === 0) {
+    // Fallback (trójkąt)
     ctx.save();
     ctx.globalAlpha = npc.fade ?? 1;
     ctx.translate(screenPos.x, screenPos.y);
     ctx.rotate(npc.angle + Math.PI);
     ctx.fillStyle = npc.friendly ? '#bfd8ff' : '#ffc7bd';
     ctx.beginPath();
-    ctx.moveTo( pixR, 0);
-    ctx.lineTo(-pixR*0.7, -pixR*0.6);
-    ctx.lineTo(-pixR*0.7,  pixR*0.6);
+    ctx.moveTo( pixR, 0); ctx.lineTo(-pixR*0.7, -pixR*0.6); ctx.lineTo(-pixR*0.7,  pixR*0.6);
     ctx.closePath(); ctx.fill();
     ctx.restore();
     return;
   }
 
-  // Rysowanie sprite'a
   const drawWidth = pixR * 2.66; 
   const drawHeight = pixR * 2.0; 
 
@@ -9574,7 +10049,6 @@ window.drawNPCPretty = function(ctx, npc, screenPos) {
   ctx.rotate(Math.PI);
   ctx.drawImage(sprite, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
   
-  // Hit flash
   if (npc.hitFlash > 0) {
     ctx.globalCompositeOperation = 'screen';
     ctx.globalAlpha = npc.hitFlash;
@@ -11537,50 +12011,21 @@ function useCIWSPair(n, target){ /* krótka seria */ }
 function maybeFireRockets(n, target){ /* warunkowo */ }
 Object.defineProperty(PirateSim, 'units', {
   get: function() {
-    // Zwraca gracza i wszystkie aktywne NPC jako jedną listę dla AI
+    // Zwraca tablicę: [Gracz, ...Wszystkie żywe NPC]
+    // Dzięki temu AI może iterować po 'sim.units' i szukać celów
     return [ship, ...npcs.filter(n => !n.dead)];
   }
 });
 
-// 2. Nadpisujemy funkcję spawnBullet, której używają Fregaty i Niszczyciele
-// Żeby ich pociski trafiały do gry, a nie w próżnię
+// 2. Podłącz funkcję strzelania AI do silnika gry
+// Kiedy AI wywoła spawnBullet, my przekierujemy to do adaptera, który doda pocisk do gry
 window.spawnBullet = function(sim, from, to, weapon) {
-  // Wywołujemy nasz adapter, który już masz w kodzie
-  window.aiSpawnBullet(sim, from, to, weapon);
-};
-
-// 3. Zapewniamy, że funkcja pickBestTarget widzi sojuszników i wrogów
-window.pickBestTarget = function(sim, self, designatedTarget){
-  if(designatedTarget && designatedTarget.alive) return designatedTarget;
-  
-  let best = null;
-  let maxScore = -Infinity;
-  
-  // AI Space szuka wrogów. Dla pirata wrogiem jest gracz i friendly NPC.
-  const potentialTargets = self.friendly 
-    ? npcs.filter(n => n.isPirate && !n.dead) 
-    : [ship, ...npcs.filter(n => n.friendly && !n.dead)];
-
-  for(const t of potentialTargets){
-     const tx = t.pos ? t.pos.x : t.x;
-     const ty = t.pos ? t.pos.y : t.y;
-     const d2 = (tx - self.x)**2 + (ty - self.y)**2;
-     
-     if(d2 > 3000*3000) continue; // Za daleko
-
-     // Prosta heurystyka: bliskość + priorytet
-     let score = -d2;
-     if(t === ship) score += 1000000; // Gracz to priorytet
-     if(t.isCapitalShip) score += 500000;
-
-     if(score > maxScore){
-       maxScore = score;
-       best = t;
-     }
+  if (window.spawnBulletAdapter) {
+     window.spawnBulletAdapter(from, to, weapon);
+  } else if (window.aiSpawnBullet) {
+     window.aiSpawnBullet(sim, from, to, weapon);
   }
-  return best;
 };
-// init
 async function startGame(){
   if (gameStarted) return;
   gameStarted = true;
