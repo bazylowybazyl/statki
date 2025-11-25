@@ -7095,71 +7095,63 @@ function spawnStationGuard(st, kind, angle){
 // uniwersalne spawnowanie pirata przy stacji (swarm)
 function spawnPirate(kind, station){
   const a = Math.random()*Math.PI*2;
-  const r = station.r + 32;
+  const r = station.r + 60;
   const pos = { x: station.x + Math.cos(a)*r, y: station.y + Math.sin(a)*r };
   let n;
+
+  // --- MYŚLIWCE (Nowe AI + Broń) ---
   if(kind==='interceptor' || kind==='fighter'){
-    n = makeNPCBase(pos, { hp: 120, accel: 160,  maxSpeed: 660, turn: 6.0, radius: 22 });
+    n = makeNPCBase(pos, { hp: 120, accel: 280,  maxSpeed: 520, turn: 5.5, radius: 14 });
     n.shield = { val:80, max:80 };
-    n.gun = 'laserS';
-    n.msl = 'AF';
-    n.mslAmmo = 1;
-    n.gunCD = 0;
-    n.mslCD = 0;
-    n.ai = dt => aiFighter(PirateSim, n, dt);
+    
+    // Losowa broń z AI SPACE
+    const weapons = ['laserS', 'pulse', 'gatling', 'rail'];
+    n.gun = weapons[Math.floor(Math.random()*weapons.length)];
+    n.msl = 'AF'; 
+    n.mslAmmo = 2;
+    
+    // Nowe AI
+    n.ai = dt => runAdvancedFighterAI(n, dt);
+    
     armPirate(n, 'light');
-  } else if(kind==='frigate' || kind==='frigate_pd'){
-    n = makeNPCBase(pos, { hp: 1800, accel: 150,  maxSpeed: 160, turn: (65*Math.PI/180), radius: 28 });
+  } 
+  // --- FREGATY ---
+  else if(kind==='frigate' || kind==='frigate_pd'){
+    n = makeNPCBase(pos, { hp: 1800, accel: 120,  maxSpeed: 180, turn: 1.2, radius: 32 });
     n.shield = { val:600, max:600 };
     n.pd = 'pd_mk1';
     n.flak = 'flak_L';
-    n.mass = 2.5;
-    n.size = { w:44, h:18 };
-    n.friction = 0.985;
-    n.separationRange = 90;
-    n.subType = 'pd';
-    n.pdCD = 0; n.flakCD = 0; n.mCD = 0;
-    n.ai = dt => aiFrigate(PirateSim, n, dt);
+    n.ai = dt => aiFrigate(PirateSim, n, dt); // Używa aiFrigate z AI SPACE
     armPirate(n, 'mid');
-  } else if(kind==='frigate_laser'){
-    n = makeNPCBase(pos, { hp: 1800, accel: 150,  maxSpeed: 160, turn: (65*Math.PI/180), radius: 28 });
+  } 
+  else if(kind==='frigate_laser'){
+    n = makeNPCBase(pos, { hp: 1800, accel: 120,  maxSpeed: 180, turn: 1.2, radius: 32 });
     n.shield = { val:600, max:600 };
-    n.mGun = 'h_beam';
-    n.mass = 2.5;
-    n.size = { w:44, h:18 };
-    n.friction = 0.985;
-    n.separationRange = 90;
+    n.mGun = 'h_beam'; // Laser beam
     n.subType = 'laser';
-    n.pdCD = 0; n.flakCD = 0; n.mCD = 0;
     n.ai = dt => aiLaserFrigate(PirateSim, n, dt);
     armPirate(n, 'mid');
-  } else if(kind==='battleship'){
-    n = makeNPCBase(pos, { hp: 12000, accel: 45, maxSpeed: 90, turn: (12*Math.PI/180), radius: 70 });
-    n.shield = { val:6000, max:6000 };
+  } 
+  // --- DUŻE OKRĘTY ---
+  else if(kind==='destroyer'){
+    n = makeNPCBase(pos, { hp: 4200, accel: 90, maxSpeed: 140, turn: 0.8, radius: 50 });
+    n.mGun = 'm_rail';
+    n.ai = dt => aiDestroyer(PirateSim, n, dt);
+    armPirate(n, 'heavy');
+  }
+  else if(kind==='battleship'){
+    n = makeNPCBase(pos, { hp: 12000, accel: 40, maxSpeed: 90, turn: 0.4, radius: 80 });
     n.mGun = 'h_rapid';
     n.pd = 'pd_laser';
-    n.mCD = 0; n.pdCD = 0;
-    n.broadLeftCD = 0; n.broadRightCD = 0; n.broadsideRange = 650;
-    n.fwdBoostT = 0; n.fwdBoostCd = 0; n.fwdBoostDur = 1.4; n.fwdBoostCool = 10.0;
-    n.rotBoostT = 0; n.rotBoostCd = 0; n.rotBoostDur = 0.9; n.rotBoostCool = 8.0;
-    n.friction = 0.99;
-    n.separationRange = 220;
-    n.mass = 25.0;
+    // Broadside params
+    n.broadsideRange = 650;
+    n.broadLeftCD = 0; n.broadRightCD = 0;
     n.ai = dt => aiBattleship(PirateSim, n, dt);
     armPirate(n, 'heavy');
-  } else { // destroyer
-    n = makeNPCBase(pos, { hp: 4200, accel: 120, maxSpeed: 140, turn: (25*Math.PI/180), radius: 45 });
-    armPirate(n, 'heavy');
-    n.mass = 8.0;
-    n.size = { w:86, h:26 };
-    n.friction = 0.986;
-    n.mGun = AISPACE_DESTROYER_MEDIUM_DEFAULT;
-    n.mCD = 0; n.mSeq = 0; n.pd = 'pd_mk1'; n.pdCD = 0;
-    n.separationRange = 150;
-    n.boostT = 0; n.boostCd = 0; n.boostDur = 1.8; n.boostCool = 8.0;
-    n.ai = dt => aiDestroyer(PirateSim, n, dt);
   }
+
   n.type = kind;
+  // Dodajemy do globalnej listy i symulacji
   npcs.push(n);
   return n;
 }
@@ -7752,7 +7744,14 @@ function bulletsAndCollisionsStep(dt){
     let hitNPC = null;
     for (const npc of npcs){
       if (npc.dead || npc.isCollidable === false) continue;
+      
+      // --- FIX FRIENDLY FIRE ---
+      // Gracz nie trafia sojuszników
       if (b.owner === 'player' && npc.friendly) continue;
+      // NPC (pirat) nie trafia innych piratów
+      if (b.owner === 'npc' && !npc.friendly) continue; 
+      // -------------------------
+
       if (b.source && b.source === npc && b.age < (b.spawnGrace || 0)) continue;
       const d = Math.hypot(npc.x - b.x, npc.y - b.y);
       if (d < npc.radius + b.r){ hitNPC = npc; break; }
@@ -8149,6 +8148,8 @@ function pirateMissionStep(dt){
   if(!mercMission) return;
   const st = mercMission.station;
   if(!st) return;
+  
+  // (Zachowaj logikę platform obronnych bez zmian - pominąłem dla czytelności, wklej tutaj kod platform z oryginału)
   PirateSim.time = (PirateSim.time || 0) + dt;
 
   const platforms = mercMission.weaponPlatforms || [];
@@ -8223,31 +8224,52 @@ function pirateMissionStep(dt){
     mercMission.weaponPlatforms = platforms.filter(p => p && !p.removed);
   }
 
-  // --- SWARM spawnowanie falowo ---
+  // --- SWARM (Fale wrogów) ---
   const swarm = mercMission.swarm;
   if(!swarm) return;
   if(!swarm.active) return;
 
-  // ilu piratów żyje
+  // Liczba żywych piratów
   const alive = npcs.reduce((a,n)=>a + (n.mission && !n.friendly && !n.dead ? 1:0), 0);
-  const hpFrac = Math.max(0, st.hp / st.maxHp);
-  // im mniej HP, tym szybciej i więcej
-  const interval = Math.max(0.35, swarm.baseInterval - (1 - hpFrac)*0.6);
-  const batch = (hpFrac>0.66)?2 : (hpFrac>0.33)?4 : 6;
-
+  
   swarm.timer -= dt;
+  
+  // Jeśli mało wrogów i upłynął czas -> spawnuj
   if(swarm.timer <= 0 && alive < swarm.maxAlive){
-    const toSpawn = Math.min(batch, swarm.maxAlive - alive);
-    for(let i=0;i<toSpawn;i++){
-      const queued = Array.isArray(swarm.queue) ? swarm.queue.shift() : null;
-      let kind = queued;
-      if(!kind){
-        const roll = Math.random();
-        kind = (roll<0.5)?'fighter' : (roll<0.8)?'frigate_pd' : 'destroyer';
-      }
-      spawnPirate(kind, st);
+    // Reset timera (dłuższy odstęp po spawnie fali)
+    swarm.timer = 8.0; 
+
+    // Pobierz typ z kolejki
+    const queued = Array.isArray(swarm.queue) ? swarm.queue.shift() : null;
+    let kind = queued || ((Math.random()<0.6)?'fighter':'frigate_pd');
+
+    // JEŚLI FIGHTER -> SPAWNUJ CAŁĄ ESKADRĘ (9 sztuk)
+    if(kind === 'fighter' || kind === 'interceptor'){
+        const squad = new Squad('pirate', 'fighter');
+        SQUADS.push(squad);
+        
+        // Punkt startowy (hangar stacji)
+        const launchAngle = Math.random() * Math.PI * 2;
+        const startX = st.x + Math.cos(launchAngle) * (st.r + 50);
+        const startY = st.y + Math.sin(launchAngle) * (st.r + 50);
+
+        for(let i=0; i<9; i++){
+            const n = spawnPirate('fighter', st);
+            // Nadpisz pozycję na grupową
+            n.x = startX + (Math.random()-0.5)*40;
+            n.y = startY + (Math.random()-0.5)*40;
+            // Dodaj do eskadry (to ustawi lidera i offsety)
+            squad.addUnit(n);
+        }
+        toast('Stacja piracka wypuściła eskadrę myśliwców!');
+    } 
+    // INNE STATKI (pojedynczo, ale z nowym AI)
+    else {
+        spawnPirate(kind, st);
     }
-    swarm.timer = interval;
+    
+    // Jeśli kolejka pusta, odnów ją
+    if(swarm.queue && swarm.queue.length === 0) resetSwarmQueue();
   }
 }
 
@@ -11354,35 +11376,70 @@ function runAdvancedFighterAI(npc, dt) {
   npc.angle = Math.atan2(npc.vy, npc.vx);
 }
 
-// Helper strzelania
+// Helper strzelania dla AI (używa definicji z AI SPACE)
 function tryFire(npc, target, dt) {
-  // Kąt do celu
+  if(!target) return;
+  
+  // Pobierz definicję broni przypisanej do NPC
+  const gunDef = AISPACE_GUNS[npc.gun] || AISPACE_GUNS.laserS;
+  const range = gunDef.range || 400;
+  const speed = gunDef.speed || 500;
+
   const targetX = target.pos ? target.pos.x : target.x;
   const targetY = target.pos ? target.pos.y : target.y;
+
+  // Kąt do celu
   const angleToTarget = Math.atan2(targetY - npc.y, targetX - npc.x);
   const myAngle = Math.atan2(npc.vy, npc.vx);
   const diff = Math.abs(wrapAngle(angleToTarget - myAngle));
+  const dist = Math.hypot(targetX - npc.x, targetY - npc.y);
 
-  // Strzelaj tylko jak celujesz (stożek 20 stopni)
-  if (diff < 0.35 && npc.gunCD <= 0) {
-     // Strzał
-     const speed = 900;
+  // Warunek strzału: w zasięgu + celownik na wrogu
+  if (dist < range && diff < 0.4 && npc.gunCD <= 0) {
      const lead = getLeadAim(npc, target, speed);
      const dir = norm({x: lead.x - npc.x, y: lead.y - npc.y});
      
+     // Rozrzut
+     const spread = (gunDef.spread || 2) * (Math.PI/180);
+     const a = Math.atan2(dir.y, dir.x) + (Math.random()-0.5)*spread;
+     
      bullets.push({
-        x: npc.x + dir.x * 20, 
-        y: npc.y + dir.y * 20,
-        vx: npc.vx + dir.x * speed,
-        vy: npc.vy + dir.y * speed,
-        life: 1.5,
+        x: npc.x + Math.cos(a) * 12, 
+        y: npc.y + Math.sin(a) * 12,
+        vx: npc.vx + Math.cos(a) * speed,
+        vy: npc.vy + Math.sin(a) * speed,
+        life: range / speed,
         r: 3,
-        color: npc.friendly ? '#86f7ff' : '#ff5c7c',
+        color: gunDef.color || '#fff',
         owner: npc.friendly ? 'player' : 'npc',
-        damage: 12,
-        type: 'plasma' // używa istniejącego systemu particles
+        damage: gunDef.dmg || 10,
+        type: 'plasma', // Używa standardowego renderera cząsteczek
+        source: npc
      });
-     npc.gunCD = 0.15; // Szybkie strzelanie (Rapid Fire)
+     
+     // Cooldown z parametru rps (rounds per second)
+     npc.gunCD = 1.0 / (gunDef.rps || 5);
+  }
+  
+  // Rakiety (jeśli ma)
+  if (npc.mslAmmo > 0 && npc.mslCD <= 0 && dist < 1000 && diff < 0.5) {
+      const mslDef = AISPACE_MISSILES[npc.msl || 'AF'];
+      bullets.push({
+        x: npc.x, y: npc.y,
+        vx: npc.vx + Math.cos(myAngle)*100,
+        vy: npc.vy + Math.sin(myAngle)*100,
+        life: mslDef.life || 4,
+        r: 4,
+        owner: npc.friendly ? 'player' : 'npc',
+        damage: mslDef.dmg || 40,
+        type: 'rocket',
+        target: target, // Homing
+        color: mslDef.color,
+        homingDelay: 0.2,
+        explodeRadius: 40
+      });
+      npc.mslAmmo--;
+      npc.mslCD = 4.0; // Długi reload rakiet
   }
 }
 function useRailPair(n, target){ /* sprawdź kąt i cooldown, odpal pary */ }
