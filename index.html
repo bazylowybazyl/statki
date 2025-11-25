@@ -13139,5 +13139,143 @@ window.addEventListener('keydown', e => {
 
 console.log(">>> FIX V2 ZASTOSOWANY: Funkcja makeNPCBase zdefiniowana. Spawnowanie powinno działać. <<<");
 </script>
+  <script>
+// =======================================================================
+// GRAPHICS PATCH: Dodaje wygląd dla Destroyerów, Fregat i Battleshipów
+// =======================================================================
+
+// 1. Rysowanie FREGATY
+window.drawFrigateHull = function(ctx, npc, screenPos){
+  const w = (npc.size?.w || npc.radius*2.2) * camera.zoom;
+  const h = (npc.size?.h || npc.radius*0.9) * camera.zoom;
+  ctx.save();
+  ctx.globalAlpha = npc.fade ?? 1;
+  ctx.translate(screenPos.x, screenPos.y);
+  ctx.rotate(npc.angle || 0);
+  
+  // Kolor: Fioletowy (Laser) lub Zielony (PD) lub Czerwony (Pirat)
+  if (npc.subType === 'laser') ctx.fillStyle = '#3c2d54';
+  else if (npc.friendly) ctx.fillStyle = '#284b36';
+  else ctx.fillStyle = '#563c2c'; // Brązowy dla pirata
+
+  ctx.strokeStyle = npc.friendly ? '#7cff91' : '#ff5c7c';
+  ctx.lineWidth = 2;
+  
+  ctx.beginPath();
+  ctx.rect(-w*0.5, -h*0.5, w, h);
+  ctx.fill(); ctx.stroke();
+  
+  // Dziób
+  ctx.beginPath();
+  ctx.moveTo(0,0); ctx.lineTo(w*0.6,0);
+  ctx.stroke();
+  
+  ctx.restore();
+};
+
+// 2. Rysowanie DESTROYERA (Niszczyciel)
+window.drawDestroyer = function(ctx, npc, screenPos){
+  const w = (npc.size?.w || 86) * camera.zoom;
+  const h = (npc.size?.h || 26) * camera.zoom;
+  ctx.save();
+  ctx.translate(screenPos.x, screenPos.y);
+  ctx.rotate(npc.angle);
+  
+  ctx.fillStyle = npc.friendly ? '#2c3f56' : '#563c2c'; // Niebieski vs Brązowy
+  ctx.strokeStyle = npc.friendly ? '#7cff91' : '#ff5c7c';
+  ctx.lineWidth = 2.2;
+  
+  // Kadłub
+  ctx.beginPath();
+  ctx.rect(-w*0.5, -h*0.5, w*0.8, h);
+  ctx.fill(); ctx.stroke();
+  
+  // Mostek
+  ctx.fillStyle = npc.friendly ? '#3e5570' : '#6e4d3d';
+  ctx.beginPath();
+  ctx.moveTo(w*0.1, -h*0.3);
+  ctx.lineTo(w*0.4, 0);
+  ctx.lineTo(w*0.1, h*0.3);
+  ctx.fill();
+  
+  // Pasek HP
+  drawMiniHP(ctx, npc, h);
+  
+  ctx.restore();
+};
+
+// 3. Rysowanie BATTLESHIPA (Pancernik)
+window.drawBattleship = function(ctx, npc, screenPos){
+  const w = (npc.size?.w || 140) * camera.zoom;
+  const h = (npc.size?.h || 50) * camera.zoom;
+  ctx.save();
+  ctx.translate(screenPos.x, screenPos.y);
+  ctx.rotate(npc.angle);
+  
+  ctx.fillStyle = npc.friendly ? '#1c2f46' : '#462c1c';
+  ctx.strokeStyle = npc.friendly ? '#7cff91' : '#ff5c7c';
+  ctx.lineWidth = 3;
+
+  // Kształt
+  ctx.beginPath();
+  ctx.moveTo(w*0.5, 0); 
+  ctx.lineTo(w*0.3, h*0.5); 
+  ctx.lineTo(-w*0.5, h*0.5);
+  ctx.lineTo(-w*0.4, 0); 
+  ctx.lineTo(-w*0.5, -h*0.5); 
+  ctx.lineTo(w*0.3, -h*0.5);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+
+  // Wieżyczki boczne
+  ctx.fillStyle = npc.friendly ? '#4a9eff' : '#ff9b4b';
+  ctx.fillRect(-w*0.2, -h*0.6, w*0.1, h*0.2);
+  ctx.fillRect(-w*0.2, h*0.4, w*0.1, h*0.2);
+
+  drawMiniHP(ctx, npc, h);
+
+  ctx.restore();
+};
+
+// Helper do paska HP nad jednostką
+function drawMiniHP(ctx, npc, height) {
+    const hpPct = npc.hp / (npc.maxHp || 100);
+    if(hpPct < 0.98) {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(-20, -height/2 - 10, 40, 4);
+        ctx.fillStyle = hpPct > 0.5 ? '#0f0' : '#f00';
+        ctx.fillRect(-20, -height/2 - 10, 40 * hpPct, 4);
+    }
+}
+
+// 4. NADPISANIE GŁÓWNEJ FUNKCJI RYSOWANIA (Router)
+// To łączy logikę typu statku z odpowiednią funkcją rysującą
+const originalDrawNPC = window.drawNPCPretty; // Zachowaj oryginał dla sprite'ów
+
+window.drawNPCPretty = function(ctx, npc, screenPos) {
+  if(!npc || npc.dead) return;
+
+  const type = String(npc.type || '').toLowerCase();
+
+  // Sprawdź nowe typy z AI SPACE
+  if (type.includes('destroyer')) {
+      window.drawDestroyer(ctx, npc, screenPos);
+      return;
+  }
+  if (type.includes('battleship')) {
+      window.drawBattleship(ctx, npc, screenPos);
+      return;
+  }
+  if (type.includes('frigate')) {
+      window.drawFrigateHull(ctx, npc, screenPos);
+      return;
+  }
+
+  // Jeśli to nie powyższe, użyj starego rysowania (dla myśliwców/sprite'ów)
+  if (originalDrawNPC) originalDrawNPC(ctx, npc, screenPos);
+};
+
+console.log(">>> GRAPHICS PATCH ZASTOSOWANY: Statki powinny być widoczne <<<");
+</script>
 </body>
 </html>
