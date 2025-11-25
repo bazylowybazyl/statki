@@ -11535,7 +11535,51 @@ function useRailPair(n, target){ /* sprawdź kąt i cooldown, odpal pary */ }
 function useRocketsPair(n, target){ /* salwy */ }
 function useCIWSPair(n, target){ /* krótka seria */ }
 function maybeFireRockets(n, target){ /* warunkowo */ }
+Object.defineProperty(PirateSim, 'units', {
+  get: function() {
+    // Zwraca gracza i wszystkie aktywne NPC jako jedną listę dla AI
+    return [ship, ...npcs.filter(n => !n.dead)];
+  }
+});
 
+// 2. Nadpisujemy funkcję spawnBullet, której używają Fregaty i Niszczyciele
+// Żeby ich pociski trafiały do gry, a nie w próżnię
+window.spawnBullet = function(sim, from, to, weapon) {
+  // Wywołujemy nasz adapter, który już masz w kodzie
+  window.aiSpawnBullet(sim, from, to, weapon);
+};
+
+// 3. Zapewniamy, że funkcja pickBestTarget widzi sojuszników i wrogów
+window.pickBestTarget = function(sim, self, designatedTarget){
+  if(designatedTarget && designatedTarget.alive) return designatedTarget;
+  
+  let best = null;
+  let maxScore = -Infinity;
+  
+  // AI Space szuka wrogów. Dla pirata wrogiem jest gracz i friendly NPC.
+  const potentialTargets = self.friendly 
+    ? npcs.filter(n => n.isPirate && !n.dead) 
+    : [ship, ...npcs.filter(n => n.friendly && !n.dead)];
+
+  for(const t of potentialTargets){
+     const tx = t.pos ? t.pos.x : t.x;
+     const ty = t.pos ? t.pos.y : t.y;
+     const d2 = (tx - self.x)**2 + (ty - self.y)**2;
+     
+     if(d2 > 3000*3000) continue; // Za daleko
+
+     // Prosta heurystyka: bliskość + priorytet
+     let score = -d2;
+     if(t === ship) score += 1000000; // Gracz to priorytet
+     if(t.isCapitalShip) score += 500000;
+
+     if(score > maxScore){
+       maxScore = score;
+       best = t;
+     }
+  }
+  return best;
+};
 // init
 async function startGame(){
   if (gameStarted) return;
