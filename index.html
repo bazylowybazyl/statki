@@ -4043,7 +4043,10 @@ window.aiBattleship = function(sim, npc, dt) {
   npc.vx *= (npc.friction || 0.99);
   npc.vy *= (npc.friction || 0.99);
 };
-
+window.runAdvancedFighterAI = runAdvancedFighterAI;
+window.aiFrigate = aiFrigate;
+window.aiDestroyer = aiDestroyer;
+window.aiBattleship = aiBattleship;
 // Helper strzelania dla myśliwców
 function tryFireFighter(npc, target, dt) {
   if(!target) return;
@@ -6956,21 +6959,25 @@ function spawnFighter(){
       return null; 
   }
 
-  // Bezpieczne pobranie pozycji startowej (jak nie ma pods, startuje ze środka)
+  // 1. Bezpieczne pobranie pozycji startowej (Naprawa błędu undefined)
+  ship.nextFighterPod = ship.nextFighterPod || 0; // Inicjalizacja licznika
   let off = {x: -20, y: 0};
+  
   if (ship.pods && ship.pods.length > 0) {
-      const pod = ship.pods[ship.nextFighterPod % ship.pods.length];
-      ship.nextFighterPod = (ship.nextFighterPod + 1) % ship.pods.length;
-      off = rotate(pod.offset, ship.angle);
+      const podIndex = ship.nextFighterPod % ship.pods.length;
+      const pod = ship.pods[podIndex];
+      ship.nextFighterPod++;
+      if(pod && pod.offset) off = rotate(pod.offset, ship.angle);
   }
   
   const spawnPos = { x: ship.pos.x + off.x, y: ship.pos.y + off.y };
 
-  // Fizyka
+  // 2. Fizyka
   const f = makeNPCBase(spawnPos, {
     hp: 60, accel: 320, maxSpeed: 580, turn: 6.5, radius: 12
   });
   
+  // 3. Konfiguracja
   f.friendly = true;
   f.mission = true; 
   f.fighter = true;
@@ -6983,7 +6990,13 @@ function spawnFighter(){
   f.msl = 'AF'; f.mslAmmo = 2;
   f.gunCD = 0; f.mslCD = 0;
 
-  // Formacja
+  // 4. Formacja
+  // Upewnij się, że SQUAD istnieje
+  if(typeof SQUAD === 'undefined') {
+     console.error("SQUAD is undefined! Adding fallback.");
+     window.SQUAD = { list: [], order: 'idle', targets: [] };
+  }
+
   const idx = SQUAD.list.length;
   f.formIndex = idx;
   const row = Math.floor((idx + 1) / 2);
@@ -6993,67 +7006,55 @@ function spawnFighter(){
   // Liderem jest GRACZ (ship)
   f.squad = { leader: ship, type: 'fighter' }; 
 
-  // AI
+  // 5. AI (Teraz bezpiecznie używa window.runAdvancedFighterAI)
   f.ai = (dt) => {
-      // 1. Zarządzanie rozkazami
       if (SQUAD.order === 'attack') {
+          // Szukaj celu jeśli brak lub martwy
           if(!f.target || f.target.dead) {
              if(window.aiPickBestTarget) f.target = window.aiPickBestTarget(f, 2500);
           }
           
-          // Jeśli jest wróg -> użyj zaawansowanego AI bojowego
           if(f.target) {
+             // Walcz
              f.state = (f.target.isCapitalShip || f.target.hp > 500) ? 'bombing' : 'dogfight3D';
              if(window.runAdvancedFighterAI) window.runAdvancedFighterAI(f, dt);
-             return;
-          } 
-          
-          // Jeśli rozkaz ataku ale brak wroga -> wracaj do formacji
-          f.state = 'engage_formation';
+          } else {
+             // Brak celu -> wracaj do gracza
+             f.state = 'engage_formation';
+             if(window.runAdvancedFighterAI) window.runAdvancedFighterAI(f, dt);
+          }
       } else {
-          f.state = 'guard';
-      }
+          // Tryb Guard / Return - używamy prostego powrotu do formacji
+          // (Skopiowane z poprzedniego rozwiązania dla stabilności)
+          const leader = ship; 
+          const offset = f.formationOffset || {x:-50, y:50};
+          const la = leader.angle;
+          const ox = offset.x * Math.cos(la) - offset.y * Math.sin(la);
+          const oy = offset.x * Math.sin(la) + offset.y * Math.cos(la);
+          const destX = leader.pos.x + ox;
+          const destY = leader.pos.y + oy;
 
-      // 2. Prosta fizyka powrotu do formacji (gdy nie walczymy)
-      // To naprawi "stanie w miejscu"
-      
-      const leader = ship; // Twoim liderem jest gracz
-      
-      // Oblicz pozycję w formacji
-      const offset = f.formationOffset || {x:-50, y:50};
-      const la = leader.angle;
-      const ox = offset.x * Math.cos(la) - offset.y * Math.sin(la);
-      const oy = offset.x * Math.sin(la) + offset.y * Math.cos(la);
-      const destX = leader.pos.x + ox;
-      const destY = leader.pos.y + oy;
-
-      // Leć tam
-      const dx = destX - f.x;
-      const dy = destY - f.y;
-      const dist = Math.hypot(dx, dy);
-      
-      // Fizyka dolotu
-      if (dist > 10) {
-          const wantSpeed = Math.min(f.maxSpeed, dist * 4.0); // Im dalej tym szybciej
-          const dirX = dx / dist;
-          const dirY = dy / dist;
+          const dx = destX - f.x;
+          const dy = destY - f.y;
+          const dist = Math.hypot(dx, dy);
           
-          // Płynny zwrot
-          const turned = clampTurnVec(f.vx, f.vy, dirX*wantSpeed, dirY*wantSpeed, dt, 360);
-          f.vx = turned.vx;
-          f.vy = turned.vy;
-          f.angle = Math.atan2(f.vy, f.vx);
-      } else {
-          // Jesteśmy na miejscu - utrzymaj prędkość lidera
-          f.vx = leader.vel.x;
-          f.vy = leader.vel.y;
-          f.angle = leader.angle;
+          if (dist > 10) {
+              const wantSpeed = Math.min(f.maxSpeed, dist * 4.0); 
+              const turned = clampTurnVec(f.vx, f.vy, (dx/dist)*wantSpeed, (dy/dist)*wantSpeed, dt, 360);
+              f.vx = turned.vx;
+              f.vy = turned.vy;
+              f.angle = Math.atan2(f.vy, f.vx);
+          } else {
+              f.vx = leader.vel.x;
+              f.vy = leader.vel.y;
+              f.angle = leader.angle;
+          }
       }
   };
 
   SQUAD.list.push(f);
   
-  // Dodanie do świata (obsługa obu przypadków zmiennej globalnej)
+  // Dodanie do świata
   if (window.npcs) window.npcs.push(f);
   else npcs.push(f);
   
