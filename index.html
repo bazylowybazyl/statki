@@ -2479,7 +2479,7 @@ function getWarpRoute(fromId, toId){ return warpRoutes[fromId + '-' + toId]; }
 initWarpRoutes();
 
 let npcs = [];
-
+window.npcs = npcs;
 // === SQUAD SYSTEM ===
 const SQUADS = [];
 class Squad {
