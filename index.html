@@ -638,7 +638,32 @@ function muzzlePosFor(entity, dir, extra = 8){
 
 const fleetNumberFormatter = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 0 });
 const FLEET_UI_REFRESH_MS = 1000;
+window.aiSpawnBullet = function(sim, from, to, weapon) {
+  const ang = Math.atan2(to.y - from.y, to.x - from.x);
+  const spread = (weapon.spread || 0) * (Math.PI / 180);
+  const a = ang + (Math.random() * 2 - 1) * spread;
+  const speed = weapon.speed || 500;
 
+  // Mapowanie wyglądu pocisku
+  let bType = 'plasma';
+  if(weapon.name && weapon.name.includes('Rail')) bType = 'rail';
+  if(weapon.name && weapon.name.includes('Flak')) bType = 'armata';
+
+  bullets.push({
+    x: from.x,
+    y: from.y,
+    vx: Math.cos(a) * speed + (from.vx || 0) * 0.2,
+    vy: Math.sin(a) * speed + (from.vy || 0) * 0.2,
+    life: (weapon.range || 1000) / speed,
+    r: (bType === 'rail') ? 4 : 3,
+    owner: from.friendly ? 'player' : 'npc',
+    damage: weapon.dmg || 10,
+    type: bType,
+    color: weapon.color || '#ffd36e',
+    source: from,
+    explodeRadius: (bType === 'armata') ? (weapon.radius || 40) : 0
+  });
+};
 function formatFleetNumber(value){
   if (!Number.isFinite(value)) return '0';
   return fleetNumberFormatter.format(Math.max(0, Math.round(value)));
@@ -7099,9 +7124,9 @@ function spawnPirate(kind, station){
   const pos = { x: station.x + Math.cos(a)*r, y: station.y + Math.sin(a)*r };
   let n;
 
-  // --- MYŚLIWCE (Nowe AI + Broń) ---
+  // --- MYŚLIWCE (Interceptors) ---
   if(kind==='interceptor' || kind==='fighter'){
-    n = makeNPCBase(pos, { hp: 120, accel: 280,  maxSpeed: 520, turn: 5.5, radius: 14 });
+    n = makeNPCBase(pos, { hp: 120, accel: 280, maxSpeed: 520, turn: 5.5, radius: 14 });
     n.shield = { val:80, max:80 };
     
     // Losowa broń z AI SPACE
@@ -7110,61 +7135,113 @@ function spawnPirate(kind, station){
     n.msl = 'AF'; 
     n.mslAmmo = 2;
     
-    // Nowe AI
-    n.ai = dt => runAdvancedFighterAI(n, dt);
+    // Przypisanie nowego, zaawansowanego AI
+    n.ai = dt => runAdvancedFighterAI(n, dt); 
     
-    armPirate(n, 'light');
+    // Ręczne flagi pirata (zamiast psującego armPirate)
+    n.friendly = false;
+    n.mission = true;
+    n.color = '#ff5c7c';
+    n.isPirate = true;
+    n.gunCD = 0; n.mslCD = 0;
   } 
-  // --- FREGATY ---
+  // --- FREGATY (Frigates) ---
   else if(kind==='frigate' || kind==='frigate_pd'){
-    n = makeNPCBase(pos, { hp: 1800, accel: 120,  maxSpeed: 180, turn: 1.2, radius: 32 });
+    n = makeNPCBase(pos, { hp: 1800, accel: 120, maxSpeed: 180, turn: 1.2, radius: 32 });
     n.shield = { val:600, max:600 };
     n.pd = 'pd_mk1';
     n.flak = 'flak_L';
-    n.ai = dt => aiFrigate(PirateSim, n, dt); // Używa aiFrigate z AI SPACE
-    armPirate(n, 'mid');
+    
+    n.ai = dt => aiFrigate(PirateSim, n, dt); // AI Fregaty
+    
+    n.friendly = false;
+    n.mission = true;
+    n.color = '#ff5c7c';
+    n.isPirate = true;
+    n.mass = 2.5;
+    n.pdCD = 0; n.flakCD = 0;
   } 
   else if(kind==='frigate_laser'){
-    n = makeNPCBase(pos, { hp: 1800, accel: 120,  maxSpeed: 180, turn: 1.2, radius: 32 });
+    n = makeNPCBase(pos, { hp: 1800, accel: 120, maxSpeed: 180, turn: 1.2, radius: 32 });
     n.shield = { val:600, max:600 };
-    n.mGun = 'h_beam'; // Laser beam
-    n.subType = 'laser';
-    n.ai = dt => aiLaserFrigate(PirateSim, n, dt);
-    armPirate(n, 'mid');
+    n.mGun = 'h_beam';
+    n.subType = 'laser'; 
+    
+    n.ai = dt => aiLaserFrigate(PirateSim, n, dt); // AI Laserowe
+
+    n.friendly = false;
+    n.mission = true;
+    n.color = '#ff5c7c';
+    n.isPirate = true;
+    n.mass = 2.5;
+    n.mCD = 0; n.pdCD = 0;
   } 
-  // --- DUŻE OKRĘTY ---
+  // --- NISZCZYCIELE (Destroyers) ---
   else if(kind==='destroyer'){
     n = makeNPCBase(pos, { hp: 4200, accel: 90, maxSpeed: 140, turn: 0.8, radius: 50 });
     n.mGun = 'm_rail';
-    n.ai = dt => aiDestroyer(PirateSim, n, dt);
-    armPirate(n, 'heavy');
+    n.pd = 'pd_mk1';
+    
+    n.ai = dt => aiDestroyer(PirateSim, n, dt); // AI Niszczyciela
+
+    n.friendly = false;
+    n.mission = true;
+    n.color = '#ff5c7c';
+    n.isPirate = true;
+    n.mass = 8.0;
+    n.separationRange = 150;
+    n.mCD = 0; n.pdCD = 0;
+    n.boostT = 0; n.boostCd = 0; n.boostDur = 1.8; n.boostCool = 8.0;
   }
+  // --- PANCERNIKI (Battleships) ---
   else if(kind==='battleship'){
     n = makeNPCBase(pos, { hp: 12000, accel: 40, maxSpeed: 90, turn: 0.4, radius: 80 });
     n.mGun = 'h_rapid';
     n.pd = 'pd_laser';
-    // Broadside params
-    n.broadsideRange = 650;
+    n.broadsideRange = 650; 
+    
+    n.ai = dt => aiBattleship(PirateSim, n, dt); // AI Pancernika
+
+    n.friendly = false;
+    n.mission = true;
+    n.color = '#ff5c7c';
+    n.isPirate = true;
+    n.mass = 25.0;
+    n.mCD = 0; n.pdCD = 0;
     n.broadLeftCD = 0; n.broadRightCD = 0;
-    n.ai = dt => aiBattleship(PirateSim, n, dt);
-    armPirate(n, 'heavy');
+  }
+  else {
+     return spawnPirate('fighter', station); // fallback
   }
 
   n.type = kind;
-  // Dodajemy do globalnej listy i symulacji
   npcs.push(n);
   return n;
 }
 
 function resetSwarmQueue(){
   if(!mercMission?.swarm) return;
-  mercMission.swarm.queue = [
-    ...Array(10).fill('fighter'),
-    ...Array(5).fill('destroyer'),
-    ...Array(10).fill('frigate_pd'),
-    ...Array(5).fill('frigate_laser'),
-    'battleship'
+  
+  // Pula jednostek do zespawnowania w jednej fali
+  const pool = [
+    ...Array(8).fill('fighter'),       // 8 eskadr myśliwców
+    ...Array(4).fill('destroyer'),     // 4 niszczyciele
+    ...Array(6).fill('frigate_pd'),    // 6 fregat PD
+    ...Array(3).fill('frigate_laser'), // 3 fregaty laserowe
+    'battleship',                      // Boss
+    'battleship'                       // Drugi boss
   ];
+
+  // Tasowanie tablicy (Fisher-Yates shuffle)
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+
+  // Zawsze daj fightera na pierwszy ogień
+  pool.unshift('fighter');
+
+  mercMission.swarm.queue = pool;
 }
 
 // === FIGHTER SQUAD STATE ===
@@ -9410,32 +9487,48 @@ function drawFrigateHull(ctx, npc, screenPos){
   ctx.restore();
 }
 
-function drawBattleshipHull(ctx, npc, screenPos){
-  const w = (npc.size?.w || npc.radius*2.0) * (camera.zoom || 1);
-  const h = (npc.size?.h || npc.radius*1.0) * (camera.zoom || 1);
+function drawDestroyer(ctx, npc, screenPos){
+  const w = (npc.size?.w || 86) * camera.zoom;
+  const h = (npc.size?.h || 26) * camera.zoom;
   ctx.save();
-  ctx.globalAlpha = npc.fade ?? 1;
   ctx.translate(screenPos.x, screenPos.y);
-  ctx.rotate(npc.angle || 0);
-  ctx.fillStyle = npc.friendly ? '#1c2f46' : '#462c1c';
-  ctx.strokeStyle = npc.friendly ? '#7cff91' : '#ff5c7c';
-  ctx.lineWidth = 3;
+  ctx.rotate(npc.angle);
+  ctx.fillStyle = '#563c2c'; 
+  ctx.strokeStyle = '#ff5c7c';
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(w*0.6,0);
-  ctx.lineTo(w*0.4,h*0.5);
-  ctx.lineTo(-w*0.5,h*0.5);
-  ctx.lineTo(-w*0.6,0);
-  ctx.lineTo(-w*0.5,-h*0.5);
-  ctx.lineTo(w*0.4,-h*0.5);
-  ctx.closePath();
+  ctx.rect(-w*0.5, -h*0.5, w*0.8, h); 
   ctx.fill(); ctx.stroke();
+  // Nadbudówka
+  ctx.fillStyle = '#6e4d3d';
   ctx.beginPath();
-  ctx.rect(-w*0.2,-h*0.2,w*0.4,h*0.4);
-  ctx.stroke();
+  ctx.moveTo(w*0.1, -h*0.3); ctx.lineTo(w*0.4, 0); ctx.lineTo(w*0.1, h*0.3);
+  ctx.fill();
   ctx.restore();
 }
 
-function drawNPCPretty(ctx, npc, screenPos) {
+function drawBattleship(ctx, npc, screenPos){
+  const w = (npc.size?.w || 140) * camera.zoom;
+  const h = (npc.size?.h || 50) * camera.zoom;
+  ctx.save();
+  ctx.translate(screenPos.x, screenPos.y);
+  ctx.rotate(npc.angle);
+  ctx.fillStyle = '#462c1c';
+  ctx.strokeStyle = '#ff5c7c';
+  ctx.lineWidth = 3;
+  // Kadłub
+  ctx.beginPath();
+  ctx.moveTo(w*0.5, 0); ctx.lineTo(w*0.3, h*0.5); ctx.lineTo(-w*0.5, h*0.5);
+  ctx.lineTo(-w*0.4, 0); ctx.lineTo(-w*0.5, -h*0.5); ctx.lineTo(w*0.3, -h*0.5);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  // Wieżyczki boczne
+  ctx.fillStyle = '#ff9b4b';
+  ctx.fillRect(-w*0.2, -h*0.6, w*0.1, h*0.2); 
+  ctx.fillRect(-w*0.2, h*0.4, w*0.1, h*0.2);
+  ctx.restore();
+}
+
+window.drawNPCPretty = function(ctx, npc, screenPos) {
   const pixR = npc.radius * camera.zoom;
 
   if (npc.isCapitalShip && npc.capitalProfile) {
@@ -9444,13 +9537,16 @@ function drawNPCPretty(ctx, npc, screenPos) {
   }
 
   const typeName = String(npc.type || '').toLowerCase();
-  if(typeName.startsWith('frigate')){ drawFrigateHull(ctx, npc, screenPos); return; }
-  if(typeName === 'battleship'){ drawBattleshipHull(ctx, npc, screenPos); return; }
+  
+  // Tutaj następuje przekierowanie do nowych funkcji rysowania
+  if(typeName.includes('frigate')) { drawFrigateHull(ctx, npc, screenPos); return; }
+  if(typeName.includes('destroyer')) { drawDestroyer(ctx, npc, screenPos); return; }
+  if(typeName.includes('battleship')) { drawBattleship(ctx, npc, screenPos); return; }
 
-  // Wybierz odpowiedni sprite
+  // Standardowe rysowanie (dla Fighters i innych)
   const sprite = npc.friendly ? npcSpriteFriendly : npcSpriteHostile;
 
-  // Jeśli sprity się jeszcze nie załadowały, narysuj prosty kształt awaryjny
+  // Fallback jeśli sprite się nie załadował
   if (!sprite || !sprite.complete || sprite.naturalWidth === 0) {
     ctx.save();
     ctx.globalAlpha = npc.fade ?? 1;
@@ -9466,33 +9562,28 @@ function drawNPCPretty(ctx, npc, screenPos) {
     return;
   }
 
-  // Oblicz docelowy rozmiar na ekranie
-  // Te wartości bazują na SVG (viewBox="-40 -30 80 60")
-  const drawWidth = pixR * 2.66; // (Szerokość 80 / promień ~30)
-  const drawHeight = pixR * 2.0; // (Wysokość 60 / promień ~30)
+  // Rysowanie sprite'a
+  const drawWidth = pixR * 2.66; 
+  const drawHeight = pixR * 2.0; 
 
   ctx.save();
   ctx.globalAlpha = npc.fade ?? 1;
   ctx.translate(screenPos.x, screenPos.y);
   ctx.rotate(npc.angle);
-
-  // Narysuj sprite! (To jest super szybkie)
   ctx.save();
   ctx.rotate(Math.PI);
   ctx.drawImage(sprite, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
-
-  // „hit-flash” (ekranowa poświata)
+  
+  // Hit flash
   if (npc.hitFlash > 0) {
     ctx.globalCompositeOperation = 'screen';
     ctx.globalAlpha = npc.hitFlash;
     ctx.fillStyle = npc.friendly ? '#cfe8ff' : '#ffd8d0';
     ctx.fillRect(-drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = npc.fade ?? 1;
   }
-  ctx.restore();
+  ctx.restore(); ctx.restore();
 
-  // Pasek HP (też tani)
+  // Pasek HP
   const hpFrac = npc.maxHp ? (npc.hp / npc.maxHp) : 1;
   if (hpFrac < 1.0) {
     const hpBarWidth = Math.max(pixR * 1.5, 20);
@@ -9502,10 +9593,8 @@ function drawNPCPretty(ctx, npc, screenPos) {
     ctx.fillStyle = hpFrac > 0.5 ? '#60a5fa' : (hpFrac > 0.2 ? '#f59e0b' : '#ef4444');
     ctx.fillRect(-hpBarWidth/2, hpY, hpBarWidth * hpFrac, 4 * camera.zoom);
   }
-
-  ctx.restore();
-}
-
+};
+  
 function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
   const profile = npc.capitalProfile || {};
   const lengthScale = Number.isFinite(profile.lengthScale) ? profile.lengthScale : 3.2;
