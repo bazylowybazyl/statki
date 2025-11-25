@@ -3693,6 +3693,7 @@ function initNPCs() {
     npc.type = 'interceptor';
     npc.fighter = true;
     npc.color = '#ff5c7c'; // Czerwony z AI SPACE
+    npc.mission = true; // Misje używają nowego AI; omijaj cywilny autopilot
     npc.gunCD = 0;
     
     // *** KLUCZOWA ZMIANA: Przypisanie nowego AI ***
@@ -3715,6 +3716,7 @@ function initNPCs() {
      npc.type = 'ally_fighter';
      npc.fighter = true;
      npc.color = '#7cff91'; // Zielony z AI SPACE
+     npc.mission = true; // Wymuś ścieżkę mission dla runAdvancedFighterAI
      npc.ai = (dt) => runAdvancedFighterAI(npc, dt);
      
      npcs.push(npc);
