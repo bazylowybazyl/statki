@@ -2860,7 +2860,7 @@ function spawnCarrierFighter(entry){
   const side = (formIndex % 2 === 0) ? 1 : -1;
   f.formationOffset = { x: -row * 50 - 100, y: side * row * 40 };
   
-  f.squad = { leader: ship, type: 'fighter' }; 
+  f.squad = { leader: carrier, type: 'fighter' }; 
 
   // 5. MÓZG (Adapter AI)
   f.carrierWing = wing;
@@ -2901,15 +2901,16 @@ function runCarrierFighterAdapter(npc, dt) {
         npc._counted = false; 
         npc.recalled = true; 
      }
-     return;
+     // WAŻNE: Kończymy tu, żeby AI nie nadpisało ruchu
+     return; 
   }
 
-  // B. GUARD - Wymuś formację jeśli wróg daleko
+  // B. GUARD
   if (wing.order === 'guard') {
      const target = window.aiPickBestTarget ? window.aiPickBestTarget(npc, 3000) : null;
      const dist = target ? Math.hypot(target.x - npc.x, target.y - npc.y) : Infinity;
-     
-     if (dist > 1000) {
+     // Jeśli nie ma wrogów blisko, wymuś stan 'guard' w nowym AI
+     if (dist > 1200) {
         npc.state = 'guard';
      }
   }
@@ -2919,7 +2920,7 @@ function runCarrierFighterAdapter(npc, dt) {
      window.runAdvancedFighterAI(npc, dt);
   }
   
-  // D. EFEKTY SILNIKÓW
+  // D. EFEKTY
   if (window.spawnCarrierFighterEngines) {
      window.spawnCarrierFighterEngines(npc);
   }
@@ -6952,76 +6953,66 @@ function spawnFighter(){
       return null; 
   }
 
-  const pod = ship.pods[ship.nextFighterPod % ship.pods.length];
-  ship.nextFighterPod = (ship.nextFighterPod + 1) % ship.pods.length;
-  const off = rotate(pod.offset, ship.angle);
+  // Bezpieczne pobranie pozycji startowej (jak nie ma pods, startuje ze środka)
+  let off = {x: -20, y: 0};
+  if (ship.pods && ship.pods.length > 0) {
+      const pod = ship.pods[ship.nextFighterPod % ship.pods.length];
+      ship.nextFighterPod = (ship.nextFighterPod + 1) % ship.pods.length;
+      off = rotate(pod.offset, ship.angle);
+  }
   
-  // Pozycja startowa
   const spawnPos = { x: ship.pos.x + off.x, y: ship.pos.y + off.y };
 
-  // Fizyka i statystyki (zgodne z nowym AI)
+  // Fizyka
   const f = makeNPCBase(spawnPos, {
-    hp: 60, accel: 280, maxSpeed: 540, turn: 5.5, radius: 12
+    hp: 60, accel: 320, maxSpeed: 580, turn: 6.5, radius: 12
   });
   
-  // Konfiguracja bojowa
   f.friendly = true;
   f.mission = true; 
   f.fighter = true;
-  f.color = '#9edfff'; // Niebieski (Gracz)
+  f.color = '#9edfff'; 
   f.vx = ship.vel.x;
   f.vy = ship.vel.y;
   f.engines = [{x:-3,y:8},{x:3,y:8}];
   
-  // Broń gracza (niebieskie lasery)
   f.gun = 'laserS'; 
-  f.msl = 'AF';
-  f.mslAmmo = 2;
+  f.msl = 'AF'; f.mslAmmo = 2;
   f.gunCD = 0; f.mslCD = 0;
 
   // Formacja
   const idx = SQUAD.list.length;
   f.formIndex = idx;
-  
-  // Ustawienie offsetu w formacji Chevron
   const row = Math.floor((idx + 1) / 2);
   const side = (idx % 2 === 0) ? 1 : -1;
   f.formationOffset = { x: -row * 50 - 80, y: side * row * 40 };
 
-  // Przypisanie do Squadu gracza
-  f.squad = { leader: ship, type: 'fighter' }; // Gracz jest liderem
+  // Liderem jest GRACZ (ship)
+  f.squad = { leader: ship, type: 'fighter' }; 
 
-  // NOWE AI + Adapter zachowań
+  // AI
   f.ai = (dt) => {
-      // Obsługa rozkazów (Z key)
       if (SQUAD.order === 'attack') {
-          // W trybie ataku szukamy wrogów (jeśli nie mamy celu)
           if(!f.target || f.target.dead) {
-             // Używamy funkcji z nowego AI do znalezienia celu
              if(window.aiPickBestTarget) f.target = window.aiPickBestTarget(f, 2500);
           }
-
-          // Jeśli jest cel -> walcz, jeśli nie -> formacja
           if(f.target) {
-             const d = Math.hypot(f.target.x - f.x, f.target.y - f.y);
-             // Wymuszenie trybu walki w nowym AI
-             if(f.state !== 'dogfight3D' && f.state !== 'bombing') {
-                 f.state = (f.target.isCapitalShip || f.target.hp > 500) ? 'bombing' : 'dogfight3D';
-             }
+             f.state = (f.target.isCapitalShip || f.target.hp > 500) ? 'bombing' : 'dogfight3D';
           } else {
-             f.state = 'engage_formation'; // Leć za liderem (graczem)
+             f.state = 'engage_formation';
           }
       } else {
-          // W trybie escort/idle -> trzymaj formację
           f.state = 'guard';
       }
-      
-      // Uruchomienie właściwego mózgu AI SPACE
       if(window.runAdvancedFighterAI) window.runAdvancedFighterAI(f, dt);
   };
 
   SQUAD.list.push(f);
-  npcs.push(f);
+  
+  // Dodanie do świata (obsługa obu przypadków zmiennej globalnej)
+  if (window.npcs) window.npcs.push(f);
+  else npcs.push(f);
+  
   return f;
 }
 
@@ -7042,7 +7033,17 @@ function spawnStationGuard(st, kind, angle){
   // Nie psujemy n.ai! spawnPirate już nadał mu dobre AI.
   return n;
 }
-
+function resetSwarmQueue(){
+  if(!mercMission || !mercMission.swarm) return;
+  mercMission.swarm.timer = 0.5; 
+  // Wypełnij kolejkę nowymi wrogami
+  const types = ['fighter', 'interceptor', 'gunship', 'frigate'];
+  mercMission.swarm.queue = [];
+  for(let i=0; i<5; i++){
+     mercMission.swarm.queue.push(types[Math.floor(Math.random()*types.length)]);
+  }
+}
+window.resetSwarmQueue = resetSwarmQueue;
 
 
 // =============== Rail (2 lufy: serie A→B, A→B) ===============
