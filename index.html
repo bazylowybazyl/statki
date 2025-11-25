@@ -12820,6 +12820,284 @@ if (document.readyState === 'loading') {
 
   })();
 </script>
+<script>
+// =======================================================================
+// HOTFIX: SPACE SURVIVORS + AI SPACE INTEGRATION
+// Wklej to na końcu body, aby naprawić myśliwce (Z) i piratów.
+// =======================================================================
 
+// 1. Helper do bezpiecznego pobierania pozycji (Gracz ma .pos, NPC mają .x/.y)
+function getPos(obj) {
+  if (!obj) return { x: 0, y: 0 };
+  if (obj.pos) return obj.pos; // Gracz
+  return { x: obj.x, y: obj.y }; // NPC/Stacje
+}
+
+// 2. Naprawa celowania myśliwców (zapobiega błędom NaN, gdy celem jest gracz)
+window.tryFireFighter = function(npc, target, dt) {
+  if (!target) return;
+  
+  const tPos = getPos(target);
+  // Definicje broni z AI SPACE
+  const gunDef = (window.AISPACE_GUNS && window.AISPACE_GUNS[npc.gun]) || 
+                 { speed: 600, range: 500, spread: 1.5, dmg: 8, rps: 5, color: '#86f7ff' };
+  
+  const angleToTarget = Math.atan2(tPos.y - npc.y, tPos.x - npc.x);
+  const myAngle = Math.atan2(npc.vy, npc.vx); 
+  const diff = Math.abs(wrapAngle(angleToTarget - myAngle));
+  const dist = Math.hypot(tPos.x - npc.x, tPos.y - npc.y);
+
+  // Strzał z działa
+  if (dist < gunDef.range && diff < 0.5 && npc.gunCD <= 0) {
+     // Używamy adaptera strzelania
+     if(window.spawnBulletAdapter) {
+        window.spawnBulletAdapter(npc, target, gunDef);
+     } else {
+        // Fallback jeśli adapter nie istnieje
+        window.bullets.push({
+            x: npc.x, y: npc.y,
+            vx: npc.vx + Math.cos(myAngle) * gunDef.speed,
+            vy: npc.vy + Math.sin(myAngle) * gunDef.speed,
+            life: 0.8, r: 3, owner: npc.friendly ? 'player' : 'npc', damage: gunDef.dmg, color: gunDef.color
+        });
+     }
+     npc.gunCD = 1.0 / (gunDef.rps || 5);
+  }
+  
+  // Strzał rakietą (jeśli ma amunicję)
+  if (npc.mslAmmo > 0 && npc.mslCD <= 0 && dist < 1200 && diff < 0.6) {
+      window.bullets.push({
+        x: npc.x, y: npc.y,
+        vx: npc.vx + Math.cos(myAngle) * 150,
+        vy: npc.vy + Math.sin(myAngle) * 150,
+        life: 4.0, r: 4,
+        owner: npc.friendly ? 'player' : 'npc',
+        damage: 40,
+        type: 'rocket',
+        target: target, 
+        color: '#7cd7ff',
+        homingDelay: 0.2,
+        explodeRadius: 40
+      });
+      npc.mslAmmo--;
+      npc.mslCD = 5.0;
+  }
+};
+
+// 3. Naprawione AI myśliwców (obsługa statków, które nie mają .x/.y wprost)
+window.runAdvancedFighterAI = function(npc, dt) {
+  npc.gunCD = Math.max(0, (npc.gunCD || 0) - dt);
+  npc.mslCD = Math.max(0, (npc.mslCD || 0) - dt);
+  
+  // Znajdź cel jeśli brak
+  let target = npc.target;
+  if (!target || target.dead) {
+      if(window.aiPickBestTarget) {
+          target = window.aiPickBestTarget(npc, 3000);
+          npc.target = target;
+      }
+  }
+
+  const tPos = getPos(target);
+  const distToTarget = target ? Math.hypot(tPos.x - npc.x, tPos.y - npc.y) : Infinity;
+  
+  // Decyzja o stanie
+  if (!target) {
+      npc.state = 'engage_formation';
+  } else {
+      // Atakuj bombowo duże cele (stacje, capital, gracza)
+      const isBig = target.isCapitalShip || target === window.ship || (target.radius && target.radius > 30);
+      if (isBig && distToTarget < 1500) npc.state = 'bombing';
+      else if (distToTarget < 800) npc.state = 'dogfight3D';
+      else npc.state = 'engage_formation';
+  }
+
+  // --- WYKONANIE RUCHU ---
+  
+  // A. BOMBING RUN (Nalot)
+  if (npc.state === 'bombing' && target) {
+    if (!npc.bombardVec || npc.lastTargetId !== (target.id || 'player')) {
+      const a = Math.random() * 6.28;
+      npc.bombardVec = { x: Math.cos(a), y: Math.sin(a) };
+      npc.bombardSide = 1; 
+      npc.lastTargetId = target.id || 'player';
+    }
+    const lineLen = 1200; 
+    const wayX = tPos.x + (npc.bombardVec.x * lineLen * npc.bombardSide);
+    const wayY = tPos.y + (npc.bombardVec.y * lineLen * npc.bombardSide);
+
+    if (Math.hypot(wayX - npc.x, wayY - npc.y) < 250) npc.bombardSide *= -1; 
+
+    const dx = wayX - npc.x;
+    const dy = wayY - npc.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const dir = { x: dx/dist, y: dy/dist };
+    
+    // Fizyka skrętu
+    const wantSpeed = (npc.maxSpeed || 500) * 1.1; 
+    const turned = clampTurnVec(npc.vx, npc.vy, dir.x * wantSpeed, dir.y * wantSpeed, dt, 160);
+    npc.vx = turned.vx; npc.vy = turned.vy;
+    npc.angle = Math.atan2(npc.vy, npc.vx);
+    
+    tryFireFighter(npc, target, dt);
+    return;
+  }
+
+  // B. DOGFIGHT / ZWYKŁY LOT
+  if (npc.state === 'dogfight3D' && target) {
+     // Prosty lead aim
+     const aimX = tPos.x + (target.vx||0);
+     const aimY = tPos.y + (target.vy||0);
+     const dx = aimX - npc.x, dy = aimY - npc.y;
+     const dist = Math.hypot(dx, dy)||1;
+     const dir = {x: dx/dist, y: dy/dist};
+     
+     const turned = clampTurnVec(npc.vx, npc.vy, dir.x * (npc.maxSpeed||500), dir.y * (npc.maxSpeed||500), dt, 280);
+     npc.vx = turned.vx; npc.vy = turned.vy;
+     npc.angle = Math.atan2(npc.vy, npc.vx);
+     
+     tryFireFighter(npc, target, dt);
+     return;
+  }
+
+  // C. POWRÓT DO FORMACJI (Gdy brak celu)
+  const leader = (npc.squad) ? npc.squad.leader : null;
+  if (leader && !leader.dead) {
+    const lPos = getPos(leader);
+    const lAngle = leader.angle || 0;
+    const off = npc.formationOffset || {x:-100, y:0};
+    
+    const destX = lPos.x + (off.x * Math.cos(lAngle) - off.y * Math.sin(lAngle));
+    const destY = lPos.y + (off.x * Math.sin(lAngle) + off.y * Math.cos(lAngle));
+    
+    const dx = destX - npc.x, dy = destY - npc.y;
+    const dist = Math.hypot(dx, dy)||1;
+    const dir = {x: dx/dist, y: dy/dist};
+    
+    // Zwalniaj przy dochodzeniu do pozycji
+    const speed = (dist > 150) ? (npc.maxSpeed||500) * 1.2 : (npc.maxSpeed||500) * 0.4;
+    
+    const turned = clampTurnVec(npc.vx, npc.vy, dir.x * speed, dir.y * speed, dt, 200);
+    npc.vx = turned.vx; npc.vy = turned.vy;
+    npc.angle = Math.atan2(npc.vy, npc.vx);
+  } else {
+    // Hamowanie
+    npc.vx *= 0.98; npc.vy *= 0.98;
+  }
+};
+
+// 4. Naprawa Spawnera Myśliwców Gracza (Klawisz Z)
+window.spawnFighter = function() {
+  // Ustal pozycję startową koło gracza
+  const off = {x: -60, y: (Math.random()-0.5)*60};
+  const spawnPos = { 
+      x: ship.pos.x + (Math.cos(ship.angle)*off.x - Math.sin(ship.angle)*off.y), 
+      y: ship.pos.y + (Math.sin(ship.angle)*off.x + Math.cos(ship.angle)*off.y) 
+  };
+
+  const f = makeNPCBase(spawnPos, {
+    hp: 80, accel: 320, maxSpeed: 600, turn: 7.0, radius: 12
+  });
+  
+  f.friendly = true;
+  f.mission = true; // Ważne: włącza logikę AI misji zamiast cywilnej
+  f.fighter = true;
+  f.color = '#7cff91';
+  f.vx = ship.vel.x; // Start z prędkością statku matki
+  f.vy = ship.vel.y;
+  
+  f.gun = 'laserS'; f.msl = 'AF'; f.mslAmmo = 4;
+  f.gunCD = 0; f.mslCD = 0;
+
+  if (!window.SQUAD) window.SQUAD = { list: [], order: 'idle', targets: [] };
+  const idx = window.SQUAD.list.length;
+  f.formIndex = idx;
+  
+  // Formacja V
+  const row = Math.floor((idx + 1) / 2);
+  const side = (idx % 2 === 0) ? 1 : -1;
+  f.formationOffset = { x: -120 - (row * 50), y: side * (50 + row * 30) };
+
+  f.squad = { leader: window.ship, type: 'fighter' }; 
+  
+  // Przypisz naprawione AI
+  f.ai = (dt) => window.runAdvancedFighterAI(f, dt);
+
+  window.SQUAD.list.push(f);
+  if (window.npcs) window.npcs.push(f);
+  
+  return f;
+};
+
+// 5. Naprawa Spawnera Piratów (Misja Najemnik)
+window.spawnPirate = function(kind, station) {
+  const angle = Math.random() * Math.PI * 2;
+  const dist = (station.r || 100) + 120;
+  const pos = {
+    x: station.x + Math.cos(angle) * dist,
+    y: station.y + Math.sin(angle) * dist
+  };
+
+  let stats = { hp: 120, accel: 200, maxSpeed: 450, turn: 4.0, radius: 20 };
+  if (kind.includes('frigate')) {
+    stats = { hp: 800, accel: 80, maxSpeed: 280, turn: 1.5, radius: 40 };
+  }
+
+  const npc = makeNPCBase(pos, stats);
+  npc.type = kind;
+  npc.friendly = false; 
+  npc.isPirate = true;
+  npc.color = '#ff5c7c'; 
+  npc.mission = true;    
+
+  if (kind.includes('frigate')) {
+    // Proste AI dla fregat
+    npc.ai = (dt) => {
+        // Leć w stronę gracza, ale trzymaj dystans
+        const pPos = window.ship.pos;
+        const dx = pPos.x - npc.x;
+        const dy = pPos.y - npc.y;
+        const d = Math.hypot(dx, dy);
+        
+        if(d > 600) { // Goń
+            const turned = clampTurnVec(npc.vx, npc.vy, (dx/d)*npc.maxSpeed, (dy/d)*npc.maxSpeed, dt, 100);
+            npc.vx = turned.vx; npc.vy = turned.vy;
+        } else { // Hamuj
+            npc.vx *= 0.95; npc.vy *= 0.95;
+        }
+        npc.angle = Math.atan2(dy, dx);
+        
+        // Strzelaj (używając tryFireFighter jako proxy bo ma dobrą logikę celowania)
+        window.tryFireFighter(npc, window.ship, dt);
+    };
+  } else {
+    npc.gun = 'laserS'; npc.msl = 'AF'; npc.mslAmmo = 1;
+    npc.ai = (dt) => window.runAdvancedFighterAI(npc, dt);
+  }
+
+  if (window.npcs) window.npcs.push(npc);
+  return npc;
+};
+
+// Nadpisanie obsługi klawisza Z (żeby używała poprawionego spawnera)
+window.addEventListener('keydown', e => {
+    if (e.key.toLowerCase() === 'z' && !e.repeat) {
+        if(!(Game.player.weapons && Game.player.weapons.hangar && Game.player.weapons.hangar.length)) { 
+            // ignore if no hangar
+            return; 
+        }
+        if (!window.SQUAD || SQUAD.list.length === 0) {
+            window.SQUAD = { list: [], order: 'escort', targets: [] };
+            for (let i = 0; i < 6; i++) window.spawnFighter();
+            console.log("Fighters Launched!");
+        } else {
+            SQUAD.order = (SQUAD.order === 'escort') ? 'attack' : 'escort';
+            console.log("Squad Order:", SQUAD.order);
+        }
+    }
+});
+
+console.log(">>> FIX ZASTOSOWANY: Myśliwce i Piraci powinni działać <<<");
+</script>
 </body>
 </html>
