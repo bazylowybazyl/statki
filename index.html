@@ -6045,9 +6045,9 @@ function startMercenaryMission(){
     weaponPlatforms: [],
     // --- SWARM control ---
     swarm: {
-      active:false,
+      active:true,
       maxAlive: 200,     // <- zwiększony limit
-      timer: 0,
+      timer: 2,
       baseInterval: 1.0, // skraca się wraz z utratą HP stacji
       queue: []
     }
@@ -6069,6 +6069,9 @@ function startMercenaryMission(){
     { angle: baseAngle + angleStep*2 + (Math.random()-0.5)*jitter, orbitRadius: orbitBase + 40, label: 'Platforma C', orbitSpeed: -0.16 },
     { angle: baseAngle + angleStep*3 + (Math.random()-0.5)*jitter, orbitRadius: orbitBase + 120, label: 'Platforma D', orbitSpeed: 0.14 }
   ];
+  if (typeof window.resetSwarmQueue === 'function') {
+      window.resetSwarmQueue();
+  }
   for(const cfg of platformConfigs){
     const platform = spawnWeaponPlatform(station, cfg);
     mercMission.weaponPlatforms.push(platform);
@@ -6992,19 +6995,60 @@ function spawnFighter(){
 
   // AI
   f.ai = (dt) => {
+      // 1. Zarządzanie rozkazami
       if (SQUAD.order === 'attack') {
           if(!f.target || f.target.dead) {
              if(window.aiPickBestTarget) f.target = window.aiPickBestTarget(f, 2500);
           }
+          
+          // Jeśli jest wróg -> użyj zaawansowanego AI bojowego
           if(f.target) {
              f.state = (f.target.isCapitalShip || f.target.hp > 500) ? 'bombing' : 'dogfight3D';
-          } else {
-             f.state = 'engage_formation';
-          }
+             if(window.runAdvancedFighterAI) window.runAdvancedFighterAI(f, dt);
+             return;
+          } 
+          
+          // Jeśli rozkaz ataku ale brak wroga -> wracaj do formacji
+          f.state = 'engage_formation';
       } else {
           f.state = 'guard';
       }
-      if(window.runAdvancedFighterAI) window.runAdvancedFighterAI(f, dt);
+
+      // 2. Prosta fizyka powrotu do formacji (gdy nie walczymy)
+      // To naprawi "stanie w miejscu"
+      
+      const leader = ship; // Twoim liderem jest gracz
+      
+      // Oblicz pozycję w formacji
+      const offset = f.formationOffset || {x:-50, y:50};
+      const la = leader.angle;
+      const ox = offset.x * Math.cos(la) - offset.y * Math.sin(la);
+      const oy = offset.x * Math.sin(la) + offset.y * Math.cos(la);
+      const destX = leader.pos.x + ox;
+      const destY = leader.pos.y + oy;
+
+      // Leć tam
+      const dx = destX - f.x;
+      const dy = destY - f.y;
+      const dist = Math.hypot(dx, dy);
+      
+      // Fizyka dolotu
+      if (dist > 10) {
+          const wantSpeed = Math.min(f.maxSpeed, dist * 4.0); // Im dalej tym szybciej
+          const dirX = dx / dist;
+          const dirY = dy / dist;
+          
+          // Płynny zwrot
+          const turned = clampTurnVec(f.vx, f.vy, dirX*wantSpeed, dirY*wantSpeed, dt, 360);
+          f.vx = turned.vx;
+          f.vy = turned.vy;
+          f.angle = Math.atan2(f.vy, f.vx);
+      } else {
+          // Jesteśmy na miejscu - utrzymaj prędkość lidera
+          f.vx = leader.vel.x;
+          f.vy = leader.vel.y;
+          f.angle = leader.angle;
+      }
   };
 
   SQUAD.list.push(f);
