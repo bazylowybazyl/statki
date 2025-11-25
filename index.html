@@ -6885,57 +6885,7 @@ function aiLeadAim(shooter,target,projSpeed=180){
   t = Math.max(0,Math.min(2.0,t));
   return {x:target.x+vx*t,y:target.y+vy*t};
 }
-function aiSpawnBullet(owner,target,def,opts={}){
-  const dir = target ? aiLeadAim(owner,target,def.speed||400) : {x:owner.x + Math.cos(owner.angle||0), y: owner.y + Math.sin(owner.angle||0)};
-  const ang = Math.atan2(dir.y-owner.y, dir.x-owner.x);
-  const spread = (opts.spread ?? def.spread ?? 0) * (Math.PI/180 || 1);
-  const jitter = (Math.random()-0.5) * spread;
-  const vx = Math.cos(ang + jitter) * (def.speed||400) + (owner.vx||0);
-  const vy = Math.sin(ang + jitter) * (def.speed||400) + (owner.vy||0);
-  bullets.push({
-    x: owner.x,
-    y: owner.y,
-    vx, vy,
-    life: (def.range||400) / Math.max(1, def.speed||400),
-    r: 3,
-    owner: owner.friendly ? 'player' : 'npc',
-    damage: def.dmg || 8,
-    type: opts.type || 'npc',
-    color: def.color,
-    source: owner
-  });
-}
-function aiSpawnFlakShell(owner,target,def){
-  const aim = aiLeadAim(owner,target,def.speed||300);
-  const ang = Math.atan2(aim.y-owner.y, aim.x-owner.x);
-  const vx = Math.cos(ang)*(def.speed||300) + (owner.vx||0);
-  const vy = Math.sin(ang)*(def.speed||300) + (owner.vy||0);
-  bullets.push({
-    x: owner.x,
-    y: owner.y,
-    vx, vy,
-    life: (def.range||400) / Math.max(1, def.speed||300),
-    r: 6,
-    owner: owner.friendly ? 'player' : 'npc',
-    damage: def.dmg || 20,
-    type: 'flak',
-    explodeRadius: def.radius || 36,
-    source: owner
-  });
-}
-function aiPickTarget(self){
-  return { x: ship.pos.x, y: ship.pos.y, vx: ship.vel.x, vy: ship.vel.y, kind:'player' };
-}
-function aiGetNearestMissile(){ return null; }
-function aiCanFireAtCap(){ return true; }
-function aiIsLineOfFireClear(){ return true; }
 
-function aiApplyFriction(self){
-  if(typeof self.friction === 'number'){
-    self.vx *= self.friction;
-    self.vy *= self.friction;
-  }
-}
 
 function spawnFighter(){
   // Sprawdź czy mamy broń w hangarze
