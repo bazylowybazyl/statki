@@ -653,6 +653,8 @@ class BattleSim{
       const hy = ship.y + h.x*s + h.y*c;
       const x = hx + dirx*launchOffset;
       const y = hy + diry*launchOffset;
+      const playerShip = SHIP.friend;
+      const angleToPlayer = Math.atan2(playerShip.y - y, playerShip.x - x);
       const u = {
         kind:'fighter',
         team,
@@ -677,6 +679,7 @@ class BattleSim{
         targetId:null,
         _slashSign:1,
         size:6,
+        ang:angleToPlayer,
         squad,
         formationSlot:null,
         dogfightTime:0,
@@ -696,6 +699,7 @@ class BattleSim{
 
   spawnFrigate(team, type='pd'){
     const ship = team==='player'?SHIP.friend:SHIP.enemy;
+    const playerShip = SHIP.friend;
     const cfg=this.teamCfg[team];
     const u = {
       kind:'frigate',
@@ -727,6 +731,12 @@ class BattleSim{
       radius:28,
       subType:type
     };
+    if(team==='enemy'){
+      const angleToPlayer = Math.atan2(playerShip.y - u.y, playerShip.x - u.x);
+      u.ang = angleToPlayer;
+      const dirToPlayer = norm(playerShip.x - u.x, playerShip.y - u.y);
+      u.moveAnchor = { x: u.x + dirToPlayer.x * 260, y: u.y + dirToPlayer.y * 260 };
+    }
     u.aiUpdate = dt => (type==='laser'? aiLaserFrigate(this,u,dt): aiFrigate(this,u,dt));
     this.addUnit(u);
     const squad = this.addSquad({
@@ -747,6 +757,7 @@ class BattleSim{
 
   spawnDestroyer(team){
     const ship = team==='player'?SHIP.friend:SHIP.enemy;
+    const playerShip = SHIP.friend;
     const u = {
       kind:'destroyer',
       team,
@@ -779,6 +790,12 @@ class BattleSim{
       boostDur:1.8,
       boostCool:8.0
     };
+    if(team==='enemy'){
+      const angleToPlayer = Math.atan2(playerShip.y - u.y, playerShip.x - u.x);
+      u.ang = angleToPlayer;
+      const dirToPlayer = norm(playerShip.x - u.x, playerShip.y - u.y);
+      u.moveAnchor = { x: u.x + dirToPlayer.x * 320, y: u.y + dirToPlayer.y * 320 };
+    }
     u.aiUpdate = dt => aiDestroyer(this,u,dt);
     this.addUnit(u);
     const squad = this.addSquad({
@@ -799,6 +816,7 @@ class BattleSim{
 
   spawnBattleship(team){
     const ship = team==='player'?SHIP.friend:SHIP.enemy;
+    const playerShip = SHIP.friend;
     const u = {
       kind:'battleship',
       team,
@@ -839,6 +857,12 @@ class BattleSim{
       rotBoostDur:0.9,
       rotBoostCool:8.0
     };
+    if(team==='enemy'){
+      const angleToPlayer = Math.atan2(playerShip.y - u.y, playerShip.x - u.x);
+      u.ang = angleToPlayer;
+      const dirToPlayer = norm(playerShip.x - u.x, playerShip.y - u.y);
+      u.moveAnchor = { x: u.x + dirToPlayer.x * 380, y: u.y + dirToPlayer.y * 380 };
+    }
     u.aiUpdate = dt => aiBattleship(this,u,dt);
     this.addUnit(u);
     const squad = this.addSquad({
