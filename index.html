@@ -9330,172 +9330,10 @@ function drawBattleship(ctx, npc, screenPos){
   ctx.restore();
 }
 
-function drawFrigateHull(ctx, npc, screenPos){
-  const zoom = camera.zoom;
-  const w = (npc.size?.w || npc.radius*2.2) * zoom;
-  const h = (npc.size?.h || npc.radius*0.9) * zoom;
-  
-  ctx.save();
-  ctx.translate(screenPos.x, screenPos.y);
-  ctx.rotate(npc.angle || 0);
-  
-  // Kolor
-  if (npc.subType === 'laser') ctx.fillStyle = '#3c2d54';
-  else if (npc.friendly) ctx.fillStyle = '#284b36';
-  else ctx.fillStyle = '#563c2c'; 
 
-  ctx.strokeStyle = npc.friendly ? '#7cff91' : '#ff5c7c';
-  ctx.lineWidth = 2;
-  
-  // Kształt
-  ctx.beginPath();
-  ctx.rect(-w*0.5, -h*0.5, w, h);
-  ctx.fill(); ctx.stroke();
-  
-  // Dziób
-  ctx.beginPath();
-  ctx.moveTo(0,0); ctx.lineTo(w*0.6,0);
-  ctx.stroke();
-  
-  drawMiniHP(ctx, npc, h);
-  ctx.restore();
-};
 
-function drawDestroyer(ctx, npc, screenPos){
-  const zoom = camera.zoom;
-  const w = (npc.size?.w || 100) * zoom;
-  const h = (npc.size?.h || 30) * zoom;
-  
-  ctx.save();
-  ctx.translate(screenPos.x, screenPos.y);
-  ctx.rotate(npc.angle);
-  
-  ctx.fillStyle = npc.friendly ? '#2c3f56' : '#563c2c'; 
-  ctx.strokeStyle = npc.friendly ? '#7cff91' : '#ff5c7c';
-  ctx.lineWidth = 2.2;
-  
-  // Kadłub
-  ctx.beginPath();
-  ctx.rect(-w*0.5, -h*0.5, w*0.8, h);
-  ctx.fill(); ctx.stroke();
-  
-  // Mostek
-  ctx.fillStyle = npc.friendly ? '#3e5570' : '#6e4d3d';
-  ctx.beginPath();
-  ctx.moveTo(w*0.1, -h*0.3);
-  ctx.lineTo(w*0.4, 0);
-  ctx.lineTo(w*0.1, h*0.3);
-  ctx.fill();
-  
-  drawMiniHP(ctx, npc, h);
-  ctx.restore();
-};
 
-function drawBattleship(ctx, npc, screenPos){
-  const zoom = camera.zoom;
-  const w = (npc.size?.w || 160) * zoom;
-  const h = (npc.size?.h || 60) * zoom;
-  
-  ctx.save();
-  ctx.translate(screenPos.x, screenPos.y);
-  ctx.rotate(npc.angle);
-  
-  ctx.fillStyle = npc.friendly ? '#1c2f46' : '#462c1c';
-  ctx.strokeStyle = npc.friendly ? '#7cff91' : '#ff5c7c';
-  ctx.lineWidth = 3;
-
-  // Kształt
-  ctx.beginPath();
-  ctx.moveTo(w*0.5, 0); 
-  ctx.lineTo(w*0.3, h*0.5); 
-  ctx.lineTo(-w*0.5, h*0.5);
-  ctx.lineTo(-w*0.4, 0); 
-  ctx.lineTo(-w*0.5, -h*0.5); 
-  ctx.lineTo(w*0.3, -h*0.5);
-  ctx.closePath();
-  ctx.fill(); ctx.stroke();
-
-  // Wieżyczki
-  ctx.fillStyle = npc.friendly ? '#4a9eff' : '#ff9b4b';
-  ctx.fillRect(-w*0.2, -h*0.6, w*0.1, h*0.2);
-  ctx.fillRect(-w*0.2, h*0.4, w*0.1, h*0.2);
-
-  drawMiniHP(ctx, npc, h);
-  ctx.restore();
-};
-
-// Helper do paska HP
-function drawMiniHP(ctx, npc, height) {
-    const hpPct = npc.hp / (npc.maxHp || 1);
-    if(hpPct < 0.98) {
-        ctx.fillStyle = 'rgba(0,0,0,0.8)';
-        ctx.fillRect(-20, -height/2 - 12, 40, 5);
-        ctx.fillStyle = hpPct > 0.5 ? '#0f0' : '#f00';
-        ctx.fillRect(-20, -height/2 - 12, 40 * hpPct, 5);
-    }
-}
-window.drawNPCPretty = function(ctx, npc, screenPos) {
-  const pixR = npc.radius * camera.zoom;
-
-  if (npc.isCapitalShip && npc.capitalProfile) {
-    drawCapitalShipSprite(ctx, npc, screenPos, pixR);
-    return;
-  }
-
-  const typeName = String(npc.type || '').toLowerCase();
-  
-  // Obsługa nowych typów z AI SPACE
-  if(typeName.includes('frigate')) { drawFrigateHull(ctx, npc, screenPos); return; }
-  if(typeName.includes('destroyer')) { drawDestroyer(ctx, npc, screenPos); return; }
-  if(typeName.includes('battleship')) { drawBattleship(ctx, npc, screenPos); return; }
-
-  // Standardowe rysowanie (dla Fighters) - reszta bez zmian
-  const sprite = npc.friendly ? npcSpriteFriendly : npcSpriteHostile;
-
-  if (!sprite || !sprite.complete || sprite.naturalWidth === 0) {
-    // Fallback (trójkąt)
-    ctx.save();
-    ctx.globalAlpha = npc.fade ?? 1;
-    ctx.translate(screenPos.x, screenPos.y);
-    ctx.rotate(npc.angle + Math.PI);
-    ctx.fillStyle = npc.friendly ? '#bfd8ff' : '#ffc7bd';
-    ctx.beginPath();
-    ctx.moveTo( pixR, 0); ctx.lineTo(-pixR*0.7, -pixR*0.6); ctx.lineTo(-pixR*0.7,  pixR*0.6);
-    ctx.closePath(); ctx.fill();
-    ctx.restore();
-    return;
-  }
-
-  const drawWidth = pixR * 2.66; 
-  const drawHeight = pixR * 2.0; 
-
-  ctx.save();
-  ctx.globalAlpha = npc.fade ?? 1;
-  ctx.translate(screenPos.x, screenPos.y);
-  ctx.rotate(npc.angle);
-  ctx.save();
-  ctx.rotate(Math.PI);
-  ctx.drawImage(sprite, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
-  
-  if (npc.hitFlash > 0) {
-    ctx.globalCompositeOperation = 'screen';
-    ctx.globalAlpha = npc.hitFlash;
-    ctx.fillStyle = npc.friendly ? '#cfe8ff' : '#ffd8d0';
-    ctx.fillRect(-drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
-  }
-  ctx.restore(); ctx.restore();
-
-  // Pasek HP
-  const hpFrac = npc.maxHp ? (npc.hp / npc.maxHp) : 1;
-  if (hpFrac < 1.0) {
-    const hpBarWidth = Math.max(pixR * 1.5, 20);
-    const hpY = -drawHeight / 2 - Math.max(8, 8 * camera.zoom);
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(-hpBarWidth/2, hpY, hpBarWidth, 4 * camera.zoom);
-    ctx.fillStyle = hpFrac > 0.5 ? '#60a5fa' : (hpFrac > 0.2 ? '#f59e0b' : '#ef4444');
-    ctx.fillRect(-hpBarWidth/2, hpY, hpBarWidth * hpFrac, 4 * camera.zoom);
-  }
-};
+w
   
 function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
   const profile = npc.capitalProfile || {};
@@ -12706,10 +12544,12 @@ function wireDevTools(){
 })();
 
 if (document.readyState === 'loading') {
-  window.addEventListener('DOMContentLoaded', wireDevTools);
-} else {
-  wireDevTools();
-}
+      window.addEventListener('DOMContentLoaded', wireDevTools);
+    } else {
+      wireDevTools();
+    }
+
+  })();
   </script>
 
 <script>
