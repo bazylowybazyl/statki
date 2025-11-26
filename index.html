@@ -11424,6 +11424,7 @@ function wireDevTools(){
       });
     }
   }
+  window.wireDevTools = wireDevTools;
   </script>
 
 <!-- === DEVTOOLS (F10) =================================================== -->
@@ -12356,7 +12357,7 @@ function wireDevTools(){
   function applyOrbitOverrides(){
     if (!Array.isArray(window.planets) || !window.SUN) return;
     const baseOrbit = getBaseOrbit();
-    const Sx = +SUN.x||0, Sy = +SUN.y||0;
+    const Sx = +window.SUN.x||0, Sy = +window.SUN.y||0;
     const map = DevConfig.planetOrbitAUById || {};
     for (const p of window.planets){
       const k = keyFor(p);
