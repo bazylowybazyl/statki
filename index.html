@@ -563,7 +563,7 @@ function detachPlanetStationsIfNeeded(){
 
 window.addEventListener('beforeunload', detachPlanetStationsIfNeeded);
 
-// Dev flags/tuning (persisted via devtools where available)
+// Dev flags/tuning (persisted via  where available)
 window.DevFlags = Object.assign({
   showRuler: false,
   unlimitedWarp: false,
@@ -2138,15 +2138,18 @@ function formatPlanetLabel(planet, index){
   if (typeof planet.id === 'string') candidates.push(planet.id);
   if (typeof planet.type === 'string') candidates.push(planet.type);
 
-for (const raw of candidates) {
-      if (!raw) continue;
-      const pretty = raw // <--- Dodano nazwę 'pretty'
-        .replace(/[_-]+/g, ' ')
-        .trim()
-        .replace(/\b\w/g, ch => ch.toUpperCase());
-      if (pretty) return pretty; // <--- Dodano warunek i zwrot
-    }
-
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const pretty = raw
+      .replace(/[_-]+/g, ' ')
+      .trim()
+      .replace(/\b\w/g, ch => ch.toUpperCase());
+    if (pretty) return pretty;
+  }
+  
+  // Tego brakowało:
+  return `Planet ${index + 1}`;
+}
 // wylicz pozycje
 let planets = PLANET_DATA.map((p, index) => {
   if (p.baseR == null) p.baseR = p.r;
@@ -9628,8 +9631,8 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
 
 function render(alpha, frameDt){
   canvas.style.cursor = 'default';
-  // DevTools cheats (np. nielimitowany warp)
-  if (window.devtoolsApplyCheats) devtoolsApplyCheats();
+  //  cheats (np. nielimitowany warp)
+  if (window.ApplyCheats) ApplyCheats();
   // Interpolacja stanu
   const interpPos = {
     x: prevState.pos.x + (ship.pos.x - prevState.pos.x) * alpha,
