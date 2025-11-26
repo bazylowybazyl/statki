@@ -9466,7 +9466,74 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
 
   ctx.restore();
 }
+// === DODAJ TĘ FUNKCJĘ DO KODU ===
+function drawNPCPretty(ctx, npc, s) {
+  // 1. Jeśli to duży statek (Capital Ship) używający sprite'a
+  if (npc.isCapitalShip) {
+    const pixR = (npc.radius || 20) * camera.zoom;
+    drawCapitalShipSprite(ctx, npc, s, pixR);
+    return;
+  }
 
+  // 2. Specjalne typy statków (rysowane proceduralnie)
+  if (npc.type === 'destroyer') {
+    drawDestroyer(ctx, npc, s);
+    return;
+  }
+  if (npc.type === 'battleship') {
+    drawBattleship(ctx, npc, s);
+    return;
+  }
+  if (npc.type && (npc.type.includes('frigate') || npc.subType === 'laser')) {
+    drawFrigateHull(ctx, npc, s);
+    return;
+  }
+
+  // 3. Domyślny rysunek dla myśliwców (Fighter/Interceptor)
+  const zoom = camera.zoom;
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.rotate(npc.angle);
+  
+  // Kolor zależny od nastawienia
+  ctx.fillStyle = npc.color || (npc.friendly ? '#7cff91' : '#ff5c7c');
+  
+  // Rysowanie trójkąta (myśliwiec)
+  const size = (npc.radius || 12) * zoom;
+  ctx.beginPath();
+  ctx.moveTo(size, 0);
+  ctx.lineTo(-size * 0.6, size * 0.7);
+  ctx.lineTo(-size * 0.3, 0);
+  ctx.lineTo(-size * 0.6, -size * 0.7);
+  ctx.closePath();
+  ctx.fill();
+  
+  // Obrys
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+  ctx.stroke();
+
+  // Pasek HP nad jednostką (opcjonalnie, jeśli blisko kursora lub uszkodzony)
+  if (npc.hp < npc.maxHp) {
+    const hpPct = Math.max(0, npc.hp / npc.maxHp);
+    ctx.fillStyle = '#ef4444';
+    ctx.fillRect(-size, -size - 6, size * 2, 3);
+    ctx.fillStyle = '#22c55e';
+    ctx.fillRect(-size, -size - 6, size * 2 * hpPct, 3);
+  }
+
+  // Tarcza (jeśli aktywna)
+  if (npc.shield && npc.shield.val > 0) {
+    const shieldPct = npc.shield.val / npc.shield.max;
+    ctx.strokeStyle = `rgba(100, 200, 255, ${shieldPct * 0.6})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, size * 1.2, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
 function render(alpha, frameDt){
   canvas.style.cursor = 'default';
   //  cheats (np. nielimitowany warp)
@@ -11944,7 +12011,9 @@ function wireDevTools(){
     if (rebuildTimer) cancelAnimationFrame(rebuildTimer);
     rebuildTimer = requestAnimationFrame(()=> {
       // aktualizujemy struktury gry na podstawie DevConfig
-      const numericSun2D = Number.isFinite(DevConfig.sunR2D) ? DevConfig.sunR2D : SUN.r;
+      const gameSun = window.SUN || { r: 823, r3D: 399 }; 
+
+const numericSun2D = Number.isFinite(DevConfig.sunR2D) ? DevConfig.sunR2D : gameSun.r;
       const appliedSun2D = Math.max(1, Math.round(numericSun2D || 0));
       SUN.r = appliedSun2D;
       const numericSun3D = Number.isFinite(DevConfig.sunR3D) ? DevConfig.sunR3D : appliedSun2D;
@@ -12137,7 +12206,7 @@ function wireDevTools(){
       if (ui.sunR2DVal) ui.sunR2DVal.textContent = value2D;
     }
     if (ui.sunR3D) {
-      const fallback3D = Number.isFinite(DevConfig.sunR2D) ? DevConfig.sunR2D : SUN.r;
+      const fallback3D = Number.isFinite(DevConfig.sunR2D) ? DevConfig.sunR2D : gameSun.r;
       const value3D = Number.isFinite(DevConfig.sunR3D) ? DevConfig.sunR3D|0 : fallback3D|0;
       ui.sunR3D.value = value3D;
       if (ui.sunR3DVal) ui.sunR3DVal.textContent = value3D;
@@ -12542,13 +12611,14 @@ function wireDevTools(){
 
   // Upewnij się, że panel można włączyć na starcie (dev wygoda)
   // ui.root.style.display = 'block';
-})();
+
 
 if (document.readyState === 'loading') {
       window.addEventListener('DOMContentLoaded', wireDevTools);
     } else {
       wireDevTools();
     }
+  })();
   </script>
 
 <script>
