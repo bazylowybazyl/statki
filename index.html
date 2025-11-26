@@ -2140,11 +2140,11 @@ function formatPlanetLabel(planet, index){
 
   for (const raw of candidates) {
     if (!raw) continue;
-    const pretty = raw
+    const  = raw
       .replace(/[_-]+/g, ' ')
       .trim()
       .replace(/\b\w/g, ch => ch.toUpperCase());
-    if (pretty) return pretty;
+    if () return ;
   }
   return `Planet ${index + 1}`;
 }
@@ -3404,49 +3404,48 @@ function spawnInterceptor(pos){
   MISSION_NPCS.push(n);
 }
 function spawnPirate(kind, station) {
-  // 1. Pozycja
   const angle = Math.random() * Math.PI * 2;
-  const dist = (station.r || 100) + 50 + Math.random() * 100;
+  const dist = (station.r || 100) + 150;
+  // Obliczamy pozycję startową wokół stacji
   const pos = {
     x: station.x + Math.cos(angle) * dist,
     y: station.y + Math.sin(angle) * dist
   };
 
-  // 2. Statystyki
+  // Statystyki w zależności od typu
   let stats = { hp: 100, accel: 200, maxSpeed: 400, turn: 4.0, radius: 20 };
   if (kind === 'interceptor' || kind === 'fighter') {
     stats = { hp: 80, accel: 280, maxSpeed: 540, turn: 5.5, radius: 12 };
-  } else if (kind === 'frigate' || kind === 'frigate_pd') {
-    stats = { hp: 600, accel: 80, maxSpeed: 320, turn: 2.0, radius: 40 };
+  } else if (kind.includes('frigate')) {
+    stats = { hp: 1200, accel: 60, maxSpeed: 280, turn: 1.2, radius: 45 };
   }
 
-  // 3. Utwórz obiekt (makeNPCBase musi być dostępne)
+  // Używamy istniejącego makeNPCBase
   const npc = makeNPCBase(pos, stats);
   
-  // 4. Konfiguracja
+  // Konfiguracja
   npc.type = kind;
   npc.friendly = false; 
   npc.isPirate = true;
   npc.color = '#ff5c7c'; 
-  npc.mission = true;    
+  npc.mission = true; // To ważne, żeby nie znikał po oddaleniu
 
-  // 5. AI
-  if (kind === 'frigate' || kind === 'frigate_pd') {
-    npc.pd = 'pd_mk1';
+  // Logika AI
+  if (kind.includes('frigate')) {
+    npc.pd = 'pd_mk1'; 
     npc.flak = 'flak_L';
-    if(window.aiFrigate) npc.ai = (dt) => window.aiFrigate(null, npc, dt);
+    npc.size = { w: 120, h: 40 }; // Wymiary dla funkcji rysującej
+    // Używamy AI fregaty (upewnij się że aiFrigate istnieje w kodzie, jeśli nie - użyj runAdvancedFighterAI)
+    npc.ai = (dt) => { if(window.aiFrigate) window.aiFrigate(null, npc, dt); };
   } else {
-    npc.gun = 'laserS';
-    npc.gunCD = 0;
+    npc.gun = 'laserS'; 
     npc.msl = 'AF'; 
     npc.mslAmmo = 1;
-    if(window.runAdvancedFighterAI) npc.ai = (dt) => window.runAdvancedFighterAI(npc, dt);
+    npc.ai = (dt) => { if(window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
   }
 
-  // 6. Dodaj do świata
-  if (window.npcs) window.npcs.push(npc);
-  
-  return npc; // Teraz ta zmienna na pewno istnieje!
+  npcs.push(npc);
+  return npc;
 }
 window.spawnPirate = spawnPirate;
   
@@ -6952,106 +6951,103 @@ function pickSquadTargets() {
   return npcs.filter(n => !n.friendly && !n.dead);
 }
 window.pickSquadTargets = pickSquadTargets;
-function spawnFighter(){
-  // Sprawdź czy mamy broń w hangarze
-  if(!(Game.player.weapons?.[HP.HANGAR]?.length)) { 
-      if(typeof toast === 'function') toast('Brak hangarów!'); 
-      return null; 
+window.spawnFighter = function() {
+  // 1. Sprawdź czy statek i hangar istnieją
+  if (!window.ship) return;
+  
+  const hasHangar = Game.player.weapons && Game.player.weapons.hangar && Game.player.weapons.hangar.length > 0;
+  if(!hasHangar) { 
+      if(typeof toast === 'function') toast('Brak modułu hangaru!'); 
+      return; 
   }
 
-  // 1. Bezpieczne pobranie pozycji startowej (Naprawa błędu undefined)
-  ship.nextFighterPod = ship.nextFighterPod || 0; // Inicjalizacja licznika
-  let off = {x: -20, y: 0};
-  
-  if (ship.pods && ship.pods.length > 0) {
-      const podIndex = ship.nextFighterPod % ship.pods.length;
-      const pod = ship.pods[podIndex];
-      ship.nextFighterPod++;
-      if(pod && pod.offset) off = rotate(pod.offset, ship.angle);
-  }
-  
-  const spawnPos = { x: ship.pos.x + off.x, y: ship.pos.y + off.y };
+  // 2. Definicja 2 Hangarów (Lewy i Prawy)
+  const halfW = (ship.w || 60) * 0.5; 
+  const halfH = (ship.h || 120) * 0.1; // Lekko przesunięte do tyłu względem środka
 
-  // 2. Fizyka
-  const f = makeNPCBase(spawnPos, {
-    hp: 60, accel: 320, maxSpeed: 580, turn: 6.5, radius: 12
-  });
-  
-  // 3. Konfiguracja
-  f.friendly = true;
-  f.mission = true; 
-  f.fighter = true;
-  f.color = '#9edfff'; 
-  f.vx = ship.vel.x;
-  f.vy = ship.vel.y;
-  f.engines = [{x:-3,y:8},{x:3,y:8}];
-  
-  f.gun = 'laserS'; 
-  f.msl = 'AF'; f.mslAmmo = 2;
-  f.gunCD = 0; f.mslCD = 0;
+  const hangarSlots = [
+      { x: -halfW, y: halfH, side: -1 }, // Lewa burta
+      { x:  halfW, y: halfH, side:  1 }  // Prawa burta
+  ];
 
-  // 4. Formacja
-  // Upewnij się, że SQUAD istnieje
-  if(typeof SQUAD === 'undefined') {
-     console.error("SQUAD is undefined! Adding fallback.");
-     window.SQUAD = { list: [], order: 'idle', targets: [] };
-  }
+  const createdFighters = [];
 
-  const idx = SQUAD.list.length;
-  f.formIndex = idx;
-  const row = Math.floor((idx + 1) / 2);
-  const side = (idx % 2 === 0) ? 1 : -1;
-  f.formationOffset = { x: -row * 50 - 80, y: side * row * 40 };
+  // 3. PĘTLA: Generuj oba myśliwce natychmiast
+  for (const slot of hangarSlots) {
+      
+      // Obliczanie pozycji w świecie (Rotacja)
+      const c = Math.cos(ship.angle);
+      const s = Math.sin(ship.angle);
+      
+      const spawnX = ship.pos.x + (slot.x * c - slot.y * s);
+      const spawnY = ship.pos.y + (slot.x * s + slot.y * c);
 
-  // Liderem jest GRACZ (ship)
-  f.squad = { leader: ship, type: 'fighter' }; 
+      // Stworzenie obiektu
+      const f = makeNPCBase({x: spawnX, y: spawnY}, {
+        hp: 80, 
+        accel: 350, 
+        maxSpeed: 650, 
+        turn: 7.0, 
+        radius: 12
+      });
+      
+      f.friendly = true;
+      f.mission = true; 
+      f.fighter = true;
+      f.color = '#7cff91'; 
+      
+      // Fizyka Wyrzutni (Wyrzut na boki)
+      const launchSpeed = 180; // Trochę mocniejszy wyrzut
+      // Wektor boczny (prostopadły do kadłuba)
+      const sideDirX = c; 
+      const sideDirY = s;
+      
+      f.vx = ship.vel.x + (sideDirX * launchSpeed * slot.side);
+      f.vy = ship.vel.y + (sideDirY * launchSpeed * slot.side);
+      f.angle = ship.angle; 
 
-  // 5. AI (Teraz bezpiecznie używa window.runAdvancedFighterAI)
-  f.ai = (dt) => {
-      if (SQUAD.order === 'attack') {
-          // Szukaj celu jeśli brak lub martwy
-          if(!f.target || f.target.dead) {
-             if(window.aiPickBestTarget) f.target = window.aiPickBestTarget(f, 2500);
-          }
-          
-          if(f.target) {
-             // Walcz
-             f.state = (f.target.isCapitalShip || f.target.hp > 500) ? 'bombing' : 'dogfight3D';
-             if(window.runAdvancedFighterAI) window.runAdvancedFighterAI(f, dt);
-          } else {
-             // Brak celu -> wracaj do gracza
-             f.state = 'engage_formation';
-             if(window.runAdvancedFighterAI) window.runAdvancedFighterAI(f, dt);
-          }
-      } else {
-          // Tryb Guard / Return - używamy prostego powrotu do formacji
-          // (Skopiowane z poprzedniego rozwiązania dla stabilności)
-          const leader = ship; 
-          const offset = f.formationOffset || {x:-50, y:50};
-          const la = leader.angle;
-          const ox = offset.x * Math.cos(la) - offset.y * Math.sin(la);
-          const oy = offset.x * Math.sin(la) + offset.y * Math.cos(la);
-          const destX = leader.pos.x + ox;
-          const destY = leader.pos.y + oy;
+      // Uzbrojenie
+      f.gun = 'laserS'; 
+      f.msl = 'AF'; f.mslAmmo = 4;
+      f.gunCD = 0.5; 
 
-          const dx = destX - f.x;
-          const dy = destY - f.y;
-          const dist = Math.hypot(dx, dy);
-          
-          if (dist > 10) {
-              const wantSpeed = Math.min(f.maxSpeed, dist * 4.0); 
-              const turned = clampTurnVec(f.vx, f.vy, (dx/dist)*wantSpeed, (dy/dist)*wantSpeed, dt, 360);
-              f.vx = turned.vx;
-              f.vy = turned.vy;
-              f.angle = Math.atan2(f.vy, f.vx);
-          } else {
-              f.vx = leader.vel.x;
-              f.vy = leader.vel.y;
-              f.angle = leader.angle;
+      // Zarządzanie eskadrą
+      if (!window.SQUAD) window.SQUAD = { list: [], order: 'idle', targets: [] };
+      
+      // WAŻNE: Pobieramy aktualną długość listy dla KAŻDEGO myśliwca z osobna,
+      // żeby zajęły różne miejsca w formacji
+      const idx = window.SQUAD.list.length;
+      f.formIndex = idx;
+      
+      // Pozycja w formacji "V"
+      const row = Math.floor((idx + 1) / 2);
+      const formSide = (idx % 2 === 0) ? 1 : -1;
+      f.formationOffset = { x: -140 - (row * 50), y: formSide * (60 + row * 30) };
+
+      f.squad = { leader: ship, type: 'fighter' }; 
+      
+      // AI
+      f.ai = (dt) => { if(window.runAdvancedFighterAI) window.runAdvancedFighterAI(f, dt); };
+
+      // Dodanie do gry
+      window.SQUAD.list.push(f);
+      npcs.push(f);
+      createdFighters.push(f);
+
+      // Efekt dymu przy wylocie
+      if(window.spawnParticle) {
+          for(let i=0; i<4; i++) {
+              window.spawnParticle(
+                  {x: spawnX, y: spawnY}, 
+                  {x: ship.vel.x + (Math.random()-0.5)*40, y: ship.vel.y + (Math.random()-0.5)*40}, 
+                  0.3, '#ffffff', 2 + Math.random()*2, false
+              );
           }
       }
-  };
-
+  }
+  
+  return createdFighters;
+};
   SQUAD.list.push(f);
   
   // Dodanie do świata
@@ -9340,9 +9336,110 @@ function drawBattleship(ctx, npc, screenPos){
   ctx.restore();
 }
 
-// --- PODMIANA GŁÓWNEJ FUNKCJI RYSOWANIA ---
-// Znajdź istniejącą funkcję drawNPCPretty i ZASTĄP ją tą wersją:
+function drawFrigateHull(ctx, npc, screenPos){
+  const zoom = camera.zoom;
+  const w = (npc.size?.w || npc.radius*2.2) * zoom;
+  const h = (npc.size?.h || npc.radius*0.9) * zoom;
+  
+  ctx.save();
+  ctx.translate(screenPos.x, screenPos.y);
+  ctx.rotate(npc.angle || 0);
+  
+  // Kolor
+  if (npc.subType === 'laser') ctx.fillStyle = '#3c2d54';
+  else if (npc.friendly) ctx.fillStyle = '#284b36';
+  else ctx.fillStyle = '#563c2c'; 
 
+  ctx.strokeStyle = npc.friendly ? '#7cff91' : '#ff5c7c';
+  ctx.lineWidth = 2;
+  
+  // Kształt
+  ctx.beginPath();
+  ctx.rect(-w*0.5, -h*0.5, w, h);
+  ctx.fill(); ctx.stroke();
+  
+  // Dziób
+  ctx.beginPath();
+  ctx.moveTo(0,0); ctx.lineTo(w*0.6,0);
+  ctx.stroke();
+  
+  drawMiniHP(ctx, npc, h);
+  ctx.restore();
+};
+
+function drawDestroyer(ctx, npc, screenPos){
+  const zoom = camera.zoom;
+  const w = (npc.size?.w || 100) * zoom;
+  const h = (npc.size?.h || 30) * zoom;
+  
+  ctx.save();
+  ctx.translate(screenPos.x, screenPos.y);
+  ctx.rotate(npc.angle);
+  
+  ctx.fillStyle = npc.friendly ? '#2c3f56' : '#563c2c'; 
+  ctx.strokeStyle = npc.friendly ? '#7cff91' : '#ff5c7c';
+  ctx.lineWidth = 2.2;
+  
+  // Kadłub
+  ctx.beginPath();
+  ctx.rect(-w*0.5, -h*0.5, w*0.8, h);
+  ctx.fill(); ctx.stroke();
+  
+  // Mostek
+  ctx.fillStyle = npc.friendly ? '#3e5570' : '#6e4d3d';
+  ctx.beginPath();
+  ctx.moveTo(w*0.1, -h*0.3);
+  ctx.lineTo(w*0.4, 0);
+  ctx.lineTo(w*0.1, h*0.3);
+  ctx.fill();
+  
+  drawMiniHP(ctx, npc, h);
+  ctx.restore();
+};
+
+function drawBattleship(ctx, npc, screenPos){
+  const zoom = camera.zoom;
+  const w = (npc.size?.w || 160) * zoom;
+  const h = (npc.size?.h || 60) * zoom;
+  
+  ctx.save();
+  ctx.translate(screenPos.x, screenPos.y);
+  ctx.rotate(npc.angle);
+  
+  ctx.fillStyle = npc.friendly ? '#1c2f46' : '#462c1c';
+  ctx.strokeStyle = npc.friendly ? '#7cff91' : '#ff5c7c';
+  ctx.lineWidth = 3;
+
+  // Kształt
+  ctx.beginPath();
+  ctx.moveTo(w*0.5, 0); 
+  ctx.lineTo(w*0.3, h*0.5); 
+  ctx.lineTo(-w*0.5, h*0.5);
+  ctx.lineTo(-w*0.4, 0); 
+  ctx.lineTo(-w*0.5, -h*0.5); 
+  ctx.lineTo(w*0.3, -h*0.5);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+
+  // Wieżyczki
+  ctx.fillStyle = npc.friendly ? '#4a9eff' : '#ff9b4b';
+  ctx.fillRect(-w*0.2, -h*0.6, w*0.1, h*0.2);
+  ctx.fillRect(-w*0.2, h*0.4, w*0.1, h*0.2);
+
+  drawMiniHP(ctx, npc, h);
+  ctx.restore();
+};
+
+// Helper do paska HP
+function drawMiniHP(ctx, npc, height) {
+    const hpPct = npc.hp / (npc.maxHp || 1);
+    if(hpPct < 0.98) {
+        ctx.fillStyle = 'rgba(0,0,0,0.8)';
+        ctx.fillRect(-20, -height/2 - 12, 40, 5);
+        ctx.fillStyle = hpPct > 0.5 ? '#0f0' : '#f00';
+        ctx.fillRect(-20, -height/2 - 12, 40 * hpPct, 5);
+    }
+}
 window.drawNPCPretty = function(ctx, npc, screenPos) {
   const pixR = npc.radius * camera.zoom;
 
