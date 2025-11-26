@@ -2138,16 +2138,14 @@ function formatPlanetLabel(planet, index){
   if (typeof planet.id === 'string') candidates.push(planet.id);
   if (typeof planet.type === 'string') candidates.push(planet.type);
 
-  for (const raw of candidates) {
-    if (!raw) continue;
-    const  = raw
-      .replace(/[_-]+/g, ' ')
-      .trim()
-      .replace(/\b\w/g, ch => ch.toUpperCase());
-    if () return ;
-  }
-  return `Planet ${index + 1}`;
-}
+for (const raw of candidates) {
+      if (!raw) continue;
+      const pretty = raw // <--- Dodano nazwę 'pretty'
+        .replace(/[_-]+/g, ' ')
+        .trim()
+        .replace(/\b\w/g, ch => ch.toUpperCase());
+      if (pretty) return pretty; // <--- Dodano warunek i zwrot
+    }
 
 // wylicz pozycje
 let planets = PLANET_DATA.map((p, index) => {
@@ -7048,14 +7046,7 @@ window.spawnFighter = function() {
   
   return createdFighters;
 };
-  SQUAD.list.push(f);
-  
-  // Dodanie do świata
-  if (window.npcs) window.npcs.push(f);
-  else npcs.push(f);
-  
-  return f;
-}
+ 
 
 // --- NOWY SPAWNER STRAŻNIKÓW STACJI (Dla misji) ---
 // Zastępuje ten stary, który używał 'guardAI'
