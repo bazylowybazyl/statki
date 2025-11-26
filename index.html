@@ -5998,14 +5998,14 @@ initInfrastructureUI();
 function startMercenaryMission(){
   if(mercMission) { toast('Misja już aktywna. Wciśnij J aby zobaczyć dziennik.'); return; }
 
-  const beltRadius = ASTEROID_BELT
-    ? ASTEROID_BELT.mid
-    : (planets[3] && planets[4])
-      ? (planets[3].orbitRadius + planets[4].orbitRadius) / 2
-      : Math.max(12000, planets[planets.length - 1]?.orbitRadius || 0);
+  const earth = planets.find(p => p.id === 'earth' || p.name === 'earth');
+  const targetPlanet = earth || planets[2] || planets[0];
+  const earthOrbit = targetPlanet ? planetOrbitRadii(targetPlanet) : null;
+  const orbitRadius = earthOrbit?.outer
+    ?? Math.max(1600, (targetPlanet?.r || 0) * 4);
   const angle = Math.random() * Math.PI * 2;
-  const x = SUN.x + Math.cos(angle) * beltRadius;
-  const y = SUN.y + Math.sin(angle) * beltRadius;
+  const x = (targetPlanet?.x || SUN.x) + Math.cos(angle) * orbitRadius;
+  const y = (targetPlanet?.y || SUN.y) + Math.sin(angle) * orbitRadius;
 
   const r = 220;
   const portOffset = r + 60;
