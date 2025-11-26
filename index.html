@@ -3578,39 +3578,39 @@ const NPC_TYPES = {
 // ==========================================================================================
 
 const AISPACE_GUNS = {
-  laserS: { name:'Laser krótki', dps:40, dmg:8,  rps:5,   speed:620, range:480, spread:1.5, color:'#86f7ff' },
-  pulse:  { name:'Pulse blaster', dps:55, dmg:14, rps:4,   speed:500, range:520, spread:2.5, color:'#ffd36e' },
-  rail:   { name:'Rail micro',    dps:65, dmg:26, rps:1.8, speed:1100,range:650, spread:0.4, color:'#c0b7ff' },
-  gatling:{ name:'Gatling',       dps:70, dmg:4,  rps:12,  speed:580, range:420, spread:4.0, color:'#9fff75' }
+  laserS: { name:'Laser krótki', dps:40, dmg:8,  rps:5,   speed:520, range:380, spread:2,  color:'#86f7ff' },
+  pulse:  { name:'Pulse blaster', dps:55, dmg:14, rps:4,   speed:420, range:420, spread:3,  color:'#ffd36e' },
+  rail:   { name:'Rail micro',    dps:65, dmg:26, rps:1.8, speed:900, range:560, spread:0.6,color:'#c0b7ff' },
+  gatling:{ name:'Gatling',       dps:70, dmg:3,  rps:12,  speed:520, range:320, spread:4,  color:'#9fff75' }
 };
 
 const AISPACE_PD = {
-  pd_mk1:   { name:'PD Mk1',   dmg:6,  rps:10, speed:700,  range:450, spread:5,   color:'#8cffd0' },
-  pd_laser: { name:'PD Laser', dmg:4,  rps:20, speed:1400, range:500, spread:0.5, color:'#ff77ff' }
+  pd_mk1:   { name:'PD Mk1',   dmg:5,  rps:9,  speed:560,  range:380, spread:6,   color:'#8cffd0', burst:3 },
+  pd_laser: { name:'PD Laser', dmg:3,  rps:18, speed:1200, range:420, spread:0.7, color:'#ff77ff', burst:10 }
 };
 
 const AISPACE_FLAK = {
-  flak_L:   { name:'Flak L', burst:1, rps:1.2, speed:450, range:650, radius:60, dmg:35, color:'#ffef8a' }
+  flak_L:   { name:'Flak L', burst:1, rps:0.8, speed:380, range:520, radius:48, dmg:28, color:'#ffef8a' }
 };
 
 const AISPACE_MISSILES = {
-  AF: { name:'AIM-3',   speed:420, turn:9.0, life:5.0, dmg:50,  seek:'fighter', color:'#7cd7ff' },
-  AS: { name:'ASM-6',   speed:350, turn:4.5, life:7.0, dmg:140, seek:'ship',    color:'#ffad7c' },
-  HE: { name:'HET-4',   speed:320, turn:3.5, life:6.0, dmg:180, seek:'any',     color:'#ff7cf0' },
-  SW: { name:'Swarm-8', speed:380, turn:8.0, life:4.0, dmg:20,  seek:'fighter', color:'#b3ff7c', swarm:6, spread:15 }
+  AF: { name:'AIM-3',  speed:360, turn:600, life:4.0, dmg:45,  seek:'fighter', color:'#7cd7ff' },
+  AS: { name:'ASM-6',  speed:300, turn:320, life:6.0, dmg:120, seek:'ship',    color:'#ffad7c' },
+  HE: { name:'HET-4',  speed:280, turn:250, life:5.0, dmg:160, seek:'any',     color:'#ff7cf0' },
+  SW: { name:'Swarm-8',speed:340, turn:550, life:3.0, dmg:18,  seek:'fighter', color:'#b3ff7c', swarm:6, spread:18 }
 };
 
 const AISPACE_GUNS_M = {
-  m_beam:       { name:'M Beam',       dmg:25,  rps:2.0,  speed:1100, range:950,  spread:0.3, color:'#8fd8ff' },
-  m_pulse:      { name:'M Pulse',      dmg:45,  rps:1.5,  speed:800,  range:850,  spread:0.7, color:'#ffd98a' },
-  m_rail:       { name:'M Rail',       dmg:90,  rps:0.6,  speed:1400, range:1100, spread:0.2, color:'#d0c9ff' },
-  m_autocannon: { name:'M Auto',       dmg:24,  rps:3.5,  speed:900,  range:750,  spread:1.0, color:'#b6ff9a' },
-  h_beam:       { name:'Heavy Beam',   dmg:300, rps:0.25, speed:1800, range:1300, spread:0.1, color:'#ff0000' },
-  h_rapid:      { name:'Rapid Laser L',dmg:50,  rps:6.0,  speed:1000, range:900,  spread:0.8, color:'#00ff00' }
+  m_beam:       { name:'M Beam',       dmg:24,  rps:1.8, speed:900,  range:820,  spread:0.4, color:'#8fd8ff', isBeam:true },
+  m_pulse:      { name:'M Pulse',      dmg:40,  rps:1.1, speed:700,  range:760,  spread:0.8, color:'#ffd98a' },
+  m_rail:       { name:'M Rail',       dmg:85,  rps:0.55,speed:1200, range:880,  spread:0.35,color:'#d0c9ff' },
+  m_autocannon: { name:'M Auto',       dmg:22,  rps:3.2, speed:780,  range:680,  spread:1.2, color:'#b6ff9a' },
+  h_beam:       { name:'Heavy Beam',   dmg:260, rps:0.22,speed:1500, range:1100, spread:0.1, color:'#ff0000', isBeam:true },
+  h_rapid:      { name:'Rapid Laser L',dmg:45,  rps:5.0, speed:900,  range:750,  spread:1.0, color:'#00ff00' }
 };
 
 const AISPACE_BS_BROADSIDE = {
-  dmg:100, rps:0.8, speed:750, range:800, spread:2.0, color:'#ff9b4b'
+  dmg:80, rps:0.6, speed:620, range:650, spread:2.5, color:'#ff9b4b'
 };
 
 // ==========================================================================================
@@ -3636,11 +3636,12 @@ window.spawnBulletAdapter = function(owner, target, weaponDef, opts = {}) {
   // 1. Obliczamy pozycję i kąt
   // Jeśli jest target, używamy leadAim (przewidywanie), jeśli nie - strzelamy przed siebie
   let aimPoint;
+  const targetPos = target ? (target.pos ? { x: target.pos.x, y: target.pos.y } : { x: target.x, y: target.y }) : null;
   if (target) {
      aimPoint = getLeadAim(owner, target, weaponDef.speed || 500);
   } else {
      const angle = owner.angle || 0;
-     aimPoint = { 
+     aimPoint = {
          x: owner.x + Math.cos(angle) * 1000, 
          y: owner.y + Math.sin(angle) * 1000 
      };
@@ -3651,7 +3652,49 @@ window.spawnBulletAdapter = function(owner, target, weaponDef, opts = {}) {
   // 2. Rozrzut (Spread)
   const spreadRad = (weaponDef.spread || 0) * (Math.PI / 180);
   const finalAngle = ang + (Math.random() - 0.5) * spreadRad;
-  
+
+  // 3a. Instant beam (AI Space heavy beams)
+  if (weaponDef.isBeam) {
+    const beamRange = weaponDef.range || 0;
+    const desiredEnd = targetPos || {
+      x: owner.x + Math.cos(finalAngle) * beamRange,
+      y: owner.y + Math.sin(finalAngle) * beamRange
+    };
+    const dx = desiredEnd.x - owner.x;
+    const dy = desiredEnd.y - owner.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const maxDist = beamRange > 0 ? Math.min(dist, beamRange) : dist;
+    const endPoint = {
+      x: owner.x + (dx / dist) * maxDist,
+      y: owner.y + (dy / dist) * maxDist
+    };
+
+    spawnLaserBeam({ x: owner.x, y: owner.y }, endPoint, opts.beamWidth || 8, {
+      life: weaponDef.beamLife || 0.08,
+      colorOuter: weaponDef.color,
+      colorInner: '#ffffff',
+      glowColor: weaponDef.color,
+      glowBlur: 28,
+      outerWidthMul: 1.3,
+      innerWidthMul: 0.6
+    });
+
+    if (target) {
+      const dmg = weaponDef.dmg || 0;
+      if (target === ship || target.isPlayer) {
+        applyDamageToPlayer(dmg);
+      } else if (target.isStation) {
+        applyDamageToStation(target, dmg);
+      } else if (target.isPlatform) {
+        applyDamageToPlatform(target, dmg);
+      } else {
+        applyDamageToNPC(target, dmg, 'beam');
+      }
+      spawnDefaultHit(endPoint.x, endPoint.y, 1.0);
+    }
+    return;
+  }
+
   // 3. Wygląd pocisku (Typ)
   let bType = 'plasma';
   let size = 3;
@@ -3847,9 +3890,9 @@ window.aiFrigate = function(sim, npc, dt) {
 
   // Ruch (Obrót + Ciąg)
   if (target) {
-    const dx = target.x - npc.x;
-    const dy = target.y - npc.y;
-    const dist = Math.hypot(dx, dy);
+     const dx = target.x - npc.x;
+     const dy = target.y - npc.y;
+     const dist = Math.hypot(dx, dy);
     const desiredAng = Math.atan2(dy, dx);
     
     // Kiting: utrzymuj dystans ~400-500
@@ -3884,15 +3927,15 @@ window.aiFrigate = function(sim, npc, dt) {
      const distSq = (target.x-npc.x)**2 + (target.y-npc.y)**2;
      
      // Flak (duży zasięg, wybucha)
-     if (npc.flakCD <= 0 && distSq < 700*700) {
+     if (npc.flakCD <= 0 && distSq < Math.pow(flakDef.range || 700, 2)) {
         window.spawnBulletAdapter(npc, target, flakDef, {type:'armata'});
         npc.flakCD = 1.0 / (flakDef.rps || 1.0);
      }
-     
+
      // PD (Point Defense - bliski zasięg, szybkie)
-     if (npc.pdCD <= 0 && distSq < 450*450) {
-        // Seria 3 strzałów
-        for(let i=0; i<3; i++) {
+     if (npc.pdCD <= 0 && distSq < Math.pow(pdDef.range || 450, 2)) {
+        const burst = pdDef.burst || 1;
+        for(let i=0; i<burst; i++) {
            window.spawnBulletAdapter(npc, target, pdDef, {type:'ciws'});
         }
         npc.pdCD = 1.0 / (pdDef.rps || 10);
@@ -4034,9 +4077,12 @@ window.aiBattleship = function(sim, npc, dt) {
     }
 
     // PD (Obrona punktowa) - strzela niezależnie w najbliższy cel
-    if (npc.pdCD <= 0 && dist < 500) {
-       window.spawnBulletAdapter(npc, target, pdDef, {type:'ciws'});
-       npc.pdCD = 0.1;
+    if (npc.pdCD <= 0 && dist < (pdDef.range || 500)) {
+       const burst = pdDef.burst || 1;
+       for(let i=0; i<burst; i++) {
+         window.spawnBulletAdapter(npc, target, pdDef, {type:'ciws'});
+       }
+       npc.pdCD = 1.0 / (pdDef.rps || 10);
     }
   }
 
@@ -4067,16 +4113,20 @@ function tryFireFighter(npc, target, dt) {
   // Strzał rakietą (rzadziej)
   if (npc.mslAmmo > 0 && npc.mslCD <= 0 && dist < 1000 && diff < 0.5) {
       const mslDef = AISPACE_MISSILES[npc.msl || 'AF'];
+      const dir = norm({ x: target.x - npc.x, y: target.y - npc.y });
+      const speed = mslDef.speed || 300;
       // Rakieta startuje z prędkością statku
       window.bullets.push({
         x: npc.x, y: npc.y,
-        vx: npc.vx, vy: npc.vy,
+        vx: dir.x * speed + npc.vx,
+        vy: dir.y * speed + npc.vy,
         life: mslDef.life || 4, r: 4,
         owner: npc.friendly ? 'player' : 'npc',
         damage: mslDef.dmg || 40,
         type: 'rocket',
         target: target,
         color: mslDef.color,
+        turnRate: (mslDef.turn || SIDE_ROCKET_TURN_RATE) * Math.PI / 180,
         homingDelay: 0.2,
         explodeRadius: 40
       });
@@ -7570,7 +7620,8 @@ function bulletsAndCollisionsStep(dt){
           const current = Math.atan2(b.vy, b.vx);
           const desired = Math.atan2(dir.y, dir.x);
           const diff = wrapAngle(desired - current);
-          const maxTurn = SIDE_ROCKET_TURN_RATE * dt;
+          const turnRate = (b.turnRate != null) ? b.turnRate : SIDE_ROCKET_TURN_RATE;
+          const maxTurn = turnRate * dt;
           const turn = Math.abs(diff) < maxTurn ? diff : Math.sign(diff) * maxTurn;
           const newAng = current + turn;
           b.vx = Math.cos(newAng) * speed;
@@ -11256,10 +11307,12 @@ function tryFire(npc, target, dt) {
   // Rakiety (jeśli ma)
   if (npc.mslAmmo > 0 && npc.mslCD <= 0 && dist < 1000 && diff < 0.5) {
       const mslDef = AISPACE_MISSILES[npc.msl || 'AF'];
+      const dir = norm({ x: targetX - npc.x, y: targetY - npc.y });
+      const speedMsl = mslDef.speed || 300;
       window.bullets.push({
         x: npc.x, y: npc.y,
-        vx: npc.vx + Math.cos(myAngle)*100,
-        vy: npc.vy + Math.sin(myAngle)*100,
+        vx: npc.vx + dir.x * speedMsl,
+        vy: npc.vy + dir.y * speedMsl,
         life: mslDef.life || 4,
         r: 4,
         owner: npc.friendly ? 'player' : 'npc',
@@ -11267,6 +11320,7 @@ function tryFire(npc, target, dt) {
         type: 'rocket',
         target: target, // Homing
         color: mslDef.color,
+        turnRate: (mslDef.turn || SIDE_ROCKET_TURN_RATE) * Math.PI / 180,
         homingDelay: 0.2,
         explodeRadius: 40
       });
