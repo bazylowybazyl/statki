@@ -3419,31 +3419,55 @@ function spawnPirate(kind, station) {
     stats = { hp: 80, accel: 280, maxSpeed: 540, turn: 5.5, radius: 12 };
   } else if (kind.includes('frigate')) {
     stats = { hp: 1200, accel: 60, maxSpeed: 280, turn: 1.2, radius: 45 };
+  } else if (kind === 'destroyer') {
+    stats = { hp: 3200, accel: 70, maxSpeed: 240, turn: 0.9, radius: 70, friction: 0.992 };
+  } else if (kind === 'battleship') {
+    stats = { hp: 5200, accel: 55, maxSpeed: 190, turn: 0.6, radius: 110, friction: 0.995 };
   }
 
   // Używamy istniejącego makeNPCBase
   const npc = makeNPCBase(pos, stats);
-  
+
   // Konfiguracja
   npc.type = kind;
-  npc.friendly = false; 
+  npc.friendly = false;
   npc.isPirate = true;
-  npc.color = '#ff5c7c'; 
+  npc.color = '#ff5c7c';
   npc.mission = true; // To ważne, żeby nie znikał po oddaleniu
 
   // Logika AI
   if (kind.includes('frigate')) {
-    npc.pd = 'pd_mk1'; 
-    npc.flak = 'flak_L';
+    npc.pd = kind === 'frigate_laser' ? 'pd_laser' : 'pd_mk1';
+    npc.mainGun = kind === 'frigate_laser' ? 'm_beam' : 'm_autocannon';
+    npc.preferredRange = kind === 'frigate_laser' ? 920 : 760;
+    npc.msl = kind === 'frigate_laser' ? 'HE' : 'AS';
+    npc.mslAmmo = 2;
+    npc.home = station;
     npc.size = { w: 120, h: 40 }; // Wymiary dla funkcji rysującej
-    // Używamy AI fregaty (upewnij się że aiFrigate istnieje w kodzie, jeśli nie - użyj runAdvancedFighterAI)
+    npc.forceTarget = ship;
     npc.ai = (dt) => { if(window.aiFrigate) window.aiFrigate(null, npc, dt); };
+  } else if (kind === 'destroyer') {
+    npc.isCapitalShip = true;
+    npc.mGun = 'm_rail';
+    npc.pd = 'pd_mk1';
+    npc.boostDur = 2.8;
+    npc.preferredRange = 820;
+    npc.forceTarget = ship;
+    npc.ai = (dt) => { if(window.aiDestroyer) window.aiDestroyer(null, npc, dt); };
+  } else if (kind === 'battleship') {
+    npc.isCapitalShip = true;
+    npc.pd = 'pd_laser';
+    npc.preferredRange = 780;
+    npc.forceTarget = ship;
+    npc.ai = (dt) => { if(window.aiBattleship) window.aiBattleship(null, npc, dt); };
   } else {
-    npc.gun = 'laserS'; 
-    npc.msl = 'AF'; 
+    npc.gun = 'laserS';
+    npc.msl = 'AF';
     npc.mslAmmo = 1;
     npc.ai = (dt) => { if(window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
   }
+
+  npc.angle = Math.atan2(ship.pos.y - npc.y, ship.pos.x - npc.x);
 
   npcs.push(npc);
   return npc;
@@ -3771,6 +3795,9 @@ window.aiPickBestTarget = function(self, weaponRange) {
 
 // Helper: Znajdowanie najlepszego celu (Gracz lub sojusznik)
 function aiPickTarget(npc) {
+  if (npc && npc.forceTarget && !npc.forceTarget.dead) {
+    return npc.forceTarget;
+  }
   let best = null;
   let maxScore = -Infinity;
   
@@ -3797,6 +3824,97 @@ function aiPickTarget(npc) {
     }
   }
   return best;
+}
+
+// --- B. AI FREGATY (FRIGATE) ---
+function aiFrigate(sim, npc, dt) {
+  npc.gunCD = Math.max(0, (npc.gunCD || 0) - dt);
+  npc.pdCD = Math.max(0, (npc.pdCD || 0) - dt);
+  npc.mslCD = Math.max(0, (npc.mslCD || 0) - dt);
+
+  let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : npc.target;
+  if (!target || target.dead) {
+    target = aiPickTarget(npc);
+  }
+  npc.target = target;
+
+  const home = npc.home;
+  const patrolRadius = npc.patrolRadius || (home ? home.r + 260 : 320);
+  if (home && !npc.patrolAngle) {
+    npc.patrolAngle = Math.random() * Math.PI * 2;
+  }
+  const patrolPoint = home
+    ? { x: home.x + Math.cos(npc.patrolAngle) * patrolRadius, y: home.y + Math.sin(npc.patrolAngle) * patrolRadius }
+    : null;
+
+  const desired = target ? { x: target.x, y: target.y } : (patrolPoint || { x: npc.x + Math.cos(npc.angle) * 120, y: npc.y + Math.sin(npc.angle) * 120 });
+  const dx = desired.x - npc.x;
+  const dy = desired.y - npc.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const desiredDir = { x: dx / dist, y: dy / dist };
+  const idealRange = npc.preferredRange || 850;
+
+  let thrust = 0;
+  if (target) {
+    if (dist > idealRange) thrust = npc.accel;
+    else if (dist < idealRange * 0.6) thrust = -npc.accel * 0.6;
+  } else {
+    thrust = npc.accel * 0.35;
+    if (home && dist < 80) {
+      npc.patrolAngle = wrapAngle(npc.patrolAngle + 0.6 * dt);
+    }
+  }
+
+  npc.vx += desiredDir.x * thrust * dt;
+  npc.vy += desiredDir.y * thrust * dt;
+
+  const desiredAng = target ? Math.atan2(dy, dx) : Math.atan2(desiredDir.y, desiredDir.x);
+  const diff = wrapAngle(desiredAng - npc.angle);
+  npc.angle = wrapAngle(npc.angle + clamp(diff, -npc.turn * dt, npc.turn * dt));
+  npc.desiredAngle = npc.angle;
+
+  if (target) {
+    const mainDef = AISPACE_GUNS_M[npc.mainGun] || AISPACE_GUNS_M.m_pulse;
+    if (npc.gunCD <= 0 && dist < (mainDef.range || 800)) {
+      window.spawnBulletAdapter(npc, target, mainDef, { type: mainDef.isBeam ? 'beam' : undefined });
+      npc.gunCD = 1.0 / (mainDef.rps || 1.0);
+    }
+
+    const pdDef = AISPACE_PD[npc.pd];
+    if (pdDef && npc.pdCD <= 0 && dist < (pdDef.range || 500)) {
+      const burst = pdDef.burst || 1;
+      for (let i = 0; i < burst; i++) {
+        window.spawnBulletAdapter(npc, target, pdDef, { type: 'ciws' });
+      }
+      npc.pdCD = 1.0 / (pdDef.rps || 8);
+    }
+
+    if (npc.msl && npc.mslAmmo > 0 && npc.mslCD <= 0 && dist < 1400) {
+      const mslDef = AISPACE_MISSILES[npc.msl] || AISPACE_MISSILES.AS;
+      const dir = desiredDir;
+      window.bullets.push({
+        x: npc.x,
+        y: npc.y,
+        vx: dir.x * mslDef.speed + npc.vx,
+        vy: dir.y * mslDef.speed + npc.vy,
+        life: mslDef.life || 5,
+        r: 5,
+        owner: npc.friendly ? 'player' : 'npc',
+        damage: mslDef.dmg || 80,
+        type: 'rocket',
+        target: target,
+        color: mslDef.color,
+        turnRate: (mslDef.turn || SIDE_ROCKET_TURN_RATE) * Math.PI / 180,
+        homingDelay: 0.3,
+        explodeRadius: 50
+      });
+      npc.mslAmmo -= 1;
+      npc.mslCD = 6.0;
+    }
+  }
+
+  npc.vx *= (npc.friction || 0.986);
+  npc.vy *= (npc.friction || 0.986);
 }
 
 // --- C. AI NISZCZYCIELA (DESTROYER) ---
@@ -6974,17 +7092,101 @@ function spawnStationGuard(st, kind, angle){
   // Nie psujemy n.ai! spawnPirate już nadał mu dobre AI.
   return n;
 }
+function lineOffsets(count, spacing){
+  const start = -((count - 1) * spacing) / 2;
+  const arr = [];
+  for(let i=0;i<count;i++) arr.push(start + i * spacing);
+  return arr;
+}
+
+function buildMercSwarmQueue(station){
+  if(!station) return [];
+  const toPlayer = norm({ x: ship.pos.x - station.x, y: ship.pos.y - station.y });
+  const right = { x: -toPlayer.y, y: toPlayer.x };
+  const baseDist = station.r + 220;
+  const rowSpacing = 200;
+  const queue = [];
+
+  const addRow = (kinds, dist, spacing) => {
+    const offsets = lineOffsets(kinds.length, spacing);
+    kinds.forEach((kind, idx) => {
+      const offset = offsets[idx];
+      queue.push({
+        kind,
+        pos: {
+          x: station.x + toPlayer.x * dist + right.x * offset,
+          y: station.y + toPlayer.y * dist + right.y * offset
+        },
+        offset,
+        right,
+        forward: toPlayer
+      });
+    });
+  };
+
+  addRow(new Array(10).fill('fighter_squad'), baseDist + rowSpacing * 3, 180);
+  addRow([...new Array(5).fill('frigate_pd'), ...new Array(2).fill('frigate_laser')], baseDist + rowSpacing * 2, 210);
+  addRow(new Array(5).fill('destroyer'), baseDist + rowSpacing, 240);
+  addRow(new Array(3).fill('battleship'), baseDist, 300);
+  return queue;
+}
+
 function resetSwarmQueue(){
   if(!mercMission || !mercMission.swarm) return;
-  mercMission.swarm.timer = 0.5; 
-  // Wypełnij kolejkę nowymi wrogami
-  const types = ['fighter', 'interceptor', 'gunship', 'frigate'];
+  mercMission.swarm.timer = 0.5;
+  const st = mercMission.station;
+  const formationQueue = buildMercSwarmQueue(st);
+  if(formationQueue.length){
+    mercMission.swarm.queue = formationQueue;
+    return;
+  }
+  // Fallback jeśli nie da się zbudować formacji
+  const types = ['fighter_squad', 'interceptor', 'gunship', 'frigate_pd'];
   mercMission.swarm.queue = [];
   for(let i=0; i<5; i++){
      mercMission.swarm.queue.push(types[Math.floor(Math.random()*types.length)]);
   }
 }
 window.resetSwarmQueue = resetSwarmQueue;
+
+function spawnFighterLineSquad(station, anchor, right, facing){
+  const squad = new Squad('pirate', 'fighter');
+  SQUADS.push(squad);
+  const spacing = 36;
+  const dirRight = right || { x: -Math.sin(facing), y: Math.cos(facing) };
+  for(let i=0; i<9; i++){
+    const n = spawnPirate('fighter', station);
+    const offset = (i - 4) * spacing;
+    if(anchor){
+      n.x = anchor.x + dirRight.x * offset;
+      n.y = anchor.y + dirRight.y * offset;
+    }
+    n.angle = facing;
+    n.vx += Math.cos(facing) * 30;
+    n.vy += Math.sin(facing) * 30;
+    squad.addUnit(n);
+    n.formationOffset = { x: offset, y: 0 };
+    n.forceTarget = ship;
+  }
+  return squad;
+}
+
+function triggerMercAggro(reason){
+  if(!mercMission) return;
+  mercMission.aggro = true;
+  mercMission.aggroReason = mercMission.aggroReason || reason;
+  if(mercMission.swarm){
+    mercMission.swarm.active = true;
+    if(!mercMission.swarm.queue || !mercMission.swarm.queue.length) resetSwarmQueue();
+    if(!mercMission.swarm.timer || mercMission.swarm.timer > 1.2) mercMission.swarm.timer = 1.2;
+  }
+  for(const npc of npcs){
+    if(npc.mission && npc.isPirate && !npc.dead){
+      npc.forceTarget = ship;
+      npc.target = ship;
+    }
+  }
+}
 
 
 // =============== Rail (2 lufy: serie A→B, A→B) ===============
@@ -7530,6 +7732,9 @@ function bulletsAndCollisionsStep(dt){
     }
 
     if(hitNPC){
+      if(b.owner === 'player' && hitNPC.mission && hitNPC.isPirate){
+        triggerMercAggro('pirate_hit');
+      }
       if(b.type === 'plasma' || b.type === 'rocket'){
         const ex = b.x, ey = b.y;
         spawnExplosionPlasma(ex, ey, 1.0);
@@ -7601,10 +7806,7 @@ function bulletsAndCollisionsStep(dt){
         const d = Math.hypot(platform.x - b.x, platform.y - b.y);
         if(d < platform.radius + b.r){
           applyDamageToPlatform(platform, b.damage || 0);
-          if(mercMission.swarm && !mercMission.swarm.active){
-            mercMission.swarm.active = true;
-            resetSwarmQueue();
-          }
+          triggerMercAggro('platform_hit');
           if(b.type === 'armata'){
             spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
           } else if(b.type === 'rail'){
@@ -7629,9 +7831,8 @@ function bulletsAndCollisionsStep(dt){
       const d = Math.hypot(st.x - b.x, st.y - b.y);
       if(d < st.r + b.r){
         applyDamageToStation(st, b.damage || 0);
-        if(mercMission && mercMission.station === st && !mercMission.swarm.active){
-          mercMission.swarm.active = true; // start „swarm”
-          resetSwarmQueue();
+        if(mercMission && mercMission.station === st){
+          triggerMercAggro('station_hit');
         }
         if(st.hp <= 0){
           if(mercMission && mercMission.station === st){
@@ -7920,7 +8121,14 @@ function pirateMissionStep(dt){
   if(!mercMission) return;
   const st = mercMission.station;
   if(!st) return;
-  
+
+  const aggroRadius = mercMission.aggroRadius || (st.r + 1200);
+  mercMission.aggroRadius = aggroRadius;
+  const distToPlayer = Math.hypot(ship.pos.x - st.x, ship.pos.y - st.y);
+  if(!mercMission.aggro && distToPlayer < aggroRadius){
+    triggerMercAggro('player_inside_zone');
+  }
+
   // (Zachowaj logikę platform obronnych bez zmian - pominąłem dla czytelności, wklej tutaj kod platform z oryginału)
   PirateSim.time = (PirateSim.time || 0) + dt;
 
@@ -8009,37 +8217,35 @@ function pirateMissionStep(dt){
   // Jeśli mało wrogów i upłynął czas -> spawnuj
   if(swarm.timer <= 0 && alive < swarm.maxAlive){
     // Reset timera (dłuższy odstęp po spawnie fali)
-    swarm.timer = 8.0; 
+    swarm.timer = 8.0;
 
     // Pobierz typ z kolejki
     const queued = Array.isArray(swarm.queue) ? swarm.queue.shift() : null;
-    let kind = queued || ((Math.random()<0.6)?'fighter':'frigate_pd');
+    const descriptor = (queued && typeof queued === 'object') ? queued : { kind: queued };
+    let kind = descriptor.kind || ((Math.random()<0.6)?'fighter_squad':'frigate_pd');
+    const spawnPos = descriptor.pos;
+    const angleToPlayer = spawnPos
+      ? Math.atan2(ship.pos.y - spawnPos.y, ship.pos.x - spawnPos.x)
+      : Math.atan2(ship.pos.y - st.y, ship.pos.x - st.x);
 
     // JEŚLI FIGHTER -> SPAWNUJ CAŁĄ ESKADRĘ (9 sztuk)
-    if(kind === 'fighter' || kind === 'interceptor'){
-        const squad = new Squad('pirate', 'fighter');
-        SQUADS.push(squad);
-        
-        // Punkt startowy (hangar stacji)
-        const launchAngle = Math.random() * Math.PI * 2;
-        const startX = st.x + Math.cos(launchAngle) * (st.r + 50);
-        const startY = st.y + Math.sin(launchAngle) * (st.r + 50);
-
-        for(let i=0; i<9; i++){
-            const n = spawnPirate('fighter', st);
-            // Nadpisz pozycję na grupową
-            n.x = startX + (Math.random()-0.5)*40;
-            n.y = startY + (Math.random()-0.5)*40;
-            // Dodaj do eskadry (to ustawi lidera i offsety)
-            squad.addUnit(n);
-        }
-        toast('Stacja piracka wypuściła eskadrę myśliwców!');
-    } 
+    if(kind === 'fighter' || kind === 'interceptor' || kind === 'fighter_squad'){
+        const anchor = spawnPos || { x: st.x + Math.cos(angleToPlayer) * (st.r + 240), y: st.y + Math.sin(angleToPlayer) * (st.r + 240) };
+        spawnFighterLineSquad(st, anchor, descriptor.right, angleToPlayer);
+    }
     // INNE STATKI (pojedynczo, ale z nowym AI)
     else {
-        spawnPirate(kind, st);
+        const npc = spawnPirate(kind, st);
+        if(spawnPos){
+          npc.x = spawnPos.x; npc.y = spawnPos.y;
+          npc.formationSlot = { x: descriptor.offset || 0, y: 0 };
+          npc.angle = angleToPlayer;
+          npc.vx += Math.cos(angleToPlayer) * 20;
+          npc.vy += Math.sin(angleToPlayer) * 20;
+        }
+        npc.forceTarget = ship;
     }
-    
+
     // Jeśli kolejka pusta, odnów ją
     if(swarm.queue && swarm.queue.length === 0) resetSwarmQueue();
   }
@@ -10981,7 +11187,7 @@ function runAdvancedFighterAI(npc, dt) {
   else npc.dogfightTime = 0;
 
   // 2. Znajdź cel
-  let target = null;
+  let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : null;
   let bestScore = -Infinity;
 
   const isFriendly = !!npc.friendly;
