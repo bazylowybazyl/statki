@@ -3438,6 +3438,9 @@ function spawnPirate(kind, station) {
   npc.mission = true; // To ważne, żeby nie znikał po oddaleniu
 
   // Logika AI
+  if (kind === 'interceptor' || kind === 'fighter') {
+      npc.fighter = true; 
+  }
   if (kind.includes('frigate')) {
     npc.pd = kind === 'frigate_laser' ? 'pd_laser' : 'pd_mk1';
     npc.mainGun = kind === 'frigate_laser' ? 'm_beam' : 'm_autocannon';
@@ -7177,15 +7180,23 @@ function triggerMercAggro(reason){
   if(!mercMission) return;
   mercMission.aggro = true;
   mercMission.aggroReason = mercMission.aggroReason || reason;
+  
   if(mercMission.swarm){
     mercMission.swarm.active = true;
     if(!mercMission.swarm.queue || !mercMission.swarm.queue.length) resetSwarmQueue();
     if(!mercMission.swarm.timer || mercMission.swarm.timer > 1.2) mercMission.swarm.timer = 1.2;
   }
+
+  // --- ZMIANA TUTAJ ---
   for(const npc of npcs){
     if(npc.mission && npc.isPirate && !npc.dead){
-      npc.forceTarget = ship;
-      npc.target = ship;
+      // USUWAMY/KOMENTUJEMY TE LINIE:
+      // npc.forceTarget = ship; 
+      // npc.target = ship;
+      
+      // Zamiast tego czyścimy forceTarget, aby AI mogło samo wybrać cel (np. myśliwce gracza)
+      npc.forceTarget = null; 
+      npc.target = null;
     }
   }
 }
@@ -11211,7 +11222,7 @@ function runAdvancedFighterAI(npc, dt) {
 
     const dist = Math.sqrt(distSq);
     let score = -dist; // Im bliżej tym lepiej
-    const fighterLike = t.fighter || t.type === 'drone';
+    const fighterLike = t.fighter || t.type === 'drone' || t.type === 'fighter' || t.type === 'interceptor';
     if (fighterLike) {
       score += (dist < targetDogfightRange) ? 40000 : 1000;
     } else if (t.isCapitalShip || t === window.ship) {
