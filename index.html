@@ -11191,20 +11191,30 @@ function runAdvancedFighterAI(npc, dt) {
   let bestScore = -Infinity;
 
   const isFriendly = !!npc.friendly;
-  const potentialTargets = (window.npcs || []).filter(n => !n.dead && n !== npc && (isFriendly ? n.isPirate : n.friendly));
-  if (!isFriendly && window.ship && !window.ship.dead) potentialTargets.unshift(window.ship);
+  const targetDogfightRange = 2500;
+  const candidateIsEnemy = (candidate) => {
+    if (!candidate || candidate.dead || candidate === npc) return false;
+    const candidateFriendly = candidate === window.ship ? true : !!candidate.friendly;
+    return candidateFriendly !== isFriendly;
+  };
+
+  const potentialTargets = (window.npcs || []).filter(candidateIsEnemy);
+  if (candidateIsEnemy(window.ship)) potentialTargets.unshift(window.ship);
 
   for (const t of potentialTargets) {
-    if(!t) continue;
     const tx = t.pos ? t.pos.x : t.x;
     const ty = t.pos ? t.pos.y : t.y;
     const distSq = (tx - npc.x)**2 + (ty - npc.y)**2;
     if (distSq > 3000**2) continue;
 
-    let score = -distSq; // Im bliżej tym lepiej
-    if (t.fighter) score += 900000;
-    if (t.isCapitalShip) score += 700000;
-    if (t === window.ship) score += 400000;
+    const dist = Math.sqrt(distSq);
+    let score = -dist; // Im bliżej tym lepiej
+    const fighterLike = t.fighter || t.type === 'drone';
+    if (fighterLike) {
+      score += (dist < targetDogfightRange) ? 40000 : 1000;
+    } else if (t.isCapitalShip || t === window.ship) {
+      score += 1000;
+    }
 
     if (score > bestScore) {
       bestScore = score;
@@ -11222,17 +11232,17 @@ function runAdvancedFighterAI(npc, dt) {
   const fighterLike = target && (target.fighter || target.type === 'drone');
 
   if (target) {
-    if (!fighterLike && distToTarget < 1400) {
+    if (!fighterLike && distToTarget < 900) {
       nextState = 'bombing';
-    } else if (fighterLike && distToTarget < 1100) {
+    } else if (fighterLike && distToTarget < 600) {
       nextState = 'dogfight3D';
     } else if (distToTarget < 2600) {
       nextState = 'engage_formation';
     }
   }
 
-  if (npc.state === 'bombing' && target && distToTarget < 1800) nextState = 'bombing';
-  if (npc.state === 'dogfight3D' && target && distToTarget < 1400) nextState = 'dogfight3D';
+  if (npc.state === 'bombing' && target && distToTarget < 1100) nextState = 'bombing';
+  if (npc.state === 'dogfight3D' && target && distToTarget < 800) nextState = 'dogfight3D';
 
   npc.state = nextState;
 
