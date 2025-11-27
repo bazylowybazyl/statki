@@ -6209,14 +6209,27 @@ initInfrastructureUI();
 function startMercenaryMission(){
   if(mercMission) { toast('Misja już aktywna. Wciśnij J aby zobaczyć dziennik.'); return; }
 
+  const beltTarget = (() => {
+    if (!ASTEROID_BELT) return null;
+    const inner = ASTEROID_BELT.inner;
+    if (!Number.isFinite(inner)) return null;
+    const safeMargin = Math.max(1200, ZONE_APPROACH_DISTANCE * 0.6);
+    const radius = Math.max(500, inner - safeMargin);
+    return { radius, angle: Math.random() * Math.PI * 2 };
+  })();
+
   const earth = planets.find(p => p.id === 'earth' || p.name === 'earth');
   const targetPlanet = earth || planets[2] || planets[0];
   const earthOrbit = targetPlanet ? planetOrbitRadii(targetPlanet) : null;
-  const orbitRadius = earthOrbit?.outer
+
+  const orbitRadius = beltTarget?.radius
+    ?? earthOrbit?.outer
     ?? Math.max(1600, (targetPlanet?.r || 0) * 4);
-  const angle = Math.random() * Math.PI * 2;
-  const x = (targetPlanet?.x || SUN.x) + Math.cos(angle) * orbitRadius;
-  const y = (targetPlanet?.y || SUN.y) + Math.sin(angle) * orbitRadius;
+  const angle = beltTarget?.angle ?? (Math.random() * Math.PI * 2);
+  const centerX = beltTarget ? SUN.x : (targetPlanet?.x || SUN.x);
+  const centerY = beltTarget ? SUN.y : (targetPlanet?.y || SUN.y);
+  const x = centerX + Math.cos(angle) * orbitRadius;
+  const y = centerY + Math.sin(angle) * orbitRadius;
 
   const r = 220;
   const portOffset = r + 60;
