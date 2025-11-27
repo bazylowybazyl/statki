@@ -6304,6 +6304,26 @@ const mapView = {
   smoothness: 0.15,
 };
 let PAUSED = false;
+let lastCameraModeBeforePause = null;
+
+function setPaused(state){
+  const next = !!state;
+  if(next === PAUSED) return;
+  PAUSED = next;
+  if(PAUSED){
+    lastCameraModeBeforePause = camera.mode;
+    if(camera.mode !== 'free') camera.enterFreeMode();
+  } else {
+    if(lastCameraModeBeforePause && lastCameraModeBeforePause !== 'free'){
+      camera.exitFreeMode();
+    }
+    lastCameraModeBeforePause = null;
+  }
+}
+
+function togglePause(){
+  setPaused(!PAUSED);
+}
 
 function currentShiftMode(){
   return isPlanetOrbitZoneId(zoneState.current?.id) ? 'boost' : 'warp';
@@ -6374,6 +6394,11 @@ window.addEventListener('keydown', e=>{
   if(k === 'j') MISSIONS.show = !MISSIONS.show;
   if(k === 'g' && !stationUI.open){
     camera.toggleFreeMode();
+  }
+  if(k === ' '){
+    togglePause();
+    updateInput();
+    return;
   }
   if(k === 'x'){
     triggerScanWave();
@@ -6648,7 +6673,7 @@ function applyGamepad(){
     stopBoost();
   }
   if(btn(3)) attemptWarp();            // Y / Triangle
-  if(btn(9)) PAUSED = !PAUSED;         // START
+  if(btn(9)) togglePause();            // START
 }
 
 // =============== Side rockets ===============
