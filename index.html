@@ -2168,10 +2168,24 @@ const AU_IN_WORLD_UNITS = getAuToWorldUnits();
 const ZONE_APPROACH_DISTANCE = AU_IN_WORLD_UNITS; // 1 AU przed granicą
 window.ZONE_APPROACH_DISTANCE = ZONE_APPROACH_DISTANCE;
 
+const PIRATE_ORBIT = Object.freeze({
+  innerAu: 4,
+  outerAu: 6
+});
+
+function pirateOrbitRadii(){
+  const au = AU_IN_WORLD_UNITS || getAuToWorldUnits();
+  return {
+    inner: PIRATE_ORBIT.innerAu * au,
+    outer: PIRATE_ORBIT.outerAu * au
+  };
+}
+
 const zoneState = {
   current: null,
   approaching: null,
   lastZoneKey: null,
+  lastZoneId: null,
   lastApproachKey: null,
   initialized: false,
   messages: []
@@ -2188,10 +2202,24 @@ function makeInterplanetaryZone(){
   };
 }
 
-const zonePriority = { planet_inner: 4, planet_outer: 3, sun: 2, asteroid_belt: 1 };
+const zonePriority = {
+  planet_inner: 4,
+  planet_outer: 3,
+  pirate_inner: 4,
+  pirate_outer: 3,
+  sun: 2,
+  asteroid_belt: 1
+};
 
 function zonePropsForId(id){
-  if (id === 'planet_inner' || id === 'planet_outer' || id === 'sun' || id === 'asteroid_belt') {
+  if (
+    id === 'planet_inner' ||
+    id === 'planet_outer' ||
+    id === 'pirate_inner' ||
+    id === 'pirate_outer' ||
+    id === 'sun' ||
+    id === 'asteroid_belt'
+  ) {
     return { warpMultiplier: 0.3, wormholeVfx: false };
   }
   if (id === 'interplanetary') {
@@ -2201,7 +2229,7 @@ function zonePropsForId(id){
 }
 
 function isPlanetOrbitZoneId(id){
-  return id === 'planet_inner' || id === 'planet_outer';
+  return id === 'planet_inner' || id === 'planet_outer' || id === 'pirate_inner' || id === 'pirate_outer';
 }
 
 function planetOrbitRadii(planet){
@@ -2224,6 +2252,13 @@ function formatPlanetOrbitLabel(planet){
     ? planet.label.trim()
     : formatPlanetLabel(planet, 0);
   return name;
+}
+
+function formatPirateOrbitLabel(station){
+  if (!station) return 'Pirate Station';
+  const raw = (station.label || station.name || station.id || '').toString();
+  const trimmed = raw.trim();
+  return trimmed.length ? trimmed : 'Pirate Station';
 }
 
 function detectZones(pos){
@@ -2254,6 +2289,37 @@ function detectZones(pos){
       approachRange: ZONE_APPROACH_DISTANCE,
       priority: zonePriority.planet_outer
     });
+  }
+
+  const pirateStation = mercMission?.station;
+  if (pirateStation) {
+    const orbitRadii = pirateOrbitRadii();
+    const dx = pos.x - pirateStation.x;
+    const dy = pos.y - pirateStation.y;
+    const dist = Math.hypot(dx, dy);
+    const labelName = formatPirateOrbitLabel(pirateStation);
+    if (Number.isFinite(orbitRadii.inner)) {
+      zones.push({
+        key: `pirate-${pirateStation.id || 'station'}-inner`,
+        id: 'pirate_inner',
+        label: `${labelName} - Inner Orbit`,
+        enteringLabel: `${labelName} - Inner Orbit`,
+        edgeDist: dist - orbitRadii.inner,
+        approachRange: ZONE_APPROACH_DISTANCE,
+        priority: zonePriority.pirate_inner
+      });
+    }
+    if (Number.isFinite(orbitRadii.outer)) {
+      zones.push({
+        key: `pirate-${pirateStation.id || 'station'}-outer`,
+        id: 'pirate_outer',
+        label: `${labelName} - Outer Orbit`,
+        enteringLabel: `${labelName} - Outer Orbit`,
+        edgeDist: dist - orbitRadii.outer,
+        approachRange: ZONE_APPROACH_DISTANCE,
+        priority: zonePriority.pirate_outer
+      });
+    }
   }
 
   const sunRadius = Math.max(10, (SUN.r || 0) * 2);
@@ -2313,17 +2379,22 @@ function updateZoneMessages(dt){
 
 function updateZoneState(dt){
   const prevZoneKey = zoneState.current?.key || zoneState.lastZoneKey;
+  const prevZoneId = zoneState.current?.id || zoneState.lastZoneId;
   const detection = detectZones(ship.pos);
   zoneState.current = detection.current;
   zoneState.approaching = detection.approaching;
 
   if (!zoneState.initialized) {
     zoneState.lastZoneKey = zoneState.current?.key || null;
+    zoneState.lastZoneId = zoneState.current?.id || null;
     zoneState.initialized = true;
   } else if (zoneState.current && zoneState.current.key !== zoneState.lastZoneKey) {
     if (zoneState.current.label) pushZoneMessage(zoneState.current.label);
     zoneState.lastZoneKey = zoneState.current.key;
   }
+
+  handleZoneTransition(prevZoneId, zoneState.current?.id || null);
+  zoneState.lastZoneId = zoneState.current?.id || zoneState.lastZoneId;
 
   const approachKey = zoneState.approaching?.key || null;
   if (
@@ -2338,6 +2409,15 @@ function updateZoneState(dt){
   zoneState.lastApproachKey = approachKey;
 
   updateZoneMessages(dt);
+}
+
+function handleZoneTransition(prevZoneId, currentZoneId){
+  if (currentZoneId === 'pirate_outer' && prevZoneId !== 'pirate_outer') {
+    enterPirateOuterOrbit();
+  }
+  if (currentZoneId === 'pirate_inner' && prevZoneId !== 'pirate_inner') {
+    enterPirateInnerOrbit();
+  }
 }
 
 
@@ -3794,12 +3874,114 @@ window.aiPickBestTarget = function(self, weaponRange) {
   }
   return best;
 };
+
+function pirateRoleKind(npc){
+  if (!npc) return 'other';
+  const type = npc.type || '';
+  if (npc.fighter || type === 'fighter' || type === 'interceptor' || type === 'drone') return 'fighter';
+  if (type.includes('frigate')) return npc.subType === 'laser' ? 'frigate_laser' : 'frigate';
+  if (type === 'destroyer') return 'destroyer';
+  if (type === 'battleship' || npc.isCapitalShip) return 'battleship';
+  return 'other';
+}
+
+function pirateTargetKind(target){
+  if (!target) return 'other';
+  if (target === ship) return 'battleship';
+  const type = target.type || '';
+  if (target.fighter || type === 'fighter' || type === 'interceptor' || type === 'drone') return 'fighter';
+  if (type.includes('frigate')) return 'frigate';
+  if (type === 'destroyer') return 'destroyer';
+  if (type === 'battleship' || target.isCapitalShip) return 'battleship';
+  return 'other';
+}
+
+function pirateEffectiveHp(target){
+  if (!target) return 0;
+  const hull = (target.hp ?? target.hull?.val ?? 0);
+  const shield = (target.shield?.val ?? target.shield ?? 0);
+  return Math.max(0, hull + shield);
+}
+
+function pirateEngageScore(attacker, target){
+  const attackerKind = pirateRoleKind(attacker);
+  const targetKind = pirateTargetKind(target);
+  const tx = target?.pos?.x ?? target?.x ?? 0;
+  const ty = target?.pos?.y ?? target?.y ?? 0;
+  const dx = tx - (attacker?.x ?? 0);
+  const dy = ty - (attacker?.y ?? 0);
+  const distSq = dx*dx + dy*dy;
+
+  let score = -distSq * 0.0008;
+
+  if (attackerKind === 'fighter') {
+    if (targetKind === 'fighter') {
+      score += distSq < 6250000 ? 40000 : 1000;
+    } else {
+      score += 1000;
+    }
+  } else if (attackerKind === 'frigate') {
+    if (targetKind === 'fighter') score += 2000;
+    else if (targetKind === 'frigate') score += 800;
+    else score += 200;
+  } else if (attackerKind === 'frigate_laser') {
+    if (targetKind === 'battleship') score += 2500;
+    else if (targetKind === 'destroyer') score += 2000;
+    else if (targetKind === 'frigate') score += 1500;
+    else score -= 300;
+  } else if (attackerKind === 'destroyer') {
+    if (targetKind === 'frigate') score += 4500;
+    else if (targetKind === 'destroyer') score += 2500;
+    else if (targetKind === 'battleship') score += 1000;
+    else score += 500;
+  } else if (attackerKind === 'battleship') {
+    if (targetKind === 'battleship') score += 4000;
+    else if (targetKind === 'destroyer') score += 3000;
+    else if (targetKind === 'frigate') score += 2000;
+    else score -= 500;
+  }
+
+  if (distSq < 122500) {
+    if (attackerKind === 'fighter' && targetKind !== 'fighter') score += 6000;
+    else score += 8000;
+  }
+
+  const effHp = pirateEffectiveHp(target);
+  const incoming = target?.incomingDamage ?? 0;
+  if (effHp > 0) {
+    const overkill = incoming / (effHp + 1);
+    if (overkill > 1.2) score -= 1500 * (overkill - 1.0);
+  }
+
+  score += Math.random() * 250;
+  return score;
+}
+
+function pickPirateEngageTarget(npc){
+  if (!npc?.isPirate || mercMission?.alertStage !== 'engage') return null;
+  const candidates = [ship, ...npcs.filter(n => n.friendly && !n.dead)];
+  let best = null;
+  let bestScore = -Infinity;
+  for (const target of candidates) {
+    const score = pirateEngageScore(npc, target);
+    if (score > bestScore) {
+      bestScore = score;
+      best = target;
+    }
+  }
+  return best;
+}
   // ==========================================================================================
 // 2. LOGIKA AI (MÓZGI STATKÓW - "AI SPACE PORT")
 // ==========================================================================================
 
 // Helper: Znajdowanie najlepszego celu (Gracz lub sojusznik)
 function aiPickTarget(npc) {
+  if (npc?.isPirate) {
+    if (mercMission?.alertStage === 'guard' && npc.guardHold) return null;
+    const engageTarget = pickPirateEngageTarget(npc);
+    if (engageTarget) return engageTarget;
+  }
   if (npc && npc.forceTarget && !npc.forceTarget.dead) {
     return npc.forceTarget;
   }
@@ -6074,10 +6256,12 @@ function startMercenaryMission(){
   mercMission = {
     station,
     npcsSpawned:false,
+    alertStage: 'idle',
+    guardConfigured: false,
     weaponPlatforms: [],
     // --- SWARM control ---
     swarm: {
-      active:true,
+      active:false,
       maxAlive: 200,     // <- zwiększony limit
       timer: 2,
       baseInterval: 1.0, // skraca się wraz z utratą HP stacji
@@ -7201,11 +7385,136 @@ function spawnFighterLineSquad(station, anchor, right, facing){
   return squad;
 }
 
+function setPirateGuardFlags(npc, station){
+  npc.guardHold = true;
+  npc.guardStation = station || npc.guardStation || null;
+  npc.forceTarget = null;
+  npc.target = null;
+}
+
+function assignPirateLine(units, station, forward, right, distance, spacing){
+  const mid = (units.length - 1) * 0.5;
+  units.forEach((npc, idx) => {
+    const offset = (idx - mid) * spacing;
+    setPirateGuardFlags(npc, station);
+    npc.guardMode = 'line';
+    npc.guardAnchor = {
+      x: station.x + forward.x * distance + right.x * offset,
+      y: station.y + forward.y * distance + right.y * offset
+    };
+    npc.guardFacing = Math.atan2(forward.y, forward.x);
+    npc.vx = 0; npc.vy = 0;
+  });
+}
+
+function assignPirateOrbit(units, station, radius, speed, jitter = 0){
+  units.forEach((npc, idx) => {
+    setPirateGuardFlags(npc, station);
+    npc.guardMode = 'orbit';
+    npc.guardOrbitRadius = radius;
+    const sign = (idx % 2 === 0) ? 1 : -1;
+    npc.guardOrbitSpeed = (speed + (Math.random() - 0.5) * jitter) * sign;
+    npc.guardAngle = Math.atan2(npc.y - station.y, npc.x - station.x);
+  });
+}
+
+function clearPirateGuardState(){
+  for (const npc of npcs) {
+    if (!npc?.isPirate) continue;
+    npc.guardHold = false;
+    npc.guardMode = null;
+    npc.guardStation = null;
+    npc.guardAnchor = null;
+    npc.guardFacing = null;
+  }
+  if (mercMission) {
+    mercMission.guardConfigured = false;
+  }
+}
+
+function setupPirateGuardFormation(station){
+  if (!mercMission || !station) return;
+  const orbit = pirateOrbitRadii();
+  const forward = norm({ x: ship.pos.x - station.x, y: ship.pos.y - station.y });
+  const right = { x: -forward.y, y: forward.x };
+  const defensiveRing = Math.min(
+    station.r + 1400,
+    Math.max(station.r + 900, (orbit.inner || (station.r + 1200)) - 200)
+  );
+  const rearRing = Math.max(station.r + 620, defensiveRing - 260);
+  const pdOrbit = Math.max(station.r + 320, Math.min(rearRing - 180, station.r + 900));
+  const fighterOrbit = Math.max(pdOrbit + 140, station.r + 480);
+
+  const pirates = npcs.filter(n => n.isPirate && !n.dead && n.mission);
+  const capitals = pirates.filter(n => n.isCapitalShip || n.type === 'battleship' || n.type === 'destroyer');
+  const laserFrigates = pirates.filter(n => (n.type && n.type.includes('frigate') && n.subType === 'laser') || n.type === 'frigate_laser');
+  const pdFrigates = pirates.filter(n => n.type && n.type.includes('frigate') && n.subType !== 'laser');
+  const fighters = pirates.filter(n => n.fighter || n.type === 'fighter' || n.type === 'interceptor');
+
+  clearPirateGuardState();
+  assignPirateLine(capitals, station, forward, right, defensiveRing, 320);
+  assignPirateLine(laserFrigates, station, forward, right, rearRing, 220);
+  assignPirateOrbit(pdFrigates, station, pdOrbit, 0.24, 0.08);
+  assignPirateOrbit(fighters, station, fighterOrbit, 0.48, 0.12);
+
+  mercMission.guardConfigured = true;
+}
+
+function updatePirateGuardBehavior(station, dt){
+  if (!station || !mercMission?.guardConfigured) return;
+  for (const npc of npcs) {
+    if (!npc?.isPirate || npc.dead || !npc.guardMode || npc.guardStation !== station) continue;
+    if (npc.guardMode === 'orbit') {
+      const ang = npc.guardAngle = wrapAngle((npc.guardAngle || 0) + (npc.guardOrbitSpeed || 0) * dt);
+      const r = npc.guardOrbitRadius || (station.r + 360);
+      npc.x = station.x + Math.cos(ang) * r;
+      npc.y = station.y + Math.sin(ang) * r;
+      npc.vx = -Math.sin(ang) * r * (npc.guardOrbitSpeed || 0);
+      npc.vy =  Math.cos(ang) * r * (npc.guardOrbitSpeed || 0);
+      npc.angle = Math.atan2(npc.vy, npc.vx);
+    } else if (npc.guardMode === 'line' && npc.guardAnchor) {
+      const dx = npc.guardAnchor.x - npc.x;
+      const dy = npc.guardAnchor.y - npc.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      const dir = { x: dx / dist, y: dy / dist };
+      const accel = (npc.accel || 140) * dt;
+      npc.vx += dir.x * accel;
+      npc.vy += dir.y * accel;
+      const friction = npc.friction || 0.985;
+      npc.vx *= friction;
+      npc.vy *= friction;
+      npc.x += npc.vx * dt;
+      npc.y += npc.vy * dt;
+      npc.angle = typeof npc.guardFacing === 'number' ? npc.guardFacing : npc.angle;
+    }
+  }
+}
+
+function enterPirateOuterOrbit(){
+  if (!mercMission || !mercMission.station || mercMission.alertStage === 'engage') return;
+  if (mercMission.alertStage === 'guard' && mercMission.guardConfigured) return;
+  mercMission.alertStage = 'guard';
+  mercMission.aggro = false;
+  if (mercMission.swarm) mercMission.swarm.active = false;
+  setupPirateGuardFormation(mercMission.station);
+}
+
+function enterPirateInnerOrbit(){
+  if (!mercMission || !mercMission.station) return;
+  if (mercMission.alertStage !== 'engage') {
+    mercMission.alertStage = 'engage';
+    clearPirateGuardState();
+  }
+  if (!mercMission.aggro) triggerMercAggro('player_inner_orbit');
+}
+
 function triggerMercAggro(reason){
   if(!mercMission) return;
   mercMission.aggro = true;
   mercMission.aggroReason = mercMission.aggroReason || reason;
-  
+  mercMission.alertStage = 'engage';
+  clearPirateGuardState();
+
   if(mercMission.swarm){
     mercMission.swarm.active = true;
     if(!mercMission.swarm.queue || !mercMission.swarm.queue.length) resetSwarmQueue();
@@ -8160,11 +8469,24 @@ function pirateMissionStep(dt){
   const st = mercMission.station;
   if(!st) return;
 
-  const aggroRadius = mercMission.aggroRadius || (st.r + 1200);
+  const orbitRadii = pirateOrbitRadii();
+  const aggroRadius = mercMission.aggroRadius || orbitRadii.inner || (st.r + 1200);
   mercMission.aggroRadius = aggroRadius;
   const distToPlayer = Math.hypot(ship.pos.x - st.x, ship.pos.y - st.y);
-  if(!mercMission.aggro && distToPlayer < aggroRadius){
-    triggerMercAggro('player_inside_zone');
+  const zoneId = zoneState.current?.id;
+  if (zoneId === 'pirate_outer' && mercMission.alertStage !== 'engage') {
+    enterPirateOuterOrbit();
+  }
+  if (zoneId === 'pirate_inner') {
+    enterPirateInnerOrbit();
+  }
+  const shouldAggro = zoneId === 'pirate_inner' || distToPlayer < aggroRadius;
+  if(!mercMission.aggro && shouldAggro){
+    triggerMercAggro(zoneId === 'pirate_inner' ? 'player_inner_orbit' : 'player_inside_zone');
+  }
+
+  if (mercMission.alertStage === 'guard') {
+    updatePirateGuardBehavior(st, dt);
   }
 
   // (Zachowaj logikę platform obronnych bez zmian - pominąłem dla czytelności, wklej tutaj kod platform z oryginału)
@@ -8241,6 +8563,8 @@ function pirateMissionStep(dt){
   if(platforms.length){
     mercMission.weaponPlatforms = platforms.filter(p => p && !p.removed);
   }
+
+  if (mercMission.alertStage !== 'engage') return;
 
   // --- SWARM (Fale wrogów) ---
   const swarm = mercMission.swarm;
@@ -8749,9 +9073,9 @@ function physicsStep(dt){
   if(warp.state!=='active'){ ship.vel.x *= linDamp; ship.vel.y *= linDamp; }
   if (boostActive && warp.state !== 'active') {
     const zoneId = zoneState.current?.id;
-    const boostCap = zoneId === 'planet_outer'
+    const boostCap = (zoneId === 'planet_outer' || zoneId === 'pirate_outer')
       ? warp.speed * 0.4
-      : zoneId === 'planet_inner'
+      : (zoneId === 'planet_inner' || zoneId === 'pirate_inner')
         ? warp.speed * 0.3
         : null;
     if (boostCap) {
@@ -11228,6 +11552,9 @@ function runAdvancedFighterAI(npc, dt) {
   let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : null;
   let bestScore = -Infinity;
 
+  const pirateEngageTarget = pickPirateEngageTarget(npc);
+  const holdGuard = npc.isPirate && mercMission?.alertStage === 'guard' && npc.guardHold;
+
   const isFriendly = !!npc.friendly;
   const targetDogfightRange = 2500;
   const candidateIsEnemy = (candidate) => {
@@ -11239,25 +11566,35 @@ function runAdvancedFighterAI(npc, dt) {
   const potentialTargets = (window.npcs || []).filter(candidateIsEnemy);
   if (candidateIsEnemy(window.ship)) potentialTargets.unshift(window.ship);
 
-  for (const t of potentialTargets) {
-    const tx = t.pos ? t.pos.x : t.x;
-    const ty = t.pos ? t.pos.y : t.y;
-    const distSq = (tx - npc.x)**2 + (ty - npc.y)**2;
-    if (distSq > 3000**2) continue;
+  if (!holdGuard && !pirateEngageTarget) {
+    for (const t of potentialTargets) {
+      const tx = t.pos ? t.pos.x : t.x;
+      const ty = t.pos ? t.pos.y : t.y;
+      const distSq = (tx - npc.x)**2 + (ty - npc.y)**2;
+      if (distSq > 3000**2) continue;
 
-    const dist = Math.sqrt(distSq);
-    let score = -dist; // Im bliżej tym lepiej
-    const fighterLike = t.fighter || t.type === 'drone' || t.type === 'fighter' || t.type === 'interceptor';
-    if (fighterLike) {
-      score += (dist < targetDogfightRange) ? 40000 : 1000;
-    } else if (t.isCapitalShip || t === window.ship) {
-      score += 1000;
-    }
+      const dist = Math.sqrt(distSq);
+      let score = -dist; // Im bliżej tym lepiej
+      const fighterLike = t.fighter || t.type === 'drone' || t.type === 'fighter' || t.type === 'interceptor';
+      if (fighterLike) {
+        score += (dist < targetDogfightRange) ? 40000 : 1000;
+      } else if (t.isCapitalShip || t === window.ship) {
+        score += 1000;
+      }
 
-    if (score > bestScore) {
-      bestScore = score;
-      target = t;
+      if (score > bestScore) {
+        bestScore = score;
+        target = t;
+      }
     }
+  }
+
+  if (!holdGuard && pirateEngageTarget) {
+    target = pirateEngageTarget;
+  }
+
+  if (holdGuard) {
+    target = null;
   }
 
   // 3. Decyzja o STANIE
