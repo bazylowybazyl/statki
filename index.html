@@ -2586,6 +2586,7 @@ function spawnMissionFighter(pos){
   n.type = 'pirate';
   n.color = '#ff5533';
   n.isPirate = true;
+  n.fighter = true;
   n.ai = function(dt){
     chaseEvadeAI(n, ship, { strafe:true });
   };
@@ -3432,6 +3433,7 @@ function spawnPirate(kind, station) {
   npc.type = kind;
   npc.friendly = false;
   npc.isPirate = true;
+  npc.fighter = (kind === 'fighter' || kind === 'interceptor');
   npc.color = '#ff5c7c';
   npc.mission = true; // To ważne, żeby nie znikał po oddaleniu
 
