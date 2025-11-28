@@ -306,44 +306,6 @@
     <div id="tab-infrastructure-html" class="station-tab hidden"></div>
   </div>
 </div>
-<div id="mechanic-overlay" class="station-overlay hidden">
-  <h3>Station Mechanic</h3>
-  <ul>
-    <li data-tab="mechanic">Mechanic</li>
-  </ul>
-  <div id="tab-mechanic" class="station-tab hidden">
-    <div class="mechanic-toolbar">
-      <label>Ship frame:</label>
-      <select id="ship-frame-select"></select>
-    </div>
-    <div class="mechanic-body">
-      <div class="mechanic-column mechanic-parts">
-        <div class="mechanic-section">
-          <div class="mechanic-section-head">
-            <div>
-              <p class="mechanic-kicker">Dostępne części</p>
-              <h4>Magazyn broni</h4>
-              <p class="mechanic-sub">Przeciągnij broń na slot hardpointu, aby ją zamontować.</p>
-            </div>
-          </div>
-          <div id="mechanic-available" class="weapon-pool"></div>
-        </div>
-      </div>
-      <div class="mechanic-column mechanic-install">
-        <div class="mechanic-section">
-          <div class="mechanic-section-head">
-            <div>
-              <p class="mechanic-kicker">Uzbrojenie statku</p>
-              <h4>Hardpointy</h4>
-              <p class="mechanic-sub">Upuść część na slot po prawej, aby zamienić uzbrojenie.</p>
-            </div>
-          </div>
-          <div id="hp-groups" class="hp-groups mechanic-grid"></div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
 <div id="infrastructure-overlay" class="station-overlay hidden">
   <h3>Station Infrastructure</h3>
   <ul>
@@ -5354,10 +5316,8 @@ function renderStationUI(){
   const alpha = clamp(stationUI.appear, 0, 1);
 
   const shouldShow = stationUI.open && stationUI.visible && !stationUI.awaitingCamera && alpha > 0.001;
-  const showMechanic = shouldShow && stationUI.tab === 'mechanic';
   const showInfrastructure = shouldShow && stationUI.tab === 'infrastructure';
 
-  setMechanicUIVisible(showMechanic);
   setInfrastructureUIVisible(showInfrastructure);
 
   const overlay = stationOverlayDom.root;
@@ -6440,36 +6400,9 @@ function renderMechanicTab(){
 }
 
 function initMechanicUI(){
-  const overlay = document.getElementById('mechanic-overlay');
-  if(!overlay) return;
-  const tabBtn = overlay.querySelector('li[data-tab="mechanic"]');
-  if(tabBtn){
-    tabBtn.addEventListener('click', ()=>{
-      stationUI.open = true;
-      stationUI.visible = true;
-      stationUI.awaitingCamera = false;
-      stationUI.tab = 'mechanic';
-      setMechanicUIVisible(true);
-    });
-  }
-  const sel = document.getElementById('ship-frame-select');
-  if(sel){
-    sel.innerHTML = Object.values(SHIPS).map(s=>
-      `<option value="${s.id}" ${Game.player.shipFrame===s.id?'selected':''}>${s.name}</option>`
-    ).join('');
-    sel.value = Game.player.shipFrame;
-    sel.onchange = () => {
-      Game.player.shipFrame = sel.value;
-      const prev = Game.player.hardpoints.map(h=>({ type:h.type, mount:h.mount, ammo:h.ammo, maxAmmo:h.maxAmmo }));
-      rebuildHardpointsForFrame();
-      tryPreserveMounts(prev);
-      syncWeaponSystems();
-      renderMechanic();
-      saveLoadout();
-    };
-  }
-  renderMechanic();
-  setMechanicUIVisible(false);
+  // Ta funkcja jest teraz uproszczona, ponieważ logika została przeniesiona 
+  // bezpośrednio do buildMechanicPanel w głównym oknie stacji.
+  // Zachowujemy ją tylko dla kompatybilności, jeśli coś ją wywołuje.
 }
 
 const HP_GROUP_META = {
@@ -6979,24 +6912,62 @@ function buildHangarPanel(){
 function buildMechanicPanel(){
   const pane = stationOverlayDom.panels.mechanic;
   if(!pane) return;
-  pane.innerHTML = '';
-  pane.appendChild(createStationCard({
-    title: 'Warsztat hardpointów',
-    badge: 'Mechanic',
-    description: 'Otwórz panel warsztatowy, aby przeprojektować uzbrojenie i przełączyć ramę statku.',
-    meta: ['Skrót klawiatury: [5]'],
-    actions: [{
-      label:'Otwórz warsztat',
-      onClick: ()=>{
-        stationUI.open = true;
-        stationUI.visible = true;
-        stationUI.awaitingCamera = false;
-        stationUI.tab = 'mechanic';
-        setMechanicUIVisible(true);
-        renderStationUI();
-      }
-    }]
-  }));
+  
+  // Wstrzykujemy strukturę HTML warsztatu bezpośrednio do zakładki
+  pane.innerHTML = `
+    <div class="mechanic-toolbar">
+      <label>Rama statku:</label>
+      <select id="ship-frame-select" style="margin-left:8px; width:200px; background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px;"></select>
+    </div>
+    <div class="mechanic-body" style="margin-top:12px;">
+      <div class="mechanic-column mechanic-parts">
+        <div class="mechanic-section">
+          <div class="mechanic-section-head">
+            <div>
+              <p class="mechanic-kicker">Dostępne części</p>
+              <h4>Magazyn broni</h4>
+              <p class="mechanic-sub">Przeciągnij broń na slot hardpointu, aby ją zamontować.</p>
+            </div>
+          </div>
+          <div id="mechanic-available" class="weapon-pool"></div>
+        </div>
+      </div>
+      <div class="mechanic-column mechanic-install">
+        <div class="mechanic-section">
+          <div class="mechanic-section-head">
+            <div>
+              <p class="mechanic-kicker">Uzbrojenie statku</p>
+              <h4>Hardpointy</h4>
+              <p class="mechanic-sub">Upuść część na slot po prawej, aby zamienić uzbrojenie.</p>
+            </div>
+          </div>
+          <div id="hp-groups" class="hp-groups mechanic-grid"></div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Inicjalizacja listy wyboru statku (ponieważ właśnie stworzyliśmy element select)
+  const sel = document.getElementById('ship-frame-select');
+  if(sel){
+    sel.innerHTML = Object.values(SHIPS).map(s=>
+      `<option value="${s.id}" ${Game.player.shipFrame===s.id?'selected':''}>${s.name}</option>`
+    ).join('');
+    
+    sel.onchange = () => {
+      Game.player.shipFrame = sel.value;
+      // Przelicz hardpointy dla nowej ramy
+      const prev = Game.player.hardpoints.map(h=>({ type:h.type, mount:h.mount, ammo:h.ammo, maxAmmo:h.maxAmmo }));
+      if(typeof rebuildHardpointsForFrame === 'function') rebuildHardpointsForFrame();
+      if(typeof tryPreserveMounts === 'function') tryPreserveMounts(prev);
+      if(typeof syncWeaponSystems === 'function') syncWeaponSystems();
+      renderMechanic();
+      if(typeof saveLoadout === 'function') saveLoadout();
+    };
+  }
+
+  // Wymuś renderowanie zawartości (ikony broni i sloty)
+  renderMechanic();
 }
 
 function buildInfrastructurePanel(){
