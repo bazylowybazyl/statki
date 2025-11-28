@@ -224,6 +224,147 @@
   .planet-radar-icon{width:52px;height:52px;padding:8px;border-radius:14px;background:rgba(9,12,24,0.9);border:1px solid rgba(98,128,188,0.5);box-shadow:0 10px 26px rgba(0,0,0,0.55);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:transform 0.2s ease,opacity 0.2s ease;}
   .planet-radar-icon img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 0 6px rgba(112,200,255,0.55));}
   .planet-radar-label{padding:4px 10px;border-radius:999px;background:rgba(26,39,68,0.8);border:1px solid rgba(96,132,194,0.6);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;white-space:nowrap;}
+  /* --- Styl widoku szczegółowego (Windows Explorer style) --- */
+
+/* Ograniczenie wysokości kolumn, aby pojawił się scrollbar */
+.mechanic-body {
+  height: 450px; /* Stała wysokość obszaru roboczego */
+  overflow: hidden;
+}
+
+.mechanic-column {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.mechanic-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* Ważne dla scrolla wewnątrz */
+  padding: 0; /* Reset paddingu dla czystszego wyglądu */
+}
+
+.mechanic-section-head {
+  padding: 10px 12px;
+  background: rgba(16, 24, 40, 0.9);
+  border-bottom: 1px solid rgba(60, 90, 140, 0.5);
+  flex-shrink: 0; /* Nagłówek się nie kurczy */
+}
+
+/* Kontenery na listy z przewijaniem */
+.weapon-pool, .hp-groups {
+  overflow-y: auto;
+  padding: 8px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px; /* Mały odstęp między wierszami */
+}
+
+/* --- Wygląd Wiersza (ROW) zamiast Kafelka --- */
+
+/* Nagłówki grup (np. "Broń główna") */
+.list-group-header {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8fb5ff;
+  background: rgba(30, 45, 70, 0.6);
+  padding: 4px 8px;
+  margin-top: 8px;
+  border-radius: 4px;
+  font-weight: 700;
+}
+
+/* Wiersz z bronią (do przeciągania) */
+.weapon-row {
+  display: grid;
+  grid-template-columns: 28px 2fr 1fr; /* Ikona | Nazwa | Statystyki */
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: rgba(14, 20, 36, 0.6);
+  border: 1px solid rgba(60, 90, 140, 0.3);
+  border-radius: 4px;
+  cursor: grab;
+  font-size: 12px;
+  transition: background 0.15s;
+}
+
+.weapon-row:hover {
+  background: rgba(60, 100, 160, 0.3);
+  border-color: rgba(100, 150, 255, 0.5);
+}
+
+.weapon-row.dragging {
+  opacity: 0.5;
+  background: #2a3a5a;
+}
+
+/* Mini ikona w wierszu */
+.weapon-row-icon {
+  width: 24px;
+  height: 24px;
+  background: rgba(0,0,0,0.3);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.weapon-row-icon img { width: 100%; height: 100%; object-fit: contain; }
+.weapon-row-icon.placeholder { font-size: 9px; color: #555; border: 1px dashed #444; }
+
+.weapon-row-name { font-weight: 600; color: #e6f8ff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.weapon-row-meta { color: #94a9d6; font-size: 11px; text-align: right; }
+
+/* Wiersz Hardpointu (Slot) */
+.hp-row {
+  display: grid;
+  grid-template-columns: 28px 80px 1fr 24px; /* Ikona | Typ slotu | Zamontowane | Przycisk X */
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: rgba(10, 16, 30, 0.7);
+  border: 1px dashed rgba(88, 108, 170, 0.4);
+  border-radius: 4px;
+  font-size: 12px;
+  min-height: 34px;
+}
+
+.hp-row.drag-over {
+  background: rgba(50, 120, 200, 0.25);
+  border-color: #60a5fa;
+}
+
+.hp-row-label { color: #6b7da8; font-size: 11px; text-transform: uppercase; }
+.hp-row-mount { color: #8fb5ff; font-weight: 600; }
+.hp-row-mount.empty { color: #4b5563; font-style: italic; font-weight: 400; }
+
+.hp-row-clear {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: #ff6b6b;
+  cursor: pointer;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+.hp-row-clear:hover { background: rgba(255, 100, 100, 0.15); }
+.hp-row-clear:disabled { color: #333; cursor: default; }
+
+/* Kolorowanie ramek slotów wg typu */
+.hp-row[data-hp-type="main"] { border-left: 3px solid #3b82f6; }
+.hp-row[data-hp-type="missile"] { border-left: 3px solid #10b981; }
+.hp-row[data-hp-type="aux"] { border-left: 3px solid #f59e0b; }
+.hp-row[data-hp-type="hangar"] { border-left: 3px solid #a78bfa; }
+.hp-row[data-hp-type="special"] { border-left: 3px solid #ef4444; }
 </style>
 <style>
   /* Overlay 3D musi być nad głównym canvasem (#c) */
@@ -6485,171 +6626,190 @@ function quickMountWeapon(weapon){
   }
 }
 
-function createWeaponChip(weapon){
-  const chip = document.createElement('div');
-  chip.className = 'weapon-chip';
-  chip.draggable = true;
-  chip.dataset.weaponId = weapon.id;
-  chip.dataset.weaponType = weapon.type;
-  chip.appendChild(mechanicIconForWeapon(weapon, weapon.type));
+function createWeaponRow(weapon) {
+  const row = document.createElement('div');
+  row.className = 'weapon-row'; // Nowa klasa CSS
+  row.draggable = true;
+  row.dataset.weaponId = weapon.id;
+  row.dataset.weaponType = weapon.type;
 
-  const content = document.createElement('div');
-  content.style.display = 'flex';
-  content.style.flexDirection = 'column';
-  content.style.gap = '4px';
-  const name = document.createElement('div');
-  name.className = 'weapon-name';
-  name.textContent = weapon.name;
-  const meta = document.createElement('div');
-  meta.className = 'weapon-meta';
-  const metaText = weaponMetaText(weapon);
-  if(metaText) meta.textContent = metaText;
-  content.appendChild(name);
-  content.appendChild(meta);
-  chip.appendChild(content);
+  // 1. Mała ikona
+  const iconWrap = document.createElement('div');
+  const iconPath = WEAPON_ICON_PATHS[weapon.id];
+  if (iconPath) {
+    iconWrap.className = 'weapon-row-icon';
+    const img = document.createElement('img');
+    img.src = iconPath;
+    iconWrap.appendChild(img);
+  } else {
+    iconWrap.className = 'weapon-row-icon placeholder';
+    iconWrap.textContent = 'IMG';
+  }
+  row.appendChild(iconWrap);
 
-  chip.addEventListener('dragstart', (e)=>{
+  // 2. Nazwa
+  const nameEl = document.createElement('div');
+  nameEl.className = 'weapon-row-name';
+  nameEl.textContent = weapon.name;
+  row.appendChild(nameEl);
+
+  // 3. Statystyki (Dmg/Cd) - skrócone w jednej linii
+  const metaEl = document.createElement('div');
+  metaEl.className = 'weapon-row-meta';
+  let stats = '';
+  if (weapon.damage) stats = `${weapon.damage}dmg`;
+  else if (weapon.dps) stats = `${weapon.dps}dps`;
+  if (weapon.cooldown) stats += ` / ${weapon.cooldown}s`;
+  if (weapon.ammo) stats += ` [${weapon.ammo}]`;
+  metaEl.textContent = stats;
+  row.appendChild(metaEl);
+
+  // Obsługa przeciągania (Drag & Drop)
+  row.addEventListener('dragstart', (e) => {
     mechanicDragWeaponId = weapon.id;
-    chip.classList.add('dragging');
-    if(e.dataTransfer){
+    row.classList.add('dragging');
+    if (e.dataTransfer) {
       e.dataTransfer.setData('text/plain', weapon.id);
-      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.effectAllowed = 'copy';
     }
   });
-  chip.addEventListener('dragend', ()=>{
+  row.addEventListener('dragend', () => {
     mechanicDragWeaponId = null;
-    chip.classList.remove('dragging');
+    row.classList.remove('dragging');
   });
-  chip.addEventListener('dblclick', ()=> quickMountWeapon(weapon));
-  return chip;
+  row.addEventListener('dblclick', () => quickMountWeapon(weapon));
+
+  return row;
 }
 
-function renderAvailableWeapons(root){
-  if(!root) return;
+function renderAvailableWeapons(root) {
+  if (!root) return;
   root.innerHTML = '';
   const inventory = Game.player?.inventory || new Set();
   const weapons = [...inventory].map(id => WEAPONS[id]).filter(Boolean);
+  
+  // Sortowanie i grupowanie
   const grouped = {};
-  for(const t of Object.values(HP)) grouped[t] = [];
-  for(const w of weapons){
-    grouped[w.type].push(w);
-  }
-  for(const type of Object.values(HP)){
-    const meta = HP_GROUP_META[type];
-    const wrapper = document.createElement('div');
-    wrapper.className = 'weapon-group';
-    const header = document.createElement('div');
-    header.className = 'weapon-group-header';
-    const title = document.createElement('h5');
-    title.textContent = meta?.title || type;
-    const count = document.createElement('span');
-    count.className = 'weapon-count';
-    count.textContent = `${grouped[type].length} szt.`;
-    header.appendChild(title);
-    header.appendChild(count);
-    wrapper.appendChild(header);
+  for (const t of Object.values(HP)) grouped[t] = [];
+  for (const w of weapons) grouped[w.type].push(w);
 
-    if(!grouped[type].length){
-      const empty = document.createElement('div');
-      empty.className = 'weapon-meta';
-      empty.textContent = 'Brak dostępnych części w magazynie.';
-      wrapper.appendChild(empty);
-    } else {
-      grouped[type].sort((a,b)=>a.name.localeCompare(b.name));
-      for(const weapon of grouped[type]){
-        wrapper.appendChild(createWeaponChip(weapon));
-      }
+  for (const type of Object.values(HP)) {
+    if (!grouped[type].length) continue;
+
+    // Nagłówek grupy (np. "MAIN") - teraz jako prosty tekst
+    const header = document.createElement('div');
+    header.className = 'list-group-header';
+    const meta = HP_GROUP_META[type];
+    header.textContent = meta ? meta.title : type;
+    root.appendChild(header);
+
+    // Sortowanie alfabetyczne
+    grouped[type].sort((a, b) => a.name.localeCompare(b.name));
+    
+    // Generowanie wierszy
+    for (const weapon of grouped[type]) {
+      root.appendChild(createWeaponRow(weapon));
     }
-    root.appendChild(wrapper);
+  }
+  
+  if (weapons.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.padding = '10px';
+    empty.style.color = '#777';
+    empty.textContent = 'Pusty magazyn.';
+    root.appendChild(empty);
   }
 }
 
-function createHpSlot(hp, idx){
-  const slot = document.createElement('div');
-  slot.className = 'hp-slot';
-  slot.dataset.hpId = hp.id;
-  slot.dataset.hpType = hp.type;
-  if(!hp.mount) slot.classList.add('empty');
+function createHpRow(hp, idx) {
+  const row = document.createElement('div');
+  row.className = 'hp-row'; // Nowa klasa CSS
+  row.dataset.hpId = hp.id;
+  row.dataset.hpType = hp.type;
 
-  const header = document.createElement('div');
-  header.className = 'hp-slot-header';
-  const label = document.createElement('span');
-  label.className = 'hp-slot-label';
-  label.textContent = `Slot #${idx+1}`;
+  // 1. Ikona zamontowanej broni (lub puste miejsce)
+  const weapon = hp.mount ? WEAPONS[hp.mount] : null;
+  const iconWrap = document.createElement('div');
+  const iconPath = weapon ? WEAPON_ICON_PATHS[weapon.id] : null;
+  
+  if (iconPath) {
+    iconWrap.className = 'weapon-row-icon';
+    iconWrap.innerHTML = `<img src="${iconPath}">`;
+  } else {
+    // Pusty kwadracik lub znak zapytania
+    iconWrap.className = 'weapon-row-icon placeholder';
+    iconWrap.textContent = weapon ? '?' : '-';
+  }
+  row.appendChild(iconWrap);
+
+  // 2. Typ slotu (np. MAIN #1) - mała etykieta
+  const label = document.createElement('div');
+  label.className = 'hp-row-label';
+  label.textContent = `${hp.type.toUpperCase()} #${idx + 1}`;
+  row.appendChild(label);
+
+  // 3. Nazwa zamontowanej broni lub "Puste"
+  const mountInfo = document.createElement('div');
+  mountInfo.className = 'hp-row-mount';
+  if (weapon) {
+    mountInfo.textContent = weapon.name;
+    mountInfo.classList.remove('empty');
+  } else {
+    mountInfo.textContent = 'Puste';
+    mountInfo.classList.add('empty');
+  }
+  row.appendChild(mountInfo);
+
+  // 4. Przycisk "X" do odczepiania
   const clearBtn = document.createElement('button');
-  clearBtn.className = 'hp-slot-clear';
-  clearBtn.textContent = 'Odczep';
+  clearBtn.className = 'hp-row-clear';
+  clearBtn.textContent = '×';
+  clearBtn.title = "Odczep broń";
   clearBtn.disabled = !hp.mount;
-  clearBtn.addEventListener('click', ()=>{
+  clearBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
     applyWeaponToHardpoint(hp, null);
   });
-  header.appendChild(label);
-  header.appendChild(clearBtn);
-  slot.appendChild(header);
+  row.appendChild(clearBtn);
 
-  const body = document.createElement('div');
-  body.className = 'hp-slot-body';
-  const weapon = hp.mount ? WEAPONS[hp.mount] : null;
-  body.appendChild(mechanicIconForWeapon(weapon, hp.type));
-  const info = document.createElement('div');
-  info.style.display = 'flex';
-  info.style.flexDirection = 'column';
-  info.style.gap = '4px';
-  const name = document.createElement('div');
-  name.className = 'weapon-name';
-  name.textContent = weapon ? weapon.name : 'Brak zamontowanej broni';
-  const meta = document.createElement('div');
-  meta.className = 'weapon-meta';
-  meta.textContent = weapon ? weaponMetaText(weapon) : 'Upuść część z magazynu, aby zamontować.';
-  info.appendChild(name);
-  info.appendChild(meta);
-  body.appendChild(info);
-  slot.appendChild(body);
-
-  const hint = document.createElement('div');
-  hint.className = 'hp-slot-hint';
-  hint.textContent = 'Przeciągnij broń z listy po lewej.';
-  slot.appendChild(hint);
-
-  attachSlotDnD(slot, hp);
-  return slot;
+  // Podpięcie upuszczania (Drop)
+  attachSlotDnD(row, hp); // Ta funkcja pomocnicza zostaje bez zmian w kodzie
+  return row;
 }
 
-function renderInstalledHardpoints(root){
-  if(!root) return;
-  const listByType = {};
-  for(const t of Object.values(HP)) listByType[t] = [];
-  for(const hp of Game.player.hardpoints) listByType[hp.type].push(hp);
+function renderInstalledHardpoints(root) {
+  if (!root) return;
   root.innerHTML = '';
-  for(const type of Object.values(HP)){
-    const meta = HP_GROUP_META[type];
-    const slots = listByType[type];
-    const group = document.createElement('div');
-    group.className = `hp-group ${meta?.css || ''}`;
-    const title = document.createElement('h4');
-    title.textContent = meta?.title || type;
-    const small = document.createElement('small');
-    small.textContent = `${slots.length} slotów`;
-    title.appendChild(small);
-    group.appendChild(title);
+  
+  const listByType = {};
+  for (const t of Object.values(HP)) listByType[t] = [];
+  for (const hp of Game.player.hardpoints) listByType[hp.type].push(hp);
 
-    if(!slots.length){
-      const empty = document.createElement('div');
-      empty.className = 'hp-slot empty';
-      const label = document.createElement('div');
-      label.className = 'hp-slot-hint';
-      label.textContent = 'Brak slotów w tej kategorii.';
-      empty.appendChild(label);
-      group.appendChild(empty);
-    } else {
-      slots.forEach((hp, idx)=>{
-        group.appendChild(createHpSlot(hp, idx));
-      });
-    }
-    root.appendChild(group);
+  for (const type of Object.values(HP)) {
+    const slots = listByType[type];
+    if (!slots || slots.length === 0) continue;
+
+    // Nagłówek grupy (np. "MAIN (4)")
+    const meta = HP_GROUP_META[type];
+    const header = document.createElement('div');
+    header.className = 'list-group-header';
+    header.textContent = `${meta ? meta.title : type} (${slots.length})`;
+    header.style.marginBottom = '4px';
+    root.appendChild(header);
+
+    // Generowanie wierszy slotów
+    slots.forEach((hp, idx) => {
+      root.appendChild(createHpRow(hp, idx));
+    });
+  }
+  
+  if (Game.player.hardpoints.length === 0) {
+    const empty = document.createElement('div');
+    empty.textContent = 'Brak slotów na uzbrojenie.';
+    empty.style.padding = '10px';
+    root.appendChild(empty);
   }
 }
-
 function renderMechanic(){
   renderAvailableWeapons(document.getElementById('mechanic-available'));
   renderInstalledHardpoints(document.getElementById('hp-groups'));
