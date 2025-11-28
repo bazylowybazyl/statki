@@ -28,6 +28,14 @@
   .fleet-order-btn{flex:1 1 30%;padding:6px 8px;border-radius:8px;border:1px solid rgba(70,90,140,0.35);background:rgba(18,24,40,0.75);color:#dfe7ff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;transition:background 0.18s ease,border-color 0.18s ease,color 0.18s ease;}
   .fleet-order-btn:hover{background:rgba(32,44,72,0.85);border-color:rgba(110,150,220,0.6);}
   .fleet-order-btn.active{background:rgba(59,130,246,0.22);border-color:rgba(96,165,250,0.8);color:#f1f7ff;box-shadow:0 0 0 1px rgba(96,165,250,0.35) inset;}
+  #support-ui{position:absolute;left:12px;top:340px;width:260px;z-index:120;display:flex;flex-direction:column;gap:10px;background:rgba(8,10,20,0.55);padding:12px 14px;border-radius:12px;border:1px solid rgba(70,90,140,0.35);backdrop-filter:blur(6px);color:#dfe7ff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
+  #support-ui.hidden{display:none !important;}
+  #support-ui h3{margin:0;font-size:15px;letter-spacing:0.08em;text-transform:uppercase;color:#8fb5ff;}
+  .support-row{display:flex;flex-wrap:wrap;gap:8px;}
+  .support-btn{flex:1 1 48%;padding:8px 10px;border-radius:9px;border:1px solid rgba(70,90,140,0.35);background:rgba(18,24,40,0.8);color:#dfe7ff;font-size:12px;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;transition:background 0.18s ease,border-color 0.18s ease,color 0.18s ease;}
+  .support-btn:hover{background:rgba(32,44,72,0.9);border-color:rgba(110,150,220,0.6);}
+  .support-order-btn{flex:1 1 48%;padding:8px 10px;border-radius:9px;border:1px solid rgba(70,90,140,0.35);background:rgba(24,32,52,0.85);color:#dfe7ff;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;transition:background 0.18s ease,border-color 0.18s ease,color 0.18s ease;}
+  .support-order-btn.active{background:rgba(59,130,246,0.22);border-color:rgba(96,165,250,0.8);color:#f1f7ff;box-shadow:0 0 0 1px rgba(96,165,250,0.35) inset;}
   canvas{display:block;width:100vw;height:100vh}
   #game-root{position:relative;width:100vw;height:100vh;}
   #game-root>canvas{display:block;width:100%;height:100%;}
@@ -167,6 +175,20 @@
   <div id="fleet-ui" class="hidden">
     <h3>Flota</h3>
     <ul id="fleet-list"></ul>
+  </div>
+  <div id="support-ui" class="hidden">
+    <h3>Wsparcie</h3>
+    <div class="support-row">
+      <button class="support-btn" data-support-spawn="fighter">Fighter Squad</button>
+      <button class="support-btn" data-support-spawn="frigate_pd">Frigate (PD)</button>
+      <button class="support-btn" data-support-spawn="frigate_laser">Frigate (Laser)</button>
+      <button class="support-btn" data-support-spawn="destroyer">Destroyer</button>
+      <button class="support-btn" data-support-spawn="battleship">Battleship</button>
+    </div>
+    <div class="support-row">
+      <button id="support-engage" class="support-order-btn">Engage</button>
+      <button id="support-guard" class="support-order-btn active">Guard</button>
+    </div>
   </div>
   <div id="main-menu">
     <div class="menu-panel">
@@ -315,6 +337,10 @@ let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
 
 const fleetUIRoot = document.getElementById('fleet-ui');
 const fleetListEl = document.getElementById('fleet-list');
+const supportUIRoot = document.getElementById('support-ui');
+const supportGuardBtn = document.getElementById('support-guard');
+const supportEngageBtn = document.getElementById('support-engage');
+const supportSpawnButtons = document.querySelectorAll('[data-support-spawn]');
 const Fleet = window.Fleet || (window.Fleet = {
   ships: [],
   dirty: true,
@@ -327,6 +353,19 @@ const Fleet = window.Fleet || (window.Fleet = {
 if (!Fleet.ui.root && fleetUIRoot) Fleet.ui.root = fleetUIRoot;
 if (!Fleet.ui.list && fleetListEl) Fleet.ui.list = fleetListEl;
 function markFleetDirty(){ Fleet.dirty = true; }
+
+const SupportWing = window.SupportWing || (window.SupportWing = {
+  units: [],
+  order: 'guard',
+  ui: {
+    root: supportUIRoot || null,
+    guardBtn: supportGuardBtn || null,
+    engageBtn: supportEngageBtn || null
+  }
+});
+if (!SupportWing.ui.root && supportUIRoot) SupportWing.ui.root = supportUIRoot;
+if (!SupportWing.ui.guardBtn && supportGuardBtn) SupportWing.ui.guardBtn = supportGuardBtn;
+if (!SupportWing.ui.engageBtn && supportEngageBtn) SupportWing.ui.engageBtn = supportEngageBtn;
 
 const uiRoot = document.getElementById('ui');
 const mainMenuEl = document.getElementById('main-menu');
@@ -822,6 +861,97 @@ function updateFleetUI(){
     ui.list.appendChild(renderFleetShip(ship));
   }
   Fleet.dirty = false;
+}
+
+const SUPPORT_FORMATION = { perRow: 4, colGap: 90, rowGap: 70, lead: 160 };
+function supportGuardSlot(slotIndex){
+  const row = Math.floor(slotIndex / SUPPORT_FORMATION.perRow);
+  const col = slotIndex % SUPPORT_FORMATION.perRow;
+  const local = {
+    x: SUPPORT_FORMATION.lead + col * SUPPORT_FORMATION.colGap,
+    y: (row - 1) * SUPPORT_FORMATION.rowGap
+  };
+  const rotated = rotate(local, ship.angle);
+  return { x: ship.pos.x + rotated.x, y: ship.pos.y + rotated.y };
+}
+
+function setSupportOrder(order, opts = {}){
+  const normalized = order === 'engage' ? 'engage' : 'guard';
+  if (SupportWing.order === normalized && !opts.force) return;
+  SupportWing.order = normalized;
+
+  if (SupportWing.ui.guardBtn){
+    SupportWing.ui.guardBtn.classList.toggle('active', normalized === 'guard');
+  }
+  if (SupportWing.ui.engageBtn){
+    SupportWing.ui.engageBtn.classList.toggle('active', normalized === 'engage');
+  }
+}
+
+function cleanupSupportWing(){
+  SupportWing.units = SupportWing.units.filter(data => data?.npc && !data.npc.dead);
+  SupportWing.units.forEach((data, idx) => { data.slotIndex = idx; });
+}
+
+function updateSupportWing(dt){
+  cleanupSupportWing();
+  if (SupportWing.ui.root) {
+    SupportWing.ui.root.classList.remove('hidden');
+  }
+  if (SupportWing.order === 'engage') {
+    const piratesAlive = npcs.some(n => n && !n.dead && n.isPirate);
+    if (!piratesAlive) {
+      setSupportOrder('guard', { force: true });
+    }
+  }
+}
+
+function supportGuardBehavior(npc, slotIndex, dt){
+  const slot = supportGuardSlot(slotIndex);
+  const dx = slot.x - npc.x;
+  const dy = slot.y - npc.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const dir = { x: dx / dist, y: dy / dist };
+  const wantSpeed = Math.min(npc.maxSpeed || 240, dist * 1.4);
+  const turned = clampTurnVec(npc.vx || 0, npc.vy || 0, dir.x * wantSpeed, dir.y * wantSpeed, dt, 220);
+  npc.vx = turned.vx;
+  npc.vy = turned.vy;
+  npc.angle = Math.atan2(npc.vy || 0, npc.vx || 0);
+  if (dist < 12) {
+    npc.vx *= 0.92;
+    npc.vy *= 0.92;
+  }
+  npc.forceTarget = null;
+  npc.target = null;
+}
+
+function runSupportAI(npc, dt){
+  const data = npc.supportData;
+  if (!data) return;
+  if (SupportWing.order === 'guard') {
+    supportGuardBehavior(npc, data.slotIndex, dt);
+    return;
+  }
+
+  const target = aiPickTarget(npc);
+  if (!target) {
+    setSupportOrder('guard', { force: true });
+    supportGuardBehavior(npc, data.slotIndex, dt);
+    return;
+  }
+
+  npc.forceTarget = target;
+
+  if (data.type === 'fighter') {
+    npc.state = npc.state || 'guard';
+    runAdvancedFighterAI(npc, dt);
+  } else if (data.type === 'frigate_pd' || data.type === 'frigate_laser') {
+    aiFrigate(null, npc, dt);
+  } else if (data.type === 'destroyer') {
+    aiDestroyer(null, npc, dt);
+  } else if (data.type === 'battleship') {
+    aiBattleship(null, npc, dt);
+  }
 }
 
 function isPirateStation(st){
@@ -2691,6 +2821,106 @@ function makeNPCBase(pos, stats){
     ai: null,
     weapons: {}
   };
+}
+
+const SUPPORT_SHIP_TEMPLATES = {
+  fighter: {
+    color: '#7cff91',
+    count: 9,
+    stats: { hp: 120, accel: 280, maxSpeed: 540, turn: 5.4, radius: 12 },
+    spawnOffset: { x: -60, y: 0 },
+    configure(npc, idx){
+      npc.fighter = true;
+      npc.gun = 'laserS';
+      npc.msl = 'AF';
+      npc.mslAmmo = 2;
+      npc.gunCD = 0;
+      npc.mslCD = 0;
+      npc.engines = npc.engines || [{ x: -10, y: -6 }, { x: -10, y: 6 }];
+      npc.state = 'guard';
+      npc._supportIndex = idx;
+    }
+  },
+  frigate_pd: {
+    color: '#9ab8ff',
+    stats: { hp: 1200, accel: 60, maxSpeed: 280, turn: 1.2, radius: 45 },
+    spawnOffset: { x: -120, y: -40 },
+    configure(npc){
+      npc.pd = 'pd_mk1';
+      npc.mainGun = 'm_autocannon';
+      npc.preferredRange = 760;
+      npc.msl = 'AS';
+      npc.mslAmmo = 2;
+      npc.keepAngle = true;
+    }
+  },
+  frigate_laser: {
+    color: '#8fe0ff',
+    stats: { hp: 1200, accel: 60, maxSpeed: 280, turn: 1.2, radius: 45 },
+    spawnOffset: { x: -120, y: 40 },
+    configure(npc){
+      npc.pd = 'pd_laser';
+      npc.mainGun = 'm_beam';
+      npc.preferredRange = 920;
+      npc.msl = 'HE';
+      npc.mslAmmo = 2;
+      npc.keepAngle = true;
+    }
+  },
+  destroyer: {
+    color: '#aac8ff',
+    stats: { hp: 3200, accel: 70, maxSpeed: 240, turn: 0.9, radius: 70, friction: 0.995 },
+    spawnOffset: { x: -160, y: 0 },
+    configure(npc){
+      npc.isCapitalShip = true;
+      npc.mGun = 'm_rail';
+      npc.pd = 'pd_mk1';
+      npc.boostDur = 2.8;
+      npc.preferredRange = 820;
+      npc.keepAngle = true;
+    }
+  },
+  battleship: {
+    color: '#c8d4ff',
+    stats: { hp: 5200, accel: 55, maxSpeed: 190, turn: 0.6, radius: 110, friction: 0.995 },
+    spawnOffset: { x: -190, y: 0 },
+    configure(npc){
+      npc.isCapitalShip = true;
+      npc.pd = 'pd_laser';
+      npc.preferredRange = 780;
+      npc.keepAngle = true;
+    }
+  }
+};
+
+function spawnSupportShip(templateKey){
+  const template = SUPPORT_SHIP_TEMPLATES[templateKey];
+  if (!template) return [];
+  const created = [];
+  const count = Math.max(1, template.count || 1);
+  for (let i = 0; i < count; i++){
+    const jitter = (Math.random() * 12 - 6);
+    const offset = {
+      x: (template.spawnOffset?.x || -60) + jitter,
+      y: (template.spawnOffset?.y || 0) + ((i % SUPPORT_FORMATION.perRow) - 1.5) * 8
+    };
+    const rotated = rotate(offset, ship.angle);
+    const spawnPos = { x: ship.pos.x + rotated.x, y: ship.pos.y + rotated.y };
+    const npc = makeNPCBase(spawnPos, template.stats || {});
+    npc.friendly = true;
+    npc.mission = true;
+    npc.color = template.color || '#7cff91';
+    npc.type = templateKey;
+    npc.vx = ship.vel?.x ?? npc.vx;
+    npc.vy = ship.vel?.y ?? npc.vy;
+    npc.supportData = { npc, type: templateKey, slotIndex: SupportWing.units.length + created.length };
+    template.configure?.(npc, i);
+    npc.ai = dt => runSupportAI(npc, dt);
+    SupportWing.units.push(npc.supportData);
+    npcs.push(npc);
+    created.push(npc);
+  }
+  return created;
 }
 
 const CAPITAL_SHIP_TEMPLATES = {
@@ -9115,6 +9345,7 @@ function physicsStep(dt){
   ship.angle = wrapAngle(ship.angle);
   // Aktualizacja logiki eskadr
   SQUADS.forEach(s => s.update());
+  updateSupportWing(dt);
   npcStep(dt);
   cleanupCarrierFighters();
   pirateMissionStep(dt);
@@ -11895,6 +12126,21 @@ if (loadGameButton) {
 }
 if (optionsButton) {
   optionsButton.title = 'Wkrótce dostępne';
+}
+if (supportGuardBtn) {
+  supportGuardBtn.addEventListener('click', () => setSupportOrder('guard', { force: true }));
+}
+if (supportEngageBtn) {
+  supportEngageBtn.addEventListener('click', () => setSupportOrder('engage', { force: true }));
+}
+if (supportSpawnButtons && supportSpawnButtons.forEach) {
+  supportSpawnButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.supportSpawn;
+      spawnSupportShip(key);
+      setSupportOrder('guard', { force: true });
+    });
+  });
 }
 
 function wireDevTools(){
