@@ -96,6 +96,27 @@
   .station-overlay li:hover{background:linear-gradient(150deg,rgba(96,188,255,0.42),rgba(55,116,186,0.54));border-color:var(--fa-strong-border);color:#e6f8ff;transform:translateY(-1px);}
   .station-overlay li.active{background:linear-gradient(150deg,rgba(109,220,255,0.5),rgba(58,161,255,0.56));border-color:var(--fa-strong-border);color:#041226;box-shadow:0 0 0 1px rgba(96,165,250,0.35) inset,0 12px 26px rgba(3,92,160,0.35);}
   .station-tab.hidden{display:none;}
+  .station-head{position:relative;z-index:1;display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px;}
+  .station-title{margin:0;font-size:20px;letter-spacing:0.08em;text-transform:uppercase;color:#e6f8ff;text-shadow:0 0 14px rgba(109,220,255,0.55);}
+  .station-subtitle{margin:2px 0 0 0;font-size:12px;letter-spacing:0.16em;text-transform:uppercase;color:var(--fa-muted);}
+  .station-balance{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:12px;background:rgba(8,18,36,0.85);border:1px solid rgba(109,220,255,0.35);box-shadow:0 12px 26px rgba(3,12,32,0.5);}
+  .station-balance .label{font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#8fb5ff;}
+  .station-balance .value{font-size:18px;font-weight:800;color:#f8fbff;letter-spacing:0.04em;}
+  .station-panels{position:relative;z-index:1;display:flex;flex-direction:column;gap:12px;}
+  .station-tab{display:none;flex-direction:column;gap:12px;}
+  .station-tab.active{display:flex;}
+  .station-card{padding:12px 14px;border-radius:12px;background:linear-gradient(170deg,rgba(9,16,32,0.92),rgba(12,26,46,0.95));border:1px solid rgba(34,60,104,0.85);box-shadow:0 14px 26px rgba(0,0,0,0.32);display:flex;flex-direction:column;gap:8px;}
+  .station-card-header{display:flex;justify-content:space-between;align-items:center;gap:8px;}
+  .station-card-title{margin:0;font-size:15px;font-weight:800;letter-spacing:0.04em;color:#e6f8ff;}
+  .station-chip{padding:4px 10px;border-radius:999px;background:rgba(63,88,144,0.32);border:1px solid rgba(96,165,250,0.4);color:#dfe7ff;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;}
+  .station-card-desc{margin:0;color:#cbd5ff;font-size:13px;line-height:1.5;}
+  .station-card-meta{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:#9fb4e6;}
+  .station-card-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;}
+  .station-card button{padding:8px 12px;border-radius:10px;border:1px solid var(--fa-border);background:linear-gradient(150deg,rgba(66,142,210,0.28),rgba(55,116,186,0.42));color:var(--fa-text);font-weight:700;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;transition:background 0.18s,border-color 0.18s,transform 0.18s;box-shadow:0 12px 22px rgba(0,0,0,0.28);}
+  .station-card button:hover:not(:disabled){background:linear-gradient(150deg,rgba(96,188,255,0.38),rgba(55,116,186,0.5));border-color:var(--fa-strong-border);transform:translateY(-1px);}
+  .station-card button:disabled{opacity:0.45;cursor:not-allowed;}
+  .station-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;}
+  .station-divider{height:1px;background:linear-gradient(90deg,rgba(109,220,255,0),rgba(109,220,255,0.45),rgba(109,220,255,0));margin:4px 0;}
   .mechanic-toolbar{position:relative;z-index:1;display:flex;align-items:center;gap:8px;margin-bottom:14px;}
   .mechanic-toolbar label{font-weight:700;letter-spacing:0.05em;color:#b8c9f3;text-transform:uppercase;font-size:12px;}
   .mechanic-toolbar select{flex:1;background:linear-gradient(135deg,rgba(6,14,28,0.92),rgba(8,16,34,0.95));color:#dfe7ff;border:1px solid #2a3a5a;border-radius:10px;padding:7px 12px;font-size:14px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.08);}
@@ -235,6 +256,27 @@
     <div class="loading-title">Ładowanie</div>
     <div class="loading-bar"><span id="loading-fill"></span></div>
     <div id="loading-progress" class="loading-progress">0%</div>
+  </div>
+</div>
+<div id="station-overlay" class="station-overlay hidden">
+  <div class="station-head">
+    <div>
+      <div id="station-title" class="station-title">Stacja orbitalna</div>
+      <div id="station-subtitle" class="station-subtitle">Przestrzeń cywilna</div>
+    </div>
+    <div class="station-balance">
+      <div class="label">Kredyty</div>
+      <div id="station-credits" class="value">0 cr</div>
+    </div>
+  </div>
+  <ul id="station-tabs"></ul>
+  <div class="station-panels">
+    <div id="tab-upgrades" class="station-tab"></div>
+    <div id="tab-trade" class="station-tab hidden"></div>
+    <div id="tab-cantina" class="station-tab hidden"></div>
+    <div id="tab-hangar" class="station-tab hidden"></div>
+    <div id="tab-mechanic-html" class="station-tab hidden"></div>
+    <div id="tab-infrastructure-html" class="station-tab hidden"></div>
   </div>
 </div>
 <div id="mechanic-overlay" class="station-overlay hidden">
@@ -5258,33 +5300,24 @@ window.addEventListener('keydown', (e)=>{
 
 function renderStationUI(){
   const alpha = clamp(stationUI.appear, 0, 1);
-  if(alpha <= 0.001){
-    setMechanicUIVisible(false);
-    setInfrastructureUIVisible(false);
+
+  const shouldShow = stationUI.open && stationUI.visible && !stationUI.awaitingCamera && alpha > 0.001;
+  const showMechanic = shouldShow && stationUI.tab === 'mechanic';
+  const showInfrastructure = shouldShow && stationUI.tab === 'infrastructure';
+
+  setMechanicUIVisible(showMechanic);
+  setInfrastructureUIVisible(showInfrastructure);
+
+  const overlay = stationOverlayDom.root;
+  if(!overlay){
     return;
   }
 
-  if(stationUI.autoPosition && stationUI.station){
-    positionStationUIPanel();
+  overlay.style.opacity = shouldShow ? alpha.toFixed(2) : '0';
+  overlay.classList.toggle('hidden', !shouldShow);
+  if(shouldShow){
+    renderStationOverlay(stationUI.tab, stationUI.station);
   }
-
-  const showMechanic = stationUI.open && stationUI.visible && !stationUI.awaitingCamera && stationUI.tab==='mechanic' && alpha > 0.25;
-  setMechanicUIVisible(showMechanic);
-  const showInfrastructure = stationUI.open && stationUI.visible && !stationUI.awaitingCamera && stationUI.tab==='infrastructure' && alpha > 0.25;
-  setInfrastructureUIVisible(showInfrastructure);
-
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  hudBeginPanel(stationUI.x, stationUI.y, stationUI.w, stationUI.h);
-  hudTabs(['upgrades','trade','cantina','hangar','mechanic','infrastructure'], stationUI.tab);
-  if(stationUI.tab==='upgrades') renderUpgradesTab();
-  if(stationUI.tab==='trade')    renderTradeTab();
-  if(stationUI.tab==='cantina')  renderCantinaTab();
-  if(stationUI.tab==='hangar')   renderHangarTab();
-  if(stationUI.tab==='mechanic') renderMechanicTab();
-  if(stationUI.tab==='infrastructure') renderInfrastructureTab();
-  hudEndPanel();
-  ctx.restore();
 }
 
 function positionStationUIPanel(){
@@ -6473,66 +6506,447 @@ const BLUEPRINTS = {
   ],
 };
 
-function renderUpgradesTab(){
-  uiTitle('Ulepszenia statku');
-  for(const u of BLUEPRINTS.upgrades){
-    if(uiRowButton(`${u.name} — ${u.cost} cr`, 'Kup')){
-      if(PLAYER.credits>=u.cost){ PLAYER.credits-=u.cost; u.apply(); toast('Zainstalowano: '+u.name); }
-      else toast('Za mało kredytów');
-    }
-  }
-}
+const STATION_TAB_CONFIG = [
+  { id:'upgrades', label:'Ulepszenia' },
+  { id:'trade', label:'Handel' },
+  { id:'cantina', label:'Kantyna' },
+  { id:'hangar', label:'Hangar' },
+  { id:'mechanic', label:'Mechanik' },
+  { id:'infrastructure', label:'Infrastruktura' },
+];
+
 const MARKET = { // ceny przykładowe
   buy:{ ruda: 22, paliwo: 15, żywność: 8 },
   sell:{ ruda: 18, paliwo: 12, żywność: 6 }
 };
-function renderTradeTab(){
-  uiTitle('Handel towarami');
-  for(const [k,price] of Object.entries(MARKET.buy)){
-    if(uiRowButton(`${k} — kup: ${price} cr`, 'Kup')){
-      if(PLAYER.credits>=price){ PLAYER.credits-=price; PLAYER.cargo[k]=(PLAYER.cargo[k]||0)+1; }
-    }
-  }
-  for(const [k,price] of Object.entries(MARKET.sell)){
-    if(uiRowButton(`${k} — sprzedaj: ${price} cr`, 'Sprzedaj')){
-      if((PLAYER.cargo[k]||0)>0){ PLAYER.cargo[k]-=1; PLAYER.credits+=price; }
-    }
-  }
-}
-function renderCantinaTab(){
-  uiTitle('Kantyna');
-  section('Misje najemnik');
-  if(uiRowButton('Najemnik: piracka stacja', 'Przyjmij')){
-    startMercenaryMission();
-  }
-  section('Misje żołnierz');
-  if(uiRowButton('Wojna o terytorium (punkt kontrolny)', 'Dołącz')){
-    startTerritoryWarMission();
-  }
-}
-function renderHangarTab(){
-  uiTitle('Hangar');
 
+const stationOverlayDom = {
+  root: document.getElementById('station-overlay'),
+  tabs: document.getElementById('station-tabs'),
+  title: document.getElementById('station-title'),
+  subtitle: document.getElementById('station-subtitle'),
+  credits: document.getElementById('station-credits'),
+  panels: {
+    upgrades: document.getElementById('tab-upgrades'),
+    trade: document.getElementById('tab-trade'),
+    cantina: document.getElementById('tab-cantina'),
+    hangar: document.getElementById('tab-hangar'),
+    mechanic: document.getElementById('tab-mechanic-html'),
+    infrastructure: document.getElementById('tab-infrastructure-html'),
+  }
+};
+
+const stationOverlayState = {
+  built:false,
+  activeTab:null,
+  stationKey:null
+};
+
+function createStationCard({ title, badge, description, meta = [], actions = [] }){
+  const card = document.createElement('div');
+  card.className = 'station-card';
+
+  const header = document.createElement('div');
+  header.className = 'station-card-header';
+  const titleEl = document.createElement('h4');
+  titleEl.className = 'station-card-title';
+  titleEl.textContent = title;
+  header.appendChild(titleEl);
+  if(badge){
+    const chip = document.createElement('span');
+    chip.className = 'station-chip';
+    chip.textContent = badge;
+    header.appendChild(chip);
+  }
+  card.appendChild(header);
+
+  if(description){
+    const desc = document.createElement('p');
+    desc.className = 'station-card-desc';
+    desc.textContent = description;
+    card.appendChild(desc);
+  }
+
+  if(meta.length){
+    const metaEl = document.createElement('div');
+    metaEl.className = 'station-card-meta';
+    meta.forEach(text => {
+      const span = document.createElement('span');
+      span.textContent = text;
+      metaEl.appendChild(span);
+    });
+    card.appendChild(metaEl);
+  }
+
+  if(actions.length){
+    const actionsEl = document.createElement('div');
+    actionsEl.className = 'station-card-actions';
+    actions.forEach(action => {
+      const btn = document.createElement('button');
+      btn.textContent = action.label;
+      if(action.dataset){
+        for(const [k,v] of Object.entries(action.dataset)){
+          btn.dataset[k] = v;
+        }
+      }
+      if(typeof action.disabled === 'boolean') btn.disabled = action.disabled;
+      btn.addEventListener('click', action.onClick);
+      actionsEl.appendChild(btn);
+    });
+    card.appendChild(actionsEl);
+  }
+
+  return card;
+}
+
+function initStationOverlayTabs(){
+  if(!stationOverlayDom.tabs) return;
+  stationOverlayDom.tabs.innerHTML = '';
+  for(const tab of STATION_TAB_CONFIG){
+    const li = document.createElement('li');
+    li.dataset.tab = tab.id;
+    li.textContent = tab.label;
+    li.addEventListener('click', ()=>{
+      stationUI.tab = tab.id;
+      renderStationUI();
+    });
+    stationOverlayDom.tabs.appendChild(li);
+  }
+}
+
+function buildUpgradesPanel(){
+  const pane = stationOverlayDom.panels.upgrades;
+  if(!pane) return;
+  pane.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'station-grid';
+  for(const upgrade of BLUEPRINTS.upgrades){
+    const card = createStationCard({
+      title: upgrade.name,
+      badge: 'Upgrade',
+      description: 'Ulepszenie statku instalowane przez warsztat stacji.',
+      meta: [`Koszt: ${upgrade.cost} cr`],
+      actions: [{
+        label: 'Kup',
+        dataset: { upgradeId: upgrade.id, cost: upgrade.cost },
+        onClick: ()=>purchaseUpgrade(upgrade)
+      }]
+    });
+    grid.appendChild(card);
+  }
+  pane.appendChild(grid);
+}
+
+function buildTradePanel(){
+  const pane = stationOverlayDom.panels.trade;
+  if(!pane) return;
+  pane.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'station-grid';
+  const allItems = new Set([...Object.keys(MARKET.buy), ...Object.keys(MARKET.sell)]);
+  for(const item of allItems){
+    const buyPrice = MARKET.buy[item];
+    const sellPrice = MARKET.sell[item];
+    const card = createStationCard({
+      title: toTitleCaseFromKey(item),
+      badge: 'Rynek',
+      description: 'Handluj surowcami z dokami stacji.',
+      meta: [
+        buyPrice ? `Kupno: ${buyPrice} cr` : 'Kupno: niedostępne',
+        sellPrice ? `Sprzedaż: ${sellPrice} cr` : 'Sprzedaż: niedostępna',
+        `Ładownia: ${PLAYER.cargo[item] || 0}`
+      ],
+      actions: [
+        buyPrice ? {
+          label: 'Kup',
+          dataset: { tradeItem: item, tradeType: 'buy', price: buyPrice },
+          onClick: ()=>handleTrade('buy', item, buyPrice)
+        } : null,
+        sellPrice ? {
+          label: 'Sprzedaj',
+          dataset: { tradeItem: item, tradeType: 'sell', price: sellPrice },
+          onClick: ()=>handleTrade('sell', item, sellPrice)
+        } : null
+      ].filter(Boolean)
+    });
+    grid.appendChild(card);
+  }
+  pane.appendChild(grid);
+}
+
+function buildCantinaPanel(){
+  const pane = stationOverlayDom.panels.cantina;
+  if(!pane) return;
+  pane.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'station-grid';
+  grid.appendChild(createStationCard({
+    title: 'Najemnik: piracka stacja',
+    badge: 'Misja',
+    description: 'Odbierz kontrakt na zniszczenie pirackiej placówki w pobliskim sektorze.',
+    meta: ['Nagrody za eliminację wrogów'],
+    actions: [{ label:'Przyjmij', onClick: startMercenaryMission }]
+  }));
+  grid.appendChild(createStationCard({
+    title: 'Wojna o terytorium',
+    badge: 'Misja',
+    description: 'Dołącz do sił sojuszniczych i odbij punkt kontrolny z rąk piratów.',
+    meta: ['Aktywuje wrogie fale w sektorze'],
+    actions: [{ label:'Dołącz', onClick: startTerritoryWarMission }]
+  }));
+  pane.appendChild(grid);
+}
+
+function buildHangarPanel(){
+  const pane = stationOverlayDom.panels.hangar;
+  if(!pane) return;
+  pane.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'station-grid';
+
+  const repairCard = createStationCard({
+    title: 'Naprawy kadłuba',
+    badge: 'Serwis',
+    description: 'Przywróć kadłub statku do pełnej sprawności.',
+    meta: ['Status: 0% uszkodzeń'],
+    actions: [{ label: 'Napraw', dataset:{ action:'repair' }, onClick: handleRepair }]
+  });
+  grid.appendChild(repairCard);
+
+  for(const shipBP of BLUEPRINTS.ships){
+    const card = createStationCard({
+      title: shipBP.name,
+      badge: 'Hangar',
+      description: 'Zamów nową ramę statku i przeładuj systemy.',
+      meta: [
+        `Koszt: ${shipBP.cost} cr`,
+        `Kadłub: ${Math.round(shipBP.stats.hp * 100)}%`,
+        `Prędkość: ${Math.round(shipBP.stats.speed * 100)}%`
+      ],
+      actions: [{
+        label: 'Kup',
+        dataset:{ shipId: shipBP.id, cost: shipBP.cost },
+        onClick: ()=>purchaseShip(shipBP)
+      }]
+    });
+    grid.appendChild(card);
+  }
+  pane.appendChild(grid);
+}
+
+function buildMechanicPanel(){
+  const pane = stationOverlayDom.panels.mechanic;
+  if(!pane) return;
+  pane.innerHTML = '';
+  pane.appendChild(createStationCard({
+    title: 'Warsztat hardpointów',
+    badge: 'Mechanic',
+    description: 'Otwórz panel warsztatowy, aby przeprojektować uzbrojenie i przełączyć ramę statku.',
+    meta: ['Skrót klawiatury: [5]'],
+    actions: [{
+      label:'Otwórz warsztat',
+      onClick: ()=>{
+        stationUI.tab = 'mechanic';
+        setMechanicUIVisible(true);
+        renderStationUI();
+      }
+    }]
+  }));
+}
+
+function buildInfrastructurePanel(){
+  const pane = stationOverlayDom.panels.infrastructure;
+  if(!pane) return;
+  pane.innerHTML = '';
+  pane.appendChild(createStationCard({
+    title: 'Infrastruktura stacji',
+    badge: 'Budowa',
+    description: 'Przeciągaj budynki na siatkę infrastruktury, aby rozwijać stację.',
+    meta: ['Skrót klawiatury: [6]'],
+    actions: [{
+      label:'Otwórz budowę',
+      onClick: ()=>{
+        stationUI.tab = 'infrastructure';
+        setInfrastructureUIVisible(true);
+        renderStationUI();
+      }
+    }]
+  }));
+}
+
+function initStationOverlay(){
+  if(!stationOverlayDom.root) return;
+  initStationOverlayTabs();
+  buildUpgradesPanel();
+  buildTradePanel();
+  buildCantinaPanel();
+  buildHangarPanel();
+  buildMechanicPanel();
+  buildInfrastructurePanel();
+  stationOverlayState.built = true;
+}
+
+function updateStationHeader(station){
+  if(stationOverlayDom.title){
+    stationOverlayDom.title.textContent = station?.name || 'Stacja orbitalna';
+  }
+  if(stationOverlayDom.subtitle){
+    const parts = [];
+    if(station?.planet?.name) parts.push(`Orbita: ${station.planet.name}`);
+    if(Number.isFinite(station?.x) && Number.isFinite(station?.y)){
+      parts.push(`Pozycja: ${Math.round(station.x)}, ${Math.round(station.y)}`);
+    }
+    stationOverlayDom.subtitle.textContent = parts.join(' • ') || 'Przestrzeń cywilna';
+  }
+  if(stationOverlayDom.credits){
+    stationOverlayDom.credits.textContent = `${Math.round(PLAYER.credits)} cr`;
+  }
+}
+
+function setActiveStationTab(tab){
+  if(stationOverlayDom.tabs){
+    stationOverlayDom.tabs.querySelectorAll('li').forEach(li => {
+      li.classList.toggle('active', li.dataset.tab === tab);
+    });
+  }
+  for(const [key, pane] of Object.entries(stationOverlayDom.panels)){
+    if(!pane) continue;
+    const match = key === tab;
+    pane.classList.toggle('active', match);
+    pane.classList.toggle('hidden', !match);
+  }
+}
+
+function updateUpgradeButtons(){
+  const buttons = stationOverlayDom.panels.upgrades?.querySelectorAll('button[data-upgrade-id]');
+  if(!buttons) return;
+  buttons.forEach(btn => {
+    const cost = Number(btn.dataset.cost) || 0;
+    btn.disabled = PLAYER.credits < cost;
+  });
+}
+
+function updateTradeCards(){
+  const cards = stationOverlayDom.panels.trade?.querySelectorAll('.station-card');
+  if(!cards) return;
+  cards.forEach(card => {
+    const item = card.querySelector('[data-trade-item]')?.dataset.tradeItem
+      || card.querySelector('button[data-trade-item]')?.dataset.tradeItem;
+    if(!item) return;
+    const meta = card.querySelector('.station-card-meta');
+    if(meta){
+      const metaSpans = [...meta.querySelectorAll('span')];
+      if(metaSpans[2]) metaSpans[2].textContent = `Ładownia: ${PLAYER.cargo[item] || 0}`;
+    }
+    card.querySelectorAll('button[data-trade-type]').forEach(btn => {
+      const price = Number(btn.dataset.price) || 0;
+      const type = btn.dataset.tradeType;
+      if(type === 'buy'){
+        btn.disabled = PLAYER.credits < price;
+      }
+      if(type === 'sell'){
+        btn.disabled = (PLAYER.cargo[item] || 0) <= 0;
+      }
+    });
+  });
+}
+
+function updateHangarCards(){
+  const pane = stationOverlayDom.panels.hangar;
+  if(!pane) return;
+  const cards = [...pane.querySelectorAll('.station-card')];
   const damageFrac = 1 - (ship.hull.val / ship.hull.max);
   const damagePct = Math.ceil(damageFrac * 100);
-  const cost = Math.ceil(damageFrac * 600);
+  const repairCost = Math.ceil(damageFrac * 600);
+  const repairCard = cards.find(card => card.querySelector('button[data-action="repair"]'));
+  if(repairCard){
+    const meta = repairCard.querySelector('.station-card-meta span');
+    if(meta) meta.textContent = `Status: ${damagePct}% uszkodzeń`;
+    const btn = repairCard.querySelector('button[data-action="repair"]');
+    if(btn) btn.disabled = damagePct <= 0 || PLAYER.credits < repairCost;
+  }
+  for(const btn of pane.querySelectorAll('button[data-ship-id]')){
+    const cost = Number(btn.dataset.cost) || 0;
+    btn.disabled = PLAYER.credits < cost;
+  }
+}
 
-  if(uiRowButton(`Napraw kadłub (${damagePct}% uszk.)`, 'Napraw')){
-    if(PLAYER.credits >= cost){
-      PLAYER.credits -= cost;
-      ship.hull.val = ship.hull.max;
-      toast('Naprawiono kadłub.');
+function renderStationOverlay(tab, station){
+  if(!stationOverlayState.built) initStationOverlay();
+  if(!stationOverlayDom.root) return;
+  const stationKey = getInfrastructureStationKey(station) || station?.name || 'station';
+  if(stationOverlayState.activeTab !== tab || stationOverlayState.stationKey !== stationKey){
+    setActiveStationTab(tab);
+    stationOverlayState.activeTab = tab;
+    stationOverlayState.stationKey = stationKey;
+  }
+  updateStationHeader(station);
+  updateUpgradeButtons();
+  updateTradeCards();
+  updateHangarCards();
+}
+
+function handleTrade(type, item, price){
+  if(type === 'buy'){
+    if(PLAYER.credits >= price){
+      PLAYER.credits -= price;
+      PLAYER.cargo[item] = (PLAYER.cargo[item] || 0) + 1;
     } else {
       toast('Za mało kredytów');
     }
-  }
-  section('Nowe statki');
-  for(const s of BLUEPRINTS.ships){
-    if(uiRowButton(`${s.name} — ${s.cost} cr`, 'Kup')){
-      if(PLAYER.credits>=s.cost){ PLAYER.credits-=s.cost; PLAYER.shipId=s.id; applyShipStats(s.stats); toast('Zakupiono: '+s.name); }
-      else toast('Za mało kredytów');
+  } else if(type === 'sell'){
+    if((PLAYER.cargo[item] || 0) > 0){
+      PLAYER.cargo[item] -= 1;
+      PLAYER.credits += price;
     }
   }
+  updateStationOverlay(stationUI.tab, stationUI.station);
+}
+
+function purchaseUpgrade(upgrade){
+  if(!upgrade) return;
+  if(PLAYER.credits >= upgrade.cost){
+    PLAYER.credits -= upgrade.cost;
+    upgrade.apply();
+    toast('Zainstalowano: ' + upgrade.name);
+  } else {
+    toast('Za mało kredytów');
+  }
+  updateStationOverlay(stationUI.tab, stationUI.station);
+}
+
+function purchaseShip(shipBP){
+  if(!shipBP) return;
+  if(PLAYER.credits >= shipBP.cost){
+    PLAYER.credits -= shipBP.cost;
+    PLAYER.shipId = shipBP.id;
+    applyShipStats(shipBP.stats);
+    toast('Zakupiono: ' + shipBP.name);
+  } else {
+    toast('Za mało kredytów');
+  }
+  updateStationOverlay(stationUI.tab, stationUI.station);
+}
+
+function handleRepair(){
+  const damageFrac = 1 - (ship.hull.val / ship.hull.max);
+  const repairCost = Math.ceil(damageFrac * 600);
+  if(damageFrac <= 0){
+    toast('Kadłub jest w pełni sprawny');
+    return;
+  }
+  if(PLAYER.credits >= repairCost){
+    PLAYER.credits -= repairCost;
+    ship.hull.val = ship.hull.max;
+    toast('Naprawiono kadłub.');
+  } else {
+    toast('Za mało kredytów');
+  }
+  updateStationOverlay(stationUI.tab, stationUI.station);
+}
+
+function updateStationOverlay(tab, station){
+  renderStationOverlay(tab, station);
 }
 
 initMechanicUI();
