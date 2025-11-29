@@ -1848,7 +1848,7 @@ const camera = {
   zoom: 1.0,
   defaultZoom: 1.0,
   altZoom: 0.7,
-  minZoom: 0.12,
+  minZoom: 0.06,
   maxZoom: 3.2,
   wheelSpeed: 0.002,
   manualZoom: false,
@@ -10521,7 +10521,21 @@ function loop(now){
   const frame = Math.min(0.033, (now - lastTime)/1000);
   lastTime = now;
   applyGamepad();
-  if(PAUSED){ requestAnimationFrame(loop); return; }
+  if(PAUSED){
+    saveState();
+    updateCameraTarget(frame);
+    zoomIndicator.update(frame);
+    render(0, frame);
+    if (overlay3D) {
+      overlay3D.tick(frame);
+    }
+    if (firstFrameResolver) {
+      firstFrameResolver();
+      firstFrameResolver = null;
+    }
+    requestAnimationFrame(loop);
+    return;
+  }
   acc += frame;
   vfxTime += frame;
   saveState();
