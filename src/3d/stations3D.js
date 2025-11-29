@@ -51,13 +51,13 @@ function initScene() {
 
   // 1. Światło Ambient (rozproszone) - jaśniejsze, aby stacja nie była czarna w cieniu
   if (ambLight) ownScene.remove(ambLight);
-  ambLight = new THREE.AmbientLight(0xffffff, 0.6); 
+  ambLight = new THREE.AmbientLight(0xffffff, 0.5); 
   ownScene.add(ambLight);
 
   // 2. Światło Kierunkowe (Słońce) - PRZYWRÓCONE
   if (dirLight) ownScene.remove(dirLight);
-  dirLight = new THREE.DirectionalLight(0xffffff, 2.5); // Mocne światło
-  dirLight.position.set(5, 2, 5); // Domyślna pozycja
+  dirLight = new THREE.DirectionalLight(0xffffff, 8.0); // Mocne światło
+  dirLight.position.set(10, 0, 0); // Domyślna pozycja
   ownScene.add(dirLight);
   // Zapisujemy referencję w userData, by renderStationSprite mógł ją aktualizować
   ownScene.userData.dirLight = dirLight; 
@@ -552,7 +552,7 @@ function renderStationSprite(record) {
     const dy = (window.SUN.y ?? 0) - (stRef.y ?? 0);
     // 2D (y w dół) -> 3D (z do przodu). Odwracamy Y.
     // Światło pada "od" słońca.
-    const v = new THREE.Vector3(dx, 0.6 * Math.hypot(dx,dy), -dy); 
+    const v = new THREE.Vector3(dx, 0.15 * Math.hypot(dx,dy), -dy); 
     if (v.lengthSq() > 0) {
       v.normalize().multiplyScalar(Math.max(200, dist));
       sunLight.position.copy(v);
