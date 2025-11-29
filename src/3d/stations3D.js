@@ -114,26 +114,31 @@ function getTemplate(stationId, path) {
 
   loader.load(path, (gltf) => {
     
-    gltf.scene.traverse(o => {
+   gltf.scene.traverse(o => {
       if (o.isMesh) {
         o.castShadow = true;
         o.receiveShadow = true;
 
-        // TUTAJ BYŁ BŁĄD: Zamiast podmieniać na ShaderMaterial, 
-        // po prostu konfigurujemy istniejący materiał PBR.
         if (o.material) {
-          // Naprawa znikających ścian (backface culling)
+          // --- NAPRAWA GEOMETRII I PRZENIKANIA ---
+         
+          o.material.transparent = false;
+          o.material.depthWrite = true;
+          o.material.depthTest = true;
+          if (o.material.map || o.material.alphaMap) {
+             o.material.alphaTest = 0.5; 
+          }
           o.material.side = THREE.DoubleSide;
           
-          // Jeśli model jest za ciemny, podbijamy siłę mapy otoczenia
           o.material.envMapIntensity = 1.0; 
+          o.material.metalness = 1.0; // Wymuś metaliczność dla lepszych odbić
+          o.material.roughness = 0.4; // Trochę połysku, ale nie lustro
 
-          // Jeśli masz światła emisyjne (świecące okna/lasery), upewnij się, że są jasne
+          // Podbicie świateł emisyjnych (okna/lasery)
           if (o.material.emissiveMap || (o.material.emissive && o.material.emissive.r > 0)) {
-             o.material.emissiveIntensity = 2.0; 
+             o.material.emissiveIntensity = 4.0; 
           }
           
-          // Wymuszamy aktualizację
           o.material.needsUpdate = true;
         }
       }
