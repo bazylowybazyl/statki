@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
-// DODANO: Potrzebne do ładnych odbić na metalu
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'; 
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const loader = new GLTFLoader();
 const templateCache = new Map();
@@ -22,7 +21,6 @@ const DEFAULT_STATION_SPRITE_FRAME = 1.25;
 const MIN_SPRITE_RENDER_INTERVAL = 0;
 const FRAME_EPSILON = 0.001;
 
-// ... (funkcje pomocnicze: getStationSpriteSize, approxEqual, markSpriteDirty - BEZ ZMIAN) ...
 function getStationSpriteSize() {
   let fromCfg = NaN;
   let fromLS = NaN;
@@ -36,12 +34,21 @@ function getStationSpriteSize() {
   v = Math.max(64, Math.min(4096, Math.round(v)));
   return v;
 }
+
 const TMP_COLOR = new THREE.Color();
 const TMP_VIEWPORT = new THREE.Vector4();
 const TMP_SCISSOR = new THREE.Vector4();
-function approxEqual(a, b, eps = FRAME_EPSILON) { return Math.abs((a ?? 0) - (b ?? 0)) <= eps; }
-function markSpriteDirty(record) { if (record) { record.forceSpriteRefresh = true; record.lastSpriteTime = 0; } }
 
+function approxEqual(a, b, eps = FRAME_EPSILON) {
+  return Math.abs((a ?? 0) - (b ?? 0)) <= eps;
+}
+
+function markSpriteDirty(record) {
+  if (record) {
+    record.forceSpriteRefresh = true;
+    record.lastSpriteTime = 0;
+  }
+}
 
 // --- POPRAWIONA FUNKCJA INIT SCENE ---
 function initScene() {
@@ -49,61 +56,79 @@ function initScene() {
   ownScene = new THREE.Scene();
   activeScene = ownScene;
 
-  // 1. Światło Ambient (rozproszone) - jaśniejsze, aby stacja nie była czarna w cieniu
+  // 1. Światło Ambient (rozproszone)
   if (ambLight) ownScene.remove(ambLight);
-  ambLight = new THREE.AmbientLight(0xffffff, 0.5); 
+  ambLight = new THREE.AmbientLight(0xffffff, 0.5);
   ownScene.add(ambLight);
 
-  // 2. Światło Kierunkowe (Słońce) - PRZYWRÓCONE
+  // 2. Światło Kierunkowe (Słońce)
   if (dirLight) ownScene.remove(dirLight);
-  dirLight = new THREE.DirectionalLight(0xffffff, 8.0); // Mocne światło
-  dirLight.position.set(10, 0, 0); // Domyślna pozycja
+  dirLight = new THREE.DirectionalLight(0xffffff, 8.0);
+  dirLight.position.set(10, 0, 0);
   ownScene.add(dirLight);
-  // Zapisujemy referencję w userData, by renderStationSprite mógł ją aktualizować
-  ownScene.userData.dirLight = dirLight; 
+  ownScene.userData.dirLight = dirLight;
 
-  // 3. Environment Map (Kluczowe dla metalu!)
-  // Generujemy sztuczne środowisko studyjne, żeby metal miał co odbijać
+  // 3. Environment Map
   const pmremGenerator = new THREE.PMREMGenerator(new THREE.WebGLRenderer());
   pmremGenerator.compileEquirectangularShader();
   const envTexture = pmremGenerator.fromScene(new RoomEnvironment()).texture;
   ownScene.environment = envTexture;
-  // Opcjonalnie tło (dla debugowania, normalnie null dla przezroczystości)
-  // ownScene.background = null; 
+  // ownScene.background = null; // przezroczyste tło
 
   // Kamera
   const S = getStationSpriteSize();
   const H = S / 2;
-  previewCam = new THREE.PerspectiveCamera(30, 1, 0.1, 10000); 
+  previewCam = new THREE.PerspectiveCamera(30, 1, 1, H * 8);
   previewCam.position.set(H * 1.0, H * 0.8, H * 1.9);
   previewCam.lookAt(0, 0, 0);
   ownScene.add(previewCam);
-  
+
   return ownScene;
 }
 
-// ... (getSharedRenderer, ensurePreviewCamera, STATION_KEY_PROP, MODEL_URLS - BEZ ZMIAN) ...
 function getSharedRenderer(width, height) {
   if (typeof window === 'undefined') return null;
   const getter = window.getSharedRenderer;
   if (typeof getter !== 'function') {
-    if (!sharedRendererWarned) { console.warn('Stations3D: shared renderer unavailable'); sharedRendererWarned = true; }
+    if (!sharedRendererWarned) {
+      console.warn('Stations3D: shared renderer unavailable');
+      sharedRendererWarned = true;
+    }
     return null;
   }
   return getter(width, height);
 }
-function ensurePreviewCamera() { if (!previewCam) { initScene(); } return previewCam; }
+
+function ensurePreviewCamera() {
+  if (!previewCam) {
+    initScene();
+  }
+  return previewCam;
+}
+
 const STATION_KEY_PROP = '__station3DKey';
 let stationKeySequence = 0;
+
 const MODEL_URLS = {
-  earth: [ new URL('../stations/earth-station.glb', import.meta.url).href, new URL('../stations/Earth-station.glb', import.meta.url).href ],
-  mars: [ new URL('../stations/mars-station.glb', import.meta.url).href, new URL('../stations/Mars-station.glb', import.meta.url).href ],
-  jupiter: [ new URL('../stations/jupiter-station.glb', import.meta.url).href, new URL('../stations/Jupiter-station.glb', import.meta.url).href ],
-  neptune: [ new URL('../stations/neptune-station.glb', import.meta.url).href, new URL('../stations/Neptune-station.glb', import.meta.url).href ]
+  earth: [
+    new URL('../stations/earth-station.glb', import.meta.url).href,
+    new URL('../stations/Earth-station.glb', import.meta.url).href
+  ],
+  mars: [
+    new URL('../stations/mars-station.glb', import.meta.url).href,
+    new URL('../stations/Mars-station.glb', import.meta.url).href
+  ],
+  jupiter: [
+    new URL('../stations/jupiter-station.glb', import.meta.url).href,
+    new URL('../stations/Jupiter-station.glb', import.meta.url).href
+  ],
+  neptune: [
+    new URL('../stations/neptune-station.glb', import.meta.url).href,
+    new URL('../stations/Neptune-station.glb', import.meta.url).href
+  ]
 };
 
-
-// --- POPRAWIONA FUNKCJA GET TEMPLATE (Kluczowa zmiana) ---
+// --- POPRAWIONA FUNKCJA GET TEMPLATE ---
 function getTemplate(stationId, path) {
   if (templateCache.has(path)) {
     return templateCache.get(path);
@@ -112,82 +137,90 @@ function getTemplate(stationId, path) {
   const placeholder = { scene: null, materials: [], error: false, loading: true };
   templateCache.set(path, placeholder);
 
-  loader.load(path, (gltf) => {
-    
-    // =========================================================
-    // 1. NAPRAWA "WYWINIĘCIA" (INVERTED NORMALS)
-    // =========================================================
-    // Jeśli model jest wywinięty do środka, skalowanie -1 na osi X
-    // odwraca go na "dobrą" stronę. To naprawi oświetlenie.
-    // gltf.scene.scale.set(-1, 1, 1); 
+  loader.load(
+    path,
+    (gltf) => {
+      const scene = gltf.scene;
 
-    // Opcjonalnie: Jeśli po tym zabiegu stacja będzie "leżeć" na boku,
-    // odkomentuj poniższą linię, żeby ją obrócić:
-    // gltf.scene.rotation.x = Math.PI / 2;
-    
-    gltf.scene.traverse(o => {
-      if (o.isMesh) {
+      // NIE wywijamy modelu skalą -1
+      // gltf.scene.scale.set(-1, 1, 1);
+
+      scene.traverse((o) => {
+        if (!o.isMesh) return;
+
         o.castShadow = true;
         o.receiveShadow = true;
 
-        if (o.material) {
-          // --- NAPRAWA MATERIAŁÓW ---
-          
-          // Upewniamy się, że rysujemy obie strony (na wypadek dziur)
-          o.material.side = THREE.DoubleSide;
-          
-          // Wyłączamy przezroczystość, żeby naprawić przenikanie (Alpha Sorting)
-          o.material.transparent = false; 
-          
-          // Włączamy AlphaTest - to naprawi "znikające tekstury".
-          // Zamiast rozmytej przezroczystości, wycina on twarde dziury w metalu.
-          if (o.material.map || o.material.alphaMap) {
-             o.material.alphaTest = 0.1; // Niski próg, żeby widzieć więcej detali
-             o.material.needsUpdate = true;
+        const materials = Array.isArray(o.material) ? o.material : [o.material];
+
+        for (const m of materials) {
+          if (!m) continue;
+
+          // Rysujemy obie strony, żeby nie znikały ścianki
+          m.side = THREE.DoubleSide;
+
+          // Domyślnie – nieprzezroczyste
+          m.transparent = false;
+
+          // Depth test/write ON, żeby kolejność geometrii była poprawna
+          m.depthWrite = true;
+          m.depthTest = true;
+
+          // Jeśli materiał ma alphę, używamy alphaTest (dziury w teksturze)
+          if (m.map || m.alphaMap) {
+            m.alphaTest = 0.1;
           }
 
-          // Wymuszamy zapis do bufora głębi (dzięki temu wieża nie będzie przed pierścieniem)
-          o.material.depthWrite = true;
-          o.material.depthTest = true;
+          // PBR metaliczny
+          m.envMapIntensity = 1.0;
+          if (typeof m.metalness === 'number' && m.metalness < 0.1) m.metalness = 0.8;
+          if (typeof m.roughness === 'number' && m.roughness > 0.9) m.roughness = 0.4;
 
-          // Parametry "Metalowego PBR"
-          o.material.envMapIntensity = 1.0; 
-          
-          // Czasami modele mają dziwne ustawienia metalness/roughness - wymuszamy standard
-          // Jeśli stacja jest za ciemna -> zmniejsz roughness
-          // Jeśli za mało błyszczy -> zwiększ metalness
-          if (o.material.metalness < 0.1) o.material.metalness = 0.8;
-          if (o.material.roughness > 0.9) o.material.roughness = 0.4;
-
-          o.material.needsUpdate = true;
+          m.needsUpdate = true;
         }
-      }
-    });
+      });
 
-    placeholder.scene = gltf.scene;
-    placeholder.materials = []; 
-    placeholder.loading = false;
-
-  }, undefined, (err) => {
-    console.error('GLTFLoader error loading station:', path, err);
-    placeholder.error = true;
-    placeholder.loading = false;
-  });
+      placeholder.scene = scene;
+      placeholder.materials = [];
+      placeholder.loading = false;
+    },
+    undefined,
+    (err) => {
+      console.error('GLTFLoader error loading station:', path, err);
+      placeholder.error = true;
+      placeholder.loading = false;
+    }
+  );
 
   return placeholder;
 }
 
-// ... (getStationKey, getModelUrlsForStation, isPirateStation, getDevScale, getPerStationScaleMap, getStationIdKey - BEZ ZMIAN) ...
+// --- POPRAWIONA FUNKCJA CLONE TEMPLATE ---
+function cloneTemplate(stationId, path) {
+  const cacheEntry = getTemplate(stationId, path);
+  if (!cacheEntry || cacheEntry.error || !cacheEntry.scene) {
+    return null;
+  }
+  const scene = SkeletonUtils.clone(cacheEntry.scene);
+  return { scene, materials: [] };
+}
+
 function getStationKey(station) {
   if (!station) return null;
   if (!Object.prototype.hasOwnProperty.call(station, STATION_KEY_PROP)) {
     const suffix = (++stationKeySequence).toString(36);
     const baseId = station.id != null ? String(station.id) : `station-${suffix}`;
     const key = `${baseId}__${suffix}`;
-    Object.defineProperty(station, STATION_KEY_PROP, { value: key, configurable: true, enumerable: false, writable: false });
+    Object.defineProperty(station, STATION_KEY_PROP, {
+      value: key,
+      configurable: true,
+      enumerable: false,
+      writable: false
+    });
   }
   return station[STATION_KEY_PROP];
 }
+
 function getModelUrlsForStation(station) {
   const tryStr = (v) => (typeof v === 'string' ? v.toLowerCase() : '');
   const id = tryStr(station?.id);
@@ -201,13 +234,20 @@ function getModelUrlsForStation(station) {
   const hit = keys.find((k) => candidates.includes(k));
   return hit ? MODEL_URLS[hit] : null;
 }
+
 function isPirateStation(station) {
   if (!station) return false;
   const name = typeof station.name === 'string' ? station.name.toLowerCase() : '';
   const style = typeof station.style === 'string' ? station.style.toLowerCase() : '';
   const piratey = /\bpir(?:ate)?\b/;
-  return station.isPirate === true || String(station.type).toLowerCase() === 'pirate' || style === 'pirate' || piratey.test(name);
+  return (
+    station.isPirate === true ||
+    String(station.type).toLowerCase() === 'pirate' ||
+    style === 'pirate' ||
+    piratey.test(name)
+  );
 }
+
 function getDevScale() {
   if (typeof window === 'undefined') return 1;
   const devValue = window.Dev?.station3DScale;
@@ -215,6 +255,7 @@ function getDevScale() {
   const value = Number.isFinite(devValue) ? devValue : Number.isFinite(tuning) ? tuning : 1;
   return Number.isFinite(value) && value > 0 ? value : 1;
 }
+
 function getPerStationScaleMap() {
   if (typeof window === 'undefined') return {};
   const cfg = (window.DevConfig && window.DevConfig.stationScaleById) || {};
@@ -222,6 +263,7 @@ function getPerStationScaleMap() {
   const fb = window.stationScaleById || {};
   return Object.assign({}, fb, tun, cfg);
 }
+
 function getStationIdKey(station) {
   if (!station) return null;
   if (station.id != null) return String(station.id).toLowerCase();
@@ -231,79 +273,156 @@ function getStationIdKey(station) {
   return null;
 }
 
-// --- POPRAWIONA FUNKCJA CLONE TEMPLATE ---
-function cloneTemplate(stationId, path) {
-  const cacheEntry = getTemplate(stationId, path);
-  if (!cacheEntry || cacheEntry.error || !cacheEntry.scene) {
-    return null;
-  }
-  const scene = SkeletonUtils.clone(cacheEntry.scene);
-  return { scene, materials: [] }; // Pusta tablica materiałów, bo nie musimy ich już aktualizować w pętli
-}
-
-// ... (getPerStationSpriteFrame, isUse3DEnabled, disableShadows, elevateOverlay, loadTemplate, loadTemplateWithFallback, removeRecord - BEZ ZMIAN) ...
 function getPerStationSpriteFrame(station) {
   const key = getStationIdKey(station);
-  const map = (typeof window !== 'undefined' && window.DevConfig && window.DevConfig.stationSpriteFrameById) ? window.DevConfig.stationSpriteFrameById : {};
+  const map =
+    typeof window !== 'undefined' &&
+    window.DevConfig &&
+    window.DevConfig.stationSpriteFrameById
+      ? window.DevConfig.stationSpriteFrameById
+      : {};
   const per = Number(map && key != null ? map[key] : undefined);
   if (Number.isFinite(per)) return Math.max(0.8, Math.min(3.0, per));
-  let global = Number(typeof window !== 'undefined' ? window.DevConfig?.stationSpriteFrame : NaN);
-  if (!Number.isFinite(global) && typeof window !== 'undefined') { try { global = Number(window.localStorage?.getItem('stationSpriteFrame')); } catch {} }
+  let global = Number(
+    typeof window !== 'undefined' ? window.DevConfig?.stationSpriteFrame : NaN
+  );
+  if (!Number.isFinite(global) && typeof window !== 'undefined') {
+    try {
+      global = Number(window.localStorage?.getItem('stationSpriteFrame'));
+    } catch {}
+  }
   if (Number.isFinite(global)) return Math.max(0.8, Math.min(3.0, global));
   return DEFAULT_STATION_SPRITE_FRAME;
 }
-function isUse3DEnabled() { if (typeof window === 'undefined') return true; return window.USE_PLANET_STATIONS_3D !== false; }
-function disableShadows(object) { object.traverse?.((node) => { if (node && (node.isMesh || node.isPoints || node.isLine)) { node.castShadow = false; node.receiveShadow = false; } }); }
-function elevateOverlay(object) { object.traverse?.((node) => { if (node && (node.isMesh || node.isPoints || node.isLine)) { const mats = Array.isArray(node.material) ? node.material : [node.material]; for (const m of mats) { if (!m) continue; m.depthTest = false; m.depthWrite = false; m.transparent = true; } node.renderOrder = 10000; } }); }
+
+function isUse3DEnabled() {
+  if (typeof window === 'undefined') return true;
+  return window.USE_PLANET_STATIONS_3D !== false;
+}
+
+function disableShadows(object) {
+  object.traverse?.((node) => {
+    if (node && (node.isMesh || node.isPoints || node.isLine)) {
+      node.castShadow = false;
+      node.receiveShadow = false;
+    }
+  });
+}
+
+// UWAGA: elevateOverlay zostaje, ale NIE używamy go do modeli stacji,
+// tylko ewentualnie do UI / overlayów w innych miejscach.
+function elevateOverlay(object) {
+  object.traverse?.((node) => {
+    if (node && (node.isMesh || node.isPoints || node.isLine)) {
+      const mats = Array.isArray(node.material) ? node.material : [node.material];
+      for (const m of mats) {
+        if (!m) continue;
+        m.depthTest = false;
+        m.depthWrite = false;
+        m.transparent = true;
+      }
+      node.renderOrder = 10000;
+    }
+  });
+}
+
 function loadTemplate(url) {
   if (!templateCache.has(url)) {
     const promise = new Promise((resolve, reject) => {
-      loader.load(url, (gltf) => {
-        const scene = gltf?.scene || (Array.isArray(gltf?.scenes) ? gltf.scenes[0] : null);
-        if (!scene) { reject(new Error(`GLTF at ${url} has no scene`)); return; }
-        disableShadows(scene); resolve(scene);
-      }, undefined, (err) => { reject(err); });
+      loader.load(
+        url,
+        (gltf) => {
+          const scene =
+            gltf?.scene || (Array.isArray(gltf?.scenes) ? gltf.scenes[0] : null);
+          if (!scene) {
+            reject(new Error(`GLTF at ${url} has no scene`));
+            return;
+          }
+          disableShadows(scene);
+          resolve(scene);
+        },
+        undefined,
+        (err) => {
+          reject(err);
+        }
+      );
     });
     templateCache.set(url, promise);
   }
   return templateCache.get(url);
 }
+
 async function loadTemplateWithFallback(urls) {
   if (!urls || !urls.length) throw new Error('No model URLs provided');
   let lastError = null;
-  for (const url of urls) { try { const template = await loadTemplate(url); if (template) return template; } catch (err) { lastError = err; } }
+  for (const url of urls) {
+    try {
+      const template = await loadTemplate(url);
+      if (template) return template;
+    } catch (err) {
+      lastError = err;
+    }
+  }
   if (lastError) throw lastError;
   throw new Error('Failed to load station model');
 }
+
 function removeRecord(record) {
   if (!record) return;
   const group = record.group;
-  if (group && group.parent) { group.parent.remove(group); }
-  if (record.stationRef) {
-    if (record.stationRef._mesh3d === group) { delete record.stationRef._mesh3d; }
-    if (Object.prototype.hasOwnProperty.call(record.stationRef, STATION_KEY_PROP)) { delete record.stationRef[STATION_KEY_PROP]; }
+  if (group && group.parent) {
+    group.parent.remove(group);
   }
-  record.group = null; record.stationRef = null; record.spriteCanvas = null; record.spriteCtx = null;
-  record.lastSpriteTime = 0; record.lastSpriteSize = 0; record.lastSpriteFrame = NaN;
-  record.lastRenderedScale = null; record.lastTargetRadius = null; record.forceSpriteRefresh = true;
+  if (record.stationRef) {
+    if (record.stationRef._mesh3d === group) {
+      delete record.stationRef._mesh3d;
+    }
+    if (Object.prototype.hasOwnProperty.call(record.stationRef, STATION_KEY_PROP)) {
+      delete record.stationRef[STATION_KEY_PROP];
+    }
+  }
+  record.group = null;
+  record.stationRef = null;
+  record.spriteCanvas = null;
+  record.spriteCtx = null;
+  record.lastSpriteTime = 0;
+  record.lastSpriteSize = 0;
+  record.lastSpriteFrame = NaN;
+  record.lastRenderedScale = null;
+  record.lastTargetRadius = null;
+  record.forceSpriteRefresh = true;
 }
 
-// ... (ensureStationRecord - BEZ ZMIAN) ...
 function ensureStationRecord(station) {
   const key = getStationKey(station);
   if (!key) return null;
   let record = stationRecords.get(key);
   if (!record) {
     record = {
-      key, stationRef: station, group: null, template: null, geometryRadius: 1, loadingPromise: null, spinOffset: Math.random() * Math.PI * 2,
-      spriteCanvas: null, spriteCtx: null, lastSpriteTime: 0, lastSpriteSize: 0, lastSpriteFrame: NaN, lastRenderedScale: null, lastTargetRadius: null, forceSpriteRefresh: true
+      key,
+      stationRef: station,
+      group: null,
+      template: null,
+      geometryRadius: 1,
+      loadingPromise: null,
+      spinOffset: Math.random() * Math.PI * 2,
+      spriteCanvas: null,
+      spriteCtx: null,
+      lastSpriteTime: 0,
+      lastSpriteSize: 0,
+      lastSpriteFrame: NaN,
+      lastRenderedScale: null,
+      lastTargetRadius: null,
+      forceSpriteRefresh: true
     };
     stationRecords.set(key, record);
-  } else { record.stationRef = station; }
+  } else {
+    record.stationRef = station;
+  }
   return record;
 }
 
-// ... (ensureStationObject - BEZ ZMIAN) ...
+// (Używane prawdopodobnie gdzie indziej, zostawiamy, ale poprawiamy overlay)
 function ensureStationObject(record, station) {
   if (!record || !station) return null;
   if (record.group || record.loadingPromise) return record.loadingPromise;
@@ -316,26 +435,35 @@ function ensureStationObject(record, station) {
       record.template = template;
       const clone = SkeletonUtils.clone(template);
       disableShadows(clone);
-      elevateOverlay(clone);
+      // NIE podnosimy całej stacji jako overlay
       const wrapper = new THREE.Group();
       wrapper.name = `station3d:${station.id ?? record.key}`;
       wrapper.add(clone);
       wrapper.renderOrder = 10001;
+
       const bbox = new THREE.Box3().setFromObject(wrapper);
       const center = bbox.getCenter(new THREE.Vector3());
       clone.position.sub(center);
       wrapper.updateMatrixWorld(true);
+
       bbox.setFromObject(wrapper);
       const sphere = bbox.getBoundingSphere(new THREE.Sphere());
-      const geometryRadius = sphere?.radius && sphere.radius > 0 ? sphere.radius : 1;
-      const desiredRadiusRaw = (Number.isFinite(station.r) ? station.r : station.baseR) ?? 1;
-      const targetRadius = Number.isFinite(desiredRadiusRaw) && desiredRadiusRaw > 0 ? desiredRadiusRaw : 1;
+      const geometryRadius =
+        sphere?.radius && sphere.radius > 0 ? sphere.radius : 1;
+      const desiredRadiusRaw =
+        (Number.isFinite(station.r) ? station.r : station.baseR) ?? 1;
+      const targetRadius =
+        Number.isFinite(desiredRadiusRaw) && desiredRadiusRaw > 0
+          ? desiredRadiusRaw
+          : 1;
+
       record.geometryRadius = geometryRadius;
       wrapper.userData.geometryRadius = geometryRadius;
       const baseScale = targetRadius / geometryRadius;
       wrapper.userData.baseScale = baseScale;
       wrapper.userData.stationId = station.id ?? record.key;
       wrapper.userData.targetRadius = targetRadius;
+
       record.group = wrapper;
       const devScale = getDevScale();
       const visible = isUse3DEnabled();
@@ -345,31 +473,47 @@ function ensureStationObject(record, station) {
       record.lastSpriteFrame = NaN;
       record.lastSpriteSize = 0;
       markSpriteDirty(record);
+
       wrapper.position.set(0, 0, 0);
       const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
       wrapper.rotation.y = baseAngle + (record.spinOffset ?? 0);
-      if (activeScene && !wrapper.parent) { activeScene.add(wrapper); }
+
+      if (activeScene && !wrapper.parent) {
+        activeScene.add(wrapper);
+      }
       station._mesh3d = wrapper;
       return wrapper;
     })
-    .catch((err) => { console.error('Failed to load station 3D model:', err); return null; })
-    .finally(() => { record.loadingPromise = null; });
+    .catch((err) => {
+      console.error('Failed to load station 3D model:', err);
+      return null;
+    })
+    .finally(() => {
+      record.loadingPromise = null;
+    });
+
   record.loadingPromise = promise;
   return promise;
 }
 
-// ... (updateRecordTransform - BEZ ZMIAN) ...
 function updateRecordTransform(record, station, devScale, visible) {
   const group = record.group;
   if (!group) return;
-  if (activeScene && group.parent !== activeScene) { activeScene.add(group); }
+  if (activeScene && group.parent !== activeScene) {
+    activeScene.add(group);
+  }
   const geometryRadius = record.geometryRadius || group.userData.geometryRadius || 1;
-  const desiredRadiusRaw = (Number.isFinite(station.r) ? station.r : station.baseR) ?? 1;
-  const desiredRadius = Number.isFinite(desiredRadiusRaw) && desiredRadiusRaw > 0 ? desiredRadiusRaw : 1;
+  const desiredRadiusRaw =
+    (Number.isFinite(station.r) ? station.r : station.baseR) ?? 1;
+  const desiredRadius =
+    Number.isFinite(desiredRadiusRaw) && desiredRadiusRaw > 0
+      ? desiredRadiusRaw
+      : 1;
   const baseScale = desiredRadius / geometryRadius;
   group.userData.baseScale = baseScale;
   group.userData.geometryRadius = geometryRadius;
   group.userData.targetRadius = desiredRadius;
+
   const perMap = getPerStationScaleMap();
   const idKey = getStationIdKey(station);
   const perScale = Number(perMap[idKey]) || 1;
@@ -378,32 +522,47 @@ function updateRecordTransform(record, station, devScale, visible) {
   const effectiveScale = baseScale * devScalar;
   const scaleChanged = !approxEqual(record.lastRenderedScale, effectiveScale);
   const radiusChanged = !approxEqual(record.lastTargetRadius, desiredRadius);
+
   group.scale.setScalar(effectiveScale);
-  if (scaleChanged || radiusChanged) { markSpriteDirty(record); }
+  if (scaleChanged || radiusChanged) {
+    markSpriteDirty(record);
+  }
   group.visible = visible;
   station._mesh3d = group;
   record.lastTargetRadius = desiredRadius;
 }
 
+// --- INIT STATIONS ---
 export function initStations3D(_sceneIgnored, stations) {
   activeScene = initScene();
   if (!activeScene || !Array.isArray(stations)) return;
 
   const activeKeys = new Set();
+
   for (const station of stations) {
     if (!station || isPirateStation(station)) continue;
+
     const urls = getModelUrlsForStation(station);
     if (!urls) {
-      if (station._mesh3d) { if (station._mesh3d.parent) station._mesh3d.parent.remove(station._mesh3d); delete station._mesh3d; }
+      if (station._mesh3d) {
+        if (station._mesh3d.parent)
+          station._mesh3d.parent.remove(station._mesh3d);
+        delete station._mesh3d;
+      }
       continue;
     }
+
     const path = urls.find(Boolean);
     if (!path) continue;
+
     const record = ensureStationRecord(station);
     if (!record) continue;
     activeKeys.add(record.key);
+
     if (record.group) {
-      if (record.group.parent !== activeScene) { activeScene.add(record.group); }
+      if (record.group.parent !== activeScene) {
+        activeScene.add(record.group);
+      }
       station._mesh3d = record.group;
       continue;
     }
@@ -411,11 +570,12 @@ export function initStations3D(_sceneIgnored, stations) {
     const clone = cloneTemplate(station.id, path);
     if (!clone) continue;
 
-    // Pobieramy tylko scene, materials puste
     const { scene: group } = clone;
     group.visible = false;
     activeScene.add(group);
-    elevateOverlay(group);
+
+    // KLUCZOWE: nie robimy z całej stacji "overlay"
+    // elevateOverlay(group);
 
     const bbox = new THREE.Box3().setFromObject(group);
     const center = bbox.getCenter(new THREE.Vector3());
@@ -426,8 +586,12 @@ export function initStations3D(_sceneIgnored, stations) {
     const sphere = bbox.getBoundingSphere(new THREE.Sphere());
     const geometryRadius = sphere?.radius && sphere.radius > 0 ? sphere.radius : 1;
 
-    const desiredRadiusRaw = (Number.isFinite(station.r) ? station.r : station.baseR) ?? 1;
-    const targetRadius = Number.isFinite(desiredRadiusRaw) && desiredRadiusRaw > 0 ? desiredRadiusRaw : 1;
+    const desiredRadiusRaw =
+      (Number.isFinite(station.r) ? station.r : station.baseR) ?? 1;
+    const targetRadius =
+      Number.isFinite(desiredRadiusRaw) && desiredRadiusRaw > 0
+        ? desiredRadiusRaw
+        : 1;
     const baseScale = targetRadius / geometryRadius;
 
     group.userData.geometryRadius = geometryRadius;
@@ -447,16 +611,21 @@ export function initStations3D(_sceneIgnored, stations) {
 
     group.position.set(0, 0, 0);
     const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
-    group.rotation.y = baseAngle + (record.spinOffset ?? 0);
+    record.spinOffset = record.spinOffset ?? Math.random() * Math.PI * 2;
+    group.rotation.y = baseAngle + record.spinOffset;
 
     station._mesh3d = group;
   }
 
   for (const [key, record] of stationRecords) {
-    if (!activeKeys.has(key)) { removeRecord(record); stationRecords.delete(key); }
+    if (!activeKeys.has(key)) {
+      removeRecord(record);
+      stationRecords.delete(key);
+    }
   }
 }
 
+// --- UPDATE STATIONS ---
 export function updateStations3D(stations) {
   if (!Array.isArray(stations) || !activeScene) return;
   const devScale = getDevScale();
@@ -469,76 +638,106 @@ export function updateStations3D(stations) {
     if (!urls) continue;
     const path = urls.find(Boolean);
     if (!path) continue;
+
     const record = ensureStationRecord(station);
     if (!record) continue;
     activeKeys.add(record.key);
-    
+
     // Jeśli model nie załadowany, init
     if (!record.group) {
-        // (Logika klonowania jak w initStations3D - skrócona dla czytelności tutaj)
-        const clone = cloneTemplate(station.id, path);
-        if (clone) {
-            const { scene: group } = clone;
-            group.visible = false;
-            activeScene.add(group);
-            elevateOverlay(group);
-            // ... setup geometrii ...
-            const bbox = new THREE.Box3().setFromObject(group);
-            const center = bbox.getCenter(new THREE.Vector3());
-            group.position.sub(center);
-            group.updateMatrixWorld(true);
-            bbox.setFromObject(group);
-            const sphere = bbox.getBoundingSphere(new THREE.Sphere());
-            record.geometryRadius = sphere?.radius > 0 ? sphere.radius : 1;
-            record.group = group;
-            markSpriteDirty(record);
-            station._mesh3d = group;
-        }
+      const clone = cloneTemplate(station.id, path);
+      if (clone) {
+        const { scene: group } = clone;
+        group.visible = false;
+        activeScene.add(group);
+        // NIE robimy overlay – zachowujemy depthTest / depthWrite
+        // elevateOverlay(group);
+
+        const bbox = new THREE.Box3().setFromObject(group);
+        const center = bbox.getCenter(new THREE.Vector3());
+        group.position.sub(center);
+        group.updateMatrixWorld(true);
+
+        bbox.setFromObject(group);
+        const sphere = bbox.getBoundingSphere(new THREE.Sphere());
+        record.geometryRadius = sphere?.radius > 0 ? sphere.radius : 1;
+        record.group = group;
+        markSpriteDirty(record);
+        station._mesh3d = group;
+      }
     }
 
-    // Aktualizacja oświetlenia (kierunku światła) w odniesieniu do stacji
-    // Ponieważ używamy standardowych materiałów, DirectionalLight w 'initScene' robi to za nas,
-    // ale musimy upewnić się, że światło 'pada' z dobrej strony w renderze 2D.
-    // W 'renderStationSprite' jest już logika ustawiania dirLight.position.
-    
-    // Tutaj tylko aktualizujemy transformację (skalę)
+    // Aktualizacja skali / widoczności
     updateRecordTransform(record, station, devScale, visible);
   }
 
   for (const [key, record] of stationRecords) {
-    if (!activeKeys.has(key)) { removeRecord(record); stationRecords.delete(key); }
+    if (!activeKeys.has(key)) {
+      removeRecord(record);
+      stationRecords.delete(key);
+    }
   }
 }
 
-// ... (ensureSpriteTarget, resetRenderer - BEZ ZMIAN) ...
+// --- SPRITES / RENDER ---
+
 function ensureSpriteTarget(record, sizeOverride) {
   const size = sizeOverride ?? getStationSpriteSize();
-  if (!record.spriteCanvas) { record.spriteCanvas = document.createElement('canvas'); record.spriteCtx = record.spriteCanvas.getContext('2d'); }
-  if (record.spriteCanvas.width !== size || record.spriteCanvas.height !== size) { record.spriteCanvas.width = size; record.spriteCanvas.height = size; }
+  if (!record.spriteCanvas) {
+    record.spriteCanvas = document.createElement('canvas');
+    record.spriteCtx = record.spriteCanvas.getContext('2d');
+  }
+  if (
+    record.spriteCanvas.width !== size ||
+    record.spriteCanvas.height !== size
+  ) {
+    record.spriteCanvas.width = size;
+    record.spriteCanvas.height = size;
+  }
   return record.spriteCanvas;
 }
+
 function resetRenderer(renderer, w, h) {
   if (!renderer) return;
-  if (typeof renderer.setRenderTarget === 'function') renderer.setRenderTarget(null);
+  if (typeof renderer.setRenderTarget === 'function')
+    renderer.setRenderTarget(null);
   if (typeof renderer.setSize === 'function') renderer.setSize(w, h, false);
-  if (typeof renderer.setViewport === 'function') renderer.setViewport(0, 0, w, h);
-  if (typeof renderer.setScissorTest === 'function') renderer.setScissorTest(false);
-  if (typeof renderer.setClearColor === 'function') renderer.setClearColor(0x000000, 0);
+  if (typeof renderer.setViewport === 'function')
+    renderer.setViewport(0, 0, w, h);
+  if (typeof renderer.setScissorTest === 'function')
+    renderer.setScissorTest(false);
+  if (typeof renderer.setClearColor === 'function')
+    renderer.setClearColor(0x000000, 0);
   if (typeof renderer.clear === 'function') renderer.clear(true, true, false);
 }
 
-// ... (renderStationSprite - MINIMALNA ZMIANA: użycie dirLight z userData) ...
 function renderStationSprite(record) {
   if (!record.group) return;
+
   const size = getStationSpriteSize();
   const zoomMul = getPerStationSpriteFrame(record.stationRef);
   const scale = record.group?.scale?.x || 1;
+
   const sizeChanged = record.lastSpriteSize !== size;
   const frameChanged = !approxEqual(record.lastSpriteFrame, zoomMul);
   const scaleChanged = !approxEqual(record.lastRenderedScale, scale);
-  const now = typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
+
+  const now =
+    typeof performance !== 'undefined' &&
+    typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
   const elapsed = record.lastSpriteTime ? now - record.lastSpriteTime : Infinity;
-  if (!record.forceSpriteRefresh && !sizeChanged && !frameChanged && !scaleChanged && elapsed < MIN_SPRITE_RENDER_INTERVAL) { return; }
+
+  if (
+    !record.forceSpriteRefresh &&
+    !sizeChanged &&
+    !frameChanged &&
+    !scaleChanged &&
+    elapsed < MIN_SPRITE_RENDER_INTERVAL
+  ) {
+    return;
+  }
 
   const scene = initScene();
   const cam = ensurePreviewCamera();
@@ -547,33 +746,55 @@ function renderStationSprite(record) {
 
   // --- ZAPAMIĘTYWANIE STANU RENDERERA ---
   const prevAutoClear = renderer.autoClear;
-  const prevTarget = typeof renderer.getRenderTarget === 'function' ? renderer.getRenderTarget() : null;
-  const hasViewport = typeof renderer.getViewport === 'function' && typeof renderer.setViewport === 'function';
-  const prevViewport = hasViewport ? renderer.getViewport(TMP_VIEWPORT) : null;
-  const hasScissor = typeof renderer.getScissor === 'function' && typeof renderer.setScissor === 'function';
+  const prevTarget =
+    typeof renderer.getRenderTarget === 'function'
+      ? renderer.getRenderTarget()
+      : null;
+
+  const hasViewport =
+    typeof renderer.getViewport === 'function' &&
+    typeof renderer.setViewport === 'function';
+  const prevViewport = hasViewport
+    ? renderer.getViewport(TMP_VIEWPORT)
+    : null;
+
+  const hasScissor =
+    typeof renderer.getScissor === 'function' &&
+    typeof renderer.setScissor === 'function';
   const prevScissor = hasScissor ? renderer.getScissor(TMP_SCISSOR) : null;
-  const prevScissorTest = typeof renderer.getScissorTest === 'function' ? renderer.getScissorTest() : (renderer.state?.scissor?.test ?? false);
-  
+  const prevScissorTest =
+    typeof renderer.getScissorTest === 'function'
+      ? renderer.getScissorTest()
+      : renderer.state?.scissor?.test ?? false;
+
   // Pokaż tylko tę stację
   const prevVis = [];
-  for (const [, rec] of stationRecords) { if (!rec.group) continue; prevVis.push([rec.group, rec.group.visible]); rec.group.visible = rec === record; }
+  for (const [, rec] of stationRecords) {
+    if (!rec.group) continue;
+    prevVis.push([rec.group, rec.group.visible]);
+    rec.group.visible = rec === record;
+  }
 
-  const R_geom = Math.max(1, record.geometryRadius || record.group?.userData?.geometryRadius || 1);
+  const R_geom = Math.max(
+    1,
+    record.geometryRadius || record.group?.userData?.geometryRadius || 1
+  );
   const s = record.group?.scale?.x || 1;
   const R_eff = Math.max(1, R_geom * s);
-  const fovRad = cam.fov * Math.PI / 180;
+  const fovRad = (cam.fov * Math.PI) / 180;
   const distFit = R_eff / Math.tan(fovRad * 0.5);
   const dist = Math.max(10, distFit / zoomMul);
+
   cam.position.set(dist, dist * 0.62, dist);
   cam.lookAt(0, 0, 0);
 
-  // Aktualizacja światła (bez zmian)
-  const sunLight = scene.userData?.dirLight; 
+  // Aktualizacja światła
+  const sunLight = scene.userData?.dirLight;
   const stRef = record.stationRef;
   if (sunLight && stRef && typeof window !== 'undefined' && window.SUN) {
     const dx = (window.SUN.x ?? 0) - (stRef.x ?? 0);
     const dy = (window.SUN.y ?? 0) - (stRef.y ?? 0);
-    const v = new THREE.Vector3(dx, 0.15 * Math.hypot(dx,dy), -dy); 
+    const v = new THREE.Vector3(dx, 0.15 * Math.hypot(dx, dy), -dy);
     if (v.lengthSq() > 0) {
       v.normalize().multiplyScalar(Math.max(200, dist));
       sunLight.position.copy(v);
@@ -583,17 +804,13 @@ function renderStationSprite(record) {
 
   // --- KLUCZOWA POPRAWKA ---
   resetRenderer(renderer, size, size);
-  renderer.autoClear = false; 
-  renderer.clear(true, true, true); // WYMUSZONE CZYSZCZENIE BUFORA GŁĘBI
-  
-  // Wymuszamy, aby renderer sprawdził głębokość (czasami sharedRenderer ma to wyłączone)
-  if (renderer.capabilities.isWebGL2) {
-     // W WebGL2 nie ma bezpośredniego 'enable', ale upewniamy się przez stan materiału
-  } else {
-     // W starszym WebGL czasem trzeba to wymusić
-     const gl = renderer.getContext();
-     gl.enable(gl.DEPTH_TEST);
-     gl.depthFunc(gl.LEQUAL);
+  renderer.autoClear = false;
+  renderer.clear(true, true, true); // w tym depth buffer
+
+  if (!renderer.capabilities.isWebGL2) {
+    const gl = renderer.getContext();
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
   }
 
   renderer.render(scene, cam);
@@ -608,14 +825,29 @@ function renderStationSprite(record) {
   }
 
   // Przywracanie widoczności
-  for (const [group, visible] of prevVis) { group.visible = visible; }
+  for (const [group, visible] of prevVis) {
+    group.visible = visible;
+  }
 
   // Przywracanie stanu
   renderer.autoClear = prevAutoClear;
-  if (prevViewport) renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
-  if (prevScissor) renderer.setScissor(prevScissor.x, prevScissor.y, prevScissor.z, prevScissor.w);
+  if (prevViewport)
+    renderer.setViewport(
+      prevViewport.x,
+      prevViewport.y,
+      prevViewport.z,
+      prevViewport.w
+    );
+  if (prevScissor)
+    renderer.setScissor(
+      prevScissor.x,
+      prevScissor.y,
+      prevScissor.z,
+      prevScissor.w
+    );
   renderer.setScissorTest(!!prevScissorTest);
-  if (typeof renderer.setRenderTarget === 'function') renderer.setRenderTarget(prevTarget || null);
+  if (typeof renderer.setRenderTarget === 'function')
+    renderer.setRenderTarget(prevTarget || null);
 
   if (rendered) {
     record.lastSpriteTime = now;
@@ -626,15 +858,16 @@ function renderStationSprite(record) {
   }
 }
 
-// ... (drawStations3D, detachPlanetStations3D, setStationScale, getStationScales, exports - BEZ ZMIAN) ...
 export function drawStations3D(ctx, cam, worldToScreen) {
   if (!isUse3DEnabled()) return;
   if (!ctx || !ctx.canvas) return;
+
   const devScale = getDevScale();
   const globalScalar = Number.isFinite(devScale) && devScale > 0 ? devScale : 1;
   const perMap = getPerStationScaleMap();
   const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
   if (!Number.isFinite(zoom) || zoom <= 0) return;
+
   const hasW2S = typeof worldToScreen === 'function';
   const canvasWidth = ctx.canvas?.width ?? 0;
   const canvasHeight = ctx.canvas?.height ?? 0;
@@ -642,50 +875,97 @@ export function drawStations3D(ctx, cam, worldToScreen) {
   for (const [, record] of stationRecords) {
     const st = record.stationRef;
     if (!st || !record.group) continue;
+
     const baseAngle = typeof st.angle === 'number' ? st.angle : 0;
     record.spinOffset = (record.spinOffset ?? 0) + 0.002;
     record.group.rotation.y = baseAngle + record.spinOffset;
+
     const idKey = getStationIdKey(st);
     const perScale = Number(perMap[idKey]) || 1;
     const effectiveScalar = globalScalar * perScale;
-    const radiusWorld = Math.max(1, (Number.isFinite(st.r) ? st.r : st.baseR) || 1) * effectiveScalar;
+    const radiusWorld = Math.max(
+      1,
+      (Number.isFinite(st.r) ? st.r : st.baseR) || 1
+    ) * effectiveScalar;
     const sizePx = radiusWorld * 2 * zoom;
     if (!hasW2S) continue;
+
     const screen = worldToScreen(st.x || 0, st.y || 0, cam);
     if (!screen) continue;
-    if (canvasWidth > 0 && canvasHeight > 0) { const half = sizePx / 2; if (screen.x + half < 0 || screen.x - half > canvasWidth || screen.y + half < 0 || screen.y - half > canvasHeight) { continue; } }
+
+    if (canvasWidth > 0 && canvasHeight > 0) {
+      const half = sizePx / 2;
+      if (
+        screen.x + half < 0 ||
+        screen.x - half > canvasWidth ||
+        screen.y + half < 0 ||
+        screen.y - half > canvasHeight
+      ) {
+        continue;
+      }
+    }
+
     renderStationSprite(record);
     if (!record.spriteCanvas) continue;
+
     const offsetY = sizePx * 0.55;
-    ctx.drawImage(record.spriteCanvas, screen.x - sizePx / 2, screen.y - offsetY, sizePx, sizePx);
+    ctx.drawImage(
+      record.spriteCanvas,
+      screen.x - sizePx / 2,
+      screen.y - offsetY,
+      sizePx,
+      sizePx
+    );
   }
 }
+
 export function detachPlanetStations3D(sceneOverride) {
   const targetScene = ownScene || sceneOverride || activeScene;
   for (const record of stationRecords.values()) {
-    if (record.group && targetScene && record.group.parent === targetScene) { targetScene.remove(record.group); }
-    if (record.stationRef && record.stationRef._mesh3d === record.group) { delete record.stationRef._mesh3d; }
-    if (record.stationRef && Object.prototype.hasOwnProperty.call(record.stationRef, STATION_KEY_PROP)) { delete record.stationRef[STATION_KEY_PROP]; }
-    record.group = null; record.stationRef = null;
+    if (record.group && targetScene && record.group.parent === targetScene) {
+      targetScene.remove(record.group);
+    }
+    if (record.stationRef && record.stationRef._mesh3d === record.group) {
+      delete record.stationRef._mesh3d;
+    }
+    if (
+      record.stationRef &&
+      Object.prototype.hasOwnProperty.call(record.stationRef, STATION_KEY_PROP)
+    ) {
+      delete record.stationRef[STATION_KEY_PROP];
+    }
+    record.group = null;
+    record.stationRef = null;
   }
   stationRecords.clear();
-  if (!sceneOverride || sceneOverride === activeScene) { activeScene = null; }
+  if (!sceneOverride || sceneOverride === activeScene) {
+    activeScene = null;
+  }
 }
+
 export function setStationScale(id, scale = 1) {
   if (typeof window === 'undefined') return;
   const key = String(id ?? '').toLowerCase();
   if (!key) return;
   if (!window.DevConfig) window.DevConfig = {};
-  if (!window.DevConfig.stationScaleById) window.DevConfig.stationScaleById = {};
+  if (!window.DevConfig.stationScaleById)
+    window.DevConfig.stationScaleById = {};
   window.DevConfig.stationScaleById[key] = Number(scale) || 1;
+
   const devScale = getDevScale();
   for (const rec of stationRecords.values()) {
     const st = rec.stationRef;
     if (!st) continue;
-    if (getStationIdKey(st) === key && rec.group) { updateRecordTransform(rec, st, devScale, rec.group.visible !== false); }
+    if (getStationIdKey(st) === key && rec.group) {
+      updateRecordTransform(rec, st, devScale, rec.group.visible !== false);
+    }
   }
 }
-export function getStationScales() { return getPerStationScaleMap(); }
+
+export function getStationScales() {
+  return getPerStationScaleMap();
+}
+
 if (typeof window !== 'undefined') {
   window.setStationScale = setStationScale;
   window.getStationScales = getStationScales;
@@ -693,5 +973,7 @@ if (typeof window !== 'undefined') {
   window.updateStations3D = updateStations3D;
   window.drawStations3D = drawStations3D;
   window.detachPlanetStations3D = detachPlanetStations3D;
-  if (typeof window.USE_PLANET_STATIONS_3D === 'undefined') { window.USE_PLANET_STATIONS_3D = true; }
+  if (typeof window.USE_PLANET_STATIONS_3D === 'undefined') {
+    window.USE_PLANET_STATIONS_3D = true;
+  }
 }
