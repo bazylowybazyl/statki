@@ -10671,7 +10671,7 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale){
 function drawNeedleEngineVfxLocal(localPos, forward, options = {}) {
   const {
     widthScale = 1.5,
-    lengthScale = 1,
+    lengthScale = 0,6,
     yNudge = -68,
     alpha = 1,
     overrides = null,
@@ -12058,7 +12058,7 @@ if (warpLensShouldDraw && warpLensOutputCanvas && warpLensOutputCanvas.width && 
       for (const { thruster, intensity } of activeThrusters) {
         const widthPxMin = thruster.vfxWidthMin != null
           ? thruster.vfxWidthMin
-          : spriteScale * 128 * 0.42;
+          : spriteScale * 128 * 1.0;
         const widthPxMax = thruster.vfxWidthMax != null
           ? thruster.vfxWidthMax
           : spriteScale * 128 * 0.82;
