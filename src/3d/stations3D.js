@@ -545,7 +545,7 @@ function renderStationSprite(record) {
   const renderer = getSharedRenderer(size, size);
   if (!scene || !cam || !renderer) return;
 
-  // ... (zapamiętywanie stanu renderera) ...
+  // --- ZAPAMIĘTYWANIE STANU RENDERERA ---
   const prevAutoClear = renderer.autoClear;
   const prevTarget = typeof renderer.getRenderTarget === 'function' ? renderer.getRenderTarget() : null;
   const hasViewport = typeof renderer.getViewport === 'function' && typeof renderer.setViewport === 'function';
@@ -554,7 +554,7 @@ function renderStationSprite(record) {
   const prevScissor = hasScissor ? renderer.getScissor(TMP_SCISSOR) : null;
   const prevScissorTest = typeof renderer.getScissorTest === 'function' ? renderer.getScissorTest() : (renderer.state?.scissor?.test ?? false);
   
-  // Show only this station
+  // Pokaż tylko tę stację
   const prevVis = [];
   for (const [, rec] of stationRecords) { if (!rec.group) continue; prevVis.push([rec.group, rec.group.visible]); rec.group.visible = rec === record; }
 
@@ -567,15 +567,12 @@ function renderStationSprite(record) {
   cam.position.set(dist, dist * 0.62, dist);
   cam.lookAt(0, 0, 0);
 
-  // === AKTUALIZACJA ŚWIATŁA KIERUNKOWEGO ===
-  // Pobieramy światło z userData (zapisane w initScene)
+  // Aktualizacja światła (bez zmian)
   const sunLight = scene.userData?.dirLight; 
   const stRef = record.stationRef;
   if (sunLight && stRef && typeof window !== 'undefined' && window.SUN) {
     const dx = (window.SUN.x ?? 0) - (stRef.x ?? 0);
     const dy = (window.SUN.y ?? 0) - (stRef.y ?? 0);
-    // 2D (y w dół) -> 3D (z do przodu). Odwracamy Y.
-    // Światło pada "od" słońca.
     const v = new THREE.Vector3(dx, 0.15 * Math.hypot(dx,dy), -dy); 
     if (v.lengthSq() > 0) {
       v.normalize().multiplyScalar(Math.max(200, dist));
@@ -584,8 +581,21 @@ function renderStationSprite(record) {
     }
   }
 
+  // --- KLUCZOWA POPRAWKA ---
   resetRenderer(renderer, size, size);
-  renderer.autoClear = true;
+  renderer.autoClear = false; 
+  renderer.clear(true, true, true); // WYMUSZONE CZYSZCZENIE BUFORA GŁĘBI
+  
+  // Wymuszamy, aby renderer sprawdził głębokość (czasami sharedRenderer ma to wyłączone)
+  if (renderer.capabilities.isWebGL2) {
+     // W WebGL2 nie ma bezpośredniego 'enable', ale upewniamy się przez stan materiału
+  } else {
+     // W starszym WebGL czasem trzeba to wymusić
+     const gl = renderer.getContext();
+     gl.enable(gl.DEPTH_TEST);
+     gl.depthFunc(gl.LEQUAL);
+  }
+
   renderer.render(scene, cam);
 
   const spriteCanvas = ensureSpriteTarget(record, size);
@@ -597,10 +607,10 @@ function renderStationSprite(record) {
     rendered = true;
   }
 
-  // Restore visibility
+  // Przywracanie widoczności
   for (const [group, visible] of prevVis) { group.visible = visible; }
 
-  // Restore renderer state
+  // Przywracanie stanu
   renderer.autoClear = prevAutoClear;
   if (prevViewport) renderer.setViewport(prevViewport.x, prevViewport.y, prevViewport.z, prevViewport.w);
   if (prevScissor) renderer.setScissor(prevScissor.x, prevScissor.y, prevScissor.z, prevScissor.w);
