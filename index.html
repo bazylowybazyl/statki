@@ -1127,14 +1127,26 @@ function updateFleetUI(){
   Fleet.dirty = false;
 }
 
-const SUPPORT_FORMATION = { perRow: 4, colGap: 90, rowGap: 70, lead: 160 };
+const SUPPORT_FORMATION = {
+  lineOrder: ['frigate_laser', 'frigate_pd', 'destroyer', 'battleship', 'fighter'],
+  lead: 260,
+  lineGap: 160,
+  lateralGap: 160,
+  spawn: { perRow: 4, colGap: 90, rowGap: 70, lead: 160 }
+};
 function supportGuardSlot(slotIndex){
-  const row = Math.floor(slotIndex / SUPPORT_FORMATION.perRow);
-  const col = slotIndex % SUPPORT_FORMATION.perRow;
-  const local = {
-    x: SUPPORT_FORMATION.lead + col * SUPPORT_FORMATION.colGap,
-    y: (row - 1) * SUPPORT_FORMATION.rowGap
-  };
+  const data = SupportWing.units[slotIndex] || null;
+  const type = data?.type || 'fighter';
+  const lineOrder = SUPPORT_FORMATION.lineOrder || [];
+  const lineIndex = lineOrder.includes(type) ? lineOrder.indexOf(type) : lineOrder.length;
+
+  const peers = SupportWing.units.filter(u => u && !u.npc?.dead && u.type === type);
+  const colCount = Math.max(1, peers.length);
+  const positionInLine = Math.max(0, peers.indexOf(data));
+  const lateral = (positionInLine - (colCount - 1) / 2) * SUPPORT_FORMATION.lateralGap;
+  const forward = SUPPORT_FORMATION.lead + lineIndex * SUPPORT_FORMATION.lineGap;
+
+  const local = { x: forward, y: lateral };
   const rotated = rotate(local, ship.angle);
   return { x: ship.pos.x + rotated.x, y: ship.pos.y + rotated.y };
 }
@@ -3168,11 +3180,12 @@ function spawnSupportShip(templateKey){
   if (!template) return [];
   const created = [];
   const count = Math.max(1, template.count || 1);
+  const spawnFormation = SUPPORT_FORMATION.spawn || { perRow: 4, rowGap: 70 };
   for (let i = 0; i < count; i++){
     const jitter = (Math.random() * 12 - 6);
     const offset = {
       x: (template.spawnOffset?.x || -60) + jitter,
-      y: (template.spawnOffset?.y || 0) + ((i % SUPPORT_FORMATION.perRow) - 1.5) * 8
+      y: (template.spawnOffset?.y || 0) + ((i % spawnFormation.perRow) - (spawnFormation.perRow - 1) * 0.5) * 8
     };
     const rotated = rotate(offset, ship.angle);
     const spawnPos = { x: ship.pos.x + rotated.x, y: ship.pos.y + rotated.y };
