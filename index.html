@@ -10374,7 +10374,7 @@ function physicsStep(dt){
     }
     if(input.rightSide>0){
       const e = ship.engines.sideRight;
-      const thrust = e.maxThrust * input.rightSide * handlingMul;
+      const thrust = e.maxThrust * input.rightSide * handlingMul * 3.0;
       const wo = rotate(e.offset, ship.angle);
       const lateral = rotate({x:-1,y:0}, ship.angle);
       const worldForce = {x: lateral.x * thrust, y: lateral.y * thrust};
