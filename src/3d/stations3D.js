@@ -74,7 +74,7 @@ function initScene() {
   // Kamera
   const S = getStationSpriteSize();
   const H = S / 2;
-  previewCam = new THREE.PerspectiveCamera(30, 1, 1, H * 8);
+  previewCam = new THREE.PerspectiveCamera(30, 1, 0.1, 10000); 
   previewCam.position.set(H * 1.0, H * 0.8, H * 1.9);
   previewCam.lookAt(0, 0, 0);
   ownScene.add(previewCam);
