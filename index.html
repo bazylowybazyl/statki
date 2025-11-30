@@ -193,6 +193,8 @@
   .infra-cell.drag-over{border-color:#60a5fa;background:rgba(37,63,128,0.35);}
   .infra-cell.selected{box-shadow:0 0 0 2px #3b82f6 inset;}
   .infra-cell.has-building{border-style:solid;border-color:rgba(94,146,255,0.65);background:rgba(12,18,38,0.85);}
+  .infra-cell.part-of-building{background:rgba(17,28,58,0.9);}
+  .infra-cell.root-building{box-shadow:0 0 0 2px rgba(96,165,250,0.7) inset;}
   .infra-cell.completed{border-color:rgba(16,185,129,0.85);background:rgba(12,29,24,0.92);}
   .infra-cell.core{border-style:solid;border-color:rgba(210,118,94,0.65);background:rgba(42,18,18,0.85);cursor:not-allowed;}
   .infra-cell.core .infra-cell-status{color:#fca5a5;}
@@ -5496,31 +5498,39 @@ function setMechanicUIVisible(visible){
 }
 
 const INFRASTRUCTURE_BUILDINGS = [
-  { id:'solar_array', name:'Orbitalna Elektrownia Słoneczna', buildTime:75, icon:'solar' },
-  { id:'shipyard_s', name:'Orbitalna Stocznia (S)', buildTime:90, icon:'shipyard', tier:'S' },
-  { id:'shipyard_m', name:'Orbitalna Stocznia (M)', buildTime:110, icon:'shipyard', tier:'M' },
-  { id:'shipyard_l', name:'Orbitalna Stocznia (L)', buildTime:140, icon:'shipyard', tier:'L' },
-  { id:'shipyard_capital', name:'Orbitalna Stocznia (Capital)', buildTime:170, icon:'shipyard', tier:'C' },
-  { id:'shipyard_supercapital', name:'Orbitalna Stocznia (SuperCapital)', buildTime:210, icon:'shipyard', tier:'SC' },
-  { id:'storage_metal', name:'Magazyn Metali', buildTime:60, icon:'storage', label:'M', color:'#60a5fa' },
-  { id:'storage_fuel', name:'Magazyn Paliwa', buildTime:70, icon:'storage', label:'F', color:'#f97316' },
-  { id:'storage_gas', name:'Magazyn Gazów', buildTime:65, icon:'storage', label:'G', color:'#14b8a6' },
-  { id:'storage_plastics', name:'Magazyn Tworzyw Sztucznych', buildTime:85, icon:'storage', label:'P', color:'#a855f7' }
+  { id:'solar_array', name:'Orbitalna Elektrownia Słoneczna', buildTime:75, icon:'solar', footprint:{ w:2, h:2 } },
+  { id:'shipyard_s', name:'Orbitalna Stocznia (S)', buildTime:90, icon:'shipyard', tier:'S', footprint:{ w:1, h:2 }, rotatable:true },
+  { id:'shipyard_m', name:'Orbitalna Stocznia (M)', buildTime:110, icon:'shipyard', tier:'M', footprint:{ w:2, h:2 } },
+  { id:'shipyard_l', name:'Orbitalna Stocznia (L)', buildTime:140, icon:'shipyard', tier:'L', footprint:{ w:3, h:2 }, rotatable:true },
+  { id:'shipyard_capital', name:'Orbitalna Stocznia (Capital)', buildTime:170, icon:'shipyard', tier:'C', footprint:{ w:3, h:4 }, rotatable:true },
+  { id:'shipyard_supercapital', name:'Orbitalna Stocznia (SuperCapital)', buildTime:210, icon:'shipyard', tier:'SC', footprint:{ w:3, h:4 }, rotatable:true },
+  { id:'storage_metal', name:'Magazyn Metali', buildTime:60, icon:'storage', label:'M', color:'#60a5fa', footprint:{ w:4, h:4 } },
+  { id:'storage_fuel', name:'Magazyn Paliwa', buildTime:70, icon:'storage', label:'F', color:'#f97316', footprint:{ w:4, h:4 } },
+  { id:'storage_gas', name:'Magazyn Gazów', buildTime:65, icon:'storage', label:'G', color:'#14b8a6', footprint:{ w:4, h:4 } },
+  { id:'storage_plastics', name:'Magazyn Tworzyw Sztucznych', buildTime:85, icon:'storage', label:'P', color:'#a855f7', footprint:{ w:4, h:4 } }
 ];
 const INFRA_BUILDING_MAP = new Map(INFRASTRUCTURE_BUILDINGS.map(b => [b.id, b]));
 
 const INFRA_CELL_WORLD_SIZE = 220;
 const INFRA_CELL_WORLD_GAP = 60;
 const INFRA_CELL_WORLD_STEP = INFRA_CELL_WORLD_SIZE + INFRA_CELL_WORLD_GAP;
+const INFRA_STATION_CORE_SIZE = 4;
+const INFRA_MIN_GRID = 8;
+const INFRA_MAX_GRID = 26;
 let infrastructureLayoutCache = null;
+let infrastructureLayoutKey = '';
 
 function computeInfrastructureLayout(cols, rows){
   const width = INFRA_CELL_WORLD_SIZE + (cols - 1) * INFRA_CELL_WORLD_STEP;
   const height = INFRA_CELL_WORLD_SIZE + (rows - 1) * INFRA_CELL_WORLD_STEP;
   const originOffset = { x: -width / 2, y: -height / 2 };
   const cells = [];
-  let centerIndex = 0;
-  let bestDist = Infinity;
+  const coreStartCol = Math.max(0, Math.floor((cols - INFRA_STATION_CORE_SIZE) / 2));
+  const coreStartRow = Math.max(0, Math.floor((rows - INFRA_STATION_CORE_SIZE) / 2));
+  const coreEndCol = Math.min(cols, coreStartCol + INFRA_STATION_CORE_SIZE) - 1;
+  const coreEndRow = Math.min(rows, coreStartRow + INFRA_STATION_CORE_SIZE) - 1;
+  const coreIndices = [];
+  const centerIndex = (coreStartRow + Math.floor(INFRA_STATION_CORE_SIZE / 2)) * cols + coreStartCol + Math.floor(INFRA_STATION_CORE_SIZE / 2);
   for(let row=0; row<rows; row++){
     for(let col=0; col<cols; col++){
       const idx = row * cols + col;
@@ -5528,15 +5538,11 @@ function computeInfrastructureLayout(cols, rows){
         x: originOffset.x + col * INFRA_CELL_WORLD_STEP + INFRA_CELL_WORLD_SIZE / 2,
         y: originOffset.y + row * INFRA_CELL_WORLD_STEP + INFRA_CELL_WORLD_SIZE / 2
       };
-      const dist = Math.hypot(local.x, local.y);
-      if(dist < bestDist){
-        bestDist = dist;
-        centerIndex = idx;
-      }
-      cells.push({ index: idx, col, row, local, blocked:false });
+      const blocked = col >= coreStartCol && col <= coreEndCol && row >= coreStartRow && row <= coreEndRow;
+      if(blocked) coreIndices.push(idx);
+      cells.push({ index: idx, col, row, local, blocked });
     }
   }
-  if(cells[centerIndex]) cells[centerIndex].blocked = true;
   return {
     cellSize: INFRA_CELL_WORLD_SIZE,
     cellGap: INFRA_CELL_WORLD_GAP,
@@ -5547,15 +5553,99 @@ function computeInfrastructureLayout(cols, rows){
     width,
     height,
     cells,
-    centerIndex
+    centerIndex,
+    core:{ startCol: coreStartCol, startRow: coreStartRow, indices: coreIndices }
   };
 }
 
 function getInfrastructureLayout(cols, rows){
-  if(!infrastructureLayoutCache || infrastructureLayoutCache.cols !== cols || infrastructureLayoutCache.rows !== rows){
+  const key = `${cols}x${rows}`;
+  if(!infrastructureLayoutCache || infrastructureLayoutKey !== key){
     infrastructureLayoutCache = computeInfrastructureLayout(cols, rows);
+    infrastructureLayoutKey = key;
   }
   return infrastructureLayoutCache;
+}
+
+function computeInfrastructureGridSize(station){
+  const planet = station?.planet;
+  const orbitRadii = planet ? planetOrbitRadii(planet) : null;
+  const innerOrbitRadius = orbitRadii?.inner || Math.max(1200, (station?.r || 0) * 10);
+  const squareSide = innerOrbitRadius * Math.SQRT2;
+  const approximateCols = Math.floor(squareSide / INFRA_CELL_WORLD_STEP);
+  let cols = Math.max(INFRA_MIN_GRID, Math.min(INFRA_MAX_GRID, approximateCols));
+  if(cols % 2 !== 0) cols += 1; // symetria względem środka stacji
+  const rows = cols;
+  return { cols, rows };
+}
+
+function rebuildInfrastructureGrid(layout){
+  const grid = infrastructureBuilder.grid;
+  if(!grid) return;
+  const cols = infrastructureBuilder.gridCols;
+  grid.style.setProperty('--infra-cols', cols);
+  grid.innerHTML = '';
+  infrastructureBuilder.gridCells = [];
+  const total = cols * infrastructureBuilder.gridRows;
+  for(let i=0;i<total;i++){
+    const meta = layout.cells?.[i];
+    const cell = document.createElement('div');
+    cell.className = 'infra-cell empty';
+    cell.dataset.index = String(i);
+    if(meta?.blocked){
+      cell.classList.add('core');
+      cell.classList.remove('empty');
+      cell.dataset.blocked = '1';
+    } else {
+      cell.dataset.blocked = '0';
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = 96;
+    canvas.height = 96;
+    cell.appendChild(canvas);
+    const progressBar = document.createElement('div');
+    progressBar.className = 'infra-progress-bar';
+    const fill = document.createElement('div');
+    fill.className = 'infra-progress-fill';
+    progressBar.appendChild(fill);
+    cell.appendChild(progressBar);
+    const status = document.createElement('div');
+    status.className = 'infra-cell-status';
+    status.textContent = meta?.blocked ? 'Rdzeń stacji' : 'Puste';
+    cell.appendChild(status);
+    cell.addEventListener('dragenter', handleInfrastructureCellDragEnter);
+    cell.addEventListener('dragover', handleInfrastructureCellDragOver);
+    cell.addEventListener('dragleave', handleInfrastructureCellDragLeave);
+    cell.addEventListener('drop', handleInfrastructureCellDrop);
+    cell.addEventListener('click', ()=>{
+      const state = getActiveInfrastructureState();
+      const rootIdx = state ? getRootCellIndex(state, i) : null;
+      infrastructureBuilder.selectedCell = rootIdx != null ? rootIdx : i;
+      renderInfrastructureOverlay();
+    });
+    infrastructureBuilder.gridCells.push(cell);
+    grid.appendChild(cell);
+  }
+}
+
+function updateInfrastructureGridForStation(station){
+  const size = computeInfrastructureGridSize(station);
+  const changed = size && (size.cols !== infrastructureBuilder.gridCols || size.rows !== infrastructureBuilder.gridRows);
+  if(changed){
+    infrastructureBuilder.gridCols = size.cols;
+    infrastructureBuilder.gridRows = size.rows;
+    infrastructureLayoutCache = null;
+    infrastructureLayoutKey = '';
+    infrastructureBuilder.selectedCell = null;
+    infrastructureBuilder.hoveredCell = null;
+  }
+  const layout = getInfrastructureLayout(infrastructureBuilder.gridCols, infrastructureBuilder.gridRows);
+  if(changed || !infrastructureBuilder.layout){
+    infrastructureBuilder.layout = layout;
+    rebuildInfrastructureGrid(layout);
+    infrastructureBuilder.needsRender = true;
+  }
+  return layout;
 }
 
 const infrastructureBuilder = {
@@ -5563,8 +5653,8 @@ const infrastructureBuilder = {
   list: document.getElementById('infra-building-list'),
   grid: document.getElementById('infra-grid'),
   info: document.getElementById('infra-info'),
-  gridCols: 6,
-  gridRows: 4,
+  gridCols: INFRA_MIN_GRID,
+  gridRows: INFRA_MIN_GRID,
   gridCells: [],
   stationStates: new Map(),
   selectedCell: null,
@@ -5580,6 +5670,7 @@ const infrastructureBuilder = {
   overlayPosition: null,
   editorAlpha: 0,
   ghostAlpha: 0,
+  ghostRotation: 0,
   layout: null
 };
 
@@ -5653,6 +5744,20 @@ function setupInfrastructureOverlayDrag(){
 
 setupInfrastructureOverlayDrag();
 
+function handleInfrastructureRotationWheel(ev){
+  if(!infrastructureBuilder.draggingBuildingId) return;
+  if(!stationUI.open || stationUI.tab !== 'infrastructure') return;
+  const building = INFRA_BUILDING_MAP.get(infrastructureBuilder.draggingBuildingId);
+  const fp = building?.footprint;
+  const canRotate = building && (building.rotatable || (fp && fp.w !== fp.h));
+  if(!canRotate) return;
+  ev.preventDefault();
+  const delta = ev.deltaY > 0 ? 1 : -1;
+  infrastructureBuilder.ghostRotation = (infrastructureBuilder.ghostRotation + delta + 2) % 2;
+  infrastructureBuilder.needsRender = true;
+}
+window.addEventListener('wheel', handleInfrastructureRotationWheel, { passive:false });
+
 function getInfrastructureStationKey(station){
   if(!station) return null;
   if(station.id != null) return `station-${station.id}`;
@@ -5673,10 +5778,10 @@ function findStationByKey(key){
 function ensureInfrastructureState(station){
   const key = getInfrastructureStationKey(station);
   if(!key) return null;
+  const layout = updateInfrastructureGridForStation(station);
   const cols = infrastructureBuilder.gridCols;
   const rows = infrastructureBuilder.gridRows;
   const totalCells = cols * rows;
-  const layout = getInfrastructureLayout(cols, rows);
   infrastructureBuilder.layout = layout;
   let state = infrastructureBuilder.stationStates.get(key);
   if(!state){
@@ -5711,6 +5816,7 @@ function ensureInfrastructureState(station){
 }
 
 function setInfrastructureActiveStation(station){
+  updateInfrastructureGridForStation(station);
   const key = getInfrastructureStationKey(station);
   if(infrastructureBuilder.activeStationKey === key){
     infrastructureBuilder.activeStationRef = station || null;
@@ -5736,6 +5842,62 @@ function setInfrastructureActiveStation(station){
 function getActiveInfrastructureState(){
   const station = infrastructureBuilder.activeStationRef || stationUI.station;
   return station ? ensureInfrastructureState(station) : null;
+}
+
+function getRootCellIndex(state, idx){
+  if(!state || !state.cells || !Number.isInteger(idx)) return null;
+  const cell = state.cells[idx];
+  if(!cell) return null;
+  if(Number.isInteger(cell.rootIndex)) return cell.rootIndex;
+  return idx;
+}
+
+function getRootCell(state, idx){
+  const rootIdx = getRootCellIndex(state, idx);
+  if(rootIdx == null) return null;
+  return state.cells[rootIdx] || null;
+}
+
+function buildingFootprint(building, rotation = 0){
+  const base = building?.footprint || { w:1, h:1 };
+  const rotated = (rotation % 2 !== 0) ? { w: base.h, h: base.w } : base;
+  return { ...rotated };
+}
+
+function computeFootprintCells(layout, anchorIdx, building, rotation){
+  if(!layout || !layout.cells || !building || !Number.isInteger(anchorIdx)) return null;
+  const anchorMeta = layout.cells[anchorIdx];
+  if(!anchorMeta) return null;
+  const fp = buildingFootprint(building, rotation);
+  const width = fp.w || 1;
+  const height = fp.h || 1;
+  if(anchorMeta.col + width > layout.cols || anchorMeta.row + height > layout.rows) return null;
+  const cells = [];
+  for(let dy=0; dy<height; dy++){
+    for(let dx=0; dx<width; dx++){
+      const col = anchorMeta.col + dx;
+      const row = anchorMeta.row + dy;
+      const idx = row * layout.cols + col;
+      const meta = layout.cells[idx];
+      if(!meta) return null;
+      cells.push(meta);
+    }
+  }
+  const center = cells.reduce((acc, meta)=>{
+    acc.x += meta.local.x; acc.y += meta.local.y; return acc;
+  }, { x:0, y:0 });
+  center.x /= cells.length;
+  center.y /= cells.length;
+  return { cells, width, height, center };
+}
+
+function validateInfrastructurePlacement(state, anchorIdx, building, rotation){
+  const layout = state?.layout || infrastructureBuilder.layout || getInfrastructureLayout(infrastructureBuilder.gridCols, infrastructureBuilder.gridRows);
+  const footprint = computeFootprintCells(layout, anchorIdx, building, rotation);
+  if(!layout || !footprint) return { valid:false, footprint:null };
+  const blocked = footprint.cells.some(meta => meta.blocked);
+  const occupied = footprint.cells.some(meta => state.cells?.[meta.index]);
+  return { valid: !blocked && !occupied, blocked, occupied, layout, footprint };
 }
 
 function drawSolarIcon(ctx){
@@ -5904,8 +6066,9 @@ function handleInfrastructureCellDragEnter(ev){
   const cellEl = ev.currentTarget;
   const idx = Number.parseInt(cellEl.dataset.index, 10);
   const state = getActiveInfrastructureState();
-  const meta = (state && Number.isInteger(idx)) ? state.cellMeta?.[idx] : null;
-  if(!id || !state || !meta || meta.blocked) return;
+  const building = INFRA_BUILDING_MAP.get(id);
+  const placement = building ? validateInfrastructurePlacement(state, idx, building, infrastructureBuilder.ghostRotation) : null;
+  if(!id || !state || !placement || !placement.footprint) return;
   ev.preventDefault();
   infrastructureBuilder.hoveredCell = idx;
   cellEl.classList.add('drag-over');
@@ -5916,11 +6079,12 @@ function handleInfrastructureCellDragOver(ev){
   const cellEl = ev.currentTarget;
   const idx = Number.parseInt(cellEl.dataset.index, 10);
   const state = getActiveInfrastructureState();
-  const meta = (state && Number.isInteger(idx)) ? state.cellMeta?.[idx] : null;
-  if(!id || !state || !meta || meta.blocked) return;
+  const building = INFRA_BUILDING_MAP.get(id);
+  const placement = building ? validateInfrastructurePlacement(state, idx, building, infrastructureBuilder.ghostRotation) : null;
+  if(!id || !state || !placement || !placement.footprint) return;
   ev.preventDefault();
   if(ev.dataTransfer){
-    ev.dataTransfer.dropEffect = 'copy';
+    ev.dataTransfer.dropEffect = placement.valid ? 'copy' : 'none';
   }
   infrastructureBuilder.hoveredCell = idx;
 }
@@ -5947,22 +6111,25 @@ function handleInfrastructureCellDrop(ev){
   if(!Number.isInteger(idx)) return;
   const state = getActiveInfrastructureState();
   if(!state) return;
-  const meta = state.cellMeta?.[idx];
-  if(meta?.blocked) return;
-  startInfrastructureBuildAtCell(state, idx, id);
+  const building = INFRA_BUILDING_MAP.get(id);
+  const placement = building ? validateInfrastructurePlacement(state, idx, building, infrastructureBuilder.ghostRotation) : null;
+  if(!placement || !placement.valid) return;
+  startInfrastructureBuildAtCell(state, idx, id, infrastructureBuilder.ghostRotation, placement.footprint);
   infrastructureBuilder.hoveredCell = idx;
   renderInfrastructureOverlay();
 }
 
-function startInfrastructureBuildAtCell(state, idx, buildingId){
+function startInfrastructureBuildAtCell(state, idx, buildingId, rotation = 0, footprintOverride = null){
   const building = INFRA_BUILDING_MAP.get(buildingId);
   if(!state || !building) return false;
   const totalCells = infrastructureBuilder.gridCols * infrastructureBuilder.gridRows;
   if(idx < 0 || idx >= totalCells) return false;
-  const meta = state.cellMeta?.[idx];
-  if(!meta || meta.blocked) return false;
-  if(state.cells[idx] && state.cells[idx].status === 'completed') return false;
-  state.cells[idx] = {
+  const layout = state.layout || infrastructureBuilder.layout || getInfrastructureLayout(infrastructureBuilder.gridCols, infrastructureBuilder.gridRows);
+  const placement = footprintOverride ? { footprint: footprintOverride, layout } : validateInfrastructurePlacement(state, idx, building, rotation);
+  if(!placement || !placement.footprint || placement.blocked || placement.occupied) return false;
+  const footprint = placement.footprint;
+  const normalizedRotation = Math.abs(rotation) % 2;
+  const base = {
     buildingId,
     status:'building',
     elapsed:0,
@@ -5970,11 +6137,18 @@ function startInfrastructureBuildAtCell(state, idx, buildingId){
     progress:0,
     startedAt:performance.now()/1000,
     cellIndex: idx,
-    gridX: meta.col,
-    gridY: meta.row,
-    localPos: { x: meta.local.x, y: meta.local.y },
+    rootIndex: idx,
+    rotation: normalizedRotation,
+    footprint: { w: footprint.width, h: footprint.height },
+    cells: footprint.cells.map(meta => meta.index),
+    gridX: layout.cells[idx]?.col ?? 0,
+    gridY: layout.cells[idx]?.row ?? 0,
+    localPos: { x: footprint.center.x, y: footprint.center.y },
     emitted: false
   };
+  for(const meta of footprint.cells){
+    state.cells[meta.index] = base;
+  }
   infrastructureBuilder.selectedCell = idx;
   infrastructureBuilder.needsRender = true;
   return true;
@@ -5982,16 +6156,15 @@ function startInfrastructureBuildAtCell(state, idx, buildingId){
 
 function infrastructureLocalToWorld(station, local){
   if(!station || !local) return { x: station?.x ?? 0, y: station?.y ?? 0 };
-  const angle = station.angle || 0;
-  const rotated = rotate(local, angle);
-  return { x: station.x + rotated.x, y: station.y + rotated.y };
+  return { x: station.x + local.x, y: station.y + local.y };
 }
 
 function emitInfrastructureCompletion(state, idx, cell){
   if(!state || !cell || cell.emitted) return;
   const station = state.stationRef || findStationByKey(state.stationKey);
   if(!station) return;
-  const meta = state.cellMeta?.[idx];
+  const rootIdx = getRootCellIndex(state, idx);
+  const meta = state.cellMeta?.[rootIdx ?? idx];
   const local = cell.localPos || meta?.local;
   if(!local) return;
   cell.localPos = { x: local.x, y: local.y };
@@ -6012,6 +6185,8 @@ function emitInfrastructureCompletion(state, idx, cell){
   existing.localPos = { x: cell.localPos.x, y: cell.localPos.y };
   existing.worldPos = worldPos;
   existing.stationRef = station;
+  existing.footprint = cell.footprint;
+  existing.rotation = cell.rotation;
   existing.status = 'completed';
   cell.emitted = true;
 }
@@ -6050,67 +6225,82 @@ function drawInfrastructureGrid(ctx, cam, station, state){
   const half = cellSize / 2;
   ctx.save();
   ctx.globalAlpha = alpha * 0.85;
+  const processedRoots = new Set();
   for(let i=0;i<layout.cells.length;i++){
     const meta = layout.cells[i];
     const worldCenter = infrastructureLocalToWorld(station, meta.local);
     const screen = worldToScreen(worldCenter.x, worldCenter.y, cam);
-    const cellData = state.cells[i];
+    const rootIdx = getRootCellIndex(state, i);
+    const rootCell = rootIdx != null ? state.cells[rootIdx] : null;
+    const building = rootCell ? INFRA_BUILDING_MAP.get(rootCell.buildingId) : null;
     const blocked = !!meta.blocked;
-    const done = cellData?.status === 'completed';
-    const progress = clamp(cellData?.progress ?? 0, 0, 1);
+    const done = rootCell?.status === 'completed';
+    const progress = clamp(rootCell?.progress ?? 0, 0, 1);
+    const belongsToBuilding = rootCell && rootCell.cells?.includes(meta.index);
 
-    const fillBase = blocked ? 'rgba(210,80,70,0.25)' : 'rgba(60,100,180,0.18)';
-    const fillBuilding = done ? 'rgba(56,180,135,0.26)' : 'rgba(90,140,220,0.28)';
-    ctx.fillStyle = cellData ? fillBuilding : fillBase;
-    ctx.fillRect(screen.x - half, screen.y - half, cellSize, cellSize);
-
-    ctx.lineWidth = Math.max(1, 1.3 * cam.zoom);
-    ctx.strokeStyle = blocked ? 'rgba(255,120,90,0.6)' : 'rgba(130,170,255,0.35)';
-    if(cellData){
-      ctx.strokeStyle = done ? 'rgba(82,205,150,0.8)' : 'rgba(108,170,255,0.75)';
-    }
-    ctx.strokeRect(screen.x - half, screen.y - half, cellSize, cellSize);
-
-    if(cellData){
-      const building = INFRA_BUILDING_MAP.get(cellData.buildingId);
-      if(building){
-        drawInfrastructureIcon(ctx, building, screen, cellSize * 0.72, alpha);
-      }
-      if(!done){
-        ctx.beginPath();
-        ctx.strokeStyle = 'rgba(96,165,250,0.85)';
-        ctx.lineWidth = Math.max(1.4, cam.zoom * 2.2);
-        ctx.arc(screen.x, screen.y, cellSize * 0.38, -Math.PI/2, -Math.PI/2 + Math.PI * 2 * progress);
-        ctx.stroke();
-      }
-    } else if(blocked){
+    if(blocked){
       ctx.beginPath();
       ctx.strokeStyle = 'rgba(255,110,90,0.65)';
       ctx.setLineDash([8 * cam.zoom, 6 * cam.zoom]);
       ctx.lineDashOffset = performance.now() * 0.04;
       ctx.strokeRect(screen.x - half, screen.y - half, cellSize, cellSize);
       ctx.setLineDash([]);
+      continue;
+    }
+
+    if(belongsToBuilding){
+      ctx.fillStyle = done ? 'rgba(56,180,135,0.26)' : 'rgba(90,140,220,0.28)';
+      ctx.fillRect(screen.x - half, screen.y - half, cellSize, cellSize);
+      ctx.lineWidth = Math.max(1, 1.3 * cam.zoom);
+      ctx.strokeStyle = done ? 'rgba(82,205,150,0.8)' : 'rgba(108,170,255,0.75)';
+      ctx.strokeRect(screen.x - half, screen.y - half, cellSize, cellSize);
+    } else {
+      ctx.fillStyle = 'rgba(60,100,180,0.18)';
+      ctx.fillRect(screen.x - half, screen.y - half, cellSize, cellSize);
+      ctx.lineWidth = Math.max(1, 1.3 * cam.zoom);
+      ctx.strokeStyle = 'rgba(130,170,255,0.35)';
+      ctx.strokeRect(screen.x - half, screen.y - half, cellSize, cellSize);
+    }
+
+    if(rootCell && building && !processedRoots.has(rootIdx)){
+      processedRoots.add(rootIdx);
+      const centerWorld = infrastructureLocalToWorld(station, rootCell.localPos || meta.local);
+      const centerScreen = worldToScreen(centerWorld.x, centerWorld.y, cam);
+      const footprintScale = Math.max(rootCell.footprint?.w || 1, rootCell.footprint?.h || 1);
+      const iconSize = cellSize * 0.72 * footprintScale;
+      ctx.globalAlpha = done ? alpha * 0.92 : alpha * 0.85;
+      drawInfrastructureIcon(ctx, building, centerScreen, iconSize, alpha);
+      if(!done){
+        ctx.beginPath();
+        ctx.strokeStyle = 'rgba(96,165,250,0.85)';
+        ctx.lineWidth = Math.max(1.4, cam.zoom * 2.2);
+        ctx.arc(centerScreen.x, centerScreen.y, (cellSize * 0.38) * footprintScale, -Math.PI/2, -Math.PI/2 + Math.PI * 2 * progress);
+        ctx.stroke();
+      }
     }
   }
 
   const hovered = infrastructureBuilder.hoveredCell;
   const ghostId = infrastructureBuilder.draggingBuildingId;
   if(ghostId && hovered != null){
-    const meta = state.cellMeta?.[hovered];
-    if(meta){
-      const worldCenter = infrastructureLocalToWorld(station, meta.local);
-      const screen = worldToScreen(worldCenter.x, worldCenter.y, cam);
-      const blocked = !!meta.blocked || !!state.cells[hovered];
+    const building = INFRA_BUILDING_MAP.get(ghostId);
+    const placement = building ? validateInfrastructurePlacement(state, hovered, building, infrastructureBuilder.ghostRotation) : null;
+    if(placement && placement.footprint){
       const ghostAlpha = infrastructureBuilder.ghostAlpha * alpha;
       if(ghostAlpha > 0.02){
+        const blocked = placement.blocked || placement.occupied;
         ctx.globalAlpha = ghostAlpha * 0.9;
         ctx.fillStyle = blocked ? 'rgba(220,70,70,0.35)' : 'rgba(80,150,255,0.3)';
-        ctx.fillRect(screen.x - half, screen.y - half, cellSize, cellSize);
+        for(const meta of placement.footprint.cells){
+          const worldCenter = infrastructureLocalToWorld(station, meta.local);
+          const screen = worldToScreen(worldCenter.x, worldCenter.y, cam);
+          ctx.fillRect(screen.x - half, screen.y - half, cellSize, cellSize);
+        }
         if(!blocked){
-          const building = INFRA_BUILDING_MAP.get(ghostId);
-          if(building){
-            drawInfrastructureIcon(ctx, building, screen, cellSize * 0.72, ghostAlpha);
-          }
+          const centerWorld = infrastructureLocalToWorld(station, placement.footprint.center);
+          const centerScreen = worldToScreen(centerWorld.x, centerWorld.y, cam);
+          const footprintScale = Math.max(placement.footprint.width, placement.footprint.height);
+          drawInfrastructureIcon(ctx, building, centerScreen, cellSize * 0.72 * footprintScale, ghostAlpha);
         }
         ctx.globalAlpha = alpha * 0.85;
       }
@@ -6130,7 +6320,8 @@ function drawInfrastructureInstances(ctx, cam){
       const building = INFRA_BUILDING_MAP.get(inst.buildingId);
       if(!building) continue;
       const screen = worldToScreen(inst.worldPos.x, inst.worldPos.y, cam);
-      const size = INFRA_CELL_WORLD_SIZE * cam.zoom * 0.6;
+      const footprintScale = inst.footprint ? Math.max(inst.footprint.w || 1, inst.footprint.h || 1) : 1;
+      const size = INFRA_CELL_WORLD_SIZE * cam.zoom * 0.6 * footprintScale;
       ctx.globalAlpha = 0.9;
       drawInfrastructureIcon(ctx, building, screen, size, 0.95);
     }
@@ -6169,11 +6360,13 @@ function initInfrastructureUI(){
       item.appendChild(name);
       const meta = document.createElement('div');
       meta.className = 'infra-building-meta';
-      meta.textContent = `Czas budowy: ${building.buildTime}s`;
+      const fp = buildingFootprint(building);
+      meta.textContent = `Czas budowy: ${building.buildTime}s • Rozmiar: ${fp.w}×${fp.h}`;
       item.appendChild(meta);
       item.addEventListener('dragstart', (ev)=>{
         item.classList.add('dragging');
         infrastructureBuilder.draggingBuildingId = building.id;
+        infrastructureBuilder.ghostRotation = 0;
         if(ev.dataTransfer){
           ev.dataTransfer.effectAllowed = 'copy';
           ev.dataTransfer.setData('text/plain', building.id);
@@ -6183,6 +6376,7 @@ function initInfrastructureUI(){
       item.addEventListener('dragend', ()=>{
         item.classList.remove('dragging');
         infrastructureBuilder.draggingBuildingId = null;
+        infrastructureBuilder.ghostRotation = 0;
         infrastructureBuilder.hoveredCell = null;
       });
       list.appendChild(item);
@@ -6192,48 +6386,8 @@ function initInfrastructureUI(){
 
   const grid = infrastructureBuilder.grid;
   if(grid){
-    grid.style.setProperty('--infra-cols', infrastructureBuilder.gridCols);
-    grid.innerHTML = '';
-    infrastructureBuilder.gridCells = [];
-    const layout = getInfrastructureLayout(infrastructureBuilder.gridCols, infrastructureBuilder.gridRows);
-    const total = infrastructureBuilder.gridCols * infrastructureBuilder.gridRows;
-    for(let i=0;i<total;i++){
-      const cell = document.createElement('div');
-      cell.className = 'infra-cell empty';
-      cell.dataset.index = String(i);
-      const meta = layout.cells?.[i];
-      if(meta?.blocked){
-        cell.classList.add('core');
-        cell.classList.remove('empty');
-        cell.dataset.blocked = '1';
-      } else {
-        cell.dataset.blocked = '0';
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = 96;
-      canvas.height = 96;
-      cell.appendChild(canvas);
-      const progressBar = document.createElement('div');
-      progressBar.className = 'infra-progress-bar';
-      const fill = document.createElement('div');
-      fill.className = 'infra-progress-fill';
-      progressBar.appendChild(fill);
-      cell.appendChild(progressBar);
-      const status = document.createElement('div');
-      status.className = 'infra-cell-status';
-      status.textContent = meta?.blocked ? 'Rdzeń stacji' : 'Puste';
-      cell.appendChild(status);
-      cell.addEventListener('dragenter', handleInfrastructureCellDragEnter);
-      cell.addEventListener('dragover', handleInfrastructureCellDragOver);
-      cell.addEventListener('dragleave', handleInfrastructureCellDragLeave);
-      cell.addEventListener('drop', handleInfrastructureCellDrop);
-      cell.addEventListener('click', ()=>{
-        infrastructureBuilder.selectedCell = i;
-        renderInfrastructureOverlay();
-      });
-      infrastructureBuilder.gridCells.push(cell);
-      grid.appendChild(cell);
-    }
+    const layout = updateInfrastructureGridForStation(stationUI.station || null);
+    rebuildInfrastructureGrid(layout || getInfrastructureLayout(infrastructureBuilder.gridCols, infrastructureBuilder.gridRows));
   }
 
   setInfrastructureUIVisible(false);
@@ -6288,7 +6442,7 @@ function setInfrastructureUIVisible(visible){
   }
 }
 
-function renderInfrastructureInfo(state){
+function renderInfrastructureInfo(state, uniqueRoots = new Set(), completedRoots = new Set()){
   const info = infrastructureBuilder.info;
   if(!info) return;
   info.innerHTML = '';
@@ -6304,8 +6458,8 @@ function renderInfrastructureInfo(state){
     return;
   }
 
-  const totalUsed = state.cells.filter(Boolean).length;
-  const completed = state.cells.filter(cell => cell && cell.status === 'completed').length;
+  const totalUsed = uniqueRoots.size || state.cells.filter(Boolean).length;
+  const completed = completedRoots.size || state.cells.filter(cell => cell && cell.status === 'completed').length;
 
   if(infrastructureBuilder.selectedCell == null){
     const p = document.createElement('p');
@@ -6319,15 +6473,15 @@ function renderInfrastructureInfo(state){
     return;
   }
 
-  const idx = infrastructureBuilder.selectedCell;
-  const meta = state.cellMeta?.[idx];
+  const idx = getRootCellIndex(state, infrastructureBuilder.selectedCell ?? 0);
+  const meta = state.cellMeta?.[idx ?? 0];
   if(!meta){
     const p = document.createElement('p');
     p.textContent = 'Nie można odczytać danych pola. Odśwież interfejs.';
     info.appendChild(p);
     return;
   }
-  const cell = state.cells[idx];
+  const cell = getRootCell(state, idx);
   const local = cell?.localPos || meta.local;
   if(cell && !cell.localPos && local){
     cell.localPos = { x: local.x, y: local.y };
@@ -6379,6 +6533,15 @@ function renderInfrastructureInfo(state){
   buildTime.style.color = '#a8b4d9';
   info.appendChild(buildTime);
 
+  if(cell.footprint){
+    const fp = cell.footprint;
+    const footprint = document.createElement('p');
+    footprint.textContent = `Zajętość siatki: ${fp.w}×${fp.h}`;
+    footprint.style.fontSize = '12px';
+    footprint.style.color = '#94a9d6';
+    info.appendChild(footprint);
+  }
+
   if(local){
     const coords = document.createElement('p');
     coords.textContent = `Położenie względem stacji: Δx ${Math.round(local.x)}, Δy ${Math.round(local.y)}.`;
@@ -6418,39 +6581,62 @@ function renderInfrastructureOverlay(){
     state.cells = state.cells.concat(Array(diff).fill(null));
   }
 
+  const uniqueRoots = new Set();
+  const completedRoots = new Set();
+  if(state){
+    state.cells.forEach((cell, idx)=>{
+      if(!cell) return;
+      const rootIdx = getRootCellIndex(state, idx) ?? idx;
+      uniqueRoots.add(rootIdx);
+      if(cell.status === 'completed') completedRoots.add(rootIdx);
+    });
+  }
+
   for(let i=0;i<infrastructureBuilder.gridCells.length;i++){
     const cellEl = infrastructureBuilder.gridCells[i];
     const cellData = state ? state.cells[i] : null;
+    const rootIdx = state ? getRootCellIndex(state, i) : null;
+    const rootCell = state ? getRootCell(state, i) : null;
+    const isRoot = rootIdx != null && rootIdx === i && !!rootCell;
+    const building = rootCell ? INFRA_BUILDING_MAP.get(rootCell.buildingId) : null;
     const meta = state ? state.cellMeta?.[i] : null;
     const blocked = !!meta?.blocked;
+    const hasBuilding = !!rootCell;
+    const done = rootCell?.status === 'completed';
+    const progress = done ? 1 : clamp(rootCell?.progress ?? 0, 0, 1);
     const canvas = cellEl.querySelector('canvas');
     const progressFill = cellEl.querySelector('.infra-progress-fill');
     const status = cellEl.querySelector('.infra-cell-status');
-    cellEl.classList.toggle('selected', infrastructureBuilder.selectedCell === i);
+    const selectedRoot = infrastructureBuilder.selectedCell;
+    cellEl.classList.toggle('selected', selectedRoot != null && selectedRoot === rootIdx);
     cellEl.classList.toggle('core', blocked);
-    if(cellData){
-      const building = INFRA_BUILDING_MAP.get(cellData.buildingId);
-      cellEl.classList.remove('empty');
-      cellEl.classList.add('has-building');
-      const done = cellData.status === 'completed';
-      cellEl.classList.toggle('completed', done);
-      const progress = done ? 1 : clamp(cellData.progress ?? 0, 0, 1);
-      if(canvas) drawBuildingPreview(canvas, building);
+    cellEl.classList.toggle('has-building', hasBuilding);
+    cellEl.classList.toggle('part-of-building', hasBuilding);
+    cellEl.classList.toggle('root-building', isRoot);
+    cellEl.classList.toggle('completed', done);
+    if(hasBuilding){
+      if(isRoot && canvas){
+        drawBuildingPreview(canvas, building);
+      } else if(canvas){
+        const ctx = canvas.getContext('2d');
+        if(ctx){ ctx.clearRect(0, 0, canvas.width, canvas.height); }
+      }
       if(progressFill) progressFill.style.width = `${Math.round(progress * 100)}%`;
-      if(status) status.textContent = done ? 'Zakończono' : `${Math.round(progress * 100)}%`;
+      if(status) status.textContent = done ? 'Zakończono' : (isRoot ? `${Math.round(progress * 100)}%` : 'Część modułu');
+      cellEl.classList.remove('empty');
     } else {
       cellEl.classList.toggle('empty', !blocked);
-      cellEl.classList.remove('has-building', 'completed');
       if(canvas){
         const ctx = canvas.getContext('2d');
         if(ctx){ ctx.clearRect(0, 0, canvas.width, canvas.height); }
       }
       if(progressFill) progressFill.style.width = '0%';
       if(status) status.textContent = blocked ? 'Rdzeń stacji' : 'Puste';
+      cellEl.classList.remove('completed', 'root-building', 'part-of-building', 'has-building');
     }
   }
   infrastructureBuilder.needsRender = false;
-  renderInfrastructureInfo(state || null);
+  renderInfrastructureInfo(state || null, uniqueRoots, completedRoots);
 }
 
 function renderInfrastructureTab(){
@@ -6492,8 +6678,12 @@ function updateInfrastructureState(dt){
   let changed = false;
   infrastructureBuilder.stationStates.forEach(state => {
     if(!state || !state.cells) return;
+    const processed = new Set();
     state.cells.forEach((cell, idx) => {
       if(!cell) return;
+      const rootIdx = getRootCellIndex(state, idx);
+      if(rootIdx == null || processed.has(rootIdx)) return;
+      processed.add(rootIdx);
       if(cell.status === 'building'){
         const prev = cell.progress || 0;
         cell.elapsed = (cell.elapsed || 0) + dt;
@@ -6506,7 +6696,7 @@ function updateInfrastructureState(dt){
         }
       }
       if(cell.status === 'completed' && !cell.emitted){
-        emitInfrastructureCompletion(state, idx, cell);
+        emitInfrastructureCompletion(state, rootIdx, cell);
         changed = true;
       }
     });
