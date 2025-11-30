@@ -1147,7 +1147,7 @@ function supportGuardSlot(slotIndex){
   const forward = SUPPORT_FORMATION.lead + lineIndex * SUPPORT_FORMATION.lineGap;
 
   const local = { x: forward, y: lateral };
-  const rotated = rotate(local, ship.angle);
+  const rotated = rotate(local, ship.angle + Math.PI / 2);
   return { x: ship.pos.x + rotated.x, y: ship.pos.y + rotated.y };
 }
 
