@@ -2804,12 +2804,12 @@ const ASTEROID_BELT = (() => {
 const STATION_STYLES = ['ringGate','hexHub','triRing','solarPetals','shipyard','tradeSpindle'];
 
 let stations = planets.map(pl => {
-  const orbitRadius = pl.r + 300;
-  const angle = Math.random() * Math.PI * 2;
-  const periodHours = 12; // stacja okrąża planetę w 12h
-  const speed = (2 * Math.PI) / (periodHours * 3600);
-  const x = pl.x + Math.cos(angle) * orbitRadius;
-  const y = pl.y + Math.sin(angle) * orbitRadius;
+  const orbitRadius = 0; // stacje cywilne na środku planety
+  const angle = 0; // brak dryfu orbitalnego
+  const periodHours = 12; // zachowana spójność parametrów (nieużywane przy orbitRadius=0)
+  const speed = 0;
+  const x = pl.x;
+  const y = pl.y;
   const r = 120;
   const portOffset = r + 40;
   const gateOffset = 220;
@@ -2876,7 +2876,13 @@ if (!hasSavedShipPosition) {
 (() => {
   if (ASTEROID_BELT) {
     const beltRadius = ASTEROID_BELT.mid;
-    for (const st of stations) st.inner = st.orbitRadius < beltRadius;
+    for (const st of stations) {
+      const planetOrbit = st.planet?.orbitRadius;
+      const distFromSun = Number.isFinite(planetOrbit)
+        ? planetOrbit
+        : Math.hypot((st.planet?.x ?? st.x) - SUN.x, (st.planet?.y ?? st.y) - SUN.y);
+      st.inner = distFromSun < beltRadius;
+    }
   } else {
     for (const st of stations) st.inner = true;
   }
