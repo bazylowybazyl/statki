@@ -114,38 +114,57 @@ function getTemplate(stationId, path) {
 
   loader.load(path, (gltf) => {
     
-   gltf.scene.traverse(o => {
+    // =========================================================
+    // 1. NAPRAWA "WYWINIĘCIA" (INVERTED NORMALS)
+    // =========================================================
+    // Jeśli model jest wywinięty do środka, skalowanie -1 na osi X
+    // odwraca go na "dobrą" stronę. To naprawi oświetlenie.
+    gltf.scene.scale.set(-1, 1, 1); 
+
+    // Opcjonalnie: Jeśli po tym zabiegu stacja będzie "leżeć" na boku,
+    // odkomentuj poniższą linię, żeby ją obrócić:
+    // gltf.scene.rotation.x = Math.PI / 2;
+    
+    gltf.scene.traverse(o => {
       if (o.isMesh) {
         o.castShadow = true;
         o.receiveShadow = true;
 
         if (o.material) {
-          // --- NAPRAWA GEOMETRII I PRZENIKANIA ---
-         
-         o.material.transparent = false;
-          o.material.depthWrite = true;
-          o.material.depthTest = true;
-          if (o.material.map || o.material.alphaMap) {
-             o.material.alphaTest = 0.5; 
-          }
+          // --- NAPRAWA MATERIAŁÓW ---
+          
+          // Upewniamy się, że rysujemy obie strony (na wypadek dziur)
           o.material.side = THREE.DoubleSide;
           
-          o.material.envMapIntensity = 1.0; 
-          o.material.metalness = 1.0; // Wymuś metaliczność dla lepszych odbić
-          o.material.roughness = 0.4; // Trochę połysku, ale nie lustro
-
-          // Podbicie świateł emisyjnych (okna/lasery)
-          if (o.material.emissiveMap || (o.material.emissive && o.material.emissive.r > 0)) {
-             o.material.emissiveIntensity = 4.0; 
-          }
+          // Wyłączamy przezroczystość, żeby naprawić przenikanie (Alpha Sorting)
+          o.material.transparent = false; 
           
+          // Włączamy AlphaTest - to naprawi "znikające tekstury".
+          // Zamiast rozmytej przezroczystości, wycina on twarde dziury w metalu.
+          if (o.material.map || o.material.alphaMap) {
+             o.material.alphaTest = 0.1; // Niski próg, żeby widzieć więcej detali
+             o.material.needsUpdate = true;
+          }
+
+          // Wymuszamy zapis do bufora głębi (dzięki temu wieża nie będzie przed pierścieniem)
+          o.material.depthWrite = true;
+          o.material.depthTest = true;
+
+          // Parametry "Metalowego PBR"
+          o.material.envMapIntensity = 1.0; 
+          
+          // Czasami modele mają dziwne ustawienia metalness/roughness - wymuszamy standard
+          // Jeśli stacja jest za ciemna -> zmniejsz roughness
+          // Jeśli za mało błyszczy -> zwiększ metalness
+          if (o.material.metalness < 0.1) o.material.metalness = 0.8;
+          if (o.material.roughness > 0.9) o.material.roughness = 0.4;
+
           o.material.needsUpdate = true;
         }
       }
     });
 
     placeholder.scene = gltf.scene;
-    // Nie potrzebujemy już tablicy 'customMaterials', bo używamy wbudowanych
     placeholder.materials = []; 
     placeholder.loading = false;
 
