@@ -7089,8 +7089,8 @@ function renderAvailableWeapons(root) {
     header.textContent = meta ? meta.title : type;
     root.appendChild(header);
 
-    // Sortowanie alfabetyczne
-    grouped[type].sort((a, b) => a.name.localeCompare(b.name));
+    // Sortowanie alfabetyczne (z ochroną przed brakującymi nazwami)
+    grouped[type].sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
     
     // Generowanie wierszy
     for (const weapon of grouped[type]) {
