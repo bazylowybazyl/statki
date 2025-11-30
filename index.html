@@ -4235,6 +4235,109 @@ const AISPACE_BS_BROADSIDE = {
   dmg:80, rps:0.6, speed:620, range:650, spread:2.5, color:'#ff9b4b'
 };
 
+// Hardpoint-friendly rejestr broni z AISPACE
+const AISPACE_HARDPOINT_WEAPONS = (() => {
+  const toWeapon = (id, def, type) => ({
+    id,
+    type,
+    name: def.name,
+    dps: def.dps,
+    damage: def.dmg,
+    rps: def.rps,
+    cooldown: def.rps ? +(1 / def.rps).toFixed(2) : null,
+    range: def.range,
+    speed: def.speed,
+    spread: def.spread,
+    color: def.color,
+    aispaceDef: def
+  });
+
+  const guns = {
+    ais_laser_s: toWeapon('ais_laser_s', AISPACE_GUNS.laserS, HP.MAIN),
+    ais_pulse: toWeapon('ais_pulse', AISPACE_GUNS.pulse, HP.MAIN),
+    ais_rail_micro: toWeapon('ais_rail_micro', AISPACE_GUNS.rail, HP.MAIN),
+    ais_gatling: toWeapon('ais_gatling', AISPACE_GUNS.gatling, HP.MAIN),
+    ais_m_beam: toWeapon('ais_m_beam', AISPACE_GUNS_M.m_beam, HP.MAIN),
+    ais_m_pulse: toWeapon('ais_m_pulse', AISPACE_GUNS_M.m_pulse, HP.MAIN),
+    ais_m_rail: toWeapon('ais_m_rail', AISPACE_GUNS_M.m_rail, HP.MAIN),
+    ais_m_autocannon: toWeapon('ais_m_autocannon', AISPACE_GUNS_M.m_autocannon, HP.MAIN),
+    ais_h_beam: toWeapon('ais_h_beam', AISPACE_GUNS_M.h_beam, HP.MAIN),
+    ais_h_rapid: toWeapon('ais_h_rapid', AISPACE_GUNS_M.h_rapid, HP.MAIN),
+    ais_broadside: toWeapon('ais_broadside', AISPACE_BS_BROADSIDE, HP.MAIN)
+  };
+
+  const pd = {
+    ais_pd_mk1: {
+      id: 'ais_pd_mk1',
+      type: HP.AUX,
+      name: AISPACE_PD.pd_mk1.name,
+      damage: AISPACE_PD.pd_mk1.dmg,
+      rps: AISPACE_PD.pd_mk1.rps,
+      cooldown: AISPACE_PD.pd_mk1.rps ? +(1 / AISPACE_PD.pd_mk1.rps).toFixed(2) : null,
+      range: AISPACE_PD.pd_mk1.range,
+      spread: AISPACE_PD.pd_mk1.spread,
+      color: AISPACE_PD.pd_mk1.color,
+      aispacePdId: 'pd_mk1'
+    },
+    ais_pd_laser: {
+      id: 'ais_pd_laser',
+      type: HP.AUX,
+      name: AISPACE_PD.pd_laser.name,
+      damage: AISPACE_PD.pd_laser.dmg,
+      rps: AISPACE_PD.pd_laser.rps,
+      cooldown: AISPACE_PD.pd_laser.rps ? +(1 / AISPACE_PD.pd_laser.rps).toFixed(2) : null,
+      range: AISPACE_PD.pd_laser.range,
+      spread: AISPACE_PD.pd_laser.spread,
+      color: AISPACE_PD.pd_laser.color,
+      aispacePdId: 'pd_laser'
+    },
+    ais_flak_L: {
+      id: 'ais_flak_L',
+      type: HP.AUX,
+      name: AISPACE_FLAK.flak_L.name,
+      damage: AISPACE_FLAK.flak_L.dmg,
+      rps: AISPACE_FLAK.flak_L.rps,
+      cooldown: AISPACE_FLAK.flak_L.rps ? +(1 / AISPACE_FLAK.flak_L.rps).toFixed(2) : null,
+      range: AISPACE_FLAK.flak_L.range,
+      spread: AISPACE_FLAK.flak_L.spread,
+      color: AISPACE_FLAK.flak_L.color,
+      aispaceFlakId: 'flak_L'
+    }
+  };
+
+  const missileDefaults = 12;
+  const missileRange = def => (def.speed && def.life) ? def.speed * def.life : def.range;
+  const missiles = {
+    ais_msl_AF: {
+      id: 'ais_msl_AF', type: HP.MISSILE, name: AISPACE_MISSILES.AF.name, damage: AISPACE_MISSILES.AF.dmg,
+      ammo: missileDefaults, rps: null, cooldown: null, range: missileRange(AISPACE_MISSILES.AF),
+      color: AISPACE_MISSILES.AF.color, aispaceMissileId: 'AF', missileStats: { ...AISPACE_MISSILES.AF, range: missileRange(AISPACE_MISSILES.AF) }
+    },
+    ais_msl_AS: {
+      id: 'ais_msl_AS', type: HP.MISSILE, name: AISPACE_MISSILES.AS.name, damage: AISPACE_MISSILES.AS.dmg,
+      ammo: missileDefaults, rps: null, cooldown: null, range: missileRange(AISPACE_MISSILES.AS),
+      color: AISPACE_MISSILES.AS.color, aispaceMissileId: 'AS', missileStats: { ...AISPACE_MISSILES.AS, range: missileRange(AISPACE_MISSILES.AS) }
+    },
+    ais_msl_HE: {
+      id: 'ais_msl_HE', type: HP.MISSILE, name: AISPACE_MISSILES.HE.name, damage: AISPACE_MISSILES.HE.dmg,
+      ammo: missileDefaults, rps: null, cooldown: null, range: missileRange(AISPACE_MISSILES.HE),
+      color: AISPACE_MISSILES.HE.color, aispaceMissileId: 'HE', missileStats: { ...AISPACE_MISSILES.HE, range: missileRange(AISPACE_MISSILES.HE) }
+    },
+    ais_msl_SW: {
+      id: 'ais_msl_SW', type: HP.MISSILE, name: AISPACE_MISSILES.SW.name, damage: AISPACE_MISSILES.SW.dmg,
+      ammo: missileDefaults, rps: null, cooldown: null, range: missileRange(AISPACE_MISSILES.SW),
+      color: AISPACE_MISSILES.SW.color, aispaceMissileId: 'SW', missileStats: { ...AISPACE_MISSILES.SW, range: missileRange(AISPACE_MISSILES.SW) }
+    }
+  };
+
+  return { ...guns, ...pd, ...missiles };
+})();
+
+Object.assign(WEAPONS, AISPACE_HARDPOINT_WEAPONS);
+for (const weaponId of Object.keys(AISPACE_HARDPOINT_WEAPONS)) {
+  mergedInventory.add(weaponId);
+}
+
 // ==========================================================================================
 // 2. ADAPTER SYSTEMU (Most między AI SPACE a Space Survivors)
 // ==========================================================================================
@@ -4255,43 +4358,49 @@ const PirateSim = {
 window.spawnBulletAdapter = function(owner, target, weaponDef, opts = {}) {
   if (!weaponDef) return;
 
+  const origin = opts.origin || owner;
+  const originVel = opts.originVel || { x: owner.vx ?? owner.vel?.x ?? 0, y: owner.vy ?? owner.vel?.y ?? 0 };
+  const baseAngle = opts.angleOverride ?? owner.angle ?? 0;
+  const bulletSpeed = weaponDef.speed || 500;
+  const bulletLife = weaponDef.life ?? ((weaponDef.range || 800) / bulletSpeed);
+
   // 1. Obliczamy pozycję i kąt
   // Jeśli jest target, używamy leadAim (przewidywanie), jeśli nie - strzelamy przed siebie
   let aimPoint;
   const targetPos = target ? (target.pos ? { x: target.pos.x, y: target.pos.y } : { x: target.x, y: target.y }) : null;
-  if (target) {
-     aimPoint = getLeadAim(owner, target, weaponDef.speed || 500);
+    if (target) {
+     aimPoint = getLeadAim(origin, target, bulletSpeed);
   } else {
-     const angle = owner.angle || 0;
+     const angle = baseAngle;
      aimPoint = {
-         x: owner.x + Math.cos(angle) * 1000, 
-         y: owner.y + Math.sin(angle) * 1000 
+         x: origin.x + Math.cos(angle) * 1000,
+         y: origin.y + Math.sin(angle) * 1000
      };
   }
 
-  const ang = Math.atan2(aimPoint.y - owner.y, aimPoint.x - owner.x);
-  
+  const adjustedAng = Math.atan2(aimPoint.y - origin.y, aimPoint.x - origin.x);
+
   // 2. Rozrzut (Spread)
   const spreadRad = (weaponDef.spread || 0) * (Math.PI / 180);
-  const finalAngle = ang + (Math.random() - 0.5) * spreadRad;
+  const finalAngle = adjustedAng + (Math.random() - 0.5) * spreadRad;
 
   // 3a. Instant beam (AI Space heavy beams)
   if (weaponDef.isBeam) {
     const beamRange = weaponDef.range || 0;
     const desiredEnd = targetPos || {
-      x: owner.x + Math.cos(finalAngle) * beamRange,
-      y: owner.y + Math.sin(finalAngle) * beamRange
+      x: origin.x + Math.cos(finalAngle) * beamRange,
+      y: origin.y + Math.sin(finalAngle) * beamRange
     };
-    const dx = desiredEnd.x - owner.x;
-    const dy = desiredEnd.y - owner.y;
+    const dx = desiredEnd.x - origin.x;
+    const dy = desiredEnd.y - origin.y;
     const dist = Math.hypot(dx, dy) || 1;
     const maxDist = beamRange > 0 ? Math.min(dist, beamRange) : dist;
     const endPoint = {
-      x: owner.x + (dx / dist) * maxDist,
-      y: owner.y + (dy / dist) * maxDist
+      x: origin.x + (dx / dist) * maxDist,
+      y: origin.y + (dy / dist) * maxDist
     };
 
-    spawnLaserBeam({ x: owner.x, y: owner.y }, endPoint, opts.beamWidth || 8, {
+    spawnLaserBeam({ x: origin.x, y: origin.y }, endPoint, opts.beamWidth || 8, {
       life: weaponDef.beamLife || 0.08,
       colorOuter: weaponDef.color,
       colorInner: '#ffffff',
@@ -4330,13 +4439,13 @@ window.spawnBulletAdapter = function(owner, target, weaponDef, opts = {}) {
 
   // 4. Dodanie pocisku do gry
   window.bullets.push({
-    x: owner.x,
-    y: owner.y,
+    x: origin.x,
+    y: origin.y,
     // Dziedziczenie pędu statku (20%) dla realizmu
-    vx: Math.cos(finalAngle) * weaponDef.speed + (owner.vx || 0) * 0.2,
-    vy: Math.sin(finalAngle) * weaponDef.speed + (owner.vy || 0) * 0.2,
-    
-    life: (weaponDef.range || 800) / weaponDef.speed,
+    vx: Math.cos(finalAngle) * bulletSpeed + originVel.x * 0.2,
+    vy: Math.sin(finalAngle) * bulletSpeed + originVel.y * 0.2,
+
+    life: bulletLife,
     r: size,
     owner: owner.friendly ? 'player' : 'npc', // Ważne dla kolizji!
     damage: weaponDef.dmg || 10,
@@ -8304,51 +8413,80 @@ const SIDE_ROCKET_HOMING_DELAY = 0.25;
 const SPECIAL_COOLDOWN = 10; ship.special.cooldownTimer = 0;
 const SPECIAL_DAMAGE = 1500;
 
-function consumeMissileAmmo(side){
-  const entries = (Game.player.weapons?.[HP.MISSILE] || []).map(e=>e.hp);
-  if(!entries.length) return false;
-  const available = entries.filter(hp => hp.mount && (hp.ammo === null || hp.ammo > 0));
-  if(!available.length) return false;
+function selectMissileLoadout(side){
+  const entries = Game.player.weapons?.[HP.MISSILE] || [];
+  const available = entries.filter(entry => entry.hp.mount && (entry.hp.ammo === null || entry.hp.ammo > 0));
+  if(!available.length) return null;
   let preferred = null;
   if(side === 'left'){
-    preferred = available.find(hp => (hp.pos?.x || 0) <= 0);
+    preferred = available.find(entry => (entry.hp.pos?.x || 0) <= 0);
   } else if(side === 'right'){
-    preferred = available.find(hp => (hp.pos?.x || 0) >= 0);
+    preferred = available.find(entry => (entry.hp.pos?.x || 0) >= 0);
   }
-  const target = preferred || available[0];
-  if(typeof target.ammo === 'number'){
-    target.ammo = Math.max(0, target.ammo - 1);
+  return preferred || available[0];
+}
+
+function consumeMissileAmmo(loadout){
+  const hp = loadout?.hp;
+  if(!hp) return false;
+  if(typeof hp.ammo === 'number'){
+    hp.ammo = Math.max(0, hp.ammo - 1);
   }
   rocketAmmo = missileAmmoTotal();
   saveLoadout();
   return true;
 }
 
+function getMissileStats(loadout){
+  const weapon = loadout?.weapon;
+  if(weapon?.missileStats) return weapon.missileStats;
+  if(weapon?.aispaceMissileId) return AISPACE_MISSILES[weapon.aispaceMissileId];
+  return null;
+}
+
 function fireRocket(side){
   if(!(Game.player.weapons?.[HP.MISSILE]?.length)) return;
   if(rocketAmmoMax > 0 && rocketAmmo <= 0) return;
+  const loadout = selectMissileLoadout(side);
+  if(!loadout) return;
   const guns = side === 'left' ? ship.sideGunsLeft : ship.sideGunsRight;
   const idx = side === 'left' ? nextRocketIndexLeft : nextRocketIndexRight;
   const gunOff = guns[idx % guns.length];
   const target = (lockedTarget && !lockedTarget.dead) ? lockedTarget : null;
-  if(!consumeMissileAmmo(side)) return;
-  fireSideGunAtOffset(gunOff, side, target);
+  if(!consumeMissileAmmo(loadout)) return;
+  const missileDef = getMissileStats(loadout);
+  fireSideGunAtOffset(gunOff, side, target, missileDef);
   if(side === 'left') nextRocketIndexLeft = (idx + 1) % guns.length;
   else nextRocketIndexRight = (idx + 1) % guns.length;
 }
 
-function fireSideGunAtOffset(gunOff, side, target=null){
+function fireSideGunAtOffset(gunOff, side, target=null, missileDef=null){
   const gunWorld = add(ship.pos, rotate(gunOff, ship.angle));
   const dl = side === 'left' ? -1 : 1;
-  const dir = rotate({x:dl, y:0}, ship.angle);
-window.bullets.push({ x: gunWorld.x, y: gunWorld.y, px: gunWorld.x, py: gunWorld.y,
-    vx: dir.x*SIDE_BULLET_SPEED + ship.vel.x, vy: dir.y*SIDE_BULLET_SPEED + ship.vel.y,
-    life:2.4, r:5, owner:'player', damage:SIDE_BULLET_DAMAGE, penetration:0, type:'rocket',
-    explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS, homingDelay: SIDE_ROCKET_HOMING_DELAY, target,
-    source: ship, spawnGrace: 0.08 });
-  spawnParticle({x:gunWorld.x, y:gunWorld.y}, {x:dir.x*120 + ship.vel.x*0.1, y:dir.y*120 + ship.vel.y*0.1}, 0.14, '#b4ffb4', 3.2, true);
+  const baseDir = rotate({x:dl, y:0}, ship.angle);
+  const speed = missileDef?.speed || SIDE_BULLET_SPEED;
+  const damage = missileDef?.dmg ?? missileDef?.damage ?? SIDE_BULLET_DAMAGE;
+  const life = missileDef?.life ?? ((missileDef?.range && missileDef.speed) ? (missileDef.range / missileDef.speed) : 2.4);
+  const turnRate = ((missileDef?.turn || SIDE_ROCKET_TURN_RATE) * Math.PI) / 180;
+  const explodeRadius = missileDef?.radius ?? SIDE_PLASMA_EXPLODE_RADIUS;
+  const homingDelay = missileDef?.homingDelay ?? SIDE_ROCKET_HOMING_DELAY;
+  const swarmCount = missileDef?.swarm || 1;
+  const spread = ((missileDef?.spread || 0) * Math.PI) / 180;
+
+  for(let n=0;n<swarmCount;n++){
+    const offsetAng = spread ? (Math.random() - 0.5) * spread : 0;
+    const dir = rotate(baseDir, offsetAng);
+    window.bullets.push({ x: gunWorld.x, y: gunWorld.y, px: gunWorld.x, py: gunWorld.y,
+      vx: dir.x*speed + ship.vel.x, vy: dir.y*speed + ship.vel.y,
+      life: life || 2.4, r:5, owner:'player', damage, penetration:0, type:'rocket',
+      explodeRadius, homingDelay, target,
+      color: missileDef?.color,
+      turnRate,
+      source: ship, spawnGrace: 0.08 });
+  }
+  spawnParticle({x:gunWorld.x, y:gunWorld.y}, {x:baseDir.x*120 + ship.vel.x*0.1, y:baseDir.y*120 + ship.vel.y*0.1}, 0.14, '#b4ffb4', 3.2, true);
   for(let k=0;k<6;k++){
-    const aa = Math.atan2(dir.y, dir.x) + (Math.random()-0.5)*0.9;
+    const aa = Math.atan2(baseDir.y, baseDir.x) + (Math.random()-0.5)*0.9;
     spawnParticle({x:gunWorld.x + Math.cos(aa)*6, y:gunWorld.y + Math.sin(aa)*6}, {x:Math.cos(aa)*160, y:Math.sin(aa)*160}, 0.14 + Math.random()*0.06, '#a8ff9a', 1.1, true);
   }
 }
@@ -9060,6 +9198,54 @@ const MAIN_WEAPON_BEHAVIOR = {
     hitFx: spawnAutocannonHitEffect,
   }),
 };
+function fireAispaceMainShot(def, context){
+  const target = (context.target && !context.target.dead) ? context.target
+    : ((lockedTarget && !lockedTarget.dead) ? lockedTarget : null);
+  spawnBulletAdapter(ship, target, def, {
+    type: def.isBeam ? 'beam' : undefined,
+    origin: context.muzzle.pos,
+    originVel: context.muzzle.baseVel,
+    angleOverride: context.turret.angle
+  });
+  return {
+    cooldown: def.rps ? 1 / def.rps : undefined,
+    recoilKick: def.isBeam ? 6 : undefined,
+    recoilMax: def.isBeam ? 10 : undefined
+  };
+}
+function createAispaceMainBehavior(id, def){
+  const projectileType = def.isBeam ? 'beam'
+    : (def.name?.toLowerCase().includes('rail') ? 'rail'
+    : (def.name?.toLowerCase().includes('auto') || def.name?.toLowerCase().includes('gatling')) ? 'autocannon'
+    : 'plasma');
+  const projectileLife = (def.range && def.speed) ? (def.range / def.speed) : BASE_MAIN_BEHAVIOR.projectile.life;
+  return createMainWeaponBehavior({
+    id,
+    priority: 5,
+    cooldown: def.rps ? 1 / def.rps : BASE_MAIN_BEHAVIOR.cooldown,
+    burstsPerClick: 1,
+    shotGap: 0,
+    burstGap: 0,
+    recoilKick: def.isBeam ? 6 : 10,
+    recoilMax: def.isBeam ? 10 : 14,
+    barrelsPerShot: 1,
+    projectile: {
+      type: projectileType,
+      speed: def.speed || BASE_MAIN_BEHAVIOR.projectile.speed,
+      life: projectileLife,
+      radius: def.isBeam ? 5 : 4,
+      penetration: projectileType === 'rail' ? 2 : 0,
+      effectScale: 1.0,
+      color: def.color
+    },
+    customFire: ctx => fireAispaceMainShot(def, ctx)
+  });
+}
+for (const [weaponId, weapon] of Object.entries(AISPACE_HARDPOINT_WEAPONS)) {
+  if (weapon.type === HP.MAIN && weapon.aispaceDef) {
+    MAIN_WEAPON_BEHAVIOR[weaponId] = createAispaceMainBehavior(weaponId, weapon.aispaceDef);
+  }
+}
 MAIN_WEAPON_BEHAVIOR.railgun_mk1 = MAIN_WEAPON_BEHAVIOR.default;
 
 const rail = {
@@ -9078,6 +9264,28 @@ let railTimer = 0;
 rebuildHardpointsForFrame();
 loadLoadout();
 
+function computeTurretMuzzle(turret, barIndex, barrelsPerShot){
+  const spriteScale = ship.visual?.spriteScale || 1;
+  const forwardLen = Math.min((ship.h * spriteScale) * 0.40, 52 * spriteScale);
+  const gap = 10 * spriteScale;
+  const normalizedIndex = Math.min(barIndex, barrelsPerShot - 1);
+  const offsetFrac = barrelsPerShot === 1 ? 0 : (normalizedIndex / (barrelsPerShot - 1) - 0.5) * 2;
+  const lateralOffset = (gap * 0.5) * offsetFrac;
+  const a = turret.angle;
+  const f = {x:Math.cos(a), y:Math.sin(a)};
+  const p = {x:-Math.sin(a), y:Math.cos(a)};
+  const off = rotate(turret.offset, ship.angle);
+  const pos = {
+    x: ship.pos.x + off.x + f.x * forwardLen + p.x * lateralOffset,
+    y: ship.pos.y + off.y + f.y * forwardLen + p.y * lateralOffset
+  };
+  return {
+    pos,
+    dir: f,
+    baseVel: { x: ship.vel.x, y: ship.vel.y }
+  };
+}
+
 function triggerRailVolley(){
   if(!(Game.player.weapons?.[HP.MAIN]?.length)) return;
   if(rail.queue.length) return;
@@ -9094,9 +9302,6 @@ function triggerRailVolley(){
 function fireRailBarrel(barIndex){
   const mainWeapons = Game.player.weapons?.[HP.MAIN] || [];
   if(!mainWeapons.length) return;
-  const spriteScale = ship.visual?.spriteScale || 1;
-  const forwardLen = Math.min((ship.h * spriteScale) * 0.40, 52 * spriteScale); // było 0.36 i 46
-  const gap = 10 * spriteScale;
   const turrets = [ship.turret, ship.turret2, ship.turret3, ship.turret4];
   const activeCount = Math.min(mainWeapons.length, turrets.length);
   let maxCooldown = 0;
@@ -9106,37 +9311,37 @@ function fireRailBarrel(barIndex){
     const behavior = getMainWeaponBehaviorForWeaponId(weaponData?.id);
     const projectile = behavior.projectile || BASE_MAIN_BEHAVIOR.projectile;
     const barrelsPerShot = Math.max(1, behavior.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot);
-    const normalizedIndex = Math.min(barIndex, barrelsPerShot - 1);
-    const offsetFrac = barrelsPerShot === 1 ? 0 : (normalizedIndex / (barrelsPerShot - 1) - 0.5) * 2;
-    const lateralOffset = (gap * 0.5) * offsetFrac;
-    const damage = weaponData?.damage ?? weaponData?.dps ?? RAIL_DAMAGE;
-    const a = t.angle;
-    const f = {x:Math.cos(a), y:Math.sin(a)};
-    const p = {x:-Math.sin(a), y:Math.cos(a)};
-    const off = rotate(t.offset, ship.angle);
-    const px = ship.pos.x + off.x + f.x * forwardLen + p.x * lateralOffset;
-    const py = ship.pos.y + off.y + f.y * forwardLen + p.y * lateralOffset;
-    window.bullets.push({
-      x: px,
-      y: py,
-      vx: f.x * (projectile.speed ?? RAIL_SPEED) + ship.vel.x,
-      vy: f.y * (projectile.speed ?? RAIL_SPEED) + ship.vel.y,
-      life: projectile.life ?? 2.0,
-      r: projectile.radius ?? 4,
-      owner: 'player',
-      damage,
-      penetration: (projectile.penetration != null) ? projectile.penetration : RAIL_PEN,
-      type: projectile.type || 'rail',
-      weaponId: weaponData?.id,
-      effectScale: projectile.effectScale ?? 1.0,
-      explodeRadius: projectile.explodeRadius,
-    });
-    const recoilKick = behavior.recoilKick ?? t.recoilKick;
-    const recoilMax = behavior.recoilMax ?? t.recoilMax;
+    const muzzle = computeTurretMuzzle(t, barIndex, barrelsPerShot);
+    let fireResult = null;
+    if (behavior.customFire) {
+      fireResult = behavior.customFire({ turret: t, muzzle, weapon: weaponData, target: lockedTarget, behavior });
+    } else {
+      const damage = weaponData?.damage ?? weaponData?.dps ?? RAIL_DAMAGE;
+      window.bullets.push({
+        x: muzzle.pos.x,
+        y: muzzle.pos.y,
+        vx: muzzle.dir.x * (projectile.speed ?? RAIL_SPEED) + ship.vel.x,
+        vy: muzzle.dir.y * (projectile.speed ?? RAIL_SPEED) + ship.vel.y,
+        life: projectile.life ?? 2.0,
+        r: projectile.radius ?? 4,
+        owner: 'player',
+        damage,
+        penetration: (projectile.penetration != null) ? projectile.penetration : RAIL_PEN,
+        type: projectile.type || 'rail',
+        weaponId: weaponData?.id,
+        color: projectile.color,
+        effectScale: projectile.effectScale ?? 1.0,
+        explodeRadius: projectile.explodeRadius,
+      });
+    }
+    const recoilKick = fireResult?.recoilKick ?? behavior.recoilKick ?? t.recoilKick;
+    const recoilMax = fireResult?.recoilMax ?? behavior.recoilMax ?? t.recoilMax;
     t.recoil = Math.min(t.recoil + recoilKick, recoilMax);
     const muzzleFx = behavior.muzzleFx || spawnRailMuzzle;
-    muzzleFx({ x: px, y: py }, f, ship.vel, projectile.effectScale ?? 1.0);
-    maxCooldown = Math.max(maxCooldown, behavior.cooldown ?? rail.cdMax);
+    if (muzzleFx && projectile.type !== 'beam') {
+      muzzleFx(muzzle.pos, muzzle.dir, ship.vel, projectile.effectScale ?? 1.0);
+    }
+    maxCooldown = Math.max(maxCooldown, fireResult?.cooldown ?? behavior.cooldown ?? rail.cdMax);
   }
   rail.cd[barIndex] = maxCooldown || rail.cdMax;
 }
@@ -9166,13 +9371,16 @@ function ciwsStep(dt){
     const loadout = auxWeapons[i];
     if(!loadout || !loadout.weapon) continue;
     const weaponId = loadout.weapon.id;
-    const isLaser = weaponId === 'laser_pd_mk1';
+    const pdDef = loadout.weapon.aispacePdId ? AISPACE_PD[loadout.weapon.aispacePdId] : null;
+    const flakDef = loadout.weapon.aispaceFlakId ? AISPACE_FLAK[loadout.weapon.aispaceFlakId] : null;
+    const isLaser = weaponId === 'laser_pd_mk1' || loadout.weapon.aispacePdId === 'pd_laser';
+    const stats = pdDef || flakDef;
     const gun = ship.ciws[i];
     gun.cd = Math.max(0, gun.cd - dt);
     const off = rotate(gun.offset, ship.angle);
     const base = { x: ship.pos.x + off.x, y: ship.pos.y + off.y };
     const baseVel = { x: ship.vel.x - ship.angVel * off.y, y: ship.vel.y + ship.angVel * off.x };
-    const range = isLaser ? LASER_PD_RANGE : CIWS_RANGE;
+    const range = stats?.range || (isLaser ? LASER_PD_RANGE : CIWS_RANGE);
     let target = null; let dist = range;
     for(const npc of npcs){
       if(npc.dead || npc.friendly || !npc.isPirate) continue;
@@ -9182,7 +9390,7 @@ function ciwsStep(dt){
     if(!target) continue;
 
     const aimPoint = isLaser ? { x: target.x, y: target.y }
-                             : leadTarget(base, baseVel, target, CIWS_BULLET_SPEED);
+                             : leadTarget(base, baseVel, target, stats?.speed || CIWS_BULLET_SPEED);
     const desired = Math.atan2(aimPoint.y - base.y, aimPoint.x - base.x);
     let diff = wrapAngle(desired - gun.angle);
     const aimStrength = isLaser ? 9 : 8;
@@ -9198,27 +9406,33 @@ function ciwsStep(dt){
     const aimTolerance = isLaser ? 0.1 : 0.15;
     if(Math.abs(diff) >= aimTolerance || gun.cd > 0) continue;
 
-    if(isLaser){
-      firePointDefenseLaser(gun, base, baseVel, target);
+    const fireInterval = stats?.rps ? (1 / stats.rps) : (isLaser ? LASER_PD_FIRE_INTERVAL : CIWS_FIRE_INTERVAL);
+    if(flakDef){
+      fireAispaceFlakShell(gun, base, baseVel, target, flakDef, fireInterval);
+    } else if(isLaser){
+      firePointDefenseLaser(gun, base, baseVel, target, pdDef, fireInterval);
     } else {
-      fireCIWSGun(gun, base, baseVel);
+      fireCIWSGun(gun, base, baseVel, pdDef, fireInterval);
     }
   }
 }
 
-function fireCIWSGun(gun, base, baseVel){
+function fireCIWSGun(gun, base, baseVel, stats, fireInterval){
   const dir = { x: Math.cos(gun.angle), y: Math.sin(gun.angle) };
   const px = base.x + dir.x * 6;
   const py = base.y + dir.y * 6;
+  const damage = stats?.dmg ?? stats?.damage ?? CIWS_DAMAGE;
+  const speed = stats?.speed ?? CIWS_BULLET_SPEED;
   window.bullets.push({
     x:px,
     y:py,
-    vx: dir.x*CIWS_BULLET_SPEED + baseVel.x,
-    vy: dir.y*CIWS_BULLET_SPEED + baseVel.y,
+    vx: dir.x*speed + baseVel.x,
+    vy: dir.y*speed + baseVel.y,
     life:1.2,
     r:2,
     owner:'player',
-    damage:CIWS_DAMAGE,
+    damage,
+    color: stats?.color,
     type:'ciws'
   });
   spawnParticle(
@@ -9229,29 +9443,41 @@ function fireCIWSGun(gun, base, baseVel){
     2.0,
     true
   );
-  gun.cd = CIWS_FIRE_INTERVAL;
+  gun.cd = fireInterval ?? CIWS_FIRE_INTERVAL;
 }
 
-function firePointDefenseLaser(gun, base, baseVel, target){
+function firePointDefenseLaser(gun, base, baseVel, target, stats, fireInterval){
   const dir = { x: Math.cos(gun.angle), y: Math.sin(gun.angle) };
   const muzzle = { x: base.x + dir.x * 6, y: base.y + dir.y * 6 };
   const toTarget = { x: target.x - muzzle.x, y: target.y - muzzle.y };
-  const distance = clamp(Math.hypot(toTarget.x, toTarget.y), 0, LASER_PD_RANGE);
+  const range = stats?.range ?? LASER_PD_RANGE;
+  const damage = stats?.dmg ?? LASER_PD_DAMAGE;
+  const distance = clamp(Math.hypot(toTarget.x, toTarget.y), 0, range);
   const beamEnd = { x: muzzle.x + dir.x * distance, y: muzzle.y + dir.y * distance };
 
   spawnLaserBeam(muzzle, beamEnd, LASER_PD_BEAM_WIDTH, {
     life: 0.09,
-    colorOuter: 'rgba(110,200,255,0.9)',
+    colorOuter: stats?.color || 'rgba(110,200,255,0.9)',
     colorInner: 'rgba(250,255,255,1.0)',
-    glowColor: 'rgba(90,180,255,0.95)',
+    glowColor: stats?.color || 'rgba(90,180,255,0.95)',
     glowBlur: 22,
     outerWidthMul: 1.05,
     innerWidthMul: 0.45
   });
   spawnPointDefenseLaserMuzzle(muzzle, dir, baseVel);
   spawnPointDefenseLaserHit(beamEnd.x, beamEnd.y);
-  applyDamageToNPC(target, LASER_PD_DAMAGE, 'laser_pd');
-  gun.cd = LASER_PD_FIRE_INTERVAL;
+  applyDamageToNPC(target, damage, 'laser_pd');
+  gun.cd = fireInterval ?? LASER_PD_FIRE_INTERVAL;
+}
+
+function fireAispaceFlakShell(gun, base, baseVel, target, flakDef, fireInterval){
+  spawnBulletAdapter(ship, target, flakDef, {
+    type: 'armata',
+    origin: base,
+    originVel: baseVel,
+    angleOverride: gun.angle
+  });
+  gun.cd = fireInterval ?? (flakDef?.rps ? 1 / flakDef.rps : CIWS_FIRE_INTERVAL);
 }
 
 function spawnPointDefenseLaserMuzzle(pos, dir, baseVel){
