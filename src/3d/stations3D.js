@@ -122,7 +122,7 @@ function getTemplate(stationId, path) {
         if (o.material) {
           // --- NAPRAWA GEOMETRII I PRZENIKANIA ---
          
-          o.material.transparent = false;
+         o.material.transparent = false;
           o.material.depthWrite = true;
           o.material.depthTest = true;
           if (o.material.map || o.material.alphaMap) {
