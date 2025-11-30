@@ -119,7 +119,7 @@ function getTemplate(stationId, path) {
     // =========================================================
     // Jeśli model jest wywinięty do środka, skalowanie -1 na osi X
     // odwraca go na "dobrą" stronę. To naprawi oświetlenie.
-    gltf.scene.scale.set(-1, 1, 1); 
+    // gltf.scene.scale.set(-1, 1, 1); 
 
     // Opcjonalnie: Jeśli po tym zabiegu stacja będzie "leżeć" na boku,
     // odkomentuj poniższą linię, żeby ją obrócić:
