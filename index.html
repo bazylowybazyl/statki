@@ -1132,13 +1132,48 @@ const SUPPORT_FORMATION = {
   lead: 260,
   lineGap: 160,
   lateralGap: 160,
-  spawn: { perRow: 4, colGap: 90, rowGap: 70, lead: 160 }
+  spawn: { perRow: 4, colGap: 90, rowGap: 70, lead: 160 },
+  fighterSquadSize: 9,
+  fighterOffsets: [
+    { x: -20, y: -15 }, { x: -20, y: 15 },
+    { x: -40, y: -30 }, { x: -40, y: 30 },
+    { x: -60, y: -45 }, { x: -60, y: 45 },
+    { x: -80, y: -60 }, { x: -80, y: 60 }
+  ],
+  fighterSpacing: 90
 };
 function supportGuardSlot(slotIndex){
   const data = SupportWing.units[slotIndex] || null;
   const type = data?.type || 'fighter';
   const lineOrder = SUPPORT_FORMATION.lineOrder || [];
   const lineIndex = lineOrder.includes(type) ? lineOrder.indexOf(type) : lineOrder.length;
+
+  if (type === 'fighter') {
+    const squadSize = SUPPORT_FORMATION.fighterSquadSize || 9;
+    const fighters = SupportWing.units.filter(u => u && !u.npc?.dead && u.type === 'fighter');
+    const fighterIndex = fighters.indexOf(data);
+    const squadIndex = Math.max(0, Math.floor(Math.max(0, fighterIndex) / squadSize));
+    const squadMateIndex = Math.max(0, fighterIndex % squadSize);
+    const squadCount = Math.max(1, Math.ceil(fighters.length / squadSize));
+
+    const lateralSpacing = SUPPORT_FORMATION.fighterSpacing || SUPPORT_FORMATION.lateralGap || 90;
+    const lateral = (squadIndex - (squadCount - 1) * 0.5) * lateralSpacing;
+    const forward = (SUPPORT_FORMATION.lead + lineIndex * SUPPORT_FORMATION.lineGap);
+    const leaderLocal = { x: forward, y: lateral };
+    const leaderRotated = rotate(leaderLocal, ship.angle - Math.PI / 2);
+
+    if (squadMateIndex === 0) {
+      return { x: ship.pos.x + leaderRotated.x, y: ship.pos.y + leaderRotated.y };
+    }
+
+    const offsets = SUPPORT_FORMATION.fighterOffsets || [];
+    const formationOffset = offsets[squadMateIndex - 1] || offsets[offsets.length - 1] || { x: -40, y: 0 };
+    const rotatedOffset = rotate(formationOffset, ship.angle);
+    return {
+      x: ship.pos.x + leaderRotated.x + rotatedOffset.x,
+      y: ship.pos.y + leaderRotated.y + rotatedOffset.y
+    };
+  }
 
   const peers = SupportWing.units.filter(u => u && !u.npc?.dead && u.type === type);
   const colCount = Math.max(1, peers.length);
