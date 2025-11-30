@@ -4363,6 +4363,7 @@ window.spawnBulletAdapter = function(owner, target, weaponDef, opts = {}) {
   const baseAngle = opts.angleOverride ?? owner.angle ?? 0;
   const bulletSpeed = weaponDef.speed || 500;
   const bulletLife = weaponDef.life ?? ((weaponDef.range || 800) / bulletSpeed);
+  const vfxKey = resolveBulletVfxKey(opts.vfxKey || weaponDef.id || weaponDef.name, opts.type || weaponDef.type);
 
   // 1. Obliczamy pozycję i kąt
   // Jeśli jest target, używamy leadAim (przewidywanie), jeśli nie - strzelamy przed siebie
@@ -4421,7 +4422,7 @@ window.spawnBulletAdapter = function(owner, target, weaponDef, opts = {}) {
       } else {
         applyDamageToNPC(target, dmg, 'beam');
       }
-      spawnDefaultHit(endPoint.x, endPoint.y, 1.0);
+      spawnWeaponImpactFromPreset(vfxKey || 'laser', weaponDef.color, 1.0, endPoint.x, endPoint.y);
     }
     return;
   }
@@ -4452,7 +4453,10 @@ window.spawnBulletAdapter = function(owner, target, weaponDef, opts = {}) {
     type: bType,
     color: weaponDef.color || '#fff',
     source: owner,
-    
+    vfxKey,
+    vfxColor: weaponDef.color,
+    hitFx: (x, y, scale) => spawnWeaponImpactFromPreset(vfxKey || bType, weaponDef.color, scale, x, y),
+
     // Specyficzne dla Flak/Armata
     explodeRadius: (bType === 'armata' || name.includes('flak')) ? (weaponDef.radius || 50) : 0,
     
@@ -5091,6 +5095,318 @@ function spawnParticle(pos, vel, life, color, size, flash){
 
   // Przesuń indeks na następne wolne miejsce
   nextParticleIndex = (nextParticleIndex + 1) % MAX_PARTICLES;
+}
+
+function hexToRgb(hex){
+  if(!hex || typeof hex !== 'string') return null;
+  const clean = hex.replace('#','');
+  if(clean.length === 3){
+    const r = clean[0], g = clean[1], b = clean[2];
+    return {
+      r: parseInt(r+r, 16),
+      g: parseInt(g+g, 16),
+      b: parseInt(b+b, 16)
+    };
+  }
+  if(clean.length !== 6) return null;
+  return {
+    r: parseInt(clean.slice(0,2), 16),
+    g: parseInt(clean.slice(2,4), 16),
+    b: parseInt(clean.slice(4,6), 16)
+  };
+}
+function rgbaFromHex(hex, alpha){
+  const rgb = hexToRgb(hex);
+  if(!rgb) return null;
+  return `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+}
+function rgbaPrefixFromHex(hex, fallback = 'rgba(255,200,150,'){
+  const rgb = hexToRgb(hex);
+  if(!rgb) return fallback;
+  return `rgba(${rgb.r},${rgb.g},${rgb.b},`;
+}
+function resolveAlphaColor(color, alpha, fallback){
+  const rgba = rgbaFromHex(color, alpha);
+  if(rgba) return rgba;
+  if(color?.startsWith('rgba(')){
+    const parts = color.split(',');
+    if(parts.length >= 3){
+      return `${parts[0]},${parts[1]},${parts[2]},${alpha})`;
+    }
+  }
+  return fallback || color || '#ffffff';
+}
+
+const WEAPON_VFX_PRESETS = {
+  rail: {
+    key: 'rail',
+    color: '#9cc9ff',
+    len: 32,
+    widthOuter: 12,
+    widthInner: 4,
+    glowBlur: 22,
+    sparkCount: 18,
+    sparkSpeed: [260, 420],
+    sparkSize: [1.6, 2.4],
+    shock: { r: 12, maxR: 120, w: 3.0, life: 0.32 },
+  },
+  armata: {
+    key: 'armata',
+    color: '#ffb46b',
+    len: 34,
+    widthOuter: 18,
+    widthInner: 6,
+    glowBlur: 26,
+    sparkCount: 26,
+    sparkSpeed: [240, 420],
+    sparkSize: [2.2, 3.4],
+    smoke: 6,
+    smokeColor: 'rgba(120,90,60,0.55)',
+    shock: { r: 16, maxR: 150, w: 3.6, life: 0.4 },
+  },
+  autocannon: {
+    key: 'autocannon',
+    color: '#ffcc8a',
+    len: 18,
+    widthOuter: 10,
+    widthInner: 4,
+    glowBlur: 18,
+    sparkCount: 14,
+    sparkSpeed: [220, 360],
+    sparkSize: [1.4, 2.4],
+    smoke: 4,
+    smokeColor: 'rgba(90,110,180,0.5)',
+    shock: { r: 10, maxR: 90, w: 2.8, life: 0.26 },
+  },
+  plasma: {
+    key: 'plasma',
+    color: '#7cff9c',
+    len: 20,
+    widthOuter: 10,
+    widthInner: 6,
+    glowBlur: 18,
+    trailFromPrev: true,
+    sparkCount: 14,
+    sparkSpeed: [180, 320],
+    sparkSize: [1.4, 2.4],
+    shock: { r: 12, maxR: 110, w: 2.8, life: 0.3 },
+  },
+  pulse: {
+    key: 'pulse',
+    color: '#ffd36e',
+    len: 22,
+    widthOuter: 12,
+    widthInner: 6,
+    glowBlur: 20,
+    trailFromPrev: true,
+    sparkCount: 16,
+    sparkSpeed: [200, 360],
+    sparkSize: [1.6, 2.6],
+    shock: { r: 12, maxR: 130, w: 3.0, life: 0.32 },
+  },
+  laser: {
+    key: 'laser',
+    color: '#86f7ff',
+    len: 28,
+    widthOuter: 11,
+    widthInner: 3.5,
+    glowBlur: 24,
+    sparkCount: 12,
+    sparkSpeed: [220, 360],
+    sparkSize: [1.2, 2.0],
+    shock: { r: 10, maxR: 100, w: 2.4, life: 0.26 },
+  },
+  beam: {
+    key: 'beam',
+    color: '#ff7c7c',
+    len: 30,
+    widthOuter: 12,
+    widthInner: 5,
+    glowBlur: 26,
+    sparkCount: 16,
+    sparkSpeed: [260, 380],
+    sparkSize: [1.6, 2.8],
+    shock: { r: 16, maxR: 160, w: 3.4, life: 0.36 },
+  },
+  flak: {
+    key: 'flak',
+    color: '#ffef8a',
+    len: 20,
+    widthOuter: 14,
+    widthInner: 6,
+    glowBlur: 22,
+    sparkCount: 22,
+    sparkSpeed: [200, 360],
+    sparkSize: [1.6, 3.0],
+    smoke: 8,
+    smokeColor: 'rgba(120,90,60,0.4)',
+    shock: { r: 18, maxR: 170, w: 3.8, life: 0.42 },
+  },
+  broadside: {
+    key: 'broadside',
+    color: '#ff9b4b',
+    len: 24,
+    widthOuter: 14,
+    widthInner: 6,
+    glowBlur: 22,
+    sparkCount: 20,
+    sparkSpeed: [220, 360],
+    sparkSize: [1.8, 2.8],
+    smoke: 5,
+    smokeColor: 'rgba(120,80,60,0.45)',
+    shock: { r: 16, maxR: 160, w: 3.4, life: 0.4 },
+  },
+  ciws: {
+    key: 'ciws',
+    color: '#8cffd0',
+    len: 14,
+    widthOuter: 8,
+    widthInner: 3,
+    glowBlur: 14,
+    sparkCount: 10,
+    sparkSpeed: [180, 280],
+    sparkSize: [1.0, 1.8],
+    shock: { r: 8, maxR: 70, w: 2.0, life: 0.2 },
+  },
+  default: {
+    key: 'default',
+    color: '#ffd86b',
+    len: 18,
+    widthOuter: 10,
+    widthInner: 4,
+    glowBlur: 18,
+    sparkCount: 14,
+    sparkSpeed: [200, 320],
+    sparkSize: [1.2, 2.0],
+    shock: { r: 10, maxR: 100, w: 2.6, life: 0.3 },
+  },
+};
+
+function resolveBulletVfxKey(rawKey, type){
+  const key = (rawKey || '').toString().toLowerCase();
+  if(key.includes('broadside')) return 'broadside';
+  if(key.includes('flak')) return 'flak';
+  if(key.includes('beam') || key.includes('laser')) return key.includes('heavy') ? 'beam' : 'laser';
+  if(key.includes('rail')) return 'rail';
+  if(key.includes('armata')) return 'armata';
+  if(key.includes('auto') || key.includes('gatling')) return 'autocannon';
+  if(key.includes('pulse')) return 'pulse';
+  if(key.includes('pd')) return 'ciws';
+  if(key.includes('missile') || key.includes('aim-') || key.includes('asm') || key.includes('het') || key.includes('swarm')) return 'armata';
+  if(type === 'beam') return 'beam';
+  if(type === 'rail') return 'rail';
+  if(type === 'armata') return 'armata';
+  if(type === 'ciws') return 'ciws';
+  if(type === 'autocannon') return 'autocannon';
+  if(type === 'plasma') return 'plasma';
+  return 'default';
+}
+
+function buildBulletVfxInstance(presetKey, color){
+  const preset = WEAPON_VFX_PRESETS[presetKey] || WEAPON_VFX_PRESETS.default;
+  const resolvedColor = color || preset.color;
+  return {
+    ...preset,
+    key: preset.key,
+    color: resolvedColor,
+    glowColor: preset.glowColor || resolvedColor,
+    trailColor: preset.trailColor || resolvedColor,
+    shockColorPrefix: rgbaPrefixFromHex(preset.shockColor || resolvedColor, 'rgba(255,200,150,'),
+  };
+}
+
+function spawnWeaponImpactFromPreset(presetKey, color, scale = 1, x = 0, y = 0){
+  const fx = buildBulletVfxInstance(presetKey, color);
+  const sparks = Math.round((fx.sparkCount || 12) * scale);
+  for(let i = 0; i < sparks; i++){
+    const a = Math.random() * Math.PI * 2;
+    const speedMin = fx.sparkSpeed?.[0] || 200;
+    const speedMax = fx.sparkSpeed?.[1] || 360;
+    const speed = speedMin + Math.random() * (speedMax - speedMin);
+    const sizeMin = fx.sparkSize?.[0] || 1.4;
+    const sizeMax = fx.sparkSize?.[1] || 2.6;
+    const size = sizeMin + Math.random() * (sizeMax - sizeMin);
+    spawnParticle(
+      { x, y },
+      { x: Math.cos(a) * speed, y: Math.sin(a) * speed },
+      0.2 + Math.random() * 0.18,
+      resolveAlphaColor(fx.color, 0.9, fx.color),
+      size * scale,
+      true
+    );
+  }
+
+  if(fx.smoke && fx.smokeColor){
+    for(let i = 0; i < fx.smoke * scale; i++){
+      const a = Math.random() * Math.PI * 2;
+      const speed = 60 + Math.random() * 100;
+      spawnParticle(
+        { x, y },
+        { x: Math.cos(a) * speed, y: Math.sin(a) * speed },
+        0.32 + Math.random() * 0.24,
+        fx.smokeColor,
+        3 * scale,
+        false
+      );
+    }
+  }
+
+  spawnParticle({ x, y }, { x: 0, y: 0 }, 0.12, resolveAlphaColor(fx.color, 1, '#ffffff'), (6 + (fx.widthInner || 4)) * 0.7 * scale, true);
+  spawnShockwave(x, y, {
+    r: (fx.shock?.r || 10) * scale,
+    maxR: (fx.shock?.maxR || 100) * scale,
+    w: (fx.shock?.w || 2.6) * scale,
+    maxLife: fx.shock?.life || 0.32,
+    color: fx.shockColorPrefix
+  });
+}
+
+function resolveBulletVfx(bullet){
+  if(!bullet.vfx){
+    const presetKey = resolveBulletVfxKey(bullet.vfxKey || bullet.weaponId || bullet.weaponName, bullet.type);
+    bullet.vfx = buildBulletVfxInstance(presetKey, bullet.vfxColor || bullet.color);
+  }
+  return bullet.vfx;
+}
+
+function drawBulletVisual(ctx, b, cam){
+  const vfx = resolveBulletVfx(b);
+  const s = worldToScreen(b.x, b.y, cam);
+  const angle = Math.atan2(b.vy, b.vx);
+  const lenPx = (vfx.len || 18) * camera.zoom;
+  const dx = Math.cos(angle) * (lenPx * 0.5);
+  const dy = Math.sin(angle) * (lenPx * 0.5);
+
+  if(vfx.trailFromPrev){
+    const sp = worldToScreen(b.px, b.py, cam);
+    const grad = ctx.createLinearGradient(sp.x, sp.y, s.x, s.y);
+    grad.addColorStop(0, resolveAlphaColor(vfx.trailColor, 0, vfx.color));
+    grad.addColorStop(1, resolveAlphaColor(vfx.trailColor, 0.8, vfx.color));
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = grad;
+    ctx.shadowBlur = (vfx.glowBlur || 14) * 0.6 * camera.zoom;
+    ctx.shadowColor = resolveAlphaColor(vfx.glowColor, 0.6, vfx.color);
+    ctx.lineWidth = Math.max(1.2, (vfx.widthOuter || 8) * 0.6 * camera.zoom);
+    ctx.beginPath(); ctx.moveTo(sp.x, sp.y); ctx.lineTo(s.x, s.y); ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.shadowBlur = (vfx.glowBlur || 16) * camera.zoom;
+  ctx.shadowColor = resolveAlphaColor(vfx.glowColor, 0.9, vfx.color);
+  ctx.strokeStyle = resolveAlphaColor(vfx.trailColor, 0.75, vfx.color);
+  ctx.lineWidth = (vfx.widthOuter || 10) * camera.zoom;
+  ctx.beginPath(); ctx.moveTo(s.x - dx, s.y - dy); ctx.lineTo(s.x + dx, s.y + dy); ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = resolveAlphaColor('#ffffff', 0.95, vfx.color);
+  ctx.lineWidth = Math.max(1.2, (vfx.widthInner || 4) * camera.zoom);
+  ctx.beginPath(); ctx.moveTo(s.x - dx * 0.35, s.y - dy * 0.35); ctx.lineTo(s.x + dx * 0.9, s.y + dy * 0.9); ctx.stroke();
+  ctx.restore();
 }
 function spawnExplosionPlasma(x,y,scale=1){
   const count = Math.round(22 * scale);
@@ -9130,6 +9446,7 @@ const BASE_MAIN_BEHAVIOR = {
     radius: 4,
     penetration: RAIL_PEN,
     effectScale: 1.0,
+    vfxKey: 'rail'
   },
 };
 
@@ -9174,6 +9491,7 @@ const MAIN_WEAPON_BEHAVIOR = {
       penetration: 0,
       explodeRadius: ARMATA_SPLASH_RADIUS,
       effectScale: 1.4,
+      vfxKey: 'armata'
     },
   }),
   heavy_autocannon: createMainWeaponBehavior({
@@ -9193,6 +9511,7 @@ const MAIN_WEAPON_BEHAVIOR = {
       radius: 3,
       penetration: 1,
       effectScale: 0.9,
+      vfxKey: 'autocannon'
     },
     muzzleFx: spawnAutocannonMuzzle,
     hitFx: spawnAutocannonHitEffect,
@@ -9236,7 +9555,8 @@ function createAispaceMainBehavior(id, def){
       radius: def.isBeam ? 5 : 4,
       penetration: projectileType === 'rail' ? 2 : 0,
       effectScale: 1.0,
-      color: def.color
+      color: def.color,
+      vfxKey: id
     },
     customFire: ctx => fireAispaceMainShot(def, ctx)
   });
@@ -9317,6 +9637,8 @@ function fireRailBarrel(barIndex){
       fireResult = behavior.customFire({ turret: t, muzzle, weapon: weaponData, target: lockedTarget, behavior });
     } else {
       const damage = weaponData?.damage ?? weaponData?.dps ?? RAIL_DAMAGE;
+      const vfxKey = projectile.vfxKey || weaponData?.id || projectile.type;
+      const vfxColor = projectile.color || weaponData?.color;
       window.bullets.push({
         x: muzzle.pos.x,
         y: muzzle.pos.y,
@@ -9332,6 +9654,13 @@ function fireRailBarrel(barIndex){
         color: projectile.color,
         effectScale: projectile.effectScale ?? 1.0,
         explodeRadius: projectile.explodeRadius,
+        vfxKey,
+        vfxColor,
+        hitFx: projectile.type === 'beam'
+          ? null
+          : (behavior.hitFx
+            ? (x, y, scale) => behavior.hitFx(x, y, scale)
+            : (x, y, scale) => spawnWeaponImpactFromPreset(resolveBulletVfxKey(vfxKey, projectile.type), vfxColor, scale, x, y)),
       });
     }
     const recoilKick = fireResult?.recoilKick ?? behavior.recoilKick ?? t.recoilKick;
@@ -9741,6 +10070,7 @@ function bulletsAndCollisionsStep(dt){
       if(b.owner === 'player' && hitNPC.mission && hitNPC.isPirate){
         triggerMercAggro('pirate_hit');
       }
+      const hitFx = b.hitFx;
       if(b.type === 'plasma' || b.type === 'rocket'){
         const ex = b.x, ey = b.y;
         spawnExplosionPlasma(ex, ey, 1.0);
@@ -9756,7 +10086,8 @@ function bulletsAndCollisionsStep(dt){
         continue;
       } else if(b.type === 'armata'){
         applyDamageToNPC(hitNPC, b.damage, 'armata');
-        spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
+        if(hitFx){ hitFx(b.x, b.y, b.effectScale || 1.0, b); }
+        else { spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0); }
         const radius = b.explodeRadius ?? ARMATA_SPLASH_RADIUS;
         if(radius > 0){
           for (const npc of npcs){
@@ -9777,13 +10108,15 @@ function bulletsAndCollisionsStep(dt){
         continue;
       } else if(b.type === 'rail'){
         applyDamageToNPC(hitNPC, b.damage, 'rail');
-        spawnRailHitEffect(b.x, b.y, 1.0);
+        if(hitFx){ hitFx(b.x, b.y, b.effectScale || 1.0, b); }
+        else { spawnRailHitEffect(b.x, b.y, 1.0); }
         b.penetration = (b.penetration !== undefined) ? b.penetration - 1 : (RAIL_PEN - 1);
         if(b.penetration <= 0){ bullets.splice(i,1); }
         continue;
       } else if(b.type === 'autocannon'){
         applyDamageToNPC(hitNPC, b.damage, 'autocannon');
-        spawnAutocannonHitEffect(b.x, b.y, b.effectScale || 1.0);
+        if(hitFx){ hitFx(b.x, b.y, b.effectScale || 1.0, b); }
+        else { spawnAutocannonHitEffect(b.x, b.y, b.effectScale || 1.0); }
         if(b.penetration != null){
           b.penetration -= 1;
           if(b.penetration <= 0){ bullets.splice(i,1); }
@@ -9793,12 +10126,14 @@ function bulletsAndCollisionsStep(dt){
         continue;
       } else if(b.type === 'siege'){
         applyDamageToNPC(hitNPC, b.damage, 'siege');
-        spawnSiegeHitEffect(b.x, b.y, b.effectScale || 1.0);
+        if(hitFx){ hitFx(b.x, b.y, b.effectScale || 1.0, b); }
+        else { spawnSiegeHitEffect(b.x, b.y, b.effectScale || 1.0); }
         bullets.splice(i,1);
         continue;
       } else {
         applyDamageToNPC(hitNPC, b.damage, 'default');
-        spawnDefaultHit(b.x, b.y, 1.0);
+        if(hitFx){ hitFx(b.x, b.y, b.effectScale || 1.0, b); }
+        else { spawnDefaultHit(b.x, b.y, 1.0); }
         bullets.splice(i,1);
         continue;
       }
@@ -9813,7 +10148,8 @@ function bulletsAndCollisionsStep(dt){
         if(d < platform.radius + b.r){
           applyDamageToPlatform(platform, b.damage || 0);
           triggerMercAggro('platform_hit');
-          if(b.type === 'armata'){
+          if(b.hitFx){ b.hitFx(b.x, b.y, b.effectScale || 1.0, b); }
+          else if(b.type === 'armata'){
             spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
           } else if(b.type === 'rail'){
             spawnRailHitEffect(b.x, b.y, 1.0);
@@ -9855,7 +10191,8 @@ function bulletsAndCollisionsStep(dt){
             resetMercMission();
           }
         }
-        if(b.type === 'armata'){
+        if(b.hitFx){ b.hitFx(b.x, b.y, b.effectScale || 1.0, b); }
+        else if(b.type === 'armata'){
           spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
         } else if(b.type === 'rail'){
           spawnRailHitEffect(b.x, b.y, 1.0);
@@ -9877,7 +10214,8 @@ function bulletsAndCollisionsStep(dt){
       const d = Math.hypot(ship.pos.x - b.x, ship.pos.y - b.y);
       if(d < hitR + b.r){
         applyDamageToPlayer(b.damage);
-        if(b.type === 'siege'){
+        if(b.hitFx){ b.hitFx(b.x, b.y, b.effectScale || 1.0, b); }
+        else if(b.type === 'siege'){
           spawnSiegeHitEffect(b.x, b.y, b.effectScale || 1.0);
         } else if(b.type === 'armata'){
           spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
@@ -11901,66 +12239,7 @@ function render(alpha, frameDt){
 
   // Pociski
   for(const b of bullets){
-    const s = worldToScreen(b.x, b.y, cam);
-    if(b.type === 'rail'){
-      const a = Math.atan2(b.vy, b.vx);
-      const lenPx = 28 * camera.zoom;
-      const dx = Math.cos(a) * (lenPx*0.5);
-      const dy = Math.sin(a) * (lenPx*0.5);
-
-      // glow
-      ctx.save();
-      ctx.lineCap = 'round';
-      ctx.shadowBlur = 20 * camera.zoom;
-      ctx.shadowColor = 'rgba(140,200,255,0.9)';
-      ctx.strokeStyle = 'rgba(160,210,255,0.6)';
-      ctx.lineWidth = 12 * camera.zoom;
-      ctx.beginPath(); ctx.moveTo(s.x - dx, s.y - dy); ctx.lineTo(s.x + dx, s.y + dy); ctx.stroke();
-      ctx.restore();
-
-      // rdzeń
-      ctx.lineCap = 'round';
-      ctx.strokeStyle = 'rgba(240,255,255,1.0)';
-      ctx.lineWidth = 4 * camera.zoom;
-      ctx.beginPath(); ctx.moveTo(s.x - dx*0.4, s.y - dy*0.4); ctx.lineTo(s.x + dx*0.9, s.y + dy*0.9); ctx.stroke();
-      ctx.lineCap = 'butt';
-    } else if(b.type === 'armata'){
-      const a = Math.atan2(b.vy, b.vx);
-      const lenPx = 36 * camera.zoom;
-      const dx = Math.cos(a) * (lenPx * 0.6);
-      const dy = Math.sin(a) * (lenPx * 0.6);
-
-      ctx.save();
-      ctx.lineCap = 'round';
-      ctx.shadowBlur = 30 * camera.zoom;
-      ctx.shadowColor = 'rgba(255,170,90,0.95)';
-      ctx.strokeStyle = 'rgba(255,190,120,0.75)';
-      ctx.lineWidth = 16 * camera.zoom;
-      ctx.beginPath(); ctx.moveTo(s.x - dx, s.y - dy); ctx.lineTo(s.x + dx, s.y + dy); ctx.stroke();
-      ctx.restore();
-
-      ctx.save();
-      ctx.lineCap = 'round';
-      ctx.strokeStyle = 'rgba(255,240,210,1.0)';
-      ctx.lineWidth = 6 * camera.zoom;
-      ctx.beginPath(); ctx.moveTo(s.x - dx*0.3, s.y - dy*0.3); ctx.lineTo(s.x + dx*1.1, s.y + dy*1.1); ctx.stroke();
-      ctx.restore();
-    } else if(b.type === 'plasma'){
-      const sp = worldToScreen(b.px, b.py, cam);
-      ctx.save();
-      ctx.lineCap = 'round';
-      ctx.shadowBlur = 20 * camera.zoom;
-      ctx.shadowColor = 'rgba(100,255,120,0.85)';
-      ctx.strokeStyle = 'rgba(80,240,120,0.55)';
-      ctx.lineWidth = 8 * camera.zoom;
-      ctx.beginPath(); ctx.moveTo(sp.x, sp.y); ctx.lineTo(s.x, s.y); ctx.stroke();
-      ctx.restore();
-      ctx.beginPath(); ctx.fillStyle = '#9eff9a';
-      ctx.arc(s.x, s.y, Math.max(2, b.r*camera.zoom*0.8), 0, Math.PI*2); ctx.fill();
-    } else {
-      ctx.beginPath(); ctx.fillStyle = '#ffd86b';
-      ctx.arc(s.x, s.y, Math.max(1.5, b.r*camera.zoom), 0, Math.PI*2); ctx.fill();
-    }
+    drawBulletVisual(ctx, b, cam);
   }
 
   // NPC
