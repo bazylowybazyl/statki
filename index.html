@@ -11115,16 +11115,27 @@ function glowCircle(ctx, x, y, r, color){
 }
 
 function drawSunWithCorona(ctx, cam, t) {
+  const zoom = cam?.zoom ?? camera.zoom ?? 1;
   const s = worldToScreen(SUN.x, SUN.y, cam);
-  const R = SUN.r * camera.zoom;
+  const R = Math.max(0, SUN.r * zoom);
+  const hazeFactor = Math.max(1, SUN.corona?.haze ?? 1);
+  const maxScreen = Math.max(W, H) || 1;
+  const hazeMax = maxScreen * 1.6;
+  const hazeR = Math.min(R * hazeFactor, hazeMax);
+  const reach = Math.max(R, hazeR);
+  const margin = maxScreen * 0.5;
+  if ((s.x + reach) < -margin || (s.x - reach) > W + margin ||
+      (s.y + reach) < -margin || (s.y - reach) > H + margin) {
+    return;
+  }
 
   ctx.save();
   ctx.translate(s.x, s.y);
 
   // --- miękka poświata daleko w tle (nebula-like) ---
   ctx.globalCompositeOperation = 'lighter';
-  const hazeR = R * SUN.corona.haze;
-  const gH = ctx.createRadialGradient(0,0, R*0.6, 0,0, hazeR);
+  const innerHaze = Math.min(R * 0.6, hazeR * 0.8);
+  const gH = ctx.createRadialGradient(0,0, innerHaze, 0,0, hazeR);
   gH.addColorStop(0, 'rgba(255,220,120,0.25)');
   gH.addColorStop(1, 'rgba(50,80,140,0.00)');
   ctx.fillStyle = gH;
@@ -11132,7 +11143,7 @@ function drawSunWithCorona(ctx, cam, t) {
 
   // --- korona: promieniste igły z lekkim szumem i pulsem ---
   const rays = SUN.corona.rays | 0;
-  const baseLen = R * (1.0 + SUN.corona.length);
+  const baseLen = Math.min(R * (1.0 + SUN.corona.length), hazeMax);
   const pulse = 1 + SUN.corona.pulse * Math.sin(t*1.6);
   const jitterAmp = SUN.corona.jitter;
 
@@ -11149,7 +11160,7 @@ function drawSunWithCorona(ctx, cam, t) {
     const j = (n1(i) - 0.5) * 2 * jitterAmp;
     const len = baseLen * (0.82 + 0.18*n1(i,3)) * pulse;
     const r1 = R * (1.02 + 0.03*n1(i,4));
-    const r2 = len * (1 + j);
+    const r2 = Math.min(len * (1 + j), hazeMax);
 
     const aL = a - w*0.5, aR = a + w*0.5;
     // mały klin (trójkąt) – od krawędzi tarczy na zewnątrz
@@ -11160,11 +11171,12 @@ function drawSunWithCorona(ctx, cam, t) {
   ctx.closePath();
   ctx.fillStyle = 'rgba(255,210,120,0.25)';
   ctx.shadowColor = 'rgba(255,235,170,0.9)';
-  ctx.shadowBlur = Math.max(6, R*0.22);
+  const maxShadowBlur = maxScreen * 0.18;
+  ctx.shadowBlur = Math.min(Math.max(6, R*0.22), maxShadowBlur);
   ctx.fill();
 
   // --- obwód korony (fresnel) ---
-  const fresR = R * (1.2 + 0.06*Math.sin(t*1.1));
+  const fresR = Math.min(R * (1.2 + 0.06*Math.sin(t*1.1)), hazeMax);
   const gF = ctx.createRadialGradient(0,0, fresR*0.7, 0,0, fresR);
   gF.addColorStop(0, 'rgba(255,240,180,0)');
   gF.addColorStop(1, 'rgba(255,235,170,0.32)');
