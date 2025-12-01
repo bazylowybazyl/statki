@@ -4633,19 +4633,20 @@ function aiPickTarget(npc) {
   let best = null;
   let maxScore = -Infinity;
   
-  // Pirat atakuje: Gracza (ship) i sojusznicze NPC (friendly=true)
   const targets = npc.friendly 
     ? npcs.filter(n => n.isPirate && !n.dead) 
     : [ship, ...npcs.filter(n => n.friendly && !n.dead)];
+
+  // RADAR POKRYWAJĄCY CAŁĄ STACJĘ PIRACKĄ
+  const RADAR_RANGE_SQ = 20000 * 20000; 
 
   for (const t of targets) {
     const tx = t.pos ? t.pos.x : t.x;
     const ty = t.pos ? t.pos.y : t.y;
     const distSq = (tx - npc.x)**2 + (ty - npc.y)**2;
 
-    if (distSq > 3500**2) continue; // Ignoruj cele poza zasięgiem radaru
+    if (distSq > RADAR_RANGE_SQ) continue; 
 
-    // Punktacja: im bliżej tym lepiej, priorytet dla Gracza i Capital Ships
     let score = -distSq;
     if (t === ship) score += 10000000; 
     if (t.isCapitalShip) score += 5000000;
