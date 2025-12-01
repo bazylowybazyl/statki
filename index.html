@@ -878,11 +878,28 @@ if (!Number.isFinite(DevTuning.pirateStationScale)) {
 }
 
 const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+  function clampTurnAngle(currentAng, targetAng, maxRateRad, dt){
+  let d = targetAng - currentAng;
+  while(d >  Math.PI) d -= 2*Math.PI;
+  while(d < -Math.PI) d += 2*Math.PI;
+  const change = Math.max(-maxRateRad * dt, Math.min(maxRateRad * dt, d));
+  let out = currentAng + change;
+  if(out >  Math.PI) out -= 2*Math.PI;
+  if(out < -Math.PI) out += 2*Math.PI;
+  return out;
+}
+
+function dist2(a, b) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx*dx + dy*dy;
+}
 const lerp = (a,b,t)=>a + (b - a) * t;
 const add = (a,b)=>({x:a.x+b.x,y:a.y+b.y});
 const mul = (v,s)=>({x:v.x*s,y:v.y*s});
 const len = v=>Math.hypot(v.x,v.y);
 const norm = v=>{ const L=len(v); return L?{x:v.x/L,y:v.y/L}:{x:0,y:0}; };
+  
 // === AI SPACE PHYSICS UTILS ===
 function clampTurnVec(vx, vy, wantVx, wantVy, dt, maxDeg){
   const maxRad = (maxDeg * Math.PI / 180) * dt;
@@ -4709,74 +4726,130 @@ function aiPickTarget(npc) {
 }
 
 // --- B. AI FREGATY (FRIGATE) ---
-function aiFrigate(sim, npc, dt) {
+window.aiFrigate = function(sim, npc, dt) {
   npc.gunCD = Math.max(0, (npc.gunCD || 0) - dt);
   npc.pdCD = Math.max(0, (npc.pdCD || 0) - dt);
   npc.mslCD = Math.max(0, (npc.mslCD || 0) - dt);
 
+  // 1. Znajdź cel
   let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : npc.target;
   if (!target || target.dead) {
-    target = aiPickTarget(npc);
+    target = aiPickTarget(npc); // Szukaj nowego
   }
   npc.target = target;
 
-  const home = npc.home;
-  const patrolRadius = npc.patrolRadius || (home ? home.r + 260 : 320);
-  if (home && !npc.patrolAngle) {
-    npc.patrolAngle = Math.random() * Math.PI * 2;
-  }
-  const patrolPoint = home
-    ? { x: home.x + Math.cos(npc.patrolAngle) * patrolRadius, y: home.y + Math.sin(npc.patrolAngle) * patrolRadius }
-    : null;
-
-  const desired = target ? { x: target.x, y: target.y } : (patrolPoint || { x: npc.x + Math.cos(npc.angle) * 120, y: npc.y + Math.sin(npc.angle) * 120 });
-  const dx = desired.x - npc.x;
-  const dy = desired.y - npc.y;
-  const dist = Math.hypot(dx, dy) || 1;
-  const desiredDir = { x: dx / dist, y: dy / dist };
-  const idealRange = npc.preferredRange || 850;
-
+  let targetAng = npc.angle;
   let thrust = 0;
+  let strafe = 0;
+  
+  // 2. Logika ruchu (Fizyka AI SPACE)
   if (target) {
-    if (dist > idealRange) thrust = npc.accel;
-    else if (dist < idealRange * 0.6) thrust = -npc.accel * 0.6;
+    const dx = target.x - npc.x;
+    const dy = target.y - npc.y;
+    targetAng = Math.atan2(dy, dx);
+    
+    // Ustawienia dystansu (zależne od broni)
+    const idealRange = npc.preferredRange || 750;
+    const dist = Math.hypot(dx, dy);
+
+    // Push-Pull: Cofaj jak za blisko, leć jak za daleko
+    if (dist < idealRange * 0.85) thrust = -npc.accel * 0.7;
+    else if (dist > idealRange * 1.1) thrust = npc.accel * 0.8;
+    
+    // Strafe (Bujanie na boki) - utrudnia trafienie
+    const time = performance.now() / 1000;
+    // Używamy npc.id (string) lub losowej wartości jeśli brak id, żeby każdy statek bujał się inaczej
+    const offset = (npc.id && typeof npc.id === 'string') ? npc.id.charCodeAt(0) : Math.random() * 100;
+    strafe = Math.sin(time * 0.7 + offset * 0.3) * npc.accel * 0.4;
+
   } else {
-    thrust = npc.accel * 0.35;
-    if (home && dist < 80) {
-      npc.patrolAngle = wrapAngle(npc.patrolAngle + 0.6 * dt);
+    // Brak celu: zwolnij
+    npc.vx *= 0.95;
+    npc.vy *= 0.95;
+    
+    // Jeśli ma przypisaną stację macierzystą (home), niech patroluje wokół niej
+    if (npc.home) {
+        const patrolRadius = npc.home.r + 300;
+        if (!npc.patrolAngle) npc.patrolAngle = Math.random() * Math.PI * 2;
+        
+        // Powolny obrót patrolu
+        npc.patrolAngle += 0.2 * dt; 
+        
+        const px = npc.home.x + Math.cos(npc.patrolAngle) * patrolRadius;
+        const py = npc.home.y + Math.sin(npc.patrolAngle) * patrolRadius;
+        
+        const dx = px - npc.x;
+        const dy = py - npc.y;
+        targetAng = Math.atan2(dy, dx);
+        thrust = npc.accel * 0.4; // Wolny lot patrolowy
+    } else {
+        return; // Stój w miejscu
     }
   }
 
-  npc.vx += desiredDir.x * thrust * dt;
-  npc.vy += desiredDir.y * thrust * dt;
+  // 3. Aplikowanie fizyki (Rotation -> Force -> Velocity)
+  // Obrót (używa nowej funkcji clampTurnAngle)
+  npc.angle = clampTurnAngle(npc.angle, targetAng, npc.turn, dt);
+  
+  // Przeliczenie Thrust/Strafe na wektory świata
+  const c = Math.cos(npc.angle);
+  const s = Math.sin(npc.angle);
+  
+  // Fizyka AI SPACE: Siła jest wypadkową ciągu głównego i bocznego (strafe)
+  const ax = c * thrust - s * strafe;
+  const ay = s * thrust + c * strafe;
 
-  const desiredAng = target ? Math.atan2(dy, dx) : Math.atan2(desiredDir.y, desiredDir.x);
-  const diff = wrapAngle(desiredAng - npc.angle);
-  npc.angle = wrapAngle(npc.angle + clamp(diff, -npc.turn * dt, npc.turn * dt));
-  npc.desiredAngle = npc.angle;
+  npc.vx += ax * dt;
+  npc.vy += ay * dt;
 
+  // Limit prędkości
+  const v = Math.hypot(npc.vx, npc.vy);
+  if (v > npc.maxSpeed) {
+    const scale = npc.maxSpeed / v;
+    npc.vx *= scale; 
+    npc.vy *= scale;
+  }
+  
+  // Tarcie (Simulating space friction/drag)
+  npc.vx *= (npc.friction || 0.985);
+  npc.vy *= (npc.friction || 0.985);
+
+  // 4. Strzelanie (Logika broni)
   if (target) {
-    const mainDef = AISPACE_GUNS_M[npc.mainGun] || AISPACE_GUNS_M.m_pulse;
-    if (npc.gunCD <= 0 && dist < (mainDef.range || 800)) {
-      window.spawnBulletAdapter(npc, target, mainDef, { type: mainDef.isBeam ? 'beam' : undefined });
-      npc.gunCD = 1.0 / (mainDef.rps || 1.0);
+    const mainDef = AISPACE_GUNS_M[npc.mainGun] || AISPACE_GUNS_M.m_autocannon;
+    const distSq = dist2(npc, target);
+    
+    // Main Gun
+    if (npc.gunCD <= 0 && distSq < (mainDef.range * mainDef.range)) {
+      // Sprawdź czy patrzymy na cel (dot product)
+      const dx = target.x - npc.x, dy = target.y - npc.y;
+      const dist = Math.sqrt(distSq);
+      const dot = (Math.cos(npc.angle)*dx + Math.sin(npc.angle)*dy) / dist;
+      
+      if (dot > 0.8) { // Strzelaj tylko jak wycelowany
+         window.spawnBulletAdapter(npc, target, mainDef, { type: mainDef.isBeam ? 'beam' : undefined });
+         npc.gunCD = 1.0 / (mainDef.rps || 1.0);
+      }
     }
-
+    
+    // PD (Point Defense)
     const pdDef = AISPACE_PD[npc.pd];
-    if (pdDef && npc.pdCD <= 0 && dist < (pdDef.range || 500)) {
+    if (pdDef && npc.pdCD <= 0 && distSq < (pdDef.range * pdDef.range)) {
       const burst = pdDef.burst || 1;
       for (let i = 0; i < burst; i++) {
-        window.spawnBulletAdapter(npc, target, pdDef, { type: 'ciws' });
+          window.spawnBulletAdapter(npc, target, pdDef, { type: 'ciws' });
       }
       npc.pdCD = 1.0 / (pdDef.rps || 8);
     }
-
-    if (npc.msl && npc.mslAmmo > 0 && npc.mslCD <= 0 && dist < 1400) {
-      const mslDef = AISPACE_MISSILES[npc.msl] || AISPACE_MISSILES.AS;
-      const dir = desiredDir;
-      window.bullets.push({
-        x: npc.x,
-        y: npc.y,
+    
+    // Rakiety (zachowane z oryginału, ale podpięte pod timer)
+    if (npc.msl && npc.mslAmmo > 0 && npc.mslCD <= 0 && distSq < 1400*1400) {
+       const mslDef = AISPACE_MISSILES[npc.msl] || AISPACE_MISSILES.AS;
+       // Wystrzel rakietę w kierunku, w którym patrzy statek
+       const dir = { x: Math.cos(npc.angle), y: Math.sin(npc.angle) };
+       
+       window.bullets.push({
+        x: npc.x, y: npc.y,
         vx: dir.x * mslDef.speed + npc.vx,
         vy: dir.y * mslDef.speed + npc.vy,
         life: mslDef.life || 5,
@@ -4794,161 +4867,227 @@ function aiFrigate(sim, npc, dt) {
       npc.mslCD = 6.0;
     }
   }
-
-  npc.vx *= (npc.friction || 0.986);
-  npc.vy *= (npc.friction || 0.986);
-}
+};
 
 // --- C. AI NISZCZYCIELA (DESTROYER) ---
 // Agresywne, używa głównego Railguna i Boosta
 window.aiDestroyer = function(sim, npc, dt) {
-  npc.mCD = Math.max(0, (npc.mCD||0) - dt);
-  npc.boostT = Math.max(0, (npc.boostT||0) - dt);
-  npc.boostCd = Math.max(0, (npc.boostCd||0) - dt);
+  npc.mCD = Math.max(0, (npc.mCD || 0) - dt);
+  npc.pdCD = Math.max(0, (npc.pdCD || 0) - dt);
+  npc.boostT = Math.max(0, (npc.boostT || 0) - dt);
+  npc.boostCd = Math.max(0, (npc.boostCd || 0) - dt);
 
   const target = aiPickTarget(npc);
   const gunDef = AISPACE_GUNS_M[npc.mGun] || AISPACE_GUNS_M.m_rail;
   
+  let targetAng = npc.angle;
+  let thrust = 0;
+  let strafe = 0;
+
   if (target) {
     const dx = target.x - npc.x;
     const dy = target.y - npc.y;
     const dist = Math.hypot(dx, dy);
-    const desiredAng = Math.atan2(dy, dx);
+    targetAng = Math.atan2(dy, dx);
 
-    // Logika Boosta (szarża)
-    const facingTarget = Math.abs(wrapAngle(desiredAng - npc.angle)) < 0.2;
-    if (dist > 900 && npc.boostCd <= 0 && facingTarget) {
-       npc.boostT = npc.boostDur || 2.0;
-       npc.boostCd = 10.0;
+    const range = gunDef.range || 800;
+    const wantRange = range * 0.8;
+
+    // --- LOGIKA BOOST (Szarża) ---
+    // Oblicz kąt patrzenia vs cel
+    const ux = Math.cos(npc.angle), uy = Math.sin(npc.angle);
+    const dot = (dx/dist)*ux + (dy/dist)*uy; // 1.0 = idealnie na wprost
+
+    // Odpal boost tylko jeśli daleko i wycelowany
+    if (dist > range * 0.95 && npc.boostCd <= 0 && dot > 0.9) {
+      npc.boostT = npc.boostDur || 2.5;
+      npc.boostCd = 10.0;
+    }
+    // Hamulec boosta jeśli za blisko
+    if (dist < wantRange * 0.9) npc.boostT = 0;
+
+    // Podstawowy ruch
+    if (dist < wantRange * 0.95) thrust = -npc.accel * 1.2; // Hamuj/Cofaj
+    else if (dist > wantRange * 1.05) thrust = npc.accel * 0.9; // Leć normalnie
+
+    // Strafe (tylko gdy blisko)
+    if (dist < range * 1.1) {
+       const time = performance.now()/1000;
+       strafe = Math.sin(time * 0.55 + npc.id.charCodeAt(0)*0.2) * npc.accel * 0.5;
+       if (npc.boostT > 0) strafe *= 1.5;
     }
 
-    let thrust = 0;
-    if (dist > 700) thrust = npc.accel; // Leć do
-    else if (dist < 500) thrust = -npc.accel * 0.5; // Za blisko
-
-    // Jeśli boost aktywny -> MOC SILNIKÓW x2
-    if (npc.boostT > 0) thrust *= 2.5;
-
-    // Obrót
-    let dAng = desiredAng - npc.angle;
-    while(dAng > Math.PI) dAng -= 2*Math.PI;
-    while(dAng < -Math.PI) dAng += 2*Math.PI;
-    npc.angle += Math.max(-npc.turn*dt, Math.min(npc.turn*dt, dAng));
-
-    const c = Math.cos(npc.angle);
-    const s = Math.sin(npc.angle);
-    npc.vx += c * thrust * dt;
-    npc.vy += s * thrust * dt;
-
-    // Strzał z głównego działa (Railgun)
-    if (npc.mCD <= 0 && dist < gunDef.range && facingTarget) {
+    // Strzelanie (Railgun)
+    if (npc.mCD <= 0 && dist < range && dot > 0.9) {
        window.spawnBulletAdapter(npc, target, gunDef, {type:'rail'});
-       // Efekt odrzutu (wizualny) można dodać tu
        npc.mCD = 1.0 / (gunDef.rps || 0.5);
-       
-       // Niszczyciele często strzelają seriami 2-3 pocisków,
-       // ale uprośćmy: strzela raz, ale mocno.
     }
   }
-  
-  npc.vx *= (npc.friction || 0.985);
-  npc.vy *= (npc.friction || 0.985);
-};
 
+  // --- FIZYKA ---
+  const speedBoost = (npc.boostT > 0) ? 1.7 : 1.0;
+  
+  // Obrót (szybciej na booście, żeby utrzymać cel)
+  npc.angle = clampTurnAngle(npc.angle, targetAng, npc.turn * speedBoost, dt);
+
+  const c = Math.cos(npc.angle);
+  const s = Math.sin(npc.angle);
+  
+  const ax = (c * thrust - s * strafe) * speedBoost;
+  const ay = (s * thrust + c * strafe) * speedBoost;
+
+  npc.vx += ax * dt;
+  npc.vy += ay * dt;
+
+  const v = Math.hypot(npc.vx, npc.vy);
+  const maxV = npc.maxSpeed * speedBoost;
+  if (v > maxV) {
+     npc.vx *= maxV/v; 
+     npc.vy *= maxV/v; 
+  }
+  
+  npc.vx *= (npc.friction || 0.986);
+  npc.vy *= (npc.friction || 0.986);
+  
+  // PD Logic
+  const pdDef = AISPACE_PD[npc.pd];
+  if (pdDef && npc.pdCD <= 0 && target) {
+     // Check distance sq
+     if ((target.x-npc.x)**2 + (target.y-npc.y)**2 < pdDef.range**2) {
+        window.spawnBulletAdapter(npc, target, pdDef, {type:'ciws'});
+        npc.pdCD = 1.0 / (pdDef.rps || 9);
+     }
+  }
+};
 // --- D. AI PANCERNIKA (BATTLESHIP) ---
 // Powolny, ustawia się bokiem (Broadside), potężne salwy
 window.aiBattleship = function(sim, npc, dt) {
   npc.broadLeftCD = Math.max(0, (npc.broadLeftCD||0) - dt);
   npc.broadRightCD = Math.max(0, (npc.broadRightCD||0) - dt);
   npc.pdCD = Math.max(0, (npc.pdCD||0) - dt);
+  npc.mCD = Math.max(0, (npc.mCD||0) - dt);
 
   const target = aiPickTarget(npc);
   const broadsideDef = AISPACE_BS_BROADSIDE;
-  const pdDef = AISPACE_PD[npc.pd] || AISPACE_PD.pd_laser;
+  const mDef = AISPACE_GUNS_M.h_rapid; // Główne działo obrotowe
+
+  let targetAng = npc.angle;
+  let thrust = 0;
+  let strafe = 0;
 
   if (target) {
     const dx = target.x - npc.x;
     const dy = target.y - npc.y;
     const dist = Math.hypot(dx, dy);
-    const angToTarget = Math.atan2(dy, dx);
-    
-    // Pancernik chce ustawić się BOKIEM (Broadside)
-    // Bok lewy: target angle + 90 stopni
-    // Bok prawy: target angle - 90 stopni
-    
-    const leftFlankAng = angToTarget + Math.PI/2;
-    const rightFlankAng = angToTarget - Math.PI/2;
-    
-    // Sprawdź do którego boku ma bliżej
-    const diffLeft = Math.abs(wrapAngle(leftFlankAng - npc.angle));
-    const diffRight = Math.abs(wrapAngle(rightFlankAng - npc.angle));
-    
-    const desiredAng = (diffLeft < diffRight) ? leftFlankAng : rightFlankAng;
-    
-    // Powolny obrót
-    let dAng = desiredAng - npc.angle;
-    while(dAng > Math.PI) dAng -= 2*Math.PI;
-    while(dAng < -Math.PI) dAng += 2*Math.PI;
-    npc.angle += Math.max(-npc.turn*dt, Math.min(npc.turn*dt, dAng));
+    const toAng = Math.atan2(dy, dx); // Kąt bezpośrednio do celu (Nos)
 
-    // Napęd (utrzymywanie dystansu ~600-800)
-    let thrust = 0;
-    if (dist > 900) thrust = npc.accel;
-    else if (dist < 500) thrust = -npc.accel * 0.5;
+    const noseRange = 800;
+    const idealDist = noseRange * 0.75;
 
-    // Pancernik porusza się wolno
-    npc.vx += Math.cos(npc.angle) * thrust * dt;
-    npc.vy += Math.sin(npc.angle) * thrust * dt;
-    
-    // --- STRZELANIE (BROADSIDE) ---
-    // Sprawdź czy bok jest wycelowany
-    const sideArc = 0.5; // ok. 30 stopni tolerancji
+    // Napęd przód/tył
+    if (dist < idealDist * 0.9) thrust = -npc.accel * 0.5;
+    else if (dist > idealDist * 1.15) thrust = npc.accel * 0.9;
+
+    // Strafe (bardzo powolny, żeby trzymać linię)
+    const time = performance.now()/1000;
+    strafe = Math.sin(time * 0.4 + npc.id.charCodeAt(0)*0.2) * npc.accel * 0.35;
+
+    // --- BROADSIDE LOGIC ---
+    // Obliczamy kąty dla burt (Nos +/- 90 stopni)
+    const rightAng = toAng + Math.PI/2;
+    const leftAng  = toAng - Math.PI/2;
+
+    // Oblicz różnice kątów od obecnego kursu
+    const diffNose  = Math.abs(wrapAngle(toAng - npc.angle));
+    const diffRight = Math.abs(wrapAngle(rightAng - npc.angle));
+    const diffLeft  = Math.abs(wrapAngle(leftAng - npc.angle));
+
+    const broadsideRange = 650;
+    let sideBetter = false;
+    const minSideDiff = Math.min(diffRight, diffLeft);
+
+    // Decyzja: Czy ustawiamy się bokiem?
+    // Jeśli jesteśmy blisko ORAZ już jesteśmy bliżej boku niż nosa
+    if (dist < broadsideRange * 1.05 && (minSideDiff + 0.2 < diffNose)) {
+      sideBetter = true;
+    }
+
+    if (sideBetter) {
+      // Wybierz lepszy bok
+      if (diffRight <= diffLeft) targetAng = rightAng;
+      else targetAng = leftAng;
+    } else {
+      // Celuj nosem
+      targetAng = toAng;
+    }
+
+    // --- STRZELANIE ---
+    // 1. Broadside (tylko jak bok jest wycelowany)
+    const sideArc = 0.5; // Tolerancja ok. 30 stopni
     
     // Prawa burta
     if (diffRight < sideArc && npc.broadRightCD <= 0 && dist < broadsideDef.range) {
-       // Salwa 4 dział
        for(let i=0; i<4; i++) {
-         // Symulacja różnych luf wzdłuż kadłuba
-         const offsetDist = (i - 1.5) * 20; 
-         const bx = npc.x + Math.cos(npc.angle)*offsetDist;
-         const by = npc.y + Math.sin(npc.angle)*offsetDist;
-         const fakeSource = { ...npc, x: bx, y: by }; // Hack dla pozycji startowej
-         
+         const offsetDist = (i - 1.5) * 25; 
+         // Hack: wirtualna pozycja lufy dla spawnera
+         const bx = npc.x + Math.cos(npc.angle)*offsetDist + Math.sin(npc.angle)*20; 
+         const by = npc.y + Math.sin(npc.angle)*offsetDist - Math.cos(npc.angle)*20;
+         const fakeSource = { ...npc, x: bx, y: by };
          window.spawnBulletAdapter(fakeSource, target, broadsideDef, {type:'plasma'});
        }
-       npc.broadRightCD = 2.0; // Wolne przeładowanie
+       npc.broadRightCD = 2.0; 
     }
-    
     // Lewa burta
     if (diffLeft < sideArc && npc.broadLeftCD <= 0 && dist < broadsideDef.range) {
        for(let i=0; i<4; i++) {
-         const offsetDist = (i - 1.5) * 20; 
-         const bx = npc.x + Math.cos(npc.angle)*offsetDist;
-         const by = npc.y + Math.sin(npc.angle)*offsetDist;
+         const offsetDist = (i - 1.5) * 25; 
+         const bx = npc.x + Math.cos(npc.angle)*offsetDist - Math.sin(npc.angle)*20; 
+         const by = npc.y + Math.sin(npc.angle)*offsetDist + Math.cos(npc.angle)*20;
          const fakeSource = { ...npc, x: bx, y: by };
-         
          window.spawnBulletAdapter(fakeSource, target, broadsideDef, {type:'plasma'});
        }
        npc.broadLeftCD = 2.0;
     }
 
-    // PD (Obrona punktowa) - strzela niezależnie w najbliższy cel
-    if (npc.pdCD <= 0 && dist < (pdDef.range || 500)) {
-       const burst = pdDef.burst || 1;
-       for(let i=0; i<burst; i++) {
-         window.spawnBulletAdapter(npc, target, pdDef, {type:'ciws'});
-       }
-       npc.pdCD = 1.0 / (pdDef.rps || 10);
+    // 2. Główne działo (tylko jak nos wycelowany)
+    if (diffNose < 0.3 && npc.mCD <= 0 && dist < mDef.range) {
+       window.spawnBulletAdapter(npc, target, mDef, {type:'rail'});
+       npc.mCD = 1.0 / mDef.rps;
     }
   }
 
+  // --- FIZYKA ---
+  npc.angle = clampTurnAngle(npc.angle, targetAng, npc.turn, dt);
+  
+  const c = Math.cos(npc.angle);
+  const s = Math.sin(npc.angle);
+  
+  const ax = c * thrust - s * strafe;
+  const ay = s * thrust + c * strafe;
+
+  npc.vx += ax * dt;
+  npc.vy += ay * dt;
+
+  const v = Math.hypot(npc.vx, npc.vy);
+  if (v > npc.maxSpeed) {
+    const sc = npc.maxSpeed / v;
+    npc.vx *= sc; npc.vy *= sc;
+  }
   npc.vx *= (npc.friction || 0.99);
   npc.vy *= (npc.friction || 0.99);
+
+  // PD
+  const pdDef = AISPACE_PD[npc.pd] || AISPACE_PD.pd_laser;
+  if (npc.pdCD <= 0 && target && dist2(npc, target) < pdDef.range**2) {
+     const burst = pdDef.burst || 1;
+     for(let i=0; i<burst; i++) window.spawnBulletAdapter(npc, target, pdDef, {type:'ciws'});
+     npc.pdCD = 1.0 / (pdDef.rps || 10);
+  }
 };
+  
 window.runAdvancedFighterAI = runAdvancedFighterAI;
-window.aiFrigate = aiFrigate;
-window.aiDestroyer = aiDestroyer;
-window.aiBattleship = aiBattleship;
+
+
 // Helper strzelania dla myśliwców
 function tryFireFighter(npc, target, dt) {
   if(!target) return;
