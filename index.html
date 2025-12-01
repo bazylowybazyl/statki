@@ -5073,34 +5073,7 @@ window.aiBattleship = function(sim, npc, dt) {
      npc.pdCD = 1.0 / (pdDef.rps || 10);
   }
 };
-  // --- FIZYKA ---
-  npc.angle = clampTurnAngle(npc.angle, targetAng, npc.turn, dt);
-  
-  const c = Math.cos(npc.angle);
-  const s = Math.sin(npc.angle);
-  
-  const ax = c * thrust - s * strafe;
-  const ay = s * thrust + c * strafe;
-
-  npc.vx += ax * dt;
-  npc.vy += ay * dt;
-
-  const v = Math.hypot(npc.vx, npc.vy);
-  if (v > npc.maxSpeed) {
-    const sc = npc.maxSpeed / v;
-    npc.vx *= sc; npc.vy *= sc;
-  }
-  npc.vx *= (npc.friction || 0.99);
-  npc.vy *= (npc.friction || 0.99);
-
-  // PD
-  const pdDef = AISPACE_PD[npc.pd] || AISPACE_PD.pd_laser;
-  if (npc.pdCD <= 0 && target && dist2(npc, target) < pdDef.range**2) {
-     const burst = pdDef.burst || 1;
-     for(let i=0; i<burst; i++) window.spawnBulletAdapter(npc, target, pdDef, {type:'ciws'});
-     npc.pdCD = 1.0 / (pdDef.rps || 10);
-  }
-};
+ 
   
 window.runAdvancedFighterAI = runAdvancedFighterAI;
 
