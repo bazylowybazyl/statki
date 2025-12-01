@@ -4492,24 +4492,23 @@ window.aiPickBestTarget = function(self, weaponRange) {
   let best = null;
   let maxScore = -Infinity;
   
-  // Kogo atakujemy?
   const enemies = self.friendly 
-     ? npcs.filter(n => n.isPirate && !n.dead) // Sojusznik bije piratów
-     : [ship, ...npcs.filter(n => n.friendly && !n.dead)]; // Pirat bije gracza i sojuszników
+     ? npcs.filter(n => n.isPirate && !n.dead) 
+     : [ship, ...npcs.filter(n => n.friendly && !n.dead)];
+
+  // RADAR 20k
+  const RADAR_RANGE_SQ = 20000 * 20000;
 
   for (const t of enemies) {
     const distSq = (t.x - self.x)**2 + (t.y - self.y)**2;
     
-    // Ignoruj cele poza zasięgiem radaru (np. 3500j)
-    if (distSq > 3500*3500) continue;
+    if (distSq > RADAR_RANGE_SQ) continue;
 
-    let score = -distSq; // Im bliżej tym lepiej
+    let score = -distSq; 
     
-    // Priorytetyzacja
-    if (t === ship) score += 500000; // Gracz priorytetem
-    if (t.isCapitalShip) score += 200000; // Duże statki groźne
+    if (t === ship) score += 500000; 
+    if (t.isCapitalShip) score += 200000; 
 
-    // Bonus jeśli jest w zasięgu broni (nie musi gonić)
     if (weaponRange && distSq < weaponRange*weaponRange) score += 100000;
 
     if (score > maxScore) {
@@ -4519,7 +4518,7 @@ window.aiPickBestTarget = function(self, weaponRange) {
   }
   return best;
 };
-
+  
 function pirateRoleKind(npc){
   if (!npc) return 'other';
   const type = npc.type || '';
