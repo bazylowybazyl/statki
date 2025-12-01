@@ -3514,16 +3514,17 @@ function runCarrierFighterAdapter(npc, dt) {
         npc._counted = false; 
         npc.recalled = true; 
      }
-     // WAŻNE: Kończymy tu, żeby AI nie nadpisało ruchu
      return; 
   }
 
-  // B. GUARD
+  // B. GUARD - ZASIĘG GLOBALNY NA STREFĘ PIRACKĄ
   if (wing.order === 'guard') {
-     const target = window.aiPickBestTarget ? window.aiPickBestTarget(npc, 3000) : null;
+     // Szukamy celu w promieniu 20,000j (pokrywa całą strefę misji)
+     const target = window.aiPickBestTarget ? window.aiPickBestTarget(npc, 20000) : null;
      const dist = target ? Math.hypot(target.x - npc.x, target.y - npc.y) : Infinity;
-     // Jeśli nie ma wrogów blisko, wymuś stan 'guard' w nowym AI
-     if (dist > 1200) {
+     
+     // Wraca do szyku dopiero, gdy wróg jest poza strefą (25,000j)
+     if (dist > 25000) {
         npc.state = 'guard';
      }
   }
