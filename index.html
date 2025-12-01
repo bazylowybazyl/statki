@@ -1219,10 +1219,45 @@ function supportGuardBehavior(npc, slotIndex, dt){
   npc.target = null;
 }
 
+function steerNpcTowards(npc, target, dt, opts = {}){
+  const dx = target.x - npc.x;
+  const dy = target.y - npc.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const dir = { x: dx / dist, y: dy / dist };
+  const wantSpeed = Math.min(opts.maxSpeed || npc.maxSpeed || 240, dist * (opts.speedScale || 1.2));
+  const turned = clampTurnVec(npc.vx || 0, npc.vy || 0, dir.x * wantSpeed, dir.y * wantSpeed, dt, opts.turnLimit || 220);
+  npc.vx = turned.vx;
+  npc.vy = turned.vy;
+  npc.angle = Math.atan2(npc.vy || 0, npc.vx || 0);
+  return dist;
+}
+
+function handleCommandedNpc(npc, dt){
+  const cmd = npc.command;
+  if(!cmd || !cmd.target) return false;
+  const attackMove = cmd.type === 'attack-move';
+  if (attackMove){
+    const target = aiPickTarget(npc);
+    if (target){
+      npc.forceTarget = target;
+      return false;
+    }
+  }
+  const arrival = cmd.arrival || (npc.radius || 20) + 20;
+  const dist = steerNpcTowards(npc, cmd.target, dt, { turnLimit: attackMove ? 260 : 220 });
+  if (dist <= arrival){
+    npc.command = null;
+    npc.forceTarget = null;
+  }
+  return true;
+}
+
 function runSupportAI(npc, dt){
   const data = npc.supportData;
   if (!data) return;
-  if (SupportWing.order === 'guard') {
+  const command = npc.command;
+  const attackMove = command?.type === 'attack-move';
+  if (SupportWing.order === 'guard' && !attackMove) {
     supportGuardBehavior(npc, data.slotIndex, dt);
     return;
   }
@@ -8559,6 +8594,41 @@ function stopBoost(){
   }
 }
 
+function playerHasManualInput(){
+  return keys['w'] || keys['a'] || keys['d'] || keys['q'] || keys['e'];
+}
+
+function updatePlayerCommand(dt){
+  const cmd = ship.command;
+  if(!cmd || !cmd.target) return;
+  if (PAUSED || warp.state !== 'idle') return;
+  if (playerHasManualInput()){ ship.command = null; return; }
+
+  const dx = cmd.target.x - ship.pos.x;
+  const dy = cmd.target.y - ship.pos.y;
+  const dist = Math.hypot(dx, dy);
+  const arrival = cmd.arrival || 90;
+  if (dist <= arrival){
+    ship.command = null;
+    applyPlayerInput(ship, { controller:'player', main:0, thrustY:0, torque:0, leftSide:0, rightSide:0 }, input);
+    return;
+  }
+
+  const desiredAng = Math.atan2(dy, dx);
+  const angDiff = wrapAngle(desiredAng - ship.angle);
+  const torque = clamp(angDiff * 2.2, -1, 1);
+  const main = clamp(dist / 800, 0, 1);
+
+  applyPlayerInput(ship, {
+    controller: 'player',
+    thrustY: main,
+    main,
+    torque,
+    leftSide: 0,
+    rightSide: 0
+  }, input);
+}
+
 function handleWarpKeyDown(){
   if(warp.state==='idle' && (DevFlags.unlimitedWarp || warp.fuel>0)){
     warp.state='charging';
@@ -8735,6 +8805,140 @@ function triggerScanWave(){
 }
 
 const mouse = { x: W/2, y: H/2, left:false, right:false, click:false, overCanvas:false };
+const Selection = { active: false, rect: null, units: new Set() };
+
+function clearSelection(){
+  Selection.active = false;
+  Selection.rect = null;
+  Selection.units.clear();
+}
+
+function startSelection(worldPoint){
+  Selection.active = true;
+  Selection.rect = { x0: worldPoint.x, y0: worldPoint.y, x1: worldPoint.x, y1: worldPoint.y };
+}
+
+function updateSelectionRect(worldPoint){
+  if(!Selection.active || !Selection.rect) return;
+  Selection.rect.x1 = worldPoint.x;
+  Selection.rect.y1 = worldPoint.y;
+}
+
+function selectableAllies(){
+  const allies = [];
+  if (ship) allies.push(ship);
+  for (const npc of npcs){
+    if (!npc || npc.dead || !npc.friendly) continue;
+    allies.push(npc);
+  }
+  return allies;
+}
+
+function finishSelection(){
+  if(!Selection.rect) { clearSelection(); return; }
+  const x0 = Math.min(Selection.rect.x0, Selection.rect.x1);
+  const y0 = Math.min(Selection.rect.y0, Selection.rect.y1);
+  const x1 = Math.max(Selection.rect.x0, Selection.rect.x1);
+  const y1 = Math.max(Selection.rect.y0, Selection.rect.y1);
+  Selection.units.clear();
+  for(const unit of selectableAllies()){
+    const ux = unit.pos ? unit.pos.x : unit.x;
+    const uy = unit.pos ? unit.pos.y : unit.y;
+    if(ux >= x0 && ux <= x1 && uy >= y0 && uy <= y1){
+      Selection.units.add(unit);
+    }
+  }
+  Selection.active = false;
+}
+
+function categorizeUnit(unit){
+  if(unit === ship) return 'player';
+  if(unit.fighter || unit.type === 'fighter') return 'fighter';
+  if(unit.type && String(unit.type).includes('frigate')) return 'frigate';
+  if(unit.type === 'destroyer') return 'destroyer';
+  if(unit.type === 'battleship' || unit.isCapitalShip) return 'battleship';
+  return 'other';
+}
+
+function formationTargets(units, anchor){
+  const fighters = [];
+  const frigates = [];
+  const destroyers = [];
+  const battleships = [];
+  const others = [];
+  for(const u of units){
+    const cat = categorizeUnit(u);
+    if(cat === 'fighter') fighters.push(u);
+    else if(cat === 'frigate') frigates.push(u);
+    else if(cat === 'destroyer' || cat === 'player') destroyers.push(u);
+    else if(cat === 'battleship') battleships.push(u);
+    else others.push(u);
+  }
+  const enemy = npcs.find(n=>n && !n.dead && !n.friendly) || null;
+  const ang = enemy ? Math.atan2(enemy.y - anchor.y, enemy.x - anchor.x) : ship.angle;
+  const forward = { x: Math.cos(ang), y: Math.sin(ang) };
+  const right = { x: -forward.y, y: forward.x };
+
+  const result = new Map();
+  let depth = 0;
+  const placeLine = (list, spacing)=>{
+    if(!list.length) return;
+    const sorted = [...list].sort((a,b)=>String(a.id||'').localeCompare(String(b.id||'')));
+    const totalW = (sorted.length - 1) * spacing;
+    const cx = anchor.x + forward.x * depth;
+    const cy = anchor.y + forward.y * depth;
+    const startX = cx - right.x * totalW / 2;
+    const startY = cy - right.y * totalW / 2;
+    sorted.forEach((u,i)=>{
+      result.set(u, {
+        x: startX + right.x * (i * spacing),
+        y: startY + right.y * (i * spacing)
+      });
+    });
+    depth += spacing * 0.9;
+  };
+
+  placeLine(fighters, 200);
+  depth += fighters.length ? 60 : 0;
+  placeLine(frigates, 150);
+  placeLine(destroyers, 200);
+  placeLine(battleships, 230);
+  placeLine(others, 170);
+  return result;
+}
+
+function issueMoveOrder(point, opts={}){
+  const units = [...Selection.units].filter(u=>u && !u.dead);
+  if(!units.length) return;
+  const targets = formationTargets(units, point);
+  for(const unit of units){
+    const t = targets.get(unit) || point;
+    const arrival = (unit.radius || unit.w || 30) + 25;
+    unit.command = { type: opts.attackMove ? 'attack-move' : 'move', target: { x: t.x, y: t.y }, arrival };
+  }
+}
+
+function handleSelectionCommand(event){
+  if(!Selection.units.size) return true;
+  const rect = canvas.getBoundingClientRect();
+  const pt = screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
+  let clickedEnemy = null;
+  let bestDistSq = Infinity;
+  for(const npc of npcs){
+    if(!npc || npc.dead || npc.friendly) continue;
+    const dx = npc.x - pt.x;
+    const dy = npc.y - pt.y;
+    const distSq = dx*dx + dy*dy;
+    const hitR = (npc.radius || 20) + 20;
+    if(distSq < hitR*hitR && distSq < bestDistSq){
+      bestDistSq = distSq;
+      clickedEnemy = npc;
+    }
+  }
+  issueMoveOrder(clickedEnemy ? { x: clickedEnemy.x, y: clickedEnemy.y } : pt, { attackMove: !!clickedEnemy });
+  return true;
+}
+
 canvas.addEventListener('mousemove', e=>{
   mouse.x = e.clientX; mouse.y = e.clientY;
   mouse.overCanvas = true;
@@ -8743,6 +8947,11 @@ canvas.addEventListener('mousemove', e=>{
   const movementY = hasMovement ? e.movementY : ((camera.lastPointerY == null) ? 0 : e.clientY - camera.lastPointerY);
   camera.lastPointerX = e.clientX;
   camera.lastPointerY = e.clientY;
+  if (PAUSED && Selection.active){
+    const rect = canvas.getBoundingClientRect();
+    const cur = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    updateSelectionRect(cur);
+  }
   if(camera.mode === 'free' && !stationUI.open){
     const panMul = camera.freePanSpeed / Math.max(0.0001, camera.zoom);
     camera.x += movementX * panMul;
@@ -8779,6 +8988,12 @@ canvas.addEventListener('mouseleave', ()=>{
   camera.lastPointerY = null;
 });
 canvas.addEventListener('mousedown', e=>{
+  if (PAUSED && !stationUI.open && e.button === 0){
+    const rect = canvas.getBoundingClientRect();
+    const start = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    startSelection(start);
+    return;
+  }
   if(e.button===0){
     if(stationUI.open){
       const interactive = stationUI.visible && !stationUI.awaitingCamera && stationUI.appear > 0.05;
@@ -8802,6 +9017,7 @@ canvas.addEventListener('mousedown', e=>{
   }
   if(e.button===2){
     e.preventDefault();
+    if (PAUSED && Selection.units.size && !stationUI.open) return;
     if(stationUI.open) return;
     mouse.right=true;
     if(!stationUI.open && !warp.isBusy()){
@@ -8823,6 +9039,10 @@ canvas.addEventListener('mousedown', e=>{
 });
 canvas.addEventListener('mouseup', e=>{
   if(e.button===0){
+    if (PAUSED && Selection.active){
+      finishSelection();
+      return;
+    }
     const wasDragging = stationUI.dragging;
     if(stationUI.dragging){
       stationUI.dragging=false;
@@ -8839,6 +9059,11 @@ canvas.addEventListener('mouseup', e=>{
     }
   }
   if(e.button===2){
+    if (PAUSED && Selection.units.size && !stationUI.open){
+      handleSelectionCommand(e);
+      mouse.right=false;
+      return;
+    }
     if(stationUI.open) return;
     mouse.right=false;
   }
@@ -10458,6 +10683,14 @@ function npcStep(dt){
     }
     if(npc.mission){
       if(npc.dead) continue;
+      if (handleCommandedNpc(npc, dt)) {
+        npc.vx *= (npc.friction || 0.99);
+        npc.vy *= (npc.friction || 0.99);
+        npc.x += (npc.vx||0)*dt;
+        npc.y += (npc.vy||0)*dt;
+        npc.angle = Math.atan2(npc.vy || 0, npc.vx || 0);
+        continue;
+      }
       if(npc.ai) npc.ai(dt);
       if (npc.fighter) { const drag = Math.exp(-3*dt); npc.vx *= drag; npc.vy *= drag; }
       npc.x += (npc.vx||0)*dt;
@@ -11120,6 +11353,8 @@ function physicsStep(dt){
   for(const t of [ship.turret, ship.turret2, ship.turret3, ship.turret4]){
     t.recoil = Math.max(0, t.recoil - t.recoilRecover * dt);
   }
+
+  updatePlayerCommand(dt);
 
   // siły
   let totalF = {x:0,y:0}, totalTorque = 0;
@@ -12428,6 +12663,38 @@ function render(alpha, frameDt){
   for (const npc of npcDrawList){
     const s = worldToScreen(npc.x, npc.y, cam);
     drawNPCPretty(ctx, npc, s);
+  }
+
+  if (Selection.units.size){
+    ctx.save();
+    ctx.strokeStyle = '#4a9eff';
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.9;
+    for (const unit of [...Selection.units]){
+      if(!unit || unit.dead){ Selection.units.delete(unit); continue; }
+      const pos = unit.pos || unit;
+      const baseR = unit.radius || unit.w || 30;
+      const screen = worldToScreen(pos.x, pos.y, cam);
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, Math.max(20, baseR + 12) * camera.zoom, 0, Math.PI*2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  if (PAUSED && Selection.active && Selection.rect){
+    const x0 = Math.min(Selection.rect.x0, Selection.rect.x1);
+    const y0 = Math.min(Selection.rect.y0, Selection.rect.y1);
+    const x1 = Math.max(Selection.rect.x0, Selection.rect.x1);
+    const y1 = Math.max(Selection.rect.y0, Selection.rect.y1);
+    const s0 = worldToScreen(x0, y0, cam);
+    const s1 = worldToScreen(x1, y1, cam);
+    ctx.save();
+    ctx.strokeStyle = '#7aa8ff';
+    ctx.globalAlpha = 0.8;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(Math.min(s0.x, s1.x), Math.min(s0.y, s1.y), Math.abs(s1.x - s0.x), Math.abs(s1.y - s0.y));
+    ctx.restore();
   }
 
   // Particles (za statkiem) — zwykłe
