@@ -2136,6 +2136,21 @@ function updateCameraTarget(dt){
       camera.x += (moveX / len) * panSpeed * dt;
       camera.y += (moveY / len) * panSpeed * dt;
     }
+    if(PAUSED && mouse.overCanvas){
+      const edgeMargin = Math.max(24, Math.min(W, H) * 0.08);
+      let edgeX = 0;
+      let edgeY = 0;
+      if(mouse.x <= edgeMargin) edgeX = -1;
+      else if(mouse.x >= W - edgeMargin) edgeX = 1;
+      if(mouse.y <= edgeMargin) edgeY = -1;
+      else if(mouse.y >= H - edgeMargin) edgeY = 1;
+      if(edgeX || edgeY){
+        const len = Math.hypot(edgeX, edgeY) || 1;
+        const panSpeed = camera.freeKeyPanSpeed / Math.max(0.0001, camera.zoom);
+        camera.x += (edgeX / len) * panSpeed * dt;
+        camera.y += (edgeY / len) * panSpeed * dt;
+      }
+    }
     camera.targetX = camera.x;
     camera.targetY = camera.y;
   } else if(camera.mode === 'focus'){
@@ -8953,7 +8968,7 @@ canvas.addEventListener('mousemove', e=>{
     const cur = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
     updateSelectionRect(cur);
   }
-  if(camera.mode === 'free' && !stationUI.open){
+  if(camera.mode === 'free' && !stationUI.open && !PAUSED){
     const panMul = camera.freePanSpeed / Math.max(0.0001, camera.zoom);
     camera.x += movementX * panMul;
     camera.y += movementY * panMul;
