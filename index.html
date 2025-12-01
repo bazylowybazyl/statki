@@ -177,8 +177,8 @@
   #infrastructure-overlay h3{cursor:grab;user-select:none;}
   #infrastructure-overlay.dragging h3{cursor:grabbing;}
   #infrastructure-overlay.dragging{box-shadow:0 22px 48px rgba(5,32,74,0.65);}
-  .infrastructure-body{display:flex;flex-direction:row;gap:16px;align-items:flex-start;}
-  .infra-building-list{display:flex;flex-direction:column;gap:12px;width:240px;max-height:520px;overflow-y:auto;padding-right:4px;}
+  .infrastructure-body{display:flex;flex-direction:column;gap:14px;align-items:stretch;}
+  .infra-building-list{display:flex;flex-direction:column;gap:12px;max-height:520px;overflow-y:auto;padding-right:4px;}
   .infra-building{background:linear-gradient(160deg,rgba(10,26,48,0.82),rgba(12,32,58,0.9));border:1px solid var(--fa-border);border-radius:12px;padding:12px;display:flex;flex-direction:column;align-items:center;gap:8px;cursor:grab;transition:border-color 0.2s,transform 0.2s,box-shadow 0.2s;box-shadow:0 12px 26px rgba(0,0,0,0.28);}
   .infra-building:hover{border-color:var(--fa-strong-border);box-shadow:0 12px 26px rgba(16,38,84,0.45);}
   .infra-building:active{cursor:grabbing;}
@@ -186,22 +186,8 @@
   .infra-building-canvas{width:96px;height:96px;border-radius:12px;background:radial-gradient(circle at 50% 35%,rgba(109,220,255,0.38),rgba(12,18,36,0.95));}
   .infra-building-name{font-weight:700;letter-spacing:0.04em;text-align:center;color:#e6f8ff;text-shadow:0 0 8px rgba(109,220,255,0.35);}
   .infra-building-meta{font-size:12px;color:var(--fa-muted);text-align:center;}
-  .infra-editor{flex:1;display:flex;flex-direction:column;gap:12px;min-width:0;}
-  .infra-grid{--infra-cols:6;display:grid;gap:10px;grid-template-columns:repeat(var(--infra-cols),minmax(72px,1fr));padding:12px;background:rgba(8,12,24,0.6);border:1px solid #1f2c49;border-radius:12px;min-height:280px;}
-  .infra-cell{position:relative;min-height:96px;border:1px dashed rgba(99,124,180,0.5);border-radius:12px;display:flex;align-items:center;justify-content:center;background:rgba(3,6,16,0.7);transition:border-color 0.2s,background 0.2s,transform 0.2s,opacity 0.2s;}
-  .infra-cell.empty:hover{border-color:#3b82f6;}
-  .infra-cell.drag-over{border-color:#60a5fa;background:rgba(37,63,128,0.35);}
-  .infra-cell.selected{box-shadow:0 0 0 2px #3b82f6 inset;}
-  .infra-cell.has-building{border-style:solid;border-color:rgba(94,146,255,0.65);background:rgba(12,18,38,0.85);}
-  .infra-cell.part-of-building{background:rgba(17,28,58,0.9);}
-  .infra-cell.root-building{box-shadow:0 0 0 2px rgba(96,165,250,0.7) inset;}
-  .infra-cell.completed{border-color:rgba(16,185,129,0.85);background:rgba(12,29,24,0.92);}
-  .infra-cell.core{border-style:solid;border-color:rgba(210,118,94,0.65);background:rgba(42,18,18,0.85);cursor:not-allowed;}
-  .infra-cell.core .infra-cell-status{color:#fca5a5;}
-  .infra-cell canvas{width:80px;height:80px;pointer-events:none;}
   .infra-progress-bar{position:absolute;top:8px;left:8px;right:8px;height:6px;border-radius:6px;background:rgba(47,68,128,0.45);overflow:hidden;}
   .infra-progress-fill{height:100%;width:0%;background:linear-gradient(90deg,#3b82f6,#60a5fa);transition:width 0.2s ease-out;}
-  .infra-cell-status{position:absolute;bottom:8px;left:8px;right:8px;font-size:12px;color:#cfe3ff;text-align:center;text-shadow:0 0 4px rgba(0,0,0,0.8);}
   .infra-info{background:rgba(8,12,24,0.6);border:1px solid #1f2c49;border-radius:12px;padding:12px 14px;min-height:120px;display:flex;flex-direction:column;gap:6px;}
   .infra-info h4{margin:0;font-size:16px;color:#8fb5ff;letter-spacing:0.04em;}
   .infra-info p{margin:0;font-size:14px;color:#cbd5ff;line-height:1.5;}
@@ -496,12 +482,9 @@
   </ul>
   <div class="infrastructure-body">
     <div class="infra-building-list" id="infra-building-list"></div>
-    <div class="infra-editor">
-      <div class="infra-grid" id="infra-grid"></div>
-      <div class="infra-info" id="infra-info">
-        <h4>Budowa stacji</h4>
-        <p>Przeciągnij budynki z listy po lewej na siatkę, aby rozpocząć ich konstrukcję.</p>
-      </div>
+    <div class="infra-info" id="infra-info">
+      <h4>Budowa stacji</h4>
+      <p>Przeciągnij budynki z listy na siatkę wokół stacji, aby rozpocząć ich konstrukcję.</p>
     </div>
   </div>
 </div>
@@ -6714,6 +6697,68 @@ function handleInfrastructureCellDrop(ev){
   renderInfrastructureOverlay();
 }
 
+function infrastructureCellFromWorld(worldPos, station, layout){
+  if(!worldPos || !station || !layout) return null;
+  const localX = worldPos.x - station.x;
+  const localY = worldPos.y - station.y;
+  const col = Math.floor((localX - layout.originOffset.x) / layout.step);
+  const row = Math.floor((localY - layout.originOffset.y) / layout.step);
+  if(col < 0 || row < 0 || col >= layout.cols || row >= layout.rows) return null;
+  return row * layout.cols + col;
+}
+
+function getInfrastructureDragContext(ev){
+  if(!stationUI.editorMode || stationUI.tab !== 'infrastructure') return null;
+  const station = stationUI.station || infrastructureBuilder.activeStationRef;
+  if(!station) return null;
+  const state = ensureInfrastructureState(station);
+  const layout = state?.layout || infrastructureBuilder.layout || getInfrastructureLayout(infrastructureBuilder.gridCols, infrastructureBuilder.gridRows);
+  const world = screenToWorld(ev.clientX ?? mouse.x, ev.clientY ?? mouse.y);
+  const idx = infrastructureCellFromWorld(world, station, layout);
+  if(idx == null) return null;
+  return { station, state, layout, idx };
+}
+
+function handleInfrastructureCanvasDragOver(ev){
+  if(!stationUI.editorMode || stationUI.tab !== 'infrastructure') return;
+  const id = infrastructureDragBuildingId(ev);
+  const ctx = getInfrastructureDragContext(ev);
+  if(!ctx){
+    infrastructureBuilder.hoveredCell = null;
+    return;
+  }
+  if(!id || !ctx.state) return;
+  const building = INFRA_BUILDING_MAP.get(id);
+  const placement = building ? validateInfrastructurePlacement(ctx.state, ctx.idx, building, infrastructureBuilder.ghostRotation) : null;
+  if(placement && placement.footprint){
+    ev.preventDefault();
+    if(ev.dataTransfer){
+      ev.dataTransfer.dropEffect = placement.valid ? 'copy' : 'none';
+    }
+    infrastructureBuilder.hoveredCell = ctx.idx;
+    infrastructureBuilder.needsRender = true;
+  }
+}
+
+function handleInfrastructureCanvasDrop(ev){
+  if(!stationUI.editorMode || stationUI.tab !== 'infrastructure') return;
+  const id = infrastructureDragBuildingId(ev);
+  if(!id) return;
+  const ctx = getInfrastructureDragContext(ev);
+  if(!ctx || !ctx.state) return;
+  const building = INFRA_BUILDING_MAP.get(id);
+  const placement = building ? validateInfrastructurePlacement(ctx.state, ctx.idx, building, infrastructureBuilder.ghostRotation) : null;
+  if(!placement || !placement.valid) return;
+  ev.preventDefault();
+  startInfrastructureBuildAtCell(ctx.state, ctx.idx, id, infrastructureBuilder.ghostRotation, placement.footprint);
+  infrastructureBuilder.hoveredCell = ctx.idx;
+  renderInfrastructureOverlay();
+}
+
+function handleInfrastructureCanvasDragLeave(){
+  infrastructureBuilder.hoveredCell = null;
+}
+
 function startInfrastructureBuildAtCell(state, idx, buildingId, rotation = 0, footprintOverride = null){
   const building = INFRA_BUILDING_MAP.get(buildingId);
   if(!state || !building) return false;
@@ -7058,7 +7103,7 @@ function renderInfrastructureInfo(state, uniqueRoots = new Set(), completedRoots
 
   if(infrastructureBuilder.selectedCell == null){
     const p = document.createElement('p');
-    p.textContent = 'Przeciągnij budynek na siatkę, aby rozpocząć budowę. Kliknij pole, aby zobaczyć szczegóły.';
+    p.textContent = 'Przeciągnij budynek z listy na siatkę wokół stacji, aby rozpocząć budowę.';
     info.appendChild(p);
     const summary = document.createElement('p');
     summary.textContent = `Ukończone budynki: ${completed}/${totalUsed}.`;
@@ -7161,21 +7206,11 @@ function renderInfrastructureInfo(state, uniqueRoots = new Set(), completedRoots
 }
 
 function renderInfrastructureOverlay(){
-  if(!infrastructureBuilder.gridCells.length){
-    infrastructureBuilder.needsRender = true;
-    return;
-  }
   const station = infrastructureBuilder.activeStationRef || stationUI.station;
   const state = station ? ensureInfrastructureState(station) : null;
   if(station && !infrastructureBuilder.activeStationRef){
     infrastructureBuilder.activeStationRef = station;
   }
-  const total = infrastructureBuilder.gridCols * infrastructureBuilder.gridRows;
-  if(state && state.cells.length < total){
-    const diff = total - state.cells.length;
-    state.cells = state.cells.concat(Array(diff).fill(null));
-  }
-
   const uniqueRoots = new Set();
   const completedRoots = new Set();
   if(state){
@@ -7185,50 +7220,6 @@ function renderInfrastructureOverlay(){
       uniqueRoots.add(rootIdx);
       if(cell.status === 'completed') completedRoots.add(rootIdx);
     });
-  }
-
-  for(let i=0;i<infrastructureBuilder.gridCells.length;i++){
-    const cellEl = infrastructureBuilder.gridCells[i];
-    const cellData = state ? state.cells[i] : null;
-    const rootIdx = state ? getRootCellIndex(state, i) : null;
-    const rootCell = state ? getRootCell(state, i) : null;
-    const isRoot = rootIdx != null && rootIdx === i && !!rootCell;
-    const building = rootCell ? INFRA_BUILDING_MAP.get(rootCell.buildingId) : null;
-    const meta = state ? state.cellMeta?.[i] : null;
-    const blocked = !!meta?.blocked;
-    const hasBuilding = !!rootCell;
-    const done = rootCell?.status === 'completed';
-    const progress = done ? 1 : clamp(rootCell?.progress ?? 0, 0, 1);
-    const canvas = cellEl.querySelector('canvas');
-    const progressFill = cellEl.querySelector('.infra-progress-fill');
-    const status = cellEl.querySelector('.infra-cell-status');
-    const selectedRoot = infrastructureBuilder.selectedCell;
-    cellEl.classList.toggle('selected', selectedRoot != null && selectedRoot === rootIdx);
-    cellEl.classList.toggle('core', blocked);
-    cellEl.classList.toggle('has-building', hasBuilding);
-    cellEl.classList.toggle('part-of-building', hasBuilding);
-    cellEl.classList.toggle('root-building', isRoot);
-    cellEl.classList.toggle('completed', done);
-    if(hasBuilding){
-      if(isRoot && canvas){
-        drawBuildingPreview(canvas, building);
-      } else if(canvas){
-        const ctx = canvas.getContext('2d');
-        if(ctx){ ctx.clearRect(0, 0, canvas.width, canvas.height); }
-      }
-      if(progressFill) progressFill.style.width = `${Math.round(progress * 100)}%`;
-      if(status) status.textContent = done ? 'Zakończono' : (isRoot ? `${Math.round(progress * 100)}%` : 'Część modułu');
-      cellEl.classList.remove('empty');
-    } else {
-      cellEl.classList.toggle('empty', !blocked);
-      if(canvas){
-        const ctx = canvas.getContext('2d');
-        if(ctx){ ctx.clearRect(0, 0, canvas.width, canvas.height); }
-      }
-      if(progressFill) progressFill.style.width = '0%';
-      if(status) status.textContent = blocked ? 'Rdzeń stacji' : 'Puste';
-      cellEl.classList.remove('completed', 'root-building', 'part-of-building', 'has-building');
-    }
   }
   infrastructureBuilder.needsRender = false;
   renderInfrastructureInfo(state || null, uniqueRoots, completedRoots);
@@ -8772,6 +8763,9 @@ canvas.addEventListener('mouseenter', e=>{
     camera.lastPointerY = e.clientY;
   }
 });
+canvas.addEventListener('dragover', handleInfrastructureCanvasDragOver);
+canvas.addEventListener('drop', handleInfrastructureCanvasDrop);
+canvas.addEventListener('dragleave', handleInfrastructureCanvasDragLeave);
 canvas.addEventListener('mouseleave', ()=>{
   mouse.overCanvas = false;
   mouse.left = false;
