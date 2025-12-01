@@ -3236,7 +3236,7 @@ const SUPPORT_SHIP_TEMPLATES = {
   },
   destroyer: {
     color: '#aac8ff',
-    stats: { hp: 3200, accel: 70, maxSpeed: 240, turn: 0.9, radius: 70, friction: 0.995 },
+    stats: { hp: 3200, accel: 70, maxSpeed: 240, turn: 0.9, radius: 60, friction: 0.995 },
     spawnOffset: { x: -160, y: 0 },
     configure(npc){
       npc.isCapitalShip = true;
@@ -3249,7 +3249,7 @@ const SUPPORT_SHIP_TEMPLATES = {
   },
   battleship: {
     color: '#c8d4ff',
-    stats: { hp: 5200, accel: 55, maxSpeed: 190, turn: 0.6, radius: 110, friction: 0.995 },
+    stats: { hp: 5200, accel: 55, maxSpeed: 190, turn: 0.6, radius: 90, friction: 0.995 },
     spawnOffset: { x: -190, y: 0 },
     configure(npc){
       npc.isCapitalShip = true;
@@ -12329,8 +12329,9 @@ function drawFrigateHull(ctx, npc, screenPos){
 }
 
 function drawDestroyer(ctx, npc, screenPos){
-  const w = (npc.size?.w || 86) * camera.zoom;
-  const h = (npc.size?.h || 26) * camera.zoom;
+  const zoomScale = camera.zoom;
+  const w = (npc.size?.w || 72) * zoomScale;
+  const h = (npc.size?.h || 22) * zoomScale;
   ctx.save();
   ctx.translate(screenPos.x, screenPos.y);
   ctx.rotate(npc.angle);
@@ -12355,8 +12356,9 @@ function drawDestroyer(ctx, npc, screenPos){
 }
 
 function drawBattleship(ctx, npc, screenPos){
-  const w = (npc.size?.w || 140) * camera.zoom;
-  const h = (npc.size?.h || 50) * camera.zoom;
+  const zoomScale = camera.zoom;
+  const w = (npc.size?.w || 120) * zoomScale;
+  const h = (npc.size?.h || 42) * zoomScale;
   ctx.save();
   ctx.translate(screenPos.x, screenPos.y);
   ctx.rotate(npc.angle);
