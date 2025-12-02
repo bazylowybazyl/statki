@@ -420,6 +420,7 @@
     <div id="support-ui" class="hidden">
       <h3>Wsparcie</h3>
       <div class="support-row">
+        <button class="support-btn" data-support-spawn="carrier_fighter">Carrier Fighter</button>
         <button class="support-btn" data-support-spawn="fighter">Fighter Squad</button>
         <button class="support-btn" data-support-spawn="frigate_pd">Frigate (PD)</button>
         <button class="support-btn" data-support-spawn="frigate_laser">Frigate (Laser)</button>
@@ -1019,36 +1020,6 @@ function renderFleetShip(entry){
   appendFleetBar(bars, 'Tarcza', entry.status?.shield ?? 0, entry.status?.shieldMax ?? 1, 'shield');
   li.appendChild(bars);
 
-  const fighters = document.createElement('div');
-  fighters.className = 'fleet-fighters';
-  const ready = Math.max(0, entry.fighters?.ready ?? 0);
-  const deployed = Math.max(0, entry.fighters?.deployed ?? 0);
-  const capacity = entry.fighters?.capacity ?? (ready + deployed);
-  const mode = (entry.fighterWing?.order || entry.fighterMode || 'idle');
-  const modeLabel = mode === 'engage' ? 'ATAK' : mode === 'guard' ? 'OSŁONA' : mode === 'return' ? 'POWRÓT' : mode.toUpperCase();
-  const deployedLabel = deployed > 0 ? ` · W polu: ${formatFleetNumber(deployed)}` : '';
-  fighters.textContent = `Myśliwce: ${formatFleetNumber(ready)}/${formatFleetNumber(capacity)} hangar${deployedLabel} · Tryb: ${modeLabel}`;
-  li.appendChild(fighters);
-
-  if (entry.fighterWing) {
-    const controls = document.createElement('div');
-    controls.className = 'fleet-controls';
-    const orders = [
-      { id: 'engage', label: 'Engage' },
-      { id: 'guard',  label: 'Guard' },
-      { id: 'return', label: 'Return' }
-    ];
-    for (const { id, label } of orders) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'fleet-order-btn' + (mode === id ? ' active' : '');
-      btn.textContent = label;
-      btn.addEventListener('click', () => commandCarrierFighters(entry, id));
-      controls.appendChild(btn);
-    }
-    li.appendChild(controls);
-  }
-
   const hardpoints = document.createElement('div');
   hardpoints.className = 'fleet-hardpoints';
   const hpLarge = document.createElement('span');
@@ -1059,50 +1030,6 @@ function renderFleetShip(entry){
   li.appendChild(hardpoints);
 
   return li;
-}
-
-function commandCarrierFighters(entry, order, opts = {}){
-  if (!entry) return;
-  ensureCarrierWing(entry);
-  const wing = entry.fighterWing;
-  if (!wing) return;
-
-  const normalized = (order === 'engage' || order === 'guard' || order === 'return') ? order : 'guard';
-  if (normalized === wing.order && !opts.force && !opts.auto) {
-    return;
-  }
-
-  if (opts.auto && normalized === 'return') {
-    if (!wing.autoReturnActive) {
-      wing.autoReturnActive = true;
-      wing.autoResumeOrder = wing.lastManualOrder || wing.order || 'guard';
-    }
-  } else {
-    wing.autoReturnActive = false;
-    wing.autoResumeOrder = null;
-    wing.lastManualOrder = normalized;
-  }
-
-  wing.order = normalized;
-  entry.fighterMode = normalized;
-
-  if (normalized === 'return') {
-    wing.launchPending = 0;
-    for (const fighter of wing.list){
-      if (fighter) fighter.orderOverride = 'return';
-    }
-  } else {
-    const ready = Math.max(0, entry.fighters?.ready ?? 0);
-    const batchSize = wing.launchBatch || ready;
-    const pending = Math.min(ready, batchSize);
-    wing.launchPending = pending;
-    wing.launchCooldown = 0;
-    for (const fighter of wing.list){
-      if (fighter) fighter.orderOverride = null;
-    }
-  }
-
-  if (!opts.silent) markFleetDirty();
 }
 
 function updateFleetUI(){
@@ -1144,6 +1071,9 @@ const SUPPORT_FORMATION = {
 };
 function supportGuardSlot(slotIndex){
   const data = SupportWing.units[slotIndex] || null;
+  const leader = (data?.leader && !data.leader.dead) ? data.leader : ship;
+  const leaderPos = leader?.pos || { x: leader?.x ?? ship.pos.x, y: leader?.y ?? ship.pos.y };
+  const leaderAng = leader?.angle ?? ship.angle;
   const type = data?.type || 'fighter';
   const lineOrder = SUPPORT_FORMATION.lineOrder || [];
   const lineIndex = lineOrder.includes(type) ? lineOrder.indexOf(type) : lineOrder.length;
@@ -1160,18 +1090,18 @@ function supportGuardSlot(slotIndex){
     const lateral = (squadIndex - (squadCount - 1) * 0.5) * lateralSpacing;
     const forward = (SUPPORT_FORMATION.lead + lineIndex * SUPPORT_FORMATION.lineGap);
     const leaderLocal = { x: forward, y: lateral };
-    const leaderRotated = rotate(leaderLocal, ship.angle - Math.PI / 2);
+    const leaderRotated = rotate(leaderLocal, leaderAng - Math.PI / 2);
 
     if (squadMateIndex === 0) {
-      return { x: ship.pos.x + leaderRotated.x, y: ship.pos.y + leaderRotated.y };
+      return { x: leaderPos.x + leaderRotated.x, y: leaderPos.y + leaderRotated.y };
     }
 
     const offsets = SUPPORT_FORMATION.fighterOffsets || [];
     const formationOffset = offsets[squadMateIndex - 1] || offsets[offsets.length - 1] || { x: -40, y: 0 };
-    const rotatedOffset = rotate(formationOffset, ship.angle);
+    const rotatedOffset = rotate(formationOffset, leaderAng);
     return {
-      x: ship.pos.x + leaderRotated.x + rotatedOffset.x,
-      y: ship.pos.y + leaderRotated.y + rotatedOffset.y
+      x: leaderPos.x + leaderRotated.x + rotatedOffset.x,
+      y: leaderPos.y + leaderRotated.y + rotatedOffset.y
     };
   }
 
@@ -1182,8 +1112,8 @@ function supportGuardSlot(slotIndex){
   const forward = SUPPORT_FORMATION.lead + lineIndex * SUPPORT_FORMATION.lineGap;
 
   const local = { x: forward, y: lateral };
-  const rotated = rotate(local, ship.angle - Math.PI / 2);
-  return { x: ship.pos.x + rotated.x, y: ship.pos.y + rotated.y };
+  const rotated = rotate(local, leaderAng - Math.PI / 2);
+  return { x: leaderPos.x + rotated.x, y: leaderPos.y + rotated.y };
 }
 
 function setSupportOrder(order, opts = {}){
@@ -1202,6 +1132,11 @@ function setSupportOrder(order, opts = {}){
 function cleanupSupportWing(){
   SupportWing.units = SupportWing.units.filter(data => data?.npc && !data.npc.dead);
   SupportWing.units.forEach((data, idx) => { data.slotIndex = idx; });
+}
+
+function getFriendlyCarrierEntity(){
+  const carrierEntry = Fleet?.ships?.find(s => s?.type === 'carrier' && s.entity && !s.entity.dead);
+  return carrierEntry?.entity || null;
 }
 
 function updateSupportWing(dt){
@@ -3281,9 +3216,14 @@ const SUPPORT_SHIP_TEMPLATES = {
   }
 };
 
-function spawnSupportShip(templateKey){
+function spawnSupportShip(templateKey, opts = {}){
   const template = SUPPORT_SHIP_TEMPLATES[templateKey];
   if (!template) return [];
+  const anchor = (opts.anchor && !opts.anchor.dead) ? opts.anchor : ship;
+  const anchorPos = anchor.pos || { x: anchor.x ?? ship.pos.x, y: anchor.y ?? ship.pos.y };
+  const anchorVel = anchor.vel || { x: anchor.vx ?? 0, y: anchor.vy ?? 0 };
+  const anchorAngle = anchor.angle ?? ship.angle;
+
   const created = [];
   const count = Math.max(1, template.count || 1);
   const spawnFormation = SUPPORT_FORMATION.spawn || { perRow: 4, rowGap: 70 };
@@ -3293,16 +3233,16 @@ function spawnSupportShip(templateKey){
       x: (template.spawnOffset?.x || -60) + jitter,
       y: (template.spawnOffset?.y || 0) + ((i % spawnFormation.perRow) - (spawnFormation.perRow - 1) * 0.5) * 8
     };
-    const rotated = rotate(offset, ship.angle);
-    const spawnPos = { x: ship.pos.x + rotated.x, y: ship.pos.y + rotated.y };
+    const rotated = rotate(offset, anchorAngle);
+    const spawnPos = { x: anchorPos.x + rotated.x, y: anchorPos.y + rotated.y };
     const npc = makeNPCBase(spawnPos, template.stats || {});
     npc.friendly = true;
     npc.mission = true;
     npc.color = template.color || '#7cff91';
     npc.type = templateKey;
-    npc.vx = ship.vel?.x ?? npc.vx;
-    npc.vy = ship.vel?.y ?? npc.vy;
-    npc.supportData = { npc, type: templateKey, slotIndex: SupportWing.units.length + created.length };
+    npc.vx = anchorVel.x ?? npc.vx;
+    npc.vy = anchorVel.y ?? npc.vy;
+    npc.supportData = { npc, type: templateKey, slotIndex: SupportWing.units.length + created.length, leader: anchor };
     template.configure?.(npc, i);
     npc.ai = dt => runSupportAI(npc, dt);
     SupportWing.units.push(npc.supportData);
@@ -3326,10 +3266,7 @@ const CAPITAL_SHIP_TEMPLATES = {
     turn: 0.9,
     radius: 150,
     hardpoints: { large: 2, medium: 2 },
-    fighters: 100,
     formationOffset: { x: -820, y: 380 },
-    fighterLaunchBatch: 100,
-    fighterLaunchInterval: 0.12,
     weaponRange: 2300,
     weapons: {
       mainCannons: [
@@ -3428,11 +3365,6 @@ function createCapitalShipEntry(templateKey, overrides = {}){
     roleText: overrides.roleText || template.roleText,
     entity: npc,
     hardpoints: { large: template.hardpoints.large, medium: template.hardpoints.medium },
-    fighters: {
-      capacity: template.fighters,
-      ready: template.fighters,
-      deployed: 0
-    },
     status: {
       hull: template.hull,
       hullMax: template.hull,
@@ -3442,23 +3374,13 @@ function createCapitalShipEntry(templateKey, overrides = {}){
     template
   };
 
-  entry.fighterWing = createCarrierWing(entry, template);
-  entry.fighterMode = entry.fighterWing.order;
-
   npc.fleetEntry = entry;
   npc.ai = dt => updateCapitalCarrier(entry, dt);
 
   return entry;
 }
 
-const CARRIER_DEFAULT_LAUNCH_BATCH = 12;
-const CARRIER_DEFAULT_LAUNCH_INTERVAL = 0.12;
 const CARRIER_DEFAULT_WEAPON_RANGE = 2200;
-const CARRIER_FIGHTER_RETURN_RADIUS = 120;
-const CARRIER_FIGHTER_SOFT_RETURN_RADIUS = 320;
-const CARRIER_FIGHTER_ATTACK_RANGE = 1400;
-const CARRIER_FIGHTER_REJOIN_TIME = 8;
-
 function createCarrierWeaponSystems(cfg){
   const systems = { mainCannons: [], dorsalBatteries: [] };
   if (cfg && Array.isArray(cfg.mainCannons)){
@@ -3496,208 +3418,24 @@ function createCarrierWeaponSystems(cfg){
   return systems;
 }
 
-function createCarrierWing(entry, template = {}){
-  const wing = {
-    entry,
-    order: 'guard',
-    list: [],
-    launchBatch: Math.max(1, Math.round(template.fighterLaunchBatch || CARRIER_DEFAULT_LAUNCH_BATCH)),
-    launchInterval: Math.max(0.05, template.fighterLaunchInterval || CARRIER_DEFAULT_LAUNCH_INTERVAL),
-    launchPending: 0,
-    launchCooldown: 0,
-    autoReturnActive: false,
-    autoResumeOrder: null,
-    lastManualOrder: 'guard',
-    targetRange: template.weaponRange || CARRIER_DEFAULT_WEAPON_RANGE,
-    nextFormIndex: 0,
-    primaryTarget: null
-  };
-  return wing;
-}
-
-function ensureCarrierWing(entry){
-  if (!entry) return null;
-  if (!entry.fighterWing){
-    entry.fighterWing = createCarrierWing(entry, entry.template || {});
-    entry.fighterMode = entry.fighterWing.order;
-  }
-  return entry.fighterWing;
-}
-
-// === NOWY SPAWNER DLA LOTNISKOWCA (FRIENDLY CARRIER) ===
-function spawnCarrierFighter(entry){
-  const wing = ensureCarrierWing(entry);
-  if (!wing || !entry || !entry.entity) return null;
-  if (!entry.fighters || entry.fighters.ready <= 0) return null;
-
-  const carrier = entry.entity;
-  
-  // 1. Pozycja startowa
-  const formIndex = wing.nextFormIndex % 8; 
-  wing.nextFormIndex = (wing.nextFormIndex + 1) % 8;
-  const spawnOff = rotate({x: -20, y: 0}, carrier.angle);
-  const spawnPos = { x: carrier.x + spawnOff.x, y: carrier.y + spawnOff.y };
-
-  // 2. Fizyka (Parametry z AI SPACE - szybkie i zwrotne)
-  const f = makeNPCBase(spawnPos, {
-    hp: 120, accel: 280, maxSpeed: 540, turn: 5.5, radius: 12
-  });
-
-  // 3. Konfiguracja Bojowa
-  f.friendly = true;
-  f.mission = true; 
-  f.fighter = true;
-  f.color = '#7cff91'; // Zielony sojusznik
-  f.vx = carrier.vx;
-  f.vy = carrier.vy;
-  
-  // Nowa broń (Laser + Rakiety)
-  f.gun = 'laserS'; 
-  f.msl = 'AF'; f.mslAmmo = 2;
-  f.gunCD = 0; f.mslCD = 0;
-  
-  // 4. Formacja (Względem GRACZA - leader: ship)
-  const row = Math.floor((formIndex + 1) / 2);
-  const side = (formIndex % 2 === 0) ? 1 : -1;
-  f.formationOffset = { x: -row * 50 - 100, y: side * row * 40 };
-  
-  f.squad = { leader: carrier, type: 'fighter' }; 
-
-  // 5. MÓZG (Adapter AI)
-  f.carrierWing = wing;
-  f.carrierEntry = entry;
-  f.ai = (dt) => runCarrierFighterAdapter(f, dt);
-  
-  // Liczniki
-  f.id = `carrier_fighter_${Math.random().toString(36).slice(2, 8)}`;
-  entry.fighters.ready = Math.max(0, entry.fighters.ready - 1);
-  entry.fighters.deployed = Math.min(entry.fighters.capacity, (entry.fighters.deployed || 0) + 1);
-  wing.list.push(f);
-  markFleetDirty();
-
-  npcs.push(f);
-  return f;
-}
-
-// --- ADAPTER INTELIGENCJI CARRIERA ---
-function runCarrierFighterAdapter(npc, dt) {
-  const wing = npc.carrierWing;
-  if (!wing) { npc.dead = true; return; }
-
-  // A. DOKOWANIE (RETURN)
-  if (wing.order === 'return' || npc.orderOverride === 'return') {
-     const carrier = wing.entry.entity;
-     if(!carrier || carrier.dead) { npc.dead = true; return; }
-
-     const dx = carrier.x - npc.x, dy = carrier.y - npc.y;
-     const dist = Math.hypot(dx, dy);
-     const dir = norm({x:dx, y:dy});
-     
-     const turned = clampTurnVec(npc.vx, npc.vy, dir.x*npc.maxSpeed, dir.y*npc.maxSpeed, dt, 220);
-     npc.vx = turned.vx; npc.vy = turned.vy;
-     npc.angle = Math.atan2(npc.vy, npc.vx);
-
-     if(dist < 80) {
-        npc.dead = true; 
-        npc._counted = false; 
-        npc.recalled = true; 
-     }
-     return; 
-  }
-
-  // B. GUARD - ZASIĘG GLOBALNY NA STREFĘ PIRACKĄ
-  if (wing.order === 'guard') {
-     // Szukamy celu w promieniu 20,000j (pokrywa całą strefę misji)
-     const target = window.aiPickBestTarget ? window.aiPickBestTarget(npc, 20000) : null;
-     const dist = target ? Math.hypot(target.x - npc.x, target.y - npc.y) : Infinity;
-     
-     // Wraca do szyku dopiero, gdy wróg jest poza strefą (25,000j)
-     if (dist > 25000) {
-        npc.state = 'guard';
-     }
-  }
-
-  // C. URUCHOM NOWE AI
-  if (window.runAdvancedFighterAI) {
-     window.runAdvancedFighterAI(npc, dt);
-  }
-  
-  // D. EFEKTY
-  if (window.spawnCarrierFighterEngines) {
-     window.spawnCarrierFighterEngines(npc);
-  }
-}
-
-function spawnCarrierFighterEngines(fighter){
-  const ang = Math.atan2(fighter.vy, fighter.vx);
-  for (const e of fighter.engines){
-    const eo = rotate(e, ang + Math.PI);
-    spawnParticle(
-      { x: fighter.x + eo.x, y: fighter.y + eo.y },
-      { x: fighter.vx - Math.cos(ang) * 60, y: fighter.vy - Math.sin(ang) * 60 },
-      0.08,
-      '#cfe7ff',
-      0.7
-    );
-  }
-}
-
-function updateCarrierWing(entry, dt){
-  const wing = ensureCarrierWing(entry);
-  if (!wing) return;
-  wing.launchCooldown = Math.max(0, (wing.launchCooldown || 0) - dt);
-
-  if (wing.launchPending > 0 && wing.launchCooldown <= 0 && entry.fighters.ready > 0){
-    spawnCarrierFighter(entry);
-    wing.launchPending = Math.max(0, wing.launchPending - 1);
-    wing.launchCooldown = wing.launchInterval;
-  }
-
-  if (wing.order !== 'return' && wing.launchPending <= 0 && entry.fighters){
-    const capacity = entry.fighters.capacity || 0;
-    const deployed = entry.fighters.deployed || 0;
-    if (deployed < capacity && entry.fighters.ready > 0){
-      const pending = Math.min(entry.fighters.ready, wing.launchBatch || entry.fighters.ready);
-      if (pending > 0){
-        wing.launchPending = pending;
-        wing.launchCooldown = 0;
-      }
-    }
-  }
-
-  if (wing.primaryTarget && wing.primaryTarget.dead){
-    wing.primaryTarget = null;
-  }
-
-  if (entry.fighters){
-    entry.fighters.ready = clamp(entry.fighters.ready, 0, entry.fighters.capacity ?? entry.fighters.ready);
-    entry.fighters.deployed = clamp(entry.fighters.deployed, 0, entry.fighters.capacity ?? entry.fighters.deployed);
-  }
-}
-
 function selectCarrierTarget(entry){
-  const wing = ensureCarrierWing(entry);
-  if (!wing || wing.order === 'return') return null;
+  if (!entry || !entry.entity) return null;
   const carrier = entry.entity;
-  const range = wing.targetRange || CARRIER_DEFAULT_WEAPON_RANGE;
+  const range = entry.template?.weaponRange || CARRIER_DEFAULT_WEAPON_RANGE;
 
-  if (wing.primaryTarget && isHostileNpc(wing.primaryTarget)){
-    const dist = Math.hypot(wing.primaryTarget.x - carrier.x, wing.primaryTarget.y - carrier.y);
+  const primary = entry.primaryTarget;
+  if (primary && isHostileNpc(primary)){
+    const dist = Math.hypot(primary.x - carrier.x, primary.y - carrier.y);
     if (dist <= range * 1.15){
-      return wing.primaryTarget;
+      return primary;
     }
-  } else if (wing.primaryTarget && !isHostileNpc(wing.primaryTarget)) {
-    wing.primaryTarget = null;
+  }
+  if (primary && !isHostileNpc(primary)) {
+    entry.primaryTarget = null;
   }
 
-  let anchorX, anchorY;
-  if (wing.order === 'guard'){
-    anchorX = ship.pos.x;
-    anchorY = ship.pos.y;
-  } else {
-    anchorX = carrier.x;
-    anchorY = carrier.y;
-  }
+  const anchorX = carrier.x;
+  const anchorY = carrier.y;
 
   const focusCandidates = [];
   for (const target of lockedTargets){
@@ -3720,7 +3458,7 @@ function selectCarrierTarget(entry){
   }
 
   if (focus && focusDist <= range * 1.2){
-    wing.primaryTarget = focus;
+    entry.primaryTarget = focus;
     return focus;
   }
 
@@ -3733,7 +3471,7 @@ function selectCarrierTarget(entry){
       bestDist = dist;
     }
   }
-  wing.primaryTarget = best;
+  entry.primaryTarget = best;
   return best;
 }
 
@@ -3857,33 +3595,6 @@ function spawnCarrierEngineFx(entry){
   }
 }
 
-function cleanupCarrierFighters(){
-  if (!Fleet || !Array.isArray(Fleet.ships)) return;
-  for (const entry of Fleet.ships){
-    const wing = entry?.fighterWing;
-    if (!wing || !Array.isArray(wing.list)) continue;
-    for (let i = wing.list.length - 1; i >= 0; i--){
-      const fighter = wing.list[i];
-      if (!fighter){
-        wing.list.splice(i, 1);
-        continue;
-      }
-      if (!fighter.dead) continue;
-      if (!fighter._counted){
-        entry.fighters.deployed = Math.max(0, (entry.fighters.deployed || 0) - 1);
-        if (fighter.recalled){
-          entry.fighters.ready = Math.min(entry.fighters.capacity, (entry.fighters.ready || 0) + 1);
-        }
-        fighter._counted = true;
-        markFleetDirty();
-      }
-      wing.list.splice(i, 1);
-      const idx = npcs.indexOf(fighter);
-      if (idx !== -1) npcs.splice(idx, 1);
-    }
-  }
-}
-
 function ensureCarrierWarpDrive(entry){
   if (!entry) return null;
   if (!entry.warpDrive){
@@ -3910,7 +3621,6 @@ function updateCapitalCarrier(entry, dt){
   const npc = entry?.entity;
   if (!npc || npc.dead) return;
 
-  const wing = ensureCarrierWing(entry);
   const formation = entry.template?.formationOffset || npc.fleetFormationOffset || { x: -800, y: 360 };
   const rotated = rotate(formation, ship.angle);
   const target = { x: ship.pos.x + rotated.x, y: ship.pos.y + rotated.y };
@@ -4032,21 +3742,6 @@ function updateCapitalCarrier(entry, dt){
   }
   npc.desiredAngle = npc.angle;
 
-  if (wing){
-    if (warp.state === 'charging' || warp.state === 'active'){
-      commandCarrierFighters(entry, 'return', { auto: true });
-    } else if (wing.autoReturnActive && wing.order === 'return' && wing.list.length === 0 && (entry.fighters.deployed || 0) === 0){
-      const resume = wing.autoResumeOrder && wing.autoResumeOrder !== 'return' ? wing.autoResumeOrder : (wing.lastManualOrder || 'guard');
-      wing.autoReturnActive = false;
-      wing.autoResumeOrder = null;
-      if (resume && resume !== 'return'){
-        commandCarrierFighters(entry, resume, { force: true, silent: true });
-        markFleetDirty();
-      }
-    }
-  }
-
-  updateCarrierWing(entry, dt);
   const attackTarget = selectCarrierTarget(entry);
   if (attackTarget){
     const desiredAngle = Math.atan2(attackTarget.y - npc.y, attackTarget.x - npc.x);
@@ -4056,7 +3751,7 @@ function updateCapitalCarrier(entry, dt){
     npc.desiredAngle = npc.angle;
   }
 
-  updateCarrierWeapons(entry, dt, wing?.order || 'guard', attackTarget);
+  updateCarrierWeapons(entry, dt, 'guard', attackTarget);
   spawnCarrierEngineFx(entry);
 
   const shield = npc.shield;
@@ -11640,7 +11335,6 @@ function physicsStep(dt){
   SQUADS.forEach(s => s.update());
   updateSupportWing(dt);
   npcStep(dt);
-  cleanupCarrierFighters();
   pirateMissionStep(dt);
   ciwsStep(dt);
   bulletsAndCollisionsStep(dt);
@@ -14388,7 +14082,13 @@ if (supportSpawnButtons && supportSpawnButtons.forEach) {
   supportSpawnButtons.forEach(btn => {
     btn.addEventListener('click', () => {
       const key = btn.dataset.supportSpawn;
-      spawnSupportShip(key);
+      if (key === 'carrier_fighter'){
+        const carrier = getFriendlyCarrierEntity();
+        if (!carrier) return;
+        spawnSupportShip('fighter', { anchor: carrier });
+      } else {
+        spawnSupportShip(key);
+      }
       setSupportOrder('guard', { force: true });
     });
   });
