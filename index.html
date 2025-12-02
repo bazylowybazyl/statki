@@ -4481,13 +4481,24 @@ window.spawnBulletAdapter = function(owner, target, weaponDef, opts = {}) {
   const baseAngle = opts.angleOverride ?? owner.angle ?? 0;
   const bulletSpeed = weaponDef.speed || 500;
   const bulletLife = weaponDef.life ?? ((weaponDef.range || 800) / bulletSpeed);
-  const vfxKey = resolveBulletVfxKey(opts.vfxKey || weaponDef.id || weaponDef.name, opts.type || weaponDef.type);
+  
+  // --- FIX VISUALS ---
+  let bType = 'default'; // Domyślnie zwykły pocisk (żółty/biały), nie zielona plazma
+  let size = 3;
+  const name = (weaponDef.name || '').toLowerCase();
 
-  // 1. Obliczamy pozycję i kąt
-  // Jeśli jest target, używamy leadAim (przewidywanie), jeśli nie - strzelamy przed siebie
+  // Wykrywanie typu
+  if (name.includes('rail') || name.includes('beam')) { bType = 'rail'; size = 4; }
+  else if (name.includes('flak') || name.includes('armata')) { bType = 'armata'; size = 5; }
+  else if (name.includes('auto') || name.includes('gatling')) { bType = 'autocannon'; size = 2; }
+  else if (name.includes('pulse') || name.includes('plasma')) { bType = 'plasma'; size = 3; } // Tylko to będzie zielone
+  else if (name.includes('laser')) { bType = 'default'; size = 2.5; } // Lasery są "default" (iskry)
+
+  if (opts.type) bType = opts.type; // Override
+
+  // 1. Celowanie z wyprzedzeniem
   let aimPoint;
-  const targetPos = target ? (target.pos ? { x: target.pos.x, y: target.pos.y } : { x: target.x, y: target.y }) : null;
-    if (target) {
+  if (target) {
      aimPoint = getLeadAim(origin, target, bulletSpeed);
   } else {
      const angle = baseAngle;
@@ -4498,26 +4509,27 @@ window.spawnBulletAdapter = function(owner, target, weaponDef, opts = {}) {
   }
 
   const adjustedAng = Math.atan2(aimPoint.y - origin.y, aimPoint.x - origin.x);
-
-  // 2. Rozrzut (Spread)
   const spreadRad = (weaponDef.spread || 0) * (Math.PI / 180);
   const finalAngle = adjustedAng + (Math.random() - 0.5) * spreadRad;
 
-  // 3a. Instant beam (AI Space heavy beams)
-  if (weaponDef.isBeam) {
-    const beamRange = weaponDef.range || 0;
-    const desiredEnd = targetPos || {
-      x: origin.x + Math.cos(finalAngle) * beamRange,
-      y: origin.y + Math.sin(finalAngle) * beamRange
-    };
-    const dx = desiredEnd.x - origin.x;
-    const dy = desiredEnd.y - origin.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    const maxDist = beamRange > 0 ? Math.min(dist, beamRange) : dist;
-    const endPoint = {
-      x: origin.x + (dx / dist) * maxDist,
-      y: origin.y + (dy / dist) * maxDist
-    };
+  // 2. Dodanie pocisku
+  window.bullets.push({
+    x: origin.x,
+    y: origin.y,
+    vx: Math.cos(finalAngle) * bulletSpeed + originVel.x * 0.2,
+    vy: Math.sin(finalAngle) * bulletSpeed + originVel.y * 0.2,
+    life: bulletLife,
+    r: size,
+    owner: owner.friendly ? 'player' : 'npc',
+    damage: weaponDef.dmg || 10,
+    type: bType, // Tutaj trafi poprawiony typ
+    color: weaponDef.color || '#fff',
+    source: owner,
+    // Flak/Armata ma splash dmg
+    explodeRadius: (bType === 'armata' || name.includes('flak')) ? (weaponDef.radius || 50) : 0,
+    penetration: (bType === 'rail') ? 2 : 0
+  });
+};
 
     spawnLaserBeam({ x: origin.x, y: origin.y }, endPoint, opts.beamWidth || 8, {
       life: weaponDef.beamLife || 0.08,
@@ -5112,43 +5124,56 @@ window.runAdvancedFighterAI = runAdvancedFighterAI;
 
 // Helper strzelania dla myśliwców
 function tryFireFighter(npc, target, dt) {
-  if(!target) return;
-  const gunDef = AISPACE_GUNS[npc.gun] || AISPACE_GUNS.laserS;
+  if(!target || target.dead) return;
   
-  // Kąt
-  const angleToTarget = Math.atan2(target.y - npc.y, target.x - npc.x);
-  const myAngle = Math.atan2(npc.vy, npc.vx); // Myśliwce strzelają w kierunku lotu (drift)
-  const diff = Math.abs(wrapAngle(angleToTarget - myAngle));
-  const dist = Math.hypot(target.x - npc.x, target.y - npc.y);
+  const gunDef = AISPACE_GUNS[npc.gun] || AISPACE_GUNS.laserS;
+  const tx = target.pos ? target.pos.x : target.x;
+  const ty = target.pos ? target.pos.y : target.y;
+  const dx = tx - npc.x;
+  const dy = ty - npc.y;
+  const dist = Math.hypot(dx, dy);
 
-  // Strzał z działa
-  if (dist < gunDef.range && diff < 0.3 && npc.gunCD <= 0) {
+  // Czy statek patrzy na cel?
+  const angleToTarget = Math.atan2(dy, dx);
+  const myAngle = Math.atan2(npc.vy, npc.vx); // Fighter patrzy tam gdzie leci
+  const diff = Math.abs(wrapAngle(angleToTarget - myAngle));
+
+  // 1. Strzał z działa (Laser)
+  if (dist < (gunDef.range || 400) && diff < 0.5 && npc.gunCD <= 0) {
      window.spawnBulletAdapter(npc, target, gunDef);
      npc.gunCD = 1.0 / (gunDef.rps || 5);
   }
   
-  // Strzał rakietą (rzadziej)
-  if (npc.mslAmmo > 0 && npc.mslCD <= 0 && dist < 1000 && diff < 0.5) {
-      const mslDef = AISPACE_MISSILES[npc.msl || 'AF'];
-      const dir = norm({ x: target.x - npc.x, y: target.y - npc.y });
-      const speed = mslDef.speed || 300;
-      // Rakieta startuje z prędkością statku
-      window.bullets.push({
-        x: npc.x, y: npc.y,
-        vx: dir.x * speed + npc.vx,
-        vy: dir.y * speed + npc.vy,
-        life: mslDef.life || 4, r: 4,
-        owner: npc.friendly ? 'player' : 'npc',
-        damage: mslDef.dmg || 40,
-        type: 'rocket',
-        target: target,
-        color: mslDef.color,
-        turnRate: (mslDef.turn || SIDE_ROCKET_TURN_RATE) * Math.PI / 180,
-        homingDelay: 0.2,
-        explodeRadius: 40
-      });
-      npc.mslAmmo--;
-      npc.mslCD = 4.0;
+  // 2. Strzał rakietą (Ograniczony amunicją)
+  if (npc.mslAmmo > 0 && npc.mslCD <= 0 && dist < 1200 && diff < 0.6) {
+      // Szansa na strzał 10% na klatkę, żeby nie wystrzelili wszystkiego w 0.1 sekundy
+      if (Math.random() < 0.1) {
+          const mslDef = AISPACE_MISSILES[npc.msl || 'AF'];
+          const dir = norm({ x: dx, y: dy });
+          const speed = mslDef.speed || 300;
+          
+          window.bullets.push({
+            x: npc.x, y: npc.y,
+            vx: dir.x * speed + npc.vx * 0.5,
+            vy: dir.y * speed + npc.vy * 0.5,
+            life: mslDef.life || 4,
+            r: 4,
+            owner: npc.friendly ? 'player' : 'npc',
+            damage: mslDef.dmg || 40,
+            type: 'rocket',
+            target: target,
+            color: mslDef.color || '#ffaa00',
+            turnRate: (mslDef.turn || 6) * Math.PI / 180,
+            homingDelay: 0.2,
+            explodeRadius: 40
+          });
+          
+          npc.mslAmmo--; // Odejmij amunicję
+          npc.mslCD = 5.0; // Długi cooldown (5 sekund)
+          
+          // Efekt dymu przy wystrzale
+          spawnParticle({x:npc.x, y:npc.y}, {x:0,y:0}, 0.5, '#ffffff', 5, true);
+      }
   }
 }
 function initNPCs() {
@@ -10648,12 +10673,20 @@ function bulletsAndCollisionsStep(dt){
       if(b.owner === 'player' && hitNPC.mission && hitNPC.isPirate){
         triggerMercAggro('pirate_hit');
       }
-      const hitFx = b.hitFx;
+      
+      // --- FIX: OBSŁUGA RÓŻNYCH TYPÓW TRAFIEŃ ---
+      
       if(b.type === 'plasma' || b.type === 'rocket'){
+        // Zielona plazma LUB Rakieta -> Wybuch obszarowy
         const ex = b.x, ey = b.y;
-        spawnExplosionPlasma(ex, ey, 1.0);
+        spawnExplosionPlasma(ex, ey, b.type==='rocket' ? 1.5 : 1.0); // Rakiety większe
+        
+        // Splash damage
         for(const npc of npcs){
           if(npc.dead || (b.owner==='player' && npc.friendly)) continue;
+          // Friendly fire check dla NPC
+          if(b.owner==='npc' && !npc.friendly) continue;
+
           const d2 = Math.hypot(npc.x - ex, npc.y - ey);
           if(d2 <= b.explodeRadius + npc.radius){
             const falloff = 1 - (d2 / (b.explodeRadius + npc.radius));
@@ -10662,56 +10695,31 @@ function bulletsAndCollisionsStep(dt){
         }
         bullets.splice(i,1);
         continue;
-      } else if(b.type === 'armata'){
-        applyDamageToNPC(hitNPC, b.damage, 'armata');
-        if(hitFx){ hitFx(b.x, b.y, b.effectScale || 1.0, b); }
-        else { spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0); }
-        const radius = b.explodeRadius ?? ARMATA_SPLASH_RADIUS;
-        if(radius > 0){
-          for (const npc of npcs){
-            if (npc === hitNPC || npc.dead) continue;
-            if (b.owner === 'player' && npc.friendly) continue;
-            const d2 = Math.hypot(npc.x - b.x, npc.y - b.y);
-            if (d2 <= radius + npc.radius){
-              const falloff = 1 - Math.min(1, d2 / (radius + npc.radius));
-              const scaled = Math.max(ARMATA_SPLASH_FALLOFF_MIN, falloff);
-              const splashDmg = Math.round(b.damage * 0.6 * scaled);
-              if (splashDmg > 0){
-                applyDamageToNPC(npc, splashDmg, 'armata');
-              }
-            }
-          }
-        }
-        bullets.splice(i,1);
-        continue;
-      } else if(b.type === 'rail'){
+      } 
+      else if(b.type === 'rail'){
         applyDamageToNPC(hitNPC, b.damage, 'rail');
-        if(hitFx){ hitFx(b.x, b.y, b.effectScale || 1.0, b); }
-        else { spawnRailHitEffect(b.x, b.y, 1.0); }
-        b.penetration = (b.penetration !== undefined) ? b.penetration - 1 : (RAIL_PEN - 1);
+        spawnRailHitEffect(b.x, b.y, 1.0);
+        b.penetration = (b.penetration !== undefined) ? b.penetration - 1 : 1;
         if(b.penetration <= 0){ bullets.splice(i,1); }
         continue;
-      } else if(b.type === 'autocannon'){
-        applyDamageToNPC(hitNPC, b.damage, 'autocannon');
-        if(hitFx){ hitFx(b.x, b.y, b.effectScale || 1.0, b); }
-        else { spawnAutocannonHitEffect(b.x, b.y, b.effectScale || 1.0); }
-        if(b.penetration != null){
-          b.penetration -= 1;
-          if(b.penetration <= 0){ bullets.splice(i,1); }
-        } else {
-          bullets.splice(i,1);
-        }
-        continue;
-      } else if(b.type === 'siege'){
-        applyDamageToNPC(hitNPC, b.damage, 'siege');
-        if(hitFx){ hitFx(b.x, b.y, b.effectScale || 1.0, b); }
-        else { spawnSiegeHitEffect(b.x, b.y, b.effectScale || 1.0); }
+      } 
+      else if(b.type === 'armata'){
+        applyDamageToNPC(hitNPC, b.damage, 'armata');
+        spawnArmataHitEffect(b.x, b.y, 1.0);
         bullets.splice(i,1);
         continue;
-      } else {
+      }
+      else if(b.type === 'autocannon'){
+        applyDamageToNPC(hitNPC, b.damage, 'autocannon');
+        spawnAutocannonHitEffect(b.x, b.y, 1.0);
+        bullets.splice(i,1);
+        continue;
+      }
+      else {
+        // --- DEFAULT / LASER ---
+        // Zwykłe iskry (nie zielone!)
         applyDamageToNPC(hitNPC, b.damage, 'default');
-        if(hitFx){ hitFx(b.x, b.y, b.effectScale || 1.0, b); }
-        else { spawnDefaultHit(b.x, b.y, 1.0); }
+        spawnDefaultHit(b.x, b.y, 1.0);
         bullets.splice(i,1);
         continue;
       }
