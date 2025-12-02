@@ -4481,22 +4481,9 @@ window.spawnBulletAdapter = function(owner, target, weaponDef, opts = {}) {
   const baseAngle = opts.angleOverride ?? owner.angle ?? 0;
   const bulletSpeed = weaponDef.speed || 500;
   const bulletLife = weaponDef.life ?? ((weaponDef.range || 800) / bulletSpeed);
-  
-  // --- FIX VISUALS ---
-  let bType = 'default'; // Domyślnie zwykły pocisk (żółty/biały), nie zielona plazma
-  let size = 3;
-  const name = (weaponDef.name || '').toLowerCase();
+  const vfxKey = resolveBulletVfxKey(opts.vfxKey || weaponDef.id || weaponDef.name, opts.type || weaponDef.type);
 
-  // Wykrywanie typu
-  if (name.includes('rail') || name.includes('beam')) { bType = 'rail'; size = 4; }
-  else if (name.includes('flak') || name.includes('armata')) { bType = 'armata'; size = 5; }
-  else if (name.includes('auto') || name.includes('gatling')) { bType = 'autocannon'; size = 2; }
-  else if (name.includes('pulse') || name.includes('plasma')) { bType = 'plasma'; size = 3; } // Tylko to będzie zielone
-  else if (name.includes('laser')) { bType = 'default'; size = 2.5; } // Lasery są "default" (iskry)
-
-  if (opts.type) bType = opts.type; // Override
-
-  // 1. Celowanie z wyprzedzeniem
+  // 1. Celowanie
   let aimPoint;
   if (target) {
      aimPoint = getLeadAim(origin, target, bulletSpeed);
@@ -4512,7 +4499,55 @@ window.spawnBulletAdapter = function(owner, target, weaponDef, opts = {}) {
   const spreadRad = (weaponDef.spread || 0) * (Math.PI / 180);
   const finalAngle = adjustedAng + (Math.random() - 0.5) * spreadRad;
 
-  // 2. Dodanie pocisku
+  // 2. OBSŁUGA LASERÓW (BEAM) - Przywrócona i naprawiona
+  if (weaponDef.isBeam || opts.type === 'beam') {
+    const beamRange = weaponDef.range || 800;
+    // Punkt końcowy promienia
+    const endX = origin.x + Math.cos(finalAngle) * beamRange;
+    const endY = origin.y + Math.sin(finalAngle) * beamRange;
+    const endPoint = { x: endX, y: endY };
+
+    // Rysowanie promienia
+    spawnLaserBeam({ x: origin.x, y: origin.y }, endPoint, opts.beamWidth || 8, {
+      life: weaponDef.beamLife || 0.12,
+      colorOuter: weaponDef.color || '#ff0000',
+      colorInner: '#ffffff',
+      glowColor: weaponDef.color,
+      glowBlur: 20
+    });
+
+    // Natychmiastowe obrażenia (Hitscan)
+    if (target) {
+       // Sprawdź czy cel jest w linii strzału (prosta kolizja)
+       // Dla uproszczenia zakładamy trafienie jeśli celowany był target
+       const dist = Math.hypot(target.x - origin.x, target.y - origin.y);
+       if (dist <= beamRange) {
+          const dmg = weaponDef.dmg || 10;
+          if (target === window.ship) applyDamageToPlayer(dmg);
+          else if (target.isStation) applyDamageToStation(target, dmg);
+          else if (target.isPlatform) applyDamageToPlatform(target, dmg);
+          else applyDamageToNPC(target, dmg, 'beam');
+          
+          // Efekt trafienia
+          spawnWeaponImpactFromPreset('beam', weaponDef.color, 1.0, target.x, target.y);
+       }
+    }
+    return; // Laser to hitscan, nie dodajemy pocisku fizycznego
+  }
+
+  // 3. OBSŁUGA POCISKÓW (FIXED VISUALS)
+  let bType = 'default'; // Domyślnie iskry
+  let size = 3;
+  const name = (weaponDef.name || '').toLowerCase();
+
+  if (name.includes('rail') || name.includes('beam')) { bType = 'rail'; size = 4; }
+  else if (name.includes('flak') || name.includes('armata')) { bType = 'armata'; size = 5; }
+  else if (name.includes('auto') || name.includes('gatling')) { bType = 'autocannon'; size = 2; }
+  else if (name.includes('pulse') || name.includes('plasma')) { bType = 'plasma'; size = 3; }
+  else if (name.includes('laser')) { bType = 'default'; size = 2.5; }
+
+  if (opts.type) bType = opts.type;
+
   window.bullets.push({
     x: origin.x,
     y: origin.y,
@@ -4522,83 +4557,14 @@ window.spawnBulletAdapter = function(owner, target, weaponDef, opts = {}) {
     r: size,
     owner: owner.friendly ? 'player' : 'npc',
     damage: weaponDef.dmg || 10,
-    type: bType, // Tutaj trafi poprawiony typ
-    color: weaponDef.color || '#fff',
-    source: owner,
-    // Flak/Armata ma splash dmg
-    explodeRadius: (bType === 'armata' || name.includes('flak')) ? (weaponDef.radius || 50) : 0,
-    penetration: (bType === 'rail') ? 2 : 0
-  });
-};
-
-    spawnLaserBeam({ x: origin.x, y: origin.y }, endPoint, opts.beamWidth || 8, {
-      life: weaponDef.beamLife || 0.08,
-      colorOuter: weaponDef.color,
-      colorInner: '#ffffff',
-      glowColor: weaponDef.color,
-      glowBlur: 28,
-      outerWidthMul: 1.3,
-      innerWidthMul: 0.6
-    });
-
-    if (target) {
-      const dmg = weaponDef.dmg || 0;
-      if (target === ship || target.isPlayer) {
-        applyDamageToPlayer(dmg);
-      } else if (target.isStation) {
-        applyDamageToStation(target, dmg);
-      } else if (target.isPlatform) {
-        applyDamageToPlatform(target, dmg);
-      } else {
-        applyDamageToNPC(target, dmg, 'beam');
-      }
-      spawnWeaponImpactFromPreset(vfxKey || 'laser', weaponDef.color, 1.0, endPoint.x, endPoint.y);
-    }
-    return;
-  }
-
-  // 3. Wygląd pocisku (Typ)
-  let bType = 'plasma';
-  let size = 3;
-  
-  // Wykrywanie typu po nazwie lub właściwościach
-  const name = (weaponDef.name || '').toLowerCase();
-  if (name.includes('rail') || name.includes('beam')) { bType = 'rail'; size = 4; }
-  if (name.includes('flak') || name.includes('armata')) { bType = 'armata'; size = 5; }
-  if (name.includes('auto') || name.includes('gatling')) { bType = 'autocannon'; size = 2; }
-  if (opts.type) bType = opts.type; // Override
-
-  // 4. Dodanie pocisku do gry
-  window.bullets.push({
-    x: origin.x,
-    y: origin.y,
-    // Dziedziczenie pędu statku (20%) dla realizmu
-    vx: Math.cos(finalAngle) * bulletSpeed + originVel.x * 0.2,
-    vy: Math.sin(finalAngle) * bulletSpeed + originVel.y * 0.2,
-
-    life: bulletLife,
-    r: size,
-    owner: owner.friendly ? 'player' : 'npc', // Ważne dla kolizji!
-    damage: weaponDef.dmg || 10,
     type: bType,
     color: weaponDef.color || '#fff',
     source: owner,
-    vfxKey,
-    vfxColor: weaponDef.color,
-    hitFx: (x, y, scale) => spawnWeaponImpactFromPreset(vfxKey || bType, weaponDef.color, scale, x, y),
-
-    // Specyficzne dla Flak/Armata
     explodeRadius: (bType === 'armata' || name.includes('flak')) ? (weaponDef.radius || 50) : 0,
-    
-    // Specyficzne dla Rail (przebicie)
     penetration: (bType === 'rail') ? 2 : 0
   });
-  
-  // Opcjonalnie: odrzut lub efekt wizualny wystrzału (muzzle flash)
-  // spawnParticle({x: owner.x, y: owner.y}, {x:0,y:0}, 0.1, weaponDef.color, size*2, true);
 };
-
-// Funkcja pomocnicza do znajdowania celu (Używana przez AI dużych statków)
+  
 window.aiPickBestTarget = function(self, weaponRange) {
   let best = null;
   let maxScore = -Infinity;
