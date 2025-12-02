@@ -14066,7 +14066,7 @@ function battleshipAI(n, target) {
 }
 
 // === PEŁNY PORT AI MYŚLIWCA Z AI SPACE ===
-window.runAdvancedFighterAI = function(npc, dt) {
+function runAdvancedFighterAI(npc, dt) {
   // 1. Liczniki
   npc.gunCD = Math.max(0, (npc.gunCD || 0) - dt);
   npc.mslCD = Math.max(0, (npc.mslCD || 0) - dt);
