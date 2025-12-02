@@ -3026,27 +3026,57 @@ class Squad {
     this.targetSquad = null;
     this.state = 'guard'; // guard, engage, return
   }
+
   addUnit(u) {
     this.units.push(u);
     u.squad = this;
-    // Formacja "Chevron" (strzałka)
-    const idx = this.units.length - 1;
-    if (idx === 0) {
-      this.leader = u;
-      u.formationOffset = { x: 0, y: 0 };
-    } else {
-      // Prosta matematyka formacji: co drugi w lewo/prawo i do tyłu
-      const row = Math.floor((idx + 1) / 2);
-      const side = (idx % 2 === 0) ? 1 : -1;
-      u.formationOffset = { x: -row * 40, y: side * row * 30 };
+    // Po dodaniu jednostki przeliczamy formację, żeby każdy wiedział gdzie ma stać
+    this.recalculateFormation();
+  }
+
+  update() {
+    // 1. Usuń martwe jednostki z listy
+    const initialCount = this.units.length;
+    this.units = this.units.filter(u => !u.dead);
+
+    // 2. Sprawdź ciągłość dowodzenia
+    // Jeśli liczba jednostek się zmieniła (ktoś zginął) LUB obecny lider nie żyje/nie istnieje
+    if (this.units.length !== initialCount || !this.leader || this.leader.dead) {
+        
+        if (this.units.length > 0) {
+            // --- AWANS I PRZEGRUPOWANIE ---
+            // Nowym liderem zostaje pierwszy żywy na liście
+            this.leader = this.units[0];
+            
+            // Przelicz sloty formacji dla wszystkich ocalałych
+            // To jest ten kluczowy mechanizm z AI SPACE, którego brakowało
+            this.recalculateFormation();
+        } else {
+            this.leader = null;
+        }
     }
   }
-  update() {
-    // Usuń martwe jednostki
-    this.units = this.units.filter(u => !u.dead);
-    if (this.leader && this.leader.dead) {
-      this.leader = this.units[0] || null; // Promocja nowego lidera
-    }
+
+  recalculateFormation() {
+      // Przelicza offsety dla każdego statku w oparciu o jego aktualny indeks w eskadrze
+      this.units.forEach((u, idx) => {
+          if (idx === 0) {
+              // Lider jest zawsze w punkcie 0,0
+              u.formationOffset = { x: 0, y: 0 };
+          } else {
+              // Reszta ustawia się w formacji "Chevron" (V)
+              // idx: 1 -> row 1, side L
+              // idx: 2 -> row 1, side R
+              // idx: 3 -> row 2, side L ...
+              const row = Math.floor((idx + 1) / 2);
+              const side = (idx % 2 === 0) ? 1 : -1; // 1 = Prawa, -1 = Lewa
+              
+              // Offsety: troche szerzej niż wcześniej, żeby się nie zderzali
+              u.formationOffset = { x: -row * 60, y: side * row * 45 };
+          }
+          // Zabezpieczenie kompatybilności (niektóre funkcje mogą szukać formationSlot)
+          u.formationSlot = u.formationOffset;
+      });
   }
 }
 
