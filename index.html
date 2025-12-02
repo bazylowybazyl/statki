@@ -2174,7 +2174,7 @@ function updateCameraTarget(dt){
       camera.x += (moveX / len) * panSpeed * dt;
       camera.y += (moveY / len) * panSpeed * dt;
     }
-    if(PAUSED && mouse.overCanvas){
+    if(mouse.overCanvas && !stationUI.open){
       const edgeMargin = Math.max(24, Math.min(W, H) * 0.08);
       let edgeX = 0;
       let edgeY = 0;
@@ -8847,6 +8847,7 @@ window.addEventListener('keydown', e=>{
   if(k === 'j') MISSIONS.show = !MISSIONS.show;
   if(k === 'g' && !stationUI.open){
     camera.toggleFreeMode();
+    pushZoneMessage(camera.mode === 'free' ? 'Free camera mode ON' : 'Free camera mode OFF');
   }
   if(k === ' '){
     togglePause();
@@ -9119,13 +9120,6 @@ canvas.addEventListener('mousemove', e=>{
     const rect = canvas.getBoundingClientRect();
     const cur = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
     updateSelectionRect(cur);
-  }
-  if(camera.mode === 'free' && !stationUI.open && !PAUSED){
-    const panMul = camera.freePanSpeed / Math.max(0.0001, camera.zoom);
-    camera.x += movementX * panMul;
-    camera.y += movementY * panMul;
-    camera.targetX = camera.x;
-    camera.targetY = camera.y;
   }
   if(stationUI.open && stationUI.dragging){
     stationUI.x = mouse.x - stationUI.dragDX;
