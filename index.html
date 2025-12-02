@@ -1269,34 +1269,55 @@ function handleCommandedNpc(npc, dt){
   return true;
 }
 
+// === FIX SUPPORT AI (Guard vs Engage) ===
 function runSupportAI(npc, dt){
   const data = npc.supportData;
   if (!data) return;
-  const command = npc.command;
-  const attackMove = command?.type === 'attack-move';
-  if (SupportWing.order === 'guard' && !attackMove) {
-    supportGuardBehavior(npc, data.slotIndex, dt);
-    return;
-  }
 
-  const target = aiPickTarget(npc);
-  if (!target) {
-    setSupportOrder('guard', { force: true });
-    supportGuardBehavior(npc, data.slotIndex, dt);
-    return;
+  // 1. Określ zasięg szukania wrogów w zależności od rozkazu
+  // Guard: Broń się tylko przed bliskimi (2500j). Engage: Atakuj wszystko w zasięgu radaru (20000j).
+  const searchRange = (SupportWing.order === 'engage') ? 20000 : 2500;
+  
+  // 2. Znajdź cel
+  // Używamy naszej ulepszonej funkcji targetowania
+  let target = (window.aiPickBestTarget) ? window.aiPickBestTarget(npc, searchRange) : window.aiPickTarget(npc);
+  
+  // Jeśli w trybie Engage nie ma celu w zasięgu wzroku, spróbuj namierzyć cokolwiek żywego (globalnie),
+  // żeby polecieć w tamtą stronę, zamiast wracać do gracza.
+  if (SupportWing.order === 'engage' && !target) {
+      const anyEnemy = npcs.find(n => n.isPirate && !n.dead);
+      if (anyEnemy) target = anyEnemy;
   }
 
   npc.forceTarget = target;
+  npc.target = target;
 
-  if (data.type === 'fighter') {
-    npc.state = npc.state || 'guard';
-    runAdvancedFighterAI(npc, dt);
-  } else if (data.type === 'frigate_pd' || data.type === 'frigate_laser') {
-    aiFrigate(null, npc, dt);
-  } else if (data.type === 'destroyer') {
-    aiDestroyer(null, npc, dt);
-  } else if (data.type === 'battleship') {
-    aiBattleship(null, npc, dt);
+  // 3. Decyzja: WALKA czy FORMACJA?
+  // Walczymy, jeśli mamy cel. Jeśli nie, wracamy do formacji.
+  if (target) {
+    // --- TRYB BOJOWY ---
+    if (data.type === 'fighter') {
+      // Myśliwce mają swoją maszynę stanów, więc po prostu ją odpalamy
+      npc.state = (SupportWing.order === 'engage') ? 'engage' : 'guard';
+      if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt);
+    } 
+    else if (data.type === 'frigate_pd' || data.type === 'frigate_laser') {
+      if (window.aiFrigate) window.aiFrigate(null, npc, dt);
+    } 
+    else if (data.type === 'destroyer') {
+      if (window.aiDestroyer) window.aiDestroyer(null, npc, dt);
+    } 
+    else if (data.type === 'battleship') {
+      if (window.aiBattleship) window.aiBattleship(null, npc, dt);
+    }
+  } 
+  else {
+    // --- TRYB FORMACJI (Brak wrogów w zasięgu) ---
+    // Wcześniej tu był "freeze", teraz wymuszamy powrót na pozycję przy graczu
+    supportGuardBehavior(npc, data.slotIndex, dt);
+    
+    // Resetujemy prędkość obrotową przy powrocie do formacji, żeby nie wirowały
+    if (npc.keepAngle) npc.angle = Math.atan2(npc.vy, npc.vx);
   }
 }
 
