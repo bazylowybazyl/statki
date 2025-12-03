@@ -208,9 +208,7 @@
   #zoom-indicator.visible{opacity:1;transform:translateY(0);}
   .planet-radar{position:fixed;inset:0;pointer-events:none;z-index:78;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;}
   .planet-radar.hidden{display:none !important;}
-  .planet-radar-item{position:absolute;display:flex;flex-direction:column;align-items:center;gap:6px;transform:translate(-50%,-50%);color:#e2e8f8;text-shadow:0 2px 10px rgba(0,0,0,0.55);}
-  .planet-radar-icon{width:52px;height:52px;padding:8px;border-radius:14px;background:rgba(9,12,24,0.9);border:1px solid rgba(98,128,188,0.5);box-shadow:0 10px 26px rgba(0,0,0,0.55);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;transition:transform 0.2s ease,opacity 0.2s ease;}
-  .planet-radar-icon img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 0 6px rgba(112,200,255,0.55));}
+  .planet-radar-item{position:absolute;display:flex;flex-direction:column;align-items:center;gap:0;transform:translate(-50%,-50%);color:#e2e8f8;text-shadow:0 2px 10px rgba(0,0,0,0.55);}
   .planet-radar-label{padding:4px 10px;border-radius:999px;background:rgba(26,39,68,0.8);border:1px solid rgba(96,132,194,0.6);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;white-space:nowrap;}
   /* --- Styl widoku szczegółowego (Windows Explorer style) --- */
 
@@ -1590,18 +1588,6 @@ const HUD = {
 };
 
 // =============== Planet radar UI ===============
-const PLANET_ICON_SRC = {
-  mercury: 'assets/planet-icons/mercury.svg',
-  venus: 'assets/planet-icons/venus.svg',
-  earth: 'assets/planet-icons/earth.svg',
-  mars: 'assets/planet-icons/mars.svg',
-  jupiter: 'assets/planet-icons/jupiter.svg',
-  saturn: 'assets/planet-icons/saturn.svg',
-  uranus: 'assets/planet-icons/uranus.svg',
-  neptune: 'assets/planet-icons/neptune.svg',
-  default: 'assets/planet-icons/earth.svg'
-};
-
 const planetRadarState = {
   enabled: true,
   visited: new Set(),
@@ -1623,7 +1609,7 @@ function projectToScreenEdge(dirX, dirY, margin){
   return { x: W / 2 + safeX * scale, y: H / 2 + safeY * scale };
 }
 
-function ensurePlanetRadarItem(id, iconSrc){
+function ensurePlanetRadarItem(id){
   if (!planetRadarRoot) return null;
   let el = planetRadarState.elements.get(id);
   if (el) return el;
@@ -1631,17 +1617,10 @@ function ensurePlanetRadarItem(id, iconSrc){
   const item = document.createElement('div');
   item.className = 'planet-radar-item';
 
-  const icon = document.createElement('div');
-  icon.className = 'planet-radar-icon';
-  const img = document.createElement('img');
-  img.alt = id;
-  img.src = iconSrc;
-  icon.appendChild(img);
-
   const label = document.createElement('div');
   label.className = 'planet-radar-label';
 
-  item.append(icon, label);
+  item.append(label);
   planetRadarRoot.appendChild(item);
   planetRadarState.elements.set(id, item);
   return item;
@@ -1677,7 +1656,6 @@ function updatePlanetRadar(ship, cam){
     const dy = planet.y - ship.pos.y;
     const distWorld = Math.hypot(dx, dy);
     const arrivalRadius = Math.max(10, (planet.r || 0) * 2);
-    const iconSrc = PLANET_ICON_SRC[id] || PLANET_ICON_SRC[planet.name] || PLANET_ICON_SRC.default;
     const distAu = Math.max(0, (distWorld - Math.max(planet.r || 0, 0)) / auUnit);
 
     if (planetRadarState.visited.has(id) && distAu >= 2) {
@@ -1710,24 +1688,17 @@ function updatePlanetRadar(ship, cam){
     const dirY = screenPos.y - H / 2;
     const edgePos = projectToScreenEdge(dirX, dirY, margin);
 
-    const item = ensurePlanetRadarItem(id, iconSrc);
+    const item = ensurePlanetRadarItem(id);
     if (!item) continue;
-    const iconEl = item.querySelector('.planet-radar-icon');
     const labelEl = item.querySelector('.planet-radar-label');
 
-    const ratio = clamp(distAu / maxScaleAu, 0, 1);
-    const scale = maxScale - (maxScale - minScale) * ratio;
-    if (iconEl) {
-      const base = 62;
-      const size = base * scale;
-      iconEl.style.width = `${size}px`;
-      iconEl.style.height = `${size}px`;
-      iconEl.style.opacity = `${0.75 + 0.25 * (1 - ratio)}`;
-      iconEl.style.transform = `scale(${scale})`;
-    }
     if (labelEl) {
+      const ratio = clamp(distAu / maxScaleAu, 0, 1);
+      const scale = maxScale - (maxScale - minScale) * ratio;
       const label = planet.label || formatPlanetLabel(planet, 0);
       labelEl.textContent = `${label} · ${formatAuDistance(distAu)}`;
+      labelEl.style.fontSize = `${11 * scale}px`;
+      labelEl.style.opacity = `${0.75 + 0.25 * (1 - ratio)}`;
       labelEl.style.writingMode = '';
       labelEl.style.transform = '';
       labelEl.style.margin = '';
