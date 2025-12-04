@@ -13867,9 +13867,9 @@ function battleshipAI(n, target) {
 
 // === PEŁNY PORT AI MYŚLIWCA Z AI SPACE ===
 function runAdvancedFighterAI(npc, dt) {
- const sim = { time: performance.now() / 1000 };
+  const sim = { time: performance.now() / 1000 };
 
-  // Liczniki
+  // Liczniki cooldownów
   npc.gunCD = Math.max(0, (npc.gunCD || 0) - dt);
   npc.mslCD = Math.max(0, (npc.mslCD || 0) - dt);
   npc.breakOffTimer = Math.max(0, (npc.breakOffTimer || 0) - dt);
@@ -13877,71 +13877,80 @@ function runAdvancedFighterAI(npc, dt) {
   if (npc.state === 'dogfight3D') npc.dogfightTime = (npc.dogfightTime || 0) + dt;
   else npc.dogfightTime = 0;
 
-  // 1. Znajdź cel
+  // 1. ZNAJDOWANIE CELU
+  // --------------------
   let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : npc.target;
   npc.retargetTimer = (npc.retargetTimer || 0) - dt;
   
   if (!target || target.dead || npc.retargetTimer <= 0) {
+    // Używamy dużego zasięgu radaru (25000), żeby widzieć wrogów z daleka
     target = (window.aiPickBestTarget) ? window.aiPickBestTarget(npc, 25000) : window.aiPickTarget(npc);
     npc.target = target;
     npc.retargetTimer = 1.0 + Math.random() * 0.5;
   }
 
-  // 2. Decyzja: WALKA czy FORMACJA?
+  // 2. DECYZJA: WALKA CZY FORMACJA?
+  // --------------------
   let mode = 'formation';
   let dist = Infinity;
+
+  // Sprawdzamy globalne rozkazy
+  const playerOrder = (npc.friendly && window.SupportWing) ? window.SupportWing.order : 'guard';
+  // Dla piratów sprawdzamy stan misji (jeśli istnieje)
+  const pirateAggro = (npc.isPirate && window.mercMission && window.mercMission.alertStage === 'engage');
 
   if (target) {
       const d2 = dist2(npc, target);
       dist = Math.sqrt(d2);
       
-      // --- FIX 1: Respektowanie rozkazu ENGAGE ---
-      // Jeśli stan to 'engage', atakuj zawsze.
-      // Jeśli 'guard', atakuj tylko gdy wróg jest blisko (< 3000).
-      if (npc.state === 'engage') {
+      // LOGIKA PRZEJŚCIA W TRYB BOJOWY:
+      // 1. Jeśli jest globalny rozkaz "Engage" (Gracz) -> Atakuj zawsze
+      // 2. Jeśli jest globalny alarm "Engage" (Piraci) -> Atakuj zawsze
+      // 3. Jeśli wróg jest blisko (< 3500) -> Atakuj (samoobrona/guard)
+      
+      if (playerOrder === 'engage' || pirateAggro) {
           mode = 'combat';
-      } else if (dist < 3000) {
+      } 
+      else if (dist < 3500) {
           mode = 'combat';
       }
   }
 
-  // ========================= TRYB WALKI =========================
+  // ========================= TRYB WALKI (COMBAT) =========================
   if (mode === 'combat') {
       const tx = target.pos ? target.pos.x : target.x;
       const ty = target.pos ? target.pos.y : target.y;
       
       const targetIsFighter = target.fighter || target.kind === 'fighter' || target.type === 'interceptor';
 
-      // Maszyna stanów (State Machine)
+      // Maszyna stanów walki (Dogfight / Bombing / Engage)
       if (targetIsFighter && dist < 800 && npc.state !== 'dogfight3D') {
           npc.state = 'dogfight3D';
           npc.sub = 'merge';
           npc.subT = 0;
           npc._mergeInit = false;
           npc.dogfightTime = 0;
-          npc.dogfightMin = 1.0 + Math.random();
       }
       else if (!targetIsFighter && dist < 1400 && npc.state !== 'bombing') {
           npc.state = 'bombing';
       }
-      // Jeśli nie mamy specyficznego stanu walki, a jesteśmy w combat -> dolot
+      // Jeśli jesteśmy w trybie combat, ale daleko -> lecimy na cel (Engage)
       else if (npc.state !== 'dogfight3D' && npc.state !== 'bombing') {
-          // Tymczasowy stan wewnętrzny na potrzeby ruchu
           npc._combatMove = 'engage'; 
       }
 
-      // --- EXECUTE COMBAT STATE ---
+      // --- WYKONANIE RUCHU BOJOWEGO ---
 
-      // A. DOGFIGHT
+      // A. DOGFIGHT (Walka kołowa z innymi myśliwcami)
       if (npc.state === 'dogfight3D') {
           if (!npc.sub) npc.sub = 'merge';
 
           if (npc.sub === 'merge') {
               if (!npc._mergeInit) { npc._mergeInit = true; npc.subT = 0.5 + Math.random()*0.6; }
-              const lead = getLeadAim(npc, target, 450);
+              const lead = getLeadAim(npc, target, 450); // Celuj z wyprzedzeniem
               const dirX = lead.x - npc.x, dirY = lead.y - npc.y;
               const len = Math.hypot(dirX, dirY) || 1;
-              const wantVx = (dirX/len) * npc.maxSpeed * 1.3; // Szybki dolot
+              const wantVx = (dirX/len) * npc.maxSpeed * 1.3;
               const wantVy = (dirY/len) * npc.maxSpeed * 1.3;
               
               const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 400);
@@ -13957,7 +13966,6 @@ function runAdvancedFighterAI(npc, dt) {
               const len = Math.hypot(dirX, dirY)||1;
               const nx = dirX/len, ny = dirY/len;
               const px = -ny * npc._slashSign, py = nx * npc._slashSign;
-              // Unik w bok
               const wantVx = (nx*0.4 + px*1.2)*npc.maxSpeed;
               const wantVy = (ny*0.4 + py*1.2)*npc.maxSpeed;
               
@@ -13981,16 +13989,14 @@ function runAdvancedFighterAI(npc, dt) {
               npc.subT -= dt;
               if (npc.subT <= 0) { npc.sub = 'merge'; npc._mergeInit = false; npc.breakOffTimer = 3.0; npc.dogfightTime=0; }
           } 
-          else { // Core fallback
-             npc.sub = 'merge';
-          }
+          else { npc.sub = 'merge'; }
 
           tryFireFighter(npc, target, dt);
           npc.angle = Math.atan2(npc.vy, npc.vx);
           return;
       }
 
-      // B. BOMBING
+      // B. BOMBING (Atak na duże cele - naloty liniowe)
       if (npc.state === 'bombing') {
           if (!npc.bombardVec || npc.lastTargetId !== target.id) {
               const a = Math.random()*Math.PI*2;
@@ -14015,7 +14021,7 @@ function runAdvancedFighterAI(npc, dt) {
           return;
       }
 
-      // C. ENGAGE (Dla każdego innego stanu bojowego)
+      // C. ENGAGE (Dolot do celu)
       const dirX = tx - npc.x, dirY = ty - npc.y;
       const len = Math.hypot(dirX, dirY)||1;
       const wantVx = (dirX/len) * npc.maxSpeed;
@@ -14023,87 +14029,102 @@ function runAdvancedFighterAI(npc, dt) {
       const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 200);
       npc.vx = turned.vx; npc.vy = turned.vy;
       npc.angle = Math.atan2(npc.vy, npc.vx);
-      tryFireFighter(npc, target, dt);
+      
+      // Jeśli jesteśmy w zasięgu strzału podczas dolotu - strzelaj
+      if (dist < 1000) tryFireFighter(npc, target, dt);
       return;
   }
 
-  // ========================= TRYB FORMACJI (Idle / Guard / Return) =========================
-  // --- FIX 2: Obsługa Support Units (brak Squad Leadera) ---
+  // ========================= TRYB FORMACJI (IDLE / GUARD / FOLLOW) =========================
+  // Tutaj trafiają statki, które NIE MAJĄ rozkazu ataku lub wróg jest za daleko (w trybie Guard)
   
   let destX, destY;
   let leader = (npc.squad && npc.squad.leader && npc.squad.leader.alive) ? npc.squad.leader : null;
 
-  // Jeśli to przyjazny statek bez eskadry, liderem jest Gracz
+  // Friendly bez eskadry -> Liderem jest Gracz
   if (!leader && npc.friendly) {
       leader = window.ship;
   }
 
   if (leader && leader !== npc) {
-      // Leć w formacji
-      // Użyj formationSlot (z SupportWing) lub domyślnego offsetu
-      // Wcześniej pobieraliśmy to z npc.formationSlot, teraz wyliczymy dynamicznie jeśli brak
+      // --- 1. JESTEM SKRZYDŁOWYM: Leć w formacji za liderem ---
       let offset = npc.formationOffset || npc.formationSlot;
       
-      // Jeśli nadal brak offsetu (np. świeży spawn), ustaw domyślny za plecami
       if (!offset) {
-          // Prosty algorytm: id jako seed do rozrzucenia wokół gracza
+          // Fallback: jeśli brak offsetu, ustaw losowy za plecami
           const seed = (npc.id && typeof npc.id === 'string') ? npc.id.charCodeAt(0) : Math.floor(Math.random()*100);
           const side = (seed % 2 === 0) ? 1 : -1;
-          const dist = 100 + (seed % 5) * 40;
-          offset = { x: -100 - (seed%3)*40, y: side * dist };
-          npc.formationSlot = offset; // Zapisz na przyszłość
+          const distBack = 100 + (seed % 5) * 40;
+          offset = { x: -100 - (seed%3)*40, y: side * distBack };
+          npc.formationSlot = offset; 
       }
 
       const la = leader.angle || 0;
-      // Obrót offsetu względem lidera
       const ox = offset.x * Math.cos(la) - offset.y * Math.sin(la);
       const oy = offset.x * Math.sin(la) + offset.y * Math.cos(la);
       destX = leader.x + ox;
       destY = leader.y + oy;
   } 
   else if (npc.home) {
-      // Patrol wokół bazy (dla piratów bez lidera)
+      // --- 2. PATROL: Nie mam lidera, ale mam bazę (npc.home) ---
       if (!npc.patrolAngle) npc.patrolAngle = Math.random() * Math.PI * 2;
       npc.patrolAngle += 0.3 * dt;
       const r = npc.home.r + 300;
       destX = npc.home.x + Math.cos(npc.patrolAngle) * r;
       destY = npc.home.y + Math.sin(npc.patrolAngle) * r;
   } 
+  else if (target) {
+      // --- 3. INTERCEPT: Nie mam lidera, nie mam bazy, ALE MAM CEL (nawet daleki) ---
+      // To naprawia freezowanie piratów, którzy widzą cel > 3000j, ale nie są w trybie 'combat'
+      destX = target.x;
+      destY = target.y;
+  }
   else {
-      // Całkowity brak celu -> zwolnij (Freeze fix: przynajmniej dryfuj)
+      // --- 4. IDLE: Nie mam nic do roboty ---
+      // Lekkie hamowanie, ale nie freeze
       npc.vx *= 0.98; npc.vy *= 0.98;
       return;
   }
 
-  // Fizyka dolotu do pozycji
+  // --- FIZYKA LOTU W FORMACJI / DO PUNKTU ---
   const dx = destX - npc.x;
   const dy = destY - npc.y;
   const distForm = Math.hypot(dx, dy);
   const dirX = dx / (distForm || 1);
   const dirY = dy / (distForm || 1);
 
-  // Płynne hamowanie przy dolocie
+  // Prędkość
   let speed = npc.maxSpeed;
-  if (distForm < 300) speed = distForm * 2.0; 
-  if (distForm < 10) speed = 0;
-
-  // Dopasowanie prędkości do lidera (Matching velocity)
-  if (leader && distForm < 400) {
-      npc.vx += (leader.vx - npc.vx) * 2.0 * dt;
-      npc.vy += (leader.vy - npc.vy) * 2.0 * dt;
+  
+  // Jeśli lecimy do lidera -> Dopasuj prędkość, żeby nie wyprzedzać i nie zostać w tyle
+  if (leader) {
+      // Hamuj przy dolocie do pozycji
+      if (distForm < 300) speed = distForm * 2.5; 
+      
+      // Matching velocity (kopiuj prędkość lidera gdy blisko)
+      if (distForm < 500) {
+          npc.vx += (leader.vx - npc.vx) * 3.0 * dt;
+          npc.vy += (leader.vy - npc.vy) * 3.0 * dt;
+      }
   }
 
   const wantVx = dirX * speed;
   const wantVy = dirY * speed;
   
+  // Skręt
   const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 250);
   npc.vx = turned.vx;
   npc.vy = turned.vy;
   
-  // W formacji patrz w kierunku lidera (lub lotu)
-  if (leader && distForm < 150) npc.angle = leader.angle;
-  else if (speed > 10) npc.angle = Math.atan2(npc.vy, npc.vx);
-};
+  // Obrót kadłuba
+  if (leader && distForm < 200) {
+      // W szyku patrz tam gdzie lider
+      npc.angle = leader.angle; 
+  } else if (Math.hypot(npc.vx, npc.vy) > 10) {
+      // W locie patrz przed siebie
+      npc.angle = Math.atan2(npc.vy, npc.vx);
+  }
+}
 
   
 function useRailPair(n, target){ /* sprawdź kąt i cooldown, odpal pary */ }
