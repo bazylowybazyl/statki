@@ -14801,7 +14801,7 @@ function wireDevTools(){
       try {
         saved = Number(localStorage.getItem('stationSpriteFrame'));
       } catch {}
-      DevConfig.stationSpriteFrame = Number.isFinite(saved) ? saved : 1.25;
+      DevConfig.stationSpriteFrame = Number.isFinite(saved) ? saved : 3.00;
     }
     if (!DevConfig.stationSpriteFrameById || typeof DevConfig.stationSpriteFrameById !== 'object') {
       try {
