@@ -8521,6 +8521,9 @@ const mapView = {
   viewX: null,
   viewY: null,
   smoothness: 0.15,
+  followShip: true,
+  dragging: false,
+  layout: null,
 };
 let PAUSED = false;
 let lastCameraModeBeforePause = null;
@@ -8643,6 +8646,10 @@ window.addEventListener('keydown', e=>{
       mapView.targetZoom = clamp(mapView.targetZoom, mapView.minZoom, mapView.maxZoom);
       mapView.viewX = null;
       mapView.viewY = null;
+      mapView.followShip = true;
+      mapView.dragging = false;
+    } else {
+      mapView.dragging = false;
     }
   }
   if(k === 'j') MISSIONS.show = !MISSIONS.show;
@@ -8917,6 +8924,15 @@ canvas.addEventListener('mousemove', e=>{
   const movementY = hasMovement ? e.movementY : ((camera.lastPointerY == null) ? 0 : e.clientY - camera.lastPointerY);
   camera.lastPointerX = e.clientX;
   camera.lastPointerY = e.clientY;
+  if (showMap && mapView.dragging){
+    mapView.followShip = false;
+    mapView.viewX = (mapView.viewX ?? 0) + movementX;
+    mapView.viewY = (mapView.viewY ?? 0) + movementY;
+    const clamped = clampMapViewPosition(mapView.viewX, mapView.viewY);
+    mapView.viewX = clamped.x;
+    mapView.viewY = clamped.y;
+    return;
+  }
   if (PAUSED && Selection.active){
     const rect = canvas.getBoundingClientRect();
     const cur = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
@@ -8943,6 +8959,7 @@ canvas.addEventListener('mouseleave', ()=>{
   mouse.left = false;
   mouse.right = false;
   mouse.click = false;
+  mapView.dragging = false;
   scan.target = null;
   scan.scanned = null;
   scan.targetType = null;
@@ -8951,6 +8968,19 @@ canvas.addEventListener('mouseleave', ()=>{
   camera.lastPointerY = null;
 });
 canvas.addEventListener('mousedown', e=>{
+  if (showMap && e.button === 0) {
+    mapView.dragging = true;
+    mapView.followShip = false;
+    const layout = syncMapViewLayout();
+    if (mapView.viewX == null || mapView.viewY == null) {
+      mapView.viewX = layout.targetX0;
+      mapView.viewY = layout.targetY0;
+    }
+    const clamped = clampMapViewPosition(mapView.viewX, mapView.viewY);
+    mapView.viewX = clamped.x;
+    mapView.viewY = clamped.y;
+    return;
+  }
   if (PAUSED && !stationUI.open && e.button === 0){
     const rect = canvas.getBoundingClientRect();
     const start = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
@@ -9001,6 +9031,12 @@ canvas.addEventListener('mousedown', e=>{
   }
 });
 canvas.addEventListener('mouseup', e=>{
+  if (showMap && e.button === 0) {
+    mapView.dragging = false;
+    mouse.left = false;
+    mouse.click = false;
+    return;
+  }
   if(e.button===0){
     if (PAUSED && Selection.active){
       finishSelection();
@@ -13534,14 +13570,26 @@ function renderMissionCompleteBanner(){
   ctx.restore();
 }
 
-function drawSectorMap(){
-  mapView.zoom += (mapView.targetZoom - mapView.zoom) * mapView.smoothness;
+function clampMapViewPosition(x, y){
+  const layout = mapView.layout;
+  if(!layout) return { x, y };
+  const minX = W - layout.mapW - layout.padding;
+  const minY = H - layout.mapH - layout.padding;
+  const maxX = layout.padding;
+  const maxY = layout.padding;
+  return {
+    x: clamp(x, minX, maxX),
+    y: clamp(y, minY, maxY),
+  };
+}
 
+function syncMapViewLayout(){
   const padding = Math.max(28, Math.min(W, H) * 0.05);
   const baseScale = Math.min((W - padding * 2) / WORLD.w, (H - padding * 2) / WORLD.h);
   const scale = baseScale * mapView.zoom;
   const mapW = WORLD.w * scale;
   const mapH = WORLD.h * scale;
+  mapView.layout = { padding, mapW, mapH };
 
   const clampPos = (value, content, view) => {
     if (content <= view - padding * 2) return (view - content) / 2;
@@ -13553,13 +13601,25 @@ function drawSectorMap(){
   const targetX0 = clampPos(W / 2 - ship.pos.x * scale, mapW, W);
   const targetY0 = clampPos(H / 2 - ship.pos.y * scale, mapH, H);
 
+  return { padding, scale, mapW, mapH, targetX0, targetY0 };
+}
+
+function drawSectorMap(){
+  mapView.zoom += (mapView.targetZoom - mapView.zoom) * mapView.smoothness;
+
+  const { padding, scale, mapW, mapH, targetX0, targetY0 } = syncMapViewLayout();
+
   if (mapView.viewX == null || mapView.viewY == null) {
     mapView.viewX = targetX0;
     mapView.viewY = targetY0;
-  } else {
+  } else if (mapView.followShip) {
     mapView.viewX += (targetX0 - mapView.viewX) * 0.18;
     mapView.viewY += (targetY0 - mapView.viewY) * 0.18;
   }
+
+  const clampedView = clampMapViewPosition(mapView.viewX, mapView.viewY);
+  mapView.viewX = clampedView.x;
+  mapView.viewY = clampedView.y;
 
   const toScreen = (x, y) => ({
     x: mapView.viewX + x * scale,
@@ -13570,16 +13630,28 @@ function drawSectorMap(){
   ctx.resetTransform();
 
   const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, 'rgba(6, 12, 24, 0.95)');
-  bg.addColorStop(1, 'rgba(4, 8, 16, 0.82)');
+  bg.addColorStop(0, 'rgba(32, 74, 129, 0.95)');
+  bg.addColorStop(0.55, 'rgba(10, 44, 86, 0.9)');
+  bg.addColorStop(1, 'rgba(4, 18, 36, 0.92)');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
-  const glow = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.12, W / 2, H / 2, Math.max(W, H) * 0.7);
-  glow.addColorStop(0, 'rgba(48, 168, 255, 0.2)');
+  const glow = ctx.createRadialGradient(W * 0.6, H * 0.34, Math.min(W, H) * 0.08, W * 0.4, H * 0.66, Math.max(W, H) * 0.9);
+  glow.addColorStop(0, 'rgba(108, 227, 255, 0.35)');
+  glow.addColorStop(0.45, 'rgba(78, 196, 255, 0.16)');
   glow.addColorStop(1, 'rgba(48, 168, 255, 0)');
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.globalAlpha = 0.8;
+  const glass = ctx.createLinearGradient(0, padding, 0, H - padding);
+  glass.addColorStop(0, 'rgba(255,255,255,0.08)');
+  glass.addColorStop(0.5, 'rgba(255,255,255,0.02)');
+  glass.addColorStop(1, 'rgba(255,255,255,0.07)');
+  ctx.fillStyle = glass;
+  ctx.fillRect(padding * 0.5, padding * 0.5, W - padding, H - padding);
+  ctx.restore();
 
   ctx.strokeStyle = 'rgba(255,255,255,0.08)';
   ctx.lineWidth = 1;
@@ -13600,12 +13672,19 @@ function drawSectorMap(){
     ctx.moveTo(padding, py);
     ctx.lineTo(W - padding, py);
   }
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
   ctx.stroke();
   ctx.restore();
 
-  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-  ctx.lineWidth = 2;
+  const frame = ctx.createLinearGradient(mapView.viewX, mapView.viewY, mapView.viewX, mapView.viewY + mapH);
+  frame.addColorStop(0, 'rgba(132, 228, 255, 0.9)');
+  frame.addColorStop(1, 'rgba(52, 142, 255, 0.8)');
+  ctx.strokeStyle = frame;
+  ctx.lineWidth = 2.5;
+  ctx.shadowColor = 'rgba(80, 200, 255, 0.4)';
+  ctx.shadowBlur = 14;
   ctx.strokeRect(mapView.viewX, mapView.viewY, mapW, mapH);
+  ctx.shadowBlur = 0;
 
   const drawGlowDot = (pos, radius, fill, stroke) => {
     ctx.save();
@@ -13645,10 +13724,10 @@ function drawSectorMap(){
     ctx.save();
 
     const markerRadius = Math.max(8, 10 * Math.sqrt(mapView.zoom));
-    ctx.fillStyle = '#7dd3fc';
+    ctx.fillStyle = '#a5ebff';
     for (const planet of planets) {
       const pos = toScreen(planet.x, planet.y);
-      drawGlowDot(pos, markerRadius, 'rgba(96, 199, 255, 0.85)', 'rgba(175, 232, 255, 0.8)');
+      drawGlowDot(pos, markerRadius, 'rgba(140, 227, 255, 0.92)', 'rgba(214, 244, 255, 0.9)');
     }
 
     const labelFont = Math.max(12, Math.round(Math.min(W, H) * 0.022));
@@ -13656,8 +13735,8 @@ function drawSectorMap(){
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.lineWidth = Math.max(2, labelFont * 0.14);
-    ctx.strokeStyle = 'rgba(8, 12, 22, 0.9)';
-    ctx.fillStyle = '#e2ecff';
+    ctx.strokeStyle = 'rgba(6, 10, 22, 0.85)';
+    ctx.fillStyle = '#e8f7ff';
 
     for (const planet of planets) {
       const name = typeof planet.label === 'string' ? planet.label.trim() : '';
@@ -13672,9 +13751,9 @@ function drawSectorMap(){
   }
 
   ctx.save();
-  ctx.fillStyle = '#75e1ff';
-  ctx.strokeStyle = 'rgba(71, 191, 255, 0.5)';
-  ctx.lineWidth = 2;
+  ctx.fillStyle = '#9df0ff';
+  ctx.strokeStyle = 'rgba(71, 191, 255, 0.65)';
+  ctx.lineWidth = 2.4;
   for(const st of stations){
     const pos = toScreen(st.x, st.y);
     ctx.beginPath();
@@ -13690,8 +13769,10 @@ function drawSectorMap(){
   const angle = ship.angle || 0;
   ctx.translate(shipPos.x, shipPos.y);
   ctx.rotate(angle);
-  ctx.fillStyle = '#ffffff';
-  ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+  ctx.fillStyle = '#e9fbff';
+  ctx.strokeStyle = 'rgba(126, 233, 255, 0.95)';
+  ctx.shadowColor = 'rgba(120, 230, 255, 0.6)';
+  ctx.shadowBlur = 10;
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(shipRadius * 1.6, 0);
@@ -13702,8 +13783,8 @@ function drawSectorMap(){
   ctx.stroke();
   ctx.restore();
 
-  ctx.strokeStyle = '#ff8fa3';
-  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#ff9cc2';
+  ctx.lineWidth = 3.2;
   for(const m of MISSIONS.active){
     if(m.status !== 'active' || !m.pos) continue;
     const pos = toScreen(m.pos.x, m.pos.y);
@@ -13719,15 +13800,15 @@ function drawSectorMap(){
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.font = `700 ${Math.max(18, Math.min(W, H) * 0.03)}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
-  ctx.fillStyle = '#e8f1ff';
-  ctx.shadowColor = 'rgba(42, 152, 255, 0.65)';
-  ctx.shadowBlur = 16;
+  ctx.fillStyle = '#f2f8ff';
+  ctx.shadowColor = 'rgba(72, 192, 255, 0.75)';
+  ctx.shadowBlur = 18;
   ctx.fillText('Mapa Sektora', padding, titleY);
 
   ctx.font = `500 ${Math.max(13, Math.min(W, H) * 0.018)}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
   ctx.shadowBlur = 0;
-  ctx.fillStyle = 'rgba(232, 241, 255, 0.8)';
-  ctx.fillText('Scroll — powiększenie · M — zamknij', padding, titleY + 28);
+  ctx.fillStyle = 'rgba(232, 241, 255, 0.85)';
+  ctx.fillText('LPM — przesuwanie · Scroll — powiększenie · M — zamknij', padding, titleY + 28);
   ctx.restore();
 
   ctx.restore();
