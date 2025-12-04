@@ -1207,16 +1207,13 @@ function runSupportAI(npc, dt){
   const data = npc.supportData;
   if (!data) return;
 
-  // 1. Określ zasięg szukania wrogów w zależności od rozkazu
-  // Guard: Broń się tylko przed bliskimi (2500j). Engage: Atakuj wszystko w zasięgu radaru (20000j).
-  const searchRange = (SupportWing.order === 'engage') ? 20000 : 2500;
+  // 1. Zasięg radaru zależny od rozkazu
+  const searchRange = (SupportWing.order === 'engage') ? 25000 : 3500; // Zwiększyłem guard range do 3500 dla spójności
   
   // 2. Znajdź cel
-  // Używamy naszej ulepszonej funkcji targetowania
   let target = (window.aiPickBestTarget) ? window.aiPickBestTarget(npc, searchRange) : window.aiPickTarget(npc);
   
-  // Jeśli w trybie Engage nie ma celu w zasięgu wzroku, spróbuj namierzyć cokolwiek żywego (globalnie),
-  // żeby polecieć w tamtą stronę, zamiast wracać do gracza.
+  // W trybie Engage, jeśli nie ma celu w zasięgu, leć do dowolnego wroga na mapie
   if (SupportWing.order === 'engage' && !target) {
       const anyEnemy = npcs.find(n => n.isPirate && !n.dead);
       if (anyEnemy) target = anyEnemy;
@@ -1225,13 +1222,12 @@ function runSupportAI(npc, dt){
   npc.forceTarget = target;
   npc.target = target;
 
-  // 3. Decyzja: WALKA czy FORMACJA?
-  // Walczymy, jeśli mamy cel. Jeśli nie, wracamy do formacji.
+  // 3. Wykonanie AI
   if (target) {
     // --- TRYB BOJOWY ---
     if (data.type === 'fighter') {
-      // Myśliwce mają swoją maszynę stanów, więc po prostu ją odpalamy
-      npc.state = (SupportWing.order === 'engage') ? 'engage' : 'guard';
+      // WAŻNE: Nie ustawiamy tu npc.state! Myśliwiec sam zarządza swoim stanem (dogfight/bombing/engage).
+      // Przekazujemy tylko sterowanie do jego mózgu.
       if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt);
     } 
     else if (data.type === 'frigate_pd' || data.type === 'frigate_laser') {
@@ -1245,12 +1241,15 @@ function runSupportAI(npc, dt){
     }
   } 
   else {
-    // --- TRYB FORMACJI (Brak wrogów w zasięgu) ---
-    // Wcześniej tu był "freeze", teraz wymuszamy powrót na pozycję przy graczu
+    // --- TRYB FORMACJI (Brak wrogów) ---
     supportGuardBehavior(npc, data.slotIndex, dt);
     
-    // Resetujemy prędkość obrotową przy powrocie do formacji, żeby nie wirowały
     if (npc.keepAngle) npc.angle = Math.atan2(npc.vy, npc.vx);
+    
+    // Reset stanu myśliwca na 'guard' tylko gdy NIE MA wroga
+    if (data.type === 'fighter') {
+        npc.state = 'guard';
+    }
   }
 }
 
