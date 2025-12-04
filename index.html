@@ -1203,54 +1203,89 @@ function handleCommandedNpc(npc, dt){
 }
 
 // === FIX SUPPORT AI (Guard vs Engage) ===
-function runSupportAI(npc, dt){
-  const data = npc.supportData;
-  if (!data) return;
+function runSupportAI(npc, dt) {
+    const data = npc.supportData;
+    if (!data) return;
 
-  // 1. Zasięg radaru zależny od rozkazu
-  const searchRange = (SupportWing.order === 'engage') ? 25000 : 3500; // Zwiększyłem guard range do 3500 dla spójności
-  
-  // 2. Znajdź cel
-  let target = (window.aiPickBestTarget) ? window.aiPickBestTarget(npc, searchRange) : window.aiPickTarget(npc);
-  
-  // W trybie Engage, jeśli nie ma celu w zasięgu, leć do dowolnego wroga na mapie
-  if (SupportWing.order === 'engage' && !target) {
-      const anyEnemy = npcs.find(n => n.isPirate && !n.dead);
-      if (anyEnemy) target = anyEnemy;
-  }
+    // Zaznacz, że ten NPC należy do skrzydła wsparcia
+    npc.isSupportWing = true;
 
-  npc.forceTarget = target;
-  npc.target = target;
+    // Aktualny rozkaz skrzydła (domyślnie guard, jakby coś było nieustawione)
+    const order = (typeof SupportWing !== 'undefined' && SupportWing && SupportWing.order)
+        ? SupportWing.order
+        : 'guard';
 
-  // 3. Wykonanie AI
-  if (target) {
-    // --- TRYB BOJOWY ---
-    if (data.type === 'fighter') {
-      // WAŻNE: Nie ustawiamy tu npc.state! Myśliwiec sam zarządza swoim stanem (dogfight/bombing/engage).
-      // Przekazujemy tylko sterowanie do jego mózgu.
-      if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt);
-    } 
-    else if (data.type === 'frigate_pd' || data.type === 'frigate_laser') {
-      if (window.aiFrigate) window.aiFrigate(null, npc, dt);
-    } 
-    else if (data.type === 'destroyer') {
-      if (window.aiDestroyer) window.aiDestroyer(null, npc, dt);
-    } 
-    else if (data.type === 'battleship') {
-      if (window.aiBattleship) window.aiBattleship(null, npc, dt);
+    npc.supportOrder = order; // przyda się w fighter AI
+
+    const ENGAGE_RANGE       = 25000; // zasięg polowania w ENGAGE
+    const GUARD_ATTACK_RANGE = 6000;  // zasięg odpalenia ataku w GUARD
+
+    const searchRange = (order === 'engage') ? ENGAGE_RANGE : GUARD_ATTACK_RANGE;
+
+    // 1. Znajdź cel
+    let target = null;
+
+    if (window.aiPickBestTarget) {
+        target = window.aiPickBestTarget(npc, searchRange);
+    } else if (window.aiPickTarget) {
+        target = window.aiPickTarget(npc);
+        // jeżeli aiPickTarget nie respektuje zasięgu – dociśnijmy ręcznie
+        if (target) {
+            const d2 = dist2(npc, target);
+            if (d2 > searchRange * searchRange) {
+                target = null;
+            }
+        }
     }
-  } 
-  else {
-    // --- TRYB FORMACJI (Brak wrogów) ---
-    supportGuardBehavior(npc, data.slotIndex, dt);
-    
-    if (npc.keepAngle) npc.angle = Math.atan2(npc.vy, npc.vx);
-    
-    // Reset stanu myśliwca na 'guard' tylko gdy NIE MA wroga
-    if (data.type === 'fighter') {
-        npc.state = 'guard';
+
+    // W trybie ENGAGE, jeśli nie ma celu w zasięgu, leć do najbliższego wroga na mapie
+    if (order === 'engage' && !target && Array.isArray(npcs)) {
+        let best = null;
+        let bestD2 = Infinity;
+        for (const n of npcs) {
+            if (!n || n.dead || !n.isPirate) continue;
+            const dx = n.x - npc.x;
+            const dy = n.y - npc.y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < bestD2) {
+                bestD2 = d2;
+                best = n;
+            }
+        }
+        target = best;
     }
-  }
+
+    // 2. Ustaw cel na NPC
+    npc.forceTarget = target || null;
+    npc.target      = target || null;
+
+    // 3. Wykonanie AI
+    if (target) {
+        // --- TRYB BOJOWY ---
+        if (data.type === 'fighter') {
+            if (window.runAdvancedFighterAI) {
+                window.runAdvancedFighterAI(npc, dt);
+            }
+        } else if (data.type === 'frigate_pd' || data.type === 'frigate_laser') {
+            if (window.aiFrigate) window.aiFrigate(null, npc, dt);
+        } else if (data.type === 'destroyer') {
+            if (window.aiDestroyer) window.aiDestroyer(null, npc, dt);
+        } else if (data.type === 'battleship') {
+            if (window.aiBattleship) window.aiBattleship(null, npc, dt);
+        }
+    } else {
+        // --- TRYB FORMACJI (Brak wrogów / wróg daleko w GUARD) ---
+        supportGuardBehavior(npc, data.slotIndex, dt);
+
+        if (npc.keepAngle) {
+            npc.angle = Math.atan2(npc.vy, npc.vx);
+        }
+
+        // Myśliwiec bez celu wraca logicznie do stanu "guard"
+        if (data.type === 'fighter') {
+            npc.state = 'guard';
+        }
+    }
 }
 
 function isPirateStation(st){
@@ -13947,13 +13982,24 @@ function battleshipAI(n, target) {
 }
 
 // === PEŁNY PORT AI MYŚLIWCA Z AI SPACE ===
-// === PEŁNY PORT AI MYŚLIWCA Z AI SPACE ===
 function runAdvancedFighterAI(npc, dt) {
- const sim = { time: performance.now() / 1000 };
+  const sim = { time: performance.now() / 1000 };
+
+  // Czy ten NPC jest skrzydłem wsparcia gracza?
+  const isSupport = npc.isSupportWing || !!npc.supportData;
+
+  // Rozkaz tylko dla supportu, reszta (piraci etc.) zawsze zachowuje się jak "engage"
+  let order = 'engage';
+  if (isSupport && typeof SupportWing !== 'undefined' && SupportWing) {
+      order = SupportWing.order || 'guard';
+  }
+
+  const ENGAGE_SEARCH_RANGE = 25000;
+  const GUARD_ATTACK_RANGE  = 6000;
 
   // Liczniki
-  npc.gunCD = Math.max(0, (npc.gunCD || 0) - dt);
-  npc.mslCD = Math.max(0, (npc.mslCD || 0) - dt);
+  npc.gunCD         = Math.max(0, (npc.gunCD || 0) - dt);
+  npc.mslCD         = Math.max(0, (npc.mslCD || 0) - dt);
   npc.breakOffTimer = Math.max(0, (npc.breakOffTimer || 0) - dt);
 
   if (npc.state === 'dogfight3D') npc.dogfightTime = (npc.dogfightTime || 0) + dt;
@@ -13962,10 +14008,25 @@ function runAdvancedFighterAI(npc, dt) {
   // 1. Znajdź cel
   let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : npc.target;
   npc.retargetTimer = (npc.retargetTimer || 0) - dt;
-  
+
   if (!target || target.dead || npc.retargetTimer <= 0) {
-    target = (window.aiPickBestTarget) ? window.aiPickBestTarget(npc, 25000) : window.aiPickTarget(npc);
-    npc.target = target;
+    const searchRange = (order === 'engage') ? ENGAGE_SEARCH_RANGE : GUARD_ATTACK_RANGE;
+
+    if (window.aiPickBestTarget) {
+        target = window.aiPickBestTarget(npc, searchRange);
+    } else if (window.aiPickTarget) {
+        target = window.aiPickTarget(npc);
+    }
+
+    // W GUARD dla supportu nie bierzemy odległych celów
+    if (target && isSupport && order === 'guard') {
+        const d2 = dist2(npc, target);
+        if (d2 > GUARD_ATTACK_RANGE * GUARD_ATTACK_RANGE) {
+            target = null;
+        }
+    }
+
+    npc.target = target || null;
     npc.retargetTimer = 1.0 + Math.random() * 0.5;
   }
 
@@ -13976,23 +14037,35 @@ function runAdvancedFighterAI(npc, dt) {
   if (target) {
       const d2 = dist2(npc, target);
       dist = Math.sqrt(d2);
-      
-      // --- FIX 1: Respektowanie rozkazu ENGAGE ---
-      // Jeśli stan to 'engage', atakuj zawsze.
-      // Jeśli 'guard', atakuj tylko gdy wróg jest blisko (< 3000).
-      if (npc.state === 'engage') {
-          mode = 'combat';
-      } else if (dist < 15000) {
-          mode = 'combat';
+
+      // Support:
+      //  - ENGAGE: jeśli jest target, zawsze walka
+      //  - GUARD : walka tylko gdy wróg jest blisko
+      if (isSupport) {
+          if (order === 'engage') {
+              mode = 'combat';
+          } else { // GUARD
+              if (dist < GUARD_ATTACK_RANGE) {
+                  mode = 'combat';
+              } else {
+                  mode = 'formation';
+              }
+          }
+      } else {
+          // Piraci / inne AI – stare zachowanie
+          if (dist < 15000) {
+              mode = 'combat';
+          }
       }
   }
 
   // ========================= TRYB WALKI =========================
-  if (mode === 'combat') {
+  if (mode === 'combat' && target) {
       const tx = target.pos ? target.pos.x : target.x;
       const ty = target.pos ? target.pos.y : target.y;
-      
-      const targetIsFighter = target.fighter || target.kind === 'fighter' || target.type === 'interceptor';
+
+      const targetIsFighter =
+          target.fighter || target.kind === 'fighter' || target.type === 'interceptor';
 
       // Maszyna stanów (State Machine)
       if (targetIsFighter && dist < 800 && npc.state !== 'dogfight3D') {
@@ -14009,7 +14082,7 @@ function runAdvancedFighterAI(npc, dt) {
       // Jeśli nie mamy specyficznego stanu walki, a jesteśmy w combat -> dolot
       else if (npc.state !== 'dogfight3D' && npc.state !== 'bombing') {
           // Tymczasowy stan wewnętrzny na potrzeby ruchu
-          npc._combatMove = 'engage'; 
+          npc._combatMove = 'engage';
       }
 
       // --- EXECUTE COMBAT STATE ---
@@ -14025,15 +14098,15 @@ function runAdvancedFighterAI(npc, dt) {
               const len = Math.hypot(dirX, dirY) || 1;
               const wantVx = (dirX/len) * npc.maxSpeed * 1.3; // Szybki dolot
               const wantVy = (dirY/len) * npc.maxSpeed * 1.3;
-              
+
               const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 400);
               npc.vx = turned.vx; npc.vy = turned.vy;
-              
+
               npc.subT -= dt;
               if (npc.subT <= 0 || dist < 120) {
                   npc.sub = 'slash'; npc.subT = 0.4; npc._slashSign = (Math.random()>0.5)?1:-1;
               }
-          } 
+          }
           else if (npc.sub === 'slash') {
               const dirX = tx - npc.x, dirY = ty - npc.y;
               const len = Math.hypot(dirX, dirY)||1;
@@ -14042,10 +14115,10 @@ function runAdvancedFighterAI(npc, dt) {
               // Unik w bok
               const wantVx = (nx*0.4 + px*1.2)*npc.maxSpeed;
               const wantVy = (ny*0.4 + py*1.2)*npc.maxSpeed;
-              
+
               const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 500);
               npc.vx = turned.vx; npc.vy = turned.vy;
-              
+
               npc.subT -= dt;
               if (npc.subT <= 0) {
                    npc.sub = (Math.random() < 0.4) ? 'break_off' : 'merge';
@@ -14054,15 +14127,20 @@ function runAdvancedFighterAI(npc, dt) {
                    npc.breakVector = { x: Math.cos(escAng), y: Math.sin(escAng) };
                    npc._mergeInit = false;
               }
-          } 
+          }
           else if (npc.sub === 'break_off') {
               const wantVx = npc.breakVector.x * npc.maxSpeed;
               const wantVy = npc.breakVector.y * npc.maxSpeed;
               const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 280);
               npc.vx = turned.vx; npc.vy = turned.vy;
               npc.subT -= dt;
-              if (npc.subT <= 0) { npc.sub = 'merge'; npc._mergeInit = false; npc.breakOffTimer = 3.0; npc.dogfightTime=0; }
-          } 
+              if (npc.subT <= 0) {
+                  npc.sub = 'merge';
+                  npc._mergeInit = false;
+                  npc.breakOffTimer = 3.0;
+                  npc.dogfightTime = 0;
+              }
+          }
           else { // Core fallback
              npc.sub = 'merge';
           }
@@ -14089,7 +14167,7 @@ function runAdvancedFighterAI(npc, dt) {
           const len = Math.hypot(dirX, dirY)||1;
           const wantVx = (dirX/len) * npc.maxSpeed * 1.1;
           const wantVy = (dirY/len) * npc.maxSpeed * 1.1;
-          
+
           const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 190);
           npc.vx = turned.vx; npc.vy = turned.vy;
           npc.angle = Math.atan2(npc.vy, npc.vx);
@@ -14098,20 +14176,21 @@ function runAdvancedFighterAI(npc, dt) {
       }
 
       // C. ENGAGE (Dla każdego innego stanu bojowego)
-      const dirX = tx - npc.x, dirY = ty - npc.y;
-      const len = Math.hypot(dirX, dirY)||1;
-      const wantVx = (dirX/len) * npc.maxSpeed;
-      const wantVy = (dirY/len) * npc.maxSpeed;
-      const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 200);
-      npc.vx = turned.vx; npc.vy = turned.vy;
-      npc.angle = Math.atan2(npc.vy, npc.vx);
-      tryFireFighter(npc, target, dt);
-      return;
+      {
+          const dirX = tx - npc.x, dirY = ty - npc.y;
+          const len = Math.hypot(dirX, dirY)||1;
+          const wantVx = (dirX/len) * npc.maxSpeed;
+          const wantVy = (dirY/len) * npc.maxSpeed;
+          const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 200);
+          npc.vx = turned.vx; npc.vy = turned.vy;
+          npc.angle = Math.atan2(npc.vy, npc.vx);
+          tryFireFighter(npc, target, dt);
+          return;
+      }
   }
 
   // ========================= TRYB FORMACJI (Idle / Guard / Return) =========================
-  // --- FIX 2: Obsługa Support Units (brak Squad Leadera) ---
-  
+
   let destX, destY;
   let leader = (npc.squad && npc.squad.leader && npc.squad.leader.alive) ? npc.squad.leader : null;
 
@@ -14122,27 +14201,25 @@ function runAdvancedFighterAI(npc, dt) {
 
   if (leader && leader !== npc) {
       // Leć w formacji
-      // Użyj formationSlot (z SupportWing) lub domyślnego offsetu
-      // Wcześniej pobieraliśmy to z npc.formationSlot, teraz wyliczymy dynamicznie jeśli brak
       let offset = npc.formationOffset || npc.formationSlot;
-      
+
       // Jeśli nadal brak offsetu (np. świeży spawn), ustaw domyślny za plecami
       if (!offset) {
-          // Prosty algorytm: id jako seed do rozrzucenia wokół gracza
-          const seed = (npc.id && typeof npc.id === 'string') ? npc.id.charCodeAt(0) : Math.floor(Math.random()*100);
+          const seed = (npc.id && typeof npc.id === 'string')
+              ? npc.id.charCodeAt(0)
+              : Math.floor(Math.random()*100);
           const side = (seed % 2 === 0) ? 1 : -1;
-          const dist = 100 + (seed % 5) * 40;
-          offset = { x: -100 - (seed%3)*40, y: side * dist };
+          const distForm = 100 + (seed % 5) * 40;
+          offset = { x: -100 - (seed%3)*40, y: side * distForm };
           npc.formationSlot = offset; // Zapisz na przyszłość
       }
 
       const la = leader.angle || 0;
-      // Obrót offsetu względem lidera
       const ox = offset.x * Math.cos(la) - offset.y * Math.sin(la);
       const oy = offset.x * Math.sin(la) + offset.y * Math.cos(la);
       destX = leader.x + ox;
       destY = leader.y + oy;
-  } 
+  }
   else if (npc.home) {
       // Patrol wokół bazy (dla piratów bez lidera)
       if (!npc.patrolAngle) npc.patrolAngle = Math.random() * Math.PI * 2;
@@ -14150,10 +14227,11 @@ function runAdvancedFighterAI(npc, dt) {
       const r = npc.home.r + 300;
       destX = npc.home.x + Math.cos(npc.patrolAngle) * r;
       destY = npc.home.y + Math.sin(npc.patrolAngle) * r;
-  } 
+  }
   else {
-      // Całkowity brak celu -> zwolnij (Freeze fix: przynajmniej dryfuj)
-      npc.vx *= 0.98; npc.vy *= 0.98;
+      // Całkowity brak celu i lidera -> lekkie dryfowanie (żeby nie stały jak kołek)
+      npc.vx *= 0.98;
+      npc.vy *= 0.98;
       return;
   }
 
@@ -14166,8 +14244,8 @@ function runAdvancedFighterAI(npc, dt) {
 
   // Płynne hamowanie przy dolocie
   let speed = npc.maxSpeed;
-  if (distForm < 300) speed = distForm * 2.0; 
-  if (distForm < 10) speed = 0;
+  if (distForm < 300) speed = distForm * 2.0;
+  if (distForm < 10)  speed = 0;
 
   // Dopasowanie prędkości do lidera (Matching velocity)
   if (leader && distForm < 400) {
@@ -14177,15 +14255,16 @@ function runAdvancedFighterAI(npc, dt) {
 
   const wantVx = dirX * speed;
   const wantVy = dirY * speed;
-  
+
   const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 250);
   npc.vx = turned.vx;
   npc.vy = turned.vy;
-  
+
   // W formacji patrz w kierunku lidera (lub lotu)
   if (leader && distForm < 150) npc.angle = leader.angle;
-  else if (speed > 10) npc.angle = Math.atan2(npc.vy, npc.vx);
-};
+  else if (speed > 10)         npc.angle = Math.atan2(npc.vy, npc.vx);
+}
+
 
   
 function useRailPair(n, target){ /* sprawdź kąt i cooldown, odpal pary */ }
