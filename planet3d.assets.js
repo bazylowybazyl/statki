@@ -23,20 +23,21 @@ function computeZoneScale(body){
 
   const bx = Number.isFinite(body.x) ? body.x : 0;
   const by = Number.isFinite(body.y) ? body.y : 0;
+  const approachRange = (typeof window !== 'undefined' && typeof window.ZONE_APPROACH_DISTANCE === 'number')
+    ? window.ZONE_APPROACH_DISTANCE
+    : 0;
   const baseRadiusRaw =
     Number.isFinite(body.baseR) ? body.baseR
       : Number.isFinite(body.r) ? body.r
       : Number.isFinite(body.radius) ? body.radius
       : (Number.isFinite(body.size) ? body.size * 0.5 : 0);
-  const orbitRadius = Math.max(10, baseRadiusRaw * 2);
-
+  const baseOrbitRadius = Math.max(10, baseRadiusRaw * 2);
+  const outerOrbitExtra = Math.max(1600, approachRange * 0.6);
+  const orbitRadius = baseOrbitRadius + outerOrbitExtra;
   const dx = pos.x - bx;
   const dy = pos.y - by;
   const dist = Math.hypot(dx, dy);
   const edgeDist = dist - orbitRadius;
-  const approachRange = (typeof window !== 'undefined' && typeof window.ZONE_APPROACH_DISTANCE === 'number')
-    ? window.ZONE_APPROACH_DISTANCE
-    : 0;
   const transitionRange = Math.max(10, approachRange);
 
   const shrinkMin = 0.4;
