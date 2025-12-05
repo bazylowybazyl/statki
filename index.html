@@ -23,10 +23,19 @@
   body,button,input,select,option{font-family:var(--fa-font);}
   body::before{content:'';position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 50% 30%,rgba(255,255,255,0.05),transparent 35%);mix-blend-mode:screen;opacity:0.8;z-index:1}
   #ui{position:absolute;left:12px;top:12px;z-index:120;background:var(--fa-panel);padding:12px 14px;border-radius:12px;backdrop-filter:blur(10px);border:1px solid var(--fa-border);box-shadow:var(--fa-glow)}
-  #side-panels{position:absolute;left:12px;top:160px;width:280px;z-index:120;display:flex;flex-direction:column;gap:12px;}
-  #fleet-ui{width:100%;display:flex;flex-direction:column;gap:10px;background:var(--fa-panel-strong);padding:14px 16px;border-radius:14px;border:1px solid var(--fa-border);backdrop-filter:blur(10px);color:var(--fa-text);font-family:var(--fa-font);box-shadow:var(--fa-glow)}
-  #fleet-ui.hidden{display:none !important;}
-  #fleet-ui h3{margin:0;font-size:15px;letter-spacing:0.08em;text-transform:uppercase;color:#aee3ff;text-shadow:0 0 12px rgba(99,208,255,0.45);}
+  #side-panels{position:absolute;left:12px;top:160px;z-index:120;display:flex;flex-direction:column;gap:12px;align-items:flex-start;}
+  .side-panel{width:280px;display:flex;flex-direction:column;gap:10px;background:var(--fa-panel-strong);padding:14px 16px;border-radius:14px;border:1px solid var(--fa-border);backdrop-filter:blur(10px);color:var(--fa-text);font-family:var(--fa-font);box-shadow:var(--fa-glow);transition:width 0.32s ease,padding 0.32s ease,gap 0.24s ease;}
+  .side-panel.hidden{display:none !important;}
+  .panel-toggle{display:flex;align-items:center;gap:10px;margin:0;padding:0;border:none;background:transparent;color:#aee3ff;font-size:15px;letter-spacing:0.08em;text-transform:uppercase;text-shadow:0 0 12px rgba(99,208,255,0.45);cursor:pointer;transition:color 0.22s ease,transform 0.22s ease;}
+  .panel-toggle:active{transform:translateY(1px);}
+  .panel-chevron{margin-left:auto;font-size:14px;color:var(--fa-muted);opacity:0.85;transition:transform 0.28s ease,opacity 0.2s ease;}
+  .side-panel-title{margin:0;font-size:15px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#aee3ff;text-shadow:0 0 12px rgba(99,208,255,0.45);display:inline-block;transform-origin:left center;transition:transform 0.35s ease,letter-spacing 0.24s ease,opacity 0.24s ease;}
+  .side-panel-body{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;max-height:1200px;opacity:1;transform:translateY(0);transition:max-height 0.32s ease,opacity 0.24s ease,transform 0.24s ease;}
+  .side-panel.collapsed{width:60px;padding:12px 10px;gap:0;align-items:center;min-height:120px;}
+  .side-panel.collapsed .panel-toggle{justify-content:center;min-height:96px;}
+  .side-panel.collapsed .side-panel-title{transform:rotate(-90deg) translate(-2px, -2px);letter-spacing:0.16em;}
+  .side-panel.collapsed .panel-chevron{opacity:0;transform:translateY(-4px);}
+  .side-panel.collapsed .side-panel-body{max-height:0;opacity:0;transform:translateY(-8px);pointer-events:none;}
   #fleet-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;}
   .fleet-ship{padding:10px 12px;background:linear-gradient(160deg,rgba(10,26,48,0.82),rgba(12,32,58,0.9));border:1px solid var(--fa-border);border-radius:12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 10px 24px rgba(0,0,0,0.35)}
   .fleet-ship-header{display:flex;flex-direction:column;gap:2px;}
@@ -45,9 +54,7 @@
   .fleet-order-btn{flex:1 1 30%;padding:8px 9px;border-radius:10px;border:1px solid var(--fa-border);background:linear-gradient(150deg,rgba(66,142,210,0.25),rgba(55,116,186,0.35));color:var(--fa-text);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;transition:background 0.18s ease,border-color 0.18s ease,color 0.18s ease,transform 0.18s ease;box-shadow:0 10px 20px rgba(0,0,0,0.22);}
   .fleet-order-btn:hover{background:linear-gradient(150deg,rgba(96,188,255,0.35),rgba(55,116,186,0.45));border-color:var(--fa-strong-border);transform:translateY(-1px);}
   .fleet-order-btn.active{background:linear-gradient(150deg,rgba(109,220,255,0.4),rgba(58,161,255,0.42));border-color:var(--fa-strong-border);color:#f1f7ff;box-shadow:0 0 0 1px rgba(96,165,250,0.35) inset,0 12px 26px rgba(3,92,160,0.35);}
-  #support-ui{width:100%;display:flex;flex-direction:column;gap:10px;background:var(--fa-panel-strong);padding:14px 16px;border-radius:14px;border:1px solid var(--fa-border);backdrop-filter:blur(10px);color:var(--fa-text);font-family:var(--fa-font);box-shadow:var(--fa-glow)}
-  #support-ui.hidden{display:none !important;}
-  #support-ui h3{margin:0;font-size:15px;letter-spacing:0.08em;text-transform:uppercase;color:#aee3ff;text-shadow:0 0 12px rgba(99,208,255,0.45);}
+  #support-ui{width:280px;}
   .support-row{display:flex;flex-wrap:wrap;gap:8px;}
   .support-btn{flex:1 1 48%;padding:9px 11px;border-radius:10px;border:1px solid var(--fa-border);background:linear-gradient(150deg,rgba(66,142,210,0.25),rgba(55,116,186,0.35));color:var(--fa-text);font-size:12px;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;transition:background 0.18s ease,border-color 0.18s ease,color 0.18s ease,transform 0.18s ease;box-shadow:0 10px 20px rgba(0,0,0,0.22);}
   .support-btn:hover{background:linear-gradient(150deg,rgba(96,188,255,0.35),rgba(55,116,186,0.45));border-color:var(--fa-strong-border);transform:translateY(-1px);}
@@ -411,23 +418,33 @@
     <div style="margin-top:6px"><small>Gwiazdy są proceduralne w całej galaktyce. Silnik: niebieski exhaust + krótki ślad przy ruchu.</small></div>
   </div>
   <div id="side-panels">
-    <div id="fleet-ui" class="hidden">
-      <h3>Flota</h3>
-      <ul id="fleet-list"></ul>
-    </div>
-    <div id="support-ui" class="hidden">
-      <h3>Wsparcie</h3>
-      <div class="support-row">
-        <button class="support-btn" data-support-spawn="carrier_fighter">Carrier Fighter</button>
-        <button class="support-btn" data-support-spawn="fighter">Fighter Squad</button>
-        <button class="support-btn" data-support-spawn="frigate_pd">Frigate (PD)</button>
-        <button class="support-btn" data-support-spawn="frigate_laser">Frigate (Laser)</button>
-        <button class="support-btn" data-support-spawn="destroyer">Destroyer</button>
-        <button class="support-btn" data-support-spawn="battleship">Battleship</button>
+    <div id="fleet-ui" class="side-panel hidden" data-panel="fleet">
+      <button class="panel-toggle" type="button">
+        <span class="side-panel-title">Flota</span>
+        <span class="panel-chevron" aria-hidden="true">⟲</span>
+      </button>
+      <div class="side-panel-body" role="group" aria-label="Flota">
+        <ul id="fleet-list"></ul>
       </div>
-      <div class="support-row">
-        <button id="support-engage" class="support-order-btn">Engage</button>
-        <button id="support-guard" class="support-order-btn active">Guard</button>
+    </div>
+    <div id="support-ui" class="side-panel hidden" data-panel="support">
+      <button class="panel-toggle" type="button">
+        <span class="side-panel-title">Wsparcie</span>
+        <span class="panel-chevron" aria-hidden="true">⟲</span>
+      </button>
+      <div class="side-panel-body" role="group" aria-label="Wsparcie">
+        <div class="support-row">
+          <button class="support-btn" data-support-spawn="carrier_fighter">Carrier Fighter</button>
+          <button class="support-btn" data-support-spawn="fighter">Fighter Squad</button>
+          <button class="support-btn" data-support-spawn="frigate_pd">Frigate (PD)</button>
+          <button class="support-btn" data-support-spawn="frigate_laser">Frigate (Laser)</button>
+          <button class="support-btn" data-support-spawn="destroyer">Destroyer</button>
+          <button class="support-btn" data-support-spawn="battleship">Battleship</button>
+        </div>
+        <div class="support-row">
+          <button id="support-engage" class="support-order-btn">Engage</button>
+          <button id="support-guard" class="support-order-btn active">Guard</button>
+        </div>
       </div>
     </div>
   </div>
@@ -587,6 +604,37 @@ const supportUIRoot = document.getElementById('support-ui');
 const supportGuardBtn = document.getElementById('support-guard');
 const supportEngageBtn = document.getElementById('support-engage');
 const supportSpawnButtons = document.querySelectorAll('[data-support-spawn]');
+
+function setupSidePanel(panelEl){
+  if (!panelEl) return null;
+  const toggleBtn = panelEl.querySelector('.panel-toggle');
+  const bodyEl = panelEl.querySelector('.side-panel-body');
+  let collapsed = false;
+
+  function applyState(){
+    panelEl.classList.toggle('collapsed', collapsed);
+    if (bodyEl) bodyEl.setAttribute('aria-hidden', collapsed ? 'true' : 'false');
+    panelEl.setAttribute('data-collapsed', collapsed ? 'true' : 'false');
+  }
+
+  applyState();
+
+  if (toggleBtn){
+    toggleBtn.addEventListener('click', () => {
+      collapsed = !collapsed;
+      applyState();
+    });
+  }
+
+  return {
+    collapse(){ if (!collapsed){ collapsed = true; applyState(); } },
+    expand(){ if (collapsed){ collapsed = false; applyState(); } },
+    isCollapsed: () => collapsed
+  };
+}
+
+const fleetPanel = setupSidePanel(fleetUIRoot);
+const supportPanel = setupSidePanel(supportUIRoot);
 const Fleet = window.Fleet || (window.Fleet = {
   ships: [],
   dirty: true,
