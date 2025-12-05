@@ -14000,22 +14000,23 @@ function battleshipAI(n, target) {
 
 // === PEŁNY PORT AI MYŚLIWCA Z AI SPACE ===
 function runAdvancedFighterAI(npc, dt) {
-  // --- KONFIGURACJA ---
+ // --- KONFIGURACJA ---
   const isSupport = npc.isSupportWing || !!npc.supportData;
-  // Domyślny rozkaz dla piratów z misji to 'engage'
   let order = 'engage';
   
-  // Jeśli to wsparcie gracza, bierzemy rozkaz z UI
   if (isSupport && typeof SupportWing !== 'undefined') {
       order = SupportWing.order || 'guard';
   }
 
-  // ZASIĘGI (Kluczowe dla Twoich stref)
-  // Guard: krótki zasięg (np. 6k)
-  // Engage: zasięg radaru (25k), żeby widzieli wroga w strefie
+  // Zasięg radaru
   const SEARCH_RANGE = (order === 'engage') ? 25000 : 6000;
 
-  // Liczniki
+  // Histereza (Deadband) dla płynnych przejść
+  // Wchodzimy w dogfight blisko (500), wychodzimy dopiero jak cel ucieknie (1000)
+  const DOGFIGHT_ENTER_DIST = 500;
+  const DOGFIGHT_EXIT_DIST = 1000;
+
+  // Timery
   npc.gunCD = Math.max(0, (npc.gunCD || 0) - dt);
   npc.mslCD = Math.max(0, (npc.mslCD || 0) - dt);
   npc.breakOffTimer = Math.max(0, (npc.breakOffTimer || 0) - dt);
@@ -14028,36 +14029,50 @@ function runAdvancedFighterAI(npc, dt) {
   
   if (target && target.dead) target = null;
 
-  // Szukaj celu tylko co jakiś czas (optymalizacja + stabilność decyzji)
   if (!target && npc.retargetTimer <= 0) {
       target = window.aiPickBestTarget(npc, SEARCH_RANGE);
       npc.target = target;
-      npc.retargetTimer = 1.0; 
+      npc.retargetTimer = 1.0 + Math.random() * 0.5; // Losowy czas, żeby nie wszyscy na raz
   }
 
   const dist = target ? Math.hypot(target.x - npc.x, target.y - npc.y) : Infinity;
 
   // ---------------------------------------------------------
-  // 2. MASZYNA STANÓW (To naprawia stanie w miejscu)
+  // 2. MASZYNA STANÓW (Z Histerezą)
   // ---------------------------------------------------------
   if (target) {
-      const isFighter = target.fighter || target.type === 'fighter';
+      const isFighter = target.fighter || target.type === 'fighter' || target.type === 'interceptor';
       
-      // A. Blisko + Myśliwiec -> DOGFIGHT
-      if (isFighter && dist < 800 && npc.state !== 'dogfight3D') {
-          npc.state = 'dogfight3D';
-          npc.sub = 'merge';
-          npc.subT = 0;
-          npc._mergeInit = false;
+      // A. FIGHTER vs FIGHTER
+      if (isFighter) {
+          // Jeśli już walczymy, trzymaj stan dopóki cel nie ucieknie daleko
+          if (npc.state === 'dogfight3D') {
+              if (dist > DOGFIGHT_EXIT_DIST) {
+                  npc.state = 'engage_formation'; // Powrót do dolotu
+              }
+          } 
+          // Jeśli dolatujemy, wejdź w walkę dopiero jak bardzo blisko
+          else {
+              if (dist < DOGFIGHT_ENTER_DIST) {
+                  npc.state = 'dogfight3D';
+                  // Reset manewrów przy wejściu
+                  npc.sub = 'merge';
+                  npc.subT = 0;
+                  npc._mergeInit = false;
+              } else {
+                  npc.state = 'engage_formation';
+              }
+          }
       }
-      // B. Blisko + Duży statek -> BOMBING
-      else if (!isFighter && dist < 1200 && npc.state !== 'bombing') {
-          npc.state = 'bombing';
-      }
-      // C. DALEKO -> DOLOT (Engage Formation) <--- TEGO BRAKOWAŁO
-      // Jeśli widzę wroga, ale jest > 800j, lecę do niego.
-      else if (dist >= 800 && npc.state !== 'dogfight3D' && npc.state !== 'bombing') {
-          npc.state = 'engage_formation';
+      // B. ATAK NA DUŻY STATEK (Bombing run)
+      else {
+          // Tu też mała histereza
+          if (npc.state === 'bombing') {
+              if (dist > 1500) npc.state = 'engage_formation';
+          } else {
+              if (dist < 1200) npc.state = 'bombing';
+              else npc.state = 'engage_formation';
+          }
       }
   } else {
       npc.state = 'guard';
@@ -14067,63 +14082,82 @@ function runAdvancedFighterAI(npc, dt) {
   // 3. FIZYKA RUCHU
   // ---------------------------------------------------------
 
-  // --- CASE 1: DOLOT DO WROGA (Naprawa błędu) ---
+  // --- CASE 1: DOLOT (Płynny lot do celu) ---
   if (npc.state === 'engage_formation' && target) {
       const dirX = target.x - npc.x;
       const dirY = target.y - npc.y;
       const len = Math.hypot(dirX, dirY) || 1;
       
-      // Leć szybko w stronę wroga
+      // Lecimy szybko, ale płynnie skręcamy (turnRate 120 zamiast 180 dla stabilności)
       const wantVx = (dirX / len) * npc.maxSpeed;
       const wantVy = (dirY / len) * npc.maxSpeed;
 
-      // Używamy clampTurnVec do płynnego skrętu
-      const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 180);
-      npc.vx = turned.vx;
-      npc.vy = turned.vy;
+      const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 120);
+      
+      // Smooth interpolation dla prędkości (żeby nie szarpało)
+      npc.vx += (turned.vx - npc.vx) * 5.0 * dt;
+      npc.vy += (turned.vy - npc.vy) * 5.0 * dt;
+      
       npc.angle = Math.atan2(npc.vy, npc.vx);
-      return; // Koniec ruchu na tę klatkę
+      
+      // Opcjonalnie strzelaj jak masz zasięg
+      if (dist < 1200) tryFireFighter(npc, target, dt);
+      return;
   }
 
-  // --- CASE 2: DOGFIGHT (vs Myśliwce) ---
+  // --- CASE 2: DOGFIGHT (Walka manewrowa) ---
   if (npc.state === 'dogfight3D' && target) {
       if (!npc.sub) npc.sub = 'merge';
+
+      // Manewr 1: Merge (Czołówka / Pościg)
       if (npc.sub === 'merge') {
-          if (!npc._mergeInit) { npc._mergeInit = true; npc.subT = 0.5 + Math.random(); }
+          if (!npc._mergeInit) { 
+              npc._mergeInit = true; 
+              npc.subT = 0.7 + Math.random() * 0.5; // Dłuższy czas manewru
+          }
           const lead = getLeadAim(npc, target, 500);
           const dx = lead.x - npc.x, dy = lead.y - npc.y;
-          const wantVx = (dx/(Math.hypot(dx,dy)||1)) * npc.maxSpeed * 1.2;
-          const wantVy = (dy/(Math.hypot(dx,dy)||1)) * npc.maxSpeed * 1.2;
+          const len = Math.hypot(dx, dy) || 1;
           
-          const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 400);
+          // Boost speed przy ataku
+          const wantVx = (dx/len) * npc.maxSpeed * 1.1; 
+          const wantVy = (dy/len) * npc.maxSpeed * 1.1;
+          
+          const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 350);
           npc.vx = turned.vx; npc.vy = turned.vy;
           
           npc.subT -= dt;
-          if (npc.subT <= 0 || dist < 120) {
-              npc.sub = 'slash'; npc.subT = 0.5; npc._slashSign = Math.random()>0.5 ? 1 : -1;
+          // Zmiana na slash tylko jak bardzo blisko lub czas minął
+          if (npc.subT <= 0 || dist < 100) {
+              npc.sub = 'slash'; 
+              npc.subT = 0.6; 
+              npc._slashSign = Math.random() > 0.5 ? 1 : -1;
           }
       }
+      // Manewr 2: Slash (Unik po minięciu)
       else if (npc.sub === 'slash') {
           const dx = target.x - npc.x, dy = target.y - npc.y;
           const len = Math.hypot(dx, dy) || 1;
           const nx = dx/len, ny = dy/len;
+          // Wektor boczny (unik)
           const px = -ny * npc._slashSign, py = nx * npc._slashSign;
           
-          const wantVx = (nx * 0.3 + px * 1.4) * npc.maxSpeed;
-          const wantVy = (ny * 0.3 + py * 1.4) * npc.maxSpeed;
+          const wantVx = (nx * 0.4 + px * 1.2) * npc.maxSpeed;
+          const wantVy = (ny * 0.4 + py * 1.2) * npc.maxSpeed;
           
-          const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 500);
+          const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 450);
           npc.vx = turned.vx; npc.vy = turned.vy;
           
           npc.subT -= dt;
           if (npc.subT <= 0) { npc.sub = 'merge'; npc._mergeInit = false; }
       }
+      
       npc.angle = Math.atan2(npc.vy, npc.vx);
       tryFireFighter(npc, target, dt);
       return;
   }
 
-  // --- CASE 3: BOMBING (vs Duże) ---
+  // --- CASE 3: BOMBING (Nalot na duże statki) ---
   if (npc.state === 'bombing' && target) {
       if (!npc.bombardVec || npc.lastTargetId !== target.id) {
           const a = Math.random() * 6.28;
@@ -14131,18 +14165,18 @@ function runAdvancedFighterAI(npc, dt) {
           npc.bombardSide = 1;
           npc.lastTargetId = target.id;
       }
-      const lineLen = 1200;
+      const lineLen = 1400; // Dłuższa prosta
       const wayX = target.x + npc.bombardVec.x * lineLen * npc.bombardSide;
       const wayY = target.y + npc.bombardVec.y * lineLen * npc.bombardSide;
       
-      if (Math.hypot(wayX - npc.x, wayY - npc.y) < 200) npc.bombardSide *= -1;
+      if (Math.hypot(wayX - npc.x, wayY - npc.y) < 250) npc.bombardSide *= -1;
 
       const dx = wayX - npc.x, dy = wayY - npc.y;
       const len = Math.hypot(dx, dy) || 1;
-      const wantVx = (dx / len) * npc.maxSpeed * 1.1;
-      const wantVy = (dy / len) * npc.maxSpeed * 1.1;
+      const wantVx = (dx / len) * npc.maxSpeed * 1.2;
+      const wantVy = (dy / len) * npc.maxSpeed * 1.2;
 
-      const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 180);
+      const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 150);
       npc.vx = turned.vx; npc.vy = turned.vy;
       npc.angle = Math.atan2(npc.vy, npc.vx);
       
@@ -14152,11 +14186,16 @@ function runAdvancedFighterAI(npc, dt) {
 
   // --- CASE 4: GUARD / IDLE (Gdy brak celu) ---
   let leader = null;
+  // FIX: Sprawdź też squad.leader dla piratów
   if (npc.supportData) leader = npc.supportData.leader || window.ship;
+  else if (npc.squad) leader = npc.squad.leader;
   
-  if (leader) {
+  if (leader && leader !== npc && !leader.dead) {
       // Formacja przy liderze
-      const offset = npc.formationOffset || {x:-100, y:0};
+      let offset = npc.formationOffset || {x:0, y:0};
+      // Jeśli brak offsetu, dryfuj za liderem
+      if (!npc.formationOffset) offset = {x: -100 - (npc.id%3)*50, y: (npc.id%2===0?50:-50)};
+
       const la = leader.angle || 0;
       const destX = leader.x + (offset.x * Math.cos(la) - offset.y * Math.sin(la));
       const destY = leader.y + (offset.x * Math.sin(la) + offset.y * Math.cos(la));
@@ -14165,29 +14204,37 @@ function runAdvancedFighterAI(npc, dt) {
       const d = Math.hypot(dx, dy);
       
       let wantSpeed = npc.maxSpeed;
-      if (d < 300) wantSpeed = d * 2.0; 
-      if (d < 600) { npc.vx += (leader.vx||0)*2*dt; npc.vy += (leader.vy||0)*2*dt; }
+      if (d < 200) wantSpeed = d * 2.5; // Zwalniaj przy dolecie
+      
+      // Matching velocity (skopiuj prędkość lidera jak jesteś blisko)
+      if (d < 600) { 
+          npc.vx += (leader.vx - npc.vx) * 2.0 * dt; 
+          npc.vy += (leader.vy - npc.vy) * 2.0 * dt; 
+      }
 
-      const turned = clampTurnVec(npc.vx, npc.vy, (dx/d)*wantSpeed, (dy/d)*wantSpeed, dt, 200);
+      const turned = clampTurnVec(npc.vx, npc.vy, (dx/d)*wantSpeed, (dy/d)*wantSpeed, dt, 180);
       npc.vx = turned.vx; npc.vy = turned.vy;
+      
       if (d < 100) npc.angle = leader.angle;
       else npc.angle = Math.atan2(npc.vy, npc.vx);
-  } else if (npc.home) {
-      // Patrol wokół bazy (piraci bez lidera)
-      npc.patrolAng = (npc.patrolAng || 0) + dt * 0.3;
-      const r = npc.home.r + 300;
+  } 
+  else if (npc.home) {
+      // Patrol wokół bazy (dla samotnych strażników)
+      npc.patrolAng = (npc.patrolAng || 0) + dt * 0.2;
+      const r = npc.home.r + 350;
       const px = npc.home.x + Math.cos(npc.patrolAng) * r;
       const py = npc.home.y + Math.sin(npc.patrolAng) * r;
       const dx = px - npc.x, dy = py - npc.y;
       const d = Math.hypot(dx, dy);
-      const turned = clampTurnVec(npc.vx, npc.vy, (dx/d)*120, (dy/d)*120, dt, 120);
+      const turned = clampTurnVec(npc.vx, npc.vy, (dx/d)*120, (dy/d)*120, dt, 100);
       npc.vx = turned.vx; npc.vy = turned.vy;
       npc.angle = Math.atan2(npc.vy, npc.vx);
-  } else {
-      // Dryfuj (żeby nie stać całkowicie w miejscu)
+  } 
+  else {
+      // Ostateczny fallback: powolny dryf zamiast gwałtownego stopu
       npc.vx *= 0.99; npc.vy *= 0.99;
   }
-}
+};
   
 function useRailPair(n, target){ /* sprawdź kąt i cooldown, odpal pary */ }
 function useRocketsPair(n, target){ /* salwy */ }
