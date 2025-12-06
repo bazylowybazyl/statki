@@ -3951,55 +3951,88 @@ function spawnPirate(kind, station) {
   return npc;
 }
 window.spawnPirate = spawnPirate;
-  function spawnPirateOrbitSquad(station, radius, speed, count = 5) {
+  function spawnPirateSquad(station, type, count, mode = 'guard', opts = {}) {
   const squad = new Squad('pirate', 'fighter');
   window.SQUADS.push(squad);
   
-  // Losowa faza startowa dla całej eskadry na orbicie
-  const squadPhase = Math.random() * Math.PI * 2;
+  // Parametry orbity / pozycji
+  const radius = opts.radius || (station.r + 200);
+  const speed = opts.speed || 0.3;
+  const startPhase = Math.random() * Math.PI * 2;
+  const phaseStep = (Math.PI * 2) / count;
+
+  // Parametry ataku (tylko dla mode='attack')
+  let attackAngle = 0;
+  let attackDir = {x:0, y:0};
+  if (mode === 'attack') {
+      // Oblicz kąt w stronę gracza
+      const dx = ship.pos.x - station.x;
+      const dy = ship.pos.y - station.y;
+      attackAngle = Math.atan2(dy, dx);
+      attackDir = { x: Math.cos(attackAngle), y: Math.sin(attackAngle) };
+  }
 
   for (let i = 0; i < count; i++) {
-    // Pierwszy to lider, reszta skrzydłowi
-    const isLeader = (i === 0);
-    const type = (Math.random() > 0.5) ? 'interceptor' : 'fighter';
-    
+    // 1. Spawn jednostki
     const npc = spawnPirate(type, station);
     
-    // Konfiguracja Guard
-    npc.state = 'guard'; 
-    
-    // TYLKO LIDER ma przypisaną stację do orbitowania
-    // (Reszta będzie podążać za liderem dzięki logice w Squad i AI)
-    npc.guardStation = station; 
-    npc.guardOrbitRadius = radius; 
-    npc.guardOrbitSpeed = speed;
-    npc.guardPhase = squadPhase; 
+    // 2. Pozycja startowa (dla obu trybów startują wokół stacji)
+    // Dla ataku: spawnujemy ich w sektorze skierowanym do gracza, żeby nie lecieli przez stację
+    const angle = (mode === 'attack') 
+        ? attackAngle + (i - (count-1)/2) * 0.15 // Wachlarz w stronę gracza
+        : startPhase + (i * phaseStep);          // Równomiernie dookoła (orbita)
 
-    // Pozycja startowa (żeby nie spawnowali się w środku stacji)
-    // Obliczamy gdzie powinien być lider
-    const lx = station.x + Math.cos(squadPhase) * radius;
-    const ly = station.y + Math.sin(squadPhase) * radius;
+    const spawnR = (mode === 'attack') ? station.r + 50 : radius; // Atakujący wylatują z doków
     
-    if (isLeader) {
-        npc.x = lx; 
-        npc.y = ly;
-        npc.angle = squadPhase + (speed > 0 ? Math.PI/2 : -Math.PI/2);
-    } else {
-        // Skrzydłowi spawnuja się lekko za liderem (symulacja formacji)
-        npc.x = lx + (Math.random()-0.5)*100;
-        npc.y = ly + (Math.random()-0.5)*100;
+    npc.x = station.x + Math.cos(angle) * spawnR;
+    npc.y = station.y + Math.sin(angle) * spawnR;
+
+    // 3. Konfiguracja zachowania
+    if (mode === 'guard') {
+        // --- TRYB STRAŻNIKA (Orbitowanie) ---
+        npc.state = 'guard';
+        // Lider dostaje dane do orbitowania
+        if (i === 0) {
+            npc.guardStation = station;
+            npc.guardOrbitRadius = radius;
+            npc.guardOrbitSpeed = speed;
+            npc.guardPhase = angle;
+        }
+        // Prędkość styczna (żeby już płynęli po orbicie)
+        npc.vx = -Math.sin(angle) * radius * speed;
+        npc.vy = Math.cos(angle) * radius * speed;
+        npc.angle = angle + (speed > 0 ? Math.PI/2 : -Math.PI/2);
+    } 
+    else {
+        // --- TRYB ATAKU (Swarm / Posiłki) ---
+        npc.state = 'engage_formation';
+        
+        // Wyczyść guardStation, żeby nie orbitowali
+        npc.guardStation = null; 
+        
+        // Nadaj dużą prędkość w stronę gracza (Wyrzut z hangaru)
+        const launchSpeed = 400;
+        npc.vx = Math.cos(angle) * launchSpeed;
+        npc.vy = Math.sin(angle) * launchSpeed;
+        npc.angle = angle;
+        
+        // Wymuś szukanie celu
+        npc.forceTarget = null;
+        npc.target = null;
+        npc.retargetTimer = 0;
     }
-    
-    // Prędkość początkowa (styczna), żeby nie stali w miejscu
-    npc.vx = -Math.sin(squadPhase) * radius * speed;
-    npc.vy = Math.cos(squadPhase) * radius * speed;
 
     squad.addUnit(npc);
+    
+    // Offsety formacji (dla obu trybów, żeby ładnie latali w grupie)
+    if (i > 0) {
+        const row = Math.floor((i + 1) / 2);
+        const side = (i % 2 === 0) ? 1 : -1;
+        npc.formationOffset = { x: -row * 50, y: side * row * 40 };
+    } else {
+        npc.formationOffset = { x: 0, y: 0 };
+    }
   }
-  
-  // Wymuś przeliczenie offsetów formacji w klasie Squad
-  // To sprawi, że Unit 1, 2, 3... dostaną formationOffset względem Unit 0
-  squad.recalculateFormation();
   
   return squad;
 }
@@ -8413,12 +8446,38 @@ function startMercenaryMission(){
     }
   };
 
-  mercMission.guards = [];
-  for (let i = 0; i < 6; i++)
-    mercMission.guards.push( spawnStationGuard(station, 'interceptor', i * (Math.PI*2/6)) );
-  for (let i = 0; i < 2; i++)
-    mercMission.guards.push( spawnStationGuard(station, 'frigate', i * Math.PI) );
+ mercMission.guards = [];
 
+  // 1. Eskadra Interceptorów (6 sztuk)
+  // Używamy nowej funkcji: tworzy eskadrę, która orbituje (mode='guard')
+  spawnPirateSquad(station, 'interceptor', 6, 'guard', { 
+      radius: station.r + 320, 
+      speed: 0.45 
+  });
+
+  // 2. Fregaty (2 sztuki)
+  // Duże statki spawnujemy osobno, żeby nie latały "na ogonie" lidera jak myśliwce,
+  // tylko dostojnie krążyły po dalszej orbicie.
+  const frigateTypes = ['frigate_pd', 'frigate_laser']; // Różne typy dla urozmaicenia
+
+  for (let i = 0; i < 2; i++) {
+      const type = frigateTypes[i % frigateTypes.length];
+      const npc = spawnPirate(type, station); // Używamy głównego spawnera
+
+      // Konfiguracja orbitowania (Guard)
+      npc.state = 'guard';
+      npc.guardStation = station;
+      npc.guardOrbitRadius = station.r + 550; // Dalsza orbita
+      npc.guardOrbitSpeed = (i === 0 ? 1 : -1) * 0.15; // Lecą w przeciwnych kierunkach
+      npc.guardPhase = i * Math.PI; // Startują po przeciwnych stronach (0 i 180 stopni)
+      
+      // Pozycja startowa na orbicie (żeby nie dolatywały z środka)
+      npc.x = station.x + Math.cos(npc.guardPhase) * npc.guardOrbitRadius;
+      npc.y = station.y + Math.sin(npc.guardPhase) * npc.guardOrbitRadius;
+      npc.angle = npc.guardPhase + (npc.guardOrbitSpeed > 0 ? Math.PI/2 : -Math.PI/2);
+
+      mercMission.guards.push(npc);
+  }
   const orbitBase = station.r + 220;
   const baseAngle = Math.random() * Math.PI * 2;
   const angleStep = Math.PI / 2;
@@ -9759,27 +9818,7 @@ function resetSwarmQueue(){
 }
 window.resetSwarmQueue = resetSwarmQueue;
 
-function spawnFighterLineSquad(station, anchor, right, facing){
-  const squad = new Squad('pirate', 'fighter');
-  SQUADS.push(squad);
-  const spacing = 36;
-  const dirRight = right || { x: -Math.sin(facing), y: Math.cos(facing) };
-  for(let i=0; i<9; i++){
-    const n = spawnPirate('fighter', station);
-    const offset = (i - 4) * spacing;
-    if(anchor){
-      n.x = anchor.x + dirRight.x * offset;
-      n.y = anchor.y + dirRight.y * offset;
-    }
-    n.angle = facing;
-    n.vx += Math.cos(facing) * 30;
-    n.vy += Math.sin(facing) * 30;
-    squad.addUnit(n);
-    n.formationOffset = { x: offset, y: 0 };
-    n.forceTarget = ship;
-  }
-  return squad;
-}
+
 
 function setPirateGuardFlags(npc, station){
   npc.guardHold = true;
@@ -11052,33 +11091,44 @@ function pirateMissionStep(dt){
     const queued = Array.isArray(swarm.queue) ? swarm.queue.shift() : null;
     const descriptor = (queued && typeof queued === 'object') ? queued : { kind: queued };
     let kind = descriptor.kind || ((Math.random()<0.6)?'fighter_squad':'frigate_pd');
+    
     const spawnPos = descriptor.pos;
-    const angleToPlayer = spawnPos
-      ? Math.atan2(ship.pos.y - spawnPos.y, ship.pos.x - spawnPos.x)
+    const angleToPlayer = spawnPos 
+      ? Math.atan2(ship.pos.y - spawnPos.y, ship.pos.x - spawnPos.x) 
       : Math.atan2(ship.pos.y - st.y, ship.pos.x - st.x);
 
-    // JEŚLI FIGHTER -> SPAWNUJ CAŁĄ ESKADRĘ (9 sztuk)
+    // 1. MYŚLIWCE: Używamy spawnPirateSquad w trybie 'attack'
+    // Tworzy eskadrę 7 interceptorów, które od razu lecą na gracza
     if(kind === 'fighter' || kind === 'interceptor' || kind === 'fighter_squad'){
-        const anchor = spawnPos || { x: st.x + Math.cos(angleToPlayer) * (st.r + 240), y: st.y + Math.sin(angleToPlayer) * (st.r + 240) };
-        spawnFighterLineSquad(st, anchor, descriptor.right, angleToPlayer);
+        spawnPirateSquad(st, 'interceptor', 7, 'attack');
     }
-    // INNE STATKI (pojedynczo, ale z nowym AI)
+    // 2. DUŻE STATKI: Spawnujemy pojedynczo przez spawnPirate
     else {
         const npc = spawnPirate(kind, st);
+        
+        // Jeśli w kolejce była zdefiniowana pozycja (np. dla formacji capitali)
         if(spawnPos){
           npc.x = spawnPos.x; npc.y = spawnPos.y;
           npc.formationSlot = { x: descriptor.offset || 0, y: 0 };
           npc.angle = angleToPlayer;
-          npc.vx += Math.cos(angleToPlayer) * 20;
-          npc.vy += Math.sin(angleToPlayer) * 20;
+          
+          // KLUCZOWE: Nadaj pęd początkowy, żeby nie stały w miejscu przy spawnie
+          npc.vx += Math.cos(angleToPlayer) * 80;
+          npc.vy += Math.sin(angleToPlayer) * 80;
         }
-        npc.forceTarget = ship;
+        
+        // Ważne: Ustaw stan na atak, żeby nie weszły w tryb Guard/Orbit
+        npc.state = 'engage_formation';
+        npc.guardStation = null;
+        
+        // Reset celów dla AI (niech aiPickBestTarget wybierze gracza lub jego myśliwce)
+        npc.forceTarget = null;
+        npc.target = null;
     }
 
     // Jeśli kolejka pusta, odnów ją
     if(swarm.queue && swarm.queue.length === 0) resetSwarmQueue();
   }
-}
 
 // =============== Warp (jak wcześniej) ===============
 const warp = {
