@@ -3197,19 +3197,6 @@ const MISSIONS = {
   show: false
 };
 
-function spawnMissionFighter(pos){
-  const n = makeNPCBase(pos, { hp: 120, accel: 90, maxSpeed: 540, turn: 4.0, radius: 22 });
-  n.type = 'pirate';
-  n.color = '#ff5533';
-  n.isPirate = true;
-  n.fighter = true;
-  n.ai = function(dt){
-    chaseEvadeAI(n, ship, { strafe:true });
-  };
-  n.mission = true;
-  npcs.push(n);
-}
-
 function makeNPCBase(pos, stats){
   stats = stats || {};
   return {
@@ -3875,14 +3862,6 @@ function initFleet(){
 function makeRailgun(cfg){ return { ...cfg }; }
 function makeRocketPod(cfg){ return { ...cfg }; }
 function makeGatling(cfg){ return { ...cfg }; }
-function spawnInterceptor(pos){
-  const n = makeNPCBase(pos, { hp: 160, accel: 90, maxSpeed: 540, turn: 4.0, radius: 22 });
-  n.type = 'interceptor';
-  n.ai = function(dt){
-    chaseEvadeAI(n, ship, { strafe:true, dodgeRails:true, rocketBurst:false });
-  };
-  MISSION_NPCS.push(n);
-}
 function spawnPirate(kind, station) {
   const angle = Math.random() * Math.PI * 2;
   const dist = (station.r || 100) + 150;
@@ -3943,19 +3922,19 @@ function spawnPirate(kind, station) {
     npc.boostDur = 2.8;
     npc.preferredRange = 820;
     npc.forceTarget = ship;
-    
+
     npc.keepAngle = true; // <--- WAŻNE
-    npc.ai = (dt) => { if(window.aiDestroyer) window.aiDestroyer(null, npc, dt); };
-  } 
+    npc.ai = (dt) => window.aiDestroyer(null, npc, dt);
+  }
   else if (kind === 'battleship') {
     npc.isCapitalShip = true;
     npc.pd = 'pd_laser';
     npc.preferredRange = 780;
     npc.forceTarget = ship;
-    
+
     npc.keepAngle = true; // <--- WAŻNE: Niezbędne do Broadside
-    npc.ai = (dt) => { if(window.aiBattleship) window.aiBattleship(null, npc, dt); };
-  } 
+    npc.ai = (dt) => window.aiBattleship(null, npc, dt);
+  }
   else {
     // Fallback dla innych jednostek
     npc.ai = (dt) => { if(window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
@@ -3967,46 +3946,6 @@ function spawnPirate(kind, station) {
   return npc;
 }
 window.spawnPirate = spawnPirate;
-  
-function spawnDestroyer(pos){
-  const n = makeNPCBase(pos, { hp: 1200, accel: 40, maxSpeed: 260, turn: 1.2, radius: 60 });
-  n.type = 'destroyer';
-  n.weapons = {
-    railL: makeRailgun({ dmg: 85, cooldown: 0.85, spread: 0.004 }),
-    railR: makeRailgun({ dmg: 85, cooldown: 0.85, spread: 0.004 }),
-    rocketL: makeRocketPod({ salvo: 3, cooldown: 2.8 }),
-    rocketR: makeRocketPod({ salvo: 3, cooldown: 2.8 })
-  };
-  n.ai = function(dt){
-    battleshipAI(n, ship);
-    useRailPair(n, ship);
-    useRocketsPair(n, ship);
-  };
-  MISSION_NPCS.push(n);
-}
-
-function spawnFrigate(pos){
-  const n = makeNPCBase(pos, { hp: 650, accel: 60, maxSpeed: 360, turn: 2.0, radius: 44 });
-  n.type = 'frigate';
-  armPirate(n, 'mid'); // AI i uzbrojenie jak w piratach
-  MISSION_NPCS.push(n);
-}
-
-function spawnGunship(pos){
-  const n = makeNPCBase(pos, { hp: 520, accel: 60, maxSpeed: 360, turn: 2.4, radius: 40 });
-  n.type = 'gunship';
-  n.weapons = {
-    ciwsL: makeGatling({ dps: 65, heat: 0.3 }),
-    ciwsR: makeGatling({ dps: 65, heat: 0.3 }),
-    rockets: makeRocketPod({ salvo: 2, cooldown: 3.2 })
-  };
-  n.ai = function(dt){
-    dogfightAI(n, ship);
-    useCIWSPair(n, ship);
-    maybeFireRockets(n, ship);
-  };
-  MISSION_NPCS.push(n);
-}
 const TRAFFIC_WEIGHTS = {
   mercury: { civilian: 0.02, convoy: 0.25 },
   venus:   { civilian: 0.03, convoy: 0.25 },
@@ -9755,7 +9694,7 @@ function resetSwarmQueue(){
     return;
   }
   // Fallback jeśli nie da się zbudować formacji
-  const types = ['fighter_squad', 'interceptor', 'gunship', 'frigate_pd'];
+  const types = ['fighter_squad', 'interceptor', 'frigate_pd'];
   mercMission.swarm.queue = [];
   for(let i=0; i<5; i++){
      mercMission.swarm.queue.push(types[Math.floor(Math.random()*types.length)]);
@@ -14009,43 +13948,6 @@ function limitSpeed(n, max){
     else { n.vx*=s; n.vy*=s; }
   }
 }
-function steerToward(n, tx, ty, dt, accel = n.accel, turnRate = n.turn) {
-  const desired = Math.atan2(ty - n.y, tx - n.x);
-  const diff = wrapAngle(desired - n.angle);
-  const turn = clamp(diff, -turnRate * dt, turnRate * dt);
-  n.angle = wrapAngle(n.angle + turn);
-  n.vx += Math.cos(n.angle) * accel * dt;
-  n.vy += Math.sin(n.angle) * accel * dt;
-  limitSpeed(n, n.maxSpeed);
-}
-
-function chaseEvadeAI(n, target, opts = {}) {
-  steerToward(n, target.pos.x, target.pos.y, 0.016);
-
-  if (opts.strafe) {
-    const side = (Math.random() < 0.5 ? -1 : 1);
-    const ang = n.angle + side * Math.PI / 2;
-    n.vx += Math.cos(ang) * n.accel * 0.004;
-    n.vy += Math.sin(ang) * n.accel * 0.004;
-  }
-}
-
-function dogfightAI(n, target) {
-  chaseEvadeAI(n, target, { strafe: true });
-}
-
-function battleshipAI(n, target) {
-  const d = Math.hypot(target.pos.x - n.x, target.pos.y - n.y);
-  if (d < 600) {
-    const ang = Math.atan2(n.y - target.pos.y, n.x - target.pos.x);
-    n.vx += Math.cos(ang) * n.accel * 0.016;
-    n.vy += Math.sin(ang) * n.accel * 0.016;
-    limitSpeed(n, n.maxSpeed);
-  } else {
-    chaseEvadeAI(n, target);
-  }
-}
-
 // === PEŁNY PORT AI MYŚLIWCA Z AI SPACE ===
 function runAdvancedFighterAI(npc, dt) {
  // --- KONFIGURACJA ---
