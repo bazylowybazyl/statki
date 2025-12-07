@@ -5464,13 +5464,22 @@ function drawBulletVisual(ctx, b, cam){
   ctx.beginPath(); ctx.moveTo(s.x - dx * 0.35, s.y - dy * 0.35); ctx.lineTo(s.x + dx * 0.9, s.y + dy * 0.9); ctx.stroke();
   ctx.restore();
 }
-function spawnExplosionPlasma(x,y,scale=1){
-  const count = Math.round(22 * scale);
-  for(let i=0;i<count;i++){
-    const a = Math.random()*Math.PI*2;
-    const s = 120 + Math.random()*260 * scale;
-    spawnParticle({x,y}, {x:Math.cos(a)*s, y:Math.sin(a)*s}, 0.45 + Math.random()*0.5, '#7CFF7C', 2 + Math.random()*3, true);
-  }
+function spawnExplosionPlasma(x, y, scale = 1) {
+  spawnParticle(
+    {x, y},         // Pozycja
+    {x: 0, y: 0},   // Brak ruchu
+    0.1,            // Bardzo krótki czas życia (0.1s)
+    '#AAFFAA',      // Jaśniejszy środek
+    4 * scale,      // Mały rozmiar (np. 4px)
+    true            // Flash (efekt świecenia)
+  );
+  spawnShockwave(x, y, { 
+    r: 2,               // Startuje od punktu
+    maxR: 14 * scale,   // Rośnie tylko do ~14 pikseli (bardzo małe)
+    w: 2,               // Cienka linia
+    maxLife: 0.15,      // Bardzo szybki zanik
+    color: 'rgba(124, 255, 124,' 
+  });
 }
 function spawnRailHitEffect(x,y,scale=1){
   // Tylko 3D (skalowane parametrem efektu)
