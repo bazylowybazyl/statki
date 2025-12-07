@@ -2912,9 +2912,6 @@ function updateZoneState(dt){
 }
 
 function handleZoneTransition(prevZoneId, currentZoneId){
-  if (currentZoneId === 'pirate_outer' && prevZoneId !== 'pirate_outer') {
-    enterPirateOuterOrbit();
-  }
   if (currentZoneId === 'pirate_inner' && prevZoneId !== 'pirate_inner') {
     enterPirateInnerOrbit();
   }
@@ -9821,125 +9818,10 @@ window.resetSwarmQueue = resetSwarmQueue;
 
 
 
-function setPirateGuardFlags(npc, station){
-  npc.guardHold = true;
-  npc.guardStation = station || npc.guardStation || null;
-  npc.forceTarget = null;
-  npc.target = null;
-}
-
-function assignPirateLine(units, station, forward, right, distance, spacing){
-  const mid = (units.length - 1) * 0.5;
-  units.forEach((npc, idx) => {
-    const offset = (idx - mid) * spacing;
-    setPirateGuardFlags(npc, station);
-    npc.guardMode = 'line';
-    npc.guardAnchor = {
-      x: station.x + forward.x * distance + right.x * offset,
-      y: station.y + forward.y * distance + right.y * offset
-    };
-    npc.guardFacing = Math.atan2(forward.y, forward.x);
-    npc.vx = 0; npc.vy = 0;
-  });
-}
-
-function assignPirateOrbit(units, station, radius, speed, jitter = 0){
-  units.forEach((npc, idx) => {
-    setPirateGuardFlags(npc, station);
-    npc.guardMode = 'orbit';
-    npc.guardOrbitRadius = radius;
-    const sign = (idx % 2 === 0) ? 1 : -1;
-    npc.guardOrbitSpeed = (speed + (Math.random() - 0.5) * jitter) * sign;
-    npc.guardAngle = Math.atan2(npc.y - station.y, npc.x - station.x);
-  });
-}
-
-function clearPirateGuardState(){
-  for (const npc of npcs) {
-    if (!npc?.isPirate) continue;
-    npc.guardHold = false;
-    npc.guardMode = null;
-    npc.guardStation = null;
-    npc.guardAnchor = null;
-    npc.guardFacing = null;
-  }
-  if (mercMission) {
-    mercMission.guardConfigured = false;
-  }
-}
-
-function setupPirateGuardFormation(station){
-  if (!mercMission || !station) return;
-  const orbit = pirateOrbitRadii();
-  const forward = norm({ x: ship.pos.x - station.x, y: ship.pos.y - station.y });
-  const right = { x: -forward.y, y: forward.x };
-  const defensiveRing = Math.min(
-    station.r + 1400,
-    Math.max(station.r + 900, (orbit.inner || (station.r + 1200)) - 200)
-  );
-  const rearRing = Math.max(station.r + 620, defensiveRing - 260);
-  const pdOrbit = Math.max(station.r + 320, Math.min(rearRing - 180, station.r + 900));
-  const fighterOrbit = Math.max(pdOrbit + 140, station.r + 480);
-
-  const pirates = npcs.filter(n => n.isPirate && !n.dead && n.mission);
-  const capitals = pirates.filter(n => n.isCapitalShip || n.type === 'battleship' || n.type === 'destroyer');
-  const laserFrigates = pirates.filter(n => (n.type && n.type.includes('frigate') && n.subType === 'laser') || n.type === 'frigate_laser');
-  const pdFrigates = pirates.filter(n => n.type && n.type.includes('frigate') && n.subType !== 'laser');
-  const fighters = pirates.filter(n => n.fighter || n.type === 'fighter' || n.type === 'interceptor');
-
-  clearPirateGuardState();
-  assignPirateLine(capitals, station, forward, right, defensiveRing, 320);
-  assignPirateLine(laserFrigates, station, forward, right, rearRing, 220);
-  assignPirateOrbit(pdFrigates, station, pdOrbit, 0.24, 0.08);
-  assignPirateOrbit(fighters, station, fighterOrbit, 0.48, 0.12);
-
-  mercMission.guardConfigured = true;
-}
-
-function updatePirateGuardBehavior(station, dt){
-  if (!station || !mercMission?.guardConfigured) return;
-  for (const npc of npcs) {
-    if (!npc?.isPirate || npc.dead || !npc.guardMode || npc.guardStation !== station) continue;
-    if (npc.guardMode === 'orbit') {
-      const ang = npc.guardAngle = wrapAngle((npc.guardAngle || 0) + (npc.guardOrbitSpeed || 0) * dt);
-      const r = npc.guardOrbitRadius || (station.r + 360);
-      npc.x = station.x + Math.cos(ang) * r;
-      npc.y = station.y + Math.sin(ang) * r;
-      npc.vx = -Math.sin(ang) * r * (npc.guardOrbitSpeed || 0);
-      npc.vy =  Math.cos(ang) * r * (npc.guardOrbitSpeed || 0);
-      npc.angle = Math.atan2(npc.vy, npc.vx);
-    } else if (npc.guardMode === 'line' && npc.guardAnchor) {
-      const dx = npc.guardAnchor.x - npc.x;
-      const dy = npc.guardAnchor.y - npc.y;
-      const dist = Math.hypot(dx, dy) || 1;
-      const dir = { x: dx / dist, y: dy / dist };
-      const accel = (npc.accel || 140) * dt;
-      npc.vx += dir.x * accel;
-      npc.vy += dir.y * accel;
-      const friction = npc.friction || 0.985;
-      npc.vx *= friction;
-      npc.vy *= friction;
-      npc.x += npc.vx * dt;
-      npc.y += npc.vy * dt;
-      npc.angle = typeof npc.guardFacing === 'number' ? npc.guardFacing : npc.angle;
-    }
-  }
-}
-
-function enterPirateOuterOrbit(){
-  if (!mercMission || !mercMission.station || mercMission.alertStage === 'engage') return;
-  if (mercMission.alertStage === 'guard' && mercMission.guardConfigured) return;
-  mercMission.alertStage = 'guard';
-  mercMission.aggro = false;
-  if (mercMission.swarm) mercMission.swarm.active = false;
-  setupPirateGuardFormation(mercMission.station);
-}
-
 function enterPirateInnerOrbit(){
   if (!mercMission || !mercMission.station) return;
   if (mercMission.alertStage !== 'engage') {
     mercMission.alertStage = 'engage';
-    clearPirateGuardState();
   }
   if (!mercMission.aggro) triggerMercAggro('player_inner_orbit');
 }
@@ -9949,25 +9831,24 @@ function triggerMercAggro(reason){
   mercMission.aggro = true;
   mercMission.aggroReason = mercMission.aggroReason || reason;
   mercMission.alertStage = 'engage';
-  clearPirateGuardState();
+
+  // --- ZMIANA: Zamiast clearPirateGuardState(), robimy to ręcznie dla nowego AI ---
+  for(const npc of npcs){
+    if(npc.mission && npc.isPirate && !npc.dead){
+      // Przełącz w tryb ataku
+      npc.state = 'engage_formation';
+      // Odłącz od stacji (przestań orbitować)
+      npc.guardStation = null;
+      // Reset celu
+      npc.forceTarget = null;
+      npc.target = null;
+    }
+  }
 
   if(mercMission.swarm){
     mercMission.swarm.active = true;
     if(!mercMission.swarm.queue || !mercMission.swarm.queue.length) resetSwarmQueue();
     if(!mercMission.swarm.timer || mercMission.swarm.timer > 1.2) mercMission.swarm.timer = 1.2;
-  }
-
-  // --- ZMIANA TUTAJ ---
-  for(const npc of npcs){
-    if(npc.mission && npc.isPirate && !npc.dead){
-      // USUWAMY/KOMENTUJEMY TE LINIE:
-      // npc.forceTarget = ship; 
-      // npc.target = ship;
-      
-      // Zamiast tego czyścimy forceTarget, aby AI mogło samo wybrać cel (np. myśliwce gracza)
-      npc.forceTarget = null; 
-      npc.target = null;
-    }
   }
 }
 
@@ -10978,12 +10859,12 @@ function pirateMissionStep(dt){
 
   const orbitRadii = pirateOrbitRadii();
   const aggroRadius = mercMission.aggroRadius || orbitRadii.inner || (st.r + 1200);
-  mercMission.aggroRadius = aggroRadius;
   const distToPlayer = Math.hypot(ship.pos.x - st.x, ship.pos.y - st.y);
   const zoneId = zoneState.current?.id;
-  if (zoneId === 'pirate_outer' && mercMission.alertStage !== 'engage') {
-    enterPirateOuterOrbit();
-  }
+
+  // --- USUNIĘTO: enterPirateOuterOrbit (resetowało formację) ---
+  
+  // Trigger ataku przy wejściu w strefę wewnętrzną
   if (zoneId === 'pirate_inner') {
     enterPirateInnerOrbit();
   }
@@ -10992,11 +10873,12 @@ function pirateMissionStep(dt){
     triggerMercAggro(zoneId === 'pirate_inner' ? 'player_inner_orbit' : 'player_inside_zone');
   }
 
-  if (mercMission.alertStage === 'guard') {
-    updatePirateGuardBehavior(st, dt);
-  }
+  // --- USUNIĘTO: updatePirateGuardBehavior (powodowało szarpanie/konflikt AI) ---
 
-  // (Zachowaj logikę platform obronnych bez zmian - pominąłem dla czytelności, wklej tutaj kod platform z oryginału)
+  // ... (Dalej jest kod platform i swarma - zostaw go bez zmian)
+  
+  // Zachowaj resztę funkcji (platformy, timer swarma itp.) od tego miejsca w dół...
+  // (Kod platformy)
   PirateSim.time = (PirateSim.time || 0) + dt;
 
   const platforms = mercMission.weaponPlatforms || [];
