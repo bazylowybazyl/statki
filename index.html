@@ -13947,9 +13947,7 @@ function limitSpeed(n, max){
   }
 }
 // === PEŁNY PORT AI MYŚLIWCA Z AI SPACE ===
-  function runAdvancedFighterAI(npc, dt) {
-// --- KONFIGURACJA ---
-  const isSupport = npc.isSupportWing || !!npc.supportData;
+ const isSupport = npc.isSupportWing || !!npc.supportData;
   let order = 'engage';
   
   if (isSupport && typeof SupportWing !== 'undefined') {
