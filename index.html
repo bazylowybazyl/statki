@@ -14104,7 +14104,7 @@ function runAdvancedFighterAI(npc, dt) {
           npc.bombardSide = 1;
           npc.lastTargetId = target.id;
       }
-      const lineLen = 300; // Dłuższa prosta
+      const lineLen = 800; // Dłuższa prosta
       const wayX = target.x + npc.bombardVec.x * lineLen * npc.bombardSide;
       const wayY = target.y + npc.bombardVec.y * lineLen * npc.bombardSide;
       
@@ -14124,7 +14124,9 @@ function runAdvancedFighterAI(npc, dt) {
   }
 
 
+  // ---------------------------------------------------------
   // 4. GUARD / IDLE (Logika Eskadry)
+  // ---------------------------------------------------------
   
   // 1. Ustal kto jest liderem
   let leader = null;
@@ -14143,33 +14145,27 @@ function runAdvancedFighterAI(npc, dt) {
   const isLeader = (leader === npc);
   let targetPos = null;
 
-  // --- SCENARIUSZ A: JESTEM LIDEREM ESKADRY PIRATÓW ---
-  // Moim zadaniem jest orbitowanie wokół Stacji (GuardStation)
+  // --- SCENARIUSZ A: JESTEM LIDEREM I MAM STACJĘ (Orbitowanie) ---
   if (isLeader && npc.isPirate && npc.guardStation) {
       const time = performance.now() / 1000;
       const radius = npc.guardOrbitRadius || 350;
       const speed = npc.guardOrbitSpeed || 0.3;
-      const phase = npc.guardPhase || 0; // Faza początkowa eskadry
+      const phase = npc.guardPhase || 0;
       
-      // Oblicz punkt na orbicie STACJI
       const angle = phase + (time * speed);
       targetPos = {
           x: npc.guardStation.x + Math.cos(angle) * radius,
           y: npc.guardStation.y + Math.sin(angle) * radius
       };
       
-      // Lider patrzy zgodnie z kierunkiem lotu po orbicie
       const tangentAngle = angle + (speed > 0 ? Math.PI/2 : -Math.PI/2);
       npc.desiredAngle = tangentAngle; 
   }
   
-  // --- SCENARIUSZ B: JESTEM SKRZYDŁOWYM (LUB LIDEREM GRACZA) ---
-  // Moim zadaniem jest trzymanie formacji względem Lidera
-  else if (leader) {
-      // Pobierz mój slot w formacji (wyliczony przez klasę Squad)
+  // --- SCENARIUSZ B: JESTEM SKRZYDŁOWYM (Podążam za liderem) ---
+  // DODANO WARUNEK: && !isLeader (Lider nie może śledzić samego siebie!)
+  else if (leader && !isLeader) {
       let offset = npc.formationOffset || {x:0, y:0};
-      
-      // Przelicz offset na świat gry względem lidera
       const la = leader.angle || 0;
       const c = Math.cos(la);
       const s = Math.sin(la);
@@ -14179,22 +14175,28 @@ function runAdvancedFighterAI(npc, dt) {
           y: leader.y + (offset.x * s + offset.y * c)
       };
   }
+  
+  // --- SCENARIUSZ C: LIDER BEZ ROZKAZÓW (Atakujący bez celu) ---
+  // Jeśli jestem liderem, ale nie mam stacji i nie mam wroga (tu trafiają "wolne" eskadry)
+  else if (isLeader) {
+      // Dryfuj powoli (nie stój w miejscu jak wryty, ale nie pędź)
+      npc.vx *= 0.99; 
+      npc.vy *= 0.99;
+      return; 
+  }
 
-  // --- FIZYKA DOLOTU DO POZYCJI (Wspólna dla wszystkich) ---
+  // --- FIZYKA DOLOTU DO POZYCJI (Dla A i B) ---
   if (targetPos) {
       const dx = targetPos.x - npc.x;
       const dy = targetPos.y - npc.y;
       const dist = Math.hypot(dx, dy);
       
-      // PID / Spring physics dla płynnego lotu
-      // Lider lata "sztywniej" po orbicie, skrzydłowi luźniej w formacji
       const kp = isLeader ? 2.0 : 3.0; 
       
       let wantVx = dx * kp;
       let wantVy = dy * kp;
       
-      // Limit prędkości dolotu
-      const currentMax = isLeader ? (npc.maxSpeed * 0.6) : (npc.maxSpeed * 1.1); // Skrzydłowi szybsi żeby nadrabiać
+      const currentMax = isLeader ? (npc.maxSpeed * 0.6) : (npc.maxSpeed * 1.1);
       const speed = Math.hypot(wantVx, wantVy);
       if (speed > currentMax) {
           const scale = currentMax / speed;
@@ -14205,13 +14207,12 @@ function runAdvancedFighterAI(npc, dt) {
       npc.vx += (wantVx - npc.vx) * 4.0 * dt;
       npc.vy += (wantVy - npc.vy) * 4.0 * dt;
 
-      // Obrót (jeśli nie wymuszony przez orbitę)
       if (!npc.desiredAngle) {
           if (dist > 50) npc.angle = Math.atan2(npc.vy, npc.vx);
-          else if (leader) npc.angle = leader.angle; // Stojąc w miejscu, patrz tam gdzie lider
+          else if (leader && !isLeader) npc.angle = leader.angle; // Skrzydłowy patrzy tam gdzie lider
       } else {
           npc.angle = clampTurnAngle(npc.angle, npc.desiredAngle, 4.0, dt);
-          npc.desiredAngle = null; // Reset
+          npc.desiredAngle = null; 
       }
   }
 };
