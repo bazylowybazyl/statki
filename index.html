@@ -10859,26 +10859,25 @@ function pirateMissionStep(dt){
 
   const orbitRadii = pirateOrbitRadii();
   const aggroRadius = mercMission.aggroRadius || orbitRadii.inner || (st.r + 1200);
+  mercMission.aggroRadius = aggroRadius;
   const distToPlayer = Math.hypot(ship.pos.x - st.x, ship.pos.y - st.y);
   const zoneId = zoneState.current?.id;
 
-  // --- USUNIĘTO: enterPirateOuterOrbit (resetowało formację) ---
-  
-  // Trigger ataku przy wejściu w strefę wewnętrzną
+  // --- ZMIANA: Usunięto enterPirateOuterOrbit (nie resetujemy już formacji starym kodem) ---
+
   if (zoneId === 'pirate_inner') {
     enterPirateInnerOrbit();
   }
+  
   const shouldAggro = zoneId === 'pirate_inner' || distToPlayer < aggroRadius;
   if(!mercMission.aggro && shouldAggro){
     triggerMercAggro(zoneId === 'pirate_inner' ? 'player_inner_orbit' : 'player_inside_zone');
   }
 
-  // --- USUNIĘTO: updatePirateGuardBehavior (powodowało szarpanie/konflikt AI) ---
+  // --- ZMIANA: Usunięto updatePirateGuardBehavior ---
+  // To naprawia konflikt sterowników. Teraz tylko runAdvancedFighterAI steruje ruchem.
 
-  // ... (Dalej jest kod platform i swarma - zostaw go bez zmian)
-  
-  // Zachowaj resztę funkcji (platformy, timer swarma itp.) od tego miejsca w dół...
-  // (Kod platformy)
+  // --- Platformy Obronne ---
   PirateSim.time = (PirateSim.time || 0) + dt;
 
   const platforms = mercMission.weaponPlatforms || [];
@@ -10915,9 +10914,9 @@ function pirateMissionStep(dt){
     platform.rail.cd = Math.max(0, platform.rail.cd - dt);
     platform.missile.cd = Math.max(0, platform.missile.cd - dt);
 
-    const distToPlayer = Math.hypot(target.x - platform.x, target.y - platform.y);
+    const distToPlayerPlat = Math.hypot(target.x - platform.x, target.y - platform.y);
 
-    if(platform.rail.cd === 0 && distToPlayer < 2200){
+    if(platform.rail.cd === 0 && distToPlayerPlat < 2200){
       const lead = leadTarget({ x: platform.x, y: platform.y }, tangentialVel, target, RAIL_SPEED * 0.9);
       const aim = Math.atan2(lead.y - platform.y, lead.x - platform.x);
       const jitter = (Math.random() - 0.5) * platform.rail.scatter;
@@ -10933,7 +10932,7 @@ function pirateMissionStep(dt){
       platform.rail.cd = platform.rail.cdMax;
     }
 
-    if(platform.missile.cd === 0 && distToPlayer < 2600){
+    if(platform.missile.cd === 0 && distToPlayerPlat < 2600){
       const lead = leadTarget({ x: platform.x, y: platform.y }, tangentialVel, target, SIDE_BULLET_SPEED);
       const aim = Math.atan2(lead.y - platform.y, lead.x - platform.x);
       const dir = {x:Math.cos(aim), y:Math.sin(aim)};
