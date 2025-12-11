@@ -1229,7 +1229,38 @@ function steerNpcTowards(npc, target, dt, opts = {}){
   npc.angle = Math.atan2(npc.vy || 0, npc.vx || 0);
   return dist;
 }
+function applySeparationForces(npc, ax, ay) {
+  // Iterujemy po wszystkich statkach w grze
+  for (const other of npcs) {
+    // Warunki ignorowania:
+    // 1. To ten sam statek
+    // 2. Inny statek jest martwy
+    // 3. To wróg (nie odpychamy się od wrogów, wlatujemy w nich)
+    // 4. Inny statek to myśliwiec (są za lekkie, żeby nas przepchnąć)
+    if (other === npc || other.dead || other.friendly !== npc.friendly) continue;
+    if (other.fighter || other.type === 'fighter' || other.type === 'interceptor') continue;
 
+    const distSq = dist2(npc, other);
+    const range = (npc.separationRange || 100); // Domyślny zasięg 100, jeśli brak w configu
+
+    // Jeśli jesteśmy w strefie odpychania
+    if (distSq < range * range) {
+      const dist = Math.sqrt(distSq) || 1;
+      // Im bliżej, tym siła odpychania jest większa (0 na granicy, 1 przy zderzeniu)
+      const repelStrength = (range - dist) / range;
+
+      // Wektor odpychania (znormalizowany)
+      const pushX = (npc.x - other.x) / dist;
+      const pushY = (npc.y - other.y) / dist;
+
+      // Dodajemy siłę do przyspieszenia (ax, ay)
+      // Mnożnik 0.8 to "siła repulsora" - można dostroić
+      ax += pushX * (npc.accel || 100) * 0.8 * repelStrength;
+      ay += pushY * (npc.accel || 100) * 0.8 * repelStrength;
+    }
+  }
+  return { ax, ay };
+}
 function handleCommandedNpc(npc, dt){
   const cmd = npc.command;
   if(!cmd || !cmd.target) return false;
@@ -3223,7 +3254,17 @@ const SUPPORT_SHIP_TEMPLATES = {
   fighter: {
     color: '#7cff91',
     count: 9,
-    stats: { hp: 120, accel: 280, maxSpeed: 540, turn: 5.4, radius: 12 },
+    // Myśliwiec: lekki, duże tarcie (zwrotność), mały zasięg odpychania
+    stats: { 
+      hp: 120, 
+      accel: 280, 
+      maxSpeed: 540, 
+      turn: 5.4, 
+      radius: 12, 
+      mass: 0.8, 
+      friction: 0.96, 
+      separationRange: 30 
+    },
     spawnOffset: { x: -60, y: 0 },
     configure(npc, idx){
       npc.fighter = true;
@@ -3239,7 +3280,17 @@ const SUPPORT_SHIP_TEMPLATES = {
   },
   frigate_pd: {
     color: '#9ab8ff',
-    stats: { hp: 1200, accel: 60, maxSpeed: 280, turn: 1.2, radius: 45 },
+    // Fregata: średnia masa, tarcie 0.985, separacja 90
+    stats: { 
+      hp: 1200, 
+      accel: 150, // Zwiększone z 60 (bo friction)
+      maxSpeed: 280, 
+      turn: 1.2, 
+      radius: 45, 
+      mass: 2.5, 
+      friction: 0.985, 
+      separationRange: 90 
+    },
     spawnOffset: { x: -120, y: -40 },
     configure(npc){
       npc.pd = 'pd_mk1';
@@ -3252,7 +3303,16 @@ const SUPPORT_SHIP_TEMPLATES = {
   },
   frigate_laser: {
     color: '#8fe0ff',
-    stats: { hp: 1200, accel: 60, maxSpeed: 280, turn: 1.2, radius: 45 },
+    stats: { 
+      hp: 1200, 
+      accel: 150, // Zwiększone z 60
+      maxSpeed: 280, 
+      turn: 1.2, 
+      radius: 45, 
+      mass: 2.5, 
+      friction: 0.985, 
+      separationRange: 90 
+    },
     spawnOffset: { x: -120, y: 40 },
     configure(npc){
       npc.pd = 'pd_laser';
@@ -3265,7 +3325,17 @@ const SUPPORT_SHIP_TEMPLATES = {
   },
   destroyer: {
     color: '#aac8ff',
-    stats: { hp: 3200, accel: 70, maxSpeed: 240, turn: 0.9, radius: 60, friction: 0.995 },
+    // Niszczyciel: ciężki (8.0), duża inercja (0.986), szeroka separacja (150)
+    stats: { 
+      hp: 3200, 
+      accel: 120, // Zwiększone z 70
+      maxSpeed: 240, 
+      turn: 0.9, 
+      radius: 60, 
+      mass: 8.0, 
+      friction: 0.986, 
+      separationRange: 150 
+    },
     spawnOffset: { x: -160, y: 0 },
     configure(npc){
       npc.isCapitalShip = true;
@@ -3278,7 +3348,17 @@ const SUPPORT_SHIP_TEMPLATES = {
   },
   battleship: {
     color: '#c8d4ff',
-    stats: { hp: 5200, accel: 55, maxSpeed: 190, turn: 0.6, radius: 90, friction: 0.995 },
+    // Pancernik: bardzo ciężki (25.0), bardzo małe tarcie (0.99 - płynie), ogromna separacja (220)
+    stats: { 
+      hp: 5200, 
+      accel: 45, 
+      maxSpeed: 190, 
+      turn: 0.6, 
+      radius: 90, 
+      mass: 25.0, 
+      friction: 0.99, 
+      separationRange: 220 
+    },
     spawnOffset: { x: -190, y: 0 },
     configure(npc){
       npc.isCapitalShip = true;
@@ -10726,12 +10806,13 @@ function npcStep(dt){
       npc.x += (npc.vx||0)*dt;
       npc.y += (npc.vy||0)*dt;
 
-      // --- ZMIANA: USUNIĘTO BLOK 'if (npc.fighter) { drag... }' ---
-      // AI teraz w pełni kontroluje prędkość (przyspiesza i zwalnia).
-      // Zostawiamy tylko minimalne tłumienie globalne dla stabilności.
+      // --- FIZYKA PĘDU (FRICTION) ---
+      // Używamy friction z szablonu (np. 0.995 dla Destroyera - płynie długo)
+      // lub domyślnego 0.92 dla małych/lekkich obiektów, żeby nie latały jak mydło.
+      const friction = npc.friction || 0.92; 
       
-      npc.vx *= 0.998; 
-      npc.vy *= 0.998;
+      npc.vx *= friction;
+      npc.vy *= friction;
 
       // 4. Obrót
       if (npc.keepAngle){
@@ -10860,7 +10941,6 @@ function npcStep(dt){
     }
   }
 }
-
 function pirateMissionStep(dt){
   if(!mercMission) return;
   const st = mercMission.station;
