@@ -3431,8 +3431,8 @@ const CAPITAL_SHIP_TEMPLATES = {
       ]
     },
     profile: {
-      lengthScale: 4.8, // Zwiększono długość (było 3.6)
-      widthScale: 0.95, // Zmniejszono szerokość (było 1.45) - koniec z "grubasem"
+      lengthScale: 4.8, 
+      widthScale: 0.85, // Wyszczuplony, żeby nie był "kwadratem"
       hullColor: '#5a7dbe',
       deckColor: '#243150',
       accentColor: '#9dc5ff',
@@ -3440,14 +3440,15 @@ const CAPITAL_SHIP_TEMPLATES = {
       hangarGlow: 'rgba(160,200,255,0.45)',
       spriteSrc: 'assets/carrier.png',
       spriteScale: 1.05,
-      spriteRotation: 0, // Naprawiono rotację (było Math.PI / 2)
+      // OBRÓT: -90 stopni (w prawo), bo sprite pewnie domyślnie patrzy w górę lub w lewo
+      spriteRotation: -Math.PI / 2, 
       spriteOffset: { x: 0, y: 0 },
       spriteLayer: 2,
       spriteEngineGlow: false,
       engineOffsets: [
-        { x: -0.38, y: 0.84 },
-        { x: 0, y: 0.88 },
-        { x: 0.38, y: 0.84 }
+        { x: -0.38, y: 0.92 },
+        { x: 0, y: 0.95 },
+        { x: 0.38, y: 0.92 }
       ],
       engineGlowSize: 0.28,
       engineOffsetMode: 'relative'
@@ -12065,7 +12066,6 @@ function drawBattleship(ctx, npc, screenPos){
 
   
 function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
-  // 1. Wyłączamy rozmywanie krawędzi dla ostrości sprite'a
   ctx.imageSmoothingEnabled = false;
 
   const profile = npc.capitalProfile || {};
@@ -12076,6 +12076,7 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
   const width = Math.max(30, pixR * widthScale);
   
   const dims = { length, width, halfL: length * 0.5, halfW: width * 0.5 };
+  // Kolory proceduralne (tylko jako fallback)
   const hullColor = profile.hullColor || (npc.friendly ? '#5477bf' : '#c85a5a');
   const deckColor = profile.deckColor || '#1f2a46';
   const accentColor = profile.accentColor || '#9dc5ff';
@@ -12097,17 +12098,15 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
 
   const halfL = length * 0.5;
   const halfW = width * 0.5;
-  // Promień zaokrąglenia rogów
   const radius = Math.max(width * 0.1, 8); 
   
   let drawHullPath = null;
 
-  // Definiujemy kształt kadłuba (prostokąt z zaokrągleniami) do wielokrotnego użycia (rysowanie, tarcza, hit)
+  // Helper do rysowania kształtu kadłuba (używany przez tarczę i hit-flash)
   const traceHullShape = (margin = 1.0) => {
-      // Używamy roundRect z Twoich helperów
-      // roundRect(ctx, x, y, w, h, r)
       const mLen = length * margin;
       const mWid = width * margin;
+      // Używamy roundRect zamiast elipsy!
       roundRect(ctx, -mLen/2, -mWid/2, mLen, mWid, radius);
   };
 
@@ -12117,7 +12116,7 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     const naturalW = spriteInfo.width || img.naturalWidth || 1;
     const naturalH = spriteInfo.height || img.naturalHeight || 1;
     
-    // Logika skalowania sprite'a
+    // Logika skalowania (zachowuje ratio, dopasowuje do length)
     const rawRotation = Number.isFinite(profile.spriteRotation) ? profile.spriteRotation : 0;
     const halfPi = Math.PI / 2;
     const approxSteps = Math.round(rawRotation / halfPi);
@@ -12136,6 +12135,7 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     let drawW = naturalW * scale;
     let drawH = naturalH * scale;
 
+    // Korekta szerokości jeśli sprite jest za szeroki
     if (targetWidth > 0){
       const crossSize = usesHeightForLength ? drawW : drawH;
       if (crossSize > targetWidth){
@@ -12148,7 +12148,7 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     const offset = profile.spriteOffset || { x: 0, y: 0 };
     ctx.drawImage(img, -drawW * 0.5 + offset.x, -drawH * 0.5 + offset.y, drawW, drawH);
   } else {
-    // Proceduralne rysowanie (gdyby sprite nie zadziałał)
+    // Fallback: Rysowanie proceduralne (tylko gdy brak pliku graficznego)
     ctx.fillStyle = hullColor;
     drawHullPath = () => traceHullShape(1.0);
     drawHullPath();
@@ -12166,6 +12166,7 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     ctx.fillRect(-halfL * 0.2, -halfW * 0.05, length * 0.4, width * 0.1);
   }
 
+  // --- SILNIKI ---
   const engineOffsets = Array.isArray(profile.engineOffsets) ? profile.engineOffsets : null;
   if (engineOffsets && engineOffsets.length){
     const speed = Math.hypot(npc.vx || 0, npc.vy || 0);
@@ -12178,46 +12179,48 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     for (const offset of engineOffsets){
       const local = capitalLocalFromNormalized(offset, dims);
       ctx.beginPath();
-      // Silniki nadal mogą być elipsami, to wygląda ok jako "blask"
+      // Glow silnika może zostać elipsą, to wygląda ok
       ctx.ellipse(local.x, local.y, width * glowSize * 0.45, width * glowSize * 0.75, 0, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
   }
 
-  // --- RYSOWANIE TARCZY (POPRAWIONE) ---
+  // --- TARCZA (SHIELD) - TO JEST TO NIEBIESKIE ---
+  // Teraz rysujemy ją jako RoundRect, a nie Ellipse
   const shield = npc.shield;
   if (shield && shield.max > 0 && shield.val > 0){
     const shieldPct = clamp(shield.val / shield.max, 0, 1);
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
-    ctx.globalAlpha = 0.2 + shieldPct * 0.25;
-    ctx.strokeStyle = `rgba(110,190,255,${0.35 + shieldPct * 0.4})`;
-    ctx.lineWidth = Math.max(2, width * 0.08); // Cieńsza linia
+    // Przezroczystość tarczy (zmniejszamy alpha, żeby była subtelniejsza)
+    ctx.globalAlpha = 0.15 + shieldPct * 0.2; 
+    
+    // Kolor niebieski
+    ctx.strokeStyle = `rgba(110,190,255,${0.3 + shieldPct * 0.4})`;
+    ctx.lineWidth = Math.max(2, width * 0.06); 
     
     ctx.beginPath();
-    // ZAMIAST ELIPSY -> RoundRect z małym marginesem (1.15x)
-    traceHullShape(1.15); 
+    traceHullShape(1.1); // Rysuj obrys statku z marginesem 1.1x
     ctx.stroke();
     
     ctx.restore();
   }
 
-  // --- EFEKT TRAFIENIA (POPRAWIONE) ---
+  // --- EFEKT TRAFIENIA ---
   if (npc.hitFlash > 0){
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
     ctx.globalAlpha = clamp(npc.hitFlash * 6, 0, 1);
-    ctx.fillStyle = 'rgba(255,190,150,0.8)';
+    ctx.fillStyle = 'rgba(255,190,150,0.8)'; // Pomarańczowy błysk
     
     if (drawHullPath){
       drawHullPath();
       ctx.fill();
     } else {
-      // Jeśli mamy sprite, rysujemy błysk idealnie pasujący kształtem (roundRect)
-      // zamiast brzydkiego prostokąta fillRect
+      // Błysk też musi pasować do kształtu
       ctx.beginPath();
-      traceHullShape(1.0); 
+      traceHullShape(1.0);
       ctx.fill();
     }
     ctx.restore();
