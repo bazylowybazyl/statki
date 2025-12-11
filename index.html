@@ -12071,8 +12071,8 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
   const lengthScale = Number.isFinite(profile.lengthScale) ? profile.lengthScale : 3.2;
   const widthScale = Number.isFinite(profile.widthScale) ? profile.widthScale : 1.2;
   
-  const length = Math.max(60, pixR * lengthScale);
-  const width = Math.max(30, pixR * widthScale);
+  const length = Math.max(1, pixR * lengthScale);
+  const width = Math.max(1, pixR * widthScale);
   
   const dims = { length, width, halfL: length * 0.5, halfW: width * 0.5 };
   // Kolory proceduralne (tylko jako fallback)
@@ -12145,7 +12145,8 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     }
 
     const offset = profile.spriteOffset || { x: 0, y: 0 };
-    ctx.drawImage(img, -drawW * 0.5 + offset.x, -drawH * 0.5 + offset.y, drawW, drawH);
+    const sc = drawW / naturalW; 
+    ctx.drawImage(img, -drawW * 0.5 + (offset.x * sc), -drawH * 0.5 + (offset.y * sc), drawW, drawH);
   } else {
     // Fallback: Rysowanie proceduralne (tylko gdy brak pliku graficznego)
     ctx.fillStyle = hullColor;
