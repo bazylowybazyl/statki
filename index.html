@@ -3431,8 +3431,8 @@ const CAPITAL_SHIP_TEMPLATES = {
       ]
     },
     profile: {
-      lengthScale: 3.6,
-      widthScale: 1.45,
+      lengthScale: 4.8, // Zwiększono długość (było 3.6)
+      widthScale: 0.95, // Zmniejszono szerokość (było 1.45) - koniec z "grubasem"
       hullColor: '#5a7dbe',
       deckColor: '#243150',
       accentColor: '#9dc5ff',
@@ -3440,7 +3440,7 @@ const CAPITAL_SHIP_TEMPLATES = {
       hangarGlow: 'rgba(160,200,255,0.45)',
       spriteSrc: 'assets/carrier.png',
       spriteScale: 1.05,
-      spriteRotation: Math.PI / 2,
+      spriteRotation: 0, // Naprawiono rotację (było Math.PI / 2)
       spriteOffset: { x: 0, y: 0 },
       spriteLayer: 2,
       spriteEngineGlow: false,
@@ -12065,17 +12065,23 @@ function drawBattleship(ctx, npc, screenPos){
 
   
 function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
+  // 1. Wyłączamy rozmywanie krawędzi dla ostrości sprite'a
+  ctx.imageSmoothingEnabled = false;
+
   const profile = npc.capitalProfile || {};
   const lengthScale = Number.isFinite(profile.lengthScale) ? profile.lengthScale : 3.2;
   const widthScale = Number.isFinite(profile.widthScale) ? profile.widthScale : 1.2;
+  
   const length = Math.max(60, pixR * lengthScale);
   const width = Math.max(30, pixR * widthScale);
+  
   const dims = { length, width, halfL: length * 0.5, halfW: width * 0.5 };
   const hullColor = profile.hullColor || (npc.friendly ? '#5477bf' : '#c85a5a');
   const deckColor = profile.deckColor || '#1f2a46';
   const accentColor = profile.accentColor || '#9dc5ff';
   const engineColor = profile.engineColor || 'rgba(130,200,255,0.85)';
   const hangarGlow = profile.hangarGlow || 'rgba(160,200,255,0.35)';
+  
   const spriteInfo = npc.capitalSprite || (profile.spriteSrc ? getCapitalShipSprite(profile.spriteSrc) : null);
   if (!npc.capitalSprite && spriteInfo) {
     npc.capitalSprite = spriteInfo;
@@ -12085,24 +12091,39 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
   ctx.save();
   ctx.globalAlpha = npc.fade ?? 1;
   ctx.translate(screenPos.x, screenPos.y);
+  
   const spriteRotation = Number.isFinite(profile.spriteRotation) ? profile.spriteRotation : 0;
   ctx.rotate((npc.angle || 0) + spriteRotation);
 
   const halfL = length * 0.5;
   const halfW = width * 0.5;
-  const radius = Math.max(width * 0.18, 18 * camera.zoom);
+  // Promień zaokrąglenia rogów
+  const radius = Math.max(width * 0.1, 8); 
+  
   let drawHullPath = null;
+
+  // Definiujemy kształt kadłuba (prostokąt z zaokrągleniami) do wielokrotnego użycia (rysowanie, tarcza, hit)
+  const traceHullShape = (margin = 1.0) => {
+      // Używamy roundRect z Twoich helperów
+      // roundRect(ctx, x, y, w, h, r)
+      const mLen = length * margin;
+      const mWid = width * margin;
+      roundRect(ctx, -mLen/2, -mWid/2, mLen, mWid, radius);
+  };
 
   if (useSprite) {
     const img = spriteInfo.image;
     const spriteScale = Number.isFinite(profile.spriteScale) ? profile.spriteScale : 1;
     const naturalW = spriteInfo.width || img.naturalWidth || 1;
     const naturalH = spriteInfo.height || img.naturalHeight || 1;
+    
+    // Logika skalowania sprite'a
     const rawRotation = Number.isFinite(profile.spriteRotation) ? profile.spriteRotation : 0;
     const halfPi = Math.PI / 2;
     const approxSteps = Math.round(rawRotation / halfPi);
     const alignedToStep = Math.abs(rawRotation - approxSteps * halfPi) < 0.0001;
     const usesHeightForLength = alignedToStep && (Math.abs(approxSteps) % 2 === 1);
+    
     const targetLength = length * spriteScale;
     const targetWidth = width * spriteScale;
 
@@ -12127,10 +12148,9 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     const offset = profile.spriteOffset || { x: 0, y: 0 };
     ctx.drawImage(img, -drawW * 0.5 + offset.x, -drawH * 0.5 + offset.y, drawW, drawH);
   } else {
+    // Proceduralne rysowanie (gdyby sprite nie zadziałał)
     ctx.fillStyle = hullColor;
-    drawHullPath = () => {
-      roundRect(ctx, -halfL, -halfW, length, width, radius);
-    };
+    drawHullPath = () => traceHullShape(1.0);
     drawHullPath();
     ctx.fill();
 
@@ -12144,7 +12164,6 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
 
     ctx.fillStyle = accentColor;
     ctx.fillRect(-halfL * 0.2, -halfW * 0.05, length * 0.4, width * 0.1);
-
   }
 
   const engineOffsets = Array.isArray(profile.engineOffsets) ? profile.engineOffsets : null;
@@ -12159,12 +12178,14 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     for (const offset of engineOffsets){
       const local = capitalLocalFromNormalized(offset, dims);
       ctx.beginPath();
+      // Silniki nadal mogą być elipsami, to wygląda ok jako "blask"
       ctx.ellipse(local.x, local.y, width * glowSize * 0.45, width * glowSize * 0.75, 0, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
   }
 
+  // --- RYSOWANIE TARCZY (POPRAWIONE) ---
   const shield = npc.shield;
   if (shield && shield.max > 0 && shield.val > 0){
     const shieldPct = clamp(shield.val / shield.max, 0, 1);
@@ -12172,30 +12193,39 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     ctx.globalCompositeOperation = 'screen';
     ctx.globalAlpha = 0.2 + shieldPct * 0.25;
     ctx.strokeStyle = `rgba(110,190,255,${0.35 + shieldPct * 0.4})`;
-    ctx.lineWidth = Math.max(2, width * 0.12);
+    ctx.lineWidth = Math.max(2, width * 0.08); // Cieńsza linia
+    
     ctx.beginPath();
-    ctx.ellipse(0, 0, halfL * 1.12, halfW * 1.18, 0, 0, Math.PI * 2);
+    // ZAMIAST ELIPSY -> RoundRect z małym marginesem (1.15x)
+    traceHullShape(1.15); 
     ctx.stroke();
+    
     ctx.restore();
   }
 
+  // --- EFEKT TRAFIENIA (POPRAWIONE) ---
   if (npc.hitFlash > 0){
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
     ctx.globalAlpha = clamp(npc.hitFlash * 6, 0, 1);
     ctx.fillStyle = 'rgba(255,190,150,0.8)';
+    
     if (drawHullPath){
       drawHullPath();
       ctx.fill();
     } else {
-      ctx.fillRect(-halfL, -halfW, halfL * 2, halfW * 2);
+      // Jeśli mamy sprite, rysujemy błysk idealnie pasujący kształtem (roundRect)
+      // zamiast brzydkiego prostokąta fillRect
+      ctx.beginPath();
+      traceHullShape(1.0); 
+      ctx.fill();
     }
     ctx.restore();
   }
 
   ctx.restore();
 }
-// === DODAJ TĘ FUNKCJĘ DO KODU ===
+
 function drawNPCPretty(ctx, npc, s) {
   // 1. Jeśli to duży statek (Capital Ship) używający sprite'a
   if (npc.isCapitalShip) {
