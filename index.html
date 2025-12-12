@@ -3273,17 +3273,16 @@ function makeNPCBase(pos, stats){
 
 const SUPPORT_SHIP_TEMPLATES = {
   fighter: {
-    color: '#7cff91',
+    color: '#7cff91', // Zielony dla sojusznika (pirat nadpisze na czerwony)
     count: 9,
-    // Myśliwiec: lekki, duże tarcie (zwrotność), mały zasięg odpychania
     stats: { 
-      hp: 120, 
-      accel: 280, 
-      maxSpeed: 540, 
-      turn: 5.4, 
-      radius: 12, 
-      mass: 0.8, 
-      friction: 0.96, 
+      hp: 120, // Zgodne z AI SPACE
+      accel: 350, // Zwiększone z AI SPACE (było 280, ale 350 lepiej działa w twoim silniku)
+      maxSpeed: 650, 
+      turn: 7.0, 
+      radius: 12,
+      mass: 0.8,
+      // Friction usunięte - domyślnie 1.0 z npcStep
       separationRange: 30 
     },
     spawnOffset: { x: -60, y: 0 },
@@ -3291,105 +3290,108 @@ const SUPPORT_SHIP_TEMPLATES = {
       npc.fighter = true;
       npc.gun = 'laserS';
       npc.msl = 'AF';
-      npc.mslAmmo = 2;
+      npc.mslAmmo = 2; // AI SPACE ma 1 lub 2
       npc.gunCD = 0;
-      npc.mslCD = 0;
-      npc.engines = npc.engines || [{ x: -10, y: -6 }, { x: -10, y: 6 }];
-      npc.state = 'guard';
-      npc._supportIndex = idx;
+      npc.ai = (dt) => { if(window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
+    }
+  },
+  interceptor: { // Dodane, bo spawnPirate używa tej nazwy
+    // To samo co fighter, ale dla piratów
+    stats: { hp: 80, accel: 350, maxSpeed: 650, turn: 7.0, radius: 12, mass: 0.8, separationRange: 30 },
+    configure(npc){
+      npc.fighter = true;
+      npc.gun = 'laserS';
+      npc.msl = 'AF';
+      npc.mslAmmo = 1;
+      npc.ai = (dt) => { if(window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
     }
   },
   frigate_pd: {
-    color: '#9ab8ff',
-    // Fregata: średnia masa, tarcie 0.985, separacja 90
     stats: { 
-      hp: 1200, 
-      accel: 150, // Zwiększone z 60 (bo friction)
-      maxSpeed: 280, 
+      hp: 1800, // AI SPACE ma 1800, ty miałeś 1200
+      accel: 150, 
+      maxSpeed: 160, // AI SPACE ma 160, ty miałeś 280 (za szybko!)
       turn: 1.2, 
-      radius: 45, 
+      radius: 28, // AI SPACE: hitR 28
       mass: 2.5, 
-      friction: 0.985, 
+      friction: 0.985, // Fregaty mają lekką inercję
       separationRange: 90 
     },
-    spawnOffset: { x: -120, y: -40 },
     configure(npc){
       npc.pd = 'pd_mk1';
-      npc.mainGun = 'm_autocannon';
+      npc.mainGun = 'm_autocannon'; // lub m_rail w zależności od wersji
       npc.preferredRange = 760;
-      npc.msl = 'AS';
-      npc.mslAmmo = 2;
+      npc.ai = (dt) => { if(window.aiFrigate) window.aiFrigate(null, npc, dt); };
       npc.keepAngle = true;
     }
   },
   frigate_laser: {
-    color: '#8fe0ff',
     stats: { 
-      hp: 1200, 
-      accel: 150, // Zwiększone z 60
-      maxSpeed: 280, 
+      hp: 1800, 
+      accel: 150, 
+      maxSpeed: 160, 
       turn: 1.2, 
-      radius: 45, 
+      radius: 28, 
       mass: 2.5, 
       friction: 0.985, 
       separationRange: 90 
     },
-    spawnOffset: { x: -120, y: 40 },
     configure(npc){
-      npc.pd = 'pd_laser';
-      npc.mainGun = 'm_beam';
-      npc.preferredRange = 920;
-      npc.msl = 'HE';
-      npc.mslAmmo = 2;
+      npc.pd = 'pd_laser'; // Laser PD
+      npc.mainGun = 'h_beam'; // HEAVY BEAM (zgodnie z AI SPACE)
+      npc.preferredRange = 920; // Większy zasięg dla lasera
+      npc.ai = (dt) => { 
+          // Jeśli masz aiLaserFrigate, użyj go, jeśli nie - fallback do aiFrigate
+          if(window.aiLaserFrigate) window.aiLaserFrigate(null, npc, dt); 
+          else if(window.aiFrigate) window.aiFrigate(null, npc, dt);
+      };
       npc.keepAngle = true;
     }
   },
   destroyer: {
-    color: '#aac8ff',
-    // Niszczyciel: ciężki (8.0), duża inercja (0.986), szeroka separacja (150)
     stats: { 
-      hp: 3200, 
-      accel: 120, // Zwiększone z 70
-      maxSpeed: 240, 
+      hp: 4200, // AI SPACE
+      accel: 120, 
+      maxSpeed: 140, // AI SPACE: 140
       turn: 0.9, 
-      radius: 60, 
+      radius: 45, // AI SPACE: hitR 45
       mass: 8.0, 
-      friction: 0.986, 
+      friction: 0.986, // Duża inercja
       separationRange: 150 
     },
-    spawnOffset: { x: -160, y: 0 },
     configure(npc){
       npc.isCapitalShip = true;
       npc.mGun = 'm_rail';
       npc.pd = 'pd_mk1';
-      npc.boostDur = 2.8;
+      npc.boostDur = 1.8; // AI SPACE destroyer ma boosta
       npc.preferredRange = 820;
+      npc.ai = (dt) => window.aiDestroyer(null, npc, dt);
       npc.keepAngle = true;
     }
   },
   battleship: {
-    color: '#c8d4ff',
-    // Pancernik: bardzo ciężki (25.0), bardzo małe tarcie (0.99 - płynie), ogromna separacja (220)
     stats: { 
-      hp: 5200, 
+      hp: 12000, // AI SPACE: 12000! (Ty miałeś 5200)
       accel: 45, 
-      maxSpeed: 190, 
+      maxSpeed: 90, 
       turn: 0.6, 
-      radius: 90, 
+      radius: 70, 
       mass: 25.0, 
-      friction: 0.99, 
+      friction: 0.99, // Bardzo duża inercja (płynie)
       separationRange: 220 
     },
-    spawnOffset: { x: -190, y: 0 },
     configure(npc){
       npc.isCapitalShip = true;
       npc.pd = 'pd_laser';
+      npc.mGun = 'h_rapid'; // AI SPACE używa h_rapid na dziobie
       npc.preferredRange = 780;
+      // Broadside config z AI SPACE
+      npc.broadsideRange = 650;
+      npc.ai = (dt) => window.aiBattleship(null, npc, dt);
       npc.keepAngle = true;
     }
   }
 };
-
 function spawnSupportShip(templateKey, opts = {}){
   const template = SUPPORT_SHIP_TEMPLATES[templateKey];
   if (!template) return [];
@@ -3967,88 +3969,55 @@ function makeRailgun(cfg){ return { ...cfg }; }
 function makeRocketPod(cfg){ return { ...cfg }; }
 function makeGatling(cfg){ return { ...cfg }; }
 function spawnPirate(kind, station) {
+  // 1. Znajdź szablon
+  let template = SUPPORT_SHIP_TEMPLATES[kind];
+  
+  // Fallback: jeśli wpisano 'fighter', a w szablonach jest 'interceptor' (lub odwrotnie)
+  if (!template) {
+      if (kind === 'fighter') template = SUPPORT_SHIP_TEMPLATES['interceptor'];
+      else if (kind === 'interceptor') template = SUPPORT_SHIP_TEMPLATES['fighter'];
+  }
+
+  // Jeśli nadal brak szablonu, użyj domyślnego interceptora (żeby gra się nie wysypała)
+  if (!template) {
+      console.warn(`Nieznany typ pirata: ${kind}. Spawnuję interceptor.`);
+      template = SUPPORT_SHIP_TEMPLATES['interceptor'];
+  }
+
+  // 2. Pozycja startowa
   const angle = Math.random() * Math.PI * 2;
   const dist = (station.r || 100) + 150;
-  
   const pos = {
     x: station.x + Math.cos(angle) * dist,
     y: station.y + Math.sin(angle) * dist
   };
 
-  // Statystyki
-  let stats = { hp: 100, accel: 200, maxSpeed: 400, turn: 4.0, radius: 20 };
-  
-  if (kind === 'interceptor' || kind === 'fighter') {
-    stats = { hp: 80, accel: 280, maxSpeed: 540, turn: 5.5, radius: 12 };
-  } else if (kind.includes('frigate')) {
-    stats = { hp: 1200, accel: 60, maxSpeed: 280, turn: 1.2, radius: 45 };
-  } else if (kind === 'destroyer') {
-    stats = { hp: 3200, accel: 70, maxSpeed: 240, turn: 0.9, radius: 70, friction: 0.992 };
-  } else if (kind === 'battleship') {
-    stats = { hp: 5200, accel: 55, maxSpeed: 190, turn: 0.6, radius: 110, friction: 0.995 };
-  }
+  // 3. Stworzenie bazy NPC z szablonu
+  const npc = makeNPCBase(pos, template.stats);
 
-  const npc = makeNPCBase(pos, stats);
-
-  // Konfiguracja
+  // 4. Nadpisanie właściwości pod PIRATA
   npc.type = kind;
   npc.friendly = false;
   npc.isPirate = true;
-  npc.fighter = (kind === 'fighter' || kind === 'interceptor');
-  npc.color = '#ff5c7c';
   npc.mission = true;
+  npc.color = '#ff5c7c'; // Czerwony kolor pirata
+  
+  // Przypisanie referencji do stacji (ważne dla logiki patrolu)
+  npc.home = station; 
 
-  // Logika AI i flagi
-  if (npc.fighter) {
-      npc.gun = 'laserS';
-      npc.msl = 'AF';
-      npc.mslAmmo = 1;
-      // Myśliwce same dbają o swój kąt w AI, nie potrzebują keepAngle, bo npcStep ma dla nich wyjątek
-      npc.ai = (dt) => { if(window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
-  } 
-  else if (kind.includes('frigate')) {
-    npc.pd = kind === 'frigate_laser' ? 'pd_laser' : 'pd_mk1';
-    npc.mainGun = kind === 'frigate_laser' ? 'm_beam' : 'm_autocannon';
-    npc.preferredRange = kind === 'frigate_laser' ? 920 : 760;
-    npc.msl = kind === 'frigate_laser' ? 'HE' : 'AS';
-    npc.mslAmmo = 2;
-    npc.home = station;
-    npc.size = { w: 120, h: 40 };
-    npc.forceTarget = ship;
-    
-    npc.keepAngle = true; // <--- WAŻNE: Pozwala AI sterować obrotem (strafe)
-    npc.ai = (dt) => { if(window.aiFrigate) window.aiFrigate(null, npc, dt); };
-  } 
-  else if (kind === 'destroyer') {
-    npc.isCapitalShip = true;
-    npc.mGun = 'm_rail';
-    npc.pd = 'pd_mk1';
-    npc.boostDur = 2.8;
-    npc.preferredRange = 820;
-    npc.forceTarget = ship;
-
-    npc.keepAngle = true; // <--- WAŻNE
-    npc.ai = (dt) => window.aiDestroyer(null, npc, dt);
-  }
-  else if (kind === 'battleship') {
-    npc.isCapitalShip = true;
-    npc.pd = 'pd_laser';
-    npc.preferredRange = 780;
-    npc.forceTarget = ship;
-
-    npc.keepAngle = true; // <--- WAŻNE: Niezbędne do Broadside
-    npc.ai = (dt) => window.aiBattleship(null, npc, dt);
-  }
-  else {
-    // Fallback dla innych jednostek
-    npc.ai = (dt) => { if(window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
+  // 5. Konfiguracja uzbrojenia i AI z szablonu
+  if (template.configure) {
+      template.configure(npc);
   }
 
+  // 6. Początkowy obrót w stronę gracza
   npc.angle = Math.atan2(ship.pos.y - npc.y, ship.pos.x - npc.x);
 
+  // 7. Rejestracja w grze
   npcs.push(npc);
   return npc;
 }
+// Przypisanie do window, żeby konsola widziała
 window.spawnPirate = spawnPirate;
   function spawnPirateSquad(station, type, count, mode = 'guard', opts = {}) {
   const squad = new Squad('pirate', 'fighter');
