@@ -5815,13 +5815,24 @@ function spawnSiegeHitEffect(x, y, scale = 1){
   spawnParticle({ x, y }, { x: 0, y: 0 }, 0.16, '#fff6d6', 9.5 * scale, true);
   spawnShockwave(x, y, { r: 16 * scale, maxR: 150 * scale, w: 3.4 * scale, maxLife: 0.42, color: 'rgba(255,195,120,' });
 }
-function spawnDefaultHit(x,y,scale=1){
-  for(let i=0;i<14*scale;i++){
-    const a = Math.random()*Math.PI*2;
-    const s = 80 + Math.random()*160 * scale;
-    spawnParticle({x,y}, {x:Math.cos(a)*s, y:Math.sin(a)*s}, 0.24 + Math.random()*0.36, '#ffb36b', 1 + Math.random()*2, true);
-  }
-  spawnParticle({x,y}, {x:0,y:0}, 0.08, '#ffffff', 4 * scale, true);
+function spawnDefaultHit(x, y, scale = 1) {
+  spawnParticle(
+    { x, y }, 
+    { x: 0, y: 0 }, 
+    0.15,           
+    '#fff5d6',      
+    7 * scale,      
+    true            // Tryb flash (świecenie)
+  );
+
+  // 2. Fala uderzeniowa (Shockwave)
+  spawnShockwave(x, y, { 
+    r: 4 * scale,
+    maxR: 45 * scale, // Mniejszy zasięg fali (rakiety mają ~100+)
+    w: 3 * scale,     // Cieńsza linia
+    maxLife: 0.25,    // Szybszy zanik
+    color: 'rgba(255, 220, 180,' // Kolor fali (ciepły biały/żółty)
+  });
 }
 
 function spawnShockwave(x, y, opts = {}){
