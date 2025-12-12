@@ -10634,7 +10634,7 @@ function npcStep(dt){
       // --- FIZYKA PĘDU (FRICTION) ---
       // Używamy friction z szablonu (np. 0.995 dla Destroyera - płynie długo)
       // lub domyślnego 0.92 dla małych/lekkich obiektów, żeby nie latały jak mydło.
-      const friction = npc.friction || 0.92; 
+      const friction = npc.friction || 1.0; 
       
       npc.vx *= friction;
       npc.vy *= friction;
