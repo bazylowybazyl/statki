@@ -3273,16 +3273,15 @@ function makeNPCBase(pos, stats){
 
 const SUPPORT_SHIP_TEMPLATES = {
   fighter: {
-    color: '#7cff91', // Zielony dla sojusznika (pirat nadpisze na czerwony)
+    color: '#7cff91', 
     count: 9,
     stats: { 
-      hp: 120, // Zgodne z AI SPACE
-      accel: 350, // Zwiększone z AI SPACE (było 280, ale 350 lepiej działa w twoim silniku)
+      hp: 120, 
+      accel: 350, 
       maxSpeed: 650, 
       turn: 7.0, 
       radius: 12,
       mass: 0.8,
-      // Friction usunięte - domyślnie 1.0 z npcStep
       separationRange: 30 
     },
     spawnOffset: { x: -60, y: 0 },
@@ -3308,14 +3307,14 @@ const SUPPORT_SHIP_TEMPLATES = {
   },
   frigate_pd: {
     stats: { 
-      hp: 1800, // AI SPACE ma 1800, ty miałeś 1200
-      accel: 150, 
-      maxSpeed: 160, // AI SPACE ma 160, ty miałeś 280 (za szybko!)
+      hp: 1200, 
+      accel: 200, 
+      maxSpeed: 280, // AI SPACE ma 160, ty miałeś 280 (za szybko!)
       turn: 1.2, 
-      radius: 28, // AI SPACE: hitR 28
+      radius: 28, 
       mass: 2.5, 
-      friction: 0.985, // Fregaty mają lekką inercję
-      separationRange: 90 
+      friction: 0.985, 
+      separationRange: 100 
     },
     configure(npc){
       npc.pd = 'pd_mk1';
@@ -3329,7 +3328,7 @@ const SUPPORT_SHIP_TEMPLATES = {
     stats: { 
       hp: 1800, 
       accel: 150, 
-      maxSpeed: 160, 
+      maxSpeed: 250, 
       turn: 1.2, 
       radius: 28, 
       mass: 2.5, 
@@ -3351,8 +3350,8 @@ const SUPPORT_SHIP_TEMPLATES = {
   destroyer: {
     stats: { 
       hp: 4200, // AI SPACE
-      accel: 120, 
-      maxSpeed: 140, // AI SPACE: 140
+      accel: 140, 
+      maxSpeed: 200, // AI SPACE: 140
       turn: 0.9, 
       radius: 45, // AI SPACE: hitR 45
       mass: 8.0, 
@@ -3372,8 +3371,8 @@ const SUPPORT_SHIP_TEMPLATES = {
   battleship: {
     stats: { 
       hp: 12000, // AI SPACE: 12000! (Ty miałeś 5200)
-      accel: 45, 
-      maxSpeed: 90, 
+      accel: 91, 
+      maxSpeed: 105, 
       turn: 0.6, 
       radius: 70, 
       mass: 25.0, 
