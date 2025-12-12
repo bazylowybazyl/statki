@@ -3233,21 +3233,42 @@ const MISSIONS = {
 
 function makeNPCBase(pos, stats){
   stats = stats || {};
-  return {
-    x: pos.x, y: pos.y,
-    vx: 0, vy: 0,
+
+  const npc = {
+    x: pos.x,
+    y: pos.y,
+    vx: 0,
+    vy: 0,
     angle: 0,
+
     hp: stats.hp || 100,
     maxHp: stats.hp || 100,
+
     accel: stats.accel || 0,
     maxSpeed: stats.maxSpeed || 0,
     turn: stats.turn || 0,
     radius: stats.radius || 20,
+
+    // jeśli nie podasz isCollidable w statsach – jest kolizyjny
     isCollidable: stats.isCollidable !== false,
+
     dead: false,
     ai: null,
     weapons: {}
   };
+
+  // NOWE: przeniesienie fizyki ze statów na NPC
+  if (typeof stats.friction === 'number') {
+    npc.friction = stats.friction;
+  }
+  if (typeof stats.mass === 'number') {
+    npc.mass = stats.mass;
+  }
+  if (typeof stats.separationRange === 'number') {
+    npc.separationRange = stats.separationRange;
+  }
+
+  return npc;
 }
 
 const SUPPORT_SHIP_TEMPLATES = {
@@ -4677,21 +4698,23 @@ function aiPickTarget(npc) {
   return best;
 }
 
-// --- B. AI FREGATY (NAPRAWIONE: Ruch, Strafing, Separacja) ---
+// --- B. AI FREGATY (Ruch, Strafing, Separacja – bez podwójnego tarcia) ---
 window.aiFrigate = function(sim, npc, dt) {
   npc.gunCD = Math.max(0, (npc.gunCD || 0) - dt);
-  npc.pdCD = Math.max(0, (npc.pdCD || 0) - dt);
+  npc.pdCD  = Math.max(0, (npc.pdCD  || 0) - dt);
   npc.mslCD = Math.max(0, (npc.mslCD || 0) - dt);
-  
+
   // Retargeting
   npc.retargetTimer = (npc.retargetTimer || 0) - dt;
   if (npc.retargetTimer <= 0) {
-      const freshTarget = aiPickTarget(npc); // używamy globalnego pickera
+      const freshTarget = aiPickTarget(npc);
       if (freshTarget) npc.target = freshTarget;
       npc.retargetTimer = 1.0 + Math.random() * 0.5;
   }
 
+  // 1. Pobierz cel
   let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : npc.target;
+
   if (!target || target.dead) {
     target = aiPickTarget(npc);
     npc.target = target;
@@ -4700,35 +4723,36 @@ window.aiFrigate = function(sim, npc, dt) {
   let targetAng = npc.angle;
   let thrust = 0;
   let strafe = 0;
-  
-  // Zmienne sił muszą być zainicjowane zerem
+
+  // Siły odseparowania
   let ax = 0;
   let ay = 0;
 
-  // 1. Logika ruchu (Thrust & Strafe)
+  // 2. Logika ruchu
   if (target) {
     const dx = target.x - npc.x;
     const dy = target.y - npc.y;
     targetAng = Math.atan2(dy, dx);
-    
+
     const idealRange = npc.preferredRange || 750;
     const dist = Math.hypot(dx, dy);
 
-    // Push-Pull
-    if (dist < idealRange * 0.85) thrust = -npc.accel * 0.7;
-    else if (dist > idealRange * 1.1) thrust = npc.accel * 0.8;
-    
-    // Strafe (Uniki)
+    // Push-Pull (lekko złagodzone)
+    if (dist < idealRange * 0.85)       thrust = -npc.accel * 0.7;
+    else if (dist > idealRange * 1.15)  thrust =  npc.accel * 0.9;
+    else                                thrust =  npc.accel * 0.25; // delikatny ruch do przodu, żeby nie "stała"
+
+    // Strafe – delikatne kołowanie wokół celu
     const seed = (npc.id && typeof npc.id === 'string') ? npc.id.charCodeAt(0) : Math.floor(Math.random() * 1000);
     const time = performance.now() / 1000;
     strafe = Math.sin(time * 0.7 + seed * 0.3) * npc.accel * 0.4;
 
   } else {
-    // Patrol
+    // Patrol lub stop
     if (npc.home) {
         const patrolRadius = npc.home.r + 300;
         if (!npc.patrolAngle) npc.patrolAngle = Math.random() * Math.PI * 2;
-        npc.patrolAngle += 0.2 * dt; 
+        npc.patrolAngle += 0.2 * dt;
         const px = npc.home.x + Math.cos(npc.patrolAngle) * patrolRadius;
         const py = npc.home.y + Math.sin(npc.patrolAngle) * patrolRadius;
         const dx = px - npc.x;
@@ -4736,59 +4760,52 @@ window.aiFrigate = function(sim, npc, dt) {
         targetAng = Math.atan2(dy, dx);
         thrust = npc.accel * 0.4;
     } else {
-        // Hamowanie gdy brak celu
         npc.vx *= 0.95;
         npc.vy *= 0.95;
     }
   }
 
-  // 2. Separacja (Odpychanie od innych)
-  // To sprawia, że statki "żyją" w tłumie
-  if (typeof applySeparationForces === 'function') {
-      const sep = applySeparationForces(npc, 0, 0);
-      ax += sep.ax;
-      ay += sep.ay;
-  }
+  // Separacja (ważne przy grupach fregat)
+  const sep = applySeparationForces(npc, 0, 0);
+  ax += sep.ax;
+  ay += sep.ay;
 
-  // 3. Fizyka (Integracja)
+  // 3. Fizyka (Integracja sił)
   npc.angle = clampTurnAngle(npc.angle, targetAng, npc.turn, dt);
-  
-  // Konwersja lokalnego ciągu (thrust/strafe) na światowy wektor
   const c = Math.cos(npc.angle);
   const s = Math.sin(npc.angle);
-  
-  // Dodajemy ciąg do sił separacji (nie nadpisujemy!)
-  ax += c * thrust - s * strafe;
-  ay += s * thrust + c * strafe;
 
-  npc.vx += ax * dt;
-  npc.vy += ay * dt;
+  // Sterowanie + separacja
+  const totalAx = ax + (c * thrust - s * strafe);
+  const totalAy = ay + (s * thrust + c * strafe);
+
+  npc.vx += totalAx * dt;
+  npc.vy += totalAy * dt;
 
   const v = Math.hypot(npc.vx, npc.vy);
   if (v > npc.maxSpeed) {
     const scale = npc.maxSpeed / v;
-    npc.vx *= scale; 
+    npc.vx *= scale;
     npc.vy *= scale;
   }
-  
-  npc.vx *= (npc.friction || 0.985);
-  npc.vy *= (npc.friction || 0.985);
+
+  // UWAGA: brak dodatkowego friction – robi to npcStep()
 
   // 4. Strzelanie
   if (target) {
     const mainDef = AISPACE_GUNS_M[npc.mainGun] || AISPACE_GUNS_M.m_autocannon;
     const distSq = dist2(npc, target);
-    
+
     if (npc.gunCD <= 0 && distSq < (mainDef.range * mainDef.range)) {
       const dx = target.x - npc.x, dy = target.y - npc.y;
       const dot = (Math.cos(npc.angle)*dx + Math.sin(npc.angle)*dy) / Math.sqrt(distSq);
-      
+
       if (dot > 0.8) {
          window.spawnBulletAdapter(npc, target, mainDef, { type: mainDef.isBeam ? 'beam' : undefined });
          npc.gunCD = 1.0 / (mainDef.rps || 1.0);
       }
     }
-    
+
     const pdDef = AISPACE_PD[npc.pd];
     if (pdDef && npc.pdCD <= 0 && distSq < (pdDef.range * pdDef.range)) {
       const burst = pdDef.burst || 1;
@@ -4797,7 +4814,7 @@ window.aiFrigate = function(sim, npc, dt) {
       }
       npc.pdCD = 1.0 / (pdDef.rps || 8);
     }
-    
+
     if (npc.msl && npc.mslAmmo > 0 && npc.mslCD <= 0 && distSq < 1400*1400) {
        const mslDef = AISPACE_MISSILES[npc.msl] || AISPACE_MISSILES.AS;
        const dir = { x: Math.cos(npc.angle), y: Math.sin(npc.angle) };
@@ -4822,11 +4839,11 @@ window.aiFrigate = function(sim, npc, dt) {
   }
 };
 
-// --- C. AI NISZCZYCIELA (NAPRAWIONE: Ruch, Separacja, Boost) ---
+// --- C. AI NISZCZYCIELA (Ruch, Separacja, Boost – bez podwójnego tarcia) ---
 window.aiDestroyer = function(sim, npc, dt) {
-  npc.mCD = Math.max(0, (npc.mCD || 0) - dt);
-  npc.pdCD = Math.max(0, (npc.pdCD || 0) - dt);
-  npc.boostT = Math.max(0, (npc.boostT || 0) - dt);
+  npc.mCD   = Math.max(0, (npc.mCD   || 0) - dt);
+  npc.pdCD  = Math.max(0, (npc.pdCD  || 0) - dt);
+  npc.boostT  = Math.max(0, (npc.boostT  || 0) - dt);
   npc.boostCd = Math.max(0, (npc.boostCd || 0) - dt);
 
   // Retargeting
@@ -4862,31 +4879,29 @@ window.aiDestroyer = function(sim, npc, dt) {
     const ux = Math.cos(npc.angle), uy = Math.sin(npc.angle);
     const dot = (dx/dist)*ux + (dy/dist)*uy;
 
-    // Logic for Boost
+    // Boost – dobieganie na pozycję
     if (dist > range * 0.95 && npc.boostCd <= 0 && dot > 0.9) {
-      npc.boostT = npc.boostDur || 2.5;
+      npc.boostT  = npc.boostDur || 2.5;
       npc.boostCd = 10.0;
     }
     if (dist < wantRange * 0.9) npc.boostT = 0;
 
     // Push-Pull
-    if (dist < wantRange * 0.95) thrust = -npc.accel * 1.2;
-    else if (dist > wantRange * 1.05) thrust = npc.accel * 0.9;
+    if (dist < wantRange * 0.95)      thrust = -npc.accel * 1.2;
+    else if (dist > wantRange * 1.05) thrust =  npc.accel * 0.9;
 
-    // Strafe logic
+    // Strafe – kołowanie wokół celu
     if (dist < range * 1.1) {
        const time = performance.now()/1000;
        const seed = (npc.id && typeof npc.id === 'string') ? npc.id.charCodeAt(0) : Math.floor(Math.random() * 1000);
        strafe = Math.sin(time * 0.55 + seed * 0.2) * npc.accel * 0.5;
        if (npc.boostT > 0) strafe *= 1.5;
     }
-    
-    // Separacja (silniejsza dla niszczycieli)
-    if (typeof applySeparationForces === 'function') {
-        const sep = applySeparationForces(npc, 0, 0);
-        ax += sep.ax * 1.2;
-        ay += sep.ay * 1.2;
-    }
+
+    // Separacja
+    const sep = applySeparationForces(npc, 0, 0);
+    ax += sep.ax * 1.2;
+    ay += sep.ay * 1.2;
 
     // Strzelanie
     if (npc.mCD <= 0 && dist < range && dot > 0.9) {
@@ -4901,40 +4916,38 @@ window.aiDestroyer = function(sim, npc, dt) {
 
   const c = Math.cos(npc.angle);
   const s = Math.sin(npc.angle);
-  
-  // Sumowanie wektorów
-  ax += (c * thrust - s * strafe) * speedBoost;
-  ay += (s * thrust + c * strafe) * speedBoost;
 
-  npc.vx += ax * dt;
-  npc.vy += ay * dt;
+  const totalAx = ax + (c * thrust - s * strafe) * speedBoost;
+  const totalAy = ay + (s * thrust + c * strafe) * speedBoost;
+
+  npc.vx += totalAx * dt;
+  npc.vy += totalAy * dt;
 
   const v = Math.hypot(npc.vx, npc.vy);
   const maxV = npc.maxSpeed * speedBoost;
   if (v > maxV) {
      const scale = maxV/v;
-     npc.vx *= scale; 
-     npc.vy *= scale; 
+     npc.vx *= scale;
+     npc.vy *= scale;
   }
-  
-  npc.vx *= (npc.friction || 0.986);
-  npc.vy *= (npc.friction || 0.986);
-  
+
+  // UWAGA: brak dodatkowego friction – robi to npcStep()
+
   const pdDef = AISPACE_PD[npc.pd];
   if (pdDef && npc.pdCD <= 0 && target) {
-     if ((target.x-npc.x)**2 + (target.y-npc.y)**2 < pdDef.range**2) {
+     if (dist2(npc, target) < pdDef.range**2) {
         window.spawnBulletAdapter(npc, target, pdDef, {type:'ciws'});
         npc.pdCD = 1.0 / (pdDef.rps || 9);
      }
   }
 };
 
-// --- D. AI PANCERNIKA (NAPRAWIONE: Ruch, Separacja, Broadside) ---
+// --- D. AI PANCERNIKA (Ruch, Separacja, Broadside – bez podwójnego tarcia) ---
 window.aiBattleship = function(sim, npc, dt) {
-  npc.broadLeftCD = Math.max(0, (npc.broadLeftCD||0) - dt);
-  npc.broadRightCD = Math.max(0, (npc.broadRightCD||0) - dt);
-  npc.pdCD = Math.max(0, (npc.pdCD||0) - dt);
-  npc.mCD = Math.max(0, (npc.mCD||0) - dt);
+  npc.broadLeftCD  = Math.max(0, (npc.broadLeftCD  || 0) - dt);
+  npc.broadRightCD = Math.max(0, (npc.broadRightCD || 0) - dt);
+  npc.pdCD         = Math.max(0, (npc.pdCD         || 0) - dt);
+  npc.mCD          = Math.max(0, (npc.mCD          || 0) - dt);
 
   // Retargeting
   npc.retargetTimer = (npc.retargetTimer || 0) - dt;
@@ -4956,7 +4969,7 @@ window.aiBattleship = function(sim, npc, dt) {
   let targetAng = npc.angle;
   let thrust = 0;
   let strafe = 0;
-  let ax = 0; 
+  let ax = 0;
   let ay = 0;
 
   if (target) {
@@ -4968,26 +4981,25 @@ window.aiBattleship = function(sim, npc, dt) {
     const noseRange = 800;
     const idealDist = noseRange * 0.75;
 
-    if (dist < idealDist * 0.9) thrust = -npc.accel * 0.5;
-    else if (dist > idealDist * 1.15) thrust = npc.accel * 0.9;
+    if (dist < idealDist * 0.9)       thrust = -npc.accel * 0.5;
+    else if (dist > idealDist * 1.15) thrust =  npc.accel * 0.9;
+    else                              thrust =  npc.accel * 0.2;
 
     const time = performance.now()/1000;
     const seed = (npc.id && typeof npc.id === 'string') ? npc.id.charCodeAt(0) : Math.floor(Math.random() * 1000);
     strafe = Math.sin(time * 0.4 + seed * 0.2) * npc.accel * 0.35;
 
-    // Separacja (Bardzo duża waga dla Capitali)
-    if (typeof applySeparationForces === 'function') {
-        const sep = applySeparationForces(npc, 0, 0);
-        ax += sep.ax * 1.5; 
-        ay += sep.ay * 1.5;
-    }
+    // Separacja – pancerniki się rozpychają
+    const sep = applySeparationForces(npc, 0, 0);
+    ax += sep.ax * 1.5;
+    ay += sep.ay * 1.5;
 
     const rightAng = toAng + Math.PI/2;
     const leftAng  = toAng - Math.PI/2;
 
-    const diffNose  = Math.abs(wrapAngle(toAng - npc.angle));
-    const diffRight = Math.abs(wrapAngle(rightAng - npc.angle));
-    const diffLeft  = Math.abs(wrapAngle(leftAng - npc.angle));
+    const diffNose  = Math.abs(wrapAngle(toAng     - npc.angle));
+    const diffRight = Math.abs(wrapAngle(rightAng  - npc.angle));
+    const diffLeft  = Math.abs(wrapAngle(leftAng   - npc.angle));
 
     const broadsideRange = 650;
     let sideBetter = false;
@@ -5005,22 +5017,24 @@ window.aiBattleship = function(sim, npc, dt) {
     }
 
     const sideArc = 0.5;
-    
+
+    // Broadside prawa burta
     if (diffRight < sideArc && npc.broadRightCD <= 0 && dist < broadsideDef.range) {
        for(let i=0; i<4; i++) {
-         const offsetDist = (i - 1.5) * 25; 
-         const bx = npc.x + Math.cos(npc.angle)*offsetDist + Math.sin(npc.angle)*20; 
+         const offsetDist = (i - 1.5) * 25;
+         const bx = npc.x + Math.cos(npc.angle)*offsetDist + Math.sin(npc.angle)*20;
          const by = npc.y + Math.sin(npc.angle)*offsetDist - Math.cos(npc.angle)*20;
          const fakeSource = { ...npc, x: bx, y: by };
          window.spawnBulletAdapter(fakeSource, target, broadsideDef, {type:'plasma'});
        }
-       npc.broadRightCD = 2.0; 
+       npc.broadRightCD = 2.0;
     }
 
+    // Broadside lewa burta
     if (diffLeft < sideArc && npc.broadLeftCD <= 0 && dist < broadsideDef.range) {
        for(let i=0; i<4; i++) {
-         const offsetDist = (i - 1.5) * 25; 
-         const bx = npc.x + Math.cos(npc.angle)*offsetDist - Math.sin(npc.angle)*20; 
+         const offsetDist = (i - 1.5) * 25;
+         const bx = npc.x + Math.cos(npc.angle)*offsetDist - Math.sin(npc.angle)*20;
          const by = npc.y + Math.sin(npc.angle)*offsetDist + Math.cos(npc.angle)*20;
          const fakeSource = { ...npc, x: bx, y: by };
          window.spawnBulletAdapter(fakeSource, target, broadsideDef, {type:'plasma'});
@@ -5028,6 +5042,7 @@ window.aiBattleship = function(sim, npc, dt) {
        npc.broadLeftCD = 2.0;
     }
 
+    // Działo dziobowe
     if (diffNose < 0.3 && npc.mCD <= 0 && dist < mDef.range) {
        window.spawnBulletAdapter(npc, target, mDef, {type:'rail'});
        npc.mCD = 1.0 / mDef.rps;
@@ -5037,7 +5052,7 @@ window.aiBattleship = function(sim, npc, dt) {
   npc.angle = clampTurnAngle(npc.angle, targetAng, npc.turn, dt);
   const c = Math.cos(npc.angle);
   const s = Math.sin(npc.angle);
-  
+
   // Sumowanie sił
   ax += c * thrust - s * strafe;
   ay += s * thrust + c * strafe;
@@ -5048,10 +5063,11 @@ window.aiBattleship = function(sim, npc, dt) {
   const v = Math.hypot(npc.vx, npc.vy);
   if (v > npc.maxSpeed) {
     const sc = npc.maxSpeed / v;
-    npc.vx *= sc; npc.vy *= sc;
+    npc.vx *= sc;
+    npc.vy *= sc;
   }
-  npc.vx *= (npc.friction || 0.99);
-  npc.vy *= (npc.friction || 0.99);
+
+  // UWAGA: brak dodatkowego friction – robi to npcStep()
 
   const pdDef = AISPACE_PD[npc.pd] || AISPACE_PD.pd_laser;
   if (npc.pdCD <= 0 && target && dist2(npc, target) < pdDef.range**2) {
@@ -13868,13 +13884,12 @@ function limitSpeed(n, max){
     else { n.vx*=s; n.vy*=s; }
   }
 }
-// === PEŁNY PORT AI MYŚLIWCA Z AI SPACE ===
- // Definicja jako zwykła funkcja
+// --- POPRAWIONE AI MYŚLIWCA (bez podwójnego tarcia i z fallbackiem na aiPickTarget) ---
 function runAdvancedFighterAI(npc, dt) {
   // --- KONFIGURACJA ---
   const isSupport = npc.isSupportWing || !!npc.supportData;
   let order = 'engage';
-  
+
   if (isSupport && typeof SupportWing !== 'undefined') {
       order = SupportWing.order || 'guard';
   }
@@ -13890,18 +13905,34 @@ function runAdvancedFighterAI(npc, dt) {
   // 1. ZNAJDOWANIE CELU
   npc.retargetTimer = (npc.retargetTimer || 0) - dt;
   let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : npc.target;
-  
+
   if (target && target.dead) target = null;
 
   if (!target && npc.retargetTimer <= 0) {
-      target = window.aiPickBestTarget(npc, SEARCH_RANGE);
-      npc.target = target;
+
+      // TU: bezpiecznie korzystamy z aiPickBestTarget / aiPickTarget
+      if (window.aiPickBestTarget) {
+        target = window.aiPickBestTarget(npc, SEARCH_RANGE);
+      } else if (window.aiPickTarget) {
+        target = window.aiPickTarget(npc);
+        if (target) {
+          const tx = (target.pos && target.pos.x !== undefined) ? target.pos.x : target.x;
+          const ty = (target.pos && target.pos.y !== undefined) ? target.pos.y : target.y;
+          const dx = tx - npc.x;
+          const dy = ty - npc.y;
+          if (dx*dx + dy*dy > SEARCH_RANGE * SEARCH_RANGE) {
+            target = null;
+          }
+        }
+      }
+
+      npc.target = target || null;
       npc.retargetTimer = 1.0 + Math.random() * 0.5;
   }
 
   const isSquadWingman = (npc.squad && npc.squad.leader && npc.squad.leader !== npc);
   if (!target && npc.isPirate && !npc.guardStation && !isSquadWingman) {
-      target = window.ship; // Piraci domyślnie atakują gracza
+      target = window.ship;
       npc.target = target;
   }
 
@@ -13913,7 +13944,6 @@ function runAdvancedFighterAI(npc, dt) {
       tx = (target.pos && target.pos.x !== undefined) ? target.pos.x : target.x;
       ty = (target.pos && target.pos.y !== undefined) ? target.pos.y : target.y;
       distToTarget = Math.hypot(tx - npc.x, ty - npc.y);
-      // UŻYWAMY HELPERA! To naprawia bug z teleportacją
       targetKind = getUnitKind(target);
   }
 
@@ -13934,7 +13964,7 @@ function runAdvancedFighterAI(npc, dt) {
               }
           }
       }
-      // B. ATAK NA DUŻY STATEK (Frigate/Destroyer/Battleship)
+      // B. ATAK NA DUŻY STATEK
       else {
           if (npc.state === 'bombing') {
               if (distToTarget > 2500) npc.state = 'engage_formation';
@@ -13962,21 +13992,21 @@ function runAdvancedFighterAI(npc, dt) {
       const dirX = tx - npc.x;
       const dirY = ty - npc.y;
       const len = Math.hypot(dirX, dirY) || 1;
-      
+
       const wantVx = (dirX / len) * npc.maxSpeed;
       const wantVy = (dirY / len) * npc.maxSpeed;
-      
+
       const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 300);
       npc.vx = turned.vx;
       npc.vy = turned.vy;
-      
+
       // Separacja (żeby nie wlatywały w siebie w roju)
       const sep = applySeparationForces(npc, 0, 0);
       npc.vx += sep.ax * dt;
       npc.vy += sep.ay * dt;
 
       smoothRotateToVelocity(10.0);
-      
+
       if (distToTarget < 1400) tryFireFighter(npc, target, dt);
       return;
   }
@@ -13990,7 +14020,7 @@ function runAdvancedFighterAI(npc, dt) {
           const lead = getLeadAim(npc, target, 500);
           const dx = lead.x - npc.x, dy = lead.y - npc.y;
           const len = Math.hypot(dx, dy) || 1;
-          const wantVx = (dx/len) * npc.maxSpeed * 1.15; 
+          const wantVx = (dx/len) * npc.maxSpeed * 1.15;
           const wantVy = (dy/len) * npc.maxSpeed * 1.15;
           const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 400);
           npc.vx = turned.vx; npc.vy = turned.vy;
@@ -14005,17 +14035,17 @@ function runAdvancedFighterAI(npc, dt) {
           const len = Math.hypot(dx, dy) || 1;
           const nx = dx/len, ny = dy/len;
           const px = -ny * npc._slashSign, py = nx * npc._slashSign;
-          
+
           const wantVx = (nx * 0.3 + px * 1.2) * npc.maxSpeed;
           const wantVy = (ny * 0.3 + py * 1.2) * npc.maxSpeed;
-          
+
           const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 450);
           npc.vx = turned.vx; npc.vy = turned.vy;
           npc.subT -= dt;
           if (npc.subT <= 0) { npc.sub = 'merge'; npc._mergeInit = false; }
       }
-      
-      smoothRotateToVelocity(12.0); 
+
+      smoothRotateToVelocity(12.0);
       tryFireFighter(npc, target, dt);
       return;
   }
@@ -14028,22 +14058,22 @@ function runAdvancedFighterAI(npc, dt) {
           npc.bombardSide = 1;
           npc.lastTargetId = target.id;
       }
-      const lineLen = 1400; 
+      const lineLen = 1400;
       const wayX = tx + npc.bombardVec.x * lineLen * npc.bombardSide;
       const wayY = ty + npc.bombardVec.y * lineLen * npc.bombardSide;
-      
+
       if (Math.hypot(wayX - npc.x, wayY - npc.y) < 250) npc.bombardSide *= -1;
 
       const dx = wayX - npc.x, dy = wayY - npc.y;
       const len = Math.hypot(dx, dy) || 1;
-      
+
       const wantVx = (dx / len) * npc.maxSpeed * 1.1;
       const wantVy = (dy / len) * npc.maxSpeed * 1.1;
 
       const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 280);
-      npc.vx = turned.vx; 
+      npc.vx = turned.vx;
       npc.vy = turned.vy;
-      
+
       if (distToTarget < 1000) {
           const aimX = tx - npc.x;
           const aimY = ty - npc.y;
@@ -14052,7 +14082,7 @@ function runAdvancedFighterAI(npc, dt) {
       } else {
           smoothRotateToVelocity(8.0);
       }
-      
+
       tryFireFighter(npc, target, dt);
       return;
   }
@@ -14062,7 +14092,7 @@ function runAdvancedFighterAI(npc, dt) {
   if (npc.squad && npc.squad.leader && !npc.squad.leader.dead) {
       leader = npc.squad.leader;
   } else if (npc.supportData) {
-      leader = npc.supportData.leader; 
+      leader = npc.supportData.leader;
   }
 
   if (!leader && !npc.guardStation) {
@@ -14084,7 +14114,7 @@ function runAdvancedFighterAI(npc, dt) {
           y: npc.guardStation.y + Math.sin(angle) * radius
       };
       const tangentAngle = angle + (speed > 0 ? Math.PI/2 : -Math.PI/2);
-      npc.desiredAngle = tangentAngle; 
+      npc.desiredAngle = tangentAngle;
   }
   else if (leader && !isLeader) {
       let offset = npc.formationOffset || {x:0, y:0};
@@ -14100,17 +14130,17 @@ function runAdvancedFighterAI(npc, dt) {
       const pdx = window.ship.pos.x - npc.x;
       const pdy = window.ship.pos.y - npc.y;
       const plen = Math.hypot(pdx, pdy) || 1;
-      npc.vx = (pdx/plen) * 150; 
+      npc.vx = (pdx/plen) * 150;
       npc.vy = (pdy/plen) * 150;
       smoothRotateToVelocity(5.0);
-      return; 
+      return;
   }
 
   if (targetPos) {
       const dx = targetPos.x - npc.x;
       const dy = targetPos.y - npc.y;
       const distToSpot = Math.hypot(dx, dy);
-      const kp = isLeader ? 2.0 : 3.0; 
+      const kp = isLeader ? 2.0 : 3.0;
       let wantVx = dx * kp;
       let wantVy = dy * kp;
       const currentMax = isLeader ? (npc.maxSpeed * 0.6) : (npc.maxSpeed * 1.1);
@@ -14130,10 +14160,10 @@ function runAdvancedFighterAI(npc, dt) {
 
       if (!npc.desiredAngle) {
           if (distToSpot > 50) smoothRotateToVelocity(6.0);
-          else if (leader && !isLeader) npc.angle = clampTurnAngle(npc.angle, leader.angle, 6.0, dt); 
+          else if (leader && !isLeader) npc.angle = clampTurnAngle(npc.angle, leader.angle, 6.0, dt);
       } else {
           npc.angle = clampTurnAngle(npc.angle, npc.desiredAngle, 4.0, dt);
-          npc.desiredAngle = null; 
+          npc.desiredAngle = null;
       }
   }
 }
