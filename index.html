@@ -581,9 +581,11 @@
 <script type="module">
 import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
 import { WORLD, setWorldSize } from './src/world/world.js';
-window.bullets = []; 
+import { initShieldSystem, updateShieldFx, drawShield, registerShieldImpact, resizeShieldSystem } from './shieldSystem.js';
+window.bullets = [];
 // Aby stary kod działał, zrobimy alias:
 const bullets = window.bullets;
+window.registerShieldImpact = registerShieldImpact;
 window.DEFAULT_PLANET_SCALE ??= DEFAULT_PLANET_SCALE;
 window.TIME_SCALE ??= TIME_SCALE;
 window.WORLD ??= WORLD;
@@ -2289,6 +2291,7 @@ let overlay3D = null;
 window.addEventListener('resize', ()=>{
   W = canvas.width = innerWidth;
   H = canvas.height = innerHeight;
+  resizeShieldSystem(innerWidth, innerHeight);
   spaceBg?.resizeSpaceBg?.(innerWidth, innerHeight);
   configureWarpLensSource?.();
   if(camera.mode === 'focus' && camera.focusStation){
@@ -10382,6 +10385,10 @@ function bulletsAndCollisionsStep(dt){
       if(b.owner === 'player' && hitNPC.mission && hitNPC.isPirate){
         triggerMercAggro('pirate_hit');
       }
+
+      if (hitNPC.shield && hitNPC.shield.val > 0) {
+        registerShieldImpact(hitNPC, b.x, b.y, b.damage || 0);
+      }
       
       // --- FIX: OBSŁUGA RÓŻNYCH TYPÓW TRAFIEŃ ---
       
@@ -10508,6 +10515,9 @@ function bulletsAndCollisionsStep(dt){
       const hitR = Math.max(ship.w, ship.h) * 0.45;
       const d = Math.hypot(ship.pos.x - b.x, ship.pos.y - b.y);
       if(d < hitR + b.r){
+        if (ship.shield && ship.shield.val > 0) {
+          registerShieldImpact(ship, b.x, b.y, b.damage || 0);
+        }
         applyDamageToPlayer(b.damage);
         if(b.hitFx){ b.hitFx(b.x, b.y, b.effectScale || 1.0, b); }
         else if(b.type === 'siege'){
@@ -10566,6 +10576,7 @@ function npcStep(dt){
   const DESPAWN_RADIUS_SQ = NPC_DESPAWN_RADIUS * NPC_DESPAWN_RADIUS;
   for(const npc of npcs){
     if (npc.hitFlash) npc.hitFlash = Math.max(0, npc.hitFlash - dt);
+    updateShieldFx(npc, dt);
     
     // Despawn logic (poza misją)
     if(!npc.mission){
@@ -11090,6 +11101,7 @@ function physicsStep(dt){
   ship.special.cooldownTimer = Math.max(0, ship.special.cooldownTimer - dt);
   if(ship.shield.regenTimer > 0) ship.shield.regenTimer -= dt;
   else ship.shield.val = clamp(ship.shield.val + ship.shield.regenRate * dt, 0, ship.shield.max);
+  updateShieldFx(ship, dt);
   rocketCooldown = Math.max(0, rocketCooldown - dt);
   // mouse world position
   const mouseWorld = screenToWorld(mouse.x, mouse.y);
@@ -12231,27 +12243,6 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     ctx.restore();
   }
 
-  // --- TARCZA (SHIELD) - TO JEST TO NIEBIESKIE ---
-  // Teraz rysujemy ją jako RoundRect, a nie Ellipse
-  const shield = npc.shield;
-  if (shield && shield.max > 0 && shield.val > 0){
-    const shieldPct = clamp(shield.val / shield.max, 0, 1);
-    ctx.save();
-    ctx.globalCompositeOperation = 'screen';
-    // Przezroczystość tarczy (zmniejszamy alpha, żeby była subtelniejsza)
-    ctx.globalAlpha = 0.15 + shieldPct * 0.2; 
-    
-    // Kolor niebieski
-    ctx.strokeStyle = `rgba(110,190,255,${0.3 + shieldPct * 0.4})`;
-    ctx.lineWidth = Math.max(2, width * 0.06); 
-    
-    ctx.beginPath();
-    traceHullShape(1.1); // Rysuj obrys statku z marginesem 1.1x
-    ctx.stroke();
-    
-    ctx.restore();
-  }
-
   // --- EFEKT TRAFIENIA ---
   if (npc.hitFlash > 0){
     ctx.save();
@@ -12327,16 +12318,6 @@ function drawNPCPretty(ctx, npc, s) {
     ctx.fillRect(-size, -size - 6, size * 2, 3);
     ctx.fillStyle = '#22c55e';
     ctx.fillRect(-size, -size - 6, size * 2 * hpPct, 3);
-  }
-
-  // Tarcza (jeśli aktywna)
-  if (npc.shield && npc.shield.val > 0) {
-    const shieldPct = npc.shield.val / npc.shield.max;
-    ctx.strokeStyle = `rgba(100, 200, 255, ${shieldPct * 0.6})`;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(0, 0, size * 1.2, 0, Math.PI * 2);
-    ctx.stroke();
   }
 
   ctx.restore();
@@ -12572,6 +12553,7 @@ function render(alpha, frameDt){
   for (const npc of npcDrawList){
     const s = worldToScreen(npc.x, npc.y, cam);
     drawNPCPretty(ctx, npc, s);
+    drawShield(ctx, npc, cam);
   }
 
   if (Selection.units.size){
@@ -13090,21 +13072,6 @@ if (warpLensShouldDraw && warpLensOutputCanvas && warpLensOutputCanvas.width && 
     ctx.restore();
   }
 
-  // tarcza
-  const sp = ship.shield.val / ship.shield.max;
-  if(sp > 0.005){
-    const rr = Math.max(visualW, visualH) * 0.62;
-    ctx.save();
-    const fresnel = ctx.createRadialGradient(0,0, rr*0.78, 0,0, rr);
-    fresnel.addColorStop(0, 'rgba(120,200,255,0)');
-    fresnel.addColorStop(1, `rgba(120,200,255,${0.18 + 0.4*sp})`);
-    ctx.fillStyle = fresnel;
-    ctx.beginPath(); ctx.arc(0,0, rr, 0, Math.PI*2); ctx.fill();
-    ctx.restore();
-    ctx.beginPath(); ctx.strokeStyle = `rgba(120,200,255,${0.18 + 0.4*sp})`;
-    ctx.lineWidth = 3; ctx.arc(0,0, Math.max(visualW,visualH)*0.6, 0, Math.PI*2); ctx.stroke();
-  }
-
   // CIWS turrets
   const ciwsBase = 8 * spriteScale, ciwsBarrelLen = 12 * spriteScale, ciwsBarrelH = 4 * spriteScale;
   const activeCIWS = (Game.player.weapons?.[HP.AUX]?.length || 0);
@@ -13214,12 +13181,14 @@ if (warpLensShouldDraw && warpLensOutputCanvas && warpLensOutputCanvas.width && 
       ctx.fillStyle = '#9ab7ff'; roundRect(ctx, -baseW/2, -baseH/2, baseW, baseH, 5 * spriteScale); ctx.fill();
       ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(30,50,90,0.45)'; ctx.stroke();
       ctx.fillStyle = '#c0c0c0';
-      roundRect(ctx, 6*spriteScale - recoil, -gap/2 - barrelH/2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
-      roundRect(ctx, 6*spriteScale - recoil,  gap/2 - barrelH/2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
+    roundRect(ctx, 6*spriteScale - recoil, -gap/2 - barrelH/2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
+    roundRect(ctx, 6*spriteScale - recoil,  gap/2 - barrelH/2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
     }
     ctx.restore();
   });
   ctx.restore(); // ship
+
+  drawShield(ctx, ship, cam);
 
   // scan arrows pointing to stations
   if(warp.state !== 'active'){
@@ -14194,6 +14163,7 @@ async function startGame(){
   acc = 0;
   vfxTime = 0;
   uiRoot?.classList.remove('hidden');
+  initShieldSystem(W, H);
   requestAnimationFrame(loop);
 
   await firstFramePromise;
