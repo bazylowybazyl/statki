@@ -10634,12 +10634,10 @@ function npcStep(dt){
       // --- FIZYKA PĘDU (FRICTION) ---
       // Używamy friction z szablonu (np. 0.995 dla Destroyera - płynie długo)
       // lub domyślnego 0.92 dla małych/lekkich obiektów, żeby nie latały jak mydło.
-      const friction = npc.friction || 0.92;
-
-      if (!npc.skipNpcFriction) {
-        npc.vx *= friction;
-        npc.vy *= friction;
-      }
+      const friction = npc.friction || 0.92; 
+      
+      npc.vx *= friction;
+      npc.vy *= friction;
 
       // 4. Obrót
       if (npc.keepAngle){
@@ -13889,7 +13887,6 @@ function limitSpeed(n, max){
 // --- POPRAWIONE AI MYŚLIWCA (bez podwójnego tarcia i z fallbackiem na aiPickTarget) ---
 function runAdvancedFighterAI(npc, dt) {
   // --- KONFIGURACJA ---
-  npc.skipNpcFriction = true;
   const isSupport = npc.isSupportWing || !!npc.supportData;
   let order = 'engage';
 
@@ -13988,12 +13985,6 @@ function runAdvancedFighterAI(npc, dt) {
       }
   };
 
-  const blendVelocity = (targetVx, targetVy, accel = 5.0) => {
-      const factor = Math.min(accel * dt, 1);
-      npc.vx += (targetVx - npc.vx) * factor;
-      npc.vy += (targetVy - npc.vy) * factor;
-  };
-
   // 3. FIZYKA RUCHU
 
   // --- CASE 1: DOLOT BOJOWY ---
@@ -14006,7 +13997,8 @@ function runAdvancedFighterAI(npc, dt) {
       const wantVy = (dirY / len) * npc.maxSpeed;
 
       const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 300);
-      blendVelocity(turned.vx, turned.vy, 7.5);
+      npc.vx = turned.vx;
+      npc.vy = turned.vy;
 
       // Separacja (żeby nie wlatywały w siebie w roju)
       const sep = applySeparationForces(npc, 0, 0);
@@ -14031,7 +14023,7 @@ function runAdvancedFighterAI(npc, dt) {
           const wantVx = (dx/len) * npc.maxSpeed * 1.15;
           const wantVy = (dy/len) * npc.maxSpeed * 1.15;
           const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 400);
-          blendVelocity(turned.vx, turned.vy, 10.0);
+          npc.vx = turned.vx; npc.vy = turned.vy;
           npc.subT -= dt;
           if (npc.subT <= 0 || distToTarget < 120) {
               npc.sub = 'slash'; npc.subT = 0.6; npc._slashSign = Math.random() > 0.5 ? 1 : -1;
@@ -14048,7 +14040,7 @@ function runAdvancedFighterAI(npc, dt) {
           const wantVy = (ny * 0.3 + py * 1.2) * npc.maxSpeed;
 
           const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 450);
-          blendVelocity(turned.vx, turned.vy, 10.0);
+          npc.vx = turned.vx; npc.vy = turned.vy;
           npc.subT -= dt;
           if (npc.subT <= 0) { npc.sub = 'merge'; npc._mergeInit = false; }
       }
@@ -14079,7 +14071,8 @@ function runAdvancedFighterAI(npc, dt) {
       const wantVy = (dy / len) * npc.maxSpeed * 1.1;
 
       const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 280);
-      blendVelocity(turned.vx, turned.vy, 6.5);
+      npc.vx = turned.vx;
+      npc.vy = turned.vy;
 
       if (distToTarget < 1000) {
           const aimX = tx - npc.x;
@@ -14137,7 +14130,8 @@ function runAdvancedFighterAI(npc, dt) {
       const pdx = window.ship.pos.x - npc.x;
       const pdy = window.ship.pos.y - npc.y;
       const plen = Math.hypot(pdx, pdy) || 1;
-      blendVelocity((pdx/plen) * 150, (pdy/plen) * 150, 3.5);
+      npc.vx = (pdx/plen) * 150;
+      npc.vy = (pdy/plen) * 150;
       smoothRotateToVelocity(5.0);
       return;
   }
