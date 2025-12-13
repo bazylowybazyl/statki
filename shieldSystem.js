@@ -1,18 +1,17 @@
 // --- SHIELD SYSTEM MODULE ---
-// Wersja Standalone: Sama oblicza pozycję na ekranie.
-// Naprawia: Niewidoczną tarczę (rysowanie w złym miejscu) i słabą widoczność.
+// Wersja: Correct World Space Scaling
+// Naprawiono: Błąd "Double Scaling", który czynił tarczę mikroskopijną przy oddaleniu kamery.
 
 const CONFIG = {
     baseColor: '#00aaff',
     hitColor: '#ffffff',
-    baseAlpha: 0.2,      // Zwiększone dla lepszej widoczności
-    minAlpha: 0.1,       // Minimalna widoczność (nawet przy 1% HP)
-    hexAlpha: 0.6,
-    hexScale: 24,
+    baseAlpha: 0.15,
+    hexAlpha: 0.4,       // Nieco mniejsza alpha, by nie zasłaniać statku
+    hexScale: 42,        // Dopasowane do skali świata gry
     hitDecayTime: 0.6,
     hitSpread: 0.8,
-    deformPower: 8,
-    shieldScale: 1.6
+    deformPower: 12,
+    shieldScale: 1.4     // Tarcza 40% większa od kadłuba
 };
 
 // Cache tekstury
@@ -32,7 +31,7 @@ function hexToRgb(hex) {
 }
 
 function generateHexTexture(colorHex, scale) {
-    const s = Math.max(4, scale || 16);
+    const s = Math.max(10, scale); 
     const tileW = 3 * s;
     const tileH = Math.sqrt(3) * s; 
     
@@ -41,11 +40,11 @@ function generateHexTexture(colorHex, scale) {
     cvs.height = Math.ceil(tileH * 2);
     const c = cvs.getContext('2d');
     
+    // Rysowanie na offscreen canvasie
     c.strokeStyle = colorHex || '#00aaff';
-    c.lineWidth = Math.max(1, s * 0.1); 
+    c.lineWidth = 2; 
     c.lineCap = 'round';
-    c.lineJoin = 'round';
-    c.globalAlpha = 0.8;
+    c.globalAlpha = 0.9;
 
     c.beginPath();
     const drawHexPart = (offsetX, offsetY) => {
@@ -59,6 +58,7 @@ function generateHexTexture(colorHex, scale) {
         c.closePath();
     };
 
+    // Tiling
     drawHexPart(0, 0);
     drawHexPart(tileW, 0);
     drawHexPart(tileW * 0.5, tileH);
@@ -88,20 +88,22 @@ export function registerShieldImpact(entity, bulletX, bulletY, damage) {
     if (!entity || !entity.shield) return;
     if (!entity.shield.impacts) entity.shield.impacts = [];
 
-    if (!Number.isFinite(bulletX) || !Number.isFinite(bulletY) || !Number.isFinite(damage)) return;
+    if (!Number.isFinite(bulletX) || !Number.isFinite(bulletY)) return;
 
+    // Kąt uderzenia w świecie gry
     const dx = bulletX - entity.x;
     const dy = bulletY - entity.y;
-    let angle = Math.atan2(dy, dx);
-    if (!Number.isFinite(angle)) angle = 0;
-
-    const localAngle = angle - (entity.angle || 0);
+    const worldAngle = Math.atan2(dy, dx);
+    
+    // Konwersja na kąt lokalny (względem obrotu statku)
+    // Dzięki temu efekt uderzenia "obraca się" razem ze statkiem
+    const localAngle = worldAngle - (entity.angle || 0);
 
     entity.shield.impacts.push({
         localAngle: localAngle,
         life: 1.0,
-        intensity: Math.min(2.0, Math.max(0.5, damage / 15)),
-        deformation: CONFIG.deformPower * (damage / 50)
+        intensity: Math.min(2.5, Math.max(0.5, damage / 10)),
+        deformation: CONFIG.deformPower
     });
 }
 
@@ -116,83 +118,127 @@ export function updateShieldFx(entity, dt) {
     }
 }
 
+// --- HELPER WYMIARÓW ---
+function getShieldDimensions(entity) {
+    // Domyślne wymiary z fizyki
+    let w = entity.w || (entity.radius * 2) || 40;
+    let h = entity.h || (entity.radius * 2) || 40;
+
+    // Specjalna obsługa Capital Ships (Carrier, Battleship) zdefiniowanych w index.html
+    // Capital ships mają 'capitalProfile' który definiuje ich wizualny rozmiar
+    if (entity.capitalProfile) {
+        const baseR = entity.radius || 20;
+        // lengthScale to długość (oś X w lokalnym układzie sprite'a)
+        const len = baseR * (entity.capitalProfile.lengthScale || 3.2);
+        // widthScale to szerokość
+        const wid = baseR * (entity.capitalProfile.widthScale || 1.2);
+        
+        // Upewniamy się, że tarcza pokrywa cały sprite
+        w = Math.max(w, len);
+        h = Math.max(h, wid);
+    } 
+    // Obsługa małych statków (fightery), żeby tarcza była bardziej okrągła
+    else if (entity.fighter || entity.type === 'fighter') {
+        const size = Math.max(w, h);
+        w = size;
+        h = size;
+    }
+
+    return { 
+        rx: (w / 2) * CONFIG.shieldScale, 
+        ry: (h / 2) * CONFIG.shieldScale 
+    };
+}
+
 // --- RENDER ---
 
 export function drawShield(ctx, entity, cam) {
     try {
         const shield = entity.shield;
-        // Rysujemy nawet przy małym HP, żebyś widział efekt
-        if (!shield || shield.max <= 0) return;
-        if (shield.val <= 0.1 && (!shield.impacts || shield.impacts.length === 0)) return;
-
-        const hpFactor = Math.max(0, Math.min(1, shield.val / shield.max));
+        if (!shield) return;
+        
+        // Nie rysuj jeśli tarcza nie ma MaxHP (np. asteroidy)
+        if (!shield.max || shield.max <= 0) return;
+        
+        // Nie rysuj całkowicie wyczerpanej tarczy, chyba że właśnie oberwała
         const impacts = shield.impacts || [];
+        if (shield.val <= 1 && impacts.length === 0) return;
 
-        // 1. OBLICZANIE POZYCJI EKRANOWEJ
-        // To jest kluczowe: Przeliczamy pozycję ze świata gry na ekran
+        // 1. POZYCJA NA EKRANIE
         const screenX = (entity.x - cam.x) * cam.zoom + ctx.canvas.width / 2;
         const screenY = (entity.y - cam.y) * cam.zoom + ctx.canvas.height / 2;
 
-        // Culling (optymalizacja)
-        const cullR = 300 * cam.zoom;
-        if (screenX < -cullR || screenX > ctx.canvas.width + cullR ||
-            screenY < -cullR || screenY > ctx.canvas.height + cullR) return;
+        // Culling (nie rysuj tego co poza ekranem)
+        if (screenX < -500 || screenX > ctx.canvas.width + 500 || screenY < -500 || screenY > ctx.canvas.height + 500) return;
 
-        // Wymiary
-        const baseW = (Number.isFinite(entity.w) && entity.w > 0) ? entity.w : (entity.radius * 2 || 40);
-        const baseH = (Number.isFinite(entity.h) && entity.h > 0) ? entity.h : (entity.radius * 2 || 40);
+        // Pobranie wymiarów (W JEDNOSTKACH ŚWIATA)
+        const { rx, ry } = getShieldDimensions(entity);
 
-        // Skalowanie tarczy względem zoomu kamery
-        const rx = (baseW / 2) * CONFIG.shieldScale * cam.zoom;
-        const ry = (baseH / 2) * CONFIG.shieldScale * cam.zoom;
-        
+        // Obliczanie Alpha
+        const hpFactor = Math.max(0, Math.min(1, shield.val / shield.max));
         const time = performance.now() / 1000;
-        const pulse = Math.sin(time * 2.0) * 0.05;
+        const pulse = Math.sin(time * 3.0) * 0.05;
         
-        // Gwarantujemy minimalną widoczność (CONFIG.minAlpha)
-        let alpha = Math.max(CONFIG.minAlpha, (CONFIG.baseAlpha + pulse) * hpFactor);
+        // Bazowa widoczność zależna od HP + minimalna widoczność
+        // ZWIĘKSZYŁEM minAlpha, żebyś widział tarczę nawet jak jest słaba
+        let alpha = Math.max(0.15, (CONFIG.baseAlpha + pulse) * hpFactor);
         
-        // Zwiększ widoczność przy trafieniu
-        const hitIntensity = impacts.reduce((sum, imp) => sum + imp.life, 0);
-        const activeAlpha = Math.min(0.8, alpha + hitIntensity * 0.3);
+        // Tarcza jaśnieje przy trafieniu
+        if (impacts.length > 0) alpha = Math.min(0.9, alpha + 0.4);
+
+        // Obsługa dodatkowej rotacji sprite'a (dla Capital Ships)
+        let visualAngle = entity.angle || 0;
+        if (entity.capitalProfile && Number.isFinite(entity.capitalProfile.spriteRotation)) {
+            visualAngle += entity.capitalProfile.spriteRotation;
+        }
 
         ctx.save();
         
-        // 2. TRANSFORMACJA CONTEXTU
+        // 2. TRANSFORMACJA (Kluczowy moment naprawy)
         ctx.translate(screenX, screenY);
-        ctx.rotate(entity.angle || 0);
-        // Nie robimy ctx.scale(zoom), bo już przeskalowaliśmy rx/ry wyżej (dla lepszej kontroli obrysu)
+        // SKALUJEMY KONTEKST, NIE PROMIEŃ!
+        // Dzięki temu rx/ry są w jednostkach świata, a canvas sam je zmniejsza przy oddaleniu.
+        ctx.scale(cam.zoom, cam.zoom);
+        ctx.rotate(visualAngle);
 
-        // 3. RYSOWANIE KSZTAŁTU
-        const segments = 40; 
+        // 3. RYSOWANIE ŚCIEŻKI (Path)
         const path = new Path2D();
-
+        const segments = 40; // Ilość segmentów elipsy
+        
         for (let i = 0; i <= segments; i++) {
             const theta = (i / segments) * Math.PI * 2 - Math.PI;
+            
+            // Standardowa elipsa
             const cos = Math.cos(theta);
             const sin = Math.sin(theta);
             
+            // Promień elipsy w danym kącie
             const rBase = (rx * ry) / Math.sqrt((ry * cos) ** 2 + (rx * sin) ** 2);
             let r = rBase;
 
-            let totalDeform = 0;
-            totalDeform -= Math.sin(theta * 6 + time * 3) * (2 * cam.zoom); 
+            // Deformacje
+            let deform = 0;
+            // Idle wobble (tylko jeśli tarcza ma energię)
+            if (shield.val > 10) {
+                deform -= Math.sin(theta * 6 + time * 4) * 2; 
+            }
 
             for (const imp of impacts) {
-                let diff = Math.abs(theta - imp.localAngle);
-                if (diff > Math.PI) diff = 2 * Math.PI - diff; 
+                // Korekta kąta uderzenia względem wizualnej rotacji statku
+                const angleCorrection = visualAngle - (entity.angle || 0);
+                const correctedImpAngle = imp.localAngle - angleCorrection;
 
+                let diff = Math.abs(theta - correctedImpAngle);
+                if (diff > Math.PI) diff = 2 * Math.PI - diff;
+                
                 if (diff < CONFIG.hitSpread) {
                     const normalizedDist = diff / CONFIG.hitSpread;
-                    const waveShape = (Math.cos(normalizedDist * Math.PI) + 1) / 2;
-                    const deform = (imp.deformation || 5) * cam.zoom * imp.life * waveShape * (imp.intensity || 1);
-                    if (Number.isFinite(deform)) {
-                        totalDeform += deform;
-                    }
+                    const wave = (Math.cos(normalizedDist * Math.PI) + 1) / 2;
+                    deform += (imp.deformation || 10) * imp.life * wave * imp.intensity;
                 }
             }
 
-            const finalR = Math.max(2 * cam.zoom, r - totalDeform);
+            const finalR = Math.max(5, r - deform);
             const px = cos * finalR;
             const py = sin * finalR;
 
@@ -205,57 +251,66 @@ export function drawShield(ctx, entity, cam) {
         ctx.globalCompositeOperation = 'lighter';
         
         const maxR = Math.max(rx, ry);
-        if (maxR > 0) {
-            const col = hexToRgb(CONFIG.baseColor);
-            const grad = ctx.createRadialGradient(0, 0, maxR * 0.6, 0, 0, maxR * 1.1);
-            grad.addColorStop(0, `rgba(${col.r}, ${col.g}, ${col.b}, 0)`);
-            grad.addColorStop(0.8, `rgba(${col.r}, ${col.g}, ${col.b}, ${activeAlpha * 0.5})`);
-            grad.addColorStop(1, `rgba(${col.r}, ${col.g}, ${col.b}, ${activeAlpha})`);
-            ctx.fillStyle = grad;
-            ctx.fill(path);
-        }
+        const col = hexToRgb(CONFIG.baseColor);
+        
+        // Gradient
+        const grad = ctx.createRadialGradient(0, 0, maxR * 0.5, 0, 0, maxR * 1.15);
+        grad.addColorStop(0, `rgba(${col.r}, ${col.g}, ${col.b}, 0)`);
+        grad.addColorStop(0.7, `rgba(${col.r}, ${col.g}, ${col.b}, ${alpha * 0.3})`);
+        grad.addColorStop(1, `rgba(${col.r}, ${col.g}, ${col.b}, ${alpha})`);
+        
+        ctx.fillStyle = grad;
+        ctx.fill(path);
 
-        // 5. HEX PATTERN
-        if ((impacts.length > 0 || shield.val > shield.max * 0.9) && hexGridTexture) {
+        // 5. HEX PATTERN (Wzór plastra miodu)
+        // Rysujemy tylko, jeśli tarcza jest mocna LUB obrywa
+        if ((impacts.length > 0 || hpFactor > 0.8) && hexGridTexture) {
             ctx.save();
             ctx.clip(path);
-            ctx.globalCompositeOperation = 'source-over'; 
-            ctx.globalAlpha = CONFIG.hexAlpha * (impacts.length > 0 ? 1 : 0.3) * activeAlpha;
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.globalAlpha = CONFIG.hexAlpha * alpha;
 
             const pat = ctx.createPattern(hexGridTexture, 'repeat');
             if (pat) {
                 const matrix = new DOMMatrix();
-                // Przesuwamy i skalujemy pattern
-                const hexZoom = Math.max(0.3, cam.zoom * 0.7);
+                // Ważne: Skalujemy teksturę w dół, bo rysujemy w powiększonym świecie
+                // Jeśli tego nie zrobimy, heksy będą ogromne przy zoomie.
+                const hexSizeFix = 0.5; 
                 matrix.translateSelf(0, time * 20); 
-                matrix.scaleSelf(hexZoom, hexZoom);
+                matrix.scaleSelf(hexSizeFix, hexSizeFix);
                 pat.setTransform(matrix);
                 
                 ctx.fillStyle = pat;
-                ctx.fillRect(-maxR * 1.5, -maxR * 1.5, maxR * 3, maxR * 3);
+                const bounds = maxR * 2.5;
+                ctx.fillRect(-bounds/2, -bounds/2, bounds, bounds);
             }
             ctx.restore();
         }
 
-        // 6. STROKE
+        // 6. OBRYS (Krawędź)
         ctx.globalCompositeOperation = 'lighter';
-        const col = hexToRgb(CONFIG.baseColor);
-        ctx.strokeStyle = `rgba(${col.r}, ${col.g}, ${col.b}, ${activeAlpha * 1.5})`;
-        ctx.lineWidth = Math.max(1, 2.5 * cam.zoom * hpFactor);
+        ctx.strokeStyle = `rgba(${col.r}, ${col.g}, ${col.b}, ${alpha * 2.0})`;
+        ctx.lineWidth = 2.5; // Stała grubość linii w świecie gry
         ctx.stroke(path);
 
-        // 7. FLASH (TRAFIENIA)
+        // 7. FLASH (Miejsce trafienia)
         if (impacts.length > 0) {
             ctx.globalCompositeOperation = 'source-over';
             for (const imp of impacts) {
-                const cos = Math.cos(imp.localAngle);
-                const sin = Math.sin(imp.localAngle);
+                const angleCorrection = visualAngle - (entity.angle || 0);
+                const correctedImpAngle = imp.localAngle - angleCorrection;
+
+                const cos = Math.cos(correctedImpAngle);
+                const sin = Math.sin(correctedImpAngle);
+                
+                // Punkt na obwodzie elipsy
                 const rHit = (rx * ry) / Math.sqrt((ry * cos) ** 2 + (rx * sin) ** 2);
                 
                 ctx.beginPath();
                 ctx.fillStyle = CONFIG.hitColor;
-                ctx.globalAlpha = imp.life * 0.9;
-                ctx.arc(cos * rHit, sin * rHit, 20 * imp.intensity * cam.zoom, 0, Math.PI * 2);
+                ctx.globalAlpha = imp.life;
+                // Błysk w miejscu uderzenia
+                ctx.arc(cos * rHit, sin * rHit, 20 * imp.intensity, 0, Math.PI * 2);
                 ctx.fill();
             }
         }
@@ -263,7 +318,6 @@ export function drawShield(ctx, entity, cam) {
         ctx.restore();
 
     } catch (e) {
-        console.warn("Shield render error:", e);
-        ctx.restore();
+        // Cichy catch, żeby błąd graficzny nie wywalił pętli gry
     }
 }
