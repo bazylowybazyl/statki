@@ -58,7 +58,7 @@ const SHIP_TEMPLATE = {
     recoilKick: 14,
     offset: { x: 0, y: 0 }
   },
-  shield: { max: 15000, val: 120, regenRate: 100, regenDelay: 2, regenTimer: 0 },
+  shield: { max: 15000, val: 15000, regenRate: 100, regenDelay: 2, regenTimer: 0 },
   hull: { max: 10000, val: 1000 },
   special: { cooldown: 10, cooldownTimer: 0 },
   input: { thrustX: 0, thrustY: 0, aimX: 0, aimY: 0 },
