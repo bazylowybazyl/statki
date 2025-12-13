@@ -105,13 +105,17 @@ export function registerShieldImpact(entity, bulletX, bulletY, damage) {
     if (!entity.shield) return;
     if (!entity.shield.impacts) entity.shield.impacts = [];
 
+    // Zabezpieczenie przed NaN na wejściu
+    if (!Number.isFinite(bulletX) || !Number.isFinite(bulletY)) return;
+
     // Kąt trafienia w świecie gry
     const dx = bulletX - entity.x;
     const dy = bulletY - entity.y;
-    const angle = Math.atan2(dy, dx); 
+    let angle = Math.atan2(dy, dx); 
 
-    // Konwersja na kąt lokalny (względem obrotu statku)
-    // Dzięki temu uderzenie "obraca się" razem ze statkiem
+    if (!Number.isFinite(angle)) angle = 0;
+
+    // Konwersja na kąt lokalny
     const localAngle = angle - (entity.angle || 0);
 
     entity.shield.impacts.push({
@@ -152,23 +156,32 @@ export function drawShield(ctx, entity, cam) {
     const length = baseW * CONFIG.shieldScale;
     const width = baseH * CONFIG.shieldScale;
     
+    // Walidacja kamery
+    const zoom = Number.isFinite(cam.zoom) ? cam.zoom : 1;
+    const camX = Number.isFinite(cam.x) ? cam.x : 0;
+    const camY = Number.isFinite(cam.y) ? cam.y : 0;
+
     // Pozycja na ekranie
-    const screenX = (entity.x - cam.x) * cam.zoom + ctx.canvas.width / 2;
-    const screenY = (entity.y - cam.y) * cam.zoom + ctx.canvas.height / 2;
-    const zoom = cam.zoom;
+    const screenX = (entity.x - camX) * zoom + ctx.canvas.width / 2;
+    const screenY = (entity.y - camY) * zoom + ctx.canvas.height / 2;
+
+    // Jeśli screenX/Y to NaN, przerywamy
+    if (!Number.isFinite(screenX) || !Number.isFinite(screenY)) return;
 
     // Promienie ekranowe
     const rx = (length / 2) * zoom;
     const ry = (width / 2) * zoom;
     const maxR = Math.max(rx, ry);
 
-    // Culling - nie rysuj poza ekranem
+    // Zabezpieczenie przed NaN w promieniach
+    if (!Number.isFinite(maxR) || maxR <= 0) return;
+
+    // Culling - nie rysuj jeśli poza ekranem
     if (screenX < -maxR || screenX > W + maxR || screenY < -maxR || screenY > H + maxR) return;
 
     // --- Efekt "życia" tarczy (pulsowanie) ---
     const time = performance.now() / 1000;
     const pulse = Math.sin(time * 2.5) * 0.05;
-    // Bazowa widoczność zależna od stanu naładowania + puls
     const currentAlpha = Math.max(0.05, (CONFIG.baseAlpha + pulse) * hpFactor);
 
     // --- KROK 1: Obliczanie kształtu (Deformacja) ---
@@ -194,7 +207,9 @@ export function drawShield(ctx, entity, cam) {
         totalDeform -= Math.sin(theta * 5 + time * 3) * (1.5 * zoom); 
 
         for (const imp of impacts) {
-            let diff = Math.abs(theta - imp.localAngle);
+            // Zabezpieczenie przed NaN w localAngle
+            const localAng = Number.isFinite(imp.localAngle) ? imp.localAngle : 0;
+            let diff = Math.abs(theta - localAng);
             if (diff > Math.PI) diff = 2 * Math.PI - diff;
             
             if (diff < CONFIG.hitSpread) {
@@ -220,114 +235,106 @@ export function drawShield(ctx, entity, cam) {
     ctx.clip(path);
     
     const col = hexToRgb(CONFIG.baseColor);
-    const grad = ctx.createRadialGradient(0, 0, maxR * 0.5, 0, 0, maxR);
     
-    // Delikatny środek, mocniejsza krawędź
-    grad.addColorStop(0, `rgba(${col.r}, ${col.g}, ${col.b}, 0)`);
-    grad.addColorStop(0.7, `rgba(${col.r}, ${col.g}, ${col.b}, ${currentAlpha * 0.4})`);
-    grad.addColorStop(1, `rgba(${col.r}, ${col.g}, ${col.b}, ${currentAlpha * 1.2})`);
+    // ZABEZPIECZENIE GRADIENTU
+    if (Number.isFinite(maxR) && maxR > 0) {
+        try {
+            const grad = ctx.createRadialGradient(0, 0, maxR * 0.5, 0, 0, maxR);
+            grad.addColorStop(0, `rgba(${col.r}, ${col.g}, ${col.b}, 0)`);
+            grad.addColorStop(0.7, `rgba(${col.r}, ${col.g}, ${col.b}, ${currentAlpha * 0.4})`);
+            grad.addColorStop(1, `rgba(${col.r}, ${col.g}, ${col.b}, ${currentAlpha * 1.2})`);
+            ctx.fillStyle = grad;
+            ctx.fill();
+        } catch (e) {
+            // Ignoruj błędy gradientu, rysuj flat color w ostateczności
+            ctx.fillStyle = `rgba(${col.r}, ${col.g}, ${col.b}, 0.2)`;
+            ctx.fill();
+        }
+    }
     
-    ctx.fillStyle = grad;
-    ctx.fill();
-
     // --- KROK 3: Efekt Hexów (Tylko przy trafieniach) ---
     if (impacts.length > 0 && hexGridTexture && sCtx) {
-        // Obszar roboczy do wyczyszczenia (kwadrat wokół tarczy)
-        // Musi być całkowity i parzysty dla wydajności
         const clearSize = Math.ceil(maxR * 2.5);
-        
-        // Zapisz stan offscreen canvasa
-        sCtx.save();
-        // Reset transformacji, żeby czyścić w układzie ekranu (absolutnym)
-        sCtx.setTransform(1, 0, 0, 1, 0, 0); 
-        
-        // Czyścimy tylko prostokąt, w którym będziemy rysować
-        // Uwaga: używamy screenX/Y jako środka
-        const drawX = screenX;
-        const drawY = screenY;
-        
-        sCtx.clearRect(drawX - clearSize/2, drawY - clearSize/2, clearSize, clearSize);
-        
-        // Ustawiamy transformację taką samą jak statku
-        sCtx.translate(drawX, drawY);
-        sCtx.rotate(rotation);
+        if (Number.isFinite(clearSize) && clearSize > 0) {
+            sCtx.save();
+            sCtx.setTransform(1, 0, 0, 1, 0, 0); 
+            
+            // Czyścimy obszar roboczy (zabezpieczone współrzędne)
+            sCtx.clearRect(screenX - clearSize/2, screenY - clearSize/2, clearSize, clearSize);
+            
+            sCtx.translate(screenX, screenY);
+            sCtx.rotate(rotation);
 
-        // 1. Rysujemy "światła" (maski) w miejscach trafień
-        for (const imp of impacts) {
-            const flashX = Math.cos(imp.localAngle) * rx;
-            const flashY = Math.sin(imp.localAngle) * ry;
+            // 1. Rysujemy "światła" (maski) w miejscach trafień
+            for (const imp of impacts) {
+                const safeAngle = Number.isFinite(imp.localAngle) ? imp.localAngle : 0;
+                const flashX = Math.cos(safeAngle) * rx;
+                const flashY = Math.sin(safeAngle) * ry;
+                
+                let spreadPx = 120 * CONFIG.hitSpread * zoom;
+                // KLUCZOWA POPRAWKA BŁĘDU Z KONSOLI:
+                if (!Number.isFinite(spreadPx) || spreadPx <= 0) spreadPx = 1;
+                
+                try {
+                    const hitGrad = sCtx.createRadialGradient(flashX, flashY, 0, flashX, flashY, spreadPx);
+                    const intensity = imp.life * CONFIG.hexAlpha * 2.5; 
+                    hitGrad.addColorStop(0, `rgba(255, 255, 255, ${intensity})`);
+                    hitGrad.addColorStop(1, `rgba(255, 255, 255, 0)`);
+                    
+                    sCtx.fillStyle = hitGrad;
+                    sCtx.beginPath();
+                    sCtx.arc(flashX, flashY, spreadPx, 0, Math.PI*2);
+                    sCtx.fill();
+                } catch(e) { /* ignoruj błędy pojedynczego uderzenia */ }
+            }
+
+            // 2. Nakładamy wzór heksagonów
+            sCtx.globalCompositeOperation = 'destination-in';
+            const pat = sCtx.createPattern(hexGridTexture, 'repeat');
+            const matrix = new DOMMatrix();
+            const hexZoom = Math.max(0.5, zoom);
+            matrix.scaleSelf(hexZoom, hexZoom);
+            matrix.translateSelf(time * 20, time * 10); 
+            pat.setTransform(matrix);
+
+            sCtx.fillStyle = pat;
+            sCtx.fillRect(-clearSize/2, -clearSize/2, clearSize, clearSize);
+            sCtx.restore();
+
+            // 3. Kopiujemy gotowy efekt na główny canvas
+            ctx.restore(); // Wychodzimy z clipa
+            ctx.save();    
             
-            const spreadPx = 120 * CONFIG.hitSpread * zoom;
-            const hitGrad = sCtx.createRadialGradient(flashX, flashY, 0, flashX, flashY, spreadPx);
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.setTransform(1, 0, 0, 1, 0, 0); 
             
-            const intensity = imp.life * CONFIG.hexAlpha * 2.5; // Mocniejszy błysk
-            hitGrad.addColorStop(0, `rgba(255, 255, 255, ${intensity})`);
-            hitGrad.addColorStop(1, `rgba(255, 255, 255, 0)`);
+            const sx = screenX - clearSize/2;
+            const sy = screenY - clearSize/2;
             
-            sCtx.fillStyle = hitGrad;
-            sCtx.beginPath();
-            sCtx.arc(flashX, flashY, spreadPx, 0, Math.PI*2);
-            sCtx.fill();
+            ctx.drawImage(sharedFxCanvas, sx, sy, clearSize, clearSize, sx, sy, clearSize, clearSize);
+            
+            ctx.restore(); 
+            ctx.save(); // Przywracamy stan dla Stroke
+            ctx.translate(screenX, screenY);
+            ctx.rotate(rotation);
         }
-
-        // 2. Nakładamy wzór heksagonów (destination-in wycina wszystko poza wzorem)
-        sCtx.globalCompositeOperation = 'destination-in';
-        
-        const pat = sCtx.createPattern(hexGridTexture, 'repeat');
-        const matrix = new DOMMatrix();
-        // Skalujemy hexy zależnie od zoomu, żeby nie znikały
-        const hexZoom = Math.max(0.5, zoom);
-        matrix.scaleSelf(hexZoom, hexZoom);
-        matrix.translateSelf(time * 20, time * 10); // Animacja przesuwu
-        pat.setTransform(matrix);
-
-        sCtx.fillStyle = pat;
-        sCtx.fillRect(-clearSize/2, -clearSize/2, clearSize, clearSize);
-        sCtx.restore();
-
-        // 3. Kopiujemy gotowy efekt na główny canvas
-        // Jesteśmy wewnątrz ctx.translate/rotate, więc musimy to uwzględnić
-        // Najbezpieczniej: zresetować transformację głównego ctx na moment rysowania obrazka
-        ctx.restore(); // Wychodzimy z clipa i transformacji statku
-        ctx.save();    // Nowy save dla blitowania
-        
-        ctx.globalCompositeOperation = 'lighter';
-        ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset do układu ekranu
-        
-        // Rysujemy wycinek z sharedFxCanvas odpowiadający pozycji statku
-        const sx = drawX - clearSize/2;
-        const sy = drawY - clearSize/2;
-        
-        ctx.drawImage(sharedFxCanvas, sx, sy, clearSize, clearSize, sx, sy, clearSize, clearSize);
-        
-        ctx.restore(); 
-        
-        // Musimy przywrócić transformację statku dla rysowania obrysu (Step 4)
-        ctx.save();
-        ctx.translate(screenX, screenY);
-        ctx.rotate(rotation);
     } else {
-        ctx.restore(); // Zamknięcie clipa jeśli nie było hexów
+        ctx.restore(); // Zamknięcie clipa
         ctx.save();
         ctx.translate(screenX, screenY);
         ctx.rotate(rotation);
     }
 
     // --- KROK 4: Krawędź (Stroke) ---
-    // Ponownie używamy lighter dla efektu energetycznego
     ctx.globalCompositeOperation = 'lighter';
     ctx.strokeStyle = `rgba(${col.r}, ${col.g}, ${col.b}, ${currentAlpha * 2.5})`;
     ctx.lineWidth = 1.5 * zoom;
     ctx.stroke(path);
 
-    // Jasne błyski na krawędzi w miejscu trafienia
+    // Jasne błyski na krawędzi
     if (impacts.length > 0) {
         for (const imp of impacts) {
             ctx.beginPath();
-            // Mały łuk w miejscu trafienia
-            const arcLen = CONFIG.hitSpread * 0.5; 
-            
-            // Rysowanie całego obwodu jest prostsze i wygląda dobrze jako "wzbudzenie"
             ctx.strokeStyle = CONFIG.hitColor;
             ctx.lineWidth = 2.5 * zoom * imp.life;
             ctx.globalAlpha = imp.life * 0.8;
