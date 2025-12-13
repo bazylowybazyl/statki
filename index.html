@@ -447,6 +447,17 @@
         </div>
       </div>
     </div>
+    <div id="shield-controls" class="side-panel hidden" data-panel="shield">
+      <button class="panel-toggle" type="button">
+        <span class="side-panel-title">Tarcza</span>
+        <span class="panel-chevron" aria-hidden="true">⟲</span>
+      </button>
+      <div class="side-panel-body" role="group" aria-label="Sterowanie tarczą">
+        <div class="support-row">
+          <button id="btn-energy-shot" class="support-order-btn">Energy Shot (+50%)</button>
+        </div>
+      </div>
+    </div>
   </div>
   <div id="main-menu">
     <div class="menu-panel">
@@ -581,7 +592,7 @@
 <script type="module">
 import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
 import { WORLD, setWorldSize } from './src/world/world.js';
-import { initShieldSystem, updateShieldFx, drawShield, registerShieldImpact, resizeShieldSystem } from './shieldSystem.js';
+import { initShieldSystem, updateShieldFx, drawShield, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot } from './shieldSystem.js';
 window.bullets = [];
 // Aby stary kod działał, zrobimy alias:
 const bullets = window.bullets;
@@ -606,6 +617,8 @@ const supportUIRoot = document.getElementById('support-ui');
 const supportGuardBtn = document.getElementById('support-guard');
 const supportEngageBtn = document.getElementById('support-engage');
 const supportSpawnButtons = document.querySelectorAll('[data-support-spawn]');
+const shieldControlsRoot = document.getElementById('shield-controls');
+const energyShotBtn = document.getElementById('btn-energy-shot');
 
 function setupSidePanel(panelEl){
   if (!panelEl) return null;
@@ -637,6 +650,7 @@ function setupSidePanel(panelEl){
 
 const fleetPanel = setupSidePanel(fleetUIRoot);
 const supportPanel = setupSidePanel(supportUIRoot);
+const shieldPanel = setupSidePanel(shieldControlsRoot);
 const Fleet = window.Fleet || (window.Fleet = {
   ships: [],
   dirty: true,
@@ -1499,6 +1513,12 @@ overlayView.center.y = ship.pos.y;
 
 let rocketAmmo = 0;
 let rocketAmmoMax = 0;
+
+function triggerEnergyShot(){
+  if (!ship?.shield) return;
+  applyEnergyShot(ship);
+}
+window.triggerEnergyShot = triggerEnergyShot;
 
 function setHardpointMount(hp, weaponId, opts={}){
   if(!hp) return;
@@ -14129,6 +14149,7 @@ async function startGame(){
   acc = 0;
   vfxTime = 0;
   uiRoot?.classList.remove('hidden');
+  if (shieldControlsRoot) shieldControlsRoot.classList.remove('hidden');
   initShieldSystem(W, H);
   requestAnimationFrame(loop);
 
@@ -14169,6 +14190,9 @@ if (supportSpawnButtons && supportSpawnButtons.forEach) {
       setSupportOrder('guard', { force: true });
     });
   });
+}
+if (energyShotBtn) {
+  energyShotBtn.addEventListener('click', () => triggerEnergyShot());
 }
 
 function wireDevTools(){
