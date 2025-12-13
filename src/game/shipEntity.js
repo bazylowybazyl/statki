@@ -1,6 +1,6 @@
 const SHIP_TEMPLATE = {
-  w: 100,
-  h: 300,
+  w: 150,
+  h: 400,
   mass: 140,
   pos: { x: 0, y: 0 },
   vel: { x: 0, y: 0 },
@@ -66,7 +66,7 @@ const SHIP_TEMPLATE = {
   aiController: null
 };
 
-const SHIP_SPRITE_SCALE = 1.22;
+const SHIP_SPRITE_SCALE = 2.0;
 const SHIP_VISUAL_BASE = {
   turretTop:    { x: 38.18587785469991, y: -52.448366304887465 },
   turretBottom: { x: 42.60145666564039, y:  43.668730035791256 },
