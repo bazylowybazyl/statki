@@ -17,8 +17,11 @@ const CONFIG = {
     breakDuration: 0.65
 };
 
-// Cache tekstury
+// Cache tekstury i offscreen dla wzoru
 let hexGridTexture = null;
+let hexPattern = null;
+let shieldCanvas = null;
+let sCtx = null;
 let W = 0, H = 0;
 
 // --- UTILS ---
@@ -82,6 +85,50 @@ function getEntityPosition(entity) {
     return { x, y };
 }
 
+function ensureShieldCanvasSize(size) {
+    if (!shieldCanvas) {
+        shieldCanvas = document.createElement('canvas');
+        sCtx = shieldCanvas.getContext('2d');
+    }
+    const clamped = Math.max(256, Math.min(2048, Math.ceil(size)));
+    if (shieldCanvas.width !== clamped || shieldCanvas.height !== clamped) {
+        shieldCanvas.width = clamped;
+        shieldCanvas.height = clamped;
+    }
+}
+
+function ensureHexPattern() {
+    if (!hexGridTexture || !sCtx) return null;
+    if (!hexPattern) {
+        hexPattern = sCtx.createPattern(hexGridTexture, 'repeat');
+    }
+    return hexPattern;
+}
+
+function spawnShieldSparks(entity, count, radiusScale = 1, speedRange = [120, 220], color = '#dff5ff', life = 0.2, rimOnly = false) {
+    if (typeof spawnParticle !== 'function') return;
+    const pos = getEntityPosition(entity);
+    if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
+    const { rx, ry } = getShieldDimensions(entity);
+    const rot = entity.angle || 0;
+
+    for (let i = 0; i < count; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const cos = Math.cos(ang);
+        const sin = Math.sin(ang);
+        const rEdge = (rx * ry) / Math.sqrt((ry * cos) ** 2 + (rx * sin) ** 2);
+        const r = rimOnly ? rEdge * radiusScale : rEdge * radiusScale * (0.6 + Math.random() * 0.4);
+        const lx = cos * r;
+        const ly = sin * r;
+        const worldX = pos.x + Math.cos(rot) * lx - Math.sin(rot) * ly;
+        const worldY = pos.y + Math.sin(rot) * lx + Math.cos(rot) * ly;
+
+        const dir = ang + rot;
+        const speed = speedRange[0] + Math.random() * (speedRange[1] - speedRange[0]);
+        spawnParticle({ x: worldX, y: worldY }, { x: Math.cos(dir) * speed, y: Math.sin(dir) * speed }, life, color, 2 + Math.random() * 1.5, true);
+    }
+}
+
 function easeOutBack(x) {
     const c1 = 1.70158;
     const c3 = c1 + 1;
@@ -96,6 +143,10 @@ function ensureShieldRuntime(shield) {
     shield.breakTimer = Number.isFinite(shield.breakTimer) ? shield.breakTimer : 0;
     shield.energyShotTimer = Number.isFinite(shield.energyShotTimer) ? shield.energyShotTimer : 0;
     shield.energyShotDuration = shield.energyShotDuration || 0.5;
+    shield.prevEnergyShotTimer = Number.isFinite(shield.prevEnergyShotTimer) ? shield.prevEnergyShotTimer : 0;
+    shield.activationSparked = Boolean(shield.activationSparked);
+    shield.breakCracksSeeded = Boolean(shield.breakCracksSeeded);
+    shield.sparkCooldown = Number.isFinite(shield.sparkCooldown) ? shield.sparkCooldown : 0;
 }
 
 function shouldBreak(shield) {
@@ -109,6 +160,7 @@ function breakShield(shield) {
     shield.activationProgress = 1;
     shield.currentAlpha = Math.max(shield.currentAlpha, 0.8);
     shield.energyShotTimer = Math.max(shield.energyShotTimer, shield.energyShotDuration);
+    shield.breakCracksSeeded = false;
 }
 
 function triggerEnergyFlash(shield, magnitude = 1) {
@@ -142,12 +194,28 @@ export function initShieldSystem(width, height) {
     resizeShieldSystem(width, height);
     if (!hexGridTexture) {
         hexGridTexture = generateHexTexture(CONFIG.baseColor, CONFIG.hexScale);
+        if (!shieldCanvas) {
+            shieldCanvas = document.createElement('canvas');
+            sCtx = shieldCanvas.getContext('2d');
+        }
+        hexPattern = sCtx?.createPattern(hexGridTexture, 'repeat');
     }
 }
 
 export function resizeShieldSystem(width, height) {
     W = width;
     H = height;
+    if (!shieldCanvas) {
+        shieldCanvas = document.createElement('canvas');
+        sCtx = shieldCanvas.getContext('2d');
+    }
+    if (shieldCanvas) {
+        const size = Math.max(256, Math.min(2048, Math.max(width, height)));
+        if (shieldCanvas.width !== size || shieldCanvas.height !== size) {
+            shieldCanvas.width = size;
+            shieldCanvas.height = size;
+        }
+    }
 }
 
 // --- LOGIC ---
@@ -178,6 +246,23 @@ export function registerShieldImpact(entity, bulletX, bulletY, damage) {
         deformation: CONFIG.deformPower
     });
 
+    if (typeof spawnParticle === 'function') {
+        const { rx, ry } = getShieldDimensions(entity);
+        const pos = getEntityPosition(entity);
+        const impactRot = (entity.angle || 0) + localAngle;
+        const cos = Math.cos(impactRot);
+        const sin = Math.sin(impactRot);
+        const rHit = (rx * ry) / Math.sqrt((ry * cos) ** 2 + (rx * sin) ** 2);
+        const hitX = pos.x + cos * rHit;
+        const hitY = pos.y + sin * rHit;
+        for (let i = 0; i < 3; i++) {
+            const jitter = (Math.random() - 0.5) * 0.3;
+            const dir = impactRot + jitter;
+            const speed = 120 + Math.random() * 140;
+            spawnParticle({ x: hitX, y: hitY }, { x: Math.cos(dir) * speed, y: Math.sin(dir) * speed }, 0.25, '#dff5ff', 2.1, true);
+        }
+    }
+
     triggerEnergyFlash(entity.shield, damage / (entity.shield.max || 1));
     if (shouldBreak(entity.shield)) {
         breakShield(entity.shield);
@@ -189,6 +274,7 @@ export function updateShieldFx(entity, dt) {
     ensureShieldRuntime(entity.shield);
     if (!entity.shield.impacts) entity.shield.impacts = [];
 
+    entity.shield.sparkCooldown = Math.max(0, (entity.shield.sparkCooldown || 0) - dt);
     if (shouldBreak(entity.shield)) {
         breakShield(entity.shield);
     }
@@ -203,12 +289,14 @@ export function updateShieldFx(entity, dt) {
             entity.shield.state = 'off';
             entity.shield.activationProgress = 0;
             entity.shield.currentAlpha = 0;
+            entity.shield.breakCracksSeeded = false;
         }
     }
 
     if (entity.shield.state === 'off' && entity.shield.val > 1) {
         entity.shield.state = 'activating';
         entity.shield.activationProgress = 0;
+        entity.shield.activationSparked = false;
     }
 
     if (entity.shield.state === 'activating') {
@@ -229,6 +317,29 @@ export function updateShieldFx(entity, dt) {
         }
     }
 
+    if (entity.shield.state === 'breaking' && !entity.shield.breakCracksSeeded) {
+        const cracks = 8;
+        for (let i = 0; i < cracks; i++) {
+            entity.shield.impacts.push({
+                localAngle: Math.random() * Math.PI * 2,
+                life: 0.9,
+                intensity: 2.2 + Math.random() * 0.8,
+                deformation: CONFIG.deformPower * 1.4
+            });
+        }
+        entity.shield.breakCracksSeeded = true;
+    }
+
+    if (entity.shield.state === 'breaking' && entity.shield.sparkCooldown <= 0) {
+        spawnShieldSparks(entity, 6, 1, [180, 320], '#f2fbff', 0.16, true);
+        entity.shield.sparkCooldown = 0.08 + Math.random() * 0.05;
+    }
+
+    if (entity.shield.state === 'activating' && !entity.shield.activationSparked && entity.shield.activationProgress > 0.05) {
+        spawnShieldSparks(entity, 14, 1, [140, 240], '#c8f3ff', 0.22, false);
+        entity.shield.activationSparked = true;
+    }
+
     if (!entity.shield.impacts) return;
     for (let i = entity.shield.impacts.length - 1; i >= 0; i--) {
         const imp = entity.shield.impacts[i];
@@ -237,6 +348,26 @@ export function updateShieldFx(entity, dt) {
             entity.shield.impacts.splice(i, 1);
         }
     }
+
+    if (entity.shield.energyShotTimer > 0 && entity.shield.prevEnergyShotTimer <= 0) {
+        if (typeof spawnParticle === 'function') {
+            const { rx, ry } = getShieldDimensions(entity);
+            const pos = getEntityPosition(entity);
+            for (let i = 0; i < 9; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const cos = Math.cos(angle);
+                const sin = Math.sin(angle);
+                const rEdge = (rx * ry) / Math.sqrt((ry * cos) ** 2 + (rx * sin) ** 2);
+                const rot = angle + (entity.angle || 0);
+                const px = pos.x + Math.cos(rot) * rEdge;
+                const py = pos.y + Math.sin(rot) * rEdge;
+                const speed = 220 + Math.random() * 160;
+                spawnParticle({ x: px, y: py }, { x: Math.cos(rot) * speed, y: Math.sin(rot) * speed }, 0.28, '#d2f7ff', 2.8, true);
+            }
+        }
+    }
+
+    entity.shield.prevEnergyShotTimer = entity.shield.energyShotTimer;
 }
 
 // --- HELPER WYMIARÓW ---
@@ -310,15 +441,20 @@ export function drawShield(ctx, entity, cam) {
         const deactivatingScale = shield.state === 'deactivating' ? clamp(shield.activationProgress, 0, 1) : 1;
         const energyFlash = shield.energyShotTimer > 0 ? clamp(shield.energyShotTimer / shield.energyShotDuration, 0, 1) : 0;
 
+        const activationBubble = shield.state === 'activating'
+            ? 1 + Math.sin(clamp(shield.activationProgress, 0, 1) * Math.PI) * 0.22
+            : 1;
+        const energyPulse = energyFlash > 0 ? Math.sin((1 - energyFlash) * Math.PI * 4 + time * 6) * 0.25 * energyFlash : 0;
+
         let targetAlpha = Math.max(0.12, (CONFIG.baseAlpha + basePulse + edgeNoise) * (0.25 + hpFactor * 0.75));
         targetAlpha += impacts.length > 0 ? 0.35 : 0;
-        targetAlpha += energyFlash * 0.45;
+        targetAlpha += energyFlash * 0.45 + energyPulse;
         if (shield.state === 'breaking') {
             targetAlpha += (1 - breakProgress) * 0.45;
-            targetAlpha *= 0.9 + 0.1 * Math.sin(time * 25);
+            targetAlpha *= 0.85 + 0.25 * Math.sin(time * 35);
         }
         if (shield.state === 'activating') {
-            targetAlpha += activatingBoost * 0.4;
+            targetAlpha += activatingBoost * 0.4 + (1 - shield.activationProgress) * 0.35;
         }
         targetAlpha *= deactivatingScale;
         targetAlpha = clamp(targetAlpha, 0, 1);
@@ -334,13 +470,14 @@ export function drawShield(ctx, entity, cam) {
 
         ctx.save();
 
-        const activationScale = shield.state === 'activating'
+        const energyScale = 1 + energyFlash * 0.18 + Math.sin(time * 6) * energyFlash * 0.05;
+        const activationScale = (shield.state === 'activating'
             ? easeOutBack(shield.activationProgress)
             : (shield.state === 'deactivating'
                 ? Math.max(0.1, shield.activationProgress)
                 : (shield.state === 'breaking'
                     ? Math.max(0.65, 1 - breakProgress * 0.35)
-                    : 1));
+                    : 1))) * activationBubble * energyScale;
         const jitter = shield.state === 'deactivating' ? (1 - clamp(shield.activationProgress, 0, 1)) * 3.5 : 0;
         
         // 2. TRANSFORMACJA (Kluczowy moment naprawy)
@@ -394,7 +531,9 @@ export function drawShield(ctx, entity, cam) {
 
             const edgeNoiseWave = (Math.sin(theta * 8 + time * 2.3) + Math.cos(theta * 11 - time * 1.3)) * (0.35 + hpFactor * 0.35);
             const breakJitter = shield.state === 'breaking' ? Math.sin(time * 25 + theta * 9) * (1 - breakProgress) * 1.8 : 0;
-            const finalR = Math.max(5, r - deform + edgeNoiseWave + breakJitter);
+            const activationFray = shield.state === 'activating' ? Math.sin(theta * 14 + time * 10) * (1 - shield.activationProgress) * 2.4 : 0;
+            const energyRipple = energyFlash > 0 ? Math.sin(theta * 6 + time * 12) * energyFlash * 1.8 : 0;
+            const finalR = Math.max(5, r - deform + edgeNoiseWave + breakJitter + activationFray + energyRipple);
             const px = cos * finalR;
             const py = sin * finalR;
 
@@ -418,8 +557,8 @@ export function drawShield(ctx, entity, cam) {
         ctx.fillStyle = grad;
         ctx.fill(path);
 
-        // Global flash przy energii / breaku
-        const flashAlpha = (energyFlash * 0.4) + (shield.state === 'breaking' ? (1 - breakProgress) * 0.3 : 0);
+        // Global flash przy energii / breaku / aktywacji
+        const flashAlpha = (energyFlash * 0.45) + (shield.state === 'breaking' ? (1 - breakProgress) * 0.35 : 0) + (shield.state === 'activating' ? (1 - shield.activationProgress) * 0.45 : 0);
         if (flashAlpha > 0.01) {
             ctx.save();
             ctx.globalAlpha = clamp(flashAlpha, 0, 0.8);
@@ -440,19 +579,28 @@ export function drawShield(ctx, entity, cam) {
                 : (shield.state === 'activating' ? 1.2 : shield.state === 'deactivating' ? 0.6 : 1);
             ctx.globalAlpha = clamp(CONFIG.hexAlpha * alpha * hexStateAlpha, 0, 1);
 
-            const pat = ctx.createPattern(hexGridTexture, 'repeat');
-            if (pat) {
+            const pat = ensureHexPattern();
+            const bounds = maxR * 2.5;
+            const pxBounds = Math.max(120, bounds * cam.zoom);
+            ensureShieldCanvasSize(pxBounds * 1.1);
+
+            if (pat && sCtx && shieldCanvas) {
                 const matrix = new DOMMatrix();
-                // Ważne: Skalujemy teksturę w dół, bo rysujemy w powiększonym świecie
-                // Jeśli tego nie zrobimy, heksy będą ogromne przy zoomie.
                 const hexSizeFix = 0.5;
-                matrix.translateSelf(0, time * 20 * (shield.state === 'breaking' ? 1.6 : 1));
+                const shiftSpeed = 18 + energyFlash * 24 + (shield.state === 'breaking' ? 12 : 0);
+                const shiftX = Math.sin(time * 0.6) * 14;
                 matrix.scaleSelf(hexSizeFix, hexSizeFix);
+                matrix.translateSelf(shiftX, time * shiftSpeed);
                 pat.setTransform(matrix);
 
-                ctx.fillStyle = pat;
-                const bounds = maxR * 2.5;
-                ctx.fillRect(-bounds/2, -bounds/2, bounds, bounds);
+                sCtx.setTransform(1, 0, 0, 1, 0, 0);
+                sCtx.globalCompositeOperation = 'source-over';
+                sCtx.clearRect(0, 0, shieldCanvas.width, shieldCanvas.height);
+                sCtx.globalAlpha = 1;
+                sCtx.fillStyle = pat;
+                sCtx.fillRect(0, 0, shieldCanvas.width, shieldCanvas.height);
+
+                ctx.drawImage(shieldCanvas, -bounds / 2, -bounds / 2, bounds, bounds);
             }
             ctx.restore();
         }
@@ -481,13 +629,24 @@ export function drawShield(ctx, entity, cam) {
                 
                 // Punkt na obwodzie elipsy
                 const rHit = (rx * ry) / Math.sqrt((ry * cos) ** 2 + (rx * sin) ** 2);
-                
+
                 ctx.beginPath();
                 ctx.fillStyle = CONFIG.hitColor;
                 ctx.globalAlpha = imp.life;
                 // Błysk w miejscu uderzenia
                 ctx.arc(cos * rHit, sin * rHit, 20 * imp.intensity, 0, Math.PI * 2);
                 ctx.fill();
+
+                const smearAlpha = clamp(imp.life * 0.85, 0, 1);
+                if (smearAlpha > 0.01) {
+                    ctx.save();
+                    ctx.globalAlpha = smearAlpha;
+                    ctx.fillStyle = `rgba(${col.r}, ${col.g}, ${col.b}, 0.5)`;
+                    ctx.beginPath();
+                    ctx.ellipse(cos * rHit * 0.95, sin * rHit * 0.95, 26 * imp.intensity, 14 * imp.intensity, correctedImpAngle, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
             }
         }
 
