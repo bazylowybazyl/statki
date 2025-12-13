@@ -11,7 +11,7 @@ const CONFIG = {
     hitDecayTime: 0.6,
     hitSpread: 0.8,
     deformPower: 12,
-    shieldScale: 1.4,    // Tarcza 40% większa od kadłuba
+    shieldScale: 2.0,    // Tarcza 2x większa od kadłuba
     activationDuration: 0.45,
     deactivationDuration: 0.55,
     breakDuration: 0.65
