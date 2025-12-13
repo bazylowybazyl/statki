@@ -11,7 +11,10 @@ const CONFIG = {
     hitDecayTime: 0.6,
     hitSpread: 0.8,
     deformPower: 12,
-    shieldScale: 1.4     // Tarcza 40% większa od kadłuba
+    shieldScale: 1.4,    // Tarcza 40% większa od kadłuba
+    activationDuration: 0.45,
+    deactivationDuration: 0.55,
+    breakDuration: 0.65
 };
 
 // Cache tekstury
@@ -69,6 +72,44 @@ function generateHexTexture(colorHex, scale) {
     return cvs;
 }
 
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+
+function easeOutBack(x) {
+    const c1 = 1.70158;
+    const c3 = c1 + 1;
+    const n = clamp(x, 0, 1) - 1;
+    return 1 + c3 * Math.pow(n, 3) + c1 * Math.pow(n, 2);
+}
+
+function ensureShieldRuntime(shield) {
+    shield.state = shield.state || (shield.val > 0 ? 'activating' : 'off');
+    shield.activationProgress = Number.isFinite(shield.activationProgress) ? shield.activationProgress : 0;
+    shield.currentAlpha = Number.isFinite(shield.currentAlpha) ? shield.currentAlpha : 0;
+    shield.breakTimer = Number.isFinite(shield.breakTimer) ? shield.breakTimer : 0;
+    shield.energyShotTimer = Number.isFinite(shield.energyShotTimer) ? shield.energyShotTimer : 0;
+    shield.energyShotDuration = shield.energyShotDuration || 0.5;
+}
+
+function shouldBreak(shield) {
+    return shield.val <= 0 && shield.max > 0 && shield.state !== 'breaking' && shield.state !== 'off';
+}
+
+function breakShield(shield) {
+    ensureShieldRuntime(shield);
+    shield.state = 'breaking';
+    shield.breakTimer = 0;
+    shield.activationProgress = 1;
+    shield.currentAlpha = Math.max(shield.currentAlpha, 0.8);
+    shield.energyShotTimer = Math.max(shield.energyShotTimer, shield.energyShotDuration);
+}
+
+function triggerEnergyFlash(shield, magnitude = 1) {
+    ensureShieldRuntime(shield);
+    const bonus = clamp(magnitude * 0.15, 0.05, 0.3);
+    shield.energyShotTimer = Math.min(shield.energyShotDuration, shield.energyShotTimer + bonus + 0.2);
+}
+
 // --- INIT ---
 export function initShieldSystem(width, height) {
     resizeShieldSystem(width, height);
@@ -87,6 +128,7 @@ export function resizeShieldSystem(width, height) {
 export function registerShieldImpact(entity, bulletX, bulletY, damage) {
     if (!entity || !entity.shield) return;
     if (!entity.shield.impacts) entity.shield.impacts = [];
+    ensureShieldRuntime(entity.shield);
 
     if (!Number.isFinite(bulletX) || !Number.isFinite(bulletY)) return;
 
@@ -105,10 +147,59 @@ export function registerShieldImpact(entity, bulletX, bulletY, damage) {
         intensity: Math.min(2.5, Math.max(0.5, damage / 10)),
         deformation: CONFIG.deformPower
     });
+
+    triggerEnergyFlash(entity.shield, damage / (entity.shield.max || 1));
+    if (shouldBreak(entity.shield)) {
+        breakShield(entity.shield);
+    }
 }
 
 export function updateShieldFx(entity, dt) {
-    if (!entity.shield || !entity.shield.impacts) return;
+    if (!entity.shield) return;
+    ensureShieldRuntime(entity.shield);
+    if (!entity.shield.impacts) entity.shield.impacts = [];
+
+    if (shouldBreak(entity.shield)) {
+        breakShield(entity.shield);
+    }
+
+    if (entity.shield.energyShotTimer > 0) {
+        entity.shield.energyShotTimer = Math.max(0, entity.shield.energyShotTimer - dt);
+    }
+
+    if (entity.shield.state === 'breaking') {
+        entity.shield.breakTimer += dt;
+        if (entity.shield.breakTimer >= CONFIG.breakDuration) {
+            entity.shield.state = 'off';
+            entity.shield.activationProgress = 0;
+            entity.shield.currentAlpha = 0;
+        }
+    }
+
+    if (entity.shield.state === 'off' && entity.shield.val > 1) {
+        entity.shield.state = 'activating';
+        entity.shield.activationProgress = 0;
+    }
+
+    if (entity.shield.state === 'activating') {
+        entity.shield.activationProgress = Math.min(1, entity.shield.activationProgress + dt / CONFIG.activationDuration);
+        if (entity.shield.activationProgress >= 1) {
+            entity.shield.state = 'active';
+        }
+    } else if (entity.shield.state === 'active') {
+        if (entity.shield.val <= 0) {
+            entity.shield.state = 'deactivating';
+        }
+        entity.shield.activationProgress = Math.min(1, entity.shield.activationProgress + dt * 0.5);
+    } else if (entity.shield.state === 'deactivating') {
+        entity.shield.activationProgress = Math.max(0, entity.shield.activationProgress - dt / CONFIG.deactivationDuration);
+        if (entity.shield.activationProgress <= 0.01) {
+            entity.shield.state = 'off';
+            entity.shield.currentAlpha = 0;
+        }
+    }
+
+    if (!entity.shield.impacts) return;
     for (let i = entity.shield.impacts.length - 1; i >= 0; i--) {
         const imp = entity.shield.impacts[i];
         imp.life -= dt / CONFIG.hitDecayTime;
@@ -156,13 +247,14 @@ export function drawShield(ctx, entity, cam) {
     try {
         const shield = entity.shield;
         if (!shield) return;
-        
+        ensureShieldRuntime(shield);
+
         // Nie rysuj jeśli tarcza nie ma MaxHP (np. asteroidy)
         if (!shield.max || shield.max <= 0) return;
-        
-        // Nie rysuj całkowicie wyczerpanej tarczy, chyba że właśnie oberwała
+
+        // Nie rysuj całkowicie wyczerpanej tarczy, chyba że właśnie oberwała albo trwa animacja stanu
         const impacts = shield.impacts || [];
-        if (shield.val <= 1 && impacts.length === 0) return;
+        if (shield.val <= 1 && impacts.length === 0 && shield.energyShotTimer <= 0 && shield.currentAlpha <= 0.01 && shield.state === 'off') return;
 
         // 1. POZYCJA NA EKRANIE
         const screenX = (entity.x - cam.x) * cam.zoom + ctx.canvas.width / 2;
@@ -174,17 +266,32 @@ export function drawShield(ctx, entity, cam) {
         // Pobranie wymiarów (W JEDNOSTKACH ŚWIATA)
         const { rx, ry } = getShieldDimensions(entity);
 
-        // Obliczanie Alpha
-        const hpFactor = Math.max(0, Math.min(1, shield.val / shield.max));
+        // Obliczanie Alpha / stanu
+        const hpFactor = clamp(shield.val / shield.max, 0, 1);
         const time = performance.now() / 1000;
-        const pulse = Math.sin(time * 3.0) * 0.05;
-        
-        // Bazowa widoczność zależna od HP + minimalna widoczność
-        // ZWIĘKSZYŁEM minAlpha, żebyś widział tarczę nawet jak jest słaba
-        let alpha = Math.max(0.15, (CONFIG.baseAlpha + pulse) * hpFactor);
-        
-        // Tarcza jaśnieje przy trafieniu
-        if (impacts.length > 0) alpha = Math.min(0.9, alpha + 0.4);
+        const basePulse = Math.sin(time * 3.4) * 0.05;
+        const edgeNoise = Math.sin(time * 7.3 + (shield.activationProgress || 0) * 5) * 0.02;
+
+        const breakProgress = shield.state === 'breaking' ? clamp(shield.breakTimer / CONFIG.breakDuration, 0, 1) : 0;
+        const activatingBoost = shield.state === 'activating' ? (1 - shield.activationProgress * 0.6) : 0;
+        const deactivatingScale = shield.state === 'deactivating' ? clamp(shield.activationProgress, 0, 1) : 1;
+        const energyFlash = shield.energyShotTimer > 0 ? clamp(shield.energyShotTimer / shield.energyShotDuration, 0, 1) : 0;
+
+        let targetAlpha = Math.max(0.12, (CONFIG.baseAlpha + basePulse + edgeNoise) * (0.25 + hpFactor * 0.75));
+        targetAlpha += impacts.length > 0 ? 0.35 : 0;
+        targetAlpha += energyFlash * 0.45;
+        if (shield.state === 'breaking') {
+            targetAlpha += (1 - breakProgress) * 0.45;
+            targetAlpha *= 0.9 + 0.1 * Math.sin(time * 25);
+        }
+        if (shield.state === 'activating') {
+            targetAlpha += activatingBoost * 0.4;
+        }
+        targetAlpha *= deactivatingScale;
+        targetAlpha = clamp(targetAlpha, 0, 1);
+
+        shield.currentAlpha = lerp(shield.currentAlpha, targetAlpha, 0.2);
+        const alpha = shield.currentAlpha;
 
         // Obsługa dodatkowej rotacji sprite'a (dla Capital Ships)
         let visualAngle = entity.angle || 0;
@@ -193,34 +300,48 @@ export function drawShield(ctx, entity, cam) {
         }
 
         ctx.save();
+
+        const activationScale = shield.state === 'activating'
+            ? easeOutBack(shield.activationProgress)
+            : (shield.state === 'deactivating'
+                ? Math.max(0.1, shield.activationProgress)
+                : (shield.state === 'breaking'
+                    ? Math.max(0.65, 1 - breakProgress * 0.35)
+                    : 1));
+        const jitter = shield.state === 'deactivating' ? (1 - clamp(shield.activationProgress, 0, 1)) * 3.5 : 0;
         
         // 2. TRANSFORMACJA (Kluczowy moment naprawy)
         ctx.translate(screenX, screenY);
         // SKALUJEMY KONTEKST, NIE PROMIEŃ!
         // Dzięki temu rx/ry są w jednostkach świata, a canvas sam je zmniejsza przy oddaleniu.
         ctx.scale(cam.zoom, cam.zoom);
+        if (jitter > 0) {
+            ctx.translate((Math.random() - 0.5) * jitter, (Math.random() - 0.5) * jitter);
+        }
         ctx.rotate(visualAngle);
 
         // 3. RYSOWANIE ŚCIEŻKI (Path)
         const path = new Path2D();
         const segments = 40; // Ilość segmentów elipsy
-        
+        const rxScaled = rx * activationScale;
+        const ryScaled = ry * activationScale;
+
         for (let i = 0; i <= segments; i++) {
             const theta = (i / segments) * Math.PI * 2 - Math.PI;
-            
+
             // Standardowa elipsa
             const cos = Math.cos(theta);
             const sin = Math.sin(theta);
-            
+
             // Promień elipsy w danym kącie
-            const rBase = (rx * ry) / Math.sqrt((ry * cos) ** 2 + (rx * sin) ** 2);
+            const rBase = (rxScaled * ryScaled) / Math.sqrt((ryScaled * cos) ** 2 + (rxScaled * sin) ** 2);
             let r = rBase;
 
             // Deformacje
             let deform = 0;
             // Idle wobble (tylko jeśli tarcza ma energię)
             if (shield.val > 10) {
-                deform -= Math.sin(theta * 6 + time * 4) * 2; 
+                deform -= Math.sin(theta * 6 + time * 4) * 2;
             }
 
             for (const imp of impacts) {
@@ -230,7 +351,7 @@ export function drawShield(ctx, entity, cam) {
 
                 let diff = Math.abs(theta - correctedImpAngle);
                 if (diff > Math.PI) diff = 2 * Math.PI - diff;
-                
+
                 if (diff < CONFIG.hitSpread) {
                     const normalizedDist = diff / CONFIG.hitSpread;
                     const wave = (Math.cos(normalizedDist * Math.PI) + 1) / 2;
@@ -238,7 +359,9 @@ export function drawShield(ctx, entity, cam) {
                 }
             }
 
-            const finalR = Math.max(5, r - deform);
+            const edgeNoiseWave = (Math.sin(theta * 8 + time * 2.3) + Math.cos(theta * 11 - time * 1.3)) * (0.35 + hpFactor * 0.35);
+            const breakJitter = shield.state === 'breaking' ? Math.sin(time * 25 + theta * 9) * (1 - breakProgress) * 1.8 : 0;
+            const finalR = Math.max(5, r - deform + edgeNoiseWave + breakJitter);
             const px = cos * finalR;
             const py = sin * finalR;
 
@@ -250,36 +373,50 @@ export function drawShield(ctx, entity, cam) {
         // 4. WYPEŁNIENIE
         ctx.globalCompositeOperation = 'lighter';
         
-        const maxR = Math.max(rx, ry);
+        const maxR = Math.max(rxScaled, ryScaled);
         const col = hexToRgb(CONFIG.baseColor);
-        
+
         // Gradient
         const grad = ctx.createRadialGradient(0, 0, maxR * 0.5, 0, 0, maxR * 1.15);
         grad.addColorStop(0, `rgba(${col.r}, ${col.g}, ${col.b}, 0)`);
-        grad.addColorStop(0.7, `rgba(${col.r}, ${col.g}, ${col.b}, ${alpha * 0.3})`);
+        grad.addColorStop(0.7, `rgba(${col.r}, ${col.g}, ${col.b}, ${alpha * 0.35})`);
         grad.addColorStop(1, `rgba(${col.r}, ${col.g}, ${col.b}, ${alpha})`);
-        
+
         ctx.fillStyle = grad;
         ctx.fill(path);
 
+        // Global flash przy energii / breaku
+        const flashAlpha = (energyFlash * 0.4) + (shield.state === 'breaking' ? (1 - breakProgress) * 0.3 : 0);
+        if (flashAlpha > 0.01) {
+            ctx.save();
+            ctx.globalAlpha = clamp(flashAlpha, 0, 0.8);
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.fillStyle = CONFIG.hitColor;
+            ctx.fill(path);
+            ctx.restore();
+        }
+
         // 5. HEX PATTERN (Wzór plastra miodu)
         // Rysujemy tylko, jeśli tarcza jest mocna LUB obrywa
-        if ((impacts.length > 0 || hpFactor > 0.8) && hexGridTexture) {
+        if ((impacts.length > 0 || hpFactor > 0.8 || shield.state === 'breaking' || shield.state === 'activating') && hexGridTexture) {
             ctx.save();
             ctx.clip(path);
             ctx.globalCompositeOperation = 'source-over';
-            ctx.globalAlpha = CONFIG.hexAlpha * alpha;
+            const hexStateAlpha = shield.state === 'breaking'
+                ? (0.7 + 0.3 * Math.sin(time * 30))
+                : (shield.state === 'activating' ? 1.2 : shield.state === 'deactivating' ? 0.6 : 1);
+            ctx.globalAlpha = clamp(CONFIG.hexAlpha * alpha * hexStateAlpha, 0, 1);
 
             const pat = ctx.createPattern(hexGridTexture, 'repeat');
             if (pat) {
                 const matrix = new DOMMatrix();
                 // Ważne: Skalujemy teksturę w dół, bo rysujemy w powiększonym świecie
                 // Jeśli tego nie zrobimy, heksy będą ogromne przy zoomie.
-                const hexSizeFix = 0.5; 
-                matrix.translateSelf(0, time * 20); 
+                const hexSizeFix = 0.5;
+                matrix.translateSelf(0, time * 20 * (shield.state === 'breaking' ? 1.6 : 1));
                 matrix.scaleSelf(hexSizeFix, hexSizeFix);
                 pat.setTransform(matrix);
-                
+
                 ctx.fillStyle = pat;
                 const bounds = maxR * 2.5;
                 ctx.fillRect(-bounds/2, -bounds/2, bounds, bounds);
@@ -289,9 +426,15 @@ export function drawShield(ctx, entity, cam) {
 
         // 6. OBRYS (Krawędź)
         ctx.globalCompositeOperation = 'lighter';
-        ctx.strokeStyle = `rgba(${col.r}, ${col.g}, ${col.b}, ${alpha * 2.0})`;
+        const rimAlpha = clamp(alpha * 2.0 + (shield.state === 'activating' ? 0.5 : 0), 0, 1.2);
+        ctx.strokeStyle = `rgba(${col.r}, ${col.g}, ${col.b}, ${rimAlpha})`;
         ctx.lineWidth = 2.5; // Stała grubość linii w świecie gry
         ctx.stroke(path);
+        if (shield.state === 'activating' && rimAlpha > 0.2) {
+            ctx.strokeStyle = `rgba(${col.r}, ${col.g}, ${col.b}, ${rimAlpha * 0.8})`;
+            ctx.lineWidth = 4.2;
+            ctx.stroke(path);
+        }
 
         // 7. FLASH (Miejsce trafienia)
         if (impacts.length > 0) {
