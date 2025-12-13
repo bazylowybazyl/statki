@@ -75,6 +75,13 @@ function generateHexTexture(colorHex, scale) {
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 
+function getEntityPosition(entity) {
+    if (!entity) return { x: undefined, y: undefined };
+    const x = Number.isFinite(entity.x) ? entity.x : entity.pos?.x;
+    const y = Number.isFinite(entity.y) ? entity.y : entity.pos?.y;
+    return { x, y };
+}
+
 function easeOutBack(x) {
     const c1 = 1.70158;
     const c3 = c1 + 1;
@@ -152,9 +159,12 @@ export function registerShieldImpact(entity, bulletX, bulletY, damage) {
 
     if (!Number.isFinite(bulletX) || !Number.isFinite(bulletY)) return;
 
+    const pos = getEntityPosition(entity);
+    if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
+
     // Kąt uderzenia w świecie gry
-    const dx = bulletX - entity.x;
-    const dy = bulletY - entity.y;
+    const dx = bulletX - pos.x;
+    const dy = bulletY - pos.y;
     const worldAngle = Math.atan2(dy, dx);
     
     // Konwersja na kąt lokalny (względem obrotu statku)
@@ -277,8 +287,11 @@ export function drawShield(ctx, entity, cam) {
         if (shield.val <= 1 && impacts.length === 0 && shield.energyShotTimer <= 0 && shield.currentAlpha <= 0.01 && shield.state === 'off') return;
 
         // 1. POZYCJA NA EKRANIE
-        const screenX = (entity.x - cam.x) * cam.zoom + ctx.canvas.width / 2;
-        const screenY = (entity.y - cam.y) * cam.zoom + ctx.canvas.height / 2;
+        const pos = getEntityPosition(entity);
+        if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
+
+        const screenX = (pos.x - cam.x) * cam.zoom + ctx.canvas.width / 2;
+        const screenY = (pos.y - cam.y) * cam.zoom + ctx.canvas.height / 2;
 
         // Culling (nie rysuj tego co poza ekranem)
         if (screenX < -500 || screenX > ctx.canvas.width + 500 || screenY < -500 || screenY > ctx.canvas.height + 500) return;
