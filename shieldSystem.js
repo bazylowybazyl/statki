@@ -110,6 +110,26 @@ function triggerEnergyFlash(shield, magnitude = 1) {
     shield.energyShotTimer = Math.min(shield.energyShotDuration, shield.energyShotTimer + bonus + 0.2);
 }
 
+export function triggerEnergyShot(entity) {
+    if (!entity || !entity.shield) return;
+    const shield = entity.shield;
+    ensureShieldRuntime(shield);
+
+    if (shield.state === 'off' || shield.state === 'deactivating') {
+        shield.state = 'active';
+        shield.activationProgress = Math.max(shield.activationProgress, 1);
+        shield.currentAlpha = Math.max(shield.currentAlpha, 0.35);
+    }
+
+    if (Number.isFinite(shield.max)) {
+        const boost = Math.max(0, 0.5 * shield.max);
+        shield.val = clamp((shield.val ?? 0) + boost, 0, shield.max);
+    }
+
+    shield.energyShotTimer = Math.max(shield.energyShotTimer, shield.energyShotDuration);
+    triggerEnergyFlash(shield, 1);
+}
+
 // --- INIT ---
 export function initShieldSystem(width, height) {
     resizeShieldSystem(width, height);
