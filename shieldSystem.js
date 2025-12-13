@@ -51,8 +51,10 @@ export function registerShieldImpact(entity, bulletX, bulletY, damage) {
     if (!entity.shield.impacts) entity.shield.impacts = [];
 
     // Kąt trafienia względem środka statku
-    const dx = bulletX - entity.x;
-    const dy = bulletY - entity.y;
+    const originX = entity.x !== undefined ? entity.x : (entity.pos?.x ?? 0);
+    const originY = entity.y !== undefined ? entity.y : (entity.pos?.y ?? 0);
+    const dx = bulletX - originX;
+    const dy = bulletY - originY;
     const angle = Math.atan2(dy, dx); // World angle
 
     // Normalizacja względem obrotu statku (żeby efekt "przykleił się" do miejsca trafienia gdy statek skręca)
@@ -100,8 +102,10 @@ export function drawShield(ctx, entity, cam) {
     const width = (entity.h || entity.radius * 2) * CONFIG.shieldScale; // Dla koła w=h
     
     // Pozycja na ekranie
-    const screenX = (entity.x - cam.x) * cam.zoom + ctx.canvas.width / 2;
-    const screenY = (entity.y - cam.y) * cam.zoom + ctx.canvas.height / 2;
+    const originX = entity.x !== undefined ? entity.x : (entity.pos?.x ?? 0);
+    const originY = entity.y !== undefined ? entity.y : (entity.pos?.y ?? 0);
+    const screenX = (originX - cam.x) * cam.zoom + ctx.canvas.width / 2;
+    const screenY = (originY - cam.y) * cam.zoom + ctx.canvas.height / 2;
     const zoom = cam.zoom;
 
     // Promienie ekranowe
