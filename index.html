@@ -3234,6 +3234,28 @@ const MISSIONS = {
   show: false
 };
 
+function createShieldState(shieldCfg){
+  if (!shieldCfg || !Number.isFinite(shieldCfg.max) || shieldCfg.max <= 0) return null;
+
+  const regenRate = shieldCfg.regenRate ?? shieldCfg.regen ?? 0;
+  const regenDelay = shieldCfg.regenDelay ?? 0;
+  const val = shieldCfg.val ?? shieldCfg.max;
+
+  return {
+    max: shieldCfg.max,
+    val: val,
+    regenRate,
+    regenDelay,
+    regenTimer: shieldCfg.regenTimer ?? 0,
+    impacts: Array.isArray(shieldCfg.impacts) ? [...shieldCfg.impacts] : [],
+    state: shieldCfg.state || (val > 0 ? 'activating' : 'off'),
+    activationProgress: shieldCfg.activationProgress ?? 0,
+    currentAlpha: shieldCfg.currentAlpha ?? 0,
+    energyShotTimer: shieldCfg.energyShotTimer ?? 0,
+    energyShotDuration: shieldCfg.energyShotDuration ?? shieldCfg.energyShotTimer ?? 0.5
+  };
+}
+
 function makeNPCBase(pos, stats){
   stats = stats || {};
 
@@ -3271,16 +3293,19 @@ function makeNPCBase(pos, stats){
     npc.separationRange = stats.separationRange;
   }
 
+  npc.shield = createShieldState(stats.shield);
+
   return npc;
 }
 
 const SUPPORT_SHIP_TEMPLATES = {
   fighter: {
-    color: '#7cff91', 
+    color: '#7cff91',
     count: 9,
-    stats: { 
-      hp: 120, 
-      accel: 350, 
+    shield: { max: 90, val: 90, regenRate: 48, regenDelay: 2.4, impacts: [], state: 'activating' },
+    stats: {
+      hp: 120,
+      accel: 350,
       maxSpeed: 650, 
       turn: 7.0, 
       radius: 12,
@@ -3299,6 +3324,7 @@ const SUPPORT_SHIP_TEMPLATES = {
   },
   interceptor: { // Dodane, bo spawnPirate używa tej nazwy
     // To samo co fighter, ale dla piratów
+    shield: { max: 70, val: 70, regenRate: 40, regenDelay: 2.1, impacts: [], state: 'activating' },
     stats: { hp: 80, accel: 350, maxSpeed: 650, turn: 7.0, radius: 12, mass: 0.8, separationRange: 30 },
     configure(npc){
       npc.fighter = true;
@@ -3309,8 +3335,9 @@ const SUPPORT_SHIP_TEMPLATES = {
     }
   },
   frigate_pd: {
-    stats: { 
-      hp: 1200, 
+    shield: { max: 650, val: 650, regenRate: 130, regenDelay: 3.6, impacts: [], state: 'activating' },
+    stats: {
+      hp: 1200,
       accel: 200, 
       maxSpeed: 280, // AI SPACE ma 160, ty miałeś 280 (za szybko!)
       turn: 1.2, 
@@ -3328,8 +3355,9 @@ const SUPPORT_SHIP_TEMPLATES = {
     }
   },
   frigate_laser: {
-    stats: { 
-      hp: 1800, 
+    shield: { max: 900, val: 900, regenRate: 140, regenDelay: 3.8, impacts: [], state: 'activating' },
+    stats: {
+      hp: 1800,
       accel: 150, 
       maxSpeed: 250, 
       turn: 1.2, 
@@ -3351,7 +3379,8 @@ const SUPPORT_SHIP_TEMPLATES = {
     }
   },
   destroyer: {
-    stats: { 
+    shield: { max: 2200, val: 2200, regenRate: 200, regenDelay: 4.5, impacts: [], state: 'activating' },
+    stats: {
       hp: 4200, // AI SPACE
       accel: 140, 
       maxSpeed: 200, // AI SPACE: 140
@@ -3372,7 +3401,8 @@ const SUPPORT_SHIP_TEMPLATES = {
     }
   },
   battleship: {
-    stats: { 
+    shield: { max: 7200, val: 7200, regenRate: 320, regenDelay: 5.2, impacts: [], state: 'activating' },
+    stats: {
       hp: 12000, // AI SPACE: 12000! (Ty miałeś 5200)
       accel: 91, 
       maxSpeed: 105, 
@@ -3413,7 +3443,7 @@ function spawnSupportShip(templateKey, opts = {}){
     };
     const rotated = rotate(offset, anchorAngle);
     const spawnPos = { x: anchorPos.x + rotated.x, y: anchorPos.y + rotated.y };
-    const npc = makeNPCBase(spawnPos, template.stats || {});
+    const npc = makeNPCBase(spawnPos, { ...template.stats, shield: template.shield });
     npc.friendly = true;
     npc.mission = true;
     npc.color = template.color || '#7cff91';
@@ -3995,7 +4025,7 @@ function spawnPirate(kind, station) {
   };
 
   // 3. Stworzenie bazy NPC z szablonu
-  const npc = makeNPCBase(pos, template.stats);
+  const npc = makeNPCBase(pos, { ...template.stats, shield: template.shield });
 
   // 4. Nadpisanie właściwości pod PIRATA
   npc.type = kind;
@@ -10588,7 +10618,15 @@ function npcStep(dt){
   for(const npc of npcs){
     if (npc.hitFlash) npc.hitFlash = Math.max(0, npc.hitFlash - dt);
     updateShieldFx(npc, dt);
-    
+
+    if (npc.shield && npc.shield.max > 0){
+      if (npc.shield.regenTimer > 0){
+        npc.shield.regenTimer = Math.max(0, npc.shield.regenTimer - dt);
+      } else if (npc.shield.val < npc.shield.max){
+        npc.shield.val = Math.min(npc.shield.max, npc.shield.val + (npc.shield.regenRate || 0) * dt);
+      }
+    }
+
     // Despawn logic (poza misją)
     if(!npc.mission){
       const dx = npc.x - ship.pos.x;
