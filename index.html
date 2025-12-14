@@ -22,6 +22,19 @@
   html,body{height:100%;margin:0;background:radial-gradient(circle at 25% 20%,rgba(123,214,255,0.12),transparent 32%),radial-gradient(circle at 70% 10%,rgba(140,196,255,0.14),transparent 36%),linear-gradient(135deg,#041226 0%,#061a32 40%,#07243f 100%);color:var(--fa-text);font-family:var(--fa-font)}
   body,button,input,select,option{font-family:var(--fa-font);}
   body::before{content:'';position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 50% 30%,rgba(255,255,255,0.05),transparent 35%);mix-blend-mode:screen;opacity:0.8;z-index:1}
+  .hud-topbar{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:120;display:flex;flex-direction:column;gap:10px;padding:12px 14px;border-radius:16px;border:1px solid var(--fa-border);background:var(--fa-panel-strong);backdrop-filter:blur(14px);box-shadow:var(--fa-glow);min-width:420px;max-width:720px;}
+  .hud-topbar .hud-status-bars{display:flex;flex-direction:column;gap:8px;}
+  .hud-topbar .hud-bar{display:flex;flex-direction:column;gap:6px;}
+  .hud-topbar .hud-bar-label{display:flex;justify-content:space-between;align-items:center;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:var(--fa-muted);padding:0 2px;}
+  .hud-topbar .hud-bar-track{position:relative;height:16px;border-radius:999px;background:rgba(10,20,36,0.75);border:1px solid var(--fa-border);box-shadow:inset 0 1px 0 rgba(255,255,255,0.12),0 12px 24px rgba(0,0,0,0.32);overflow:hidden;}
+  .hud-topbar .hud-bar-fill{position:absolute;left:0;top:0;bottom:0;width:0%;border-radius:inherit;transition:width 0.15s ease-out;filter:drop-shadow(0 0 10px rgba(109,220,255,0.45));}
+  .hud-topbar .hud-bar-fill.hull{background:linear-gradient(90deg,#ffb866,#ffd56b);} 
+  .hud-topbar .hud-bar-fill.shield{background:linear-gradient(90deg,#5be0ff,#7ea7ff);} 
+  .hud-topbar .skill-slot-row{display:grid;grid-template-columns:repeat(10,minmax(44px,1fr));gap:10px;}
+  .hud-topbar .skill-slot{position:relative;height:50px;border-radius:12px;border:1px solid var(--fa-border);background:var(--fa-panel);box-shadow:inset 0 1px 0 rgba(255,255,255,0.12),0 12px 22px rgba(5,32,74,0.45);display:flex;align-items:center;justify-content:center;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:#e8f6ff;text-shadow:0 0 14px rgba(109,220,255,0.55);} 
+  .hud-topbar .skill-slot::after{content:'';position:absolute;inset:0;background:var(--fa-surface-gloss);border-radius:inherit;opacity:0.65;pointer-events:none;}
+  .hud-topbar{pointer-events:none;}
+  .hud-topbar .skill-slot,.hud-topbar .hud-bar{pointer-events:none;}
   #ui{position:absolute;left:12px;top:12px;z-index:120;background:var(--fa-panel);padding:12px 14px;border-radius:12px;backdrop-filter:blur(10px);border:1px solid var(--fa-border);box-shadow:var(--fa-glow)}
   #side-panels{position:absolute;left:12px;top:160px;z-index:120;display:flex;flex-direction:column;gap:12px;align-items:flex-start;}
   .side-panel{width:280px;display:flex;flex-direction:column;gap:10px;background:var(--fa-panel-strong);padding:14px 16px;border-radius:14px;border:1px solid var(--fa-border);backdrop-filter:blur(10px);color:var(--fa-text);font-family:var(--fa-font);box-shadow:var(--fa-glow);transition:width 0.32s ease,padding 0.32s ease,gap 0.24s ease, min-height 0.24s ease;align-items:flex-start;}
@@ -417,6 +430,29 @@
     <div class="stat">LPM — rail (A→B, A→B) · PPM — boczne rakiety · F — superbroń · SHIFT — warp / dopalacz na orbitach</div>
     <div style="margin-top:6px"><small>Gwiazdy są proceduralne w całej galaktyce. Silnik: niebieski exhaust + krótki ślad przy ruchu.</small></div>
   </div>
+  <div id="hud-topbar" class="hud-topbar hidden">
+    <div id="skill-slots" class="skill-slot-row" aria-label="Umiejętności i skille"></div>
+    <div class="hud-status-bars" aria-label="Status statku">
+      <div class="hud-bar hull">
+        <div class="hud-bar-label">
+          <span>Kadłub</span>
+          <span id="player-hull-label">—/—</span>
+        </div>
+        <div class="hud-bar-track" role="presentation">
+          <div id="player-hull-fill" class="hud-bar-fill hull"></div>
+        </div>
+      </div>
+      <div class="hud-bar shield">
+        <div class="hud-bar-label">
+          <span>Tarcza</span>
+          <span id="player-shield-label">—/—</span>
+        </div>
+        <div class="hud-bar-track" role="presentation">
+          <div id="player-shield-fill" class="hud-bar-fill shield"></div>
+        </div>
+      </div>
+    </div>
+  </div>
   <div id="side-panels">
     <div id="fleet-ui" class="side-panel hidden" data-panel="fleet">
       <button class="panel-toggle" type="button">
@@ -686,6 +722,12 @@ const loadingEl = document.getElementById('loading');
 const loadingFillEl = document.getElementById('loading-fill');
 const loadingProgressEl = document.getElementById('loading-progress');
 const planetRadarRoot = document.getElementById('planet-radar');
+const hudTopbarRoot = document.getElementById('hud-topbar');
+const skillSlotsEl = document.getElementById('skill-slots');
+const hullFillEl = document.getElementById('player-hull-fill');
+const shieldFillEl = document.getElementById('player-shield-fill');
+const hullLabelEl = document.getElementById('player-hull-label');
+const shieldLabelEl = document.getElementById('player-shield-label');
 let gameStarted = false;
 
 function setLoadingProgress(value, label){
@@ -715,6 +757,16 @@ function waitForCondition(predicate, timeoutMs = 4000){
       if (performance.now() - start >= timeoutMs) return resolve();
       requestAnimationFrame(poll);
     })();
+  });
+}
+
+if (skillSlotsEl && skillSlotsEl.childElementCount === 0) {
+  const slots = ['1','2','3','4','5','6','7','8','9','0'];
+  slots.forEach(label => {
+    const slot = document.createElement('div');
+    slot.className = 'skill-slot';
+    slot.textContent = label;
+    skillSlotsEl.appendChild(slot);
   });
 }
 
@@ -1998,6 +2050,26 @@ function formatGameTime(sec){
   const h = Math.floor(t / 3600) % 24;
   const m = Math.floor((t % 3600) / 60);
   return `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}`;
+}
+
+function updatePlayerStatusUI(){
+  if (!hudTopbarRoot) return;
+  const hull = ship?.hull;
+  const shield = ship?.shield;
+  if (hull && hullFillEl){
+    const frac = clamp(hull.val / Math.max(1, hull.max), 0, 1);
+    hullFillEl.style.width = `${(frac * 100).toFixed(1)}%`;
+  }
+  if (shield && shieldFillEl){
+    const frac = clamp(shield.val / Math.max(1, shield.max), 0, 1);
+    shieldFillEl.style.width = `${(frac * 100).toFixed(1)}%`;
+  }
+  if (hull && hullLabelEl){
+    hullLabelEl.textContent = `${Math.round(hull.val)}/${Math.round(hull.max)}`;
+  }
+  if (shield && shieldLabelEl){
+    shieldLabelEl.textContent = `${Math.round(shield.val)}/${Math.round(shield.max)}`;
+  }
 }
 function wrapAngle(a){ while(a>Math.PI) a-=2*Math.PI; while(a<-Math.PI) a+=2*Math.PI; return a; }
 function interpAngleShort(prev,curr,t){ const d = wrapAngle(curr - prev); return wrapAngle(prev + d * t); }
@@ -12449,6 +12521,7 @@ function render(alpha, frameDt){
 
   // aktualizuj wyświetlanie czasu
   gameTimeEl.textContent = formatGameTime(gameTime);
+  updatePlayerStatusUI();
   updateFleetUI();
   updatePlanetRadar(ship, cam);
 
@@ -13118,31 +13191,6 @@ if (warpLensShouldDraw && warpLensOutputCanvas && warpLensOutputCanvas.width && 
       yNudge: -68 * spriteScale,
       alpha: 1
     });
-  }
-
-  // status circle (hull/shield/speed/rockets) behind shield
-  {
-    const hullFrac = ship.hull.val / ship.hull.max;
-    const shieldFrac = ship.shield.val / ship.shield.max;
-    const r = Math.max(visualW, visualH) * 0.6;
-    ctx.save();
-    ctx.rotate(-interpAngle);
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-    ctx.beginPath(); ctx.arc(0,0,r,-Math.PI/2,-Math.PI/2 - Math.PI,true); ctx.stroke();
-    ctx.beginPath(); ctx.arc(0,0,r,-Math.PI/2,-Math.PI/2 + Math.PI,false); ctx.stroke();
-    ctx.strokeStyle = '#ef4444';
-    ctx.beginPath(); ctx.arc(0,0,r,-Math.PI/2,-Math.PI/2 - Math.PI*hullFrac,true); ctx.stroke();
-    ctx.strokeStyle = '#3b82f6';
-    ctx.beginPath(); ctx.arc(0,0,r,-Math.PI/2,-Math.PI/2 + Math.PI*shieldFrac,false); ctx.stroke();
-    ctx.fillStyle = '#dfe7ff';
-    ctx.font = '10px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const speed = Math.round(Math.hypot(ship.vel.x, ship.vel.y));
-    ctx.fillText(`${speed}`, 0, -r - 8);
-    if(rocketAmmoMax > 0 && rocketAmmo < rocketAmmoMax) ctx.fillText(`${rocketAmmo}`, 0, r + 8);
-    ctx.restore();
   }
 
   // CIWS turrets
@@ -14191,6 +14239,7 @@ async function startGame(){
   acc = 0;
   vfxTime = 0;
   uiRoot?.classList.remove('hidden');
+  hudTopbarRoot?.classList.remove('hidden');
   if (shieldControlsRoot) shieldControlsRoot.classList.remove('hidden');
   initShieldSystem(W, H);
   requestAnimationFrame(loop);
