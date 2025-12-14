@@ -15783,7 +15783,7 @@ if (document.readyState === 'loading') {
       if (tries >= 120) clearInterval(t);
     }, 500);
 
-    if (typeof window.__saveDevLS !== 'function') {
+   if (typeof window.__saveDevLS !== 'function') {
       window.__saveDevLS = function __saveDevLSFallback(){
         try {
           const data = { DevFlags: window.DevFlags, DevTuning: window.DevTuning, DevConfig: window.DevConfig };
