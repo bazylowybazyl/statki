@@ -1,6 +1,7 @@
 // Engineeffects.js
 // Ulepszony VFX: Shader-based Ion Drive v18 (Final)
 // Czysta termiczna plazma + Heat Glow + Anamorficzna Flara + Dynamiczne Światło.
+// + FIX: Wysoka rozdzielczość (256x512) i wbudowany renderer.
 
 import * as THREE from "three";
 
@@ -158,7 +159,7 @@ function makeRingTexture() {
     return new THREE.CanvasTexture(canvas);
 }
 
-// ================== GŁÓWNA FUNKCJA ==================
+// ================== GŁÓWNA FUNKCJA KREACJI (SCENA) ==================
 
 export function createShortNeedleExhaust(opts = {}) {
     const group = new THREE.Group();
@@ -361,4 +362,138 @@ export function createShortNeedleExhaust(opts = {}) {
 export function createWarpExhaustBlue(opts = {}) {
     // Warp wariant używa tego samego shadera, bo jest elastyczny
     return createShortNeedleExhaust(opts);
+}
+
+// ================== MANAGER RENDEROWANIA (SINGLETON) ==================
+// Dodany tutaj, aby hermetyzować logikę rozdzielczości i kamery w module.
+
+let _engineVFX = null;
+
+export function getEngineVFX() {
+    if (_engineVFX) return _engineVFX;
+
+    // 1. Canvas - PODWÓJNA ROZDZIELCZOŚĆ DLA OSTROŚCI
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;  // Było 128
+    canvas.height = 512; // Było 256
+    const ctx2d = canvas.getContext("2d");
+
+    // 2. Scena
+    const scene = new THREE.Scene();
+    scene.background = null;
+
+    // 3. Kamera - DOPASOWANA DO PODWÓJNEJ ROZDZIELCZOŚCI
+    // Parametry (L, R, T, B) pomnożone x2 względem poprzedniej wersji
+    const camera = new THREE.OrthographicCamera(-128, 128, 128, -384, -1000, 1000);
+    camera.position.z = 10;
+    camera.lookAt(0, 0, 0);
+
+    // 4. Instancja silnika
+    const exhaust = createShortNeedleExhaust();
+    exhaust.group.position.y = 0; // zero — unikamy clipu przy obrocie
+    scene.add(exhaust.group);
+
+    // 5. Renderer Helper
+    let localRenderer = null;
+    
+    function pickRenderer(w, h) {
+        if (typeof window.getSharedRenderer === "function") {
+            const r = window.getSharedRenderer(w, h);
+            return r || null;
+        }
+        if (!localRenderer) {
+            localRenderer = new THREE.WebGLRenderer({
+                alpha: true,
+                antialias: true,
+                premultipliedAlpha: true,
+                preserveDrawingBuffer: true
+            });
+            localRenderer.setPixelRatio(1);
+        }
+        const d = localRenderer.getSize(new THREE.Vector2());
+        if (d.x !== w || d.y !== h) localRenderer.setSize(w, h, false);
+        return localRenderer;
+    }
+
+    function resetRendererForVFX(renderer, width, height) {
+        if (!renderer) return;
+        if (typeof renderer.setRenderTarget === 'function') renderer.setRenderTarget(null);
+        if (typeof renderer.setPixelRatio === 'function') renderer.setPixelRatio(1);
+        if (typeof renderer.setSize === 'function') renderer.setSize(width, height, false);
+        if (typeof renderer.setViewport === 'function') renderer.setViewport(0, 0, width, height);
+        if (renderer.state && typeof renderer.state.reset === 'function') renderer.state.reset();
+        if (typeof renderer.setScissorTest === 'function') renderer.setScissorTest(false);
+        if (typeof renderer.setClearColor === 'function') renderer.setClearColor(0x000000, 0);
+        if (typeof renderer.clear === 'function') renderer.clear(true, true, false);
+    }
+
+    const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
+    const smoothstep01 = (t) => { const x = clamp(t, 0, 1); return x*x*(3 - 2*x); };
+
+    // Eksportujemy obiekt managera
+    _engineVFX = {
+        canvas, ctx2d, camera, scene, exhaust,
+        render(time, overrides = null) {
+            const r = pickRenderer(canvas.width, canvas.height);
+            if (!r) return;
+            resetRendererForVFX(r, canvas.width, canvas.height);
+
+            // Pobieranie danych wejściowych z globalnego stanu gry (jeśli dostępny)
+            // lub fallback do zer.
+            const ship = window.ship || { vel: {x:0, y:0} };
+            const input = window.input || { main: 0 };
+            const boost = window.boost || { effectDuration:0, effectTime:0 };
+            const warp = window.warp || { state: 'idle', charge:0, chargeTime:1, entryProgress:0 };
+            const optionsVfx = (window.OPTIONS && window.OPTIONS.vfx) ? window.OPTIONS.vfx : { colorTempK: 8000, bloomGain: 1.0 };
+
+            // Obliczenia parametrów (Throttle, Boost, Warp)
+            const spd = Math.hypot(ship.vel.x, ship.vel.y);
+            const moveGlowBase = Math.min(spd / 900, 0.6);
+            const thrust = input.main > 0 ? input.main : 0;
+            
+            const boostAmpBase = (boost.effectDuration > 0)
+                ? clamp(boost.effectTime / boost.effectDuration, 0, 1)
+                : 0;
+                
+            const warpActiveAmp = (warp.state === 'active') ? smoothstep01(warp.entryProgress) : 0;
+            const warpChargeAmp = (warp.state === 'charging')
+                ? smoothstep01(Math.min(1, warp.charge/warp.chargeTime)) * 0.6
+                : 0;
+            const warpAmpBase = Math.max(warpActiveAmp, warpChargeAmp);
+
+            // Overrides (dla bocznych silników / tunera)
+            const moveGlow = (overrides && typeof overrides.moveGlowOverride === 'number')
+                ? clamp(overrides.moveGlowOverride, 0, 1)
+                : moveGlowBase;
+                
+            const throttleBase = Math.max(thrust, moveGlow * 0.8);
+            const throttle = (overrides && typeof overrides.throttleOverride === 'number')
+                ? clamp(overrides.throttleOverride, 0, 1)
+                : throttleBase;
+                
+            const boostAmp = (overrides && typeof overrides.boostOverride === 'number')
+                ? clamp(overrides.boostOverride, 0, 1)
+                : boostAmpBase;
+                
+            const warpAmp = (overrides && typeof overrides.warpOverride === 'number')
+                ? clamp(overrides.warpOverride, 0, 1)
+                : warpAmpBase;
+
+            // Aplikowanie do silnika
+            exhaust.setThrottle(throttle);
+            exhaust.setWarpBoost(Math.max(boostAmp, warpAmp));
+            exhaust.setColorTemp(optionsVfx.colorTempK);
+            exhaust.setBloomGain(optionsVfx.bloomGain);
+
+            // Update i Render
+            exhaust.update(time);
+            r.render(scene, camera);
+
+            // Kopiowanie do Canvasu 2D
+            ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+            ctx2d.drawImage(r.domElement, 0, 0, canvas.width, canvas.height);
+        }
+    };
+
+    return _engineVFX;
 }
