@@ -12925,16 +12925,23 @@ function render(alpha, frameDt){
   {
     const e = ship.engines.main;
     const visualOffset = e.visualOffset || e.offset;
-    const forward = { x: 0, y: -1 }; // lokalny "w dół statku"
-    // szerokość zależna od gazu/ruchu
+    const forward = { x: 0, y: -1 }; 
     const spd = Math.hypot(ship.vel.x, ship.vel.y);
     const moveGlow = Math.min(spd / 900, 0.6) * 0.8;
     const throttle = Math.max(input.main || 0, moveGlow);
-    const widen = 2.4 + 0.6 * throttle; // 1.2..1.8
+    
+    // Hook dla Live Tunera (domyślnie 1.0)
+    const mainW = window.VFX_TUNE?.mainW ?? 1.0; 
+    const mainL = window.VFX_TUNE?.mainL ?? 1.0; 
+
+    // Zastosowanie tunera
+    const widen = (2.4 + 0.6 * throttle) * mainW;
+    const lenBase = 1.0 * mainL;
+
     drawNeedleEngineVfxLocal(visualOffset, forward, {
       widthScale: widen,
-      lengthScale: 1,
-      yNudge: -68 * spriteScale,
+      lengthScale: lenBase,
+      yNudge: -68 * spriteScale, // Tu jest Twoja pozycja Y (zmieniałeś ją wcześniej)
       alpha: 1
     });
   }
