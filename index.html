@@ -10407,7 +10407,6 @@ function applyDamageToPlatform(platform, amount){
   return dmg;
 }
 
-// =============== Collisions & particles ===============
 function bulletsAndCollisionsStep(dt){
   for(let i=bullets.length-1;i>=0;i--){
     const b = bullets[i];
@@ -10669,23 +10668,7 @@ function bulletsAndCollisionsStep(dt){
       }
     }
   }
-
-  // particles
-  for (const p of particlePool) { // Iteruj po całej puli
-    if (!p.active) continue; // Pomiń nieaktywne
-
-    p.age += dt;
-    if (p.age >= p.life) {
-      p.active = false; // <-- Deaktywuj zamiast usuwać (splice)
-      continue;
-    }
-
-    if (p.beam) continue;
-    p.vel.x *= 0.98; p.vel.y *= 0.98; p.vel.y += 8*dt;
-    p.pos.x += p.vel.x * dt; p.pos.y += p.vel.y * dt;
-  }
 }
-
 // =============== NPC movement/shooting ===============
 let npcFireTimer = 0;
 function npcShootingStep(dt){
@@ -11812,7 +11795,26 @@ function drawNeedleEngineVfxLocal(localPos, forward, options = {}) {
 }
 
 function drawBoostBeam(pos, dir, cam, alpha){ const s=worldToScreen(pos.x,pos.y,cam); ctx.save(); ctx.translate(s.x,s.y); ctx.scale(camera.zoom,camera.zoom); ctx.rotate(Math.atan2(-dir.x, dir.y)); ctx.globalCompositeOperation='lighter'; drawPhotonBeamLocal(alpha); ctx.restore(); }
+function updateParticles(dt) {
+  for (const p of particlePool) {
+    if (!p.active) continue;
 
+    p.age += dt;
+    if (p.age >= p.life) {
+      p.active = false;
+      continue;
+    }
+
+    if (p.beam) continue;
+    
+    // Prosta fizyka cząsteczek
+    p.vel.x *= 0.98; // Tarcie
+    p.vel.y *= 0.98; 
+    p.vel.y += 8 * dt; // Grawitacja (jeśli używana)
+    p.pos.x += p.vel.x * dt;
+    p.pos.y += p.vel.y * dt;
+  }
+}
 // =============== Main loop ===============
 let lastTime = performance.now();
 const PHYS_DT = 1/120;
@@ -12734,20 +12736,38 @@ function render(alpha, frameDt){
     ctx.restore();
   }
 
-  // Particles (za statkiem) — zwykłe
+  // --- ZOPTYMALIZOWANE RYSOWANIE CZĄSTECZEK (ZA STATKIEM) ---
   {
+    ctx.save();
+    
     let drawn = 0;
     for (const p of particlePool) {
       if (!p.active || p.flash || p.beam) continue;
       if (drawn >= MAX_PARTICLES_DRAW) break;
       drawn++;
+
+      // Pomijanie cząsteczek poza ekranem (Frustum culling)
       const s = worldToScreen(p.pos.x, p.pos.y, cam);
-      const t = clamp(1 - p.age/p.life, 0, 1);
-      ctx.globalAlpha = t;
-      ctx.beginPath(); ctx.fillStyle = p.color;
-      ctx.arc(s.x, s.y, p.size * camera.zoom, 0, Math.PI*2); ctx.fill();
-      ctx.globalAlpha = 1;
+      if (s.x < -10 || s.x > W + 10 || s.y < -10 || s.y > H + 10) continue;
+
+      const size = p.size * camera.zoom;
+      if (size < 0.5) continue; // Nie rysuj sub-pikselowych śmieci
+
+      const t = 1 - p.age/p.life; // Alpha
+      
+      ctx.globalAlpha = clamp(t, 0, 1);
+      ctx.fillStyle = p.color;
+      
+      if (size < 4) {
+          // Dla małych cząsteczek rysujemy kwadrat (znacznie szybsze niż arc)
+          ctx.fillRect(s.x - size/2, s.y - size/2, size, size);
+      } else {
+          ctx.beginPath(); 
+          ctx.arc(s.x, s.y, size, 0, Math.PI*2); 
+          ctx.fill();
+      }
     }
+    ctx.restore(); // Przywróć stan raz na koniec
   }
 
   // Efekt dopalacza
@@ -12762,109 +12782,109 @@ function render(alpha, frameDt){
   }
 
   let warpLensShouldDraw = false;
-let warpLensOutputCanvas = null;
+  let warpLensOutputCanvas = null;
 
-if (warpBlackHoleFX) {
-  const isWarpActive   = (warp.state === 'active');
-  const entryProgress  = isWarpActive ? clamp(warp.entryProgress, 0, 1) : 0;
-  const warpIntensity  = isWarpActive ? smoothstep01(entryProgress) : 0;
+  if (warpBlackHoleFX) {
+    const isWarpActive   = (warp.state === 'active');
+    const entryProgress  = isWarpActive ? clamp(warp.entryProgress, 0, 1) : 0;
+    const warpIntensity  = isWarpActive ? smoothstep01(entryProgress) : 0;
 
-  const lensThreshold  = getWarpLensThreshold();
-  const desiredLensMode = (warpIntensity >= lensThreshold) ? 'full' : 'background';
-  if (desiredLensMode !== warpLensMode) {
-    warpLensMode  = desiredLensMode;
-    warpLensSource = null;
-  }
-  if (!warpLensSource) {
-    configureWarpLensSource();
-  }
-
-  const zoneAllowsWarpLens = zoneState.current?.wormholeVfx ?? false;
-  const shouldRenderWarpLens = isWarpActive && warpIntensity > 0.001 && zoneAllowsWarpLens;
-  warpBlackHoleFX.setEnabled(shouldRenderWarpLens && !!warpLensSource);
-
-  if (shouldRenderWarpLens && warpLensSource) {
-    const engineTail     = ship.visual?.mainEngine?.y ?? (ship.h * 0.5);
-    const tailDepthExtra = warpLensParam('tailDepthExtra');
-    const warpDepth      = engineTail + ship.h * tailDepthExtra;
-
-    const tailOffset = rotate({ x: 0, y: warpDepth }, interpAngle);
-
-    const s = {
-      x: W / 2 + tailOffset.x * camera.zoom,
-      y: H / 2 + tailOffset.y * camera.zoom
-    };
-
-    const radiusBase    = warpLensParam('radiusBase');
-    const radiusScale   = warpLensParam('radiusScale');
-    const massBase      = warpLensParam('massBase');
-    const massScale     = warpLensParam('massScale');
-    const softness      = Math.min(1, Math.max(0, warpLensParam('softness')));
-    const opacityBase   = warpLensParam('opacityBase');
-    const opacityScale  = warpLensParam('opacityScale');
-
-    const baseRadius    = Math.max(0.01, radiusBase + radiusScale * warpIntensity);
-    const referenceZoom = Math.max(0.0001, camera.defaultZoom || 1);
-    const zoomFactor    = camera.zoom / referenceZoom;
-    const radius        = Math.min(1, baseRadius * zoomFactor);
-
-    const baseMass      = Math.max(0, (massBase + massScale * warpIntensity) * warpIntensity);
-    const mass          = Math.min(0.6, baseMass * zoomFactor * zoomFactor);
-    const opacity       = Math.min(1, Math.max(0, (opacityBase + opacityScale * warpIntensity) * warpIntensity));
-
-    const forwardStretchParam  = warpLensParam('forwardStretch');
-    const forwardStretchMajor  = forwardStretchParam >= 1
-      ? forwardStretchParam
-      : 1 + (1 - forwardStretchParam);
-
-    // ogólny współczynnik rozciągnięcia soczewki (skalujemy go z intensywnością warp)
-    const lensStretchFactor = 1 + (forwardStretchMajor - 1) * warpIntensity;
-
-    // ⬇️ WAŻNE: ship.angle jest JUŻ w radianach, nie przeliczamy go na stopnie
-    const lensAngle = ship.angle || 0;
-
-    // renderujemy do wewnętrznego WebGL canvasa
-    warpBlackHoleFX.render({
-      centerX: s.x,
-      centerY: s.y,
-      mass,
-      radius,
-      softness,
-      rotation: lensAngle,         // soczewka obrócona razem ze statkiem
-      opacity,
-      lensStretchForward: lensStretchFactor
-    });
-
-    // ⬇️ NOWE: przepisujemy wynik z WebGL na 2D canvas i pobieramy go
-    let updated = false;
-    if (typeof warpBlackHoleFX.updateOutputBuffer === 'function') {
-      updated = warpBlackHoleFX.updateOutputBuffer();
+    const lensThreshold  = getWarpLensThreshold();
+    const desiredLensMode = (warpIntensity >= lensThreshold) ? 'full' : 'background';
+    if (desiredLensMode !== warpLensMode) {
+      warpLensMode  = desiredLensMode;
+      warpLensSource = null;
+    }
+    if (!warpLensSource) {
+      configureWarpLensSource();
     }
 
-    warpLensOutputCanvas = (typeof warpBlackHoleFX.getOutputCanvas === 'function')
-      ? warpBlackHoleFX.getOutputCanvas()
-      : null;
+    const zoneAllowsWarpLens = zoneState.current?.wormholeVfx ?? false;
+    const shouldRenderWarpLens = isWarpActive && warpIntensity > 0.001 && zoneAllowsWarpLens;
+    warpBlackHoleFX.setEnabled(shouldRenderWarpLens && !!warpLensSource);
 
-    warpLensShouldDraw = !!(
-      updated &&
-      warpLensOutputCanvas &&
-      warpLensOutputCanvas.width &&
-      warpLensOutputCanvas.height
-    );
+    if (shouldRenderWarpLens && warpLensSource) {
+      const engineTail     = ship.visual?.mainEngine?.y ?? (ship.h * 0.5);
+      const tailDepthExtra = warpLensParam('tailDepthExtra');
+      const warpDepth      = engineTail + ship.h * tailDepthExtra;
+
+      const tailOffset = rotate({ x: 0, y: warpDepth }, interpAngle);
+
+      const s = {
+        x: W / 2 + tailOffset.x * camera.zoom,
+        y: H / 2 + tailOffset.y * camera.zoom
+      };
+
+      const radiusBase    = warpLensParam('radiusBase');
+      const radiusScale   = warpLensParam('radiusScale');
+      const massBase      = warpLensParam('massBase');
+      const massScale     = warpLensParam('massScale');
+      const softness      = Math.min(1, Math.max(0, warpLensParam('softness')));
+      const opacityBase   = warpLensParam('opacityBase');
+      const opacityScale  = warpLensParam('opacityScale');
+
+      const baseRadius    = Math.max(0.01, radiusBase + radiusScale * warpIntensity);
+      const referenceZoom = Math.max(0.0001, camera.defaultZoom || 1);
+      const zoomFactor    = camera.zoom / referenceZoom;
+      const radius        = Math.min(1, baseRadius * zoomFactor);
+
+      const baseMass      = Math.max(0, (massBase + massScale * warpIntensity) * warpIntensity);
+      const mass          = Math.min(0.6, baseMass * zoomFactor * zoomFactor);
+      const opacity       = Math.min(1, Math.max(0, (opacityBase + opacityScale * warpIntensity) * warpIntensity));
+
+      const forwardStretchParam  = warpLensParam('forwardStretch');
+      const forwardStretchMajor  = forwardStretchParam >= 1
+        ? forwardStretchParam
+        : 1 + (1 - forwardStretchParam);
+
+      // ogólny współczynnik rozciągnięcia soczewki (skalujemy go z intensywnością warp)
+      const lensStretchFactor = 1 + (forwardStretchMajor - 1) * warpIntensity;
+
+      // ⬇️ WAŻNE: ship.angle jest JUŻ w radianach, nie przeliczamy go na stopnie
+      const lensAngle = ship.angle || 0;
+
+      // renderujemy do wewnętrznego WebGL canvasa
+      warpBlackHoleFX.render({
+        centerX: s.x,
+        centerY: s.y,
+        mass,
+        radius,
+        softness,
+        rotation: lensAngle,         // soczewka obrócona razem ze statkiem
+        opacity,
+        lensStretchForward: lensStretchFactor
+      });
+
+      // ⬇️ NOWE: przepisujemy wynik z WebGL na 2D canvas i pobieramy go
+      let updated = false;
+      if (typeof warpBlackHoleFX.updateOutputBuffer === 'function') {
+        updated = warpBlackHoleFX.updateOutputBuffer();
+      }
+
+      warpLensOutputCanvas = (typeof warpBlackHoleFX.getOutputCanvas === 'function')
+        ? warpBlackHoleFX.getOutputCanvas()
+        : null;
+
+      warpLensShouldDraw = !!(
+        updated &&
+        warpLensOutputCanvas &&
+        warpLensOutputCanvas.width &&
+        warpLensOutputCanvas.height
+      );
+    }
   }
-}
 
-// rysowanie efektu na główny canvas – to możesz zostawić dokładnie tak:
-if (warpLensShouldDraw && warpLensOutputCanvas && warpLensOutputCanvas.width && warpLensOutputCanvas.height) {
-  ctx.save();
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.drawImage(
-    warpLensOutputCanvas,
-    0, 0, warpLensOutputCanvas.width, warpLensOutputCanvas.height,
-    0, 0, canvas.width, canvas.height
-  );
-  ctx.restore();
-}
+  // rysowanie efektu na główny canvas – to możesz zostawić dokładnie tak:
+  if (warpLensShouldDraw && warpLensOutputCanvas && warpLensOutputCanvas.width && warpLensOutputCanvas.height) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(
+      warpLensOutputCanvas,
+      0, 0, warpLensOutputCanvas.width, warpLensOutputCanvas.height,
+      0, 0, canvas.width, canvas.height
+    );
+    ctx.restore();
+  }
 
 
   hudRenderNav(ship, cam);
@@ -13348,31 +13368,37 @@ if (warpLensShouldDraw && warpLensOutputCanvas && warpLensOutputCanvas.width && 
     }
   }
 
-  // Particles typu "flash" na samym wierzchu
+  // --- ZOPTYMALIZOWANE RYSOWANIE FLASH (NA WIERZCHU) ---
   {
+    ctx.save();
+    
     let drawn = 0;
     for (const p of particlePool) {
       if (!p.active || !p.flash) continue;
       if (drawn >= MAX_PARTICLES_DRAW) break;
       drawn++;
+
       const s = worldToScreen(p.pos.x, p.pos.y, cam);
+      // Cull offscreen
+      if (s.x < -50 || s.x > W + 50 || s.y < -50 || s.y > H + 50) continue;
+
       const t = clamp(1 - p.age/p.life, 0, 1);
+      const size = p.size * camera.zoom;
+
+      // Glow (duże, słabe kółko)
+      ctx.globalAlpha = t * 0.3;
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); 
+      ctx.arc(s.x, s.y, size * 4, 0, Math.PI*2); 
+      ctx.fill();
+
+      // Core (małe, jasne kółko)
       ctx.globalAlpha = t;
-      ctx.save();
-      ctx.shadowBlur = 20 * camera.zoom * (p.size/2);
-      let shadowColor = p.color;
-      if(p.color === '#bfe7ff') shadowColor = 'rgba(120,200,255,0.9)';
-      if(p.color === '#ffd8c4') shadowColor = 'rgba(255,180,120,0.9)';
-      if(p.color === '#7CFF7C' || p.color === '#a8ff9a') shadowColor = 'rgba(120,255,140,0.95)';
-      if(p.color === '#ffffff') shadowColor = 'rgba(255,255,255,0.95)';
-      ctx.shadowColor = shadowColor;
-      ctx.beginPath(); ctx.fillStyle = p.color;
-      ctx.arc(s.x, s.y, (p.size * 3) * camera.zoom, 0, Math.PI*2); ctx.fill();
-      ctx.restore();
-      ctx.beginPath(); ctx.fillStyle = p.color;
-      ctx.arc(s.x, s.y, p.size * camera.zoom, 0, Math.PI*2); ctx.fill();
-      ctx.globalAlpha = 1;
+      ctx.beginPath(); 
+      ctx.arc(s.x, s.y, size, 0, Math.PI*2); 
+      ctx.fill();
     }
+    ctx.restore();
   }
 
   if (HUD_SHOW_LEGACY) {
