@@ -11851,6 +11851,11 @@ function loop(now){
     physicsStep(PHYS_DT);
     acc -= PHYS_DT; steps++;
   }
+  
+  // >>> TO JEST KLUCZOWE - ODDZIELNA AKTUALIZACJA WIZUALIÓW <<<
+  updateParticles(frame); 
+  // >>> BEZ TEGO CZĄSTECZKI STOJĄ W MIEJSCU <<<
+
   const alpha = acc / PHYS_DT;
   frameId++;
   missionCompleteBanner.update(frame);
