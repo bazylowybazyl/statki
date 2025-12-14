@@ -319,7 +319,7 @@ export function drawShield(ctx, entity, cam) {
             const t = clamp(shield.energyShotTimer / shield.energyShotDuration, 0, 1);
             const intensity = Math.sin(t * Math.PI);
             baseAlpha += intensity * 0.6;
-            scaleModifier += intensity * 0.15;
+            //scaleModifier += intensity * 0.15;
         }
 
         let activationDeform = 0;
