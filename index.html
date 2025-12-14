@@ -11703,53 +11703,6 @@ function drawEngineFallback2D() {
   ctx.restore();
 }
 
-function drawPhotonBeamLocal(alpha){
-  const L = 200;
-  ctx.save();
-  ctx.lineCap = 'round';
-  ctx.shadowBlur = 28;
-  ctx.shadowColor = `rgba(230,250,255,${0.95 * alpha})`;
-  ctx.strokeStyle = `rgba(255,255,255,${0.95 * alpha})`;
-  ctx.lineWidth = 6;
-  ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.lineTo(0, -L * 0.96);
-  ctx.stroke();
-  ctx.restore();
-
-  const g = ctx.createLinearGradient(0, 0, 0, -L);
-  g.addColorStop(0, `rgba(160,210,255,${0.25 * alpha})`);
-  g.addColorStop(1, `rgba(160,210,255,0)`);
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.moveTo(-50, 0);
-  ctx.quadraticCurveTo(0, -L * 0.5, 0, -L);
-  ctx.quadraticCurveTo(0, -L * 0.5, 50, 0);
-  ctx.closePath();
-  ctx.fill();
-
-  for (let i = 0; i < 4; i++) {
-    const phase = ((vfxTime * 0.8) + i * 0.25) % 1;
-    const y = -phase * L;
-    const r = 20 + 40 * (1 - phase);
-    ctx.strokeStyle = `rgba(200,240,255,${(1 - phase) * alpha})`;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(0, y, r, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.shadowBlur = 19.2;
-  ctx.shadowColor = '#fff';
-  ctx.fillStyle = '#fff';
-  ctx.beginPath();
-  ctx.arc(0, 0, 12, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
-
 function drawWarpChargeEffectLocal(progress, radius, spriteScale){
   if(progress <= 0) return;
   const eased = smoothstep01(progress);
@@ -11819,8 +11772,6 @@ function drawNeedleEngineVfxLocal(localPos, forward, options = {}) {
   ctx.globalAlpha = prevAlpha;
   ctx.restore();
 }
-
-function drawBoostBeam(pos, dir, cam, alpha){ const s=worldToScreen(pos.x,pos.y,cam); ctx.save(); ctx.translate(s.x,s.y); ctx.scale(camera.zoom,camera.zoom); ctx.rotate(Math.atan2(-dir.x, dir.y)); ctx.globalCompositeOperation='lighter'; drawPhotonBeamLocal(alpha); ctx.restore(); }
 function updateParticles(dt) {
   for (const p of particlePool) {
     if (!p.active) continue;
@@ -13187,16 +13138,6 @@ function render(alpha, frameDt){
   }
 
   // === UI / HUD Pass ===
-  const boostAlpha = (boost.effectDuration > 0)
-    ? clamp(boost.effectTime / boost.effectDuration, 0, 1)
-    : 0;
-  if(boostAlpha>0){
-    const e = ship.engines.main;
-    const mainVisual = e.visualOffset || e.offset;
-    const origin = add(interpPos, rotate(mainVisual, interpAngle));
-    drawBoostBeam(origin, boost.effectDir, cam, boostAlpha);
-  }
-
   let warpLensShouldDraw = false;
   let warpLensOutputCanvas = null;
 
