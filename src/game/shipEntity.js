@@ -95,8 +95,8 @@ const SHIP_TEMPLATE = {
 
 export const SHIP_SPRITE_SCALE = 2.0;
 const SHIP_VISUAL_BASE = {
-  turretTop:    { x: 38.18587785469991, y: -52.448366304887465 },
-  turretBottom: { x: 42.60145666564039, y:  43.668730035791256 },
+  turretTop:    { x: 63.50, y: -81.00 },
+  turretBottom: { x: 77.50, y: 57.50 },
   engineY: 147.00
 };
 
