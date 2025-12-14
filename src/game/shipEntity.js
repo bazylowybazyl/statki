@@ -186,61 +186,47 @@ function configureShipGeometry(ship) {
     maxThrust: ship.engines.torqueRight?.maxThrust ?? 3000
   };
 
-  const torqueThrusterX = sideVisualX + Math.round(12 * ship.visual.spriteScale);
-  const torqueThrusterY = Math.round(54 * ship.visual.spriteScale);
+  // --- ZDEFINIOWANE POZYCJE DYSZ (GÓRA / DÓŁ) ---
+  const topX = 90.0 * ship.visual.spriteScale;
+  const topY = 78.5 * ship.visual.spriteScale; // Ujemne w konfiguracji
+  const botX = 106.5 * ship.visual.spriteScale;
+  const botY = 58.0 * ship.visual.spriteScale; // Dodatnie w konfiguracji
 
-  const torqueThrusterPodW = 16 * ship.visual.spriteScale;
-  const torqueThrusterNozzleInset = 2 * ship.visual.spriteScale;
-  const torqueThrusterNozzleW = 10 * ship.visual.spriteScale;
-  const torqueThrusterNozzleH = 14 * ship.visual.spriteScale;
+  // Parametry wyglądu (zachowane z oryginału)
+  const torqueThrusterVfxWidthMin = Math.round(14 * ship.visual.spriteScale * 0.75);
+  const torqueThrusterVfxWidthMax = Math.round(14 * ship.visual.spriteScale * 1.25);
+  const torqueThrusterVfxLengthMin = Math.round(10 * ship.visual.spriteScale * 1.4);
+  const torqueThrusterVfxLengthMax = Math.round(10 * ship.visual.spriteScale * 2.6);
+  const nudge = -Math.round(10 * ship.visual.spriteScale * 0.85);
 
-  const torqueThrusterExit = (torqueThrusterPodW / 2 - torqueThrusterNozzleInset) + torqueThrusterNozzleW * 0.85;
-  const torqueThrusterNudge = -Math.round(torqueThrusterExit);
-
-  const torqueThrusterVfxWidthMin = Math.round(torqueThrusterNozzleH * 0.75);
-  const torqueThrusterVfxWidthMax = Math.round(torqueThrusterNozzleH * 1.25);
-  const torqueThrusterVfxLengthMin = Math.round(torqueThrusterNozzleW * 1.4);
-  const torqueThrusterVfxLengthMax = Math.round(torqueThrusterNozzleW * 2.6);
   ship.visual.torqueThrusters = [
+    // 1. Left Top
     {
-      offset: { x: -torqueThrusterX, y: -torqueThrusterY },
-      forward: { x: 1, y: 0 },
-      side: 'left',
-      yNudge: torqueThrusterNudge,
-      vfxWidthMin: torqueThrusterVfxWidthMin,
-      vfxWidthMax: torqueThrusterVfxWidthMax,
-      vfxLengthMin: torqueThrusterVfxLengthMin,
-      vfxLengthMax: torqueThrusterVfxLengthMax
+      offset: { x: -topX, y: -topY },
+      forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge,
+      vfxWidthMin: torqueThrusterVfxWidthMin, vfxWidthMax: torqueThrusterVfxWidthMax,
+      vfxLengthMin: torqueThrusterVfxLengthMin, vfxLengthMax: torqueThrusterVfxLengthMax
     },
+    // 2. Left Bottom
     {
-      offset: { x: -torqueThrusterX, y: torqueThrusterY },
-      forward: { x: 1, y: 0 },
-      side: 'left',
-      yNudge: torqueThrusterNudge,
-      vfxWidthMin: torqueThrusterVfxWidthMin,
-      vfxWidthMax: torqueThrusterVfxWidthMax,
-      vfxLengthMin: torqueThrusterVfxLengthMin,
-      vfxLengthMax: torqueThrusterVfxLengthMax
+      offset: { x: -botX, y: botY },
+      forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge,
+      vfxWidthMin: torqueThrusterVfxWidthMin, vfxWidthMax: torqueThrusterVfxWidthMax,
+      vfxLengthMin: torqueThrusterVfxLengthMin, vfxLengthMax: torqueThrusterVfxLengthMax
     },
+    // 3. Right Top
     {
-      offset: { x: torqueThrusterX, y: -torqueThrusterY },
-      forward: { x: -1, y: 0 },
-      side: 'right',
-      yNudge: torqueThrusterNudge,
-      vfxWidthMin: torqueThrusterVfxWidthMin,
-      vfxWidthMax: torqueThrusterVfxWidthMax,
-      vfxLengthMin: torqueThrusterVfxLengthMin,
-      vfxLengthMax: torqueThrusterVfxLengthMax
+      offset: { x: topX, y: -topY },
+      forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge,
+      vfxWidthMin: torqueThrusterVfxWidthMin, vfxWidthMax: torqueThrusterVfxWidthMax,
+      vfxLengthMin: torqueThrusterVfxLengthMin, vfxLengthMax: torqueThrusterVfxLengthMax
     },
+    // 4. Right Bottom
     {
-      offset: { x: torqueThrusterX, y: torqueThrusterY },
-      forward: { x: -1, y: 0 },
-      side: 'right',
-      yNudge: torqueThrusterNudge,
-      vfxWidthMin: torqueThrusterVfxWidthMin,
-      vfxWidthMax: torqueThrusterVfxWidthMax,
-      vfxLengthMin: torqueThrusterVfxLengthMin,
-      vfxLengthMax: torqueThrusterVfxLengthMax
+      offset: { x: botX, y: botY },
+      forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge,
+      vfxWidthMin: torqueThrusterVfxWidthMin, vfxWidthMax: torqueThrusterVfxWidthMax,
+      vfxLengthMin: torqueThrusterVfxLengthMin, vfxLengthMax: torqueThrusterVfxLengthMax
     }
   ];
 
