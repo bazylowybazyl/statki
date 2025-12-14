@@ -93,7 +93,7 @@ const SHIP_TEMPLATE = {
   aiController: null
 };
 
-export const SHIP_SPRITE_SCALE = 2.0;
+export const SHIP_SPRITE_SCALE = 2.2;
 const SHIP_VISUAL_BASE = {
   turretTop:    { x: 63.50, y: -81.00 },
   turretBottom: { x: 77.50, y: 57.50 },
