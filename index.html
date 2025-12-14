@@ -12281,11 +12281,12 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
   const lengthScale = Number.isFinite(profile.lengthScale) ? profile.lengthScale : 3.2;
   const widthScale = Number.isFinite(profile.widthScale) ? profile.widthScale : 1.2;
   
+  // Obliczamy wymiary na ekranie
   const length = Math.max(1, pixR * lengthScale);
   const width = Math.max(1, pixR * widthScale);
   
   const dims = { length, width, halfL: length * 0.5, halfW: width * 0.5 };
-  // Kolory proceduralne (tylko jako fallback)
+  
   const hullColor = profile.hullColor || (npc.friendly ? '#5477bf' : '#c85a5a');
   const deckColor = profile.deckColor || '#1f2a46';
   const accentColor = profile.accentColor || '#9dc5ff';
@@ -12307,15 +12308,17 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
 
   const halfL = length * 0.5;
   const halfW = width * 0.5;
-  const radius = Math.max(width * 0.1, 8); 
+
+  // --- POPRAWKA: Dynamiczny promień, nigdy większy niż sam statek ---
+  // Zamiast sztywnych pixeli, bierzemy procent wymiaru.
+  // To zapobiega "wykręcaniu" się kształtu przy oddalaniu kamery.
+  const radius = Math.min(width, length) * 0.15; 
   
   let drawHullPath = null;
 
-  // Helper do rysowania kształtu kadłuba (używany przez tarczę i hit-flash)
   const traceHullShape = (margin = 1.0) => {
       const mLen = length * margin;
       const mWid = width * margin;
-      // Używamy roundRect zamiast elipsy!
       roundRect(ctx, -mLen/2, -mWid/2, mLen, mWid, radius);
   };
 
@@ -12325,7 +12328,7 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     const naturalW = spriteInfo.width || img.naturalWidth || 1;
     const naturalH = spriteInfo.height || img.naturalHeight || 1;
     
-    // Logika skalowania (zachowuje ratio, dopasowuje do length)
+    // Logika skalowania
     const rawRotation = Number.isFinite(profile.spriteRotation) ? profile.spriteRotation : 0;
     const halfPi = Math.PI / 2;
     const approxSteps = Math.round(rawRotation / halfPi);
@@ -12344,7 +12347,6 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     let drawW = naturalW * scale;
     let drawH = naturalH * scale;
 
-    // Korekta szerokości jeśli sprite jest za szeroki
     if (targetWidth > 0){
       const crossSize = usesHeightForLength ? drawW : drawH;
       if (crossSize > targetWidth){
@@ -12358,42 +12360,48 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     const sc = drawW / naturalW; 
     ctx.drawImage(img, -drawW * 0.5 + (offset.x * sc), -drawH * 0.5 + (offset.y * sc), drawW, drawH);
   } else {
-    // Fallback: Rysowanie proceduralne (tylko gdy brak pliku graficznego)
+    // Proceduralny fallback (rysowanie prostokątów)
     ctx.fillStyle = hullColor;
     drawHullPath = () => traceHullShape(1.0);
     drawHullPath();
     ctx.fill();
 
-    ctx.fillStyle = deckColor;
-    roundRect(ctx, -halfL * 0.78, -halfW * 0.55, length * 0.82, width * 0.58, radius * 0.7);
-    ctx.fill();
+    // Detale rysujemy TYLKO jeśli statek jest widoczny (większy niż kropka)
+    if (length > 4 && width > 4) {
+        ctx.fillStyle = deckColor;
+        roundRect(ctx, -halfL * 0.78, -halfW * 0.55, length * 0.82, width * 0.58, radius * 0.7);
+        ctx.fill();
 
-    ctx.fillStyle = hangarGlow;
-    roundRect(ctx, -length * 0.18, -halfW * 0.45, length * 0.36, width * 0.9, width * 0.18);
-    ctx.fill();
+        ctx.fillStyle = hangarGlow;
+        roundRect(ctx, -length * 0.18, -halfW * 0.45, length * 0.36, width * 0.9, width * 0.18);
+        ctx.fill();
 
-    ctx.fillStyle = accentColor;
-    ctx.fillRect(-halfL * 0.2, -halfW * 0.05, length * 0.4, width * 0.1);
+        ctx.fillStyle = accentColor;
+        ctx.fillRect(-halfL * 0.2, -halfW * 0.05, length * 0.4, width * 0.1);
+    }
   }
 
-  // --- SILNIKI ---
+  // --- SILNIKI (tylko jeśli statek jest wystarczająco duży) ---
   const engineOffsets = Array.isArray(profile.engineOffsets) ? profile.engineOffsets : null;
   if (engineOffsets && engineOffsets.length){
     const speed = Math.hypot(npc.vx || 0, npc.vy || 0);
     const thrust = clamp(speed / Math.max(1, npc.maxSpeed || 1), 0, 1);
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = 0.45 + thrust * 0.4;
-    ctx.fillStyle = engineColor;
-    const glowSize = profile.engineGlowSize || 0.26;
-    for (const offset of engineOffsets){
-      const local = capitalLocalFromNormalized(offset, dims);
-      ctx.beginPath();
-      // Glow silnika może zostać elipsą, to wygląda ok
-      ctx.ellipse(local.x, local.y, width * glowSize * 0.45, width * glowSize * 0.75, 0, 0, Math.PI * 2);
-      ctx.fill();
+    
+    // Optymalizacja: nie rysuj glowa silników, jeśli statek to < 2px na ekranie
+    if (width > 2) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = 0.45 + thrust * 0.4;
+        ctx.fillStyle = engineColor;
+        const glowSize = profile.engineGlowSize || 0.26;
+        for (const offset of engineOffsets){
+          const local = capitalLocalFromNormalized(offset, dims);
+          ctx.beginPath();
+          ctx.ellipse(local.x, local.y, width * glowSize * 0.45, width * glowSize * 0.75, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
     }
-    ctx.restore();
   }
 
   // --- EFEKT TRAFIENIA ---
@@ -12401,13 +12409,13 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
     ctx.globalAlpha = clamp(npc.hitFlash * 6, 0, 1);
-    ctx.fillStyle = 'rgba(255,190,150,0.8)'; // Pomarańczowy błysk
+    ctx.fillStyle = 'rgba(255,190,150,0.8)';
     
     if (drawHullPath){
       drawHullPath();
       ctx.fill();
     } else {
-      // Błysk też musi pasować do kształtu
+      // Fallback kształtu
       ctx.beginPath();
       traceHullShape(1.0);
       ctx.fill();
@@ -12417,7 +12425,6 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
 
   ctx.restore();
 }
-
 function drawNPCPretty(ctx, npc, s) {
   // 1. Jeśli to duży statek (Capital Ship) używający sprite'a
   if (npc.isCapitalShip) {
@@ -13834,9 +13841,26 @@ function drawSectorMap(){
   ctx.restore();
 }
 
-// =============== Helpers ===============
-function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
-function roundRectScreen(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+// =============== Helpers (POPRAWIONE) ===============
+function roundRect(ctx, x, y, w, h, r) {
+  // Zabezpieczenie: promień nie może być większy niż połowa krótszego boku
+  if (w < 2 * r) r = w / 2;
+  if (h < 2 * r) r = h / 2;
+  if (r < 0) r = 0;
+  
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+
+function roundRectScreen(x, y, w, h, r) {
+  roundRect(ctx, x, y, w, h, r); 
+}
 
 function screenToWorld(sx, sy){
   return { x: camera.x + (sx - W/2)/camera.zoom, y: camera.y + (sy - H/2)/camera.zoom };
