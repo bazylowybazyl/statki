@@ -1,5 +1,5 @@
 // src/game/shipEntity.js
-// Oryginalny statek z poprawioną definicją tarczy dla nowego systemu renderowania.
+// Zaktualizowany pod nowy system renderowania tarczy (Fixed Visuals)
 
 const SHIP_TEMPLATE = {
   w: 150,
@@ -61,22 +61,31 @@ const SHIP_TEMPLATE = {
     recoilKick: 14,
     offset: { x: 0, y: 0 }
   },
-  // --- ZMIANA TYLKO TUTAJ: Dodano parametry dla nowego systemu tarczy ---
+  
+  // --- SEKCJA TARCZY (Dostosowana do nowego renderera) ---
   shield: { 
       max: 15000, 
       val: 15000, 
       regenRate: 100, 
       regenDelay: 2, 
       regenTimer: 0,
-      // Nowe pola dla systemu wizualnego:
-      state: 'active',
-      activationProgress: 1.0,
-      currentAlpha: 0.0,
-      impacts: [],
-      hexScale: 11, // Skala hexów z Twojego playground
-      baseAlpha: 0.15
+      
+      // Stan wizualny:
+      state: 'active',       // Statek startuje z włączoną tarczą
+      activationProgress: 1.0, // Tarcza jest już w pełni uformowana
+      currentAlpha: 1.0,     // WAŻNE: Startujemy z pełną widocznością, żeby nie mrugała przy spawnie
+      
+      // Parametry efektów:
+      energyShotTimer: 0,
+      energyShotDuration: 0.5, // Czas trwania efektu przeładowania energią
+      impacts: [],           // Pusta tablica na start
+      
+      // Opcjonalne nadpisania dla konkretnego statku:
+      hexScale: 11,          // Skala wzoru (dla spójności z CONFIG)
+      baseAlpha: 0.15        // Bazowa przezroczystość
   },
-  // ---------------------------------------------------------------------
+  // -------------------------------------------------------
+
   hull: { max: 10000, val: 1000 },
   special: { cooldown: 10, cooldownTimer: 0 },
   input: { thrustX: 0, thrustY: 0, aimX: 0, aimY: 0 },
