@@ -12795,39 +12795,45 @@ function render(alpha, frameDt){
     }
 
     if (ship.visual?.torqueThrusters?.length) {
-      for (const thruster of ship.visual.torqueThrusters) {
-        ctx.save();
-        ctx.translate(thruster.offset.x, thruster.offset.y);
-        if (thruster.side === 'left') ctx.scale(-1, 1);
+      for (const { thruster, intensity } of activeThrusters) {
+        // 1. Pobieramy wartości z Tunera (lub domyślne 1.0)
+        const tuneW = window.VFX_TUNE?.sideW ?? 1.0;
+        const tuneL = window.VFX_TUNE?.sideL ?? 1.0;
 
-        const podW = 16 * spriteScale;
-        const podH = 28 * spriteScale;
-        const nozzleW = 10 * spriteScale;
-        const nozzleH = 14 * spriteScale;
-        const podRadius = 5 * spriteScale;
+        // 2. Bazowe wymiary z configu
+        const widthPxMin = thruster.vfxWidthMin != null 
+          ? thruster.vfxWidthMin 
+          : spriteScale * 128 * 1.0;
+        const widthPxMax = thruster.vfxWidthMax != null 
+          ? thruster.vfxWidthMax 
+          : spriteScale * 128 * 1.10;
+          
+        const lengthPxMin = thruster.vfxLengthMin != null 
+          ? thruster.vfxLengthMin 
+          : spriteScale * 256 * 0.2;
+        const lengthPxMax = thruster.vfxLengthMax != null 
+          ? thruster.vfxLengthMax 
+          : spriteScale * 256 * 0.4;
 
-        const podGradient = ctx.createLinearGradient(-podW/2, -podH/2, podW/2, podH/2);
-        podGradient.addColorStop(0, '#1c263d');
-        podGradient.addColorStop(1, '#2f3f62');
-        ctx.fillStyle = podGradient;
-        roundRect(ctx, -podW/2, -podH/2, podW, podH, podRadius);
-        ctx.fill();
-        ctx.lineWidth = 1.2;
-        ctx.strokeStyle = 'rgba(10,18,32,0.6)';
-        roundRect(ctx, -podW/2, -podH/2, podW, podH, podRadius);
-        ctx.stroke();
+        // 3. Interpolacja intensywności
+        const baseWidthPx = lerp(widthPxMin, widthPxMax, intensity);
+        const baseLengthPx = lerp(lengthPxMin, lengthPxMax, intensity);
 
-        ctx.fillStyle = '#8fa7d6';
-        roundRect(ctx, podW/2 - 2 * spriteScale, -nozzleH/2, nozzleW, nozzleH, 3 * spriteScale);
-        ctx.fill();
+        // 4. APLIKOWANIE SKALI Z TUNERA (Kluczowy moment)
+        // Mnożymy finalny wynik pixeli przez mnożnik z konsoli
+        const finalWidthScale = Math.max(0.0001, (baseWidthPx / 128) * tuneW);
+        const finalLengthScale = Math.max(0.0001, (baseLengthPx / 256) * tuneL);
 
-        ctx.fillStyle = 'rgba(255,255,255,0.12)';
-        roundRect(ctx, -podW/2 + 2 * spriteScale, -podH*0.35, podW * 0.3, podH * 0.7, 3 * spriteScale);
-        ctx.fill();
+        const alpha = 0.55 + intensity * 0.35;
 
-        ctx.restore();
+        drawNeedleEngineVfxLocal(thruster.offset, thruster.forward, {
+          widthScale: finalWidthScale,
+          lengthScale: finalLengthScale,
+          yNudge: thruster.yNudge,
+          alpha,
+          overrides
+        });
       }
-    }
 
     ctx.fillStyle = '#cbd6ff';
     for (const off of ship.sideGunsLeft) {
