@@ -12826,7 +12826,7 @@ function render(alpha, frameDt){
 
         const alpha = 0.55 + intensity * 0.35;
 
-        drawNeedleEngineVfxLocal(thruster.offset, thruster.forward, {
+       drawNeedleEngineVfxLocal(thruster.offset, thruster.forward, {
           widthScale: finalWidthScale,
           lengthScale: finalLengthScale,
           yNudge: thruster.yNudge,
@@ -12834,7 +12834,8 @@ function render(alpha, frameDt){
           overrides
         });
       }
-
+    } 
+  }  
     ctx.fillStyle = '#cbd6ff';
     for (const off of ship.sideGunsLeft) {
       ctx.save();
