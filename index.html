@@ -629,6 +629,7 @@
 import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
 import { WORLD, setWorldSize } from './src/world/world.js';
 import { initShieldSystem, updateShieldFx, drawShield, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot } from './shieldSystem.js';
+import { createShipEntity, applyPlayerInput, runShipAI } from "./src/game/shipEntity.js";
 window.bullets = [];
 // Aby stary kod działał, zrobimy alias:
 const bullets = window.bullets;
@@ -905,7 +906,7 @@ let mainScene3D = null;
 let planetScene3D = null;
 let planetStationsReady = false;
 
-const { createShipEntity, applyPlayerInput, runShipAI } = window;
+//const { createShipEntity, applyPlayerInput, runShipAI } = window
 
 function asThreeScene(candidate){
   if (!candidate) return null;
