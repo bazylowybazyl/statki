@@ -2,8 +2,8 @@
 // Zaktualizowany pod nowy system renderowania tarczy (Fixed Visuals)
 
 const SHIP_TEMPLATE = {
-  w: 150,
-  h: 400,
+  w: 250,
+  h: 450,
   mass: 140,
   pos: { x: 0, y: 0 },
   vel: { x: 0, y: 0 },
