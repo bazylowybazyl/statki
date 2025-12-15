@@ -1,6 +1,6 @@
 import REGL from "regl";
 
-// --- ORYGINALNE SZADERY TYRO (1:1 z repozytorium) ---
+// --- ORYGINALNE SZADERY TYRO ---
 
 const commonVert = `
 precision highp float;
@@ -114,9 +114,9 @@ void main() {
     vec3 ndl = normalize(dl);
     vec3 ndeye = vec3(0, 0, -1);
     
-    // ORYGINALNE FIZYCZNE OŚWIETLENIE TYRO
+    // ORYGINAŁ: fizyczne oświetlenie Tyro
     float light = clamp(dot(ndl, ndeye), 0.0, 1.0);
-    light = light / dot(dl, dl);
+    light = light / (dot(dl, dl)); 
     
     totalLight += light * texture2D(starColorTexture, xy).rgb;
   }
@@ -159,8 +159,6 @@ void main() {
   gl_FragColor = vec4(light * 4.0 * normalize(color), 0.0);
 }`;
 
-// --- KLASA Space2D ---
-
 export class Space2D {
   private canvas: HTMLCanvasElement;
   private regl: REGL.Regl;
@@ -176,6 +174,8 @@ export class Space2D {
 
   constructor() {
     this.canvas = document.createElement("canvas");
+    this.canvas.width = 1; this.canvas.height = 1;
+
     this.regl = REGL({
       canvas: this.canvas,
       attributes: { preserveDrawingBuffer: true, alpha: false, depth: false },
@@ -256,10 +256,11 @@ export class Space2D {
     this.regl.clear({ color: [0,0,0,0], framebuffer: this.fbLight });
     this.regl.clear({ color: [0,0,0,0], framebuffer: this.pingpong[1] });
 
-    const opts = options; // Używamy opcji przekazanych bezpośrednio z tyroBackground (które są kopią logiki z main.ts)
+    // FIX: Scalanie opcji - to naprawia "missing uniform depth"
+    const opts = { ...renderConfigDefaults(), ...options };
     const stars = opts.stars || [];
-    
-    // FIX INT TYPES
+
+    // Ensure octaves are Integers
     const bgOctaves = Math.floor(opts.backgroundOctaves || 8);
     const nebOctaves = Math.floor(opts.nebulaOctaves || 8);
 
@@ -270,13 +271,13 @@ export class Space2D {
     this.renderBackground({
       color: opts.backgroundColor, depth: opts.backgroundDepth, resolution: [width, height], offset: opts.offset,
       lacunarity: opts.backgroundLacunarity, gain: opts.backgroundGain, density: opts.backgroundDensity,
-      octaves: bgOctaves, falloff: opts.backgroundFalloff, scale: opts.scale,
+      octaves: bgOctaves, falloff: opts.backgroundFalloff, scale: opts.backgroundScale,
       viewport, framebuffer: this.pingpong[0],
     });
     this.paste({ resolution: [width, height], texture: this.pingpong[0], viewport });
 
     let pingIndex = 0;
-    // Ważne: renderujemy tyle warstw, ile jest w konfiguracji (Tyro używa dużo!)
+    // Ważne: renderujemy tyle warstw, ile jest w konfiguracji
     const layers = opts.nebulaLayers;
     
     for (let i = 0; i < layers; i++) {
@@ -317,4 +318,27 @@ export class Space2D {
     
     return this.canvas;
   }
+}
+
+function renderConfigDefaults() {
+  return {
+    scale: 0.001, 
+    offset: [0, 0],
+    backgroundColor: [0.05, 0.05, 0.1], // Ciemne tło
+    backgroundDepth: 137, backgroundLacunarity: 2, backgroundGain: 0.5, backgroundDensity: 1.0,
+    backgroundOctaves: 8, backgroundFalloff: 4, backgroundScale: 0.003,
+    
+    nebulaNear: 0, nebulaFar: 500, nebulaLayers: 40,
+    nebulaAbsorption: 1.0, nebulaLacunarity: 2.0, nebulaDensity: 0.1, nebulaGain: 0.5,
+    nebulaOctaves: 7, nebulaFalloff: 4,
+    
+    // Brak emisji (klucz dla Tyro style)
+    nebulaEmissiveLow: [0, 0, 0], nebulaEmissiveHigh: [0, 0, 0], 
+    nebulaEmissiveOffset: [0, 0, 0], nebulaEmissiveScale: 1,
+    
+    nebulaAlbedoLow: [1, 1, 1], nebulaAlbedoHigh: [1, 1, 1],
+    nebulaAlbedoOffset: [0, 0, 0], nebulaAlbedoScale: 1,
+    
+    stars: [],
+  };
 }
