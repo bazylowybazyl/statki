@@ -3,33 +3,56 @@
 import { Space2D } from './index.ts';
 import Alea from 'alea';
 
-const TILE_SCALE = 1.0; 
 let finalCanvas = null; 
 let newBg = null;
 
-// --- PANEL STEROWANIA ---
+// --- PANEL STEROWANIA (KONSOLA) ---
+// Dostępny pod: window.Nebula
 window.Nebula = {
-  falloff: 60.0,       
-  density: 0.8,
-  layers: 40,
-  scale: 0.0008,
+  // --- 1. ROZMIAR I JAKOŚĆ ---
+  // Rozdzielczość tekstury tła.
+  // 2048 = Standard. 4096 = Wysoka jakość (4K). 8192 = Ultra (może ciąć).
+  resolution: 2048, 
+
+  // Skala szumu (Zoom). 
+  // Mniejsza liczba (0.0002) = wielkie chmury. Większa (0.002) = drobny pył.
+  scale: 0.0005,
   
-  // Tłumienie światła (im więcej, tym ciemniej)
-  // Spróbuj: 100, 200, 500, 1000
-  lightFalloff: 200.0, 
+  // --- 2. WYGLĄD MGŁAWIC ---
+  falloff: 40.0,       // 30-60 = gęste chmury. >100 = rzadkie.
+  density: 0.5,        // Przezroczystość
+  layers: 60,          // Głębia (ilość warstw)
   
-  starColorBase: [0.2, 0.6, 1.0], 
-  starColorVar:  [0.2, 0.4, 0.5], 
+  // --- 3. OŚWIETLENIE ---
+  // Zasięg światła gwiazd (Im WIĘCEJ, tym MNIEJSZY zasięg / ciemniej).
+  // 200 = Jasno. 1000 = Ciemno.
+  lightFalloff: 200.0,
   
+  // Kolory gwiazd oświetlających (R, G, B)
+  colors: {
+    base: [0.1, 0.4, 1.0], // Główny kolor (Niebieski)
+    var:  [0.2, 0.3, 0.5]  // Zmienność (odcienie)
+  },
+
+  // --- 4. STEROWANIE ---
+  seed: 'statki', // Aktualny seed
+  
+  // Przerysuj z obecnymi ustawieniami
   redraw: () => {
-    console.log('[Nebula] Redraw...');
+    console.log(`[Nebula] Przerysowywanie (Res: ${window.Nebula.resolution}px)...`);
     setTimeout(() => initSpaceBg(window.Nebula.seed), 10);
   },
+  
+  // Wylosuj nowy układ
   randomize: () => {
-    initSpaceBg(Math.random().toString(36));
+    const newSeed = Math.random().toString(36).slice(2, 8);
+    console.log(`[Nebula] Nowy seed: "${newSeed}"`);
+    window.Nebula.seed = newSeed;
+    initSpaceBg(newSeed);
   }
 };
 
+// Konfiguracja wewnętrzna
 let opts = {
   renderPointStars: false, renderStars: false, renderNebulae: false,
   newSystemEnabled: true, newSystemOpacity: 1.0, seed: 'statki'
@@ -41,51 +64,63 @@ const parallaxState = {
 };
 
 function ensureFinalCanvas(w, h){
-  const targetW = Math.max(2048, w); const targetH = Math.max(2048, h);
+  // Bierzemy rozdzielczość z obiektu konfiguracji window.Nebula
+  const size = window.Nebula.resolution || 2048;
+  const targetW = Math.max(size, w); 
+  const targetH = Math.max(size, h);
+  
   if (!finalCanvas) finalCanvas = document.createElement('canvas');
+  
+  // Jeśli rozmiar się zmienił (np. wpisałeś w konsoli resolution = 4096), to zmieniamy
   if (finalCanvas.width !== targetW || finalCanvas.height !== targetH) {
-    finalCanvas.width = targetW; finalCanvas.height = targetH;
-    return true;
+    finalCanvas.width = targetW; 
+    finalCanvas.height = targetH;
+    return true; // Wymaga przerysowania
   }
   return false;
 }
 
 export function initSpaceBg(seedStr = null){
   ensureFinalCanvas(innerWidth, innerHeight);
-  opts.seed = String(seedStr ?? (window.SUN?.seed ?? 'statki'));
-  window.Nebula.seed = opts.seed;
+  
+  opts.seed = String(seedStr ?? window.Nebula.seed);
+  window.Nebula.seed = opts.seed; // Aktualizacja w panelu
 
   const w = finalCanvas.width;
   const h = finalCanvas.height;
   const ctx = finalCanvas.getContext('2d');
   const prng = Alea(opts.seed);
 
-  ctx.fillStyle = '#000205'; 
+  // Tło
+  ctx.fillStyle = '#000104'; 
   ctx.fillRect(0, 0, w, h);
 
   if (opts.newSystemEnabled) {
     if (!newBg) newBg = new Space2D();
     
+    // Generowanie gwiazd na podstawie kolorów z panelu
     const stars = [];
-    const nStars = 80; 
+    const nStars = 60; 
     
-    const base = window.Nebula.starColorBase;
-    const vari = window.Nebula.starColorVar;
-
-    const sceneOffset = [prng() * 1000000 - 500000, prng() * 1000000 - 500000];
+    const base = window.Nebula.colors.base;
+    const vari = window.Nebula.colors.var;
+    
+    // Rozrzucamy gwiazdy po całej (ewentualnie powiększonej) przestrzeni
+    // Ważne: obszar generowania gwiazd musi pasować do 'offsetu'
+    const sceneOffset = [prng() * 500000 - 250000, prng() * 500000 - 250000];
 
     for(let i=0; i<nStars; i++) {
+        // Boost jasności * 2.5
         const color = [
-            (base[0] + (prng()-0.5) * vari[0]) * 2.0,
-            (base[1] + (prng()-0.5) * vari[1]) * 2.0,
-            (base[2] + (prng()-0.5) * vari[2]) * 2.0
+            Math.max(0, (base[0] + (prng()-0.5) * vari[0]) * 2.5),
+            Math.max(0, (base[1] + (prng()-0.5) * vari[1]) * 2.5),
+            Math.max(0, (base[2] + (prng()-0.5) * vari[2]) * 2.5)
         ];
-        
         stars.push({
             position: [
                 sceneOffset[0] + prng() * w, 
                 sceneOffset[1] + prng() * h, 
-                prng() * 500
+                prng() * 600
             ],
             color: color,
             falloff: 256,
@@ -94,21 +129,21 @@ export function initSpaceBg(seedStr = null){
         });
     }
 
-    console.log(`[TyroBackground] Render: lightFalloff=${window.Nebula.lightFalloff}`);
-
     const newCanvas = newBg.render(w, h, {
       stars,
       offset: sceneOffset,
       
+      // Parametry z konsoli
       lightFalloff: window.Nebula.lightFalloff,
       nebulaFalloff: window.Nebula.falloff,
-      nebulaDensity: window.Nebula.density / window.Nebula.layers * 40,
+      nebulaDensity: window.Nebula.density,
       nebulaLayers: window.Nebula.layers,
       scale: window.Nebula.scale,
       
+      // Stałe
       nebulaLacunarity: 2.2, 
       nebulaGain: 0.5,
-      nebulaAbsorption: 1.2,
+      nebulaAbsorption: 1.0, 
       
       nebulaAlbedoLow: [1, 1, 1],
       nebulaAlbedoHigh: [1, 1, 1],
@@ -126,6 +161,7 @@ export function initSpaceBg(seedStr = null){
 
 export function resizeSpaceBg(w, h){
   parallaxState.offsetX = 0; parallaxState.offsetY = 0;
+  // Sprawdzamy czy okno nie przerosło tekstury (rzadkie przy 2048/4096)
   if (w > finalCanvas.width || h > finalCanvas.height) initSpaceBg(opts.seed);
 }
 
@@ -155,8 +191,19 @@ export function drawSpaceBg(mainCtx, camera){
     }
   }
 }
+
+// Helpers
 export function setBgOptions(partial){ Object.assign(opts, partial || {}); }
 export function setBgSeed(seed){ opts.seed = String(seed); }
 export function setParallaxOptions(partial){ if(partial) Object.assign(parallaxState, partial); }
 export function getBackgroundCanvas(){ return finalCanvas; }
-export function getBackgroundSampleDescriptor(){ return finalCanvas ? { canvas: finalCanvas, tileWidth: finalCanvas.width, tileHeight: finalCanvas.height, offsetX: parallaxState.offsetX, offsetY: parallaxState.offsetY, parallaxEnabled: true } : null; }
+export function getBackgroundSampleDescriptor(){ 
+  return finalCanvas ? { 
+    canvas: finalCanvas, 
+    tileWidth: finalCanvas.width, 
+    tileHeight: finalCanvas.height, 
+    offsetX: parallaxState.offsetX, 
+    offsetY: parallaxState.offsetY, 
+    parallaxEnabled: true 
+  } : null; 
+}
