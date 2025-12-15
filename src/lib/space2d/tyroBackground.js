@@ -2,10 +2,12 @@
 
 import Scene from './scene.js'; // Twój stary system
 import * as random from './random.js';
-// Importujemy nowy system z pliku index.ts w tym samym folderze
-import { Space2D } from './index'; 
+// Importujemy nowy system z pliku index.ts
+import { Space2D } from './index.ts'; 
 
-const TILE_SCALE = 1.5; // Rozmiar bufora
+// Skala tła - 1.0 oznacza 1:1 pikseli (najostrzej), wyższe wartości oszczędzają wydajność
+// Ustawiam 1.0, żeby było ładnie, bo i tak renderujemy to raz.
+const TILE_SCALE = 1.0; 
 
 let oldBg = null;    // Stary system
 let oldOffGL = null; // Canvas starego systemu
@@ -24,25 +26,25 @@ let opts = {
   
   // Nowy system (Space2D)
   newSystemEnabled: true,
-  newSystemOpacity: 0.8, // Przezroczystość nowych mgławic
+  newSystemOpacity: 1.0, // Pełna widoczność na start
 };
 
 const parallaxState = {
   enabled: true,
-  factorX: 0.045,
-  factorY: 0.03,
+  factorX: 0.05, // Prędkość paralaksy
+  factorY: 0.05,
   smoothing: 0.2,
   offsetX: 0,
   offsetY: 0,
   targetX: 0,
   targetY: 0,
-  tileWidth: 0,
-  tileHeight: 0
 };
 
 function ensureOffscreenSize(w, h){
-  const targetW = Math.max(1, Math.round((w || 0) * TILE_SCALE));
-  const targetH = Math.max(1, Math.round((h || 0) * TILE_SCALE));
+  // Renderujemy nieco większy obszar, żeby kafelki ładnie się zazębiały
+  // Rozmiar tekstury tła (np. 1024x1024 lub ekran)
+  const targetW = Math.max(1024, w); 
+  const targetH = Math.max(1024, h);
   
   // 1. Stary system
   if (!oldOffGL) {
@@ -51,21 +53,19 @@ function ensureOffscreenSize(w, h){
   if (oldOffGL.width !== targetW || oldOffGL.height !== targetH) {
     oldOffGL.width = targetW;
     oldOffGL.height = targetH;
-    if(oldBg) oldBg.clear?.();
+    if(oldBg && oldBg.resize) oldBg.resize(targetW, targetH);
   }
-
-  // 2. Nowy system (tylko zapisujemy wymiary, render w init/resize)
-  parallaxState.tileWidth = targetW;
-  parallaxState.tileHeight = targetH;
 }
 
 export function initSpaceBg(seedStr = null){
+  console.log('[TyroBackground] Inicjalizacja tła...');
   ensureOffscreenSize(innerWidth, innerHeight);
   
   opts.seed = String(seedStr ?? (window.SUN?.seed ?? random.generateRandomSeed()));
 
   // A. Stary system
   if (!oldBg) oldBg = new Scene(oldOffGL);
+  // Wymuś renderowanie starego tła
   oldBg.render(opts); 
 
   // B. Nowy system
@@ -76,27 +76,31 @@ export function initSpaceBg(seedStr = null){
     const w = oldOffGL.width;
     const h = oldOffGL.height;
     
+    console.log(`[TyroBackground] Generowanie nowych mgławic (${w}x${h})...`);
+    
     // Generujemy tło Space2D
+    // Zwiększyłem jasność i gęstość, żeby było widać efekt!
     newOffGL = newBg.render(w, h, {
-      // Ukryte gwiazdy (służą tylko jako źródła światła dla mgławicy)
-      backgroundStarBrightness: 0.0, 
-      backgroundStarDensity: 0.05,
-      // Czarne tło dla blendingu 'screen'
-      backgroundColor: [0, 0, 0],
-      // Wygląd mgławic
-      nebulaDensity: 0.2,
-      nebulaLayers: 3, 
-      nebulaFalloff: 3.5,
-      nebulaEmissiveLow: [0.0, 0.05, 0.1], 
-      nebulaEmissiveHigh: [0.1, 0.0, 0.2], 
+      backgroundStarBrightness: 0.0, // Gwiazdy wyłączone (masz swoje)
+      backgroundStarDensity: 0.0,
+      backgroundColor: [0, 0, 0],    // Czarne tło = przezroczystość w trybie 'screen'
+      
+      // Parametry mgławic - podkręcone dla widoczności
+      nebulaDensity: 0.4,    
+      nebulaLayers: 2,       
+      nebulaFalloff: 3.0,
+      // Kolory: fioletowo-niebieskie, jasne
+      nebulaEmissiveLow: [0.0, 0.1, 0.2], 
+      nebulaEmissiveHigh: [0.4, 0.2, 0.6], 
     });
+    console.log('[TyroBackground] Nowe mgławice wygenerowane.');
   }
   return true;
 }
 
 export function resizeSpaceBg(w, h){
   ensureOffscreenSize(w, h);
-  
+  // Przy resize resetujemy paralaksę, żeby nie zgubić tła
   parallaxState.offsetX = 0;
   parallaxState.offsetY = 0;
   parallaxState.targetX = 0;
@@ -105,14 +109,14 @@ export function resizeSpaceBg(w, h){
   if(oldBg) oldBg.render(opts);
   
   if(newBg && opts.newSystemEnabled){
+     // Regeneracja nowych mgławic przy zmianie rozmiaru
      const targetW = oldOffGL.width;
      const targetH = oldOffGL.height;
      newOffGL = newBg.render(targetW, targetH, {
         backgroundStarBrightness: 0.0,
-        backgroundStarDensity: 0.05,
         backgroundColor: [0, 0, 0],
-        nebulaDensity: 0.2,
-        nebulaLayers: 3,
+        nebulaDensity: 0.4,
+        nebulaLayers: 2,
      });
   }
 }
@@ -125,10 +129,7 @@ export function drawSpaceBg(mainCtx, camera){
   const bgW = oldOffGL.width;
   const bgH = oldOffGL.height;
 
-  // Paralaksa
-  let offsetX = 0;
-  let offsetY = 0;
-
+  // --- Obliczanie Paralaksy ---
   if (parallaxState.enabled && camera) {
     const smooth = Math.max(0, Math.min(1, parallaxState.smoothing));
     const camX = camera.x || 0;
@@ -144,52 +145,39 @@ export function drawSpaceBg(mainCtx, camera){
       parallaxState.offsetX += (parallaxState.targetX - parallaxState.offsetX) * smooth;
       parallaxState.offsetY += (parallaxState.targetY - parallaxState.offsetY) * smooth;
     }
-    offsetX = parallaxState.offsetX;
-    offsetY = parallaxState.offsetY;
   }
 
-  const shiftX = wrapOffset(offsetX, bgW);
-  const shiftY = wrapOffset(offsetY, bgH);
+  // --- MATEMATYKA NIESKOŃCZONEGO TŁA ---
+  // Obliczamy przesunięcie modulo, żeby wiedzieć gdzie zacząć rysować
+  // Używamy ((a % n) + n) % n, żeby modulo działało poprawnie dla liczb ujemnych
+  let startX = -((parallaxState.offsetX % bgW + bgW) % bgW);
+  let startY = -((parallaxState.offsetY % bgH + bgH) % bgH);
 
-  // Rysowanie wyśrodkowane z paralaksą
-  const centerX = screenW / 2;
-  const centerY = screenH / 2;
-  const drawX = centerX - (bgW / 2) - shiftX;
-  const drawY = centerY - (bgH / 2) - shiftY;
+  // Jeśli startX/Y jest zbyt blisko krawędzi, może powstać dziura,
+  // więc upewniamy się, że pokrywamy cały ekran
+  
+  // Rysujemy kafelki aż pokryjemy cały ekran
+  for (let x = startX; x < screenW; x += bgW) {
+    for (let y = startY; y < screenH; y += bgH) {
+      
+      // 1. Rysuj STARE tło (bazowe)
+      // floor() zapobiega szparom między kafelkami przy skalowaniu
+      mainCtx.drawImage(oldOffGL, Math.floor(x), Math.floor(y), Math.ceil(bgW)+1, Math.ceil(bgH)+1);
 
-  // Pętla do pokrycia ekranu (safety wrap)
-  for (let x = -1; x <= 0; x++) {
-      for (let y = -1; y <= 0; y++) {
-          let dx = drawX + (x * bgW);
-          let dy = drawY + (y * bgH);
-          
-          if (dx < -bgW) dx += bgW;
-          if (dx > screenW) dx -= bgW;
-          if (dy < -bgH) dy += bgH;
-          if (dy > screenH) dy -= bgH;
-
-          // 1. Stare tło
-          mainCtx.drawImage(oldOffGL, dx, dy);
-
-          // 2. Nowe tło (nakładka)
-          if (newOffGL && opts.newSystemEnabled) {
-              mainCtx.save();
-              mainCtx.globalCompositeOperation = 'screen'; 
-              mainCtx.globalAlpha = opts.newSystemOpacity;
-              mainCtx.drawImage(newOffGL, dx, dy);
-              mainCtx.restore();
-          }
+      // 2. Rysuj NOWE tło (nakładka)
+      if (newOffGL && opts.newSystemEnabled) {
+          mainCtx.save();
+          // Tryb 'screen' dodaje jasność pikseli (czarny jest przezroczysty)
+          mainCtx.globalCompositeOperation = 'screen'; 
+          mainCtx.globalAlpha = opts.newSystemOpacity;
+          mainCtx.drawImage(newOffGL, Math.floor(x), Math.floor(y), Math.ceil(bgW)+1, Math.ceil(bgH)+1);
+          mainCtx.restore();
       }
+    }
   }
 }
 
-function wrapOffset(value, max) {
-  let val = value % max;
-  if (val > max / 2) val -= max;
-  if (val < -max / 2) val += max;
-  return val;
-}
-
+// Helpers
 export function setBgOptions(partial){ Object.assign(opts, partial || {}); }
 export function setBgSeed(seed){ opts.seed = String(seed); }
 export function setParallaxOptions(partial){
