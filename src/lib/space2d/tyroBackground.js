@@ -4,20 +4,20 @@ import Scene from './scene.js';
 import * as random from './random.js';
 import { Space2D } from './index.ts'; 
 
-// Skala 1.0 = pełna jakość
 const TILE_SCALE = 1.0; 
 
 let finalCanvas = null; 
+let newBg = null;
 
 let opts = {
+  // Wyłączamy wszystko ze starego systemu dla testu
   renderPointStars: false,
-  renderStars: true,
-  renderNebulae: true,
+  renderStars: false,
+  renderNebulae: false,
   renderSun: false,
   shortScale: true,
   seed: 'statki',
   
-  // TEST: Tylko nowy system
   newSystemEnabled: true,
   newSystemOpacity: 1.0, 
 };
@@ -49,61 +49,78 @@ function ensureFinalCanvas(w, h){
   return false;
 }
 
-export function initSpaceBg(seedStr = null){
-  console.log('[TyroBackground] Generowanie tła (TRYB TESTOWY: TYLKO NOWE MGŁAWICE)...');
-  const needResize = ensureFinalCanvas(innerWidth, innerHeight);
-  
-  if (!needResize && finalCanvas.dataset.seed === seedStr) {
-      return true;
+// Helper: Generuje losowe "lampy" (gwiazdy), które oświetlą mgławicę
+function generateLightingStars(count) {
+  const stars = [];
+  for(let i=0; i<count; i++) {
+    stars.push({
+      // Rozrzucamy je w 3D
+      position: [Math.random()*4000 - 2000, Math.random()*4000 - 2000, Math.random()*500],
+      // Jasny, biało-niebieski kolor światła
+      color: [1.5, 1.5, 2.0],
+      // Parametry fizyczne dla shadera
+      falloff: 1,
+      diffractionSpikeFalloff: 0,
+      diffractionSpikeScale: 0
+    });
   }
+  return stars;
+}
 
+export function initSpaceBg(seedStr = null){
+  console.log('[TyroBackground] Generowanie tła...');
+  ensureFinalCanvas(innerWidth, innerHeight);
+  
   opts.seed = String(seedStr ?? (window.SUN?.seed ?? random.generateRandomSeed()));
-  finalCanvas.dataset.seed = opts.seed;
-
+  
   const w = finalCanvas.width;
   const h = finalCanvas.height;
   const ctx = finalCanvas.getContext('2d');
 
-  // --- KROK 1: CZYŚCIMY NA CZARNO (Zamiast starych gwiazd) ---
+  // 1. ZAMALOWANIE TŁA NA CZARNO (Zabija stare mgławice z CSS)
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, w, h);
-  console.log('[TyroBackground] Stary system WYŁĄCZONY. Tło jest czarne.');
 
-  // --- KROK 2: Generowanie Nowego Systemu ---
   if (opts.newSystemEnabled) {
-    console.log('[TyroBackground] Generowanie Space2D...');
-    const space2D = new Space2D();
+    if (!newBg) newBg = new Space2D();
     
-    // Generujemy mgławice
-    const newCanvas = space2D.render(w, h, {
+    // Generujemy listę gwiazd-źródeł światła
+    const lightSources = generateLightingStars(50);
+
+    console.log('[TyroBackground] Generowanie Space2D z oświetleniem...');
+    const newCanvas = newBg.render(w, h, {
+      // Przekazujemy gwiazdy, żeby mgławica miała co odbijać!
+      stars: lightSources,
+      
+      // Wyłączamy renderowanie samych kropek gwiazd (chcemy tylko mgławicę)
       backgroundStarBrightness: 0.0, 
       backgroundStarDensity: 0.0,
-      backgroundColor: [0, 0, 0], // Czarne tło mgławic
+      backgroundColor: [0, 0, 0], 
       
-      // Parametry testowe - bardzo widoczne
-      nebulaDensity: 0.5,     
-      nebulaLayers: 2,        
+      // Konfiguracja wyglądu mgławicy (z wwwtyro demo)
+      nebulaDensity: 0.4,     
+      nebulaLayers: 3,        
       nebulaFalloff: 3.0,     
-      // Bardzo jaskrawe kolory dla testu (fiolet/róż)
-      nebulaEmissiveLow: [0.2, 0.0, 0.2], 
-      nebulaEmissiveHigh: [0.8, 0.2, 0.8], 
+      
+      // Kolory - fiolet/niebieski
+      nebulaEmissiveLow: [0.0, 0.0, 0.1], 
+      nebulaEmissiveHigh: [0.3, 0.1, 0.4], 
+      
+      // Kluczowe: ALBEDO (odbicie światła gwiazd)
+      nebulaAlbedoLow: [0.1, 0.1, 0.3],
+      nebulaAlbedoHigh: [0.8, 0.8, 1.0],
     });
 
-    // --- KROK 3: Rysowanie ---
-    // Używamy 'source-over', żeby po prostu wkleić obrazek (bez mieszania)
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = 1.0;
+    // Rysujemy wynik
     ctx.drawImage(newCanvas, 0, 0);
-    
-    console.log('[TyroBackground] Narysowano nowe mgławice na płótnie.');
-  } else {
-      console.warn('[TyroBackground] Nowy system jest wyłączony w opcjach!');
+    console.log('[TyroBackground] Gotowe.');
   }
   
   return true;
 }
 
 export function resizeSpaceBg(w, h){
+  // Reset paralaksy przy resize
   parallaxState.offsetX = 0;
   parallaxState.offsetY = 0;
   parallaxState.targetX = 0;
@@ -122,6 +139,7 @@ export function drawSpaceBg(mainCtx, camera){
   const bgW = finalCanvas.width;
   const bgH = finalCanvas.height;
 
+  // Paralaksa
   if (parallaxState.enabled && camera) {
     const smooth = Math.max(0, Math.min(1, parallaxState.smoothing));
     const camX = camera.x || 0;
@@ -139,11 +157,13 @@ export function drawSpaceBg(mainCtx, camera){
     }
   }
 
+  // Kafelkowanie bez szwów
   const shiftX = -((parallaxState.offsetX % bgW + bgW) % bgW);
   const shiftY = -((parallaxState.offsetY % bgH + bgH) % bgH);
 
   for (let x = shiftX; x < screenW; x += bgW) {
     for (let y = shiftY; y < screenH; y += bgH) {
+      // Używamy Math.ceil/floor żeby uniknąć linii między kaflami
       mainCtx.drawImage(finalCanvas, Math.floor(x), Math.floor(y), Math.ceil(bgW)+1, Math.ceil(bgH)+1);
     }
   }
