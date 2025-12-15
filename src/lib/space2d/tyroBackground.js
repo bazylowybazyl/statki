@@ -8,7 +8,6 @@ let finalCanvas = null;
 let newBg = null;
 
 // KOLORY GWIAZD TYRO (Black Body Radiation)
-// To jest ta paleta, która daje naturalny wygląd
 const blackBodyColors = [
   [1.0, 0.0401, 0.003], [1.0, 0.0631, 0.003], [1.0, 0.086, 0.003], [1.0, 0.1085, 0.003], [1.0, 0.1303, 0.003],
   [1.0, 0.2097, 0.003], [1.0, 0.2272, 0.003], [1.0, 0.2484, 0.0061], [1.0, 0.2709, 0.0153], [1.0, 0.293, 0.0257],
@@ -25,29 +24,52 @@ const blackBodyColors = [
   [0.5394, 0.6666, 1.0], [0.5357, 0.664, 1.0], [0.5322, 0.6615, 1.0], [0.5287, 0.659, 1.0], [0.5253, 0.6566, 1.0]
 ];
 
-// --- PANEL STEROWANIA ---
+// --- PANEL STEROWANIA (KONSOLA) ---
 window.Nebula = {
-  // Ziarno losowości (zmiana tego zmienia cały układ)
+  resolution: 2048,
+  
+  // Parametry "Tyro":
+  // Domyślny falloff ~600 daje ostre, nitkowate chmury.
+  // Zmniejsz do 100-200, jeśli chcesz grubsze.
+  falloffBase: 256.0,
+  falloffRange: 1024.0, 
+  
+  density: 50.0, // Wartość bazowa (dzielona przez layers)
+  layers: 60,    // Ilość warstw
+  
+  scale: 0.0014, // Zoom (im mniej tym większe)
+  
+  // Seed
   seed: 'statki',
-
-  // Rozdzielczość (2048 to standard, 1024 szybkie)
-  resolution: 2048, 
-
-  // Przerysowanie
+  
   redraw: () => {
     console.log(`[Nebula] Przerysowywanie (${window.Nebula.resolution}px)...`);
     setTimeout(() => initSpaceBg(window.Nebula.seed), 10);
   },
-  
   randomize: () => {
-    const newSeed = Math.random().toString(36).slice(2, 12);
+    const newSeed = Math.random().toString(36).slice(2, 8);
     console.log(`[Nebula] Nowy seed: "${newSeed}"`);
     window.Nebula.seed = newSeed;
     initSpaceBg(newSeed);
+  },
+  
+  // PRESETY DO TESTÓW
+  presetThick: () => {
+    window.Nebula.falloffBase = 50;
+    window.Nebula.falloffRange = 100;
+    window.Nebula.density = 80;
+    window.Nebula.redraw();
+  },
+  presetStringy: () => {
+    window.Nebula.falloffBase = 256;
+    window.Nebula.falloffRange = 1024;
+    window.Nebula.density = 50;
+    window.Nebula.redraw();
   }
 };
 
 let opts = {
+  renderPointStars: false, renderStars: false, renderNebulae: false,
   newSystemEnabled: true, newSystemOpacity: 1.0, seed: 'statki'
 };
 
@@ -70,48 +92,42 @@ function ensureFinalCanvas(w, h){
 
 export function initSpaceBg(seedStr = null){
   ensureFinalCanvas(innerWidth, innerHeight);
+  
   opts.seed = String(seedStr ?? window.Nebula.seed);
   window.Nebula.seed = opts.seed;
 
   const w = finalCanvas.width;
   const h = finalCanvas.height;
   const ctx = finalCanvas.getContext('2d');
+  
   const prng = Alea(opts.seed);
 
-  // 1. TŁO (Czarne, żeby nie przebijał CSS)
-  ctx.fillStyle = '#000000';
+  // TŁO
+  ctx.fillStyle = '#000000'; 
   ctx.fillRect(0, 0, w, h);
 
   if (opts.newSystemEnabled) {
     if (!newBg) newBg = new Space2D();
     
-    // --- PORT LOGIKI Z main.ts ---
-    
-    // Skala szumu (0.001 - 0.002)
-    const scale = 0.001 + prng() * 0.001;
-
-    const sceneOffset = [prng() * 10000000 - 5000000, prng() * 10000000 - 5000000];
-    // Centrowanie
-    sceneOffset[0] -= 0.5 * w;
-    sceneOffset[1] -= 0.5 * h;
-
+    // PARAMETRY
+    const scale = window.Nebula.scale + prng() * 0.001;
+    const layers = window.Nebula.layers;
     const near = 0;
     const far = 500;
     
-    // TYRO: Dużo warstw (w demo jest 1000, my dajemy 100 dla wydajności - to i tak dużo)
-    // Jeśli chcesz "ultra" jakość jak w demo, możesz tu wpisać 500 lub 1000, ale render potrwa.
-    const layers = 100; 
+    const sceneOffset = [prng() * 10000000 - 5000000, prng() * 10000000 - 5000000];
+    sceneOffset[0] -= 0.5 * w;
+    sceneOffset[1] -= 0.5 * h;
 
-    // Generowanie gwiazd z palety Black Body
+    // GENEROWANIE GWIAZD (Tyro Style)
     const stars = [];
     const nStars = Math.min(64, 1 + Math.round(prng() * (w * h) * scale * scale));
 
     for (let i = 0; i < nStars; i++) {
-        // Losuj kolor z palety
+        // Losuj kolor z palety Black Body
         const color = blackBodyColors[Math.floor(prng() * blackBodyColors.length)].slice();
-        const intensity = 0.5 * prng(); // Jasność
+        const intensity = 0.5 * prng(); 
         
-        // Mnożymy kolor przez intensywność
         color[0] *= intensity;
         color[1] *= intensity;
         color[2] *= intensity;
@@ -128,42 +144,41 @@ export function initSpaceBg(seedStr = null){
             diffractionSpikeScale: 4 + 4 * prng(),
         });
     }
-
-    // Tło (też z palety, ale bardzo ciemne)
+    
+    // TŁO KOSMOSU (Kolorowe)
     const backgroundColor = blackBodyColors[Math.floor(prng() * blackBodyColors.length)].slice();
     const bgInt = 0.5 * prng();
     backgroundColor[0] *= bgInt; backgroundColor[1] *= bgInt; backgroundColor[2] *= bgInt;
 
-    console.log(`[Nebula] Render (Seed: ${opts.seed}, Scale: ${scale.toFixed(5)}, Layers: ${layers})`);
-
     const newCanvas = newBg.render(w, h, {
       stars,
       scale,
-      offset: sceneOffset, 
+      offset: sceneOffset,
       backgroundColor,
       
-      // Parametry mgławicy DOKŁADNIE z main.ts
+      // LOGIKA PARAMETRÓW Z MAIN.TS
       nebulaLacunarity: 1.8 + 0.2 * prng(),
       nebulaGain: 0.5,
-      nebulaAbsorption: 1.0, // Czarne dziury w chmurach
-      nebulaFalloff: 256 + prng() * 1024, // To daje te ostre, poskręcane kształty!
+      nebulaAbsorption: 1.0,
+      
+      // Falloff z konsoli (baza + losowość)
+      nebulaFalloff: window.Nebula.falloffBase + prng() * window.Nebula.falloffRange,
+      
       nebulaNear: near,
       nebulaFar: far,
       nebulaLayers: layers,
-      nebulaDensity: (50 + prng() * 100) / layers, // Gęstość skalowana warstwami
       
-      // ALBEDO (Kolor chmur) - losowe RGB, to one dają kolory!
+      // Gęstość skalowana warstwami
+      nebulaDensity: (window.Nebula.density + prng() * 100) / layers,
+      
+      // Albedo - klucz do kolorów
       nebulaAlbedoLow: [prng(), prng(), prng()],
       nebulaAlbedoHigh: [prng(), prng(), prng()],
       nebulaAlbedoScale: prng() * 8,
       
-      // EMISJA WYŁĄCZONA (czern) - chmury świecą tylko odbiciem
+      // Brak emisji
       nebulaEmissiveLow: [0, 0, 0],
       nebulaEmissiveHigh: [0, 0, 0],
-      
-      // Background params (defaults from Tyro)
-      backgroundOctaves: 8,
-      nebulaOctaves: 8
     });
     
     ctx.globalCompositeOperation = 'source-over'; 
