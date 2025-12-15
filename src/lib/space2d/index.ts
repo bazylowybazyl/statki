@@ -1,8 +1,6 @@
 import REGL from "regl";
 import Alea from "alea";
 
-// --- ORYGINALNE SZADERY TYRO (Wbudowane) ---
-
 const commonVert = `
 precision highp float;
 attribute vec2 position;
@@ -12,7 +10,6 @@ void main() {
   gl_Position = vec4(position, 0, 1);
 }`;
 
-// Funkcje szumu (Simplex Noise) - identyczne jak w repo
 const noiseChunk = `
 vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
 vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
@@ -54,7 +51,6 @@ float cnoise(vec3 P) {
   return 2.2 * n_xyz;
 }`;
 
-// Oryginalny background.fs
 const backgroundFrag = `
 precision highp float;
 varying vec2 uv;
@@ -62,9 +58,7 @@ uniform vec3 color;
 uniform vec2 offset;
 uniform float depth, scale, density, falloff, lacunarity, gain;
 uniform int octaves;
-
 ${noiseChunk}
-
 float fbm(vec3 p) {
   float amplitude = 1.0; float frequency = 1.0; float sum = 0.0; float q = 0.0;
   for (int i = 0; i < 16; i++) {
@@ -76,26 +70,22 @@ float fbm(vec3 p) {
   }
   return sum / q;
 }
-
 void main() {
   vec3 p = vec3(scale * (gl_FragCoord.xy + offset), 0.002 * depth);
   float d = density * exp(-falloff * (0.5 + 0.5 * fbm(p)));
   gl_FragColor = vec4(d * color, 1.0);
 }`;
 
-// Oryginalny nebula.fs - TO JEST KLUCZ DO WYGLĄDU
 const nebulaFrag = `
 precision highp float;
 varying vec2 uv;
-uniform sampler2D starPositionTexture;
-uniform sampler2D starColorTexture;
+uniform sampler2D starPositionTexture, starColorTexture;
 uniform vec3 emissiveHigh, emissiveLow, albedoHigh, albedoLow, albedoOffset, emissiveOffset;
 uniform vec2 offset;
 uniform float scale, depth, density, falloff, absorption, gain, lacunarity, albedoScale, emissiveScale;
+uniform float lightFalloff; // <--- NOWY PARAMETR
 uniform int octaves, nStars;
-
 ${noiseChunk}
-
 float fbm(vec3 p) {
   float amplitude = 1.0; float frequency = 1.0; float sum = 0.0; float q = 0.0;
   for (int i = 0; i < 32; i++) {
@@ -107,7 +97,6 @@ float fbm(vec3 p) {
   }
   return sum / q;
 }
-
 void main() {
   vec3 p = vec3(scale * (gl_FragCoord.xy + offset), 0.002 * depth);
   float d = fbm(p);
@@ -116,23 +105,15 @@ void main() {
   d *= density;
 
   vec3 totalLight = vec3(0.0);
-
-  // Pętla oświetlenia - dokładnie tak jak w oryginale Tyro
   for (int i = 0; i < 256; i++) {
     if (i >= nStars) break;
     vec2 xy = vec2((float(i) + 0.5) / float(nStars), 0.5);
     vec3 pos = texture2D(starPositionTexture, xy).rgb;
-    
     vec3 dl = vec3(scale * pos.xy, 0.002 * pos.z) - p;
-    vec3 ndl = normalize(dl);
-    vec3 ndeye = vec3(0, 0, -1);
+    float distSq = dot(dl, dl);
     
-    // Rozpraszanie kierunkowe (chmura świeci mocniej od strony gwiazdy)
-    float light = clamp(dot(ndl, ndeye), 0.0, 1.0);
-    
-    // Fizyczny spadek jasności z kwadratem odległości
-    // Tyro używał prostego dzielenia, co daje bardzo jasne centra i szybki spadek
-    light = light / (dot(dl, dl)); 
+    // Używamy uniforma lightFalloff
+    float light = 1.0 / (1.0 + distSq * lightFalloff); 
     
     totalLight += light * texture2D(starColorTexture, xy).rgb;
   }
@@ -140,7 +121,6 @@ void main() {
   vec3 emissive = mix(emissiveLow, emissiveHigh, abs(cnoise(p * emissiveScale + emissiveOffset)));
   vec3 albedo = mix(albedoLow, albedoHigh, abs(cnoise(p * albedoScale + albedoOffset)));
   
-  // (ŚwiatłoGwiazd * Gęstość * KolorOdbicia) + (Gęstość * KolorWłasny)
   gl_FragColor = vec4(totalLight * d * albedo + d * emissive, d * absorption);
 }`;
 
@@ -153,15 +133,12 @@ void main() { gl_FragColor = texture2D(texture, uv); }`;
 const accumulateFrag = `
 precision highp float;
 varying vec2 uv;
-uniform sampler2D incidentTexture;
-uniform sampler2D lightTexture;
+uniform sampler2D incidentTexture, lightTexture;
 void main() {
   vec4 incident = texture2D(incidentTexture, uv);
   vec4 light = texture2D(lightTexture, uv);
   gl_FragColor = vec4(incident.rgb * exp(-light.a) + light.rgb, 1.0);
 }`;
-
-// --- KLASA Space2D ---
 
 export class Space2D {
   private canvas: HTMLCanvasElement;
@@ -177,84 +154,33 @@ export class Space2D {
 
   constructor() {
     this.canvas = document.createElement("canvas");
-    
     this.regl = REGL({
       canvas: this.canvas,
       attributes: { preserveDrawingBuffer: true, alpha: false, depth: false },
-      // float jest bezpieczniejszy i daje lepszą jakość dla HDR niż half float
       extensions: ["OES_texture_float", "WEBGL_color_buffer_float"],
       optionalExtensions: ["OES_texture_float_linear"]
     });
+    const common = { vert: commonVert, attributes: { position: [-4,-4,4,-4,0,4] }, count: 3, depth: { enable: false }, viewport: this.regl.prop("viewport") };
 
-    const common = { 
-      vert: commonVert, 
-      attributes: { position: [-4,-4,4,-4,0,4] }, 
-      count: 3, 
-      depth: { enable: false }, 
-      viewport: this.regl.prop("viewport") 
-    };
-
-    this.renderBackground = this.regl({ 
-      ...common, 
-      frag: backgroundFrag, 
-      uniforms: {
+    this.renderBackground = this.regl({ ...common, frag: backgroundFrag, uniforms: {
         depth: this.regl.prop("depth"), color: this.regl.prop("color"), scale: this.regl.prop("scale"),
         lacunarity: this.regl.prop("lacunarity"), gain: this.regl.prop("gain"), octaves: this.regl.prop("octaves"),
         density: this.regl.prop("density"), falloff: this.regl.prop("falloff"), offset: this.regl.prop("offset"),
-      }, 
-      framebuffer: this.regl.prop("framebuffer") 
-    });
+      }, framebuffer: this.regl.prop("framebuffer") });
 
-    this.renderNebula = this.regl({ 
-      ...common, 
-      frag: nebulaFrag, 
-      uniforms: {
-        depth: this.regl.prop("depth"), 
-        starPositionTexture: this.regl.prop("starPositionTexture"), 
-        starColorTexture: this.regl.prop("starColorTexture"), 
-        nStars: this.regl.prop("nStars"),
-        scale: this.regl.prop("scale"), 
-        absorption: this.regl.prop("absorption"), 
-        emissiveLow: this.regl.prop("emissiveLow"), 
-        emissiveHigh: this.regl.prop("emissiveHigh"),
-        emissiveOffset: this.regl.prop("emissiveOffset"), 
-        emissiveScale: this.regl.prop("emissiveScale"), 
-        albedoLow: this.regl.prop("albedoLow"), 
-        albedoHigh: this.regl.prop("albedoHigh"),
-        albedoOffset: this.regl.prop("albedoOffset"), 
-        albedoScale: this.regl.prop("albedoScale"), 
-        lacunarity: this.regl.prop("lacunarity"), 
-        gain: this.regl.prop("gain"),
-        octaves: this.regl.prop("octaves"), 
-        density: this.regl.prop("density"), 
-        falloff: this.regl.prop("falloff"), 
-        offset: this.regl.prop("offset"),
-      }, 
-      blend: { enable: true, func: { src: "one", dst: "one" } }, 
-      framebuffer: this.regl.prop("framebuffer") 
-    });
+    this.renderNebula = this.regl({ ...common, frag: nebulaFrag, uniforms: {
+        depth: this.regl.prop("depth"), starPositionTexture: this.regl.prop("starPositionTexture"), starColorTexture: this.regl.prop("starColorTexture"), nStars: this.regl.prop("nStars"),
+        scale: this.regl.prop("scale"), absorption: this.regl.prop("absorption"), emissiveLow: this.regl.prop("emissiveLow"), emissiveHigh: this.regl.prop("emissiveHigh"),
+        emissiveOffset: this.regl.prop("emissiveOffset"), emissiveScale: this.regl.prop("emissiveScale"), albedoLow: this.regl.prop("albedoLow"), albedoHigh: this.regl.prop("albedoHigh"),
+        albedoOffset: this.regl.prop("albedoOffset"), albedoScale: this.regl.prop("albedoScale"), lacunarity: this.regl.prop("lacunarity"), gain: this.regl.prop("gain"),
+        octaves: this.regl.prop("octaves"), density: this.regl.prop("density"), falloff: this.regl.prop("falloff"), offset: this.regl.prop("offset"),
+        lightFalloff: this.regl.prop("lightFalloff"), // PRZEKAZUJEMY PARAMETR
+      }, blend: { enable: true, func: { src: "one", dst: "one" } }, framebuffer: this.regl.prop("framebuffer") });
 
-    this.paste = this.regl({ 
-      ...common, 
-      frag: pasteFrag, 
-      uniforms: { texture: this.regl.prop("texture") }, 
-      framebuffer: this.regl.prop("framebuffer") 
-    });
-    
-    this.accumulate = this.regl({ 
-      ...common, 
-      frag: accumulateFrag, 
-      uniforms: { 
-        incidentTexture: this.regl.prop("incidentTexture"), 
-        lightTexture: this.regl.prop("lightTexture") 
-      }, 
-      framebuffer: this.regl.prop("framebuffer") 
-    });
+    this.paste = this.regl({ ...common, frag: pasteFrag, uniforms: { texture: this.regl.prop("texture") }, framebuffer: this.regl.prop("framebuffer") });
+    this.accumulate = this.regl({ ...common, frag: accumulateFrag, uniforms: { incidentTexture: this.regl.prop("incidentTexture"), lightTexture: this.regl.prop("lightTexture") }, framebuffer: this.regl.prop("framebuffer") });
 
-    this.pingpong = [
-      this.regl.framebuffer({ colorType: "float", depth: false }),
-      this.regl.framebuffer({ colorType: "float", depth: false }),
-    ];
+    this.pingpong = [ this.regl.framebuffer({ colorType: "float", depth: false }), this.regl.framebuffer({ colorType: "float", depth: false }) ];
     this.fbLight = this.regl.framebuffer({ colorType: "float", depth: false });
     this.starPositionTexture = this.regl.texture({ type: "float", format: "rgb" });
     this.starColorTexture = this.regl.texture({ type: "float", format: "rgb" });
@@ -266,156 +192,67 @@ export class Space2D {
       this.pingpong[0].resize(width, height); this.pingpong[1].resize(width, height); this.fbLight.resize(width, height);
     }
     const viewport = { x: 0, y: 0, width, height };
-
     this.regl.clear({ color: [0,0,0,1], framebuffer: this.pingpong[0] });
     this.regl.clear({ color: [0,0,0,0], framebuffer: this.fbLight });
     this.regl.clear({ color: [0,0,0,0], framebuffer: this.pingpong[1] });
 
-    // Scalanie opcji - naprawia błąd "bad data for uniform"
     const opts = { ...renderConfigDefaults(), ...options };
 
-    // --- GENEROWANIE GWIAZD (ŹRÓDEŁ ŚWIATŁA) ---
-    // Jeśli nie podano gwiazd, generujemy je tak, żeby ładnie oświetlały mgławicę.
-    // Oryginalne demo Tyro generuje ich dużo w losowych kolorach.
-    let stars = options.stars;
-    if (!stars || stars.length === 0) {
-       stars = [];
-       // Generujemy 40 jasnych gwiazd, które rozświetlą gaz
-       for(let i=0; i<40; i++) {
-           stars.push({ 
-               // Pozycja dopasowana do skali 0.001 (widok domyślny)
-               position: [
-                   (Math.random() - 0.5) * 3000, 
-                   (Math.random() - 0.5) * 3000, 
-                   (Math.random() - 0.5) * 1000
-               ], 
-               // Jasne, pastelowe kolory (niebieski, pomarańcz, biały)
-               color: [
-                   0.8 + Math.random() * 0.5, 
-                   0.8 + Math.random() * 0.5, 
-                   0.8 + Math.random() * 1.0
-               ] 
-           });
-       }
+    let stars = opts.stars || [];
+    if (stars.length === 0) {
+       for(let i=0; i<50; i++) stars.push({ 
+           position: [Math.random()*4000-2000, Math.random()*4000-2000, Math.random()*500], 
+           color: [0.8, 0.8, 1.2]
+       });
     }
 
     this.starPositionTexture({ data: stars.flatMap((s:any)=>s.position), width: stars.length, height: 1, type: "float", format: "rgb" });
     this.starColorTexture({ data: stars.flatMap((s:any)=>s.color), width: stars.length, height: 1, type: "float", format: "rgb" });
 
-    // 1. TŁO
     this.renderBackground({
-      // Przekazujemy wszystkie parametry z opts (scalonych), 
-      // żeby shadery nie narzekały na brak danych (np. 'octaves')
-      color: opts.backgroundColor,
-      depth: opts.backgroundDepth,
-      resolution: [width, height],
-      offset: opts.offset,
-      lacunarity: opts.backgroundLacunarity,
-      gain: opts.backgroundGain,
-      density: opts.backgroundDensity,
-      octaves: opts.backgroundOctaves,
-      falloff: opts.backgroundFalloff,
-      scale: opts.backgroundScale,
-      
-      viewport,
-      framebuffer: this.pingpong[0],
+      color: opts.backgroundColor, depth: opts.backgroundDepth, resolution: [width, height], offset: opts.offset,
+      lacunarity: opts.backgroundLacunarity, gain: opts.backgroundGain, density: opts.backgroundDensity,
+      octaves: opts.backgroundOctaves, falloff: opts.backgroundFalloff, scale: opts.backgroundScale,
+      viewport, framebuffer: this.pingpong[0],
     });
     
     this.paste({ resolution: [width, height], texture: this.pingpong[0], viewport });
 
-    // 2. MGŁAWICE
     let pingIndex = 0;
-    const layers = opts.nebulaLayers || 3;
-    
-    for (let i = 0; i < layers; i++) {
-      const depth = opts.nebulaFar - (i * (opts.nebulaFar - opts.nebulaNear)) / Math.max(1, layers - 1);
-      
+    for (let i = 0; i < (opts.nebulaLayers || 3); i++) {
+      const depth = opts.nebulaFar - (i * (opts.nebulaFar - opts.nebulaNear)) / Math.max(1, (options.nebulaLayers||3) - 1);
       this.regl.clear({ color: [0,0,0,0], framebuffer: this.fbLight });
-      
       this.renderNebula({
-        // Przekazujemy komplet parametrów z opts
-        depth,
-        offset: opts.offset,
-        scale: opts.scale, 
-        
-        starPositionTexture: this.starPositionTexture,
-        starColorTexture: this.starColorTexture,
-        nStars: stars.length,
-        
-        absorption: opts.nebulaAbsorption,
-        lacunarity: opts.nebulaLacunarity,
-        gain: opts.nebulaGain,
-        albedoLow: opts.nebulaAlbedoLow,
-        albedoHigh: opts.nebulaAlbedoHigh,
-        albedoOffset: opts.nebulaAlbedoOffset,
-        albedoScale: opts.nebulaAlbedoScale,
-        emissiveLow: opts.nebulaEmissiveLow,
-        emissiveHigh: opts.nebulaEmissiveHigh,
-        emissiveOffset: opts.nebulaEmissiveOffset,
-        emissiveScale: opts.nebulaEmissiveScale,
-        density: opts.nebulaDensity,
-        octaves: opts.nebulaOctaves,
-        falloff: opts.nebulaFalloff,
-        
-        viewport,
-        framebuffer: this.fbLight,
+        depth, offset: opts.offset, scale: opts.scale, starPositionTexture: this.starPositionTexture, starColorTexture: this.starColorTexture, nStars: stars.length,
+        absorption: opts.nebulaAbsorption, lacunarity: opts.nebulaLacunarity, gain: opts.nebulaGain, albedoLow: opts.nebulaAlbedoLow,
+        albedoHigh: opts.nebulaAlbedoHigh, albedoOffset: opts.nebulaAlbedoOffset, albedoScale: opts.nebulaAlbedoScale, emissiveLow: opts.nebulaEmissiveLow,
+        emissiveHigh: opts.nebulaEmissiveHigh, emissiveOffset: opts.nebulaEmissiveOffset, emissiveScale: opts.nebulaEmissiveScale, density: opts.nebulaDensity,
+        octaves: opts.nebulaOctaves, falloff: opts.nebulaFalloff,
+        lightFalloff: opts.lightFalloff, // PRZEKAZUJEMY DO SHADERA
+        viewport, framebuffer: this.fbLight,
       });
-
-      this.accumulate({
-        incidentTexture: this.pingpong[pingIndex],
-        lightTexture: this.fbLight,
-        resolution: [width, height],
-        viewport,
-        framebuffer: this.pingpong[1 - pingIndex],
-      });
+      this.accumulate({ incidentTexture: this.pingpong[pingIndex], lightTexture: this.fbLight, resolution: [width, height], viewport, framebuffer: this.pingpong[1 - pingIndex] });
       pingIndex = 1 - pingIndex;
     }
 
     this.regl.clear({ color: [0,0,0,1] });
     this.paste({ texture: this.pingpong[pingIndex], viewport });
-    
     return this.canvas;
   }
 }
 
-// Domyślna konfiguracja (zgodna z demo Tyro)
 function renderConfigDefaults() {
   return {
     scale: 0.001, 
     offset: [0, 0],
-    
-    // Tło (bardzo ciemne, żeby mgławice się wybijały)
-    backgroundColor: [0.01, 0.01, 0.02],
-    backgroundDepth: 137,
-    backgroundLacunarity: 2,
-    backgroundGain: 0.5,
-    backgroundDensity: 0.8,
-    backgroundOctaves: 8,
-    backgroundFalloff: 4,
-    backgroundScale: 0.003,
-    
-    nebulaNear: 0,
-    nebulaFar: 1000,
-    nebulaLayers: 3,
-    nebulaAbsorption: 0.5,
-    nebulaLacunarity: 2.2,
-    nebulaDensity: 0.5,
-    nebulaGain: 0.6,
-    nebulaOctaves: 8,
-    nebulaFalloff: 2.5,
-    
-    // Emisja (fiolety/róże)
-    nebulaEmissiveLow: [0.1, 0.0, 0.2],
-    nebulaEmissiveHigh: [0.5, 0.2, 0.8],
-    nebulaEmissiveOffset: [0, 0, 0],
-    nebulaEmissiveScale: 1,
-    
-    // Albedo (odbicie światła gwiazd)
-    nebulaAlbedoLow: [0.2, 0.2, 0.5],
-    nebulaAlbedoHigh: [0.9, 0.9, 1.0],
-    nebulaAlbedoOffset: [0, 0, 0],
-    nebulaAlbedoScale: 1,
-    
+    backgroundColor: [0.01, 0.01, 0.03],
+    backgroundDepth: 137, backgroundLacunarity: 2, backgroundGain: 0.5, backgroundDensity: 0.8,
+    backgroundOctaves: 8, backgroundFalloff: 4, backgroundScale: 0.003,
+    nebulaNear: 0, nebulaFar: 1000, nebulaLayers: 4, nebulaAbsorption: 0.5,
+    nebulaLacunarity: 2.2, nebulaDensity: 0.6, nebulaGain: 0.6, nebulaOctaves: 8, nebulaFalloff: 2.5,
+    nebulaEmissiveLow: [0.1, 0.0, 0.2], nebulaEmissiveHigh: [0.5, 0.2, 0.8], nebulaEmissiveOffset: [0, 0, 0], nebulaEmissiveScale: 1,
+    nebulaAlbedoLow: [0.2, 0.2, 0.5], nebulaAlbedoHigh: [0.9, 0.9, 1.0], nebulaAlbedoOffset: [0, 0, 0], nebulaAlbedoScale: 1,
+    lightFalloff: 400.0, // DOMYŚLNA WARTOŚĆ
     stars: [],
   };
 }
