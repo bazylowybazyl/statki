@@ -43,9 +43,6 @@ function computeZoneScale(body){
   const shrinkMin = 0.4;
   const growMax = 1.12;
 
-  // Maksymalne powiększenie w momencie przecięcia granicy "Orbit of".
-  // Po wejściu do orbity utrzymujemy maksymalną skalę; dopiero oddalanie się
-  // od krawędzi (w stronę przestrzeni międzyplanetarnej) zaczyna ją zmniejszać.
   if (edgeDist <= 0) {
     return growMax;
   }
@@ -83,7 +80,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
 }
 
 (function () {
-  // ======= WSPÓŁDZIELONY RENDERER (kopiuj z proc, drobna adaptacja) =======
+  // ======= WSPÓŁDZIELONY RENDERER =======
   function getSharedRenderer(width = 256, height = 256) {
     if (typeof window !== 'undefined' && typeof window.getSharedRenderer === 'function') {
       return window.getSharedRenderer(width, height);
@@ -145,7 +142,13 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     }
   }
 
-  const assetUrl = (path) => new URL(`./src/assets/${path}`, import.meta.url).href;
+  // --- ZMIANA: NOWA ŚCIEŻKA (do folderu public) ---
+  const assetUrl = (path) => {
+    // Zabezpieczenie przed błędami
+    if (!path || path.includes('undefined')) return '';
+    // Ścieżka absolutna do folderu public/assets
+    return `/assets/${path}`;
+  };
 
   let _sharedTextureLoader = null;
   function getTextureLoader() {
@@ -156,21 +159,39 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     return _sharedTextureLoader;
   }
 
+  // --- ZABEZPIECZENIE: FALLBACK TEXTURE (Szary kwadrat) ---
+  // Jeśli tekstury nie ma, użyjemy tego, zamiast wywalić grę.
+  let _fallbackTexture = null;
+  function getFallbackTexture() {
+    if (_fallbackTexture) return _fallbackTexture;
+    if (typeof THREE === 'undefined') return null;
+    const cvs = document.createElement('canvas');
+    cvs.width = 2; cvs.height = 2;
+    const ctx = cvs.getContext('2d');
+    ctx.fillStyle = '#888888'; // Szary
+    ctx.fillRect(0,0,2,2);
+    _fallbackTexture = new THREE.CanvasTexture(cvs);
+    _fallbackTexture.colorSpace = THREE.SRGBColorSpace;
+    return _fallbackTexture;
+  }
+
   function loadTextureSafe(url, { srgb = false } = {}) {
     return new Promise((resolve) => {
-      if (!url) { resolve(null); return; }
+      if (!url) { resolve(getFallbackTexture()); return; }
       const loader = getTextureLoader();
       if (!loader) { resolve(null); return; }
+      
       loader.load(
         url,
         (tex) => {
           if (tex && srgb) tex.colorSpace = THREE.SRGBColorSpace;
-          resolve(tex || null);
+          resolve(tex);
         },
         undefined,
-        () => {
-          console.warn('Texture missing:', url);
-          resolve(null);
+        (err) => {
+          // Błąd ładowania (np. 404) - zwracamy fallback
+          console.warn('Texture missing (using fallback):', url);
+          resolve(getFallbackTexture());
         }
       );
     });
@@ -179,7 +200,6 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
   const SUN_COLOR = assetUrl('planety/solar/sun/sun_color.jpg');
   const ASTEROIDS_GLB = assetUrl('planety/asteroids/asteroidPack.glb');
 
-  // === Tekstury dla realnego układu (same ścieżki, bez binarek w PR) ===
   const EARTH_NORMAL_EXT = 'jpg';
   const EARTH_SPEC_EXT = 'jpg';
   const TEX = {
@@ -201,8 +221,6 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     uranus:  { color: assetUrl('planety/solar/uranus/uranus_color.jpg'),
                ring:  assetUrl('planety/images/uranus_ring.png') },
     neptune: { color: assetUrl('planety/solar/neptune/neptune_color.jpg') },
-    // pluto opcjonalnie:
-    // pluto: { color:assetUrl('planety/images/plutomap.jpg'), bump:assetUrl('planety/images/plutobump2k.jpg') }
   };
 
   const _planets = [];
@@ -214,7 +232,6 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
   const ASTEROID_SCALE_MIN = 0.01;
   const ASTEROID_SCALE_MAX = 0.035;
 
-  // ======= PLANETA Z TEKSTUR =======
   function sunDirFor(worldX, worldY) {
     const sx = (window.SUN?.x ?? 0) - worldX;
     const sy = (window.SUN?.y ?? 0) - worldY;
@@ -235,7 +252,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       if (!this._name || !TEX[this._name]) this._name = 'earth';
       this._needsInit = true;
       this._initPromise = null;
-      this.spin = 0.01 + Math.random() * 0.02; // prędkość obracania planet
+      this.spin = 0.01 + Math.random() * 0.02; 
     }
 
     async _initThree() {
@@ -268,14 +285,12 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       const renderer = getSharedRenderer();
       const maxAnisotropy = renderer ? renderer.capabilities.getMaxAnisotropy() : 1;
       [colorMap, normalMap, bumpMap, specMap, nightMap, cloudsMap, ringMap].forEach(map => {
-        if (map) {
+        if (map && map !== getFallbackTexture()) {
           map.anisotropy = maxAnisotropy;
-          map.needsUpdate = true; // Dla pewności odświeżamy teksturę
+          map.needsUpdate = true;
         }
       });
-      // === KONIEC WKLEJANIA ===
-  
-    
+
       const vert = `
         varying vec2 vUv; varying vec3 vN;
         void main() {
@@ -313,10 +328,13 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
           gl_FragColor = vec4(dayC.rgb * k * uIntensity, dayC.a);
         }`;
 
-      const useNight = !!nightMap;
+      // Jeśli tekstura nocna to fallback, nie używamy shadera nocnego
+      const realNightMap = (tex.night && nightMap !== getFallbackTexture()) ? nightMap : null;
+      const useNight = !!realNightMap;
+
       const uniforms = {
-        dayTexture:   { value: colorMap || null },
-        nightTexture: { value: nightMap || null },
+        dayTexture:   { value: colorMap || getFallbackTexture() },
+        nightTexture: { value: realNightMap || null },
         uLightDir:    { value: new THREE.Vector3(1, 0, 0) },
         minAmbient:   { value: 0.08 },
         uIntensity:   { value: 1.5 }
@@ -347,23 +365,23 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.mesh.receiveShadow = false;
       this.scene.add(this.mesh);
 
-      if (cloudsMap) {
+      if (cloudsMap && cloudsMap !== getFallbackTexture()) {
         const clouds = new THREE.Mesh(
           new THREE.SphereGeometry(1.008, 64, 48),
           new THREE.MeshBasicMaterial({
-      map: cloudsMap,
-      transparent: true,
-      depthWrite: false,
-      opacity: 0.6, // Zmniejszyłem trochę opacity, możesz poeksperymentować
-      blending: THREE.AdditiveBlending 
-    })
+            map: cloudsMap,
+            transparent: true,
+            depthWrite: false,
+            opacity: 0.6,
+            blending: THREE.AdditiveBlending 
+          })
         );
         clouds.castShadow = false;
         this.scene.add(clouds);
         this.clouds = clouds;
       }
 
-      if (ringMap) {
+      if (ringMap && ringMap !== getFallbackTexture()) {
         ringMap.anisotropy = 4;
         const ringGeo = new THREE.RingGeometry(1.35, 2.4, 256, 1);
         const ringMat = new THREE.MeshBasicMaterial({ map: ringMap, transparent: true, side: THREE.DoubleSide, opacity: 0.7 });
@@ -377,7 +395,6 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     }
 
     render(dt) {
-      // Inicjalizacja Three.js (bez zmian)
       if (this._needsInit && typeof THREE !== "undefined") {
         this._needsInit = false;
         this._initPromise = this._initThree();
@@ -387,16 +404,15 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       }
       if (!this.scene || !this.camera || !this.mesh) return;
 
-      // 1. ZAWSZE aktualizuj matematykę obrotu (żeby nie było skoków przy wznawianiu)
       this.mesh.rotation.y += this.spin * dt;
       if (this.clouds) this.clouds.rotation.y += this.spin * dt * 1.3;
 
-      // --- SYSTEM LOD (z poprzedniego kroku) ---
       const ship = (typeof window !== 'undefined') ? window.ship : null;
+      const camZoom = (typeof window !== 'undefined' && window.camera) ? window.camera.zoom : 1;
       const pos = ship?.pos;
       
       const RES_LOW = 1536;
-      const RES_HIGH = 2048; // 4K jest bardzo ciężkie, ale throttling pomoże
+      const RES_HIGH = 2048; 
       
       if (typeof this.isHighRes === 'undefined') this.isHighRes = false;
 
@@ -418,32 +434,19 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       if (this.canvas.width !== targetRes) {
         this.canvas.width = targetRes;
         this.canvas.height = targetRes;
-        // Reset timera po zmianie rozdzielczości, żeby wymusić natychmiastowe odrysowanie
         this.frameTimer = 100; 
       }
 
-      // --- OPTYMALIZACJA: TEXTURE THROTTLING ---
-      // Jeśli jesteśmy w trybie High Res (4K), ograniczamy odświeżanie tekstury.
-      // 4K texture copy to gigantyczny koszt transferu.
-      
-      // Czas w sekundach między klatkami tekstury.
-      // 0.033 = 30 FPS (wystarczające dla wolno obracającej się planety)
-      // 0.050 = 20 FPS (jeszcze lżej, nadal wygląda ok)
-      const UPDATE_INTERVAL = this.isHighRes ? 0.04 : 0.0; // Low Res robimy co klatkę (jest lekkie), High Res dławimy
+      const UPDATE_INTERVAL = this.isHighRes ? 0.04 : 0.0; 
 
       this.frameTimer = (this.frameTimer || 0) + dt;
 
       if (this.frameTimer < UPDATE_INTERVAL) {
-        // SKIP! Nie rysujemy nowej tekstury, gra użyje starej z canvasa.
-        // To oszczędza 90% pracy CPU/GPU w tej klatce.
         return;
       }
 
-      // Reset timera (zachowując resztkę czasu dla płynności)
       this.frameTimer %= UPDATE_INTERVAL;
-      if (this.frameTimer > 0.1) this.frameTimer = 0; // Safety check
-
-      // --- WŁAŚCIWE RENDEROWANIE (Ciężka praca) ---
+      if (this.frameTimer > 0.1) this.frameTimer = 0; 
       
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r) return;
@@ -462,8 +465,11 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       
       r.render(this.scene, this.camera);
 
-      this.ctx2d.clearRect(0,0,this.canvas.width,this.canvas.height);
-      this.ctx2d.drawImage(r.domElement, 0, 0, this.canvas.width, this.canvas.height);
+      const ctx2d = this.ctx2d;
+      ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      ctx2d.globalCompositeOperation = 'copy';
+      ctx2d.drawImage(r.domElement, 0, 0, this.canvas.width, this.canvas.height);
+      ctx2d.globalCompositeOperation = 'source-over';
     }
 
     draw(ctx, cam) {
@@ -480,7 +486,6 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     }
   }
 
-  // ======= Słońce (zachowujemy prosty shaderowy wygląd z proc lub teksturę) =======
   class Sun3D {
     constructor(pixelSize) {
       this.x = 0; this.y = 0; this.size = pixelSize || 512;
@@ -496,7 +501,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
       this.camera.position.z = 3;
       const tex = await loadTextureSafe(SUN_COLOR, { srgb: true });
-      const matParams = tex ? { map: tex } : { color: 0xffffff };
+      const matParams = (tex && tex !== getFallbackTexture()) ? { map: tex } : { color: 0xffcc00 };
       const mat = new THREE.MeshBasicMaterial(matParams);
       this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1.0, 128, 96), mat);
       this.scene.add(this.mesh);
@@ -532,8 +537,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     }
   }
 
-  // ======= Pas asteroid – kopiuj 1:1 z proceduralnego pliku (geometria instancjonowana) =======
-  // UPROSZCZENIE: użyjemy istniejącego loadera GLTF i rysunku jak w proc.
+  // ======= Pas asteroid (InstancedMesh) =======
   class AsteroidBelt3D {
     constructor(innerRadius, outerRadius, count = 2500) {
       this.size = outerRadius * 2;
@@ -544,6 +548,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.rotSpeed = 0.01;
       this.innerRadius = innerRadius;
       this.outerRadius = outerRadius;
+      this.count = count;
 
       if (typeof THREE === 'undefined') return;
       this.scene = new THREE.Scene();
@@ -552,14 +557,18 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.root = new THREE.Group();
       this.scene.add(this.root);
       this.camera.lookAt(0, 0, 0);
-      // Normalizacja geometrii do przestrzeni offscreen (0..~2), a nie tysięcy jednostek:
-      const _norm = 1 / outerRadius;
+      
+      this._initGeometry();
+    }
 
-      // Ładowanie paczki asteroid z assets (już w repo)
+    _initGeometry() {
+      const _norm = 1 / this.outerRadius;
+      
       const tryLoadGLTF = () => {
         const Loader = (typeof window !== 'undefined') && window.GLTFLoader;
         if (!Loader) { requestAnimationFrame(tryLoadGLTF); return; }
         const loader = new Loader();
+        
         loader.load(
           ASTEROIDS_GLB,
           (gltf) => {
@@ -571,41 +580,34 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
             });
             if (!geos.length) return;
             const mat = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, roughness: 1.0, metalness: 0.0 });
-            const imesh = new THREE.InstancedMesh(geos[0], mat, count);
-            const m = new THREE.Matrix4();
-            const rotM = new THREE.Matrix4();
-            const scaleM = new THREE.Matrix4();
-            const euler = new THREE.Euler();
-            for (let i = 0; i < count; i++) {
-              // losowa pozycja w torusie
-              const a = Math.random() * TAU;
-              const rWorld = innerRadius + Math.random() * (outerRadius - innerRadius);
-              const r = rWorld * _norm;               // 0..~2 w scenie offscreen
-              const z = (Math.random() - 0.5) * 0.12; // grubość pasa w jednostkach sceny
-              const x = Math.cos(a) * r;
-              const y = Math.sin(a) * r;
-              const s = ASTEROID_SCALE_MIN + Math.random() * (ASTEROID_SCALE_MAX - ASTEROID_SCALE_MIN);
-              m.makeTranslation(x, y, z);
-              euler.set(Math.random() * TAU, Math.random() * TAU, Math.random() * TAU);
-              rotM.makeRotationFromEuler(euler);
-              scaleM.makeScale(s, s, s);
-              m.multiply(rotM); m.multiply(scaleM);
-              imesh.setMatrixAt(i, m);
-            }
-            imesh.instanceMatrix.needsUpdate = true;
-            imesh.castShadow = true;
-            imesh.receiveShadow = true;
+            const imesh = new THREE.InstancedMesh(geos[0], mat, this.count);
+            this._fillInstancedMesh(imesh, this.count, _norm);
             this.root.add(imesh);
             this.imesh = imesh;
-            this.spin = 0.008; // bardzo wolna rotacja
+            this.spin = 0.008;
+          },
+          undefined,
+          (err) => {
+            console.warn("Using fallback asteroids (dots)", err);
+            this._createFallbackAsteroids(_norm);
           }
         );
       };
-      tryLoadGLTF();
+      
+      if (!ASTEROIDS_GLB) {
+        this._createFallbackAsteroids(_norm);
+      } else {
+        try {
+          tryLoadGLTF();
+        } catch(e) {
+          console.warn("Asteroid load exception", e);
+          this._createFallbackAsteroids(_norm);
+        }
+      }
 
       const sunWorldX = (window.SUN?.x ?? 0);
       const sunWorldY = (window.SUN?.y ?? 0);
-      const beltMidRadius = (innerRadius + outerRadius) * 0.5;
+      const beltMidRadius = (this.innerRadius + this.outerRadius) * 0.5;
       const sampleX = sunWorldX + beltMidRadius;
       const sampleY = sunWorldY;
       const d = sunDirFor(sampleX, sampleY);
@@ -614,7 +616,6 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       beltDL.position.set(d.x * 50, d.y * 50, d.z * 50);
       beltDL.target.position.set(0, 0, 0);
       this.scene.add(beltDL.target);
-      // większa projekcja — pas jest duży
       beltDL.shadow.mapSize.set(1024, 1024);
       beltDL.shadow.camera.near = 1;
       beltDL.shadow.camera.far = 200;
@@ -625,6 +626,51 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       beltDL.shadow.camera.bottom = -R;
       this.scene.add(beltDL);
       this.sunLight = beltDL;
+    }
+
+    _createFallbackAsteroids(_norm) {
+      const geom = new THREE.BufferGeometry();
+      const posArray = new Float32Array(this.count * 3);
+      for(let i=0; i<this.count; i++) {
+        const a = Math.random() * TAU;
+        const rWorld = this.innerRadius + Math.random() * (this.outerRadius - this.innerRadius);
+        const r = rWorld * _norm;
+        const z = (Math.random() - 0.5) * 0.12;
+        const x = Math.cos(a) * r;
+        const y = Math.sin(a) * r;
+        posArray[i*3+0] = x;
+        posArray[i*3+1] = y;
+        posArray[i*3+2] = z;
+      }
+      geom.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+      const mat = new THREE.PointsMaterial({ color: 0x888888, size: 2, sizeAttenuation: false });
+      const points = new THREE.Points(geom, mat);
+      this.root.add(points);
+    }
+
+    _fillInstancedMesh(imesh, count, _norm) {
+      const m = new THREE.Matrix4();
+      const rotM = new THREE.Matrix4();
+      const scaleM = new THREE.Matrix4();
+      const euler = new THREE.Euler();
+      for (let i = 0; i < count; i++) {
+        const a = Math.random() * TAU;
+        const rWorld = this.innerRadius + Math.random() * (this.outerRadius - this.innerRadius);
+        const r = rWorld * _norm;               
+        const z = (Math.random() - 0.5) * 0.12; 
+        const x = Math.cos(a) * r;
+        const y = Math.sin(a) * r;
+        const s = ASTEROID_SCALE_MIN + Math.random() * (ASTEROID_SCALE_MAX - ASTEROID_SCALE_MIN);
+        m.makeTranslation(x, y, z);
+        euler.set(Math.random() * TAU, Math.random() * TAU, Math.random() * TAU);
+        rotM.makeRotationFromEuler(euler);
+        scaleM.makeScale(s, s, s);
+        m.multiply(rotM); m.multiply(scaleM);
+        imesh.setMatrixAt(i, m);
+      }
+      imesh.instanceMatrix.needsUpdate = true;
+      imesh.castShadow = true;
+      imesh.receiveShadow = true;
     }
 
     render(dt) {
@@ -662,8 +708,6 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.baseSize = (opts && opts.size) || 256;
       this.size = this.baseSize;
       
-      // Zmieniamy startowy rozmiar na większy (dla bezpieczeństwa), 
-      // ale render() i tak zaraz to dostosuje dynamicznie.
       this.canvas = document.createElement('canvas');
       this.canvas.width = 1024; 
       this.canvas.height = 1024;
@@ -672,8 +716,6 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.canvas.style.background = 'transparent';
       this._needsInit = true;
       this._ready = false;
-      
-      // Zmienne do systemu LOD
       this._hiResActive = false;
       this.frameTimer = 0;
     }
@@ -735,33 +777,23 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this._lazyInit();
       if (!this.scene || !this.camera || !this.mesh) return;
 
-      // 1. Animacja (zawsze płynna)
       this.mesh.rotation.y += 0.02 * dt;
 
-      // 2. --- SMART LOD SYSTEM (Kopia logiki z planet) ---
       const ship = (typeof window !== 'undefined') ? window.ship : null;
-      // Pobieramy zoom kamery globalnej
       const camZoom = (typeof window !== 'undefined' && window.camera) ? window.camera.zoom : 1;
       const pos = ship?.pos;
 
-      let targetRes = 512; // Domyślnie mała (oszczędna)
+      let targetRes = 512;
       let isHighResMode = false;
 
       if (pos && this.ref) {
-        // Ile pikseli zajmuje stacja na ekranie?
-        // Pobieramy promień stacji (z definicji lub domyślny 128)
         const baseR = this.ref.baseR ?? this.ref.r ?? 128;
-        
-        // Pobieramy skalę globalną (z DevTools lub domyślną)
         const rawScale = Number(window.Dev?.station3DScale ?? window.DevTuning?.pirateStationScale ?? NaN);
         const scale = (Number.isFinite(rawScale) && rawScale > 0) ? rawScale : 2.70;
-
-        // Średnica w pikselach na ekranie
         const visiblePixelSize = (baseR * 2 * scale) * camZoom;
 
-        // Progi przełączania jakości
-        const ENTER_HI = 400; // Jak zajmuje > 400px na ekranie -> High Res
-        const EXIT_HI  = 300; // Jak < 300px -> Low Res
+        const ENTER_HI = 400; 
+        const EXIT_HI  = 300; 
 
         if (!this._hiResActive && visiblePixelSize > ENTER_HI) this._hiResActive = true;
         else if (this._hiResActive && visiblePixelSize < EXIT_HI) this._hiResActive = false;
@@ -769,37 +801,29 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         if (this._hiResActive) {
           isHighResMode = true;
           const screenMax = Math.max(window.innerWidth, window.innerHeight) * (window.devicePixelRatio || 1);
-          // Stacje mają drobne detale, więc dajemy mnożnik 1.5x dla ostrości
           const optimalRes = Math.min(visiblePixelSize * 1.5, screenMax * 1.5);
-          
-          // Zaokrąglamy do 256/512
-          targetRes = Math.min(2048, Math.ceil(optimalRes / 256) * 256); // Limit 2048 dla stacji wystarczy
+          targetRes = Math.min(2048, Math.ceil(optimalRes / 256) * 256);
           targetRes = Math.max(512, targetRes);
         } else {
-          targetRes = 512; // Wystarczy z daleka
+          targetRes = 512;
         }
       }
 
-      // Zmiana rozmiaru Canvasa
       if (this.canvas.width !== targetRes) {
         this.canvas.width = targetRes;
         this.canvas.height = targetRes;
-        this.frameTimer = 100; // Wymuś render
+        this.frameTimer = 100; 
       }
 
-      // 3. --- THROTTLING (Oszczędzanie FPS) ---
-      // Stacja obraca się wolno, więc 30 FPS dla tekstury wystarczy (0.033s)
-      // Z daleka (Low Res) możemy odświeżać rzadziej, np. 20 FPS (0.050s)
       const UPDATE_INTERVAL = isHighResMode ? 0.033 : 0.050;
 
       this.frameTimer = (this.frameTimer || 0) + dt;
       if (this.frameTimer < UPDATE_INTERVAL) {
-        return; // Skip renderowania tekstury
+        return;
       }
       this.frameTimer %= UPDATE_INTERVAL;
       if (this.frameTimer > 0.1) this.frameTimer = 0;
 
-      // 4. --- RENDEROWANIE ---
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r) return;
 
@@ -809,10 +833,9 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
 
       r.render(this.scene, this.camera);
 
-      // Kopiowanie
       const ctx2d = this.ctx2d;
       ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      ctx2d.globalCompositeOperation = 'copy'; // Szybsze kopiowanie
+      ctx2d.globalCompositeOperation = 'copy';
       ctx2d.drawImage(r.domElement, 0, 0, this.canvas.width, this.canvas.height);
       ctx2d.globalCompositeOperation = 'source-over';
     }
@@ -830,13 +853,10 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       const baseRadius = this.ref.baseR ?? this.ref.r ?? (this.size ? this.size/2 : 128);
       const pxSize = baseRadius * 2 * scale * cam.zoom;
 
-      // Rysujemy canvas WebGL przeskalowany do rozmiaru na ekranie
-      // Dzięki wysokiej rozdzielczości wewn. canvasa, obraz będzie ostry
       ctx.drawImage(this.canvas, s.x - pxSize/2, s.y - pxSize/2, pxSize, pxSize);
     }
   }
 
-  // ======= API zgodne z proceduralnym rendererem =======
   window.initPlanets3D = function initPlanets3D(list, sunObj) {
     _planets.length = 0;
     for (const s of list) {
@@ -852,32 +872,20 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       sun.x = sunObj.x; sun.y = sunObj.y;
     }
 
-    // Pas asteroid — synchronizacja z mapą (index.html)
-    // Mapa definiuje pas jako: Neptun Orbit + 3 AU.
-    // 1 AU w grze to zazwyczaj 3000 jednostek (BASE_ORBIT).
     const AU_UNIT = (typeof window !== 'undefined' && window.BASE_ORBIT) ? window.BASE_ORBIT : 3000;
-    
-    // 1. Próba pobrania definicji globalnej (jeśli dostępna)
     const beltFromGlobal = (typeof window !== 'undefined' && window.ASTEROID_BELT) ? window.ASTEROID_BELT : null;
 
     if (beltFromGlobal && Number.isFinite(beltFromGlobal.inner) && Number.isFinite(beltFromGlobal.outer)) {
       asteroidBelt = new AsteroidBelt3D(beltFromGlobal.inner, beltFromGlobal.outer, 3500);
     } 
     else {
-      // 2. Fallback: Obliczamy dokładnie tak jak mapa (Neptun + 3 AU)
       const lastPlanet = list.find(p => (p.name === 'neptune' || p.id === 'neptune')) || list[list.length - 1];
-      
       if (lastPlanet && lastPlanet.orbitRadius) {
-        // Mapa ma offset +3 AU. W jednostkach świata to 3 * 3000 = 9000.
-        const offsetFromPlanet = 3 * AU_UNIT; // 9000
-        const width = 2 * AU_UNIT;            // 6000 (szerokość pasa 2 AU)
-        
+        const offsetFromPlanet = 3 * AU_UNIT;
+        const width = 2 * AU_UNIT;            
         const startDistance = lastPlanet.orbitRadius + offsetFromPlanet;
-        
         const inner = startDistance;
         const outer = startDistance + width;
-        
-        // Generujemy pas (3500 asteroid dla gęstości)
         asteroidBelt = new AsteroidBelt3D(inner, outer, 3500);
       } else {
         asteroidBelt = null;
@@ -885,7 +893,6 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     }
   };
  
-
   window.updatePlanets3D = function updatePlanets3D(dt) {
     if (sun) sun.render(dt);
     if (asteroidBelt) asteroidBelt.render(dt);
