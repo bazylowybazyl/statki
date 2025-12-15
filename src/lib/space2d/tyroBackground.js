@@ -7,20 +7,22 @@ const TILE_SCALE = 1.0;
 let finalCanvas = null; 
 let newBg = null;
 
-// --- PANEL STEROWANIA (KONSOLA) ---
+// --- PANEL STEROWANIA ---
 window.Nebula = {
-  // Wygląd chmur
-  falloff: 60.0,       // Mniej (30-60) = grube chmury. Więcej (256+) = cienkie nitki.
-  density: 0.8,        // Gęstość gazu
-  layers: 40,          // Ilość warstw (dla głębi)
-  scale: 0.0008,       // Zoom szumu
+  falloff: 60.0,       
+  density: 0.8,
+  layers: 40,
+  scale: 0.0008,
   
-  // Kolory (r, g, b)
-  starColorBase: [0.2, 0.6, 1.0], // Baza koloru gwiazd (Niebieski)
-  starColorVar:  [0.2, 0.4, 0.5], // Zmienność losowa
+  // Tłumienie światła (im więcej, tym ciemniej)
+  // Spróbuj: 100, 200, 500, 1000
+  lightFalloff: 200.0, 
+  
+  starColorBase: [0.2, 0.6, 1.0], 
+  starColorVar:  [0.2, 0.4, 0.5], 
   
   redraw: () => {
-    console.log('[Nebula] Przerysowywanie...');
+    console.log('[Nebula] Redraw...');
     setTimeout(() => initSpaceBg(window.Nebula.seed), 10);
   },
   randomize: () => {
@@ -58,7 +60,6 @@ export function initSpaceBg(seedStr = null){
   const ctx = finalCanvas.getContext('2d');
   const prng = Alea(opts.seed);
 
-  // 1. TŁO
   ctx.fillStyle = '#000205'; 
   ctx.fillRect(0, 0, w, h);
 
@@ -87,20 +88,19 @@ export function initSpaceBg(seedStr = null){
                 prng() * 500
             ],
             color: color,
-            // --- FIX: BRAKUJĄCE PARAMETRY GWIAZD ---
             falloff: 256,
             diffractionSpikeFalloff: 1024,
             diffractionSpikeScale: 4 + 4 * prng(),
         });
     }
 
-    console.log(`[TyroBackground] Render: falloff=${window.Nebula.falloff}, layers=${window.Nebula.layers}`);
+    console.log(`[TyroBackground] Render: lightFalloff=${window.Nebula.lightFalloff}`);
 
     const newCanvas = newBg.render(w, h, {
       stars,
       offset: sceneOffset,
       
-      // Parametry z konsoli
+      lightFalloff: window.Nebula.lightFalloff,
       nebulaFalloff: window.Nebula.falloff,
       nebulaDensity: window.Nebula.density / window.Nebula.layers * 40,
       nebulaLayers: window.Nebula.layers,
@@ -118,7 +118,7 @@ export function initSpaceBg(seedStr = null){
       nebulaEmissiveHigh: [0, 0, 0],
     });
     
-    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalCompositeOperation = 'source-over'; 
     ctx.drawImage(newCanvas, 0, 0);
   }
   return true;
