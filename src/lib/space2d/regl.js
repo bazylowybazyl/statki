@@ -1,4 +1,5 @@
 "use strict";
+import regl from 'regl';
 
 const DEFAULT_ATTRIBUTES = {
   alpha: true,
@@ -11,22 +12,15 @@ const DEFAULT_ATTRIBUTES = {
 };
 
 export default function createREGL(opts = {}){
-  const factory = (typeof window !== 'undefined') ? (window.createREGL || window.regl) : null;
-  if (typeof factory !== 'function') {
-    throw new Error('[Tyro] REGL not loaded. Add <script src="https://unpkg.com/regl/dist/regl.min.js"></script> before modules.');
-  }
+  const mergedAttributes = { 
+    ...DEFAULT_ATTRIBUTES, 
+    ...(opts && opts.attributes ? opts.attributes : {}) 
+  };
 
-  const mergedOpts = { ...opts };
-  mergedOpts.attributes = { ...DEFAULT_ATTRIBUTES, ...(opts && opts.attributes) };
+  const finalOpts = { 
+    ...opts, 
+    attributes: mergedAttributes 
+  };
 
-  try {
-    return factory(mergedOpts);
-  } catch (err) {
-    const message = (err && err.message) ? String(err.message) : String(err || 'Unknown error');
-    if (/context/i.test(message)) {
-      throw new Error(`[Tyro] Unable to create REGL context — WebGL context limit reached or unavailable. Close other WebGL applications and try again. Original error: ${message}`);
-    }
-    throw err;
-  }
+  return regl(finalOpts);
 }
-
