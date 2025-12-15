@@ -1,7 +1,7 @@
 import REGL from "regl";
 import Alea from "alea";
 
-// --- WBUDOWANE SHADERY (Bezpieczne, bez ładowania z plików) ---
+// --- WBUDOWANE SHADERY ---
 
 const commonVert = `
 precision highp float;
@@ -107,8 +107,12 @@ void main() {
 
   vec3 totalLight = vec3(0.0);
   
-  // OŚWIETLENIE - poprawione
-  for (int i = 0; i < 256; i++) {
+  // --- FIX: BALANS ŚWIATŁA ---
+  // Ustawienie 2000.0 = czarno, ustawienie 2.0 = biało.
+  // Ustawienie 400.0 = idealnie (światło gwiazd zanika w odpowiednim tempie)
+  float lightFalloff = 400.0;
+
+  for (int i = 0; i < 128; i++) {
     if (i >= nStars) break;
     vec2 xy = vec2((float(i) + 0.5) / float(nStars), 0.5);
     vec3 pos = texture2D(starPositionTexture, xy).rgb;
@@ -116,8 +120,8 @@ void main() {
     vec3 dl = vec3(scale * pos.xy, 0.002 * pos.z) - p;
     float distSq = dot(dl, dl);
     
-    // Tłumienie: zmniejszamy współczynnik z 2000 na 2.0, żeby światło niosło dalej
-    float light = 1.0 / (1.0 + distSq * 2.0); 
+    // Obliczanie światła z balansem
+    float light = 1.0 / (1.0 + distSq * lightFalloff); 
     
     totalLight += light * texture2D(starColorTexture, xy).rgb;
   }
@@ -160,8 +164,9 @@ export class Space2D {
 
   constructor() {
     this.canvas = document.createElement("canvas");
+    this.canvas.width = 1;
+    this.canvas.height = 1;
     
-    // Używamy 'float' (bezpieczniejsze niż half float)
     this.regl = REGL({
       canvas: this.canvas,
       attributes: { preserveDrawingBuffer: true, alpha: false, depth: false },
@@ -208,62 +213,50 @@ export class Space2D {
     this.regl.clear({ color: [0,0,0,0], framebuffer: this.fbLight });
     this.regl.clear({ color: [0,0,0,0], framebuffer: this.pingpong[1] });
 
-    // Scalanie opcji z domyślnymi
     const opts = { ...renderConfigDefaults(), ...options };
 
-    // Gwarancja gwiazd oświetlających
+    // Generujemy gwiazdy oświetlające (mniej jasne niż wcześniej)
     let stars = opts.stars || [];
     if (stars.length === 0) {
-       for(let i=0; i<50; i++) stars.push({ 
+       for(let i=0; i<60; i++) stars.push({ 
            position: [Math.random()*4000-2000, Math.random()*4000-2000, Math.random()*500], 
-           color: [2.0, 2.0, 3.0] 
+           color: [0.8, 0.8, 1.2] // Normalna jasność
        });
     }
 
     this.starPositionTexture({ data: stars.flatMap((s:any)=>s.position), width: stars.length, height: 1, type: "float", format: "rgb" });
     this.starColorTexture({ data: stars.flatMap((s:any)=>s.color), width: stars.length, height: 1, type: "float", format: "rgb" });
 
-    // 1. TŁO
-    // FIX: Ręczne mapowanie parametrów (nazwy w opts vs nazwy w shaderze)
     this.renderBackground({
-      // Generic params
       color: opts.backgroundColor,
       depth: opts.backgroundDepth,
       resolution: [width, height],
       offset: opts.offset,
-      // Specific mapping: opts.backgroundXYZ -> uniform XYZ
       lacunarity: opts.backgroundLacunarity,
       gain: opts.backgroundGain,
       density: opts.backgroundDensity,
       octaves: opts.backgroundOctaves,
       falloff: opts.backgroundFalloff,
       scale: opts.backgroundScale,
-      
       viewport,
       framebuffer: this.pingpong[0],
     });
     
     this.paste({ resolution: [width, height], texture: this.pingpong[0], viewport });
 
-    // 2. MGŁAWICE
     let pingIndex = 0;
-    for (let i = 0; i < (opts.nebulaLayers || 3); i++) {
-      const depth = opts.nebulaFar - (i * (opts.nebulaFar - opts.nebulaNear)) / Math.max(1, (opts.nebulaLayers||3) - 1);
+    for (let i = 0; i < (options.nebulaLayers || 3); i++) {
+      const depth = options.nebulaFar - (i * (options.nebulaFar - options.nebulaNear)) / Math.max(1, (options.nebulaLayers||3) - 1);
       
       this.regl.clear({ color: [0,0,0,0], framebuffer: this.fbLight });
       
       this.renderNebula({
-        // Generic
         depth,
         offset: opts.offset,
-        scale: opts.scale, // Tu akurat "scale" jest wspólne (nebula scale)
-        
-        // Textures
+        scale: opts.scale, 
         starPositionTexture: this.starPositionTexture,
         starColorTexture: this.starColorTexture,
         nStars: stars.length,
-        
-        // Nebula specific mapping
         absorption: opts.nebulaAbsorption,
         lacunarity: opts.nebulaLacunarity,
         gain: opts.nebulaGain,
@@ -278,7 +271,6 @@ export class Space2D {
         density: opts.nebulaDensity,
         octaves: opts.nebulaOctaves,
         falloff: opts.nebulaFalloff,
-        
         viewport,
         framebuffer: this.fbLight,
       });
@@ -293,7 +285,6 @@ export class Space2D {
       pingIndex = 1 - pingIndex;
     }
 
-    // Wynik
     this.regl.clear({ color: [0,0,0,1] });
     this.paste({ texture: this.pingpong[pingIndex], viewport });
     
@@ -303,7 +294,7 @@ export class Space2D {
 
 function renderConfigDefaults() {
   return {
-    scale: 0.001, 
+    scale: 0.0008, 
     offset: [0, 0],
     
     backgroundColor: [0.01, 0.01, 0.03],
@@ -320,7 +311,7 @@ function renderConfigDefaults() {
     nebulaLayers: 4,
     nebulaAbsorption: 0.5,
     nebulaLacunarity: 2.2,
-    nebulaDensity: 0.6,
+    nebulaDensity: 0.3, // Zmniejszone, żeby nie zalać ekranu
     nebulaGain: 0.6,
     nebulaOctaves: 8,
     nebulaFalloff: 2.5,
