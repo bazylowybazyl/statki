@@ -1,6 +1,8 @@
 import REGL from "regl";
 import Alea from "alea";
 
+// --- ORYGINALNE SZADERY Z REPOZTYROIUM ---
+
 const commonVert = `
 precision highp float;
 attribute vec2 position;
@@ -83,7 +85,6 @@ uniform sampler2D starPositionTexture, starColorTexture;
 uniform vec3 emissiveHigh, emissiveLow, albedoHigh, albedoLow, albedoOffset, emissiveOffset;
 uniform vec2 offset;
 uniform float scale, depth, density, falloff, absorption, gain, lacunarity, albedoScale, emissiveScale;
-uniform float lightFalloff; // <--- NOWY PARAMETR
 uniform int octaves, nStars;
 ${noiseChunk}
 float fbm(vec3 p) {
@@ -109,11 +110,14 @@ void main() {
     if (i >= nStars) break;
     vec2 xy = vec2((float(i) + 0.5) / float(nStars), 0.5);
     vec3 pos = texture2D(starPositionTexture, xy).rgb;
-    vec3 dl = vec3(scale * pos.xy, 0.002 * pos.z) - p;
-    float distSq = dot(dl, dl);
     
-    // Używamy uniforma lightFalloff
-    float light = 1.0 / (1.0 + distSq * lightFalloff); 
+    vec3 dl = vec3(scale * pos.xy, 0.002 * pos.z) - p;
+    vec3 ndl = normalize(dl);
+    vec3 ndeye = vec3(0, 0, -1);
+    
+    // ORYGINAŁ Z REPO: fizyczny model oświetlenia
+    float light = clamp(dot(ndl, ndeye), 0.0, 1.0);
+    light = light / (dot(dl, dl)); // Czysty kwadrat odległości, bez mnożników
     
     totalLight += light * texture2D(starColorTexture, xy).rgb;
   }
@@ -140,11 +144,30 @@ void main() {
   gl_FragColor = vec4(incident.rgb * exp(-light.a) + light.rgb, 1.0);
 }`;
 
+const starFrag = `
+precision highp float;
+uniform vec3 color, position;
+uniform vec2 resolution, offset;
+uniform float scale, falloff, diffractionSpikeFalloff, diffractionSpikeScale;
+
+void main() {
+  vec2 p = scale * (gl_FragCoord.xy + offset);
+  vec2 dl = scale * (position.xy) - p.xy;
+  float spike = exp(-diffractionSpikeFalloff * abs(dl.x));
+  spike += exp(-diffractionSpikeFalloff * abs(dl.y));
+  spike *= exp(-1.0 / diffractionSpikeScale * falloff * length(dl));
+  float light = spike + exp(-falloff * length(dl));
+  gl_FragColor = vec4(light * 4.0 * normalize(color), 0.0);
+}`;
+
+// --- KLASA Space2D ---
+
 export class Space2D {
   private canvas: HTMLCanvasElement;
   private regl: REGL.Regl;
   private renderBackground: REGL.DrawCommand;
   private renderNebula: REGL.DrawCommand;
+  private renderStar: REGL.DrawCommand;
   private paste: REGL.DrawCommand;
   private accumulate: REGL.DrawCommand;
   private pingpong: REGL.Framebuffer2D[];
@@ -154,12 +177,15 @@ export class Space2D {
 
   constructor() {
     this.canvas = document.createElement("canvas");
+    this.canvas.width = 1; this.canvas.height = 1;
+
     this.regl = REGL({
       canvas: this.canvas,
       attributes: { preserveDrawingBuffer: true, alpha: false, depth: false },
       extensions: ["OES_texture_float", "WEBGL_color_buffer_float"],
       optionalExtensions: ["OES_texture_float_linear"]
     });
+
     const common = { vert: commonVert, attributes: { position: [-4,-4,4,-4,0,4] }, count: 3, depth: { enable: false }, viewport: this.regl.prop("viewport") };
 
     this.renderBackground = this.regl({ ...common, frag: backgroundFrag, uniforms: {
@@ -174,7 +200,12 @@ export class Space2D {
         emissiveOffset: this.regl.prop("emissiveOffset"), emissiveScale: this.regl.prop("emissiveScale"), albedoLow: this.regl.prop("albedoLow"), albedoHigh: this.regl.prop("albedoHigh"),
         albedoOffset: this.regl.prop("albedoOffset"), albedoScale: this.regl.prop("albedoScale"), lacunarity: this.regl.prop("lacunarity"), gain: this.regl.prop("gain"),
         octaves: this.regl.prop("octaves"), density: this.regl.prop("density"), falloff: this.regl.prop("falloff"), offset: this.regl.prop("offset"),
-        lightFalloff: this.regl.prop("lightFalloff"), // PRZEKAZUJEMY PARAMETR
+      }, blend: { enable: true, func: { src: "one", dst: "one" } }, framebuffer: this.regl.prop("framebuffer") });
+
+    this.renderStar = this.regl({ ...common, frag: starFrag, uniforms: {
+        position: this.regl.prop("position"), color: this.regl.prop("color"), scale: this.regl.prop("scale"),
+        falloff: this.regl.prop("falloff"), diffractionSpikeFalloff: this.regl.prop("diffractionSpikeFalloff"),
+        diffractionSpikeScale: this.regl.prop("diffractionSpikeScale"), offset: this.regl.prop("offset"),
       }, blend: { enable: true, func: { src: "one", dst: "one" } }, framebuffer: this.regl.prop("framebuffer") });
 
     this.paste = this.regl({ ...common, frag: pasteFrag, uniforms: { texture: this.regl.prop("texture") }, framebuffer: this.regl.prop("framebuffer") });
@@ -192,67 +223,68 @@ export class Space2D {
       this.pingpong[0].resize(width, height); this.pingpong[1].resize(width, height); this.fbLight.resize(width, height);
     }
     const viewport = { x: 0, y: 0, width, height };
+
     this.regl.clear({ color: [0,0,0,1], framebuffer: this.pingpong[0] });
     this.regl.clear({ color: [0,0,0,0], framebuffer: this.fbLight });
     this.regl.clear({ color: [0,0,0,0], framebuffer: this.pingpong[1] });
 
     const opts = { ...renderConfigDefaults(), ...options };
-
-    let stars = opts.stars || [];
-    if (stars.length === 0) {
-       for(let i=0; i<50; i++) stars.push({ 
-           position: [Math.random()*4000-2000, Math.random()*4000-2000, Math.random()*500], 
-           color: [0.8, 0.8, 1.2]
-       });
-    }
+    const stars = opts.stars || [];
 
     this.starPositionTexture({ data: stars.flatMap((s:any)=>s.position), width: stars.length, height: 1, type: "float", format: "rgb" });
     this.starColorTexture({ data: stars.flatMap((s:any)=>s.color), width: stars.length, height: 1, type: "float", format: "rgb" });
 
-    this.renderBackground({
-      color: opts.backgroundColor, depth: opts.backgroundDepth, resolution: [width, height], offset: opts.offset,
-      lacunarity: opts.backgroundLacunarity, gain: opts.backgroundGain, density: opts.backgroundDensity,
-      octaves: opts.backgroundOctaves, falloff: opts.backgroundFalloff, scale: opts.backgroundScale,
-      viewport, framebuffer: this.pingpong[0],
-    });
-    
-    this.paste({ resolution: [width, height], texture: this.pingpong[0], viewport });
+    this.renderBackground({ ...opts, viewport, framebuffer: this.pingpong[0] });
+    this.paste({ texture: this.pingpong[0], viewport });
 
     let pingIndex = 0;
-    for (let i = 0; i < (opts.nebulaLayers || 3); i++) {
-      const depth = opts.nebulaFar - (i * (opts.nebulaFar - opts.nebulaNear)) / Math.max(1, (options.nebulaLayers||3) - 1);
+    // Ważne: Demo używa bardzo wielu warstw (np. 50+), ale my ograniczymy do np. 40 dla wydajności
+    const layers = opts.nebulaLayers || 40; 
+    
+    for (let i = 0; i < layers; i++) {
+      const depth = opts.nebulaFar - (i * (opts.nebulaFar - opts.nebulaNear)) / Math.max(1, layers - 1);
+      
       this.regl.clear({ color: [0,0,0,0], framebuffer: this.fbLight });
-      this.renderNebula({
-        depth, offset: opts.offset, scale: opts.scale, starPositionTexture: this.starPositionTexture, starColorTexture: this.starColorTexture, nStars: stars.length,
-        absorption: opts.nebulaAbsorption, lacunarity: opts.nebulaLacunarity, gain: opts.nebulaGain, albedoLow: opts.nebulaAlbedoLow,
-        albedoHigh: opts.nebulaAlbedoHigh, albedoOffset: opts.nebulaAlbedoOffset, albedoScale: opts.nebulaAlbedoScale, emissiveLow: opts.nebulaEmissiveLow,
-        emissiveHigh: opts.nebulaEmissiveHigh, emissiveOffset: opts.nebulaEmissiveOffset, emissiveScale: opts.nebulaEmissiveScale, density: opts.nebulaDensity,
-        octaves: opts.nebulaOctaves, falloff: opts.nebulaFalloff,
-        lightFalloff: opts.lightFalloff, // PRZEKAZUJEMY DO SHADERA
-        viewport, framebuffer: this.fbLight,
-      });
-      this.accumulate({ incidentTexture: this.pingpong[pingIndex], lightTexture: this.fbLight, resolution: [width, height], viewport, framebuffer: this.pingpong[1 - pingIndex] });
+      
+      this.renderNebula({ ...opts, depth, nStars: stars.length, viewport, framebuffer: this.fbLight });
+      
+      this.accumulate({ incidentTexture: this.pingpong[pingIndex], lightTexture: this.fbLight, viewport, framebuffer: this.pingpong[1 - pingIndex] });
       pingIndex = 1 - pingIndex;
+    }
+
+    // Rysowanie jasnych gwiazd (Flare) na wierzchu
+    for (const star of stars) {
+      this.renderStar({
+        ...star,
+        offset: opts.offset,
+        scale: opts.scale,
+        viewport,
+        framebuffer: this.pingpong[pingIndex],
+      });
     }
 
     this.regl.clear({ color: [0,0,0,1] });
     this.paste({ texture: this.pingpong[pingIndex], viewport });
+    
     return this.canvas;
   }
 }
 
 function renderConfigDefaults() {
+  // Domyślne wartości z repo (częściowo)
   return {
     scale: 0.001, 
     offset: [0, 0],
-    backgroundColor: [0.01, 0.01, 0.03],
-    backgroundDepth: 137, backgroundLacunarity: 2, backgroundGain: 0.5, backgroundDensity: 0.8,
+    backgroundColor: [0, 0, 0],
+    backgroundDepth: 137, backgroundLacunarity: 2, backgroundGain: 0.5, backgroundDensity: 1.0,
     backgroundOctaves: 8, backgroundFalloff: 4, backgroundScale: 0.003,
-    nebulaNear: 0, nebulaFar: 1000, nebulaLayers: 4, nebulaAbsorption: 0.5,
-    nebulaLacunarity: 2.2, nebulaDensity: 0.6, nebulaGain: 0.6, nebulaOctaves: 8, nebulaFalloff: 2.5,
-    nebulaEmissiveLow: [0.1, 0.0, 0.2], nebulaEmissiveHigh: [0.5, 0.2, 0.8], nebulaEmissiveOffset: [0, 0, 0], nebulaEmissiveScale: 1,
-    nebulaAlbedoLow: [0.2, 0.2, 0.5], nebulaAlbedoHigh: [0.9, 0.9, 1.0], nebulaAlbedoOffset: [0, 0, 0], nebulaAlbedoScale: 1,
-    lightFalloff: 400.0, // DOMYŚLNA WARTOŚĆ
+    nebulaNear: 0, nebulaFar: 500, nebulaLayers: 40,
+    nebulaAbsorption: 1.0, nebulaLacunarity: 2.0, nebulaDensity: 0.1, nebulaGain: 0.5,
+    nebulaOctaves: 7, nebulaFalloff: 4,
+    nebulaEmissiveLow: [0, 0, 0], nebulaEmissiveHigh: [0, 0, 0], // BRAK EMISJI = KLUCZ DO WYGLĄDU
+    nebulaEmissiveOffset: [0, 0, 0], nebulaEmissiveScale: 1,
+    nebulaAlbedoLow: [1, 1, 1], nebulaAlbedoHigh: [1, 1, 1],
+    nebulaAlbedoOffset: [0, 0, 0], nebulaAlbedoScale: 1,
     stars: [],
   };
 }
