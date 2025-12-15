@@ -6,7 +6,8 @@
     "start": "npx http-server ./ -p 8080"
   },
   "devDependencies": {
-    "http-server": "^14.1.1"
+    "http-server": "^14.1.1",
+    "vite": "^7.3.0"
   },
   "dependencies": {
     "alea": "^1.0.1",
