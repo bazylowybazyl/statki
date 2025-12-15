@@ -1,7 +1,6 @@
 import REGL from "regl";
-import Alea from "alea";
 
-// --- WBUDOWANE SHADERY ---
+// --- ORYGINALNE SZADERY TYRO (1:1 z repozytorium) ---
 
 const commonVert = `
 precision highp float;
@@ -85,7 +84,6 @@ uniform sampler2D starPositionTexture, starColorTexture;
 uniform vec3 emissiveHigh, emissiveLow, albedoHigh, albedoLow, albedoOffset, emissiveOffset;
 uniform vec2 offset;
 uniform float scale, depth, density, falloff, absorption, gain, lacunarity, albedoScale, emissiveScale;
-uniform float lightFalloff; // PARAMETR TŁUMIENIA
 uniform int octaves, nStars;
 ${noiseChunk}
 float fbm(vec3 p) {
@@ -107,8 +105,6 @@ void main() {
   d *= density;
 
   vec3 totalLight = vec3(0.0);
-
-  // Pętla oświetlenia
   for (int i = 0; i < 256; i++) {
     if (i >= nStars) break;
     vec2 xy = vec2((float(i) + 0.5) / float(nStars), 0.5);
@@ -118,15 +114,11 @@ void main() {
     vec3 ndl = normalize(dl);
     vec3 ndeye = vec3(0, 0, -1);
     
-    float dotLight = clamp(dot(ndl, ndeye), 0.0, 1.0);
-    float distSq = dot(dl, dl);
-
-    // KONTROLA JASNOŚCI: 
-    // Dodajemy małą wartość (0.2) żeby uniknąć dzielenia przez zero (white screen)
-    // lightFalloff pozwala przyciemnić światło gdy jest za mocne
-    float attenuation = 1.0 / (0.2 + distSq * lightFalloff);
+    // ORYGINALNE FIZYCZNE OŚWIETLENIE TYRO
+    float light = clamp(dot(ndl, ndeye), 0.0, 1.0);
+    light = light / dot(dl, dl);
     
-    totalLight += dotLight * attenuation * texture2D(starColorTexture, xy).rgb;
+    totalLight += light * texture2D(starColorTexture, xy).rgb;
   }
 
   vec3 emissive = mix(emissiveLow, emissiveHigh, abs(cnoise(p * emissiveScale + emissiveOffset)));
@@ -167,6 +159,8 @@ void main() {
   gl_FragColor = vec4(light * 4.0 * normalize(color), 0.0);
 }`;
 
+// --- KLASA Space2D ---
+
 export class Space2D {
   private canvas: HTMLCanvasElement;
   private regl: REGL.Regl;
@@ -182,8 +176,6 @@ export class Space2D {
 
   constructor() {
     this.canvas = document.createElement("canvas");
-    this.canvas.width = 1; this.canvas.height = 1;
-
     this.regl = REGL({
       canvas: this.canvas,
       attributes: { preserveDrawingBuffer: true, alpha: false, depth: false },
@@ -233,7 +225,6 @@ export class Space2D {
         density: this.regl.prop("density"), 
         falloff: this.regl.prop("falloff"), 
         offset: this.regl.prop("offset"),
-        lightFalloff: this.regl.prop("lightFalloff"), // PRZEKAZYWANIE
       }, 
       blend: { enable: true, func: { src: "one", dst: "one" } }, 
       framebuffer: this.regl.prop("framebuffer") 
@@ -265,26 +256,28 @@ export class Space2D {
     this.regl.clear({ color: [0,0,0,0], framebuffer: this.fbLight });
     this.regl.clear({ color: [0,0,0,0], framebuffer: this.pingpong[1] });
 
-    const opts = { ...renderConfigDefaults(), ...options };
+    const opts = options; // Używamy opcji przekazanych bezpośrednio z tyroBackground (które są kopią logiki z main.ts)
     const stars = opts.stars || [];
-
-    // FIX INT TYPE FOR SHADERS
+    
+    // FIX INT TYPES
     const bgOctaves = Math.floor(opts.backgroundOctaves || 8);
     const nebOctaves = Math.floor(opts.nebulaOctaves || 8);
 
     this.starPositionTexture({ data: stars.flatMap((s:any)=>s.position), width: stars.length, height: 1, type: "float", format: "rgb" });
     this.starColorTexture({ data: stars.flatMap((s:any)=>s.color), width: stars.length, height: 1, type: "float", format: "rgb" });
 
+    // Render tła
     this.renderBackground({
       color: opts.backgroundColor, depth: opts.backgroundDepth, resolution: [width, height], offset: opts.offset,
       lacunarity: opts.backgroundLacunarity, gain: opts.backgroundGain, density: opts.backgroundDensity,
-      octaves: bgOctaves, falloff: opts.backgroundFalloff, scale: opts.backgroundScale,
+      octaves: bgOctaves, falloff: opts.backgroundFalloff, scale: opts.scale,
       viewport, framebuffer: this.pingpong[0],
     });
     this.paste({ resolution: [width, height], texture: this.pingpong[0], viewport });
 
     let pingIndex = 0;
-    const layers = opts.nebulaLayers || 40; 
+    // Ważne: renderujemy tyle warstw, ile jest w konfiguracji (Tyro używa dużo!)
+    const layers = opts.nebulaLayers;
     
     for (let i = 0; i < layers; i++) {
       const depth = opts.nebulaFar - (i * (opts.nebulaFar - opts.nebulaNear)) / Math.max(1, layers - 1);
@@ -298,11 +291,16 @@ export class Space2D {
         albedoLow: opts.nebulaAlbedoLow, albedoHigh: opts.nebulaAlbedoHigh, albedoOffset: opts.nebulaAlbedoOffset, albedoScale: opts.nebulaAlbedoScale, 
         emissiveLow: opts.nebulaEmissiveLow, emissiveHigh: opts.nebulaEmissiveHigh, emissiveOffset: opts.nebulaEmissiveOffset, emissiveScale: opts.nebulaEmissiveScale, 
         density: opts.nebulaDensity, octaves: nebOctaves, falloff: opts.nebulaFalloff,
-        lightFalloff: opts.lightFalloff, // PARAMETR
         viewport, framebuffer: this.fbLight,
       });
 
-      this.accumulate({ incidentTexture: this.pingpong[pingIndex], lightTexture: this.fbLight, resolution: [width, height], viewport, framebuffer: this.pingpong[1 - pingIndex] });
+      this.accumulate({
+        incidentTexture: this.pingpong[pingIndex],
+        lightTexture: this.fbLight,
+        resolution: [width, height],
+        viewport,
+        framebuffer: this.pingpong[1 - pingIndex],
+      });
       pingIndex = 1 - pingIndex;
     }
 
@@ -319,27 +317,4 @@ export class Space2D {
     
     return this.canvas;
   }
-}
-
-function renderConfigDefaults() {
-  return {
-    scale: 0.001, 
-    offset: [0, 0],
-    backgroundColor: [0, 0, 0],
-    backgroundDepth: 137, backgroundLacunarity: 2, backgroundGain: 0.5, backgroundDensity: 1.0,
-    backgroundOctaves: 8, backgroundFalloff: 4, backgroundScale: 0.003,
-    nebulaNear: 0, nebulaFar: 500, nebulaLayers: 40,
-    nebulaAbsorption: 1.0, nebulaLacunarity: 2.0, nebulaDensity: 0.1, nebulaGain: 0.5,
-    nebulaOctaves: 7, nebulaFalloff: 4,
-    nebulaEmissiveLow: [0, 0, 0], nebulaEmissiveHigh: [0, 0, 0], 
-    nebulaEmissiveOffset: [0, 0, 0], nebulaEmissiveScale: 1,
-    nebulaAlbedoLow: [1, 1, 1], nebulaAlbedoHigh: [1, 1, 1],
-    nebulaAlbedoOffset: [0, 0, 0], nebulaAlbedoScale: 1,
-    
-    // DOMYŚLNE TŁUMIENIE ŚWIATŁA
-    // 200-500 jest bezpieczne. Mniejsze wartości (np. 20) dają jaskrawe białe światło.
-    lightFalloff: 200.0, 
-    
-    stars: [],
-  };
 }
