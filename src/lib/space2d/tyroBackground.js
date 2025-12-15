@@ -24,61 +24,174 @@ const TILE_SCALE = 1.0;
 let finalCanvas = null; 
 let newBg = null;
 
-// Funkcja generująca seed jak w demo Tyro (22 znaki)
-function generateSeed() {
-  const alphanum = "abcdefghijklmnopqrstuvqxyz1234567890";
-  let seed = "";
-  for (let i = 0; i < 22; i++) {
-    seed += alphanum[Math.floor(Math.random() * alphanum.length)];
-  }
-  return seed;
+// --- STAN GUI ---
+const guiState = {
+  seed: 'statki',
+  resolution: 2048,
+  
+  // Parametry mgławicy
+  scale: 0.001,
+  falloff: 300,    // Tyro używa dużych wartości (256-1200)
+  density: 0.5,
+  layers: 60,
+  
+  // Oświetlenie
+  lightFalloff: 400.0,
+  
+  // Stan okna
+  isVisible: true
+};
+
+// --- TWORZENIE GUI ---
+function createGUI() {
+  if (document.getElementById('nebula-gui')) return;
+
+  const root = document.createElement('div');
+  root.id = 'nebula-gui';
+  root.style.cssText = `
+    position: fixed; top: 10px; left: 10px; width: 260px;
+    background: rgba(10, 15, 20, 0.9); color: #bde;
+    border: 1px solid #357; border-radius: 6px;
+    padding: 10px; font-family: monospace; font-size: 11px;
+    z-index: 100000; box-shadow: 0 4px 16px rgba(0,0,0,0.8);
+  `;
+
+  const header = document.createElement('div');
+  header.textContent = "NEBULA GENERATOR (F9)";
+  header.style.cssText = "text-align:center; font-weight:bold; margin-bottom:8px; color:#fff;";
+  root.appendChild(header);
+
+  // --- Seed ---
+  const rowSeed = document.createElement('div');
+  rowSeed.style.cssText = "display:flex; gap:4px; margin-bottom:8px;";
+  
+  const inpSeed = document.createElement('input');
+  inpSeed.value = guiState.seed;
+  inpSeed.style.cssText = "flex:1; background:#000; border:1px solid #468; color:#fff; padding:2px;";
+  inpSeed.addEventListener('change', e => { guiState.seed = e.target.value; redraw(); });
+  
+  const btnRandSeed = document.createElement('button');
+  btnRandSeed.textContent = "RND";
+  btnRandSeed.style.cssText = "background:#246; color:#fff; border:1px solid #468; cursor:pointer;";
+  btnRandSeed.addEventListener('click', () => {
+    guiState.seed = Math.random().toString(36).slice(2, 9);
+    inpSeed.value = guiState.seed;
+    redraw();
+  });
+  
+  rowSeed.appendChild(inpSeed);
+  rowSeed.appendChild(btnRandSeed);
+  root.appendChild(rowSeed);
+
+  // --- Sliders Helper ---
+  const addSlider = (label, key, min, max, step) => {
+    const row = document.createElement('div');
+    row.style.cssText = "display:flex; align-items:center; margin-bottom:4px;";
+    
+    const txt = document.createElement('span');
+    txt.textContent = label;
+    txt.style.width = "70px";
+    
+    const range = document.createElement('input');
+    range.type = 'range'; range.min = min; range.max = max; range.step = step;
+    range.value = guiState[key];
+    range.style.cssText = "flex:1; cursor:pointer;";
+    
+    const val = document.createElement('span');
+    val.textContent = guiState[key];
+    val.style.cssText = "width:40px; text-align:right;";
+    
+    range.addEventListener('input', e => {
+      guiState[key] = Number(e.target.value);
+      val.textContent = guiState[key];
+    });
+    range.addEventListener('change', () => redraw()); // Redraw on release
+    
+    // Zapisz referencję do aktualizacji z kodu
+    guiState['_el_' + key] = { range, val };
+
+    row.appendChild(txt);
+    row.appendChild(range);
+    row.appendChild(val);
+    root.appendChild(row);
+  };
+
+  addSlider("Scale", "scale", 0.0001, 0.005, 0.0001);
+  addSlider("Falloff", "falloff", 10, 1500, 10);
+  addSlider("Density", "density", 0.1, 2.0, 0.1);
+  addSlider("Light", "lightFalloff", 50, 1000, 10);
+  addSlider("Layers", "layers", 10, 200, 10);
+
+  // --- Resolution ---
+  const rowRes = document.createElement('div');
+  rowRes.style.cssText = "margin-top:8px; display:flex; align-items:center; justify-content:space-between;";
+  const lblRes = document.createElement('span'); lblRes.textContent = "Rozdzielczość:";
+  const selRes = document.createElement('select');
+  selRes.style.cssText = "background:#000; color:#fff; border:1px solid #468;";
+  [1024, 2048, 4096].forEach(r => {
+    const opt = document.createElement('option');
+    opt.value = r; opt.textContent = r + "px";
+    if(r === guiState.resolution) opt.selected = true;
+    selRes.appendChild(opt);
+  });
+  selRes.addEventListener('change', e => {
+    guiState.resolution = Number(e.target.value);
+    redraw();
+  });
+  rowRes.appendChild(lblRes);
+  rowRes.appendChild(selRes);
+  root.appendChild(rowRes);
+
+  // --- Randomize Params Button ---
+  const btnRandParams = document.createElement('button');
+  btnRandParams.textContent = "Losuj Parametry (Tyro Style)";
+  btnRandParams.style.cssText = "width:100%; margin-top:10px; padding:6px; background:#264; color:#fff; border:1px solid #486; cursor:pointer; font-weight:bold;";
+  btnRandParams.addEventListener('click', randomizeParams);
+  root.appendChild(btnRandParams);
+
+  document.body.appendChild(root);
+
+  // F9 Toggle
+  window.addEventListener('keydown', e => {
+    if (e.code === 'F9') {
+      guiState.isVisible = !guiState.isVisible;
+      root.style.display = guiState.isVisible ? 'block' : 'none';
+    }
+  });
 }
 
-// --- PANEL STEROWANIA (KONSOLA) ---
-window.Nebula = {
-  // Ziarno losowości (zmiana tego zmienia cały układ)
-  seed: 'o7y91x2t2ze6ctqtxhuom5', // Domyślny seed z Twojego linku
-
-  // Rozdzielczość
-  resolution: 2048, 
-  
-  // Opcja ręcznego nadpisywania (jeśli false, używamy logiki z demo)
-  manualOverride: false,
-
-  // Parametry ręczne (używane tylko gdy manualOverride = true)
-  manualParams: {
-      falloff: 60.0,
-      density: 0.5,
-      lightFalloff: 200.0,
-      scale: 0.001
-  },
-
-  // Przerysowanie
-  redraw: () => {
-    console.log(`[Nebula] Przerysowywanie (${window.Nebula.resolution}px)...`);
-    setTimeout(() => initSpaceBg(window.Nebula.seed), 10);
-  },
-  
-  // Losuj nowe parametry (jak w demo)
-  randomize: () => {
-    const newSeed = generateSeed();
-    console.log(`[Nebula] Wylosowano seed: "${newSeed}"`);
-    window.Nebula.seed = newSeed;
-    initSpaceBg(newSeed);
-  },
-  
-  // Włącz tryb ręczny
-  useManual: (enabled = true) => {
-      window.Nebula.manualOverride = enabled;
-      console.log(`[Nebula] Tryb ręczny: ${enabled ? 'WŁĄCZONY' : 'WYŁĄCZONY (Demo style)'}`);
-      window.Nebula.redraw();
+function updateGUI() {
+  for (const key in guiState) {
+    const el = guiState['_el_' + key];
+    if (el) {
+      el.range.value = guiState[key];
+      el.val.textContent = typeof guiState[key] === 'number' ? guiState[key].toFixed(4) : guiState[key];
+    }
   }
-};
+}
 
-let opts = {
-  renderPointStars: false, renderStars: false, renderNebulae: false,
-  newSystemEnabled: true, newSystemOpacity: 1.0, seed: 'statki'
-};
+function randomizeParams() {
+  const prng = Alea(Math.random()); // Losowe, niezależne od seeda tła
+  
+  // Wzory z main.ts
+  guiState.scale = 0.001 + prng() * 0.001;
+  guiState.falloff = Math.floor(256 + prng() * 1024);
+  guiState.density = 0.5 + prng() * 0.5; // Trochę uproszczone
+  
+  updateGUI();
+  redraw();
+}
+
+function redraw() {
+  const status = document.getElementById('nebula-gui');
+  if(status) status.style.opacity = "0.5";
+  setTimeout(() => {
+    initSpaceBg(guiState.seed);
+    if(status) status.style.opacity = "1.0";
+  }, 10);
+}
+
+// --- LOGIKA RENDEROWANIA ---
 
 const parallaxState = {
   enabled: true, factorX: 0.05, factorY: 0.05, smoothing: 0.2,
@@ -86,7 +199,7 @@ const parallaxState = {
 };
 
 function ensureFinalCanvas(w, h){
-  const size = window.Nebula.resolution || 2048;
+  const size = guiState.resolution;
   const targetW = Math.max(size, w); 
   const targetH = Math.max(size, h);
   if (!finalCanvas) finalCanvas = document.createElement('canvas');
@@ -98,60 +211,43 @@ function ensureFinalCanvas(w, h){
 }
 
 export function initSpaceBg(seedStr = null){
+  createGUI();
   ensureFinalCanvas(innerWidth, innerHeight);
   
-  opts.seed = String(seedStr ?? window.Nebula.seed);
-  window.Nebula.seed = opts.seed;
+  if (seedStr) guiState.seed = String(seedStr);
+  const seed = guiState.seed;
 
   const w = finalCanvas.width;
   const h = finalCanvas.height;
   const ctx = finalCanvas.getContext('2d');
-  
-  // Inicjalizacja PRNG tym samym seedem co w demo
-  const prng = Alea(opts.seed);
+  const prng = Alea(seed);
 
-  // 1. TŁO
-  // Tyro też losuje kolor tła!
-  const backgroundColor = blackBodyColors[Math.floor(prng() * blackBodyColors.length)].slice();
-  const bgIntensity = 0.5 * prng();
-  backgroundColor[0] *= bgIntensity; backgroundColor[1] *= bgIntensity; backgroundColor[2] *= bgIntensity;
-
-  ctx.fillStyle = `rgb(${backgroundColor[0]*255}, ${backgroundColor[1]*255}, ${backgroundColor[2]*255})`;
+  // Tło
+  ctx.fillStyle = '#000000'; 
   ctx.fillRect(0, 0, w, h);
 
   if (opts.newSystemEnabled) {
     if (!newBg) newBg = new Space2D();
     
-    // --- LOGIKA Z DEMO (utility/main.ts) ---
+    // --- GEN GWIAZD ---
+    const stars = [];
+    // Ilość gwiazd zależna od skali (jak w demo)
+    const nStars = Math.min(64, 1 + Math.round(prng() * (w * h) * guiState.scale * guiState.scale));
     
-    // Skala (Zoom)
-    const scale = 0.001 + prng() * 0.001;
-    
-    const near = 0;
-    const far = 500;
-    const layers = 60; // W demo jest więcej, ale 60 wystarczy dla wydajności w grze
-
     const sceneOffset = [prng() * 10000000 - 5000000, prng() * 10000000 - 5000000];
     sceneOffset[0] -= 0.5 * w;
     sceneOffset[1] -= 0.5 * h;
 
-    // Generowanie gwiazd
-    const stars = [];
-    const nStars = Math.min(64, 1 + Math.round(prng() * (w * h) * scale * scale));
-
     for (let i = 0; i < nStars; i++) {
         const color = blackBodyColors[Math.floor(prng() * blackBodyColors.length)].slice();
         const intensity = 0.5 * prng(); 
-        
-        color[0] *= intensity;
-        color[1] *= intensity;
-        color[2] *= intensity;
+        color[0] *= intensity; color[1] *= intensity; color[2] *= intensity;
 
         stars.push({
             position: [
                 sceneOffset[0] + prng() * w, 
                 sceneOffset[1] + prng() * h, 
-                near + prng() * (far - near)
+                prng() * 500
             ],
             color: color,
             falloff: 256,
@@ -160,57 +256,33 @@ export function initSpaceBg(seedStr = null){
         });
     }
 
-    // Parametry mgławicy (losowane)
-    let nebulaLacunarity = 1.8 + 0.2 * prng();
-    let nebulaGain = 0.5;
-    let nebulaAbsorption = 1.0;
-    // To jest kluczowe dla "nitek": losowy falloff w dużym zakresie
-    let nebulaFalloff = 256 + prng() * 1024; 
-    let nebulaDensity = (50 + prng() * 100) / layers;
-    
-    // Kolory mgławicy (Albedo) - losowe RGB
-    let nebulaAlbedoLow = [prng(), prng(), prng()];
-    let nebulaAlbedoHigh = [prng(), prng(), prng()];
-    let nebulaAlbedoScale = prng() * 8;
-    
-    // Oświetlenie (nasz custom fix na jasność, Tyro ma to wbudowane w fizykę)
-    let lightFalloff = 400.0;
-
-    // OBSŁUGA MANUALNA (jeśli chcesz nadpisać demo swoimi ustawieniami)
-    if (window.Nebula.manualOverride) {
-        const m = window.Nebula.manualParams;
-        nebulaFalloff = m.falloff;
-        nebulaDensity = m.density;
-        lightFalloff = m.lightFalloff;
-        // Resztę można też podpiąć
-    }
-
-    console.log(`[Nebula] Render Seed="${opts.seed}" | Falloff=${nebulaFalloff.toFixed(0)}`);
+    const backgroundColor = blackBodyColors[Math.floor(prng() * blackBodyColors.length)].slice();
+    const bgInt = 0.5 * prng();
+    backgroundColor[0] *= bgInt; backgroundColor[1] *= bgInt; backgroundColor[2] *= bgInt;
 
     const newCanvas = newBg.render(w, h, {
       stars,
-      scale,
       offset: sceneOffset,
       backgroundColor,
       
-      nebulaLacunarity,
-      nebulaGain,
-      nebulaAbsorption,
-      nebulaFalloff,
-      nebulaNear: near,
-      nebulaFar: far,
-      nebulaLayers: layers,
-      nebulaDensity,
+      // Używamy wartości z GUI
+      scale: guiState.scale,
+      nebulaFalloff: guiState.falloff,
+      nebulaDensity: guiState.density / guiState.layers * 100, // Skalowanie gęstości
+      nebulaLayers: guiState.layers,
+      lightFalloff: guiState.lightFalloff,
       
-      nebulaAlbedoLow,
-      nebulaAlbedoHigh,
-      nebulaAlbedoScale,
+      // Losowane per seed
+      nebulaLacunarity: 1.8 + 0.2 * prng(),
+      nebulaGain: 0.5,
+      nebulaAbsorption: 1.0,
+      
+      nebulaAlbedoLow: [prng(), prng(), prng()],
+      nebulaAlbedoHigh: [prng(), prng(), prng()],
+      nebulaAlbedoScale: prng() * 8,
       
       nebulaEmissiveLow: [0, 0, 0],
       nebulaEmissiveHigh: [0, 0, 0],
-      
-      // Nasz parametr oświetlenia (dla bezpieczeństwa)
-      lightFalloff: lightFalloff
     });
     
     ctx.globalCompositeOperation = 'source-over'; 
@@ -221,7 +293,7 @@ export function initSpaceBg(seedStr = null){
 
 export function resizeSpaceBg(w, h){
   parallaxState.offsetX = 0; parallaxState.offsetY = 0;
-  if (w > finalCanvas.width || h > finalCanvas.height) initSpaceBg(opts.seed);
+  if (w > finalCanvas.width || h > finalCanvas.height) initSpaceBg(guiState.seed);
 }
 
 export function drawSpaceBg(mainCtx, camera){
@@ -250,8 +322,22 @@ export function drawSpaceBg(mainCtx, camera){
     }
   }
 }
+
+// Zmienna globalna dla konsoli
+window.Nebula = guiState;
+
+let opts = { newSystemEnabled: true };
 export function setBgOptions(partial){ Object.assign(opts, partial || {}); }
-export function setBgSeed(seed){ opts.seed = String(seed); }
+export function setBgSeed(seed){ guiState.seed = String(seed); }
 export function setParallaxOptions(partial){ if(partial) Object.assign(parallaxState, partial); }
 export function getBackgroundCanvas(){ return finalCanvas; }
-export function getBackgroundSampleDescriptor(){ return finalCanvas ? { canvas: finalCanvas, tileWidth: finalCanvas.width, tileHeight: finalCanvas.height, offsetX: parallaxState.offsetX, offsetY: parallaxState.offsetY, parallaxEnabled: true } : null; }
+export function getBackgroundSampleDescriptor(){ 
+  return finalCanvas ? { 
+    canvas: finalCanvas, 
+    tileWidth: finalCanvas.width, 
+    tileHeight: finalCanvas.height, 
+    offsetX: parallaxState.offsetX, 
+    offsetY: parallaxState.offsetY, 
+    parallaxEnabled: true 
+  } : null; 
+}
