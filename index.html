@@ -12689,8 +12689,58 @@ function render(alpha, frameDt){
   const spriteScale = ship.visual?.spriteScale || 1;
   const visualW = ship.w * spriteScale;
   const visualH = ship.h * spriteScale;
-  ctx.save(); ctx.translate(shipS.x, shipS.y); ctx.scale(camera.zoom, camera.zoom); ctx.rotate(interpAngle);
+  
+  ctx.save(); 
+  ctx.translate(shipS.x, shipS.y); 
+  ctx.scale(camera.zoom, camera.zoom); 
+  ctx.rotate(interpAngle);
 
+  // --- 1. OBLICZANIE ACTIVE THRUSTERS (Przeniesione na górę - FIX BŁĘDU) ---
+  const activeThrusters = [];
+  let overrides = null;
+
+  if (ship.visual?.torqueThrusters?.length) {
+    const thrusters = ship.visual.torqueThrusters;
+    const strafeLeft = clamp(input.leftSide ?? 0, 0, 1);
+    const strafeRight = clamp(input.rightSide ?? 0, 0, 1);
+    const torqueInput = clamp(input.torque ?? 0, -1, 1);
+    const torqueIntensity = Math.abs(torqueInput);
+    let globalIntensity = 0;
+
+    for (const thruster of thrusters) {
+      const strafeIntensity = thruster.side === 'left' ? strafeLeft : strafeRight;
+      let thrusterIntensity = strafeIntensity;
+
+      if (torqueIntensity > 0) {
+        const isTop = thruster.offset.y < 0;
+        const isBottom = thruster.offset.y > 0;
+        if (torqueInput < 0) {
+          const shouldFire = (thruster.side === 'right' && isTop) || (thruster.side === 'left' && isBottom);
+          if (shouldFire) thrusterIntensity = Math.max(thrusterIntensity, torqueIntensity);
+        } else if (torqueInput > 0) {
+          const shouldFire = (thruster.side === 'left' && isTop) || (thruster.side === 'right' && isBottom);
+          if (shouldFire) thrusterIntensity = Math.max(thrusterIntensity, torqueIntensity);
+        }
+      }
+
+      thrusterIntensity = clamp(thrusterIntensity, 0, 1);
+      if (thrusterIntensity > 0) {
+        activeThrusters.push({ thruster, intensity: thrusterIntensity });
+        globalIntensity = Math.max(globalIntensity, thrusterIntensity);
+      }
+    }
+
+    if (globalIntensity > 0) {
+      overrides = {
+        throttleOverride: globalIntensity,
+        warpOverride: 0,
+        boostOverride: 0,
+        moveGlowOverride: 0
+      };
+    }
+  }
+
+  // --- 2. Rysowanie Warp Glow (ładowanie) ---
   let warpGlowProgress = 0;
   if(warp.state === 'charging'){
     warpGlowProgress = clamp(warp.charge / warp.chargeTime, 0, 1);
@@ -12702,7 +12752,7 @@ function render(alpha, frameDt){
     drawWarpChargeEffectLocal(warpGlowProgress, chargeRadius, spriteScale);
   }
 
-  // --- KADŁUB: sprite lub fallback ---
+  // --- 3. Rysowanie KADŁUBA ---
   if (USE_SHIP_SPRITE && ship.spriteReady) {
     const scale = (ship.h / ship.spriteH) * spriteScale;
     const drawW = ship.spriteW * scale;
@@ -12716,6 +12766,7 @@ function render(alpha, frameDt){
 
     ctx.drawImage(shipSprite, -drawW/2, -drawH/2, drawW, drawH);
   } else {
+    // Fallback proceduralny (gdy brak sprite'a)
     ctx.fillStyle = 'rgba(3,8,18,0.8)';
     ctx.fillRect(-visualW/2 + 6*spriteScale, -visualH/2 + 8*spriteScale, visualW, visualH);
     const g = ctx.createLinearGradient(-visualW/2, -visualH/2, visualW/2, visualH/2);
@@ -12754,6 +12805,7 @@ function render(alpha, frameDt){
     ctx.restore();
   }
 
+  // --- 4. Rysowanie ELEMENTÓW PROCEDURALNYCH (gdy brak sprite'a) ---
   if (!(USE_SHIP_SPRITE && ship.spriteReady)) {
     for (const pod of ship.pods) {
       ctx.save();
@@ -12794,48 +12846,7 @@ function render(alpha, frameDt){
       ctx.restore();
     }
 
-    if (ship.visual?.torqueThrusters?.length) {
-      for (const { thruster, intensity } of activeThrusters) {
-        // 1. Pobieramy wartości z Tunera (lub domyślne 1.0)
-        const tuneW = window.VFX_TUNE?.sideW ?? 1.0;
-        const tuneL = window.VFX_TUNE?.sideL ?? 1.0;
-
-        // 2. Bazowe wymiary z configu
-        const widthPxMin = thruster.vfxWidthMin != null 
-          ? thruster.vfxWidthMin 
-          : spriteScale * 128 * 1.0;
-        const widthPxMax = thruster.vfxWidthMax != null 
-          ? thruster.vfxWidthMax 
-          : spriteScale * 128 * 1.10;
-          
-        const lengthPxMin = thruster.vfxLengthMin != null 
-          ? thruster.vfxLengthMin 
-          : spriteScale * 256 * 0.2;
-        const lengthPxMax = thruster.vfxLengthMax != null 
-          ? thruster.vfxLengthMax 
-          : spriteScale * 256 * 0.4;
-
-        // 3. Interpolacja intensywności
-        const baseWidthPx = lerp(widthPxMin, widthPxMax, intensity);
-        const baseLengthPx = lerp(lengthPxMin, lengthPxMax, intensity);
-
-        // 4. APLIKOWANIE SKALI Z TUNERA (Kluczowy moment)
-        // Mnożymy finalny wynik pixeli przez mnożnik z konsoli
-        const finalWidthScale = Math.max(0.0001, (baseWidthPx / 128) * tuneW);
-        const finalLengthScale = Math.max(0.0001, (baseLengthPx / 256) * tuneL);
-
-        const alpha = 0.55 + intensity * 0.35;
-
-       drawNeedleEngineVfxLocal(thruster.offset, thruster.forward, {
-          widthScale: finalWidthScale,
-          lengthScale: finalLengthScale,
-          yNudge: thruster.yNudge,
-          alpha,
-          overrides
-        });
-      }
-    } 
-  }  
+    // Działka boczne
     ctx.fillStyle = '#cbd6ff';
     for (const off of ship.sideGunsLeft) {
       ctx.save();
@@ -12851,70 +12862,25 @@ function render(alpha, frameDt){
       ctx.fill();
       ctx.restore();
     }
-  
+  }
 
-  // VFX bocznych silników momentu/strafe
-  if (ship.visual?.torqueThrusters?.length) {
-    const thrusters = ship.visual.torqueThrusters;
-    const strafeLeft = clamp(input.leftSide ?? 0, 0, 1);
-    const strafeRight = clamp(input.rightSide ?? 0, 0, 1);
-    const torqueInput = clamp(input.torque ?? 0, -1, 1);
-    const torqueIntensity = Math.abs(torqueInput);
-
-    const activeThrusters = [];
-    let globalIntensity = 0;
-
-    for (const thruster of thrusters) {
-      const strafeIntensity = thruster.side === 'left' ? strafeLeft : strafeRight;
-      let thrusterIntensity = strafeIntensity;
-
-      if (torqueIntensity > 0) {
-        const isTop = thruster.offset.y < 0;
-        const isBottom = thruster.offset.y > 0;
-
-        if (torqueInput < 0) {
-          const shouldFire = (thruster.side === 'right' && isTop) || (thruster.side === 'left' && isBottom);
-          if (shouldFire) thrusterIntensity = Math.max(thrusterIntensity, torqueIntensity);
-        } else if (torqueInput > 0) {
-          const shouldFire = (thruster.side === 'left' && isTop) || (thruster.side === 'right' && isBottom);
-          if (shouldFire) thrusterIntensity = Math.max(thrusterIntensity, torqueIntensity);
-        }
-      }
-
-      thrusterIntensity = clamp(thrusterIntensity, 0, 1);
-      if (thrusterIntensity <= 0) continue;
-
-      activeThrusters.push({ thruster, intensity: thrusterIntensity });
-      globalIntensity = Math.max(globalIntensity, thrusterIntensity);
-    }
-
-    if (globalIntensity > 0) {
-      const overrides = {
-        throttleOverride: globalIntensity,
-        warpOverride: 0,
-        boostOverride: 0,
-        moveGlowOverride: 0
-      };
-
+  // --- 5. VFX SILNIKÓW (Draw phase - igły ognia) ---
+  // A. Boczne silniki (Strafe/Torque)
+  if (activeThrusters.length) {
       for (const { thruster, intensity } of activeThrusters) {
-        const widthPxMin = thruster.vfxWidthMin != null
-          ? thruster.vfxWidthMin
-          : spriteScale * 128 * 1.0;
-        const widthPxMax = thruster.vfxWidthMax != null
-          ? thruster.vfxWidthMax
-          : spriteScale * 128 * 1.10;
-        const lengthPxMin = thruster.vfxLengthMin != null
-          ? thruster.vfxLengthMin
-          : spriteScale * 256 * 0.2;
-        const lengthPxMax = thruster.vfxLengthMax != null
-          ? thruster.vfxLengthMax
-          : spriteScale * 256 * 0.4;
+        const tuneW = window.VFX_TUNE?.sideW ?? 1.0;
+        const tuneL = window.VFX_TUNE?.sideL ?? 1.0;
+
+        const widthPxMin = thruster.vfxWidthMin != null ? thruster.vfxWidthMin : spriteScale * 128 * 1.0;
+        const widthPxMax = thruster.vfxWidthMax != null ? thruster.vfxWidthMax : spriteScale * 128 * 1.10;
+        const lengthPxMin = thruster.vfxLengthMin != null ? thruster.vfxLengthMin : spriteScale * 256 * 0.2;
+        const lengthPxMax = thruster.vfxLengthMax != null ? thruster.vfxLengthMax : spriteScale * 256 * 0.4;
 
         const widthPx = lerp(widthPxMin, widthPxMax, intensity);
         const lengthPx = lerp(lengthPxMin, lengthPxMax, intensity);
 
-        const widthScale = Math.max(0.0001, widthPx / 128);
-        const lengthScale = Math.max(0.0001, lengthPx / 256);
+        const widthScale = Math.max(0.0001, (widthPx / 128) * tuneW);
+        const lengthScale = Math.max(0.0001, (lengthPx / 256) * tuneL);
         const alpha = 0.55 + intensity * 0.35;
 
         drawNeedleEngineVfxLocal(thruster.offset, thruster.forward, {
@@ -12925,10 +12891,9 @@ function render(alpha, frameDt){
           overrides
         });
       }
-    }
   }
 
-  // VFX głównego silnika – pod tarczą, wyrasta z dyszy
+  // B. Główny silnik
   {
     const e = ship.engines.main;
     const visualOffset = e.visualOffset || e.offset;
@@ -12937,23 +12902,22 @@ function render(alpha, frameDt){
     const moveGlow = Math.min(spd / 900, 0.6) * 0.8;
     const throttle = Math.max(input.main || 0, moveGlow);
     
-    // Hook dla Live Tunera (domyślnie 1.0)
     const mainW = window.VFX_TUNE?.mainW ?? 1.0; 
     const mainL = window.VFX_TUNE?.mainL ?? 1.0; 
 
-    // Zastosowanie tunera
     const widen = (2.4 + 0.6 * throttle) * mainW;
     const lenBase = 1.0 * mainL;
 
     drawNeedleEngineVfxLocal(visualOffset, forward, {
       widthScale: widen,
       lengthScale: lenBase,
-      yNudge: -68 * spriteScale, // Tu jest Twoja pozycja Y (zmieniałeś ją wcześniej)
+      yNudge: -68 * spriteScale, 
       alpha: 1
     });
   }
 
-  // CIWS turrets
+  // --- 6. WIEŻYCZKI I CIWS ---
+  // CIWS
   const ciwsBase = 8 * spriteScale, ciwsBarrelLen = 12 * spriteScale, ciwsBarrelH = 4 * spriteScale;
   const activeCIWS = (Game.player.weapons?.[HP.AUX]?.length || 0);
   ship.ciws.forEach((c,i)=>{
@@ -12978,12 +12942,12 @@ function render(alpha, frameDt){
     ctx.restore();
   });
 
-  // wieżyczki podwójne z recoilem
+  // Główne wieżyczki
   const baseW = 16 * spriteScale,
         baseH = 24 * spriteScale,
         barrelLen = Math.max(14 * spriteScale, Math.round(visualH * 0.16)) / 2,
         barrelH = 6 * spriteScale,
-        gap = 10 * spriteScale; // trochę dłuższe
+        gap = 10 * spriteScale; 
   const turrets = [
     { t: ship.turret,  ang: interpTurretAngle },
     { t: ship.turret2, ang: interpTurretAngle2 },
@@ -13038,8 +13002,6 @@ function render(alpha, frameDt){
       } else {
         const housingW = 20 * spriteScale;
         const housingH = 30 * spriteScale;
-        const barrelL = Math.max(20 * spriteScale, Math.round(visualH * 0.22));
-        const barrelThickness = 8 * spriteScale;
         ctx.fillStyle = '#7f8fb7';
         roundRect(ctx, -housingW/2, -housingH/2, housingW, housingH, 6 * spriteScale); ctx.fill();
         ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(24,38,68,0.55)'; ctx.stroke();
@@ -13049,6 +13011,8 @@ function render(alpha, frameDt){
         roundRect(ctx, -housingW/2 + 2.5 * spriteScale, -2 * spriteScale, housingW * 0.42, 4 * spriteScale, 2 * spriteScale); ctx.fill();
         ctx.strokeStyle = 'rgba(24,38,68,0.55)';
         ctx.fillStyle = '#d9dde9';
+        const barrelThickness = 8 * spriteScale;
+        const barrelL = Math.max(20 * spriteScale, Math.round(visualH * 0.22));
         roundRect(ctx, 8 * spriteScale - recoil, -barrelThickness/2, barrelL, barrelThickness, 3 * spriteScale); ctx.fill(); ctx.stroke();
         ctx.fillStyle = '#f0b97a';
         ctx.beginPath();
@@ -13062,8 +13026,8 @@ function render(alpha, frameDt){
       ctx.fillStyle = '#9ab7ff'; roundRect(ctx, -baseW/2, -baseH/2, baseW, baseH, 5 * spriteScale); ctx.fill();
       ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(30,50,90,0.45)'; ctx.stroke();
       ctx.fillStyle = '#c0c0c0';
-    roundRect(ctx, 6*spriteScale - recoil, -gap/2 - barrelH/2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
-    roundRect(ctx, 6*spriteScale - recoil,  gap/2 - barrelH/2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
+      roundRect(ctx, 6*spriteScale - recoil, -gap/2 - barrelH/2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
+      roundRect(ctx, 6*spriteScale - recoil,  gap/2 - barrelH/2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
     }
     ctx.restore();
   });
