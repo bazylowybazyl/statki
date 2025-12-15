@@ -3,10 +3,6 @@
 import { Space2D } from './index.ts';
 import Alea from 'alea';
 
-const TILE_SCALE = 1.0; 
-let finalCanvas = null; 
-let newBg = null;
-
 // KOLORY GWIAZD TYRO (Black Body Radiation)
 const blackBodyColors = [
   [1.0, 0.0401, 0.003], [1.0, 0.0631, 0.003], [1.0, 0.086, 0.003], [1.0, 0.1085, 0.003], [1.0, 0.1303, 0.003],
@@ -24,47 +20,58 @@ const blackBodyColors = [
   [0.5394, 0.6666, 1.0], [0.5357, 0.664, 1.0], [0.5322, 0.6615, 1.0], [0.5287, 0.659, 1.0], [0.5253, 0.6566, 1.0]
 ];
 
+const TILE_SCALE = 1.0; 
+let finalCanvas = null; 
+let newBg = null;
+
+// Funkcja generująca seed jak w demo Tyro (22 znaki)
+function generateSeed() {
+  const alphanum = "abcdefghijklmnopqrstuvqxyz1234567890";
+  let seed = "";
+  for (let i = 0; i < 22; i++) {
+    seed += alphanum[Math.floor(Math.random() * alphanum.length)];
+  }
+  return seed;
+}
+
 // --- PANEL STEROWANIA (KONSOLA) ---
 window.Nebula = {
-  resolution: 2048,
+  // Ziarno losowości (zmiana tego zmienia cały układ)
+  seed: 'o7y91x2t2ze6ctqtxhuom5', // Domyślny seed z Twojego linku
+
+  // Rozdzielczość
+  resolution: 2048, 
   
-  // Parametry "Tyro":
-  // Domyślny falloff ~600 daje ostre, nitkowate chmury.
-  // Zmniejsz do 100-200, jeśli chcesz grubsze.
-  falloffBase: 256.0,
-  falloffRange: 1024.0, 
-  
-  density: 50.0, // Wartość bazowa (dzielona przez layers)
-  layers: 60,    // Ilość warstw
-  
-  scale: 0.0014, // Zoom (im mniej tym większe)
-  
-  // Seed
-  seed: 'statki',
-  
+  // Opcja ręcznego nadpisywania (jeśli false, używamy logiki z demo)
+  manualOverride: false,
+
+  // Parametry ręczne (używane tylko gdy manualOverride = true)
+  manualParams: {
+      falloff: 60.0,
+      density: 0.5,
+      lightFalloff: 200.0,
+      scale: 0.001
+  },
+
+  // Przerysowanie
   redraw: () => {
     console.log(`[Nebula] Przerysowywanie (${window.Nebula.resolution}px)...`);
     setTimeout(() => initSpaceBg(window.Nebula.seed), 10);
   },
+  
+  // Losuj nowe parametry (jak w demo)
   randomize: () => {
-    const newSeed = Math.random().toString(36).slice(2, 8);
-    console.log(`[Nebula] Nowy seed: "${newSeed}"`);
+    const newSeed = generateSeed();
+    console.log(`[Nebula] Wylosowano seed: "${newSeed}"`);
     window.Nebula.seed = newSeed;
     initSpaceBg(newSeed);
   },
   
-  // PRESETY DO TESTÓW
-  presetThick: () => {
-    window.Nebula.falloffBase = 50;
-    window.Nebula.falloffRange = 100;
-    window.Nebula.density = 80;
-    window.Nebula.redraw();
-  },
-  presetStringy: () => {
-    window.Nebula.falloffBase = 256;
-    window.Nebula.falloffRange = 1024;
-    window.Nebula.density = 50;
-    window.Nebula.redraw();
+  // Włącz tryb ręczny
+  useManual: (enabled = true) => {
+      window.Nebula.manualOverride = enabled;
+      console.log(`[Nebula] Tryb ręczny: ${enabled ? 'WŁĄCZONY' : 'WYŁĄCZONY (Demo style)'}`);
+      window.Nebula.redraw();
   }
 };
 
@@ -100,31 +107,39 @@ export function initSpaceBg(seedStr = null){
   const h = finalCanvas.height;
   const ctx = finalCanvas.getContext('2d');
   
+  // Inicjalizacja PRNG tym samym seedem co w demo
   const prng = Alea(opts.seed);
 
-  // TŁO
-  ctx.fillStyle = '#000000'; 
+  // 1. TŁO
+  // Tyro też losuje kolor tła!
+  const backgroundColor = blackBodyColors[Math.floor(prng() * blackBodyColors.length)].slice();
+  const bgIntensity = 0.5 * prng();
+  backgroundColor[0] *= bgIntensity; backgroundColor[1] *= bgIntensity; backgroundColor[2] *= bgIntensity;
+
+  ctx.fillStyle = `rgb(${backgroundColor[0]*255}, ${backgroundColor[1]*255}, ${backgroundColor[2]*255})`;
   ctx.fillRect(0, 0, w, h);
 
   if (opts.newSystemEnabled) {
     if (!newBg) newBg = new Space2D();
     
-    // PARAMETRY
-    const scale = window.Nebula.scale + prng() * 0.001;
-    const layers = window.Nebula.layers;
+    // --- LOGIKA Z DEMO (utility/main.ts) ---
+    
+    // Skala (Zoom)
+    const scale = 0.001 + prng() * 0.001;
+    
     const near = 0;
     const far = 500;
-    
+    const layers = 60; // W demo jest więcej, ale 60 wystarczy dla wydajności w grze
+
     const sceneOffset = [prng() * 10000000 - 5000000, prng() * 10000000 - 5000000];
     sceneOffset[0] -= 0.5 * w;
     sceneOffset[1] -= 0.5 * h;
 
-    // GENEROWANIE GWIAZD (Tyro Style)
+    // Generowanie gwiazd
     const stars = [];
     const nStars = Math.min(64, 1 + Math.round(prng() * (w * h) * scale * scale));
 
     for (let i = 0; i < nStars; i++) {
-        // Losuj kolor z palety Black Body
         const color = blackBodyColors[Math.floor(prng() * blackBodyColors.length)].slice();
         const intensity = 0.5 * prng(); 
         
@@ -144,11 +159,33 @@ export function initSpaceBg(seedStr = null){
             diffractionSpikeScale: 4 + 4 * prng(),
         });
     }
+
+    // Parametry mgławicy (losowane)
+    let nebulaLacunarity = 1.8 + 0.2 * prng();
+    let nebulaGain = 0.5;
+    let nebulaAbsorption = 1.0;
+    // To jest kluczowe dla "nitek": losowy falloff w dużym zakresie
+    let nebulaFalloff = 256 + prng() * 1024; 
+    let nebulaDensity = (50 + prng() * 100) / layers;
     
-    // TŁO KOSMOSU (Kolorowe)
-    const backgroundColor = blackBodyColors[Math.floor(prng() * blackBodyColors.length)].slice();
-    const bgInt = 0.5 * prng();
-    backgroundColor[0] *= bgInt; backgroundColor[1] *= bgInt; backgroundColor[2] *= bgInt;
+    // Kolory mgławicy (Albedo) - losowe RGB
+    let nebulaAlbedoLow = [prng(), prng(), prng()];
+    let nebulaAlbedoHigh = [prng(), prng(), prng()];
+    let nebulaAlbedoScale = prng() * 8;
+    
+    // Oświetlenie (nasz custom fix na jasność, Tyro ma to wbudowane w fizykę)
+    let lightFalloff = 400.0;
+
+    // OBSŁUGA MANUALNA (jeśli chcesz nadpisać demo swoimi ustawieniami)
+    if (window.Nebula.manualOverride) {
+        const m = window.Nebula.manualParams;
+        nebulaFalloff = m.falloff;
+        nebulaDensity = m.density;
+        lightFalloff = m.lightFalloff;
+        // Resztę można też podpiąć
+    }
+
+    console.log(`[Nebula] Render Seed="${opts.seed}" | Falloff=${nebulaFalloff.toFixed(0)}`);
 
     const newCanvas = newBg.render(w, h, {
       stars,
@@ -156,29 +193,24 @@ export function initSpaceBg(seedStr = null){
       offset: sceneOffset,
       backgroundColor,
       
-      // LOGIKA PARAMETRÓW Z MAIN.TS
-      nebulaLacunarity: 1.8 + 0.2 * prng(),
-      nebulaGain: 0.5,
-      nebulaAbsorption: 1.0,
-      
-      // Falloff z konsoli (baza + losowość)
-      nebulaFalloff: window.Nebula.falloffBase + prng() * window.Nebula.falloffRange,
-      
+      nebulaLacunarity,
+      nebulaGain,
+      nebulaAbsorption,
+      nebulaFalloff,
       nebulaNear: near,
       nebulaFar: far,
       nebulaLayers: layers,
+      nebulaDensity,
       
-      // Gęstość skalowana warstwami
-      nebulaDensity: (window.Nebula.density + prng() * 100) / layers,
+      nebulaAlbedoLow,
+      nebulaAlbedoHigh,
+      nebulaAlbedoScale,
       
-      // Albedo - klucz do kolorów
-      nebulaAlbedoLow: [prng(), prng(), prng()],
-      nebulaAlbedoHigh: [prng(), prng(), prng()],
-      nebulaAlbedoScale: prng() * 8,
-      
-      // Brak emisji
       nebulaEmissiveLow: [0, 0, 0],
       nebulaEmissiveHigh: [0, 0, 0],
+      
+      // Nasz parametr oświetlenia (dla bezpieczeństwa)
+      lightFalloff: lightFalloff
     });
     
     ctx.globalCompositeOperation = 'source-over'; 
