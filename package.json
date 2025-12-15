@@ -9,6 +9,8 @@
     "http-server": "^14.1.1"
   },
   "dependencies": {
+    "alea": "^1.0.1",
+    "regl": "^2.1.1",
     "three": "^0.156.1"
   }
 }
