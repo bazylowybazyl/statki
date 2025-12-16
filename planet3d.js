@@ -232,6 +232,15 @@
       this.scene.add(this.fillLight);
 
       this._sunDir = new THREE.Vector3();
+
+      const haloColors = {
+        terran: '#6fc0ff',
+        volcanic: '#ff824f',
+        frozen: '#a4d8ff',
+        gas: '#ffdca0',
+        barren: '#c7c7c7',
+      };
+      this.haloColor = haloColors[type] || '#a8b8d0';
     }
 
     render(dt) {
@@ -259,6 +268,24 @@
       // kopiuj wynik z jedynego renderera do prywatnego canvasa 2D
       this.ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
       this.ctx2d.drawImage(r.domElement, 0, 0);
+
+      // Subtelna poświata wokół planety – skaluje się razem z jej bitmapą
+      const ctx = this.ctx2d;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const cx = this.canvas.width * 0.5;
+      const inner = this.canvas.width * 0.46;
+      const outer = this.canvas.width * 0.60;
+      const g = ctx.createRadialGradient(cx, cx, inner, cx, cx, outer);
+      const haloRGB = this.haloColor;
+      g.addColorStop(0.0, `${haloRGB}33`);
+      g.addColorStop(0.6, `${haloRGB}22`);
+      g.addColorStop(1.0, `${haloRGB}00`);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(cx, cx, outer, 0, TAU);
+      ctx.fill();
+      ctx.restore();
     }
   }
 
