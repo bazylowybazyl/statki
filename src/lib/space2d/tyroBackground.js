@@ -29,14 +29,14 @@ const guiState = {
   seed: 'statki',
   resolution: 2048,
   
-  // Parametry mgławicy
-  scale: 0.001,
+  // Parametry mgławicy (Twoje nowe ustawienia)
+  scale: 0.0022,
   falloff: 300,
   density: 0.5,
-  layers: 60,
+  layers: 1360,
   
   // Oświetlenie
-  lightFalloff: 400.0,
+  lightFalloff: 500.0,
   
   // Stan okna
   isVisible: true
@@ -120,8 +120,6 @@ function createGUI() {
   addSlider("Falloff", "falloff", 10, 1500, 10);
   addSlider("Density", "density", 0.1, 2.0, 0.1);
   addSlider("Light", "lightFalloff", 50, 1000, 10);
-  
-  // ZWIĘKSZONY ZAKRES DLA LAYERS (do 2000)
   addSlider("Layers", "layers", 10, 2000, 10);
 
   // --- Resolution ---
@@ -173,13 +171,10 @@ function updateGUI() {
 }
 
 function randomizeParams() {
-  const prng = Alea(Math.random()); // Losowe, niezależne od seeda tła
-  
-  // Wzory z main.ts
+  const prng = Alea(Math.random()); 
   guiState.scale = 0.001 + prng() * 0.001;
   guiState.falloff = Math.floor(256 + prng() * 1024);
-  guiState.density = 0.5 + prng() * 0.5; // Trochę uproszczone
-  
+  guiState.density = 0.5 + prng() * 0.5; 
   updateGUI();
   redraw();
 }
@@ -233,7 +228,6 @@ export function initSpaceBg(seedStr = null){
     
     // --- GEN GWIAZD ---
     const stars = [];
-    // Ilość gwiazd zależna od skali (jak w demo)
     const nStars = Math.min(64, 1 + Math.round(prng() * (w * h) * guiState.scale * guiState.scale));
     
     const sceneOffset = [prng() * 10000000 - 5000000, prng() * 10000000 - 5000000];
@@ -267,14 +261,12 @@ export function initSpaceBg(seedStr = null){
       offset: sceneOffset,
       backgroundColor,
       
-      // Używamy wartości z GUI
       scale: guiState.scale,
       nebulaFalloff: guiState.falloff,
-      nebulaDensity: guiState.density / guiState.layers * 100, // Skalowanie gęstości
+      nebulaDensity: guiState.density / guiState.layers * 100, 
       nebulaLayers: guiState.layers,
       lightFalloff: guiState.lightFalloff,
       
-      // Losowane per seed
       nebulaLacunarity: 1.8 + 0.2 * prng(),
       nebulaGain: 0.5,
       nebulaAbsorption: 1.0,
@@ -314,13 +306,29 @@ export function drawSpaceBg(mainCtx, camera){
       parallaxState.offsetY += (parallaxState.targetY - parallaxState.offsetY) * smooth;
     }
   }
+  
+  // FIX: ZOOM SUPPORT
+  const zoom = camera ? (camera.zoom || 1.0) : 1.0;
+  // Paralaksa zoomu - tło skaluje się wolniej niż świat (np. pierwiastek z zoomu)
+  // Jeśli wolisz 1:1, użyj po prostu `const drawScale = zoom;`
+  const drawScale = Math.pow(zoom, 0.5); 
+  
+  // Przeskalowane wymiary kafelka
+  const drawW = bgW * drawScale;
+  const drawH = bgH * drawScale;
 
-  const shiftX = -((parallaxState.offsetX % bgW + bgW) % bgW);
-  const shiftY = -((parallaxState.offsetY % bgH + bgH) % bgH);
+  // Przesunięcie z uwzględnieniem skali
+  // Musimy przeskalować offset, żeby pasował do przeskalowanych kafelków
+  const scaledOffsetX = parallaxState.offsetX * drawScale;
+  const scaledOffsetY = parallaxState.offsetY * drawScale;
 
-  for (let x = shiftX; x < screenW; x += bgW) {
-    for (let y = shiftY; y < screenH; y += bgH) {
-      mainCtx.drawImage(finalCanvas, Math.floor(x), Math.floor(y), Math.ceil(bgW)+1, Math.ceil(bgH)+1);
+  const shiftX = -((scaledOffsetX % drawW + drawW) % drawW);
+  const shiftY = -((scaledOffsetY % drawH + drawH) % drawH);
+
+  for (let x = shiftX; x < screenW; x += drawW) {
+    for (let y = shiftY; y < screenH; y += drawH) {
+      // Używamy drawW/drawH zamiast oryginalnych wymiarów
+      mainCtx.drawImage(finalCanvas, Math.floor(x), Math.floor(y), Math.ceil(drawW)+1, Math.ceil(drawH)+1);
     }
   }
 }
