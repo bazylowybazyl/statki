@@ -246,7 +246,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.ref = opts.ref || null;
 
       this.canvas = document.createElement("canvas");
-      this.canvas.width = 2048; this.canvas.height = 2048;
+      this.canvas.width = 1536; this.canvas.height = 1536;
       this.ctx2d = this.canvas.getContext("2d");
       this._name = String((opts && (opts.name ?? opts.id)) ?? "").toLowerCase();
       if (!this._name || !TEX[this._name]) this._name = 'earth';
