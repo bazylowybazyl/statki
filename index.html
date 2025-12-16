@@ -14271,17 +14271,36 @@ async function startGame(){
   // Ukryj loading overlay
   hideLoadingOverlay();
 
-  // --- START GENEROWANIA TŁA "LIVE" ---
-  // Uruchamiamy to TERAZ, gdy gracz już widzi statek i czarne tło.
-  if (window.Space2DBackground && window.mainScene3D) {
+  // --- DIAGNOSTYKA I START TŁA ---
+  console.log("[DEBUG] Próba uruchomienia generatora tła...");
+  console.log("[DEBUG] Moduł tła (Space2DBackground):", window.Space2DBackground);
+  console.log("[DEBUG] Scena 3D (mainScene3D):", window.mainScene3D);
+
+  if (window.Space2DBackground) {
+      // Pokaż pasek ręcznie przed startem, żeby było widać że coś ruszyło
+      const bgStatusEl = document.getElementById('bg-gen-status');
+      if (bgStatusEl) bgStatusEl.style.display = 'block';
+
+      // Przekazujemy null jeśli scena nie istnieje, żeby skrypt i tak ruszył
+      const sceneRef = window.mainScene3D || null;
+
       window.Space2DBackground.startLiveGeneration(
-          window.mainScene3D, 
-          updateLiveBackgroundProgress, // Callback postępu
+          sceneRef, 
+          updateLiveBackgroundProgress, 
           () => { 
-              console.log("Galaktyka wygenerowana w tle.");
-              configureWarpLensSource(); // Odśwież soczewkę warpa po wygenerowaniu tła
+              console.log("[Tyro] Tło gotowe.");
+              // Jeśli soczewka warpa istnieje, odśwież ją nowym tłem
+              if (typeof configureWarpLensSource === 'function') configureWarpLensSource();
+              
+              // Jeśli scena pojawiła się później (np. asynchronicznie), przypisz tło teraz
+              if (!sceneRef && window.mainScene3D) {
+                  const bgCanvas = window.Space2DBackground.getBackgroundCanvas();
+                  // (Tu można by dodać logikę przypisania tekstury do window.mainScene3D.background jeśli trzeba)
+              }
           }
       );
+  } else {
+      console.error("[BŁĄD KRYTYCZNY] Moduł 'Space2DBackground' nie jest dostępny w window! Sprawdź importy.");
   }
 }
 
