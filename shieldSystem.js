@@ -10,7 +10,7 @@ const CONFIG = {
     hitDecayTime: 0.6,
     hitSpread: 1.0,       // Szersze rozchodzenie się fali
     deformPower: 12,
-    shieldScale: 2.0,
+    shieldScale: 3.0,
     activationDuration: 0.45,
     deactivationDuration: 0.55,
     breakDuration: 0.65
