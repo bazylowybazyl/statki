@@ -6339,6 +6339,10 @@ function setMechanicUIVisible(visible){
 
 const INFRASTRUCTURE_BUILDINGS = [
   { id:'solar_array', name:'Orbitalna Elektrownia Słoneczna', buildTime:75, icon:'solar', footprint:{ w:4, h:4 } },
+  { id:'dock_s', name:'Dok Orbitalny (S)', buildTime:55, icon:'dock', footprint:{ w:1, h:1 } },
+  { id:'dock_m', name:'Dok Orbitalny (M)', buildTime:75, icon:'dock', footprint:{ w:2, h:1 }, rotatable:true },
+  { id:'dock_l', name:'Dok Orbitalny (L)', buildTime:105, icon:'dock', footprint:{ w:2, h:2 } },
+  { id:'dock_capital', name:'Dok Orbitalny (Capital)', buildTime:140, icon:'dock', footprint:{ w:3, h:3 } },
   { id:'shipyard_s', name:'Orbitalna Stocznia (S)', buildTime:90, icon:'shipyard', tier:'S', footprint:{ w:1, h:2 }, rotatable:true },
   { id:'shipyard_m', name:'Orbitalna Stocznia (M)', buildTime:110, icon:'shipyard', tier:'M', footprint:{ w:2, h:2 } },
   { id:'shipyard_l', name:'Orbitalna Stocznia (L)', buildTime:140, icon:'shipyard', tier:'L', footprint:{ w:3, h:2 }, rotatable:true },
@@ -7025,6 +7029,42 @@ function drawStorageIcon(ctx, color, label){
   ctx.restore();
 }
 
+function drawDockIcon(ctx, size = 72){
+  const sprite = [
+    '..cc..cc..',
+    '.cddccddc.',
+    'cddddddddc',
+    '.cddddddc.',
+    '..cddddc..',
+    '..cddddc..',
+    '.cddccddc.',
+    'cddddddddc',
+    '.cddddddc.',
+    '..cddcc...',
+    '..cc.....'
+  ];
+  const palette = {
+    c:'#a5b4fc',
+    d:'#38bdf8'
+  };
+  const cols = sprite[0].length;
+  const rows = sprite.length;
+  const cell = size / cols;
+  ctx.save();
+  ctx.translate(-(cols * cell) / 2, -(rows * cell) / 2);
+  for(let y=0; y<rows; y++){
+    const row = sprite[y];
+    for(let x=0; x<cols; x++){
+      const ch = row[x];
+      if(palette[ch]){
+        ctx.fillStyle = palette[ch];
+        ctx.fillRect(x * cell, y * cell, cell - 0.5, cell - 0.5);
+      }
+    }
+  }
+  ctx.restore();
+}
+
 function drawGenericIcon(ctx){
   ctx.save();
   ctx.fillStyle = 'rgba(56,80,160,0.9)';
@@ -7058,6 +7098,9 @@ function drawBuildingPreview(canvas, building){
   switch(building.icon){
     case 'solar':
       drawSolarIcon(ctx);
+      break;
+    case 'dock':
+      drawDockIcon(ctx, 64);
       break;
     case 'shipyard':
       drawShipyardIcon(ctx, building.tier);
@@ -7285,6 +7328,9 @@ function drawInfrastructureIcon(ctx, building, center, size, alpha = 1){
   switch(building.icon){
     case 'solar':
       drawSolarIcon(ctx);
+      break;
+    case 'dock':
+      drawDockIcon(ctx, size * 0.9);
       break;
     case 'shipyard':
       drawShipyardIcon(ctx, building.tier);
