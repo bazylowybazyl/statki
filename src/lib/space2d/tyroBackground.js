@@ -31,7 +31,7 @@ const guiState = {
   
   // Parametry mgławicy
   scale: 0.001,
-  falloff: 300,    // Tyro używa dużych wartości (256-1200)
+  falloff: 300,
   density: 0.5,
   layers: 60,
   
@@ -120,7 +120,9 @@ function createGUI() {
   addSlider("Falloff", "falloff", 10, 1500, 10);
   addSlider("Density", "density", 0.1, 2.0, 0.1);
   addSlider("Light", "lightFalloff", 50, 1000, 10);
-  addSlider("Layers", "layers", 10, 200, 10);
+  
+  // ZWIĘKSZONY ZAKRES DLA LAYERS (do 2000)
+  addSlider("Layers", "layers", 10, 2000, 10);
 
   // --- Resolution ---
   const rowRes = document.createElement('div');
