@@ -37,7 +37,7 @@ const guiState = {
   scale: 0.0022,
   falloff: 300,
   density: 0.5,
-  layers: 1360,
+  layers: 1200,
   lightFalloff: 500.0,
   
   isVisible: true,
