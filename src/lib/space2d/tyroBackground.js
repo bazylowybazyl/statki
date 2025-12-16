@@ -65,9 +65,11 @@ export function startLiveGeneration(sceneRef, onProgress, onComplete) {
         _bgTexture.userData = { ready: false }; // Flaga gotowości
     }
 
-    // 3. Przypisz czarną teksturę do sceny OD RAZU
+    // 3. Przypisz czarną teksturę do sceny OD RAZU (jeśli scena istnieje)
     if (sceneRef) {
         sceneRef.background = _bgTexture;
+    } else {
+        console.warn("[Tyro] Brak sceny 3D (sceneRef is null). Generuję tło w pamięci.");
     }
 
     // 4. Pętla generowania chunków
