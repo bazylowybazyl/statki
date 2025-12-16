@@ -3,7 +3,15 @@
 import { Space2D } from './index.ts';
 import Alea from 'alea';
 
-// KOLORY GWIAZD TYRO (Black Body Radiation)
+// --- KONFIGURACJA ŚWIATA ---
+const CHUNK_SIZE = 4096; // Rozmiar jednego kafla (zgodnie z życzeniem)
+const RENDER_RADIUS = 1; // Ile kafli w każdą stronę (1 = 3x3 grid, 2 = 5x5 grid)
+
+// Cache na wygenerowane kafelki { "x_y": Canvas }
+const chunks = new Map();
+let newBg = null;
+
+// KOLORY GWIAZD (Tyro Style)
 const blackBodyColors = [
   [1.0, 0.0401, 0.003], [1.0, 0.0631, 0.003], [1.0, 0.086, 0.003], [1.0, 0.1085, 0.003], [1.0, 0.1303, 0.003],
   [1.0, 0.2097, 0.003], [1.0, 0.2272, 0.003], [1.0, 0.2484, 0.0061], [1.0, 0.2709, 0.0153], [1.0, 0.293, 0.0257],
@@ -20,30 +28,30 @@ const blackBodyColors = [
   [0.5394, 0.6666, 1.0], [0.5357, 0.664, 1.0], [0.5322, 0.6615, 1.0], [0.5287, 0.659, 1.0], [0.5253, 0.6566, 1.0]
 ];
 
-// --- KONFIGURACJA CHUNKÓW ---
-const CHUNK_SIZE = 1024; // Rozmiar kafelka (piksele świata gry)
-const CACHE_LIMIT = 50;  // Ile kafelków trzymać w pamięci (zabezpieczenie RAM)
-
-let newBg = null;
-const chunkCache = new Map(); // Cache wygenerowanych kafelków
-
-// --- STAN GUI ---
-const guiState = {
+// --- PANEL STEROWANIA ---
+window.Nebula = {
   seed: 'statki',
   
-  // Twoje ustawienia ("The Best"):
-  scale: 0.0022,
+  // Twoje wybrane parametry:
+  scale: 0.0024,
   falloff: 300,
   density: 0.5,
-  layers: 1360,
   lightFalloff: 500.0,
+  layers: 1360,
   
-  colors: {
-    base: [0.1, 0.4, 1.0], 
-    var:  [0.2, 0.3, 0.5]  
+  isVisible: true,
+
+  redraw: () => {
+    console.log(`[Nebula] Przerysowywanie gridu 3x3...`);
+    setTimeout(() => initSpaceBg(window.Nebula.seed), 10);
   },
   
-  isVisible: true
+  randomize: () => {
+    const newSeed = Math.random().toString(36).slice(2, 9);
+    console.log(`[Nebula] Nowy seed: "${newSeed}"`);
+    window.Nebula.seed = newSeed;
+    initSpaceBg(newSeed);
+  }
 };
 
 // --- TWORZENIE GUI ---
@@ -70,18 +78,14 @@ function createGUI() {
   rowSeed.style.cssText = "display:flex; gap:4px; margin-bottom:8px;";
   
   const inpSeed = document.createElement('input');
-  inpSeed.value = guiState.seed;
+  inpSeed.value = window.Nebula.seed;
   inpSeed.style.cssText = "flex:1; background:#000; border:1px solid #468; color:#fff; padding:2px;";
-  inpSeed.addEventListener('change', e => { guiState.seed = e.target.value; clearCache(); });
+  inpSeed.addEventListener('change', e => { window.Nebula.seed = e.target.value; window.Nebula.redraw(); });
   
   const btnRandSeed = document.createElement('button');
   btnRandSeed.textContent = "RND";
   btnRandSeed.style.cssText = "background:#246; color:#fff; border:1px solid #468; cursor:pointer;";
-  btnRandSeed.addEventListener('click', () => {
-    guiState.seed = Math.random().toString(36).slice(2, 9);
-    inpSeed.value = guiState.seed;
-    clearCache();
-  });
+  btnRandSeed.addEventListener('click', window.Nebula.randomize);
   
   rowSeed.appendChild(inpSeed);
   rowSeed.appendChild(btnRandSeed);
@@ -91,31 +95,17 @@ function createGUI() {
   const addSlider = (label, key, min, max, step) => {
     const row = document.createElement('div');
     row.style.cssText = "display:flex; align-items:center; margin-bottom:4px;";
-    
-    const txt = document.createElement('span');
-    txt.textContent = label;
-    txt.style.width = "70px";
-    
+    const txt = document.createElement('span'); txt.textContent = label; txt.style.width = "70px";
     const range = document.createElement('input');
     range.type = 'range'; range.min = min; range.max = max; range.step = step;
-    range.value = guiState[key];
+    range.value = window.Nebula[key];
     range.style.cssText = "flex:1; cursor:pointer;";
+    const val = document.createElement('span'); val.textContent = window.Nebula[key]; val.style.cssText = "width:40px; text-align:right;";
     
-    const val = document.createElement('span');
-    val.textContent = guiState[key];
-    val.style.cssText = "width:40px; text-align:right;";
+    range.addEventListener('input', e => { window.Nebula[key] = Number(e.target.value); val.textContent = window.Nebula[key]; });
+    range.addEventListener('change', () => window.Nebula.redraw());
     
-    range.addEventListener('input', e => {
-      guiState[key] = Number(e.target.value);
-      val.textContent = guiState[key];
-    });
-    range.addEventListener('change', () => clearCache()); // Po zmianie czyścimy cache, żeby przerysować
-    
-    guiState['_el_' + key] = { range, val };
-
-    row.appendChild(txt);
-    row.appendChild(range);
-    row.appendChild(val);
+    row.appendChild(txt); row.appendChild(range); row.appendChild(val);
     root.appendChild(row);
   };
 
@@ -125,98 +115,39 @@ function createGUI() {
   addSlider("Light", "lightFalloff", 50, 1000, 10);
   addSlider("Layers", "layers", 10, 2000, 10);
 
-  // --- Randomize Params Button ---
-  const btnRandParams = document.createElement('button');
-  btnRandParams.textContent = "Losuj Parametry (Tyro Style)";
-  btnRandParams.style.cssText = "width:100%; margin-top:10px; padding:6px; background:#264; color:#fff; border:1px solid #486; cursor:pointer; font-weight:bold;";
-  btnRandParams.addEventListener('click', randomizeParams);
-  root.appendChild(btnRandParams);
-
   document.body.appendChild(root);
 
-  // F9 Toggle
   window.addEventListener('keydown', e => {
     if (e.code === 'F9') {
-      guiState.isVisible = !guiState.isVisible;
-      root.style.display = guiState.isVisible ? 'block' : 'none';
+      window.Nebula.isVisible = !window.Nebula.isVisible;
+      root.style.display = window.Nebula.isVisible ? 'block' : 'none';
     }
   });
 }
 
-function updateGUI() {
-  for (const key in guiState) {
-    const el = guiState['_el_' + key];
-    if (el) {
-      el.range.value = guiState[key];
-      el.val.textContent = typeof guiState[key] === 'number' ? guiState[key].toFixed(4) : guiState[key];
-    }
-  }
-}
-
-function randomizeParams() {
-  const prng = Alea(Math.random()); 
-  guiState.scale = 0.001 + prng() * 0.001;
-  guiState.falloff = Math.floor(256 + prng() * 1024);
-  guiState.density = 0.5 + prng() * 0.5; 
-  updateGUI();
-  clearCache();
-}
-
-function clearCache() {
-    chunkCache.clear();
-    console.log('[Nebula] Cache wyczyszczony. Generowanie nowych chunków...');
-}
-
-// --- LOGIKA RENDEROWANIA (CHUNKING) ---
-
-export function initSpaceBg(seedStr = null){
-  createGUI();
-  if (seedStr) guiState.seed = String(seedStr);
-  if (!newBg) newBg = new Space2D();
-  return true;
-}
-
-export function resizeSpaceBg(w, h){
-  // W systemie chunkowym resize nie wymaga reinicjalizacji
-}
-
-// Funkcja generująca pojedynczy kafelek
-function generateChunk(chunkX, chunkY) {
+// --- GENERATOR KAFELKA ---
+function generateChunk(cx, cy) {
     if (!newBg) newBg = new Space2D();
     
-    // Obliczamy światowe współrzędne rogu chunka
-    // Uwaga: offset w shaderze przesuwa szum.
-    // Musimy przekazać pozycję chunka jako offset.
-    const worldX = chunkX * CHUNK_SIZE;
-    const worldY = chunkY * CHUNK_SIZE;
+    // Obliczamy offset świata dla tego konkretnego kafelka
+    const worldX = cx * CHUNK_SIZE;
+    const worldY = cy * CHUNK_SIZE;
     
-    const prng = Alea(guiState.seed); // Seed ten sam dla spójności gwiazd
-    
-    // --- GEN GWIAZD ---
+    const prng = Alea(window.Nebula.seed);
+    const chunkPrng = Alea(window.Nebula.seed + "_" + cx + "_" + cy);
+
+    // --- GEN GWIAZD DLA TEGO KAFELKA ---
     const stars = [];
-    // Generujemy gwiazdy tylko w obrębie tego chunka (plus margines)
-    // Ale w tym systemie offset jest globalny, więc generujemy gwiazdy "lokalnie"
-    // To uproszczenie: generujemy zestaw gwiazd, który jest powtarzany/przesuwany, 
-    // LUB (lepiej) generujemy je proceduralnie w shaderze (ale shader Tyro używa listy).
-    
-    // Wariant "Tyro": Stała lista gwiazd przesunięta o offset chunka?
-    // Nie, Tyro generuje gwiazdy raz dla całego widoku.
-    // My musimy wygenerować gwiazdy, które "siedzą" w tym chunku.
-    
-    // UPROSZCZENIE DLA WYDAJNOŚCI: 
-    // Generujemy losowe gwiazdy RELATYWNIE do chunka, używając koordynatów chunka jako seeda.
-    const chunkPrng = Alea(guiState.seed + "_" + chunkX + "_" + chunkY);
-    const nStars = Math.min(32, 1 + Math.round(chunkPrng() * (CHUNK_SIZE * CHUNK_SIZE) * guiState.scale * guiState.scale));
-    
-    for (let i = 0; i < nStars; i++) {
+    const nStars = Math.min(64, 1 + Math.round(chunkPrng() * (CHUNK_SIZE * CHUNK_SIZE) * window.Nebula.scale * window.Nebula.scale * 0.000001)); 
+    // Uwaga: Skalujemy ilość gwiazd, bo CHUNK_SIZE jest duży
+
+    for (let i = 0; i < 40; i++) { // Stała liczba gwiazd na chunk dla pewności
         const color = blackBodyColors[Math.floor(chunkPrng() * blackBodyColors.length)].slice();
         const intensity = 0.5 + chunkPrng() * 0.5; 
         color[0] *= intensity; color[1] *= intensity; color[2] *= intensity;
 
         stars.push({
-            // Pozycja lokalna wewnątrz chunka (0..CHUNK_SIZE)
-            // Shader Nebula oczekuje pozycji ekranowej, więc to jest OK
-            // jeśli przekażemy odpowiedni offset.
+            // Gwiazdy pozycjonujemy wewnątrz kafelka (0..CHUNK_SIZE)
             position: [
                 chunkPrng() * CHUNK_SIZE, 
                 chunkPrng() * CHUNK_SIZE, 
@@ -233,19 +164,18 @@ function generateChunk(chunkX, chunkY) {
     const bgInt = 0.5 * prng();
     backgroundColor[0] *= bgInt; backgroundColor[1] *= bgInt; backgroundColor[2] *= bgInt;
 
-    // Renderujemy do canvasa
-    const chunkCanvas = newBg.render(CHUNK_SIZE, CHUNK_SIZE, {
+    // Renderujemy kafelek
+    return newBg.render(CHUNK_SIZE, CHUNK_SIZE, {
       stars,
-      // OFFSET: To jest klucz do ciągłości!
-      // Przekazujemy globalną pozycję chunka.
-      offset: [worldX, worldY], 
+      // KLUCZOWE: Offset przesuwa szum proceduralny w odpowiednie miejsce we wszechświecie
+      offset: [worldX, worldY],
       backgroundColor,
       
-      scale: guiState.scale,
-      nebulaFalloff: guiState.falloff,
-      nebulaDensity: guiState.density / guiState.layers * 100, 
-      nebulaLayers: guiState.layers,
-      lightFalloff: guiState.lightFalloff,
+      scale: window.Nebula.scale,
+      nebulaFalloff: window.Nebula.falloff,
+      nebulaDensity: window.Nebula.density / window.Nebula.layers * 100, 
+      nebulaLayers: window.Nebula.layers,
+      lightFalloff: window.Nebula.lightFalloff,
       
       nebulaLacunarity: 1.8 + 0.2 * prng(),
       nebulaGain: 0.5,
@@ -258,78 +188,85 @@ function generateChunk(chunkX, chunkY) {
       nebulaEmissiveLow: [0, 0, 0],
       nebulaEmissiveHigh: [0, 0, 0],
     });
-    
-    return chunkCanvas;
 }
 
-export function drawSpaceBg(mainCtx, camera){
-  if (!newBg) return;
-  const screenW = mainCtx.canvas.width; const screenH = mainCtx.canvas.height;
-
-  // Zoom i pozycja kamery
-  const zoom = camera ? (camera.zoom || 1.0) : 1.0;
-  // Przy "True Infinite" chcemy widzieć dokładnie to, co jest na tych współrzędnych
-  const camX = camera ? camera.x : 0;
-  const camY = camera ? camera.y : 0;
-
-  // Obliczamy, jaki obszar świata (w pikselach gry) jest widoczny na ekranie
-  const visibleW = screenW / zoom;
-  const visibleH = screenH / zoom;
+// --- INITIALIZACJA ---
+export function initSpaceBg(seedStr = null){
+  createGUI();
+  if (seedStr) window.Nebula.seed = String(seedStr);
   
-  const left = camX - visibleW / 2;
-  const top = camY - visibleH / 2;
-  const right = left + visibleW;
-  const bottom = top + visibleH;
-
-  // Obliczamy indeksy kafelków, które pokrywają ten obszar
-  const startCol = Math.floor(left / CHUNK_SIZE);
-  const endCol = Math.floor(right / CHUNK_SIZE);
-  const startRow = Math.floor(top / CHUNK_SIZE);
-  const endRow = Math.floor(bottom / CHUNK_SIZE);
-
-  // Zarządzanie Cache (usuwamy stare kafelki, które są daleko)
-  if (chunkCache.size > CACHE_LIMIT) {
-      for (const [key, val] of chunkCache) {
-          const [cx, cy] = key.split('_').map(Number);
-          // Jeśli kafelek jest bardzo daleko od kamery, usuń
-          if (cx < startCol - 2 || cx > endCol + 2 || cy < startRow - 2 || cy > endRow + 2) {
-              chunkCache.delete(key);
-          }
+  chunks.clear();
+  console.log(`[Tyro] Generowanie startowych kafelków (3x3) wokół (0,0)...`);
+  
+  // Generujemy statycznie 9 kafelków wokół punktu (0,0)
+  for (let x = -RENDER_RADIUS; x <= RENDER_RADIUS; x++) {
+      for (let y = -RENDER_RADIUS; y <= RENDER_RADIUS; y++) {
+          const key = `${x}_${y}`;
+          const chunk = generateChunk(x, y);
+          chunks.set(key, chunk);
       }
   }
+  console.log(`[Tyro] Wygenerowano ${chunks.size} kafelków.`);
+  return true;
+}
 
-  // Rysowanie (z generowaniem brakujących)
-  for (let col = startCol; col <= endCol; col++) {
-      for (let row = startRow; row <= endRow; row++) {
-          const key = `${col}_${row}`;
-          let chunk = chunkCache.get(key);
+export function resizeSpaceBg(w, h){
+  // Brak akcji przy resize w systemie kafelkowym
+}
 
-          if (!chunk) {
-              chunk = generateChunk(col, row);
-              chunkCache.set(key, chunk);
-          }
+// --- RYSOWANIE ---
+export function drawSpaceBg(mainCtx, camera){
+  if (chunks.size === 0) return;
 
-          // Pozycja kafelka na ekranie
-          // (WorldPos - CameraPos) * Zoom + CenterOffset
-          const worldX = col * CHUNK_SIZE;
-          const worldY = row * CHUNK_SIZE;
+  const screenW = mainCtx.canvas.width; 
+  const screenH = mainCtx.canvas.height;
+  
+  // Pobieramy dane kamery (domyślnie 0,0,1 jeśli brak)
+  const camX = camera ? (camera.x || 0) : 0;
+  const camY = camera ? (camera.y || 0) : 0;
+  const zoom = camera ? (camera.zoom || 1.0) : 1.0;
+
+  // Środek ekranu
+  const halfW = screenW / 2;
+  const halfH = screenH / 2;
+
+  // Rysujemy wszystkie wygenerowane kafelki
+  // (W przyszłości tu będzie logika sprawdzająca czy kafel jest na ekranie)
+  for (const [key, canvas] of chunks) {
+      const [cx, cy] = key.split('_').map(Number);
+      
+      // Pozycja kafelka w świecie gry (lewy górny róg)
+      const worldX = cx * CHUNK_SIZE;
+      const worldY = cy * CHUNK_SIZE;
+      
+      // Projekcja na ekran (World -> Screen)
+      // (WorldPos - CameraPos) * Zoom + ScreenCenter
+      const screenX = (worldX - camX) * zoom + halfW;
+      const screenY = (worldY - camY) * zoom + halfH;
+      
+      // Rozmiar na ekranie
+      const drawSize = CHUNK_SIZE * zoom;
+      
+      // Optymalizacja: Rysuj tylko jeśli widoczne (Frustum Culling)
+      if (screenX + drawSize > 0 && screenX < screenW && 
+          screenY + drawSize > 0 && screenY < screenH) {
           
-          const screenX = (worldX - camX) * zoom + screenW / 2;
-          const screenY = (worldY - camY) * zoom + screenH / 2;
-          const drawSize = CHUNK_SIZE * zoom;
-
-          // Rysujemy. Dodajemy +1 do rozmiaru, żeby załatać ewentualne mikroszczeliny przy zoomie
-          mainCtx.drawImage(chunk, Math.floor(screenX), Math.floor(screenY), Math.ceil(drawSize)+1, Math.ceil(drawSize)+1);
+          // Rysujemy bez szpar (+1 px na łączeniach)
+          // Math.floor na pozycję zapobiega drżeniu
+          mainCtx.drawImage(canvas, 
+              Math.floor(screenX), 
+              Math.floor(screenY), 
+              Math.ceil(drawSize) + 1, 
+              Math.ceil(drawSize) + 1
+          );
       }
   }
 }
 
-// Globalne API
-window.Nebula = guiState;
-
+// Experty API
 let opts = { newSystemEnabled: true };
 export function setBgOptions(partial){ Object.assign(opts, partial || {}); }
-export function setBgSeed(seed){ guiState.seed = String(seed); clearCache(); }
-export function setParallaxOptions(partial){ } // Niepotrzebne w trybie True Infinite
-export function getBackgroundCanvas(){ return null; } // Brak jednego canvasa
+export function setBgSeed(seed){ window.Nebula.seed = String(seed); initSpaceBg(); }
+export function setParallaxOptions(partial){ }
+export function getBackgroundCanvas(){ return null; }
 export function getBackgroundSampleDescriptor(){ return null; }
