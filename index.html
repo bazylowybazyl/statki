@@ -5334,6 +5334,7 @@ window.addEventListener('DOMContentLoaded', () => {
       mainScene3D = res.scene;
       overlayScene = res.scene;
     }
+    window.mainScene3D = mainScene3D;
   }
   // stacje – własna warstwa 3D (ortho), bez world3D
   if (typeof window.initStations3D === 'function') {
