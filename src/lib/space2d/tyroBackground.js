@@ -20,29 +20,29 @@ const blackBodyColors = [
   [0.5394, 0.6666, 1.0], [0.5357, 0.664, 1.0], [0.5322, 0.6615, 1.0], [0.5287, 0.659, 1.0], [0.5253, 0.6566, 1.0]
 ];
 
-const TILE_SCALE = 1.0; 
-let finalCanvas = null; 
+// --- KONFIGURACJA CHUNKÓW ---
+const CHUNK_SIZE = 1024; // Rozmiar kafelka (piksele świata gry)
+const CACHE_LIMIT = 50;  // Ile kafelków trzymać w pamięci (zabezpieczenie RAM)
+
 let newBg = null;
+const chunkCache = new Map(); // Cache wygenerowanych kafelków
 
 // --- STAN GUI ---
 const guiState = {
   seed: 'statki',
-  resolution: 2048,
   
   // Twoje ustawienia ("The Best"):
-  scale: 0.0024,
+  scale: 0.0022,
   falloff: 300,
   density: 0.5,
   layers: 1360,
   lightFalloff: 500.0,
   
-  // Kolory gwiazd oświetlających (R, G, B)
   colors: {
     base: [0.1, 0.4, 1.0], 
     var:  [0.2, 0.3, 0.5]  
   },
   
-  // Stan okna
   isVisible: true
 };
 
@@ -72,7 +72,7 @@ function createGUI() {
   const inpSeed = document.createElement('input');
   inpSeed.value = guiState.seed;
   inpSeed.style.cssText = "flex:1; background:#000; border:1px solid #468; color:#fff; padding:2px;";
-  inpSeed.addEventListener('change', e => { guiState.seed = e.target.value; redraw(); });
+  inpSeed.addEventListener('change', e => { guiState.seed = e.target.value; clearCache(); });
   
   const btnRandSeed = document.createElement('button');
   btnRandSeed.textContent = "RND";
@@ -80,7 +80,7 @@ function createGUI() {
   btnRandSeed.addEventListener('click', () => {
     guiState.seed = Math.random().toString(36).slice(2, 9);
     inpSeed.value = guiState.seed;
-    redraw();
+    clearCache();
   });
   
   rowSeed.appendChild(inpSeed);
@@ -109,9 +109,8 @@ function createGUI() {
       guiState[key] = Number(e.target.value);
       val.textContent = guiState[key];
     });
-    range.addEventListener('change', () => redraw()); // Redraw on release
+    range.addEventListener('change', () => clearCache()); // Po zmianie czyścimy cache, żeby przerysować
     
-    // Zapisz referencję do aktualizacji z kodu
     guiState['_el_' + key] = { range, val };
 
     row.appendChild(txt);
@@ -125,26 +124,6 @@ function createGUI() {
   addSlider("Density", "density", 0.1, 2.0, 0.1);
   addSlider("Light", "lightFalloff", 50, 1000, 10);
   addSlider("Layers", "layers", 10, 2000, 10);
-
-  // --- Resolution ---
-  const rowRes = document.createElement('div');
-  rowRes.style.cssText = "margin-top:8px; display:flex; align-items:center; justify-content:space-between;";
-  const lblRes = document.createElement('span'); lblRes.textContent = "Rozdzielczość:";
-  const selRes = document.createElement('select');
-  selRes.style.cssText = "background:#000; color:#fff; border:1px solid #468;";
-  [1024, 2048, 4096].forEach(r => {
-    const opt = document.createElement('option');
-    opt.value = r; opt.textContent = r + "px";
-    if(r === guiState.resolution) opt.selected = true;
-    selRes.appendChild(opt);
-  });
-  selRes.addEventListener('change', e => {
-    guiState.resolution = Number(e.target.value);
-    redraw();
-  });
-  rowRes.appendChild(lblRes);
-  rowRes.appendChild(selRes);
-  root.appendChild(rowRes);
 
   // --- Randomize Params Button ---
   const btnRandParams = document.createElement('button');
@@ -180,80 +159,73 @@ function randomizeParams() {
   guiState.falloff = Math.floor(256 + prng() * 1024);
   guiState.density = 0.5 + prng() * 0.5; 
   updateGUI();
-  redraw();
+  clearCache();
 }
 
-function redraw() {
-  const status = document.getElementById('nebula-gui');
-  if(status) status.style.opacity = "0.5";
-  setTimeout(() => {
-    initSpaceBg(guiState.seed);
-    if(status) status.style.opacity = "1.0";
-  }, 10);
+function clearCache() {
+    chunkCache.clear();
+    console.log('[Nebula] Cache wyczyszczony. Generowanie nowych chunków...');
 }
 
-// --- LOGIKA RENDEROWANIA ---
-
-const parallaxState = {
-  enabled: true, factorX: 0.05, factorY: 0.05, smoothing: 0.2,
-  offsetX: 0, offsetY: 0, targetX: 0, targetY: 0,
-};
-
-function ensureFinalCanvas(w, h){
-  const size = guiState.resolution;
-  const targetW = Math.max(size, w); 
-  const targetH = Math.max(size, h);
-  if (!finalCanvas) finalCanvas = document.createElement('canvas');
-  if (finalCanvas.width !== targetW || finalCanvas.height !== targetH) {
-    finalCanvas.width = targetW; finalCanvas.height = targetH;
-    return true; 
-  }
-  return false;
-}
+// --- LOGIKA RENDEROWANIA (CHUNKING) ---
 
 export function initSpaceBg(seedStr = null){
   createGUI();
-  ensureFinalCanvas(innerWidth, innerHeight);
-  
   if (seedStr) guiState.seed = String(seedStr);
-  const seed = guiState.seed;
+  if (!newBg) newBg = new Space2D();
+  return true;
+}
 
-  const w = finalCanvas.width;
-  const h = finalCanvas.height;
-  const ctx = finalCanvas.getContext('2d');
-  const prng = Alea(seed);
+export function resizeSpaceBg(w, h){
+  // W systemie chunkowym resize nie wymaga reinicjalizacji
+}
 
-  // Tło
-  ctx.fillStyle = '#000000'; 
-  ctx.fillRect(0, 0, w, h);
-
-  if (opts.newSystemEnabled) {
+// Funkcja generująca pojedynczy kafelek
+function generateChunk(chunkX, chunkY) {
     if (!newBg) newBg = new Space2D();
+    
+    // Obliczamy światowe współrzędne rogu chunka
+    // Uwaga: offset w shaderze przesuwa szum.
+    // Musimy przekazać pozycję chunka jako offset.
+    const worldX = chunkX * CHUNK_SIZE;
+    const worldY = chunkY * CHUNK_SIZE;
+    
+    const prng = Alea(guiState.seed); // Seed ten sam dla spójności gwiazd
     
     // --- GEN GWIAZD ---
     const stars = [];
-    // Ilość gwiazd zależna od skali (jak w demo)
-    const nStars = Math.min(64, 1 + Math.round(prng() * (w * h) * guiState.scale * guiState.scale));
+    // Generujemy gwiazdy tylko w obrębie tego chunka (plus margines)
+    // Ale w tym systemie offset jest globalny, więc generujemy gwiazdy "lokalnie"
+    // To uproszczenie: generujemy zestaw gwiazd, który jest powtarzany/przesuwany, 
+    // LUB (lepiej) generujemy je proceduralnie w shaderze (ale shader Tyro używa listy).
     
-    const sceneOffset = [prng() * 10000000 - 5000000, prng() * 10000000 - 5000000];
-    sceneOffset[0] -= 0.5 * w;
-    sceneOffset[1] -= 0.5 * h;
-
+    // Wariant "Tyro": Stała lista gwiazd przesunięta o offset chunka?
+    // Nie, Tyro generuje gwiazdy raz dla całego widoku.
+    // My musimy wygenerować gwiazdy, które "siedzą" w tym chunku.
+    
+    // UPROSZCZENIE DLA WYDAJNOŚCI: 
+    // Generujemy losowe gwiazdy RELATYWNIE do chunka, używając koordynatów chunka jako seeda.
+    const chunkPrng = Alea(guiState.seed + "_" + chunkX + "_" + chunkY);
+    const nStars = Math.min(32, 1 + Math.round(chunkPrng() * (CHUNK_SIZE * CHUNK_SIZE) * guiState.scale * guiState.scale));
+    
     for (let i = 0; i < nStars; i++) {
-        const color = blackBodyColors[Math.floor(prng() * blackBodyColors.length)].slice();
-        const intensity = 0.5 * prng(); 
+        const color = blackBodyColors[Math.floor(chunkPrng() * blackBodyColors.length)].slice();
+        const intensity = 0.5 + chunkPrng() * 0.5; 
         color[0] *= intensity; color[1] *= intensity; color[2] *= intensity;
 
         stars.push({
+            // Pozycja lokalna wewnątrz chunka (0..CHUNK_SIZE)
+            // Shader Nebula oczekuje pozycji ekranowej, więc to jest OK
+            // jeśli przekażemy odpowiedni offset.
             position: [
-                sceneOffset[0] + prng() * w, 
-                sceneOffset[1] + prng() * h, 
-                prng() * 500
+                chunkPrng() * CHUNK_SIZE, 
+                chunkPrng() * CHUNK_SIZE, 
+                chunkPrng() * 500
             ],
             color: color,
             falloff: 256,
             diffractionSpikeFalloff: 1024,
-            diffractionSpikeScale: 4 + 4 * prng(),
+            diffractionSpikeScale: 4 + 4 * chunkPrng(),
         });
     }
 
@@ -261,9 +233,12 @@ export function initSpaceBg(seedStr = null){
     const bgInt = 0.5 * prng();
     backgroundColor[0] *= bgInt; backgroundColor[1] *= bgInt; backgroundColor[2] *= bgInt;
 
-    const newCanvas = newBg.render(w, h, {
+    // Renderujemy do canvasa
+    const chunkCanvas = newBg.render(CHUNK_SIZE, CHUNK_SIZE, {
       stars,
-      offset: sceneOffset,
+      // OFFSET: To jest klucz do ciągłości!
+      // Przekazujemy globalną pozycję chunka.
+      offset: [worldX, worldY], 
       backgroundColor,
       
       scale: guiState.scale,
@@ -284,88 +259,77 @@ export function initSpaceBg(seedStr = null){
       nebulaEmissiveHigh: [0, 0, 0],
     });
     
-    ctx.globalCompositeOperation = 'source-over'; 
-    ctx.drawImage(newCanvas, 0, 0);
-  }
-  return true;
-}
-
-export function resizeSpaceBg(w, h){
-  parallaxState.offsetX = 0; parallaxState.offsetY = 0;
-  if (w > finalCanvas.width || h > finalCanvas.height) initSpaceBg(guiState.seed);
+    return chunkCanvas;
 }
 
 export function drawSpaceBg(mainCtx, camera){
-  if (!finalCanvas) return;
+  if (!newBg) return;
   const screenW = mainCtx.canvas.width; const screenH = mainCtx.canvas.height;
-  const bgW = finalCanvas.width; const bgH = finalCanvas.height;
 
-  // --- FIX: CENTROWANIE I ZOOM ---
-  
-  // Zoom
+  // Zoom i pozycja kamery
   const zoom = camera ? (camera.zoom || 1.0) : 1.0;
-  // Paralaksa zoomu (tło skaluje się trochę wolniej dla efektu głębi)
-  const drawScale = Math.max(0.001, Math.pow(zoom, 0.6)); 
-  
-  const tileW = bgW * drawScale;
-  const tileH = bgH * drawScale;
+  // Przy "True Infinite" chcemy widzieć dokładnie to, co jest na tych współrzędnych
+  const camX = camera ? camera.x : 0;
+  const camY = camera ? camera.y : 0;
 
-  // Paralaksa ruchu
-  if (parallaxState.enabled && camera) {
-    const smooth = Math.max(0, Math.min(1, parallaxState.smoothing));
-    parallaxState.targetX = (camera.x||0) * parallaxState.factorX;
-    parallaxState.targetY = (camera.y||0) * parallaxState.factorY;
-    if (smooth === 0) {
-      parallaxState.offsetX = parallaxState.targetX; parallaxState.offsetY = parallaxState.targetY;
-    } else {
-      parallaxState.offsetX += (parallaxState.targetX - parallaxState.offsetX) * smooth;
-      parallaxState.offsetY += (parallaxState.targetY - parallaxState.offsetY) * smooth;
-    }
+  // Obliczamy, jaki obszar świata (w pikselach gry) jest widoczny na ekranie
+  const visibleW = screenW / zoom;
+  const visibleH = screenH / zoom;
+  
+  const left = camX - visibleW / 2;
+  const top = camY - visibleH / 2;
+  const right = left + visibleW;
+  const bottom = top + visibleH;
+
+  // Obliczamy indeksy kafelków, które pokrywają ten obszar
+  const startCol = Math.floor(left / CHUNK_SIZE);
+  const endCol = Math.floor(right / CHUNK_SIZE);
+  const startRow = Math.floor(top / CHUNK_SIZE);
+  const endRow = Math.floor(bottom / CHUNK_SIZE);
+
+  // Zarządzanie Cache (usuwamy stare kafelki, które są daleko)
+  if (chunkCache.size > CACHE_LIMIT) {
+      for (const [key, val] of chunkCache) {
+          const [cx, cy] = key.split('_').map(Number);
+          // Jeśli kafelek jest bardzo daleko od kamery, usuń
+          if (cx < startCol - 2 || cx > endCol + 2 || cy < startRow - 2 || cy > endRow + 2) {
+              chunkCache.delete(key);
+          }
+      }
   }
-  
-  // Obliczamy punkt startowy tak, aby środek ekranu (W/2, H/2) był punktem odniesienia
-  const halfW = screenW / 2;
-  const halfH = screenH / 2;
 
-  // Obliczamy przesunięcie w przestrzeni ekranu
-  const panX = parallaxState.offsetX * drawScale;
-  const panY = parallaxState.offsetY * drawScale;
+  // Rysowanie (z generowaniem brakujących)
+  for (let col = startCol; col <= endCol; col++) {
+      for (let row = startRow; row <= endRow; row++) {
+          const key = `${col}_${row}`;
+          let chunk = chunkCache.get(key);
 
-  // Punkt, w którym "zaczepiona" jest siatka (środek ekranu minus przesunięcie)
-  const anchorX = halfW - panX;
-  const anchorY = halfH - panY;
+          if (!chunk) {
+              chunk = generateChunk(col, row);
+              chunkCache.set(key, chunk);
+          }
 
-  // Obliczamy fazę (resztę z dzielenia), żeby wiedzieć gdzie zacząć rysować kafelki
-  const phaseX = ((anchorX % tileW) + tileW) % tileW;
-  const phaseY = ((anchorY % tileH) + tileH) % tileH;
+          // Pozycja kafelka na ekranie
+          // (WorldPos - CameraPos) * Zoom + CenterOffset
+          const worldX = col * CHUNK_SIZE;
+          const worldY = row * CHUNK_SIZE;
+          
+          const screenX = (worldX - camX) * zoom + screenW / 2;
+          const screenY = (worldY - camY) * zoom + screenH / 2;
+          const drawSize = CHUNK_SIZE * zoom;
 
-  // Startujemy jeden kafelek wcześniej, żeby na pewno pokryć lewą/górną krawędź
-  const startX = phaseX - tileW;
-  const startY = phaseY - tileH;
-
-  for (let x = startX; x < screenW; x += tileW) {
-    for (let y = startY; y < screenH; y += tileH) {
-      // Używamy Math.ceil/floor żeby uniknąć linii między kaflami
-      mainCtx.drawImage(finalCanvas, Math.floor(x), Math.floor(y), Math.ceil(tileW)+1, Math.ceil(tileH)+1);
-    }
+          // Rysujemy. Dodajemy +1 do rozmiaru, żeby załatać ewentualne mikroszczeliny przy zoomie
+          mainCtx.drawImage(chunk, Math.floor(screenX), Math.floor(screenY), Math.ceil(drawSize)+1, Math.ceil(drawSize)+1);
+      }
   }
 }
 
-// Zmienna globalna dla konsoli
+// Globalne API
 window.Nebula = guiState;
 
 let opts = { newSystemEnabled: true };
 export function setBgOptions(partial){ Object.assign(opts, partial || {}); }
-export function setBgSeed(seed){ guiState.seed = String(seed); }
-export function setParallaxOptions(partial){ if(partial) Object.assign(parallaxState, partial); }
-export function getBackgroundCanvas(){ return finalCanvas; }
-export function getBackgroundSampleDescriptor(){ 
-  return finalCanvas ? { 
-    canvas: finalCanvas, 
-    tileWidth: finalCanvas.width, 
-    tileHeight: finalCanvas.height, 
-    offsetX: parallaxState.offsetX, 
-    offsetY: parallaxState.offsetY, 
-    parallaxEnabled: true 
-  } : null; 
-}
+export function setBgSeed(seed){ guiState.seed = String(seed); clearCache(); }
+export function setParallaxOptions(partial){ } // Niepotrzebne w trybie True Infinite
+export function getBackgroundCanvas(){ return null; } // Brak jednego canvasa
+export function getBackgroundSampleDescriptor(){ return null; }
