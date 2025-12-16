@@ -423,6 +423,10 @@
     <div class="stat">W — ciąg (duży silnik plazmowy) · Q/E — strafe · A/D — obrót</div>
     <div class="stat">LPM — rail (A→B, A→B) · PPM — boczne rakiety · F — superbroń · SHIFT — warp / dopalacz na orbitach</div>
     <div style="margin-top:6px"><small>Gwiazdy są proceduralne w całej galaktyce. Silnik: niebieski exhaust + krótki ślad przy ruchu.</small></div>
+
+    <div id="bg-gen-status" style="margin-top: 8px; font-size: 11px; color: #7dd3fc; display: none;">
+        Generowanie galaktyki: <span id="bg-gen-percent">0%</span>
+    </div>
   </div>
   <div id="hud-topbar" class="hud-topbar hidden">
     <div id="skill-slots" class="skill-slot-row" aria-label="Umiejętności i skille"></div>
@@ -14208,6 +14212,20 @@ window.spawnBullet = function(sim, from, to, weapon) {
      window.aiSpawnBullet(sim, from, to, weapon);
   }
 };
+// NOWE: Funkcja do obsługi paska w UI gry
+function updateLiveBackgroundProgress(progress) {
+    const el = document.getElementById('bg-gen-status');
+    const txt = document.getElementById('bg-gen-percent');
+    if (!el || !txt) return;
+
+    if (progress < 1.0) {
+        el.style.display = 'block';
+        txt.textContent = Math.round(progress * 100) + '%';
+    } else {
+        el.style.display = 'none'; // Ukryj po zakończeniu
+    }
+}
+
 async function startGame(){
   if (gameStarted) return;
   gameStarted = true;
@@ -14215,42 +14233,56 @@ async function startGame(){
 
   showLoadingOverlay(0, 'Przygotowanie świata');
   initStars(true);
-  setLoadingProgress(18, 'Generowanie gwiazd');
+  setLoadingProgress(20, 'Inicjalizacja systemów');
   await nextFrame();
 
   initNPCs();
-  setLoadingProgress(36, 'Planowanie tras NPC');
+  setLoadingProgress(40, 'Symulacja tras NPC');
   await nextFrame();
 
   initFleet();
-  setLoadingProgress(54, 'Kalibracja floty');
+  setLoadingProgress(60, 'Kalibracja floty');
   await nextFrame();
 
-  for(let i=0;i<120;i++) npcStep(PHYS_DT);
-  setLoadingProgress(68, 'Symulacja startowa');
-
-  await waitForSpaceBackgroundReady();
-  setLoadingProgress(82, 'Tło gwiezdne gotowe');
+  // Wstępna symulacja fizyki
+  for(let i=0;i<60;i++) npcStep(PHYS_DT);
+  setLoadingProgress(80, 'Rozruch silników');
 
   await waitForPlanetsReady();
-  setLoadingProgress(92, 'Planety i stacje');
-
+  
+  // Ukrywamy loading screen ZANIM tło będzie gotowe
+  setLoadingProgress(100, 'Start!');
+  await nextFrame();
+  
+  // Uruchomienie pętli gry
   const firstFramePromise = new Promise(resolve => { firstFrameResolver = resolve; });
   lastTime = performance.now();
   acc = 0;
   vfxTime = 0;
+  
   uiRoot?.classList.remove('hidden');
   hudTopbarRoot?.classList.remove('hidden');
   if (shieldControlsRoot) shieldControlsRoot.classList.remove('hidden');
   initShieldSystem(W, H);
+  
   requestAnimationFrame(loop);
-
   await firstFramePromise;
-  setLoadingProgress(100, 'Gotowe do lotu');
-  await nextFrame();
-  await new Promise(resolve => setTimeout(resolve, 180));
+  
+  // Ukryj loading overlay
   hideLoadingOverlay();
-  console.log('Gwiazdy: proceduralne kafelki 1024px na całej mapie. Silnik: warkocz jonowy, dopalacz: wiązka fotonów.');
+
+  // --- START GENEROWANIA TŁA "LIVE" ---
+  // Uruchamiamy to TERAZ, gdy gracz już widzi statek i czarne tło.
+  if (window.Space2DBackground && window.mainScene3D) {
+      window.Space2DBackground.startLiveGeneration(
+          window.mainScene3D, 
+          updateLiveBackgroundProgress, // Callback postępu
+          () => { 
+              console.log("Galaktyka wygenerowana w tle.");
+              configureWarpLensSource(); // Odśwież soczewkę warpa po wygenerowaniu tła
+          }
+      );
+  }
 }
 
 if (newGameButton) {
