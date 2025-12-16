@@ -125,14 +125,25 @@
   .station-card-desc{margin:0;color:#cbd5ff;font-size:13px;line-height:1.5;}
   .station-card-meta{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:#9fb4e6;}
   .station-card-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;}
-  .station-card button{padding:8px 12px;border-radius:10px;border:1px solid var(--fa-border);background:linear-gradient(150deg,rgba(66,142,210,0.28),rgba(55,116,186,0.42));color:var(--fa-text);font-weight:700;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;transition:background 0.18s,border-color 0.18s,transform 0.18s;box-shadow:0 12px 22px rgba(0,0,0,0.28);}
-  .station-card button:hover:not(:disabled){background:linear-gradient(150deg,rgba(96,188,255,0.38),rgba(55,116,186,0.5));border-color:var(--fa-strong-border);transform:translateY(-1px);}
+  .station-card button{padding:8px 12px;border-radius:10px;border:1px solid var(--fa-border);background:linear-gradient(150deg,rgba(66,142,210,0.28),rgba(55,116,186,0.42));color:var(--fa-text);font-weight:700;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;transition:background 0.18s,border-color 0.18s,transform 0.18s;box-shadow:0 12px 22px rgba(0,0,0,0.28);} 
+  .station-card button:hover:not(:disabled){background:linear-gradient(150deg,rgba(96,188,255,0.38),rgba(55,116,186,0.5));border-color:var(--fa-strong-border);transform:translateY(-1px);} 
   .station-card button:disabled{opacity:0.45;cursor:not-allowed;}
   .station-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;}
   .station-divider{height:1px;background:linear-gradient(90deg,rgba(109,220,255,0),rgba(109,220,255,0.45),rgba(109,220,255,0));margin:4px 0;}
+  .trade-resource-card .station-card-meta{margin-top:-4px;}
+  .trade-resource-note{display:block;font-size:12px;color:#9fb4e6;margin-top:-2px;}
+  .trade-resource-table{width:100%;border-collapse:collapse;margin-top:6px;}
+  .trade-resource-table td{padding:6px 4px;font-size:13px;color:#dfe7ff;}
+  .trade-resource-table tr+tr td{border-top:1px solid rgba(70,94,140,0.4);}
+  .trade-resource-label{display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:0.03em;}
+  .trade-resource-values{white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums;}
+  .trade-resource-amount{color:#e6f8ff;font-weight:800;}
+  .trade-resource-capacity{color:#9fb4e6;font-size:12px;}
+  .resource-icon-wrap{width:22px;height:22px;display:grid;place-items:center;background:rgba(24,36,66,0.85);border:1px solid rgba(96,165,250,0.25);border-radius:8px;box-shadow:0 6px 14px rgba(0,0,0,0.32);}
+  .resource-icon{width:16px;height:16px;display:block;}
   .mechanic-toolbar{position:relative;z-index:1;display:flex;align-items:center;gap:8px;margin-bottom:14px;}
   .mechanic-toolbar label{font-weight:700;letter-spacing:0.05em;color:#b8c9f3;text-transform:uppercase;font-size:12px;}
-  .mechanic-toolbar select{flex:1;background:linear-gradient(135deg,rgba(6,14,28,0.92),rgba(8,16,34,0.95));color:#dfe7ff;border:1px solid #2a3a5a;border-radius:10px;padding:7px 12px;font-size:14px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.08);}
+  .mechanic-toolbar select{flex:1;background:linear-gradient(135deg,rgba(6,14,28,0.92),rgba(8,16,34,0.95));color:#dfe7ff;border:1px solid #2a3a5a;border-radius:10px;padding:7px 12px;font-size:14px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.08);} 
   .mechanic-body{display:grid;grid-template-columns:1fr 1.2fr;gap:16px;align-items:flex-start;}
   .mechanic-column{display:flex;flex-direction:column;gap:12px;min-width:0;}
   .mechanic-section{background:linear-gradient(170deg,rgba(9,16,32,0.92),rgba(10,22,42,0.95));border:1px solid #1f2c49;border-radius:12px;padding:12px;box-shadow:0 12px 22px rgba(0,0,0,0.32);position:relative;z-index:1;}
@@ -1500,6 +1511,7 @@ function uid(){ return 'hp_'+Math.random().toString(36).slice(2,9); }
 
 const Game = window.Game || (window.Game={});
 Game.infrastructure = Game.infrastructure || new Map();
+Game.stationEconomy = Game.stationEconomy || new Map();
 const previousPlayer = Game.player || {};
 const defaultInventory = ['railgun_mk1','railgun_mk2','armata_mk1','heavy_autocannon','missile_rack','ciws_mk1','laser_pd_mk1','fighter_bay','super_f'];
 const existingInventory = previousPlayer.inventory ? Array.from(previousPlayer.inventory) : [];
@@ -6359,6 +6371,26 @@ const INFRASTRUCTURE_BUILDINGS = [
   { id:'gas_harvester', name:'Gas Harvester', buildTime:110, icon:'gas_harvester', footprint:{ w:4, h:4 }, requiresSolarSystem:true, allowedPlanetTypes:['gas'] },
   { id:'gas_refinery', name:'Gas Refinery', buildTime:140, icon:'gas_refinery', footprint:{ w:4, h:4 }, requiresSolarSystem:true, allowedPlanetTypes:['gas'] }
 ];
+const ECONOMY_RESOURCES = {
+  gas:{ label:'Gaz' },
+  fuel:{ label:'Paliwo' },
+  rawMetal:{ label:'Surowy metal' },
+  refinedMetal:{ label:'Rafinowany metal' }
+};
+const ECONOMY_RESOURCE_KEYS = Object.keys(ECONOMY_RESOURCES);
+const ECONOMY_BASE_CAPACITY = { gas:60, fuel:90, rawMetal:140, refinedMetal:100 };
+const ECONOMY_STORAGE_BONUS = {
+  storage_gas: { gas:260 },
+  storage_fuel: { fuel:240 },
+  storage_metal: { rawMetal:320, refinedMetal:240 }
+};
+const ECONOMY_BUILDING_RULES = {
+  gas_harvester: { produce: { gas: 22 } },
+  gas_refinery: { consume: { gas: 16 }, produce: { fuel: 14 } },
+  metal_harvester: { produce: { rawMetal: 24 } },
+  metal_refinery: { consume: { rawMetal: 18 }, produce: { refinedMetal: 12 } }
+};
+const ECONOMY_TICK_SECONDS = 60;
 const INFRA_BUILDING_MAP = new Map(INFRASTRUCTURE_BUILDINGS.map(b => [b.id, b]));
 
 const INFRA_CELL_WORLD_SIZE = 220;
@@ -6663,6 +6695,106 @@ function ensureInfrastructureState(station){
     state.stationRef = station || findStationByKey(key) || null;
   }
   return state;
+}
+
+function createEmptyEconomyResources(){
+  const res = {};
+  for(const key of ECONOMY_RESOURCE_KEYS){
+    res[key] = 0;
+  }
+  return res;
+}
+
+function getEconomyStationKey(ctx){
+  if(!ctx) return null;
+  if(ctx.stationKey) return ctx.stationKey;
+  if(ctx.stationRef) return getInfrastructureStationKey(ctx.stationRef);
+  return getInfrastructureStationKey(ctx);
+}
+
+function ensureStationEconomy(ctx){
+  const key = getEconomyStationKey(ctx);
+  if(!key) return null;
+  if(!Game.stationEconomy) Game.stationEconomy = new Map();
+  let econ = Game.stationEconomy.get(key);
+  if(!econ){
+    econ = {
+      stationKey: key,
+      resources: createEmptyEconomyResources(),
+      capacity: { ...ECONOMY_BASE_CAPACITY },
+      timer: 0
+    };
+    Game.stationEconomy.set(key, econ);
+  }
+  econ.stationRef = ctx?.stationRef || ctx || findStationByKey(key);
+  return econ;
+}
+
+function computeEconomyCapacities(buildingCounts){
+  const capacity = { ...ECONOMY_BASE_CAPACITY };
+  for(const [buildingId, bonus] of Object.entries(ECONOMY_STORAGE_BONUS)){
+    const count = buildingCounts?.[buildingId] || 0;
+    if(!count) continue;
+    for(const [res, value] of Object.entries(bonus)){
+      capacity[res] = (capacity[res] || 0) + value * count;
+    }
+  }
+  return capacity;
+}
+
+function clampEconomyResources(econ){
+  if(!econ) return;
+  for(const key of ECONOMY_RESOURCE_KEYS){
+    const cap = econ.capacity?.[key];
+    const value = econ.resources?.[key] ?? 0;
+    econ.resources[key] = Number.isFinite(cap) ? clamp(value, 0, cap) : Math.max(0, value);
+  }
+}
+
+function applyEconomyProduction(econ, buildingCounts, ticks){
+  if(!econ || ticks <= 0) return;
+  for(const [buildingId, rule] of Object.entries(ECONOMY_BUILDING_RULES)){
+    const count = buildingCounts?.[buildingId] || 0;
+    if(!count) continue;
+    const cycles = count * ticks;
+    let ratio = 1;
+    if(rule.consume){
+      for(const [res, amount] of Object.entries(rule.consume)){
+        const required = amount * cycles;
+        if(required <= 0) continue;
+        const available = econ.resources?.[res] ?? 0;
+        ratio = Math.min(ratio, available / required);
+      }
+    }
+    if(ratio <= 0) continue;
+    if(rule.consume){
+      for(const [res, amount] of Object.entries(rule.consume)){
+        const delta = amount * cycles * ratio;
+        econ.resources[res] = Math.max(0, (econ.resources?.[res] ?? 0) - delta);
+      }
+    }
+    if(rule.produce){
+      for(const [res, amount] of Object.entries(rule.produce)){
+        const current = econ.resources?.[res] ?? 0;
+        const cap = econ.capacity?.[res];
+        const next = current + amount * cycles * ratio;
+        econ.resources[res] = Number.isFinite(cap) ? Math.min(cap, next) : next;
+      }
+    }
+  }
+  clampEconomyResources(econ);
+}
+
+function updateStationEconomyFromBuildings(state, buildingCounts, dt){
+  const econ = ensureStationEconomy(state);
+  if(!econ) return;
+  econ.capacity = computeEconomyCapacities(buildingCounts || {});
+  clampEconomyResources(econ);
+  econ.timer = (econ.timer || 0) + dt;
+  if(econ.timer < ECONOMY_TICK_SECONDS) return;
+  const ticks = Math.floor(econ.timer / ECONOMY_TICK_SECONDS);
+  econ.timer -= ticks * ECONOMY_TICK_SECONDS;
+  applyEconomyProduction(econ, buildingCounts, ticks);
 }
 
 function setInfrastructureActiveStation(station){
@@ -7937,6 +8069,7 @@ function updateInfrastructureState(dt){
   infrastructureBuilder.stationStates.forEach(state => {
     if(!state || !state.cells) return;
     const processed = new Set();
+    const buildingCounts = {};
     state.cells.forEach((cell, idx) => {
       if(!cell) return;
       const rootIdx = getRootCellIndex(state, idx);
@@ -7953,11 +8086,15 @@ function updateInfrastructureState(dt){
           changed = true;
         }
       }
+      if(cell.status === 'completed'){
+        buildingCounts[cell.buildingId] = (buildingCounts[cell.buildingId] || 0) + 1;
+      }
       if(cell.status === 'completed' && !cell.emitted){
         emitInfrastructureCompletion(state, rootIdx, cell);
         changed = true;
       }
     });
+    updateStationEconomyFromBuildings(state, buildingCounts, dt);
   });
   if(changed){
     if(infrastructureBuilder.isVisible){
@@ -8428,6 +8565,12 @@ const MARKET = { // ceny przykładowe
   buy:{ ruda: 22, paliwo: 15, żywność: 8 },
   sell:{ ruda: 18, paliwo: 12, żywność: 6 }
 };
+const RESOURCE_SVGS = {
+  gas: '<svg viewBox="0 0 24 24" fill="none"><path d="M12 3c-3.2 3.5-5 6.3-5 9a5 5 0 1010 0c0-2.7-1.8-5.5-5-9z" fill="#22d3ee" stroke="#67e8f9" stroke-width="1.5"/><circle cx="12" cy="13" r="2.6" fill="#0ea5e9" stroke="#bae6fd" stroke-width="0.8" opacity="0.9"/></svg>',
+  fuel: '<svg viewBox="0 0 24 24" fill="none"><path d="M12 4c1.5 2 4 4.5 4 7.5A4.5 4.5 0 0112 16a4.5 4.5 0 01-4-4.5c0-1.6.5-3.3 1.7-5.1L12 4z" fill="#f97316" stroke="#fdba74" stroke-width="1.4"/><path d="M11.2 9.8c-.6.7-.9 1.4-.9 2.2 0 1.4 1 2.4 2.2 2.4 1.1 0 2-.8 2.2-2" stroke="#fff7ed" stroke-width="1.1" stroke-linecap="round"/></svg>',
+  rawMetal: '<svg viewBox="0 0 24 24" fill="none"><path d="M12 3 18 7v10l-6 4-6-4V7z" fill="#94a3b8" stroke="#cbd5e1" stroke-width="1.2"/><path d="M12 3v8l6 6" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/></svg>',
+  refinedMetal: '<svg viewBox="0 0 24 24" fill="none"><rect x="4.5" y="6.5" width="15" height="4" rx="1.2" fill="#d1d5db" stroke="#e5e7eb"/><rect x="6" y="11.5" width="13" height="4" rx="1.2" fill="#cbd5e1" stroke="#e5e7eb"/><rect x="7.5" y="16.5" width="10" height="3" rx="1" fill="#94a3b8" stroke="#cbd5e1"/></svg>'
+};
 
 const stationOverlayDom = {
   root: document.getElementById('station-overlay'),
@@ -8451,9 +8594,27 @@ const stationOverlayState = {
   stationKey:null
 };
 
-function createStationCard({ title, badge, description, meta = [], actions = [] }){
+function createResourceIcon(key){
+  const wrap = document.createElement('span');
+  wrap.className = 'resource-icon-wrap';
+  wrap.innerHTML = RESOURCE_SVGS[key] || '';
+  const svg = wrap.querySelector('svg');
+  if(svg) svg.classList.add('resource-icon');
+  return wrap;
+}
+
+function getResourceLabel(key){
+  return ECONOMY_RESOURCES[key]?.label || toTitleCaseFromKey(key);
+}
+
+function createStationCard({ title, badge, description, meta = [], actions = [], dataset = null }){
   const card = document.createElement('div');
   card.className = 'station-card';
+  if(dataset){
+    for(const [key, val] of Object.entries(dataset)){
+      card.dataset[key] = val;
+    }
+  }
 
   const header = document.createElement('div');
   header.className = 'station-card-header';
@@ -8550,6 +8711,66 @@ function buildTradePanel(){
   const pane = stationOverlayDom.panels.trade;
   if(!pane) return;
   pane.innerHTML = '';
+
+  const resourcesCard = document.createElement('div');
+  resourcesCard.className = 'station-card trade-resource-card';
+
+  const resHeader = document.createElement('div');
+  resHeader.className = 'station-card-header';
+  const resTitle = document.createElement('h4');
+  resTitle.className = 'station-card-title';
+  resTitle.textContent = 'Magazyny i produkcja';
+  resHeader.appendChild(resTitle);
+  const resBadge = document.createElement('span');
+  resBadge.className = 'station-chip';
+  resBadge.textContent = 'Trade';
+  resHeader.appendChild(resBadge);
+  resourcesCard.appendChild(resHeader);
+
+  const resDesc = document.createElement('p');
+  resDesc.className = 'station-card-desc';
+  resDesc.textContent = 'Aktualny stan surowców na orbicie planety.';
+  resourcesCard.appendChild(resDesc);
+
+  const resMeta = document.createElement('div');
+  resMeta.className = 'station-card-meta';
+  const resNote = document.createElement('span');
+  resNote.className = 'trade-resource-note';
+  resNote.textContent = 'Magazyny stacji orbitalnej.';
+  resMeta.appendChild(resNote);
+  resourcesCard.appendChild(resMeta);
+
+  const resTable = document.createElement('table');
+  resTable.className = 'trade-resource-table';
+  for(const key of ECONOMY_RESOURCE_KEYS){
+    const row = document.createElement('tr');
+    row.dataset.resourceKey = key;
+    const labelCell = document.createElement('td');
+    labelCell.className = 'trade-resource-label';
+    labelCell.appendChild(createResourceIcon(key));
+    const label = document.createElement('span');
+    label.textContent = getResourceLabel(key);
+    labelCell.appendChild(label);
+    const values = document.createElement('td');
+    values.className = 'trade-resource-values';
+    const amount = document.createElement('span');
+    amount.dataset.field = 'amount';
+    amount.className = 'trade-resource-amount';
+    amount.textContent = '0';
+    const cap = document.createElement('span');
+    cap.dataset.field = 'capacity';
+    cap.className = 'trade-resource-capacity';
+    cap.textContent = '0';
+    values.appendChild(amount);
+    values.append(' / ');
+    values.appendChild(cap);
+    row.appendChild(labelCell);
+    row.appendChild(values);
+    resTable.appendChild(row);
+  }
+  resourcesCard.appendChild(resTable);
+  pane.appendChild(resourcesCard);
+
   const grid = document.createElement('div');
   grid.className = 'station-grid';
   const allItems = new Set([...Object.keys(MARKET.buy), ...Object.keys(MARKET.sell)]);
@@ -8565,6 +8786,7 @@ function buildTradePanel(){
         sellPrice ? `Sprzedaż: ${sellPrice} cr` : 'Sprzedaż: niedostępna',
         `Ładownia: ${PLAYER.cargo[item] || 0}`
       ],
+      dataset: { tradeCard:'market', tradeItem: item },
       actions: [
         buyPrice ? {
           label: 'Kup',
@@ -8791,11 +9013,34 @@ function updateUpgradeButtons(){
   });
 }
 
-function updateTradeCards(){
-  const cards = stationOverlayDom.panels.trade?.querySelectorAll('.station-card');
+function updateTradeResourceTable(station){
+  const pane = stationOverlayDom.panels.trade;
+  if(!pane) return;
+  const table = pane.querySelector('.trade-resource-table');
+  if(!table) return;
+  const econ = station ? ensureStationEconomy(station) : null;
+  if(!econ) return;
+  table.querySelectorAll('tr[data-resource-key]').forEach(row => {
+    const key = row.dataset.resourceKey;
+    const amountEl = row.querySelector('[data-field="amount"]');
+    const capEl = row.querySelector('[data-field="capacity"]');
+    if(amountEl) amountEl.textContent = `${Math.round(econ.resources?.[key] ?? 0)}`;
+    if(capEl) capEl.textContent = `${Math.round(econ.capacity?.[key] ?? 0)}`;
+  });
+  const note = pane.querySelector('.trade-resource-note');
+  if(note){
+    const label = station?.planet?.name || station?.name;
+    note.textContent = label ? `Magazyny: ${label}` : 'Magazyny stacji orbitalnej.';
+  }
+}
+
+function updateTradeCards(station){
+  updateTradeResourceTable(station);
+  const cards = stationOverlayDom.panels.trade?.querySelectorAll('.station-card[data-trade-card="market"]');
   if(!cards) return;
   cards.forEach(card => {
-    const item = card.querySelector('[data-trade-item]')?.dataset.tradeItem
+    const item = card.dataset.tradeItem
+      || card.querySelector('[data-trade-item]')?.dataset.tradeItem
       || card.querySelector('button[data-trade-item]')?.dataset.tradeItem;
     if(!item) return;
     const meta = card.querySelector('.station-card-meta');
@@ -8847,7 +9092,7 @@ function renderStationOverlay(tab, station){
   }
   updateStationHeader(station);
   updateUpgradeButtons();
-  updateTradeCards();
+  updateTradeCards(station);
   updateHangarCards();
 }
 
