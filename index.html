@@ -6354,6 +6354,8 @@ const INFRASTRUCTURE_BUILDINGS = [
   { id:'storage_fuel', name:'Magazyn Paliwa', buildTime:70, icon:'storage', label:'F', color:'#f97316', footprint:{ w:4, h:4 } },
   { id:'storage_gas', name:'Magazyn Gazów', buildTime:65, icon:'storage', label:'G', color:'#14b8a6', footprint:{ w:4, h:4 } },
   { id:'storage_plastics', name:'Magazyn Tworzyw Sztucznych', buildTime:85, icon:'storage', label:'P', color:'#a855f7', footprint:{ w:4, h:4 } },
+  { id:'metal_harvester', name:'Metal Harvester', buildTime:95, icon:'metal_harvester', footprint:{ w:4, h:4 }, allowedPlanetTypes:['rocky'] },
+  { id:'metal_refinery', name:'Metal Refinery', buildTime:125, icon:'metal_refinery', footprint:{ w:4, h:4 }, allowedPlanetTypes:['rocky'] },
   { id:'gas_harvester', name:'Gas Harvester', buildTime:110, icon:'gas_harvester', footprint:{ w:4, h:4 }, requiresSolarSystem:true, allowedPlanetTypes:['gas'] },
   { id:'gas_refinery', name:'Gas Refinery', buildTime:140, icon:'gas_refinery', footprint:{ w:4, h:4 }, requiresSolarSystem:true, allowedPlanetTypes:['gas'] }
 ];
@@ -7053,6 +7055,74 @@ function drawStorageIcon(ctx, color, label){
   ctx.restore();
 }
 
+function drawMetalHarvesterIcon(ctx){
+  ctx.save();
+  ctx.fillStyle = 'rgba(59,130,246,0.10)';
+  ctx.strokeStyle = '#60a5fa';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.rect(-34, -26, 68, 52);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.strokeStyle = '#93c5fd';
+  ctx.lineWidth = 2.5;
+  const gearTeeth = 8;
+  for(let i=0;i<gearTeeth;i++){
+    const angle = i * (Math.PI * 2 / gearTeeth);
+    const x = Math.cos(angle) * 26;
+    const y = Math.sin(angle) * 26;
+    ctx.beginPath();
+    ctx.moveTo(x * 0.6, y * 0.6);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = '#0b1224';
+  ctx.strokeStyle = '#38bdf8';
+  ctx.beginPath();
+  ctx.arc(0, 0, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawMetalRefineryIcon(ctx){
+  ctx.save();
+  ctx.fillStyle = 'rgba(12,74,110,0.12)';
+  ctx.strokeStyle = '#38bdf8';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.rect(-30, -30, 60, 60);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.strokeStyle = '#67e8f9';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-24, 12);
+  ctx.lineTo(24, 12);
+  ctx.moveTo(-18, 4);
+  ctx.lineTo(18, 4);
+  ctx.moveTo(-12, -4);
+  ctx.lineTo(12, -4);
+  ctx.moveTo(-6, -12);
+  ctx.lineTo(6, -12);
+  ctx.stroke();
+
+  ctx.fillStyle = '#0f172a';
+  ctx.strokeStyle = '#e0f2fe';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(-18, 18);
+  ctx.lineTo(0, -14);
+  ctx.lineTo(18, 18);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawGasHarvesterIcon(ctx){
   ctx.save();
   ctx.fillStyle = 'rgba(20,184,166,0.12)';
@@ -7192,6 +7262,12 @@ function drawBuildingPreview(canvas, building){
       break;
     case 'storage':
       drawStorageIcon(ctx, building.color, building.label);
+      break;
+    case 'metal_harvester':
+      drawMetalHarvesterIcon(ctx);
+      break;
+    case 'metal_refinery':
+      drawMetalRefineryIcon(ctx);
       break;
     case 'gas_harvester':
       drawGasHarvesterIcon(ctx);
@@ -7431,6 +7507,18 @@ function drawInfrastructureIcon(ctx, building, center, size, alpha = 1){
       break;
     case 'storage':
       drawStorageIcon(ctx, building.color, building.label);
+      break;
+    case 'metal_harvester':
+      drawMetalHarvesterIcon(ctx);
+      break;
+    case 'metal_refinery':
+      drawMetalRefineryIcon(ctx);
+      break;
+    case 'gas_harvester':
+      drawGasHarvesterIcon(ctx);
+      break;
+    case 'gas_refinery':
+      drawGasRefineryIcon(ctx);
       break;
     default:
       drawGenericIcon(ctx);
@@ -7910,6 +7998,14 @@ function populateStationInfrastructureDefaults(station, preset){
   const farBand = Math.max(Math.floor(Math.min(layout.cols, layout.rows) / 3), midBand + 2);
 
   const plans = {
+    mercury: [
+      { id:'metal_harvester', offset:{ col: -midBand, row: 0 }, rotation:0 },
+      { id:'metal_harvester', offset:{ col: midBand, row: 0 }, rotation:0 },
+      { id:'metal_refinery', offset:{ col: 0, row: -midBand }, rotation:0 },
+      { id:'metal_refinery', offset:{ col: 0, row: midBand }, rotation:0 },
+      { id:'solar_array', offset:{ col: -midBand + 1, row: midBand - 1 }, rotation:0 },
+      { id:'solar_array', offset:{ col: midBand - 1, row: midBand - 1 }, rotation:0 },
+    ],
     earth: [
       { id:'shipyard_capital', offset:{ col: midBand + 2, row: 0 }, rotation:0 },
       { id:'shipyard_l', offset:{ col: -(midBand + 2), row: 0 }, rotation:0 },
@@ -7932,6 +8028,8 @@ function populateStationInfrastructureDefaults(station, preset){
       { id:'shipyard_l', offset:{ col: midBand, row: 0 }, rotation:0 },
       { id:'solar_array', offset:{ col: -midBand + 1, row: -(midBand + 1) }, rotation:0 },
       { id:'solar_array', offset:{ col: midBand - 1, row: midBand - 1 }, rotation:0 },
+      { id:'metal_harvester', offset:{ col: -farBand, row: -farBand }, rotation:0 },
+      { id:'metal_refinery', offset:{ col: farBand, row: farBand }, rotation:0 },
       { id:'storage_metal', offset:{ col: -farBand, row: 0 }, rotation:0 },
       { id:'storage_fuel', offset:{ col: 0, row: -farBand }, rotation:0 },
       { id:'storage_gas', offset:{ col: farBand, row: 0 }, rotation:0 },
@@ -7965,6 +8063,7 @@ function autopopulateDefaultInfrastructure(){
   for(const st of stations){
     if(!st || !st.id) continue;
     const key = st.id.toLowerCase();
+    if(key === 'mercury') changed = populateStationInfrastructureDefaults(st, 'mercury') || changed;
     if(key === 'earth') changed = populateStationInfrastructureDefaults(st, 'earth') || changed;
     if(key === 'mars') changed = populateStationInfrastructureDefaults(st, 'mars') || changed;
     if(key === 'jupiter') changed = populateStationInfrastructureDefaults(st, 'jupiter') || changed;
