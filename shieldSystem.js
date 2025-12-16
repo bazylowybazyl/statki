@@ -3,7 +3,7 @@
 
 const CONFIG = {
     baseColor: '#00aaff',
-    hitColor: '#ffffff',
+    hitColor: '#00e5ff',
     baseAlpha: 0.15,
     hexAlpha: 0.55,       // Nieco wyraźniejsze heksy jak w oryginale
     hexScale: 11,         // Skala dopasowana do generatora seamless
@@ -89,6 +89,17 @@ function getEntityPosition(entity) {
     const x = Number.isFinite(entity.x) ? entity.x : entity.pos?.x;
     const y = Number.isFinite(entity.y) ? entity.y : entity.pos?.y;
     return { x, y };
+}
+
+function shouldRenderShield(entity){
+    if (!entity) return false;
+    const type = String(entity.type || '').toLowerCase();
+
+    if (entity.isCapitalShip || entity.capitalProfile) return true;
+    if (type.includes('capital') || type.includes('battleship') || type.includes('destroyer') || type.includes('frigate') || type.includes('carrier')) return true;
+
+    const r = Number.isFinite(entity.radius) ? entity.radius : 0;
+    return r >= 26; // Przybliżony próg od fregaty w górę
 }
 
 function ensureShieldCanvasSize(size) {
@@ -289,6 +300,7 @@ export function drawShield(ctx, entity, cam) {
     try {
         const shield = entity.shield;
         if (!shield) return;
+        if (!shouldRenderShield(entity)) return;
         ensureShieldRuntime(shield);
 
         if (!shield.max || shield.max <= 0) return;
@@ -404,6 +416,7 @@ export function drawShield(ctx, entity, cam) {
         ctx.clip(path);
 
         const col = hexToRgb(CONFIG.baseColor);
+        const hitCol = hexToRgb(CONFIG.hitColor);
         const isBreaking = shield.state === 'breaking';
         
         ctx.globalCompositeOperation = 'lighter';
@@ -442,8 +455,8 @@ export function drawShield(ctx, entity, cam) {
                     const flashY = Math.sin(correctedImpAngle) * ry;
                     
                     const hitGrad = sCtx.createRadialGradient(flashX, flashY, 0, flashX, flashY, 150 * CONFIG.hitSpread);
-                    hitGrad.addColorStop(0, `rgba(255, 255, 255, ${imp.life * 2.0})`);
-                    hitGrad.addColorStop(1, `rgba(255, 255, 255, 0)`);
+                    hitGrad.addColorStop(0, `rgba(${hitCol.r}, ${hitCol.g}, ${hitCol.b}, ${imp.life * 2.0})`);
+                    hitGrad.addColorStop(1, `rgba(${hitCol.r}, ${hitCol.g}, ${hitCol.b}, 0)`);
                     sCtx.fillStyle = hitGrad;
                     sCtx.beginPath();
                     sCtx.arc(flashX, flashY, 150 * CONFIG.hitSpread, 0, Math.PI*2);
