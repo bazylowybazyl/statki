@@ -29,14 +29,18 @@ const guiState = {
   seed: 'statki',
   resolution: 2048,
   
-  // Parametry mgławicy (Twoje nowe ustawienia)
-  scale: 0.0022,
+  // Twoje ustawienia ("The Best"):
+  scale: 0.0024,
   falloff: 300,
   density: 0.5,
   layers: 1360,
-  
-  // Oświetlenie
   lightFalloff: 500.0,
+  
+  // Kolory gwiazd oświetlających (R, G, B)
+  colors: {
+    base: [0.1, 0.4, 1.0], 
+    var:  [0.2, 0.3, 0.5]  
+  },
   
   // Stan okna
   isVisible: true
@@ -228,6 +232,7 @@ export function initSpaceBg(seedStr = null){
     
     // --- GEN GWIAZD ---
     const stars = [];
+    // Ilość gwiazd zależna od skali (jak w demo)
     const nStars = Math.min(64, 1 + Math.round(prng() * (w * h) * guiState.scale * guiState.scale));
     
     const sceneOffset = [prng() * 10000000 - 5000000, prng() * 10000000 - 5000000];
@@ -295,6 +300,17 @@ export function drawSpaceBg(mainCtx, camera){
   const screenW = mainCtx.canvas.width; const screenH = mainCtx.canvas.height;
   const bgW = finalCanvas.width; const bgH = finalCanvas.height;
 
+  // --- FIX: CENTROWANIE I ZOOM ---
+  
+  // Zoom
+  const zoom = camera ? (camera.zoom || 1.0) : 1.0;
+  // Paralaksa zoomu (tło skaluje się trochę wolniej dla efektu głębi)
+  const drawScale = Math.max(0.001, Math.pow(zoom, 0.6)); 
+  
+  const tileW = bgW * drawScale;
+  const tileH = bgH * drawScale;
+
+  // Paralaksa ruchu
   if (parallaxState.enabled && camera) {
     const smooth = Math.max(0, Math.min(1, parallaxState.smoothing));
     parallaxState.targetX = (camera.x||0) * parallaxState.factorX;
@@ -307,28 +323,30 @@ export function drawSpaceBg(mainCtx, camera){
     }
   }
   
-  // FIX: ZOOM SUPPORT
-  const zoom = camera ? (camera.zoom || 1.0) : 1.0;
-  // Paralaksa zoomu - tło skaluje się wolniej niż świat (np. pierwiastek z zoomu)
-  // Jeśli wolisz 1:1, użyj po prostu `const drawScale = zoom;`
-  const drawScale = Math.pow(zoom, 0.5); 
-  
-  // Przeskalowane wymiary kafelka
-  const drawW = bgW * drawScale;
-  const drawH = bgH * drawScale;
+  // Obliczamy punkt startowy tak, aby środek ekranu (W/2, H/2) był punktem odniesienia
+  const halfW = screenW / 2;
+  const halfH = screenH / 2;
 
-  // Przesunięcie z uwzględnieniem skali
-  // Musimy przeskalować offset, żeby pasował do przeskalowanych kafelków
-  const scaledOffsetX = parallaxState.offsetX * drawScale;
-  const scaledOffsetY = parallaxState.offsetY * drawScale;
+  // Obliczamy przesunięcie w przestrzeni ekranu
+  const panX = parallaxState.offsetX * drawScale;
+  const panY = parallaxState.offsetY * drawScale;
 
-  const shiftX = -((scaledOffsetX % drawW + drawW) % drawW);
-  const shiftY = -((scaledOffsetY % drawH + drawH) % drawH);
+  // Punkt, w którym "zaczepiona" jest siatka (środek ekranu minus przesunięcie)
+  const anchorX = halfW - panX;
+  const anchorY = halfH - panY;
 
-  for (let x = shiftX; x < screenW; x += drawW) {
-    for (let y = shiftY; y < screenH; y += drawH) {
-      // Używamy drawW/drawH zamiast oryginalnych wymiarów
-      mainCtx.drawImage(finalCanvas, Math.floor(x), Math.floor(y), Math.ceil(drawW)+1, Math.ceil(drawH)+1);
+  // Obliczamy fazę (resztę z dzielenia), żeby wiedzieć gdzie zacząć rysować kafelki
+  const phaseX = ((anchorX % tileW) + tileW) % tileW;
+  const phaseY = ((anchorY % tileH) + tileH) % tileH;
+
+  // Startujemy jeden kafelek wcześniej, żeby na pewno pokryć lewą/górną krawędź
+  const startX = phaseX - tileW;
+  const startY = phaseY - tileH;
+
+  for (let x = startX; x < screenW; x += tileW) {
+    for (let y = startY; y < screenH; y += tileH) {
+      // Używamy Math.ceil/floor żeby uniknąć linii między kaflami
+      mainCtx.drawImage(finalCanvas, Math.floor(x), Math.floor(y), Math.ceil(tileW)+1, Math.ceil(tileH)+1);
     }
   }
 }
