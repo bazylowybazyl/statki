@@ -14323,30 +14323,52 @@ async function startGame(){
   console.log("[DEBUG] Scena 3D (mainScene3D):", window.mainScene3D);
 
   if (window.Space2DBackground) {
-      // Pokaż pasek ręcznie przed startem, żeby było widać że coś ruszyło
+      // Pokaż pasek ręcznie
       const bgStatusEl = document.getElementById('bg-gen-status');
       if (bgStatusEl) bgStatusEl.style.display = 'block';
 
-      // Przekazujemy null jeśli scena nie istnieje, żeby skrypt i tak ruszył
+      // Przekazujemy null, bo wiemy z logów, że mainScene3D jest tu jeszcze undefined
       const sceneRef = window.mainScene3D || null;
 
       window.Space2DBackground.startLiveGeneration(
           sceneRef, 
           updateLiveBackgroundProgress, 
           () => { 
-              console.log("[Tyro] Tło gotowe.");
-              // Jeśli soczewka warpa istnieje, odśwież ją nowym tłem
-              if (typeof configureWarpLensSource === 'function') configureWarpLensSource();
+              console.log("[Tyro] Generowanie zakończone (Callback).");
               
-              // Jeśli scena pojawiła się później (np. asynchronicznie), przypisz tło teraz
-              if (!sceneRef && window.mainScene3D) {
-                  const bgCanvas = window.Space2DBackground.getBackgroundCanvas();
-                  // (Tu można by dodać logikę przypisania tekstury do window.mainScene3D.background jeśli trzeba)
+              // 1. Pobierz gotową teksturę z generatora
+              const texture = window.Space2DBackground.getTexture();
+
+              // 2. Funkcja, która próbuje przypisać tło do sceny
+              const tryAssignBackground = () => {
+                  // Sprawdzamy czy scena już istnieje
+                  if (window.mainScene3D && texture) {
+                      console.log("[Tyro] Scena 3D dostępna. Przypisuję tło.");
+                      window.mainScene3D.background = texture;
+                      window.mainScene3D.environment = texture; // Odbicia na statkach
+                      
+                      // Odśwież VFX warpa
+                      if (typeof configureWarpLensSource === 'function') configureWarpLensSource();
+                      return true; // Sukces
+                  }
+                  return false; // Nadal brak sceny
+              };
+
+              // 3. Próbujemy przypisać od razu
+              if (!tryAssignBackground()) {
+                  console.warn("[Tyro] Scena 3D nadal niedostępna. Uruchamiam oczekiwanie...");
+                  // 4. Jeśli się nie udało, sprawdzaj co 500ms aż scena się załaduje
+                  const interval = setInterval(() => {
+                      if (tryAssignBackground()) {
+                          clearInterval(interval);
+                          console.log("[Tyro] Tło przypisane z opóźnieniem.");
+                      }
+                  }, 500);
               }
           }
       );
   } else {
-      console.error("[BŁĄD KRYTYCZNY] Moduł 'Space2DBackground' nie jest dostępny w window! Sprawdź importy.");
+      console.error("[BŁĄD KRYTYCZNY] Brak modułu Space2DBackground.");
   }
 }
 
