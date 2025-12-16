@@ -3,7 +3,7 @@
 import { Space2D } from './index.ts';
 import Alea from 'alea';
 
-// KOLORY GWIAZD (Tyro Style)
+// KOLORY GWIAZD TYRO
 const blackBodyColors = [
   [1.0, 0.0401, 0.003], [1.0, 0.0631, 0.003], [1.0, 0.086, 0.003], [1.0, 0.1085, 0.003], [1.0, 0.1303, 0.003],
   [1.0, 0.2097, 0.003], [1.0, 0.2272, 0.003], [1.0, 0.2484, 0.0061], [1.0, 0.2709, 0.0153], [1.0, 0.293, 0.0257],
@@ -20,33 +20,37 @@ const blackBodyColors = [
   [0.5394, 0.6666, 1.0], [0.5357, 0.664, 1.0], [0.5322, 0.6615, 1.0], [0.5287, 0.659, 1.0], [0.5253, 0.6566, 1.0]
 ];
 
-// Cache kafelków
-const chunks = new Map(); 
-const CACHE_LIMIT = 40; 
+// Zmienne globalne
+let finalCanvas = null; 
 let newBg = null;
 
 // --- STAN GUI ---
 const guiState = {
   seed: 'statki',
   
-  // Twoje ustawienia:
-  resolution: 2048, 
-  scale: 0.0024,
+  // LOGIKA "SCREEN SIZE"
+  // Mnożnik rozmiaru ekranu. 
+  // Np. 3 oznacza, że tło będzie 3x większe od Twojego monitora.
+  resolutionMult: 3, 
+  
+  // Twoje idealne parametry:
+  scale: 0.0022,
   falloff: 300,
   density: 0.5,
-  layers: 200, // Zmniejszyłem startowo do 200 dla szybkości, w grze możesz dać 1360
+  layers: 1360,
   lightFalloff: 500.0,
   
   isVisible: true,
 
   redraw: () => {
-    console.log(`[Nebula] Czyszczenie cache...`);
-    chunks.clear(); // Wymusza regenerację widocznych kafelków
+    console.log(`[Nebula] Przerysowywanie (To może chwilę potrwać... Layers: ${guiState.layers})`);
+    // Delay dla UI
+    setTimeout(() => initSpaceBg(window.Nebula.seed), 50);
   },
   
   randomize: () => {
     guiState.seed = Math.random().toString(36).slice(2, 9);
-    chunks.clear();
+    guiState.redraw();
   }
 };
 
@@ -75,6 +79,7 @@ function createGUI() {
     row.append(txt, inp, val); root.appendChild(row);
   };
 
+  addSlider("Size (xScreen)", "resolutionMult", 1, 6, 1); // Nowy suwak: Mnożnik ekranu
   addSlider("Scale", "scale", 0.0001, 0.005, 0.0001);
   addSlider("Falloff", "falloff", 10, 1500, 10);
   addSlider("Density", "density", 0.1, 2.0, 0.1);
@@ -93,181 +98,165 @@ function createGUI() {
   });
 }
 
-// --- GENEROWANIE KAFELKA ---
-function generateChunk(cx, cy) {
-    if (!newBg) newBg = new Space2D();
-    
-    const size = guiState.resolution;
-    // Pozycja w świecie gry
-    const worldX = cx * size;
-    const worldY = cy * size;
-    
-    // Seed zależny od pozycji kafelka (deterministyczny)
-    const chunkPrng = Alea(guiState.seed + "_" + cx + "_" + cy);
-    const prng = Alea(guiState.seed);
-
-    // --- GWIAZDY ---
-    const stars = [];
-    const nStars = Math.min(64, 1 + Math.round(chunkPrng() * (size * size) * guiState.scale * guiState.scale * 0.000001)); 
-
-    for (let i = 0; i < 40; i++) { 
-        const color = blackBodyColors[Math.floor(chunkPrng() * blackBodyColors.length)].slice();
-        const intensity = 0.5 + chunkPrng() * 0.5; 
-        color[0] *= intensity; color[1] *= intensity; color[2] *= intensity;
-
-        stars.push({
-            // FIX: Gwiazdy muszą być w GLOBALNYCH współrzędnych, bo shader używa globalnego offsetu!
-            position: [
-                worldX + chunkPrng() * size, 
-                worldY + chunkPrng() * size, 
-                chunkPrng() * 500
-            ],
-            color: color,
-            falloff: 256,
-            diffractionSpikeFalloff: 1024,
-            diffractionSpikeScale: 4 + 4 * chunkPrng(),
-        });
-    }
-
-    const backgroundColor = blackBodyColors[Math.floor(prng() * blackBodyColors.length)].slice();
-    const bgInt = 0.5 * prng();
-    backgroundColor[0] *= bgInt; backgroundColor[1] *= bgInt; backgroundColor[2] *= bgInt;
-
-    // Render WebGL
-    const webglCanvas = newBg.render(size, size, {
-      stars,
-      offset: [worldX, worldY], // GLOBALNY OFFSET
-      backgroundColor,
-      
-      scale: guiState.scale,
-      nebulaFalloff: guiState.falloff,
-      nebulaDensity: guiState.density / guiState.layers * 100, 
-      nebulaLayers: guiState.layers,
-      lightFalloff: guiState.lightFalloff,
-      
-      nebulaLacunarity: 1.8 + 0.2 * prng(),
-      nebulaGain: 0.5,
-      nebulaAbsorption: 1.0,
-      nebulaAlbedoLow: [prng(), prng(), prng()],
-      nebulaAlbedoHigh: [prng(), prng(), prng()],
-      nebulaAlbedoScale: prng() * 8,
-      nebulaEmissiveLow: [0, 0, 0],
-      nebulaEmissiveHigh: [0, 0, 0],
-    });
-
-    // Kopiujemy wynik WebGL do statycznego obrazka (Snapshot)
-    const snapshot = document.createElement('canvas');
-    snapshot.width = size; snapshot.height = size;
-    const ctx = snapshot.getContext('2d');
-    
-    // Tło bezpieczeństwa (Żeby nigdy nie było pusto)
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, size, size);
-    
-    ctx.drawImage(webglCanvas, 0, 0);
-    return snapshot;
+function ensureFinalCanvas(w, h){
+  // LOGIKA "SCREEN SIZE": Rozmiar tła to rozmiar ekranu * mnożnik
+  const mult = guiState.resolutionMult || 3;
+  const targetW = Math.ceil(w * mult);
+  const targetH = Math.ceil(h * mult);
+  
+  if (!finalCanvas) finalCanvas = document.createElement('canvas');
+  
+  // Jeśli rozmiar się zmienił, musimy przebudować canvas
+  if (finalCanvas.width !== targetW || finalCanvas.height !== targetH) {
+    finalCanvas.width = targetW; 
+    finalCanvas.height = targetH;
+    return true; 
+  }
+  return false;
 }
 
-// --- INIT ---
+// --- INIT (GENEROWANIE) ---
 export function initSpaceBg(seedStr = null){
   createGUI();
   if (seedStr) guiState.seed = String(seedStr);
-  chunks.clear();
+  
+  // Pobieramy rozmiar okna
+  const screenW = window.innerWidth;
+  const screenH = window.innerHeight;
+  
+  // Tworzymy gigantyczny canvas
+  ensureFinalCanvas(screenW, screenH);
+  
+  const w = finalCanvas.width;
+  const h = finalCanvas.height;
+  
+  console.log(`[Tyro] Generowanie tła: ${w}x${h} px (Mnożnik: x${guiState.resolutionMult})...`);
+  const startTime = performance.now();
+
+  if (!newBg) newBg = new Space2D();
+  const prng = Alea(guiState.seed);
+
+  // --- GEN GWIAZD ---
+  const stars = [];
+  // Skalujemy ilość gwiazd do powierzchni gigantycznego tła
+  const nStars = Math.min(200, 1 + Math.round(prng() * (w * h) * guiState.scale * guiState.scale * 0.000002)); 
+
+  for (let i = 0; i < 80; i++) { 
+      const color = blackBodyColors[Math.floor(prng() * blackBodyColors.length)].slice();
+      const intensity = 0.5 + prng() * 0.5; 
+      color[0] *= intensity; color[1] *= intensity; color[2] *= intensity;
+
+      stars.push({
+          position: [
+              prng() * w, // Rozrzucamy gwiazdy po CAŁYM tle
+              prng() * h, 
+              prng() * 500
+          ],
+          color: color,
+          falloff: 256,
+          diffractionSpikeFalloff: 1024,
+          diffractionSpikeScale: 4 + 4 * prng(),
+      });
+  }
+
+  const backgroundColor = blackBodyColors[Math.floor(prng() * blackBodyColors.length)].slice();
+  const bgInt = 0.5 * prng();
+  backgroundColor[0] *= bgInt; backgroundColor[1] *= bgInt; backgroundColor[2] *= bgInt;
+
+  // Render WebGL
+  // Ważne: Offset jest losowy, żeby za każdym razem był inny fragment kosmosu
+  const randomOffset = [prng() * 1000000, prng() * 1000000];
+
+  const webglCanvas = newBg.render(w, h, {
+    stars,
+    offset: randomOffset, 
+    backgroundColor,
+    
+    scale: guiState.scale,
+    nebulaFalloff: guiState.falloff,
+    nebulaDensity: guiState.density / guiState.layers * 100, 
+    nebulaLayers: guiState.layers,
+    lightFalloff: guiState.lightFalloff,
+    
+    nebulaLacunarity: 1.8 + 0.2 * prng(),
+    nebulaGain: 0.5,
+    nebulaAbsorption: 1.0,
+    nebulaAlbedoLow: [prng(), prng(), prng()],
+    nebulaAlbedoHigh: [prng(), prng(), prng()],
+    nebulaAlbedoScale: prng() * 8,
+    nebulaEmissiveLow: [0, 0, 0],
+    nebulaEmissiveHigh: [0, 0, 0],
+  });
+
+  // Zapisujemy wynik do finalCanvas (Snapshot)
+  const ctx = finalCanvas.getContext('2d');
+  // Bezpieczne czarne tło
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(webglCanvas, 0, 0);
+  
+  console.log(`[Tyro] Gotowe w ${(performance.now() - startTime).toFixed(0)} ms.`);
   return true;
 }
 
-export function resizeSpaceBg(w, h){}
+export function resizeSpaceBg(w, h){
+    // Opcjonalnie: Przeładowanie przy zmianie rozmiaru okna
+    // Możesz to odkomentować, ale przy 1360 warstwach to spowoduje laga przy resize
+    // initSpaceBg(); 
+}
 
-// --- RYSOWANIE (Dynamiczne) ---
+// --- RYSOWANIE ---
 export function drawSpaceBg(mainCtx, camera){
-  // 1. CZYŚCIMY EKRAN NA CZARNO
-  // Jeśli to zadziała, stary background CSS powinien zniknąć.
-  mainCtx.fillStyle = '#000000';
-  mainCtx.fillRect(0, 0, mainCtx.canvas.width, mainCtx.canvas.height);
+  if (!finalCanvas) return;
 
-  // Ustawienia kamery
+  const screenW = mainCtx.canvas.width; 
+  const screenH = mainCtx.canvas.height;
+  
   const camX = camera ? (camera.x || 0) : 0;
   const camY = camera ? (camera.y || 0) : 0;
   const zoom = camera ? (camera.zoom || 1.0) : 1.0;
 
-  const screenW = mainCtx.canvas.width; 
-  const screenH = mainCtx.canvas.height;
+  const bgW = finalCanvas.width;
+  const bgH = finalCanvas.height;
+
+  // Paralaksa zoomu
+  const drawScale = Math.max(0.001, Math.pow(zoom, 0.6)); 
+  const tileDrawW = bgW * drawScale;
+  const tileDrawH = bgH * drawScale;
+
   const halfW = screenW / 2;
   const halfH = screenH / 2;
 
-  const CHUNK_SIZE = guiState.resolution;
-  
-  // Paralaksa zoomu
-  const drawScale = Math.max(0.001, Math.pow(zoom, 0.6)); 
-  const tileDrawSize = CHUNK_SIZE * drawScale;
-
-  // Przesuwamy tło wolniej niż kamerę (paralaksa)
+  // Przesunięcie
   const viewCenterX = camX * 0.8; 
   const viewCenterY = camY * 0.8;
 
-  // Obliczamy widoczny obszar w świecie kafelków
-  const worldLeft = viewCenterX - (halfW / drawScale);
-  const worldTop  = viewCenterY - (halfH / drawScale);
-  const worldRight = viewCenterX + (halfW / drawScale);
-  const worldBottom = viewCenterY + (halfH / drawScale);
+  // Obliczamy punkt zaczepienia (kotwicę)
+  const anchorX = halfW - (viewCenterX * drawScale);
+  const anchorY = halfH - (viewCenterY * drawScale);
 
-  const startCol = Math.floor(worldLeft / CHUNK_SIZE);
-  const endCol   = Math.floor(worldRight / CHUNK_SIZE);
-  const startRow = Math.floor(worldTop / CHUNK_SIZE);
-  const endRow   = Math.floor(worldBottom / CHUNK_SIZE);
+  // Obliczamy fazę (resztę z dzielenia), żeby wiedzieć gdzie zacząć rysować
+  const phaseX = ((anchorX % tileDrawW) + tileDrawW) % tileDrawW;
+  const phaseY = ((anchorY % tileDrawH) + tileDrawH) % tileDrawH;
 
-  // Garbage Collector dla kafelków
-  if (chunks.size > CACHE_LIMIT) {
-      for (const key of chunks.keys()) {
-          const [cx, cy] = key.split('_').map(Number);
-          if (cx < startCol - 2 || cx > endCol + 2 || cy < startRow - 2 || cy > endRow + 2) {
-              chunks.delete(key);
-          }
-      }
-  }
+  const startX = phaseX - tileDrawW;
+  const startY = phaseY - tileDrawH;
 
-  // Rysujemy kafelki (generując brakujące)
-  for (let col = startCol; col <= endCol; col++) {
-      for (let row = startRow; row <= endRow; row++) {
-          const key = `${col}_${row}`;
-          let chunk = chunks.get(key);
-
-          // Lazy load
-          if (!chunk) {
-              chunk = generateChunk(col, row);
-              chunks.set(key, chunk);
-          }
-
-          const worldX = col * CHUNK_SIZE;
-          const worldY = row * CHUNK_SIZE;
-          
-          const screenX = (worldX - viewCenterX) * drawScale + halfW;
-          const screenY = (worldY - viewCenterY) * drawScale + halfH;
-
-          // +2px na łączenia
-          mainCtx.drawImage(chunk, 
-              Math.floor(screenX), Math.floor(screenY), 
-              Math.ceil(tileDrawSize)+2, Math.ceil(tileDrawSize)+2
+  // Rysujemy kafelki (jeden wielki obraz powielany)
+  for (let x = startX; x < screenW; x += tileDrawW) {
+      for (let y = startY; y < screenH; y += tileDrawH) {
+          mainCtx.drawImage(finalCanvas, 
+              Math.floor(x), Math.floor(y), 
+              Math.ceil(tileDrawW)+1, Math.ceil(tileDrawH)+1
           );
       }
   }
-
-  // --- DEBUG: CZERWONY KRZYŻ ---
-  // Jeśli to widzisz, funkcja drawSpaceBg działa!
-  mainCtx.save();
-  mainCtx.strokeStyle = 'rgba(255, 0, 0, 0.3)';
-  mainCtx.lineWidth = 2;
-  mainCtx.beginPath();
-  mainCtx.moveTo(halfW - 20, halfH); mainCtx.lineTo(halfW + 20, halfH);
-  mainCtx.moveTo(halfW, halfH - 20); mainCtx.lineTo(halfW, halfH + 20);
-  mainCtx.stroke();
-  mainCtx.restore();
 }
 
 window.Nebula = guiState;
 let opts = { newSystemEnabled: true };
 export function setBgOptions(partial){ Object.assign(opts, partial || {}); }
-export function setBgSeed(seed){ guiState.seed = String(seed); chunks.clear(); }
+export function setBgSeed(seed){ guiState.seed = String(seed); initSpaceBg(); }
 export function setParallaxOptions(partial){ }
-export function getBackgroundCanvas(){ return null; }
+export function getBackgroundCanvas(){ return finalCanvas; }
 export function getBackgroundSampleDescriptor(){ return null; }
