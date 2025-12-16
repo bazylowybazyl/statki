@@ -20,7 +20,6 @@ const blackBodyColors = [
   [0.5394, 0.6666, 1.0], [0.5357, 0.664, 1.0], [0.5322, 0.6615, 1.0], [0.5287, 0.659, 1.0], [0.5253, 0.6566, 1.0]
 ];
 
-// Zmienne globalne
 let finalCanvas = null; 
 let newBg = null;
 
@@ -28,18 +27,18 @@ let newBg = null;
 const guiState = {
   seed: 'statki',
   
-  // Rozmiar tła (Mnożnik ekranu)
-  resolutionMult: 3, 
+  // Konfiguracja
+  resolutionMult: 3, // Mnożnik ekranu
   
-  // Parametry mgławicy:
+  // Parametry
   scale: 0.0022,
   falloff: 300,
   density: 0.5,
   layers: 1360,
   lightFalloff: 500.0,
   
-  // Nowy parametr: Gęstość gwiazd (0.0 - 1.0)
-  starDensity: 0.5, 
+  // Ile gwiazd (mnożnik gęstości)
+  starDensity: 1.0, 
   
   isVisible: true,
 
@@ -85,9 +84,7 @@ function createGUI() {
   addSlider("Density", "density", 0.1, 2.0, 0.1);
   addSlider("Light", "lightFalloff", 50, 1000, 10);
   addSlider("Layers", "layers", 10, 2000, 10);
-  
-  // SUWAK DO GWIAZD
-  addSlider("Stars", "starDensity", 0.1, 2.0, 0.1);
+  addSlider("Stars", "starDensity", 0.1, 3.0, 0.1);
 
   const btnRand = document.createElement('button');
   btnRand.textContent = "Random Seed";
@@ -125,22 +122,21 @@ export function initSpaceBg(seedStr = null){
   const w = finalCanvas.width;
   const h = finalCanvas.height;
   
-  console.log(`[Tyro] Generowanie: ${w}x${h} (Stars Density: ${guiState.starDensity})`);
-
   if (!newBg) newBg = new Space2D();
   const prng = Alea(guiState.seed);
 
-  // --- POPRAWIONE GENEROWANIE GWIAZD ---
+  // 1. GENERUJEMY OFFSET RAZ
+  // To jest pozycja "kamery" w szumie proceduralnym.
+  const randomOffset = [prng() * 1000000, prng() * 1000000];
+
+  // 2. GENERUJEMY GWIAZDY Z UWZGLĘDNIENIEM OFFSETU
   const stars = [];
-  
-  // Obliczamy ilość gwiazd na podstawie powierzchni (pikseli)
-  // Wcześniej było max 200, teraz będzie tysiące.
+  // Gęstość gwiazd zależna od powierzchni
   const pixelArea = w * h;
-  // Domyślna gęstość: 1 gwiazda na ~10000 pikseli (zależne od suwaka)
   const baseStarCount = Math.floor(pixelArea / 12000); 
   const nStars = Math.floor(baseStarCount * guiState.starDensity);
 
-  console.log(`[Tyro] Ilość gwiazd: ${nStars}`);
+  console.log(`[Tyro] Generowanie ${w}x${h}. Gwiazd: ${nStars}. Offset: ${randomOffset}`);
 
   for (let i = 0; i < nStars; i++) { 
       const color = blackBodyColors[Math.floor(prng() * blackBodyColors.length)].slice();
@@ -149,8 +145,10 @@ export function initSpaceBg(seedStr = null){
 
       stars.push({
           position: [
-              prng() * w, 
-              prng() * h, 
+              // FIX: Dodajemy offset do pozycji gwiazdy!
+              // Dzięki temu gwiazda jest w tym samym miejscu co szum mgławicy.
+              randomOffset[0] + prng() * w, 
+              randomOffset[1] + prng() * h, 
               prng() * 500
           ],
           color: color,
@@ -164,11 +162,10 @@ export function initSpaceBg(seedStr = null){
   const bgInt = 0.5 * prng();
   backgroundColor[0] *= bgInt; backgroundColor[1] *= bgInt; backgroundColor[2] *= bgInt;
 
-  const randomOffset = [prng() * 1000000, prng() * 1000000];
-
+  // 3. RENDERUJEMY TŁO
   const webglCanvas = newBg.render(w, h, {
     stars,
-    offset: randomOffset, 
+    offset: randomOffset, // Przekazujemy ten sam offset
     backgroundColor,
     
     scale: guiState.scale,
@@ -218,11 +215,9 @@ export function drawSpaceBg(mainCtx, camera){
   const halfW = screenW / 2;
   const halfH = screenH / 2;
 
-  // Przesunięcie z uwzględnieniem paralaksy (tło przesuwa się wolniej)
-  // Mnożnik 0.5 = tło porusza się o połowę wolniej niż kamera
-  const parallaxFactor = 0.5;
-  const viewCenterX = camX * parallaxFactor; 
-  const viewCenterY = camY * parallaxFactor;
+  // Przesunięcie
+  const viewCenterX = camX * 0.8; 
+  const viewCenterY = camY * 0.8;
 
   const anchorX = halfW - (viewCenterX * drawScale);
   const anchorY = halfH - (viewCenterY * drawScale);
