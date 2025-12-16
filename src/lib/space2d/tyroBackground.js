@@ -20,6 +20,7 @@ const blackBodyColors = [
   [0.5394, 0.6666, 1.0], [0.5357, 0.664, 1.0], [0.5322, 0.6615, 1.0], [0.5287, 0.659, 1.0], [0.5253, 0.6566, 1.0]
 ];
 
+// Zmienne globalne
 let finalCanvas = null; 
 let newBg = null;
 
@@ -27,23 +28,25 @@ let newBg = null;
 const guiState = {
   seed: 'statki',
   
-  // Konfiguracja
-  resolutionMult: 3, // Mnożnik ekranu
+  // SZTYWNA ROZDZIELCZOŚĆ 8K
+  // Używam 8192, bo to potęga dwójki (bezpieczniej dla GPU niż 8096)
+  resolution: 8192, 
   
-  // Parametry
-  scale: 0.0022,
+  // Twoje parametry:
+  scale: 0.0024,
   falloff: 300,
   density: 0.5,
   layers: 1360,
   lightFalloff: 500.0,
   
-  // Ile gwiazd (mnożnik gęstości)
-  starDensity: 1.0, 
+  // Mniejsza gęstość gwiazd (0.15 daje około ~800 gwiazd na 8K, zamiast tysięcy)
+  starDensity: 0.15, 
   
   isVisible: true,
 
   redraw: () => {
-    console.log(`[Nebula] Przerysowywanie...`);
+    console.log(`[Nebula] Generowanie tekstury ${guiState.resolution}px...`);
+    // Delay dla UI
     setTimeout(() => initSpaceBg(window.Nebula.seed), 50);
   },
   
@@ -78,13 +81,13 @@ function createGUI() {
     row.append(txt, inp, val); root.appendChild(row);
   };
 
-  addSlider("Size (xScreen)", "resolutionMult", 1, 6, 1);
+  addSlider("Size (px)", "resolution", 1024, 8192, 1024);
   addSlider("Scale", "scale", 0.0001, 0.005, 0.0001);
   addSlider("Falloff", "falloff", 10, 1500, 10);
   addSlider("Density", "density", 0.1, 2.0, 0.1);
   addSlider("Light", "lightFalloff", 50, 1000, 10);
   addSlider("Layers", "layers", 10, 2000, 10);
-  addSlider("Stars", "starDensity", 0.1, 3.0, 0.1);
+  addSlider("Stars", "starDensity", 0.01, 1.0, 0.01);
 
   const btnRand = document.createElement('button');
   btnRand.textContent = "Random Seed";
@@ -98,13 +101,15 @@ function createGUI() {
   });
 }
 
-function ensureFinalCanvas(w, h){
-  const mult = guiState.resolutionMult || 3;
-  const targetW = Math.ceil(w * mult);
-  const targetH = Math.ceil(h * mult);
+function ensureFinalCanvas(){
+  const size = guiState.resolution || 8192;
+  
   if (!finalCanvas) finalCanvas = document.createElement('canvas');
-  if (finalCanvas.width !== targetW || finalCanvas.height !== targetH) {
-    finalCanvas.width = targetW; finalCanvas.height = targetH;
+  
+  // Sprawdzamy czy rozmiar się zmienił
+  if (finalCanvas.width !== size || finalCanvas.height !== size) {
+    finalCanvas.width = size; 
+    finalCanvas.height = size;
     return true; 
   }
   return false;
@@ -115,28 +120,28 @@ export function initSpaceBg(seedStr = null){
   createGUI();
   if (seedStr) guiState.seed = String(seedStr);
   
-  const screenW = window.innerWidth;
-  const screenH = window.innerHeight;
-  ensureFinalCanvas(screenW, screenH);
+  // Wymuszamy rozmiar z konfiguracji
+  ensureFinalCanvas();
   
   const w = finalCanvas.width;
   const h = finalCanvas.height;
   
+  const startTime = performance.now();
+
   if (!newBg) newBg = new Space2D();
   const prng = Alea(guiState.seed);
 
-  // 1. GENERUJEMY OFFSET RAZ
-  // To jest pozycja "kamery" w szumie proceduralnym.
-  const randomOffset = [prng() * 1000000, prng() * 1000000];
-
-  // 2. GENERUJEMY GWIAZDY Z UWZGLĘDNIENIEM OFFSETU
+  // --- GEN GWIAZD ---
   const stars = [];
-  // Gęstość gwiazd zależna od powierzchni
+  
+  // Obliczamy ilość gwiazd na podstawie powierzchni
+  // Dzielnik 12000 jest bazą. Im większy dzielnik, tym mniej gwiazd.
+  // Zwiększyłem starDensity default na 0.15, żeby nie było ich za dużo na 8K.
   const pixelArea = w * h;
   const baseStarCount = Math.floor(pixelArea / 12000); 
   const nStars = Math.floor(baseStarCount * guiState.starDensity);
 
-  console.log(`[Tyro] Generowanie ${w}x${h}. Gwiazd: ${nStars}. Offset: ${randomOffset}`);
+  console.log(`[Tyro] Generowanie ${w}x${h} (Gwiazd: ${nStars})...`);
 
   for (let i = 0; i < nStars; i++) { 
       const color = blackBodyColors[Math.floor(prng() * blackBodyColors.length)].slice();
@@ -145,10 +150,8 @@ export function initSpaceBg(seedStr = null){
 
       stars.push({
           position: [
-              // FIX: Dodajemy offset do pozycji gwiazdy!
-              // Dzięki temu gwiazda jest w tym samym miejscu co szum mgławicy.
-              randomOffset[0] + prng() * w, 
-              randomOffset[1] + prng() * h, 
+              prng() * w, 
+              prng() * h, 
               prng() * 500
           ],
           color: color,
@@ -162,10 +165,12 @@ export function initSpaceBg(seedStr = null){
   const bgInt = 0.5 * prng();
   backgroundColor[0] *= bgInt; backgroundColor[1] *= bgInt; backgroundColor[2] *= bgInt;
 
-  // 3. RENDERUJEMY TŁO
+  // Render WebGL
+  const randomOffset = [prng() * 1000000, prng() * 1000000];
+
   const webglCanvas = newBg.render(w, h, {
     stars,
-    offset: randomOffset, // Przekazujemy ten sam offset
+    offset: randomOffset, 
     backgroundColor,
     
     scale: guiState.scale,
@@ -184,11 +189,13 @@ export function initSpaceBg(seedStr = null){
     nebulaEmissiveHigh: [0, 0, 0],
   });
 
+  // Snapshot
   const ctx = finalCanvas.getContext('2d');
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, w, h);
   ctx.drawImage(webglCanvas, 0, 0);
   
+  console.log(`[Tyro] Gotowe w ${(performance.now() - startTime).toFixed(0)} ms.`);
   return true;
 }
 
@@ -208,6 +215,7 @@ export function drawSpaceBg(mainCtx, camera){
   const bgW = finalCanvas.width;
   const bgH = finalCanvas.height;
 
+  // Zoom paralaksy
   const drawScale = Math.max(0.001, Math.pow(zoom, 0.6)); 
   const tileDrawW = bgW * drawScale;
   const tileDrawH = bgH * drawScale;
@@ -216,18 +224,21 @@ export function drawSpaceBg(mainCtx, camera){
   const halfH = screenH / 2;
 
   // Przesunięcie
-  const viewCenterX = camX * 0.8; 
+  const viewCenterX = camX * 0.8; // Paralaksa 0.8
   const viewCenterY = camY * 0.8;
 
+  // Kotwica
   const anchorX = halfW - (viewCenterX * drawScale);
   const anchorY = halfH - (viewCenterY * drawScale);
 
+  // Faza kafelkowania
   const phaseX = ((anchorX % tileDrawW) + tileDrawW) % tileDrawW;
   const phaseY = ((anchorY % tileDrawH) + tileDrawH) % tileDrawH;
 
   const startX = phaseX - tileDrawW;
   const startY = phaseY - tileDrawH;
 
+  // Pętla rysowania
   for (let x = startX; x < screenW; x += tileDrawW) {
       for (let y = startY; y < screenH; y += tileDrawH) {
           mainCtx.drawImage(finalCanvas, 
