@@ -3437,7 +3437,6 @@ const SUPPORT_SHIP_TEMPLATES = {
   fighter: {
     color: '#7cff91',
     count: 9,
-    shield: { max: 90, val: 90, regenRate: 48, regenDelay: 2.4, impacts: [], state: 'activating' },
     stats: {
       hp: 120,
       accel: 350,
@@ -3459,7 +3458,6 @@ const SUPPORT_SHIP_TEMPLATES = {
   },
   interceptor: { // Dodane, bo spawnPirate używa tej nazwy
     // To samo co fighter, ale dla piratów
-    shield: { max: 70, val: 70, regenRate: 40, regenDelay: 2.1, impacts: [], state: 'activating' },
     stats: { hp: 80, accel: 350, maxSpeed: 650, turn: 7.0, radius: 12, mass: 0.8, separationRange: 30 },
     configure(npc){
       npc.fighter = true;
