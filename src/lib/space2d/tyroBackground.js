@@ -3,15 +3,7 @@
 import { Space2D } from './index.ts';
 import Alea from 'alea';
 
-// --- KONFIGURACJA ŚWIATA ---
-const CHUNK_SIZE = 4096; // Rozmiar jednego kafla (zgodnie z życzeniem)
-const RENDER_RADIUS = 1; // Ile kafli w każdą stronę (1 = 3x3 grid, 2 = 5x5 grid)
-
-// Cache na wygenerowane kafelki { "x_y": Canvas }
-const chunks = new Map();
-let newBg = null;
-
-// KOLORY GWIAZD (Tyro Style)
+// KOLORY GWIAZD TYRO (Black Body Radiation)
 const blackBodyColors = [
   [1.0, 0.0401, 0.003], [1.0, 0.0631, 0.003], [1.0, 0.086, 0.003], [1.0, 0.1085, 0.003], [1.0, 0.1303, 0.003],
   [1.0, 0.2097, 0.003], [1.0, 0.2272, 0.003], [1.0, 0.2484, 0.0061], [1.0, 0.2709, 0.0153], [1.0, 0.293, 0.0257],
@@ -28,29 +20,48 @@ const blackBodyColors = [
   [0.5394, 0.6666, 1.0], [0.5357, 0.664, 1.0], [0.5322, 0.6615, 1.0], [0.5287, 0.659, 1.0], [0.5253, 0.6566, 1.0]
 ];
 
-// --- PANEL STEROWANIA ---
-window.Nebula = {
+// --- KONFIGURACJA CHUNKÓW ---
+// UWAGA: Zmniejszyłem domyślny CHUNK_SIZE do 2048 dla bezpieczeństwa.
+// 4096 jest bardzo duże, jeśli gra nie wstanie, zmień na 1024.
+let CHUNK_SIZE = 2048; 
+const RENDER_RADIUS = 1; // 1 = siatka 3x3 (9 kafelków)
+
+// Cache na wygenerowane kafelki { "x_y": Canvas }
+const chunks = new Map();
+let newBg = null;
+
+// --- STAN GUI ---
+const guiState = {
   seed: 'statki',
   
-  // Twoje wybrane parametry:
+  // Parametry (Twoje ulubione, lekko dostrojone dla bezpieczeństwa)
+  resolution: 2048, // To steruje CHUNK_SIZE
   scale: 0.0024,
   falloff: 300,
   density: 0.5,
+  layers: 200,      // Startujemy z 200, zwiększ suwakiem do 1360 jeśli chcesz
   lightFalloff: 500.0,
-  layers: 1360,
+  
+  colors: {
+    base: [0.1, 0.4, 1.0], 
+    var:  [0.2, 0.3, 0.5]  
+  },
   
   isVisible: true,
 
   redraw: () => {
-    console.log(`[Nebula] Przerysowywanie gridu 3x3...`);
-    setTimeout(() => initSpaceBg(window.Nebula.seed), 10);
+    // Aktualizujemy CHUNK_SIZE z GUI
+    CHUNK_SIZE = guiState.resolution;
+    console.log(`[Nebula] Przerysowywanie (Res: ${CHUNK_SIZE}, Layers: ${guiState.layers})...`);
+    // Reset cache i generowanie od nowa
+    setTimeout(() => initSpaceBg(window.Nebula.seed), 50);
   },
   
   randomize: () => {
     const newSeed = Math.random().toString(36).slice(2, 9);
     console.log(`[Nebula] Nowy seed: "${newSeed}"`);
     window.Nebula.seed = newSeed;
-    initSpaceBg(newSeed);
+    guiState.redraw();
   }
 };
 
@@ -78,14 +89,14 @@ function createGUI() {
   rowSeed.style.cssText = "display:flex; gap:4px; margin-bottom:8px;";
   
   const inpSeed = document.createElement('input');
-  inpSeed.value = window.Nebula.seed;
+  inpSeed.value = guiState.seed;
   inpSeed.style.cssText = "flex:1; background:#000; border:1px solid #468; color:#fff; padding:2px;";
-  inpSeed.addEventListener('change', e => { window.Nebula.seed = e.target.value; window.Nebula.redraw(); });
+  inpSeed.addEventListener('change', e => { guiState.seed = e.target.value; guiState.redraw(); });
   
   const btnRandSeed = document.createElement('button');
   btnRandSeed.textContent = "RND";
   btnRandSeed.style.cssText = "background:#246; color:#fff; border:1px solid #468; cursor:pointer;";
-  btnRandSeed.addEventListener('click', window.Nebula.randomize);
+  btnRandSeed.addEventListener('click', guiState.randomize);
   
   rowSeed.appendChild(inpSeed);
   rowSeed.appendChild(btnRandSeed);
@@ -105,6 +116,7 @@ function createGUI() {
     range.addEventListener('input', e => { window.Nebula[key] = Number(e.target.value); val.textContent = window.Nebula[key]; });
     range.addEventListener('change', () => window.Nebula.redraw());
     
+    guiState['_el_' + key] = { range, val };
     row.appendChild(txt); row.appendChild(range); row.appendChild(val);
     root.appendChild(row);
   };
@@ -114,6 +126,26 @@ function createGUI() {
   addSlider("Density", "density", 0.1, 2.0, 0.1);
   addSlider("Light", "lightFalloff", 50, 1000, 10);
   addSlider("Layers", "layers", 10, 2000, 10);
+
+  // --- Resolution ---
+  const rowRes = document.createElement('div');
+  rowRes.style.cssText = "margin-top:8px; display:flex; align-items:center; justify-content:space-between;";
+  const lblRes = document.createElement('span'); lblRes.textContent = "Rozdzielczość:";
+  const selRes = document.createElement('select');
+  selRes.style.cssText = "background:#000; color:#fff; border:1px solid #468;";
+  [1024, 2048, 4096].forEach(r => {
+    const opt = document.createElement('option');
+    opt.value = r; opt.textContent = r + "px";
+    if(r === guiState.resolution) opt.selected = true;
+    selRes.appendChild(opt);
+  });
+  selRes.addEventListener('change', e => {
+    guiState.resolution = Number(e.target.value);
+    guiState.redraw();
+  });
+  rowRes.appendChild(lblRes);
+  rowRes.appendChild(selRes);
+  root.appendChild(rowRes);
 
   document.body.appendChild(root);
 
@@ -125,29 +157,38 @@ function createGUI() {
   });
 }
 
+function updateGUI() {
+  for (const key in guiState) {
+    if (key.startsWith('_')) continue;
+    const el = guiState['_el_' + key];
+    if (el) {
+      el.range.value = guiState[key];
+      el.val.textContent = typeof guiState[key] === 'number' ? guiState[key] : guiState[key];
+    }
+  }
+}
+
 // --- GENERATOR KAFELKA ---
 function generateChunk(cx, cy) {
     if (!newBg) newBg = new Space2D();
     
-    // Obliczamy offset świata dla tego konkretnego kafelka
     const worldX = cx * CHUNK_SIZE;
     const worldY = cy * CHUNK_SIZE;
     
     const prng = Alea(window.Nebula.seed);
+    // Seed zależny od pozycji chunka - zapewnia unikalność
     const chunkPrng = Alea(window.Nebula.seed + "_" + cx + "_" + cy);
 
-    // --- GEN GWIAZD DLA TEGO KAFELKA ---
+    // --- GEN GWIAZD ---
     const stars = [];
     const nStars = Math.min(64, 1 + Math.round(chunkPrng() * (CHUNK_SIZE * CHUNK_SIZE) * window.Nebula.scale * window.Nebula.scale * 0.000001)); 
-    // Uwaga: Skalujemy ilość gwiazd, bo CHUNK_SIZE jest duży
 
-    for (let i = 0; i < 40; i++) { // Stała liczba gwiazd na chunk dla pewności
+    for (let i = 0; i < 40; i++) { 
         const color = blackBodyColors[Math.floor(chunkPrng() * blackBodyColors.length)].slice();
         const intensity = 0.5 + chunkPrng() * 0.5; 
         color[0] *= intensity; color[1] *= intensity; color[2] *= intensity;
 
         stars.push({
-            // Gwiazdy pozycjonujemy wewnątrz kafelka (0..CHUNK_SIZE)
             position: [
                 chunkPrng() * CHUNK_SIZE, 
                 chunkPrng() * CHUNK_SIZE, 
@@ -164,10 +205,9 @@ function generateChunk(cx, cy) {
     const bgInt = 0.5 * prng();
     backgroundColor[0] *= bgInt; backgroundColor[1] *= bgInt; backgroundColor[2] *= bgInt;
 
-    // Renderujemy kafelek
-    return newBg.render(CHUNK_SIZE, CHUNK_SIZE, {
+    // Renderujemy do WebGL
+    const webglCanvas = newBg.render(CHUNK_SIZE, CHUNK_SIZE, {
       stars,
-      // KLUCZOWE: Offset przesuwa szum proceduralny w odpowiednie miejsce we wszechświecie
       offset: [worldX, worldY],
       backgroundColor,
       
@@ -188,6 +228,17 @@ function generateChunk(cx, cy) {
       nebulaEmissiveLow: [0, 0, 0],
       nebulaEmissiveHigh: [0, 0, 0],
     });
+
+    // --- KLUCZOWA POPRAWKA: SNAPSHOT ---
+    // Kopiujemy wynik WebGL do statycznego Canvasa 2D.
+    // Dzięki temu każdy chunk jest osobnym obrazkiem i nie nadpisuje się w pamięci!
+    const snapshot = document.createElement('canvas');
+    snapshot.width = CHUNK_SIZE;
+    snapshot.height = CHUNK_SIZE;
+    const ctx = snapshot.getContext('2d');
+    ctx.drawImage(webglCanvas, 0, 0);
+    
+    return snapshot;
 }
 
 // --- INITIALIZACJA ---
@@ -196,9 +247,11 @@ export function initSpaceBg(seedStr = null){
   if (seedStr) window.Nebula.seed = String(seedStr);
   
   chunks.clear();
+  CHUNK_SIZE = guiState.resolution || 2048;
+  
   console.log(`[Tyro] Generowanie startowych kafelków (3x3) wokół (0,0)...`);
   
-  // Generujemy statycznie 9 kafelków wokół punktu (0,0)
+  // Generujemy statycznie 9 kafelków
   for (let x = -RENDER_RADIUS; x <= RENDER_RADIUS; x++) {
       for (let y = -RENDER_RADIUS; y <= RENDER_RADIUS; y++) {
           const key = `${x}_${y}`;
@@ -210,9 +263,7 @@ export function initSpaceBg(seedStr = null){
   return true;
 }
 
-export function resizeSpaceBg(w, h){
-  // Brak akcji przy resize w systemie kafelkowym
-}
+export function resizeSpaceBg(w, h){ }
 
 // --- RYSOWANIE ---
 export function drawSpaceBg(mainCtx, camera){
@@ -221,49 +272,51 @@ export function drawSpaceBg(mainCtx, camera){
   const screenW = mainCtx.canvas.width; 
   const screenH = mainCtx.canvas.height;
   
-  // Pobieramy dane kamery (domyślnie 0,0,1 jeśli brak)
   const camX = camera ? (camera.x || 0) : 0;
   const camY = camera ? (camera.y || 0) : 0;
   const zoom = camera ? (camera.zoom || 1.0) : 1.0;
 
-  // Środek ekranu
   const halfW = screenW / 2;
   const halfH = screenH / 2;
 
-  // Rysujemy wszystkie wygenerowane kafelki
-  // (W przyszłości tu będzie logika sprawdzająca czy kafel jest na ekranie)
+  // Zoom paralaksy
+  const drawScale = Math.max(0.001, Math.pow(zoom, 0.6)); 
+  const tileDrawSize = CHUNK_SIZE * drawScale;
+
   for (const [key, canvas] of chunks) {
       const [cx, cy] = key.split('_').map(Number);
       
-      // Pozycja kafelka w świecie gry (lewy górny róg)
       const worldX = cx * CHUNK_SIZE;
       const worldY = cy * CHUNK_SIZE;
       
-      // Projekcja na ekran (World -> Screen)
-      // (WorldPos - CameraPos) * Zoom + ScreenCenter
-      const screenX = (worldX - camX) * zoom + halfW;
-      const screenY = (worldY - camY) * zoom + halfH;
+      // Projekcja na ekran z uwzględnieniem "wolniejszego" zoomu tła
+      const screenX = (worldX - camX * drawScale) * zoom / drawScale + halfW; // Korekta dla paralaksy zoomu
+      // Uproszczona (jeśli powyższa skacze): const screenX = (worldX - camX) * drawScale + halfW;
       
-      // Rozmiar na ekranie
-      const drawSize = CHUNK_SIZE * zoom;
+      // Ale my chcemy żeby tło było "daleko", więc po prostu:
+      const dx = (worldX - camX) * drawScale;
+      const dy = (worldY - camY) * drawScale;
       
-      // Optymalizacja: Rysuj tylko jeśli widoczne (Frustum Culling)
-      if (screenX + drawSize > 0 && screenX < screenW && 
-          screenY + drawSize > 0 && screenY < screenH) {
+      const renderX = halfW + dx;
+      const renderY = halfH + dy;
+      
+      // Frustum culling
+      if (renderX + tileDrawSize > 0 && renderX < screenW && 
+          renderY + tileDrawSize > 0 && renderY < screenH) {
           
-          // Rysujemy bez szpar (+1 px na łączeniach)
-          // Math.floor na pozycję zapobiega drżeniu
           mainCtx.drawImage(canvas, 
-              Math.floor(screenX), 
-              Math.floor(screenY), 
-              Math.ceil(drawSize) + 1, 
-              Math.ceil(drawSize) + 1
+              Math.floor(renderX), 
+              Math.floor(renderY), 
+              Math.ceil(tileDrawSize) + 1, 
+              Math.ceil(tileDrawSize) + 1
           );
       }
   }
 }
 
-// Experty API
+// Globalne API
+window.Nebula = guiState;
+
 let opts = { newSystemEnabled: true };
 export function setBgOptions(partial){ Object.assign(opts, partial || {}); }
 export function setBgSeed(seed){ window.Nebula.seed = String(seed); initSpaceBg(); }
