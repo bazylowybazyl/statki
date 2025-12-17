@@ -13257,6 +13257,58 @@ function render(alpha, frameDt){
     }
   }
 
+  // --- 5. VFX SILNIKÓW (Przeniesione na górę) ---
+  // A. Boczne silniki (Strafe/Torque)
+  if (activeThrusters.length) {
+      for (const { thruster, intensity } of activeThrusters) {
+        const tuneW = window.VFX_TUNE?.sideW ?? 1.0;
+        const tuneL = window.VFX_TUNE?.sideL ?? 1.0;
+
+        const widthPxMin = thruster.vfxWidthMin != null ? thruster.vfxWidthMin : spriteScale * 128 * 1.0;
+        const widthPxMax = thruster.vfxWidthMax != null ? thruster.vfxWidthMax : spriteScale * 128 * 1.10;
+        const lengthPxMin = thruster.vfxLengthMin != null ? thruster.vfxLengthMin : spriteScale * 256 * 0.2;
+        const lengthPxMax = thruster.vfxLengthMax != null ? thruster.vfxLengthMax : spriteScale * 256 * 0.4;
+
+        const widthPx = lerp(widthPxMin, widthPxMax, intensity);
+        const lengthPx = lerp(lengthPxMin, lengthPxMax, intensity);
+
+        const widthScale = Math.max(0.0001, (widthPx / 128) * tuneW);
+        const lengthScale = Math.max(0.0001, (lengthPx / 256) * tuneL);
+        const alpha = 0.55 + intensity * 0.35;
+
+        drawNeedleEngineVfxLocal(thruster.offset, thruster.forward, {
+          widthScale,
+          lengthScale,
+          yNudge: thruster.yNudge,
+          alpha,
+          overrides
+        });
+      }
+  }
+
+  // B. Główny silnik
+  {
+    const e = ship.engines.main;
+    const visualOffset = e.visualOffset || e.offset;
+    const forward = { x: 0, y: -1 };
+    const spd = Math.hypot(ship.vel.x, ship.vel.y);
+    const moveGlow = Math.min(spd / 900, 0.6) * 0.8;
+    const throttle = Math.max(input.main || 0, moveGlow);
+
+    const mainW = window.VFX_TUNE?.mainW ?? 1.0;
+    const mainL = window.VFX_TUNE?.mainL ?? 1.0;
+
+    const widen = (2.4 + 0.6 * throttle) * mainW;
+    const lenBase = 1.0 * mainL;
+
+    drawNeedleEngineVfxLocal(visualOffset, forward, {
+      widthScale: widen,
+      lengthScale: lenBase,
+      yNudge: -68 * spriteScale,
+      alpha: 1
+    });
+  }
+
   // --- 2. Rysowanie Warp Glow (ładowanie) ---
   let warpGlowProgress = 0;
   if(warp.state === 'charging'){
@@ -13379,58 +13431,6 @@ function render(alpha, frameDt){
       ctx.fill();
       ctx.restore();
     }
-  }
-
-  // --- 5. VFX SILNIKÓW (Draw phase - igły ognia) ---
-  // A. Boczne silniki (Strafe/Torque)
-  if (activeThrusters.length) {
-      for (const { thruster, intensity } of activeThrusters) {
-        const tuneW = window.VFX_TUNE?.sideW ?? 1.0;
-        const tuneL = window.VFX_TUNE?.sideL ?? 1.0;
-
-        const widthPxMin = thruster.vfxWidthMin != null ? thruster.vfxWidthMin : spriteScale * 128 * 1.0;
-        const widthPxMax = thruster.vfxWidthMax != null ? thruster.vfxWidthMax : spriteScale * 128 * 1.10;
-        const lengthPxMin = thruster.vfxLengthMin != null ? thruster.vfxLengthMin : spriteScale * 256 * 0.2;
-        const lengthPxMax = thruster.vfxLengthMax != null ? thruster.vfxLengthMax : spriteScale * 256 * 0.4;
-
-        const widthPx = lerp(widthPxMin, widthPxMax, intensity);
-        const lengthPx = lerp(lengthPxMin, lengthPxMax, intensity);
-
-        const widthScale = Math.max(0.0001, (widthPx / 128) * tuneW);
-        const lengthScale = Math.max(0.0001, (lengthPx / 256) * tuneL);
-        const alpha = 0.55 + intensity * 0.35;
-
-        drawNeedleEngineVfxLocal(thruster.offset, thruster.forward, {
-          widthScale,
-          lengthScale,
-          yNudge: thruster.yNudge,
-          alpha,
-          overrides
-        });
-      }
-  }
-
-  // B. Główny silnik
-  {
-    const e = ship.engines.main;
-    const visualOffset = e.visualOffset || e.offset;
-    const forward = { x: 0, y: -1 }; 
-    const spd = Math.hypot(ship.vel.x, ship.vel.y);
-    const moveGlow = Math.min(spd / 900, 0.6) * 0.8;
-    const throttle = Math.max(input.main || 0, moveGlow);
-    
-    const mainW = window.VFX_TUNE?.mainW ?? 1.0; 
-    const mainL = window.VFX_TUNE?.mainL ?? 1.0; 
-
-    const widen = (2.4 + 0.6 * throttle) * mainW;
-    const lenBase = 1.0 * mainL;
-
-    drawNeedleEngineVfxLocal(visualOffset, forward, {
-      widthScale: widen,
-      lengthScale: lenBase,
-      yNudge: -68 * spriteScale, 
-      alpha: 1
-    });
   }
 
   // --- 6. WIEŻYCZKI I CIWS ---
