@@ -297,7 +297,7 @@ export function createShortNeedleExhaust(opts = {}) {
         const pulse = 1.0 + 0.05 * Math.sin(uniforms.uTime.value * 20.0);
         
         // MESH: Szerokość rośnie z Warpem
-        const totalWidth = 48 * (1.0 + currentWarpBoost * 0.3) * pulse;
+        const totalWidth = 96 * (1.0 + currentWarpBoost * 0.3) * pulse;
         mesh.scale.set(totalWidth, totalLen, 1);
         mesh.position.y = -totalLen / 2; 
 
