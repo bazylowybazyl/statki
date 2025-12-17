@@ -193,11 +193,11 @@ const botX = 134.5 * ship.visual.spriteScale;
 const botY = 83.0 * ship.visual.spriteScale; // Dodatnie w konfiguracji
 
   // Parametry wyglądu (zachowane z oryginału)
-  const torqueThrusterVfxWidthMin = Math.round(14 * ship.visual.spriteScale * 0.75);
-  const torqueThrusterVfxWidthMax = Math.round(14 * ship.visual.spriteScale * 1.25);
-  const torqueThrusterVfxLengthMin = Math.round(10 * ship.visual.spriteScale * 1.4);
-  const torqueThrusterVfxLengthMax = Math.round(10 * ship.visual.spriteScale * 2.6);
-  const nudge = -Math.round(10 * ship.visual.spriteScale * 0.85);
+ const torqueThrusterVfxWidthMin = Math.round(25.9 * ship.visual.spriteScale * 0.75);
+const torqueThrusterVfxWidthMax = Math.round(25.9 * ship.visual.spriteScale * 1.25);
+const torqueThrusterVfxLengthMin = Math.round(41.0 * ship.visual.spriteScale * 1.4);
+const torqueThrusterVfxLengthMax = Math.round(41.0 * ship.visual.spriteScale * 2.6);
+const nudge = -72.0; // Nadpisana wartość stała
 
   ship.visual.torqueThrusters = [
     // 1. Left Top
