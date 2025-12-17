@@ -533,6 +533,20 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       // Reset trybu mieszania
       ctx2d.globalCompositeOperation = 'source-over';
     }
+    draw(ctx, cam) {
+      const ref = this.ref || {};
+      const cx = Number.isFinite(ref.x) ? ref.x : this.x;
+      const cy = Number.isFinite(ref.y) ? ref.y : this.y;
+      const s = worldToScreen(cx, cy, cam);
+      const size = this.size * cam.zoom;
+
+      // Skalowanie orbitalne (interplanetary orbit)
+      const baseRadius = ref.baseR ?? ref.r ?? (this.size ? this.size/2 : 128);
+      const zoneScale = computeZoneScale(ref.baseR || ref.r ? ref : { x: cx, y: cy, r: baseRadius });
+
+      ctx.drawImage(this.canvas, s.x - size * zoneScale/2, s.y - size * zoneScale/2, size * zoneScale, size * zoneScale);
+    }
+  } 
   class Sun3D {
     constructor(pixelSize) {
       this.x = 0; this.y = 0; this.size = pixelSize || 512;
