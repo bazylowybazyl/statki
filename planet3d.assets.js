@@ -395,6 +395,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     }
 
     render(dt) {
+      // Inicjalizacja Three.js, jeśli jeszcze nie nastąpiła
       if (this._needsInit && typeof THREE !== "undefined") {
         this._needsInit = false;
         this._initPromise = this._initThree();
@@ -402,16 +403,19 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
           this._initPromise.catch((err) => console.error('AssetPlanet3D init failed', err));
         }
       }
+      
+      // Jeśli scena nie jest gotowa, przerywamy
       if (!this.scene || !this.camera || !this.mesh) return;
 
+      // Obrót planety i chmur
       this.mesh.rotation.y += this.spin * dt;
       if (this.clouds) this.clouds.rotation.y += this.spin * dt * 1.3;
 
+      // Logika LOD (Level of Detail) - zmiana rozdzielczości w zależności od odległości
       const ship = (typeof window !== 'undefined') ? window.ship : null;
-      const camZoom = (typeof window !== 'undefined' && window.camera) ? window.camera.zoom : 1;
       const pos = ship?.pos;
       
-      const RES_LOW = 1536;
+      const RES_LOW = 1024; 
       const RES_HIGH = 2048; 
       
       if (typeof this.isHighRes === 'undefined') this.isHighRes = false;
@@ -437,7 +441,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
         this.frameTimer = 100; 
       }
 
-      const UPDATE_INTERVAL = this.isHighRes ? 0.04 : 0.0; 
+      const UPDATE_INTERVAL = this.isHighRes ? 0.03 : 0.06;
 
       this.frameTimer = (this.frameTimer || 0) + dt;
 
@@ -448,10 +452,12 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this.frameTimer %= UPDATE_INTERVAL;
       if (this.frameTimer > 0.1) this.frameTimer = 0; 
       
+      // Pobranie renderera
       const r = getSharedRenderer(this.canvas.width, this.canvas.height);
       if (!r) return;
       resetRendererState(r, this.canvas.width, this.canvas.height);
       
+      // Aktualizacja oświetlenia (kierunek słońca)
       if (this.material?.uniforms?.uLightDir && typeof THREE !== 'undefined') {
         if (!this._lightDirView) this._lightDirView = new THREE.Vector3();
         if (!this._viewMatrix3) this._viewMatrix3 = new THREE.Matrix3();
@@ -463,29 +469,70 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       }
       if (this.sunLight) updateSunLightForPlanet(this.sunLight, this.x, this.y);
       
+      // 1. RENDER 3D DO WEWNĘTRZNEGO BUFORA
       r.render(this.scene, this.camera);
 
+      // 2. PRZENIESIENIE NA CANVAS 2D + EFEKT HALO
       const ctx2d = this.ctx2d;
-      ctx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      const w = this.canvas.width;
+      const h = this.canvas.height;
+
+      // Czyścimy
+      ctx2d.clearRect(0, 0, w, h);
+
+      // Kopiujemy planetę (tryb copy jest szybki i zastępuje piksele)
       ctx2d.globalCompositeOperation = 'copy';
-      ctx2d.drawImage(r.domElement, 0, 0, this.canvas.width, this.canvas.height);
+      ctx2d.drawImage(r.domElement, 0, 0, w, h);
+
+      // --- EFEKT HALO (ATMOSFERA) ---
+      // Konfiguracja kolorów dla różnych typów planet
+      const haloColors = {
+        earth:   '#4ca1ff', // Błękitna
+        mars:    '#ff6a4d', // Czerwona
+        venus:   '#ffcc33', // Żółta/Pomarańczowa
+        jupiter: '#e3dccb', // Beżowa
+        neptune: '#5b8aff', // Głęboki błękit
+        uranus:  '#8bf0ff', // Jasny cyjan
+        mercury: '#a8a8a8', // Szara
+        saturn:  '#e8dcb5', // Żółtawa
+        default: '#88aaff'
+      };
+
+      // Wybór koloru na podstawie nazwy planety
+      const planetKey = (this._name || '').toLowerCase();
+      let colorHex = haloColors.default;
+      for (const key in haloColors) {
+        if (planetKey.includes(key)) {
+          colorHex = haloColors[key];
+          break;
+        }
+      }
+
+      // Ustawienia geometrii
+      const cx = w * 0.5;
+      const cy = h * 0.5;
+      
+      const rInner = w * 0.36; // Start na krawędzi
+      const rOuter = w * 0.52; // Koniec
+
+      // Tryb 'screen' sprawia, że poświata "świeci" i nie zasłania planety
+      ctx2d.globalCompositeOperation = 'screen'; 
+
+      const grad = ctx2d.createRadialGradient(cx, cy, rInner, cx, cy, rOuter);
+      
+      // Tworzenie gradientu
+      grad.addColorStop(0.0, colorHex);       
+      grad.addColorStop(0.3, colorHex + '55'); 
+      grad.addColorStop(1.0, '#00000000');    
+
+      ctx2d.fillStyle = grad;
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, rOuter, 0, Math.PI * 2);
+      ctx2d.fill();
+
+      // Reset trybu mieszania
       ctx2d.globalCompositeOperation = 'source-over';
     }
-
-    draw(ctx, cam) {
-      const ref = this.ref || {};
-      const cx = Number.isFinite(ref.x) ? ref.x : this.x;
-      const cy = Number.isFinite(ref.y) ? ref.y : this.y;
-      const s = worldToScreen(cx, cy, cam);
-      const size = this.size * cam.zoom;
-
-      const baseRadius = ref.baseR ?? ref.r ?? (this.size ? this.size/2 : 128);
-      const zoneScale = computeZoneScale(ref.baseR || ref.r ? ref : { x: cx, y: cy, r: baseRadius });
-
-      ctx.drawImage(this.canvas, s.x - size * zoneScale/2, s.y - size * zoneScale/2, size * zoneScale, size * zoneScale);
-    }
-  }
-
   class Sun3D {
     constructor(pixelSize) {
       this.x = 0; this.y = 0; this.size = pixelSize || 512;
