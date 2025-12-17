@@ -98,7 +98,10 @@ function shouldRenderShield(entity){
     if (entity.isCapitalShip || entity.capitalProfile) return true;
     if (type.includes('capital') || type.includes('battleship') || type.includes('destroyer') || type.includes('frigate') || type.includes('carrier')) return true;
 
-    const r = Number.isFinite(entity.radius) ? entity.radius : 0;
+    const w = Number.isFinite(entity.w) ? entity.w : 0;
+    const h = Number.isFinite(entity.h) ? entity.h : 0;
+    const fallbackRadius = Math.max(w, h) / 2;
+    const r = Number.isFinite(entity.radius) ? entity.radius : fallbackRadius;
     return r >= 26; // Przybliżony próg od fregaty w górę
 }
 
