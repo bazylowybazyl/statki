@@ -575,6 +575,7 @@
   import { createAutocannonImpactFactory } from "./src/effects3d/autocannonImpact.js";
   import * as Space2DBackground from "./src/lib/space2d/tyroBackground.js";
   import { WarpBlackHole } from "./src/vfx/warpBlackHole.js";
+  import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
   import { createShipEntity, applyPlayerInput, runShipAI } from "./src/game/shipEntity.js";
   window.THREE = THREE;
   window.EffectComposer  = EffectComposer;
@@ -601,6 +602,8 @@
   window.createShipEntity = createShipEntity;
   window.applyPlayerInput = applyPlayerInput;
   window.runShipAI = runShipAI;
+  window.drawInfrastructureIcon = drawInfrastructureIcon;
+  window.updateInfrastructureAnimations = updateInfrastructureAnimations;
   // Nie modyfikujemy namespace'u modułu THREE (jest niemodyfikowalny).
   // Jeśli coś potrzebuje CopyShader globalnie, wystawiamy go przez window:
   window.CopyShader = CopyShader;
@@ -6988,215 +6991,6 @@ function autoplaceBuildingByOffset(state, buildingId, offsetCol, offsetRow, rota
   return autoplaceInfrastructureBuilding(state, buildingId, anchorCol, anchorRow, rotation);
 }
 
-function drawSolarIcon(ctx){
-  const size = 48; // Baza skalowania dla ikony (dopasowana do siatki)
-  
-  ctx.save();
-  
-  // Wymiary głównego kwadratu
-  const w = size * 1.8; 
-  const h = size * 1.8;
-  const halfW = w / 2;
-  const halfH = h / 2;
-
-  // 1. GŁÓWNA PŁYTA (Podstawa)
-  ctx.fillStyle = '#0f172a';
-  ctx.fillRect(-halfW, -halfH, w, h);
-  
-  // Obramowanie techniczne
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = '#334155';
-  ctx.strokeRect(-halfW, -halfH, w, h);
-
-  // Narożniki (wzmocnienia)
-  const cornerSize = size * 0.3;
-  ctx.fillStyle = '#334155';
-  ctx.beginPath();
-  ctx.moveTo(-halfW, -halfH + cornerSize); ctx.lineTo(-halfW, -halfH); ctx.lineTo(-halfW + cornerSize, -halfH);
-  ctx.moveTo(halfW, -halfH + cornerSize); ctx.lineTo(halfW, -halfH); ctx.lineTo(halfW - cornerSize, -halfH);
-  ctx.moveTo(halfW, halfH - cornerSize); ctx.lineTo(halfW, halfH); ctx.lineTo(halfW - cornerSize, halfH);
-  ctx.moveTo(-halfW, halfH - cornerSize); ctx.lineTo(-halfW, halfH); ctx.lineTo(-halfW + cornerSize, halfH);
-  ctx.fill();
-
-  // 2. POWIERZCHNIA PANELI (Tafla)
-  const panelMargin = 4;
-  const pw = w - panelMargin * 2;
-  const ph = h - panelMargin * 2;
-  
-  ctx.save();
-  // Gradient skośny dla efektu odbicia
-  const grad = ctx.createLinearGradient(-pw/2, -ph/2, pw/2, ph/2);
-  grad.addColorStop(0, '#111827');
-  grad.addColorStop(0.2, '#1e3a8a');
-  grad.addColorStop(0.5, '#3b82f6'); // Highlight
-  grad.addColorStop(0.8, '#1e3a8a');
-  grad.addColorStop(1, '#111827');
-  
-  ctx.fillStyle = grad;
-  ctx.fillRect(-pw/2, -ph/2, pw, ph);
-
-  // Siatka ogniw (Grid)
-  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  
-  const cells = 8; 
-  const cellW = pw / cells;
-  const cellH = ph / cells;
-  
-  for(let i=1; i<cells; i++) {
-      ctx.moveTo(-pw/2 + i*cellW, -ph/2); ctx.lineTo(-pw/2 + i*cellW, ph/2);
-      ctx.moveTo(-pw/2, -ph/2 + i*cellH); ctx.lineTo(pw/2, -ph/2 + i*cellH);
-  }
-  ctx.stroke();
-  ctx.restore();
-
-  // 3. TRANSFORMATORY MOCY (Na bokach)
-  const trW = size * 0.6;
-  const trH = size * 0.15;
-  
-  for(let i=0; i<4; i++) {
-    ctx.save();
-    ctx.rotate((Math.PI/2) * i);
-    ctx.translate(0, -halfH);
-    
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(-trW/2, -trH/2, trW, trH);
-    ctx.strokeStyle = '#475569';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(-trW/2, -trH/2, trW, trH);
-    
-    // Cewki
-    const coilCount = 4;
-    const coilW = (trW * 0.8) / coilCount;
-    const coilGap = coilW * 0.2;
-    const startX = -trW * 0.4;
-    
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(startX, -trH*0.3, trW*0.8, trH*0.6);
-    
-    ctx.fillStyle = '#38bdf8';
-    for(let k=0; k<coilCount; k++) {
-        ctx.fillRect(startX + k*coilW + coilGap, -trH*0.2, coilW - coilGap*2, trH*0.4);
-    }
-    
-    // Światła statusu (migające)
-    ctx.fillStyle = (Date.now() % 1000 < 500) ? '#ef4444' : '#7f1d1d';
-    ctx.beginPath();
-    ctx.arc(-trW/2 + 3, 0, 1.5, 0, Math.PI*2);
-    ctx.arc(trW/2 - 3, 0, 1.5, 0, Math.PI*2);
-    ctx.fill();
-
-    ctx.restore();
-  }
-
-  // 4. KONCENTRATOR (Środek)
-  const coreR = size * 0.35; 
-  
-  ctx.fillStyle = '#1e293b';
-  ctx.beginPath(); ctx.arc(0, 0, coreR, 0, Math.PI*2); ctx.fill();
-
-  ctx.strokeStyle = '#475569';
-  ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.arc(0, 0, coreR * 0.9, 0, Math.PI*2); ctx.stroke();
-
-  // Rdzeń (Glow)
-  const glowR = coreR * 0.7;
-  const coreGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, glowR);
-  coreGrad.addColorStop(0, '#ffffff');
-  coreGrad.addColorStop(0.3, '#f59e0b');
-  coreGrad.addColorStop(0.7, '#ea580c');
-  coreGrad.addColorStop(1, '#7f1d1d');
-  
-  ctx.fillStyle = coreGrad;
-  ctx.beginPath(); ctx.arc(0, 0, glowR, 0, Math.PI*2); ctx.fill();
-
-  // Refleks
-  ctx.fillStyle = 'rgba(255,255,255,0.25)';
-  ctx.beginPath(); ctx.arc(0, 0, glowR, 0, Math.PI*2); ctx.fill(); 
-
-  // Iglice
-  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  for(let i=0; i<4; i++) {
-      ctx.save();
-      ctx.rotate((Math.PI/2) * i + Math.PI/4); 
-      ctx.moveTo(glowR * 0.4, 0); ctx.lineTo(glowR * 0.9, 0);
-      ctx.restore();
-  }
-  ctx.stroke();
-
-  ctx.restore();
-}
-
-function drawShipyardIcon(ctx, tier){
-  ctx.save();
-  const accent = ({
-    S:'#38bdf8',
-    M:'#34d399',
-    L:'#818cf8',
-    C:'#f97316',
-    SC:'#f472b6'
-  })[tier] || '#38bdf8';
-
-  ctx.fillStyle = 'rgba(20,28,52,0.95)';
-  ctx.strokeStyle = accent;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.rect(-32, -20, 64, 40);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo(-32, -12); ctx.lineTo(-48, -20);
-  ctx.moveTo(-32, 12);  ctx.lineTo(-48, 20);
-  ctx.moveTo(32, -12);  ctx.lineTo(48, -20);
-  ctx.moveTo(32, 12);   ctx.lineTo(48, 20);
-  ctx.stroke();
-
-  ctx.fillStyle = 'rgba(56,91,189,0.35)';
-  ctx.beginPath();
-  ctx.arc(0, 0, 16, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = accent;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(0, 0, 16, 0, Math.PI * 2);
-  ctx.stroke();
-
-  ctx.fillStyle = '#e2e8f0';
-  ctx.font = tier === 'SC' ? 'bold 14px Inter, system-ui' : 'bold 16px Inter, system-ui';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(tier || 'S', 0, 0);
-  ctx.restore();
-}
-
-function drawStorageIcon(ctx, color, label){
-  ctx.save();
-  ctx.fillStyle = 'rgba(10,16,34,0.95)';
-  ctx.strokeStyle = color || '#60a5fa';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.rect(-30, -24, 60, 48);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = (color || '#60a5fa') + '33';
-  ctx.fillRect(-24, -6, 48, 12);
-
-  ctx.fillStyle = color || '#60a5fa';
-  ctx.fillRect(-28, 18, 56, 6);
-
-  ctx.fillStyle = '#dbeafe';
-  ctx.font = 'bold 18px Inter, system-ui';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(label || 'S', 0, -4);
-  ctx.restore();
-}
-
 function drawMetalHarvesterIcon(ctx){
   ctx.save();
   ctx.fillStyle = 'rgba(59,130,246,0.10)';
@@ -7362,22 +7156,6 @@ function drawDockIcon(ctx, size = 72){
   ctx.restore();
 }
 
-function drawGenericIcon(ctx){
-  ctx.save();
-  ctx.fillStyle = 'rgba(56,80,160,0.9)';
-  ctx.beginPath();
-  ctx.moveTo(0, -24);
-  ctx.lineTo(20, 0);
-  ctx.lineTo(0, 24);
-  ctx.lineTo(-20, 0);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(160,200,255,0.8)';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  ctx.restore();
-}
-
 function drawBuildingPreview(canvas, building){
   if(!canvas || !building) return;
   const ctx = canvas.getContext('2d');
@@ -7392,33 +7170,9 @@ function drawBuildingPreview(canvas, building){
   ctx.translate(w / 2, h / 2);
   ctx.shadowColor = 'rgba(32,64,128,0.45)';
   ctx.shadowBlur = 12;
-  switch(building.icon){
-    case 'solar':
-      drawSolarIcon(ctx);
-      break;
-    case 'dock':
-      drawDockIcon(ctx, 64);
-      break;
-    case 'shipyard':
-      drawShipyardIcon(ctx, building.tier);
-      break;
-    case 'storage':
-      drawStorageIcon(ctx, building.color, building.label);
-      break;
-    case 'metal_harvester':
-      drawMetalHarvesterIcon(ctx);
-      break;
-    case 'metal_refinery':
-      drawMetalRefineryIcon(ctx);
-      break;
-    case 'gas_harvester':
-      drawGasHarvesterIcon(ctx);
-      break;
-    case 'gas_refinery':
-      drawGasRefineryIcon(ctx);
-      break;
-    default:
-      drawGenericIcon(ctx);
+  if (window.drawInfrastructureIcon) {
+    const size = Math.min(w, h) * 0.6;
+    window.drawInfrastructureIcon(ctx, building, { x: 0, y: 0 }, size, 1, null);
   }
   ctx.restore();
 }
@@ -7630,45 +7384,6 @@ function emitInfrastructureCompletion(state, idx, cell){
   cell.emitted = true;
 }
 
-function drawInfrastructureIcon(ctx, building, center, size, alpha = 1){
-  if(!ctx || !building || !center) return;
-  ctx.save();
-  ctx.translate(center.x, center.y);
-  const scale = size > 0 ? (size / 96) : 1;
-  ctx.scale(scale, scale);
-  ctx.globalAlpha *= alpha;
-  switch(building.icon){
-    case 'solar':
-      drawSolarIcon(ctx);
-      break;
-    case 'dock':
-      drawDockIcon(ctx, size * 0.9);
-      break;
-    case 'shipyard':
-      drawShipyardIcon(ctx, building.tier);
-      break;
-    case 'storage':
-      drawStorageIcon(ctx, building.color, building.label);
-      break;
-    case 'metal_harvester':
-      drawMetalHarvesterIcon(ctx);
-      break;
-    case 'metal_refinery':
-      drawMetalRefineryIcon(ctx);
-      break;
-    case 'gas_harvester':
-      drawGasHarvesterIcon(ctx);
-      break;
-    case 'gas_refinery':
-      drawGasRefineryIcon(ctx);
-      break;
-    default:
-      drawGenericIcon(ctx);
-      break;
-  }
-  ctx.restore();
-}
-
 function drawInfrastructureGrid(ctx, cam, station, state){
   if(!ctx || !cam || !station || !state) return;
   const alpha = infrastructureBuilder.editorAlpha;
@@ -7723,7 +7438,9 @@ function drawInfrastructureGrid(ctx, cam, station, state){
       const footprintScale = Math.max(rootCell.footprint?.w || 1, rootCell.footprint?.h || 1);
       const iconSize = cellSize * 0.72 * footprintScale;
       ctx.globalAlpha = done ? alpha * 0.92 : alpha * 0.85;
-      drawInfrastructureIcon(ctx, building, centerScreen, iconSize, alpha);
+      if (window.drawInfrastructureIcon) {
+        window.drawInfrastructureIcon(ctx, building, centerScreen, iconSize, alpha, null);
+      }
       if(!done){
         ctx.beginPath();
         ctx.strokeStyle = 'rgba(96,165,250,0.85)';
@@ -7754,7 +7471,9 @@ function drawInfrastructureGrid(ctx, cam, station, state){
           const centerWorld = infrastructureLocalToWorld(station, placement.footprint.center);
           const centerScreen = worldToScreen(centerWorld.x, centerWorld.y, cam);
           const footprintScale = Math.max(placement.footprint.width, placement.footprint.height);
-          drawInfrastructureIcon(ctx, building, centerScreen, cellSize * 0.72 * footprintScale, ghostAlpha);
+          if (window.drawInfrastructureIcon) {
+            window.drawInfrastructureIcon(ctx, building, centerScreen, cellSize * 0.72 * footprintScale, ghostAlpha, null);
+          }
         }
         ctx.globalAlpha = alpha * 0.85;
       }
@@ -7777,7 +7496,9 @@ function drawInfrastructureInstances(ctx, cam){
       const footprintScale = inst.footprint ? Math.max(inst.footprint.w || 1, inst.footprint.h || 1) : 1;
       const size = INFRA_CELL_WORLD_SIZE * cam.zoom * 0.6 * footprintScale;
       ctx.globalAlpha = 0.9;
-      drawInfrastructureIcon(ctx, building, screen, size, 0.95);
+      if (window.drawInfrastructureIcon) {
+        window.drawInfrastructureIcon(ctx, building, screen, size, 0.95, inst);
+      }
     }
   });
   ctx.restore();
@@ -11639,6 +11360,9 @@ function physicsStep(dt){
   updateStationUIState(dt);
   updateInfrastructureEditorState(dt);
   updateInfrastructureState(dt);
+  if(window.updateInfrastructureAnimations) {
+    window.updateInfrastructureAnimations(dt);
+  }
   // czas gry
   gameTime = (gameTime + dt * TIME_SCALE) % (24*3600);
   // aktualizacja orbit planet i stacji
