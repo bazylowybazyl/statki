@@ -1,10 +1,15 @@
 node_modules
 
-# do not commit binaries via PR
 assets/planety/**/*.psd
-planets/**
-*.glb
-*.jpg
-*.png
-*.exr
 
+
+# planets/**
+# *.glb
+# *.jpg
+# *.png
+# *.exr
+
+# Opcjonalnie: Ignoruj foldery budowania (standard dla Vite)
+dist/
+dist-ssr/
+*.local
