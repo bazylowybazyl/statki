@@ -394,7 +394,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       this._initPromise = null;
     }
 
-    render(dt) {
+   render(dt) {
       // Inicjalizacja Three.js, jeśli jeszcze nie nastąpiła
       if (this._needsInit && typeof THREE !== "undefined") {
         this._needsInit = false;
@@ -469,7 +469,7 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       }
       if (this.sunLight) updateSunLightForPlanet(this.sunLight, this.x, this.y);
       
-      // 1. RENDER 3D DO WEWNĘTRZNEGO BUFORA
+      // 1. RENDER 3D DO WEWNĘTRZNEGO BUFORA THREE.JS
       r.render(this.scene, this.camera);
 
       // 2. PRZENIESIENIE NA CANVAS 2D + EFEKT HALO
@@ -477,14 +477,14 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       const w = this.canvas.width;
       const h = this.canvas.height;
 
-      // Czyścimy
+      // Czyścimy canvas 2D
       ctx2d.clearRect(0, 0, w, h);
 
-      // Kopiujemy planetę (tryb copy jest szybki i zastępuje piksele)
-      ctx2d.globalCompositeOperation = 'copy';
-      ctx2d.drawImage(r.domElement, 0, 0, w, h);
+      // Ustawiamy standardowy tryb rysowania (jeden na drugim)
+      ctx2d.globalCompositeOperation = 'source-over';
 
-      // --- EFEKT HALO (ATMOSFERA) ---
+      // --- KROK A: RYSOWANIE EFEKTU HALO (Jako tło) ---
+      
       // Konfiguracja kolorów dla różnych typów planet
       const haloColors = {
         earth:   '#4ca1ff', // Błękitna
@@ -512,17 +512,16 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       const cx = w * 0.5;
       const cy = h * 0.5;
       
-      const rInner = w * 0.36; // Start na krawędzi
-      const rOuter = w * 0.52; // Koniec
-
-      // Tryb 'screen' sprawia, że poświata "świeci" i nie zasłania planety
-      ctx2d.globalCompositeOperation = 'screen'; 
+      // Promienie: Inner trochę mniejszy, żeby halo ładnie wchodziło pod planetę
+      const rInner = w * 0.35; 
+      const rOuter = w * 0.53; 
 
       const grad = ctx2d.createRadialGradient(cx, cy, rInner, cx, cy, rOuter);
       
-      // Tworzenie gradientu
+      // Tworzenie gradientu (od pełnego koloru do przezroczystości)
+      // Zwiększyłem lekko opacity na starcie (z 55 na 66) dla wyraźniejszego efektu
       grad.addColorStop(0.0, colorHex);       
-      grad.addColorStop(0.3, colorHex + '55'); 
+      grad.addColorStop(0.2, colorHex + '66'); 
       grad.addColorStop(1.0, '#00000000');    
 
       ctx2d.fillStyle = grad;
@@ -530,8 +529,12 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       ctx2d.arc(cx, cy, rOuter, 0, Math.PI * 2);
       ctx2d.fill();
 
-      // Reset trybu mieszania
+      // --- KROK B: RYSOWANIE PLANETY 3D (Na wierzchu) ---
+      
+      // Rysujemy wyrenderowaną planetę na wierzchu halo.
+      // Używamy 'source-over', aby przezroczyste tło z Three.js nie wymazało halo.
       ctx2d.globalCompositeOperation = 'source-over';
+      ctx2d.drawImage(r.domElement, 0, 0, w, h);
     }
     draw(ctx, cam) {
       const ref = this.ref || {};
