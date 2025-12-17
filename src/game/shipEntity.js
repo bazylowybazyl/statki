@@ -187,10 +187,10 @@ function configureShipGeometry(ship) {
   };
 
   // --- ZDEFINIOWANE POZYCJE DYSZ (GÓRA / DÓŁ) ---
-  const topX = 90.0 * ship.visual.spriteScale;
-  const topY = 78.5 * ship.visual.spriteScale; // Ujemne w konfiguracji
-  const botX = 106.5 * ship.visual.spriteScale;
-  const botY = 58.0 * ship.visual.spriteScale; // Dodatnie w konfiguracji
+  const topX = 109.0 * ship.visual.spriteScale;
+const topY = 108.5 * ship.visual.spriteScale;
+const botX = 134.5 * ship.visual.spriteScale;
+const botY = 83.0 * ship.visual.spriteScale; // Dodatnie w konfiguracji
 
   // Parametry wyglądu (zachowane z oryginału)
   const torqueThrusterVfxWidthMin = Math.round(14 * ship.visual.spriteScale * 0.75);
