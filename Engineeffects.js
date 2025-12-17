@@ -289,9 +289,9 @@ export function createShortNeedleExhaust(opts = {}) {
         uniforms.uThrottle.value = currentThrottle;
         uniforms.uBoost.value = currentWarpBoost;
 
-        const baseLen = 20; 
-        const extraLen = 50 * currentThrottle; 
-        const warpLen = 60 * currentWarpBoost; // Max długość przy warpie
+        const baseLen = 40; 
+        const extraLen = 100 * currentThrottle; 
+        const warpLen = 110 * currentWarpBoost; // Max długość przy warpie
         const totalLen = baseLen + extraLen + warpLen;
         
         const pulse = 1.0 + 0.05 * Math.sin(uniforms.uTime.value * 20.0);
