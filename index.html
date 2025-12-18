@@ -12110,87 +12110,6 @@ function glowCircle(ctx, x, y, r, color){
   ctx.restore();
 }
 
-function drawSunWithCorona(ctx, cam, t) {
-  const s = worldToScreen(SUN.x, SUN.y, cam);
-  const R = SUN.r * camera.zoom;
-
-  ctx.save();
-  ctx.translate(s.x, s.y);
-
-  // --- miękka poświata daleko w tle (nebula-like) ---
-  ctx.globalCompositeOperation = 'lighter';
-  const hazeR = R * SUN.corona.haze;
-  const gH = ctx.createRadialGradient(0,0, R*0.6, 0,0, hazeR);
-  gH.addColorStop(0, 'rgba(255,220,120,0.25)');
-  gH.addColorStop(1, 'rgba(50,80,140,0.00)');
-  ctx.fillStyle = gH;
-  ctx.beginPath(); ctx.arc(0,0,hazeR,0,Math.PI*2); ctx.fill();
-
-  // --- korona: promieniste igły z lekkim szumem i pulsem ---
-  const rays = SUN.corona.rays | 0;
-  const baseLen = R * (1.0 + SUN.corona.length);
-  const pulse = 1 + SUN.corona.pulse * Math.sin(t*1.6);
-  const jitterAmp = SUN.corona.jitter;
-
-  // deterministyczny „szum” bez biblioteki
-  function n1(i, k=1) {
-    const x = Math.sin((i*374761.0 + SUN.seed*1.123 + k)*0.0000131) * 43758.5453;
-    return x - Math.floor(x);
-  }
-
-  ctx.beginPath();
-  for (let i=0;i<rays;i++){
-    const a = (i / rays) * Math.PI*2;
-    const w = (Math.PI*2 / rays) * (0.6 + n1(i,2)*0.6);  // szerokość klina
-    const j = (n1(i) - 0.5) * 2 * jitterAmp;
-    const len = baseLen * (0.82 + 0.18*n1(i,3)) * pulse;
-    const r1 = R * (1.02 + 0.03*n1(i,4));
-    const r2 = len * (1 + j);
-
-    const aL = a - w*0.5, aR = a + w*0.5;
-    // mały klin (trójkąt) – od krawędzi tarczy na zewnątrz
-    ctx.moveTo(Math.cos(aL)*r1, Math.sin(aL)*r1);
-    ctx.lineTo(Math.cos(a)*r2,  Math.sin(a)*r2);
-    ctx.lineTo(Math.cos(aR)*r1, Math.sin(aR)*r1);
-  }
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(255,210,120,0.25)';
-  ctx.shadowColor = 'rgba(255,235,170,0.9)';
-  ctx.shadowBlur = Math.max(6, R*0.22);
-  ctx.fill();
-
-  // --- obwód korony (fresnel) ---
-  const fresR = R * (1.2 + 0.06*Math.sin(t*1.1));
-  const gF = ctx.createRadialGradient(0,0, fresR*0.7, 0,0, fresR);
-  gF.addColorStop(0, 'rgba(255,240,180,0)');
-  gF.addColorStop(1, 'rgba(255,235,170,0.32)');
-  ctx.fillStyle = gF;
-  ctx.beginPath(); ctx.arc(0,0, fresR, 0, Math.PI*2); ctx.fill();
-
-  // --- tarcza gwiazdy (żółta z „rimem”) ---
-  const g = ctx.createRadialGradient(0,0, R*0.1, 0,0, R);
-  g.addColorStop(0, SUN.color.core);
-  g.addColorStop(0.55, SUN.color.mid);
-  g.addColorStop(1, SUN.color.rim);
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.fillStyle = g;
-  ctx.beginPath(); ctx.arc(0,0,R,0,Math.PI*2); ctx.fill();
-
-  // delikatne „plamy” (granulacja) — kilka półprzezroczystych kół
-  ctx.globalCompositeOperation = 'multiply';
-  ctx.fillStyle = 'rgba(200,90,0,0.06)';
-  for(let i=0;i<8;i++){
-    const a = (i*0.79 + t*0.15) % (Math.PI*2);
-    const rr = R*(0.12 + 0.15*n1(i,5));
-    const d  = R*(0.15 + 0.55*n1(i,6));
-    ctx.beginPath();
-    ctx.arc(Math.cos(a)*d, Math.sin(a)*d, rr, 0, Math.PI*2);
-    ctx.fill();
-  }
-
-  ctx.restore();
-}
-
 function drawStationShadow(ctx, st, cam){
   const s = worldToScreen(st.x, st.y, cam);
   const toSun = { x: (SUN.x - st.x), y: (SUN.y - st.y) };
@@ -12772,9 +12691,6 @@ function render(alpha, frameDt){
 
   // Gwiazdy (proceduralne kafelki na całej mapie)
   drawStars(cam);
-
-  // ★ SŁOŃCE Z KORONĄ
-  drawSunWithCorona(ctx, cam, vfxTime);
 
   // scan waves
   for(const w of scanWaves){
