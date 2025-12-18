@@ -11,7 +11,6 @@ let currentImage = null;
 let isLoaded = false;
 
 // --- DEFINICJA ŚWIATA ---
-// Zwiększyłem margines, żeby paralaksa była jeszcze subtelniejsza
 const WORLD_RADIUS_LIMIT = 500000;
 
 const config = {
@@ -66,9 +65,7 @@ export function drawSpaceBg(ctx, camera) {
   const halfH = sh / 2;
 
   // 2. Obliczamy BAZOWE wymiary (bez zoomu kamery)
-  // To jest kluczowe dla naprawy "pływania" przy zoomie.
-  // Liczymy, gdzie tło powinno być w skali 1:1, a zoom nakładamy na końcu transformacją.
-  
+  // Liczymy, gdzie tło powinno być w skali 1:1
   const minScaleW = (sw / currentImage.width) * 1.15;
   const minScaleH = (sh / currentImage.height) * 1.15;
   const baseScale = Math.max(minScaleW, minScaleH) * config.scale;
@@ -81,7 +78,6 @@ export function drawSpaceBg(ctx, camera) {
   const slackY = (baseH - sh) / 2;
 
   // 4. Pobieramy pozycję kamery
-  // Zakładamy, że (0,0) to środek mapy (Słońce).
   const camX = camera.x || 0;
   const camY = camera.y || 0;
 
@@ -90,30 +86,34 @@ export function drawSpaceBg(ctx, camera) {
   const progressY = Math.max(-1, Math.min(1, camY / WORLD_RADIUS_LIMIT));
 
   // 6. Obliczamy przesunięcie
-  // FIX 1: Usunąłem minus przy progressX, aby odwrócić kierunek paralaksy w poziomie.
-  // Teraz lot w prawo przesuwa tło w lewo (poprawnie).
-  const offsetX = progressX * slackX; 
-  const offsetY = -progressY * slackY; // Y zostawiamy jak było (było OK)
+  // FIX 1: Dodałem minus przy progressX.
+  // Teraz gdy lecisz w prawo (progressX > 0), tło przesuwa się w lewo (offsetX < 0).
+  const offsetX = -progressX * slackX; 
+  const offsetY = -progressY * slackY; 
 
   // 7. Rysowanie z Transformacją
-  // FIX 2: Zamiast przeliczać współrzędne x/y ręcznie, używamy translate + scale.
-  // Dzięki temu zoom (scale) wykonuje się względem obliczonego środka (translate).
-  
-  // Obliczamy współczynnik zoomu tła (bardzo delikatny)
+  // Bardzo delikatny zoom tła (potęga 0.1), żeby nie psuć efektu głębi
   const camZoomFactor = Math.pow(camera.zoom || 1.0, 0.1); 
 
   ctx.save();
   
-  // A. Ustawiamy środek rysowania w centrum ekranu + przesunięcie paralaksy
-  ctx.translate(halfW + offsetX, halfH + offsetY);
+  // FIX 2: Poprawiona kolejność transformacji (Stabilny Zoom)
   
-  // B. Skalujemy "w miejscu"
+  // A. Najpierw ustawiamy punkt odniesienia na ŚRODEK EKRANU.
+  // Dzięki temu zoom zawsze będzie działał "od środka monitora", a nie od środka tła.
+  ctx.translate(halfW, halfH);
+  
+  // B. Skalujemy (Zoomujemy)
   ctx.scale(camZoomFactor, camZoomFactor);
   
-  // C. Opcjonalna jasność
+  // C. Dopiero teraz przesuwamy o paralaksę.
+  // Ponieważ jesteśmy już po scale, przesunięcie też się skaluje wizualnie, co jest poprawne.
+  ctx.translate(offsetX, offsetY);
+  
+  // D. Opcjonalna jasność
   if (config.brightness !== 1.0) ctx.globalAlpha = config.brightness;
   
-  // D. Rysujemy obrazek wycentrowany w punkcie (0,0) kontekstu
+  // E. Rysujemy obrazek wycentrowany względem punktu (0,0) (który teraz jest przesunięty o paralaksę)
   ctx.drawImage(
       currentImage, 
       -baseW / 2, 
