@@ -9143,6 +9143,10 @@ function renderOptions(){
   if(!OPTIONS_OPEN) return;
   hudBeginPanel();
   uiTitle('Opcje');
+  
+  // --- NOWE: Wybór jakości tła ---
+  uiQualitySelector();
+  // ------------------------------
   slider('VFX: temperatura (K)', 1000, 20000, 500, OPTIONS.vfx, 'colorTempK');
   slider('VFX: bloom', 0.2, 2.5, 0.05, OPTIONS.vfx, 'bloomGain');
   slider('Audio: master', 0, 1, 0.05, OPTIONS.audio, 'master');
@@ -14009,6 +14013,55 @@ function hudTabs(names, active){
   ctx.fillStyle = '#E6F2FF';
   if (clicked){ stationUI.tab = clicked; mouse.click = false; }
 }
+
+// --- NOWA FUNKCJA UI DO WYBORU JAKOŚCI ---
+function uiQualitySelector(){
+  if(!window.Nebula) return;
+  const cfg = window.Nebula.getConfig();
+  const current = cfg.quality;
+  const opts = ['2k','4k','8k'];
+
+  ctx.fillText('Jakość tła:', 0, 0);
+
+  let x = 180;
+  const y = -14;
+  const w = 40;
+  const h = 20;
+
+  for(const opt of opts){
+    const isActive = (current === opt);
+    
+    // Rysowanie przycisku
+    ctx.strokeStyle = isActive ? '#fff' : 'rgba(100,150,255,0.4)';
+    ctx.fillStyle = isActive ? '#3b82f6' : 'rgba(10,20,40,0.5)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    
+    // Tekst
+    ctx.fillStyle = isActive ? '#fff' : '#8fb5ff';
+    ctx.fillText(opt.toUpperCase(), x + 8, 0);
+
+    // Obsługa myszy (Canvas Immediate Mode GUI)
+    const t = ctx.getTransform();
+    const L = t.e + x;
+    const T = t.f + y;
+    const R = L + w;
+    const B = T + h;
+    
+    const over = mouse.x > L && mouse.x < R && mouse.y > T && mouse.y < B;
+    if(over){
+        canvas.style.cursor = 'pointer';
+        if(mouse.click){
+            window.Nebula.setQuality(opt);
+            mouse.click = false; // "zjedz" kliknięcie
+        }
+    }
+    
+    x += w + 8; // odstęp
+  }
+  ctx.translate(0, 24); // nowa linia w panelu
+}
+
 function uiRowButton(label, btn){
   ctx.fillText(label, 0, 0);
   const w=96,h=20,x=320,y=-14;
