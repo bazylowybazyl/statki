@@ -12762,14 +12762,8 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
   ctx.restore();
 }
 function drawNPCPretty(ctx, npc, s) {
-  // 1. Jeśli to duży statek (Capital Ship) używający sprite'a
-  if (npc.isCapitalShip) {
-    const pixR = (npc.radius || 20) * camera.zoom;
-    drawCapitalShipSprite(ctx, npc, s, pixR);
-    return;
-  }
-
-  // 2. Specjalne typy statków (rysowane proceduralnie)
+  // 1. NAJPIERW sprawdź konkretne typy (Destroyer, Battleship, Frigate)
+  // Dzięki temu użyją one Twoich nowych sprite'ów z HULL_SPRITE_PATHS
   if (npc.type === 'destroyer') {
     drawDestroyer(ctx, npc, s);
     return;
@@ -12780,6 +12774,14 @@ function drawNPCPretty(ctx, npc, s) {
   }
   if (npc.type && (npc.type.includes('frigate') || npc.subType === 'laser')) {
     drawFrigateHull(ctx, npc, s);
+    return;
+  }
+
+  // 2. DOPIERO POTEM sprawdź czy to ogólny Capital Ship (np. Carrier gracza)
+  // Jeśli to duży statek, który nie jest destroyerem/battleshipem, użyje systemu profili/sprite'ów capital
+  if (npc.isCapitalShip) {
+    const pixR = (npc.radius || 20) * camera.zoom;
+    drawCapitalShipSprite(ctx, npc, s, pixR);
     return;
   }
 
@@ -12816,7 +12818,7 @@ function drawNPCPretty(ctx, npc, s) {
     ctx.stroke();
   }
 
-  // Pasek HP nad jednostką (opcjonalnie, jeśli blisko kursora lub uszkodzony)
+  // Pasek HP nad jednostką
   if (npc.hp < npc.maxHp) {
     const hpPct = Math.max(0, npc.hp / npc.maxHp);
     ctx.fillStyle = '#ef4444';
