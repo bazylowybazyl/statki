@@ -11,9 +11,9 @@ let currentImage = null;
 let isLoaded = false;
 
 // --- DEFINICJA ŚWIATA ---
-// Ustawione na 400k zgodnie z testami. 
-// Zapewnia płynny ruch tła aż do krawędzi mapy przy zachowaniu dynamiki.
-const WORLD_RADIUS_LIMIT = 400000;
+// Limit 500k jest bezpieczny i współpracuje z dynamiczną skalą poniżej.
+// Dla 8k paralaksa będzie szybsza (bo większy margines), a dla 2k wolniejsza.
+const WORLD_RADIUS_LIMIT = 500000;
 
 const config = {
   quality: '4k',      
@@ -67,15 +67,28 @@ export function drawSpaceBg(ctx, camera) {
   const halfH = sh / 2;
 
   // 2. Obliczamy BAZOWE wymiary (bez zoomu kamery)
-  // Liczymy, gdzie tło powinno być w skali 1:1
-  const minScaleW = (sw / currentImage.width) * 1.15;
-  const minScaleH = (sh / currentImage.height) * 1.15;
+  
+  // --- DYNAMICZNY MARGINES PARALAKSY ---
+  // Bazowy luz to 0.15 (15%) dla 4k.
+  // 8k: 2x większy luz (0.30) -> margines 1.30 -> paralaksa 2x szybsza/głębsza.
+  // 2k: 2x mniejszy luz (0.075) -> margines 1.075 -> paralaksa 2x wolniejsza/płaska.
+  let slackMargin = 1.15; 
+  
+  if (config.quality === '8k') {
+      slackMargin = 1.30; 
+  } else if (config.quality === '2k') {
+      slackMargin = 1.075;
+  }
+
+  const minScaleW = (sw / currentImage.width) * slackMargin;
+  const minScaleH = (sh / currentImage.height) * slackMargin;
   const baseScale = Math.max(minScaleW, minScaleH) * config.scale;
   
   const baseW = currentImage.width * baseScale;
   const baseH = currentImage.height * baseScale;
 
   // 3. Obliczamy Slack (Luz) na podstawie bazowych wymiarów
+  // Tutaj magia działa: dla 8k baseW będzie większe względem sw, więc slackX będzie większy.
   const slackX = (baseW - sw) / 2;
   const slackY = (baseH - sh) / 2;
 
@@ -92,7 +105,7 @@ export function drawSpaceBg(ctx, camera) {
   const progressY = Math.max(-1, Math.min(1, camY / WORLD_RADIUS_LIMIT));
 
   // 6. Obliczamy przesunięcie
-  // Minus przy X zapewnia, że tło przesuwa się w lewo gdy lecimy w prawo (naturalny efekt)
+  // Minus przy X zapewnia, że tło przesuwa się w lewo gdy lecimy w prawo
   const offsetX = -progressX * slackX; 
   const offsetY = -progressY * slackY; 
 
