@@ -652,6 +652,20 @@ import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
 import { WORLD, setWorldSize } from './src/world/world.js';
 import { initShieldSystem, updateShieldFx, drawShield, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot } from './shieldSystem.js';
 import { createShipEntity, applyPlayerInput, runShipAI } from "./src/game/shipEntity.js";
+// Statki Terran (Wsparcie)
+import terranFrigateImg from "./src/assets/ships/terranfrigate.png";
+import terranDestroyerImg from "./src/assets/ships/terrandestroyer.png";
+import terranBattleshipImg from "./src/assets/ships/terranbattleship.png";
+
+// Statki Piratów
+import pirateFrigateImg from "./src/assets/ships/piratefrigate.png";
+import pirateDestroyerImg from "./src/assets/ships/piratedestroyer.png";
+import pirateBattleshipImg from "./src/assets/ships/piratebattleship.png";
+
+// Jednostki mniejsze
+import fighterImg from "./assets/fighter.png";
+import npcFriImg from "./assets/npc_friendly.png";
+import npcHosImg from "./assets/npc_hostile.png";
 window.bullets = [];
 // Aby stary kod działał, zrobimy alias:
 const bullets = window.bullets;
@@ -2639,14 +2653,14 @@ function loadHullSprite(src){
 
 const HULL_SPRITE_PATHS = {
   terran: {
-    frigate: 'assets/ships/terranfrigate.png',
-    destroyer: 'assets/ships/terrandestroyer.png',
-    battleship: 'assets/ships/terranbattleship.png'
+    frigate: terranFrigateImg,
+    destroyer: terranDestroyerImg,
+    battleship: terranBattleshipImg
   },
   pirate: {
-    frigate: 'assets/ships/piratefrigate.png',
-    destroyer: 'assets/ships/piratedestroyer.png',
-    battleship: 'assets/ships/piratebattleship.png'
+    frigate: pirateFrigateImg,
+    destroyer: pirateDestroyerImg,
+    battleship: pirateBattleshipImg
   }
 };
 
@@ -2716,7 +2730,7 @@ fighterSprite.onload = () => {
 fighterSprite.onerror = () => {
   fighterSpriteState.error = true;
 };
-fighterSprite.src = "assets/fighter.png";
+fighterSprite.src = fighterImg;
 
 const npcSpriteFriendly = new Image();
 const npcSpriteHostile = new Image();
@@ -2725,8 +2739,8 @@ let npcSpritesReady = 0;
 npcSpriteFriendly.onload = () => { npcSpritesReady++; };
 npcSpriteHostile.onload = () => { npcSpritesReady++; };
 
-npcSpriteFriendly.src = "assets/npc_friendly.png";
-npcSpriteHostile.src = "assets/npc_hostile.png";
+npcSpriteFriendly.src = npcFriImg;
+npcSpriteHostile.src = npcHosImg;
 
 const heavyAutocannonSprite = new Image();
 let heavyAutocannonSpriteReady = false;
