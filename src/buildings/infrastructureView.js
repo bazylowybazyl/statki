@@ -43,7 +43,7 @@ export function updateInfrastructureAnimations(dt) {
     if (!window.Game || !window.Game.infrastructure) return;
     window.Game.infrastructure.forEach((list) => {
         for (const inst of list) {
-            if (inst.buildingId.includes('shipyard')) {
+            if (inst.buildingId === 'shipyard_s') {
                 updateShipyardVisuals(inst, dt);
             }
         }
@@ -53,7 +53,7 @@ export function updateInfrastructureAnimations(dt) {
 export function drawInfrastructureIcon(ctx, building, center, size, alpha = 1, instanceData = null) {
   if (!ctx || !building || !center) return;
 
-  if (instanceData && building.id.includes('shipyard')) {
+  if (instanceData && building.id === 'shipyard_s') {
      const rotation = instanceData.rotation || 0;
      drawComplexShipyard(ctx, instanceData, center, size, rotation);
      return;
