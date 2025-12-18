@@ -11,9 +11,9 @@ let currentImage = null;
 let isLoaded = false;
 
 // --- DEFINICJA ŚWIATA ---
-// Zmniejszamy limit: im mniejsza liczba, tym SZYBCIEJ przesuwa się tło (większa czułość paralaksy).
-// Przy 100k wykorzystasz szybciej ten "zapas" obrazka, który masz.
-const WORLD_RADIUS_LIMIT = 100000;
+// Ustawione na 400k zgodnie z testami. 
+// Zapewnia płynny ruch tła aż do krawędzi mapy przy zachowaniu dynamiki.
+const WORLD_RADIUS_LIMIT = 400000;
 
 const config = {
   quality: '4k',      
@@ -80,12 +80,10 @@ export function drawSpaceBg(ctx, camera) {
   const slackY = (baseH - sh) / 2;
 
   // 4. Pobieramy pozycję kamery
-  // FIX: Pobieramy wymiary świata z globalnego obiektu WORLD (jeśli istnieje),
-  // aby wycentrować paralaksę na środku mapy (Słońcu), a nie na współrzędnych 0,0.
+  // Centrujemy system paralaksy na środku świata gry (Słońcu).
   const worldW = window.WORLD ? window.WORLD.w : 0;
   const worldH = window.WORLD ? window.WORLD.h : 0;
   
-  // Odejmujemy połowę świata, aby (0,0) dla paralaksy wypadło na środku mapy gry
   const camX = (camera.x || 0) - (worldW / 2);
   const camY = (camera.y || 0) - (worldH / 2);
 
@@ -94,7 +92,7 @@ export function drawSpaceBg(ctx, camera) {
   const progressY = Math.max(-1, Math.min(1, camY / WORLD_RADIUS_LIMIT));
 
   // 6. Obliczamy przesunięcie
-  // Minus przy X zapewnia, że tło przesuwa się przeciwnie do ruchu statku
+  // Minus przy X zapewnia, że tło przesuwa się w lewo gdy lecimy w prawo (naturalny efekt)
   const offsetX = -progressX * slackX; 
   const offsetY = -progressY * slackY; 
 
@@ -106,10 +104,10 @@ export function drawSpaceBg(ctx, camera) {
   // A. Najpierw ustawiamy punkt odniesienia na ŚRODEK EKRANU.
   ctx.translate(halfW, halfH);
   
-  // B. Skalujemy (Zoomujemy)
+  // B. Skalujemy (Zoomujemy "w głąb")
   ctx.scale(camZoomFactor, camZoomFactor);
   
-  // C. Dopiero teraz przesuwamy o paralaksę.
+  // C. Przesuwamy o paralaksę.
   ctx.translate(offsetX, offsetY);
   
   // D. Opcjonalna jasność
