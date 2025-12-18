@@ -2618,6 +2618,56 @@ const shipSprite = new Image();
 const capitalShipSpriteCache = {};
 const fighterSprite = new Image();
 const fighterSpriteState = { ready: false, error: false, width: 0, height: 0 };
+const hullSpriteCache = new Map();
+
+function loadHullSprite(src){
+  if (!src) return null;
+  if (!hullSpriteCache.has(src)) {
+    const img = new Image();
+    const entry = { image: img, ready: false, error: false, width: 1, height: 1 };
+    img.onload = () => {
+      entry.ready = true;
+      entry.width = img.naturalWidth || 1;
+      entry.height = img.naturalHeight || 1;
+    };
+    img.onerror = () => { entry.error = true; };
+    img.src = src;
+    hullSpriteCache.set(src, entry);
+  }
+  return hullSpriteCache.get(src) || null;
+}
+
+const HULL_SPRITE_PATHS = {
+  terran: {
+    frigate: 'assets/ships/terranfrigate.png',
+    destroyer: 'assets/ships/terrandestroyer.png',
+    battleship: 'assets/ships/terranbattleship.png'
+  },
+  pirate: {
+    frigate: 'assets/ships/piratefrigate.png',
+    destroyer: 'assets/ships/piratedestroyer.png',
+    battleship: 'assets/ships/piratebattleship.png'
+  }
+};
+
+function getNpcHullClass(npc){
+  const type = String(npc?.type || '');
+  if (type === 'destroyer') return 'destroyer';
+  if (type === 'battleship') return 'battleship';
+  if (type.includes('frigate')) return 'frigate';
+  return null;
+}
+
+function getHullSpriteForNpc(npc){
+  const faction = (npc?.isPirate) ? 'pirate' : (npc?.supportData && npc?.friendly ? 'terran' : null);
+  if (!faction) return null;
+  const hullClass = getNpcHullClass(npc);
+  const src = hullClass ? HULL_SPRITE_PATHS[faction]?.[hullClass] : null;
+  if (!src) return null;
+  const sprite = loadHullSprite(src);
+  if (!sprite || !sprite.ready || sprite.error) return null;
+  return sprite;
+}
 
 function getCapitalShipSprite(src){
   if(!src) return null;
@@ -12414,6 +12464,21 @@ function drawRangeRuler(ctx, cam){
 }
 
 function drawFrigateHull(ctx, npc, screenPos){
+  const hullSprite = getHullSpriteForNpc(npc);
+  if (hullSprite) {
+    const targetH = Math.max(4, (npc.radius || 28) * 2 * (camera.zoom || 1));
+    const aspect = hullSprite.width / hullSprite.height;
+    const targetW = targetH * (Number.isFinite(aspect) && aspect > 0 ? aspect : 1);
+    ctx.save();
+    ctx.translate(screenPos.x, screenPos.y);
+    ctx.rotate(npc.angle || 0);
+    ctx.globalAlpha = npc.fade ?? 1;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(hullSprite.image, -targetW * 0.5, -targetH * 0.5, targetW, targetH);
+    ctx.restore();
+    return;
+  }
+
   const w = (npc.size?.w || npc.radius*2.2) * (camera.zoom || 1);
   const h = (npc.size?.h || npc.radius*0.9) * (camera.zoom || 1);
   ctx.save();
@@ -12440,6 +12505,21 @@ function drawFrigateHull(ctx, npc, screenPos){
 }
 
 function drawDestroyer(ctx, npc, screenPos){
+  const hullSprite = getHullSpriteForNpc(npc);
+  if (hullSprite) {
+    const targetH = Math.max(6, (npc.radius || 45) * 2 * camera.zoom);
+    const aspect = hullSprite.width / hullSprite.height;
+    const targetW = targetH * (Number.isFinite(aspect) && aspect > 0 ? aspect : 1);
+    ctx.save();
+    ctx.translate(screenPos.x, screenPos.y);
+    ctx.rotate(npc.angle);
+    ctx.globalAlpha = npc.fade ?? 1;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(hullSprite.image, -targetW * 0.5, -targetH * 0.5, targetW, targetH);
+    ctx.restore();
+    return;
+  }
+
   const zoomScale = camera.zoom;
   const w = (npc.size?.w || 72) * zoomScale;
   const h = (npc.size?.h || 22) * zoomScale;
@@ -12467,6 +12547,21 @@ function drawDestroyer(ctx, npc, screenPos){
 }
 
 function drawBattleship(ctx, npc, screenPos){
+  const hullSprite = getHullSpriteForNpc(npc);
+  if (hullSprite) {
+    const targetH = Math.max(8, (npc.radius || 70) * 2 * camera.zoom);
+    const aspect = hullSprite.width / hullSprite.height;
+    const targetW = targetH * (Number.isFinite(aspect) && aspect > 0 ? aspect : 1);
+    ctx.save();
+    ctx.translate(screenPos.x, screenPos.y);
+    ctx.rotate(npc.angle);
+    ctx.globalAlpha = npc.fade ?? 1;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(hullSprite.image, -targetW * 0.5, -targetH * 0.5, targetW, targetH);
+    ctx.restore();
+    return;
+  }
+
   const zoomScale = camera.zoom;
   const w = (npc.size?.w || 120) * zoomScale;
   const h = (npc.size?.h || 42) * zoomScale;
