@@ -1,11 +1,11 @@
 "use strict";
 
 // Konfiguracja dostępnych plików tła (.png)
+// 16K usunięte z powodu limitów GitHub (>100MB)
 const BACKGROUNDS = {
-  '16k': '/assets/nebula_16k.png', // Ultra
-  '8k':  '/assets/nebula_8k.png',  // High
+  '8k':  '/assets/nebula_8k.png',  // High (Ultra)
   '4k':  '/assets/nebula_4k.png',  // Medium (Domyślne)
-  '2k':  '/assets/nebula_2k.png'   // Low
+  '2k':  '/assets/nebula_2k.png'   // Low (Dla słabych łączy/sprzętu)
 };
 
 let currentImage = null;
@@ -13,7 +13,7 @@ let isLoaded = false;
 
 // --- DOMYŚLNA KONFIGURACJA ---
 const config = {
-  // Tutaj ustalasz co wczytuje się na starcie gry:
+  // Domyślna jakość (bezpieczna)
   quality: '4k',      
   
   // Parametry wyświetlania
@@ -24,10 +24,10 @@ const config = {
 
 // --- PANEL STEROWANIA (window.Nebula) ---
 window.Nebula = {
-  // Zmiana jakości w locie (np. z menu opcji)
+  // Zmiana jakości w locie
   setQuality: (quality) => {
     if (!BACKGROUNDS[quality]) {
-      console.warn(`[Background] Nieznana jakość: ${quality}. Dostępne: 16k, 8k, 4k, 2k`);
+      console.warn(`[Background] Nieznana jakość: ${quality}. Dostępne: 8k, 4k, 2k`);
       return;
     }
     config.quality = quality;
@@ -60,8 +60,8 @@ function loadBackground() {
   
   img.onerror = () => {
     console.error(`[Background] BŁĄD: Nie znaleziono pliku: ${url}`);
-    // Fallback: jeśli 16k/8k zawiedzie, próbuj 4k
-    if (config.quality === '16k' || config.quality === '8k') {
+    // Fallback: jeśli 8k zawiedzie (np. brak pliku), próbuj 4k
+    if (config.quality === '8k') {
         console.warn('[Background] Próba wczytania niższej jakości (4k)...');
         window.Nebula.setQuality('4k');
     }
@@ -102,7 +102,7 @@ export function drawSpaceBg(ctx, camera) {
   let drawX = centerX - (camX * config.parallaxFactor);
   let drawY = centerY - (camY * config.parallaxFactor);
 
-  // Centrowanie środka obrazka w 0,0 świata gry (opcjonalne, ale zalecane)
+  // Centrowanie środka obrazka w 0,0 świata gry
   drawX -= bgW / 2;
   drawY -= bgH / 2;
 
@@ -117,7 +117,7 @@ export function drawSpaceBg(ctx, camera) {
   }
 }
 
-// Funkcje zachowane dla kompatybilności (puste, bo nie są już potrzebne)
+// Funkcje zachowane dla kompatybilności (puste)
 export function resizeSpaceBg(w, h) {}
 export function setBgOptions(opts) {}
 export function setBgSeed(seed) {}
