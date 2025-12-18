@@ -11,14 +11,12 @@ let currentImage = null;
 let isLoaded = false;
 
 // --- DEFINICJA ŚWIATA ---
-// Promień świata gry w jednostkach logicznych.
-// Neptun jest na ok. 360 000. Dajemy 450 000 dla bezpieczeństwa.
-// To oznacza: "Gdy gracz przeleci 450 000 jednostek, tło przesunie się do samej krawędzi".
-const WORLD_RADIUS_LIMIT = 450000;
+// Zwiększyłem margines, żeby paralaksa była jeszcze subtelniejsza
+const WORLD_RADIUS_LIMIT = 500000;
 
 const config = {
   quality: '4k',      
-  scale: 1.0,       // Bazowy zoom obrazka (1.0 = dopasuj do ekranu z zapasem)
+  scale: 1.0,       // Bazowa skala
   brightness: 1.0
 };
 
@@ -64,62 +62,65 @@ export function drawSpaceBg(ctx, camera) {
 
   if (!isLoaded || !currentImage) return;
 
-  // --- MATEMATYKA "SMART PARALLAX" ---
+  const halfW = sw / 2;
+  const halfH = sh / 2;
 
-  // 2. Ustalanie minimalnej skali, żeby obrazek ZAWSZE zakrywał ekran
-  // Nawet jak zrobisz zoom out w oknie 4K, tło musi być większe.
-  // Dajemy mnożnik 1.15, żeby mieć 15% zapasu na ruchy paralaksy.
+  // 2. Obliczamy BAZOWE wymiary (bez zoomu kamery)
+  // To jest kluczowe dla naprawy "pływania" przy zoomie.
+  // Liczymy, gdzie tło powinno być w skali 1:1, a zoom nakładamy na końcu transformacją.
+  
   const minScaleW = (sw / currentImage.width) * 1.15;
   const minScaleH = (sh / currentImage.height) * 1.15;
+  const baseScale = Math.max(minScaleW, minScaleH) * config.scale;
   
-  // Wybieramy większą skalę, żeby nie było pasów ani w pionie, ani w poziomie
-  // Dodatkowo uwzględniamy zoom kamery, ale BARDZO delikatnie (pow 0.1),
-  // żeby tło było "daleko" i prawie się nie przybliżało.
-  const camZoomFactor = Math.pow(camera.zoom || 1.0, 0.1); 
-  const baseScale = Math.max(minScaleW, minScaleH);
-  
-  // Ostateczna wielkość rysowanego obrazka
-  const drawW = currentImage.width * baseScale * config.scale * camZoomFactor;
-  const drawH = currentImage.height * baseScale * config.scale * camZoomFactor;
+  const baseW = currentImage.width * baseScale;
+  const baseH = currentImage.height * baseScale;
 
-  // 3. Obliczamy "Slack" (Luz)
-  // Ile pikseli obrazka wystaje poza ekran? To jest nasz budżet na ruch.
-  const slackX = (drawW - sw) / 2;
-  const slackY = (drawH - sh) / 2;
+  // 3. Obliczamy Slack (Luz) na podstawie bazowych wymiarów
+  const slackX = (baseW - sw) / 2;
+  const slackY = (baseH - sh) / 2;
 
-  // 4. Pozycja kamery względem środka świata (Słońca)
-  // Jeśli nie znasz środka świata, zakładamy 0,0.
-  // W Twojej grze Słońce jest chyba na WORLD.w/2, WORLD.h/2, 
-  // ale kamera.x/y to pozycje absolutne. 
-  // Przyjmijmy, że (0,0) to środek logiczny dla paralaksy.
-  let camX = camera.x || 0;
-  let camY = camera.y || 0;
+  // 4. Pobieramy pozycję kamery
+  // Zakładamy, że (0,0) to środek mapy (Słońce).
+  const camX = camera.x || 0;
+  const camY = camera.y || 0;
 
-  // (Opcjonalnie: Centrowanie na Słońcu, jeśli masz dostęp do zmiennej WORLD)
-  // const centerX = (window.WORLD?.w || 0) / 2;
-  // const centerY = (window.WORLD?.h || 0) / 2;
-  // camX -= centerX; 
-  // camY -= centerY;
-
-  // 5. Obliczamy przesunięcie (Clamp)
-  // Mapujemy pozycję gracza (-450k do +450k) na dostępny luz (-slack do +slack).
-  // Clampujemy pozycję kamery, żeby tło nigdy nie uciekło, nawet jak wylecisz poza mapę.
+  // 5. Obliczamy postęp paralaksy (-1 do 1)
   const progressX = Math.max(-1, Math.min(1, camX / WORLD_RADIUS_LIMIT));
   const progressY = Math.max(-1, Math.min(1, camY / WORLD_RADIUS_LIMIT));
 
-  const offsetX = -progressX * slackX;
-  const offsetY = -progressY * slackY;
+  // 6. Obliczamy przesunięcie
+  // FIX 1: Usunąłem minus przy progressX, aby odwrócić kierunek paralaksy w poziomie.
+  // Teraz lot w prawo przesuwa tło w lewo (poprawnie).
+  const offsetX = progressX * slackX; 
+  const offsetY = -progressY * slackY; // Y zostawiamy jak było (było OK)
 
-  // 6. Rysowanie
-  // Środek ekranu + offset - połowa obrazka
-  const x = (sw / 2) + offsetX - (drawW / 2);
-  const y = (sh / 2) + offsetY - (drawH / 2);
+  // 7. Rysowanie z Transformacją
+  // FIX 2: Zamiast przeliczać współrzędne x/y ręcznie, używamy translate + scale.
+  // Dzięki temu zoom (scale) wykonuje się względem obliczonego środka (translate).
+  
+  // Obliczamy współczynnik zoomu tła (bardzo delikatny)
+  const camZoomFactor = Math.pow(camera.zoom || 1.0, 0.1); 
 
   ctx.save();
+  
+  // A. Ustawiamy środek rysowania w centrum ekranu + przesunięcie paralaksy
+  ctx.translate(halfW + offsetX, halfH + offsetY);
+  
+  // B. Skalujemy "w miejscu"
+  ctx.scale(camZoomFactor, camZoomFactor);
+  
+  // C. Opcjonalna jasność
   if (config.brightness !== 1.0) ctx.globalAlpha = config.brightness;
   
-  // Rysujemy RAZ (bez pętli)
-  ctx.drawImage(currentImage, x, y, drawW, drawH);
+  // D. Rysujemy obrazek wycentrowany w punkcie (0,0) kontekstu
+  ctx.drawImage(
+      currentImage, 
+      -baseW / 2, 
+      -baseH / 2, 
+      baseW, 
+      baseH
+  );
   
   ctx.restore();
 }
