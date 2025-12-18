@@ -304,6 +304,7 @@
       this.protubGroup = null;
       this.time = 0;
       this.composer = null;
+      this.haloColor = "#ffb347";
 
       if (typeof THREE === "undefined") return;
 
@@ -515,6 +516,24 @@
       this.ctx2d.arc(this.canvas.width/2, this.canvas.height/2, this.canvas.width/2, 0, Math.PI*2);
       this.ctx2d.fill();
       this.ctx2d.globalCompositeOperation = "source-over";
+
+      // Poświata wokół słońca (spójna z efektami planet)
+      const ctx = this.ctx2d;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      const cx = this.canvas.width * 0.5;
+      const inner = this.canvas.width * 0.46;
+      const outer = this.canvas.width * 0.62;
+      const g = ctx.createRadialGradient(cx, cx, inner, cx, cx, outer);
+      const haloRGB = this.haloColor;
+      g.addColorStop(0.0, `${haloRGB}44`);
+      g.addColorStop(0.6, `${haloRGB}26`);
+      g.addColorStop(1.0, `${haloRGB}00`);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(cx, cx, outer, 0, TAU);
+      ctx.fill();
+      ctx.restore();
     }
   }
 
