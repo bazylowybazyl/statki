@@ -11468,6 +11468,7 @@ function exitWarp(){
   spawnShockwave(ship.pos.x, ship.pos.y, { maxR: 1200, maxLife: 0.7 });
   camera.addShake(18, 0.22);
   warp.entryProgress = 0;
+  warpBrakeTimer = 0.8; 
 }
 
 const boost = {
@@ -12396,7 +12397,12 @@ function drawPlanetLabels(ctx, cam){
 }
 
 function drawStars(cam){
-  // jak daleko poza ekran ładować komórki
+  // --- KONFIGURACJA EFEKTU WARP ---
+  const STEADY_LENGTH = 60; // Długość kresek podczas stabilnego lotu (nie kropki, ale linie)
+  const KICK_STRENGTH = 4.0; // Mnożnik przy starcie (np. 60 * 4 = 240px przy uderzeniu)
+  const BRAKE_STRENGTH = 5.0; // Mnożnik przy hamowaniu (np. 60 * 5 = 300px przy wyjściu)
+  // --------------------------------
+
   const zoom = cam?.zoom ?? camera.zoom ?? 1;
   const marginW = (W/2)/zoom + 2000;
   const marginH = (H/2)/zoom + 2000;
@@ -12413,25 +12419,70 @@ function drawStars(cam){
         const sy = (s.y - cam.y) * zoom + H/2;
         if(sx < -50 || sx > W+50 || sy < -50 || sy > H+50) continue;
 
+        // 1. FAZA LOTU I STARTU (Active)
         if(warp.state==='active'){
-          // Smugi przy warp
-          const entry = smoothstep01(warp.entryProgress);
-          const L = 76 * (0.25 + 0.75*entry) * (1 + 1.2*(warp.fuel/warp.fuelMax));
+          
+          let currentStretch = 1.0; // Domyślnie 1.0 = STEADY_LENGTH
+
+          // Jeśli dopiero wchodzimy w warp (entryProgress < 1), dodajemy "kopa"
+          if (warp.entryProgress < 1.0) {
+             // Sinusoida daje płynny skok w górę i powrót
+             const kick = Math.sin(warp.entryProgress * Math.PI); 
+             currentStretch = 1.0 + (kick * KICK_STRENGTH);
+          }
+
+          // Obliczamy finalną długość dla tej klatki
+          // Dodajemy też mały wpływ paliwa (opcjonalnie), żeby smugi słabły jak brakuje energii
+          const L = STEADY_LENGTH * currentStretch * (0.8 + 0.2*(warp.fuel/warp.fuelMax));
+          
+          // Kierunek smug (przeciwny do lotu)
           const dx = -warp.dir.x * L * zoom;
           const dy = -warp.dir.y * L * zoom;
+          
           ctx.strokeStyle = 'rgba(200,220,255,0.35)';
           ctx.lineWidth = 2;
           ctx.beginPath(); ctx.moveTo(sx+dx, sy+dy); ctx.lineTo(sx, sy); ctx.stroke();
-        } else {
-          ctx.globalAlpha = s.bright;
-          ctx.fillStyle = '#ffffff';
-          const flicker = 0.8 + 0.2 * Math.random();
-          const baseSize = s.size * flicker * zoom;
-          const minSize = 0.6 * zoom;
-          const sz = Math.max(minSize, baseSize);
-          const drawSize = Math.max(1, Math.ceil(sz));
-          ctx.fillRect(Math.round(sx), Math.round(sy), drawSize, drawSize);
-          ctx.globalAlpha = 1;
+        } 
+        
+        // 2. FAZA HAMOWANIA LUB SPOCZYNKU
+        else {
+          
+          // Jeśli timer hamowania jest aktywny -> Rysuj wydłużone linie, które się kurczą
+          if (typeof warpBrakeTimer !== 'undefined' && warpBrakeTimer > 0) {
+             const t = warpBrakeTimer / 0.8; // (zakładając że timer ustawiasz na 0.8s w exitWarp)
+             const tSq = t * t; // Kwadratowo dla dynamiki
+             
+             // Długość przy hamowaniu
+             const brakeLen = STEADY_LENGTH * BRAKE_STRENGTH * tSq;
+
+             // Kierunek z prędkości statku lub ostatniego wektora
+             const dirX = warp.dir.x || (ship.vel.x ? ship.vel.x/1000 : 1);
+             const dirY = warp.dir.y || (ship.vel.y ? ship.vel.y/1000 : 0);
+
+             const dx = -dirX * brakeLen * zoom;
+             const dy = -dirY * brakeLen * zoom;
+
+             ctx.strokeStyle = `rgba(200,220,255,${0.1 + 0.4 * t})`; // Zanikanie alpha
+             ctx.lineWidth = 2;
+             ctx.beginPath(); ctx.moveTo(sx+dx, sy+dy); ctx.lineTo(sx, sy); ctx.stroke();
+             
+             // Mała kropka na czele, żeby płynnie przeszło w gwiazdę
+             ctx.fillStyle = '#ffffff';
+             ctx.fillRect(Math.round(sx), Math.round(sy), 1, 1);
+          } 
+          
+          // 3. ZWYKŁY STAN (Kropki)
+          else {
+            ctx.globalAlpha = s.bright;
+            ctx.fillStyle = '#ffffff';
+            const flicker = 0.8 + 0.2 * Math.random();
+            const baseSize = s.size * flicker * zoom;
+            const minSize = 0.6 * zoom;
+            const sz = Math.max(minSize, baseSize);
+            const drawSize = Math.max(1, Math.ceil(sz));
+            ctx.fillRect(Math.round(sx), Math.round(sy), drawSize, drawSize);
+            ctx.globalAlpha = 1;
+          }
         }
       }
     }
