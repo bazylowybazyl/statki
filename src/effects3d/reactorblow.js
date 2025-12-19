@@ -17,16 +17,23 @@ const shockFragment = `
     varying vec2 vUv;
     
     void main() {
-        float dist = abs(vUv.y - 0.5) * 2.0;
-        float ring = 1.0 - pow(dist, 0.5);
+        // Dystans od środka UV (0.5, 0.5)
+        float dist = distance(vUv, vec2(0.5));
         
-        float sparks = sin(vUv.x * 100.0 + progress * 20.0) * 0.5 + 0.5;
-        ring *= (0.8 + sparks * 0.4);
+        // Ring effect
+        float ringWidth = 0.15;
+        float ringRadius = 0.5 * progress; // Rośnie z czasem
+        
+        // Kształt pierścienia
+        float ring = smoothstep(ringRadius, ringRadius - 0.05, dist) * smoothstep(ringRadius - ringWidth, ringRadius - 0.02, dist);
+        
+        // Iskry/Szum w pierścieniu
+        float sparks = sin(vUv.x * 80.0 + progress * 30.0) * 0.5 + 0.5;
+        ring *= (0.6 + sparks * 0.4);
 
-        vec3 color = vec3(0.2, 0.8, 1.0) * 4.0 * uGlobalFade; 
+        vec3 color = vec3(0.1, 0.9, 1.0) * 3.0; // Bardzo jasny cyjan
         
-        float fade = 1.0 - smoothstep(0.4, 1.0, progress);
-        
+        float fade = 1.0 - smoothstep(0.5, 1.0, progress);
         float alpha = ring * fade * uGlobalFade * uOpacity;
         
         if (alpha < 0.01) discard;
@@ -35,12 +42,15 @@ const shockFragment = `
     }
 `;
 
-// --- ZASOBY WSPÓŁDZIELONE ---
+// --- ZASOBY WSPÓŁDZIELONE (SINGLETON) ---
 const sharedResources = {
   textures: { glow: null, spark: null, glowNew: null },
   geometries: {
-    sphere: null, torusImplosion: null, ringInner: null, ringOuter: null,
-    planeGlow: null, spike: null,
+    sphere: null, 
+    torusImplosion: null, 
+    planeShock: null, 
+    planeGlow: null, 
+    spike: null,
   }
 };
 
@@ -49,73 +59,110 @@ function ensureResources() {
   if (!sharedResources.textures.glowNew) sharedResources.textures.glowNew = makeSoftGlow(128, "rgba(0, 200, 255, 1)", "rgba(0, 50, 255, 0.2)");
   if (!sharedResources.textures.spark) sharedResources.textures.spark = makeSparkTexture(64);
 
-  if (!sharedResources.geometries.sphere) sharedResources.geometries.sphere = new THREE.SphereGeometry(3, 32, 32);
-  if (!sharedResources.geometries.torusImplosion) sharedResources.geometries.torusImplosion = new THREE.TorusGeometry(15, 0.5, 16, 100);
-  if (!sharedResources.geometries.ringInner) sharedResources.geometries.ringInner = new THREE.RingGeometry(0.5, 0.8, 64);
-  if (!sharedResources.geometries.ringOuter) sharedResources.geometries.ringOuter = new THREE.RingGeometry(0.5, 0.6, 64);
-  if (!sharedResources.geometries.planeGlow) sharedResources.geometries.planeGlow = new THREE.PlaneGeometry(15, 15);
+  // Zmniejszone geometrie bazowe (Unit size ~1.0)
+  if (!sharedResources.geometries.sphere) sharedResources.geometries.sphere = new THREE.SphereGeometry(0.5, 16, 16);
+  if (!sharedResources.geometries.torusImplosion) sharedResources.geometries.torusImplosion = new THREE.TorusGeometry(1.5, 0.05, 8, 50);
+  
+  if (!sharedResources.geometries.planeShock) sharedResources.geometries.planeShock = new THREE.PlaneGeometry(1, 1);
+  if (!sharedResources.geometries.planeGlow) sharedResources.geometries.planeGlow = new THREE.PlaneGeometry(1, 1);
   
   if (!sharedResources.geometries.spike) {
-    // Stożek/Kolec: promień góry 0, dołu 1, wysokość 1
-    sharedResources.geometries.spike = new THREE.CylinderGeometry(0, 1, 1, 4); 
-    // Przesuwamy pivot na podstawę, żeby skalowanie odbywało się "od środka" w górę
-    sharedResources.geometries.spike.translate(0, 0.5, 0);
+    // Stożek/Kolec: promień góry 0, dołu 0.1, wysokość 1
+    sharedResources.geometries.spike = new THREE.CylinderGeometry(0, 0.1, 1, 4); 
+    sharedResources.geometries.spike.translate(0, 0.5, 0); // Pivot u podstawy
+    sharedResources.geometries.spike.rotateX(Math.PI / 2); // Obrót, by celował w bok (na płaszczyźnie)
   }
 }
 
 export function createReactorBlowFactory(scene) {
   ensureResources();
 
-  return function spawn({ x = 0, y = 0, z, size = 1.0 } = {}) {
+  return function spawn({ x = 0, y = 0, size = 100 } = {}) {
+    // DEBUG: Potwierdzenie spawnu
+    // console.log(`ReactorBlow spawned at: ${x}, ${y} with size: ${size}`);
+
     const group = new THREE.Group();
-    group.position.set(x, 0, z !== undefined ? z : y);
-    group.scale.setScalar(size);
+    
+    // --- KLUCZOWA POPRAWKA POZYCJI ---
+    // Mapujemy 2D (x, y) gry na 3D (x, 0, z)
+    // Dzięki temu obiekt leży na płaszczyźnie, na którą patrzy kamera
+    group.position.set(x, 0, y); 
+    
+    // Skala: size to promień w jednostkach gry.
+    const scaleFactor = size; 
+    group.scale.setScalar(scaleFactor);
+    
+    // RenderOrder: wymusza rysowanie NA WIERZCHU wszystkiego innego (poza UI)
+    group.renderOrder = 9999;
+
     scene.add(group);
 
-    // --- FAZA 1 & 2 ---
-    const coreMaterial = new THREE.MeshBasicMaterial({ color: 0x00ffff, toneMapped: false });
+    // --- FAZA 1: RDZEŃ & IMPLOZJA ---
+    // depthTest: false -> widać przez ściany/inne obiekty
+    const coreMaterial = new THREE.MeshBasicMaterial({ 
+        color: 0x00ffff, 
+        toneMapped: false, 
+        transparent: true,
+        depthTest: false 
+    });
     const core = new THREE.Mesh(sharedResources.geometries.sphere, coreMaterial);
     group.add(core);
 
-    const implosionMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0 });
+    const implosionMat = new THREE.MeshBasicMaterial({ 
+        color: 0x00ffff, 
+        transparent: true, 
+        opacity: 0,
+        depthTest: false 
+    });
     const implosionRing = new THREE.Mesh(sharedResources.geometries.torusImplosion, implosionMat);
+    // Obrót, by leżał płasko na XZ
     implosionRing.rotation.x = Math.PI / 2;
     implosionRing.scale.set(0, 0, 0);
     group.add(implosionRing);
 
+    // Błyskawice
     const lightningPos = new Float32Array(40 * 2 * 3);
     const lightningGeo = new THREE.BufferGeometry();
     lightningGeo.setAttribute('position', new THREE.BufferAttribute(lightningPos, 3));
     const lightningMat = new THREE.LineBasicMaterial({ 
-        color: 0x88ffff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending 
+        color: 0x88ffff, 
+        transparent: true, 
+        opacity: 0.8, 
+        blending: THREE.AdditiveBlending,
+        depthTest: false
     });
     const lightning = new THREE.LineSegments(lightningGeo, lightningMat);
     lightning.visible = false;
     group.add(lightning);
 
-    const pCount = 1000;
+    // Cząsteczki wciągane
+    const pCount = 200;
     const pGeo = new THREE.BufferGeometry();
     const pPos = new Float32Array(pCount * 3);
-    const pVel = new Float32Array(pCount * 3); 
     for(let i=0; i<pCount; i++) {
-        const r = Math.random() * 8;
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.random() * Math.PI;
-        pPos[i*3] = r * Math.sin(phi) * Math.cos(theta);
-        pPos[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
-        pPos[i*3+2] = r * Math.cos(phi);
+        const angle = Math.random() * Math.PI * 2;
+        const r = 1.5 + Math.random();
+        // Rozkład na płaszczyźnie XZ
+        pPos[i*3] = Math.cos(angle) * r;     // X
+        pPos[i*3+1] = 0;                     // Y (płasko)
+        pPos[i*3+2] = Math.sin(angle) * r;   // Z
     }
     pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
     const particlesMat = new THREE.PointsMaterial({
-        color: 0x00ffff, size: 1.0, map: sharedResources.textures.glow,
-        blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0
+        color: 0x00ffff, 
+        size: 8.0, 
+        map: sharedResources.textures.glow,
+        blending: THREE.AdditiveBlending, 
+        depthWrite: false, 
+        depthTest: false, // Ważne
+        transparent: true, 
+        opacity: 0
     });
     const particles = new THREE.Points(pGeo, particlesMat);
-    particles.userData = { positions: pPos, velocities: pVel }; 
     group.add(particles);
 
-    const light = new THREE.PointLight(0x00ffff, 0, 300 * size);
-    light.position.set(0, 10, 0);
+    const light = new THREE.PointLight(0x00ffff, 0, size * 2);
+    light.position.set(0, 10, 0); // Lekko nad ziemią
     group.add(light);
 
     // --- FAZA 3: EKSPLOZJA ---
@@ -123,19 +170,25 @@ export function createReactorBlowFactory(scene) {
     explosionGroup.visible = false;
     group.add(explosionGroup);
 
-    // KOLCE (SPIKES)
-    const spikeCount = 24;
+    // Kolce (Spikes)
+    const spikeCount = 16;
     const spikeGroup = new THREE.Group();
     const spikeMat = new THREE.MeshBasicMaterial({ 
-        color: 0xffffff, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false
+        color: 0xffffff, 
+        transparent: true, 
+        opacity: 1, 
+        blending: THREE.AdditiveBlending, 
+        depthWrite: false,
+        depthTest: false
     });
     const spikes = [];
     for(let i=0; i<spikeCount; i++) {
         const mesh = new THREE.Mesh(sharedResources.geometries.spike, spikeMat);
-        mesh.rotation.set(Math.random() * Math.PI * 2, Math.random() * Math.PI * 2, Math.random() * Math.PI * 2);
+        // Obracamy wokół osi Y (płaszczyzna XZ)
+        mesh.rotation.y = Math.random() * Math.PI * 2;
         mesh.userData = {
-            maxScaleY: 20 + Math.random() * 30,
-            widthScale: 0.5 + Math.random() * 1.5
+            maxScaleY: 1.5 + Math.random() * 1.5,
+            widthScale: 0.5 + Math.random() * 1.0
         };
         mesh.scale.set(0,0,0);
         spikeGroup.add(mesh);
@@ -143,69 +196,89 @@ export function createReactorBlowFactory(scene) {
     }
     explosionGroup.add(spikeGroup);
 
-    const ringUniforms = { progress: { value: 0 }, uGlobalFade: { value: 1.0 }, uOpacity: { value: 1.0 } };
+    // Fala uderzeniowa (Shockwave)
     const ring1Mat = new THREE.ShaderMaterial({
         vertexShader: shockVertex, fragmentShader: shockFragment,
-        uniforms: THREE.UniformsUtils.clone(ringUniforms),
-        transparent: true, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
+        uniforms: {
+            progress: { value: 0 },
+            uGlobalFade: { value: 1.0 },
+            uOpacity: { value: 1.0 }
+        },
+        transparent: true, 
+        side: THREE.DoubleSide, 
+        blending: THREE.AdditiveBlending, 
+        depthWrite: false,
+        depthTest: false
     });
-    const ring1 = new THREE.Mesh(sharedResources.geometries.ringInner, ring1Mat);
-    ring1.rotation.x = -Math.PI/2;
+    const ring1 = new THREE.Mesh(sharedResources.geometries.planeShock, ring1Mat);
+    ring1.rotation.x = -Math.PI / 2; // Płasko na ziemi
+    ring1.scale.set(4, 4, 1); 
     explosionGroup.add(ring1);
 
-    const ring2Mat = new THREE.ShaderMaterial({
-        vertexShader: shockVertex, fragmentShader: shockFragment,
-        uniforms: THREE.UniformsUtils.clone(ringUniforms),
-        transparent: true, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
-    });
-    ring2Mat.uniforms.uOpacity.value = 0.6;
-    const ring2 = new THREE.Mesh(sharedResources.geometries.ringOuter, ring2Mat);
-    ring2.rotation.x = -Math.PI/2;
-    explosionGroup.add(ring2);
-
     const glowMat = new THREE.MeshBasicMaterial({
-        map: sharedResources.textures.glowNew, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false
+        map: sharedResources.textures.glowNew, 
+        transparent: true, 
+        opacity: 0, 
+        blending: THREE.AdditiveBlending, 
+        depthWrite: false,
+        depthTest: false
     });
-    const groundGlow = new THREE.Mesh(sharedResources.geometries.planeGlow, glowMat);
-    groundGlow.rotation.x = -Math.PI/2;
-    groundGlow.position.y = 1.0;
-    explosionGroup.add(groundGlow);
+    const glowSprite = new THREE.Mesh(sharedResources.geometries.planeGlow, glowMat);
+    glowSprite.rotation.x = -Math.PI / 2; // Płasko na ziemi
+    glowSprite.scale.set(5, 5, 1);
+    explosionGroup.add(glowSprite);
 
-    // --- ISKRY / ODŁAMKI ---
-    const sparkCount = 400;
+    // Iskry
+    const sparkCount = 120;
     const sparkPos = new Float32Array(sparkCount * 3);
     const sparkVel = [];
     for(let i=0; i<sparkCount; i++) {
-        // Zmniejszona prędkość początkowa (15-45)
-        const speed = 15 + Math.random() * 30; 
+        const speed = 0.5 + Math.random() * 1.5; 
         const angle = Math.random() * Math.PI * 2;
-        const up = (Math.random() - 0.2) * 1.5;
-        sparkVel.push(new THREE.Vector3(Math.cos(angle), up, Math.sin(angle)).normalize().multiplyScalar(speed));
+        // Rozrzut w płaszczyźnie XZ
+        sparkVel.push({
+            x: Math.cos(angle) * speed,
+            y: (Math.random()) * 0.5, // Lekko w górę
+            z: Math.sin(angle) * speed
+        });
     }
     const sparkGeo = new THREE.BufferGeometry();
     sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
     const sparks = new THREE.Points(sparkGeo, new THREE.PointsMaterial({
-        color: 0xffffff, size: 1.2, map: sharedResources.textures.spark, transparent: true, blending: THREE.AdditiveBlending
+        color: 0xffffff, 
+        size: 6.0, 
+        map: sharedResources.textures.spark, 
+        transparent: true, 
+        blending: THREE.AdditiveBlending, 
+        depthWrite: false,
+        depthTest: false
     }));
     explosionGroup.add(sparks);
 
+    // --- LOGIKA ANIMACJI ---
     let time = 0;
-    let state = 'charging';
     let disposed = false;
-    const explosionLifespan = 6.0;
+    
+    const CHARGE_TIME = 1.8;
+    const IMPLOSION_DURATION = 0.6;
+    const EXPLOSION_DURATION = 3.0; 
+    const TOTAL_IMPLOSION_END = CHARGE_TIME + IMPLOSION_DURATION;
 
     function updateLightning(radius) {
         const positions = lightningGeo.attributes.position.array;
         for (let i = 0; i < 40; i++) {
-            positions[i*6] = (Math.random()-0.5) * 3;
-            positions[i*6+1] = (Math.random()-0.5) * 3;
-            positions[i*6+2] = (Math.random()-0.5) * 3;
+            const jit = 0.1;
+            // Centrum (jitter wokół 0,0,0)
+            positions[i*6] = (Math.random()-0.5) * jit;
+            positions[i*6+1] = (Math.random()-0.5) * jit;
+            positions[i*6+2] = (Math.random()-0.5) * jit;
+            
+            // Koniec linii na obwodzie (XZ)
             const r = radius * (0.8 + Math.random()*0.4);
-            const theta = Math.random() * Math.PI * 2;
-            const phi = Math.random() * Math.PI;
-            positions[i*6+3] = r * Math.sin(phi) * Math.cos(theta);
-            positions[i*6+4] = r * Math.sin(phi) * Math.sin(theta);
-            positions[i*6+5] = r * Math.cos(phi);
+            const angle = Math.random() * Math.PI * 2;
+            positions[i*6+3] = Math.cos(angle) * r;
+            positions[i*6+4] = (Math.random()-0.5) * jit; // Płasko
+            positions[i*6+5] = Math.sin(angle) * r;
         }
         lightningGeo.attributes.position.needsUpdate = true;
         lightningMat.opacity = Math.random();
@@ -215,7 +288,7 @@ export function createReactorBlowFactory(scene) {
         const positions = particles.geometry.attributes.position.array;
         for(let i=0; i < positions.length; i+=3) {
             positions[i] *= factor;
-            positions[i+1] *= factor;
+            // Y zostawiamy bez zmian lub minimalnie
             positions[i+2] *= factor;
         }
         particles.geometry.attributes.position.needsUpdate = true;
@@ -227,102 +300,97 @@ export function createReactorBlowFactory(scene) {
       if (disposed) return;
       time += dt;
 
-      if (time < 2.5) {
-        state = 'charging';
-        const pulse = Math.sin(time * 12) * 0.2 + 1;
+      // 1. ŁADOWANIE
+      if (time < CHARGE_TIME) {
+        const t = time / CHARGE_TIME;
+        const pulse = 1.0 + Math.sin(time * 15) * 0.1 * t;
         core.scale.setScalar(pulse);
-        const colorMix = Math.min(1, time / 2.5);
-        core.material.color.setHSL(0.5, 1, 0.5 + colorMix * 0.5); 
+        
+        const lightness = 0.5 + t * 0.5;
+        core.material.color.setHSL(0.5, 1.0, lightness);
+        
         lightning.visible = true;
-        updateLightning(20 + time * 20);
-        light.intensity = time * 30;
-        light.color.setHSL(0.5 - time * 0.1, 1, 0.5);
-        particles.material.opacity = Math.min(1, time * 0.5);
-        particles.material.color.setHex(0x00ffff);
-      } else if (time < 3.4) {
-        state = 'imploding';
-        const implosionTime = time - 2.5; 
-        const totalImplosionTime = 0.9;
-        const progress = implosionTime / totalImplosionTime;
-        if (progress < 0.3) {
-            const expandProgress = progress / 0.3;
-            const scale = THREE.MathUtils.lerp(0, 4, expandProgress);
-            implosionRing.scale.setScalar(scale);
-            implosionRing.material.opacity = expandProgress * 0.8;
-            implosionRing.material.color.setHex(0x00ffff);
+        updateLightning(1.2 + t * 0.5);
+        
+        light.intensity = t * 2.0;
+        
+        particles.material.opacity = Math.min(1, t * 2.0);
+      } 
+      // 2. IMPLOZJA
+      else if (time < TOTAL_IMPLOSION_END) {
+        const localTime = time - CHARGE_TIME;
+        const progress = localTime / IMPLOSION_DURATION;
+        
+        if (progress < 0.5) {
+            const s = progress * 2.0; 
+            implosionRing.scale.setScalar(s);
+            implosionRing.material.opacity = progress * 2.0;
         } else {
-            const contractProgress = (progress - 0.3) / 0.7;
-            const t = contractProgress * contractProgress * contractProgress;
-            const scale = THREE.MathUtils.lerp(4, 0, t); 
-            implosionRing.scale.setScalar(scale);
-            implosionRing.material.opacity = 1.0; 
-            implosionRing.material.color.setHSL(0.5, 1.0, 0.5 + contractProgress * 0.5);
+            const s = (1.0 - progress) * 4.0; 
+            implosionRing.scale.setScalar(s);
         }
-        if (progress < 0.9) core.scale.setScalar(1 - progress * 0.6);
-        else { core.scale.setScalar(0.01); core.material.color.setHex(0x000000); }
-        updateLightning(8 * (1-progress)); 
-        suckParticles(progress > 0.8 ? 0.6 : 0.92);
-      } else {
-        if (state !== 'exploding') {
-            state = 'exploding';
-            explosionGroup.visible = true;
-        }
-
-        const explosionAge = time - 3.4;
-        const progress = explosionAge / explosionLifespan;
+        
+        core.scale.setScalar(Math.max(0.01, 1.0 - progress));
+        suckParticles(0.85);
+        lightning.visible = progress < 0.8;
+      } 
+      // 3. EKSPLOZJA
+      else {
+        const explosionTime = time - TOTAL_IMPLOSION_END;
+        const progress = explosionTime / EXPLOSION_DURATION;
 
         if (progress >= 1.0) {
             dispose();
             return;
         }
 
-        let globalFade = 1.0 - THREE.MathUtils.smoothstep(0.6, 1.0, progress);
-        if (progress > 0.98) globalFade = 0.0;
+        if (!explosionGroup.visible) {
+            explosionGroup.visible = true;
+            core.visible = false;
+            lightning.visible = false;
+            implosionRing.visible = false;
+            particles.visible = false;
+        }
+
+        const globalFade = 1.0 - Math.pow(progress, 3.0);
 
         ring1Mat.uniforms.progress.value = progress;
         ring1Mat.uniforms.uGlobalFade.value = globalFade;
-        ring2Mat.uniforms.progress.value = progress;
-        ring2Mat.uniforms.uGlobalFade.value = globalFade;
-        const s1 = (1.0 + progress * 35.0) * 4.0;
-        ring1.scale.set(s1, s1, 1);
-        const s2 = (1.0 + progress * 60.0) * 4.0;
-        ring2.scale.set(s2, s2, 1);
+        const ringScale = 1.0 + progress * 5.0;
+        ring1.scale.set(ringScale * 4, ringScale * 4, 1);
 
-        const spikeGrow = Math.min(1.0, explosionAge * 8.0);
-        const spikeFade = Math.max(0, 1.0 - explosionAge * 1.5);
+        glowMat.opacity = (1.0 - progress) * 0.8;
+        glowSprite.scale.setScalar(2.0 + progress * 8.0);
+
+        const spikeGrow = Math.min(1.0, explosionTime * 10.0);
+        const spikeFade = Math.max(0, 1.0 - progress * 1.2);
+        
         for(let i=0; i<spikeCount; i++) {
             const m = spikes[i];
             m.scale.set(
                 m.userData.widthScale * spikeGrow * spikeFade, 
-                m.userData.maxScaleY * spikeGrow, 
+                m.userData.maxScaleY * spikeGrow * spikeFade, 
                 m.userData.widthScale * spikeGrow * spikeFade
             );
         }
         spikeMat.opacity = spikeFade;
 
-        let glowIntensity = progress < 0.1 ? progress * 10 : 1.0;
-        glowMat.opacity = glowIntensity * 0.8 * globalFade;
-        groundGlow.scale.setScalar((1.0 + progress * 6.0) * 5.0);
-
         const spkPos = sparks.geometry.attributes.position.array;
         for(let i=0; i<sparkVel.length; i++) {
             const vel = sparkVel[i];
-            // Minimalny opór powietrza (0.992)
-            vel.multiplyScalar(0.992); 
-            spkPos[i*3]   += vel.x * dt;
-            spkPos[i*3+1] += vel.y * dt;
-            spkPos[i*3+2] += vel.z * dt;
+            vel.x *= 0.95; 
+            vel.z *= 0.95; // Opór na XZ
+            
+            spkPos[i*3]   += vel.x * dt * 60; 
+            spkPos[i*3+1] += vel.y * dt * 60;
+            spkPos[i*3+2] += vel.z * dt * 60;
         }
         sparks.geometry.attributes.position.needsUpdate = true;
-        sparks.material.opacity = globalFade;
+        
+        const sparkFade = Math.max(0, 1.0 - progress * 1.5);
+        sparks.material.opacity = sparkFade;
 
-        let lightInt = progress < 0.1 ? 500 * (progress/0.1) : 500;
-        light.intensity = lightInt * globalFade;
-
-        core.visible = false;
-        lightning.visible = false;
-        implosionRing.visible = false;
-        particles.visible = false;
+        light.intensity = (1.0 - progress) * 5.0;
       }
     }
 
@@ -330,14 +398,24 @@ export function createReactorBlowFactory(scene) {
       if (disposed) return;
       disposed = true;
       if (group.parent) group.parent.remove(group);
-      coreMaterial.dispose(); implosionMat.dispose(); lightningGeo.dispose(); lightningMat.dispose();
-      particlesMat.dispose(); ring1Mat.dispose(); ring2Mat.dispose(); glowMat.dispose(); 
-      sparkGeo.dispose(); spikeMat.dispose();
+      
+      coreMaterial.dispose(); 
+      implosionMat.dispose(); 
+      lightningGeo.dispose(); lightningMat.dispose();
+      particlesMat.dispose(); pGeo.dispose();
+      
+      ring1Mat.dispose(); 
+      glowMat.dispose(); 
+      
+      spikeMat.dispose(); 
+      sparks.geometry.dispose(); sparks.material.dispose();
     }
 
     return { group, update, dispose };
   };
 }
+
+// --- HELPERY ---
 
 function makeSoftGlow(size, colorCore, colorOuter) {
   const canvas = document.createElement("canvas");
@@ -369,10 +447,10 @@ function makeSparkTexture(size) {
   ctx.fillRect(0, 0, size, size);
   ctx.fillStyle = "rgba(255, 255, 255, 1)";
   ctx.beginPath();
-  ctx.ellipse(center, center, size * 0.45, size * 0.03, 0, 0, Math.PI * 2);
+  ctx.ellipse(center, center, size * 0.45, size * 0.05, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.beginPath();
-  ctx.ellipse(center, center, size * 0.45, size * 0.03, Math.PI / 2, 0, Math.PI * 2);
+  ctx.ellipse(center, center, size * 0.45, size * 0.05, Math.PI / 2, 0, Math.PI * 2);
   ctx.fill();
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
