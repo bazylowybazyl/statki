@@ -679,6 +679,8 @@ const PLANET_SCALE =
   (typeof window !== 'undefined' && typeof window.DEFAULT_PLANET_SCALE !== 'undefined')
     ? window.DEFAULT_PLANET_SCALE : (DEFAULT_PLANET_SCALE ?? 3);
 
+let warpBrakeTimer = 0;
+
 // =============== Canvas & utils ===============
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
@@ -11467,8 +11469,18 @@ const warp = {
 function exitWarp(){
   spawnShockwave(ship.pos.x, ship.pos.y, { maxR: 1200, maxLife: 0.7 });
   camera.addShake(18, 0.22);
+  
   warp.entryProgress = 0;
+  
+  // TO JEST NAJWAŻNIEJSZE:
+  // Ustawiamy timer na czas trwania efektu hamowania (np. 0.8 sekundy)
   warpBrakeTimer = 0.8; 
+  
+  // Zachowujemy ostatni kierunek warpa, aby efekt hamowania wiedział, w którą stronę rysować kreski
+  // (Jeśli warp.dir się zeruje gdzieś indziej, to tu go "zamrażamy" dla efektu)
+  if (!warp.lastDir) warp.lastDir = { x: warp.dir.x, y: warp.dir.y };
+  warp.lastDir.x = warp.dir.x;
+  warp.lastDir.y = warp.dir.y;
 }
 
 const boost = {
@@ -12447,35 +12459,45 @@ function drawStars(cam){
           ctx.beginPath(); ctx.moveTo(sx+dx, sy+dy); ctx.lineTo(sx, sy); ctx.stroke();
         } 
         
-        // 2. FAZA HAMOWANIA LUB SPOCZYNKU
+        // 2. FAZA HAMOWANIA LUB SPOCZYNKU (warp.state !== 'active')
         else {
           
-          // Jeśli timer hamowania jest aktywny -> Rysuj wydłużone linie, które się kurczą
-          if (typeof warpBrakeTimer !== 'undefined' && warpBrakeTimer > 0) {
-             const t = warpBrakeTimer / 0.8; // (zakładając że timer ustawiasz na 0.8s w exitWarp)
-             const tSq = t * t; // Kwadratowo dla dynamiki
+          if (warpBrakeTimer > 0) {
+             // Efekt hamowania
+             const t = warpBrakeTimer / 0.8; // Normalizacja (1.0 -> 0.0)
              
-             // Długość przy hamowaniu
+             // Używamy funkcji potęgowej, żeby efekt był "ostry" na początku
+             const tSq = t * t * t; 
+             
+             // Długość przy hamowaniu (MOCNE ROZCIĄGNIĘCIE)
              const brakeLen = STEADY_LENGTH * BRAKE_STRENGTH * tSq;
 
-             // Kierunek z prędkości statku lub ostatniego wektora
-             const dirX = warp.dir.x || (ship.vel.x ? ship.vel.x/1000 : 1);
-             const dirY = warp.dir.y || (ship.vel.y ? ship.vel.y/1000 : 0);
+             // Kierunek: Używamy zapamiętanego lastDir, a jak go nie ma to prędkości statku
+             let dirX = 1, dirY = 0;
+             if (warp.lastDir) {
+                 dirX = warp.lastDir.x;
+                 dirY = warp.lastDir.y;
+             } else if (ship.vel.x || ship.vel.y) {
+                 const vLen = Math.hypot(ship.vel.x, ship.vel.y) || 1;
+                 dirX = ship.vel.x / vLen;
+                 dirY = ship.vel.y / vLen;
+             }
 
              const dx = -dirX * brakeLen * zoom;
              const dy = -dirY * brakeLen * zoom;
 
-             ctx.strokeStyle = `rgba(200,220,255,${0.1 + 0.4 * t})`; // Zanikanie alpha
+             ctx.strokeStyle = `rgba(200,220,255,${0.2 + 0.6 * t})`; // Jaśniejsze na początku
              ctx.lineWidth = 2;
+             
+             // Rysujemy linię
              ctx.beginPath(); ctx.moveTo(sx+dx, sy+dy); ctx.lineTo(sx, sy); ctx.stroke();
              
-             // Mała kropka na czele, żeby płynnie przeszło w gwiazdę
+             // Kropka na końcu
              ctx.fillStyle = '#ffffff';
-             ctx.fillRect(Math.round(sx), Math.round(sy), 1, 1);
-          } 
-          
-          // 3. ZWYKŁY STAN (Kropki)
-          else {
+             ctx.fillRect(Math.round(sx), Math.round(sy), 2, 2); // Nieco większa kropka
+
+          } else {
+            // Zwykłe kropki (spoczynek)
             ctx.globalAlpha = s.bright;
             ctx.fillStyle = '#ffffff';
             const flicker = 0.8 + 0.2 * Math.random();
