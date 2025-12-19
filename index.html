@@ -603,6 +603,7 @@
   import { createRailgunExplosionFactory } from "./src/effects3d/railgunExplosion.js";
   import { createArmataImpactFactory } from "./src/effects3d/armataImpact.js";
   import { createAutocannonImpactFactory } from "./src/effects3d/autocannonImpact.js";
+  import { createReactorBlowFactory } from "./src/effects3d/reactorblow.js";
   import * as Space2DBackground from "./src/lib/space2d/tyroBackground.js";
   import { WarpBlackHole } from "./src/vfx/warpBlackHole.js";
   import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
@@ -629,6 +630,7 @@
   window.createRailgunExplosionFactory = createRailgunExplosionFactory;
   window.createArmataImpactFactory = createArmataImpactFactory;
   window.createAutocannonImpactFactory = createAutocannonImpactFactory;
+  window.createReactorBlowFactory = createReactorBlowFactory;
   window.createShipEntity = createShipEntity;
   window.applyPlayerInput = applyPlayerInput;
   window.runShipAI = runShipAI;
@@ -1646,6 +1648,7 @@ ship.hardpoints = previousPlayer.hardpoints || [];
 ship.weapons = previousPlayer.weapons || {};
 ship.spriteW = previousPlayer.spriteW || ship.spriteW || 260;
 ship.spriteH = previousPlayer.spriteH || ship.spriteH || 520;
+ship.destroyed = ship.hull?.val <= 0;
 
 if (previousPlayer && typeof previousPlayer === 'object'){
   for (const [key, value] of Object.entries(previousPlayer)){
@@ -2566,6 +2569,7 @@ function startOverlay3D() {
   const railFactory = window.createRailgunExplosionFactory;
   const armataFactory = window.createArmataImpactFactory;
   const autocannonFactory = window.createAutocannonImpactFactory;
+  const reactorFactory = window.createReactorBlowFactory;
   const host = document.getElementById('game-root');
 
   // Musimy mieć: API z modułu + host z DOM + overlayView z tego skryptu
@@ -2580,6 +2584,9 @@ function startOverlay3D() {
   }
   if (autocannonFactory) {
     window.makeAutocannonImpact = autocannonFactory(ov.scene);
+  }
+  if (reactorFactory) {
+    window.makeReactorBlow = reactorFactory(ov.scene);
   }
   resizeOverlay3D();
   return true;
@@ -2615,6 +2622,13 @@ function triggerArmataImpact3D(x, y, size = ship.h * 0.3){
 function triggerAutocannonImpact3D(x, y, size = ship.h * 0.2){
   if (overlay3D && window.makeAutocannonImpact) {
     const fx = window.makeAutocannonImpact({ x, y, size });
+    overlay3D.spawn(fx);
+  }
+}
+
+function triggerReactorBlow3D(x, y, size = ship.h * 0.35){
+  if (overlay3D && window.makeReactorBlow) {
+    const fx = window.makeReactorBlow({ x, y, size });
     overlay3D.spawn(fx);
   }
 }
@@ -9427,6 +9441,7 @@ function playerHasManualInput(){
 }
 
 function updatePlayerCommand(dt){
+  if (ship.destroyed) return;
   const cmd = ship.command;
   if(!cmd || !cmd.target) return;
   if (PAUSED || warp.state !== 'idle') return;
@@ -9470,6 +9485,7 @@ function handleWarpKeyUp(){
 }
 
 function handleShiftDown(){
+  if (ship.destroyed) return;
   shiftBinding = currentShiftMode();
   if (shiftBinding === 'boost') {
     activateBoostIfAllowed();
@@ -9479,6 +9495,7 @@ function handleShiftDown(){
 }
 
 function handleShiftUp(){
+  if (ship.destroyed) return;
   const mode = shiftBinding || currentShiftMode();
   if (mode === 'boost') {
     stopBoost();
@@ -9573,6 +9590,10 @@ window.addEventListener('keyup', e=>{
   updateInput();
 });
 function updateInput(){
+  if (ship.destroyed) {
+    applyPlayerInput(ship, { controller:'player', main:0, thrustX:0, thrustY:0, leftSide:0, rightSide:0, torque:0 }, input);
+    return;
+  }
   const main = keys['w'] ? 1 : 0;
   const leftSide = keys['e'] ? 1 : 0;
   const rightSide = keys['q'] ? 1 : 0;
@@ -10747,9 +10768,30 @@ function tryFireSpecial(){
     spawnParticle({x:px, y:py}, {x:(Math.random()-0.5)*120, y:(Math.random()-0.5)*120}, 0.2, '#9ccfff', 2.5, true);
   }
 }
+
+function handlePlayerDestroyed(){
+  if (ship.destroyed) return;
+  ship.destroyed = true;
+  input.main = input.leftSide = input.rightSide = input.torque = 0;
+  applyPlayerInput(ship, { controller:'player', main:0, thrustX:0, thrustY:0, leftSide:0, rightSide:0, torque:0 }, input);
+  ship.command = null;
+  stopBoost();
+  if (warp.state !== 'idle') {
+    warp.state = 'idle';
+    warp.charge = 0;
+  }
+
+  const reactorY = ship.pos.y + ship.h * 0.08;
+  triggerReactorBlow3D(ship.pos.x, reactorY, ship.h * 0.35);
+}
+
 function applyDamageToPlayer(amount){
+  const prevHull = ship.hull.val;
   if(ship.shield.val>0){ const s = Math.min(ship.shield.val, amount); ship.shield.val -= s; amount -= s; ship.shield.regenTimer = ship.shield.regenDelay; }
   if(amount>0) ship.hull.val = Math.max(0, ship.hull.val - amount);
+  if (!ship.destroyed && prevHull > 0 && ship.hull.val <= 0) {
+    handlePlayerDestroyed();
+  }
   hudSpawnDMG(ship.pos.x, ship.pos.y - ship.h*0.4, amount, 'player');
 }
 function applyDamageToNPC(npc, dmg, cause='default'){
