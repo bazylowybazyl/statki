@@ -78,7 +78,7 @@ export function createRailgunExplosionFactory(scene) {
     group.add(core);
 
     // --- ZMNIEJSZENIE LICZBY ISKIER ---
-    const sparkCount = 10; // Było 32 (drastyczna redukcja)
+    const sparkCount = 2; 
     const sparks = new THREE.InstancedMesh(sparkGeometry, sparkMaterial, sparkCount);
     sparks.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     group.add(sparks);
@@ -87,11 +87,11 @@ export function createRailgunExplosionFactory(scene) {
     for(let i=0; i<sparkCount; i++) {
         sparkData[i] = {
             angle: Math.random() * Math.PI * 2,
-            // Mniejsze prędkości = mniejszy zasięg
+           
             speed: 40 + Math.random() * 80, // Było 70 + ... 140
             life: 0.14 + Math.random() * 0.22,
             // Krótsze i cieńsze iskry
-            length: 1.5 + Math.random() * 3.0, // Było 2.6 + ... 6.0
+            length: 1.0 + Math.random() * 2.0, // Było 2.6 + ... 6.0
             thickness: 0.10 + Math.random() * 0.12, // Było 0.18 + ... 0.18
             elevation: 0.15 + Math.random() * 0.4,
             age: 0
