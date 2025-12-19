@@ -2436,19 +2436,11 @@ function updateCameraTarget(dt){
       camera.x += (moveX / len) * panSpeed * dt;
       camera.y += (moveY / len) * panSpeed * dt;
     }
-    if(mouse.overCanvas && !stationUI.open){
-      const edgeMargin = Math.max(24, Math.min(W, H) * 0.08);
-      let edgeX = 0;
-      let edgeY = 0;
-      if(mouse.x <= edgeMargin) edgeX = -1;
-      else if(mouse.x >= W - edgeMargin) edgeX = 1;
-      if(mouse.y <= edgeMargin) edgeY = -1;
-      else if(mouse.y >= H - edgeMargin) edgeY = 1;
-      if(edgeX || edgeY){
-        const len = Math.hypot(edgeX, edgeY) || 1;
-        const panSpeed = camera.freeKeyPanSpeed / Math.max(0.0001, camera.zoom);
-        camera.x += (edgeX / len) * panSpeed * dt;
-        camera.y += (edgeY / len) * panSpeed * dt;
+    if(mouse.overCanvas && !stationUI.open && !showMap){
+      const panSpeed = (camera.freePanSpeed || 1) / Math.max(0.0001, camera.zoom);
+      if(mouse.dx || mouse.dy){
+        camera.x += mouse.dx * panSpeed;
+        camera.y += mouse.dy * panSpeed;
       }
     }
     camera.targetX = camera.x;
@@ -2524,6 +2516,8 @@ function updateCameraTarget(dt){
   }
 
   camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom);
+  mouse.dx = 0;
+  mouse.dy = 0;
 }
 
 // Bezpieczna, odroczona inicjalizacja overlayu 3D
@@ -9659,7 +9653,7 @@ function triggerScanWave(){
   }
 }
 
-const mouse = { x: W/2, y: H/2, left:false, right:false, click:false, overCanvas:false };
+const mouse = { x: W/2, y: H/2, left:false, right:false, click:false, overCanvas:false, dx:0, dy:0 };
 const Selection = { active: false, rect: null, units: new Set() };
 
 function clearSelection(){
@@ -9800,6 +9794,8 @@ canvas.addEventListener('mousemove', e=>{
   const hasMovement = typeof e.movementX === 'number' && typeof e.movementY === 'number';
   const movementX = hasMovement ? e.movementX : ((camera.lastPointerX == null) ? 0 : e.clientX - camera.lastPointerX);
   const movementY = hasMovement ? e.movementY : ((camera.lastPointerY == null) ? 0 : e.clientY - camera.lastPointerY);
+  mouse.dx += movementX;
+  mouse.dy += movementY;
   camera.lastPointerX = e.clientX;
   camera.lastPointerY = e.clientY;
   if (showMap && mapView.dragging){
