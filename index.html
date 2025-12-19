@@ -12459,20 +12459,21 @@ function drawStars(cam){
           ctx.beginPath(); ctx.moveTo(sx+dx, sy+dy); ctx.lineTo(sx, sy); ctx.stroke();
         } 
         
-        // 2. FAZA HAMOWANIA LUB SPOCZYNKU (warp.state !== 'active')
+        // 2. FAZA HAMOWANIA LUB SPOCZYNKU
         else {
           
-          if (warpBrakeTimer > 0) {
-             // Efekt hamowania
-             const t = warpBrakeTimer / 0.8; // Normalizacja (1.0 -> 0.0)
+          // Jeśli timer hamowania jest aktywny
+          if (typeof warpBrakeTimer !== 'undefined' && warpBrakeTimer > 0) {
+             // t schodzi od 1.0 do 0.0
+             const t = warpBrakeTimer / 0.8; 
              
-             // Używamy funkcji potęgowej, żeby efekt był "ostry" na początku
-             const tSq = t * t * t; 
+             // Używamy t^3, aby długość malała bardzo szybko (dynamiczny "snap back")
+             const tCubed = t * t * t;
              
-             // Długość przy hamowaniu (MOCNE ROZCIĄGNIĘCIE)
-             const brakeLen = STEADY_LENGTH * BRAKE_STRENGTH * tSq;
+             // Długość: Mnożymy przez BRAKE_STRENGTH
+             const brakeLen = STEADY_LENGTH * BRAKE_STRENGTH * tCubed;
 
-             // Kierunek: Używamy zapamiętanego lastDir, a jak go nie ma to prędkości statku
+             // Kierunek
              let dirX = 1, dirY = 0;
              if (warp.lastDir) {
                  dirX = warp.lastDir.x;
@@ -12486,18 +12487,27 @@ function drawStars(cam){
              const dx = -dirX * brakeLen * zoom;
              const dy = -dirY * brakeLen * zoom;
 
-             ctx.strokeStyle = `rgba(200,220,255,${0.2 + 0.6 * t})`; // Jaśniejsze na początku
-             ctx.lineWidth = 2;
-             
-             // Rysujemy linię
-             ctx.beginPath(); ctx.moveTo(sx+dx, sy+dy); ctx.lineTo(sx, sy); ctx.stroke();
-             
-             // Kropka na końcu
-             ctx.fillStyle = '#ffffff';
-             ctx.fillRect(Math.round(sx), Math.round(sy), 2, 2); // Nieco większa kropka
+             // --- POPRAWKA JASNOŚCI ---
+             // Wcześniej było: 0.2 + 0.6*t (Max 0.8 -> zbyt jasne!)
+             // Teraz: Max 0.3 (delikatna smuga, która nie przepala ekranu)
+             const alpha = 0.05 + 0.25 * t;
 
-          } else {
-            // Zwykłe kropki (spoczynek)
+             ctx.strokeStyle = `rgba(200,220,255,${alpha})`;
+             ctx.lineWidth = 2; // Możesz zmienić na 1.5 dla cieńszych linii
+             
+             ctx.beginPath(); 
+             ctx.moveTo(sx+dx, sy+dy); 
+             ctx.lineTo(sx, sy); 
+             ctx.stroke();
+             
+             // USUNIĘTO: ctx.fillRect(...) 
+             // Nie rysujemy kropki na końcu smugi podczas hamowania, 
+             // bo nakładanie się smugi i kropki powodowało "białe punkty".
+
+          } 
+          
+          // 3. ZWYKŁY STAN (Spoczynek - rysujemy tylko kropki)
+          else {
             ctx.globalAlpha = s.bright;
             ctx.fillStyle = '#ffffff';
             const flicker = 0.8 + 0.2 * Math.random();
@@ -12505,6 +12515,7 @@ function drawStars(cam){
             const minSize = 0.6 * zoom;
             const sz = Math.max(minSize, baseSize);
             const drawSize = Math.max(1, Math.ceil(sz));
+            
             ctx.fillRect(Math.round(sx), Math.round(sy), drawSize, drawSize);
             ctx.globalAlpha = 1;
           }
