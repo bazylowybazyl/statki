@@ -11593,6 +11593,9 @@ function physicsStep(dt){
   if (boost.state === 'active' && !isPlanetOrbitZoneId(zoneState.current?.id)) {
     boost.state = 'idle';
   }
+  if(typeof warpBrakeTimer !== 'undefined' && warpBrakeTimer > 0) {
+      warpBrakeTimer -= dt;
+  }
   // regen paliwa gdy nie warpuje
   if(warp.state!=='active'){
     warp.fuel = clamp(warp.fuel + warp.regenRate*dt, 0, warp.fuelMax);
