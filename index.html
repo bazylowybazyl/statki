@@ -2762,7 +2762,7 @@ function key(ix,iy){ return ix+','+iy; }
 function generateCell(ix,iy){
   const seed = ((ix*73856093) ^ (iy*19349663) ^ 0x9e3779b9) >>> 0;
   const rnd = mulberry32(seed);
-  const count = 14 + Math.floor(rnd()*10); // 14–23 gwiazdy na komórkę
+  const count = 5 + Math.floor(rnd()*5); // ilośc gwiazd na komorke
   const stars = [];
   for(let i=0;i<count;i++){
     const x = ix*STAR_CELL + rnd()*STAR_CELL;
@@ -12416,7 +12416,7 @@ function drawStars(cam){
         if(warp.state==='active'){
           // Smugi przy warp
           const entry = smoothstep01(warp.entryProgress);
-          const L = 24 * (0.25 + 0.75*entry) * (1 + 1.2*(warp.fuel/warp.fuelMax));
+          const L = 76 * (0.25 + 0.75*entry) * (1 + 1.2*(warp.fuel/warp.fuelMax));
           const dx = -warp.dir.x * L * zoom;
           const dy = -warp.dir.y * L * zoom;
           ctx.strokeStyle = 'rgba(200,220,255,0.35)';
