@@ -468,6 +468,7 @@
       </button>
       <div class="side-panel-body" role="group" aria-label="Wsparcie">
         <div class="support-row">
+          <button class="support-btn" data-support-spawn="carrier_capital">Spawn carrier</button>
           <button class="support-btn" data-support-spawn="carrier_fighter">Carrier Fighter</button>
           <button class="support-btn" data-support-spawn="fighter">Fighter Squad</button>
           <button class="support-btn" data-support-spawn="frigate_pd">Frigate (PD)</button>
@@ -699,6 +700,7 @@ const supportUIRoot = document.getElementById('support-ui');
 const supportGuardBtn = document.getElementById('support-guard');
 const supportEngageBtn = document.getElementById('support-engage');
 const supportSpawnButtons = document.querySelectorAll('[data-support-spawn]');
+const carrierSpawnBtn = document.querySelector('[data-support-spawn="carrier_capital"]');
 const shieldControlsRoot = document.getElementById('shield-controls');
 const energyShotBtn = document.getElementById('btn-energy-shot');
 
@@ -1532,6 +1534,9 @@ function updateSupportWing(dt){
   cleanupSupportWing();
   if (SupportWing.ui.root) {
     SupportWing.ui.root.classList.remove('hidden');
+  }
+  if (carrierSpawnBtn) {
+    carrierSpawnBtn.disabled = !!getFriendlyCarrierEntity();
   }
   if (SupportWing.order === 'engage') {
     const piratesAlive = npcs.some(n => n && !n.dead && n.isPirate);
@@ -4476,12 +4481,31 @@ function updateCapitalCarrier(entry, dt){
   }
 }
 
+function spawnFriendlyCarrier(){
+  const existing = getFriendlyCarrierEntity();
+  if (existing) return existing;
+
+  const au = getAuToWorldUnits();
+  const angle = Number.isFinite(ship?.angle) ? ship.angle : Math.random() * Math.PI * 2;
+  const spawnPos = {
+    x: ship.pos.x + Math.cos(angle) * au,
+    y: ship.pos.y + Math.sin(angle) * au
+  };
+
+  const carrier = createCapitalShipEntry('carrier', {
+    pos: spawnPos,
+    formationOffset: { x: 0, y: 0 }
+  });
+  if (!carrier) return null;
+
+  addFleetShip(carrier);
+  return carrier.entity;
+}
+
 function initFleet(){
   Fleet.ships.length = 0;
   markFleetDirty();
   if (Fleet.ui?.root) Fleet.ui.root.classList.add('hidden');
-  const carrier = createCapitalShipEntry('carrier');
-  if (carrier) addFleetShip(carrier);
 }
 
 function makeRailgun(cfg){ return { ...cfg }; }
@@ -15130,7 +15154,10 @@ if (supportSpawnButtons && supportSpawnButtons.forEach) {
   supportSpawnButtons.forEach(btn => {
     btn.addEventListener('click', () => {
       const key = btn.dataset.supportSpawn;
-      if (key === 'carrier_fighter'){
+      if (key === 'carrier_capital'){
+        const carrier = spawnFriendlyCarrier();
+        if (!carrier) return;
+      } else if (key === 'carrier_fighter'){
         const carrier = getFriendlyCarrierEntity();
         if (!carrier) return;
         spawnSupportShip('fighter', { anchor: carrier });
