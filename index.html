@@ -608,6 +608,7 @@
   import { WarpBlackHole } from "./src/vfx/warpBlackHole.js";
   import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
   import { createShipEntity, applyPlayerInput, runShipAI } from "./src/game/shipEntity.js";
+  import { DestructorSystem, initHexBody, drawHexBody } from "./src/game/destructor.js";
   window.THREE = THREE;
   window.EffectComposer  = EffectComposer;
   window.RenderPass      = RenderPass;
@@ -636,6 +637,9 @@
   window.runShipAI = runShipAI;
   window.drawInfrastructureIcon = drawInfrastructureIcon;
   window.updateInfrastructureAnimations = updateInfrastructureAnimations;
+  window.DestructorSystem = DestructorSystem;
+  window.initHexBody = initHexBody;
+  window.drawHexBody = drawHexBody;
   // Nie modyfikujemy namespace'u modułu THREE (jest niemodyfikowalny).
   // Jeśli coś potrzebuje CopyShader globalnie, wystawiamy go przez window:
   window.CopyShader = CopyShader;
@@ -654,6 +658,7 @@ import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
 import { WORLD, setWorldSize } from './src/world/world.js';
 import { initShieldSystem, updateShieldFx, drawShield, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot } from './shieldSystem.js';
 import { createShipEntity, applyPlayerInput, runShipAI } from "./src/game/shipEntity.js";
+import { DestructorSystem, initHexBody, drawHexBody } from "./src/game/destructor.js";
 // Statki Terran (Wsparcie)
 import terranFrigateImg from "./src/assets/ships/terranfrigate.png";
 import terranDestroyerImg from "./src/assets/ships/terrandestroyer.png";
@@ -2901,6 +2906,7 @@ shipSprite.onload = () => {
   rebuildHardpointsForFrame();
   tryPreserveMounts(prev);
   syncWeaponSystems();
+  initHexBody(ship, shipSprite);
   if(typeof renderMechanic === 'function') renderMechanic();
   saveLoadout();
 };
@@ -11141,6 +11147,11 @@ function bulletsAndCollisionsStep(dt){
     }
 
     if(hitNPC){
+      let hexHit = false;
+      if (hitNPC.hexGrid) {
+          hexHit = DestructorSystem.applyImpact(hitNPC, b.x, b.y, b.damage || 10, {x: b.vx, y: b.vy});
+      }
+
       if(b.owner === 'player' && hitNPC.mission && hitNPC.isPirate){
         triggerMercAggro('pirate_hit');
       }
@@ -11148,14 +11159,14 @@ function bulletsAndCollisionsStep(dt){
       if (hitNPC.shield && hitNPC.shield.val > 0) {
         registerShieldImpact(hitNPC, b.x, b.y, b.damage || 0);
       }
-      
+
       // --- FIX: OBSŁUGA RÓŻNYCH TYPÓW TRAFIEŃ ---
-      
+
       if(b.type === 'plasma' || b.type === 'rocket'){
         // Zielona plazma LUB Rakieta -> Wybuch obszarowy
         const ex = b.x, ey = b.y;
         spawnExplosionPlasma(ex, ey, b.type==='rocket' ? 1.5 : 1.0); // Rakiety większe
-        
+
         // Splash damage
         for(const npc of npcs){
           if(npc.dead || (b.owner==='player' && npc.friendly)) continue;
@@ -11165,37 +11176,50 @@ function bulletsAndCollisionsStep(dt){
           const d2 = Math.hypot(npc.x - ex, npc.y - ey);
           if(d2 <= b.explodeRadius + npc.radius){
             const falloff = 1 - (d2 / (b.explodeRadius + npc.radius));
-            applyDamageToNPC(npc, Math.round(b.damage * (0.9 * falloff + 0.1)), 'plasma');
+            const splashDmg = Math.round(b.damage * (0.9 * falloff + 0.1));
+
+            if (npc.hexGrid) {
+                const splashVx = (npc.x - ex);
+                const splashVy = (npc.y - ey);
+                DestructorSystem.applyImpact(npc, npc.x, npc.y, splashDmg, {x: splashVx*5, y: splashVy*5});
+            }
+
+            applyDamageToNPC(npc, splashDmg, 'plasma');
           }
         }
         bullets.splice(i,1);
         continue;
-      } 
-      else if(b.type === 'rail'){
-        applyDamageToNPC(hitNPC, b.damage, 'rail');
-        spawnRailHitEffect(b.x, b.y, 1.0);
-        b.penetration = (b.penetration !== undefined) ? b.penetration - 1 : 1;
-        if(b.penetration <= 0){ bullets.splice(i,1); }
-        continue;
-      } 
+      }
       else if(b.type === 'armata'){
         applyDamageToNPC(hitNPC, b.damage, 'armata');
         spawnArmataHitEffect(b.x, b.y, 1.0);
         bullets.splice(i,1);
         continue;
       }
-      else if(b.type === 'autocannon'){
-        applyDamageToNPC(hitNPC, b.damage, 'autocannon');
-        spawnAutocannonHitEffect(b.x, b.y, 1.0);
-        bullets.splice(i,1);
-        continue;
-      }
       else {
-        // --- DEFAULT / LASER ---
-        // Zwykłe iskry (nie zielone!)
-        applyDamageToNPC(hitNPC, b.damage, 'default');
-        spawnDefaultHit(b.x, b.y, 1.0);
-        bullets.splice(i,1);
+        if (!hexHit) {
+            if(b.type === 'rail'){
+              applyDamageToNPC(hitNPC, b.damage, 'rail');
+              spawnRailHitEffect(b.x, b.y, 1.0);
+            }
+            else if(b.type === 'autocannon'){
+              applyDamageToNPC(hitNPC, b.damage, 'autocannon');
+              spawnAutocannonHitEffect(b.x, b.y, 1.0);
+            }
+            else {
+              applyDamageToNPC(hitNPC, b.damage, 'default');
+              spawnDefaultHit(b.x, b.y, 1.0);
+            }
+        } else {
+            applyDamageToNPC(hitNPC, b.damage, 'none');
+        }
+
+        if(b.type === 'rail') {
+           b.penetration = (b.penetration !== undefined) ? b.penetration - 1 : 1;
+           if(b.penetration <= 0){ bullets.splice(i,1); }
+        } else {
+           bullets.splice(i,1);
+        }
         continue;
       }
     }
@@ -11278,18 +11302,24 @@ function bulletsAndCollisionsStep(dt){
           registerShieldImpact(ship, b.x, b.y, b.damage || 0);
           AudioSys.playSound('shieldHit');
         }
+        let hexHit = false;
+        if (ship.hexGrid) {
+            hexHit = DestructorSystem.applyImpact(ship, b.x, b.y, b.damage || 10, {x: b.vx, y: b.vy});
+        }
         applyDamageToPlayer(b.damage);
-        if(b.hitFx){ b.hitFx(b.x, b.y, b.effectScale || 1.0, b); }
-        else if(b.type === 'siege'){
-          spawnSiegeHitEffect(b.x, b.y, b.effectScale || 1.0);
-        } else if(b.type === 'armata'){
-          spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
-        } else if(b.type === 'rail'){
-          spawnRailHitEffect(b.x, b.y, 1.0);
-        } else if(b.type === 'autocannon'){
-          spawnAutocannonHitEffect(b.x, b.y, b.effectScale || 1.0);
-        } else {
-          spawnDefaultHit(b.x, b.y, 1.0);
+        if(!hexHit){
+          if(b.hitFx){ b.hitFx(b.x, b.y, b.effectScale || 1.0, b); }
+          else if(b.type === 'siege'){
+            spawnSiegeHitEffect(b.x, b.y, b.effectScale || 1.0);
+          } else if(b.type === 'armata'){
+            spawnArmataHitEffect(b.x, b.y, b.effectScale || 1.0);
+          } else if(b.type === 'rail'){
+            spawnRailHitEffect(b.x, b.y, 1.0);
+          } else if(b.type === 'autocannon'){
+            spawnAutocannonHitEffect(b.x, b.y, b.effectScale || 1.0);
+          } else {
+            spawnDefaultHit(b.x, b.y, 1.0);
+          }
         }
         bullets.splice(i,1);
         continue;
@@ -12448,9 +12478,11 @@ function loop(now){
     physicsStep(PHYS_DT);
     acc -= PHYS_DT; steps++;
   }
-  
+
+  DestructorSystem.update(frame, [ship, ...npcs]);
+
   // >>> TO JEST KLUCZOWE - ODDZIELNA AKTUALIZACJA WIZUALIÓW <<<
-  updateParticles(frame); 
+  updateParticles(frame);
   // >>> BEZ TEGO CZĄSTECZKI STOJĄ W MIEJSCU <<<
 
   const alpha = acc / PHYS_DT;
@@ -13080,6 +13112,32 @@ function drawCapitalShipSprite(ctx, npc, screenPos, pixR){
   ctx.restore();
 }
 function drawNPCPretty(ctx, npc, s) {
+  if (npc.hexGrid) {
+      drawHexBody(ctx, npc, camera, worldToScreen);
+      if (npc.hp < npc.maxHp) {
+        const zoom = camera.zoom;
+        const size = (npc.radius || 20) * zoom;
+        const hpPct = Math.max(0, npc.hp / npc.maxHp);
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(-size, -size - 10, size * 2, 4);
+        ctx.fillStyle = '#22c55e';
+        ctx.fillRect(-size, -size - 10, size * 2 * hpPct, 4);
+        ctx.restore();
+      }
+      return;
+  }
+
+  if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip) && !npc.hexGrid) {
+      const sprite = getHullSpriteForNpc(npc) || (npc.capitalSprite && npc.capitalSprite.ready ? npc.capitalSprite : null);
+      if (sprite && sprite.ready && !sprite.error) {
+          initHexBody(npc, sprite.image);
+          drawNPCPretty(ctx, npc, s);
+          return;
+      }
+  }
+
   // 1. NAJPIERW sprawdź konkretne typy (Destroyer, Battleship, Frigate)
   // Dzięki temu użyją one Twoich nowych sprite'ów z HULL_SPRITE_PATHS
   if (npc.type === 'destroyer') {
@@ -13591,7 +13649,10 @@ function render(alpha, frameDt){
   }
 
   // --- 3. Rysowanie KADŁUBA ---
-  if (USE_SHIP_SPRITE && ship.spriteReady) {
+  if (ship.hexGrid) {
+      drawHexBody(ctx, ship, cam, worldToScreen);
+  }
+  else if (USE_SHIP_SPRITE && ship.spriteReady) {
     const scale = (ship.h / ship.spriteH) * spriteScale;
     const drawW = ship.spriteW * scale;
     const drawH = ship.spriteH * scale;
@@ -13891,6 +13952,8 @@ function render(alpha, frameDt){
     }
     ctx.restore(); // Przywróć stan raz na koniec
   }
+
+  DestructorSystem.draw(ctx, cam, worldToScreen);
 
   // === Shield Pass ===
   for (const npc of npcDrawList){
