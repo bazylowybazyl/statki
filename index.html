@@ -755,7 +755,7 @@ if (!SupportWing.ui.guardBtn && supportGuardBtn) SupportWing.ui.guardBtn = suppo
 if (!SupportWing.ui.engageBtn && supportEngageBtn) SupportWing.ui.engageBtn = supportEngageBtn;
 
 const OPTIONS = {
-  vfx: { colorTempK: 8000, bloomGain: 1.1 },
+  vfx: { colorTempK: 8000, bloomGain: 1.1, engineGain: 1.0 },
   audio: { master: 0.8, sfx: 1.0, music: 0.7 },
   controls: { mouseSensitivity: 1.0 } // bez odwracania osi
 };
@@ -9475,6 +9475,7 @@ function renderOptions(){
   // ------------------------------
   slider('VFX: temperatura (K)', 1000, 20000, 500, OPTIONS.vfx, 'colorTempK');
   slider('VFX: bloom', 0.2, 2.5, 0.05, OPTIONS.vfx, 'bloomGain');
+  slider('VFX: silnik (głośność)', 0, 1.5, 0.05, OPTIONS.vfx, 'engineGain');
   slider('Audio: master', 0, 1, 0.05, OPTIONS.audio, 'master');
   slider('Audio: SFX', 0, 1, 0.05, OPTIONS.audio, 'sfx');
   slider('Audio: muzyka', 0, 1, 0.05, OPTIONS.audio, 'music');
@@ -12375,7 +12376,8 @@ function drawNeedleEngineVfxLocal(localPos, forward, options = {}) {
   ctx.rotate(Math.atan2(forward.y, forward.x) + Math.PI/2);
   ctx.globalCompositeOperation = 'lighter';
   const prevAlpha = ctx.globalAlpha;
-  ctx.globalAlpha = prevAlpha * alpha;
+  const engineGain = clamp(OPTIONS?.vfx?.engineGain ?? 1, 0, 1.5);
+  ctx.globalAlpha = prevAlpha * alpha * engineGain;
 
   const evfx = getEngineVFX();
   if (evfx) {
