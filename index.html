@@ -11275,6 +11275,7 @@ function bulletsAndCollisionsStep(dt){
       if(d < hitR + b.r){
         if (ship.shield && ship.shield.val > 0) {
           registerShieldImpact(ship, b.x, b.y, b.damage || 0);
+          AudioSys.playSound('shieldHit');
         }
         applyDamageToPlayer(b.damage);
         if(b.hitFx){ b.hitFx(b.x, b.y, b.effectScale || 1.0, b); }
@@ -14955,12 +14956,15 @@ async function startGame(){
   
   // --- AUDIO START ---
   AudioSys.init();
-  // Ładujemy plik dźwiękowy (nazwa w systemie: 'engine', ścieżka do pliku)
-  await AudioSys.loadSound('engine', '/sounds/engine/thruster_loop.wav');
+  // Ładujemy pliki dźwiękowe potrzebne na starcie gry
+  await Promise.all([
+    AudioSys.loadSound('engine', '/sounds/engine/thruster_loop.wav'),
+    AudioSys.loadSound('shieldHit', '/sounds/465540__steaq__sci-fi-shield-hit-wav.wav')
+  ]);
   
   // Podpinamy instancję dźwięku pod statek gracza
   if (typeof ship !== 'undefined') {
-      ship.engineSound = AudioSys.createEngineLoop('engine');
+    ship.engineSound = AudioSys.createEngineLoop('engine');
   }
   // --- AUDIO END ---
 
