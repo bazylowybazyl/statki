@@ -52,6 +52,11 @@ export const DestructorSystem = {
   applyImpact(entity, worldX, worldY, damage, bulletVel) {
     if (!entity.hexGrid) return false; // Brak siatki - użyj standardowego HP
 
+    // Dodatkowe zabezpieczenie: fightery ignorują system heksów (mają standardowe HP)
+    if (entity.fighter || (entity.type && (entity.type === 'fighter' || entity.type === 'interceptor' || entity.type === 'drone'))) {
+        return false;
+    }
+
     const r = DESTRUCTOR_CONFIG.gridDivisions;
     const h = r * Math.sqrt(3);
 
@@ -93,8 +98,7 @@ export const DestructorSystem = {
                  const lvx = bulletVel.x * c - bulletVel.y * s;
                  const lvy = bulletVel.x * s + bulletVel.y * c;
                  
-                 // Wgniecenie w miejscu trafienia (odwrotne do wektora pocisku w tym kontekście to pchnięcie)
-                 // Deformacja działa "od środka uderzenia", więc przekazujemy pozycję względem środka heksa
+                 // Wgniecenie w miejscu trafienia
                  shard.deform(lx - shard.lx, ly - shard.ly); 
 
                  // Structural warp (przemieszczenie całego heksa)
@@ -124,7 +128,11 @@ export const DestructorSystem = {
     const checkDistSq = (r * 1.4) ** 2;
 
     // Filtrujemy tylko byty, które mają zainicjowaną siatkę heksów
-    const activeBodies = entities.filter(e => e && !e.dead && e.hexGrid);
+    // I wykluczamy fightery (na wszelki wypadek, choć initHexBody ich nie tworzy)
+    const activeBodies = entities.filter(e => 
+        e && !e.dead && e.hexGrid && 
+        !(e.fighter || e.type === 'fighter' || e.type === 'interceptor' || e.type === 'drone')
+    );
 
     for (let i = 0; i < activeBodies.length; i++) {
       const A = activeBodies[i];
@@ -146,7 +154,7 @@ export const DestructorSystem = {
             iterator = B; gridHolder = A; 
         }
 
-        // Pobranie pozycji i prędkości (kompatybilność z shipEntity i prostymi NPC)
+        // Pobranie pozycji i prędkości
         const iPos = iterator.pos || {x: iterator.x, y: iterator.y};
         const gPos = gridHolder.pos || {x: gridHolder.x, y: gridHolder.y};
         const iVel = iterator.vel || {x: iterator.vx, y: iterator.vy};
@@ -217,7 +225,6 @@ export const DestructorSystem = {
                   sG.hp -= baseDmgToGrid * dmgFactorGrid;
 
                   // 2. Deformacja i DMG dla Iterator (A)
-                  // Transformacja wektora kolizji z powrotem do A
                   const revICos = Math.cos(-iterator.angle); 
                   const revISin = Math.sin(-iterator.angle);
                   const wdx = dx * Math.cos(gridHolder.angle) - dy * Math.sin(gridHolder.angle);
@@ -226,7 +233,6 @@ export const DestructorSystem = {
                   const idy = wdx * revISin + wdy * revICos;
 
                   sI.deform(idx, idy);
-                  // Warp dla A
                   const iDist = Math.sqrt(idx*idx + idy*idy) || 1;
                   sI.warpStructure((idx/iDist) * warpPush, (idy/iDist) * warpPush, r * 1.5);
                   sI.hp -= baseDmgToIter * dmgFactorIter;
@@ -511,9 +517,8 @@ class HexShard {
 
 // Inicjalizacja siatki heksów na obiekcie
 export function initHexBody(entity, image) {
-  // === MODYFIKACJA: IGNORUJ MYŚLIWCE ===
+  // === FIX: IGNORUJ MYŚLIWCE ===
   if (entity.fighter || (entity.type && (entity.type === 'fighter' || entity.type === 'interceptor' || entity.type === 'drone'))) {
-      // Myśliwce nie dostają heksów (są za małe)
       return;
   }
   
@@ -586,13 +591,19 @@ export function initHexBody(entity, image) {
       }
   }
   
+  // --- ZMIANA: USUNIĘTO WADLIWE AUTOCENTROWANIE ---
+  // Teraz ufamy, że środek obrazka (w/2, h/2) to środek statku.
+  // Wcześniej kod próbował przesuwać shardy względem "masy pikseli",
+  // co powodowało offset sprite'a w prawo.
+  
+  const finalOffsetX = -centerX;
+  const finalOffsetY = -centerY;
+  
   // Analiza komponentów (Armor vs Core)
   const coreRadSq = (Math.min(w, h) * 0.25) ** 2;
   
   for (const s of shards) {
       const distSq = s.lx*s.lx + s.ly*s.ly;
-      
-      // Sprawdź liczbę sąsiadów
       const odd = (s.c % 2 !== 0);
       const neighborOffsets = odd 
           ? [[0,-1],[0,1],[-1,0],[-1,1],[1,0],[1,1]]
@@ -603,7 +614,6 @@ export function initHexBody(entity, image) {
           if (map[`${s.c + no[0]},${s.r + no[1]}`]) nFound++;
       }
       
-      // Aplikuj statystyki
       if (distSq < coreRadSq) {
           s.hardness = 3.0; // Core
           s.hp *= 3.0;
@@ -619,8 +629,8 @@ export function initHexBody(entity, image) {
   entity.hexGrid = {
       shards,
       map,
-      offsetX: -centerX, // Potrzebne do szybkiego lookupu w kolizjach
-      offsetY: -centerY
+      offsetX: finalOffsetX,
+      offsetY: finalOffsetY
   };
   
   // Ustaw promień kolizji encji na podstawie obrazka (jeśli nie ma)
