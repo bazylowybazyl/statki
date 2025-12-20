@@ -754,6 +754,13 @@ if (!SupportWing.ui.root && supportUIRoot) SupportWing.ui.root = supportUIRoot;
 if (!SupportWing.ui.guardBtn && supportGuardBtn) SupportWing.ui.guardBtn = supportGuardBtn;
 if (!SupportWing.ui.engageBtn && supportEngageBtn) SupportWing.ui.engageBtn = supportEngageBtn;
 
+const OPTIONS = {
+  vfx: { colorTempK: 8000, bloomGain: 1.1 },
+  audio: { master: 0.8, sfx: 1.0, music: 0.7 },
+  controls: { mouseSensitivity: 1.0 } // bez odwracania osi
+};
+let OPTIONS_OPEN = false;
+
 const uiRoot = document.getElementById('ui');
 const mainMenuEl = document.getElementById('main-menu');
 const newGameButton = document.getElementById('btn-new-game');
@@ -762,6 +769,10 @@ const optionsButton = document.getElementById('btn-options');
 const continueButton = document.getElementById('btn-continue');
 const menuHomeView = document.getElementById('menu-home-view');
 const menuOptionsView = document.getElementById('menu-options-view');
+const MENU_MUSIC_SRC = '/sounds/menu/menu.mp3';
+let menuMusicEl = null;
+let menuMusicFadeId = null;
+let menuMusicUnlockAttached = false;
 const optionsBackButton = document.getElementById('btn-options-back');
 const qualityButtons = Array.from(document.querySelectorAll('[data-quality]'));
 const loadingEl = document.getElementById('loading');
@@ -814,14 +825,83 @@ function setMenuView(nextView = 'home'){
   if (menuView === 'options') applyQualitySelection();
 }
 
+function getMenuMusicVolume(){
+  const master = OPTIONS?.audio?.master ?? 1;
+  const music = OPTIONS?.audio?.music ?? 1;
+  return Math.max(0, Math.min(1, master * music));
+}
+
+function getMenuMusic(){
+  if (!menuMusicEl){
+    menuMusicEl = new Audio(MENU_MUSIC_SRC);
+    menuMusicEl.loop = true;
+    menuMusicEl.volume = getMenuMusicVolume();
+  }
+  return menuMusicEl;
+}
+
+function tryPlayMenuMusic(){
+  if (gameStarted) return;
+  const audio = getMenuMusic();
+  audio.volume = getMenuMusicVolume();
+  const unlock = () => {
+    audio.play().catch(()=>{});
+    document.removeEventListener('pointerdown', unlock);
+    document.removeEventListener('keydown', unlock);
+    menuMusicUnlockAttached = false;
+  };
+
+  const playPromise = audio.play();
+  if (playPromise && typeof playPromise.catch === 'function'){
+    playPromise.catch(() => {
+      if (menuMusicUnlockAttached) return;
+      menuMusicUnlockAttached = true;
+      document.addEventListener('pointerdown', unlock, { once: true });
+      document.addEventListener('keydown', unlock, { once: true });
+    });
+  }
+}
+
+function fadeOutMenuMusic(duration = 1200){
+  if (menuMusicFadeId) cancelAnimationFrame(menuMusicFadeId);
+  const audio = menuMusicEl;
+  if (!audio || audio.paused || audio.volume <= 0.001){
+    if (audio){
+      audio.pause();
+      audio.currentTime = 0;
+    }
+    return Promise.resolve();
+  }
+  const startVolume = audio.volume;
+  return new Promise(resolve => {
+    const start = performance.now();
+    const step = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const v = startVolume * (1 - t);
+      audio.volume = Math.max(0, v);
+      if (t < 1){
+        menuMusicFadeId = requestAnimationFrame(step);
+      } else {
+        audio.pause();
+        audio.currentTime = 0;
+        resolve();
+      }
+    };
+    menuMusicFadeId = requestAnimationFrame(step);
+  });
+}
+
 function isMainMenuVisible(){
   return !!mainMenuEl && !mainMenuEl.classList.contains('hidden');
 }
+
+if (isMainMenuVisible()) tryPlayMenuMusic();
 
 function showMainMenu(view = 'home'){
   setMenuView(view);
   if (mainMenuEl) mainMenuEl.classList.remove('hidden');
   if (gameStarted) setPaused(true);
+  if (!gameStarted) tryPlayMenuMusic();
 }
 
 function hideMainMenu(){
@@ -6205,13 +6285,6 @@ let stationUI = {
   dragDY:0,
   editorMode:false
 };
-
-const OPTIONS = {
-  vfx: { colorTempK: 8000, bloomGain: 1.1 },
-  audio: { master: 0.8, sfx: 1.0, music: 0.7 },
-  controls: { mouseSensitivity: 1.0 } // bez odwracania osi
-};
-let OPTIONS_OPEN = false;
 
 function stationUnderCursor(){
   const world = screenToWorld(mouse.x, mouse.y);
@@ -14765,6 +14838,7 @@ function updateLiveBackgroundProgress(progress) {
 async function startGame(){
   if (gameStarted) return;
   gameStarted = true;
+  fadeOutMenuMusic();
   if (continueButton) continueButton.classList.remove('hidden');
   if (optionsButton) optionsButton.disabled = false;
   setMenuView('home');
