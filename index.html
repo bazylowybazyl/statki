@@ -754,6 +754,13 @@ if (!SupportWing.ui.root && supportUIRoot) SupportWing.ui.root = supportUIRoot;
 if (!SupportWing.ui.guardBtn && supportGuardBtn) SupportWing.ui.guardBtn = supportGuardBtn;
 if (!SupportWing.ui.engageBtn && supportEngageBtn) SupportWing.ui.engageBtn = supportEngageBtn;
 
+const OPTIONS = {
+  vfx: { colorTempK: 8000, bloomGain: 1.1 },
+  audio: { master: 0.8, sfx: 1.0, music: 0.7 },
+  controls: { mouseSensitivity: 1.0 } // bez odwracania osi
+};
+let OPTIONS_OPEN = false;
+
 const uiRoot = document.getElementById('ui');
 const mainMenuEl = document.getElementById('main-menu');
 const newGameButton = document.getElementById('btn-new-game');
@@ -6278,13 +6285,6 @@ let stationUI = {
   dragDY:0,
   editorMode:false
 };
-
-const OPTIONS = {
-  vfx: { colorTempK: 8000, bloomGain: 1.1 },
-  audio: { master: 0.8, sfx: 1.0, music: 0.7 },
-  controls: { mouseSensitivity: 1.0 } // bez odwracania osi
-};
-let OPTIONS_OPEN = false;
 
 function stationUnderCursor(){
   const world = screenToWorld(mouse.x, mouse.y);
