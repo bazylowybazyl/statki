@@ -3514,13 +3514,13 @@ if (window.__setStation3DScale) {
 if (!hasSavedShipPosition) {
   const earthStation = stations.find(st => st.id === 'earth');
   if (earthStation) {
-    const dockOffset = earthStation.ports?.[0] || { x: earthStation.r + 40, y: 0 };
-    const dockDir = Math.atan2(dockOffset.y, dockOffset.x);
-    const dockDist = Math.hypot(dockOffset.x, dockOffset.y);
-    const spawnGap = 140;
+    const planetRadius = earthStation.planet?.r || 0;
+    const orbitPadding = 900;
+    const spawnOrbitRadius = Math.max(planetRadius + orbitPadding, earthStation.r + 200);
+    const spawnAngle = earthStation.planet?.angle || 0;
     const spawnPos = {
-      x: earthStation.x + Math.cos(dockDir) * (dockDist + spawnGap),
-      y: earthStation.y + Math.sin(dockDir) * (dockDist + spawnGap)
+      x: earthStation.x + Math.cos(spawnAngle) * spawnOrbitRadius,
+      y: earthStation.y + Math.sin(spawnAngle) * spawnOrbitRadius
     };
 
     ship.pos.x = spawnPos.x;
