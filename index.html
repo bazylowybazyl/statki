@@ -823,22 +823,14 @@ const AudioSys = {
       // Funkcja aktualizująca brzmienie w czasie rzeczywistym
       update: (throttle) => {
         const now = AudioSys.ctx.currentTime;
-        
-        // --- 1. PITCH (Wysokość) ---
-        // 0.5 = Bardzo niski "idle"
-        // + (throttle * 1.0) = przy pełnym gazie wchodzi na 1.5 (wyraźne przyspieszenie)
-        const targetPitch = 0.5 + (throttle * 1.0); 
+        const targetPitch = 0.5 + (throttle * 0.6); 
         source.playbackRate.setTargetAtTime(targetPitch, now, 0.2);
-
-        // --- 2. VOLUME (Głośność) ---
-        // 0.15 = Słyszalny warkot na postoju
-        // + (throttle * 0.45) = Zgłaśnia się do max 0.6 przy pełnym gazie
-        let baseVol = 0.15 + (throttle * 0.45);
+        let baseVol = 0.05 + (throttle * 0.25);
 
         // Pobranie ustawień SFX gracza
         const sfxVol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.sfx : 1.0;
         
-        // Aplikowanie poprawnej zmiennej baseVol
+        // Aplikowanie głośności
         gainNode.gain.setTargetAtTime(baseVol * sfxVol, now, 0.1);
       },
       
