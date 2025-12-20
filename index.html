@@ -826,7 +826,7 @@ const AudioSys = {
         
         // PITCH: 0.8 (wolne obroty) -> 1.4 (wysokie)
         // Możesz dostroić te liczby: 0.8 to niski pomruk, 1.5 to wycie
-        const targetPitch = 0.8 + (throttle * 0.6); 
+        const targetPitch = 0.5 + (throttle * 0.3);
         source.playbackRate.setTargetAtTime(targetPitch, now, 0.1);
 
         // VOLUME: 0.1 (cicho) -> 0.6 (głośno)
