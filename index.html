@@ -808,7 +808,7 @@ const AudioSys = {
     source.loop = true;
 
     const gainNode = this.ctx.createGain();
-    gainNode.gain.value = 0; // Na start cisza (idle wchodzi płynnie)
+    gainNode.gain.value = 0; // Na start cisza
 
     // Łańcuch: Źródło -> Gain -> Master -> Wyjście
     source.connect(gainNode);
@@ -819,32 +819,34 @@ const AudioSys = {
     return {
       source: source,
       gain: gainNode,
+      
       // Funkcja aktualizująca brzmienie w czasie rzeczywistym
       update: (throttle) => {
-        // throttle: 0.0 (stoisz) do 1.0 (max gaz)
         const now = AudioSys.ctx.currentTime;
         
-        // PITCH: 0.8 (wolne obroty) -> 1.4 (wysokie)
-        // Możesz dostroić te liczby: 0.8 to niski pomruk, 1.5 to wycie
-        const targetPitch = 0.5 + (throttle * 0.3);
-        source.playbackRate.setTargetAtTime(targetPitch, now, 0.1);
+        // --- 1. PITCH (Wysokość) ---
+        // 0.5 = Bardzo niski "idle"
+        // + (throttle * 1.0) = przy pełnym gazie wchodzi na 1.5 (wyraźne przyspieszenie)
+        const targetPitch = 0.5 + (throttle * 1.0); 
+        source.playbackRate.setTargetAtTime(targetPitch, now, 0.2);
 
-        // VOLUME: 0.1 (cicho) -> 0.6 (głośno)
-        // Jeśli throttle blisko 0, ściszamy prawie całkowicie
-        let targetVol = 0.05 + (throttle * 0.55);
-        if (throttle < 0.05) targetVol = 0.0; // Prawie cisza na postoju
+        // --- 2. VOLUME (Głośność) ---
+        // 0.15 = Słyszalny warkot na postoju
+        // + (throttle * 0.45) = Zgłaśnia się do max 0.6 przy pełnym gazie
+        let baseVol = 0.15 + (throttle * 0.45);
 
-        // Aplikuj głośność SFX z opcji
+        // Pobranie ustawień SFX gracza
         const sfxVol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.sfx : 1.0;
         
-        gainNode.gain.setTargetAtTime(targetVol * sfxVol, now, 0.1);
+        // Aplikowanie poprawnej zmiennej baseVol
+        gainNode.gain.setTargetAtTime(baseVol * sfxVol, now, 0.1);
       },
+      
       stop: () => {
         try { source.stop(); } catch(e){}
       }
     };
   },
-  
   // Prosta funkcja do strzałów (na przyszłość)
   playSound: function(name) {
     if (!this.sounds[name]) return;
