@@ -11147,9 +11147,12 @@ function bulletsAndCollisionsStep(dt){
     }
 
     if(hitNPC){
+      const npcDamage = Number.isFinite(b.damage) ? b.damage : 0;
+      const npcShieldVal = hitNPC.shield?.val || 0;
+      const npcImpactDamage = Math.max(0, npcDamage - npcShieldVal);
       let hexHit = false;
-      if (hitNPC.hexGrid) {
-          hexHit = DestructorSystem.applyImpact(hitNPC, b.x, b.y, b.damage || 10, {x: b.vx, y: b.vy});
+      if (npcImpactDamage > 0 && hitNPC.hexGrid) {
+          hexHit = DestructorSystem.applyImpact(hitNPC, b.x, b.y, npcImpactDamage, {x: b.vx, y: b.vy});
       }
 
       if(b.owner === 'player' && hitNPC.mission && hitNPC.isPirate){
@@ -11157,7 +11160,7 @@ function bulletsAndCollisionsStep(dt){
       }
 
       if (hitNPC.shield && hitNPC.shield.val > 0) {
-        registerShieldImpact(hitNPC, b.x, b.y, b.damage || 0);
+        registerShieldImpact(hitNPC, b.x, b.y, npcDamage);
       }
 
       // --- FIX: OBSŁUGA RÓŻNYCH TYPÓW TRAFIEŃ ---
@@ -11181,7 +11184,10 @@ function bulletsAndCollisionsStep(dt){
             if (npc.hexGrid) {
                 const splashVx = (npc.x - ex);
                 const splashVy = (npc.y - ey);
-                DestructorSystem.applyImpact(npc, npc.x, npc.y, splashDmg, {x: splashVx*5, y: splashVy*5});
+                const splashImpactDamage = Math.max(0, splashDmg - (npc.shield?.val || 0));
+                if (splashImpactDamage > 0) {
+                    DestructorSystem.applyImpact(npc, npc.x, npc.y, splashImpactDamage, {x: splashVx*5, y: splashVy*5});
+                }
             }
 
             applyDamageToNPC(npc, splashDmg, 'plasma');
@@ -11298,15 +11304,18 @@ function bulletsAndCollisionsStep(dt){
       const hitR = Math.max(ship.w, ship.h) * 0.45;
       const d = Math.hypot(ship.pos.x - b.x, ship.pos.y - b.y);
       if(d < hitR + b.r){
+        const playerDamage = Number.isFinite(b.damage) ? b.damage : 0;
+        const playerShieldVal = ship.shield?.val || 0;
+        const playerImpactDamage = Math.max(0, playerDamage - playerShieldVal);
         if (ship.shield && ship.shield.val > 0) {
-          registerShieldImpact(ship, b.x, b.y, b.damage || 0);
+          registerShieldImpact(ship, b.x, b.y, playerDamage);
           AudioSys.playSound('shieldHit');
         }
         let hexHit = false;
-        if (ship.hexGrid) {
-            hexHit = DestructorSystem.applyImpact(ship, b.x, b.y, b.damage || 10, {x: b.vx, y: b.vy});
+        if (playerImpactDamage > 0 && ship.hexGrid) {
+            hexHit = DestructorSystem.applyImpact(ship, b.x, b.y, playerImpactDamage, {x: b.vx, y: b.vy});
         }
-        applyDamageToPlayer(b.damage);
+        applyDamageToPlayer(playerDamage);
         if(!hexHit){
           if(b.hitFx){ b.hitFx(b.x, b.y, b.effectScale || 1.0, b); }
           else if(b.type === 'siege'){
