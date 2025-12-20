@@ -15176,7 +15176,7 @@ function wireDevTools(){
 
   <div class="group">
     <div class="row">
-      <label><input id="toggleRuler" type="checkbox"> Miarka (okręgi dystansu) <span class="pill">F11</span></label>
+      <label><input id="toggleRuler" type="checkbox"> Miarka (okręgi dystansu)</label>
     </div>
     <div class="row">
       <label><input id="toggleUnlimitedWarp" type="checkbox"> Nielimitowany warp <span class="pill">F9</span></label>
@@ -16084,10 +16084,9 @@ const numericSun2D = Number.isFinite(DevConfig.sunR2D) ? DevConfig.sunR2D : game
   // skróty klawiaturowe
   window.addEventListener('keydown', (e)=>{
     if (e.key === 'F10'){ ui.root.style.display = (ui.root.style.display==='none' || !ui.root.style.display) ? 'block' : 'none'; }
-    if (e.key === 'F11'){ DevFlags.showRuler = !DevFlags.showRuler; ui.cbRuler.checked = DevFlags.showRuler; saveLS(); }
     if (e.key === 'F9' ){ DevFlags.unlimitedWarp = !DevFlags.unlimitedWarp; ui.cbUnlimited.checked = DevFlags.unlimitedWarp; saveLS(); }
-    if (e.key === 'F8' ){ 
-      DevFlags.showSunDir = !DevFlags.showSunDir; 
+    if (e.key === 'F8' ){
+      DevFlags.showSunDir = !DevFlags.showSunDir;
       if (ui.cbSunDir) ui.cbSunDir.checked = DevFlags.showSunDir; 
       const el = document.getElementById('dt-show-sundir'); 
       if (el) el.checked = DevFlags.showSunDir; 
