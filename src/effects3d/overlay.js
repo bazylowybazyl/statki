@@ -1,72 +1,118 @@
 import * as THREE from "three";
-// Importujemy moduły post-processingu (muszą być dostępne w mapie importów w index.html)
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
-import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+
+// Shader naprawiający alfę, ale z podbiciem intensywności ("punch")
+const RestoreAlphaShader = {
+  uniforms: {
+    'tDiffuse': { value: null }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    varying vec2 vUv;
+    void main() {
+      vec4 tex = texture2D( tDiffuse, vUv );
+      
+      // Obliczamy jasność piksela
+      float brightness = max(tex.r, max(tex.g, tex.b));
+      
+      // FIX: Podbijamy alfę (mnożnik 1.5), żeby słabsze poświaty (glow) 
+      // nie były zbyt przezroczyste i nie znikały na tle gry.
+      float alpha = min(1.0, brightness * 1.5);
+      
+      gl_FragColor = vec4( tex.rgb, alpha );
+    }
+  `
+};
 
 export function initOverlay({ host, getView }) {
   if (!host) {
     throw new Error("initOverlay: host element is required");
   }
 
-  // 1. Inicjalizacja Renderera
+  // 1. Renderer
   const renderer = new THREE.WebGLRenderer({
-    antialias: false, // Antialiasing w rendererze wyłączamy, gdy używamy Composera (chyba że używamy SMAA)
-    alpha: true,
-    premultipliedAlpha: true,
+    antialias: false,
+    alpha: true, 
+    premultipliedAlpha: false,
     powerPreference: "high-performance"
   });
   
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.setSize(host.clientWidth, host.clientHeight, false);
-  renderer.autoClear = true;
   renderer.setClearColor(0x000000, 0);
   
-  // Kluczowe dla kolorów:
+  // Ważne: Tone Mapping musi być taki sam jak w źródle, żeby kolory nie były wyprane
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.2; // Lekko podbite dla soczystości
+  renderer.toneMappingExposure = 1.0; // Wartość 1.0 jest bardziej naturalna dla neonów
 
   const dom = renderer.domElement;
   dom.classList.add("overlay3d");
   dom.style.pointerEvents = "none";
   dom.style.position = "absolute";
   dom.style.inset = "0";
-  dom.style.zIndex = "20";
+  dom.style.zIndex = "20"; 
   dom.style.background = "transparent";
+  
+  // --- KLUCZOWA ZMIANA WIZUALNA ---
+  // Tryb mieszania 'screen' sprawia, że overlay zachowuje się jak światło.
+  // Czarne tło staje się niewidoczne, a kolory dodają się do tła gry.
+  dom.style.mixBlendMode = "screen"; 
 
   host.appendChild(dom);
 
   const scene = new THREE.Scene();
+  scene.background = null; 
 
-  // Kamera ortograficzna (widok z góry)
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
   camera.up.set(0, 0, -1);
   camera.position.set(0, 120, 0);
   camera.lookAt(0, 0, 0);
 
-  // 2. Konfiguracja Post-Processingu (BLOOM)
-  const composer = new EffectComposer(renderer);
+  // 2. RenderTarget (RGBA + Float dla lepszego HDR)
+  const renderTarget = new THREE.WebGLRenderTarget(
+    host.clientWidth * renderer.getPixelRatio(),
+    host.clientHeight * renderer.getPixelRatio(),
+    {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat,
+      type: THREE.HalfFloatType,
+      stencilBuffer: false,
+      depthBuffer: true
+    }
+  );
+
+  const composer = new EffectComposer(renderer, renderTarget);
   
-  // A. RenderPass - rysuje scenę 3D
+  // Pass 1: Scena
   const renderPass = new RenderPass(scene, camera);
-  renderPass.clear = true;
+  renderPass.clearColor = new THREE.Color(0, 0, 0);
+  renderPass.clearAlpha = 0; 
   composer.addPass(renderPass);
 
-  // B. UnrealBloomPass - dodaje poświatę
-  // Parametry: resolution, strength, radius, threshold
+  // Pass 2: Bloom (Parametry ze źródła reactorblow.js)
   const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(host.clientWidth, host.clientHeight), 
-    2.5,  // Siła (2.5 sprawi, że reaktor będzie świecił jak neon)
-    0.4,  // Promień rozmycia
-    0.05  // Próg (im niższy, tym ciemniejsze elementy też świecą)
+    2.5,  // Strength: Wysoka wartość dla efektu neonu
+    0.5,  // Radius: 0.5 (jak w oryginale) - daje szerszą poświatę
+    0.1   // Threshold: 0.1 (jak w oryginale) - pozwala świecić ciemniejszym elementom
   );
   composer.addPass(bloomPass);
 
-  // C. OutputPass - korekcja kolorów na koniec (wymagane w nowym Three.js)
-  const outputPass = new OutputPass();
-  composer.addPass(outputPass);
+  // Pass 3: Naprawa Alfy (żeby tło zniknęło, a glow został)
+  const alphaPass = new ShaderPass(RestoreAlphaShader);
+  composer.addPass(alphaPass);
 
   const effects = [];
   let lastSizeW = host.clientWidth;
@@ -85,7 +131,6 @@ export function initOverlay({ host, getView }) {
     const halfW = w / (2 * scale);
     const halfH = h / (2 * scale);
 
-    // Aktualizacja kamery ortograficznej, by pasowała do zoomu gry 2D
     if (camera.left !== -halfW || camera.right !== halfW || camera.top !== halfH || camera.bottom !== -halfH) {
       camera.left = -halfW;
       camera.right = halfW;
@@ -98,16 +143,14 @@ export function initOverlay({ host, getView }) {
     const cx = center.x ?? 0;
     const cz = center.y ?? 0;
 
-    // Przesuwanie kamery razem z graczem
     if (camera.position.x !== cx || camera.position.z !== cz) {
       camera.position.set(cx, camera.position.y, cz);
       camera.lookAt(cx, 0, cz);
     }
 
-    // Obsługa zmiany rozmiaru okna
     if (lastSizeW !== w || lastSizeH !== h) {
       renderer.setSize(w, h, false);
-      composer.setSize(w, h); // Ważne: resize composera!
+      composer.setSize(w, h);
       lastSizeW = w;
       lastSizeH = h;
     }
@@ -116,26 +159,23 @@ export function initOverlay({ host, getView }) {
   function tick(dt) {
     syncCamera();
 
-    // Aktualizacja animacji efektów
     for (let i = effects.length - 1; i >= 0; i--) {
       const fx = effects[i];
       if (fx.update) {
         fx.update(dt);
       }
-      // Usuwanie zakończonych efektów
       if (!fx.group || !fx.group.parent) {
         effects.splice(i, 1);
       }
     }
 
-    // Renderowanie przez Composera (z Bloomem), a nie czysty renderer
+    // Czyścimy renderer do zera przed rysowaniem composera
+    renderer.clear();
     composer.render();
   }
 
   function spawn(effect) {
     if (!effect) return;
-    // Jeśli efekt to factory function, wywołaj go (opcjonalne zabezpieczenie)
-    // Ale w Twoim kodzie przekazujesz już instancję {group, update...}
     if (effect.group) {
         scene.add(effect.group);
         effects.push(effect);
@@ -153,8 +193,8 @@ export function initOverlay({ host, getView }) {
     }
     composer.dispose();
     renderer.dispose();
+    renderTarget.dispose();
   }
 
-  // Zwracamy również composer, aby Live Patch mógł go wykryć
   return { scene, camera, renderer, composer, tick, spawn, resize, dispose };
 }
