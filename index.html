@@ -10955,22 +10955,20 @@ function handlePlayerDestroyed(){
   triggerReactorBlow3D(ship.pos.x, reactorY, ship.h * 0.35);
 }
 
-function applyDamageToPlayer(amount){
+function applyDamageToPlayer(amount, options = {}){
   const prevHull = ship.hull.val;
   if(ship.shield.val>0){ const s = Math.min(ship.shield.val, amount); ship.shield.val -= s; amount -= s; ship.shield.regenTimer = ship.shield.regenDelay; }
+  if (amount > 0 && options.onHullDamage) {
+    options.onHullDamage(amount);
+  }
   if(amount>0) ship.hull.val = Math.max(0, ship.hull.val - amount);
   if (!ship.destroyed && prevHull > 0 && ship.hull.val <= 0) {
     handlePlayerDestroyed();
   }
   hudSpawnDMG(ship.pos.x, ship.pos.y - ship.h*0.4, amount, 'player');
 }
-function applyDamageToNPC(npc, dmg, cause='default'){
-  if(npc.dead) return;
-  if(!Number.isFinite(dmg) || dmg <= 0) return;
-  npc.hitFlash = 0.12;
-  npc.damageHue = (npc.damageHue || 0) + dmg;
-
-  let remaining = dmg;
+function consumeNPCShield(npc, incomingDamage){
+  let remaining = incomingDamage;
   if (npc.shield && npc.shield.max > 0){
     npc.shield.regenTimer = npc.shield.regenDelay ?? 0;
     const absorbed = Math.min(npc.shield.val, remaining);
@@ -10983,9 +10981,25 @@ function applyDamageToNPC(npc, dmg, cause='default'){
       }
     }
   }
+  return remaining;
+}
+function applyDamageToNPC(npc, dmg, cause='default', options = {}){
+  if(npc.dead) return;
+  if(!Number.isFinite(dmg) || dmg <= 0) return;
+  npc.hitFlash = 0.12;
+  npc.damageHue = (npc.damageHue || 0) + dmg;
+
+  let remaining = dmg;
+  if (!options.skipShield) {
+    remaining = consumeNPCShield(npc, remaining);
+  }
 
   if(remaining <= 0){
-    return;
+    return 0;
+  }
+
+  if (options.onHullDamage) {
+    options.onHullDamage(remaining);
   }
 
   npc.hp -= remaining;
@@ -11148,9 +11162,7 @@ function bulletsAndCollisionsStep(dt){
 
     if(hitNPC){
       let hexHit = false;
-      if (hitNPC.hexGrid) {
-          hexHit = DestructorSystem.applyImpact(hitNPC, b.x, b.y, b.damage || 10, {x: b.vx, y: b.vy});
-      }
+      const postShieldDamage = consumeNPCShield(hitNPC, b.damage || 10);
 
       if(b.owner === 'player' && hitNPC.mission && hitNPC.isPirate){
         triggerMercAggro('pirate_hit');
@@ -11158,6 +11170,10 @@ function bulletsAndCollisionsStep(dt){
 
       if (hitNPC.shield && hitNPC.shield.val > 0) {
         registerShieldImpact(hitNPC, b.x, b.y, b.damage || 0);
+      }
+
+      if (hitNPC.hexGrid && postShieldDamage > 0) {
+          hexHit = DestructorSystem.applyImpact(hitNPC, b.x, b.y, postShieldDamage, {x: b.vx, y: b.vy});
       }
 
       // --- FIX: OBSŁUGA RÓŻNYCH TYPÓW TRAFIEŃ ---
@@ -11178,20 +11194,25 @@ function bulletsAndCollisionsStep(dt){
             const falloff = 1 - (d2 / (b.explodeRadius + npc.radius));
             const splashDmg = Math.round(b.damage * (0.9 * falloff + 0.1));
 
-            if (npc.hexGrid) {
-                const splashVx = (npc.x - ex);
-                const splashVy = (npc.y - ey);
-                DestructorSystem.applyImpact(npc, npc.x, npc.y, splashDmg, {x: splashVx*5, y: splashVy*5});
+            const splashRemaining = consumeNPCShield(npc, splashDmg);
+            if (npc.shield && npc.shield.val > 0) {
+              registerShieldImpact(npc, ex, ey, splashDmg);
             }
 
-            applyDamageToNPC(npc, splashDmg, 'plasma');
+            if (npc.hexGrid && splashRemaining > 0) {
+                const splashVx = (npc.x - ex);
+                const splashVy = (npc.y - ey);
+                DestructorSystem.applyImpact(npc, npc.x, npc.y, splashRemaining, {x: splashVx*5, y: splashVy*5});
+            }
+
+            applyDamageToNPC(npc, splashRemaining, 'plasma', { skipShield: true });
           }
         }
         bullets.splice(i,1);
         continue;
       }
       else if(b.type === 'armata'){
-        applyDamageToNPC(hitNPC, b.damage, 'armata');
+        applyDamageToNPC(hitNPC, postShieldDamage, 'armata', { skipShield: true });
         spawnArmataHitEffect(b.x, b.y, 1.0);
         bullets.splice(i,1);
         continue;
@@ -11199,19 +11220,19 @@ function bulletsAndCollisionsStep(dt){
       else {
         if (!hexHit) {
             if(b.type === 'rail'){
-              applyDamageToNPC(hitNPC, b.damage, 'rail');
+              applyDamageToNPC(hitNPC, postShieldDamage, 'rail', { skipShield: true });
               spawnRailHitEffect(b.x, b.y, 1.0);
             }
             else if(b.type === 'autocannon'){
-              applyDamageToNPC(hitNPC, b.damage, 'autocannon');
+              applyDamageToNPC(hitNPC, postShieldDamage, 'autocannon', { skipShield: true });
               spawnAutocannonHitEffect(b.x, b.y, 1.0);
             }
             else {
-              applyDamageToNPC(hitNPC, b.damage, 'default');
+              applyDamageToNPC(hitNPC, postShieldDamage, 'default', { skipShield: true });
               spawnDefaultHit(b.x, b.y, 1.0);
             }
         } else {
-            applyDamageToNPC(hitNPC, b.damage, 'none');
+            applyDamageToNPC(hitNPC, postShieldDamage, 'none', { skipShield: true });
         }
 
         if(b.type === 'rail') {
@@ -11303,10 +11324,13 @@ function bulletsAndCollisionsStep(dt){
           AudioSys.playSound('shieldHit');
         }
         let hexHit = false;
-        if (ship.hexGrid) {
-            hexHit = DestructorSystem.applyImpact(ship, b.x, b.y, b.damage || 10, {x: b.vx, y: b.vy});
-        }
-        applyDamageToPlayer(b.damage);
+        applyDamageToPlayer(b.damage, {
+          onHullDamage: (remaining)=>{
+            if (ship.hexGrid) {
+                hexHit = DestructorSystem.applyImpact(ship, b.x, b.y, remaining, {x: b.vx, y: b.vy});
+            }
+          }
+        });
         if(!hexHit){
           if(b.hitFx){ b.hitFx(b.x, b.y, b.effectScale || 1.0, b); }
           else if(b.type === 'siege'){
