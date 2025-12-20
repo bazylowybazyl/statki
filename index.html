@@ -761,6 +761,106 @@ const OPTIONS = {
 };
 let OPTIONS_OPEN = false;
 
+// --- SYSTEM AUDIO (AudioSys) ---
+const AudioSys = {
+  ctx: null,
+  masterGain: null,
+  sounds: {},
+  isInit: false,
+
+  // Inicjalizacja kontekstu (musi być po kliknięciu użytkownika)
+  init: function() {
+    if (this.isInit) return;
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    this.ctx = new AudioContext();
+    
+    // Główna szyna głośności (Master)
+    this.masterGain = this.ctx.createGain();
+    // Pobieramy głośność z Twoich OPTIONS (jeśli są dostępne)
+    const vol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.master : 0.5;
+    this.masterGain.gain.value = vol;
+    this.masterGain.connect(this.ctx.destination);
+    
+    this.isInit = true;
+    console.log("🔊 AudioSys: Zainicjowano.");
+  },
+
+  // Ładowanie pojedynczego dźwięku do pamięci
+  loadSound: async function(name, url) {
+    if (!this.ctx) this.init();
+    try {
+      const response = await fetch(url);
+      const arrayBuffer = await response.arrayBuffer();
+      const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+      this.sounds[name] = audioBuffer;
+      console.log(`🔊 AudioSys: Załadowano '${name}'`);
+    } catch (e) {
+      console.error(`🔊 AudioSys: Błąd ładowania '${name}' z ${url}:`, e);
+    }
+  },
+
+  // Tworzenie zapętlonego silnika (z kontrolą Pitch i Volume)
+  createEngineLoop: function(soundName) {
+    if (!this.sounds[soundName]) return null;
+    
+    const source = this.ctx.createBufferSource();
+    source.buffer = this.sounds[soundName];
+    source.loop = true;
+
+    const gainNode = this.ctx.createGain();
+    gainNode.gain.value = 0; // Na start cisza (idle wchodzi płynnie)
+
+    // Łańcuch: Źródło -> Gain -> Master -> Wyjście
+    source.connect(gainNode);
+    gainNode.connect(this.masterGain);
+    
+    source.start(0);
+
+    return {
+      source: source,
+      gain: gainNode,
+      // Funkcja aktualizująca brzmienie w czasie rzeczywistym
+      update: (throttle) => {
+        // throttle: 0.0 (stoisz) do 1.0 (max gaz)
+        const now = AudioSys.ctx.currentTime;
+        
+        // PITCH: 0.8 (wolne obroty) -> 1.4 (wysokie)
+        // Możesz dostroić te liczby: 0.8 to niski pomruk, 1.5 to wycie
+        const targetPitch = 0.8 + (throttle * 0.6); 
+        source.playbackRate.setTargetAtTime(targetPitch, now, 0.1);
+
+        // VOLUME: 0.1 (cicho) -> 0.6 (głośno)
+        // Jeśli throttle blisko 0, ściszamy prawie całkowicie
+        let targetVol = 0.05 + (throttle * 0.55);
+        if (throttle < 0.05) targetVol = 0.0; // Prawie cisza na postoju
+
+        // Aplikuj głośność SFX z opcji
+        const sfxVol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.sfx : 1.0;
+        
+        gainNode.gain.setTargetAtTime(targetVol * sfxVol, now, 0.1);
+      },
+      stop: () => {
+        try { source.stop(); } catch(e){}
+      }
+    };
+  },
+  
+  // Prosta funkcja do strzałów (na przyszłość)
+  playSound: function(name) {
+    if (!this.sounds[name]) return;
+    const source = this.ctx.createBufferSource();
+    source.buffer = this.sounds[name];
+    const sfxVol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.sfx : 1.0;
+    
+    const gain = this.ctx.createGain();
+    gain.gain.value = sfxVol;
+    
+    source.connect(gain);
+    gain.connect(this.masterGain);
+    source.start(0);
+  }
+};
+
 const uiRoot = document.getElementById('ui');
 const mainMenuEl = document.getElementById('main-menu');
 const newGameButton = document.getElementById('btn-new-game');
@@ -12373,6 +12473,27 @@ function loop(now){
     if(camera.shakeTime <= 0) camera.shakeMag = 0;
   }
   zoomIndicator.update(frame);
+
+  // --- AUDIO UPDATE ---
+  if (ship && ship.engineSound) {
+      if (!ship.destroyed) {
+          // input.main to wartość 0 lub 1 (z klawisza W)
+          let throttle = input.main;
+          
+          // Jeśli masz BOOST (Shift), dodajemy kopa do dźwięku (+0.5 do pitcha)
+          if (typeof boost !== 'undefined' && boost.state === 'active') {
+              throttle += 0.5;
+          }
+          
+          // Aktualizuj dźwięk
+          ship.engineSound.update(throttle);
+      } else {
+          // Jeśli statek zniszczony - wycisz natychmiast
+          ship.engineSound.gain.gain.setTargetAtTime(0, AudioSys.ctx.currentTime, 0.1);
+      }
+  }
+  // --------------------
+
   render(alpha, frame);
   if (overlay3D) {
     overlay3D.tick(frame);
@@ -14837,6 +14958,18 @@ function updateLiveBackgroundProgress(progress) {
 
 async function startGame(){
   if (gameStarted) return;
+  
+  // --- AUDIO START ---
+  AudioSys.init();
+  // Ładujemy plik dźwiękowy (nazwa w systemie: 'engine', ścieżka do pliku)
+  await AudioSys.loadSound('engine', '/sounds/engine/thruster_loop.wav');
+  
+  // Podpinamy instancję dźwięku pod statek gracza
+  if (typeof ship !== 'undefined') {
+      ship.engineSound = AudioSys.createEngineLoop('engine');
+  }
+  // --- AUDIO END ---
+
   gameStarted = true;
   fadeOutMenuMusic();
   if (continueButton) continueButton.classList.remove('hidden');
