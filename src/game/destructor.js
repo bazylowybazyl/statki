@@ -641,6 +641,19 @@ export function initHexBody(entity, image) {
   console.log(`Destructor: Initialized hex body for entity. Shards: ${shards.length}`);
 }
 
+// === FIX: NOWA FUNKCJA DO RYSOWANIA LOKALNEGO ===
+// Używana gdy kontekst jest już ustawiony (np. dla gracza z interpolacją)
+export function drawHexGridLocal(ctx, hexGrid) {
+    if (!hexGrid) return;
+    
+    // Po prostu rysujemy heksy w (0,0), bo kontekst jest już przesunięty i obrócony
+    for (const shard of hexGrid.shards) {
+        if (shard.active && !shard.isDebris) {
+            shard.drawLocal(ctx);
+        }
+    }
+}
+
 // Rysowanie statku jako chmury heksów (zastępuje zwykłe drawImage)
 export function drawHexBody(ctx, entity, camera, worldToScreenFunc) {
     if (!entity.hexGrid) return;
@@ -658,15 +671,10 @@ export function drawHexBody(ctx, entity, camera, worldToScreenFunc) {
     ctx.save();
     ctx.translate(s.x, s.y);
     ctx.rotate(entity.angle);
-    ctx.scale(camera.zoom, camera.zoom); // Skalujemy tutaj
+    ctx.scale(camera.zoom, camera.zoom); 
     
-    // Rysujemy heksy
-    for (const shard of entity.hexGrid.shards) {
-        if (shard.active && !shard.isDebris) {
-            // Można dodać lokalny culling tutaj jeśli wydajność spadnie
-            shard.drawLocal(ctx);
-        }
-    }
+    // Użyj lokalnego rysowania
+    drawHexGridLocal(ctx, entity.hexGrid);
     
     ctx.restore();
 }
