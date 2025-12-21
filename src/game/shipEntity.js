@@ -153,6 +153,17 @@ function configureShipGeometry(ship) {
     }
   };
 
+  // --- FIX DLA DESTRUCTOR.JS ---
+  // Nowy system niszczenia szuka danych w capitalProfile.
+  // Musimy zsynchronizować te dane ze stałą SHIP_SPRITE_SCALE.
+  ship.capitalProfile = ship.capitalProfile || {};
+  Object.assign(ship.capitalProfile, {
+      spriteScale: SHIP_SPRITE_SCALE, // Przekazujemy 2.2
+      spriteRotation: 0,              // Statek gracza jest obrócony standardowo
+      spriteOffset: { x: 0, y: 0 }    // Zakładamy, że PNG jest wyśrodkowany
+  });
+  // -----------------------------
+
   ship.engines = ship.engines || {};
   ship.engines.main = {
     offset: { x: 0, y: Math.round(hh - 8) },
@@ -188,40 +199,35 @@ function configureShipGeometry(ship) {
 
   // --- ZDEFINIOWANE POZYCJE DYSZ (GÓRA / DÓŁ) ---
   const topX = 109.0 * ship.visual.spriteScale;
-const topY = 108.5 * ship.visual.spriteScale;
-const botX = 134.5 * ship.visual.spriteScale;
-const botY = 83.0 * ship.visual.spriteScale; // Dodatnie w konfiguracji
+  const topY = 108.5 * ship.visual.spriteScale;
+  const botX = 134.5 * ship.visual.spriteScale;
+  const botY = 83.0 * ship.visual.spriteScale;
 
-  // Parametry wyglądu (zachowane z oryginału)
- const torqueThrusterVfxWidthMin = Math.round(25.9 * ship.visual.spriteScale * 0.75);
-const torqueThrusterVfxWidthMax = Math.round(25.9 * ship.visual.spriteScale * 1.25);
-const torqueThrusterVfxLengthMin = Math.round(41.0 * ship.visual.spriteScale * 1.4);
-const torqueThrusterVfxLengthMax = Math.round(41.0 * ship.visual.spriteScale * 2.6);
-const nudge = -72.0; // Nadpisana wartość stała
+  const torqueThrusterVfxWidthMin = Math.round(25.9 * ship.visual.spriteScale * 0.75);
+  const torqueThrusterVfxWidthMax = Math.round(25.9 * ship.visual.spriteScale * 1.25);
+  const torqueThrusterVfxLengthMin = Math.round(41.0 * ship.visual.spriteScale * 1.4);
+  const torqueThrusterVfxLengthMax = Math.round(41.0 * ship.visual.spriteScale * 2.6);
+  const nudge = -72.0;
 
   ship.visual.torqueThrusters = [
-    // 1. Left Top
     {
       offset: { x: -topX, y: -topY },
       forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge,
       vfxWidthMin: torqueThrusterVfxWidthMin, vfxWidthMax: torqueThrusterVfxWidthMax,
       vfxLengthMin: torqueThrusterVfxLengthMin, vfxLengthMax: torqueThrusterVfxLengthMax
     },
-    // 2. Left Bottom
     {
       offset: { x: -botX, y: botY },
       forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge,
       vfxWidthMin: torqueThrusterVfxWidthMin, vfxWidthMax: torqueThrusterVfxWidthMax,
       vfxLengthMin: torqueThrusterVfxLengthMin, vfxLengthMax: torqueThrusterVfxLengthMax
     },
-    // 3. Right Top
     {
       offset: { x: topX, y: -topY },
       forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge,
       vfxWidthMin: torqueThrusterVfxWidthMin, vfxWidthMax: torqueThrusterVfxWidthMax,
       vfxLengthMin: torqueThrusterVfxLengthMin, vfxLengthMax: torqueThrusterVfxLengthMax
     },
-    // 4. Right Bottom
     {
       offset: { x: botX, y: botY },
       forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge,
