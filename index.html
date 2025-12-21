@@ -3800,11 +3800,12 @@ const SUPPORT_SHIP_TEMPLATES = {
     stats: {
       hp: 120,
       accel: 350,
-      maxSpeed: 650, 
-      turn: 7.0, 
+      maxSpeed: 650,
+      turn: 7.0,
       radius: 12,
       mass: 0.8,
-      separationRange: 30 
+      // BRAK rammingMass i brak heksów -> przelatuje przez statki
+      separationRange: 30
     },
     spawnOffset: { x: -60, y: 0 },
     configure(npc, idx){
@@ -3818,7 +3819,16 @@ const SUPPORT_SHIP_TEMPLATES = {
   },
   interceptor: { // Dodane, bo spawnPirate używa tej nazwy
     // To samo co fighter, ale dla piratów
-    stats: { hp: 80, accel: 350, maxSpeed: 650, turn: 7.0, radius: 12, mass: 0.8, separationRange: 30 },
+    stats: {
+      hp: 80,
+      accel: 350,
+      maxSpeed: 650,
+      turn: 7.0,
+      radius: 12,
+      mass: 0.8,
+      // BRAK rammingMass -> przelatuje przez statki
+      separationRange: 30
+    },
     configure(npc){
       npc.fighter = true;
       npc.gun = 'laserS';
@@ -3836,6 +3846,7 @@ const SUPPORT_SHIP_TEMPLATES = {
       turn: 1.2,
       radius: 45,
       mass: 2.5,
+      rammingMass: 1000, // Fregata (Lekka)
       friction: 0.985,
       separationRange: 160
     },
@@ -3856,6 +3867,7 @@ const SUPPORT_SHIP_TEMPLATES = {
       turn: 1.2,
       radius: 45,
       mass: 2.5,
+      rammingMass: 1200, // Fregata (Lekka+)
       friction: 0.985,
       separationRange: 150
     },
@@ -3880,6 +3892,7 @@ const SUPPORT_SHIP_TEMPLATES = {
       turn: 0.9,
       radius: 70, // Skalowany do poprzedniego battleshipa
       mass: 8.0,
+      rammingMass: 5000, // Destroyer (Średni)
       friction: 0.986, // Duża inercja
       separationRange: 240
     },
@@ -3902,6 +3915,7 @@ const SUPPORT_SHIP_TEMPLATES = {
       turn: 0.6,
       radius: 140,
       mass: 25.0,
+      rammingMass: 8000, // Battleship (Ciężki, ale lżejszy od Capitali)
       friction: 0.99, // Bardzo duża inercja (płynie)
       separationRange: 440
     },
@@ -3959,6 +3973,8 @@ const CAPITAL_SHIP_TEMPLATES = {
     displayName: 'CSV Aegis',
     roleText: 'Carrier · Capital',
     hull: 42000,
+    mass: 40,
+    rammingMass: 15000, // Capital (Ciężki, ale lżejszy od Gracza-SuperCapitala)
     shield: 28000,
     shieldRegen: 260,
     shieldDelay: 6,
