@@ -609,7 +609,7 @@
   import { WarpBlackHole } from "./src/vfx/warpBlackHole.js";
   import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
   import { createShipEntity, applyPlayerInput, runShipAI } from "./src/game/shipEntity.js";
-  import { DestructorSystem, initHexBody, drawHexBody } from "./src/game/destructor.js";
+  import { DestructorSystem, initHexBody, drawHexBody, drawHexBodyLocal } from "./src/game/destructor.js";
   window.THREE = THREE;
   window.EffectComposer  = EffectComposer;
   window.RenderPass      = RenderPass;
@@ -641,6 +641,7 @@
   window.DestructorSystem = DestructorSystem;
   window.initHexBody = initHexBody;
   window.drawHexBody = drawHexBody;
+  window.drawHexBodyLocal = drawHexBodyLocal;
   // Nie modyfikujemy namespace'u modułu THREE (jest niemodyfikowalny).
   // Jeśli coś potrzebuje CopyShader globalnie, wystawiamy go przez window:
   window.CopyShader = CopyShader;
@@ -659,7 +660,7 @@ import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
 import { WORLD, setWorldSize } from './src/world/world.js';
 import { initShieldSystem, updateShieldFx, drawShield, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot } from './shieldSystem.js';
 import { createShipEntity, applyPlayerInput, runShipAI } from "./src/game/shipEntity.js";
-import { DestructorSystem, initHexBody, drawHexBody } from "./src/game/destructor.js";
+import { DestructorSystem, initHexBody, drawHexBody, drawHexBodyLocal } from "./src/game/destructor.js";
 // Statki Terran (Wsparcie)
 import terranFrigateImg from "./src/assets/ships/terranfrigate.png";
 import terranDestroyerImg from "./src/assets/ships/terrandestroyer.png";
@@ -13683,7 +13684,20 @@ function render(alpha, frameDt){
 
   // --- 3. Rysowanie KADŁUBA ---
   if (ship.hexGrid) {
-      drawHexBody(ctx, ship, cam, worldToScreen);
+      drawHexBodyLocal(ctx, ship);
+  if (ship.hp < ship.maxHp) {
+        const zoom = camera.zoom;
+        const size = (ship.radius || 20); // Usunąłem * zoom, bo ctx jest już wyskalowany w linii 2010
+        const hpPct = Math.max(0, ship.hp / ship.maxHp);
+        ctx.save();
+        // Rysujemy lokalnie względem statku
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(-size, -size - 10, size * 2, 4);
+        ctx.fillStyle = '#22c55e';
+        ctx.fillRect(-size, -size - 10, size * 2 * hpPct, 4);
+        ctx.restore();
+      }
+      // Nie robimy return, żeby silniki i efekty (rysowane dalej) się wykonały
   }
   else if (USE_SHIP_SPRITE && ship.spriteReady) {
     const scale = (ship.h / ship.spriteH) * spriteScale;
