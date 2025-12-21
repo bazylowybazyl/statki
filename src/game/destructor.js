@@ -121,79 +121,84 @@ export const DestructorSystem = {
   resolveHexGrinding(entities) {
     const r = DESTRUCTOR_CONFIG.gridDivisions;
     const h = r * Math.sqrt(3);
-    const checkDistSq = (r * 1.4) ** 2;
+    const checkDistSq = (r * 2.2) ** 2; 
 
-    // Filtrujemy tylko byty, które mają zainicjowaną siatkę heksów
+    // WAŻNE: To filtruje Fightery, ponieważ one nie mają hexGrid (initHexBody je pomija)
     const activeBodies = entities.filter(e => e && !e.dead && e.hexGrid);
 
     for (let i = 0; i < activeBodies.length; i++) {
       const A = activeBodies[i];
+      const scaleA = getFinalScale(A);
+      // Pobieramy masę A (Gracz = 25000, Battleship = 8000)
+      const massA = A.rammingMass || A.mass || 100;
       
+      const realRadA = A.hexGrid.rawRadius ? (A.hexGrid.rawRadius * scaleA) : (A.radius || 100);
+      const broadPhaseRadA = Math.max(A.radius || 0, realRadA);
+
       for (let j = i + 1; j < activeBodies.length; j++) {
         const B = activeBodies[j];
+        const scaleB = getFinalScale(B);
+        const massB = B.rammingMass || B.mass || 100;
 
-        // Szybki test AABB (bounding box)
-        const posA = A.pos || {x: A.x, y: A.y}; // Obsługa obu typów obiektów (shipEntity vs NPC)
+        const realRadB = B.hexGrid.rawRadius ? (B.hexGrid.rawRadius * scaleB) : (B.radius || 100);
+        const broadPhaseRadB = Math.max(B.radius || 0, realRadB);
+
+        const posA = A.pos || {x: A.x, y: A.y};
         const posB = B.pos || {x: B.x, y: B.y};
         
         const distSq = (posA.x - posB.x)**2 + (posA.y - posB.y)**2;
-        const radSum = (A.radius || 100) + (B.radius || 100);
+        const radSum = broadPhaseRadA + broadPhaseRadB;
+        
         if (distSq > radSum * radSum) continue;
 
-        // Ustalenie kto jest "Iteratorem" (ten z mniejszą liczbą heksów iteruje po drugim)
         let iterator = A, gridHolder = B;
+        let iterScale = scaleA, gridScale = scaleB;
+        
+        // Optymalizacja: iterujemy po obiekcie z mniejszą liczbą shardów
         if (A.hexGrid.shards.length > B.hexGrid.shards.length) { 
             iterator = B; gridHolder = A; 
+            iterScale = scaleB; gridScale = scaleA;
         }
+        
+        // Pobieramy masy dla konkretnych ról
+        const massIter = iterator.rammingMass || iterator.mass || 100;
+        const massHolder = gridHolder.rammingMass || gridHolder.mass || 100;
 
-        // Pobranie pozycji i prędkości (kompatybilność z shipEntity i prostymi NPC)
         const iPos = iterator.pos || {x: iterator.x, y: iterator.y};
         const gPos = gridHolder.pos || {x: gridHolder.x, y: gridHolder.y};
-        const iVel = iterator.vel || {x: iterator.vx, y: iterator.vy};
-        const gVel = gridHolder.vel || {x: gridHolder.vx, y: gridHolder.vy};
-
-        // Parametry transformacji
+        
         const gCos = Math.cos(-gridHolder.angle); 
         const gSin = Math.sin(-gridHolder.angle);
         const iCos = Math.cos(iterator.angle); 
         const iSin = Math.sin(iterator.angle);
         
-        // Relatywna prędkość do skalowania obrażeń
-        const relVx = (iVel.x || 0) - (gVel.x || 0);
-        const relVy = (iVel.y || 0) - (gVel.y || 0);
-        const impactSpeed = Math.hypot(relVx, relVy) * 0.5;
+        const relativeScale = iterScale / gridScale; 
+        const searchRadius = relativeScale > 2.0 ? 3 : (relativeScale > 1.0 ? 2 : 1);
 
-        // Skalowanie obrażeń (Kinetic Energy)
-        const speedFactor = 1 + (impactSpeed * impactSpeed * 6.0);
-        const massA = iterator.mass || 100;
-        const massB = gridHolder.mass || 100;
-        
-        const baseDmgToGrid = (massA * 0.005) * speedFactor;
-        const baseDmgToIter = (massB * 0.005) * speedFactor;
-        
+        const relVx = (iterator.vx || 0) - (gridHolder.vx || 0);
+        const relVy = (iterator.vy || 0) - (gridHolder.vy || 0);
+        const impactSpeed = Math.hypot(relVx, relVy) * 0.5; 
         const warpStrength = DESTRUCTOR_CONFIG.structureWarp * (impactSpeed * 0.5);
 
-        // Pętla po heksach iteratora
         for (const sI of iterator.hexGrid.shards) {
           if (!sI.active || sI.isDebris) continue;
 
-          // Pozycja sI w świecie
-          const wx = iPos.x + sI.lx * iCos - sI.ly * iSin;
-          const wy = iPos.y + sI.lx * iSin + sI.ly * iCos;
+          const wx = iPos.x + (sI.lx * iterScale) * iCos - (sI.ly * iterScale) * iSin;
+          const wy = iPos.y + (sI.lx * iterScale) * iSin + (sI.ly * iterScale) * iCos;
 
-          // Transformacja do układu lokalnego gridHolder
           const rdx = wx - gPos.x;
           const rdy = wy - gPos.y;
-          const glx = rdx * gCos - rdy * gSin;
-          const gly = rdx * gSin + rdy * gCos;
+          const glxRaw = rdx * gCos - rdy * gSin;
+          const glyRaw = rdx * gSin + rdy * gCos;
+          
+          const glx = glxRaw / gridScale;
+          const gly = glyRaw / gridScale;
 
-          // Lookup w siatce (hashmapa)
           const approxC = Math.round((glx - gridHolder.hexGrid.offsetX) / (1.5 * r));
           const approxR = Math.round((gly - gridHolder.hexGrid.offsetY) / h);
 
-          // Sprawdzenie sąsiadów
-          for (let dc = -1; dc <= 1; dc++) {
-            for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -searchRadius; dc <= searchRadius; dc++) {
+            for (let dr = -searchRadius; dr <= searchRadius; dr++) {
               const key = (approxC + dc) + "," + (approxR + dr);
               const sG = gridHolder.hexGrid.map[key];
 
@@ -202,80 +207,63 @@ export const DestructorSystem = {
                 const dy = sG.ly - gly;
 
                 if (dx*dx + dy*dy < checkDistSq) {
-                  // === KOLIZJA ===
+                  // === KOLIZJA (MIAŻDŻENIE) ===
                   
-                  // Współczynniki twardości (Armor vs Hull)
-                  const dmgFactorGrid = sI.hardness / sG.hardness;
-                  const dmgFactorIter = sG.hardness / sI.hardness;
+                  const baseDamage = 35; // Bazowe obrażenia od "szorowania"
+                  const crushFactor = 0.08; 
+                  const speedFactor = Math.max(1, impactSpeed * 0.15);
+                  
+                  // Obrażenia zależne od masy taranującego
+                  // Np. Gracz (25k) vs Fregata (1k) -> Gracz zadaje 25x więcej obrażeń z masy
+                  const damageToHolder = baseDamage + (massIter / 1000) * crushFactor * speedFactor;
+                  const damageToIter = baseDamage + (massHolder / 1000) * crushFactor * speedFactor;
 
-                  // 1. Deformacja i DMG dla GridHolder (B)
+                  sG.hp -= damageToHolder;
+                  sI.hp -= damageToIter;
+
                   sG.deform(-dx, -dy);
                   const dist = Math.sqrt(dx*dx + dy*dy) || 1;
-                  const ndx = dx/dist; const ndy = dy/dist;
                   const warpPush = warpStrength * (1.0 / sG.hardness);
-                  sG.warpStructure(ndx * warpPush, ndy * warpPush, r * 1.5);
-                  sG.hp -= baseDmgToGrid * dmgFactorGrid;
+                  sG.warpStructure((dx/dist) * warpPush, (dy/dist) * warpPush, r * 1.5);
 
-                  // 2. Deformacja i DMG dla Iterator (A)
-                  // Transformacja wektora kolizji z powrotem do A
-                  const revICos = Math.cos(-iterator.angle); 
-                  const revISin = Math.sin(-iterator.angle);
-                  const wdx = dx * Math.cos(gridHolder.angle) - dy * Math.sin(gridHolder.angle);
-                  const wdy = dx * Math.sin(gridHolder.angle) + dy * Math.cos(gridHolder.angle);
-                  const idx = wdx * revICos - wdy * revISin;
-                  const idy = wdx * revISin + wdy * revICos;
-
-                  sI.deform(idx, idy);
-                  // Warp dla A
-                  const iDist = Math.sqrt(idx*idx + idy*idy) || 1;
-                  sI.warpStructure((idx/iDist) * warpPush, (idy/iDist) * warpPush, r * 1.5);
-                  sI.hp -= baseDmgToIter * dmgFactorIter;
-
-                  // 3. Momentum Transfer (Popychanie statków)
-                  const impulse = impactSpeed * 0.05;
-                  const pushDirX = wdx / (Math.hypot(wdx, wdy) || 1);
-                  const pushDirY = wdy / (Math.hypot(wdx, wdy) || 1);
+                  // === FIZYKA (ODPYCHANIE) ===
+                  // Siła stała, ale przyspieszenie (a=F/m) zależy od masy
+                  const collisionForce = 80000; 
+                  const dt = 0.016; 
                   
-                  // Modyfikacja prędkości (obsługa struktur `vel` i `vx/vy`)
-                  if (massA > 0) {
-                      if (iterator.vel) {
-                        iterator.vel.x -= pushDirX * impulse * (massB / (massA + massB));
-                        iterator.vel.y -= pushDirY * impulse * (massB / (massA + massB));
-                      } else {
-                        iterator.vx -= pushDirX * impulse * (massB / (massA + massB));
-                        iterator.vy -= pushDirY * impulse * (massB / (massA + massB));
-                      }
+                  const centerDx = iPos.x - gPos.x;
+                  const centerDy = iPos.y - gPos.y;
+                  const centerDist = Math.hypot(centerDx, centerDy) || 1;
+                  const pushDirX = centerDx / centerDist;
+                  const pushDirY = centerDy / centerDist;
+
+                  const accelIter = collisionForce / massIter;
+                  const accelHolder = collisionForce / massHolder;
+
+                  if (iterator.vel) { 
+                      iterator.vel.x += pushDirX * accelIter * dt; 
+                      iterator.vel.y += pushDirY * accelIter * dt; 
+                  } else { 
+                      iterator.vx += pushDirX * accelIter * dt; 
+                      iterator.vy += pushDirY * accelIter * dt; 
                   }
-                  if (massB > 0) {
-                      if (gridHolder.vel) {
-                        gridHolder.vel.x += pushDirX * impulse * (massA / (massA + massB));
-                        gridHolder.vel.y += pushDirY * impulse * (massA / (massA + massB));
-                      } else {
-                        gridHolder.vx += pushDirX * impulse * (massA / (massA + massB));
-                        gridHolder.vy += pushDirY * impulse * (massA / (massA + massB));
-                      }
+                  
+                  if (gridHolder.vel) { 
+                      gridHolder.vel.x -= pushDirX * accelHolder * dt; 
+                      gridHolder.vel.y -= pushDirY * accelHolder * dt; 
+                  } else { 
+                      gridHolder.vx -= pushDirX * accelHolder * dt; 
+                      gridHolder.vy -= pushDirY * accelHolder * dt; 
                   }
 
-                  // 4. Zniszczenie i Debris
                   if (sG.hp <= 0) {
                     this.spawnSparks(wx, wy, 2);
-                    const iVelX = iterator.vel ? iterator.vel.x : iterator.vx;
-                    const iVelY = iterator.vel ? iterator.vel.y : iterator.vy;
-                    sG.becomeDebris(iVelX * 0.2, iVelY * 0.2, gridHolder);
+                    sG.becomeDebris(iterator.vx * 0.2, iterator.vy * 0.2, gridHolder, gridScale);
                   }
                   if (sI.hp <= 0) {
                     this.spawnSparks(wx, wy, 2);
-                    const gVelX = gridHolder.vel ? gridHolder.vel.x : gridHolder.vx;
-                    const gVelY = gridHolder.vel ? gridHolder.vel.y : gridHolder.vy;
-                    sI.becomeDebris(gVelX * 0.2, gVelY * 0.2, iterator);
+                    sI.becomeDebris(gridHolder.vx * 0.2, gridHolder.vy * 0.2, iterator, iterScale);
                   }
-                  
-                  // Hamowanie przy "szlifowaniu"
-                  if (iterator.vel) { iterator.vel.x *= 0.95; iterator.vel.y *= 0.95; }
-                  else { iterator.vx *= 0.95; iterator.vy *= 0.95; }
-                  
-                  if (gridHolder.vel) { gridHolder.vel.x *= 0.95; gridHolder.vel.y *= 0.95; }
-                  else { gridHolder.vx *= 0.95; gridHolder.vy *= 0.95; }
                 }
               }
             }
