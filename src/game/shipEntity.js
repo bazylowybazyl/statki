@@ -5,7 +5,8 @@ const SHIP_TEMPLATE = {
   w: 250,
   h: 450,
   radius: 220,       // WAŻNE: Promień kolizji (dla destructor.js i kolizji)
-  mass: 140,
+  mass: 140,           // Zwinność silników (bez zmian)
+  rammingMass: 25000,  // Masa taranowania: Najcięższy obiekt w grze
   pos: { x: 0, y: 0 },
   vel: { x: 0, y: 0 },
   angle: 0,
