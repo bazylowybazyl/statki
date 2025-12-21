@@ -14,7 +14,7 @@ export const DESTRUCTOR_CONFIG = {
   friction: 0.99           // Tarcie dla odłamków w kosmosie
 };
 
-// Pomocnik do pobierania parametrów wizualnych statku (zgodność z index.html)
+// Pomocnik do pobierania parametrów wizualnych statku
 function getVisualProps(entity) {
   const prof = entity.capitalProfile || {};
   return {
@@ -27,12 +27,11 @@ function getVisualProps(entity) {
 
 // Globalne kontenery dla systemu destrukcji
 export const DestructorSystem = {
-  debris: [], // Lista luźnych odłamków
-  sparks: [], // Lista iskier
+  debris: [],
+  sparks: [],
   
-  // Metoda do aktualizacji fizyki i logiki
   update(dt, entities) {
-    // 1. Aktualizacja odłamków (debris)
+    // 1. Aktualizacja odłamków
     for (let i = this.debris.length - 1; i >= 0; i--) {
       const d = this.debris[i];
       d.updateDebris();
@@ -54,14 +53,11 @@ export const DestructorSystem = {
       }
     }
 
-    // 3. Kolizje i mielenie (Grind)
     this.resolveHexGrinding(entities);
   },
 
-  // --- NOWOŚĆ: Obsługa trafień z broni (z uwzględnieniem skali/rotacji) ---
   applyImpact(entity, worldX, worldY, damage, bulletVel) {
     if (!entity.hexGrid) return false;
-
     if (entity.fighter || (entity.type && (entity.type === 'fighter' || entity.type === 'interceptor' || entity.type === 'drone'))) {
         return false;
     }
@@ -70,32 +66,23 @@ export const DestructorSystem = {
     const r = DESTRUCTOR_CONFIG.gridDivisions;
     const h = r * Math.sqrt(3);
 
-    // 1. Transformacja pozycji trafienia do układu lokalnego statku
     const pos = entity.pos || {x: entity.x, y: entity.y};
-    // Uwzględniamy dodatkową rotację sprite'a (np. +90 deg dla Carriera)
     const ang = (entity.angle || 0) + rotation;
     
-    // Wektor od środka statku do trafienia
     const dx = worldX - pos.x;
     const dy = worldY - pos.y;
     
-    // Obrót o -angle (do lokalnego układu)
     const c = Math.cos(-ang);
     const s = Math.sin(-ang);
     
-    // Obracamy wektor dystansu
     let lx = dx * c - dy * s;
     let ly = dx * s + dy * c;
 
-    // Skalujemy w dół (ze świata do lokalnej przestrzeni obrazka)
     lx /= scale;
     ly /= scale;
-
-    // Odejmujemy offset sprite'a
     lx -= offX;
     ly -= offY;
 
-    // 2. Znalezienie heksa w siatce
     const approxC = Math.round((lx - entity.hexGrid.offsetX) / (1.5 * r));
     const approxR = Math.round((ly - entity.hexGrid.offsetY) / h);
 
@@ -112,13 +99,11 @@ export const DestructorSystem = {
              if (distSq < (r * 1.5)**2) {
                  hitSomething = true;
                  
-                 // Wektor uderzenia w lokalnym układzie
                  const lvx = bulletVel.x * c - bulletVel.y * s;
                  const lvy = bulletVel.x * s + bulletVel.y * c;
                  
                  shard.deform(lx - shard.lx, ly - shard.ly); 
-
-                 const warpFactor = 0.05 * (damage / 50) / scale; // Warp też skalujemy
+                 const warpFactor = 0.05 * (damage / 50) / scale; 
                  shard.warpStructure(lvx * warpFactor, lvy * warpFactor, r * 2.0);
 
                  shard.hp -= damage / shard.hardness;
@@ -131,14 +116,14 @@ export const DestructorSystem = {
          }
       }
     }
-    
     return hitSomething;
   },
 
-  // Logika kolizji heksów (uproszczona, ignoruje precyzyjną skalę dla wydajności w tym demie)
   resolveHexGrinding(entities) {
-    // ... (pozostawiam bez zmian dla zwięzłości, działa na podobnej zasadzie)
-    // W pełnej wersji tutaj też trzeba by dodać uwzględnianie 'scale' przy transformacjach.
+      // Logika kolizji heksów (skrócona wersja z poprzednich plików)
+      // Wymaga analogicznych poprawek 'scale' jak applyImpact, 
+      // ale dla uproszczenia w tym momencie zostawiamy pustą lub podstawową implementację
+      // jeśli nie używasz taranowania statkami.
   },
 
   spawnSparks(x, y, count = 1) {
@@ -153,7 +138,6 @@ export const DestructorSystem = {
     }
   },
 
-  // Rysowanie (wywoływane w głównej pętli render)
   draw(ctx, camera, worldToScreenFunc) {
     const viewLeft = camera.x - (ctx.canvas.width/2)/camera.zoom - 200;
     const viewRight = camera.x + (ctx.canvas.width/2)/camera.zoom + 200;
@@ -189,20 +173,15 @@ class HexShard {
     this.c = c;
     this.r = r;
     this.color = color;
-    
     this.active = true;
     this.isDebris = false;
     this.hp = DESTRUCTOR_CONFIG.shardHP;
     this.hardness = 1.0;
-
     this.worldX = 0; this.worldY = 0;
     this.dvx = 0; this.dvy = 0; this.drot = 0;
     this.alpha = 1;
     this.angle = 0;
-    
-    // Dane wizualne debris
     this.debScale = 1;
-
     this.verts = [];
     this.baseVerts = [];
     for (let i = 0; i < 6; i++) {
@@ -218,7 +197,6 @@ class HexShard {
     const range = this.radius * DESTRUCTOR_CONFIG.deformRadius;
     const strength = DESTRUCTOR_CONFIG.deformStrength / this.hardness;
     const limit = this.radius * DESTRUCTOR_CONFIG.maxDeform;
-
     for (let i = 0; i < 6; i++) {
       const v = this.verts[i];
       const dx = v.x - localHitX;
@@ -231,7 +209,6 @@ class HexShard {
         const ny = dy / dist;
         v.x += nx * strength * influence;
         v.y += ny * strength * influence;
-
         const bx = v.x - this.baseVerts[i].x;
         const by = v.y - this.baseVerts[i].y;
         const stretch = Math.hypot(bx, by);
@@ -261,40 +238,29 @@ class HexShard {
 
   becomeDebris(impulseX, impulseY, parentEntity, visualProps = {scale:1, rotation:0, offX:0, offY:0}) {
     if (this.isDebris) return;
-    
-    // Konwertujemy pozycję lokalną heksa (z uwzględnieniem skali i obrotu) na świat
     const px = parentEntity.pos ? parentEntity.pos.x : parentEntity.x;
     const py = parentEntity.pos ? parentEntity.pos.y : parentEntity.y;
-    
     const scale = visualProps.scale;
-    // Pozycja lokalna po przeskalowaniu i offsecie
     const effLx = (this.lx + visualProps.offX) * scale;
     const effLy = (this.ly + visualProps.offY) * scale;
-
     const ang = parentEntity.angle + visualProps.rotation;
     const c = Math.cos(ang);
     const s = Math.sin(ang);
-    
     this.worldX = px + effLx * c - effLy * s;
     this.worldY = py + effLx * s + effLy * c;
-
-    // Prędkość
     let vx = parentEntity.vel ? parentEntity.vel.x : (parentEntity.vx || 0);
     let vy = parentEntity.vel ? parentEntity.vel.y : (parentEntity.vy || 0);
     const angVel = parentEntity.angVel || 0;
-    
     const rx = effLx * c - effLy * s;
     const ry = effLx * s + effLy * c;
     vx += -angVel * ry;
     vy +=  angVel * rx;
-
     this.dvx = vx + impulseX + (Math.random() - 0.5);
     this.dvy = vy + impulseY + (Math.random() - 0.5);
     this.drot = (Math.random() - 0.5) * 2.0;
     this.angle = ang;
     this.alpha = 2.0;
-    this.debScale = scale; // Odłamek musi pamiętać swoją skalę
-
+    this.debScale = scale;
     this.isDebris = true;
     this.active = true;
     DestructorSystem.debris.push(this);
@@ -311,19 +277,14 @@ class HexShard {
   }
 
   draw(ctx, camera, worldToScreenFunc) {
-    if (!this.active) return;
-    if (!this.isDebris) return; 
-
+    if (!this.active || !this.isDebris) return; 
     const p = worldToScreenFunc(this.worldX, this.worldY, camera);
-    
     ctx.save();
     ctx.translate(p.x, p.y);
     ctx.rotate(this.angle);
-    ctx.scale(camera.zoom * this.debScale, camera.zoom * this.debScale); // Skalowanie odłamka
+    ctx.scale(camera.zoom * this.debScale, camera.zoom * this.debScale);
     ctx.globalAlpha = Math.min(1, this.alpha);
-    
     this.drawShape(ctx);
-    
     ctx.restore();
   }
 
@@ -335,7 +296,6 @@ class HexShard {
         ctx.lineTo(this.verts[i].x * overlap, this.verts[i].y * overlap);
     }
     ctx.closePath();
-
     if (this.color) {
         ctx.fillStyle = this.color;
         ctx.fill();
@@ -345,7 +305,6 @@ class HexShard {
         const texW = this.img.width;
         const texH = this.img.height;
         ctx.translate(-this.lx, -this.ly);
-        // Rysujemy obraz w środku (0,0), który jest teraz przesunięty o -lx, -ly względem wierzchołka
         ctx.drawImage(this.img, -texW/2, -texH/2);
         ctx.restore();
     }
@@ -360,14 +319,8 @@ class HexShard {
 }
 
 export function initHexBody(entity, image) {
-  if (entity.fighter || (entity.type && (entity.type === 'fighter' || entity.type === 'interceptor' || entity.type === 'drone'))) {
-      return;
-  }
-  
-  if (!image || !image.width) {
-      console.warn("Destructor: Image not ready for", entity);
-      return;
-  }
+  if (entity.fighter || (entity.type && (entity.type === 'fighter' || entity.type === 'interceptor' || entity.type === 'drone'))) return;
+  if (!image || !image.width) return;
   
   const w = image.width;
   const h = image.height;
@@ -396,21 +349,15 @@ export function initHexBody(entity, image) {
           
           let hit = false;
           const offsets = [{x:0,y:0}, {x:r*0.5,y:0}, {x:-r*0.5,y:0}, {x:0,y:r*0.5}, {x:0,y:-r*0.5}];
-          
           for (const off of offsets) {
               const px = Math.floor(cx + off.x);
               const py = Math.floor(cy + off.y);
               if (px >= 0 && px < w && py >= 0 && py < h) {
                   const alpha = data[(py * w + px) * 4 + 3];
-                  if (alpha > 40) {
-                      hit = true;
-                      break;
-                  }
+                  if (alpha > 40) { hit = true; break; }
               }
           }
-          
           if (hit) {
-              // UWAGA: lx, ly to pozycje wewnątrz nieprzeskalowanego obrazka
               const lx = cx - centerX;
               const ly = cy - centerY;
               const shard = new HexShard(image, lx, ly, r, c, ro);
@@ -420,12 +367,8 @@ export function initHexBody(entity, image) {
       }
   }
   
-  // FIX: Nie zmieniamy entity.radius, bo to psuje fizykę gry, jeśli statek jest skalowany!
-  // Tylko ustawiamy offsety (które w tym modelu są centrowane)
   const finalOffsetX = -centerX;
   const finalOffsetY = -centerY;
-  
-  // Analiza twardości (Armor vs Core)
   const coreRadSq = (Math.min(w, h) * 0.25) ** 2;
   for (const s of shards) {
       const distSq = s.lx*s.lx + s.ly*s.ly;
@@ -434,23 +377,15 @@ export function initHexBody(entity, image) {
       const neighborOffsets = odd 
           ? [[0,-1],[0,1],[-1,0],[-1,1],[1,0],[1,1]]
           : [[0,-1],[0,1],[-1,-1],[-1,0],[1,-1],[1,0]];
-      
       for (const no of neighborOffsets) {
           if (map[`${s.c + no[0]},${s.r + no[1]}`]) nFound++;
       }
-      
       if (distSq < coreRadSq) { s.hardness = 3.0; s.hp *= 3.0; } 
       else if (nFound < 6) { s.hardness = 2.0; s.hp *= 2.0; } 
       else { s.hardness = 1.0; }
   }
 
-  entity.hexGrid = {
-      shards,
-      map,
-      offsetX: finalOffsetX,
-      offsetY: finalOffsetY
-  };
-  
+  entity.hexGrid = { shards, map, offsetX: finalOffsetX, offsetY: finalOffsetY };
   console.log(`Destructor: Initialized hex body for entity. Shards: ${shards.length}`);
 }
 
@@ -463,37 +398,47 @@ export function drawHexGridLocal(ctx, hexGrid) {
     }
 }
 
-// Główna funkcja rysująca statek jako siatkę heksów
+// === FIX 2: FUNKCJA DO RYSOWANIA GRACZA W ISTNIEJĄCYM KONTEKŚCIE ===
+export function drawHexBodyLocal(ctx, entity) {
+    if (!entity.hexGrid) return;
+    
+    const { scale, rotation, offX, offY } = getVisualProps(entity);
+
+    ctx.save();
+    // Zakładamy, że ctx jest już:
+    // 1. Przesunięty do środka statku (Translate)
+    // 2. Obrócony o kąt statku (Rotate)
+    // 3. Przeskalowany o Zoom kamery (Scale)
+    
+    // Aplikujemy tylko różnice wizualne Sprite'a:
+    ctx.rotate(rotation);       // np. 0
+    ctx.scale(scale, scale);    // np. 2.2
+    ctx.translate(offX, offY);  // np. 0,0
+
+    // Rysujemy siatkę bezpośrednio w (0,0) lokalnego układu
+    drawHexGridLocal(ctx, entity.hexGrid);
+    
+    ctx.restore();
+}
+
+// Stara funkcja do rysowania NPC (absolutna)
 export function drawHexBody(ctx, entity, camera, worldToScreenFunc) {
     if (!entity.hexGrid) return;
     
     const posX = entity.pos ? entity.pos.x : entity.x;
     const posY = entity.pos ? entity.pos.y : entity.y;
     const s = worldToScreenFunc(posX, posY, camera);
-    
-    // --- KLUCZOWE POPRAWKI ---
-    // Pobieramy dane wizualne, żeby grid pasował do reszty gry
     const { scale, rotation, offX, offY } = getVisualProps(entity);
 
-    // Culling (z uwzględnieniem skali)
     const size = (entity.radius || 100) * scale * camera.zoom;
     if (s.x + size < 0 || s.x - size > ctx.canvas.width ||
         s.y + size < 0 || s.y - size > ctx.canvas.height) return;
 
     ctx.save();
     ctx.translate(s.x, s.y);
-    
-    // 1. Aplikujemy rotację (fizyczna + wizualna, np. +90 stopni dla Carriera)
-    ctx.rotate(entity.angle + rotation);
-    
-    // 2. Aplikujemy skalę (zoom kamery + skala sprite'a, np. x5)
-    ctx.scale(camera.zoom * scale, camera.zoom * scale); 
-    
-    // 3. Aplikujemy offset (jeśli statek nie jest wyśrodkowany)
+    ctx.rotate(entity.angle + rotation); // Suma kątów
+    ctx.scale(camera.zoom * scale, camera.zoom * scale); // Suma skali
     ctx.translate(offX, offY);
-
-    // 4. Rysujemy lokalną siatkę (która jest 1:1 z obrazkiem)
     drawHexGridLocal(ctx, entity.hexGrid);
-    
     ctx.restore();
 }
