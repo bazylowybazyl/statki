@@ -42,18 +42,15 @@
   .side-panel.collapsed .side-panel-title{transform:rotate(-90deg);letter-spacing:0.16em;transform-origin:center center;text-align:center;}
   .side-panel.collapsed .panel-chevron{opacity:0;transform:translateY(-4px);}
   .side-panel.collapsed .side-panel-body{max-height:0;opacity:0;transform:translateY(-8px);pointer-events:none;}
+  #fleet-ui .side-panel-body{max-height:360px;overflow-y:auto;-ms-overflow-style:none;scrollbar-width:none;}
+  #fleet-ui .side-panel-body::-webkit-scrollbar{display:none;}
   #fleet-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;}
   .fleet-ship{padding:10px 12px;background:linear-gradient(160deg,rgba(10,26,48,0.82),rgba(12,32,58,0.9));border:1px solid var(--fa-border);border-radius:12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 10px 24px rgba(0,0,0,0.35)}
   .fleet-ship-header{display:flex;flex-direction:column;gap:2px;}
   .fleet-ship-name{font-weight:700;font-size:15px;color:#f6fbff;letter-spacing:0.02em;}
   .fleet-ship-meta{font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--fa-muted);}
-  .fleet-bars{display:flex;flex-direction:column;gap:6px;}
-  .fleet-bar-label{font-size:11px;color:var(--fa-muted);display:flex;justify-content:space-between;}
-  .fleet-bar{height:9px;border-radius:999px;background:rgba(56,92,138,0.65);overflow:hidden;position:relative;box-shadow:inset 0 1px 0 rgba(255,255,255,0.08);}
-  .fleet-bar-fill{position:absolute;left:0;top:0;height:100%;border-radius:999px;transition:width 0.25s ease-out;filter:drop-shadow(0 0 6px rgba(109,220,255,0.5));}
-  .fleet-bar-fill.hull{background:linear-gradient(90deg,#ffb866,#ffd56b);} 
-  .fleet-bar-fill.shield{background:linear-gradient(90deg,#5be0ff,#7ea7ff);} 
-  .fleet-fighters{font-size:12px;color:var(--fa-text);text-shadow:0 0 8px rgba(109,220,255,0.45);}
+  .fleet-stats{font-size:13px;letter-spacing:0.04em;color:#dfe7ff;display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  .fleet-fighters{font-size:13px;font-weight:700;color:var(--fa-text);text-shadow:0 0 8px rgba(109,220,255,0.45);letter-spacing:0.04em;}
   .fleet-hardpoints{display:flex;gap:8px;font-size:11px;color:#cde7ff;flex-wrap:wrap;}
   .fleet-hardpoints span{padding:2px 8px;border-radius:999px;background:rgba(99,167,238,0.2);border:1px solid var(--fa-border);box-shadow:0 6px 16px rgba(0,0,0,0.25);}
   .fleet-controls{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
@@ -1336,6 +1333,17 @@ function muzzlePosFor(entity, dir, extra = 8){
 
 const fleetNumberFormatter = new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 0 });
 const FLEET_UI_REFRESH_MS = 1000;
+const SUPPORT_TYPE_LABELS = {
+  fighter: 'Mysliwiec',
+  frigate_pd: 'Fregata PD',
+  frigate_laser: 'Fregata Laserowa',
+  destroyer: 'Destroyer',
+  battleship: 'Battleship',
+  carrier: 'Capital',
+  capital: 'Capital',
+  supercapital: 'Supercapital'
+};
+const UNIMPLEMENTED_FLEET_TYPES = new Set(['capital', 'supercapital']);
 window.aiSpawnBullet = function(sim, from, to, weapon) {
   const ang = Math.atan2(to.y - from.y, to.x - from.x);
   const spread = (weapon.spread || 0) * (Math.PI / 180);
@@ -1367,59 +1375,97 @@ function formatFleetNumber(value){
   return fleetNumberFormatter.format(Math.max(0, Math.round(value)));
 }
 
-function percent(value, max){
-  if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0) return 0;
-  return clamp(value / max, 0, 1);
+function getSupportTypeLabel(typeKey){
+  if (!typeKey) return 'Jednostka';
+  return SUPPORT_TYPE_LABELS[typeKey] || typeKey;
 }
 
-function appendFleetBar(container, label, value, max, type){
-  const labelRow = document.createElement('div');
-  labelRow.className = 'fleet-bar-label';
-  const labelSpan = document.createElement('span');
-  labelSpan.textContent = label;
-  const valueSpan = document.createElement('span');
-  valueSpan.textContent = `${formatFleetNumber(value)}/${formatFleetNumber(max)}`;
-  labelRow.append(labelSpan, valueSpan);
-  container.appendChild(labelRow);
+function buildSupportEntries(){
+  const entries = [];
+  const units = Array.isArray(SupportWing?.units) ? SupportWing.units : [];
+  const liveUnits = units.filter(u => u && u.npc && !u.npc.dead && u.npc.friendly);
+  const fighterCount = liveUnits.filter(u => (u.type || u.npc?.type) === 'fighter').length;
+  if (fighterCount > 0){
+    entries.push({ kind: 'fighters', label: 'Mysliwce', count: fighterCount });
+  }
 
-  const bar = document.createElement('div');
-  bar.className = 'fleet-bar';
-  const fill = document.createElement('div');
-  fill.className = `fleet-bar-fill ${type}`;
-  fill.style.width = `${Math.round(percent(value, max) * 100)}%`;
-  bar.appendChild(fill);
-  container.appendChild(bar);
+  for (const unit of liveUnits){
+    const npc = unit.npc;
+    const typeKey = unit.type || npc.type;
+    if (typeKey === 'fighter') continue;
+    const shield = npc.shield || {};
+    const label = getSupportTypeLabel(typeKey);
+
+    entries.push({
+      id: unit.slotIndex ?? `${typeKey || 'support'}_${entries.length}`,
+      kind: UNIMPLEMENTED_FLEET_TYPES.has(typeKey) ? 'placeholder' : 'ship',
+      name: label,
+      typeLabel: label,
+      meta: 'Wsparcie',
+      hull: Math.max(0, npc.hp ?? 0),
+      shield: Math.max(0, shield.val ?? 0)
+    });
+  }
+  return entries;
 }
 
-function renderFleetShip(entry){
+function buildCapitalEntries(){
+  const entries = [];
+  for (const ship of Fleet.ships){
+    const npc = ship.entity;
+    if (!npc || npc.dead || !npc.friendly) continue;
+    const typeKey = ship.type || npc.type || 'capital';
+    const label = ship.displayName || getSupportTypeLabel(typeKey);
+    const shield = npc.shield || {};
+
+    entries.push({
+      id: ship.id || `${typeKey}_${entries.length}`,
+      kind: UNIMPLEMENTED_FLEET_TYPES.has(typeKey) ? 'placeholder' : 'ship',
+      name: label,
+      typeLabel: ship.roleText || getSupportTypeLabel(typeKey),
+      meta: ship.roleText || 'Capital',
+      hull: Math.max(0, ship.status?.hull ?? npc.hp ?? 0),
+      shield: Math.max(0, ship.status?.shield ?? shield.val ?? 0)
+    });
+  }
+  return entries;
+}
+
+function renderFleetEntry(entry){
   const li = document.createElement('li');
   li.className = 'fleet-ship';
+
+  if (entry.kind === 'fighters'){
+    const fighters = document.createElement('div');
+    fighters.className = 'fleet-fighters';
+    fighters.textContent = `${entry.label}: ${formatFleetNumber(entry.count)}`;
+    li.appendChild(fighters);
+    return li;
+  }
 
   const header = document.createElement('div');
   header.className = 'fleet-ship-header';
   const nameEl = document.createElement('div');
   nameEl.className = 'fleet-ship-name';
-  nameEl.textContent = entry.displayName || entry.name || entry.type || 'Jednostka';
+  nameEl.textContent = `${entry.name} (${entry.typeLabel})`;
   const metaEl = document.createElement('div');
   metaEl.className = 'fleet-ship-meta';
-  metaEl.textContent = entry.roleText || entry.role || 'Flota';
+  metaEl.textContent = entry.meta || 'Flota';
   header.append(nameEl, metaEl);
   li.appendChild(header);
 
-  const bars = document.createElement('div');
-  bars.className = 'fleet-bars';
-  appendFleetBar(bars, 'Kadłub', entry.status?.hull ?? 0, entry.status?.hullMax ?? 1, 'hull');
-  appendFleetBar(bars, 'Tarcza', entry.status?.shield ?? 0, entry.status?.shieldMax ?? 1, 'shield');
-  li.appendChild(bars);
-
-  const hardpoints = document.createElement('div');
-  hardpoints.className = 'fleet-hardpoints';
-  const hpLarge = document.createElement('span');
-  hpLarge.textContent = `Duże ×${formatFleetNumber(entry.hardpoints?.large ?? 0)}`;
-  const hpMedium = document.createElement('span');
-  hpMedium.textContent = `Średnie ×${formatFleetNumber(entry.hardpoints?.medium ?? 0)}`;
-  hardpoints.append(hpLarge, hpMedium);
-  li.appendChild(hardpoints);
+  const stats = document.createElement('div');
+  stats.className = 'fleet-stats';
+  if (entry.kind === 'placeholder'){
+    stats.textContent = 'W przygotowaniu';
+  } else {
+    const hpSpan = document.createElement('span');
+    hpSpan.textContent = `HP: ${formatFleetNumber(entry.hull)}`;
+    const shieldSpan = document.createElement('span');
+    shieldSpan.textContent = `SHIELD: ${formatFleetNumber(entry.shield)}`;
+    stats.append(hpSpan, document.createTextNode(' · '), shieldSpan);
+  }
+  li.appendChild(stats);
 
   return li;
 }
@@ -1431,7 +1477,8 @@ function updateFleetUI(){
   if (!Fleet.dirty && now - (ui.lastUpdate || 0) < FLEET_UI_REFRESH_MS) return;
   ui.lastUpdate = now;
 
-  if (!Fleet.ships.length){
+  const entries = [...buildSupportEntries(), ...buildCapitalEntries()];
+  if (!entries.length){
     ui.root.classList.add('hidden');
     ui.list.innerHTML = '';
     Fleet.dirty = false;
@@ -1440,8 +1487,8 @@ function updateFleetUI(){
 
   ui.root.classList.remove('hidden');
   ui.list.innerHTML = '';
-  for (const ship of Fleet.ships){
-    ui.list.appendChild(renderFleetShip(ship));
+  for (const entry of entries){
+    ui.list.appendChild(renderFleetEntry(entry));
   }
   Fleet.dirty = false;
 }
@@ -3964,6 +4011,7 @@ function spawnSupportShip(templateKey, opts = {}){
     npcs.push(npc);
     created.push(npc);
   }
+  if (created.length) markFleetDirty();
   return created;
 }
 
