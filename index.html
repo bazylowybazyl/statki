@@ -3640,6 +3640,9 @@ initWarpRoutes();
 
 let npcs = [];
 window.npcs = npcs;
+// Lista na martwe, dryfujące kawałki
+const wrecks = [];
+window.wrecks = wrecks;
 // === SQUAD SYSTEM ===
 const SQUADS = [];
 window.SQUADS = SQUADS;
@@ -4627,6 +4630,83 @@ function spawnPirate(kind, station) {
 }
 // Przypisanie do window, żeby konsola widziała
 window.spawnPirate = spawnPirate;
+// Lista na martwe, dryfujące kawałki
+window.createWreckage = function(parentEntity, shards) {
+  if (!shards || shards.length === 0) return;
+
+  // 1. Oblicz środek masy nowej grupy heksów
+  let sumLx = 0, sumLy = 0;
+  for (const s of shards) {
+    sumLx += s.lx;
+    sumLy += s.ly;
+  }
+  const avgLx = sumLx / shards.length;
+  const avgLy = sumLy / shards.length;
+
+  // 2. Pozycja w świecie (bazując na pozycji rodzica i offsecie środka masy)
+  // Musimy uwzględnić obrót rodzica
+  const c = Math.cos(parentEntity.angle);
+  const s = Math.sin(parentEntity.angle);
+
+  // Pozycja środka nowego wraku w świecie
+  const worldX = parentEntity.x + (avgLx * c - avgLy * s);
+  const worldY = parentEntity.y + (avgLx * s + avgLy * c);
+
+  // 3. Utwórz obiekt wraku
+  const wreck = {
+    x: worldX,
+    y: worldY,
+    vx: parentEntity.vx || parentEntity.vel.x, // Dziedziczy pęd
+    vy: parentEntity.vy || parentEntity.vel.y,
+    angle: parentEntity.angle,
+    angVel: (parentEntity.angVel || 0) + (Math.random() - 0.5) * 0.5, // Dodaj trochę rotacji przy oderwaniu
+    mass: shards.length * 10, // Przybliżona masa
+    friction: 0.99, // Wraki dryfują
+    dead: false,
+    isWreck: true,
+
+    // Budujemy mini-hexGrid dla tego kawałka
+    hexGrid: {
+      shards: [],
+      map: {},
+      // Offsety muszą być zresetowane względem nowego środka (avgLx, avgLy)
+      offsetX: 0,
+      offsetY: 0,
+      srcWidth: parentEntity.hexGrid.srcWidth // Zachowujemy skalę
+    }
+  };
+
+  // 4. Przenosimy heksy do wraku
+  for (const shard of shards) {
+    // Przesuwamy lokalne koordynaty heksa tak, by 0,0 było w środku nowego wraku
+    shard.lx -= avgLx;
+    shard.ly -= avgLy;
+    shard.origLx -= avgLx; // Ważne dla warpStructure
+    shard.origLy -= avgLy;
+
+    // Przypisujemy do nowego grida
+    wreck.hexGrid.shards.push(shard);
+    wreck.hexGrid.map[shard.c + "," + shard.r] = shard;
+  }
+
+  // Oblicz promień wraku (dla kolizji zgrubnej)
+  let maxR2 = 0;
+  for(const sh of wreck.hexGrid.shards) {
+    const d2 = sh.lx*sh.lx + sh.ly*sh.ly;
+    if(d2 > maxR2) maxR2 = d2;
+  }
+  wreck.radius = Math.sqrt(maxR2) + 10;
+
+  // Dodaj do listy wraków
+  wrecks.push(wreck);
+
+  // Dodaj efekt wizualny (dym/iskry w miejscu oderwania)
+  if(window.spawnParticle) {
+    for(let i=0; i<5; i++) {
+      window.spawnParticle({x: worldX, y: worldY}, {x: wreck.vx, y: wreck.vy}, 1.0, '#aaaaaa', 5, false);
+    }
+  }
+};
   function spawnPirateSquad(station, type, count, mode = 'guard', opts = {}) {
   const squad = new Squad('pirate', 'fighter');
   window.SQUADS.push(squad);
@@ -4952,7 +5032,7 @@ const PirateSim = {
   },
   // Symulacja pocisków i eksplozji nie jest potrzebna tutaj, bo gra ma własną w main loop
   projectiles: [], 
-  wrecks: []
+  wrecks
 };
 
 // Funkcja strzelania - TŁUMACZY broń z AI Space na pociski w grze
@@ -12296,6 +12376,25 @@ function physicsStep(dt){
   ship.angVel *= Math.exp(-ship.angularDamping * (boostActive ? boost.angularDampingFactor : 1) * dt);
   ship.angle += ship.angVel*dt;
   ship.angle = wrapAngle(ship.angle);
+  // Aktualizacja wraków
+  for (let i = wrecks.length - 1; i >= 0; i--) {
+    const w = wrecks[i];
+
+    // Fizyka ruchu
+    w.x += w.vx * dt;
+    w.y += w.vy * dt;
+    w.angle += w.angVel * dt;
+    w.vx *= w.friction;
+    w.vy *= w.friction;
+    w.angVel *= w.friction;
+
+    // Despawn jeśli wyleci za daleko lub minie czas
+    // (możesz dodać timer życia)
+    const distToPlayer = Math.hypot(w.x - ship.pos.x, w.y - ship.pos.y);
+    if (distToPlayer > 15000) {
+      wrecks.splice(i, 1);
+    }
+  }
   // Aktualizacja logiki eskadr
   SQUADS.forEach(s => s.update());
   updateSupportWing(dt);
@@ -12577,7 +12676,8 @@ function loop(now){
     acc -= PHYS_DT; steps++;
   }
 
-  DestructorSystem.update(frame, [ship, ...npcs]);
+  const allDestructibles = [ship, ...npcs, ...wrecks];
+  DestructorSystem.update(frame, allDestructibles);
 
   // >>> TO JEST KLUCZOWE - ODDZIELNA AKTUALIZACJA WIZUALIÓW <<<
   updateParticles(frame);
@@ -13479,6 +13579,13 @@ function render(alpha, frameDt){
         ctx.beginPath(); ctx.arc(0, 0, size*0.62, 0, Math.PI*2); ctx.stroke();
         ctx.restore();
       }
+    }
+  }
+
+  // Rysowanie wraków (hex-grid)
+  for (const w of wrecks) {
+    if (window.drawHexBody) {
+      window.drawHexBody(ctx, w, camera, worldToScreen);
     }
   }
 
