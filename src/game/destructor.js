@@ -4,7 +4,7 @@
  */
 
 export const DESTRUCTOR_CONFIG = {
-  gridDivisions: 20,
+  gridDivisions: 60,
   shardHP: 40,
   deformStrength: 20.0,
   deformRadius: 8.0,
