@@ -4634,7 +4634,7 @@ window.spawnPirate = spawnPirate;
 window.createWreckage = function(parentEntity, shards) {
   if (!shards || shards.length === 0) return;
 
-  // 1. Oblicz środek masy nowej grupy heksów
+  // 1. Oblicz środek masy nowej grupy heksów (Ważne dla obrotu!)
   let sumLx = 0, sumLy = 0;
   for (const s of shards) {
     sumLx += s.lx;
@@ -4643,7 +4643,7 @@ window.createWreckage = function(parentEntity, shards) {
   const avgLx = sumLx / shards.length;
   const avgLy = sumLy / shards.length;
 
-  // 1. Oblicz średnie indeksy C i R dla grupy
+  // 1b. Oblicz średnie indeksy C i R dla grupy (dla hitboxów)
   let sumC = 0, sumR = 0;
   for (const s of shards) {
       sumC += s.c;
@@ -4653,39 +4653,43 @@ window.createWreckage = function(parentEntity, shards) {
   const avgR = Math.round(sumR / shards.length);
 
   // 2. Pozycja w świecie (bazując na pozycji rodzica i offsecie środka masy)
-  // Musimy uwzględnić obrót rodzica
+  const scale = parentEntity.visual?.spriteScale || 1.0;
   const c = Math.cos(parentEntity.angle);
   const s = Math.sin(parentEntity.angle);
 
   // Pozycja środka nowego wraku w świecie
-  const worldX = parentEntity.x + (avgLx * c - avgLy * s);
-  const worldY = parentEntity.y + (avgLx * s + avgLy * c);
+  const worldX = parentEntity.x + (avgLx * scale * c - avgLy * scale * s);
+  const worldY = parentEntity.y + (avgLx * scale * s + avgLy * scale * c);
 
   // 3. Utwórz obiekt wraku
   const wreck = {
     x: worldX,
     y: worldY,
-    vx: parentEntity.vx || parentEntity.vel.x, // Dziedziczy pęd
-    vy: parentEntity.vy || parentEntity.vel.y,
+    // Dziedziczenie pędu + lekki odrzut
+   vx: (parentEntity.vx || parentEntity.vel?.x || 0), 
+   vy: (parentEntity.vy || parentEntity.vel?.y || 0),
     angle: parentEntity.angle,
-    angVel: (parentEntity.angVel || 0) + (Math.random() - 0.5) * 0.5, // Dodaj trochę rotacji przy oderwaniu
-    mass: shards.length * 10, // Przybliżona masa
-    friction: 0.99, // Wraki dryfują
+    angVel: parentEntity.angVel || 0, 
+    mass: shards.length * 10, 
+    friction: 0.998, // Wraki dryfują
     dead: false,
     isWreck: true,
+    // Kopiujemy visual, żeby destruktor wiedział jak skalować
+    visual: { spriteScale: scale }, 
 
     // Budujemy mini-hexGrid dla tego kawałka
     hexGrid: {
       shards: [],
       map: {},
-      // Offsety muszą być zresetowane względem nowego środka (avgLx, avgLy)
       offsetX: 0,
       offsetY: 0,
-      srcWidth: parentEntity.hexGrid.srcWidth // Zachowujemy skalę
+      srcWidth: parentEntity.hexGrid.srcWidth
     }
   };
 
-  // 4. Przenosimy heksy do wraku (ZAKTUALIZOWANA PĘTLA)
+  // 4. Przenosimy heksy do wraku
+  let maxR2 = 0;
+  
   for (const shard of shards) {
     // Przesuwamy lokalne koordynaty heksa (wizualnie)
     shard.lx -= avgLx;
@@ -4693,29 +4697,29 @@ window.createWreckage = function(parentEntity, shards) {
     shard.origLx -= avgLx;
     shard.origLy -= avgLy;
 
-    // WAŻNE: Przesuwamy indeksy siatki (logicznie), aby hitbox pasował do nowej pozycji
+    // Przesuwamy indeksy siatki (logicznie)
     shard.c -= avgC;
     shard.r -= avgR;
 
-    // Przypisujemy do nowego grida z nowymi kluczami
+    // Obliczamy promień
+    const d2 = shard.lx*shard.lx + shard.ly*shard.ly;
+    if(d2 > maxR2) maxR2 = d2;
+
+    // Przypisujemy do nowego grida
     wreck.hexGrid.shards.push(shard);
     wreck.hexGrid.map[shard.c + "," + shard.r] = shard;
   }
 
-  // Oblicz promień wraku (dla kolizji zgrubnej)
-  let maxR2 = 0;
-  for(const sh of wreck.hexGrid.shards) {
-    const d2 = sh.lx*sh.lx + sh.ly*sh.ly;
-    if(d2 > maxR2) maxR2 = d2;
+  wreck.radius = (Math.sqrt(maxR2) + 20) * scale;
+  
+  // Dodaj do listy wraków (Globalnej tablicy w index.html)
+  if (window.wrecks) {
+      window.wrecks.push(wreck);
   }
-  wreck.radius = Math.sqrt(maxR2) + 10;
-
-  // Dodaj do listy wraków
-  wrecks.push(wreck);
 
   // Dodaj efekt wizualny (dym/iskry w miejscu oderwania)
   if(window.spawnParticle) {
-    for(let i=0; i<5; i++) {
+    for(let i=0; i<3; i++) {
       window.spawnParticle({x: worldX, y: worldY}, {x: wreck.vx, y: wreck.vy}, 1.0, '#aaaaaa', 5, false);
     }
   }
@@ -11230,6 +11234,7 @@ function bulletsAndCollisionsStep(dt){
     b.life -= dt;
     b.age = (b.age || 0) + dt; // krótki „grace” po wystrzale
 
+    // --- RUCH I EFEKTY WIZUALNE POCISKÓW ---
     if(b.type === 'plasma' || b.type === 'rocket'){
       const trailVel = { x: -b.vx*0.02 + (Math.random()-0.5)*10, y: -b.vy*0.02 + (Math.random()-0.5)*10 };
       spawnParticle({x:b.x + (Math.random()-0.5)*3, y:b.y + (Math.random()-0.5)*3}, trailVel, 0.28, '#8cff8c', 1.0, false);
@@ -11311,13 +11316,13 @@ function bulletsAndCollisionsStep(dt){
 
     if(b.life <= 0){ bullets.splice(i,1); continue; }
 
-    // hit NPC lub WRAK
+    // --- KOLIZJE ---
+
+    // 1. hit NPC lub WRAK
     let hitNPC = null;
-    // Tworzymy tymczasową listę celów: żywe NPC + wraki
     const potentialTargets = [...npcs, ...wrecks]; 
 
     for (const npc of potentialTargets){
-      // Jeśli to wrak (isWreck), to nie sprawdzamy 'dead', bo wraki technicznie są martwe logicznie, ale fizyczne
       if (!npc.isWreck && (npc.dead || npc.isCollidable === false)) continue;
 
       // --- FIX FRIENDLY FIRE ---
@@ -11334,19 +11339,45 @@ function bulletsAndCollisionsStep(dt){
 
     if(hitNPC){
       const npcDamage = Number.isFinite(b.damage) ? b.damage : 0;
-      const npcShieldVal = hitNPC.shield?.val || 0;
-      const npcImpactDamage = Math.max(0, npcDamage - npcShieldVal);
+      
+      // === NOWOŚĆ: SPRAWDZANIE HEKSÓW (Pixel Perfect) ===
       let hexHit = false;
-      if (npcImpactDamage > 0 && hitNPC.hexGrid) {
-          hexHit = DestructorSystem.applyImpact(hitNPC, b.x, b.y, npcImpactDamage, {x: b.vx, y: b.vy});
+      let hitShield = false;
+
+      // Najpierw sprawdź tarczę (tarcza jest sferą dookoła, więc łapie zawsze)
+      if (hitNPC.shield && hitNPC.shield.val > 0) {
+          hitShield = true;
+          registerShieldImpact(hitNPC, b.x, b.y, npcDamage);
+          if (window.AudioSys) AudioSys.playSound('shieldHit');
       }
+
+      // Jeśli nie ma tarczy (lub przebita), sprawdzamy czy trafiliśmy w fizyczny heks
+      if (!hitShield && hitNPC.hexGrid) {
+          // Obliczamy potencjalne obrażenia dla heksa (pomniejszone o tarczę jeśli była)
+          const shieldVal = hitNPC.shield ? hitNPC.shield.val : 0;
+          const npcImpactDamage = Math.max(0, npcDamage - shieldVal);
+          
+          if (npcImpactDamage > 0) {
+              // Wywołujemy applyImpact - zwróci TRUE tylko jeśli trafi w aktywny heks
+              hexHit = DestructorSystem.applyImpact(hitNPC, b.x, b.y, npcImpactDamage, {x: b.vx, y: b.vy});
+          }
+          
+          // JEŚLI NIE TRAFIONO W HEKS (dziura) I NIE MA TARCZY -> POCISK LECI DALEJ
+          if (!hexHit) {
+              // Resetujemy hitNPC, żeby pętla myślała, że nic nie trafiliśmy
+              hitNPC = null; 
+              // Kontynuujemy pętlę po pociskach (ten pocisk żyje dalej)
+              continue; 
+          }
+      }
+
+      // Jeśli doszliśmy tutaj, to znaczy że:
+      // A) Trafiliśmy w tarczę
+      // B) Trafiliśmy w heks (hexHit = true)
+      // C) Trafiliśmy w obiekt bez gridu heksagonalnego (zwykły NPC)
 
       if(b.owner === 'player' && hitNPC.mission && hitNPC.isPirate){
         triggerMercAggro('pirate_hit');
-      }
-
-      if (hitNPC.shield && hitNPC.shield.val > 0) {
-        registerShieldImpact(hitNPC, b.x, b.y, npcDamage);
       }
 
       // --- FIX: OBSŁUGA RÓŻNYCH TYPÓW TRAFIEŃ ---
@@ -11383,27 +11414,28 @@ function bulletsAndCollisionsStep(dt){
         continue;
       }
       else if(b.type === 'armata'){
+        // Armata zadaje obrażenia nawet jak trafiła w tarczę lub heks
         applyDamageToNPC(hitNPC, b.damage, 'armata');
         spawnArmataHitEffect(b.x, b.y, 1.0);
         bullets.splice(i,1);
         continue;
       }
       else {
-        if (!hexHit) {
-            if(b.type === 'rail'){
-              applyDamageToNPC(hitNPC, b.damage, 'rail');
-              spawnRailHitEffect(b.x, b.y, 1.0);
-            }
-            else if(b.type === 'autocannon'){
-              applyDamageToNPC(hitNPC, b.damage, 'autocannon');
-              spawnAutocannonHitEffect(b.x, b.y, 1.0);
-            }
-            else {
-              applyDamageToNPC(hitNPC, b.damage, 'default');
-              spawnDefaultHit(b.x, b.y, 1.0);
-            }
-        } else {
-            applyDamageToNPC(hitNPC, b.damage, 'none');
+        // Zwykły pocisk (Rail/Autocannon/Default)
+        
+        // Tylko jeśli faktycznie trafiliśmy w ciało (heks lub zwykły NPC) lub tarczę, aplikujemy obrażenia
+        // applyDamageToNPC zarządza odejmowaniem HP/Tarczy globalnie
+        applyDamageToNPC(hitNPC, b.damage, b.type);
+        
+        // Efekty wizualne
+        if(b.type === 'rail'){
+             spawnRailHitEffect(b.x, b.y, 1.0);
+        }
+        else if(b.type === 'autocannon'){
+             spawnAutocannonHitEffect(b.x, b.y, 1.0);
+        }
+        else {
+             spawnDefaultHit(b.x, b.y, 1.0);
         }
 
         if(b.type === 'rail') {
@@ -11416,6 +11448,7 @@ function bulletsAndCollisionsStep(dt){
       }
     }
 
+    // 2. hit platforms
     if(mercMission && mercMission.weaponPlatforms && mercMission.weaponPlatforms.length){
       let hitPlatform = false;
       for(const platform of mercMission.weaponPlatforms){
@@ -11443,7 +11476,7 @@ function bulletsAndCollisionsStep(dt){
       if(hitPlatform) continue;
     }
 
-    // hit mission station
+    // 3. hit mission station
     for(const st of stations){
       if(!st.hp) continue;
       if (b.source && b.source === st && b.age < (b.spawnGrace || 0)) continue;
@@ -11485,23 +11518,38 @@ function bulletsAndCollisionsStep(dt){
       }
     }
 
-    // hit player
+    // 4. hit player
     if(b.owner !== 'player'){
       const hitR = Math.max(ship.w, ship.h) * 0.45;
       const d = Math.hypot(ship.pos.x - b.x, ship.pos.y - b.y);
       if(d < hitR + b.r){
         const playerDamage = Number.isFinite(b.damage) ? b.damage : 0;
-        const playerShieldVal = ship.shield?.val || 0;
-        const playerImpactDamage = Math.max(0, playerDamage - playerShieldVal);
-        if (ship.shield && ship.shield.val > 0) {
-          registerShieldImpact(ship, b.x, b.y, playerDamage);
-          AudioSys.playSound('shieldHit');
-        }
+        
         let hexHit = false;
-        if (playerImpactDamage > 0 && ship.hexGrid) {
-            hexHit = DestructorSystem.applyImpact(ship, b.x, b.y, playerImpactDamage, {x: b.vx, y: b.vy});
+        let hitShield = false;
+
+        // Tarcza gracza
+        if (ship.shield && ship.shield.val > 0) {
+          hitShield = true;
+          registerShieldImpact(ship, b.x, b.y, playerDamage);
+          if (window.AudioSys) AudioSys.playSound('shieldHit');
         }
+
+        // Heksy gracza (jeśli tarcza nie zablokowała)
+        if (!hitShield && ship.hexGrid) {
+            const shieldVal = ship.shield ? ship.shield.val : 0;
+            const playerImpactDamage = Math.max(0, playerDamage - shieldVal);
+            
+            if (playerImpactDamage > 0) {
+               hexHit = DestructorSystem.applyImpact(ship, b.x, b.y, playerImpactDamage, {x: b.vx, y: b.vy});
+            }
+            
+            // Dziura w statku? Pocisk leci dalej!
+            if (!hexHit) continue;
+        }
+
         applyDamageToPlayer(playerDamage);
+        
         if(!hexHit){
           if(b.hitFx){ b.hitFx(b.x, b.y, b.effectScale || 1.0, b); }
           else if(b.type === 'siege'){
