@@ -3253,7 +3253,8 @@ function pirateOrbitRadii(){
   const au = AU_IN_WORLD_UNITS || getAuToWorldUnits();
   return {
     inner: PIRATE_ORBIT.innerAu * au,
-    outer: PIRATE_ORBIT.outerAu * au
+    outer: PIRATE_ORBIT.outerAu * au,
+    gravityWell: (PIRATE_ORBIT.outerAu + 1) * au
   };
 }
 
@@ -3281,8 +3282,10 @@ function makeInterplanetaryZone(){
 const zonePriority = {
   planet_inner: 4,
   planet_outer: 3,
+  planet_gravity: 2.5,
   pirate_inner: 4,
   pirate_outer: 3,
+  pirate_gravity: 2.5,
   sun: 2,
   asteroid_belt: 1
 };
@@ -3291,8 +3294,10 @@ function zonePropsForId(id){
   if (
     id === 'planet_inner' ||
     id === 'planet_outer' ||
+    id === 'planet_gravity' ||
     id === 'pirate_inner' ||
     id === 'pirate_outer' ||
+    id === 'pirate_gravity' ||
     id === 'sun' ||
     id === 'asteroid_belt'
   ) {
@@ -3305,14 +3310,22 @@ function zonePropsForId(id){
 }
 
 function isPlanetOrbitZoneId(id){
-  return id === 'planet_inner' || id === 'planet_outer' || id === 'pirate_inner' || id === 'pirate_outer';
+  return (
+    id === 'planet_inner' ||
+    id === 'planet_outer' ||
+    id === 'planet_gravity' ||
+    id === 'pirate_inner' ||
+    id === 'pirate_outer' ||
+    id === 'pirate_gravity'
+  );
 }
 
 function planetOrbitRadii(planet){
   const baseRadius = Math.max(10, (planet.r || 0) * 2);
   const outerOrbitExtra = Math.max(1600, ZONE_APPROACH_DISTANCE * 0.6);
   const outerRadius = baseRadius + outerOrbitExtra;
-  return { inner: baseRadius, outer: outerRadius };
+  const gravityWellRadius = outerRadius + AU_IN_WORLD_UNITS;
+  return { inner: baseRadius, outer: outerRadius, gravityWell: gravityWellRadius };
 }
 
 function enhanceZoneDescriptor(zone){
@@ -3365,6 +3378,17 @@ function detectZones(pos){
       approachRange: ZONE_APPROACH_DISTANCE,
       priority: zonePriority.planet_outer
     });
+    if (Number.isFinite(orbitRadii.gravityWell)) {
+      zones.push({
+        key: `planet-${planet.id || planet.name || index}-gravity-well`,
+        id: 'planet_gravity',
+        label: `${labelName} - Gravity Well`,
+        enteringLabel: `${labelName} - Gravity Well`,
+        edgeDist: dist - orbitRadii.gravityWell,
+        approachRange: ZONE_APPROACH_DISTANCE,
+        priority: zonePriority.planet_gravity
+      });
+    }
   }
 
   const pirateStation = mercMission?.station;
@@ -3394,6 +3418,17 @@ function detectZones(pos){
         edgeDist: dist - orbitRadii.outer,
         approachRange: ZONE_APPROACH_DISTANCE,
         priority: zonePriority.pirate_outer
+      });
+    }
+    if (Number.isFinite(orbitRadii.gravityWell)) {
+      zones.push({
+        key: `pirate-${pirateStation.id || 'station'}-gravity-well`,
+        id: 'pirate_gravity',
+        label: `${labelName} - Gravity Well`,
+        enteringLabel: `${labelName} - Gravity Well`,
+        edgeDist: dist - orbitRadii.gravityWell,
+        approachRange: ZONE_APPROACH_DISTANCE,
+        priority: zonePriority.pirate_gravity
       });
     }
   }
@@ -12362,9 +12397,16 @@ function physicsStep(dt){
   if(warp.state!=='active'){ ship.vel.x *= linDamp; ship.vel.y *= linDamp; }
   if (boostActive && warp.state !== 'active') {
     const zoneId = zoneState.current?.id;
-    const boostCap = (zoneId === 'planet_outer' || zoneId === 'pirate_outer')
+    const inOuterOrbit = (
+      zoneId === 'planet_outer' ||
+      zoneId === 'pirate_outer' ||
+      zoneId === 'planet_gravity' ||
+      zoneId === 'pirate_gravity'
+    );
+    const inInnerOrbit = zoneId === 'planet_inner' || zoneId === 'pirate_inner';
+    const boostCap = inOuterOrbit
       ? warp.speed * 0.4
-      : (zoneId === 'planet_inner' || zoneId === 'pirate_inner')
+      : inInnerOrbit
         ? warp.speed * 0.3
         : null;
     if (boostCap) {
