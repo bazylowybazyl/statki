@@ -29,9 +29,11 @@ function getFinalScale(entity) {
 }
 
 export const DestructorSystem = {
-  debris: [], 
+  debris: [],
   sparks: [],
-  
+  // Kolejka obiektów do sprawdzenia czy się nie rozpadły
+  splitQueue: new Set(),
+
   update(dt, entities) {
     // 1. Aktualizacja odłamków
     for (let i = this.debris.length - 1; i >= 0; i--) {
@@ -57,6 +59,9 @@ export const DestructorSystem = {
 
     // 3. Kolizje
     this.resolveHexGrinding(entities);
+
+    // 4. NOWE: Obsługa pękania statków (Split Check)
+    this.processSplits(entities);
   },
 
   applyImpact(entity, worldX, worldY, damage, bulletVel) {
@@ -109,6 +114,7 @@ export const DestructorSystem = {
                  if (shard.hp <= 0) {
                      this.spawnSparks(worldX, worldY, 3);
                      shard.becomeDebris(bulletVel.x * 0.15, bulletVel.y * 0.15, entity, scale);
+                     this.splitQueue.add(entity);
                  }
              }
          }
@@ -259,10 +265,12 @@ export const DestructorSystem = {
                   if (sG.hp <= 0) {
                     this.spawnSparks(wx, wy, 2);
                     sG.becomeDebris(iterator.vx * 0.2, iterator.vy * 0.2, gridHolder, gridScale);
+                    this.splitQueue.add(gridHolder);
                   }
                   if (sI.hp <= 0) {
                     this.spawnSparks(wx, wy, 2);
                     sI.becomeDebris(gridHolder.vx * 0.2, gridHolder.vy * 0.2, iterator, iterScale);
+                    this.splitQueue.add(iterator);
                   }
                 }
               }
@@ -271,6 +279,70 @@ export const DestructorSystem = {
         }
       }
     }
+  },
+
+  // --- NOWA FUNKCJA: Procesowanie podziałów ---
+  processSplits(activeEntities) {
+    if (this.splitQueue.size === 0) return;
+
+    for (const entity of this.splitQueue) {
+        if (!entity.hexGrid || entity.dead) continue;
+        // Uruchom BFS
+        const groups = findConnectedComponents(entity.hexGrid);
+
+        // Jeśli jest tylko 1 grupa, statek jest cały
+        if (groups.length <= 1) continue;
+
+        // Mamy podział! Sprawdźmy, która część ma rdzeń
+        let mainGroup = null;
+        const wreckGroups = [];
+
+        for (const group of groups) {
+            // Sprawdź czy grupa zawiera chociaż jeden heks rdzenia
+            const hasCore = group.some(shard => shard.isCore);
+
+            // Logika Gracza/NPC:
+            // Jeśli ma rdzeń -> zostaje żywym statkiem.
+            // Jeśli wiele grup ma rdzeń (np. cięcie wzdłuż), bierzemy największą jako główną.
+            if (hasCore) {
+                if (!mainGroup || group.length > mainGroup.length) {
+                    // Jeśli mieliśmy już kandydata na main, a ten jest lepszy,
+                    // tamten staje się wrakiem (chyba że chcemy pozwolić na dwa żywe statki -
+                    // ale dla uproszczenia sterowania gracza, lepiej mieć jeden).
+                    if (mainGroup) wreckGroups.push(mainGroup);
+                    mainGroup = group;
+                } else {
+                    wreckGroups.push(group);
+                }
+            } else {
+                wreckGroups.push(group);
+            }
+        }
+
+        // Jeśli żaden kawałek nie ma rdzenia (zniszczono serce statku),
+        // to największy kawałek staje się wrakiem, a statek ginie.
+        if (!mainGroup && groups.length > 0) {
+             // Opcjonalnie: Znajdź największy kawałek by był "głównym wrakiem"
+             // Ale tutaj po prostu statek umiera.
+             entity.dead = true;
+             // createWreckage zostanie wywołane dla wszystkich grup poniżej
+             wreckGroups.push(...groups);
+        }
+
+        // Aplikujemy zmiany
+        if (mainGroup) {
+            // 1. Przebuduj grid głównego statku, zostawiając tylko mainGroup
+            rebuildEntityGrid(entity, mainGroup);
+        }
+
+        // 2. Stwórz wraki z pozostałych grup
+        for (const group of wreckGroups) {
+            if (window.createWreckage) {
+                window.createWreckage(entity, group);
+            }
+        }
+    }
+    this.splitQueue.clear();
   },
 
   spawnSparks(x, y, count = 1) {
@@ -309,6 +381,80 @@ export const DestructorSystem = {
   }
 };
 
+// --- POMOCNICZE FUNKCJE ALGORYTMICZNE (poza obiektem DestructorSystem) ---
+
+// BFS do znajdowania wysp
+function findConnectedComponents(hexGrid) {
+    const shards = hexGrid.shards.filter(s => s.active && !s.isDebris);
+    if (shards.length === 0) return [];
+
+    const visited = new Set();
+    const groups = [];
+
+    for (const seed of shards) {
+        const seedKey = seed.c + "," + seed.r;
+        if (visited.has(seedKey)) continue;
+
+        const group = [];
+        const stack = [seed];
+        visited.add(seedKey);
+
+        while (stack.length > 0) {
+            const current = stack.pop();
+            group.push(current);
+
+            // Sąsiedzi heksa (offset coordinates)
+            const odd = (current.c % 2 !== 0);
+            const neighborOffsets = odd
+                ? [[0,-1],[0,1],[-1,0],[-1,1],[1,0],[1,1]]
+                : [[0,-1],[0,1],[-1,-1],[-1,0],[1,-1],[1,0]];
+
+            for (const offset of neighborOffsets) {
+                const nc = current.c + offset[0];
+                const nr = current.r + offset[1];
+                const nKey = nc + "," + nr;
+
+                // Sprawdzamy czy sąsiad istnieje w mapie i jest aktywny
+                const neighbor = hexGrid.map[nKey];
+                if (neighbor && neighbor.active && !neighbor.isDebris && !visited.has(nKey)) {
+                    visited.add(nKey);
+                    stack.push(neighbor);
+                }
+            }
+        }
+        groups.push(group);
+    }
+    return groups;
+}
+
+// Funkcja aktualizująca grid statku po utracie części
+function rebuildEntityGrid(entity, shardsToKeep) {
+    const newMap = {};
+    const newShards = [];
+    let minLx = Infinity, maxLx = -Infinity, minLy = Infinity, maxLy = -Infinity;
+    let rawRadiusSq = 0;
+
+    for (const s of shardsToKeep) {
+        newShards.push(s);
+        newMap[s.c + "," + s.r] = s;
+        minLx = Math.min(minLx, s.lx);
+        maxLx = Math.max(maxLx, s.lx);
+        minLy = Math.min(minLy, s.ly);
+        maxLy = Math.max(maxLy, s.ly);
+        const distSq = s.lx * s.lx + s.ly * s.ly;
+        if (distSq > rawRadiusSq) rawRadiusSq = distSq;
+    }
+
+    entity.hexGrid.shards = newShards;
+    entity.hexGrid.map = newMap;
+
+    if (newShards.length > 0) {
+        const r = newShards[0].radius || DESTRUCTOR_CONFIG.gridDivisions;
+        entity.hexGrid.rawRadius = Math.sqrt(rawRadiusSq) + r;
+        entity.hexGrid.contentWidth = Math.max(0, maxLx - minLx);
+    }
+}
+
 class HexShard {
   constructor(img, lx, ly, radius, c, r, color = null) {
     this.img = img;
@@ -322,6 +468,7 @@ class HexShard {
     this.color = color;
     this.active = true;
     this.isDebris = false;
+    this.isCore = false;
     this.hp = DESTRUCTOR_CONFIG.shardHP;
     this.hardness = 1.0;
     this.worldX = 0; this.worldY = 0;
@@ -543,6 +690,54 @@ export function initHexBody(entity, image) {
       }
   }
 
+  // --- MODYFIKACJA INIT HEX BODY (Oznaczanie Rdzenia) ---
+  // PO UTWORZENIU WSZYSTKICH SHARDÓW:
+
+  // 1. Znajdź środek siatki (geometryczny środekBounding Boxa heksów)
+  let minC = Infinity, maxC = -Infinity, minR = Infinity, maxR = -Infinity;
+  for (const s of shards) {
+      if (s.c < minC) minC = s.c;
+      if (s.c > maxC) maxC = s.c;
+      if (s.r < minR) minR = s.r;
+      if (s.r > maxR) maxR = s.r;
+  }
+  const centerC = Math.floor((minC + maxC) / 2);
+  const centerR = Math.floor((minR + maxR) / 2);
+
+  // 2. Pobierz wymiary rdzenia z entity (lub domyślne)
+  // Domyślne wartości dla różnych typów (jeśli nie podano w entity)
+  let cw = 2, ch = 2; // Default small core
+
+  if (entity.coreDimensions) {
+      cw = entity.coreDimensions.w;
+      ch = entity.coreDimensions.h;
+  } else if (entity.type) {
+      if (entity.type.includes('frigate')) { cw = 1; ch = 2; }
+      else if (entity.type === 'destroyer') { cw = 2; ch = 2; }
+      else if (entity.type === 'battleship') { cw = 3; ch = 3; }
+      else if (entity.isCapitalShip) { cw = 3; ch = 5; } // Player/Other Capital
+  }
+
+  // 3. Oznacz heksy jako rdzeń
+  const halfW = Math.floor(cw / 2);
+  const halfH = Math.floor(ch / 2);
+  for (const s of shards) {
+      // Prosta prostokątna strefa wokół środka w koordynatach heksów
+      // Uwaga: koordynaty heksów są "skewed", ale dla małych rdzeni to wystarczy
+      const dc = Math.abs(s.c - centerC);
+      const dr = Math.abs(s.r - centerR);
+
+      // Warunek bycia w rdzeniu
+      if (dc <= halfW && dr <= halfH) {
+          s.isCore = true;
+          s.color = '#ff00ff'; // Debug: tymczasowo podświetl rdzeń (zakomentuj w produkcji)
+          s.hardness = 5.0;    // Rdzeń jest bardzo twardy
+          s.hp *= 5.0;
+      } else {
+          s.isCore = false;
+      }
+  }
+
   // --- AUTO-CENTERING ---
   let shiftX = 0;
   let shiftY = 0;
@@ -570,23 +765,6 @@ export function initHexBody(entity, image) {
       contentWidth = maxContentX - minContentX;
   }
   
-  // Wzmacnianie rdzenia
-  const coreRadSq = (Math.min(w, h) * 0.25) ** 2;
-  for (const s of shards) {
-      const distSq = s.lx*s.lx + s.ly*s.ly;
-      const odd = (s.c % 2 !== 0);
-      const neighborOffsets = odd 
-          ? [[0,-1],[0,1],[-1,0],[-1,1],[1,0],[1,1]]
-          : [[0,-1],[0,1],[-1,-1],[-1,0],[1,-1],[1,0]];
-      let nFound = 0;
-      for (const no of neighborOffsets) {
-          if (map[`${s.c + no[0]},${s.r + no[1]}`]) nFound++;
-      }
-      if (distSq < coreRadSq) { s.hardness = 3.0; s.hp *= 3.0; }
-      else if (nFound < 6) { s.hardness = 2.0; s.hp *= 2.0; }
-      else { s.hardness = 1.0; }
-  }
-
   entity.hexGrid = {
       shards,
       map,
