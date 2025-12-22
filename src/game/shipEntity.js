@@ -4,9 +4,8 @@
 const SHIP_TEMPLATE = {
   w: 250,
   h: 450,
-  radius: 220, // WAŻNE: Promień kolizji (dla destructor.js i kolizji)
-const SHIP_TEMPLATE = {  
-  mass: 100,           // Zwinność silników (bez zmian)
+  radius: 220,         // WAŻNE: Promień kolizji (dla destructor.js i kolizji)
+  mass: 100,           // Zwinność silników
   rammingMass: 50000,  // Masa taranowania: Najcięższy obiekt w grze
   pos: { x: 0, y: 0 },
   vel: { x: 0, y: 0 },
@@ -21,7 +20,7 @@ const SHIP_TEMPLATE = {
 
   // Profil wizualny (Most między index.html a destructor.js)
   capitalProfile: {
-      spriteScale: 1.0,     // Twoja zmiana
+      spriteScale: 1.0,     
       lengthScale: 2.1,     // Dopasowanie długości wizualnej do promienia
       widthScale: 1.2,      // Dopasowanie szerokości
       spriteRotation: 0,
@@ -56,14 +55,13 @@ const SHIP_TEMPLATE = {
       hexScale: 11, baseAlpha: 0.15
   },
 
-  hull: { max: 10000, val: 10000 }, // Poprawione startowe HP na max
+  hull: { max: 10000, val: 10000 }, 
   special: { cooldown: 10, cooldownTimer: 0 },
   input: { thrustX: 0, thrustY: 0, aimX: 0, aimY: 0 },
   controller: 'player',
   aiController: null
 };
 
-// Zmienione na 1.0 zgodnie z Twoim życzeniem
 export const SHIP_SPRITE_SCALE = 1.0; 
 
 const SHIP_VISUAL_BASE = {
