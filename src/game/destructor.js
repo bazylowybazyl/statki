@@ -1,6 +1,6 @@
 /**
  * Moduł Destrukcji "Hex Grinder"
- * Wersja: FIXED RADIUS (Naprawa problemu "tylko w centrum")
+ * Wersja: FIXED SCALING & HITBOX
  */
 
 export const DESTRUCTOR_CONFIG = {
@@ -18,7 +18,6 @@ function getFinalScale(entity) {
     // Jeśli statek ma zdefiniowany promień i znamy szerokość zawartości
     if (entity.radius && entity.hexGrid.contentWidth) {
         // Skalujemy tak, aby 'contentWidth' pasował do 2 * radius (średnicy)
-        // Dajemy 1.05 marginesu, żeby heksy minimalnie wystawały poza hitbox logiczny
         return ((entity.radius * 2) / entity.hexGrid.contentWidth) * 1.05;
     }
     // Fallback do szerokości obrazka
@@ -60,7 +59,7 @@ export const DestructorSystem = {
     // 3. Kolizje
     this.resolveHexGrinding(entities);
 
-    // 4. NOWE: Obsługa pękania statków (Split Check)
+    // 4. Obsługa pękania statków (Split Check)
     this.processSplits(entities);
   },
 
@@ -87,6 +86,7 @@ export const DestructorSystem = {
     const ly = (dx * s + dy * c) / scale;
 
     const searchRadius = scale < 0.5 ? 2 : 1;
+    // Korekta offsetu przy wyszukiwaniu w mapie
     const approxC = Math.round((lx - entity.hexGrid.offsetX) / (1.5 * r));
     const approxR = Math.round((ly - entity.hexGrid.offsetY) / h);
 
@@ -99,7 +99,8 @@ export const DestructorSystem = {
 
          if (shard && shard.active && !shard.isDebris) {
              const distSq = (shard.lx - lx)**2 + (shard.ly - ly)**2;
-             if (distSq < (r * 2.0)**2) {
+             // Zwiększona tolerancja trafienia
+             if (distSq < (r * 2.5)**2) {
                  hitSomething = true;
                  
                  const lvx = bulletVel.x * c - bulletVel.y * s;
@@ -129,13 +130,11 @@ export const DestructorSystem = {
     const h = r * Math.sqrt(3);
     const checkDistSq = (r * 2.2) ** 2; 
 
-    // WAŻNE: To filtruje Fightery, ponieważ one nie mają hexGrid (initHexBody je pomija)
     const activeBodies = entities.filter(e => e && !e.dead && e.hexGrid);
 
     for (let i = 0; i < activeBodies.length; i++) {
       const A = activeBodies[i];
       const scaleA = getFinalScale(A);
-      // Pobieramy masę A (Gracz = 25000, Battleship = 8000)
       const massA = A.rammingMass || A.mass || 100;
       
       const realRadA = A.hexGrid.rawRadius ? (A.hexGrid.rawRadius * scaleA) : (A.radius || 100);
@@ -160,13 +159,11 @@ export const DestructorSystem = {
         let iterator = A, gridHolder = B;
         let iterScale = scaleA, gridScale = scaleB;
         
-        // Optymalizacja: iterujemy po obiekcie z mniejszą liczbą shardów
         if (A.hexGrid.shards.length > B.hexGrid.shards.length) { 
             iterator = B; gridHolder = A; 
             iterScale = scaleB; gridScale = scaleA;
         }
         
-        // Pobieramy masy dla konkretnych ról
         const massIter = iterator.rammingMass || iterator.mass || 100;
         const massHolder = gridHolder.rammingMass || gridHolder.mass || 100;
 
@@ -213,14 +210,10 @@ export const DestructorSystem = {
                 const dy = sG.ly - gly;
 
                 if (dx*dx + dy*dy < checkDistSq) {
-                  // === KOLIZJA (MIAŻDŻENIE) ===
-                  
-                  const baseDamage = 35; // Bazowe obrażenia od "szorowania"
+                  const baseDamage = 35; 
                   const crushFactor = 0.08; 
                   const speedFactor = Math.max(1, impactSpeed * 0.15);
                   
-                  // Obrażenia zależne od masy taranującego
-                  // Np. Gracz (25k) vs Fregata (1k) -> Gracz zadaje 25x więcej obrażeń z masy
                   const damageToHolder = baseDamage + (massIter / 1000) * crushFactor * speedFactor;
                   const damageToIter = baseDamage + (massHolder / 1000) * crushFactor * speedFactor;
 
@@ -232,8 +225,6 @@ export const DestructorSystem = {
                   const warpPush = warpStrength * (1.0 / sG.hardness);
                   sG.warpStructure((dx/dist) * warpPush, (dy/dist) * warpPush, r * 1.5);
 
-                  // === FIZYKA (ODPYCHANIE) ===
-                  // Siła stała, ale przyspieszenie (a=F/m) zależy od masy
                   const collisionForce = 80000; 
                   const dt = 0.016; 
                   
@@ -281,34 +272,23 @@ export const DestructorSystem = {
     }
   },
 
-  // --- NOWA FUNKCJA: Procesowanie podziałów ---
   processSplits(activeEntities) {
     if (this.splitQueue.size === 0) return;
 
     for (const entity of this.splitQueue) {
         if (!entity.hexGrid || entity.dead) continue;
-        // Uruchom BFS
         const groups = findConnectedComponents(entity.hexGrid);
 
-        // Jeśli jest tylko 1 grupa, statek jest cały
         if (groups.length <= 1) continue;
 
-        // Mamy podział! Sprawdźmy, która część ma rdzeń
         let mainGroup = null;
         const wreckGroups = [];
 
         for (const group of groups) {
-            // Sprawdź czy grupa zawiera chociaż jeden heks rdzenia
             const hasCore = group.some(shard => shard.isCore);
-
-            // Logika Gracza/NPC:
-            // Jeśli ma rdzeń -> zostaje żywym statkiem.
-            // Jeśli wiele grup ma rdzeń (np. cięcie wzdłuż), bierzemy największą jako główną.
+            // Wybieramy największą grupę z rdzeniem jako główny statek
             if (hasCore) {
                 if (!mainGroup || group.length > mainGroup.length) {
-                    // Jeśli mieliśmy już kandydata na main, a ten jest lepszy,
-                    // tamten staje się wrakiem (chyba że chcemy pozwolić na dwa żywe statki -
-                    // ale dla uproszczenia sterowania gracza, lepiej mieć jeden).
                     if (mainGroup) wreckGroups.push(mainGroup);
                     mainGroup = group;
                 } else {
@@ -319,23 +299,20 @@ export const DestructorSystem = {
             }
         }
 
-        // Jeśli żaden kawałek nie ma rdzenia (zniszczono serce statku),
-        // to największy kawałek staje się wrakiem, a statek ginie.
         if (!mainGroup && groups.length > 0) {
-             // Opcjonalnie: Znajdź największy kawałek by był "głównym wrakiem"
-             // Ale tutaj po prostu statek umiera.
+             // Jeśli statek stracił wszystkie rdzenie - umiera
              entity.dead = true;
-             // createWreckage zostanie wywołane dla wszystkich grup poniżej
              wreckGroups.push(...groups);
         }
 
-        // Aplikujemy zmiany
-        if (mainGroup) {
-            // 1. Przebuduj grid głównego statku, zostawiając tylko mainGroup
+        // --- ZASTOSOWANIE ZMIAN ---
+        
+        // 1. Główny statek (Gracz/NPC) zostaje, ale traci odłączone części
+        if (mainGroup && !entity.dead) {
             rebuildEntityGrid(entity, mainGroup);
         }
 
-        // 2. Stwórz wraki z pozostałych grup
+        // 2. Odłączone części stają się wrakami
         for (const group of wreckGroups) {
             if (window.createWreckage) {
                 window.createWreckage(entity, group);
@@ -381,9 +358,8 @@ export const DestructorSystem = {
   }
 };
 
-// --- POMOCNICZE FUNKCJE ALGORYTMICZNE (poza obiektem DestructorSystem) ---
+// --- FUNKCJE POMOCNICZE ---
 
-// BFS do znajdowania wysp
 function findConnectedComponents(hexGrid) {
     const shards = hexGrid.shards.filter(s => s.active && !s.isDebris);
     if (shards.length === 0) return [];
@@ -403,7 +379,6 @@ function findConnectedComponents(hexGrid) {
             const current = stack.pop();
             group.push(current);
 
-            // Sąsiedzi heksa (offset coordinates)
             const odd = (current.c % 2 !== 0);
             const neighborOffsets = odd
                 ? [[0,-1],[0,1],[-1,0],[-1,1],[1,0],[1,1]]
@@ -414,7 +389,6 @@ function findConnectedComponents(hexGrid) {
                 const nr = current.r + offset[1];
                 const nKey = nc + "," + nr;
 
-                // Sprawdzamy czy sąsiad istnieje w mapie i jest aktywny
                 const neighbor = hexGrid.map[nKey];
                 if (neighbor && neighbor.active && !neighbor.isDebris && !visited.has(nKey)) {
                     visited.add(nKey);
@@ -427,20 +401,20 @@ function findConnectedComponents(hexGrid) {
     return groups;
 }
 
-// Funkcja aktualizująca grid statku po utracie części
 function rebuildEntityGrid(entity, shardsToKeep) {
     const newMap = {};
     const newShards = [];
-    let minLx = Infinity, maxLx = -Infinity, minLy = Infinity, maxLy = -Infinity;
+    let minLx = Infinity, maxLx = -Infinity;
     let rawRadiusSq = 0;
 
     for (const s of shardsToKeep) {
         newShards.push(s);
         newMap[s.c + "," + s.r] = s;
+        
         minLx = Math.min(minLx, s.lx);
         maxLx = Math.max(maxLx, s.lx);
-        minLy = Math.min(minLy, s.ly);
-        maxLy = Math.max(maxLy, s.ly);
+        
+        // Obliczamy nowy promień surowy (od środka obrazka)
         const distSq = s.lx * s.lx + s.ly * s.ly;
         if (distSq > rawRadiusSq) rawRadiusSq = distSq;
     }
@@ -451,7 +425,12 @@ function rebuildEntityGrid(entity, shardsToKeep) {
     if (newShards.length > 0) {
         const r = newShards[0].radius || DESTRUCTOR_CONFIG.gridDivisions;
         entity.hexGrid.rawRadius = Math.sqrt(rawRadiusSq) + r;
-        entity.hexGrid.contentWidth = Math.max(0, maxLx - minLx);
+        entity.hexGrid.contentWidth = Math.max(1, maxLx - minLx);
+        
+        // === FIX BŁĘDU: AKTUALIZACJA FIZYCZNEGO PROMIENIA ===
+        // Bez tego getFinalScale() zwracałoby ogromne wartości (mała zawartość / duży stary promień)
+        // Co powodowało efekt "wielkiego ducha" nakładającego się na wraki.
+        entity.radius = entity.hexGrid.rawRadius; 
     }
 }
 
@@ -622,7 +601,6 @@ class HexShard {
   }
 }
 
-// Inicjalizacja siatki heksów na obiekcie
 export function initHexBody(entity, image) {
   if (entity.fighter || (entity.type && ['fighter','interceptor','drone'].includes(entity.type))) {
       return;
@@ -649,9 +627,7 @@ export function initHexBody(entity, image) {
   const centerX = w / 2;
   const centerY = h / 2;
   
-  // Zmienne do obliczenia Bounding Boxa faktycznych pikseli
   let minContentX = w, maxContentX = 0;
-  let minContentY = h, maxContentY = 0;
   let rawRadiusSq = 0;
 
   for (let c = 0; c < cols; c++) {
@@ -677,11 +653,8 @@ export function initHexBody(entity, image) {
               const lx = cx - centerX;
               const ly = cy - centerY;
               
-              // Aktualizuj bounding box
               minContentX = Math.min(minContentX, lx);
               maxContentX = Math.max(maxContentX, lx);
-              minContentY = Math.min(minContentY, ly);
-              maxContentY = Math.max(maxContentY, ly);
 
               const shard = new HexShard(image, lx, ly, r, c, ro);
               shards.push(shard);
@@ -690,10 +663,7 @@ export function initHexBody(entity, image) {
       }
   }
 
-  // --- MODYFIKACJA INIT HEX BODY (Oznaczanie Rdzenia) ---
-  // PO UTWORZENIU WSZYSTKICH SHARDÓW:
-
-  // 1. Znajdź środek siatki (geometryczny środekBounding Boxa heksów)
+  // --- RDZENIE ---
   let minC = Infinity, maxC = -Infinity, minR = Infinity, maxR = -Infinity;
   for (const s of shards) {
       if (s.c < minC) minC = s.c;
@@ -704,10 +674,7 @@ export function initHexBody(entity, image) {
   const centerC = Math.floor((minC + maxC) / 2);
   const centerR = Math.floor((minR + maxR) / 2);
 
-  // 2. Pobierz wymiary rdzenia z entity (lub domyślne)
-  // Domyślne wartości dla różnych typów (jeśli nie podano w entity)
-  let cw = 2, ch = 2; // Default small core
-
+  let cw = 2, ch = 2; 
   if (entity.coreDimensions) {
       cw = entity.coreDimensions.w;
       ch = entity.coreDimensions.h;
@@ -715,23 +682,17 @@ export function initHexBody(entity, image) {
       if (entity.type.includes('frigate')) { cw = 1; ch = 2; }
       else if (entity.type === 'destroyer') { cw = 2; ch = 2; }
       else if (entity.type === 'battleship') { cw = 3; ch = 3; }
-      else if (entity.isCapitalShip) { cw = 3; ch = 5; } // Player/Other Capital
+      else if (entity.isCapitalShip) { cw = 3; ch = 5; } 
   }
 
-  // 3. Oznacz heksy jako rdzeń
   const halfW = Math.floor(cw / 2);
   const halfH = Math.floor(ch / 2);
   for (const s of shards) {
-      // Prosta prostokątna strefa wokół środka w koordynatach heksów
-      // Uwaga: koordynaty heksów są "skewed", ale dla małych rdzeni to wystarczy
       const dc = Math.abs(s.c - centerC);
       const dr = Math.abs(s.r - centerR);
-
-      // Warunek bycia w rdzeniu
       if (dc <= halfW && dr <= halfH) {
           s.isCore = true;
-          s.color = '#ff00ff'; // Debug: tymczasowo podświetl rdzeń (zakomentuj w produkcji)
-          s.hardness = 5.0;    // Rdzeń jest bardzo twardy
+          s.hardness = 5.0;
           s.hp *= 5.0;
       } else {
           s.isCore = false;
@@ -746,10 +707,12 @@ export function initHexBody(entity, image) {
   let contentWidth = w;
   
   if (shards.length > 0) {
+      // Wyśrodkowanie na podstawie bounding boxa
       shiftX = -(minContentX + maxContentX) / 2;
-      shiftY = -(minContentY + maxContentY) / 2;
+      // W osi Y nie przesuwamy tak agresywnie, żeby zachować środek obrazka jako pivot
+      // Ale jeśli statek jest niesymetryczny, można odkomentować:
+      // shiftY = -(minContentY + maxContentY) / 2; 
       
-      // Przesuwamy heksy i obliczamy maksymalny promień od nowego środka
       for (const s of shards) {
           s.lx += shiftX;
           s.ly += shiftY;
@@ -772,12 +735,11 @@ export function initHexBody(entity, image) {
       offsetY: finalOffsetY,
       srcWidth: w,
       srcHeight: h,
-      contentWidth: contentWidth, // Zapisz szerokość samej zawartości (bez pustego miejsca PNG)
-      rawRadius: Math.sqrt(rawRadiusSq) + r // Maksymalny promień w pikselach obrazka
+      contentWidth: contentWidth, 
+      rawRadius: Math.sqrt(rawRadiusSq) + r 
   };
   
   if (!entity.radius) entity.radius = Math.max(w, h) / 2;
-  console.log(`Destructor: Initialized hex body. Shards: ${shards.length}, RawRadius: ${entity.hexGrid.rawRadius}`);
 }
 
 export function drawHexBody(ctx, entity, camera, worldToScreenFunc) {
@@ -788,6 +750,7 @@ export function drawHexBody(ctx, entity, camera, worldToScreenFunc) {
     const s = worldToScreenFunc(posX, posY, camera);
     
     const size = entity.radius * camera.zoom;
+    // Frustum culling
     if (s.x + size < 0 || s.x - size > ctx.canvas.width ||
         s.y + size < 0 || s.y - size > ctx.canvas.height) return;
 
