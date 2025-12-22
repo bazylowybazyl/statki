@@ -4,13 +4,13 @@
 const CONFIG = {
     baseColor: '#00aaff',
     hitColor: '#00e5ff',
-    baseAlpha: 0.15,
+    baseAlpha: 0.35,
     hexAlpha: 0.55,       // Nieco wyraźniejsze heksy jak w oryginale
-    hexScale: 11,         // Skala dopasowana do generatora seamless
+    hexScale: 30,         // Skala dopasowana do generatora seamless
     hitDecayTime: 0.6,
-    hitSpread: 1.0,       // Szersze rozchodzenie się fali
-    deformPower: 12,
-    shieldScale: 3.0,
+    hitSpread: 0.5,       // Szersze rozchodzenie się fali
+    deformPower: 3,
+    shieldScale: 1.5,
     activationDuration: 0.45,
     deactivationDuration: 0.55,
     breakDuration: 0.65
