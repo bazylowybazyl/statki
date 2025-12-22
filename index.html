@@ -4643,6 +4643,15 @@ window.createWreckage = function(parentEntity, shards) {
   const avgLx = sumLx / shards.length;
   const avgLy = sumLy / shards.length;
 
+  // 1. Oblicz średnie indeksy C i R dla grupy
+  let sumC = 0, sumR = 0;
+  for (const s of shards) {
+      sumC += s.c;
+      sumR += s.r;
+  }
+  const avgC = Math.round(sumC / shards.length);
+  const avgR = Math.round(sumR / shards.length);
+
   // 2. Pozycja w świecie (bazując na pozycji rodzica i offsecie środka masy)
   // Musimy uwzględnić obrót rodzica
   const c = Math.cos(parentEntity.angle);
@@ -4676,15 +4685,19 @@ window.createWreckage = function(parentEntity, shards) {
     }
   };
 
-  // 4. Przenosimy heksy do wraku
+  // 4. Przenosimy heksy do wraku (ZAKTUALIZOWANA PĘTLA)
   for (const shard of shards) {
-    // Przesuwamy lokalne koordynaty heksa tak, by 0,0 było w środku nowego wraku
+    // Przesuwamy lokalne koordynaty heksa (wizualnie)
     shard.lx -= avgLx;
     shard.ly -= avgLy;
-    shard.origLx -= avgLx; // Ważne dla warpStructure
+    shard.origLx -= avgLx;
     shard.origLy -= avgLy;
 
-    // Przypisujemy do nowego grida
+    // WAŻNE: Przesuwamy indeksy siatki (logicznie), aby hitbox pasował do nowej pozycji
+    shard.c -= avgC;
+    shard.r -= avgR;
+
+    // Przypisujemy do nowego grida z nowymi kluczami
     wreck.hexGrid.shards.push(shard);
     wreck.hexGrid.map[shard.c + "," + shard.r] = shard;
   }
@@ -11298,11 +11311,15 @@ function bulletsAndCollisionsStep(dt){
 
     if(b.life <= 0){ bullets.splice(i,1); continue; }
 
-    // hit NPC (z pominięciem własnego źródła w czasie grace)
+    // hit NPC lub WRAK
     let hitNPC = null;
-    for (const npc of npcs){
-      if (npc.dead || npc.isCollidable === false) continue;
-      
+    // Tworzymy tymczasową listę celów: żywe NPC + wraki
+    const potentialTargets = [...npcs, ...wrecks]; 
+
+    for (const npc of potentialTargets){
+      // Jeśli to wrak (isWreck), to nie sprawdzamy 'dead', bo wraki technicznie są martwe logicznie, ale fizyczne
+      if (!npc.isWreck && (npc.dead || npc.isCollidable === false)) continue;
+
       // --- FIX FRIENDLY FIRE ---
       // Gracz nie trafia sojuszników
       if (b.owner === 'player' && npc.friendly) continue;
