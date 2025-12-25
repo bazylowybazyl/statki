@@ -686,6 +686,43 @@ const PLANET_SCALE =
     ? window.DEFAULT_PLANET_SCALE : (DEFAULT_PLANET_SCALE ?? 3);
 
 let warpBrakeTimer = 0;
+const GRAVITY_WELL_IDS = ['planet_gravity', 'pirate_gravity', 'sun'];
+
+function isGravityWellZoneId(id){
+  return GRAVITY_WELL_IDS.includes(id);
+}
+
+function resolveGravityWellSource(zoneId){
+  if (zoneId === 'sun') return { x: SUN.x, y: SUN.y };
+  if (zoneId === 'pirate_gravity' && mercMission?.station) {
+    return { x: mercMission.station.x, y: mercMission.station.y };
+  }
+  if (zoneId === 'planet_gravity' && Array.isArray(planets)) {
+    const playerPos = ship?.pos || null;
+    let closest = null;
+    for (const planet of planets) {
+      if (!planet) continue;
+      const dist = playerPos
+        ? Math.hypot(planet.x - playerPos.x, planet.y - playerPos.y)
+        : Math.hypot(planet.x, planet.y);
+      if (!closest || dist < closest.dist) {
+        closest = { x: planet.x, y: planet.y, dist };
+      }
+    }
+    if (closest) return { x: closest.x, y: closest.y };
+  }
+  return null;
+}
+
+function gravityBrakeCameraOffset(){
+  const brake = warp?.gravityBrake;
+  if (!brake || !brake.active || brake.duration <= 0) return null;
+  const t = clamp(brake.timer / brake.duration, 0, 1);
+  const ease = Math.pow(t, 0.8);
+  const baseMag = 120 + Math.min(480, brake.startSpeed * 0.06);
+  const mag = baseMag * ease;
+  return { x: brake.dir.x * mag, y: brake.dir.y * mag };
+}
 
 // =============== Canvas & utils ===============
 const canvas = document.getElementById('c');
@@ -2658,6 +2695,11 @@ function updateCameraTarget(dt){
   if(camera.mode === 'ship'){
     camera.targetX = ship.pos.x;
     camera.targetY = ship.pos.y;
+    const brakeOffset = gravityBrakeCameraOffset();
+    if (brakeOffset) {
+      camera.targetX += brakeOffset.x;
+      camera.targetY += brakeOffset.y;
+    }
     if(!camera.transition && !camera.manualZoom) camera.targetZoom = camera.defaultZoom;
   } else if(camera.mode === 'free'){
     const moveX = (keys['arrowright'] ? 1 : 0) - (keys['arrowleft'] ? 1 : 0);
@@ -3523,6 +3565,9 @@ function updateZoneState(dt){
 }
 
 function handleZoneTransition(prevZoneId, currentZoneId){
+  if (isGravityWellZoneId(currentZoneId) && currentZoneId !== prevZoneId) {
+    triggerGravityWarpBrake(currentZoneId);
+  }
   if (currentZoneId === 'pirate_inner' && prevZoneId !== 'pirate_inner') {
     enterPirateInnerOrbit();
   }
@@ -11978,6 +12023,14 @@ const warp = {
   entryProgress:0,
   entryDuration:0.9,
   entryBaseSpeed:0,
+  gravityBrake: {
+    active: false,
+    timer: 0,
+    duration: 1.1,
+    dir: { x: 0, y: 0 },
+    startSpeed: 0,
+    sourceId: null
+  },
   isBusy(){ return this.state!=='idle'; }
 };
 
@@ -11996,6 +12049,41 @@ function exitWarp(){
   if (!warp.lastDir) warp.lastDir = { x: warp.dir.x, y: warp.dir.y };
   warp.lastDir.x = warp.dir.x;
   warp.lastDir.y = warp.dir.y;
+}
+
+function triggerGravityWarpBrake(zoneId){
+  if (warp.state !== 'active') return;
+  const source = resolveGravityWellSource(zoneId);
+  const dirVec = source
+    ? { x: source.x - ship.pos.x, y: source.y - ship.pos.y }
+    : { x: warp.dir.x, y: warp.dir.y };
+  const dir = norm(dirVec.x || dirVec.y ? dirVec : warp.dir);
+  const brake = warp.gravityBrake;
+  brake.active = true;
+  brake.timer = brake.duration;
+  brake.dir.x = dir.x || 0;
+  brake.dir.y = dir.y || 0;
+  brake.startSpeed = Math.hypot(ship.vel.x, ship.vel.y);
+  brake.sourceId = zoneId;
+  warp.state = 'idle';
+  warp.charge = 0;
+  exitWarp();
+}
+
+function updateGravityWarpBrake(dt){
+  const brake = warp.gravityBrake;
+  if (!brake.active) return;
+  brake.timer = Math.max(0, brake.timer - dt);
+  const t = brake.duration > 0 ? clamp(brake.timer / brake.duration, 0, 1) : 0;
+  const brakeRate = 10 + 6 * t;
+  const lerpFactor = clamp(dt * brakeRate, 0, 1);
+  ship.vel.x += (0 - ship.vel.x) * lerpFactor;
+  ship.vel.y += (0 - ship.vel.y) * lerpFactor;
+  ship.angVel += (0 - ship.angVel) * Math.min(1, dt * 6);
+  if (brake.timer <= 0.0001 && Math.hypot(ship.vel.x, ship.vel.y) < 5) {
+    brake.active = false;
+    brake.sourceId = null;
+  }
 }
 
 const boost = {
@@ -12466,19 +12554,20 @@ function physicsStep(dt){
       }
     }
   }
-    ship.pos.x += ship.vel.x*dt;
-    ship.pos.y += ship.vel.y*dt;
+  updateGravityWarpBrake(dt);
+  ship.pos.x += ship.vel.x*dt;
+  ship.pos.y += ship.vel.y*dt;
 
-    // granice
-    const margin = Math.max(50, getAuToWorldUnits() * WORLD_EDGE_MARGIN_AU);
-    ship.pos.x = clamp(ship.pos.x, margin, WORLD.w - margin);
-    ship.pos.y = clamp(ship.pos.y, margin, WORLD.h - margin);
+  // granice
+  const margin = Math.max(50, getAuToWorldUnits() * WORLD_EDGE_MARGIN_AU);
+  ship.pos.x = clamp(ship.pos.x, margin, WORLD.w - margin);
+  ship.pos.y = clamp(ship.pos.y, margin, WORLD.h - margin);
 
-    ship.x = ship.pos.x;
-    ship.y = ship.pos.y;
+  ship.x = ship.pos.x;
+  ship.y = ship.pos.y;
 
-    // obrót
-    const angAcc = totalTorque / ship.inertia;
+  // obrót
+  const angAcc = totalTorque / ship.inertia;
   ship.angVel += angAcc*dt;
   ship.angVel *= Math.exp(-ship.angularDamping * (boostActive ? boost.angularDampingFactor : 1) * dt);
   ship.angle += ship.angVel*dt;
