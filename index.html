@@ -6522,8 +6522,12 @@ function drawBulletVisual(ctx, b, cam){
     ctx.save();
     ctx.lineCap = 'round';
     ctx.strokeStyle = grad;
-    ctx.shadowBlur = (vfx.glowBlur || 14) * 0.6 * camera.zoom;
-    ctx.shadowColor = resolveAlphaColor(vfx.glowColor, 0.6, vfx.color);
+    if (camera.zoom > 0.5) {
+      ctx.shadowBlur = (vfx.glowBlur || 14) * 0.6 * camera.zoom;
+      ctx.shadowColor = resolveAlphaColor(vfx.glowColor, 0.6, vfx.color);
+    } else {
+      ctx.shadowBlur = 0;
+    }
     ctx.lineWidth = Math.max(1.2, (vfx.widthOuter || 8) * 0.6 * camera.zoom);
     ctx.beginPath(); ctx.moveTo(sp.x, sp.y); ctx.lineTo(s.x, s.y); ctx.stroke();
     ctx.restore();
@@ -6531,8 +6535,12 @@ function drawBulletVisual(ctx, b, cam){
 
   ctx.save();
   ctx.lineCap = 'round';
-  ctx.shadowBlur = (vfx.glowBlur || 16) * camera.zoom;
-  ctx.shadowColor = resolveAlphaColor(vfx.glowColor, 0.9, vfx.color);
+  if (camera.zoom > 0.5) {
+    ctx.shadowBlur = (vfx.glowBlur || 16) * camera.zoom;
+    ctx.shadowColor = resolveAlphaColor(vfx.glowColor, 0.9, vfx.color);
+  } else {
+    ctx.shadowBlur = 0;
+  }
   ctx.strokeStyle = resolveAlphaColor(vfx.trailColor, 0.75, vfx.color);
   ctx.lineWidth = (vfx.widthOuter || 10) * camera.zoom;
   ctx.beginPath(); ctx.moveTo(s.x - dx, s.y - dy); ctx.lineTo(s.x + dx, s.y + dy); ctx.stroke();
@@ -11475,7 +11483,62 @@ function applyDamageToPlatform(platform, amount){
   return dmg;
 }
 
+// Optymalizacja 1: Prosty Spatial Grid
+const SpatialGrid = {
+  cellSize: 500, // Rozmiar komórki (musi być większy niż największy obiekt)
+  cells: new Map(),
+
+  clear() {
+    this.cells.clear();
+  },
+
+  getKey(x, y) {
+    const cx = Math.floor(x / this.cellSize);
+    const cy = Math.floor(y / this.cellSize);
+    return cx + "," + cy;
+  },
+
+  insert(entity) {
+    // Rejestrujemy obiekt w komórce, w której jest jego środek
+    // (Dla dużych obiektów można rejestrować w sąsiednich, ale to wersja uproszczona)
+    const key = this.getKey(entity.x, entity.y);
+    if (!this.cells.has(key)) this.cells.set(key, []);
+    this.cells.get(key).push(entity);
+  },
+
+  // Zwraca obiekty z komórki obiektu + 8 sąsiednich
+  getPotentialTargets(x, y) {
+    const cx = Math.floor(x / this.cellSize);
+    const cy = Math.floor(y / this.cellSize);
+    const results = [];
+
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        const key = (cx + i) + "," + (cy + j);
+        const cell = this.cells.get(key);
+        if (cell) {
+          // Zamiast push(...cell) co alokuje pamięć, iterujemy (dla wydajności JS)
+          for(let k=0; k<cell.length; k++) results.push(cell[k]);
+        }
+      }
+    }
+    return results;
+  }
+};
+
 function bulletsAndCollisionsStep(dt){
+  // 1. Wyczyść i zbuduj grid w każdej klatce (dla obiektów dynamicznych to szybsze niż aktualizacja)
+  SpatialGrid.clear();
+  // Dodajemy NPC i Wraki do siatki
+  for (let i = 0; i < npcs.length; i++) {
+    const t = npcs[i];
+    if (!t.dead) SpatialGrid.insert(t);
+  }
+  for (let i = 0; i < wrecks.length; i++) {
+    const t = wrecks[i];
+    if (t.isWreck) SpatialGrid.insert(t);
+  }
+
   for(let i=bullets.length-1;i>=0;i--){
     const b = bullets[i];
     b.px = b.x; b.py = b.y;
@@ -11569,9 +11632,9 @@ function bulletsAndCollisionsStep(dt){
 
     // 1. hit NPC lub WRAK
     let hitNPC = null;
-    const potentialTargets = [...npcs, ...wrecks]; 
-
-    for (const npc of potentialTargets){
+    const nearbyTargets = SpatialGrid.getPotentialTargets(b.x, b.y);
+    for (let k = 0; k < nearbyTargets.length; k++){
+      const npc = nearbyTargets[k];
       if (!npc.isWreck && (npc.dead || npc.isCollidable === false)) continue;
 
       // --- FRIENDLY FIRE ON: Zakomentuj te linie, żeby umożliwić strzelanie do swoich ---
@@ -11580,8 +11643,11 @@ function bulletsAndCollisionsStep(dt){
       // ---------------------------------------------------------------------------------
 
       if (b.source && b.source === npc && b.age < (b.spawnGrace || 0)) continue;
-      const d = Math.hypot(npc.x - b.x, npc.y - b.y);
-      if (d < npc.radius + b.r){ hitNPC = npc; break; }
+      const dx = npc.x - b.x;
+      const dy = npc.y - b.y;
+      const distSq = dx * dx + dy * dy;
+      const radSum = npc.radius + b.r;
+      if (distSq < radSum * radSum){ hitNPC = npc; break; }
     }
 
     if(hitNPC){
@@ -14240,7 +14306,6 @@ function render(alpha, frameDt){
 
     ctx.save();
     ctx.globalAlpha = 0.33;
-    ctx.filter = 'blur(2px)';
     ctx.drawImage(shipSprite, -drawW/2 + 6, -drawH/2 + 8, drawW, drawH);
     ctx.restore();
 
@@ -14522,7 +14587,7 @@ function render(alpha, frameDt){
       ctx.globalAlpha = clamp(t, 0, 1);
       ctx.fillStyle = p.color;
 
-      if (size < 4) {
+      if (size < 6) {
           // Dla małych cząsteczek rysujemy kwadrat (znacznie szybsze niż arc)
           ctx.fillRect(s.x - size/2, s.y - size/2, size, size);
       } else {
