@@ -1633,15 +1633,42 @@ function updateSupportWing(dt){
 
 function supportGuardBehavior(npc, slotIndex, dt){
   const slot = supportGuardSlot(slotIndex);
+
+  // --- FIX: Detekcja kolizji z Liderem ---
+  const leader = (npc.supportData?.leader) || ship;
+  const distToLeader = Math.hypot(npc.x - leader.x, npc.y - leader.y);
+  
+  // Bezpieczna strefa wokół lidera
+  const minSafeDist = (leader.radius || 220) + (npc.radius || 30) + 60;
+
+  if (distToLeader < minSafeDist) {
+      // JESTEŚ ZA BLISKO! Tryb ucieczki
+      const pushX = npc.x - leader.x;
+      const pushY = npc.y - leader.y;
+      const dist = Math.hypot(pushX, pushY) || 1;
+      const dir = {x: pushX/dist, y: pushY/dist};
+      
+      // Wymuś odlot od lidera
+      const wantSpeed = npc.maxSpeed * 0.9;
+      const turned = clampTurnVec(npc.vx, npc.vy, dir.x * wantSpeed, dir.y * wantSpeed, dt, 360);
+      
+      npc.vx = turned.vx;
+      npc.vy = turned.vy;
+      npc.angle = Math.atan2(npc.vy, npc.vx);
+      return; // Przerywamy, nie lecimy do slotu
+  }
+
+  // Standardowy lot do slotu (jeśli jest bezpiecznie)
   const dx = slot.x - npc.x;
   const dy = slot.y - npc.y;
   const dist = Math.hypot(dx, dy) || 1;
   const dir = { x: dx / dist, y: dy / dist };
   const wantSpeed = Math.min(npc.maxSpeed || 240, dist * 1.4);
-  const turned = clampTurnVec(npc.vx || 0, npc.vy || 0, dir.x * wantSpeed, dir.y * wantSpeed, dt, 220);
+  const turned = clampTurnVec(npc.vx, npc.vy, dir.x * wantSpeed, dir.y * wantSpeed, dt, 220);
   npc.vx = turned.vx;
   npc.vy = turned.vy;
   npc.angle = Math.atan2(npc.vy || 0, npc.vx || 0);
+  
   if (dist < 12) {
     npc.vx *= 0.92;
     npc.vy *= 0.92;
@@ -1663,35 +1690,66 @@ function steerNpcTowards(npc, target, dt, opts = {}){
   return dist;
 }
 function applySeparationForces(npc, ax, ay) {
-  // Iterujemy po wszystkich statkach w grze
+  const myRadius = npc.radius || 20;
+  const myMass = npc.mass || 1;
+
   for (const other of npcs) {
-    // Warunki ignorowania:
-    // 1. To ten sam statek
-    // 2. Inny statek jest martwy
-    // 3. To wróg (nie odpychamy się od wrogów, wlatujemy w nich)
-    // 4. Inny statek to myśliwiec (są za lekkie, żeby nas przepchnąć)
-    if (other === npc || other.dead || other.friendly !== npc.friendly) continue;
-    if (other.fighter || other.type === 'fighter' || other.type === 'interceptor') continue;
+    if (other === npc || other.dead) continue;
+    // Duże statki ignorują małe myśliwce (niech myśliwce schodzą z drogi)
+    if (npc.isCapitalShip && other.fighter) continue;
 
-    const distSq = dist2(npc, other);
-    const range = (npc.separationRange || 100); // Domyślny zasięg 100, jeśli brak w configu
-
-    // Jeśli jesteśmy w strefie odpychania
-    if (distSq < range * range) {
+    const dx = npc.x - other.x;
+    const dy = npc.y - other.y;
+    const distSq = dx*dx + dy*dy;
+    
+    // Zasięg: promienie + margines 100 jednostek
+    const otherRadius = other.radius || 20;
+    const safeDistance = myRadius + otherRadius + 100; 
+    
+    if (distSq < safeDistance * safeDistance) {
       const dist = Math.sqrt(distSq) || 1;
-      // Im bliżej, tym siła odpychania jest większa (0 na granicy, 1 przy zderzeniu)
-      const repelStrength = (range - dist) / range;
-
-      // Wektor odpychania (znormalizowany)
-      const pushX = (npc.x - other.x) / dist;
-      const pushY = (npc.y - other.y) / dist;
-
-      // Dodajemy siłę do przyspieszenia (ax, ay)
-      // Mnożnik 0.8 to "siła repulsora" - można dostroić
-      ax += pushX * (npc.accel || 100) * 0.8 * repelStrength;
-      ay += pushY * (npc.accel || 100) * 0.8 * repelStrength;
+      const overlap = safeDistance - dist;
+      
+      // Im bliżej, tym potężniejsza siła odpychająca
+      const force = (overlap * 20.0) / myMass; 
+      
+      ax += (dx / dist) * force;
+      ay += (dy / dist) * force;
     }
   }
+
+  // --- SEPARACJA OD GRACZA (Priorytet absolutny) ---
+  if (window.ship && !window.ship.destroyed && npc !== window.ship) {
+      const player = window.ship;
+      const dx = npc.x - player.pos.x;
+      const dy = npc.y - player.pos.y;
+      const distSq = dx*dx + dy*dy;
+      
+      // Gracz ma duży promień (Capital), dajemy duży margines bezpieczeństwa
+      // (radius Gracza ~220 + radius NPC + 180 marginesu)
+      const playerRadius = player.radius || 220; 
+      const safeDistance = myRadius + playerRadius + 180;
+
+      if (distSq < safeDistance * safeDistance) {
+          const dist = Math.sqrt(distSq) || 1;
+          const overlap = safeDistance - dist;
+          
+          // GIGANTYCZNA siła odpychania dla sojuszników, żeby nie wlatywali w gracza
+          const pushStrength = npc.friendly ? 60.0 : 15.0;
+          const force = (overlap * pushStrength) / myMass;
+
+          ax += (dx / dist) * force;
+          ay += (dy / dist) * force;
+          
+          // Hamulec awaryjny: Jeśli lecisz W STRONĘ gracza, natychmiast hamuj
+          const dot = npc.vx * (-dx) + npc.vy * (-dy);
+          if (dot > 0) {
+              npc.vx *= 0.85; // Mocne hamowanie
+              npc.vy *= 0.85;
+          }
+      }
+  }
+
   return { ax, ay };
 }
 function handleCommandedNpc(npc, dt){
@@ -11405,12 +11463,10 @@ function bulletsAndCollisionsStep(dt){
     for (const npc of potentialTargets){
       if (!npc.isWreck && (npc.dead || npc.isCollidable === false)) continue;
 
-      // --- FIX FRIENDLY FIRE ---
-      // Gracz nie trafia sojuszników
-      if (b.owner === 'player' && npc.friendly) continue;
-      // NPC (pirat) nie trafia innych piratów
-      if (b.owner === 'npc' && !npc.friendly) continue; 
-      // -------------------------
+      // --- FRIENDLY FIRE ON: Zakomentuj te linie, żeby umożliwić strzelanie do swoich ---
+      // if (b.owner === 'player' && npc.friendly) continue;
+      // if (b.owner === 'npc' && !npc.friendly) continue; 
+      // ---------------------------------------------------------------------------------
 
       if (b.source && b.source === npc && b.age < (b.spawnGrace || 0)) continue;
       const d = Math.hypot(npc.x - b.x, npc.y - b.y);
