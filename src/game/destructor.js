@@ -24,6 +24,31 @@ function getFinalScale(entity) {
     return 1.0;
 }
 
+function updateHexCache(entity) {
+    if (!entity.hexGrid || !entity.hexGrid.cacheCtx) return;
+    const ctx = entity.hexGrid.cacheCtx;
+    const grid = entity.hexGrid;
+
+    ctx.clearRect(0, 0, grid.srcWidth, grid.srcHeight);
+
+    ctx.save();
+    const centerX = grid.srcWidth / 2;
+    const centerY = grid.srcHeight / 2;
+    ctx.translate(centerX, centerY);
+
+    for (const shard of grid.shards) {
+        if (shard.active && !shard.isDebris) {
+            ctx.save();
+            ctx.translate(shard.lx, shard.ly);
+            shard.drawShape(ctx);
+            ctx.restore();
+        }
+    }
+    ctx.restore();
+
+    grid.cacheDirty = false;
+}
+
 export const DestructorSystem = {
   debris: [],
   sparks: [],
@@ -109,6 +134,7 @@ export const DestructorSystem = {
                  // Deformacja i obrażenia
                  shard.deform(lx - shard.lx, ly - shard.ly); 
                  shard.hp -= damage / shard.hardness;
+                 entity.hexGrid.cacheDirty = true;
 
                  // Jeśli heks zniszczony -> zamień w debris
                  if (shard.hp <= 0) {
@@ -132,47 +158,73 @@ export const DestructorSystem = {
 
     const activeBodies = entities.filter(e => e && !e.dead && e.hexGrid);
 
-    for (let i = 0; i < activeBodies.length; i++) {
-      const A = activeBodies[i];
-      if (A.fighter) continue; // Myśliwce nie mają heksów, pomijamy w tej fazie
+    if (window.SpatialGrid && activeBodies.length > 20) {
+        const checkedPairs = new Set();
+        const ids = new WeakMap();
+        let nextId = 1;
+        const getId = (obj) => {
+            let id = ids.get(obj);
+            if (!id) {
+                id = nextId++;
+                ids.set(obj, id);
+            }
+            return id;
+        };
 
-      const scaleA = getFinalScale(A);
-      const posA = A.pos || {x: A.x, y: A.y};
-      const radA = (A.hexGrid.rawRadius || A.radius) * scaleA;
+        for (const A of activeBodies) {
+            if (A.fighter) continue;
+            const ax = A.pos ? A.pos.x : A.x;
+            const ay = A.pos ? A.pos.y : A.y;
+            const nearby = window.SpatialGrid.getPotentialTargets(ax, ay);
 
-      for (let j = i + 1; j < activeBodies.length; j++) {
-        const B = activeBodies[j];
-        if (B.fighter) continue;
+            for (const B of nearby) {
+                if (A === B || !B || !B.hexGrid || B.dead || B.fighter) continue;
 
-        const posB = B.pos || {x: B.x, y: B.y};
-        const scaleB = getFinalScale(B);
-        const radB = (B.hexGrid.rawRadius || B.radius) * scaleB;
+                const idA = getId(A);
+                const idB = getId(B);
+                const pairKey = idA < idB ? `${idA}:${idB}` : `${idB}:${idA}`;
 
-        // Szybki test odległości
-        const distSq = (posA.x - posB.x)**2 + (posA.y - posB.y)**2;
-        const minDist = radA + radB;
-        if (distSq > minDist * minDist) continue;
+                if (checkedPairs.has(pairKey)) continue;
+                checkedPairs.add(pairKey);
 
-        // --- FIZYKA ZDERZEŃ ---
-        const relVx = (A.vx || 0) - (B.vx || 0);
-        const relVy = (A.vy || 0) - (B.vy || 0);
-        const impactSpeed = Math.hypot(relVx, relVy);
-
-        // Zapobieganie "szlifowaniu" przy minimalnym kontakcie (np. przy dokowaniu/starcie)
-        if (impactSpeed < 15) {
-            this.applyRepulsion(A, B, posA, posB, 0.5); 
-            continue; 
+                this._checkPair(A, B, r, h, checkDistSq);
+            }
         }
-
-        // --- FRIENDLY FIRE ON ---
-        // Brak redukcji obrażeń dla sojuszników.
-        // Jeśli uderzą mocno, zniszczą się nawzajem.
-        const damageMultiplier = 1.0; 
-
-        // Uruchomienie logiki niszczenia heksów
-        this._processHexCollisionPair(A, B, scaleA, scaleB, impactSpeed, damageMultiplier, r, h, checkDistSq);
-      }
+    } else {
+        for (let i = 0; i < activeBodies.length; i++) {
+          const A = activeBodies[i];
+          if (A.fighter) continue;
+          for (let j = i + 1; j < activeBodies.length; j++) {
+            const B = activeBodies[j];
+            if (B.fighter) continue;
+            this._checkPair(A, B, r, h, checkDistSq);
+          }
+        }
     }
+  },
+
+  _checkPair(A, B, r, h, checkDistSq) {
+      const scaleA = getFinalScale(A);
+      const scaleB = getFinalScale(B);
+      const radA = (A.hexGrid.rawRadius || A.radius) * scaleA;
+      const radB = (B.hexGrid.rawRadius || B.radius) * scaleB;
+
+      const posA = A.pos || {x: A.x, y: A.y};
+      const posB = B.pos || {x: B.x, y: B.y};
+      const dx = posA.x - posB.x;
+      const dy = posA.y - posB.y;
+      const distSq = dx * dx + dy * dy;
+      const minDist = radA + radB;
+
+      if (distSq > minDist * minDist) return;
+
+      const impactSpeed = Math.hypot((A.vx || 0) - (B.vx || 0), (A.vy || 0) - (B.vy || 0));
+      if (impactSpeed < 15) {
+          this.applyRepulsion(A, B, posA, posB, 0.5); 
+          return; 
+      }
+
+      this._processHexCollisionPair(A, B, scaleA, scaleB, impactSpeed, 1.0, r, h, checkDistSq);
   },
 
   applyRepulsion(A, B, posA, posB, forceMul) {
@@ -244,6 +296,7 @@ export const DestructorSystem = {
                         if (dmgToHolder > 1) {
                             sG.hp -= dmgToHolder;
                             sG.deform(-dx, -dy);
+                            gridHolder.hexGrid.cacheDirty = true;
                             if (sG.hp <= 0) {
                                 this.spawnSparks(wx, wy, 2);
                                 sG.becomeDebris(iterator.vx * 0.2, iterator.vy * 0.2, gridHolder, gridScale);
@@ -253,6 +306,7 @@ export const DestructorSystem = {
                         
                         if (dmgToIter > 1) {
                             sI.hp -= dmgToIter;
+                            iterator.hexGrid.cacheDirty = true;
                             if (sI.hp <= 0) {
                                 this.spawnSparks(wx, wy, 2);
                                 sI.becomeDebris(gridHolder.vx * 0.2, gridHolder.vy * 0.2, iterator, iterScale);
@@ -487,6 +541,7 @@ function updateBodyWithShards(entity, shardsToKeep) {
     // Nowy promień fizyczny
     const r = DESTRUCTOR_CONFIG.gridDivisions;
     entity.hexGrid.rawRadius = Math.sqrt(maxR2) + r;
+    entity.hexGrid.cacheDirty = true;
     
     // Nadpisz radius fizyczny gry, żeby kolizje działały poprawnie
     entity.radius = entity.hexGrid.rawRadius * scale;
@@ -650,6 +705,12 @@ class HexShard {
     }
     ctx.closePath();
 
+    if (this.isDebris) {
+        ctx.fillStyle = this.color || '#555';
+        ctx.fill();
+        return;
+    }
+
     if (this.color) {
         ctx.fillStyle = this.color;
         ctx.fill();
@@ -804,6 +865,10 @@ export function initHexBody(entity, image) {
       finalOffsetY = -centerY + shiftY;
       contentWidth = maxContentX - minContentX;
   }
+
+  const cacheCanvas = document.createElement('canvas');
+  cacheCanvas.width = w;
+  cacheCanvas.height = h;
   
   entity.hexGrid = {
       shards,
@@ -813,7 +878,10 @@ export function initHexBody(entity, image) {
       srcWidth: w,
       srcHeight: h,
       contentWidth: contentWidth, 
-      rawRadius: Math.sqrt(rawRadiusSq) + r 
+      rawRadius: Math.sqrt(rawRadiusSq) + r,
+      cacheCanvas: cacheCanvas,
+      cacheCtx: cacheCanvas.getContext('2d', { willReadFrequently: true }),
+      cacheDirty: true
   };
   
   // Ustawienie promienia kolizji
@@ -828,35 +896,38 @@ export function drawHexBody(ctx, entity, camera, worldToScreenFunc) {
     const posY = entity.pos ? entity.pos.y : entity.y;
     const s = worldToScreenFunc(posX, posY, camera);
     
+    const finalScale = getFinalScale(entity);
     const size = entity.radius * camera.zoom;
     // Frustum culling
     if (s.x + size < 0 || s.x - size > ctx.canvas.width ||
         s.y + size < 0 || s.y - size > ctx.canvas.height) return;
 
-    const finalScale = getFinalScale(entity);
+    if (entity.hexGrid.cacheDirty) {
+        updateHexCache(entity);
+    }
 
     ctx.save();
     ctx.translate(s.x, s.y);
     ctx.rotate(entity.angle);
     ctx.scale(camera.zoom * finalScale, camera.zoom * finalScale);
-    
-    for (const shard of entity.hexGrid.shards) {
-        if (shard.active && !shard.isDebris) {
-            shard.drawLocal(ctx);
-        }
-    }
+
+    const cw = entity.hexGrid.srcWidth;
+    const ch = entity.hexGrid.srcHeight;
+    ctx.drawImage(entity.hexGrid.cacheCanvas, -cw / 2, -ch / 2);
     ctx.restore();
 }
 
 export function drawHexBodyLocal(ctx, entity) {
     if (!entity.hexGrid) return;
     const finalScale = getFinalScale(entity);
+    if (entity.hexGrid.cacheDirty) {
+        updateHexCache(entity);
+    }
+
+    const cw = entity.hexGrid.srcWidth;
+    const ch = entity.hexGrid.srcHeight;
     ctx.save();
     ctx.scale(finalScale, finalScale);
-    for (const shard of entity.hexGrid.shards) {
-        if (shard.active && !shard.isDebris) {
-            shard.drawLocal(ctx);
-        }
-    }
+    ctx.drawImage(entity.hexGrid.cacheCanvas, -cw / 2, -ch / 2);
     ctx.restore();
 }
