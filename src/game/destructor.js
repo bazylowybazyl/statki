@@ -134,140 +134,136 @@ export const DestructorSystem = {
 
     for (let i = 0; i < activeBodies.length; i++) {
       const A = activeBodies[i];
+      if (A.fighter) continue; // Myśliwce nie mają heksów, pomijamy w tej fazie
+
       const scaleA = getFinalScale(A);
-      
-      const realRadA = A.hexGrid.rawRadius ? (A.hexGrid.rawRadius * scaleA) : (A.radius || 100);
-      const broadPhaseRadA = Math.max(A.radius || 0, realRadA);
+      const posA = A.pos || {x: A.x, y: A.y};
+      const radA = (A.hexGrid.rawRadius || A.radius) * scaleA;
 
       for (let j = i + 1; j < activeBodies.length; j++) {
         const B = activeBodies[j];
-        const scaleB = getFinalScale(B);
+        if (B.fighter) continue;
 
-        const realRadB = B.hexGrid.rawRadius ? (B.hexGrid.rawRadius * scaleB) : (B.radius || 100);
-        const broadPhaseRadB = Math.max(B.radius || 0, realRadB);
-
-        const posA = A.pos || {x: A.x, y: A.y};
         const posB = B.pos || {x: B.x, y: B.y};
-        
+        const scaleB = getFinalScale(B);
+        const radB = (B.hexGrid.rawRadius || B.radius) * scaleB;
+
+        // Szybki test odległości
         const distSq = (posA.x - posB.x)**2 + (posA.y - posB.y)**2;
-        const radSum = broadPhaseRadA + broadPhaseRadB;
-        
-        if (distSq > radSum * radSum) continue; // Broadphase check
+        const minDist = radA + radB;
+        if (distSq > minDist * minDist) continue;
 
-        // Optymalizacja: iterujemy po mniejszym obiekcie, sprawdzamy kolizje w większym
-        let iterator = A, gridHolder = B;
-        let iterScale = scaleA, gridScale = scaleB;
-        
-        if (A.hexGrid.shards.length > B.hexGrid.shards.length) { 
-            iterator = B; gridHolder = A; 
-            iterScale = scaleB; gridScale = scaleA;
+        // --- FIZYKA ZDERZEŃ ---
+        const relVx = (A.vx || 0) - (B.vx || 0);
+        const relVy = (A.vy || 0) - (B.vy || 0);
+        const impactSpeed = Math.hypot(relVx, relVy);
+
+        // Zapobieganie "szlifowaniu" przy minimalnym kontakcie (np. przy dokowaniu/starcie)
+        if (impactSpeed < 15) {
+            this.applyRepulsion(A, B, posA, posB, 0.5); 
+            continue; 
         }
-        
-        const massIter = iterator.rammingMass || iterator.mass || 100;
-        const massHolder = gridHolder.rammingMass || gridHolder.mass || 100;
 
-        const iPos = iterator.pos || {x: iterator.x, y: iterator.y};
-        const gPos = gridHolder.pos || {x: gridHolder.x, y: gridHolder.y};
-        
-        const gCos = Math.cos(-gridHolder.angle); 
-        const gSin = Math.sin(-gridHolder.angle);
-        const iCos = Math.cos(iterator.angle); 
-        const iSin = Math.sin(iterator.angle);
-        
-        const relVx = (iterator.vx || 0) - (gridHolder.vx || 0);
-        const relVy = (iterator.vy || 0) - (gridHolder.vy || 0);
-        const impactSpeed = Math.hypot(relVx, relVy) * 0.5; 
+        // --- FRIENDLY FIRE ON ---
+        // Brak redukcji obrażeń dla sojuszników.
+        // Jeśli uderzą mocno, zniszczą się nawzajem.
+        const damageMultiplier = 1.0; 
 
-        // Sprawdzanie kolizji heks-heks
-        for (const sI of iterator.hexGrid.shards) {
+        // Uruchomienie logiki niszczenia heksów
+        this._processHexCollisionPair(A, B, scaleA, scaleB, impactSpeed, damageMultiplier, r, h, checkDistSq);
+      }
+    }
+  },
+
+  applyRepulsion(A, B, posA, posB, forceMul) {
+      const dx = posA.x - posB.x;
+      const dy = posA.y - posB.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      const nx = dx / dist;
+      const ny = dy / dist;
+      
+      const push = 200 * forceMul;
+      
+      const massA = A.mass || 100;
+      const massB = B.mass || 100;
+      
+      if (!A.static) { A.vx += nx * (push / massA); A.vy += ny * (push / massA); }
+      if (!B.static) { B.vx -= nx * (push / massB); B.vy -= ny * (push / massB); }
+  },
+
+  _processHexCollisionPair(A, B, scaleA, scaleB, impactSpeed, dmgMult, r, h, checkDistSq) {
+      let iterator = A, gridHolder = B;
+      let iterScale = scaleA, gridScale = scaleB;
+      if (A.hexGrid.shards.length > B.hexGrid.shards.length) { 
+          iterator = B; gridHolder = A; 
+          iterScale = scaleB; gridScale = scaleA;
+      }
+      
+      const iPos = iterator.pos || {x: iterator.x, y: iterator.y};
+      const gPos = gridHolder.pos || {x: gridHolder.x, y: gridHolder.y};
+      const gCos = Math.cos(-gridHolder.angle), gSin = Math.sin(-gridHolder.angle);
+      const iCos = Math.cos(iterator.angle), iSin = Math.sin(iterator.angle);
+
+      const massIter = iterator.rammingMass || iterator.mass || 100;
+      const massHolder = gridHolder.rammingMass || gridHolder.mass || 100;
+
+      // Jednorazowe odepchnięcie (dla wydajności)
+      this.applyRepulsion(iterator, gridHolder, iPos, gPos, 2.0);
+
+      // Iteracja po heksach (niszczenie)
+      for (const sI of iterator.hexGrid.shards) {
           if (!sI.active || sI.isDebris) continue;
-
-          // Transformacja punktu z A do lokalnego układu B
+          
           const wx = iPos.x + (sI.lx * iterScale) * iCos - (sI.ly * iterScale) * iSin;
           const wy = iPos.y + (sI.lx * iterScale) * iSin + (sI.ly * iterScale) * iCos;
-
+          
           const rdx = wx - gPos.x;
           const rdy = wy - gPos.y;
-          const glxRaw = rdx * gCos - rdy * gSin;
-          const glyRaw = rdx * gSin + rdy * gCos;
+          const glx = (rdx * gCos - rdy * gSin) / gridScale;
+          const gly = (rdx * gSin + rdy * gCos) / gridScale;
           
-          const glx = glxRaw / gridScale;
-          const gly = glyRaw / gridScale;
-
           const approxC = Math.round((glx - gridHolder.hexGrid.offsetX) / (1.5 * r));
           const approxR = Math.round((gly - gridHolder.hexGrid.offsetY) / h);
 
-          // Szukanie sąsiadów w mapie
           for (let dc = -1; dc <= 1; dc++) {
             for (let dr = -1; dr <= 1; dr++) {
-              const key = (approxC + dc) + "," + (approxR + dr);
-              const sG = gridHolder.hexGrid.map[key];
+                const key = (approxC + dc) + "," + (approxR + dr);
+                const sG = gridHolder.hexGrid.map[key];
+                if (sG && sG.active && !sG.isDebris) {
+                    const dx = sG.lx - glx;
+                    const dy = sG.ly - gly;
+                    if (dx*dx + dy*dy < checkDistSq) {
+                        // Oblicz obrażenia
+                        const baseDamage = 35;
+                        const speedFactor = Math.max(1, impactSpeed * 0.15);
+                        
+                        // Obrażenia zależne od masy taranującego
+                        const dmgToHolder = (baseDamage + (massIter / 1000) * speedFactor) * dmgMult;
+                        const dmgToIter   = (baseDamage + (massHolder / 1000) * speedFactor) * dmgMult;
 
-              if (sG && sG.active && !sG.isDebris) {
-                const dx = sG.lx - glx;
-                const dy = sG.ly - gly;
-
-                if (dx*dx + dy*dy < checkDistSq) {
-                  // Kolizja wykryta!
-                  const baseDamage = 35; 
-                  const crushFactor = 0.08; 
-                  const speedFactor = Math.max(1, impactSpeed * 0.15);
-                  
-                  const damageToHolder = baseDamage + (massIter / 1000) * crushFactor * speedFactor;
-                  const damageToIter = baseDamage + (massHolder / 1000) * crushFactor * speedFactor;
-
-                  sG.hp -= damageToHolder;
-                  sI.hp -= damageToIter;
-
-                  sG.deform(-dx, -dy);
-
-                  // Fizyka odpychania (prosta)
-                  const collisionForce = 80000; 
-                  const dtPhysics = 0.016; 
-                  
-                  const centerDx = iPos.x - gPos.x;
-                  const centerDy = iPos.y - gPos.y;
-                  const centerDist = Math.hypot(centerDx, centerDy) || 1;
-                  const pushDirX = centerDx / centerDist;
-                  const pushDirY = centerDy / centerDist;
-
-                  const accelIter = collisionForce / massIter;
-                  const accelHolder = collisionForce / massHolder;
-
-                  if (iterator.vel) { 
-                      iterator.vel.x += pushDirX * accelIter * dtPhysics; 
-                      iterator.vel.y += pushDirY * accelIter * dtPhysics; 
-                  } else { 
-                      iterator.vx += pushDirX * accelIter * dtPhysics; 
-                      iterator.vy += pushDirY * accelIter * dtPhysics; 
-                  }
-                  
-                  if (gridHolder.vel) { 
-                      gridHolder.vel.x -= pushDirX * accelHolder * dtPhysics; 
-                      gridHolder.vel.y -= pushDirY * accelHolder * dtPhysics; 
-                  } else { 
-                      gridHolder.vx -= pushDirX * accelHolder * dtPhysics; 
-                      gridHolder.vy -= pushDirY * accelHolder * dtPhysics; 
-                  }
-
-                  // Zniszczenie heksów przy kolizji
-                  if (sG.hp <= 0) {
-                    this.spawnSparks(wx, wy, 2);
-                    sG.becomeDebris(iterator.vx * 0.2, iterator.vy * 0.2, gridHolder, gridScale);
-                    this.splitQueue.add(gridHolder);
-                  }
-                  if (sI.hp <= 0) {
-                    this.spawnSparks(wx, wy, 2);
-                    sI.becomeDebris(gridHolder.vx * 0.2, gridHolder.vy * 0.2, iterator, iterScale);
-                    this.splitQueue.add(iterator);
-                  }
+                        if (dmgToHolder > 1) {
+                            sG.hp -= dmgToHolder;
+                            sG.deform(-dx, -dy);
+                            if (sG.hp <= 0) {
+                                this.spawnSparks(wx, wy, 2);
+                                sG.becomeDebris(iterator.vx * 0.2, iterator.vy * 0.2, gridHolder, gridScale);
+                                this.splitQueue.add(gridHolder);
+                            }
+                        }
+                        
+                        if (dmgToIter > 1) {
+                            sI.hp -= dmgToIter;
+                            if (sI.hp <= 0) {
+                                this.spawnSparks(wx, wy, 2);
+                                sI.becomeDebris(gridHolder.vx * 0.2, gridHolder.vy * 0.2, iterator, iterScale);
+                                this.splitQueue.add(iterator);
+                            }
+                        }
+                    }
                 }
-              }
             }
           }
-        }
       }
-    }
   },
 
   processSplits() {
