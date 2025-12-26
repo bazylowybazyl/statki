@@ -4181,11 +4181,11 @@ const SUPPORT_SHIP_TEMPLATES = {
       accel: 140,
       maxSpeed: 200, // AI SPACE: 140
       turn: 0.9,
-      radius: 70, // Skalowany do poprzedniego battleshipa
+      radius: 35, // Połowa rozmiaru
       mass: 8.0,
       rammingMass: 5000, // Destroyer (Średni)
       friction: 0.986, // Duża inercja
-      separationRange: 240
+      separationRange: 120
     },
     configure(npc){
       npc.isCapitalShip = true;
@@ -4216,7 +4216,7 @@ const SUPPORT_SHIP_TEMPLATES = {
       npc.mGun = 'h_rapid'; // AI SPACE używa h_rapid na dziobie
       npc.preferredRange = 780;
       // Broadside config z AI SPACE
-      npc.broadsideRange = 650;
+      npc.broadsideRange = 1200;
       npc.ai = (dt) => window.aiBattleship(null, npc, dt);
       npc.keepAngle = true;
     }
@@ -5170,14 +5170,14 @@ const AISPACE_MISSILES = {
 const AISPACE_GUNS_M = {
   m_beam:       { name:'M Beam',       dmg:24,  rps:1.8, speed:900,  range:820,  spread:0.4, color:'#8fd8ff', isBeam:true },
   m_pulse:      { name:'M Pulse',      dmg:40,  rps:1.1, speed:700,  range:760,  spread:0.8, color:'#ffd98a' },
-  m_rail:       { name:'M Rail',       dmg:85,  rps:0.55,speed:1200, range:880,  spread:0.35,color:'#d0c9ff' },
+  m_rail:       { name:'M Rail',       dmg:85,  rps:0.55,speed:1200, range:1500, spread:0.35,color:'#d0c9ff' },
   m_autocannon: { name:'M Auto',       dmg:22,  rps:3.2, speed:780,  range:680,  spread:1.2, color:'#b6ff9a' },
   h_beam:       { name:'Heavy Beam',   dmg:260, rps:0.22,speed:1500, range:1100, spread:0.1, color:'#ff0000', isBeam:true },
-  h_rapid:      { name:'Rapid Laser L',dmg:45,  rps:5.0, speed:900,  range:750,  spread:1.0, color:'#00ff00' }
+  h_rapid:      { name:'Rapid Laser L',dmg:45,  rps:5.0, speed:900,  range:1300, spread:1.0, color:'#00ff00' }
 };
 
 const AISPACE_BS_BROADSIDE = {
-  dmg:80, rps:0.6, speed:620, range:650, spread:2.5, color:'#ff9b4b'
+  dmg:80, rps:0.6, speed:620, range:1200, spread:2.5, color:'#ff9b4b'
 };
 
 // Hardpoint-friendly rejestr broni z AISPACE
@@ -5903,7 +5903,7 @@ window.aiBattleship = function(sim, npc, dt) {
     const dist = Math.hypot(dx, dy);
     const toAng = Math.atan2(dy, dx);
 
-    const noseRange = 800;
+    const noseRange = mDef.range || 800;
     const idealDist = noseRange * 0.75;
 
     if (dist < idealDist * 0.9)       thrust = -npc.accel * 0.5;
@@ -5926,7 +5926,7 @@ window.aiBattleship = function(sim, npc, dt) {
     const diffRight = Math.abs(wrapAngle(rightAng  - npc.angle));
     const diffLeft  = Math.abs(wrapAngle(leftAng   - npc.angle));
 
-    const broadsideRange = 650;
+    const broadsideRange = broadsideDef.range || 650;
     let sideBetter = false;
     const minSideDiff = Math.min(diffRight, diffLeft);
 
