@@ -738,6 +738,57 @@ const supportSpawnButtons = document.querySelectorAll('[data-support-spawn]');
 const carrierSpawnBtn = document.querySelector('[data-support-spawn="carrier_capital"]');
 const shieldControlsRoot = document.getElementById('shield-controls');
 const energyShotBtn = document.getElementById('btn-energy-shot');
+const supportDragState = {
+  active: false,
+  key: null,
+  sourceBtn: null
+};
+const SUPPORT_DRAG_TYPES = new Set([
+  'carrier_capital',
+  'frigate_pd',
+  'frigate_laser',
+  'destroyer',
+  'battleship'
+]);
+const SUPPORT_CLICK_TYPES = new Set([
+  'fighter',
+  'carrier_fighter'
+]);
+
+function isSupportDragKey(key){
+  return SUPPORT_DRAG_TYPES.has(key);
+}
+
+function beginSupportDrag(key, btn){
+  supportDragState.active = true;
+  supportDragState.key = key;
+  supportDragState.sourceBtn = btn || null;
+}
+
+function endSupportDrag(event){
+  if (!supportDragState.active) return false;
+  const key = supportDragState.key;
+  supportDragState.active = false;
+  supportDragState.key = null;
+  supportDragState.sourceBtn = null;
+
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX;
+  const y = event.clientY;
+  const overCanvas = x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  if (overCanvas){
+    const world = screenToWorld(x - rect.left, y - rect.top);
+    if (key === 'carrier_capital'){
+      spawnFriendlyCarrier({ pos: world });
+    } else {
+      spawnSupportShip(key, { spawnPos: world });
+    }
+    setSupportOrder('guard', { force: true });
+  }
+  mouse.left = false;
+  mouse.click = false;
+  return true;
+}
 
 function setupSidePanel(panelEl){
   if (!panelEl) return null;
@@ -4166,6 +4217,10 @@ function spawnSupportShip(templateKey, opts = {}){
   const anchorPos = anchor.pos || { x: anchor.x ?? ship.pos.x, y: anchor.y ?? ship.pos.y };
   const anchorVel = anchor.vel || { x: anchor.vx ?? 0, y: anchor.vy ?? 0 };
   const anchorAngle = anchor.angle ?? ship.angle;
+  const useSpawnPos = opts.spawnPos && Number.isFinite(opts.spawnPos.x) && Number.isFinite(opts.spawnPos.y);
+  const basePos = useSpawnPos ? opts.spawnPos : anchorPos;
+  const baseAngle = opts.spawnAngle ?? anchorAngle;
+  const baseOffset = (opts.spawnOffset ?? template.spawnOffset ?? (useSpawnPos ? { x: 0, y: 0 } : { x: -60, y: 0 }));
 
   const created = [];
   const count = Math.max(1, template.count || 1);
@@ -4173,11 +4228,11 @@ function spawnSupportShip(templateKey, opts = {}){
   for (let i = 0; i < count; i++){
     const jitter = (Math.random() * 12 - 6);
     const offset = {
-      x: (template.spawnOffset?.x || -60) + jitter,
-      y: (template.spawnOffset?.y || 0) + ((i % spawnFormation.perRow) - (spawnFormation.perRow - 1) * 0.5) * 8
+      x: (baseOffset.x || 0) + jitter,
+      y: (baseOffset.y || 0) + ((i % spawnFormation.perRow) - (spawnFormation.perRow - 1) * 0.5) * 8
     };
-    const rotated = rotate(offset, anchorAngle);
-    const spawnPos = { x: anchorPos.x + rotated.x, y: anchorPos.y + rotated.y };
+    const rotated = rotate(offset, baseAngle);
+    const spawnPos = { x: basePos.x + rotated.x, y: basePos.y + rotated.y };
     const npc = makeNPCBase(spawnPos, { ...template.stats, shield: template.shield });
     npc.friendly = true;
     npc.mission = true;
@@ -4727,16 +4782,18 @@ function updateCapitalCarrier(entry, dt){
   }
 }
 
-function spawnFriendlyCarrier(){
+function spawnFriendlyCarrier(opts = {}){
   const existing = getFriendlyCarrierEntity();
   if (existing) return existing;
 
   const au = getAuToWorldUnits();
   const angle = Number.isFinite(ship?.angle) ? ship.angle : Math.random() * Math.PI * 2;
-  const spawnPos = {
-    x: ship.pos.x + Math.cos(angle) * au,
-    y: ship.pos.y + Math.sin(angle) * au
-  };
+  const spawnPos = (opts.pos && Number.isFinite(opts.pos.x) && Number.isFinite(opts.pos.y))
+    ? opts.pos
+    : {
+      x: ship.pos.x + Math.cos(angle) * au,
+      y: ship.pos.y + Math.sin(angle) * au
+    };
 
   const carrier = createCapitalShipEntry('carrier', {
     pos: spawnPos,
@@ -15643,22 +15700,35 @@ if (supportEngageBtn) {
 }
 if (supportSpawnButtons && supportSpawnButtons.forEach) {
   supportSpawnButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const key = btn.dataset.supportSpawn;
-      if (key === 'carrier_capital'){
-        const carrier = spawnFriendlyCarrier();
-        if (!carrier) return;
-      } else if (key === 'carrier_fighter'){
-        const carrier = getFriendlyCarrierEntity();
-        if (!carrier) return;
-        spawnSupportShip('fighter', { anchor: carrier });
-      } else {
-        spawnSupportShip(key);
-      }
-      setSupportOrder('guard', { force: true });
-    });
+    const key = btn.dataset.supportSpawn;
+    if (SUPPORT_CLICK_TYPES.has(key)) {
+      btn.addEventListener('click', () => {
+        if (key === 'carrier_fighter'){
+          const carrier = getFriendlyCarrierEntity();
+          if (!carrier) return;
+          spawnSupportShip('fighter', { anchor: carrier });
+        } else {
+          spawnSupportShip(key);
+        }
+        setSupportOrder('guard', { force: true });
+      });
+    } else if (isSupportDragKey(key)) {
+      btn.addEventListener('mousedown', (event) => {
+        if (event.button !== 0) return;
+        beginSupportDrag(key, btn);
+      });
+      btn.addEventListener('click', (event) => {
+        event.preventDefault();
+      });
+    }
   });
 }
+window.addEventListener('mouseup', (event) => {
+  if (endSupportDrag(event)) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}, true);
 if (energyShotBtn) {
   energyShotBtn.addEventListener('click', () => triggerEnergyShot());
 }
