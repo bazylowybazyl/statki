@@ -890,7 +890,7 @@ export function initHexBody(entity, image) {
 }
 
 export function drawHexBody(ctx, entity, camera, worldToScreenFunc) {
-    if (!entity.hexGrid) return;
+    if (!entity.hexGrid || !entity.hexGrid.cacheCanvas) return;
     
     const posX = entity.pos ? entity.pos.x : entity.x;
     const posY = entity.pos ? entity.pos.y : entity.y;
@@ -918,7 +918,7 @@ export function drawHexBody(ctx, entity, camera, worldToScreenFunc) {
 }
 
 export function drawHexBodyLocal(ctx, entity) {
-    if (!entity.hexGrid) return;
+    if (!entity.hexGrid || !entity.hexGrid.cacheCanvas) return;
     const finalScale = getFinalScale(entity);
     if (entity.hexGrid.cacheDirty) {
         updateHexCache(entity);
