@@ -11099,17 +11099,17 @@ let railTimer = 0;
 rebuildHardpointsForFrame();
 loadLoadout();
 
-function computeTurretMuzzle(turret, barIndex, barrelsPerShot){
+function computeMainMuzzle(offset, angle, barIndex, barrelsPerShot){
   const spriteScale = ship.visual?.spriteScale || 1;
   const forwardLen = Math.min((ship.h * spriteScale) * 0.40, 52 * spriteScale);
   const gap = 10 * spriteScale;
   const normalizedIndex = Math.min(barIndex, barrelsPerShot - 1);
   const offsetFrac = barrelsPerShot === 1 ? 0 : (normalizedIndex / (barrelsPerShot - 1) - 0.5) * 2;
   const lateralOffset = (gap * 0.5) * offsetFrac;
-  const a = turret.angle;
+  const a = angle;
   const f = {x:Math.cos(a), y:Math.sin(a)};
   const p = {x:-Math.sin(a), y:Math.cos(a)};
-  const off = rotate(turret.offset, ship.angle);
+  const off = rotate(offset, ship.angle);
   const pos = {
     x: ship.pos.x + off.x + f.x * forwardLen + p.x * lateralOffset,
     y: ship.pos.y + off.y + f.y * forwardLen + p.y * lateralOffset
@@ -11119,6 +11119,27 @@ function computeTurretMuzzle(turret, barIndex, barrelsPerShot){
     dir: f,
     baseVel: { x: ship.vel.x, y: ship.vel.y }
   };
+}
+
+function computeTurretMuzzle(turret, barIndex, barrelsPerShot){
+  return computeMainMuzzle(turret.offset, turret.angle, barIndex, barrelsPerShot);
+}
+
+function getNearestTurretIndex(offset, turrets){
+  if(!offset || !turrets.length) return -1;
+  let bestIndex = 0;
+  let bestDist = Infinity;
+  for(let i=0;i<turrets.length;i++){
+    const t = turrets[i];
+    const dx = offset.x - t.offset.x;
+    const dy = offset.y - t.offset.y;
+    const dist = dx*dx + dy*dy;
+    if(dist < bestDist){
+      bestDist = dist;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
 }
 
 function triggerRailVolley(){
@@ -11138,18 +11159,27 @@ function fireRailBarrel(barIndex){
   const mainWeapons = Game.player.weapons?.[HP.MAIN] || [];
   if(!mainWeapons.length) return;
   const turrets = [ship.turret, ship.turret2, ship.turret3, ship.turret4];
-  const activeCount = Math.min(mainWeapons.length, turrets.length);
   let maxCooldown = 0;
-  for(let i=0;i<activeCount;i++){
-    const t = turrets[i];
+  for(let i=0;i<mainWeapons.length;i++){
     const weaponData = mainWeapons[i]?.weapon;
+    const hpOffset = mainWeapons[i]?.hp?.pos;
+    const turretIndex = hpOffset ? getNearestTurretIndex(hpOffset, turrets) : (i % turrets.length);
+    const t = turrets[turretIndex];
+    const aimAngle = t?.angle ?? ship.angle;
     const behavior = getMainWeaponBehaviorForWeaponId(weaponData?.id);
     const projectile = behavior.projectile || BASE_MAIN_BEHAVIOR.projectile;
     const barrelsPerShot = Math.max(1, behavior.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot);
-    const muzzle = computeTurretMuzzle(t, barIndex, barrelsPerShot);
+    const muzzleOffset = hpOffset || t?.offset;
+    const muzzle = computeMainMuzzle(muzzleOffset, aimAngle, barIndex, barrelsPerShot);
     let fireResult = null;
     if (behavior.customFire) {
-      fireResult = behavior.customFire({ turret: t, muzzle, weapon: weaponData, target: lockedTarget, behavior });
+      fireResult = behavior.customFire({
+        turret: { angle: aimAngle },
+        muzzle,
+        weapon: weaponData,
+        target: lockedTarget,
+        behavior
+      });
     } else {
       const damage = weaponData?.damage ?? weaponData?.dps ?? RAIL_DAMAGE;
       const vfxKey = projectile.vfxKey || weaponData?.id || projectile.type;
@@ -11180,7 +11210,9 @@ function fireRailBarrel(barIndex){
     }
     const recoilKick = fireResult?.recoilKick ?? behavior.recoilKick ?? t.recoilKick;
     const recoilMax = fireResult?.recoilMax ?? behavior.recoilMax ?? t.recoilMax;
-    t.recoil = Math.min(t.recoil + recoilKick, recoilMax);
+    if(t){
+      t.recoil = Math.min(t.recoil + recoilKick, recoilMax);
+    }
     const muzzleFx = behavior.muzzleFx || spawnRailMuzzle;
     if (muzzleFx && projectile.type !== 'beam') {
       muzzleFx(muzzle.pos, muzzle.dir, ship.vel, projectile.effectScale ?? 1.0);
@@ -14459,13 +14491,19 @@ function render(alpha, frameDt){
     { t: ship.turret3, ang: interpTurretAngle3 },
     { t: ship.turret4, ang: interpTurretAngle4 }
   ];
+  const turretRefs = turrets.map(({ t }) => t);
   const mainWeaponLoadouts = Game.player.weapons?.[HP.MAIN] || [];
-  turrets.forEach(({ t, ang }, index) => {
+  mainWeaponLoadouts.forEach((loadout, index) => {
+    const hpOffset = loadout?.hp?.pos;
+    const turretIndex = hpOffset ? getNearestTurretIndex(hpOffset, turretRefs) : (index % turrets.length);
+    const activeTurret = turrets[turretIndex] || turrets[0];
+    const t = activeTurret.t;
+    const ang = activeTurret.ang;
+    const mountOffset = hpOffset || t.offset;
     ctx.save();
-    ctx.translate(t.offset.x, t.offset.y);
+    ctx.translate(mountOffset.x, mountOffset.y);
     ctx.rotate(ang - interpAngle);
     const recoil = t.recoil * spriteScale;
-    const loadout = mainWeaponLoadouts[index];
     const behavior = getMainWeaponBehaviorForWeaponId(loadout?.weapon?.id);
     const barrelsPerShot = Math.max(1, behavior.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot);
 
