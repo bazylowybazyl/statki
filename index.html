@@ -4869,7 +4869,7 @@ window.spawnPirate = spawnPirate;
 window.createWreckage = function(parentEntity, shards) {
   if (!shards || shards.length === 0) return;
 
-  // 1. Oblicz środek masy nowej grupy heksów (Ważne dla obrotu!)
+  // 1. Oblicz środek masy nowej grupy
   let sumLx = 0, sumLy = 0;
   for (const s of shards) {
     sumLx += s.lx;
@@ -4878,7 +4878,6 @@ window.createWreckage = function(parentEntity, shards) {
   const avgLx = sumLx / shards.length;
   const avgLy = sumLy / shards.length;
 
-  // 1b. Oblicz średnie indeksy C i R dla grupy (dla hitboxów)
   let sumC = 0, sumR = 0;
   for (const s of shards) {
       sumC += s.c;
@@ -4887,72 +4886,73 @@ window.createWreckage = function(parentEntity, shards) {
   const avgC = Math.round(sumC / shards.length);
   const avgR = Math.round(sumR / shards.length);
 
-  // 2. Pozycja w świecie (bazując na pozycji rodzica i offsecie środka masy)
   const scale = parentEntity.visual?.spriteScale || 1.0;
   const c = Math.cos(parentEntity.angle);
   const s = Math.sin(parentEntity.angle);
 
-  // Pozycja środka nowego wraku w świecie
   const worldX = parentEntity.x + (avgLx * scale * c - avgLy * scale * s);
   const worldY = parentEntity.y + (avgLx * scale * s + avgLy * scale * c);
 
-  // 3. Utwórz obiekt wraku
+  // --- PRZYGOTOWANIE CACHE DLA WRAKU (FIX) ---
+  // Używamy wymiarów oryginału, aby zachować spójność koordynatów
+  const srcW = parentEntity.hexGrid.srcWidth;
+  const srcH = parentEntity.hexGrid.srcHeight;
+  const cacheCanvas = document.createElement('canvas');
+  cacheCanvas.width = srcW;
+  cacheCanvas.height = srcH;
+  // -------------------------------------------
+
   const wreck = {
     x: worldX,
     y: worldY,
-    // Dziedziczenie pędu + lekki odrzut
-   vx: (parentEntity.vx || parentEntity.vel?.x || 0), 
-   vy: (parentEntity.vy || parentEntity.vel?.y || 0),
+    vx: (parentEntity.vx || parentEntity.vel?.x || 0), 
+    vy: (parentEntity.vy || parentEntity.vel?.y || 0),
     angle: parentEntity.angle,
     angVel: parentEntity.angVel || 0, 
     mass: shards.length * 10, 
-    friction: 0.998, // Wraki dryfują
+    friction: 0.998,
     dead: false,
     isWreck: true,
-    // Kopiujemy visual, żeby destruktor wiedział jak skalować
     visual: { spriteScale: scale }, 
 
-    // Budujemy mini-hexGrid dla tego kawałka
     hexGrid: {
       shards: [],
       map: {},
       offsetX: 0,
       offsetY: 0,
-      srcWidth: parentEntity.hexGrid.srcWidth
+      srcWidth: srcW,
+      srcHeight: srcH,
+      // --- FIX: Dodajemy wymagane pola cache ---
+      cacheCanvas: cacheCanvas,
+      cacheCtx: cacheCanvas.getContext('2d', { willReadFrequently: true }),
+      cacheDirty: true // Wymuś narysowanie w pierwszej klatce
+      // ----------------------------------------
     }
   };
 
-  // 4. Przenosimy heksy do wraku
   let maxR2 = 0;
   
   for (const shard of shards) {
-    // Przesuwamy lokalne koordynaty heksa (wizualnie)
     shard.lx -= avgLx;
     shard.ly -= avgLy;
     shard.origLx -= avgLx;
     shard.origLy -= avgLy;
-
-    // Przesuwamy indeksy siatki (logicznie)
     shard.c -= avgC;
     shard.r -= avgR;
 
-    // Obliczamy promień
     const d2 = shard.lx*shard.lx + shard.ly*shard.ly;
     if(d2 > maxR2) maxR2 = d2;
 
-    // Przypisujemy do nowego grida
     wreck.hexGrid.shards.push(shard);
     wreck.hexGrid.map[shard.c + "," + shard.r] = shard;
   }
 
   wreck.radius = (Math.sqrt(maxR2) + 20) * scale;
   
-  // Dodaj do listy wraków (Globalnej tablicy w index.html)
   if (window.wrecks) {
       window.wrecks.push(wreck);
   }
 
-  // Dodaj efekt wizualny (dym/iskry w miejscu oderwania)
   if(window.spawnParticle) {
     for(let i=0; i<3; i++) {
       window.spawnParticle({x: worldX, y: worldY}, {x: wreck.vx, y: wreck.vy}, 1.0, '#aaaaaa', 5, false);
