@@ -1360,6 +1360,46 @@ function getLeadAim(shooter, target, projSpeed){
   t = Math.max(0, Math.min(2.0, t));
   return { x: targetX + vx*t, y: targetY + vy*t };
 }
+function isLineOfFireBlocked(shooter, target, weaponRange){
+  const start = { x: shooter.x, y: shooter.y };
+  const targetX = target.pos ? target.pos.x : target.x;
+  const targetY = target.pos ? target.pos.y : target.y;
+  const distToTarget = Math.hypot(targetX - shooter.x, targetY - shooter.y);
+  if (!Number.isFinite(distToTarget) || distToTarget <= 0) return false;
+  const checkDist = Math.min(distToTarget, weaponRange || 1000);
+
+  const dx = (targetX - shooter.x) / distToTarget;
+  const dy = (targetY - shooter.y) / distToTarget;
+
+  const potentialVictims = [window.ship, ...npcs];
+
+  for (const victim of potentialVictims) {
+    if (victim === shooter || victim.dead) continue;
+
+    const isAlly = (shooter.friendly === victim.friendly) || (shooter.friendly && victim === window.ship);
+    if (!isAlly) continue;
+
+    const victimRadius = victim.radius ?? victim.r ?? 0;
+    const distToVictim = Math.hypot(victim.x - start.x, victim.y - start.y);
+    if (distToVictim > checkDist + victimRadius) continue;
+
+    const dot = (victim.x - start.x) * dx + (victim.y - start.y) * dy;
+    if (dot < 0) continue;
+
+    const closestX = start.x + dx * dot;
+    const closestY = start.y + dy * dot;
+
+    const distSq = (victim.x - closestX) ** 2 + (victim.y - closestY) ** 2;
+
+    const safeRadius = (victimRadius || 20) + 15;
+
+    if (distSq < safeRadius * safeRadius) {
+      return true;
+    }
+  }
+
+  return false;
+}
 const smoothstep01 = t=>{ const x = clamp(t, 0, 1); return x*x*(3 - 2*x); };
 function rotate(local,a){ const c=Math.cos(a), s=Math.sin(a); return {x: local.x*c - local.y*s, y: local.x*s + local.y*c}; }
 function rotateInv(world,a){ return rotate(world, -a); }
@@ -5613,8 +5653,10 @@ window.aiFrigate = function(sim, npc, dt) {
       const dot = (Math.cos(npc.angle)*dx + Math.sin(npc.angle)*dy) / Math.sqrt(distSq);
 
       if (dot > 0.8) {
-         window.spawnBulletAdapter(npc, target, mainDef, { type: mainDef.isBeam ? 'beam' : undefined });
-         npc.gunCD = 1.0 / (mainDef.rps || 1.0);
+         if (!isLineOfFireBlocked(npc, target, mainDef.range)) {
+           window.spawnBulletAdapter(npc, target, mainDef, { type: mainDef.isBeam ? 'beam' : undefined });
+           npc.gunCD = 1.0 / (mainDef.rps || 1.0);
+         }
       }
     }
 
@@ -5717,8 +5759,10 @@ window.aiDestroyer = function(sim, npc, dt) {
 
     // Strzelanie
     if (npc.mCD <= 0 && dist < range && dot > 0.9) {
-       window.spawnBulletAdapter(npc, target, gunDef, {type:'rail'});
-       npc.mCD = 1.0 / (gunDef.rps || 0.5);
+      if (!isLineOfFireBlocked(npc, target, range)) {
+        window.spawnBulletAdapter(npc, target, gunDef, {type:'rail'});
+        npc.mCD = 1.0 / (gunDef.rps || 0.5);
+      }
     }
   }
 
@@ -5832,32 +5876,38 @@ window.aiBattleship = function(sim, npc, dt) {
 
     // Broadside prawa burta
     if (diffRight < sideArc && npc.broadRightCD <= 0 && dist < broadsideDef.range) {
-       for(let i=0; i<4; i++) {
-         const offsetDist = (i - 1.5) * 25;
-         const bx = npc.x + Math.cos(npc.angle)*offsetDist + Math.sin(npc.angle)*20;
-         const by = npc.y + Math.sin(npc.angle)*offsetDist - Math.cos(npc.angle)*20;
-         const fakeSource = { ...npc, x: bx, y: by };
-         window.spawnBulletAdapter(fakeSource, target, broadsideDef, {type:'plasma'});
-       }
-       npc.broadRightCD = 2.0;
+      if (!isLineOfFireBlocked(npc, target, broadsideDef.range)) {
+        for(let i=0; i<4; i++) {
+          const offsetDist = (i - 1.5) * 25;
+          const bx = npc.x + Math.cos(npc.angle)*offsetDist + Math.sin(npc.angle)*20;
+          const by = npc.y + Math.sin(npc.angle)*offsetDist - Math.cos(npc.angle)*20;
+          const fakeSource = { ...npc, x: bx, y: by };
+          window.spawnBulletAdapter(fakeSource, target, broadsideDef, {type:'plasma'});
+        }
+        npc.broadRightCD = 2.0;
+      }
     }
 
     // Broadside lewa burta
     if (diffLeft < sideArc && npc.broadLeftCD <= 0 && dist < broadsideDef.range) {
-       for(let i=0; i<4; i++) {
-         const offsetDist = (i - 1.5) * 25;
-         const bx = npc.x + Math.cos(npc.angle)*offsetDist - Math.sin(npc.angle)*20;
-         const by = npc.y + Math.sin(npc.angle)*offsetDist + Math.cos(npc.angle)*20;
-         const fakeSource = { ...npc, x: bx, y: by };
-         window.spawnBulletAdapter(fakeSource, target, broadsideDef, {type:'plasma'});
-       }
-       npc.broadLeftCD = 2.0;
+      if (!isLineOfFireBlocked(npc, target, broadsideDef.range)) {
+        for(let i=0; i<4; i++) {
+          const offsetDist = (i - 1.5) * 25;
+          const bx = npc.x + Math.cos(npc.angle)*offsetDist - Math.sin(npc.angle)*20;
+          const by = npc.y + Math.sin(npc.angle)*offsetDist + Math.cos(npc.angle)*20;
+          const fakeSource = { ...npc, x: bx, y: by };
+          window.spawnBulletAdapter(fakeSource, target, broadsideDef, {type:'plasma'});
+        }
+        npc.broadLeftCD = 2.0;
+      }
     }
 
     // Działo dziobowe
     if (diffNose < 0.3 && npc.mCD <= 0 && dist < mDef.range) {
-       window.spawnBulletAdapter(npc, target, mDef, {type:'rail'});
-       npc.mCD = 1.0 / mDef.rps;
+      if (!isLineOfFireBlocked(npc, target, mDef.range)) {
+        window.spawnBulletAdapter(npc, target, mDef, {type:'rail'});
+        npc.mCD = 1.0 / mDef.rps;
+      }
     }
   }
 
@@ -5902,6 +5952,10 @@ function tryFireFighter(npc, target, dt) {
   const dx = tx - npc.x;
   const dy = ty - npc.y;
   const dist = Math.hypot(dx, dy);
+
+  if (isLineOfFireBlocked(npc, target, gunDef.range)) {
+    return;
+  }
 
   // Czy statek patrzy na cel?
   const angleToTarget = Math.atan2(dy, dx);
