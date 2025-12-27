@@ -1,6 +1,6 @@
 /**
- * Moduł Destrukcji "Hex Grinder" - Wersja HEAVY METAL (Core Logic)
- * Zachowanie 1:1 jak w prototypie destruction.html
+ * Moduł Destrukcji "Hex Grinder" - Wersja INTEGRATED HP
+ * Teraz heksy są bezpośrednio połączone z paskiem życia statku.
  */
 
 export const DESTRUCTOR_CONFIG = {
@@ -13,11 +13,8 @@ export const DESTRUCTOR_CONFIG = {
   friction: 0.90
 };
 
-// Funkcja pomocnicza do pobierania skali - TERAZ ZWRACA STAŁĄ WARTOŚĆ
-// Naprawia problem "ogromnych wraków"
+// Funkcja pomocnicza do pobierania skali
 function getFinalScale(entity) {
-    // Jeśli entity ma zdefiniowaną skalę wizualną (np. spriteScale), użyj jej.
-    // W przeciwnym razie 1.0. Nie obliczamy tego na podstawie radiusa!
     if (entity.visual && typeof entity.visual.spriteScale === 'number') {
         return entity.visual.spriteScale;
     }
@@ -55,7 +52,7 @@ export const DestructorSystem = {
   splitQueue: new Set(),
 
   update(dt, entities) {
-    // 1. Aktualizacja odłamków (cząsteczek) - te, które wyleciały jako pył
+    // 1. Aktualizacja odłamków
     for (let i = this.debris.length - 1; i >= 0; i--) {
       const d = this.debris[i];
       d.updateDebris();
@@ -86,7 +83,6 @@ export const DestructorSystem = {
 
   applyImpact(entity, worldX, worldY, damage, bulletVel) {
     if (!entity.hexGrid) return false;
-    // Ignoruj myśliwce (za małe na siatkę)
     if (entity.fighter || (entity.type && ['fighter','interceptor','drone'].includes(entity.type))) {
         return false;
     }
@@ -95,7 +91,6 @@ export const DestructorSystem = {
     const h = r * Math.sqrt(3);
     const scale = getFinalScale(entity);
 
-    // Transformacja pozycji świata na lokalną siatkę heksów
     const pos = entity.pos || {x: entity.x, y: entity.y};
     const ang = entity.angle || 0;
     
@@ -110,7 +105,6 @@ export const DestructorSystem = {
 
     const searchRadius = scale < 0.5 ? 2 : 1;
     
-    // Szukanie heksa w przybliżonej lokalizacji
     const approxC = Math.round((lx - entity.hexGrid.offsetX) / (1.5 * r));
     const approxR = Math.round((ly - entity.hexGrid.offsetY) / h);
 
@@ -124,24 +118,25 @@ export const DestructorSystem = {
          if (shard && shard.active && !shard.isDebris) {
              const distSq = (shard.lx - lx)**2 + (shard.ly - ly)**2;
              
-             // Czy trafiliśmy w heks?
              if (distSq < (r * 2.5)**2) {
                  hitSomething = true;
                  
-                 const lvx = bulletVel.x * c - bulletVel.y * s;
-                 const lvy = bulletVel.x * s + bulletVel.y * c;
+                 // Oblicz obrażenia dla heksa
+                 const rawDmg = damage / shard.hardness;
                  
-                 // Deformacja i obrażenia
+                 // --- LOGIKA HP 1: Odejmij od HP statku ---
+                 if (entity.hexGrid.hpRatio) {
+                     // Odejmujemy proporcjonalnie do uszkodzenia heksa
+                     entity.hp -= rawDmg * entity.hexGrid.hpRatio;
+                 }
+                 
                  shard.deform(lx - shard.lx, ly - shard.ly); 
-                 shard.hp -= damage / shard.hardness;
+                 shard.hp -= rawDmg;
                  entity.hexGrid.cacheDirty = true;
 
-                 // Jeśli heks zniszczony -> zamień w debris
                  if (shard.hp <= 0) {
                      this.spawnSparks(worldX, worldY, 3);
-                     // Wyrzucamy heks z siatki (staje się pyłem)
                      shard.becomeDebris(bulletVel.x * 0.02, bulletVel.y * 0.02, entity, scale);
-                     // Dodajemy encję do kolejki sprawdzania spójności (czy nie pękła na pół)
                      this.splitQueue.add(entity);
                  }
              }
@@ -164,10 +159,7 @@ export const DestructorSystem = {
         let nextId = 1;
         const getId = (obj) => {
             let id = ids.get(obj);
-            if (!id) {
-                id = nextId++;
-                ids.set(obj, id);
-            }
+            if (!id) { id = nextId++; ids.set(obj, id); }
             return id;
         };
 
@@ -179,14 +171,11 @@ export const DestructorSystem = {
 
             for (const B of nearby) {
                 if (A === B || !B || !B.hexGrid || B.dead || B.fighter) continue;
-
                 const idA = getId(A);
                 const idB = getId(B);
                 const pairKey = idA < idB ? `${idA}:${idB}` : `${idB}:${idA}`;
-
                 if (checkedPairs.has(pairKey)) continue;
                 checkedPairs.add(pairKey);
-
                 this._checkPair(A, B, r, h, checkDistSq);
             }
         }
@@ -259,10 +248,8 @@ export const DestructorSystem = {
       const massIter = iterator.rammingMass || iterator.mass || 100;
       const massHolder = gridHolder.rammingMass || gridHolder.mass || 100;
 
-      // Jednorazowe odepchnięcie (dla wydajności)
       this.applyRepulsion(iterator, gridHolder, iPos, gPos, 2.0);
 
-      // Iteracja po heksach (niszczenie)
       for (const sI of iterator.hexGrid.shards) {
           if (!sI.active || sI.isDebris) continue;
           
@@ -285,16 +272,19 @@ export const DestructorSystem = {
                     const dx = sG.lx - glx;
                     const dy = sG.ly - gly;
                     if (dx*dx + dy*dy < checkDistSq) {
-                        // Oblicz obrażenia
                         const baseDamage = 35;
                         const speedFactor = Math.max(1, impactSpeed * 0.15);
                         
-                        // Obrażenia zależne od masy taranującego
                         const dmgToHolder = (baseDamage + (massIter / 1000) * speedFactor) * dmgMult;
                         const dmgToIter   = (baseDamage + (massHolder / 1000) * speedFactor) * dmgMult;
 
                         if (dmgToHolder > 1) {
                             sG.hp -= dmgToHolder;
+                            // --- LOGIKA HP 2: Kolizje odbierają HP statku ---
+                            if (gridHolder.hexGrid.hpRatio) {
+                                gridHolder.hp -= dmgToHolder * gridHolder.hexGrid.hpRatio;
+                            }
+                            
                             sG.deform(-dx, -dy);
                             gridHolder.hexGrid.cacheDirty = true;
                             if (sG.hp <= 0) {
@@ -306,6 +296,11 @@ export const DestructorSystem = {
                         
                         if (dmgToIter > 1) {
                             sI.hp -= dmgToIter;
+                            // --- LOGIKA HP 2 (cd) ---
+                            if (iterator.hexGrid.hpRatio) {
+                                iterator.hp -= dmgToIter * iterator.hexGrid.hpRatio;
+                            }
+
                             iterator.hexGrid.cacheDirty = true;
                             if (sI.hp <= 0) {
                                 this.spawnSparks(wx, wy, 2);
@@ -326,26 +321,17 @@ export const DestructorSystem = {
     for (const entity of this.splitQueue) {
         if (!entity.hexGrid || entity.dead) continue;
         
-        // 1. Znajdź wszystkie spójne grupy heksów (wyspy)
         const groups = findConnectedComponents(entity.hexGrid);
-
-        // Jeśli jest tylko jedna grupa, statek jest cały -> nic nie rób
         if (groups.length <= 1) continue;
 
-        // 2. Znajdź grupę "Przetrwania" (tę z Rdzeniem)
         let survivorGroup = null;
         const debrisGroups = [];
 
         for (const group of groups) {
-            // Sprawdź czy grupa zawiera heks oznaczony jako Core
             const hasCore = group.some(shard => shard.isCore);
-            
             if (hasCore) {
-                // Jeśli ma rdzeń -> to jest nasz statek (Gracz/NPC)
-                // Zakładamy, że jest tylko jeden rdzeń, ale jeśli by pękł na pół i oba miały rdzeń,
-                // bierzemy większy.
                 if (!survivorGroup || group.length > survivorGroup.length) {
-                    if (survivorGroup) debrisGroups.push(survivorGroup); // Poprzedni kandydat odpada
+                    if (survivorGroup) debrisGroups.push(survivorGroup);
                     survivorGroup = group;
                 } else {
                     debrisGroups.push(group);
@@ -355,20 +341,39 @@ export const DestructorSystem = {
             }
         }
 
-        // Jeśli żaden kawałek nie ma rdzenia (rdzeń zniszczony), statek ginie
         if (!survivorGroup) {
              entity.dead = true;
-             // Wszystkie grupy stają się wrakami
              debrisGroups.push(...groups);
+        } else {
+             // --- LOGIKA HP 3: Utrata masy (Split) ---
+             // Obliczamy ile "wartości HP" traci statek przez odcięcie tych fragmentów
+             let totalLostHpValue = 0;
+             const ratio = entity.hexGrid.hpRatio || 0;
+             
+             for (const group of debrisGroups) {
+                 for (const shard of group) {
+                     // Jeśli heks jeszcze ma HP (a zwykle ma, bo odpadł jako cały kawałek),
+                     // to statek traci to HP.
+                     if (shard.hp > 0) {
+                         totalLostHpValue += shard.hp * ratio;
+                         // Zerujemy HP sharda, żeby wrak nie był "żywy" logicznie (opcjonalne)
+                         // shard.hp = 0; // Zostawmy to, żeby wrak miał HP
+                     }
+                 }
+             }
+             
+             // Odejmij HP od statku
+             if (totalLostHpValue > 0) {
+                 entity.hp -= totalLostHpValue;
+                 // Jeśli utrata masy zabiła statek
+                 if (entity.hp <= 0) entity.dead = true;
+             }
+             
+             if (!entity.dead) {
+                 updateBodyWithShards(entity, survivorGroup);
+             }
         }
 
-        // 3. Obsługa "Przetrwania" (Mutacja oryginalnego bytu)
-        if (survivorGroup && !entity.dead) {
-            // To jest kluczowe dla "player control" -> mutujemy obiekt gracza, żeby nim pozostał
-            updateBodyWithShards(entity, survivorGroup);
-        }
-
-        // 4. Tworzenie wraków z odpadów
         for (const group of debrisGroups) {
             if (window.createWreckage) {
                 window.createWreckage(entity, group);
@@ -391,7 +396,6 @@ export const DestructorSystem = {
   },
 
   draw(ctx, camera, worldToScreenFunc) {
-    // Rysowanie pyłu i iskier w World Space
     const viewLeft = camera.x - (ctx.canvas.width/2)/camera.zoom - 200;
     const viewRight = camera.x + (ctx.canvas.width/2)/camera.zoom + 200;
     const viewTop = camera.y - (ctx.canvas.height/2)/camera.zoom - 200;
@@ -415,16 +419,12 @@ export const DestructorSystem = {
   }
 };
 
-// --- ALGORYTM BFS (Spójność grafu) ---
 function findConnectedComponents(hexGrid) {
     const shards = hexGrid.shards.filter(s => s.active && !s.isDebris);
     if (shards.length === 0) return [];
 
     const visited = new Set();
     const groups = [];
-
-    // Mapowanie klucz -> shard dla szybkiego dostępu
-    // (hexGrid.map może zawierać nieaktywne, więc polegamy na przefiltrowanej liscie)
     const activeMap = {};
     for (const s of shards) {
         activeMap[s.c + "," + s.r] = s;
@@ -441,8 +441,6 @@ function findConnectedComponents(hexGrid) {
         while (stack.length > 0) {
             const current = stack.pop();
             group.push(current);
-
-            // Sąsiedzi w siatce heksagonalnej (zależnie od parzystości kolumny)
             const odd = (current.c % 2 !== 0);
             const neighborOffsets = odd
                 ? [[0,-1],[0,1],[-1,0],[-1,1],[1,0],[1,1]]
@@ -452,7 +450,6 @@ function findConnectedComponents(hexGrid) {
                 const nc = current.c + offset[0];
                 const nr = current.r + offset[1];
                 const nKey = nc + "," + nr;
-
                 const neighbor = activeMap[nKey];
                 if (neighbor && !visited.has(nKey)) {
                     visited.add(nKey);
@@ -465,9 +462,7 @@ function findConnectedComponents(hexGrid) {
     return groups;
 }
 
-// --- AKTUALIZACJA GRIDU PO PODZIALE (KLUCZOWA FUNKCJA) ---
 function updateBodyWithShards(entity, shardsToKeep) {
-    // 1. Oblicz nowy środek masy (geometryczny)
     let sumLx = 0, sumLy = 0;
     for (const s of shardsToKeep) {
         sumLx += s.lx;
@@ -476,17 +471,13 @@ function updateBodyWithShards(entity, shardsToKeep) {
     const avgLx = sumLx / shardsToKeep.length;
     const avgLy = sumLy / shardsToKeep.length;
 
-    // 2. Przesuń encję w świecie, żeby skompensować zmianę środka masy
-    // (Dzięki temu statek wizualnie nie "przeskoczy", mimo że jego x/y się zmieni)
     const scale = getFinalScale(entity);
     const c = Math.cos(entity.angle);
     const s = Math.sin(entity.angle);
     
-    // Przesunięcie w World Space
     const shiftX = (avgLx * scale) * c - (avgLy * scale) * s;
     const shiftY = (avgLx * scale) * s + (avgLy * scale) * c;
 
-    // Aktualizujemy pozycję encji (jeśli ma 'pos' to pos, jeśli x,y to x,y)
     if (entity.pos) {
         entity.pos.x += shiftX;
         entity.pos.y += shiftY;
@@ -497,34 +488,28 @@ function updateBodyWithShards(entity, shardsToKeep) {
         entity.y += shiftY;
     }
 
-    // 3. Przebuduj lokalne koordynaty heksów (żeby (0,0) znów było środkiem)
     const newMap = {};
     const newShards = [];
     let minLx = Infinity, maxLx = -Infinity;
     let maxR2 = 0;
 
-    // Obliczamy też przesunięcie indeksów C/R, żeby hitbox się nie rozjechał
     let sumC = 0, sumR = 0;
     for (const s of shardsToKeep) { sumC += s.c; sumR += s.r; }
     const avgC = Math.round(sumC / shardsToKeep.length);
     const avgR = Math.round(sumR / shardsToKeep.length);
 
     for (const shard of shardsToKeep) {
-        // Przesuwamy lokalne coords
         shard.lx -= avgLx;
         shard.ly -= avgLy;
         shard.origLx -= avgLx;
         shard.origLy -= avgLy;
         
-        // Przesuwamy indeksy logiczne
         shard.c -= avgC;
         shard.r -= avgR;
 
-        // Budujemy nową mapę
         newShards.push(shard);
         newMap[shard.c + "," + shard.r] = shard;
 
-        // Obliczamy bounds
         if (shard.lx < minLx) minLx = shard.lx;
         if (shard.lx > maxLx) maxLx = shard.lx;
         
@@ -532,18 +517,15 @@ function updateBodyWithShards(entity, shardsToKeep) {
         if(d2 > maxR2) maxR2 = d2;
     }
 
-    // 4. Aktualizacja właściwości obiektu
     entity.hexGrid.shards = newShards;
     entity.hexGrid.map = newMap;
     entity.hexGrid.contentWidth = Math.max(1, maxLx - minLx);
     entity.hexGrid.offsetX = 0; 
     entity.hexGrid.offsetY = 0;
-    // Nowy promień fizyczny
     const r = DESTRUCTOR_CONFIG.gridDivisions;
     entity.hexGrid.rawRadius = Math.sqrt(maxR2) + r;
     entity.hexGrid.cacheDirty = true;
     
-    // Nadpisz radius fizyczny gry, żeby kolizje działały poprawnie
     entity.radius = entity.hexGrid.rawRadius * scale;
 }
 
@@ -646,23 +628,13 @@ class HexShard {
     vx += -angVel * ry;
     vy +=  angVel * rx;
 
-    // === TUTAJ SĄ GŁÓWNE ZMIANY ===
-    
-    // 1. Siła wyrzutu (Oryginał: rand(-0.5, 0.5) czyli zakres 1.0)
-    // W grze miałeś: (Math.random() - 0.5) * 50
     this.dvx = vx + impulseX + (Math.random() - 0.5) * 1.0; 
     this.dvy = vy + impulseY + (Math.random() - 0.5) * 1.0;
-    
-    // 2. Rotacja (Oryginał: rand(-0.1, 0.1))
-    // W grze miałeś: * 0.3
     this.drot = (Math.random() - 0.5) * 0.2; 
     
-    // ==============================
-
     this.angle = parentEntity.angle;
     this.alpha = 1.5; 
 
-    // Odczepienie od rodzica
     const key = this.c + "," + this.r;
     if (parentEntity.hexGrid && parentEntity.hexGrid.map[key] === this) {
         delete parentEntity.hexGrid.map[key];
@@ -722,7 +694,6 @@ class HexShard {
         ctx.clip();
         const texW = this.img.width;
         const texH = this.img.height;
-        // Rysujemy teksturę przesuniętą o -lx, -ly, żeby pasowała do fragmentu
         ctx.translate(-this.lx, -this.ly);
         ctx.drawImage(this.img, -texW/2, -texH/2);
         ctx.restore();
@@ -772,7 +743,6 @@ export function initHexBody(entity, image) {
           let cy = ro * hexHeight;
           if (c % 2 !== 0) cy += hexHeight / 2;
           
-          // Sampling (sprawdzamy czy w tym miejscu obrazka coś jest)
           let hit = false;
           const offsets = [{x:0,y:0}, {x:r*0.5,y:0}, {x:-r*0.5,y:0}, {x:0,y:r*0.5}, {x:0,y:-r*0.5}];
           for (const off of offsets) {
@@ -800,8 +770,6 @@ export function initHexBody(entity, image) {
       }
   }
 
-  // --- RDZENIE (CORE LOGIC) ---
-  // Znajdujemy środek bounding boxa i oznaczamy heksy w centrum jako "Core"
   let minC = Infinity, maxC = -Infinity, minR = Infinity, maxR = -Infinity;
   for (const s of shards) {
       if (s.c < minC) minC = s.c;
@@ -812,7 +780,6 @@ export function initHexBody(entity, image) {
   const centerC = Math.floor((minC + maxC) / 2);
   const centerR = Math.floor((minR + maxR) / 2);
 
-  // Rozmiar rdzenia zależny od typu statku
   let cw = 2, ch = 2; 
   if (entity.coreDimensions) {
       cw = entity.coreDimensions.w;
@@ -827,20 +794,27 @@ export function initHexBody(entity, image) {
   const halfW = Math.floor(cw / 2);
   const halfH = Math.floor(ch / 2);
   
+  // --- KALIBRACJA HP ---
+  let totalStructuralHp = 0;
+
   for (const s of shards) {
       const dc = Math.abs(s.c - centerC);
       const dr = Math.abs(s.r - centerR);
       if (dc <= halfW && dr <= halfH) {
           s.isCore = true;
-          s.hardness = 5.0; // Rdzeń twardszy
+          s.hardness = 5.0; 
           s.hp *= 5.0;
-          s.color = null; // Można dać kolor debugowy np. 'red'
+          s.color = null; 
       } else {
           s.isCore = false;
       }
+      totalStructuralHp += s.hp;
   }
 
-  // --- AUTO-CENTERING ---
+  // Obliczamy współczynnik: ile HP statku odpowiada 1 HP heksa
+  const entityMaxHp = entity.maxHp || 1000;
+  const hpRatio = totalStructuralHp > 0 ? (entityMaxHp / totalStructuralHp) : 1.0;
+
   let shiftX = 0;
   let shiftY = 0;
   let finalOffsetX = -centerX;
@@ -848,7 +822,6 @@ export function initHexBody(entity, image) {
   let contentWidth = w;
   
   if (shards.length > 0) {
-      // Wyśrodkowanie na podstawie bounding boxa
       shiftX = -(minContentX + maxContentX) / 2;
       
       for (const s of shards) {
@@ -881,10 +854,10 @@ export function initHexBody(entity, image) {
       rawRadius: Math.sqrt(rawRadiusSq) + r,
       cacheCanvas: cacheCanvas,
       cacheCtx: cacheCanvas.getContext('2d', { willReadFrequently: true }),
-      cacheDirty: true
+      cacheDirty: true,
+      hpRatio: hpRatio // ZAPAMIĘTUJEMY WSPÓŁCZYNNIK
   };
   
-  // Ustawienie promienia kolizji
   const scale = getFinalScale(entity);
   entity.radius = entity.hexGrid.rawRadius * scale;
 }
@@ -898,7 +871,6 @@ export function drawHexBody(ctx, entity, camera, worldToScreenFunc) {
     
     const finalScale = getFinalScale(entity);
     const size = entity.radius * camera.zoom;
-    // Frustum culling
     if (s.x + size < 0 || s.x - size > ctx.canvas.width ||
         s.y + size < 0 || s.y - size > ctx.canvas.height) return;
 
