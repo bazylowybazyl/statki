@@ -156,7 +156,7 @@ export const DestructorSystem = {
     const h = r * Math.sqrt(3);
     const checkDistSq = (r * 2.2) ** 2; 
 
-    const activeBodies = entities.filter(e => e && !e.dead && e.hexGrid);
+    const activeBodies = entities.filter(e => e && !e.dead && e.hexGrid && e.isCollidable !== false);
 
     if (window.SpatialGrid && activeBodies.length > 20) {
         const checkedPairs = new Set();
