@@ -4875,6 +4875,54 @@ function spawnPirate(kind, station) {
   npcs.push(npc);
   return npc;
 }
+
+function spawnPirateHeavyFleet(station) {
+  if (!station) return;
+  const dx = ship.pos.x - station.x;
+  const dy = ship.pos.y - station.y;
+  const dist = Math.hypot(dx, dy) || 1;
+
+  const fwd = { x: dx / dist, y: dy / dist };
+  const right = { x: -fwd.y, y: fwd.x };
+
+  const startDist = 3500;
+  const endDist = 800;
+
+  const fleetComposition = [
+    'destroyer', 'destroyer',
+    'battleship', 'battleship', 'battleship',
+    'destroyer', 'destroyer', 'destroyer'
+  ];
+
+  const spacing = 220;
+  const totalWidth = (fleetComposition.length - 1) * spacing;
+
+  fleetComposition.forEach((type, i) => {
+    const offset = (i * spacing) - (totalWidth / 2);
+    const startX = station.x - (fwd.x * startDist) + (right.x * offset);
+    const startY = station.y - (fwd.y * startDist) + (right.y * offset);
+    const targetX = station.x + (fwd.x * endDist) + (right.x * offset);
+    const targetY = station.y + (fwd.y * endDist) + (right.y * offset);
+
+    const npc = spawnPirate(type, station);
+    npc.x = startX;
+    npc.y = startY;
+    npc.angle = Math.atan2(fwd.y, fwd.x);
+    npc.state = 'warping_in';
+    npc.isCollidable = false;
+    npc.warpData = {
+      targetX,
+      targetY,
+      speed: 4000,
+      brakingDist: 300
+    };
+    npc.vx = 0;
+    npc.vy = 0;
+  });
+
+  pushZoneMessage("WARNING: HOSTILE CAPITAL SIGNATURES DETECTED", 4.0);
+  if (window.AudioSys) AudioSys.playSound('shieldHit');
+}
 // Przypisanie do window, żeby konsola widziała
 window.spawnPirate = spawnPirate;
 // Lista na martwe, dryfujące kawałki
@@ -10876,10 +10924,8 @@ function buildMercSwarmQueue(station){
     });
   };
 
-  addRow(new Array(10).fill('fighter_squad'), baseDist + rowSpacing * 3, 180);
-  addRow([...new Array(5).fill('frigate_pd'), ...new Array(2).fill('frigate_laser')], baseDist + rowSpacing * 2, 210);
-  addRow(new Array(5).fill('destroyer'), baseDist + rowSpacing, 240);
-  addRow(new Array(3).fill('battleship'), baseDist, 300);
+  addRow(new Array(8).fill('fighter_squad'), baseDist + rowSpacing * 3, 180);
+  addRow(['frigate_pd', 'frigate_laser', 'frigate_pd'], baseDist + rowSpacing * 2, 210);
   return queue;
 }
 
@@ -10913,9 +10959,15 @@ function enterPirateInnerOrbit(){
 
 function triggerMercAggro(reason){
   if(!mercMission) return;
+  const wasAggro = mercMission.aggro;
   mercMission.aggro = true;
   mercMission.aggroReason = mercMission.aggroReason || reason;
   mercMission.alertStage = 'engage';
+
+  if (!wasAggro) {
+    console.log("PIRATE FLEET WARPING IN!");
+    spawnPirateHeavyFleet(mercMission.station);
+  }
 
   // --- ZMIANA: Zamiast clearPirateGuardState(), robimy to ręcznie dla nowego AI ---
   for(const npc of npcs){
@@ -11974,6 +12026,40 @@ function npcStep(dt){
     // --- LOGIKA MISJI I WALKI ---
     if(npc.mission){
       if(npc.dead) continue;
+
+      if (npc.state === 'warping_in' && npc.warpData) {
+        const dx = npc.warpData.targetX - npc.x;
+        const dy = npc.warpData.targetY - npc.y;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist < npc.warpData.brakingDist) {
+          npc.state = 'engage_formation';
+          npc.isCollidable = true;
+          npc.vx *= 0.1;
+          npc.vy *= 0.1;
+          spawnShockwave(npc.x, npc.y, { maxR: 600, maxLife: 0.5, color: 'rgba(255, 100, 100,' });
+          if (npc.type === 'battleship') camera.addShake(8, 0.4);
+          else camera.addShake(3, 0.2);
+          npc.warpData = null;
+        } else {
+          const dirX = dx / dist;
+          const dirY = dy / dist;
+
+          npc.vx = dirX * npc.warpData.speed;
+          npc.vy = dirY * npc.warpData.speed;
+          npc.angle = Math.atan2(npc.vy, npc.vx);
+
+          spawnParticle(
+            { x: npc.x, y: npc.y },
+            { x: -dirX * 500, y: -dirY * 500 },
+            0.2, '#ffaaaa', 4, false
+          );
+
+          npc.x += npc.vx * dt;
+          npc.y += npc.vy * dt;
+          continue;
+        }
+      }
       
       // 1. Komendy RTS (priorytet)
       if (handleCommandedNpc(npc, dt)) {
