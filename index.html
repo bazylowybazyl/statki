@@ -4894,7 +4894,8 @@ function spawnPirateHeavyFleet(station) {
     'destroyer', 'destroyer', 'destroyer'
   ];
 
-  const spacing = 220;
+  // POPRAWKA 1: Zwiększony odstęp, żeby Battleshipy (szerokość ~280) się nie zderzały
+  const spacing = 450; 
   const totalWidth = (fleetComposition.length - 1) * spacing;
 
   fleetComposition.forEach((type, i) => {
@@ -4910,11 +4911,15 @@ function spawnPirateHeavyFleet(station) {
     npc.angle = Math.atan2(fwd.y, fwd.x);
     npc.state = 'warping_in';
     npc.isCollidable = false;
+    
+    // Lekka losowość hamowania, żeby nie wyglądały jak roboty
+    const randomBrake = 280 + Math.random() * 40;
+
     npc.warpData = {
       targetX,
       targetY,
       speed: 4000,
-      brakingDist: 300
+      brakingDist: randomBrake
     };
     npc.vx = 0;
     npc.vy = 0;
@@ -4923,8 +4928,9 @@ function spawnPirateHeavyFleet(station) {
   pushZoneMessage("WARNING: HOSTILE CAPITAL SIGNATURES DETECTED", 4.0);
   if (window.AudioSys) AudioSys.playSound('shieldHit');
 }
-// Przypisanie do window, żeby konsola widziała
-window.spawnPirate = spawnPirate;
+
+// POPRAWKA 2: Przypisanie do window (teraz będzie widoczne globalnie)
+window.spawnPirateHeavyFleet = spawnPirateHeavyFleet;
 // Lista na martwe, dryfujące kawałki
 window.createWreckage = function(parentEntity, shards) {
   if (!shards || shards.length === 0) return;
