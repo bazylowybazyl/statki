@@ -1996,28 +1996,31 @@ const SHIPS = {
     id:'atlas', name:'Atlas-class',
     spec: { [HP.MAIN]:24, [HP.MISSILE]:8, [HP.AUX]:8, [HP.HANGAR]:4, [HP.SPECIAL]:1 },
     genHardpoints(bounds){
-      const hp = [];
       const w = bounds.w, h = bounds.h;
-      const mainSideX = w * 0.32;
-      const mainChevronSpread = w * 0.045;
-      const mainChevronDepth = h * 0.045;
-      const mainRows = [-0.42, -0.22, -0.02, 0.18];
-      for (const side of [-1, 1]){
-        for (const row of mainRows){
-          const cx = side * mainSideX;
-          const cy = row * h;
-          hp.push({ id:uid(), type:HP.MAIN, pos:{ x:cx, y:cy - mainChevronDepth, rot:0 }, mount:null, ammo:null, maxAmmo:null });
-          hp.push({ id:uid(), type:HP.MAIN, pos:{ x:cx - mainChevronSpread, y:cy + mainChevronDepth, rot:0 }, mount:null, ammo:null, maxAmmo:null });
-          hp.push({ id:uid(), type:HP.MAIN, pos:{ x:cx + mainChevronSpread, y:cy + mainChevronDepth, rot:0 }, mount:null, ammo:null, maxAmmo:null });
-        }
+      const hp = [];
+
+      // --- NOWE USTAWIENIA ---
+      const leftX = w * -0.230;
+      const rightX = w * 0.240;
+      const spreadX = w * 0.028;
+      const depthY = h * 0.018;
+      const startY = -0.400;
+      const gapY = 0.110;
+
+      for(let i=0; i<4; i++){
+          const cy = (startY * h) + (i * gapY * h);
+
+          // Lewa burta (3 sloty)
+          hp.push({ id:uid(), type:HP.MAIN, pos:{ x:leftX, y:cy - depthY, rot:0 }, mount:null, ammo:null, maxAmmo:null });
+          hp.push({ id:uid(), type:HP.MAIN, pos:{ x:leftX - spreadX, y:cy + depthY, rot:0 }, mount:null, ammo:null, maxAmmo:null });
+          hp.push({ id:uid(), type:HP.MAIN, pos:{ x:leftX + spreadX, y:cy + depthY, rot:0 }, mount:null, ammo:null, maxAmmo:null });
+
+          // Prawa burta (3 sloty)
+          hp.push({ id:uid(), type:HP.MAIN, pos:{ x:rightX, y:cy - depthY, rot:0 }, mount:null, ammo:null, maxAmmo:null });
+          hp.push({ id:uid(), type:HP.MAIN, pos:{ x:rightX - spreadX, y:cy + depthY, rot:0 }, mount:null, ammo:null, maxAmmo:null });
+          hp.push({ id:uid(), type:HP.MAIN, pos:{ x:rightX + spreadX, y:cy + depthY, rot:0 }, mount:null, ammo:null, maxAmmo:null });
       }
-      placeLine(hp, HP.MISSILE, 4, {x:-w*0.48,y:-h*0.15}, {x:-w*0.48,y:h*0.15});
-      placeLine(hp, HP.MISSILE, 4, {x:w*0.48, y:-h*0.15}, {x:w*0.48, y:h*0.15});
-      placeLine(hp, HP.AUX,     4, {x:-w*0.35,y:-h*0.35}, {x:-w*0.35,y:h*0.35});
-      placeLine(hp, HP.AUX,     4, {x:w*0.35, y:-h*0.35}, {x:w*0.35, y:h*0.35});
-      placeLine(hp, HP.HANGAR,  2, {x:-w*0.20,y:h*0.48},  {x:w*0.20, y:h*0.48});
-      placeLine(hp, HP.HANGAR,  2, {x:-w*0.20,y:h*0.40},  {x:w*0.20, y:h*0.40});
-      hp.push({id:uid(), type:HP.SPECIAL, pos:{x:0,y:0,rot:0}, mount:null, ammo:null, maxAmmo:null});
+      // ----------------------
       return hp;
     }
   },
