@@ -2301,7 +2301,6 @@ function drawHardpointGizmos(ctx, worldPos){
 const HUD_SHOW_LEGACY = false; // stary HUD w lewym dolnym rogu – zostaw false
 
 const HUD = {
-  dmg: [],       // popupy obrażeń: {x,y,txt,color,vy,life,max}
   navArrows: [], // niebieskie strzałki po X: {x,y,age,life}
 };
 
@@ -2506,27 +2505,6 @@ function updatePlanetRadar(ship, cam){
       planetRadarState.elements.delete(id);
     }
   }
-}
-
-function hudSpawnDMG(x,y,amount,kind='npc'){
-  const color = (kind==='player') ? '#f87171' : '#a7f3d0';
-  HUD.dmg.push({ x, y, txt: Math.round(amount), color, vy: -14, life: 1.15, max: 1.15 });
-}
-function hudUpdateDMG(dt){
-  for(const d of HUD.dmg){ d.y += d.vy*dt; d.life -= dt; }
-  HUD.dmg = HUD.dmg.filter(d=>d.life>0);
-}
-function hudRenderDMG(cam){
-  ctx.save();
-  ctx.font = 'bold 13px system-ui,monospace';
-  ctx.textAlign = 'center';
-  for(const d of HUD.dmg){
-    const s = worldToScreen(d.x, d.y, cam);
-    ctx.globalAlpha = Math.max(0, d.life/d.max);
-    ctx.fillStyle = d.color;
-    ctx.fillText(d.txt, s.x, s.y);
-  }
-  ctx.restore();
 }
 
 function hudPingNpcStations(){
@@ -11508,7 +11486,6 @@ function applyDamageToPlayer(amount){
   if (!ship.destroyed && prevHull > 0 && ship.hull.val <= 0) {
     handlePlayerDestroyed();
   }
-  hudSpawnDMG(ship.pos.x, ship.pos.y - ship.h*0.4, amount, 'player');
 }
 function applyDamageToNPC(npc, dmg, cause='default'){
   if(npc.dead) return;
@@ -11535,7 +11512,6 @@ function applyDamageToNPC(npc, dmg, cause='default'){
   }
 
   npc.hp -= remaining;
-  hudSpawnDMG(npc.x, npc.y - (npc.radius||20)*0.8, remaining, 'npc');
   if (npc.fleetEntry){
     npc.fleetEntry.status.hull = npc.hp;
     markFleetDirty();
@@ -11576,7 +11552,6 @@ function applyDamageToPlatform(platform, amount){
     platform.hp = Math.max(0, platform.hp - dmg);
   }
   platform.hitFlash = 0.18;
-  hudSpawnDMG(platform.x, platform.y - platform.radius * 0.65, amount, 'npc');
   if(platform.hp <= 0 && !platform.destroyed){
     platform.destroyed = true;
     platform.deathTimer = 0;
@@ -12969,7 +12944,6 @@ function physicsStep(dt){
   ciwsStep(dt);
   bulletsAndCollisionsStep(dt);
   npcShootingStep(dt);
-  hudUpdateDMG(dt);
   hudUpdateNav(dt);
 }
 
@@ -14755,7 +14729,6 @@ function render(alpha, frameDt){
 
   // === UI / HUD Pass ===
   hudRenderNav(ship, cam);
-  hudRenderDMG(cam);
   hudRenderFloatingBars(ship, cam);
   for(const ping of radarPings){
     const s = worldToScreen(ping.x, ping.y, cam);
