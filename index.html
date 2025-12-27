@@ -10978,14 +10978,12 @@ function triggerMercAggro(reason){
     spawnPirateHeavyFleet(mercMission.station);
   }
 
-  // --- ZMIANA: Zamiast clearPirateGuardState(), robimy to ręcznie dla nowego AI ---
+  
   for(const npc of npcs){
     if(npc.mission && npc.isPirate && !npc.dead){
-      // Przełącz w tryb ataku
+      if (npc.state === 'warping_in') continue;
       npc.state = 'engage_formation';
-      // Odłącz od stacji (przestań orbitować)
       npc.guardStation = null;
-      // Reset celu
       npc.forceTarget = null;
       npc.target = null;
     }
