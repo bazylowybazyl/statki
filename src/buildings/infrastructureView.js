@@ -40,23 +40,33 @@ function drawGenericIcon(ctx) {
 }
 
 export function updateInfrastructureAnimations(dt) {
-    if (!window.Game || !window.Game.infrastructure) return;
-    window.Game.infrastructure.forEach((list) => {
-        for (const inst of list) {
-            if (inst.buildingId === 'shipyard_s') {
-                updateShipyardVisuals(inst, dt);
-            }
-        }
-    });
+  if (!window.Game || !window.Game.infrastructure) return;
+
+  // Ensure fighter sprite is loaded (lazy load check)
+  if (!window.fighterSprite && !window.fighterSpriteLoading) {
+    window.fighterSpriteLoading = true;
+    const img = new Image();
+    img.src = './assets/fighter.png';
+    img.onload = () => { window.fighterSprite = img; window.fighterSpriteLoading = false; };
+    img.onerror = () => { window.fighterSpriteLoading = false; };
+  }
+
+  window.Game.infrastructure.forEach((list) => {
+    for (const inst of list) {
+      if (inst.buildingId === 'shipyard_s') {
+        updateShipyardVisuals(inst, dt);
+      }
+    }
+  });
 }
 
 export function drawInfrastructureIcon(ctx, building, center, size, alpha = 1, instanceData = null) {
   if (!ctx || !building || !center) return;
 
   if (instanceData && building.id === 'shipyard_s') {
-     const rotation = instanceData.rotation || 0;
-     drawComplexShipyard(ctx, instanceData, center, size, rotation);
-     return;
+    const rotation = instanceData.rotation || 0;
+    drawComplexShipyard(ctx, instanceData, center, size, rotation);
+    return;
   }
 
   ctx.save();
@@ -74,9 +84,9 @@ export function drawInfrastructureIcon(ctx, building, center, size, alpha = 1, i
       break;
     default:
       if (building.icon === 'shipyard') {
-         drawStorageIcon(ctx, '#38bdf8', building.tier || 'S'); 
+        drawStorageIcon(ctx, '#38bdf8', building.tier || 'S');
       } else {
-         drawGenericIcon(ctx);
+        drawGenericIcon(ctx);
       }
       break;
   }

@@ -14,19 +14,19 @@ const SHIP_TEMPLATE = {
   inertia: null,
   linearDamping: 0.9,
   angularDamping: 1.6,
-  
+
   // Flaga dla systemu renderowania
-  isCapitalShip: true, 
+  isCapitalShip: true,
 
   // Profil wizualny (Most między index.html a destructor.js)
   capitalProfile: {
-      spriteScale: 1.0,     
-      lengthScale: 2.1,     // Dopasowanie długości wizualnej do promienia
-      widthScale: 1.2,      // Dopasowanie szerokości
-      spriteRotation: 0,
-      spriteOffset: { x: 0, y: 0 },
-      // Opcjonalnie ścieżka, jeśli index.html jej nie nadpisze
-      spriteSrc: "assets/capital_ship_rect_v1.png" 
+    spriteScale: 1.0,
+    lengthScale: 2.1,     // Dopasowanie długości wizualnej do promienia
+    widthScale: 1.2,      // Dopasowanie szerokości
+    spriteRotation: 0,
+    spriteOffset: { x: 0, y: 0 },
+    // Opcjonalnie ścieżka, jeśli index.html jej nie nadpisze
+    spriteSrc: "assets/capital_ship_rect_v1.png"
   },
 
   engines: {},
@@ -46,26 +46,26 @@ const SHIP_TEMPLATE = {
     angle: 0, angVel: 0, maxSpeed: 1.8, maxAccel: 8.0, damping: 2.0,
     recoil: 0, recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 }
   },
-  
+
   // Tarcza
-  shield: { 
-      max: 15000, val: 15000, regenRate: 100, regenDelay: 2, regenTimer: 0,
-      state: 'active', activationProgress: 1.0, currentAlpha: 1.0,
-      energyShotTimer: 0, energyShotDuration: 0.5, impacts: [],
-      hexScale: 11, baseAlpha: 0.15
+  shield: {
+    max: 15000, val: 15000, regenRate: 100, regenDelay: 2, regenTimer: 0,
+    state: 'active', activationProgress: 1.0, currentAlpha: 1.0,
+    energyShotTimer: 0, energyShotDuration: 0.5, impacts: [],
+    hexScale: 11, baseAlpha: 0.15
   },
 
-  hull: { max: 10000, val: 10000 }, 
+  hull: { max: 10000, val: 10000 },
   special: { cooldown: 10, cooldownTimer: 0 },
   input: { thrustX: 0, thrustY: 0, aimX: 0, aimY: 0 },
   controller: 'player',
   aiController: null
 };
 
-export const SHIP_SPRITE_SCALE = 1.0; 
+export const SHIP_SPRITE_SCALE = 1.0;
 
 const SHIP_VISUAL_BASE = {
-  turretTop:    { x: 63.50, y: -81.00 },
+  turretTop: { x: 63.50, y: -81.00 },
   turretBottom: { x: 77.50, y: 57.50 },
   engineY: 223.00
 };
@@ -278,7 +278,7 @@ export function createShipEntity(options = {}) {
   }
 
   configureShipGeometry(ship);
-  
+
   // Upewniamy się, że inertia jest policzona
   ship.inertia = (1 / 12) * ship.mass * ((ship.w * ship.w) + (ship.h * ship.h));
 

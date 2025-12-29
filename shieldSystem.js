@@ -38,7 +38,7 @@ function hexToRgb(hex) {
 function generateHexTexture(colorHex, scale) {
     const tileW = 3 * scale;
     const tileH = Math.round(Math.sqrt(3) * scale); // Zaokrąglenie dla pixel-perfect
-    
+
     const s_x = scale;
     const s_y = tileH / Math.sqrt(3);
 
@@ -51,7 +51,7 @@ function generateHexTexture(colorHex, scale) {
     cvs.width = width;
     cvs.height = height;
     const c = cvs.getContext('2d');
-    
+
     c.strokeStyle = colorHex || '#00aaff';
     c.lineWidth = Math.max(1, scale * 0.15);
     c.lineCap = 'round';
@@ -66,7 +66,7 @@ function generateHexTexture(colorHex, scale) {
         for (let row = -1; row <= 3; row++) {
             const xOffset = col * xStep;
             const yOffset = row * yStep + (col % 2 === 0 ? 0 : yStep / 2);
-            
+
             for (let i = 0; i < 6; i++) {
                 const angle = 2 * Math.PI / 6 * i;
                 const x = xOffset + s_x * Math.cos(angle);
@@ -91,7 +91,7 @@ function getEntityPosition(entity) {
     return { x, y };
 }
 
-function shouldRenderShield(entity){
+function shouldRenderShield(entity) {
     if (!entity) return false;
     const type = String(entity.type || '').toLowerCase();
 
@@ -111,7 +111,7 @@ function ensureShieldCanvasSize(size) {
         sCtx = shieldCanvas.getContext('2d');
     }
     // Canvas pomocniczy nie musi być ogromny, bo skalujemy teksturę
-    const needed = Math.min(1024, Math.ceil(size)); 
+    const needed = Math.min(1024, Math.ceil(size));
     if (shieldCanvas.width < needed || shieldCanvas.height < needed) {
         shieldCanvas.width = needed;
         shieldCanvas.height = needed;
@@ -204,7 +204,7 @@ export function registerShieldImpact(entity, bulletX, bulletY, damage) {
     const dx = bulletX - pos.x;
     const dy = bulletY - pos.y;
     const worldAngle = Math.atan2(dy, dx);
-    
+
     // Konwersja na kąt lokalny
     const localAngle = worldAngle - (entity.angle || 0);
 
@@ -229,9 +229,9 @@ export function updateShieldFx(entity, dt) {
 
     // Logika stanów (skrócona dla czytelności - identyczna jak w Twoim pliku, działa OK)
     shield.sparkCooldown = Math.max(0, (shield.sparkCooldown || 0) - dt);
-    
+
     if (shield.energyShotTimer > 0) shield.energyShotTimer = Math.max(0, shield.energyShotTimer - dt);
-    
+
     if (shield.state === 'breaking') {
         shield.breakTimer += dt;
         if (shield.breakTimer >= CONFIG.breakDuration) {
@@ -240,7 +240,7 @@ export function updateShieldFx(entity, dt) {
             shield.currentAlpha = 0;
         }
     }
-    
+
     // Proste sterowanie stanem activation/deactivation
     if (shield.state === 'off' && shield.val > 1) {
         shield.state = 'activating';
@@ -277,6 +277,9 @@ function getShieldDimensions(entity) {
         const baseR = entity.radius || 20;
         const len = baseR * (entity.capitalProfile.lengthScale || 3.2);
         const wid = baseR * (entity.capitalProfile.widthScale || 1.2);
+
+        // POPRAWKA: Długość (len) idzie do X (w), Szerokość (wid) idzie do Y (h)
+        // Wcześniej było na odwrót (Math.max(w, wid)), co tworzyło pionową elipsę.
         w = Math.max(w, len);
         h = Math.max(h, wid);
     } else if (entity.fighter || entity.type === 'fighter') {
@@ -284,9 +287,9 @@ function getShieldDimensions(entity) {
         w = size; h = size;
     }
 
-    return { 
-        rx: (w / 2) * CONFIG.shieldScale, 
-        ry: (h / 2) * CONFIG.shieldScale 
+    return {
+        rx: (w / 2) * CONFIG.shieldScale,
+        ry: (h / 2) * CONFIG.shieldScale
     };
 }
 
@@ -325,7 +328,7 @@ export function drawShield(ctx, entity, cam) {
         // 2. Obliczanie zmiennych wizualnych
         const time = performance.now() / 1000;
         const hpFactor = clamp(shield.val / shield.max, 0, 1);
-        
+
         let baseAlpha = CONFIG.baseAlpha + Math.sin(time * 2) * 0.03; // "Oddychanie"
         let scaleModifier = 1.0;
 
@@ -364,17 +367,17 @@ export function drawShield(ctx, entity, cam) {
         const segments = 120; // FIX: 120 zamiast 40 = gładka tarcza
         const path = new Path2D();
         const points = []; // Cache punktów do rysowania iskier
-        
+
         const breakJitter = (shield.state === 'breaking') ? 10 : 0;
 
         for (let i = 0; i <= segments; i++) {
             const theta = (i / segments) * Math.PI * 2 - Math.PI;
-            
+
             // Promień elipsy w tym kącie
             const cos = Math.cos(theta);
             const sin = Math.sin(theta);
             const rBase = (rx * ry) / Math.sqrt((ry * cos) ** 2 + (rx * sin) ** 2);
-            
+
             let totalDeform = 0;
 
             // Wobble (falowanie krawędzi)
@@ -393,7 +396,7 @@ export function drawShield(ctx, entity, cam) {
 
                 let diff = Math.abs(theta - correctedImpAngle);
                 if (diff > Math.PI) diff = 2 * Math.PI - diff;
-                
+
                 if (diff < CONFIG.hitSpread) {
                     const normalizedDist = diff / CONFIG.hitSpread;
                     const waveShape = (Math.cos(normalizedDist * Math.PI) + 1) / 2;
@@ -409,7 +412,7 @@ export function drawShield(ctx, entity, cam) {
 
             if (i === 0) path.moveTo(px, py);
             else path.lineTo(px, py);
-            
+
             points.push({ x: px, y: py });
         }
         path.closePath();
@@ -421,7 +424,7 @@ export function drawShield(ctx, entity, cam) {
         const col = hexToRgb(CONFIG.baseColor);
         const hitCol = hexToRgb(CONFIG.hitColor);
         const isBreaking = shield.state === 'breaking';
-        
+
         ctx.globalCompositeOperation = 'lighter';
         ctx.globalAlpha = alpha;
 
@@ -430,67 +433,67 @@ export function drawShield(ctx, entity, cam) {
         grad.addColorStop(0, `rgba(${col.r}, ${col.g}, ${col.b}, 0)`);
         grad.addColorStop(0.8, `rgba(${col.r}, ${col.g}, ${col.b}, 0.2)`);
         grad.addColorStop(1, `rgba(${col.r}, ${col.g}, ${col.b}, 0.8)`);
-        
+
         ctx.fillStyle = grad;
         ctx.fillRect(-maxR * 1.5, -maxR * 1.5, maxR * 3, maxR * 3);
 
         // --- KROK 5: Hex Pattern (Tylko jeśli aktywny) ---
         const showHex = impacts.length > 0 || shield.state === 'activating' || isBreaking || shield.energyShotTimer > 0;
-        
+
         if (showHex && hexGridTexture) {
             // Obliczamy widoczność hexów w zależności od stanu
             let hexIntensity = CONFIG.hexAlpha;
             if (isBreaking) hexIntensity = 1.0;
             else if (shield.state === 'activating') hexIntensity = 0.8;
-            
+
             // Rysujemy hexy tam gdzie uderzenie (lokalnie)
             if (impacts.length > 0 && !isBreaking) {
-                 ensureShieldCanvasSize(maxR * 2.5);
-                 sCtx.clearRect(0, 0, shieldCanvas.width, shieldCanvas.height);
-                 sCtx.save();
-                 sCtx.translate(shieldCanvas.width/2, shieldCanvas.height/2);
-                 
-                 for (const imp of impacts) {
+                ensureShieldCanvasSize(maxR * 2.5);
+                sCtx.clearRect(0, 0, shieldCanvas.width, shieldCanvas.height);
+                sCtx.save();
+                sCtx.translate(shieldCanvas.width / 2, shieldCanvas.height / 2);
+
+                for (const imp of impacts) {
                     const angleCorrection = visualAngle - (entity.angle || 0);
                     const correctedImpAngle = imp.localAngle - angleCorrection;
-                    
+
                     const flashX = Math.cos(correctedImpAngle) * rx;
                     const flashY = Math.sin(correctedImpAngle) * ry;
-                    
+
                     const hitGrad = sCtx.createRadialGradient(flashX, flashY, 0, flashX, flashY, 150 * CONFIG.hitSpread);
                     hitGrad.addColorStop(0, `rgba(${hitCol.r}, ${hitCol.g}, ${hitCol.b}, ${imp.life * 2.0})`);
                     hitGrad.addColorStop(1, `rgba(${hitCol.r}, ${hitCol.g}, ${hitCol.b}, 0)`);
                     sCtx.fillStyle = hitGrad;
                     sCtx.beginPath();
-                    sCtx.arc(flashX, flashY, 150 * CONFIG.hitSpread, 0, Math.PI*2);
+                    sCtx.arc(flashX, flashY, 150 * CONFIG.hitSpread, 0, Math.PI * 2);
                     sCtx.fill();
-                 }
-                 
-                 // Maskowanie wzorem
-                 sCtx.globalCompositeOperation = 'source-in';
-                 const pat = sCtx.createPattern(hexGridTexture, 'repeat');
-                 const matrix = new DOMMatrix();
-                 matrix.scaleSelf(0.5, 0.5); // Skala hexów
-                 matrix.translateSelf(time * 20, time * 10);
-                 pat.setTransform(matrix);
-                 sCtx.fillStyle = pat;
-                 sCtx.fillRect(-shieldCanvas.width/2, -shieldCanvas.height/2, shieldCanvas.width, shieldCanvas.height);
-                 
-                 sCtx.restore();
-                 
-                 ctx.globalCompositeOperation = 'lighter';
-                 ctx.drawImage(shieldCanvas, -shieldCanvas.width/2, -shieldCanvas.height/2);
-            } 
+                }
+
+                // Maskowanie wzorem
+                sCtx.globalCompositeOperation = 'source-in';
+                const pat = sCtx.createPattern(hexGridTexture, 'repeat');
+                const matrix = new DOMMatrix();
+                matrix.scaleSelf(0.5, 0.5); // Skala hexów
+                matrix.translateSelf(time * 20, time * 10);
+                pat.setTransform(matrix);
+                sCtx.fillStyle = pat;
+                sCtx.fillRect(-shieldCanvas.width / 2, -shieldCanvas.height / 2, shieldCanvas.width, shieldCanvas.height);
+
+                sCtx.restore();
+
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.drawImage(shieldCanvas, -shieldCanvas.width / 2, -shieldCanvas.height / 2);
+            }
             // Globalne hexy (np. przy pękaniu)
             else if (isBreaking || shield.state === 'activating') {
-                 const pat = ctx.createPattern(hexGridTexture, 'repeat');
-                 const matrix = new DOMMatrix();
-                 matrix.scaleSelf(0.5, 0.5);
-                 matrix.translateSelf(time * 50, 0); // Szybki ruch przy pękaniu
-                 pat.setTransform(matrix);
-                 ctx.globalAlpha = hexIntensity * alpha;
-                 ctx.fillStyle = pat;
-                 ctx.fillRect(-maxR*2, -maxR*2, maxR*4, maxR*4);
+                const pat = ctx.createPattern(hexGridTexture, 'repeat');
+                const matrix = new DOMMatrix();
+                matrix.scaleSelf(0.5, 0.5);
+                matrix.translateSelf(time * 50, 0); // Szybki ruch przy pękaniu
+                pat.setTransform(matrix);
+                ctx.globalAlpha = hexIntensity * alpha;
+                ctx.fillStyle = pat;
+                ctx.fillRect(-maxR * 2, -maxR * 2, maxR * 4, maxR * 4);
             }
         }
         ctx.restore(); // Koniec clipa
@@ -505,7 +508,7 @@ export function drawShield(ctx, entity, cam) {
         // Zamiast kółek, rysujemy pogrubioną linię wzdłuż deformacji (Arc Lighting)
         if (impacts.length > 0) {
             ctx.globalCompositeOperation = 'lighter';
-            
+
             for (const imp of impacts) {
                 const angleCorrection = visualAngle - (entity.angle || 0);
                 const correctedImpAngle = imp.localAngle - angleCorrection;
@@ -535,15 +538,15 @@ export function drawShield(ctx, entity, cam) {
                 const strokeColor = isBreaking ? '#ffffff' : CONFIG.hitColor;
                 ctx.lineCap = 'round';
                 // Grubość zależna od czasu życia uderzenia
-                ctx.lineWidth = 4 * imp.life * imp.intensity; 
+                ctx.lineWidth = 4 * imp.life * imp.intensity;
                 ctx.strokeStyle = strokeColor;
-                
+
                 // Glow
                 ctx.shadowColor = strokeColor;
                 ctx.shadowBlur = 15 * imp.life;
-                
+
                 ctx.stroke();
-                
+
                 // Reset shadow dla następnych elementów
                 ctx.shadowBlur = 0;
             }
