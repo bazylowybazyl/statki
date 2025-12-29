@@ -1,5 +1,6 @@
 // planet3d.assets.js
-
+window.Dev = window.Dev || {};
+window.Dev.freezePlanets3D = false;
 // Bridge/shim dla worldToScreen w module:
 function worldToScreen(x, y, cam){
   const fn = (typeof window !== 'undefined') ? window.worldToScreen : null;
