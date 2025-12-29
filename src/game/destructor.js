@@ -10,7 +10,9 @@ export const DESTRUCTOR_CONFIG = {
     deformRadius: 8.0,
     maxDeform: 0.98,
     structureWarp: 2.0,
-    friction: 0.90
+    friction: 0.90,
+    shardCheckBudget: 1500,
+    spatialCellMultiplier: 3.0
 };
 
 // Funkcja pomocnicza do pobierania skali
@@ -46,6 +48,90 @@ function updateHexCache(entity) {
     grid.cacheDirty = false;
 }
 
+function getSpatialKey(x, y, cellSize) {
+    const cx = Math.floor(x / cellSize);
+    const cy = Math.floor(y / cellSize);
+    return `${cx},${cy}`;
+}
+
+function rebuildSpatialMap(hexGrid) {
+    const cellSize = hexGrid.spatialCellSize;
+    const spatialMap = new Map();
+
+    for (const shard of hexGrid.shards) {
+        if (!shard.active || shard.isDebris) continue;
+        const key = getSpatialKey(shard.lx, shard.ly, cellSize);
+        let bucket = spatialMap.get(key);
+        if (!bucket) {
+            bucket = [];
+            spatialMap.set(key, bucket);
+        }
+        bucket.push(shard);
+        shard.spatialKey = key;
+    }
+
+    hexGrid.spatialMap = spatialMap;
+}
+
+function removeShardFromSpatialMap(hexGrid, shard) {
+    if (!hexGrid || !hexGrid.spatialMap || !shard.spatialKey) return;
+    const bucket = hexGrid.spatialMap.get(shard.spatialKey);
+    if (!bucket) {
+        shard.spatialKey = null;
+        return;
+    }
+    const idx = bucket.indexOf(shard);
+    if (idx !== -1) {
+        bucket[idx] = bucket[bucket.length - 1];
+        bucket.pop();
+    }
+    if (bucket.length === 0) {
+        hexGrid.spatialMap.delete(shard.spatialKey);
+    }
+    shard.spatialKey = null;
+}
+
+function collectShardsInBounds(hexGrid, minX, maxX, minY, maxY, out) {
+    if (!hexGrid) return out;
+    if (!hexGrid.spatialMap) {
+        for (const shard of hexGrid.shards) {
+            if (!shard.active || shard.isDebris) continue;
+            if (shard.lx >= minX && shard.lx <= maxX && shard.ly >= minY && shard.ly <= maxY) {
+                out.push(shard);
+            }
+        }
+        return out;
+    }
+
+    const cellSize = hexGrid.spatialCellSize;
+    const minCellX = Math.floor(minX / cellSize);
+    const maxCellX = Math.floor(maxX / cellSize);
+    const minCellY = Math.floor(minY / cellSize);
+    const maxCellY = Math.floor(maxY / cellSize);
+
+    for (let cx = minCellX; cx <= maxCellX; cx++) {
+        for (let cy = minCellY; cy <= maxCellY; cy++) {
+            const bucket = hexGrid.spatialMap.get(`${cx},${cy}`);
+            if (!bucket) continue;
+            for (const shard of bucket) {
+                if (!shard.active || shard.isDebris) continue;
+                if (shard.lx >= minX && shard.lx <= maxX && shard.ly >= minY && shard.ly <= maxY) {
+                    out.push(shard);
+                }
+            }
+        }
+    }
+    return out;
+}
+
+function collectShardsNearPoint(hexGrid, x, y, radius, out) {
+    const minX = x - radius;
+    const maxX = x + radius;
+    const minY = y - radius;
+    const maxY = y + radius;
+    return collectShardsInBounds(hexGrid, minX, maxX, minY, maxY, out);
+}
+
 export const DestructorSystem = {
     debris: [],
     sparks: [],
@@ -75,6 +161,7 @@ export const DestructorSystem = {
         }
 
         // 3. Kolizje fizyczne heksów
+        this.shardCheckBudget = DESTRUCTOR_CONFIG.shardCheckBudget;
         this.resolveHexGrinding(entities);
 
         // 4. Podział statków (Split Check)
@@ -234,6 +321,7 @@ export const DestructorSystem = {
     },
 
     _processHexCollisionPair(A, B, scaleA, scaleB, impactSpeed, dmgMult, r, h, checkDistSq) {
+        const perfStart = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
         let iterator = A, gridHolder = B;
         let iterScale = scaleA, gridScale = scaleB;
         if (A.hexGrid.shards.length > B.hexGrid.shards.length) {
@@ -251,8 +339,29 @@ export const DestructorSystem = {
 
         this.applyRepulsion(iterator, gridHolder, iPos, gPos, 2.0);
 
-        for (const sI of iterator.hexGrid.shards) {
+        const holderRadiusLocal = (gridHolder.hexGrid.rawRadius + Math.sqrt(checkDistSq)) * (gridScale / iterScale);
+        const centerDx = gPos.x - iPos.x;
+        const centerDy = gPos.y - iPos.y;
+        const iLocalX = (centerDx * iCos + centerDy * iSin) / iterScale;
+        const iLocalY = (-centerDx * iSin + centerDy * iCos) / iterScale;
+
+        const iterCandidates = this._iterShardCandidates || (this._iterShardCandidates = []);
+        iterCandidates.length = 0;
+        collectShardsInBounds(
+            iterator.hexGrid,
+            iLocalX - holderRadiusLocal,
+            iLocalX + holderRadiusLocal,
+            iLocalY - holderRadiusLocal,
+            iLocalY + holderRadiusLocal,
+            iterCandidates
+        );
+
+        const holderCandidates = this._holderShardCandidates || (this._holderShardCandidates = []);
+
+        for (const sI of iterCandidates) {
+            if (this.shardCheckBudget <= 0) break;
             if (!sI.active || sI.isDebris) continue;
+            this.shardCheckBudget -= 1;
 
             const wx = iPos.x + (sI.lx * iterScale) * iCos - (sI.ly * iterScale) * iSin;
             const wy = iPos.y + (sI.lx * iterScale) * iSin + (sI.ly * iterScale) * iCos;
@@ -262,57 +371,59 @@ export const DestructorSystem = {
             const glx = (rdx * gCos - rdy * gSin) / gridScale;
             const gly = (rdx * gSin + rdy * gCos) / gridScale;
 
-            const approxC = Math.round((glx - gridHolder.hexGrid.offsetX) / (1.5 * r));
-            const approxR = Math.round((gly - gridHolder.hexGrid.offsetY) / h);
+            holderCandidates.length = 0;
+            collectShardsNearPoint(gridHolder.hexGrid, glx, gly, Math.sqrt(checkDistSq), holderCandidates);
 
-            for (let dc = -1; dc <= 1; dc++) {
-                for (let dr = -1; dr <= 1; dr++) {
-                    const key = (approxC + dc) + "," + (approxR + dr);
-                    const sG = gridHolder.hexGrid.map[key];
-                    if (sG && sG.active && !sG.isDebris) {
-                        const dx = sG.lx - glx;
-                        const dy = sG.ly - gly;
-                        if (dx * dx + dy * dy < checkDistSq) {
-                            const baseDamage = 35;
-                            const speedFactor = Math.max(1, impactSpeed * 0.15);
+            for (const sG of holderCandidates) {
+                if (!sG.active || sG.isDebris) continue;
+                const dx = sG.lx - glx;
+                const dy = sG.ly - gly;
+                if (dx * dx + dy * dy < checkDistSq) {
+                    const baseDamage = 35;
+                    const speedFactor = Math.max(1, impactSpeed * 0.15);
 
-                            const dmgToHolder = (baseDamage + (massIter / 1000) * speedFactor) * dmgMult;
-                            const dmgToIter = (baseDamage + (massHolder / 1000) * speedFactor) * dmgMult;
+                    const dmgToHolder = (baseDamage + (massIter / 1000) * speedFactor) * dmgMult;
+                    const dmgToIter = (baseDamage + (massHolder / 1000) * speedFactor) * dmgMult;
 
-                            if (dmgToHolder > 1) {
-                                sG.hp -= dmgToHolder;
-                                // --- LOGIKA HP 2: Kolizje odbierają HP statku ---
-                                if (gridHolder.hexGrid.hpRatio) {
-                                    gridHolder.hp -= dmgToHolder * gridHolder.hexGrid.hpRatio;
-                                }
+                    if (dmgToHolder > 1) {
+                        sG.hp -= dmgToHolder;
+                        // --- LOGIKA HP 2: Kolizje odbierają HP statku ---
+                        if (gridHolder.hexGrid.hpRatio) {
+                            gridHolder.hp -= dmgToHolder * gridHolder.hexGrid.hpRatio;
+                        }
 
-                                sG.deform(-dx, -dy);
-                                gridHolder.hexGrid.cacheDirty = true;
-                                if (sG.hp <= 0) {
-                                    this.spawnSparks(wx, wy, 2);
-                                    sG.becomeDebris(iterator.vx * 0.2, iterator.vy * 0.2, gridHolder, gridScale);
-                                    this.splitQueue.add(gridHolder);
-                                }
-                            }
+                        sG.deform(-dx, -dy);
+                        gridHolder.hexGrid.cacheDirty = true;
+                        if (sG.hp <= 0) {
+                            this.spawnSparks(wx, wy, 2);
+                            sG.becomeDebris(iterator.vx * 0.2, iterator.vy * 0.2, gridHolder, gridScale);
+                            this.splitQueue.add(gridHolder);
+                        }
+                    }
 
-                            if (dmgToIter > 1) {
-                                sI.hp -= dmgToIter;
-                                // --- LOGIKA HP 2 (cd) ---
-                                if (iterator.hexGrid.hpRatio) {
-                                    iterator.hp -= dmgToIter * iterator.hexGrid.hpRatio;
-                                }
+                    if (dmgToIter > 1) {
+                        sI.hp -= dmgToIter;
+                        // --- LOGIKA HP 2 (cd) ---
+                        if (iterator.hexGrid.hpRatio) {
+                            iterator.hp -= dmgToIter * iterator.hexGrid.hpRatio;
+                        }
 
-                                iterator.hexGrid.cacheDirty = true;
-                                if (sI.hp <= 0) {
-                                    this.spawnSparks(wx, wy, 2);
-                                    sI.becomeDebris(gridHolder.vx * 0.2, gridHolder.vy * 0.2, iterator, iterScale);
-                                    this.splitQueue.add(iterator);
-                                }
-                            }
+                        iterator.hexGrid.cacheDirty = true;
+                        if (sI.hp <= 0) {
+                            this.spawnSparks(wx, wy, 2);
+                            sI.becomeDebris(gridHolder.vx * 0.2, gridHolder.vy * 0.2, iterator, iterScale);
+                            this.splitQueue.add(iterator);
                         }
                     }
                 }
             }
+        }
+
+        if (typeof performance !== 'undefined' && performance.now) {
+            const elapsed = performance.now() - perfStart;
+            this.lastHexCollisionMs = elapsed;
+            this.totalHexCollisionMs = (this.totalHexCollisionMs || 0) + elapsed;
+            this.hexCollisionSamples = (this.hexCollisionSamples || 0) + 1;
         }
     },
 
@@ -529,6 +640,8 @@ function updateBodyWithShards(entity, shardsToKeep) {
     const r = DESTRUCTOR_CONFIG.gridDivisions;
     entity.hexGrid.rawRadius = Math.sqrt(maxR2) + r;
     entity.hexGrid.cacheDirty = true;
+    entity.hexGrid.spatialCellSize = r * DESTRUCTOR_CONFIG.spatialCellMultiplier;
+    rebuildSpatialMap(entity.hexGrid);
 
     entity.radius = entity.hexGrid.rawRadius * scale;
 }
@@ -642,6 +755,9 @@ class HexShard {
         const key = this.c + "," + this.r;
         if (parentEntity.hexGrid && parentEntity.hexGrid.map[key] === this) {
             delete parentEntity.hexGrid.map[key];
+        }
+        if (parentEntity.hexGrid) {
+            removeShardFromSpatialMap(parentEntity.hexGrid, this);
         }
 
         this.isDebris = true;
@@ -859,8 +975,12 @@ export function initHexBody(entity, image) {
         cacheCanvas: cacheCanvas,
         cacheCtx: cacheCanvas.getContext('2d', { willReadFrequently: true }),
         cacheDirty: true,
-        hpRatio: hpRatio // ZAPAMIĘTUJEMY WSPÓŁCZYNNIK
+        hpRatio: hpRatio, // ZAPAMIĘTUJEMY WSPÓŁCZYNNIK
+        spatialCellSize: r * DESTRUCTOR_CONFIG.spatialCellMultiplier,
+        spatialMap: null
     };
+
+    rebuildSpatialMap(entity.hexGrid);
 
     const scale = getFinalScale(entity);
     entity.radius = entity.hexGrid.rawRadius * scale;
