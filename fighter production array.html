@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<title>Podgląd: Orbitalna Fabryka Myśliwców (Smart Printer + Time Control)</title>
+<style>
+  body {
+    background: #02040a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    margin: 0;
+    color: #8899ac;
+    font-family: monospace;
+    padding: 20px 0;
+    overflow: hidden;
+  }
+  .container {
+    position: relative;
+  }
+  canvas {
+    background: radial-gradient(circle at center, #1e293b 0%, #000000 100%);
+    border: 1px solid #334155;
+    box-shadow: 0 0 80px rgba(56, 189, 248, 0.15);
+    border-radius: 8px;
+    display: block;
+    cursor: grab;
+  }
+  canvas:active {
+    cursor: grabbing;
+  }
+  .ui-panel {
+    margin-top: 5px;
+    background: #0f172a;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 900px;
+    box-sizing: border-box;
+    z-index: 10;
+  }
+  .controls-row {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    align-items: center;
+  }
+  .input-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  input[type="text"] {
+    background: #1e293b;
+    border: 1px solid #475569;
+    color: #e2e8f0;
+    padding: 8px;
+    border-radius: 4px;
+    flex: 1;
+    font-family: monospace;
+  }
+  button {
+    background: #1e293b;
+    border: 1px solid #475569;
+    color: #94a3b8;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-family: monospace;
+    font-weight: bold;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    flex: 1;
+  }
+  button:hover {
+    background: #334155;
+    color: #fff;
+  }
+  button.active {
+    border-color: #38bdf8;
+    color: #38bdf8;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
+  }
+  button[data-state="off"].active {
+    border-color: #ef4444;
+    color: #ef4444;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
+  }
+  button[data-state="paused"].active {
+    border-color: #f59e0b;
+    color: #f59e0b;
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.2);
+  }
+  /* Styl dla przycisków czasu */
+  button[data-type="time"].active {
+    border-color: #22c55e;
+    color: #22c55e;
+    box-shadow: 0 0 10px rgba(34, 197, 94, 0.2);
+  }
+  .status-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    color: #38bdf8;
+    background: #1e293b;
+    padding: 8px 12px;
+    border-radius: 4px;
+    border: 1px solid #334155;
+  }
+  .progress-val {
+    font-weight: bold;
+    color: #fff;
+  }
+  .instructions {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    color: rgba(255,255,255,0.3);
+    font-size: 11px;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<h2>FIGHTER FACTORY [SMART PRINTER 3x3]</h2>
+
+<div class="ui-panel">
+  <div class="input-row">
+    <span>Sprite URL:</span>
+    <input type="text" id="sprite-url" placeholder="https://example.com/fighter.png (zostaw puste dla demo)" value="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/132.png">
+    <button onclick="loadSprite()" style="flex: 0 0 100px;">Load</button>
+  </div>
+  
+  <div class="controls-row">
+    <span class="label">STATE:</span>
+    <button onclick="setFactoryState('idle')" id="btn-idle">Idle</button>
+    <button onclick="setFactoryState('working')" id="btn-working" class="active">Working</button>
+    <button onclick="setFactoryState('paused')" id="btn-paused" data-state="paused">Pause</button>
+    <button onclick="setFactoryState('off')" id="btn-off" data-state="off">Off</button>
+  </div>
+
+  <div class="controls-row">
+    <span class="label">SPEED:</span>
+    <button onclick="setTimeScale(1)" id="btn-x1" data-type="time" class="active">x1</button>
+    <button onclick="setTimeScale(2)" id="btn-x2" data-type="time">x2</button>
+    <button onclick="setTimeScale(4)" id="btn-x4" data-type="time">x4</button>
+    <button onclick="setTimeScale(8)" id="btn-x8" data-type="time">x8</button>
+  </div>
+
+  <div class="status-bar">
+    <span>STATUS: <span id="status-text">WORKING</span></span>
+    <span>SQUADS PRODUCED: <span id="progress-text" class="progress-val">0</span></span>
+    <button onclick="resetCamera()" style="flex: 0 0 100px; padding: 4px;">Reset Cam</button>
+  </div>
+</div>
+
+<div class="container">
+  <canvas id="c" width="1800" height="1200"></canvas>
+  <div class="instructions">Scroll: Zoom | Drag: Pan</div>
+</div>
+
+<script>
+/**
+ * SKRYPT SYMULACJI (Deployable Floor & Pads + Time Control)
+ */
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const statusText = document.getElementById('status-text');
+const progressText = document.getElementById('progress-text');
+const spriteInput = document.getElementById('sprite-url');
+
+// --- KAMERA ---
+const camera = {
+    zoom: 2.5, 
+    x: 0,
+    y: 0,
+    isDragging: false,
+    lastX: 0,
+    lastY: 0
+};
+
+function resetCamera() {
+    camera.zoom = 2.5;
+    camera.x = 0;
+    camera.y = 0;
+}
+
+canvas.addEventListener('mousedown', (e) => {
+    camera.isDragging = true;
+    camera.lastX = e.clientX;
+    camera.lastY = e.clientY;
+});
+
+window.addEventListener('mouseup', () => {
+    camera.isDragging = false;
+});
+
+window.addEventListener('mousemove', (e) => {
+    if (camera.isDragging) {
+        const dx = e.clientX - camera.lastX;
+        const dy = e.clientY - camera.lastY;
+        camera.x += dx / camera.zoom; 
+        camera.y += dy / camera.zoom;
+        camera.lastX = e.clientX;
+        camera.lastY = e.clientY;
+    }
+});
+
+canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const zoomIntensity = 0.1;
+    const delta = e.deltaY > 0 ? -zoomIntensity : zoomIntensity;
+    const newZoom = camera.zoom + delta;
+    camera.zoom = Math.min(Math.max(0.1, newZoom), 10);
+});
+
+// --- ZMIENNE SYMULACJI ---
+let simTime = 0; 
+let lastFrameTime = performance.now();
+let timeMultiplier = 1;
+
+const DOCKS_COUNT = 1;
+
+// --- DANE I STANY ---
+let currentState = 'working'; 
+let producedUnits = 0;
+
+const mockInstance = {
+    visuals: null 
+};
+
+const PALETTE = {
+  idle: { base: '#1e293b', light: '#22c55e', accent: '#0ea5e9', hologram: 'rgba(14, 165, 233, 0.05)', glow: 0 },
+  working: { base: '#1e293b', light: '#eab308', accent: '#38bdf8', hologram: 'rgba(14, 165, 233, 0.2)', glow: 1 },
+  paused: { base: '#1e293b', light: '#f59e0b', accent: '#38bdf8', hologram: 'rgba(14, 165, 233, 0.2)', glow: 0.5 },
+  off: { base: '#0f172a', light: '#ef4444', accent: '#334155', hologram: 'rgba(0, 0, 0, 0)', glow: 0 }
+};
+
+// --- SPRITE ---
+let fighterSprite = null;
+
+const defaultSpriteCanvas = document.createElement('canvas');
+defaultSpriteCanvas.width = 64; 
+defaultSpriteCanvas.height = 64;
+const dCtx = defaultSpriteCanvas.getContext('2d');
+dCtx.translate(32, 32);
+dCtx.scale(0.8, 0.8); 
+dCtx.fillStyle = '#475569';
+dCtx.beginPath();
+dCtx.moveTo(0, -20); dCtx.lineTo(12, 10); dCtx.lineTo(0, 5); dCtx.lineTo(-12, 10);
+dCtx.fill();
+dCtx.fillStyle = '#38bdf8'; 
+dCtx.beginPath(); dCtx.arc(0, -5, 3, 0, Math.PI*2); dCtx.fill();
+dCtx.fillStyle = '#ef4444'; 
+dCtx.fillRect(-8, 10, 4, 4); dCtx.fillRect(4, 10, 4, 4);
+
+function getDefaultFighterSprite() { return defaultSpriteCanvas; }
+
+fighterSprite = defaultSpriteCanvas;
+
+function loadSprite() {
+    const url = spriteInput.value.trim();
+    if (!url) {
+        fighterSprite = defaultSpriteCanvas;
+        return;
+    }
+    const img = new Image();
+    img.removeAttribute('crossOrigin'); 
+    img.onload = () => { fighterSprite = img; };
+    img.onerror = () => { fighterSprite = defaultSpriteCanvas; };
+    img.src = url;
+}
+
+// --- LOGIKA STANU UI ---
+function setFactoryState(state) {
+  currentState = state;
+  if (mockInstance.visuals) mockInstance.visuals.currentState = state;
+  
+  document.querySelectorAll('.controls-row:first-of-type button').forEach(b => b.classList.remove('active'));
+  document.getElementById(`btn-${state}`).classList.add('active');
+  
+  let color = '#38bdf8';
+  if (state === 'off') color = '#ef4444';
+  if (state === 'idle') color = '#22c55e';
+  if (state === 'paused') color = '#f59e0b';
+  statusText.textContent = state.toUpperCase();
+  statusText.style.color = color;
+}
+
+function setTimeScale(scale) {
+    timeMultiplier = scale;
+    document.querySelectorAll('button[data-type="time"]').forEach(b => b.classList.remove('active'));
+    document.getElementById(`btn-x${scale}`).classList.add('active');
+}
+
+// =================================================================================
+// === LOGIKA FABRYKI ===
+// =================================================================================
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+function initShipyardState(inst) {
+  if (inst.visuals) return;
+  inst.visuals = {
+    docks: Array.from({ length: DOCKS_COUNT }, (_, i) => ({
+      id: i,
+      phase: 0,
+      progress: 0,
+      cranePos: 0,
+      transportArmPos: 0,
+      shipPos: 0,
+      gateProgress: 0,
+      floorExtension: 0, // Nowa zmienna: 0 = zwinięta, 1 = rozwinięta
+      particles: []
+    })),
+    simTime: 0,
+    producedUnits: 0,
+    currentState: 'working'
+  };
+}
+
+function updateShipyardVisuals(inst, dt) {
+  if (!inst.visuals) initShipyardState(inst);
+  const viz = inst.visuals;
+  
+  viz.currentState = currentState;
+  viz.producedUnits = producedUnits;
+
+  const isWorking = viz.currentState === 'working';
+  const isPaused = viz.currentState === 'paused';
+  
+  if (isWorking) viz.simTime += dt;
+
+  const dockHeight = 120;
+  const shipH = dockHeight * 0.8;
+  const topY = -shipH / 2;
+  const bottomY = shipH / 2;
+  const armParkPos = bottomY + 20;
+
+  viz.docks.forEach(dock => {
+    // 1. Postęp
+    if (isWorking) {
+      let baseSpeed = 0.0005; 
+      if (dock.phase === 3) baseSpeed = 0.0003; // Transport (trochę wolniej, skomplikowana sekwencja)
+      if (dock.phase === 4) baseSpeed = 0.002;   // Szybki powrót
+
+      const speedPerSecond = baseSpeed * 60; 
+      dock.progress += speedPerSecond * dt;
+      
+      if (dock.progress >= 1.0) {
+        dock.progress = 0;
+        dock.phase++;
+        
+        if (dock.phase === 4) {
+            viz.producedUnits++;
+            producedUnits++;
+            progressText.textContent = producedUnits + " (x9)";
+        }
+        if (dock.phase > 4) {
+          dock.phase = 0;
+        }
+      }
+    }
+
+    // 2. Pozycje i Logika
+    let targetCrane = dock.cranePos;
+    let targetArm = dock.transportArmPos;
+    let targetGate = 0;
+    let targetFloor = 0;
+
+    if (isWorking || isPaused) {
+       if (dock.phase === 0) { // Blueprint
+           targetCrane = topY + (dock.progress * (bottomY - topY));
+           targetArm = armParkPos; 
+           targetFloor = 0;
+       } else if (dock.phase === 1) { // Masa
+           targetCrane = bottomY - (dock.progress * (bottomY - topY));
+           targetArm = armParkPos;
+           targetFloor = 0;
+       } else if (dock.phase === 2) { // Sprite
+           targetCrane = topY + (dock.progress * (bottomY - topY));
+           targetArm = armParkPos;
+           targetFloor = 0;
+           if (dock.progress > 0.8) targetGate = 1;
+       } else if (dock.phase === 3) { // Transport (ZŁOŻONA SEKWENCJA)
+           targetCrane = topY - 10;
+           targetGate = 1;
+           const p = dock.progress;
+           
+           // Sekwencja transportu - SZYBSZE ROZKŁADANIE (15% czasu):
+           // 0.00 - 0.15: Ramię podjeżdża z parkingu
+           // 0.15 - 0.30: Ramię stoi, podłoga się rozwija
+           // 0.30 - 1.00: Ramię wyjeżdża z ładunkiem
+           
+           if (p < 0.15) {
+               // Dojazd
+               const subP = p / 0.15;
+               targetArm = armParkPos * (1 - subP);
+               targetFloor = 0;
+               dock.shipPos = 0;
+           } else if (p < 0.30) {
+               // Rozwijanie podłogi
+               targetArm = 0;
+               const subP = (p - 0.15) / 0.15;
+               targetFloor = subP; // 0 -> 1
+               dock.shipPos = 0;
+           } else {
+               // Wyjazd
+               targetArm = ((p - 0.30) / 0.70) * 280; 
+               targetFloor = 1;
+               dock.shipPos = targetArm;
+           }
+       } else if (dock.phase === 4) { // Return (ZWIJANIE I POWRÓT)
+           targetCrane = topY - 10;
+           dock.shipPos = 0;
+           
+           const p = dock.progress;
+           // Sekwencja powrotu (szybsze zwijanie):
+           if (p < 0.2) {
+               // Zwijanie
+               targetArm = 280; 
+               targetFloor = 1 - (p / 0.2);
+           } else {
+               // Powrót
+               targetArm = 280 + ((p - 0.2) / 0.8) * (armParkPos - 280);
+               targetFloor = 0;
+           }
+           
+           if (dock.transportArmPos < 100) targetGate = 0;
+           else targetGate = 1;
+       }
+    } else if (viz.currentState === 'idle') {
+      targetCrane = topY - 10;
+      targetArm = armParkPos;
+      targetGate = 0;
+      targetFloor = 0;
+    } 
+
+    // Fizyka (Lerp)
+    if (viz.currentState !== 'off' && !isPaused) {
+        const lerp = 5.0 * dt; // dt jest już skalowane
+        dock.cranePos += (targetCrane - dock.cranePos) * lerp;
+        
+        if (dock.phase === 3 || dock.phase === 4) {
+            dock.transportArmPos = targetArm; 
+            dock.floorExtension = targetFloor;
+        } else {
+            dock.transportArmPos += (targetArm - dock.transportArmPos) * (lerp * 0.5);
+            dock.floorExtension += (targetFloor - dock.floorExtension) * (lerp * 0.5);
+        }
+        
+        dock.gateProgress += (targetGate - dock.gateProgress) * (lerp * 0.5);
+    }
+
+    // Cząsteczki
+    if (isWorking) {
+       for (let i = dock.particles.length - 1; i >= 0; i--) {
+         const p = dock.particles[i];
+         p.x += p.vx * 60 * dt; p.y += p.vy * 60 * dt;
+         p.life -= 3.0 * dt; 
+         if (p.life <= 0) dock.particles.splice(i, 1);
+       }
+    } else {
+       dock.particles = [];
+    }
+  });
+}
+
+// =================================================================================
+// === RYSOWANIE ===
+// =================================================================================
+
+function drawGrid(ctx, w, h, cellSize) {
+  const color = currentState === 'off' ? 'rgba(255, 50, 50, 0.03)' : 'rgba(255, 255, 255, 0.03)';
+  ctx.strokeStyle = color; ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 0; x <= w; x += cellSize) ctx.rect(x, 0, 0, h);
+  for (let y = 0; y <= h; y += cellSize) ctx.rect(0, y, w, 0);
+  ctx.stroke();
+}
+
+function drawControlTower(ctx, x, y, w, h, isTop, viz) {
+    ctx.save();
+    ctx.translate(x, y);
+    const theme = PALETTE[viz.currentState];
+    ctx.fillStyle = theme.base;
+    ctx.beginPath();
+    const rightX = w/2; const leftX = -w/2;
+    const topY = -h/2; const botY = h/2;
+    if (isTop) {
+        ctx.moveTo(rightX, botY); ctx.lineTo(leftX, botY);     
+        ctx.lineTo(leftX + 10, topY); ctx.lineTo(rightX, topY);    
+    } else {
+        ctx.moveTo(rightX, topY); ctx.lineTo(leftX, topY);     
+        ctx.lineTo(leftX + 10, botY); ctx.lineTo(rightX, botY);    
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#475569'; ctx.lineWidth = 2; ctx.stroke();
+    
+    // Mostek
+    const bridgeW = w * 0.6; const bridgeH = h * 0.5;
+    const bridgeX = leftX + bridgeW/2 + 10; const bridgeY = isTop ? 5 : -5;
+    ctx.fillStyle = (viz.currentState === 'off') ? '#0f172a' : '#0c4a6e';
+    ctx.fillRect(bridgeX - bridgeW/2, bridgeY - bridgeH/2, bridgeW, bridgeH);
+    ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 1;
+    ctx.strokeRect(bridgeX - bridgeW/2, bridgeY - bridgeH/2, bridgeW, bridgeH);
+    ctx.restore();
+}
+
+function drawMainDockPart(ctx, x, y, width, height, layer, viz) {
+  const dockW = 180;
+  
+  ctx.save();
+  ctx.translate(x, y);
+  
+  if (layer === 'back') {
+    ctx.fillStyle = '#050a10';
+    ctx.fillRect(-dockW, -height/2 - 10, dockW, height + 20);
+    if (viz.currentState !== 'off') {
+        ctx.fillStyle = 'rgba(14, 165, 233, 0.1)';
+        for (let i=0; i<3; i++) ctx.fillRect(-dockW + 10 + i*40, -height/2, 2, height);
+    }
+  } else {
+    // Dach
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(-dockW, -height/2, dockW - 5, height); 
+    ctx.strokeStyle = '#334155'; ctx.lineWidth = 2;
+    ctx.strokeRect(-dockW, -height/2, dockW - 5, height);
+    
+    // Detale
+    ctx.fillStyle = '#263750'; ctx.fillRect(-dockW + 10, -height/2 + 20, dockW - 20, 5);
+    ctx.fillStyle = '#263750'; ctx.fillRect(-dockW + 10, height/2 - 25, dockW - 20, 5);
+    
+    ctx.strokeStyle = '#475569'; ctx.lineWidth = 2;
+    ctx.strokeRect(-dockW, -height/2 - 10, dockW, height + 20);
+
+    // Brama (jedna duża)
+    const dock = viz.docks[0];
+    const gateH = 100;
+    const open = dock.gateProgress * (gateH / 2);
+    
+    ctx.fillStyle = '#475569';
+    ctx.fillRect(-5, -gateH/2 - open, 10, gateH/2);
+    ctx.fillRect(-5, open, 10, gateH/2);
+    
+    // Trójkąty ostrzegawcze
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.moveTo(-5, -gateH/2 - open); ctx.lineTo(5, -gateH/2 - open + 5); ctx.lineTo(-5, -gateH/2 - open - 2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-5, gateH/2 + open); ctx.lineTo(5, gateH/2 + open - 5); ctx.lineTo(-5, gateH/2 + open + 2); ctx.fill();
+
+    if (viz.currentState !== 'off') {
+        ctx.fillStyle = dock.gateProgress > 0.1 ? (dock.gateProgress > 0.9 ? '#22c55e' : '#eab308') : '#ef4444';
+        ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 5;
+        ctx.fillRect(6, -gateH/2 - 5, 2, gateH + 10);
+        ctx.shadowBlur = 0;
+    }
+    
+    // Napis
+    ctx.save();
+    ctx.translate(-dockW / 2, 0); ctx.rotate(-Math.PI / 2); 
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.font = 'bold 20px monospace'; 
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText("SQUADRON PRINTER", 0, 0);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function drawSquadronGrid(ctx, spriteImg, renderType) {
+    const fighterSize = 24; 
+    const spacing = 12;
+    const gridSize = 3;
+    const startX = -((gridSize-1) * (fighterSize + spacing)) / 2;
+    const startY = -((gridSize-1) * (fighterSize + spacing)) / 2;
+
+    for(let r=0; r<gridSize; r++) {
+        for(let c=0; c<gridSize; c++) {
+            const fx = startX + c * (fighterSize + spacing);
+            const fy = startY + r * (fighterSize + spacing);
+            
+            ctx.save();
+            ctx.translate(fx, fy); 
+            
+            const fSize = fighterSize; 
+            
+            if (renderType === 'blueprint') {
+                if (spriteImg) {
+                    ctx.globalAlpha = 0.4;
+                    ctx.globalCompositeOperation = 'source-over';
+                    ctx.drawImage(spriteImg, -fSize/2, -fSize/2, fSize, fSize);
+                    ctx.globalCompositeOperation = 'source-atop';
+                    ctx.fillStyle = 'rgba(0, 200, 255, 0.5)'; 
+                    ctx.fillRect(-fSize/2, -fSize/2, fSize, fSize);
+                } else {
+                    ctx.fillStyle = 'rgba(0, 200, 255, 0.3)'; 
+                    ctx.fillRect(-fSize/2, -fSize/2, fSize, fSize);
+                }
+            } else if (renderType === 'mass') {
+                if (spriteImg) {
+                    ctx.drawImage(spriteImg, -fSize/2, -fSize/2, fSize, fSize);
+                    ctx.globalCompositeOperation = 'source-atop';
+                    ctx.fillStyle = '#475569'; 
+                    ctx.fillRect(-fSize/2, -fSize/2, fSize, fSize);
+                } else {
+                    ctx.fillStyle = '#475569';
+                    ctx.fillRect(-fSize/2, -fSize/2, fSize, fSize);
+                }
+            } else if (renderType === 'sprite') {
+                if (spriteImg) {
+                    ctx.drawImage(spriteImg, -fSize/2, -fSize/2, fSize, fSize);
+                } else {
+                    ctx.fillStyle = '#38bdf8';
+                    ctx.fillRect(-fSize/2, -fSize/2, fSize, fSize);
+                }
+            }
+            
+            ctx.restore();
+        }
+    }
+}
+
+function getApproxShipWidthAtY(localY, shipHeight) {
+    const normY = localY / (shipHeight / 2); 
+    if (normY < -0.5) return (normY + 1.0) * 2 * 0.5;
+    if (normY < 0.5) return 0.5 + (normY + 0.5) * 0.5;
+    return 1.0 - (normY - 0.5) * 0.4;
+}
+
+function drawSmartLaserHeads(ctx, dock, startX, startY, fighterSize, spacing, gridSize, time, working) {
+    const scanY = dock.cranePos; 
+    const headSize = 4;
+    const laserColor = (working && dock.phase === 1) ? '#fbbf24' : ((working && dock.phase === 2) ? '#fff' : '#38bdf8');
+    
+    if (working) {
+        ctx.fillStyle = laserColor;
+        ctx.shadowColor = laserColor;
+        ctx.shadowBlur = 5;
+    } else {
+        ctx.fillStyle = '#475569'; 
+        ctx.shadowBlur = 0;
+    }
+
+    for (let c = 0; c < gridSize; c++) {
+        const shipCenterX = startX + c * (fighterSize + spacing);
+        let activeRow = -1;
+        
+        if (working) {
+            for (let r = 0; r < gridSize; r++) {
+                const shipCenterY = startY + r * (fighterSize + spacing);
+                const shipTop = shipCenterY - fighterSize/2;
+                const shipBottom = shipCenterY + fighterSize/2;
+                
+                if (scanY >= shipTop && scanY <= shipBottom) {
+                    activeRow = r;
+                    const relativeY = scanY - shipCenterY;
+                    const widthFactor = getApproxShipWidthAtY(relativeY, fighterSize);
+                    
+                    const scanSpeed = 15;
+                    const maxOffset = (fighterSize / 2) * widthFactor;
+                    const headOffset = Math.sin(time * scanSpeed + c + r) * maxOffset;
+                    
+                    const headX = shipCenterX + headOffset;
+                    
+                    ctx.fillRect(headX - headSize/2, scanY - 3, headSize, 6);
+                    
+                    ctx.beginPath();
+                    ctx.strokeStyle = laserColor;
+                    ctx.lineWidth = 1.5;
+                    ctx.moveTo(headX, scanY);
+                    ctx.lineTo(headX, scanY + (dock.phase === 0 ? 4 : -4)); 
+                    ctx.stroke();
+                    
+                    if (Math.random() > 0.5) {
+                        ctx.fillStyle = '#fff';
+                        ctx.fillRect(headX - 1, scanY + (dock.phase === 0 ? 2 : -2), 2, 2);
+                        ctx.fillStyle = laserColor;
+                    }
+                    
+                    if (Math.random() < 0.3) {
+                        dock.particles.push({
+                            x: headX, 
+                            y: scanY,
+                            vx: (Math.random()-0.5)*2, 
+                            vy: (Math.random()-0.5)*2,
+                            life: 0.5 + Math.random()*0.5, 
+                            color: laserColor
+                        });
+                    }
+                }
+            }
+        }
+        
+        if (activeRow === -1) {
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#475569';
+            ctx.fillRect(shipCenterX - headSize/2, scanY - 2, headSize, 4);
+            if (working) { 
+                ctx.fillStyle = laserColor;
+                ctx.shadowColor = laserColor;
+                ctx.shadowBlur = 5;
+            }
+        }
+    }
+    ctx.shadowBlur = 0;
+}
+
+function drawShipyardUnit(ctx, dock, x, y, h, w, viz, spriteImg) { 
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.PI / 2);
+    const theme = PALETTE[viz.currentState];
+    
+    const dockWidth = h * 0.95; 
+    const platLen = 40; 
+    const halfH = w / 2;
+    const halfW = dockWidth / 2;
+    
+    // Ramię dokujące (Baza)
+    ctx.save();
+    ctx.translate(0, w/2 + platLen/2);
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(-dockWidth/2, -platLen/2, dockWidth, platLen);
+    ctx.strokeStyle = '#334155'; ctx.lineWidth = 1;
+    ctx.strokeRect(-dockWidth/2, -platLen/2, dockWidth, platLen);
+    
+    // --- RUCHOME RAMIĘ TRANSPORTOWE + PODŁOGA ---
+    const armRelY = dock.transportArmPos - (w/2 + platLen/2);
+    ctx.translate(0, armRelY);
+    
+    // 1. Główna belka transportowa (chwytająca środek)
+    ctx.fillStyle = '#334155'; ctx.fillRect(-dockWidth/2 + 4, 0, dockWidth - 8, 4); // Poprzeczka
+    ctx.fillStyle = '#64748b'; ctx.fillRect(-20, -2, 40, 8); // Środkowe złącze
+    
+    // 2. Chwytaki środkowe (zawsze widoczne)
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillRect(-2, -3, 4, 10); // Środek
+    ctx.fillRect(-2 - 35, -3, 4, 10); // Środek-góra (w gridzie)
+    ctx.fillRect(-2 + 35, -3, 4, 10); // Środek-dół (w gridzie)
+
+    // 3. ROZWIJANA PODŁOGA (Boczne panele)
+    const floorMaxW = 48; // Poszerzone z 35 do 48, żeby objąć cały grid
+    const floorW = dock.floorExtension * floorMaxW; 
+    
+    if (floorW > 1) {
+        ctx.fillStyle = '#1e293b';
+        ctx.strokeStyle = '#475569';
+        ctx.lineWidth = 1;
+        ctx.fillRect(-dockWidth/2 + 10, 4, dockWidth - 20, floorW);
+        ctx.strokeRect(-dockWidth/2 + 10, 4, dockWidth - 20, floorW);
+        
+        ctx.fillRect(-dockWidth/2 + 10, -floorW, dockWidth - 20, floorW);
+        ctx.strokeRect(-dockWidth/2 + 10, -floorW, dockWidth - 20, floorW);
+        
+        // 4. PODSTAWKI (Pads) - animowane wejście
+        // Zaczynają się pojawiać gdy podłoga jest w 60% rozwinięta
+        if (dock.floorExtension > 0.6) {
+            const padAnim = (dock.floorExtension - 0.6) / 0.4; // 0.0 -> 1.0
+            
+            const fighterSize = 24; const spacing = 12; const gridSize = 3;
+            const startX = -((gridSize-1) * (fighterSize + spacing)) / 2;
+            const startY = -((gridSize-1) * (fighterSize + spacing)) / 2;
+            
+            for(let r=0; r<gridSize; r++) { // Y offset (boki)
+                const padY = startY + r * (fighterSize + spacing);
+                
+                for(let c=0; c<gridSize; c++) { // X offset (wzdłuż belki)
+                    const padX = startX + c * (fighterSize + spacing);
+                    
+                    // Scale effect based on padAnim
+                    const maxPadSize = 16;
+                    const currentPadSize = maxPadSize * padAnim;
+                    const offsetCenter = (maxPadSize - currentPadSize) / 2;
+                    
+                    ctx.save();
+                    ctx.translate(padX, padY);
+                    
+                    // Animacja wysuwania (scale + fade)
+                    ctx.globalAlpha = padAnim;
+                    
+                    // Rysuj pad (centrowany)
+                    // Oryginalnie było -8, -8 dla 16px. Teraz skalujemy.
+                    ctx.fillStyle = '#0f172a';
+                    ctx.fillRect(-8 + offsetCenter, -8 + offsetCenter, currentPadSize, currentPadSize);
+                    ctx.strokeStyle = '#38bdf8';
+                    ctx.strokeRect(-8 + offsetCenter, -8 + offsetCenter, currentPadSize, currentPadSize);
+                    
+                    // Magnes (pojawia się na końcu)
+                    if (padAnim > 0.8) {
+                        ctx.fillStyle = '#38bdf8';
+                        ctx.fillRect(-2, -2, 4, 4);
+                    }
+                    
+                    ctx.restore();
+                }
+            }
+        }
+    }
+
+    ctx.restore(); // Koniec ramienia
+
+    // Podłoga hologramu
+    ctx.fillStyle = theme.hologram;
+    ctx.fillRect(-dockWidth/2, -w/2, dockWidth, w);
+    if (viz.currentState !== 'off') {
+        ctx.lineWidth = 1; ctx.strokeStyle = '#334155';
+        ctx.setLineDash([2,2]); ctx.strokeRect(-dockWidth/2, -w/2, dockWidth, w); ctx.setLineDash([]);
+    }
+
+    const fighterSize = 24; 
+    const spacing = 12;
+    const gridSize = 3;
+    const startX = -((gridSize-1) * (fighterSize + spacing)) / 2;
+    const startY = -((gridSize-1) * (fighterSize + spacing)) / 2;
+
+    // --- LOGIKA RYSOWANIA ETAPOWEGO ---
+    const shouldDrawShips = (dock.phase < 3) || (dock.phase === 3 && dock.shipPos < 200);
+
+    if (shouldDrawShips) { 
+       ctx.save();
+       const shipYOffset = (dock.phase === 3) ? dock.shipPos : 0;
+       ctx.translate(0, shipYOffset);
+       
+       const scanY = dock.cranePos;
+       
+       if (dock.phase === 0) {
+           ctx.save();
+           ctx.beginPath();
+           ctx.rect(-halfW, -halfH, dockWidth, scanY - (-halfH));
+           ctx.clip();
+           drawSquadronGrid(ctx, spriteImg, 'blueprint');
+           ctx.restore();
+       } 
+       else if (dock.phase === 1) {
+           ctx.save();
+           ctx.beginPath();
+           ctx.rect(-halfW, -halfH, dockWidth, scanY - (-halfH));
+           ctx.clip();
+           drawSquadronGrid(ctx, spriteImg, 'blueprint');
+           ctx.restore();
+
+           ctx.save();
+           ctx.beginPath();
+           ctx.rect(-halfW, scanY, dockWidth, halfH - scanY);
+           ctx.clip();
+           drawSquadronGrid(ctx, spriteImg, 'mass');
+           ctx.restore();
+       }
+       else if (dock.phase === 2) {
+           ctx.save();
+           ctx.beginPath();
+           ctx.rect(-halfW, -halfH, dockWidth, scanY - (-halfH));
+           ctx.clip();
+           drawSquadronGrid(ctx, spriteImg, 'sprite');
+           ctx.restore();
+
+           ctx.save();
+           ctx.beginPath();
+           ctx.rect(-halfW, scanY, dockWidth, halfH - scanY);
+           ctx.clip();
+           drawSquadronGrid(ctx, spriteImg, 'mass');
+           ctx.restore();
+       }
+       else if (dock.phase === 3) {
+           drawSquadronGrid(ctx, spriteImg, 'sprite');
+       }
+       
+       ctx.restore();
+       
+       if (dock.phase < 3) {
+           const laserColor = dock.phase===1 ? '#94a3b8' : (dock.phase===2 ? '#fff' : '#38bdf8');
+           ctx.save();
+           ctx.strokeStyle = laserColor; ctx.lineWidth = 2;
+           ctx.shadowColor = laserColor; ctx.shadowBlur = 10;
+           ctx.beginPath(); 
+           ctx.moveTo(-dockWidth/2, scanY); 
+           ctx.lineTo(dockWidth/2, scanY); 
+           ctx.stroke();
+           ctx.restore();
+       }
+    }
+
+    ctx.fillStyle = (viz.currentState === 'off') ? '#451a03' : '#eab308';
+    ctx.fillRect(-dockWidth/2 - 2, dock.cranePos - 2, dockWidth + 4, 4);
+
+    drawSmartLaserHeads(ctx, dock, startX, startY, fighterSize, spacing, gridSize, viz.simTime, viz.currentState === 'working' && dock.phase < 3);
+
+    if (viz.currentState === 'working') {
+        ctx.fillStyle = '#fff';
+        for (let p of dock.particles) {
+            ctx.globalAlpha = p.life;
+            ctx.fillRect(p.x, p.y, 1, 1);
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    ctx.restore();
+}
+
+function drawFactory(ctx, centerX, centerY) {
+  const time = simTime;
+  const viz = mockInstance.visuals;
+  const theme = PALETTE[viz.currentState];
+  const spriteImg = fighterSprite;
+  
+  const unitLen = 140; 
+  const unitThick = 140; 
+  const spacing = 0;
+  
+  const totalHeight = unitThick;
+  const docksX = 100;
+  const spineX = docksX + unitLen / 2 + 10;
+  const transportX = docksX - unitLen / 2;
+  const mainDockX = transportX - 60;
+
+  drawMainDockPart(ctx, mainDockX, 0, 200, totalHeight + 40, 'back', viz);
+
+  ctx.fillStyle = theme.base;
+  ctx.strokeStyle = '#475569';
+  ctx.lineWidth = 2;
+  const spineW = 20;
+  ctx.fillRect(spineX - spineW/2, -totalHeight/2 - 20, spineW, totalHeight + 40);
+  ctx.strokeRect(spineX - spineW/2, -totalHeight/2 - 20, spineW, totalHeight + 40);
+
+  if (viz.currentState === 'working') {
+      ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2;
+      ctx.setLineDash([5, 10]);
+      ctx.lineDashOffset = time * 30; 
+      ctx.beginPath(); ctx.moveTo(spineX, -totalHeight/2+5); ctx.lineTo(spineX, totalHeight/2-5); ctx.stroke();
+      ctx.setLineDash([]);
+  }
+
+  const towerHeight = 40;
+  const topTowerY = -unitThick/2 - spacing - towerHeight/2;
+  const botTowerY = unitThick/2 + spacing + towerHeight/2;
+  
+  drawControlTower(ctx, docksX, topTowerY, unitLen, towerHeight, true, viz);
+  ctx.fillStyle = '#334155'; ctx.fillRect(docksX + unitLen/2 - 5, topTowerY - 5, spineX - (docksX + unitLen/2) + 5, 10);
+
+  drawControlTower(ctx, docksX, botTowerY, unitLen, towerHeight, false, viz);
+  ctx.fillRect(docksX + unitLen/2 - 5, botTowerY - 5, spineX - (docksX + unitLen/2) + 5, 10);
+
+  const dock = viz.docks[0];
+  drawShipyardUnit(ctx, dock, docksX, 0, unitThick, unitLen, viz, spriteImg);
+     
+  ctx.fillStyle = '#334155';
+  const dockRight = docksX + unitLen/2;
+  ctx.fillRect(dockRight - 2, -2, spineX - dockRight + 2, 4);
+     
+  if (viz.currentState !== 'off') {
+      const phaseColor = ['#38bdf8', '#94a3b8', '#ffffff', '#22c55e'][dock.phase] || '#22c55e';
+      ctx.fillStyle = phaseColor; ctx.fillRect(dockRight + 5, -1, 3, 3);
+  }
+
+  drawMainDockPart(ctx, mainDockX, 0, 200, totalHeight + 40, 'front', viz);
+}
+
+function render() {
+    const now = performance.now();
+    // APPLY TIME SCALE
+    const dt = ((now - lastFrameTime) * 0.001) * timeMultiplier;
+    lastFrameTime = now;
+    
+    updateShipyardVisuals(mockInstance, dt);
+
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h); 
+  
+    ctx.save();
+    ctx.translate(w/2 + camera.x, h/2 + camera.y);
+    ctx.scale(camera.zoom, camera.zoom);
+    ctx.translate(-w/2, -h/2);
+
+    drawGrid(ctx, w*2, h*2, 70); 
+    
+    ctx.translate(w/2, h/2);
+    drawFactory(ctx, 0, 0);
+
+    ctx.restore();
+  
+    requestAnimationFrame(render);
+}
+
+loadSprite(); 
+initShipyardState(mockInstance);
+render();
+
+</script>
+</body>
+</html>
