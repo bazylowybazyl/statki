@@ -1,6 +1,11 @@
 /**
- * Moduł Destrukcji "Hex Grinder" - Wersja INTEGRATED HP
- * Teraz heksy są bezpośrednio połączone z paskiem życia statku.
+ * Moduł Destrukcji "Hex Grinder" - Wersja ZOPTYMALIZOWANA (Transformed Bounds + Paint Damage)
+ *
+ * Zmiany względem oryginału:
+ * 1. Throttling kolizji (liczymy co 2 klatkę).
+ * 2. Transformed Bounds Intersection (sprawdzamy tylko heksy w oknie kolizji).
+ * 3. Paint Damage (rysowanie uszkodzeń na bieżąco bez cacheDirty).
+ * 4. Gumka (eraseShard) zamiast przerysowywania przy zniszczeniu.
  */
 
 export const DESTRUCTOR_CONFIG = {
@@ -23,6 +28,7 @@ function getFinalScale(entity) {
     return 1.0;
 }
 
+// Pełne przerysowanie (używane rzadko, np. przy podziale statku)
 function updateHexCache(entity) {
     if (!entity.hexGrid || !entity.hexGrid.cacheCtx) return;
     const ctx = entity.hexGrid.cacheCtx;
@@ -136,6 +142,7 @@ export const DestructorSystem = {
     debris: [],
     sparks: [],
     splitQueue: new Set(),
+    _frameTick: 0, // Licznik klatek do throttlingu
 
     update(dt, entities) {
         // 1. Aktualizacja odłamków
@@ -160,13 +167,60 @@ export const DestructorSystem = {
             }
         }
 
-        // 3. Kolizje fizyczne heksów
+        // 3. Kolizje fizyczne heksów (z Throttlingiem)
         this.shardCheckBudget = DESTRUCTOR_CONFIG.shardCheckBudget;
         this.resolveHexGrinding(entities);
 
         // 4. Podział statków (Split Check)
         this.processSplits();
     },
+
+    // --- METODY GRAFICZNE (Optymalizacja) ---
+
+    // Trwałe wycięcie heksa z tekstury (GUMKA)
+    eraseShard(entity, shard) {
+        if (!entity.hexGrid || !entity.hexGrid.cacheCtx) return;
+        const ctx = entity.hexGrid.cacheCtx;
+        const cx = entity.hexGrid.srcWidth / 2;
+        const cy = entity.hexGrid.srcHeight / 2;
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.translate(cx, cy);
+        ctx.translate(shard.lx, shard.ly);
+        ctx.beginPath();
+        const overlap = 1.1; 
+        ctx.moveTo(shard.verts[0].x * overlap, shard.verts[0].y * overlap);
+        for (let i = 1; i < 6; i++) ctx.lineTo(shard.verts[i].x * overlap, shard.verts[i].y * overlap);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+        ctx.globalCompositeOperation = 'source-over';
+    },
+
+    // Domalowanie uszkodzeń na teksturze (PĘDZEL)
+    paintDamage(entity, shard) {
+        if (!entity.hexGrid || !entity.hexGrid.cacheCtx) return;
+        const ctx = entity.hexGrid.cacheCtx;
+        const cx = entity.hexGrid.srcWidth / 2;
+        const cy = entity.hexGrid.srcHeight / 2;
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'source-over'; 
+        ctx.translate(cx, cy);
+        ctx.translate(shard.lx, shard.ly);
+        ctx.beginPath();
+        ctx.moveTo(shard.verts[0].x, shard.verts[0].y);
+        for (let i = 1; i < 6; i++) ctx.lineTo(shard.verts[i].x, shard.verts[i].y);
+        ctx.closePath();
+        // Im mniej HP, tym ciemniejszy ślad
+        const dmgRatio = Math.max(0, 1 - (shard.hp / 40)); 
+        ctx.fillStyle = `rgba(0, 0, 0, ${dmgRatio * 0.6})`; 
+        ctx.fill();
+        ctx.restore();
+    },
+
+    // --- KOLIZJE POCISKÓW ---
 
     applyImpact(entity, worldX, worldY, damage, bulletVel) {
         if (!entity.hexGrid) return false;
@@ -190,7 +244,6 @@ export const DestructorSystem = {
         const lx = (dx * c - dy * s) / scale;
         const ly = (dx * s + dy * c) / scale;
 
-        // Larger search radius for wrecks since their hexes may be scattered
         const searchRadius = entity.isWreck ? 3 : (scale < 0.5 ? 2 : 1);
 
         const approxC = Math.round((lx - entity.hexGrid.offsetX) / (1.5 * r));
@@ -209,23 +262,25 @@ export const DestructorSystem = {
                     if (distSq < (r * 2.5) ** 2) {
                         hitSomething = true;
 
-                        // Oblicz obrażenia dla heksa
                         const rawDmg = damage / shard.hardness;
 
-                        // --- LOGIKA HP 1: Odejmij od HP statku ---
                         if (entity.hexGrid.hpRatio) {
-                            // Odejmujemy proporcjonalnie do uszkodzenia heksa
                             entity.hp -= rawDmg * entity.hexGrid.hpRatio;
                         }
 
                         shard.deform(lx - shard.lx, ly - shard.ly);
                         shard.hp -= rawDmg;
-                        entity.hexGrid.cacheDirty = true;
 
+                        // OPTYMALIZACJA:
                         if (shard.hp <= 0) {
+                            // Zniszczenie -> Wytnij dziurę
                             this.spawnSparks(worldX, worldY, 3);
                             shard.becomeDebris(bulletVel.x * 0.02, bulletVel.y * 0.02, entity, scale);
                             this.splitQueue.add(entity);
+                            this.eraseShard(entity, shard);
+                        } else {
+                            // Uszkodzenie -> Domaluj ślad (bez cacheDirty)
+                            this.paintDamage(entity, shard);
                         }
                     }
                 }
@@ -234,7 +289,13 @@ export const DestructorSystem = {
         return hitSomething;
     },
 
+    // --- KOLIZJE FIZYCZNE (Grinding) ---
+
     resolveHexGrinding(entities) {
+        // OPTYMALIZACJA: Throttling (30 FPS logicznych)
+        this._frameTick = (this._frameTick || 0) + 1;
+        if (this._frameTick % 2 !== 0) return;
+
         const r = DESTRUCTOR_CONFIG.gridDivisions;
         const h = r * Math.sqrt(3);
         const checkDistSq = (r * 2.2) ** 2;
@@ -320,8 +381,8 @@ export const DestructorSystem = {
         if (!B.static) { B.vx -= nx * (push / massB); B.vy -= ny * (push / massB); }
     },
 
+    // OPTYMALIZACJA: Transformed Bounds Intersection + Paint Damage
     _processHexCollisionPair(A, B, scaleA, scaleB, impactSpeed, dmgMult, r, h, checkDistSq) {
-        const perfStart = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
         let iterator = A, gridHolder = B;
         let iterScale = scaleA, gridScale = scaleB;
         if (A.hexGrid.shards.length > B.hexGrid.shards.length) {
@@ -331,99 +392,127 @@ export const DestructorSystem = {
 
         const iPos = iterator.pos || { x: iterator.x, y: iterator.y };
         const gPos = gridHolder.pos || { x: gridHolder.x, y: gridHolder.y };
-        const gCos = Math.cos(-gridHolder.angle), gSin = Math.sin(-gridHolder.angle);
-        const iCos = Math.cos(iterator.angle), iSin = Math.sin(iterator.angle);
-
-        const massIter = iterator.rammingMass || iterator.mass || 100;
-        const massHolder = gridHolder.rammingMass || gridHolder.mass || 100;
-
+        
+        // Szybkie odpychanie
         this.applyRepulsion(iterator, gridHolder, iPos, gPos, 2.0);
 
-        const holderRadiusLocal = (gridHolder.hexGrid.rawRadius + Math.sqrt(checkDistSq)) * (gridScale / iterScale);
-        const centerDx = gPos.x - iPos.x;
-        const centerDy = gPos.y - iPos.y;
-        const iLocalX = (centerDx * iCos + centerDy * iSin) / iterScale;
-        const iLocalY = (-centerDx * iSin + centerDy * iCos) / iterScale;
+        // --- MATEMATYKA OKNA PRZECIĘCIA (BOUNDS) ---
+        const iterRadius = (iterator.hexGrid.rawRadius || 20); 
+        
+        // Rogi Bounding Boxa mniejszego statku (lokalnie)
+        const corners = [
+            {x: -iterRadius, y: -iterRadius},
+            {x: iterRadius, y: -iterRadius},
+            {x: iterRadius, y: iterRadius},
+            {x: -iterRadius, y: iterRadius}
+        ];
 
-        const iterCandidates = this._iterShardCandidates || (this._iterShardCandidates = []);
-        iterCandidates.length = 0;
-        collectShardsInBounds(
-            iterator.hexGrid,
-            iLocalX - holderRadiusLocal,
-            iLocalX + holderRadiusLocal,
-            iLocalY - holderRadiusLocal,
-            iLocalY + holderRadiusLocal,
-            iterCandidates
-        );
+        const cosI = Math.cos(iterator.angle), sinI = Math.sin(iterator.angle);
+        const cosG = Math.cos(-gridHolder.angle), sinG = Math.sin(-gridHolder.angle); // Inverse rotation
 
-        const holderCandidates = this._holderShardCandidates || (this._holderShardCandidates = []);
+        let minC = Infinity, maxC = -Infinity, minR = Infinity, maxR = -Infinity;
 
-        for (const sI of iterCandidates) {
-            if (this.shardCheckBudget <= 0) break;
-            if (!sI.active || sI.isDebris) continue;
-            this.shardCheckBudget -= 1;
+        // Transformujemy 4 rogi do układu Grid (indeksy) większego statku
+        for(let k=0; k<4; k++) {
+            const p = corners[k];
+            // 1. To World
+            const wx = iPos.x + (p.x * iterScale) * cosI - (p.y * iterScale) * sinI;
+            const wy = iPos.y + (p.x * iterScale) * sinI + (p.y * iterScale) * cosI;
+            // 2. To Holder Local
+            const dx = wx - gPos.x;
+            const dy = wy - gPos.y;
+            const hlx = (dx * cosG - dy * sinG) / gridScale;
+            const hly = (dx * sinG + dy * cosG) / gridScale;
+            // 3. To Grid Index
+            const c = Math.floor((hlx - gridHolder.hexGrid.offsetX) / (1.5 * r));
+            const row = Math.floor((hly - gridHolder.hexGrid.offsetY) / h);
 
-            const wx = iPos.x + (sI.lx * iterScale) * iCos - (sI.ly * iterScale) * iSin;
-            const wy = iPos.y + (sI.lx * iterScale) * iSin + (sI.ly * iterScale) * iCos;
+            if (c < minC) minC = c;
+            if (c > maxC) maxC = c;
+            if (row < minR) minR = row;
+            if (row > maxR) maxR = row;
+        }
 
-            const rdx = wx - gPos.x;
-            const rdy = wy - gPos.y;
-            const glx = (rdx * gCos - rdy * gSin) / gridScale;
-            const gly = (rdx * gSin + rdy * gCos) / gridScale;
+        // Margines błędu
+        const pad = 2;
+        minC -= pad; maxC += pad; minR -= pad; maxR += pad;
 
-            holderCandidates.length = 0;
-            collectShardsNearPoint(gridHolder.hexGrid, glx, gly, Math.sqrt(checkDistSq), holderCandidates);
+        const holderMap = gridHolder.hexGrid.map;
+        const iterMap = iterator.hexGrid.map;
+        
+        const cosG_rev = Math.cos(gridHolder.angle);
+        const sinG_rev = Math.sin(gridHolder.angle);
+        const cosI_rev = Math.cos(-iterator.angle);
+        const sinI_rev = Math.sin(-iterator.angle);
 
-            for (const sG of holderCandidates) {
-                if (!sG.active || sG.isDebris) continue;
-                const dx = sG.lx - glx;
-                const dy = sG.ly - gly;
-                if (dx * dx + dy * dy < checkDistSq) {
-                    const baseDamage = 35;
-                    const speedFactor = Math.max(1, impactSpeed * 0.15);
+        // Iterujemy tylko po heksach w oknie przecięcia
+        for (let c = minC; c <= maxC; c++) {
+            for (let row = minR; row <= maxR; row++) {
+                
+                const sG = holderMap[c + "," + row];
+                if (!sG || !sG.active || sG.isDebris) continue;
 
-                    const dmgToHolder = (baseDamage + (massIter / 1000) * speedFactor) * dmgMult;
-                    const dmgToIter = (baseDamage + (massHolder / 1000) * speedFactor) * dmgMult;
+                // Sprawdzamy czy środek tego heksa koliduje z Iteratorem
+                // Holder Local -> World
+                const wx = gPos.x + (sG.lx * gridScale) * cosG_rev - (sG.ly * gridScale) * sinG_rev;
+                const wy = gPos.y + (sG.lx * gridScale) * sinG_rev + (sG.ly * gridScale) * cosG_rev;
 
-                    if (dmgToHolder > 1) {
-                        sG.hp -= dmgToHolder;
-                        // --- LOGIKA HP 2: Kolizje odbierają HP statku ---
-                        if (gridHolder.hexGrid.hpRatio) {
-                            gridHolder.hp -= dmgToHolder * gridHolder.hexGrid.hpRatio;
+                // World -> Iterator Local
+                const dx = wx - iPos.x;
+                const dy = wy - iPos.y;
+                const ilx = (dx * cosI_rev - dy * sinI_rev) / iterScale;
+                const ily = (dx * sinI_rev + dy * cosI_rev) / iterScale;
+
+                // Grid Index w iteratorze
+                const ic = Math.round((ilx - iterator.hexGrid.offsetX) / (1.5 * r));
+                const ir = Math.round((ily - iterator.hexGrid.offsetY) / h);
+
+                const sI = iterMap[ic + "," + ir];
+
+                if (sI && sI.active && !sI.isDebris) {
+                    // Dystans lokalny dla pewności
+                    const distLocalSq = (sI.lx - ilx)**2 + (sI.ly - ily)**2;
+                    
+                    if (distLocalSq < (r * 2.2)**2) {
+                        // Kolizja!
+                        const massIter = iterator.mass || 100;
+                        const massHolder = gridHolder.mass || 100; // Dodane, było brakujące w patchu
+                        const baseDamage = 35;
+                        const speedFactor = Math.max(1, impactSpeed * 0.15);
+                        
+                        const dmgToHolder = (baseDamage + (massIter / 500) * speedFactor) * dmgMult;
+                        const dmgToIter = (baseDamage + (massHolder / 500) * speedFactor) * dmgMult;
+
+                        if (dmgToHolder > 1) {
+                            sG.hp -= dmgToHolder;
+                            if (gridHolder.hexGrid.hpRatio) gridHolder.hp -= dmgToHolder * gridHolder.hexGrid.hpRatio;
+                            
+                            this.paintDamage(gridHolder, sG);
+                            
+                            if (sG.hp <= 0) {
+                                this.spawnSparks(wx, wy, 2);
+                                sG.becomeDebris(iterator.vx * 0.2, iterator.vy * 0.2, gridHolder, gridScale);
+                                this.splitQueue.add(gridHolder);
+                                this.eraseShard(gridHolder, sG);
+                            }
                         }
 
-                        sG.deform(-dx, -dy);
-                        gridHolder.hexGrid.cacheDirty = true;
-                        if (sG.hp <= 0) {
-                            this.spawnSparks(wx, wy, 2);
-                            sG.becomeDebris(iterator.vx * 0.2, iterator.vy * 0.2, gridHolder, gridScale);
-                            this.splitQueue.add(gridHolder);
-                        }
-                    }
-
-                    if (dmgToIter > 1) {
-                        sI.hp -= dmgToIter;
-                        // --- LOGIKA HP 2 (cd) ---
-                        if (iterator.hexGrid.hpRatio) {
-                            iterator.hp -= dmgToIter * iterator.hexGrid.hpRatio;
-                        }
-
-                        iterator.hexGrid.cacheDirty = true;
-                        if (sI.hp <= 0) {
-                            this.spawnSparks(wx, wy, 2);
-                            sI.becomeDebris(gridHolder.vx * 0.2, gridHolder.vy * 0.2, iterator, iterScale);
-                            this.splitQueue.add(iterator);
+                        if (dmgToIter > 1) {
+                            sI.hp -= dmgToIter;
+                            if (iterator.hexGrid.hpRatio) iterator.hp -= dmgToIter * iterator.hexGrid.hpRatio;
+                            
+                            this.paintDamage(iterator, sI);
+                            
+                            if (sI.hp <= 0) {
+                                this.spawnSparks(wx, wy, 2);
+                                sI.becomeDebris(gridHolder.vx * 0.2, gridHolder.vy * 0.2, iterator, iterScale);
+                                this.splitQueue.add(iterator);
+                                this.eraseShard(iterator, sI);
+                            }
                         }
                     }
                 }
             }
-        }
-
-        if (typeof performance !== 'undefined' && performance.now) {
-            const elapsed = performance.now() - perfStart;
-            this.lastHexCollisionMs = elapsed;
-            this.totalHexCollisionMs = (this.totalHexCollisionMs || 0) + elapsed;
-            this.hexCollisionSamples = (this.hexCollisionSamples || 0) + 1;
         }
     },
 
@@ -457,39 +546,30 @@ export const DestructorSystem = {
                 entity.dead = true;
                 debrisGroups.push(...groups);
             } else {
-                // --- LOGIKA HP 3: Utrata masy (Split) ---
-                // Obliczamy ile "wartości HP" traci statek przez odcięcie tych fragmentów
                 let totalLostHpValue = 0;
                 const ratio = entity.hexGrid.hpRatio || 0;
 
                 for (const group of debrisGroups) {
                     for (const shard of group) {
-                        // Jeśli heks jeszcze ma HP (a zwykle ma, bo odpadł jako cały kawałek),
-                        // to statek traci to HP.
                         if (shard.hp > 0) {
                             totalLostHpValue += shard.hp * ratio;
-                            // Zerujemy HP sharda, żeby wrak nie był "żywy" logicznie (opcjonalne)
-                            // shard.hp = 0; // Zostawmy to, żeby wrak miał HP
                         }
                     }
                 }
 
-                // Odejmij HP od statku
                 if (totalLostHpValue > 0) {
                     entity.hp -= totalLostHpValue;
-                    // Jeśli utrata masy zabiła statek
                     if (entity.hp <= 0) entity.dead = true;
                 }
 
                 if (!entity.dead) {
+                    // Update cache will handle full redraw of the new body shape
                     updateBodyWithShards(entity, survivorGroup);
                 }
             }
 
             for (const group of debrisGroups) {
-                // Nie twórz wraków z wraków - zapobiega powielaniu
                 if (entity.isWreck) continue;
-
                 if (window.createWreckage) {
                     window.createWreckage(entity, group);
                 }
@@ -931,7 +1011,6 @@ export function initHexBody(entity, image) {
         totalStructuralHp += s.hp;
     }
 
-    // Obliczamy współczynnik: ile HP statku odpowiada 1 HP heksa
     const entityMaxHp = entity.maxHp || 1000;
     const hpRatio = totalStructuralHp > 0 ? (entityMaxHp / totalStructuralHp) : 1.0;
 
@@ -975,7 +1054,7 @@ export function initHexBody(entity, image) {
         cacheCanvas: cacheCanvas,
         cacheCtx: cacheCanvas.getContext('2d', { willReadFrequently: true }),
         cacheDirty: true,
-        hpRatio: hpRatio, // ZAPAMIĘTUJEMY WSPÓŁCZYNNIK
+        hpRatio: hpRatio,
         spatialCellSize: r * DESTRUCTOR_CONFIG.spatialCellMultiplier,
         spatialMap: null
     };
