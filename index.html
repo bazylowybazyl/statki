@@ -5097,9 +5097,11 @@
       if (typeof ZONE_APPROACH_DISTANCE === 'number' && Number.isFinite(ZONE_APPROACH_DISTANCE)) {
         approach = ZONE_APPROACH_DISTANCE;
       }
-      const outerOrbitExtra = Math.max(1600, approach * 0.6);
+      const outerOrbitScale = 3;
+      const scaledApproach = approach * outerOrbitScale;
+      const outerOrbitExtra = Math.max(1600, scaledApproach * 0.6);
       const outerRadius = baseRadius + outerOrbitExtra;
-      const gravityWellRadius = outerRadius + approach;
+      const gravityWellRadius = outerRadius + scaledApproach;
 
       return { inner: baseRadius, outer: outerRadius, gravityWell: gravityWellRadius };
     }
