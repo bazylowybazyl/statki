@@ -5090,10 +5090,17 @@
     }
 
     function planetOrbitRadii(planet) {
-      const baseRadius = Math.max(10, (planet.r || 0) * 2);
-      const outerOrbitExtra = Math.max(1600, ZONE_APPROACH_DISTANCE * 0.6);
+      
+      const baseR = (planet.r && Number.isFinite(planet.r)) ? planet.r : 100;
+      const baseRadius = Math.max(10, baseR * 2);
+      let approach = 3000;
+      if (typeof ZONE_APPROACH_DISTANCE === 'number' && Number.isFinite(ZONE_APPROACH_DISTANCE)) {
+        approach = ZONE_APPROACH_DISTANCE;
+      }
+      const outerOrbitExtra = Math.max(1600, approach * 0.6);
       const outerRadius = baseRadius + outerOrbitExtra;
-      const gravityWellRadius = outerRadius + AU_IN_WORLD_UNITS;
+      const gravityWellRadius = outerRadius + approach;
+
       return { inner: baseRadius, outer: outerRadius, gravityWell: gravityWellRadius };
     }
 
