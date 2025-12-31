@@ -2881,6 +2881,7 @@
     // Dev flags/tuning (persisted via  where available)
     window.DevFlags = Object.assign({
       showRuler: false,
+      showPlanetOrbits: false,
       unlimitedWarp: false,
       showSunDir: false,
       use3DPirateStation: true,
@@ -15339,6 +15340,43 @@
       ctx.restore();
     }
 
+    function drawPlanetOrbitRings(ctx, cam) {
+      if (!DevFlags.showPlanetOrbits) return;
+      const planetList = Array.isArray(window.planets) ? window.planets : [];
+      if (!planetList.length) return;
+
+      const zoom = cam?.zoom ?? camera.zoom ?? 1;
+      ctx.save();
+      ctx.lineWidth = Math.max(1, 1.5 * zoom);
+
+      for (const planet of planetList) {
+        if (!planet || !Number.isFinite(planet.x) || !Number.isFinite(planet.y)) continue;
+        const radii = planetOrbitRadii(planet);
+        const s = worldToScreen(planet.x, planet.y, cam);
+
+        if (Number.isFinite(radii.inner)) {
+          ctx.strokeStyle = 'rgba(90, 180, 255, 0.55)';
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, radii.inner * zoom, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        if (Number.isFinite(radii.outer)) {
+          ctx.strokeStyle = 'rgba(140, 210, 255, 0.45)';
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, radii.outer * zoom, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        if (Number.isFinite(radii.gravityWell)) {
+          ctx.strokeStyle = 'rgba(170, 150, 255, 0.35)';
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, radii.gravityWell * zoom, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+
+      ctx.restore();
+    }
+
     function drawFrigateHull(ctx, npc, screenPos) {
       const hullSprite = getHullSpriteForNpc(npc);
       if (hullSprite) {
@@ -15812,6 +15850,7 @@
       }
       drawInfrastructureInstances(ctx, cam);
       drawPlanetLabels(ctx, cam);
+      drawPlanetOrbitRings(ctx, cam);
       drawRangeRuler(ctx, cam);
       if (window.drawSunDirection) drawSunDirection(ctx, cam);
 
@@ -17700,6 +17739,7 @@
       const saveLS = () => { window.__devtoolsSaveLS?.(); };
       const elUnlimited = document.getElementById('dt-unlimited-warp') || document.getElementById('toggleUnlimitedWarp');
       const elRuler = document.getElementById('dt-show-ruler') || document.getElementById('toggleRuler');
+      const elPlanetOrbits = document.getElementById('dt-show-planet-orbits') || document.getElementById('togglePlanetOrbits');
       const elScale = document.getElementById('dt-pirate-scale') || document.getElementById('pirScale');
       const elScaleVal = document.getElementById('dt-pirate-scale-value') || document.getElementById('pirScaleVal');
       const elStation3DScale = document.getElementById('dt-station3d-scale') || document.getElementById('station3DScale');
@@ -17723,6 +17763,15 @@
           DevFlags.showRuler = e.target.checked;
           const legacyRuler = document.getElementById('toggleRuler');
           if (legacyRuler) legacyRuler.checked = DevFlags.showRuler;
+        });
+      }
+      if (elPlanetOrbits) {
+        elPlanetOrbits.checked = !!DevFlags.showPlanetOrbits;
+        elPlanetOrbits.addEventListener('change', e => {
+          DevFlags.showPlanetOrbits = e.target.checked;
+          const legacyPlanets = document.getElementById('togglePlanetOrbits');
+          if (legacyPlanets) legacyPlanets.checked = DevFlags.showPlanetOrbits;
+          saveLS();
         });
       }
 
@@ -18107,6 +18156,9 @@
         <label><input id="toggleRuler" type="checkbox"> Miarka (okręgi dystansu)</label>
       </div>
       <div class="row">
+        <label><input id="togglePlanetOrbits" type="checkbox"> Miarki planet (inner/outer/gravity)</label>
+      </div>
+      <div class="row">
         <label><input id="toggleUnlimitedWarp" type="checkbox"> Nielimitowany warp <span class="pill">F9</span></label>
       </div>
       <div class="row">
@@ -18136,6 +18188,7 @@
       // Nie nadpisuj obiektu! Zachowaj referencję, bo gameplay trzyma do niej const.
       const __devtoolsDefaults = {
         showRuler: false,
+        showPlanetOrbits: false,
         unlimitedWarp: false,
         showSunDir: false,
         use3DPirateStation: true,
@@ -18233,6 +18286,7 @@
         planetsGroup: 'planetsGroup',
         distancesGroup: 'distancesGroup',
         cbRuler: 'toggleRuler',
+        cbPlanetOrbits: 'togglePlanetOrbits',
         cbUnlimited: 'toggleUnlimitedWarp',
         cbSunDir: 'dt-show-sundir',
         cbShake: 'dt-disable-shake',
@@ -18666,6 +18720,7 @@
         }
         if (ui.stationSpritePx) ui.stationSpritePx.value = DevConfig.stationSpriteSize | 0;
         ui.cbRuler.checked = DevFlags.showRuler;
+        if (ui.cbPlanetOrbits) ui.cbPlanetOrbits.checked = DevFlags.showPlanetOrbits;
         ui.cbUnlimited.checked = DevFlags.unlimitedWarp;
         if (ui.cbSunDir) ui.cbSunDir.checked = DevFlags.showSunDir;
         if (ui.cbShake) ui.cbShake.checked = DevFlags.disableCameraShake;
@@ -18960,6 +19015,9 @@
         }
       }
       ui.cbRuler.addEventListener('change', () => { DevFlags.showRuler = ui.cbRuler.checked; saveLS(); });
+      if (ui.cbPlanetOrbits) {
+        ui.cbPlanetOrbits.addEventListener('change', () => { DevFlags.showPlanetOrbits = ui.cbPlanetOrbits.checked; saveLS(); });
+      }
       ui.cbUnlimited.addEventListener('change', () => { DevFlags.unlimitedWarp = ui.cbUnlimited.checked; saveLS(); });
       if (ui.cbSunDir) {
         ui.cbSunDir.addEventListener('change', () => {
