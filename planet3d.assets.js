@@ -24,71 +24,32 @@ function computeZoneScale(body){
 
   const bx = Number.isFinite(body.x) ? body.x : 0;
   const by = Number.isFinite(body.y) ? body.y : 0;
-  const dx = pos.x - bx;
-  const dy = pos.y - by;
-  const dist = Math.hypot(dx, dy);
-
+  const approachRange = (typeof window !== 'undefined' && typeof window.ZONE_APPROACH_DISTANCE === 'number')
+    ? window.ZONE_APPROACH_DISTANCE
+    : 0;
   const baseRadiusRaw =
     Number.isFinite(body.baseR) ? body.baseR
       : Number.isFinite(body.r) ? body.r
       : Number.isFinite(body.radius) ? body.radius
       : (Number.isFinite(body.size) ? body.size * 0.5 : 0);
-  const baseRadius = Math.max(10, baseRadiusRaw);
-  const distFromSurface = Math.max(0, dist - baseRadius);
+  const baseOrbitRadius = Math.max(10, baseRadiusRaw * 2);
+  const outerOrbitExtra = Math.max(1600, approachRange * 0.6);
+  const orbitRadius = baseOrbitRadius + outerOrbitExtra;
+  const dx = pos.x - bx;
+  const dy = pos.y - by;
+  const dist = Math.hypot(dx, dy);
+  const edgeDist = dist - orbitRadius;
+  const transitionRange = Math.max(10, approachRange);
 
-  const auUnit = (typeof window !== 'undefined' && typeof window.getAuToWorldUnits === 'function')
-    ? window.getAuToWorldUnits()
-    : 3000;
-  const distAu = auUnit > 0 ? distFromSurface / auUnit : distFromSurface;
+  const shrinkMin = 0.4;
+  const growMax = 1.12;
 
-  const startAu = 30;
-  const maxScale = 2;
-  const minPercent = 0.05;
-  const gravityPercent = 0.2;
-  const brakePercent = 0.9;
-  const maxPercent = 1.0;
-
-  const orbitRadii = (typeof window !== 'undefined' && typeof window.planetOrbitRadii === 'function')
-    ? window.planetOrbitRadii(body)
-    : null;
-  const fallbackApproach = (typeof window !== 'undefined' && typeof window.ZONE_APPROACH_DISTANCE === 'number')
-    ? window.ZONE_APPROACH_DISTANCE
-    : 3000;
-  const outerRadius = Number.isFinite(orbitRadii?.outer)
-    ? orbitRadii.outer
-    : (baseRadius * 2 + Math.max(1600, fallbackApproach * 0.6));
-  const gravityWellRadius = Number.isFinite(orbitRadii?.gravityWell)
-    ? orbitRadii.gravityWell
-    : (outerRadius + Math.max(0, fallbackApproach * 3));
-
-  const outerSurface = Math.max(0, outerRadius - baseRadius);
-  const gravitySurface = Math.max(outerSurface + 1, gravityWellRadius - baseRadius);
-  const gravityAu = auUnit > 0 ? gravitySurface / auUnit : gravitySurface;
-
-  if (distAu >= startAu) {
-    return 0;
+  if (edgeDist <= 0) {
+    return growMax;
   }
 
-  if (distFromSurface > gravitySurface) {
-    const denom = Math.max(0.001, startAu - gravityAu);
-    const t = clamp01((startAu - distAu) / denom);
-    return maxScale * lerp(minPercent, gravityPercent, t);
-  }
-
-  let percent = brakePercent;
-  const warp = ship?.warp;
-  const brake = warp?.gravityBrake;
-  if (brake?.active && Number.isFinite(brake.timer) && Number.isFinite(brake.duration) && brake.duration > 0) {
-    const progress = smoothstep01(1 - brake.timer / brake.duration);
-    percent = lerp(gravityPercent, brakePercent, progress);
-  }
-
-  if (distFromSurface <= outerSurface && gravitySurface > outerSurface) {
-    const tOuter = clamp01((gravitySurface - distFromSurface) / (gravitySurface - outerSurface));
-    percent = lerp(brakePercent, maxPercent, tOuter);
-  }
-
-  return maxScale * percent;
+  const t = smoothstep01(1 - edgeDist / transitionRange);
+  return lerp(shrinkMin, growMax, t);
 }
 
 if (typeof window !== 'undefined' && !window.getSharedRenderer) {
@@ -966,9 +927,6 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
     for (const s of list) {
       const size = (s.r || 30) * PLANET_SIZE_MULTIPLIER;
       const planet = new AssetPlanet3D(s.x, s.y, size, { name: s.name || s.id || null, type: s.type, ref: s });
-      if (s && planet?.canvas) {
-        s._planetCanvas3D = planet.canvas;
-      }
       _planets.push(planet);
     }
 
