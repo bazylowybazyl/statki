@@ -1706,6 +1706,12 @@
       text-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
     }
 
+    .planet-radar-visual {
+      display: block;
+      border-radius: 50%;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+    }
+
     .planet-radar-label {
       padding: 4px 10px;
       border-radius: 999px;
@@ -3882,6 +3888,51 @@
       return { x: W / 2 + safeX * scale, y: H / 2 + safeY * scale };
     }
 
+    function getPlanetScaleInfo(planet, distWorld) {
+      const auUnit = getAuToWorldUnits();
+      const baseRadius = Math.max(10, planet?.r || 0);
+      const distFromSurface = Math.max(0, distWorld - baseRadius);
+      const distAu = auUnit > 0 ? distFromSurface / auUnit : distFromSurface;
+      const startAu = 30;
+      const maxScale = 2;
+      const minPercent = 0.05;
+      const gravityPercent = 0.2;
+      const brakePercent = 0.9;
+      const maxPercent = 1.0;
+
+      const orbitRadii = planetOrbitRadii(planet);
+      const outerRadius = Number.isFinite(orbitRadii?.outer) ? orbitRadii.outer : baseRadius * 2;
+      const gravityWellRadius = Number.isFinite(orbitRadii?.gravityWell) ? orbitRadii.gravityWell : outerRadius;
+      const outerSurface = Math.max(0, outerRadius - baseRadius);
+      const gravitySurface = Math.max(outerSurface + 1, gravityWellRadius - baseRadius);
+      const gravityAu = auUnit > 0 ? gravitySurface / auUnit : gravitySurface;
+
+      if (distAu >= startAu) {
+        return { scale: 0, distAu, distFromSurface, gravitySurface, outerSurface, maxScale, startAu };
+      }
+
+      if (distFromSurface > gravitySurface) {
+        const denom = Math.max(0.001, startAu - gravityAu);
+        const t = clamp((startAu - distAu) / denom, 0, 1);
+        const percent = minPercent + (gravityPercent - minPercent) * t;
+        return { scale: maxScale * percent, distAu, distFromSurface, gravitySurface, outerSurface, maxScale, startAu };
+      }
+
+      let percent = brakePercent;
+      const brake = window.ship?.warp?.gravityBrake;
+      if (brake?.active && brake.duration > 0) {
+        const progress = smoothstep01(1 - brake.timer / brake.duration);
+        percent = gravityPercent + (brakePercent - gravityPercent) * progress;
+      }
+
+      if (distFromSurface <= outerSurface && gravitySurface > outerSurface) {
+        const tOuter = clamp((gravitySurface - distFromSurface) / (gravitySurface - outerSurface), 0, 1);
+        percent = brakePercent + (maxPercent - brakePercent) * tOuter;
+      }
+
+      return { scale: maxScale * percent, distAu, distFromSurface, gravitySurface, outerSurface, maxScale, startAu };
+    }
+
     function ensurePlanetRadarItem(id) {
       if (!planetRadarRoot) return null;
       let el = planetRadarState.elements.get(id);
@@ -3890,10 +3941,13 @@
       const item = document.createElement('div');
       item.className = 'planet-radar-item';
 
+      const visual = document.createElement('canvas');
+      visual.className = 'planet-radar-visual';
+
       const label = document.createElement('div');
       label.className = 'planet-radar-label';
 
-      item.append(label);
+      item.append(visual, label);
       planetRadarRoot.appendChild(item);
       planetRadarState.elements.set(id, item);
       return item;
@@ -3911,7 +3965,7 @@
       if (!Array.isArray(planets)) return;
       const auUnit = getAuToWorldUnits();
       const margin = 32;
-      const maxScaleAu = 40;
+      const maxScaleAu = 30;
       const minScale = 0.58;
       const maxScale = 1.4;
       const shouldRender = !!planetRadarRoot && planetRadarState.enabled;
@@ -3929,7 +3983,8 @@
         const dy = planet.y - ship.pos.y;
         const distWorld = Math.hypot(dx, dy);
         const arrivalRadius = Math.max(10, (planet.r || 0) * 2);
-        const distAu = Math.max(0, (distWorld - Math.max(planet.r || 0, 0)) / auUnit);
+        const scaleInfo = getPlanetScaleInfo(planet, distWorld);
+        const distAu = Math.max(0, scaleInfo.distAu);
 
         if (planetRadarState.visited.has(id) && distAu >= 2) {
           planetRadarState.visited.delete(id);
@@ -3954,6 +4009,15 @@
           continue;
         }
 
+        if (distAu >= scaleInfo.startAu || scaleInfo.distFromSurface <= scaleInfo.gravitySurface || scaleInfo.scale <= 0) {
+          const existing = planetRadarState.elements.get(id);
+          if (existing) {
+            existing.remove();
+            planetRadarState.elements.delete(id);
+          }
+          continue;
+        }
+
         if (!shouldRender) continue;
 
         const screenPos = worldToScreen(planet.x, planet.y, cam);
@@ -3963,7 +4027,31 @@
 
         const item = ensurePlanetRadarItem(id);
         if (!item) continue;
+        const visualEl = item.querySelector('.planet-radar-visual');
         const labelEl = item.querySelector('.planet-radar-label');
+
+        if (visualEl) {
+          const planetCanvas = planet._planetCanvas3D;
+          visualEl.style.display = planetCanvas ? 'block' : 'none';
+          const scaleRatio = clamp(scaleInfo.scale / scaleInfo.maxScale, 0, 1);
+          const baseSize = Math.max(60, Math.min(240, (planet.r || 120) * 0.05));
+          const planetSize = Math.max(10, baseSize * scaleRatio);
+          const dpr = window.devicePixelRatio || 1;
+          visualEl.width = Math.round(planetSize * dpr);
+          visualEl.height = Math.round(planetSize * dpr);
+          visualEl.style.width = `${planetSize}px`;
+          visualEl.style.height = `${planetSize}px`;
+          const ctx = visualEl.getContext('2d');
+          if (ctx && planetCanvas) {
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, planetSize, planetSize);
+            ctx.drawImage(planetCanvas, 0, 0, planetSize, planetSize);
+          }
+          const dirLen = Math.hypot(dirX, dirY) || 1;
+          const shiftX = (dirX / dirLen) * margin;
+          const shiftY = (dirY / dirLen) * margin;
+          visualEl.style.transform = `translate(${shiftX}px, ${shiftY}px)`;
+        }
 
         if (labelEl) {
           const ratio = clamp(distAu / maxScaleAu, 0, 1);
@@ -14160,6 +14248,9 @@
       },
       isBusy() { return this.state !== 'idle'; }
     };
+    if (window.ship) {
+      window.ship.warp = warp;
+    }
 
     function exitWarp() {
       spawnShockwave(ship.pos.x, ship.pos.y, { maxR: 1200, maxLife: 0.7 });
