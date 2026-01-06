@@ -4843,7 +4843,18 @@
       const defs = [
         { id: 'mercury', name: 'mercury', baseR: 2000, orbitAU: 8.0, type: 'rocky' },
         { id: 'venus', name: 'venus', baseR: 2800, orbitAU: 15.0, type: 'rocky' },
-        { id: 'earth', name: 'earth', baseR: 2800, orbitAU: 25.0, type: 'terran' },
+        {
+          id: 'earth',
+          name: 'earth',
+          baseR: 2800,
+          orbitAU: 25.0,
+          type: 'terran',
+          orbitZone: {
+            inner: 8500,
+            outer: 12000,
+            gravity: 22000
+          }
+        },
         { id: 'mars', name: 'mars', baseR: 3000, orbitAU: 33.0, type: 'rocky' },
         { id: 'jupiter', name: 'jupiter', baseR: 3800, orbitAU: 50.20, type: 'gas' },
         { id: 'saturn', name: 'saturn', baseR: 3700, orbitAU: 80.58, type: 'gas' },
@@ -4875,6 +4886,7 @@
           baseR: def.baseR,
           r: effectiveR,
           orbitAU: def.orbitAU,
+          orbitZone: def.orbitZone,
           orbitRadius,
           angle: rand(),
           speed: 0
@@ -5090,20 +5102,30 @@
     }
 
     function planetOrbitRadii(planet) {
-      
-      const baseR = (planet.r && Number.isFinite(planet.r)) ? planet.r : 100;
-      const baseRadius = Math.max(10, baseR * 2);
-      let approach = 3000;
-      if (typeof ZONE_APPROACH_DISTANCE === 'number' && Number.isFinite(ZONE_APPROACH_DISTANCE)) {
-        approach = ZONE_APPROACH_DISTANCE;
-      }
-      const outerOrbitScale = 3;
-      const scaledApproach = approach * outerOrbitScale;
-      const outerOrbitExtra = Math.max(1600, scaledApproach * 0.6);
-      const outerRadius = baseRadius + outerOrbitExtra;
-      const gravityWellRadius = outerRadius + scaledApproach;
+      // 1. Bezpiecznie pobierz fizyczny promień (hitbox)
+      const r = (planet.r && Number.isFinite(planet.r)) ? planet.r : 100;
 
-      return { inner: baseRadius, outer: outerRadius, gravityWell: gravityWellRadius };
+      // 2. PRIORYTET: Jeśli zdefiniowano ręczne strefy w konfiguracji planety - użyj ich!
+      // To pozwala ustawić np. Outer na 12000 pod Ring, niezależnie od wielkości planety.
+      if (planet.orbitZone) {
+        return {
+          inner: planet.orbitZone.inner || (r * 2.5),
+          outer: planet.orbitZone.outer || (r * 4.0),
+          gravityWell: planet.orbitZone.gravity || (r * 8.0)
+        };
+      }
+
+      // 3. FALLBACK: Nowa, bezpieczniejsza matematyka dla planet bez konfigu.
+      // Zwiększamy mnożnik Inner z 2.0 na 2.2, żeby linia na pewno była nad dużą grafiką.
+      const innerRadius = Math.max(r * 2.2, r + 1500);
+
+      // Outer to strefa operacyjna (tam gdzie ringi)
+      const outerRadius = innerRadius + 4000;
+
+      // Gravity Well to granica przyciągania
+      const gravityWellRadius = outerRadius + 6000;
+
+      return { inner: innerRadius, outer: outerRadius, gravityWell: gravityWellRadius };
     }
 
     function enhanceZoneDescriptor(zone) {
