@@ -13414,17 +13414,19 @@
     function drawSuperweaponSprite(ctx, cam) {
       if (!superweaponSpriteReady) return;
 
-      const screen = worldToScreen(ship.pos.x, ship.pos.y, cam);
-      const spriteScale = 0.35 * cam.zoom; // Increased scale for better visibility
-      const spriteW = superweaponSprite.width * spriteScale;
-      const spriteH = superweaponSprite.height * spriteScale;
+      
+  const tuneScale = (typeof window.SW_SCALE === 'number') ? window.SW_SCALE : 0.35;
+  const defaultY = -ship.h * 0.35;
+  const tuneY = (typeof window.SW_POS_Y === 'number') ? window.SW_POS_Y : defaultY;
 
-      // Calculate turret mount position (center-top of ship in world space)
-      const mountOffset = rotate({ x: 0, y: -ship.h * 0.35 }, ship.angle);
-      const mountWorld = {
-        x: ship.pos.x + mountOffset.x,
-        y: ship.pos.y + mountOffset.y
-      };
+  const spriteScale = tuneScale * cam.zoom; 
+  const spriteW = superweaponSprite.width * spriteScale;
+  const spriteH = superweaponSprite.height * spriteScale;
+  const mountOffset = rotate({ x: 0, y: tuneY }, ship.angle);
+  const mountWorld = {
+    x: ship.pos.x + mountOffset.x,
+    y: ship.pos.y + mountOffset.y
+  };
       const mountScreen = worldToScreen(mountWorld.x, mountWorld.y, cam);
 
       // Calculate angle towards mouse cursor
