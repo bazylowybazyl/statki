@@ -13329,54 +13329,63 @@
     }
 
     function executeSuperweaponFire() {
-      // Calculate firing direction (towards mouse or forward)
-      const mouseWorld = screenToWorld(mouse.x, mouse.y);
-      const dx = mouseWorld.x - ship.pos.x;
-      const dy = mouseWorld.y - ship.pos.y;
-      const dist = Math.hypot(dx, dy) || 1;
-      const dir = { x: dx / dist, y: dy / dist };
+      // Pobieramy te same wartości co przy rysowaniu
+      const tuneY = (typeof window.SW_POS_Y === 'number') ? window.SW_POS_Y : (-ship.h * 0.35);
+      const tuneX = (typeof window.SW_POS_X === 'number') ? window.SW_POS_X : 50;
 
-      // Muzzle position (center-top of ship)
-      const muzzleOffset = rotate({ x: 0, y: -ship.h * 0.4 }, ship.angle);
-      const muzzle = {
-        x: ship.pos.x + muzzleOffset.x,
-        y: ship.pos.y + muzzleOffset.y
-      };
+      // Definiujemy dwa punkty wylotu
+      const offsets = [
+        { x: -tuneX, y: tuneY },
+        { x: tuneX, y: tuneY }
+      ];
 
-      // Create hexlance projectile
-      hexlanceProjectiles.push({
-        x: muzzle.x,
-        y: muzzle.y,
-        vx: dir.x * superweapon.projectileSpeed + ship.vel.x,
-        vy: dir.y * superweapon.projectileSpeed + ship.vel.y,
-        life: 2.0,
-        traveled: 0,
-        beamWidth: superweapon.beamWidth,
-        angle: Math.atan2(dir.y, dir.x)
+      // Pętla strzału dla każdego działa
+      offsets.forEach(off => {
+        // 1. Oblicz pozycję lufy w świecie gry
+        const muzzleOffset = rotate(off, ship.angle);
+        const muzzle = {
+          x: ship.pos.x + muzzleOffset.x,
+          y: ship.pos.y + muzzleOffset.y
+        };
+
+        // 2. Oblicz kierunek strzału (do myszki)
+        const mouseWorld = screenToWorld(mouse.x, mouse.y);
+        const dx = mouseWorld.x - muzzle.x;
+        const dy = mouseWorld.y - muzzle.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const dir = { x: dx / dist, y: dy / dist };
+
+        // 3. Stwórz pocisk Hexlance
+        hexlanceProjectiles.push({
+          x: muzzle.x,
+          y: muzzle.y,
+          vx: dir.x * superweapon.projectileSpeed + ship.vel.x,
+          vy: dir.y * superweapon.projectileSpeed + ship.vel.y,
+          life: 2.0,
+          traveled: 0,
+          beamWidth: superweapon.beamWidth,
+          angle: Math.atan2(dir.y, dir.x)
+        });
+
+        // 4. Efekty wizualne (Muzzle Flash)
+        for (let i = 0; i < 30; i++) {
+          const a = Math.atan2(dir.y, dir.x) + (Math.random() - 0.5) * 0.8;
+          const spd = 400 + Math.random() * 600;
+          spawnParticle(
+            { x: muzzle.x, y: muzzle.y },
+            { x: Math.cos(a) * spd, y: Math.sin(a) * spd },
+            0.15 + Math.random() * 0.1,
+            '#ffaa44',
+            4 + Math.random() * 3,
+            true
+          );
+        }
+        spawnShockwave(muzzle.x, muzzle.y, { maxR: 150, maxLife: 0.25, w: 4, color: 'rgba(255,180,100,' });
       });
 
-      // Set cooldown
+      // Wspólny cooldown i wstrząs kamery (raz na salwę)
       superweapon.cooldown = superweapon.cooldownMax;
-
-      // Visual effects
       camera.addShake(15, 0.3);
-
-      // Muzzle flash
-      for (let i = 0; i < 30; i++) {
-        const a = Math.atan2(dir.y, dir.x) + (Math.random() - 0.5) * 0.8;
-        const spd = 400 + Math.random() * 600;
-        spawnParticle(
-          { x: muzzle.x, y: muzzle.y },
-          { x: Math.cos(a) * spd, y: Math.sin(a) * spd },
-          0.15 + Math.random() * 0.1,
-          '#ffaa44',
-          4 + Math.random() * 3,
-          true
-        );
-      }
-
-      // Shockwave at muzzle
-      spawnShockwave(muzzle.x, muzzle.y, { maxR: 150, maxLife: 0.25, w: 4, color: 'rgba(255,180,100,' });
     }
 
     function drawHexlanceProjectiles(ctx, cam) {
@@ -13411,55 +13420,61 @@
       }
     }
 
-    function drawSuperweaponSprite(ctx, cam) {
+   function drawSuperweaponSprite(ctx, cam) {
       if (!superweaponSpriteReady) return;
 
-      
-  const tuneScale = (typeof window.SW_SCALE === 'number') ? window.SW_SCALE : 0.35;
-  const defaultY = -ship.h * 0.35;
-  const tuneY = (typeof window.SW_POS_Y === 'number') ? window.SW_POS_Y : defaultY;
+      // --- KONFIGURACJA TUNERA ---
+      const tuneScale = (typeof window.SW_SCALE === 'number') ? window.SW_SCALE : 0.35;
+      const defaultY = -ship.h * 0.35;
+      const tuneY = (typeof window.SW_POS_Y === 'number') ? window.SW_POS_Y : defaultY;
 
-  const spriteScale = tuneScale * cam.zoom; 
-  const spriteW = superweaponSprite.width * spriteScale;
-  const spriteH = superweaponSprite.height * spriteScale;
-  const mountOffset = rotate({ x: 0, y: tuneY }, ship.angle);
-  const mountWorld = {
-    x: ship.pos.x + mountOffset.x,
-    y: ship.pos.y + mountOffset.y
-  };
-      const mountScreen = worldToScreen(mountWorld.x, mountWorld.y, cam);
+      // NOWOŚĆ: Rozstaw dział (X). Domyślnie 50px w lewo i prawo.
+      const tuneX = (typeof window.SW_POS_X === 'number') ? window.SW_POS_X : 50;
+      // ---------------------------
 
-      // Calculate angle towards mouse cursor
-      const mouseWorld = screenToWorld(mouse.x, mouse.y);
-      const dx = mouseWorld.x - mountWorld.x;
-      const dy = mouseWorld.y - mountWorld.y;
-      const turretAngle = Math.atan2(dy, dx); // Direct angle to mouse, no offset
+      const spriteScale = tuneScale * cam.zoom;
+      const spriteW = superweaponSprite.width * spriteScale;
+      const spriteH = superweaponSprite.height * spriteScale;
 
-      ctx.save();
-      ctx.translate(mountScreen.x, mountScreen.y);
-      ctx.rotate(turretAngle);
+      // Definiujemy dwa offsety: Lewy (-X) i Prawy (+X)
+      const offsets = [
+        { x: -tuneX, y: tuneY }, // Lewe działo
+        { x: tuneX, y: tuneY }   // Prawe działo
+      ];
 
-      // Charging glow effect
-      if (superweapon.charging) {
-        const t = superweapon.chargeProgress / superweapon.chargeTime;
-        ctx.shadowColor = `rgba(255, ${150 + t * 100}, 50, ${0.5 + t * 0.5})`;
-        ctx.shadowBlur = 20 + t * 30;
-      }
+      // Rysujemy w pętli (dwa razy)
+      offsets.forEach(off => {
+        const mountOffset = rotate(off, ship.angle);
 
-      // Cooldown visual (dim when on cooldown)
-      if (superweapon.cooldown > 0) {
-        ctx.globalAlpha = 0.6 + 0.4 * (1 - superweapon.cooldown / superweapon.cooldownMax);
-      }
+        const mountWorld = {
+          x: ship.pos.x + mountOffset.x,
+          y: ship.pos.y + mountOffset.y
+        };
+        const mountScreen = worldToScreen(mountWorld.x, mountWorld.y, cam);
 
-      ctx.drawImage(
-        superweaponSprite,
-        -spriteW / 2,
-        -spriteH / 2,
-        spriteW,
-        spriteH
-      );
+        // Celowanie (kąt w stronę myszki)
+        const mouseWorld = screenToWorld(mouse.x, mouse.y);
+        const dx = mouseWorld.x - mountWorld.x;
+        const dy = mouseWorld.y - mountWorld.y;
+        const turretAngle = Math.atan2(dy, dx);
 
-      ctx.restore();
+        ctx.save();
+        ctx.translate(mountScreen.x, mountScreen.y);
+        ctx.rotate(turretAngle);
+
+        // Efekty ładowania (wspólne dla obu)
+        if (typeof superweapon !== 'undefined' && superweapon.charging) {
+          const t = superweapon.chargeProgress / superweapon.chargeTime;
+          ctx.shadowColor = `rgba(255, ${150 + t * 100}, 50, ${0.5 + t * 0.5})`;
+          ctx.shadowBlur = 20 + t * 30;
+        }
+        if (typeof superweapon !== 'undefined' && superweapon.cooldown > 0) {
+          ctx.globalAlpha = 0.6 + 0.4 * (1 - superweapon.cooldown / superweapon.cooldownMax);
+        }
+
+        ctx.drawImage(superweaponSprite, -spriteW / 2, -spriteH / 2, spriteW, spriteH);
+        ctx.restore();
+      });
     }
 
     // Keyboard handler for superweapon (key "1")
