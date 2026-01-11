@@ -67,7 +67,7 @@ export const SHIP_SPRITE_SCALE = 1.0;
 const SHIP_VISUAL_BASE = {
   turretTop: { x: 63.50, y: -81.00 },
   turretBottom: { x: 77.50, y: 57.50 },
-  engineY: 223.00
+  engineY: 540.00
 };
 
 function clone(value) {

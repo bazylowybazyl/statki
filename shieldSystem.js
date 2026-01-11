@@ -274,14 +274,15 @@ function getShieldDimensions(entity) {
     let h = entity.h || (entity.radius * 2) || 40;
 
     if (entity.capitalProfile) {
-        const baseR = entity.radius || 20;
-        const len = baseR * (entity.capitalProfile.lengthScale || 3.2);
-        const wid = baseR * (entity.capitalProfile.widthScale || 1.2);
+    const baseR = entity.radius || 20;
+    const len = baseR * (entity.capitalProfile.lengthScale || 3.2);
+    const wid = baseR * (entity.capitalProfile.widthScale || 1.2);
 
-        // POPRAWKA: Długość (len) idzie do X (w), Szerokość (wid) idzie do Y (h)
-        // Wcześniej było na odwrót (Math.max(w, wid)), co tworzyło pionową elipsę.
-        w = Math.max(w, len);
-        h = Math.max(h, wid);
+    // POPRAWKA: Aby tarcza była pionowa (zgodna z długim statkiem):
+    // Szerokość (w) musi brać wartość 'wid' (węższą)
+    // Wysokość (h) musi brać wartość 'len' (dłuższą)
+    w = Math.max(w, wid); 
+    h = Math.max(h, len);
     } else if (entity.fighter || entity.type === 'fighter') {
         const size = Math.max(w, h);
         w = size; h = size;
