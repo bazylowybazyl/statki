@@ -2030,17 +2030,6 @@
         <ul id="fleet-list"></ul>
       </div>
     </div>
-    <div id="shield-controls" class="side-panel hidden" data-panel="shield">
-      <button class="panel-toggle" type="button">
-        <span class="side-panel-title">Tarcza</span>
-        <span class="panel-chevron" aria-hidden="true">⟲</span>
-      </button>
-      <div class="side-panel-body" role="group" aria-label="Sterowanie tarczą">
-        <div class="support-row">
-          <button id="btn-energy-shot" class="support-order-btn">Energy Shot (+50%)</button>
-        </div>
-      </div>
-    </div>
   </div>
   <div id="main-menu">
     <div class="menu-panel">
@@ -2287,8 +2276,6 @@
     const supportEngageBtn = document.getElementById('support-engage');
     const supportSpawnButtons = document.querySelectorAll('[data-support-spawn]');
     const carrierSpawnBtn = document.querySelector('[data-support-spawn="carrier_capital"]');
-    const shieldControlsRoot = document.getElementById('shield-controls');
-    const energyShotBtn = document.getElementById('btn-energy-shot');
     const supportDragState = {
       active: false,
       key: null,
@@ -2371,7 +2358,6 @@
 
     const fleetPanel = setupSidePanel(fleetUIRoot);
     const supportPanel = setupSidePanel(supportUIRoot);
-    const shieldPanel = setupSidePanel(shieldControlsRoot);
     const Fleet = window.Fleet || (window.Fleet = {
       ships: [],
       dirty: true,
@@ -11916,6 +11902,11 @@
         hudPingNpcStations();
         togglePlanetRadarVisibility();
       }
+      if (k === '4') {
+        if (!stationUI.open && !showMap && gameStarted) {
+          triggerEnergyShot();
+        }
+      }
       if (k === 'z') {
         if (!(Game.player.weapons?.[HP.HANGAR]?.length)) { toast('Brak dostępnych hangarów.'); return; }
         if (SQUAD.order === 'idle' || SQUAD.list.length === 0) {
@@ -17819,7 +17810,6 @@
 
       uiRoot?.classList.remove('hidden');
       hudTopbarRoot?.classList.remove('hidden');
-      if (shieldControlsRoot) shieldControlsRoot.classList.remove('hidden');
       initShieldSystem(W, H);
 
       requestAnimationFrame(loop);
@@ -17896,10 +17886,6 @@
         event.stopPropagation();
       }
     }, true);
-    if (energyShotBtn) {
-      energyShotBtn.addEventListener('click', () => triggerEnergyShot());
-    }
-
     function wireDevTools() {
       const saveLS = () => { window.__devtoolsSaveLS?.(); };
       const elUnlimited = document.getElementById('dt-unlimited-warp') || document.getElementById('toggleUnlimitedWarp');
