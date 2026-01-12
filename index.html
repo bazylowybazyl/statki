@@ -4312,18 +4312,18 @@
       exitFreeMode() {
         this.mode = 'ship';
         this.focusStation = null;
-        this.manualZoom = false;
         this.focusArrived = false;
         this.lastPointerX = null;
         this.lastPointerY = null;
         const tx = ship.pos.x;
         const ty = ship.pos.y;
-        const tz = this.defaultZoom;
+        const tz = clamp(this.zoom, this.minZoom, this.maxZoom);
         this.beginTransition(tx, ty, tz, 0.75, () => {
           this.targetX = tx;
           this.targetY = ty;
           this.targetZoom = tz;
         });
+        this.manualZoom = true;
       },
       toggleFreeMode() {
         if (this.mode === 'free') this.exitFreeMode();
