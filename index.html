@@ -15990,7 +15990,8 @@
       // najpierw zaktualizuj pozycje stacji 3D...
       if (window.updateStations3D) window.updateStations3D(stations);
       // ...a potem wyrenderuj overlay sceny 3D
-      if (window.updateWorld3D) updateWorld3D(frameDt, vfxTime);
+      // Przekazujemy 'cam' (który ma już interpolowane x/y), aby kamera 3D była zsynchronizowana
+      if (window.updateWorld3D) updateWorld3D(frameDt, vfxTime, cam);
 
       // Gwiazdy (proceduralne kafelki na całej mapie)
       drawStars(cam);
