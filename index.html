@@ -4435,14 +4435,53 @@
 
     function updateCameraTarget(dt) {
       if (camera.mode === 'ship') {
-        camera.targetX = ship.pos.x;
-        camera.targetY = ship.pos.y;
+        // 1. Bazowa pozycja to statek
+        let targetX = ship.pos.x;
+        let targetY = ship.pos.y;
+
+        // 2. STARSECTOR STYLE PANNING (Look Ahead)
+        if (mouse.overCanvas) {
+          // Środek ekranu
+          const cx = W / 2;
+          const cy = H / 2;
+
+          // Odległość myszki od środka ekranu (w pikselach)
+          const dx = mouse.x - cx;
+          const dy = mouse.y - cy;
+          
+          // Ustawienia Panningu
+          // Czułość: 0.65 oznacza, że kamera przesunie się o 65% odległości w stronę kursora
+          const sensitivity = 0.65; 
+          
+          // Maksymalne wychylenie (w pikselach ekranu), żeby kamera nie uciekła w róg
+          const maxPan = Math.min(W, H) * 0.42;
+
+          // Obliczamy wektor przesunięcia
+          const dist = Math.hypot(dx, dy);
+          const angle = Math.atan2(dy, dx);
+          
+          // Clampujemy (ograniczamy) dystans wychylenia
+          const panDist = Math.min(dist * sensitivity, maxPan);
+
+          // Dodajemy offset do celu kamery
+          // Dzielimy przez camera.zoom, aby ruch był spójny niezależnie od przybliżenia
+          targetX += (Math.cos(angle) * panDist) / Math.max(0.1, camera.zoom);
+          targetY += (Math.sin(angle) * panDist) / Math.max(0.1, camera.zoom);
+        }
+
+        camera.targetX = targetX;
+        camera.targetY = targetY;
+
+        // Zachowanie efektu hamowania z grawitacji (Twój istniejący kod)
         const brakeOffset = gravityBrakeCameraOffset();
         if (brakeOffset) {
           camera.targetX += brakeOffset.x;
           camera.targetY += brakeOffset.y;
         }
+        
+        // Reset zoomu jeśli nie ma animacji
         if (!camera.transition && !camera.manualZoom) camera.targetZoom = camera.defaultZoom;
+      
       } else if (camera.mode === 'free') {
         const moveX = (keys['arrowright'] ? 1 : 0) - (keys['arrowleft'] ? 1 : 0);
         const moveY = (keys['arrowdown'] ? 1 : 0) - (keys['arrowup'] ? 1 : 0);
@@ -4519,14 +4558,19 @@
           if (typeof onComplete === 'function') onComplete();
         }
       } else {
+        // --- WYGŁADZANIE RUCHU KAMERY ---
         if (camera.mode === 'ship') {
-          camera.x = camera.targetX;
-          camera.y = camera.targetY;
+          // Dla trybu statku dajemy lekkie opóźnienie (5.0), żeby kamera płynnie podążała za myszką
+          const posLerp = Math.min(1, dt * 5.0); 
+          camera.x += (camera.targetX - camera.x) * posLerp;
+          camera.y += (camera.targetY - camera.y) * posLerp;
         } else {
+          // Dla innych trybów (np. free) standardowa prędkość
           const posLerp = Math.min(1, dt * 6);
           camera.x += (camera.targetX - camera.x) * posLerp;
           camera.y += (camera.targetY - camera.y) * posLerp;
         }
+        
         const zoomLerp = Math.min(1, dt * 4);
         camera.zoom += (camera.targetZoom - camera.zoom) * zoomLerp;
       }
