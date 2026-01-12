@@ -1,6 +1,6 @@
 # AGENTS.md — przewodnik dla agentów
 
-> **Cel pliku**: Krótki, praktyczny opis architektury gry „Space Survivors” i miejsc integracji. Trzymaj się poniższych zasad, aby uniknąć psucia warstwy grywalnej i wydajności.
+> **Cel pliku**: Krótki, praktyczny opis architektury gry „Super Capital: Battle for Solar System” i miejsc integracji. Trzymaj się poniższych zasad, aby uniknąć psucia warstwy grywalnej i wydajności.
 
 ---
 
