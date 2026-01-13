@@ -457,7 +457,7 @@
       color: #a8b4d9
     }
 
-    /* --- STAR WARS MENU STYLES (ENHANCED) --- */
+    /* --- MENU STYLES (ENHANCED) --- */
     #main-menu {
       position: fixed;
       inset: 0;
@@ -467,7 +467,7 @@
       background: radial-gradient(circle at 50% 50%, rgba(10, 20, 40, 0.3), rgba(0, 0, 0, 0.95));
       perspective: 1200px;
       overflow: hidden;
-      z-index: 70;
+      z-index: 9999;
       transition: opacity 0.8s ease, backdrop-filter 0.8s ease;
     }
 
@@ -794,7 +794,7 @@
       align-items: center;
       justify-content: center;
       background: radial-gradient(circle at 40% 30%, rgba(77, 190, 255, 0.12), rgba(3, 4, 23, 0.94));
-      z-index: 80;
+      z-index: 300;
       color: var(--fa-text);
       font-family: var(--fa-font);
       padding: 20px;
@@ -4129,17 +4129,67 @@
 
     if (isMainMenuVisible()) tryPlayMenuMusic();
 
+    // --- ZBIORCZA LISTA ELEMENTÓW HUD (Nowych i starych) ---
+    function getGameUIElements() {
+      return [
+        // Główne kontenery AERO HUD
+        document.getElementById('hud-top-container'),
+        document.getElementById('hud-bottom-container'),
+        
+        // Kontenery boczne
+        document.getElementById('side-panels-container'),
+        document.getElementById('right-panels-container'),
+        
+        // Bezpośrednie panele (dla pewności)
+        document.getElementById('panel-support'),
+        document.getElementById('panel-fleet'),
+        
+        // Elementy Overlay
+        document.getElementById('planet-radar'),
+        document.getElementById('zoom-indicator'),
+        document.getElementById('hint-box'),
+        
+        // Stare/Inne elementy
+        document.getElementById('hud-topbar'),
+        document.getElementById('ui'),
+        
+        // Canvasy hex pancerza (dla pewności, choć są w bottom-container)
+        document.getElementById('hex-armor-container')
+      ];
+    }
+
+    function toggleGameUI(visible) {
+      const elements = getGameUIElements();
+      elements.forEach(el => {
+        if (el) {
+          if (visible) el.classList.remove('hidden');
+          else el.classList.add('hidden');
+        }
+      });
+    }
+
     function showMainMenu(view = 'home') {
       setMenuView(view);
       if (mainMenuEl) mainMenuEl.classList.remove('hidden');
+      
+      // UKRYJ HUD GRY GDY MENU JEST OTWARTE
+      toggleGameUI(false);
+
       if (gameStarted) setPaused(true);
       if (!gameStarted) tryPlayMenuMusic();
     }
 
     function hideMainMenu() {
       if (mainMenuEl) mainMenuEl.classList.add('hidden');
-      if (gameStarted) setPaused(false);
+      
+      // POKAŻ HUD GRY TYLKO JEŚLI GRA JEST ROZPOCZĘTA
+      if (gameStarted) {
+        toggleGameUI(true);
+        setPaused(false);
+      }
     }
+
+   
 
     function toggleMainMenu() {
       if (isMainMenuVisible()) hideMainMenu();
@@ -4664,6 +4714,10 @@
     }
 
     function updateFleetUI() {
+      // --- POPRAWKA: Jeśli menu jest otwarte, nie ruszaj UI ---
+      if (isMainMenuVisible()) return;
+      // --------------------------------------------------------
+
       const ui = Fleet.ui;
       if (!ui || !ui.root || !ui.list) return;
       const now = performance.now();
@@ -5680,6 +5734,10 @@
     }
 
     function updatePlayerStatusUI() {
+      // --- POPRAWKA: Jeśli menu jest otwarte, przerywamy ---
+      if (isMainMenuVisible()) return;
+      // -----------------------------------------------------
+
       if (!window.hudSystem) return;
       const boostFuelMax = boost?.fuelMax || 1;
       const sysData = {
@@ -18880,13 +18938,11 @@
 
       // --- AUDIO START ---
       AudioSys.init();
-      // Ładujemy pliki dźwiękowe potrzebne na starcie gry
       await Promise.all([
         AudioSys.loadSound('engine', '/sounds/engine/thruster_loop.wav'),
         AudioSys.loadSound('shieldHit', '/sounds/465540__steaq__sci-fi-shield-hit-wav.wav')
       ]);
 
-      // Podpinamy instancję dźwięku pod statek gracza
       if (typeof ship !== 'undefined') {
         ship.engineSound = AudioSys.createEngineLoop('engine');
       }
@@ -18894,10 +18950,14 @@
 
       gameStarted = true;
       fadeOutMenuMusic();
+      
       if (continueButton) continueButton.classList.remove('hidden');
       if (optionsButton) optionsButton.disabled = false;
       setMenuView('home');
-      hideMainMenu();
+
+      // 1. Ręcznie ukryj menu i upewnij się, że HUD jest SCHOWANY podczas ładowania
+      if (mainMenuEl) mainMenuEl.classList.add('hidden');
+      toggleGameUI(false);
 
       showLoadingOverlay(0, 'Przygotowanie świata');
       initStars(true);
@@ -18918,19 +18978,15 @@
 
       await waitForPlanetsReady();
 
-      // Ukrywamy loading screen ZANIM tło będzie gotowe
       setLoadingProgress(100, 'Start!');
       await nextFrame();
 
-      // Uruchomienie pętli gry
       const firstFramePromise = new Promise(resolve => { firstFrameResolver = resolve; });
       lastTime = performance.now();
       acc = 0;
       vfxTime = 0;
 
-      uiRoot?.classList.remove('hidden');
-      hudTopbarRoot?.classList.remove('hidden');
-      if (shieldControlsRoot) shieldControlsRoot.classList.remove('hidden');
+      // Inicjalizacja systemów (ale bez pokazywania ich ręcznie, zrobi to toggleGameUI)
       initShieldSystem(W, H);
 
       requestAnimationFrame(loop);
@@ -18939,9 +18995,12 @@
       // Ukryj loading overlay
       hideLoadingOverlay();
 
-      console.log("[System] Gra uruchomiona. Tło statyczne.");
-    }
+      // 2. TERAZ, gdy gra jest gotowa, używamy hideMainMenu() logicznie, 
+      // aby włączyć HUD i odpauzować grę.
+      hideMainMenu();
 
+      console.log("[System] Gra uruchomiona.");
+    }
     if (newGameButton) {
       newGameButton.addEventListener('click', () => {
         setMenuView('home');
