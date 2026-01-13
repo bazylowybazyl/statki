@@ -2209,6 +2209,8 @@
     import { initShieldSystem, updateShieldFx, drawShield, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot } from './shieldSystem.js';
     import { createShipEntity, applyPlayerInput, runShipAI } from "./src/game/shipEntity.js";
     import { DestructorSystem, initHexBody, drawHexBody, drawHexBodyLocal } from "./src/game/destructor.js";
+    // IMPORTUJEMY NOWY MODUŁ SUPERBRONI
+    import * as Superweapon from "./src/game/superweapon.js";
     // Statki Terran (Wsparcie)
     import terranFrigateImg from "./src/assets/ships/terranfrigate.png";
     import terranDestroyerImg from "./src/assets/ships/terrandestroyer.png";
@@ -4773,32 +4775,8 @@
     };
     heavyAutocannonSprite.src = "assets/weapons/heavy_autocannon.svg";
 
-    // =============== SUPERCAPITAL MAIN WEAPON ===============
-    const superweaponSprite = new Image();
-    let superweaponSpriteReady = false;
-    superweaponSprite.onload = () => {
-      superweaponSpriteReady = true;
-    };
-    superweaponSprite.src = "assets/weapons/supercapitalmain.png";
-
-    // Weapon state
-    const superweapon = {
-      cooldown: 0,
-      cooldownMax: 15,
-      chargeTime: 0.4,
-      charging: false,
-      chargeProgress: 0,
-      // Mounting position (set after ship dimensions are known)
-      offset: { x: 0, y: 0 },
-      // Projectile config
-      projectileSpeed: 8000,
-      beamWidth: 40,
-      range: 12000,
-      damage: 9999
-    };
-
-    // Hexlance projectiles (the cutting beam)
-    const hexlanceProjectiles = [];
+    // USUNIĘTO STARY KOD SUPERBRONI (definicje superweapon, executeSuperweaponFire itp.)
+    // Teraz korzystamy z src/game/superweapon.js
 
 
     // =============== Proceduralne gwiazdy na CAŁEJ MAPIE ===============
@@ -13161,345 +13139,12 @@
       }
     }
 
-    // =============== SUPERCAPITAL MAIN WEAPON - HEXLANCE ===============
-    // Fires a devastating beam that cuts ships in half by destroying hex lines
-
-    function fireSuperweapon() {
-      if (superweapon.cooldown > 0) return false;
-      if (superweapon.charging) return false;
-
-      // Start charging
-      superweapon.charging = true;
-      superweapon.chargeProgress = 0;
-      return true;
-    }
-
-    function updateSuperweapon(dt) {
-      // Cooldown tick
-      if (superweapon.cooldown > 0) {
-        superweapon.cooldown = Math.max(0, superweapon.cooldown - dt);
-      }
-
-      // Charging phase
-      if (superweapon.charging) {
-        superweapon.chargeProgress += dt;
-        if (superweapon.chargeProgress >= superweapon.chargeTime) {
-          superweapon.charging = false;
-          superweapon.chargeProgress = 0;
-          executeSuperweaponFire();
-        }
-      }
-
-      // Update hexlance projectiles
-      for (let i = hexlanceProjectiles.length - 1; i >= 0; i--) {
-        const proj = hexlanceProjectiles[i];
-
-        // Move projectile
-        const stepDist = Math.hypot(proj.vx, proj.vy) * dt;
-        proj.x += proj.vx * dt;
-        proj.y += proj.vy * dt;
-        proj.life -= dt;
-        proj.traveled += stepDist;
-
-        // Beam velocity for impact momentum
-        const beamVel = { x: proj.vx, y: proj.vy };
-
-        // Check collisions with NPCs (enemies AND friendlies with hexGrid)
-        const allTargets = [...npcs, ...wrecks];
-
-        for (const target of allTargets) {
-          // Skip dead NPCs but NOT wrecks (wrecks have isWreck=true)
-          if (!target.isWreck && target.dead) continue;
-          // FRIENDLY FIRE ENABLED - superweapon hits everything!
-          if (!target.hexGrid) continue;
-
-          const targetX = target.x ?? (target.pos?.x || 0);
-          const targetY = target.y ?? (target.pos?.y || 0);
-          const dx = targetX - proj.x;
-          const dy = targetY - proj.y;
-          const dist = Math.hypot(dx, dy);
-          const targetRadius = target.radius || 50;
-
-          // Check if projectile is within range of target
-          if (dist < targetRadius + proj.beamWidth * 2) {
-            // Use DestructorSystem.applyImpact - same as collision damage!
-            // This damages individual hexes progressively
-            const hitDamage = 80; // Damage per hit (adjustable)
-            const hit = DestructorSystem.applyImpact(target, proj.x, proj.y, hitDamage, beamVel);
-
-            if (hit) {
-              // Spawn cutting sparks at beam position
-              for (let j = 0; j < 5; j++) {
-                const a = Math.random() * Math.PI * 2;
-                const spd = 150 + Math.random() * 200;
-                spawnParticle(
-                  { x: proj.x, y: proj.y },
-                  { x: Math.cos(a) * spd + proj.vx * 0.05, y: Math.sin(a) * spd + proj.vy * 0.05 },
-                  0.2 + Math.random() * 0.15,
-                  '#ff8844',
-                  2 + Math.random() * 2,
-                  true
-                );
-              }
-            }
-          }
-        }
-
-        // Remove if expired or traveled too far
-        if (proj.life <= 0 || proj.traveled > superweapon.range) {
-          hexlanceProjectiles.splice(i, 1);
-        }
-      }
-    }
-
-    function cutHexLine(entity, proj) {
-      // Calculate beam direction
-      const beamDir = { x: proj.vx, y: proj.vy };
-      const beamLen = Math.hypot(beamDir.x, beamDir.y) || 1;
-      beamDir.x /= beamLen;
-      beamDir.y /= beamLen;
-
-      // Get entity's local space
-      const scale = entity.visual?.spriteScale || 1.0;
-      const cosA = Math.cos(-entity.angle);
-      const sinA = Math.sin(-entity.angle);
-
-      // Transform projectile position to entity's local space
-      const relX = proj.x - entity.x;
-      const relY = proj.y - entity.y;
-      const localX = (relX * cosA - relY * sinA) / scale;
-      const localY = (relX * sinA + relY * cosA) / scale;
-
-      // Transform beam direction to local space
-      const localDirX = beamDir.x * cosA - beamDir.y * sinA;
-      const localDirY = beamDir.x * sinA + beamDir.y * cosA;
-
-      // Find all shards along the beam line
-      const cutWidth = proj.beamWidth / scale;
-      const shardsToCut = [];
-
-      for (const shard of entity.hexGrid.shards) {
-        if (shard.hp <= 0) continue;
-
-        // Distance from shard center to beam line
-        const toShardX = shard.lx - localX;
-        const toShardY = shard.ly - localY;
-        const perpDist = Math.abs(toShardX * localDirY - toShardY * localDirX);
-
-        if (perpDist < cutWidth + 15) { // 15 = approx hex radius
-          shardsToCut.push(shard);
-        }
-      }
-
-      // Destroy the shards
-      let destroyed = 0;
-      for (const shard of shardsToCut) {
-        shard.hp = 0;
-        shard.destroyed = true;
-        destroyed++;
-
-        // Spawn debris particles
-        const worldX = entity.x + (shard.lx * scale * Math.cos(entity.angle) - shard.ly * scale * Math.sin(entity.angle));
-        const worldY = entity.y + (shard.lx * scale * Math.sin(entity.angle) + shard.ly * scale * Math.cos(entity.angle));
-
-        for (let k = 0; k < 3; k++) {
-          const a = Math.random() * Math.PI * 2;
-          const spd = 80 + Math.random() * 120;
-          spawnParticle(
-            { x: worldX, y: worldY },
-            { x: Math.cos(a) * spd + proj.vx * 0.1, y: Math.sin(a) * spd + proj.vy * 0.1 },
-            0.4 + Math.random() * 0.3,
-            '#888888',
-            2 + Math.random() * 2,
-            false
-          );
-        }
-      }
-
-      // Mark cache dirty and trigger split detection
-      if (destroyed > 0 && entity.hexGrid) {
-        entity.hexGrid.cacheDirty = true;
-        DestructorSystem.splitQueue.add(entity);
-      }
-
-      return destroyed;
-    }
-
-    function executeSuperweaponFire() {
-      // 1. TE SAME WARTOŚCI CO W drawSuperweaponSprite
-      const tuneX = 275;
-      const tuneY = 315;
-      const tuneScale = 0.2; 
-      // AnchorY = 0.5 (środek). Żeby znaleźć koniec lufy, musimy dodać połowę wysokości obrazka.
-      // Obliczamy długość lufy na podstawie wysokości obrazka i skali
-      const spriteH = (superweaponSpriteReady && superweaponSprite.height) ? superweaponSprite.height : 500; 
-      
-      // Dystans od punktu montażu do wylotu lufy (połowa wysokości + ewentualna korekta)
-      const barrelLength = (spriteH * tuneScale) * 0.5; 
-
-      // Definiujemy dwa punkty montażu (lewy i prawy)
-      const offsets = [
-        { x: -tuneX, y: tuneY },
-        { x: tuneX, y: tuneY }
-      ];
-
-      // Pętla strzału dla każdego działa
-      offsets.forEach(off => {
-        // A. Oblicz pozycję PIVOTA (punkt montażu na kadłubie)
-        // off to lokalna pozycja względem środka statku
-        const pivotOffset = rotate(off, ship.angle);
-        const pivotPos = {
-          x: ship.pos.x + pivotOffset.x,
-          y: ship.pos.y + pivotOffset.y
-        };
-
-        // B. Oblicz kierunek strzału (od Pivota do Myszki)
-        // Dzięki temu pocisk poleci dokładnie tam, gdzie celuje działo graficzne
-        const mouseWorld = screenToWorld(mouse.x, mouse.y);
-        const dx = mouseWorld.x - pivotPos.x;
-        const dy = mouseWorld.y - pivotPos.y;
-        const dist = Math.hypot(dx, dy) || 1;
-        const dir = { x: dx / dist, y: dy / dist };
-
-        // C. Oblicz finalną pozycję MUZZLE (wylot lufy)
-        // Przesuwamy punkt startu od Pivota wzdłuż lufy (kierunek strzału)
-        const muzzle = {
-            x: pivotPos.x + dir.x * barrelLength,
-            y: pivotPos.y + dir.y * barrelLength
-        };
-
-        // 3. Stwórz pocisk Hexlance (startując z muzzle)
-        hexlanceProjectiles.push({
-          x: muzzle.x,
-          y: muzzle.y,
-          vx: dir.x * superweapon.projectileSpeed + ship.vel.x,
-          vy: dir.y * superweapon.projectileSpeed + ship.vel.y,
-          life: 2.0,
-          traveled: 0,
-          beamWidth: superweapon.beamWidth,
-          angle: Math.atan2(dir.y, dir.x)
-        });
-
-        // 4. Efekty wizualne (Muzzle Flash) w punkcie wylotu
-        for (let i = 0; i < 30; i++) {
-          const a = Math.atan2(dir.y, dir.x) + (Math.random() - 0.5) * 0.8;
-          const spd = 400 + Math.random() * 600;
-          spawnParticle(
-            { x: muzzle.x, y: muzzle.y },
-            { x: Math.cos(a) * spd, y: Math.sin(a) * spd },
-            0.15 + Math.random() * 0.1,
-            '#ffaa44',
-            4 + Math.random() * 3,
-            true
-          );
-        }
-        spawnShockwave(muzzle.x, muzzle.y, { maxR: 150, maxLife: 0.25, w: 4, color: 'rgba(255,180,100,' });
-      });
-
-      // Wspólny cooldown i wstrząs kamery (raz na salwę)
-      superweapon.cooldown = superweapon.cooldownMax;
-      camera.addShake(15, 0.3);
-    }
-
-    function drawHexlanceProjectiles(ctx, cam) {
-      for (const proj of hexlanceProjectiles) {
-        const screen = worldToScreen(proj.x, proj.y, cam);
-        const len = 120 * cam.zoom;
-        const w = proj.beamWidth * cam.zoom;
-
-        ctx.save();
-        ctx.translate(screen.x, screen.y);
-        ctx.rotate(proj.angle);
-
-        // Outer glow
-        const gradient = ctx.createLinearGradient(-len, 0, len * 0.5, 0);
-        gradient.addColorStop(0, 'rgba(255,100,50,0)');
-        gradient.addColorStop(0.3, 'rgba(255,150,80,0.8)');
-        gradient.addColorStop(0.7, 'rgba(255,200,150,1)');
-        gradient.addColorStop(1, 'rgba(255,255,200,1)');
-
-        ctx.fillStyle = gradient;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, len, w * 1.5, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Core
-        ctx.fillStyle = '#fff8e0';
-        ctx.beginPath();
-        ctx.ellipse(0, 0, len * 0.6, w * 0.5, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.restore();
-      }
-    }
-
-   function drawSuperweaponSprite(ctx, cam, drawPos, drawAngle) {
-      if (!superweaponSpriteReady) return;
-
-      const posX = drawPos ? drawPos.x : ship.pos.x;
-      const posY = drawPos ? drawPos.y : ship.pos.y;
-      const angle = (typeof drawAngle === 'number') ? drawAngle : ship.angle;
-
-      // --- ZASTOSOWANE WARTOŚCI (HARDCODED) ---
-      const tuneX = 275;
-      const tuneY = 315;
-      const anchorX = 0.25;
-      const anchorY = 0.5;
-      const tuneScale = 0.2;
-
-      const spriteScale = tuneScale * cam.zoom;
-      const spriteW = superweaponSprite.width * spriteScale;
-      const spriteH = superweaponSprite.height * spriteScale;
-
-      // Obliczamy pozycję rysowania na podstawie anchora (pivota)
-      // drawOffset to przesunięcie lewego górnego rogu obrazka względem punktu obrotu (0,0)
-      const drawOffsetX = -spriteW * anchorX;
-      const drawOffsetY = -spriteH * anchorY;
-
-      const offsets = [
-        { x: -tuneX, y: tuneY },
-        { x: tuneX, y: tuneY }
-      ];
-
-      offsets.forEach(off => {
-        const mountOffset = rotate(off, angle);
-
-        const mountWorld = {
-          x: posX + mountOffset.x,
-          y: posY + mountOffset.y
-        };
-        const mountScreen = worldToScreen(mountWorld.x, mountWorld.y, cam);
-
-        const mouseWorld = screenToWorld(mouse.x, mouse.y);
-        const dx = mouseWorld.x - mountWorld.x;
-        const dy = mouseWorld.y - mountWorld.y;
-        const turretAngle = Math.atan2(dy, dx);
-
-        ctx.save();
-        ctx.translate(mountScreen.x, mountScreen.y);
-        ctx.rotate(turretAngle);
-
-        if (typeof superweapon !== 'undefined' && superweapon.charging) {
-          const t = superweapon.chargeProgress / superweapon.chargeTime;
-          ctx.shadowColor = `rgba(255, ${150 + t * 100}, 50, ${0.5 + t * 0.5})`;
-          ctx.shadowBlur = 20 + t * 30;
-        }
-        if (typeof superweapon !== 'undefined' && superweapon.cooldown > 0) {
-          ctx.globalAlpha = 0.6 + 0.4 * (1 - superweapon.cooldown / superweapon.cooldownMax);
-        }
-
-        // Rysowanie z uwzględnieniem pivota
-        ctx.drawImage(superweaponSprite, drawOffsetX, drawOffsetY, spriteW, spriteH);
-
-        ctx.restore();
-      });
-    }
-
     // Keyboard handler for superweapon (key "1")
     window.addEventListener('keydown', (e) => {
       if (e.key === '1' || e.code === 'Digit1') {
         if (!stationUI.open && !showMap && gameStarted) {
-          fireSuperweapon();
+          // UŻYWAMY NOWEGO MODUŁU
+          Superweapon.tryFireSuperweapon();
         }
       }
     });
@@ -14859,7 +14504,6 @@
       bulletsAndCollisionsStep(dt);
       npcShootingStep(dt);
       hudUpdateNav(dt);
-      updateSuperweapon(dt);
     }
 
     // ======= Efekty VFX =======
@@ -15134,6 +14778,9 @@
       const allDestructibles = [ship, ...npcs, ...wrecks];
       DestructorSystem.update(frame, allDestructibles);
 
+      // AKTUALIZACJA SUPERBRONI (NOWY MODUŁ)
+      Superweapon.updateSuperweapon(frame, ship);
+
       // >>> TO JEST KLUCZOWE - ODDZIELNA AKTUALIZACJA WIZUALIÓW <<<
       updateParticles(frame);
       // >>> BEZ TEGO CZĄSTECZKI STOJĄ W MIEJSCU <<<
@@ -15177,6 +14824,13 @@
       // --------------------
 
       render(alpha, frame);
+
+      // WAŻNE: Eksportujemy globalne zmienne dla modułu superweapon
+      window.camera = camera;
+      window.spawnParticle = spawnParticle;
+      window.spawnShockwave = spawnShockwave;
+      window.worldToScreen = worldToScreen;
+
       if (overlay3D) {
         overlay3D.tick(frame);
       }
@@ -16641,11 +16295,8 @@
       }
 
       // === Hexlance Projectiles (Supercapital Weapon) ===
-      drawHexlanceProjectiles(ctx, cam);
-
-      // === Superweapon Sprite ===
-      // Rysujemy superbroń używając interpPos i interpAngle, żeby była "przyklejona" do statku
-      drawSuperweaponSprite(ctx, cam, interpPos, interpAngle);
+      // Rysujemy superbroń z nowego modułu
+      Superweapon.drawSuperweapon(ctx, cam, ship, worldToScreen);
 
       // === VFX Pass ===
       for (const p of particlePool) {
