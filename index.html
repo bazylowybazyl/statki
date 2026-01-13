@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Super Capital: Battle for Solar System — gwiazdy na całej mapie + duży silnik plazmowy</title>
+  <title>Super Capital: Battle for Solar System — Aero HUD</title>
   <style>
     :root {
       --fa-font: 'Segoe UI', 'Frutiger', 'Inter', system-ui, -apple-system, sans-serif;
@@ -1980,9 +1980,1349 @@
       z-index: 30 !important;
     }
   </style>
+  <style>
+    :root {
+      --fa-font: 'Segoe UI', 'Frutiger', 'Inter', system-ui, -apple-system, sans-serif;
+      --fa-text: #e8f6ff;
+      --fa-muted: #b8d6f3;
+
+      /* --- NOWE STYLE AERO HUD --- */
+      --glass-bg: rgba(16, 24, 45, 0.85);
+      --glass-border: rgba(255, 255, 255, 0.12);
+      --glass-highlight: rgba(255, 255, 255, 0.25);
+      --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+
+      --hp-color: #ef4444;
+      --hp-low-color: #ff0000;
+      --shield-color: #3b82f6;
+      --power-glow: #06b6d4;
+      --boost-glow: #f59e0b;
+      --core-glow: #84cc16;
+      --warp-glow: #a78bfa;
+      --text-muted: #94a3b8;
+      --loc-glow: #fcd34d;
+      --speed-text: #e2e8f0;
+
+      /* Menu Colors */
+      --mode-battle: #ef4444;
+      --mode-cruise: #3b82f6;
+      --mode-salvage: #f59e0b;
+      --mode-mining: #10b981;
+      --mode-intel: #8b5cf6;
+    }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      background: #000;
+      color: var(--fa-text);
+      font-family: var(--fa-font);
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* Canvas Gry */
+    #game-root {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* --- UI LAYOUT --- */
+    .hidden {
+      display: none !important;
+    }
+
+    /* Hint box (Góra-Lewo) */
+    .hint-box {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      color: rgba(255, 255, 255, 0.4);
+      font-size: 13px;
+      pointer-events: none;
+      text-align: right;
+      z-index: 150;
+    }
+
+    kbd {
+      background: rgba(255, 255, 255, 0.1);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: #fff;
+      font-family: monospace;
+    }
+
+    /* --- SIDE PANELS --- */
+    #side-panels-container {
+      position: fixed;
+      left: 20px;
+      top: 140px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      z-index: 90;
+      width: 280px;
+      transition: width 0.4s ease;
+    }
+
+    #right-panels-container {
+      position: fixed;
+      right: 20px;
+      top: 140px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      z-index: 90;
+      width: 260px;
+      align-items: flex-end;
+    }
+
+    .side-panel-transparent {
+      background: rgba(10, 16, 30, 0.45);
+      backdrop-filter: blur(4px);
+      border-radius: 8px;
+      border: none;
+      box-shadow: none;
+      overflow: hidden;
+      width: 100%;
+      transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+      pointer-events: auto;
+    }
+
+    .side-panel-transparent.collapsed {
+      width: 44px;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      box-shadow: var(--glass-shadow);
+    }
+
+    #side-panels-container .side-panel-transparent.collapsed {
+      transform: translateX(-20px);
+      border-radius: 0 12px 12px 0;
+      border-left: none;
+    }
+
+    #right-panels-container .side-panel-transparent.collapsed {
+      transform: translateX(20px);
+      border-radius: 12px 0 0 12px;
+      border-right: none;
+    }
+
+    .panel-header {
+      padding: 10px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      background: transparent;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      transition: all 0.4s ease;
+      height: 40px;
+      white-space: nowrap;
+    }
+
+    .side-panel-transparent.collapsed .panel-header {
+      height: 160px;
+      padding: 0;
+      justify-content: center;
+      flex-direction: column-reverse;
+      border-bottom: none;
+    }
+
+    .panel-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: #e8f6ff;
+      text-shadow: 0 0 8px rgba(109, 220, 255, 0.4);
+      transition: transform 0.4s ease;
+    }
+
+    .side-panel-transparent.collapsed .panel-title {
+      writing-mode: vertical-rl;
+      transform: rotate(0deg);
+    }
+
+    .panel-chevron {
+      font-size: 10px;
+      color: var(--text-muted);
+      transition: transform 0.4s ease, margin 0.4s ease;
+    }
+
+    #side-panels-container .side-panel-transparent.collapsed .panel-chevron {
+      margin-top: 10px;
+      transform: rotate(90deg);
+    }
+
+    #right-panels-container .side-panel-transparent.collapsed .panel-chevron {
+      margin-top: 10px;
+      transform: rotate(-90deg);
+    }
+
+    .panel-body {
+      padding: 8px 0;
+      max-height: 600px;
+      opacity: 1;
+      transition: max-height 0.4s cubic-bezier(0, 1, 0, 1), opacity 0.2s ease, padding 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      overflow-y: auto;
+      scrollbar-width: none;
+    }
+
+    .side-panel-transparent.collapsed .panel-body {
+      max-height: 0;
+      padding: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* Cards */
+    .support-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      cursor: grab;
+      transition: background 0.2s;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .support-card:active {
+      cursor: grabbing;
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .support-card:hover {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .support-card.disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .ship-icon-wrap {
+      width: 36px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-right: 12px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    /* CSS Icons for Ships */
+    .icon-capital {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .icon-cap-center {
+      width: 12px;
+      height: 20px;
+      background: #e2e8f0;
+      border: 1px solid #94a3b8;
+    }
+
+    .icon-cap-side {
+      width: 5px;
+      height: 14px;
+      background: #cbd5e1;
+      border: 1px solid #94a3b8;
+    }
+
+    .icon-battleship {
+      display: flex;
+      align-items: center;
+      gap: 1px;
+    }
+
+    .icon-bs-rect {
+      width: 10px;
+      height: 14px;
+      background: #e2e8f0;
+      border: 1px solid #94a3b8;
+    }
+
+    .icon-bs-chevron {
+      width: 0;
+      height: 0;
+      border-top: 7px solid transparent;
+      border-bottom: 7px solid transparent;
+      border-left: 10px solid #e2e8f0;
+    }
+
+    .icon-destroyer {
+      width: 22px;
+      height: 10px;
+      background: #cbd5e1;
+      border: 1px solid #94a3b8;
+    }
+
+    .icon-frigate {
+      width: 14px;
+      height: 14px;
+      background: #93c5fd;
+      border: 1px solid #60a5fa;
+    }
+
+    .icon-fighter {
+      width: 0;
+      height: 0;
+      border-left: 7px solid transparent;
+      border-right: 7px solid transparent;
+      border-bottom: 14px solid #86efac;
+      transform: translateY(-2px);
+    }
+
+    .support-details {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    .ship-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f1f5f9;
+      letter-spacing: 0.5px;
+    }
+
+    .ship-role {
+      font-size: 9px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .support-count {
+      font-family: 'Consolas', monospace;
+      font-size: 14px;
+      font-weight: 700;
+      color: #a5f3fc;
+      text-shadow: 0 0 5px rgba(6, 182, 212, 0.5);
+      background: rgba(6, 182, 212, 0.1);
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid rgba(6, 182, 212, 0.2);
+    }
+
+    .orders-row {
+      margin-top: 4px;
+      padding: 8px 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      display: flex;
+      gap: 8px;
+    }
+
+    .glass-btn {
+      flex: 1;
+      padding: 8px 10px;
+      border-radius: 6px;
+      background: linear-gradient(145deg, rgba(59, 130, 246, 0.2) 0%, rgba(30, 64, 175, 0.1) 100%);
+      border: 1px solid rgba(96, 165, 250, 0.4);
+      color: #bfdbfe;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .glass-btn:hover {
+      background: linear-gradient(145deg, rgba(59, 130, 246, 0.3) 0%, rgba(30, 64, 175, 0.2) 100%);
+      border-color: #60a5fa;
+      color: #fff;
+      transform: translateY(-1px);
+    }
+
+    .glass-btn.active {
+      background: linear-gradient(145deg, rgba(59, 130, 246, 0.5) 0%, rgba(30, 64, 175, 0.4) 100%);
+      border-color: #60a5fa;
+      color: #fff;
+      box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+    }
+
+    /* Fleet List */
+    .fleet-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .fleet-item {
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 0;
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      transition: background 0.2s;
+    }
+
+    .fleet-item:hover {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .fleet-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .fleet-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f1f5f9;
+      letter-spacing: 0.5px;
+    }
+
+    .fleet-type {
+      font-size: 9px;
+      text-transform: uppercase;
+      color: #64748b;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .fleet-bars {
+      display: flex;
+      gap: 4px;
+      height: 3px;
+      margin-top: 4px;
+      opacity: 0.8;
+    }
+
+    .mini-bar {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 1px;
+      overflow: hidden;
+    }
+
+    .mini-fill {
+      height: 100%;
+      width: 100%;
+    }
+
+    .mini-fill.hp {
+      background: var(--hp-color);
+    }
+
+    .mini-fill.shield {
+      background: var(--shield-color);
+    }
+
+    /* --- DOCK & HUD --- */
+    .hud-dock {
+      position: relative;
+      background: var(--glass-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--glass-border);
+      box-shadow: var(--glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      min-width: 520px;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
+      pointer-events: auto;
+    }
+
+    .hud-dock.expanded {
+      min-width: 760px;
+    }
+
+    /* TOP CONTAINER */
+    #hud-top-container {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: flex-start;
+      z-index: 110;
+    }
+
+    #hud-top-dock {
+      border-bottom: 1px solid var(--glass-highlight);
+      border-top: 1px solid var(--glass-border);
+      border-radius: 0 0 16px 16px;
+      padding: 10px 18px 12px 18px;
+    }
+
+    .location-display {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 36px;
+    }
+
+    .loc-label {
+      font-size: 9px;
+      color: var(--text-muted);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    .loc-name {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--loc-glow);
+      text-shadow: 0 0 12px rgba(253, 224, 71, 0.4);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    /* BOTTOM CONTAINER */
+    #hud-bottom-container {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: flex-end;
+      gap: 12px;
+      z-index: 100;
+      transition: gap 0.5s ease;
+    }
+
+    #hud-center-dock {
+      border-top: 1px solid var(--glass-highlight);
+      border-radius: 16px 16px 0 0;
+      padding: 12px 18px 14px 18px;
+      border-radius: 16px;
+    }
+
+    /* Wings */
+    .hud-wing {
+      width: 420px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 2px;
+      opacity: 0.95;
+      transition: transform 0.2s;
+      pointer-events: none;
+    }
+
+    .hud-wing.left {
+      align-items: flex-end;
+    }
+
+    .hud-wing.right {
+      align-items: flex-start;
+    }
+
+    .stat-bar-aero {
+      height: 16px;
+      width: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px solid var(--glass-border);
+      border-top: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+      transform: skewX(-12deg);
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .hud-wing.right .stat-bar-aero {
+      transform: skewX(12deg);
+    }
+
+    /* Anchoring bars */
+    .hud-wing.left .stat-ghost,
+    .hud-wing.left .stat-fill {
+      right: 0;
+      left: auto;
+    }
+
+    .hud-wing.right .stat-ghost,
+    .hud-wing.right .stat-fill {
+      left: 0;
+      right: auto;
+    }
+
+    .stat-ghost {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      background: rgba(255, 255, 255, 0.9);
+      width: 100%;
+      transition: width 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.15s;
+      z-index: 1;
+      box-shadow: 0 0 15px rgba(255, 255, 255, 0.4);
+    }
+
+    .stat-fill {
+      height: 100%;
+      width: 100%;
+      position: absolute;
+      top: 0;
+      z-index: 2;
+      transition: width 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .stat-fill::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 40%;
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.35), transparent);
+    }
+
+    .stat-fill.hp {
+      background: linear-gradient(90deg, #991b1b, var(--hp-color));
+      box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
+    }
+
+    .stat-fill.shield {
+      background: linear-gradient(90deg, #1e40af, var(--shield-color));
+      box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+    }
+
+    .stat-unit {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-bottom: 8px;
+      width: 100%;
+    }
+
+    .hud-wing.left .stat-unit {
+      align-items: flex-end;
+    }
+
+    .stat-value-text {
+      font-size: 22px;
+      font-weight: 700;
+      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+      letter-spacing: 0.05em;
+      font-family: 'Segoe UI', sans-serif;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: #94a3b8;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      margin-bottom: -2px;
+    }
+
+    /* Drawers & Animation */
+    .hud-drawer {
+      width: 100%;
+      height: 0;
+      overflow: hidden;
+      opacity: 0;
+      border-bottom: 1px solid transparent;
+      transition: height 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.2s ease, margin-bottom 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .drawer-content-wrapper {
+      opacity: 1;
+      transition: opacity 0.15s ease;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .drawer-content-wrapper.fading {
+      opacity: 0;
+    }
+
+    #top-drawer {
+      margin-top: 0;
+    }
+
+    .hud-dock.expanded #top-drawer {
+      height: 450px;
+      opacity: 1;
+      margin-top: 16px;
+      border-bottom-color: rgba(255, 255, 255, 0.1);
+    }
+
+    #bottom-drawer {
+      margin-bottom: 0;
+    }
+
+    .hud-dock.expanded #bottom-drawer {
+      opacity: 1;
+      margin-bottom: 16px;
+      border-bottom-color: rgba(255, 255, 255, 0.1);
+    }
+
+    /* Dashboard & Gauges */
+    .dock-dashboard {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .dash-group {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .dash-group.center {
+      align-items: center;
+      justify-content: flex-end;
+    }
+
+    .speed-display {
+      text-align: center;
+      margin-bottom: 4px;
+    }
+
+    .speed-value {
+      font-family: 'Consolas', monospace;
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--speed-text);
+      text-shadow: 0 0 8px rgba(255, 255, 255, 0.2);
+      letter-spacing: 1px;
+      display: block;
+      line-height: 1;
+    }
+
+    .speed-unit {
+      font-size: 9px;
+      color: var(--text-muted);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    .dash-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      color: #94a3b8;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+
+    .dash-group.right .dash-label {
+      text-align: right;
+    }
+
+    .dash-group.center .dash-label {
+      font-size: 8px;
+      opacity: 0.7;
+      margin-top: 2px;
+    }
+
+    .dash-gauge {
+      height: 10px;
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 2px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      position: relative;
+      overflow: hidden;
+      transform: skewX(-15deg);
+    }
+
+    .dash-group.right .dash-gauge {
+      transform: skewX(15deg);
+    }
+
+    .dash-group.center .dash-gauge {
+      transform: skewX(0deg);
+      width: 100%;
+      height: 6px;
+    }
+
+    .dash-fill {
+      height: 100%;
+      width: 0%;
+      position: absolute;
+      left: 0;
+      top: 0;
+      transition: width 0.1s linear;
+    }
+
+    .dash-fill::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 50%;
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .dash-fill.power {
+      background: var(--power-glow);
+      box-shadow: 0 0 12px var(--power-glow);
+    }
+
+    .dash-fill.boost {
+      background: var(--boost-glow);
+      box-shadow: 0 0 12px var(--boost-glow);
+    }
+
+    .dash-fill.core {
+      background: var(--core-glow);
+      box-shadow: 0 0 12px var(--core-glow);
+    }
+
+    /* Warp Bar */
+    .warp-separator-container {
+      width: 100%;
+      height: 0;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0);
+      border-radius: 3px;
+      position: relative;
+      overflow: hidden;
+      margin-bottom: 0;
+      opacity: 0;
+      transition: height 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), margin-bottom 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), border-color 0.4s ease, opacity 0.2s ease 0s;
+    }
+
+    .hud-dock.warp-mode .warp-separator-container {
+      height: 6px;
+      margin-bottom: 12px;
+      border-color: rgba(255, 255, 255, 0.1);
+      opacity: 1;
+      transition-delay: 0s, 0s, 0s, 0.3s;
+    }
+
+    .warp-separator-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--warp-glow);
+      box-shadow: 0 0 15px var(--warp-glow);
+      transition: width 0.1s linear;
+    }
+
+    .warp-label-center {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 8px;
+      color: #fff;
+      font-weight: 800;
+      letter-spacing: 2px;
+      opacity: 0;
+      text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+      z-index: 2;
+    }
+
+    .hud-dock.warp-mode .warp-label-center {
+      opacity: 1;
+      transition: opacity 0.2s 0.4s;
+    }
+
+    /* Skill Keys */
+    .skill-row {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 4px;
+    }
+
+    .glass-key {
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.01) 100%);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-top: 1px solid rgba(255, 255, 255, 0.35);
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 14px;
+      font-weight: 700;
+      font-family: 'Consolas', monospace;
+      position: relative;
+      transition: all 0.1s ease;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+
+    .glass-key span {
+      position: absolute;
+      top: 3px;
+      left: 5px;
+      font-size: 9px;
+      color: rgba(255, 255, 255, 0.4);
+      font-family: var(--fa-font);
+    }
+
+    .glass-key.active {
+      background: linear-gradient(145deg, rgba(59, 130, 246, 0.3) 0%, rgba(37, 99, 235, 0.1) 100%);
+      border-color: #60a5fa;
+      box-shadow: 0 0 15px rgba(59, 130, 246, 0.4), inset 0 0 12px rgba(59, 130, 246, 0.2);
+      color: #fff;
+      transform: translateY(1px);
+    }
+
+    .glass-key:hover {
+      border-color: rgba(255, 255, 255, 0.4);
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%);
+    }
+
+    /* Menu Grid */
+    .menu-grid {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      padding: 24px;
+      height: 100%;
+      min-height: min-content;
+      flex-wrap: wrap;
+    }
+
+    .menu-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 110px;
+      height: 120px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+    }
+
+    .menu-btn:hover {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.04) 100%);
+      transform: translateY(-4px);
+      border-color: rgba(255, 255, 255, 0.3);
+      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+    }
+
+    .menu-btn .key-hint {
+      font-size: 18px;
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.3);
+      margin-bottom: 12px;
+      font-family: 'Consolas', monospace;
+    }
+
+    .menu-btn .label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #e8f6ff;
+      text-align: center;
+    }
+
+    .menu-header {
+      text-align: center;
+      padding: 10px 0 0 0;
+      font-size: 14px;
+      letter-spacing: 2px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    /* Station Styles */
+    .station-header {
+      padding: 8px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .station-title h2 {
+      margin: 0;
+      font-size: 16px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: #fff;
+      text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+    }
+
+    .station-title span {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .station-credits {
+      font-family: 'Consolas', monospace;
+      font-size: 14px;
+      font-weight: 700;
+      color: #fbbf24;
+      text-shadow: 0 0 8px rgba(251, 191, 36, 0.4);
+    }
+
+    .station-nav {
+      display: flex;
+      padding: 12px 12px 0 12px;
+      gap: 4px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .station-tab-btn {
+      padding: 8px 12px;
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: rgba(255, 255, 255, 0.6);
+      font-family: var(--fa-font);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .station-tab-btn:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 4px 4px 0 0;
+    }
+
+    .station-tab-btn.active {
+      color: #60a5fa;
+      border-bottom-color: #60a5fa;
+      text-shadow: 0 0 8px rgba(96, 165, 250, 0.4);
+    }
+
+    .station-content {
+      flex: 1;
+      padding: 16px;
+      overflow-y: auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 12px;
+      align-content: start;
+    }
+
+    .station-tab {
+      display: contents;
+    }
+
+    .station-tab.hidden {
+      display: none;
+    }
+
+    .station-card-aero {
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.01) 100%);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-top: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: transform 0.2s, border-color 0.2s;
+    }
+
+    .station-card-aero:hover {
+      transform: translateY(-1px);
+      border-color: rgba(255, 255, 255, 0.25);
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+
+    .card-badge {
+      font-size: 9px;
+      background: rgba(96, 165, 250, 0.2);
+      color: #93c5fd;
+      padding: 2px 4px;
+      border-radius: 4px;
+      border: 1px solid rgba(96, 165, 250, 0.3);
+      text-transform: uppercase;
+    }
+
+    .card-desc {
+      font-size: 11px;
+      color: #94a3b8;
+      line-height: 1.3;
+    }
+
+    .card-actions {
+      margin-top: 6px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-price {
+      font-family: 'Consolas', monospace;
+      font-weight: 700;
+      color: #fbbf24;
+      font-size: 12px;
+    }
+
+    .station-card-aero button {
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      background: rgba(15, 23, 42, 0.75);
+      color: #e2e8f0;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .station-card-aero button:hover:not(:disabled) {
+      border-color: rgba(96, 165, 250, 0.65);
+      color: #fff;
+      background: rgba(30, 64, 175, 0.35);
+    }
+
+    .station-card-aero button:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    .trade-resource-card .card-desc {
+      margin-top: -4px;
+    }
+
+    /* Hide Original UI */
+    #ui,
+    #side-panels,
+    #hud-topbar,
+    #station-overlay,
+    #infrastructure-overlay {
+      display: none !important;
+    }
+  </style>
 </head>
 
 <body>
+  <!-- --- HUD TOP CONTAINER --- -->
+  <div id="hud-top-container">
+    <div class="hud-dock" id="hud-top-dock">
+      <div class="location-display">
+        <span class="loc-label">CURRENT SECTOR</span>
+        <span class="loc-name" id="loc-text">INTERPLANETARY SPACE</span>
+      </div>
+      <div class="hud-drawer" id="top-drawer">
+        <div class="station-header">
+          <div class="station-title">
+            <h2 id="station-title">Orbital Station</h2>
+            <span id="station-subtitle">Sector 7</span>
+          </div>
+          <div class="station-credits" id="station-credits">0 CR</div>
+        </div>
+        <div class="station-nav" id="station-tabs">
+          <!-- Zakładki generowane przez JS -->
+        </div>
+        <div class="station-content" id="station-content-area">
+          <div id="tab-upgrades" class="station-tab"></div>
+          <div id="tab-trade" class="station-tab hidden"></div>
+          <div id="tab-cantina" class="station-tab hidden"></div>
+          <div id="tab-hangar" class="station-tab hidden"></div>
+          <div id="tab-mechanic-html" class="station-tab hidden"></div>
+          <div id="tab-infrastructure-html" class="station-tab hidden"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- --- LEFT PANELS (Support) --- -->
+  <div id="side-panels-container">
+    <div class="side-panel-transparent" id="panel-support">
+      <div class="panel-header" onclick="togglePanel('panel-support')"><span class="panel-title">Wsparcie</span><span
+          class="panel-chevron">▼</span></div>
+      <div class="panel-body">
+        <div class="support-card" data-support-spawn="carrier_capital">
+          <div class="ship-icon-wrap">
+            <div class="icon-capital">
+              <div class="icon-cap-side"></div>
+              <div class="icon-cap-center"></div>
+              <div class="icon-cap-side"></div>
+            </div>
+          </div>
+          <div class="support-details"><span class="ship-name">Capital</span><span class="ship-role">Flagship</span></div>
+          <div class="support-count">x1</div>
+        </div>
+        <div class="support-card" data-support-spawn="battleship">
+          <div class="ship-icon-wrap">
+            <div class="icon-battleship">
+              <div class="icon-bs-rect"></div>
+              <div class="icon-bs-chevron"></div>
+            </div>
+          </div>
+          <div class="support-details"><span class="ship-name">Battleship</span><span class="ship-role">Heavy
+              Capital</span></div>
+          <div class="support-count">x5</div>
+        </div>
+        <div class="support-card" data-support-spawn="destroyer">
+          <div class="ship-icon-wrap">
+            <div class="icon-destroyer"></div>
+          </div>
+          <div class="support-details"><span class="ship-name">Destroyer</span><span class="ship-role">Escort
+              Class</span></div>
+          <div class="support-count">x5</div>
+        </div>
+        <div class="support-card" data-support-spawn="frigate_pd">
+          <div class="ship-icon-wrap">
+            <div class="icon-frigate"></div>
+          </div>
+          <div class="support-details"><span class="ship-name">Frigate</span><span class="ship-role">Patrol Unit</span>
+          </div>
+          <div class="support-count">x50</div>
+        </div>
+        <div class="support-card" data-support-spawn="fighter">
+          <div class="ship-icon-wrap">
+            <div class="icon-fighter"></div>
+          </div>
+          <div class="support-details"><span class="ship-name">Fighter</span><span class="ship-role">Interceptor</span>
+          </div>
+          <div class="support-count">x200</div>
+        </div>
+        <div class="orders-row">
+          <div class="glass-btn active" id="support-guard">Guard</div>
+          <div class="glass-btn" id="support-engage">Engage</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="side-panel-transparent" id="panel-shield">
+      <div class="panel-header" onclick="togglePanel('panel-shield')"><span class="panel-title">Tarcza</span><span
+          class="panel-chevron">▼</span></div>
+      <div class="panel-body">
+        <div class="orders-row">
+          <div class="glass-btn" id="btn-energy-shot">Energy Shot (+50%)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- --- RIGHT PANELS (Fleet) --- -->
+  <div id="right-panels-container">
+    <div class="side-panel-transparent" id="panel-fleet">
+      <div class="panel-header" onclick="togglePanel('panel-fleet')"><span class="panel-title">Flota</span><span
+          class="panel-chevron">▼</span></div>
+      <div class="panel-body">
+        <div class="fleet-list" id="fleet-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- --- HUD BOTTOM CONTAINER --- -->
+  <div id="hud-bottom-container">
+    <div class="hud-wing left" id="left-wing">
+      <div class="stat-unit" id="shield-unit">
+        <div class="stat-value-text" id="val-shield">2800</div>
+        <div class="stat-bar-aero">
+          <div class="stat-ghost" id="ghost-shield"></div>
+          <div class="stat-fill shield" id="fill-shield"></div>
+        </div>
+        <div class="stat-label">Deflector Shield</div>
+      </div>
+      <div class="stat-unit" id="hp-unit">
+        <div class="stat-value-text" id="val-hp">4200</div>
+        <div class="stat-bar-aero">
+          <div class="stat-ghost" id="ghost-hp"></div>
+          <div class="stat-fill hp" id="fill-hp"></div>
+        </div>
+        <div class="stat-label">Hull Integrity</div>
+      </div>
+    </div>
+
+    <div class="hud-dock" id="hud-center-dock">
+      <div class="hud-drawer" id="bottom-drawer">
+        <div class="drawer-content-wrapper" id="drawer-content-wrapper"></div>
+      </div>
+      <div class="warp-separator-container" id="warp-container"><span class="warp-label-center"
+          id="warp-text">WARP DRIVE CHARGING</span>
+        <div class="warp-separator-fill" id="fill-warp"></div>
+      </div>
+      <div class="dock-dashboard">
+        <div class="dash-group left"><span class="dash-label">Engine</span>
+          <div class="dash-gauge">
+            <div class="dash-fill power" id="fill-power"></div>
+          </div>
+        </div>
+        <div class="dash-group center">
+          <div class="speed-display"><span class="speed-value" id="val-speed">0</span><span class="speed-unit">M/S</span>
+          </div>
+          <div class="dash-gauge">
+            <div class="dash-fill core" id="fill-core"></div>
+          </div>
+          <span class="dash-label">CORE INTEGRITY</span>
+        </div>
+        <div class="dash-group right"><span class="dash-label">Boost</span>
+          <div class="dash-gauge">
+            <div class="dash-fill boost" id="fill-boost"></div>
+          </div>
+        </div>
+      </div>
+      <div class="skill-row" id="skill-row">
+        <!-- Generowane przez HUDSystem -->
+      </div>
+    </div>
+
+    <div class="hud-wing right" id="hex-armor-container"></div>
+  </div>
+
   <div id="ui" class="hidden">
     <div><strong>Super Capital: Battle for Solar System — gwiazdy na całej mapie + duży silnik plazmowy</strong></div>
     <div class="stat">Czas gry: <span id="game-time">00:00</span></div>
@@ -1998,49 +3338,6 @@
   </div>
   <div id="hud-topbar" class="hud-topbar hidden">
     <div id="skill-slots" class="skill-slot-row" aria-label="Umiejętności i skille"></div>
-  </div>
-  <div id="side-panels">
-    <div id="support-ui" class="side-panel hidden" data-panel="support">
-      <button class="panel-toggle" type="button">
-        <span class="side-panel-title">Wsparcie</span>
-        <span class="panel-chevron" aria-hidden="true">⟲</span>
-      </button>
-      <div class="side-panel-body" role="group" aria-label="Wsparcie">
-        <div class="support-row">
-          <button class="support-btn" data-support-spawn="carrier_capital">Spawn carrier</button>
-          <button class="support-btn" data-support-spawn="carrier_fighter">Carrier Fighter</button>
-          <button class="support-btn" data-support-spawn="fighter">Fighter Squad</button>
-          <button class="support-btn" data-support-spawn="frigate_pd">Frigate (PD)</button>
-          <button class="support-btn" data-support-spawn="frigate_laser">Frigate (Laser)</button>
-          <button class="support-btn" data-support-spawn="destroyer">Destroyer</button>
-          <button class="support-btn" data-support-spawn="battleship">Battleship</button>
-        </div>
-        <div class="support-row">
-          <button id="support-engage" class="support-order-btn">Engage</button>
-          <button id="support-guard" class="support-order-btn active">Guard</button>
-        </div>
-      </div>
-    </div>
-    <div id="fleet-ui" class="side-panel hidden" data-panel="fleet">
-      <button class="panel-toggle" type="button">
-        <span class="side-panel-title">Flota</span>
-        <span class="panel-chevron" aria-hidden="true">⟲</span>
-      </button>
-      <div class="side-panel-body" role="group" aria-label="Flota">
-        <ul id="fleet-list"></ul>
-      </div>
-    </div>
-    <div id="shield-controls" class="side-panel hidden" data-panel="shield">
-      <button class="panel-toggle" type="button">
-        <span class="side-panel-title">Tarcza</span>
-        <span class="panel-chevron" aria-hidden="true">⟲</span>
-      </button>
-      <div class="side-panel-body" role="group" aria-label="Sterowanie tarczą">
-        <div class="support-row">
-          <button id="btn-energy-shot" class="support-order-btn">Energy Shot (+50%)</button>
-        </div>
-      </div>
-    </div>
   </div>
   <div id="main-menu">
     <div class="menu-panel">
@@ -2083,27 +3380,6 @@
       <div class="loading-title">Ładowanie</div>
       <div class="loading-bar"><span id="loading-fill"></span></div>
       <div id="loading-progress" class="loading-progress">0%</div>
-    </div>
-  </div>
-  <div id="station-overlay" class="station-overlay hidden">
-    <div class="station-head">
-      <div>
-        <div id="station-title" class="station-title">Stacja orbitalna</div>
-        <div id="station-subtitle" class="station-subtitle">Przestrzeń cywilna</div>
-      </div>
-      <div class="station-balance">
-        <div class="label">Kredyty</div>
-        <div id="station-credits" class="value">0 cr</div>
-      </div>
-    </div>
-    <ul id="station-tabs"></ul>
-    <div class="station-panels">
-      <div id="tab-upgrades" class="station-tab"></div>
-      <div id="tab-trade" class="station-tab hidden"></div>
-      <div id="tab-cantina" class="station-tab hidden"></div>
-      <div id="tab-hangar" class="station-tab hidden"></div>
-      <div id="tab-mechanic-html" class="station-tab hidden"></div>
-      <div id="tab-infrastructure-html" class="station-tab hidden"></div>
     </div>
   </div>
   <div id="infrastructure-overlay" class="station-overlay hidden">
@@ -2211,6 +3487,7 @@
     import { DestructorSystem, initHexBody, drawHexBody, drawHexBodyLocal } from "./src/game/destructor.js";
     // IMPORTUJEMY NOWY MODUŁ SUPERBRONI
     import * as Superweapon from "./src/game/superweapon.js";
+    import { HUDSystem } from "./src/ui/hudSystem.js";
     // Statki Terran (Wsparcie)
     import terranFrigateImg from "./src/assets/ships/terranfrigate.png";
     import terranDestroyerImg from "./src/assets/ships/terrandestroyer.png";
@@ -2232,6 +3509,10 @@
     window.DEFAULT_PLANET_SCALE ??= DEFAULT_PLANET_SCALE;
     window.TIME_SCALE ??= TIME_SCALE;
     window.WORLD ??= WORLD;
+
+    const hud = new HUDSystem();
+    hud.init();
+    window.hudSystem = hud;
 
     // LOKALNY alias na potrzeby tego modułu (ESM nie widzi 'gołych' globali z window):
     const PLANET_SCALE =
@@ -2282,14 +3563,14 @@
     const ctx = canvas.getContext('2d');
     let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
 
-    const fleetUIRoot = document.getElementById('fleet-ui');
+    const fleetUIRoot = document.getElementById('panel-fleet');
     const fleetListEl = document.getElementById('fleet-list');
-    const supportUIRoot = document.getElementById('support-ui');
+    const supportUIRoot = document.getElementById('panel-support');
     const supportGuardBtn = document.getElementById('support-guard');
     const supportEngageBtn = document.getElementById('support-engage');
     const supportSpawnButtons = document.querySelectorAll('[data-support-spawn]');
     const carrierSpawnBtn = document.querySelector('[data-support-spawn="carrier_capital"]');
-    const shieldControlsRoot = document.getElementById('shield-controls');
+    const shieldControlsRoot = document.getElementById('panel-shield');
     const energyShotBtn = document.getElementById('btn-energy-shot');
     const supportDragState = {
       active: false,
@@ -3118,42 +4399,57 @@
     }
 
     function renderFleetEntry(entry) {
-      const li = document.createElement('li');
-      li.className = 'fleet-ship';
-
-      if (entry.kind === 'fighters') {
-        const fighters = document.createElement('div');
-        fighters.className = 'fleet-fighters';
-        fighters.textContent = `${entry.label}: ${formatFleetNumber(entry.count)}`;
-        li.appendChild(fighters);
-        return li;
-      }
+      const item = document.createElement('div');
+      item.className = 'fleet-item';
 
       const header = document.createElement('div');
-      header.className = 'fleet-ship-header';
+      header.className = 'fleet-header';
       const nameEl = document.createElement('div');
-      nameEl.className = 'fleet-ship-name';
-      nameEl.textContent = `${entry.name} (${entry.typeLabel})`;
-      const metaEl = document.createElement('div');
-      metaEl.className = 'fleet-ship-meta';
-      metaEl.textContent = entry.meta || 'Flota';
-      header.append(nameEl, metaEl);
-      li.appendChild(header);
+      nameEl.className = 'fleet-name';
+      const typeEl = document.createElement('div');
+      typeEl.className = 'fleet-type';
 
-      const stats = document.createElement('div');
-      stats.className = 'fleet-stats';
-      if (entry.kind === 'placeholder') {
-        stats.textContent = 'W przygotowaniu';
-      } else {
-        const hpSpan = document.createElement('span');
-        hpSpan.textContent = `HP: ${formatFleetNumber(entry.hull)}`;
-        const shieldSpan = document.createElement('span');
-        shieldSpan.textContent = `SHIELD: ${formatFleetNumber(entry.shield)}`;
-        stats.append(hpSpan, document.createTextNode(' · '), shieldSpan);
+      if (entry.kind === 'fighters') {
+        nameEl.textContent = `${entry.label}`;
+        typeEl.textContent = `x${formatFleetNumber(entry.count)}`;
+        header.append(nameEl, typeEl);
+        item.appendChild(header);
+        return item;
       }
-      li.appendChild(stats);
 
-      return li;
+      nameEl.textContent = entry.name;
+      typeEl.textContent = entry.typeLabel || entry.meta || 'Flota';
+      header.append(nameEl, typeEl);
+      item.appendChild(header);
+
+      if (entry.kind === 'placeholder') {
+        const note = document.createElement('div');
+        note.className = 'fleet-type';
+        note.textContent = 'W przygotowaniu';
+        item.appendChild(note);
+        return item;
+      }
+
+      const bars = document.createElement('div');
+      bars.className = 'fleet-bars';
+      const hpBar = document.createElement('div');
+      hpBar.className = 'mini-bar';
+      const hpFill = document.createElement('div');
+      hpFill.className = 'mini-fill hp';
+      hpFill.style.width = entry.hull > 0 ? '100%' : '0%';
+      hpBar.appendChild(hpFill);
+
+      const shieldBar = document.createElement('div');
+      shieldBar.className = 'mini-bar';
+      const shieldFill = document.createElement('div');
+      shieldFill.className = 'mini-fill shield';
+      shieldFill.style.width = entry.shield > 0 ? '100%' : '0%';
+      shieldBar.appendChild(shieldFill);
+
+      bars.append(hpBar, shieldBar);
+      item.appendChild(bars);
+
+      return item;
     }
 
     function updateFleetUI() {
@@ -3270,7 +4566,9 @@
         SupportWing.ui.root.classList.remove('hidden');
       }
       if (carrierSpawnBtn) {
-        carrierSpawnBtn.disabled = !!getFriendlyCarrierEntity();
+        const hasCarrier = !!getFriendlyCarrierEntity();
+        carrierSpawnBtn.classList.toggle('disabled', hasCarrier);
+        carrierSpawnBtn.setAttribute('aria-disabled', hasCarrier ? 'true' : 'false');
       }
       if (SupportWing.order === 'engage') {
         const piratesAlive = npcs.some(n => n && !n.dead && n.isPirate);
@@ -4215,23 +5513,21 @@
     }
 
     function updatePlayerStatusUI() {
-      if (!hudTopbarRoot) return;
-      const hull = ship?.hull;
-      const shield = ship?.shield;
-      if (hull && hullFillEl) {
-        const frac = clamp(hull.val / Math.max(1, hull.max), 0, 1);
-        hullFillEl.style.width = `${(frac * 100).toFixed(1)}%`;
-      }
-      if (shield && shieldFillEl) {
-        const frac = clamp(shield.val / Math.max(1, shield.max), 0, 1);
-        shieldFillEl.style.width = `${(frac * 100).toFixed(1)}%`;
-      }
-      if (hull && hullLabelEl) {
-        hullLabelEl.textContent = `${Math.round(hull.val)}/${Math.round(hull.max)}`;
-      }
-      if (shield && shieldLabelEl) {
-        shieldLabelEl.textContent = `${Math.round(shield.val)}/${Math.round(shield.max)}`;
-      }
+      if (!window.hudSystem) return;
+      const boostFuelMax = boost?.fuelMax || 1;
+      const sysData = {
+        power: (enginePower?.current ?? 0) * 100,
+        boost: (boost?.fuel ?? 0) / boostFuelMax * 100,
+        core: 100,
+        warpState: warp?.state,
+        warpCharge: warp?.charge ?? 0,
+        warpMax: warp?.chargeTime ?? 1,
+        warpSpeed: warp?.speed ?? 0
+      };
+      const envData = {
+        locationName: zoneState.current?.label || 'UNKNOWN SECTOR'
+      };
+      window.hudSystem.update(ship, sysData, envData);
     }
     function wrapAngle(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; }
     function interpAngleShort(prev, curr, t) { const d = wrapAngle(curr - prev); return wrapAngle(prev + d * t); }
@@ -8793,13 +10089,11 @@
 
       setInfrastructureUIVisible(showInfrastructure);
 
-      const overlay = stationOverlayDom.root;
-      if (!overlay) {
-        return;
+      const topDock = document.getElementById('hud-top-dock');
+      if (topDock) {
+        topDock.classList.toggle('expanded', shouldShow);
       }
 
-      overlay.style.opacity = shouldShow ? alpha.toFixed(2) : '0';
-      overlay.classList.toggle('hidden', !shouldShow);
       if (shouldShow) {
         renderStationOverlay(stationUI.tab, stationUI.station);
       }
@@ -10771,7 +12065,7 @@
     };
 
     const stationOverlayDom = {
-      root: document.getElementById('station-overlay'),
+      root: document.getElementById('top-drawer'),
       tabs: document.getElementById('station-tabs'),
       title: document.getElementById('station-title'),
       subtitle: document.getElementById('station-subtitle'),
@@ -10807,7 +12101,7 @@
 
     function createStationCard({ title, badge, description, meta = [], actions = [], dataset = null }) {
       const card = document.createElement('div');
-      card.className = 'station-card';
+      card.className = 'station-card-aero';
       if (dataset) {
         for (const [key, val] of Object.entries(dataset)) {
           card.dataset[key] = val;
@@ -10815,14 +12109,14 @@
       }
 
       const header = document.createElement('div');
-      header.className = 'station-card-header';
-      const titleEl = document.createElement('h4');
-      titleEl.className = 'station-card-title';
+      header.className = 'card-header';
+      const titleEl = document.createElement('div');
+      titleEl.className = 'card-title';
       titleEl.textContent = title;
       header.appendChild(titleEl);
       if (badge) {
         const chip = document.createElement('span');
-        chip.className = 'station-chip';
+        chip.className = 'card-badge';
         chip.textContent = badge;
         header.appendChild(chip);
       }
@@ -10830,25 +12124,22 @@
 
       if (description) {
         const desc = document.createElement('p');
-        desc.className = 'station-card-desc';
+        desc.className = 'card-desc';
         desc.textContent = description;
         card.appendChild(desc);
       }
 
       if (meta.length) {
         const metaEl = document.createElement('div');
-        metaEl.className = 'station-card-meta';
-        meta.forEach(text => {
-          const span = document.createElement('span');
-          span.textContent = text;
-          metaEl.appendChild(span);
-        });
+        metaEl.className = 'card-desc';
+        metaEl.dataset.cardMeta = 'true';
+        metaEl.innerHTML = meta.map(text => `<div>${text}</div>`).join('');
         card.appendChild(metaEl);
       }
 
       if (actions.length) {
         const actionsEl = document.createElement('div');
-        actionsEl.className = 'station-card-actions';
+        actionsEl.className = 'card-actions';
         actions.forEach(action => {
           const btn = document.createElement('button');
           btn.textContent = action.label;
@@ -10871,14 +12162,16 @@
       if (!stationOverlayDom.tabs) return;
       stationOverlayDom.tabs.innerHTML = '';
       for (const tab of STATION_TAB_CONFIG) {
-        const li = document.createElement('li');
-        li.dataset.tab = tab.id;
-        li.textContent = tab.label;
-        li.addEventListener('click', () => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'station-tab-btn';
+        btn.dataset.tab = tab.id;
+        btn.textContent = tab.label;
+        btn.addEventListener('click', () => {
           stationUI.tab = tab.id;
           renderStationUI();
         });
-        stationOverlayDom.tabs.appendChild(li);
+        stationOverlayDom.tabs.appendChild(btn);
       }
     }
 
@@ -10886,8 +12179,6 @@
       const pane = stationOverlayDom.panels.upgrades;
       if (!pane) return;
       pane.innerHTML = '';
-      const grid = document.createElement('div');
-      grid.className = 'station-grid';
       for (const upgrade of BLUEPRINTS.upgrades) {
         const card = createStationCard({
           title: upgrade.name,
@@ -10900,9 +12191,8 @@
             onClick: () => purchaseUpgrade(upgrade)
           }]
         });
-        grid.appendChild(card);
+        pane.appendChild(card);
       }
-      pane.appendChild(grid);
     }
 
     function buildTradePanel() {
@@ -10911,27 +12201,27 @@
       pane.innerHTML = '';
 
       const resourcesCard = document.createElement('div');
-      resourcesCard.className = 'station-card trade-resource-card';
+      resourcesCard.className = 'station-card-aero trade-resource-card';
 
       const resHeader = document.createElement('div');
-      resHeader.className = 'station-card-header';
-      const resTitle = document.createElement('h4');
-      resTitle.className = 'station-card-title';
+      resHeader.className = 'card-header';
+      const resTitle = document.createElement('div');
+      resTitle.className = 'card-title';
       resTitle.textContent = 'Magazyny i produkcja';
       resHeader.appendChild(resTitle);
       const resBadge = document.createElement('span');
-      resBadge.className = 'station-chip';
+      resBadge.className = 'card-badge';
       resBadge.textContent = 'Trade';
       resHeader.appendChild(resBadge);
       resourcesCard.appendChild(resHeader);
 
       const resDesc = document.createElement('p');
-      resDesc.className = 'station-card-desc';
+      resDesc.className = 'card-desc';
       resDesc.textContent = 'Aktualny stan surowców na orbicie planety.';
       resourcesCard.appendChild(resDesc);
 
       const resMeta = document.createElement('div');
-      resMeta.className = 'station-card-meta';
+      resMeta.className = 'card-desc';
       const resNote = document.createElement('span');
       resNote.className = 'trade-resource-note';
       resNote.textContent = 'Magazyny stacji orbitalnej.';
@@ -10968,9 +12258,6 @@
       }
       resourcesCard.appendChild(resTable);
       pane.appendChild(resourcesCard);
-
-      const grid = document.createElement('div');
-      grid.className = 'station-grid';
       const allItems = new Set([...Object.keys(MARKET.buy), ...Object.keys(MARKET.sell)]);
       for (const item of allItems) {
         const buyPrice = MARKET.buy[item];
@@ -10998,40 +12285,34 @@
             } : null
           ].filter(Boolean)
         });
-        grid.appendChild(card);
+        pane.appendChild(card);
       }
-      pane.appendChild(grid);
     }
 
     function buildCantinaPanel() {
       const pane = stationOverlayDom.panels.cantina;
       if (!pane) return;
       pane.innerHTML = '';
-      const grid = document.createElement('div');
-      grid.className = 'station-grid';
-      grid.appendChild(createStationCard({
+      pane.appendChild(createStationCard({
         title: 'Najemnik: piracka stacja',
         badge: 'Misja',
         description: 'Odbierz kontrakt na zniszczenie pirackiej placówki w pobliskim sektorze.',
         meta: ['Nagrody za eliminację wrogów'],
         actions: [{ label: 'Przyjmij', onClick: startMercenaryMission }]
       }));
-      grid.appendChild(createStationCard({
+      pane.appendChild(createStationCard({
         title: 'Wojna o terytorium',
         badge: 'Misja',
         description: 'Dołącz do sił sojuszniczych i odbij punkt kontrolny z rąk piratów.',
         meta: ['Aktywuje wrogie fale w sektorze'],
         actions: [{ label: 'Dołącz', onClick: startTerritoryWarMission }]
       }));
-      pane.appendChild(grid);
     }
 
     function buildHangarPanel() {
       const pane = stationOverlayDom.panels.hangar;
       if (!pane) return;
       pane.innerHTML = '';
-      const grid = document.createElement('div');
-      grid.className = 'station-grid';
 
       const repairCard = createStationCard({
         title: 'Naprawy kadłuba',
@@ -11040,7 +12321,7 @@
         meta: ['Status: 0% uszkodzeń'],
         actions: [{ label: 'Napraw', dataset: { action: 'repair' }, onClick: handleRepair }]
       });
-      grid.appendChild(repairCard);
+      pane.appendChild(repairCard);
 
       for (const shipBP of BLUEPRINTS.ships) {
         const card = createStationCard({
@@ -11058,9 +12339,8 @@
             onClick: () => purchaseShip(shipBP)
           }]
         });
-        grid.appendChild(card);
+        pane.appendChild(card);
       }
-      pane.appendChild(grid);
     }
 
     function buildMechanicPanel() {
@@ -11184,14 +12464,14 @@
         stationOverlayDom.subtitle.textContent = parts.join(' • ') || 'Przestrzeń cywilna';
       }
       if (stationOverlayDom.credits) {
-        stationOverlayDom.credits.textContent = `${Math.round(PLAYER.credits)} cr`;
+        stationOverlayDom.credits.textContent = `${Math.round(PLAYER.credits)} CR`;
       }
     }
 
     function setActiveStationTab(tab) {
       if (stationOverlayDom.tabs) {
-        stationOverlayDom.tabs.querySelectorAll('li').forEach(li => {
-          li.classList.toggle('active', li.dataset.tab === tab);
+        stationOverlayDom.tabs.querySelectorAll('.station-tab-btn').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.tab === tab);
         });
       }
       for (const [key, pane] of Object.entries(stationOverlayDom.panels)) {
@@ -11234,17 +12514,17 @@
 
     function updateTradeCards(station) {
       updateTradeResourceTable(station);
-      const cards = stationOverlayDom.panels.trade?.querySelectorAll('.station-card[data-trade-card="market"]');
+      const cards = stationOverlayDom.panels.trade?.querySelectorAll('.station-card-aero[data-trade-card="market"]');
       if (!cards) return;
       cards.forEach(card => {
         const item = card.dataset.tradeItem
           || card.querySelector('[data-trade-item]')?.dataset.tradeItem
           || card.querySelector('button[data-trade-item]')?.dataset.tradeItem;
         if (!item) return;
-        const meta = card.querySelector('.station-card-meta');
+        const meta = card.querySelector('[data-card-meta="true"]');
         if (meta) {
-          const metaSpans = [...meta.querySelectorAll('span')];
-          if (metaSpans[2]) metaSpans[2].textContent = `Ładownia: ${PLAYER.cargo[item] || 0}`;
+          const metaLines = [...meta.querySelectorAll('div')];
+          if (metaLines[2]) metaLines[2].textContent = `Ładownia: ${PLAYER.cargo[item] || 0}`;
         }
         card.querySelectorAll('button[data-trade-type]').forEach(btn => {
           const price = Number(btn.dataset.price) || 0;
@@ -11262,13 +12542,13 @@
     function updateHangarCards() {
       const pane = stationOverlayDom.panels.hangar;
       if (!pane) return;
-      const cards = [...pane.querySelectorAll('.station-card')];
+      const cards = [...pane.querySelectorAll('.station-card-aero')];
       const damageFrac = 1 - (ship.hull.val / ship.hull.max);
       const damagePct = Math.ceil(damageFrac * 100);
       const repairCost = Math.ceil(damageFrac * 600);
       const repairCard = cards.find(card => card.querySelector('button[data-action="repair"]'));
       if (repairCard) {
-        const meta = repairCard.querySelector('.station-card-meta span');
+        const meta = repairCard.querySelector('[data-card-meta="true"] div');
         if (meta) meta.textContent = `Status: ${damagePct}% uszkodzeń`;
         const btn = repairCard.querySelector('button[data-action="repair"]');
         if (btn) btn.disabled = damagePct <= 0 || PLAYER.credits < repairCost;
@@ -17534,6 +18814,7 @@
         const key = btn.dataset.supportSpawn;
         if (SUPPORT_CLICK_TYPES.has(key)) {
           btn.addEventListener('click', () => {
+            if (btn.getAttribute('aria-disabled') === 'true') return;
             if (key === 'carrier_fighter') {
               const carrier = getFriendlyCarrierEntity();
               if (!carrier) return;
@@ -17546,6 +18827,7 @@
         } else if (isSupportDragKey(key)) {
           btn.addEventListener('mousedown', (event) => {
             if (event.button !== 0) return;
+            if (btn.getAttribute('aria-disabled') === 'true') return;
             beginSupportDrag(key, btn);
           });
           btn.addEventListener('click', (event) => {
