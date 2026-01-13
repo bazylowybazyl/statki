@@ -281,6 +281,14 @@ export class HUDSystem {
      * @param {Object} env - Informacje o świecie (lokacja)
      */
     update(ship, sys, env) {
+        // --- POPRAWKA (KROK 4) ---
+        // Jeśli główny kontener (centerDock) jest ukryty (np. jesteśmy w menu), 
+        // offsetParent będzie null. Wtedy przerywamy rysowanie.
+        if (this.dom.centerDock && this.dom.centerDock.offsetParent === null) {
+            return; 
+        }
+        // -------------------------
+
         if (!ship || !this.dom.hpFill) return;
 
         // 1. HP & Shield
@@ -340,8 +348,6 @@ export class HUDSystem {
         // 5. Hex Armor Draw
         if (this.hexHud) this.hexHud.draw();
     }
-
-    // --- PANEL CONTROLS ---
 
     toggleTopPanel() {
         if(this.dom.topDock) this.dom.topDock.classList.toggle('expanded');
