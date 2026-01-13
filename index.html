@@ -14778,8 +14778,8 @@
       const allDestructibles = [ship, ...npcs, ...wrecks];
       DestructorSystem.update(frame, allDestructibles);
 
-      // AKTUALIZACJA SUPERBRONI (NOWY MODUŁ)
-      Superweapon.updateSuperweapon(frame, ship);
+      const mWorld = screenToWorld(mouse.x, mouse.y);
+      Superweapon.updateSuperweapon(frame, ship, mWorld);
 
       // >>> TO JEST KLUCZOWE - ODDZIELNA AKTUALIZACJA WIZUALIÓW <<<
       updateParticles(frame);
@@ -16295,8 +16295,8 @@
       }
 
       // === Hexlance Projectiles (Supercapital Weapon) ===
-      // Rysujemy superbroń z nowego modułu
-      Superweapon.drawSuperweapon(ctx, cam, ship, worldToScreen);
+      const mWorldRender = { x: cam.x + (mouse.x - W / 2) / cam.zoom, y: cam.y + (mouse.y - H / 2) / cam.zoom };
+      Superweapon.drawSuperweapon(ctx, cam, ship, worldToScreen, mWorldRender);
 
       // === VFX Pass ===
       for (const p of particlePool) {
