@@ -3479,7 +3479,7 @@
     <div><strong>Super Capital: Battle for Solar System — gwiazdy na całej mapie + duży silnik plazmowy</strong></div>
     <div class="stat">Czas gry: <span id="game-time">00:00</span></div>
     <div class="stat">W — ciąg (duży silnik plazmowy) · Q/E — strafe · A/D — obrót</div>
-    <div class="stat">LPM — rail (A→B, A→B) · PPM — boczne rakiety · F — superbroń · SHIFT — warp / dopalacz na orbitach
+    <div class="stat">LPM — rail (A→B, A→B) · PPM — broń specjalna (priorytet) / boczne rakiety · F — superbroń · SHIFT — warp / dopalacz na orbitach
     </div>
     <div style="margin-top:6px"><small>Gwiazdy są proceduralne w całej galaktyce. Silnik: niebieski exhaust + krótki
         ślad przy ruchu.</small></div>
@@ -13738,8 +13738,11 @@
         e.preventDefault();
         if (PAUSED && Selection.units.size && !stationUI.open) return;
         if (stationUI.open) return;
-        mouse.right = true;
-        if (!stationUI.open && !warp.isBusy()) {
+        const firedSpecial = (!showMap && gameStarted)
+          ? Superweapon.tryFireSuperweapon()
+          : false;
+        mouse.right = !firedSpecial;
+        if (!firedSpecial && !warp.isBusy()) {
           const mouseWorld = screenToWorld(mouse.x, mouse.y);
           const local = rotateInv({ x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y }, ship.angle);
           const side = (local.x >= 0) ? 'right' : 'left';
@@ -14652,16 +14655,6 @@
         spawnParticle({ x: px, y: py }, { x: (Math.random() - 0.5) * 120, y: (Math.random() - 0.5) * 120 }, 0.2, '#9ccfff', 2.5, true);
       }
     }
-
-    // Keyboard handler for superweapon (key "1")
-    window.addEventListener('keydown', (e) => {
-      if (e.key === '1' || e.code === 'Digit1') {
-        if (!stationUI.open && !showMap && gameStarted) {
-          // UŻYWAMY NOWEGO MODUŁU
-          Superweapon.tryFireSuperweapon();
-        }
-      }
-    });
 
 
     function handlePlayerDestroyed() {
