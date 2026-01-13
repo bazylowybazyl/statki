@@ -145,6 +145,14 @@ export class HUDSystem {
         this.menuState = 'IDLE';
         this.menuClearTimer = null;
         this.hexHud = null;
+        this.skillKeys = [
+            { key: '1', label: 'MODE' },
+            { key: '2', label: 'WEAP' },
+            { key: '3', label: 'SCAN' },
+            { key: '4', label: 'MAP' },
+            { key: '5', label: 'AUTO' },
+            { key: '6', label: 'AUX' }
+        ];
         
         // Cache DOM elements
         this.dom = {
@@ -182,6 +190,8 @@ export class HUDSystem {
     init() {
         // Inicjalizacja Heksów
         this.hexHud = new HexArmorHUD('hex-armor-container', 160, 200);
+
+        this.renderSkillKeys();
 
         // Obsługa Drag & Drop dla panelu Wsparcia (integracja z grą)
         this.setupSupportDrag();
@@ -244,9 +254,10 @@ export class HUDSystem {
 
         cards.forEach((card, index) => {
             // Pobierz typ z atrybutu (zalecane) lub z mapy
-            const spawnKey = card.dataset.spawnType || spawnTypes[index];
+            const spawnKey = card.dataset.supportSpawn || card.dataset.spawnType || spawnTypes[index];
+            const clickOnly = spawnKey === 'fighter' || spawnKey === 'carrier_fighter';
             
-            if (spawnKey) {
+            if (spawnKey && !clickOnly) {
                 card.addEventListener('mousedown', (event) => {
                     if (event.button !== 0) return; // Tylko lewy przycisk
                     
@@ -393,6 +404,7 @@ export class HUDSystem {
     }
 
     updateActiveKeys() {
+        if (!this.dom.skillRow) return;
         const btns = this.dom.skillRow.querySelectorAll('.glass-key');
         btns.forEach(b => b.classList.remove('active'));
         
@@ -411,6 +423,19 @@ export class HUDSystem {
         if (action === 'close') {
             this.setBottomMenuState('IDLE');
         }
+    }
+
+    renderSkillKeys() {
+        if (!this.dom.skillRow || this.dom.skillRow.children.length) return;
+        this.skillKeys.forEach((entry) => {
+            const keyEl = document.createElement('div');
+            keyEl.className = 'glass-key';
+            const hint = document.createElement('span');
+            hint.textContent = entry.label;
+            keyEl.appendChild(hint);
+            keyEl.appendChild(document.createTextNode(entry.key));
+            this.dom.skillRow.appendChild(keyEl);
+        });
     }
 
     getMenuHTML(state) {
@@ -441,6 +466,3 @@ export class HUDSystem {
         return '';
     }
 }
-
-// Globalna instancja dla dostępu z HTML (onclick)
-window.hudSystem = new HUDSystem();
