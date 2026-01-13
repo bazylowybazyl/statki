@@ -4127,8 +4127,6 @@
       return !!mainMenuEl && !mainMenuEl.classList.contains('hidden');
     }
 
-    if (isMainMenuVisible()) tryPlayMenuMusic();
-
     // --- ZBIORCZA LISTA ELEMENTÓW HUD (Nowych i starych) ---
     function getGameUIElements() {
       return [
@@ -4166,6 +4164,11 @@
           else el.classList.add('hidden');
         }
       });
+    }
+
+    if (isMainMenuVisible()) {
+      toggleGameUI(false);
+      tryPlayMenuMusic();
     }
 
     function showMainMenu(view = 'home') {
