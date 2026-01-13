@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Super Capital: Battle for Solar System — gwiazdy na całej mapie + duży silnik plazmowy</title>
+  <title>Space Survivors — gwiazdy na całej mapie + duży silnik plazmowy</title>
   <style>
     :root {
       --fa-font: 'Segoe UI', 'Frutiger', 'Inter', system-ui, -apple-system, sans-serif;
@@ -1984,7 +1984,7 @@
 
 <body>
   <div id="ui" class="hidden">
-    <div><strong>Super Capital: Battle for Solar System — gwiazdy na całej mapie + duży silnik plazmowy</strong></div>
+    <div><strong>Space Survivors — gwiazdy na całej mapie + duży silnik plazmowy</strong></div>
     <div class="stat">Czas gry: <span id="game-time">00:00</span></div>
     <div class="stat">W — ciąg (duży silnik plazmowy) · Q/E — strafe · A/D — obrót</div>
     <div class="stat">LPM — rail (A→B, A→B) · PPM — boczne rakiety · F — superbroń · SHIFT — warp / dopalacz na orbitach
@@ -2030,11 +2030,22 @@
         <ul id="fleet-list"></ul>
       </div>
     </div>
+    <div id="shield-controls" class="side-panel hidden" data-panel="shield">
+      <button class="panel-toggle" type="button">
+        <span class="side-panel-title">Tarcza</span>
+        <span class="panel-chevron" aria-hidden="true">⟲</span>
+      </button>
+      <div class="side-panel-body" role="group" aria-label="Sterowanie tarczą">
+        <div class="support-row">
+          <button id="btn-energy-shot" class="support-order-btn">Energy Shot (+50%)</button>
+        </div>
+      </div>
+    </div>
   </div>
   <div id="main-menu">
     <div class="menu-panel">
       <div id="menu-home-view" class="menu-view">
-        <h1>Super Capital: Battle for Solar System</h1>
+        <h1>Space Survivors</h1>
         <p class="menu-subtitle">Rozpocznij lot lub zajrzyj do nowych opcji.</p>
         <div class="menu-actions">
           <button id="btn-continue" class="menu-primary hidden">Kontynuuj</button>
@@ -2276,6 +2287,8 @@
     const supportEngageBtn = document.getElementById('support-engage');
     const supportSpawnButtons = document.querySelectorAll('[data-support-spawn]');
     const carrierSpawnBtn = document.querySelector('[data-support-spawn="carrier_capital"]');
+    const shieldControlsRoot = document.getElementById('shield-controls');
+    const energyShotBtn = document.getElementById('btn-energy-shot');
     const supportDragState = {
       active: false,
       key: null,
@@ -2358,6 +2371,7 @@
 
     const fleetPanel = setupSidePanel(fleetUIRoot);
     const supportPanel = setupSidePanel(supportUIRoot);
+    const shieldPanel = setupSidePanel(shieldControlsRoot);
     const Fleet = window.Fleet || (window.Fleet = {
       ships: [],
       dirty: true,
@@ -4421,51 +4435,11 @@
 
     function updateCameraTarget(dt) {
       if (camera.mode === 'ship') {
-        // 1. Bazowa pozycja to statek
-        let targetX = ship.pos.x;
-        let targetY = ship.pos.y;
-
-        // 2. STARSECTOR STYLE PANNING (Look Ahead)
-        if (mouse.overCanvas) {
-          // Środek ekranu
-          const cx = W / 2;
-          const cy = H / 2;
-
-          // Odległość myszki od środka ekranu (w pikselach)
-          const dx = mouse.x - cx;
-          const dy = mouse.y - cy;
-          
-          // Ustawienia Panningu
-          // Czułość: 0.65 oznacza, że kamera przesunie się o 65% odległości w stronę kursora
-          const sensitivity = 0.65; 
-          
-          // Maksymalne wychylenie (w pikselach ekranu), żeby kamera nie uciekła w róg
-          const maxPan = Math.min(W, H) * 0.42;
-
-          // Obliczamy wektor przesunięcia
-          const dist = Math.hypot(dx, dy);
-          const angle = Math.atan2(dy, dx);
-          
-          // Clampujemy (ograniczamy) dystans wychylenia
-          const panDist = Math.min(dist * sensitivity, maxPan);
-
-          // Dodajemy offset do celu kamery
-          // Dzielimy przez camera.zoom, aby ruch był spójny niezależnie od przybliżenia
-          targetX += (Math.cos(angle) * panDist) / Math.max(0.1, camera.zoom);
-          targetY += (Math.sin(angle) * panDist) / Math.max(0.1, camera.zoom);
-        }
-
-        camera.targetX = targetX;
-        camera.targetY = targetY;
-
-        // Zachowanie efektu hamowania z grawitacji (Twój istniejący kod)
-        const brakeOffset = gravityBrakeCameraOffset();
-        if (brakeOffset) {
-          camera.targetX += brakeOffset.x;
-          camera.targetY += brakeOffset.y;
-        }
+        // --- ZMIANA: POZYCJA PRZENIESIONA DO RENDER() ---
+        // W trybie 'ship' nie obliczamy tu targetX/Y, żeby uniknąć konfliktu 
+        // z interpolacją w funkcji render() (co powodowało drgania).
         
-        // Reset zoomu jeśli nie ma animacji
+        // Reset zoomu jeśli nie ma animacji i gracz nie przybliża ręcznie
         if (!camera.transition && !camera.manualZoom) camera.targetZoom = camera.defaultZoom;
       
       } else if (camera.mode === 'free') {
@@ -4501,8 +4475,7 @@
           }
         } else {
           camera.clearFocus();
-          camera.targetX = ship.pos.x;
-          camera.targetY = ship.pos.y;
+          // Wracamy do statku - render() przejmie pozycję
           camera.targetZoom = camera.defaultZoom;
         }
       } else if (camera.mode === 'infrastructure') {
@@ -4521,8 +4494,6 @@
           }
         } else {
           camera.clearFocus();
-          camera.targetX = ship.pos.x;
-          camera.targetY = ship.pos.y;
           camera.targetZoom = camera.defaultZoom;
         }
       }
@@ -4545,13 +4516,10 @@
         }
       } else {
         // --- WYGŁADZANIE RUCHU KAMERY ---
-        if (camera.mode === 'ship') {
-          // Dla trybu statku dajemy lekkie opóźnienie (5.0), żeby kamera płynnie podążała za myszką
-          const posLerp = Math.min(1, dt * 5.0); 
-          camera.x += (camera.targetX - camera.x) * posLerp;
-          camera.y += (camera.targetY - camera.y) * posLerp;
-        } else {
-          // Dla innych trybów (np. free) standardowa prędkość
+        // ZMIANA: Ruszamy kamerą tutaj TYLKO jeśli NIE jesteśmy w trybie statku.
+        // Pozycją statku steruje teraz render(), co eliminuje drgania przy interpolacji.
+        
+        if (camera.mode !== 'ship') {
           const posLerp = Math.min(1, dt * 6);
           camera.x += (camera.targetX - camera.x) * posLerp;
           camera.y += (camera.targetY - camera.y) * posLerp;
@@ -4565,7 +4533,6 @@
       mouse.dx = 0;
       mouse.dy = 0;
     }
-
     // Bezpieczna, odroczona inicjalizacja overlayu 3D
     let overlay3D = null;
 
@@ -7014,7 +6981,7 @@
     }
 
     // ==========================================================================================
-    // 2. ADAPTER SYSTEMU (Most między AI SPACE a Super Capital: Battle for Solar System)
+    // 2. ADAPTER SYSTEMU (Most między AI SPACE a Space Survivors)
     // ==========================================================================================
 
     // Ten obiekt udaje silnik z AI Space, żebyśmy nie musieli przepisywać każdej linijki AI
@@ -11902,11 +11869,6 @@
         hudPingNpcStations();
         togglePlanetRadarVisibility();
       }
-      if (k === '4') {
-        if (!stationUI.open && !showMap && gameStarted) {
-          triggerEnergyShot();
-        }
-      }
       if (k === 'z') {
         if (!(Game.player.weapons?.[HP.HANGAR]?.length)) { toast('Brak dostępnych hangarów.'); return; }
         if (SQUAD.order === 'idle' || SQUAD.list.length === 0) {
@@ -13455,39 +13417,43 @@
       }
     }
 
-   function drawSuperweaponSprite(ctx, cam) {
+   function drawSuperweaponSprite(ctx, cam, drawPos, drawAngle) {
       if (!superweaponSpriteReady) return;
 
-      // --- KONFIGURACJA TUNERA ---
-      const tuneScale = (typeof window.SW_SCALE === 'number') ? window.SW_SCALE : 0.35;
-      const defaultY = -ship.h * 0.35;
-      const tuneY = (typeof window.SW_POS_Y === 'number') ? window.SW_POS_Y : defaultY;
+      const posX = drawPos ? drawPos.x : ship.pos.x;
+      const posY = drawPos ? drawPos.y : ship.pos.y;
+      const angle = (typeof drawAngle === 'number') ? drawAngle : ship.angle;
 
-      // NOWOŚĆ: Rozstaw dział (X). Domyślnie 50px w lewo i prawo.
-      const tuneX = (typeof window.SW_POS_X === 'number') ? window.SW_POS_X : 50;
-      // ---------------------------
+      // --- ZASTOSOWANE WARTOŚCI (HARDCODED) ---
+      const tuneX = 275;
+      const tuneY = 315;
+      const anchorX = 0.25;
+      const anchorY = 0.5;
+      const tuneScale = 0.2;
 
       const spriteScale = tuneScale * cam.zoom;
       const spriteW = superweaponSprite.width * spriteScale;
       const spriteH = superweaponSprite.height * spriteScale;
 
-      // Definiujemy dwa offsety: Lewy (-X) i Prawy (+X)
+      // Obliczamy pozycję rysowania na podstawie anchora (pivota)
+      // drawOffset to przesunięcie lewego górnego rogu obrazka względem punktu obrotu (0,0)
+      const drawOffsetX = -spriteW * anchorX;
+      const drawOffsetY = -spriteH * anchorY;
+
       const offsets = [
-        { x: -tuneX, y: tuneY }, // Lewe działo
-        { x: tuneX, y: tuneY }   // Prawe działo
+        { x: -tuneX, y: tuneY },
+        { x: tuneX, y: tuneY }
       ];
 
-      // Rysujemy w pętli (dwa razy)
       offsets.forEach(off => {
-        const mountOffset = rotate(off, ship.angle);
+        const mountOffset = rotate(off, angle);
 
         const mountWorld = {
-          x: ship.pos.x + mountOffset.x,
-          y: ship.pos.y + mountOffset.y
+          x: posX + mountOffset.x,
+          y: posY + mountOffset.y
         };
         const mountScreen = worldToScreen(mountWorld.x, mountWorld.y, cam);
 
-        // Celowanie (kąt w stronę myszki)
         const mouseWorld = screenToWorld(mouse.x, mouse.y);
         const dx = mouseWorld.x - mountWorld.x;
         const dy = mouseWorld.y - mountWorld.y;
@@ -13497,7 +13463,6 @@
         ctx.translate(mountScreen.x, mountScreen.y);
         ctx.rotate(turretAngle);
 
-        // Efekty ładowania (wspólne dla obu)
         if (typeof superweapon !== 'undefined' && superweapon.charging) {
           const t = superweapon.chargeProgress / superweapon.chargeTime;
           ctx.shadowColor = `rgba(255, ${150 + t * 100}, 50, ${0.5 + t * 0.5})`;
@@ -13507,7 +13472,9 @@
           ctx.globalAlpha = 0.6 + 0.4 * (1 - superweapon.cooldown / superweapon.cooldownMax);
         }
 
-        ctx.drawImage(superweaponSprite, -spriteW / 2, -spriteH / 2, spriteW, spriteH);
+        // Rysowanie z uwzględnieniem pivota
+        ctx.drawImage(superweaponSprite, drawOffsetX, drawOffsetY, spriteW, spriteH);
+
         ctx.restore();
       });
     }
@@ -15916,6 +15883,7 @@
       canvas.style.cursor = 'default';
       //  cheats (np. nielimitowany warp)
       if (window.ApplyCheats) ApplyCheats();
+      
       // Interpolacja stanu
       const interpPos = {
         x: prevState.pos.x + (ship.pos.x - prevState.pos.x) * alpha,
@@ -15928,28 +15896,66 @@
       const interpTurretAngle4 = interpAngleShort(prevState.turretAngle4, ship.turret4.angle, alpha);
       const interpCIWSAngles = ship.ciws.map((c, i) => interpAngleShort(prevState.ciwsAngles[i], c.angle, alpha));
 
-      // Kamera
-      if (camera.mode === 'ship') {
-        camera.x = interpPos.x;
-        camera.y = interpPos.y;
-      } else if (camera.mode === 'focus') {
+      // --- LOGIKA KAMERY (POPRAWIONA) ---
+      // Przeniesiona do render(), aby używać interpPos i uniknąć drgań (jitter)
+      
+      if (camera.mode === 'ship' && !camera.transition) {
+          // 1. Celujemy w wygładzoną pozycję statku (interpPos)
+          let targetX = interpPos.x;
+          let targetY = interpPos.y;
+
+          // 2. Efekt "Look Ahead" (Wyłączony podczas Warpa, żeby nie szarpało)
+          if (mouse.overCanvas && warp.state === 'idle') {
+             const cx = W / 2;
+             const cy = H / 2;
+             const dx = mouse.x - cx;
+             const dy = mouse.y - cy;
+             
+             // Czułość i max wychylenie
+             const sensitivity = 0.55; 
+             const maxPan = Math.min(W, H) * 0.45;
+
+             const dist = Math.hypot(dx, dy);
+             const angle = Math.atan2(dy, dx);
+             const panDist = Math.min(dist * sensitivity, maxPan);
+             
+             // Dodajemy offset
+             targetX += (Math.cos(angle) * panDist) / Math.max(0.1, camera.zoom);
+             targetY += (Math.sin(angle) * panDist) / Math.max(0.1, camera.zoom);
+          }
+
+          // 3. Efekt hamowania grawitacyjnego (pozostawiony bez zmian)
+          const brake = gravityBrakeCameraOffset();
+          if (brake) {
+             targetX += brake.x;
+             targetY += brake.y;
+          }
+
+          // 4. Płynne podążanie (Frame-independent lerp)
+          // Podczas warpa kamera jest sztywniejsza (szybsza), żeby nie gubić statku
+          const lerpSpeed = (warp.state !== 'idle') ? 15.0 : 5.0; 
+          
+          // Wzór na frame-independent damping: lerp(current, target, 1 - exp(-speed * dt))
+          const t = 1.0 - Math.exp(-lerpSpeed * frameDt);
+          
+          camera.x += (targetX - camera.x) * t;
+          camera.y += (targetY - camera.y) * t;
+      }
+      else if (camera.mode === 'focus') {
         const st = camera.focusStation;
         if (st) {
           camera.x = st.x;
           camera.y = st.y;
         } else {
           camera.clearFocus();
-          camera.x = interpPos.x;
-          camera.y = interpPos.y;
         }
       } else if (camera.mode === 'infrastructure') {
         const st = camera.focusStation;
         if (!st) {
           camera.clearFocus();
-          camera.x = interpPos.x;
-          camera.y = interpPos.y;
         }
       }
+
       const cam = { x: camera.x, y: camera.y, zoom: camera.zoom };
       if (!DevFlags.disableCameraShake && camera.shakeMag > 0) {
         const t = camera.shakeTime / camera.shakeDur;
@@ -15981,8 +15987,7 @@
       // najpierw zaktualizuj pozycje stacji 3D...
       if (window.updateStations3D) window.updateStations3D(stations);
       // ...a potem wyrenderuj overlay sceny 3D
-      // Przekazujemy 'cam' (który ma już interpolowane x/y), aby kamera 3D była zsynchronizowana
-      if (window.updateWorld3D) updateWorld3D(frameDt, vfxTime, cam);
+      if (window.updateWorld3D) updateWorld3D(frameDt, vfxTime);
 
       // Gwiazdy (proceduralne kafelki na całej mapie)
       drawStars(cam);
@@ -16623,7 +16628,8 @@
       drawHexlanceProjectiles(ctx, cam);
 
       // === Superweapon Sprite ===
-      drawSuperweaponSprite(ctx, cam);
+      // Rysujemy superbroń używając interpPos i interpAngle, żeby była "przyklejona" do statku
+      drawSuperweaponSprite(ctx, cam, interpPos, interpAngle);
 
       // === VFX Pass ===
       for (const p of particlePool) {
@@ -17810,6 +17816,7 @@
 
       uiRoot?.classList.remove('hidden');
       hudTopbarRoot?.classList.remove('hidden');
+      if (shieldControlsRoot) shieldControlsRoot.classList.remove('hidden');
       initShieldSystem(W, H);
 
       requestAnimationFrame(loop);
@@ -17886,6 +17893,10 @@
         event.stopPropagation();
       }
     }, true);
+    if (energyShotBtn) {
+      energyShotBtn.addEventListener('click', () => triggerEnergyShot());
+    }
+
     function wireDevTools() {
       const saveLS = () => { window.__devtoolsSaveLS?.(); };
       const elUnlimited = document.getElementById('dt-unlimited-warp') || document.getElementById('toggleUnlimitedWarp');
