@@ -14627,6 +14627,14 @@
       if (!(Game.player.weapons?.[HP.SPECIAL]?.length)) return;
       if (ship.special.cooldownTimer > 0) return;
       ship.special.cooldownTimer = SPECIAL_COOLDOWN;
+      const specialWeaponsCount = Game.player.weapons?.[HP.SPECIAL]?.length || 0;
+      if (window.AudioSys && specialWeaponsCount > 0) {
+        const shotsTotal = specialWeaponsCount * 2;
+        const shotDelayMs = 60;
+        for (let i = 0; i < shotsTotal; i++) {
+          setTimeout(() => AudioSys.playSound('specialTurret'), i * shotDelayMs);
+        }
+      }
       const dir = rotate({ x: 0, y: -1 }, ship.angle);
       const start = add(ship.pos, rotate({ x: 0, y: -ship.h / 2 }, ship.angle));
       const length = 2000;
@@ -18945,7 +18953,8 @@
       AudioSys.init();
       await Promise.all([
         AudioSys.loadSound('engine', '/sounds/engine/thruster_loop.wav'),
-        AudioSys.loadSound('shieldHit', '/sounds/465540__steaq__sci-fi-shield-hit-wav.wav')
+        AudioSys.loadSound('shieldHit', '/sounds/465540__steaq__sci-fi-shield-hit-wav.wav'),
+        AudioSys.loadSound('specialTurret', '/sounds/weapons/specialturret.wav')
       ]);
 
       if (typeof ship !== 'undefined') {
