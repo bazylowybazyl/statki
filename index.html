@@ -5473,6 +5473,12 @@
     }
 
     function updatePlanetRadar(ship, cam) {
+      // --- POPRAWKA ---
+      if (isMainMenuVisible()) {
+        if (planetRadarRoot) planetRadarRoot.classList.add('hidden');
+        return;
+      }
+      // ----------------
       if (!Array.isArray(planets)) return;
       const auUnit = getAuToWorldUnits();
       const margin = 32;
@@ -17883,14 +17889,17 @@
       }
 
       // === UI / HUD Pass ===
-      hudRenderNav(ship, cam);
-      hudRenderFloatingBars(ship, cam);
-      for (const ping of radarPings) {
-        const s = worldToScreen(ping.x, ping.y, cam);
-        const t = ping.age / ping.life;
-        ctx.strokeStyle = `rgba(120,200,255,${1 - t})`;
-        ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(s.x, s.y, 40 * t * camera.zoom, 0, Math.PI * 2); ctx.stroke();
+      // Rysuj HUD na Canvasie TYLKO jeśli nie jesteśmy w menu
+      if (!isMainMenuVisible()) {
+        hudRenderNav(ship, cam);
+        hudRenderFloatingBars(ship, cam);
+        for (const ping of radarPings) {
+          const s = worldToScreen(ping.x, ping.y, cam);
+          const t = ping.age / ping.life;
+          ctx.strokeStyle = `rgba(120,200,255,${1 - t})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(s.x, s.y, 40 * t * camera.zoom, 0, Math.PI * 2); ctx.stroke();
+        }
       }
 
       if (scan.target && scan.targetType && mouse.overCanvas) {
