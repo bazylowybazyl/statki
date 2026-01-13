@@ -164,7 +164,12 @@ export class HUDSystem {
             valShield: document.getElementById('val-shield'),
             
             powerFill: document.getElementById('fill-power'),
+            boostFill: document.getElementById('fill-boost'),
             coreFill: document.getElementById('fill-core'),
+            warpFill: document.getElementById('fill-warp'),
+            
+            warpContainer: document.getElementById('warp-container'),
+            warpText: document.getElementById('warp-text'),
             
             speedVal: document.getElementById('val-speed'),
             locText: document.getElementById('loc-text'),
@@ -272,7 +277,7 @@ export class HUDSystem {
      * Główna pętla aktualizacji HUD.
      * Wywoływana z pętli gry (render loop).
      * @param {Object} ship - Obiekt statku gracza
-     * @param {Object} sys - Obiekt systemów (power, core, engine)
+     * @param {Object} sys - Obiekt systemów (boost, warp, engine)
      * @param {Object} env - Informacje o świecie (lokacja)
      */
     update(ship, sys, env) {
@@ -313,14 +318,26 @@ export class HUDSystem {
             this.dom.shieldUnit.classList.remove('shield-critical');
         }
 
-        // 2. Power / Core
-        // Zakładam, że sys zawiera { power: 0-100, core: 0-100 }
+        // 2. Power / Boost / Core
+        // Zakładam, że sys zawiera { power: 0-100, boost: 0-100, core: 0-100 }
         if (sys.power !== undefined) this.dom.powerFill.style.width = `${sys.power}%`;
+        if (sys.boost !== undefined) this.dom.boostFill.style.width = `${sys.boost}%`;
         // Core - jeśli gra nie ma jeszcze logiki core, można symulować lub dać 100%
         const coreVal = sys.core !== undefined ? sys.core : 100;
         this.dom.coreFill.style.width = `${coreVal}%`;
 
-        // 3. Speed & Location
+        // 3. Warp
+        if (sys.warpState === 'charging' || sys.warpState === 'active') {
+            this.dom.centerDock.classList.add('warp-mode');
+            const chargePct = (sys.warpCharge / sys.warpMax) * 100;
+            this.dom.warpFill.style.width = `${chargePct}%`;
+            this.dom.warpText.innerText = sys.warpState === 'active' ? "WARP ACTIVE" : `CHARGING ${Math.round(chargePct)}%`;
+        } else {
+            this.dom.centerDock.classList.remove('warp-mode');
+            this.dom.warpFill.style.width = '0%';
+        }
+
+        // 4. Speed & Location
         const speed = Math.hypot(ship.vel.x, ship.vel.y);
         this.dom.speedVal.innerText = Math.round(speed);
         
@@ -328,7 +345,7 @@ export class HUDSystem {
             this.dom.locText.innerText = env.locationName;
         }
 
-        // 4. Hex Armor Draw
+        // 5. Hex Armor Draw
         if (this.hexHud) this.hexHud.draw();
     }
 
