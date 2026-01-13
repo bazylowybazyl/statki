@@ -5626,50 +5626,6 @@
         ctx.restore();
       }
 
-      // MOC SILNIKA – pływające suwaki (target + aktualna)
-      const sliderHeight = 68;
-      const sliderGap = 12;
-      const sliderX0 = cx - R0 - 38;
-      const sliderY0 = cy - sliderHeight / 2;
-      const engineTarget = clamp(enginePower.target, 0, 1);
-      const engineCurrent = clamp(enginePower.current, 0, 1);
-
-      ctx.save();
-      ctx.fillStyle = '#cfe7ff';
-      ctx.font = '11px system-ui,monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText('MOC SILNIKA', sliderX0 + sliderGap / 2, sliderY0 - 12);
-
-      function drawEngineSlider(x, ratio, color, label) {
-        ctx.strokeStyle = 'rgba(30,41,59,0.9)';
-        ctx.lineWidth = 6;
-        ctx.beginPath();
-        ctx.moveTo(x, sliderY0);
-        ctx.lineTo(x, sliderY0 + sliderHeight);
-        ctx.stroke();
-
-        const fillY = sliderY0 + (1 - ratio) * sliderHeight;
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(x, sliderY0 + sliderHeight);
-        ctx.lineTo(x, fillY);
-        ctx.stroke();
-
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(x, fillY, 4, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = '#cfe7ff';
-        ctx.font = '10px system-ui,monospace';
-        ctx.fillText(label, x, sliderY0 + sliderHeight + 14);
-      }
-
-      drawEngineSlider(sliderX0, engineTarget, '#7dd3fc', 'CEL');
-      drawEngineSlider(sliderX0 + sliderGap, engineCurrent, '#22d3ee', 'OBECNA');
-      ctx.restore();
-
       // WARP – pokazuj przy charge/active
       if (warp.state === 'charging' || warp.state === 'active') {
         const t = (warp.state === 'charging') ? Math.min(1, warp.charge / warp.chargeTime) : 1;
