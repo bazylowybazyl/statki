@@ -13326,11 +13326,18 @@
     }
 
     function executeSuperweaponFire() {
-      // Pobieramy te same wartości co przy rysowaniu
-      const tuneY = (typeof window.SW_POS_Y === 'number') ? window.SW_POS_Y : (-ship.h * 0.35);
-      const tuneX = (typeof window.SW_POS_X === 'number') ? window.SW_POS_X : 50;
+      // 1. TE SAME WARTOŚCI CO W drawSuperweaponSprite
+      const tuneX = 275;
+      const tuneY = 315;
+      const tuneScale = 0.2; 
+      // AnchorY = 0.5 (środek). Żeby znaleźć koniec lufy, musimy dodać połowę wysokości obrazka.
+      // Obliczamy długość lufy na podstawie wysokości obrazka i skali
+      const spriteH = (superweaponSpriteReady && superweaponSprite.height) ? superweaponSprite.height : 500; 
+      
+      // Dystans od punktu montażu do wylotu lufy (połowa wysokości + ewentualna korekta)
+      const barrelLength = (spriteH * tuneScale) * 0.5; 
 
-      // Definiujemy dwa punkty wylotu
+      // Definiujemy dwa punkty montażu (lewy i prawy)
       const offsets = [
         { x: -tuneX, y: tuneY },
         { x: tuneX, y: tuneY }
@@ -13338,21 +13345,30 @@
 
       // Pętla strzału dla każdego działa
       offsets.forEach(off => {
-        // 1. Oblicz pozycję lufy w świecie gry
-        const muzzleOffset = rotate(off, ship.angle);
-        const muzzle = {
-          x: ship.pos.x + muzzleOffset.x,
-          y: ship.pos.y + muzzleOffset.y
+        // A. Oblicz pozycję PIVOTA (punkt montażu na kadłubie)
+        // off to lokalna pozycja względem środka statku
+        const pivotOffset = rotate(off, ship.angle);
+        const pivotPos = {
+          x: ship.pos.x + pivotOffset.x,
+          y: ship.pos.y + pivotOffset.y
         };
 
-        // 2. Oblicz kierunek strzału (do myszki)
+        // B. Oblicz kierunek strzału (od Pivota do Myszki)
+        // Dzięki temu pocisk poleci dokładnie tam, gdzie celuje działo graficzne
         const mouseWorld = screenToWorld(mouse.x, mouse.y);
-        const dx = mouseWorld.x - muzzle.x;
-        const dy = mouseWorld.y - muzzle.y;
+        const dx = mouseWorld.x - pivotPos.x;
+        const dy = mouseWorld.y - pivotPos.y;
         const dist = Math.hypot(dx, dy) || 1;
         const dir = { x: dx / dist, y: dy / dist };
 
-        // 3. Stwórz pocisk Hexlance
+        // C. Oblicz finalną pozycję MUZZLE (wylot lufy)
+        // Przesuwamy punkt startu od Pivota wzdłuż lufy (kierunek strzału)
+        const muzzle = {
+            x: pivotPos.x + dir.x * barrelLength,
+            y: pivotPos.y + dir.y * barrelLength
+        };
+
+        // 3. Stwórz pocisk Hexlance (startując z muzzle)
         hexlanceProjectiles.push({
           x: muzzle.x,
           y: muzzle.y,
@@ -13364,7 +13380,7 @@
           angle: Math.atan2(dir.y, dir.x)
         });
 
-        // 4. Efekty wizualne (Muzzle Flash)
+        // 4. Efekty wizualne (Muzzle Flash) w punkcie wylotu
         for (let i = 0; i < 30; i++) {
           const a = Math.atan2(dir.y, dir.x) + (Math.random() - 0.5) * 0.8;
           const spd = 400 + Math.random() * 600;
