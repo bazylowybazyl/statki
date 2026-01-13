@@ -13,8 +13,8 @@ const VFX_CONFIG = {
     newSpread: 1.4,
     newDecay: 0.04,
     newDrag: 0.92,
-    newSizeMin: 2.0,
-    newSizeMax: 5.0,
+    newSizeMin: 1.5, // PRZYWRÓCONE: 1.5
+    newSizeMax: 7.0, // PRZYWRÓCONE: 7.0
 
     // --- STARE ISKRY (Tło - zakrzywione linie) ---
     oldCount: 10,
@@ -23,7 +23,7 @@ const VFX_CONFIG = {
     oldDrag: 0.90,
     oldCurve: 6.0,
     oldLife: 0.2,
-    oldSizeMin: 0.5,
+    oldSizeMin: 0.5, // Pozostawione zgodnie z życzeniem
     oldSizeMax: 1.2
 };
 
@@ -36,7 +36,6 @@ let globalTime = 0;
 const sprite = new Image();
 let spriteReady = false;
 sprite.onload = () => { spriteReady = true; };
-// Upewnij się, że ścieżka jest poprawna względem index.html
 sprite.src = "assets/weapons/supercapitalmain.png"; 
 
 // Stan broni
@@ -113,16 +112,29 @@ function rotate(v, angle) {
     return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
 }
 
-function getMuzzlePos(ship, cannonIndex, barrelIndex) {
+// FIX: Dodano aimPos (punkt celowania)
+function getMuzzlePos(ship, cannonIndex, barrelIndex, aimPos) {
     const tuneX = 275;
     const tuneY = 315;
     const offsets = [ { x: -tuneX, y: tuneY }, { x: tuneX, y: tuneY } ];
     const off = offsets[cannonIndex];
+    
+    // Punkt montażu obraca się razem ze statkiem
     const pivotOffset = rotate(off, ship.angle);
     const pivotPos = { x: ship.pos.x + pivotOffset.x, y: ship.pos.y + pivotOffset.y };
     
-    // Strzał zgodnie z kadłubem
-    const dir = { x: Math.cos(ship.angle), y: Math.sin(ship.angle) };
+    // FIX: Kierunek strzału wyznaczany z pozycji pivota do kursora (aimPos)
+    let dir;
+    if (aimPos) {
+        const dx = aimPos.x - pivotPos.x;
+        const dy = aimPos.y - pivotPos.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        dir = { x: dx / dist, y: dy / dist };
+    } else {
+        // Fallback: strzał zgodnie z kadłubem
+        dir = { x: Math.cos(ship.angle), y: Math.sin(ship.angle) };
+    }
+
     const perp = { x: -dir.y, y: dir.x };
     
     const recoilShift = -superweaponState.recoilOffset;
@@ -156,8 +168,9 @@ function spawnChargeEffect(targetPos) {
     }
 }
 
-function fireSingleBarrel(ship, cannonIndex, barrelIndex) {
-    const m = getMuzzlePos(ship, cannonIndex, barrelIndex);
+// FIX: Dodano aimPos
+function fireSingleBarrel(ship, cannonIndex, barrelIndex, aimPos) {
+    const m = getMuzzlePos(ship, cannonIndex, barrelIndex, aimPos);
     const angle = Math.atan2(m.dir.y, m.dir.x);
     superweaponState.recoilOffset = Math.min(25, superweaponState.recoilOffset + 12);
     
@@ -218,7 +231,8 @@ export function tryFireSuperweapon() {
     return true;
 }
 
-export function updateSuperweapon(dt, ship) {
+// FIX: Dodano aimPos w argumencie
+export function updateSuperweapon(dt, ship, aimPos) {
     globalTime += dt;
     if (superweaponState.recoilOffset > 0) {
         superweaponState.recoilOffset = Math.max(0, superweaponState.recoilOffset - superweaponState.recoilRecovery * dt);
@@ -228,7 +242,8 @@ export function updateSuperweapon(dt, ship) {
     }
     if (superweaponState.charging) {
         superweaponState.chargeProgress += dt;
-        const m = getMuzzlePos(ship, 1, 0);
+        // Używamy aimPos do efektu ładowania
+        const m = getMuzzlePos(ship, 1, 0, aimPos);
         for(let k=0; k<3; k++) spawnChargeEffect(m);
         if (superweaponState.chargeProgress >= superweaponState.chargeTime) {
             superweaponState.charging = false;
@@ -239,13 +254,14 @@ export function updateSuperweapon(dt, ship) {
     if (superweaponState.queue.length > 0) {
         const nextShot = superweaponState.queue[0];
         if (nextShot.delay > 0 && nextShot.delay <= 0.22) {
-             const m = getMuzzlePos(ship, nextShot.cannonIndex, nextShot.barrelIndex);
+             const m = getMuzzlePos(ship, nextShot.cannonIndex, nextShot.barrelIndex, aimPos);
              for(let k=0; k<3; k++) spawnChargeEffect(m);
         }
         nextShot.delay -= dt;
         while (superweaponState.queue.length > 0 && superweaponState.queue[0].delay <= 0) {
             const shot = superweaponState.queue.shift();
-            fireSingleBarrel(ship, shot.cannonIndex, shot.barrelIndex);
+            // Przekazujemy aimPos do strzału
+            fireSingleBarrel(ship, shot.cannonIndex, shot.barrelIndex, aimPos);
             if (superweaponState.queue.length > 0) {
                 superweaponState.queue[0].delay += shot.delay; 
             }
@@ -261,16 +277,13 @@ export function updateSuperweapon(dt, ship) {
         proj.life -= dt;
         proj.traveled += stepDist;
 
-        // KOLIZJE z DestructorSystem
         if (window.DestructorSystem && window.npcs) {
             const targets = [...window.npcs, ...(window.wrecks || [])];
             for (const t of targets) {
                 if (!t.hexGrid || (t.dead && !t.isWreck)) continue;
                 const dx = t.x - proj.x;
                 const dy = t.y - proj.y;
-                // Prosty check promieniem
                 if (dx*dx + dy*dy < (t.radius + 20)**2) {
-                     // Wywołanie destruktora z dużą siłą
                      window.DestructorSystem.applyImpact(t, proj.x, proj.y, 150, {x: proj.vx, y: proj.vy});
                 }
             }
@@ -281,7 +294,6 @@ export function updateSuperweapon(dt, ship) {
         }
     }
 
-    // Iskry lokalne
     for (let i = localParticles.length - 1; i >= 0; i--) {
         const p = localParticles[i];
         p.update();
@@ -289,7 +301,8 @@ export function updateSuperweapon(dt, ship) {
     }
 }
 
-export function drawSuperweapon(ctx, camera, ship, worldToScreen) {
+// FIX: Dodano aimPos
+export function drawSuperweapon(ctx, camera, ship, worldToScreen, aimPos) {
     if (!spriteReady) return;
     const zoom = camera.zoom;
     drawHexlanceProjectiles(ctx, camera, worldToScreen);
@@ -307,6 +320,7 @@ export function drawSuperweapon(ctx, camera, ship, worldToScreen) {
     const offsets = [ { x: -tuneX, y: tuneY }, { x: tuneX, y: tuneY } ];
 
     offsets.forEach(off => {
+        // Punkt montażu (obrót ze statkiem)
         const c = Math.cos(ship.angle);
         const s = Math.sin(ship.angle);
         const rotatedOffX = off.x * c - off.y * s;
@@ -314,15 +328,25 @@ export function drawSuperweapon(ctx, camera, ship, worldToScreen) {
         const mountWorldX = ship.pos.x + rotatedOffX;
         const mountWorldY = ship.pos.y + rotatedOffY;
         const sPos = worldToScreen(mountWorldX, mountWorldY, camera);
+        
+        // FIX: Kąt wieżyczki celuje w aimPos (lub zgodnie z kadłubem jeśli brak celu)
+        let turretAngle = ship.angle;
+        if (aimPos) {
+            const dx = aimPos.x - mountWorldX;
+            const dy = aimPos.y - mountWorldY;
+            turretAngle = Math.atan2(dy, dx);
+        }
+
         ctx.save();
         ctx.translate(sPos.x, sPos.y);
-        ctx.rotate(ship.angle);
+        ctx.rotate(turretAngle);
         ctx.drawImage(sprite, drawOffsetX, drawOffsetY, spriteW, spriteH);
         ctx.restore();
     });
 }
 
 function drawHexlanceProjectiles(ctx, camera, worldToScreen) {
+    // ... (bez zmian w rysowaniu pocisków) ...
     const zoom = camera.zoom;
     const tailLengthBase = 500 * zoom; 
     const segments = 40; 
@@ -345,7 +369,6 @@ function drawHexlanceProjectiles(ctx, camera, worldToScreen) {
         ctx.globalCompositeOperation = 'screen';
         const aberrationOffset = 2 * zoom;
 
-        // Kanał 1
         ctx.save();
         ctx.translate(0, -aberrationOffset); 
         ctx.strokeStyle = 'rgba(200, 240, 255, 0.6)';
@@ -353,7 +376,6 @@ function drawHexlanceProjectiles(ctx, camera, worldToScreen) {
         ctx.beginPath(); ctx.moveTo(20, 0); ctx.lineTo(-tailLengthBase * 0.8, 0); ctx.stroke();
         ctx.restore();
 
-        // Kanał 2
         ctx.save();
         ctx.translate(0, aberrationOffset); 
         ctx.strokeStyle = 'rgba(0, 100, 255, 0.6)';
