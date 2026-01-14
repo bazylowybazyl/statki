@@ -15093,9 +15093,11 @@ window.AudioSys = AudioSys;
       for (let i = bullets.length - 1; i >= 0; i--) {
         const b = bullets[i];
         b.px = b.x; b.py = b.y;
+        const moveDist = Math.hypot(b.vx * dt, b.vy * dt);
         b.x += b.vx * dt; b.y += b.vy * dt;
         b.life -= dt;
         b.age = (b.age || 0) + dt;
+        b.distTraveled = (b.distTraveled || 0) + moveDist;
 
         // --- RUCH I EFEKTY WIZUALNE POCISKÓW ---
         if (b.type === 'plasma' || b.type === 'rocket') {
@@ -15120,6 +15122,33 @@ window.AudioSys = AudioSys;
         } else if (b.type === 'autocannon') {
            const trailVel = { x: -b.vx * 0.015, y: -b.vy * 0.015 };
            spawnParticle({ x: b.x, y: b.y }, trailVel, 0.18, '#ffdca8', 1.1, true);
+        }
+
+        if (b.type === 'rail') {
+            const stepSize = 40;
+            const steps = Math.ceil(moveDist / stepSize);
+
+            for (let k = 0; k < steps; k++) {
+                const t = k / steps;
+                const distFromMuzzle = b.distTraveled - (moveDist * (1 - t));
+
+                if (distFromMuzzle < 100) continue;
+
+                if (Math.random() < 0.5) {
+                    const px = b.px + (b.x - b.px) * t;
+                    const py = b.py + (b.y - b.py) * t;
+                    const jitter = 4;
+
+                    spawnParticle(
+                        { x: px + (Math.random() - 0.5) * jitter, y: py + (Math.random() - 0.5) * jitter },
+                        { x: 0, y: 0 },
+                        0.35 + Math.random() * 0.1,
+                        '#ffffff',
+                        12 * (0.8 + Math.random() * 0.6),
+                        'lightning'
+                    );
+                }
+            }
         }
 
         if (b.life <= 0) { bullets.splice(i, 1); continue; }
