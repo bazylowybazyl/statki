@@ -9449,6 +9449,8 @@ window.AudioSys = AudioSys;
           age: 0,
           color: '#fff',
           size: 1,
+          type: 'spark',
+          angle: 0,
           flash: false,
           beam: false,
           start: { x: 0, y: 0 },
@@ -9474,7 +9476,7 @@ window.AudioSys = AudioSys;
       // spawnParticle jest teraz główną funkcją.
     }
 
-    function spawnParticle(pos, vel, life, color, size, flash) {
+    function spawnParticle(pos, vel, life, color, size, typeOrFlash) {
       const p = particlePool[nextParticleIndex]; // Weź następną cząsteczkę z puli
 
       // Ustaw jej właściwości
@@ -9486,7 +9488,15 @@ window.AudioSys = AudioSys;
       p.age = 0;
       p.color = color || '#ffb677';
       p.size = size || 2;
-      p.flash = !!flash;
+      if (typeof typeOrFlash === 'boolean') {
+        p.type = typeOrFlash ? 'flash' : 'spark';
+        p.flash = typeOrFlash;
+      } else {
+        p.type = typeOrFlash || 'spark';
+        p.flash = (p.type === 'flash');
+      }
+
+      p.angle = Math.random() * Math.PI * 2;
       p.beam = false;
       p.start.x = 0;
       p.start.y = 0;
@@ -9550,14 +9560,19 @@ window.AudioSys = AudioSys;
     const WEAPON_VFX_PRESETS = {
       rail: {
         key: 'rail',
-        color: '#9cc9ff',
-        len: 32,
-        widthOuter: 12,
-        widthInner: 4,
-        glowBlur: 22,
-        sparkCount: 18,
-        sparkSpeed: [260, 420],
-        sparkSize: [1.6, 2.4],
+        color: '#ffffff',
+        trailColor: '#aaaaaa',
+        glowColor: '#ffffff',
+        len: 50,
+        widthOuter: 3,
+        widthInner: 3,
+        glowBlur: 20,
+        glowWidth: 8,
+        trailFromPrev: false,
+        sparkCount: 12,
+        lightningChance: 0.5,
+        lightningSize: 18,
+        lightningLife: 0.35,
         shock: { r: 12, maxR: 120, w: 3.0, life: 0.32 },
       },
       armata: {
@@ -9783,6 +9798,72 @@ window.AudioSys = AudioSys;
       const vfx = resolveBulletVfx(b);
       const s = worldToScreen(b.x, b.y, cam);
       const angle = Math.atan2(b.vy, b.vx);
+
+      if (vfx.key === 'rail') {
+        const lenPx = (vfx.len || 50) * camera.zoom;
+        const widthScale = (vfx.widthOuter || 3) * camera.zoom;
+
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(angle);
+
+        const trailLen = lenPx * 4.0;
+        const gradOuter = ctx.createLinearGradient(-trailLen, 0, 0, 0);
+        gradOuter.addColorStop(0, 'rgba(100, 100, 100, 0)');
+        gradOuter.addColorStop(1, 'rgba(200, 200, 200, 0.4)');
+        ctx.fillStyle = gradOuter;
+        ctx.beginPath();
+        ctx.moveTo(0, -widthScale * 1.0);
+        ctx.lineTo(-trailLen, 0);
+        ctx.lineTo(0, widthScale * 1.0);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowBlur = 10 * camera.zoom;
+        ctx.shadowColor = '#ffffff';
+        ctx.beginPath();
+        ctx.roundRect(-lenPx / 2, -widthScale / 2, lenPx, widthScale, 2 * camera.zoom);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        ctx.globalCompositeOperation = 'screen';
+        const headGrad = ctx.createRadialGradient(lenPx / 2, 0, 0, lenPx / 2, 0, widthScale * 4);
+        headGrad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        headGrad.addColorStop(0.4, 'rgba(200, 200, 200, 0.5)');
+        headGrad.addColorStop(1, 'rgba(100, 100, 100, 0)');
+        ctx.fillStyle = headGrad;
+        ctx.beginPath();
+        ctx.arc(lenPx / 2, 0, widthScale * 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.lineWidth = 1.5 * camera.zoom;
+        for (let i = 0; i < 3; i++) {
+          const offsetX = -lenPx * (0.2 + i * 0.25);
+          ctx.beginPath();
+          ctx.ellipse(offsetX, 0, 4 * camera.zoom, 8 * camera.zoom, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        if (!PAUSED) {
+          const speed = Math.hypot(b.vx, b.vy);
+          if (Math.random() < (vfx.lightningChance || 0.1)) {
+            const tOffset = Math.random() * speed * 0.016;
+            spawnParticle(
+              { x: b.x - (b.vx / speed) * tOffset * 20, y: b.y - (b.vy / speed) * tOffset * 20 },
+              { x: 0, y: 0 },
+              (vfx.lightningLife || 0.3),
+              '#ffffff',
+              (vfx.lightningSize || 10) * camera.zoom,
+              'lightning'
+            );
+          }
+        }
+        return;
+      }
+
       const lenPx = (vfx.len || 18) * camera.zoom;
       const dx = Math.cos(angle) * (lenPx * 0.5);
       const dy = Math.sin(angle) * (lenPx * 0.5);
@@ -9902,18 +9983,33 @@ window.AudioSys = AudioSys;
     }
 
     function spawnRailMuzzle(pos, dir, baseVel, scale = 1) {
-      spawnParticle({ x: pos.x, y: pos.y }, { x: 0, y: 0 }, 0.1, '#bfe7ff', 6 * scale, true);
       const angle = Math.atan2(dir.y, dir.x);
-      for (let i = 0; i < 5; i++) {
-        const aa = angle + (Math.random() - 0.5) * 0.14;
-        const speed = 220 + Math.random() * 60;
+
+      spawnParticle({ x: pos.x, y: pos.y }, { x: baseVel.x, y: baseVel.y }, 0.05, '#ffffff', 22 * scale, 'flash');
+
+      for (let i = 0; i < 3; i++) {
         spawnParticle(
-          { x: pos.x + Math.cos(aa) * 6 * scale, y: pos.y + Math.sin(aa) * 6 * scale },
+          { x: pos.x + dir.x * i * 12 * scale, y: pos.y + dir.y * i * 12 * scale },
+          { x: dir.x * 60 + baseVel.x, y: dir.y * 60 + baseVel.y },
+          0.04,
+          '#dddddd',
+          (14 - i * 4) * scale,
+          'flash'
+        );
+      }
+
+      const sparkCount = 12;
+      for (let i = 0; i < sparkCount; i++) {
+        const aa = angle + (Math.random() - 0.5) * 0.15;
+        const speed = (700 + Math.random() * 300) * (scale * 0.4);
+
+        spawnParticle(
+          { x: pos.x, y: pos.y },
           { x: Math.cos(aa) * speed + baseVel.x * 0.2, y: Math.sin(aa) * speed + baseVel.y * 0.2 },
-          0.12,
-          '#bfe7ff',
-          1.6 * scale,
-          true
+          0.1 + Math.random() * 0.1,
+          '#ffffff',
+          (1.2 + Math.random() * 1.5) * scale,
+          'spark'
         );
       }
     }
@@ -14472,6 +14568,9 @@ window.AudioSys = AudioSys;
         const hpOffset = mainWeapons[i]?.hp?.pos;
         const turretIndex = hpOffset ? getNearestTurretIndex(hpOffset, turrets) : (i % turrets.length);
         const t = turrets[turretIndex];
+        if (t) {
+          t.activeBarrel = barIndex;
+        }
         const aimAngle = t?.angle ?? ship.angle;
         const behavior = getMainWeaponBehaviorForWeaponId(weaponData?.id);
         const projectile = behavior.projectile || BASE_MAIN_BEHAVIOR.projectile;
@@ -17816,77 +17915,158 @@ window.AudioSys = AudioSys;
         const t = activeTurret.t;
         const ang = activeTurret.ang;
         const mountOffset = hpOffset || t.offset;
+
         ctx.save();
         ctx.translate(mountOffset.x, mountOffset.y);
         ctx.rotate(ang - interpAngle);
         const recoil = t.recoil * spriteScale;
         const behavior = getMainWeaponBehaviorForWeaponId(loadout?.weapon?.id);
-        const barrelsPerShot = Math.max(1, behavior.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot);
+        if (loadout?.weapon?.id !== 'heavy_autocannon') {
+          const s = spriteScale;
+          const activeBarrel = t.activeBarrel || 0;
 
-        if (barrelsPerShot === 1) {
-          const weaponId = loadout?.weapon?.id;
-          if (weaponId === 'heavy_autocannon' && heavyAutocannonSpriteReady) {
-            const naturalW = heavyAutocannonSprite.naturalWidth || 180;
-            const naturalH = heavyAutocannonSprite.naturalHeight || 120;
-            const scaleMul = spriteScale * 0.32;
-            const drawW = naturalW * scaleMul;
-            const drawH = naturalH * scaleMul;
-            const pivotOffset = drawW * 0.52;
-            const recoilOffset = recoil * 0.9;
-            ctx.save();
-            ctx.translate(-pivotOffset - recoilOffset, -drawH / 2);
-            ctx.drawImage(heavyAutocannonSprite, 0, 0, drawW, drawH);
-            ctx.restore();
+          ctx.fillStyle = 'rgba(0,0,0,0.6)';
+          ctx.beginPath();
+          ctx.moveTo(0, -10 * s);
+          ctx.lineTo(-15 * s, -15 * s);
+          ctx.lineTo(-15 * s, 15 * s);
+          ctx.lineTo(0, 10 * s);
+          ctx.fill();
 
-            const glowRadius = drawH * 0.34;
-            const glowLength = drawW * 0.32;
-            ctx.save();
-            ctx.translate(drawW * 0.36 - recoil * 0.55, 0);
-            const gradient = ctx.createRadialGradient(0, 0, glowRadius * 0.2, 0, 0, glowRadius);
-            gradient.addColorStop(0, 'rgba(255,214,160,0.55)');
-            gradient.addColorStop(1, 'rgba(255,166,70,0)');
-            ctx.fillStyle = gradient;
+          const drawRail = (y, rcl) => {
+            const xStart = 4 * s - rcl;
+            const length = 40 * s;
+            const thick = 4 * s;
+
+            const railGrad = ctx.createLinearGradient(0, y - thick / 2, 0, y + thick / 2);
+            railGrad.addColorStop(0, '#999');
+            railGrad.addColorStop(0.5, '#eee');
+            railGrad.addColorStop(1, '#999');
+            ctx.fillStyle = railGrad;
+
             ctx.beginPath();
-            ctx.ellipse(0, 0, glowLength, glowRadius * 0.55, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
-
-            ctx.fillStyle = 'rgba(255,194,120,0.22)';
-            ctx.beginPath();
-            ctx.moveTo(drawW * 0.34 - recoil * 0.4, -drawH * 0.18);
-            ctx.lineTo(drawW * 0.58 - recoil * 0.3, 0);
-            ctx.lineTo(drawW * 0.34 - recoil * 0.4, drawH * 0.18);
+            ctx.moveTo(xStart, y - thick / 2);
+            ctx.lineTo(xStart + length, y - thick / 2);
+            ctx.lineTo(xStart + length + 2 * s, y);
+            ctx.lineTo(xStart + length, y + thick / 2);
+            ctx.lineTo(xStart, y + thick / 2);
             ctx.closePath();
             ctx.fill();
-          } else {
-            const housingW = 20 * spriteScale;
-            const housingH = 30 * spriteScale;
-            ctx.fillStyle = '#7f8fb7';
-            roundRect(ctx, -housingW / 2, -housingH / 2, housingW, housingH, 6 * spriteScale); ctx.fill();
-            ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(24,38,68,0.55)'; ctx.stroke();
-            ctx.fillStyle = '#aebce0';
-            roundRect(ctx, -housingW / 2 + 3 * spriteScale, -housingH / 2 + 4 * spriteScale, housingW - 6 * spriteScale, housingH - 8 * spriteScale, 5 * spriteScale); ctx.fill();
-            ctx.fillStyle = 'rgba(255,180,110,0.8)';
-            roundRect(ctx, -housingW / 2 + 2.5 * spriteScale, -2 * spriteScale, housingW * 0.42, 4 * spriteScale, 2 * spriteScale); ctx.fill();
-            ctx.strokeStyle = 'rgba(24,38,68,0.55)';
-            ctx.fillStyle = '#d9dde9';
-            const barrelThickness = 8 * spriteScale;
-            const barrelL = Math.max(20 * spriteScale, Math.round(visualH * 0.22));
-            roundRect(ctx, 8 * spriteScale - recoil, -barrelThickness / 2, barrelL, barrelThickness, 3 * spriteScale); ctx.fill(); ctx.stroke();
-            ctx.fillStyle = '#f0b97a';
-            ctx.beginPath();
-            ctx.moveTo(8 * spriteScale - recoil + barrelL, -barrelThickness / 2);
-            ctx.lineTo(8 * spriteScale - recoil + barrelL + 6 * spriteScale, 0);
-            ctx.lineTo(8 * spriteScale - recoil + barrelL, barrelThickness / 2);
-            ctx.closePath();
-            ctx.fill();
-          }
+
+            ctx.fillStyle = '#111';
+            for (let i = 1; i < 5; i++) {
+              ctx.fillRect(xStart + i * 8 * s, y - thick / 2, 1 * s, thick);
+            }
+          };
+
+          const offsetY = 6 * s;
+          drawRail(-offsetY, (activeBarrel === 0) ? recoil : 0);
+          drawRail(offsetY, (activeBarrel === 1) ? recoil : 0);
+
+          const housingW = 20 * s;
+          const housingH = 24 * s;
+
+          ctx.fillStyle = '#222';
+          ctx.beginPath();
+          ctx.moveTo(8 * s, -6 * s);
+          ctx.lineTo(0, -housingH / 2);
+          ctx.lineTo(-housingW / 2, -housingH / 2);
+          ctx.lineTo(-housingW / 1.5, 0);
+          ctx.lineTo(-housingW / 2, housingH / 2);
+          ctx.lineTo(0, housingH / 2);
+          ctx.lineTo(8 * s, 6 * s);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.fillStyle = '#333';
+          ctx.beginPath();
+          ctx.moveTo(-housingW / 2 + 2 * s, -housingH / 2 + 2 * s);
+          ctx.lineTo(-2 * s, -housingH / 2 + 2 * s);
+          ctx.lineTo(4 * s, -4 * s);
+          ctx.lineTo(4 * s, 4 * s);
+          ctx.lineTo(-2 * s, housingH / 2 - 2 * s);
+          ctx.lineTo(-housingW / 2 + 2 * s, housingH / 2 - 2 * s);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(-10 * s, -housingH / 2 + 4 * s, 4 * s, 1 * s);
+          ctx.fillRect(-10 * s, housingH / 2 - 5 * s, 4 * s, 1 * s);
+
+          ctx.fillStyle = '#fff';
+          ctx.shadowColor = '#fff';
+          ctx.shadowBlur = 5 * s;
+          ctx.beginPath();
+          ctx.arc(0, 0, 1.5 * s, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
         } else {
-          ctx.fillStyle = '#9ab7ff'; roundRect(ctx, -baseW / 2, -baseH / 2, baseW, baseH, 5 * spriteScale); ctx.fill();
-          ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(30,50,90,0.45)'; ctx.stroke();
-          ctx.fillStyle = '#c0c0c0';
-          roundRect(ctx, 6 * spriteScale - recoil, -gap / 2 - barrelH / 2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
-          roundRect(ctx, 6 * spriteScale - recoil, gap / 2 - barrelH / 2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
+          const barrelsPerShot = Math.max(1, behavior.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot);
+          if (barrelsPerShot === 1) {
+            const weaponId = loadout?.weapon?.id;
+            if (weaponId === 'heavy_autocannon' && heavyAutocannonSpriteReady) {
+              const naturalW = heavyAutocannonSprite.naturalWidth || 180;
+              const naturalH = heavyAutocannonSprite.naturalHeight || 120;
+              const scaleMul = spriteScale * 0.32;
+              const drawW = naturalW * scaleMul;
+              const drawH = naturalH * scaleMul;
+              const pivotOffset = drawW * 0.52;
+              const recoilOffset = recoil * 0.9;
+              ctx.save();
+              ctx.translate(-pivotOffset - recoilOffset, -drawH / 2);
+              ctx.drawImage(heavyAutocannonSprite, 0, 0, drawW, drawH);
+              ctx.restore();
+
+              const glowRadius = drawH * 0.34;
+              const glowLength = drawW * 0.32;
+              ctx.save();
+              ctx.translate(drawW * 0.36 - recoil * 0.55, 0);
+              const gradient = ctx.createRadialGradient(0, 0, glowRadius * 0.2, 0, 0, glowRadius);
+              gradient.addColorStop(0, 'rgba(255,214,160,0.55)');
+              gradient.addColorStop(1, 'rgba(255,166,70,0)');
+              ctx.fillStyle = gradient;
+              ctx.beginPath();
+              ctx.ellipse(0, 0, glowLength, glowRadius * 0.55, 0, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.restore();
+
+              ctx.fillStyle = 'rgba(255,194,120,0.22)';
+              ctx.beginPath();
+              ctx.moveTo(drawW * 0.34 - recoil * 0.4, -drawH * 0.18);
+              ctx.lineTo(drawW * 0.58 - recoil * 0.3, 0);
+              ctx.lineTo(drawW * 0.34 - recoil * 0.4, drawH * 0.18);
+              ctx.closePath();
+              ctx.fill();
+            } else {
+              const housingW = 20 * spriteScale;
+              const housingH = 30 * spriteScale;
+              ctx.fillStyle = '#7f8fb7';
+              roundRect(ctx, -housingW / 2, -housingH / 2, housingW, housingH, 6 * spriteScale); ctx.fill();
+              ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(24,38,68,0.55)'; ctx.stroke();
+              ctx.fillStyle = '#aebce0';
+              roundRect(ctx, -housingW / 2 + 3 * spriteScale, -housingH / 2 + 4 * spriteScale, housingW - 6 * spriteScale, housingH - 8 * spriteScale, 5 * spriteScale); ctx.fill();
+              ctx.fillStyle = 'rgba(255,180,110,0.8)';
+              roundRect(ctx, -housingW / 2 + 2.5 * spriteScale, -2 * spriteScale, housingW * 0.42, 4 * spriteScale, 2 * spriteScale); ctx.fill();
+              ctx.strokeStyle = 'rgba(24,38,68,0.55)';
+              ctx.fillStyle = '#d9dde9';
+              const barrelThickness = 8 * spriteScale;
+              const barrelL = Math.max(20 * spriteScale, Math.round(visualH * 0.22));
+              roundRect(ctx, 8 * spriteScale - recoil, -barrelThickness / 2, barrelL, barrelThickness, 3 * spriteScale); ctx.fill(); ctx.stroke();
+              ctx.fillStyle = '#f0b97a';
+              ctx.beginPath();
+              ctx.moveTo(8 * spriteScale - recoil + barrelL, -barrelThickness / 2);
+              ctx.lineTo(8 * spriteScale - recoil + barrelL + 6 * spriteScale, 0);
+              ctx.lineTo(8 * spriteScale - recoil + barrelL, barrelThickness / 2);
+              ctx.closePath();
+              ctx.fill();
+            }
+          } else {
+            ctx.fillStyle = '#9ab7ff'; roundRect(ctx, -baseW / 2, -baseH / 2, baseW, baseH, 5 * spriteScale); ctx.fill();
+            ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(30,50,90,0.45)'; ctx.stroke();
+            ctx.fillStyle = '#c0c0c0';
+            roundRect(ctx, 6 * spriteScale - recoil, -gap / 2 - barrelH / 2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
+            roundRect(ctx, 6 * spriteScale - recoil, gap / 2 - barrelH / 2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
+          }
         }
         ctx.restore();
       });
@@ -17941,7 +18121,54 @@ window.AudioSys = AudioSys;
 
         let drawn = 0;
         for (const p of particlePool) {
-          if (!p.active || p.flash || p.beam) continue;
+          if (!p.active) continue;
+
+          if (p.type === 'lightning') {
+            const t = 1 - (p.age / p.life);
+            if (Math.random() > 0.3) {
+              ctx.save();
+              ctx.globalAlpha = t * 0.8 + 0.2;
+              ctx.strokeStyle = p.color;
+              ctx.shadowBlur = 8 * camera.zoom;
+              ctx.shadowColor = '#ffffff';
+              ctx.lineWidth = (1 + Math.random()) * camera.zoom;
+              ctx.lineCap = 'round';
+              ctx.lineJoin = 'round';
+
+              const s = worldToScreen(p.pos.x, p.pos.y, cam);
+              const len = p.size * t * 2.0;
+              const ax = Math.cos(p.angle) * len;
+              const ay = Math.sin(p.angle) * len;
+
+              const x1 = s.x - ax * 0.5;
+              const y1 = s.y - ay * 0.5;
+              const x2 = s.x + ax * 0.5;
+              const y2 = s.y + ay * 0.5;
+
+              ctx.beginPath();
+              ctx.moveTo(x1, y1);
+
+              const segments = 4;
+              for (let i = 1; i <= segments; i++) {
+                const progress = i / segments;
+                const tx = x1 + (x2 - x1) * progress;
+                const ty = y1 + (y2 - y1) * progress;
+                const noise = (Math.random() - 0.5) * p.size * 0.4 * t * camera.zoom;
+                if (i < segments) {
+                  const nx = tx - ay * (noise / len);
+                  const ny = ty + ax * (noise / len);
+                  ctx.lineTo(nx, ny);
+                } else {
+                  ctx.lineTo(x2, y2);
+                }
+              }
+              ctx.stroke();
+              ctx.restore();
+            }
+            continue;
+          }
+
+          if (p.flash || p.beam) continue;
           if (drawn >= MAX_PARTICLES_DRAW) break;
           drawn++;
 
