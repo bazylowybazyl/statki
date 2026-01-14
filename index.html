@@ -3985,6 +3985,56 @@
       }
     };
 
+    // --- CENTRALA DŹWIĘKOWA UZBROJENIA ---
+    window.addEventListener('game_weapon_fired', (e) => {
+      if (!window.AudioSys || !window.AudioSys.isInit) return;
+
+      const { weaponId, x, y } = e.detail;
+
+      // Tutaj decydujemy jaki dźwięk grać w zależności od ID broni
+      switch (weaponId) {
+        case 'hexlance':
+          // Odtwórz dźwięk superbroni (z lekką wariacją tonu)
+          playDynamicSound('sfx_hexlance', { pitchVar: 0.1, volume: 0.8 });
+          break;
+
+        case 'main_cannon':
+          // (Przyszłość) Tu dodasz dźwięk dla Main Cannon
+          // playDynamicSound('sfx_maincannon', { pitchVar: 0.2, volume: 0.6 });
+          break;
+
+        case 'nuclear_missile':
+          // (Przyszłość) Inna superbroń
+          // playDynamicSound('sfx_nuke_launch', { volume: 1.0 });
+          break;
+      }
+    });
+
+    // Helper do ładniejszego odtwarzania dźwięków (z wariacją)
+    function playDynamicSound(soundKey, opts = {}) {
+      const ctx = window.AudioSys.ctx;
+      const buffer = window.AudioSys.sounds[soundKey];
+      if (!ctx || !buffer) return;
+
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+
+      // Losowa wariacja tonu (żeby seria nie brzmiała sztucznie)
+      if (opts.pitchVar) {
+        const detune = (Math.random() - 0.5) * 2 * opts.pitchVar; 
+        source.playbackRate.value = 1.0 + detune;
+      }
+
+      const gainNode = ctx.createGain();
+      // Ustaw głośność (bazując na opcjach gry + opcjach wywołania)
+      const gameSfxVol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.sfx : 1.0;
+      gainNode.gain.value = (opts.volume || 1.0) * gameSfxVol;
+
+      source.connect(gainNode);
+      gainNode.connect(window.AudioSys.masterGain);
+      source.start(0);
+    }
+
     const uiRoot = document.getElementById('ui');
     const mainMenuEl = document.getElementById('main-menu');
     const newGameButton = document.getElementById('btn-new-game');
@@ -18954,7 +19004,8 @@
       await Promise.all([
         AudioSys.loadSound('engine', '/sounds/engine/thruster_loop.wav'),
         AudioSys.loadSound('shieldHit', '/sounds/465540__steaq__sci-fi-shield-hit-wav.wav'),
-        AudioSys.loadSound('specialTurret', '/sounds/weapons/specialturret.wav')
+        AudioSys.loadSound('specialTurret', '/sounds/weapons/specialturret.wav'),
+        AudioSys.loadSound('sfx_hexlance', '/sounds/weapons/specialturret.wav')
       ]);
 
       if (typeof ship !== 'undefined') {

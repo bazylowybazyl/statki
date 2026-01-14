@@ -262,6 +262,16 @@ function fireSingleBarrel(ship, cannonIndex, barrelIndex, aimPos) {
     
     if (window.camera && window.camera.addShake) window.camera.addShake(8, 0.25);
 
+    // --- AUDIO EVENT: Wysyłamy sygnał do gry, że strzela konkretna broń ---
+    window.dispatchEvent(new CustomEvent('game_weapon_fired', { 
+        detail: { 
+            weaponId: 'hexlance', // Unikalne ID tej broni
+            x: m.x, 
+            y: m.y 
+        } 
+    }));
+    // ----------------------------------------------------------------------
+
     // Dodanie pocisku
     hexlanceProjectiles.push({
         x: m.x, y: m.y,
