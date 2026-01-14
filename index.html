@@ -3998,6 +3998,11 @@ window.AudioSys = AudioSys;
           playDynamicSound('sfx_hexlance', { pitchVar: 0.1, volume: 0.8 });
           break;
 
+        case 'railgun_mk1':
+        case 'railgun_mk2':
+          playDynamicSound('sfx_railgun', { pitchVar: 0.2, volume: 0.4 });
+          break;
+
         case 'main_cannon':
           // (Przyszłość) Tu dodasz dźwięk dla Main Cannon
           // playDynamicSound('sfx_maincannon', { pitchVar: 0.2, volume: 0.6 });
@@ -14487,6 +14492,15 @@ window.AudioSys = AudioSys;
                 ? (x, y, scale) => behavior.hitFx(x, y, scale)
                 : (x, y, scale) => spawnWeaponImpactFromPreset(resolveBulletVfxKey(vfxKey, projectile.type), vfxColor, scale, x, y)),
           });
+
+          const wId = weaponData?.id || 'default_gun';
+          window.dispatchEvent(new CustomEvent('game_weapon_fired', {
+            detail: {
+              weaponId: wId,
+              x: muzzle.pos.x,
+              y: muzzle.pos.y
+            }
+          }));
         }
         const recoilKick = fireResult?.recoilKick ?? behavior.recoilKick ?? t.recoilKick;
         const recoilMax = fireResult?.recoilMax ?? behavior.recoilMax ?? t.recoilMax;
@@ -19005,7 +19019,8 @@ window.AudioSys = AudioSys;
         AudioSys.loadSound('engine', '/sounds/engine/thruster_loop.wav'),
         AudioSys.loadSound('shieldHit', '/sounds/465540__steaq__sci-fi-shield-hit-wav.wav'),
         AudioSys.loadSound('specialTurret', '/sounds/weapons/specialturret.wav'),
-        AudioSys.loadSound('sfx_hexlance', '/sounds/weapons/specialturret.wav')
+        AudioSys.loadSound('sfx_hexlance', '/sounds/weapons/specialturret.wav'),
+        AudioSys.loadSound('sfx_railgun', './sounds/weapons/Laser.wav')
       ]);
 
       if (typeof ship !== 'undefined') {
