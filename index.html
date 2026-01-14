@@ -5253,6 +5253,11 @@ window.AudioSys = AudioSys;
     Game.player = createShipEntity({ world: WORLD, overlayView, overrides: shipOverrides });
     const ship = Game.player;
     window.ship = ship;
+    if (typeof ship !== 'undefined') {
+      ship.aimSpread = 0;
+      ship.spreadRecover = 300;
+      ship.spreadMax = 180;
+    }
 
     ship.inventory = mergedInventory;
     ship.shipFrame = previousPlayer.shipFrame || 'atlas';
@@ -14323,6 +14328,7 @@ window.AudioSys = AudioSys;
     const RAIL_SPEED = 2600, RAIL_PEN = 3, RAIL_DAMAGE = 60;
     const ARMATA_SPLASH_RADIUS = 140;
     const ARMATA_SPLASH_FALLOFF_MIN = 0.2;
+    // === KONFIGURACJA ZACHOWANIA BRONI GŁÓWNEJ (Z ODDRZUTEM) ===
     const BASE_MAIN_BEHAVIOR = {
       id: 'default',
       priority: 1,
@@ -14330,9 +14336,15 @@ window.AudioSys = AudioSys;
       burstsPerClick: 2,
       shotGap: 0.07,
       burstGap: 0.18,
-      recoilKick: 14,
+      recoilKick: 14, // To jest tylko wizualny odrzut lufy (cofanie się sprite'a)
       recoilMax: 12,
       barrelsPerShot: 2,
+      spreadStats: {
+        perShot: 5.0,
+        max: 180,
+        recovery: 320.0,
+        min: 0
+      },
       muzzleFx: spawnRailMuzzle,
       hitFx: spawnRailHitEffect,
       projectile: {
@@ -14348,12 +14360,17 @@ window.AudioSys = AudioSys;
 
     function createMainWeaponBehavior(overrides = {}) {
       const projectileOverrides = overrides.projectile || {};
+      const spreadOverrides = overrides.spreadStats || {};
       const behavior = {
         ...BASE_MAIN_BEHAVIOR,
         ...overrides,
         projectile: {
           ...BASE_MAIN_BEHAVIOR.projectile,
           ...projectileOverrides,
+        },
+        spreadStats: {
+          ...BASE_MAIN_BEHAVIOR.spreadStats,
+          ...spreadOverrides
         },
         muzzleFx: overrides.muzzleFx || BASE_MAIN_BEHAVIOR.muzzleFx,
         hitFx: overrides.hitFx || BASE_MAIN_BEHAVIOR.hitFx,
@@ -14366,17 +14383,23 @@ window.AudioSys = AudioSys;
 
     const MAIN_WEAPON_BEHAVIOR = {
       default: createMainWeaponBehavior(),
-      
-      // --- ZMIANA: Railgun MKII (Dwa strzały: Lewa -> Prawa) ---
-      railgun_mk2: createMainWeaponBehavior({ 
-        id: 'railgun_mk2', 
+
+      // 1. RAILGUN MK2 - Bardzo stabilny, mały rozrzut
+      railgun_mk2: createMainWeaponBehavior({
+        id: 'railgun_mk2',
         priority: 2,
-        burstsPerClick: 1, // Było 2 (teraz tylko jedna seria)
-        barrelsPerShot: 2, // Użyj obu luf w serii
-        shotGap: 0.50,     // Odstęp między strzałem lewym a prawym
-        cooldown: 2.50     // Szybsze przeładowanie, bo mniej pocisków na klik
+        burstsPerClick: 1,
+        barrelsPerShot: 2,
+        shotGap: 0.50,
+        cooldown: 2.50,
+        spreadStats: {
+          perShot: 3.0,
+          max: 120,
+          recovery: 400.0
+        }
       }),
 
+      // 2. ARMATA - Ogromny odrzut, strzela rzadko
       armata_mk1: createMainWeaponBehavior({
         id: 'armata_mk1',
         priority: 3,
@@ -14387,6 +14410,11 @@ window.AudioSys = AudioSys;
         recoilKick: 20,
         recoilMax: 18,
         barrelsPerShot: 1,
+        spreadStats: {
+          perShot: 45.0,
+          max: 250,
+          recovery: 200.0
+        },
         muzzleFx: spawnArmataMuzzle,
         hitFx: spawnArmataHitEffect,
         projectile: {
@@ -14400,6 +14428,8 @@ window.AudioSys = AudioSys;
           vfxKey: 'armata'
         },
       }),
+
+      // 3. HEAVY AUTOCANNON - Szybko traci celność przy ogniu ciągłym
       heavy_autocannon: createMainWeaponBehavior({
         id: 'heavy_autocannon',
         priority: 4,
@@ -14410,6 +14440,11 @@ window.AudioSys = AudioSys;
         recoilKick: 8,
         recoilMax: 10,
         barrelsPerShot: 1,
+        spreadStats: {
+          perShot: 12.0,
+          max: 220,
+          recovery: 350.0
+        },
         projectile: {
           type: 'autocannon',
           speed: RAIL_SPEED * 0.82,
@@ -14562,6 +14597,13 @@ window.AudioSys = AudioSys;
       if (!mainWeapons.length) return;
       const turrets = [ship.turret, ship.turret2, ship.turret3, ship.turret4];
       let maxCooldown = 0;
+      let baseTargetPos;
+      if (lockedTarget && !lockedTarget.dead) {
+        baseTargetPos = leadTarget(ship.pos, ship.vel, lockedTarget, RAIL_SPEED);
+      } else {
+        if (!window.screenToWorld) return;
+        baseTargetPos = screenToWorld(mouse.x, mouse.y);
+      }
       for (let i = 0; i < mainWeapons.length; i++) {
         if (specificWeaponIdx !== -1 && i !== specificWeaponIdx) continue;
         const weaponData = mainWeapons[i]?.weapon;
@@ -14574,9 +14616,25 @@ window.AudioSys = AudioSys;
         const aimAngle = t?.angle ?? ship.angle;
         const behavior = getMainWeaponBehaviorForWeaponId(weaponData?.id);
         const projectile = behavior.projectile || BASE_MAIN_BEHAVIOR.projectile;
+        const spreadStats = behavior.spreadStats || BASE_MAIN_BEHAVIOR.spreadStats;
+
+        ship.spreadRecover = spreadStats.recovery;
+        ship.spreadMax = spreadStats.max;
+        ship.aimSpread = Math.min(spreadStats.max, ship.aimSpread + spreadStats.perShot);
+
+        const r = ship.aimSpread * Math.sqrt(Math.random());
+        const theta = Math.random() * 2 * Math.PI;
+        const finalTarget = {
+          x: baseTargetPos.x + r * Math.cos(theta),
+          y: baseTargetPos.y + r * Math.sin(theta)
+        };
         const barrelsPerShot = Math.max(1, behavior.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot);
         const muzzleOffset = hpOffset || t?.offset;
         const muzzle = computeMainMuzzle(muzzleOffset, aimAngle, barIndex, barrelsPerShot);
+        const dx = finalTarget.x - muzzle.pos.x;
+        const dy = finalTarget.y - muzzle.pos.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const fireDir = { x: dx / dist, y: dy / dist };
         let fireResult = null;
         if (behavior.customFire) {
           fireResult = behavior.customFire({
@@ -14593,8 +14651,8 @@ window.AudioSys = AudioSys;
           window.bullets.push({
             x: muzzle.pos.x,
             y: muzzle.pos.y,
-            vx: muzzle.dir.x * (projectile.speed ?? RAIL_SPEED) + ship.vel.x,
-            vy: muzzle.dir.y * (projectile.speed ?? RAIL_SPEED) + ship.vel.y,
+            vx: fireDir.x * (projectile.speed ?? RAIL_SPEED) + ship.vel.x,
+            vy: fireDir.y * (projectile.speed ?? RAIL_SPEED) + ship.vel.y,
             life: projectile.life ?? 2.0,
             r: projectile.radius ?? 4,
             owner: 'player',
@@ -16175,6 +16233,10 @@ window.AudioSys = AudioSys;
       ship.angVel *= Math.exp(-ship.angularDamping * (boostActive ? boost.angularDampingFactor : 1) * dt);
       ship.angle += ship.angVel * dt;
       ship.angle = wrapAngle(ship.angle);
+      if (ship.aimSpread > 0) {
+        const recoveryRate = ship.spreadRecover || 300;
+        ship.aimSpread = Math.max(0, ship.aimSpread - recoveryRate * dt);
+      }
       // Aktualizacja wraków
       for (let i = wrecks.length - 1; i >= 0; i--) {
         const w = wrecks[i];
@@ -18345,6 +18407,40 @@ window.AudioSys = AudioSys;
           ctx.beginPath();
           ctx.arc(s.x, s.y, size, 0, Math.PI * 2);
           ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      // === CELOWNIK DYNAMICZNY (Spread Circle) ===
+      if (!isMainMenuVisible() && !stationUI.open && mouse.overCanvas) {
+        const mWorld = screenToWorld(mouse.x, mouse.y);
+        const screenPos = worldToScreen(mWorld.x, mWorld.y, cam);
+        const currentSpread = (ship.aimSpread || 0) * camera.zoom;
+        const maxSpreadLocal = (ship.spreadMax || 180);
+        ctx.save();
+        const spreadRatio = clamp((ship.aimSpread || 0) / maxSpreadLocal, 0, 1);
+        const r = Math.floor(100 + 155 * spreadRatio);
+        const g = Math.floor(200 * (1 - spreadRatio));
+        const b = Math.floor(255 * (1 - spreadRatio));
+        ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${0.5 + 0.3 * spreadRatio})`;
+        ctx.lineWidth = 1.5 + spreadRatio;
+        ctx.setLineDash([4 + spreadRatio * 4, 3]);
+        const rotation = gameTime * (2 + spreadRatio * 10);
+        ctx.beginPath();
+        ctx.arc(screenPos.x, screenPos.y, Math.max(6, currentSpread), rotation, rotation + Math.PI * 2);
+        ctx.stroke();
+        if (spreadRatio > 0.1) {
+          ctx.setLineDash([]);
+          ctx.lineWidth = 2;
+          const markerLen = 0.15;
+          for (let i = 0; i < 4; i++) {
+            const ang = (i * Math.PI / 2) - rotation;
+            const rad = Math.max(6, currentSpread);
+            ctx.beginPath();
+            ctx.moveTo(screenPos.x + Math.cos(ang) * (rad - 4), screenPos.y + Math.sin(ang) * (rad - 4));
+            ctx.lineTo(screenPos.x + Math.cos(ang) * (rad + 4), screenPos.y + Math.sin(ang) * (rad + 4));
+            ctx.stroke();
+          }
         }
         ctx.restore();
       }
