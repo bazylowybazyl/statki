@@ -14595,46 +14595,64 @@ window.AudioSys = AudioSys;
     function fireRailBarrel(barIndex, specificWeaponIdx = -1) {
       const mainWeapons = Game.player.weapons?.[HP.MAIN] || [];
       if (!mainWeapons.length) return;
+      
       const turrets = [ship.turret, ship.turret2, ship.turret3, ship.turret4];
       let maxCooldown = 0;
+
+      // Obliczamy punkt celowania (baza)
       let baseTargetPos;
+      
       if (lockedTarget && !lockedTarget.dead) {
-        baseTargetPos = leadTarget(ship.pos, ship.vel, lockedTarget, RAIL_SPEED);
+         // Wyprzedzenie celu
+         baseTargetPos = leadTarget(ship.pos, ship.vel, lockedTarget, RAIL_SPEED);
       } else {
-        if (!window.screenToWorld) return;
-        baseTargetPos = screenToWorld(mouse.x, mouse.y);
+         // POPRAWKA: Usunięto 'if (!window.screenToWorld) return;'
+         // Funkcja screenToWorld jest dostępna lokalnie w tym pliku.
+         baseTargetPos = screenToWorld(mouse.x, mouse.y);
       }
+
       for (let i = 0; i < mainWeapons.length; i++) {
         if (specificWeaponIdx !== -1 && i !== specificWeaponIdx) continue;
+
         const weaponData = mainWeapons[i]?.weapon;
         const hpOffset = mainWeapons[i]?.hp?.pos;
         const turretIndex = hpOffset ? getNearestTurretIndex(hpOffset, turrets) : (i % turrets.length);
         const t = turrets[turretIndex];
-        if (t) {
-          t.activeBarrel = barIndex;
-        }
         const aimAngle = t?.angle ?? ship.angle;
+        
         const behavior = getMainWeaponBehaviorForWeaponId(weaponData?.id);
         const projectile = behavior.projectile || BASE_MAIN_BEHAVIOR.projectile;
+        
+        // === 1. OBSŁUGA ROZRZUTU (SPREAD) ===
         const spreadStats = behavior.spreadStats || BASE_MAIN_BEHAVIOR.spreadStats;
-
-        ship.spreadRecover = spreadStats.recovery;
+        
+        // Zapisz parametry do statku (dla stabilizacji w physicsStep)
+        ship.spreadRecover = spreadStats.recovery; 
         ship.spreadMax = spreadStats.max;
-        ship.aimSpread = Math.min(spreadStats.max, ship.aimSpread + spreadStats.perShot);
 
-        const r = ship.aimSpread * Math.sqrt(Math.random());
+        // Zwiększ rozrzut o wartość per-shot tej konkretnej broni
+        ship.aimSpread = Math.min(spreadStats.max, (ship.aimSpread || 0) + spreadStats.perShot);
+
+        // Losowanie punktu trafienia wewnątrz aktualnego koła aimSpread
+        const r = ship.aimSpread * Math.sqrt(Math.random()); 
         const theta = Math.random() * 2 * Math.PI;
+        
+        // Finalny cel to: Baza + Losowy Offset
         const finalTarget = {
-          x: baseTargetPos.x + r * Math.cos(theta),
-          y: baseTargetPos.y + r * Math.sin(theta)
+            x: baseTargetPos.x + r * Math.cos(theta),
+            y: baseTargetPos.y + r * Math.sin(theta)
         };
+        // =====================================
+
         const barrelsPerShot = Math.max(1, behavior.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot);
-        const muzzleOffset = hpOffset || t?.offset;
-        const muzzle = computeMainMuzzle(muzzleOffset, aimAngle, barIndex, barrelsPerShot);
+        const muzzle = computeMainMuzzle(hpOffset || t?.offset, aimAngle, barIndex, barrelsPerShot);
+        
+        // Wektor kierunku do ZASZUMIONEGO celu
         const dx = finalTarget.x - muzzle.pos.x;
         const dy = finalTarget.y - muzzle.pos.y;
         const dist = Math.hypot(dx, dy) || 1;
         const fireDir = { x: dx / dist, y: dy / dist };
+
         let fireResult = null;
         if (behavior.customFire) {
           fireResult = behavior.customFire({
@@ -14648,11 +14666,14 @@ window.AudioSys = AudioSys;
           const damage = weaponData?.damage ?? weaponData?.dps ?? RAIL_DAMAGE;
           const vfxKey = projectile.vfxKey || weaponData?.id || projectile.type;
           const vfxColor = projectile.color || weaponData?.color;
+          
           window.bullets.push({
             x: muzzle.pos.x,
             y: muzzle.pos.y,
+            // UŻYWAMY fireDir ZAMIAST muzzle.dir
             vx: fireDir.x * (projectile.speed ?? RAIL_SPEED) + ship.vel.x,
             vy: fireDir.y * (projectile.speed ?? RAIL_SPEED) + ship.vel.y,
+            
             life: projectile.life ?? 2.0,
             r: projectile.radius ?? 4,
             owner: 'player',
@@ -14665,37 +14686,32 @@ window.AudioSys = AudioSys;
             explodeRadius: projectile.explodeRadius,
             vfxKey,
             vfxColor,
-            hitFx: projectile.type === 'beam'
-              ? null
-              : (behavior.hitFx
-                ? (x, y, scale) => behavior.hitFx(x, y, scale)
-                : (x, y, scale) => spawnWeaponImpactFromPreset(resolveBulletVfxKey(vfxKey, projectile.type), vfxColor, scale, x, y)),
+            hitFx: projectile.type === 'beam' 
+                ? null 
+                : (behavior.hitFx ? (x, y, s) => behavior.hitFx(x, y, s) : (x, y, s) => spawnWeaponImpactFromPreset(resolveBulletVfxKey(vfxKey, projectile.type), vfxColor, s, x, y)),
           });
 
           const wId = weaponData?.id || 'default_gun';
-          window.dispatchEvent(new CustomEvent('game_weapon_fired', {
-            detail: {
-              weaponId: wId,
-              x: muzzle.pos.x,
-              y: muzzle.pos.y
-            }
-          }));
+          window.dispatchEvent(new CustomEvent('game_weapon_fired', { detail: { weaponId: wId, x: muzzle.pos.x, y: muzzle.pos.y } }));
         }
+        
         const recoilKick = fireResult?.recoilKick ?? behavior.recoilKick ?? t.recoilKick;
         const recoilMax = fireResult?.recoilMax ?? behavior.recoilMax ?? t.recoilMax;
+        
         const distributedKick = recoilKick / Math.max(1, mainWeapons.length / 2);
         if (t) {
           t.recoil = Math.min(t.recoil + distributedKick, recoilMax);
         }
+        
         const muzzleFx = behavior.muzzleFx || spawnRailMuzzle;
         if (muzzleFx && projectile.type !== 'beam') {
           muzzleFx(muzzle.pos, muzzle.dir, ship.vel, projectile.effectScale ?? 1.0);
         }
         maxCooldown = Math.max(maxCooldown, fireResult?.cooldown ?? behavior.cooldown ?? rail.cdMax);
       }
+      
       rail.cd[barIndex] = maxCooldown || rail.cdMax;
     }
-
     // =============== CIWS (point-defence) ===============
     const CIWS_FIRE_INTERVAL = 0.06;
     const CIWS_BULLET_SPEED = 900;
