@@ -3995,12 +3995,12 @@ window.AudioSys = AudioSys;
       switch (weaponId) {
         case 'hexlance':
           // Odtwórz dźwięk superbroni (z lekką wariacją tonu)
-          playDynamicSound('sfx_hexlance', { pitchVar: 0.1, volume: 0.8 });
+          playDynamicSound('sfx_hexlance', { pitchVar: 0.1, volume: 0.6 });
           break;
 
         case 'railgun_mk1':
         case 'railgun_mk2':
-          playDynamicSound('sfx_railgun', { pitchVar: 0.2, volume: 0.4 });
+          playDynamicSound('sfx_railgun', { pitchVar: 0.2, volume: 0.05 });
           break;
 
         case 'main_cannon':
@@ -14270,7 +14270,17 @@ window.AudioSys = AudioSys;
 
     const MAIN_WEAPON_BEHAVIOR = {
       default: createMainWeaponBehavior(),
-      railgun_mk2: createMainWeaponBehavior({ id: 'railgun_mk2', priority: 2 }),
+      
+      // --- ZMIANA: Railgun MKII (Dwa strzały: Lewa -> Prawa) ---
+      railgun_mk2: createMainWeaponBehavior({ 
+        id: 'railgun_mk2', 
+        priority: 2,
+        burstsPerClick: 1, // Było 2 (teraz tylko jedna seria)
+        barrelsPerShot: 2, // Użyj obu luf w serii
+        shotGap: 0.50,     // Odstęp między strzałem lewym a prawym
+        cooldown: 2.50     // Szybsze przeładowanie, bo mniej pocisków na klik
+      }),
+
       armata_mk1: createMainWeaponBehavior({
         id: 'armata_mk1',
         priority: 3,
