@@ -14438,24 +14438,36 @@ window.AudioSys = AudioSys;
     }
 
     function triggerRailVolley() {
-      if (!(Game.player.weapons?.[HP.MAIN]?.length)) return;
+      const mainWeapons = Game.player.weapons?.[HP.MAIN];
+      if (!mainWeapons || !mainWeapons.length) return;
       if (rail.queue.length) return;
-      const start = rail.nextStart; rail.nextStart ^= 1;
+      const start = rail.nextStart;
+      rail.nextStart ^= 1;
       const barrels = Math.max(1, rail.barrelsPerShot || 2);
       const orderPair = barrels === 1 ? [0] : [start, 1 - start];
       for (let b = 0; b < rail.burstsPerClick; b++) {
         const baseDelay = b * (orderPair.length * rail.shotGap + rail.burstGap);
         for (let idx = 0; idx < orderPair.length; idx++) {
-          rail.queue.push({ timer: baseDelay + idx * rail.shotGap, barrel: orderPair[idx] });
+          const barrelBaseTime = baseDelay + idx * rail.shotGap;
+          for (let w = 0; w < mainWeapons.length; w++) {
+            const jitter = Math.random() * 0.12;
+            rail.queue.push({
+              timer: barrelBaseTime + jitter,
+              barrel: orderPair[idx],
+              weaponIndex: w,
+              ignoreCD: true
+            });
+          }
         }
       }
     }
-    function fireRailBarrel(barIndex) {
+    function fireRailBarrel(barIndex, specificWeaponIdx = -1) {
       const mainWeapons = Game.player.weapons?.[HP.MAIN] || [];
       if (!mainWeapons.length) return;
       const turrets = [ship.turret, ship.turret2, ship.turret3, ship.turret4];
       let maxCooldown = 0;
       for (let i = 0; i < mainWeapons.length; i++) {
+        if (specificWeaponIdx !== -1 && i !== specificWeaponIdx) continue;
         const weaponData = mainWeapons[i]?.weapon;
         const hpOffset = mainWeapons[i]?.hp?.pos;
         const turretIndex = hpOffset ? getNearestTurretIndex(hpOffset, turrets) : (i % turrets.length);
@@ -14514,8 +14526,9 @@ window.AudioSys = AudioSys;
         }
         const recoilKick = fireResult?.recoilKick ?? behavior.recoilKick ?? t.recoilKick;
         const recoilMax = fireResult?.recoilMax ?? behavior.recoilMax ?? t.recoilMax;
+        const distributedKick = recoilKick / Math.max(1, mainWeapons.length / 2);
         if (t) {
-          t.recoil = Math.min(t.recoil + recoilKick, recoilMax);
+          t.recoil = Math.min(t.recoil + distributedKick, recoilMax);
         }
         const muzzleFx = behavior.muzzleFx || spawnRailMuzzle;
         if (muzzleFx && projectile.type !== 'beam') {
@@ -15742,8 +15755,9 @@ window.AudioSys = AudioSys;
         firedSomething = false;
         for (let i = 0; i < rail.queue.length; i++) {
           const q = rail.queue[i];
-          if (q.timer <= 0 && rail.cd[q.barrel] <= 0 && !warp.isBusy()) {
-            fireRailBarrel(q.barrel);
+          const canFire = q.ignoreCD || rail.cd[q.barrel] <= 0;
+          if (q.timer <= 0 && canFire && !warp.isBusy()) {
+            fireRailBarrel(q.barrel, q.weaponIndex);
             rail.queue.splice(i, 1);
             firedSomething = true;
             break;
