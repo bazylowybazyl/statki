@@ -9930,7 +9930,14 @@ window.AudioSys = AudioSys;
         ctx.translate(s.x, s.y);
         ctx.rotate(angle);
 
-        const trailLen = lenPx * 4.0;
+        // POPRAWKA: Przytnij ogon, jeśli pocisk nie przebył jeszcze pełnego dystansu
+        // Dzięki temu ogon nie "wystaje" z tyłu lufy na starcie
+        const maxTrailWorld = b.distTraveled || 0;
+        const maxTrailScreen = maxTrailWorld * camera.zoom;
+        const targetTrailLen = lenPx * 4.0;
+
+        // Rysuj tylko tyle ogona, ile pocisk faktycznie przeleciał
+        const trailLen = Math.min(targetTrailLen, maxTrailScreen);
         const gradOuter = ctx.createLinearGradient(-trailLen, 0, 0, 0);
         gradOuter.addColorStop(0, 'rgba(100, 100, 100, 0)');
         gradOuter.addColorStop(1, 'rgba(200, 200, 200, 0.4)');
@@ -15243,26 +15250,38 @@ window.AudioSys = AudioSys;
         }
 
         if (b.type === 'rail') {
-            const stepSize = 40;
-            const steps = Math.ceil(moveDist / stepSize);
+            // OPTYMALIZACJA: Zwiększamy krok (mniej cząsteczek)
+            // W rail.html zoom robił to "gęstszym", tu musimy to rozrzedzić dla wydajności
+            const stepSize = 120;
 
-            for (let k = 0; k < steps; k++) {
-                const t = k / steps;
-                const distFromMuzzle = b.distTraveled - (moveDist * (1 - t));
+            // Obliczamy ile dystansu "zakumulował" pocisk do następnego efektu
+            // Używamy b.railAccumulator, żeby nie gubić dystansu między klatkami
+            b.railAccumulator = (b.railAccumulator || 0) + moveDist;
 
-                if (distFromMuzzle < 100) continue;
+            while (b.railAccumulator >= stepSize) {
+                b.railAccumulator -= stepSize;
 
-                if (Math.random() < 0.5) {
-                    const px = b.px + (b.x - b.px) * t;
-                    const py = b.py + (b.y - b.py) * t;
-                    const jitter = 4;
+                // Cofamy się wzdłuż ścieżki o to co zostało w akumulatorze + losowość
+                const lag = b.railAccumulator + (Math.random() * stepSize * 0.5);
 
+                // Interpolacja pozycji (gdzie dokładnie był pocisk chwilę temu)
+                const t = 1 - (lag / Math.max(0.1, moveDist));
+                const px = b.px + (b.x - b.px) * t;
+                const py = b.py + (b.y - b.py) * t;
+
+                // Nie rysuj piorunów, jeśli pocisk dopiero co wyleciał (unika efektu wewnątrz lufy)
+                const totalDist = (b.distTraveled || 0) - lag;
+                if (totalDist < 140) continue;
+
+                if (Math.random() < 0.4) { // 40% szansy na piorun
+                    const jitter = 6;
                     spawnParticle(
                         { x: px + (Math.random() - 0.5) * jitter, y: py + (Math.random() - 0.5) * jitter },
-                        { x: 0, y: 0 },
-                        0.35 + Math.random() * 0.1,
+                        { x: 0, y: 0 }, // Pioruny stoją w miejscu w przestrzeni
+                        0.25 + Math.random() * 0.1,
                         '#ffffff',
-                        12 * (0.8 + Math.random() * 0.6),
+                        // ZMNIEJSZONA WIELKOŚĆ: Z 12 na 7
+                        7 * (0.8 + Math.random() * 0.6),
                         'lightning'
                     );
                 }
