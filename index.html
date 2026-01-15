@@ -2692,6 +2692,50 @@
       align-items: flex-end;
     }
 
+    #hex-armor-container {
+      display: flex !important;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: flex-end;
+      pointer-events: none;
+      padding-left: 12px;
+      padding-bottom: 8px;
+    }
+
+    .hex-armor-display {
+      width: 140px;
+      height: 160px;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 8px;
+      box-shadow: var(--glass-shadow);
+      backdrop-filter: blur(10px);
+      transform: skewX(12deg);
+      overflow: hidden;
+      position: relative;
+    }
+
+    .hex-armor-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      transform: skewX(-12deg);
+      transform-origin: center center;
+    }
+
+    .hex-armor-label {
+      position: absolute;
+      bottom: 4px;
+      right: 12px;
+      font-size: 9px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      transform: skewX(-12deg);
+      font-weight: 700;
+      text-shadow: 0 1px 2px black;
+    }
+
     .stat-bar-aero {
       height: 10px;
       width: 100%;
@@ -5763,6 +5807,80 @@ window.AudioSys = AudioSys;
         ctx.restore();
       }
     }
+
+    // === SYSTEM UI PANCERZA HEKSAGONALNEGO ===
+    const HexArmorHUD = {
+      canvas: null,
+      ctx: null,
+      width: 140,
+      height: 160,
+      _path: new Path2D(),
+      init() {
+        const container = document.getElementById('hex-armor-container');
+        if (!container) return;
+
+        if (!container.querySelector('.hex-armor-display')) {
+          container.innerHTML = `
+                <div class="hex-armor-display">
+                    <canvas class="hex-armor-canvas" width="${this.width}" height="${this.height}"></canvas>
+                    <div class="hex-armor-label">STRUCTURAL INTEGRITY</div>
+                </div>
+            `;
+        }
+
+        this.canvas = container.querySelector('canvas');
+        this.ctx = this.canvas.getContext('2d', { alpha: true });
+      },
+
+      update(ship) {
+        if (!this.ctx) this.init();
+        if (!this.ctx || !ship || !ship.hexGrid) return;
+
+        const ctx = this.ctx;
+        const w = this.width;
+        const h = this.height;
+
+        ctx.clearRect(0, 0, w, h);
+
+        const shipRadius = ship.hexGrid.rawRadius || 200;
+        const padding = 20;
+        const availableSize = Math.min(w, h) - padding;
+        const scale = availableSize / (shipRadius * 2);
+
+        ctx.save();
+        ctx.translate(w / 2, h / 2);
+        ctx.scale(scale, scale);
+
+        const shards = ship.hexGrid.shards;
+        const MAX_SHARD_HP = 40;
+
+        for (let i = 0; i < shards.length; i++) {
+          const shard = shards[i];
+          if (!shard.active || shard.isDebris) continue;
+
+          const hpRatio = Math.max(0, Math.min(1, shard.hp / MAX_SHARD_HP));
+          const hue = Math.floor(hpRatio * 120);
+          const fillStyle = shard.isCore
+            ? `hsla(200, 80%, 50%, ${0.4 + hpRatio * 0.6})`
+            : `hsla(${hue}, 90%, 45%, ${0.3 + hpRatio * 0.7})`;
+
+          ctx.fillStyle = fillStyle;
+          ctx.beginPath();
+          const v0 = shard.verts[0];
+          ctx.moveTo(shard.lx + v0.x, shard.ly + v0.y);
+
+          for (let j = 1; j < 6; j++) {
+            const v = shard.verts[j];
+            ctx.lineTo(shard.lx + v.x, shard.ly + v.y);
+          }
+
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        ctx.restore();
+      }
+    };
 
     // =============== Zoom indicator ===============
     const zoomIndicatorEl = document.getElementById('zoom-indicator');
@@ -18303,6 +18421,7 @@ window.AudioSys = AudioSys;
       if (!isMainMenuVisible()) {
         hudRenderNav(ship, cam);
         hudRenderFloatingBars(ship, cam);
+        HexArmorHUD.update(ship);
         for (const ping of radarPings) {
           const s = worldToScreen(ping.x, ping.y, cam);
           const t = ping.age / ping.life;
