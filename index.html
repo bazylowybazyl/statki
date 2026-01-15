@@ -2692,50 +2692,6 @@
       align-items: flex-end;
     }
 
-    #hex-armor-container {
-      display: flex !important;
-      flex-direction: column;
-      align-items: flex-start;
-      justify-content: flex-end;
-      pointer-events: none;
-      padding-left: 12px;
-      padding-bottom: 8px;
-    }
-
-    .hex-armor-display {
-      width: 140px;
-      height: 160px;
-      background: var(--glass-bg);
-      border: 1px solid var(--glass-border);
-      border-radius: 8px;
-      box-shadow: var(--glass-shadow);
-      backdrop-filter: blur(10px);
-      transform: skewX(12deg);
-      overflow: hidden;
-      position: relative;
-    }
-
-    .hex-armor-canvas {
-      width: 100%;
-      height: 100%;
-      display: block;
-      transform: skewX(-12deg);
-      transform-origin: center center;
-    }
-
-    .hex-armor-label {
-      position: absolute;
-      bottom: 4px;
-      right: 12px;
-      font-size: 9px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      transform: skewX(-12deg);
-      font-weight: 700;
-      text-shadow: 0 1px 2px black;
-    }
-
     .stat-bar-aero {
       height: 10px;
       width: 100%;
@@ -5807,80 +5763,6 @@ window.AudioSys = AudioSys;
         ctx.restore();
       }
     }
-
-    // === SYSTEM UI PANCERZA HEKSAGONALNEGO ===
-    const HexArmorHUD = {
-      canvas: null,
-      ctx: null,
-      width: 140,
-      height: 160,
-      _path: new Path2D(),
-      init() {
-        const container = document.getElementById('hex-armor-container');
-        if (!container) return;
-
-        if (!container.querySelector('.hex-armor-display')) {
-          container.innerHTML = `
-                <div class="hex-armor-display">
-                    <canvas class="hex-armor-canvas" width="${this.width}" height="${this.height}"></canvas>
-                    <div class="hex-armor-label">STRUCTURAL INTEGRITY</div>
-                </div>
-            `;
-        }
-
-        this.canvas = container.querySelector('canvas');
-        this.ctx = this.canvas.getContext('2d', { alpha: true });
-      },
-
-      update(ship) {
-        if (!this.ctx) this.init();
-        if (!this.ctx || !ship || !ship.hexGrid) return;
-
-        const ctx = this.ctx;
-        const w = this.width;
-        const h = this.height;
-
-        ctx.clearRect(0, 0, w, h);
-
-        const shipRadius = ship.hexGrid.rawRadius || 200;
-        const padding = 20;
-        const availableSize = Math.min(w, h) - padding;
-        const scale = availableSize / (shipRadius * 2);
-
-        ctx.save();
-        ctx.translate(w / 2, h / 2);
-        ctx.scale(scale, scale);
-
-        const shards = ship.hexGrid.shards;
-        const MAX_SHARD_HP = 40;
-
-        for (let i = 0; i < shards.length; i++) {
-          const shard = shards[i];
-          if (!shard.active || shard.isDebris) continue;
-
-          const hpRatio = Math.max(0, Math.min(1, shard.hp / MAX_SHARD_HP));
-          const hue = Math.floor(hpRatio * 120);
-          const fillStyle = shard.isCore
-            ? `hsla(200, 80%, 50%, ${0.4 + hpRatio * 0.6})`
-            : `hsla(${hue}, 90%, 45%, ${0.3 + hpRatio * 0.7})`;
-
-          ctx.fillStyle = fillStyle;
-          ctx.beginPath();
-          const v0 = shard.verts[0];
-          ctx.moveTo(shard.lx + v0.x, shard.ly + v0.y);
-
-          for (let j = 1; j < 6; j++) {
-            const v = shard.verts[j];
-            ctx.lineTo(shard.lx + v.x, shard.ly + v.y);
-          }
-
-          ctx.closePath();
-          ctx.fill();
-        }
-
-        ctx.restore();
-      }
-    };
 
     // =============== Zoom indicator ===============
     const zoomIndicatorEl = document.getElementById('zoom-indicator');
@@ -9930,14 +9812,7 @@ window.AudioSys = AudioSys;
         ctx.translate(s.x, s.y);
         ctx.rotate(angle);
 
-        // POPRAWKA: Przytnij ogon, jeśli pocisk nie przebył jeszcze pełnego dystansu
-        // Dzięki temu ogon nie "wystaje" z tyłu lufy na starcie
-        const maxTrailWorld = b.distTraveled || 0;
-        const maxTrailScreen = maxTrailWorld * camera.zoom;
-        const targetTrailLen = lenPx * 4.0;
-
-        // Rysuj tylko tyle ogona, ile pocisk faktycznie przeleciał
-        const trailLen = Math.min(targetTrailLen, maxTrailScreen);
+        const trailLen = lenPx * 4.0;
         const gradOuter = ctx.createLinearGradient(-trailLen, 0, 0, 0);
         gradOuter.addColorStop(0, 'rgba(100, 100, 100, 0)');
         gradOuter.addColorStop(1, 'rgba(200, 200, 200, 0.4)');
@@ -14837,6 +14712,7 @@ window.AudioSys = AudioSys;
       
       rail.cd[barIndex] = maxCooldown || rail.cdMax;
     }
+
     // =============== CIWS (point-defence) ===============
     const CIWS_FIRE_INTERVAL = 0.06;
     const CIWS_BULLET_SPEED = 900;
@@ -15218,11 +15094,9 @@ window.AudioSys = AudioSys;
       for (let i = bullets.length - 1; i >= 0; i--) {
         const b = bullets[i];
         b.px = b.x; b.py = b.y;
-        const moveDist = Math.hypot(b.vx * dt, b.vy * dt);
         b.x += b.vx * dt; b.y += b.vy * dt;
         b.life -= dt;
         b.age = (b.age || 0) + dt;
-        b.distTraveled = (b.distTraveled || 0) + moveDist;
 
         // --- RUCH I EFEKTY WIZUALNE POCISKÓW ---
         if (b.type === 'plasma' || b.type === 'rocket') {
@@ -15247,45 +15121,6 @@ window.AudioSys = AudioSys;
         } else if (b.type === 'autocannon') {
            const trailVel = { x: -b.vx * 0.015, y: -b.vy * 0.015 };
            spawnParticle({ x: b.x, y: b.y }, trailVel, 0.18, '#ffdca8', 1.1, true);
-        }
-
-        if (b.type === 'rail') {
-            // OPTYMALIZACJA: Zwiększamy krok (mniej cząsteczek)
-            // W rail.html zoom robił to "gęstszym", tu musimy to rozrzedzić dla wydajności
-            const stepSize = 120;
-
-            // Obliczamy ile dystansu "zakumulował" pocisk do następnego efektu
-            // Używamy b.railAccumulator, żeby nie gubić dystansu między klatkami
-            b.railAccumulator = (b.railAccumulator || 0) + moveDist;
-
-            while (b.railAccumulator >= stepSize) {
-                b.railAccumulator -= stepSize;
-
-                // Cofamy się wzdłuż ścieżki o to co zostało w akumulatorze + losowość
-                const lag = b.railAccumulator + (Math.random() * stepSize * 0.5);
-
-                // Interpolacja pozycji (gdzie dokładnie był pocisk chwilę temu)
-                const t = 1 - (lag / Math.max(0.1, moveDist));
-                const px = b.px + (b.x - b.px) * t;
-                const py = b.py + (b.y - b.py) * t;
-
-                // Nie rysuj piorunów, jeśli pocisk dopiero co wyleciał (unika efektu wewnątrz lufy)
-                const totalDist = (b.distTraveled || 0) - lag;
-                if (totalDist < 140) continue;
-
-                if (Math.random() < 0.4) { // 40% szansy na piorun
-                    const jitter = 6;
-                    spawnParticle(
-                        { x: px + (Math.random() - 0.5) * jitter, y: py + (Math.random() - 0.5) * jitter },
-                        { x: 0, y: 0 }, // Pioruny stoją w miejscu w przestrzeni
-                        0.25 + Math.random() * 0.1,
-                        '#ffffff',
-                        // ZMNIEJSZONA WIELKOŚĆ: Z 12 na 7
-                        7 * (0.8 + Math.random() * 0.6),
-                        'lightning'
-                    );
-                }
-            }
         }
 
         if (b.life <= 0) { bullets.splice(i, 1); continue; }
@@ -18456,7 +18291,6 @@ window.AudioSys = AudioSys;
       if (!isMainMenuVisible()) {
         hudRenderNav(ship, cam);
         hudRenderFloatingBars(ship, cam);
-        HexArmorHUD.update(ship);
         for (const ping of radarPings) {
           const s = worldToScreen(ping.x, ping.y, cam);
           const t = ping.age / ping.life;
