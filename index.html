@@ -9550,15 +9550,16 @@ window.AudioSys = AudioSys;
     const WEAPON_VFX_PRESETS = {
       rail: {
         key: 'rail',
-        color: '#9cc9ff',
-        len: 32,
-        widthOuter: 12,
-        widthInner: 4,
-        glowBlur: 22,
-        sparkCount: 18,
-        sparkSpeed: [260, 420],
-        sparkSize: [1.6, 2.4],
-        shock: { r: 12, maxR: 120, w: 3.0, life: 0.32 },
+        color: '#bfe7ff',
+        len: 46,
+        widthOuter: 14,
+        widthInner: 4.5,
+        glowBlur: 30,
+        trailFromPrev: true,
+        sparkCount: 24,
+        sparkSpeed: [300, 520],
+        sparkSize: [1.6, 2.8],
+        shock: { r: 14, maxR: 150, w: 3.4, life: 0.36 },
       },
       armata: {
         key: 'armata',
@@ -9902,20 +9903,29 @@ window.AudioSys = AudioSys;
     }
 
     function spawnRailMuzzle(pos, dir, baseVel, scale = 1) {
-      spawnParticle({ x: pos.x, y: pos.y }, { x: 0, y: 0 }, 0.1, '#bfe7ff', 6 * scale, true);
+      spawnParticle({ x: pos.x, y: pos.y }, { x: 0, y: 0 }, 0.12, '#e6f7ff', 7.5 * scale, true);
+      spawnParticle(
+        { x: pos.x, y: pos.y },
+        { x: dir.x * 140 + baseVel.x * 0.12, y: dir.y * 140 + baseVel.y * 0.12 },
+        0.16,
+        'rgba(170,220,255,0.85)',
+        5.2 * scale,
+        true
+      );
       const angle = Math.atan2(dir.y, dir.x);
-      for (let i = 0; i < 5; i++) {
-        const aa = angle + (Math.random() - 0.5) * 0.14;
-        const speed = 220 + Math.random() * 60;
+      for (let i = 0; i < 8; i++) {
+        const aa = angle + (Math.random() - 0.5) * 0.18;
+        const speed = 260 + Math.random() * 120;
         spawnParticle(
-          { x: pos.x + Math.cos(aa) * 6 * scale, y: pos.y + Math.sin(aa) * 6 * scale },
-          { x: Math.cos(aa) * speed + baseVel.x * 0.2, y: Math.sin(aa) * speed + baseVel.y * 0.2 },
-          0.12,
+          { x: pos.x + Math.cos(aa) * 7 * scale, y: pos.y + Math.sin(aa) * 7 * scale },
+          { x: Math.cos(aa) * speed + baseVel.x * 0.18, y: Math.sin(aa) * speed + baseVel.y * 0.18 },
+          0.14 + Math.random() * 0.08,
           '#bfe7ff',
-          1.6 * scale,
+          (1.5 + Math.random() * 1.4) * scale,
           true
         );
       }
+      spawnShockwave(pos.x, pos.y, { r: 6 * scale, maxR: 70 * scale, w: 2.4 * scale, maxLife: 0.22, color: 'rgba(140,200,255,' });
     }
 
     function spawnArmataMuzzle(pos, dir, baseVel, scale = 1) {
@@ -14529,6 +14539,10 @@ window.AudioSys = AudioSys;
         const distributedKick = recoilKick / Math.max(1, mainWeapons.length / 2);
         if (t) {
           t.recoil = Math.min(t.recoil + distributedKick, recoilMax);
+          if (t.recoilBarrels?.length) {
+            const idx = Math.min(barIndex, t.recoilBarrels.length - 1);
+            t.recoilBarrels[idx] = Math.min((t.recoilBarrels[idx] || 0) + distributedKick, recoilMax);
+          }
         }
         const muzzleFx = behavior.muzzleFx || spawnRailMuzzle;
         if (muzzleFx && projectile.type !== 'beam') {
@@ -15907,6 +15921,11 @@ window.AudioSys = AudioSys;
       }
       for (const t of [ship.turret, ship.turret2, ship.turret3, ship.turret4]) {
         t.recoil = Math.max(0, t.recoil - t.recoilRecover * dt);
+        if (t.recoilBarrels?.length) {
+          for (let i = 0; i < t.recoilBarrels.length; i++) {
+            t.recoilBarrels[i] = Math.max(0, t.recoilBarrels[i] - t.recoilRecover * dt);
+          }
+        }
       }
 
       updatePlayerCommand(dt);
@@ -17882,11 +17901,37 @@ window.AudioSys = AudioSys;
             ctx.fill();
           }
         } else {
-          ctx.fillStyle = '#9ab7ff'; roundRect(ctx, -baseW / 2, -baseH / 2, baseW, baseH, 5 * spriteScale); ctx.fill();
-          ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(30,50,90,0.45)'; ctx.stroke();
-          ctx.fillStyle = '#c0c0c0';
-          roundRect(ctx, 6 * spriteScale - recoil, -gap / 2 - barrelH / 2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
-          roundRect(ctx, 6 * spriteScale - recoil, gap / 2 - barrelH / 2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
+          const recoilA = (t.recoilBarrels?.[0] ?? recoil) * 0.9;
+          const recoilB = (t.recoilBarrels?.[1] ?? recoil) * 0.9;
+          const housingW = baseW * 1.05;
+          const housingH = baseH * 0.78;
+          const housingGrad = ctx.createLinearGradient(-housingW / 2, -housingH / 2, housingW / 2, housingH / 2);
+          housingGrad.addColorStop(0, '#6f83b6');
+          housingGrad.addColorStop(1, '#a3baf0');
+          ctx.fillStyle = housingGrad;
+          roundRect(ctx, -housingW / 2, -housingH / 2, housingW, housingH, 5 * spriteScale); ctx.fill();
+          ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(30,50,90,0.5)'; ctx.stroke();
+
+          ctx.fillStyle = '#cdd8f2';
+          roundRect(ctx, -baseW * 0.26, -housingH * 0.22, baseW * 0.52, housingH * 0.44, 4 * spriteScale); ctx.fill();
+
+          ctx.fillStyle = '#d2d7e2';
+          roundRect(ctx, 6 * spriteScale - recoilA, -gap / 2 - barrelH / 2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
+          roundRect(ctx, 6 * spriteScale - recoilB, gap / 2 - barrelH / 2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
+
+          ctx.fillStyle = 'rgba(170,210,255,0.35)';
+          ctx.beginPath();
+          ctx.moveTo(6 * spriteScale - recoilA + barrelLen, -gap / 2 - barrelH * 0.45);
+          ctx.lineTo(6 * spriteScale - recoilA + barrelLen + 6 * spriteScale, -gap / 2);
+          ctx.lineTo(6 * spriteScale - recoilA + barrelLen, -gap / 2 + barrelH * 0.45);
+          ctx.closePath();
+          ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(6 * spriteScale - recoilB + barrelLen, gap / 2 - barrelH * 0.45);
+          ctx.lineTo(6 * spriteScale - recoilB + barrelLen + 6 * spriteScale, gap / 2);
+          ctx.lineTo(6 * spriteScale - recoilB + barrelLen, gap / 2 + barrelH * 0.45);
+          ctx.closePath();
+          ctx.fill();
         }
         ctx.restore();
       });
