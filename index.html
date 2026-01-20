@@ -9468,6 +9468,27 @@ window.AudioSys = AudioSys;
     })();
     // === KONIEC NOWEGO KODU ===
 
+    // Nowa tablica na efekty błyskawic (są rysowane liniami, nie sprite'ami)
+    const lightningParticles = [];
+
+    function spawnLightningSpark(pos, life, size, angle) {
+      lightningParticles.push({
+        x: pos.x, y: pos.y,
+        life: life, maxLife: life,
+        size: size,
+        angle: angle,
+        age: 0
+      });
+    }
+
+    function updateLightnings(dt) {
+      for (let i = lightningParticles.length - 1; i >= 0; i--) {
+        const p = lightningParticles[i];
+        p.age += dt;
+        if (p.age >= p.maxLife) lightningParticles.splice(i, 1);
+      }
+    }
+
     function pushParticleSafe(p) {
       // Ta funkcja nie jest już potrzebna, ale zostawiamy ją pustą,
       // na wypadek gdyby inne części kodu ją wołały (jak spawnLaserBeam).
@@ -9782,14 +9803,57 @@ window.AudioSys = AudioSys;
     function drawBulletVisual(ctx, b, cam) {
       const vfx = resolveBulletVfx(b);
       const s = worldToScreen(b.x, b.y, cam);
+      const prevS = worldToScreen(b.px ?? b.x, b.py ?? b.y, cam);
       const angle = Math.atan2(b.vy, b.vx);
-      const lenPx = (vfx.len || 18) * camera.zoom;
+      const lenPx = (vfx.len || 50) * camera.zoom;
+
+      if (b.type === 'rail') {
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(angle);
+
+        const coreGrad = ctx.createLinearGradient(-lenPx / 2, 0, lenPx / 2, 0);
+        coreGrad.addColorStop(0, 'rgba(255, 255, 255, 0.6)');
+        coreGrad.addColorStop(1, 'rgba(255, 255, 255, 1.0)');
+        ctx.fillStyle = coreGrad;
+
+        const width = (vfx.widthInner || 3) * camera.zoom;
+        ctx.beginPath();
+        ctx.roundRect(-lenPx / 2, -width / 2, lenPx, width, width / 2);
+        ctx.fill();
+
+        const headSize = width * 6;
+        const headGrad = ctx.createRadialGradient(lenPx / 2, 0, 0, lenPx / 2, 0, headSize);
+        headGrad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        headGrad.addColorStop(0.3, 'rgba(200, 230, 255, 0.5)');
+        headGrad.addColorStop(1, 'rgba(100, 100, 255, 0)');
+        ctx.fillStyle = headGrad;
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.beginPath();
+        ctx.arc(lenPx / 2, 0, headSize, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (Math.random() < 0.3) {
+          const jitter = 10;
+          const jx = (Math.random() - 0.5) * jitter;
+          const jy = (Math.random() - 0.5) * jitter;
+          spawnLightningSpark(
+            { x: b.x + jx, y: b.y + jy },
+            0.3,
+            18,
+            Math.random() * Math.PI * 2
+          );
+        }
+
+        ctx.restore();
+        return;
+      }
+
       const dx = Math.cos(angle) * (lenPx * 0.5);
       const dy = Math.sin(angle) * (lenPx * 0.5);
 
       if (vfx.trailFromPrev) {
-        const sp = worldToScreen(b.px, b.py, cam);
-        const grad = ctx.createLinearGradient(sp.x, sp.y, s.x, s.y);
+        const grad = ctx.createLinearGradient(prevS.x, prevS.y, s.x, s.y);
         grad.addColorStop(0, resolveAlphaColor(vfx.trailColor, 0, vfx.color));
         grad.addColorStop(1, resolveAlphaColor(vfx.trailColor, 0.8, vfx.color));
         ctx.save();
@@ -9802,7 +9866,7 @@ window.AudioSys = AudioSys;
           ctx.shadowBlur = 0;
         }
         ctx.lineWidth = Math.max(1.2, (vfx.widthOuter || 8) * 0.6 * camera.zoom);
-        ctx.beginPath(); ctx.moveTo(sp.x, sp.y); ctx.lineTo(s.x, s.y); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(prevS.x, prevS.y); ctx.lineTo(s.x, s.y); ctx.stroke();
         ctx.restore();
       }
 
@@ -9902,18 +9966,30 @@ window.AudioSys = AudioSys;
     }
 
     function spawnRailMuzzle(pos, dir, baseVel, scale = 1) {
-      spawnParticle({ x: pos.x, y: pos.y }, { x: 0, y: 0 }, 0.1, '#bfe7ff', 6 * scale, true);
+      spawnParticle({ x: pos.x, y: pos.y }, baseVel, 0.08, '#ffffff', 22 * scale, true);
+
       const angle = Math.atan2(dir.y, dir.x);
-      for (let i = 0; i < 5; i++) {
-        const aa = angle + (Math.random() - 0.5) * 0.14;
-        const speed = 220 + Math.random() * 60;
+
+      for (let i = 0; i < 3; i++) {
         spawnParticle(
-          { x: pos.x + Math.cos(aa) * 6 * scale, y: pos.y + Math.sin(aa) * 6 * scale },
+          { x: pos.x + dir.x * i * 12 * scale, y: pos.y + dir.y * i * 12 * scale },
+          { x: dir.x * 60 + baseVel.x, y: dir.y * 60 + baseVel.y },
+          0.06, '#bfe7ff', (14 - i * 4) * scale, true
+        );
+      }
+
+      const sparkCount = 12;
+      for (let i = 0; i < sparkCount; i++) {
+        const aa = angle + (Math.random() - 0.5) * 0.25;
+        const speed = (500 + Math.random() * 300) * scale;
+
+        spawnParticle(
+          { x: pos.x, y: pos.y },
           { x: Math.cos(aa) * speed + baseVel.x * 0.2, y: Math.sin(aa) * speed + baseVel.y * 0.2 },
-          0.12,
-          '#bfe7ff',
-          1.6 * scale,
-          true
+          0.15 + Math.random() * 0.1,
+          '#ffffff',
+          (1.5 + Math.random() * 2.0) * scale,
+          false
         );
       }
     }
@@ -14271,14 +14347,19 @@ window.AudioSys = AudioSys;
     const MAIN_WEAPON_BEHAVIOR = {
       default: createMainWeaponBehavior(),
       
-      // --- ZMIANA: Railgun MKII (Dwa strzały: Lewa -> Prawa) ---
-      railgun_mk2: createMainWeaponBehavior({ 
-        id: 'railgun_mk2', 
+      railgun_mk2: createMainWeaponBehavior({
+        id: 'railgun_mk2',
         priority: 2,
-        burstsPerClick: 1, // Było 2 (teraz tylko jedna seria)
-        barrelsPerShot: 2, // Użyj obu luf w serii
-        shotGap: 0.50,     // Odstęp między strzałem lewym a prawym
-        cooldown: 2.50     // Szybsze przeładowanie, bo mniej pocisków na klik
+        burstsPerClick: 1,
+        barrelsPerShot: 1,
+        shotGap: 0.12,
+        cooldown: 0.15,
+        recoilKick: 12,
+        projectile: {
+          vfxKey: 'rail',
+          speed: 2800,
+          life: 2.0
+        }
       }),
 
       armata_mk1: createMainWeaponBehavior({
@@ -14444,7 +14525,7 @@ window.AudioSys = AudioSys;
       const start = rail.nextStart;
       rail.nextStart ^= 1;
       const barrels = Math.max(1, rail.barrelsPerShot || 2);
-      const orderPair = barrels === 1 ? [0] : [start, 1 - start];
+      const orderPair = barrels === 1 ? [start] : [start, 1 - start];
       for (let b = 0; b < rail.burstsPerClick; b++) {
         const baseDelay = b * (orderPair.length * rail.shotGap + rail.burstGap);
         for (let idx = 0; idx < orderPair.length; idx++) {
@@ -14526,9 +14607,11 @@ window.AudioSys = AudioSys;
         }
         const recoilKick = fireResult?.recoilKick ?? behavior.recoilKick ?? t.recoilKick;
         const recoilMax = fireResult?.recoilMax ?? behavior.recoilMax ?? t.recoilMax;
-        const distributedKick = recoilKick / Math.max(1, mainWeapons.length / 2);
-        if (t) {
-          t.recoil = Math.min(t.recoil + distributedKick, recoilMax);
+        if (t && Array.isArray(t.recoil)) {
+          const idx = barIndex % 2;
+          t.recoil[idx] = Math.min(t.recoil[idx] + recoilKick, recoilMax);
+        } else if (t) {
+          t.recoil = Math.min(t.recoil + recoilKick, recoilMax);
         }
         const muzzleFx = behavior.muzzleFx || spawnRailMuzzle;
         if (muzzleFx && projectile.type !== 'beam') {
@@ -15906,7 +15989,12 @@ window.AudioSys = AudioSys;
         }
       }
       for (const t of [ship.turret, ship.turret2, ship.turret3, ship.turret4]) {
-        t.recoil = Math.max(0, t.recoil - t.recoilRecover * dt);
+        if (Array.isArray(t.recoil)) {
+          t.recoil[0] = Math.max(0, t.recoil[0] - t.recoilRecover * dt);
+          t.recoil[1] = Math.max(0, t.recoil[1] - t.recoilRecover * dt);
+        } else {
+          t.recoil = Math.max(0, t.recoil - t.recoilRecover * dt);
+        }
       }
 
       updatePlayerCommand(dt);
@@ -16386,6 +16474,7 @@ window.AudioSys = AudioSys;
 
       // >>> TO JEST KLUCZOWE - ODDZIELNA AKTUALIZACJA WIZUALIÓW <<<
       updateParticles(frame);
+      updateLightnings(frame);
       // >>> BEZ TEGO CZĄSTECZKI STOJĄ W MIEJSCU <<<
 
       const alpha = acc / PHYS_DT;
@@ -17819,7 +17908,7 @@ window.AudioSys = AudioSys;
         ctx.save();
         ctx.translate(mountOffset.x, mountOffset.y);
         ctx.rotate(ang - interpAngle);
-        const recoil = t.recoil * spriteScale;
+        const recoil = (Array.isArray(t.recoil) ? t.recoil[0] : t.recoil) * spriteScale;
         const behavior = getMainWeaponBehaviorForWeaponId(loadout?.weapon?.id);
         const barrelsPerShot = Math.max(1, behavior.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot);
 
@@ -17882,11 +17971,60 @@ window.AudioSys = AudioSys;
             ctx.fill();
           }
         } else {
-          ctx.fillStyle = '#9ab7ff'; roundRect(ctx, -baseW / 2, -baseH / 2, baseW, baseH, 5 * spriteScale); ctx.fill();
-          ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(30,50,90,0.45)'; ctx.stroke();
-          ctx.fillStyle = '#c0c0c0';
-          roundRect(ctx, 6 * spriteScale - recoil, -gap / 2 - barrelH / 2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
-          roundRect(ctx, 6 * spriteScale - recoil, gap / 2 - barrelH / 2, barrelLen, barrelH, 3 * spriteScale); ctx.fill(); ctx.stroke();
+          const s = spriteScale * camera.zoom;
+          const recoilL = (Array.isArray(t.recoil) ? t.recoil[0] : t.recoil) * s;
+          const recoilR = (Array.isArray(t.recoil) ? t.recoil[1] : t.recoil) * s;
+
+          const housingW = 20 * s;
+          const housingH = 24 * s;
+          const barrelLen = 40 * s;
+          const barrelThick = 4 * s;
+          const barrelOffset = 6 * s;
+
+          const drawBarrel = (offsetY, recoilVal) => {
+            const startX = 4 * s - recoilVal;
+            ctx.fillStyle = '#cccccc';
+            ctx.fillRect(startX, offsetY - barrelThick / 2, barrelLen, barrelThick);
+
+            ctx.fillStyle = '#111111';
+            for (let k = 1; k < 5; k++) {
+              ctx.fillRect(startX + k * 8 * s, offsetY - barrelThick / 2, 1 * s, barrelThick);
+            }
+          };
+
+          drawBarrel(-barrelOffset, recoilL);
+          drawBarrel(barrelOffset, recoilR);
+
+          ctx.fillStyle = '#222222';
+          ctx.beginPath();
+          ctx.moveTo(8 * s, -6 * s);
+          ctx.lineTo(0, -housingH / 2);
+          ctx.lineTo(-housingW / 2, -housingH / 2);
+          ctx.lineTo(-housingW / 1.5, 0);
+          ctx.lineTo(-housingW / 2, housingH / 2);
+          ctx.lineTo(0, housingH / 2);
+          ctx.lineTo(8 * s, 6 * s);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.fillStyle = '#333333';
+          ctx.beginPath();
+          ctx.moveTo(-housingW / 2 + 2 * s, -housingH / 2 + 2 * s);
+          ctx.lineTo(-2 * s, -housingH / 2 + 2 * s);
+          ctx.lineTo(4 * s, -4 * s);
+          ctx.lineTo(4 * s, 4 * s);
+          ctx.lineTo(-2 * s, housingH / 2 - 2 * s);
+          ctx.lineTo(-housingW / 2 + 2 * s, housingH / 2 - 2 * s);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(-10 * s, -housingH / 2 + 4 * s, 4 * s, 1 * s);
+          ctx.fillRect(-10 * s, housingH / 2 - 5 * s, 4 * s, 1 * s);
+
+          ctx.beginPath();
+          ctx.arc(0, 0, 1.5 * s, 0, Math.PI * 2);
+          ctx.fill();
         }
         ctx.restore();
       });
@@ -17900,6 +18038,53 @@ window.AudioSys = AudioSys;
       // === Hexlance Projectiles (Supercapital Weapon) ===
       const mWorldRender = { x: cam.x + (mouse.x - W / 2) / cam.zoom, y: cam.y + (mouse.y - H / 2) / cam.zoom };
       Superweapon.drawSuperweapon(ctx, cam, ship, worldToScreen, mWorldRender);
+
+      // Rysowanie Błyskawic (Lightning) - nad pociskami, pod UI
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.globalCompositeOperation = 'lighter';
+
+      for (const p of lightningParticles) {
+        const t = 1 - (p.age / p.maxLife);
+        const s = worldToScreen(p.x, p.y, cam);
+
+        if (s.x < -50 || s.x > W + 50 || s.y < -50 || s.y > H + 50) continue;
+
+        ctx.strokeStyle = `rgba(180, 240, 255, ${t * 0.8})`;
+        ctx.lineWidth = (1 + Math.random()) * camera.zoom;
+
+        const len = p.size * t * 2.0 * camera.zoom;
+        const ax = Math.cos(p.angle) * len;
+        const ay = Math.sin(p.angle) * len;
+
+        const x1 = s.x - ax * 0.5;
+        const y1 = s.y - ay * 0.5;
+        const x2 = s.x + ax * 0.5;
+        const y2 = s.y + ay * 0.5;
+
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+
+        const segments = 3;
+        for (let i = 1; i <= segments; i++) {
+          const progress = i / segments;
+          const tx = x1 + (x2 - x1) * progress;
+          const ty = y1 + (y2 - y1) * progress;
+
+          const noise = (Math.random() - 0.5) * p.size * 0.4 * t * camera.zoom;
+          const px = -Math.sin(p.angle);
+          const py = Math.cos(p.angle);
+
+          if (i < segments) {
+            ctx.lineTo(tx + px * noise, ty + py * noise);
+          } else {
+            ctx.lineTo(x2, y2);
+          }
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
 
       // === VFX Pass ===
       for (const p of particlePool) {

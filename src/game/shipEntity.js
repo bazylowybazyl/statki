@@ -32,19 +32,19 @@ const SHIP_TEMPLATE = {
   engines: {},
   turret: {
     angle: 0, angVel: 0, maxSpeed: 1.8, maxAccel: 8.0, damping: 2.0,
-    recoil: 0, recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 }
+    recoil: [0, 0], recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 }
   },
   turret2: {
     angle: 0, angVel: 0, maxSpeed: 1.8, maxAccel: 8.0, damping: 2.0,
-    recoil: 0, recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 }
+    recoil: [0, 0], recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 }
   },
   turret3: {
     angle: 0, angVel: 0, maxSpeed: 1.8, maxAccel: 8.0, damping: 2.0,
-    recoil: 0, recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 }
+    recoil: [0, 0], recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 }
   },
   turret4: {
     angle: 0, angVel: 0, maxSpeed: 1.8, maxAccel: 8.0, damping: 2.0,
-    recoil: 0, recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 }
+    recoil: [0, 0], recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 }
   },
 
   // Tarcza
