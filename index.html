@@ -17241,6 +17241,63 @@ window.AudioSys = AudioSys;
 
       ctx.restore();
     }
+
+    // --- CACHE DLA KORPUSU RAILGUNA (Optymalizacja) ---
+    let railgunBodyCache = null;
+    function getRailgunBodySprite() {
+      if (railgunBodyCache) return railgunBodyCache;
+
+      const s = 3.0; // Skala bazowa dla wysokiej jakości
+      const size = 120; // Rozmiar canvasa
+      const c = document.createElement('canvas');
+      c.width = size;
+      c.height = size;
+      const ctx = c.getContext('2d');
+
+      ctx.translate(size / 2, size / 2);
+
+      const housingW = 20 * s;
+      const housingH = 24 * s;
+
+      // Obudowa (Ciemny grafit)
+      ctx.fillStyle = '#222222';
+      ctx.beginPath();
+      ctx.moveTo(8 * s, -6 * s);
+      ctx.lineTo(0, -housingH / 2);
+      ctx.lineTo(-housingW / 2, -housingH / 2);
+      ctx.lineTo(-housingW / 1.5, 0);
+      ctx.lineTo(-housingW / 2, housingH / 2);
+      ctx.lineTo(0, housingH / 2);
+      ctx.lineTo(8 * s, 6 * s);
+      ctx.closePath();
+      ctx.fill();
+
+      // Wnętrze (Jaśniejszy grafit)
+      ctx.fillStyle = '#333333';
+      ctx.beginPath();
+      ctx.moveTo(-housingW / 2 + 2 * s, -housingH / 2 + 2 * s);
+      ctx.lineTo(-2 * s, -housingH / 2 + 2 * s);
+      ctx.lineTo(4 * s, -4 * s);
+      ctx.lineTo(4 * s, 4 * s);
+      ctx.lineTo(-2 * s, housingH / 2 - 2 * s);
+      ctx.lineTo(-housingW / 2 + 2 * s, housingH / 2 - 2 * s);
+      ctx.closePath();
+      ctx.fill();
+
+      // Detale (Światła/Złącza)
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(-10 * s, -housingH / 2 + 4 * s, 4 * s, 1 * s);
+      ctx.fillRect(-10 * s, housingH / 2 - 5 * s, 4 * s, 1 * s);
+
+      // Pivot (Środek)
+      ctx.beginPath();
+      ctx.arc(0, 0, 1.5 * s, 0, Math.PI * 2);
+      ctx.fill();
+
+      railgunBodyCache = c;
+      return c;
+    }
+
     function render(alpha, frameDt) {
       canvas.style.cursor = 'default';
       //  cheats (np. nielimitowany warp)
@@ -17908,46 +17965,98 @@ window.AudioSys = AudioSys;
         ctx.save();
         ctx.translate(mountOffset.x, mountOffset.y);
         ctx.rotate(ang - interpAngle);
-        const recoil = (Array.isArray(t.recoil) ? t.recoil[0] : t.recoil) * spriteScale;
-        const behavior = getMainWeaponBehaviorForWeaponId(loadout?.weapon?.id);
-        const barrelsPerShot = Math.max(1, behavior.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot);
 
-        if (barrelsPerShot === 1) {
-          const weaponId = loadout?.weapon?.id;
-          if (weaponId === 'heavy_autocannon' && heavyAutocannonSpriteReady) {
-            const naturalW = heavyAutocannonSprite.naturalWidth || 180;
-            const naturalH = heavyAutocannonSprite.naturalHeight || 120;
-            const scaleMul = spriteScale * 0.32;
-            const drawW = naturalW * scaleMul;
-            const drawH = naturalH * scaleMul;
-            const pivotOffset = drawW * 0.52;
-            const recoilOffset = recoil * 0.9;
-            ctx.save();
-            ctx.translate(-pivotOffset - recoilOffset, -drawH / 2);
-            ctx.drawImage(heavyAutocannonSprite, 0, 0, drawW, drawH);
-            ctx.restore();
+        // Pobieramy ID broni
+        const weaponId = loadout?.weapon?.id;
+        const behavior = getMainWeaponBehaviorForWeaponId(weaponId);
 
-            const glowRadius = drawH * 0.34;
-            const glowLength = drawW * 0.32;
-            ctx.save();
-            ctx.translate(drawW * 0.36 - recoil * 0.55, 0);
-            const gradient = ctx.createRadialGradient(0, 0, glowRadius * 0.2, 0, 0, glowRadius);
-            gradient.addColorStop(0, 'rgba(255,214,160,0.55)');
-            gradient.addColorStop(1, 'rgba(255,166,70,0)');
-            ctx.fillStyle = gradient;
-            ctx.beginPath();
-            ctx.ellipse(0, 0, glowLength, glowRadius * 0.55, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
+        // =========================================================
+        // PRIORYTET 1: RAILGUN (MK1 / MK2) - ZAWSZE NOWY MODEL
+        // =========================================================
+        if (weaponId === 'railgun_mk2' || weaponId === 'railgun_mk1') {
+          const s = spriteScale * camera.zoom;
 
-            ctx.fillStyle = 'rgba(255,194,120,0.22)';
-            ctx.beginPath();
-            ctx.moveTo(drawW * 0.34 - recoil * 0.4, -drawH * 0.18);
-            ctx.lineTo(drawW * 0.58 - recoil * 0.3, 0);
-            ctx.lineTo(drawW * 0.34 - recoil * 0.4, drawH * 0.18);
-            ctx.closePath();
-            ctx.fill();
-          } else {
+          // Pobierz recoil dla lewej i prawej lufy
+          // (MK2 strzela naprzemiennie, więc wartości będą różne)
+          const recoilL = (Array.isArray(t.recoil) ? t.recoil[0] : t.recoil) * s;
+          const recoilR = (Array.isArray(t.recoil) ? t.recoil[1] : t.recoil) * s;
+
+          const barrelLen = 40 * s;
+          const barrelThick = 4 * s;
+          const barrelOffset = 6 * s;
+
+          // Rysowanie dynamicznych luf (proceduralnie, bo się ruszają)
+          const drawBarrel = (offsetY, recoilVal) => {
+            const startX = 4 * s - recoilVal;
+            ctx.fillStyle = '#cccccc';
+            ctx.fillRect(startX, offsetY - barrelThick / 2, barrelLen, barrelThick);
+            // Detale lufy (paski)
+            ctx.fillStyle = '#111111';
+            for (let k = 1; k < 5; k++) ctx.fillRect(startX + k * 8 * s, offsetY - barrelThick / 2, 1 * s, barrelThick);
+          };
+
+          drawBarrel(-barrelOffset, recoilL); // Lewa
+          drawBarrel(barrelOffset, recoilR);  // Prawa
+
+          // Rysowanie statycznego korpusu z CACHE (jako obrazek)
+          const bodySprite = getRailgunBodySprite();
+          // Przeliczenie skali: w cache s=3.0, tutaj mamy 's'.
+          // 120px to rozmiar cache.
+          const scaleRatio = s / 3.0;
+          const drawSize = 120 * scaleRatio;
+
+          ctx.drawImage(bodySprite, -drawSize / 2, -drawSize / 2, drawSize, drawSize);
+        }
+
+        // =========================================================
+        // PRIORYTET 2: HEAVY AUTOCANNON (SPRITE SVG)
+        // =========================================================
+        else if (weaponId === 'heavy_autocannon' && heavyAutocannonSpriteReady) {
+          const recoil = (Array.isArray(t.recoil) ? t.recoil[0] : t.recoil) * spriteScale;
+          const naturalW = heavyAutocannonSprite.naturalWidth || 180;
+          const naturalH = heavyAutocannonSprite.naturalHeight || 120;
+          const scaleMul = spriteScale * 0.32;
+          const drawW = naturalW * scaleMul;
+          const drawH = naturalH * scaleMul;
+          const pivotOffset = drawW * 0.52;
+          const recoilOffset = recoil * 0.9;
+          ctx.save();
+          ctx.translate(-pivotOffset - recoilOffset, -drawH / 2);
+          ctx.drawImage(heavyAutocannonSprite, 0, 0, drawW, drawH);
+          ctx.restore();
+
+          // Glow efekt dla autocannona
+          const glowRadius = drawH * 0.34;
+          const glowLength = drawW * 0.32;
+          ctx.save();
+          ctx.translate(drawW * 0.36 - recoil * 0.55, 0);
+          const gradient = ctx.createRadialGradient(0, 0, glowRadius * 0.2, 0, 0, glowRadius);
+          gradient.addColorStop(0, 'rgba(255,214,160,0.55)');
+          gradient.addColorStop(1, 'rgba(255,166,70,0)');
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, glowLength, glowRadius * 0.55, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+
+          ctx.fillStyle = 'rgba(255,194,120,0.22)';
+          ctx.beginPath();
+          ctx.moveTo(drawW * 0.34 - recoil * 0.4, -drawH * 0.18);
+          ctx.lineTo(drawW * 0.58 - recoil * 0.3, 0);
+          ctx.lineTo(drawW * 0.34 - recoil * 0.4, drawH * 0.18);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        // =========================================================
+        // PRIORYTET 3: RESZTA (GENERYCZNE FALLBACKI)
+        // =========================================================
+        else {
+          const barrelsPerShot = Math.max(1, behavior.barrelsPerShot ?? BASE_MAIN_BEHAVIOR.barrelsPerShot);
+          const recoil = (Array.isArray(t.recoil) ? t.recoil[0] : t.recoil) * spriteScale;
+
+          if (barrelsPerShot === 1) {
+            // Rysowanie domyślnej pojedynczej wieżyczki (Armata style)
             const housingW = 20 * spriteScale;
             const housingH = 30 * spriteScale;
             ctx.fillStyle = '#7f8fb7';
@@ -17969,62 +18078,30 @@ window.AudioSys = AudioSys;
             ctx.lineTo(8 * spriteScale - recoil + barrelL, barrelThickness / 2);
             ctx.closePath();
             ctx.fill();
+          } else {
+            // Rysowanie domyślnej podwójnej wieżyczki (Generyczna)
+            const s = spriteScale * camera.zoom;
+            const rVal = recoil * s; // Uproszczony recoil
+            const housingW = 20 * s;
+            const housingH = 24 * s;
+            const barrelLen = 40 * s;
+            const barrelThick = 4 * s;
+            const barrelOffset = 6 * s;
+
+            const drawBarrel = (offsetY) => {
+              const startX = 4 * s - rVal;
+              ctx.fillStyle = '#cccccc';
+              ctx.fillRect(startX, offsetY - barrelThick / 2, barrelLen, barrelThick);
+            };
+
+            drawBarrel(-barrelOffset);
+            drawBarrel(barrelOffset);
+
+            ctx.fillStyle = '#555'; // Zwykły szary dla generycznej
+            ctx.beginPath();
+            ctx.arc(0, 0, housingW / 1.5, 0, Math.PI * 2);
+            ctx.fill();
           }
-        } else {
-          const s = spriteScale * camera.zoom;
-          const recoilL = (Array.isArray(t.recoil) ? t.recoil[0] : t.recoil) * s;
-          const recoilR = (Array.isArray(t.recoil) ? t.recoil[1] : t.recoil) * s;
-
-          const housingW = 20 * s;
-          const housingH = 24 * s;
-          const barrelLen = 40 * s;
-          const barrelThick = 4 * s;
-          const barrelOffset = 6 * s;
-
-          const drawBarrel = (offsetY, recoilVal) => {
-            const startX = 4 * s - recoilVal;
-            ctx.fillStyle = '#cccccc';
-            ctx.fillRect(startX, offsetY - barrelThick / 2, barrelLen, barrelThick);
-
-            ctx.fillStyle = '#111111';
-            for (let k = 1; k < 5; k++) {
-              ctx.fillRect(startX + k * 8 * s, offsetY - barrelThick / 2, 1 * s, barrelThick);
-            }
-          };
-
-          drawBarrel(-barrelOffset, recoilL);
-          drawBarrel(barrelOffset, recoilR);
-
-          ctx.fillStyle = '#222222';
-          ctx.beginPath();
-          ctx.moveTo(8 * s, -6 * s);
-          ctx.lineTo(0, -housingH / 2);
-          ctx.lineTo(-housingW / 2, -housingH / 2);
-          ctx.lineTo(-housingW / 1.5, 0);
-          ctx.lineTo(-housingW / 2, housingH / 2);
-          ctx.lineTo(0, housingH / 2);
-          ctx.lineTo(8 * s, 6 * s);
-          ctx.closePath();
-          ctx.fill();
-
-          ctx.fillStyle = '#333333';
-          ctx.beginPath();
-          ctx.moveTo(-housingW / 2 + 2 * s, -housingH / 2 + 2 * s);
-          ctx.lineTo(-2 * s, -housingH / 2 + 2 * s);
-          ctx.lineTo(4 * s, -4 * s);
-          ctx.lineTo(4 * s, 4 * s);
-          ctx.lineTo(-2 * s, housingH / 2 - 2 * s);
-          ctx.lineTo(-housingW / 2 + 2 * s, housingH / 2 - 2 * s);
-          ctx.closePath();
-          ctx.fill();
-
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(-10 * s, -housingH / 2 + 4 * s, 4 * s, 1 * s);
-          ctx.fillRect(-10 * s, housingH / 2 - 5 * s, 4 * s, 1 * s);
-
-          ctx.beginPath();
-          ctx.arc(0, 0, 1.5 * s, 0, Math.PI * 2);
-          ctx.fill();
         }
         ctx.restore();
       });
