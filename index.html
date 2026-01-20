@@ -17673,7 +17673,8 @@ window.AudioSys = AudioSys;
       const spriteScale = ship.visual?.spriteScale || 1;
       const visualW = ship.w * spriteScale;
       const visualH = ship.h * spriteScale;
-
+ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
       ctx.save();
       ctx.translate(shipS.x, shipS.y);
       ctx.scale(camera.zoom, camera.zoom);
