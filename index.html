@@ -2155,8 +2155,6 @@ window.AudioSys = AudioSys;
     }
 
     // =============== Floating HUD state ===============
-    const HUD_SHOW_LEGACY = false; // stary HUD w lewym dolnym rogu – zostaw false
-
     const HUD = {
       navArrows: [], // niebieskie strzałki po X: {x,y,age,life}
     };
@@ -2401,38 +2399,6 @@ window.AudioSys = AudioSys;
         const a = Math.max(0, 1 - p.age / p.life);
         ctx.save(); ctx.globalAlpha = 0.3 + 0.7 * a;
         drawArrowOnRing(s.x, s.y, R, ang, 12, '#60a5fa');
-        ctx.restore();
-      }
-    }
-
-    function hudRenderFloatingBars(ship, cam) {
-      const cx = W / 2, cy = H / 2;
-      const R0 = Math.max(ship.w, ship.h) * camera.zoom * 0.8 + 32;
-
-      // BOOST – pokazuj jako poziom paliwa dopalacza
-      const boostFuelRatio = clamp(boost.fuel / boost.fuelMax, 0, 1);
-      if (boostFuelRatio < 1 || (boost.state === 'active' && boost.fuel > 0)) {
-        ctx.save();
-        ctx.strokeStyle = 'rgba(41,52,65,0.9)'; ctx.lineWidth = 8;
-        ctx.beginPath(); ctx.arc(cx, cy, R0, -Math.PI / 2, -Math.PI / 2 + Math.PI * 1.1); ctx.stroke();
-        ctx.strokeStyle = '#60a5fa';
-        ctx.beginPath(); ctx.arc(cx, cy, R0, -Math.PI / 2, -Math.PI / 2 + Math.PI * 1.1 * boostFuelRatio); ctx.stroke();
-        ctx.fillStyle = '#bcd7ff'; ctx.font = '12px system-ui,monospace'; ctx.textAlign = 'center';
-        ctx.fillText('BOOST', cx, cy - R0 - 10);
-        ctx.restore();
-      }
-
-      // WARP – pokazuj przy charge/active
-      if (warp.state === 'charging' || warp.state === 'active') {
-        const t = (warp.state === 'charging') ? Math.min(1, warp.charge / warp.chargeTime) : 1;
-        const R1 = R0 + 16;
-        ctx.save();
-        ctx.strokeStyle = 'rgba(30,41,59,0.9)'; ctx.lineWidth = 8;
-        ctx.beginPath(); ctx.arc(cx, cy, R1, Math.PI / 2, Math.PI / 2 - Math.PI * 1.1, true); ctx.stroke();
-        ctx.strokeStyle = '#7dd3fc';
-        ctx.beginPath(); ctx.arc(cx, cy, R1, Math.PI / 2, Math.PI / 2 - Math.PI * 1.1 * t, true); ctx.stroke();
-        ctx.fillStyle = '#d0f0ff'; ctx.font = '12px system-ui,monospace'; ctx.textAlign = 'center';
-        ctx.fillText('WARP', cx, cy + R1 + 26);
         ctx.restore();
       }
     }
@@ -14425,7 +14391,6 @@ ctx.imageSmoothingEnabled = true;
       // Rysuj HUD na Canvasie TYLKO jeśli nie jesteśmy w menu
       if (!isMainMenuVisible()) {
         hudRenderNav(ship, cam);
-        hudRenderFloatingBars(ship, cam);
         for (const ping of radarPings) {
           const s = worldToScreen(ping.x, ping.y, cam);
           const t = ping.age / ping.life;
@@ -14561,36 +14526,6 @@ ctx.imageSmoothingEnabled = true;
           ctx.fill();
         }
         ctx.restore();
-      }
-
-      if (HUD_SHOW_LEGACY) {
-        // HUD
-        ctx.fillStyle = '#dfe7ff'; ctx.font = '12px monospace';
-        ctx.fillText(`HP: ${Math.round(ship.hull.val)}/${ship.hull.max}`, 12, H - 100);
-        ctx.fillText(`Shield: ${Math.round(ship.shield.val)}/${ship.shield.max}`, 12, H - 84);
-        const warpText = warp.state === 'active' ? `ACTIVE`
-          : warp.state === 'charging' ? `CHARGING ${(Math.min(1, warp.charge / warp.chargeTime) * 100).toFixed(0)}%`
-            : 'READY';
-        ctx.fillText(`Warp: ${warpText}`, 12, H - 68);
-        const fw = 200, fh = 10, ffrac = warp.fuel / warp.fuelMax;
-        ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.strokeRect(12 - 1, H - 52 - fh, fw + 2, fh + 2);
-        ctx.fillStyle = '#60a5fa'; ctx.fillRect(12, H - 52 - fh, fw * ffrac, fh);
-        ctx.fillStyle = '#dfe7ff'; ctx.fillText(`${warp.fuel.toFixed(1)}s / ${warp.fuelMax}s`, 12 + fw + 8, H - 42 - fh);
-        const boosting = boost.state === 'active' && boost.fuel > 0;
-        const fullyCharged = boost.fuel >= boost.fuelMax - 0.01;
-        const boostText = boosting ? 'ACTIVE' : (fullyCharged ? 'READY' : 'REFILLING');
-        ctx.fillText(`Boost: ${boostText} (${boost.fuel.toFixed(1)}/${boost.fuelMax})`, 12, H - 44);
-        const railTimerHUD = (Math.max(1, rail.barrelsPerShot || 2) > 1)
-          ? Math.min(rail.cd[0], rail.cd[1])
-          : rail.cd[0];
-        ctx.fillText(`Rail: ${railTimerHUD > 0 ? railTimerHUD.toFixed(2) + 's' : 'READY'}  Special: ${ship.special.cooldownTimer > 0 ? ship.special.cooldownTimer.toFixed(1) + 's' : 'READY'}`, 12, H - 28);
-
-        // rocket ammo
-        const bw = 160, bh = 10;
-        const ammoFrac = rocketAmmoMax > 0 ? rocketAmmo / rocketAmmoMax : 0;
-        ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.strokeRect(12 - 1, H - 12 - bh - 12, bw + 2, bh + 2);
-        ctx.fillStyle = '#3b82f6'; ctx.fillRect(12, H - 12 - bh - 12, bw * ammoFrac, bh);
-        ctx.fillStyle = '#dfe7ff'; ctx.fillText(`Rockets: ${rocketAmmo}`, 12 + bw + 8, H - 12 - bh - 6 - 12);
       }
 
       if (mercMission && mercMission.station) {
