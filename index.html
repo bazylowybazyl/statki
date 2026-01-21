@@ -344,6 +344,8 @@
     import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
     import { createShipEntity, applyPlayerInput, runShipAI } from "./src/game/shipEntity.js";
     import { DestructorSystem, initHexBody, drawHexBody, drawHexBodyLocal } from "./src/game/destructor.js";
+    import { WEAPONS, WEAPON_ICON_PATHS, AISPACE_GUNS, AISPACE_PD, AISPACE_MISSILES, AISPACE_GUNS_M } from "./src/data/weapons.js";
+    import { SHIPS as SHIP_FRAMES, SUPPORT_SHIP_TEMPLATES as SUPPORT_SHIP_TEMPLATES_DATA, CAPITAL_SHIP_TEMPLATES as CAPITAL_SHIP_TEMPLATES_DATA } from "./src/data/ships.js";
     window.THREE = THREE;
     window.EffectComposer = EffectComposer;
     window.RenderPass = RenderPass;
@@ -1831,71 +1833,75 @@ window.AudioSys = AudioSys;
     };
 
     // === definicje broni ===
-    const WEAPONS = {
-      railgun_mk1: { id: 'railgun_mk1', type: HP.MAIN, name: 'Railgun Mk I', dps: 40, energy: 6, ammo: null },
-      railgun_mk2: { id: 'railgun_mk2', type: HP.MAIN, name: 'Railgun Mk II', dps: 60, energy: 8, ammo: null },
-      armata_mk1: { id: 'armata_mk1', type: HP.MAIN, name: 'Armata Siege Cannon', damage: 220, cooldown: 1.8, energy: 14, ammo: null },
-      heavy_autocannon: { id: 'heavy_autocannon', type: HP.MAIN, name: 'Heavy Autocannon', damage: 28, cooldown: 0.16, energy: 9, ammo: null },
-      missile_rack: { id: 'missile_rack', type: HP.MISSILE, name: 'Missile Rack', dps: 0, energy: 2, ammo: 20 },
-      ciws_mk1: { id: 'ciws_mk1', type: HP.AUX, name: 'CIWS Mk I', dps: 12, energy: 2, ammo: null },
-      laser_pd_mk1: { id: 'laser_pd_mk1', type: HP.AUX, name: 'Helios PD Laser', dps: 18, energy: 3, ammo: null },
-      fighter_bay: { id: 'fighter_bay', type: HP.HANGAR, name: 'Fighter Bay', dps: 0, energy: 5, ammo: null },
-      super_f: { id: 'super_f', type: HP.SPECIAL, name: 'Super Weapon', dps: 300, energy: 20, ammo: null },
-    };
-
-    const WEAPON_ICON_PATHS = {
-      heavy_autocannon: 'assets/weapons/heavy_autocannon.svg',
-    };
 
     // === definicje statków / ram ===
-    const SHIPS = {
-      atlas: {
-        id: 'atlas', name: 'Atlas-class',
-        spec: { [HP.MAIN]: 24, [HP.MISSILE]: 8, [HP.AUX]: 8, [HP.HANGAR]: 4, [HP.SPECIAL]: 1 },
-        genHardpoints(bounds) {
-          const w = bounds.w, h = bounds.h;
-          const hp = [];
+    const SHIPS = buildShipFrames(SHIP_FRAMES);
 
-          // --- NOWE USTAWIENIA ---
-          const leftX = w * -0.230;
-          const rightX = w * 0.240;
-          const spreadX = w * 0.028;
-          const depthY = h * 0.018;
-          const startY = -0.400;
-          const gapY = 0.110;
-
-          for (let i = 0; i < 4; i++) {
-            const cy = (startY * h) + (i * gapY * h);
-
-            // Lewa burta (3 sloty)
-            hp.push({ id: uid(), type: HP.MAIN, pos: { x: leftX, y: cy - depthY, rot: 0 }, mount: null, ammo: null, maxAmmo: null });
-            hp.push({ id: uid(), type: HP.MAIN, pos: { x: leftX - spreadX, y: cy + depthY, rot: 0 }, mount: null, ammo: null, maxAmmo: null });
-            hp.push({ id: uid(), type: HP.MAIN, pos: { x: leftX + spreadX, y: cy + depthY, rot: 0 }, mount: null, ammo: null, maxAmmo: null });
-
-            // Prawa burta (3 sloty)
-            hp.push({ id: uid(), type: HP.MAIN, pos: { x: rightX, y: cy - depthY, rot: 0 }, mount: null, ammo: null, maxAmmo: null });
-            hp.push({ id: uid(), type: HP.MAIN, pos: { x: rightX - spreadX, y: cy + depthY, rot: 0 }, mount: null, ammo: null, maxAmmo: null });
-            hp.push({ id: uid(), type: HP.MAIN, pos: { x: rightX + spreadX, y: cy + depthY, rot: 0 }, mount: null, ammo: null, maxAmmo: null });
+    function buildShipFrames(shipFrames) {
+      const frames = {};
+      for (const [id, frame] of Object.entries(shipFrames)) {
+        frames[id] = {
+          ...frame,
+          genHardpoints(bounds) {
+            return buildShipHardpoints(frame.hardpointLayout, bounds);
           }
-          // ----------------------
-          return hp;
-        }
-      },
-      corvus: {
-        id: 'corvus', name: 'Corvus-class',
-        spec: { [HP.MAIN]: 2, [HP.MISSILE]: 12, [HP.AUX]: 4, [HP.HANGAR]: 2, [HP.SPECIAL]: 1 },
-        genHardpoints(bounds) {
-          const hp = []; const w = bounds.w, h = bounds.h;
-          placeLine(hp, HP.MAIN, 2, { x: -w * 0.2, y: -h * 0.5 }, { x: w * 0.2, y: -h * 0.5 });
-          placeLine(hp, HP.MISSILE, 6, { x: -w * 0.5, y: -h * 0.25 }, { x: -w * 0.5, y: h * 0.25 });
-          placeLine(hp, HP.MISSILE, 6, { x: w * 0.5, y: -h * 0.25 }, { x: w * 0.5, y: h * 0.25 });
-          placeLine(hp, HP.AUX, 4, { x: 0, y: -h * 0.2 }, { x: 0, y: h * 0.2 });
-          placeLine(hp, HP.HANGAR, 2, { x: -w * 0.15, y: h * 0.5 }, { x: w * 0.15, y: h * 0.5 });
-          hp.push({ id: uid(), type: HP.SPECIAL, pos: { x: 0, y: 0, rot: 0 }, mount: null, ammo: null, maxAmmo: null });
-          return hp;
-        }
+        };
       }
-    };
+      return frames;
+    }
+
+    function buildShipHardpoints(layout, bounds) {
+      if (!layout) return [];
+      if (layout.type === 'atlas_broadside') {
+        return buildAtlasHardpoints(layout, bounds);
+      }
+      if (layout.type === 'lines') {
+        const hp = [];
+        for (const line of layout.lines || []) {
+          placeLineNormalized(hp, line.type, line.count, line.start, line.end, bounds);
+        }
+        for (const special of layout.specials || []) {
+          hp.push({
+            id: uid(),
+            type: special.type,
+            pos: { x: (special.pos?.x || 0) * bounds.w, y: (special.pos?.y || 0) * bounds.h, rot: 0 },
+            mount: null,
+            ammo: null,
+            maxAmmo: null
+          });
+        }
+        return hp;
+      }
+      return [];
+    }
+
+    function buildAtlasHardpoints(layout, bounds) {
+      const w = bounds.w, h = bounds.h;
+      const hp = [];
+      const leftX = w * layout.leftX;
+      const rightX = w * layout.rightX;
+      const spreadX = w * layout.spreadX;
+      const depthY = h * layout.depthY;
+      const startY = layout.startY;
+      const gapY = layout.gapY;
+      const rows = layout.rows || 0;
+
+      for (let i = 0; i < rows; i++) {
+        const cy = (startY * h) + (i * gapY * h);
+        hp.push({ id: uid(), type: HP.MAIN, pos: { x: leftX, y: cy - depthY, rot: 0 }, mount: null, ammo: null, maxAmmo: null });
+        hp.push({ id: uid(), type: HP.MAIN, pos: { x: leftX - spreadX, y: cy + depthY, rot: 0 }, mount: null, ammo: null, maxAmmo: null });
+        hp.push({ id: uid(), type: HP.MAIN, pos: { x: leftX + spreadX, y: cy + depthY, rot: 0 }, mount: null, ammo: null, maxAmmo: null });
+
+        hp.push({ id: uid(), type: HP.MAIN, pos: { x: rightX, y: cy - depthY, rot: 0 }, mount: null, ammo: null, maxAmmo: null });
+        hp.push({ id: uid(), type: HP.MAIN, pos: { x: rightX - spreadX, y: cy + depthY, rot: 0 }, mount: null, ammo: null, maxAmmo: null });
+        hp.push({ id: uid(), type: HP.MAIN, pos: { x: rightX + spreadX, y: cy + depthY, rot: 0 }, mount: null, ammo: null, maxAmmo: null });
+      }
+      return hp;
+    }
+
+    function placeLineNormalized(out, type, count, a, b, bounds) {
+      placeLine(out, type, count, { x: a.x * bounds.w, y: a.y * bounds.h }, { x: b.x * bounds.w, y: b.y * bounds.h });
+    }
 
     function placeLine(out, type, count, a, b) {
       for (let i = 0; i < count; i++) {
@@ -3930,149 +3936,76 @@ window.AudioSys = AudioSys;
       return npc;
     }
 
-    const SUPPORT_SHIP_TEMPLATES = {
-      fighter: {
-        color: '#7cff91',
-        count: 9,
-        stats: {
-          hp: 120,
-          accel: 350,
-          maxSpeed: 650,
-          turn: 7.0,
-          radius: 12,
-          mass: 0.8,
-          // BRAK rammingMass i brak heksów -> przelatuje przez statki
-          separationRange: 30
-        },
-        spawnOffset: { x: -60, y: 0 },
-        configure(npc, idx) {
-          npc.fighter = true;
-          npc.gun = 'laserS';
-          npc.msl = 'AF';
-          npc.mslAmmo = 2; // AI SPACE ma 1 lub 2
-          npc.gunCD = 0;
-          npc.ai = (dt) => { if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
-        }
+    const SUPPORT_SHIP_CONFIGURERS = {
+      fighter(npc) {
+        npc.fighter = true;
+        npc.gun = 'laserS';
+        npc.msl = 'AF';
+        npc.mslAmmo = 2;
+        npc.gunCD = 0;
+        npc.ai = (dt) => { if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
       },
-      interceptor: { // Dodane, bo spawnPirate używa tej nazwy
-        // To samo co fighter, ale dla piratów
-        stats: {
-          hp: 80,
-          accel: 350,
-          maxSpeed: 650,
-          turn: 7.0,
-          radius: 12,
-          mass: 0.8,
-          // BRAK rammingMass -> przelatuje przez statki
-          separationRange: 30
-        },
-        configure(npc) {
-          npc.fighter = true;
-          npc.gun = 'laserS';
-          npc.msl = 'AF';
-          npc.mslAmmo = 1;
-          npc.ai = (dt) => { if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
-        }
+      interceptor(npc) {
+        npc.fighter = true;
+        npc.gun = 'laserS';
+        npc.msl = 'AF';
+        npc.mslAmmo = 1;
+        npc.ai = (dt) => { if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
       },
-      frigate_pd: {
-        shield: { max: 650, val: 650, regenRate: 130, regenDelay: 3.6, impacts: [], state: 'activating' },
-        stats: {
-          hp: 1200,
-          accel: 200,
-          maxSpeed: 280, // AI SPACE ma 160, ty miałeś 280 (za szybko!)
-          turn: 1.2,
-          radius: 45,
-          mass: 2.5,
-          rammingMass: 1000, // Fregata (Lekka)
-          friction: 0.985,
-          separationRange: 160
-        },
-        configure(npc) {
-          npc.pd = 'pd_mk1';
-          npc.mainGun = 'm_autocannon'; // lub m_rail w zależności od wersji
-          npc.preferredRange = 760;
-          npc.ai = (dt) => { if (window.aiFrigate) window.aiFrigate(null, npc, dt); };
-          npc.keepAngle = true;
-        }
+      frigate_pd(npc) {
+        npc.pd = 'pd_mk1';
+        npc.mainGun = 'm_autocannon';
+        npc.preferredRange = 760;
+        npc.ai = (dt) => { if (window.aiFrigate) window.aiFrigate(null, npc, dt); };
+        npc.keepAngle = true;
       },
-      frigate_laser: {
-        shield: { max: 900, val: 900, regenRate: 140, regenDelay: 3.8, impacts: [], state: 'activating' },
-        stats: {
-          hp: 1800,
-          accel: 150,
-          maxSpeed: 250,
-          turn: 1.2,
-          radius: 45,
-          mass: 2.5,
-          rammingMass: 1200, // Fregata (Lekka+)
-          friction: 0.985,
-          separationRange: 150
-        },
-        configure(npc) {
-          npc.pd = 'pd_laser'; // Laser PD
-          npc.mainGun = 'h_beam'; // HEAVY BEAM (zgodnie z AI SPACE)
-          npc.preferredRange = 920; // Większy zasięg dla lasera
-          npc.ai = (dt) => {
-            // Jeśli masz aiLaserFrigate, użyj go, jeśli nie - fallback do aiFrigate
-            if (window.aiLaserFrigate) window.aiLaserFrigate(null, npc, dt);
-            else if (window.aiFrigate) window.aiFrigate(null, npc, dt);
-          };
-          npc.keepAngle = true;
-        }
+      frigate_laser(npc) {
+        npc.pd = 'pd_laser';
+        npc.mainGun = 'h_beam';
+        npc.preferredRange = 920;
+        npc.ai = (dt) => {
+          if (window.aiLaserFrigate) window.aiLaserFrigate(null, npc, dt);
+          else if (window.aiFrigate) window.aiFrigate(null, npc, dt);
+        };
+        npc.keepAngle = true;
       },
-      destroyer: {
-        shield: { max: 2200, val: 2200, regenRate: 200, regenDelay: 4.5, impacts: [], state: 'activating' },
-        stats: {
-          hp: 4200, // AI SPACE
-          accel: 140,
-          maxSpeed: 200, // AI SPACE: 140
-          turn: 0.9,
-          radius: 35, // Połowa rozmiaru
-          mass: 8.0,
-          rammingMass: 5000, // Destroyer (Średni)
-          friction: 0.986, // Duża inercja
-          separationRange: 120
-        },
-        configure(npc) {
-          npc.isCapitalShip = true;
-          npc.mGun = 'm_rail';
-          npc.pd = 'pd_mk1';
-          npc.boostDur = 1.8; // AI SPACE destroyer ma boosta
-          npc.preferredRange = 820;
-          npc.ai = (dt) => window.aiDestroyer(null, npc, dt);
-          npc.keepAngle = true;
-          npc.capitalProfile = {
-            lengthScale: 2.0, // Długość tarczy (mnożnik promienia)
-            widthScale: 1.5   // Szerokość tarczy (mnożnik promienia)
-          };
-          // ----------------------------------------
-        }
+      destroyer(npc) {
+        npc.isCapitalShip = true;
+        npc.mGun = 'm_rail';
+        npc.pd = 'pd_mk1';
+        npc.boostDur = 1.8;
+        npc.preferredRange = 820;
+        npc.ai = (dt) => window.aiDestroyer(null, npc, dt);
+        npc.keepAngle = true;
+        npc.capitalProfile = {
+          lengthScale: 2.0,
+          widthScale: 1.5
+        };
       },
-      battleship: {
-        shield: { max: 7200, val: 7200, regenRate: 320, regenDelay: 5.2, impacts: [], state: 'activating' },
-        stats: {
-          hp: 12000, // AI SPACE: 12000! (Ty miałeś 5200)
-          accel: 91,
-          maxSpeed: 105,
-          turn: 0.6,
-          radius: 140,
-          mass: 25.0,
-          rammingMass: 8000, // Battleship (Ciężki, ale lżejszy od Capitali)
-          friction: 0.99, // Bardzo duża inercja (płynie)
-          separationRange: 440
-        },
-        configure(npc) {
-          npc.isCapitalShip = true;
-          npc.pd = 'pd_laser';
-          npc.mGun = 'h_rapid'; // AI SPACE używa h_rapid na dziobie
-          npc.preferredRange = 780;
-          // Broadside config z AI SPACE
-          npc.broadsideRange = 1200;
-          npc.ai = (dt) => window.aiBattleship(null, npc, dt);
-          npc.keepAngle = true;
-        }
+      battleship(npc) {
+        npc.isCapitalShip = true;
+        npc.pd = 'pd_laser';
+        npc.mGun = 'h_rapid';
+        npc.preferredRange = 780;
+        npc.broadsideRange = 1200;
+        npc.ai = (dt) => window.aiBattleship(null, npc, dt);
+        npc.keepAngle = true;
       }
     };
+
+    const SUPPORT_SHIP_TEMPLATES = buildSupportTemplates(SUPPORT_SHIP_TEMPLATES_DATA);
+
+    function buildSupportTemplates(templates) {
+      const result = {};
+      for (const [key, template] of Object.entries(templates)) {
+        const configureKey = template.configureId || key;
+        result[key] = {
+          ...template,
+          configure: SUPPORT_SHIP_CONFIGURERS[configureKey]
+        };
+      }
+      return result;
+    }
     function spawnSupportShip(templateKey, opts = {}) {
       const template = SUPPORT_SHIP_TEMPLATES[templateKey];
       if (!template) return [];
@@ -4114,57 +4047,7 @@ window.AudioSys = AudioSys;
       return created;
     }
 
-    const CAPITAL_SHIP_TEMPLATES = {
-      carrier: {
-        id: 'capital_carrier',
-        displayName: 'CSV Aegis',
-        roleText: 'Carrier · Capital',
-        hull: 42000,
-        mass: 40,
-        rammingMass: 15000, // Capital (Ciężki, ale lżejszy od Gracza-SuperCapitala)
-        shield: 28000,
-        shieldRegen: 260,
-        shieldDelay: 6,
-        accel: 32,
-        maxSpeed: 220,
-        turn: 0.9,
-        radius: 150,
-        hardpoints: { large: 2, medium: 2 },
-        formationOffset: { x: -820, y: 380 },
-        weaponRange: 2300,
-        weapons: {
-          mainCannons: [
-            { id: 'port', offset: { x: 0.42, y: -0.18 }, cooldown: 3.4, projectileSpeed: 1700, damage: 210, spread: 0.0038, arc: Math.PI / 2.2 },
-            { id: 'starboard', offset: { x: 0.42, y: 0.18 }, cooldown: 3.4, projectileSpeed: 1700, damage: 210, spread: 0.0038, arc: Math.PI / 2.2 }
-          ],
-          dorsalBatteries: [
-            { id: 'dorsal', offset: { x: 0.18, y: 0 }, cooldown: 1.6, projectileSpeed: 1300, damage: 38, spread: 0.012, arc: Math.PI / 1.6 }
-          ]
-        },
-        profile: {
-          lengthScale: 1.0,
-          widthScale: 4.0, // Wyszczuplony, żeby nie był "kwadratem"
-          hullColor: '#5a7dbe',
-          deckColor: '#243150',
-          accentColor: '#9dc5ff',
-          engineColor: 'rgba(130,200,255,0.9)',
-          hangarGlow: 'rgba(160,200,255,0.45)',
-          spriteSrc: 'assets/carrier.png',
-          spriteScale: 5.0,
-          spriteRotation: Math.PI / 2,
-          spriteOffset: { x: 0, y: 0 },
-          spriteLayer: 2,
-          spriteEngineGlow: false,
-          engineOffsets: [
-            { x: -0.38, y: 0.92 },
-            { x: 0, y: 0.95 },
-            { x: 0.38, y: 0.92 }
-          ],
-          engineGlowSize: 0.28,
-          engineOffsetMode: 'relative'
-        }
-      }
-    };
+    const CAPITAL_SHIP_TEMPLATES = CAPITAL_SHIP_TEMPLATES_DATA;
 
     Fleet.templates = Object.assign(Fleet.templates || {}, { capital: CAPITAL_SHIP_TEMPLATES });
 
@@ -5049,36 +4932,8 @@ window.AudioSys = AudioSys;
     // 1. BAZA DANYCH AI SPACE (Statystyki broni i pocisków)
     // ==========================================================================================
 
-    const AISPACE_GUNS = {
-      laserS: { name: 'Laser krótki', dps: 40, dmg: 8, rps: 5, speed: 520, range: 380, spread: 2, color: '#86f7ff' },
-      pulse: { name: 'Pulse blaster', dps: 55, dmg: 14, rps: 4, speed: 420, range: 420, spread: 3, color: '#ffd36e' },
-      rail: { name: 'Rail micro', dps: 65, dmg: 26, rps: 1.8, speed: 900, range: 560, spread: 0.6, color: '#c0b7ff' },
-      gatling: { name: 'Gatling', dps: 70, dmg: 3, rps: 12, speed: 520, range: 320, spread: 4, color: '#9fff75' }
-    };
-
-    const AISPACE_PD = {
-      pd_mk1: { name: 'PD Mk1', dmg: 5, rps: 9, speed: 560, range: 380, spread: 6, color: '#8cffd0', burst: 3 },
-      pd_laser: { name: 'PD Laser', dmg: 3, rps: 18, speed: 1200, range: 420, spread: 0.7, color: '#ff77ff', burst: 10 }
-    };
-
     const AISPACE_FLAK = {
       flak_L: { name: 'Flak L', burst: 1, rps: 0.8, speed: 380, range: 520, radius: 48, dmg: 28, color: '#ffef8a' }
-    };
-
-    const AISPACE_MISSILES = {
-      AF: { name: 'AIM-3', speed: 360, turn: 600, life: 4.0, dmg: 45, seek: 'fighter', color: '#7cd7ff' },
-      AS: { name: 'ASM-6', speed: 300, turn: 320, life: 6.0, dmg: 120, seek: 'ship', color: '#ffad7c' },
-      HE: { name: 'HET-4', speed: 280, turn: 250, life: 5.0, dmg: 160, seek: 'any', color: '#ff7cf0' },
-      SW: { name: 'Swarm-8', speed: 340, turn: 550, life: 3.0, dmg: 18, seek: 'fighter', color: '#b3ff7c', swarm: 6, spread: 18 }
-    };
-
-    const AISPACE_GUNS_M = {
-      m_beam: { name: 'M Beam', dmg: 24, rps: 1.8, speed: 900, range: 820, spread: 0.4, color: '#8fd8ff', isBeam: true },
-      m_pulse: { name: 'M Pulse', dmg: 40, rps: 1.1, speed: 700, range: 760, spread: 0.8, color: '#ffd98a' },
-      m_rail: { name: 'M Rail', dmg: 85, rps: 0.55, speed: 1200, range: 1500, spread: 0.35, color: '#d0c9ff' },
-      m_autocannon: { name: 'M Auto', dmg: 22, rps: 3.2, speed: 780, range: 680, spread: 1.2, color: '#b6ff9a' },
-      h_beam: { name: 'Heavy Beam', dmg: 260, rps: 0.22, speed: 1500, range: 1100, spread: 0.1, color: '#ff0000', isBeam: true },
-      h_rapid: { name: 'Rapid Laser L', dmg: 45, rps: 5.0, speed: 900, range: 1300, spread: 1.0, color: '#00ff00' }
     };
 
     const AISPACE_BS_BROADSIDE = {
