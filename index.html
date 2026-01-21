@@ -318,6 +318,9 @@
 }
 </script>
   <script type="module" src="./src/config/constants.js"></script>
+  <script type="module" src="./src/ai/aiUtils.js"></script>
+  <script type="module" src="./src/ai/capitalAI.js"></script>
+  <script type="module" src="./src/ai/fighterAI.js"></script>
   <script src="https://unpkg.com/regl/dist/regl.min.js"></script>
   <script type="module">
     import * as THREE from "three";
@@ -1240,39 +1243,6 @@ window.AudioSys = AudioSys;
       const sin = Math.sin(angle);
       return (rx * ry) / Math.sqrt((ry * cos) ** 2 + (rx * sin) ** 2);
     }
-    // === AI SPACE PHYSICS UTILS ===
-    function clampTurnVec(vx, vy, wantVx, wantVy, dt, maxDeg) {
-      const maxRad = (maxDeg * Math.PI / 180) * dt;
-      const a = Math.atan2(vy, vx);
-      const b = Math.atan2(wantVy, wantVx);
-      let d = b - a;
-      while (d > Math.PI) d -= 2 * Math.PI;
-      while (d < -Math.PI) d += 2 * Math.PI;
-      const lim = Math.max(-maxRad, Math.min(maxRad, d));
-      const speed = Math.hypot(wantVx, wantVy);
-      const ang = a + lim;
-      return { vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed };
-    }
-
-    function getLeadAim(shooter, target, projSpeed) {
-      const targetX = target.pos ? target.pos.x : target.x;
-      const targetY = target.pos ? target.pos.y : target.y;
-      const vx = target.vx ?? target.vel?.x ?? 0;
-      const vy = target.vy ?? target.vel?.y ?? 0;
-      const px = targetX - shooter.x, py = targetY - shooter.y;
-      const A = (vx * vx + vy * vy) - projSpeed * projSpeed;
-      const B = 2 * (px * vx + py * vy);
-      const C = (px * px + py * py);
-      let t = 0;
-      if (Math.abs(A) < 1e-3) {
-        t = -C / Math.max(B, -1e-3);
-      } else {
-        const disc = B * B - 4 * A * C;
-        t = (disc > 0) ? (-B - Math.sqrt(disc)) / (2 * A) : 0;
-      }
-      t = Math.max(0, Math.min(2.0, t));
-      return { x: targetX + vx * t, y: targetY + vy * t };
-    }
     function isLineOfFireBlocked(shooter, target, weaponRange) {
       const start = { x: shooter.x, y: shooter.y };
       const targetX = target.pos ? target.pos.x : target.x;
@@ -1313,6 +1283,9 @@ window.AudioSys = AudioSys;
 
       return false;
     }
+    window.clampTurnAngle = clampTurnAngle;
+    window.dist2 = dist2;
+    window.isLineOfFireBlocked = isLineOfFireBlocked;
     const smoothstep01 = t => { const x = clamp(t, 0, 1); return x * x * (3 - 2 * x); };
     function rotate(local, a) { const c = Math.cos(a), s = Math.sin(a); return { x: local.x * c - local.y * s, y: local.x * s + local.y * c }; }
     function rotateInv(world, a) { return rotate(world, -a); }
@@ -1624,7 +1597,7 @@ window.AudioSys = AudioSys;
 
         // Wymuś odlot od lidera
         const wantSpeed = npc.maxSpeed * 0.9;
-        const turned = clampTurnVec(npc.vx, npc.vy, dir.x * wantSpeed, dir.y * wantSpeed, dt, 360);
+        const turned = window.clampTurnVec(npc.vx, npc.vy, dir.x * wantSpeed, dir.y * wantSpeed, dt, 360);
 
         npc.vx = turned.vx;
         npc.vy = turned.vy;
@@ -1638,7 +1611,7 @@ window.AudioSys = AudioSys;
       const dist = Math.hypot(dx, dy) || 1;
       const dir = { x: dx / dist, y: dy / dist };
       const wantSpeed = Math.min(npc.maxSpeed || 240, dist * 1.4);
-      const turned = clampTurnVec(npc.vx, npc.vy, dir.x * wantSpeed, dir.y * wantSpeed, dt, 220);
+      const turned = window.clampTurnVec(npc.vx, npc.vy, dir.x * wantSpeed, dir.y * wantSpeed, dt, 220);
       npc.vx = turned.vx;
       npc.vy = turned.vy;
       npc.angle = Math.atan2(npc.vy || 0, npc.vx || 0);
@@ -1657,7 +1630,7 @@ window.AudioSys = AudioSys;
       const dist = Math.hypot(dx, dy) || 1;
       const dir = { x: dx / dist, y: dy / dist };
       const wantSpeed = Math.min(opts.maxSpeed || npc.maxSpeed || 240, dist * (opts.speedScale || 1.2));
-      const turned = clampTurnVec(npc.vx || 0, npc.vy || 0, dir.x * wantSpeed, dir.y * wantSpeed, dt, opts.turnLimit || 220);
+      const turned = window.clampTurnVec(npc.vx || 0, npc.vy || 0, dir.x * wantSpeed, dir.y * wantSpeed, dt, opts.turnLimit || 220);
       npc.vx = turned.vx;
       npc.vy = turned.vy;
       npc.angle = Math.atan2(npc.vy || 0, npc.vx || 0);
@@ -1726,6 +1699,7 @@ window.AudioSys = AudioSys;
 
       return { ax, ay };
     }
+    window.applySeparationForces = applySeparationForces;
     function handleCommandedNpc(npc, dt) {
       const cmd = npc.command;
       if (!cmd || !cmd.target) return false;
@@ -2523,6 +2497,7 @@ window.AudioSys = AudioSys;
       window.hudSystem.update(ship, sysData, envData);
     }
     function wrapAngle(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; }
+    window.wrapAngle = wrapAngle;
     function interpAngleShort(prev, curr, t) { const d = wrapAngle(curr - prev); return wrapAngle(prev + d * t); }
     function shuffleArray(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; } }
     function leadTarget(shooter, shooterVel, target, speed) {
@@ -5242,6 +5217,13 @@ window.AudioSys = AudioSys;
       return { ...guns, ...pd, ...missiles };
     })();
 
+    window.AISPACE_GUNS = AISPACE_GUNS;
+    window.AISPACE_PD = AISPACE_PD;
+    window.AISPACE_FLAK = AISPACE_FLAK;
+    window.AISPACE_MISSILES = AISPACE_MISSILES;
+    window.AISPACE_GUNS_M = AISPACE_GUNS_M;
+    window.AISPACE_BS_BROADSIDE = AISPACE_BS_BROADSIDE;
+
     Object.assign(WEAPONS, AISPACE_HARDPOINT_WEAPONS);
     for (const weaponId of Object.keys(AISPACE_HARDPOINT_WEAPONS)) {
       mergedInventory.add(weaponId);
@@ -5277,7 +5259,7 @@ window.AudioSys = AudioSys;
       // 1. Celowanie
       let aimPoint;
       if (target) {
-        aimPoint = getLeadAim(origin, target, bulletSpeed);
+        aimPoint = window.getLeadAim(origin, target, bulletSpeed);
       } else {
         const angle = baseAngle;
         aimPoint = {
@@ -5356,67 +5338,6 @@ window.AudioSys = AudioSys;
       });
     };
 
-    window.aiPickBestTarget = function (self, rangeLimit) {
-      let bestTarget = null;
-      let bestScore = -Infinity;
-
-      // Pobierz listę wrogów
-      const enemies = self.friendly
-        ? npcs.filter(n => n.isPirate && !n.dead)
-        : [ship, ...npcs.filter(n => n.friendly && !n.dead)];
-
-      // Limit zasięgu przekazywany z AI (np. 25000 dla Engage, 5000 dla Guard)
-      const MAX_RANGE_SQ = (rangeLimit || 20000) ** 2;
-
-      for (const u of enemies) {
-        // 1. Sprawdź zasięg (twardy limit strefy)
-        const distSq = (u.x - self.x) ** 2 + (u.y - self.y) ** 2;
-        if (distSq > MAX_RANGE_SQ) continue;
-
-        // 2. Tabela punktowa (Port z AI Space - pickBestTarget)
-        let score = 0;
-
-        // Kara za odległość (im dalej, tym mniejszy priorytet)
-        score -= distSq * 0.00008;
-
-        // Typy jednostek
-        const amFighter = self.fighter || self.type === 'fighter' || self.type === 'interceptor';
-        const isFighter = u.fighter || u.type === 'fighter' || u.type === 'interceptor';
-        const isCapital = u.isCapitalShip || u.type === 'frigate' || u.type === 'destroyer' || u === ship;
-
-        if (amFighter) {
-          if (isFighter) {
-            // Myśliwiec vs Myśliwiec: Wysoki priorytet jeśli blisko (dogfight)
-            // 2500^2 = 6250000
-            if (distSq < 6250000) score += 40000;
-            else score += 1000;
-          } else {
-            // Myśliwiec vs Duży statek: Niższy priorytet
-            score += 1000;
-          }
-        } else {
-          // Większe statki (Fregaty itp.)
-          if (isFighter) score += 2000;
-          else score += 5000;
-        }
-
-        // Samoobrona (Capital Defense z AI Space)
-        // Jeśli cel jest BARDZO blisko (<350j), atakuj go bez względu na wszystko
-        if (distSq < 122500) {
-          score += 50000;
-        }
-
-        // Losowość (żeby nie wszyscy rzucili się na ten sam cel w jednej klatce)
-        score += Math.random() * 500;
-
-        if (score > bestScore) {
-          bestScore = score;
-          bestTarget = u;
-        }
-      }
-
-      return bestTarget;
-    };
     // --- HELPER: Tłumacz typów dla AI (AI Space Port) ---
     function getUnitKind(npc) {
       if (!npc) return 'unknown';
@@ -5444,6 +5365,7 @@ window.AudioSys = AudioSys;
 
       return 'other';
     }
+    window.getUnitKind = getUnitKind;
     function pirateRoleKind(npc) {
       if (!npc) return 'other';
       const type = npc.type || '';
@@ -5582,457 +5504,8 @@ window.AudioSys = AudioSys;
       }
       return best;
     }
+    window.aiPickTarget = aiPickTarget;
 
-    // --- B. AI FREGATY (Ruch, Strafing, Separacja – bez podwójnego tarcia) ---
-    window.aiFrigate = function (sim, npc, dt) {
-      npc.gunCD = Math.max(0, (npc.gunCD || 0) - dt);
-      npc.pdCD = Math.max(0, (npc.pdCD || 0) - dt);
-      npc.mslCD = Math.max(0, (npc.mslCD || 0) - dt);
-
-      // Retargeting
-      npc.retargetTimer = (npc.retargetTimer || 0) - dt;
-      if (npc.retargetTimer <= 0) {
-        const freshTarget = aiPickTarget(npc);
-        if (freshTarget) npc.target = freshTarget;
-        npc.retargetTimer = 1.0 + Math.random() * 0.5;
-      }
-
-      // 1. Pobierz cel
-      let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : npc.target;
-
-      if (!target || target.dead) {
-        target = aiPickTarget(npc);
-        npc.target = target;
-      }
-
-      let targetAng = npc.angle;
-      let thrust = 0;
-      let strafe = 0;
-
-      // Siły odseparowania
-      let ax = 0;
-      let ay = 0;
-
-      // 2. Logika ruchu
-      if (target) {
-        const dx = target.x - npc.x;
-        const dy = target.y - npc.y;
-        targetAng = Math.atan2(dy, dx);
-
-        const idealRange = npc.preferredRange || 750;
-        const dist = Math.hypot(dx, dy);
-
-        // Push-Pull (lekko złagodzone)
-        if (dist < idealRange * 0.85) thrust = -npc.accel * 0.7;
-        else if (dist > idealRange * 1.15) thrust = npc.accel * 0.9;
-        else thrust = npc.accel * 0.25; // delikatny ruch do przodu, żeby nie "stała"
-
-        // Strafe – delikatne kołowanie wokół celu
-        const seed = (npc.id && typeof npc.id === 'string') ? npc.id.charCodeAt(0) : Math.floor(Math.random() * 1000);
-        const time = performance.now() / 1000;
-        strafe = Math.sin(time * 0.7 + seed * 0.3) * npc.accel * 0.4;
-
-      } else {
-        // Patrol lub stop
-        if (npc.home) {
-          const patrolRadius = npc.home.r + 300;
-          if (!npc.patrolAngle) npc.patrolAngle = Math.random() * Math.PI * 2;
-          npc.patrolAngle += 0.2 * dt;
-          const px = npc.home.x + Math.cos(npc.patrolAngle) * patrolRadius;
-          const py = npc.home.y + Math.sin(npc.patrolAngle) * patrolRadius;
-          const dx = px - npc.x;
-          const dy = py - npc.y;
-          targetAng = Math.atan2(dy, dx);
-          thrust = npc.accel * 0.4;
-        } else {
-          npc.vx *= 0.95;
-          npc.vy *= 0.95;
-        }
-      }
-
-      // Separacja (ważne przy grupach fregat)
-      const sep = applySeparationForces(npc, 0, 0);
-      ax += sep.ax;
-      ay += sep.ay;
-
-      // 3. Fizyka (Integracja sił)
-      npc.angle = clampTurnAngle(npc.angle, targetAng, npc.turn, dt);
-      const c = Math.cos(npc.angle);
-      const s = Math.sin(npc.angle);
-
-      // Sterowanie + separacja
-      const totalAx = ax + (c * thrust - s * strafe);
-      const totalAy = ay + (s * thrust + c * strafe);
-
-      npc.vx += totalAx * dt;
-      npc.vy += totalAy * dt;
-
-      const v = Math.hypot(npc.vx, npc.vy);
-      if (v > npc.maxSpeed) {
-        const scale = npc.maxSpeed / v;
-        npc.vx *= scale;
-        npc.vy *= scale;
-      }
-
-      // UWAGA: brak dodatkowego friction – robi to npcStep()
-
-      // 4. Strzelanie
-      if (target) {
-        const mainDef = AISPACE_GUNS_M[npc.mainGun] || AISPACE_GUNS_M.m_autocannon;
-        const distSq = dist2(npc, target);
-
-        if (npc.gunCD <= 0 && distSq < (mainDef.range * mainDef.range)) {
-          const dx = target.x - npc.x, dy = target.y - npc.y;
-          const dot = (Math.cos(npc.angle) * dx + Math.sin(npc.angle) * dy) / Math.sqrt(distSq);
-
-          if (dot > 0.8) {
-            if (!isLineOfFireBlocked(npc, target, mainDef.range)) {
-              window.spawnBulletAdapter(npc, target, mainDef, { type: mainDef.isBeam ? 'beam' : undefined });
-              npc.gunCD = 1.0 / (mainDef.rps || 1.0);
-            }
-          }
-        }
-
-        const pdDef = AISPACE_PD[npc.pd];
-        if (pdDef && npc.pdCD <= 0 && distSq < (pdDef.range * pdDef.range)) {
-          const burst = pdDef.burst || 1;
-          for (let i = 0; i < burst; i++) {
-            window.spawnBulletAdapter(npc, target, pdDef, { type: 'ciws' });
-          }
-          npc.pdCD = 1.0 / (pdDef.rps || 8);
-        }
-
-        if (npc.msl && npc.mslAmmo > 0 && npc.mslCD <= 0 && distSq < 1400 * 1400) {
-          const mslDef = AISPACE_MISSILES[npc.msl] || AISPACE_MISSILES.AS;
-          const dir = { x: Math.cos(npc.angle), y: Math.sin(npc.angle) };
-          window.bullets.push({
-            x: npc.x, y: npc.y,
-            vx: dir.x * mslDef.speed + npc.vx,
-            vy: dir.y * mslDef.speed + npc.vy,
-            life: mslDef.life || 5,
-            r: 5,
-            owner: npc.friendly ? 'player' : 'npc',
-            damage: mslDef.dmg || 80,
-            type: 'rocket',
-            target: target,
-            color: mslDef.color,
-            turnRate: (mslDef.turn || SIDE_ROCKET_TURN_RATE) * Math.PI / 180,
-            homingDelay: 0.3,
-            explodeRadius: 50
-          });
-          npc.mslAmmo -= 1;
-          npc.mslCD = 6.0;
-        }
-      }
-    };
-
-    // --- C. AI NISZCZYCIELA (Ruch, Separacja, Boost – bez podwójnego tarcia) ---
-    window.aiDestroyer = function (sim, npc, dt) {
-      npc.mCD = Math.max(0, (npc.mCD || 0) - dt);
-      npc.pdCD = Math.max(0, (npc.pdCD || 0) - dt);
-      npc.boostT = Math.max(0, (npc.boostT || 0) - dt);
-      npc.boostCd = Math.max(0, (npc.boostCd || 0) - dt);
-
-      // Retargeting
-      npc.retargetTimer = (npc.retargetTimer || 0) - dt;
-      if (npc.retargetTimer <= 0) {
-        const freshTarget = aiPickTarget(npc);
-        if (freshTarget) npc.target = freshTarget;
-        npc.retargetTimer = 1.0 + Math.random() * 0.5;
-      }
-
-      let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : npc.target;
-      if (!target || target.dead) {
-        target = aiPickTarget(npc);
-        npc.target = target;
-      }
-
-      const gunDef = AISPACE_GUNS_M[npc.mGun] || AISPACE_GUNS_M.m_rail;
-      let targetAng = npc.angle;
-      let thrust = 0;
-      let strafe = 0;
-      let ax = 0;
-      let ay = 0;
-
-      if (target) {
-        const dx = target.x - npc.x;
-        const dy = target.y - npc.y;
-        const dist = Math.hypot(dx, dy);
-        targetAng = Math.atan2(dy, dx);
-
-        const range = gunDef.range || 800;
-        const wantRange = range * 0.8;
-
-        const ux = Math.cos(npc.angle), uy = Math.sin(npc.angle);
-        const dot = (dx / dist) * ux + (dy / dist) * uy;
-
-        // Boost – dobieganie na pozycję
-        if (dist > range * 0.95 && npc.boostCd <= 0 && dot > 0.9) {
-          npc.boostT = npc.boostDur || 2.5;
-          npc.boostCd = 10.0;
-        }
-        if (dist < wantRange * 0.9) npc.boostT = 0;
-
-        // Push-Pull
-        if (dist < wantRange * 0.95) thrust = -npc.accel * 1.2;
-        else if (dist > wantRange * 1.05) thrust = npc.accel * 0.9;
-
-        // Strafe – kołowanie wokół celu
-        if (dist < range * 1.1) {
-          const time = performance.now() / 1000;
-          const seed = (npc.id && typeof npc.id === 'string') ? npc.id.charCodeAt(0) : Math.floor(Math.random() * 1000);
-          strafe = Math.sin(time * 0.55 + seed * 0.2) * npc.accel * 0.5;
-          if (npc.boostT > 0) strafe *= 1.5;
-        }
-
-        // Separacja
-        const sep = applySeparationForces(npc, 0, 0);
-        ax += sep.ax * 1.2;
-        ay += sep.ay * 1.2;
-
-        // Strzelanie
-        if (npc.mCD <= 0 && dist < range && dot > 0.9) {
-          if (!isLineOfFireBlocked(npc, target, range)) {
-            window.spawnBulletAdapter(npc, target, gunDef, { type: 'rail' });
-            npc.mCD = 1.0 / (gunDef.rps || 0.5);
-          }
-        }
-      }
-
-      // Fizyka
-      const speedBoost = (npc.boostT > 0) ? 1.7 : 1.0;
-      npc.angle = clampTurnAngle(npc.angle, targetAng, npc.turn * speedBoost, dt);
-
-      const c = Math.cos(npc.angle);
-      const s = Math.sin(npc.angle);
-
-      const totalAx = ax + (c * thrust - s * strafe) * speedBoost;
-      const totalAy = ay + (s * thrust + c * strafe) * speedBoost;
-
-      npc.vx += totalAx * dt;
-      npc.vy += totalAy * dt;
-
-      const v = Math.hypot(npc.vx, npc.vy);
-      const maxV = npc.maxSpeed * speedBoost;
-      if (v > maxV) {
-        const scale = maxV / v;
-        npc.vx *= scale;
-        npc.vy *= scale;
-      }
-
-      // UWAGA: brak dodatkowego friction – robi to npcStep()
-
-      const pdDef = AISPACE_PD[npc.pd];
-      if (pdDef && npc.pdCD <= 0 && target) {
-        if (dist2(npc, target) < pdDef.range ** 2) {
-          window.spawnBulletAdapter(npc, target, pdDef, { type: 'ciws' });
-          npc.pdCD = 1.0 / (pdDef.rps || 9);
-        }
-      }
-    };
-
-    // --- D. AI PANCERNIKA (Ruch, Separacja, Broadside – bez podwójnego tarcia) ---
-    window.aiBattleship = function (sim, npc, dt) {
-      npc.broadLeftCD = Math.max(0, (npc.broadLeftCD || 0) - dt);
-      npc.broadRightCD = Math.max(0, (npc.broadRightCD || 0) - dt);
-      npc.pdCD = Math.max(0, (npc.pdCD || 0) - dt);
-      npc.mCD = Math.max(0, (npc.mCD || 0) - dt);
-
-      // Retargeting
-      npc.retargetTimer = (npc.retargetTimer || 0) - dt;
-      if (npc.retargetTimer <= 0) {
-        const freshTarget = aiPickTarget(npc);
-        if (freshTarget) npc.target = freshTarget;
-        npc.retargetTimer = 1.5 + Math.random() * 0.5;
-      }
-
-      let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : npc.target;
-      if (!target || target.dead) {
-        target = aiPickTarget(npc);
-        npc.target = target;
-      }
-
-      const broadsideDef = AISPACE_BS_BROADSIDE;
-      const mDef = AISPACE_GUNS_M.h_rapid;
-
-      let targetAng = npc.angle;
-      let thrust = 0;
-      let strafe = 0;
-      let ax = 0;
-      let ay = 0;
-
-      if (target) {
-        const dx = target.x - npc.x;
-        const dy = target.y - npc.y;
-        const dist = Math.hypot(dx, dy);
-        const toAng = Math.atan2(dy, dx);
-
-        const noseRange = mDef.range || 800;
-        const idealDist = noseRange * 0.75;
-
-        if (dist < idealDist * 0.9) thrust = -npc.accel * 0.5;
-        else if (dist > idealDist * 1.15) thrust = npc.accel * 0.9;
-        else thrust = npc.accel * 0.2;
-
-        const time = performance.now() / 1000;
-        const seed = (npc.id && typeof npc.id === 'string') ? npc.id.charCodeAt(0) : Math.floor(Math.random() * 1000);
-        strafe = Math.sin(time * 0.4 + seed * 0.2) * npc.accel * 0.35;
-
-        // Separacja – pancerniki się rozpychają
-        const sep = applySeparationForces(npc, 0, 0);
-        ax += sep.ax * 1.5;
-        ay += sep.ay * 1.5;
-
-        const rightAng = toAng + Math.PI / 2;
-        const leftAng = toAng - Math.PI / 2;
-
-        const diffNose = Math.abs(wrapAngle(toAng - npc.angle));
-        const diffRight = Math.abs(wrapAngle(rightAng - npc.angle));
-        const diffLeft = Math.abs(wrapAngle(leftAng - npc.angle));
-
-        const broadsideRange = broadsideDef.range || 650;
-        let sideBetter = false;
-        const minSideDiff = Math.min(diffRight, diffLeft);
-
-        if (dist < broadsideRange * 1.05 && (minSideDiff + 0.2 < diffNose)) {
-          sideBetter = true;
-        }
-
-        if (sideBetter) {
-          if (diffRight <= diffLeft) targetAng = rightAng;
-          else targetAng = leftAng;
-        } else {
-          targetAng = toAng;
-        }
-
-        const sideArc = 0.5;
-
-        // Broadside prawa burta
-        if (diffRight < sideArc && npc.broadRightCD <= 0 && dist < broadsideDef.range) {
-          if (!isLineOfFireBlocked(npc, target, broadsideDef.range)) {
-            for (let i = 0; i < 4; i++) {
-              const offsetDist = (i - 1.5) * 25;
-              const bx = npc.x + Math.cos(npc.angle) * offsetDist + Math.sin(npc.angle) * 20;
-              const by = npc.y + Math.sin(npc.angle) * offsetDist - Math.cos(npc.angle) * 20;
-              const fakeSource = { ...npc, x: bx, y: by };
-              window.spawnBulletAdapter(fakeSource, target, broadsideDef, { type: 'plasma' });
-            }
-            npc.broadRightCD = 2.0;
-          }
-        }
-
-        // Broadside lewa burta
-        if (diffLeft < sideArc && npc.broadLeftCD <= 0 && dist < broadsideDef.range) {
-          if (!isLineOfFireBlocked(npc, target, broadsideDef.range)) {
-            for (let i = 0; i < 4; i++) {
-              const offsetDist = (i - 1.5) * 25;
-              const bx = npc.x + Math.cos(npc.angle) * offsetDist - Math.sin(npc.angle) * 20;
-              const by = npc.y + Math.sin(npc.angle) * offsetDist + Math.cos(npc.angle) * 20;
-              const fakeSource = { ...npc, x: bx, y: by };
-              window.spawnBulletAdapter(fakeSource, target, broadsideDef, { type: 'plasma' });
-            }
-            npc.broadLeftCD = 2.0;
-          }
-        }
-
-        // Działo dziobowe
-        if (diffNose < 0.3 && npc.mCD <= 0 && dist < mDef.range) {
-          if (!isLineOfFireBlocked(npc, target, mDef.range)) {
-            window.spawnBulletAdapter(npc, target, mDef, { type: 'rail' });
-            npc.mCD = 1.0 / mDef.rps;
-          }
-        }
-      }
-
-      npc.angle = clampTurnAngle(npc.angle, targetAng, npc.turn, dt);
-      const c = Math.cos(npc.angle);
-      const s = Math.sin(npc.angle);
-
-      // Sumowanie sił
-      ax += c * thrust - s * strafe;
-      ay += s * thrust + c * strafe;
-
-      npc.vx += ax * dt;
-      npc.vy += ay * dt;
-
-      const v = Math.hypot(npc.vx, npc.vy);
-      if (v > npc.maxSpeed) {
-        const sc = npc.maxSpeed / v;
-        npc.vx *= sc;
-        npc.vy *= sc;
-      }
-
-      // UWAGA: brak dodatkowego friction – robi to npcStep()
-
-      const pdDef = AISPACE_PD[npc.pd] || AISPACE_PD.pd_laser;
-      if (npc.pdCD <= 0 && target && dist2(npc, target) < pdDef.range ** 2) {
-        const burst = pdDef.burst || 1;
-        for (let i = 0; i < burst; i++) window.spawnBulletAdapter(npc, target, pdDef, { type: 'ciws' });
-        npc.pdCD = 1.0 / (pdDef.rps || 10);
-      }
-    };
-
-    window.runAdvancedFighterAI = runAdvancedFighterAI;
-
-
-    // Helper strzelania dla myśliwców
-    function tryFireFighter(npc, target, dt) {
-      if (!target || target.dead) return;
-
-      const gunDef = AISPACE_GUNS[npc.gun] || AISPACE_GUNS.laserS;
-      const tx = target.pos ? target.pos.x : target.x;
-      const ty = target.pos ? target.pos.y : target.y;
-      const dx = tx - npc.x;
-      const dy = ty - npc.y;
-      const dist = Math.hypot(dx, dy);
-
-      if (isLineOfFireBlocked(npc, target, gunDef.range)) {
-        return;
-      }
-
-      // Czy statek patrzy na cel?
-      const angleToTarget = Math.atan2(dy, dx);
-      const myAngle = Math.atan2(npc.vy, npc.vx); // Fighter patrzy tam gdzie leci
-      const diff = Math.abs(wrapAngle(angleToTarget - myAngle));
-
-      // 1. Strzał z działa (Laser)
-      if (dist < (gunDef.range || 400) && diff < 0.5 && npc.gunCD <= 0) {
-        window.spawnBulletAdapter(npc, target, gunDef);
-        npc.gunCD = 1.0 / (gunDef.rps || 5);
-      }
-
-      // 2. Strzał rakietą (Ograniczony amunicją)
-      if (npc.mslAmmo > 0 && npc.mslCD <= 0 && dist < 1200 && diff < 0.6) {
-        // Szansa na strzał 10% na klatkę, żeby nie wystrzelili wszystkiego w 0.1 sekundy
-        if (Math.random() < 0.1) {
-          const mslDef = AISPACE_MISSILES[npc.msl || 'AF'];
-          const dir = norm({ x: dx, y: dy });
-          const speed = mslDef.speed || 300;
-
-          window.bullets.push({
-            x: npc.x, y: npc.y,
-            vx: dir.x * speed + npc.vx * 0.5,
-            vy: dir.y * speed + npc.vy * 0.5,
-            life: mslDef.life || 4,
-            r: 4,
-            owner: npc.friendly ? 'player' : 'npc',
-            damage: mslDef.dmg || 40,
-            type: 'rocket',
-            target: target,
-            color: mslDef.color || '#ffaa00',
-            turnRate: (mslDef.turn || 6) * Math.PI / 180,
-            homingDelay: 0.2,
-            explodeRadius: 40
-          });
-
-          npc.mslAmmo--; // Odejmij amunicję
-          npc.mslCD = 5.0; // Długi cooldown (5 sekund)
-
-          // Efekt dymu przy wystrzale
-          spawnParticle({ x: npc.x, y: npc.y }, { x: 0, y: 0 }, 0.5, '#ffffff', 5, true);
-        }
-      }
-    }
     function initNPCs() {
       npcs = [];
 	  window.npcs = npcs;
@@ -6066,7 +5539,7 @@ window.AudioSys = AudioSys;
         npc.gunCD = 0;
 
         // *** KLUCZOWA ZMIANA: Przypisanie nowego AI ***
-        npc.ai = (dt) => runAdvancedFighterAI(npc, dt);
+        npc.ai = (dt) => { if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
 
         npcs.push(npc);
         pirateSquad.addUnit(npc);
@@ -6086,7 +5559,7 @@ window.AudioSys = AudioSys;
         npc.fighter = true;
         npc.color = '#7cff91'; // Zielony z AI SPACE
         npc.mission = true; // Wymuś ścieżkę mission dla runAdvancedFighterAI
-        npc.ai = (dt) => runAdvancedFighterAI(npc, dt);
+        npc.ai = (dt) => { if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
 
         npcs.push(npc);
         allySquad.addUnit(npc);
@@ -10689,6 +10162,7 @@ window.AudioSys = AudioSys;
     const SIDE_BULLET_SPEED = 760, SIDE_BULLET_DAMAGE = 20;
     const SIDE_PLASMA_EXPLODE_RADIUS = 48;
     const SIDE_ROCKET_TURN_RATE = 6;
+    window.SIDE_ROCKET_TURN_RATE = SIDE_ROCKET_TURN_RATE;
     const SIDE_ROCKET_HOMING_DELAY = 0.25;
     const SPECIAL_COOLDOWN = 10; ship.special.cooldownTimer = 0;
     const SPECIAL_DAMAGE = 1500;
@@ -15677,293 +15151,6 @@ ctx.imageSmoothingEnabled = true;
         else { n.vx *= s; n.vy *= s; }
       }
     }
-    // --- POPRAWIONE AI MYŚLIWCA (bez podwójnego tarcia i z fallbackiem na aiPickTarget) ---
-    function runAdvancedFighterAI(npc, dt) {
-      // --- KONFIGURACJA ---
-      const isSupport = npc.isSupportWing || !!npc.supportData;
-      let order = 'engage';
-
-      if (isSupport && typeof SupportWing !== 'undefined') {
-        order = SupportWing.order || 'guard';
-      }
-
-      const SEARCH_RANGE = (order === 'engage' || npc.isPirate) ? 30000 : 6000;
-      const DOGFIGHT_ENTER_DIST = 600;
-      const DOGFIGHT_EXIT_DIST = 1100;
-
-      npc.gunCD = Math.max(0, (npc.gunCD || 0) - dt);
-      npc.mslCD = Math.max(0, (npc.mslCD || 0) - dt);
-      npc.breakOffTimer = Math.max(0, (npc.breakOffTimer || 0) - dt);
-
-      // 1. ZNAJDOWANIE CELU
-      npc.retargetTimer = (npc.retargetTimer || 0) - dt;
-      let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : npc.target;
-
-      if (target && target.dead) target = null;
-
-      if (!target && npc.retargetTimer <= 0) {
-
-        // TU: bezpiecznie korzystamy z aiPickBestTarget / aiPickTarget
-        if (window.aiPickBestTarget) {
-          target = window.aiPickBestTarget(npc, SEARCH_RANGE);
-        } else if (window.aiPickTarget) {
-          target = window.aiPickTarget(npc);
-          if (target) {
-            const tx = (target.pos && target.pos.x !== undefined) ? target.pos.x : target.x;
-            const ty = (target.pos && target.pos.y !== undefined) ? target.pos.y : target.y;
-            const dx = tx - npc.x;
-            const dy = ty - npc.y;
-            if (dx * dx + dy * dy > SEARCH_RANGE * SEARCH_RANGE) {
-              target = null;
-            }
-          }
-        }
-
-        npc.target = target || null;
-        npc.retargetTimer = 1.0 + Math.random() * 0.5;
-      }
-
-      const isSquadWingman = (npc.squad && npc.squad.leader && npc.squad.leader !== npc);
-      if (!target && npc.isPirate && !npc.guardStation && !isSquadWingman) {
-        target = window.ship;
-        npc.target = target;
-      }
-
-      let tx = 0, ty = 0;
-      let distToTarget = Infinity;
-      let targetKind = 'unknown';
-
-      if (target) {
-        tx = (target.pos && target.pos.x !== undefined) ? target.pos.x : target.x;
-        ty = (target.pos && target.pos.y !== undefined) ? target.pos.y : target.y;
-        distToTarget = Math.hypot(tx - npc.x, ty - npc.y);
-        targetKind = getUnitKind(target);
-      }
-
-      // 2. MASZYNA STANÓW
-      if (target) {
-        // A. FIGHTER vs FIGHTER
-        if (targetKind === 'fighter') {
-          if (npc.state === 'dogfight3D') {
-            if (distToTarget > DOGFIGHT_EXIT_DIST) npc.state = 'engage_formation';
-          } else {
-            if (distToTarget < DOGFIGHT_ENTER_DIST) {
-              npc.state = 'dogfight3D';
-              npc.sub = 'merge';
-              npc.subT = 0;
-              npc._mergeInit = false;
-            } else {
-              npc.state = 'engage_formation';
-            }
-          }
-        }
-        // B. ATAK NA DUŻY STATEK
-        else {
-          if (npc.state === 'bombing') {
-            if (distToTarget > 2500) npc.state = 'engage_formation';
-          } else {
-            if (distToTarget < 1500) npc.state = 'bombing';
-            else npc.state = 'engage_formation';
-          }
-        }
-      } else {
-        npc.state = 'guard';
-      }
-
-      const smoothRotateToVelocity = (turnSpeed = 8.0) => {
-        const speed = Math.hypot(npc.vx, npc.vy);
-        if (speed > 10) {
-          const desiredAngle = Math.atan2(npc.vy, npc.vx);
-          npc.angle = clampTurnAngle(npc.angle, desiredAngle, turnSpeed, dt);
-        }
-      };
-
-      // 3. FIZYKA RUCHU
-
-      // --- CASE 1: DOLOT BOJOWY ---
-      if (npc.state === 'engage_formation' && target) {
-        const dirX = tx - npc.x;
-        const dirY = ty - npc.y;
-        const len = Math.hypot(dirX, dirY) || 1;
-
-        const wantVx = (dirX / len) * npc.maxSpeed;
-        const wantVy = (dirY / len) * npc.maxSpeed;
-
-        const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 300);
-        npc.vx = turned.vx;
-        npc.vy = turned.vy;
-
-        // Separacja (żeby nie wlatywały w siebie w roju)
-        const sep = applySeparationForces(npc, 0, 0);
-        npc.vx += sep.ax * dt;
-        npc.vy += sep.ay * dt;
-
-        smoothRotateToVelocity(10.0);
-
-        if (distToTarget < 1400) tryFireFighter(npc, target, dt);
-        return;
-      }
-
-      // --- CASE 2: DOGFIGHT ---
-      if (npc.state === 'dogfight3D' && target) {
-        if (!npc.sub) npc.sub = 'merge';
-
-        if (npc.sub === 'merge') {
-          if (!npc._mergeInit) { npc._mergeInit = true; npc.subT = 0.7 + Math.random() * 0.5; }
-          const lead = getLeadAim(npc, target, 500);
-          const dx = lead.x - npc.x, dy = lead.y - npc.y;
-          const len = Math.hypot(dx, dy) || 1;
-          const wantVx = (dx / len) * npc.maxSpeed * 1.15;
-          const wantVy = (dy / len) * npc.maxSpeed * 1.15;
-          const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 400);
-          npc.vx = turned.vx; npc.vy = turned.vy;
-          npc.subT -= dt;
-          if (npc.subT <= 0 || distToTarget < 120) {
-            npc.sub = 'slash'; npc.subT = 0.6; npc._slashSign = Math.random() > 0.5 ? 1 : -1;
-          }
-        }
-        else if (npc.sub === 'slash') {
-          const dx = tx - npc.x;
-          const dy = ty - npc.y;
-          const len = Math.hypot(dx, dy) || 1;
-          const nx = dx / len, ny = dy / len;
-          const px = -ny * npc._slashSign, py = nx * npc._slashSign;
-
-          const wantVx = (nx * 0.3 + px * 1.2) * npc.maxSpeed;
-          const wantVy = (ny * 0.3 + py * 1.2) * npc.maxSpeed;
-
-          const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 450);
-          npc.vx = turned.vx; npc.vy = turned.vy;
-          npc.subT -= dt;
-          if (npc.subT <= 0) { npc.sub = 'merge'; npc._mergeInit = false; }
-        }
-
-        smoothRotateToVelocity(12.0);
-        tryFireFighter(npc, target, dt);
-        return;
-      }
-
-      // --- CASE 3: BOMBING ---
-      if (npc.state === 'bombing' && target) {
-        if (!npc.bombardVec || npc.lastTargetId !== target.id) {
-          const a = Math.random() * 6.28;
-          npc.bombardVec = { x: Math.cos(a), y: Math.sin(a) };
-          npc.bombardSide = 1;
-          npc.lastTargetId = target.id;
-        }
-        const lineLen = 1400;
-        const wayX = tx + npc.bombardVec.x * lineLen * npc.bombardSide;
-        const wayY = ty + npc.bombardVec.y * lineLen * npc.bombardSide;
-
-        if (Math.hypot(wayX - npc.x, wayY - npc.y) < 250) npc.bombardSide *= -1;
-
-        const dx = wayX - npc.x, dy = wayY - npc.y;
-        const len = Math.hypot(dx, dy) || 1;
-
-        const wantVx = (dx / len) * npc.maxSpeed * 1.1;
-        const wantVy = (dy / len) * npc.maxSpeed * 1.1;
-
-        const turned = clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 280);
-        npc.vx = turned.vx;
-        npc.vy = turned.vy;
-
-        if (distToTarget < 1000) {
-          const aimX = tx - npc.x;
-          const aimY = ty - npc.y;
-          const desiredAngle = Math.atan2(aimY, aimX);
-          npc.angle = clampTurnAngle(npc.angle, desiredAngle, 10.0, dt);
-        } else {
-          smoothRotateToVelocity(8.0);
-        }
-
-        tryFireFighter(npc, target, dt);
-        return;
-      }
-
-      // 4. GUARD / IDLE (Logika formacji)
-      let leader = null;
-      if (npc.squad && npc.squad.leader && !npc.squad.leader.dead) {
-        leader = npc.squad.leader;
-      } else if (npc.supportData) {
-        leader = npc.supportData.leader;
-      }
-
-      if (!leader && !npc.guardStation) {
-        npc.vx *= 0.98; npc.vy *= 0.98;
-        return;
-      }
-
-      const isLeader = (leader === npc);
-      let targetPos = null;
-
-      if (isLeader && npc.isPirate && npc.guardStation) {
-        const time = performance.now() / 1000;
-        const radius = npc.guardOrbitRadius || 350;
-        const speed = npc.guardOrbitSpeed || 0.3;
-        const phase = npc.guardPhase || 0;
-        const angle = phase + (time * speed);
-        targetPos = {
-          x: npc.guardStation.x + Math.cos(angle) * radius,
-          y: npc.guardStation.y + Math.sin(angle) * radius
-        };
-        const tangentAngle = angle + (speed > 0 ? Math.PI / 2 : -Math.PI / 2);
-        npc.desiredAngle = tangentAngle;
-      }
-      else if (leader && !isLeader) {
-        let offset = npc.formationOffset || { x: 0, y: 0 };
-        const la = leader.angle || 0;
-        const c = Math.cos(la);
-        const s = Math.sin(la);
-        targetPos = {
-          x: leader.x + (offset.x * c - offset.y * s),
-          y: leader.y + (offset.x * s + offset.y * c)
-        };
-      }
-      else if (isLeader) {
-        const pdx = window.ship.pos.x - npc.x;
-        const pdy = window.ship.pos.y - npc.y;
-        const plen = Math.hypot(pdx, pdy) || 1;
-        npc.vx = (pdx / plen) * 150;
-        npc.vy = (pdy / plen) * 150;
-        smoothRotateToVelocity(5.0);
-        return;
-      }
-
-      if (targetPos) {
-        const dx = targetPos.x - npc.x;
-        const dy = targetPos.y - npc.y;
-        const distToSpot = Math.hypot(dx, dy);
-        const kp = isLeader ? 2.0 : 3.0;
-        let wantVx = dx * kp;
-        let wantVy = dy * kp;
-        const currentMax = isLeader ? (npc.maxSpeed * 0.6) : (npc.maxSpeed * 1.1);
-        const speed = Math.hypot(wantVx, wantVy);
-        if (speed > currentMax) {
-          const scale = currentMax / speed;
-          wantVx *= scale;
-          wantVy *= scale;
-        }
-        npc.vx += (wantVx - npc.vx) * 4.0 * dt;
-        npc.vy += (wantVy - npc.vy) * 4.0 * dt;
-
-        // Separacja w formacji
-        const sep = applySeparationForces(npc, 0, 0);
-        npc.vx += sep.ax * dt;
-        npc.vy += sep.ay * dt;
-
-        if (!npc.desiredAngle) {
-          if (distToSpot > 50) smoothRotateToVelocity(6.0);
-          else if (leader && !isLeader) npc.angle = clampTurnAngle(npc.angle, leader.angle, 6.0, dt);
-        } else {
-          npc.angle = clampTurnAngle(npc.angle, npc.desiredAngle, 4.0, dt);
-          npc.desiredAngle = null;
-        }
-      }
-    }
-
-    // Przypisanie do window na końcu
-    window.runAdvancedFighterAI = runAdvancedFighterAI;
-
     function useRailPair(n, target) { /* sprawdź kąt i cooldown, odpal pary */ }
     function useRocketsPair(n, target) { /* salwy */ }
     function useCIWSPair(n, target) { /* krótka seria */ }
