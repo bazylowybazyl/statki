@@ -344,8 +344,6 @@
     import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
     import { createShipEntity, applyPlayerInput, runShipAI } from "./src/game/shipEntity.js";
     import { DestructorSystem, initHexBody, drawHexBody, drawHexBodyLocal } from "./src/game/destructor.js";
-    import { WEAPONS, WEAPON_ICON_PATHS, AISPACE_GUNS, AISPACE_PD, AISPACE_MISSILES, AISPACE_GUNS_M } from "./src/data/weapons.js";
-    import { SHIPS as SHIP_FRAMES, SUPPORT_SHIP_TEMPLATES as SUPPORT_SHIP_TEMPLATES_DATA, CAPITAL_SHIP_TEMPLATES as CAPITAL_SHIP_TEMPLATES_DATA } from "./src/data/ships.js";
     window.THREE = THREE;
     window.EffectComposer = EffectComposer;
     window.RenderPass = RenderPass;
@@ -400,6 +398,8 @@
     // IMPORTUJEMY NOWY MODUŁ SUPERBRONI
     import * as Superweapon from "./src/game/superweapon.js";
     import { HUDSystem } from "./src/ui/hudSystem.js";
+    import { WEAPONS, WEAPON_ICON_PATHS, AISPACE_GUNS, AISPACE_PD, AISPACE_MISSILES, AISPACE_GUNS_M } from "./src/data/weapons.js";
+    import { SHIPS as SHIP_FRAMES, SUPPORT_SHIP_TEMPLATES as SUPPORT_SHIP_TEMPLATES_DATA, CAPITAL_SHIP_TEMPLATES as CAPITAL_SHIP_TEMPLATES_DATA } from "./src/data/ships.js";
     // Statki Terran (Wsparcie)
     import terranFrigateImg from "./src/assets/ships/terranfrigate.png";
     import terranDestroyerImg from "./src/assets/ships/terrandestroyer.png";
