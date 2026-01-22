@@ -235,6 +235,13 @@
                 <button class="menu-chip" data-quality="4k">4K</button>
                 <button class="menu-chip" data-quality="8k">8K</button>
               </div>
+              <div style="margin-top:12px; margin-bottom:8px; font-size:12px; color:#a2d9ff;">Jakość Planet (3D)</div>
+              <div class="menu-chip-group" id="planet-quality-group">
+                <button class="menu-chip" data-planet-q="low">Low</button>
+                <button class="menu-chip" data-planet-q="medium">Med</button>
+                <button class="menu-chip" data-planet-q="high">High</button>
+                <button class="menu-chip" data-planet-q="ultra">Ultra</button>
+              </div>
             </div>
 
             <div class="menu-section">
@@ -596,8 +603,10 @@
     const OPTIONS = {
       vfx: { colorTempK: 8000, bloomGain: 1.1, engineGain: 1.0 },
       audio: { master: 0.8, sfx: 1.0, music: 0.7 },
-      controls: { mouseSensitivity: 1.0 } // bez odwracania osi
+      controls: { mouseSensitivity: 1.0 }, // bez odwracania osi
+      planetQuality: 'medium'
     };
+    window.OPTIONS = OPTIONS;
     let OPTIONS_OPEN = false;
 
     // --- SYSTEM AUDIO (AudioSys) ---
@@ -15126,6 +15135,35 @@ ctx.imageSmoothingEnabled = true;
     if (energyShotBtn) {
       energyShotBtn.addEventListener('click', () => triggerEnergyShot());
     }
+
+    // --- OBSŁUGA JAKOŚCI PLANET ---
+
+    function updatePlanetQualityUI() {
+      const current = window.OPTIONS.planetQuality || 'medium';
+      document.querySelectorAll('[data-planet-q]').forEach(btn => {
+        const isActive = (btn.dataset.planetQ === current);
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive);
+      });
+    }
+
+    document.querySelectorAll('[data-planet-q]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const quality = e.target.dataset.planetQ;
+        if (window.OPTIONS) window.OPTIONS.planetQuality = quality;
+        localStorage.setItem('sc_planet_quality', quality);
+        updatePlanetQualityUI();
+        console.log(`Zmieniono jakość planet na: ${quality}`);
+      });
+    });
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const saved = localStorage.getItem('sc_planet_quality');
+      if (saved && window.OPTIONS) {
+        window.OPTIONS.planetQuality = saved;
+      }
+      updatePlanetQualityUI();
+    });
 
   </script>
 
