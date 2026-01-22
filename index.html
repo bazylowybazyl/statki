@@ -286,8 +286,10 @@
       <div class="menu-footer">System online // oczekiwanie na rozkazy</div>
     </div>
   </div>
-  <div id="game-root">
-    <canvas id="c"></canvas>
+  <div id="game-root" style="position: relative; width: 100vw; height: 100vh; overflow: hidden; background: #050505;">
+    <canvas id="webgl-layer" style="position: absolute; top: 0; left: 0; z-index: 0; width: 100%; height: 100%;"></canvas>
+    
+    <canvas id="c" style="position: absolute; top: 0; left: 0; z-index: 1; pointer-events: auto;"></canvas>
   </div>
   <div id="loading" class="hidden">
     <div class="loading-box">
@@ -13403,14 +13405,21 @@ window.AudioSys = AudioSys;
       updateFleetUI();
       updatePlanetRadar(ship, cam);
 
-      // Czyścimy ekran
+      // 1. Czyścimy Canvas 2D do przezroczystości (żeby odsłonić warstwę WebGL pod spodem)
       ctx.clearRect(0, 0, W, H);
-      spaceBg?.drawSpaceBg?.(ctx, cam);
+
+      // (Opcjonalnie) Jeśli spaceBg rysuje czarne tło, zakomentuj tę linię:
+      // spaceBg?.drawSpaceBg?.(ctx, cam);
+
+      // 2. Aktualizacja i renderowanie planet 3D (na dolnym canvasie)
+      if (window.updatePlanets3D) updatePlanets3D(frameDt);
+      if (window.drawPlanets3D) {
+        window.drawPlanets3D(ctx, cam);
+      }
       if (warpBlackHoleFX) {
         configureWarpLensSource();
       }
       ensurePlanetStationsInit(stations);
-      if (window.updatePlanets3D) updatePlanets3D(frameDt);
       // najpierw zaktualizuj pozycje stacji 3D...
       if (window.updateStations3D) window.updateStations3D(stations);
       // ...a potem wyrenderuj overlay sceny 3D
@@ -13429,7 +13438,6 @@ window.AudioSys = AudioSys;
 
       ctx.globalCompositeOperation = 'source-over';
       ctx.imageSmoothingEnabled = true;
-      if (window.drawPlanets3D) drawPlanets3D(ctx, cam);      // planety
       if (window.drawStations3D) drawStations3D(ctx, cam, worldToScreen); // STACJE 3D NAD PLANETAMI (sprite per-stacja)
       if (window.drawWorld3D) drawWorld3D(ctx, cam, worldToScreen); // np. piracka stacja (spotlight)
       if (stationUI.editorMode && stationUI.station) {
