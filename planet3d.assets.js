@@ -232,6 +232,12 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
   const SUN_SIZE_MULTIPLIER = 6.0;
   const ASTEROID_SCALE_MIN = 0.01;
   const ASTEROID_SCALE_MAX = 0.035;
+  const PLANET_QUALITY_PRESETS = {
+    low:    { low: 256,  high: 512  },
+    medium: { low: 512,  high: 1024 },
+    high:   { low: 1024, high: 2048 },
+    ultra:  { low: 2048, high: 4096 }
+  };
 
   function sunDirFor(worldX, worldY) {
     const sx = (window.SUN?.x ?? 0) - worldX;
@@ -440,8 +446,15 @@ if (typeof window !== 'undefined' && !window.getSharedRenderer) {
       const ship = (typeof window !== 'undefined') ? window.ship : null;
       const pos = ship?.pos;
       
-      const RES_LOW = 512;   // Zmniejszyłem z 1024 dla wydajności
-      const RES_HIGH = 1024; // Zmniejszyłem z 2048 dla wydajności
+      // --- DYNAMICZNA JAKOŚĆ ---
+      const qKey = (typeof window !== 'undefined' && window.OPTIONS?.planetQuality) 
+                   ? window.OPTIONS.planetQuality 
+                   : 'medium';
+
+      const qualitySettings = PLANET_QUALITY_PRESETS[qKey] || PLANET_QUALITY_PRESETS.medium;
+
+      const RES_LOW = qualitySettings.low;
+      const RES_HIGH = qualitySettings.high;
       
       if (typeof this.isHighRes === 'undefined') this.isHighRes = false;
 
