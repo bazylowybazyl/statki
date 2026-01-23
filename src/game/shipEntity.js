@@ -1,74 +1,112 @@
 // src/game/shipEntity.js
-// FIXED: Synchronizacja skali i promienia dla systemu heksów
+// HYBRID PHYSICS MODEL (V46 Port)
+// Model hybrydowy: Kinematyczny obrót (natychmiastowy) + Dynamiczny ruch (bezwładność z tarciem)
 
+// --- KONFIGURACJA FIZYKI (V46) ---
+// Te wartości sterują zachowaniem statku w głównym silniku gry.
+export const SHIP_PHYSICS = {
+  SPEED: 850,           // Podstawowa siła ciągu (liniowa) - wpływa na przyspieszenie
+  ROTATION_SPEED: 2.8,  // Prędkość obrotu (radiany/s) - bezpośrednia kontrola (snappy feeling)
+  FRICTION: 0.985,      // Tarcie "ślizgowe" (per klatka przy 60fps) - klucz do efektu driftu
+  SIDE_POWER: 0.6,      // Mnożnik mocy dla silników bocznych (Q/E)
+  BOOST_MULT: 2.5       // Mnożnik prędkości przy włączonym dopalaczu (SHIFT)
+};
+
+// --- SZABLON STATKU ---
 const SHIP_TEMPLATE = {
   w: 250,
   h: 450,
-  radius: 220,         // WAŻNE: Promień kolizji (dla destructor.js i kolizji)
-  mass: 100,           // Zwinność silników
-  rammingMass: 50000,  // Masa taranowania: Najcięższy obiekt w grze
+  radius: 220, // Promień kolizji
+  
+  // Masa w tym modelu służy głównie do interakcji z innymi obiektami (taranowanie),
+  // a nie do obliczania przyspieszenia gracza (to jest sterowane przez SHIP_PHYSICS.SPEED).
+  mass: 2500, 
+  rammingMass: 80000,
+  
   pos: { x: 0, y: 0 },
   vel: { x: 0, y: 0 },
   angle: 0,
   angVel: 0,
-  inertia: null,
-  linearDamping: 0.9,
-  angularDamping: 1.6,
+  
+  // Tłumienie ustawiamy na 0, ponieważ fizykę tarcia (drift) obsługujemy ręcznie w pętli gry
+  // przy użyciu parametru SHIP_PHYSICS.FRICTION.
+  linearDamping: 0, 
+  angularDamping: 0,
 
-  // Flaga dla systemu renderowania
   isCapitalShip: true,
 
-  // Profil wizualny (Most między index.html a destructor.js)
+  // --- PROFIL WIZUALNY (Capital Ship) ---
   capitalProfile: {
     spriteScale: 1.0,
-    lengthScale: 2.1,     // Dopasowanie długości wizualnej do promienia
-    widthScale: 1.2,      // Dopasowanie szerokości
+    lengthScale: 2.1,
+    widthScale: 1.2,
     spriteRotation: 0,
     spriteOffset: { x: 0, y: 0 },
-    // Opcjonalnie ścieżka, jeśli index.html jej nie nadpisze
-    spriteSrc: "assets/capital_ship_rect_v1.png"
+    spriteSrc: "assets/capital_ship_rect_v1.png", // Domyślna grafika
+    
+    // Konfiguracja efektów silników
+    engineGlowSize: 0.35,
+    engineColor: 'rgba(100, 200, 255, 0.85)',
+    engineOffsets: [
+        { x: -0.15, y: 0.42 }, // Lewa dysza główna
+        { x: 0.15, y: 0.42 },  // Prawa dysza główna
+        { x: 0, y: 0.45 }      // Środek
+    ]
   },
 
-  engines: {},
-  turret: {
-    angle: 0, angVel: 0, maxSpeed: 1.8, maxAccel: 8.0, damping: 2.0,
-    recoil: [0, 0], recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 }
+  engines: {}, // Zostanie wypełnione przez configureShipGeometry
+
+  // --- WIEŻYCZKI (Turrets) ---
+  // Definicje obrotowych wieżyczek z parametrami odrzutu (recoil)
+  turret: { 
+    angle: 0, angVel: 0, maxSpeed: 2.2, maxAccel: 12.0, damping: 3.0, 
+    recoil: [0, 0], recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 } 
   },
-  turret2: {
-    angle: 0, angVel: 0, maxSpeed: 1.8, maxAccel: 8.0, damping: 2.0,
-    recoil: [0, 0], recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 }
+  turret2: { 
+    angle: 0, angVel: 0, maxSpeed: 2.2, maxAccel: 12.0, damping: 3.0, 
+    recoil: [0, 0], recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 } 
   },
-  turret3: {
-    angle: 0, angVel: 0, maxSpeed: 1.8, maxAccel: 8.0, damping: 2.0,
-    recoil: [0, 0], recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 }
+  turret3: { 
+    angle: 0, angVel: 0, maxSpeed: 2.2, maxAccel: 12.0, damping: 3.0, 
+    recoil: [0, 0], recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 } 
   },
-  turret4: {
-    angle: 0, angVel: 0, maxSpeed: 1.8, maxAccel: 8.0, damping: 2.0,
-    recoil: [0, 0], recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 }
+  turret4: { 
+    angle: 0, angVel: 0, maxSpeed: 2.2, maxAccel: 12.0, damping: 3.0, 
+    recoil: [0, 0], recoilMax: 12, recoilRecover: 48, recoilKick: 14, offset: { x: 0, y: 0 } 
   },
 
-  // Tarcza
+  // --- TARCZA (Shield) ---
   shield: {
-    max: 15000, val: 15000, regenRate: 100, regenDelay: 2, regenTimer: 0,
+    max: 18000, val: 18000, 
+    regenRate: 150, regenDelay: 2.5, regenTimer: 0,
     state: 'active', activationProgress: 1.0, currentAlpha: 1.0,
-    energyShotTimer: 0, energyShotDuration: 0.5, impacts: [],
-    hexScale: 11, baseAlpha: 0.15
+    energyShotTimer: 0, energyShotDuration: 0.5, 
+    impacts: [], 
+    hexScale: 12, baseAlpha: 0.12
   },
 
-  hull: { max: 10000, val: 10000 },
+  hull: { max: 12000, val: 12000 },
+  
   special: { cooldown: 10, cooldownTimer: 0 },
+  
+  // Stan wejścia sterowania
   input: { thrustX: 0, thrustY: 0, aimX: 0, aimY: 0 },
+  thrusterInput: { main: 0, leftSide: 0, rightSide: 0, torque: 0 },
+  
   controller: 'player',
   aiController: null
 };
 
 export const SHIP_SPRITE_SCALE = 1.0;
 
+// Bazowe pozycje elementów wizualnych (w pikselach oryginalnego sprite'a)
 const SHIP_VISUAL_BASE = {
   turretTop: { x: 63.50, y: -81.00 },
   turretBottom: { x: 77.50, y: 57.50 },
   engineY: 540.00
 };
+
+// --- FUNKCJE POMOCNICZE ---
 
 function clone(value) {
   if (Array.isArray(value)) return value.map(clone);
@@ -99,104 +137,100 @@ function deepMerge(target, source) {
   return target;
 }
 
+// --- KONFIGURACJA GEOMETRII ---
 function configureShipGeometry(ship) {
   const hw = ship.w / 2;
   const hh = ship.h / 2;
 
   ship.visual = {
+    ...ship.visual,
     spriteScale: SHIP_SPRITE_SCALE,
-    turretTop: {
-      x: SHIP_VISUAL_BASE.turretTop.x * SHIP_SPRITE_SCALE,
-      y: SHIP_VISUAL_BASE.turretTop.y * SHIP_SPRITE_SCALE
+    turretTop: { 
+      x: SHIP_VISUAL_BASE.turretTop.x * SHIP_SPRITE_SCALE, 
+      y: SHIP_VISUAL_BASE.turretTop.y * SHIP_SPRITE_SCALE 
     },
-    turretBottom: {
-      x: SHIP_VISUAL_BASE.turretBottom.x * SHIP_SPRITE_SCALE,
-      y: SHIP_VISUAL_BASE.turretBottom.y * SHIP_SPRITE_SCALE
+    turretBottom: { 
+      x: SHIP_VISUAL_BASE.turretBottom.x * SHIP_SPRITE_SCALE, 
+      y: SHIP_VISUAL_BASE.turretBottom.y * SHIP_SPRITE_SCALE 
     },
-    mainEngine: {
-      x: 0,
-      y: Math.round(SHIP_VISUAL_BASE.engineY * SHIP_SPRITE_SCALE)
+    mainEngine: { 
+      x: 0, 
+      y: Math.round(SHIP_VISUAL_BASE.engineY * SHIP_SPRITE_SCALE) 
     }
   };
 
+  // Konfiguracja fizyczna i wizualna silników
+  // (Używana głównie przez system efektów cząsteczkowych)
+  
   ship.engines = ship.engines || {};
+  
+  // 1. Silnik Główny (Rufa)
   ship.engines.main = {
-    offset: { x: 0, y: Math.round(hh - 8) },
+    offset: { x: 0, y: Math.round(hh - 20) },
     visualOffset: { x: 0, y: ship.visual.mainEngine.y },
-    maxThrust: ship.engines.main?.maxThrust ?? 12800
+    maxThrust: 1 // Wartość placeholder, fizyka używa SHIP_PHYSICS.SPEED
   };
 
-  const sidePhysX = Math.round(hw - 8);
-  const sideVisualX = Math.round((hw - 8) * ship.visual.spriteScale);
-  ship.engines.sideLeft = {
-    offset: { x: -sidePhysX, y: 0 },
-    visualOffset: { x: -sideVisualX, y: 0 },
-    maxThrust: ship.engines.sideLeft?.maxThrust ?? 3000
-  };
-  ship.engines.sideRight = {
-    offset: { x: sidePhysX, y: 0 },
-    visualOffset: { x: sideVisualX, y: 0 },
-    maxThrust: ship.engines.sideRight?.maxThrust ?? 3000
-  };
+  const sidePhysX = Math.round(hw - 10);
+  const sideVisualX = Math.round((hw - 10) * ship.visual.spriteScale);
 
-  const torquePhysY = Math.round(hh - 8);
-  const torqueVisualY = Math.round((hh - 8) * ship.visual.spriteScale);
-  ship.engines.torqueLeft = {
-    offset: { x: 0, y: -torquePhysY },
-    visualOffset: { x: 0, y: -torqueVisualY },
-    maxThrust: ship.engines.torqueLeft?.maxThrust ?? 3000
+  // 2. Silniki Boczne (Strafe)
+  ship.engines.sideLeft = { 
+    offset: { x: -sidePhysX, y: 0 }, 
+    visualOffset: { x: -sideVisualX, y: 0 }, 
+    maxThrust: 1 
   };
-  ship.engines.torqueRight = {
-    offset: { x: 0, y: torquePhysY },
-    visualOffset: { x: 0, y: torqueVisualY },
-    maxThrust: ship.engines.torqueRight?.maxThrust ?? 3000
+  ship.engines.sideRight = { 
+    offset: { x: sidePhysX, y: 0 }, 
+    visualOffset: { x: sideVisualX, y: 0 }, 
+    maxThrust: 1 
   };
 
-  const topX = 109.0 * ship.visual.spriteScale;
-  const topY = 108.5 * ship.visual.spriteScale;
-  const botX = 134.5 * ship.visual.spriteScale;
-  const botY = 83.0 * ship.visual.spriteScale;
+  // 3. Silniki Manewrowe (Obrotowe)
+  const torquePhysY = Math.round(hh * 0.8);
+  const torqueVisualY = Math.round((hh * 0.8) * ship.visual.spriteScale);
+  
+  ship.engines.torqueLeft = { 
+    offset: { x: 0, y: -torquePhysY }, 
+    visualOffset: { x: 0, y: -torqueVisualY }, 
+    maxThrust: 1 
+  };
+  ship.engines.torqueRight = { 
+    offset: { x: 0, y: torquePhysY }, 
+    visualOffset: { x: 0, y: torqueVisualY }, 
+    maxThrust: 1 
+  };
 
-  const torqueThrusterVfxWidthMin = Math.round(25.9 * ship.visual.spriteScale * 0.75);
-  const torqueThrusterVfxWidthMax = Math.round(25.9 * ship.visual.spriteScale * 1.25);
-  const torqueThrusterVfxLengthMin = Math.round(41.0 * ship.visual.spriteScale * 1.4);
-  const torqueThrusterVfxLengthMax = Math.round(41.0 * ship.visual.spriteScale * 2.6);
-  const nudge = -72.0;
+  // Konfiguracja VFX dla silników manewrowych
+  if (!ship.visual.torqueThrusters) {
+      const topX = 109.0 * ship.visual.spriteScale;
+      const topY = 108.5 * ship.visual.spriteScale;
+      const botX = 134.5 * ship.visual.spriteScale;
+      const botY = 83.0 * ship.visual.spriteScale;
+      const nudge = -72.0;
+      
+      const vfxWMin = Math.round(25.9 * ship.visual.spriteScale * 0.75);
+      const vfxWMax = Math.round(25.9 * ship.visual.spriteScale * 1.25);
+      const vfxLMin = Math.round(41.0 * ship.visual.spriteScale * 1.4);
+      const vfxLMax = Math.round(41.0 * ship.visual.spriteScale * 2.6);
 
-  ship.visual.torqueThrusters = [
-    {
-      offset: { x: -topX, y: -topY },
-      forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge,
-      vfxWidthMin: torqueThrusterVfxWidthMin, vfxWidthMax: torqueThrusterVfxWidthMax,
-      vfxLengthMin: torqueThrusterVfxLengthMin, vfxLengthMax: torqueThrusterVfxLengthMax
-    },
-    {
-      offset: { x: -botX, y: botY },
-      forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge,
-      vfxWidthMin: torqueThrusterVfxWidthMin, vfxWidthMax: torqueThrusterVfxWidthMax,
-      vfxLengthMin: torqueThrusterVfxLengthMin, vfxLengthMax: torqueThrusterVfxLengthMax
-    },
-    {
-      offset: { x: topX, y: -topY },
-      forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge,
-      vfxWidthMin: torqueThrusterVfxWidthMin, vfxWidthMax: torqueThrusterVfxWidthMax,
-      vfxLengthMin: torqueThrusterVfxLengthMin, vfxLengthMax: torqueThrusterVfxLengthMax
-    },
-    {
-      offset: { x: botX, y: botY },
-      forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge,
-      vfxWidthMin: torqueThrusterVfxWidthMin, vfxWidthMax: torqueThrusterVfxWidthMax,
-      vfxLengthMin: torqueThrusterVfxLengthMin, vfxLengthMax: torqueThrusterVfxLengthMax
-    }
-  ];
+      ship.visual.torqueThrusters = [
+        { offset: { x: -topX, y: -topY }, forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
+        { offset: { x: -botX, y: botY }, forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
+        { offset: { x: topX, y: -topY }, forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
+        { offset: { x: botX, y: botY }, forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax }
+      ];
+  }
 
+  // Pozycje działek bocznych (dla rakiet)
   ship.sideGunsLeft = [];
   ship.sideGunsRight = [];
   const gunsPer = 8;
   const inset = 6 * ship.visual.spriteScale;
-  const margin = 12 * ship.visual.spriteScale;
+  const margin = 20 * ship.visual.spriteScale;
   const visualHH = hh * ship.visual.spriteScale;
   const visualHW = hw * ship.visual.spriteScale;
+  
   for (let i = 0; i < gunsPer; i++) {
     const t = gunsPer === 1 ? 0.5 : (i / (gunsPer - 1));
     const yLocal = -visualHH + margin + t * ((visualHH - margin) - (-visualHH + margin));
@@ -215,12 +249,14 @@ function configureShipGeometry(ship) {
     { offset: { x: topTurret.x, y: topTurret.y }, w: podW, h: podH }
   ];
 
+  // Przypisanie offsetów wieżyczek
   ship.turret.offset = { x: -bottomTurret.x, y: bottomTurret.y };
   ship.turret2.offset = { x: bottomTurret.x, y: bottomTurret.y };
   ship.turret3.offset = { x: -topTurret.x, y: topTurret.y };
   ship.turret4.offset = { x: topTurret.x, y: topTurret.y };
 
-  const ciwsOff = 20 * ship.visual.spriteScale;
+  // CIWS (Systemy obrony bezpośredniej)
+  const ciwsOff = 22 * ship.visual.spriteScale;
   ship.ciws = [
     { offset: { x: -ciwsOff, y: -ciwsOff }, angle: 0, angVel: 0, cd: 0 },
     { offset: { x: 0, y: -ciwsOff }, angle: 0, angVel: 0, cd: 0 },
@@ -236,71 +272,34 @@ function configureShipGeometry(ship) {
   ship.nextFighterOrbit = 0;
 }
 
+// --- FACTORY FUNCTION ---
 export function createShipEntity(options = {}) {
   const { world, overlayView, overrides } = options;
   const ship = clone(SHIP_TEMPLATE);
 
-  const worldCenterX = world?.w != null ? world.w / 2 : ship.pos.x;
-  const worldCenterY = world?.h != null ? world.h / 2 : ship.pos.y;
+  const worldCenterX = world?.w != null ? world.w / 2 : 0;
+  const worldCenterY = world?.h != null ? world.h / 2 : 0;
 
   ship.pos = {
     x: overrides?.pos?.x ?? worldCenterX,
     y: overrides?.pos?.y ?? worldCenterY
   };
   ship.vel = {
-    x: overrides?.vel?.x ?? ship.vel.x,
-    y: overrides?.vel?.y ?? ship.vel.y
+    x: overrides?.vel?.x ?? 0,
+    y: overrides?.vel?.y ?? 0
   };
-  if (typeof overrides?.angle === 'number') {
-    ship.angle = overrides.angle;
-  }
-  if (typeof overrides?.angVel === 'number') {
-    ship.angVel = overrides.angVel;
-  }
-  if (typeof overrides?.mass === 'number') {
-    ship.mass = overrides.mass;
-  }
-  if (typeof overrides?.linearDamping === 'number') {
-    ship.linearDamping = overrides.linearDamping;
-  }
-  if (typeof overrides?.angularDamping === 'number') {
-    ship.angularDamping = overrides.angularDamping;
-  }
-  if (typeof overrides?.w === 'number') {
-    ship.w = overrides.w;
-  }
-  if (typeof overrides?.h === 'number') {
-    ship.h = overrides.h;
-  }
-  // Nadpisanie promienia jeśli przekazany w override
-  if (typeof overrides?.radius === 'number') {
-    ship.radius = overrides.radius;
-  }
-
-  configureShipGeometry(ship);
-
-  // Upewniamy się, że inertia jest policzona
-  ship.inertia = (1 / 12) * ship.mass * ((ship.w * ship.w) + (ship.h * ship.h));
 
   if (overrides) {
     const rest = { ...overrides };
-    delete rest.pos;
+    delete rest.pos; 
     delete rest.vel;
-    delete rest.angle;
-    delete rest.angVel;
-    delete rest.mass;
-    delete rest.linearDamping;
-    delete rest.angularDamping;
-    delete rest.w;
-    delete rest.h;
-    if (rest.controller) ship.controller = rest.controller;
-    if (rest.aiController) ship.aiController = rest.aiController;
-    delete rest.controller;
-    delete rest.aiController;
     deepMerge(ship, rest);
   }
 
-  // Przelicz ponownie inercję na wypadek nadpisania mass/w/h
+  configureShipGeometry(ship);
+  
+  // Obliczamy moment bezwładności (Inertia) dla kolizji
+  // (Mimo że obrót gracza jest kinematyczny, inertia przydaje się przy zderzeniach fizycznych)
   ship.inertia = (1 / 12) * ship.mass * ((ship.w * ship.w) + (ship.h * ship.h));
 
   if (overlayView) {
@@ -311,37 +310,45 @@ export function createShipEntity(options = {}) {
   return ship;
 }
 
+// --- OBSŁUGA INPUTU ---
 export function applyPlayerInput(ship, control = {}, thrusterTarget) {
   if (!ship) return thrusterTarget || null;
+  if (control.controller) ship.controller = control.controller;
 
-  if (Object.prototype.hasOwnProperty.call(control, 'controller')) {
-    if (control.controller) {
-      ship.controller = control.controller;
-    }
-  }
-
+  // Aktualizacja surowych danych wejściowych
   if (typeof control.thrustX === 'number') ship.input.thrustX = control.thrustX;
   if (typeof control.thrustY === 'number') ship.input.thrustY = control.thrustY;
   if (typeof control.aimX === 'number') ship.input.aimX = control.aimX;
   if (typeof control.aimY === 'number') ship.input.aimY = control.aimY;
 
+  // Obiekt stanu silników (używany przez renderer do efektów VFX)
   const target = thrusterTarget || ship.thrusterInput || { main: 0, leftSide: 0, rightSide: 0, torque: 0 };
 
-  if (typeof control.main === 'number') target.main = control.main;
-  else if (typeof ship.input.thrustY === 'number') target.main = Math.max(0, ship.input.thrustY);
+  // 1. Silnik główny (Main Thrust)
+  if (typeof control.main === 'number') {
+      target.main = control.main;
+  } else if (typeof ship.input.thrustY === 'number') {
+      // ThrustY jest dodatni dla 'W', więc bierzemy go bezpośrednio
+      target.main = Math.max(0, ship.input.thrustY);
+  }
 
+  // 2. Silniki boczne (Strafe)
   if (typeof control.leftSide === 'number') target.leftSide = control.leftSide;
   if (typeof control.rightSide === 'number') target.rightSide = control.rightSide;
+
+  // 3. Obrót (Torque)
   if (typeof control.torque === 'number') target.torque = control.torque;
 
   ship.thrusterInput = target;
   return target;
 }
 
+// --- AI PLACEHOLDER ---
 export function runShipAI(ship, dt) {
   if (!ship || ship.controller !== 'ai') return null;
   const controller = ship.aiController;
   if (!controller) return null;
+  
   if (typeof controller === 'function') {
     return controller(ship, dt) || null;
   }

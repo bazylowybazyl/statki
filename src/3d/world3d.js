@@ -5,7 +5,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { createPirateStation } from '../space/pirateStation/pirateStationFactory.js';
 
-// ZWIĘKSZONA ROZDZIELCZOŚĆ DLA OSTROŚCI
+// WYSOKA ROZDZIELCZOŚĆ (anty-pikseloza)
 const RENDER_SIZE = 2048;
 
 const canvas2d = typeof document !== 'undefined' ? document.createElement('canvas') : null;
@@ -24,6 +24,9 @@ let preserveAlphaPass = null;
 let localRenderer = null;
 let maskRT = null;
 
+// ZMIENNA DO KALIBRACJI DYSTANSU (Można zmieniać z konsoli)
+let cameraDistanceMultiplier = 2.5; 
+
 const maskMaterial = new THREE.MeshBasicMaterial({
   color: 0xffffff,
   transparent: true,
@@ -32,7 +35,7 @@ const maskMaterial = new THREE.MeshBasicMaterial({
 });
 
 let ambientLight = null;
-let dirLight = null; // Usunięto hemiLight (psuł kontrast)
+let dirLight = null;
 let lightsAdded = false;
 
 let pirateStation3D = null;
@@ -82,8 +85,7 @@ function updateSunLightForPlanet(dirLightInstance, planet, sun){
   const dx = (sun.x ?? 0) - (planet.x ?? 0);
   const dy = (sun.y ?? 0) - (planet.y ?? 0);
   const L = Math.hypot(dx, dy) || 1;
-  // Światło z boku, ale lekko z góry (z=0.3), żeby oświetlić górne detale
-  dirLightInstance.position.set(dx / L, -dy / L, 0.3);
+  dirLightInstance.position.set(dx / L, -dy / L, 0.4); // Z=0.4 daje ładne cienie od góry
 }
 
 const PreserveAlphaOutputShader = {
@@ -179,31 +181,26 @@ function ensureScene() {
     scene.background = null;
   }
   if (!lightsAdded && scene) {
-    // HARD SPACE LIGHTING - Ciemny Ambient, Jasny Directional
-    
-    // 1. Ambient - minimalny, czarne cienie
-    ambientLight = new THREE.AmbientLight(0xffffff, 0.15); 
+    // HARD SPACE LIGHTING
+    ambientLight = new THREE.AmbientLight(0xffffff, 0.1); // Ciemny ambient
     scene.add(ambientLight);
 
-    // 2. Directional - Słońce
-    dirLight = new THREE.DirectionalLight(0xffffff, 3.5);
+    dirLight = new THREE.DirectionalLight(0xffffff, 4.0); // Bardzo jasne słońce
     dirLight.position.set(100, 50, 100);
     dirLight.castShadow = true;
     
-    // Cienie wysokiej jakości
     dirLight.shadow.mapSize.width = 2048;
     dirLight.shadow.mapSize.height = 2048;
     dirLight.shadow.bias = -0.0001;
     dirLight.shadow.normalBias = 0.02;
     
-    // Zasięg cienia dla dużej stacji
-    const d = 800;
+    const d = 1500; // Większy zasięg cienia
     dirLight.shadow.camera.left = -d;
     dirLight.shadow.camera.right = d;
     dirLight.shadow.camera.top = d;
     dirLight.shadow.camera.bottom = -d;
     dirLight.shadow.camera.near = 1;
-    dirLight.shadow.camera.far = 3000;
+    dirLight.shadow.camera.far = 5000;
 
     scene.add(dirLight);
     if (dirLight.target) {
@@ -216,8 +213,7 @@ function ensureScene() {
 
 function ensureCamera() {
   if (!camera) {
-    // Near Plane 0.1 pozwala podejść bardzo blisko bez ucinania
-    camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
+    camera = new THREE.PerspectiveCamera(45, 1, 0.1, 8000);
     camera.position.set(60, 28, 60);
     camera.lookAt(0, 0, 0);
   }
@@ -242,7 +238,7 @@ function getRenderer() {
       alpha: true,
       premultipliedAlpha: true,
       preserveDrawingBuffer: true,
-      logarithmicDepthBuffer: true // FIX NA MIGOTANIE (Z-FIGHTING)
+      logarithmicDepthBuffer: true
     });
     localRenderer.setPixelRatio(1);
     localRenderer.setSize(RENDER_SIZE, RENDER_SIZE, false);
@@ -300,17 +296,17 @@ function updateCameraTarget() {
   if (pirateStation3D) {
     const target = pirateStation3D.object3d.position;
     
-    // --- AUTO-FIT CAMERA (WYPEŁNIENIE KADRU) ---
-    // Obliczamy dystans tak, aby stacja wypełniała ~90% tekstury.
-    // Dzięki temu, niezależnie od skali, zawsze wykorzystujemy pełną rozdzielczość 2048px.
+    // Obliczamy dystans na podstawie promienia stacji
     const fovRad = (camera.fov * Math.PI) / 180;
-    const radiusWithMargin = pirateStation3D.radius * 1.1; 
+    const radiusWithMargin = pirateStation3D.radius;
     const distToFit = radiusWithMargin / Math.sin(fovRad / 2);
     
-    // Ustawiamy kamerę pod kątem (izometrycznie)
-    const dist = Math.max(50, distToFit);
-    const offset = dist / Math.sqrt(3); // Równomiernie na osie X, Y, Z
+    // ZASTOSOWANIE MNOŻNIKA DYSTANSU
+    // To pozwala odsunąć kamerę, gdy stacja robi się za duża
+    const dist = Math.max(100, distToFit * cameraDistanceMultiplier);
     
+    // Ustawiamy kamerę pod kątem (izometrycznie)
+    const offset = dist / Math.sqrt(3); 
     camera.position.set(target.x + offset, target.y + offset * 0.6, target.z + offset);
     camera.lookAt(target);
     return;
@@ -417,7 +413,7 @@ export function attachPirateStation3D(sceneOverride, station2D) {
   ensureScene();
   ensureCamera();
   
-  // Zwiększony worldRadius - stacja będzie większa w świecie gry
+  // Duży promień bazowy, żeby stacja była "potężna"
   pirateStation3D = createPirateStation({ worldRadius: 360 }); 
   
   pirateStation2D = station2D || null;
@@ -425,7 +421,7 @@ export function attachPirateStation3D(sceneOverride, station2D) {
   scene.add(pirateStation3D.object3d);
   initialRadius = pirateStation3D.radius;
   
-  // Domyślna skala - ustawiana na start, potem można zmieniać DevToolem
+  // Domyślna skala
   setPirateStationScale(6);
   updateCameraTarget();
 }
@@ -476,19 +472,15 @@ export function drawWorld3D(ctx, cam, worldToScreen) {
   if (!lastRenderInfo.canvas) return;
   const center = worldToScreen(lastRenderInfo.world.x, lastRenderInfo.world.y, cam);
   
-  // Rysujemy w rozmiarze dopasowanym do promienia stacji i zoomu
-  // lastRenderInfo.radius to promień fizyczny w grze
   const sizeWorld = lastRenderInfo.radius * 2;
   const sizePx = sizeWorld * cam.zoom;
   
-  // Wyśrodkowanie
   const x = center.x - sizePx / 2;
   const y = center.y - sizePx / 2;
   
   ctx.globalCompositeOperation = 'source-over';
   ctx.imageSmoothingEnabled = true;
   
-  // Ponieważ texture jest kwadratem, rysujemy ją jako kwadrat
   ctx.drawImage(lastRenderInfo.canvas, x, y, sizePx, sizePx);
   
   resetRendererState2D(ctx);
@@ -515,7 +507,17 @@ export function setPirateStationWorldRadius(r) {
   setPirateStationScale(k);
 }
 
+// FUNKCJA KALIBRACJI KAMERY
+export function setPirateCamDistance(mul) {
+    const val = parseFloat(mul);
+    if(isFinite(val) && val > 0.1) {
+        cameraDistanceMultiplier = val;
+        updateCameraTarget();
+    }
+}
+
 if (typeof window !== 'undefined') {
   window.__setStation3DScale = setPirateStationScale;
   window.__setStation3DWorldRadius = setPirateStationWorldRadius;
+  window.__setPirateCamDistance = setPirateCamDistance;
 }
