@@ -14,11 +14,12 @@ let activeScene = null;
 let ambLight = null;
 let dirLight = null;
 
+// FIX: Lokalny renderer, aby uniknąć konfliktów z głównym silnikiem gry
 let localRenderer = null; 
 
 // Stałe konfiguracyjne
 const DEFAULT_STATION_SPRITE_SIZE = 512;
-const DEFAULT_STATION_SPRITE_FRAME = 3.0;
+const DEFAULT_STATION_SPRITE_FRAME = 3.0; // Domyślny zoom na sprite
 const MIN_SPRITE_RENDER_INTERVAL = 0;
 const FRAME_EPSILON = 0.001;
 
@@ -56,31 +57,35 @@ function initScene() {
   ownScene = new THREE.Scene();
   activeScene = ownScene;
 
-  // 1. Światło Ambient (rozproszone) - lekko podbite dla lepszej widoczności w cieniu
+  // --- OŚWIETLENIE "PÓŁ NA PÓŁ" (Terminator Line) ---
+  
+  // 1. Światło Ambient (rozproszone) - BARDZO CIEMNE
+  // Dzięki temu strona odwrócona od słońca będzie prawie czarna
   if (ambLight) ownScene.remove(ambLight);
-  ambLight = new THREE.AmbientLight(0xffffff, 0.7);
+  ambLight = new THREE.AmbientLight(0xffffff, 0.15); 
   ownScene.add(ambLight);
 
-  // 2. Światło Kierunkowe (Słońce) - poprawione parametry cieni
+  // 2. Światło Kierunkowe (Słońce) - BARDZO JASNE
+  // To światło będzie poruszane w funkcji renderStationSprite
   if (dirLight) ownScene.remove(dirLight);
-  dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-  dirLight.position.set(20, 10, 20); // Wyżej i pod kątem
+  dirLight = new THREE.DirectionalLight(0xffffff, 3.5);
   
-  // Konfiguracja cieni przeciw migotaniu (Shadow Acne)
+  // Parametry cieni dla wysokiej jakości
   dirLight.castShadow = true;
-  dirLight.shadow.mapSize.width = 2048; // Wyższa rozdzielczość cieni
+  dirLight.shadow.mapSize.width = 2048;
   dirLight.shadow.mapSize.height = 2048;
-  dirLight.shadow.bias = -0.0005; // Kluczowe dla uniknięcia "prążków" na modelu
-  dirLight.shadow.normalBias = 0.02; // Pomaga przy zakrzywionych powierzchniach
+  dirLight.shadow.bias = -0.0005; // Zapobiega "shadow acne"
+  dirLight.shadow.normalBias = 0.02;
   
   ownScene.add(dirLight);
   ownScene.userData.dirLight = dirLight;
 
-  // 3. Environment Map
+  // 3. Environment Map (Odbicia) - zmniejszona intensywność, żeby nie rozjaśniała cieni
   const pmremGenerator = new THREE.PMREMGenerator(new THREE.WebGLRenderer());
   pmremGenerator.compileEquirectangularShader();
   const envTexture = pmremGenerator.fromScene(new RoomEnvironment()).texture;
   ownScene.environment = envTexture;
+  ownScene.environmentIntensity = 0.4; // Zmniejszone odbicia otoczenia
 
   // Kamera
   const S = getStationSpriteSize();
@@ -100,18 +105,18 @@ function getSharedRenderer(width, height) {
     if (r) return r;
   }
 
-  // 2. Fallback: Własny renderer z FIXEM NA MIGOTANIE
+  // 2. Fallback: Własny renderer z FIXEM NA MIGOTANIE (Logarithmic Depth)
   if (!localRenderer) {
     localRenderer = new THREE.WebGLRenderer({ 
         alpha: true, 
         antialias: true, 
         preserveDrawingBuffer: true,
-        logarithmicDepthBuffer: true // <--- TO NAPRAWIA Z-FIGHTING (MIGOTANIE)
+        logarithmicDepthBuffer: true // <--- FIX Z-FIGHTING
     });
     localRenderer.setPixelRatio(1);
     localRenderer.outputColorSpace = THREE.SRGBColorSpace;
-    localRenderer.shadowMap.enabled = true; // Włącz cienie
-    localRenderer.shadowMap.type = THREE.PCFSoftShadowMap; // Miękkie cienie
+    localRenderer.shadowMap.enabled = true;
+    localRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
   }
   
   const size = localRenderer.getSize(new THREE.Vector2());
@@ -164,43 +169,35 @@ function getTemplate(stationId, path) {
     (gltf) => {
       const scene = gltf.scene;
       
-      // Optymalizacja materiałów i tekstur pod kątem migotania
       const maxAnisotropy = localRenderer ? localRenderer.capabilities.getMaxAnisotropy() : 4;
 
       scene.traverse((o) => {
         if (!o.isMesh) return;
         o.castShadow = true;
         o.receiveShadow = true;
-        
-        // Czasami modele mają źle ustawione frustum culling, co powoduje znikanie
         o.frustumCulled = false; 
 
         const materials = Array.isArray(o.material) ? o.material : [o.material];
         for (const m of materials) {
           if (!m) continue;
           
-          // Poprawa jakości tekstur
           if (m.map) m.map.anisotropy = maxAnisotropy;
           if (m.normalMap) m.normalMap.anisotropy = maxAnisotropy;
           if (m.roughnessMap) m.roughnessMap.anisotropy = maxAnisotropy;
           if (m.metalnessMap) m.metalnessMap.anisotropy = maxAnisotropy;
 
-          // DoubleSide często powoduje migotanie na cienkich ściankach
-          // Jeśli model migocze, zmiana na FrontSide często pomaga
-          // m.side = THREE.FrontSide; // Odkomentuj jeśli nadal migocze
           m.side = THREE.DoubleSide; 
-
           m.transparent = false;
           m.depthWrite = true;
           m.depthTest = true;
           
           if (m.map || m.alphaMap) {
-            m.alphaTest = 0.5; // Agresywniejsze wycinanie przezroczystości
+            m.alphaTest = 0.5;
           }
           
-          m.envMapIntensity = 1.0;
+          // Zmniejszamy wpływ mapy otoczenia, żeby nie rozjaśniała cieni
+          m.envMapIntensity = 0.5;
           
-          // Zapobieganie "czarnym plamom" przy braku odbić
           if (typeof m.metalness === 'number' && m.metalness < 0.1) m.metalness = 0.5; 
           if (typeof m.roughness === 'number' && m.roughness > 0.9) m.roughness = 0.6;
           
@@ -706,17 +703,31 @@ function renderStationSprite(record) {
   cam.position.set(dist, dist * 0.62, dist); 
   cam.lookAt(0, 0, 0);
 
+  // --- AKTUALIZACJA POZYCJI SŁOŃCA W RELACJI DO STACJI ---
   const sunLight = scene.userData?.dirLight;
   const stRef = record.stationRef;
   if (sunLight && stRef && typeof window !== 'undefined' && window.SUN) {
+    // Wektor od stacji do słońca (w świecie gry 2D)
     const dx = (window.SUN.x ?? 0) - (stRef.x ?? 0);
     const dy = (window.SUN.y ?? 0) - (stRef.y ?? 0);
-    const v = new THREE.Vector3(dx, 0.15 * Math.hypot(dx, dy), -dy);
-    if (v.lengthSq() > 0) {
-      v.normalize().multiplyScalar(Math.max(200, dist));
-      sunLight.position.copy(v);
-      sunLight.updateMatrixWorld();
-    }
+    
+    // Mapowanie na 3D:
+    // Game X -> Three X
+    // Game Y -> Three Z (typowe mapowanie top-down)
+    // Y (wysokość) -> Dajemy lekkie wzniesienie, żeby oświetlało też górę
+    
+    const distanceToSun = Math.max(200, dist * 2); // Odsuwamy słońce daleko
+    const lightVec = new THREE.Vector3(dx, 0, dy); // Płaski wektor
+    lightVec.normalize();
+    
+    // Dodajemy lekkie wzniesienie (elevation), np. 20 stopni w górę
+    lightVec.y = 0.35; 
+    lightVec.normalize();
+    
+    lightVec.multiplyScalar(distanceToSun);
+    
+    sunLight.position.copy(lightVec);
+    sunLight.updateMatrixWorld();
   }
 
   resetRenderer(renderer, size, size);
