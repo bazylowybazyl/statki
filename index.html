@@ -9589,11 +9589,17 @@ window.AudioSys = AudioSys;
         enginePower.current = enginePower.target;
         return;
       }
-      let target = enginePower.target;
-      if (keys['w']) target += ENGINE_TARGET_RATE * dt;
-      if (keys['s']) target -= ENGINE_TARGET_RATE * dt;
-      enginePower.target = clamp(target, 0, 1);
-      enginePower.current = approachValue(enginePower.current, enginePower.target, ENGINE_RESPONSE_RATE * dt);
+      
+      // ZMIANA: Reaktywny pasek mocy (zamiast tempomatu)
+      // W = 100% mocy, S = 40% mocy (wsteczny), Brak = 0% (wygasanie)
+      let target = 0;
+      if (keys['w']) target = 1.0;
+      else if (keys['s']) target = 0.4; 
+
+      enginePower.target = target;
+      
+      // Szybka reakcja paska (6.0), żeby wizualnie pasowało do nowej fizyki
+      enginePower.current = approachValue(enginePower.current, enginePower.target, 6.0 * dt);
       input.main = enginePower.current;
     }
 

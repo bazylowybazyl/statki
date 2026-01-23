@@ -5,7 +5,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { createPirateStation } from '../space/pirateStation/pirateStationFactory.js';
 
-// WYSOKA ROZDZIELCZOŚĆ (anty-pikseloza)
+// WYSOKA ROZDZIELCZOŚĆ
 const RENDER_SIZE = 2048;
 
 const canvas2d = typeof document !== 'undefined' ? document.createElement('canvas') : null;
@@ -24,9 +24,6 @@ let preserveAlphaPass = null;
 let localRenderer = null;
 let maskRT = null;
 
-// ZMIENNA DO KALIBRACJI DYSTANSU (Można zmieniać z konsoli)
-let cameraDistanceMultiplier = 2.5; 
-
 const maskMaterial = new THREE.MeshBasicMaterial({
   color: 0xffffff,
   transparent: true,
@@ -42,6 +39,9 @@ let pirateStation3D = null;
 let pirateStation2D = null;
 let lastRenderInfo = null;
 let initialRadius = null;
+
+let visibleWorldHeight = 1000; 
+
 const fallbackCameraTarget = new THREE.Vector3();
 const lastCameraState = { x: 0, y: 0, zoom: 1 };
 let hasCameraState = false;
@@ -80,12 +80,36 @@ function rendererHasAlpha(r) {
   }
 }
 
+// --- FIX OŚWIETLENIA ---
 function updateSunLightForPlanet(dirLightInstance, planet, sun){
   if (!dirLightInstance || !planet || !sun) return;
-  const dx = (sun.x ?? 0) - (planet.x ?? 0);
-  const dy = (sun.y ?? 0) - (planet.y ?? 0);
-  const L = Math.hypot(dx, dy) || 1;
-  dirLightInstance.position.set(dx / L, -dy / L, 0.4); // Z=0.4 daje ładne cienie od góry
+  
+  // Wektor od stacji do słońca w świecie gry (2D)
+  const dx = sun.x - planet.x;
+  const dy = sun.y - planet.y; 
+  
+  // Konwersja na 3D:
+  // Canvas Y rośnie w dół, Three.js Y rośnie w górę.
+  // Dlatego musimy odwrócić DY.
+  
+  const vx = dx;
+  const vy = -dy; // <-- INWERSJA OSI Y
+  
+  const len = Math.hypot(vx, vy) || 1;
+  const nx = vx / len;
+  const ny = vy / len;
+
+  // Ustawienie odległości światła (daleko)
+  const sunDist = 50000;
+  
+  // Ustawienie Z (Wysokość słońca "nad ekranem")
+  // Im bliżej 0, tym bardziej "płaskie" oświetlenie boczne (efekt pół na pół).
+  // Dajemy małą wartość (np. 0.15 dystansu), żeby oświetlić trochę front, ale zachować długie cienie.
+  const zOffset = sunDist * 0.15; 
+
+  dirLightInstance.position.set(nx * sunDist, ny * sunDist, zOffset); 
+  
+  // Target jest zawsze w 0,0,0 (środek stacji), więc light direction jest poprawny
 }
 
 const PreserveAlphaOutputShader = {
@@ -107,7 +131,6 @@ const PreserveAlphaOutputShader = {
     uniform sampler2D tDiffuse; 
     uniform sampler2D tMask;    
     varying vec2 vUv;
-
     vec3 _srgbEncode3( in vec3 linearRGB ) {
       vec3 cutoff = step( vec3(0.0031308), linearRGB );
       vec3 lower  = 12.92 * linearRGB;
@@ -117,7 +140,6 @@ const PreserveAlphaOutputShader = {
     vec4 _srgbEncode4( in vec4 linearRGBA ) {
       return vec4( _srgbEncode3( linearRGBA.rgb ), linearRGBA.a );
     }
-
     void main() {
       vec3  colorPost = texture2D( tDiffuse, vUv ).rgb;
       float a         = texture2D( tMask,    vUv ).r;
@@ -181,26 +203,31 @@ function ensureScene() {
     scene.background = null;
   }
   if (!lightsAdded && scene) {
-    // HARD SPACE LIGHTING
-    ambientLight = new THREE.AmbientLight(0xffffff, 0.1); // Ciemny ambient
+    // --- DRAMATIC LIGHTING SETUP ---
+    
+    // 1. Ambient - Prawie zero. Chcemy głębokie, czarne cienie.
+    ambientLight = new THREE.AmbientLight(0xffffff, 0.02); 
     scene.add(ambientLight);
 
-    dirLight = new THREE.DirectionalLight(0xffffff, 4.0); // Bardzo jasne słońce
-    dirLight.position.set(100, 50, 100);
+    // 2. Directional - Słońce. Mocne światło.
+    dirLight = new THREE.DirectionalLight(0xffffff, 4.5);
+    dirLight.position.set(10000, 10000, 5000); 
     dirLight.castShadow = true;
     
-    dirLight.shadow.mapSize.width = 2048;
-    dirLight.shadow.mapSize.height = 2048;
-    dirLight.shadow.bias = -0.0001;
-    dirLight.shadow.normalBias = 0.02;
+    // Konfiguracja cieni - duży obszar, wysoka jakość
+    dirLight.shadow.mapSize.width = 4096;
+    dirLight.shadow.mapSize.height = 4096;
+    dirLight.shadow.bias = -0.00005; // Minimalny bias dla precyzji
+    dirLight.shadow.normalBias = 0.02; // Pomaga przy zakrzywieniach
     
-    const d = 1500; // Większy zasięg cienia
+    // Shadow Camera musi obejmować całą stację (nawet przy skali x25)
+    const d = 15000; 
     dirLight.shadow.camera.left = -d;
     dirLight.shadow.camera.right = d;
     dirLight.shadow.camera.top = d;
     dirLight.shadow.camera.bottom = -d;
-    dirLight.shadow.camera.near = 1;
-    dirLight.shadow.camera.far = 5000;
+    dirLight.shadow.camera.near = 100;
+    dirLight.shadow.camera.far = 100000;
 
     scene.add(dirLight);
     if (dirLight.target) {
@@ -213,8 +240,9 @@ function ensureScene() {
 
 function ensureCamera() {
   if (!camera) {
-    camera = new THREE.PerspectiveCamera(45, 1, 0.1, 8000);
-    camera.position.set(60, 28, 60);
+    // Orthographic Camera - brak zniekształceń perspektywy, stała wielkość obiektu
+    camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 200000);
+    camera.position.set(0, 0, 10000);
     camera.lookAt(0, 0, 0);
   }
 }
@@ -226,9 +254,11 @@ function getRenderer() {
 
   if (r && rendererHasAlpha(r)) {
     r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 1.25;
+    r.toneMappingExposure = 1.0;
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.setClearColor(0x000000, 0);
+    r.shadowMap.enabled = true;
+    r.shadowMap.type = THREE.PCFSoftShadowMap;
     return r;
   }
 
@@ -244,7 +274,7 @@ function getRenderer() {
     localRenderer.setSize(RENDER_SIZE, RENDER_SIZE, false);
     localRenderer.outputColorSpace = THREE.SRGBColorSpace;
     localRenderer.toneMapping = THREE.ACESFilmicToneMapping;
-    localRenderer.toneMappingExposure = 1.25;
+    localRenderer.toneMappingExposure = 1.0;
     localRenderer.shadowMap.enabled = true;
     localRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
     localRenderer.setClearColor(0x000000, 0);
@@ -296,30 +326,30 @@ function updateCameraTarget() {
   if (pirateStation3D) {
     const target = pirateStation3D.object3d.position;
     
-    // Obliczamy dystans na podstawie promienia stacji
-    const fovRad = (camera.fov * Math.PI) / 180;
-    const radiusWithMargin = pirateStation3D.radius;
-    const distToFit = radiusWithMargin / Math.sin(fovRad / 2);
+    // --- ORTHO CAMERA FIT ---
+    // Promień stacji (po przeskalowaniu x25)
+    const worldRadius = Math.max(50, pirateStation3D.radius);
     
-    // ZASTOSOWANIE MNOŻNIKA DYSTANSU
-    // To pozwala odsunąć kamerę, gdy stacja robi się za duża
-    const dist = Math.max(100, distToFit * cameraDistanceMultiplier);
+    // Ustawiamy kadr tak, aby stacja zajmowała większość tekstury
+    const viewSize = worldRadius * 1.4; 
     
-    // Ustawiamy kamerę pod kątem (izometrycznie)
+    camera.left = -viewSize;
+    camera.right = viewSize;
+    camera.top = viewSize;
+    camera.bottom = -viewSize;
+    camera.updateProjectionMatrix();
+    
+    // Pozycja kamery "Izometryczna" (nadal Ortho)
+    const dist = 5000;
     const offset = dist / Math.sqrt(3); 
+    
     camera.position.set(target.x + offset, target.y + offset * 0.6, target.z + offset);
     camera.lookAt(target);
+
+    if (!lastRenderInfo) lastRenderInfo = {};
+    lastRenderInfo.orthoSize = viewSize * 2;
     return;
   }
-  
-  if (!hasCameraState) return;
-  const target = fallbackCameraTarget;
-  target.set(lastCameraState.x || 0, 0, lastCameraState.y || 0);
-  const zoom = Math.max(0.0001, lastCameraState.zoom || 1);
-  const baseRadius = initialRadius || 120;
-  const dist = Math.max(60, baseRadius * 2.0 / zoom);
-  camera.position.set(target.x + dist, target.y + dist * 0.62, target.z + dist);
-  camera.lookAt(target);
 }
 
 function renderScene(dt, t, rendererOverride) {
@@ -372,14 +402,16 @@ function renderScene(dt, t, rendererOverride) {
       lastRenderInfo = {
         canvas: canvas2d,
         radius: pirateStation3D.radius,
-        world: { x: pirateStation2D.x, y: pirateStation2D.y }
+        world: { x: pirateStation2D.x, y: pirateStation2D.y },
+        orthoSize: lastRenderInfo?.orthoSize || (pirateStation3D.radius * 2.8)
       };
     } else {
       const baseRadius = initialRadius || 120;
       lastRenderInfo = {
         canvas: canvas2d,
         radius: baseRadius,
-        world: { x: lastCameraState.x || 0, y: lastCameraState.y || 0 }
+        world: { x: lastCameraState.x || 0, y: lastCameraState.y || 0 },
+        orthoSize: baseRadius * 2.8
       };
     }
   }
@@ -413,7 +445,6 @@ export function attachPirateStation3D(sceneOverride, station2D) {
   ensureScene();
   ensureCamera();
   
-  // Duży promień bazowy, żeby stacja była "potężna"
   pirateStation3D = createPirateStation({ worldRadius: 360 }); 
   
   pirateStation2D = station2D || null;
@@ -421,8 +452,8 @@ export function attachPirateStation3D(sceneOverride, station2D) {
   scene.add(pirateStation3D.object3d);
   initialRadius = pirateStation3D.radius;
   
-  // Domyślna skala
-  setPirateStationScale(6);
+  // Domyślna duża skala x25
+  setPirateStationScale(25);
   updateCameraTarget();
 }
 
@@ -447,41 +478,30 @@ export function updateWorld3D(dt, t) {
 export function drawWorld3D(ctx, cam, worldToScreen) {
   initWorld3D();
   if (!isWorldOverlayEnabled()) return;
+  
   if (cam) {
-    let updated = false;
-    if (Number.isFinite(cam.x) && Number.isFinite(cam.y)) {
-      lastCameraState.x = cam.x;
-      lastCameraState.y = cam.y;
-      updated = true;
-    }
-    if (Number.isFinite(cam.zoom)) {
-      lastCameraState.zoom = cam.zoom;
-      updated = true;
-    }
-    if (updated) hasCameraState = true;
+    // Reset zoomu dla ortho (zoomem sterują granice left/right)
+    if (camera) camera.zoom = 1; 
   }
-  if (camera) {
-    const zoom = Math.max(0.0001, Number.isFinite(lastCameraState.zoom) ? lastCameraState.zoom : 1);
-    if (camera.zoom !== zoom) {
-      camera.zoom = zoom;
-      camera.updateProjectionMatrix();
-    }
-  }
+  
   updateCameraTarget();
+
   if (!lastRenderInfo || typeof worldToScreen !== 'function') return;
   if (!lastRenderInfo.canvas) return;
+  
   const center = worldToScreen(lastRenderInfo.world.x, lastRenderInfo.world.y, cam);
   
-  const sizeWorld = lastRenderInfo.radius * 2;
-  const sizePx = sizeWorld * cam.zoom;
+  // Rysujemy obrazek o stałym rozmiarze w świecie
+  const worldSize = lastRenderInfo.orthoSize || (lastRenderInfo.radius * 2.8);
+  const drawSizePx = worldSize * cam.zoom;
   
-  const x = center.x - sizePx / 2;
-  const y = center.y - sizePx / 2;
+  const x = center.x - drawSizePx / 2;
+  const y = center.y - drawSizePx / 2;
   
   ctx.globalCompositeOperation = 'source-over';
   ctx.imageSmoothingEnabled = true;
   
-  ctx.drawImage(lastRenderInfo.canvas, x, y, sizePx, sizePx);
+  ctx.drawImage(lastRenderInfo.canvas, x, y, drawSizePx, drawSizePx);
   
   resetRendererState2D(ctx);
 }
@@ -507,14 +527,8 @@ export function setPirateStationWorldRadius(r) {
   setPirateStationScale(k);
 }
 
-// FUNKCJA KALIBRACJI KAMERY
-export function setPirateCamDistance(mul) {
-    const val = parseFloat(mul);
-    if(isFinite(val) && val > 0.1) {
-        cameraDistanceMultiplier = val;
-        updateCameraTarget();
-    }
-}
+// Funkcja kalibracji - niepotrzebna przy Ortho
+export function setPirateCamDistance(mul) {}
 
 if (typeof window !== 'undefined') {
   window.__setStation3DScale = setPirateStationScale;
