@@ -114,21 +114,25 @@ function buildPirateStation(THREE, opts = {}) {
 
   const panelTex = makePanelTexture(256);
 
+  // --- HARD SPACE MATERIALS (Większy kontrast) ---
   const metal = new THREE.MeshStandardMaterial({
     map: panelTex,
     color: 0x9aa2ad,
-    metalness: 0.7,
-    roughness: 0.38
+    metalness: 0.8, // Zwiększone dla lepszych odbić światła
+    roughness: 0.3, // Zmniejszone dla ostrzejszego "błysku"
+    side: THREE.DoubleSide // Zapobiega znikaniu ścianek przy skalowaniu
   });
   const darkMetal = new THREE.MeshStandardMaterial({
     color: 0x2c3138,
-    metalness: 0.85,
-    roughness: 0.55
+    metalness: 0.9,
+    roughness: 0.4,
+    side: THREE.DoubleSide
   });
   const matteDark = new THREE.MeshStandardMaterial({
     color: 0x1b1f26,
-    metalness: 0.35,
-    roughness: 0.9
+    metalness: 0.2,
+    roughness: 0.8,
+    side: THREE.DoubleSide
   });
 
   const coreRadius = 6 * scale;
@@ -140,6 +144,8 @@ function buildPirateStation(THREE, opts = {}) {
 
   const capBot = new THREE.Mesh(new THREE.CylinderGeometry(coreRadius, coreRadius * 0.35, 4 * scale, 24), darkMetal);
   capBot.position.y = -coreHeight * 0.5 - 2 * scale;
+  capBot.castShadow = true;
+  capBot.receiveShadow = true;
   group.add(capBot);
 
   const resR = coreRadius * 1.25;
@@ -152,6 +158,8 @@ function buildPirateStation(THREE, opts = {}) {
 
   const dome = new THREE.Mesh(new THREE.SphereGeometry(resR * 0.92, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2), darkMetal);
   dome.position.y = res.position.y + resH * 0.5 - 0.2 * scale;
+  dome.castShadow = true;
+  dome.receiveShadow = true;
   group.add(dome);
 
   function addCurvedWindowBands(radius, yLevels, palette, offProb = 0.15, segLen = Math.PI / 28) {
@@ -237,6 +245,8 @@ function buildPirateStation(THREE, opts = {}) {
     g.rotation.y = i * Math.PI / 2;
     const spoke = new THREE.Mesh(spokeGeo, darkMetal);
     spoke.rotation.z = Math.PI / 2;
+    spoke.castShadow = true;
+    spoke.receiveShadow = true;
     g.add(spoke);
     group.add(g);
   }
@@ -246,6 +256,8 @@ function buildPirateStation(THREE, opts = {}) {
   const hangarRing = new THREE.Mesh(new THREE.TorusGeometry(hangarRingR, 1.0 * scale, 16, 64), darkMetal);
   hangarRing.position.y = hRingY;
   hangarRing.rotation.x = Math.PI / 2;
+  hangarRing.castShadow = true;
+  hangarRing.receiveShadow = true;
   group.add(hangarRing);
 
   const glowTex = makeGlowTexture(256);
@@ -358,6 +370,8 @@ function buildPirateStation(THREE, opts = {}) {
     const bridgePos = new THREE.Vector3().copy(dir).multiplyScalar(coreRadius + distToCore * 0.5 + 0.6 * scale);
     bridge.position.set(bridgePos.x, hRingY + 0.5 * scale, bridgePos.z);
     bridge.lookAt(0, hRingY + 0.5 * scale, 0);
+    bridge.castShadow = true;
+    bridge.receiveShadow = true;
     group.add(bridge);
 
     addDoorOnCore(angle + Math.PI, hRingY + 0.8 * scale);
