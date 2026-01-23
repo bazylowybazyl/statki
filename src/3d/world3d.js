@@ -5,7 +5,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { createPirateStation } from '../space/pirateStation/pirateStationFactory.js';
 
-const RENDER_SIZE = 1024;
+// ZWIĘKSZONA ROZDZIELCZOŚĆ DLA OSTROŚCI
+const RENDER_SIZE = 2048;
 
 const canvas2d = typeof document !== 'undefined' ? document.createElement('canvas') : null;
 if (canvas2d) {
@@ -31,8 +32,7 @@ const maskMaterial = new THREE.MeshBasicMaterial({
 });
 
 let ambientLight = null;
-let hemiLight = null;
-let dirLight = null;
+let dirLight = null; // Usunięto hemiLight (psuł kontrast)
 let lightsAdded = false;
 
 let pirateStation3D = null;
@@ -45,8 +45,6 @@ let hasCameraState = false;
 
 function isWorldOverlayEnabled() {
   if (typeof window === 'undefined') return true;
-  // Domyślnie ON; aby wyłączyć globalnie:
-  // window.USE_WORLD3D_OVERLAY = false
   return window.USE_WORLD3D_OVERLAY !== false;
 }
 
@@ -84,7 +82,8 @@ function updateSunLightForPlanet(dirLightInstance, planet, sun){
   const dx = (sun.x ?? 0) - (planet.x ?? 0);
   const dy = (sun.y ?? 0) - (planet.y ?? 0);
   const L = Math.hypot(dx, dy) || 1;
-  dirLightInstance.position.set(dx / L, -dy / L, 0.001);
+  // Światło z boku, ale lekko z góry (z=0.3), żeby oświetlić górne detale
+  dirLightInstance.position.set(dx / L, -dy / L, 0.3);
 }
 
 const PreserveAlphaOutputShader = {
@@ -103,11 +102,10 @@ const PreserveAlphaOutputShader = {
   `,
   fragmentShader: /* glsl */`
     precision highp float;
-    uniform sampler2D tDiffuse; // kolor po bloomie (linear)
-    uniform sampler2D tMask;    // maska alfa sceny bez post FX
+    uniform sampler2D tDiffuse; 
+    uniform sampler2D tMask;    
     varying vec2 vUv;
 
-    // --- lokalny enkoder sRGB (unikalne nazwy, zero kolizji) ---
     vec3 _srgbEncode3( in vec3 linearRGB ) {
       vec3 cutoff = step( vec3(0.0031308), linearRGB );
       vec3 lower  = 12.92 * linearRGB;
@@ -119,18 +117,13 @@ const PreserveAlphaOutputShader = {
     }
 
     void main() {
-      vec3  colorPost = texture2D( tDiffuse, vUv ).rgb; // linear RGB po bloomie
-      float a         = texture2D( tMask,    vUv ).r;   // alfa z maski
-
-      // premultiply w przestrzeni liniowej
+      vec3  colorPost = texture2D( tDiffuse, vUv ).rgb;
+      float a         = texture2D( tMask,    vUv ).r;
       vec4 outLinear = vec4( colorPost * a, a );
-
-      // enkodowanie do sRGB DOPIERO po premultiply
       #ifdef SRGB_COLOR_SPACE
         outLinear = _srgbEncode4( outLinear );
       #endif
-
-      gl_FragColor = outLinear; // premultiplied RGBA
+      gl_FragColor = outLinear; 
     }
   `
 };
@@ -139,8 +132,8 @@ function createPreserveAlphaOutputPass() {
   const p = new ShaderPass(PreserveAlphaOutputShader);
   if (p.material) {
     p.material.toneMapped = false;
-    p.material.transparent = false;           // bez domyślnego alpha-blend
-    p.material.blending    = THREE.NoBlending; // nadpisanie 1:1
+    p.material.transparent = false;
+    p.material.blending    = THREE.NoBlending;
     p.material.depthTest   = false;
     p.material.depthWrite  = false;
   }
@@ -149,11 +142,9 @@ function createPreserveAlphaOutputPass() {
 
 function updatePreserveAlphaOutputPass(renderer) {
   if (!preserveAlphaPass || !renderer) return;
-
   const material = preserveAlphaPass.material;
   const defines = material.defines || (material.defines = {});
   let needsUpdate = false;
-
   if (preserveAlphaPass._outputColorSpace !== renderer.outputColorSpace) {
     preserveAlphaPass._outputColorSpace = renderer.outputColorSpace;
     if (renderer.outputColorSpace === THREE.SRGBColorSpace) {
@@ -163,7 +154,6 @@ function updatePreserveAlphaOutputPass(renderer) {
     }
     needsUpdate = true;
   }
-
   if (needsUpdate) {
     material.needsUpdate = true;
   }
@@ -189,12 +179,32 @@ function ensureScene() {
     scene.background = null;
   }
   if (!lightsAdded && scene) {
-    ambientLight = new THREE.AmbientLight(0x1a2535, 0.45);
-    hemiLight = new THREE.HemisphereLight(0x6c8aff, 0x0a0e16, 0.82);
-    dirLight = new THREE.DirectionalLight(0xffffff, 1.05);
-    dirLight.position.set(80, 140, 60);
+    // HARD SPACE LIGHTING - Ciemny Ambient, Jasny Directional
+    
+    // 1. Ambient - minimalny, czarne cienie
+    ambientLight = new THREE.AmbientLight(0xffffff, 0.15); 
     scene.add(ambientLight);
-    scene.add(hemiLight);
+
+    // 2. Directional - Słońce
+    dirLight = new THREE.DirectionalLight(0xffffff, 3.5);
+    dirLight.position.set(100, 50, 100);
+    dirLight.castShadow = true;
+    
+    // Cienie wysokiej jakości
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.bias = -0.0001;
+    dirLight.shadow.normalBias = 0.02;
+    
+    // Zasięg cienia dla dużej stacji
+    const d = 800;
+    dirLight.shadow.camera.left = -d;
+    dirLight.shadow.camera.right = d;
+    dirLight.shadow.camera.top = d;
+    dirLight.shadow.camera.bottom = -d;
+    dirLight.shadow.camera.near = 1;
+    dirLight.shadow.camera.far = 3000;
+
     scene.add(dirLight);
     if (dirLight.target) {
       dirLight.target.position.set(0, 0, 0);
@@ -206,7 +216,8 @@ function ensureScene() {
 
 function ensureCamera() {
   if (!camera) {
-    camera = new THREE.PerspectiveCamera(45, 1, 0.1, 4000);
+    // Near Plane 0.1 pozwala podejść bardzo blisko bez ucinania
+    camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
     camera.position.set(60, 28, 60);
     camera.lookAt(0, 0, 0);
   }
@@ -230,13 +241,16 @@ function getRenderer() {
       antialias: true,
       alpha: true,
       premultipliedAlpha: true,
-      preserveDrawingBuffer: true
+      preserveDrawingBuffer: true,
+      logarithmicDepthBuffer: true // FIX NA MIGOTANIE (Z-FIGHTING)
     });
     localRenderer.setPixelRatio(1);
     localRenderer.setSize(RENDER_SIZE, RENDER_SIZE, false);
     localRenderer.outputColorSpace = THREE.SRGBColorSpace;
     localRenderer.toneMapping = THREE.ACESFilmicToneMapping;
     localRenderer.toneMappingExposure = 1.25;
+    localRenderer.shadowMap.enabled = true;
+    localRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
     localRenderer.setClearColor(0x000000, 0);
   }
   return localRenderer;
@@ -282,13 +296,26 @@ function ensureComposer(renderer) {
 
 function updateCameraTarget() {
   if (!camera) return;
+  
   if (pirateStation3D) {
     const target = pirateStation3D.object3d.position;
-    const dist = Math.max(60, pirateStation3D.radius * 2.4);
-    camera.position.set(target.x + dist, target.y + dist * 0.62, target.z + dist);
+    
+    // --- AUTO-FIT CAMERA (WYPEŁNIENIE KADRU) ---
+    // Obliczamy dystans tak, aby stacja wypełniała ~90% tekstury.
+    // Dzięki temu, niezależnie od skali, zawsze wykorzystujemy pełną rozdzielczość 2048px.
+    const fovRad = (camera.fov * Math.PI) / 180;
+    const radiusWithMargin = pirateStation3D.radius * 1.1; 
+    const distToFit = radiusWithMargin / Math.sin(fovRad / 2);
+    
+    // Ustawiamy kamerę pod kątem (izometrycznie)
+    const dist = Math.max(50, distToFit);
+    const offset = dist / Math.sqrt(3); // Równomiernie na osie X, Y, Z
+    
+    camera.position.set(target.x + offset, target.y + offset * 0.6, target.z + offset);
     camera.lookAt(target);
     return;
   }
+  
   if (!hasCameraState) return;
   const target = fallbackCameraTarget;
   target.set(lastCameraState.x || 0, 0, lastCameraState.y || 0);
@@ -314,7 +341,6 @@ function renderScene(dt, t, rendererOverride) {
   if (dirLight) {
     const sun = (typeof window !== 'undefined' ? window.SUN : null) || null;
     if (sun) {
-      // planetRef = piracka stacja albo punkt kamery w widoku planetarnym
       const planetRef = pirateStation2D || { x: lastCameraState.x || 0, y: lastCameraState.y || 0 };
       updateSunLightForPlanet(dirLight, planetRef, sun);
       if (dirLight.target) dirLight.target.updateMatrixWorld();
@@ -353,7 +379,6 @@ function renderScene(dt, t, rendererOverride) {
         world: { x: pirateStation2D.x, y: pirateStation2D.y }
       };
     } else {
-      // Tryb ogólny (bez pirackiej) – kotwiczymy na pozycji kamery
       const baseRadius = initialRadius || 120;
       lastRenderInfo = {
         canvas: canvas2d,
@@ -391,12 +416,16 @@ export function attachPirateStation3D(sceneOverride, station2D) {
   }
   ensureScene();
   ensureCamera();
-  pirateStation3D = createPirateStation({ worldRadius: 120 });
+  
+  // Zwiększony worldRadius - stacja będzie większa w świecie gry
+  pirateStation3D = createPirateStation({ worldRadius: 360 }); 
+  
   pirateStation2D = station2D || null;
   pirateStation3D.object3d.position.set(station2D?.x || 0, 0, station2D?.y || 0);
   scene.add(pirateStation3D.object3d);
   initialRadius = pirateStation3D.radius;
-  // Domyślna skala ×6 przed ustawieniem kamery:
+  
+  // Domyślna skala - ustawiana na start, potem można zmieniać DevToolem
   setPirateStationScale(6);
   updateCameraTarget();
 }
@@ -446,12 +475,22 @@ export function drawWorld3D(ctx, cam, worldToScreen) {
   if (!lastRenderInfo || typeof worldToScreen !== 'function') return;
   if (!lastRenderInfo.canvas) return;
   const center = worldToScreen(lastRenderInfo.world.x, lastRenderInfo.world.y, cam);
-  const sizePx = Math.max(ctx.canvas.width, ctx.canvas.height);
+  
+  // Rysujemy w rozmiarze dopasowanym do promienia stacji i zoomu
+  // lastRenderInfo.radius to promień fizyczny w grze
+  const sizeWorld = lastRenderInfo.radius * 2;
+  const sizePx = sizeWorld * cam.zoom;
+  
+  // Wyśrodkowanie
   const x = center.x - sizePx / 2;
   const y = center.y - sizePx / 2;
+  
   ctx.globalCompositeOperation = 'source-over';
   ctx.imageSmoothingEnabled = true;
+  
+  // Ponieważ texture jest kwadratem, rysujemy ją jako kwadrat
   ctx.drawImage(lastRenderInfo.canvas, x, y, sizePx, sizePx);
+  
   resetRendererState2D(ctx);
 }
 

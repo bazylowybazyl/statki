@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+// RoomEnvironment usuwamy, bo "spłaszcza" oświetlenie w kosmosie
+// import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const loader = new GLTFLoader();
 const templateCache = new Map();
@@ -14,12 +15,11 @@ let activeScene = null;
 let ambLight = null;
 let dirLight = null;
 
-// FIX: Lokalny renderer, aby uniknąć konfliktów z głównym silnikiem gry
 let localRenderer = null; 
 
 // Stałe konfiguracyjne
 const DEFAULT_STATION_SPRITE_SIZE = 512;
-const DEFAULT_STATION_SPRITE_FRAME = 3.0; // Domyślny zoom na sprite
+const DEFAULT_STATION_SPRITE_FRAME = 3.0; 
 const MIN_SPRITE_RENDER_INTERVAL = 0;
 const FRAME_EPSILON = 0.001;
 
@@ -57,35 +57,39 @@ function initScene() {
   ownScene = new THREE.Scene();
   activeScene = ownScene;
 
-  // --- OŚWIETLENIE "PÓŁ NA PÓŁ" (Terminator Line) ---
+  // --- HARD SPACE LIGHTING SETUP ---
   
-  // 1. Światło Ambient (rozproszone) - BARDZO CIEMNE
-  // Dzięki temu strona odwrócona od słońca będzie prawie czarna
+  // 1. Ambient (Tło) - Prawie czerń. Tylko 5% światła w cieniu.
   if (ambLight) ownScene.remove(ambLight);
-  ambLight = new THREE.AmbientLight(0xffffff, 0.15); 
+  ambLight = new THREE.AmbientLight(0xffffff, 0.05); 
   ownScene.add(ambLight);
 
-  // 2. Światło Kierunkowe (Słońce) - BARDZO JASNE
-  // To światło będzie poruszane w funkcji renderStationSprite
+  // 2. Directional (Słońce) - Bardzo jasne i ostre.
   if (dirLight) ownScene.remove(dirLight);
-  dirLight = new THREE.DirectionalLight(0xffffff, 3.5);
+  dirLight = new THREE.DirectionalLight(0xffffff, 4.0);
   
-  // Parametry cieni dla wysokiej jakości
+  // Konfiguracja cieni - kluczowe dla efektu głębi
   dirLight.castShadow = true;
   dirLight.shadow.mapSize.width = 2048;
   dirLight.shadow.mapSize.height = 2048;
-  dirLight.shadow.bias = -0.0005; // Zapobiega "shadow acne"
-  dirLight.shadow.normalBias = 0.02;
+  dirLight.shadow.bias = -0.0001; 
+  dirLight.shadow.normalBias = 0.01;
+  // Zwiększamy obszar cienia, żeby objął duże stacje
+  const d = 500;
+  dirLight.shadow.camera.left = -d;
+  dirLight.shadow.camera.right = d;
+  dirLight.shadow.camera.top = d;
+  dirLight.shadow.camera.bottom = -d;
+  dirLight.shadow.camera.near = 0.1;
+  dirLight.shadow.camera.far = 2000;
   
   ownScene.add(dirLight);
   ownScene.userData.dirLight = dirLight;
 
-  // 3. Environment Map (Odbicia) - zmniejszona intensywność, żeby nie rozjaśniała cieni
-  const pmremGenerator = new THREE.PMREMGenerator(new THREE.WebGLRenderer());
-  pmremGenerator.compileEquirectangularShader();
-  const envTexture = pmremGenerator.fromScene(new RoomEnvironment()).texture;
-  ownScene.environment = envTexture;
-  ownScene.environmentIntensity = 0.4; // Zmniejszone odbicia otoczenia
+  // 3. Usuwamy Environment Map (RoomEnvironment)
+  // W kosmosie nie ma "ścian", które odbijają światło.
+  // Dzięki temu cień będzie czarny, a nie szary.
+  ownScene.environment = null;
 
   // Kamera
   const S = getStationSpriteSize();
@@ -99,24 +103,25 @@ function initScene() {
 }
 
 function getSharedRenderer(width, height) {
-  // 1. Próba użycia globalnego
   if (typeof window !== 'undefined' && typeof window.getSharedRenderer === 'function') {
     const r = window.getSharedRenderer(width, height);
     if (r) return r;
   }
 
-  // 2. Fallback: Własny renderer z FIXEM NA MIGOTANIE (Logarithmic Depth)
   if (!localRenderer) {
     localRenderer = new THREE.WebGLRenderer({ 
         alpha: true, 
         antialias: true, 
         preserveDrawingBuffer: true,
-        logarithmicDepthBuffer: true // <--- FIX Z-FIGHTING
+        logarithmicDepthBuffer: true // Fix migotania
     });
     localRenderer.setPixelRatio(1);
     localRenderer.outputColorSpace = THREE.SRGBColorSpace;
     localRenderer.shadowMap.enabled = true;
     localRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Ważne: Tone mapping "filmowy" zwiększa kontrast
+    localRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+    localRenderer.toneMappingExposure = 1.0;
   }
   
   const size = localRenderer.getSize(new THREE.Vector2());
@@ -177,15 +182,22 @@ function getTemplate(stationId, path) {
         o.receiveShadow = true;
         o.frustumCulled = false; 
 
+        // WYMUSZENIE REAKCJI NA ŚWIATŁO
         const materials = Array.isArray(o.material) ? o.material : [o.material];
         for (const m of materials) {
           if (!m) continue;
           
           if (m.map) m.map.anisotropy = maxAnisotropy;
-          if (m.normalMap) m.normalMap.anisotropy = maxAnisotropy;
-          if (m.roughnessMap) m.roughnessMap.anisotropy = maxAnisotropy;
-          if (m.metalnessMap) m.metalnessMap.anisotropy = maxAnisotropy;
-
+          
+          // Jeśli materiał to Basic (brak oświetlenia), zamień na Standard
+          // Ale większość GLB ma StandardMaterial. 
+          // Tutaj podkręcamy parametry, żeby "łapały" światło.
+          
+          m.roughness = 0.4; // Mniej szorstki = bardziej błyszczący (ostrzejsze światło)
+          m.metalness = 0.6; // Bardziej metaliczny = mocniejsze odbicia
+          
+          m.envMapIntensity = 0.0; // Wyłączamy wpływ mapy otoczenia (której i tak nie ma, ale dla pewności)
+          
           m.side = THREE.DoubleSide; 
           m.transparent = false;
           m.depthWrite = true;
@@ -194,12 +206,6 @@ function getTemplate(stationId, path) {
           if (m.map || m.alphaMap) {
             m.alphaTest = 0.5;
           }
-          
-          // Zmniejszamy wpływ mapy otoczenia, żeby nie rozjaśniała cieni
-          m.envMapIntensity = 0.5;
-          
-          if (typeof m.metalness === 'number' && m.metalness < 0.1) m.metalness = 0.5; 
-          if (typeof m.roughness === 'number' && m.roughness > 0.9) m.roughness = 0.6;
           
           m.needsUpdate = true;
         }
@@ -703,30 +709,29 @@ function renderStationSprite(record) {
   cam.position.set(dist, dist * 0.62, dist); 
   cam.lookAt(0, 0, 0);
 
-  // --- AKTUALIZACJA POZYCJI SŁOŃCA W RELACJI DO STACJI ---
+  // --- OŚWIETLENIE SŁONECZNE (POPRAWIONE DLA EFEKTU TERMINATORA) ---
   const sunLight = scene.userData?.dirLight;
   const stRef = record.stationRef;
   if (sunLight && stRef && typeof window !== 'undefined' && window.SUN) {
-    // Wektor od stacji do słońca (w świecie gry 2D)
     const dx = (window.SUN.x ?? 0) - (stRef.x ?? 0);
     const dy = (window.SUN.y ?? 0) - (stRef.y ?? 0);
     
-    // Mapowanie na 3D:
-    // Game X -> Three X
-    // Game Y -> Three Z (typowe mapowanie top-down)
-    // Y (wysokość) -> Dajemy lekkie wzniesienie, żeby oświetlało też górę
+    // Normalizujemy wektor kierunku słońca
+    const v = new THREE.Vector3(dx, 0, dy).normalize();
     
-    const distanceToSun = Math.max(200, dist * 2); // Odsuwamy słońce daleko
-    const lightVec = new THREE.Vector3(dx, 0, dy); // Płaski wektor
-    lightVec.normalize();
+    // Ustawiamy słońce w odległości 200 jednostek w tym kierunku
+    // Dodajemy lekkie podniesienie (y), żeby oświetlić też górę stacji
+    v.multiplyScalar(200);
+    v.y = 50; 
     
-    // Dodajemy lekkie wzniesienie (elevation), np. 20 stopni w górę
-    lightVec.y = 0.35; 
-    lightVec.normalize();
+    sunLight.position.copy(v);
     
-    lightVec.multiplyScalar(distanceToSun);
+    // WAŻNE: Słońce musi patrzeć na środek (gdzie jest stacja)
+    if (sunLight.target) {
+        sunLight.target.position.set(0, 0, 0);
+        sunLight.target.updateMatrixWorld();
+    }
     
-    sunLight.position.copy(lightVec);
     sunLight.updateMatrixWorld();
   }
 
