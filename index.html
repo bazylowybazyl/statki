@@ -402,7 +402,8 @@
     import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
     import { WORLD, setWorldSize } from './src/world/world.js';
     import { initShieldSystem, updateShieldFx, drawShield, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot } from './shieldSystem.js';
-    import { createShipEntity, applyPlayerInput, runShipAI } from "./src/game/shipEntity.js";
+    // DODANO IMPORT SHIP_PHYSICS
+    import { createShipEntity, applyPlayerInput, runShipAI, SHIP_PHYSICS } from "./src/game/shipEntity.js";
     import { DestructorSystem, initHexBody, drawHexBody, drawHexBodyLocal } from "./src/game/destructor.js";
     // IMPORTUJEMY NOWY MODUŁ SUPERBRONI
     import * as Superweapon from "./src/game/superweapon.js";
@@ -12010,10 +12011,6 @@ window.AudioSys = AudioSys;
       updatePlayerCommand(dt);
       updateEnginePower(dt);
 
-      // siły
-      let totalF = { x: 0, y: 0 }, totalTorque = 0;
-      const forwardLocal = { x: 0, y: -1 };
-
       if (warp.state === 'active') {
         const turnInput = clamp(input.torque, -1, 1);
         if (Math.abs(turnInput) > 1e-3) {
@@ -12062,100 +12059,109 @@ window.AudioSys = AudioSys;
         }
       }
       else {
-        const handlingMul = boostActive ? boost.handlingMultiplier : 1;
-        const forwardWorld = rotate(forwardLocal, ship.angle);
+        // --- HYBRID PHYSICS IMPLEMENTATION (V46 PORT) ---
+        // Zastępuje stary model siłowy modelem z dema
 
-        if (boostActive) {
-          boost.effectTime = boost.effectDuration;
-          boost.effectDir = { x: forwardWorld.x, y: forwardWorld.y };
-        }
+        // 1. Parametry
+        const baseSpeed = SHIP_PHYSICS.SPEED;
+        const rotSpeed = SHIP_PHYSICS.ROTATION_SPEED;
 
-        // GŁÓWNY DUŻY SILNIK — ciąg do przodu
-        if (input.main > 0) {
-          const e = ship.engines.main;
-          const wo = rotate(e.offset, ship.angle);
-          const wf = forwardWorld;
-          let thrust = e.maxThrust * input.main;
-          if (boostActive) {
-            thrust *= (1 + boost.extraThrustMul);
+        // Boost
+        const boostActive = (boost.state === 'active');
+        const currentSpeed = boostActive ? baseSpeed * SHIP_PHYSICS.BOOST_MULT : baseSpeed;
+        const currentRotSpeed = rotSpeed; // Można dodać karę za boost jeśli chcemy
+
+        // Tarcie normalizowane do klatki (dt)
+        // Wzór: friction_factor = base_friction ^ (dt / 0.016)
+        const frictionFactor = Math.pow(SHIP_PHYSICS.FRICTION, dt / 0.016);
+
+        // Kąty
+        const sin = Math.sin(ship.angle);
+        const cos = Math.cos(ship.angle);
+        const forward = { x: sin, y: -cos }; // Dziób w górę (-Y)
+        const right = { x: cos, y: sin };    // Prawa burta
+
+        // 2. Rotacja (Kinematyczna - bezpośrednia)
+        if (input.torque !== 0) {
+          ship.angle += input.torque * currentRotSpeed * dt;
+          // Aktualizujemy angVel tylko dla systemów AI/kolizji, żeby wiedziały że się kręcimy
+          ship.angVel = input.torque * currentRotSpeed;
+
+          // Efekty manewrowe
+          if (input.torque < 0) { // W lewo (A)
+            const e = ship.engines.torqueRight; // Prawy przód/tył
+            const wo = rotate(e.offset, ship.angle);
+            spawnParticle(add(ship.pos, wo), add(ship.vel, mul(right, 100)), 0.22, '#cfe7ff', 1.0);
+          } else { // W prawo (D)
+            const e = ship.engines.torqueLeft; // Lewy przód/tył
+            const wo = rotate(e.offset, ship.angle);
+            spawnParticle(add(ship.pos, wo), add(ship.vel, mul(right, -100)), 0.22, '#cfe7ff', 1.0);
           }
-          totalF.x += wf.x * thrust; totalF.y += wf.y * thrust;
-          totalTorque += (wo.x * (wf.y * thrust) - wo.y * (wf.x * thrust));
+        } else {
+          ship.angVel = 0;
         }
-        // mały krótki ślad przy poruszaniu (bez gazu)
-        const spd = len(ship.vel);
-        if (spd > 60) {
-          const e = ship.engines.main;
-          const wo = rotate(e.offset, ship.angle);
-          const backDir = norm({ x: -ship.vel.x, y: -ship.vel.y });
-          spawnParticle({ x: ship.pos.x + wo.x, y: ship.pos.y + wo.y },
-            { x: backDir.x * 50 + (Math.random() - 0.5) * 20, y: backDir.y * 50 + (Math.random() - 0.5) * 20 },
-            0.18, '#bfe7ff', 1.2, false);
+        ship.angle = wrapAngle(ship.angle);
+
+        // 3. Ruch (Dynamiczny + Tarcie)
+
+        // Główny ciąg (W/S)
+        if (input.main !== 0) {
+          // Uwaga: input.main w starym kodzie to 0..1 (przepustnica). 
+          // Jeśli gracz trzyma S, input.main może być obsługiwane inaczej w applyPlayerInput.
+          // Tutaj upraszczamy: keys['w'] daje +speed, keys['s'] daje -speed.
+          // Musimy sprawdzić surowe klawisze lub zaufać, że input.thrustY ma znak.
+          // W `applyPlayerInput` thrustY jest przepisywane.
+
+          let thrust = 0;
+          if (keys['w']) thrust = 1;
+          else if (keys['s']) thrust = -0.4; // Wsteczny wolniejszy
+
+          if (thrust !== 0) {
+            ship.vel.x += forward.x * thrust * currentSpeed * dt;
+            ship.vel.y += forward.y * thrust * currentSpeed * dt;
+
+            // Efekt głównego silnika
+            if (thrust > 0) {
+              // Cząsteczki spawnuje osobna pętla `draw` (VFX), tutaj dodajemy tylko fizyczny impuls
+              // Ale dla spójności dodajmy też mały impuls dla 'feeling'
+            }
+          }
         }
 
-        // boczne i moment
+        // Strafe (Q/E) - input.leftSide / input.rightSide
+        const sideSpeed = currentSpeed * SHIP_PHYSICS.SIDE_POWER;
         if (input.leftSide > 0) {
-          const e = ship.engines.sideLeft;
-          const thrust = e.maxThrust * input.leftSide * handlingMul;
+          ship.vel.x -= right.x * sideSpeed * input.leftSide * dt;
+          ship.vel.y -= right.y * sideSpeed * input.leftSide * dt;
+
+          const e = ship.engines.sideRight; // Odpalasz prawy, lecisz w lewo
           const wo = rotate(e.offset, ship.angle);
-          const lateral = rotate({ x: 1, y: 0 }, ship.angle);
-          const worldForce = { x: lateral.x * thrust, y: lateral.y * thrust };
-          totalF.x += worldForce.x; totalF.y += worldForce.y;
-          totalTorque += (wo.x * worldForce.y - wo.y * worldForce.x);
-          spawnParticle(add(ship.pos, wo), add(ship.vel, mul(worldForce, -0.002)), 0.30, '#cfe7ff', 1.0);
+          spawnParticle(add(ship.pos, wo), add(ship.vel, mul(right, 150)), 0.30, '#cfe7ff', 1.0);
         }
         if (input.rightSide > 0) {
-          const e = ship.engines.sideRight;
-          const thrust = e.maxThrust * input.rightSide * handlingMul * 3.0;
+          ship.vel.x += right.x * sideSpeed * input.rightSide * dt;
+          ship.vel.y += right.y * sideSpeed * input.rightSide * dt;
+
+          const e = ship.engines.sideLeft; // Odpalasz lewy, lecisz w prawo
           const wo = rotate(e.offset, ship.angle);
-          const lateral = rotate({ x: -1, y: 0 }, ship.angle);
-          const worldForce = { x: lateral.x * thrust, y: lateral.y * thrust };
-          totalF.x += worldForce.x; totalF.y += worldForce.y;
-          totalTorque += (wo.x * worldForce.y - wo.y * worldForce.x);
-          spawnParticle(add(ship.pos, wo), add(ship.vel, mul(worldForce, -0.002)), 0.30, '#cfe7ff', 1.0);
+          spawnParticle(add(ship.pos, wo), add(ship.vel, mul(right, -150)), 0.30, '#cfe7ff', 1.0);
         }
-        if (input.torque !== 0) {
-          const sign = Math.sign(input.torque);
-          const left = ship.engines.torqueLeft; const right = ship.engines.torqueRight;
-          const thrust = left.maxThrust * Math.abs(input.torque) * handlingMul;
-          const o1 = rotate(left.offset, ship.angle), o2 = rotate(right.offset, ship.angle);
-          const lateral1 = rotate({ x: 1, y: 0 }, ship.angle), lateral2 = rotate({ x: -1, y: 0 }, ship.angle);
-          const f1 = mul(lateral1, thrust * sign), f2 = mul(lateral2, thrust * sign);
-          totalF.x += f1.x + f2.x; totalF.y += f1.y + f2.y;
-          totalTorque += (o1.x * f1.y - o1.y * f1.x) + (o2.x * f2.y - o2.y * f2.x);
-          spawnParticle(add(ship.pos, o1), add(ship.vel, mul(f1, -0.002)), 0.22, '#cfe7ff', 1.0);
-          spawnParticle(add(ship.pos, o2), add(ship.vel, mul(f2, -0.002)), 0.22, '#cfe7ff', 1.0);
+
+        // 4. Aplikacja Tarcia (Klucz do "Driftu")
+        ship.vel.x *= frictionFactor;
+        ship.vel.y *= frictionFactor;
+
+        // Boost logic (Update Timer)
+        if (boostActive) {
+          boost.effectTime = boost.effectDuration;
+          boost.effectDir = { x: forward.x, y: forward.y };
         }
+        if (!boostActive && boost.effectTime > 0) boost.effectTime = Math.max(0, boost.effectTime - dt);
       }
 
-      // integracja ruchu
-      const ax = totalF.x / ship.mass, ay = totalF.y / ship.mass;
-      ship.vel.x += ax * dt; ship.vel.y += ay * dt;
-      const linDamp = Math.exp(-ship.linearDamping * (boostActive ? boost.dampingFactor : 1) * dt);
-      if (warp.state !== 'active') { ship.vel.x *= linDamp; ship.vel.y *= linDamp; }
-      if (boostActive && warp.state !== 'active') {
-        const zoneId = zoneState.current?.id;
-        const inOuterOrbit = (
-          zoneId === 'planet_outer' ||
-          zoneId === 'pirate_outer' ||
-          zoneId === 'planet_gravity' ||
-          zoneId === 'pirate_gravity'
-        );
-        const inInnerOrbit = zoneId === 'planet_inner' || zoneId === 'pirate_inner';
-        const boostCap = inOuterOrbit
-          ? warp.speed * 0.4
-          : inInnerOrbit
-            ? warp.speed * 0.3
-            : null;
-        if (boostCap) {
-          const speed = len(ship.vel);
-          if (speed > boostCap) {
-            const scale = boostCap / speed;
-            ship.vel.x *= scale;
-            ship.vel.y *= scale;
-          }
-        }
-      }
+      // integracja ruchu (pozycja)
+      // W modelu V46 nie używamy F=ma, tylko bezpośrednio v += speed*dt, więc ax/ay nie są potrzebne
+      // Jednak dla kolizji i wraków warto zachować jakąś "masę" w kolizjach, ale ruch gracza jest nadrzędny.
       updateGravityWarpBrake(dt);
       ship.pos.x += ship.vel.x * dt;
       ship.pos.y += ship.vel.y * dt;
@@ -12168,12 +12174,13 @@ window.AudioSys = AudioSys;
       ship.x = ship.pos.x;
       ship.y = ship.pos.y;
 
-      // obrót
-      const angAcc = totalTorque / ship.inertia;
+      // obrót (STARY KOD USUNIĘTY - zastąpiony powyżej kinematycznym)
+      /* const angAcc = totalTorque / ship.inertia;
       ship.angVel += angAcc * dt;
       ship.angVel *= Math.exp(-ship.angularDamping * (boostActive ? boost.angularDampingFactor : 1) * dt);
       ship.angle += ship.angVel * dt;
-      ship.angle = wrapAngle(ship.angle);
+      */
+      // ship.angle = wrapAngle(ship.angle);
       // Aktualizacja wraków
       for (let i = wrecks.length - 1; i >= 0; i--) {
         const w = wrecks[i];
