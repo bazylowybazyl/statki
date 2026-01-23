@@ -109,6 +109,8 @@ const PlanetRenderer = {
         const ambient = new THREE.AmbientLight(0x111111);
         this.scene.add(ambient);
 
+        this.createStars();
+
         this.resize();
         window.addEventListener('resize', () => this.resize());
     },
@@ -118,6 +120,42 @@ const PlanetRenderer = {
         this.width = window.innerWidth;
         this.height = window.innerHeight;
         this.renderer.setSize(this.width, this.height, false);
+    },
+
+    createStars: function() {
+        const starCount = 5000;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(starCount * 3);
+        const colors = new Float32Array(starCount * 3);
+
+        for (let i = 0; i < starCount; i++) {
+            const x = (Math.random() - 0.5) * 400000;
+            const y = (Math.random() - 0.5) * 400000;
+            const z = (Math.random() - 0.5) * 100000 - 50000;
+
+            positions[i * 3] = x;
+            positions[i * 3 + 1] = y;
+            positions[i * 3 + 2] = z;
+
+            colors[i * 3] = 0.8 + Math.random() * 0.2;
+            colors[i * 3 + 1] = 0.8 + Math.random() * 0.2;
+            colors[i * 3 + 2] = 1.0;
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        const material = new THREE.PointsMaterial({
+            color: 0xffffff,
+            size: 400,
+            sizeAttenuation: true,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.8
+        });
+
+        const starField = new THREE.Points(geometry, material);
+        this.scene.add(starField);
     },
 
     render: function(gameCamera) {
@@ -323,6 +361,7 @@ window.initPlanets3D = function(planetList, sunData) {
         // ale mogą się przydać dla innych obiektów (np. stacji).
         const ambient = new THREE.AmbientLight(0x333333);
         PlanetRenderer.scene.add(ambient);
+        PlanetRenderer.createStars();
     }
 
     if (sunData) {
