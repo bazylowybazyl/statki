@@ -13,11 +13,12 @@ let previewCam = null;
 let activeScene = null;
 let ambLight = null;
 let dirLight = null;
-let sharedRendererWarned = false;
+
+let localRenderer = null; 
 
 // Stałe konfiguracyjne
 const DEFAULT_STATION_SPRITE_SIZE = 512;
-const DEFAULT_STATION_SPRITE_FRAME = 1.25;
+const DEFAULT_STATION_SPRITE_FRAME = 3.0;
 const MIN_SPRITE_RENDER_INTERVAL = 0;
 const FRAME_EPSILON = 0.001;
 
@@ -50,21 +51,28 @@ function markSpriteDirty(record) {
   }
 }
 
-// --- POPRAWIONA FUNKCJA INIT SCENE ---
 function initScene() {
   if (ownScene) return ownScene;
   ownScene = new THREE.Scene();
   activeScene = ownScene;
 
-  // 1. Światło Ambient (rozproszone)
+  // 1. Światło Ambient (rozproszone) - lekko podbite dla lepszej widoczności w cieniu
   if (ambLight) ownScene.remove(ambLight);
-  ambLight = new THREE.AmbientLight(0xffffff, 0.5);
+  ambLight = new THREE.AmbientLight(0xffffff, 0.7);
   ownScene.add(ambLight);
 
-  // 2. Światło Kierunkowe (Słońce)
+  // 2. Światło Kierunkowe (Słońce) - poprawione parametry cieni
   if (dirLight) ownScene.remove(dirLight);
-  dirLight = new THREE.DirectionalLight(0xffffff, 8.0);
-  dirLight.position.set(10, 0, 0);
+  dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+  dirLight.position.set(20, 10, 20); // Wyżej i pod kątem
+  
+  // Konfiguracja cieni przeciw migotaniu (Shadow Acne)
+  dirLight.castShadow = true;
+  dirLight.shadow.mapSize.width = 2048; // Wyższa rozdzielczość cieni
+  dirLight.shadow.mapSize.height = 2048;
+  dirLight.shadow.bias = -0.0005; // Kluczowe dla uniknięcia "prążków" na modelu
+  dirLight.shadow.normalBias = 0.02; // Pomaga przy zakrzywionych powierzchniach
+  
   ownScene.add(dirLight);
   ownScene.userData.dirLight = dirLight;
 
@@ -73,13 +81,12 @@ function initScene() {
   pmremGenerator.compileEquirectangularShader();
   const envTexture = pmremGenerator.fromScene(new RoomEnvironment()).texture;
   ownScene.environment = envTexture;
-  // ownScene.background = null; // przezroczyste tło
 
   // Kamera
   const S = getStationSpriteSize();
   const H = S / 2;
-  previewCam = new THREE.PerspectiveCamera(30, 1, 1, H * 8);
-  previewCam.position.set(H * 1.0, H * 0.8, H * 1.9);
+  previewCam = new THREE.PerspectiveCamera(30, 1, 0.1, 10000);
+  previewCam.position.set(0, 0, 100);
   previewCam.lookAt(0, 0, 0);
   ownScene.add(previewCam);
 
@@ -87,16 +94,32 @@ function initScene() {
 }
 
 function getSharedRenderer(width, height) {
-  if (typeof window === 'undefined') return null;
-  const getter = window.getSharedRenderer;
-  if (typeof getter !== 'function') {
-    if (!sharedRendererWarned) {
-      console.warn('Stations3D: shared renderer unavailable');
-      sharedRendererWarned = true;
-    }
-    return null;
+  // 1. Próba użycia globalnego
+  if (typeof window !== 'undefined' && typeof window.getSharedRenderer === 'function') {
+    const r = window.getSharedRenderer(width, height);
+    if (r) return r;
   }
-  return getter(width, height);
+
+  // 2. Fallback: Własny renderer z FIXEM NA MIGOTANIE
+  if (!localRenderer) {
+    localRenderer = new THREE.WebGLRenderer({ 
+        alpha: true, 
+        antialias: true, 
+        preserveDrawingBuffer: true,
+        logarithmicDepthBuffer: true // <--- TO NAPRAWIA Z-FIGHTING (MIGOTANIE)
+    });
+    localRenderer.setPixelRatio(1);
+    localRenderer.outputColorSpace = THREE.SRGBColorSpace;
+    localRenderer.shadowMap.enabled = true; // Włącz cienie
+    localRenderer.shadowMap.type = THREE.PCFSoftShadowMap; // Miękkie cienie
+  }
+  
+  const size = localRenderer.getSize(new THREE.Vector2());
+  if (size.x !== width || size.y !== height) {
+      localRenderer.setSize(width, height, false);
+  }
+  
+  return localRenderer;
 }
 
 function ensurePreviewCamera() {
@@ -128,7 +151,6 @@ const MODEL_URLS = {
   ]
 };
 
-// --- POPRAWIONA FUNKCJA GET TEMPLATE ---
 function getTemplate(stationId, path) {
   if (templateCache.has(path)) {
     return templateCache.get(path);
@@ -141,52 +163,57 @@ function getTemplate(stationId, path) {
     path,
     (gltf) => {
       const scene = gltf.scene;
-
-      // NIE wywijamy modelu skalą -1
-      // gltf.scene.scale.set(-1, 1, 1);
+      
+      // Optymalizacja materiałów i tekstur pod kątem migotania
+      const maxAnisotropy = localRenderer ? localRenderer.capabilities.getMaxAnisotropy() : 4;
 
       scene.traverse((o) => {
         if (!o.isMesh) return;
-
         o.castShadow = true;
         o.receiveShadow = true;
+        
+        // Czasami modele mają źle ustawione frustum culling, co powoduje znikanie
+        o.frustumCulled = false; 
 
         const materials = Array.isArray(o.material) ? o.material : [o.material];
-
         for (const m of materials) {
           if (!m) continue;
+          
+          // Poprawa jakości tekstur
+          if (m.map) m.map.anisotropy = maxAnisotropy;
+          if (m.normalMap) m.normalMap.anisotropy = maxAnisotropy;
+          if (m.roughnessMap) m.roughnessMap.anisotropy = maxAnisotropy;
+          if (m.metalnessMap) m.metalnessMap.anisotropy = maxAnisotropy;
 
-          // Rysujemy obie strony, żeby nie znikały ścianki
-          m.side = THREE.DoubleSide;
+          // DoubleSide często powoduje migotanie na cienkich ściankach
+          // Jeśli model migocze, zmiana na FrontSide często pomaga
+          // m.side = THREE.FrontSide; // Odkomentuj jeśli nadal migocze
+          m.side = THREE.DoubleSide; 
 
-          // Domyślnie – nieprzezroczyste
           m.transparent = false;
-
-          // Depth test/write ON, żeby kolejność geometrii była poprawna
           m.depthWrite = true;
           m.depthTest = true;
-
-          // Jeśli materiał ma alphę, używamy alphaTest (dziury w teksturze)
+          
           if (m.map || m.alphaMap) {
-            m.alphaTest = 0.1;
+            m.alphaTest = 0.5; // Agresywniejsze wycinanie przezroczystości
           }
-
-          // PBR metaliczny
+          
           m.envMapIntensity = 1.0;
-          if (typeof m.metalness === 'number' && m.metalness < 0.1) m.metalness = 0.8;
-          if (typeof m.roughness === 'number' && m.roughness > 0.9) m.roughness = 0.4;
-
+          
+          // Zapobieganie "czarnym plamom" przy braku odbić
+          if (typeof m.metalness === 'number' && m.metalness < 0.1) m.metalness = 0.5; 
+          if (typeof m.roughness === 'number' && m.roughness > 0.9) m.roughness = 0.6;
+          
           m.needsUpdate = true;
         }
       });
-
       placeholder.scene = scene;
       placeholder.materials = [];
       placeholder.loading = false;
     },
     undefined,
     (err) => {
-      console.error('GLTFLoader error loading station:', path, err);
+      console.warn('GLTFLoader error loading station:', path, err);
       placeholder.error = true;
       placeholder.loading = false;
     }
@@ -195,7 +222,6 @@ function getTemplate(stationId, path) {
   return placeholder;
 }
 
-// --- POPRAWIONA FUNKCJA CLONE TEMPLATE ---
 function cloneTemplate(stationId, path) {
   const cacheEntry = getTemplate(stationId, path);
   if (!cacheEntry || cacheEntry.error || !cacheEntry.scene) {
@@ -229,10 +255,18 @@ function getModelUrlsForStation(station) {
   const planet = tryStr(station?.planet?.name) || tryStr(station?.planet?.id);
   const orbit = tryStr(station?.orbit?.name);
   const host = tryStr(station?.host) || tryStr(station?.home);
+  
   const candidates = [id, name, style, planet, orbit, host].filter(Boolean).join(' ');
   const keys = Object.keys(MODEL_URLS);
+  
   const hit = keys.find((k) => candidates.includes(k));
-  return hit ? MODEL_URLS[hit] : null;
+  if (hit) return MODEL_URLS[hit];
+
+  if (!isPirateStation(station)) {
+      return MODEL_URLS.earth; 
+  }
+
+  return null;
 }
 
 function isPirateStation(station) {
@@ -305,23 +339,6 @@ function disableShadows(object) {
     if (node && (node.isMesh || node.isPoints || node.isLine)) {
       node.castShadow = false;
       node.receiveShadow = false;
-    }
-  });
-}
-
-// UWAGA: elevateOverlay zostaje, ale NIE używamy go do modeli stacji,
-// tylko ewentualnie do UI / overlayów w innych miejscach.
-function elevateOverlay(object) {
-  object.traverse?.((node) => {
-    if (node && (node.isMesh || node.isPoints || node.isLine)) {
-      const mats = Array.isArray(node.material) ? node.material : [node.material];
-      for (const m of mats) {
-        if (!m) continue;
-        m.depthTest = false;
-        m.depthWrite = false;
-        m.transparent = true;
-      }
-      node.renderOrder = 10000;
     }
   });
 }
@@ -422,80 +439,6 @@ function ensureStationRecord(station) {
   return record;
 }
 
-// (Używane prawdopodobnie gdzie indziej, zostawiamy, ale poprawiamy overlay)
-function ensureStationObject(record, station) {
-  if (!record || !station) return null;
-  if (record.group || record.loadingPromise) return record.loadingPromise;
-  if (!activeScene) return null;
-  const urls = getModelUrlsForStation(station);
-  if (!urls) return null;
-  const promise = loadTemplateWithFallback(urls)
-    .then((template) => {
-      if (!template || !stationRecords.has(record.key)) return null;
-      record.template = template;
-      const clone = SkeletonUtils.clone(template);
-      disableShadows(clone);
-      // NIE podnosimy całej stacji jako overlay
-      const wrapper = new THREE.Group();
-      wrapper.name = `station3d:${station.id ?? record.key}`;
-      wrapper.add(clone);
-      wrapper.renderOrder = 10001;
-
-      const bbox = new THREE.Box3().setFromObject(wrapper);
-      const center = bbox.getCenter(new THREE.Vector3());
-      clone.position.sub(center);
-      wrapper.updateMatrixWorld(true);
-
-      bbox.setFromObject(wrapper);
-      const sphere = bbox.getBoundingSphere(new THREE.Sphere());
-      const geometryRadius =
-        sphere?.radius && sphere.radius > 0 ? sphere.radius : 1;
-      const desiredRadiusRaw =
-        (Number.isFinite(station.r) ? station.r : station.baseR) ?? 1;
-      const targetRadius =
-        Number.isFinite(desiredRadiusRaw) && desiredRadiusRaw > 0
-          ? desiredRadiusRaw
-          : 1;
-
-      record.geometryRadius = geometryRadius;
-      wrapper.userData.geometryRadius = geometryRadius;
-      const baseScale = targetRadius / geometryRadius;
-      wrapper.userData.baseScale = baseScale;
-      wrapper.userData.stationId = station.id ?? record.key;
-      wrapper.userData.targetRadius = targetRadius;
-
-      record.group = wrapper;
-      const devScale = getDevScale();
-      const visible = isUse3DEnabled();
-      updateRecordTransform(record, station, devScale, visible);
-      record.lastRenderedScale = null;
-      record.lastTargetRadius = targetRadius;
-      record.lastSpriteFrame = NaN;
-      record.lastSpriteSize = 0;
-      markSpriteDirty(record);
-
-      wrapper.position.set(0, 0, 0);
-      const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
-      wrapper.rotation.y = baseAngle + (record.spinOffset ?? 0);
-
-      if (activeScene && !wrapper.parent) {
-        activeScene.add(wrapper);
-      }
-      station._mesh3d = wrapper;
-      return wrapper;
-    })
-    .catch((err) => {
-      console.error('Failed to load station 3D model:', err);
-      return null;
-    })
-    .finally(() => {
-      record.loadingPromise = null;
-    });
-
-  record.loadingPromise = promise;
-  return promise;
-}
-
 function updateRecordTransform(record, station, devScale, visible) {
   const group = record.group;
   if (!group) return;
@@ -574,9 +517,6 @@ export function initStations3D(_sceneIgnored, stations) {
     group.visible = false;
     activeScene.add(group);
 
-    // KLUCZOWE: nie robimy z całej stacji "overlay"
-    // elevateOverlay(group);
-
     const bbox = new THREE.Box3().setFromObject(group);
     const center = bbox.getCenter(new THREE.Vector3());
     group.position.sub(center);
@@ -627,7 +567,9 @@ export function initStations3D(_sceneIgnored, stations) {
 
 // --- UPDATE STATIONS ---
 export function updateStations3D(stations) {
-  if (!Array.isArray(stations) || !activeScene) return;
+  if (!Array.isArray(stations)) return;
+  if (!activeScene) activeScene = initScene();
+
   const devScale = getDevScale();
   const visible = isUse3DEnabled();
   const activeKeys = new Set();
@@ -643,15 +585,12 @@ export function updateStations3D(stations) {
     if (!record) continue;
     activeKeys.add(record.key);
 
-    // Jeśli model nie załadowany, init
     if (!record.group) {
       const clone = cloneTemplate(station.id, path);
       if (clone) {
         const { scene: group } = clone;
         group.visible = false;
         activeScene.add(group);
-        // NIE robimy overlay – zachowujemy depthTest / depthWrite
-        // elevateOverlay(group);
 
         const bbox = new THREE.Box3().setFromObject(group);
         const center = bbox.getCenter(new THREE.Vector3());
@@ -667,7 +606,6 @@ export function updateStations3D(stations) {
       }
     }
 
-    // Aktualizacja skali / widoczności
     updateRecordTransform(record, station, devScale, visible);
   }
 
@@ -744,30 +682,11 @@ function renderStationSprite(record) {
   const renderer = getSharedRenderer(size, size);
   if (!scene || !cam || !renderer) return;
 
-  // --- ZAPAMIĘTYWANIE STANU RENDERERA ---
   const prevAutoClear = renderer.autoClear;
-  const prevTarget =
-    typeof renderer.getRenderTarget === 'function'
-      ? renderer.getRenderTarget()
-      : null;
+  const prevTarget = typeof renderer.getRenderTarget === 'function' ? renderer.getRenderTarget() : null;
+  const prevViewport = new THREE.Vector4();
+  if (typeof renderer.getViewport === 'function') renderer.getViewport(prevViewport);
 
-  const hasViewport =
-    typeof renderer.getViewport === 'function' &&
-    typeof renderer.setViewport === 'function';
-  const prevViewport = hasViewport
-    ? renderer.getViewport(TMP_VIEWPORT)
-    : null;
-
-  const hasScissor =
-    typeof renderer.getScissor === 'function' &&
-    typeof renderer.setScissor === 'function';
-  const prevScissor = hasScissor ? renderer.getScissor(TMP_SCISSOR) : null;
-  const prevScissorTest =
-    typeof renderer.getScissorTest === 'function'
-      ? renderer.getScissorTest()
-      : renderer.state?.scissor?.test ?? false;
-
-  // Pokaż tylko tę stację
   const prevVis = [];
   for (const [, rec] of stationRecords) {
     if (!rec.group) continue;
@@ -775,20 +694,18 @@ function renderStationSprite(record) {
     rec.group.visible = rec === record;
   }
 
-  const R_geom = Math.max(
-    1,
-    record.geometryRadius || record.group?.userData?.geometryRadius || 1
-  );
+  const R_geom = Math.max(1, record.geometryRadius || record.group?.userData?.geometryRadius || 1);
   const s = record.group?.scale?.x || 1;
   const R_eff = Math.max(1, R_geom * s);
-  const fovRad = (cam.fov * Math.PI) / 180;
-  const distFit = R_eff / Math.tan(fovRad * 0.5);
-  const dist = Math.max(10, distFit / zoomMul);
 
-  cam.position.set(dist, dist * 0.62, dist);
+  const fovRad = (cam.fov * Math.PI) / 180;
+  const distToFit = R_eff / Math.sin(fovRad / 2);
+  const minSafeDist = R_eff * 1.1 + 1.0; 
+  const dist = Math.max(minSafeDist, distToFit / zoomMul);
+
+  cam.position.set(dist, dist * 0.62, dist); 
   cam.lookAt(0, 0, 0);
 
-  // Aktualizacja światła
   const sunLight = scene.userData?.dirLight;
   const stRef = record.stationRef;
   if (sunLight && stRef && typeof window !== 'undefined' && window.SUN) {
@@ -802,10 +719,9 @@ function renderStationSprite(record) {
     }
   }
 
-  // --- KLUCZOWA POPRAWKA ---
   resetRenderer(renderer, size, size);
   renderer.autoClear = false;
-  renderer.clear(true, true, true); // w tym depth buffer
+  renderer.clear(true, true, true);
 
   if (!renderer.capabilities.isWebGL2) {
     const gl = renderer.getContext();
@@ -824,30 +740,15 @@ function renderStationSprite(record) {
     rendered = true;
   }
 
-  // Przywracanie widoczności
   for (const [group, visible] of prevVis) {
     group.visible = visible;
   }
 
-  // Przywracanie stanu
   renderer.autoClear = prevAutoClear;
-  if (prevViewport)
-    renderer.setViewport(
-      prevViewport.x,
-      prevViewport.y,
-      prevViewport.z,
-      prevViewport.w
-    );
-  if (prevScissor)
-    renderer.setScissor(
-      prevScissor.x,
-      prevScissor.y,
-      prevScissor.z,
-      prevScissor.w
-    );
-  renderer.setScissorTest(!!prevScissorTest);
-  if (typeof renderer.setRenderTarget === 'function')
-    renderer.setRenderTarget(prevTarget || null);
+  if (prevViewport.width > 0) {
+      renderer.setViewport(prevViewport);
+  }
+  if (typeof renderer.setRenderTarget === 'function') renderer.setRenderTarget(prevTarget || null);
 
   if (rendered) {
     record.lastSpriteTime = now;
@@ -883,10 +784,7 @@ export function drawStations3D(ctx, cam, worldToScreen) {
     const idKey = getStationIdKey(st);
     const perScale = Number(perMap[idKey]) || 1;
     const effectiveScalar = globalScalar * perScale;
-    const radiusWorld = Math.max(
-      1,
-      (Number.isFinite(st.r) ? st.r : st.baseR) || 1
-    ) * effectiveScalar;
+    const radiusWorld = Math.max(1, (Number.isFinite(st.r) ? st.r : st.baseR) || 1) * effectiveScalar;
     const sizePx = radiusWorld * 2 * zoom;
     if (!hasW2S) continue;
 
@@ -962,12 +860,34 @@ export function setStationScale(id, scale = 1) {
   }
 }
 
+// --- NOWA FUNKCJA DO OBSŁUGI KADRU ---
+export function setStationSpriteFrame(id, val) {
+  if (typeof window === 'undefined') return;
+  const key = String(id ?? '').toLowerCase();
+  if (!key) return;
+
+  // 1. Aktualizacja konfiguracji
+  if (!window.DevConfig) window.DevConfig = {};
+  if (!window.DevConfig.stationSpriteFrameById) window.DevConfig.stationSpriteFrameById = {};
+  window.DevConfig.stationSpriteFrameById[key] = Number(val);
+
+  // 2. Wymuszenie odświeżenia sprite'a
+  for (const rec of stationRecords.values()) {
+    const st = rec.stationRef;
+    if (!st) continue;
+    if (getStationIdKey(st) === key) {
+       markSpriteDirty(rec);
+    }
+  }
+}
+
 export function getStationScales() {
   return getPerStationScaleMap();
 }
 
 if (typeof window !== 'undefined') {
   window.setStationScale = setStationScale;
+  window.setStationSpriteFrame = setStationSpriteFrame; // Export nowego API
   window.getStationScales = getStationScales;
   window.initStations3D = initStations3D;
   window.updateStations3D = updateStations3D;
