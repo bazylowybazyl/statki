@@ -9123,22 +9123,8 @@ window.AudioSys = AudioSys;
 
         mercMission.guards.push(npc);
       }
-      const orbitBase = station.r + 220;
-      const baseAngle = Math.random() * Math.PI * 2;
-      const angleStep = Math.PI / 2;
-      const jitter = 0.25;
-      const platformConfigs = [
-        { angle: baseAngle + (Math.random() - 0.5) * jitter, orbitRadius: orbitBase, label: 'Platforma A' },
-        { angle: baseAngle + angleStep + (Math.random() - 0.5) * jitter, orbitRadius: orbitBase + 80, label: 'Platforma B', orbitSpeed: 0.18 },
-        { angle: baseAngle + angleStep * 2 + (Math.random() - 0.5) * jitter, orbitRadius: orbitBase + 40, label: 'Platforma C', orbitSpeed: -0.16 },
-        { angle: baseAngle + angleStep * 3 + (Math.random() - 0.5) * jitter, orbitRadius: orbitBase + 120, label: 'Platforma D', orbitSpeed: 0.14 }
-      ];
       if (typeof window.resetSwarmQueue === 'function') {
         window.resetSwarmQueue();
-      }
-      for (const cfg of platformConfigs) {
-        const platform = spawnWeaponPlatform(station, cfg);
-        mercMission.weaponPlatforms.push(platform);
       }
 
       // Zapis do dziennika + koordy do markera mapy
