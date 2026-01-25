@@ -11705,18 +11705,30 @@ window.AudioSys = AudioSys;
       }
     }
 
-    function engageWarp(dir) {
-      const ndir = norm(dir);
-      warp.dir.x = ndir.x;
-      warp.dir.y = ndir.y;
-      ship.angle = Math.atan2(ndir.y, ndir.x) + Math.PI / 2;
-      ship.angVel = 0;
+    function engageWarp(dirToMouse) { // dirToMouse ignorujemy, bierzemy dziób statku
+      
+      // FIX: Pobieramy wektor z AKTUALNEGO kąta statku
+      // W tym silniku 0 stopni to góra (0, -1), obrót zgodnie z zegarem
+      const angle = ship.angle;
+      const dirX = Math.sin(angle);
+      const dirY = -Math.cos(angle);
+
+      warp.dir.x = dirX;
+      warp.dir.y = dirY;
+      
+    
+      
+      ship.angVel = 0; // Tylko stabilizujemy obrót
+      
       warp.state = 'active';
       warp.entryProgress = 0;
       warp.entryBaseSpeed = Math.hypot(ship.vel.x, ship.vel.y);
+      
       if (DevFlags.unlimitedWarp) {
         warp.fuel = warp.fuelMax;
       }
+      
+      // Efekty wizualne
       spawnParticle({ x: ship.pos.x, y: ship.pos.y }, { x: 0, y: 0 }, 0.14, '#bfe7ff', 8, true);
       for (let i = 0; i < 18; i++) {
         const a = Math.random() * Math.PI * 2;
