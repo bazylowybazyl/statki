@@ -238,14 +238,14 @@ void main() {
 `;
 
 // ==========================================
-// 3. SYSTEM GWIAZD
+// 3. SYSTEM GWIAZD (POPRAWIONY: ULTRAWIDE + PARALAKSA)
 // ==========================================
 
 const StarSystem = {
     mesh: null,
     uniforms: null,
-    count: 20000,
-    worldScale: 30000,
+    count: 40000,        // Zwiększona ilość dla gęstości
+    worldScale: 100000,  // Ogromny obszar dla monitorów Ultrawide
     lastWarpState: 'idle',
     exitTimer: 0,
 
@@ -258,7 +258,6 @@ const StarSystem = {
         const tempColor = new THREE.Color();
 
         for(let i=0; i < this.count; i++) {
-            // Generujemy w lokalnej przestrzeni mesha (box wokół 0,0)
             positions[i*3] = (Math.random() - 0.5) * this.worldScale;
             positions[i*3+1] = (Math.random() - 0.5) * this.worldScale;
             positions[i*3+2] = -5000; 
@@ -331,57 +330,63 @@ const StarSystem = {
 
         this.uniforms.time.value += dt;
 
-        // 1. Przesuwamy fizycznie mesh gwiazd, aby był zawsze tam gdzie kamera
+        // 1. FIX ULTRAWIDE: Gwiazdy podążają za kamerą
         if (this.mesh) {
             this.mesh.position.set(cx, -cy, -10000); 
         }
 
-        // 2. Aktualizujemy offset (paralaksa)
-        this.uniforms.cameraOffset.value.set(cx * 0.05, -cy * 0.05);
+        // 2. FIX PARALAKSA: Zwiększono mnożnik z 0.05 na 0.25
+        this.uniforms.cameraOffset.value.set(cx * 0.25, -cy * 0.25);
 
-        // Kierunek rozciągania (Warp) - PRZECIWNY do dziobu
-        if (ship && typeof ship.angle === 'number') {
-            this.uniforms.moveDir.value.set(Math.sin(ship.angle), -Math.cos(ship.angle));
+        // Kierunek rozciągania
+        let dx = 0, dy = 1;
+        if (ship && ship.vel) {
+             const speed = Math.hypot(ship.vel.x, ship.vel.y);
+             if (speed > 10) {
+                 dx = ship.vel.x / speed;
+                 dy = ship.vel.y / speed;
+             } else if (typeof ship.angle === 'number') {
+                 dx = Math.sin(ship.angle);
+                 dy = -Math.cos(ship.angle);
+             }
         }
-
+        
+        // Logika Warpa (bez zmian logicznych, tylko podpięcie)
+        let targetWarp = 0.0;
         if (window.warp) {
-            let targetWarp = 0;
             const currentState = window.warp.state;
-
-            // Wykrywanie momentu wyjścia z warpa (Active -> Idle/Braking)
             if (this.lastWarpState === 'active' && currentState !== 'active') {
-                this.exitTimer = 0.8; // Czas trwania efektu hamowania
+                this.exitTimer = 0.8;
             }
             this.lastWarpState = currentState;
 
-            // Logika stanów
             if (currentState === 'active') {
                 targetWarp = 1.0;
-                this.exitTimer = 0;
-            } 
-            else if (currentState === 'charging' && window.warp.chargeTime > 0) {
-                // Efekt drgania przy ładowaniu
+                // W warpie gwiazdy lecą zgodnie z kierunkiem warpa
+                if (window.warp.dir) {
+                    dx = window.warp.dir.x;
+                    dy = window.warp.dir.y;
+                }
+            } else if (currentState === 'charging' && window.warp.chargeTime > 0) {
                 const progress = Math.min(1, window.warp.charge / window.warp.chargeTime);
                 targetWarp = Math.pow(progress, 3.0) * 0.3;
-            } 
-            else if (this.exitTimer > 0) {
-                // EFEKT HAMOWANIA: Zmniejszamy timer i ustawiamy silne rozciągnięcie
-                this.exitTimer -= dt;
-                const progress = Math.max(0, this.exitTimer / 0.8);
-                // Funkcja kwadratowa dla płynnego zaniku
-                targetWarp = Math.pow(progress, 2.0) * 1.5; 
             }
-
-            // Interpolacja dla płynności
-            const current = this.uniforms.warpFactor.value;
-            // Szybsza interpolacja przy hamowaniu (snappy effect), wolniejsza przy ładowaniu
-            const lerpSpeed = (this.exitTimer > 0) ? 8.0 : 5.0;
-            
-            this.uniforms.warpFactor.value += (targetWarp - current) * lerpSpeed * dt;
         }
+
+        if (this.exitTimer > 0) {
+            this.exitTimer -= dt;
+            const progress = Math.max(0, this.exitTimer / 0.8);
+            targetWarp = Math.max(targetWarp, Math.pow(progress, 2.0) * 1.5);
+        }
+
+        // Aplikacja do shadera (-dy bo Three.js ma odwrócony Y)
+        this.uniforms.moveDir.value.set(dx, -dy); 
+
+        const currentWarp = this.uniforms.warpFactor.value;
+        const lerpSpeed = (this.exitTimer > 0) ? 8.0 : 4.0;
+        this.uniforms.warpFactor.value += (targetWarp - currentWarp) * lerpSpeed * dt;
     }
 };
-
 // ==========================================
 // 4. PLANET RENDERER
 // ==========================================
