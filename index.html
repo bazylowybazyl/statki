@@ -12068,12 +12068,10 @@ window.AudioSys = AudioSys;
           warp.charge += dt;
         }
 
-        // --- FIX: POPRAWIONY WARUNEK WEJŚCIA ---
-        // Jeśli naładowany: ignorujemy idealne celowanie (orientTolerance).
-        // Funkcja engageWarp() i tak ustawi statek idealnie prosto w momencie skoku.
-        // Dzięki temu warp "nie zacina się" przy ruszaniu myszką.
+        // WARUNEK WEJŚCIA:
+        // Jeśli naładowane -> wchodzimy. engageWarp() weźmie obecny kąt dziobu.
         if (warp.charge >= warp.chargeTime && (DevFlags.unlimitedWarp || warp.fuel > 0)) {
-          engageWarp(dirToMouse);
+          engageWarp();
         }
       }
       else {
