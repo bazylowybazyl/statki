@@ -2537,6 +2537,9 @@ window.AudioSys = AudioSys;
       focusZoom: 1.0,
       focusArrived: false,
       transition: null,
+      warpFactor: 0,
+      moveDir: new THREE.Vector2(0, 0),
+      isCharging: false,
       addShake(mag, dur) {
         if (DevFlags && DevFlags.disableCameraShake) {
           this.shakeMag = 0;
@@ -9543,7 +9546,11 @@ window.AudioSys = AudioSys;
       }
       const leftSide = keys['e'] ? 1 : 0;
       const rightSide = keys['q'] ? 1 : 0;
-      let torque = 0; if (keys['a']) torque -= 1; if (keys['d']) torque += 1;
+      let torque = 0;
+      if (!camera.isCharging) {
+        if (keys['a']) torque -= 1;
+        if (keys['d']) torque += 1;
+      }
       applyPlayerInput(ship, {
         controller: 'player',
         thrustX: torque,
@@ -12445,6 +12452,7 @@ window.AudioSys = AudioSys;
     let vfxTime = 0;
     let prevState = null;
     let firstFrameResolver = null;
+    let warpTimer = 0;
     function saveState() { prevState = { pos: { ...ship.pos }, angle: ship.angle, turretAngle: ship.turret.angle, turretAngle2: ship.turret2.angle, turretAngle3: ship.turret3.angle, turretAngle4: ship.turret4.angle, ciwsAngles: ship.ciws.map(c => c.angle) }; }
     saveState();
     function loop(now) {
@@ -12503,6 +12511,25 @@ window.AudioSys = AudioSys;
         if (camera.shakeTime <= 0) camera.shakeMag = 0;
       }
       zoomIndicator.update(frame);
+
+      if (keys['shift']) {
+        warpTimer += frame;
+        const progress = Math.min(1, warpTimer / 1.3);
+        camera.warpFactor = Math.pow(progress, 4.0);
+        camera.isCharging = true;
+      } else {
+        warpTimer = 0;
+        camera.warpFactor *= 0.9;
+        if (camera.warpFactor < 0.0001) camera.warpFactor = 0;
+        camera.isCharging = false;
+      }
+
+      const moveSpeed = Math.hypot(ship.vel.x, ship.vel.y);
+      if (moveSpeed > 0.0001) {
+        camera.moveDir.set(ship.vel.x / moveSpeed, ship.vel.y / moveSpeed);
+      } else {
+        camera.moveDir.set(0, 0);
+      }
 
       // --- AUDIO UPDATE ---
       if (ship && ship.engineSound) {
@@ -13384,7 +13411,14 @@ window.AudioSys = AudioSys;
         }
       }
 
-      const cam = { x: camera.x, y: camera.y, zoom: camera.zoom };
+      const cam = {
+        x: camera.x,
+        y: camera.y,
+        zoom: camera.zoom,
+        warpFactor: camera.warpFactor,
+        moveDir: camera.moveDir,
+        isCharging: camera.isCharging
+      };
       if (!DevFlags.disableCameraShake && camera.shakeMag > 0) {
         const t = camera.shakeTime / camera.shakeDur;
         const mag = camera.shakeMag * Math.max(0, t);
