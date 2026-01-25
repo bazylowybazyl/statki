@@ -11602,8 +11602,8 @@ window.AudioSys = AudioSys;
     const warp = {
       state: 'idle', // idle | charging | active
       charge: 0, chargeTime: 0.8,
-      orientTolerance: Math.PI / 30,
-      speed: 5000,
+      orientTolerance: Math.PI / 30, // 6 stopni - to nas blokowało!
+      speed: 5000, // Prędkość przelotowa
       fuelMax: 60, fuel: 60, consumeRate: 1.0, regenRate: 5,
       dir: { x: 0, y: 0 },
       turnRate: Math.PI / 5, // maksymalna prędkość skrętu w rad/s podczas warpa
@@ -11621,6 +11621,8 @@ window.AudioSys = AudioSys;
       },
       isBusy() { return this.state !== 'idle'; }
     };
+    // WAŻNE: Upubliczniamy warp, żeby planet3d.assets.js (gwiazdy) go widziały!
+    window.warp = warp;
 
     function exitWarp() {
       spawnShockwave(ship.pos.x, ship.pos.y, { maxR: 1200, maxLife: 0.7 });
@@ -12039,14 +12041,26 @@ window.AudioSys = AudioSys;
         const dirToMouse = norm({ x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y });
         warp.dir.x = dirToMouse.x;
         warp.dir.y = dirToMouse.y;
+
         const desiredBodyAngle = Math.atan2(dirToMouse.y, dirToMouse.x) + Math.PI / 2;
+
+        // Logika obrotu podczas ładowania (Visual feel)
         const kp = 5.5, maxSpin = 2.5, accel = 8.0;
         const diffB = wrapAngle(desiredBodyAngle - ship.angle);
         const desiredSpin = clamp(diffB * kp, -maxSpin, maxSpin);
         const delta = clamp(desiredSpin - ship.angVel, -accel * dt, accel * dt);
         ship.angVel += delta;
-        if (warp.charge < warp.chargeTime) warp.charge += dt;
-        if (warp.charge >= warp.chargeTime && Math.abs(diffB) <= warp.orientTolerance && (DevFlags.unlimitedWarp || warp.fuel > 0)) {
+
+        // Ładowanie paska
+        if (warp.charge < warp.chargeTime) {
+          warp.charge += dt;
+        }
+
+        // --- FIX: POPRAWIONY WARUNEK WEJŚCIA ---
+        // Jeśli naładowany: ignorujemy idealne celowanie (orientTolerance).
+        // Funkcja engageWarp() i tak ustawi statek idealnie prosto w momencie skoku.
+        // Dzięki temu warp "nie zacina się" przy ruszaniu myszką.
+        if (warp.charge >= warp.chargeTime && (DevFlags.unlimitedWarp || warp.fuel > 0)) {
           engageWarp(dirToMouse);
         }
       }
