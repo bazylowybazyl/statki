@@ -57,7 +57,7 @@ const STARS_VERTEX = `
         // Rozciąganie kierunkowe: 
         if(warpFactor > 0.001) {
             float offsetWorld = (finalSize * (stretch - 1.0)) * 0.05;
-            mvPosition.xy -= moveDir * offsetWorld;
+            mvPosition.xy += moveDir * offsetWorld;
         }
 
         gl_PointSize = pointSize;
@@ -336,7 +336,7 @@ const StarSystem = {
         }
 
         // 2. FIX PARALAKSA: Zwiększono mnożnik z 0.05 na 0.25
-        this.uniforms.cameraOffset.value.set(cx * 0.25, -cy * 0.25);
+        this.uniforms.cameraOffset.value.set(cx * 0.9, -cy * 0.9);
 
         // Kierunek rozciągania
         let dx = 0, dy = 1;
