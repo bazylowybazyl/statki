@@ -3,6 +3,37 @@ const PLANET_SIZE_MULTIPLIER = 4.5;
 const SUN_SIZE_MULTIPLIER = 6.0;
 
 // ==========================================
+// 0. SHADERS: NEBULA (CLEAN / RAW)
+// ==========================================
+
+const NEBULA_VERTEX = `
+    varying vec2 vUv;
+    void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+`;
+
+const NEBULA_FRAGMENT = `
+    uniform sampler2D map;
+    uniform float warpFactor;
+    
+    varying vec2 vUv;
+
+    void main() {
+        vec4 texColor = texture2D(map, vUv);
+        
+        // CZYSTY KOLOR (Bez zmian barwy)
+        vec3 color = texColor.rgb;
+        
+        // Warp: Tylko rozjaśnienie (Flash) bez zmiany koloru na niebieski
+        float boost = 1.0 + warpFactor * 0.8;
+        
+        gl_FragColor = vec4(color * boost, 1.0);
+    }
+`;
+
+// ==========================================
 // 1. SHADERS: STARS (SYSTEM GWIAZD)
 // ==========================================
 
@@ -33,7 +64,6 @@ const STARS_VERTEX = `
         vec3 pos = position;
         
         // Nieskończony świat (Modulo)
-        // Odejmujemy offset kamery, aby symulować ruch wewnątrz statycznego mesha
         pos.x -= cameraOffset.x;
         pos.y -= cameraOffset.y;
         
@@ -43,20 +73,18 @@ const STARS_VERTEX = `
 
         vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
         
-        // Skala rozciągnięcia (zależna od warpFactor)
+        // Skala rozciągnięcia
         float stretch = 1.0 + (warpFactor * stretchStrength);
         vStretch = stretch; 
         
         float finalSize = size * baseSizeMul;
-        
-        // Stała głębia dla kamery Ortho
         float depth = 1000.0; 
         float distFactor = perspectiveScale / depth;
         float pointSize = (finalSize * stretch) * distFactor;
         
-        // Rozciąganie kierunkowe: 
+        // Rozciąganie kierunkowe: Przesuwamy środek ZGODNIE z ruchem
         if(warpFactor > 0.001) {
-            float offsetWorld = (finalSize * (stretch - 1.0)) * 0.05;
+            float offsetWorld = (finalSize * (stretch - 1.0)) * 0.5;
             mvPosition.xy += moveDir * offsetWorld;
         }
 
@@ -82,7 +110,6 @@ const STARS_FRAGMENT = `
     void main() {
         vec2 rawUV = gl_PointCoord - 0.5;
         
-        // Miękka maska kołowa
         float distFromCenter = length(rawUV);
         float mask = 1.0 - smoothstep(0.4, 0.5, distFromCenter);
         if (mask < 0.01) discard;
@@ -90,13 +117,16 @@ const STARS_FRAGMENT = `
         vec2 uv = rawUV;
         
         if (vWarp > 0.01) {
+            // Obrót tekstury
             float angle = atan(moveDir.y, moveDir.x);
             float c = cos(angle); float s = sin(angle);
             mat2 rot = mat2(c, s, -s, c);
             uv = rot * uv;
             
+            // Rozciąganie
             uv.x *= (1.0 / vStretch); 
             
+            // Zwężanie (Thinning)
             float maxSafeThin = max(1.0, vScreenSize * 0.4);
             float actualThin = min(thinningStrength, maxSafeThin);
             uv.y *= (1.0 + vWarp * actualThin); 
@@ -109,7 +139,9 @@ const STARS_FRAGMENT = `
         if (tex.a < 0.05) discard;
 
         float twinkle = 0.8 + 0.2 * sin(time * 3.0 + vBrightness * 10.0);
-        vec3 finalColor = mix(vColor, vec3(0.7, 0.85, 1.0), vWarp * 0.7);
+        
+        // Warp color shift (gwiazdy zostawiamy błękitne przy skoku, bo to ładny efekt speed lines)
+        vec3 finalColor = mix(vColor, vec3(0.7, 0.85, 1.0), vWarp * 0.8);
         float boost = 1.0 + vWarp * 2.5; 
 
         gl_FragColor = vec4(finalColor * twinkle, tex.a * vBrightness * globalBrightness * boost * mask);
@@ -119,7 +151,6 @@ const STARS_FRAGMENT = `
 // ==========================================
 // 2. SHADERS: PLANETS
 // ==========================================
-
 const EARTH_VERTEX = `
 varying vec2 vUv;
 varying vec3 vNormal;
@@ -238,14 +269,92 @@ void main() {
 `;
 
 // ==========================================
-// 3. SYSTEM GWIAZD (POPRAWIONY: ULTRAWIDE + PARALAKSA)
+// 2.5 NEBULA SYSTEM (CLEAN)
+// ==========================================
+
+const NebulaSystem = {
+    mesh: null,
+    uniforms: null,
+    
+    // Paralaksa i Skala
+    parallaxFactor: 0.98, 
+    baseScale: 70000,    // Zmniejszone z 380k do 120k dla lepszej widoczności
+    aspectRatio: 1.6,
+
+    init: function(scene) {
+        const loader = new THREE.TextureLoader();
+        const tex = loader.load('/assets/nebula.png');
+        
+        // WAŻNE: Usunęliśmy SRGBColorSpace, który mógł zmieniać kolory na wyblakłe/niebieskie
+        // tex.colorSpace = THREE.SRGBColorSpace; // <-- USUNIĘTE
+        
+        tex.wrapS = THREE.ClampToEdgeWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+
+        const width = this.baseScale;
+        const height = width / this.aspectRatio; 
+        const geo = new THREE.PlaneGeometry(width, height);
+
+        this.uniforms = {
+            map: { value: tex },
+            warpFactor: { value: 0.0 }
+        };
+
+        const mat = new THREE.ShaderMaterial({
+            uniforms: this.uniforms,
+            vertexShader: NEBULA_VERTEX,
+            fragmentShader: NEBULA_FRAGMENT,
+            depthWrite: false,
+            depthTest: false 
+        });
+
+        this.mesh = new THREE.Mesh(geo, mat);
+        this.mesh.position.z = -20000;
+        this.mesh.renderOrder = -999;
+        
+        scene.add(this.mesh);
+    },
+
+    update: function(dt, gameCamera) {
+        if (!this.uniforms || !gameCamera) return;
+        
+        const cx = typeof gameCamera.x === 'number' ? gameCamera.x : 0;
+        const cy = typeof gameCamera.y === 'number' ? gameCamera.y : 0;
+        
+        const sunX = (window.SUN && window.SUN.x) || 0;
+        const sunY = (window.SUN && window.SUN.y) || 0;
+
+        const dx = cx - sunX;
+        const dy = (-cy) - (-sunY);
+
+        this.mesh.position.x = sunX + dx * this.parallaxFactor;
+        this.mesh.position.y = (-sunY) + dy * this.parallaxFactor;
+
+        if (window.warp) {
+            let targetWarp = 0;
+            const currentState = window.warp.state;
+            if (currentState === 'active') {
+                targetWarp = 1.0;
+            } else if (currentState === 'charging' && window.warp.chargeTime > 0) {
+                targetWarp = Math.min(1, window.warp.charge / window.warp.chargeTime) * 0.3;
+            }
+            const current = this.uniforms.warpFactor.value;
+            this.uniforms.warpFactor.value += (targetWarp - current) * 3.0 * dt;
+        }
+    }
+};
+
+// ==========================================
+// 3. SYSTEM GWIAZD
 // ==========================================
 
 const StarSystem = {
     mesh: null,
     uniforms: null,
-    count: 40000,        // Zwiększona ilość dla gęstości
-    worldScale: 100000,  // Ogromny obszar dla monitorów Ultrawide
+    count: 40000,        
+    worldScale: 100000, 
     lastWarpState: 'idle',
     exitTimer: 0,
 
@@ -335,8 +444,10 @@ const StarSystem = {
             this.mesh.position.set(cx, -cy, -10000); 
         }
 
-        // 2. FIX PARALAKSA: Zwiększono mnożnik z 0.05 na 0.25
-        this.uniforms.cameraOffset.value.set(cx * 0.9, -cy * 0.9);
+        // 2. FIX PARALAKSA: 
+        const starSpeed = 0.9; 
+        
+        this.uniforms.cameraOffset.value.set(cx * starSpeed, -cy * starSpeed);
 
         // Kierunek rozciągania
         let dx = 0, dy = 1;
@@ -351,7 +462,6 @@ const StarSystem = {
              }
         }
         
-        // Logika Warpa (bez zmian logicznych, tylko podpięcie)
         let targetWarp = 0.0;
         if (window.warp) {
             const currentState = window.warp.state;
@@ -362,7 +472,6 @@ const StarSystem = {
 
             if (currentState === 'active') {
                 targetWarp = 1.0;
-                // W warpie gwiazdy lecą zgodnie z kierunkiem warpa
                 if (window.warp.dir) {
                     dx = window.warp.dir.x;
                     dy = window.warp.dir.y;
@@ -379,7 +488,6 @@ const StarSystem = {
             targetWarp = Math.max(targetWarp, Math.pow(progress, 2.0) * 1.5);
         }
 
-        // Aplikacja do shadera (-dy bo Three.js ma odwrócony Y)
         this.uniforms.moveDir.value.set(dx, -dy); 
 
         const currentWarp = this.uniforms.warpFactor.value;
@@ -387,6 +495,7 @@ const StarSystem = {
         this.uniforms.warpFactor.value += (targetWarp - currentWarp) * lerpSpeed * dt;
     }
 };
+
 // ==========================================
 // 4. PLANET RENDERER
 // ==========================================
@@ -430,6 +539,10 @@ const PlanetRenderer = {
         this.sunLight.position.set(0, 0, 100000);
         this.scene.add(this.sunLight);
 
+        // 1. Najpierw Tło (Nebula)
+        NebulaSystem.init(this.scene);
+        
+        // 2. Potem Gwiazdy
         StarSystem.init(this.scene);
 
         this.resize();
@@ -448,10 +561,13 @@ const PlanetRenderer = {
 
         const dt = 1/60; 
 
-        // 1. Aktualizacja Gwiazd
+        // 1. Aktualizacja Tła (Nebula)
+        NebulaSystem.update(dt, gameCamera);
+
+        // 2. Aktualizacja Gwiazd
         StarSystem.update(dt, gameCamera, window.ship);
 
-        // 2. Synchronizacja Kamery Three.js z Kamerą Gry
+        // 3. Synchronizacja Kamery Three.js z Kamerą Gry
         const zoom = gameCamera.zoom || 1;
         const w = this.width / zoom;
         const h = this.height / zoom;
@@ -465,7 +581,7 @@ const PlanetRenderer = {
         this.camera.position.x = gameCamera.x;
         this.camera.position.y = -gameCamera.y;
         
-        // 3. Pozycja Światła Słońca (absolutna)
+        // 4. Pozycja Światła Słońca (absolutna)
         if (window.SUN) {
             const sunX = window.SUN.x;
             const sunY = -window.SUN.y; 
@@ -474,7 +590,7 @@ const PlanetRenderer = {
             this.sunLight.target.updateMatrixWorld();
         }
 
-        // 4. Aktualizacja Planet (Pozycjonowanie absolutne)
+        // 5. Aktualizacja Planet (Pozycjonowanie absolutne)
         if (window._entities) {
             window._entities.forEach(ent => {
                 if (ent.update) ent.update(dt, gameCamera);
@@ -615,7 +731,6 @@ class DirectPlanet {
     update(dt, cam) {
         if (!this.group || !cam) return;
         
-        // --- FIX: Pozycja absolutna ---
         const x = this.data.x;
         const y = -this.data.y;
         this.group.position.set(x, y, 0);
@@ -675,7 +790,6 @@ class DirectSun {
     update(dt, cam) {
         if(!cam) return;
         
-        // --- FIX: Pozycja absolutna ---
         const x = this.data.x;
         const y = -this.data.y;
         
@@ -705,11 +819,12 @@ window.initPlanets3D = function(planetList, sunData) {
         PlanetRenderer.init();
     } else {
         const stars = StarSystem.mesh;
+        const nebula = NebulaSystem.mesh; 
         const ambient = PlanetRenderer.ambientLight;
         const sun = PlanetRenderer.sunLight;
         
         const toRemove = PlanetRenderer.scene.children.filter(c => 
-            c !== stars && c !== ambient && c !== sun
+            c !== stars && c !== nebula && c !== ambient && c !== sun
         );
         toRemove.forEach(c => PlanetRenderer.scene.remove(c));
     }
