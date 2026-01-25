@@ -13383,15 +13383,24 @@ window.AudioSys = AudioSys;
              targetY += brake.y;
           }
 
-          // 4. Płynne podążanie (Frame-independent lerp)
-          // Podczas warpa kamera jest sztywniejsza (szybsza), żeby nie gubić statku
-          const lerpSpeed = (warp.state !== 'idle') ? 15.0 : 5.0; 
-          
-          // Wzór na frame-independent damping: lerp(current, target, 1 - exp(-speed * dt))
-          const t = 1.0 - Math.exp(-lerpSpeed * frameDt);
-          
-          camera.x += (targetX - camera.x) * t;
-          camera.y += (targetY - camera.y) * t;
+          // 4. Płynne podążanie vs Hard Lock
+          if (warp.state === 'active') {
+              // FIX DRŻENIA: Podczas Warpu wyłączamy wygładzanie.
+              // Kamera musi być idealnie "przyspawana" do pozycji statku,
+              // inaczej przy prędkości 10k+ jednostek powstanie jitter.
+              camera.x = targetX;
+              camera.y = targetY;
+          } else {
+              // Normalny lot - używamy płynnego podążania (lerp)
+              // Zwiększamy lerpSpeed przy ładowaniu/hamowaniu dla lepszego czucia
+              const isBusy = warp.state !== 'idle';
+              const lerpSpeed = isBusy ? 15.0 : 5.0;
+
+              const t = 1.0 - Math.exp(-lerpSpeed * frameDt);
+
+              camera.x += (targetX - camera.x) * t;
+              camera.y += (targetY - camera.y) * t;
+          }
       }
       else if (camera.mode === 'focus') {
         const st = camera.focusStation;
