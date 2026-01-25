@@ -2,14 +2,129 @@ window.Dev = window.Dev || {};
 const PLANET_SIZE_MULTIPLIER = 4.5;
 const SUN_SIZE_MULTIPLIER = 6.0;
 
-// --- SHADERS ---
+// ==========================================
+// 1. SHADERS: STARS (SYSTEM GWIAZD)
+// ==========================================
+
+const STARS_VERTEX = `
+    uniform vec2 cameraOffset;
+    uniform float containerSize;
+    uniform float perspectiveScale;
+    uniform float warpFactor;
+    uniform float stretchStrength;
+    uniform float baseSizeMul;
+    uniform vec2 moveDir; 
+    
+    attribute float size;
+    attribute float brightness;
+    attribute vec3 color;
+    
+    varying float vBrightness;
+    varying float vWarp;
+    varying vec3 vColor;
+    varying float vStretch;
+    varying float vScreenSize;
+
+    void main() {
+        vBrightness = brightness;
+        vWarp = warpFactor;
+        vColor = color;
+        
+        vec3 pos = position;
+        
+        // Nieskończony świat (Modulo)
+        // Odejmujemy offset kamery, aby symulować ruch wewnątrz statycznego mesha
+        pos.x -= cameraOffset.x;
+        pos.y -= cameraOffset.y;
+        
+        float halfSize = containerSize / 2.0;
+        pos.x = mod(pos.x + halfSize, containerSize) - halfSize;
+        pos.y = mod(pos.y + halfSize, containerSize) - halfSize;
+
+        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+        
+        // Skala rozciągnięcia (zależna od warpFactor)
+        float stretch = 1.0 + (warpFactor * stretchStrength);
+        vStretch = stretch; 
+        
+        float finalSize = size * baseSizeMul;
+        
+        // Stała głębia dla kamery Ortho
+        float depth = 1000.0; 
+        float distFactor = perspectiveScale / depth;
+        float pointSize = (finalSize * stretch) * distFactor;
+        
+        // Rozciąganie kierunkowe: 
+        if(warpFactor > 0.001) {
+            float offsetWorld = (finalSize * (stretch - 1.0)) * 0.05;
+            mvPosition.xy -= moveDir * offsetWorld;
+        }
+
+        gl_PointSize = pointSize;
+        gl_Position = projectionMatrix * mvPosition;
+        vScreenSize = pointSize;
+    }
+`;
+
+const STARS_FRAGMENT = `
+    uniform sampler2D pointTexture;
+    uniform float time;
+    uniform float globalBrightness;
+    uniform vec2 moveDir;
+    uniform float thinningStrength;
+    
+    varying float vBrightness;
+    varying float vWarp;
+    varying vec3 vColor;
+    varying float vStretch; 
+    varying float vScreenSize;
+
+    void main() {
+        vec2 rawUV = gl_PointCoord - 0.5;
+        
+        // Miękka maska kołowa
+        float distFromCenter = length(rawUV);
+        float mask = 1.0 - smoothstep(0.4, 0.5, distFromCenter);
+        if (mask < 0.01) discard;
+
+        vec2 uv = rawUV;
+        
+        if (vWarp > 0.01) {
+            float angle = atan(moveDir.y, moveDir.x);
+            float c = cos(angle); float s = sin(angle);
+            mat2 rot = mat2(c, s, -s, c);
+            uv = rot * uv;
+            
+            uv.x *= (1.0 / vStretch); 
+            
+            float maxSafeThin = max(1.0, vScreenSize * 0.4);
+            float actualThin = min(thinningStrength, maxSafeThin);
+            uv.y *= (1.0 + vWarp * actualThin); 
+        }
+
+        vec2 texUV = uv + 0.5;
+        if (texUV.x < 0.0 || texUV.x > 1.0 || texUV.y < 0.0 || texUV.y > 1.0) discard;
+
+        vec4 tex = texture2D(pointTexture, texUV);
+        if (tex.a < 0.05) discard;
+
+        float twinkle = 0.8 + 0.2 * sin(time * 3.0 + vBrightness * 10.0);
+        vec3 finalColor = mix(vColor, vec3(0.7, 0.85, 1.0), vWarp * 0.7);
+        float boost = 1.0 + vWarp * 2.5; 
+
+        gl_FragColor = vec4(finalColor * twinkle, tex.a * vBrightness * globalBrightness * boost * mask);
+    }
+`;
+
+// ==========================================
+// 2. SHADERS: PLANETS
+// ==========================================
 
 const EARTH_VERTEX = `
 varying vec2 vUv;
 varying vec3 vNormal;
 varying vec3 vWorldPosition;
 varying vec3 vViewPosition;
-
 void main() {
     vUv = uv;
     vNormal = normalize(normalMatrix * normal);
@@ -28,8 +143,6 @@ uniform sampler2D specularTexture;
 uniform sampler2D normalTexture;   
 uniform vec3 sunPosition;
 uniform float hasNightTexture; 
-
-// Parametry
 uniform float uBrightness;  
 uniform float uAmbient;     
 uniform float uSpecular;    
@@ -47,11 +160,9 @@ void main() {
     vec3 halfVector = normalize(lightDir + viewDir);
     vec3 normal = normalize(vNormal);
 
-    // Normal Mapping
     if (hasNightTexture > 0.5) {
         vec3 mapN = texture2D(normalTexture, vUv).xyz * 2.0 - 1.0;
         mapN.xy *= 0.8; 
-        
         vec3 q0 = dFdx(vWorldPosition.xyz);
         vec3 q1 = dFdy(vWorldPosition.xyz);
         vec2 st0 = dFdx(vUv.st);
@@ -80,32 +191,25 @@ void main() {
 
     float terminatorEdge = -0.15 - uSunWrap; 
     float mixFactor = smoothstep(terminatorEdge, 0.15, NdotL);
-    
     vec3 finalColor;
 
     if (hasNightTexture > 0.5) {
         vec3 daySide = dayColor.rgb * uBrightness;
         daySide *= intensity;
         daySide += vec3(0.7, 0.8, 1.0) * specular; 
-
         vec3 nightSide = nightColor.rgb * 3.0;
-
         finalColor = mix(nightSide, daySide, mixFactor);
     } else {
         float light = clamp(NdotL, uAmbient, 1.0);
         finalColor = dayColor.rgb * light * uBrightness * uSunIntensity;
     }
-
     gl_FragColor = vec4(finalColor, 1.0);
 }
 `;
 
-// --- ATMOSPHERE SHADERS (Z REAKCJĄ NA DZIEŃ/NOC) ---
-
 const ATMOSPHERE_VERTEX = `
 varying vec3 vNormal;
-varying vec3 vWorldPosition; // Potrzebne do obliczenia gdzie jest słońce
-
+varying vec3 vWorldPosition;
 void main() {
     vNormal = normalize(normalMatrix * normal);
     vec4 worldPos = modelMatrix * vec4(position, 1.0);
@@ -117,33 +221,170 @@ void main() {
 const ATMOSPHERE_FRAGMENT = `
 varying vec3 vNormal;
 varying vec3 vWorldPosition;
-
 uniform vec3 glowColor;
-uniform vec3 sunPosition; // Pozycja słońca
+uniform vec3 sunPosition;
 uniform float coef;
 uniform float power;
 uniform float uSunIntensity;
-
 void main() {
-    // 1. Halo (Krawędź)
-    // Używamy prostego wektora kamery (0,0,1) dla OrthographicCamera
     float rim = pow(coef - dot(vNormal, vec3(0.0, 0.0, 1.0)), power);
-    
-    // 2. Maska Dnia (Gdzie pada światło?)
     vec3 lightDir = normalize(sunPosition - vWorldPosition);
     float sunDot = dot(vNormal, lightDir);
-    
-    // Smoothstep sprawia, że halo znika płynnie w cieniu.
-    // +0.1 daje minimalną poświatę w nocy (żeby nie znikało totalnie)
     float dayFactor = smoothstep(-0.2, 0.2, sunDot) + 0.1;
-    
-    // 3. Łączymy: Halo * Dzień
     float intensity = rim * dayFactor;
     intensity = clamp(intensity, 0.0, 1.0); 
-    
     gl_FragColor = vec4(glowColor, intensity * clamp(uSunIntensity, 0.5, 1.5));
 }
 `;
+
+// ==========================================
+// 3. SYSTEM GWIAZD
+// ==========================================
+
+const StarSystem = {
+    mesh: null,
+    uniforms: null,
+    count: 20000,
+    worldScale: 30000,
+    lastWarpState: 'idle',
+    exitTimer: 0,
+
+    init: function(scene) {
+        const geo = new THREE.BufferGeometry();
+        const positions = new Float32Array(this.count * 3);
+        const sizes = new Float32Array(this.count);
+        const brights = new Float32Array(this.count);
+        const colors = new Float32Array(this.count * 3);
+        const tempColor = new THREE.Color();
+
+        for(let i=0; i < this.count; i++) {
+            // Generujemy w lokalnej przestrzeni mesha (box wokół 0,0)
+            positions[i*3] = (Math.random() - 0.5) * this.worldScale;
+            positions[i*3+1] = (Math.random() - 0.5) * this.worldScale;
+            positions[i*3+2] = -5000; 
+
+            sizes[i] = 1.0 + Math.pow(Math.random(), 3.0) * 4.0; 
+            brights[i] = 0.4 + Math.random() * 0.6;
+            
+            const r = Math.random();
+            if(r > 0.85) tempColor.setHex(0x9bb0ff); 
+            else if(r > 0.55) tempColor.setHex(0xfff4e8); 
+            else if(r > 0.25) tempColor.setHex(0xffd2a1); 
+            else tempColor.setHex(0xffcc6f); 
+            
+            colors[i*3] = tempColor.r; 
+            colors[i*3+1] = tempColor.g; 
+            colors[i*3+2] = tempColor.b;
+        }
+
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+        geo.setAttribute('brightness', new THREE.BufferAttribute(brights, 1));
+        geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        this.uniforms = {
+            pointTexture: { value: this.createStarTexture() },
+            time: { value: 0 },
+            cameraOffset: { value: new THREE.Vector2(0, 0) },
+            containerSize: { value: this.worldScale },
+            perspectiveScale: { value: 800.0 },
+            globalBrightness: { value: 1.2 },
+            warpFactor: { value: 0.0 },
+            moveDir: { value: new THREE.Vector2(0, 1) },
+            stretchStrength: { value: 25.0 },
+            thinningStrength: { value: 45.0 },
+            baseSizeMul: { value: 1.0 }
+        };
+
+        const mat = new THREE.ShaderMaterial({
+            uniforms: this.uniforms,
+            vertexShader: STARS_VERTEX,
+            fragmentShader: STARS_FRAGMENT,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending
+        });
+
+        this.mesh = new THREE.Points(geo, mat);
+        this.mesh.renderOrder = -1;
+        this.mesh.frustumCulled = false; 
+        scene.add(this.mesh);
+    },
+
+    createStarTexture: function() {
+        const canvas = document.createElement('canvas');
+        canvas.width = 64; canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+        grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        grad.addColorStop(0.3, 'rgba(200, 230, 255, 0.7)');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 64, 64);
+        return new THREE.CanvasTexture(canvas);
+    },
+
+    update: function(dt, gameCamera, ship) {
+        if (!this.uniforms || !gameCamera) return;
+        const cx = typeof gameCamera.x === 'number' ? gameCamera.x : 0;
+        const cy = typeof gameCamera.y === 'number' ? gameCamera.y : 0;
+
+        this.uniforms.time.value += dt;
+
+        // 1. Przesuwamy fizycznie mesh gwiazd, aby był zawsze tam gdzie kamera
+        if (this.mesh) {
+            this.mesh.position.set(cx, -cy, -10000); 
+        }
+
+        // 2. Aktualizujemy offset (paralaksa)
+        this.uniforms.cameraOffset.value.set(cx * 0.05, -cy * 0.05);
+
+        // Kierunek rozciągania (Warp) - PRZECIWNY do dziobu
+        if (ship && typeof ship.angle === 'number') {
+            this.uniforms.moveDir.value.set(Math.sin(ship.angle), -Math.cos(ship.angle));
+        }
+
+        if (window.warp) {
+            let targetWarp = 0;
+            const currentState = window.warp.state;
+
+            // Wykrywanie momentu wyjścia z warpa (Active -> Idle/Braking)
+            if (this.lastWarpState === 'active' && currentState !== 'active') {
+                this.exitTimer = 0.8; // Czas trwania efektu hamowania
+            }
+            this.lastWarpState = currentState;
+
+            // Logika stanów
+            if (currentState === 'active') {
+                targetWarp = 1.0;
+                this.exitTimer = 0;
+            } 
+            else if (currentState === 'charging' && window.warp.chargeTime > 0) {
+                // Efekt drgania przy ładowaniu
+                const progress = Math.min(1, window.warp.charge / window.warp.chargeTime);
+                targetWarp = Math.pow(progress, 3.0) * 0.3;
+            } 
+            else if (this.exitTimer > 0) {
+                // EFEKT HAMOWANIA: Zmniejszamy timer i ustawiamy silne rozciągnięcie
+                this.exitTimer -= dt;
+                const progress = Math.max(0, this.exitTimer / 0.8);
+                // Funkcja kwadratowa dla płynnego zaniku
+                targetWarp = Math.pow(progress, 2.0) * 1.5; 
+            }
+
+            // Interpolacja dla płynności
+            const current = this.uniforms.warpFactor.value;
+            // Szybsza interpolacja przy hamowaniu (snappy effect), wolniejsza przy ładowaniu
+            const lerpSpeed = (this.exitTimer > 0) ? 8.0 : 5.0;
+            
+            this.uniforms.warpFactor.value += (targetWarp - current) * lerpSpeed * dt;
+        }
+    }
+};
+
+// ==========================================
+// 4. PLANET RENDERER
+// ==========================================
 
 const PlanetRenderer = {
     renderer: null,
@@ -163,8 +404,9 @@ const PlanetRenderer = {
             alpha: true,
             antialias: true,
             powerPreference: "high-performance",
-            logarithmicDepthBuffer: true
+            logarithmicDepthBuffer: true 
         });
+        
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         this.renderer.toneMappingExposure = 1.0;
@@ -183,6 +425,8 @@ const PlanetRenderer = {
         this.sunLight.position.set(0, 0, 100000);
         this.scene.add(this.sunLight);
 
+        StarSystem.init(this.scene);
+
         this.resize();
         window.addEventListener('resize', () => this.resize());
     },
@@ -195,25 +439,43 @@ const PlanetRenderer = {
     },
 
     render: function(gameCamera) {
-        if (!this.renderer) return;
-        const zoom = gameCamera.zoom;
+        if (!this.renderer || !gameCamera) return;
+
+        const dt = 1/60; 
+
+        // 1. Aktualizacja Gwiazd
+        StarSystem.update(dt, gameCamera, window.ship);
+
+        // 2. Synchronizacja Kamery Three.js z Kamerą Gry
+        const zoom = gameCamera.zoom || 1;
         const w = this.width / zoom;
         const h = this.height / zoom;
+        
         this.camera.left = -w / 2;
         this.camera.right = w / 2;
         this.camera.top = h / 2;
         this.camera.bottom = -h / 2;
         this.camera.updateProjectionMatrix();
+        
         this.camera.position.x = gameCamera.x;
         this.camera.position.y = -gameCamera.y;
         
+        // 3. Pozycja Światła Słońca (absolutna)
         if (window.SUN) {
             const sunX = window.SUN.x;
-            const sunY = -window.SUN.y;
+            const sunY = -window.SUN.y; 
             this.sunLight.position.set(sunX, sunY, 100000);
             this.sunLight.target.position.set(sunX, sunY, 0); 
             this.sunLight.target.updateMatrixWorld();
         }
+
+        // 4. Aktualizacja Planet (Pozycjonowanie absolutne)
+        if (window._entities) {
+            window._entities.forEach(ent => {
+                if (ent.update) ent.update(dt, gameCamera);
+            });
+        }
+
         this.renderer.render(this.scene, this.camera);
     }
 };
@@ -228,6 +490,10 @@ function loadTex(path) {
     }
     return tex;
 }
+
+// ==========================================
+// 5. CLASSES: PLANET & SUN
+// ==========================================
 
 class DirectPlanet {
     constructor(data) {
@@ -244,7 +510,6 @@ class DirectPlanet {
             normalTexture: { value: null },
             sunPosition: { value: new THREE.Vector3(0, 0, 0) },
             hasNightTexture: { value: 0.0 },
-            
             uBrightness: { value: 1.5 }, 
             uAmbient: { value: 0.02 },   
             uSpecular: { value: 0.3 },   
@@ -291,7 +556,6 @@ class DirectPlanet {
         this.mesh = new THREE.Mesh(geometry, material);
         this.group.add(this.mesh);
 
-        // --- CHMURY (TYLKO ZIEMIA) ---
         if (name === 'earth') {
             const cloudPath = `/assets/planety/solar/earth/earth_clouds.jpg`;
             const cloudGeo = new THREE.SphereGeometry(1.005, 128, 128); 
@@ -307,13 +571,11 @@ class DirectPlanet {
             this.group.add(this.clouds);
         }
 
-        // --- ATMOSFERA (DLA WSZYSTKICH) ---
         let atmColor = new THREE.Vector3(0.3, 0.6, 1.0); 
         let atmPower = 8.0;   
         let atmCoef = 0.470;  
-        let atmSize = 1.10; // SZTYWNE 1.10
+        let atmSize = 1.10; 
 
-        // Kolory
         if (name === 'mercury') { atmColor.set(0.6, 0.6, 0.6); atmPower = 10.0; }
         if (name === 'venus')   { atmColor.set(0.9, 0.7, 0.2); atmPower = 6.0; }
         if (name === 'mars')    { atmColor.set(0.8, 0.4, 0.2); atmPower = 9.0; }
@@ -331,7 +593,7 @@ class DirectPlanet {
                 power: { value: atmPower }, 
                 glowColor: { value: atmColor },
                 uSunIntensity: { value: 2.2 },
-                sunPosition: { value: new THREE.Vector3(0,0,0) } // Placeholder
+                sunPosition: { value: new THREE.Vector3(0,0,0) }
             },
             transparent: true,
             side: THREE.BackSide, 
@@ -345,18 +607,20 @@ class DirectPlanet {
         if (name === 'earth') window.EARTH = this;
     }
 
-    update(dt) {
-        if (!this.group) return;
-        this.group.position.set(this.data.x, -this.data.y, 0);
+    update(dt, cam) {
+        if (!this.group || !cam) return;
+        
+        // --- FIX: Pozycja absolutna ---
+        const x = this.data.x;
+        const y = -this.data.y;
+        this.group.position.set(x, y, 0);
+        
         const currentRadius = (this.data.r || 100);
         const scale = currentRadius * PLANET_SIZE_MULTIPLIER;
         this.group.scale.set(scale, scale, scale);
         
         if (window.SUN) {
-            // Aktualizujemy słońce dla planety
             this.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, 0); 
-            
-            // AKTUALIZUJEMY SŁOŃCE DLA ATMOSFERY (ŻEBY WIEDZIAŁA GDZIE JEST NOC)
             if (this.atmosphere) {
                 this.atmosphere.material.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, 0);
             }
@@ -388,6 +652,7 @@ class DirectSun {
             color: 0xffffff
         });
         this.mesh = new THREE.Mesh(geometry, material);
+        
         const spriteMat = new THREE.SpriteMaterial({ 
             map: loadTex('/assets/effects/glow.png'),
             color: 0xffaa00, 
@@ -396,14 +661,25 @@ class DirectSun {
             blending: THREE.AdditiveBlending
         });
         this.glow = new THREE.Sprite(spriteMat);
+        
         this.group.add(this.mesh);
+        this.group.add(this.glow); 
+        
         if (PlanetRenderer.scene) PlanetRenderer.scene.add(this.group);
     }
-    update(dt) {
-        this.group.position.set(this.data.x, -this.data.y, -500);
+    update(dt, cam) {
+        if(!cam) return;
+        
+        // --- FIX: Pozycja absolutna ---
+        const x = this.data.x;
+        const y = -this.data.y;
+        
+        this.group.position.set(x, y, -500);
+        
         const rawRadius = this.data.r3D || this.data.r || 200;
         const scale = rawRadius * SUN_SIZE_MULTIPLIER;
         this.mesh.scale.set(scale, scale, scale);
+        
         if (this.glow) {
             const glowScale = scale * 3.0;
             this.glow.scale.set(glowScale, glowScale, 1);
@@ -412,19 +688,27 @@ class DirectSun {
     }
 }
 
+// ==========================================
+// 6. GLOBAL INTERFACE
+// ==========================================
+
 const _entities = [];
 window.initPlanets3D = function(planetList, sunData) {
     _entities.length = 0;
+    
     if (!PlanetRenderer.renderer) {
         PlanetRenderer.init();
     } else {
-        while(PlanetRenderer.scene.children.length > 0){ 
-            PlanetRenderer.scene.remove(PlanetRenderer.scene.children[0]); 
-        }
-        PlanetRenderer.ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
-        PlanetRenderer.scene.add(PlanetRenderer.ambientLight);
-        PlanetRenderer.scene.add(PlanetRenderer.sunLight);
+        const stars = StarSystem.mesh;
+        const ambient = PlanetRenderer.ambientLight;
+        const sun = PlanetRenderer.sunLight;
+        
+        const toRemove = PlanetRenderer.scene.children.filter(c => 
+            c !== stars && c !== ambient && c !== sun
+        );
+        toRemove.forEach(c => PlanetRenderer.scene.remove(c));
     }
+    
     if (sunData) _entities.push(new DirectSun(sunData));
     if (Array.isArray(planetList)) {
         planetList.forEach(pData => {
@@ -433,9 +717,17 @@ window.initPlanets3D = function(planetList, sunData) {
     }
     window._entities = _entities;
 };
-window.updatePlanets3D = function(dt) { _entities.forEach(e => e.update(dt)); };
-window.drawPlanets3D = function(ctx, cam) { PlanetRenderer.render(cam); };
+
+window.updatePlanets3D = function(dt, cam) { 
+    PlanetRenderer.render(cam);
+};
+
+window.drawPlanets3D = function(ctx, cam) { 
+    PlanetRenderer.render(cam); 
+};
+
 window.worldToScreen = function(x, y, cam) {
+    if(!cam) return {x:0, y:0};
     const z = cam.zoom;
     const w = window.innerWidth;
     const h = window.innerHeight;
