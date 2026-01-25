@@ -14163,7 +14163,8 @@ ctx.imageSmoothingEnabled = true;
 
       // === Hexlance Projectiles (Supercapital Weapon) ===
       const mWorldRender = { x: cam.x + (mouse.x - W / 2) / cam.zoom, y: cam.y + (mouse.y - H / 2) / cam.zoom };
-      Superweapon.drawSuperweapon(ctx, cam, ship, worldToScreen, mWorldRender);
+      // FIX: Przekazujemy interpolowaną pozycję i kąt
+      Superweapon.drawSuperweapon(ctx, cam, ship, worldToScreen, mWorldRender, { pos: interpPos, angle: interpAngle });
 
       // Rysowanie Błyskawic (Lightning) - nad pociskami, pod UI
       ctx.save();
@@ -14288,7 +14289,8 @@ ctx.imageSmoothingEnabled = true;
         drawShield(ctx, npc, cam);
       }
       if (ship.shield) {
-        drawShield(ctx, ship, cam);
+        // FIX: Przekazujemy interpolowaną pozycję do tarczy
+        drawShield(ctx, ship, cam, interpPos);
       }
 
       // === UI / HUD Pass ===
