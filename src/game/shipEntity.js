@@ -14,8 +14,8 @@ export const SHIP_PHYSICS = {
 
 // --- SZABLON STATKU ---
 const SHIP_TEMPLATE = {
-  w: 250,
-  h: 450,
+  w: 450,
+  h: 250,
   radius: 220, // Promień kolizji
   
   // Masa w tym modelu służy głównie do interakcji z innymi obiektami (taranowanie),
@@ -142,21 +142,17 @@ function configureShipGeometry(ship) {
   const hw = ship.w / 2;
   const hh = ship.h / 2;
 
+  const rotateOffsetToForwardX = (offset) => ({
+    x: -offset.y * SHIP_SPRITE_SCALE,
+    y: offset.x * SHIP_SPRITE_SCALE
+  });
+
   ship.visual = {
     ...ship.visual,
     spriteScale: SHIP_SPRITE_SCALE,
-    turretTop: { 
-      x: SHIP_VISUAL_BASE.turretTop.x * SHIP_SPRITE_SCALE, 
-      y: SHIP_VISUAL_BASE.turretTop.y * SHIP_SPRITE_SCALE 
-    },
-    turretBottom: { 
-      x: SHIP_VISUAL_BASE.turretBottom.x * SHIP_SPRITE_SCALE, 
-      y: SHIP_VISUAL_BASE.turretBottom.y * SHIP_SPRITE_SCALE 
-    },
-    mainEngine: { 
-      x: 0, 
-      y: Math.round(SHIP_VISUAL_BASE.engineY * SHIP_SPRITE_SCALE) 
-    }
+    turretTop: rotateOffsetToForwardX(SHIP_VISUAL_BASE.turretTop),
+    turretBottom: rotateOffsetToForwardX(SHIP_VISUAL_BASE.turretBottom),
+    mainEngine: rotateOffsetToForwardX({ x: 0, y: SHIP_VISUAL_BASE.engineY })
   };
 
   // Konfiguracja fizyczna i wizualna silników
@@ -166,38 +162,38 @@ function configureShipGeometry(ship) {
   
   // 1. Silnik Główny (Rufa)
   ship.engines.main = {
-    offset: { x: 0, y: Math.round(hh - 20) },
-    visualOffset: { x: 0, y: ship.visual.mainEngine.y },
+    offset: { x: Math.round(-hw + 20), y: 0 },
+    visualOffset: { x: ship.visual.mainEngine.x, y: ship.visual.mainEngine.y },
     maxThrust: 1 // Wartość placeholder, fizyka używa SHIP_PHYSICS.SPEED
   };
 
-  const sidePhysX = Math.round(hw - 10);
-  const sideVisualX = Math.round((hw - 10) * ship.visual.spriteScale);
+  const sidePhysY = Math.round(hh - 10);
+  const sideVisualY = Math.round((hh - 10) * ship.visual.spriteScale);
 
   // 2. Silniki Boczne (Strafe)
   ship.engines.sideLeft = { 
-    offset: { x: -sidePhysX, y: 0 }, 
-    visualOffset: { x: -sideVisualX, y: 0 }, 
+    offset: { x: 0, y: -sidePhysY }, 
+    visualOffset: { x: 0, y: -sideVisualY }, 
     maxThrust: 1 
   };
   ship.engines.sideRight = { 
-    offset: { x: sidePhysX, y: 0 }, 
-    visualOffset: { x: sideVisualX, y: 0 }, 
+    offset: { x: 0, y: sidePhysY }, 
+    visualOffset: { x: 0, y: sideVisualY }, 
     maxThrust: 1 
   };
 
   // 3. Silniki Manewrowe (Obrotowe)
-  const torquePhysY = Math.round(hh * 0.8);
-  const torqueVisualY = Math.round((hh * 0.8) * ship.visual.spriteScale);
+  const torquePhysX = Math.round(hw * 0.8);
+  const torqueVisualX = Math.round((hw * 0.8) * ship.visual.spriteScale);
   
   ship.engines.torqueLeft = { 
-    offset: { x: 0, y: -torquePhysY }, 
-    visualOffset: { x: 0, y: -torqueVisualY }, 
+    offset: { x: -torquePhysX, y: 0 }, 
+    visualOffset: { x: -torqueVisualX, y: 0 }, 
     maxThrust: 1 
   };
   ship.engines.torqueRight = { 
-    offset: { x: 0, y: torquePhysY }, 
-    visualOffset: { x: 0, y: torqueVisualY }, 
+    offset: { x: torquePhysX, y: 0 }, 
+    visualOffset: { x: torqueVisualX, y: 0 }, 
     maxThrust: 1 
   };
 
@@ -214,11 +210,16 @@ function configureShipGeometry(ship) {
       const vfxLMin = Math.round(41.0 * ship.visual.spriteScale * 1.4);
       const vfxLMax = Math.round(41.0 * ship.visual.spriteScale * 2.6);
 
+      const rotateThrusterOffset = (offset) => ({
+        x: -offset.y,
+        y: offset.x
+      });
+
       ship.visual.torqueThrusters = [
-        { offset: { x: -topX, y: -topY }, forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
-        { offset: { x: -botX, y: botY }, forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
-        { offset: { x: topX, y: -topY }, forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
-        { offset: { x: botX, y: botY }, forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax }
+        { offset: rotateThrusterOffset({ x: -topX, y: -topY }), forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
+        { offset: rotateThrusterOffset({ x: -botX, y: botY }), forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
+        { offset: rotateThrusterOffset({ x: topX, y: -topY }), forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
+        { offset: rotateThrusterOffset({ x: botX, y: botY }), forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax }
       ];
   }
 
@@ -233,9 +234,9 @@ function configureShipGeometry(ship) {
   
   for (let i = 0; i < gunsPer; i++) {
     const t = gunsPer === 1 ? 0.5 : (i / (gunsPer - 1));
-    const yLocal = -visualHH + margin + t * ((visualHH - margin) - (-visualHH + margin));
-    ship.sideGunsLeft.push({ x: -Math.round(visualHW - inset), y: Math.round(yLocal) });
-    ship.sideGunsRight.push({ x: Math.round(visualHW - inset), y: Math.round(yLocal) });
+    const xLocal = -visualHW + margin + t * ((visualHW - margin) - (-visualHW + margin));
+    ship.sideGunsLeft.push({ x: Math.round(xLocal), y: -Math.round(visualHH - inset) });
+    ship.sideGunsRight.push({ x: Math.round(xLocal), y: Math.round(visualHH - inset) });
   }
 
   const podW = Math.round(30 * ship.visual.spriteScale);
