@@ -10808,8 +10808,8 @@ window.AudioSys = AudioSys;
           setTimeout(() => AudioSys.playSound('specialTurret'), i * shotDelayMs);
         }
       }
-      const dir = rotate({ x: 0, y: -1 }, ship.angle);
-      const start = add(ship.pos, rotate({ x: 0, y: -ship.h / 2 }, ship.angle));
+      const dir = rotate({ x: 1, y: 0 }, ship.angle);
+      const start = add(ship.pos, rotate({ x: ship.w / 2, y: 0 }, ship.angle));
       const length = 2000;
       const end = { x: start.x + dir.x * length, y: start.y + dir.y * length };
       const width = ship.w;
@@ -11710,8 +11710,8 @@ window.AudioSys = AudioSys;
       // FIX: Pobieramy wektor z AKTUALNEGO kąta statku
       // W tym silniku 0 stopni to góra (0, -1), obrót zgodnie z zegarem
       const angle = ship.angle;
-      const dirX = Math.sin(angle);
-      const dirY = -Math.cos(angle);
+      const dirX = Math.cos(angle);
+      const dirY = Math.sin(angle);
 
       warp.dir.x = dirX;
       warp.dir.y = dirY;
@@ -12094,8 +12094,8 @@ window.AudioSys = AudioSys;
         // Kąty
         const sin = Math.sin(ship.angle);
         const cos = Math.cos(ship.angle);
-        const forward = { x: sin, y: -cos }; // Dziób w górę (-Y)
-        const right = { x: cos, y: sin };    // Prawa burta
+        const forward = { x: cos, y: sin }; // Dziób w prawo (+X)
+        const right = { x: -sin, y: cos };  // Prawa burta (prostopadły)
 
         // 2. Rotacja (Kinematyczna - bezpośrednia)
         if (input.torque !== 0) {
@@ -12424,7 +12424,7 @@ window.AudioSys = AudioSys;
       ctx.save();
       ctx.translate(localPos.x, localPos.y);
       ctx.scale(safeWidth, safeLength);
-      ctx.rotate(Math.atan2(forward.y, forward.x) + Math.PI / 2);
+      ctx.rotate(Math.atan2(forward.y, forward.x));
       ctx.globalCompositeOperation = 'lighter';
       const prevAlpha = ctx.globalAlpha;
       const engineGain = clamp(OPTIONS?.vfx?.engineGain ?? 1, 0, 1.5);
