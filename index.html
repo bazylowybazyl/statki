@@ -3116,7 +3116,18 @@ window.AudioSys = AudioSys;
 
     function makeSolarPlanets() {
       // Skala: 1 AU ≈ 3000 jednostek świata (Neptun ~ 90k)
-      const AU = 3000;
+      // Uwaga: powiększamy AU tak, aby rozmiary planet w 3D (×4.5) nie powodowały
+      // nachodzenia Ziemi i Marsa przy zbieżnych kątach orbitalnych.
+      const BASE_AU = 3000;
+      const PLANET_3D_SIZE_MULTIPLIER = 4.5;
+      const EARTH_BASE_R = 2800;
+      const MARS_BASE_R = 3000;
+      const EARTH_ORBIT_AU = 25.0;
+      const MARS_ORBIT_AU = 33.0;
+      const earthMarsMinGap = (EARTH_BASE_R + MARS_BASE_R) * PLANET_SCALE * PLANET_3D_SIZE_MULTIPLIER;
+      const earthMarsOrbitGapAu = MARS_ORBIT_AU - EARTH_ORBIT_AU;
+      const minAuForNoOverlap = earthMarsMinGap / earthMarsOrbitGapAu;
+      const AU = Math.max(BASE_AU, Math.ceil(minAuForNoOverlap));
       window.BASE_ORBIT = AU;
       const MIN_SUN_GAP = 600;
       const MIN_PLANET_GAP = 800;
