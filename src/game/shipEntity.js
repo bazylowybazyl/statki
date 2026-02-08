@@ -101,9 +101,9 @@ export const SHIP_SPRITE_SCALE = 1.0;
 
 // Bazowe pozycje elementów wizualnych (w pikselach oryginalnego sprite'a)
 const SHIP_VISUAL_BASE = {
-  turretTop: { x: 63.50, y: -81.00 },
-  turretBottom: { x: 77.50, y: 57.50 },
-  engineY: 540.00
+  turretTop: { x: 81.00, y: 63.50 },
+  turretBottom: { x: -57.50, y: 77.50 },
+  engineY: -540.00
 };
 
 // --- FUNKCJE POMOCNICZE ---
@@ -143,8 +143,8 @@ function configureShipGeometry(ship) {
   const hh = ship.h / 2;
 
   const rotateOffsetToForwardX = (offset) => ({
-    x: -offset.y * SHIP_SPRITE_SCALE,
-    y: offset.x * SHIP_SPRITE_SCALE
+    x: offset.x * SHIP_SPRITE_SCALE,
+    y: offset.y * SHIP_SPRITE_SCALE
   });
 
   ship.visual = {
@@ -152,7 +152,7 @@ function configureShipGeometry(ship) {
     spriteScale: SHIP_SPRITE_SCALE,
     turretTop: rotateOffsetToForwardX(SHIP_VISUAL_BASE.turretTop),
     turretBottom: rotateOffsetToForwardX(SHIP_VISUAL_BASE.turretBottom),
-    mainEngine: rotateOffsetToForwardX({ x: 0, y: SHIP_VISUAL_BASE.engineY })
+    mainEngine: rotateOffsetToForwardX({ x: SHIP_VISUAL_BASE.engineY, y: 0 })
   };
 
   // Konfiguracja fizyczna i wizualna silników
