@@ -12027,7 +12027,7 @@ window.AudioSys = AudioSys;
           warp.dir.x = Math.cos(newAngle);
           warp.dir.y = Math.sin(newAngle);
         }
-        const desiredBodyAngle = Math.atan2(warp.dir.y, warp.dir.x) + Math.PI / 2;
+        const desiredBodyAngle = Math.atan2(warp.dir.y, warp.dir.x);
         const diffBody = wrapAngle(desiredBodyAngle - ship.angle);
         const maxAlign = warp.alignRate * dt;
         ship.angle = wrapAngle(ship.angle + clamp(diffBody, -maxAlign, maxAlign));
@@ -12054,7 +12054,7 @@ window.AudioSys = AudioSys;
         warp.dir.x = dirToMouse.x;
         warp.dir.y = dirToMouse.y;
 
-        const desiredBodyAngle = Math.atan2(dirToMouse.y, dirToMouse.x) + Math.PI / 2;
+        const desiredBodyAngle = Math.atan2(dirToMouse.y, dirToMouse.x);
 
         // Logika obrotu podczas ładowania (Visual feel)
         const kp = 5.5, maxSpin = 2.5, accel = 8.0;
