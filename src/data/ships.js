@@ -6,6 +6,7 @@ export const SHIPS = {
     hardpointLayout: {
       type: 'atlas_broadside',
       rows: 4,
+      rotate: 'cw',
       leftX: -0.230,
       rightX: 0.240,
       spreadX: 0.028,
@@ -20,6 +21,7 @@ export const SHIPS = {
     spec: { main: 2, missile: 12, aux: 4, hangar: 2, special: 1 },
     hardpointLayout: {
       type: 'lines',
+      rotate: 'cw',
       lines: [
         { type: 'main', count: 2, start: { x: -0.2, y: -0.5 }, end: { x: 0.2, y: -0.5 } },
         { type: 'missile', count: 6, start: { x: -0.5, y: -0.25 }, end: { x: -0.5, y: 0.25 } },
