@@ -103,7 +103,7 @@ export const SHIP_SPRITE_SCALE = 1.0;
 const SHIP_VISUAL_BASE = {
   turretTop: { x: 81.00, y: 63.50 },
   turretBottom: { x: -57.50, y: 77.50 },
-  engineY: -540.00
+  engineY: -210.00
 };
 
 // --- FUNKCJE POMOCNICZE ---
@@ -199,11 +199,11 @@ function configureShipGeometry(ship) {
 
   // Konfiguracja VFX dla silników manewrowych
   if (!ship.visual.torqueThrusters) {
-      const topX = 109.0 * ship.visual.spriteScale;
-      const topY = 108.5 * ship.visual.spriteScale;
-      const botX = 134.5 * ship.visual.spriteScale;
-      const botY = 83.0 * ship.visual.spriteScale;
-      const nudge = -72.0;
+      const topX = Math.round(-hw * 0.82 * ship.visual.spriteScale);
+      const topY = Math.round(hh * 0.62 * ship.visual.spriteScale);
+      const botX = Math.round(-hw * 0.68 * ship.visual.spriteScale);
+      const botY = Math.round(hh * 0.42 * ship.visual.spriteScale);
+      const nudge = Math.round(-48.0 * ship.visual.spriteScale);
       
       const vfxWMin = Math.round(25.9 * ship.visual.spriteScale * 0.75);
       const vfxWMax = Math.round(25.9 * ship.visual.spriteScale * 1.25);
@@ -211,14 +211,14 @@ function configureShipGeometry(ship) {
       const vfxLMax = Math.round(41.0 * ship.visual.spriteScale * 2.6);
 
       const rotateThrusterOffset = (offset) => ({
-        x: -offset.y,
-        y: offset.x
+        x: offset.x,
+        y: offset.y
       });
 
       ship.visual.torqueThrusters = [
-        { offset: rotateThrusterOffset({ x: -topX, y: -topY }), forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
-        { offset: rotateThrusterOffset({ x: -botX, y: botY }), forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
-        { offset: rotateThrusterOffset({ x: topX, y: -topY }), forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
+        { offset: rotateThrusterOffset({ x: topX, y: -topY }), forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
+        { offset: rotateThrusterOffset({ x: botX, y: -botY }), forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
+        { offset: rotateThrusterOffset({ x: topX, y: topY }), forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
         { offset: rotateThrusterOffset({ x: botX, y: botY }), forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax }
       ];
   }
