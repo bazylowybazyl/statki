@@ -11075,7 +11075,7 @@ window.AudioSys = AudioSys;
         for (let k = 0; k < nearbyTargets.length; k++) {
           const npc = nearbyTargets[k];
           if (!npc.isWreck && (npc.dead || npc.isCollidable === false)) continue;
-          if (b.source && b.source === npc && b.age < (b.spawnGrace || 0)) continue;
+          if (b.source && b.source === npc) continue;
           
           let isHit = false;
           const shieldActive = npc.shield && npc.shield.val > 0;
