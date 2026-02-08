@@ -101,8 +101,8 @@ export const SHIP_SPRITE_SCALE = 1.0;
 
 // Bazowe pozycje elementów wizualnych (w pikselach oryginalnego sprite'a)
 const SHIP_VISUAL_BASE = {
-  turretTop: { x: 81.00, y: 63.50 },
-  turretBottom: { x: -57.50, y: 77.50 },
+  turretTop: { x: -57.50, y: 77.50 },
+  turretBottom: { x: 81.00, y: 63.50 },
   engineY: -210.00
 };
 
