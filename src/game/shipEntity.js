@@ -103,7 +103,7 @@ export const SHIP_SPRITE_SCALE = 1.0;
 const SHIP_VISUAL_BASE = {
   turretTop: { x: 63.50, y: -81.00 },
   turretBottom: { x: 77.50, y: 57.50 },
-  engineY: 540.00
+  engineX: -700.00
 };
 
 // --- FUNKCJE POMOCNICZE ---
@@ -143,8 +143,8 @@ function configureShipGeometry(ship) {
   const hh = ship.h / 2;
 
   const rotateOffsetToForwardX = (offset) => ({
-    x: -offset.y * SHIP_SPRITE_SCALE,
-    y: offset.x * SHIP_SPRITE_SCALE
+    x: offset.x * SHIP_SPRITE_SCALE,
+    y: offset.y * SHIP_SPRITE_SCALE
   });
 
   ship.visual = {
@@ -152,7 +152,7 @@ function configureShipGeometry(ship) {
     spriteScale: SHIP_SPRITE_SCALE,
     turretTop: rotateOffsetToForwardX(SHIP_VISUAL_BASE.turretTop),
     turretBottom: rotateOffsetToForwardX(SHIP_VISUAL_BASE.turretBottom),
-    mainEngine: rotateOffsetToForwardX({ x: 0, y: SHIP_VISUAL_BASE.engineY })
+    mainEngine: rotateOffsetToForwardX({ x: SHIP_VISUAL_BASE.engineX, y: 0 })
   };
 
   // Konfiguracja fizyczna i wizualna silników
@@ -199,11 +199,11 @@ function configureShipGeometry(ship) {
 
   // Konfiguracja VFX dla silników manewrowych
   if (!ship.visual.torqueThrusters) {
-      const topX = 109.0 * ship.visual.spriteScale;
-      const topY = 108.5 * ship.visual.spriteScale;
-      const botX = 134.5 * ship.visual.spriteScale;
-      const botY = 83.0 * ship.visual.spriteScale;
-      const nudge = -72.0;
+      const topX = 640.0 * ship.visual.spriteScale;
+      const topY = 180.0 * ship.visual.spriteScale;
+      const botX = 640.0 * ship.visual.spriteScale;
+      const botY = 240.0 * ship.visual.spriteScale;
+      const nudge = 0.0;
       
       const vfxWMin = Math.round(25.9 * ship.visual.spriteScale * 0.75);
       const vfxWMax = Math.round(25.9 * ship.visual.spriteScale * 1.25);
@@ -211,15 +211,15 @@ function configureShipGeometry(ship) {
       const vfxLMax = Math.round(41.0 * ship.visual.spriteScale * 2.6);
 
       const rotateThrusterOffset = (offset) => ({
-        x: -offset.y,
-        y: offset.x
+        x: offset.x,
+        y: offset.y
       });
 
       ship.visual.torqueThrusters = [
         { offset: rotateThrusterOffset({ x: -topX, y: -topY }), forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
-        { offset: rotateThrusterOffset({ x: -botX, y: botY }), forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
-        { offset: rotateThrusterOffset({ x: topX, y: -topY }), forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
-        { offset: rotateThrusterOffset({ x: botX, y: botY }), forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax }
+        { offset: rotateThrusterOffset({ x: -botX, y: -botY }), forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
+        { offset: rotateThrusterOffset({ x: -topX, y: topY }), forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
+        { offset: rotateThrusterOffset({ x: -botX, y: botY }), forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax }
       ];
   }
 
