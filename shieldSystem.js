@@ -268,8 +268,8 @@ function getShieldDimensions(entity) {
         const baseR = entity.radius || 20;
         const len = baseR * (entity.capitalProfile.lengthScale || 3.2);
         const wid = baseR * (entity.capitalProfile.widthScale || 1.2);
-        w = Math.max(w, wid); 
-        h = Math.max(h, len);
+        w = Math.max(w, len);
+        h = Math.max(h, wid);
     } else if (entity.fighter || entity.type === 'fighter') {
         const size = Math.max(w, h);
         w = size; h = size;
