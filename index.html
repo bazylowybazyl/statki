@@ -1864,25 +1864,28 @@ window.AudioSys = AudioSys;
 
     function buildShipHardpoints(layout, bounds) {
       if (!layout) return [];
+      const rotation = layout.rotate || null;
+      const layoutBounds = rotation ? { w: bounds.h, h: bounds.w } : bounds;
       if (layout.type === 'atlas_broadside') {
-        return buildAtlasHardpoints(layout, bounds);
+        const hp = buildAtlasHardpoints(layout, layoutBounds);
+        return applyHardpointRotation(hp, rotation);
       }
       if (layout.type === 'lines') {
         const hp = [];
         for (const line of layout.lines || []) {
-          placeLineNormalized(hp, line.type, line.count, line.start, line.end, bounds);
+          placeLineNormalized(hp, line.type, line.count, line.start, line.end, layoutBounds);
         }
         for (const special of layout.specials || []) {
           hp.push({
             id: uid(),
             type: special.type,
-            pos: { x: (special.pos?.x || 0) * bounds.w, y: (special.pos?.y || 0) * bounds.h, rot: 0 },
+            pos: { x: (special.pos?.x || 0) * layoutBounds.w, y: (special.pos?.y || 0) * layoutBounds.h, rot: 0 },
             mount: null,
             ammo: null,
             maxAmmo: null
           });
         }
-        return hp;
+        return applyHardpointRotation(hp, rotation);
       }
       return [];
     }
@@ -1909,6 +1912,21 @@ window.AudioSys = AudioSys;
         hp.push({ id: uid(), type: HP.MAIN, pos: { x: rightX + spreadX, y: cy + depthY, rot: 0 }, mount: null, ammo: null, maxAmmo: null });
       }
       return hp;
+    }
+
+    function applyHardpointRotation(hardpoints, rotation) {
+      if (!rotation) return hardpoints;
+      for (const hp of hardpoints) {
+        const { x, y } = hp.pos || { x: 0, y: 0 };
+        if (rotation === 'cw') {
+          hp.pos.x = y;
+          hp.pos.y = -x;
+        } else if (rotation === 'ccw') {
+          hp.pos.x = -y;
+          hp.pos.y = x;
+        }
+      }
+      return hardpoints;
     }
 
     function placeLineNormalized(out, type, count, a, b, bounds) {
