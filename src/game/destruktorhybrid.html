@@ -331,8 +331,6 @@
                 for (let i = 0; i < iterations; i++) {
                     this.resolveCollisions(entities, dt);
                 }
-
-                if (this._tick % 1 === 0) this.resolveCollisions(entities, dt);
                 if (this._tick % 10 === 0 && this.splitQueue.length > 0) this.processSplits(entities);
             },
 
@@ -351,6 +349,7 @@
 
             simulateElasticity(entities) {
                 const tension = 0.0; // Wewnętrzne "trzęsienie się" poszycia
+                if (tension <= 0) return;
                 for (const e of entities) {
                     if (!e.hexGrid) continue;
                     for (const s of e.hexGrid.shards) {
@@ -486,6 +485,7 @@
                 const angA = A.angle + DESTRUCTOR_CONFIG.visualRotationOffset;
                 const angB = B.angle + DESTRUCTOR_CONFIG.visualRotationOffset;
                 const ca = Math.cos(angA), sa = Math.sin(angA);
+                const cb = Math.cos(angB), sb = Math.sin(angB);
                 const cb_inv = Math.cos(-angB), sb_inv = Math.sin(-angB);
 
                 const cxA = A.hexGrid.srcWidth / 2;
@@ -499,10 +499,8 @@
 
                 const hitRadSq = (r * 1.3) ** 2;
 
-                let collided = false;
-                let sA = null;
-                let hitB = null;
-                let worldHitX = 0, worldHitY = 0;
+                const contacts = [];
+                const maxContacts = 8;
 
                 // Sprawdzamy kolizję heksów
                 for (const shardA of A.hexGrid.shards) {
@@ -534,21 +532,66 @@
                                 const gx = shardB.gridX + shardB.deformation.x;
                                 const gy = shardB.gridY + shardB.deformation.y;
                                 if ((gx - gridBx) ** 2 + (gy - gridBy) ** 2 < hitRadSq) {
-                                    hitB = shardB;
-                                    sA = shardA;
-                                    worldHitX = worldAx;
-                                    worldHitY = worldAy;
-                                    collided = true;
-                                    break;
+                                    const relBX = gx - cxB - pivotBx;
+                                    const relBY = gy - cyB - pivotBy;
+                                    const worldBx = B.x + relBX * cb - relBY * sb;
+                                    const worldBy = B.y + relBX * sb + relBY * cb;
+                                    const normalX = worldAx - worldBx;
+                                    const normalY = worldAy - worldBy;
+                                    const hexDist = Math.hypot(normalX, normalY);
+
+                                    contacts.push({
+                                        shardA,
+                                        shardB,
+                                        worldAx,
+                                        worldAy,
+                                        worldBx,
+                                        worldBy,
+                                        normalX,
+                                        normalY,
+                                        penetration: Math.max(0, r * 1.3 - hexDist),
+                                    });
+
+                                    if (contacts.length >= maxContacts) break;
                                 }
                             }
                         }
-                        if (collided) break;
+                        if (contacts.length >= maxContacts) break;
                     }
-                    if (collided) break;
+                    if (contacts.length >= maxContacts) break;
                 }
 
-                if (!collided) return;
+                if (contacts.length === 0) return;
+
+                const primaryContact = contacts[0];
+                const sA = primaryContact.shardA;
+                const hitB = primaryContact.shardB;
+
+                let worldHitX = 0;
+                let worldHitY = 0;
+                let nx = 0;
+                let ny = 0;
+                let penetration = 0;
+
+                for (const contact of contacts) {
+                    worldHitX += (contact.worldAx + contact.worldBx) * 0.5;
+                    worldHitY += (contact.worldAy + contact.worldBy) * 0.5;
+                    nx += contact.normalX;
+                    ny += contact.normalY;
+                    penetration = Math.max(penetration, contact.penetration);
+                }
+
+                worldHitX /= contacts.length;
+                worldHitY /= contacts.length;
+
+                let normalLen = Math.hypot(nx, ny);
+                if (normalLen < 1e-6) {
+                    nx = A.x - B.x;
+                    ny = A.y - B.y;
+                    normalLen = Math.hypot(nx, ny) || 1;
+                }
+                nx /= normalLen;
+                ny /= normalLen;
 
                 // --- 2. V46 PHYSICS SOLVER (Rigid Body Impulse) ---
 
@@ -567,12 +610,6 @@
                 const dvx = vAx - vBx;
                 const dvy = vAy - vBy;
 
-                // Normalna zderzenia (od B do A)
-                let nx = A.x - B.x;
-                let ny = A.y - B.y;
-                let dist = Math.hypot(nx, ny) || 1;
-                nx /= dist; ny /= dist;
-
                 // Prędkość wzdłuż normalnej
                 const velAlongNormal = dvx * nx + dvy * ny;
 
@@ -584,14 +621,18 @@
                 const invMassA = 1 / massA;
                 const invMassB = 1 / massB;
                 const inertiaScale = 0.5;
-                const invIa = 1 / (inertiaScale * massA * A.radius * A.radius);
-                const invIb = 1 / (inertiaScale * massB * B.radius * B.radius);
+                const effectiveRadiusA = Math.max(1, A.radius || Math.max(cxA, cyA, 1));
+                const effectiveRadiusB = Math.max(1, B.radius || Math.max(cxB, cyB, 1));
+                const invIa = 1 / (inertiaScale * massA * effectiveRadiusA * effectiveRadiusA);
+                const invIb = 1 / (inertiaScale * massB * effectiveRadiusB * effectiveRadiusB);
 
                 const rnA = rAx * ny - rAy * nx;
                 const rnB = rBx * ny - rBy * nx;
 
                 let j = -(1 + restitution) * velAlongNormal;
-                j /= (invMassA + invMassB + rnA * rnA * invIa + rnB * rnB * invIb);
+                const normalDenom = invMassA + invMassB + rnA * rnA * invIa + rnB * rnB * invIb;
+                if (!Number.isFinite(normalDenom) || normalDenom <= 1e-8) return;
+                j /= normalDenom;
 
                 // --- FIX: DEFINICJA isDestruction ZANIM UŻYJEMY JEJ W TARCIU ---
                 const impactForce = Math.abs(j);
@@ -615,23 +656,29 @@
                 let tx = -ny, ty = nx;
                 const velTangent = dvx * tx + dvy * ty;
                 let jt = -velTangent;
-                jt /= (invMassA + invMassB + (rAx * ty - rAy * tx) ** 2 * invIa + (rBx * ty - rBy * tx) ** 2 * invIb);
+                const tangentDenom = invMassA + invMassB + (rAx * ty - rAy * tx) ** 2 * invIa + (rBx * ty - rBy * tx) ** 2 * invIb;
+                if (!Number.isFinite(tangentDenom) || tangentDenom <= 1e-8) {
+                    jt = 0;
+                } else {
+                    jt /= tangentDenom;
+                }
                 const mu = 0.5;
                 if (Math.abs(jt) > j * mu) jt = -j * mu * Math.sign(velTangent);
 
                 // Tutaj isDestruction jest już zdefiniowane!
                 const frictionScale = isDestruction ? 0.05 : 0.8;
+                const scaledJt = jt * frictionScale;
 
-                const fImpulseX = jt * tx;
-                const fImpulseY = jt * ty;
+                const fImpulseX = scaledJt * tx;
+                const fImpulseY = scaledJt * ty;
 
                 A.vx += fImpulseX * invMassA;
                 A.vy += fImpulseY * invMassA;
                 B.vx -= fImpulseX * invMassB;
                 B.vy -= fImpulseY * invMassB;
 
-                A.angVel += (rAx * ty - rAy * tx) * jt * invIa;
-                B.angVel -= (rBx * ty - rBy * tx) * jt * invIb;
+                A.angVel += (rAx * ty - rAy * tx) * scaledJt * invIa;
+                B.angVel -= (rBx * ty - rBy * tx) * scaledJt * invIb;
 
                 // --- 3. HYBRID THRESHOLD (Yield Point) - POPRAWIONE WEKTORY ---
                 if (isDestruction) {
@@ -665,8 +712,6 @@
                 // --- 4. SEPARATION ---
                 const percent = 0.8;
                 const slop = 0.01;
-                const penetration = Math.max(0, (r * 1.5) - dist);
-
                 if (penetration > slop) {
                     const correctionMag = Math.max(penetration - slop, 0.0) / (invMassA + invMassB) * percent;
                     const cx = nx * correctionMag;
@@ -1271,16 +1316,20 @@
 
             DestructorSystem.updateVisualDeformation(entities, dt);
 
-            for (let i = entities.length - 1; i >= 0; i--) {
-                const e = entities[i];
+            const aliveEntities = [];
+            for (const e of entities) {
                 e.x += e.vx * dt;
                 e.y += e.vy * dt;
                 if (e.angVel) e.angle += e.angVel * dt;
-                if (e.isProjectile) {
-                    if (e.dead || Math.hypot(e.x - player.x, e.y - player.y) > 5000) {
-                        entities.splice(i, 1);
-                    }
+
+                if (e.isProjectile && (e.dead || Math.hypot(e.x - player.x, e.y - player.y) > 5000)) {
+                    continue;
                 }
+                aliveEntities.push(e);
+            }
+            if (aliveEntities.length !== entities.length) {
+                entities.length = 0;
+                entities.push(...aliveEntities);
             }
 
             if (mouse.right) {
@@ -1293,7 +1342,10 @@
                 const beamLen = 3000;
                 const p1 = { x: player.x, y: player.y };
                 const p2 = { x: player.x + ndx * beamLen, y: player.y + ndy * beamLen };
-                DestructorSystem.cutByBeam(dummy, p1, p2, 12);
+                for (const target of entities) {
+                    if (!target.hexGrid) continue;
+                    DestructorSystem.cutByBeam(target, p1, p2, 12);
+                }
             }
 
             DestructorSystem.update(dt, entities);
