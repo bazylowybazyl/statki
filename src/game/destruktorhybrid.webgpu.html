@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Destruktor Hybrid WebGPU (near 1:1)</title>
+  <style>
+    body { margin:0; overflow:hidden; background:#070a10; color:#d7e7ff; font:12px ui-monospace,Consolas,monospace; }
+    #hud { position:absolute; top:12px; left:12px; background:rgba(12,20,32,.92); border:1px solid #38506f; border-radius:8px; padding:10px; max-width:560px; }
+    #stats,#bench { white-space:pre; margin-top:6px; }
+    #bench { color:#9ed9b4; }
+    b { color:#fff; }
+    canvas { display:block; }
+  </style>
+</head>
+<body>
+<div id="hud">
+  <div><b>Hybrid Destruktor WebGPU PoC (WGSL)</b></div>
+  <div>[W/S] ciąg, [A/D] obrót, LPM niski impuls, PPM wysoki impuls, [R] reset, [B] benchmark.</div>
+  <div>Backend: <b id="backend">init...</b></div>
+  <div id="stats"></div>
+  <div id="bench"></div>
+</div>
+<canvas id="c"></canvas>
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const backendEl = document.getElementById('backend');
+  const statsEl = document.getElementById('stats');
+  const benchEl = document.getElementById('bench');
+  let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
+
+  const CFG = {
+    dt: 1/120, hexR: 16, shardHP: 500, shardMass: 10, restitution: 0.06, friction: 0.992,
+    yieldPoint: 1000, plasticity: 0.00002, tearThreshold: 100, deformLerp: 0.08
+  };
+  const INPUT = { thrust:0, turn:0 };
+
+  class HexShard {
+    constructor(entityId, gridX, gridY, c, r){
+      this.entityId=entityId; this.gridX=gridX; this.gridY=gridY; this.c=c; this.r=r;
+      this.worldX=0; this.worldY=0; this.deformX=0; this.deformY=0; this.targetX=0; this.targetY=0;
+      this.hp=CFG.shardHP; this.active=1; this.isDebris=0; this.dvx=0; this.dvy=0;
+    }
+  }
+
+  function loadImage(src){ return new Promise((res,rej)=>{ const i=new Image(); i.crossOrigin='anonymous'; i.onload=()=>res(i); i.onerror=rej; i.src=src; }); }
+
+  function buildHexShards(entity, image){
+    const r = CFG.hexR, h = r*Math.sqrt(3), w = r*1.5;
+    const cvs = document.createElement('canvas'); cvs.width=image.width; cvs.height=image.height;
+    const g = cvs.getContext('2d'); g.drawImage(image,0,0);
+    const px = g.getImageData(0,0,cvs.width,cvs.height).data;
+    const shards=[]; const map={};
+    let c=0;
+    for (let gx = r; gx < image.width-r; gx += w, c++) {
+      let rr=0;
+      for (let gy = r + ((c&1)?h*0.5:0); gy < image.height-r; gy += h, rr++) {
+        const idx=((gy|0)*image.width + (gx|0))*4+3;
+        if ((px[idx]||0) < 20) continue;
+        const s = new HexShard(entity.id, gx, gy, c, rr);
+        shards.push(s); map[`${c},${rr}`]=s;
+      }
+    }
+    const odd=[[0,-1],[0,1],[-1,0],[-1,1],[1,0],[1,1]], even=[[0,-1],[0,1],[-1,-1],[-1,0],[1,-1],[1,0]];
+    for (const s of shards){
+      const o=(s.c&1)?odd:even; s.neighbors=[];
+      for(const d of o){ const n=map[`${s.c+d[0]},${s.r+d[1]}`]; if(n) s.neighbors.push(n); }
+    }
+    entity.mass = Math.max(100, shards.length*CFG.shardMass);
+    entity.radius = Math.max(image.width,image.height)*0.58;
+    return shards;
+  }
+
+  function makeEntity(id,x,y,img,damaged){
+    return { id, x,y, vx:0,vy:0, angle:0, angVel:0, thrust:0, turn:0, mass:1000, radius:200, img, damaged, shards:[] };
+  }
+
+  function worldFromLocal(e, lx, ly){
+    const cx=e.img.width*0.5, cy=e.img.height*0.5;
+    const dx=lx-cx, dy=ly-cy, c=Math.cos(e.angle), s=Math.sin(e.angle);
+    return { x:e.x + dx*c - dy*s, y:e.y + dx*s + dy*c };
+  }
+
+  function createState(images){
+    const player = makeEntity(0, W*0.36, H*0.5, images.ship, images.dmg);
+    const dummy = makeEntity(1, W*0.66, H*0.5, images.ship, images.dmg);
+    player.shards = buildHexShards(player, images.ship);
+    dummy.shards = buildHexShards(dummy, images.ship);
+    for(const e of [player,dummy]) for(const s of e.shards){ const p=worldFromLocal(e,s.gridX,s.gridY); s.worldX=p.x; s.worldY=p.y; }
+    return { entities:[player,dummy], shards:[...player.shards,...dummy.shards], t:0 };
+  }
+
+  function drawShard(s,e){
+    if (!s.active && !s.isDebris) return;
+    const x=s.worldX,y=s.worldY;
+    ctx.save(); ctx.translate(x,y); ctx.rotate(e.angle);
+    const rr=CFG.hexR*1.03; ctx.beginPath();
+    for(let i=0;i<6;i++){ const a=i*Math.PI/3; const px=Math.cos(a)*rr, py=Math.sin(a)*rr; if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py); }
+    ctx.closePath(); ctx.clip();
+    const stress=Math.hypot(s.deformX,s.deformY);
+    if (s.isDebris || s.hp < CFG.shardHP*0.65 || stress>5) ctx.drawImage(e.damaged||e.img, -s.gridX, -s.gridY);
+    else ctx.drawImage(e.img, -s.gridX, -s.gridY);
+    if (!s.isDebris && stress>6){ const k=Math.min(1,stress/CFG.tearThreshold); ctx.fillStyle=`rgba(255,90,0,${k*0.5})`; ctx.fill(); }
+    ctx.restore();
+  }
+
+  function applyImpactDamage(state, ownerId, nx, ny, impact){
+    if (impact <= CFG.yieldPoint) return;
+    const e = state.entities[ownerId]; if(!e) return;
+    const excess = (impact - CFG.yieldPoint)*CFG.plasticity;
+    for(const s of e.shards){
+      if(!s.active||s.isDebris) continue;
+      const dx=s.worldX-e.x, dy=s.worldY-e.y;
+      const influence=Math.max(0,1-Math.hypot(dx,dy)/(e.radius*0.85));
+      if(influence<=0) continue;
+      s.targetX += nx*excess*230*influence; s.targetY += ny*excess*230*influence;
+      s.hp -= excess*4200*influence;
+      if (s.hp<=0 || Math.hypot(s.targetX,s.targetY)>CFG.tearThreshold){
+        s.active=0; s.isDebris=1; s.dvx=e.vx + nx*(80+influence*120); s.dvy=e.vy + ny*(80+influence*120);
+      }
+    }
+  }
+
+  class CPUBackend {
+    constructor(){ this.name='CPU fallback'; }
+    async init(state){ this.state=state; }
+    async step(dt){
+      const [A,B]=this.state.entities;
+      A.angVel += A.turn*1.5*dt; A.vx += Math.cos(A.angle)*A.thrust*dt; A.vy += Math.sin(A.angle)*A.thrust*dt;
+      for(const e of this.state.entities){ e.angle += e.angVel*dt; e.x += e.vx*dt; e.y += e.vy*dt; e.vx*=CFG.friction; e.vy*=CFG.friction; e.angVel*=0.98; }
+      const dx=B.x-A.x, dy=B.y-A.y, dist=Math.hypot(dx,dy)||1e-4, pen=A.radius+B.radius-dist;
+      if (pen>0){ const nx=dx/dist, ny=dy/dist; const rvx=A.vx-B.vx, rvy=A.vy-B.vy; const vn=rvx*nx+rvy*ny;
+        const invA=1/Math.max(1,A.mass), invB=1/Math.max(1,B.mass); const j=-(1+CFG.restitution)*vn/(invA+invB);
+        A.vx += j*nx*invA; A.vy += j*ny*invA; B.vx -= j*nx*invB; B.vy -= j*ny*invB;
+        const imp=Math.abs(j)/Math.max(dt,1e-4); applyImpactDamage(this.state,0,nx,ny,imp); applyImpactDamage(this.state,1,-nx,-ny,imp);
+        const corr=pen*0.45; A.x-=nx*corr*invA*20; A.y-=ny*corr*invA*20; B.x+=nx*corr*invB*20; B.y+=ny*corr*invB*20;
+      }
+      for(const s of this.state.shards){
+        const e=this.state.entities[s.entityId];
+        if (s.active && !s.isDebris){ s.deformX += (s.targetX-s.deformX)*CFG.deformLerp; s.deformY += (s.targetY-s.deformY)*CFG.deformLerp; s.targetX*=0.99; s.targetY*=0.99;
+          const p=worldFromLocal(e,s.gridX+s.deformX,s.gridY+s.deformY); s.worldX=p.x; s.worldY=p.y;
+        } else if (s.isDebris){ s.worldX += s.dvx*dt; s.worldY += s.dvy*dt; s.dvx*=0.99; s.dvy*=0.99; s.hp-=dt*25; if(s.hp<-100) s.isDebris=0; }
+      }
+    }
+  }
+
+  class WebGPUBackend {
+    constructor(){ this.name='WebGPU compute (WGSL collision+physics)'; }
+    async init(state){
+      this.state=state; if(!navigator.gpu) throw new Error('navigator.gpu niedostępne');
+      this.adapter=await navigator.gpu.requestAdapter(); if(!this.adapter) throw new Error('Brak adaptera WebGPU');
+      this.device=await this.adapter.requestDevice();
+      this.entityStride=16; this.shardStride=16;
+      this.entityData=new Float32Array(state.entities.length*this.entityStride);
+      this.shardData=new Float32Array(state.shards.length*this.shardStride);
+      this.entityBuf=this.device.createBuffer({size:this.entityData.byteLength, usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST|GPUBufferUsage.COPY_SRC});
+      this.shardBuf=this.device.createBuffer({size:this.shardData.byteLength, usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST|GPUBufferUsage.COPY_SRC});
+      this.paramBuf=this.device.createBuffer({size:32, usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
+      this.entityRead=this.device.createBuffer({size:this.entityData.byteLength, usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
+      this.shardRead=this.device.createBuffer({size:this.shardData.byteLength, usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
+
+      const entityWGSL = `
+struct Params { dt:f32, restitution:f32, friction:f32, thrust:f32, turn:f32, _a:f32, _b:f32, _c:f32 };
+@group(0) @binding(0) var<storage, read_write> ents: array<vec4<f32>>;
+@group(0) @binding(1) var<uniform> p: Params;
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x > 0u) { return; }
+  var e0a = ents[0u]; var e0b = ents[1u]; var e0c = ents[2u];
+  var e1a = ents[3u]; var e1b = ents[4u]; var e1c = ents[5u];
+  e0b.w = e0b.w + p.turn * 1.5 * p.dt; // angVel
+  e0a.z = e0a.z + cos(e0b.z) * p.thrust * p.dt; // vx
+  e0a.w = e0a.w + sin(e0b.z) * p.thrust * p.dt; // vy
+  e0b.z = e0b.z + e0b.w * p.dt; e1b.z = e1b.z + e1b.w * p.dt;
+  e0a.x = e0a.x + e0a.z * p.dt; e0a.y = e0a.y + e0a.w * p.dt;
+  e1a.x = e1a.x + e1a.z * p.dt; e1a.y = e1a.y + e1a.w * p.dt;
+  let dx=e1a.x-e0a.x; let dy=e1a.y-e0a.y; let dist=max(0.0001, sqrt(dx*dx+dy*dy));
+  let pen=(e0b.y+e1b.y)-dist; var nx=0.0; var ny=0.0; var impact=0.0;
+  if (pen > 0.0) {
+    nx=dx/dist; ny=dy/dist;
+    let rvx=e0a.z-e1a.z; let rvy=e0a.w-e1a.w; let vn=rvx*nx+rvy*ny;
+    let invA=1.0/max(1.0,e0b.x); let invB=1.0/max(1.0,e1b.x);
+    let j=-(1.0+p.restitution)*vn/(invA+invB);
+    e0a.z = e0a.z + j*nx*invA; e0a.w = e0a.w + j*ny*invA;
+    e1a.z = e1a.z - j*nx*invB; e1a.w = e1a.w - j*ny*invB;
+    impact = abs(j)/max(p.dt, 0.0001);
+    let corr = pen*0.45;
+    e0a.x = e0a.x - nx*corr*invA*20.0; e0a.y = e0a.y - ny*corr*invA*20.0;
+    e1a.x = e1a.x + nx*corr*invB*20.0; e1a.y = e1a.y + ny*corr*invB*20.0;
+  }
+  e0a.z=e0a.z*p.friction; e0a.w=e0a.w*p.friction; e1a.z=e1a.z*p.friction; e1a.w=e1a.w*p.friction;
+  e0b.w=e0b.w*0.98; e1b.w=e1b.w*0.98;
+  e0c = vec4<f32>(nx, ny, impact, 0.0); e1c = vec4<f32>(-nx,-ny,impact,0.0);
+  ents[0u]=e0a; ents[1u]=e0b; ents[2u]=e0c; ents[3u]=e1a; ents[4u]=e1b; ents[5u]=e1c;
+}`;
+
+      const shardWGSL = `
+struct Params { dt:f32, restitution:f32, friction:f32, thrust:f32, turn:f32, _a:f32, _b:f32, _c:f32 };
+@group(0) @binding(0) var<storage, read> ents: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read_write> shards: array<vec4<f32>>;
+@group(0) @binding(2) var<uniform> p: Params;
+@compute @workgroup_size(128)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i=gid.x; let base=i*4u; if (base+3u >= arrayLength(&shards)) { return; }
+  var a=shards[base+0u]; // entityId, localX, localY, hp
+  var b=shards[base+1u]; // worldX worldY deformX deformY
+  var c=shards[base+2u]; // targetX targetY active isDebris
+  var d=shards[base+3u]; // dvx dvy _ _
+  if (c.z > 0.5 && c.w < 0.5) {
+    c.x = c.x * 0.99; c.y = c.y * 0.99;
+    b.z = b.z + (c.x - b.z) * 0.08;
+    b.w = b.w + (c.y - b.w) * 0.08;
+    let e = u32(a.x);
+    let eA = ents[e*3u+0u]; let eB = ents[e*3u+1u];
+    let cx = 256.0; let cy = 128.0; // approx sprite center
+    let lx = (a.y + b.z) - cx; let ly = (a.z + b.w) - cy;
+    let ca=cos(eB.z), sa=sin(eB.z);
+    b.x = eA.x + lx*ca - ly*sa; b.y = eA.y + lx*sa + ly*ca;
+  } else if (c.w > 0.5) {
+    b.x = b.x + d.x * p.dt; b.y = b.y + d.y * p.dt; d.x = d.x * 0.99; d.y = d.y * 0.99; a.w = a.w - p.dt*25.0; if (a.w < -100.0) { c.w = 0.0; }
+  }
+  shards[base+0u]=a; shards[base+1u]=b; shards[base+2u]=c; shards[base+3u]=d;
+}`;
+
+      this.entityPipe=this.device.createComputePipeline({layout:'auto', compute:{module:this.device.createShaderModule({code:entityWGSL}), entryPoint:'main'}});
+      this.shardPipe=this.device.createComputePipeline({layout:'auto', compute:{module:this.device.createShaderModule({code:shardWGSL}), entryPoint:'main'}});
+      this.entityBind=this.device.createBindGroup({layout:this.entityPipe.getBindGroupLayout(0), entries:[{binding:0,resource:{buffer:this.entityBuf}},{binding:1,resource:{buffer:this.paramBuf}}]});
+      this.shardBind=this.device.createBindGroup({layout:this.shardPipe.getBindGroupLayout(0), entries:[{binding:0,resource:{buffer:this.entityBuf}},{binding:1,resource:{buffer:this.shardBuf}},{binding:2,resource:{buffer:this.paramBuf}}]});
+    }
+
+    push(){
+      for(let i=0;i<this.state.entities.length;i++){
+        const e=this.state.entities[i], b=i*this.entityStride;
+        this.entityData[b+0]=e.x; this.entityData[b+1]=e.y; this.entityData[b+2]=e.vx; this.entityData[b+3]=e.vy;
+        this.entityData[b+4]=e.mass; this.entityData[b+5]=e.radius; this.entityData[b+6]=e.angle; this.entityData[b+7]=e.angVel;
+      }
+      for(let i=0;i<this.state.shards.length;i++){
+        const s=this.state.shards[i], b=i*this.shardStride;
+        this.shardData[b+0]=s.entityId; this.shardData[b+1]=s.gridX; this.shardData[b+2]=s.gridY; this.shardData[b+3]=s.hp;
+        this.shardData[b+4]=s.worldX; this.shardData[b+5]=s.worldY; this.shardData[b+6]=s.deformX; this.shardData[b+7]=s.deformY;
+        this.shardData[b+8]=s.targetX; this.shardData[b+9]=s.targetY; this.shardData[b+10]=s.active; this.shardData[b+11]=s.isDebris;
+        this.shardData[b+12]=s.dvx; this.shardData[b+13]=s.dvy;
+      }
+      this.device.queue.writeBuffer(this.entityBuf,0,this.entityData);
+      this.device.queue.writeBuffer(this.shardBuf,0,this.shardData);
+    }
+
+    async pull(){
+      const rd= async (buf,arr)=>{ await buf.mapAsync(GPUMapMode.READ); arr.set(new Float32Array(buf.getMappedRange())); buf.unmap(); };
+      await rd(this.entityRead,this.entityData); await rd(this.shardRead,this.shardData);
+      for(let i=0;i<this.state.entities.length;i++){
+        const e=this.state.entities[i], b=i*this.entityStride;
+        e.x=this.entityData[b+0]; e.y=this.entityData[b+1]; e.vx=this.entityData[b+2]; e.vy=this.entityData[b+3]; e.angle=this.entityData[b+6]; e.angVel=this.entityData[b+7];
+        e.colNx=this.entityData[b+8]; e.colNy=this.entityData[b+9]; e.colImpact=this.entityData[b+10];
+      }
+      for(let i=0;i<this.state.shards.length;i++){
+        const s=this.state.shards[i], b=i*this.shardStride;
+        s.hp=this.shardData[b+3]; s.worldX=this.shardData[b+4]; s.worldY=this.shardData[b+5]; s.deformX=this.shardData[b+6]; s.deformY=this.shardData[b+7];
+        s.targetX=this.shardData[b+8]; s.targetY=this.shardData[b+9]; s.active=this.shardData[b+10]>0.5?1:0; s.isDebris=this.shardData[b+11]>0.5?1:0;
+        s.dvx=this.shardData[b+12]; s.dvy=this.shardData[b+13];
+      }
+    }
+
+    async step(dt){
+      this.state.entities[0].thrust = INPUT.thrust; this.state.entities[0].turn = INPUT.turn;
+      this.push();
+      this.device.queue.writeBuffer(this.paramBuf,0,new Float32Array([dt,CFG.restitution,CFG.friction,this.state.entities[0].thrust,this.state.entities[0].turn,0,0,0]));
+      const enc=this.device.createCommandEncoder();
+      { const p=enc.beginComputePass(); p.setPipeline(this.entityPipe); p.setBindGroup(0,this.entityBind); p.dispatchWorkgroups(1); p.end(); }
+      { const p=enc.beginComputePass(); p.setPipeline(this.shardPipe); p.setBindGroup(0,this.shardBind); p.dispatchWorkgroups(Math.ceil(this.state.shards.length/128)); p.end(); }
+      enc.copyBufferToBuffer(this.entityBuf,0,this.entityRead,0,this.entityData.byteLength);
+      enc.copyBufferToBuffer(this.shardBuf,0,this.shardRead,0,this.shardData.byteLength);
+      this.device.queue.submit([enc.finish()]);
+      await this.pull();
+      applyImpactDamage(this.state,0,this.state.entities[0].colNx||0,this.state.entities[0].colNy||0,this.state.entities[0].colImpact||0);
+      applyImpactDamage(this.state,1,this.state.entities[1].colNx||0,this.state.entities[1].colNy||0,this.state.entities[1].colImpact||0);
+    }
+  }
+
+  let state, backend, frame=0; const perf={step:0,draw:0};
+  async function makeBackend(){
+    try { const b=new WebGPUBackend(); await b.init(state); backendEl.textContent=b.name; return b; }
+    catch(err){ const b=new CPUBackend(); await b.init(state); backendEl.textContent=`${b.name} (${err.message})`; return b; }
+  }
+
+  function pointerImpulse(x,y,force){
+    for(const s of state.shards){ if(!s.active||s.isDebris) continue; const dx=s.worldX-x, dy=s.worldY-y; const d=Math.hypot(dx,dy); if(d>160) continue;
+      const f=(1-d/160); s.targetX += (dx/Math.max(1,d))*force*f*0.03; s.targetY += (dy/Math.max(1,d))*force*f*0.03;
+      if(force>CFG.yieldPoint){ s.hp -= f*force*0.05; if(s.hp<=0){ s.active=0; s.isDebris=1; s.dvx=dx*0.6; s.dvy=dy*0.6; } }
+    }
+  }
+
+  async function bench(){
+    const cases=[{name:'A: 2x ship (oryginalny rozkład)',frames:220},{name:'B: 2x ship + wyższy impuls',frames:220,heavy:true}];
+    let out='Benchmark fixed dt=1/120\n';
+    for(const c of cases){
+      state=createState(IMGS); const cpu=new CPUBackend(); await cpu.init(state);
+      let tc=0; for(let i=0;i<c.frames;i++){ if(c.heavy&&i%30===0) pointerImpulse(W*0.5,H*0.5,1800); const t0=performance.now(); await cpu.step(CFG.dt); tc+=performance.now()-t0; }
+      state=createState(IMGS); let tg=NaN;
+      try { const gpu=new WebGPUBackend(); await gpu.init(state); tg=0; for(let i=0;i<c.frames;i++){ if(c.heavy&&i%30===0) pointerImpulse(W*0.5,H*0.5,1800); const t0=performance.now(); await gpu.step(CFG.dt); tg+=performance.now()-t0; } }
+      catch(_){ tg=NaN; }
+      out += `${c.name}\n CPU: ${(tc/c.frames).toFixed(3)} ms/frame\n GPU: ${Number.isNaN(tg)?'n/a':(tg/c.frames).toFixed(3)+' ms/frame'}\n`;
+    }
+    benchEl.textContent=out;
+  }
+
+  function draw(){
+    const t0=performance.now();
+    ctx.clearRect(0,0,W,H); ctx.fillStyle='#080f1c'; ctx.fillRect(0,0,W,H);
+    for(const e of state.entities){ for(const s of e.shards) drawShard(s,e); }
+    perf.draw += performance.now()-t0;
+    if((frame++%20)===0){
+      const alive=state.shards.filter(s=>s.active&&!s.isDebris).length, deb=state.shards.filter(s=>s.isDebris).length;
+      statsEl.textContent=`shards=${state.shards.length} alive=${alive} debris=${deb}\nstep avg=${(perf.step/Math.max(1,frame)).toFixed(3)} ms\ndraw avg=${(perf.draw/Math.max(1,frame)).toFixed(3)} ms`;
+    }
+  }
+
+  canvas.addEventListener('mousedown',e=>pointerImpulse(e.clientX,e.clientY,e.button===2?1800:350));
+  canvas.addEventListener('contextmenu',e=>e.preventDefault());
+  addEventListener('keydown',async e=>{
+    if(e.code==='KeyW') INPUT.thrust=240; if(e.code==='KeyS') INPUT.thrust=-140; if(e.code==='KeyA') INPUT.turn=-2.2; if(e.code==='KeyD') INPUT.turn=2.2;
+    if(e.code==='KeyR'){ state=createState(IMGS); backend=await makeBackend(); }
+    if(e.code==='KeyB') bench();
+  });
+  addEventListener('keyup',e=>{ if(['KeyW','KeyS'].includes(e.code)) INPUT.thrust=0; if(['KeyA','KeyD'].includes(e.code)) INPUT.turn=0; });
+  addEventListener('resize',()=>{W=canvas.width=innerWidth; H=canvas.height=innerHeight;});
+
+  const SHIP_URL='/assets/capital_ship_rect_v1.png', DMG_URL='/assets/damaged.png';
+  let IMGS;
+  async function init(){
+    const [ship,dmg]=await Promise.all([loadImage(SHIP_URL),loadImage(DMG_URL)]);
+    IMGS={ship,dmg}; state=createState(IMGS); backend=await makeBackend();
+    let last=performance.now(), acc=0;
+    async function loop(now){
+      acc += Math.min(0.05,(now-last)/1000); last=now;
+      while(acc>=CFG.dt){ const t0=performance.now(); await backend.step(CFG.dt); perf.step += performance.now()-t0; state.t+=CFG.dt; acc-=CFG.dt; }
+      draw(); requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+  }
+  init().catch(err=>{ backendEl.textContent='Błąd init: '+err.message; console.error(err); });
+})();
+</script>
+</body>
+</html>
