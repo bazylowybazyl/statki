@@ -745,7 +745,9 @@ export const DestructorSystem = {
       for (let j = i + 1; j < len; j++) {
         const B = entities[j];
         if (!B?.hexGrid || B.dead || B.isCollidable === false) continue;
-        if (A.owner === B || B.owner === A) continue;
+        const rootA = A.owner || A;
+        const rootB = B.owner || B;
+        if (rootA === rootB || rootA === B || rootB === A) continue;
         const dx = ax - getEntityPosX(B);
         const dy = ay - getEntityPosY(B);
         const rs = ar + (B.radius || 100);
@@ -1104,7 +1106,16 @@ export const DestructorSystem = {
     ctx.fill();
     ctx.restore();
     ctx.globalCompositeOperation = 'source-over';
-    shard.becomeDebris((velVector?.x || 0) * 0.3 + shard.deformation.x * 2, (velVector?.y || 0) * 0.3 + shard.deformation.y * 2, entity, 1.0);
+    const scale = getFinalScale(entity);
+    shard.becomeDebris(
+      (velVector?.x || 0) * 0.3 + shard.deformation.x * 2,
+      (velVector?.y || 0) * 0.3 + shard.deformation.y * 2,
+      entity,
+      scale
+    );
+    if (Number.isFinite(entity.hexGrid.activeStructuralCount)) {
+      entity.hexGrid.activeStructuralCount = Math.max(0, entity.hexGrid.activeStructuralCount - 1);
+    }
     entity.hexGrid.meshDirty = true;
     entity.hexGrid.gpuTextureNeedsUpdate = true;
   },
@@ -1173,6 +1184,11 @@ export const DestructorSystem = {
     entity.hexGrid.meshDirty = true;
     entity.hexGrid.textureDirty = true;
     entity.hexGrid.cacheDirty = true;
+    entity.hexGrid.activeStructuralCount = shards.length;
+    entity.hexGrid.baseStructuralCount = Math.max(
+      Number(entity.hexGrid.baseStructuralCount) || 0,
+      shards.length
+    );
     rebuildNeighbors(entity.hexGrid);
     if (!entity.isPlayer) entity.mass = Math.max(10, shards.length * DESTRUCTOR_CONFIG.shardMass);
   },
@@ -1198,11 +1214,21 @@ export const DestructorSystem = {
     }
     const newRadius = Math.sqrt(maxD2) + DESTRUCTOR_CONFIG.gridDivisions * 2;
 
+    const scale = getFinalScale(parent);
     const ang = getEntityHexAngle(parent);
     const c = Math.cos(ang);
     const s = Math.sin(ang);
-    const worldX = getEntityPosX(parent) + relX * c - relY * s;
-    const worldY = getEntityPosY(parent) + relX * s + relY * c;
+    const worldX = getEntityPosX(parent) + (relX * scale) * c - (relY * scale) * s;
+    const worldY = getEntityPosY(parent) + (relX * scale) * s + (relY * scale) * c;
+    const angVel = getEntityAngVel(parent);
+    let wreckVx = getEntityVelX(parent);
+    let wreckVy = getEntityVelY(parent);
+    if (angVel) {
+      const rx = worldX - getEntityPosX(parent);
+      const ry = worldY - getEntityPosY(parent);
+      wreckVx += -angVel * ry;
+      wreckVy += angVel * rx;
+    }
 
     const cols = parent.hexGrid.cols || Math.ceil(parent.hexGrid.srcWidth / HEX_SPACING);
     const rows = parent.hexGrid.rows || Math.ceil(parent.hexGrid.srcHeight / HEX_HEIGHT);
@@ -1210,8 +1236,8 @@ export const DestructorSystem = {
     const wreck = {
       x: worldX,
       y: worldY,
-      vx: getEntityVelX(parent),
-      vy: getEntityVelY(parent),
+      vx: wreckVx,
+      vy: wreckVy,
       angle: getEntityAngle(parent),
       angVel: getEntityAngVel(parent),
       radius: newRadius,
@@ -1220,7 +1246,8 @@ export const DestructorSystem = {
       dead: false,
       isWreck: true,
       isCollidable: true,
-      visual: { spriteScale: getFinalScale(parent), spriteRotation: getEntitySpriteRotation(parent) },
+      owner: parent.owner || parent,
+      visual: { spriteScale: scale, spriteRotation: getEntitySpriteRotation(parent) },
       hexGrid: {
         shards,
         map: {},
@@ -1235,11 +1262,14 @@ export const DestructorSystem = {
         textureDirty: true,
         meshDirty: true,
         gpuTextureNeedsUpdate: false,
+        activeStructuralCount: shards.length,
+        baseStructuralCount: shards.length,
         pivot: { x: relX, y: relY }
       }
     };
 
     wreck.hexGrid.cacheCtx = wreck.hexGrid.cacheCanvas.getContext('2d');
+    wreck.hexGrid.cacheCtx.drawImage(parent.hexGrid.cacheCanvas, 0, 0);
     for (const hs of shards) {
       wreck.hexGrid.map[hs.c + ',' + hs.r] = hs;
       if (hs.c >= 0 && hs.c < cols && hs.r >= 0 && hs.r < rows) {
@@ -1348,6 +1378,8 @@ export function initHexBody(entity, image, damagedImage = null, isProjectile = f
     textureDirty: false,
     meshDirty: false,
     gpuTextureNeedsUpdate: false,
+    activeStructuralCount: shards.length,
+    baseStructuralCount: shards.length,
     pivot: null
   };
 
@@ -1359,6 +1391,32 @@ export function initHexBody(entity, image, damagedImage = null, isProjectile = f
   else if (!Number.isFinite(entity.mass) || entity.mass <= 0) {
     entity.mass = Math.max(10, shards.length * DESTRUCTOR_CONFIG.shardMass);
   }
+}
+
+export function getHexStructuralState(entity) {
+  const grid = entity?.hexGrid;
+  if (!grid || !Array.isArray(grid.shards)) return null;
+
+  let active = Number(grid.activeStructuralCount);
+  if (!Number.isFinite(active)) {
+    active = 0;
+    for (let i = 0; i < grid.shards.length; i++) {
+      const shard = grid.shards[i];
+      if (shard?.active && !shard?.isDebris && shard.hp > 0) active++;
+    }
+    grid.activeStructuralCount = active;
+  }
+  active = Math.max(0, active);
+
+  let total = Number(grid.baseStructuralCount);
+  if (!Number.isFinite(total) || total <= 0) {
+    total = grid.shards.length;
+    grid.baseStructuralCount = total;
+  }
+  total = Math.max(0, total);
+
+  const ratio = total > 0 ? Math.max(0, Math.min(1, active / total)) : 0;
+  return { active, total, ratio };
 }
 
 export function drawHexBody(ctx, entity, camera, worldToScreenFunc) {
@@ -1382,10 +1440,15 @@ export function drawHexBody(ctx, entity, camera, worldToScreenFunc) {
   ctx.restore();
 }
 
-export function drawHexBodyLocal(ctx, entity) {
-  if (HEX_SHIPS_3D_ACTIVE) return;
+export function drawHexBodyLocal(ctx, entity, forceRender2D = false) {
+  if (HEX_SHIPS_3D_ACTIVE && !forceRender2D) return;
   if (!entity?.hexGrid?.cacheCanvas) return;
-  refreshHexBodyCache(entity);
+  if (forceRender2D) {
+    const grid = entity.hexGrid;
+    if (grid.cacheDirty || grid.textureDirty) updateHexCache(entity);
+  } else {
+    refreshHexBodyCache(entity);
+  }
   ctx.save();
   const sc = getFinalScale(entity);
   ctx.scale(sc, sc);

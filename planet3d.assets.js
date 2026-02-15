@@ -4,6 +4,14 @@ import { Core3D } from './src/3d/core3d.js';
 window.Dev = window.Dev || {};
 const PLANET_SIZE_MULTIPLIER = 4.5;
 const SUN_SIZE_MULTIPLIER = 6.0;
+const HALO_DEFAULTS = Object.freeze({
+    sizeMul: 0.99,
+    coefMul: 1.4,
+    coefAdd: 0.0,
+    powerMul: 1.0,
+    powerAdd: 8.0,
+    sunMul: 1.0
+});
 
 // ==========================================
 // 0. SHADERS: NEBULA (CLEAN / RAW)
@@ -195,35 +203,76 @@ void main() {
     }
 
     float NdotL = dot(normal, lightDir);
-    float directLight = max(0.0, NdotL) * uSunIntensity;
-    float intensity = max(uAmbient, directLight);
+    float sunL = max(0.0, NdotL);
+    float dayLight = clamp(uAmbient + sunL * uSunIntensity, 0.0, 1.2);
 
     vec4 dayColor = texture2D(dayTexture, vUv);
     vec4 nightColor = texture2D(nightTexture, vUv);
     float specularMask = texture2D(specularTexture, vUv).r;
 
     float specular = 0.0;
-    if (NdotL > 0.0) {
+    if (sunL > 0.0) {
         float NdotH = max(0.0, dot(normal, halfVector));
         float shininess = 10.0; 
-        specular = pow(NdotH, shininess) * specularMask * uSpecular * uSunIntensity;
+        specular = pow(NdotH, shininess) * specularMask * uSpecular * sunL;
     }
 
-    float terminatorEdge = -0.15 - uSunWrap; 
-    float mixFactor = smoothstep(terminatorEdge, 0.15, NdotL);
+    float terminatorEdge = -0.08 - uSunWrap; 
+    float mixFactor = smoothstep(terminatorEdge, 0.20, NdotL);
     vec3 finalColor;
 
     if (hasNightTexture > 0.5) {
-        vec3 daySide = dayColor.rgb * uBrightness;
-        daySide *= intensity;
-        daySide += vec3(0.7, 0.8, 1.0) * specular; 
-        vec3 nightSide = nightColor.rgb * 3.0;
+        vec3 daySide = dayColor.rgb * uBrightness * dayLight;
+        daySide += vec3(0.45, 0.52, 0.65) * specular; 
+        float nightMask = 1.0 - mixFactor;
+        vec3 nightSide = nightColor.rgb * 0.55 * nightMask;
         finalColor = mix(nightSide, daySide, mixFactor);
     } else {
-        float light = clamp(NdotL, uAmbient, 1.0);
-        finalColor = dayColor.rgb * light * uBrightness * uSunIntensity;
+        float twilight = smoothstep(-0.06 - uSunWrap * 0.5, 0.20, NdotL);
+        float minNightLight = max(0.006, uAmbient * 0.35);
+        float lit = mix(minNightLight, dayLight, twilight);
+        float nightBand = 1.0 - smoothstep(-0.25, 0.02, NdotL);
+        vec3 nightTint = vec3(0.02, 0.03, 0.05) * nightBand;
+        finalColor = dayColor.rgb * uBrightness * lit + nightTint;
     }
+    finalColor = clamp(finalColor, 0.0, 1.0);
     gl_FragColor = vec4(finalColor, 1.0);
+}
+`;
+
+const CLOUD_VERTEX = `
+varying vec2 vUv;
+varying vec3 vNormal;
+varying vec3 vWorldPosition;
+void main() {
+    vUv = uv;
+    vNormal = normalize(normalMatrix * normal);
+    vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+    vWorldPosition = worldPosition.xyz;
+    gl_Position = projectionMatrix * viewMatrix * worldPosition;
+}
+`;
+
+const CLOUD_FRAGMENT = `
+uniform sampler2D cloudTexture;
+uniform vec3 sunPosition;
+uniform float uOpacity;
+varying vec2 vUv;
+varying vec3 vNormal;
+varying vec3 vWorldPosition;
+void main() {
+    vec4 texel = texture2D(cloudTexture, vUv);
+    float mask = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
+    if (mask < 0.03) discard;
+
+    vec3 normal = normalize(vNormal);
+    vec3 lightDir = normalize(sunPosition - vWorldPosition);
+    float lit = smoothstep(-0.02, 0.22, dot(normal, lightDir));
+    float alpha = mask * uOpacity * pow(lit, 1.35);
+    if (alpha < 0.01) discard;
+
+    vec3 color = vec3(1.0) * (0.08 + 0.92 * lit);
+    gl_FragColor = vec4(color, alpha);
 }
 `;
 
@@ -250,10 +299,10 @@ void main() {
     float rim = pow(coef - dot(vNormal, vec3(0.0, 0.0, 1.0)), power);
     vec3 lightDir = normalize(sunPosition - vWorldPosition);
     float sunDot = dot(vNormal, lightDir);
-    float dayFactor = smoothstep(-0.2, 0.2, sunDot) + 0.1;
+    float dayFactor = smoothstep(-0.15, 0.25, sunDot);
     float intensity = rim * dayFactor;
     intensity = clamp(intensity, 0.0, 1.0); 
-    gl_FragColor = vec4(glowColor, intensity * clamp(uSunIntensity, 0.5, 1.5));
+    gl_FragColor = vec4(glowColor, intensity * clamp(uSunIntensity, 0.2, 1.0));
 }
 `;
 
@@ -296,7 +345,7 @@ const NebulaSystem = {
         });
 
         this.mesh = new THREE.Mesh(geo, mat);
-        this.mesh.position.z = -20000; // Głęboko w tle
+        this.mesh.position.z = -150000; // Głęboko w tle
         this.mesh.renderOrder = -999;
         
         Core3D.scene.add(this.mesh);
@@ -355,7 +404,7 @@ const StarSystem = {
         for(let i=0; i < this.count; i++) {
             positions[i*3] = (Math.random() - 0.5) * this.worldScale;
             positions[i*3+1] = (Math.random() - 0.5) * this.worldScale;
-            positions[i*3+2] = -5000; 
+            positions[i*3+2] = -100000; 
 
             sizes[i] = 1.0 + Math.pow(Math.random(), 3.0) * 4.0; 
             brights[i] = 0.4 + Math.random() * 0.6;
@@ -426,18 +475,27 @@ const StarSystem = {
         this.uniforms.time.value += dt;
 
         if (this.mesh) {
-            this.mesh.position.set(cx, -cy, -10000); 
+            this.mesh.position.set(cx, -cy, -100000); 
         }
 
-        const starSpeed = 0.9; 
-        this.uniforms.cameraOffset.value.set(cx * starSpeed, -cy * starSpeed);
+        const starSpeed = 0.9;
+        const wrapSize = this.worldScale || 100000;
+        const offsetXRaw = cx * starSpeed;
+        const offsetYRaw = -cy * starSpeed;
+        const offsetX = ((offsetXRaw % wrapSize) + wrapSize) % wrapSize;
+        const offsetY = ((offsetYRaw % wrapSize) + wrapSize) % wrapSize;
+        this.uniforms.cameraOffset.value.set(offsetX, offsetY);
 
         let dx = 0, dy = 1;
+        const interpShipPose = (typeof window !== 'undefined') ? window.__interpShipPose : null;
         if (ship && ship.vel) {
              const speed = Math.hypot(ship.vel.x, ship.vel.y);
              if (speed > 10) {
                  dx = ship.vel.x / speed;
                  dy = ship.vel.y / speed;
+             } else if (interpShipPose && Number.isFinite(interpShipPose.angle)) {
+                 dx = Math.sin(interpShipPose.angle);
+                 dy = -Math.cos(interpShipPose.angle);
              } else if (typeof ship.angle === 'number') {
                  dx = Math.sin(ship.angle);
                  dy = -Math.cos(ship.angle);
@@ -495,10 +553,11 @@ class DirectPlanet {
         this.data = data;
         this.mesh = null;
         this.clouds = null;
+        this.cloudUniforms = null;
         this.atmosphere = null;
         this.group = new THREE.Group();
         // Planety lądują pod statkiem, ale nad gwiazdami
-        this.group.position.z = -100;
+        this.group.position.z = -50000;
         
         this.uniforms = {
             dayTexture: { value: null },
@@ -507,11 +566,11 @@ class DirectPlanet {
             normalTexture: { value: null },
             sunPosition: { value: new THREE.Vector3(0, 0, 0) },
             hasNightTexture: { value: 0.0 },
-            uBrightness: { value: 1.5 }, 
-            uAmbient: { value: 0.02 },   
-            uSpecular: { value: 0.3 },   
+            uBrightness: { value: 1.0 }, 
+            uAmbient: { value: 0.008 },   
+            uSpecular: { value: 0.22 },   
             uSunWrap: { value: 0.0 },
-            uSunIntensity: { value: 2.2 }
+            uSunIntensity: { value: 1.12 }
         };
         this.init();
     }
@@ -520,6 +579,35 @@ class DirectPlanet {
         if (!Core3D.isInitialized) return;
         const geometry = new THREE.SphereGeometry(1, 128, 128);
         const name = (this.data.name || this.data.id || 'earth').toLowerCase();
+
+        if (name !== 'earth') {
+            this.uniforms.uAmbient.value = 0.004;
+            this.uniforms.uSpecular.value = 0.0;
+            this.uniforms.uSunWrap.value = -0.01;
+            this.uniforms.uSunIntensity.value = 1.1;
+            this.uniforms.uBrightness.value = 1.0;
+        }
+        if (name === 'jupiter') {
+            this.uniforms.uAmbient.value = 0.0025;
+            this.uniforms.uSunIntensity.value = 0.92;
+            this.uniforms.uBrightness.value = 0.92;
+        } else if (name === 'saturn') {
+            this.uniforms.uAmbient.value = 0.003;
+            this.uniforms.uSunIntensity.value = 0.95;
+            this.uniforms.uBrightness.value = 0.94;
+        } else if (name === 'neptune' || name === 'uranus') {
+            this.uniforms.uAmbient.value = 0.003;
+            this.uniforms.uSunIntensity.value = 1.0;
+            this.uniforms.uBrightness.value = 0.96;
+        } else if (name === 'mars' || name === 'mercury') {
+            this.uniforms.uAmbient.value = 0.0035;
+            this.uniforms.uSunIntensity.value = 1.04;
+            this.uniforms.uBrightness.value = 0.95;
+        } else if (name === 'venus') {
+            this.uniforms.uAmbient.value = 0.003;
+            this.uniforms.uSunIntensity.value = 0.98;
+            this.uniforms.uBrightness.value = 0.93;
+        }
         
         const texPath = `/assets/planety/solar/${name}/${name}_color.jpg`; 
         const dayTex = loadTex(texPath);
@@ -552,18 +640,28 @@ class DirectPlanet {
         });
 
         this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
         this.group.add(this.mesh);
 
         if (name === 'earth') {
             const cloudPath = `/assets/planety/solar/earth/earth_clouds.jpg`;
             const cloudGeo = new THREE.SphereGeometry(1.005, 128, 128); 
-            const cloudMat = new THREE.MeshPhongMaterial({
-                map: loadTex(cloudPath),
+            const cloudTex = loadTex(cloudPath);
+            cloudTex.colorSpace = THREE.SRGBColorSpace;
+            this.cloudUniforms = {
+                cloudTexture: { value: cloudTex },
+                sunPosition: { value: new THREE.Vector3(0, 0, 0) },
+                uOpacity: { value: 0.62 }
+            };
+            const cloudMat = new THREE.ShaderMaterial({
+                uniforms: this.cloudUniforms,
+                vertexShader: CLOUD_VERTEX,
+                fragmentShader: CLOUD_FRAGMENT,
                 transparent: true,
-                opacity: 0.8,
-                blending: THREE.AdditiveBlending, 
+                depthWrite: false,
                 side: THREE.DoubleSide,
-                shininess: 0
+                blending: THREE.NormalBlending
             });
             this.clouds = new THREE.Mesh(cloudGeo, cloudMat);
             this.group.add(this.clouds);
@@ -582,6 +680,11 @@ class DirectPlanet {
         if (name === 'uranus')  { atmColor.set(0.4, 0.7, 0.8);  atmPower = 4.0; }
         if (name === 'neptune') { atmColor.set(0.2, 0.3, 0.9);  atmPower = 4.0; }
 
+        atmSize *= HALO_DEFAULTS.sizeMul;
+        atmCoef = atmCoef * HALO_DEFAULTS.coefMul + HALO_DEFAULTS.coefAdd;
+        atmPower = atmPower * HALO_DEFAULTS.powerMul + HALO_DEFAULTS.powerAdd;
+        const atmSunIntensity = 1.1 * HALO_DEFAULTS.sunMul;
+
         const atmGeo = new THREE.SphereGeometry(atmSize, 64, 64);
         const atmMat = new THREE.ShaderMaterial({
             vertexShader: ATMOSPHERE_VERTEX,
@@ -590,7 +693,7 @@ class DirectPlanet {
                 coef: { value: atmCoef },  
                 power: { value: atmPower }, 
                 glowColor: { value: atmColor },
-                uSunIntensity: { value: 2.2 },
+                uSunIntensity: { value: atmSunIntensity },
                 sunPosition: { value: new THREE.Vector3(0,0,0) }
             },
             transparent: true,
@@ -610,7 +713,7 @@ class DirectPlanet {
         
         const x = this.data.x;
         const y = -this.data.y; // Odwrócenie Y dla WebGL
-        this.group.position.set(x, y, -100);
+        this.group.position.set(x, y, -50000);
         
         const currentRadius = (this.data.r || 100);
         const scale = currentRadius * PLANET_SIZE_MULTIPLIER;
@@ -618,6 +721,9 @@ class DirectPlanet {
         
         if (window.SUN) {
             this.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, 0); 
+            if (this.cloudUniforms) {
+                this.cloudUniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, 0);
+            }
             if (this.atmosphere) {
                 this.atmosphere.material.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, 0);
             }
@@ -632,7 +738,7 @@ class DirectSun {
     constructor(data) {
         this.data = data;
         this.group = new THREE.Group();
-        this.group.position.z = -150;
+        this.group.position.z = -60000;
         this.init();
     }
     init() {
@@ -659,18 +765,24 @@ class DirectSun {
         Core3D.scene.add(this.group);
         
         // Słońce potrzebuje oświetlać inne planety - wpinamy światło do Core3D
-        this.sunLight = new THREE.DirectionalLight(0xffffff, 2.2);
+        this.sunLight = new THREE.DirectionalLight(0xffeedd, 1.5);
         this.sunLight.castShadow = true;
         this.sunLight.shadow.mapSize.width = 4096;
         this.sunLight.shadow.mapSize.height = 4096;
-        this.sunLight.shadow.camera.near = 100;
-        this.sunLight.shadow.camera.far = 100000;
+        this.sunLight.shadow.camera.near = 1;
+        this.sunLight.shadow.camera.far = 220000;
         
-        const d = 15000; 
+        const d = 4000; 
         this.sunLight.shadow.camera.left = -d;
         this.sunLight.shadow.camera.right = d;
         this.sunLight.shadow.camera.top = d;
         this.sunLight.shadow.camera.bottom = -d;
+        this.sunLight.shadow.bias = -0.0005;
+        this.sunLight.shadow.normalBias = 0.01;
+
+        this.sunTarget = new THREE.Object3D();
+        Core3D.scene.add(this.sunTarget);
+        this.sunLight.target = this.sunTarget;
 
         Core3D.scene.add(this.sunLight);
         Core3D.scene.add(new THREE.AmbientLight(0xffffff, 0.02));
@@ -682,12 +794,26 @@ class DirectSun {
         const x = this.data.x;
         const y = -this.data.y;
         
-        this.group.position.set(x, y, -150);
+        this.group.position.set(x, y, -60000);
         if (this.sunLight) {
-            this.sunLight.position.set(x, y, 100000);
-            if (this.sunLight.target) {
-                this.sunLight.target.position.set(x, y, 0);
-                this.sunLight.target.updateMatrixWorld();
+            const targetX = (typeof cam.x === 'number') ? cam.x : x;
+            const targetY = (typeof cam.y === 'number') ? -cam.y : y;
+            const dirX = x - targetX;
+            const dirY = y - targetY;
+            const len = Math.hypot(dirX, dirY) || 1;
+            const normX = dirX / len;
+            const normY = dirY / len;
+            const offset = 2600;
+
+            this.sunLight.position.set(
+                targetX + normX * offset,
+                targetY + normY * offset,
+                3000
+            );
+
+            if (this.sunTarget) {
+                this.sunTarget.position.set(targetX, targetY, 0);
+                this.sunTarget.updateMatrixWorld();
             }
         }
         

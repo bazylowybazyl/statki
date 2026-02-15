@@ -53,6 +53,7 @@ export const Core3D = {
   renderer: null,
   scene: null,
   camera: null,
+  shadowCatcher: null,
   composer: null,
   width: 0,
   height: 0,
@@ -87,9 +88,21 @@ export const Core3D = {
     this.scene = new THREE.Scene();
     this.scene.background = null;
 
-    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 300000);
-    this.camera.position.set(0, 0, 10000);
+    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 400000);
+    this.camera.position.set(0, 0, 150000);
     this.camera.lookAt(0, 0, 0);
+
+    const shadowPlaneGeo = new THREE.PlaneGeometry(240000, 240000);
+    const shadowPlaneMat = new THREE.ShadowMaterial({
+      opacity: 0.55,
+      depthWrite: false
+    });
+    this.shadowCatcher = new THREE.Mesh(shadowPlaneGeo, shadowPlaneMat);
+    this.shadowCatcher.receiveShadow = true;
+    this.shadowCatcher.frustumCulled = false;
+    this.shadowCatcher.renderOrder = -0.5;
+    this.shadowCatcher.position.set(0, 0, -90000);
+    this.scene.add(this.shadowCatcher);
 
     const rt = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
       format: THREE.RGBAFormat,
@@ -158,7 +171,11 @@ export const Core3D = {
     this.camera.bottom = -halfH;
     this.camera.updateProjectionMatrix();
 
-    this.camera.position.set(gameCamera.x, -gameCamera.y, 10000);
+    this.camera.position.set(gameCamera.x, -gameCamera.y, 150000);
+    if (this.shadowCatcher) {
+      this.shadowCatcher.position.x = gameCamera.x;
+      this.shadowCatcher.position.y = -gameCamera.y;
+    }
   },
 
   render() {
@@ -166,4 +183,3 @@ export const Core3D = {
     this.composer.render();
   }
 };
-

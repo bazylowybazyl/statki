@@ -90,6 +90,16 @@ const SHIP_TEMPLATE = {
   hull: { max: 12000, val: 12000 },
   
   special: { cooldown: 10, cooldownTimer: 0 },
+
+  agility: {
+    active: false,
+    cooldowns: { dash: 0, strafe: 0, arc: 0 },
+    maxCooldowns: { dash: 2.5, strafe: 2.5, arc: 5.0 },
+    arcCharge: 0,
+    arcDir: 0,
+    lastPivot: null,
+    maneuver: null
+  },
   
   // Stan wejścia sterowania
   input: { thrustX: 0, thrustY: 0, aimX: 0, aimY: 0 },
@@ -106,6 +116,21 @@ const SHIP_VISUAL_BASE = {
   turretTop: { x: -77.50, y: -57.50 },
   turretBottom: { x: -63.50, y: 81.00 },
   engineX: -210.00
+};
+
+const DEFAULT_ENGINE_VFX = {
+  tune: { mainW: 1.13, mainL: 4.06, sideW: 1.0, sideL: 0.98, curve: 1.8 },
+  main: {
+    offset: { x: -352, y: 0 },
+    forward: { x: 0, y: 1 },
+    yNudge: -54
+  },
+  sides: [
+    { offset: { x: 338, y: 366 }, forward: { x: 1, y: 0 }, side: 'left', yNudge: -51, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
+    { offset: { x: -289, y: 463 }, forward: { x: 1, y: 0 }, side: 'left', yNudge: -51, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
+    { offset: { x: 345, y: -366 }, forward: { x: -1, y: 0 }, side: 'right', yNudge: -48, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
+    { offset: { x: -303, y: -456 }, forward: { x: -1, y: 0 }, side: 'right', yNudge: -48, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 }
+  ]
 };
 
 // --- FUNKCJE POMOCNICZE ---
@@ -166,6 +191,9 @@ function configureShipGeometry(ship) {
   ship.engines.main = {
     offset: { x: Math.round(-hw + 20), y: 0 },
     visualOffset: { x: ship.visual.mainEngine.x, y: ship.visual.mainEngine.y },
+    vfxOffset: { ...DEFAULT_ENGINE_VFX.main.offset },
+    vfxForward: { ...DEFAULT_ENGINE_VFX.main.forward },
+    vfxYNudge: DEFAULT_ENGINE_VFX.main.yNudge,
     maxThrust: 1 // Wartość placeholder, fizyka używa SHIP_PHYSICS.SPEED
   };
 
@@ -201,28 +229,16 @@ function configureShipGeometry(ship) {
 
   // Konfiguracja VFX dla silników manewrowych
   if (!ship.visual.torqueThrusters) {
-      const topX = Math.round(-hw * 0.82 * ship.visual.spriteScale);
-      const topY = Math.round(hh * 0.62 * ship.visual.spriteScale);
-      const botX = Math.round(-hw * 0.68 * ship.visual.spriteScale);
-      const botY = Math.round(hh * 0.42 * ship.visual.spriteScale);
-      const nudge = Math.round(-48.0 * ship.visual.spriteScale);
-      
-      const vfxWMin = Math.round(25.9 * ship.visual.spriteScale * 0.75);
-      const vfxWMax = Math.round(25.9 * ship.visual.spriteScale * 1.25);
-      const vfxLMin = Math.round(41.0 * ship.visual.spriteScale * 1.4);
-      const vfxLMax = Math.round(41.0 * ship.visual.spriteScale * 2.6);
-
-      const rotateThrusterOffset = (offset) => ({
-        x: offset.x,
-        y: offset.y
-      });
-
-      ship.visual.torqueThrusters = [
-        { offset: rotateThrusterOffset({ x: topX, y: -topY }), forward: { x: 0, y: 1 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
-        { offset: rotateThrusterOffset({ x: botX, y: -botY }), forward: { x: 0, y: 1 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
-        { offset: rotateThrusterOffset({ x: topX, y: topY }), forward: { x: 0, y: -1 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
-        { offset: rotateThrusterOffset({ x: botX, y: botY }), forward: { x: 0, y: -1 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax }
-      ];
+      ship.visual.torqueThrusters = DEFAULT_ENGINE_VFX.sides.map(t => ({
+        offset: { ...t.offset },
+        forward: { ...t.forward },
+        side: t.side,
+        yNudge: t.yNudge,
+        vfxWidthMin: t.vfxWidthMin,
+        vfxWidthMax: t.vfxWidthMax,
+        vfxLengthMin: t.vfxLengthMin,
+        vfxLengthMax: t.vfxLengthMax
+      }));
   }
 
   // Pozycje działek bocznych (dla rakiet)

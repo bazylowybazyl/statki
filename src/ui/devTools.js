@@ -1,4 +1,4 @@
-// src/ui/devTools.js
+﻿// src/ui/devTools.js
 
 const STYLES = `
 #devtools { position: fixed; right: 16px; top: 16px; width: 340px; max-height: 80vh; overflow: auto; padding: 14px; border-radius: 12px; background: rgba(10, 14, 25, .92); border: 1px solid #1b2337; color: #dfe7ff; z-index: 1000; font-family: Inter, system-ui, Segoe UI, Roboto, Arial; display: none }
@@ -23,21 +23,21 @@ const STYLES = `
 const HTML = `
 <h3>DevTools</h3>
 <div class="group">
-  <div class="row"><strong>Wszechświat</strong></div>
-  <div class="row"><label>Słońce – promień 2D (R)</label><input id="sunR2D" type="range" min="50" max="1500" step="1" value="823"><div class="val" id="sunR2DVal"></div></div>
-  <div class="row"><label>Słońce – promień 3D (R)</label><input id="sunR3D" type="range" min="50" max="1500" step="1" value="399"><div class="val" id="sunR3DVal"></div></div>
-  <div class="row"><label>Planety – skala globalna (×)</label><input id="planetScaleAll" type="range" min="0.5" max="3" step="0.01" value="1"><div class="val" id="planetScaleAllVal"></div></div>
+  <div class="row"><strong>Wszechswiat</strong></div>
+  <div class="row"><label>Slonce - promien 2D (R)</label><input id="sunR2D" type="range" min="50" max="1500" step="1" value="823"><div class="val" id="sunR2DVal"></div></div>
+  <div class="row"><label>Slonce - promien 3D (R)</label><input id="sunR3D" type="range" min="50" max="1500" step="1" value="399"><div class="val" id="sunR3DVal"></div></div>
+  <div class="row"><label>Planety - skala globalna (x)</label><input id="planetScaleAll" type="range" min="0.5" max="3" step="0.01" value="1"><div class="val" id="planetScaleAllVal"></div></div>
 </div>
 <div class="group" id="planetsGroup"><div class="row"><strong>Planety (R)</strong> <span class="small muted">(per-planeta)</span></div></div>
-<div class="group" id="distancesGroup"><div class="row"><strong>Dystanse od Słońca</strong> <span class="small muted">(AU → promień orbity)</span></div></div>
+<div class="group" id="distancesGroup"><div class="row"><strong>Dystanse od Slonca</strong> <span class="small muted">(AU -> promien orbity)</span></div></div>
 <div class="group">
   <div class="row"><strong>Stacje</strong></div>
-  <div class="row"><label>Skala stacji pirackiej (×)</label><input id="pirScale" type="range" min="0.4" max="12" step="0.01" value="6"><div class="val" id="pirScaleVal"></div></div>
-  <div class="row"><label>Skala stacji 3D (×) (Global)</label><input id="station3DScale" type="range" min="0.2" max="12.0" step="0.05" value="2.70"><div class="val" id="station3DScaleVal"></div></div>
-  <div class="row"><label>Stacja 3D – rozmiar sprite (px)</label><input id="stationSpritePx" type="number" min="64" max="4096" step="32" value="1024" style="width:96px;"></div>
+  <div class="row"><label>Skala stacji pirackiej (x)</label><input id="pirScale" type="range" min="0.4" max="12" step="0.01" value="6"><div class="val" id="pirScaleVal"></div></div>
+  <div class="row"><label>Skala stacji 3D (x) (global)</label><input id="station3DScale" type="range" min="0.2" max="12.0" step="0.05" value="2.70"><div class="val" id="station3DScaleVal"></div></div>
+  <div class="row"><label>Stacja 3D - rozmiar sprite (px)</label><input id="stationSpritePx" type="number" min="64" max="4096" step="32" value="1024" style="width:96px;"></div>
   <div class="dt-row">
     <div class="dt-col">
-      <div class="dt-label" style="margin-top:6px;">Skala per stacja (3D Override)</div>
+      <div class="dt-label" style="margin-top:6px;">Skala per stacja (3D override)</div>
       <div id="dt-stations-per-scale" class="dt-stack" style="gap:6px;"></div>
       <button id="dt-reset-station-scales" class="dt-btn" style="margin-top:6px;">Reset per stacja</button>
     </div>
@@ -48,31 +48,82 @@ const HTML = `
 <div class="group" id="stationsFramesGroup"><div class="row"><strong>Stacje (kadr per stacja)</strong> <span class="small muted">(zoom kamery na sprite)</span></div></div>
 <div class="group" id="warpVfxGroup">
   <div class="row"><strong>Warp Wormhole VFX</strong> <span class="small muted">(soczewka statku)</span></div>
-  <div class="row"><label>Próg trybu pełnego</label><input id="warpLensThreshold" type="range" min="0" max="1" step="0.01"><input id="warpLensThresholdNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpLensThresholdVal"></div></div>
-  <div class="row"><label>Promień bazowy</label><input id="warpRadiusBase" type="range" min="0.05" max="0.6" step="0.005"><input id="warpRadiusBaseNum" type="number" min="0.05" max="0.6" step="0.005" style="width:72px;"><div class="val" id="warpRadiusBaseVal"></div></div>
-  <div class="row"><label>Promień — skala</label><input id="warpRadiusScale" type="range" min="0" max="0.3" step="0.005"><input id="warpRadiusScaleNum" type="number" min="0" max="0.3" step="0.005" style="width:72px;"><div class="val" id="warpRadiusScaleVal"></div></div>
+  <div class="row"><label>Prog trybu pelnego</label><input id="warpLensThreshold" type="range" min="0" max="1" step="0.01"><input id="warpLensThresholdNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpLensThresholdVal"></div></div>
+  <div class="row"><label>Promien bazowy</label><input id="warpRadiusBase" type="range" min="0.05" max="0.6" step="0.005"><input id="warpRadiusBaseNum" type="number" min="0.05" max="0.6" step="0.005" style="width:72px;"><div class="val" id="warpRadiusBaseVal"></div></div>
+  <div class="row"><label>Promien - skala</label><input id="warpRadiusScale" type="range" min="0" max="0.3" step="0.005"><input id="warpRadiusScaleNum" type="number" min="0" max="0.3" step="0.005" style="width:72px;"><div class="val" id="warpRadiusScaleVal"></div></div>
   <div class="row"><label>Masa bazowa</label><input id="warpMassBase" type="range" min="0" max="0.5" step="0.005"><input id="warpMassBaseNum" type="number" min="0" max="0.5" step="0.005" style="width:72px;"><div class="val" id="warpMassBaseVal"></div></div>
-  <div class="row"><label>Masa — skala</label><input id="warpMassScale" type="range" min="0" max="0.6" step="0.005"><input id="warpMassScaleNum" type="number" min="0" max="0.6" step="0.005" style="width:72px;"><div class="val" id="warpMassScaleVal"></div></div>
-  <div class="row"><label>Miękkość krawędzi</label><input id="warpSoftness" type="range" min="0" max="1" step="0.01"><input id="warpSoftnessNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpSoftnessVal"></div></div>
-  <div class="row"><label>Przezroczystość bazowa</label><input id="warpOpacityBase" type="range" min="0" max="1" step="0.01"><input id="warpOpacityBaseNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpOpacityBaseVal"></div></div>
-  <div class="row"><label>Przezroczystość — skala</label><input id="warpOpacityScale" type="range" min="0" max="1" step="0.01"><input id="warpOpacityScaleNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpOpacityScaleVal"></div></div>
-  <div class="row"><label>Wydłużenie wzdłuż lotu</label><input id="warpLensForwardStretch" type="range" min="0.1" max="2" step="0.01"><input id="warpLensForwardStretchNum" type="number" min="0.1" max="2" step="0.01" style="width:72px;"><div class="val" id="warpLensForwardStretchVal"></div></div>
-  <div class="row"><label>Offset wzdłuż kadłuba</label><input id="warpTailDepthExtra" type="range" min="-0.2" max="0.8" step="0.01"><input id="warpTailDepthExtraNum" type="number" min="-0.2" max="0.8" step="0.01" style="width:72px;"><div class="val" id="warpTailDepthExtraVal"></div></div>
+  <div class="row"><label>Masa - skala</label><input id="warpMassScale" type="range" min="0" max="0.6" step="0.005"><input id="warpMassScaleNum" type="number" min="0" max="0.6" step="0.005" style="width:72px;"><div class="val" id="warpMassScaleVal"></div></div>
+  <div class="row"><label>Miekkosc krawedzi</label><input id="warpSoftness" type="range" min="0" max="1" step="0.01"><input id="warpSoftnessNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpSoftnessVal"></div></div>
+  <div class="row"><label>Przezroczystosc bazowa</label><input id="warpOpacityBase" type="range" min="0" max="1" step="0.01"><input id="warpOpacityBaseNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpOpacityBaseVal"></div></div>
+  <div class="row"><label>Przezroczystosc - skala</label><input id="warpOpacityScale" type="range" min="0" max="1" step="0.01"><input id="warpOpacityScaleNum" type="number" min="0" max="1" step="0.01" style="width:72px;"><div class="val" id="warpOpacityScaleVal"></div></div>
+  <div class="row"><label>Wydluzenie wzdluz lotu</label><input id="warpLensForwardStretch" type="range" min="0.1" max="2" step="0.01"><input id="warpLensForwardStretchNum" type="number" min="0.1" max="2" step="0.01" style="width:72px;"><div class="val" id="warpLensForwardStretchVal"></div></div>
+  <div class="row"><label>Offset wzdluz kadluba</label><input id="warpTailDepthExtra" type="range" min="-0.2" max="0.8" step="0.01"><input id="warpTailDepthExtraNum" type="number" min="-0.2" max="0.8" step="0.01" style="width:72px;"><div class="val" id="warpTailDepthExtraVal"></div></div>
 </div>
 <div class="group">
-  <div class="row"><label><input id="toggleRuler" type="checkbox"> Miarka (okręgi dystansu)</label></div>
+  <div class="row"><label><input id="toggleRuler" type="checkbox"> Miarka (okregi dystansu)</label></div>
   <div class="row"><label><input id="togglePlanetOrbits" type="checkbox"> Miarki planet (inner/outer/gravity)</label></div>
   <div class="row"><label><input id="toggleUnlimitedWarp" type="checkbox"> Nielimitowany warp <span class="pill">F9</span></label></div>
-  <div class="row"><label><input id="dt-show-sundir" type="checkbox"> Pokaż kierunek słońca</label></div>
-  <div class="row"><label><input id="dt-disable-shake" type="checkbox"> Wyłącz wstrząsy kamery</label></div>
+  <div class="row"><label><input id="dt-show-sundir" type="checkbox"> Pokaz kierunek slonca</label></div>
+  <div class="row"><label><input id="dt-disable-shake" type="checkbox"> Wylacz wstrzasy kamery</label></div>
+</div>
+<div class="group">
+  <div class="row"><strong>HUD (pozycja Y)</strong></div>
+  <div class="row">
+    <label>Panel glowny</label>
+    <input id="dt-hud-center-y" type="range" min="-250" max="250" step="1" value="0">
+    <input id="dt-hud-center-y-num" type="number" min="-250" max="250" step="1" value="0" style="width:72px;">
+    <div class="val" id="dt-hud-center-y-val">0px</div>
+  </div>
+  <div class="row">
+    <label>Heksy (prawy panel)</label>
+    <input id="dt-hud-hex-y" type="range" min="-250" max="250" step="1" value="0">
+    <input id="dt-hud-hex-y-num" type="number" min="-250" max="250" step="1" value="0" style="width:72px;">
+    <div class="val" id="dt-hud-hex-y-val">0px</div>
+  </div>
+  <div class="row">
+    <label>Shield bar</label>
+    <input id="dt-hud-shield-y" type="range" min="-250" max="250" step="1" value="0">
+    <input id="dt-hud-shield-y-num" type="number" min="-250" max="250" step="1" value="0" style="width:72px;">
+    <div class="val" id="dt-hud-shield-y-val">0px</div>
+  </div>
+  <div class="row">
+    <label>HP bar</label>
+    <input id="dt-hud-hp-y" type="range" min="-250" max="250" step="1" value="0">
+    <input id="dt-hud-hp-y-num" type="number" min="-250" max="250" step="1" value="0" style="width:72px;">
+    <div class="val" id="dt-hud-hp-y-val">0px</div>
+  </div>
+  <div class="small muted">Dodatnia wartosc = w gore, ujemna = w dol.</div>
+</div>
+<div class="group">
+  <div class="row"><strong>Bake 3D Model (.glb)</strong></div>
+
+  <div class="row">
+    <label>Korekta dziobu (deg):</label>
+    <input type="number" id="dt-glb-rot" value="0" style="background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px; flex:1; text-align: right;">
+  </div>
+
+  <div class="row">
+    <label>Kadr (Zoom tla):</label>
+    <input type="number" id="dt-glb-zoom" value="1.0" step="0.1" style="background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px; flex:1; text-align: right;">
+  </div>
+
+  <div class="row">
+    <label>Skala statku w grze (x):</label>
+    <input type="number" id="dt-glb-scale" value="1.0" step="0.1" style="background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px; flex:1; text-align: right;">
+  </div>
+
+  <div class="row">
+    <input type="file" id="dt-file-glb" accept=".glb,.gltf" style="display:none">
+    <button id="btn-load-glb" class="dt-btn" style="width:100%">Wybierz i wypal statek (GLB)</button>
+  </div>
 </div>
 <div class="group">
   <div class="row"><strong>Konfiguracja</strong></div>
-  <div class="row"><button id="btnCopy">Kopiuj aktualną konfigurację</button><button id="btnReset" style="margin-left:auto">Reset</button></div>
+  <div class="row"><button id="btnCopy">Kopiuj aktualna konfiguracje</button><button id="btnReset" style="margin-left:auto">Reset</button></div>
   <div class="row"><textarea id="cfgOut" readonly></textarea></div>
   <div class="small muted">Skopiuj JSON i wklej do kodu.</div>
 </div>
-<div class="small muted">F10 — pokaż/ukryj panel</div>
+<div class="small muted">F10 - pokaz/ukryj panel</div>
 `;
 
 export function initDevTools() {
@@ -85,7 +136,7 @@ export function initDevTools() {
   container.innerHTML = HTML;
   document.body.appendChild(container);
 
-  // Obsługa F10
+  // ObsĹ‚uga F10
   window.addEventListener('keydown', (e) => {
     if (e.code === 'F10') {
       e.preventDefault();
@@ -114,23 +165,29 @@ function wireDevToolsLogic() {
     stationsFramesGroup: 'stationsFramesGroup', planetsGroup: 'planetsGroup', distancesGroup: 'distancesGroup',
     cbRuler: 'toggleRuler', cbPlanetOrbits: 'togglePlanetOrbits', cbUnlimited: 'toggleUnlimitedWarp',
     cbSunDir: 'dt-show-sundir', cbShake: 'dt-disable-shake', cbPlanetStations3D: 'dt-use-planet-stations',
-    cbPirate3D: 'dt-use-3d-pirate', btnCopy: 'btnCopy', btnReset: 'btnReset', cfgOut: 'cfgOut'
+    cbPirate3D: 'dt-use-3d-pirate', btnCopy: 'btnCopy', btnReset: 'btnReset', cfgOut: 'cfgOut',
+    fileGlb: 'dt-file-glb', btnLoadGlb: 'btn-load-glb', glbRot: 'dt-glb-rot', glbZoom: 'dt-glb-zoom', glbScale: 'dt-glb-scale',
+    hudCenterY: 'dt-hud-center-y', hudCenterYNum: 'dt-hud-center-y-num', hudCenterYVal: 'dt-hud-center-y-val',
+    hudHexY: 'dt-hud-hex-y', hudHexYNum: 'dt-hud-hex-y-num', hudHexYVal: 'dt-hud-hex-y-val',
+    hudShieldY: 'dt-hud-shield-y', hudShieldYNum: 'dt-hud-shield-y-num', hudShieldYVal: 'dt-hud-shield-y-val',
+    hudHpY: 'dt-hud-hp-y', hudHpYNum: 'dt-hud-hp-y-num', hudHpYVal: 'dt-hud-hp-y-val'
   };
   function refreshUIRefs() { for (const [k, id] of Object.entries(uiIds)) ui[k] = el(id); }
   refreshUIRefs();
 
-  // Domyślne wartości
+  // DomyĹ›lne wartoĹ›ci
   const DEFAULT_PIRATE_SCALE = 6;
   const DEFAULT_STATION3D_SCALE = 2.70;
 
   const DevConfig = window.DevConfig || {
     sunR2D: 823, sunR3D: 399, planetRById: {}, planetOrbitAUById: {},
     planetScaleAll: 1, pirateScale: DEFAULT_PIRATE_SCALE, station3DScale: DEFAULT_STATION3D_SCALE, stationSpriteSize: 1024,
-    stationSpriteFrame: 3.00, stationSpriteFrameById: {}, stationScaleById: {}
+    stationSpriteFrame: 3.00, stationSpriteFrameById: {}, stationScaleById: {},
+    hudOffsets: { centerY: 0, hexY: 0, shieldY: 0, hpY: 0 }
   };
   window.DevConfig = DevConfig;
   
-  // Upewniamy się, że obiekt Dev istnieje (silnik 3D z niego korzysta w getDevScale)
+  // Upewniamy siÄ™, ĹĽe obiekt Dev istnieje (silnik 3D z niego korzysta w getDevScale)
   window.Dev = window.Dev || {};
   window.Dev.station3DScale = DevConfig.station3DScale;
 
@@ -139,11 +196,49 @@ function wireDevToolsLogic() {
   DevVFX.warpLens = Object.assign({}, WarpLensDefaults, DevVFX.warpLens || {});
 
   const DevTuning = window.DevTuning = window.DevTuning || {};
+  const DEFAULT_HUD_OFFSETS = { centerY: 0, hexY: 0, shieldY: 0, hpY: 0 };
+
+  function ensureHudOffsetsShape() {
+    if (!DevConfig.hudOffsets || typeof DevConfig.hudOffsets !== 'object') {
+      DevConfig.hudOffsets = { ...DEFAULT_HUD_OFFSETS };
+      return;
+    }
+    for (const [k, v] of Object.entries(DEFAULT_HUD_OFFSETS)) {
+      if (!Number.isFinite(DevConfig.hudOffsets[k])) DevConfig.hudOffsets[k] = v;
+    }
+  }
+
+  function clampHudOffset(vRaw) {
+    let v = Number(vRaw);
+    if (!Number.isFinite(v)) v = 0;
+    return Math.max(-250, Math.min(250, Math.round(v)));
+  }
+
+  function formatHudOffset(v) {
+    const n = clampHudOffset(v);
+    return `${n > 0 ? '+' : ''}${n}px`;
+  }
+
+  function setHudYOffset(elId, offsetPx) {
+    const node = document.getElementById(elId);
+    if (!node) return;
+    const y = clampHudOffset(offsetPx);
+    node.style.transform = `translateY(${-y}px)`;
+  }
+
+  function applyHudOffsetsToDom() {
+    ensureHudOffsetsShape();
+    setHudYOffset('hud-center-dock', DevConfig.hudOffsets.centerY);
+    setHudYOffset('hex-armor-container', DevConfig.hudOffsets.hexY);
+    setHudYOffset('shield-unit', DevConfig.hudOffsets.shieldY);
+    setHudYOffset('hp-unit', DevConfig.hudOffsets.hpY);
+  }
 
   function loadLS() {
     try { Object.assign(DevConfig, JSON.parse(localStorage.getItem('devConfig') || '{}')); } catch { }
     // Synchronizacja z Dev
     window.Dev.station3DScale = DevConfig.station3DScale;
+    ensureHudOffsetsShape();
     try {
       const savedFlags = JSON.parse(localStorage.getItem('devFlags') || '{}');
       if (!window.DevFlags) window.DevFlags = {};
@@ -178,7 +273,7 @@ function wireDevToolsLogic() {
     if (rebuildTimer) cancelAnimationFrame(rebuildTimer);
     rebuildTimer = requestAnimationFrame(() => {
       // (Kod przebudowy planet) ...
-      // Tutaj zostawiamy, ale najważniejsze dzieje się w event listenerach
+      // Tutaj zostawiamy, ale najwaĹĽniejsze dzieje siÄ™ w event listenerach
     });
   }
 
@@ -225,11 +320,11 @@ function wireDevToolsLogic() {
             // 1. Zapisz w konfigu
             DevConfig.planetRById[key] = v;
             
-            // 2. ZNAJDŹ PLANETĘ I ZAKTUALIZUJ JĄ NA ŻYWO
+            // 2. ZNAJDĹą PLANETÄ I ZAKTUALIZUJ JÄ„ NA Ĺ»YWO
             const targetP = planetList.find(p => keyFor(p) === key);
             if (targetP) {
                 targetP.baseR = v;
-                // Jeśli mamy globalną skalę, uwzględnij ją
+                // JeĹ›li mamy globalnÄ… skalÄ™, uwzglÄ™dnij jÄ…
                 const scaleAll = DevConfig.planetScaleAll || 1;
                 targetP.r = v * scaleAll; 
                 if (targetP.orbit) targetP.orbit.radius = targetP.orbitRadius; 
@@ -257,7 +352,7 @@ function wireDevToolsLogic() {
   }
 
   function fmtU(v) {
-    if (!Number.isFinite(v)) return '—';
+    if (!Number.isFinite(v)) return '-';
     return Math.round(v).toLocaleString('pl-PL');
   }
 
@@ -308,12 +403,12 @@ function wireDevToolsLogic() {
         const worldR = renderVal(au);
         
         // --- KLUCZOWA POPRAWKA ---
-        // Bezpośrednia modyfikacja promienia orbity planety w grze
+        // BezpoĹ›rednia modyfikacja promienia orbity planety w grze
         p.orbitRadius = worldR;
         p.orbitR = worldR;
         if(p.orbit) p.orbit.radius = worldR;
         
-        // Aktualizacja pozycji natychmiast (opcjonalne, ale daje płynność)
+        // Aktualizacja pozycji natychmiast (opcjonalne, ale daje pĹ‚ynnoĹ›Ä‡)
         p.x = window.SUN.x + Math.cos(p.angle) * worldR;
         p.y = window.SUN.y + Math.sin(p.angle) * worldR;
         // -------------------------
@@ -362,7 +457,7 @@ function wireDevToolsLogic() {
       const valEl = row.querySelector(`#stFrameVal_${key}`);
 
       // Ustawienie etykiety
-      if (valEl) valEl.textContent = '×' + val.toFixed(2);
+      if (valEl) valEl.textContent = 'x' + val.toFixed(2);
 
       const apply = (vRaw) => {
         let v = Number(vRaw);
@@ -372,14 +467,14 @@ function wireDevToolsLogic() {
         // 1. Zapisz w konfigu
         DevConfig.stationSpriteFrameById[key] = v;
 
-        // 2. Wyślij do silnika 3D
+        // 2. WyĹ›lij do silnika 3D
         if (typeof window.setStationSpriteFrame === 'function') {
           window.setStationSpriteFrame(key, v);
         }
 
         if (num) num.value = String(v);
         if (slider) slider.value = String(v);
-        if (valEl) valEl.textContent = '×' + v.toFixed(2);
+        if (valEl) valEl.textContent = 'x' + v.toFixed(2);
 
         saveLS();
       };
@@ -445,6 +540,35 @@ function wireDevToolsLogic() {
     }, 2000);
   }
 
+  function setupHudOffsetControls() {
+    ensureHudOffsetsShape();
+
+    const links = [
+      { key: 'centerY', range: ui.hudCenterY, num: ui.hudCenterYNum, val: ui.hudCenterYVal },
+      { key: 'hexY', range: ui.hudHexY, num: ui.hudHexYNum, val: ui.hudHexYVal },
+      { key: 'shieldY', range: ui.hudShieldY, num: ui.hudShieldYNum, val: ui.hudShieldYVal },
+      { key: 'hpY', range: ui.hudHpY, num: ui.hudHpYNum, val: ui.hudHpYVal }
+    ];
+
+    for (const item of links) {
+      const apply = (vRaw) => {
+        const v = clampHudOffset(vRaw);
+        DevConfig.hudOffsets[item.key] = v;
+        if (item.range) item.range.value = String(v);
+        if (item.num) item.num.value = String(v);
+        if (item.val) item.val.textContent = formatHudOffset(v);
+        applyHudOffsetsToDom();
+        saveLS();
+        reflectToCfg();
+      };
+
+      const initial = clampHudOffset(DevConfig.hudOffsets[item.key]);
+      if (item.range) item.range.addEventListener('input', () => apply(item.range.value));
+      if (item.num) item.num.addEventListener('input', () => apply(item.num.value));
+      apply(initial);
+    }
+  }
+
   function wireDevTools() {
     // --- GLOBALNA SKALA STACJI ---
     const elStation3DScale = document.getElementById('station3DScale');
@@ -461,7 +585,7 @@ function wireDevToolsLogic() {
         }
         
         const l = document.getElementById('station3DScaleVal');
-        if (l) l.textContent = '×' + val.toFixed(2);
+        if (l) l.textContent = 'x' + val.toFixed(2);
         saveLS();
       });
     }
@@ -479,8 +603,8 @@ function wireDevToolsLogic() {
     if (ui.planetScaleAll) {
       ui.planetScaleAll.addEventListener('input', () => {
         DevConfig.planetScaleAll = +ui.planetScaleAll.value;
-        if (ui.planetScaleAllVal) ui.planetScaleAllVal.textContent = '×' + DevConfig.planetScaleAll.toFixed(2);
-        // TODO: Można tu dodać logikę apply dla planetScaleAll
+        if (ui.planetScaleAllVal) ui.planetScaleAllVal.textContent = 'x' + DevConfig.planetScaleAll.toFixed(2);
+        // TODO: MoĹĽna tu dodaÄ‡ logikÄ™ apply dla planetScaleAll
         saveLS(); 
       });
     }
@@ -489,8 +613,60 @@ function wireDevToolsLogic() {
         const v = +ui.pirScale.value;
         DevConfig.pirateScale = v;
         DevTuning.pirateStationScale = v;
-        if (ui.pirScaleVal) ui.pirScaleVal.textContent = '×' + v.toFixed(2);
+        if (ui.pirScaleVal) ui.pirScaleVal.textContent = 'x' + v.toFixed(2);
         saveLS();
+      });
+    }
+    if (ui.btnLoadGlb && ui.fileGlb) {
+      ui.btnLoadGlb.addEventListener('click', () => ui.fileGlb.click());
+
+      ui.fileGlb.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        const originalText = ui.btnLoadGlb.textContent;
+        ui.btnLoadGlb.textContent = "Wypalanie... Czekaj";
+        ui.btnLoadGlb.disabled = true;
+
+      try {
+          const rotInput = document.getElementById('dt-glb-rot');
+          const zoomInput = document.getElementById('dt-glb-zoom');
+          const scaleInput = document.getElementById('dt-glb-scale');
+          const degrees = rotInput ? (parseFloat(rotInput.value) || 0) : 0; 
+          const radians = degrees * (Math.PI / 180);
+          
+          const camZoom = zoomInput ? (parseFloat(zoomInput.value) || 1.0) : 1.0;
+          const shipScale = scaleInput ? (parseFloat(scaleInput.value) || 1.0) : 1.0;
+
+          const { ModelBaker } = await import('../3d/modelBaker.js');
+          
+          // Odbieramy obiekt { albedo, normal }
+          const bakedData = await ModelBaker.bakeFromFile(file, 1024, radians, camZoom);
+          
+          if (window.ship && window.initHexBody) {
+              if (window.ship.hexGrid && window.ship.hexGrid.meshDirty !== undefined) {
+                 window.ship.hexGrid.shards = [];
+              }
+              
+              // --- WAĹ»NE: Ustawiamy skalÄ™ PRZED wygenerowaniem fizyki! ---
+              window.ship.visual.spriteScale = shipScale;
+
+              // 1. Aplikujemy obrazek kolorowy do destrukcji
+              window.initHexBody(window.ship, bakedData.albedo);
+              
+              // 2. Aplikujemy Normal MapÄ™ do pamiÄ™ci obiektu statku
+              window.ship.hexGrid.normalMapImage = bakedData.normal;
+              
+              console.log(`Model GLB załadowany! Obrót: ${degrees}°, Kadr: ${camZoom}x, Skala Gry: ${shipScale}x`);
+          }
+
+        } catch (err) {
+          console.error('Blad podczas bake GLB:', err);
+        } finally {
+          ui.btnLoadGlb.textContent = originalText;
+          ui.btnLoadGlb.disabled = false;
+          ui.fileGlb.value = ''; 
+        }
       });
     }
   }
@@ -506,25 +682,28 @@ function wireDevToolsLogic() {
   buildDistancesUI();
   buildStationFramesUI();
   setupPerStationScales();
+  setupHudOffsetControls();
+  applyHudOffsetsToDom();
 
-  // Wypełnienie wartości początkowych w UI
+  // WypeĹ‚nienie wartoĹ›ci poczÄ…tkowych w UI
   if (ui.sunR2D) ui.sunR2D.value = DevConfig.sunR2D || 823;
   if (ui.sunR3D) ui.sunR3D.value = DevConfig.sunR3D || 399;
   if (ui.planetScaleAll) ui.planetScaleAll.value = DevConfig.planetScaleAll || 1;
   if (ui.pirScale) ui.pirScale.value = DevConfig.pirateScale || 6;
   if (ui.station3DScale) ui.station3DScale.value = DevConfig.station3DScale || 2.7;
 
-  // Odświeżenie opisów
+  // OdĹ›wieĹĽenie opisĂłw
   if (ui.sunR2DVal) ui.sunR2DVal.textContent = ui.sunR2D?.value;
   if (ui.sunR3DVal) ui.sunR3DVal.textContent = ui.sunR3D?.value;
-  if (ui.planetScaleAllVal) ui.planetScaleAllVal.textContent = '×' + (+ui.planetScaleAll?.value).toFixed(2);
-  if (ui.pirScaleVal) ui.pirScaleVal.textContent = '×' + (+ui.pirScale?.value).toFixed(2);
-  if (ui.station3DScaleVal) ui.station3DScaleVal.textContent = '×' + (+ui.station3DScale?.value).toFixed(2);
+  if (ui.planetScaleAllVal) ui.planetScaleAllVal.textContent = 'x' + (+ui.planetScaleAll?.value).toFixed(2);
+  if (ui.pirScaleVal) ui.pirScaleVal.textContent = 'x' + (+ui.pirScale?.value).toFixed(2);
+  if (ui.station3DScaleVal) ui.station3DScaleVal.textContent = 'x' + (+ui.station3DScale?.value).toFixed(2);
 
   wireDevTools();
 
-  // Pętla odświeżania dla dynamicznie ładowanych obiektów
+  // PÄ™tla odĹ›wieĹĽania dla dynamicznie Ĺ‚adowanych obiektĂłw
   setInterval(() => {
     buildStationFramesUI();
   }, 2000);
 }
+
