@@ -1,3 +1,6 @@
+import * as THREE from 'three';
+import { Core3D } from './src/3d/core3d.js';
+
 window.Dev = window.Dev || {};
 const PLANET_SIZE_MULTIPLIER = 4.5;
 const SUN_SIZE_MULTIPLIER = 6.0;
@@ -22,13 +25,8 @@ const NEBULA_FRAGMENT = `
 
     void main() {
         vec4 texColor = texture2D(map, vUv);
-        
-        // CZYSTY KOLOR (Bez zmian barwy)
         vec3 color = texColor.rgb;
-        
-        // Warp: Tylko rozjaśnienie (Flash) bez zmiany koloru na niebieski
         float boost = 1.0 + warpFactor * 0.8;
-        
         gl_FragColor = vec4(color * boost, 1.0);
     }
 `;
@@ -63,7 +61,6 @@ const STARS_VERTEX = `
         
         vec3 pos = position;
         
-        // Nieskończony świat (Modulo)
         pos.x -= cameraOffset.x;
         pos.y -= cameraOffset.y;
         
@@ -73,7 +70,6 @@ const STARS_VERTEX = `
 
         vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
         
-        // Skala rozciągnięcia
         float stretch = 1.0 + (warpFactor * stretchStrength);
         vStretch = stretch; 
         
@@ -82,7 +78,6 @@ const STARS_VERTEX = `
         float distFactor = perspectiveScale / depth;
         float pointSize = (finalSize * stretch) * distFactor;
         
-        // Rozciąganie kierunkowe: Przesuwamy środek ZGODNIE z ruchem
         if(warpFactor > 0.001) {
             float offsetWorld = (finalSize * (stretch - 1.0)) * 0.5;
             mvPosition.xy += moveDir * offsetWorld;
@@ -117,16 +112,12 @@ const STARS_FRAGMENT = `
         vec2 uv = rawUV;
         
         if (vWarp > 0.01) {
-            // Obrót tekstury
             float angle = atan(moveDir.y, moveDir.x);
             float c = cos(angle); float s = sin(angle);
             mat2 rot = mat2(c, s, -s, c);
             uv = rot * uv;
             
-            // Rozciąganie
             uv.x *= (1.0 / vStretch); 
-            
-            // Zwężanie (Thinning)
             float maxSafeThin = max(1.0, vScreenSize * 0.4);
             float actualThin = min(thinningStrength, maxSafeThin);
             uv.y *= (1.0 + vWarp * actualThin); 
@@ -139,8 +130,6 @@ const STARS_FRAGMENT = `
         if (tex.a < 0.05) discard;
 
         float twinkle = 0.8 + 0.2 * sin(time * 3.0 + vBrightness * 10.0);
-        
-        // Warp color shift (gwiazdy zostawiamy błękitne przy skoku, bo to ładny efekt speed lines)
         vec3 finalColor = mix(vColor, vec3(0.7, 0.85, 1.0), vWarp * 0.8);
         float boost = 1.0 + vWarp * 2.5; 
 
@@ -269,24 +258,20 @@ void main() {
 `;
 
 // ==========================================
-// 2.5 NEBULA SYSTEM (CLEAN)
+// 2.5 NEBULA SYSTEM
 // ==========================================
 
 const NebulaSystem = {
     mesh: null,
     uniforms: null,
-    
-    // Paralaksa i Skala
     parallaxFactor: 0.98, 
-    baseScale: 70000,    // Zmniejszone z 380k do 120k dla lepszej widoczności
+    baseScale: 70000,    
     aspectRatio: 1.6,
 
-    init: function(scene) {
+    init: function() {
+        if (!Core3D.isInitialized) return;
         const loader = new THREE.TextureLoader();
         const tex = loader.load('/assets/nebula.png');
-        
-        // WAŻNE: Usunęliśmy SRGBColorSpace, który mógł zmieniać kolory na wyblakłe/niebieskie
-        // tex.colorSpace = THREE.SRGBColorSpace; // <-- USUNIĘTE
         
         tex.wrapS = THREE.ClampToEdgeWrapping;
         tex.wrapT = THREE.ClampToEdgeWrapping;
@@ -311,14 +296,14 @@ const NebulaSystem = {
         });
 
         this.mesh = new THREE.Mesh(geo, mat);
-        this.mesh.position.z = -20000;
+        this.mesh.position.z = -20000; // Głęboko w tle
         this.mesh.renderOrder = -999;
         
-        scene.add(this.mesh);
+        Core3D.scene.add(this.mesh);
     },
 
     update: function(dt, gameCamera) {
-        if (!this.uniforms || !gameCamera) return;
+        if (!this.uniforms || !gameCamera || !this.mesh) return;
         
         const cx = typeof gameCamera.x === 'number' ? gameCamera.x : 0;
         const cy = typeof gameCamera.y === 'number' ? gameCamera.y : 0;
@@ -358,7 +343,8 @@ const StarSystem = {
     lastWarpState: 'idle',
     exitTimer: 0,
 
-    init: function(scene) {
+    init: function() {
+        if (!Core3D.isInitialized) return;
         const geo = new THREE.BufferGeometry();
         const positions = new Float32Array(this.count * 3);
         const sizes = new Float32Array(this.count);
@@ -416,7 +402,7 @@ const StarSystem = {
         this.mesh = new THREE.Points(geo, mat);
         this.mesh.renderOrder = -1;
         this.mesh.frustumCulled = false; 
-        scene.add(this.mesh);
+        Core3D.scene.add(this.mesh);
     },
 
     createStarTexture: function() {
@@ -439,17 +425,13 @@ const StarSystem = {
 
         this.uniforms.time.value += dt;
 
-        // 1. FIX ULTRAWIDE: Gwiazdy podążają za kamerą
         if (this.mesh) {
             this.mesh.position.set(cx, -cy, -10000); 
         }
 
-        // 2. FIX PARALAKSA: 
         const starSpeed = 0.9; 
-        
         this.uniforms.cameraOffset.value.set(cx * starSpeed, -cy * starSpeed);
 
-        // Kierunek rozciągania
         let dx = 0, dy = 1;
         if (ship && ship.vel) {
              const speed = Math.hypot(ship.vel.x, ship.vel.y);
@@ -489,7 +471,6 @@ const StarSystem = {
         }
 
         this.uniforms.moveDir.value.set(dx, -dy); 
-
         const currentWarp = this.uniforms.warpFactor.value;
         const lerpSpeed = (this.exitTimer > 0) ? 8.0 : 4.0;
         this.uniforms.warpFactor.value += (targetWarp - currentWarp) * lerpSpeed * dt;
@@ -497,124 +478,17 @@ const StarSystem = {
 };
 
 // ==========================================
-// 4. PLANET RENDERER
+// 4. CLASSES: PLANET & SUN
 // ==========================================
-
-const PlanetRenderer = {
-    renderer: null,
-    scene: null,
-    camera: null,
-    sunLight: null,
-    ambientLight: null,
-    width: 0,
-    height: 0,
-    
-    init: function() {
-        const canvas = document.getElementById('webgl-layer');
-        if (!canvas || !window.THREE) return;
-
-        this.renderer = new THREE.WebGLRenderer({
-            canvas: canvas,
-            alpha: true,
-            antialias: true,
-            powerPreference: "high-performance",
-            logarithmicDepthBuffer: true 
-        });
-        
-        this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-        this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        this.renderer.toneMappingExposure = 1.0;
-        this.renderer.shadowMap.enabled = false; 
-
-        this.scene = new THREE.Scene();
-
-        this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 300000);
-        this.camera.position.z = 150000;
-        this.camera.lookAt(0, 0, 0);
-
-        this.ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
-        this.scene.add(this.ambientLight);
-
-        this.sunLight = new THREE.DirectionalLight(0xffffff, 2.2);
-        this.sunLight.position.set(0, 0, 100000);
-        this.scene.add(this.sunLight);
-
-        // 1. Najpierw Tło (Nebula)
-        NebulaSystem.init(this.scene);
-        
-        // 2. Potem Gwiazdy
-        StarSystem.init(this.scene);
-
-        this.resize();
-        window.addEventListener('resize', () => this.resize());
-    },
-
-    resize: function() {
-        if (!this.renderer) return;
-        this.width = window.innerWidth;
-        this.height = window.innerHeight;
-        this.renderer.setSize(this.width, this.height, false);
-    },
-
-    render: function(gameCamera) {
-        if (!this.renderer || !gameCamera) return;
-
-        const dt = 1/60; 
-
-        // 1. Aktualizacja Tła (Nebula)
-        NebulaSystem.update(dt, gameCamera);
-
-        // 2. Aktualizacja Gwiazd
-        StarSystem.update(dt, gameCamera, window.ship);
-
-        // 3. Synchronizacja Kamery Three.js z Kamerą Gry
-        const zoom = gameCamera.zoom || 1;
-        const w = this.width / zoom;
-        const h = this.height / zoom;
-        
-        this.camera.left = -w / 2;
-        this.camera.right = w / 2;
-        this.camera.top = h / 2;
-        this.camera.bottom = -h / 2;
-        this.camera.updateProjectionMatrix();
-        
-        this.camera.position.x = gameCamera.x;
-        this.camera.position.y = -gameCamera.y;
-        
-        // 4. Pozycja Światła Słońca (absolutna)
-        if (window.SUN) {
-            const sunX = window.SUN.x;
-            const sunY = -window.SUN.y; 
-            this.sunLight.position.set(sunX, sunY, 100000);
-            this.sunLight.target.position.set(sunX, sunY, 0); 
-            this.sunLight.target.updateMatrixWorld();
-        }
-
-        // 5. Aktualizacja Planet (Pozycjonowanie absolutne)
-        if (window._entities) {
-            window._entities.forEach(ent => {
-                if (ent.update) ent.update(dt, gameCamera);
-            });
-        }
-
-        this.renderer.render(this.scene, this.camera);
-    }
-};
-
-window.PlanetRenderer = PlanetRenderer;
 
 const textureLoader = new THREE.TextureLoader();
 function loadTex(path) {
     const tex = textureLoader.load(path);
-    if (PlanetRenderer.renderer) {
-        tex.anisotropy = PlanetRenderer.renderer.capabilities.getMaxAnisotropy();
+    if (Core3D.renderer) {
+        tex.anisotropy = Core3D.renderer.capabilities.getMaxAnisotropy();
     }
     return tex;
 }
-
-// ==========================================
-// 5. CLASSES: PLANET & SUN
-// ==========================================
 
 class DirectPlanet {
     constructor(data) {
@@ -623,6 +497,8 @@ class DirectPlanet {
         this.clouds = null;
         this.atmosphere = null;
         this.group = new THREE.Group();
+        // Planety lądują pod statkiem, ale nad gwiazdami
+        this.group.position.z = -100;
         
         this.uniforms = {
             dayTexture: { value: null },
@@ -641,6 +517,7 @@ class DirectPlanet {
     }
 
     init() {
+        if (!Core3D.isInitialized) return;
         const geometry = new THREE.SphereGeometry(1, 128, 128);
         const name = (this.data.name || this.data.id || 'earth').toLowerCase();
         
@@ -724,7 +601,7 @@ class DirectPlanet {
         this.atmosphere = new THREE.Mesh(atmGeo, atmMat);
         this.group.add(this.atmosphere);
         
-        if (PlanetRenderer.scene) PlanetRenderer.scene.add(this.group);
+        Core3D.scene.add(this.group);
         if (name === 'earth') window.EARTH = this;
     }
 
@@ -732,8 +609,8 @@ class DirectPlanet {
         if (!this.group || !cam) return;
         
         const x = this.data.x;
-        const y = -this.data.y;
-        this.group.position.set(x, y, 0);
+        const y = -this.data.y; // Odwrócenie Y dla WebGL
+        this.group.position.set(x, y, -100);
         
         const currentRadius = (this.data.r || 100);
         const scale = currentRadius * PLANET_SIZE_MULTIPLIER;
@@ -746,14 +623,6 @@ class DirectPlanet {
             }
         }
 
-        if (PlanetRenderer.sunLight) {
-            const currentIntensity = PlanetRenderer.sunLight.intensity;
-            this.uniforms.uSunIntensity.value = currentIntensity;
-            if (this.atmosphere) {
-                this.atmosphere.material.uniforms.uSunIntensity.value = currentIntensity;
-            }
-        }
-
         if (this.mesh) this.mesh.rotation.y += 0.02 * dt;
         if (this.clouds) this.clouds.rotation.y += 0.027 * dt;
     }
@@ -763,9 +632,11 @@ class DirectSun {
     constructor(data) {
         this.data = data;
         this.group = new THREE.Group();
+        this.group.position.z = -150;
         this.init();
     }
     init() {
+        if (!Core3D.isInitialized) return;
         const geometry = new THREE.SphereGeometry(1, 64, 64);
         const material = new THREE.MeshBasicMaterial({
             map: loadTex('/assets/planety/solar/sun/sun_color.jpg'),
@@ -785,15 +656,40 @@ class DirectSun {
         this.group.add(this.mesh);
         this.group.add(this.glow); 
         
-        if (PlanetRenderer.scene) PlanetRenderer.scene.add(this.group);
+        Core3D.scene.add(this.group);
+        
+        // Słońce potrzebuje oświetlać inne planety - wpinamy światło do Core3D
+        this.sunLight = new THREE.DirectionalLight(0xffffff, 2.2);
+        this.sunLight.castShadow = true;
+        this.sunLight.shadow.mapSize.width = 4096;
+        this.sunLight.shadow.mapSize.height = 4096;
+        this.sunLight.shadow.camera.near = 100;
+        this.sunLight.shadow.camera.far = 100000;
+        
+        const d = 15000; 
+        this.sunLight.shadow.camera.left = -d;
+        this.sunLight.shadow.camera.right = d;
+        this.sunLight.shadow.camera.top = d;
+        this.sunLight.shadow.camera.bottom = -d;
+
+        Core3D.scene.add(this.sunLight);
+        Core3D.scene.add(new THREE.AmbientLight(0xffffff, 0.02));
     }
+    
     update(dt, cam) {
         if(!cam) return;
         
         const x = this.data.x;
         const y = -this.data.y;
         
-        this.group.position.set(x, y, -500);
+        this.group.position.set(x, y, -150);
+        if (this.sunLight) {
+            this.sunLight.position.set(x, y, 100000);
+            if (this.sunLight.target) {
+                this.sunLight.target.position.set(x, y, 0);
+                this.sunLight.target.updateMatrixWorld();
+            }
+        }
         
         const rawRadius = this.data.r3D || this.data.r || 200;
         const scale = rawRadius * SUN_SIZE_MULTIPLIER;
@@ -808,27 +704,21 @@ class DirectSun {
 }
 
 // ==========================================
-// 6. GLOBAL INTERFACE
+// 5. GLOBAL INTERFACE DLA GRY
 // ==========================================
 
 const _entities = [];
+
 window.initPlanets3D = function(planetList, sunData) {
-    _entities.length = 0;
-    
-    if (!PlanetRenderer.renderer) {
-        PlanetRenderer.init();
-    } else {
-        const stars = StarSystem.mesh;
-        const nebula = NebulaSystem.mesh; 
-        const ambient = PlanetRenderer.ambientLight;
-        const sun = PlanetRenderer.sunLight;
-        
-        const toRemove = PlanetRenderer.scene.children.filter(c => 
-            c !== stars && c !== nebula && c !== ambient && c !== sun
-        );
-        toRemove.forEach(c => PlanetRenderer.scene.remove(c));
+    if (!Core3D.isInitialized) {
+        Core3D.init();
     }
     
+    _entities.length = 0;
+    
+    NebulaSystem.init();
+    StarSystem.init();
+
     if (sunData) _entities.push(new DirectSun(sunData));
     if (Array.isArray(planetList)) {
         planetList.forEach(pData => {
@@ -836,14 +726,27 @@ window.initPlanets3D = function(planetList, sunData) {
         });
     }
     window._entities = _entities;
+    return Core3D.scene;
 };
 
+// Aktualizacja w pętli fizyki
 window.updatePlanets3D = function(dt, cam) { 
-    PlanetRenderer.render(cam);
+    if (!Core3D.isInitialized || !cam) return;
+    
+    NebulaSystem.update(dt, cam);
+    StarSystem.update(dt, cam, window.ship);
+    
+    if (window._entities) {
+        window._entities.forEach(ent => {
+            if (ent.update) ent.update(dt, cam);
+        });
+    }
 };
 
+// UWAGA: Ta funkcja jest teraz opcjonalna, bo Core3D renderuje cały ekran naraz 
+// w hexShips3D. Zostawiamy ją jako pustą fasadę, żeby index.html się nie zepsuł.
 window.drawPlanets3D = function(ctx, cam) { 
-    PlanetRenderer.render(cam); 
+    // Nic nie robi - renderowaniem zajmuje się teraz Core3D.render() 
 };
 
 window.worldToScreen = function(x, y, cam) {

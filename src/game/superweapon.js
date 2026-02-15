@@ -137,7 +137,7 @@ function rotate(v, angle) {
 
 function getMuzzlePos(ship, cannonIndex, barrelIndex, aimPos) {
     const tuneX = 315; const tuneY = 275;
-    const offsets = [ { x: tuneX, y: -tuneY }, { x: tuneX, y: tuneY } ];
+    const offsets = [ { x: -tuneX, y: -tuneY }, { x: -tuneX, y: tuneY } ];
     const off = offsets[cannonIndex];
     const pivotOffset = rotate(off, ship.angle);
     const pivotPos = { x: ship.pos.x + pivotOffset.x, y: ship.pos.y + pivotOffset.y };
@@ -306,7 +306,7 @@ export function drawSuperweapon(ctx, camera, ship, worldToScreen, aimPos, visual
     const recoilDrawOffset = -superweaponState.recoilOffset * zoom;
     const drawOffsetX = -spriteW * anchorX + recoilDrawOffset;
     const drawOffsetY = -spriteH * anchorY;
-    const offsets = [ { x: tuneX, y: -tuneY }, { x: tuneX, y: tuneY } ];
+    const offsets = [ { x: -tuneX, y: -tuneY }, { x: -tuneX, y: tuneY } ];
 
     // Używamy pozycji interpolowanej (visualState) jeśli dostępna
     const shipX = visualState ? visualState.pos.x : ship.pos.x;

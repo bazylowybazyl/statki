@@ -6,7 +6,7 @@ export const SHIPS = {
     hardpointLayout: {
       type: 'atlas_broadside',
       rows: 4,
-      rotate: 'cw',
+      rotate: 'ccw',
       leftX: -0.230,
       rightX: 0.240,
       spreadX: 0.028,
@@ -161,7 +161,7 @@ export const CAPITAL_SHIP_TEMPLATES = {
       hangarGlow: 'rgba(160,200,255,0.45)',
       spriteSrc: 'assets/carrier.png',
       spriteScale: 5.0,
-      spriteRotation: Math.PI / 2,
+      spriteRotation: 0,
       spriteOffset: { x: 0, y: 0 },
       spriteLayer: 2,
       spriteEngineGlow: false,
