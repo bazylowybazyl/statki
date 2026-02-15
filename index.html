@@ -6,7 +6,111 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Super Capital: Battle for Solar System — Aero HUD</title>
   <link rel="stylesheet" href="assets/css/main.css">
+  <style>
+    #perfPanel {
+      position: fixed;
+      top: 86px;
+      right: 20px;
+      z-index: 120;
+      pointer-events: none;
+      background: rgba(5, 10, 20, 0.92);
+      padding: 12px 16px;
+      border-radius: 8px;
+      border: 1px solid #335;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      color: #aab;
+      min-width: 240px;
+      transition: opacity 0.25s ease;
+    }
 
+    #perfPanel.hidden {
+      opacity: 0;
+      visibility: hidden;
+    }
+
+    #perfPanel .perf-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #667;
+      margin-bottom: 6px;
+    }
+
+    #perfPanel .perf-fps {
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+
+    #perfPanel .perf-fps.good {
+      color: #4f8;
+    }
+
+    #perfPanel .perf-fps.ok {
+      color: #fd4;
+    }
+
+    #perfPanel .perf-fps.bad {
+      color: #f44;
+    }
+
+    #perfPanel .perf-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 1px 0;
+    }
+
+    #perfPanel .perf-label {
+      color: #778;
+      white-space: nowrap;
+    }
+
+    #perfPanel .perf-val {
+      color: #bbc;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    #perfPanel .perf-bar-bg {
+      height: 3px;
+      background: #223;
+      border-radius: 2px;
+      margin: 2px 0;
+      overflow: hidden;
+    }
+
+    #perfPanel .perf-bar {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.25s ease;
+    }
+
+    #perfPanel .perf-sep {
+      border-top: 1px solid #223;
+      margin: 5px 0;
+    }
+
+    #perfGraph {
+      margin-top: 6px;
+      display: block;
+    }
+
+    #perfPanel canvas,
+    #perfPanel #perfGraph {
+      position: static !important;
+      inset: auto !important;
+      width: 240px !important;
+      height: 44px !important;
+      max-width: 100%;
+      z-index: auto !important;
+      pointer-events: none !important;
+    }
+  </style>
 
 </head>
 
@@ -318,6 +422,50 @@
     <span class="hover-subtitle"></span>
     <div class="hover-content"></div>
   </div>
+  <div id="perfPanel">
+    <div class="perf-title">WYDAJNOSC <span style="float:right;color:#556">[P] toggle</span></div>
+    <div class="perf-fps good" id="perfFps">--</div>
+    <div style="color:#556;font-size:10px;margin-bottom:6px" id="perfFrameTime">-- ms/frame</div>
+    <div class="perf-sep"></div>
+
+    <div class="perf-row"><span class="perf-label">Fizyka</span><span class="perf-val" id="perfPhysics">--</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar" id="barPhysics" style="width:0%;background:#4af"></div></div>
+
+    <div class="perf-row"><span class="perf-label">  |- Destructor</span><span class="perf-val" id="perfDestructor">--</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar" id="barDestructor" style="width:0%;background:#6cf"></div></div>
+
+    <div class="perf-row"><span class="perf-label">  |- Kolizje</span><span class="perf-val" id="perfCollisions">--</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar" id="barCollisions" style="width:0%;background:#f84"></div></div>
+
+    <div class="perf-row"><span class="perf-label">  |- Deformacja</span><span class="perf-val" id="perfDeform">--</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar" id="barDeform" style="width:0%;background:#8f4"></div></div>
+
+    <div class="perf-row"><span class="perf-label">Rysowanie</span><span class="perf-val" id="perfDraw">--</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar" id="barDraw" style="width:0%;background:#f4f"></div></div>
+
+    <div class="perf-row"><span class="perf-label">  |- Planety 3D</span><span class="perf-val" id="perfPlanets">--</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar" id="barPlanets" style="width:0%;background:#60a5fa"></div></div>
+
+    <div class="perf-row"><span class="perf-label">  |- Stacje 3D</span><span class="perf-val" id="perfStations">--</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar" id="barStations" style="width:0%;background:#22c55e"></div></div>
+
+    <div class="perf-row"><span class="perf-label">  |- World 3D</span><span class="perf-val" id="perfWorld3d">--</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar" id="barWorld3d" style="width:0%;background:#eab308"></div></div>
+
+    <div class="perf-row"><span class="perf-label">  |- HexShips 3D</span><span class="perf-val" id="perfHex3d">--</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar" id="barHex3d" style="width:0%;background:#14b8a6"></div></div>
+
+    <div class="perf-row"><span class="perf-label">VFX update</span><span class="perf-val" id="perfVfxUpdate">--</span></div>
+    <div class="perf-bar-bg"><div class="perf-bar" id="barVfxUpdate" style="width:0%;background:#f97316"></div></div>
+
+    <div class="perf-sep"></div>
+    <div class="perf-row"><span class="perf-label">Phys steps/frame</span><span class="perf-val" id="perfPhysicsSteps">--</span></div>
+    <div class="perf-row"><span class="perf-label">Entities</span><span class="perf-val" id="perfEntities">--</span></div>
+    <div class="perf-row"><span class="perf-label">Shardy (aktywne)</span><span class="perf-val" id="perfShards">--</span></div>
+    <div class="perf-row"><span class="perf-label">Debris</span><span class="perf-val" id="perfDebris">--</span></div>
+    <div class="perf-row"><span class="perf-label">Kontakty/klatka</span><span class="perf-val" id="perfContacts">--</span></div>
+    <canvas id="perfGraph" width="240" height="44"></canvas>
+  </div>
   <script type="importmap">
 {
   "imports": {
@@ -343,6 +491,8 @@
     import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
     import { initWorld3D, attachPirateStation3D, dettachPirateStation3D, updateWorld3D, drawWorld3D } from "./src/3d/world3d.js";
     import { initStations3D, updateStations3D, detachPlanetStations3D, drawStations3D } from "./src/3d/stations3D.js";
+    import { initHexShips3D, updateHexShips3D, resizeHexShips3D, drawHexShips3D } from "./src/3d/hexShips3D.js";
+    import { Core3D } from "./src/3d/core3d.js";
     import { initOverlay } from "./src/effects3d/overlay.js";
     import { createRailgunExplosionFactory } from "./src/effects3d/railgunExplosion.js";
     import { createArmataImpactFactory } from "./src/effects3d/armataImpact.js";
@@ -352,7 +502,7 @@
     import { WarpBlackHole } from "./src/vfx/warpBlackHole.js";
     import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
     import { createShipEntity, applyPlayerInput, runShipAI } from "./src/game/shipEntity.js";
-    import { DestructorSystem, initHexBody, drawHexBody, drawHexBodyLocal } from "./src/game/destructor.js";
+    import { DestructorSystem, initHexBody, drawHexBody, drawHexBodyLocal, setHexShips3DActive } from "./src/game/destructor.js";
     window.THREE = THREE;
     window.EffectComposer = EffectComposer;
     window.RenderPass = RenderPass;
@@ -370,6 +520,11 @@
     window.initStations3D = initStations3D;
     window.updateStations3D = updateStations3D;
     window.drawStations3D = drawStations3D;
+    window.initHexShips3D = initHexShips3D;
+    window.updateHexShips3D = updateHexShips3D;
+    window.resizeHexShips3D = resizeHexShips3D;
+    window.drawHexShips3D = drawHexShips3D;
+    window.Core3D = Core3D;
     window.detachPlanetStations3D = detachPlanetStations3D;
     window.initOverlay3D = initOverlay;
     window.createRailgunExplosionFactory = createRailgunExplosionFactory;
@@ -385,6 +540,7 @@
     window.initHexBody = initHexBody;
     window.drawHexBody = drawHexBody;
     window.drawHexBodyLocal = drawHexBodyLocal;
+    window.setHexShips3DActive = setHexShips3DActive;
     // Nie modyfikujemy namespace'u modułu THREE (jest niemodyfikowalny).
     // Jeśli coś potrzebuje CopyShader globalnie, wystawiamy go przez window:
     window.CopyShader = CopyShader;
@@ -483,7 +639,285 @@
     // =============== Canvas & utils ===============
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d');
+    const hexShipsCanvas = document.createElement('canvas');
     let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
+    hexShipsCanvas.width = W;
+    hexShipsCanvas.height = H;
+    if (window.initHexShips3D) {
+      const hex3dReady = window.initHexShips3D({ canvas: hexShipsCanvas, width: W, height: H });
+      window.setHexShips3DActive?.(!!hex3dReady);
+    }
+
+    const PerfHUD = {
+      history: new Float32Array(120),
+      histIdx: 0,
+      visible: true,
+      lastFlush: 0,
+      updateInterval: 500,
+      accum: {
+        frameCount: 0,
+        frameMs: 0,
+        physicsTime: 0,
+        destructorTime: 0,
+        collisionTime: 0,
+        deformTime: 0,
+        drawTime: 0,
+        planetsTime: 0,
+        stationsTime: 0,
+        world3dTime: 0,
+        hex3dTime: 0,
+        vfxUpdateTime: 0,
+        contacts: 0,
+        physicsSteps: 0
+      },
+      display: {
+        fps: 0,
+        frameMs: 0,
+        physicsTime: 0,
+        destructorTime: 0,
+        collisionTime: 0,
+        deformTime: 0,
+        drawTime: 0,
+        planetsTime: 0,
+        stationsTime: 0,
+        world3dTime: 0,
+        hex3dTime: 0,
+        vfxUpdateTime: 0,
+        contacts: 0,
+        physicsSteps: 0,
+        entities: 0,
+        shards: 0,
+        debris: 0
+      },
+      els: null,
+      graphCtx: null,
+
+      init() {
+        const panel = document.getElementById('perfPanel');
+        const graph = document.getElementById('perfGraph');
+        this.els = {
+          panel,
+          fps: document.getElementById('perfFps'),
+          frameMs: document.getElementById('perfFrameTime'),
+          physics: document.getElementById('perfPhysics'),
+          destructor: document.getElementById('perfDestructor'),
+          collisions: document.getElementById('perfCollisions'),
+          deform: document.getElementById('perfDeform'),
+          draw: document.getElementById('perfDraw'),
+          planets: document.getElementById('perfPlanets'),
+          stations: document.getElementById('perfStations'),
+          world3d: document.getElementById('perfWorld3d'),
+          hex3d: document.getElementById('perfHex3d'),
+          vfxUpdate: document.getElementById('perfVfxUpdate'),
+          physicsSteps: document.getElementById('perfPhysicsSteps'),
+          entities: document.getElementById('perfEntities'),
+          shards: document.getElementById('perfShards'),
+          debris: document.getElementById('perfDebris'),
+          contacts: document.getElementById('perfContacts'),
+          barPhysics: document.getElementById('barPhysics'),
+          barDestructor: document.getElementById('barDestructor'),
+          barCollisions: document.getElementById('barCollisions'),
+          barDeform: document.getElementById('barDeform'),
+          barDraw: document.getElementById('barDraw'),
+          barPlanets: document.getElementById('barPlanets'),
+          barStations: document.getElementById('barStations'),
+          barWorld3d: document.getElementById('barWorld3d'),
+          barHex3d: document.getElementById('barHex3d'),
+          barVfxUpdate: document.getElementById('barVfxUpdate')
+        };
+        this.graphCtx = graph ? graph.getContext('2d') : null;
+        this.history.fill(16.67);
+        this.lastFlush = performance.now();
+      },
+
+      toggle() {
+        this.visible = !this.visible;
+        if (this.els?.panel) {
+          this.els.panel.classList.toggle('hidden', !this.visible);
+        }
+      },
+
+      addTiming(key, ms) {
+        if (!Number.isFinite(ms) || ms < 0) return;
+        if (!(key in this.accum)) return;
+        this.accum[key] += ms;
+      },
+
+      addContacts(count) {
+        if (!Number.isFinite(count) || count < 0) return;
+        this.accum.contacts += count;
+      },
+
+      markPhysicsStep() {
+        this.accum.physicsSteps += 1;
+      },
+
+      recordFrameTime(ms) {
+        if (!Number.isFinite(ms) || ms < 0) return;
+        this.accum.frameCount += 1;
+        this.accum.frameMs += ms;
+        this.history[this.histIdx % this.history.length] = ms;
+        this.histIdx += 1;
+      },
+
+      flush(now) {
+        if (now - this.lastFlush < this.updateInterval) return;
+        const frames = Math.max(1, this.accum.frameCount);
+        const avgFrame = this.accum.frameMs / frames;
+        this.display.fps = Math.round(1000 / Math.max(0.001, avgFrame));
+        this.display.frameMs = avgFrame;
+        this.display.physicsTime = this.accum.physicsTime / frames;
+        this.display.destructorTime = this.accum.destructorTime / frames;
+        this.display.collisionTime = this.accum.collisionTime / frames;
+        this.display.deformTime = this.accum.deformTime / frames;
+        this.display.drawTime = this.accum.drawTime / frames;
+        this.display.planetsTime = this.accum.planetsTime / frames;
+        this.display.stationsTime = this.accum.stationsTime / frames;
+        this.display.world3dTime = this.accum.world3dTime / frames;
+        this.display.hex3dTime = this.accum.hex3dTime / frames;
+        this.display.vfxUpdateTime = this.accum.vfxUpdateTime / frames;
+        this.display.contacts = this.accum.contacts / frames;
+        this.display.physicsSteps = this.accum.physicsSteps / frames;
+
+        const counts = this.collectCounts();
+        this.display.entities = counts.entities;
+        this.display.shards = counts.shards;
+        this.display.debris = counts.debris;
+
+        this.updateDOM();
+        this.drawGraph();
+        this.resetAccum();
+        this.lastFlush = now;
+      },
+
+      collectCounts() {
+        let entitiesCount = 0;
+        let activeShards = 0;
+        const all = [];
+        if (ship && ship.hexGrid && !ship.dead) all.push(ship);
+        for (const npc of npcs) {
+          if (npc && npc.hexGrid && !npc.dead) all.push(npc);
+        }
+        for (const w of wrecks) {
+          if (w && w.hexGrid && !w.dead) all.push(w);
+        }
+        entitiesCount = all.length;
+        for (const e of all) {
+          const shards = e?.hexGrid?.shards;
+          if (!Array.isArray(shards)) continue;
+          for (let i = 0; i < shards.length; i++) {
+            const s = shards[i];
+            if (s?.active && !s.isDebris) activeShards++;
+          }
+        }
+        const debris = Array.isArray(DestructorSystem?.debris) ? DestructorSystem.debris.length : 0;
+        return { entities: entitiesCount, shards: activeShards, debris };
+      },
+
+      updateDOM() {
+        if (!this.visible || !this.els) return;
+        const e = this.els;
+        const d = this.display;
+        const setMs = (el, value) => { if (el) el.textContent = `${value.toFixed(2)} ms`; };
+        const setBar = (el, valueMs) => {
+          if (!el) return;
+          const width = Math.min(100, (valueMs / 16.67) * 100);
+          el.style.width = `${Math.max(0, width).toFixed(0)}%`;
+        };
+
+        if (e.fps) {
+          e.fps.textContent = `${d.fps}`;
+          e.fps.className = `perf-fps ${d.fps >= 55 ? 'good' : d.fps >= 30 ? 'ok' : 'bad'}`;
+        }
+        if (e.frameMs) e.frameMs.textContent = `${d.frameMs.toFixed(1)} ms/frame`;
+
+        setMs(e.physics, d.physicsTime);
+        setMs(e.destructor, d.destructorTime);
+        setMs(e.collisions, d.collisionTime);
+        setMs(e.deform, d.deformTime);
+        setMs(e.draw, d.drawTime);
+        setMs(e.planets, d.planetsTime);
+        setMs(e.stations, d.stationsTime);
+        setMs(e.world3d, d.world3dTime);
+        setMs(e.hex3d, d.hex3dTime);
+        setMs(e.vfxUpdate, d.vfxUpdateTime);
+
+        setBar(e.barPhysics, d.physicsTime);
+        setBar(e.barDestructor, d.destructorTime);
+        setBar(e.barCollisions, d.collisionTime);
+        setBar(e.barDeform, d.deformTime);
+        setBar(e.barDraw, d.drawTime);
+        setBar(e.barPlanets, d.planetsTime);
+        setBar(e.barStations, d.stationsTime);
+        setBar(e.barWorld3d, d.world3dTime);
+        setBar(e.barHex3d, d.hex3dTime);
+        setBar(e.barVfxUpdate, d.vfxUpdateTime);
+
+        if (e.physicsSteps) e.physicsSteps.textContent = d.physicsSteps.toFixed(2);
+        if (e.entities) e.entities.textContent = `${d.entities}`;
+        if (e.shards) e.shards.textContent = `${d.shards}`;
+        if (e.debris) e.debris.textContent = `${d.debris}`;
+        if (e.contacts) e.contacts.textContent = `${Math.round(d.contacts)}`;
+      },
+
+      drawGraph() {
+        if (!this.visible || !this.graphCtx) return;
+        const ctx2d = this.graphCtx;
+        const graph = ctx2d.canvas;
+        const w = graph.width;
+        const h = graph.height;
+        ctx2d.clearRect(0, 0, w, h);
+        ctx2d.fillStyle = '#0a0e18';
+        ctx2d.fillRect(0, 0, w, h);
+
+        const drawGuide = (ms, color) => {
+          const y = h - (ms / 50) * h;
+          ctx2d.strokeStyle = color;
+          ctx2d.lineWidth = 1;
+          ctx2d.setLineDash([3, 3]);
+          ctx2d.beginPath();
+          ctx2d.moveTo(0, y);
+          ctx2d.lineTo(w, y);
+          ctx2d.stroke();
+          ctx2d.setLineDash([]);
+        };
+        drawGuide(16.67, '#2a3a2a');
+        drawGuide(33.33, '#3a2a2a');
+
+        const len = this.history.length;
+        const barW = w / len;
+        const startIdx = this.histIdx;
+        for (let i = 0; i < len; i++) {
+          const idx = (startIdx + i) % len;
+          const ms = this.history[idx];
+          const barH = Math.min(h, (ms / 50) * h);
+          const x = i * barW;
+          if (ms < 17) ctx2d.fillStyle = '#2a6a3a';
+          else if (ms < 33) ctx2d.fillStyle = '#6a6a2a';
+          else ctx2d.fillStyle = '#6a2a2a';
+          ctx2d.fillRect(x, h - barH, Math.max(1, barW - 0.5), barH);
+        }
+      },
+
+      resetAccum() {
+        this.accum.frameCount = 0;
+        this.accum.frameMs = 0;
+        this.accum.physicsTime = 0;
+        this.accum.destructorTime = 0;
+        this.accum.collisionTime = 0;
+        this.accum.deformTime = 0;
+        this.accum.drawTime = 0;
+        this.accum.planetsTime = 0;
+        this.accum.stationsTime = 0;
+        this.accum.world3dTime = 0;
+        this.accum.hex3dTime = 0;
+        this.accum.vfxUpdateTime = 0;
+        this.accum.contacts = 0;
+        this.accum.physicsSteps = 0;
+      }
+    };
+
+    PerfHUD.init();
 
     const fleetUIRoot = document.getElementById('panel-fleet');
     const fleetListEl = document.getElementById('fleet-list');
@@ -1242,6 +1676,54 @@ window.AudioSys = AudioSys;
       return out;
     }
 
+    const BASE_FRAME_DT = 1 / 60;
+    function npcTurnPhysicsStep(npc, desiredAngle, dt, frameNorm) {
+      const maxTurnSpeed = npc?.turn;
+      if (!Number.isFinite(maxTurnSpeed) || maxTurnSpeed <= 0) return;
+      if (!Number.isFinite(npc.angle)) npc.angle = 0;
+      if (!Number.isFinite(npc.angVel)) npc.angVel = 0;
+
+      const friction = (typeof npc.angularFriction === 'number') ? clamp(npc.angularFriction, 0, 1) : SHIP_PHYSICS.ANGULAR_FRICTION;
+      const angularDamping = Math.pow(friction, frameNorm);
+
+      const diff = wrapAngle(desiredAngle - npc.angle);
+      const kp = (typeof npc.turnKp === 'number') ? npc.turnKp : 5.5;
+      const desiredSpin = clamp(diff * kp, -maxTurnSpeed, maxTurnSpeed);
+
+      const turnAccel = (typeof npc.turnAccel === 'number') ? Math.max(0, npc.turnAccel) : (maxTurnSpeed * 4);
+      const maxDelta = turnAccel * dt;
+      npc.angVel += clamp(desiredSpin - npc.angVel, -maxDelta, maxDelta);
+
+      npc.angVel *= angularDamping;
+      npc.angVel = clamp(npc.angVel, -maxTurnSpeed, maxTurnSpeed);
+      npc.angle = wrapAngle(npc.angle + npc.angVel * dt);
+    }
+
+    function npcRotationStep(npc, dt, frameNorm) {
+      if (!npc) return;
+      const keepAngle = !!npc.keepAngle;
+      const vx = npc.vx || 0;
+      const vy = npc.vy || 0;
+      const spdSq = vx * vx + vy * vy;
+
+      let desiredAngle = Number.isFinite(npc.desiredAngle) ? npc.desiredAngle : NaN;
+      if (!Number.isFinite(desiredAngle) && !keepAngle && spdSq > 25) {
+        desiredAngle = Math.atan2(vy, vx);
+        npc.desiredAngle = desiredAngle;
+      }
+
+      if (Number.isFinite(desiredAngle)) {
+        npcTurnPhysicsStep(npc, desiredAngle, dt, frameNorm);
+        return;
+      }
+
+      if (!Number.isFinite(npc.angVel) || npc.angVel === 0) return;
+      const friction = (typeof npc.angularFriction === 'number') ? clamp(npc.angularFriction, 0, 1) : SHIP_PHYSICS.ANGULAR_FRICTION;
+      const angularDamping = Math.pow(friction, frameNorm);
+      npc.angVel *= angularDamping;
+      npc.angle = wrapAngle((npc.angle || 0) + npc.angVel * dt);
+    }
+
     function dist2(a, b) {
       const dx = a.x - b.x;
       const dy = a.y - b.y;
@@ -1615,7 +2097,9 @@ window.AudioSys = AudioSys;
 
         npc.vx = turned.vx;
         npc.vy = turned.vy;
-        npc.angle = Math.atan2(npc.vy, npc.vx);
+        if (npc.vx * npc.vx + npc.vy * npc.vy > 25) {
+          npc.desiredAngle = Math.atan2(npc.vy, npc.vx);
+        }
         return; // Przerywamy, nie lecimy do slotu
       }
 
@@ -1628,7 +2112,9 @@ window.AudioSys = AudioSys;
       const turned = window.clampTurnVec(npc.vx, npc.vy, dir.x * wantSpeed, dir.y * wantSpeed, dt, 220);
       npc.vx = turned.vx;
       npc.vy = turned.vy;
-      npc.angle = Math.atan2(npc.vy || 0, npc.vx || 0);
+      if (npc.vx * npc.vx + npc.vy * npc.vy > 25) {
+        npc.desiredAngle = Math.atan2(npc.vy || 0, npc.vx || 0);
+      }
 
       if (dist < 12) {
         npc.vx *= 0.92;
@@ -1647,7 +2133,9 @@ window.AudioSys = AudioSys;
       const turned = window.clampTurnVec(npc.vx || 0, npc.vy || 0, dir.x * wantSpeed, dir.y * wantSpeed, dt, opts.turnLimit || 220);
       npc.vx = turned.vx;
       npc.vy = turned.vy;
-      npc.angle = Math.atan2(npc.vy || 0, npc.vx || 0);
+      if (npc.vx * npc.vx + npc.vy * npc.vy > 25) {
+        npc.desiredAngle = Math.atan2(npc.vy || 0, npc.vx || 0);
+      }
       return dist;
     }
     function applySeparationForces(npc, ax, ay) {
@@ -1810,7 +2298,9 @@ window.AudioSys = AudioSys;
         supportGuardBehavior(npc, data.slotIndex, dt);
 
         if (npc.keepAngle) {
-          npc.angle = Math.atan2(npc.vy, npc.vx);
+          if (npc.vx * npc.vx + npc.vy * npc.vy > 25) {
+            npc.desiredAngle = Math.atan2(npc.vy, npc.vx);
+          }
         }
 
         // Myśliwiec bez celu wraca logicznie do stanu "guard"
@@ -1956,7 +2446,6 @@ window.AudioSys = AudioSys;
     if (previousPlayer.vel) shipOverrides.vel = previousPlayer.vel;
     if (typeof previousPlayer.angle === 'number') shipOverrides.angle = previousPlayer.angle;
     if (typeof previousPlayer.angVel === 'number') shipOverrides.angVel = previousPlayer.angVel;
-    if (typeof previousPlayer.mass === 'number') shipOverrides.mass = previousPlayer.mass;
     if (typeof previousPlayer.linearDamping === 'number') shipOverrides.linearDamping = previousPlayer.linearDamping;
     if (typeof previousPlayer.angularDamping === 'number') shipOverrides.angularDamping = previousPlayer.angularDamping;
     if (typeof previousPlayer.w === 'number') shipOverrides.w = previousPlayer.w;
@@ -1967,6 +2456,9 @@ window.AudioSys = AudioSys;
     Game.player = createShipEntity({ world: WORLD, overlayView, overrides: shipOverrides });
     const ship = Game.player;
     window.ship = ship;
+    ship.mass = SHIP_PHYSICS.PLAYER_MASS;
+    ship.rammingMass = SHIP_PHYSICS.PLAYER_MASS;
+    ship.inertia = (1 / 12) * ship.mass * ((ship.w * ship.w) + (ship.h * ship.h));
 
     ship.inventory = mergedInventory;
     ship.shipFrame = previousPlayer.shipFrame || 'atlas';
@@ -2807,6 +3299,7 @@ window.AudioSys = AudioSys;
     window.addEventListener('resize', () => {
       W = canvas.width = innerWidth;
       H = canvas.height = innerHeight;
+      if (window.resizeHexShips3D) window.resizeHexShips3D(W, H);
       resizeShieldSystem(innerWidth, innerHeight);
       spaceBg?.resizeSpaceBg?.(innerWidth, innerHeight);
       configureWarpLensSource?.();
@@ -3944,6 +4437,7 @@ window.AudioSys = AudioSys;
         vx: 0,
         vy: 0,
         angle: 0,
+        angVel: (typeof stats.angVel === 'number') ? stats.angVel : 0,
 
         hp: stats.hp || 100,
         maxHp: stats.hp || 100,
@@ -3951,6 +4445,10 @@ window.AudioSys = AudioSys;
         accel: stats.accel || 0,
         maxSpeed: stats.maxSpeed || 0,
         turn: stats.turn || 0,
+        turnAccel: (typeof stats.turnAccel === 'number')
+          ? stats.turnAccel
+          : ((stats.turn || 0) > 0 ? (stats.turn * 4) : 0),
+        angularFriction: (typeof stats.angularFriction === 'number') ? stats.angularFriction : SHIP_PHYSICS.ANGULAR_FRICTION,
         radius: stats.radius || 20,
 
         // jeśli nie podasz isCollidable w statsach – jest kolizyjny
@@ -4512,31 +5010,25 @@ window.AudioSys = AudioSys;
 
       limitSpeed(npc, speedLimit);
 
+      const attackTarget = selectCarrierTarget(entry);
+      let desiredAngle = NaN;
       if (driveState === 'active' && warpDrive) {
-        const desiredAngle = Math.atan2(warpDrive.dir.y, warpDrive.dir.x);
-        const diff = wrapAngle(desiredAngle - npc.angle);
-        const maxAlign = warpDrive.alignRate * dt;
-        npc.angle = wrapAngle(npc.angle + clamp(diff, -maxAlign, maxAlign));
+        desiredAngle = Math.atan2(warpDrive.dir.y, warpDrive.dir.x);
       } else {
-        const spd = Math.hypot(npc.vx, npc.vy);
-        if (spd > 1) {
-          npc.angle = Math.atan2(npc.vy, npc.vx);
+        const vx = npc.vx || 0;
+        const vy = npc.vy || 0;
+        const spdSq = vx * vx + vy * vy;
+        if (spdSq > 1) {
+          desiredAngle = Math.atan2(vy, vx);
         } else {
-          const desiredAngle = Math.atan2(ship.pos.y - npc.y, ship.pos.x - npc.x);
-          const diff = wrapAngle(desiredAngle - npc.angle);
-          const turnLimit = (entry.template?.turn ?? npc.turn ?? 0) * dt;
-          npc.angle = wrapAngle(npc.angle + clamp(diff, -turnLimit, turnLimit));
+          desiredAngle = Math.atan2(ship.pos.y - npc.y, ship.pos.x - npc.x);
         }
       }
-      npc.desiredAngle = npc.angle;
-
-      const attackTarget = selectCarrierTarget(entry);
       if (attackTarget) {
-        const desiredAngle = Math.atan2(attackTarget.y - npc.y, attackTarget.x - npc.x);
-        const diff = wrapAngle(desiredAngle - npc.angle);
-        const turnLimit = (entry.template?.turn ?? npc.turn ?? 0) * dt;
-        npc.angle = wrapAngle(npc.angle + clamp(diff, -turnLimit, turnLimit));
-        npc.desiredAngle = npc.angle;
+        desiredAngle = Math.atan2(attackTarget.y - npc.y, attackTarget.x - npc.x);
+      }
+      if (Number.isFinite(desiredAngle)) {
+        npc.desiredAngle = desiredAngle;
       }
 
       updateCarrierWeapons(entry, dt, 'guard', attackTarget);
@@ -4766,7 +5258,9 @@ window.AudioSys = AudioSys;
           // --- FIX: Dodajemy wymagane pola cache ---
           cacheCanvas: cacheCanvas,
           cacheCtx: cacheCanvas.getContext('2d', { willReadFrequently: true }),
-          cacheDirty: true // Wymuś narysowanie w pierwszej klatce
+          cacheDirty: true, // Wymuś narysowanie w pierwszej klatce
+          textureDirty: true,
+          meshDirty: true
           // ----------------------------------------
         }
       };
@@ -9490,6 +9984,9 @@ window.AudioSys = AudioSys;
       if (k === 'shift') {
         handleShiftDown();
       }
+      if (k === 'p') {
+        PerfHUD.toggle();
+      }
       if (k === 'm') {
         showMap = !showMap;
         if (showMap) {
@@ -9543,7 +10040,7 @@ window.AudioSys = AudioSys;
           toast('Myśliwce: ESKORTA');
         }
       }
-      if (k === 'r') {
+      if (k === 't') {
         if (highlightedEnemies.length) {
           lockedTargets = highlightedEnemies.filter(isHostileNpc)
             .sort((a, b) => Math.hypot(a.x - ship.pos.x, a.y - ship.pos.y) - Math.hypot(b.x - ship.pos.x, b.y - ship.pos.y));
@@ -9554,6 +10051,10 @@ window.AudioSys = AudioSys;
         } else {
           lockedTarget = null;
         }
+      }
+      if (k === 'r') {
+        const allDestructibles = [ship, ...npcs, ...wrecks];
+        DestructorSystem.repair(allDestructibles, 0.1);
       }
       updateInput();
     });
@@ -9570,14 +10071,17 @@ window.AudioSys = AudioSys;
         applyPlayerInput(ship, { controller: 'player', main: 0, thrustX: 0, thrustY: 0, leftSide: 0, rightSide: 0, torque: 0 }, input);
         return;
       }
+      let thrustY = 0;
+      if (keys['w']) thrustY = 1;
+      else if (keys['s']) thrustY = -1;
       const leftSide = keys['e'] ? 1 : 0;
       const rightSide = keys['q'] ? 1 : 0;
       let torque = 0; if (keys['a']) torque -= 1; if (keys['d']) torque += 1;
       applyPlayerInput(ship, {
         controller: 'player',
         thrustX: torque,
-        thrustY: input.main,
-        main: input.main,
+        thrustY,
+        main: Math.max(0, thrustY),
         leftSide,
         rightSide,
         torque
@@ -9606,10 +10110,10 @@ window.AudioSys = AudioSys;
       }
       
       // ZMIANA: Reaktywny pasek mocy (zamiast tempomatu)
-      // W = 100% mocy, S = 40% mocy (wsteczny), Brak = 0% (wygasanie)
+      // W = 100% mocy, S = 50% mocy (wsteczny), Brak = 0% (wygasanie)
       let target = 0;
       if (keys['w']) target = 1.0;
-      else if (keys['s']) target = 0.4; 
+      else if (keys['s']) target = 0.5;
 
       enginePower.target = target;
       
@@ -9907,7 +10411,7 @@ window.AudioSys = AudioSys;
         if (!firedSpecial && !warp.isBusy()) {
           const mouseWorld = screenToWorld(mouse.x, mouse.y);
           const local = rotateInv({ x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y }, ship.angle);
-          const side = (local.x >= 0) ? 'right' : 'left';
+          const side = (local.y >= 0) ? 'right' : 'left';
           fireRocket(side);
           rocketCooldown = ROCKET_FIRE_INTERVAL;
         }
@@ -10025,11 +10529,18 @@ window.AudioSys = AudioSys;
       const entries = Game.player.weapons?.[HP.MISSILE] || [];
       const available = entries.filter(entry => entry.hp.mount && (entry.hp.ammo === null || entry.hp.ammo > 0));
       if (!available.length) return null;
+      const sideCoord = (entry) => {
+        const pos = entry?.hp?.pos;
+        if (!pos) return 0;
+        const y = Number(pos.y) || 0;
+        if (Math.abs(y) > 1e-3) return y;
+        return Number(pos.x) || 0;
+      };
       let preferred = null;
       if (side === 'left') {
-        preferred = available.find(entry => (entry.hp.pos?.x || 0) <= 0);
+        preferred = available.find(entry => sideCoord(entry) <= 0);
       } else if (side === 'right') {
-        preferred = available.find(entry => (entry.hp.pos?.x || 0) >= 0);
+        preferred = available.find(entry => sideCoord(entry) >= 0);
       }
       return preferred || available[0];
     }
@@ -10974,14 +11485,30 @@ window.AudioSys = AudioSys;
       }
       return dmg;
     }
-
-    // Optymalizacja 1: Prosty Spatial Grid
+    // Optymalizacja 1: Prosty Spatial Grid (bez generowania GC)
     const SpatialGrid = {
-      cellSize: 4000, // Rozmiar komórki (musi być większy niż największy obiekt)
+      cellSize: 4000,
       cells: new Map(),
+      _arrayPool: [],
+      _poolIndex: 0,
+      _resultBuffer: [],
+      _resultCount: 0,
+
+      _getArray() {
+        if (this._poolIndex < this._arrayPool.length) {
+          const arr = this._arrayPool[this._poolIndex++];
+          arr.length = 0;
+          return arr;
+        }
+        const arr = [];
+        this._arrayPool.push(arr);
+        this._poolIndex++;
+        return arr;
+      },
 
       clear() {
         this.cells.clear();
+        this._poolIndex = 0;
       },
 
       getKey(x, y) {
@@ -10991,30 +11518,33 @@ window.AudioSys = AudioSys;
       },
 
       insert(entity) {
-        // Rejestrujemy obiekt w komórce, w której jest jego środek
-        // (Dla dużych obiektów można rejestrować w sąsiednich, ale to wersja uproszczona)
         const key = this.getKey(entity.x, entity.y);
-        if (!this.cells.has(key)) this.cells.set(key, []);
-        this.cells.get(key).push(entity);
+        let cell = this.cells.get(key);
+        if (!cell) {
+          cell = this._getArray();
+          this.cells.set(key, cell);
+        }
+        cell.push(entity);
       },
 
-      // Zwraca obiekty z komórki obiektu + 8 sąsiednich
       getPotentialTargets(x, y) {
         const cx = Math.floor(x / this.cellSize);
         const cy = Math.floor(y / this.cellSize);
-        const results = [];
+        this._resultCount = 0;
 
         for (let i = -1; i <= 1; i++) {
           for (let j = -1; j <= 1; j++) {
             const key = (cx + i) + "," + (cy + j);
             const cell = this.cells.get(key);
-            if (cell) {
-              // Zamiast push(...cell) co alokuje pamięć, iterujemy (dla wydajności JS)
-              for (let k = 0; k < cell.length; k++) results.push(cell[k]);
+            if (!cell) continue;
+            const len = cell.length;
+            for (let k = 0; k < len; k++) {
+              this._resultBuffer[this._resultCount++] = cell[k];
             }
           }
         }
-        return results;
+
+        return { buffer: this._resultBuffer, count: this._resultCount };
       }
     };
 
@@ -11070,10 +11600,12 @@ window.AudioSys = AudioSys;
         let hitNPC = null;
         let didHitShield = false; 
         
-        const nearbyTargets = SpatialGrid.getPotentialTargets(b.x, b.y);
+        const searchResult = SpatialGrid.getPotentialTargets(b.x, b.y);
+        const targetsBuffer = searchResult.buffer;
+        const targetsCount = searchResult.count;
 
-        for (let k = 0; k < nearbyTargets.length; k++) {
-          const npc = nearbyTargets[k];
+        for (let k = 0; k < targetsCount; k++) {
+          const npc = targetsBuffer[k];
           if (!npc.isWreck && (npc.dead || npc.isCollidable === false)) continue;
           if (b.source && b.source === npc) continue;
           
@@ -11112,10 +11644,11 @@ window.AudioSys = AudioSys;
             const dy = b.y - npc.y;
             
             // Obrót punktu względem środka statku (Local Space)
-            const cos = Math.cos(-effectiveAngle);
-            const sin = Math.sin(-effectiveAngle);
-            const localX = dx * cos - dy * sin;
-            const localY = dx * sin + dy * cos;
+            // Używamy macierzy odwróconej dla rotacji 2D o kąt 'effectiveAngle'
+            const cos = Math.cos(effectiveAngle);
+            const sin = Math.sin(effectiveAngle);
+            const localX = dx * cos + dy * sin;
+            const localY = -dx * sin + dy * cos;
             
             // Promień tarczy pod kątem uderzenia
             const impactAngle = Math.atan2(localY, localX);
@@ -11254,6 +11787,7 @@ window.AudioSys = AudioSys;
     }
     function npcStep(dt) {
       const DESPAWN_RADIUS_SQ = NPC_DESPAWN_RADIUS * NPC_DESPAWN_RADIUS;
+      const frameNorm = dt / BASE_FRAME_DT;
       for (const npc of npcs) {
         if (npc.hitFlash) npc.hitFlash = Math.max(0, npc.hitFlash - dt);
         updateShieldFx(npc, dt);
@@ -11301,7 +11835,8 @@ window.AudioSys = AudioSys;
 
               npc.vx = dirX * npc.warpData.speed;
               npc.vy = dirY * npc.warpData.speed;
-              npc.angle = Math.atan2(npc.vy, npc.vx);
+              npc.desiredAngle = Math.atan2(npc.vy, npc.vx);
+              npcRotationStep(npc, dt, frameNorm);
 
               spawnParticle(
                 { x: npc.x, y: npc.y },
@@ -11321,7 +11856,10 @@ window.AudioSys = AudioSys;
             npc.vy *= (npc.friction || 0.99);
             npc.x += (npc.vx || 0) * dt;
             npc.y += (npc.vy || 0) * dt;
-            npc.angle = Math.atan2(npc.vy || 0, npc.vx || 0);
+            if (Math.hypot(npc.vx || 0, npc.vy || 0) > 1) {
+              npc.desiredAngle = Math.atan2(npc.vy || 0, npc.vx || 0);
+            }
+            npcRotationStep(npc, dt, frameNorm);
             continue;
           }
 
@@ -11340,14 +11878,8 @@ window.AudioSys = AudioSys;
           npc.vx *= friction;
           npc.vy *= friction;
 
-          // 4. Obrót
-          if (npc.keepAngle) {
-            if (typeof npc.desiredAngle === 'number') npc.angle = npc.desiredAngle;
-          } else if (!npc.fighter) {
-            // Myśliwce obracają się w AI, reszta tutaj
-            const speed = Math.hypot(npc.vx, npc.vy);
-            if (speed > 1) npc.angle = Math.atan2(npc.vy, npc.vx);
-          }
+          // 4. Obrót (obrót z limitem przyspieszenia, jak "wciśnięcie A/D")
+          npcRotationStep(npc, dt, frameNorm);
           continue;
         }
 
@@ -11397,7 +11929,10 @@ window.AudioSys = AudioSys;
         }
         if (npc.phase === 'warping') {
           npc.x += npc.vx * dt; npc.y += npc.vy * dt;
-          npc.angle = Math.atan2(npc.vy || 0, npc.vx || 0);
+          if (npc.vx * npc.vx + npc.vy * npc.vy > 25) {
+            npc.desiredAngle = Math.atan2(npc.vy || 0, npc.vx || 0);
+          }
+          npcRotationStep(npc, dt, frameNorm);
           const route = npc.warpRoute;
           const traveled = (npc.x - route.start.x) * route.dir.x + (npc.y - route.start.y) * route.dir.y;
           if (traveled >= route.length) { npc.phase = 'toStation'; npc.x = route.end.x; npc.y = route.end.y; }
@@ -11431,7 +11966,9 @@ window.AudioSys = AudioSys;
           const desiredV = { x: dir.x * npc.speed, y: dir.y * npc.speed };
           npc.vx += (desiredV.x - (npc.vx || 0)) * clamp(1.5 * dt, 0, 1);
           npc.vy += (desiredV.y - (npc.vy || 0)) * clamp(1.5 * dt, 0, 1);
-          npc.x += npc.vx * dt; npc.y += npc.vy * dt; npc.angle = Math.atan2(npc.vy || 0, npc.vx || 0);
+          npc.x += npc.vx * dt;
+          npc.y += npc.vy * dt;
+          npcRotationStep(npc, dt, frameNorm);
           continue;
         }
         let targetPos, st = null;
@@ -11459,7 +11996,9 @@ window.AudioSys = AudioSys;
         npc.vy += (desiredV.y - (npc.vy || 0)) * clamp(1.5 * dt, 0, 1);
         const toP = { x: ship.pos.x - npc.x, y: ship.pos.y - npc.y }; const dp = Math.hypot(toP.x, toP.y);
         if (dp < 120) { npc.vx -= (toP.x / dp) * 40 * dt; npc.vy -= (toP.y / dp) * 40 * dt; }
-        npc.x += npc.vx * dt; npc.y += npc.vy * dt; npc.angle = Math.atan2(npc.vy || 0, npc.vx || 0);
+        npc.x += npc.vx * dt;
+        npc.y += npc.vy * dt;
+        npcRotationStep(npc, dt, frameNorm);
         const portPos = st ? stationPortWorld(st, npc.dockPort || 0) : null;
         const distToStation = portPos ? Math.hypot(portPos.x - npc.x, portPos.y - npc.y) : Infinity;
         if (npc.leader == null && st && distToStation < 20) {
@@ -11767,6 +12306,8 @@ window.AudioSys = AudioSys;
 
     // =============== Fizyk ===============
     function physicsStep(dt) {
+      const tPhysics0 = performance.now();
+      PerfHUD.markPhysicsStep();
       updateCameraTarget(dt);
       updateStationUIState(dt);
       updateInfrastructureEditorState(dt);
@@ -11905,7 +12446,7 @@ window.AudioSys = AudioSys;
       const hasMissilesEquipped = (Game.player.weapons?.[HP.MISSILE]?.length || 0) > 0;
       if (!stationUI.open && mouse.right && !warp.isBusy() && hasMissilesEquipped && (rocketAmmoMax === 0 || rocketAmmo > 0) && rocketCooldown <= 0) {
         const local = rotateInv({ x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y }, ship.angle);
-        const side = (local.x >= 0) ? 'right' : 'left';
+        const side = (local.y >= 0) ? 'right' : 'left';
         fireRocket(side);
         rocketCooldown = ROCKET_FIRE_INTERVAL;
       }
@@ -12104,99 +12645,60 @@ window.AudioSys = AudioSys;
         }
       }
       else {
-        // --- HYBRID PHYSICS IMPLEMENTATION (V46 PORT) ---
-        // Zastępuje stary model siłowy modelem z dema
-
-        // 1. Parametry
-        const baseSpeed = SHIP_PHYSICS.SPEED;
-        const rotSpeed = SHIP_PHYSICS.ROTATION_SPEED;
-
-        // Boost
-        const boostActive = (boost.state === 'active');
-        const currentSpeed = boostActive ? baseSpeed * SHIP_PHYSICS.BOOST_MULT : baseSpeed;
-        const currentRotSpeed = rotSpeed; // Można dodać karę za boost jeśli chcemy
-
-        // Tarcie normalizowane do klatki (dt)
-        // Wzór: friction_factor = base_friction ^ (dt / 0.016)
-        const frictionFactor = Math.pow(SHIP_PHYSICS.FRICTION, dt / 0.016);
-
-        // Kąty
+        // --- Player physics from destruktorhybrid... (nearly 1:1) ---
+        const currentSpeed = boostActive ? SHIP_PHYSICS.SPEED * SHIP_PHYSICS.BOOST_MULT : SHIP_PHYSICS.SPEED;
+        const frameNorm = dt / (1 / 60);
+        const linearDamping = Math.pow(SHIP_PHYSICS.LINEAR_FRICTION, frameNorm);
+        const angularDamping = Math.pow(SHIP_PHYSICS.ANGULAR_FRICTION, frameNorm);
+        const turnInput = clamp(input.torque, -1, 1);
         const sin = Math.sin(ship.angle);
         const cos = Math.cos(ship.angle);
-        const forward = { x: cos, y: sin }; // Dziób w prawo (+X)
-        const right = { x: -sin, y: cos };  // Prawa burta (prostopadły)
+        const forward = { x: cos, y: sin };
+        const right = { x: -sin, y: cos };
 
-        // 2. Rotacja (Kinematyczna - bezpośrednia)
-        if (input.torque !== 0) {
-          ship.angle += input.torque * currentRotSpeed * dt;
-          // Aktualizujemy angVel tylko dla systemów AI/kolizji, żeby wiedziały że się kręcimy
-          ship.angVel = input.torque * currentRotSpeed;
+        let thrust = clamp(ship.input?.thrustY ?? 0, -1, 1);
+        if (thrust < 0) thrust *= SHIP_PHYSICS.REVERSE_MULT;
+        if (thrust !== 0) {
+          ship.vel.x += forward.x * thrust * currentSpeed * dt;
+          ship.vel.y += forward.y * thrust * currentSpeed * dt;
+        }
 
-          // Efekty manewrowe
-          if (input.torque < 0) { // W lewo (A)
-            const e = ship.engines.torqueRight; // Prawy przód/tył
+        ship.angVel += turnInput * SHIP_PHYSICS.TURN_ACCEL * dt;
+        ship.angVel *= angularDamping;
+        ship.angVel = clamp(ship.angVel, -SHIP_PHYSICS.MAX_TURN_SPEED, SHIP_PHYSICS.MAX_TURN_SPEED);
+        ship.angle = wrapAngle(ship.angle + ship.angVel * dt);
+
+        if (Math.abs(turnInput) > 1e-3) {
+          if (turnInput < 0) {
+            const e = ship.engines.torqueRight;
             const wo = rotate(e.offset, ship.angle);
             spawnParticle(add(ship.pos, wo), add(ship.vel, mul(right, 100)), 0.22, '#cfe7ff', 1.0);
-          } else { // W prawo (D)
-            const e = ship.engines.torqueLeft; // Lewy przód/tył
+          } else {
+            const e = ship.engines.torqueLeft;
             const wo = rotate(e.offset, ship.angle);
             spawnParticle(add(ship.pos, wo), add(ship.vel, mul(right, -100)), 0.22, '#cfe7ff', 1.0);
           }
-        } else {
-          ship.angVel = 0;
-        }
-        ship.angle = wrapAngle(ship.angle);
-
-        // 3. Ruch (Dynamiczny + Tarcie)
-
-        // Główny ciąg (W/S)
-        if (input.main !== 0) {
-          // Uwaga: input.main w starym kodzie to 0..1 (przepustnica). 
-          // Jeśli gracz trzyma S, input.main może być obsługiwane inaczej w applyPlayerInput.
-          // Tutaj upraszczamy: keys['w'] daje +speed, keys['s'] daje -speed.
-          // Musimy sprawdzić surowe klawisze lub zaufać, że input.thrustY ma znak.
-          // W `applyPlayerInput` thrustY jest przepisywane.
-
-          let thrust = 0;
-          if (keys['w']) thrust = 1;
-          else if (keys['s']) thrust = -0.4; // Wsteczny wolniejszy
-
-          if (thrust !== 0) {
-            ship.vel.x += forward.x * thrust * currentSpeed * dt;
-            ship.vel.y += forward.y * thrust * currentSpeed * dt;
-
-            // Efekt głównego silnika
-            if (thrust > 0) {
-              // Cząsteczki spawnuje osobna pętla `draw` (VFX), tutaj dodajemy tylko fizyczny impuls
-              // Ale dla spójności dodajmy też mały impuls dla 'feeling'
-            }
-          }
         }
 
-        // Strafe (Q/E) - input.leftSide / input.rightSide
-        const sideSpeed = currentSpeed * SHIP_PHYSICS.SIDE_POWER;
+        const sideSpeed = currentSpeed * 0.55;
         if (input.leftSide > 0) {
           ship.vel.x -= right.x * sideSpeed * input.leftSide * dt;
           ship.vel.y -= right.y * sideSpeed * input.leftSide * dt;
-
-          const e = ship.engines.sideRight; // Odpalasz prawy, lecisz w lewo
+          const e = ship.engines.sideRight;
           const wo = rotate(e.offset, ship.angle);
           spawnParticle(add(ship.pos, wo), add(ship.vel, mul(right, 150)), 0.30, '#cfe7ff', 1.0);
         }
         if (input.rightSide > 0) {
           ship.vel.x += right.x * sideSpeed * input.rightSide * dt;
           ship.vel.y += right.y * sideSpeed * input.rightSide * dt;
-
-          const e = ship.engines.sideLeft; // Odpalasz lewy, lecisz w prawo
+          const e = ship.engines.sideLeft;
           const wo = rotate(e.offset, ship.angle);
           spawnParticle(add(ship.pos, wo), add(ship.vel, mul(right, -150)), 0.30, '#cfe7ff', 1.0);
         }
 
-        // 4. Aplikacja Tarcia (Klucz do "Driftu")
-        ship.vel.x *= frictionFactor;
-        ship.vel.y *= frictionFactor;
+        ship.vel.x *= linearDamping;
+        ship.vel.y *= linearDamping;
 
-        // Boost logic (Update Timer)
         if (boostActive) {
           boost.effectTime = boost.effectDuration;
           boost.effectDir = { x: forward.x, y: forward.y };
@@ -12256,7 +12758,18 @@ window.AudioSys = AudioSys;
       ciwsStep(dt);
       bulletsAndCollisionsStep(dt);
       npcShootingStep(dt);
+      const allDestructibles = [ship, ...npcs, ...wrecks];
+      const tDestructor0 = performance.now();
+      DestructorSystem.update(dt, allDestructibles);
+      const destructorMs = performance.now() - tDestructor0;
+      PerfHUD.addTiming('destructorTime', destructorMs);
+      if (DestructorSystem.perf) {
+        PerfHUD.addTiming('collisionTime', DestructorSystem.perf.lastCollisionMs || 0);
+        PerfHUD.addTiming('deformTime', DestructorSystem.perf.lastDeformMs || 0);
+        PerfHUD.addContacts(DestructorSystem.perf.lastContacts || 0);
+      }
       hudUpdateNav(dt);
+      PerfHUD.addTiming('physicsTime', performance.now() - tPhysics0);
     }
 
     // ======= Efekty VFX =======
@@ -12501,6 +13014,7 @@ window.AudioSys = AudioSys;
     function saveState() { prevState = { pos: { ...ship.pos }, angle: ship.angle, turretAngle: ship.turret.angle, turretAngle2: ship.turret2.angle, turretAngle3: ship.turret3.angle, turretAngle4: ship.turret4.angle, ciwsAngles: ship.ciws.map(c => c.angle) }; }
     saveState();
     function loop(now) {
+      const frameStartMs = performance.now();
       const frame = Math.min(0.033, (now - lastTime) / 1000);
       lastTime = now;
       applyGamepad();
@@ -12516,6 +13030,9 @@ window.AudioSys = AudioSys;
           firstFrameResolver();
           firstFrameResolver = null;
         }
+        const frameEndMs = performance.now();
+        PerfHUD.recordFrameTime(frameEndMs - frameStartMs);
+        PerfHUD.flush(frameEndMs);
         requestAnimationFrame(loop);
         return;
       }
@@ -12528,15 +13045,14 @@ window.AudioSys = AudioSys;
         acc -= PHYS_DT; steps++;
       }
 
-      const allDestructibles = [ship, ...npcs, ...wrecks];
-      DestructorSystem.update(frame, allDestructibles);
-
       const mWorld = screenToWorld(mouse.x, mouse.y);
       Superweapon.updateSuperweapon(frame, ship, mWorld);
 
       // >>> TO JEST KLUCZOWE - ODDZIELNA AKTUALIZACJA WIZUALIÓW <<<
+      const tVfxUpdate0 = performance.now();
       updateParticles(frame);
       updateLightnings(frame);
+      PerfHUD.addTiming('vfxUpdateTime', performance.now() - tVfxUpdate0);
       // >>> BEZ TEGO CZĄSTECZKI STOJĄ W MIEJSCU <<<
 
       const alpha = acc / PHYS_DT;
@@ -12577,7 +13093,9 @@ window.AudioSys = AudioSys;
       }
       // --------------------
 
+      const tDraw0 = performance.now();
       render(alpha, frame);
+      PerfHUD.addTiming('drawTime', performance.now() - tDraw0);
 
       // WAŻNE: Eksportujemy globalne zmienne dla modułu superweapon
       window.camera = camera;
@@ -12592,6 +13110,9 @@ window.AudioSys = AudioSys;
         firstFrameResolver();
         firstFrameResolver = null;
       }
+      const frameEndMs = performance.now();
+      PerfHUD.recordFrameTime(frameEndMs - frameStartMs);
+      PerfHUD.flush(frameEndMs);
       requestAnimationFrame(loop);
     }
 
@@ -13459,48 +13980,32 @@ window.AudioSys = AudioSys;
       overlayView.viewport.w = W;
       overlayView.viewport.h = H;
       overlayView.zoom = cam.zoom;
+      // ==========================================
+      // --- UNIFIED 3D UPDATE & RENDER ---
+      // ==========================================
 
-      // aktualizuj wyświetlanie czasu
-      gameTimeEl.textContent = formatGameTime(gameTime);
-      updatePlayerStatusUI();
-      updateFleetUI();
-      updatePlanetRadar(ship, cam);
-
-      // 1. Czyścimy Canvas 2D do przezroczystości (żeby odsłonić warstwę WebGL pod spodem)
-      ctx.clearRect(0, 0, W, H);
-
-      // (Opcjonalnie) Jeśli spaceBg rysuje czarne tło, zakomentuj tę linię:
-      // spaceBg?.drawSpaceBg?.(ctx, cam);
-
-      // 2. Aktualizacja i renderowanie planet 3D (na dolnym canvasie)
-      if (window.updatePlanets3D) updatePlanets3D(frameDt);
-      if (window.drawPlanets3D) {
-        window.drawPlanets3D(ctx, cam);
-      }
-      if (warpBlackHoleFX) {
-        configureWarpLensSource();
-      }
-      ensurePlanetStationsInit(stations);
-      // najpierw zaktualizuj pozycje stacji 3D...
+      // 1. Zaktualizuj wszystkie obiekty 3D na podstawie logiki gry
+      if (window.updatePlanets3D) window.updatePlanets3D(frameDt, cam);
       if (window.updateStations3D) window.updateStations3D(stations);
-      // ...a potem wyrenderuj overlay sceny 3D
-      if (window.updateWorld3D) updateWorld3D(frameDt, vfxTime);
+      if (window.updateWorld3D) window.updateWorld3D(frameDt, vfxTime);
 
-      // Gwiazdy (proceduralne kafelki na całej mapie)
-      //drawStars(cam);
+      // 2. Statek gracza i system zniszczen (oraz VFX silnikow wewnatrz)
+      if (window.updateHexShips3D) {
+        const hexEntities = [];
+        if (ship && ship.hexGrid && !ship.dead) hexEntities.push(ship);
+        for (const npc of npcs) if (npc && npc.hexGrid && !npc.dead) hexEntities.push(npc);
+        for (const w of wrecks) if (w && w.hexGrid && !w.dead) hexEntities.push(w);
 
-      // scan waves
-      for (const w of scanWaves) {
-        const s = worldToScreen(w.x, w.y, cam);
-        ctx.strokeStyle = 'rgba(120,200,255,0.18)';
-        ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(s.x, s.y, w.r * camera.zoom, 0, Math.PI * 2); ctx.stroke();
+        // Ta funkcja aktualizuje statki i ostatecznie wywoluje Core3D.render()
+        window.updateHexShips3D(cam, hexEntities);
       }
 
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.imageSmoothingEnabled = true;
-      if (window.drawStations3D) drawStations3D(ctx, cam, worldToScreen); // STACJE 3D NAD PLANETAMI (sprite per-stacja)
-      if (window.drawWorld3D) drawWorld3D(ctx, cam, worldToScreen); // np. piracka stacja (spotlight)
+      // 3. Rysujemy gotowa klatke z WebGL na glowny Canvas 2D
+      if (window.drawHexShips3D) {
+        window.drawHexShips3D(ctx, W, H);
+      }
+
+      // ==========================================
       if (stationUI.editorMode && stationUI.station) {
         const infraState = ensureInfrastructureState(stationUI.station);
         if (infraState) drawInfrastructureGrid(ctx, cam, stationUI.station, infraState);
@@ -15251,3 +15756,4 @@ ctx.imageSmoothingEnabled = true;
 </body>
 
 </html>
+

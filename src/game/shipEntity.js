@@ -1,15 +1,17 @@
 // src/game/shipEntity.js
-// HYBRID PHYSICS MODEL (V46 Port)
-// Model hybrydowy: Kinematyczny obrót (natychmiastowy) + Dynamiczny ruch (bezwładność z tarciem)
+// HYBRID PHYSICS MODEL (V53 Port)
+// Model dynamiczny: obrót i ruch zgodne z nową symulacją destrukcji.
 
-// --- KONFIGURACJA FIZYKI (V46) ---
-// Te wartości sterują zachowaniem statku w głównym silniku gry.
+// --- KONFIGURACJA FIZYKI GRACZA (zgodna z destruktorhybrid...) ---
 export const SHIP_PHYSICS = {
-  SPEED: 850,           // Podstawowa siła ciągu (liniowa) - wpływa na przyspieszenie
-  ROTATION_SPEED: 2.8,  // Prędkość obrotu (radiany/s) - bezpośrednia kontrola (snappy feeling)
-  FRICTION: 0.985,      // Tarcie "ślizgowe" (per klatka przy 60fps) - klucz do efektu driftu
-  SIDE_POWER: 0.6,      // Mnożnik mocy dla silników bocznych (Q/E)
-  BOOST_MULT: 2.5       // Mnożnik prędkości przy włączonym dopalaczu (SHIFT)
+  PLAYER_MASS: 800000,
+  SPEED: 600,
+  REVERSE_MULT: 0.5,
+  TURN_ACCEL: 10.0,
+  MAX_TURN_SPEED: 2.5,
+  LINEAR_FRICTION: 0.99,
+  ANGULAR_FRICTION: 0.92,
+  BOOST_MULT: 2.5
 };
 
 // --- SZABLON STATKU ---
@@ -18,18 +20,17 @@ const SHIP_TEMPLATE = {
   h: 250,
   radius: 220, // Promień kolizji
   
-  // Masa w tym modelu służy głównie do interakcji z innymi obiektami (taranowanie),
-  // a nie do obliczania przyspieszenia gracza (to jest sterowane przez SHIP_PHYSICS.SPEED).
-  mass: 2500, 
-  rammingMass: 80000,
+  // Masa z nowego silnika (destruktorhybrid...)
+  mass: SHIP_PHYSICS.PLAYER_MASS,
+  rammingMass: SHIP_PHYSICS.PLAYER_MASS,
   
   pos: { x: 0, y: 0 },
   vel: { x: 0, y: 0 },
   angle: 0,
   angVel: 0,
   
-  // Tłumienie ustawiamy na 0, ponieważ fizykę tarcia (drift) obsługujemy ręcznie w pętli gry
-  // przy użyciu parametru SHIP_PHYSICS.FRICTION.
+  // Tłumienie ustawiamy na 0, ponieważ dryf i obrót tłumimy ręcznie w pętli gry
+  // przez SHIP_PHYSICS.LINEAR_FRICTION / SHIP_PHYSICS.ANGULAR_FRICTION.
   linearDamping: 0, 
   angularDamping: 0,
 
@@ -48,9 +49,10 @@ const SHIP_TEMPLATE = {
     engineGlowSize: 0.35,
     engineColor: 'rgba(100, 200, 255, 0.85)',
     engineOffsets: [
-        { x: -0.15, y: 0.42 }, // Lewa dysza główna
-        { x: 0.15, y: 0.42 },  // Prawa dysza główna
-        { x: 0, y: 0.45 }      // Środek
+        // Dziób to +X, Rufa to ujemne -X. Zmieniamy pozycje na oś X!
+        { x: -0.42, y: -0.15 }, // Lewa dysza główna
+        { x: -0.42, y: 0.15 },  // Prawa dysza główna
+        { x: -0.45, y: 0 }      // Środek
     ]
   },
 
@@ -101,9 +103,9 @@ export const SHIP_SPRITE_SCALE = 1.0;
 
 // Bazowe pozycje elementów wizualnych (w pikselach oryginalnego sprite'a)
 const SHIP_VISUAL_BASE = {
-  turretTop: { x: -57.50, y: 77.50 },
-  turretBottom: { x: 81.00, y: 63.50 },
-  engineY: -210.00
+  turretTop: { x: -77.50, y: -57.50 },
+  turretBottom: { x: -63.50, y: 81.00 },
+  engineX: -210.00
 };
 
 // --- FUNKCJE POMOCNICZE ---
@@ -152,7 +154,7 @@ function configureShipGeometry(ship) {
     spriteScale: SHIP_SPRITE_SCALE,
     turretTop: rotateOffsetToForwardX(SHIP_VISUAL_BASE.turretTop),
     turretBottom: rotateOffsetToForwardX(SHIP_VISUAL_BASE.turretBottom),
-    mainEngine: rotateOffsetToForwardX({ x: SHIP_VISUAL_BASE.engineY, y: 0 })
+    mainEngine: rotateOffsetToForwardX({ x: SHIP_VISUAL_BASE.engineX, y: 0 })
   };
 
   // Konfiguracja fizyczna i wizualna silników
@@ -216,10 +218,10 @@ function configureShipGeometry(ship) {
       });
 
       ship.visual.torqueThrusters = [
-        { offset: rotateThrusterOffset({ x: topX, y: -topY }), forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
-        { offset: rotateThrusterOffset({ x: botX, y: -botY }), forward: { x: 1, y: 0 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
-        { offset: rotateThrusterOffset({ x: topX, y: topY }), forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
-        { offset: rotateThrusterOffset({ x: botX, y: botY }), forward: { x: -1, y: 0 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax }
+        { offset: rotateThrusterOffset({ x: topX, y: -topY }), forward: { x: 0, y: 1 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
+        { offset: rotateThrusterOffset({ x: botX, y: -botY }), forward: { x: 0, y: 1 }, side: 'left', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
+        { offset: rotateThrusterOffset({ x: topX, y: topY }), forward: { x: 0, y: -1 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax },
+        { offset: rotateThrusterOffset({ x: botX, y: botY }), forward: { x: 0, y: -1 }, side: 'right', yNudge: nudge, vfxWidthMin: vfxWMin, vfxWidthMax: vfxWMax, vfxLengthMin: vfxLMin, vfxLengthMax: vfxLMax }
       ];
   }
 

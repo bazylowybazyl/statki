@@ -65,7 +65,7 @@ export function aiFrigate(sim, npc, dt) {
   ax += sep.ax;
   ay += sep.ay;
 
-  npc.angle = window.clampTurnAngle(npc.angle, targetAng, npc.turn, dt);
+  npc.desiredAngle = targetAng;
   const c = Math.cos(npc.angle);
   const s = Math.sin(npc.angle);
 
@@ -203,7 +203,7 @@ export function aiDestroyer(sim, npc, dt) {
   }
 
   const speedBoost = (npc.boostT > 0) ? 1.7 : 1.0;
-  npc.angle = window.clampTurnAngle(npc.angle, targetAng, npc.turn * speedBoost, dt);
+  npc.desiredAngle = targetAng;
 
   const c = Math.cos(npc.angle);
   const s = Math.sin(npc.angle);
@@ -342,7 +342,7 @@ export function aiBattleship(sim, npc, dt) {
     }
   }
 
-  npc.angle = window.clampTurnAngle(npc.angle, targetAng, npc.turn, dt);
+  npc.desiredAngle = targetAng;
   const c = Math.cos(npc.angle);
   const s = Math.sin(npc.angle);
 

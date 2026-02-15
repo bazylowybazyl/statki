@@ -23,7 +23,7 @@ function tryFireFighter(npc, target) {
   }
 
   const angleToTarget = Math.atan2(dy, dx);
-  const myAngle = Math.atan2(npc.vy, npc.vx);
+  const myAngle = Number.isFinite(npc.angle) ? npc.angle : Math.atan2(npc.vy || 0, npc.vx || 0);
   const diff = Math.abs(window.wrapAngle(angleToTarget - myAngle));
 
   if (dist < (gunDef.range || 400) && diff < 0.5 && npc.gunCD <= 0) {
@@ -152,7 +152,7 @@ export function runAdvancedFighterAI(npc, dt) {
     const speed = Math.hypot(npc.vx, npc.vy);
     if (speed > 10) {
       const desiredAngle = Math.atan2(npc.vy, npc.vx);
-      npc.angle = window.clampTurnAngle(npc.angle, desiredAngle, turnSpeed, dt);
+      npc.desiredAngle = desiredAngle;
     }
   };
 
@@ -247,7 +247,7 @@ export function runAdvancedFighterAI(npc, dt) {
       const aimX = tx - npc.x;
       const aimY = ty - npc.y;
       const desiredAngle = Math.atan2(aimY, aimX);
-      npc.angle = window.clampTurnAngle(npc.angle, desiredAngle, 10.0, dt);
+      npc.desiredAngle = desiredAngle;
     } else {
       smoothRotateToVelocity(8.0);
     }
@@ -325,12 +325,11 @@ export function runAdvancedFighterAI(npc, dt) {
     npc.vx += sep.ax * dt;
     npc.vy += sep.ay * dt;
 
-    if (!npc.desiredAngle) {
+    if (!Number.isFinite(npc.desiredAngle)) {
       if (distToSpot > 50) smoothRotateToVelocity(6.0);
-      else if (leader && !isLeader) npc.angle = window.clampTurnAngle(npc.angle, leader.angle, 6.0, dt);
+      else if (leader && !isLeader && Number.isFinite(leader.angle)) npc.desiredAngle = leader.angle;
     } else {
-      npc.angle = window.clampTurnAngle(npc.angle, npc.desiredAngle, 4.0, dt);
-      npc.desiredAngle = null;
+      // npc.desiredAngle ustawiane przez logikę (np. orbita) – zostawiamy, nie kasujemy.
     }
   }
 }
