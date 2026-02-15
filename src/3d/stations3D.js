@@ -34,10 +34,6 @@ function isUse3DEnabled() {
   return window.USE_PLANET_STATIONS_3D !== false;
 }
 
-function approxEqual(a, b, eps = 0.001) {
-  return Math.abs((a ?? 0) - (b ?? 0)) <= eps;
-}
-
 function getTemplate(stationId, path) {
   if (templateCache.has(path)) {
     return templateCache.get(path);
@@ -51,9 +47,27 @@ function getTemplate(stationId, path) {
     (gltf) => {
       const scene = gltf.scene;
       const maxAnisotropy = Core3D.renderer ? Core3D.renderer.capabilities.getMaxAnisotropy() : 4;
+      
+      // --- FIX: ZBIERAMY FAŁSZYWE TŁA DO USUNIĘCIA ---
+      const toRemove = [];
 
       scene.traverse((o) => {
         if (!o.isMesh) return;
+        
+        const name = o.name.toLowerCase();
+        // Wykrywamy wbudowane planety/atmosfery z darmowych modeli GLTF
+        const isBackground = name.includes('planet') || name.includes('earth') || 
+                             name.includes('mars') || name.includes('jupiter') || 
+                             name.includes('neptune') || name.includes('clouds') || 
+                             name.includes('atmosphere') || name.includes('bg_') || 
+                             name.includes('background') || name.includes('sphere');
+                             
+        // Zabezpieczenie: usuwamy tylko, jeśli to nie jest sama stacja
+        if (isBackground && !name.includes('station') && !name.includes('base') && !name.includes('hub')) {
+          toRemove.push(o);
+          return; // Przerywamy pętlę, obiekt i tak idzie do kosza
+        }
+
         o.castShadow = true;
         o.receiveShadow = true;
         o.frustumCulled = false; 
@@ -78,6 +92,12 @@ function getTemplate(stationId, path) {
           m.needsUpdate = true;
         }
       });
+
+      // --- FIX: FIZYCZNE USUNIĘCIE TŁA Z MODELU ---
+      toRemove.forEach(obj => {
+        if (obj.parent) obj.parent.remove(obj);
+      });
+
       placeholder.scene = scene;
       placeholder.materials = [];
       placeholder.loading = false;
@@ -136,7 +156,6 @@ function getModelUrlsForStation(station) {
   if (!isPirateStation(station)) {
       return MODEL_URLS.earth; 
   }
-
   return null;
 }
 
@@ -232,17 +251,15 @@ function updateRecordTransform(record, station, devScale, visible) {
   const idKey = getStationIdKey(station);
   const perScale = Number(perMap[idKey]) || 1;
   const globalScalar = Number.isFinite(devScale) && devScale > 0 ? devScale : 1;
-  const effectiveScale = baseScale * globalScalar * perScale * 2.8; // Skala korygująca z dawnego Sprite
+  const effectiveScale = baseScale * globalScalar * perScale * 2.8; 
 
   group.scale.setScalar(effectiveScale);
   
-  // Aktualizacja pozycji (WebGL odwrócone Y!)
+  // Z = -100 utrzymuje stację na odpowiedniej płaszczyźnie
   group.position.set(station.x, -station.y, -100);
 
-  // Animacja obrotu stacji
   const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
   record.spinOffset += 0.002;
-  // Dodajemy mały tilt (pochylenie) w osi X, by stacje nie wyglądały idealnie płasko z góry
   group.rotation.set(Math.PI / 8, baseAngle + record.spinOffset, 0);
 
   group.visible = visible;
@@ -250,7 +267,6 @@ function updateRecordTransform(record, station, devScale, visible) {
   record.lastTargetRadius = desiredRadius;
 }
 
-// --- INIT STATIONS ---
 export function initStations3D(_sceneIgnored, stations) {
   if (!Core3D.isInitialized || !Array.isArray(stations)) return;
 
@@ -261,7 +277,6 @@ export function initStations3D(_sceneIgnored, stations) {
 
     const urls = getModelUrlsForStation(station);
     if (!urls) continue;
-
     const path = urls.find(Boolean);
     if (!path) continue;
 
@@ -270,9 +285,7 @@ export function initStations3D(_sceneIgnored, stations) {
     activeKeys.add(record.key);
 
     if (record.group) {
-      if (record.group.parent !== Core3D.scene) {
-        Core3D.scene.add(record.group);
-      }
+      if (record.group.parent !== Core3D.scene) Core3D.scene.add(record.group);
       station._mesh3d = record.group;
       continue;
     }
@@ -306,7 +319,6 @@ export function initStations3D(_sceneIgnored, stations) {
   }
 }
 
-// --- UPDATE STATIONS ---
 export function updateStations3D(stations) {
   if (!Core3D.isInitialized || !Array.isArray(stations)) return;
 
@@ -356,12 +368,7 @@ export function updateStations3D(stations) {
   }
 }
 
-// --- SPRITES / RENDER ---
-// UWAGA: Stare renderowanie do Canvasu zniknęło! Teraz stacje są częścią sceny Core3D!
-export function drawStations3D(ctx, cam, worldToScreen) {
-   // Zostawiamy funkcję pustą, żeby nie wywaliło błędu w index.html (które jej oczekuje)
-   // Wszystko narysuje się samo, kiedy hexShips3D.js wywoła Core3D.render()
-}
+export function drawStations3D(ctx, cam, worldToScreen) { }
 
 export function detachPlanetStations3D(_sceneIgnored) {
   for (const record of stationRecords.values()) {
@@ -382,10 +389,8 @@ export function setStationScale(id, scale = 1) {
   const key = String(id ?? '').toLowerCase();
   if (!key) return;
   if (!window.DevConfig) window.DevConfig = {};
-  if (!window.DevConfig.stationScaleById)
-    window.DevConfig.stationScaleById = {};
+  if (!window.DevConfig.stationScaleById) window.DevConfig.stationScaleById = {};
   window.DevConfig.stationScaleById[key] = Number(scale) || 1;
-
   const devScale = getDevScale();
   for (const rec of stationRecords.values()) {
     const st = rec.stationRef;
@@ -396,9 +401,7 @@ export function setStationScale(id, scale = 1) {
   }
 }
 
-export function setStationSpriteFrame(id, val) {
-   // Legacy - zostawiamy puste dla zachowania kompatybilności API
-}
+export function setStationSpriteFrame(id, val) { }
 
 export function getStationScales() {
   return getPerStationScaleMap();

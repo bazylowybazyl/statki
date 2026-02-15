@@ -1,146 +1,137 @@
-# AGENTS.md — przewodnik dla agentów
+# AGENTS.md — aktualny przewodnik dla agentów
 
-> **Cel pliku**: Krótki, praktyczny opis architektury gry „Super Capital: Battle for Solar System” i miejsc integracji. Trzymaj się poniższych zasad, aby uniknąć psucia warstwy grywalnej i wydajności.
+> **Cel pliku**: krótki, praktyczny opis aktualnej architektury gry „Super Capital: Battle for Solar System” i miejsc integracji. Trzymaj się tych zasad, żeby nie psuć gameplayu i wydajności.
 
 ---
 
 ## Szybka mapa repozytorium
 
-- **`index.html`** — główna pętla gry i warstwa **2D (Canvas)** odpowiedzialna za sterowanie, fizykę, strzały, HUD itp. Tu jest większość logiki grywalnej.
-- **`planet3d.proc.js`** — integracja z nakładką **Three.js** (planety/słońce). Wystawia globalne API: `initPlanets3D`, `updatePlanets3D`, `drawPlanets3D`. << obecnie proceduralne planety sa nieuzywane.
-- **`planet3d.js`** (wariant deweloperski) — implementacja klas 3D: `Planet3D`, `Sun3D`, współdzielony renderer WebGL i rysowanie do prywatnych canvasków.
-- **`package.json`** — minimalny serwer dev (`http-server`) i zależność `three`.
-- **`planet3d.assets.js`**
-
-
+- **`index.html`** — główna pętla gry i warstwa **2D Canvas** (sterowanie, fizyka, strzały, HUD, UI).
+- **`src/3d/core3d.js`** — **jedyny współdzielony rdzeń WebGL** (`renderer`, `scene`, `camera`, `composer`, bloom, alpha pass).
+- **`src/3d/hexShips3D.js`** — aktualizacja i render statków/hexów 3D; końcowe wywołanie renderu 3D (`Core3D.render()`) i kopiowanie na 2D.
+- **`src/3d/world3d.js`** — obiekty świata 3D (np. piracka stacja), podpinane do `Core3D.scene`.
+- **`src/3d/stations3D.js`** — stacje 3D, podpinane do `Core3D.scene`.
+- **`planet3d.assets.js`** — aktywna warstwa planet/słońca (API globalne: `initPlanets3D`, `updatePlanets3D`, `drawPlanets3D`).
+- **`planet3d.proc.js`** — wariant legacy/proceduralny (nie używać jako głównej ścieżki bez wyraźnej potrzeby).
+- **`src/game/destructor.js`** — silnik destrukcji heksów (fizyka kolizji, deformacje, splity, debris).
+- **`src/game/shipEntity.js`** — konfiguracja i geometria statku gracza (fizyka wejścia, offsety, thrusters, hardpointy).
+- **`package.json`** — serwer dev i zależności.
 
 ---
 
-## Pipeline renderowania
+## Pipeline renderowania (aktualny)
 
-1. **Gra** działa w **2D Canvas** – tu dzieją się kolizje, bronie, ruch i HUD.
-2. **Three.js** generuje obraz planet/słońca do **offscreen canvas** (jeden współdzielony `WebGLRenderer`).
-3. Wynik jest **wklejany** do głównego Canvas w odpowiedniej kolejności (`drawPlanets3D`), tak aby 3D było **tłem/dekoracją** i **nie wpływało** na gameplay.
+1. **Gameplay i fizyka** dzieją się w 2D (`index.html`, `destructor.js`, logika broni/NPC/HUD).
+2. W `render(alpha, frameDt)` aktualizowane są moduły 3D:
+   - `updatePlanets3D(frameDt, cam)`
+   - `updateStations3D(stations)`
+   - `updateWorld3D(frameDt, vfxTime)`
+   - `updateHexShips3D(cam, hexEntities)`
+3. Finalna klatka WebGL jest kopiowana na główny canvas przez `drawHexShips3D(ctx, W, H)`.
+4. HUD/overlays 2D są rysowane na końcu.
 
-**Zasada żelazna**: _Nie twórz nowego renderera WebGL na każdy obiekt._ Korzystaj z **współdzielonego** renderera.
+**Zasada żelazna**: _Nie twórz nowych instancji `THREE.WebGLRenderer` poza `Core3D`._
 
 ---
 
 ## Kluczowe byty gry
 
 ### Świat i kamera
-- `WORLD`: rozmiar mapy (galaktyki).
-- `camera`: powiększenie (zoom), limity, szybki zoom pod kółkiem myszy.
+- `WORLD` — rozmiar mapy.
+- `camera` — zoom, limity, tryby śledzenia/focus.
 
-### Słońce i planety
-- `SUN`: pozycja i promień słońca w świecie.
-- `initPlanets3D(planets, SUN)`: tworzy obiekty 3D (`Planet3D`, `Sun3D`).
-- `updatePlanets3D(dt)`: aktualizuje rotację/animację 3D.
-- `drawPlanets3D(ctx, cam)`: wkleja wyrenderowane bitmapy 3D do głównego canvasa.
+### Planety i słońce
+- `initPlanets3D(planets, SUN)` — inicjalizacja.
+- `updatePlanets3D(dt, cam)` — aktualizacja.
+- Planety są częścią wizualnej warstwy 3D, gameplay nadal jest liczony w 2D.
 
-**Sun3D** – obecnie prosty materiał; można go zastąpić shaderem (patrz _Miejsca do pracy_).
-
-### Stacje/NPC
-- Planety i stacje są generowane proceduralnie; NPC latają między stacjami.
+### Stacje i obiekty 3D
+- `updateStations3D(stations)` — synchronizacja stacji 2D -> 3D.
+- `updateWorld3D(dt, t)` — aktualizacja obiektów świata 3D.
 
 ### Statek gracza
-- Obiekt `ship`: rozmiary, masa, pozycja, prędkość, kąt, tłumienia.
-- **Silniki**: `main`, `sideLeft`, `sideRight`, `torqueLeft`, `torqueRight` (ciąg/strafe/obrót).
-- **Wieżyczka**: `ship.turret` z `angle`, `recoil`, limity prędkości/akceleracji.
-- **Uzbrojenie główne**: Rail (podwójna lufa) – `triggerRailVolley()`, `fireRailBarrel()`.
-- **Boczne salwy** (rakiety/plazma) – `requestSalvo(side)`, `fireSideGunAtOffset()`.
-- **Specjal** – `tryFireSpecial()` (cooldown), obrażenia obszarowe.
-- **Tarcza/Kadłub** – `ship.shield`, `ship.hull`.
+- Obiekt `ship`: pozycja, kąt, prędkość, masa, shield/hull.
+- Sterowanie i fizyka gracza: `shipEntity.js`.
+- Destrukcja i kolizje heksów: `destructor.js`.
 
 ### Pociski, kolizje, efekty
 - Tablice `bullets`, `particles`.
-- Funkcja `bulletsAndCollisionsStep(dt)` obsługuje ruch, namierzanie rakiet, trafienia i eksplozje.
-- Efekty: `spawnParticle`, `spawnExplosionPlasma`, `spawnRailHitEffect`, `spawnDefaultHit`.
+- `bulletsAndCollisionsStep(dt)` — ruch, trafienia, eksplozje, applyImpact.
 
-### Wejście i HUD
-- Klawisze: W (ciąg), Q/E (strafe), A/D (obrót), LPM (rail), PPM (rakiety), F (specjal), SHIFT (warp), SPACJA (dopalacz), M (mapa), X (skan), R (lock).
-- HUD na Canvas: paski, cooldowny, mini‑mapa, skan/radar.
-
-### Gwiazdy (tło)
-- Proceduralna siatka gwiazd w kafelkach 1024×1024 z LRU (utrzymujemy tylko ostatnio widziane kafle).
+### Wejście i HUD (aktualne skróty)
+- `W/S` — ciąg przód/tył
+- `Q/E` — strafe
+- `A/D` — obrót
+- `LPM` — rail
+- `PPM` — rakiety/specjal zależnie od stanu
+- `F` — specjal
+- `Shift` — warp/boost (kontekstowo)
+- `M` — mapa
+- `X` — scan
+- `T` — lock target
+- `R` — repair/heal (destructor)
+- `P` — panel wydajności
+- `Space` — pauza
 
 ---
 
 ## Miejsca do pracy dla agentów
 
-> **Krytyczna zasada**: _Warstwa grywalna musi pozostać w Canvas 2D._ Three.js jest dekoracją/warstwą wizualną. Nie ruszaj fizyki/kolizji/strzelania w 3D.
+> **Krytyczna zasada**: gameplay (fizyka, kolizje, damage, input) pozostaje źródłem prawdy w **2D**. 3D jest warstwą renderingu.
 
-1. **Słońce (Sun3D)**  
-   - Zastąp materiał słońca shaderem (granulacja, plamy, korona, lekkie bloom).  
-   - **Nie zmieniaj API** (`Sun3D` musi dalej tworzyć `canvas` i renderować do niego; `drawPlanets3D` ma pozostać bez zmian).
-   - Używaj **tego samego współdzielonego renderera** (patrz sekcja _Renderer współdzielony_).
+1. **Core3D (`src/3d/core3d.js`)**
+   - Modyfikacje renderera/composera/blooma/alpha-pass rób wyłącznie tutaj.
+   - Nie duplikuj postprocessingu w innych modułach.
 
-2. **Planety (Planet3D)**  
-   - Drobne ulepszenia materiałów (emisja miast w nocy, albedo).  
-   - Zachowaj rozmiar i podpisy – gameplay liczy na to, że planety to tło.
+2. **Moduły 3D (`world3d.js`, `stations3D.js`, `hexShips3D.js`)**
+   - Używaj `Core3D.scene` i `Core3D.camera`.
+   - Nie twórz lokalnych rendererów ani dodatkowych canvasów WebGL.
 
-3. **Statek 3D — tylko jako _overlay dekoracyjny_ (opcjonalnie)**  
-   - Jeśli potrzebny model 3D statku, renderuj go do **osobnego offscreen canvas** i **wklejaj** POD warstwą HUD, ale NAD tłem 3D.  
-   - **Nie** ingeruj w sterowanie/kolizje – 2D jest źródłem prawdy.
+3. **Destruction + ship integration**
+   - Zachowaj spójność osi/rotacji między `shipEntity.js` i `destructor.js`.
+   - Unikaj alokacji w gorących pętlach (kolizje, spatial queries, contact buffers).
 
-4. **Wydajność**  
-   - Nie alokuj zasobów w pętli; recyklinguj geometrie/meshe/tekstury.  
-   - Jedna instancja `WebGLRenderer` na całe 3D (patrz _Renderer współdzielony_).  
-   - Uważaj na `devicePixelRatio` – limituj do 2x.
+4. **Wydajność**
+   - Bez nowych alokacji per-frame tam, gdzie da się użyć pooli/buforów.
+   - Profiluj przez `PerfHUD` (`performance.now()`), szczególnie: physics/draw/3D update.
 
-5. **Kolejność rysowania**  
-   - Porządek: **tło 3D** → **świat gry 2D** → **HUD/efekty**.
-
----
-
-## Renderer współdzielony (ważne)
-
-- Funkcja `getSharedRenderer(w, h)` zwraca jeden wspólny `THREE.WebGLRenderer` (alpha=true, antialias=true).  
-- Każdy obiekt 3D ma **prywatny 2D canvas** (`this.canvas`), do którego kopiujemy wynik `r.domElement`.  
-- Dzięki temu mamy jeden kontekst WebGL i wiele bitmap 2D do łatwego wklejania w głównej warstwie.
+5. **Kolejność rysowania**
+   - 3D world pass -> 2D world/HUD.
+   - Nie przywracaj starych, równoległych ścieżek `drawPlanets3D`/`drawStations3D`/`drawWorld3D` jako osobnych finalnych passów, jeśli render jest już zunifikowany przez `Core3D`.
 
 ---
 
 ## Konwencje PR dla agentów
 
-- **Nie** dodawaj frameworków (np. React) ani bundlera – projekt jest „vanilla”.
-- **Nie** zmieniaj publicznego API `initPlanets3D/updatePlanets3D/drawPlanets3D`.
-- **Tak**: małe, izolowane PR-y z jasnym opisem.  
-- Dołącz GIF/PNG z porównaniem „przed/po”.
+- Nie dodawaj frameworków ani bundlera.
+- Trzymaj zmiany małe i izolowane.
+- Nie zmieniaj API bez potrzeby i opisu skutków.
+- Zachowuj kompatybilność warstwy grywalnej 2D.
+- Nie rób screenshotów z gry w ramach pracy agenta (za ciężki runtime / duży kontekst).
 
 ### Lista kontrolna PR
-- [ ] Brak nowych globali (poza parametrami w obrębie 3D).  
-- [ ] Jedna instancja `WebGLRenderer` (współdzielona).  
-- [ ] Bez alokacji w pętli (`animate`/`render`).  
-- [ ] FPS bez spadków (profiluj `performance.now()`).  
-- [ ] Warstwa grywalna (2D) nietknięta.
+- [ ] Brak nowych rendererów WebGL poza `Core3D`.
+- [ ] Brak alokacji w pętli render/update tam, gdzie były bufory/pule.
+- [ ] Brak regresji sterowania i kolizji 2D.
+- [ ] Spójność osi/rotacji (sprite, thrusters, impact/local transforms).
+- [ ] Mierzalna poprawa lub brak regresji FPS.
 
 ---
 
-## Słownik symboli / nazewnictwo
-- **ship** – statek gracza (pozycja, kąt, silniki, wieżyczka, broń).  
-- **rail** – podwójne działa z recoil.  
-- **side guns / salvos** – boczne salwy rakiet/plazmy.  
-- **stations** – stacje orbitalne wokół planet.  
-- **npcs** – proste cele/transporty między stacjami.  
-- **scan/radar** – falowe skanowanie i pingowanie celu.
+## FAQ
+
+**Czy można przepisać gameplay do Three.js?**
+Nie. Gameplay pozostaje w 2D Canvas.
+
+**Gdzie dodawać nowe efekty 3D?**
+W `src/3d/*`, z wykorzystaniem `Core3D`.
+
+**Czy można dodać drugi bloom/composer lokalnie w module?**
+Nie. Postprocessing powinien być centralny w `Core3D`.
+
+**Jak zostawić notatkę dla kolejnych agentów?**
+Dodaj TODO z prefiksem `AGENT:`.
 
 ---
 
-## FAQ dla agentów
-
-**Czy można przepisać wszystko do Three.js?**  
-Nie. Gameplay pozostaje w 2D Canvas. Three.js służy do tła (planety/słońce) i ewentualnie lekkich _overlays_.
-
-**Gdzie wpiąć nowe efekty 3D?**  
-W klasach `Planet3D`/`Sun3D` oraz w ich `render()`. Zachowaj API i współdzielony renderer.
-
-**Jak kontrolować kolejność rysowania?**  
-Używaj tylko `drawPlanets3D` do wklejenia bitmap 3D, reszta dzieje się w głównym rysowaniu gry.
-
-**Czy robić screenshot?**  |
-Nie, nie rób screenshota, gra jest za duza abyś mógł ją odpalić.
----
-
-> Masz pytania? Dodaj komentarz do PR lub zostaw TODO w kodzie z prefiksem `AGENT:` (np. `// AGENT: replace Sun3D material with shader`).
-
+> Uwaga techniczna: trzymaj `AGENTS.md` w kodowaniu UTF-8.

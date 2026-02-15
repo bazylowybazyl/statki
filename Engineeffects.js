@@ -23,6 +23,7 @@ uniform vec3 uColorCore;
 uniform vec3 uColorEdge;
 uniform float uNoiseScale;
 uniform float uSpeed;
+uniform float uCurve;
 
 varying vec2 vUv;
 
@@ -53,7 +54,8 @@ void main() {
 
     // --- 2. KSZTAŁT ---
     // Szeroka podstawa, szybkie zwężenie (parabola)
-    float width = (1.0 - pow(y, 1.8)) * 0.95; 
+    float curvePow = max(0.2, uCurve);
+    float width = (1.0 - pow(y, curvePow)) * 0.95; 
     width *= (1.0 + uBoost * 0.4); 
     
     float shape = 1.0 - smoothstep(width * 0.4, width, abs(x));
@@ -176,7 +178,8 @@ export function createShortNeedleExhaust(opts = {}) {
         uColorCore: { value: colorCore },
         uColorEdge: { value: colorEdge },
         uNoiseScale: { value: 1.0 },
-        uSpeed: { value: 8.0 }
+        uSpeed: { value: 8.0 },
+        uCurve: { value: Number.isFinite(opts.curve) ? Number(opts.curve) : 1.8 }
     };
 
     const material = new THREE.ShaderMaterial({
@@ -251,6 +254,7 @@ export function createShortNeedleExhaust(opts = {}) {
     let currentWarpBoost = 0;
     let bloomGain = opts.bloomGain || 1.0;
     let baseColorTemp = opts.colorTempK || 8000;
+    let shapeCurve = Number.isFinite(opts.curve) ? Number(opts.curve) : 1.8;
     let heatAccumulator = 0; 
 
     const warpBlue = new THREE.Color(0x0066ff);
@@ -260,6 +264,10 @@ export function createShortNeedleExhaust(opts = {}) {
     function setThrottle(t) { throttleTarget = THREE.MathUtils.clamp(t, 0, 1); }
     function setWarpBoost(t) { warpBoostTarget = THREE.MathUtils.clamp(t, 0, 1); }
     function setBloomGain(g) { bloomGain = g; }
+    function setCurve(value) {
+        if (!Number.isFinite(Number(value))) return;
+        shapeCurve = THREE.MathUtils.clamp(Number(value), 0.2, 4.0);
+    }
     
     // Funkcja temperatury barwowej (Kelvin -> RGB)
     function kelvinToRGB(k) {
@@ -288,6 +296,7 @@ export function createShortNeedleExhaust(opts = {}) {
         uniforms.uTime.value += dt;
         uniforms.uThrottle.value = currentThrottle;
         uniforms.uBoost.value = currentWarpBoost;
+        uniforms.uCurve.value = shapeCurve;
 
         const baseLen = 40; 
         const extraLen = 100 * currentThrottle; 
@@ -356,7 +365,7 @@ export function createShortNeedleExhaust(opts = {}) {
         heatRing.scale.set(ringWidth, 30, 1);
     }
 
-    return { group, setThrottle, setWarpBoost, setColorTemp, setBloomGain, update };
+    return { group, setThrottle, setWarpBoost, setColorTemp, setBloomGain, setCurve, update };
 }
 
 export function createWarpExhaustBlue(opts = {}) {
