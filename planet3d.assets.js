@@ -12,6 +12,21 @@ const HALO_DEFAULTS = Object.freeze({
     powerAdd: 8.0,
     sunMul: 1.0
 });
+const SUN_SHADOW_TUNE = Object.freeze({
+    color: 0xffeedd,
+    intensity: 1.45,
+    mapSize: 4096,
+    near: 1,
+    far: 320000,
+    lightHeight: 120000,
+    offsetMin: 70000,
+    frustumMul: 1.45,
+    frustumPad: 560,
+    frustumMin: 2800,
+    frustumMax: 22000,
+    bias: -0.00025,
+    normalBias: 0.02
+});
 
 // ==========================================
 // 0. SHADERS: NEBULA (CLEAN / RAW)
@@ -235,6 +250,7 @@ void main() {
         vec3 nightTint = vec3(0.02, 0.03, 0.05) * nightBand;
         finalColor = dayColor.rgb * uBrightness * lit + nightTint;
     }
+
     finalColor = clamp(finalColor, 0.0, 1.0);
     gl_FragColor = vec4(finalColor, 1.0);
 }
@@ -640,8 +656,6 @@ class DirectPlanet {
         });
 
         this.mesh = new THREE.Mesh(geometry, material);
-        this.mesh.castShadow = true;
-        this.mesh.receiveShadow = true;
         this.group.add(this.mesh);
 
         if (name === 'earth') {
@@ -732,6 +746,7 @@ class DirectPlanet {
         if (this.mesh) this.mesh.rotation.y += 0.02 * dt;
         if (this.clouds) this.clouds.rotation.y += 0.027 * dt;
     }
+
 }
 
 class DirectSun {
@@ -765,20 +780,8 @@ class DirectSun {
         Core3D.scene.add(this.group);
         
         // Słońce potrzebuje oświetlać inne planety - wpinamy światło do Core3D
-        this.sunLight = new THREE.DirectionalLight(0xffeedd, 1.5);
-        this.sunLight.castShadow = true;
-        this.sunLight.shadow.mapSize.width = 4096;
-        this.sunLight.shadow.mapSize.height = 4096;
-        this.sunLight.shadow.camera.near = 1;
-        this.sunLight.shadow.camera.far = 220000;
-        
-        const d = 4000; 
-        this.sunLight.shadow.camera.left = -d;
-        this.sunLight.shadow.camera.right = d;
-        this.sunLight.shadow.camera.top = d;
-        this.sunLight.shadow.camera.bottom = -d;
-        this.sunLight.shadow.bias = -0.0005;
-        this.sunLight.shadow.normalBias = 0.01;
+        this.sunLight = new THREE.DirectionalLight(SUN_SHADOW_TUNE.color, SUN_SHADOW_TUNE.intensity);
+        this.sunLight.castShadow = false;
 
         this.sunTarget = new THREE.Object3D();
         Core3D.scene.add(this.sunTarget);
@@ -787,7 +790,55 @@ class DirectSun {
         Core3D.scene.add(this.sunLight);
         Core3D.scene.add(new THREE.AmbientLight(0xffffff, 0.02));
     }
-    
+
+    syncShadowRig(cam, sunX, sunY) {
+        if (!this.sunLight || !this.sunTarget || !cam) return;
+
+        const zoom = Math.max(0.0001, Number(cam.zoom) || 1);
+        const viewportW = Math.max(1, Number(Core3D.width) || window.innerWidth || 1);
+        const viewportH = Math.max(1, Number(Core3D.height) || window.innerHeight || 1);
+        const halfW = (viewportW * 0.5) / zoom;
+        const halfH = (viewportH * 0.5) / zoom;
+
+        let halfSpan = Math.max(halfW, halfH) * SUN_SHADOW_TUNE.frustumMul + SUN_SHADOW_TUNE.frustumPad;
+        halfSpan = Math.max(SUN_SHADOW_TUNE.frustumMin, Math.min(SUN_SHADOW_TUNE.frustumMax, halfSpan));
+        halfSpan = Math.round(halfSpan / 8) * 8;
+
+        const mapSize = Math.max(256, this.sunLight.shadow.mapSize.width || SUN_SHADOW_TUNE.mapSize);
+        const texelSize = (halfSpan * 2) / mapSize;
+        const targetXRaw = Number(cam.x) || sunX;
+        const targetYRaw = Number.isFinite(cam.y) ? -cam.y : sunY;
+        const targetX = texelSize > 0 ? Math.round(targetXRaw / texelSize) * texelSize : targetXRaw;
+        const targetY = texelSize > 0 ? Math.round(targetYRaw / texelSize) * texelSize : targetYRaw;
+
+        const dirX = sunX - targetX;
+        const dirY = sunY - targetY;
+        const dirLen = Math.hypot(dirX, dirY) || 1;
+        const nx = dirX / dirLen;
+        const ny = dirY / dirLen;
+        const offset = Math.max(SUN_SHADOW_TUNE.offsetMin, halfSpan * 0.58);
+
+        this.sunLight.position.set(
+            targetX + nx * offset,
+            targetY + ny * offset,
+            SUN_SHADOW_TUNE.lightHeight
+        );
+        this.sunTarget.position.set(targetX, targetY, -50000);
+        this.sunTarget.updateMatrixWorld();
+
+        const shadowCam = this.sunLight.shadow.camera;
+        shadowCam.left = -halfSpan;
+        shadowCam.right = halfSpan;
+        shadowCam.top = halfSpan;
+        shadowCam.bottom = -halfSpan;
+        shadowCam.updateProjectionMatrix();
+
+        this.sunLight.shadow.needsUpdate = true;
+        if (Core3D.renderer) {
+            Core3D.renderer.shadowMap.needsUpdate = true;
+        }
+    }
+
     update(dt, cam) {
         if(!cam) return;
         
@@ -827,6 +878,7 @@ class DirectSun {
         }
         this.mesh.rotation.y += 0.005 * dt;
     }
+
 }
 
 // ==========================================
@@ -839,7 +891,7 @@ window.initPlanets3D = function(planetList, sunData) {
     if (!Core3D.isInitialized) {
         Core3D.init();
     }
-    
+
     _entities.length = 0;
     
     NebulaSystem.init();

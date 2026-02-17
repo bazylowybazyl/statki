@@ -118,6 +118,13 @@ const HTML = `
   </div>
 </div>
 <div class="group">
+  <div class="row"><strong>Edytor hardpointow</strong></div>
+  <div class="row">
+    <button id="btn-hardpoint-editor" class="dt-btn" style="width:100%">Edytor</button>
+  </div>
+  <div class="small muted">Uklad hardpointow/silnikow + eksport JSON.</div>
+</div>
+<div class="group">
   <div class="row"><strong>Konfiguracja</strong></div>
   <div class="row"><button id="btnCopy">Kopiuj aktualna konfiguracje</button><button id="btnReset" style="margin-left:auto">Reset</button></div>
   <div class="row"><textarea id="cfgOut" readonly></textarea></div>
@@ -136,7 +143,7 @@ export function initDevTools() {
   container.innerHTML = HTML;
   document.body.appendChild(container);
 
-  // ObsĹ‚uga F10
+  // Obsługa F10
   window.addEventListener('keydown', (e) => {
     if (e.code === 'F10') {
       e.preventDefault();
@@ -167,6 +174,7 @@ function wireDevToolsLogic() {
     cbSunDir: 'dt-show-sundir', cbShake: 'dt-disable-shake', cbPlanetStations3D: 'dt-use-planet-stations',
     cbPirate3D: 'dt-use-3d-pirate', btnCopy: 'btnCopy', btnReset: 'btnReset', cfgOut: 'cfgOut',
     fileGlb: 'dt-file-glb', btnLoadGlb: 'btn-load-glb', glbRot: 'dt-glb-rot', glbZoom: 'dt-glb-zoom', glbScale: 'dt-glb-scale',
+    btnHardpointEditor: 'btn-hardpoint-editor',
     hudCenterY: 'dt-hud-center-y', hudCenterYNum: 'dt-hud-center-y-num', hudCenterYVal: 'dt-hud-center-y-val',
     hudHexY: 'dt-hud-hex-y', hudHexYNum: 'dt-hud-hex-y-num', hudHexYVal: 'dt-hud-hex-y-val',
     hudShieldY: 'dt-hud-shield-y', hudShieldYNum: 'dt-hud-shield-y-num', hudShieldYVal: 'dt-hud-shield-y-val',
@@ -175,7 +183,7 @@ function wireDevToolsLogic() {
   function refreshUIRefs() { for (const [k, id] of Object.entries(uiIds)) ui[k] = el(id); }
   refreshUIRefs();
 
-  // DomyĹ›lne wartoĹ›ci
+  // Domyślne wartości
   const DEFAULT_PIRATE_SCALE = 6;
   const DEFAULT_STATION3D_SCALE = 2.70;
 
@@ -187,7 +195,7 @@ function wireDevToolsLogic() {
   };
   window.DevConfig = DevConfig;
   
-  // Upewniamy siÄ™, ĹĽe obiekt Dev istnieje (silnik 3D z niego korzysta w getDevScale)
+  // Upewniamy się, że obiekt Dev istnieje (silnik 3D z niego korzysta w getDevScale)
   window.Dev = window.Dev || {};
   window.Dev.station3DScale = DevConfig.station3DScale;
 
@@ -273,7 +281,7 @@ function wireDevToolsLogic() {
     if (rebuildTimer) cancelAnimationFrame(rebuildTimer);
     rebuildTimer = requestAnimationFrame(() => {
       // (Kod przebudowy planet) ...
-      // Tutaj zostawiamy, ale najwaĹĽniejsze dzieje siÄ™ w event listenerach
+      // Tutaj zostawiamy, ale najważniejsze dzieje się w event listenerach
     });
   }
 
@@ -320,11 +328,11 @@ function wireDevToolsLogic() {
             // 1. Zapisz w konfigu
             DevConfig.planetRById[key] = v;
             
-            // 2. ZNAJDĹą PLANETÄ I ZAKTUALIZUJ JÄ„ NA Ĺ»YWO
+            // 2. ZNAJDZ PLANETE I ZAKTUALIZUJ JA NA ZYWO
             const targetP = planetList.find(p => keyFor(p) === key);
             if (targetP) {
                 targetP.baseR = v;
-                // JeĹ›li mamy globalnÄ… skalÄ™, uwzglÄ™dnij jÄ…
+                // Jeśli mamy globalną skalę, uwzględnij ją
                 const scaleAll = DevConfig.planetScaleAll || 1;
                 targetP.r = v * scaleAll; 
                 if (targetP.orbit) targetP.orbit.radius = targetP.orbitRadius; 
@@ -403,12 +411,12 @@ function wireDevToolsLogic() {
         const worldR = renderVal(au);
         
         // --- KLUCZOWA POPRAWKA ---
-        // BezpoĹ›rednia modyfikacja promienia orbity planety w grze
+        // Bezpośrednia modyfikacja promienia orbity planety w grze
         p.orbitRadius = worldR;
         p.orbitR = worldR;
         if(p.orbit) p.orbit.radius = worldR;
         
-        // Aktualizacja pozycji natychmiast (opcjonalne, ale daje pĹ‚ynnoĹ›Ä‡)
+        // Aktualizacja pozycji natychmiast (opcjonalne, ale daje płynność)
         p.x = window.SUN.x + Math.cos(p.angle) * worldR;
         p.y = window.SUN.y + Math.sin(p.angle) * worldR;
         // -------------------------
@@ -467,7 +475,7 @@ function wireDevToolsLogic() {
         // 1. Zapisz w konfigu
         DevConfig.stationSpriteFrameById[key] = v;
 
-        // 2. WyĹ›lij do silnika 3D
+        // 2. Wyślij do silnika 3D
         if (typeof window.setStationSpriteFrame === 'function') {
           window.setStationSpriteFrame(key, v);
         }
@@ -604,7 +612,7 @@ function wireDevToolsLogic() {
       ui.planetScaleAll.addEventListener('input', () => {
         DevConfig.planetScaleAll = +ui.planetScaleAll.value;
         if (ui.planetScaleAllVal) ui.planetScaleAllVal.textContent = 'x' + DevConfig.planetScaleAll.toFixed(2);
-        // TODO: MoĹĽna tu dodaÄ‡ logikÄ™ apply dla planetScaleAll
+        // TODO: Można tu dodać logikę apply dla planetScaleAll
         saveLS(); 
       });
     }
@@ -648,13 +656,13 @@ function wireDevToolsLogic() {
                  window.ship.hexGrid.shards = [];
               }
               
-              // --- WAĹ»NE: Ustawiamy skalÄ™ PRZED wygenerowaniem fizyki! ---
+              // --- WAŻNE: Ustawiamy skalę PRZED wygenerowaniem fizyki! ---
               window.ship.visual.spriteScale = shipScale;
 
               // 1. Aplikujemy obrazek kolorowy do destrukcji
               window.initHexBody(window.ship, bakedData.albedo);
               
-              // 2. Aplikujemy Normal MapÄ™ do pamiÄ™ci obiektu statku
+              // 2. Aplikujemy Normal Mapę do pamięci obiektu statku
               window.ship.hexGrid.normalMapImage = bakedData.normal;
               
               console.log(`Model GLB załadowany! Obrót: ${degrees}°, Kadr: ${camZoom}x, Skala Gry: ${shipScale}x`);
@@ -666,6 +674,17 @@ function wireDevToolsLogic() {
           ui.btnLoadGlb.textContent = originalText;
           ui.btnLoadGlb.disabled = false;
           ui.fileGlb.value = ''; 
+        }
+      });
+    }
+
+    if (ui.btnHardpointEditor) {
+      ui.btnHardpointEditor.addEventListener('click', async () => {
+        try {
+          const { openHardpointEditor } = await import('./hardpointEditor.js');
+          openHardpointEditor();
+        } catch (err) {
+          console.error('Blad otwierania edytora hardpointow:', err);
         }
       });
     }
@@ -685,14 +704,14 @@ function wireDevToolsLogic() {
   setupHudOffsetControls();
   applyHudOffsetsToDom();
 
-  // WypeĹ‚nienie wartoĹ›ci poczÄ…tkowych w UI
+  // Wypełnienie wartości początkowych w UI
   if (ui.sunR2D) ui.sunR2D.value = DevConfig.sunR2D || 823;
   if (ui.sunR3D) ui.sunR3D.value = DevConfig.sunR3D || 399;
   if (ui.planetScaleAll) ui.planetScaleAll.value = DevConfig.planetScaleAll || 1;
   if (ui.pirScale) ui.pirScale.value = DevConfig.pirateScale || 6;
   if (ui.station3DScale) ui.station3DScale.value = DevConfig.station3DScale || 2.7;
 
-  // OdĹ›wieĹĽenie opisĂłw
+  // Odświeżenie opisów
   if (ui.sunR2DVal) ui.sunR2DVal.textContent = ui.sunR2D?.value;
   if (ui.sunR3DVal) ui.sunR3DVal.textContent = ui.sunR3D?.value;
   if (ui.planetScaleAllVal) ui.planetScaleAllVal.textContent = 'x' + (+ui.planetScaleAll?.value).toFixed(2);
@@ -701,7 +720,7 @@ function wireDevToolsLogic() {
 
   wireDevTools();
 
-  // PÄ™tla odĹ›wieĹĽania dla dynamicznie Ĺ‚adowanych obiektĂłw
+  // Pętla odświeżania dla dynamicznie ładowanych obiektów
   setInterval(() => {
     buildStationFramesUI();
   }, 2000);

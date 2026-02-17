@@ -541,8 +541,10 @@ export const DestructorSystem = {
       }
       if (anyFix) {
         e.hexGrid.meshDirty = true;
-        e.hexGrid.textureDirty = true;
-        e.hexGrid.cacheDirty = true;
+        if (!HEX_SHIPS_3D_ACTIVE) {
+          e.hexGrid.textureDirty = true;
+          e.hexGrid.cacheDirty = true;
+        }
       }
     }
   },
@@ -626,8 +628,10 @@ export const DestructorSystem = {
     }
 
     entity.hexGrid.meshDirty = true;
-    entity.hexGrid.textureDirty = true;
-    entity.hexGrid.cacheDirty = true;
+    if (!HEX_SHIPS_3D_ACTIVE) {
+      entity.hexGrid.textureDirty = true;
+      entity.hexGrid.cacheDirty = true;
+    }
     return true;
   },
 
@@ -728,7 +732,7 @@ export const DestructorSystem = {
     const splitForceThreshold = DESTRUCTOR_CONFIG.splitForceThreshold ?? 50;
     if (damageScale > 0 && anyDestroyed && forceMag > splitForceThreshold) this.splitQueue.push(entity);
     if (anyMeshChange) entity.hexGrid.meshDirty = true;
-    if (anyTextureChange) {
+    if (anyTextureChange && !HEX_SHIPS_3D_ACTIVE) {
       entity.hexGrid.textureDirty = true;
       entity.hexGrid.cacheDirty = true;
     }

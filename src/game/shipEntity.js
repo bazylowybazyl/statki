@@ -44,6 +44,7 @@ const SHIP_TEMPLATE = {
     spriteRotation: 0,
     spriteOffset: { x: 0, y: 0 },
     spriteSrc: "assets/capital_ship_rect_v1.png", // Domyślna grafika
+    spriteNormalSrc: "assets/capital_ship_rect_v1_normal.png",
     
     // Konfiguracja efektów silników
     engineGlowSize: 0.35,
@@ -119,11 +120,13 @@ const SHIP_VISUAL_BASE = {
 };
 
 const DEFAULT_ENGINE_VFX = {
-  tune: { mainW: 1.13, mainL: 4.06, sideW: 1.0, sideL: 0.98, curve: 1.8 },
+  tune: { mainW: 2.26, mainL: 2.37, sideW: 1.0, sideL: 0.98, curve: 1.8 },
   main: {
-    offset: { x: -352, y: 0 },
-    forward: { x: 0, y: 1 },
-    yNudge: -54
+    offset: { x: -519, y: 60 },
+    forward: { x: 1, y: 0 },
+    yNudge: -58,
+    vfxLengthMin: 10,
+    vfxLengthMax: 179
   },
   sides: [
     { offset: { x: 338, y: 366 }, forward: { x: 1, y: 0 }, side: 'left', yNudge: -51, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
@@ -194,6 +197,8 @@ function configureShipGeometry(ship) {
     vfxOffset: { ...DEFAULT_ENGINE_VFX.main.offset },
     vfxForward: { ...DEFAULT_ENGINE_VFX.main.forward },
     vfxYNudge: DEFAULT_ENGINE_VFX.main.yNudge,
+    vfxLengthMin: DEFAULT_ENGINE_VFX.main.vfxLengthMin,
+    vfxLengthMax: DEFAULT_ENGINE_VFX.main.vfxLengthMax,
     maxThrust: 1 // Wartość placeholder, fizyka używa SHIP_PHYSICS.SPEED
   };
 
