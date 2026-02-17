@@ -182,7 +182,7 @@
           <div class="station-credits" id="station-credits">0 CR</div>
         </div>
         <div class="station-nav" id="station-tabs">
-          <!-- ZakÄąâ€šadki generowane przez JS -->
+          <!-- ZakĹ‚adki generowane przez JS -->
         </div>
         <div class="station-content" id="station-content-area">
           <div id="tab-upgrades" class="station-tab"></div>
@@ -335,13 +335,13 @@
   </div>
 
   <div id="ui" class="hidden">
-    <div><strong>Super Capital: Battle for Solar System Ă˘â‚¬â€ť gwiazdy na caÄąâ€šej mapie + duÄąÄ˝y silnik plazmowy</strong></div>
+    <div><strong>Super Capital: Battle for Solar System â€” gwiazdy na caĹ‚ej mapie + duĹĽy silnik plazmowy</strong></div>
     <div class="stat">Czas gry: <span id="game-time">00:00</span></div>
-    <div class="stat">W Ă˘â‚¬â€ť ciĂ„â€¦g (duÄąÄ˝y silnik plazmowy) Ă‚Â· Q/E Ă˘â‚¬â€ť strafe Ă‚Â· A/D Ă˘â‚¬â€ť obrÄ‚Ĺ‚t</div>
-    <div class="stat">LPM Ă˘â‚¬â€ť rail (AĂ˘â€ â€™B, AĂ˘â€ â€™B) Ă‚Â· PPM Ă˘â‚¬â€ť broÄąâ€ž specjalna (priorytet) / boczne rakiety Ă‚Â· F Ă˘â‚¬â€ť superbroÄąâ€ž Ă‚Â· SHIFT Ă˘â‚¬â€ť warp / dopalacz na orbitach
+    <div class="stat">W â€” ciÄ…g (duĹĽy silnik plazmowy) Â· Q/E â€” strafe Â· A/D â€” obrĂłt</div>
+    <div class="stat">LPM â€” rail (Aâ†’B, Aâ†’B) Â· PPM â€” broĹ„ specjalna (priorytet) / boczne rakiety Â· F â€” superbroĹ„ Â· SHIFT â€” warp / dopalacz na orbitach
     </div>
-    <div style="margin-top:6px"><small>Gwiazdy sĂ„â€¦ proceduralne w caÄąâ€šej galaktyce. Silnik: niebieski exhaust + krÄ‚Ĺ‚tki
-        Äąâ€şlad przy ruchu.</small></div>
+    <div style="margin-top:6px"><small>Gwiazdy sÄ… proceduralne w caĹ‚ej galaktyce. Silnik: niebieski exhaust + krĂłtki
+        Ĺ›lad przy ruchu.</small></div>
 
     <div id="bg-gen-status" style="margin-top: 8px; font-size: 11px; color: #7dd3fc; display: none;">
       Generowanie galaktyki: <span id="bg-gen-percent">0%</span>
@@ -370,6 +370,9 @@
           </button>
           <button id="btn-options" class="menu-btn-styled">
             <span>Opcje</span> <span>&#9881;</span>
+          </button>
+          <button id="btn-editor" class="menu-btn-styled">
+            <span>Edytor</span> <span>&#9998;</span>
           </button>
           <button id="btn-credits" class="menu-btn-styled">
             <span>Credits</span> <span>i</span>
@@ -402,7 +405,7 @@
             <div class="menu-section">
               <div class="menu-section-title">Dzwiek</div>
               <div class="option-slider-row">
-                <div class="option-slider-label"><span>Glowna glosnosc</span> <span>80%</span></div>
+                <div class="option-slider-label"><span>GĹ‚Ăłwna gĹ‚oĹ›noĹ›Ä‡</span> <span>80%</span></div>
                 <input type="range" class="option-slider" min="0" max="100" value="80">
               </div>
               <div class="option-slider-row">
@@ -462,7 +465,7 @@
       <div class="infra-building-list" id="infra-building-list"></div>
       <div class="infra-info" id="infra-info">
         <h4>Budowa stacji</h4>
-        <p>PrzeciĂ„â€¦gnij budynki z listy na siatkĂ„â„˘ wokÄ‚Ĺ‚Äąâ€š stacji, aby rozpoczĂ„â€¦Ă„â€ˇ ich konstrukcjĂ„â„˘.</p>
+        <p>PrzeciÄ…gnij budynki z listy na siatkÄ™ wokĂłĹ‚ stacji, aby rozpoczÄ…Ä‡ ich konstrukcjÄ™.</p>
       </div>
     </div>
   </div>
@@ -590,8 +593,8 @@
     window.drawHexBodyLocal = drawHexBodyLocal;
     window.setHexShips3DActive = setHexShips3DActive;
     window.getHexStructuralState = getHexStructuralState;
-    // Nie modyfikujemy namespace'u moduÄąâ€šu THREE (jest niemodyfikowalny).
-    // JeÄąâ€şli coÄąâ€ş potrzebuje CopyShader globalnie, wystawiamy go przez window:
+    // Nie modyfikujemy namespace'u moduĹ‚u THREE (jest niemodyfikowalny).
+    // JeĹ›li coĹ› potrzebuje CopyShader globalnie, wystawiamy go przez window:
     window.CopyShader = CopyShader;
     window.Space2DBackground = Space2DBackground;
 
@@ -600,7 +603,7 @@
     window.warpBlackHoleFX = warpFX;
 
   </script>
-  <!-- przeÄąâ€šĂ„â€¦cznik: aktywuj assetowy renderer planet (klasyczny skrypt, aby globalne API byÄąâ€šo gotowe zanim ruszy pĂ„â„˘tla gry) -->
+  <!-- przeĹ‚Ä…cznik: aktywuj assetowy renderer planet (klasyczny skrypt, aby globalne API byĹ‚o gotowe zanim ruszy pÄ™tla gry) -->
   <script type="module" src="planet3d.assets.js"></script>
 
   <script type="module">
@@ -610,17 +613,18 @@
     // DODANO IMPORT SHIP_PHYSICS
     import { createShipEntity, applyPlayerInput, runShipAI, SHIP_PHYSICS } from "./src/game/shipEntity.js";
     import { DestructorSystem, initHexBody, drawHexBody, drawHexBodyLocal, isHexShips3DActive, getHexStructuralState } from "./src/game/destructor.js";
-    // IMPORTUJEMY NOWY MODUÄą SUPERBRONI
+    // IMPORTUJEMY NOWY MODUL SUPERBRONI
     import * as Superweapon from "./src/game/superweapon.js";
     import { HUDSystem } from "./src/ui/hudSystem.js";
     import { WEAPONS, WEAPON_ICON_PATHS, AISPACE_GUNS, AISPACE_PD, AISPACE_MISSILES, AISPACE_GUNS_M } from "./src/data/weapons.js";
     import { SHIPS as SHIP_FRAMES, SUPPORT_SHIP_TEMPLATES as SUPPORT_SHIP_TEMPLATES_DATA, CAPITAL_SHIP_TEMPLATES as CAPITAL_SHIP_TEMPLATES_DATA } from "./src/data/ships.js";
+    import { createNpcHardpointRuntime } from "./src/game/npcHardpointRuntime.js";
     // Statki Terran (Wsparcie)
     import terranFrigateImg from "./src/assets/ships/terranfrigate.png";
     import terranDestroyerImg from "./src/assets/ships/terrandestroyer.png";
     import terranBattleshipImg from "./src/assets/ships/terranbattleship.png";
 
-    // Statki PiratÄ‚Ĺ‚w
+    // Statki PiratĂłw
     import pirateFrigateImg from "./src/assets/ships/piratefrigate.png";
     import pirateDestroyerImg from "./src/assets/ships/piratedestroyer.png";
     import pirateBattleshipImg from "./src/assets/ships/piratebattleship.png";
@@ -630,7 +634,7 @@
     import npcFriImg from "./assets/npc_friendly.png";
     import npcHosImg from "./assets/npc_hostile.png";
     window.bullets = [];
-    // Aby stary kod dziaÄąâ€šaÄąâ€š, zrobimy alias:
+    // Aby stary kod dziaĹ‚aĹ‚, zrobimy alias:
     const bullets = window.bullets;
     window.registerShieldImpact = registerShieldImpact;
     window.DEFAULT_PLANET_SCALE ??= DEFAULT_PLANET_SCALE;
@@ -641,7 +645,7 @@
     hud.init();
     window.hudSystem = hud;
 
-    // LOKALNY alias na potrzeby tego moduÄąâ€šu (ESM nie widzi 'goÄąâ€šych' globali z window):
+    // LOKALNY alias na potrzeby tego moduĹ‚u (ESM nie widzi 'goĹ‚ych' globali z window):
     const PLANET_SCALE =
       (typeof window !== 'undefined' && typeof window.DEFAULT_PLANET_SCALE !== 'undefined')
         ? window.DEFAULT_PLANET_SCALE : (DEFAULT_PLANET_SCALE ?? 3);
@@ -1094,8 +1098,8 @@
     };
     window.OPTIONS = OPTIONS;
     window.VFX_TUNE = Object.assign({
-      mainW: 1.13,
-      mainL: 4.06,
+      mainW: 2.26,
+      mainL: 2.37,
       sideW: 1.0,
       sideL: 0.98,
       curve: 1.8
@@ -1109,24 +1113,24 @@
       sounds: {},
       isInit: false,
 
-      // Inicjalizacja kontekstu (musi byĂ„â€ˇ po klikniĂ„â„˘ciu uÄąÄ˝ytkownika)
+      // Inicjalizacja kontekstu (musi byÄ‡ po klikniÄ™ciu uĹĽytkownika)
       init: function () {
         if (this.isInit) return;
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         this.ctx = new AudioContext();
 
-        // GÄąâ€šÄ‚Ĺ‚wna szyna gÄąâ€šoÄąâ€şnoÄąâ€şci (Master)
+        // GĹ‚Ăłwna szyna gĹ‚oĹ›noĹ›ci (Master)
         this.masterGain = this.ctx.createGain();
-        // Pobieramy gÄąâ€šoÄąâ€şnoÄąâ€şĂ„â€ˇ z Twoich OPTIONS (jeÄąâ€şli sĂ„â€¦ dostĂ„â„˘pne)
+        // Pobieramy gĹ‚oĹ›noĹ›Ä‡ z Twoich OPTIONS (jeĹ›li sÄ… dostÄ™pne)
         const vol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.master : 0.5;
         this.masterGain.gain.value = vol;
         this.masterGain.connect(this.ctx.destination);
 
         this.isInit = true;
-        console.log("Ä‘Ĺşâ€ťĹ  AudioSys: Zainicjowano.");
+        console.log("[AudioSys] Zainicjowano.");
       },
 
-      // Äąadowanie pojedynczego dÄąĹźwiĂ„â„˘ku do pamiĂ„â„˘ci
+      // Ĺadowanie pojedynczego dĹşwiÄ™ku do pamiÄ™ci
       loadSound: async function (name, url) {
         if (!this.ctx) this.init();
         try {
@@ -1134,13 +1138,13 @@
           const arrayBuffer = await response.arrayBuffer();
           const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
           this.sounds[name] = audioBuffer;
-          console.log(`Ä‘Ĺşâ€ťĹ  AudioSys: ZaÄąâ€šadowano '${name}'`);
+          console.log(`[AudioSys] ZaĹ‚adowano '${name}'`);
         } catch (e) {
-          console.error(`Ä‘Ĺşâ€ťĹ  AudioSys: BÄąâ€šĂ„â€¦d Äąâ€šadowania '${name}' z ${url}:`, e);
+          console.error(`[AudioSys] BĹ‚Ä…d Ĺ‚adowania '${name}' z ${url}:`, e);
         }
       },
 
-      // Tworzenie zapĂ„â„˘tlonego silnika (z kontrolĂ„â€¦ Pitch i Volume)
+      // Tworzenie zapÄ™tlonego silnika (z kontrolÄ… Pitch i Volume)
       createEngineLoop: function (soundName) {
         if (!this.sounds[soundName]) return null;
 
@@ -1151,7 +1155,7 @@
         const gainNode = this.ctx.createGain();
         gainNode.gain.value = 0; // Na start cisza
 
-        // ÄąaÄąâ€žcuch: ÄąÄ…rÄ‚Ĺ‚dÄąâ€šo -> Gain -> Master -> WyjÄąâ€şcie
+        // Lancuch: Zrodlo -> Gain -> Master -> Wyjscie
         source.connect(gainNode);
         gainNode.connect(this.masterGain);
 
@@ -1161,17 +1165,17 @@
           source: source,
           gain: gainNode,
 
-          // Funkcja aktualizujĂ„â€¦ca brzmienie w czasie rzeczywistym
+          // Funkcja aktualizujÄ…ca brzmienie w czasie rzeczywistym
           update: (throttle) => {
             const now = AudioSys.ctx.currentTime;
             const targetPitch = 0.5 + (throttle * 0.6);
             source.playbackRate.setTargetAtTime(targetPitch, now, 0.2);
             let baseVol = 0.05 + (throttle * 0.25);
 
-            // Pobranie ustawieÄąâ€ž SFX gracza
+            // Pobranie ustawieĹ„ SFX gracza
             const sfxVol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.sfx : 1.0;
 
-            // Aplikowanie gÄąâ€šoÄąâ€şnoÄąâ€şci
+            // Aplikowanie gĹ‚oĹ›noĹ›ci
             gainNode.gain.setTargetAtTime(baseVol * sfxVol, now, 0.1);
           },
 
@@ -1180,7 +1184,7 @@
           }
         };
       },
-      // Prosta funkcja do strzaÄąâ€šÄ‚Ĺ‚w (na przyszÄąâ€šoÄąâ€şĂ„â€ˇ)
+      // Prosta funkcja do strzaĹ‚Ăłw (na przyszĹ‚oĹ›Ä‡)
       playSound: function (name) {
         if (!this.sounds[name]) return;
         const source = this.ctx.createBufferSource();
@@ -1196,16 +1200,16 @@
       }
     };
 window.AudioSys = AudioSys;
-    // --- CENTRALA DÄąÄ…WIĂ„KOWA UZBROJENIA ---
+    // --- CENTRALA DZWIEKOWA UZBROJENIA ---
     window.addEventListener('game_weapon_fired', (e) => {
       if (!window.AudioSys || !window.AudioSys.isInit) return;
 
       const { weaponId, x, y } = e.detail;
 
-      // Tutaj decydujemy jaki dÄąĹźwiĂ„â„˘k graĂ„â€ˇ w zaleÄąÄ˝noÄąâ€şci od ID broni
+      // Tutaj decydujemy jaki dĹşwiÄ™k graÄ‡ w zaleĹĽnoĹ›ci od ID broni
       switch (weaponId) {
         case 'hexlance':
-          // OdtwÄ‚Ĺ‚rz dÄąĹźwiĂ„â„˘k superbroni (z lekkĂ„â€¦ wariacjĂ„â€¦ tonu)
+          // OdtwĂłrz dĹşwiÄ™k superbroni (z lekkÄ… wariacjÄ… tonu)
           playDynamicSound('sfx_hexlance', { pitchVar: 0.1, volume: 0.6 });
           break;
 
@@ -1215,18 +1219,18 @@ window.AudioSys = AudioSys;
           break;
 
         case 'main_cannon':
-          // (PrzyszÄąâ€šoÄąâ€şĂ„â€ˇ) Tu dodasz dÄąĹźwiĂ„â„˘k dla Main Cannon
+          // (PrzyszĹ‚oĹ›Ä‡) Tu dodasz dĹşwiÄ™k dla Main Cannon
           // playDynamicSound('sfx_maincannon', { pitchVar: 0.2, volume: 0.6 });
           break;
 
         case 'nuclear_missile':
-          // (PrzyszÄąâ€šoÄąâ€şĂ„â€ˇ) Inna superbroÄąâ€ž
+          // (PrzyszĹ‚oĹ›Ä‡) Inna superbroĹ„
           // playDynamicSound('sfx_nuke_launch', { volume: 1.0 });
           break;
       }
     });
 
-    // Helper do Äąâ€šadniejszego odtwarzania dÄąĹźwiĂ„â„˘kÄ‚Ĺ‚w (z wariacjĂ„â€¦)
+    // Helper do Ĺ‚adniejszego odtwarzania dĹşwiÄ™kĂłw (z wariacjÄ…)
     function playDynamicSound(soundKey, opts = {}) {
       const ctx = window.AudioSys.ctx;
       const buffer = window.AudioSys.sounds[soundKey];
@@ -1235,14 +1239,14 @@ window.AudioSys = AudioSys;
       const source = ctx.createBufferSource();
       source.buffer = buffer;
 
-      // Losowa wariacja tonu (ÄąÄ˝eby seria nie brzmiaÄąâ€ša sztucznie)
+      // Losowa wariacja tonu (ĹĽeby seria nie brzmiaĹ‚a sztucznie)
       if (opts.pitchVar) {
         const detune = (Math.random() - 0.5) * 2 * opts.pitchVar; 
         source.playbackRate.value = 1.0 + detune;
       }
 
       const gainNode = ctx.createGain();
-      // Ustaw gÄąâ€šoÄąâ€şnoÄąâ€şĂ„â€ˇ (bazujĂ„â€¦c na opcjach gry + opcjach wywoÄąâ€šania)
+      // Ustaw gĹ‚oĹ›noĹ›Ä‡ (bazujÄ…c na opcjach gry + opcjach wywoĹ‚ania)
       const gameSfxVol = (typeof OPTIONS !== 'undefined') ? OPTIONS.audio.sfx : 1.0;
       gainNode.gain.value = (opts.volume || 1.0) * gameSfxVol;
 
@@ -1256,6 +1260,7 @@ window.AudioSys = AudioSys;
     const newGameButton = document.getElementById('btn-new-game');
     const loadGameButton = document.getElementById('btn-load-game');
     const optionsButton = document.getElementById('btn-options');
+    const editorButton = document.getElementById('btn-editor');
     const creditsButton = document.getElementById('btn-credits');
     const continueButton = document.getElementById('btn-continue');
     const menuHomeView = document.getElementById('menu-home-view');
@@ -1393,10 +1398,10 @@ window.AudioSys = AudioSys;
       return !!mainMenuEl && !mainMenuEl.classList.contains('hidden');
     }
 
-    // --- ZBIORCZA LISTA ELEMENTÄ‚â€śW HUD (Nowych i starych) ---
+    // --- ZBIORCZA LISTA ELEMENTĂ“W HUD (Nowych i starych) ---
     function getGameUIElements() {
       return [
-        // GÄąâ€šÄ‚Ĺ‚wne kontenery AERO HUD
+        // GĹ‚Ăłwne kontenery AERO HUD
         document.getElementById('hud-top-container'),
         document.getElementById('hud-bottom-container'),
         
@@ -1404,7 +1409,7 @@ window.AudioSys = AudioSys;
         document.getElementById('side-panels-container'),
         document.getElementById('right-panels-container'),
         
-        // BezpoÄąâ€şrednie panele (dla pewnoÄąâ€şci)
+        // BezpoĹ›rednie panele (dla pewnoĹ›ci)
         document.getElementById('panel-support'),
         document.getElementById('panel-fleet'),
         
@@ -1417,7 +1422,7 @@ window.AudioSys = AudioSys;
         document.getElementById('hud-topbar'),
         document.getElementById('ui'),
         
-        // Canvasy hex pancerza (dla pewnoÄąâ€şci, choĂ„â€ˇ sĂ„â€¦ w bottom-container)
+        // Canvasy hex pancerza (dla pewnoĹ›ci, choÄ‡ sÄ… w bottom-container)
         document.getElementById('hex-armor-container')
       ];
     }
@@ -1451,7 +1456,7 @@ window.AudioSys = AudioSys;
     function hideMainMenu() {
       if (mainMenuEl) mainMenuEl.classList.add('hidden');
       
-      // POKAÄąÂ» HUD GRY TYLKO JEÄąĹˇLI GRA JEST ROZPOCZĂ„TA
+      // POKAZ HUD GRY TYLKO JESLI GRA JEST ROZPOCZETA
       if (gameStarted) {
         toggleGameUI(true);
         setPaused(false);
@@ -1497,7 +1502,7 @@ window.AudioSys = AudioSys;
       });
     }
 
-    // Model widoku overlayu (ortho nad Äąâ€şwiatem 2D)
+    // Model widoku overlayu (ortho nad Ĺ›wiatem 2D)
     const overlayView = {
       center: { x: 0, y: 0 },
       viewport: { w: innerWidth, h: innerHeight },
@@ -1858,15 +1863,26 @@ window.AudioSys = AudioSys;
       if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return null;
       return pos;
     }
+    function getStationShadowRadius(station) {
+      if (!station) return 0;
+      const scale = stationScaleFor(station);
+      const base = Number(station.baseR ?? station.r ?? 0);
+      if (!Number.isFinite(base) || base <= 0) return 0;
+      return Math.max(0, base * scale);
+    }
     const SHADOW_TUNE = {
-      planetLengthMul: 38,
-      planetSpread: 0.060,
-      shipLengthMul: 18,
-      shipSpread: 0.12,
-      planetStrength: 0.92,
-      shipStrength: 0.58,
-      overlayAlpha: 0.62
+      planetLengthMul: 22,
+      planetSpread: 0.050,
+      stationLengthMul: 12,
+      stationSpread: 0.085,
+      shipLengthMul: 14,
+      shipSpread: 0.10,
+      planetStrength: 0.90,
+      stationStrength: 0.72,
+      shipStrength: 0.48,
+      overlayAlpha: 0.58
     };
+    const SHADOWS_ENABLED = false;
     let playerShadowFactor = 0;
     function shadowContributionAtPoint(px, py, targetRadius, ox, oy, oradius, sunX, sunY, lenMul, spread) {
       if (!Number.isFinite(oradius) || oradius <= 0) return 0;
@@ -1895,6 +1911,7 @@ window.AudioSys = AudioSys;
       return clamp(radial * axialFade, 0, 1);
     }
     function computeWorldShadowAtPoint(px, py, targetRadius, ignoreEntity = null) {
+      if (!SHADOWS_ENABLED) return 0;
       if (!window.SUN) return 0;
       const sunX = window.SUN.x || 0;
       const sunY = window.SUN.y || 0;
@@ -1908,6 +1925,19 @@ window.AudioSys = AudioSys;
           const c = shadowContributionAtPoint(px, py, targetRadius, planet.x, planet.y, pr, sunX, sunY, SHADOW_TUNE.planetLengthMul, SHADOW_TUNE.planetSpread);
           if (c > 0) {
             shadow = 1 - (1 - shadow) * (1 - c * SHADOW_TUNE.planetStrength);
+            if (shadow >= 0.995) return 1;
+          }
+        }
+      }
+
+      if (Array.isArray(stations)) {
+        for (const station of stations) {
+          if (!station || station.dead) continue;
+          const radius = getStationShadowRadius(station);
+          if (radius <= 4) continue;
+          const c = shadowContributionAtPoint(px, py, targetRadius, station.x, station.y, radius, sunX, sunY, SHADOW_TUNE.stationLengthMul, SHADOW_TUNE.stationSpread);
+          if (c > 0) {
+            shadow = 1 - (1 - shadow) * (1 - c * SHADOW_TUNE.stationStrength);
             if (shadow >= 0.995) return 1;
           }
         }
@@ -1934,13 +1964,58 @@ window.AudioSys = AudioSys;
 
       return clamp(shadow, 0, 1);
     }
+    function drawSoftLongShadowTrail(ctx, sx, sy, angle, occluderRadius, lenMul, spread, stops = null) {
+      const radius = Math.max(2, occluderRadius || 0);
+      const shadowLen = Math.max(radius * 2.0, radius * lenMul);
+      const nearW = Math.max(4, radius * 0.58);
+      const farW = nearW + shadowLen * spread;
+      const startX = radius * 0.78;
+      const endX = radius + shadowLen;
+
+      const colorStops = stops || [
+        ['0.00', 'rgba(20, 30, 52, 0.36)'],
+        ['0.38', 'rgba(14, 20, 38, 0.20)'],
+        ['1.00', 'rgba(8, 10, 18, 0.00)']
+      ];
+
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(angle);
+      ctx.scale(camera.zoom, camera.zoom);
+
+      const grad = ctx.createLinearGradient(startX, 0, endX, 0);
+      for (const [stop, color] of colorStops) grad.addColorStop(Number(stop), color);
+
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(startX, -nearW);
+      ctx.bezierCurveTo(radius + shadowLen * 0.20, -(nearW + farW) * 0.48, radius + shadowLen * 0.68, -farW, endX, -farW);
+      ctx.lineTo(endX, farW);
+      ctx.bezierCurveTo(radius + shadowLen * 0.68, farW, radius + shadowLen * 0.20, (nearW + farW) * 0.48, startX, nearW);
+      ctx.closePath();
+      ctx.fill();
+
+      const softGrad = ctx.createRadialGradient(
+        radius + shadowLen * 0.38, 0, nearW * 0.24,
+        radius + shadowLen * 0.50, 0, shadowLen * 0.88
+      );
+      softGrad.addColorStop(0, 'rgba(18,26,48,0.12)');
+      softGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = softGrad;
+      ctx.beginPath();
+      ctx.ellipse(radius + shadowLen * 0.50, 0, shadowLen * 0.72, farW * 1.06, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
     function drawPlanetShadowTrails(ctx, cam) {
+      if (!SHADOWS_ENABLED) return;
       if (!window.SUN || !Array.isArray(planets) || !planets.length) return;
       const sunX = window.SUN.x || 0;
       const sunY = window.SUN.y || 0;
 
       ctx.save();
-      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalCompositeOperation = 'multiply';
       for (const planet of planets) {
         if (!planet || !Number.isFinite(planet.x) || !Number.isFinite(planet.y)) continue;
         const pr = Math.max(0, Number(planet.r) || 0);
@@ -1954,34 +2029,47 @@ window.AudioSys = AudioSys;
         const dirX = dx / dLen;
         const dirY = dy / dLen;
         const angle = Math.atan2(dirY, dirX);
-        const shadowLen = pr * SHADOW_TUNE.planetLengthMul;
-        const nearW = pr * 0.72;
-        const farW = nearW + shadowLen * SHADOW_TUNE.planetSpread;
         const s = worldToScreen(planet.x, planet.y, cam);
+        drawSoftLongShadowTrail(ctx, s.x, s.y, angle, pr, SHADOW_TUNE.planetLengthMul, SHADOW_TUNE.planetSpread);
+      }
+      ctx.restore();
+    }
+    function drawStationLongShadowTrails(ctx, cam) {
+      if (!SHADOWS_ENABLED) return;
+      if (!window.SUN || !Array.isArray(stations) || !stations.length) return;
+      const sunX = window.SUN.x || 0;
+      const sunY = window.SUN.y || 0;
 
-        ctx.save();
-        ctx.translate(s.x, s.y);
-        ctx.rotate(angle);
-        ctx.scale(camera.zoom, camera.zoom);
+      ctx.save();
+      ctx.globalCompositeOperation = 'multiply';
+      for (const st of stations) {
+        if (!st || st.dead) continue;
+        const sr = getStationShadowRadius(st);
+        if (sr <= 4) continue;
 
-        const grad = ctx.createLinearGradient(0, 0, shadowLen, 0);
-        grad.addColorStop(0.00, 'rgba(0,0,0,0.30)');
-        grad.addColorStop(0.35, 'rgba(0,0,0,0.20)');
-        grad.addColorStop(1.00, 'rgba(0,0,0,0.00)');
+        const dx = st.x - sunX;
+        const dy = st.y - sunY;
+        const dLen = Math.hypot(dx, dy);
+        if (dLen < 1e-4) continue;
 
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.moveTo(pr * 0.12, -nearW);
-        ctx.quadraticCurveTo(shadowLen * 0.40, -(nearW + farW) * 0.5, shadowLen, -farW);
-        ctx.lineTo(shadowLen, farW);
-        ctx.quadraticCurveTo(shadowLen * 0.40, (nearW + farW) * 0.5, pr * 0.12, nearW);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
+        const angle = Math.atan2(dy, dx);
+        const s = worldToScreen(st.x, st.y, cam);
+
+        if (
+          s.x < -200 || s.x > W + 200 ||
+          s.y < -200 || s.y > H + 200
+        ) continue;
+
+        drawSoftLongShadowTrail(ctx, s.x, s.y, angle, sr, SHADOW_TUNE.stationLengthMul, SHADOW_TUNE.stationSpread, [
+          ['0.00', 'rgba(16, 26, 46, 0.30)'],
+          ['0.36', 'rgba(12, 18, 34, 0.16)'],
+          ['1.00', 'rgba(6, 9, 17, 0.00)']
+        ]);
       }
       ctx.restore();
     }
     function drawShipShadowOverlay(ctx, cam, entity, shadowFactor, overridePos = null) {
+      if (!SHADOWS_ENABLED) return;
       if (!entity || shadowFactor <= 0.01) return;
       const pos = overridePos || getShadowPos(entity);
       if (!pos) return;
@@ -2024,7 +2112,7 @@ window.AudioSys = AudioSys;
       const a = ang + (Math.random() * 2 - 1) * spread;
       const speed = weapon.speed || 500;
 
-      // Mapowanie wyglĂ„â€¦du pocisku
+      // Mapowanie wyglÄ…du pocisku
       let bType = 'plasma';
       if (weapon.name && weapon.name.includes('Rail')) bType = 'rail';
       if (weapon.name && weapon.name.includes('Flak')) bType = 'armata';
@@ -2060,7 +2148,7 @@ window.AudioSys = AudioSys;
       const liveUnits = units.filter(u => u && u.npc && !u.npc.dead && u.npc.friendly);
       const fighterCount = liveUnits.filter(u => (u.type || u.npc?.type) === 'fighter').length;
       if (fighterCount > 0) {
-        entries.push({ kind: 'fighters', label: 'Mysliwce', count: fighterCount });
+        entries.push({ kind: 'fighters', label: 'MyĹ›liwce', count: fighterCount });
       }
 
       for (const unit of liveUnits) {
@@ -2160,7 +2248,7 @@ window.AudioSys = AudioSys;
     }
 
     function updateFleetUI() {
-      // --- POPRAWKA: JeÄąâ€şli menu jest otwarte, nie ruszaj UI ---
+      // --- POPRAWKA: JeĹ›li menu jest otwarte, nie ruszaj UI ---
       if (isMainMenuVisible()) return;
       // --------------------------------------------------------
 
@@ -2296,17 +2384,17 @@ window.AudioSys = AudioSys;
       const leader = (npc.supportData?.leader) || ship;
       const distToLeader = Math.hypot(npc.x - leader.x, npc.y - leader.y);
 
-      // Bezpieczna strefa wokÄ‚Ĺ‚Äąâ€š lidera
+      // Bezpieczna strefa wokĂłĹ‚ lidera
       const minSafeDist = (leader.radius || 220) + (npc.radius || 30) + 60;
 
       if (distToLeader < minSafeDist) {
-        // JESTEÄąĹˇ ZA BLISKO! Tryb ucieczki
+        // JESTEĹš ZA BLISKO! Tryb ucieczki
         const pushX = npc.x - leader.x;
         const pushY = npc.y - leader.y;
         const dist = Math.hypot(pushX, pushY) || 1;
         const dir = { x: pushX / dist, y: pushY / dist };
 
-        // WymuÄąâ€ş odlot od lidera
+        // WymuĹ› odlot od lidera
         const wantSpeed = npc.maxSpeed * 0.9;
         const turned = window.clampTurnVec(npc.vx, npc.vy, dir.x * wantSpeed, dir.y * wantSpeed, dt, 360);
 
@@ -2318,7 +2406,7 @@ window.AudioSys = AudioSys;
         return; // Przerywamy, nie lecimy do slotu
       }
 
-      // Standardowy lot do slotu (jeÄąâ€şli jest bezpiecznie)
+      // Standardowy lot do slotu (jeĹ›li jest bezpiecznie)
       const dx = slot.x - npc.x;
       const dy = slot.y - npc.y;
       const dist = Math.hypot(dx, dy) || 1;
@@ -2359,14 +2447,14 @@ window.AudioSys = AudioSys;
 
       for (const other of npcs) {
         if (other === npc || other.dead) continue;
-        // DuÄąÄ˝e statki ignorujĂ„â€¦ maÄąâ€še myÄąâ€şliwce (niech myÄąâ€şliwce schodzĂ„â€¦ z drogi)
+        // DuĹĽe statki ignorujÄ… maĹ‚e myĹ›liwce (niech myĹ›liwce schodzÄ… z drogi)
         if (npc.isCapitalShip && other.fighter) continue;
 
         const dx = npc.x - other.x;
         const dy = npc.y - other.y;
         const distSq = dx * dx + dy * dy;
 
-        // ZasiĂ„â„˘g: promienie + margines 100 jednostek
+        // ZasiÄ™g: promienie + margines 100 jednostek
         const otherRadius = other.radius || 20;
         const safeDistance = myRadius + otherRadius + 100;
 
@@ -2374,7 +2462,7 @@ window.AudioSys = AudioSys;
           const dist = Math.sqrt(distSq) || 1;
           const overlap = safeDistance - dist;
 
-          // Im bliÄąÄ˝ej, tym potĂ„â„˘ÄąÄ˝niejsza siÄąâ€ša odpychajĂ„â€¦ca
+          // Im bliĹĽej, tym potÄ™ĹĽniejsza siĹ‚a odpychajÄ…ca
           const force = (overlap * 20.0) / myMass;
 
           ax += (dx / dist) * force;
@@ -2389,7 +2477,7 @@ window.AudioSys = AudioSys;
         const dy = npc.y - player.pos.y;
         const distSq = dx * dx + dy * dy;
 
-        // Gracz ma duÄąÄ˝y promieÄąâ€ž (Capital), dajemy duÄąÄ˝y margines bezpieczeÄąâ€žstwa
+        // Gracz ma duĹĽy promieĹ„ (Capital), dajemy duĹĽy margines bezpieczeĹ„stwa
         // (radius Gracza ~220 + radius NPC + 180 marginesu)
         const playerRadius = player.radius || 220;
         const safeDistance = myRadius + playerRadius + 180;
@@ -2398,14 +2486,14 @@ window.AudioSys = AudioSys;
           const dist = Math.sqrt(distSq) || 1;
           const overlap = safeDistance - dist;
 
-          // GIGANTYCZNA siÄąâ€ša odpychania dla sojusznikÄ‚Ĺ‚w, ÄąÄ˝eby nie wlatywali w gracza
+          // GIGANTYCZNA siĹ‚a odpychania dla sojusznikĂłw, ĹĽeby nie wlatywali w gracza
           const pushStrength = npc.friendly ? 60.0 : 15.0;
           const force = (overlap * pushStrength) / myMass;
 
           ax += (dx / dist) * force;
           ay += (dy / dist) * force;
 
-          // Hamulec awaryjny: JeÄąâ€şli lecisz W STRONĂ„ gracza, natychmiast hamuj
+          // Hamulec awaryjny: Jesli lecisz W STRONE gracza, natychmiast hamuj
           const dot = npc.vx * (-dx) + npc.vy * (-dy);
           if (dot > 0) {
             npc.vx *= 0.85; // Mocne hamowanie
@@ -2442,29 +2530,29 @@ window.AudioSys = AudioSys;
       const data = npc.supportData;
       if (!data) return;
 
-      // Zaznacz, ÄąÄ˝e ten NPC naleÄąÄ˝y do skrzydÄąâ€ša wsparcia
+      // Zaznacz, ĹĽe ten NPC naleĹĽy do skrzydĹ‚a wsparcia
       npc.isSupportWing = true;
 
-      // Aktualny rozkaz skrzydÄąâ€ša (domyÄąâ€şlnie guard, jakby coÄąâ€ş byÄąâ€šo nieustawione)
+      // Aktualny rozkaz skrzydĹ‚a (domyĹ›lnie guard, jakby coĹ› byĹ‚o nieustawione)
       const order = (typeof SupportWing !== 'undefined' && SupportWing && SupportWing.order)
         ? SupportWing.order
         : 'guard';
 
-      npc.supportOrder = order; // przyda siĂ„â„˘ w fighter AI
+      npc.supportOrder = order; // przyda siÄ™ w fighter AI
 
-      const ENGAGE_RANGE = 25000; // zasiĂ„â„˘g polowania w ENGAGE
-      const GUARD_ATTACK_RANGE = 6000;  // zasiĂ„â„˘g odpalenia ataku w GUARD
+      const ENGAGE_RANGE = 25000; // zasiÄ™g polowania w ENGAGE
+      const GUARD_ATTACK_RANGE = 6000;  // zasiÄ™g odpalenia ataku w GUARD
 
       const searchRange = (order === 'engage') ? ENGAGE_RANGE : GUARD_ATTACK_RANGE;
 
-      // 1. ZnajdÄąĹź cel
+      // 1. ZnajdĹş cel
       let target = null;
 
       if (window.aiPickBestTarget) {
         target = window.aiPickBestTarget(npc, searchRange);
       } else if (window.aiPickTarget) {
         target = window.aiPickTarget(npc);
-        // jeÄąÄ˝eli aiPickTarget nie respektuje zasiĂ„â„˘gu Ă˘â‚¬â€ś dociÄąâ€şnijmy rĂ„â„˘cznie
+        // jeĹĽeli aiPickTarget nie respektuje zasiÄ™gu â€“ dociĹ›nijmy rÄ™cznie
         if (target) {
           const d2 = dist2(npc, target);
           if (d2 > searchRange * searchRange) {
@@ -2473,7 +2561,7 @@ window.AudioSys = AudioSys;
         }
       }
 
-      // W trybie ENGAGE, jeÄąâ€şli nie ma celu w zasiĂ„â„˘gu, leĂ„â€ˇ do najbliÄąÄ˝szego wroga na mapie
+      // W trybie ENGAGE, jeĹ›li nie ma celu w zasiÄ™gu, leÄ‡ do najbliĹĽszego wroga na mapie
       if (order === 'engage' && !target && Array.isArray(npcs)) {
         let best = null;
         let bestD2 = Infinity;
@@ -2509,7 +2597,7 @@ window.AudioSys = AudioSys;
           if (window.aiBattleship) window.aiBattleship(null, npc, dt);
         }
       } else {
-        // --- TRYB FORMACJI (Brak wrogÄ‚Ĺ‚w / wrÄ‚Ĺ‚g daleko w GUARD) ---
+        // --- TRYB FORMACJI (Brak wrogĂłw / wrĂłg daleko w GUARD) ---
         supportGuardBehavior(npc, data.slotIndex, dt);
 
         if (npc.keepAngle) {
@@ -2518,7 +2606,7 @@ window.AudioSys = AudioSys;
           }
         }
 
-        // MyÄąâ€şliwiec bez celu wraca logicznie do stanu "guard"
+        // MyĹ›liwiec bez celu wraca logicznie do stanu "guard"
         if (data.type === 'fighter') {
           npc.state = 'guard';
         }
@@ -2549,9 +2637,19 @@ window.AudioSys = AudioSys;
       SPECIAL: 'special'
     };
 
+    const npcHardpointRuntime = createNpcHardpointRuntime({
+      hardpointEnum: HP,
+      storageKey: 'hpEditor.v1',
+      pollInterval: 0.35
+    });
+    const NPC_HARDPOINT_COLORS = npcHardpointRuntime.colors;
+    const applyEditorLayoutToNpc = npcHardpointRuntime.applyLayoutToNpc;
+    const pollNpcEditorLayoutCache = npcHardpointRuntime.pollCache;
+    npcHardpointRuntime.refreshCache(true);
+
     // === definicje broni ===
 
-    // === definicje statkÄ‚Ĺ‚w / ram ===
+    // === definicje statkĂłw / ram ===
     const SHIPS = buildShipFrames(SHIP_FRAMES);
 
     function buildShipFrames(shipFrames) {
@@ -2899,7 +2997,7 @@ window.AudioSys = AudioSys;
 
     // =============== Floating HUD state ===============
     const HUD = {
-      navArrows: [], // niebieskie strzaÄąâ€ški po X: {x,y,age,life}
+      navArrows: [], // niebieskie strzaĹ‚ki po X: {x,y,age,life}
     };
 
     // =============== Planet radar UI ===============
@@ -3017,7 +3115,7 @@ window.AudioSys = AudioSys;
           const ratio = clamp(distAu / maxScaleAu, 0, 1);
           const scale = maxScale - (maxScale - minScale) * ratio;
           const label = planet.label || formatPlanetLabel(planet, 0);
-          labelEl.textContent = `${label} Ă‚Â· ${formatAuDistance(distAu)}`;
+          labelEl.textContent = `${label} Â· ${formatAuDistance(distAu)}`;
           labelEl.style.fontSize = `${11 * scale}px`;
           labelEl.style.opacity = `${0.75 + 0.25 * (1 - ratio)}`;
           labelEl.style.writingMode = '';
@@ -3069,7 +3167,7 @@ window.AudioSys = AudioSys;
           if (labelEl) {
             const ratio = clamp(distAu / maxScaleAu, 0, 1);
             const scale = maxScale - (maxScale - minScale) * ratio;
-            labelEl.textContent = `PIRATE STATION Ă‚Â· ${formatAuDistance(distAu)}`;
+            labelEl.textContent = `PIRATE STATION Â· ${formatAuDistance(distAu)}`;
             labelEl.style.fontSize = `${11 * scale}px`;
             labelEl.style.opacity = `${0.75 + 0.25 * (1 - ratio)}`;
             labelEl.classList.add('pirate');
@@ -3112,7 +3210,7 @@ window.AudioSys = AudioSys;
     }
 
     function hudPingNpcStations() {
-      // Niebieskie strzaÄąâ€ški do stacji nie-misyjnych; gasnĂ„â€¦ po 4s
+      // Niebieskie strzaĹ‚ki do stacji nie-misyjnych; gasnÄ… po 4s
       const targets = stations.filter(s => !s.mission).slice(0, 8);
       HUD.navArrows = targets.map(s => ({ x: s.x, y: s.y, age: 0, life: 4.0 }));
     }
@@ -3185,7 +3283,7 @@ window.AudioSys = AudioSys;
     }
 
     function updatePlayerStatusUI() {
-      // --- POPRAWKA: JeÄąâ€şli menu jest otwarte, przerywamy ---
+      // --- POPRAWKA: JeĹ›li menu jest otwarte, przerywamy ---
       if (isMainMenuVisible()) return;
       // -----------------------------------------------------
 
@@ -3405,7 +3503,7 @@ window.AudioSys = AudioSys;
       return { x, y, zoom, screenX, screenY };
     }
 
-    // Model widoku overlayu juÄąÄ˝ istnieje Ă˘â‚¬â€ś dopasuj poczĂ„â€¦tkowy zoom do kamery
+    // Model widoku overlayu juĹĽ istnieje â€“ dopasuj poczÄ…tkowy zoom do kamery
     overlayView.zoom = camera.zoom;
 
     function updateCameraTarget(dt) {
@@ -3447,7 +3545,7 @@ window.AudioSys = AudioSys;
           }
         } else {
           camera.clearFocus();
-          // Wracamy do statku - render() przejmie pozycjĂ„â„˘
+          // Wracamy do statku - render() przejmie pozycjÄ™
           camera.targetZoom = camera.defaultZoom;
         }
       } else if (camera.mode === 'infrastructure') {
@@ -3487,9 +3585,9 @@ window.AudioSys = AudioSys;
           if (typeof onComplete === 'function') onComplete();
         }
       } else {
-        // --- WYGÄąADZANIE RUCHU KAMERY ---
-        // ZMIANA: Ruszamy kamerĂ„â€¦ tutaj TYLKO jeÄąâ€şli NIE jesteÄąâ€şmy w trybie statku.
-        // PozycjĂ„â€¦ statku steruje teraz render(), co eliminuje drgania przy interpolacji.
+        // --- WYGLADZANIE RUCHU KAMERY ---
+        // ZMIANA: Ruszamy kamerÄ… tutaj TYLKO jeĹ›li NIE jesteĹ›my w trybie statku.
+        // PozycjÄ… statku steruje teraz render(), co eliminuje drgania przy interpolacji.
         
         if (camera.mode !== 'ship') {
           const posLerp = Math.min(1, dt * 6);
@@ -3552,7 +3650,7 @@ window.AudioSys = AudioSys;
       const reactorFactory = window.createReactorBlowFactory;
       const host = document.getElementById('game-root');
 
-      // Musimy mieĂ„â€ˇ: API z moduÄąâ€šu + host z DOM + overlayView z tego skryptu
+      // Musimy mieÄ‡: API z moduĹ‚u + host z DOM + overlayView z tego skryptu
       if (!init || !railFactory || !host || typeof overlayView === 'undefined') return false;
 
       const ov = init({ host, getView: () => overlayView });
@@ -3572,8 +3670,8 @@ window.AudioSys = AudioSys;
       return true;
     }
 
-    // ModuÄąâ€šy <script type="module"> wykonujĂ„â€¦ siĂ„â„˘ po parsowaniu DOM, wiĂ„â„˘c
-    // DOMContentLoaded zwykle wystarczy. Dla pewnoÄąâ€şci dodajemy krÄ‚Ĺ‚tki polling.
+    // ModuĹ‚y <script type="module"> wykonujÄ… siÄ™ po parsowaniu DOM, wiÄ™c
+    // DOMContentLoaded zwykle wystarczy. Dla pewnoĹ›ci dodajemy krĂłtki polling.
     window.addEventListener('DOMContentLoaded', () => {
       if (startOverlay3D()) return;
       let tries = 0;
@@ -3625,10 +3723,19 @@ window.AudioSys = AudioSys;
     // === Ship sprite ===
     const USE_SHIP_SPRITE = true;
     const shipSprite = new Image();
+    const shipNormalSprite = new Image();
+    const shipNormalSpriteState = { ready: false, error: false };
     const capitalShipSpriteCache = {};
     const fighterSprite = new Image();
     const fighterSpriteState = { ready: false, error: false, width: 0, height: 0 };
     const hullSpriteCache = new Map();
+
+    function applyPlayerNormalMapIfReady() {
+      if (!shipNormalSpriteState.ready) return;
+      if (!ship?.hexGrid) return;
+      ship.hexGrid.normalMapImage = shipNormalSprite;
+      ship.hexGrid.meshDirty = true;
+    }
 
     function loadHullSprite(src) {
       if (!src) return null;
@@ -3714,10 +3821,20 @@ window.AudioSys = AudioSys;
       tryPreserveMounts(prev);
       syncWeaponSystems();
       initHexBody(ship, shipSprite);
+      applyPlayerNormalMapIfReady();
       if (typeof renderMechanic === 'function') renderMechanic();
       saveLoadout();
     };
-    shipSprite.src = "assets/capital_ship_rect_v1.png"; // <- Äąâ€şcieÄąÄ˝ka do pliku
+    shipSprite.src = ship.capitalProfile?.spriteSrc || "assets/capital_ship_rect_v1.png";
+
+    shipNormalSprite.onload = () => {
+      shipNormalSpriteState.ready = true;
+      applyPlayerNormalMapIfReady();
+    };
+    shipNormalSprite.onerror = () => {
+      shipNormalSpriteState.error = true;
+    };
+    shipNormalSprite.src = ship.capitalProfile?.spriteNormalSrc || "assets/capital_ship_rect_v1_normal.png";
 
     fighterSprite.onload = () => {
       fighterSpriteState.ready = true;
@@ -3746,13 +3863,13 @@ window.AudioSys = AudioSys;
     };
     heavyAutocannonSprite.src = "assets/weapons/heavy_autocannon.svg";
 
-    // USUNIĂ„TO STARY KOD SUPERBRONI (definicje superweapon, executeSuperweaponFire itp.)
+    // USUNIETO STARY KOD SUPERBRONI (definicje superweapon, executeSuperweaponFire itp.)
     // Teraz korzystamy z src/game/superweapon.js
 
 
-    // =============== Proceduralne gwiazdy na CAÄąEJ MAPIE ===============
-    // Generujemy je "na ÄąÄ˝Ă„â€¦danie" w kafelkach 1024Ä‚â€”1024 z deterministycznym seedem.
-    // DziĂ„â„˘ki temu gwiazdy sĂ„â€¦ wszĂ„â„˘dzie, ale pamiĂ„â„˘Ă„â€ˇ i CPU trzymamy w ryzach.
+    // =============== Proceduralne gwiazdy na CALEJ MAPIE ===============
+    // Generujemy je "na ĹĽÄ…danie" w kafelkach 1024Ă—1024 z deterministycznym seedem.
+    // DziÄ™ki temu gwiazdy sÄ… wszÄ™dzie, ale pamiÄ™Ä‡ i CPU trzymamy w ryzach.
     const STAR_CELL = 1024;
     const starCells = new Map(); // key "ix,iy" -> {stars:[...] , lastSeen: frameId}
     let frameId = 0;
@@ -3763,7 +3880,7 @@ window.AudioSys = AudioSys;
     function generateCell(ix, iy) {
       const seed = ((ix * 73856093) ^ (iy * 19349663) ^ 0x9e3779b9) >>> 0;
       const rnd = mulberry32(seed);
-      const count = 5 + Math.floor(rnd() * 5); // iloÄąâ€şc gwiazd na komorke
+      const count = 5 + Math.floor(rnd() * 5); // iloĹ›c gwiazd na komorke
       const stars = [];
       for (let i = 0; i < count; i++) {
         const x = ix * STAR_CELL + rnd() * STAR_CELL;
@@ -3784,7 +3901,7 @@ window.AudioSys = AudioSys;
       return c;
     }
     function pruneStarCells() {
-      // Trzymajmy ~ 600 ostatnio widzianych komÄ‚Ĺ‚rek (wystarczy z zapasem)
+      // Trzymajmy ~ 600 ostatnio widzianych komĂłrek (wystarczy z zapasem)
       if (starCells.size <= 600) return;
       // Proste LRU: wyrzucamy najstarsze
       const arr = Array.from(starCells.entries());
@@ -3796,33 +3913,33 @@ window.AudioSys = AudioSys;
       if (reset) { starCells.clear(); }
     }
 
-    // =============== SÄąâ€šoÄąâ€žce, planety i stacje ===============
+    // =============== SĹ‚oĹ„ce, planety i stacje ===============
     const SUN = {
       x: WORLD.w / 2, y: WORLD.h / 2, r: 823, r3D: 399,
       color: {
-        core: '#ffe88a',   // jasno-ÄąÄ˝Ä‚Ĺ‚Äąâ€šty rdzeÄąâ€ž
-        mid: '#ffbe3b',   // pomaraÄąâ€žcz-ÄąÄ˝Ä‚Ĺ‚Äąâ€šĂ„â€ˇ
-        rim: '#ff8c1a'    // ciepÄąâ€ša krawĂ„â„˘dÄąĹź tarczy
+        core: '#ffe88a',   // jasno-ĹĽĂłĹ‚ty rdzeĹ„
+        mid: '#ffbe3b',   // pomaraĹ„cz-ĹĽĂłĹ‚Ä‡
+        rim: '#ff8c1a'    // ciepĹ‚a krawÄ™dĹş tarczy
       },
       corona: {
-        rays: 72,           // ile Ă˘â‚¬ĹľigieÄąâ€šĂ˘â‚¬ĹĄ
-        jitter: 0.35,       // nieregularnoÄąâ€şĂ„â€ˇ
-        length: 0.85,       // dÄąâ€šugoÄąâ€şĂ„â€ˇ korony w promieniach R
+        rays: 72,           // ile â€žigieĹ‚â€ť
+        jitter: 0.35,       // nieregularnoĹ›Ä‡
+        length: 0.85,       // dĹ‚ugoĹ›Ä‡ korony w promieniach R
         pulse: 0.22,        // amplituda pulsu
-        haze: 2.8          // rozmiar miĂ„â„˘kkiej poÄąâ€şwiaty (Ä‚â€”R)
+        haze: 2.8          // rozmiar miÄ™kkiej poĹ›wiaty (Ă—R)
       },
       seed: 93731
     };
     window.SUN = SUN;
 
-    // --- tryb: REALNY UKÄąAD SÄąONECZNY (domyÄąâ€şlnie wÄąâ€šĂ„â€¦czony) ---
+    // --- tryb: REALNY UKLAD SLONECZNY (domyslnie wlaczony) ---
     const solarParams = new URLSearchParams(location.search);
-    const USE_SOLAR = solarParams.has('solar') ? solarParams.get('solar') !== '0' : true; // moÄąÄ˝na teÄąÄ˝ sterowaĂ„â€ˇ paramem URL ?solar=1
+    const USE_SOLAR = solarParams.has('solar') ? solarParams.get('solar') !== '0' : true; // moĹĽna teĹĽ sterowaÄ‡ paramem URL ?solar=1
 
     function makeSolarPlanets() {
-      // Skala: 1 AU Ă˘â€° 3000 jednostek Äąâ€şwiata (Neptun ~ 90k)
-      // Uwaga: powiĂ„â„˘kszamy AU tak, aby rozmiary planet w 3D (Ä‚â€”4.5) nie powodowaÄąâ€šy
-      // nachodzenia Ziemi i Marsa przy zbieÄąÄ˝nych kĂ„â€¦tach orbitalnych.
+      // Skala: 1 AU ~= 3000 jednostek swiata (Neptun ~ 90k)
+      // Uwaga: powiÄ™kszamy AU tak, aby rozmiary planet w 3D (Ă—4.5) nie powodowaĹ‚y
+      // nachodzenia Ziemi i Marsa przy zbieĹĽnych kÄ…tach orbitalnych.
       const BASE_AU = 3000;
       const PLANET_3D_SIZE_MULTIPLIER = 4.5;
       const EARTH_BASE_R = 2800;
@@ -3946,9 +4063,9 @@ window.AudioSys = AudioSys;
       }
     }
 
-    // jeÄąâ€şli kiedyÄąâ€ş bĂ„â„˘dziemy chcieli wrÄ‚Ĺ‚ciĂ„â€ˇ do starych zasad, zostawiamy helper:
+    // jeĹ›li kiedyĹ› bÄ™dziemy chcieli wrĂłciÄ‡ do starych zasad, zostawiamy helper:
     function makeProceduralPlanets() {
-      // stary kod moÄąÄ˝e zostaĂ„â€ˇ, ale domyÄąâ€şlnie nieuÄąÄ˝ywany
+      // stary kod moĹĽe zostaÄ‡, ale domyĹ›lnie nieuĹĽywany
       const PLANET_TYPES = {
         TERRAN: 'terran',
         VOLCANIC: 'volcanic',
@@ -4005,7 +4122,7 @@ window.AudioSys = AudioSys;
         if (pretty) return pretty;
       }
 
-      // Tego brakowaÄąâ€šo:
+      // Tego brakowaĹ‚o:
       return `Planet ${index + 1}`;
     }
     // wylicz pozycje
@@ -4021,9 +4138,9 @@ window.AudioSys = AudioSys;
     });
     window.planets = planets;
 
-    // =============== Strefy (planety/sÄąâ€šoÄąâ€žce/pas asteroid) ===============
+    // =============== Strefy (planety/sĹ‚oĹ„ce/pas asteroid) ===============
     const AU_IN_WORLD_UNITS = getAuToWorldUnits();
-    const ZONE_APPROACH_DISTANCE = AU_IN_WORLD_UNITS; // 1 AU przed granicĂ„â€¦
+    const ZONE_APPROACH_DISTANCE = AU_IN_WORLD_UNITS; // 1 AU przed granicÄ…
     window.ZONE_APPROACH_DISTANCE = ZONE_APPROACH_DISTANCE;
 
     const PIRATE_ORBIT = Object.freeze({
@@ -4103,11 +4220,11 @@ window.AudioSys = AudioSys;
     }
 
     function planetOrbitRadii(planet) {
-      // 1. Bezpiecznie pobierz fizyczny promieÄąâ€ž (hitbox)
+      // 1. Bezpiecznie pobierz fizyczny promieĹ„ (hitbox)
       const r = (planet.r && Number.isFinite(planet.r)) ? planet.r : 100;
 
-      // 2. PRIORYTET: JeÄąâ€şli zdefiniowano rĂ„â„˘czne strefy w konfiguracji planety - uÄąÄ˝yj ich!
-      // To pozwala ustawiĂ„â€ˇ np. Outer na 12000 pod Ring, niezaleÄąÄ˝nie od wielkoÄąâ€şci planety.
+      // 2. PRIORYTET: JeĹ›li zdefiniowano rÄ™czne strefy w konfiguracji planety - uĹĽyj ich!
+      // To pozwala ustawiÄ‡ np. Outer na 12000 pod Ring, niezaleĹĽnie od wielkoĹ›ci planety.
       if (planet.orbitZone) {
         return {
           inner: planet.orbitZone.inner || (r * 2.5),
@@ -4117,13 +4234,13 @@ window.AudioSys = AudioSys;
       }
 
       // 3. FALLBACK: Nowa, bezpieczniejsza matematyka dla planet bez konfigu.
-      // ZwiĂ„â„˘kszamy mnoÄąÄ˝nik Inner z 2.0 na 2.2, ÄąÄ˝eby linia na pewno byÄąâ€ša nad duÄąÄ˝Ă„â€¦ grafikĂ„â€¦.
+      // ZwiÄ™kszamy mnoĹĽnik Inner z 2.0 na 2.2, ĹĽeby linia na pewno byĹ‚a nad duĹĽÄ… grafikÄ….
       const innerRadius = Math.max(r * 2.2, r + 1500);
 
       // Outer to strefa operacyjna (tam gdzie ringi)
       const outerRadius = innerRadius + 4000;
 
-      // Gravity Well to granica przyciĂ„â€¦gania
+      // Gravity Well to granica przyciÄ…gania
       const gravityWellRadius = outerRadius + 6000;
 
       return { inner: innerRadius, outer: outerRadius, gravityWell: gravityWellRadius };
@@ -4362,9 +4479,9 @@ window.AudioSys = AudioSys;
     const STATION_STYLES = ['ringGate', 'hexHub', 'triRing', 'solarPetals', 'shipyard', 'tradeSpindle'];
 
     let stations = planets.map(pl => {
-      const orbitRadius = 0; // stacje cywilne na Äąâ€şrodku planety
+      const orbitRadius = 0; // stacje cywilne na Ĺ›rodku planety
       const angle = 0; // brak dryfu orbitalnego
-      const periodHours = 12; // zachowana spÄ‚Ĺ‚jnoÄąâ€şĂ„â€ˇ parametrÄ‚Ĺ‚w (nieuÄąÄ˝ywane przy orbitRadius=0)
+      const periodHours = 12; // zachowana spĂłjnoĹ›Ä‡ parametrĂłw (nieuĹĽywane przy orbitRadius=0)
       const speed = 0;
       const x = pl.x;
       const y = pl.y;
@@ -4430,7 +4547,7 @@ window.AudioSys = AudioSys;
       }
     }
 
-    // oznacz stacje wewnĂ„â€¦trz pasa asteroid
+    // oznacz stacje wewnÄ…trz pasa asteroid
     (() => {
       if (ASTEROID_BELT) {
         const beltRadius = ASTEROID_BELT.mid;
@@ -4479,7 +4596,7 @@ window.AudioSys = AudioSys;
 
     let npcs = [];
     window.npcs = npcs;
-    // Lista na martwe, dryfujĂ„â€¦ce kawaÄąâ€ški
+    // Lista na martwe, dryfujÄ…ce kawaĹ‚ki
     const wrecks = [];
     window.wrecks = wrecks;
     // === SQUAD SYSTEM ===
@@ -4500,7 +4617,7 @@ window.AudioSys = AudioSys;
         this.units.push(u);
         u.squad = this;
 
-        // FIX: Natychmiast mianuj lidera, jeÄąâ€şli go nie ma
+        // FIX: Natychmiast mianuj lidera, jeĹ›li go nie ma
         if (!this.leader) {
           this.leader = u;
         }
@@ -4509,21 +4626,21 @@ window.AudioSys = AudioSys;
       }
 
       update() {
-        // 1. UsuÄąâ€ž martwe jednostki z listy
+        // 1. UsuĹ„ martwe jednostki z listy
         const initialCount = this.units.length;
         this.units = this.units.filter(u => !u.dead);
 
-        // 2. SprawdÄąĹź ciĂ„â€¦gÄąâ€šoÄąâ€şĂ„â€ˇ dowodzenia
-        // JeÄąâ€şli liczba jednostek siĂ„â„˘ zmieniÄąâ€ša (ktoÄąâ€ş zginĂ„â€¦Äąâ€š) LUB obecny lider nie ÄąÄ˝yje/nie istnieje
+        // 2. SprawdĹş ciÄ…gĹ‚oĹ›Ä‡ dowodzenia
+        // JeĹ›li liczba jednostek siÄ™ zmieniĹ‚a (ktoĹ› zginÄ…Ĺ‚) LUB obecny lider nie ĹĽyje/nie istnieje
         if (this.units.length !== initialCount || !this.leader || this.leader.dead) {
 
           if (this.units.length > 0) {
             // --- AWANS I PRZEGRUPOWANIE ---
-            // Nowym liderem zostaje pierwszy ÄąÄ˝ywy na liÄąâ€şcie
+            // Nowym liderem zostaje pierwszy ĹĽywy na liĹ›cie
             this.leader = this.units[0];
 
-            // Przelicz sloty formacji dla wszystkich ocalaÄąâ€šych
-            // To jest ten kluczowy mechanizm z AI SPACE, ktÄ‚Ĺ‚rego brakowaÄąâ€šo
+            // Przelicz sloty formacji dla wszystkich ocalaĹ‚ych
+            // To jest ten kluczowy mechanizm z AI SPACE, ktĂłrego brakowaĹ‚o
             this.recalculateFormation();
           } else {
             this.leader = null;
@@ -4532,23 +4649,23 @@ window.AudioSys = AudioSys;
       }
 
       recalculateFormation() {
-        // Przelicza offsety dla kaÄąÄ˝dego statku w oparciu o jego aktualny indeks w eskadrze
+        // Przelicza offsety dla kaĹĽdego statku w oparciu o jego aktualny indeks w eskadrze
         this.units.forEach((u, idx) => {
           if (idx === 0) {
             // Lider jest zawsze w punkcie 0,0
             u.formationOffset = { x: 0, y: 0 };
           } else {
-            // Reszta ustawia siĂ„â„˘ w formacji "Chevron" (V)
+            // Reszta ustawia siÄ™ w formacji "Chevron" (V)
             // idx: 1 -> row 1, side L
             // idx: 2 -> row 1, side R
             // idx: 3 -> row 2, side L ...
             const row = Math.floor((idx + 1) / 2);
             const side = (idx % 2 === 0) ? 1 : -1; // 1 = Prawa, -1 = Lewa
 
-            // Offsety: troche szerzej niÄąÄ˝ wczeÄąâ€şniej, ÄąÄ˝eby siĂ„â„˘ nie zderzali
+            // Offsety: troche szerzej niĹĽ wczeĹ›niej, ĹĽeby siÄ™ nie zderzali
             u.formationOffset = { x: -row * 60, y: side * row * 45 };
           }
-          // Zabezpieczenie kompatybilnoÄąâ€şci (niektÄ‚Ĺ‚re funkcje mogĂ„â€¦ szukaĂ„â€ˇ formationSlot)
+          // Zabezpieczenie kompatybilnoĹ›ci (niektĂłre funkcje mogÄ… szukaÄ‡ formationSlot)
           u.formationSlot = u.formationOffset;
         });
       }
@@ -4663,7 +4780,7 @@ window.AudioSys = AudioSys;
         angularFriction: (typeof stats.angularFriction === 'number') ? stats.angularFriction : SHIP_PHYSICS.ANGULAR_FRICTION,
         radius: stats.radius || 20,
 
-        // jeÄąâ€şli nie podasz isCollidable w statsach Ă˘â‚¬â€ś jest kolizyjny
+        // jeĹ›li nie podasz isCollidable w statsach â€“ jest kolizyjny
         isCollidable: stats.isCollidable !== false,
 
         dead: false,
@@ -4671,7 +4788,7 @@ window.AudioSys = AudioSys;
         weapons: {}
       };
 
-      // NOWE: przeniesienie fizyki ze statÄ‚Ĺ‚w na NPC
+      // NOWE: przeniesienie fizyki ze statĂłw na NPC
       if (typeof stats.friction === 'number') {
         npc.friction = stats.friction;
       }
@@ -4789,6 +4906,7 @@ window.AudioSys = AudioSys;
         npc.vy = anchorVel.y ?? npc.vy;
         npc.supportData = { npc, type: templateKey, slotIndex: SupportWing.units.length + created.length, leader: anchor };
         template.configure?.(npc, i);
+        applyEditorLayoutToNpc(npc);
         npc.ai = dt => runSupportAI(npc, dt);
         SupportWing.units.push(npc.supportData);
         npcs.push(npc);
@@ -4874,6 +4992,7 @@ window.AudioSys = AudioSys;
 
       npc.fleetEntry = entry;
       npc.ai = dt => updateCapitalCarrier(entry, dt);
+      applyEditorLayoutToNpc(npc);
 
       return entry;
     }
@@ -5306,18 +5425,18 @@ window.AudioSys = AudioSys;
     function makeRocketPod(cfg) { return { ...cfg }; }
     function makeGatling(cfg) { return { ...cfg }; }
     function spawnPirate(kind, station) {
-      // 1. ZnajdÄąĹź szablon
+      // 1. ZnajdĹş szablon
       let template = SUPPORT_SHIP_TEMPLATES[kind];
 
-      // Fallback: jeÄąâ€şli wpisano 'fighter', a w szablonach jest 'interceptor' (lub odwrotnie)
+      // Fallback: jeĹ›li wpisano 'fighter', a w szablonach jest 'interceptor' (lub odwrotnie)
       if (!template) {
         if (kind === 'fighter') template = SUPPORT_SHIP_TEMPLATES['interceptor'];
         else if (kind === 'interceptor') template = SUPPORT_SHIP_TEMPLATES['fighter'];
       }
 
-      // JeÄąâ€şli nadal brak szablonu, uÄąÄ˝yj domyÄąâ€şlnego interceptora (ÄąÄ˝eby gra siĂ„â„˘ nie wysypaÄąâ€ša)
+      // JeĹ›li nadal brak szablonu, uĹĽyj domyĹ›lnego interceptora (ĹĽeby gra siÄ™ nie wysypaĹ‚a)
       if (!template) {
-        console.warn(`Nieznany typ pirata: ${kind}. SpawnujĂ„â„˘ interceptor.`);
+        console.warn(`Nieznany typ pirata: ${kind}. SpawnujÄ™ interceptor.`);
         template = SUPPORT_SHIP_TEMPLATES['interceptor'];
       }
 
@@ -5332,22 +5451,23 @@ window.AudioSys = AudioSys;
       // 3. Stworzenie bazy NPC z szablonu
       const npc = makeNPCBase(pos, { ...template.stats, shield: template.shield });
 
-      // 4. Nadpisanie wÄąâ€šaÄąâ€şciwoÄąâ€şci pod PIRATA
+      // 4. Nadpisanie wĹ‚aĹ›ciwoĹ›ci pod PIRATA
       npc.type = kind;
       npc.friendly = false;
       npc.isPirate = true;
       npc.mission = true;
       npc.color = '#ff5c7c'; // Czerwony kolor pirata
 
-      // Przypisanie referencji do stacji (waÄąÄ˝ne dla logiki patrolu)
+      // Przypisanie referencji do stacji (waĹĽne dla logiki patrolu)
       npc.home = station;
 
       // 5. Konfiguracja uzbrojenia i AI z szablonu
       if (template.configure) {
         template.configure(npc);
+        applyEditorLayoutToNpc(npc);
       }
 
-      // 6. PoczĂ„â€¦tkowy obrÄ‚Ĺ‚t w stronĂ„â„˘ gracza
+      // 6. PoczÄ…tkowy obrĂłt w stronÄ™ gracza
       npc.angle = Math.atan2(ship.pos.y - npc.y, ship.pos.x - npc.x);
 
       // 7. Rejestracja w grze
@@ -5373,7 +5493,7 @@ window.AudioSys = AudioSys;
         'destroyer', 'destroyer', 'destroyer'
       ];
 
-      // POPRAWKA 1: ZwiĂ„â„˘kszony odstĂ„â„˘p, ÄąÄ˝eby Battleshipy (szerokoÄąâ€şĂ„â€ˇ ~280) siĂ„â„˘ nie zderzaÄąâ€šy
+      // POPRAWKA 1: ZwiÄ™kszony odstÄ™p, ĹĽeby Battleshipy (szerokoĹ›Ä‡ ~280) siÄ™ nie zderzaĹ‚y
       const spacing = 1600;
       const totalWidth = (fleetComposition.length - 1) * spacing;
 
@@ -5391,7 +5511,7 @@ window.AudioSys = AudioSys;
         npc.state = 'warping_in';
         npc.isCollidable = false;
 
-        // Lekka losowoÄąâ€şĂ„â€ˇ hamowania, ÄąÄ˝eby nie wyglĂ„â€¦daÄąâ€šy jak roboty
+        // Lekka losowoĹ›Ä‡ hamowania, ĹĽeby nie wyglÄ…daĹ‚y jak roboty
         const randomBrake = 280 + Math.random() * 40;
 
         npc.warpData = {
@@ -5408,13 +5528,13 @@ window.AudioSys = AudioSys;
       if (window.AudioSys) AudioSys.playSound('shieldHit');
     }
 
-    // POPRAWKA 2: Przypisanie do window (teraz bĂ„â„˘dzie widoczne globalnie)
+    // POPRAWKA 2: Przypisanie do window (teraz bÄ™dzie widoczne globalnie)
     window.spawnPirateHeavyFleet = spawnPirateHeavyFleet;
-    // Lista na martwe, dryfujĂ„â€¦ce kawaÄąâ€ški
+    // Lista na martwe, dryfujÄ…ce kawaĹ‚ki
     window.createWreckage = function (parentEntity, shards) {
       if (!shards || shards.length === 0) return;
 
-      // 1. Oblicz Äąâ€şrodek masy nowej grupy
+      // 1. Oblicz Ĺ›rodek masy nowej grupy
       let sumLx = 0, sumLy = 0;
       for (const s of shards) {
         sumLx += s.lx;
@@ -5439,7 +5559,7 @@ window.AudioSys = AudioSys;
       const worldY = parentEntity.y + (avgLx * scale * s + avgLy * scale * c);
 
       // --- PRZYGOTOWANIE CACHE DLA WRAKU (FIX) ---
-      // UÄąÄ˝ywamy wymiarÄ‚Ĺ‚w oryginaÄąâ€šu, aby zachowaĂ„â€ˇ spÄ‚Ĺ‚jnoÄąâ€şĂ„â€ˇ koordynatÄ‚Ĺ‚w
+      // UĹĽywamy wymiarĂłw oryginaĹ‚u, aby zachowaÄ‡ spĂłjnoĹ›Ä‡ koordynatĂłw
       const srcW = parentEntity.hexGrid.srcWidth;
       const srcH = parentEntity.hexGrid.srcHeight;
       const cacheCanvas = document.createElement('canvas');
@@ -5470,7 +5590,7 @@ window.AudioSys = AudioSys;
           // --- FIX: Dodajemy wymagane pola cache ---
           cacheCanvas: cacheCanvas,
           cacheCtx: cacheCanvas.getContext('2d', { willReadFrequently: true }),
-          cacheDirty: true, // WymuÄąâ€ş narysowanie w pierwszej klatce
+          cacheDirty: true, // WymuĹ› narysowanie w pierwszej klatce
           textureDirty: true,
           meshDirty: true
           // ----------------------------------------
@@ -5520,7 +5640,7 @@ window.AudioSys = AudioSys;
       let attackAngle = 0;
       let attackDir = { x: 0, y: 0 };
       if (mode === 'attack') {
-        // Oblicz kĂ„â€¦t w stronĂ„â„˘ gracza
+        // Oblicz kÄ…t w stronÄ™ gracza
         const dx = ship.pos.x - station.x;
         const dy = ship.pos.y - station.y;
         attackAngle = Math.atan2(dy, dx);
@@ -5531,20 +5651,20 @@ window.AudioSys = AudioSys;
         // 1. Spawn jednostki
         const npc = spawnPirate(type, station);
 
-        // 2. Pozycja startowa (dla obu trybÄ‚Ĺ‚w startujĂ„â€¦ wokÄ‚Ĺ‚Äąâ€š stacji)
-        // Dla ataku: spawnujemy ich w sektorze skierowanym do gracza, ÄąÄ˝eby nie lecieli przez stacjĂ„â„˘
+        // 2. Pozycja startowa (dla obu trybĂłw startujÄ… wokĂłĹ‚ stacji)
+        // Dla ataku: spawnujemy ich w sektorze skierowanym do gracza, ĹĽeby nie lecieli przez stacjÄ™
         const angle = (mode === 'attack')
-          ? attackAngle + (i - (count - 1) / 2) * 0.15 // Wachlarz w stronĂ„â„˘ gracza
-          : startPhase + (i * phaseStep);          // RÄ‚Ĺ‚wnomiernie dookoÄąâ€ša (orbita)
+          ? attackAngle + (i - (count - 1) / 2) * 0.15 // Wachlarz w stronÄ™ gracza
+          : startPhase + (i * phaseStep);          // RĂłwnomiernie dookoĹ‚a (orbita)
 
-        const spawnR = (mode === 'attack') ? station.r + 50 : radius; // AtakujĂ„â€¦cy wylatujĂ„â€¦ z dokÄ‚Ĺ‚w
+        const spawnR = (mode === 'attack') ? station.r + 50 : radius; // AtakujÄ…cy wylatujÄ… z dokĂłw
 
         npc.x = station.x + Math.cos(angle) * spawnR;
         npc.y = station.y + Math.sin(angle) * spawnR;
 
         // 3. Konfiguracja zachowania
         if (mode === 'guard') {
-          // --- TRYB STRAÄąÂ»NIKA (Orbitowanie) ---
+          // --- TRYB STRAĹ»NIKA (Orbitowanie) ---
           npc.state = 'guard';
           // Lider dostaje dane do orbitowania
           if (i === 0) {
@@ -5553,25 +5673,25 @@ window.AudioSys = AudioSys;
             npc.guardOrbitSpeed = speed;
             npc.guardPhase = angle;
           }
-          // PrĂ„â„˘dkoÄąâ€şĂ„â€ˇ styczna (ÄąÄ˝eby juÄąÄ˝ pÄąâ€šynĂ„â„˘li po orbicie)
+          // PrÄ™dkoĹ›Ä‡ styczna (ĹĽeby juĹĽ pĹ‚ynÄ™li po orbicie)
           npc.vx = -Math.sin(angle) * radius * speed;
           npc.vy = Math.cos(angle) * radius * speed;
           npc.angle = angle + (speed > 0 ? Math.PI / 2 : -Math.PI / 2);
         }
         else {
-          // --- TRYB ATAKU (Swarm / PosiÄąâ€ški) ---
+          // --- TRYB ATAKU (Swarm / PosiĹ‚ki) ---
           npc.state = 'engage_formation';
 
-          // WyczyÄąâ€şĂ„â€ˇ guardStation, ÄąÄ˝eby nie orbitowali
+          // WyczyĹ›Ä‡ guardStation, ĹĽeby nie orbitowali
           npc.guardStation = null;
 
-          // Nadaj duÄąÄ˝Ă„â€¦ prĂ„â„˘dkoÄąâ€şĂ„â€ˇ w stronĂ„â„˘ gracza (Wyrzut z hangaru)
+          // Nadaj duĹĽÄ… prÄ™dkoĹ›Ä‡ w stronÄ™ gracza (Wyrzut z hangaru)
           const launchSpeed = 400;
           npc.vx = Math.cos(angle) * launchSpeed;
           npc.vy = Math.sin(angle) * launchSpeed;
           npc.angle = angle;
 
-          // WymuÄąâ€ş szukanie celu
+          // WymuĹ› szukanie celu
           npc.forceTarget = null;
           npc.target = null;
           npc.retargetTimer = 0;
@@ -5579,7 +5699,7 @@ window.AudioSys = AudioSys;
 
         squad.addUnit(npc);
 
-        // Offsety formacji (dla obu trybÄ‚Ĺ‚w, ÄąÄ˝eby Äąâ€šadnie latali w grupie)
+        // Offsety formacji (dla obu trybĂłw, ĹĽeby Ĺ‚adnie latali w grupie)
         if (i > 0) {
           const row = Math.floor((i + 1) / 2);
           const side = (i % 2 === 0) ? 1 : -1;
@@ -5676,7 +5796,7 @@ window.AudioSys = AudioSys;
       'mercenary': { radius: 25, speed: 100, hp: 100, color: '#ff6633', weapon: 'gun', isCollidable: true }
     };
     // ==========================================================================================
-    // 1. BAZA DANYCH AI SPACE (Statystyki broni i pociskÄ‚Ĺ‚w)
+    // 1. BAZA DANYCH AI SPACE (Statystyki broni i pociskĂłw)
     // ==========================================================================================
 
     const AISPACE_FLAK = {
@@ -5798,26 +5918,31 @@ window.AudioSys = AudioSys;
     }
 
     // ==========================================================================================
-    // 2. ADAPTER SYSTEMU (Most miĂ„â„˘dzy AI SPACE a Super Capital: Battle for Solar System)
+    // 2. ADAPTER SYSTEMU (Most miÄ™dzy AI SPACE a Super Capital: Battle for Solar System)
     // ==========================================================================================
 
-    // Ten obiekt udaje silnik z AI Space, ÄąÄ˝ebyÄąâ€şmy nie musieli przepisywaĂ„â€ˇ kaÄąÄ˝dej linijki AI
+    // Ten obiekt udaje silnik z AI Space, ĹĽebyĹ›my nie musieli przepisywaÄ‡ kaĹĽdej linijki AI
     const PirateSim = {
       time: 0,
       get units() {
-        // Zwraca listĂ„â„˘ celÄ‚Ĺ‚w: Gracz + jego sojusznicy + wrodzy piraci (dla friendly fire check)
+        // Zwraca listÄ™ celĂłw: Gracz + jego sojusznicy + wrodzy piraci (dla friendly fire check)
         return [ship, ...npcs.filter(n => !n.dead)];
       },
-      // Symulacja pociskÄ‚Ĺ‚w i eksplozji nie jest potrzebna tutaj, bo gra ma wÄąâ€šasnĂ„â€¦ w main loop
+      // Symulacja pociskĂłw i eksplozji nie jest potrzebna tutaj, bo gra ma wĹ‚asnÄ… w main loop
       projectiles: [],
       wrecks
     };
 
-    // Funkcja strzelania - TÄąUMACZY broÄąâ€ž z AI Space na pociski w grze
+    // Funkcja strzelania - TLUMACZY bron z AI Space na pociski w grze
     window.spawnBulletAdapter = function (owner, target, weaponDef, opts = {}) {
       if (!weaponDef) return;
 
-      const origin = opts.origin || owner;
+      if (owner && owner !== ship && (owner.__editorLayoutVersion !== npcHardpointRuntime.version || !owner.__editorLayoutShipId)) {
+        applyEditorLayoutToNpc(owner);
+      }
+
+      const hardpointOrigin = opts.origin ? null : npcHardpointRuntime.resolveOwnerHardpointOrigin(owner, weaponDef, opts);
+      const origin = opts.origin || hardpointOrigin || owner;
       const originVel = opts.originVel || { x: owner.vx ?? owner.vel?.x ?? 0, y: owner.vy ?? owner.vel?.y ?? 0 };
       const baseAngle = opts.angleOverride ?? owner.angle ?? 0;
       const bulletSpeed = weaponDef.speed || 500;
@@ -5840,10 +5965,10 @@ window.AudioSys = AudioSys;
       const spreadRad = (weaponDef.spread || 0) * (Math.PI / 180);
       const finalAngle = adjustedAng + (Math.random() - 0.5) * spreadRad;
 
-      // 2. OBSÄąUGA LASERÄ‚â€śW (BEAM) - PrzywrÄ‚Ĺ‚cona i naprawiona
+      // 2. OBSLUGA LASEROW (BEAM) - Przywrocona i naprawiona
       if (weaponDef.isBeam || opts.type === 'beam') {
         const beamRange = weaponDef.range || 800;
-        // Punkt koÄąâ€žcowy promienia
+        // Punkt koĹ„cowy promienia
         const endX = origin.x + Math.cos(finalAngle) * beamRange;
         const endY = origin.y + Math.sin(finalAngle) * beamRange;
         const endPoint = { x: endX, y: endY };
@@ -5857,10 +5982,10 @@ window.AudioSys = AudioSys;
           glowBlur: 20
         });
 
-        // Natychmiastowe obraÄąÄ˝enia (Hitscan)
+        // Natychmiastowe obraĹĽenia (Hitscan)
         if (target) {
-          // SprawdÄąĹź czy cel jest w linii strzaÄąâ€šu (prosta kolizja)
-          // Dla uproszczenia zakÄąâ€šadamy trafienie jeÄąâ€şli celowany byÄąâ€š target
+          // SprawdĹş czy cel jest w linii strzaĹ‚u (prosta kolizja)
+          // Dla uproszczenia zakĹ‚adamy trafienie jeĹ›li celowany byĹ‚ target
           const dist = Math.hypot(target.x - origin.x, target.y - origin.y);
           if (dist <= beamRange) {
             const dmg = weaponDef.dmg || 10;
@@ -5876,8 +6001,8 @@ window.AudioSys = AudioSys;
         return; // Laser to hitscan, nie dodajemy pocisku fizycznego
       }
 
-      // 3. OBSÄąUGA POCISKÄ‚â€śW (FIXED VISUALS)
-      let bType = 'default'; // DomyÄąâ€şlnie iskry
+      // 3. OBSLUGA POCISKOW (FIXED VISUALS)
+      let bType = 'default'; // DomyĹ›lnie iskry
       let size = 3;
       const name = (weaponDef.name || '').toLowerCase();
 
@@ -5906,12 +6031,12 @@ window.AudioSys = AudioSys;
       });
     };
 
-    // --- HELPER: TÄąâ€šumacz typÄ‚Ĺ‚w dla AI (AI Space Port) ---
+    // --- HELPER: TĹ‚umacz typĂłw dla AI (AI Space Port) ---
     function getUnitKind(npc) {
       if (!npc) return 'unknown';
-      if (npc === window.ship) return 'battleship'; // Gracz to dla AI duÄąÄ˝y statek
+      if (npc === window.ship) return 'battleship'; // Gracz to dla AI duĹĽy statek
 
-      // Czy to myÄąâ€şliwiec?
+      // Czy to myĹ›liwiec?
       if (npc.fighter || npc.type === 'fighter' || npc.type === 'interceptor' || npc.type === 'drone') {
         return 'fighter';
       }
@@ -6031,7 +6156,7 @@ window.AudioSys = AudioSys;
       return best;
     }
     // ==========================================================================================
-    // 2. LOGIKA AI (MÄ‚â€śZGI STATKÄ‚â€śW - "AI SPACE PORT")
+    // 2. LOGIKA AI (MĂ“ZGI STATKĂ“W - "AI SPACE PORT")
     // ==========================================================================================
 
     // Helper: Znajdowanie najlepszego celu (Gracz lub sojusznik)
@@ -6051,7 +6176,7 @@ window.AudioSys = AudioSys;
         ? npcs.filter(n => n.isPirate && !n.dead)
         : [ship, ...npcs.filter(n => n.friendly && !n.dead)];
 
-      // RADAR POKRYWAJĂ„â€žCY CAÄąĂ„â€ž STACJĂ„ PIRACKĂ„â€ž
+      // RADAR POKRYWAJACY CALA STACJE PIRACKA
       const RADAR_RANGE_SQ = 20000 * 20000;
 
       for (const t of targets) {
@@ -6080,18 +6205,18 @@ window.AudioSys = AudioSys;
       SQUADS.length = 0; // Reset eskadr
       let npcCounter = 0;
 
-      // 1. StwÄ‚Ĺ‚rz eskadrĂ„â„˘ pirackich myÄąâ€şliwcÄ‚Ĺ‚w (Interceptor Squad)
+      // 1. StwĂłrz eskadrÄ™ pirackich myĹ›liwcĂłw (Interceptor Squad)
       const pirateSquad = new Squad('pirate', 'fighter');
       SQUADS.push(pirateSquad);
 
       const startX = ship.pos.x + 2000;
       const startY = ship.pos.y;
 
-      // Spawn 5 myÄąâ€şliwcÄ‚Ĺ‚w w formacji
+      // Spawn 5 myĹ›liwcĂłw w formacji
       for (let i = 0; i < 5; i++) {
         const npc = makeNPCBase({ x: startX + Math.random() * 100, y: startY + Math.random() * 100 }, {
           hp: 80,
-          accel: 220, // WyÄąÄ˝sze przyspieszenie dla nowej fizyki
+          accel: 220, // WyĹĽsze przyspieszenie dla nowej fizyki
           maxSpeed: 450,
           turn: 6.0,
           radius: 18
@@ -6103,7 +6228,7 @@ window.AudioSys = AudioSys;
         npc.type = 'interceptor';
         npc.fighter = true;
         npc.color = '#ff5c7c'; // Czerwony z AI SPACE
-        npc.mission = true; // Misje uÄąÄ˝ywajĂ„â€¦ nowego AI; omijaj cywilny autopilot
+        npc.mission = true; // Misje uĹĽywajÄ… nowego AI; omijaj cywilny autopilot
         npc.gunCD = 0;
 
         // *** KLUCZOWA ZMIANA: Przypisanie nowego AI ***
@@ -6113,7 +6238,7 @@ window.AudioSys = AudioSys;
         pirateSquad.addUnit(npc);
       }
 
-      // 2. StwÄ‚Ĺ‚rz eskadrĂ„â„˘ sojuszniczĂ„â€¦ (jeÄąâ€şli chcesz testowaĂ„â€ˇ dogfight)
+      // 2. StwĂłrz eskadrÄ™ sojuszniczÄ… (jeĹ›li chcesz testowaÄ‡ dogfight)
       const allySquad = new Squad('player', 'fighter');
       SQUADS.push(allySquad);
 
@@ -6126,7 +6251,7 @@ window.AudioSys = AudioSys;
         npc.type = 'ally_fighter';
         npc.fighter = true;
         npc.color = '#7cff91'; // Zielony z AI SPACE
-        npc.mission = true; // WymuÄąâ€ş Äąâ€şcieÄąÄ˝kĂ„â„˘ mission dla runAdvancedFighterAI
+        npc.mission = true; // WymuĹ› Ĺ›cieĹĽkÄ™ mission dla runAdvancedFighterAI
         npc.ai = (dt) => { if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
 
         npcs.push(npc);
@@ -6154,7 +6279,7 @@ window.AudioSys = AudioSys;
         }
         window.mainScene3D = mainScene3D;
       }
-      // stacje Ă˘â‚¬â€ś wÄąâ€šasna warstwa 3D (ortho), bez world3D
+      // stacje â€“ wĹ‚asna warstwa 3D (ortho), bez world3D
       if (typeof window.initStations3D === 'function') {
         window.initStations3D(null, stations);
         planetScene3D = overlayScene;
@@ -6177,15 +6302,15 @@ window.AudioSys = AudioSys;
 
     // =============== Bullets & effects ===============
 
-    // const particles = []; // USUNIĂ„TE
+    // const particles = []; // USUNIETE
     const shockwaves = [];
     const MAX_PARTICLES = 8000;          // twardy sufit (dobry balans)
     const MAX_PARTICLES_DRAW = 4500;     // ile maks. rysujemy na ekranie
 
-    // === POCZĂ„â€žTEK NOWEGO KODU (Pula CzĂ„â€¦steczek) ===
+    // === POCZÄ„TEK NOWEGO KODU (Pula CzÄ…steczek) ===
     const particlePool = [];
     let nextParticleIndex = 0;
-    (function initParticlePool() { // SamowywoÄąâ€šujĂ„â€¦ca siĂ„â„˘ funkcja do zainicjowania puli
+    (function initParticlePool() { // SamowywoĹ‚ujÄ…ca siÄ™ funkcja do zainicjowania puli
       for (let i = 0; i < MAX_PARTICLES; i++) {
         particlePool.push({
           pos: { x: 0, y: 0 },
@@ -6207,13 +6332,13 @@ window.AudioSys = AudioSys;
           glowBlur: 0,
           outerWidthMul: 1,
           innerWidthMul: 1,
-          active: false // Flaga 'aktywnoÄąâ€şci' jest kluczowa
+          active: false // Flaga 'aktywnoĹ›ci' jest kluczowa
         });
       }
     })();
     // === KONIEC NOWEGO KODU ===
 
-    // Nowa tablica na efekty bÄąâ€šyskawic (sĂ„â€¦ rysowane liniami, nie sprite'ami)
+    // Nowa tablica na efekty bĹ‚yskawic (sÄ… rysowane liniami, nie sprite'ami)
     const lightningParticles = [];
 
     function spawnLightningSpark(pos, life, size, angle) {
@@ -6235,15 +6360,15 @@ window.AudioSys = AudioSys;
     }
 
     function pushParticleSafe(p) {
-      // Ta funkcja nie jest juÄąÄ˝ potrzebna, ale zostawiamy jĂ„â€¦ pustĂ„â€¦,
-      // na wypadek gdyby inne czĂ„â„˘Äąâ€şci kodu jĂ„â€¦ woÄąâ€šaÄąâ€šy (jak spawnLaserBeam).
-      // spawnParticle jest teraz gÄąâ€šÄ‚Ĺ‚wnĂ„â€¦ funkcjĂ„â€¦.
+      // Ta funkcja nie jest juĹĽ potrzebna, ale zostawiamy jÄ… pustÄ…,
+      // na wypadek gdyby inne czÄ™Ĺ›ci kodu jÄ… woĹ‚aĹ‚y (jak spawnLaserBeam).
+      // spawnParticle jest teraz gĹ‚ĂłwnÄ… funkcjÄ….
     }
 
     function spawnParticle(pos, vel, life, color, size, flash) {
-      const p = particlePool[nextParticleIndex]; // WeÄąĹź nastĂ„â„˘pnĂ„â€¦ czĂ„â€¦steczkĂ„â„˘ z puli
+      const p = particlePool[nextParticleIndex]; // WeĹş nastÄ™pnÄ… czÄ…steczkÄ™ z puli
 
-      // Ustaw jej wÄąâ€šaÄąâ€şciwoÄąâ€şci
+      // Ustaw jej wĹ‚aĹ›ciwoĹ›ci
       p.pos.x = pos.x;
       p.pos.y = pos.y;
       p.vel.x = vel.x;
@@ -6267,9 +6392,9 @@ window.AudioSys = AudioSys;
       p.glowBlur = 0;
       p.outerWidthMul = 1;
       p.innerWidthMul = 1;
-      p.active = true; // <-- AKTYWUJ CZĂ„â€žSTECZKĂ„
+      p.active = true; // <-- AKTYWUJ CZASTECZKE
 
-      // PrzesuÄąâ€ž indeks na nastĂ„â„˘pne wolne miejsce
+      // PrzesuĹ„ indeks na nastÄ™pne wolne miejsce
       nextParticleIndex = (nextParticleIndex + 1) % MAX_PARTICLES;
     }
 
@@ -6643,14 +6768,14 @@ window.AudioSys = AudioSys;
       spawnParticle(
         { x, y },         // Pozycja
         { x: 0, y: 0 },   // Brak ruchu
-        0.1,            // Bardzo krÄ‚Ĺ‚tki czas ÄąÄ˝ycia (0.1s)
-        '#AAFFAA',      // JaÄąâ€şniejszy Äąâ€şrodek
-        4 * scale,      // MaÄąâ€šy rozmiar (np. 4px)
-        true            // Flash (efekt Äąâ€şwiecenia)
+        0.1,            // Bardzo krĂłtki czas ĹĽycia (0.1s)
+        '#AAFFAA',      // JaĹ›niejszy Ĺ›rodek
+        4 * scale,      // MaĹ‚y rozmiar (np. 4px)
+        true            // Flash (efekt Ĺ›wiecenia)
       );
       spawnShockwave(x, y, {
         r: 2,               // Startuje od punktu
-        maxR: 14 * scale,   // RoÄąâ€şnie tylko do ~14 pikseli (bardzo maÄąâ€še)
+        maxR: 14 * scale,   // RoĹ›nie tylko do ~14 pikseli (bardzo maĹ‚e)
         w: 2,               // Cienka linia
         maxLife: 0.15,      // Bardzo szybki zanik
         color: 'rgba(124, 255, 124,'
@@ -6881,16 +7006,16 @@ window.AudioSys = AudioSys;
         0.15,
         '#fff5d6',
         7 * scale,
-        true            // Tryb flash (Äąâ€şwiecenie)
+        true            // Tryb flash (Ĺ›wiecenie)
       );
 
       // 2. Fala uderzeniowa (Shockwave)
       spawnShockwave(x, y, {
         r: 4 * scale,
-        maxR: 45 * scale, // Mniejszy zasiĂ„â„˘g fali (rakiety majĂ„â€¦ ~100+)
-        w: 3 * scale,     // CieÄąâ€žsza linia
+        maxR: 45 * scale, // Mniejszy zasiÄ™g fali (rakiety majÄ… ~100+)
+        w: 3 * scale,     // CieĹ„sza linia
         maxLife: 0.25,    // Szybszy zanik
-        color: 'rgba(255, 220, 180,' // Kolor fali (ciepÄąâ€šy biaÄąâ€šy/ÄąÄ˝Ä‚Ĺ‚Äąâ€šty)
+        color: 'rgba(255, 220, 180,' // Kolor fali (ciepĹ‚y biaĹ‚y/ĹĽĂłĹ‚ty)
       });
     }
 
@@ -7120,7 +7245,7 @@ window.AudioSys = AudioSys;
         if (content) {
           const section = document.createElement('div');
           section.className = 'hover-section';
-          section.textContent = 'ZakÄąâ€šadki';
+          section.textContent = 'ZakĹ‚adki';
           content.appendChild(section);
 
           const tags = document.createElement('div');
@@ -7140,7 +7265,7 @@ window.AudioSys = AudioSys;
           const lines = [
             { label: 'HP', value: `${Math.max(0, Math.round(target.hp ?? 0))}/${Math.max(0, Math.round(target.maxHp ?? target.hp ?? 0))}` },
             { label: 'Tarcza', value: formatShieldValue(target) },
-            { label: 'BroÄąâ€ž', value: formatWeaponName(target.weapon) }
+            { label: 'BroĹ„', value: formatWeaponName(target.weapon) }
           ];
           for (const line of lines) {
             const row = document.createElement('div');
@@ -7160,9 +7285,9 @@ window.AudioSys = AudioSys;
         if (content) {
           const lines = [];
           if (target.shield) {
-            lines.push({ label: 'OsÄąâ€šony', value: `${Math.max(0, Math.round(target.shield.val))}/${target.shield.max}` });
+            lines.push({ label: 'OsĹ‚ony', value: `${Math.max(0, Math.round(target.shield.val))}/${target.shield.max}` });
           }
-          lines.push({ label: 'KadÄąâ€šub', value: `${Math.max(0, Math.round(target.hp ?? 0))}/${Math.max(0, Math.round(target.maxHp ?? target.hp ?? 0))}` });
+          lines.push({ label: 'KadĹ‚ub', value: `${Math.max(0, Math.round(target.hp ?? 0))}/${Math.max(0, Math.round(target.maxHp ?? target.hp ?? 0))}` });
           lines.push({ label: 'Orbita', value: `${Math.round(target.orbitRadius)} u` });
           for (const line of lines) {
             const row = document.createElement('div');
@@ -7236,7 +7361,7 @@ window.AudioSys = AudioSys;
     }
 
     const INFRASTRUCTURE_BUILDINGS = [
-      { id: 'solar_array', name: 'Orbitalna Elektrownia SÄąâ€šoneczna', buildTime: 75, icon: 'solar', footprint: { w: 4, h: 4 } },
+      { id: 'solar_array', name: 'Orbitalna Elektrownia SĹ‚oneczna', buildTime: 75, icon: 'solar', footprint: { w: 4, h: 4 } },
       { id: 'dock_s', name: 'Dok Orbitalny (S)', buildTime: 55, icon: 'dock', footprint: { w: 1, h: 1 } },
       { id: 'dock_m', name: 'Dok Orbitalny (M)', buildTime: 75, icon: 'dock', footprint: { w: 2, h: 1 }, rotatable: true },
       { id: 'dock_l', name: 'Dok Orbitalny (L)', buildTime: 105, icon: 'dock', footprint: { w: 2, h: 2 } },
@@ -7248,7 +7373,7 @@ window.AudioSys = AudioSys;
       { id: 'shipyard_supercapital', name: 'Orbitalna Stocznia (SuperCapital)', buildTime: 210, icon: 'shipyard', tier: 'SC', footprint: { w: 3, h: 4 }, rotatable: true },
       { id: 'storage_metal', name: 'Magazyn Metali', buildTime: 60, icon: 'storage', label: 'M', color: '#60a5fa', footprint: { w: 4, h: 4 } },
       { id: 'storage_fuel', name: 'Magazyn Paliwa', buildTime: 70, icon: 'storage', label: 'F', color: '#f97316', footprint: { w: 4, h: 4 } },
-      { id: 'storage_gas', name: 'Magazyn GazÄ‚Ĺ‚w', buildTime: 65, icon: 'storage', label: 'G', color: '#14b8a6', footprint: { w: 4, h: 4 } },
+      { id: 'storage_gas', name: 'Magazyn GazĂłw', buildTime: 65, icon: 'storage', label: 'G', color: '#14b8a6', footprint: { w: 4, h: 4 } },
       { id: 'storage_plastics', name: 'Magazyn Tworzyw Sztucznych', buildTime: 85, icon: 'storage', label: 'P', color: '#a855f7', footprint: { w: 4, h: 4 } },
       { id: 'metal_harvester', name: 'Metal Harvester', buildTime: 95, icon: 'metal_harvester', footprint: { w: 4, h: 4 }, allowedPlanetTypes: ['rocky'] },
       { id: 'metal_refinery', name: 'Metal Refinery', buildTime: 125, icon: 'metal_refinery', footprint: { w: 4, h: 4 }, allowedPlanetTypes: ['rocky'] },
@@ -7340,7 +7465,7 @@ window.AudioSys = AudioSys;
       const squareSide = innerOrbitRadius * Math.SQRT2;
       const approximateCols = Math.floor(squareSide / INFRA_CELL_WORLD_STEP);
       let cols = Math.max(INFRA_MIN_GRID, Math.min(INFRA_MAX_GRID, approximateCols));
-      if (cols % 2 !== 0) cols += 1; // symetria wzglĂ„â„˘dem Äąâ€şrodka stacji
+      if (cols % 2 !== 0) cols += 1; // symetria wzglÄ™dem Ĺ›rodka stacji
       const rows = cols;
       return { cols, rows };
     }
@@ -7377,7 +7502,7 @@ window.AudioSys = AudioSys;
         cell.appendChild(progressBar);
         const status = document.createElement('div');
         status.className = 'infra-cell-status';
-        status.textContent = meta?.blocked ? 'RdzeÄąâ€ž stacji' : 'Puste';
+        status.textContent = meta?.blocked ? 'RdzeĹ„ stacji' : 'Puste';
         cell.appendChild(status);
         cell.addEventListener('dragenter', handleInfrastructureCellDragEnter);
         cell.addEventListener('dragover', handleInfrastructureCellDragOver);
@@ -7760,7 +7885,7 @@ window.AudioSys = AudioSys;
     function isBuildingAllowedOnStation(building, station) {
       if (!building) return { allowed: false, reason: 'Brak definicji budynku.' };
       if (building.requiresSolarSystem && !USE_SOLAR) {
-        return { allowed: false, reason: 'DostĂ„â„˘pne tylko w UkÄąâ€šadzie SÄąâ€šonecznym.' };
+        return { allowed: false, reason: 'DostÄ™pne tylko w UkĹ‚adzie SĹ‚onecznym.' };
       }
       if (Array.isArray(building.allowedPlanetTypes) && building.allowedPlanetTypes.length) {
         const allowed = building.allowedPlanetTypes.map(t => String(t).toLowerCase());
@@ -8407,7 +8532,7 @@ window.AudioSys = AudioSys;
           const meta = document.createElement('div');
           meta.className = 'infra-building-meta';
           const fp = buildingFootprint(building);
-          meta.textContent = `Czas budowy: ${building.buildTime}s Ă˘â‚¬Ë Rozmiar: ${fp.w}Ä‚â€”${fp.h}`;
+          meta.textContent = `Czas budowy: ${building.buildTime}s â€˘ Rozmiar: ${fp.w}Ă—${fp.h}`;
           item.appendChild(meta);
           item.addEventListener('dragstart', (ev) => {
             item.classList.add('dragging');
@@ -8499,7 +8624,7 @@ window.AudioSys = AudioSys;
 
       if (!state) {
         const p = document.createElement('p');
-        p.textContent = 'Brak aktywnej stacji. Wybierz stacjĂ„â„˘, aby rozpoczĂ„â€¦Ă„â€ˇ budowĂ„â„˘.';
+        p.textContent = 'Brak aktywnej stacji. Wybierz stacjÄ™, aby rozpoczÄ…Ä‡ budowÄ™.';
         info.appendChild(p);
         return;
       }
@@ -8509,10 +8634,10 @@ window.AudioSys = AudioSys;
 
       if (infrastructureBuilder.selectedCell == null) {
         const p = document.createElement('p');
-        p.textContent = 'PrzeciĂ„â€¦gnij budynek z listy na siatkĂ„â„˘ wokÄ‚Ĺ‚Äąâ€š stacji, aby rozpoczĂ„â€¦Ă„â€ˇ budowĂ„â„˘.';
+        p.textContent = 'PrzeciÄ…gnij budynek z listy na siatkÄ™ wokĂłĹ‚ stacji, aby rozpoczÄ…Ä‡ budowÄ™.';
         info.appendChild(p);
         const summary = document.createElement('p');
-        summary.textContent = `UkoÄąâ€žczone budynki: ${completed}/${totalUsed}.`;
+        summary.textContent = `UkoĹ„czone budynki: ${completed}/${totalUsed}.`;
         summary.style.fontSize = '12px';
         summary.style.color = '#94a9d6';
         info.appendChild(summary);
@@ -8523,7 +8648,7 @@ window.AudioSys = AudioSys;
       const meta = state.cellMeta?.[idx ?? 0];
       if (!meta) {
         const p = document.createElement('p');
-        p.textContent = 'Nie moÄąÄ˝na odczytaĂ„â€ˇ danych pola. OdÄąâ€şwieÄąÄ˝ interfejs.';
+        p.textContent = 'Nie moĹĽna odczytaÄ‡ danych pola. OdĹ›wieĹĽ interfejs.';
         info.appendChild(p);
         return;
       }
@@ -8534,10 +8659,10 @@ window.AudioSys = AudioSys;
       }
       if (meta.blocked && !cell) {
         const p = document.createElement('p');
-        p.textContent = 'RdzeÄąâ€ž stacji Ă˘â‚¬â€ť strefa serwisowa niedostĂ„â„˘pna dla infrastruktury.';
+        p.textContent = 'RdzeĹ„ stacji â€” strefa serwisowa niedostÄ™pna dla infrastruktury.';
         info.appendChild(p);
         const coords = document.createElement('p');
-        coords.textContent = `PoÄąâ€šoÄąÄ˝enie rdzenia: ĂŽâ€ťx ${Math.round(local?.x ?? 0)}, ĂŽâ€ťy ${Math.round(local?.y ?? 0)}.`;
+        coords.textContent = `PoĹ‚oĹĽenie rdzenia: Î”x ${Math.round(local?.x ?? 0)}, Î”y ${Math.round(local?.y ?? 0)}.`;
         coords.style.fontSize = '12px';
         coords.style.color = '#94a9d6';
         info.appendChild(coords);
@@ -8545,11 +8670,11 @@ window.AudioSys = AudioSys;
       }
       if (!cell) {
         const p = document.createElement('p');
-        p.textContent = 'Puste pole. UpuÄąâ€şĂ„â€ˇ budynek z listy po lewej, aby rozpoczĂ„â€¦Ă„â€ˇ konstrukcjĂ„â„˘.';
+        p.textContent = 'Puste pole. UpuĹ›Ä‡ budynek z listy po lewej, aby rozpoczÄ…Ä‡ konstrukcjÄ™.';
         info.appendChild(p);
         if (local) {
           const coords = document.createElement('p');
-          coords.textContent = `PoÄąâ€šoÄąÄ˝enie wzglĂ„â„˘dem centrum: ĂŽâ€ťx ${Math.round(local.x)}, ĂŽâ€ťy ${Math.round(local.y)}.`;
+          coords.textContent = `PoĹ‚oĹĽenie wzglÄ™dem centrum: Î”x ${Math.round(local.x)}, Î”y ${Math.round(local.y)}.`;
           coords.style.fontSize = '12px';
           coords.style.color = '#94a9d6';
           info.appendChild(coords);
@@ -8566,10 +8691,10 @@ window.AudioSys = AudioSys;
       const status = document.createElement('p');
       const progress = cell.status === 'completed' ? 1 : clamp(cell.progress ?? 0, 0, 1);
       if (cell.status === 'completed') {
-        status.textContent = 'Status: ZakoÄąâ€žczono budowĂ„â„˘.';
+        status.textContent = 'Status: ZakoĹ„czono budowÄ™.';
       } else {
         const remaining = Math.max(0, (cell.duration ?? 0) - (cell.elapsed ?? 0));
-        status.textContent = `Status: W budowie Ă˘â‚¬â€ť ${Math.round(progress * 100)}% (pozostaÄąâ€šo ${remaining.toFixed(1)}s).`;
+        status.textContent = `Status: W budowie â€” ${Math.round(progress * 100)}% (pozostaĹ‚o ${remaining.toFixed(1)}s).`;
       }
       info.appendChild(status);
 
@@ -8582,7 +8707,7 @@ window.AudioSys = AudioSys;
       if (cell.footprint) {
         const fp = cell.footprint;
         const footprint = document.createElement('p');
-        footprint.textContent = `ZajĂ„â„˘toÄąâ€şĂ„â€ˇ siatki: ${fp.w}Ä‚â€”${fp.h}`;
+        footprint.textContent = `ZajÄ™toĹ›Ä‡ siatki: ${fp.w}Ă—${fp.h}`;
         footprint.style.fontSize = '12px';
         footprint.style.color = '#94a9d6';
         info.appendChild(footprint);
@@ -8590,7 +8715,7 @@ window.AudioSys = AudioSys;
 
       if (local) {
         const coords = document.createElement('p');
-        coords.textContent = `PoÄąâ€šoÄąÄ˝enie wzglĂ„â„˘dem stacji: ĂŽâ€ťx ${Math.round(local.x)}, ĂŽâ€ťy ${Math.round(local.y)}.`;
+        coords.textContent = `PoĹ‚oĹĽenie wzglÄ™dem stacji: Î”x ${Math.round(local.x)}, Î”y ${Math.round(local.y)}.`;
         coords.style.fontSize = '12px';
         coords.style.color = '#94a9d6';
         info.appendChild(coords);
@@ -8599,7 +8724,7 @@ window.AudioSys = AudioSys;
       const progressWrap = document.createElement('div');
       progressWrap.className = 'infra-info-progress';
       const strong = document.createElement('strong');
-      strong.textContent = 'PostĂ„â„˘p';
+      strong.textContent = 'PostÄ™p';
       progressWrap.appendChild(strong);
       const bar = document.createElement('div');
       bar.className = 'infra-progress-bar';
@@ -8641,9 +8766,9 @@ window.AudioSys = AudioSys;
       const state = ensureInfrastructureState(station);
       const totalUsed = state.cells.filter(Boolean).length;
       const completed = state.cells.filter(cell => cell && cell.status === 'completed').length;
-      uiText('ZarzĂ„â€¦dzaj infrastrukturĂ„â€¦ w panelu Infrastructure obok.');
-      uiText(`Budowy ukoÄąâ€žczone: ${completed}/${totalUsed}.`);
-      uiText('PrzeciĂ„â€¦gnij budynek na siatkĂ„â„˘, aby rozpoczĂ„â€¦Ă„â€ˇ konstrukcjĂ„â„˘ lub kliknij pole, by zobaczyĂ„â€ˇ postĂ„â„˘p.');
+      uiText('ZarzÄ…dzaj infrastrukturÄ… w panelu Infrastructure obok.');
+      uiText(`Budowy ukoĹ„czone: ${completed}/${totalUsed}.`);
+      uiText('PrzeciÄ…gnij budynek na siatkÄ™, aby rozpoczÄ…Ä‡ konstrukcjÄ™ lub kliknij pole, by zobaczyÄ‡ postÄ™p.');
     }
 
     function updateInfrastructureEditorState(dt) {
@@ -8815,21 +8940,21 @@ window.AudioSys = AudioSys;
 
     function renderMechanicTab() {
       uiTitle('Mechanic');
-      uiText('ZarzĂ„â€¦dzaj hardpointami i uzbrojeniem w panelu obok.');
+      uiText('ZarzÄ…dzaj hardpointami i uzbrojeniem w panelu obok.');
     }
 
     function initMechanicUI() {
-      // Ta funkcja jest teraz uproszczona, poniewaÄąÄ˝ logika zostaÄąâ€ša przeniesiona 
-      // bezpoÄąâ€şrednio do buildMechanicPanel w gÄąâ€šÄ‚Ĺ‚wnym oknie stacji.
-      // Zachowujemy jĂ„â€¦ tylko dla kompatybilnoÄąâ€şci, jeÄąâ€şli coÄąâ€ş jĂ„â€¦ wywoÄąâ€šuje.
+      // Ta funkcja jest teraz uproszczona, poniewaĹĽ logika zostaĹ‚a przeniesiona 
+      // bezpoĹ›rednio do buildMechanicPanel w gĹ‚Ăłwnym oknie stacji.
+      // Zachowujemy jÄ… tylko dla kompatybilnoĹ›ci, jeĹ›li coĹ› jÄ… wywoĹ‚uje.
     }
 
     const HP_GROUP_META = {
-      [HP.MAIN]: { title: 'BroÄąâ€ž gÄąâ€šÄ‚Ĺ‚wna', css: 'hp-main' },
+      [HP.MAIN]: { title: 'BroĹ„ gĹ‚Ăłwna', css: 'hp-main' },
       [HP.MISSILE]: { title: 'Rakiety', css: 'hp-miss' },
-      [HP.AUX]: { title: 'BroÄąâ€ž dodatkowa', css: 'hp-aux' },
+      [HP.AUX]: { title: 'BroĹ„ dodatkowa', css: 'hp-aux' },
       [HP.HANGAR]: { title: 'Hangary', css: 'hp-hangar' },
-      [HP.SPECIAL]: { title: 'BroÄąâ€ž specjalna', css: 'hp-spec' },
+      [HP.SPECIAL]: { title: 'BroĹ„ specjalna', css: 'hp-spec' },
     };
     let mechanicWeaponFilter = 'all';
     let mechanicHardpointFilter = 'all';
@@ -8844,7 +8969,7 @@ window.AudioSys = AudioSys;
         const img = document.createElement('img');
         img.src = iconPath;
         img.loading = 'lazy';
-        img.alt = weapon?.name || 'BroÄąâ€ž';
+        img.alt = weapon?.name || 'Bron';
         wrap.appendChild(img);
         return wrap;
       }
@@ -8863,7 +8988,7 @@ window.AudioSys = AudioSys;
       if (weapon.cooldown != null) parts.push(`${weapon.cooldown}s cd`);
       if (weapon.ammo != null) parts.push(`${weapon.ammo} ammo`);
       if (weapon.energy != null) parts.push(`${weapon.energy}e`);
-      return parts.join(' Ă˘â‚¬Ë ');
+      return parts.join(' | ');
     }
 
     function applyWeaponToHardpoint(hp, weaponId) {
@@ -8913,7 +9038,7 @@ window.AudioSys = AudioSys;
       row.dataset.weaponId = weapon.id;
       row.dataset.weaponType = weapon.type;
 
-      // 1. MaÄąâ€ša ikona
+      // 1. MaĹ‚a ikona
       const iconWrap = document.createElement('div');
       const iconPath = WEAPON_ICON_PATHS[weapon.id];
       if (iconPath) {
@@ -8933,7 +9058,7 @@ window.AudioSys = AudioSys;
       nameEl.textContent = weapon.name;
       row.appendChild(nameEl);
 
-      // 3. Statystyki (Dmg/Cd) - skrÄ‚Ĺ‚cone w jednej linii
+      // 3. Statystyki (Dmg/Cd) - skrĂłcone w jednej linii
       const metaEl = document.createElement('div');
       metaEl.className = 'weapon-row-meta';
       let stats = '';
@@ -8944,7 +9069,7 @@ window.AudioSys = AudioSys;
       metaEl.textContent = stats;
       row.appendChild(metaEl);
 
-      // ObsÄąâ€šuga przeciĂ„â€¦gania (Drag & Drop)
+      // ObsĹ‚uga przeciÄ…gania (Drag & Drop)
       row.addEventListener('dragstart', (e) => {
         mechanicDragWeaponId = weapon.id;
         row.classList.add('dragging');
@@ -9002,14 +9127,14 @@ window.AudioSys = AudioSys;
       for (const type of Object.values(HP)) {
         if (!grouped[type].length) continue;
 
-        // NagÄąâ€šÄ‚Ĺ‚wek grupy (np. "MAIN") - teraz jako prosty tekst
+        // NagĹ‚Ăłwek grupy (np. "MAIN") - teraz jako prosty tekst
         const header = document.createElement('div');
         header.className = 'list-group-header';
         const meta = HP_GROUP_META[type];
         header.textContent = meta ? meta.title : type;
         root.appendChild(header);
 
-        // Sortowanie alfabetyczne (z ochronĂ„â€¦ przed brakujĂ„â€¦cymi nazwami)
+        // Sortowanie alfabetyczne (z ochronÄ… przed brakujÄ…cymi nazwami)
         grouped[type].sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
 
         // Generowanie wierszy
@@ -9048,7 +9173,7 @@ window.AudioSys = AudioSys;
       }
       row.appendChild(iconWrap);
 
-      // 2. Typ slotu (np. MAIN #1) - maÄąâ€ša etykieta
+      // 2. Typ slotu (np. MAIN #1) - maĹ‚a etykieta
       const label = document.createElement('div');
       label.className = 'hp-row-label';
       label.textContent = `${hp.type.toUpperCase()} #${idx + 1}`;
@@ -9069,8 +9194,8 @@ window.AudioSys = AudioSys;
       // 4. Przycisk "X" do odczepiania
       const clearBtn = document.createElement('button');
       clearBtn.className = 'hp-row-clear';
-      clearBtn.textContent = 'Ä‚â€”';
-      clearBtn.title = "Odczep broÄąâ€ž";
+      clearBtn.textContent = 'Ă—';
+      clearBtn.title = "Odczep broĹ„";
       clearBtn.disabled = !hp.mount;
       clearBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -9078,7 +9203,7 @@ window.AudioSys = AudioSys;
       });
       row.appendChild(clearBtn);
 
-      // PodpiĂ„â„˘cie upuszczania (Drop)
+      // PodpiÄ™cie upuszczania (Drop)
       attachSlotDnD(row, hp); // Ta funkcja pomocnicza zostaje bez zmian w kodzie
       return row;
     }
@@ -9100,7 +9225,7 @@ window.AudioSys = AudioSys;
         const slots = listByType[type];
         if (!slots || slots.length === 0) continue;
 
-        // NagÄąâ€šÄ‚Ĺ‚wek grupy (np. "MAIN (4)")
+        // NagĹ‚Ăłwek grupy (np. "MAIN (4)")
         const meta = HP_GROUP_META[type];
         const header = document.createElement('div');
         header.className = 'list-group-header';
@@ -9108,7 +9233,7 @@ window.AudioSys = AudioSys;
         header.style.marginBottom = '4px';
         root.appendChild(header);
 
-        // Generowanie wierszy slotÄ‚Ĺ‚w
+        // Generowanie wierszy slotĂłw
         slots.forEach((hp, idx) => {
           root.appendChild(createHpRow(hp, idx));
         });
@@ -9116,7 +9241,7 @@ window.AudioSys = AudioSys;
 
       if (source.length === 0) {
         const empty = document.createElement('div');
-        empty.textContent = filter === 'all' ? 'Brak slotÄ‚Ĺ‚w na uzbrojenie.' : 'Brak slotÄ‚Ĺ‚w dla wybranego filtra.';
+        empty.textContent = filter === 'all' ? 'Brak slotĂłw na uzbrojenie.' : 'Brak slotĂłw dla wybranego filtra.';
         empty.style.padding = '10px';
         root.appendChild(empty);
       }
@@ -9132,11 +9257,11 @@ window.AudioSys = AudioSys;
       }
     }
 
-    // --- ZakÄąâ€šadki ---
+    // --- ZakĹ‚adki ---
     const PLAYER = { credits: 1200, cargo: {}, shipId: 'starter' };
     const BLUEPRINTS = {
       upgrades: [
-        { id: 'rail_cooler', name: 'ChÄąâ€šodzenie raila', cost: 600, apply() { rail.heatCap *= 1.25; rail.coolRate *= 1.15; } },
+        { id: 'rail_cooler', name: 'ChĹ‚odzenie raila', cost: 600, apply() { rail.heatCap *= 1.25; rail.coolRate *= 1.15; } },
         {
           id: 'boost_core', name: 'Wzmocniony boost', cost: 700, apply() {
             boost.extraThrustMul *= 1.15;
@@ -9145,7 +9270,7 @@ window.AudioSys = AudioSys;
           }
         },
         {
-          id: 'agility', name: 'ZwrotnoÄąâ€şĂ„â€ˇ +', cost: 500, apply() {
+          id: 'agility', name: 'ZwrotnoĹ›Ä‡ +', cost: 500, apply() {
             ship.angularDamping *= 0.9;
             ship.engines.torqueLeft.maxThrust = Math.round(ship.engines.torqueLeft.maxThrust * 1.12);
             ship.engines.torqueRight.maxThrust = Math.round(ship.engines.torqueRight.maxThrust * 1.12);
@@ -9167,7 +9292,7 @@ window.AudioSys = AudioSys;
       { id: 'infrastructure', label: 'Infrastruktura' },
     ];
 
-    const MARKET = { // ceny przykÄąâ€šadowe
+    const MARKET = { // ceny przykĹ‚adowe
       buy: { ruda: 22, paliwo: 15, zywnosc: 8 },
       sell: { ruda: 18, paliwo: 12, zywnosc: 6 }
     };
@@ -9331,7 +9456,7 @@ window.AudioSys = AudioSys;
 
       const resDesc = document.createElement('p');
       resDesc.className = 'card-desc';
-      resDesc.textContent = 'Aktualny stan surowcÄ‚Ĺ‚w na orbicie planety.';
+      resDesc.textContent = 'Aktualny stan surowcĂłw na orbicie planety.';
       resourcesCard.appendChild(resDesc);
 
       const resMeta = document.createElement('div');
@@ -9381,9 +9506,9 @@ window.AudioSys = AudioSys;
           badge: 'Rynek',
           description: 'Handluj surowcami z dokami stacji.',
           meta: [
-            buyPrice ? `Kupno: ${buyPrice} cr` : 'Kupno: niedostĂ„â„˘pne',
-            sellPrice ? `SprzedaÄąÄ˝: ${sellPrice} cr` : 'SprzedaÄąÄ˝: niedostĂ„â„˘pna',
-            `Äąadownia: ${PLAYER.cargo[item] || 0}`
+            buyPrice ? `Kupno: ${buyPrice} cr` : 'Kupno: niedostepne',
+            sellPrice ? `Sprzedaz: ${sellPrice} cr` : 'Sprzedaz: niedostepna',
+            `Ĺadownia: ${PLAYER.cargo[item] || 0}`
           ],
           dataset: { tradeCard: 'market', tradeItem: item },
           actions: [
@@ -9410,16 +9535,16 @@ window.AudioSys = AudioSys;
       pane.appendChild(createStationCard({
         title: 'Najemnik: piracka stacja',
         badge: 'Misja',
-        description: 'Odbierz kontrakt na zniszczenie pirackiej placÄ‚Ĺ‚wki w pobliskim sektorze.',
-        meta: ['Nagrody za eliminacjĂ„â„˘ wrogÄ‚Ĺ‚w'],
+        description: 'Odbierz kontrakt na zniszczenie pirackiej placĂłwki w pobliskim sektorze.',
+        meta: ['Nagrody za eliminacjÄ™ wrogĂłw'],
         actions: [{ label: 'Przyjmij', onClick: startMercenaryMission }]
       }));
       pane.appendChild(createStationCard({
         title: 'Wojna o terytorium',
         badge: 'Misja',
-        description: 'DoÄąâ€šĂ„â€¦cz do siÄąâ€š sojuszniczych i odbij punkt kontrolny z rĂ„â€¦k piratÄ‚Ĺ‚w.',
+        description: 'DoĹ‚Ä…cz do siĹ‚ sojuszniczych i odbij punkt kontrolny z rÄ…k piratĂłw.',
         meta: ['Aktywuje wrogie fale w sektorze'],
-        actions: [{ label: 'DoÄąâ€šĂ„â€¦cz', onClick: startTerritoryWarMission }]
+        actions: [{ label: 'DoĹ‚Ä…cz', onClick: startTerritoryWarMission }]
       }));
     }
 
@@ -9429,10 +9554,10 @@ window.AudioSys = AudioSys;
       pane.innerHTML = '';
 
       const repairCard = createStationCard({
-        title: 'Naprawy kadÄąâ€šuba',
+        title: 'Naprawy kadĹ‚uba',
         badge: 'Serwis',
-        description: 'PrzywrÄ‚Ĺ‚Ă„â€ˇ kadÄąâ€šub statku do peÄąâ€šnej sprawnoÄąâ€şci.',
-        meta: ['Status: 0% uszkodzeÄąâ€ž'],
+        description: 'PrzywrĂłÄ‡ kadĹ‚ub statku do peĹ‚nej sprawnoĹ›ci.',
+        meta: ['Status: 0% uszkodzeĹ„'],
         actions: [{ label: 'Napraw', dataset: { action: 'repair' }, onClick: handleRepair }]
       });
       pane.appendChild(repairCard);
@@ -9441,11 +9566,11 @@ window.AudioSys = AudioSys;
         const card = createStationCard({
           title: shipBP.name,
           badge: 'Hangar',
-          description: 'ZamÄ‚Ĺ‚w nowĂ„â€¦ ramĂ„â„˘ statku i przeÄąâ€šaduj systemy.',
+          description: 'ZamĂłw nowÄ… ramÄ™ statku i przeĹ‚aduj systemy.',
           meta: [
             `Koszt: ${shipBP.cost} cr`,
-            `KadÄąâ€šub: ${Math.round(shipBP.stats.hp * 100)}%`,
-            `PrĂ„â„˘dkoÄąâ€şĂ„â€ˇ: ${Math.round(shipBP.stats.speed * 100)}%`
+            `KadĹ‚ub: ${Math.round(shipBP.stats.hp * 100)}%`,
+            `PrÄ™dkoĹ›Ä‡: ${Math.round(shipBP.stats.speed * 100)}%`
           ],
           actions: [{
             label: 'Kup',
@@ -9461,7 +9586,7 @@ window.AudioSys = AudioSys;
       const pane = stationOverlayDom.panels.mechanic;
       if (!pane) return;
 
-      // Wstrzykujemy strukturĂ„â„˘ HTML warsztatu bezpoÄąâ€şrednio do zakÄąâ€šadki
+      // Wstrzykujemy strukturÄ™ HTML warsztatu bezpoĹ›rednio do zakĹ‚adki
       pane.innerHTML = `
     <div class="mechanic-toolbar">
       <label>Rama statku:</label>
@@ -9472,16 +9597,16 @@ window.AudioSys = AudioSys;
         <div class="mechanic-section">
           <div class="mechanic-section-head">
             <div>
-              <p class="mechanic-kicker">DostĂ„â„˘pne czĂ„â„˘Äąâ€şci</p>
+              <p class="mechanic-kicker">DostÄ™pne czÄ™Ĺ›ci</p>
               <h4>Magazyn broni</h4>
-              <p class="mechanic-sub">PrzeciĂ„â€¦gnij broÄąâ€ž na slot hardpointu, aby jĂ„â€¦ zamontowaĂ„â€ˇ.</p>
+              <p class="mechanic-sub">PrzeciÄ…gnij broĹ„ na slot hardpointu, aby jÄ… zamontowaÄ‡.</p>
             </div>
           </div>
           <div class="mechanic-tabs" id="weapon-filter-tabs">
             <button class="mechanic-tab-btn" data-filter="all">Wszystkie</button>
-            <button class="mechanic-tab-btn" data-filter="main">BroÄąâ€ž gÄąâ€šÄ‚Ĺ‚wna</button>
+            <button class="mechanic-tab-btn" data-filter="main">BroĹ„ gĹ‚Ăłwna</button>
             <button class="mechanic-tab-btn" data-filter="missile">Rakiety</button>
-            <button class="mechanic-tab-btn" data-filter="aux">BroÄąâ€ž dodatkowa</button>
+            <button class="mechanic-tab-btn" data-filter="aux">BroĹ„ dodatkowa</button>
           </div>
           <div id="mechanic-available" class="weapon-pool"></div>
         </div>
@@ -9492,14 +9617,14 @@ window.AudioSys = AudioSys;
             <div>
               <p class="mechanic-kicker">Uzbrojenie statku</p>
               <h4>Hardpointy</h4>
-              <p class="mechanic-sub">UpuÄąâ€şĂ„â€ˇ czĂ„â„˘Äąâ€şĂ„â€ˇ na slot po prawej, aby zamieniĂ„â€ˇ uzbrojenie.</p>
+              <p class="mechanic-sub">UpuĹ›Ä‡ czÄ™Ĺ›Ä‡ na slot po prawej, aby zamieniÄ‡ uzbrojenie.</p>
             </div>
           </div>
           <div class="mechanic-tabs" id="hp-filter-tabs">
             <button class="mechanic-tab-btn" data-filter="all">Wszystkie</button>
-            <button class="mechanic-tab-btn" data-filter="main">BroÄąâ€ž gÄąâ€šÄ‚Ĺ‚wna</button>
+            <button class="mechanic-tab-btn" data-filter="main">BroĹ„ gĹ‚Ăłwna</button>
             <button class="mechanic-tab-btn" data-filter="missile">Rakiety</button>
-            <button class="mechanic-tab-btn" data-filter="aux">BroÄąâ€ž dodatkowa</button>
+            <button class="mechanic-tab-btn" data-filter="aux">BroĹ„ dodatkowa</button>
           </div>
           <div id="hp-groups" class="hp-groups mechanic-grid"></div>
         </div>
@@ -9507,7 +9632,7 @@ window.AudioSys = AudioSys;
     </div>
   `;
 
-      // Inicjalizacja listy wyboru statku (poniewaÄąÄ˝ wÄąâ€šaÄąâ€şnie stworzyliÄąâ€şmy element select)
+      // Inicjalizacja listy wyboru statku (poniewaĹĽ wĹ‚aĹ›nie stworzyliĹ›my element select)
       const sel = document.getElementById('ship-frame-select');
       if (sel) {
         sel.innerHTML = Object.values(SHIPS).map(s =>
@@ -9529,7 +9654,7 @@ window.AudioSys = AudioSys;
       initMechanicFilter('weapon-filter-tabs', () => mechanicWeaponFilter, (val) => { mechanicWeaponFilter = val; });
       initMechanicFilter('hp-filter-tabs', () => mechanicHardpointFilter, (val) => { mechanicHardpointFilter = val; });
 
-      // WymuÄąâ€ş renderowanie zawartoÄąâ€şci (ikony broni i sloty)
+      // WymuĹ› renderowanie zawartoĹ›ci (ikony broni i sloty)
       renderMechanic();
     }
 
@@ -9540,10 +9665,10 @@ window.AudioSys = AudioSys;
       pane.appendChild(createStationCard({
         title: 'Infrastruktura stacji',
         badge: 'Budowa',
-        description: 'PrzeciĂ„â€¦gaj budynki na siatkĂ„â„˘ infrastruktury, aby rozwijaĂ„â€ˇ stacjĂ„â„˘.',
-        meta: ['SkrÄ‚Ĺ‚t klawiatury: [6]'],
+        description: 'PrzeciÄ…gaj budynki na siatkÄ™ infrastruktury, aby rozwijaÄ‡ stacjÄ™.',
+        meta: ['SkrĂłt klawiatury: [6]'],
         actions: [{
-          label: 'OtwÄ‚Ĺ‚rz budowĂ„â„˘',
+          label: 'OtwĂłrz budowÄ™',
           onClick: () => {
             stationUI.tab = 'infrastructure';
             setInfrastructureUIVisible(true);
@@ -9575,7 +9700,7 @@ window.AudioSys = AudioSys;
         if (Number.isFinite(station?.x) && Number.isFinite(station?.y)) {
           parts.push(`Pozycja: ${Math.round(station.x)}, ${Math.round(station.y)}`);
         }
-        stationOverlayDom.subtitle.textContent = parts.join(' Ă˘â‚¬Ë ') || 'PrzestrzeÄąâ€ž cywilna';
+        stationOverlayDom.subtitle.textContent = parts.join(' â€˘ ') || 'PrzestrzeĹ„ cywilna';
       }
       if (stationOverlayDom.credits) {
         stationOverlayDom.credits.textContent = `${Math.round(PLAYER.credits)} CR`;
@@ -9638,7 +9763,7 @@ window.AudioSys = AudioSys;
         const meta = card.querySelector('[data-card-meta="true"]');
         if (meta) {
           const metaLines = [...meta.querySelectorAll('div')];
-          if (metaLines[2]) metaLines[2].textContent = `Äąadownia: ${PLAYER.cargo[item] || 0}`;
+          if (metaLines[2]) metaLines[2].textContent = `Ĺadownia: ${PLAYER.cargo[item] || 0}`;
         }
         card.querySelectorAll('button[data-trade-type]').forEach(btn => {
           const price = Number(btn.dataset.price) || 0;
@@ -9663,7 +9788,7 @@ window.AudioSys = AudioSys;
       const repairCard = cards.find(card => card.querySelector('button[data-action="repair"]'));
       if (repairCard) {
         const meta = repairCard.querySelector('[data-card-meta="true"] div');
-        if (meta) meta.textContent = `Status: ${damagePct}% uszkodzeÄąâ€ž`;
+        if (meta) meta.textContent = `Status: ${damagePct}% uszkodzeĹ„`;
         const btn = repairCard.querySelector('button[data-action="repair"]');
         if (btn) btn.disabled = damagePct <= 0 || PLAYER.credits < repairCost;
       }
@@ -9694,7 +9819,7 @@ window.AudioSys = AudioSys;
           PLAYER.credits -= price;
           PLAYER.cargo[item] = (PLAYER.cargo[item] || 0) + 1;
         } else {
-          toast('Za maÄąâ€šo kredytÄ‚Ĺ‚w');
+          toast('Za maĹ‚o kredytĂłw');
         }
       } else if (type === 'sell') {
         if ((PLAYER.cargo[item] || 0) > 0) {
@@ -9712,7 +9837,7 @@ window.AudioSys = AudioSys;
         upgrade.apply();
         toast('Zainstalowano: ' + upgrade.name);
       } else {
-        toast('Za maÄąâ€šo kredytÄ‚Ĺ‚w');
+        toast('Za maĹ‚o kredytĂłw');
       }
       updateStationOverlay(stationUI.tab, stationUI.station);
     }
@@ -9725,7 +9850,7 @@ window.AudioSys = AudioSys;
         applyShipStats(shipBP.stats);
         toast('Zakupiono: ' + shipBP.name);
       } else {
-        toast('Za maÄąâ€šo kredytÄ‚Ĺ‚w');
+        toast('Za maĹ‚o kredytĂłw');
       }
       updateStationOverlay(stationUI.tab, stationUI.station);
     }
@@ -9734,15 +9859,15 @@ window.AudioSys = AudioSys;
       const damageFrac = 1 - (ship.hull.val / ship.hull.max);
       const repairCost = Math.ceil(damageFrac * 600);
       if (damageFrac <= 0) {
-        toast('KadÄąâ€šub jest w peÄąâ€šni sprawny');
+        toast('KadĹ‚ub jest w peĹ‚ni sprawny');
         return;
       }
       if (PLAYER.credits >= repairCost) {
         PLAYER.credits -= repairCost;
         ship.hull.val = ship.hull.max;
-        toast('Naprawiono kadÄąâ€šub.');
+        toast('Naprawiono kadĹ‚ub.');
       } else {
-        toast('Za maÄąâ€šo kredytÄ‚Ĺ‚w');
+        toast('Za maĹ‚o kredytĂłw');
       }
       updateStationOverlay(stationUI.tab, stationUI.station);
     }
@@ -9755,7 +9880,7 @@ window.AudioSys = AudioSys;
     initInfrastructureUI();
     autopopulateDefaultInfrastructure();
     function startMercenaryMission() {
-      if (mercMission) { toast('Misja juÄąÄ˝ aktywna. WciÄąâ€şnij J aby zobaczyĂ„â€ˇ dziennik.'); return; }
+      if (mercMission) { toast('Misja juĹĽ aktywna. WciĹ›nij J aby zobaczyÄ‡ dziennik.'); return; }
 
       const beltTarget = (() => {
         if (!ASTEROID_BELT) return null;
@@ -9823,39 +9948,39 @@ window.AudioSys = AudioSys;
         // --- SWARM control ---
         swarm: {
           active: false,
-          maxAlive: 200,     // <- zwiĂ„â„˘kszony limit
+          maxAlive: 200,     // <- zwiÄ™kszony limit
           timer: 2,
-          baseInterval: 1.0, // skraca siĂ„â„˘ wraz z utratĂ„â€¦ HP stacji
+          baseInterval: 1.0, // skraca siÄ™ wraz z utratÄ… HP stacji
           queue: []
         }
       };
 
       mercMission.guards = [];
 
-      // 1. Eskadra InterceptorÄ‚Ĺ‚w (6 sztuk)
-      // UÄąÄ˝ywamy nowej funkcji: tworzy eskadrĂ„â„˘, ktÄ‚Ĺ‚ra orbituje (mode='guard')
+      // 1. Eskadra InterceptorĂłw (6 sztuk)
+      // UĹĽywamy nowej funkcji: tworzy eskadrÄ™, ktĂłra orbituje (mode='guard')
       spawnPirateSquad(station, 'interceptor', 6, 'guard', {
         radius: station.r + 320,
         speed: 0.45
       });
 
       // 2. Fregaty (2 sztuki)
-      // DuÄąÄ˝e statki spawnujemy osobno, ÄąÄ˝eby nie lataÄąâ€šy "na ogonie" lidera jak myÄąâ€şliwce,
-      // tylko dostojnie krĂ„â€¦ÄąÄ˝yÄąâ€šy po dalszej orbicie.
-      const frigateTypes = ['frigate_pd', 'frigate_laser']; // RÄ‚Ĺ‚ÄąÄ˝ne typy dla urozmaicenia
+      // DuĹĽe statki spawnujemy osobno, ĹĽeby nie lataĹ‚y "na ogonie" lidera jak myĹ›liwce,
+      // tylko dostojnie krÄ…ĹĽyĹ‚y po dalszej orbicie.
+      const frigateTypes = ['frigate_pd', 'frigate_laser']; // RĂłĹĽne typy dla urozmaicenia
 
       for (let i = 0; i < 2; i++) {
         const type = frigateTypes[i % frigateTypes.length];
-        const npc = spawnPirate(type, station); // UÄąÄ˝ywamy gÄąâ€šÄ‚Ĺ‚wnego spawnera
+        const npc = spawnPirate(type, station); // UĹĽywamy gĹ‚Ăłwnego spawnera
 
         // Konfiguracja orbitowania (Guard)
         npc.state = 'guard';
         npc.guardStation = station;
         npc.guardOrbitRadius = station.r + 550; // Dalsza orbita
-        npc.guardOrbitSpeed = (i === 0 ? 1 : -1) * 0.15; // LecĂ„â€¦ w przeciwnych kierunkach
-        npc.guardPhase = i * Math.PI; // StartujĂ„â€¦ po przeciwnych stronach (0 i 180 stopni)
+        npc.guardOrbitSpeed = (i === 0 ? 1 : -1) * 0.15; // LecÄ… w przeciwnych kierunkach
+        npc.guardPhase = i * Math.PI; // StartujÄ… po przeciwnych stronach (0 i 180 stopni)
 
-        // Pozycja startowa na orbicie (ÄąÄ˝eby nie dolatywaÄąâ€šy z Äąâ€şrodka)
+        // Pozycja startowa na orbicie (ĹĽeby nie dolatywaĹ‚y z Ĺ›rodka)
         npc.x = station.x + Math.cos(npc.guardPhase) * npc.guardOrbitRadius;
         npc.y = station.y + Math.sin(npc.guardPhase) * npc.guardOrbitRadius;
         npc.angle = npc.guardPhase + (npc.guardOrbitSpeed > 0 ? Math.PI / 2 : -Math.PI / 2);
@@ -9879,7 +10004,7 @@ window.AudioSys = AudioSys;
         });
       }
 
-      toast('Misja najemnik rozpoczĂ„â„˘ta. WciÄąâ€şnij M aby otworzyĂ„â€ˇ mapĂ„â„˘ Ă˘â‚¬â€ť cel oznaczony X. Dziennik: J.');
+      toast('Misja najemnik rozpoczÄ™ta. WciĹ›nij M aby otworzyÄ‡ mapÄ™ â€” cel oznaczony X. Dziennik: J.');
     }
 
     function spawnWeaponPlatform(station, config = {}) {
@@ -9984,24 +10109,24 @@ window.AudioSys = AudioSys;
       }
       mercMission = null;
     }
-    function startTerritoryWarMission() { toast('DoÄąâ€šĂ„â€¦czono do wojny terytorialnej'); }
+    function startTerritoryWarMission() { toast('DoĹ‚Ä…czono do wojny terytorialnej'); }
 
     function renderOptions() {
       if (!OPTIONS_OPEN) return;
       hudBeginPanel();
       uiTitle('Opcje');
 
-      // --- NOWE: WybÄ‚Ĺ‚r jakoÄąâ€şci tÄąâ€ša ---
+      // --- NOWE: WybĂłr jakoĹ›ci tĹ‚a ---
       uiQualitySelector();
       // ------------------------------
       slider('VFX: temperatura (K)', 1000, 20000, 500, OPTIONS.vfx, 'colorTempK');
       slider('VFX: bloom', 0.2, 2.5, 0.05, OPTIONS.vfx, 'bloomGain');
-      slider('VFX: silnik (gÄąâ€šoÄąâ€şnoÄąâ€şĂ„â€ˇ)', 0, 1.5, 0.05, OPTIONS.vfx, 'engineGain');
+      slider('VFX: silnik (gĹ‚oĹ›noĹ›Ä‡)', 0, 1.5, 0.05, OPTIONS.vfx, 'engineGain');
       slider('Audio: master', 0, 1, 0.05, OPTIONS.audio, 'master');
       slider('Audio: SFX', 0, 1, 0.05, OPTIONS.audio, 'sfx');
       slider('Audio: muzyka', 0, 1, 0.05, OPTIONS.audio, 'music');
-      slider('Mysz: czuÄąâ€šoÄąâ€şĂ„â€ˇ', 0.3, 2.0, 0.05, OPTIONS.controls, 'mouseSensitivity');
-      // brak opcji odwrÄ‚Ĺ‚cenia osi zgodnie z proÄąâ€şbĂ„â€¦
+      slider('Mysz: czuĹ‚oĹ›Ä‡', 0.3, 2.0, 0.05, OPTIONS.controls, 'mouseSensitivity');
+      // brak opcji odwrĂłcenia osi zgodnie z proĹ›bÄ…
       hudEndPanel();
     }
 
@@ -10012,11 +10137,11 @@ window.AudioSys = AudioSys;
       hudBeginPanel(x, y, w, h);
       uiTitle('Dziennik misji [J]');
       if (MISSIONS.active.length === 0) {
-        uiText('Brak przyjĂ„â„˘tych misji.');
+        uiText('Brak przyjÄ™tych misji.');
       } else {
         for (const m of MISSIONS.active) {
-          const status = m.status === 'active' ? 'AKTYWNA' : 'ZAKOÄąCZONA';
-          uiText(`${m.title} Ă˘â‚¬â€ť ${status}`);
+          const status = m.status === 'active' ? 'AKTYWNA' : 'ZAKOĹCZONA';
+          uiText(`${m.title} ? ${status}`);
         }
       }
       hudEndPanel();
@@ -10054,7 +10179,7 @@ window.AudioSys = AudioSys;
     // =============== Input ===============
     const input = { main: 0, leftSide: 0, rightSide: 0, torque: 0 };
     const enginePower = { target: 0, current: 0 };
-    const ENGINE_TARGET_RATE = 2.4; // 0..1 na sekundĂ„â„˘ (szybka regulacja)
+    const ENGINE_TARGET_RATE = 2.4; // 0..1 na sekundÄ™ (szybka regulacja)
     const ENGINE_RESPONSE_RATE = 1.6; // jak szybko aktualna moc dogania target
     const keys = {};
     let showMap = false;
@@ -10092,6 +10217,9 @@ window.AudioSys = AudioSys;
     function togglePause() {
       setPaused(!PAUSED);
     }
+
+    window.__setGamePaused = setPaused;
+    window.__isGamePaused = () => PAUSED;
 
     window.addEventListener('keydown', e => {
       if (e.code !== 'Escape') return;
@@ -10231,7 +10359,7 @@ window.AudioSys = AudioSys;
         togglePlanetRadarVisibility();
       }
       if (k === 'z') {
-        if (!(Game.player.weapons?.[HP.HANGAR]?.length)) { toast('Brak dostĂ„â„˘pnych hangarÄ‚Ĺ‚w.'); return; }
+        if (!(Game.player.weapons?.[HP.HANGAR]?.length)) { toast('Brak dostÄ™pnych hangarĂłw.'); return; }
         if (SQUAD.order === 'idle' || SQUAD.list.length === 0) {
           // start + ESKORTA
           SQUAD.list = [];
@@ -10242,18 +10370,18 @@ window.AudioSys = AudioSys;
           }
           SQUAD.order = 'escort';
           SQUAD.targets = [];
-          toast('MyÄąâ€şliwce: ESKORTA');
+          toast('MyĹ›liwce: ESKORTA');
         } else if (SQUAD.order === 'escort') {
           SQUAD.targets = pickSquadTargets();
           SQUAD.order = 'attack';
-          toast(SQUAD.targets.length ? 'MyÄąâ€şliwce: ATAK' : 'MyÄąâ€şliwce: ATAK (brak oznaczeÄąâ€ž Ă˘â‚¬â€ť wybiorĂ„â€¦ najbliÄąÄ˝szych)');
+          toast(SQUAD.targets.length ? 'MyĹ›liwce: ATAK' : 'MyĹ›liwce: ATAK (brak oznaczeĹ„ â€” wybiorÄ… najbliĹĽszych)');
         } else if (SQUAD.order === 'attack') {
           SQUAD.order = 'return';
-          toast('MyÄąâ€şliwce: POWRÄ‚â€śT');
+          toast('MyĹ›liwce: POWRĂ“T');
         } else if (SQUAD.order === 'return') {
           SQUAD.order = 'escort';
           SQUAD.targets = [];
-          toast('MyÄąâ€şliwce: ESKORTA');
+          toast('MyĹ›liwce: ESKORTA');
         }
       }
       if (k === 't') {
@@ -10379,7 +10507,7 @@ window.AudioSys = AudioSys;
 
       enginePower.target = target;
       
-      // Szybka reakcja paska (6.0), ÄąÄ˝eby wizualnie pasowaÄąâ€šo do nowej fizyki
+      // Szybka reakcja paska (6.0), ĹĽeby wizualnie pasowaĹ‚o do nowej fizyki
       enginePower.current = approachValue(enginePower.current, enginePower.target, 6.0 * dt);
       input.main = enginePower.current;
     }
@@ -10388,7 +10516,7 @@ window.AudioSys = AudioSys;
       const ag = ship.agility;
       if (!ag) return;
 
-      // 1. Zmniejszanie cooldownÄ‚Ĺ‚w
+      // 1. Zmniejszanie cooldownĂłw
       if (ag.cooldowns.dash > 0) ag.cooldowns.dash -= dt;
       if (ag.cooldowns.strafe > 0) ag.cooldowns.strafe -= dt;
       if (ag.cooldowns.arc > 0) ag.cooldowns.arc -= dt;
@@ -10407,11 +10535,11 @@ window.AudioSys = AudioSys;
         currentPivot = { x: mouseWorld.x, y: mouseWorld.y, isEntity: false, ref: null };
       }
 
-      // 2. JeÄąâ€şli trwa aktywny manewr Äąâ€šuku (Arc Maneuver) - ZARZĂ„â€žDZAJ LOTEM
+      // 2. JeĹ›li trwa aktywny manewr Ĺ‚uku (Arc Maneuver) - ZARZÄ„DZAJ LOTEM
       if (ag.maneuver) {
         const m = ag.maneuver;
 
-        // Przerwij manewr, jeÄąâ€şli zakotwiczyliÄąâ€şmy go na statku, a ten wybuchÄąâ€š
+        // Przerwij manewr, jeĹ›li zakotwiczyliĹ›my go na statku, a ten wybuchĹ‚
         if (m.isEntity && m.target && m.target.dead) {
           ag.maneuver = null; 
           return;
@@ -10421,10 +10549,10 @@ window.AudioSys = AudioSys;
         let t = m.elapsed / m.duration;
         if (t >= 1) {
           t = 1;
-          ag.maneuver = null; // ZakoÄąâ€žcz manewr
+          ag.maneuver = null; // ZakoĹ„cz manewr
         }
 
-        // PÄąâ€šynne przyspieszanie i zwalnianie (Ease In/Out)
+        // PĹ‚ynne przyspieszanie i zwalnianie (Ease In/Out)
         const easeT = t * t * (3 - 2 * t);
         const currentAngle = m.startAngle + m.totalAngle * easeT;
 
@@ -10435,7 +10563,7 @@ window.AudioSys = AudioSys;
         const targetX = pivotX + Math.cos(currentAngle) * m.radius;
         const targetY = pivotY + Math.sin(currentAngle) * m.radius;
 
-        // Kinematyczne przejĂ„â„˘cie pĂ„â„˘du - teraz statek porusza siĂ„â„˘ dostojniej
+        // Kinematyczne przejÄ™cie pÄ™du - teraz statek porusza siÄ™ dostojniej
         ship.vel.x = (targetX - ship.pos.x) / dt;
         ship.vel.y = (targetY - ship.pos.y) / dt;
 
@@ -10448,14 +10576,14 @@ window.AudioSys = AudioSys;
         return;
       }
 
-      // 3. Äąadowanie umiejĂ„â„˘tnoÄąâ€şci Äąâ€šuku (A / D)
+      // 3. Ladowanie umiejetnosci luku (A / D)
       if ((keys['a'] || keys['d']) && ag.cooldowns.arc <= 0 && currentPivot) {
         ag.arcDir = keys['d'] ? 1 : -1;
 
-        // ZWOLNIONE ÄąADOWANIE: zajmie ok. 1.25s, ÄąÄ˝eby zaÄąâ€šadowaĂ„â€ˇ maksa
+        // ZWOLNIONE LADOWANIE: zajmie ok. 1.25s, zeby zaladowac maksa
         const chargeRate = Math.PI * 0.8; 
 
-        // LIMIT 180 STOPNI (Math.PI to dokÄąâ€šadnie pÄ‚Ĺ‚Äąâ€š okrĂ„â„˘gu)
+        // LIMIT 180 STOPNI (Math.PI to dokĹ‚adnie pĂłĹ‚ okrÄ™gu)
         ag.arcCharge = Math.min(Math.PI, ag.arcCharge + chargeRate * dt);
         ag.lastPivot = currentPivot; 
       } else if (ag.arcCharge > 0) {
@@ -10477,7 +10605,7 @@ window.AudioSys = AudioSys;
               totalAngle: ag.arcCharge * ag.arcDir,
               radius: radius,
               elapsed: 0,
-              // ZWOLNIONY FIZYCZNIE LOT (peÄąâ€šne 180 stopni potrwa ~1.8 sekundy)
+              // ZWOLNIONY FIZYCZNIE LOT (peĹ‚ne 180 stopni potrwa ~1.8 sekundy)
               duration: Math.max(0.4, Math.abs(ag.arcCharge) / (Math.PI * 0.55))
             };
 
@@ -10525,8 +10653,8 @@ window.AudioSys = AudioSys;
       scanWaves.push(wave);
       scanArrows.length = 0;
       // Merge of branches:
-      // 1) codex/add-various-npc-types-and-groups Ă˘â€ â€™ prefer enemies that have weapons
-      // 2) main Ă˘â€ â€™ only highlight those within HIGHLIGHT_RANGE
+      // 1) codex/add-various-npc-types-and-groups â†’ prefer enemies that have weapons
+      // 2) main â†’ only highlight those within HIGHLIGHT_RANGE
       const inRange = (n) => Math.hypot(n.x - ship.pos.x, n.y - ship.pos.y) <= HIGHLIGHT_RANGE;
       highlightedEnemies = npcs.filter(n => isPirateScanTarget(n) && inRange(n));
       highlightTimer = HIGHLIGHT_TIME;
@@ -10982,7 +11110,7 @@ window.AudioSys = AudioSys;
     }
 
     // =============== Fighters ===============
-    const FIGHTER_ORBIT_RADIUS = 200;  // byÄąâ€šy zbyt blisko
+    const FIGHTER_ORBIT_RADIUS = 200;  // byĹ‚y zbyt blisko
     const FIGHTER_ORBIT_SPEED = 1.8;
     const FIGHTER_ATTACK_RANGE = 1000;
     const FIGHTERS_PER_LAUNCH = 10;
@@ -10993,7 +11121,7 @@ window.AudioSys = AudioSys;
     const FIGHTER_ESCORT_POSITION_GAIN = 3.0;
     const FIGHTER_ESCORT_FOLLOW_GAIN = 7.5;
 
-    // Bliska eskorta - lokalne offsety wzglĂ„â„˘dem kadÄąâ€šuba (w pikselach)
+    // Bliska eskorta - lokalne offsety wzglÄ™dem kadĹ‚uba (w pikselach)
     const FIGHTER_FORMATION = [
       { x: -150, y: -120 }, { x: 150, y: -120 },
       { x: -190, y: -70 }, { x: 190, y: -70 },
@@ -11011,23 +11139,23 @@ window.AudioSys = AudioSys;
     };
     window.SQUAD = SQUAD;
     function pickSquadTargets() {
-      // Zwraca wszystkich ÄąÄ˝ywych wrogÄ‚Ĺ‚w (nie-friendly)
+      // Zwraca wszystkich ĹĽywych wrogĂłw (nie-friendly)
       return npcs.filter(n => !n.friendly && !n.dead);
     }
     window.pickSquadTargets = pickSquadTargets;
     window.spawnFighter = function () {
-      // 1. SprawdÄąĹź czy statek i hangar istniejĂ„â€¦
+      // 1. SprawdĹş czy statek i hangar istniejÄ…
       if (!window.ship) return;
 
       const hasHangar = Game.player.weapons && Game.player.weapons.hangar && Game.player.weapons.hangar.length > 0;
       if (!hasHangar) {
-        if (typeof toast === 'function') toast('Brak moduÄąâ€šu hangaru!');
+        if (typeof toast === 'function') toast('Brak moduĹ‚u hangaru!');
         return;
       }
 
-      // 2. Definicja 2 HangarÄ‚Ĺ‚w (Lewy i Prawy)
+      // 2. Definicja 2 HangarĂłw (Lewy i Prawy)
       const halfW = (ship.w || 60) * 0.5;
-      const halfH = (ship.h || 120) * 0.1; // Lekko przesuniĂ„â„˘te do tyÄąâ€šu wzglĂ„â„˘dem Äąâ€şrodka
+      const halfH = (ship.h || 120) * 0.1; // Lekko przesuniÄ™te do tyĹ‚u wzglÄ™dem Ĺ›rodka
 
       const hangarSlots = [
         { x: -halfW, y: halfH, side: -1 }, // Lewa burta
@@ -11036,10 +11164,10 @@ window.AudioSys = AudioSys;
 
       const createdFighters = [];
 
-      // 3. PĂ„TLA: Generuj oba myÄąâ€şliwce natychmiast
+      // 3. PETLA: Generuj oba mysliwce natychmiast
       for (const slot of hangarSlots) {
 
-        // Obliczanie pozycji w Äąâ€şwiecie (Rotacja)
+        // Obliczanie pozycji w Ĺ›wiecie (Rotacja)
         const c = Math.cos(ship.angle);
         const s = Math.sin(ship.angle);
 
@@ -11061,8 +11189,8 @@ window.AudioSys = AudioSys;
         f.color = '#7cff91';
 
         // Fizyka Wyrzutni (Wyrzut na boki)
-        const launchSpeed = 180; // TrochĂ„â„˘ mocniejszy wyrzut
-        // Wektor boczny (prostopadÄąâ€šy do kadÄąâ€šuba)
+        const launchSpeed = 180; // TrochÄ™ mocniejszy wyrzut
+        // Wektor boczny (prostopadĹ‚y do kadĹ‚uba)
         const sideDirX = c;
         const sideDirY = s;
 
@@ -11075,11 +11203,11 @@ window.AudioSys = AudioSys;
         f.msl = 'AF'; f.mslAmmo = 4;
         f.gunCD = 0.5;
 
-        // ZarzĂ„â€¦dzanie eskadrĂ„â€¦
+        // ZarzÄ…dzanie eskadrÄ…
         if (!window.SQUAD) window.SQUAD = { list: [], order: 'idle', targets: [] };
 
-        // WAÄąÂ»NE: Pobieramy aktualnĂ„â€¦ dÄąâ€šugoÄąâ€şĂ„â€ˇ listy dla KAÄąÂ»DEGO myÄąâ€şliwca z osobna,
-        // ÄąÄ˝eby zajĂ„â„˘Äąâ€šy rÄ‚Ĺ‚ÄąÄ˝ne miejsca w formacji
+        // WAĹ»NE: Pobieramy aktualnÄ… dĹ‚ugoĹ›Ä‡ listy dla KAĹ»DEGO myĹ›liwca z osobna,
+        // ĹĽeby zajÄ™Ĺ‚y rĂłĹĽne miejsca w formacji
         const idx = window.SQUAD.list.length;
         f.formIndex = idx;
 
@@ -11161,7 +11289,7 @@ window.AudioSys = AudioSys;
         mercMission.swarm.queue = formationQueue;
         return;
       }
-      // Fallback jeÄąâ€şli nie da siĂ„â„˘ zbudowaĂ„â€ˇ formacji
+      // Fallback jeĹ›li nie da siÄ™ zbudowaÄ‡ formacji
       const types = ['fighter_squad', 'interceptor', 'frigate_pd'];
       mercMission.swarm.queue = [];
       for (let i = 0; i < 5; i++) {
@@ -11211,7 +11339,7 @@ window.AudioSys = AudioSys;
     }
 
 
-    // =============== Rail (2 lufy: serie AĂ˘â€ â€™B, AĂ˘â€ â€™B) ===============
+    // =============== Rail (2 lufy: serie Aâ†’B, Aâ†’B) ===============
     const RAIL_SPEED = 2600, RAIL_PEN = 3, RAIL_DAMAGE = 60;
     const ARMATA_SPLASH_RADIUS = 140;
     const ARMATA_SPLASH_FALLOFF_MIN = 0.2;
@@ -11724,7 +11852,7 @@ window.AudioSys = AudioSys;
       const width = ship.w;
       const npcsInRange = npcs.filter(npc => !npc.dead && Math.hypot(npc.x - start.x, npc.y - start.y) < length + npc.radius);
       let hits = 0;
-      const HIT_CAP = 80; // wystarczajĂ„â€¦co duÄąÄ˝o, by czuĂ„â€ˇ Ă˘â‚¬ĹľmiotÄąâ€šĂ„â„˘", ale bez zgonu CPU
+      const HIT_CAP = 80; // wystarczajÄ…co duĹĽo, by czuÄ‡ â€žmiotĹ‚Ä™", ale bez zgonu CPU
       for (const npc of npcsInRange) {
         if (hits >= HIT_CAP) break;
         const vx = npc.x - start.x, vy = npc.y - start.y;
@@ -11967,7 +12095,7 @@ window.AudioSys = AudioSys;
         b.life -= dt;
         b.age = (b.age || 0) + dt;
 
-        // --- RUCH I EFEKTY WIZUALNE POCISKÄ‚â€śW ---
+        // --- RUCH I EFEKTY WIZUALNE POCISKĂ“W ---
         if (b.type === 'plasma' || b.type === 'rocket') {
            const trailVel = { x: -b.vx * 0.02 + (Math.random() - 0.5) * 10, y: -b.vy * 0.02 + (Math.random() - 0.5) * 10 };
            spawnParticle({ x: b.x + (Math.random() - 0.5) * 3, y: b.y + (Math.random() - 0.5) * 3 }, trailVel, 0.28, '#8cff8c', 1.0, false);
@@ -11994,7 +12122,7 @@ window.AudioSys = AudioSys;
 
         if (b.life <= 0) { bullets.splice(i, 1); continue; }
 
-        // --- GÄąÄ‚â€śWNA PĂ„TLA KOLIZJI ---
+        // --- GLOWNA PETLA KOLIZJI ---
         let hitNPC = null;
         let didHitShield = false; 
         
@@ -12034,29 +12162,29 @@ window.AudioSys = AudioSys;
             const rx = (w / 2) * shieldScale;
             const ry = (h / 2) * shieldScale;
 
-            // === FIX: POWRÄ‚â€śT DO STANDARDOWEGO KĂ„â€žTA ===
-            // Usuwamy spriteRotation, bo debugger pokazaÄąâ€š, ÄąÄ˝e sam npc.angle pasuje do grafiki.
+            // === FIX: POWRĂ“T DO STANDARDOWEGO KÄ„TA ===
+            // Usuwamy spriteRotation, bo debugger pokazaĹ‚, ĹĽe sam npc.angle pasuje do grafiki.
             const effectiveAngle = npc.angle;
 
             const dx = b.x - npc.x;
             const dy = b.y - npc.y;
             
-            // ObrÄ‚Ĺ‚t punktu wzglĂ„â„˘dem Äąâ€şrodka statku (Local Space)
-            // UÄąÄ˝ywamy macierzy odwrÄ‚Ĺ‚conej dla rotacji 2D o kĂ„â€¦t 'effectiveAngle'
+            // ObrĂłt punktu wzglÄ™dem Ĺ›rodka statku (Local Space)
+            // UĹĽywamy macierzy odwrĂłconej dla rotacji 2D o kÄ…t 'effectiveAngle'
             const cos = Math.cos(effectiveAngle);
             const sin = Math.sin(effectiveAngle);
             const localX = dx * cos + dy * sin;
             const localY = -dx * sin + dy * cos;
             
-            // PromieÄąâ€ž tarczy pod kĂ„â€¦tem uderzenia
+            // PromieĹ„ tarczy pod kÄ…tem uderzenia
             const impactAngle = Math.atan2(localY, localX);
             const rBase = (rx * ry) / Math.sqrt((ry * Math.cos(impactAngle)) ** 2 + (rx * Math.sin(impactAngle)) ** 2);
             
-            // Sprawdzenie czy punkt jest wewnĂ„â€¦trz elipsy
-            // Dystans do kwadratu w ukÄąâ€šadzie lokalnym
+            // Sprawdzenie czy punkt jest wewnÄ…trz elipsy
+            // Dystans do kwadratu w ukĹ‚adzie lokalnym
             const distSq = localX * localX + localY * localY;
             
-            // Hitbox tarczy + promieÄąâ€ž pocisku
+            // Hitbox tarczy + promieĹ„ pocisku
             const hitThreshold = rBase + b.r; 
 
             if (distSq <= hitThreshold * hitThreshold) {
@@ -12064,7 +12192,7 @@ window.AudioSys = AudioSys;
               didHitShield = true; 
             }
           } else {
-            // Brak tarczy -> zwykÄąâ€ša kolizja koÄąâ€šowa
+            // Brak tarczy -> zwykĹ‚a kolizja koĹ‚owa
             const dx = b.x - npc.x;
             const dy = b.y - npc.y;
             if ((dx*dx + dy*dy) <= (npc.radius + b.r)**2) {
@@ -12080,24 +12208,24 @@ window.AudioSys = AudioSys;
           const npcDamage = Number.isFinite(b.damage) ? b.damage : 0;
           
           // === FAILSAFE ===
-          // JeÄąâ€şli tarcza jest aktywna, ale z jakiegoÄąâ€ş powodu matematyka elipsy zawiodÄąâ€ša (np. lag, tunelowanie),
-          // a pocisk trafiÄąâ€š w fizyczny heks w Äąâ€şrodku -> WYMUSZAMY trafienie w tarczĂ„â„˘.
+          // JeĹ›li tarcza jest aktywna, ale z jakiegoĹ› powodu matematyka elipsy zawiodĹ‚a (np. lag, tunelowanie),
+          // a pocisk trafiĹ‚ w fizyczny heks w Ĺ›rodku -> WYMUSZAMY trafienie w tarczÄ™.
           const shieldActive = hitNPC.shield && hitNPC.shield.val > 0;
           
-          // Czy trafiono w fizyczny kadÄąâ€šub?
+          // Czy trafiono w fizyczny kadĹ‚ub?
           let hexHit = false;
           if (hitNPC.hexGrid) {
-             // Sprawdzamy kolizjĂ„â„˘ z heksem, ale na razie bez zadawania obraÄąÄ˝eÄąâ€ž (damage=0),
-             // ÄąÄ˝eby nie zraniĂ„â€ˇ statku pod tarczĂ„â€¦.
+             // Sprawdzamy kolizjÄ™ z heksem, ale na razie bez zadawania obraĹĽeĹ„ (damage=0),
+             // ĹĽeby nie zraniÄ‡ statku pod tarczÄ….
              hexHit = DestructorSystem.applyImpact(hitNPC, b.x, b.y, 0, { x: 0, y: 0 });
           } else {
-             // Dla maÄąâ€šych statkÄ‚Ĺ‚w bez heksÄ‚Ĺ‚w, uznajemy ÄąÄ˝e trafienie w ogÄ‚Ĺ‚le (isHit) to trafienie w kadÄąâ€šub
+             // Dla maĹ‚ych statkĂłw bez heksĂłw, uznajemy ĹĽe trafienie w ogĂłle (isHit) to trafienie w kadĹ‚ub
              hexHit = true;
           }
 
-          // RozstrzygniĂ„â„˘cie: TARCZA CZY KADÄąUB?
+          // Rozstrzygniecie: TARCZA CZY KADLUB?
           if (shieldActive && (didHitShield || hexHit)) {
-             // JeÄąâ€şli tarcza dziaÄąâ€ša ORAZ (trafiono w elipsĂ„â„˘ LUB trafiono w kadÄąâ€šub) -> TARCZA BLOKUJE
+             // JeĹ›li tarcza dziaĹ‚a ORAZ (trafiono w elipsÄ™ LUB trafiono w kadĹ‚ub) -> TARCZA BLOKUJE
              
              registerShieldImpact(hitNPC, b.x, b.y, npcDamage);
              if (window.AudioSys) AudioSys.playSound('shieldHit');
@@ -12107,14 +12235,14 @@ window.AudioSys = AudioSys;
              hitNPC.shield.val -= absorbed;
              hitNPC.shield.regenTimer = hitNPC.shield.regenDelay || 3.0;
              
-             // ZATRZYMAJ I USUÄą POCISK
+             // ZATRZYMAJ I USUN POCISK
              bullets.splice(i, 1);
              continue; 
 
           } else if (!shieldActive && hexHit) {
-             // Tarcza nie dziaÄąâ€ša, trafiono w kadÄąâ€šub -> OBRAÄąÂ»ENIA
+             // Tarcza nie dziaĹ‚a, trafiono w kadĹ‚ub -> OBRAĹ»ENIA
              
-             // PonÄ‚Ĺ‚w sprawdzenie heksa, tym razem z prawdziwym DMG (ÄąÄ˝eby odpadÄąâ€š kawaÄąâ€šek)
+             // PonĂłw sprawdzenie heksa, tym razem z prawdziwym DMG (ĹĽeby odpadĹ‚ kawaĹ‚ek)
              if (hitNPC.hexGrid) {
                 DestructorSystem.applyImpact(hitNPC, b.x, b.y, npcDamage, { x: b.vx, y: b.vy });
              }
@@ -12135,7 +12263,7 @@ window.AudioSys = AudioSys;
              }
              continue;
           } else {
-             // Pocisk minĂ„â€¦Äąâ€š wszystko (np. dziura we wraku, albo minĂ„â€¦Äąâ€š tarczĂ„â„˘ gdy byÄąâ€ša wyÄąâ€šĂ„â€¦czona)
+             // Pocisk minÄ…Ĺ‚ wszystko (np. dziura we wraku, albo minÄ…Ĺ‚ tarczÄ™ gdy byĹ‚a wyĹ‚Ä…czona)
              hitNPC = null;
              continue;
           }
@@ -12186,7 +12314,11 @@ window.AudioSys = AudioSys;
     function npcStep(dt) {
       const DESPAWN_RADIUS_SQ = NPC_DESPAWN_RADIUS * NPC_DESPAWN_RADIUS;
       const frameNorm = dt / BASE_FRAME_DT;
+      const layoutChanged = pollNpcEditorLayoutCache(dt);
       for (const npc of npcs) {
+        if (layoutChanged || npc.__editorLayoutVersion !== npcHardpointRuntime.version) {
+          applyEditorLayoutToNpc(npc);
+        }
         if (npc.hitFlash) npc.hitFlash = Math.max(0, npc.hitFlash - dt);
         updateShieldFx(npc, dt);
 
@@ -12198,7 +12330,7 @@ window.AudioSys = AudioSys;
           }
         }
 
-        // Despawn logic (poza misjĂ„â€¦)
+        // Despawn logic (poza misjÄ…)
         if (!npc.mission) {
           const dx = npc.x - ship.pos.x;
           const dy = npc.y - ship.pos.y;
@@ -12268,15 +12400,15 @@ window.AudioSys = AudioSys;
           npc.x += (npc.vx || 0) * dt;
           npc.y += (npc.vy || 0) * dt;
 
-          // --- FIZYKA PĂ„DU (FRICTION) ---
-          // UÄąÄ˝ywamy friction z szablonu (np. 0.995 dla Destroyera - pÄąâ€šynie dÄąâ€šugo)
-          // lub domyÄąâ€şlnego 0.92 dla maÄąâ€šych/lekkich obiektÄ‚Ĺ‚w, ÄąÄ˝eby nie lataÄąâ€šy jak mydÄąâ€šo.
+          // --- FIZYKA PEDU (FRICTION) ---
+          // UĹĽywamy friction z szablonu (np. 0.995 dla Destroyera - pĹ‚ynie dĹ‚ugo)
+          // lub domyĹ›lnego 0.92 dla maĹ‚ych/lekkich obiektĂłw, ĹĽeby nie lataĹ‚y jak mydĹ‚o.
           const friction = npc.friction || 1.0;
 
           npc.vx *= friction;
           npc.vy *= friction;
 
-          // 4. ObrÄ‚Ĺ‚t (obrÄ‚Ĺ‚t z limitem przyspieszenia, jak "wciÄąâ€şniĂ„â„˘cie A/D")
+          // 4. ObrĂłt (obrĂłt z limitem przyspieszenia, jak "wciĹ›niÄ™cie A/D")
           npcRotationStep(npc, dt, frameNorm);
           continue;
         }
@@ -12415,7 +12547,7 @@ window.AudioSys = AudioSys;
       const distToPlayer = Math.hypot(ship.pos.x - st.x, ship.pos.y - st.y);
       const zoneId = zoneState.current?.id;
 
-      // --- ZMIANA: UsuniĂ„â„˘to enterPirateOuterOrbit (nie resetujemy juÄąÄ˝ formacji starym kodem) ---
+      // --- ZMIANA: UsuniÄ™to enterPirateOuterOrbit (nie resetujemy juĹĽ formacji starym kodem) ---
 
       if (zoneId === 'pirate_inner') {
         enterPirateInnerOrbit();
@@ -12426,8 +12558,8 @@ window.AudioSys = AudioSys;
         triggerMercAggro(zoneId === 'pirate_inner' ? 'player_inner_orbit' : 'player_inside_zone');
       }
 
-      // --- ZMIANA: UsuniĂ„â„˘to updatePirateGuardBehavior ---
-      // To naprawia konflikt sterownikÄ‚Ĺ‚w. Teraz tylko runAdvancedFighterAI steruje ruchem.
+      // --- ZMIANA: UsuniÄ™to updatePirateGuardBehavior ---
+      // To naprawia konflikt sterownikĂłw. Teraz tylko runAdvancedFighterAI steruje ruchem.
 
       // --- Platformy Obronne ---
       PirateSim.time = (PirateSim.time || 0) + dt;
@@ -12506,19 +12638,19 @@ window.AudioSys = AudioSys;
 
       if (mercMission.alertStage !== 'engage') return;
 
-      // --- SWARM (Fale wrogÄ‚Ĺ‚w) ---
+      // --- SWARM (Fale wrogĂłw) ---
       const swarm = mercMission.swarm;
       if (!swarm) return;
       if (!swarm.active) return;
 
-      // Liczba ÄąÄ˝ywych piratÄ‚Ĺ‚w
+      // Liczba ĹĽywych piratĂłw
       const alive = npcs.reduce((a, n) => a + (n.mission && !n.friendly && !n.dead ? 1 : 0), 0);
 
       swarm.timer -= dt;
 
-      // JeÄąâ€şli maÄąâ€šo wrogÄ‚Ĺ‚w i upÄąâ€šynĂ„â€¦Äąâ€š czas -> spawnuj
+      // JeĹ›li maĹ‚o wrogĂłw i upĹ‚ynÄ…Ĺ‚ czas -> spawnuj
       if (swarm.timer <= 0 && alive < swarm.maxAlive) {
-        // Reset timera (dÄąâ€šuÄąÄ˝szy odstĂ„â„˘p po spawnie fali)
+        // Reset timera (dĹ‚uĹĽszy odstÄ™p po spawnie fali)
         swarm.timer = 8.0;
 
         // Pobierz typ z kolejki
@@ -12531,49 +12663,49 @@ window.AudioSys = AudioSys;
           ? Math.atan2(ship.pos.y - spawnPos.y, ship.pos.x - spawnPos.x)
           : Math.atan2(ship.pos.y - st.y, ship.pos.x - st.x);
 
-        // 1. MYÄąĹˇLIWCE: UÄąÄ˝ywamy spawnPirateSquad w trybie 'attack'
-        // Tworzy eskadrĂ„â„˘ 7 interceptorÄ‚Ĺ‚w, ktÄ‚Ĺ‚re od razu lecĂ„â€¦ na gracza
+        // 1. MYĹšLIWCE: UĹĽywamy spawnPirateSquad w trybie 'attack'
+        // Tworzy eskadrÄ™ 7 interceptorĂłw, ktĂłre od razu lecÄ… na gracza
         if (kind === 'fighter' || kind === 'interceptor' || kind === 'fighter_squad') {
           spawnPirateSquad(st, 'interceptor', 7, 'attack');
         }
-        // 2. DUÄąÂ»E STATKI: Spawnujemy pojedynczo przez spawnPirate
+        // 2. DUĹ»E STATKI: Spawnujemy pojedynczo przez spawnPirate
         else {
           const npc = spawnPirate(kind, st);
 
-          // JeÄąâ€şli w kolejce byÄąâ€ša zdefiniowana pozycja (np. dla formacji capitali)
+          // JeĹ›li w kolejce byĹ‚a zdefiniowana pozycja (np. dla formacji capitali)
           if (spawnPos) {
             npc.x = spawnPos.x; npc.y = spawnPos.y;
             npc.formationSlot = { x: descriptor.offset || 0, y: 0 };
             npc.angle = angleToPlayer;
 
-            // KLUCZOWE: Nadaj pĂ„â„˘d poczĂ„â€¦tkowy, ÄąÄ˝eby nie staÄąâ€šy w miejscu przy spawnie
+            // KLUCZOWE: Nadaj pÄ™d poczÄ…tkowy, ĹĽeby nie staĹ‚y w miejscu przy spawnie
             npc.vx += Math.cos(angleToPlayer) * 80;
             npc.vy += Math.sin(angleToPlayer) * 80;
           }
 
-          // WaÄąÄ˝ne: Ustaw stan na atak, ÄąÄ˝eby nie weszÄąâ€šy w tryb Guard/Orbit
+          // WaĹĽne: Ustaw stan na atak, ĹĽeby nie weszĹ‚y w tryb Guard/Orbit
           npc.state = 'engage_formation';
           npc.guardStation = null;
 
-          // Reset celÄ‚Ĺ‚w dla AI (niech aiPickBestTarget wybierze gracza lub jego myÄąâ€şliwce)
+          // Reset celĂłw dla AI (niech aiPickBestTarget wybierze gracza lub jego myĹ›liwce)
           npc.forceTarget = null;
           npc.target = null;
         }
 
-        // JeÄąâ€şli kolejka pusta, odnÄ‚Ĺ‚w jĂ„â€¦
+        // JeĹ›li kolejka pusta, odnĂłw jÄ…
         if (swarm.queue && swarm.queue.length === 0) resetSwarmQueue();
       }
     }
-    // =============== Warp (jak wczeÄąâ€şniej) ===============
+    // =============== Warp (jak wczeĹ›niej) ===============
     const warp = {
       state: 'idle', // idle | charging | active
       charge: 0, chargeTime: 0.8,
-      orientTolerance: Math.PI / 30, // 6 stopni - to nas blokowaÄąâ€šo!
-      speed: 5000, // PrĂ„â„˘dkoÄąâ€şĂ„â€ˇ przelotowa
+      orientTolerance: Math.PI / 30, // 6 stopni - to nas blokowaĹ‚o!
+      speed: 5000, // PrÄ™dkoĹ›Ä‡ przelotowa
       fuelMax: 60, fuel: 60, consumeRate: 1.0, regenRate: 5,
       dir: { x: 0, y: 0 },
-      turnRate: Math.PI / 5, // maksymalna prĂ„â„˘dkoÄąâ€şĂ„â€ˇ skrĂ„â„˘tu w rad/s podczas warpa
-      alignRate: Math.PI / 2.5, // szybkoÄąâ€şĂ„â€ˇ zgrywania kadÄąâ€šuba do kierunku lotu
+      turnRate: Math.PI / 5, // maksymalna prÄ™dkoĹ›Ä‡ skrÄ™tu w rad/s podczas warpa
+      alignRate: Math.PI / 2.5, // szybkoĹ›Ä‡ zgrywania kadĹ‚uba do kierunku lotu
       entryProgress: 0,
       entryDuration: 0.9,
       entryBaseSpeed: 0,
@@ -12587,7 +12719,7 @@ window.AudioSys = AudioSys;
       },
       isBusy() { return this.state !== 'idle'; }
     };
-    // WAÄąÂ»NE: Upubliczniamy warp, ÄąÄ˝eby planet3d.assets.js (gwiazdy) go widziaÄąâ€šy!
+    // WAĹ»NE: Upubliczniamy warp, ĹĽeby planet3d.assets.js (gwiazdy) go widziaĹ‚y!
     window.warp = warp;
 
     function exitWarp() {
@@ -12596,12 +12728,12 @@ window.AudioSys = AudioSys;
 
       warp.entryProgress = 0;
 
-      // TO JEST NAJWAÄąÂ»NIEJSZE:
+      // TO JEST NAJWAĹ»NIEJSZE:
       // Ustawiamy timer na czas trwania efektu hamowania (np. 0.8 sekundy)
       warpBrakeTimer = 0.8;
 
-      // Zachowujemy ostatni kierunek warpa, aby efekt hamowania wiedziaÄąâ€š, w ktÄ‚Ĺ‚rĂ„â€¦ stronĂ„â„˘ rysowaĂ„â€ˇ kreski
-      // (JeÄąâ€şli warp.dir siĂ„â„˘ zeruje gdzieÄąâ€ş indziej, to tu go "zamraÄąÄ˝amy" dla efektu)
+      // Zachowujemy ostatni kierunek warpa, aby efekt hamowania wiedziaĹ‚, w ktĂłrÄ… stronÄ™ rysowaÄ‡ kreski
+      // (JeĹ›li warp.dir siÄ™ zeruje gdzieĹ› indziej, to tu go "zamraĹĽamy" dla efektu)
       if (!warp.lastDir) warp.lastDir = { x: warp.dir.x, y: warp.dir.y };
       warp.lastDir.x = warp.dir.x;
       warp.lastDir.y = warp.dir.y;
@@ -12671,10 +12803,10 @@ window.AudioSys = AudioSys;
       }
     }
 
-    function engageWarp(dirToMouse) { // dirToMouse ignorujemy, bierzemy dziÄ‚Ĺ‚b statku
+    function engageWarp(dirToMouse) { // dirToMouse ignorujemy, bierzemy dziĂłb statku
       
-      // FIX: Pobieramy wektor z AKTUALNEGO kĂ„â€¦ta statku
-      // W tym silniku 0 stopni to gÄ‚Ĺ‚ra (0, -1), obrÄ‚Ĺ‚t zgodnie z zegarem
+      // FIX: Pobieramy wektor z AKTUALNEGO kÄ…ta statku
+      // W tym silniku 0 stopni to gĂłra (0, -1), obrĂłt zgodnie z zegarem
       const angle = ship.angle;
       const dirX = Math.cos(angle);
       const dirY = Math.sin(angle);
@@ -12684,7 +12816,7 @@ window.AudioSys = AudioSys;
       
     
       
-      ship.angVel = 0; // Tylko stabilizujemy obrÄ‚Ĺ‚t
+      ship.angVel = 0; // Tylko stabilizujemy obrĂłt
       
       warp.state = 'active';
       warp.entryProgress = 0;
@@ -13030,20 +13162,20 @@ window.AudioSys = AudioSys;
 
         const desiredBodyAngle = Math.atan2(dirToMouse.y, dirToMouse.x);
 
-        // Logika obrotu podczas Äąâ€šadowania (Visual feel)
+        // Logika obrotu podczas Ĺ‚adowania (Visual feel)
         const kp = 5.5, maxSpin = 2.5, accel = 8.0;
         const diffB = wrapAngle(desiredBodyAngle - ship.angle);
         const desiredSpin = clamp(diffB * kp, -maxSpin, maxSpin);
         const delta = clamp(desiredSpin - ship.angVel, -accel * dt, accel * dt);
         ship.angVel += delta;
 
-        // Äąadowanie paska
+        // Ladowanie paska
         if (warp.charge < warp.chargeTime) {
           warp.charge += dt;
         }
 
-        // WARUNEK WEJÄąĹˇCIA:
-        // JeÄąâ€şli naÄąâ€šadowane -> wchodzimy. engageWarp() weÄąĹźmie obecny kĂ„â€¦t dziobu.
+        // WARUNEK WEJĹšCIA:
+        // JeĹ›li naĹ‚adowane -> wchodzimy. engageWarp() weĹşmie obecny kÄ…t dziobu.
         if (warp.charge >= warp.chargeTime && (DevFlags.unlimitedWarp || warp.fuel > 0)) {
           engageWarp();
         }
@@ -13111,8 +13243,8 @@ window.AudioSys = AudioSys;
       }
 
       // integracja ruchu (pozycja)
-      // W modelu V46 nie uÄąÄ˝ywamy F=ma, tylko bezpoÄąâ€şrednio v += speed*dt, wiĂ„â„˘c ax/ay nie sĂ„â€¦ potrzebne
-      // Jednak dla kolizji i wrakÄ‚Ĺ‚w warto zachowaĂ„â€ˇ jakĂ„â€¦Äąâ€ş "masĂ„â„˘" w kolizjach, ale ruch gracza jest nadrzĂ„â„˘dny.
+      // W modelu V46 nie uĹĽywamy F=ma, tylko bezpoĹ›rednio v += speed*dt, wiÄ™c ax/ay nie sÄ… potrzebne
+      // Jednak dla kolizji i wrakĂłw warto zachowaÄ‡ jakÄ…Ĺ› "masÄ™" w kolizjach, ale ruch gracza jest nadrzÄ™dny.
       updateGravityWarpBrake(dt);
       ship.pos.x += ship.vel.x * dt;
       ship.pos.y += ship.vel.y * dt;
@@ -13125,14 +13257,14 @@ window.AudioSys = AudioSys;
       ship.x = ship.pos.x;
       ship.y = ship.pos.y;
 
-      // obrÄ‚Ĺ‚t (STARY KOD USUNIĂ„TY - zastĂ„â€¦piony powyÄąÄ˝ej kinematycznym)
+      // obrĂłt (STARY KOD USUNIÄTY - zastÄ…piony powyĹĽej kinematycznym)
       /* const angAcc = totalTorque / ship.inertia;
       ship.angVel += angAcc * dt;
       ship.angVel *= Math.exp(-ship.angularDamping * (boostActive ? boost.angularDampingFactor : 1) * dt);
       ship.angle += ship.angVel * dt;
       */
       // ship.angle = wrapAngle(ship.angle);
-      // Aktualizacja wrakÄ‚Ĺ‚w
+      // Aktualizacja wrakĂłw
       for (let i = wrecks.length - 1; i >= 0; i--) {
         const w = wrecks[i];
 
@@ -13144,12 +13276,12 @@ window.AudioSys = AudioSys;
         w.vy *= w.friction;
         w.angVel *= w.friction;
 
-        // Despawn jeÄąâ€şli wrak nie ma juÄąÄ˝ heksÄ‚Ĺ‚w lub jest bardzo daleko
+        // Despawn jeĹ›li wrak nie ma juĹĽ heksĂłw lub jest bardzo daleko
         const distToPlayer = Math.hypot(w.x - ship.pos.x, w.y - ship.pos.y);
         const hasHexesLeft = w.hexGrid && w.hexGrid.shards &&
           w.hexGrid.shards.some(s => s.active && !s.isDebris && s.hp > 0);
 
-        // UsuÄąâ€ž tylko jeÄąâ€şli: brak heksÄ‚Ĺ‚w LUB ekstremalna odlegÄąâ€šoÄąâ€şĂ„â€ˇ (50km)
+        // UsuĹ„ tylko jeĹ›li: brak heksĂłw LUB ekstremalna odlegĹ‚oĹ›Ä‡ (50km)
         if (!hasHexesLeft || distToPlayer > 50000) {
           wrecks.splice(i, 1);
         }
@@ -13225,10 +13357,10 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
 
         if (p.beam) continue;
 
-        // Prosta fizyka czĂ„â€¦steczek
+        // Prosta fizyka czÄ…steczek
         p.vel.x *= 0.98; // Tarcie
         p.vel.y *= 0.98;
-        p.vel.y += 8 * dt; // Grawitacja (jeÄąâ€şli uÄąÄ˝ywana)
+        p.vel.y += 8 * dt; // Grawitacja (jeĹ›li uĹĽywana)
         p.pos.x += p.vel.x * dt;
         p.pos.y += p.vel.y * dt;
       }
@@ -13281,12 +13413,12 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
       const mWorld = screenToWorld(mouse.x, mouse.y);
       Superweapon.updateSuperweapon(frame, ship, mWorld);
 
-      // >>> TO JEST KLUCZOWE - ODDZIELNA AKTUALIZACJA WIZUALIÄ‚â€śW <<<
+      // >>> TO JEST KLUCZOWE - ODDZIELNA AKTUALIZACJA WIZUALIĂ“W <<<
       const tVfxUpdate0 = performance.now();
       updateParticles(frame);
       updateLightnings(frame);
       PerfHUD.addTiming('vfxUpdateTime', performance.now() - tVfxUpdate0);
-      // >>> BEZ TEGO CZĂ„â€žSTECZKI STOJĂ„â€ž W MIEJSCU <<<
+      // >>> BEZ TEGO CZÄ„STECZKI STOJÄ„ W MIEJSCU <<<
 
       const alpha = acc / PHYS_DT;
       frameId++;
@@ -13310,18 +13442,18 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
       // --- AUDIO UPDATE ---
       if (ship && ship.engineSound) {
         if (!ship.destroyed) {
-          // input.main to wartoÄąâ€şĂ„â€ˇ 0..1 (moc silnika)
+          // input.main to wartoĹ›Ä‡ 0..1 (moc silnika)
           let throttle = input.main;
 
-          // JeÄąâ€şli masz BOOST (Shift), dodajemy kopa do dÄąĹźwiĂ„â„˘ku (+0.5 do pitcha)
+          // JeĹ›li masz BOOST (Shift), dodajemy kopa do dĹşwiÄ™ku (+0.5 do pitcha)
           if (typeof boost !== 'undefined' && boost.state === 'active') {
             throttle += 0.5;
           }
 
-          // Aktualizuj dÄąĹźwiĂ„â„˘k
+          // Aktualizuj dĹşwiÄ™k
           ship.engineSound.update(throttle);
         } else {
-          // JeÄąâ€şli statek zniszczony - wycisz natychmiast
+          // JeĹ›li statek zniszczony - wycisz natychmiast
           ship.engineSound.gain.gain.setTargetAtTime(0, AudioSys.ctx.currentTime, 0.1);
         }
       }
@@ -13331,7 +13463,7 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
       render(alpha, frame);
       PerfHUD.addTiming('drawTime', performance.now() - tDraw0);
 
-      // WAÄąÂ»NE: Eksportujemy globalne zmienne dla moduÄąâ€šu superweapon
+      // WAĹ»NE: Eksportujemy globalne zmienne dla moduĹ‚u superweapon
       window.camera = camera;
       window.spawnParticle = spawnParticle;
       window.spawnShockwave = spawnShockwave;
@@ -13370,7 +13502,7 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
     function drawStationShadow(ctx, st, cam) {
       const s = worldToScreen(st.x, st.y, cam);
       const toSun = { x: (SUN.x - st.x), y: (SUN.y - st.y) };
-      const ang = Math.atan2(toSun.y, toSun.x) + Math.PI; // cieÄąâ€ž Ă˘â‚¬ĹľodĂ˘â‚¬ĹĄ SÄąâ€šoÄąâ€žca
+      const ang = Math.atan2(toSun.y, toSun.x) + Math.PI; // cieĹ„ â€žodâ€ť SĹ‚oĹ„ca
       const scale = stationScaleFor(st);
       const base = (st.baseR || st.r || 120) * scale;
       const off = base * 1.2 * cam.zoom;
@@ -13490,9 +13622,9 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
 
     function drawStars(cam) {
       // --- KONFIGURACJA EFEKTU WARP ---
-      const STEADY_LENGTH = 60; // DÄąâ€šugoÄąâ€şĂ„â€ˇ kresek podczas stabilnego lotu (nie kropki, ale linie)
-      const KICK_STRENGTH = 4.0; // MnoÄąÄ˝nik przy starcie (np. 60 * 4 = 240px przy uderzeniu)
-      const BRAKE_STRENGTH = 5.0; // MnoÄąÄ˝nik przy hamowaniu (np. 60 * 5 = 300px przy wyjÄąâ€şciu)
+      const STEADY_LENGTH = 60; // DĹ‚ugoĹ›Ä‡ kresek podczas stabilnego lotu (nie kropki, ale linie)
+      const KICK_STRENGTH = 4.0; // MnoĹĽnik przy starcie (np. 60 * 4 = 240px przy uderzeniu)
+      const BRAKE_STRENGTH = 5.0; // MnoĹĽnik przy hamowaniu (np. 60 * 5 = 300px przy wyjĹ›ciu)
       // --------------------------------
 
       const zoom = cam?.zoom ?? camera.zoom ?? 1;
@@ -13514,17 +13646,17 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
             // 1. FAZA LOTU I STARTU (Active)
             if (warp.state === 'active') {
 
-              let currentStretch = 1.0; // DomyÄąâ€şlnie 1.0 = STEADY_LENGTH
+              let currentStretch = 1.0; // DomyĹ›lnie 1.0 = STEADY_LENGTH
 
-              // JeÄąâ€şli dopiero wchodzimy w warp (entryProgress < 1), dodajemy "kopa"
+              // JeĹ›li dopiero wchodzimy w warp (entryProgress < 1), dodajemy "kopa"
               if (warp.entryProgress < 1.0) {
-                // Sinusoida daje pÄąâ€šynny skok w gÄ‚Ĺ‚rĂ„â„˘ i powrÄ‚Ĺ‚t
+                // Sinusoida daje pĹ‚ynny skok w gĂłrÄ™ i powrĂłt
                 const kick = Math.sin(warp.entryProgress * Math.PI);
                 currentStretch = 1.0 + (kick * KICK_STRENGTH);
               }
 
-              // Obliczamy finalnĂ„â€¦ dÄąâ€šugoÄąâ€şĂ„â€ˇ dla tej klatki
-              // Dodajemy teÄąÄ˝ maÄąâ€šy wpÄąâ€šyw paliwa (opcjonalnie), ÄąÄ˝eby smugi sÄąâ€šabÄąâ€šy jak brakuje energii
+              // Obliczamy finalnÄ… dĹ‚ugoĹ›Ä‡ dla tej klatki
+              // Dodajemy teĹĽ maĹ‚y wpĹ‚yw paliwa (opcjonalnie), ĹĽeby smugi sĹ‚abĹ‚y jak brakuje energii
               const L = STEADY_LENGTH * currentStretch * (0.8 + 0.2 * (warp.fuel / warp.fuelMax));
 
               // Kierunek smug (przeciwny do lotu)
@@ -13539,15 +13671,15 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
             // 2. FAZA HAMOWANIA LUB SPOCZYNKU
             else {
 
-              // JeÄąâ€şli timer hamowania jest aktywny
+              // JeĹ›li timer hamowania jest aktywny
               if (typeof warpBrakeTimer !== 'undefined' && warpBrakeTimer > 0) {
                 // t schodzi od 1.0 do 0.0
                 const t = warpBrakeTimer / 0.8;
 
-                // UÄąÄ˝ywamy t^3, aby dÄąâ€šugoÄąâ€şĂ„â€ˇ malaÄąâ€ša bardzo szybko (dynamiczny "snap back")
+                // UĹĽywamy t^3, aby dĹ‚ugoĹ›Ä‡ malaĹ‚a bardzo szybko (dynamiczny "snap back")
                 const tCubed = t * t * t;
 
-                // DÄąâ€šugoÄąâ€şĂ„â€ˇ: MnoÄąÄ˝ymy przez BRAKE_STRENGTH
+                // DĹ‚ugoĹ›Ä‡: MnoĹĽymy przez BRAKE_STRENGTH
                 const brakeLen = STEADY_LENGTH * BRAKE_STRENGTH * tCubed;
 
                 // Kierunek
@@ -13564,26 +13696,26 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
                 const dx = -dirX * brakeLen * zoom;
                 const dy = -dirY * brakeLen * zoom;
 
-                // --- POPRAWKA JASNOÄąĹˇCI ---
-                // WczeÄąâ€şniej byÄąâ€šo: 0.2 + 0.6*t (Max 0.8 -> zbyt jasne!)
-                // Teraz: Max 0.3 (delikatna smuga, ktÄ‚Ĺ‚ra nie przepala ekranu)
+                // --- POPRAWKA JASNOĹšCI ---
+                // WczeĹ›niej byĹ‚o: 0.2 + 0.6*t (Max 0.8 -> zbyt jasne!)
+                // Teraz: Max 0.3 (delikatna smuga, ktĂłra nie przepala ekranu)
                 const alpha = 0.05 + 0.25 * t;
 
                 ctx.strokeStyle = `rgba(200,220,255,${alpha})`;
-                ctx.lineWidth = 2; // MoÄąÄ˝esz zmieniĂ„â€ˇ na 1.5 dla cieÄąâ€žszych linii
+                ctx.lineWidth = 2; // MoĹĽesz zmieniÄ‡ na 1.5 dla cieĹ„szych linii
 
                 ctx.beginPath();
                 ctx.moveTo(sx + dx, sy + dy);
                 ctx.lineTo(sx, sy);
                 ctx.stroke();
 
-                // USUNIĂ„TO: ctx.fillRect(...) 
-                // Nie rysujemy kropki na koÄąâ€žcu smugi podczas hamowania, 
-                // bo nakÄąâ€šadanie siĂ„â„˘ smugi i kropki powodowaÄąâ€šo "biaÄąâ€še punkty".
+                // USUNIETO: ctx.fillRect(...)
+                // Nie rysujemy kropki na koĹ„cu smugi podczas hamowania, 
+                // bo nakĹ‚adanie siÄ™ smugi i kropki powodowaĹ‚o "biaĹ‚e punkty".
 
               }
 
-              // 3. ZWYKÄąY STAN (Spoczynek - rysujemy tylko kropki)
+              // 3. ZWYKLY STAN (Spoczynek - rysujemy tylko kropki)
               else {
                 ctx.globalAlpha = s.bright;
                 ctx.fillStyle = '#ffffff';
@@ -13742,16 +13874,16 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
       ctx.save();
       ctx.translate(screenPos.x, screenPos.y);
       ctx.rotate(npc.angle);
-      ctx.fillStyle = '#563c2c'; // BrĂ„â€¦zowy (Pirat)
+      ctx.fillStyle = '#563c2c'; // BrÄ…zowy (Pirat)
       ctx.strokeStyle = '#ff5c7c';
       ctx.lineWidth = 2;
 
-      // KadÄąâ€šub
+      // KadĹ‚ub
       ctx.beginPath();
       ctx.rect(-w * 0.5, -h * 0.5, w * 0.8, h);
       ctx.fill(); ctx.stroke();
 
-      // NadbudÄ‚Ĺ‚wka
+      // NadbudĂłwka
       ctx.fillStyle = '#6e4d3d';
       ctx.beginPath();
       ctx.moveTo(w * 0.1, -h * 0.3);
@@ -13785,11 +13917,11 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
       ctx.save();
       ctx.translate(screenPos.x, screenPos.y);
       ctx.rotate(npc.angle);
-      ctx.fillStyle = '#462c1c'; // Ciemny brĂ„â€¦z
+      ctx.fillStyle = '#462c1c'; // Ciemny brÄ…z
       ctx.strokeStyle = '#ff5c7c'; // Czerwony obrys
       ctx.lineWidth = 3;
 
-      // GÄąâ€šÄ‚Ĺ‚wny kadÄąâ€šub (agresywny ksztaÄąâ€št)
+      // GĹ‚Ăłwny kadĹ‚ub (agresywny ksztaĹ‚t)
       ctx.beginPath();
       ctx.moveTo(w * 0.5, 0);
       ctx.lineTo(w * 0.3, h * 0.5);
@@ -13800,8 +13932,8 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
       ctx.closePath();
       ctx.fill(); ctx.stroke();
 
-      // WieÄąÄ˝yczki boczne (symboliczne)
-      ctx.fillStyle = '#ff9b4b'; // PomaraÄąâ€žczowe
+      // WieĹĽyczki boczne (symboliczne)
+      ctx.fillStyle = '#ff9b4b'; // PomaraĹ„czowe
       ctx.fillRect(-w * 0.2, -h * 0.6, w * 0.1, h * 0.2); // Lewa burta
       ctx.fillRect(-w * 0.2, h * 0.4, w * 0.1, h * 0.2);  // Prawa burta
 
@@ -13848,9 +13980,9 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
       const halfL = length * 0.5;
       const halfW = width * 0.5;
 
-      // --- POPRAWKA: Dynamiczny promieÄąâ€ž, nigdy wiĂ„â„˘kszy niÄąÄ˝ sam statek ---
+      // --- POPRAWKA: Dynamiczny promieĹ„, nigdy wiÄ™kszy niĹĽ sam statek ---
       // Zamiast sztywnych pixeli, bierzemy procent wymiaru.
-      // To zapobiega "wykrĂ„â„˘caniu" siĂ„â„˘ ksztaÄąâ€štu przy oddalaniu kamery.
+      // To zapobiega "wykrÄ™caniu" siÄ™ ksztaĹ‚tu przy oddalaniu kamery.
       const radius = Math.min(width, length) * 0.15;
 
       let drawHullPath = null;
@@ -13899,13 +14031,13 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
         const sc = drawW / naturalW;
         ctx.drawImage(img, -drawW * 0.5 + (offset.x * sc), -drawH * 0.5 + (offset.y * sc), drawW, drawH);
       } else {
-        // Proceduralny fallback (rysowanie prostokĂ„â€¦tÄ‚Ĺ‚w)
+        // Proceduralny fallback (rysowanie prostokÄ…tĂłw)
         ctx.fillStyle = hullColor;
         drawHullPath = () => traceHullShape(1.0);
         drawHullPath();
         ctx.fill();
 
-        // Detale rysujemy TYLKO jeÄąâ€şli statek jest widoczny (wiĂ„â„˘kszy niÄąÄ˝ kropka)
+        // Detale rysujemy TYLKO jeĹ›li statek jest widoczny (wiÄ™kszy niĹĽ kropka)
         if (length > 4 && width > 4) {
           ctx.fillStyle = deckColor;
           roundRect(ctx, -halfL * 0.78, -halfW * 0.55, length * 0.82, width * 0.58, radius * 0.7);
@@ -13920,13 +14052,13 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
         }
       }
 
-      // --- SILNIKI (tylko jeÄąâ€şli statek jest wystarczajĂ„â€¦co duÄąÄ˝y) ---
+      // --- SILNIKI (tylko jeĹ›li statek jest wystarczajÄ…co duĹĽy) ---
       const engineOffsets = Array.isArray(profile.engineOffsets) ? profile.engineOffsets : null;
       if (engineOffsets && engineOffsets.length) {
         const speed = Math.hypot(npc.vx || 0, npc.vy || 0);
         const thrust = clamp(speed / Math.max(1, npc.maxSpeed || 1), 0, 1);
 
-        // Optymalizacja: nie rysuj glowa silnikÄ‚Ĺ‚w, jeÄąâ€şli statek to < 2px na ekranie
+        // Optymalizacja: nie rysuj glowa silnikĂłw, jeĹ›li statek to < 2px na ekranie
         if (width > 2) {
           ctx.save();
           ctx.globalCompositeOperation = 'lighter';
@@ -13954,7 +14086,7 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
           drawHullPath();
           ctx.fill();
         } else {
-          // Fallback ksztaÄąâ€štu
+          // Fallback ksztaĹ‚tu
           ctx.beginPath();
           traceHullShape(1.0);
           ctx.fill();
@@ -13964,9 +14096,40 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
 
       ctx.restore();
     }
+    function drawNpcHardpointOverlay(ctx, npc, screenPos) {
+      const hardpoints = Array.isArray(npc?.editorHardpoints) ? npc.editorHardpoints : null;
+      if (!hardpoints || hardpoints.length === 0) return;
+      const zoom = camera.zoom || 1;
+      const angle = (npc.angle || 0) + (Number(npc.capitalProfile?.spriteRotation) || 0);
+      const c = Math.cos(angle);
+      const s = Math.sin(angle);
+      const radius = Math.max(1.4, Math.min(4.4, 2.1 * zoom));
+
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      for (const hp of hardpoints) {
+        if (!hp) continue;
+        const localX = Number(hp.x);
+        const localY = Number(hp.y);
+        if (!Number.isFinite(localX) || !Number.isFinite(localY)) continue;
+        const x = screenPos.x + (localX * c - localY * s) * zoom;
+        const y = screenPos.y + (localX * s + localY * c) * zoom;
+        const color = NPC_HARDPOINT_COLORS[hp.type] || '#cfe4ff';
+        ctx.fillStyle = color;
+        ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
     function drawNPCPretty(ctx, npc, s) {
       if (npc.hexGrid) {
         drawHexBody(ctx, npc, camera, worldToScreen);
+        drawNpcHardpointOverlay(ctx, npc, s);
         if (npc.hp < npc.maxHp) {
           const zoom = camera.zoom;
           const size = (npc.radius || 20) * zoom;
@@ -13991,30 +14154,34 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
         }
       }
 
-      // 1. NAJPIERW sprawdÄąĹź konkretne typy (Destroyer, Battleship, Frigate)
-      // DziĂ„â„˘ki temu uÄąÄ˝yjĂ„â€¦ one Twoich nowych sprite'Ä‚Ĺ‚w z HULL_SPRITE_PATHS
+      // 1. NAJPIERW sprawdĹş konkretne typy (Destroyer, Battleship, Frigate)
+      // DziÄ™ki temu uĹĽyjÄ… one Twoich nowych sprite'Ăłw z HULL_SPRITE_PATHS
       if (npc.type === 'destroyer') {
         drawDestroyer(ctx, npc, s);
+        drawNpcHardpointOverlay(ctx, npc, s);
         return;
       }
       if (npc.type === 'battleship') {
         drawBattleship(ctx, npc, s);
+        drawNpcHardpointOverlay(ctx, npc, s);
         return;
       }
       if (npc.type && (npc.type.includes('frigate') || npc.subType === 'laser')) {
         drawFrigateHull(ctx, npc, s);
+        drawNpcHardpointOverlay(ctx, npc, s);
         return;
       }
 
-      // 2. DOPIERO POTEM sprawdÄąĹź czy to ogÄ‚Ĺ‚lny Capital Ship (np. Carrier gracza)
-      // JeÄąâ€şli to duÄąÄ˝y statek, ktÄ‚Ĺ‚ry nie jest destroyerem/battleshipem, uÄąÄ˝yje systemu profili/sprite'Ä‚Ĺ‚w capital
+      // 2. DOPIERO POTEM sprawdĹş czy to ogĂłlny Capital Ship (np. Carrier gracza)
+      // JeĹ›li to duĹĽy statek, ktĂłry nie jest destroyerem/battleshipem, uĹĽyje systemu profili/sprite'Ăłw capital
       if (npc.isCapitalShip) {
         const pixR = (npc.radius || 20) * camera.zoom;
         drawCapitalShipSprite(ctx, npc, s, pixR);
+        drawNpcHardpointOverlay(ctx, npc, s);
         return;
       }
 
-      // 3. DomyÄąâ€şlny rysunek dla myÄąâ€şliwcÄ‚Ĺ‚w (Fighter/Interceptor)
+      // 3. DomyĹ›lny rysunek dla myĹ›liwcĂłw (Fighter/Interceptor)
       const zoom = camera.zoom;
       ctx.save();
       ctx.translate(s.x, s.y);
@@ -14022,10 +14189,10 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
 
       const isFighter = npc.fighter || npc.type === 'fighter' || npc.type === 'interceptor';
 
-      // Kolor zaleÄąÄ˝ny od nastawienia
+      // Kolor zaleĹĽny od nastawienia
       ctx.fillStyle = npc.color || (npc.friendly ? '#7cff91' : '#ff5c7c');
 
-      // Rysowanie trÄ‚Ĺ‚jkĂ„â€¦ta (myÄąâ€şliwiec)
+      // Rysowanie trĂłjkÄ…ta (myĹ›liwiec)
       const size = (npc.radius || 12) * zoom;
       if (isFighter && fighterSpriteState.ready && !fighterSpriteState.error) {
         const targetH = size * 2;
@@ -14047,7 +14214,7 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
         ctx.stroke();
       }
 
-      // Pasek HP nad jednostkĂ„â€¦
+      // Pasek HP nad jednostkÄ…
       if (npc.hp < npc.maxHp) {
         const hpPct = Math.max(0, npc.hp / npc.maxHp);
         ctx.fillStyle = '#ef4444';
@@ -14057,6 +14224,7 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
       }
 
       ctx.restore();
+      drawNpcHardpointOverlay(ctx, npc, s);
     }
 
     // --- CACHE DLA KORPUSU RAILGUNA (Optymalizacja) ---
@@ -14064,7 +14232,7 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
     function getRailgunBodySprite() {
       if (railgunBodyCache) return railgunBodyCache;
 
-      const s = 3.0; // Skala bazowa dla wysokiej jakoÄąâ€şci
+      const s = 3.0; // Skala bazowa dla wysokiej jakoĹ›ci
       const size = 120; // Rozmiar canvasa
       const c = document.createElement('canvas');
       c.width = size;
@@ -14089,7 +14257,7 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
       ctx.closePath();
       ctx.fill();
 
-      // WnĂ„â„˘trze (JaÄąâ€şniejszy grafit)
+      // WnÄ™trze (JaĹ›niejszy grafit)
       ctx.fillStyle = '#333333';
       ctx.beginPath();
       ctx.moveTo(-housingW / 2 + 2 * s, -housingH / 2 + 2 * s);
@@ -14101,12 +14269,12 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
       ctx.closePath();
       ctx.fill();
 
-      // Detale (ÄąĹˇwiatÄąâ€ša/ZÄąâ€šĂ„â€¦cza)
+      // Detale (ĹšwiatĹ‚a/ZĹ‚Ä…cza)
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(-10 * s, -housingH / 2 + 4 * s, 4 * s, 1 * s);
       ctx.fillRect(-10 * s, housingH / 2 - 5 * s, 4 * s, 1 * s);
 
-      // Pivot (ÄąĹˇrodek)
+      // Pivot (Ĺšrodek)
       ctx.beginPath();
       ctx.arc(0, 0, 1.5 * s, 0, Math.PI * 2);
       ctx.fill();
@@ -14134,7 +14302,7 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
       window.__interpShipPose = { x: interpPos.x, y: interpPos.y, angle: interpAngle };
 
       // --- LOGIKA KAMERY (POPRAWIONA) ---
-      // Przeniesiona do render(), aby uÄąÄ˝ywaĂ„â€ˇ interpPos i uniknĂ„â€¦Ă„â€ˇ drgaÄąâ€ž (jitter)
+      // Przeniesiona do render(), aby uĹĽywaÄ‡ interpPos i uniknÄ…Ä‡ drgaĹ„ (jitter)
       
       if (camera.mode === 'ship' && !camera.transition) {
         const lookAheadFactor = 0.3;
@@ -14189,7 +14357,7 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
       overlayView.viewport.h = H;
       overlayView.zoom = cam.zoom;
 
-      // === Warp Lens Pass (rysowany pod warstwĂ„â€¦ 3D i statkiem) ===
+      // === Warp Lens Pass (rysowany pod warstwÄ… 3D i statkiem) ===
       if (warpBlackHoleFX) {
         const isWarpActive = (warp.state === 'active');
         const entryProgress = isWarpActive ? clamp(warp.entryProgress, 0, 1) : 0;
@@ -14289,20 +14457,22 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
 
       // 2. Statek gracza i system zniszczen (oraz VFX silnikow wewnatrz)
       if (window.updateHexShips3D) {
-        const hexEntities = [];
-        if (ship && ship.hexGrid && !ship.dead) hexEntities.push(ship);
-        for (const npc of npcs) if (npc && npc.hexGrid && !npc.dead) hexEntities.push(npc);
-        for (const w of wrecks) if (w && w.hexGrid && !w.dead) hexEntities.push(w);
+        const renderEntities = [];
+        if (ship && !ship.dead) renderEntities.push(ship);
+        for (const npc of npcs) if (npc && !npc.dead) renderEntities.push(npc);
+        for (const w of wrecks) if (w && !w.dead) renderEntities.push(w);
 
         // Ta funkcja aktualizuje statki i ostatecznie wywoluje Core3D.render()
-        window.updateHexShips3D(cam, hexEntities);
+        window.updateHexShips3D(cam, renderEntities);
       }
 
       // 3. Rysujemy gotowa klatke z WebGL na glowny Canvas 2D
       if (window.drawHexShips3D) {
         window.drawHexShips3D(ctx, W, H);
       }
+
       drawPlanetShadowTrails(ctx, cam);
+      drawStationLongShadowTrails(ctx, cam);
 
       // ==========================================
       if (stationUI.editorMode && stationUI.station) {
@@ -14334,7 +14504,7 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
         ctx.stroke();
       }
 
-      // Shockwaves (na warstwie Äąâ€şwiata, pod HUD)
+      // Shockwaves (na warstwie Ĺ›wiata, pod HUD)
       for (const s of shockwaves) {
         const sw = worldToScreen(s.x, s.y, cam);
         ctx.beginPath();
@@ -14350,7 +14520,6 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
           const visR = (st.baseR || st.r) * stationScaleFor(st);
           const rr = visR * camera.zoom;
 
-          drawStationShadow(ctx, st, cam);
           drawStationVFX(ctx, st, s.x, s.y, rr, gameTime);
 
           for (let i = 0; i < st.ports.length; i++) {
@@ -14398,7 +14567,7 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
         }
       }
 
-      // Rysowanie wrakÄ‚Ĺ‚w (hex-grid)
+      // Rysowanie wrakĂłw (hex-grid)
       for (const w of wrecks) {
         if (window.drawHexBody) {
           window.drawHexBody(ctx, w, camera, worldToScreen);
@@ -14414,10 +14583,10 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
       npcDrawList.sort((a, b) => (a.drawLayer || 0) - (b.drawLayer || 0));
       for (const npc of npcDrawList) {
         const s = worldToScreen(npc.x, npc.y, cam);
-        drawNPCPretty(ctx, npc, s);
         const npcRadiusForShadow = Math.max(6, Number(npc.radius || npc.r || 14));
         const npcShadowFactor = computeWorldShadowAtPoint(npc.x, npc.y, npcRadiusForShadow, npc);
         npc.shadowFactor = npcShadowFactor;
+        drawNPCPretty(ctx, npc, s);
         drawShipShadowOverlay(ctx, cam, npc, npcShadowFactor);
       }
 
@@ -14466,8 +14635,8 @@ ctx.imageSmoothingEnabled = true;
       ctx.rotate(interpAngle);
 
       // --- 1. OBLICZANIE ACTIVE THRUSTERS ---
-      // Gdy statek gracza jest renderowany w 3D, pomijamy 2D exhausty, bo nakÄąâ€šadajĂ„â€¦ siĂ„â„˘ na kadÄąâ€šub.
-      // --- 2. Rysowanie Warp Glow (Äąâ€šadowanie) ---
+      // Gdy statek gracza jest renderowany w 3D, pomijamy 2D exhausty, bo nakĹ‚adajÄ… siÄ™ na kadĹ‚ub.
+      // --- 2. Rysowanie Warp Glow (Ĺ‚adowanie) ---
       let warpGlowProgress = 0;
       if (warp.state === 'charging') {
         warpGlowProgress = clamp(warp.charge / warp.chargeTime, 0, 1);
@@ -14479,22 +14648,22 @@ ctx.imageSmoothingEnabled = true;
         drawWarpChargeEffectLocal(warpGlowProgress, chargeRadius, spriteScale);
       }
 
-      // --- 3. Rysowanie KADÄąUBA ---
+      // --- 3. Rysowanie KADLUBA ---
       if (ship.hexGrid) {
         drawHexBodyLocal(ctx, ship);
         if (ship.hp < ship.maxHp) {
           const zoom = camera.zoom;
-          const size = (ship.radius || 20); // UsunĂ„â€¦Äąâ€šem * zoom, bo ctx jest juÄąÄ˝ wyskalowany w linii 2010
+          const size = (ship.radius || 20); // UsunÄ…Ĺ‚em * zoom, bo ctx jest juĹĽ wyskalowany w linii 2010
           const hpPct = Math.max(0, ship.hp / ship.maxHp);
           ctx.save();
-          // Rysujemy lokalnie wzglĂ„â„˘dem statku
+          // Rysujemy lokalnie wzglÄ™dem statku
           ctx.fillStyle = '#ef4444';
           ctx.fillRect(-size, -size - 10, size * 2, 4);
           ctx.fillStyle = '#22c55e';
           ctx.fillRect(-size, -size - 10, size * 2 * hpPct, 4);
           ctx.restore();
         }
-        // Nie robimy return, ÄąÄ˝eby silniki i efekty (rysowane dalej) siĂ„â„˘ wykonaÄąâ€šy
+        // Nie robimy return, ĹĽeby silniki i efekty (rysowane dalej) siÄ™ wykonaĹ‚y
       }
       else if (USE_SHIP_SPRITE && ship.spriteReady) {
         const scale = (ship.h / ship.spriteH) * spriteScale;
@@ -14547,7 +14716,7 @@ ctx.imageSmoothingEnabled = true;
         ctx.restore();
       }
 
-      // --- 4. Rysowanie ELEMENTÄ‚â€śW PROCEDURALNYCH (gdy brak sprite'a) ---
+      // --- 4. Rysowanie ELEMENTĂ“W PROCEDURALNYCH (gdy brak sprite'a) ---
       if (!(USE_SHIP_SPRITE && ship.spriteReady)) {
         for (const pod of ship.pods) {
           ctx.save();
@@ -14588,7 +14757,7 @@ ctx.imageSmoothingEnabled = true;
           ctx.restore();
         }
 
-        // DziaÄąâ€ška boczne
+        // DziaĹ‚ka boczne
         ctx.fillStyle = '#cbd6ff';
         for (const off of ship.sideGunsLeft) {
           ctx.save();
@@ -14606,7 +14775,7 @@ ctx.imageSmoothingEnabled = true;
         }
       }
 
-      // --- 6. WIEÄąÂ»YCZKI I CIWS ---
+      // --- 6. WIEĹ»YCZKI I CIWS ---
       // CIWS
       const ciwsBase = 8 * spriteScale, ciwsBarrelLen = 12 * spriteScale, ciwsBarrelH = 4 * spriteScale;
       const activeCIWS = (Game.player.weapons?.[HP.AUX]?.length || 0);
@@ -14632,7 +14801,7 @@ ctx.imageSmoothingEnabled = true;
         ctx.restore();
       });
 
-      // GÄąâ€šÄ‚Ĺ‚wne wieÄąÄ˝yczki
+      // GĹ‚Ăłwne wieĹĽyczki
       const baseW = 16 * spriteScale,
         baseH = 24 * spriteScale,
         barrelLen = Math.max(14 * spriteScale, Math.round(visualH * 0.16)) / 2,
@@ -14668,7 +14837,7 @@ ctx.imageSmoothingEnabled = true;
           const s = spriteScale;
 
           // Pobierz recoil dla lewej i prawej lufy
-          // (MK2 strzela naprzemiennie, wiĂ„â„˘c wartoÄąâ€şci bĂ„â„˘dĂ„â€¦ rÄ‚Ĺ‚ÄąÄ˝ne)
+          // (MK2 strzela naprzemiennie, wiÄ™c wartoĹ›ci bÄ™dÄ… rĂłĹĽne)
           const recoilL = (Array.isArray(t.recoil) ? t.recoil[0] : t.recoil) * s;
           const recoilR = (Array.isArray(t.recoil) ? t.recoil[1] : t.recoil) * s;
 
@@ -14676,7 +14845,7 @@ ctx.imageSmoothingEnabled = true;
           const barrelThick = 4 * s;
           const barrelOffset = 6 * s;
 
-          // Rysowanie dynamicznych luf (proceduralnie, bo siĂ„â„˘ ruszajĂ„â€¦)
+          // Rysowanie dynamicznych luf (proceduralnie, bo siÄ™ ruszajÄ…)
           const drawBarrel = (offsetY, recoilVal) => {
             const startX = 4 * s - recoilVal;
             ctx.fillStyle = '#cccccc';
@@ -14747,7 +14916,7 @@ ctx.imageSmoothingEnabled = true;
           const recoil = (Array.isArray(t.recoil) ? t.recoil[0] : t.recoil) * spriteScale;
 
           if (barrelsPerShot === 1) {
-            // Rysowanie domyÄąâ€şlnej pojedynczej wieÄąÄ˝yczki (Armata style)
+            // Rysowanie domyĹ›lnej pojedynczej wieĹĽyczki (Armata style)
             const housingW = 20 * spriteScale;
             const housingH = 30 * spriteScale;
             ctx.fillStyle = '#7f8fb7';
@@ -14770,7 +14939,7 @@ ctx.imageSmoothingEnabled = true;
             ctx.closePath();
             ctx.fill();
           } else {
-            // Rysowanie domyÄąâ€şlnej podwÄ‚Ĺ‚jnej wieÄąÄ˝yczki (Generyczna)
+            // Rysowanie domyĹ›lnej podwĂłjnej wieĹĽyczki (Generyczna)
             const s = spriteScale * camera.zoom;
             const rVal = recoil * s; // Uproszczony recoil
             const housingW = 20 * s;
@@ -14788,7 +14957,7 @@ ctx.imageSmoothingEnabled = true;
             drawBarrel(-barrelOffset);
             drawBarrel(barrelOffset);
 
-            ctx.fillStyle = '#555'; // ZwykÄąâ€šy szary dla generycznej
+            ctx.fillStyle = '#555'; // ZwykĹ‚y szary dla generycznej
             ctx.beginPath();
             ctx.arc(0, 0, housingW / 1.5, 0, Math.PI * 2);
             ctx.fill();
@@ -14797,10 +14966,7 @@ ctx.imageSmoothingEnabled = true;
         ctx.restore();
       });
       ctx.restore(); // ship
-      const playerVisualShadow = computeWorldShadowAtPoint(interpPos.x, interpPos.y, Math.max(8, Number(ship.radius || ship.r || 24)), ship);
-      const playerCombinedShadow = Math.max(playerShadowFactor || 0, playerVisualShadow);
-      drawShipShadowOverlay(ctx, cam, ship, playerCombinedShadow, interpPos);
-
+      drawShipShadowOverlay(ctx, cam, ship, playerShadowFactor, interpPos);
       // === Projectile Pass ===
       for (const b of bullets) {
         drawBulletVisual(ctx, b, cam, alpha);
@@ -14808,10 +14974,10 @@ ctx.imageSmoothingEnabled = true;
 
       // === Hexlance Projectiles (Supercapital Weapon) ===
       const mWorldRender = { x: cam.x + (mouse.x - W / 2) / cam.zoom, y: cam.y + (mouse.y - H / 2) / cam.zoom };
-      // FIX: Przekazujemy interpolowanĂ„â€¦ pozycjĂ„â„˘ i kĂ„â€¦t
+      // FIX: Przekazujemy interpolowanÄ… pozycjÄ™ i kÄ…t
       Superweapon.drawSuperweapon(ctx, cam, ship, worldToScreen, mWorldRender, { pos: interpPos, angle: interpAngle });
 
-      // Rysowanie BÄąâ€šyskawic (Lightning) - nad pociskami, pod UI
+      // Rysowanie BĹ‚yskawic (Lightning) - nad pociskami, pod UI
       ctx.save();
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -14902,12 +15068,12 @@ ctx.imageSmoothingEnabled = true;
           if (drawn >= MAX_PARTICLES_DRAW) break;
           drawn++;
 
-          // Pomijanie czĂ„â€¦steczek poza ekranem (Frustum culling)
+          // Pomijanie czÄ…steczek poza ekranem (Frustum culling)
           const s = worldToScreen(p.pos.x, p.pos.y, cam);
           if (s.x < -10 || s.x > W + 10 || s.y < -10 || s.y > H + 10) continue;
 
           const size = p.size * camera.zoom;
-          if (size < 0.5) continue; // Nie rysuj sub-pikselowych Äąâ€şmieci
+          if (size < 0.5) continue; // Nie rysuj sub-pikselowych Ĺ›mieci
 
           const t = 1 - p.age / p.life; // Alpha
 
@@ -14915,7 +15081,7 @@ ctx.imageSmoothingEnabled = true;
           ctx.fillStyle = p.color;
 
           if (size < 6) {
-            // Dla maÄąâ€šych czĂ„â€¦steczek rysujemy kwadrat (znacznie szybsze niÄąÄ˝ arc)
+            // Dla maĹ‚ych czÄ…steczek rysujemy kwadrat (znacznie szybsze niĹĽ arc)
             ctx.fillRect(s.x - size / 2, s.y - size / 2, size, size);
           } else {
             ctx.beginPath();
@@ -14923,7 +15089,7 @@ ctx.imageSmoothingEnabled = true;
             ctx.fill();
           }
         }
-        ctx.restore(); // PrzywrÄ‚Ĺ‚Ă„â€ˇ stan raz na koniec
+        ctx.restore(); // PrzywrĂłÄ‡ stan raz na koniec
       }
 
       DestructorSystem.draw(ctx, cam, worldToScreen);
@@ -14934,12 +15100,12 @@ ctx.imageSmoothingEnabled = true;
         drawShield(ctx, npc, cam);
       }
       if (ship.shield) {
-        // FIX: Przekazujemy interpolowanĂ„â€¦ pozycjĂ„â„˘ do tarczy
+        // FIX: Przekazujemy interpolowanÄ… pozycjÄ™ do tarczy
         drawShield(ctx, ship, cam, interpPos);
       }
 
       // === UI / HUD Pass ===
-      // Rysuj HUD na Canvasie TYLKO jeÄąâ€şli nie jesteÄąâ€şmy w menu
+      // Rysuj HUD na Canvasie TYLKO jeĹ›li nie jesteĹ›my w menu
       if (!isMainMenuVisible()) {
         hudRenderNav(ship, cam);
         for (const ping of radarPings) {
@@ -15062,14 +15228,14 @@ ctx.imageSmoothingEnabled = true;
           const t = clamp(1 - p.age / p.life, 0, 1);
           const size = p.size * camera.zoom;
 
-          // Glow (duÄąÄ˝e, sÄąâ€šabe kÄ‚Ĺ‚Äąâ€ško)
+          // Glow (duĹĽe, sĹ‚abe kĂłĹ‚ko)
           ctx.globalAlpha = t * 0.3;
           ctx.fillStyle = p.color;
           ctx.beginPath();
           ctx.arc(s.x, s.y, size * 4, 0, Math.PI * 2);
           ctx.fill();
 
-          // Core (maÄąâ€še, jasne kÄ‚Ĺ‚Äąâ€ško)
+          // Core (maĹ‚e, jasne kĂłĹ‚ko)
           ctx.globalAlpha = t;
           ctx.beginPath();
           ctx.arc(s.x, s.y, size, 0, Math.PI * 2);
@@ -15093,7 +15259,7 @@ ctx.imageSmoothingEnabled = true;
         y += 8;
         if (st.shield) {
           const shieldFrac = clamp(st.shield.val / st.shield.max, 0, 1);
-          ctx.fillText(`OsÄąâ€šony: ${Math.round(st.shield.val)}/${st.shield.max}`, xRight, y + 10);
+          ctx.fillText(`OsĹ‚ony: ${Math.round(st.shield.val)}/${st.shield.max}`, xRight, y + 10);
           const bx = xRight - barW;
           ctx.strokeStyle = 'rgba(255,255,255,0.18)';
           ctx.strokeRect(bx - 1, y + 14, barW + 2, barH + 2);
@@ -15103,7 +15269,7 @@ ctx.imageSmoothingEnabled = true;
           y += 32;
         }
         const hullFrac = clamp(st.hp / st.maxHp, 0, 1);
-        ctx.fillText(`KadÄąâ€šub: ${Math.round(st.hp)}/${st.maxHp}`, xRight, y + 10);
+        ctx.fillText(`KadĹ‚ub: ${Math.round(st.hp)}/${st.maxHp}`, xRight, y + 10);
         const bx = xRight - barW;
         ctx.strokeStyle = 'rgba(255,255,255,0.18)';
         ctx.strokeRect(bx - 1, y + 14, barW + 2, barH + 2);
@@ -15121,7 +15287,7 @@ ctx.imageSmoothingEnabled = true;
             if (platform.shield && platform.shield.max > 0) {
               const shieldFrac = clamp(platform.shield.val / platform.shield.max, 0, 1);
               ctx.fillStyle = '#dfe7ff';
-              ctx.fillText(`${label}: osÄąâ€šony ${Math.round(platform.shield.val)}/${platform.shield.max}`, xRight, y + 10);
+              ctx.fillText(`${label}: osĹ‚ony ${Math.round(platform.shield.val)}/${platform.shield.max}`, xRight, y + 10);
               ctx.strokeStyle = 'rgba(255,255,255,0.12)';
               ctx.strokeRect(entryBx - 1, y + 14, barW + 2, barH + 2);
               ctx.fillStyle = '#60a5fa';
@@ -15130,7 +15296,7 @@ ctx.imageSmoothingEnabled = true;
             }
             const hpFrac = (platform.maxHp > 0) ? clamp(Math.max(0, platform.hp) / platform.maxHp, 0, 1) : 0;
             ctx.fillStyle = '#dfe7ff';
-            ctx.fillText(`${label}: kadÄąâ€šub ${Math.max(0, Math.round(platform.hp))}/${platform.maxHp}`, xRight, y + 10);
+            ctx.fillText(`${label}: kadĹ‚ub ${Math.max(0, Math.round(platform.hp))}/${platform.maxHp}`, xRight, y + 10);
             ctx.strokeStyle = 'rgba(255,255,255,0.12)';
             ctx.strokeRect(entryBx - 1, y + 14, barW + 2, barH + 2);
             ctx.fillStyle = platform.destroyed ? '#4b5563' : '#f97316';
@@ -15469,7 +15635,7 @@ ctx.imageSmoothingEnabled = true;
       ctx.font = `500 ${Math.max(13, Math.min(W, H) * 0.018)}px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif`;
       ctx.shadowBlur = 0;
       ctx.fillStyle = 'rgba(232, 241, 255, 0.85)';
-      ctx.fillText('LPM Ă˘â‚¬â€ť przesuwanie Ă‚Â· Scroll Ă˘â‚¬â€ť powiĂ„â„˘kszenie Ă‚Â· M Ă˘â‚¬â€ť zamknij', padding, titleY + 28);
+      ctx.fillText('LPM â€” przesuwanie Â· Scroll â€” powiÄ™kszenie Â· M â€” zamknij', padding, titleY + 28);
       ctx.restore();
 
       ctx.restore();
@@ -15477,7 +15643,7 @@ ctx.imageSmoothingEnabled = true;
 
     // =============== Helpers (POPRAWIONE) ===============
     function roundRect(ctx, x, y, w, h, r) {
-      // Zabezpieczenie: promieÄąâ€ž nie moÄąÄ˝e byĂ„â€ˇ wiĂ„â„˘kszy niÄąÄ˝ poÄąâ€šowa krÄ‚Ĺ‚tszego boku
+      // Zabezpieczenie: promieĹ„ nie moĹĽe byÄ‡ wiÄ™kszy niĹĽ poĹ‚owa krĂłtszego boku
       if (w < 2 * r) r = w / 2;
       if (h < 2 * r) r = h / 2;
       if (r < 0) r = 0;
@@ -15517,7 +15683,7 @@ ctx.imageSmoothingEnabled = true;
     }
     function hudEndPanel() { ctx.restore(); }
     function uiTitle(t) { ctx.font = '20px monospace'; ctx.fillText(t, 0, 0); ctx.translate(0, 28); ctx.font = '16px monospace'; }
-    function section(t) { ctx.translate(0, 12); ctx.globalAlpha = 0.8; ctx.fillText('Ă˘â‚¬â€ť ' + t, 0, 0); ctx.globalAlpha = 1; ctx.translate(0, 18); }
+    function section(t) { ctx.translate(0, 12); ctx.globalAlpha = 0.8; ctx.fillText('â€” ' + t, 0, 0); ctx.globalAlpha = 1; ctx.translate(0, 18); }
     function uiText(t) { ctx.fillText(t, 0, 0); ctx.translate(0, 18); }
     function hudTabs(names, active) {
       let x = 0, clicked = null;
@@ -15542,14 +15708,14 @@ ctx.imageSmoothingEnabled = true;
       if (clicked) { stationUI.tab = clicked; mouse.click = false; }
     }
 
-    // --- NOWA FUNKCJA UI DO WYBORU JAKOÄąĹˇCI ---
+    // --- NOWA FUNKCJA UI DO WYBORU JAKOĹšCI ---
     function uiQualitySelector() {
       if (!window.Nebula) return;
       const cfg = window.Nebula.getConfig();
       const current = cfg.quality;
       const opts = ['2k', '4k', '8k'];
 
-      ctx.fillText('JakoÄąâ€şĂ„â€ˇ tÄąâ€ša:', 0, 0);
+      ctx.fillText('JakoĹ›Ä‡ tĹ‚a:', 0, 0);
 
       let x = 180;
       const y = -14;
@@ -15569,7 +15735,7 @@ ctx.imageSmoothingEnabled = true;
         ctx.fillStyle = isActive ? '#fff' : '#8fb5ff';
         ctx.fillText(opt.toUpperCase(), x + 8, 0);
 
-        // ObsÄąâ€šuga myszy (Canvas Immediate Mode GUI)
+        // ObsĹ‚uga myszy (Canvas Immediate Mode GUI)
         const t = ctx.getTransform();
         const L = t.e + x;
         const T = t.f + y;
@@ -15581,11 +15747,11 @@ ctx.imageSmoothingEnabled = true;
           canvas.style.cursor = 'pointer';
           if (mouse.click) {
             window.Nebula.setQuality(opt);
-            mouse.click = false; // "zjedz" klikniĂ„â„˘cie
+            mouse.click = false; // "zjedz" klikniÄ™cie
           }
         }
 
-        x += w + 8; // odstĂ„â„˘p
+        x += w + 8; // odstÄ™p
       }
       ctx.translate(0, 24); // nowa linia w panelu
     }
@@ -15607,10 +15773,10 @@ ctx.imageSmoothingEnabled = true;
     }
     function slider(label, min, max, step, obj, key) {
       ctx.fillText(`${label}: ${obj[key].toFixed(2)}`, 0, 0); ctx.translate(0, 18);
-      // do prostoty Ă˘â‚¬â€ś klawiszami [ i ] zmieniasz ostatni slider; lub klik + ruch (opcjonalnie)
-      // MoÄąÄ˝esz podpiĂ„â€¦Ă„â€ˇ realny input wedÄąâ€šug swojej architektury.
+      // do prostoty â€“ klawiszami [ i ] zmieniasz ostatni slider; lub klik + ruch (opcjonalnie)
+      // MoĹĽesz podpiÄ…Ä‡ realny input wedĹ‚ug swojej architektury.
     }
-    function toast(t) { /* opcjonalnie dopisz do kolejki komunikatÄ‚Ĺ‚w HUD */ }
+    function toast(t) { /* opcjonalnie dopisz do kolejki komunikatĂłw HUD */ }
     function applyShipStats(s) {
       ship.hull.max = Math.round(ship.hull.max * s.hp);
       ship.hull.val = Math.min(ship.hull.val, ship.hull.max);
@@ -15636,22 +15802,22 @@ ctx.imageSmoothingEnabled = true;
         else { n.vx *= s; n.vy *= s; }
       }
     }
-    function useRailPair(n, target) { /* sprawdÄąĹź kĂ„â€¦t i cooldown, odpal pary */ }
+    function useRailPair(n, target) { /* sprawdĹş kÄ…t i cooldown, odpal pary */ }
     function useRocketsPair(n, target) { /* salwy */ }
-    function useCIWSPair(n, target) { /* krÄ‚Ĺ‚tka seria */ }
+    function useCIWSPair(n, target) { /* krĂłtka seria */ }
     function maybeFireRockets(n, target) { /* warunkowo */ }
     Object.defineProperty(PirateSim, 'units', {
       get: function () {
-        // Zwraca tablicĂ„â„˘: [Gracz, ...Wszystkie ÄąÄ˝ywe NPC]
-        // DziĂ„â„˘ki temu AI moÄąÄ˝e iterowaĂ„â€ˇ po 'sim.units' i szukaĂ„â€ˇ celÄ‚Ĺ‚w
+        // Zwraca tablicÄ™: [Gracz, ...Wszystkie ĹĽywe NPC]
+        // DziÄ™ki temu AI moĹĽe iterowaÄ‡ po 'sim.units' i szukaÄ‡ celĂłw
         return [ship, ...npcs.filter(n => !n.dead)];
       }
     });
 
 
 
-    // 2. PodÄąâ€šĂ„â€¦cz funkcjĂ„â„˘ strzelania AI do silnika gry
-    // Kiedy AI wywoÄąâ€ša spawnBullet, my przekierujemy to do adaptera, ktÄ‚Ĺ‚ry doda pocisk do gry
+    // 2. PodĹ‚Ä…cz funkcjÄ™ strzelania AI do silnika gry
+    // Kiedy AI wywoĹ‚a spawnBullet, my przekierujemy to do adaptera, ktĂłry doda pocisk do gry
     window.spawnBullet = function (sim, from, to, weapon) {
       if (window.spawnBulletAdapter) {
         window.spawnBulletAdapter(from, to, weapon);
@@ -15659,7 +15825,7 @@ ctx.imageSmoothingEnabled = true;
         window.aiSpawnBullet(sim, from, to, weapon);
       }
     };
-    // NOWE: Funkcja do obsÄąâ€šugi paska w UI gry
+    // NOWE: Funkcja do obsĹ‚ugi paska w UI gry
     function updateLiveBackgroundProgress(progress) {
       const el = document.getElementById('bg-gen-status');
       const txt = document.getElementById('bg-gen-percent');
@@ -15669,7 +15835,7 @@ ctx.imageSmoothingEnabled = true;
         el.style.display = 'block';
         txt.textContent = Math.round(progress * 100) + '%';
       } else {
-        el.style.display = 'none'; // Ukryj po zakoÄąâ€žczeniu
+        el.style.display = 'none'; // Ukryj po zakoĹ„czeniu
       }
     }
 
@@ -15698,13 +15864,13 @@ ctx.imageSmoothingEnabled = true;
       if (optionsButton) optionsButton.disabled = false;
       setMenuView('home');
 
-      // 1. RĂ„â„˘cznie ukryj menu i upewnij siĂ„â„˘, ÄąÄ˝e HUD jest SCHOWANY podczas Äąâ€šadowania
+      // 1. RÄ™cznie ukryj menu i upewnij siÄ™, ĹĽe HUD jest SCHOWANY podczas Ĺ‚adowania
       if (mainMenuEl) mainMenuEl.classList.add('hidden');
       toggleGameUI(false);
 
-      showLoadingOverlay(0, 'Przygotowanie Äąâ€şwiata');
+      showLoadingOverlay(0, 'Przygotowanie Ĺ›wiata');
       initStars(true);
-      setLoadingProgress(20, 'Inicjalizacja systemÄ‚Ĺ‚w');
+      setLoadingProgress(20, 'Inicjalizacja systemĂłw');
       await nextFrame();
 
       initNPCs();
@@ -15715,9 +15881,9 @@ ctx.imageSmoothingEnabled = true;
       setLoadingProgress(60, 'Kalibracja floty');
       await nextFrame();
 
-      // WstĂ„â„˘pna symulacja fizyki
+      // WstÄ™pna symulacja fizyki
       for (let i = 0; i < 60; i++) npcStep(PHYS_DT);
-      setLoadingProgress(80, 'Rozruch silnikÄ‚Ĺ‚w');
+      setLoadingProgress(80, 'Rozruch silnikĂłw');
 
       await waitForPlanetsReady();
 
@@ -15729,7 +15895,7 @@ ctx.imageSmoothingEnabled = true;
       acc = 0;
       vfxTime = 0;
 
-      // Inicjalizacja systemÄ‚Ĺ‚w (ale bez pokazywania ich rĂ„â„˘cznie, zrobi to toggleGameUI)
+      // Inicjalizacja systemĂłw (ale bez pokazywania ich rÄ™cznie, zrobi to toggleGameUI)
       initShieldSystem(W, H);
 
       requestAnimationFrame(loop);
@@ -15738,8 +15904,8 @@ ctx.imageSmoothingEnabled = true;
       // Ukryj loading overlay
       hideLoadingOverlay();
 
-      // 2. TERAZ, gdy gra jest gotowa, uÄąÄ˝ywamy hideMainMenu() logicznie, 
-      // aby wÄąâ€šĂ„â€¦czyĂ„â€ˇ HUD i odpauzowaĂ„â€ˇ grĂ„â„˘.
+      // 2. TERAZ, gdy gra jest gotowa, uĹĽywamy hideMainMenu() logicznie, 
+      // aby wĹ‚Ä…czyÄ‡ HUD i odpauzowaÄ‡ grÄ™.
       hideMainMenu();
 
       console.log("[System] Gra uruchomiona.");
@@ -15759,9 +15925,49 @@ ctx.imageSmoothingEnabled = true;
     if (loadGameButton) {
       loadGameButton.title = 'Wkrotce dostepne';
     }
+    let editorLaunchInProgress = false;
+    async function openHardpointEditorFromMenu() {
+      if (editorLaunchInProgress) return;
+      editorLaunchInProgress = true;
+      const menuWasVisible = isMainMenuVisible();
+      const returnView = (menuView === 'options' || menuView === 'credits') ? menuView : 'home';
+      try {
+        showLoadingOverlay(0, 'Uruchamianie edytora');
+        await nextFrame();
+        setLoadingProgress(35, 'Ladowanie modulu');
+        const { openHardpointEditor } = await import('./src/ui/hardpointEditor.js');
+        setLoadingProgress(70, 'Inicjalizacja edytora');
+        await nextFrame();
+        if (menuWasVisible) {
+          if (mainMenuEl) mainMenuEl.classList.add('hidden');
+          toggleGameUI(false);
+          window.__onHardpointEditorClosed = () => {
+            showMainMenu(returnView);
+          };
+        } else {
+          window.__onHardpointEditorClosed = null;
+        }
+        setLoadingProgress(100, 'Start');
+        await nextFrame();
+        openHardpointEditor();
+      } catch (error) {
+        window.__onHardpointEditorClosed = null;
+        if (menuWasVisible) showMainMenu(returnView);
+        console.error('Nie udalo sie otworzyc edytora hardpointow:', error);
+      } finally {
+        hideLoadingOverlay();
+        editorLaunchInProgress = false;
+      }
+    }
     if (optionsButton) {
       optionsButton.title = 'Dostosuj jakosc tla';
       optionsButton.addEventListener('click', () => showMainMenu('options'));
+    }
+    if (editorButton) {
+      editorButton.title = 'Otworz edytor hardpointow i dysz';
+      editorButton.addEventListener('click', () => {
+        openHardpointEditorFromMenu();
+      });
     }
     if (optionsBackButton) {
       optionsBackButton.addEventListener('click', () => setMenuView('home'));
@@ -15822,7 +16028,7 @@ ctx.imageSmoothingEnabled = true;
       energyShotBtn.addEventListener('click', () => triggerEnergyShot());
     }
 
-    // --- OBSÄąUGA JAKOÄąĹˇCI PLANET ---
+    // --- OBSLUGA JAKOSCI PLANET ---
 
     function updatePlanetQualityUI() {
       const current = window.OPTIONS.planetQuality || 'medium';
@@ -15839,7 +16045,7 @@ ctx.imageSmoothingEnabled = true;
         if (window.OPTIONS) window.OPTIONS.planetQuality = quality;
         localStorage.setItem('sc_planet_quality', quality);
         updatePlanetQualityUI();
-        console.log(`Zmieniono jakoÄąâ€şĂ„â€ˇ planet na: ${quality}`);
+        console.log(`Zmieniono jakoĹ›Ä‡ planet na: ${quality}`);
       });
     });
 

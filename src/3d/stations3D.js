@@ -68,8 +68,8 @@ function getTemplate(stationId, path) {
           return; // Przerywamy pętlę, obiekt i tak idzie do kosza
         }
 
-        o.castShadow = true;
-        o.receiveShadow = true;
+        o.castShadow = false;
+        o.receiveShadow = false;
         o.frustumCulled = false; 
 
         const materials = Array.isArray(o.material) ? o.material : [o.material];

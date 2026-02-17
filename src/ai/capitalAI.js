@@ -200,7 +200,7 @@ function processAutonomousWeapons(npc, dt) {
           const by = npc.y + Math.sin(npc.angle) * offsetDist + Math.sin(npc.angle + weapon.mountAngle) * 20;
           const fakeSource = { ...npc, x: bx, y: by, angle: npc.angle + weapon.mountAngle };
           
-          window.spawnBulletAdapter(fakeSource, bestTarget, weapon.def, { type: weapon.type });
+          window.spawnBulletAdapter(fakeSource, bestTarget, weapon.def, { type: weapon.type, useHardpoint: false });
         }
       } 
       // Rakiety
