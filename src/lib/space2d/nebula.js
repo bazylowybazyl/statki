@@ -40,9 +40,12 @@ export function createRenderer(regl) {
     frag: `
       precision highp float;
       uniform sampler2D source, tNoise;
-      uniform vec3 color;
+      uniform vec3 colorDeep;
+      uniform vec3 colorBright;
       uniform vec2 offset;
-      uniform float scale, density, falloff, tNoiseSize;
+      uniform vec2 domainScale;
+      uniform vec2 domainPeriod;
+      uniform float density, falloff, tNoiseSize, intensity;
       varying vec2 vUV;
 
       float smootherstep(float a, float b, float r) {
@@ -51,56 +54,85 @@ export function createRenderer(regl) {
           return mix(a, b, r);
       }
 
-      float perlin_2d(vec2 p) {
-          vec2 p0 = floor(p);
-          vec2 p1 = p0 + vec2(1, 0);
-          vec2 p2 = p0 + vec2(1, 1);
-          vec2 p3 = p0 + vec2(0, 1);
-          vec2 d0 = texture2D(tNoise, p0/tNoiseSize).ba;
-          vec2 d1 = texture2D(tNoise, p1/tNoiseSize).ba;
-          vec2 d2 = texture2D(tNoise, p2/tNoiseSize).ba;
-          vec2 d3 = texture2D(tNoise, p3/tNoiseSize).ba;
-          d0 = 2.0 * d0 - 1.0;
-          d1 = 2.0 * d1 - 1.0;
-          d2 = 2.0 * d2 - 1.0;
-          d3 = 2.0 * d3 - 1.0;
-          vec2 p0p = p - p0;
-          vec2 p1p = p - p1;
-          vec2 p2p = p - p2;
-          vec2 p3p = p - p3;
+      float wrapPeriodic(float value, float period) {
+          return mod(mod(value, period) + period, period);
+      }
+
+      vec2 wrapPeriodic(vec2 value, vec2 period) {
+          return vec2(wrapPeriodic(value.x, period.x), wrapPeriodic(value.y, period.y));
+      }
+
+      vec2 gradient(vec2 lattice) {
+          vec2 sampleUV = (lattice + 0.5) / tNoiseSize;
+          vec2 g = texture2D(tNoise, sampleUV).ba;
+          return 2.0 * g - 1.0;
+      }
+
+      float perlin_2d(vec2 p, vec2 period) {
+          vec2 cell = floor(p);
+          vec2 local = fract(p);
+
+          vec2 base = wrapPeriodic(cell, period);
+          vec2 p0 = base;
+          vec2 p1 = vec2(wrapPeriodic(base.x + 1.0, period.x), base.y);
+          vec2 p2 = vec2(wrapPeriodic(base.x + 1.0, period.x), wrapPeriodic(base.y + 1.0, period.y));
+          vec2 p3 = vec2(base.x, wrapPeriodic(base.y + 1.0, period.y));
+
+          vec2 d0 = gradient(p0);
+          vec2 d1 = gradient(p1);
+          vec2 d2 = gradient(p2);
+          vec2 d3 = gradient(p3);
+
+          vec2 p0p = local;
+          vec2 p1p = local - vec2(1.0, 0.0);
+          vec2 p2p = local - vec2(1.0, 1.0);
+          vec2 p3p = local - vec2(0.0, 1.0);
+
           float dp0 = dot(d0, p0p);
           float dp1 = dot(d1, p1p);
           float dp2 = dot(d2, p2p);
           float dp3 = dot(d3, p3p);
-          float fx = p.x - p0.x;
-          float fy = p.y - p0.y;
+
+          float fx = local.x;
+          float fy = local.y;
           float m01 = smootherstep(dp0, dp1, fx);
           float m32 = smootherstep(dp3, dp2, fx);
           float m01m32 = smootherstep(m01, m32, fy);
           return m01m32;
       }
 
-      float normalnoise(vec2 p) {
-          return perlin_2d(p) * 0.5 + 0.5;
+      float normalnoise(vec2 p, vec2 period) {
+          return perlin_2d(p, period) * 0.5 + 0.5;
       }
 
-      float noise(vec2 p) {
-          p += offset;
-          const int steps = 5;
-          float scale = pow(2.0, float(steps));
-          float displace = 0.0;
-          for (int i = 0; i < steps; i++) {
-              displace = normalnoise(p * scale + displace);
-              scale *= 0.5;
+      float fbm(vec2 p, vec2 period) {
+          float amplitude = 0.6;
+          float total = 0.0;
+          float sum = 0.0;
+          vec2 freq = vec2(1.0);
+          vec2 per = period;
+          for (int i = 0; i < 5; i++) {
+              total += normalnoise(p * freq, per) * amplitude;
+              sum += amplitude;
+              amplitude *= 0.55;
+              freq *= 2.0;
+              per *= 2.0;
           }
-          return normalnoise(p + displace);
+          return total / sum;
       }
 
       void main() {
         vec4 p = texture2D(source, vUV);
-        float n = noise(gl_FragCoord.xy * scale * 1.0);
-        n = pow(n + density, falloff);
-        gl_FragColor = vec4(mix(p.rgb, color, n), 1);
+        vec2 repeat = domainPeriod;
+        vec2 domain = vUV * domainScale + offset;
+        float base = fbm(domain, repeat);
+        float maskBase = clamp(base + density, 0.0, 1.0);
+        float highlightBase = clamp(base + density * 0.5, 0.0, 1.0);
+        float mask = pow(maskBase, falloff);
+        float highlight = pow(highlightBase, max(1.0, falloff * 0.6));
+        vec3 tint = mix(colorDeep, colorBright, highlight);
+        vec3 finalColor = mix(p.rgb, tint, mask * intensity);
+        gl_FragColor = vec4(finalColor, 1);
       }
     `,
     attributes: {
@@ -110,12 +142,15 @@ export function createRenderer(regl) {
     uniforms: {
       source: regl.prop('source'),
       offset: regl.prop('offset'),
-      scale: regl.prop('scale'),
+      domainScale: regl.prop('domainScale'),
       falloff: regl.prop('falloff'),
-      color: regl.prop('color'),
+      colorDeep: regl.prop('colorDeep'),
+      colorBright: regl.prop('colorBright'),
       density: regl.prop('density'),
       tNoise: pgTexture,
-      tNoiseSize: pgWidth
+      tNoiseSize: pgWidth,
+      domainPeriod: regl.prop('domainPeriod'),
+      intensity: regl.prop('intensity')
     },
     framebuffer: regl.prop('destination'),
     viewport: regl.prop('viewport'),
