@@ -660,7 +660,8 @@ function wireDevToolsLogic() {
               window.ship.visual.spriteScale = shipScale;
 
               // 1. Aplikujemy obrazek kolorowy do destrukcji
-              window.initHexBody(window.ship, bakedData.albedo);
+              const damagedSprite = (window.__damagedSprite && window.__damagedSprite.width) ? window.__damagedSprite : null;
+              window.initHexBody(window.ship, bakedData.albedo, damagedSprite);
               
               // 2. Aplikujemy Normal Mapę do pamięci obiektu statku
               window.ship.hexGrid.normalMapImage = bakedData.normal;

@@ -72,6 +72,35 @@ function getEditorShipIdForNpc(npc) {
   return null;
 }
 
+function cloneShipsMap(ships) {
+  if (!ships || typeof ships !== 'object') return {};
+  try {
+    return JSON.parse(JSON.stringify(ships));
+  } catch {
+    return {};
+  }
+}
+
+function mergeShipsDefaults(defaultShips, loadedShips) {
+  const merged = cloneShipsMap(defaultShips);
+  if (!loadedShips || typeof loadedShips !== 'object') return merged;
+  for (const [shipId, shipCfg] of Object.entries(loadedShips)) {
+    if (!shipCfg || typeof shipCfg !== 'object') continue;
+    const base = merged[shipId] && typeof merged[shipId] === 'object' ? merged[shipId] : {};
+    merged[shipId] = {
+      ...base,
+      ...shipCfg,
+      hardpoints: Array.isArray(shipCfg.hardpoints) ? shipCfg.hardpoints : (Array.isArray(base.hardpoints) ? base.hardpoints : []),
+      cores: Array.isArray(shipCfg.cores) ? shipCfg.cores : (Array.isArray(base.cores) ? base.cores : []),
+      engines: {
+        ...(base.engines && typeof base.engines === 'object' ? base.engines : {}),
+        ...(shipCfg.engines && typeof shipCfg.engines === 'object' ? shipCfg.engines : {})
+      }
+    };
+  }
+  return merged;
+}
+
 function pickNpcHardpoint(owner, preferredType) {
   const list = Array.isArray(owner?.editorHardpoints) ? owner.editorHardpoints : null;
   if (!list || !list.length) return null;
@@ -87,6 +116,7 @@ function pickNpcHardpoint(owner, preferredType) {
 export function createNpcHardpointRuntime({
   hardpointEnum = DEFAULT_HP,
   storageKey = 'hpEditor.v1',
+  defaultShips = {},
   pollInterval = 0.35
 } = {}) {
   const HP = normalizeHpEnum(hardpointEnum);
@@ -102,7 +132,8 @@ export function createNpcHardpointRuntime({
   const state = {
     raw: '',
     version: 0,
-    ships: {},
+    defaultShips: cloneShipsMap(defaultShips),
+    ships: cloneShipsMap(defaultShips),
     pollTimer: 0
   };
 
@@ -118,15 +149,15 @@ export function createNpcHardpointRuntime({
     state.raw = raw;
     state.version += 1;
     if (!raw) {
-      state.ships = {};
+      state.ships = cloneShipsMap(state.defaultShips);
       return true;
     }
     try {
       const parsed = JSON.parse(raw);
       const ships = parsed?.ships;
-      state.ships = ships && typeof ships === 'object' ? ships : {};
+      state.ships = mergeShipsDefaults(state.defaultShips, ships && typeof ships === 'object' ? ships : {});
     } catch {
-      state.ships = {};
+      state.ships = cloneShipsMap(state.defaultShips);
     }
     return true;
   }

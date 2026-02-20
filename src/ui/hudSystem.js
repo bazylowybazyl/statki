@@ -205,7 +205,7 @@ export class HUDSystem {
 
         this.skillKeys = [
             { key: '1', label: 'MODE' },
-            { key: '2', label: 'WEAP' },
+            { key: '2', label: 'COMM' },
             { key: '3', label: 'SCAN' },
             { key: '4', label: 'MAP' },
             { key: '5', label: 'AUTO' },
@@ -266,7 +266,7 @@ export class HUDSystem {
         if(btn1) btn1.addEventListener('click', () => this.setBottomMenuState('MODE'));
 
         const btn2 = this.dom.skillRow?.querySelector('.glass-key:nth-child(2)');
-        if(btn2) btn2.addEventListener('click', () => this.setBottomMenuState('WEAPONS'));
+        if(btn2) btn2.addEventListener('click', () => this.setBottomMenuState('COMM'));
         
         window.addEventListener('keydown', (e) => {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -277,11 +277,13 @@ export class HUDSystem {
             
             if (this.menuState === 'IDLE') {
                 if (e.key === '1') this.setBottomMenuState('MODE');
-                if (e.key === '2') this.setBottomMenuState('WEAPONS');
+                if (e.key === '2') this.setBottomMenuState('COMM');
             } else if (this.menuState === 'MODE') {
                 if (e.key === '1') this.handleMenuAction('close');
-            } else if (this.menuState === 'WEAPONS') {
+            } else if (this.menuState === 'COMM') {
+                if (e.key === '1') this.handleMenuAction('gate-toggle');
                 if (e.key === '2') this.handleMenuAction('close');
+                if (e.key === '3') this.handleMenuAction('gate-auto');
             }
         });
     }
@@ -576,7 +578,7 @@ export class HUDSystem {
         if (this.menuState === 'MODE') {
             const btn = this.dom.skillRow.querySelector('.glass-key:nth-child(1)'); 
             if(btn) btn.classList.add('active');
-        } else if (this.menuState === 'WEAPONS') {
+        } else if (this.menuState === 'COMM') {
             const btn = this.dom.skillRow.querySelector('.glass-key:nth-child(2)'); 
             if(btn) btn.classList.add('active');
         }
@@ -586,7 +588,27 @@ export class HUDSystem {
         console.log("HUD Action:", action);
         if (action === 'close') {
             this.setBottomMenuState('IDLE');
+            return;
         }
+        if (action === 'gate-toggle') {
+            if (typeof window.togglePlanetaryRingGates === 'function') {
+                window.togglePlanetaryRingGates();
+            }
+            this.refreshOpenMenu();
+            return;
+        }
+        if (action === 'gate-auto') {
+            if (typeof window.setPlanetaryRingGateMode === 'function') {
+                window.setPlanetaryRingGateMode('auto');
+            }
+            this.refreshOpenMenu();
+        }
+    }
+
+    refreshOpenMenu() {
+        if (this.menuState === 'IDLE') return;
+        if (!this.dom.drawerContent) return;
+        this.dom.drawerContent.innerHTML = this.getMenuHTML(this.menuState);
     }
 
     renderSkillKeys() {
@@ -615,15 +637,17 @@ export class HUDSystem {
                     <div class="menu-btn" onclick="hudSystem.handleMenuAction('intel')" data-mode="intel"><div class="key-hint">6</div><div class="label">INTEL</div></div>
                 </div>
             `;
-        } else if (state === 'WEAPONS') {
+        } else if (state === 'COMM') {
+            const gateState = (typeof window.getPlanetaryGateControlState === 'function')
+                ? window.getPlanetaryGateControlState()
+                : null;
+            const mode = String(gateState?.mode || 'auto').toUpperCase();
             return `
-                <div class="menu-header">WEAPON SYSTEMS CONTROL</div>
+                <div class="menu-header">COMM / GATE CONTROL</div>
                 <div class="menu-grid" style="align-items:flex-start; height:auto; flex-wrap:wrap; padding-bottom:40px;">
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('special')"><div class="key-hint">1</div><div class="label">SPECIAL</div></div>
+                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('gate-toggle')"><div class="key-hint">1</div><div class="label">GATE TOGGLE</div></div>
                     <div class="menu-btn" onclick="hudSystem.handleMenuAction('close')"><div class="key-hint">2</div><div class="label">BACK</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('main')"><div class="key-hint">3</div><div class="label">MAIN</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('secondary')"><div class="key-hint">4</div><div class="label">SECONDARY</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('hangar')"><div class="key-hint">5</div><div class="label">HANGAR</div></div>
+                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('gate-auto')"><div class="key-hint">3</div><div class="label">MODE: ${mode}</div></div>
                 </div>
             `;
         }

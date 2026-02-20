@@ -19,19 +19,40 @@ function getInterpolatedPose(entity) {
 function buildSlots(entity) {
   const slots = [];
 
-  const mainEngine = entity?.engines?.main;
-  if (mainEngine) {
-    const mainOffset = mainEngine.vfxOffset || mainEngine.visualOffset || mainEngine.offset;
-    if (mainOffset && Number.isFinite(mainOffset.x) && Number.isFinite(mainOffset.y)) {
+  const mainThrusters = Array.isArray(entity?.visual?.mainThrusters) ? entity.visual.mainThrusters : null;
+  if (mainThrusters && mainThrusters.length) {
+    for (const thruster of mainThrusters) {
+      if (!thruster?.offset) continue;
+      const ox = Number(thruster.offset.x);
+      const oy = Number(thruster.offset.y);
+      if (!Number.isFinite(ox) || !Number.isFinite(oy)) continue;
+      const fwd = thruster.forward || { x: 0, y: 1 };
       slots.push({
         kind: 'main',
         mode: 'absolute',
-        offset: { x: Number(mainOffset.x) || 0, y: Number(mainOffset.y) || 0 },
-        forward: (mainEngine.vfxForward && Number.isFinite(mainEngine.vfxForward.x) && Number.isFinite(mainEngine.vfxForward.y))
-          ? { x: Number(mainEngine.vfxForward.x) || 0, y: Number(mainEngine.vfxForward.y) || 1 }
-          : { x: 0, y: 1 },
+        offset: { x: ox, y: oy },
+        forward: {
+          x: Number.isFinite(Number(fwd.x)) ? Number(fwd.x) : 0,
+          y: Number.isFinite(Number(fwd.y)) ? Number(fwd.y) : 1
+        },
         side: null
       });
+    }
+  } else {
+    const mainEngine = entity?.engines?.main;
+    if (mainEngine) {
+      const mainOffset = mainEngine.vfxOffset || mainEngine.visualOffset || mainEngine.offset;
+      if (mainOffset && Number.isFinite(mainOffset.x) && Number.isFinite(mainOffset.y)) {
+        slots.push({
+          kind: 'main',
+          mode: 'absolute',
+          offset: { x: Number(mainOffset.x) || 0, y: Number(mainOffset.y) || 0 },
+          forward: (mainEngine.vfxForward && Number.isFinite(mainEngine.vfxForward.x) && Number.isFinite(mainEngine.vfxForward.y))
+            ? { x: Number(mainEngine.vfxForward.x) || 0, y: Number(mainEngine.vfxForward.y) || 1 }
+            : { x: 0, y: 1 },
+          side: null
+        });
+      }
     }
   }
 

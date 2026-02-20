@@ -545,6 +545,7 @@
     import { initWorld3D, attachPirateStation3D, dettachPirateStation3D, updateWorld3D, drawWorld3D } from "./src/3d/world3d.js";
     import { initStations3D, updateStations3D, detachPlanetStations3D, drawStations3D } from "./src/3d/stations3D.js";
     import { initHexShips3D, updateHexShips3D, resizeHexShips3D, drawHexShips3D } from "./src/3d/hexShips3D.js";
+    import { updateShields3D } from "./src/3d/shield3D.js";
     import { Core3D } from "./src/3d/core3d.js";
     import { initOverlay } from "./src/effects3d/overlay.js";
     import { createRailgunExplosionFactory } from "./src/effects3d/railgunExplosion.js";
@@ -575,6 +576,7 @@
     window.updateHexShips3D = updateHexShips3D;
     window.resizeHexShips3D = resizeHexShips3D;
     window.drawHexShips3D = drawHexShips3D;
+    window.updateShields3D = updateShields3D;
     window.Core3D = Core3D;
     window.detachPlanetStations3D = detachPlanetStations3D;
     window.initOverlay3D = initOverlay;
@@ -609,16 +611,27 @@
   <script type="module">
     import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
     import { WORLD, setWorldSize } from './src/world/world.js';
-    import { initShieldSystem, updateShieldFx, drawShield, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot } from './shieldSystem.js';
+    import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot } from './shieldSystem.js';
     // DODANO IMPORT SHIP_PHYSICS
     import { createShipEntity, applyPlayerInput, runShipAI, SHIP_PHYSICS } from "./src/game/shipEntity.js";
     import { DestructorSystem, initHexBody, drawHexBody, drawHexBodyLocal, isHexShips3DActive, getHexStructuralState } from "./src/game/destructor.js";
+    import { updateShields3D } from "./src/3d/shield3D.js";
     // IMPORTUJEMY NOWY MODUL SUPERBRONI
     import * as Superweapon from "./src/game/superweapon.js";
     import { HUDSystem } from "./src/ui/hudSystem.js";
     import { WEAPONS, WEAPON_ICON_PATHS, AISPACE_GUNS, AISPACE_PD, AISPACE_MISSILES, AISPACE_GUNS_M } from "./src/data/weapons.js";
     import { SHIPS as SHIP_FRAMES, SUPPORT_SHIP_TEMPLATES as SUPPORT_SHIP_TEMPLATES_DATA, CAPITAL_SHIP_TEMPLATES as CAPITAL_SHIP_TEMPLATES_DATA } from "./src/data/ships.js";
+    import { PLAYER_EDITOR_DEFAULTS, SHIP_EDITOR_DEFAULTS } from "./src/data/hardpointEditorDefaults.js";
     import { createNpcHardpointRuntime } from "./src/game/npcHardpointRuntime.js";
+    import {
+      initPlanetaryRings3D,
+      updatePlanetaryRings3D,
+      getPlanetaryRingEntities,
+      getPotentialPlanetaryRingTargets,
+      togglePlanetaryRingGates,
+      setPlanetaryRingGateMode,
+      getPlanetaryGateControlState
+    } from "./src/3d/planetaryRing3D.js";
     // Statki Terran (Wsparcie)
     import terranFrigateImg from "./src/assets/ships/terranfrigate.png";
     import terranDestroyerImg from "./src/assets/ships/terrandestroyer.png";
@@ -644,6 +657,9 @@
     const hud = new HUDSystem();
     hud.init();
     window.hudSystem = hud;
+    window.togglePlanetaryRingGates = togglePlanetaryRingGates;
+    window.setPlanetaryRingGateMode = setPlanetaryRingGateMode;
+    window.getPlanetaryGateControlState = getPlanetaryGateControlState;
 
     // LOKALNY alias na potrzeby tego moduĹ‚u (ESM nie widzi 'goĹ‚ych' globali z window):
     const PLANET_SCALE =
@@ -1097,13 +1113,42 @@
       planetQuality: 'medium'
     };
     window.OPTIONS = OPTIONS;
-    window.VFX_TUNE = Object.assign({
+    const VFX_TUNE_DEFAULTS = {
       mainW: 2.26,
       mainL: 2.37,
       sideW: 1.0,
       sideL: 0.98,
       curve: 1.8
-    }, window.VFX_TUNE || {});
+    };
+    const VFX_TUNE_STORAGE_KEY = 'engineVfxTune.v1';
+    let storedVfxTune = null;
+    try {
+      const raw = localStorage.getItem(VFX_TUNE_STORAGE_KEY);
+      if (raw) storedVfxTune = JSON.parse(raw);
+    } catch { }
+    window.VFX_TUNE = Object.assign({}, VFX_TUNE_DEFAULTS, storedVfxTune || {}, window.VFX_TUNE || {});
+    window.__getEngineVfxTune = () => ({ ...window.VFX_TUNE });
+    window.__setEngineVfxTune = (patch = {}, opts = {}) => {
+      if (!patch || typeof patch !== 'object') return window.__getEngineVfxTune();
+      for (const key of ['mainW', 'mainL', 'sideW', 'sideL', 'curve', 'mainCurve', 'sideCurve']) {
+        if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
+        const val = Number(patch[key]);
+        if (Number.isFinite(val) && val > 0) window.VFX_TUNE[key] = val;
+      }
+      const save = opts && opts.save !== false;
+      if (save) {
+        try { localStorage.setItem(VFX_TUNE_STORAGE_KEY, JSON.stringify(window.VFX_TUNE)); } catch { }
+      }
+      return window.__getEngineVfxTune();
+    };
+    window.__resetEngineVfxTune = (opts = {}) => {
+      window.VFX_TUNE = { ...VFX_TUNE_DEFAULTS };
+      const save = opts && opts.save !== false;
+      if (save) {
+        try { localStorage.setItem(VFX_TUNE_STORAGE_KEY, JSON.stringify(window.VFX_TUNE)); } catch { }
+      }
+      return window.__getEngineVfxTune();
+    };
     let OPTIONS_OPEN = false;
 
     // --- SYSTEM AUDIO (AudioSys) ---
@@ -2640,6 +2685,7 @@ window.AudioSys = AudioSys;
     const npcHardpointRuntime = createNpcHardpointRuntime({
       hardpointEnum: HP,
       storageKey: 'hpEditor.v1',
+      defaultShips: SHIP_EDITOR_DEFAULTS?.ships || {},
       pollInterval: 0.35
     });
     const NPC_HARDPOINT_COLORS = npcHardpointRuntime.colors;
@@ -2691,6 +2737,137 @@ window.AudioSys = AudioSys;
         return applyHardpointRotation(hp, rotation);
       }
       return [];
+    }
+
+    function readShipsEditorConfigFromStorage() {
+      try {
+        const raw = localStorage.getItem('hpEditor.v1');
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return null;
+        return (parsed.ships && typeof parsed.ships === 'object') ? parsed.ships : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function getPlayerEditorConfigFromStorage() {
+      const ships = readShipsEditorConfigFromStorage();
+      const playerCfg = ships?.player;
+      if (playerCfg && typeof playerCfg === 'object') return playerCfg;
+      return PLAYER_EDITOR_DEFAULTS || {};
+    }
+
+    function editorDegToForward(deg) {
+      const rad = (Number(deg) || 0) * Math.PI / 180;
+      return { x: Math.sin(rad), y: Math.cos(rad) };
+    }
+
+    function buildPlayerDefaultEditorHardpoints() {
+      const playerCfg = getPlayerEditorConfigFromStorage();
+      const src = Array.isArray(playerCfg?.hardpoints) ? playerCfg.hardpoints : [];
+      if (!src.length) return [];
+      const validTypes = new Set(Object.values(HP));
+      const out = [];
+      for (let i = 0; i < src.length; i++) {
+        const marker = src[i];
+        const x = Number(marker?.x);
+        const y = Number(marker?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        const rawType = String(marker?.type || HP.MAIN).toLowerCase();
+        const type = validTypes.has(rawType) ? rawType : HP.MAIN;
+        out.push({
+          id: marker?.id || uid(),
+          type,
+          pos: { x, y, rot: 0 },
+          mount: null,
+          ammo: null,
+          maxAmmo: null
+        });
+      }
+      return out;
+    }
+
+    function normalizeEditorEngineMarker(marker) {
+      const x = Number(marker?.x);
+      const y = Number(marker?.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return {
+        x: x + (Number(marker?.offsetX) || 0),
+        y: y + (Number(marker?.offsetY) || 0),
+        deg: Number(marker?.deg) || 0,
+        offsetY: Number(marker?.offsetY) || 0,
+        vfxLengthMin: Number(marker?.vfxLengthMin) || 10,
+        vfxLengthMax: Number(marker?.vfxLengthMax) || 179,
+        vfxWidthMin: Number(marker?.vfxWidthMin) || 25,
+        vfxWidthMax: Number(marker?.vfxWidthMax) || 227
+      };
+    }
+
+    function buildPlayerDefaultEditorEngines() {
+      const playerCfg = getPlayerEditorConfigFromStorage();
+      const rawMain = Array.isArray(playerCfg?.engines?.main) ? playerCfg.engines.main : [];
+      const rawSide = Array.isArray(playerCfg?.engines?.side) ? playerCfg.engines.side : [];
+      const mainThrusters = [];
+      const sideThrusters = [];
+
+      for (let i = 0; i < rawMain.length; i++) {
+        const m = normalizeEditorEngineMarker(rawMain[i]);
+        if (!m) continue;
+        mainThrusters.push({
+          offset: { x: m.x, y: m.y },
+          forward: editorDegToForward(m.deg),
+          yNudge: m.offsetY,
+          vfxLengthMin: m.vfxLengthMin,
+          vfxLengthMax: m.vfxLengthMax
+        });
+      }
+
+      for (let i = 0; i < rawSide.length; i++) {
+        const s = normalizeEditorEngineMarker(rawSide[i]);
+        if (!s) continue;
+        const side = s.y >= 0 ? 'left' : 'right';
+        sideThrusters.push({
+          offset: { x: s.x, y: s.y },
+          forward: editorDegToForward(s.deg),
+          side,
+          yNudge: s.offsetY,
+          vfxWidthMin: s.vfxWidthMin,
+          vfxWidthMax: s.vfxWidthMax,
+          vfxLengthMin: s.vfxLengthMin,
+          vfxLengthMax: s.vfxLengthMax
+        });
+      }
+
+      return { mainThrusters, sideThrusters };
+    }
+
+    function applyPlayerEditorEngineLayoutFromStorage() {
+      if (!ship?.visual || !ship?.engines) return;
+      const cfg = buildPlayerDefaultEditorEngines();
+      if (cfg.mainThrusters.length) {
+        ship.visual.mainThrusters = cfg.mainThrusters;
+        const firstMain = cfg.mainThrusters[0];
+        if (ship.engines.main) {
+          ship.engines.main.vfxOffset = { ...firstMain.offset };
+          ship.engines.main.vfxForward = { ...firstMain.forward };
+          ship.engines.main.vfxYNudge = Number(firstMain.yNudge) || 0;
+          ship.engines.main.vfxLengthMin = Number(firstMain.vfxLengthMin) || ship.engines.main.vfxLengthMin || 10;
+          ship.engines.main.vfxLengthMax = Number(firstMain.vfxLengthMax) || ship.engines.main.vfxLengthMax || 179;
+        }
+      }
+      if (cfg.sideThrusters.length) {
+        ship.visual.torqueThrusters = cfg.sideThrusters;
+      }
+    }
+
+    function generatePlayerHardpointsForFrame(frameId, frame, spriteSize) {
+      if (frameId === 'atlas') {
+        const editorHardpoints = buildPlayerDefaultEditorHardpoints();
+        if (editorHardpoints.length) return editorHardpoints;
+      }
+      if (!frame?.genHardpoints) return [];
+      return frame.genHardpoints(spriteSize);
     }
 
     function buildAtlasHardpoints(layout, bounds) {
@@ -2772,6 +2949,7 @@ window.AudioSys = AudioSys;
     ship.mass = SHIP_PHYSICS.PLAYER_MASS;
     ship.rammingMass = SHIP_PHYSICS.PLAYER_MASS;
     ship.inertia = (1 / 12) * ship.mass * ((ship.w * ship.w) + (ship.h * ship.h));
+    applyPlayerEditorEngineLayoutFromStorage();
 
     ship.inventory = mergedInventory;
     ship.shipFrame = previousPlayer.shipFrame || 'atlas';
@@ -2826,7 +3004,7 @@ window.AudioSys = AudioSys;
       const frame = SHIPS[Game.player.shipFrame];
       if (!frame) return;
       const spriteSize = { w: Game.player.spriteW || 260, h: Game.player.spriteH || 520 };
-      Game.player.hardpoints = frame.genHardpoints(spriteSize);
+      Game.player.hardpoints = generatePlayerHardpointsForFrame(Game.player.shipFrame, frame, spriteSize);
       autoMountDefaults();
       syncWeaponSystems();
     }
@@ -2859,9 +3037,37 @@ window.AudioSys = AudioSys;
         if (weapon) byType[hp.type].push({ hp, weapon });
       }
       Game.player.weapons = byType;
+      syncCiwsFromAuxLoadout(byType[HP.AUX] || []);
       rocketAmmoMax = missileAmmoCapacity();
       rocketAmmo = missileAmmoTotal();
       updateMainWeaponBehavior();
+    }
+
+    function syncCiwsFromAuxLoadout(auxLoadouts) {
+      const prev = Array.isArray(ship.ciws) ? ship.ciws : [];
+      const prevByHpId = new Map();
+      for (let i = 0; i < prev.length; i++) {
+        const entry = prev[i];
+        if (!entry || !entry.hpId) continue;
+        prevByHpId.set(entry.hpId, entry);
+      }
+
+      const next = [];
+      for (let i = 0; i < auxLoadouts.length; i++) {
+        const loadout = auxLoadouts[i];
+        const hp = loadout?.hp;
+        if (!hp?.pos) continue;
+        const previous = prevByHpId.get(hp.id);
+        next.push({
+          hpId: hp.id,
+          offset: { x: Number(hp.pos.x) || 0, y: Number(hp.pos.y) || 0 },
+          angle: Number.isFinite(previous?.angle) ? previous.angle : 0,
+          angVel: Number.isFinite(previous?.angVel) ? previous.angVel : 0,
+          cd: Number.isFinite(previous?.cd) ? previous.cd : 0
+        });
+      }
+
+      ship.ciws = next;
     }
 
     function getMainWeaponBehaviorForWeaponId(id) {
@@ -2954,7 +3160,7 @@ window.AudioSys = AudioSys;
         const frame = SHIPS[Game.player.shipFrame];
         if (frame) {
           const spriteSize = { w: Game.player.spriteW || 260, h: Game.player.spriteH || 520 };
-          const fresh = frame.genHardpoints(spriteSize);
+          const fresh = generatePlayerHardpointsForFrame(Game.player.shipFrame, frame, spriteSize);
           const savedByType = new Map();
           for (const saved of (data.hardpoints || [])) {
             if (!saved.mount) continue;
@@ -2976,6 +3182,35 @@ window.AudioSys = AudioSys;
       syncWeaponSystems();
       if (typeof renderMechanic === 'function') renderMechanic();
     }
+
+    function applyHardpointEditorConfigToRunningGame() {
+      try {
+        npcHardpointRuntime.refreshCache(true);
+      } catch { }
+
+      const prev = Array.isArray(Game.player?.hardpoints)
+        ? Game.player.hardpoints.map(h => ({ type: h.type, mount: h.mount, ammo: h.ammo, maxAmmo: h.maxAmmo }))
+        : [];
+
+      applyPlayerEditorEngineLayoutFromStorage();
+      rebuildHardpointsForFrame();
+      if (prev.length) tryPreserveMounts(prev);
+      syncWeaponSystems();
+      if (typeof renderMechanic === 'function') renderMechanic();
+
+      const npcList = Array.isArray(window.npcs) ? window.npcs : [];
+      for (let i = 0; i < npcList.length; i++) {
+        try { applyEditorLayoutToNpc(npcList[i]); } catch { }
+      }
+    }
+
+    window.__applyHardpointEditorConfig = (configData) => {
+      if (configData && typeof configData === 'object') {
+        try { localStorage.setItem('hpEditor.v1', JSON.stringify(configData)); } catch { }
+      }
+      applyHardpointEditorConfigToRunningGame();
+      return true;
+    };
 
     window.addEventListener('beforeunload', saveLoadout);
 
@@ -3723,18 +3958,40 @@ window.AudioSys = AudioSys;
     // === Ship sprite ===
     const USE_SHIP_SPRITE = true;
     const shipSprite = new Image();
-    const shipNormalSprite = new Image();
-    const shipNormalSpriteState = { ready: false, error: false };
+    const shipDamagedSprite = new Image();
+    const shipDamagedSpriteState = { ready: false, error: false, applied: false };
     const capitalShipSpriteCache = {};
     const fighterSprite = new Image();
     const fighterSpriteState = { ready: false, error: false, width: 0, height: 0 };
     const hullSpriteCache = new Map();
 
-    function applyPlayerNormalMapIfReady() {
-      if (!shipNormalSpriteState.ready) return;
+    function applyPlayerDamagedSpriteIfReady() {
+      if (!shipDamagedSpriteState.ready) return;
       if (!ship?.hexGrid) return;
-      ship.hexGrid.normalMapImage = shipNormalSprite;
-      ship.hexGrid.meshDirty = true;
+      if (shipDamagedSpriteState.applied && ship.hexGrid.damagedImage) return;
+
+      const grid = ship.hexGrid;
+      const w = Math.max(1, Number(grid.srcWidth) || shipDamagedSprite.naturalWidth || 1);
+      const h = Math.max(1, Number(grid.srcHeight) || shipDamagedSprite.naturalHeight || 1);
+      const damagedCanvas = document.createElement('canvas');
+      damagedCanvas.width = w;
+      damagedCanvas.height = h;
+      const damagedCtx = damagedCanvas.getContext('2d');
+      if (!damagedCtx) return;
+      damagedCtx.clearRect(0, 0, w, h);
+      damagedCtx.drawImage(shipDamagedSprite, 0, 0, w, h);
+
+      grid.damagedImage = damagedCanvas;
+      if (Array.isArray(grid.shards)) {
+        for (const shard of grid.shards) {
+          if (!shard) continue;
+          shard.damagedImg = damagedCanvas;
+        }
+      }
+      grid.meshDirty = true;
+      grid.textureDirty = true;
+      grid.cacheDirty = true;
+      shipDamagedSpriteState.applied = true;
     }
 
     function loadHullSprite(src) {
@@ -3821,20 +4078,21 @@ window.AudioSys = AudioSys;
       tryPreserveMounts(prev);
       syncWeaponSystems();
       initHexBody(ship, shipSprite);
-      applyPlayerNormalMapIfReady();
+      applyPlayerDamagedSpriteIfReady();
       if (typeof renderMechanic === 'function') renderMechanic();
       saveLoadout();
     };
     shipSprite.src = ship.capitalProfile?.spriteSrc || "assets/capital_ship_rect_v1.png";
 
-    shipNormalSprite.onload = () => {
-      shipNormalSpriteState.ready = true;
-      applyPlayerNormalMapIfReady();
+    shipDamagedSprite.onload = () => {
+      shipDamagedSpriteState.ready = true;
+      shipDamagedSpriteState.applied = false;
+      applyPlayerDamagedSpriteIfReady();
     };
-    shipNormalSprite.onerror = () => {
-      shipNormalSpriteState.error = true;
+    shipDamagedSprite.onerror = () => {
+      shipDamagedSpriteState.error = true;
     };
-    shipNormalSprite.src = ship.capitalProfile?.spriteNormalSrc || "assets/capital_ship_rect_v1_normal.png";
+    shipDamagedSprite.src = "assets/damaged.png";
 
     fighterSprite.onload = () => {
       fighterSpriteState.ready = true;
@@ -6261,6 +6519,7 @@ window.AudioSys = AudioSys;
     // Ensure Three.js modules are loaded before initializing 3D objects
     window.addEventListener('DOMContentLoaded', () => {
       const planetInitResult = initPlanets3D(planets, SUN);
+      initPlanetaryRings3D(planets);
       const sceneFromInit = asThreeScene(planetInitResult);
       if (sceneFromInit) {
         planetScene3D = sceneFromInit;
@@ -9582,7 +9841,7 @@ window.AudioSys = AudioSys;
       }
     }
 
-    function buildMechanicPanel() {
+    function buildMechanicPanelLegacy() {
       const pane = stationOverlayDom.panels.mechanic;
       if (!pane) return;
 
@@ -9658,6 +9917,76 @@ window.AudioSys = AudioSys;
       renderMechanic();
     }
 
+    function buildMechanicPanel() {
+      const pane = stationOverlayDom.panels.mechanic;
+      if (!pane) return;
+
+      pane.innerHTML = `
+      <div class="station-card-aero mechanic-station-card mechanic-frame-card">
+        <div class="card-header">
+          <div class="card-title">Mechanik</div>
+          <span class="card-badge">Warsztat</span>
+        </div>
+        <p class="card-desc">Wybierz rame i zarzadzaj uzbrojeniem bez zagniezdzania paneli.</p>
+        <div class="mechanic-frame-row">
+          <label for="ship-frame-select">Rama statku:</label>
+          <select id="ship-frame-select"></select>
+        </div>
+      </div>
+
+      <div class="station-card-aero mechanic-station-card mechanic-list-panel">
+        <div class="card-header">
+          <div class="card-title">Magazyn broni</div>
+          <span class="card-badge">Loadout</span>
+        </div>
+        <p class="card-desc">Przeciagnij bron na slot po prawej stronie.</p>
+        <div class="mechanic-tabs" id="weapon-filter-tabs">
+          <button class="mechanic-tab-btn" data-filter="all">Wszystkie</button>
+          <button class="mechanic-tab-btn" data-filter="main">Bron glowna</button>
+          <button class="mechanic-tab-btn" data-filter="missile">Rakiety</button>
+          <button class="mechanic-tab-btn" data-filter="aux">Bron dodatkowa</button>
+        </div>
+        <div id="mechanic-available" class="weapon-pool mechanic-list-scroll"></div>
+      </div>
+
+      <div class="station-card-aero mechanic-station-card mechanic-list-panel">
+        <div class="card-header">
+          <div class="card-title">Hardpointy</div>
+          <span class="card-badge">Statek</span>
+        </div>
+        <p class="card-desc">Upusc bron na slot, aby podmienic uzbrojenie.</p>
+        <div class="mechanic-tabs" id="hp-filter-tabs">
+          <button class="mechanic-tab-btn" data-filter="all">Wszystkie</button>
+          <button class="mechanic-tab-btn" data-filter="main">Bron glowna</button>
+          <button class="mechanic-tab-btn" data-filter="missile">Rakiety</button>
+          <button class="mechanic-tab-btn" data-filter="aux">Bron dodatkowa</button>
+        </div>
+        <div id="hp-groups" class="hp-groups mechanic-list-scroll"></div>
+      </div>
+      `;
+
+      const sel = document.getElementById('ship-frame-select');
+      if (sel) {
+        sel.innerHTML = Object.values(SHIPS).map(s =>
+          `<option value="${s.id}" ${Game.player.shipFrame === s.id ? 'selected' : ''}>${s.name}</option>`
+        ).join('');
+
+        sel.onchange = () => {
+          Game.player.shipFrame = sel.value;
+          const prev = Game.player.hardpoints.map(h => ({ type: h.type, mount: h.mount, ammo: h.ammo, maxAmmo: h.maxAmmo }));
+          if (typeof rebuildHardpointsForFrame === 'function') rebuildHardpointsForFrame();
+          if (typeof tryPreserveMounts === 'function') tryPreserveMounts(prev);
+          if (typeof syncWeaponSystems === 'function') syncWeaponSystems();
+          renderMechanic();
+          if (typeof saveLoadout === 'function') saveLoadout();
+        };
+      }
+
+      initMechanicFilter('weapon-filter-tabs', () => mechanicWeaponFilter, (val) => { mechanicWeaponFilter = val; });
+      initMechanicFilter('hp-filter-tabs', () => mechanicHardpointFilter, (val) => { mechanicHardpointFilter = val; });
+      renderMechanic();
+    }
+
     function buildInfrastructurePanel() {
       const pane = stationOverlayDom.panels.infrastructure;
       if (!pane) return;
@@ -9718,6 +10047,18 @@ window.AudioSys = AudioSys;
         const match = key === tab;
         pane.classList.toggle('active', match);
         pane.classList.toggle('hidden', !match);
+      }
+      const contentArea = document.getElementById('station-content-area');
+      if (contentArea) {
+        contentArea.classList.toggle('mechanic-layout', tab === 'mechanic');
+      }
+      const topDock = document.getElementById('hud-top-dock');
+      if (topDock) {
+        topDock.classList.toggle('mechanic-expanded', tab === 'mechanic');
+      }
+      const topDrawer = document.getElementById('top-drawer');
+      if (topDrawer) {
+        topDrawer.classList.toggle('mechanic-expanded', tab === 'mechanic');
       }
     }
 
@@ -12074,7 +12415,45 @@ window.AudioSys = AudioSys;
       }
     };
 
+    const _ringNearEntitiesBuffer = [];
+    const _ringNearSeen = new Set();
+    function collectNearbyRingDestructibles(dynamicEntities) {
+      _ringNearEntitiesBuffer.length = 0;
+      _ringNearSeen.clear();
+      if (!dynamicEntities || !dynamicEntities.length) return _ringNearEntitiesBuffer;
 
+      for (let i = 0; i < dynamicEntities.length; i++) {
+        const ent = dynamicEntities[i];
+        if (!ent || ent.dead || !ent.hexGrid || ent.isCollidable === false) continue;
+
+        const ex = Number(ent.pos?.x ?? ent.x);
+        const ey = Number(ent.pos?.y ?? ent.y);
+        if (!Number.isFinite(ex) || !Number.isFinite(ey)) continue;
+
+        const er = Math.max(60, Number(ent.radius) || 120);
+        const query = getPotentialPlanetaryRingTargets(ex, ey, er + 1200);
+        const buf = query.buffer;
+        const cnt = query.count;
+
+        for (let j = 0; j < cnt; j++) {
+          const seg = buf[j];
+          if (!seg || seg.dead || seg.isCollidable === false || !seg.hexGrid) continue;
+          if (_ringNearSeen.has(seg)) continue;
+
+          const sx = Number(seg.x) || 0;
+          const sy = Number(seg.y) || 0;
+          const sr = Math.max(80, Number(seg.radius) || 120);
+          const reach = er + sr + 600;
+          const dx = sx - ex;
+          const dy = sy - ey;
+          if (dx * dx + dy * dy > reach * reach) continue;
+
+          _ringNearSeen.add(seg);
+          _ringNearEntitiesBuffer.push(seg);
+        }
+      }
+      return _ringNearEntitiesBuffer;
+    }
 
  function bulletsAndCollisionsStep(dt) {
       // 1. Budowa SpatialGrid
@@ -12266,6 +12645,72 @@ window.AudioSys = AudioSys;
              // Pocisk minÄ…Ĺ‚ wszystko (np. dziura we wraku, albo minÄ…Ĺ‚ tarczÄ™ gdy byĹ‚a wyĹ‚Ä…czona)
              hitNPC = null;
              continue;
+           }
+        }
+
+        // --- KOLIZJE Z RINGIEM PLANETARNYM (swept hit, bez wrzucania ringu do glownego SpatialGrid) ---
+        if (!hitNPC) {
+          const segX0 = Number.isFinite(b.px) ? b.px : b.x;
+          const segY0 = Number.isFinite(b.py) ? b.py : b.y;
+          const segX1 = b.x;
+          const segY1 = b.y;
+          const vxSweep = segX1 - segX0;
+          const vySweep = segY1 - segY0;
+          const vvSweep = vxSweep * vxSweep + vySweep * vySweep;
+          const sweepLen = Math.sqrt(vvSweep);
+          const searchRadius = Math.max(120, (b.r || 0) + sweepLen + 48);
+          const ringSearch = getPotentialPlanetaryRingTargets(b.x, b.y, searchRadius);
+          const ringBuf = ringSearch.buffer;
+          const ringCount = ringSearch.count;
+          let ringHit = null;
+          let ringHitX = b.x;
+          let ringHitY = b.y;
+
+          for (let k = 0; k < ringCount; k++) {
+            const seg = ringBuf[k];
+            if (!seg || seg.dead || seg.isCollidable === false) continue;
+            if (b.source && b.source === seg) continue;
+
+            const tx = Number(seg.x) || 0;
+            const ty = Number(seg.y) || 0;
+            const hitR = (Number(seg.radius) || 80) + (Number(b.r) || 0);
+            let tSweep = 0;
+            if (vvSweep > 1e-6) {
+              tSweep = ((tx - segX0) * vxSweep + (ty - segY0) * vySweep) / vvSweep;
+              tSweep = Math.max(0, Math.min(1, tSweep));
+            }
+            const cx = segX0 + vxSweep * tSweep;
+            const cy = segY0 + vySweep * tSweep;
+            const dx = tx - cx;
+            const dy = ty - cy;
+            if (dx * dx + dy * dy > hitR * hitR) continue;
+
+            // Precyzyjny test trafienia po heksach (usuwa "niewidzialne" hitboxy w szczelinie ringu)
+            const hasRealHexHit = DestructorSystem.applyImpact(seg, cx, cy, 0, { x: 0, y: 0 });
+            if (!hasRealHexHit) continue;
+
+            ringHit = seg;
+            ringHitX = cx;
+            ringHitY = cy;
+            break;
+          }
+
+          if (ringHit) {
+            const ringDamage = Number.isFinite(b.damage) ? b.damage : 0;
+            DestructorSystem.applyImpact(ringHit, ringHitX, ringHitY, ringDamage, { x: b.vx, y: b.vy });
+
+            if (b.type === 'armata') spawnArmataHitEffect(ringHitX, ringHitY, 0.95);
+            else if (b.type === 'rail') spawnRailHitEffect(ringHitX, ringHitY, 0.95);
+            else if (b.type === 'autocannon') spawnAutocannonHitEffect(ringHitX, ringHitY, 0.95);
+            else spawnDefaultHit(ringHitX, ringHitY, 0.95);
+
+            if (b.type === 'rail') {
+              b.penetration = (b.penetration || 1) - 1;
+              if (b.penetration <= 0) bullets.splice(i, 1);
+            } else {
+              bullets.splice(i, 1);
+            }
+            continue;
           }
         }
 
@@ -13283,6 +13728,9 @@ window.AudioSys = AudioSys;
 
         // UsuĹ„ tylko jeĹ›li: brak heksĂłw LUB ekstremalna odlegĹ‚oĹ›Ä‡ (50km)
         if (!hasHexesLeft || distToPlayer > 50000) {
+          if (window.DestructorSystem?.recycleWreck) {
+            window.DestructorSystem.recycleWreck(w);
+          }
           wrecks.splice(i, 1);
         }
       }
@@ -13294,7 +13742,11 @@ window.AudioSys = AudioSys;
       ciwsStep(dt);
       bulletsAndCollisionsStep(dt);
       npcShootingStep(dt);
-      const allDestructibles = [ship, ...npcs, ...wrecks];
+      const dynamicDestructibles = [ship, ...npcs, ...wrecks];
+      const nearbyRingDestructibles = collectNearbyRingDestructibles(dynamicDestructibles);
+      const allDestructibles = nearbyRingDestructibles.length
+        ? dynamicDestructibles.concat(nearbyRingDestructibles)
+        : dynamicDestructibles;
       const tDestructor0 = performance.now();
       DestructorSystem.update(dt, allDestructibles);
       enforceNpcHexIntegrityBalance();
@@ -14298,7 +14750,11 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
       const interpTurretAngle2 = interpAngleShort(prevState.turretAngle2, ship.turret2.angle, alpha);
       const interpTurretAngle3 = interpAngleShort(prevState.turretAngle3, ship.turret3.angle, alpha);
       const interpTurretAngle4 = interpAngleShort(prevState.turretAngle4, ship.turret4.angle, alpha);
-      const interpCIWSAngles = ship.ciws.map((c, i) => interpAngleShort(prevState.ciwsAngles[i], c.angle, alpha));
+      const prevCiwsAngles = Array.isArray(prevState?.ciwsAngles) ? prevState.ciwsAngles : [];
+      const interpCIWSAngles = ship.ciws.map((c, i) => {
+        const from = Number.isFinite(prevCiwsAngles[i]) ? prevCiwsAngles[i] : c.angle;
+        return interpAngleShort(from, c.angle, alpha);
+      });
       window.__interpShipPose = { x: interpPos.x, y: interpPos.y, angle: interpAngle };
 
       // --- LOGIKA KAMERY (POPRAWIONA) ---
@@ -14452,18 +14908,48 @@ function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
 
       // 1. Zaktualizuj wszystkie obiekty 3D na podstawie logiki gry
       if (window.updatePlanets3D) window.updatePlanets3D(frameDt, camNoShake);
+      updatePlanetaryRings3D(frameDt, planets);
       if (window.updateStations3D) window.updateStations3D(stations);
       if (window.updateWorld3D) window.updateWorld3D(frameDt, vfxTime);
 
       // 2. Statek gracza i system zniszczen (oraz VFX silnikow wewnatrz)
+      const renderEntities = [];
+      if (ship && !ship.dead) renderEntities.push(ship);
+      for (const npc of npcs) if (npc && !npc.dead) renderEntities.push(npc);
+      for (const w of wrecks) if (w && !w.dead) renderEntities.push(w);
+
       if (window.updateHexShips3D) {
-        const renderEntities = [];
-        if (ship && !ship.dead) renderEntities.push(ship);
-        for (const npc of npcs) if (npc && !npc.dead) renderEntities.push(npc);
-        for (const w of wrecks) if (w && !w.dead) renderEntities.push(w);
+        const zoomNow = Math.max(0.0001, Number(cam?.zoom) || 1);
+        const camX = Number(cam?.x) || 0;
+        const camY = Number(cam?.y) || 0;
+        const viewHalfW = (W * 0.5) / zoomNow;
+        const viewHalfH = (H * 0.5) / zoomNow;
+        const ringRenderRadius = Math.hypot(viewHalfW, viewHalfH) + 2800;
+        const ringSearch = getPotentialPlanetaryRingTargets(camX, camY, ringRenderRadius);
+        const ringBuf = ringSearch.buffer;
+        const ringCount = ringSearch.count;
+        for (let i = 0; i < ringCount; i++) {
+          const seg = ringBuf[i];
+          if (!seg || seg.dead) continue;
+          if (seg.isCollidable === false && !seg.hexGrid) continue;
+          const sx = Number(seg.x) || 0;
+          const sy = Number(seg.y) || 0;
+          const sr = Math.max(80, Number(seg.radius) || 120);
+          if (Math.abs(sx - camX) > viewHalfW + sr + 1400) continue;
+          if (Math.abs(sy - camY) > viewHalfH + sr + 1400) continue;
+          renderEntities.push(seg);
+        }
 
         // Ta funkcja aktualizuje statki i ostatecznie wywoluje Core3D.render()
         window.updateHexShips3D(cam, renderEntities);
+      }
+
+      // NOWOSC: TARCZA 3D
+      ship.isPlayer = true;
+      if (window.updateShields3D) {
+        window.updateShields3D(frameDt, renderEntities, window.__interpShipPose);
+      } else {
+        updateShields3D(frameDt, renderEntities, window.__interpShipPose);
       }
 
       // 3. Rysujemy gotowa klatke z WebGL na glowny Canvas 2D
@@ -15092,17 +15578,7 @@ ctx.imageSmoothingEnabled = true;
         ctx.restore(); // PrzywrĂłÄ‡ stan raz na koniec
       }
 
-      DestructorSystem.draw(ctx, cam, worldToScreen);
-
-      // === Shield Pass ===
-      for (const npc of npcDrawList) {
-        if (!npc.shield) continue;
-        drawShield(ctx, npc, cam);
-      }
-      if (ship.shield) {
-        // FIX: Przekazujemy interpolowanÄ… pozycjÄ™ do tarczy
-        drawShield(ctx, ship, cam, interpPos);
-      }
+      
 
       // === UI / HUD Pass ===
       // Rysuj HUD na Canvasie TYLKO jeĹ›li nie jesteĹ›my w menu
@@ -16061,10 +16537,12 @@ ctx.imageSmoothingEnabled = true;
 
   <script type="module">
     import { initDevTools } from './src/ui/devTools.js';
+    import { initBloomTunerPanel } from './src/ui/bloomTunerPanel.js';
 
     window.addEventListener('DOMContentLoaded', () => {
       setTimeout(() => {
         initDevTools();
+        initBloomTunerPanel();
       }, 100);
     });
   </script>

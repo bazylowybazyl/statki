@@ -2616,6 +2616,17 @@
       border-top: 1px solid var(--glass-border);
       border-radius: 0 0 16px 16px;
       padding: 6px 18px 8px 18px;
+      min-width: 520px;
+      width: min(620px, calc(100vw - 32px));
+      transition: width 0.45s cubic-bezier(0.22, 0.61, 0.36, 1), box-shadow 0.25s ease, border-color 0.25s ease;
+    }
+
+    #hud-top-dock.expanded {
+      width: min(760px, calc(100vw - 32px));
+    }
+
+    #hud-top-dock.expanded.mechanic-expanded {
+      width: min(1680px, calc(100vw - 24px));
     }
 
     .location-display {
@@ -2660,6 +2671,13 @@
       border-radius: 16px 16px 0 0;
       padding: 8px 18px 8px 18px;
       border-radius: 16px;
+      width: 520px;
+      min-width: 0;
+      box-sizing: border-box;
+    }
+
+    #hud-center-dock.expanded {
+      width: 760px;
     }
 
     /* Wings */
@@ -2829,6 +2847,10 @@
       opacity: 1;
       margin-top: 16px;
       border-bottom-color: rgba(255, 255, 255, 0.1);
+    }
+
+    .hud-dock.expanded #top-drawer.mechanic-expanded {
+      height: calc(100vh - 44px);
     }
 
     #bottom-drawer {
@@ -3071,6 +3093,8 @@
       height: 100%;
       min-height: min-content;
       flex-wrap: wrap;
+      width: 100%;
+      box-sizing: border-box;
     }
 
     .menu-btn {
@@ -3198,13 +3222,42 @@
       grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
       gap: 12px;
       align-content: start;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
     }
 
-    .station-tab {
+    .station-content::-webkit-scrollbar {
+      display: none;
+    }
+
+    .station-content.mechanic-layout {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr);
+      align-items: stretch;
+      align-content: stretch;
+      gap: 14px;
+      min-height: 0;
+    }
+
+    .station-content.mechanic-layout .mechanic-frame-card {
+      grid-column: 1 / -1;
+    }
+
+    .station-content.mechanic-layout .mechanic-list-panel {
+      min-height: 0;
+      min-width: 0;
+      height: auto;
+    }
+
+    .station-content > .station-tab {
       display: contents;
     }
 
-    .station-tab.hidden {
+    .station-content > .station-tab.active {
+      display: contents;
+    }
+
+    .station-content > .station-tab.hidden {
       display: none;
     }
 
@@ -3224,6 +3277,57 @@
       transform: translateY(-1px);
       border-color: rgba(255, 255, 255, 0.25);
       background: linear-gradient(145deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
+    }
+
+    .mechanic-station-card {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 420px;
+      min-width: 0;
+    }
+
+    .mechanic-frame-card {
+      min-height: auto;
+      grid-column: 1 / -1;
+    }
+
+    .mechanic-frame-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .mechanic-frame-row label {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #b8c9f3;
+    }
+
+    .mechanic-frame-row select {
+      min-width: 220px;
+      max-width: 360px;
+      flex: 1;
+      background: linear-gradient(135deg, rgba(6, 14, 28, 0.92), rgba(8, 16, 34, 0.95));
+      color: #dfe7ff;
+      border: 1px solid #2a3a5a;
+      border-radius: 10px;
+      padding: 7px 12px;
+      font-size: 14px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    .mechanic-list-panel .mechanic-tabs {
+      padding: 0;
+      margin: 0;
+    }
+
+    .mechanic-list-scroll {
+      flex: 1;
+      min-height: 280px;
     }
 
     .card-header {

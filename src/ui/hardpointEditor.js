@@ -8,6 +8,14 @@ import pirateBattleshipImg from '../assets/ships/piratebattleship.png';
 const STYLE_ID = 'hp-editor-style';
 const ROOT_ID = 'hp-editor-root';
 const STORAGE_KEY = 'hpEditor.v1';
+const VFX_TUNE_STORAGE_KEY = 'engineVfxTune.v1';
+const VFX_TUNE_DEFAULTS = {
+  mainW: 2.26,
+  mainL: 2.37,
+  sideW: 1.0,
+  sideL: 0.98,
+  curve: 1.8
+};
 
 const SHIP_DEFS = [
   { id: 'player', label: 'Statek gracza', sprite: 'assets/capital_ship_rect_v1.png' },
@@ -51,6 +59,12 @@ const state = {
   engineDeg: 90,
   engineOffsetX: 0,
   engineOffsetY: 0,
+  mainVfxLengthMin: 10,
+  mainVfxLengthMax: 179,
+  sideVfxWidthMin: 25,
+  sideVfxWidthMax: 227,
+  sideVfxLengthMin: 49,
+  sideVfxLengthMax: 354,
   mirrorLR: true,
   mirrorUD: false,
   snap: true,
@@ -63,6 +77,8 @@ const state = {
   mouseLocal: null,
   mouseScreen: null,
   vfxTestEnabled: false,
+  vfxThreePreview: true,
+  vfxTune: { ...VFX_TUNE_DEFAULTS },
   vfxKeys: {},
   pausedByEditor: false,
   visible: false,
@@ -101,6 +117,53 @@ function normalizeDeg(value) {
   return deg;
 }
 
+function sanitizeVfxTune(raw) {
+  const out = { ...VFX_TUNE_DEFAULTS };
+  if (!raw || typeof raw !== 'object') return out;
+  for (const key of ['mainW', 'mainL', 'sideW', 'sideL', 'curve', 'mainCurve', 'sideCurve']) {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue;
+    const v = Number(raw[key]);
+    if (Number.isFinite(v) && v > 0) out[key] = round2(v);
+  }
+  return out;
+}
+
+function readGlobalVfxTune() {
+  let stored = null;
+  try {
+    const raw = localStorage.getItem(VFX_TUNE_STORAGE_KEY);
+    if (raw) stored = JSON.parse(raw);
+  } catch {}
+  const runtimeTune = (typeof window !== 'undefined' && window.VFX_TUNE && typeof window.VFX_TUNE === 'object')
+    ? window.VFX_TUNE
+    : null;
+  return sanitizeVfxTune({ ...(stored || {}), ...(runtimeTune || {}) });
+}
+
+function applyVfxTuneToGame(save = true) {
+  if (typeof window === 'undefined') return;
+  const patch = sanitizeVfxTune(state.vfxTune);
+  state.vfxTune = patch;
+  if (typeof window.__setEngineVfxTune === 'function') {
+    window.__setEngineVfxTune(patch, { save });
+    return;
+  }
+  window.VFX_TUNE = { ...(window.VFX_TUNE || {}), ...patch };
+  if (save) {
+    try { localStorage.setItem(VFX_TUNE_STORAGE_KEY, JSON.stringify(window.VFX_TUNE)); } catch {}
+  }
+}
+
+function isEnginePreviewActive() {
+  return !!(state.vfxTestEnabled || state.tool === 'engine_main' || state.tool === 'engine_side');
+}
+
+function updateEditorBackdrop() {
+  if (!runtime.root) return;
+  const show3d = !!(state.vfxThreePreview && isEnginePreviewActive());
+  runtime.root.classList.toggle('hp-vfx-three', show3d);
+}
+
 function ensureStyle() {
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement('style');
@@ -109,6 +172,9 @@ function ensureStyle() {
   #${ROOT_ID}{position:fixed;inset:0;z-index:3000;display:none;background:#050a13}
   #${ROOT_ID}.open{display:block}
   #${ROOT_ID} .hp-editor-shell{position:absolute;inset:22px;border:1px solid #294064;border-radius:12px;background:#0a1020;color:#e5f1ff;display:flex;flex-direction:column;overflow:hidden;font-family:Inter,system-ui,Segoe UI,Arial}
+  #${ROOT_ID}.hp-vfx-three{background:rgba(5,10,19,.28);backdrop-filter:blur(1px)}
+  #${ROOT_ID}.hp-vfx-three .hp-editor-shell{background:rgba(10,16,32,.68)}
+  #${ROOT_ID}.hp-vfx-three .hp-canvas-wrap{background:rgba(4,8,15,.22)}
   #${ROOT_ID} .hp-editor-top{display:flex;flex-wrap:wrap;gap:8px;padding:10px;border-bottom:1px solid #21304c;background:#0d162a}
   #${ROOT_ID} .hp-c{display:flex;gap:6px;align-items:center;background:#0a1222;border:1px solid #243654;border-radius:8px;padding:6px 8px}
   #${ROOT_ID} .hp-c label{font-size:12px;opacity:.9}
@@ -160,9 +226,23 @@ function createRoot() {
       <div class="hp-c"><label>Diag 45°</label><input id="hp-diag" type="checkbox" checked></div>
       <div class="hp-c"><label>Zoom</label><input id="hp-zoom" type="range" min="0.2" max="4" step="0.05" value="1"></div>
       <div class="hp-c"><label>Test VFX (WSAD+QE+Shift)</label><input id="hp-vfx-test" type="checkbox"></div>
+      <div class="hp-c"><label>Podgląd 3D VFX</label><input id="hp-vfx-three" type="checkbox" checked></div>
+      <div class="hp-c"><label>Main W</label><input id="hp-vfx-main-w" type="number" min="0.05" step="0.05" value="2.26" style="width:66px;"></div>
+      <div class="hp-c"><label>Main L</label><input id="hp-vfx-main-l" type="number" min="0.05" step="0.05" value="2.37" style="width:66px;"></div>
+      <div class="hp-c"><label>Side W</label><input id="hp-vfx-side-w" type="number" min="0.05" step="0.05" value="1.00" style="width:66px;"></div>
+      <div class="hp-c"><label>Side L</label><input id="hp-vfx-side-l" type="number" min="0.05" step="0.05" value="0.98" style="width:66px;"></div>
+      <div class="hp-c"><label>Main L min</label><input id="hp-main-lmin" type="number" min="1" step="1" value="10" style="width:66px;"></div>
+      <div class="hp-c"><label>Main L max</label><input id="hp-main-lmax" type="number" min="1" step="1" value="179" style="width:66px;"></div>
+      <div class="hp-c"><label>Side W min</label><input id="hp-side-wmin" type="number" min="1" step="1" value="25" style="width:66px;"></div>
+      <div class="hp-c"><label>Side W max</label><input id="hp-side-wmax" type="number" min="1" step="1" value="227" style="width:66px;"></div>
+      <div class="hp-c"><label>Side L min</label><input id="hp-side-lmin" type="number" min="1" step="1" value="49" style="width:66px;"></div>
+      <div class="hp-c"><label>Side L max</label><input id="hp-side-lmax" type="number" min="1" step="1" value="354" style="width:66px;"></div>
       <button id="hp-clear-ship">Wyczyść statek</button>
       <button id="hp-copy-json">Kopiuj JSON</button>
       <button id="hp-download-json">Pobierz JSON</button>
+      <button id="hp-import-json">Wgraj JSON</button>
+      <button id="hp-apply-game">Wgraj do gry</button>
+      <input id="hp-import-file" type="file" accept=".json,application/json" style="display:none">
       <button id="hp-close">Zamknij</button>
     </div>
     <div class="hp-editor-body">
@@ -197,9 +277,23 @@ function createRoot() {
     diag: root.querySelector('#hp-diag'),
     zoom: root.querySelector('#hp-zoom'),
     vfxTest: root.querySelector('#hp-vfx-test'),
+    vfxThree: root.querySelector('#hp-vfx-three'),
+    vfxMainW: root.querySelector('#hp-vfx-main-w'),
+    vfxMainL: root.querySelector('#hp-vfx-main-l'),
+    vfxSideW: root.querySelector('#hp-vfx-side-w'),
+    vfxSideL: root.querySelector('#hp-vfx-side-l'),
+    mainLMin: root.querySelector('#hp-main-lmin'),
+    mainLMax: root.querySelector('#hp-main-lmax'),
+    sideWMin: root.querySelector('#hp-side-wmin'),
+    sideWMax: root.querySelector('#hp-side-wmax'),
+    sideLMin: root.querySelector('#hp-side-lmin'),
+    sideLMax: root.querySelector('#hp-side-lmax'),
     clearShip: root.querySelector('#hp-clear-ship'),
     copyJson: root.querySelector('#hp-copy-json'),
     downloadJson: root.querySelector('#hp-download-json'),
+    importJson: root.querySelector('#hp-import-json'),
+    importFile: root.querySelector('#hp-import-file'),
+    applyGame: root.querySelector('#hp-apply-game'),
     close: root.querySelector('#hp-close'),
     stats: root.querySelector('#hp-stats'),
     preview: root.querySelector('#hp-json-preview'),
@@ -233,11 +327,12 @@ function setBrushFromPalette(itemId) {
   if (!item) return;
   state.tool = item.tool;
   if (item.hardpointType) state.hardpointType = item.hardpointType;
-  const previewActive = state.vfxTestEnabled || state.tool === 'engine_main' || state.tool === 'engine_side';
+  const previewActive = isEnginePreviewActive();
   if (!previewActive) {
     state.vfxKeys = {};
     clearVfxOverride();
   }
+  updateEditorBackdrop();
   refreshVfxLoop();
   buildPaletteUI();
   const badge = runtime.controls.cursorBadge;
@@ -317,7 +412,9 @@ function bootstrapIfNeeded(shipId) {
       y: round2(main.vfxOffset.y || 0),
       deg: round2(toDeg(main.vfxForward)),
       offsetX: 0,
-      offsetY: round2(main.vfxYNudge || 0)
+      offsetY: round2(main.vfxYNudge || 0),
+      vfxLengthMin: round2(Number(main.vfxLengthMin) || 10),
+      vfxLengthMax: round2(Number(main.vfxLengthMax) || 179)
     });
   }
   const side = Array.isArray(player.visual?.torqueThrusters) ? player.visual.torqueThrusters : [];
@@ -332,7 +429,11 @@ function bootstrapIfNeeded(shipId) {
         y: round2(oy),
         deg: round2(toDeg(thruster?.forward)),
         offsetX: 0,
-        offsetY: round2(thruster?.yNudge || 0)
+        offsetY: round2(thruster?.yNudge || 0),
+        vfxWidthMin: round2(Number(thruster?.vfxWidthMin) || 25),
+        vfxWidthMax: round2(Number(thruster?.vfxWidthMax) || 227),
+        vfxLengthMin: round2(Number(thruster?.vfxLengthMin) || 49),
+        vfxLengthMax: round2(Number(thruster?.vfxLengthMax) || 354)
       });
     }
   }
@@ -405,8 +506,83 @@ function bindControls() {
       state.vfxKeys = {};
       clearVfxOverride();
     }
+    updateEditorBackdrop();
     refreshVfxLoop();
     persist();
+    scheduleDraw();
+  });
+  c.vfxThree.addEventListener('change', () => {
+    state.vfxThreePreview = !!c.vfxThree.checked;
+    updateEditorBackdrop();
+    persist();
+    scheduleDraw();
+  });
+  const updateVfxTuneValue = (key, value) => {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) return;
+    state.vfxTune[key] = round2(num);
+    applyVfxTuneToGame(true);
+    persist();
+    scheduleDraw();
+  };
+  c.vfxMainW.addEventListener('input', () => updateVfxTuneValue('mainW', c.vfxMainW.value));
+  c.vfxMainL.addEventListener('input', () => updateVfxTuneValue('mainL', c.vfxMainL.value));
+  c.vfxSideW.addEventListener('input', () => updateVfxTuneValue('sideW', c.vfxSideW.value));
+  c.vfxSideL.addEventListener('input', () => updateVfxTuneValue('sideL', c.vfxSideL.value));
+  const clampRange = (value, fallback = 1) => {
+    const v = Math.round(Number(value));
+    if (!Number.isFinite(v) || v <= 0) return fallback;
+    return v;
+  };
+  const syncEngineRangeControls = () => {
+    c.mainLMin.value = String(state.mainVfxLengthMin);
+    c.mainLMax.value = String(state.mainVfxLengthMax);
+    c.sideWMin.value = String(state.sideVfxWidthMin);
+    c.sideWMax.value = String(state.sideVfxWidthMax);
+    c.sideLMin.value = String(state.sideVfxLengthMin);
+    c.sideLMax.value = String(state.sideVfxLengthMax);
+  };
+  c.mainLMin.addEventListener('input', () => {
+    state.mainVfxLengthMin = clampRange(c.mainLMin.value, 10);
+    if (state.mainVfxLengthMax < state.mainVfxLengthMin) state.mainVfxLengthMax = state.mainVfxLengthMin;
+    syncEngineRangeControls();
+    persist();
+    scheduleDraw();
+  });
+  c.mainLMax.addEventListener('input', () => {
+    state.mainVfxLengthMax = clampRange(c.mainLMax.value, 179);
+    if (state.mainVfxLengthMax < state.mainVfxLengthMin) state.mainVfxLengthMin = state.mainVfxLengthMax;
+    syncEngineRangeControls();
+    persist();
+    scheduleDraw();
+  });
+  c.sideWMin.addEventListener('input', () => {
+    state.sideVfxWidthMin = clampRange(c.sideWMin.value, 25);
+    if (state.sideVfxWidthMax < state.sideVfxWidthMin) state.sideVfxWidthMax = state.sideVfxWidthMin;
+    syncEngineRangeControls();
+    persist();
+    scheduleDraw();
+  });
+  c.sideWMax.addEventListener('input', () => {
+    state.sideVfxWidthMax = clampRange(c.sideWMax.value, 227);
+    if (state.sideVfxWidthMax < state.sideVfxWidthMin) state.sideVfxWidthMin = state.sideVfxWidthMax;
+    syncEngineRangeControls();
+    persist();
+    scheduleDraw();
+  });
+  c.sideLMin.addEventListener('input', () => {
+    state.sideVfxLengthMin = clampRange(c.sideLMin.value, 49);
+    if (state.sideVfxLengthMax < state.sideVfxLengthMin) state.sideVfxLengthMax = state.sideVfxLengthMin;
+    syncEngineRangeControls();
+    persist();
+    scheduleDraw();
+  });
+  c.sideLMax.addEventListener('input', () => {
+    state.sideVfxLengthMax = clampRange(c.sideLMax.value, 354);
+    if (state.sideVfxLengthMax < state.sideVfxLengthMin) state.sideVfxLengthMin = state.sideVfxLengthMax;
+    syncEngineRangeControls();
+    persist();
+    scheduleDraw();
   });
   c.clearShip.addEventListener('click', () => {
     const data = ensureShipData(state.shipId);
@@ -417,7 +593,7 @@ function bindControls() {
     scheduleDraw();
   });
   c.copyJson.addEventListener('click', async () => {
-    const json = JSON.stringify(buildExportData(), null, 2);
+    const json = JSON.stringify(buildSingleShipExportData(state.shipId), null, 2);
     c.preview.value = json;
     try { await navigator.clipboard.writeText(json); } catch {}
   });
@@ -430,6 +606,23 @@ function bindControls() {
     a.download = `ship-hardpoints-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
+  });
+  c.importJson.addEventListener('click', () => {
+    if (c.importFile) c.importFile.click();
+  });
+  c.importFile.addEventListener('change', async () => {
+    const file = c.importFile.files?.[0];
+    if (!file) return;
+    try {
+      await importConfigFromFile(file);
+    } catch (error) {
+      console.warn('Edytor: import JSON nie powiodl sie', error);
+    } finally {
+      c.importFile.value = '';
+    }
+  });
+  c.applyGame.addEventListener('click', () => {
+    pushCurrentConfigToGame();
   });
   c.close.addEventListener('click', closeHardpointEditor);
   runtime.root.addEventListener('mousemove', onRootMouseMove);
@@ -475,7 +668,7 @@ function onRootMouseLeave() {
 
 function onKeyDown(event) {
   if (!state.visible) return;
-  if ((state.vfxTestEnabled || state.tool === 'engine_main' || state.tool === 'engine_side') && isVfxTestKey(event.code)) {
+  if (isEnginePreviewActive() && isVfxTestKey(event.code)) {
     state.vfxKeys[event.code] = true;
     event.preventDefault();
     event.stopPropagation();
@@ -491,7 +684,7 @@ function onKeyDown(event) {
 
 function onKeyUp(event) {
   if (!state.visible) return;
-  if (!(state.vfxTestEnabled || state.tool === 'engine_main' || state.tool === 'engine_side')) return;
+  if (!isEnginePreviewActive()) return;
   if (!isVfxTestKey(event.code)) return;
   delete state.vfxKeys[event.code];
   event.preventDefault();
@@ -508,7 +701,7 @@ function isVfxTestKey(code) {
 
 function applyVfxOverride() {
   if (!state.visible) return;
-  if (!(state.vfxTestEnabled || state.tool === 'engine_main' || state.tool === 'engine_side')) return;
+  if (!isEnginePreviewActive()) return;
   const ship = window.ship;
   if (!ship) return;
   const keys = state.vfxKeys;
@@ -550,11 +743,11 @@ function refreshVfxLoop() {
     runtime.vfxLoopRaf = 0;
   }
   if (!state.visible) return;
-  if (!(state.vfxTestEnabled || state.tool === 'engine_main' || state.tool === 'engine_side')) return;
+  if (!isEnginePreviewActive()) return;
   const tick = () => {
     runtime.vfxLoopRaf = 0;
     if (!state.visible) return;
-    if (!(state.vfxTestEnabled || state.tool === 'engine_main' || state.tool === 'engine_side')) return;
+    if (!isEnginePreviewActive()) return;
     applyVfxOverride();
     scheduleDraw();
     runtime.vfxLoopRaf = requestAnimationFrame(tick);
@@ -802,8 +995,8 @@ function addMarker(target, marker) {
 
 function mirrorDeg(deg, mirrorX, mirrorY) {
   let out = Number(deg) || 0;
-  if (mirrorX) out = 180 - out;
-  if (mirrorY) out = -out;
+  if (mirrorX) out = -out;
+  if (mirrorY) out = 180 - out;
   return normalizeDeg(out);
 }
 
@@ -834,14 +1027,24 @@ function placeMarker(x, y) {
       placedIds.push(id);
     } else if (state.tool === 'engine_main' || state.tool === 'engine_side') {
       const id = markerId();
-      addMarker(state.tool, {
+      const marker = {
         id,
         x: pos.x,
         y: pos.y,
         deg: mirrorDeg(state.engineDeg, pos.mirrorX, pos.mirrorY),
         offsetX: round2(state.engineOffsetX),
         offsetY: round2(state.engineOffsetY)
-      });
+      };
+      if (state.tool === 'engine_main') {
+        marker.vfxLengthMin = round2(state.mainVfxLengthMin);
+        marker.vfxLengthMax = round2(state.mainVfxLengthMax);
+      } else {
+        marker.vfxWidthMin = round2(state.sideVfxWidthMin);
+        marker.vfxWidthMax = round2(state.sideVfxWidthMax);
+        marker.vfxLengthMin = round2(state.sideVfxLengthMin);
+        marker.vfxLengthMax = round2(state.sideVfxLengthMax);
+      }
+      addMarker(state.tool, marker);
       placedIds.push(id);
     }
   }
@@ -888,8 +1091,9 @@ function draw() {
   if (!ensureCanvasReady()) return;
   state.needsDraw = false;
   const ctx = runtime.ctx;
+  const show3dBackdrop = !!(state.vfxThreePreview && isEnginePreviewActive());
   ctx.clearRect(0, 0, runtime.cssW, runtime.cssH);
-  ctx.fillStyle = '#050a13';
+  ctx.fillStyle = show3dBackdrop ? 'rgba(5,10,19,0.58)' : '#050a13';
   ctx.fillRect(0, 0, runtime.cssW, runtime.cssH);
   drawGrid(ctx);
   drawSprite(ctx);
@@ -1027,7 +1231,7 @@ function getVfxPreviewThrottle() {
 }
 
 function drawEngineVfxPreview(ctx) {
-  if (!(state.vfxTestEnabled || state.tool === 'engine_main' || state.tool === 'engine_side')) return;
+  if (!isEnginePreviewActive()) return;
   const data = ensureShipData(state.shipId);
   const throttle = getVfxPreviewThrottle();
   const scale = getDrawScale();
@@ -1263,6 +1467,29 @@ function compactMarker(marker, kind) {
   };
 }
 
+function buildSingleShipExportData(shipId) {
+  const def = SHIP_DEFS.find((item) => item.id === shipId) || { id: shipId, label: shipId };
+  const data = ensureShipData(def.id);
+  const ships = {
+    [def.id]: {
+      label: def.label,
+      frontAxis: '+X',
+      hardpoints: data.hardpoints.map((m) => compactMarker(m, 'hardpoint')),
+      cores: data.cores.map((m) => compactMarker(m, 'core')),
+      engines: {
+        main: data.engines.main.map((m) => compactMarker(m, 'engine')),
+        side: data.engines.side.map((m) => compactMarker(m, 'engine'))
+      }
+    }
+  };
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    source: 'hardpoint-editor',
+    ships
+  };
+}
+
 function buildExportData() {
   const ships = {};
   for (const def of SHIP_DEFS) {
@@ -1286,6 +1513,126 @@ function buildExportData() {
   };
 }
 
+function toNum(value, fallback = 0) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function normalizeImportedEngine(marker) {
+  const x = Number(marker?.x);
+  const y = Number(marker?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const out = {
+    id: marker?.id || markerId(),
+    x: round2(x),
+    y: round2(y),
+    deg: round2(normalizeDeg(marker?.deg || 0)),
+    offsetX: round2(toNum(marker?.offsetX, 0)),
+    offsetY: round2(toNum(marker?.offsetY, 0))
+  };
+  const vfxWidthMin = Number(marker?.vfxWidthMin);
+  const vfxWidthMax = Number(marker?.vfxWidthMax);
+  const vfxLengthMin = Number(marker?.vfxLengthMin);
+  const vfxLengthMax = Number(marker?.vfxLengthMax);
+  if (Number.isFinite(vfxWidthMin)) out.vfxWidthMin = round2(vfxWidthMin);
+  if (Number.isFinite(vfxWidthMax)) out.vfxWidthMax = round2(vfxWidthMax);
+  if (Number.isFinite(vfxLengthMin)) out.vfxLengthMin = round2(vfxLengthMin);
+  if (Number.isFinite(vfxLengthMax)) out.vfxLengthMax = round2(vfxLengthMax);
+  return out;
+}
+
+function normalizeImportedShip(raw) {
+  const hardpointsRaw = Array.isArray(raw?.hardpoints) ? raw.hardpoints : [];
+  const coresRaw = Array.isArray(raw?.cores) ? raw.cores : [];
+  const enginesMainRaw = Array.isArray(raw?.engines?.main) ? raw.engines.main : [];
+  const enginesSideRaw = Array.isArray(raw?.engines?.side) ? raw.engines.side : [];
+
+  const hardpoints = [];
+  for (const marker of hardpointsRaw) {
+    const x = Number(marker?.x);
+    const y = Number(marker?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const type = HARDPOINT_TYPES.includes(String(marker?.type || '').toLowerCase())
+      ? String(marker.type).toLowerCase()
+      : 'main';
+    hardpoints.push({ id: marker?.id || markerId(), type, x: round2(x), y: round2(y) });
+  }
+
+  const cores = [];
+  for (const marker of coresRaw) {
+    const x = Number(marker?.x);
+    const y = Number(marker?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    cores.push({ id: marker?.id || markerId(), x: round2(x), y: round2(y) });
+  }
+
+  const engines = { main: [], side: [] };
+  for (const marker of enginesMainRaw) {
+    const normalized = normalizeImportedEngine(marker);
+    if (normalized) engines.main.push(normalized);
+  }
+  for (const marker of enginesSideRaw) {
+    const normalized = normalizeImportedEngine(marker);
+    if (normalized) engines.side.push(normalized);
+  }
+
+  return { hardpoints, cores, engines, __bootstrapped: true };
+}
+
+function applyImportedConfigObject(parsed, applyToGame = true) {
+  const shipsBlock = (parsed && typeof parsed === 'object' && parsed.ships && typeof parsed.ships === 'object')
+    ? parsed.ships
+    : (parsed && typeof parsed === 'object' ? parsed : null);
+  if (!shipsBlock || typeof shipsBlock !== 'object') {
+    throw new Error('Nieprawidlowy format JSON (brak obiektu ships).');
+  }
+
+  let updated = 0;
+  for (const def of SHIP_DEFS) {
+    const shipRaw = shipsBlock[def.id];
+    if (!shipRaw || typeof shipRaw !== 'object') continue;
+    state.ships[def.id] = normalizeImportedShip(shipRaw);
+    updated++;
+  }
+
+  if (!updated) {
+    throw new Error('JSON nie zawiera zadnego wspieranego statku.');
+  }
+
+  persist();
+  syncControlsFromState();
+  updateStatsAndPreview();
+  scheduleDraw();
+
+  if (applyToGame && typeof window !== 'undefined' && typeof window.__applyHardpointEditorConfig === 'function') {
+    try { window.__applyHardpointEditorConfig(buildExportData()); } catch {}
+  }
+}
+
+function importConfigFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result || ''));
+        applyImportedConfigObject(parsed, true);
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = () => reject(new Error('Nie udalo sie odczytac pliku.'));
+    reader.readAsText(file, 'utf-8');
+  });
+}
+
+function pushCurrentConfigToGame() {
+  if (typeof window === 'undefined') return;
+  if (typeof window.__applyHardpointEditorConfig === 'function') {
+    try { window.__applyHardpointEditorConfig(buildExportData()); } catch {}
+  }
+}
+
 function updateStatsAndPreview() {
   const data = ensureShipData(state.shipId);
   const brush = PALETTE_ITEMS.find((p) => p.id === activePaletteId());
@@ -1303,11 +1650,14 @@ function updateStatsAndPreview() {
     <div>Rdzenie: ${data.cores.length}</div>
     <div>Silniki MAIN: ${data.engines.main.length}</div>
     <div>Silniki SIDE: ${data.engines.side.length}</div>
+    <div>Min/Max: MainL ${state.mainVfxLengthMin}-${state.mainVfxLengthMax}, SideW ${state.sideVfxWidthMin}-${state.sideVfxWidthMax}, SideL ${state.sideVfxLengthMin}-${state.sideVfxLengthMax}</div>
     <div>Canvas: ${Math.round(runtime.cssW)} x ${Math.round(runtime.cssH)}</div>
     <div>Mysz local: ${mouseLabel}</div>
-    <div>VFX test: ${(state.vfxTestEnabled || state.tool === 'engine_main' || state.tool === 'engine_side') ? 'ON' : 'OFF'} (${keyState})</div>
+    <div>VFX test: ${isEnginePreviewActive() ? 'ON' : 'OFF'} (${keyState})</div>
+    <div>Podgląd 3D VFX: ${state.vfxThreePreview ? 'ON' : 'OFF'}</div>
+    <div>Tune MAIN ${state.vfxTune.mainW}/${state.vfxTune.mainL} | SIDE ${state.vfxTune.sideW}/${state.vfxTune.sideL}</div>
   `;
-  runtime.controls.preview.value = JSON.stringify(buildExportData(), null, 2);
+  runtime.controls.preview.value = JSON.stringify(buildSingleShipExportData(state.shipId), null, 2);
 }
 
 function scheduleDraw() {
@@ -1334,6 +1684,14 @@ function persist() {
     showDiag: state.showDiag,
     zoom: state.zoom,
     vfxTestEnabled: state.vfxTestEnabled,
+    vfxThreePreview: state.vfxThreePreview,
+    vfxTune: sanitizeVfxTune(state.vfxTune),
+    mainVfxLengthMin: state.mainVfxLengthMin,
+    mainVfxLengthMax: state.mainVfxLengthMax,
+    sideVfxWidthMin: state.sideVfxWidthMin,
+    sideVfxWidthMax: state.sideVfxWidthMax,
+    sideVfxLengthMin: state.sideVfxLengthMin,
+    sideVfxLengthMax: state.sideVfxLengthMax,
     ships: state.ships
   };
   try {
@@ -1344,6 +1702,7 @@ function persist() {
 }
 
 function loadStorage() {
+  state.vfxTune = readGlobalVfxTune();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
@@ -1362,6 +1721,14 @@ function loadStorage() {
     state.showDiag = data.showDiag !== false;
     state.zoom = Number.isFinite(data.zoom) ? data.zoom : state.zoom;
     state.vfxTestEnabled = !!data.vfxTestEnabled;
+    state.vfxThreePreview = data.vfxThreePreview !== false;
+    state.vfxTune = sanitizeVfxTune(data.vfxTune && typeof data.vfxTune === 'object' ? data.vfxTune : state.vfxTune);
+    state.mainVfxLengthMin = Math.max(1, Math.round(Number(data.mainVfxLengthMin) || state.mainVfxLengthMin));
+    state.mainVfxLengthMax = Math.max(state.mainVfxLengthMin, Math.round(Number(data.mainVfxLengthMax) || state.mainVfxLengthMax));
+    state.sideVfxWidthMin = Math.max(1, Math.round(Number(data.sideVfxWidthMin) || state.sideVfxWidthMin));
+    state.sideVfxWidthMax = Math.max(state.sideVfxWidthMin, Math.round(Number(data.sideVfxWidthMax) || state.sideVfxWidthMax));
+    state.sideVfxLengthMin = Math.max(1, Math.round(Number(data.sideVfxLengthMin) || state.sideVfxLengthMin));
+    state.sideVfxLengthMax = Math.max(state.sideVfxLengthMin, Math.round(Number(data.sideVfxLengthMax) || state.sideVfxLengthMax));
     state.ships = data.ships && typeof data.ships === 'object' ? data.ships : {};
     if (!['erase', 'hardpoint', 'core', 'engine_main', 'engine_side'].includes(state.tool)) state.tool = 'hardpoint';
     if (!HARDPOINT_TYPES.includes(state.hardpointType)) state.hardpointType = 'main';
@@ -1381,6 +1748,19 @@ function syncControlsFromState() {
   c.diag.checked = !!state.showDiag;
   c.zoom.value = String(state.zoom);
   c.vfxTest.checked = !!state.vfxTestEnabled;
+  c.vfxThree.checked = !!state.vfxThreePreview;
+  c.vfxMainW.value = String(state.vfxTune.mainW ?? VFX_TUNE_DEFAULTS.mainW);
+  c.vfxMainL.value = String(state.vfxTune.mainL ?? VFX_TUNE_DEFAULTS.mainL);
+  c.vfxSideW.value = String(state.vfxTune.sideW ?? VFX_TUNE_DEFAULTS.sideW);
+  c.vfxSideL.value = String(state.vfxTune.sideL ?? VFX_TUNE_DEFAULTS.sideL);
+  c.mainLMin.value = String(state.mainVfxLengthMin);
+  c.mainLMax.value = String(state.mainVfxLengthMax);
+  c.sideWMin.value = String(state.sideVfxWidthMin);
+  c.sideWMax.value = String(state.sideVfxWidthMax);
+  c.sideLMin.value = String(state.sideVfxLengthMin);
+  c.sideLMax.value = String(state.sideVfxLengthMax);
+  applyVfxTuneToGame(false);
+  updateEditorBackdrop();
   buildPaletteUI();
 }
 
@@ -1394,6 +1774,8 @@ export function openHardpointEditor() {
   state.visible = true;
   runtime.root.classList.add('open');
   ensureShipData(state.shipId);
+  applyVfxTuneToGame(false);
+  updateEditorBackdrop();
   ensureSprite(state.shipId).finally(() => scheduleDraw());
   syncControlsFromState();
   resizeCanvas();
@@ -1414,6 +1796,7 @@ export function closeHardpointEditor() {
   if (!runtime.root) return;
   state.visible = false;
   runtime.root.classList.remove('open');
+  runtime.root.classList.remove('hp-vfx-three');
   state.vfxKeys = {};
   state.mouseLocal = null;
   clearVfxOverride();

@@ -55,6 +55,11 @@ export const Core3D = {
   camera: null,
   shadowCatcher: null,
   composer: null,
+  bloomPass: null,
+  bloomResolutionScale: Math.SQRT1_2,
+  bloomBaseStrength: 0.31,
+  bloomBaseThreshold: 0.2,
+  pixelRatio: 1,
   width: 0,
   height: 0,
   isInitialized: false,
@@ -74,10 +79,12 @@ export const Core3D = {
       antialias: true,
       powerPreference: 'high-performance',
       premultipliedAlpha: true,
-      logarithmicDepthBuffer: true
+      logarithmicDepthBuffer: false
     });
 
-    this.renderer.setPixelRatio(1);
+    const dpr = (typeof window !== 'undefined' ? Number(window.devicePixelRatio) : 1) || 1;
+    this.pixelRatio = Math.min(1.5, Math.max(1, dpr));
+    this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
@@ -93,24 +100,36 @@ export const Core3D = {
 
     this.shadowCatcher = null;
 
+    const canUseHalfFloatRt =
+      this.renderer.capabilities.isWebGL2 ||
+      !!this.renderer.extensions.get('EXT_color_buffer_half_float') ||
+      !!this.renderer.extensions.get('EXT_color_buffer_float');
+
     const rt = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
       format: THREE.RGBAFormat,
-      type: THREE.UnsignedByteType,
-      depthBuffer: true
+      type: canUseHalfFloatRt ? THREE.HalfFloatType : THREE.UnsignedByteType,
+      depthBuffer: true,
+      samples: this.renderer.capabilities.isWebGL2 ? 4 : 0
     });
     this.composer = new EffectComposer(this.renderer, rt);
+    this.composer.setPixelRatio(this.pixelRatio);
 
     const renderPass = new RenderPass(this.scene, this.camera);
     renderPass.clearColor = new THREE.Color(0x000000);
     renderPass.clearAlpha = 0;
     this.composer.addPass(renderPass);
 
+    const bloomScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || Math.SQRT1_2));
     const bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(window.innerWidth, window.innerHeight),
-      0.95,
-      0.45,
-      0.2
+      new THREE.Vector2(
+        Math.max(1, Math.floor(window.innerWidth * bloomScale)),
+        Math.max(1, Math.floor(window.innerHeight * bloomScale))
+      ),
+      this.bloomBaseStrength,
+      0.18,
+      this.bloomBaseThreshold
     );
+    this.bloomPass = bloomPass;
     this.composer.addPass(bloomPass);
 
     const alphaPass = new ShaderPass(PreserveAlphaOutputShader);
@@ -132,12 +151,25 @@ export const Core3D = {
 
     const width = Math.max(1, w | 0);
     const height = Math.max(1, h | 0);
+    const dpr = (typeof window !== 'undefined' ? Number(window.devicePixelRatio) : 1) || 1;
+    const nextPixelRatio = Math.min(1.5, Math.max(1, dpr));
+    if (Math.abs(nextPixelRatio - this.pixelRatio) > 0.001) {
+      this.pixelRatio = nextPixelRatio;
+      this.renderer.setPixelRatio(this.pixelRatio);
+      this.composer.setPixelRatio(this.pixelRatio);
+    }
 
     this.width = width;
     this.height = height;
 
     this.renderer.setSize(width, height, false);
     this.composer.setSize(width, height);
+    if (this.bloomPass && typeof this.bloomPass.setSize === 'function') {
+      const bloomScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || Math.SQRT1_2));
+      const bloomW = Math.max(1, Math.floor(width * this.pixelRatio * bloomScale));
+      const bloomH = Math.max(1, Math.floor(height * this.pixelRatio * bloomScale));
+      this.bloomPass.setSize(bloomW, bloomH);
+    }
 
     const halfW = width * 0.5;
     const halfH = height * 0.5;
@@ -165,6 +197,31 @@ export const Core3D = {
 
   render() {
     if (!this.isInitialized) return;
+
+    if (this.bloomPass && typeof window !== 'undefined') {
+      const bloomCfg = window?.DevVFX?.bloom;
+      const manualStrength = Number(bloomCfg?.strength);
+      const manualRadius = Number(bloomCfg?.radius);
+      const manualThreshold = Number(bloomCfg?.threshold);
+      const hasManualBloom =
+        Number.isFinite(manualStrength) ||
+        Number.isFinite(manualRadius) ||
+        Number.isFinite(manualThreshold);
+
+      if (hasManualBloom) {
+        if (Number.isFinite(manualStrength)) this.bloomPass.strength = Math.max(0, Math.min(5, manualStrength));
+        if (Number.isFinite(manualRadius)) this.bloomPass.radius = Math.max(0, Math.min(2, manualRadius));
+        if (Number.isFinite(manualThreshold)) this.bloomPass.threshold = Math.max(0, Math.min(2, manualThreshold));
+      } else {
+        const gainRaw = Number(window?.OPTIONS?.vfx?.bloomGain);
+        if (Number.isFinite(gainRaw)) {
+          const gain = Math.min(4.0, Math.max(0.2, gainRaw));
+          this.bloomPass.strength = this.bloomBaseStrength * gain;
+          this.bloomPass.threshold = Math.max(0, Math.min(2, this.bloomBaseThreshold - (gain - 1.0) * 0.2));
+        }
+      }
+    }
+
     this.composer.render();
   }
 };

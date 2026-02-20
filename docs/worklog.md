@@ -117,6 +117,18 @@ Krotki dziennik zmian: co zmienione i dlaczego.
   - Dlaczego: szybkie dopasowanie granicy terminatora i jasności strony nocnej bez kolejnych patchy.
   - Wplyw: `open/close/reset/status` + suwakowe UI wpływające na uniformy shadera w runtime (dla wszystkich statków hex).
 
+- [`index.html`, `src/game/shipEntity.js`, `src/3d/hexShips3D.js`] Tymczasowo wyłączona normal mapa gracza i efekt „pół na pół” na statkach.
+  - Dlaczego: szybki rollback stylu oświetlenia do bardziej neutralnego wariantu.
+  - Wplyw: gracz nie ładuje `spriteNormalSrc`, a shader statków działa jako klasyczne diffuse+specular bez day/night split.
+
+- [`planet3d.assets.js`] Dodany segmentowany ring planetarny tylko dla Ziemi i Marsa.
+  - Dlaczego: wprowadzenie ciężkiej orbitalnej infrastruktury wokół wybranych planet bez dokładania nowego renderera.
+  - Wplyw: Earth/Mars dostają obracający się ring z bramami i pulsującym polem (gate middle), zintegrowany z istniejącą warstwą 3D planety.
+
+- [`src/3d/planetaryRing3D.js`, `index.html`, `planet3d.assets.js`] Ring wydzielony do osobnego modułu 3D i usunięty z warstwy planet.
+  - Dlaczego: ring ma być niezależnym systemem pod dalszą rozbudowę (konstrukcje/budowanie), a nie częścią renderera planety.
+  - Wplyw: nowy pipeline `initPlanetaryRings3D/updatePlanetaryRings3D` działa osobno; `planet3d.assets.js` wrócił do czystego renderu planet/słońca.
+
 - [`src/ui/hardpointEditor.js`] Dodane jednostki pirackie do listy statkow edytora (`pirate_battleship`, `pirate_destroyer`, `pirate_frigate`) z dedykowanymi sprite'ami.
   - Dlaczego: potrzebna edycja hardpointow i dysz takze dla floty pirackiej.
   - Wplyw: export JSON zawiera teraz osobne profile dla statkow pirackich.
