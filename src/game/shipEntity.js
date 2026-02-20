@@ -44,7 +44,7 @@ const SHIP_TEMPLATE = {
     spriteRotation: 0,
     spriteOffset: { x: 0, y: 0 },
     spriteSrc: "assets/capital_ship_rect_v1.png", // Domyślna grafika
-    spriteNormalSrc: "assets/capital_ship_rect_v1_normal.png",
+    spriteNormalSrc: null,
     
     // Konfiguracja efektów silników
     engineGlowSize: 0.35,
@@ -121,18 +121,24 @@ const SHIP_VISUAL_BASE = {
 
 const DEFAULT_ENGINE_VFX = {
   tune: { mainW: 2.26, mainL: 2.37, sideW: 1.0, sideL: 0.98, curve: 1.8 },
+  mains: [
+    { offset: { x: -579.29, y: -52.0 }, forward: { x: 1, y: 0 }, yNudge: 0, vfxLengthMin: 10, vfxLengthMax: 179 },
+    { offset: { x: -579.29, y: 52.0 }, forward: { x: 1, y: 0 }, yNudge: 0, vfxLengthMin: 10, vfxLengthMax: 179 },
+    { offset: { x: -431.55, y: -423.13 }, forward: { x: 1, y: 0 }, yNudge: 0, vfxLengthMin: 10, vfxLengthMax: 179 },
+    { offset: { x: -431.55, y: 423.13 }, forward: { x: 1, y: 0 }, yNudge: 0, vfxLengthMin: 10, vfxLengthMax: 179 }
+  ],
   main: {
-    offset: { x: -519, y: 60 },
+    offset: { x: -579.29, y: -52.0 },
     forward: { x: 1, y: 0 },
-    yNudge: -58,
+    yNudge: 0,
     vfxLengthMin: 10,
     vfxLengthMax: 179
   },
   sides: [
-    { offset: { x: 338, y: 366 }, forward: { x: 1, y: 0 }, side: 'left', yNudge: -51, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
-    { offset: { x: -289, y: 463 }, forward: { x: 1, y: 0 }, side: 'left', yNudge: -51, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
-    { offset: { x: 345, y: -366 }, forward: { x: -1, y: 0 }, side: 'right', yNudge: -48, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
-    { offset: { x: -303, y: -456 }, forward: { x: -1, y: 0 }, side: 'right', yNudge: -48, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 }
+    { offset: { x: -288, y: -444 }, forward: { x: 0, y: 1 }, side: 'right', yNudge: 0, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
+    { offset: { x: -288, y: 444 }, forward: { x: 0, y: -1 }, side: 'left', yNudge: 0, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
+    { offset: { x: 348, y: -384 }, forward: { x: 0, y: 1 }, side: 'right', yNudge: 0, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
+    { offset: { x: 348, y: 384 }, forward: { x: 0, y: -1 }, side: 'left', yNudge: 0, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 }
   ]
 };
 
@@ -231,6 +237,19 @@ function configureShipGeometry(ship) {
     visualOffset: { x: torqueVisualX, y: 0 }, 
     maxThrust: 1 
   };
+
+  if (!ship.visual.mainThrusters) {
+    const source = Array.isArray(DEFAULT_ENGINE_VFX.mains) && DEFAULT_ENGINE_VFX.mains.length
+      ? DEFAULT_ENGINE_VFX.mains
+      : [DEFAULT_ENGINE_VFX.main];
+    ship.visual.mainThrusters = source.map(t => ({
+      offset: { ...t.offset },
+      forward: { ...t.forward },
+      yNudge: t.yNudge,
+      vfxLengthMin: t.vfxLengthMin,
+      vfxLengthMax: t.vfxLengthMax
+    }));
+  }
 
   // Konfiguracja VFX dla silników manewrowych
   if (!ship.visual.torqueThrusters) {

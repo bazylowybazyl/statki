@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prototyp: Segmentowany Ring Planetarny (Heavy Defense)</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            color: #aaddff;
+            font-family: 'Segoe UI', monospace;
+        }
+        canvas {
+            display: block;
+            outline: none; /* Usuwa obramowanie po kliknięciu */
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 20, 40, 0.9);
+            padding: 15px;
+            border: 1px solid #4488ff;
+            border-radius: 8px;
+            pointer-events: auto;
+            backdrop-filter: blur(4px);
+            max-width: 300px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+            user-select: none;
+        }
+        h1 { margin: 0 0 10px 0; font-size: 16px; color: #fff; text-transform: uppercase; letter-spacing: 1px; }
+        .stat { font-size: 12px; margin-bottom: 4px; color: #88aaff; }
+        .val { color: #fff; font-weight: bold; float: right; }
+        .controls { margin-top: 12px; font-size: 11px; color: #6688aa; border-top: 1px solid #2a4a6a; padding-top: 8px; }
+        .warning { color: #ffaa00; margin-top: 8px; font-size: 11px; }
+        
+        .build-section {
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid #4488ff;
+        }
+        .input-group {
+            display: flex;
+            gap: 8px;
+            margin-top: 6px;
+            align-items: center;
+        }
+        input[type="number"] {
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid #2a4a6a;
+            color: #fff;
+            padding: 4px 8px;
+            width: 80px;
+            font-family: monospace;
+            border-radius: 4px;
+        }
+        input[type="number"]:focus {
+            border-color: #4488ff;
+            outline: none;
+        }
+        input[type="range"] {
+            flex: 1;
+            accent-color: #4488ff;
+        }
+        button {
+            flex: 1;
+            background: linear-gradient(180deg, #4488ff, #2266aa);
+            border: none;
+            border-radius: 4px;
+            color: #fff;
+            font-weight: bold;
+            font-size: 11px;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            transition: filter 0.2s, transform 0.1s;
+            padding: 6px;
+        }
+        button:hover { filter: brightness(1.2); }
+        button:active { filter: brightness(0.9); transform: translateY(1px); }
+
+        .legend {
+            margin-top: 10px;
+            font-size: 11px;
+            color: #ccc;
+        }
+        .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+        
+        .chk-row {
+            display: flex;
+            align-items: center;
+            margin-top: 8px;
+            font-size: 12px;
+            color: #aaddff;
+            cursor: pointer;
+        }
+        .chk-row input { margin-right: 8px; }
+
+        /* Focus helper overlay */
+        #focus-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: rgba(255,255,255,0.5);
+            font-size: 24px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.5s;
+        }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <h1>Struktura Segmentowa</h1>
+    <div class="stat">Średnica Ringu: <span class="val" id="disp-diameter">25,200 px</span></div>
+    <div class="stat">Wysokość Modułu: <span class="val">2400 px</span></div>
+    <div class="stat">Liczba segmentów: <span class="val" id="seg-count">0</span></div>
+    <div class="stat">Sloty budowlane: <span class="val" id="slot-count-ui">0</span></div>
+    <div class="stat">Bramy (3-seg): <span class="val" id="gate-count">0</span></div>
+    <div class="stat">Zoom: <span class="val" id="zoom-val">1.0</span></div>
+    
+    <div class="build-section">
+        <div style="font-size: 12px; color: #fff; font-weight: bold; margin-bottom: 4px;">KONSTRUKCJA</div>
+        
+        <label style="font-size: 11px; color: #88aaff;">Średnica Outer Orbit (px):</label>
+        <div class="input-group">
+            <input type="number" id="input-diameter" value="24000" step="1000">
+        </div>
+
+        <label style="font-size: 11px; color: #88aaff; margin-top: 8px; display:block;">Szerokość Pylonu Bramy:</label>
+        <div class="input-group">
+            <input type="number" id="input-pylon-width" value="380" step="10">
+            <input type="range" id="range-pylon-width" min="20" max="400" step="10" value="380">
+        </div>
+        
+        <div class="input-group" style="margin-top:12px;">
+            <button id="btn-build">Przebuduj Ring</button>
+        </div>
+        
+        <div class="input-group" style="margin-top:12px;">
+            <label style="font-size:11px; color:#88aaff; min-width:60px;">Obrót:</label>
+            <input type="range" id="input-speed" min="-2.0" max="2.0" step="0.1" value="0.0">
+        </div>
+        
+        <label class="chk-row">
+            <input type="checkbox" id="chk-rotation" checked> Auto-obrót Ringu
+        </label>
+        
+        <div style="font-size: 12px; color: #fff; font-weight: bold; margin-top: 12px; margin-bottom: 4px;">STATEK GRACZA</div>
+        <div class="stat">Sterowanie: <span class="val">WSAD</span></div>
+        <label class="chk-row">
+            <input type="checkbox" id="chk-follow" checked> Śledź Statek (Camera)
+        </label>
+    </div>
+
+    <div class="legend">
+        <div><span class="dot" style="background:rgba(0, 255, 255, 0.5);"></span>Brama (Field)</div>
+    </div>
+
+    <div class="controls">
+        Kliknij w tło aby sterować.<br>
+        LPM + Przesuwanie: Kamera<br>
+        Scroll: Zoom (x0.02 - x4.0)
+    </div>
+</div>
+
+<div id="focus-overlay">KLIKNIJ ABY AKTYWOWAĆ</div>
+<canvas id="canvas" tabindex="0"></canvas>
+
+<script>
+    const CONFIG = {
+        ringRadius: 12600,
+        segmentWidth: 800,  
+        segmentHeight: 2400, // ZWIĘKSZONA WYSOKOŚĆ (GRUBOŚĆ PASA)
+        overlap: 2,         
+        color: '#2a3a5a',
+        globalRotation: 0,
+        pylonWidth: 380,
+        angleStep: 0     
+    };
+
+    // Konfiguracja siatki budowlanej
+    const BUILD_GRID = {
+        stride: 3,       
+        floors: 5,       
+        floorHeight: 300, 
+        slotWidthRatio: 0.92 
+    };
+
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    
+    // UI Elements
+    const uiSegCount = document.getElementById('seg-count');
+    const uiGateCount = document.getElementById('gate-count');
+    const uiSlotCount = document.getElementById('slot-count-ui');
+    const uiZoom = document.getElementById('zoom-val');
+    const uiDispDiameter = document.getElementById('disp-diameter');
+    const inputDiameter = document.getElementById('input-diameter');
+    
+    const inputPylonWidth = document.getElementById('input-pylon-width');
+    const rangePylonWidth = document.getElementById('range-pylon-width');
+    
+    const btnBuild = document.getElementById('btn-build');
+    const chkRotation = document.getElementById('chk-rotation');
+    const inputSpeed = document.getElementById('input-speed');
+    const chkFollow = document.getElementById('chk-follow');
+    const focusOverlay = document.getElementById('focus-overlay');
+
+    let width, height;
+    let canvasFocused = false;
+
+    // --- STATEK GRACZA ---
+    const shipImg = new Image();
+    shipImg.src = "https://raw.githubusercontent.com/bazylowybazyl/statki/refs/heads/main/assets/capital_ship_rect_v1.png";
+    
+    const ship = {
+        x: CONFIG.ringRadius + 2200, 
+        y: 0, 
+        angle: Math.PI, 
+        vx: 0, 
+        vy: 0,
+        accel: 0.5,
+        turnSpeed: 0.04,
+        friction: 0.98
+    };
+
+    const keys = {};
+    window.addEventListener('keydown', e => {
+        keys[e.key.toLowerCase()] = true;
+    });
+    window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+    
+    canvas.addEventListener('click', () => {
+        canvas.focus();
+        canvasFocused = true;
+        focusOverlay.style.opacity = 0;
+    });
+
+    function updateShip() {
+        if (keys['w']) {
+            ship.vx += Math.cos(ship.angle) * ship.accel;
+            ship.vy += Math.sin(ship.angle) * ship.accel;
+        }
+        if (keys['s']) {
+            ship.vx -= Math.cos(ship.angle) * ship.accel * 0.5;
+            ship.vy -= Math.sin(ship.angle) * ship.accel * 0.5;
+        }
+        if (keys['a']) ship.angle -= ship.turnSpeed;
+        if (keys['d']) ship.angle += ship.turnSpeed;
+
+        ship.vx *= ship.friction;
+        ship.vy *= ship.friction;
+        ship.x += ship.vx;
+        ship.y += ship.vy;
+    }
+
+    // --- TEKSTURA SEGMENTU ZWYKŁEGO (WALL) ---
+    const wallCanvas = document.createElement('canvas');
+    wallCanvas.width = CONFIG.segmentWidth;
+    wallCanvas.height = CONFIG.segmentHeight;
+    const wCtx = wallCanvas.getContext('2d');
+
+    function preRenderWall() {
+        const ctx = wCtx;
+        const w = CONFIG.segmentWidth;
+        const h = CONFIG.segmentHeight;
+        
+        // Tło - Głęboki kosmiczny metal
+        const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
+        bgGrad.addColorStop(0, '#0a0d14'); // Ciemna góra
+        bgGrad.addColorStop(0.2, '#182030'); // Lekkie rozjaśnienie
+        bgGrad.addColorStop(0.5, '#121620'); // Środek
+        bgGrad.addColorStop(0.8, '#182030');
+        bgGrad.addColorStop(1, '#0a0d14'); // Ciemny dół
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, w, h);
+
+        const railSize = 150; // Szyny nieco węższe by oddać miejsce obronie
+
+        // Funkcja rysująca "greebles" (detale)
+        function drawGreebles(y, height, density) {
+            ctx.fillStyle = 'rgba(255,255,255,0.03)';
+            for(let i=0; i<density; i++) {
+                const gx = Math.random() * w;
+                const gy = y + Math.random() * height;
+                const gw = 10 + Math.random() * 50;
+                const gh = 5 + Math.random() * 20;
+                ctx.fillRect(gx, gy, gw, gh);
+            }
+            // Linie podziału paneli
+            ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for(let i=0; i<5; i++) {
+                const lx = Math.random() * w;
+                ctx.moveTo(lx, y); ctx.lineTo(lx, y+height);
+            }
+            ctx.stroke();
+        }
+
+        // --- 1. SZYNY (RAILS) - Góra i Dół ---
+        function drawRailSystem(y, isTop) {
+            // Podstawa szyny
+            const rGrad = ctx.createLinearGradient(0, y, 0, y + railSize);
+            rGrad.addColorStop(0, '#080808');
+            rGrad.addColorStop(0.5, '#252a33');
+            rGrad.addColorStop(1, '#080808');
+            ctx.fillStyle = rGrad;
+            ctx.fillRect(0, y, w, railSize);
+
+            // Maglev Glow (Niebieski pas)
+            const glowY = isTop ? y + railSize - 30 : y;
+            ctx.fillStyle = '#0066cc';
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = '#00aaff';
+            ctx.fillRect(0, glowY, w, 15);
+            ctx.shadowBlur = 0;
+            
+            // Pasy ostrzegawcze
+            const stripeY = isTop ? y : y + railSize - 15;
+            ctx.fillStyle = '#111';
+            for(let i=0; i<w; i+=80) {
+                ctx.fillRect(i, stripeY, 40, 15);
+            }
+        }
+
+        drawRailSystem(0, true);
+        drawRailSystem(h - railSize, false);
+
+
+        // --- LAYOUT SEGMENTU (Definicja Stref) ---
+        // Top Rail: 0 - 150
+        // Outer Shell: 150 - 300 (Bufor)
+        // Defense: 300 - 1800 (1500px - NAJWIĘKSZY ELEMENT)
+        // Infra: 1800 - 2250 (450px - Strona planety)
+        // Bottom Rail: 2250 - 2400
+
+        const defenseY = 300;
+        const defenseH = 1500;
+        const infraY = 1800;
+        const infraH = 450;
+        const outerY = 150;
+        const outerH = 150;
+
+
+        // --- 2. WARSTWA OBRONNA (GIGANTYCZNY ŚRODEK) ---
+        
+        // Płyta pancerna
+        const dGrad = ctx.createLinearGradient(0, defenseY, 0, defenseY + defenseH);
+        dGrad.addColorStop(0, '#1a202c');
+        dGrad.addColorStop(0.5, '#232b3a');
+        dGrad.addColorStop(1, '#1a202c');
+        ctx.fillStyle = dGrad;
+        ctx.fillRect(0, defenseY, w, defenseH);
+        
+        // Ciężkie żebrowanie pancerza
+        ctx.fillStyle = '#11151c';
+        for(let i=0; i<5; i++) {
+             // Poziome linie podziału
+             const ly = defenseY + (i+1) * (defenseH / 6);
+             ctx.fillRect(0, ly, w, 10);
+        }
+
+        // Hardpointy (Sloty na broń) - Pionowy układ baterii
+        const rows = 3; // 3 rzędy w pionie
+        const cols = 1; // 1 kolumna na środek (masywne działa)
+        
+        const rowH = defenseH / rows;
+        
+        for(let r=0; r<rows; r++) {
+            const cx = w/2;
+            const cy = defenseY + r * rowH + rowH/2;
+            const radius = 180; // Bardzo duże
+
+            // Baza wieżyczki (Sześciokątna / Okrągła)
+            ctx.fillStyle = '#2d3748';
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, 0, Math.PI*2);
+            ctx.fill();
+
+            // Mechanika obrotu
+            ctx.strokeStyle = '#1a202c';
+            ctx.lineWidth = 10;
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius - 20, 0, Math.PI*2);
+            ctx.stroke();
+
+            // Czerwona strefa zagrożenia (Warning ring)
+            ctx.strokeStyle = '#661111';
+            ctx.lineWidth = 8;
+            ctx.setLineDash([20, 10]);
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius + 20, 0, Math.PI*2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Działo (Lufa)
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(cx - 30, cy - 80, 60, 160); // Lufa
+            ctx.fillStyle = '#4a5568'; // Jarzmo
+            ctx.beginPath();
+            ctx.arc(cx, cy, 50, 0, Math.PI*2);
+            ctx.fill();
+            
+            // Detal lufy
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(cx, cy, 20, 0, Math.PI*2);
+            ctx.fill();
+        }
+
+        // --- 3. INFRASTRUKTURA (Strona Planety - Wnętrze) ---
+        // Tło "techniczne"
+        ctx.fillStyle = '#131821';
+        ctx.fillRect(0, infraY, w, infraH);
+        
+        // Detale: Hangar Bays, światła doków, "miasto"
+        drawGreebles(infraY, infraH, 80); // Gęsto
+
+        // Światła infrastruktury
+        ctx.fillStyle = '#ffeebb';
+        for(let i=0; i<60; i++) {
+            if(Math.random() > 0.6) {
+                const lx = Math.random()*w;
+                const ly = infraY + Math.random()*infraH;
+                const size = 2 + Math.random()*2;
+                ctx.fillRect(lx, ly, size, size);
+            }
+        }
+
+        // Żółte strefy hangarowe
+        ctx.fillStyle = 'rgba(255, 180, 0, 0.15)';
+        for(let i=0; i<2; i++) {
+            const dx = 50 + i * 400;
+            const dy = infraY + 50;
+            const dw = 300;
+            const dh = infraH - 100;
+            ctx.fillRect(dx, dy, dw, dh);
+            ctx.strokeStyle = '#aa8800';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(dx, dy, dw, dh);
+            
+            // Pas startowy?
+            ctx.fillStyle = 'rgba(255,255,255,0.1)';
+            ctx.fillRect(dx + dw/2 - 10, dy, 20, dh);
+        }
+        
+        // --- 4. ZEWNĘTRZNA POWŁOKA (Strona Kosmosu) ---
+        drawGreebles(outerY, outerH, 20);
+        // Anteny / czujniki
+        ctx.strokeStyle = '#445';
+        ctx.lineWidth = 2;
+        for(let i=0; i<5; i++) {
+            const ax = 50 + i * 150;
+            ctx.beginPath();
+            ctx.moveTo(ax, outerY + outerH);
+            ctx.lineTo(ax, outerY);
+            ctx.stroke();
+            ctx.fillStyle = '#f00';
+            ctx.fillRect(ax-2, outerY, 4, 4); // Czerwona kropka na czubku
+        }
+    }
+    preRenderWall();
+
+    // --- TEKSTURA PYLONU (GATE SIDE) ---
+    const gateLeftCanvas = document.createElement('canvas');
+    gateLeftCanvas.width = CONFIG.segmentWidth;
+    gateLeftCanvas.height = CONFIG.segmentHeight;
+    const glCtx = gateLeftCanvas.getContext('2d');
+
+    const gateRightCanvas = document.createElement('canvas');
+    gateRightCanvas.width = CONFIG.segmentWidth;
+    gateRightCanvas.height = CONFIG.segmentHeight;
+    const grCtx = gateRightCanvas.getContext('2d');
+
+    function renderGatePylon(ctx, side) {
+        const w = CONFIG.segmentWidth;
+        const h = CONFIG.segmentHeight;
+        const pylonW = CONFIG.pylonWidth;
+        
+        ctx.clearRect(0, 0, w, h);
+        
+        // Pylon Body
+        const grad = ctx.createLinearGradient(0, 0, w, 0);
+        grad.addColorStop(0, '#05070a');
+        grad.addColorStop(0.5, '#1a202e');
+        grad.addColorStop(1, '#05070a');
+        ctx.fillStyle = grad;
+        
+        const px = (side === 'left') ? 0 : w - pylonW;
+        ctx.fillRect(px, 0, pylonW, h);
+
+        const railSize = 150;
+
+        // Kontynuacja Szyn (żeby pasowały do Wall)
+        // Góra
+        ctx.fillStyle = '#111';
+        ctx.fillRect(px, 0, pylonW, railSize);
+        // Dół
+        ctx.fillRect(px, h - railSize, pylonW, railSize);
+
+        // Emitery pola siłowego (Generator Coils)
+        // Rozmieszczone wzdłuż całej wysokości (pasują do zwiększonej skali)
+        const emitters = 12; // Więcej emiterów
+        const eH = (h - 2*railSize) / emitters;
+        const startY = railSize;
+        
+        for(let i=0; i<emitters; i++) {
+            const y = startY + i * eH + eH/2;
+            
+            // Obudowa emitera
+            ctx.fillStyle = '#2a303e';
+            const ew = 50;
+            const ex = (side === 'left') ? pylonW - ew : w - pylonW;
+            ctx.fillRect(ex, y - 20, ew, 40);
+
+            // Świecący rdzeń
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = '#00ffff';
+            ctx.fillStyle = '#ccffff';
+            const cx = (side === 'left') ? pylonW - 10 : w - pylonW + 10 - 6;
+            ctx.fillRect(cx, y - 15, 8, 30);
+            ctx.shadowBlur = 0;
+        }
+
+        // Napis GATE
+        ctx.save();
+        if(side === 'left') {
+            ctx.translate(pylonW/2, h/2);
+            ctx.rotate(-Math.PI/2);
+        } else {
+            ctx.translate(w - pylonW/2, h/2);
+            ctx.rotate(Math.PI/2);
+        }
+        
+        ctx.fillStyle = 'rgba(255,255,255,0.15)';
+        ctx.font = 'bold 200px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        if(pylonW > 100) ctx.fillText("GATE 07", 0, 0);
+        ctx.restore();
+    }
+
+    function updateGateVisuals() {
+        renderGatePylon(glCtx, 'left');
+        renderGatePylon(grCtx, 'right');
+    }
+    updateGateVisuals();
+
+
+    // --- LOGIKA BUDOWANIA RINGU ---
+    const segments = [];
+    const constructionSlots = [];
+
+    function buildRing() {
+        segments.length = 0;
+        constructionSlots.length = 0;
+        CONFIG.globalRotation = 0;
+
+        const circumference = 2 * Math.PI * CONFIG.ringRadius;
+        const effectiveWidth = CONFIG.segmentWidth - CONFIG.overlap;
+        const count = Math.ceil(circumference / effectiveWidth);
+        const angleStep = (Math.PI * 2) / count;
+        
+        CONFIG.angleStep = angleStep;
+
+        let gatesCreated = 0;
+
+        const types = new Array(count).fill('WALL');
+        const quarter = Math.floor(count / 4);
+        const gateIndices = [0, quarter, quarter*2, quarter*3];
+
+        for(const idx of gateIndices) {
+            if(idx + 2 < count) {
+                types[idx] = 'GATE_L';
+                types[idx+1] = 'GATE_M';
+                types[idx+2] = 'GATE_R';
+                gatesCreated++;
+            }
+        }
+
+        for(let i=0; i<count; i++) {
+            const baseAngle = i * angleStep;
+            const type = types[i];
+
+            segments.push({
+                index: i,
+                type: type,
+                baseAngle: baseAngle, 
+                x: 0, y: 0, angle: 0,
+                width: CONFIG.segmentWidth,
+                height: CONFIG.segmentHeight,
+                fieldAlpha: 0.6,
+                fieldColor: 'blue'
+            });
+        }
+
+        const slotsCount = Math.floor(count / BUILD_GRID.stride);
+        const groupArcLength = (effectiveWidth * BUILD_GRID.stride);
+        const safeWidth = groupArcLength * BUILD_GRID.slotWidthRatio;
+
+        for(let i=0; i<slotsCount; i++) {
+            const centerSegIndex = Math.floor(i * BUILD_GRID.stride + BUILD_GRID.stride/2);
+            let hasGate = false;
+            for(let k=0; k<BUILD_GRID.stride; k++) {
+                const idx = (i * BUILD_GRID.stride + k) % count;
+                if(types[idx].startsWith('GATE')) {
+                    hasGate = true;
+                    break;
+                }
+            }
+
+            if (hasGate) continue; 
+
+            const seg = segments[centerSegIndex % segments.length];
+            const attachRadius = CONFIG.ringRadius - CONFIG.segmentHeight/2;
+            
+            constructionSlots.push({
+                index: i,
+                baseAngle: seg.baseAngle,
+                attachRadius: attachRadius,
+                width: safeWidth,
+                angle: 0, rotation: 0
+            });
+        }
+
+        uiSegCount.textContent = count;
+        uiGateCount.textContent = gatesCreated;
+        if(uiSlotCount) uiSlotCount.textContent = constructionSlots.length; // FIX: Sprawdzenie istnienia
+        uiDispDiameter.textContent = (CONFIG.ringRadius * 2).toLocaleString() + " px";
+        
+        updateRingPositions();
+    }
+
+    function updateRingPositions() {
+        for(const seg of segments) {
+            const currentAngle = seg.baseAngle + CONFIG.globalRotation;
+            seg.x = Math.cos(currentAngle) * CONFIG.ringRadius;
+            seg.y = Math.sin(currentAngle) * CONFIG.ringRadius;
+            seg.angle = currentAngle + Math.PI / 2;
+            
+            if (seg.type.startsWith('GATE')) {
+                const dx = ship.x - seg.x;
+                const dy = ship.y - seg.y;
+                const dist = Math.hypot(dx, dy);
+                
+                if (dist < 3000) {
+                    seg.fieldColor = 'green';
+                    seg.fieldAlpha = 0.2 + Math.sin(Date.now() * 0.005) * 0.1;
+                } else {
+                    seg.fieldColor = 'blue';
+                    seg.fieldAlpha = 0.6;
+                }
+            }
+        }
+
+        for(const slot of constructionSlots) {
+            const currentAngle = slot.baseAngle + CONFIG.globalRotation;
+            slot.angle = currentAngle;
+            slot.rotation = currentAngle + Math.PI / 2;
+        }
+    }
+
+    // Obsługa Input Pylon Width
+    inputPylonWidth.addEventListener('input', () => {
+        const w = parseInt(inputPylonWidth.value);
+        if(!isNaN(w)) {
+            CONFIG.pylonWidth = w;
+            rangePylonWidth.value = w;
+            updateGateVisuals();
+        }
+    });
+
+    rangePylonWidth.addEventListener('input', () => {
+        const w = parseInt(rangePylonWidth.value);
+        CONFIG.pylonWidth = w;
+        inputPylonWidth.value = w;
+        updateGateVisuals();
+    });
+
+    btnBuild.addEventListener('click', () => {
+        const d = parseFloat(inputDiameter.value);
+        
+        if (Number.isFinite(d) && d >= 2000) {
+            CONFIG.ringRadius = d / 2;
+            buildRing();
+            ship.x = CONFIG.ringRadius + 2200;
+            ship.y = 0;
+        } else {
+            alert("Podaj poprawną średnicę (min. 2000)");
+        }
+    });
+
+    const camera = { x: 0, y: 0, zoom: 0.08 };
+
+    function worldToScreen(wx, wy) {
+        return {
+            x: (wx - camera.x) * camera.zoom + width / 2,
+            y: (wy - camera.y) * camera.zoom + height / 2
+        };
+    }
+
+    function screenToWorld(sx, sy) {
+        return {
+            x: (sx - width / 2) / camera.zoom + camera.x,
+            y: (sy - height / 2) / camera.zoom + camera.y
+        };
+    }
+
+    function resize() {
+        width = canvas.width = window.innerWidth;
+        height = canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+
+    // --- RYSOWANIE POLA SIŁOWEGO (ŁUKOWE) ---
+    function drawCurvedForceField(ctx, segColor, segAlpha, zoom) {
+        const pylonAngle = CONFIG.pylonWidth / CONFIG.ringRadius;
+        const startAngle = -1.5 * CONFIG.angleStep + pylonAngle;
+        const endAngle = 1.5 * CONFIG.angleStep - pylonAngle;
+        const c = segColor === 'green' ? '0, 255, 100' : '0, 150, 255';
+        
+        const zoneH = CONFIG.segmentHeight / 8;
+        
+        const outerFieldY = -CONFIG.segmentHeight/2 + (zoneH * 4);
+        const innerFieldY = CONFIG.segmentHeight/2 - (zoneH * 2);
+        const fieldH = innerFieldY - outerFieldY;
+        
+        const radiusOuter = CONFIG.ringRadius - outerFieldY;
+        const radiusInner = CONFIG.ringRadius - innerFieldY;
+        
+        const centerX = 0;
+        const centerY = CONFIG.ringRadius;
+        
+        const arcStart = -Math.PI/2 + startAngle;
+        const arcEnd = -Math.PI/2 + endAngle;
+        
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radiusInner, arcStart, arcEnd, false);
+        ctx.arc(centerX, centerY, radiusOuter, arcEnd, arcStart, true); 
+        ctx.closePath();
+        
+        ctx.shadowBlur = 25 * zoom;
+        ctx.shadowColor = `rgba(${c}, 1)`;
+        ctx.fillStyle = `rgba(${c}, ${segAlpha})`;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        
+        ctx.strokeStyle = `rgba(255, 255, 255, 0.15)`;
+        ctx.lineWidth = 15 * zoom; 
+        
+        const spacing = 120;
+        const speed = 0.08;
+        
+        ctx.save();
+        ctx.clip(); 
+        
+        for(let k=0; k<16; k++) {
+            const anim = (Date.now() * speed);
+            let yOffset = (anim + k * spacing) % fieldH;
+            
+            let localY = outerFieldY + yOffset;
+            let currentR = CONFIG.ringRadius - localY;
+            
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, currentR, arcStart, arcEnd);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    function drawShip() {
+        if (!shipImg.complete) return;
+        const s = worldToScreen(ship.x, ship.y);
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(ship.angle + Math.PI / 2); 
+        ctx.scale(camera.zoom, camera.zoom);
+        ctx.drawImage(shipImg, -shipImg.naturalWidth/2, -shipImg.naturalHeight/2);
+        ctx.restore();
+    }
+
+    function draw() {
+        updateShip();
+
+        if (chkFollow.checked) {
+            camera.x = ship.x;
+            camera.y = ship.y;
+        }
+
+        if (chkRotation.checked) {
+            const speed = parseFloat(inputSpeed.value) * 0.005;
+            CONFIG.globalRotation += speed;
+            updateRingPositions();
+        }
+
+        ctx.fillStyle = '#020408';
+        ctx.fillRect(0, 0, width, height);
+
+        // Planeta
+        const planetS = worldToScreen(0, 0);
+        ctx.fillStyle = '#051020';
+        ctx.beginPath();
+        const innerR = CONFIG.ringRadius - CONFIG.segmentHeight/2 - (BUILD_GRID.floors * BUILD_GRID.floorHeight) - 200;
+        ctx.arc(planetS.x, planetS.y, Math.max(100, innerR * 0.5 * camera.zoom), 0, Math.PI*2);
+        ctx.fill();
+        
+        ctx.strokeStyle = 'rgba(255, 100, 100, 0.3)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([10, 10]);
+        ctx.beginPath();
+        ctx.arc(planetS.x, planetS.y, Math.max(100, innerR * camera.zoom), 0, Math.PI*2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // SEGMENTY
+        const viewWorldW = width / camera.zoom;
+        const viewBound = Math.max(CONFIG.segmentWidth, CONFIG.segmentHeight);
+        const viewL = camera.x - viewWorldW/2 - viewBound;
+        const viewR = camera.x + viewWorldW/2 + viewBound;
+        
+        ctx.imageSmoothingEnabled = camera.zoom > 0.5;
+
+        for(const seg of segments) {
+            if (seg.x < viewL || seg.x > viewR) {
+                if(Math.abs(seg.x - camera.x) > viewWorldW) continue;
+            }
+
+            const s = worldToScreen(seg.x, seg.y);
+            ctx.save();
+            ctx.translate(s.x, s.y);
+            ctx.rotate(seg.angle);
+            ctx.scale(camera.zoom, camera.zoom);
+            
+            if (seg.type === 'GATE_L') {
+                ctx.drawImage(gateLeftCanvas, -seg.width/2, -seg.height/2);
+            } else if (seg.type === 'GATE_R') {
+                ctx.drawImage(gateRightCanvas, -seg.width/2, -seg.height/2);
+            } else if (seg.type === 'GATE_M') {
+                const w = seg.width;
+                const h = seg.height;
+                const railSize = 150; // Zaktualizowana wielkość szyny
+
+                // Szyny łączące bramy (żeby nie było dziury)
+                ctx.fillStyle = '#080808'; 
+                // Top Rail
+                ctx.fillRect(-w/2, -h/2, w, railSize); 
+                // Bottom Rail
+                ctx.fillRect(-w/2, h/2 - railSize, w, railSize); 
+                
+                // Maglev Glow dla bramy
+                ctx.fillStyle = '#0066cc';
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = '#00aaff';
+                ctx.fillRect(-w/2, -h/2 + railSize - 20, w, 20); // Top glow
+                ctx.fillRect(-w/2, h/2 - railSize, w, 20); // Bottom glow
+                ctx.shadowBlur = 0;
+
+                drawCurvedForceField(ctx, seg.fieldColor, seg.fieldAlpha, camera.zoom);
+                
+            } else {
+                ctx.drawImage(wallCanvas, -seg.width/2, -seg.height/2);
+            }
+            ctx.restore();
+        }
+
+        drawShip();
+        
+        // Focus hint
+        if(!canvasFocused && !chkFollow.checked) {
+             focusOverlay.style.opacity = 1;
+        } else {
+             focusOverlay.style.opacity = 0;
+        }
+
+        uiZoom.textContent = camera.zoom.toFixed(3);
+        requestAnimationFrame(draw);
+    }
+
+    // --- INPUT ---
+    let isDragging = false;
+    let lastX = 0, lastY = 0;
+
+    canvas.addEventListener('mousedown', e => {
+        if(e.target.closest('#ui')) return;
+        if(chkFollow.checked) return;
+        isDragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+    });
+    window.addEventListener('mouseup', () => isDragging = false);
+    window.addEventListener('mousemove', e => {
+        if(isDragging && !chkFollow.checked) {
+            const dx = e.clientX - lastX;
+            const dy = e.clientY - lastY;
+            camera.x -= dx / camera.zoom;
+            camera.y -= dy / camera.zoom;
+            lastX = e.clientX;
+            lastY = e.clientY;
+        }
+    });
+    canvas.addEventListener('wheel', e => {
+        if(e.target.closest('#ui')) return;
+        e.preventDefault();
+        const factor = e.deltaY > 0 ? 0.9 : 1.1;
+        const mWorldBefore = screenToWorld(e.clientX, e.clientY);
+        camera.zoom = Math.max(0.02, Math.min(4.0, camera.zoom * factor));
+        const mWorldAfter = screenToWorld(e.clientX, e.clientY);
+        camera.x += (mWorldBefore.x - mWorldAfter.x);
+        camera.y += (mWorldBefore.y - mWorldAfter.y);
+    }, {passive:false});
+
+    // Start
+    resize();
+    buildRing();
+    draw();
+
+</script>
+</body>
+</html>

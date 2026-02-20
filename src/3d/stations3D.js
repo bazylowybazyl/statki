@@ -29,6 +29,10 @@ const MODEL_URLS = {
   ]
 };
 
+const STATION_PIVOT_DEFAULTS = Object.freeze({
+  earth: Object.freeze({ x: 0, y: 0, z: 0 })
+});
+
 function isUse3DEnabled() {
   if (typeof window === 'undefined') return true;
   return window.USE_PLANET_STATIONS_3D !== false;
@@ -70,7 +74,7 @@ function getTemplate(stationId, path) {
 
         o.castShadow = false;
         o.receiveShadow = false;
-        o.frustumCulled = false; 
+        o.frustumCulled = true;
 
         const materials = Array.isArray(o.material) ? o.material : [o.material];
         for (const m of materials) {
@@ -188,6 +192,14 @@ function getPerStationScaleMap() {
   return Object.assign({}, fb, tun, cfg);
 }
 
+function getPerStationPivotMap() {
+  if (typeof window === 'undefined') return {};
+  const cfg = (window.DevConfig && window.DevConfig.stationPivotById) || {};
+  const tun = (window.DevTuning && window.DevTuning.stationPivotById) || {};
+  const fb = window.stationPivotById || {};
+  return Object.assign({}, fb, tun, cfg);
+}
+
 function getStationIdKey(station) {
   if (!station) return null;
   if (station.id != null) return String(station.id).toLowerCase();
@@ -195,6 +207,19 @@ function getStationIdKey(station) {
   if (station?.planet?.id != null) return String(station.planet.id).toLowerCase();
   if (station?.planet?.name) return String(station.planet.name).toLowerCase();
   return null;
+}
+
+function getStationPivot(station) {
+  const idKey = getStationIdKey(station);
+  const defaults = (idKey && STATION_PIVOT_DEFAULTS[idKey]) || null;
+  const byId = getPerStationPivotMap();
+  const custom = (idKey && byId[idKey]) || null;
+  const pivot = {
+    x: Number(custom?.x ?? defaults?.x ?? 0) || 0,
+    y: Number(custom?.y ?? defaults?.y ?? 0) || 0,
+    z: Number(custom?.z ?? defaults?.z ?? 0) || 0
+  };
+  return pivot;
 }
 
 function removeRecord(record) {
@@ -210,7 +235,12 @@ function removeRecord(record) {
     }
   }
   record.group = null;
+  record.modelGroup = null;
   record.stationRef = null;
+  record.lastPivotKey = null;
+  record.modelBaseX = 0;
+  record.modelBaseY = 0;
+  record.modelBaseZ = 0;
 }
 
 function ensureStationRecord(station) {
@@ -222,10 +252,15 @@ function ensureStationRecord(station) {
       key,
       stationRef: station,
       group: null,
+      modelGroup: null,
       geometryRadius: 1,
       spinOffset: Math.random() * Math.PI * 2,
       lastRenderedScale: null,
-      lastTargetRadius: null
+      lastTargetRadius: null,
+      lastPivotKey: null,
+      modelBaseX: 0,
+      modelBaseY: 0,
+      modelBaseZ: 0
     };
     stationRecords.set(key, record);
   } else {
@@ -237,6 +272,7 @@ function ensureStationRecord(station) {
 function updateRecordTransform(record, station, devScale, visible) {
   const group = record.group;
   if (!group || !Core3D.scene) return;
+  const modelGroup = record.modelGroup || group;
   
   if (group.parent !== Core3D.scene) {
     Core3D.scene.add(group);
@@ -253,6 +289,17 @@ function updateRecordTransform(record, station, devScale, visible) {
   const globalScalar = Number.isFinite(devScale) && devScale > 0 ? devScale : 1;
   const effectiveScale = baseScale * globalScalar * perScale * 2.8; 
 
+  const pivot = getStationPivot(station);
+  const pivotKey = `${pivot.x}|${pivot.y}|${pivot.z}`;
+  if (record.lastPivotKey !== pivotKey && modelGroup) {
+    modelGroup.position.set(
+      (Number(record.modelBaseX) || 0) - pivot.x,
+      (Number(record.modelBaseY) || 0) - pivot.y,
+      (Number(record.modelBaseZ) || 0) - pivot.z
+    );
+    record.lastPivotKey = pivotKey;
+  }
+
   group.scale.setScalar(effectiveScale);
   
   // Z = -100 utrzymuje stację na odpowiedniej płaszczyźnie
@@ -260,7 +307,10 @@ function updateRecordTransform(record, station, devScale, visible) {
 
   const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
   record.spinOffset += 0.002;
-  group.rotation.set(Math.PI / 8, baseAngle + record.spinOffset, 0);
+  group.rotation.set(Math.PI / 8, baseAngle, 0);
+  if (modelGroup) {
+    modelGroup.rotation.set(0, record.spinOffset, 0);
+  }
 
   group.visible = visible;
   station._mesh3d = group;
@@ -293,22 +343,33 @@ export function initStations3D(_sceneIgnored, stations) {
     const clone = cloneTemplate(station.id, path);
     if (!clone) continue;
 
-    const { scene: group } = clone;
-    group.visible = false;
-    Core3D.scene.add(group);
+    const { scene: modelGroup } = clone;
+    modelGroup.visible = true;
 
-    const bbox = new THREE.Box3().setFromObject(group);
+    const bbox = new THREE.Box3().setFromObject(modelGroup);
     const center = bbox.getCenter(new THREE.Vector3());
-    group.position.sub(center);
-    group.updateMatrixWorld(true);
+    modelGroup.children.forEach(child => {
+      child.position.sub(center);
+    });
+    modelGroup.position.set(0, 0, 0);
+    modelGroup.updateMatrixWorld(true);
+    record.modelBaseX = 0;
+    record.modelBaseY = 0;
+    record.modelBaseZ = 0;
 
-    bbox.setFromObject(group);
+    bbox.setFromObject(modelGroup);
     const sphere = bbox.getBoundingSphere(new THREE.Sphere());
     const geometryRadius = sphere?.radius && sphere.radius > 0 ? sphere.radius : 1;
 
-    record.group = group;
+    const pivotGroup = new THREE.Group();
+    pivotGroup.visible = false;
+    pivotGroup.add(modelGroup);
+    Core3D.scene.add(pivotGroup);
+
+    record.group = pivotGroup;
+    record.modelGroup = modelGroup;
     record.geometryRadius = geometryRadius;
-    station._mesh3d = group;
+    station._mesh3d = pivotGroup;
   }
 
   for (const [key, record] of stationRecords) {
@@ -338,22 +399,32 @@ export function updateStations3D(stations) {
     activeKeys.add(record.key);
 
     if (!record.group) {
-      const clone = cloneTemplate(station.id, path);
-      if (clone) {
-        const { scene: group } = clone;
-        group.visible = false;
-        Core3D.scene.add(group);
+        const clone = cloneTemplate(station.id, path);
+        if (clone) {
+          const { scene: modelGroup } = clone;
+          modelGroup.visible = true;
 
-        const bbox = new THREE.Box3().setFromObject(group);
-        const center = bbox.getCenter(new THREE.Vector3());
-        group.position.sub(center);
-        group.updateMatrixWorld(true);
+          const bbox = new THREE.Box3().setFromObject(modelGroup);
+          const center = bbox.getCenter(new THREE.Vector3());
+          modelGroup.children.forEach(child => {
+            child.position.sub(center);
+          });
+          modelGroup.position.set(0, 0, 0);
+          modelGroup.updateMatrixWorld(true);
+          record.modelBaseX = 0;
+          record.modelBaseY = 0;
+          record.modelBaseZ = 0;
 
-        bbox.setFromObject(group);
-        const sphere = bbox.getBoundingSphere(new THREE.Sphere());
-        record.geometryRadius = sphere?.radius > 0 ? sphere.radius : 1;
-        record.group = group;
-        station._mesh3d = group;
+          bbox.setFromObject(modelGroup);
+          const sphere = bbox.getBoundingSphere(new THREE.Sphere());
+          record.geometryRadius = sphere?.radius > 0 ? sphere.radius : 1;
+          const pivotGroup = new THREE.Group();
+          pivotGroup.visible = false;
+          pivotGroup.add(modelGroup);
+          Core3D.scene.add(pivotGroup);
+          record.group = pivotGroup;
+          record.modelGroup = modelGroup;
+          station._mesh3d = pivotGroup;
       }
     }
 
@@ -379,7 +450,12 @@ export function detachPlanetStations3D(_sceneIgnored) {
       delete record.stationRef._mesh3d;
     }
     record.group = null;
+    record.modelGroup = null;
     record.stationRef = null;
+    record.lastPivotKey = null;
+    record.modelBaseX = 0;
+    record.modelBaseY = 0;
+    record.modelBaseZ = 0;
   }
   stationRecords.clear();
 }

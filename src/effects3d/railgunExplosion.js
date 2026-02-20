@@ -14,7 +14,6 @@ function ensureTextures() {
 export function createRailgunExplosionFactory(scene) {
   ensureTextures();
 
-  // Materiały współdzielone (bez zmian, są wydajne)
   const flashMaterial = new THREE.SpriteMaterial({
     map: sharedTextures.flash,
     blending: THREE.AdditiveBlending,
@@ -35,7 +34,6 @@ export function createRailgunExplosionFactory(scene) {
     color: 0x99e6ff,
   });
 
-  // Geometria iskry (baza)
   const sparkGeometry = new THREE.PlaneGeometry(1, 0.14);
   const sparkMaterial = new THREE.MeshBasicMaterial({
     color: 0xb0f2ff,
@@ -55,29 +53,24 @@ export function createRailgunExplosionFactory(scene) {
     opacity: 0.22,
   });
 
-  // Helper object do macierzy
   const dummyObj = new THREE.Object3D();
 
   return function spawn({ x = 0, y = 0, z, size = 50 } = {}) {
     const group = new THREE.Group();
     group.position.set(x, 0, z !== undefined ? z : y);
-    // Opcjonalnie: globalne zmniejszenie skali całego efektu
-    // group.scale.setScalar(size * 0.7); 
     group.scale.setScalar(size);
     scene.add(group);
 
-    // --- ZMNIEJSZENIE BŁYSKU CENTRALEGO ---
     const flash = new THREE.Sprite(flashMaterial);
-    flash.scale.setScalar(1.5); // Było 3
+    flash.scale.setScalar(1.5); 
     flash.position.y = 0.25;
     group.add(flash);
 
     const core = new THREE.Sprite(coreMaterial);
-    core.scale.setScalar(0.8); // Było 1.6
+    core.scale.setScalar(0.8); 
     core.position.y = 0.7;
     group.add(core);
 
-    // --- ZMNIEJSZENIE LICZBY ISKIER ---
     const sparkCount = 2; 
     const sparks = new THREE.InstancedMesh(sparkGeometry, sparkMaterial, sparkCount);
     sparks.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -87,36 +80,31 @@ export function createRailgunExplosionFactory(scene) {
     for(let i=0; i<sparkCount; i++) {
         sparkData[i] = {
             angle: Math.random() * Math.PI * 2,
-           
-            speed: 40 + Math.random() * 80, // Było 70 + ... 140
+            speed: 40 + Math.random() * 80,
             life: 0.14 + Math.random() * 0.22,
-            // Krótsze i cieńsze iskry
-            length: 1.0 + Math.random() * 2.0, // Było 2.6 + ... 6.0
-            thickness: 0.10 + Math.random() * 0.12, // Było 0.18 + ... 0.18
+            length: 1.0 + Math.random() * 2.0, 
+            thickness: 0.10 + Math.random() * 0.12, 
             elevation: 0.15 + Math.random() * 0.4,
             age: 0
         };
-        // Inicjalizacja poza widokiem
         dummyObj.scale.set(0, 0, 0); 
         dummyObj.updateMatrix();
         sparks.setMatrixAt(i, dummyObj.matrix);
     }
 
     const smokes = [];
-    // Zmniejszona liczba dymków (już było w poprzednim kroku, ale utrzymujemy)
+    // OPTYMALIZACJA: Klonujemy materiał tylko RAZ na CAŁĄ eksplozję
+    const localSmokeMaterial = baseSmokeMaterial.clone(); 
+    
     for (let i = 0; i < 6; i++) {
-      const mat = baseSmokeMaterial.clone(); 
-      const smoke = new THREE.Sprite(mat);
-      // Mniejszy rozrzut początkowy dymu
+      const smoke = new THREE.Sprite(localSmokeMaterial); // WSZYSTKIE 6 dymków korzysta z tego jednego!
       smoke.position.set((Math.random() - 0.5) * 0.5, 0.1, (Math.random() - 0.5) * 0.5);
-      // Mniejsza skala początkowa dymu
-      const scale = 0.8 + Math.random() * 1.0; // Było 1.1 + ... 1.5
+      const scale = 0.8 + Math.random() * 1.0; 
       smoke.scale.setScalar(scale);
       smoke.userData = {
         vx: (Math.random() - 0.5) * 8,
         vz: (Math.random() - 0.5) * 8,
-        // Wolniejszy wzrost dymu
-        growth: 0.8 + Math.random() * 0.4, // Było 1.3 + ... 0.6
+        growth: 0.8 + Math.random() * 0.4, 
         age: 0,
         life: 0.7 + Math.random() * 0.5,
       };
@@ -132,26 +120,24 @@ export function createRailgunExplosionFactory(scene) {
       if (disposed) return;
       time += dt;
 
-      // --- MNIEJSZY WZROST BŁYSKU W CZASIE ---
       const flashFade = Math.max(0, 1 - time / 0.09);
-      // Wolniejszy wzrost
-      flash.scale.setScalar(1.5 + time * 15); // Było 3 + time * 26
+      flash.scale.setScalar(1.5 + time * 15); 
       if (flashFade <= 0) flash.visible = false;
       
       const coreFade = Math.max(0, 1 - time / 0.16);
-      // Wolniejszy wzrost i mniejsza baza
-      const coreScale = 0.8 + Math.max(0, 0.6 - time * 2.0); // Było 1.6 + ... time * 2.5
+      const coreScale = 0.8 + Math.max(0, 0.6 - time * 2.0); 
       core.scale.setScalar(coreScale);
       if (coreFade <= 0) core.visible = false;
 
-      // Sparks logic
+      // Globalne wygaszanie współdzielonego materiału dymu
+      localSmokeMaterial.opacity = 0.22 * Math.max(0, 1 - time / 0.8);
+
       for (let i = 0; i < sparkCount; i++) {
         const data = sparkData[i];
         data.age += dt;
         const ageNorm = Math.max(0, 1 - data.age / data.life);
         
         if (data.age < data.life) {
-            // Mnożnik 0.015 zamiast 0.02 zmniejsza dystans
             const dist = data.speed * data.age * 0.015; 
             const px = Math.cos(data.angle) * dist;
             const pz = Math.sin(data.angle) * dist;
@@ -171,21 +157,15 @@ export function createRailgunExplosionFactory(scene) {
       }
       sparks.instanceMatrix.needsUpdate = true;
 
-      // Smokes logic
       for (let i = smokes.length - 1; i >= 0; i--) {
         const smoke = smokes[i];
         const state = smoke.userData;
         state.age += dt;
         smoke.position.x += state.vx * dt;
         smoke.position.z += state.vz * dt;
-        // Wzrost zdefiniowany przy spawnie (teraz mniejszy)
         smoke.scale.multiplyScalar(1 + state.growth * dt);
-        const lifeT = Math.min(1, state.age / state.life);
-        smoke.material.opacity = 0.22 * (1 - lifeT) * Math.max(0, 1 - time / 0.55);
         if (state.age >= state.life) {
-          group.remove(smoke);
-          smoke.material.dispose();
-          smokes.splice(i, 1);
+          smoke.visible = false; // Podobnie jak wyżej, tylko ukrywamy w trakcie życia
         }
       }
 
@@ -200,9 +180,8 @@ export function createRailgunExplosionFactory(scene) {
       if (group.parent) {
         group.parent.remove(group);
       }
-      smokes.forEach((smoke) => {
-        if(smoke.material) smoke.material.dispose();
-      });
+      // Niszczymy nasz jeden sklonowany materiał
+      localSmokeMaterial.dispose();
     }
 
     return { update, dispose, group };

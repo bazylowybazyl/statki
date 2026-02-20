@@ -86,14 +86,7 @@ export function createArmataImpactFactory(scene) {
       const life = 0.2 + Math.random() * 0.28;
       const tilt = (Math.random() - 0.5) * 0.8;
       const length = 2.4 + Math.random() * 2.2;
-      return {
-        angle,
-        speed,
-        life,
-        age: 0,
-        tilt,
-        length,
-      };
+      return { angle, speed, life, age: 0, tilt, length };
     });
 
     shardData.forEach((data, i) => {
@@ -106,6 +99,7 @@ export function createArmataImpactFactory(scene) {
     shards.instanceMatrix.needsUpdate = true;
 
     const embers = [];
+    // OPTYMALIZACJA 1: Tylko JEDEN materiał dla wszystkich iskier
     const emberMaterial = new THREE.SpriteMaterial({
       map: sharedTextures.flash,
       blending: THREE.AdditiveBlending,
@@ -115,7 +109,7 @@ export function createArmataImpactFactory(scene) {
       opacity: 0.85,
     });
     for (let i = 0; i < 18; i++) {
-      const ember = new THREE.Sprite(emberMaterial.clone());
+      const ember = new THREE.Sprite(emberMaterial); // ZABRONIONE CLONE!
       ember.scale.setScalar(0.35 + Math.random() * 0.4);
       ember.position.set((Math.random() - 0.5) * 0.6, 0.18 + Math.random() * 0.2, (Math.random() - 0.5) * 0.6);
       ember.userData = {
@@ -128,6 +122,8 @@ export function createArmataImpactFactory(scene) {
       group.add(ember);
     }
 
+    const smokes = [];
+    // OPTYMALIZACJA 2: Tylko JEDEN materiał dla wszystkich dymków
     const smokeMaterial = new THREE.SpriteMaterial({
       map: sharedTextures.smoke,
       color: 0x3b2a1c,
@@ -135,9 +131,8 @@ export function createArmataImpactFactory(scene) {
       opacity: 0.32,
       depthWrite: false,
     });
-    const smokes = [];
     for (let i = 0; i < 12; i++) {
-      const smoke = new THREE.Sprite(smokeMaterial.clone());
+      const smoke = new THREE.Sprite(smokeMaterial); // ZABRONIONE CLONE!
       smoke.position.set((Math.random() - 0.5) * 0.7, 0.05, (Math.random() - 0.5) * 0.7);
       const s = 0.9 + Math.random() * 1.3;
       smoke.scale.setScalar(s);
@@ -153,9 +148,7 @@ export function createArmataImpactFactory(scene) {
       group.add(smoke);
     }
 
-    const light = new THREE.PointLight(0xffb060, 140, 150 * size, 1.8);
-    light.position.set(0, 5, 0);
-    group.add(light);
+    // OPTYMALIZACJA 3: Usunięto PointLight! W zupełności wystarczą Additive Sprites!
 
     let time = 0;
     let disposed = false;
@@ -174,6 +167,10 @@ export function createArmataImpactFactory(scene) {
 
       ring.scale.setScalar(0.4 + time * 5.6);
       ringMaterial.opacity = 0.9 * Math.max(0, 1 - time / 0.32);
+
+      // Globalne wygaszanie wspólnych materiałów
+      emberMaterial.opacity = 0.85 * Math.max(0, 1 - time / 0.5);
+      smokeMaterial.opacity = 0.32 * Math.max(0, 1 - time / 1.2);
 
       for (let i = 0; i < shardData.length; i++) {
         const data = shardData[i];
@@ -199,12 +196,8 @@ export function createArmataImpactFactory(scene) {
         ember.position.x += state.vx * dt * 0.04;
         ember.position.z += state.vz * dt * 0.04;
         ember.position.y += 0.4 * dt;
-        const fade = Math.max(0, 1 - state.age / state.life);
-        ember.material.opacity = 0.85 * fade * Math.max(0, 1 - time / 0.4);
         if (state.age >= state.life) {
-          group.remove(ember);
-          ember.material.dispose();
-          embers.splice(i, 1);
+          ember.visible = false; // Po prostu ukrywamy, NIE robimy dispose() w pętli!
         }
       }
 
@@ -216,16 +209,10 @@ export function createArmataImpactFactory(scene) {
         smoke.position.z += state.vz * dt * 0.3;
         smoke.position.y += state.rise * dt * 0.4;
         smoke.scale.multiplyScalar(1 + state.growth * dt * 0.6);
-        const fade = Math.max(0, 1 - state.age / state.life);
-        smoke.material.opacity = 0.32 * fade * Math.max(0, 1 - time / 0.7);
         if (state.age >= state.life) {
-          group.remove(smoke);
-          smoke.material.dispose();
-          smokes.splice(i, 1);
+          smoke.visible = false; // Po prostu ukrywamy, NIE robimy dispose() w pętli!
         }
       }
-
-      light.intensity = 140 * Math.max(0, 1 - time / 0.18);
 
       if (time > 1.0) {
         dispose();
@@ -245,12 +232,8 @@ export function createArmataImpactFactory(scene) {
       shards.dispose();
       shardGeometry.dispose();
       shardMaterial.dispose();
-      embers.forEach((ember) => {
-        ember.material.dispose();
-      });
-      smokes.forEach((smoke) => {
-        smoke.material.dispose();
-      });
+      // Dispose wspólnych materiałów wywołujemy tylko RAZ tutaj
+      emberMaterial.dispose();
       smokeMaterial.dispose();
     }
 

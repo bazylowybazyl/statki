@@ -1,0 +1,3009 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8" />
+<title>Dogfight AI – Battleship Broadsides v2</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg:#0b0f14;
+    --fg:#e5f0ff;
+    --muted:#9fb3c8;
+    --enemy:#ff5c7c;
+    --friend:#7cff91;
+    --proj:#ffd36e;
+    --draw:#6ecbff;
+    --move:#6eff7a
+  }
+  html,body{
+    margin:0;
+    padding:0;
+    background:var(--bg);
+    color:var(--fg);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Arial;
+    height:100%;
+    overflow:hidden;
+  }
+  header{
+    padding:10px 12px;
+    display:flex;
+    align-items:center;
+    gap:12px;
+    border-bottom:1px solid #17202a;
+    background:#0d131a;
+    flex-wrap:wrap;
+  }
+  header h1{
+    font-size:14px;
+    margin:0;
+    color:#9fb3c8;
+    font-weight:600;
+  }
+  .spacer{flex:1}
+  .counter{
+    padding:2px 8px;
+    background:#102233;
+    border:1px solid #1e3650;
+    border-radius:8px;
+    color:#a7c2e2;
+    font-size:12px;
+  }
+  .wrap{
+    display:grid;
+    grid-template-columns:360px 1fr 360px;
+    gap:0;
+    height:calc(100% - 54px);
+  }
+  canvas{
+    display:block;
+    width:100%;
+    height:100%;
+    background:radial-gradient(1200px 700px at 50% 40%,#0d1520,#081019 60%,#050b12 100%);
+    cursor:crosshair;
+  }
+  aside{
+    background:#0c131b;
+    border-left:1px solid #17202a;
+    border-right:1px solid #17202a;
+    overflow:auto;
+    display:flex;
+    flex-direction:column;
+  }
+  .fleet{
+    padding:12px;
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+  }
+  .section{
+    background:#0f1823;
+    border:1px solid #1f2a36;
+    border-radius:10px;
+    overflow:hidden;
+  }
+  .sectHead{
+    padding:8px 10px;
+    color:#a9bfd6;
+    background:#0d1520;
+    border-bottom:1px solid #1a2a36;
+    font-weight:600;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    font-size:13px;
+  }
+  .sectBody{
+    padding:10px;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    font-size:13px;
+  }
+  .row{
+    display:flex;
+    gap:8px;
+    align-items:center;
+    flex-wrap:wrap;
+  }
+  .pill{
+    padding:4px 8px;
+    border:1px solid #22364d;
+    border-radius:999px;
+    background:#12263a;
+    color:#cfe6ff;
+    font-size:11px;
+  }
+  button{
+    background:#122033;
+    color:var(--fg);
+    border:1px solid #20344d;
+    padding:5px 9px;
+    border-radius:8px;
+    cursor:pointer;
+    font-weight:600;
+    font-size:12px;
+  }
+  button:hover{background:#16263d}
+  button.active{
+    outline:2px solid #2a72ff;
+    background:#1a3a5a;
+  }
+  input[type=number], select{
+    width:90px;
+    background:#0a121a;
+    border:1px solid #1f2a36;
+    color:#cfe6ff;
+    border-radius:6px;
+    padding:4px 6px;
+    font-size:12px;
+  }
+  .small{width:72px}
+  .squadList{
+    display:grid;
+    grid-template-columns:repeat(2,1fr);
+    gap:6px;
+  }
+  .squadCard{
+    background:#0c1520;
+    border:1px solid #1b2a3a;
+    border-radius:8px;
+    padding:6px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .squadCard span{font-size:11px;color:#9fb3c8}
+  .note{font-size:11px;color:#789}
+  .timeParams button{font-size:11px;padding:3px 7px;}
+</style>
+</head>
+<body>
+<header>
+  <h1>Dogfight AI – Battleship Broadsides v2</h1>
+  <span class="counter" id="cntFriend">FR: 0</span>
+  <span class="counter" id="cntEnemy">EN: 0</span>
+
+  <div class="row timeParams" style="margin-left:20px">
+    <span>Time:</span>
+    <button id="t_02">x0.2</button>
+    <button id="t_05">x0.5</button>
+    <button id="t_1" class="active">x1.0</button>
+    <button id="t_2">x2.0</button>
+    <button id="t_4">x4.0</button>
+  </div>
+
+  <div class="spacer"></div>
+  <button id="pause">Pauza</button>
+  <button id="reset">Reset</button>
+  <button id="zoomIn">+</button>
+  <button id="zoomOut">−</button>
+  <button id="zoomFit">Fit</button>
+</header>
+
+<div class="wrap">
+  <!-- LEFT: FRIENDLY -->
+  <aside id="left">
+    <div class="fleet">
+      <div class="section">
+        <div class="sectHead">
+          <span>Friendly Forces</span>
+          <span class="pill" style="border-color:#2b4; background:#103018;">Ready</span>
+        </div>
+        <div class="sectBody">
+          <div class="row">
+            <label>Squad (9): <button id="spawnF">Fighter Squad</button></label>
+          </div>
+          <div class="row">
+            <button id="spawnFF">Frigate (PD)</button>
+            <button id="spawnFL">Frigate (Laser)</button>
+          </div>
+          <div class="row">
+            <button id="spawnFD">Destroyer</button>
+            <button id="spawnFB">Battleship</button>
+          </div>
+          <hr style="border:0;border-top:1px solid #333;width:100%">
+          <div class="row">
+            <button id="f_engage">Engage</button>
+            <button id="f_guard" class="active">Guard</button>
+            <button id="f_move">Move</button>
+            <button id="f_return">Return</button>
+          </div>
+          <!-- Config -->
+          <div class="row" style="margin-top:10px">
+            <label>HP:
+              <input id="fr_hp" type="number" min="10" max="5000" value="120">
+            </label>
+            <label>Shield:
+              <input id="fr_sh" type="number" min="0" max="5000" value="80">
+            </label>
+          </div>
+          <div class="row">
+            <label>Wep:
+              <select id="fr_gun">
+                <option value="laserS">Laser S</option>
+                <option value="pulse">Pulse</option>
+                <option value="rail">Rail</option>
+                <option value="gatling">Gatling</option>
+              </select>
+            </label>
+            <label>Msl:
+              <select id="fr_msl">
+                <option value="AF">AIM-3</option>
+                <option value="AS">ASM-6</option>
+                <option value="HE">HET-4</option>
+                <option value="SW">Swarm</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <label>PD:
+              <select id="fr_pd">
+                <option value="pd_mk1">PD Mk1</option>
+                <option value="pd_laser">PD Laser</option>
+              </select>
+            </label>
+            <label>Flak:
+              <select id="fr_flak">
+                <option value="flak_L">Flak L</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <button id="fr_apply">Apply Config</button>
+          </div>
+          <div class="squadList" id="frSquads"></div>
+          <div class="note">
+            LPM na ikonie = zaznacz. PPM na mapie = formacja. PPM na wroga = atak.
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- CENTER: CANVAS -->
+  <canvas id="cv"></canvas>
+
+  <!-- RIGHT: ENEMY -->
+  <aside id="right">
+    <div class="fleet">
+      <div class="section">
+        <div class="sectHead">
+          <span>Enemy Forces</span>
+          <span class="pill" style="border-color:#b44; background:#2a1015;">Ready</span>
+        </div>
+        <div class="sectBody">
+          <div class="row">
+            <label>Squad (9): <button id="spawnE">Fighter Squad</button></label>
+          </div>
+          <div class="row">
+            <button id="spawnEF">Frigate (PD)</button>
+            <button id="spawnEL">Frigate (Laser)</button>
+          </div>
+          <div class="row">
+            <button id="spawnED">Destroyer</button>
+            <button id="spawnEB">Battleship</button>
+          </div>
+          <hr style="border:0;border-top:1px solid #333;width:100%">
+          <div class="row">
+            <button id="e_engage">Engage</button>
+            <button id="e_guard" class="active">Guard</button>
+            <button id="e_move">Move</button>
+            <button id="e_return">Return</button>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <label>HP:
+              <input id="en_hp" type="number" min="10" max="5000" value="120">
+            </label>
+            <label>Shield:
+              <input id="en_sh" type="number" min="0" max="5000" value="80">
+            </label>
+          </div>
+          <div class="row">
+            <label>Wep:
+              <select id="en_gun">
+                <option value="laserS">Laser S</option>
+                <option value="pulse">Pulse</option>
+                <option value="rail">Rail</option>
+                <option value="gatling">Gatling</option>
+              </select>
+            </label>
+            <label>Msl:
+              <select id="en_msl">
+                <option value="AF">AIM-3</option>
+                <option value="AS">ASM-6</option>
+                <option value="HE">HET-4</option>
+                <option value="SW">Swarm</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <label>PD:
+              <select id="en_pd">
+                <option value="pd_mk1">PD Mk1</option>
+                <option value="pd_laser">PD Laser</option>
+              </select>
+            </label>
+            <label>Flak:
+              <select id="en_flak">
+                <option value="flak_L">Flak L</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <button id="en_apply">Apply Config</button>
+          </div>
+          <div class="squadList" id="enSquads"></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script type="module">
+/* ============================== Canvas / Camera ============================== */
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+let DPR = window.devicePixelRatio || 1;
+ctx.imageSmoothingEnabled = false;
+
+const WORLD = { W: 10000, H: 6000 };
+const CAM   = { x: WORLD.W*0.5, y: WORLD.H*0.5, scale: 0.25, min: 0.05, max: 3.0 };
+let TIME_SCALE = 1.0;
+
+function fit(){
+  DPR = window.devicePixelRatio || 1;
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  canvas.width  = Math.max(1, Math.floor(W * DPR));
+  canvas.height = Math.max(1, Math.floor(H * DPR));
+}
+window.addEventListener('resize', fit);
+
+function setBaseTransform(){ ctx.setTransform(DPR,0,0,DPR,0,0); }
+function applyCam(){
+  setBaseTransform();
+  const cssW = canvas.width / DPR, cssH = canvas.height / DPR;
+  ctx.translate(cssW*0.5, cssH*0.5);
+  ctx.scale(CAM.scale, CAM.scale);
+  ctx.translate(-CAM.x, -CAM.y);
+}
+function resetTransform(){ setBaseTransform(); }
+function screenToWorld(px, py){
+  const cssW = canvas.width / DPR, cssH = canvas.height / DPR;
+  const wx = (px - cssW*0.5) / CAM.scale + CAM.x;
+  const wy = (py - cssH*0.5) / CAM.scale + CAM.y;
+  return {x:wx, y:wy};
+}
+function worldClamp(obj, r=24){
+  obj.x = Math.max(r, Math.min(WORLD.W - r, obj.x));
+  obj.y = Math.max(r, Math.min(WORLD.H - r, obj.y));
+}
+
+/* ============================== Utils ======================================= */
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const norm  = (x,y)=>{const d=Math.hypot(x,y)||1;return {x:x/d,y:y/d};};
+const dist2 = (a,b)=>{const dx=a.x-b.x,dy=a.y-b.y;return dx*dx+dy*dy;};
+
+function rotateVec(vx,vy,deg){
+  const r = deg*Math.PI/180;
+  const c = Math.cos(r), s = Math.sin(r);
+  return {vx:vx*c - vy*s, vy:vx*s + vy*c};
+}
+
+function clampTurn(vx, vy, wantVx, wantVy, dt, maxDeg){
+  const maxRad = (maxDeg * Math.PI / 180) * dt;
+  const a = Math.atan2(vy, vx);
+  const b = Math.atan2(wantVy, wantVx);
+  let d = b - a;
+  while(d >  Math.PI) d -= 2*Math.PI;
+  while(d < -Math.PI) d += 2*Math.PI;
+  const lim = clamp(d, -maxRad, maxRad);
+  const speed = Math.hypot(wantVx, wantVy);
+  const ang = a + lim;
+  return { vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed };
+}
+function clampTurnAngle(currentAng, targetAng, maxRateRad, dt){
+  let d = targetAng - currentAng;
+  while(d >  Math.PI) d -= 2*Math.PI;
+  while(d < -Math.PI) d += 2*Math.PI;
+  const change = clamp(d, -maxRateRad * dt, maxRateRad * dt);
+  let out = currentAng + change;
+  if(out >  Math.PI) out -= 2*Math.PI;
+  if(out < -Math.PI) out += 2*Math.PI;
+  return out;
+}
+
+function leadAim(shooter,target,projSpeed=180){
+  const vx=target.vx||0, vy=target.vy||0;
+  const px=target.x-shooter.x, py=target.y-shooter.y;
+  const A=(vx*vx+vy*vy)-projSpeed*projSpeed;
+  const B=2*(px*vx+py*vy);
+  const C=(px*px+py*py);
+  let t=0;
+  if(Math.abs(A)<1e-3){
+    t = -C/Math.max(B,-1e-3);
+  }else{
+    const disc=B*B-4*A*C;
+    t = (disc>0)?(-B-Math.sqrt(disc))/(2*A):0;
+  }
+  t = Math.max(0,Math.min(2.0,t));
+  return {x:target.x+vx*t,y:target.y+vy*t};
+}
+
+/* ============================== Weapons ===================================== */
+const GUNS = {
+  laserS:{ name:'Laser krótki', dps:40, dmg:8,  rps:5,   speed:520, range:380, spread:2,  color:'#86f7ff' },
+  pulse :{ name:'Pulse blaster', dps:55, dmg:14, rps:4,   speed:420, range:420, spread:3,  color:'#ffd36e' },
+  rail  :{ name:'Rail micro',    dps:65, dmg:26, rps:1.8, speed:900, range:560, spread:0.6,color:'#c0b7ff' },
+  gatling:{name:'Gatling',       dps:70, dmg:3,  rps:12,  speed:520, range:320, spread:4,  color:'#9fff75' }
+};
+const PD = {
+  pd_mk1  :{ name:'PD Mk1',   dmg:5,  rps:9,  speed:560,  range:380, spread:6,   color:'#8cffd0' },
+  pd_laser:{ name:'PD Laser', dmg:3,  rps:18, speed:1200, range:420, spread:0.7, color:'#ff77ff' }
+};
+const FLAK = {
+  flak_L  :{ name:'Flak L', burst:1, rps:0.8, speed:380, range:520, radius:48, dmg:28, color:'#ffef8a' }
+};
+const MISSILES = {
+  AF:{ name:'AIM-3',  speed:360, turn:600, life:4.0, dmg:45,  seek:'fighter', color:'#7cd7ff' },
+  AS:{ name:'ASM-6',  speed:300, turn:320, life:6.0, dmg:120, seek:'ship',    color:'#ffad7c' },
+  HE:{ name:'HET-4',  speed:280, turn:250, life:5.0, dmg:160, seek:'any',     color:'#ff7cf0' },
+  SW:{ name:'Swarm-8',speed:340, turn:550, life:3.0, dmg:18,  seek:'fighter', color:'#b3ff7c', swarm:6, spread:18 }
+};
+const GUNS_M = {
+  m_beam      :{ name:'M Beam',       dmg:24,  rps:1.8, speed:900,  range:820,  spread:0.4, color:'#8fd8ff' },
+  m_pulse     :{ name:'M Pulse',      dmg:40,  rps:1.1, speed:700,  range:760,  spread:0.8, color:'#ffd98a' },
+  m_rail      :{ name:'M Rail',       dmg:85,  rps:0.55,speed:1200, range:880,  spread:0.35,color:'#d0c9ff' },
+  m_autocannon:{ name:'M Auto',       dmg:22,  rps:3.2, speed:780,  range:680,  spread:1.2, color:'#b6ff9a' },
+  h_beam      :{ name:'Heavy Beam',   dmg:260, rps:0.22,speed:1500, range:1100, spread:0.1, color:'#ff0000' },
+  h_rapid     :{ name:'Rapid Laser L',dmg:45,  rps:5.0, speed:900,  range:750,  spread:1.0, color:'#00ff00' }
+};
+// broadside definicja – grube plazmy
+const BS_BROADSIDE = {
+  dmg:80,
+  rps:0.6,
+  speed:620,
+  range:650,
+  spread:2.5,
+  color:'#ff9b4b'
+};
+const DESTROYER_MEDIUM_DEFAULT = 'm_rail';
+
+const COL = {
+  friend:'#7cff91',
+  enemy :'#ff5c7c',
+  proj  :'#ffd36e',
+  move  :'#6eff7a'
+};
+
+/* ============================== Player carrier ships ======================== */
+function makeCarrier({team,x,y,color}){
+  return {
+    team, x,y,
+    vx:0,vy:0,
+    ang:(team==='player'?0:Math.PI),
+    color,
+    accel:200,
+    maxv:160,
+    turnRate:2.8,
+    friction:0.98
+  };
+}
+const SHIP = {
+  friend: makeCarrier({team:'player',x:600,       y:WORLD.H*0.5,color:COL.friend}),
+  enemy : makeCarrier({team:'enemy', x:WORLD.W-600,y:WORLD.H*0.5,color:COL.enemy})
+};
+const keys = new Set();
+window.addEventListener('keydown',e=>{
+  keys.add(e.key.toLowerCase());
+});
+window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
+
+function updateCarrier(s,dt){
+  const l=keys.has('a'), r=keys.has('d'), u=keys.has('w'), d=keys.has('s'), brake=keys.has('q'), boost=keys.has('e');
+  if(l) s.ang -= s.turnRate*dt;
+  if(r) s.ang += s.turnRate*dt;
+  let thrust=0;
+  if(u) thrust+=1;
+  if(d) thrust-=0.6;
+  if(boost) thrust+=0.5;
+  const ax=Math.cos(s.ang)*s.accel*thrust;
+  const ay=Math.sin(s.ang)*s.accel*thrust;
+  s.vx += ax*dt;
+  s.vy += ay*dt;
+  const v = Math.hypot(s.vx,s.vy);
+  const maxv = s.maxv * (boost?1.2:1);
+  if(v>maxv){
+    s.vx *= maxv/v;
+    s.vy *= maxv/v;
+  }
+  if(brake){ s.vx*=0.92; s.vy*=0.92; }
+  s.vx *= s.friction;
+  s.vy *= s.friction;
+  s.x  += s.vx*dt;
+  s.y  += s.vy*dt;
+  worldClamp(s,24);
+}
+function drawCarrier(s){
+  ctx.save();
+  ctx.translate(s.x,s.y);
+  ctx.rotate(s.ang);
+  ctx.strokeStyle=s.color;
+  ctx.fillStyle=s.color+'22';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.moveTo(26,0);
+  ctx.lineTo(-20,14);
+  ctx.lineTo(-16,0);
+  ctx.lineTo(-20,-14);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0,0);
+  ctx.lineTo(34,0);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(52,0,10,0,Math.PI*2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/* ============================== Fighters / squads =========================== */
+const PARAM = {
+  squadSize:9
+};
+const CHEVRON_FORMATION = [
+  {x:-20,y:-15},{x:-20,y:15},
+  {x:-40,y:-30},{x:-40,y:30},
+  {x:-60,y:-45},{x:-60,y:45},
+  {x:-80,y:-60},{x:-80,y:60}
+];
+
+class BattleSim{
+  constructor(){
+    this.time=0;
+    this.units=new Set();
+    this.squads=new Set();
+    this.wrecks=new Set();
+    this.projectiles=[];
+    this.missiles=[];
+    this.explosions=[];
+    this.nextId=1;
+    this.nextSquadId=1;
+
+    this.teamCmd={player:'GUARD',enemy:'GUARD'};
+    this.teamCfg={
+      player:{ hp:120, shield:80, gun:'laserS', msl:'AF', pd:'pd_mk1', flak:'flak_L' },
+      enemy :{ hp:120, shield:80, gun:'laserS', msl:'AF', pd:'pd_mk1', flak:'flak_L' }
+    };
+    // precomputed centers for fighters (do „leashowania” dogfightów)
+    this.fighterCenter = {
+      player:{x:WORLD.W*0.25,y:WORLD.H*0.5,count:0},
+      enemy :{x:WORLD.W*0.75,y:WORLD.H*0.5,count:0}
+    };
+  }
+
+  setCmd(team,cmd){
+    this.teamCmd[team]=cmd;
+  }
+
+  addUnit(u){
+    u.id=this.nextId++;
+    this.units.add(u);
+    return u;
+  }
+  addSquad(s){
+    s.id=this.nextSquadId++;
+    this.squads.add(s);
+    return s;
+  }
+
+  spawnWreck(u){
+    if(u.kind==='fighter') return;
+    const w = {
+      x:u.x, y:u.y,
+      vx:u.vx*0.4, vy:u.vy*0.4,
+      ang:u.ang || 0,
+      vAng:(Math.random()-0.5)*0.8,
+      radius:u.hitR || 30,
+      kind:u.kind,
+      size:u.size || {w:40,h:20},
+      life:30,
+      friction:0.98
+    };
+    this.wrecks.add(w);
+  }
+
+  getHangarPoints(numPerSide=5, sideDist=25, spacing=15){
+    const startOffset = -(numPerSide-1)*0.5*spacing;
+    const pts=[];
+    for(let i=0;i<numPerSide;i++){
+      const lx = startOffset + i*spacing;
+      pts.push({x:lx,y: sideDist});
+      pts.push({x:lx,y:-sideDist});
+    }
+    return pts;
+  }
+
+  spawnSquadron(team){
+    const cfg=this.teamCfg[team];
+    const ship = team==='player'?SHIP.friend:SHIP.enemy;
+    const squad = this.addSquad({
+      team,
+      units:new Set(),
+      x:ship.x,y:ship.y,
+      iconHitR:12,
+      isCapital:false,
+      type:'fighter',
+      leader:null,
+      moveAnchor:null,
+      attackTargetSquadId:null,
+      totalHp:0,totalMaxHp:0
+    });
+    const hangars = this.getHangarPoints(5,25,15);
+    const c = Math.cos(ship.ang), s = Math.sin(ship.ang);
+    const launchOffset=15;
+    const launchSpeed = 80;
+    for(let i=0;i<PARAM.squadSize;i++){
+      const h = hangars[i % hangars.length];
+      const sideSign = Math.sign(h.y)||1;
+      const dirx = -s*sideSign;
+      const diry =  c*sideSign;
+      const hx = ship.x + h.x*c - h.y*s;
+      const hy = ship.y + h.x*s + h.y*c;
+      const x = hx + dirx*launchOffset;
+      const y = hy + diry*launchOffset;
+      const u = {
+        kind:'fighter',
+        team,
+        x,y,
+        vx:ship.vx + dirx*launchSpeed,
+        vy:ship.vy + diry*launchSpeed,
+        alive:true,
+        hitR:10,
+        hp:cfg.hp,
+        hpMax:cfg.hp,
+        shield:cfg.shield,
+        shieldMax:cfg.shield,
+        gun:cfg.gun,
+        msl:cfg.msl,
+        mslAmmo:1,
+        gunCD:0,
+        mslCD:0,
+        incomingDamage:0,
+        state:'guard',
+        sub:'merge',
+        subT:0,
+        targetId:null,
+        _slashSign:1,
+        size:6,
+        squad,
+        formationSlot:null,
+        dogfightTime:0,
+        dogfightMin:1.0,
+        breakOffTimer:0
+      };
+      squad.units.add(u);
+      if(i===0){
+        squad.leader = u;
+      }else if(CHEVRON_FORMATION[i-1]){
+        u.formationSlot = CHEVRON_FORMATION[i-1];
+      }
+      u.aiUpdate = dt => aiFighter(this,u,dt);
+      this.addUnit(u);
+    }
+  }
+
+  spawnFrigate(team, type='pd'){
+    const ship = team==='player'?SHIP.friend:SHIP.enemy;
+    const cfg=this.teamCfg[team];
+    const u = {
+      kind:'frigate',
+      team,
+      x:ship.x,
+      y:ship.y,
+      vx:0,vy:0,
+      alive:true,
+      hitR:28,
+      hp:1800, hpMax:1800,
+      shield:600, shieldMax:600,
+      incomingDamage:0,
+      pd:(type==='laser')?null:cfg.pd,
+      flak:(type==='laser')?null:cfg.flak,
+      mGun:(type==='laser')?'h_beam':null,
+      pdCD:0,
+      flakCD:0,
+      mCD:0,
+      state:'guard',
+      moveAnchor:null,
+      size:{w:44,h:18},
+      ang:(team==='player'?0:Math.PI),
+      turnRate:(65 * Math.PI / 180),
+      maxSpeed:160,
+      accel:150,
+      friction:0.985,
+      separationRange:90,
+      mass:2.5,
+      radius:28,
+      subType:type
+    };
+    u.aiUpdate = dt => (type==='laser'? aiLaserFrigate(this,u,dt): aiFrigate(this,u,dt));
+    this.addUnit(u);
+    const squad = this.addSquad({
+      team,
+      units:new Set([u]),
+      x:u.x,y:u.y,
+      iconHitR:16,
+      isCapital:true,
+      type:'frigate',
+      leader:u,
+      moveAnchor:null,
+      attackTargetSquadId:null,
+      totalHp:0,totalMaxHp:0
+    });
+    u.squad=squad;
+    return u;
+  }
+
+  spawnDestroyer(team){
+    const ship = team==='player'?SHIP.friend:SHIP.enemy;
+    const u = {
+      kind:'destroyer',
+      team,
+      x:ship.x,
+      y:ship.y,
+      vx:0,vy:0,
+      alive:true,
+      hitR:45,
+      hp:4200,hpMax:4200,
+      shield:2100,shieldMax:2100,
+      incomingDamage:0,
+      size:{w:86,h:26},
+      ang:(team==='player'?0:Math.PI),
+      turnRate:(25 * Math.PI / 180),
+      maxSpeed:140,
+      accel:120,
+      friction:0.986,
+      mGun:DESTROYER_MEDIUM_DEFAULT,
+      mCD:0,
+      mSeq:0,
+      pd:'pd_mk1',
+      pdCD:0,
+      state:'advance',
+      moveAnchor:null,
+      separationRange:150,
+      mass:8.0,
+      radius:45,
+      boostT:0,
+      boostCd:0,
+      boostDur:1.8,
+      boostCool:8.0
+    };
+    u.aiUpdate = dt => aiDestroyer(this,u,dt);
+    this.addUnit(u);
+    const squad = this.addSquad({
+      team,
+      units:new Set([u]),
+      x:u.x,y:u.y,
+      iconHitR:20,
+      isCapital:true,
+      type:'destroyer',
+      leader:u,
+      moveAnchor:null,
+      attackTargetSquadId:null,
+      totalHp:0,totalMaxHp:0
+    });
+    u.squad=squad;
+    return u;
+  }
+
+  spawnBattleship(team){
+    const ship = team==='player'?SHIP.friend:SHIP.enemy;
+    const u = {
+      kind:'battleship',
+      team,
+      x:ship.x,
+      y:ship.y,
+      vx:0,vy:0,
+      alive:true,
+      hitR:70,
+      hp:12000,hpMax:12000,
+      shield:6000,shieldMax:6000,
+      incomingDamage:0,
+      size:{w:140,h:50},
+      ang:(team==='player'?0:Math.PI),
+      turnRate:(12 * Math.PI / 180),
+      maxSpeed:90,
+      accel:45,
+      friction:0.99,
+      mGun:'h_rapid',
+      mCD:0,
+      pd:'pd_laser',
+      pdCD:0,
+      state:'advance',
+      moveAnchor:null,
+      separationRange:220,
+      mass:25.0,
+      radius:70,
+      // broadside
+      broadLeftCD:0,
+      broadRightCD:0,
+      broadsideRange:650,
+      // boosty
+      fwdBoostT:0,
+      fwdBoostCd:0,
+      fwdBoostDur:1.4,
+      fwdBoostCool:10.0,
+      rotBoostT:0,
+      rotBoostCd:0,
+      rotBoostDur:0.9,
+      rotBoostCool:8.0
+    };
+    u.aiUpdate = dt => aiBattleship(this,u,dt);
+    this.addUnit(u);
+    const squad = this.addSquad({
+      team,
+      units:new Set([u]),
+      x:u.x,y:u.y,
+      iconHitR:26,
+      isCapital:true,
+      type:'battleship',
+      leader:u,
+      moveAnchor:null,
+      attackTargetSquadId:null,
+      totalHp:0,totalMaxHp:0
+    });
+    u.squad=squad;
+    return u;
+  }
+
+  resolveCollisions(){
+    const solids=[];
+    for(const u of this.units){
+      if(u.alive && u.kind!=='fighter') solids.push(u);
+    }
+    for(const w of this.wrecks) solids.push(w);
+
+    for(let i=0;i<solids.length;i++){
+      for(let j=i+1;j<solids.length;j++){
+        const a=solids[i], b=solids[j];
+        const dx=b.x-a.x, dy=b.y-a.y;
+        const d2=dx*dx+dy*dy;
+        const Ra=(a.radius||a.hitR||24)+4;
+        const Rb=(b.radius||b.hitR||24)+4;
+        const minD = Ra+Rb;
+        if(d2>0 && d2<minD*minD){
+          const d=Math.sqrt(d2)||0.001;
+          const nx=dx/d, ny=dy/d;
+          const overlap = (minD - d);
+
+          const aMoving = !!a.moveAnchor;
+          const bMoving = !!b.moveAnchor;
+          let wA,wB;
+          if(aMoving && !bMoving){ wA=0.2; wB=0.8; }
+          else if(bMoving && !aMoving){ wA=0.8; wB=0.2; }
+          else{
+            const ma=a.mass||1, mb=b.mass||1;
+            const tot = ma+mb;
+            wA = mb/tot;
+            wB = ma/tot;
+          }
+
+          a.x -= nx*overlap*wA*0.9;
+          a.y -= ny*overlap*wA*0.9;
+          b.x += nx*overlap*wB*0.9;
+          b.y += ny*overlap*wB*0.9;
+
+          const relVx=b.vx-a.vx;
+          const relVy=b.vy-a.vy;
+          const relAlong = relVx*nx + relVy*ny;
+          if(relAlong<0){
+            const e=0.2;
+            const ma=a.mass||1, mb=b.mass||1;
+            const jVal = -(1+e)*relAlong/(1/ma+1/mb);
+            const ix=jVal*nx, iy=jVal*ny;
+            a.vx -= ix/ma;
+            a.vy -= iy/ma;
+            b.vx += ix/mb;
+            b.vy += iy/mb;
+          }
+        }
+      }
+    }
+  }
+
+  tick(dt){
+    const stepDt = dt*TIME_SCALE;
+    this.time += stepDt;
+
+    for(const u of this.units) u.incomingDamage = 0;
+
+    // fighter centers (do "leashowania")
+    let fxP=0, fyP=0, nFP=0;
+    let fxE=0, fyE=0, nFE=0;
+    for(const u of this.units){
+      if(!u.alive || u.kind!=='fighter') continue;
+      if(u.team==='player'){ fxP+=u.x; fyP+=u.y; nFP++; }
+      else{ fxE+=u.x; fyE+=u.y; nFE++; }
+    }
+    this.fighterCenter.player = {
+      x:nFP?fxP/nFP:WORLD.W*0.25,
+      y:nFP?fyP/nFP:WORLD.H*0.5,
+      count:nFP
+    };
+    this.fighterCenter.enemy = {
+      x:nFE?fxE/nFE:WORLD.W*0.75,
+      y:nFE?fyE/nFE:WORLD.H*0.5,
+      count:nFE
+    };
+
+    const deadSquads=[];
+    for(const s of this.squads){
+      s.units = new Set([...s.units].filter(u=>u.alive));
+      s.totalHp=0;
+      s.totalMaxHp=0;
+      if(s.units.size===0){
+        deadSquads.push(s);
+        continue;
+      }
+      if(s.leader && !s.leader.alive && !s.isCapital){
+        s.leader = s.units.values().next().value;
+        let i=0;
+        for(const u of s.units){
+          if(u===s.leader) u.formationSlot=null;
+          else{
+            u.formationSlot = CHEVRON_FORMATION[i] || CHEVRON_FORMATION[0];
+            i++;
+          }
+        }
+      }
+      let sx=0,sy=0;
+      for(const u of s.units){
+        sx+=u.x; sy+=u.y;
+        s.totalHp += (u.hp+u.shield);
+        s.totalMaxHp += (u.hpMax+u.shieldMax);
+      }
+      s.x = sx/s.units.size;
+      s.y = sy/s.units.size;
+    }
+    deadSquads.forEach(s=>this.squads.delete(s));
+
+    for(const w of this.wrecks){
+      w.x += w.vx*stepDt;
+      w.y += w.vy*stepDt;
+      w.vx *= w.friction;
+      w.vy *= w.friction;
+      w.ang += w.vAng*stepDt;
+      w.life -= stepDt;
+      if(w.life<=0) this.wrecks.delete(w);
+    }
+
+    // incomingDamage z rakiet (bez robienia kopii tablicy)
+    for(const m of this.missiles){
+      if(!m.alive || !m.targetId) continue;
+      for(const u of this.units){
+        if(u.id===m.targetId && u.alive){
+          u.incomingDamage += m.dmg;
+          break;
+        }
+      }
+    }
+
+    for(const u of this.units){
+      if(!u.alive) continue;
+      u.aiUpdate(stepDt);
+    }
+
+    this.resolveCollisions();
+
+    for(const u of this.units){
+      if(!u.alive) continue;
+      u.x += u.vx*stepDt;
+      u.y += u.vy*stepDt;
+      worldClamp(u,(u.kind==='fighter'?8:(u.kind==='frigate'?26:40)));
+    }
+
+    stepProjectiles(this,stepDt);
+    stepMissiles(this,stepDt);
+    stepExplosions(this,stepDt);
+
+    this.units = new Set([...this.units].filter(u=>u.alive));
+    this.projectiles = this.projectiles.filter(p=>p.alive);
+    this.missiles    = this.missiles.filter(m=>m.alive);
+    this.explosions  = this.explosions.filter(e=>e.alive);
+  }
+
+  guardSlotsWorld(team){
+    const ship = team==='player'?SHIP.friend:SHIP.enemy;
+    const slots=[];
+    const dx = team==='player'?1:-1;
+    const baseX = ship.x + dx*120;
+    const baseY = ship.y;
+    const perRow = 4;
+    const colGap = 80;
+    const rowGap = 60;
+    const squads = [...this.squads].filter(s=>s.team===team && !s.isCapital && s.units.size>0)
+      .sort((a,b)=>a.id-b.id);
+    squads.forEach((s,idx)=>{
+      const row = Math.floor(idx/perRow);
+      const col = idx%perRow;
+      slots.push({
+        x: baseX + dx*(col*colGap),
+        y: baseY + (row-1)*rowGap
+      });
+    });
+    return slots;
+  }
+}
+
+/* ============================== Combat helpers ============================== */
+function canFireAt(self,target,weapon){
+  if(!target) return false;
+  const dx=target.x-self.x, dy=target.y-self.y;
+  const dist=Math.hypot(dx,dy);
+  if(dist>weapon.range) return false;
+  const vx=self.vx, vy=self.vy;
+  const vmag = Math.hypot(vx,vy)||1;
+  const ux=vx/vmag, uy=vy/vmag;
+  const dot = (dx/dist)*ux + (dy/dist)*uy;
+  return dot>0.4;
+}
+function canFireAtCap(self,target,weapon){
+  if(!target) return false;
+  const dx=target.x-self.x, dy=target.y-self.y;
+  const dist=Math.hypot(dx,dy);
+  if(dist>weapon.range) return false;
+  const ux=Math.cos(self.ang), uy=Math.sin(self.ang);
+  const dot = (dx/dist)*ux + (dy/dist)*uy;
+  return dot>0.7;
+}
+function isLineOfFireClear(sim,self,target){
+  if(!target) return true;
+  const team=self.team;
+  const dxT = target.x-self.x, dyT=target.y-self.y;
+  const d2T = dxT*dxT + dyT*dyT;
+  if(d2T < (25*25)) return true;
+  const dT = Math.sqrt(d2T)||1;
+  const uxT = dxT/dT, uyT = dyT/dT;
+  const DOT = 0.985;
+  for(const u of sim.units){
+    if(!u.alive || u.team!==team || u===self) continue;
+    const dx=u.x-self.x, dy=u.y-self.y;
+    const d2=dx*dx+dy*dy;
+    if(d2>=d2T || d2<1) continue;
+    const d = Math.sqrt(d2)||1;
+    const ux=dx/d, uy=dy/d;
+    const dot = uxT*ux + uyT*uy;
+    if(dot>DOT) return false;
+  }
+  return true;
+}
+
+function damageUnit(sim,u,dmg){
+  if(!u.alive) return;
+  if(u.shield>0){
+    const used = Math.min(u.shield,dmg);
+    u.shield-=used;
+    dmg-=used;
+  }
+  if(dmg>0){
+    u.hp-=dmg;
+    if(u.hp<=0){
+      u.alive=false;
+      sim.spawnWreck(u);
+    }
+  }
+}
+
+/* ============================== Projectiles / Missiles ====================== */
+function spawnBullet(sim,from,to,weapon){
+  const ang=Math.atan2(to.y-from.y,to.x-from.x);
+  const spread=(weapon.spread||0)*(Math.PI/180);
+  const a=ang + (Math.random()*2-1)*spread;
+  const speed=weapon.speed;
+  sim.projectiles.push({
+    type:'bullet',
+    team:from.team,
+    x:from.x,
+    y:from.y,
+    vx:Math.cos(a)*speed,
+    vy:Math.sin(a)*speed,
+    dmg:weapon.dmg,
+    life:weapon.range/speed,
+    alive:true,
+    color:weapon.color||'#ffd36e',
+    isBeam:false
+  });
+}
+function spawnFlakShell(sim,from,target,fdef){
+  const aim = target? leadAim(from,target,fdef.speed):{x:from.x+1,y:from.y};
+  const ang=Math.atan2(aim.y-from.y,aim.x-from.x);
+  sim.projectiles.push({
+    type:'flak',
+    team:from.team,
+    x:from.x,y:from.y,
+    vx:Math.cos(ang)*fdef.speed,
+    vy:Math.sin(ang)*fdef.speed,
+    dmg:fdef.dmg,
+    radius:fdef.radius,
+    life:fdef.range/fdef.speed,
+    alive:true,
+    color:fdef.color
+  });
+}
+function spawnExplosion(sim,x,y,radius,dmg,team,color){
+  sim.explosions.push({x,y,radius,t:0,life:0.18,dmg,team,color,alive:true,_did:false});
+}
+
+function stepExplosions(sim,dt){
+  for(const e of sim.explosions){
+    if(!e.alive) continue;
+    e.t += dt;
+    if(e.t>=e.life){ e.alive=false; continue; }
+    if(!e._did){
+      for(const u of sim.units){
+        if(!u.alive || u.team===e.team) continue;
+        const dist=Math.hypot(u.x-e.x,u.y-e.y);
+        if(dist<=e.radius){
+          const fall = 1 - dist/e.radius;
+          damageUnit(sim,u,e.dmg*(0.4+0.6*fall));
+        }
+      }
+      e._did=true;
+    }
+  }
+}
+
+function stepProjectiles(sim,dt){
+  for(const p of sim.projectiles){
+    if(!p.alive) continue;
+    p.life -= dt;
+    if(p.life<=0){
+      if(p.type==='flak'){
+        spawnExplosion(sim,p.x,p.y,p.radius,p.dmg,p.team,p.color);
+      }
+      p.alive=false;
+      continue;
+    }
+    p.x += p.vx*dt;
+    p.y += p.vy*dt;
+
+    if(p.type==='bullet'){
+      if(p.isBeam) continue;
+      let hit=null, best=1e9;
+      for(const u of sim.units){
+        if(!u.alive || u.team===p.team) continue;
+        const d2v = dist2(p,u);
+        if(d2v < (u.hitR*u.hitR + 16) && d2v<best){
+          best=d2v; hit=u;
+        }
+      }
+      if(hit){
+        p.alive=false;
+        damageUnit(sim,hit,p.dmg);
+      }
+    }else if(p.type==='flak'){
+      for(const u of sim.units){
+        if(!u.alive || u.team===p.team) continue;
+        const d2v = dist2(p,u);
+        if(d2v < 100){
+          p.alive=false;
+          spawnExplosion(sim,p.x,p.y,p.radius,p.dmg,p.team,p.color);
+          break;
+        }
+      }
+    }
+  }
+}
+
+function spawnMissile(sim,from,target,mdef){
+  const m = {
+    team:from.team,
+    x:from.x,
+    y:from.y,
+    vx:from.vx,
+    vy:from.vy,
+    life:mdef.life,
+    speed:mdef.speed,
+    turn:mdef.turn,
+    dmg:mdef.dmg,
+    seek:mdef.seek,
+    alive:true,
+    targetId:target?.id||null,
+    color:mdef.color,
+    hitR:8
+  };
+  const scatter=25;
+  m.x += (Math.random()-0.5)*scatter;
+  m.y += (Math.random()-0.5)*scatter;
+  m.vx+= (Math.random()-0.5)*50;
+  m.vy+= (Math.random()-0.5)*50;
+  sim.missiles.push(m);
+  if(mdef.swarm){
+    for(let i=0;i<mdef.swarm-1;i++){
+      const mm = {...m};
+      const angle=(Math.random()*2-1)*(mdef.spread||14)*(Math.PI/180);
+      const c=Math.cos(angle), s=Math.sin(angle);
+      const nvx=mm.vx*c - mm.vy*s;
+      const nvy=mm.vx*s + mm.vy*c;
+      mm.vx=nvx; mm.vy=nvy;
+      sim.missiles.push(mm);
+    }
+  }
+}
+function pickMissileTarget(sim,team,seek){
+  let cand=null,best=1e9;
+  const wantShip = (seek==='ship');
+  for(const u of sim.units){
+    if(!u.alive || u.team===team) continue;
+    const isShip = (u.kind!=='fighter');
+    if(wantShip && !isShip) continue;
+    if(seek==='fighter' && u.kind!=='fighter') continue;
+    const d2v = u.x*u.x + u.y*u.y;
+    if(d2v<best){ best=d2v; cand=u; }
+  }
+  if(!cand){
+    for(const u of sim.units){
+      if(u.alive && u.team!==team){ cand=u; break; }
+    }
+  }
+  return cand;
+}
+function stepMissiles(sim,dt){
+  for(const m of sim.missiles){
+    if(!m.alive) continue;
+    m.life -= dt;
+    if(m.life<=0){ m.alive=false; continue; }
+    let tgt=null;
+    if(m.targetId){
+      for(const u of sim.units){
+        if(u.id===m.targetId && u.alive){ tgt=u; break; }
+      }
+    }
+    if(!tgt){
+      tgt = pickMissileTarget(sim,m.team,m.seek);
+      m.targetId = tgt?.id||null;
+    }
+    if(tgt){
+      const dx=tgt.x-m.x, dy=tgt.y-m.y;
+      const turned = clampTurn(m.vx,m.vy,dx,dy,dt,m.turn);
+      const v = Math.hypot(turned.vx,turned.vy)||1;
+      m.vx = (turned.vx/v)*m.speed;
+      m.vy = (turned.vy/v)*m.speed;
+    }
+    m.x += m.vx*dt;
+    m.y += m.vy*dt;
+    for(const u of sim.units){
+      if(!u.alive || u.team===m.team) continue;
+      const d2v = dist2(m,u);
+      if(d2v < (u.hitR*u.hitR+36)){
+        m.alive=false;
+        damageUnit(sim,u,m.dmg);
+        break;
+      }
+    }
+  }
+}
+function getNearestMissile(sim,self,range){
+  let bestM=null, bestD2=range*range;
+  for(const m of sim.missiles){
+    if(!m.alive || m.team===self.team) continue;
+    const d2v = dist2(self,m);
+    if(d2v<bestD2){ bestD2=d2v; bestM=m; }
+  }
+  return bestM;
+}
+
+/* ============================== Target selection ============================ */
+// uproszczony, O(N^2) – bez lokalnej gęstości w środku pętli
+function pickBestTarget(sim,self,designatedTarget){
+  if(designatedTarget && designatedTarget.alive) return designatedTarget;
+
+  let bestTarget=null;
+  let bestScore=-Infinity;
+
+  for(const u of sim.units){
+    if(!u.alive || u.team===self.team) continue;
+    const effHP = (u.hp+u.shield);
+    if(effHP<=0) continue;
+
+    let score=0;
+    const d2v = dist2(self,u); 
+    
+    // 1. Kara za odległość
+    score -= d2v * 0.0008;
+
+    // 2. Priorytetyzacja (ZABEZPIECZONA)
+    if(self.kind==='fighter'){
+      
+      if(u.kind==='fighter') {
+          // FIX: STREFA REAGOWANIA
+          // Tylko jeśli wrogi myśliwiec jest w zasięgu ~2500px (2500^2 = 6250000)
+          // to dostaje ultra-priorytet. Jeśli jest dalej, olewamy go na rzecz bliższych celów.
+          if(d2v < 6250000){
+             score += 40000; 
+          } else {
+             score += 1000; // Mały priorytet, jak jest daleko
+          }
+      } else {
+          // Capital ships (bazowo mało, ale bliskość podbije wynik niżej)
+          score += 1000; 
+      }
+      
+    } else {
+      // --- Reszta statków (bez zmian) ---
+      if(self.kind==='frigate' && self.subType!=='laser'){
+        if(u.kind==='fighter')      score += 2000;
+        else if(u.kind==='frigate') score += 800;
+        else                        score += 200;
+      }else if(self.kind==='frigate' && self.subType==='laser'){
+        if(u.kind==='battleship')   score += 2500;
+        else if(u.kind==='destroyer')score+=2000;
+        else if(u.kind==='frigate') score += 1500;
+        else                        score -= 300;
+      }else if(self.kind==='destroyer'){
+        if(u.kind==='frigate')      score += 4500; 
+        else if(u.kind==='destroyer')score+=2500;
+        else if(u.kind==='battleship')score+=1000;
+        else                        score += 500;
+      }else if(self.kind==='battleship'){
+        if(u.kind==='battleship')   score += 4000;
+        else if(u.kind==='destroyer')score+=3000;
+        else if(u.kind==='frigate') score += 2000;
+        else                        score -= 500;
+      }
+    }
+
+    // 3. Protokół Samoobrony (CAPITAL DEFENSE)
+    // Jeśli duży statek jest bardzo blisko (<350px), a myśliwiec wroga daleko,
+    // to ten bonus przebije "dalekiego myśliwca".
+    if(d2v < 122500) { 
+        if(self.kind === 'fighter' && u.kind !== 'fighter') {
+             score += 6000; // Fighter broni się przed Capem
+        } else {
+             score += 8000; // Inne statki
+        }
+    }
+
+    // 4. Overkill prevention
+    const overkill = u.incomingDamage / (effHP+1);
+    if(overkill>1.2) score -= 1500 * (overkill-1.0);
+
+    // 5. Fighter focus
+    if(self.kind==='fighter' && u.kind==='fighter'){
+      const fc = sim.fighterCenter[self.team==='player'?'enemy':'player'];
+      const dCenter = Math.hypot(u.x-fc.x,u.y-fc.y);
+      score -= dCenter*0.15;
+    }
+
+    score += Math.random()*250;
+
+    if(score>bestScore){
+      bestScore=score;
+      bestTarget=u;
+    }
+  }
+  return bestTarget;
+}
+
+/* ============================== AI – Fighters =============================== */
+function fireIfPossible(sim,self,designatedTarget){
+  const gun = GUNS[self.gun]||GUNS.laserS;
+  let targetToShoot=null;
+  const bestTarget = pickBestTarget(sim,self,designatedTarget);
+  if(bestTarget && canFireAt(self,bestTarget,gun) && isLineOfFireClear(sim,self,bestTarget)){
+    targetToShoot=bestTarget;
+  }
+  if(targetToShoot && self.gunCD<=0){
+    spawnBullet(sim,self,targetToShoot,gun);
+    self.gunCD = 1.0/(gun.rps||3);
+  }
+
+  const missileTarget = bestTarget;
+  if(missileTarget && self.mslAmmo>0 && self.mslCD<=0){
+    const mdef=MISSILES[self.msl]||MISSILES.AF;
+    const dx=missileTarget.x-self.x, dy=missileTarget.y-self.y;
+    const dist=Math.hypot(dx,dy);
+    if(dist<1100){
+      spawnMissile(sim,self,missileTarget,mdef);
+      self.mslAmmo -= (mdef.swarm?Math.min(self.mslAmmo,1):1);
+      self.mslCD = 3.0;
+    }
+  }
+}
+
+function aiFighter(sim,self,dt){
+  // 1. Aktualizacja liczników
+  self.gunCD=Math.max(0,(self.gunCD||0)-dt);
+  self.mslCD=Math.max(0,(self.mslCD||0)-dt);
+  self.breakOffTimer=Math.max(0,(self.breakOffTimer||0)-dt);
+  
+  if(self.state==='dogfight3D') self.dogfightTime = (self.dogfightTime||0)+dt;
+  else self.dogfightTime = 0;
+
+  // 2. Wybór celu
+  const cmd = sim.teamCmd[self.team];
+  let designatedTarget=null;
+  if(self.squad.attackTargetSquadId){
+    const tgtSquad=[...sim.squads].find(s=>s.id===self.squad.attackTargetSquadId);
+    if(tgtSquad && tgtSquad.units.size>0){
+      designatedTarget = tgtSquad.leader || tgtSquad.units.values().next().value;
+    }else{
+      self.squad.attackTargetSquadId = null;
+    }
+  }
+  const combatTarget = pickBestTarget(sim,self,designatedTarget);
+  
+function getEnemyCenter(sim, team){
+  let sx = 0, sy = 0, n = 0;
+  for (const u of sim.units){
+    if (!u.alive || u.team === team) continue;
+    sx += u.x;
+    sy += u.y;
+    n++;
+  }
+  if (!n) return null;
+  return { x: sx / n, y: sy / n };
+}
+  // ====================================================================
+  // FIX: WYMUSZENIE STANU "BOMBING" NA DUŻE CELE
+  // Jeśli mamy cel i nie jest to myśliwiec, wchodzimy w tryb nalotów.
+  // ====================================================================
+  const distToTarget = combatTarget ? Math.hypot(combatTarget.x - self.x, combatTarget.y - self.y) : Infinity;
+  const ATTACK_RANGE = 900; // Dystans, przy którym łamiemy formację i atakujemy
+
+  // 1. Jeśli cel to DUŻY STATEK (nie fighter)
+  if(combatTarget && combatTarget.kind !== 'fighter'){
+     if(distToTarget < ATTACK_RANGE) {
+         // Jesteśmy blisko -> Rozpoczynamy nalot (łamiemy formację)
+         self.state = 'bombing';
+     } else {
+         // Jesteśmy daleko -> Lecimy w formacji w stronę wroga
+         // (kod formacji na dole funkcji obsłuży ten stan)
+         self.state = 'engage_formation';
+     }
+  }
+  
+  // 2. Jeśli cel to FIGHTER (Dogfight)
+  // Twoja stara logika sprawdzała to niżej, ale warto to uporządkować tutaj:
+  else if(combatTarget && combatTarget.kind === 'fighter') {
+      // Dogfight zaczynamy, gdy jesteśmy dość blisko (np. 600px)
+      if(distToTarget < 600 && self.state !== 'dogfight3D') {
+          self.state = 'dogfight3D';
+          self.sub = 'merge';
+          self.subT = 0;
+          self._mergeInit = false;
+          self.dogfightTime = 0;
+      } 
+      // Jeśli daleko do wrogiego myśliwca, to też lecimy w formacji
+      else if (self.state !== 'dogfight3D') {
+          self.state = 'engage_formation';
+      }
+  }
+
+  // Jeśli cel zniknął całkowicie, wracamy do guard (zabezpieczenie)
+  else if(self.state === 'bombing' && !combatTarget){
+     self.state = 'guard';
+  }
+  // Jeśli cel zniknął całkowicie, wracamy do guard (zabezpieczenie)
+  else if(self.state === 'bombing' && !combatTarget){
+     self.state = 'guard';
+  }
+
+  // ====================================================================
+  // LOGIKA BOMBARDOWANIA (RAIL RUN)
+  // To musi być NA GÓRZE funkcji i kończyć się "return", 
+  // żeby kod formacji na dole nie nadpisał ruchu.
+  // ====================================================================
+  if(self.state === 'bombing' && combatTarget){
+      
+      // Inicjalizacja wektora linii przy pierwszym ataku lub zmianie celu
+      if(!self.bombardVec || self.lastTargetId !== combatTarget.id){
+        // Każdy myśliwiec losuje swój kąt nalotu, żeby nie latały w gęsiego
+        const angle = Math.random() * Math.PI * 2; 
+        self.bombardVec = { x: Math.cos(angle), y: Math.sin(angle) };
+        self.bombardSide = 1; // 1 lub -1 (strony linii)
+        self.lastTargetId = combatTarget.id;
+      }
+
+      // Długość "szyny" - punkt nawrotu daleko za statkiem
+      const lineLen = 1200; 
+
+      // Wyliczamy punkt docelowy (Waypoint)
+      const wayX = combatTarget.x + (self.bombardVec.x * lineLen * self.bombardSide);
+      const wayY = combatTarget.y + (self.bombardVec.y * lineLen * self.bombardSide);
+
+      // Sprawdzamy czy dolecieliśmy do końca linii
+      const distToWaypoint = Math.hypot(wayX - self.x, wayY - self.y);
+      if(distToWaypoint < 200){ // Margines nawrotu
+        self.bombardSide *= -1; // Zawracamy na drugi koniec
+      }
+
+      // FIZYKA LOTU (Lecimy do Waypointa, ignorując środek statku)
+      const dirToWay = norm(wayX - self.x, wayY - self.y);
+      const wantVx = dirToWay.x * 240; // Duża prędkość
+      const wantVy = dirToWay.y * 240;
+
+      // Płynny, szeroki nawrót (mniejsza zwrotność przy dużej prędkości daje ładne łuki)
+      const turned = clampTurn(self.vx, self.vy, wantVx, wantVy, dt, 220);
+      self.vx = turned.vx;
+      self.vy = turned.vy;
+
+      // STRZELANIE (Celujemy we wroga, nie w waypoint)
+      fireIfPossible(sim, self, designatedTarget);
+      
+      // WAŻNE: Return, żeby nie wykonywać kodu poniżej (formacji)
+      return;
+  }
+
+
+  // 3. Logika DOGFIGHT (tylko vs Fightery)
+  // wejście w dogfight
+  if((self.state==='guard' || self.state==='move' || self.state==='engage_formation' || self.state==='approach')
+    && combatTarget && combatTarget.kind==='fighter'){
+    if(dist2(self,combatTarget) < (450*450)){
+      self.state='dogfight3D';
+      self.sub='merge';
+      self.subT=0;
+      self._mergeInit=false;
+      self.dogfightTime=0;
+      self.dogfightMin = 0.8 + Math.random()*0.6;
+    }
+  }
+
+  // Obsługa komend globalnych (tylko jeśli nie bombardujemy)
+  if(cmd==='RETURN'){
+    self.state='returning';
+  }else if(cmd==='ENGAGE' && (self.state==='guard' || self.state==='move')){
+    self.state='engage_formation';
+  }else if(cmd==='GUARD' && (self.state==='dogfight3D' || self.state==='engage_formation' || self.state==='approach')){
+    self.state='guard';
+  }else if(cmd==='MOVE' && (self.state==='dogfight3D' || self.state==='engage_formation' || self.state==='approach')){
+    self.state='move';
+  }
+
+  if(self.state==='returning'){
+    const home = self.team==='player'?SHIP.friend:SHIP.enemy;
+    const dir = norm(home.x-self.x,home.y-self.y);
+    self.vx += dir.x*120*dt;
+    self.vy += dir.y*120*dt;
+    if(Math.hypot(self.x-home.x,self.y-home.y)<30) self.alive=false;
+    return;
+  }
+
+  // --- DOGFIGHT LOGIC (VS FIGHTER) ---
+  if(self.state==='dogfight3D' && combatTarget && combatTarget.kind==='fighter'){
+      if(self.sub==='core'){
+        let neighbors=0;
+        for(const u of sim.units){
+          if(u!==self && u.kind==='fighter' && dist2(self,u)<(30*30)) neighbors++;
+        }
+        const canBreak = (self.dogfightTime>self.dogfightMin) || neighbors>5;
+        if(canBreak && (neighbors>3 || (Math.random()<0.008 && self.breakOffTimer<=0))){
+          self.sub='break_off';
+          self.subT=1.5 + Math.random()*0.7;
+          const dx=self.x-combatTarget.x, dy=self.y-combatTarget.y;
+          const angle=Math.atan2(dy,dx) + (Math.random()-0.5);
+          self.breakVector = {x:Math.cos(angle),y:Math.sin(angle)};
+        }
+      }
+      if(self.sub==='break_off'){
+        const wantVx=self.breakVector.x*220;
+        const wantVy=self.breakVector.y*220;
+        const turned=clampTurn(self.vx,self.vy,wantVx,wantVy,dt,370);
+        self.vx=turned.vx;
+        self.vy=turned.vy;
+        self.subT-=dt;
+        if(self.subT<=0){
+          self.sub='merge';
+          self._mergeInit=false;
+          self.breakOffTimer=4.0;
+          self.dogfightTime=0;
+          self.dogfightMin = 1.3 + Math.random()*0.7;
+        }
+        fireIfPossible(sim,self,designatedTarget);
+        return;
+      }
+      if(self.sub==='merge'){
+        if(!self._mergeInit){
+          self._mergeInit=true;
+          self.subT = 0.5 + Math.random()*0.6;
+        }
+        const aim=leadAim(self,combatTarget,220);
+        const dir=norm(aim.x-self.x,aim.y-self.y);
+        const wantVx=dir.x*150*1.25;
+        const wantVy=dir.y*150*1.25;
+        const turned=clampTurn(self.vx,self.vy,wantVx,wantVy,dt,370*1.2);
+        self.vx=turned.vx;
+        self.vy=turned.vy;
+        self.subT-=dt;
+        if(self.subT<=0 || dist2(self,combatTarget)<(140*140)){
+          self.sub='slash';
+          self.subT=0.5;
+          self._slashSign = (self.id%2===0)?+1:-1;
+        }
+        fireIfPossible(sim,self,designatedTarget);
+        return;
+      }
+      if(self.sub==='slash'){
+        const aim={x:combatTarget.x,y:combatTarget.y};
+        const dir=norm(aim.x-self.x,aim.y-self.y);
+        const base={vx:dir.x*150,vy:dir.y*150};
+        const rotAng=self._slashSign*32;
+        const rot=rotateVec(base.vx,base.vy,rotAng);
+        const turned=clampTurn(self.vx,self.vy,rot.vx,rot.vy,dt,370*1.3);
+        self.vx=turned.vx;
+        self.vy=turned.vy;
+        self.subT-=dt;
+        if(self.subT<=0){
+          self.sub='core';
+        }
+        fireIfPossible(sim,self,designatedTarget);
+        return;
+      }
+      if(self.sub==='core'){
+        const aim=leadAim(self,combatTarget,220);
+        const dir=norm(aim.x-self.x,aim.y-self.y);
+        const wantVx=dir.x*150, wantVy=dir.y*150;
+        const t=sim.time + (self.id%17)*0.13;
+        const jrad=(4*Math.PI/180)*Math.sin(2*Math.PI*0.5*t);
+        const c=Math.cos(jrad), s=Math.sin(jrad);
+        const jvx=wantVx*c - wantVy*s;
+        const jvy=wantVx*s + wantVy*c;
+        const turned=clampTurn(self.vx,self.vy,jvx,jvy,dt,370);
+        const swirl=Math.sin(sim.time*2.0 + self.id*0.37)*0.10;
+        const rx=-turned.vy, ry=turned.vx;
+        const mag=Math.hypot(turned.vx,turned.vy)||1;
+        self.vx=turned.vx + (rx/mag)*150*swirl;
+        self.vy=turned.vy + (ry/mag)*150*swirl;
+        
+        // Unikanie kolizji w dogfighcie
+        const dx=combatTarget.x-self.x, dy=combatTarget.y-self.y;
+        const dist=Math.hypot(dx,dy);
+        if(dist<70){
+          const nx=-dy/(dist||1), ny=dx/(dist||1);
+          self.vx += nx*110;
+          self.vy += ny*110;
+        }
+        // Leash
+        /*const fc = sim.fighterCenter[self.team];
+        const dCenter = Math.hypot(self.x-fc.x,self.y-fc.y);
+        if(dCenter>900){
+          const back = norm(fc.x-self.x,fc.y-self.y);
+          self.vx += back.x*140*dt;
+          self.vy += back.y*140*dt;
+        }
+		*/
+        fireIfPossible(sim,self,designatedTarget);
+        return;
+      }
+  }
+
+  // Podejście
+  if(self.state==='approach' && combatTarget){ 
+    const dir = norm(combatTarget.x-self.x,combatTarget.y-self.y);
+    const wantVx=dir.x*130, wantVy=dir.y*130;
+    const turned=clampTurn(self.vx,self.vy,wantVx,wantVy,dt,260);
+    self.vx=turned.vx;
+    self.vy=turned.vy;
+    fireIfPossible(sim,self,designatedTarget);
+    return;
+  }
+
+  // --- FORMATION LOGIC (Guard / Move / Engage Formation) ---
+  // To wykonuje się TYLKO jeśli nie bombardujemy i nie walczymy z fighterami
+  const isLeader = (self.squad.leader===self);
+  const leader   = self.squad.leader;
+  if(!leader || !leader.alive){
+    self.vx*=0.95; self.vy*=0.95;
+    return;
+  }
+  const ship = self.team==='player'?SHIP.friend:SHIP.enemy;
+  let targetPos=null;
+  let formationAngle=0;
+  const kp=3.0;
+
+  if(isLeader){
+    if(self.state==='guard'){
+      const slots=sim.guardSlotsWorld(self.team);
+      if(slots && slots.length){
+        const order=[...sim.squads].filter(s=>s.team===self.team && s.units.size>0 && !s.isCapital)
+          .sort((a,b)=>a.id-b.id);
+        const idx=order.findIndex(s=>s.id===self.squad.id);
+        if(idx!==-1) targetPos = slots[idx % slots.length];
+      }
+      if(!targetPos){
+        targetPos={x:ship.x+80, y:ship.y+(self.id%2)*80-40};
+      }
+    }else if(self.state==='move'){
+      targetPos=self.squad.moveAnchor;
+    }else if(self.state==='engage_formation'){
+      // To był problematyczny fragment!
+      // Jeśli tu jesteśmy, to znaczy że cel jest NULL (bo inaczej bylibyśmy w 'bombing')
+      // Więc lecimy po prostu przed siebie lub do designated
+      const flyTo=designatedTarget || combatTarget;
+      if(flyTo) targetPos={x:flyTo.x,y:flyTo.y};
+    }
+  }else{
+    const offset=self.formationSlot;
+    if(!offset){
+      self.vx*=0.95; self.vy*=0.95;
+      return;
+    }
+    if(self.state==='guard') formationAngle=ship.ang;
+    else{
+      const enemyPos = designatedTarget || combatTarget || (self.team==='player'?SHIP.enemy:SHIP.friend);
+      formationAngle = Math.atan2(enemyPos.y-leader.y,enemyPos.x-leader.x);
+    }
+    const c=Math.cos(formationAngle), s=Math.sin(formationAngle);
+    targetPos={
+      x:leader.x + offset.x*c - offset.y*s,
+      y:leader.y + offset.x*s + offset.y*c
+    };
+  }
+
+  if(targetPos){
+    let desVX=(targetPos.x-self.x)*kp;
+    let desVY=(targetPos.y-self.y)*kp;
+    const speedBoost=isLeader?0:1.15;
+    const maxFollow=150*(1+speedBoost);
+    const tv=Math.hypot(desVX,desVY);
+    if(tv>maxFollow){
+      const sc=maxFollow/tv;
+      desVX*=sc; desVY*=sc;
+    }
+    const maxAccel=(isLeader?160:220)*dt;
+    const dvx=clamp(desVX-self.vx,-maxAccel,maxAccel);
+    const dvy=clamp(desVY-self.vy,-maxAccel,maxAccel);
+    self.vx+=dvx; self.vy+=dvy;
+  }else{
+    self.vx*=0.95; self.vy*=0.95;
+  }
+
+  fireIfPossible(sim,self,designatedTarget);
+}
+
+/* ============================== AI – Frigates / Destroyer / Battleship ===== */
+function repulseFromWrecks(sim,self,ax,ay,strength=1.0){
+  for(const w of sim.wrecks){
+    const dx=self.x-w.x, dy=self.y-w.y;
+    const d2=dx*dx+dy*dy;
+    const avoidR=(self.radius||30)+(w.radius||30)+60;
+    if(d2<avoidR*avoidR){
+      const d=Math.sqrt(d2)||1;
+      const repel=(avoidR-d)/avoidR;
+      const rx=dx/d, ry=dy/d;
+      ax += rx*self.accel*1.2*repel*strength;
+      ay += ry*self.accel*1.2*repel*strength;
+    }
+  }
+  return {ax,ay};
+}
+
+function aiLaserFrigate(sim,self,dt){
+  self.mCD=Math.max(0,(self.mCD||0)-dt);
+  self.pdCD=Math.max(0,(self.pdCD||0)-dt);
+
+  let designatedTarget=null;
+  if(self.squad.attackTargetSquadId){
+    const tgtSquad=[...sim.squads].find(s=>s.id===self.squad.attackTargetSquadId);
+    if(tgtSquad && tgtSquad.units.size>0) designatedTarget=tgtSquad.leader || tgtSquad.units.values().next().value;
+    else self.squad.attackTargetSquadId=null;
+  }
+  const combatTarget=pickBestTarget(sim,self,designatedTarget);
+
+  const cmd=sim.teamCmd[self.team];
+  const moveTarget=self.moveAnchor;
+  let targetAng=self.ang;
+  let thrust=0, strafe=0;
+  let ax=0, ay=0;
+
+  if(cmd==='RETURN'){
+    const home=self.team==='player'?SHIP.friend:SHIP.enemy;
+    targetAng=Math.atan2(home.y-self.y,home.x-self.x);
+    if(Math.hypot(self.x-home.x,self.y-home.y)<30) self.alive=false;
+    thrust=self.accel;
+  }else if(moveTarget){
+    const dx=moveTarget.x-self.x, dy=moveTarget.y-self.y;
+    const dist=Math.hypot(dx,dy)||1;
+    targetAng=Math.atan2(dy,dx);
+    const ux=Math.cos(self.ang), uy=Math.sin(self.ang);
+    const dot=(dx/dist)*ux+(dy/dist)*uy;
+    if(dot>0.8){
+      const braking=150;
+      if(dist>braking) thrust=self.accel;
+      else thrust=self.accel*(dist/braking);
+    }
+    if(dist<30) self.moveAnchor=null;
+
+    for(const s of sim.squads){
+      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
+      const other=s.leader;
+      const d2v=dist2(self,other);
+      if(d2v<self.separationRange*self.separationRange){
+        const d=Math.sqrt(d2v)||1;
+        const repel=(self.separationRange-d)/self.separationRange;
+        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
+        ax += rx*self.accel*0.7*repel;
+        ay += ry*self.accel*0.7*repel;
+      }
+    }
+    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.0));
+  }else if((cmd==='GUARD' || cmd==='ENGAGE') && combatTarget){
+    targetAng=Math.atan2(combatTarget.y-self.y,combatTarget.x-self.x);
+    const mdef=GUNS_M[self.mGun];
+    const wantRange=(mdef.range||850)*0.9;
+    const dist=Math.hypot(combatTarget.x-self.x,combatTarget.y-self.y)||1;
+    if(dist<wantRange*0.95) thrust=-self.accel*0.7;
+    else if(dist>wantRange*1.05) thrust=self.accel*0.7;
+    strafe = Math.sin(sim.time*0.7 + self.id*0.3)*self.accel*0.4;
+    for(const s of sim.squads){
+      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
+      const other=s.leader;
+      const d2v=dist2(self,other);
+      if(d2v<self.separationRange*self.separationRange){
+        const d=Math.sqrt(d2v)||1;
+        const repel=(self.separationRange-d)/self.separationRange;
+        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
+        ax += rx*self.accel*0.5*repel;
+        ay += ry*self.accel*0.5*repel;
+      }
+    }
+    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.1));
+  }
+
+  self.ang = clampTurnAngle(self.ang,targetAng,self.turnRate,dt);
+  const c=Math.cos(self.ang), s=Math.sin(self.ang);
+  ax += (c*thrust - s*strafe);
+  ay += (s*thrust + c*strafe);
+  self.vx += ax*dt;
+  self.vy += ay*dt;
+  const v=Math.hypot(self.vx,self.vy);
+  if(v>self.maxSpeed){ self.vx*=self.maxSpeed/v; self.vy*=self.maxSpeed/v; }
+  self.vx *= self.friction;
+  self.vy *= self.friction;
+
+  if(combatTarget){
+    const mdef=GUNS_M[self.mGun];
+    if(dist2(self,combatTarget)<=mdef.range*mdef.range &&
+       canFireAtCap(self,combatTarget,mdef) &&
+       isLineOfFireClear(sim,self,combatTarget)){
+      if(self.mCD<=0){
+        // heavy beam jako instant
+        sim.projectiles.push({
+          type:'bullet',
+          team:self.team,
+          x:self.x,y:self.y,
+          vx:0,vy:0,
+          dmg:mdef.dmg,
+          life:0.08,
+          alive:true,
+          color:mdef.color,
+          isBeam:true,
+          tx:combatTarget.x,
+          ty:combatTarget.y
+        });
+        damageUnit(sim,combatTarget,mdef.dmg);
+        self.mCD = 1.0/mdef.rps;
+      }
+    }
+  }
+
+  // PD laser tylko defensywny
+  const pd=PD[self.pd]||PD.pd_laser;
+  if(self.pdCD<=0){
+    let pdTarget=getNearestMissile(sim,self,pd.range||400);
+    if(pdTarget && dist2(self,pdTarget) < (pd.range||400)**2){
+      const ignoreLOF=true;
+      if(ignoreLOF || canFireAtCap(self,pdTarget,pd)){
+        const burst=10;
+        for(let i=0;i<burst;i++){
+          spawnBullet(sim,self,pdTarget,{dmg:pd.dmg,speed:pd.speed,range:pd.range,spread:pd.spread,color:pd.color,rps:pd.rps});
+        }
+        self.pdCD = 1.0/(pd.rps||18);
+      }
+    }
+  }
+}
+
+function aiFrigate(sim,self,dt){
+  self.pdCD=Math.max(0,(self.pdCD||0)-dt);
+  self.flakCD=Math.max(0,(self.flakCD||0)-dt);
+  const pd=PD[self.pd]||PD.pd_mk1;
+  const fl=FLAK[self.flak]||FLAK.flak_L;
+
+  let designatedTarget=null;
+  if(self.squad.attackTargetSquadId){
+    const tgtSquad=[...sim.squads].find(s=>s.id===self.squad.attackTargetSquadId);
+    if(tgtSquad && tgtSquad.units.size>0){
+      designatedTarget=tgtSquad.leader || tgtSquad.units.values().next().value;
+    }else self.squad.attackTargetSquadId=null;
+  }
+  const combatTarget=pickBestTarget(sim,self,designatedTarget);
+
+  const cmd=sim.teamCmd[self.team];
+  const moveTarget=self.moveAnchor;
+  let targetAng=self.ang;
+  let thrust=0, strafe=0;
+  let ax=0, ay=0;
+
+  if(cmd==='RETURN'){
+    const home=self.team==='player'?SHIP.friend:SHIP.enemy;
+    targetAng=Math.atan2(home.y-self.y,home.x-self.x);
+    if(Math.hypot(self.x-home.x,self.y-home.y)<30) self.alive=false;
+    thrust=self.accel;
+  }else if(moveTarget){
+    const dx=moveTarget.x-self.x, dy=moveTarget.y-self.y;
+    const dist=Math.hypot(dx,dy)||1;
+    targetAng=Math.atan2(dy,dx);
+    const ux=Math.cos(self.ang), uy=Math.sin(self.ang);
+    const dot=(dx/dist)*ux+(dy/dist)*uy;
+    if(dot>0.8){
+      const braking=140;
+      if(dist>braking) thrust=self.accel;
+      else thrust=self.accel*(dist/braking);
+    }
+    if(dist<26) self.moveAnchor=null;
+
+    for(const s of sim.squads){
+      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
+      const other=s.leader;
+      const d2v=dist2(self,other);
+      if(d2v<self.separationRange*self.separationRange){
+        const d=Math.sqrt(d2v)||1;
+        const repel=(self.separationRange-d)/self.separationRange;
+        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
+        ax += rx*self.accel*0.7*repel;
+        ay += ry*self.accel*0.7*repel;
+      }
+    }
+    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.1));
+  }else if((cmd==='GUARD'||cmd==='ENGAGE') && combatTarget){
+    targetAng=Math.atan2(combatTarget.y-self.y,combatTarget.x-self.x);
+    let wantRange;
+    if(combatTarget.kind==='fighter') wantRange=(pd.range||380)*0.85;
+    else wantRange=(fl.range||520)*0.85;
+    const dist=Math.hypot(combatTarget.x-self.x,combatTarget.y-self.y)||1;
+    if(dist<wantRange*0.95) thrust=-self.accel*0.7;
+    else if(dist>wantRange*1.05) thrust=self.accel*0.7;
+    strafe = Math.sin(sim.time*0.7 + self.id*0.3)*self.accel*0.4;
+    for(const s of sim.squads){
+      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
+      const other=s.leader;
+      const d2v=dist2(self,other);
+      if(d2v<self.separationRange*self.separationRange){
+        const d=Math.sqrt(d2v)||1;
+        const repel=(self.separationRange-d)/self.separationRange;
+        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
+        ax += rx*self.accel*0.7*repel;
+        ay += ry*self.accel*0.7*repel;
+      }
+    }
+    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.0));
+  }
+
+  self.ang=clampTurnAngle(self.ang,targetAng,self.turnRate,dt);
+  const c=Math.cos(self.ang), s=Math.sin(self.ang);
+  ax += (c*thrust - s*strafe);
+  ay += (s*thrust + c*strafe);
+  self.vx += ax*dt;
+  self.vy += ay*dt;
+  const v=Math.hypot(self.vx,self.vy);
+  if(v>self.maxSpeed){ self.vx*=self.maxSpeed/v; self.vy*=self.maxSpeed/v; }
+  self.vx*=self.friction;
+  self.vy*=self.friction;
+
+  // PD
+  if(self.pdCD<=0){
+    let pdTarget = getNearestMissile(sim,self,pd.range||400);
+    if(!pdTarget) pdTarget = designatedTarget || pickBestTarget(sim,self,null);
+    if(pdTarget && dist2(self,pdTarget) < (pd.range||400)**2){
+      const ignoreLOF = (pdTarget.vx!==undefined);
+      if(ignoreLOF || canFireAtCap(self,pdTarget,pd)){
+        const burst=8;
+        for(let i=0;i<burst;i++){
+          spawnBullet(sim,self,pdTarget,{dmg:pd.dmg,speed:pd.speed,range:pd.range,spread:pd.spread,color:pd.color,rps:pd.rps});
+        }
+        self.pdCD = 1.0/(pd.rps||9);
+      }
+    }
+  }
+  // flak
+  if(self.flakCD<=0 && combatTarget){
+    if(dist2(self,combatTarget) < fl.range*fl.range){
+      spawnFlakShell(sim,self,combatTarget,fl);
+      self.flakCD = 1.0/(fl.rps||0.8);
+    }
+  }
+}
+
+function aiDestroyer(sim,self,dt){
+  self.mCD=Math.max(0,(self.mCD||0)-dt);
+  self.pdCD=Math.max(0,(self.pdCD||0)-dt);
+  self.boostT=Math.max(0,(self.boostT||0)-dt);
+  self.boostCd=Math.max(0,(self.boostCd||0)-dt);
+
+  let designatedTarget=null;
+  if(self.squad.attackTargetSquadId){
+    const tgtSquad=[...sim.squads].find(s=>s.id===self.squad.attackTargetSquadId);
+    if(tgtSquad && tgtSquad.units.size>0){
+      designatedTarget=tgtSquad.leader || tgtSquad.units.values().next().value;
+    }else self.squad.attackTargetSquadId=null;
+  }
+  const combatTarget=pickBestTarget(sim,self,designatedTarget);
+
+  const cmd=sim.teamCmd[self.team];
+  const moveTarget=self.moveAnchor;
+  let targetAng=self.ang;
+  let thrust=0, strafe=0;
+  let ax=0, ay=0;
+
+  if(cmd==='RETURN'){
+    const home=self.team==='player'?SHIP.friend:SHIP.enemy;
+    targetAng=Math.atan2(home.y-self.y,home.x-self.x);
+    if(Math.hypot(self.x-home.x,self.y-home.y)<40) self.alive=false;
+    thrust=self.accel;
+  }else if(moveTarget){
+    const dx=moveTarget.x-self.x, dy=moveTarget.y-self.y;
+    const dist=Math.hypot(dx,dy)||1;
+    targetAng=Math.atan2(dy,dx);
+    const ux=Math.cos(self.ang), uy=Math.sin(self.ang);
+    const dot=(dx/dist)*ux+(dy/dist)*uy;
+    if(dot>0.8){
+      const braking=160;
+      if(dist>braking) thrust=self.accel;
+      else thrust=self.accel*(dist/braking);
+    }
+    if(dist<30) self.moveAnchor=null;
+
+    // --- Separation Logic (bez zmian) ---
+    for(const s of sim.squads){
+      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
+      const other=s.leader;
+      const d2v=dist2(self,other);
+      if(d2v<self.separationRange*self.separationRange){
+        const d=Math.sqrt(d2v)||1;
+        const repel=(self.separationRange-d)/self.separationRange;
+        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
+        ax += rx*self.accel*0.8*repel;
+        ay += ry*self.accel*0.8*repel;
+      }
+    }
+    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.1));
+
+  }else if((cmd==='GUARD'||cmd==='ENGAGE') && combatTarget){
+    targetAng=Math.atan2(combatTarget.y-self.y,combatTarget.x-self.x);
+    const mdef=GUNS_M[self.mGun]||GUNS_M.m_rail;
+    const range=mdef.range||760;
+    const want = range*0.8;
+    const dist=Math.hypot(combatTarget.x-self.x,combatTarget.y-self.y)||1;
+
+    // Obliczanie kąta do celu
+    const ux=Math.cos(self.ang), uy=Math.sin(self.ang);
+    const dx=combatTarget.x-self.x, dy=combatTarget.y-self.y;
+    const dot=(dx/dist)*ux+(dy/dist)*uy; // 1.0 = patrzymy prosto na cel
+
+    // --- POPRAWIONA LOGIKA BOOSTA ---
+    // Boost tylko jeśli daleko I statek jest obrócony w stronę celu (dot > 0.9)
+    if(dist>range*0.95 && self.boostCd<=0 && dot > 0.9){
+      self.boostT = self.boostDur;
+      self.boostCd = self.boostCool;
+    }
+
+    // Hamulec awaryjny dla Boosta - jeśli jesteśmy za blisko, odetnij boost
+    if(dist < want * 0.9) {
+      self.boostT = 0; 
+    }
+
+    if(dist<want*0.95) {
+        // Mocniejsze hamowanie silnikami
+        thrust=-self.accel*1.2; 
+    }
+    else if(dist>want*1.05) thrust=self.accel*0.9;
+
+    // strafe
+    const strafeRange = range*1.1;
+    if(dist<strafeRange){
+      const sVal=Math.sin(sim.time*0.55 + self.id*0.2)*(self.boostT>0?24:16);
+      strafe = sVal*self.accel*0.5;
+    }
+
+    // Kolizje (bez zmian)
+    for(const s of sim.squads){
+      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
+      const other=s.leader;
+      const d2v=dist2(self,other);
+      if(d2v<self.separationRange*self.separationRange){
+        const d=Math.sqrt(d2v)||1;
+        const repel=(self.separationRange-d)/self.separationRange;
+        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
+        ax += rx*self.accel*0.7*repel;
+        ay += ry*self.accel*0.7*repel;
+      }
+    }
+    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.2));
+  }
+
+  // Fizyka ruchu
+  const speedBoost = (self.boostT>0)?1.7:1.0;
+  self.ang=clampTurnAngle(self.ang,targetAng,self.turnRate*speedBoost,dt);
+  const c=Math.cos(self.ang), s=Math.sin(self.ang);
+  ax += (c*thrust - s*strafe)*speedBoost;
+  ay += (s*thrust + c*strafe)*speedBoost;
+  self.vx += ax*dt;
+  self.vy += ay*dt;
+  const v=Math.hypot(self.vx,self.vy);
+  const maxv=self.maxSpeed*speedBoost;
+  if(v>maxv){ self.vx*=maxv/v; self.vy*=maxv/v; }
+  self.vx*=self.friction;
+  self.vy*=self.friction;
+
+  // Strzelanie (bez zmian)
+  if(combatTarget){
+    const mdef=GUNS_M[self.mGun]||GUNS_M.m_rail;
+    if(dist2(self,combatTarget)<=mdef.range*mdef.range &&
+       canFireAtCap(self,combatTarget,mdef) &&
+       isLineOfFireClear(sim,self,combatTarget)){
+      if(self.mCD<=0){
+        const aim=leadAim(self,combatTarget,mdef.speed||800);
+        spawnBullet(sim,self,aim,mdef);
+        self.mSeq=(self.mSeq+1)&3;
+        const seqGap=0.14;
+        self.mCD=seqGap;
+      }
+    }
+  }
+  const pd=PD[self.pd]||PD.pd_mk1;
+  if(self.pdCD<=0){
+    let pdTarget=(designatedTarget?.kind==='fighter'?designatedTarget:null) || pickBestTarget(sim,self,null);
+    if(pdTarget && dist2(self,pdTarget)<(pd.range*pd.range) &&
+       canFireAtCap(self,pdTarget,pd) && isLineOfFireClear(sim,self,pdTarget)){
+      const burst=8;
+      for(let i=0;i<burst;i++){
+        spawnBullet(sim,self,pdTarget,{dmg:pd.dmg,speed:pd.speed,range:pd.range,spread:pd.spread,color:pd.color,rps:pd.rps});
+      }
+      self.pdCD = 1.0/(pd.rps||9);
+    }
+  }
+}
+function aiBattleship(sim,self,dt){
+  self.mCD=Math.max(0,(self.mCD||0)-dt);
+  self.pdCD=Math.max(0,(self.pdCD||0)-dt);
+  self.broadLeftCD=Math.max(0,(self.broadLeftCD||0)-dt);
+  self.broadRightCD=Math.max(0,(self.broadRightCD||0)-dt);
+  self.rotBoostT=Math.max(0,(self.rotBoostT||0)-dt);
+  self.rotBoostCd=Math.max(0,(self.rotBoostCd||0)-dt);
+  self.fwdBoostT=Math.max(0,(self.fwdBoostT||0)-dt);
+  self.fwdBoostCd=Math.max(0,(self.fwdBoostCd||0)-dt);
+
+  let designatedTarget=null;
+  if(self.squad.attackTargetSquadId){
+    const tgtSquad=[...sim.squads].find(s=>s.id===self.squad.attackTargetSquadId);
+    if(tgtSquad && tgtSquad.units.size>0){
+      designatedTarget=tgtSquad.leader || tgtSquad.units.values().next().value;
+    }
+  }
+  const combatTarget=pickBestTarget(sim,self,designatedTarget);
+  const cmd=sim.teamCmd[self.team];
+  const moveTarget=self.moveAnchor;
+
+  let targetAng=self.ang;
+  let thrust=0, strafe=0;
+  let ax=0, ay=0;
+
+  if(cmd==='RETURN'){
+    const home=self.team==='player'?SHIP.friend:SHIP.enemy;
+    targetAng=Math.atan2(home.y-self.y,home.x-self.x);
+    if(Math.hypot(self.x-home.x,self.y-home.y)<90) self.alive=false;
+    thrust=self.accel;
+  }else if(moveTarget){
+    const dx=moveTarget.x-self.x, dy=moveTarget.y-self.y;
+    const dist=Math.hypot(dx,dy)||1;
+    targetAng=Math.atan2(dy,dx);
+    const ux=Math.cos(self.ang), uy=Math.sin(self.ang);
+    const dot=(dx/dist)*ux+(dy/dist)*uy;
+    if(dot>0.8){
+      const braking=260;
+      if(dist>braking) thrust=self.accel;
+      else thrust=self.accel*(dist/braking);
+    }
+    if(dist<60) self.moveAnchor=null;
+
+    for(const s of sim.squads){
+      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
+      const other=s.leader;
+      const d2v=dist2(self,other);
+      if(d2v<self.separationRange*self.separationRange){
+        const d=Math.sqrt(d2v)||1;
+        const repel=(self.separationRange-d)/self.separationRange;
+        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
+        ax += rx*self.accel*0.9*repel;
+        ay += ry*self.accel*0.9*repel;
+      }
+    }
+    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.3));
+  }else if((cmd==='GUARD'||cmd==='ENGAGE') && combatTarget){
+    // „linia frontu” – trzymamy się raczej blisko
+    const dx=combatTarget.x-self.x, dy=combatTarget.y-self.y;
+    const toAng=Math.atan2(dy,dx);
+    const dist=Math.hypot(dx,dy)||1;
+
+    // preferowany dystans – battleship nie boi się wejść bliżej
+    const mdef=GUNS_M[self.mGun];
+    const noseRange=(mdef.range||800);
+    const ideal = noseRange*0.75;
+
+    if(dist<ideal*0.9) thrust=-self.accel*0.5;
+    else if(dist>ideal*1.15) thrust=self.accel*0.9;
+
+    // strafe – wolny, żeby tworzyć linię
+    const lateralAmp = self.accel*0.35;
+    strafe = Math.sin(sim.time*0.4 + self.id*0.2)*lateralAmp;
+
+    // delikatna separacja z innymi capitalami
+    for(const s of sim.squads){
+      if(s.team!==self.team || !s.isCapital || s===self.squad) continue;
+      const other=s.leader;
+      const d2v=dist2(self,other);
+      if(d2v<self.separationRange*self.separationRange){
+        const d=Math.sqrt(d2v)||1;
+        const repel=(self.separationRange-d)/self.separationRange;
+        const rx=(self.x-other.x)/d, ry=(self.y-other.y)/d;
+        ax += rx*self.accel*0.9*repel;
+        ay += ry*self.accel*0.9*repel;
+      }
+    }
+    ({ax,ay}=repulseFromWrecks(sim,self,ax,ay,1.4));
+
+    // forward boost – tylko gdy daleko
+    if(dist>noseRange*0.95 && self.fwdBoostCd<=0){
+      self.fwdBoostT=self.fwdBoostDur;
+      self.fwdBoostCd=self.fwdBoostCool;
+    }
+
+    // rotation boost – gdy chcemy szybciej obrócić kadłub
+    const angDiff = Math.abs(((toAng-self.ang+Math.PI*3)%(2*Math.PI))-Math.PI);
+    if(angDiff>0.5 && self.rotBoostCd<=0){
+      self.rotBoostT=self.rotBoostDur;
+      self.rotBoostCd=self.rotBoostCool;
+    }
+
+    // broadside logika – tylko gdy JUŻ jesteśmy prawie bokiem
+    const noseAng = toAng;
+    const rightAng = noseAng + Math.PI/2;
+    const leftAng  = noseAng - Math.PI/2;
+
+    const diffNose  = Math.abs(((self.ang-noseAng+Math.PI*3)%(2*Math.PI))-Math.PI);
+    const diffRight = Math.abs(((self.ang-rightAng+Math.PI*3)%(2*Math.PI))-Math.PI);
+    const diffLeft  = Math.abs(((self.ang-leftAng+Math.PI*3)%(2*Math.PI))-Math.PI);
+
+    let sideBetter=false;
+    const sideArc = Math.PI/2; // ±45°
+    const minSideDiff = Math.min(diffRight,diffLeft);
+
+    // tylko jeśli już jesteśmy bliżej do "boku" niż do nosa
+    if(dist<self.broadsideRange*1.05 && minSideDiff + 0.2 < diffNose){
+      sideBetter=true;
+    }
+
+    if(sideBetter){
+      if(diffRight <= diffLeft) targetAng = rightAng;
+      else targetAng = leftAng;
+    }else{
+      targetAng = noseAng;
+    }
+
+    // broadside strzały – tylko gdy rzeczywiście mamy bok w stronę celu
+    if(dist<self.broadsideRange*1.05){
+      if(diffRight < sideArc*0.5 && self.broadRightCD<=0){
+        for(let i=0;i<4;i++){
+          spawnBullet(sim,self,combatTarget,{
+            dmg:BS_BROADSIDE.dmg,
+            speed:BS_BROADSIDE.speed,
+            range:BS_BROADSIDE.range,
+            spread:BS_BROADSIDE.spread,
+            color:BS_BROADSIDE.color,
+            rps:BS_BROADSIDE.rps
+          });
+        }
+        self.broadRightCD = 2.0;
+      }
+      if(diffLeft < sideArc*0.5 && self.broadLeftCD<=0){
+        for(let i=0;i<4;i++){
+          spawnBullet(sim,self,combatTarget,{
+            dmg:BS_BROADSIDE.dmg,
+            speed:BS_BROADSIDE.speed,
+            range:BS_BROADSIDE.range,
+            spread:BS_BROADSIDE.spread,
+            color:BS_BROADSIDE.color,
+            rps:BS_BROADSIDE.rps
+          });
+        }
+        self.broadLeftCD = 2.0;
+      }
+    }
+  }
+
+  const rotBoost = (self.rotBoostT>0)?1.8:1.0;
+  const speedBoost = (self.fwdBoostT>0)?1.6:1.0;
+
+  self.ang = clampTurnAngle(self.ang,targetAng,self.turnRate*rotBoost,dt);
+  const c=Math.cos(self.ang), s=Math.sin(self.ang);
+  ax += (c*thrust - s*strafe)*speedBoost;
+  ay += (s*thrust + c*strafe)*speedBoost;
+  self.vx += ax*dt;
+  self.vy += ay*dt;
+  const v=Math.hypot(self.vx,self.vy);
+  const maxv=self.maxSpeed*speedBoost;
+  if(v>maxv){ self.vx*=maxv/v; self.vy*=maxv/v; }
+  self.vx *= self.friction;
+  self.vy *= self.friction;
+
+  if(combatTarget){
+    const mdef=GUNS_M[self.mGun]||GUNS_M.h_rapid;
+    if(dist2(self,combatTarget)<=mdef.range*mdef.range &&
+       canFireAtCap(self,combatTarget,mdef) &&
+       isLineOfFireClear(sim,self,combatTarget)){
+      if(self.mCD<=0){
+        const aim=leadAim(self,combatTarget,mdef.speed||900);
+        spawnBullet(sim,self,aim,mdef);
+        self.mCD = 1.0/mdef.rps;
+      }
+    }
+  }
+
+  // PD – 8x, preferuje rakiety, potem fightery
+  const pd=PD[self.pd]||PD.pd_laser;
+  if(self.pdCD<=0){
+    let pdTarget = getNearestMissile(sim,self,pd.range||400);
+    if(!pdTarget) pdTarget = pickBestTarget(sim,self,null);
+    if(pdTarget && dist2(self,pdTarget) < (pd.range||400)**2){
+      if(canFireAtCap(self,pdTarget,pd) || pdTarget.vx!==undefined){
+        const burst=10;
+        for(let i=0;i<burst;i++){
+          spawnBullet(sim,self,pdTarget,{dmg:pd.dmg,speed:pd.speed,range:pd.range,spread:pd.spread,color:pd.color,rps:pd.rps});
+        }
+        self.pdCD = 1.0/(pd.rps||18);
+      }
+    }
+  }
+}
+
+/* ============================== Drawing ===================================== */
+function drawWreck(w){
+  ctx.save();
+  ctx.translate(w.x,w.y);
+  ctx.rotate(w.ang);
+  ctx.globalAlpha=0.6;
+  ctx.fillStyle='#444';
+  ctx.strokeStyle='#777';
+  const s=w.size;
+  if(w.kind==='fighter'){
+    ctx.beginPath();
+    ctx.moveTo(6,0); ctx.lineTo(-5,4); ctx.lineTo(-3,-2); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  }else{
+    ctx.beginPath();
+    ctx.rect(-s.w*0.5,-s.h*0.5,s.w,s.h);
+    ctx.fill(); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-5,-5); ctx.lineTo(5,5);
+    ctx.moveTo(5,-5); ctx.lineTo(-5,5);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawFighter(f){
+  ctx.save();
+  ctx.translate(f.x,f.y);
+  const ang=Math.atan2(f.vy,f.vx);
+  ctx.rotate(ang);
+  const color=(f.team==='player')?COL.friend:COL.enemy;
+  ctx.fillStyle=color;
+  ctx.strokeStyle='#0006';
+  const s=6;
+  ctx.beginPath();
+  ctx.moveTo(s,0);
+  ctx.lineTo(-s*0.8,s*0.6);
+  ctx.lineTo(-s*0.8,-s*0.6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  if(f.shield>0){
+    ctx.globalAlpha = clamp(f.shield/(f.shieldMax||1),0.15,0.6);
+    ctx.strokeStyle=(f.team==='player')?'#7cf5ff':'#ffb4d0';
+    ctx.beginPath();
+    ctx.arc(0,0,8,0,Math.PI*2);
+    ctx.stroke();
+    ctx.globalAlpha=1;
+  }
+  ctx.restore();
+}
+function drawFrigate(fr){
+  ctx.save();
+  ctx.translate(fr.x,fr.y);
+  ctx.rotate(fr.ang);
+  const w=fr.size.w, h=fr.size.h;
+  ctx.fillStyle=(fr.team==='player')?'#284b36':'#4b2836';
+  ctx.strokeStyle=(fr.team==='player')?COL.friend:COL.enemy;
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.rect(-w*0.5,-h*0.5,w,h);
+  ctx.fill(); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0,0); ctx.lineTo(w*0.6,0);
+  ctx.stroke();
+  if(fr.subType==='laser'){
+    ctx.strokeStyle='#f0f'; ctx.beginPath();
+    ctx.moveTo(w*0.1,-h*0.25); ctx.lineTo(w*0.5,-h*0.25);
+    ctx.moveTo(w*0.1,h*0.25);  ctx.lineTo(w*0.5,h*0.25);
+    ctx.stroke();
+  }
+  if(fr.shield>0){
+    ctx.globalAlpha=clamp(fr.shield/(fr.shieldMax||1),0.1,0.35);
+    ctx.strokeStyle=(fr.team==='player')?'#7cf5ff':'#ffb4d0';
+    ctx.beginPath();
+    ctx.ellipse(0,0,w*0.7,h*0.9,0,0,Math.PI*2);
+    ctx.stroke();
+    ctx.globalAlpha=1;
+  }
+  ctx.restore();
+}
+function drawDestroyer(d){
+  ctx.save();
+  ctx.translate(d.x,d.y);
+  ctx.rotate(d.ang);
+  const w=d.size.w, h=d.size.h;
+  ctx.fillStyle=(d.team==='player')?'#2c3f56':'#563c2c';
+  ctx.strokeStyle=(d.team==='player')?COL.friend:COL.enemy;
+  ctx.lineWidth=2.2;
+  ctx.beginPath();
+  ctx.rect(-w*0.5,-h*0.5,w*0.8,h);
+  ctx.fill(); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(w*0.3,-h*0.5);
+  ctx.lineTo(w*0.5,0);
+  ctx.lineTo(w*0.3,h*0.5);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(-w*0.15,0);
+  ctx.lineTo(w*0.55,0);
+  ctx.stroke();
+  if(d.shield>0){
+    ctx.globalAlpha=clamp(d.shield/(d.shieldMax||1),0.1,0.35);
+    ctx.strokeStyle=(d.team==='player')?'#7cf5ff':'#ffb4d0';
+    ctx.beginPath();
+    ctx.ellipse(0,0,w*0.85,h*1.05,0,0,Math.PI*2);
+    ctx.stroke();
+    ctx.globalAlpha=1;
+  }
+  ctx.restore();
+}
+function drawBattleship(b){
+  ctx.save();
+  ctx.translate(b.x,b.y);
+  ctx.rotate(b.ang);
+  const w=b.size.w, h=b.size.h;
+  ctx.fillStyle=(b.team==='player')?'#1c2f46':'#462c1c';
+  ctx.strokeStyle=(b.team==='player')?COL.friend:COL.enemy;
+  ctx.lineWidth=3;
+
+  ctx.beginPath();
+  ctx.moveTo(w*0.6,0);
+  ctx.lineTo(w*0.4,h*0.5);
+  ctx.lineTo(-w*0.5,h*0.5);
+  ctx.lineTo(-w*0.6,0);
+  ctx.lineTo(-w*0.5,-h*0.5);
+  ctx.lineTo(w*0.4,-h*0.5);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+
+  ctx.beginPath();
+  ctx.rect(-w*0.2,-h*0.2,w*0.4,h*0.4);
+  ctx.stroke();
+
+  if(b.shield>0){
+    ctx.globalAlpha=clamp(b.shield/(b.shieldMax||1),0.1,0.35);
+    ctx.strokeStyle=(b.team==='player')?'#7cf5ff':'#ffb4d0';
+    ctx.beginPath();
+    ctx.ellipse(0,0,w*0.9,h*1.1,0,0,Math.PI*2);
+    ctx.stroke();
+    ctx.globalAlpha=1;
+  }
+  ctx.restore();
+}
+
+function drawSquadIcon(squad){
+  ctx.save();
+  const scaleFactor=Math.max(0.5,CAM.scale);
+  const iconSize=(squad.iconHitR||12)/scaleFactor;
+  ctx.translate(squad.x, squad.y - (22/scaleFactor));
+  ctx.strokeStyle=(squad.team==='player')?COL.friend:COL.enemy;
+  ctx.lineWidth=2/scaleFactor;
+  ctx.globalAlpha=0.85;
+
+  if(squad.isCapital){
+    if(squad.type==='frigate'){
+      ctx.strokeRect(-iconSize*0.7,-iconSize*0.7,iconSize*1.4,iconSize*1.4);
+    }else if(squad.type==='battleship'){
+      ctx.strokeRect(-iconSize,-iconSize*0.6,iconSize*2,iconSize*1.2);
+      ctx.strokeRect(-iconSize*0.5,-iconSize*0.3,iconSize,iconSize*0.6);
+    }else{
+      ctx.strokeRect(-iconSize,-iconSize*0.5,iconSize*2,iconSize);
+    }
+  }else{
+    ctx.beginPath();
+    ctx.moveTo(0,-iconSize*0.8);
+    ctx.lineTo(iconSize*0.8,iconSize*0.8);
+    ctx.lineTo(-iconSize*0.8,iconSize*0.8);
+    ctx.closePath();
+    ctx.stroke();
+  }
+
+  const hpPercent = (squad.totalMaxHp>0)?(squad.totalHp/squad.totalMaxHp):0;
+  const barW=iconSize*2.5;
+  const barH=Math.max(3/scaleFactor,iconSize*0.2);
+  const barY=iconSize*1.2;
+  ctx.fillStyle='#000';
+  ctx.fillRect(-barW/2,barY,barW,barH);
+  ctx.fillStyle=(squad.team==='player')?COL.friend:COL.enemy;
+  ctx.fillRect(-barW/2,barY,barW*hpPercent,barH);
+  ctx.restore();
+}
+
+function drawProjectiles(sim){
+  ctx.save();
+  for(const p of sim.projectiles){
+    if(!p.alive) continue;
+    if(p.isBeam){
+      ctx.lineWidth=3;
+      ctx.strokeStyle=p.color;
+      ctx.beginPath();
+      ctx.moveTo(p.x,p.y);
+      ctx.lineTo(p.tx||p.x,p.ty||p.y);
+      ctx.stroke();
+      continue;
+    }
+    if(p.type==='bullet'){
+      const ang=Math.atan2(p.vy,p.vx);
+      const trail=6;
+      const tx=p.x-Math.cos(ang)*trail;
+      const ty=p.y-Math.sin(ang)*trail;
+      ctx.strokeStyle=p.color||'#ffd36e';
+      ctx.globalAlpha=0.9;
+      ctx.lineWidth=1.5;
+      ctx.beginPath();
+      ctx.moveTo(tx,ty);
+      ctx.lineTo(p.x,p.y);
+      ctx.stroke();
+    }else if(p.type==='flak'){
+      ctx.fillStyle=p.color||'#fff';
+      ctx.globalAlpha=0.9;
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,2,0,Math.PI*2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+function drawMissiles(sim){
+  for(const m of sim.missiles){
+    if(!m.alive) continue;
+    const ang=Math.atan2(m.vy,m.vx);
+    ctx.save();
+    ctx.translate(m.x,m.y);
+    ctx.rotate(ang);
+    ctx.fillStyle=m.color||'#fff';
+    ctx.strokeStyle='#000';
+    ctx.lineWidth=1;
+    ctx.beginPath();
+    ctx.moveTo(5,0);
+    ctx.lineTo(-4,2.5);
+    ctx.lineTo(-2,0);
+    ctx.lineTo(-4,-2.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+function drawExplosions(sim){
+  ctx.save();
+  for(const e of sim.explosions){
+    if(!e.alive) continue;
+    const t=e.t/e.life;
+    const R=e.radius*(0.8+0.4*t);
+    ctx.globalAlpha=0.35*(1-t);
+    ctx.strokeStyle=e.color||'#ffef8a';
+    ctx.beginPath();
+    ctx.arc(e.x,e.y,R,0,Math.PI*2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* ============================== Selection & Commands ======================== */
+const Selection = {
+  team:'player',
+  rect:null,
+  active:false,
+  units:new Set()
+};
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+
+let isPanning=false;
+let panLast={x:0,y:0};
+
+canvas.addEventListener('mousedown',e=>{
+  // środkowy przycisk – pan
+  if((e.button===0 && e.ctrlKey) || e.button===1){
+    e.preventDefault();
+    isPanning=true;
+    panLast={x:e.clientX,y:e.clientY};
+    return;
+  }
+  if(e.button===0 && !e.ctrlKey){
+    const rect=canvas.getBoundingClientRect();
+    const start=screenToWorld(e.clientX-rect.left,e.clientY-rect.top);
+    Selection.active=true;
+    Selection.rect={x0:start.x,y0:start.y,x1:start.x,y1:start.y};
+  }
+});
+
+window.addEventListener('mousemove',e=>{
+  if(isPanning){
+    e.preventDefault();
+    const dx=(e.clientX-panLast.x)/CAM.scale;
+    const dy=(e.clientY-panLast.y)/CAM.scale;
+    CAM.x -= dx;
+    CAM.y -= dy;
+    panLast={x:e.clientX,y:e.clientY};
+  }else if(Selection.active){
+    const rect=canvas.getBoundingClientRect();
+    const cur=screenToWorld(e.clientX-rect.left,e.clientY-rect.top);
+    Selection.rect.x1=cur.x;
+    Selection.rect.y1=cur.y;
+  }
+});
+window.addEventListener('mouseup',e=>{
+  if(e.button===0 || e.button===1){
+    isPanning=false;
+  }
+  if(e.button===0 && Selection.active){
+    Selection.active=false;
+    Selection.units.clear();
+    const x0=Math.min(Selection.rect.x0,Selection.rect.x1);
+    const y0=Math.min(Selection.rect.y0,Selection.rect.y1);
+    const x1=Math.max(Selection.rect.x0,Selection.rect.x1);
+    const y1=Math.max(Selection.rect.y0,Selection.rect.y1);
+    const allowEnemy=e.shiftKey;
+    for(const squad of sim.squads){
+      if(!allowEnemy && squad.team!=='player') continue;
+      if(squad.x>=x0 && squad.x<=x1 && squad.y>=y0 && squad.y<=y1){
+        for(const u of squad.units) Selection.units.add(u);
+      }
+    }
+  }
+});
+
+// PPM – move / attack
+canvas.addEventListener('mouseup',e=>{
+  if(e.button!==2) return;
+  if(Selection.units.size===0) return;
+  const rect=canvas.getBoundingClientRect();
+  const pt=screenToWorld(e.clientX-rect.left,e.clientY-rect.top);
+
+  let clickedEnemySquad=null;
+  let bestD2=1e9;
+  for(const squad of sim.squads){
+    if(squad.team==='player' || squad.units.size===0) continue;
+    const d2v=dist2(pt,squad);
+    const hitR = squad.iconHitR/Math.max(0.5,CAM.scale);
+    if(d2v<hitR*hitR && d2v<bestD2){
+      bestD2=d2v;
+      clickedEnemySquad=squad;
+    }
+  }
+  if(clickedEnemySquad) issueAttackOrder(clickedEnemySquad);
+  else issueMoveOrderToPoint(pt.x,pt.y);
+});
+
+function issueAttackOrder(targetSquad){
+  const selectedSquads=new Set([...Selection.units].map(u=>u.squad));
+  for(const squad of selectedSquads){
+    squad.attackTargetSquadId=targetSquad.id;
+    squad.moveAnchor=null;
+    if(squad.leader && squad.leader.moveAnchor) squad.leader.moveAnchor=null;
+    for(const u of squad.units){
+      if(u.state!=='dogfight3D' && u.state!=='approach') u.state='engage_formation';
+    }
+  }
+  sim.setCmd('player','ENGAGE');
+  setActive(fBtns,fBtns.engage);
+}
+function issueMoveOrderToPoint(x,y){
+  const units=[...Selection.units].filter(u=>u.alive);
+  if(units.length===0) return;
+  const squads=new Set(units.map(u=>u.squad));
+
+  const fighters=[...squads].filter(s=>s.type==='fighter');
+  const frigatesPD=[...squads].filter(s=>s.type==='frigate' && s.leader.subType!=='laser');
+  const frigatesL=[...squads].filter(s=>s.type==='frigate' && s.leader.subType==='laser');
+  const destroyers=[...squads].filter(s=>s.type==='destroyer');
+  const battleships=[...squads].filter(s=>s.type==='battleship');
+
+  const enemyShip=SHIP.enemy;
+  const ang=Math.atan2(enemyShip.y-y,enemyShip.x-x);
+  const forward={x:Math.cos(ang),y:Math.sin(ang)};
+  const right={x:-forward.y,y:forward.x};
+
+  let depth=0;
+  const placeLine=(list,spacing)=>{
+    if(list.length===0) return;
+    list.sort((a,b)=>a.id-b.id);
+    const totalW=(list.length-1)*spacing;
+    const cx=x - forward.x*depth;
+    const cy=y - forward.y*depth;
+    const startX=cx - right.x*totalW/2;
+    const startY=cy - right.y*totalW/2;
+    list.forEach((s,i)=>{
+      const tx=startX + right.x*(i*spacing);
+      const ty=startY + right.y*(i*spacing);
+      if(s.isCapital && s.leader) s.leader.moveAnchor={x:tx,y:ty};
+      else s.moveAnchor={x:tx,y:ty};
+    });
+    depth += 200;
+  };
+
+  placeLine(fighters,200);
+  depth += 80;
+  placeLine(frigatesPD,140);
+  placeLine(frigatesL,140);
+  placeLine(destroyers,180);
+  placeLine(battleships,220);
+
+  for(const u of units) u.state='move';
+  sim.setCmd('player','MOVE');
+  setActive(fBtns,fBtns.move);
+}
+
+/* ============================== UI / Controls =============================== */
+const frSquadsDiv=document.getElementById('frSquads');
+const enSquadsDiv=document.getElementById('enSquads');
+function renderSquadPlaceholders(){
+  frSquadsDiv.innerHTML='';
+  enSquadsDiv.innerHTML='';
+  const build=(root,color)=>{
+    for(let i=1;i<=5;i++){
+      const el=document.createElement('div');
+      el.className='squadCard';
+      el.innerHTML=`<span>Group ${i}</span><span style="color:${color}">—</span>`;
+      root.appendChild(el);
+    }
+  };
+  build(frSquadsDiv,COL.friend);
+  build(enSquadsDiv,COL.enemy);
+}
+renderSquadPlaceholders();
+
+const sim=new BattleSim();
+
+function spawnFriendly(){ sim.spawnSquadron('player'); }
+function spawnEnemy(){ sim.spawnSquadron('enemy'); }
+function spawnFrigF(){ sim.spawnFrigate('player','pd'); }
+function spawnFrigFL(){ sim.spawnFrigate('player','laser'); }
+function spawnFrigE(){ sim.spawnFrigate('enemy','pd'); }
+function spawnFrigEL(){ sim.spawnFrigate('enemy','laser'); }
+function spawnDestF(){ sim.spawnDestroyer('player'); }
+function spawnDestE(){ sim.spawnDestroyer('enemy'); }
+function spawnBatF(){ sim.spawnBattleship('player'); }
+function spawnBatE(){ sim.spawnBattleship('enemy'); }
+
+document.getElementById('spawnF').addEventListener('click',spawnFriendly);
+document.getElementById('spawnE').addEventListener('click',spawnEnemy);
+document.getElementById('spawnFF').addEventListener('click',spawnFrigF);
+document.getElementById('spawnFL').addEventListener('click',spawnFrigFL);
+document.getElementById('spawnEF').addEventListener('click',spawnFrigE);
+document.getElementById('spawnEL').addEventListener('click',spawnFrigEL);
+document.getElementById('spawnFD').addEventListener('click',spawnDestF);
+document.getElementById('spawnED').addEventListener('click',spawnDestE);
+document.getElementById('spawnFB').addEventListener('click',spawnBatF);
+document.getElementById('spawnEB').addEventListener('click',spawnBatE);
+
+document.getElementById('reset').addEventListener('click',()=>{
+  sim.units.clear();
+  sim.squads.clear();
+  sim.projectiles.length=0;
+  sim.missiles.length=0;
+  sim.explosions.length=0;
+  sim.wrecks.clear();
+  Selection.units.clear();
+});
+
+let paused=false;
+document.getElementById('pause').addEventListener('click',()=>{
+  paused=!paused;
+  document.getElementById('pause').textContent=paused?'Start':'Pauza';
+});
+
+// Time controls
+const timeBtns={
+  t02:document.getElementById('t_02'),
+  t05:document.getElementById('t_05'),
+  t1 :document.getElementById('t_1'),
+  t2 :document.getElementById('t_2'),
+  t4 :document.getElementById('t_4')
+};
+function setTimeScale(val,btn){
+  TIME_SCALE=val;
+  Object.values(timeBtns).forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+}
+timeBtns.t02.addEventListener('click',e=>setTimeScale(0.2,e.target));
+timeBtns.t05.addEventListener('click',e=>setTimeScale(0.5,e.target));
+timeBtns.t1 .addEventListener('click',e=>setTimeScale(1.0,e.target));
+timeBtns.t2 .addEventListener('click',e=>setTimeScale(2.0,e.target));
+timeBtns.t4 .addEventListener('click',e=>setTimeScale(4.0,e.target));
+
+const fBtns={
+  engage:document.getElementById('f_engage'),
+  guard :document.getElementById('f_guard'),
+  move  :document.getElementById('f_move'),
+  ret   :document.getElementById('f_return')
+};
+const eBtns={
+  engage:document.getElementById('e_engage'),
+  guard :document.getElementById('e_guard'),
+  move  :document.getElementById('e_move'),
+  ret   :document.getElementById('e_return')
+};
+function setActive(btns,active){
+  Object.values(btns).forEach(b=>b.classList.remove('active'));
+  active.classList.add('active');
+}
+fBtns.engage.addEventListener('click',()=>{ sim.setCmd('player','ENGAGE'); setActive(fBtns,fBtns.engage); });
+fBtns.guard .addEventListener('click',()=>{ sim.setCmd('player','GUARD');  setActive(fBtns,fBtns.guard ); });
+fBtns.move  .addEventListener('click',()=>{ sim.setCmd('player','MOVE');   setActive(fBtns,fBtns.move  ); });
+fBtns.ret   .addEventListener('click',()=>{ sim.setCmd('player','RETURN'); setActive(fBtns,fBtns.ret   ); });
+eBtns.engage.addEventListener('click',()=>{ sim.setCmd('enemy','ENGAGE'); setActive(eBtns,eBtns.engage); });
+eBtns.guard .addEventListener('click',()=>{ sim.setCmd('enemy','GUARD');  setActive(eBtns,eBtns.guard ); });
+eBtns.move  .addEventListener('click',()=>{ sim.setCmd('enemy','MOVE');   setActive(eBtns,eBtns.move  ); });
+eBtns.ret   .addEventListener('click',()=>{ sim.setCmd('enemy','RETURN'); setActive(eBtns,eBtns.ret   ); });
+
+function applyTeamCfg(team){
+  const hp = parseFloat(document.getElementById(team==='player'?'fr_hp':'en_hp').value)||120;
+  const sh = parseFloat(document.getElementById(team==='player'?'fr_sh':'en_sh').value)||80;
+  const gun= document.getElementById(team==='player'?'fr_gun':'en_gun').value;
+  const msl= document.getElementById(team==='player'?'fr_msl':'en_msl').value;
+  const pd = document.getElementById(team==='player'?'fr_pd':'en_pd').value;
+  const flk= document.getElementById(team==='player'?'fr_flak':'en_flak').value;
+  sim.teamCfg[team]={hp,shield:sh,gun,msl,pd,flak:flk};
+  for(const u of sim.units){
+    if(u.team!==team || !u.alive) continue;
+    if(u.kind==='fighter'){
+      u.hpMax=hp; u.shieldMax=sh; u.hp=hp; u.shield=sh;
+      u.gun=gun; u.msl=msl; u.mslAmmo=Math.max(u.mslAmmo,1);
+    }else if(u.kind==='frigate'){
+      u.pd=pd; u.flak=flk;
+    }else if(u.kind==='destroyer'){
+      u.pd=pd;
+    }
+  }
+}
+document.getElementById('fr_apply').addEventListener('click',()=>applyTeamCfg('player'));
+document.getElementById('en_apply').addEventListener('click',()=>applyTeamCfg('enemy'));
+
+// zoom
+canvas.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const rect=canvas.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  const before=screenToWorld(mx,my);
+  const factor=(e.deltaY<0)?1.1:(1/1.1);
+  const ns=clamp(CAM.scale*factor,CAM.min,CAM.max);
+  CAM.scale=ns;
+  const after=screenToWorld(mx,my);
+  CAM.x+=(before.x-after.x);
+  CAM.y+=(before.y-after.y);
+},{passive:false});
+
+document.getElementById('zoomIn').addEventListener('click',()=>{CAM.scale=Math.min(CAM.max,CAM.scale*1.2);});
+document.getElementById('zoomOut').addEventListener('click',()=>{CAM.scale=Math.max(CAM.min,CAM.scale/1.2);});
+document.getElementById('zoomFit').addEventListener('click',()=>{
+  CAM.x=WORLD.W*0.5;
+  CAM.y=WORLD.H*0.5;
+  CAM.scale=0.35;
+});
+
+/* ============================== Main loop =================================== */
+function updateCounters(){
+  const fr=[...sim.units].filter(u=>u.alive && u.team==='player').length;
+  const en=[...sim.units].filter(u=>u.alive && u.team==='enemy').length;
+  document.getElementById('cntFriend').textContent=`FR: ${fr}`;
+  document.getElementById('cntEnemy').textContent =`EN: ${en}`;
+}
+function drawBackground(){
+  ctx.fillStyle = '#050a11';
+  ctx.fillRect(0,0,WORLD.W,WORLD.H);
+  ctx.strokeStyle='#101726';
+  ctx.lineWidth=1;
+  ctx.globalAlpha=0.3;
+  for(let x=0;x<=WORLD.W;x+=200){
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,WORLD.H); ctx.stroke();
+  }
+  for(let y=0;y<=WORLD.H;y+=200){
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(WORLD.W,y); ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+}
+
+function drawSelection(){
+  if(Selection.units.size===0) return;
+  ctx.save();
+  ctx.strokeStyle='#4a9eff';
+  ctx.lineWidth=2/CAM.scale;
+  ctx.globalAlpha=0.9;
+  for(const u of Selection.units){
+    if(!u.alive) continue;
+    const radius=(u.hitR||10) + (5/CAM.scale);
+    ctx.beginPath();
+    ctx.arc(u.x,u.y,radius,0,Math.PI*2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+let last=performance.now();
+function frame(){
+  const now=performance.now();
+  const dt=Math.min(0.05,(now-last)/1000);
+  last=now;
+
+  if(!paused){
+    updateCarrier(SHIP.friend,dt);
+    updateCarrier(SHIP.enemy,dt);
+    sim.tick(dt);
+  }
+
+  resetTransform();
+  ctx.clearRect(0,0,canvas.width/DPR,canvas.height/DPR);
+  applyCam();
+  drawBackground();
+  drawCarrier(SHIP.friend);
+  drawCarrier(SHIP.enemy);
+
+  for(const w of sim.wrecks) drawWreck(w);
+  for(const u of sim.units){
+    if(!u.alive) continue;
+    if(u.kind==='fighter')      drawFighter(u);
+    else if(u.kind==='frigate') drawFrigate(u);
+    else if(u.kind==='destroyer')drawDestroyer(u);
+    else if(u.kind==='battleship')drawBattleship(u);
+  }
+  drawProjectiles(sim);
+  drawMissiles(sim);
+  drawExplosions(sim);
+  for(const s of sim.squads) drawSquadIcon(s);
+
+  if(Selection.active && Selection.rect){
+    ctx.save();
+    ctx.strokeStyle='#7aa8ff';
+    ctx.globalAlpha=0.8;
+    ctx.lineWidth=2/CAM.scale;
+    const x0=Math.min(Selection.rect.x0,Selection.rect.x1);
+    const y0=Math.min(Selection.rect.y0,Selection.rect.y1);
+    const w=Math.abs(Selection.rect.x1-Selection.rect.x0);
+    const h=Math.abs(Selection.rect.y1-Selection.rect.y0);
+    ctx.strokeRect(x0,y0,w,h);
+    ctx.restore();
+  }
+  drawSelection();
+  updateCounters();
+  requestAnimationFrame(frame);
+}
+fit();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

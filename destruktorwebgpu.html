@@ -1,0 +1,2688 @@
+<!DOCTYPE html>
+<html lang="pl">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Destruction Engine V53 - Three.js Hybrid</title>
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #080808;
+            color: #ccc;
+            font-family: 'Segoe UI', monospace;
+            user-select: none;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            pointer-events: auto;
+            background: rgba(15, 25, 40, 0.95);
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid #446;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+        }
+
+        h3 {
+            margin: 0 0 10px 0;
+            color: #fff;
+            font-size: 16px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .key {
+            color: #4db8ff;
+            font-weight: bold;
+        }
+
+        .warn {
+            color: #55ff55;
+        }
+
+        .feature {
+            color: #ffaa00;
+        }
+
+        #status {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            z-index: 10;
+            color: #888;
+            font-size: 12px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #333;
+        }
+
+        #perfPanel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 10;
+            pointer-events: none;
+            background: rgba(5, 10, 20, 0.92);
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 1px solid #335;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7);
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 12px;
+            color: #aab;
+            min-width: 220px;
+            transition: opacity 0.3s;
+        }
+
+        #perfPanel.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #perfPanel .perf-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: #667;
+            margin-bottom: 6px;
+        }
+
+        #perfPanel .perf-fps {
+            font-size: 28px;
+            font-weight: bold;
+            line-height: 1;
+            margin-bottom: 4px;
+        }
+
+        #perfPanel .perf-fps.good {
+            color: #4f8;
+        }
+
+        #perfPanel .perf-fps.ok {
+            color: #fd4;
+        }
+
+        #perfPanel .perf-fps.bad {
+            color: #f44;
+        }
+
+        #perfPanel .perf-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 1px 0;
+        }
+
+        #perfPanel .perf-label {
+            color: #778;
+        }
+
+        #perfPanel .perf-val {
+            color: #bbc;
+            font-weight: bold;
+        }
+
+        #perfPanel .perf-bar-bg {
+            height: 3px;
+            background: #223;
+            border-radius: 2px;
+            margin: 2px 0;
+            overflow: hidden;
+        }
+
+        #perfPanel .perf-bar {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.3s;
+        }
+
+        #perfPanel .perf-sep {
+            border-top: 1px solid #223;
+            margin: 5px 0;
+        }
+
+        #perfGraph {
+            margin-top: 6px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="ui">
+        <h3>Hybrid Engine V52 (Fixed)</h3>
+        <div><span class="key">[W / S]</span> - Silnik</div>
+        <div><span class="key">[A / D]</span> - ObrĂłt</div>
+        <div><span class="key">[LPM]</span> - <b>PRZECIÄ„GNIJ: ASTEROIDA</b></div>
+        <div><span class="key">[PPM]</span> - <b>LASER TNÄ„CY</b></div>
+        <div><span class="key">[Spacja]</span> - Reset</div>
+        <div style="margin-top: 10px; font-size: 13px;">
+            <span class="feature">Hybrid Physics:</span><br>
+            Low Impulse -> Rigid Body Bounce<br>
+            High Impulse -> Soft Body Crush<br>
+            <span class="warn">Yield Point: 1,000J</span>
+        </div>
+        <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #446;">
+            <span class="feature">WĹASNY SPRITE:</span><br>
+            <input type="file" id="shipPicker" accept="image/*" style="margin-top: 5px; font-size: 12px; color: #ccc;">
+        </div>
+    </div>
+    <div id="status">Inicjalizacja...</div>
+    <div id="perfPanel">
+        <div class="perf-title">WYDAJNOĹšÄ† <span style="float:right;color:#556">[P] toggle</span></div>
+        <div class="perf-fps good" id="perfFps">--</div>
+        <div style="color:#556;font-size:10px;margin-bottom:6px" id="perfFrameTime">-- ms/frame</div>
+        <div class="perf-sep"></div>
+        <div class="perf-row"><span class="perf-label">Fizyka</span><span class="perf-val" id="perfPhysics">--</span>
+        </div>
+        <div class="perf-bar-bg">
+            <div class="perf-bar" id="barPhysics" style="width:0%;background:#4af"></div>
+        </div>
+        <div class="perf-row"><span class="perf-label"> â”” Kolizje</span><span class="perf-val"
+                id="perfCollisions">--</span></div>
+        <div class="perf-bar-bg">
+            <div class="perf-bar" id="barCollisions" style="width:0%;background:#f84"></div>
+        </div>
+        <div class="perf-row"><span class="perf-label"> â”” Deformacja</span><span class="perf-val"
+                id="perfDeform">--</span></div>
+        <div class="perf-bar-bg">
+            <div class="perf-bar" id="barDeform" style="width:0%;background:#8f4"></div>
+        </div>
+        <div class="perf-row"><span class="perf-label">Rysowanie</span><span class="perf-val" id="perfDraw">--</span>
+        </div>
+        <div class="perf-bar-bg">
+            <div class="perf-bar" id="barDraw" style="width:0%;background:#f4f"></div>
+        </div>
+        <div class="perf-sep"></div>
+        <div class="perf-row"><span class="perf-label">Entities</span><span class="perf-val" id="perfEntities">--</span>
+        </div>
+        <div class="perf-row"><span class="perf-label">Shardy (aktywne)</span><span class="perf-val"
+                id="perfShards">--</span></div>
+        <div class="perf-row"><span class="perf-label">Debris</span><span class="perf-val" id="perfDebris">--</span>
+        </div>
+        <div class="perf-row"><span class="perf-label">Kontakty/klatka</span><span class="perf-val"
+                id="perfContacts">--</span></div>
+        <canvas id="perfGraph" width="220" height="40"></canvas>
+    </div>
+    <div id="game-root" style="position:relative;width:100vw;height:100vh;overflow:hidden;background:#080808;">
+        <canvas id="webgl-layer" style="position:absolute;top:0;left:0;z-index:0;width:100%;height:100%;"></canvas>
+        <canvas id="c" style="position:absolute;top:0;left:0;z-index:1;"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d');
+        const statusEl = document.getElementById('status');
+
+        let width = canvas.width = window.innerWidth;
+        let height = canvas.height = window.innerHeight;
+
+        const camera = { x: 0, y: 0, zoom: 0.5 };
+
+        // --- PERFORMANCE PROFILER ---
+        const Perf = {
+            // Timing accumulators (reset every update interval)
+            physicsTime: 0,
+            collisionTime: 0,
+            deformTime: 0,
+            drawTime: 0,
+            frameCount: 0,
+            contactsThisFrame: 0,
+            contactsAccum: 0,
+
+            // Displayed values (updated every interval)
+            fps: 0,
+            avgFrameTime: 0,
+            dPhysics: 0,
+            dCollisions: 0,
+            dDeform: 0,
+            dDraw: 0,
+            dEntities: 0,
+            dShards: 0,
+            dDebris: 0,
+            dContacts: 0,
+
+            // Frame time history for graph
+            history: new Float32Array(110),
+            histIdx: 0,
+
+            // DOM refs (cached)
+            els: null,
+            graphCtx: null,
+            visible: true,
+            lastUpdate: 0,
+            updateInterval: 500, // ms between display refreshes
+
+            init() {
+                this.els = {
+                    fps: document.getElementById('perfFps'),
+                    frameTime: document.getElementById('perfFrameTime'),
+                    physics: document.getElementById('perfPhysics'),
+                    collisions: document.getElementById('perfCollisions'),
+                    deform: document.getElementById('perfDeform'),
+                    draw: document.getElementById('perfDraw'),
+                    entities: document.getElementById('perfEntities'),
+                    shards: document.getElementById('perfShards'),
+                    debris: document.getElementById('perfDebris'),
+                    contacts: document.getElementById('perfContacts'),
+                    barPhysics: document.getElementById('barPhysics'),
+                    barCollisions: document.getElementById('barCollisions'),
+                    barDeform: document.getElementById('barDeform'),
+                    barDraw: document.getElementById('barDraw'),
+                    panel: document.getElementById('perfPanel'),
+                };
+                const graphCanvas = document.getElementById('perfGraph');
+                this.graphCtx = graphCanvas.getContext('2d');
+                this.history.fill(16.67);
+            },
+
+            toggle() {
+                this.visible = !this.visible;
+                this.els.panel.classList.toggle('hidden', !this.visible);
+            },
+
+            startFrame() {
+                this.contactsThisFrame = 0;
+            },
+
+            recordFrameTime(totalMs) {
+                this.history[this.histIdx % this.history.length] = totalMs;
+                this.histIdx++;
+                this.frameCount++;
+            },
+
+            flush(now) {
+                if (now - this.lastUpdate < this.updateInterval) return;
+                const n = this.frameCount || 1;
+                this.fps = Math.round(1000 / ((now - this.lastUpdate) / n));
+                this.avgFrameTime = (now - this.lastUpdate) / n;
+                this.dPhysics = this.physicsTime / n;
+                this.dCollisions = this.collisionTime / n;
+                this.dDeform = this.deformTime / n;
+                this.dDraw = this.drawTime / n;
+                this.dContacts = this.contactsAccum / n;
+
+                // Count objects
+                let totalShards = 0;
+                for (const e of entities) {
+                    if (e.hexGrid) {
+                        const sh = e.hexGrid.shards;
+                        for (let i = 0, l = sh.length; i < l; i++) {
+                            if (sh[i].active && !sh[i].isDebris) totalShards++;
+                        }
+                    }
+                }
+                this.dEntities = entities.length;
+                this.dShards = totalShards;
+                this.dDebris = DestructorSystem.debris.length;
+
+                this.updateDOM();
+                this.drawGraph();
+
+                // Reset accumulators
+                this.physicsTime = 0;
+                this.collisionTime = 0;
+                this.deformTime = 0;
+                this.drawTime = 0;
+                this.contactsAccum = 0;
+                this.frameCount = 0;
+                this.lastUpdate = now;
+            },
+
+            updateDOM() {
+                if (!this.visible) return;
+                const e = this.els;
+                // FPS number + color
+                e.fps.textContent = this.fps;
+                e.fps.className = 'perf-fps ' + (this.fps >= 55 ? 'good' : this.fps >= 30 ? 'ok' : 'bad');
+                e.frameTime.textContent = this.avgFrameTime.toFixed(1) + ' ms/frame';
+
+                // Timing rows
+                e.physics.textContent = this.dPhysics.toFixed(2) + ' ms';
+                e.collisions.textContent = this.dCollisions.toFixed(2) + ' ms';
+                e.deform.textContent = this.dDeform.toFixed(2) + ' ms';
+                e.draw.textContent = this.dDraw.toFixed(2) + ' ms';
+
+                // Bars (scale: 16.67ms = 100%)
+                const barScale = 100 / 16.67;
+                e.barPhysics.style.width = Math.min(100, this.dPhysics * barScale).toFixed(0) + '%';
+                e.barCollisions.style.width = Math.min(100, this.dCollisions * barScale).toFixed(0) + '%';
+                e.barDeform.style.width = Math.min(100, this.dDeform * barScale).toFixed(0) + '%';
+                e.barDraw.style.width = Math.min(100, this.dDraw * barScale).toFixed(0) + '%';
+
+                // Counts
+                e.entities.textContent = this.dEntities;
+                e.shards.textContent = this.dShards;
+                e.debris.textContent = this.dDebris;
+                e.contacts.textContent = Math.round(this.dContacts);
+            },
+
+            drawGraph() {
+                if (!this.visible) return;
+                const gCtx = this.graphCtx;
+                const w = 220, h = 40;
+                gCtx.clearRect(0, 0, w, h);
+
+                // Background
+                gCtx.fillStyle = '#0a0e18';
+                gCtx.fillRect(0, 0, w, h);
+
+                // 60fps line (16.67ms)
+                const y60 = h - (16.67 / 50) * h;
+                gCtx.strokeStyle = '#2a3a2a';
+                gCtx.lineWidth = 1;
+                gCtx.setLineDash([3, 3]);
+                gCtx.beginPath();
+                gCtx.moveTo(0, y60);
+                gCtx.lineTo(w, y60);
+                gCtx.stroke();
+                gCtx.setLineDash([]);
+
+                // 30fps line (33.33ms)
+                const y30 = h - (33.33 / 50) * h;
+                gCtx.strokeStyle = '#3a2a2a';
+                gCtx.beginPath();
+                gCtx.setLineDash([3, 3]);
+                gCtx.moveTo(0, y30);
+                gCtx.lineTo(w, y30);
+                gCtx.stroke();
+                gCtx.setLineDash([]);
+
+                // Frame time bars
+                const len = this.history.length;
+                const barW = w / len;
+                const startIdx = this.histIdx;
+                for (let i = 0; i < len; i++) {
+                    const idx = (startIdx + i) % len;
+                    const ms = this.history[idx];
+                    const barH = Math.min(h, (ms / 50) * h);
+                    const x = i * barW;
+
+                    // Color based on frame time
+                    if (ms < 17) gCtx.fillStyle = '#2a6a3a';
+                    else if (ms < 33) gCtx.fillStyle = '#6a6a2a';
+                    else gCtx.fillStyle = '#6a2a2a';
+
+                    gCtx.fillRect(x, h - barH, barW - 0.5, barH);
+                }
+            }
+        };
+
+        function worldToScreen(wx, wy, cam) {
+            return {
+                x: (wx - cam.x) * cam.zoom + width / 2,
+                y: (wy - cam.y) * cam.zoom + height / 2
+            };
+        }
+
+        function screenToWorld(sx, sy, cam) {
+            return {
+                x: (sx - width / 2) / cam.zoom + cam.x,
+                y: (sy - height / 2) / cam.zoom + cam.y
+            };
+        }
+
+        const DESTRUCTOR_CONFIG = {
+            gridDivisions: 6,
+            shardHP: 100,
+            armorThreshold: 0.4,
+            maxDeform: 120.0,
+            tearThreshold: 180.0,
+            bendingRadius: 100.0,
+            playerStartingMass: 800000,
+            friction: 0.99,
+            shardMass: 10.0,
+            visualRotationOffset: 0,
+            yieldPoint: 200.0,
+            restitution: 0.05,
+            plasticity: 0.00002,
+            collisionDeformScale: 1.0, // startowo 0.25
+            collisionSearchRadius: 5,  // ile kratek wokół sprawdzamy w mapie (większe = lepsze przy dużych deformacjach)
+            gpuCollisionSearchRadius: 3, // osobny radius dla WGSL narrowphase
+            gpuMaxStepDeform: 10.0,      // maksymalna deformacja dodana w 1 dispatch GPU
+            gpuPenClampMul: 0.65,        // clamp penetracji w shaderze (0..1 hit radius)
+            collisionIterations: 2,
+            crushMinSpeed: 1.5,          // minimalna prÄ™dkoĹ›Ä‡ kontaktu dla deformacji (m/s w twoich jednostkach)
+            crushPenetrationMin: 0.15,   // minimalna penetracja, ĹĽeby zaczÄ…Ä‡ wgniatanie "na docisk"
+            crushVelK: 0.15,             // jak mocno prÄ™dkoĹ›Ä‡ wzglÄ™dna wgniata (stara wersja miaĹ‚a ~0.15)
+            crushPenK: 10.0,             // jak mocno penetracja wgniata (docisk)
+            shearK: 0.06,                // jak mocno "szorowanie" gniecie (skĹ‚adowa styczna)
+            crushSeparation: 0.25,       // mniejsza separacja = dĹ‚uĹĽszy kontakt = pĹ‚ynniejsze wgniatanie
+            crushImpulseScale: 0.45,     // ile impulsu zostaje przy niszczeniu (mniej = mniej "odbijania" celu)
+            dummyMass: 20000,       // Masa kukĹ‚y
+            debrisMass: 50,         // Masa odĹ‚amkĂłw
+            asteroidMass: 1000000,  // Masa asteroidy
+            asteroidSpeedMult: 10,  // MnoĹĽnik prÄ™dkoĹ›ci asteroidy
+            asteroidMaxSpeed: 4000, // Limit prÄ™dkoĹ›ci asteroidy
+            asteroidHPMult: 10,     // MnoĹĽnik HP szardĂłw asteroidy
+
+            recoverSpeed: 1.0,      // SzybkoĹ›Ä‡ powrotu do ksztaĹ‚tu (elastycznoĹ›Ä‡ wizualna)
+            repairRate: 100,        // SzybkoĹ›Ä‡ naprawy HP (klawisz R)
+            visualLerpSpeed: 5.0,   // PĹ‚ynnoĹ›Ä‡ animacji deformacji
+
+            softBodyTension: 0.15,  // NapiÄ™cie powierzchniowe (0.0 - 1.0)
+            tearSensitivity: 0.15,  // WraĹĽliwoĹ›Ä‡ na strzÄ™pienie krawÄ™dzi
+            maxFray: 15.0,          // Maksymalne postrzÄ™pienie (px)
+            deformMul: 0.6,         // MnoĹĽnik deformacji od uderzenia
+            cleaveForce: 1.5,
+            // --- PLASTYCZNOĹšÄ† (TrwaĹ‚e odksztaĹ‚cenia) ---
+            plasticYield: 15.0,     // PrĂłg siĹ‚y, od ktĂłrego blacha gnie siÄ™ na staĹ‚e
+            maxPlastic: 60.0,       // Maksymalne trwaĹ‚e wgniecenie (ĹĽeby statek nie zapadĹ‚ siÄ™ w punkt)
+            plasticityRate: 0.8,    // SzybkoĹ›Ä‡ pochĹ‚aniania siĹ‚y w staĹ‚e wgniecenie
+            inflictedDamageMult: 1.0, // MnoĹĽnik obraĹĽeĹ„ od siĹ‚y uderzenia
+
+            beamWidth: 12,          // SzerokoĹ›Ä‡ lasera
+            beamForce: 400,         // SiĹ‚a odepchniÄ™cia lasera
+
+            playerSpeed: 600,       // SiĹ‚a silnikĂłw gracza
+            playerTurnAccel: 10.0,  // Przyspieszenie obrotu
+            playerMaxTurn: 2.5,     // Maksymalna prÄ™dkoĹ›Ä‡ obrotu
+            zoomSpeed: 0.001        // CzuĹ‚oĹ›Ä‡ zoomu
+        };
+
+        // --- PRECOMPUTED CONSTANTS (hoisted out of hot loops) ---
+        const HEX_R = DESTRUCTOR_CONFIG.gridDivisions;
+        const HEX_HEIGHT = Math.sqrt(3) * HEX_R;
+        const HEX_SPACING = HEX_R * 1.5;
+        const HIT_RAD_SQ = (HEX_R * 1.3) ** 2;
+        const HIT_RAD = HEX_R * 1.3;
+        const BENDING_RAD_SQ = DESTRUCTOR_CONFIG.bendingRadius * DESTRUCTOR_CONFIG.bendingRadius;
+
+        // Precomputed offset lists for collision neighborhood searches (avoid nested loops + string keys in hot path)
+        const _SEARCH_OFFSETS_CACHE = Object.create(null);
+        function getSearchOffsets(radius) {
+            const r = radius | 0;
+            let arr = _SEARCH_OFFSETS_CACHE[r];
+            if (arr) return arr;
+            const list = [];
+            const r2 = r * r;
+            for (let dc = -r; dc <= r; dc++) {
+                for (let dr = -r; dr <= r; dr++) {
+                    if (dc * dc + dr * dr <= r2) {
+                        list.push(dc, dr);
+                    }
+                }
+            }
+            // Int8Array is enough for our typical radii (<= 16); Int16Array fallback if bigger
+            arr = (r <= 127) ? new Int8Array(list) : new Int16Array(list);
+            _SEARCH_OFFSETS_CACHE[r] = arr;
+            return arr;
+        }
+
+
+        // ====================================================================
+        // THREE.JS HEX RENDERER â€” Instanced GPU rendering of hex shards
+        // ====================================================================
+        const HexRenderer = {
+            renderer: null,
+            scene: null,
+            camera: null,
+            entityMeshes: new Map(),
+            _dummy: null, // reusable Object3D for matrix computation
+
+            HEX_VERTEX: `
+                attribute vec2 aGridPos;
+                attribute float aHPRatio;
+                attribute float aStress;
+
+                uniform vec2 uSpriteSize;
+
+                varying vec2 vSpriteUV;
+                varying float vHPRatio;
+                varying float vStress;
+
+                void main() {
+                    vHPRatio = aHPRatio;
+                    vStress = aStress;
+                    // UV into sprite based on original grid position (not deformed)
+                    vSpriteUV = (aGridPos + position.xy) / uSpriteSize;
+
+                    // instanceMatrix handles: translate(gridX+deformX-cx, gridY+deformY-cy)
+                    // modelMatrix handles: entity world position + rotation
+                    vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position.xy, 0.0, 1.0);
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+
+            HEX_FRAGMENT: `
+                uniform sampler2D uArmorTex;
+                uniform sampler2D uDamagedTex;
+                uniform float uArmorThreshold;
+                uniform float uHasArmorTex;
+                uniform float uHasDamagedTex;
+                uniform float uIsProjectile;
+                uniform vec3 uColor;
+
+                varying vec2 vSpriteUV;
+                varying float vHPRatio;
+                varying float vStress;
+
+                void main() {
+                    // Discard outside sprite bounds
+                    if (vSpriteUV.x < -0.01 || vSpriteUV.x > 1.01 ||
+                        vSpriteUV.y < -0.01 || vSpriteUV.y > 1.01) discard;
+
+                    vec3 color;
+                    float alpha = 1.0;
+
+                    if (uIsProjectile > 0.5) {
+                        color = uColor;
+                    } else {
+                        // Base: damaged texture or dark fallback
+                        vec4 damaged = vec4(0.133, 0.133, 0.133, 1.0);
+                        if (uHasDamagedTex > 0.5) {
+                            damaged = texture2D(uDamagedTex, vSpriteUV);
+                        }
+                        color = damaged.rgb;
+                        alpha = damaged.a;
+
+                        // Armor overlay blended by HP
+                        if (uHasArmorTex > 0.5) {
+                            float armorAlpha = 0.0;
+                            if (vHPRatio > uArmorThreshold) {
+                                armorAlpha = (vHPRatio - uArmorThreshold) / (1.0 - uArmorThreshold);
+                            }
+                            if (armorAlpha > 0.01) {
+                                vec4 armor = texture2D(uArmorTex, vSpriteUV);
+                                color = mix(color, armor.rgb, armorAlpha * armor.a);
+                                alpha = max(alpha, armor.a * armorAlpha);
+                            }
+                        }
+                    }
+
+                    // Stress glow (deformation heat)
+                    if (vStress > 5.0) {
+                        float ratio = min(1.0, vStress / 100.0);
+                        color = mix(color, vec3(1.0, ratio * 0.4, 0.0), ratio * 0.6);
+                    }
+
+                    if (alpha < 0.01) discard;
+                    gl_FragColor = vec4(color, alpha);
+                }
+            `,
+
+            init() {
+                const webglCanvas = document.getElementById('webgl-layer');
+                this.renderer = new THREE.WebGLRenderer({
+                    canvas: webglCanvas,
+                    alpha: true,
+                    antialias: false,
+                    powerPreference: 'high-performance'
+                });
+                this.renderer.setSize(width, height);
+                this.renderer.setClearColor(0x080808, 1);
+                this.renderer.setPixelRatio(1);
+
+                this.scene = new THREE.Scene();
+                // OrthographicCamera â€” top/bottom flipped to match Canvas 2D Y-down
+                this.camera = new THREE.OrthographicCamera(
+                    -width / 2, width / 2,
+                    -height / 2, height / 2,
+                    0.1, 10000
+                );
+                this.camera.position.z = 1000;
+
+                this._dummy = new THREE.Object3D();
+            },
+
+            createEntityMesh(entity) {
+                if (!entity.hexGrid) return null;
+                const grid = entity.hexGrid;
+                const shards = grid.shards;
+                const count = shards.length;
+
+                // Base hex geometry (6 segments = hexagon, overlap 1.08)
+                const hexGeo = new THREE.CircleGeometry(HEX_R * 1.08, 6);
+
+                // Textures from shard image sources (canvas elements)
+                const firstShard = shards[0];
+                let armorTex = null, damagedTex = null;
+                if (firstShard && firstShard.img) {
+                    armorTex = new THREE.CanvasTexture(firstShard.img);
+                    armorTex.flipY = false;
+                    armorTex.minFilter = THREE.LinearFilter;
+                    armorTex.magFilter = THREE.LinearFilter;
+                }
+                if (firstShard && firstShard.damagedImg) {
+                    damagedTex = new THREE.CanvasTexture(firstShard.damagedImg);
+                    damagedTex.flipY = false;
+                    damagedTex.minFilter = THREE.LinearFilter;
+                    damagedTex.magFilter = THREE.LinearFilter;
+                }
+
+                const material = new THREE.ShaderMaterial({
+                    uniforms: {
+                        uSpriteSize: { value: new THREE.Vector2(grid.srcWidth, grid.srcHeight) },
+                        uArmorTex: { value: armorTex || new THREE.Texture() },
+                        uDamagedTex: { value: damagedTex || new THREE.Texture() },
+                        uArmorThreshold: { value: DESTRUCTOR_CONFIG.armorThreshold },
+                        uHasArmorTex: { value: armorTex ? 1.0 : 0.0 },
+                        uHasDamagedTex: { value: damagedTex ? 1.0 : 0.0 },
+                        uIsProjectile: { value: entity.isProjectile ? 1.0 : 0.0 },
+                        uColor: { value: new THREE.Color(firstShard?.color || '#ffcc00') }
+                    },
+                    vertexShader: this.HEX_VERTEX,
+                    fragmentShader: this.HEX_FRAGMENT,
+                    transparent: true,
+                    depthWrite: false,
+                    depthTest: false,
+                    side: THREE.DoubleSide
+                });
+
+                const mesh = new THREE.InstancedMesh(hexGeo, material, count);
+                mesh.frustumCulled = false;
+
+                // Custom per-instance attributes
+                const gridPosArr = new Float32Array(count * 2);
+                const hpArr = new Float32Array(count);
+                const stressArr = new Float32Array(count);
+
+                for (let i = 0; i < count; i++) {
+                    const s = shards[i];
+                    gridPosArr[i * 2] = s.gridX;
+                    gridPosArr[i * 2 + 1] = s.gridY;
+
+                    // IMPORTANT: initialize visual state from current simulation state.
+                    // This avoids 1-frame "undamaged sprite" flicker when meshes are rebuilt after splits.
+                    const hpRatio = (s.maxHp > 0) ? (s.hp / s.maxHp) : 0.0;
+                    hpArr[i] = Math.max(0.0, Math.min(1.0, hpRatio));
+
+                    const dx = s.deformation ? s.deformation.x : 0.0;
+                    const dy = s.deformation ? s.deformation.y : 0.0;
+                    stressArr[i] = Math.sqrt(dx * dx + dy * dy);
+                }
+
+                mesh.geometry.setAttribute('aGridPos',
+                    new THREE.InstancedBufferAttribute(gridPosArr, 2));
+                mesh.geometry.setAttribute('aHPRatio',
+                    new THREE.InstancedBufferAttribute(hpArr, 1));
+                mesh.geometry.setAttribute('aStress',
+                    new THREE.InstancedBufferAttribute(stressArr, 1));
+
+                // Set initial instance matrices
+                const centerX = grid.srcWidth / 2;
+                const centerY = grid.srcHeight / 2;
+                const pivotX = grid.pivot ? grid.pivot.x : 0;
+                const pivotY = grid.pivot ? grid.pivot.y : 0;
+                const dummy = this._dummy;
+
+                for (let i = 0; i < count; i++) {
+                    const s = shards[i];
+                    if (s.active && !s.isDebris) {
+                        dummy.position.set(
+                            s.gridX + s.deformation.x - centerX - pivotX,
+                            s.gridY + s.deformation.y - centerY - pivotY, 0);
+                    } else {
+                        dummy.position.set(0, 0, -99999);
+                    }
+                    dummy.updateMatrix();
+                    mesh.setMatrixAt(i, dummy.matrix);
+                }
+                mesh.instanceMatrix.needsUpdate = true;
+
+                // Entity world transform
+                mesh.position.set(entity.x, entity.y, 0);
+                mesh.rotation.z = entity.angle + DESTRUCTOR_CONFIG.visualRotationOffset;
+
+                this.scene.add(mesh);
+
+                const data = {
+                    mesh,
+                    shards,
+                    centerX,
+                    centerY,
+                    hpAttr: mesh.geometry.getAttribute('aHPRatio'),
+                    stressAttr: mesh.geometry.getAttribute('aStress')
+                };
+                this.entityMeshes.set(entity, data);
+                return data;
+            },
+
+            updateEntityMesh(entity) {
+                let data = this.entityMeshes.get(entity);
+                if (!data) return;
+
+                // Detect if shards array was replaced (by split/rebuild)
+                if (data.shards !== entity.hexGrid.shards) {
+                    this.scene.remove(data.mesh);
+                    data.mesh.geometry.dispose();
+                    this.entityMeshes.delete(entity);
+
+                    // Recreate and continue updating in the same frame (prevents any transient visual mismatch).
+                    data = this.createEntityMesh(entity);
+                    if (!data) return;
+                }
+
+                const { mesh, shards, centerX, centerY, hpAttr, stressAttr } = data;
+                const dummy = this._dummy;
+                const pivotX = entity.hexGrid.pivot ? entity.hexGrid.pivot.x : 0;
+                const pivotY = entity.hexGrid.pivot ? entity.hexGrid.pivot.y : 0;
+
+                for (let i = 0; i < shards.length; i++) {
+                    const s = shards[i];
+                    if (s.active && !s.isDebris) {
+                        dummy.position.set(
+                            s.gridX + s.deformation.x - centerX - pivotX,
+                            s.gridY + s.deformation.y - centerY - pivotY, 0);
+                        dummy.updateMatrix();
+                        mesh.setMatrixAt(i, dummy.matrix);
+                        hpAttr.array[i] = s.hp / s.maxHp;
+                        const dx = s.deformation.x, dy = s.deformation.y;
+                        stressAttr.array[i] = Math.sqrt(dx * dx + dy * dy);
+                    } else {
+                        dummy.position.set(0, 0, -99999);
+                        dummy.updateMatrix();
+                        mesh.setMatrixAt(i, dummy.matrix);
+                    }
+                }
+
+                mesh.instanceMatrix.needsUpdate = true;
+                hpAttr.needsUpdate = true;
+                stressAttr.needsUpdate = true;
+
+                // Entity world transform
+                mesh.position.set(entity.x, entity.y, 0);
+                mesh.rotation.z = entity.angle + DESTRUCTOR_CONFIG.visualRotationOffset;
+            },
+
+            syncCamera() {
+                const cam = camera;
+                const z = cam.zoom;
+                const halfW = width / (2 * z);
+                const halfH = height / (2 * z);
+                this.camera.left = -halfW;
+                this.camera.right = halfW;
+                this.camera.top = -halfH;   // flipped Y to match canvas
+                this.camera.bottom = halfH;
+                this.camera.position.set(cam.x, cam.y, 1000);
+                this.camera.lookAt(cam.x, cam.y, 0);
+                this.camera.updateProjectionMatrix();
+            },
+
+            update(entitiesArr) {
+                this.syncCamera();
+                const alive = new Set(entitiesArr);
+
+                // Remove meshes for deleted entities
+                for (const [ent, data] of this.entityMeshes) {
+                    if (!alive.has(ent)) {
+                        this.scene.remove(data.mesh);
+                        data.mesh.geometry.dispose();
+                        this.entityMeshes.delete(ent);
+                    }
+                }
+
+                // Create/update meshes
+                for (const ent of entitiesArr) {
+                    if (!ent.hexGrid) continue;
+                    if (!this.entityMeshes.has(ent)) {
+                        this.createEntityMesh(ent);
+                    }
+                    this.updateEntityMesh(ent);
+                }
+            },
+
+            render() {
+                if (this.renderer) {
+                    this.renderer.render(this.scene, this.camera);
+                }
+            },
+
+            resize() {
+                if (this.renderer) this.renderer.setSize(width, height);
+            }
+        };
+
+        class HexShard {
+            constructor(img, damagedImg, gridX, gridY, radius, c, r, color = null) {
+                this.img = img;
+                this.damagedImg = damagedImg;
+                this.gridX = gridX;
+                this.gridY = gridY;
+                this.radius = radius;
+                this.c = c;
+                this.r = r;
+                this.color = color;
+                this.active = true;
+                this.isDebris = false;
+                this.maxHp = DESTRUCTOR_CONFIG.shardHP;
+                this.hp = this.maxHp;
+                this.deformation = { x: 0, y: 0 };
+                this.targetDeformation = { x: 0, y: 0 };
+
+                // --- NOWOĹšÄ†: Tablica deformacji wierzchoĹ‚kĂłw (efekt strzÄ™pienia) ---
+                this.frays = [];
+                for (let i = 0; i < 6; i++) this.frays.push({ x: 0, y: 0 });
+                // ------------------------------------------------------------------
+
+                this.worldX = 0; this.worldY = 0;
+                this.dvx = 0; this.dvy = 0; this.drot = 0;
+                this.alpha = 1;
+                this.angle = 0;
+                this.scale = 1.0;
+                this.neighbors = [];
+                this.verts = [];
+                for (let i = 0; i < 6; i++) {
+                    const a = i * Math.PI / 3;
+                    this.verts.push({ x: Math.cos(a) * radius, y: Math.sin(a) * radius });
+                }
+            }
+            repair(dt) {
+                if (!this.active || this.isDebris) return;
+                const recoverSpeed = DESTRUCTOR_CONFIG.recoverSpeed;
+                this.targetDeformation.x *= (1.0 - Math.min(1.0, recoverSpeed * dt));
+                this.targetDeformation.y *= (1.0 - Math.min(1.0, recoverSpeed * dt));
+
+                // Opcjonalnie: Powolne naprawianie strzÄ™pienia (bardzo wolne, ĹĽeby Ĺ›lady walki zostawaĹ‚y)
+                // JeĹ›li chcesz trwaĹ‚e zniszczenia, usuĹ„ poniĹĽszÄ… pÄ™tlÄ™.
+                /*
+                for(let i=0; i<6; i++) {
+                    this.frays[i].x *= 0.99;
+                    this.frays[i].y *= 0.99;
+                }
+                */
+
+                this.hp = Math.min(this.maxHp, this.hp + DESTRUCTOR_CONFIG.repairRate * dt);
+            }
+            updateAnimation(dt) {
+                const lerpSpeed = DESTRUCTOR_CONFIG.visualLerpSpeed;
+                const dx = this.targetDeformation.x - this.deformation.x;
+                const dy = this.targetDeformation.y - this.deformation.y;
+                if (Math.abs(dx) > 0.05 || Math.abs(dy) > 0.05) {
+                    this.deformation.x += dx * lerpSpeed * dt;
+                    this.deformation.y += dy * lerpSpeed * dt;
+                    return true;
+                }
+                return false;
+            }
+            applyDeformation(vecX, vecY) {
+                this.targetDeformation.x += vecX;
+                this.targetDeformation.y += vecY;
+
+                // --- EFEKT PLASTYCZNOĹšCI (TrwaĹ‚e zgniatanie statku) ---
+                // Po przekroczeniu progu (yieldPoint) metal zapamiÄ™tuje nowy ksztaĹ‚t.
+                const yieldPoint = DESTRUCTOR_CONFIG.plasticYield || 15.0;
+                const maxPlastic = DESTRUCTOR_CONFIG.maxPlastic || 60.0;
+                const plasticityRate = DESTRUCTOR_CONFIG.plasticityRate || 0.8;
+
+                const currentDefSq = this.targetDeformation.x ** 2 + this.targetDeformation.y ** 2;
+
+                if (currentDefSq > yieldPoint * yieldPoint) {
+                    const currentDef = Math.sqrt(currentDefSq);
+                    const excess = currentDef - yieldPoint;
+
+                    // Obliczamy wektor trwaĹ‚ego przesuniÄ™cia (jak mocno blacha siÄ™ poddaĹ‚a)
+                    const shiftX = (this.targetDeformation.x / currentDef) * excess * plasticityRate;
+                    const shiftY = (this.targetDeformation.y / currentDef) * excess * plasticityRate;
+
+                    // Obliczamy oryginalnÄ… pozycjÄ™ heksa w siatce
+                    const hexHeight = Math.sqrt(3) * this.radius;
+                    const origGridX = this.c * this.radius * 1.5;
+                    const origGridY = this.r * hexHeight + (this.c % 2 !== 0 ? hexHeight / 2 : 0);
+
+                    // Zabezpieczenie: limitujemy max wgniecenie, ĹĽeby nie zepsuÄ‡ hit-boxĂłw (Search Radius)
+                    const totalShiftX = (this.gridX + shiftX) - origGridX;
+                    const totalShiftY = (this.gridY + shiftY) - origGridY;
+                    const totalShiftSq = totalShiftX * totalShiftX + totalShiftY * totalShiftY;
+
+                    if (totalShiftSq < maxPlastic * maxPlastic) {
+                        // Metal siÄ™ wygina! Przemieszczamy punkt zerowy heksa na staĹ‚e.
+                        this.gridX += shiftX;
+                        this.gridY += shiftY;
+
+                        // RozĹ‚adowujemy napiÄ™cie sprÄ™ĹĽyste, bo siatka przyjÄ™Ĺ‚a juĹĽ nowy ksztaĹ‚t.
+                        // Zmniejszamy teĹĽ deformacjÄ™ wizualnÄ…, ĹĽeby nie byĹ‚o przeskoku klatki.
+                        this.targetDeformation.x -= shiftX;
+                        this.targetDeformation.y -= shiftY;
+                        this.deformation.x -= shiftX;
+                        this.deformation.y -= shiftY;
+                    }
+                }
+
+                // --- LIMITY SPRÄĹ»YSTE ---
+                const maxD = DESTRUCTOR_CONFIG.maxDeform;
+                const tx = this.targetDeformation.x;
+                const ty = this.targetDeformation.y;
+                const d2 = tx * tx + ty * ty;
+
+                if (d2 > maxD * maxD) {
+                    const s = maxD / Math.sqrt(d2);
+                    this.targetDeformation.x *= s;
+                    this.targetDeformation.y *= s;
+                }
+
+                // tear check
+                const tt = DESTRUCTOR_CONFIG.tearThreshold;
+                if (this.targetDeformation.x ** 2 + this.targetDeformation.y ** 2 > tt * tt) this.hp = 0;
+            }
+            becomeDebris(impulseX, impulseY, parentEntity, scale = 1.0) {
+                if (this.isDebris) return;
+                this.scale = scale;
+                const px = parentEntity.x;
+                const py = parentEntity.y;
+                const rotation = parentEntity.angle + DESTRUCTOR_CONFIG.visualRotationOffset;
+                const c = Math.cos(rotation);
+                const s = Math.sin(rotation);
+                const centerX = parentEntity.hexGrid.srcWidth / 2;
+                const centerY = parentEntity.hexGrid.srcHeight / 2;
+                const pX = parentEntity.hexGrid.pivot ? parentEntity.hexGrid.pivot.x : 0;
+                const pY = parentEntity.hexGrid.pivot ? parentEntity.hexGrid.pivot.y : 0;
+                const startLx = (this.gridX - centerX) + this.deformation.x - pX;
+                const startLy = (this.gridY - centerY) + this.deformation.y - pY;
+                this.worldX = px + (startLx * scale) * c - (startLy * scale) * s;
+                this.worldY = py + (startLx * scale) * s + (startLy * scale) * c;
+                let vx = parentEntity.vx || 0;
+                let vy = parentEntity.vy || 0;
+                const angVel = parentEntity.angVel || 0;
+                const rx = (startLx * scale) * c - (startLy * scale) * s;
+                const ry = (startLx * scale) * s + (startLy * scale) * c;
+                vx += -angVel * ry;
+                vy += angVel * rx;
+                this.dvx = vx + impulseX + (this.deformation.x * 3.0);
+                this.dvy = vy + impulseY + (this.deformation.y * 3.0);
+                this.drot = (Math.random() - 0.5) * 8.0;
+                this.angle = rotation;
+                this.alpha = 1.0;
+                this.isDebris = true;
+                this.active = true;
+                DestructorSystem.debris.push(this);
+                if (parentEntity.mass) {
+                    parentEntity.mass -= DESTRUCTOR_CONFIG.shardMass;
+                    if (parentEntity.mass < 10) parentEntity.mass = 10;
+                }
+            }
+            updateDebris(dt) {
+                this.worldX += this.dvx * dt;
+                this.worldY += this.dvy * dt;
+                this.angle += this.drot * dt;
+                this.dvx *= DESTRUCTOR_CONFIG.friction;
+                this.dvy *= DESTRUCTOR_CONFIG.friction;
+                this.alpha -= dt * 0.2;
+                if (this.alpha <= 0) this.active = false;
+            }
+            drawDebris(ctx, camera) {
+                if (!this.active || !this.isDebris) return;
+                const p = worldToScreen(this.worldX, this.worldY, camera);
+                if (p.x < -100 || p.x > ctx.canvas.width + 100 || p.y < -100 || p.y > ctx.canvas.height + 100) return;
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                ctx.rotate(this.angle);
+                const s = camera.zoom * (this.scale || 1.0);
+                ctx.scale(s, s);
+                ctx.globalAlpha = Math.max(0, this.alpha);
+                this._drawHexPath(ctx);
+                ctx.clip();
+                if (this.damagedImg) ctx.drawImage(this.damagedImg, -this.gridX, -this.gridY);
+                else if (this.img) ctx.drawImage(this.img, -this.gridX, -this.gridY);
+                else { ctx.fillStyle = '#444'; ctx.fill(); }
+                ctx.restore();
+            }
+            drawShape(ctx) {
+                // (Ta metoda pozostaje bez zmian, ale wklejam dla kontekstu)
+                ctx.save();
+                ctx.translate(this.gridX + this.deformation.x, this.gridY + this.deformation.y);
+                this._drawHexPath(ctx); // To wywoĹ‚a naszÄ… nowÄ… funkcjÄ™
+                ctx.save();
+                ctx.clip();
+                if (this.color) { ctx.fillStyle = this.color; ctx.fill(); }
+                else {
+                    if (this.damagedImg) ctx.drawImage(this.damagedImg, -this.gridX, -this.gridY);
+                    else { ctx.fillStyle = '#222'; ctx.fill(); }
+                    if (this.img) {
+                        const hpRatio = this.hp / this.maxHp;
+                        const threshold = DESTRUCTOR_CONFIG.armorThreshold;
+                        let armorAlpha = 0;
+                        if (hpRatio > threshold) armorAlpha = (hpRatio - threshold) / (1.0 - threshold);
+                        if (armorAlpha > 0.01) {
+                            ctx.globalAlpha = armorAlpha;
+                            ctx.drawImage(this.img, -this.gridX, -this.gridY);
+                            ctx.globalAlpha = 1.0;
+                        }
+                    }
+                }
+                ctx.restore();
+                const stressSq = this.deformation.x * this.deformation.x + this.deformation.y * this.deformation.y;
+                if (stressSq > 25.0) { // 5.0^2
+                    const stress = Math.sqrt(stressSq);
+                    const ratio = Math.min(1.0, stress / DESTRUCTOR_CONFIG.tearThreshold);
+                    const alpha = ratio * 0.6;
+                    ctx.fillStyle = `rgba(255, ${Math.floor(ratio * 100)}, 0, ${alpha})`;
+                    ctx.fill();
+                }
+                ctx.restore();
+            }
+
+            _drawHexPath(ctx) {
+                ctx.beginPath();
+                const overlap = 1.08;
+
+                // --- NOWOĹšÄ†: Rysowanie z uwzglÄ™dnieniem strzÄ™pĂłw (this.frays) ---
+                // Pierwszy punkt
+                let fx = this.verts[0].x + this.frays[0].x;
+                let fy = this.verts[0].y + this.frays[0].y;
+                ctx.moveTo(fx * overlap, fy * overlap);
+
+                // Reszta punktĂłw
+                for (let i = 1; i < 6; i++) {
+                    fx = this.verts[i].x + this.frays[i].x;
+                    fy = this.verts[i].y + this.frays[i].y;
+                    ctx.lineTo(fx * overlap, fy * overlap);
+                }
+                // ----------------------------------------------------------------
+                ctx.closePath();
+            }
+        }
+        // ====================================================================
+        // WEBGPU PHYSICS MANAGER (PHASE 4: COMPLETE HYBRID SOLUTION - REVIWED & FIXED)
+        // ====================================================================
+        const WebGPUPhysics = {
+            device: null,
+            active: false,
+
+            elasticityPipeline: null,
+            elasticityBindLayout: null,
+            elasticityUniform: null,
+
+            collisionPipeline: null,
+            collisionBindLayout: null,
+            uniformBuffer: null,
+            reactionBuffer: null,
+            readbackBuffer: null,
+
+            async init() {
+                if (!navigator.gpu) return false;
+                try {
+                    const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+                    if (!adapter) return false;
+                    this.device = await adapter.requestDevice();
+
+                    const hexR = DESTRUCTOR_CONFIG.gridDivisions;
+                    const hitRad = hexR * 1.3;
+                    const hitRadSq = hitRad * hitRad;
+                    const hexSpacing = hexR * 1.5;
+                    const hexHeight = Math.sqrt(3) * hexR;
+
+                    // OPTYMALIZACJA: Promień zmniejszony do 2 (25 iteracji zamiast 49 per heks).
+                    // Wystarczy by pokryć przemieszczenia deformacji i uderzeń.
+                    const searchR = Math.max(1, Math.min(4, Number(DESTRUCTOR_CONFIG.gpuCollisionSearchRadius) || 2));
+                    const maxDeform = DESTRUCTOR_CONFIG.maxDeform;
+                    const maxStepDeform = Math.max(1.0, Number(DESTRUCTOR_CONFIG.gpuMaxStepDeform) || 10.0);
+                    const penClamp = hitRad * Math.max(0.2, Math.min(1.0, Number(DESTRUCTOR_CONFIG.gpuPenClampMul) || 0.65));
+
+                    // --- 1. PIPELINE: SPRĘŻYSTOŚĆ ---
+                    this.elasticityBindLayout = this.device.createBindGroupLayout({
+                        entries: [
+                            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+                            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+                            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } }
+                        ]
+                    });
+
+                    const elasticityShader = `
+                struct Shard { gridX: f32, gridY: f32, deformX: f32, deformY: f32, targetDeformX: f32, targetDeformY: f32, hp: f32, maxHp: f32 };
+                @group(0) @binding(0) var<storage, read_write> shards: array<Shard>;
+                @group(0) @binding(1) var<storage, read> neighbors: array<i32>;
+                @group(0) @binding(2) var<uniform> params: vec2<f32>;
+
+                @compute @workgroup_size(64)
+                fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+                    let idx = id.x;
+                    if (idx >= arrayLength(&shards)) { return; }
+                    var me = shards[idx];
+                    if (me.hp <= 0.0) { return; }
+                    let k = params.x;
+                    var myTarget = vec2<f32>(me.targetDeformX, me.targetDeformY);
+                    var dDeform = vec2<f32>(0.0, 0.0);
+                    let nBase = idx * 6u;
+                    for(var i = 0u; i < 6u; i = i + 1u) {
+                        let nIdx = neighbors[nBase + i];
+                        if (nIdx >= 0) {
+                            let nTarget = vec2<f32>(shards[u32(nIdx)].targetDeformX, shards[u32(nIdx)].targetDeformY);
+                            let avgDeform = (myTarget + nTarget) * 0.5;
+                            dDeform = dDeform + (avgDeform - myTarget) * k;
+                        }
+                    }
+                    shards[idx].targetDeformX = myTarget.x + dDeform.x;
+                    shards[idx].targetDeformY = myTarget.y + dDeform.y;
+                }
+            `;
+                    this.elasticityPipeline = this.device.createComputePipeline({
+                        layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.elasticityBindLayout] }),
+                        compute: { module: this.device.createShaderModule({ code: elasticityShader }), entryPoint: "main" }
+                    });
+                    this.elasticityUniform = this.device.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+
+                    // --- 2. PIPELINE: DETEKCJA KOLIZJI I WGNIATANIE ---
+                    this.collisionBindLayout = this.device.createBindGroupLayout({
+                        entries: [
+                            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }, // Shards A (READ_WRITE)
+                            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // Shards B
+                            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } }, // Transforms
+                            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // GridMap B
+                            { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }  // Reaction
+                        ]
+                    });
+
+                    const collisionShader = `
+                struct Shard { gridX: f32, gridY: f32, deformX: f32, deformY: f32, targetDeformX: f32, targetDeformY: f32, hp: f32, maxHp: f32 };
+                
+                struct Config { 
+                    posA: vec2<f32>, rotA: vec2<f32>, cx_cyA: vec2<f32>, pivotA: vec2<f32>, scaleA: f32, colsB: f32, rowsB: f32, padA: f32,
+                    posB: vec2<f32>, rotB: vec2<f32>, cx_cyB: vec2<f32>, pivotB: vec2<f32>, scaleB: f32, padB1: f32, padB2: f32, padB3: f32,
+                    velA: vec2<f32>, velB: vec2<f32>, angVelA: f32, angVelB: f32, dt: f32, isDestruction: f32
+                };
+
+                struct Reaction { impulseX: atomic<i32>, impulseY: atomic<i32>, hitCount: atomic<u32> };
+
+                @group(0) @binding(0) var<storage, read_write> shardsA: array<Shard>;
+                @group(0) @binding(1) var<storage, read> shardsB: array<Shard>;
+                @group(0) @binding(2) var<uniform> config: Config;
+                @group(0) @binding(3) var<storage, read> gridMapB: array<i32>;
+                @group(0) @binding(4) var<storage, read_write> reaction: Reaction;
+
+                @compute @workgroup_size(64)
+                fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+                    let idxA = id.x;
+                    if (idxA >= arrayLength(&shardsA)) { return; }
+                    var sA = shardsA[idxA];
+                    if (sA.hp <= 0.0) { return; }
+
+                    let relAx = (sA.gridX - config.cx_cyA.x) + sA.deformX - config.pivotA.x;
+                    let relAy = (sA.gridY - config.cx_cyA.y) + sA.deformY - config.pivotA.y;
+                    let worldAx = config.posA.x + (relAx * config.scaleA) * config.rotA.x - (relAy * config.scaleA) * config.rotA.y;
+                    let worldAy = config.posA.y + (relAx * config.scaleA) * config.rotA.y + (relAy * config.scaleA) * config.rotA.x;
+
+                    let dx = worldAx - config.posB.x;
+                    let dy = worldAy - config.posB.y;
+                    let localBx = (dx * config.rotB.x + dy * config.rotB.y) / config.scaleB;
+                    let localBy = (-dx * config.rotB.y + dy * config.rotB.x) / config.scaleB;
+                    
+                    let gridBx = localBx + config.cx_cyB.x + config.pivotB.x;
+                    let gridBy = localBy + config.cx_cyB.y + config.pivotB.y;
+
+                    let approxC = i32(round(gridBx / ${hexSpacing.toFixed(5)})); 
+                    let offsetR = f32(approxC % 2) * (${hexHeight.toFixed(5)} * 0.5);
+                    let approxR = i32(round((gridBy - offsetR) / ${hexHeight.toFixed(5)})); 
+
+                    let hitRadSq = ${hitRadSq.toFixed(5)}; 
+
+                    var accumulatedDeformX = 0.0;
+                    var accumulatedDeformY = 0.0;
+                    var hit = false;
+
+                    for(var r = approxR - ${searchR}; r <= approxR + ${searchR}; r++) {
+                        for(var c = approxC - ${searchR}; c <= approxC + ${searchR}; c++) {
+                            if (c >= 0 && c < i32(config.colsB) && r >= 0 && r < i32(config.rowsB)) {
+                                let gridIdx = u32(c + r * i32(config.colsB));
+                                let denseIdx = gridMapB[gridIdx];
+                                
+                                if (denseIdx >= 0) {
+                                    let sB = shardsB[denseIdx];
+                                    if (sB.hp > 0.0) {
+                                        let bRelX = (sB.gridX - config.cx_cyB.x) + sB.deformX - config.pivotB.x;
+                                        let bRelY = (sB.gridY - config.cx_cyB.y) + sB.deformY - config.pivotB.y;
+                                        let worldBx = config.posB.x + (bRelX * config.scaleB) * config.rotB.x - (bRelY * config.scaleB) * config.rotB.y;
+                                        let worldBy = config.posB.y + (bRelX * config.scaleB) * config.rotB.y + (bRelY * config.scaleB) * config.rotB.x;
+
+                                        let nx = worldAx - worldBx;
+                                        let ny = worldAy - worldBy;
+                                        let distSq = nx*nx + ny*ny;
+
+                                        if (distSq < hitRadSq) {
+                                            let dist = sqrt(distSq);
+                                            let rawPen = ${hitRad.toFixed(5)} - dist;
+                                            let pen = max(0.0, min(rawPen, ${penClamp.toFixed(5)}));
+                                            
+                                            let invDist = 1.0 / max(dist, 0.0001);
+                                            let dirX = nx * invDist;
+                                            let dirY = ny * invDist;
+
+                                            let crushForce = pen * (1.0 + config.isDestruction * 1.25);
+                                            
+                                            let localDefX = dirX * config.rotA.x + dirY * config.rotA.y;
+                                            let localDefY = -dirX * config.rotA.y + dirY * config.rotA.x;
+
+                                            accumulatedDeformX += localDefX * crushForce;
+                                            accumulatedDeformY += localDefY * crushForce;
+
+                                            hit = true;
+
+                                            atomicAdd(&reaction.impulseX, i32(dirX * pen * 1000.0));
+                                            atomicAdd(&reaction.impulseY, i32(dirY * pen * 1000.0));
+                                            atomicAdd(&reaction.hitCount, 1u);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (hit) {
+                        let stepSq = accumulatedDeformX * accumulatedDeformX + accumulatedDeformY * accumulatedDeformY;
+                        let maxStepSq = ${maxStepDeform.toFixed(2)} * ${maxStepDeform.toFixed(2)};
+                        if (stepSq > maxStepSq) {
+                            let stepScale = ${maxStepDeform.toFixed(2)} / sqrt(stepSq);
+                            accumulatedDeformX = accumulatedDeformX * stepScale;
+                            accumulatedDeformY = accumulatedDeformY * stepScale;
+                        }
+
+                        let newDefX = sA.targetDeformX + accumulatedDeformX;
+                        let newDefY = sA.targetDeformY + accumulatedDeformY;
+                        
+                        let defSq = newDefX*newDefX + newDefY*newDefY;
+                        let maxDefSq = ${maxDeform.toFixed(2)} * ${maxDeform.toFixed(2)};
+                        
+                        if (defSq > maxDefSq) {
+                            let scale = ${maxDeform.toFixed(2)} / sqrt(defSq);
+                            sA.targetDeformX = newDefX * scale;
+                            sA.targetDeformY = newDefY * scale;
+                        } else {
+                            sA.targetDeformX = newDefX;
+                            sA.targetDeformY = newDefY;
+                        }
+
+                        if (defSq > ${DESTRUCTOR_CONFIG.tearThreshold.toFixed(2)} * ${DESTRUCTOR_CONFIG.tearThreshold.toFixed(2)}) {
+                            sA.hp = 0.0;
+                        } else {
+                            sA.hp -= config.isDestruction * 6.0;
+                        }
+                        
+                        shardsA[idxA] = sA; 
+                    }
+                }
+            `;
+
+                    this.collisionPipeline = this.device.createComputePipeline({
+                        layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.collisionBindLayout] }),
+                        compute: { module: this.device.createShaderModule({ code: collisionShader }), entryPoint: "main" }
+                    });
+
+                    this.uniformBuffer = this.device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+                    this.reactionBuffer = this.device.createBuffer({ size: 12, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+                    // FIX Bug 1: Pool of readback buffers to avoid race conditions
+                    this._readbackPool = [];
+                    for (let rb = 0; rb < 4; rb++) {
+                        this._readbackPool.push({
+                            buffer: this.device.createBuffer({ size: 12, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
+                            inUse: false
+                        });
+                    }
+                    this.readbackBuffer = this._readbackPool[0].buffer; // backward compat
+
+                    this.active = true;
+                    console.log("🚀 WebGPU Phase 4 (Full System) gotowe i zabezpieczone!");
+                    return true;
+                } catch (e) {
+                    console.error("Błąd WebGPU:", e);
+                    return false;
+                }
+            },
+
+            _destroyGpuData(gd, force = false) {
+                if (!gd || gd._destroyed) return;
+                gd._destroyed = true;
+                gd.disposed = true;
+                if (!force) return;
+                gd.shardBuffer?.destroy?.();
+                gd.neighborBuffer?.destroy?.();
+                gd.gridMapBuffer?.destroy?.();
+                gd.readbackShards?.destroy?.();
+            },
+
+            _retireGpuData(gd) {
+                if (!gd || gd._destroyed) return;
+                gd.disposed = true;
+                if (gd.isMapping) {
+                    gd.pendingDestroy = true;
+                    return;
+                }
+                this._destroyGpuData(gd);
+            },
+
+            releaseEntityBuffers(entity) {
+                const gd = entity?.gpuData;
+                if (!gd) return;
+                this._destroyGpuData(gd, true);
+                entity.gpuData = null;
+            },
+
+            createBuffersForEntity(entity) {
+                if (!this.active || !entity.hexGrid || !entity.hexGrid.shards) return;
+                const oldGd = entity.gpuData;
+                if (oldGd) this._retireGpuData(oldGd);
+                const grid = entity.hexGrid;
+                const count = grid.shards.length;
+
+                const shardData = new Float32Array(count * 8);
+                const neighborData = new Int32Array(count * 6).fill(-1);
+                const gridMapData = new Int32Array(grid.cols * grid.rows).fill(-1);
+
+                for (let i = 0; i < count; i++) {
+                    grid.shards[i]._gpuIndex = i;
+                }
+
+                for (let i = 0; i < count; i++) {
+                    const s = grid.shards[i];
+                    const offset = i * 8;
+                    shardData[offset + 0] = s.gridX;
+                    shardData[offset + 1] = s.gridY;
+                    shardData[offset + 2] = s.deformation.x;
+                    shardData[offset + 3] = s.deformation.y;
+                    shardData[offset + 4] = s.targetDeformation.x;
+                    shardData[offset + 5] = s.targetDeformation.y;
+                    shardData[offset + 6] = s.hp;
+                    shardData[offset + 7] = s.maxHp;
+
+                    gridMapData[s.c + s.r * grid.cols] = i;
+
+                    const nOffset = i * 6;
+                    for (let n = 0; n < s.neighbors.length && n < 6; n++) {
+                        if (s.neighbors[n] && s.neighbors[n]._gpuIndex !== undefined) {
+                            neighborData[nOffset + n] = s.neighbors[n]._gpuIndex;
+                        }
+                    }
+                }
+
+                const shardBuffer = this.device.createBuffer({
+                    size: shardData.byteLength,
+                    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+                });
+                this.device.queue.writeBuffer(shardBuffer, 0, shardData);
+
+                const neighborBuffer = this.device.createBuffer({
+                    size: neighborData.byteLength,
+                    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+                });
+                this.device.queue.writeBuffer(neighborBuffer, 0, neighborData);
+
+                const gridMapBuffer = this.device.createBuffer({
+                    size: gridMapData.byteLength,
+                    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+                });
+                this.device.queue.writeBuffer(gridMapBuffer, 0, gridMapData);
+
+                const readbackShards = this.device.createBuffer({
+                    size: shardData.byteLength,
+                    usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+                });
+
+                const elasticityBindGroup = this.device.createBindGroup({
+                    layout: this.elasticityBindLayout,
+                    entries: [
+                        { binding: 0, resource: { buffer: shardBuffer } },
+                        { binding: 1, resource: { buffer: neighborBuffer } },
+                        { binding: 2, resource: { buffer: this.elasticityUniform } }
+                    ]
+                });
+
+                entity.gpuData = {
+                    shardsRef: grid.shards,
+                    shardData, count,
+                    shardBuffer, neighborBuffer, gridMapBuffer, readbackShards, elasticityBindGroup,
+                    needsSyncFromGPU: false, isMapping: false,
+                    disposed: false, pendingDestroy: false, _destroyed: false
+                };
+            },
+
+            syncToGPU(entity, force = false) {
+                if (!this.active || !entity?.hexGrid || !entity.gpuData) return;
+                const gd = entity.gpuData;
+                if (gd.disposed || gd._destroyed) return;
+                if (!force && gd.needsSyncFromGPU) return;
+
+                if (gd.shardsRef !== entity.hexGrid.shards) {
+                    this.createBuffersForEntity(entity);
+                    return;
+                }
+
+                const shardLen = entity.hexGrid.shards.length;
+                const liveCount = Math.min(gd.count, shardLen);
+                for (let i = 0; i < liveCount; i++) {
+                    const s = entity.hexGrid.shards[i];
+                    if (!s) continue;
+                    const offset = i * 8;
+                    // FIX Bug 4: sync gridX/gridY which change during plastic deformation
+                    gd.shardData[offset + 0] = s.gridX;
+                    gd.shardData[offset + 1] = s.gridY;
+                    gd.shardData[offset + 2] = s.deformation.x;
+                    gd.shardData[offset + 3] = s.deformation.y;
+                    gd.shardData[offset + 4] = s.targetDeformation.x;
+                    gd.shardData[offset + 5] = s.targetDeformation.y;
+                    gd.shardData[offset + 6] = s.hp;
+                }
+                this.device.queue.writeBuffer(gd.shardBuffer, 0, gd.shardData);
+            },
+
+            // BEZPIECZNE ASYNC Z TRY/CATCH DLA ELASTICITY
+            async computeElasticity(entity, dt) {
+                if (!this.active || !entity?.hexGrid || !entity.gpuData || entity.gpuData.isMapping) return;
+                let gd = entity.gpuData;
+                if (gd.disposed || gd._destroyed) return;
+
+                this.syncToGPU(entity);
+                gd = entity.gpuData;
+                if (!gd || gd.isMapping || gd.disposed || gd._destroyed) return;
+
+                const tension = DESTRUCTOR_CONFIG.softBodyTension;
+                const k = 1.0 - Math.exp(-tension * dt * 60);
+                this.device.queue.writeBuffer(this.elasticityUniform, 0, new Float32Array([k, 0]));
+
+                const commandEncoder = this.device.createCommandEncoder();
+                const passEncoder = commandEncoder.beginComputePass();
+                passEncoder.setPipeline(this.elasticityPipeline);
+                passEncoder.setBindGroup(0, gd.elasticityBindGroup);
+                passEncoder.dispatchWorkgroups(Math.ceil(gd.count / 64));
+                passEncoder.end();
+
+                commandEncoder.copyBufferToBuffer(gd.shardBuffer, 0, gd.readbackShards, 0, gd.shardData.byteLength);
+                this.device.queue.submit([commandEncoder.finish()]);
+
+                gd.isMapping = true;
+                try {
+                    await gd.readbackShards.mapAsync(GPUMapMode.READ);
+                    if (entity.gpuData !== gd || gd.disposed || gd._destroyed) return;
+                    const mappedData = new Float32Array(gd.readbackShards.getMappedRange());
+                    let changed = false;
+                    const shardLen = entity.hexGrid.shards.length;
+                    const liveCount = Math.min(gd.count, shardLen);
+                    for (let i = 0; i < liveCount; i++) {
+                        const s = entity.hexGrid.shards[i];
+                        if (!s) continue;
+                        if (s.active && !s.isDebris) {
+                            s.targetDeformation.x = mappedData[i * 8 + 4];
+                            s.targetDeformation.y = mappedData[i * 8 + 5];
+                            changed = true;
+                        }
+                    }
+                    if (changed) entity.hexGrid.cacheDirty = true;
+                } catch (err) {
+                    console.error("WebGPU Elasticity mapAsync error:", err);
+                } finally {
+                    if (gd.readbackShards.mapState === 'mapped') {
+                        gd.readbackShards.unmap();
+                    }
+                    gd.isMapping = false;
+                    if (gd.pendingDestroy || gd.disposed) this._destroyGpuData(gd);
+                }
+            },
+
+            // BEZPIECZNE ASYNC Z TRY/CATCH DLA WYNIKÓW WGNIECEŃ
+            async pullFromGPU(entity) {
+                if (!this.active || !entity?.hexGrid || !entity.gpuData) return;
+                if (!entity.gpuData.needsSyncFromGPU || entity.gpuData.isMapping) return;
+                const gd = entity.gpuData;
+                if (gd.disposed || gd._destroyed) return;
+                gd.isMapping = true;
+
+                const commandEncoder = this.device.createCommandEncoder();
+                commandEncoder.copyBufferToBuffer(gd.shardBuffer, 0, gd.readbackShards, 0, gd.shardData.byteLength);
+                this.device.queue.submit([commandEncoder.finish()]);
+
+                try {
+                    await gd.readbackShards.mapAsync(GPUMapMode.READ);
+                    if (entity.gpuData !== gd || gd.disposed || gd._destroyed) return;
+                    const mappedData = new Float32Array(gd.readbackShards.getMappedRange());
+                    let changed = false;
+
+                    const shardLen = entity.hexGrid.shards.length;
+                    const liveCount = Math.min(gd.count, shardLen);
+                    for (let i = 0; i < liveCount; i++) {
+                        const s = entity.hexGrid.shards[i];
+                        if (!s) continue;
+                        if (s.active && !s.isDebris) {
+                            s.targetDeformation.x = mappedData[i * 8 + 4];
+                            s.targetDeformation.y = mappedData[i * 8 + 5];
+                            s.hp = mappedData[i * 8 + 6];
+                            changed = true;
+                        }
+                    }
+                    if (changed) entity.hexGrid.cacheDirty = true;
+                } catch (err) {
+                    console.error("WebGPU Pull mapAsync error:", err);
+                } finally {
+                    if (gd.readbackShards.mapState === 'mapped') {
+                        gd.readbackShards.unmap();
+                    }
+                    gd.needsSyncFromGPU = false;
+                    gd.isMapping = false;
+                    if (gd.pendingDestroy || gd.disposed) this._destroyGpuData(gd);
+                }
+            },
+
+            // FIX Bug 1: Get a free readback buffer from pool
+            _acquireReadback() {
+                for (const rb of this._readbackPool) {
+                    if (!rb.inUse) { rb.inUse = true; return rb; }
+                }
+                // All busy — create a temporary one
+                const buf = this.device.createBuffer({ size: 12, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+                const rb = { buffer: buf, inUse: true };
+                this._readbackPool.push(rb);
+                return rb;
+            },
+
+            // POPRAWIONE POZYCJE (this.collisionBindLayout, this.collisionPipeline) ORAZ SYNC B
+            async processCollision(A, B, dt) {
+                if (!this.active || !A.gpuData || !B.gpuData) return null;
+                if (A.gpuData.disposed || A.gpuData._destroyed || B.gpuData.disposed || B.gpuData._destroyed) return null;
+
+                if (!A.gpuData.needsSyncFromGPU) this.syncToGPU(A);
+                if (!B.gpuData.needsSyncFromGPU) this.syncToGPU(B);
+                if (!A.gpuData || !B.gpuData) return null;
+                if (A.gpuData.disposed || A.gpuData._destroyed || B.gpuData.disposed || B.gpuData._destroyed) return null;
+
+                this.device.queue.writeBuffer(this.reactionBuffer, 0, new Int32Array([0, 0, 0]));
+
+                const dvx = A.vx - B.vx;
+                const dvy = A.vy - B.vy;
+                const impactSpeed = Math.hypot(dvx, dvy);
+                const isDestruction = impactSpeed > (DESTRUCTOR_CONFIG.yieldPoint || 200) ? 1.0 : 0.0;
+
+                const getTrans = (ent) => {
+                    const ang = ent.angle + DESTRUCTOR_CONFIG.visualRotationOffset;
+                    return [
+                        ent.x, ent.y, Math.cos(ang), Math.sin(ang),
+                        ent.hexGrid.srcWidth * 0.5, ent.hexGrid.srcHeight * 0.5,
+                        ent.hexGrid.pivot ? ent.hexGrid.pivot.x : 0, ent.hexGrid.pivot ? ent.hexGrid.pivot.y : 0,
+                        1.0, ent.hexGrid.cols, ent.hexGrid.rows, 0.0
+                    ];
+                };
+
+                const uData = new Float32Array([
+                    ...getTrans(A), ...getTrans(B),
+                    A.vx, A.vy, B.vx, B.vy,
+                    A.angVel, B.angVel, dt, isDestruction
+                ]);
+                this.device.queue.writeBuffer(this.uniformBuffer, 0, uData);
+
+                const bindGroup = this.device.createBindGroup({
+                    layout: this.collisionBindLayout,
+                    entries: [
+                        { binding: 0, resource: { buffer: A.gpuData.shardBuffer } },
+                        { binding: 1, resource: { buffer: B.gpuData.shardBuffer } },
+                        { binding: 2, resource: { buffer: this.uniformBuffer } },
+                        { binding: 3, resource: { buffer: B.gpuData.gridMapBuffer } },
+                        { binding: 4, resource: { buffer: this.reactionBuffer } }
+                    ]
+                });
+
+                // FIX Bug 1: use pooled readback buffer
+                const rb = this._acquireReadback();
+
+                const commandEncoder = this.device.createCommandEncoder();
+                const passEncoder = commandEncoder.beginComputePass();
+                passEncoder.setPipeline(this.collisionPipeline);
+                passEncoder.setBindGroup(0, bindGroup);
+                passEncoder.dispatchWorkgroups(Math.ceil(A.gpuData.count / 64));
+                passEncoder.end();
+
+                commandEncoder.copyBufferToBuffer(this.reactionBuffer, 0, rb.buffer, 0, 12);
+                this.device.queue.submit([commandEncoder.finish()]);
+
+                let res = null;
+                try {
+                    await rb.buffer.mapAsync(GPUMapMode.READ);
+                    const results = new Int32Array(rb.buffer.getMappedRange());
+
+                    const hitCount = results[2];
+                    if (hitCount > 0) {
+                        res = {
+                            impulseX: (results[0] / 1000.0) / hitCount,
+                            impulseY: (results[1] / 1000.0) / hitCount,
+                            count: hitCount
+                        };
+                    }
+                } catch (err) {
+                    console.error("WebGPU processCollision mapAsync error:", err);
+                } finally {
+                    if (rb.buffer.mapState === 'mapped') {
+                        rb.buffer.unmap();
+                    }
+                    rb.inUse = false;
+                }
+
+                if (res && res.count > 0) A.gpuData.needsSyncFromGPU = true;
+
+                return res;
+            }
+        };
+
+        const DestructorSystem = {
+            debris: [],
+            splitQueue: [],
+            _tick: 0,
+            async update(dt, entities) {
+                for (let i = this.debris.length - 1; i >= 0; i--) {
+                    this.debris[i].updateDebris(dt);
+                    if (!this.debris[i].active) {
+                        this.debris[i] = this.debris[this.debris.length - 1];
+                        this.debris.pop();
+                    }
+                }
+                this._tick++;
+
+                const t0col = performance.now();
+
+                // Ściągnijmy na CPU to, co zostało wgniecione w poprzedniej klatce!
+                if (WebGPUPhysics.active) {
+                    const pullPromises = [];
+                    for (const e of entities) {
+                        if (e.hexGrid && e.gpuData && e.gpuData.needsSyncFromGPU) {
+                            pullPromises.push(WebGPUPhysics.pullFromGPU(e));
+                        }
+                    }
+                    if (pullPromises.length) await Promise.all(pullPromises);
+                }
+
+                // --- ZMIANA: Czekamy na sprężystość z GPU! ---
+                await this.simulateElasticity(entities, dt);
+
+                const iterations = DESTRUCTOR_CONFIG.collisionIterations || 2;
+                for (let i = 0; i < iterations; i++) {
+                    await this.resolveCollisions(entities, dt);
+                }
+                Perf.collisionTime += performance.now() - t0col;
+
+                // Detekcja zniszczonych heksów
+                for (const e of entities) {
+                    if (!e.hexGrid) continue;
+                    let splitNeeded = false;
+                    for (const s of e.hexGrid.shards) {
+                        if (s.active && !s.isDebris && s.hp <= 0) {
+                            this.destroyShard(e, s, { x: e.vx, y: e.vy });
+                            splitNeeded = true;
+                        }
+                    }
+                    if (splitNeeded) this.splitQueue.push(e);
+                }
+
+                if (this.splitQueue.length > 0) this.processSplits(entities);
+            },
+
+            updateVisualDeformation(entities, dt) {
+                for (const e of entities) {
+                    if (e.hexGrid) {
+                        let moving = false;
+                        for (const s of e.hexGrid.shards) {
+                            if (!s.active || s.isDebris) continue;
+                            if (s.updateAnimation(dt)) moving = true;
+                        }
+                        if (moving) e.hexGrid.cacheDirty = true;
+                    }
+                }
+            },
+
+            // --- ZMIANA: Funkcja jest teraz async ---
+            async simulateElasticity(entities, dt) {
+                // GPU PATH
+                if (WebGPUPhysics.active) {
+                    const promises = [];
+                    for (const e of entities) {
+                        if (e.hexGrid) promises.push(WebGPUPhysics.computeElasticity(e, dt));
+                    }
+                    if (promises.length > 0) await Promise.all(promises);
+                    return;
+                }
+
+                // CPU FALLBACK PATH
+                const tension = DESTRUCTOR_CONFIG.softBodyTension;
+                if (tension <= 0) return;
+                const k = 1.0 - Math.exp(-tension * dt * 60);
+
+                for (const e of entities) {
+                    if (!e.hexGrid) continue;
+                    for (const s of e.hexGrid.shards) {
+                        if (!s.active || s.isDebris) continue;
+                        for (const n of s.neighbors) {
+                            if (!n.active || n.isDebris) continue;
+                            if (n.c < s.c || (n.c === s.c && n.r <= s.r)) continue;
+
+                            const ax = s.targetDeformation.x;
+                            const ay = s.targetDeformation.y;
+                            const bx = n.targetDeformation.x;
+                            const by = n.targetDeformation.y;
+
+                            const avgX = (ax + bx) * 0.5;
+                            const avgY = (ay + by) * 0.5;
+
+                            s.targetDeformation.x += (avgX - ax) * k;
+                            s.targetDeformation.y += (avgY - ay) * k;
+                            n.targetDeformation.x += (avgX - bx) * k;
+                            n.targetDeformation.y += (avgY - by) * k;
+                        }
+                    }
+                }
+            },
+
+            repair(entities, dt) {
+                for (const e of entities) {
+                    if (e.hexGrid && e.hexGrid.shards) {
+                        let anyFix = false;
+                        for (const s of e.hexGrid.shards) {
+                            if (s.active && !s.isDebris) {
+                                if (Math.abs(s.deformation.x) > 0.1 || Math.abs(s.deformation.y) > 0.1 || s.hp < s.maxHp) {
+                                    s.repair(dt);
+                                    anyFix = true;
+                                }
+                            }
+                        }
+                        if (anyFix) {
+                            e.hexGrid.cacheDirty = true;
+                            if (WebGPUPhysics.active) WebGPUPhysics.syncToGPU(e);
+                        }
+                    }
+                }
+            },
+
+            async resolveCollisions(entities, dt) {
+                const len = entities.length;
+                for (let i = 0; i < len; i++) {
+                    const A = entities[i];
+                    if (!A.hexGrid) continue;
+                    const ax = A.x, ay = A.y;
+                    const ar = A.radius || 100;
+                    for (let j = i + 1; j < len; j++) {
+                        const B = entities[j];
+                        if (!B.hexGrid) continue;
+                        if (A.owner === B || B.owner === A) continue;
+                        const dx = ax - B.x, dy = ay - B.y;
+                        const radSum = ar + (B.radius || 100);
+                        if (dx * dx + dy * dy > radSum * radSum) continue;
+
+                        // GPU robi wszystko: zwraca nam tylko wektor pchnięcia makro!
+                        if (WebGPUPhysics.active) {
+                            const reaction = await WebGPUPhysics.processCollision(A, B, dt);
+                            if (!reaction || reaction.count <= 0) continue;
+                            const reactionB = await WebGPUPhysics.processCollision(B, A, dt);
+
+                            const massA = A.mass || 100;
+                            const massB = B.mass || 100;
+                            // FIX Bug 2: Halved forceMag since both A→B and B→A contribute
+                            const forceMag = DESTRUCTOR_CONFIG.crushSeparation * 50;
+
+                            if (reaction && reaction.count > 0) {
+                                Perf.contactsAccum += reaction.count;
+
+                                A.vx += (reaction.impulseX / massA) * forceMag;
+                                A.vy += (reaction.impulseY / massA) * forceMag;
+                                B.vx -= (reaction.impulseX / massB) * forceMag;
+                                B.vy -= (reaction.impulseY / massB) * forceMag;
+
+                                A.x += reaction.impulseX * 0.05;
+                                A.y += reaction.impulseY * 0.05;
+                                B.x -= reaction.impulseX * 0.05;
+                                B.y -= reaction.impulseY * 0.05;
+                            }
+
+                            // FIX Bug 2: Apply symmetric forces from B→A reaction
+                            if (reactionB && reactionB.count > 0) {
+                                Perf.contactsAccum += reactionB.count;
+
+                                B.vx += (reactionB.impulseX / massB) * forceMag;
+                                B.vy += (reactionB.impulseY / massB) * forceMag;
+                                A.vx -= (reactionB.impulseX / massA) * forceMag;
+                                A.vy -= (reactionB.impulseY / massA) * forceMag;
+
+                                B.x += reactionB.impulseX * 0.05;
+                                B.y += reactionB.impulseY * 0.05;
+                                A.x -= reactionB.impulseX * 0.05;
+                                A.y -= reactionB.impulseY * 0.05;
+                            }
+                        } else {
+                            const massA = A.mass || 100;
+                            const massB = B.mass || 100;
+                            let nx = dx;
+                            let ny = dy;
+                            let distSq = nx * nx + ny * ny;
+                            if (distSq < 1e-8) {
+                                nx = 1;
+                                ny = 0;
+                                distSq = 1;
+                            }
+                            const dist = Math.sqrt(distSq);
+                            const penetration = radSum - dist;
+                            if (penetration <= 0) continue;
+                            nx /= dist;
+                            ny /= dist;
+
+                            const rvx = A.vx - B.vx;
+                            const rvy = A.vy - B.vy;
+                            const velAlongNormal = rvx * nx + rvy * ny;
+                            if (velAlongNormal < 0) {
+                                const restitution = DESTRUCTOR_CONFIG.restitution ?? 0.05;
+                                const invMassA = 1 / massA;
+                                const invMassB = 1 / massB;
+                                const denom = invMassA + invMassB;
+                                if (denom > 1e-8) {
+                                    const jImp = (-(1 + restitution) * velAlongNormal) / denom;
+                                    const impX = jImp * nx;
+                                    const impY = jImp * ny;
+                                    A.vx += impX * invMassA;
+                                    A.vy += impY * invMassA;
+                                    B.vx -= impX * invMassB;
+                                    B.vy -= impY * invMassB;
+                                }
+                            }
+
+                            const invMassA = 1 / massA;
+                            const invMassB = 1 / massB;
+                            const percent = 0.35;
+                            const slop = 0.01;
+                            const corrMag = Math.max(penetration - slop, 0) / (invMassA + invMassB) * percent;
+                            const corrX = nx * corrMag;
+                            const corrY = ny * corrMag;
+                            A.x += corrX * invMassA;
+                            A.y += corrY * invMassA;
+                            B.x -= corrX * invMassB;
+                            B.y -= corrY * invMassB;
+                        }
+                    }
+                }
+            },
+
+            // eraseShard: Gumka â€” wytnij dziurÄ™ z cache bez peĹ‚nego redraw (from destructor.js)
+            eraseShard(entity, shard) {
+                if (!entity.hexGrid || !entity.hexGrid.cacheCtx) return;
+                const ctx = entity.hexGrid.cacheCtx;
+                ctx.save();
+                ctx.globalCompositeOperation = 'destination-out';
+                ctx.translate(shard.gridX + shard.deformation.x, shard.gridY + shard.deformation.y);
+                ctx.beginPath();
+                const r = shard.radius * 1.15;
+                ctx.arc(0, 0, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+                ctx.globalCompositeOperation = 'source-over';
+            },
+
+            destroyShard(entity, shard, velVector) {
+                shard.hp = 0;
+                const ctx = entity.hexGrid.cacheCtx;
+                if (ctx) {
+                    ctx.save();
+                    ctx.translate(shard.gridX + shard.deformation.x, shard.gridY + shard.deformation.y);
+                    ctx.globalCompositeOperation = 'destination-out';
+                    ctx.beginPath();
+                    ctx.arc(0, 0, shard.radius * 1.05, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                    ctx.globalCompositeOperation = 'source-over';
+                }
+                const deformVelX = shard.deformation.x * 2.0;
+                const deformVelY = shard.deformation.y * 2.0;
+                shard.becomeDebris(velVector.x * 0.3 + deformVelX, velVector.y * 0.3 + deformVelY, entity, 1.0);
+            },
+            processSplits(entities) {
+                const queue = [...new Set(this.splitQueue)];
+                this.splitQueue = [];
+                for (const entity of queue) {
+                    if (!entity.hexGrid || !entities.includes(entity)) continue;
+                    const groups = this.findIslands(entity.hexGrid);
+                    if (groups.length <= 1) continue;
+                    groups.sort((a, b) => b.length - a.length);
+                    const mainGroup = groups[0];
+                    const looseGroups = groups.slice(1);
+                    this.rebuildEntityGrid(entity, mainGroup);
+                    for (const group of looseGroups) {
+                        if (group.length < 3) {
+                            for (const s of group) this.destroyShard(entity, s, { x: entity.vx, y: entity.vy });
+                            continue;
+                        }
+                        this.spawnWreckEntity(entity, group, entities);
+                    }
+                }
+            },
+            findIslands(grid) {
+                const activeShards = grid.shards.filter(s => s.active && !s.isDebris);
+                if (activeShards.length === 0) return [];
+                const map = {};
+                for (const s of activeShards) map[s.c + "," + s.r] = s;
+                const visited = new Set();
+                const groups = [];
+                for (const seed of activeShards) {
+                    if (visited.has(seed)) continue;
+                    const group = [];
+                    const stack = [seed];
+                    visited.add(seed);
+                    while (stack.length > 0) {
+                        const curr = stack.pop();
+                        group.push(curr);
+                        if (curr.neighbors) {
+                            for (const neighbor of curr.neighbors) {
+                                if (neighbor && neighbor.active && !neighbor.isDebris && !visited.has(neighbor)) {
+                                    visited.add(neighbor);
+                                    stack.push(neighbor);
+                                }
+                            }
+                        }
+                    }
+                    groups.push(group);
+                }
+                return groups;
+            },
+            getNeighborCoords(c, r) {
+                const odd = (c % 2 !== 0);
+                const offsets = odd
+                    ? [[0, -1], [0, 1], [-1, 0], [-1, 1], [1, 0], [1, 1]]
+                    : [[0, -1], [0, 1], [-1, -1], [-1, 0], [1, -1], [1, 0]];
+                return offsets.map(o => ({ c: c + o[0], r: r + o[1] }));
+            },
+            rebuildEntityGrid(entity, shards) {
+                const cols = entity.hexGrid.cols || Math.ceil(entity.hexGrid.srcWidth / HEX_SPACING);
+                const rows = entity.hexGrid.rows || Math.ceil(entity.hexGrid.srcHeight / HEX_HEIGHT);
+                const map = {};
+                const grid = new Array(cols * rows);
+
+                for (let i = 0; i < shards.length; i++) {
+                    const s = shards[i];
+                    map[s.c + "," + s.r] = s;
+                    if (s.c >= 0 && s.c < cols && s.r >= 0 && s.r < rows) {
+                        grid[s.c + s.r * cols] = s;
+                    }
+                }
+
+                entity.hexGrid.shards = shards;
+                entity.hexGrid.map = map;
+                entity.hexGrid.grid = grid;
+                entity.hexGrid.cols = cols;
+                entity.hexGrid.rows = rows;
+                entity.hexGrid.cacheDirty = true;
+                entity.mass = shards.length * DESTRUCTOR_CONFIG.shardMass;
+            },
+            spawnWreckEntity(parent, shards, entities) {
+                // 1. Obliczanie Ĺ›rodka masy (Pivot)
+                let sumX = 0, sumY = 0;
+                for (const s of shards) {
+                    sumX += (s.gridX + s.deformation.x);
+                    sumY += (s.gridY + s.deformation.y);
+                }
+                const avgX = sumX / shards.length;
+                const avgY = sumY / shards.length;
+
+                const cx = parent.hexGrid.srcWidth / 2;
+                const cy = parent.hexGrid.srcHeight / 2;
+                const relX = avgX - cx;
+                const relY = avgY - cy;
+
+                // --- FIX: OBLICZANIE NOWEGO PROMIENIA (RADIUS) ---
+                // Sprawdzamy jak daleko najdalszy heks leĹĽy od nowego Ĺ›rodka (avgX, avgY)
+                let maxDistSq = 0;
+                for (const s of shards) {
+                    const dx = (s.gridX + s.deformation.x) - avgX;
+                    const dy = (s.gridY + s.deformation.y) - avgY;
+                    const d2 = dx * dx + dy * dy;
+                    if (d2 > maxDistSq) maxDistSq = d2;
+                }
+                const newRadius = Math.sqrt(maxDistSq) + DESTRUCTOR_CONFIG.gridDivisions * 2.0;
+                // --------------------------------------------------
+
+                const ang = parent.angle + DESTRUCTOR_CONFIG.visualRotationOffset;
+                const c = Math.cos(ang);
+                const s = Math.sin(ang);
+                const worldX = parent.x + relX * c - relY * s;
+                const worldY = parent.y + relX * s + relY * c;
+
+                // Grid dimensions for fast lookups (kept from parent)
+                const cols = parent.hexGrid.cols || Math.ceil(parent.hexGrid.srcWidth / HEX_SPACING);
+                const rows = parent.hexGrid.rows || Math.ceil(parent.hexGrid.srcHeight / HEX_HEIGHT);
+
+                const wreck = {
+                    x: worldX, y: worldY,
+                    vx: parent.vx, vy: parent.vy,
+                    angle: parent.angle, angVel: parent.angVel,
+
+                    radius: newRadius, // <--- TUTAJ PRZYPISUJEMY OBLICZONY PROMIEĹ
+
+                    mass: shards.length * DESTRUCTOR_CONFIG.shardMass,
+                    isWreck: true,
+                    hexGrid: {
+                        shards: shards,
+                        map: {},
+                        grid: new Array(cols * rows),
+                        cols,
+                        rows,
+                        srcWidth: parent.hexGrid.srcWidth,
+                        srcHeight: parent.hexGrid.srcHeight,
+                        cacheCanvas: parent.hexGrid.cacheCanvas.cloneNode(),
+                        cacheCtx: null,
+                        cacheDirty: true,
+                        pivot: { x: relX, y: relY }
+                    }
+                };
+                wreck.hexGrid.cacheCtx = wreck.hexGrid.cacheCanvas.getContext('2d');
+                const wGrid = wreck.hexGrid.grid;
+                for (let i = 0; i < shards.length; i++) {
+                    const hs = shards[i];
+                    wreck.hexGrid.map[hs.c + "," + hs.r] = hs;
+                    if (hs.c >= 0 && hs.c < cols && hs.r >= 0 && hs.r < rows) {
+                        wGrid[hs.c + hs.r * cols] = hs;
+                    }
+                }
+                WebGPUPhysics.createBuffersForEntity(wreck);
+
+                entities.push(wreck);
+            },
+            cutByBeam(entity, p1, p2, beamWidth) {
+                if (!entity.hexGrid) return;
+                const ang = -(entity.angle + DESTRUCTOR_CONFIG.visualRotationOffset);
+                const cos = Math.cos(ang);
+                const sin = Math.sin(ang);
+                const ex = entity.x;
+                const ey = entity.y;
+                const dx1 = p1.x - ex; const dy1 = p1.y - ey;
+                const dx2 = p2.x - ex; const dy2 = p2.y - ey;
+                const l1x = dx1 * cos - dy1 * sin; const l1y = dx1 * sin + dy1 * cos;
+                const l2x = dx2 * cos - dy2 * sin; const l2y = dx2 * sin + dy2 * cos;
+                const cx = entity.hexGrid.srcWidth / 2;
+                const cy = entity.hexGrid.srcHeight / 2;
+                const pivotX = entity.hexGrid.pivot ? entity.hexGrid.pivot.x : 0;
+                const pivotY = entity.hexGrid.pivot ? entity.hexGrid.pivot.y : 0;
+                const lineStart = { x: l1x + cx + pivotX, y: l1y + cy + pivotY };
+                const lineEnd = { x: l2x + cx + pivotX, y: l2y + cy + pivotY };
+                const minX = Math.min(lineStart.x, lineEnd.x) - beamWidth * 2;
+                const maxX = Math.max(lineStart.x, lineEnd.x) + beamWidth * 2;
+                const minY = Math.min(lineStart.y, lineEnd.y) - beamWidth * 2;
+                const maxY = Math.max(lineStart.y, lineEnd.y) + beamWidth * 2;
+                const lineVecX = lineEnd.x - lineStart.x;
+                const lineVecY = lineEnd.y - lineStart.y;
+                const lineLenSq = lineVecX * lineVecX + lineVecY * lineVecY;
+                const perpX = -lineVecY;
+                const perpY = lineVecX;
+                const perpLen = Math.sqrt(perpX * perpX + perpY * perpY) || 1;
+                const pushDirX = perpX / perpLen;
+                const pushDirY = perpY / perpLen;
+                const rotBack = -ang;
+                const cosB = Math.cos(rotBack);
+                const sinB = Math.sin(rotBack);
+                let anyHit = false;
+                for (const shard of entity.hexGrid.shards) {
+                    if (!shard.active || shard.isDebris) continue;
+                    const px = shard.gridX + shard.deformation.x;
+                    const py = shard.gridY + shard.deformation.y;
+                    if (px < minX || px > maxX || py < minY || py > maxY) continue;
+                    let t = ((px - lineStart.x) * lineVecX + (py - lineStart.y) * lineVecY) / lineLenSq;
+                    t = Math.max(0, Math.min(1, t));
+                    const closestX = lineStart.x + t * lineVecX;
+                    const closestY = lineStart.y + t * lineVecY;
+                    const distSq = (px - closestX) ** 2 + (py - closestY) ** 2;
+                    if (distSq < (beamWidth + shard.radius * 1.2) ** 2) {
+                        const cross = (px - lineStart.x) * lineVecY - (py - lineStart.y) * lineVecX;
+                        const side = cross > 0 ? 1 : -1;
+                        const worldImpulseLocalX = pushDirX * side * DESTRUCTOR_CONFIG.beamForce;
+                        const worldImpulseLocalY = pushDirY * side * DESTRUCTOR_CONFIG.beamForce;
+                        const wImpX = worldImpulseLocalX * cosB - worldImpulseLocalY * sinB;
+                        const wImpY = worldImpulseLocalX * sinB + worldImpulseLocalY * cosB;
+                        this.destroyShard(entity, shard, { x: entity.vx + wImpX * 0.05, y: entity.vy + wImpY * 0.05 });
+                        entity.hexGrid.cacheDirty = true;
+                        anyHit = true;
+                    }
+                }
+                if (anyHit) this.splitQueue.push(entity);
+            },
+            draw(ctx, camera) {
+                for (const d of this.debris) {
+                    d.drawDebris(ctx, camera);
+                }
+            }
+        };
+
+        function createProjectileImage() {
+            const size = 64;
+            const c = document.createElement('canvas');
+            c.width = size; c.height = size;
+            const ctx = c.getContext('2d');
+            const grad = ctx.createRadialGradient(size / 2, size / 2, 4, size / 2, size / 2, size / 2);
+            grad.addColorStop(0, '#ffffaa');
+            grad.addColorStop(0.4, '#ffaa00');
+            grad.addColorStop(1, 'rgba(255, 100, 0, 0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, size, size);
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(size / 2, size / 2, size / 3, 0, Math.PI * 2);
+            ctx.stroke();
+            return c;
+        }
+        const projectileImg = createProjectileImage();
+
+        function createProceduralShipImage(color) {
+            const c = document.createElement('canvas');
+            c.width = 160; c.height = 300;
+            const x = c.getContext('2d');
+            x.fillStyle = color || '#445566';
+            x.fillRect(40, 20, 80, 260);
+            x.fillStyle = '#667788';
+            x.fillRect(20, 180, 120, 80);
+            x.fillStyle = '#33ccff';
+            x.fillRect(60, 40, 40, 40);
+            return c;
+        }
+
+        function createDebrisObstacle() {
+            const c = document.createElement('canvas');
+            c.width = 80; c.height = 80;
+            const x = c.getContext('2d');
+            x.fillStyle = '#554433';
+            x.beginPath();
+            x.arc(40, 40, 35, 0, Math.PI * 2);
+            x.fill();
+            return c;
+        }
+
+        function createAsteroidImage(radius) {
+            const c = document.createElement('canvas');
+            c.width = radius * 2; c.height = radius * 2;
+            const ctx = c.getContext('2d');
+            const cx = radius; const cy = radius;
+            ctx.fillStyle = '#665544';
+            ctx.beginPath();
+            for (let a = 0; a < Math.PI * 2; a += 0.4) {
+                const r = radius * (0.8 + Math.random() * 0.2);
+                const x = cx + Math.cos(a) * r;
+                const y = cy + Math.sin(a) * r;
+                if (a === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            ctx.fill();
+            for (let i = 0; i < 30; i++) {
+                ctx.fillStyle = Math.random() > 0.5 ? '#554433' : '#776655';
+                const s = Math.random() * radius * 0.4;
+                const x = Math.random() * c.width;
+                const y = Math.random() * c.height;
+                if (Math.hypot(x - cx, y - cy) < radius * 0.7) {
+                    ctx.beginPath(); ctx.arc(x, y, s, 0, Math.PI * 2); ctx.fill();
+                }
+            }
+            return c;
+        }
+
+        function initHexBody(entity, image, damagedImage, isProjectile = false, massOverride = null) {
+            const w = Math.ceil(image.width / 2) * 2;
+            const h = Math.ceil(image.height / 2) * 2;
+            const r = DESTRUCTOR_CONFIG.gridDivisions;
+            const hexHeight = Math.sqrt(3) * r;
+            let data = null;
+            let ctx = null;
+            const cvs = document.createElement('canvas');
+            cvs.width = w; cvs.height = h;
+            ctx = cvs.getContext('2d');
+            let dmgCvs = null;
+            if (damagedImage) {
+                dmgCvs = document.createElement('canvas');
+                dmgCvs.width = w; dmgCvs.height = h;
+                dmgCvs.getContext('2d').drawImage(damagedImage, 0, 0, w, h);
+            }
+            try {
+                ctx.drawImage(image, 0, 0, w, h);
+                data = ctx.getImageData(0, 0, w, h).data;
+            } catch (e) { }
+            const shards = [];
+            const map = {};
+            const cols = Math.ceil(w / (r * 1.5));
+            const rows = Math.ceil(h / hexHeight);
+            // Fast lookup grid (flattened 2D) â€” avoids string keys in hot paths
+            const grid = new Array(cols * rows);
+            for (let c = 0; c < cols; c++) {
+                for (let ro = 0; ro < rows; ro++) {
+                    const x = c * r * 1.5;
+                    let y = ro * hexHeight;
+                    if (c % 2 !== 0) y += hexHeight / 2;
+                    const px = Math.floor(x);
+                    const py = Math.floor(y);
+                    if (px >= 0 && px < w && py >= 0 && py < h) {
+                        const alpha = data[(py * w + px) * 4 + 3];
+                        if (alpha > 40) {
+                            const color = isProjectile ? '#ffcc00' : null;
+                            const s = new HexShard(isProjectile ? null : cvs, dmgCvs, x, y, r, c, ro, color);
+                            shards.push(s);
+                            grid[c + ro * cols] = s;
+                            map[c + "," + ro] = s;
+                        }
+                    }
+                }
+            }
+
+            // --- PRE-CALCULATE NEIGHBORS (Softbody optimization) ---
+            // Use numeric grid lookups (no string keys)
+            for (const s of shards) {
+                const nCoords = DestructorSystem.getNeighborCoords(s.c, s.r);
+                for (let ni = 0; ni < nCoords.length; ni++) {
+                    const nc = nCoords[ni];
+                    if (nc.c < 0 || nc.c >= cols || nc.r < 0 || nc.r >= rows) continue;
+                    const ns = grid[nc.c + nc.r * cols];
+                    if (ns) s.neighbors.push(ns);
+                }
+            }
+            // -------------------------------------------------------
+
+            const cacheCvs = document.createElement('canvas');
+            cacheCvs.width = w; cacheCvs.height = h;
+            const cCtx = cacheCvs.getContext('2d');
+            if (isProjectile) {
+                cCtx.drawImage(image, 0, 0);
+            } else {
+                for (const s of shards) {
+                    s.drawShape(cCtx);
+                }
+            }
+            entity.hexGrid = {
+                shards,
+                map,
+                grid,
+                cols,
+                rows,
+                srcWidth: w,
+                srcHeight: h,
+                cacheCanvas: cacheCvs,
+                cacheCtx: cCtx,
+                cacheDirty: false
+            };
+            entity.radius = Math.max(w, h) / 2;
+            entity.isProjectile = isProjectile;
+            if (massOverride) {
+                entity.mass = massOverride;
+            } else {
+                entity.mass = shards.length * DESTRUCTOR_CONFIG.shardMass;
+            }
+        }
+
+        // drawHexBody â€” now a no-op stub; Three.js HexRenderer handles all entity rendering.
+        // Kept for API compatibility (physics code references cacheDirty etc.)
+        function drawHexBody(ctx, entity, camera) {
+            // Three.js rendering is handled by HexRenderer.update() + HexRenderer.render()
+        }
+
+        let entities = [];
+        const SHIP_URL = 'https://raw.githubusercontent.com/bazylowybazyl/statki/refs/heads/main/assets/capital_ship_rect_v1.png';
+        const DAMAGED_URL = 'https://raw.githubusercontent.com/bazylowybazyl/statki/refs/heads/main/assets/damaged.png';
+        const player = { x: -1200, y: 0, vx: 0, vy: 0, angle: 0, angVel: 0, radius: 100 };
+        const dummy = { x: 1200, y: 0, vx: 0, vy: 0, angle: Math.PI, angVel: 0, radius: 100 };
+        let mouse = { x: 0, y: 0, down: false, dragStart: null, dragCurrent: null };
+        const keys = {};
+
+        async function init() {
+            statusEl.textContent = "Inicjalizacja WebGPU...";
+
+            // Odpalamy kartÄ™ graficznÄ… zanim zaĹ‚adujemy cokolwiek innego
+            await WebGPUPhysics.init();
+
+            if (WebGPUPhysics.active) {
+                statusEl.innerHTML = "WebGPU <span style='color:#4f8'>AKTYWNE</span>. Ĺadowanie tekstur...";
+            } else {
+                statusEl.innerHTML = "WebGPU <span style='color:#f44'>BRAK</span>. Fallback na CPU...";
+            }
+
+            const shipImg = new Image();
+            const damagedImg = new Image();
+            shipImg.crossOrigin = "Anonymous";
+            damagedImg.crossOrigin = "Anonymous";
+            let loaded = 0;
+            const onLoaded = () => {
+                loaded++;
+                if (loaded === 2) {
+                    statusEl.textContent = "Obrazy zaĹ‚adowane.";
+                    setupScene(shipImg, damagedImg);
+                }
+            };
+            shipImg.onload = onLoaded;
+            damagedImg.onload = onLoaded;
+            shipImg.onerror = () => useFallback();
+            damagedImg.onerror = () => useFallback();
+            shipImg.src = SHIP_URL;
+            damagedImg.src = DAMAGED_URL;
+        }
+
+        function setupScene(img, dmgImg) {
+            initHexBody(player, img, dmgImg, false, 800000);
+            initHexBody(dummy, img, dmgImg, false, DESTRUCTOR_CONFIG.dummyMass);
+
+            // Budujemy bufory dla statkĂłw
+            WebGPUPhysics.createBuffersForEntity(player);
+            WebGPUPhysics.createBuffersForEntity(dummy);
+
+            entities.push(player, dummy);
+            const debrisImg = new Image();
+            debrisImg.src = createDebrisObstacle().toDataURL();
+            debrisImg.onload = () => {
+                for (let i = 0; i < 5; i++) {
+                    const d = {
+                        x: -400 + i * 150,
+                        y: 0,
+                        vx: 0, vy: 0, angle: Math.random(), angVel: 0, radius: 40
+                    };
+                    initHexBody(d, debrisImg, null, false, DESTRUCTOR_CONFIG.debrisMass);
+                    WebGPUPhysics.createBuffersForEntity(d); // dla maĹ‚ych przeszkĂłd teĹĽ
+                    entities.push(d);
+                }
+            };
+            loop();
+        }
+
+        function useFallback() {
+            statusEl.textContent = "BĹ‚Ä…d sieci/CORS. Uruchamianie generatora awaryjnego...";
+            const procImg = createProceduralShipImage('#445566');
+            const procDmg = createProceduralShipImage('#222222');
+            const img = new Image();
+            img.onload = () => {
+                const imgD = new Image();
+                imgD.onload = () => setupScene(img, imgD);
+                imgD.src = procDmg.toDataURL();
+            };
+            img.src = procImg.toDataURL();
+        }
+
+        function resetSim() {
+            for (const e of entities) WebGPUPhysics.releaseEntityBuffers(e);
+            entities = [];
+            player.x = -1200; player.y = 0; player.vx = 0; player.vy = 0; player.angle = 0;
+            dummy.x = 1200; dummy.y = 0; dummy.vx = 0; dummy.vy = 0; dummy.angle = Math.PI;
+            init();
+            DestructorSystem.debris = [];
+        }
+
+        function fireAsteroid(startPos, endPos) {
+            const dx = endPos.x - startPos.x;
+            const dy = endPos.y - startPos.y;
+            const len = Math.hypot(dx, dy);
+            // ZWIÄKSZONO PRÄDKOĹšÄ† 2X
+            const speed = Math.min(len * DESTRUCTOR_CONFIG.asteroidSpeedMult, DESTRUCTOR_CONFIG.asteroidMaxSpeed);
+            const dirX = len > 0 ? dx / len : 0;
+            const dirY = len > 0 ? dy / len : 1;
+            const radius = 60;
+            const asteroidImg = new Image();
+            asteroidImg.src = createAsteroidImage(radius).toDataURL();
+            const ast = {
+                x: startPos.x,
+                y: startPos.y,
+                vx: dirX * speed,
+                vy: dirY * speed,
+                angle: Math.random() * Math.PI * 2,
+                angVel: (Math.random() - 0.5) * 5,
+                radius: radius
+            };
+            asteroidImg.onload = () => {
+                // ZWIÄKSZONO MASÄ (1 000 000)
+                initHexBody(ast, asteroidImg, null, false, DESTRUCTOR_CONFIG.asteroidMass);
+                WebGPUPhysics.createBuffersForEntity(ast);
+
+                // ZWIÄKSZONO Ĺ»YCIE (x10)
+                if (ast.hexGrid) {
+                    for (const s of ast.hexGrid.shards) {
+                        s.maxHp *= DESTRUCTOR_CONFIG.asteroidHPMult;
+                        s.hp = s.maxHp;
+                    }
+                }
+                entities.push(ast);
+            };
+        }
+
+        window.addEventListener('keydown', e => {
+            keys[e.key.toLowerCase()] = true;
+            if (e.code === 'Space') resetSim();
+            if (e.code === 'KeyR') DestructorSystem.repair(entities, 0.1);
+            if (e.code === 'KeyP') Perf.toggle();
+        });
+        window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+        window.addEventListener('mousemove', e => {
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+            if (mouse.down) {
+                mouse.dragCurrent = { x: mouse.x, y: mouse.y };
+            }
+        });
+
+        window.addEventListener('mousedown', (e) => {
+            if (e.button === 0) {
+                mouse.down = true;
+                mouse.dragStart = { x: mouse.x, y: mouse.y };
+                mouse.dragCurrent = { x: mouse.x, y: mouse.y };
+            }
+            if (e.button === 2) mouse.right = true;
+        });
+        window.addEventListener('mouseup', (e) => {
+            if (e.button === 0 && mouse.dragStart) {
+                const worldStart = screenToWorld(mouse.dragStart.x, mouse.dragStart.y, camera);
+                const worldEnd = screenToWorld(mouse.dragCurrent.x, mouse.dragCurrent.y, camera);
+                if (Math.hypot(mouse.dragStart.x - mouse.dragCurrent.x, mouse.dragStart.y - mouse.dragCurrent.y) > 10) {
+                    fireAsteroid(worldStart, worldEnd);
+                }
+                mouse.down = false;
+                mouse.dragStart = null;
+                mouse.dragCurrent = null;
+            }
+            if (e.button === 2) mouse.right = false;
+        });
+        window.addEventListener('contextmenu', e => e.preventDefault());
+
+        window.addEventListener('wheel', e => {
+            e.preventDefault();
+            const zoomSpeed = DESTRUCTOR_CONFIG.zoomSpeed;
+            camera.zoom -= e.deltaY * zoomSpeed * camera.zoom;
+            camera.zoom = Math.max(0.2, Math.min(camera.zoom, 3.0));
+        }, { passive: false });
+
+        window.addEventListener('resize', () => {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            HexRenderer.resize();
+        });
+
+        async function updatePhysics(dt) {
+            const t0 = performance.now();
+
+            const speed = DESTRUCTOR_CONFIG.playerSpeed;
+            if (keys['w']) {
+                player.vx += Math.cos(player.angle) * speed * dt;
+                player.vy += Math.sin(player.angle) * speed * dt;
+            }
+            if (keys['s']) {
+                player.vx -= Math.cos(player.angle) * (speed * 0.5) * dt;
+                player.vy -= Math.sin(player.angle) * (speed * 0.5) * dt;
+            }
+            const turnAcceleration = DESTRUCTOR_CONFIG.playerTurnAccel;
+            const maxTurnSpeed = DESTRUCTOR_CONFIG.playerMaxTurn;
+
+            if (keys['a']) {
+                player.angVel -= turnAcceleration * dt;
+            } else if (keys['d']) {
+                player.angVel += turnAcceleration * dt;
+            }
+
+            player.vx *= 0.99;
+            player.vy *= 0.99;
+            player.angVel *= 0.92;
+
+            if (Math.abs(player.angVel) > maxTurnSpeed) {
+                player.angVel = Math.sign(player.angVel) * maxTurnSpeed;
+            }
+
+            dummy.vx *= 0.99;
+            dummy.vy *= 0.99;
+            dummy.angVel *= 0.95;
+
+            const tDeform0 = performance.now();
+            DestructorSystem.updateVisualDeformation(entities, dt);
+            Perf.deformTime += performance.now() - tDeform0;
+
+            const aliveEntities = [];
+            for (const e of entities) {
+                e.x += e.vx * dt;
+                e.y += e.vy * dt;
+                if (e.angVel) e.angle += e.angVel * dt;
+
+                if (e.isProjectile && (e.dead || Math.hypot(e.x - player.x, e.y - player.y) > 5000)) {
+                    continue;
+                }
+                aliveEntities.push(e);
+            }
+            if (aliveEntities.length !== entities.length) {
+                entities.length = 0;
+                entities.push(...aliveEntities);
+            }
+
+            if (mouse.right) {
+                const mWorld = screenToWorld(mouse.x, mouse.y, camera);
+                const dx = mWorld.x - player.x;
+                const dy = mWorld.y - player.y;
+                const len = Math.hypot(dx, dy);
+                const ndx = dx / len;
+                const ndy = dy / len;
+                const beamLen = 3000;
+                const p1 = { x: player.x, y: player.y };
+                const p2 = { x: player.x + ndx * beamLen, y: player.y + ndy * beamLen };
+                for (const target of entities) {
+                    if (!target.hexGrid) continue;
+                    DestructorSystem.cutByBeam(target, p1, p2, DESTRUCTOR_CONFIG.beamWidth);
+                }
+            }
+
+            // TUTAJ CZEKAMY NA KARTE GRAFICZNĄ
+            await DestructorSystem.update(dt, entities);
+
+            Perf.physicsTime += performance.now() - t0;
+        }
+
+        function draw() {
+            const tDraw0 = performance.now();
+
+            // --- Camera tracking ---
+            const midX = (player.x + dummy.x) / 2;
+            const midY = (player.y + dummy.y) / 2;
+            camera.x += (midX - camera.x) * 0.1;
+            camera.y += (midY - camera.y) * 0.1;
+
+            // --- Canvas 2D: clear (transparent â€” background is CSS/WebGL) ---
+            ctx.clearRect(0, 0, width, height);
+
+            const gw = 100 * camera.zoom;
+            const offX = (width / 2 - camera.x * camera.zoom) % gw;
+            const offY = (height / 2 - camera.y * camera.zoom) % gw;
+            ctx.strokeStyle = 'rgba(30, 30, 30, 0.6)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (let x = offX; x < width; x += gw) { ctx.moveTo(x, 0); ctx.lineTo(x, height); }
+            for (let y = offY; y < height; y += gw) { ctx.moveTo(0, y); ctx.lineTo(width, y); }
+            ctx.stroke();
+
+            // --- Canvas 2D: debris (still on Canvas for now) ---
+            DestructorSystem.draw(ctx, camera);
+
+            // --- THREE.JS: update + render all hex entities ---
+            HexRenderer.update(entities);
+            HexRenderer.render();
+
+            // --- Canvas 2D overlays: laser beam ---
+            if (mouse.right) {
+                const mWorld = screenToWorld(mouse.x, mouse.y, camera);
+                const dx = mWorld.x - player.x;
+                const dy = mWorld.y - player.y;
+                const len = Math.hypot(dx, dy);
+                if (len > 0.01) {
+                    const ndx = dx / len;
+                    const ndy = dy / len;
+                    const beamLen = 3000;
+                    const p1 = { x: player.x, y: player.y };
+                    const p2 = { x: player.x + ndx * beamLen, y: player.y + ndy * beamLen };
+                    const s1 = worldToScreen(p1.x, p1.y, camera);
+                    const s2 = worldToScreen(p2.x, p2.y, camera);
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.moveTo(s1.x, s1.y);
+                    ctx.lineTo(s2.x, s2.y);
+                    ctx.lineWidth = 5 * camera.zoom;
+                    ctx.strokeStyle = 'rgba(255, 0, 0, 0.6)';
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+
+            // --- Canvas 2D overlays: drag arrow ---
+            if (mouse.down && mouse.dragStart && mouse.dragCurrent) {
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(mouse.dragStart.x, mouse.dragStart.y);
+                ctx.lineTo(mouse.dragCurrent.x, mouse.dragCurrent.y);
+                ctx.strokeStyle = '#ffff00';
+                ctx.fillStyle = '#ffff00';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.stroke();
+                const angle = Math.atan2(mouse.dragCurrent.y - mouse.dragStart.y, mouse.dragCurrent.x - mouse.dragStart.x);
+                ctx.translate(mouse.dragCurrent.x, mouse.dragCurrent.y);
+                ctx.rotate(angle);
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(-10, -5);
+                ctx.lineTo(-10, 5);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            Perf.drawTime += performance.now() - tDraw0;
+        }
+
+        let lastTime = 0;
+        let isLooping = false;
+
+        // FIX Bug 5: Schedule RAF before await to prevent frame drops
+        async function loop(timestamp) {
+            requestAnimationFrame(loop); // schedule next frame FIRST
+            if (isLooping) return; // skip if previous frame still processing
+            isLooping = true;
+
+            const dt = Math.min((timestamp - lastTime) / 1000, 0.1) || 0.016;
+            lastTime = timestamp;
+
+            const frameStart = performance.now();
+            Perf.startFrame();
+
+            await updatePhysics(dt);
+            draw();
+
+            const frameEnd = performance.now();
+            Perf.recordFrameTime(frameEnd - frameStart);
+            Perf.flush(frameEnd);
+
+            isLooping = false;
+        }
+
+        Perf.init();
+        HexRenderer.init();
+        init();
+        document.getElementById('shipPicker').addEventListener('change', function (e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function (event) {
+                const img = new Image();
+                img.onload = function () {
+                    player.hexGrid = null;
+                    const damagedImg = new Image();
+                    damagedImg.src = DAMAGED_URL;
+                    damagedImg.onload = () => {
+                        initHexBody(player, img, damagedImg, false, DESTRUCTOR_CONFIG.playerStartingMass);
+                        WebGPUPhysics.createBuffersForEntity(player);
+                        player.vx = 0;
+                        player.vy = 0;
+                        statusEl.textContent = "Wczytano nowy sprite: " + file.name;
+                    };
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+    </script>
+</body>
+
+</html>
