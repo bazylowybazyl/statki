@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="pl">
 
 <head>
@@ -432,7 +432,7 @@
         }
 
         const DESTRUCTOR_CONFIG = {
-            gridDivisions: 6,
+            gridDivisions: 4,
             shardHP: 100,
             armorThreshold: 0.4,
             maxDeform: 120.0,
@@ -446,11 +446,8 @@
             restitution: 0.05,
             plasticity: 0.00002,
             collisionDeformScale: 1.0, // startowo 0.25
-            collisionSearchRadius: 5,  // ile kratek wokół sprawdzamy w mapie (większe = lepsze przy dużych deformacjach)
-            gpuCollisionSearchRadius: 3, // osobny radius dla WGSL narrowphase
-            gpuMaxStepDeform: 10.0,      // maksymalna deformacja dodana w 1 dispatch GPU
-            gpuPenClampMul: 0.65,        // clamp penetracji w shaderze (0..1 hit radius)
-            collisionIterations: 2,
+            collisionSearchRadius: 5,  // ile kratek wokĂłĹ‚ sprawdzamy w mapie (wiÄ™ksze = lepsze przy duĹĽych deformacjach)
+            collisionIterations: 4,
             crushMinSpeed: 1.5,          // minimalna prÄ™dkoĹ›Ä‡ kontaktu dla deformacji (m/s w twoich jednostkach)
             crushPenetrationMin: 0.15,   // minimalna penetracja, ĹĽeby zaczÄ…Ä‡ wgniatanie "na docisk"
             crushVelK: 0.15,             // jak mocno prÄ™dkoĹ›Ä‡ wzglÄ™dna wgniata (stara wersja miaĹ‚a ~0.15)
@@ -479,6 +476,14 @@
             maxPlastic: 60.0,       // Maksymalne trwaĹ‚e wgniecenie (ĹĽeby statek nie zapadĹ‚ siÄ™ w punkt)
             plasticityRate: 0.8,    // SzybkoĹ›Ä‡ pochĹ‚aniania siĹ‚y w staĹ‚e wgniecenie
             inflictedDamageMult: 1.0, // MnoĹĽnik obraĹĽeĹ„ od siĹ‚y uderzenia
+
+            // CRUMPLE ZONE (GPU 3D accordion deformation)
+            crumpleStiffnessXY: 0.3,   // XY spring stiffness between neighbors
+            crumpleStiffnessZ: 0.5,    // Z spring stiffness (accordion)
+            crumpleDamping: 0.92,      // velocity damping per step (1.0 = no damping)
+            crumpleAccordion: 0.8,     // alternating Z sign strength (0=none, 1=full)
+            crumpleMaxZ: 15.0,         // max Z deformation (px)
+            crumpleMaxXY: 30.0,        // max XY deformation (px)
 
             beamWidth: 12,          // SzerokoĹ›Ä‡ lasera
             beamForce: 400,         // SiĹ‚a odepchniÄ™cia lasera
@@ -772,12 +777,13 @@
                     if (s.active && !s.isDebris) {
                         dummy.position.set(
                             s.gridX + s.deformation.x - centerX - pivotX,
-                            s.gridY + s.deformation.y - centerY - pivotY, 0);
+                            s.gridY + s.deformation.y - centerY - pivotY,
+                            s.deformZ || 0);
                         dummy.updateMatrix();
                         mesh.setMatrixAt(i, dummy.matrix);
                         hpAttr.array[i] = s.hp / s.maxHp;
-                        const dx = s.deformation.x, dy = s.deformation.y;
-                        stressAttr.array[i] = Math.sqrt(dx * dx + dy * dy);
+                        const dx = s.deformation.x, dy = s.deformation.y, dz = s.deformZ || 0;
+                        stressAttr.array[i] = Math.sqrt(dx * dx + dy * dy + dz * dz);
                     } else {
                         dummy.position.set(0, 0, -99999);
                         dummy.updateMatrix();
@@ -858,6 +864,11 @@
                 this.hp = this.maxHp;
                 this.deformation = { x: 0, y: 0 };
                 this.targetDeformation = { x: 0, y: 0 };
+                // CRUMPLE ZONE: 3D accordion deformation
+                this.deformZ = 0;
+                this.velX = 0;
+                this.velY = 0;
+                this.velZ = 0;
 
                 // --- NOWOĹšÄ†: Tablica deformacji wierzchoĹ‚kĂłw (efekt strzÄ™pienia) ---
                 this.frays = [];
@@ -1082,21 +1093,21 @@
             }
         }
         // ====================================================================
-        // WEBGPU PHYSICS MANAGER (PHASE 4: COMPLETE HYBRID SOLUTION - REVIWED & FIXED)
+        // WEBGPU PHYSICS MANAGER (PHASE 3: PROPAGATION + COLLISIONS + DEFORMATION)
         // ====================================================================
         const WebGPUPhysics = {
             device: null,
             active: false,
 
-            elasticityPipeline: null,
-            elasticityBindLayout: null,
-            elasticityUniform: null,
+            propagationPipeline: null,
+            propagationBindLayout: null,
+            propagationUniform: null,
 
             collisionPipeline: null,
             collisionBindLayout: null,
-            uniformBuffer: null,
-            reactionBuffer: null,
-            readbackBuffer: null,
+            contactsBuffer: null,
+            contactCountBuffer: null,
+            readbackContactsBuffer: null,
 
             async init() {
                 if (!navigator.gpu) return false;
@@ -1105,33 +1116,32 @@
                     if (!adapter) return false;
                     this.device = await adapter.requestDevice();
 
-                    const hexR = DESTRUCTOR_CONFIG.gridDivisions;
-                    const hitRad = hexR * 1.3;
-                    const hitRadSq = hitRad * hitRad;
-                    const hexSpacing = hexR * 1.5;
-                    const hexHeight = Math.sqrt(3) * hexR;
-
-                    // OPTYMALIZACJA: Promień zmniejszony do 2 (25 iteracji zamiast 49 per heks).
-                    // Wystarczy by pokryć przemieszczenia deformacji i uderzeń.
-                    const searchR = Math.max(1, Math.min(4, Number(DESTRUCTOR_CONFIG.gpuCollisionSearchRadius) || 2));
-                    const maxDeform = DESTRUCTOR_CONFIG.maxDeform;
-                    const maxStepDeform = Math.max(1.0, Number(DESTRUCTOR_CONFIG.gpuMaxStepDeform) || 10.0);
-                    const penClamp = hitRad * Math.max(0.2, Math.min(1.0, Number(DESTRUCTOR_CONFIG.gpuPenClampMul) || 0.65));
-
-                    // --- 1. PIPELINE: SPRĘŻYSTOŚĆ ---
-                    this.elasticityBindLayout = this.device.createBindGroupLayout({
+                    // --- 1. PIPELINE: CRUMPLE PROPAGATION (Spring-mass + accordion Z) ---
+                    this.propagationBindLayout = this.device.createBindGroupLayout({
                         entries: [
-                            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
-                            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
-                            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } }
+                            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },        // shards (read_write)
+                            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // neighbors
+                            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } }          // params
                         ]
                     });
 
-                    const elasticityShader = `
-                struct Shard { gridX: f32, gridY: f32, deformX: f32, deformY: f32, targetDeformX: f32, targetDeformY: f32, hp: f32, maxHp: f32 };
+                    const propagationShader = `
+                // Extended shard: 16 floats (64 bytes, aligned)
+                struct Shard {
+                    gridX: f32, gridY: f32,
+                    defX: f32, defY: f32,
+                    tgtDefX: f32, tgtDefY: f32,
+                    hp: f32, maxHp: f32,
+                    defZ: f32,                    // accordion Z deformation
+                    velX: f32, velY: f32, velZ: f32, // deformation velocities
+                    _pad0: f32, _pad1: f32, _pad2: f32, _pad3: f32  // padding to 16 floats
+                };
                 @group(0) @binding(0) var<storage, read_write> shards: array<Shard>;
                 @group(0) @binding(1) var<storage, read> neighbors: array<i32>;
-                @group(0) @binding(2) var<uniform> params: vec2<f32>;
+
+                // params: (dt, damping, stiffnessXY, stiffnessZ, accordion, maxZ, maxXY, 0)
+                struct Params { dt: f32, damping: f32, kXY: f32, kZ: f32, accordion: f32, maxZ: f32, maxXY: f32, _pad: f32 };
+                @group(0) @binding(2) var<uniform> params: Params;
 
                 @compute @workgroup_size(64)
                 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -1139,187 +1149,313 @@
                     if (idx >= arrayLength(&shards)) { return; }
                     var me = shards[idx];
                     if (me.hp <= 0.0) { return; }
-                    let k = params.x;
-                    var myTarget = vec2<f32>(me.targetDeformX, me.targetDeformY);
-                    var dDeform = vec2<f32>(0.0, 0.0);
+
+                    let dt = params.dt;
+                    let damping = params.damping;
+                    let kXY = params.kXY;
+                    let kZ = params.kZ;
+                    let accordion = params.accordion;
+
+                    // Accumulate spring forces from 6 hex neighbors
+                    var forceX = 0.0;
+                    var forceY = 0.0;
+                    var forceZ = 0.0;
+                    var neighborCount = 0u;
                     let nBase = idx * 6u;
-                    for(var i = 0u; i < 6u; i = i + 1u) {
+
+                    for (var i = 0u; i < 6u; i = i + 1u) {
                         let nIdx = neighbors[nBase + i];
-                        if (nIdx >= 0) {
-                            let nTarget = vec2<f32>(shards[u32(nIdx)].targetDeformX, shards[u32(nIdx)].targetDeformY);
-                            let avgDeform = (myTarget + nTarget) * 0.5;
-                            dDeform = dDeform + (avgDeform - myTarget) * k;
-                        }
+                        if (nIdx < 0) { continue; }
+                        let n = shards[u32(nIdx)];
+                        if (n.hp <= 0.0) { continue; }
+                        neighborCount = neighborCount + 1u;
+
+                        // XY spring: pull toward neighbor's deformation (averaging)
+                        forceX += (n.tgtDefX - me.tgtDefX) * kXY;
+                        forceY += (n.tgtDefY - me.tgtDefY) * kXY;
+
+                        // Z accordion spring: INVERTED sign creates alternating pattern
+                        // If neighbor goes +Z, force pulls me toward -Z (and vice versa)
+                        let normalZ = (n.defZ - me.defZ) * kZ;        // normal spring
+                        let accordionZ = (-n.defZ - me.defZ) * accordion; // accordion spring
+                        forceZ += normalZ + accordionZ;
                     }
-                    shards[idx].targetDeformX = myTarget.x + dDeform.x;
-                    shards[idx].targetDeformY = myTarget.y + dDeform.y;
+
+                    // Scale by neighbor count for stability
+                    if (neighborCount > 0u) {
+                        let invN = 1.0 / f32(neighborCount);
+                        forceX *= invN;
+                        forceY *= invN;
+                        forceZ *= invN;
+                    }
+
+                    // Update velocities with forces + damping
+                    var vx = (me.velX + forceX * dt) * damping;
+                    var vy = (me.velY + forceY * dt) * damping;
+                    var vz = (me.velZ + forceZ * dt) * damping;
+
+                    // Update deformations
+                    var newDefX = me.tgtDefX + vx * dt;
+                    var newDefY = me.tgtDefY + vy * dt;
+                    var newDefZ = me.defZ + vz * dt;
+
+                    // Clamp XY deformation
+                    let xyLen = sqrt(newDefX * newDefX + newDefY * newDefY);
+                    if (xyLen > params.maxXY) {
+                        let s = params.maxXY / xyLen;
+                        newDefX *= s;
+                        newDefY *= s;
+                    }
+
+                    // Clamp Z deformation
+                    newDefZ = clamp(newDefZ, -params.maxZ, params.maxZ);
+
+                    // Write back
+                    shards[idx].tgtDefX = newDefX;
+                    shards[idx].tgtDefY = newDefY;
+                    shards[idx].defZ = newDefZ;
+                    shards[idx].velX = vx;
+                    shards[idx].velY = vy;
+                    shards[idx].velZ = vz;
                 }
             `;
-                    this.elasticityPipeline = this.device.createComputePipeline({
-                        layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.elasticityBindLayout] }),
-                        compute: { module: this.device.createShaderModule({ code: elasticityShader }), entryPoint: "main" }
+                    this.propagationPipeline = this.device.createComputePipeline({
+                        layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.propagationBindLayout] }),
+                        compute: { module: this.device.createShaderModule({ code: propagationShader }), entryPoint: "main" }
                     });
-                    this.elasticityUniform = this.device.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+                    // params: dt, damping, kXY, kZ, accordion, maxZ, maxXY, pad = 8 floats = 32 bytes
+                    this.propagationUniform = this.device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
-                    // --- 2. PIPELINE: DETEKCJA KOLIZJI I WGNIATANIE ---
+                    // --- 2. PIPELINE: DETEKCJA KOLIZJI (Narrowphase) ---
                     this.collisionBindLayout = this.device.createBindGroupLayout({
                         entries: [
-                            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }, // Shards A (READ_WRITE)
+                            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // Shards A
                             { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // Shards B
-                            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } }, // Transforms
-                            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // GridMap B
-                            { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }  // Reaction
+                            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },           // Transforms (A & B)
+                            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },           // Zwracane kontakty
+                            { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },           // Licznik kontaktów
+                            { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }  // GridMap B (grid→dense)
                         ]
                     });
 
+                    // Dynamiczne stałe z konfigu (zamiast hardcoded)
+                    const hexR = DESTRUCTOR_CONFIG.gridDivisions;
+                    const hexSpacing = hexR * 1.5;
+                    const hexHeightGPU = Math.sqrt(3) * hexR;
+                    const hitRad = hexR * 1.3;
+                    const hitRadSq = hitRad * hitRad;
+
+                    // Shader Kolizji — FIX: gridMap lookup, dynamiczne stałe, poprawny alignment
                     const collisionShader = `
-                struct Shard { gridX: f32, gridY: f32, deformX: f32, deformY: f32, targetDeformX: f32, targetDeformY: f32, hp: f32, maxHp: f32 };
-                
-                struct Config { 
-                    posA: vec2<f32>, rotA: vec2<f32>, cx_cyA: vec2<f32>, pivotA: vec2<f32>, scaleA: f32, colsB: f32, rowsB: f32, padA: f32,
-                    posB: vec2<f32>, rotB: vec2<f32>, cx_cyB: vec2<f32>, pivotB: vec2<f32>, scaleB: f32, padB1: f32, padB2: f32, padB3: f32,
-                    velA: vec2<f32>, velB: vec2<f32>, angVelA: f32, angVelB: f32, dt: f32, isDestruction: f32
+                struct Shard {
+                    gridX: f32, gridY: f32,
+                    defX: f32, defY: f32,
+                    tgtDefX: f32, tgtDefY: f32,
+                    hp: f32, maxHp: f32,
+                    defZ: f32,
+                    velX: f32, velY: f32, velZ: f32,
+                    _pad0: f32, _pad1: f32, _pad2: f32, _pad3: f32
                 };
+                // FIX alignment: pad after scale so vec2 gridSize aligns to 8 bytes
+                struct Transform { pos: vec2<f32>, rot: vec2<f32>, scale: f32, _pad: f32, gridSize: vec2<f32>, cx_cy: vec2<f32>, pivot: vec2<f32>, pad: vec2<f32> };
+                struct Contact { idxA: u32, idxB: u32, nx: f32, ny: f32, pen: f32, pad1: f32, pad2: f32, pad3: f32 }; // 32 bytes
 
-                struct Reaction { impulseX: atomic<i32>, impulseY: atomic<i32>, hitCount: atomic<u32> };
-
-                @group(0) @binding(0) var<storage, read_write> shardsA: array<Shard>;
+                @group(0) @binding(0) var<storage, read> shardsA: array<Shard>;
                 @group(0) @binding(1) var<storage, read> shardsB: array<Shard>;
-                @group(0) @binding(2) var<uniform> config: Config;
-                @group(0) @binding(3) var<storage, read> gridMapB: array<i32>;
-                @group(0) @binding(4) var<storage, read_write> reaction: Reaction;
+                @group(0) @binding(2) var<uniform> transforms: array<Transform, 2>;
+                @group(0) @binding(3) var<storage, read_write> contactsOut: array<Contact>;
+                @group(0) @binding(4) var<storage, read_write> contactCount: atomic<u32>;
+                @group(0) @binding(5) var<storage, read> gridMapB: array<i32>;
+
+                const HEX_SPACING: f32 = ${hexSpacing.toFixed(4)};
+                const HEX_HEIGHT: f32 = ${hexHeightGPU.toFixed(4)};
+                const HIT_RAD: f32 = ${hitRad.toFixed(4)};
+                const HIT_RAD_SQ: f32 = ${hitRadSq.toFixed(4)};
 
                 @compute @workgroup_size(64)
                 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                     let idxA = id.x;
                     if (idxA >= arrayLength(&shardsA)) { return; }
-                    var sA = shardsA[idxA];
+                    let sA = shardsA[idxA];
                     if (sA.hp <= 0.0) { return; }
 
-                    let relAx = (sA.gridX - config.cx_cyA.x) + sA.deformX - config.pivotA.x;
-                    let relAy = (sA.gridY - config.cx_cyA.y) + sA.deformY - config.pivotA.y;
-                    let worldAx = config.posA.x + (relAx * config.scaleA) * config.rotA.x - (relAy * config.scaleA) * config.rotA.y;
-                    let worldAy = config.posA.y + (relAx * config.scaleA) * config.rotA.y + (relAy * config.scaleA) * config.rotA.x;
+                    let tA = transforms[0];
+                    let tB = transforms[1];
 
-                    let dx = worldAx - config.posB.x;
-                    let dy = worldAy - config.posB.y;
-                    let localBx = (dx * config.rotB.x + dy * config.rotB.y) / config.scaleB;
-                    let localBy = (-dx * config.rotB.y + dy * config.rotB.x) / config.scaleB;
+                    let relAx = (sA.gridX - tA.cx_cy.x) + sA.defX - tA.pivot.x;
+                    let relAy = (sA.gridY - tA.cx_cy.y) + sA.defY - tA.pivot.y;
+                    let worldAx = tA.pos.x + (relAx * tA.scale) * tA.rot.x - (relAy * tA.scale) * tA.rot.y;
+                    let worldAy = tA.pos.y + (relAx * tA.scale) * tA.rot.y + (relAy * tA.scale) * tA.rot.x;
+
+                    let dx = worldAx - tB.pos.x;
+                    let dy = worldAy - tB.pos.y;
+                    let localBx = (dx * tB.rot.x + dy * tB.rot.y) / tB.scale;
+                    let localBy = (-dx * tB.rot.y + dy * tB.rot.x) / tB.scale;
                     
-                    let gridBx = localBx + config.cx_cyB.x + config.pivotB.x;
-                    let gridBy = localBy + config.cx_cyB.y + config.pivotB.y;
+                    let gridBx = localBx + tB.cx_cy.x + tB.pivot.x;
+                    let gridBy = localBy + tB.cx_cy.y + tB.pivot.y;
 
-                    let approxC = i32(round(gridBx / ${hexSpacing.toFixed(5)})); 
-                    let offsetR = f32(approxC % 2) * (${hexHeight.toFixed(5)} * 0.5);
-                    let approxR = i32(round((gridBy - offsetR) / ${hexHeight.toFixed(5)})); 
+                    let approxC = i32(round(gridBx / HEX_SPACING));
+                    let approxR = i32(round(gridBy / HEX_HEIGHT));
 
-                    let hitRadSq = ${hitRadSq.toFixed(5)}; 
+                    let colsB = i32(tB.gridSize.x);
+                    let rowsB = i32(tB.gridSize.y);
+                    let searchR = 2;
 
-                    var accumulatedDeformX = 0.0;
-                    var accumulatedDeformY = 0.0;
-                    var hit = false;
-
-                    for(var r = approxR - ${searchR}; r <= approxR + ${searchR}; r++) {
-                        for(var c = approxC - ${searchR}; c <= approxC + ${searchR}; c++) {
-                            if (c >= 0 && c < i32(config.colsB) && r >= 0 && r < i32(config.rowsB)) {
-                                let gridIdx = u32(c + r * i32(config.colsB));
+                    for(var r = approxR - searchR; r <= approxR + searchR; r++) {
+                        for(var c = approxC - searchR; c <= approxC + searchR; c++) {
+                            if (c >= 0 && c < colsB && r >= 0 && r < rowsB) {
+                                // FIX: use gridMap to go from grid coords → dense array index
+                                let gridIdx = u32(c + r * colsB);
                                 let denseIdx = gridMapB[gridIdx];
-                                
-                                if (denseIdx >= 0) {
-                                    let sB = shardsB[denseIdx];
-                                    if (sB.hp > 0.0) {
-                                        let bRelX = (sB.gridX - config.cx_cyB.x) + sB.deformX - config.pivotB.x;
-                                        let bRelY = (sB.gridY - config.cx_cyB.y) + sB.deformY - config.pivotB.y;
-                                        let worldBx = config.posB.x + (bRelX * config.scaleB) * config.rotB.x - (bRelY * config.scaleB) * config.rotB.y;
-                                        let worldBy = config.posB.y + (bRelX * config.scaleB) * config.rotB.y + (bRelY * config.scaleB) * config.rotB.x;
+                                if (denseIdx < 0) { continue; } // empty cell
+                                let idxB = u32(denseIdx);
+                                let sB = shardsB[idxB];
+                                if (sB.hp > 0.0) {
+                                    let bRelX = (sB.gridX - tB.cx_cy.x) + sB.defX - tB.pivot.x;
+                                    let bRelY = (sB.gridY - tB.cx_cy.y) + sB.defY - tB.pivot.y;
+                                    let worldBx = tB.pos.x + (bRelX * tB.scale) * tB.rot.x - (bRelY * tB.scale) * tB.rot.y;
+                                    let worldBy = tB.pos.y + (bRelX * tB.scale) * tB.rot.y + (bRelY * tB.scale) * tB.rot.x;
 
-                                        let nx = worldAx - worldBx;
-                                        let ny = worldAy - worldBy;
-                                        let distSq = nx*nx + ny*ny;
+                                    let nx = worldAx - worldBx;
+                                    let ny = worldAy - worldBy;
+                                    let distSq = nx*nx + ny*ny;
 
-                                        if (distSq < hitRadSq) {
-                                            let dist = sqrt(distSq);
-                                            let rawPen = ${hitRad.toFixed(5)} - dist;
-                                            let pen = max(0.0, min(rawPen, ${penClamp.toFixed(5)}));
-                                            
-                                            let invDist = 1.0 / max(dist, 0.0001);
-                                            let dirX = nx * invDist;
-                                            let dirY = ny * invDist;
-
-                                            let crushForce = pen * (1.0 + config.isDestruction * 1.25);
-                                            
-                                            let localDefX = dirX * config.rotA.x + dirY * config.rotA.y;
-                                            let localDefY = -dirX * config.rotA.y + dirY * config.rotA.x;
-
-                                            accumulatedDeformX += localDefX * crushForce;
-                                            accumulatedDeformY += localDefY * crushForce;
-
-                                            hit = true;
-
-                                            atomicAdd(&reaction.impulseX, i32(dirX * pen * 1000.0));
-                                            atomicAdd(&reaction.impulseY, i32(dirY * pen * 1000.0));
-                                            atomicAdd(&reaction.hitCount, 1u);
+                                    if (distSq < HIT_RAD_SQ) {
+                                        let dist = sqrt(distSq);
+                                        let cIdx = atomicAdd(&contactCount, 1u);
+                                        if (cIdx < 1024u) {
+                                            contactsOut[cIdx].idxA = idxA;
+                                            contactsOut[cIdx].idxB = idxB;
+                                            contactsOut[cIdx].nx = nx;
+                                            contactsOut[cIdx].ny = ny;
+                                            contactsOut[cIdx].pen = HIT_RAD - dist;
                                         }
                                     }
                                 }
                             }
                         }
                     }
-
-                    if (hit) {
-                        let stepSq = accumulatedDeformX * accumulatedDeformX + accumulatedDeformY * accumulatedDeformY;
-                        let maxStepSq = ${maxStepDeform.toFixed(2)} * ${maxStepDeform.toFixed(2)};
-                        if (stepSq > maxStepSq) {
-                            let stepScale = ${maxStepDeform.toFixed(2)} / sqrt(stepSq);
-                            accumulatedDeformX = accumulatedDeformX * stepScale;
-                            accumulatedDeformY = accumulatedDeformY * stepScale;
-                        }
-
-                        let newDefX = sA.targetDeformX + accumulatedDeformX;
-                        let newDefY = sA.targetDeformY + accumulatedDeformY;
-                        
-                        let defSq = newDefX*newDefX + newDefY*newDefY;
-                        let maxDefSq = ${maxDeform.toFixed(2)} * ${maxDeform.toFixed(2)};
-                        
-                        if (defSq > maxDefSq) {
-                            let scale = ${maxDeform.toFixed(2)} / sqrt(defSq);
-                            sA.targetDeformX = newDefX * scale;
-                            sA.targetDeformY = newDefY * scale;
-                        } else {
-                            sA.targetDeformX = newDefX;
-                            sA.targetDeformY = newDefY;
-                        }
-
-                        if (defSq > ${DESTRUCTOR_CONFIG.tearThreshold.toFixed(2)} * ${DESTRUCTOR_CONFIG.tearThreshold.toFixed(2)}) {
-                            sA.hp = 0.0;
-                        } else {
-                            sA.hp -= config.isDestruction * 6.0;
-                        }
-                        
-                        shardsA[idxA] = sA; 
-                    }
                 }
             `;
-
                     this.collisionPipeline = this.device.createComputePipeline({
                         layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.collisionBindLayout] }),
                         compute: { module: this.device.createShaderModule({ code: collisionShader }), entryPoint: "main" }
                     });
 
-                    this.uniformBuffer = this.device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-                    this.reactionBuffer = this.device.createBuffer({ size: 12, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
-                    // FIX Bug 1: Pool of readback buffers to avoid race conditions
-                    this._readbackPool = [];
-                    for (let rb = 0; rb < 4; rb++) {
-                        this._readbackPool.push({
-                            buffer: this.device.createBuffer({ size: 12, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
-                            inUse: false
-                        });
+                    // Bufory na wyniki kolizji (Max 1024 kontakty per zderzenie)
+                    this.contactsBuffer = this.device.createBuffer({ size: 1024 * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+                    this.contactCountBuffer = this.device.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+                    this.readbackContactsBuffer = this.device.createBuffer({ size: (1024 * 32) + 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+
+                    // --- 3. PIPELINE: GPU DEFORMATION (per-contact force application) ---
+                    this.deformBindLayout = this.device.createBindGroupLayout({
+                        entries: [
+                            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },           // shardsA (read_write — we write vel/def)
+                            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },           // shardsB (read_write)
+                            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },  // contacts
+                            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },  // contactCount
+                            { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } }            // deform params
+                        ]
+                    });
+
+                    const deformShader = `
+                struct Shard {
+                    gridX: f32, gridY: f32,
+                    defX: f32, defY: f32,
+                    tgtDefX: f32, tgtDefY: f32,
+                    hp: f32, maxHp: f32,
+                    defZ: f32,
+                    velX: f32, velY: f32, velZ: f32,
+                    _pad0: f32, _pad1: f32, _pad2: f32, _pad3: f32
+                };
+                struct Contact { idxA: u32, idxB: u32, nx: f32, ny: f32, pen: f32, pad1: f32, pad2: f32, pad3: f32 };
+                struct DeformParams {
+                    forceScale: f32,          // overall deformation strength
+                    accordionStrength: f32,   // Z accordion force multiplier
+                    ratioA: f32,              // massB / totalMass — how much A deforms
+                    ratioB: f32,              // massA / totalMass
+                    normalX: f32,             // collision normal (entity-level)
+                    normalY: f32,
+                    contactCount: u32,
+                    _pad: u32
+                };
+
+                @group(0) @binding(0) var<storage, read_write> shardsA: array<Shard>;
+                @group(0) @binding(1) var<storage, read_write> shardsB: array<Shard>;
+                @group(0) @binding(2) var<storage, read> contacts: array<Contact>;
+                @group(0) @binding(3) var<storage, read> countBuf: array<u32>;
+                @group(0) @binding(4) var<uniform> params: DeformParams;
+
+                @compute @workgroup_size(64)
+                fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+                    let ci = id.x;
+                    let totalContacts = min(params.contactCount, 1024u);
+                    if (ci >= totalContacts) { return; }
+
+                    let contact = contacts[ci];
+                    let idxA = contact.idxA;
+                    let idxB = contact.idxB;
+
+                    // Skip dead shards
+                    if (shardsA[idxA].hp <= 0.0 || shardsB[idxB].hp <= 0.0) { return; }
+
+                    let pen = max(contact.pen, 0.0);
+                    if (pen < 0.01) { return; }
+
+                    // Normalize contact normal
+                    var nx = contact.nx;
+                    var ny = contact.ny;
+                    let nLen = sqrt(nx * nx + ny * ny);
+                    if (nLen > 0.001) {
+                        nx = nx / nLen;
+                        ny = ny / nLen;
+                    } else {
+                        nx = params.normalX;
+                        ny = params.normalY;
                     }
-                    this.readbackBuffer = this._readbackPool[0].buffer; // backward compat
+
+                    let force = pen * params.forceScale;
+
+                    // --- XY deformation: push shards along collision normal ---
+                    let pushAx = -nx * force * params.ratioA;
+                    let pushAy = -ny * force * params.ratioA;
+                    let pushBx = nx * force * params.ratioB;
+                    let pushBy = ny * force * params.ratioB;
+
+                    // --- Z accordion: alternating sign based on contact index ---
+                    // Odd contacts go +Z, even go -Z → creates crumple waves
+                    let zSign = select(-1.0, 1.0, (ci % 2u) == 0u);
+                    let zForce = pen * params.accordionStrength * zSign;
+
+                    // Apply to shard A velocities (atomic-unsafe but GPU race is acceptable for softbody)
+                    shardsA[idxA].velX += pushAx;
+                    shardsA[idxA].velY += pushAy;
+                    shardsA[idxA].velZ += zForce * params.ratioA;
+                    shardsA[idxA].tgtDefX += pushAx * 0.5;
+                    shardsA[idxA].tgtDefY += pushAy * 0.5;
+
+                    // Apply to shard B velocities
+                    shardsB[idxB].velX += pushBx;
+                    shardsB[idxB].velY += pushBy;
+                    shardsB[idxB].velZ -= zForce * params.ratioB;
+                    shardsB[idxB].tgtDefX += pushBx * 0.5;
+                    shardsB[idxB].tgtDefY += pushBy * 0.5;
+
+                    // HP damage proportional to penetration
+                    let dmg = pen * 0.5;
+                    shardsA[idxA].hp -= dmg * params.ratioA;
+                    shardsB[idxB].hp -= dmg * params.ratioB;
+                }
+            `;
+                    this.deformPipeline = this.device.createComputePipeline({
+                        layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.deformBindLayout] }),
+                        compute: { module: this.device.createShaderModule({ code: deformShader }), entryPoint: "main" }
+                    });
+                    this.deformUniform = this.device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
                     this.active = true;
-                    console.log("🚀 WebGPU Phase 4 (Full System) gotowe i zabezpieczone!");
+                    console.log("🚀 WebGPU Phase 2 (Collisions) gotowe!");
                     return true;
                 } catch (e) {
                     console.error("Błąd WebGPU:", e);
@@ -1327,52 +1463,28 @@
                 }
             },
 
-            _destroyGpuData(gd, force = false) {
-                if (!gd || gd._destroyed) return;
-                gd._destroyed = true;
-                gd.disposed = true;
-                if (!force) return;
-                gd.shardBuffer?.destroy?.();
-                gd.neighborBuffer?.destroy?.();
-                gd.gridMapBuffer?.destroy?.();
-                gd.readbackShards?.destroy?.();
-            },
-
-            _retireGpuData(gd) {
-                if (!gd || gd._destroyed) return;
-                gd.disposed = true;
-                if (gd.isMapping) {
-                    gd.pendingDestroy = true;
-                    return;
-                }
-                this._destroyGpuData(gd);
-            },
-
-            releaseEntityBuffers(entity) {
-                const gd = entity?.gpuData;
-                if (!gd) return;
-                this._destroyGpuData(gd, true);
-                entity.gpuData = null;
-            },
-
             createBuffersForEntity(entity) {
                 if (!this.active || !entity.hexGrid || !entity.hexGrid.shards) return;
-                const oldGd = entity.gpuData;
-                if (oldGd) this._retireGpuData(oldGd);
-                const grid = entity.hexGrid;
-                const count = grid.shards.length;
 
-                const shardData = new Float32Array(count * 8);
-                const neighborData = new Int32Array(count * 6).fill(-1);
-                const gridMapData = new Int32Array(grid.cols * grid.rows).fill(-1);
+                const shards = entity.hexGrid.shards;
+                const count = shards.length;
+                const cols = entity.hexGrid.cols || 0;
+                const rows = entity.hexGrid.rows || 0;
+
+                const shardData = new Float32Array(count * 16);
+                const neighborData = new Int32Array(count * 6);
+                neighborData.fill(-1);
+
+                // FIX: gridMap — maps grid[c + r*cols] → dense shard index (or -1)
+                const gridMapSize = cols * rows;
+                const gridMapData = new Int32Array(Math.max(1, gridMapSize));
+                gridMapData.fill(-1);
+
+                for (let i = 0; i < count; i++) shards[i]._gpuIndex = i;
 
                 for (let i = 0; i < count; i++) {
-                    grid.shards[i]._gpuIndex = i;
-                }
-
-                for (let i = 0; i < count; i++) {
-                    const s = grid.shards[i];
-                    const offset = i * 8;
+                    const s = shards[i];
+                    const offset = i * 16;
                     shardData[offset + 0] = s.gridX;
                     shardData[offset + 1] = s.gridY;
                     shardData[offset + 2] = s.deformation.x;
@@ -1381,14 +1493,22 @@
                     shardData[offset + 5] = s.targetDeformation.y;
                     shardData[offset + 6] = s.hp;
                     shardData[offset + 7] = s.maxHp;
-
-                    gridMapData[s.c + s.r * grid.cols] = i;
+                    shardData[offset + 8] = s.deformZ || 0;
+                    shardData[offset + 9] = s.velX || 0;
+                    shardData[offset + 10] = s.velY || 0;
+                    shardData[offset + 11] = s.velZ || 0;
+                    // 12-15 = padding (zeros)
 
                     const nOffset = i * 6;
                     for (let n = 0; n < s.neighbors.length && n < 6; n++) {
                         if (s.neighbors[n] && s.neighbors[n]._gpuIndex !== undefined) {
                             neighborData[nOffset + n] = s.neighbors[n]._gpuIndex;
                         }
+                    }
+
+                    // Fill gridMap
+                    if (s.c >= 0 && s.c < cols && s.r >= 0 && s.r < rows) {
+                        gridMapData[s.c + s.r * cols] = i;
                     }
                 }
 
@@ -1405,52 +1525,56 @@
                 this.device.queue.writeBuffer(neighborBuffer, 0, neighborData);
 
                 const gridMapBuffer = this.device.createBuffer({
-                    size: gridMapData.byteLength,
+                    size: Math.max(4, gridMapData.byteLength),
                     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
                 });
                 this.device.queue.writeBuffer(gridMapBuffer, 0, gridMapData);
 
-                const readbackShards = this.device.createBuffer({
+                const readbackBuffer = this.device.createBuffer({
                     size: shardData.byteLength,
                     usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
                 });
 
-                const elasticityBindGroup = this.device.createBindGroup({
-                    layout: this.elasticityBindLayout,
+                const propagationBindGroup = this.device.createBindGroup({
+                    layout: this.propagationBindLayout,
                     entries: [
                         { binding: 0, resource: { buffer: shardBuffer } },
                         { binding: 1, resource: { buffer: neighborBuffer } },
-                        { binding: 2, resource: { buffer: this.elasticityUniform } }
+                        { binding: 2, resource: { buffer: this.propagationUniform } }
                     ]
                 });
 
                 entity.gpuData = {
-                    shardsRef: grid.shards,
+                    shardsRef: shards,
                     shardData, count,
-                    shardBuffer, neighborBuffer, gridMapBuffer, readbackShards, elasticityBindGroup,
-                    needsSyncFromGPU: false, isMapping: false,
-                    disposed: false, pendingDestroy: false, _destroyed: false
+                    shardBuffer, neighborBuffer, gridMapBuffer, readbackBuffer, propagationBindGroup,
+                    isMapping: false
                 };
             },
 
-            syncToGPU(entity, force = false) {
+            // FIX: syncToGPU — uploads gridX/gridY (plasticity) + deformation + hp
+            syncToGPU(entity) {
                 if (!this.active || !entity?.hexGrid || !entity.gpuData) return;
                 const gd = entity.gpuData;
-                if (gd.disposed || gd._destroyed) return;
-                if (!force && gd.needsSyncFromGPU) return;
+                if (gd.isMapping) return;
 
                 if (gd.shardsRef !== entity.hexGrid.shards) {
+
+                    if (gd.shardBuffer) gd.shardBuffer.destroy();
+                    if (gd.neighborBuffer) gd.neighborBuffer.destroy();
+                    if (gd.gridMapBuffer) gd.gridMapBuffer.destroy();
+                    if (gd.readbackBuffer) gd.readbackBuffer.destroy();
+
                     this.createBuffersForEntity(entity);
                     return;
                 }
 
-                const shardLen = entity.hexGrid.shards.length;
-                const liveCount = Math.min(gd.count, shardLen);
+                const shards = entity.hexGrid.shards;
+                const liveCount = Math.min(gd.count, shards.length);
                 for (let i = 0; i < liveCount; i++) {
-                    const s = entity.hexGrid.shards[i];
+                    const s = shards[i];
                     if (!s) continue;
-                    const offset = i * 8;
-                    // FIX Bug 4: sync gridX/gridY which change during plastic deformation
+                    const offset = i * 16;
                     gd.shardData[offset + 0] = s.gridX;
                     gd.shardData[offset + 1] = s.gridY;
                     gd.shardData[offset + 2] = s.deformation.x;
@@ -1458,166 +1582,171 @@
                     gd.shardData[offset + 4] = s.targetDeformation.x;
                     gd.shardData[offset + 5] = s.targetDeformation.y;
                     gd.shardData[offset + 6] = s.hp;
+                    gd.shardData[offset + 7] = s.maxHp;
+                    gd.shardData[offset + 8] = s.deformZ || 0;
+                    gd.shardData[offset + 9] = s.velX || 0;
+                    gd.shardData[offset + 10] = s.velY || 0;
+                    gd.shardData[offset + 11] = s.velZ || 0;
                 }
                 this.device.queue.writeBuffer(gd.shardBuffer, 0, gd.shardData);
             },
 
-            // BEZPIECZNE ASYNC Z TRY/CATCH DLA ELASTICITY
-            async computeElasticity(entity, dt) {
-                if (!this.active || !entity?.hexGrid || !entity.gpuData || entity.gpuData.isMapping) return;
-                let gd = entity.gpuData;
-                if (gd.disposed || gd._destroyed) return;
+            computePropagation(entity, dt) {
+                if (!this.active || !entity.gpuData || entity.gpuData.isMapping) return;
+                const gd = entity.gpuData;
 
+                if (gd.shardsRef !== entity.hexGrid.shards) {
+
+                    if (gd.shardBuffer) gd.shardBuffer.destroy();
+                    if (gd.neighborBuffer) gd.neighborBuffer.destroy();
+                    if (gd.gridMapBuffer) gd.gridMapBuffer.destroy();
+                    if (gd.readbackBuffer) gd.readbackBuffer.destroy();
+
+                    this.createBuffersForEntity(entity);
+                    return;
+                }
+
+                // Upload current CPU state to GPU
                 this.syncToGPU(entity);
-                gd = entity.gpuData;
-                if (!gd || gd.isMapping || gd.disposed || gd._destroyed) return;
 
-                const tension = DESTRUCTOR_CONFIG.softBodyTension;
-                const k = 1.0 - Math.exp(-tension * dt * 60);
-                this.device.queue.writeBuffer(this.elasticityUniform, 0, new Float32Array([k, 0]));
+                // Write propagation params: dt, damping, kXY, kZ, accordion, maxZ, maxXY, pad
+                const cfg = DESTRUCTOR_CONFIG;
+                this.device.queue.writeBuffer(this.propagationUniform, 0, new Float32Array([
+                    dt, cfg.crumpleDamping, cfg.crumpleStiffnessXY, cfg.crumpleStiffnessZ,
+                    cfg.crumpleAccordion, cfg.crumpleMaxZ, cfg.crumpleMaxXY, 0
+                ]));
 
                 const commandEncoder = this.device.createCommandEncoder();
                 const passEncoder = commandEncoder.beginComputePass();
-                passEncoder.setPipeline(this.elasticityPipeline);
-                passEncoder.setBindGroup(0, gd.elasticityBindGroup);
+                passEncoder.setPipeline(this.propagationPipeline);
+                passEncoder.setBindGroup(0, gd.propagationBindGroup);
                 passEncoder.dispatchWorkgroups(Math.ceil(gd.count / 64));
                 passEncoder.end();
 
-                commandEncoder.copyBufferToBuffer(gd.shardBuffer, 0, gd.readbackShards, 0, gd.shardData.byteLength);
+                commandEncoder.copyBufferToBuffer(gd.shardBuffer, 0, gd.readbackBuffer, 0, gd.shardData.byteLength);
                 this.device.queue.submit([commandEncoder.finish()]);
 
                 gd.isMapping = true;
-                try {
-                    await gd.readbackShards.mapAsync(GPUMapMode.READ);
-                    if (entity.gpuData !== gd || gd.disposed || gd._destroyed) return;
-                    const mappedData = new Float32Array(gd.readbackShards.getMappedRange());
+                gd.readbackBuffer.mapAsync(GPUMapMode.READ).then(() => {
+                    const mappedData = new Float32Array(gd.readbackBuffer.getMappedRange());
                     let changed = false;
-                    const shardLen = entity.hexGrid.shards.length;
-                    const liveCount = Math.min(gd.count, shardLen);
-                    for (let i = 0; i < liveCount; i++) {
+                    for (let i = 0; i < gd.count; i++) {
                         const s = entity.hexGrid.shards[i];
-                        if (!s) continue;
                         if (s.active && !s.isDebris) {
-                            s.targetDeformation.x = mappedData[i * 8 + 4];
-                            s.targetDeformation.y = mappedData[i * 8 + 5];
+                            const off = i * 16;
+                            s.targetDeformation.x = mappedData[off + 4];
+                            s.targetDeformation.y = mappedData[off + 5];
+                            s.deformZ = mappedData[off + 8];
+                            s.velX = mappedData[off + 9];
+                            s.velY = mappedData[off + 10];
+                            s.velZ = mappedData[off + 11];
                             changed = true;
                         }
                     }
-                    if (changed) entity.hexGrid.cacheDirty = true;
-                } catch (err) {
-                    console.error("WebGPU Elasticity mapAsync error:", err);
-                } finally {
-                    if (gd.readbackShards.mapState === 'mapped') {
-                        gd.readbackShards.unmap();
-                    }
+                    gd.readbackBuffer.unmap();
                     gd.isMapping = false;
-                    if (gd.pendingDestroy || gd.disposed) this._destroyGpuData(gd);
-                }
+                    if (changed) entity.hexGrid.cacheDirty = true;
+                }).catch(() => { gd.isMapping = false; });
             },
 
-            // BEZPIECZNE ASYNC Z TRY/CATCH DLA WYNIKÓW WGNIECEŃ
-            async pullFromGPU(entity) {
-                if (!this.active || !entity?.hexGrid || !entity.gpuData) return;
-                if (!entity.gpuData.needsSyncFromGPU || entity.gpuData.isMapping) return;
-                const gd = entity.gpuData;
-                if (gd.disposed || gd._destroyed) return;
-                gd.isMapping = true;
+            // --- GPU DEFORMATION: Apply per-contact forces directly on GPU ---
+            applyGPUDeformation(A, B, contactCount, nx, ny) {
+                if (!this.active || !A.gpuData || !B.gpuData) return;
+                if (contactCount <= 0) return;
+
+                const massA = A.mass || 1;
+                const massB = B.mass || 1;
+                const totalMass = massA + massB;
+                const ratioA = massB / totalMass; // heavier B = more deformation on A
+                const ratioB = massA / totalMass;
+
+                const cfg = DESTRUCTOR_CONFIG;
+                const forceScale = cfg.crushVelK * cfg.collisionDeformScale;
+                const accordionStr = cfg.crumpleAccordion * cfg.crumpleStiffnessZ;
+
+                // Upload params: forceScale, accordionStrength, ratioA, ratioB, normalX, normalY, contactCount, pad
+                const paramsData = new Float32Array(8);
+                paramsData[0] = forceScale;
+                paramsData[1] = accordionStr;
+                paramsData[2] = ratioA;
+                paramsData[3] = ratioB;
+                paramsData[4] = nx;
+                paramsData[5] = ny;
+                // contactCount is u32, write as int view
+                const paramsU32 = new Uint32Array(paramsData.buffer);
+                paramsU32[6] = contactCount;
+                paramsU32[7] = 0;
+                this.device.queue.writeBuffer(this.deformUniform, 0, paramsData);
+
+                // Create bind group for this pair
+                const deformBindGroup = this.device.createBindGroup({
+                    layout: this.deformBindLayout,
+                    entries: [
+                        { binding: 0, resource: { buffer: A.gpuData.shardBuffer } },
+                        { binding: 1, resource: { buffer: B.gpuData.shardBuffer } },
+                        { binding: 2, resource: { buffer: this.contactsBuffer } },
+                        { binding: 3, resource: { buffer: this.contactCountBuffer } },
+                        { binding: 4, resource: { buffer: this.deformUniform } }
+                    ]
+                });
 
                 const commandEncoder = this.device.createCommandEncoder();
-                commandEncoder.copyBufferToBuffer(gd.shardBuffer, 0, gd.readbackShards, 0, gd.shardData.byteLength);
+                const passEncoder = commandEncoder.beginComputePass();
+                passEncoder.setPipeline(this.deformPipeline);
+                passEncoder.setBindGroup(0, deformBindGroup);
+                passEncoder.dispatchWorkgroups(Math.ceil(contactCount / 64));
+                passEncoder.end();
                 this.device.queue.submit([commandEncoder.finish()]);
-
-                try {
-                    await gd.readbackShards.mapAsync(GPUMapMode.READ);
-                    if (entity.gpuData !== gd || gd.disposed || gd._destroyed) return;
-                    const mappedData = new Float32Array(gd.readbackShards.getMappedRange());
-                    let changed = false;
-
-                    const shardLen = entity.hexGrid.shards.length;
-                    const liveCount = Math.min(gd.count, shardLen);
-                    for (let i = 0; i < liveCount; i++) {
-                        const s = entity.hexGrid.shards[i];
-                        if (!s) continue;
-                        if (s.active && !s.isDebris) {
-                            s.targetDeformation.x = mappedData[i * 8 + 4];
-                            s.targetDeformation.y = mappedData[i * 8 + 5];
-                            s.hp = mappedData[i * 8 + 6];
-                            changed = true;
-                        }
-                    }
-                    if (changed) entity.hexGrid.cacheDirty = true;
-                } catch (err) {
-                    console.error("WebGPU Pull mapAsync error:", err);
-                } finally {
-                    if (gd.readbackShards.mapState === 'mapped') {
-                        gd.readbackShards.unmap();
-                    }
-                    gd.needsSyncFromGPU = false;
-                    gd.isMapping = false;
-                    if (gd.pendingDestroy || gd.disposed) this._destroyGpuData(gd);
-                }
             },
 
-            // FIX Bug 1: Get a free readback buffer from pool
-            _acquireReadback() {
-                for (const rb of this._readbackPool) {
-                    if (!rb.inUse) { rb.inUse = true; return rb; }
-                }
-                // All busy — create a temporary one
-                const buf = this.device.createBuffer({ size: 12, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-                const rb = { buffer: buf, inUse: true };
-                this._readbackPool.push(rb);
-                return rb;
-            },
-
-            // POPRAWIONE POZYCJE (this.collisionBindLayout, this.collisionPipeline) ORAZ SYNC B
-            async processCollision(A, B, dt) {
+            // --- GPU COLLISION DETECTION (naprawione) ---
+            async getGPUContacts(A, B) {
                 if (!this.active || !A.gpuData || !B.gpuData) return null;
-                if (A.gpuData.disposed || A.gpuData._destroyed || B.gpuData.disposed || B.gpuData._destroyed) return null;
+                if (A.gpuData.isMapping || B.gpuData.isMapping) return null;
 
-                if (!A.gpuData.needsSyncFromGPU) this.syncToGPU(A);
-                if (!B.gpuData.needsSyncFromGPU) this.syncToGPU(B);
-                if (!A.gpuData || !B.gpuData) return null;
-                if (A.gpuData.disposed || A.gpuData._destroyed || B.gpuData.disposed || B.gpuData._destroyed) return null;
+                // FIX: sync CPU→GPU before detection
+                this.syncToGPU(A);
+                this.syncToGPU(B);
 
-                this.device.queue.writeBuffer(this.reactionBuffer, 0, new Int32Array([0, 0, 0]));
+                // Resetowanie licznika kontaktów do zera
+                this.device.queue.writeBuffer(this.contactCountBuffer, 0, new Uint32Array([0]));
 
-                const dvx = A.vx - B.vx;
-                const dvy = A.vy - B.vy;
-                const impactSpeed = Math.hypot(dvx, dvy);
-                const isDestruction = impactSpeed > (DESTRUCTOR_CONFIG.yieldPoint || 200) ? 1.0 : 0.0;
-
-                const getTrans = (ent) => {
+                // FIX alignment: Transform struct has _pad after scale (16 floats = 64 bytes per transform)
+                const getTransformData = (ent) => {
                     const ang = ent.angle + DESTRUCTOR_CONFIG.visualRotationOffset;
                     return [
-                        ent.x, ent.y, Math.cos(ang), Math.sin(ang),
-                        ent.hexGrid.srcWidth * 0.5, ent.hexGrid.srcHeight * 0.5,
-                        ent.hexGrid.pivot ? ent.hexGrid.pivot.x : 0, ent.hexGrid.pivot ? ent.hexGrid.pivot.y : 0,
-                        1.0, ent.hexGrid.cols, ent.hexGrid.rows, 0.0
+                        ent.x, ent.y,                     // pos (vec2)
+                        Math.cos(ang), Math.sin(ang),     // rot (vec2)
+                        1.0,                              // scale (f32)
+                        0.0,                              // _pad (f32) — alignment for gridSize vec2
+                        ent.hexGrid.cols, ent.hexGrid.rows, // gridSize (vec2)
+                        ent.hexGrid.srcWidth * 0.5, ent.hexGrid.srcHeight * 0.5, // cx_cy (vec2)
+                        ent.hexGrid.pivot ? ent.hexGrid.pivot.x : 0, ent.hexGrid.pivot ? ent.hexGrid.pivot.y : 0, // pivot (vec2)
+                        0, 0                              // pad (vec2) → 14 floats = 56 bytes per Transform
                     ];
                 };
 
-                const uData = new Float32Array([
-                    ...getTrans(A), ...getTrans(B),
-                    A.vx, A.vy, B.vx, B.vy,
-                    A.angVel, B.angVel, dt, isDestruction
-                ]);
-                this.device.queue.writeBuffer(this.uniformBuffer, 0, uData);
+                const transformData = new Float32Array([...getTransformData(A), ...getTransformData(B)]);
+                const transformBuffer = this.device.createBuffer({
+                    size: transformData.byteLength,
+                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+                });
+                this.device.queue.writeBuffer(transformBuffer, 0, transformData);
 
+                // Bind group z gridMapBuffer dla B
                 const bindGroup = this.device.createBindGroup({
                     layout: this.collisionBindLayout,
                     entries: [
                         { binding: 0, resource: { buffer: A.gpuData.shardBuffer } },
                         { binding: 1, resource: { buffer: B.gpuData.shardBuffer } },
-                        { binding: 2, resource: { buffer: this.uniformBuffer } },
-                        { binding: 3, resource: { buffer: B.gpuData.gridMapBuffer } },
-                        { binding: 4, resource: { buffer: this.reactionBuffer } }
+                        { binding: 2, resource: { buffer: transformBuffer } },
+                        { binding: 3, resource: { buffer: this.contactsBuffer } },
+                        { binding: 4, resource: { buffer: this.contactCountBuffer } },
+                        { binding: 5, resource: { buffer: B.gpuData.gridMapBuffer } }
                     ]
                 });
 
-                // FIX Bug 1: use pooled readback buffer
-                const rb = this._acquireReadback();
-
+                // Dispatch Compute Shader
                 const commandEncoder = this.device.createCommandEncoder();
                 const passEncoder = commandEncoder.beginComputePass();
                 passEncoder.setPipeline(this.collisionPipeline);
@@ -1625,34 +1754,34 @@
                 passEncoder.dispatchWorkgroups(Math.ceil(A.gpuData.count / 64));
                 passEncoder.end();
 
-                commandEncoder.copyBufferToBuffer(this.reactionBuffer, 0, rb.buffer, 0, 12);
+                // Kopiowanie wyników
+                commandEncoder.copyBufferToBuffer(this.contactCountBuffer, 0, this.readbackContactsBuffer, 0, 4);
+                commandEncoder.copyBufferToBuffer(this.contactsBuffer, 0, this.readbackContactsBuffer, 4, 1024 * 32);
                 this.device.queue.submit([commandEncoder.finish()]);
 
-                let res = null;
-                try {
-                    await rb.buffer.mapAsync(GPUMapMode.READ);
-                    const results = new Int32Array(rb.buffer.getMappedRange());
+                // Czekamy na wyniki z GPU
+                await this.readbackContactsBuffer.mapAsync(GPUMapMode.READ);
 
-                    const hitCount = results[2];
-                    if (hitCount > 0) {
-                        res = {
-                            impulseX: (results[0] / 1000.0) / hitCount,
-                            impulseY: (results[1] / 1000.0) / hitCount,
-                            count: hitCount
-                        };
-                    }
-                } catch (err) {
-                    console.error("WebGPU processCollision mapAsync error:", err);
-                } finally {
-                    if (rb.buffer.mapState === 'mapped') {
-                        rb.buffer.unmap();
-                    }
-                    rb.inUse = false;
+                const countArray = new Uint32Array(this.readbackContactsBuffer.getMappedRange(0, 4));
+                const count = Math.min(countArray[0], 1024);
+
+                const contactsArray = new Float32Array(this.readbackContactsBuffer.getMappedRange(4, count * 32));
+                const uintArray = new Uint32Array(this.readbackContactsBuffer.getMappedRange(4, count * 32));
+
+                const results = [];
+                for (let i = 0; i < count; i++) {
+                    results.push({
+                        shardA: A.hexGrid.shards[uintArray[i * 8 + 0]],
+                        shardB: B.hexGrid.shards[uintArray[i * 8 + 1]],
+                        nx: contactsArray[i * 8 + 2],
+                        ny: contactsArray[i * 8 + 3],
+                        pen: contactsArray[i * 8 + 4]
+                    });
                 }
 
-                if (res && res.count > 0) A.gpuData.needsSyncFromGPU = true;
+                this.readbackContactsBuffer.unmap();
 
-                return res;
+                return results;
             }
         };
 
@@ -1660,52 +1789,55 @@
             debris: [],
             splitQueue: [],
             _tick: 0,
+            _nextEid: 0,
             async update(dt, entities) {
-                for (let i = this.debris.length - 1; i >= 0; i--) {
-                    this.debris[i].updateDebris(dt);
-                    if (!this.debris[i].active) {
-                        this.debris[i] = this.debris[this.debris.length - 1];
-                        this.debris.pop();
+                const debris = this.debris;
+                for (let i = debris.length - 1; i >= 0; i--) {
+                    debris[i].updateDebris(dt);
+                    if (!debris[i].active) {
+                        debris[i] = debris[debris.length - 1];
+                        debris.pop();
                     }
                 }
                 this._tick++;
 
                 const t0col = performance.now();
+                this.simulateElasticity(entities, dt);
 
-                // Ściągnijmy na CPU to, co zostało wgniecione w poprzedniej klatce!
+                // Pre-fetch GPU contacts once per frame (async)
+                let gpuCache = null;
                 if (WebGPUPhysics.active) {
-                    const pullPromises = [];
-                    for (const e of entities) {
-                        if (e.hexGrid && e.gpuData && e.gpuData.needsSyncFromGPU) {
-                            pullPromises.push(WebGPUPhysics.pullFromGPU(e));
+                    gpuCache = new Map();
+                    const len = entities.length;
+                    for (let i = 0; i < len; i++) {
+                        const A = entities[i];
+                        if (!A.hexGrid || !A.gpuData) continue;
+                        if (A._eid === undefined) A._eid = this._nextEid++;
+                        for (let j = i + 1; j < len; j++) {
+                            const B = entities[j];
+                            if (!B.hexGrid || !B.gpuData) continue;
+                            if (A.owner === B || B.owner === A) continue;
+                            if (B._eid === undefined) B._eid = this._nextEid++;
+                            const dx = A.x - B.x, dy = A.y - B.y;
+                            const radSum = (A.radius || 100) + (B.radius || 100);
+                            if (dx * dx + dy * dy > radSum * radSum) continue;
+                            try {
+                                const contacts = await WebGPUPhysics.getGPUContacts(A, B);
+                                if (contacts && contacts.length > 0) {
+                                    gpuCache.set(A._eid + '|' + B._eid, contacts);
+                                }
+                            } catch (e) { /* GPU fail - CPU fallback */ }
                         }
                     }
-                    if (pullPromises.length) await Promise.all(pullPromises);
                 }
 
-                // --- ZMIANA: Czekamy na sprężystość z GPU! ---
-                await this.simulateElasticity(entities, dt);
-
-                const iterations = DESTRUCTOR_CONFIG.collisionIterations || 2;
+                const iterations = DESTRUCTOR_CONFIG.collisionIterations || 4; // moĹĽesz zaczÄ…Ä‡ od 3-4
                 for (let i = 0; i < iterations; i++) {
-                    await this.resolveCollisions(entities, dt);
+                    const doDamage = (i === 0);
+                    this.resolveCollisions(entities, dt, doDamage, gpuCache);
                 }
                 Perf.collisionTime += performance.now() - t0col;
-
-                // Detekcja zniszczonych heksów
-                for (const e of entities) {
-                    if (!e.hexGrid) continue;
-                    let splitNeeded = false;
-                    for (const s of e.hexGrid.shards) {
-                        if (s.active && !s.isDebris && s.hp <= 0) {
-                            this.destroyShard(e, s, { x: e.vx, y: e.vy });
-                            splitNeeded = true;
-                        }
-                    }
-                    if (splitNeeded) this.splitQueue.push(e);
-                }
-
-                if (this.splitQueue.length > 0) this.processSplits(entities);
+                if (this._tick % 10 === 0 && this.splitQueue.length > 0) this.processSplits(entities);
             },
 
             updateVisualDeformation(entities, dt) {
@@ -1721,29 +1853,31 @@
                 }
             },
 
-            // --- ZMIANA: Funkcja jest teraz async ---
-            async simulateElasticity(entities, dt) {
-                // GPU PATH
+            simulateElasticity(entities, dt) {
+                // JeĹ›li WebGPU jest dostÄ™pne, puszczamy wszystko na kartÄ™ graficznÄ….
                 if (WebGPUPhysics.active) {
-                    const promises = [];
                     for (const e of entities) {
-                        if (e.hexGrid) promises.push(WebGPUPhysics.computeElasticity(e, dt));
+                        if (e.hexGrid) WebGPUPhysics.computePropagation(e, dt);
                     }
-                    if (promises.length > 0) await Promise.all(promises);
                     return;
                 }
 
-                // CPU FALLBACK PATH
                 const tension = DESTRUCTOR_CONFIG.softBodyTension;
                 if (tension <= 0) return;
+
+                // frame-rate independent krok
                 const k = 1.0 - Math.exp(-tension * dt * 60);
 
                 for (const e of entities) {
                     if (!e.hexGrid) continue;
+
                     for (const s of e.hexGrid.shards) {
                         if (!s.active || s.isDebris) continue;
+
                         for (const n of s.neighbors) {
                             if (!n.active || n.isDebris) continue;
+
+                            // ĹĽeby nie liczyÄ‡ pary 2x (prosty warunek deterministyczny)
                             if (n.c < s.c || (n.c === s.c && n.r <= s.r)) continue;
 
                             const ax = s.targetDeformation.x;
@@ -1756,10 +1890,13 @@
 
                             s.targetDeformation.x += (avgX - ax) * k;
                             s.targetDeformation.y += (avgY - ay) * k;
+
                             n.targetDeformation.x += (avgX - bx) * k;
                             n.targetDeformation.y += (avgY - by) * k;
                         }
                     }
+
+                    e.hexGrid.cacheDirty = true;
                 }
             },
 
@@ -1775,15 +1912,218 @@
                                 }
                             }
                         }
-                        if (anyFix) {
-                            e.hexGrid.cacheDirty = true;
-                            if (WebGPUPhysics.active) WebGPUPhysics.syncToGPU(e);
-                        }
+                        if (anyFix) e.hexGrid.cacheDirty = true;
                     }
                 }
             },
 
-            async resolveCollisions(entities, dt) {
+            distributeStructuralDamage(entity, impactLocalX, impactLocalY, forceX, forceY, damageScale = 1.0) {
+                const radius = DESTRUCTOR_CONFIG.bendingRadius;
+                const radiusSq = BENDING_RAD_SQ;
+                const invRadius = 1.0 / radius;
+                const deformMul = DESTRUCTOR_CONFIG.deformMul;
+                let anyDestroyed = false;
+
+                const pivotX = entity.hexGrid.pivot ? entity.hexGrid.pivot.x : 0;
+                const pivotY = entity.hexGrid.pivot ? entity.hexGrid.pivot.y : 0;
+                const adjustedImpactX = impactLocalX + pivotX;
+                const adjustedImpactY = impactLocalY + pivotY;
+
+                // Parametry strzÄ™pienia - precomputed
+                const tearSensitivity = DESTRUCTOR_CONFIG.tearSensitivity;
+                const maxFray = DESTRUCTOR_CONFIG.maxFray;
+                const maxFraySq = maxFray * maxFray;
+
+                // Precompute force magnitude and direction ONCE (nie w pÄ™tli!)
+                const forceMagSq = forceX * forceX + forceY * forceY;
+                const forceMag = Math.sqrt(forceMagSq);
+                const doFray = (damageScale > 0) && (forceMag > 2.0);
+
+                // ZMIANA: Normalizujemy wektor siĹ‚y zawsze, gdy tylko siĹ‚a istnieje
+                const fnx = forceMag > 0 ? forceX / forceMag : 0;
+                const fny = forceMag > 0 ? forceY / forceMag : 0;
+                const hpDmgBase = (Math.abs(forceX) + Math.abs(forceY)) * DESTRUCTOR_CONFIG.inflictedDamageMult * damageScale;
+
+                const cx = entity.hexGrid.srcWidth * 0.5;
+                const cy = entity.hexGrid.srcHeight * 0.5;
+
+                // FAST PATH: iterate only cells around impact (instead of scanning all shards)
+                const cols = entity.hexGrid.cols;
+                const rows = entity.hexGrid.rows;
+                const grid = entity.hexGrid.grid;
+
+                const invHexSpacing = 1.0 / HEX_SPACING;
+                const invHexHeight = 1.0 / HEX_HEIGHT;
+
+                const impactGX = adjustedImpactX + cx;
+                const impactGY = adjustedImpactY + cy;
+
+                const approxC = Math.round(impactGX * invHexSpacing);
+                const approxR = Math.round(impactGY * invHexHeight);
+
+                const cellRadC = Math.ceil(radius * invHexSpacing) + 2;
+                const cellRadR = Math.ceil(radius * invHexHeight) + 2;
+
+                if (grid && cols && rows) {
+                    let c0 = approxC - cellRadC;
+                    let c1 = approxC + cellRadC;
+                    let r0 = approxR - cellRadR;
+                    let r1 = approxR + cellRadR;
+
+                    if (c0 < 0) c0 = 0;
+                    if (r0 < 0) r0 = 0;
+                    if (c1 >= cols) c1 = cols - 1;
+                    if (r1 >= rows) r1 = rows - 1;
+
+                    for (let r = r0; r <= r1; r++) {
+                        const rowBase = r * cols;
+                        for (let c = c0; c <= c1; c++) {
+                            const shard = grid[rowBase + c];
+                            if (!shard || !shard.active || shard.isDebris) continue;
+
+                            const dx = (shard.gridX - cx) - adjustedImpactX;
+                            const dy = (shard.gridY - cy) - adjustedImpactY;
+                            const d2 = dx * dx + dy * dy;
+                            if (d2 >= radiusSq) continue;
+
+                            const dist = Math.sqrt(d2);
+                            const factor = 1 - dist * invRadius;
+                            if (factor <= 0) continue;
+                            const influence = factor * factor * (3 - 2 * factor);
+
+                            // Softbody deformation - BAZOWA
+                            let defX = forceX * influence * deformMul;
+                            let defY = forceY * influence * deformMul;
+
+                            // --- EFEKT ROZĹUPYWANIA (CLEAVE) I WYBRZUSZANIA (BULGE) ---
+                            // Dodano zabezpieczenie "|| 0.8" w razie braku zmiennej w konfigu
+                            const cleaveForce = DESTRUCTOR_CONFIG.cleaveForce || 0.8;
+                            if (forceMag > 0.5) {
+                                // 1. Wektor prostopadĹ‚y do osi siĹ‚y uderzenia (lokalnej)
+                                const perpX = -fny;
+                                const perpY = fnx;
+
+                                // 2. Po ktĂłrej stronie osi uderzenia znajduje siÄ™ ten heks? (Iloczyn skalarny)
+                                const lateralDist = dx * perpX + dy * perpY;
+
+                                // 3. Kierunek wypchniÄ™cia (zabezpieczenie przed 0, spychamy zawsze na boki)
+                                const side = lateralDist >= 0 ? 1 : -1;
+
+                                // 4. Skalowanie efektu (uĹĽywamy teĹĽ deformMul, ĹĽeby siĹ‚a boczna nie dominowaĹ‚a!)
+                                const lateralMul = cleaveForce * influence * deformMul;
+
+                                // Rozpychanie na boki
+                                defX += perpX * side * forceMag * lateralMul;
+                                defY += perpY * side * forceMag * lateralMul;
+                            }
+
+                            shard.applyDeformation(defX, defY);
+
+                            // Efekt strzÄ™pienia (shredding)
+                            if (doFray) {
+                                const tearBase = forceMag * influence * tearSensitivity;
+                                for (let i = 0; i < 6; i++) {
+                                    const randomTear = Math.random() * tearBase;
+                                    const f = shard.frays[i];
+                                    f.x += fnx * randomTear + (Math.random() - 0.5) * randomTear * 0.5;
+                                    f.y += fny * randomTear + (Math.random() - 0.5) * randomTear * 0.5;
+
+                                    const fraySq = f.x * f.x + f.y * f.y;
+                                    if (fraySq > maxFraySq) {
+                                        const scale = maxFray / Math.sqrt(fraySq);
+                                        f.x *= scale;
+                                        f.y *= scale;
+                                    }
+                                }
+                            }
+
+                            if (damageScale > 0) {
+                                shard.hp -= hpDmgBase * influence;
+                                if (shard.hp <= 0) {
+                                    this.destroyShard(entity, shard, { x: entity.vx, y: entity.vy });
+                                    anyDestroyed = true;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Fallback (should rarely happen)
+                    const shards = entity.hexGrid.shards;
+                    for (let si = 0, sLen = shards.length; si < sLen; si++) {
+                        const shard = shards[si];
+                        if (!shard.active || shard.isDebris) continue;
+
+                        const dx = (shard.gridX - cx) - adjustedImpactX;
+                        const dy = (shard.gridY - cy) - adjustedImpactY;
+                        const d2 = dx * dx + dy * dy;
+                        if (d2 < radiusSq) {
+                            const dist = Math.sqrt(d2);
+                            const factor = 1 - dist * invRadius;
+                            if (factor <= 0) continue;
+                            const influence = factor * factor * (3 - 2 * factor);
+
+                            // Softbody deformation - BAZOWA
+                            let defX = forceX * influence * deformMul;
+                            let defY = forceY * influence * deformMul;
+
+                            // --- EFEKT ROZĹUPYWANIA (CLEAVE) I WYBRZUSZANIA (BULGE) ---
+                            // Dodano zabezpieczenie "|| 0.8" w razie braku zmiennej w konfigu
+                            const cleaveForce = DESTRUCTOR_CONFIG.cleaveForce || 0.8;
+                            if (forceMag > 0.5) {
+                                // 1. Wektor prostopadĹ‚y do osi siĹ‚y uderzenia (lokalnej)
+                                const perpX = -fny;
+                                const perpY = fnx;
+
+                                // 2. Po ktĂłrej stronie osi uderzenia znajduje siÄ™ ten heks? (Iloczyn skalarny)
+                                const lateralDist = dx * perpX + dy * perpY;
+
+                                // 3. Kierunek wypchniÄ™cia (zabezpieczenie przed 0, spychamy zawsze na boki)
+                                const side = lateralDist >= 0 ? 1 : -1;
+
+                                // 4. Skalowanie efektu (uĹĽywamy teĹĽ deformMul, ĹĽeby siĹ‚a boczna nie dominowaĹ‚a!)
+                                const lateralMul = cleaveForce * influence * deformMul;
+
+                                // Rozpychanie na boki
+                                defX += perpX * side * forceMag * lateralMul;
+                                defY += perpY * side * forceMag * lateralMul;
+                            }
+
+                            shard.applyDeformation(defX, defY);
+
+                            // Efekt strzÄ™pienia (shredding)
+                            if (doFray) {
+                                const tearBase = forceMag * influence * tearSensitivity;
+                                for (let i = 0; i < 6; i++) {
+                                    const randomTear = Math.random() * tearBase;
+                                    const f = shard.frays[i];
+                                    f.x += fnx * randomTear + (Math.random() - 0.5) * randomTear * 0.5;
+                                    f.y += fny * randomTear + (Math.random() - 0.5) * randomTear * 0.5;
+
+                                    const fraySq = f.x * f.x + f.y * f.y;
+                                    if (fraySq > maxFraySq) {
+                                        const scale = maxFray / Math.sqrt(fraySq);
+                                        f.x *= scale;
+                                        f.y *= scale;
+                                    }
+                                }
+                            }
+
+                            if (damageScale > 0) {
+                                shard.hp -= hpDmgBase * influence;
+                                if (shard.hp <= 0) {
+                                    this.destroyShard(entity, shard, { x: entity.vx, y: entity.vy });
+                                    anyDestroyed = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (damageScale > 0 && anyDestroyed) this.splitQueue.push(entity);
+                entity.hexGrid.cacheDirty = true;
+            },
+
+            resolveCollisions(entities, dt, doDamage, gpuCache) {
                 const len = entities.length;
                 for (let i = 0; i < len; i++) {
                     const A = entities[i];
@@ -1797,95 +2137,533 @@
                         const dx = ax - B.x, dy = ay - B.y;
                         const radSum = ar + (B.radius || 100);
                         if (dx * dx + dy * dy > radSum * radSum) continue;
+                        // Look up pre-fetched GPU contacts
+                        let gpuContacts = null;
+                        if (gpuCache && A._eid !== undefined && B._eid !== undefined) {
+                            gpuContacts = gpuCache.get(A._eid + '|' + B._eid) || null;
+                        }
+                        this.collideEntities(A, B, dt, doDamage, gpuContacts);
+                    }
+                }
+            },
 
-                        // GPU robi wszystko: zwraca nam tylko wektor pchnięcia makro!
-                        if (WebGPUPhysics.active) {
-                            const reaction = await WebGPUPhysics.processCollision(A, B, dt);
-                            if (!reaction || reaction.count <= 0) continue;
-                            const reactionB = await WebGPUPhysics.processCollision(B, A, dt);
+            // --- HYBRID COLLISION SOLVER (V36 Detection + V46 Impulse Physics) ---
+            // Reusable contacts buffer to avoid GC pressure (pre-allocated objects â€” no per-frame GC)
+            _contactsBuf: Array.from({ length: 64 }, () => ({
+                shardA: null, shardB: null,
+                worldAx: 0, worldAy: 0,
+                worldBx: 0, worldBy: 0,
+                normalX: 0, normalY: 0,
+                penetration: 0
+            })),
+            _contactsCount: 0,
 
-                            const massA = A.mass || 100;
-                            const massB = B.mass || 100;
-                            // FIX Bug 2: Halved forceMag since both A→B and B→A contribute
-                            const forceMag = DESTRUCTOR_CONFIG.crushSeparation * 50;
+            collideEntities(A, B, dt, doDamage, gpuContacts) {
+                // OPTIMIZATION: Smaller object iterates (from destructor.js)
+                // Swap so that 'iterator' has fewer shards â€” much fewer hex lookups
+                let iterator = A, gridHolder = B;
+                if (A.hexGrid.shards.length > B.hexGrid.shards.length) {
+                    iterator = B;
+                    gridHolder = A;
+                }
 
-                            if (reaction && reaction.count > 0) {
-                                Perf.contactsAccum += reaction.count;
+                const massA = A.mass || 100;
+                const massB = B.mass || 100;
+                const angIter = iterator.angle + DESTRUCTOR_CONFIG.visualRotationOffset;
+                const angGrid = gridHolder.angle + DESTRUCTOR_CONFIG.visualRotationOffset;
+                const cosI = Math.cos(angIter), sinI = Math.sin(angIter);
+                const cosG = Math.cos(angGrid), sinG = Math.sin(angGrid);
+                // Inverse rotation for gridHolder: cos(-x)=cos(x), sin(-x)=-sin(x)
+                const cosG_inv = cosG, sinG_inv = -sinG;
 
-                                A.vx += (reaction.impulseX / massA) * forceMag;
-                                A.vy += (reaction.impulseY / massA) * forceMag;
-                                B.vx -= (reaction.impulseX / massB) * forceMag;
-                                B.vy -= (reaction.impulseY / massB) * forceMag;
+                const cxI = iterator.hexGrid.srcWidth * 0.5;
+                const cyI = iterator.hexGrid.srcHeight * 0.5;
+                const cxG = gridHolder.hexGrid.srcWidth * 0.5;
+                const cyG = gridHolder.hexGrid.srcHeight * 0.5;
+                const pivotIx = iterator.hexGrid.pivot ? iterator.hexGrid.pivot.x : 0;
+                const pivotIy = iterator.hexGrid.pivot ? iterator.hexGrid.pivot.y : 0;
+                const pivotGx = gridHolder.hexGrid.pivot ? gridHolder.hexGrid.pivot.x : 0;
+                const pivotGy = gridHolder.hexGrid.pivot ? gridHolder.hexGrid.pivot.y : 0;
 
-                                A.x += reaction.impulseX * 0.05;
-                                A.y += reaction.impulseY * 0.05;
-                                B.x -= reaction.impulseX * 0.05;
-                                B.y -= reaction.impulseY * 0.05;
-                            }
+                // --- BOUNDS INTERSECTION (from destructor.js) ---
+                // Compute bounding box of iterator in gridHolder's local grid space
+                const iterRadius = iterator.radius || 100;
+                const ix = iterator.x, iy = iterator.y;
+                const gx = gridHolder.x, gy = gridHolder.y;
 
-                            // FIX Bug 2: Apply symmetric forces from B→A reaction
-                            if (reactionB && reactionB.count > 0) {
-                                Perf.contactsAccum += reactionB.count;
+                // corners implicit (avoid per-frame allocations)
 
-                                B.vx += (reactionB.impulseX / massB) * forceMag;
-                                B.vy += (reactionB.impulseY / massB) * forceMag;
-                                A.vx -= (reactionB.impulseX / massA) * forceMag;
-                                A.vy -= (reactionB.impulseY / massA) * forceMag;
+                let minC = Infinity, maxC = -Infinity, minR = Infinity, maxR = -Infinity;
+                const invHexSpacing = 1.0 / HEX_SPACING;
+                const invHexHeight = 1.0 / HEX_HEIGHT;
 
-                                B.x += reactionB.impulseX * 0.05;
-                                B.y += reactionB.impulseY * 0.05;
-                                A.x -= reactionB.impulseX * 0.05;
-                                A.y -= reactionB.impulseY * 0.05;
-                            }
-                        } else {
-                            const massA = A.mass || 100;
-                            const massB = B.mass || 100;
-                            let nx = dx;
-                            let ny = dy;
-                            let distSq = nx * nx + ny * ny;
-                            if (distSq < 1e-8) {
-                                nx = 1;
-                                ny = 0;
-                                distSq = 1;
-                            }
-                            const dist = Math.sqrt(distSq);
-                            const penetration = radSum - dist;
-                            if (penetration <= 0) continue;
-                            nx /= dist;
-                            ny /= dist;
 
-                            const rvx = A.vx - B.vx;
-                            const rvy = A.vy - B.vy;
-                            const velAlongNormal = rvx * nx + rvy * ny;
-                            if (velAlongNormal < 0) {
-                                const restitution = DESTRUCTOR_CONFIG.restitution ?? 0.05;
-                                const invMassA = 1 / massA;
-                                const invMassB = 1 / massB;
-                                const denom = invMassA + invMassB;
-                                if (denom > 1e-8) {
-                                    const jImp = (-(1 + restitution) * velAlongNormal) / denom;
-                                    const impX = jImp * nx;
-                                    const impY = jImp * ny;
-                                    A.vx += impX * invMassA;
-                                    A.vy += impY * invMassA;
-                                    B.vx -= impX * invMassB;
-                                    B.vy -= impY * invMassB;
+                // Ile sÄ…siednich komĂłrek sprawdzamy w mapie (musi byÄ‡ >= przesuniÄ™cie od deformacji / spacing)
+                const searchR = (DESTRUCTOR_CONFIG.collisionSearchRadius ?? 4);
+                for (let k = 0; k < 4; k++) {
+                    const sx = (k === 0 || k === 3) ? -iterRadius : iterRadius;
+                    const sy = (k < 2) ? -iterRadius : iterRadius;
+                    // Iterator local -> world
+                    const wx = ix + sx;
+                    const wy = iy + sy;
+                    // World -> gridHolder local
+                    const dx = wx - gx;
+                    const dy = wy - gy;
+                    const hlx = dx * cosG_inv - dy * sinG_inv;
+                    const hly = dx * sinG_inv + dy * cosG_inv;
+                    const gridBx = hlx + cxG + pivotGx;
+                    const gridBy = hly + cyG + pivotGy;
+                    // Grid index
+                    const c = Math.floor(gridBx * invHexSpacing);
+                    const r = Math.floor(gridBy * invHexHeight);
+                    if (c < minC) minC = c;
+                    if (c > maxC) maxC = c;
+                    if (r < minR) minR = r;
+                    if (r > maxR) maxR = r;
+                }
+
+                // Padding for rotation + deform error
+                const pad = searchR + 2;
+                minC -= pad; maxC += pad; minR -= pad; maxR += pad;
+
+                // --- COLLISION DETECTION ---
+                let contactsCount = 0;
+                const maxContacts = 64;
+                let contacts = this._contactsBuf;
+
+                // GPU PATH: use pre-fetched contacts if available
+                if (gpuContacts && gpuContacts.length > 0) {
+                    contacts = []; // GPU contacts - fresh array
+                    const angA_ = A.angle + DESTRUCTOR_CONFIG.visualRotationOffset;
+                    const angB_ = B.angle + DESTRUCTOR_CONFIG.visualRotationOffset;
+                    const cosA_ = Math.cos(angA_), sinA_ = Math.sin(angA_);
+                    const cosB_ = Math.cos(angB_), sinB_ = Math.sin(angB_);
+                    const cxA_ = A.hexGrid.srcWidth * 0.5, cyA_ = A.hexGrid.srcHeight * 0.5;
+                    const cxB_ = B.hexGrid.srcWidth * 0.5, cyB_ = B.hexGrid.srcHeight * 0.5;
+                    const pivAxG = A.hexGrid.pivot ? A.hexGrid.pivot.x : 0;
+                    const pivAyG = A.hexGrid.pivot ? A.hexGrid.pivot.y : 0;
+                    const pivBxG = B.hexGrid.pivot ? B.hexGrid.pivot.x : 0;
+                    const pivByG = B.hexGrid.pivot ? B.hexGrid.pivot.y : 0;
+                    const cds_ = DESTRUCTOR_CONFIG.collisionDeformScale ?? 1.0;
+
+                    for (let gi = 0; gi < gpuContacts.length && contactsCount < maxContacts; gi++) {
+                        const gc = gpuContacts[gi];
+                        if (!gc.shardA || !gc.shardB) continue;
+                        if (!gc.shardA.active || gc.shardA.isDebris) continue;
+                        if (!gc.shardB.active || gc.shardB.isDebris) continue;
+
+                        // Compute world positions (same math as CPU path)
+                        const defAx = gc.shardA.deformation.x * cds_;
+                        const defAy = gc.shardA.deformation.y * cds_;
+                        const rAx = (gc.shardA.gridX - cxA_) + defAx - pivAxG;
+                        const rAy = (gc.shardA.gridY - cyA_) + defAy - pivAyG;
+                        const wAx = A.x + rAx * cosA_ - rAy * sinA_;
+                        const wAy = A.y + rAx * sinA_ + rAy * cosA_;
+
+                        const defBx = gc.shardB.deformation.x * cds_;
+                        const defBy = gc.shardB.deformation.y * cds_;
+                        const rBx = (gc.shardB.gridX - cxB_) + defBx - pivBxG;
+                        const rBy = (gc.shardB.gridY - cyB_) + defBy - pivByG;
+                        const wBx = B.x + rBx * cosB_ - rBy * sinB_;
+                        const wBy = B.y + rBx * sinB_ + rBy * cosB_;
+
+                        const nxG = wAx - wBx, nyG = wAy - wBy;
+                        const distG = Math.sqrt(nxG * nxG + nyG * nyG);
+                        const penG = Math.max(0, HIT_RAD - distG);
+
+                        // Grow contacts buffer if needed
+                        while (contacts.length <= contactsCount) {
+                            contacts.push({ shardA: null, shardB: null, worldAx: 0, worldAy: 0, worldBx: 0, worldBy: 0, normalX: 0, normalY: 0, penetration: 0 });
+                        }
+                        const cObj = contacts[contactsCount];
+                        cObj.shardA = gc.shardA;
+                        cObj.shardB = gc.shardB;
+                        cObj.worldAx = wAx; cObj.worldAy = wAy;
+                        cObj.worldBx = wBx; cObj.worldBy = wBy;
+                        cObj.normalX = nxG; cObj.normalY = nyG;
+                        cObj.penetration = penG;
+                        contactsCount++;
+                    }
+
+                    if (contactsCount === 0) return;
+                    // Skip CPU detection — jump to physics solver
+                } else {
+                    // CPU PATH (fallback)
+                    contacts = this._contactsBuf;
+
+                    // Fast grids (flattened) â€” avoids string keys + reduces GC pressure
+                    const holderGrid = gridHolder.hexGrid.grid;
+                    const iterGrid = iterator.hexGrid.grid;
+                    const holderCols = gridHolder.hexGrid.cols || 0;
+                    const holderRows = gridHolder.hexGrid.rows || 0;
+                    const iterCols = iterator.hexGrid.cols || 0;
+                    const iterRows = iterator.hexGrid.rows || 0;
+
+                    // Precompute inverse transform for gridHolder->world->iterator
+                    const cosI_inv = cosI, sinI_inv = -sinI;
+
+                    // NOWOĹšÄ†: Skalowanie deformacji do kolizji
+                    const cds = DESTRUCTOR_CONFIG.collisionDeformScale ?? 1.0;
+
+                    // Clamp search window to holder grid (huge speed-up; outside is always empty)
+                    if (holderGrid && holderCols && holderRows) {
+                        if (minC < 0) minC = 0;
+                        if (minR < 0) minR = 0;
+                        if (maxC >= holderCols) maxC = holderCols - 1;
+                        if (maxR >= holderRows) maxR = holderRows - 1;
+                        if (minC > maxC || minR > maxR) return;
+                    }
+
+                    const offsets = getSearchOffsets(searchR);
+
+                    for (let r = minR; r <= maxR; r++) {
+                        const rowBase = r * holderCols;
+                        for (let c = minC; c <= maxC; c++) {
+                            const shardG = holderGrid ? holderGrid[rowBase + c] : null;
+                            if (!shardG || !shardG.active || shardG.isDebris) continue;
+
+                            const defGx = shardG.deformation.x * cds;
+                            const defGy = shardG.deformation.y * cds;
+
+                            // gridHolder shard -> world
+                            const relGx = (shardG.gridX - cxG) + defGx - pivotGx;
+                            const relGy = (shardG.gridY - cyG) + defGy - pivotGy;
+                            const worldGx = gx + relGx * cosG - relGy * sinG;
+                            const worldGy = gy + relGx * sinG + relGy * cosG;
+
+                            // world -> iterator local grid
+                            const dx = worldGx - ix;
+                            const dy = worldGy - iy;
+                            const localIx = dx * cosI_inv - dy * sinI_inv;
+                            const localIy = dx * sinI_inv + dy * cosI_inv;
+                            const gridIx = localIx + cxI + pivotIx;
+                            const gridIy = localIy + cyI + pivotIy;
+
+                            const approxC_I = Math.round(gridIx * invHexSpacing);
+                            const approxR_I = Math.round(gridIy * invHexHeight);
+
+                            // Quick reject if far outside iterator grid
+                            if (iterGrid && iterCols && iterRows) {
+                                if (approxC_I < -searchR || approxC_I >= iterCols + searchR ||
+                                    approxR_I < -searchR || approxR_I >= iterRows + searchR) {
+                                    continue;
                                 }
                             }
 
-                            const invMassA = 1 / massA;
-                            const invMassB = 1 / massB;
-                            const percent = 0.35;
-                            const slop = 0.01;
-                            const corrMag = Math.max(penetration - slop, 0) / (invMassA + invMassB) * percent;
-                            const corrX = nx * corrMag;
-                            const corrY = ny * corrMag;
-                            A.x += corrX * invMassA;
-                            A.y += corrY * invMassA;
-                            B.x -= corrX * invMassB;
-                            B.y -= corrY * invMassB;
+                            // Search in iterator grid (neighborhood offsets)
+                            for (let oi = 0; oi < offsets.length; oi += 2) {
+                                const ic = approxC_I + offsets[oi];
+                                const ir = approxR_I + offsets[oi + 1];
+                                if (ic < 0 || ir < 0 || ic >= iterCols || ir >= iterRows) continue;
+
+                                const shardI = iterGrid ? iterGrid[ic + ir * iterCols] : null;
+                                if (!shardI || !shardI.active || shardI.isDebris) continue;
+
+                                const defIx = shardI.deformation.x * cds;
+                                const defIy = shardI.deformation.y * cds;
+
+                                const gi = shardI.gridX + defIx;
+                                const giy = shardI.gridY + defIy;
+                                const ddx = gi - gridIx, ddy = giy - gridIy;
+                                if (ddx * ddx + ddy * ddy < HIT_RAD_SQ) {
+                                    // Compute world position of iterator shard
+                                    const relIx = (shardI.gridX - cxI) + defIx - pivotIx;
+                                    const relIy = (shardI.gridY - cyI) + defIy - pivotIy;
+                                    const worldIx = ix + relIx * cosI - relIy * sinI;
+                                    const worldIy = iy + relIx * sinI + relIy * cosI;
+
+                                    const normalX = worldIx - worldGx;
+                                    const normalY = worldIy - worldGy;
+                                    const hexDistSq = normalX * normalX + normalY * normalY;
+                                    const hexDist = Math.sqrt(hexDistSq);
+
+                                    // Map shardA/shardB consistently: A is always first entity arg
+                                    const isSwapped = (iterator !== A);
+                                    const cObj = contacts[contactsCount];
+                                    cObj.shardA = isSwapped ? shardG : shardI;
+                                    cObj.shardB = isSwapped ? shardI : shardG;
+                                    cObj.worldAx = isSwapped ? worldGx : worldIx;
+                                    cObj.worldAy = isSwapped ? worldGy : worldIy;
+                                    cObj.worldBx = isSwapped ? worldIx : worldGx;
+                                    cObj.worldBy = isSwapped ? worldIy : worldGy;
+                                    cObj.normalX = isSwapped ? -normalX : normalX;
+                                    cObj.normalY = isSwapped ? -normalY : normalY;
+                                    cObj.penetration = Math.max(0, HIT_RAD - hexDist);
+
+                                    contactsCount++;
+                                    if (contactsCount >= maxContacts) break;
+                                }
+                            }
+                            if (contactsCount >= maxContacts) break;
                         }
+                        if (contactsCount >= maxContacts) break;
                     }
+
+                    if (contactsCount === 0) return;
+                } // end CPU path else
+
+                Perf.contactsAccum += contactsCount;
+
+                const sA = contacts[0].shardA;
+                const hitB = contacts[0].shardB;
+
+                let worldHitX = 0;
+                let worldHitY = 0;
+                let nx = 0;
+                let ny = 0;
+                let penetration = 0;
+
+                for (let ci = 0; ci < contactsCount; ci++) {
+                    const contact = contacts[ci];
+                    worldHitX += (contact.worldAx + contact.worldBx) * 0.5;
+                    worldHitY += (contact.worldAy + contact.worldBy) * 0.5;
+                    nx += contact.normalX;
+                    ny += contact.normalY;
+                    if (contact.penetration > penetration) penetration = contact.penetration;
+                }
+
+                const invCount = 1.0 / contactsCount;
+                worldHitX *= invCount;
+                worldHitY *= invCount;
+
+                let normalLenSq = nx * nx + ny * ny;
+                if (normalLenSq < 1e-12) {
+                    nx = A.x - B.x;
+                    ny = A.y - B.y;
+                    normalLenSq = nx * nx + ny * ny;
+                    if (normalLenSq < 1e-12) normalLenSq = 1;
+                }
+                const invNormalLen = 1.0 / Math.sqrt(normalLenSq);
+                nx *= invNormalLen;
+                ny *= invNormalLen;
+
+                // --- 2. V46 PHYSICS SOLVER (Rigid Body Impulse) ---
+
+                const cxA = A.hexGrid.srcWidth * 0.5;
+                const cyA = A.hexGrid.srcHeight * 0.5;
+                const cxB = B.hexGrid.srcWidth * 0.5;
+                const cyB = B.hexGrid.srcHeight * 0.5;
+                const pivotAx = A.hexGrid.pivot ? A.hexGrid.pivot.x : 0;
+                const pivotAy = A.hexGrid.pivot ? A.hexGrid.pivot.y : 0;
+                const pivotBx = B.hexGrid.pivot ? B.hexGrid.pivot.x : 0;
+                const pivotBy = B.hexGrid.pivot ? B.hexGrid.pivot.y : 0;
+
+
+                // Wektory ramienia siĹ‚y
+                const rAx = worldHitX - A.x;
+                const rAy = worldHitY - A.y;
+                const rBx = worldHitX - B.x;
+                const rBy = worldHitY - B.y;
+
+                // PrÄ™dkoĹ›ci w punkcie zderzenia
+                const vAx = A.vx - A.angVel * rAy;
+                const vAy = A.vy + A.angVel * rAx;
+                const vBx = B.vx - B.angVel * rBy;
+                const vBy = B.vy + B.angVel * rBx;
+
+                const dvx = vAx - vBx;
+                const dvy = vAy - vBy;
+
+                // Baza kontaktu (normalna + styczna)
+                const velAlongNormal = dvx * nx + dvy * ny;
+                const tx = -ny, ty = nx;
+                const velTangent = dvx * tx + dvy * ty;
+
+                const invMassA = 1 / massA;
+                const invMassB = 1 / massB;
+
+                const slop = 0.01;
+                const pen = Math.max(0, penetration - slop);
+
+                // ---- 1) IMPULS RIGID BODY (tylko gdy obiekty siÄ™ zbliĹĽajÄ…) ----
+                let isDestruction = false;
+                let impactForceTest = 0;
+
+                if (velAlongNormal < 0) {
+                    const restitutionBase = DESTRUCTOR_CONFIG.restitution;
+                    const inertiaScale = 0.5;
+                    const effectiveRadiusA = Math.max(1, A.radius || Math.max(cxA, cyA, 1));
+                    const effectiveRadiusB = Math.max(1, B.radius || Math.max(cxB, cyB, 1));
+                    const invIa = 1 / (inertiaScale * massA * effectiveRadiusA * effectiveRadiusA);
+                    const invIb = 1 / (inertiaScale * massB * effectiveRadiusB * effectiveRadiusB);
+
+                    const rnA = rAx * ny - rAy * nx;
+                    const rnB = rBx * ny - rBy * nx;
+
+                    const normalDenom = invMassA + invMassB + rnA * rnA * invIa + rnB * rnB * invIb;
+                    if (Number.isFinite(normalDenom) && normalDenom > 1e-8) {
+
+                        // Testowy impuls dla restitution podstawowego (do sprawdzenia yield)
+                        let jTest = -(1 + restitutionBase) * velAlongNormal;
+                        jTest /= normalDenom;
+                        impactForceTest = Math.abs(jTest);
+
+                        const yieldPoint = DESTRUCTOR_CONFIG.yieldPoint;
+                        isDestruction = impactForceTest > yieldPoint;
+
+                        // Brak odbicia przy destrukcji
+                        const restitutionEff = isDestruction ? 0.0 : restitutionBase;
+
+                        // Impuls wĹ‚aĹ›ciwy
+                        let j = -(1 + restitutionEff) * velAlongNormal;
+                        j /= normalDenom;
+
+                        // Opcjonalnie: pochĹ‚oniÄ™cie czÄ™Ĺ›ci impulsu, ĹĽeby nie "wystrzeliwaÄ‡" celu (bardziej car-crash)
+                        if (isDestruction) {
+                            const crushImpulseScale = DESTRUCTOR_CONFIG.crushImpulseScale ?? 0.45;
+                            j *= crushImpulseScale;
+                        }
+
+                        const impulseX = j * nx;
+                        const impulseY = j * ny;
+
+                        A.vx += impulseX * invMassA;
+                        A.vy += impulseY * invMassA;
+                        B.vx -= impulseX * invMassB;
+                        B.vy -= impulseY * invMassB;
+
+                        A.angVel += rnA * j * invIa;
+                        B.angVel -= rnB * j * invIb;
+
+                        // Tarcie (dla niszczenia nie schodzimy do zera, ĹĽeby byĹ‚o "scrape")
+                        let jt = -velTangent;
+                        const tangentDenom = invMassA + invMassB + (rAx * ty - rAy * tx) ** 2 * invIa + (rBx * ty - rBy * tx) ** 2 * invIb;
+                        if (Number.isFinite(tangentDenom) && tangentDenom > 1e-8) jt /= tangentDenom;
+                        else jt = 0;
+
+                        const mu = 0.5;
+                        const maxFriction = Math.abs(j) * mu;
+                        if (Math.abs(jt) > maxFriction) jt = -maxFriction * Math.sign(velTangent);
+
+                        const frictionScale = isDestruction ? 0.25 : 0.8;
+                        jt *= frictionScale;
+
+                        const fImpulseX = jt * tx;
+                        const fImpulseY = jt * ty;
+
+                        A.vx += fImpulseX * invMassA;
+                        A.vy += fImpulseY * invMassA;
+                        B.vx -= fImpulseX * invMassB;
+                        B.vy -= fImpulseY * invMassB;
+
+                        A.angVel += (rAx * ty - rAy * tx) * jt * invIa;
+                        B.angVel -= (rBx * ty - rBy * tx) * jt * invIb;
+                    }
+                }
+
+                // ---- 2) SOFTBODY CRUSH (ciÄ…gĹ‚e wgniatanie) ----
+                // Startujemy zgniatanie gdy:
+                // - yield zostaĹ‚ przekroczony (duĹĽy impuls) LUB
+                // - nadal mamy wyraĹşnÄ… penetracjÄ™ (dociĹ›niÄ™cie, nawet przy maĹ‚ej prÄ™dkoĹ›ci)
+                const penMin = DESTRUCTOR_CONFIG.crushPenetrationMin ?? 0.15;
+                const crushActive = isDestruction || (pen > penMin);
+
+                const impactSpeed = Math.hypot(dvx, dvy);
+                const minCrushSpeed = DESTRUCTOR_CONFIG.crushMinSpeed ?? 1.5;
+                const allowCrush = (impactSpeed > minCrushSpeed) || (pen > penMin);
+
+                if (crushActive && allowCrush) {
+                    const angA = A.angle + DESTRUCTOR_CONFIG.visualRotationOffset;
+                    const angB = B.angle + DESTRUCTOR_CONFIG.visualRotationOffset;
+
+                    // Skalowanie pod iteracje solvera (ĹĽeby 4 iteracje nie dawaĹ‚y 4x wiÄ™kszego wgniatania)
+                    const iterScale = 1.0 / (DESTRUCTOR_CONFIG.collisionIterations || 1);
+                    const dtScale = dt * 60 * iterScale;
+
+                    const totalMass = massA + massB;
+                    const ratioA = massB / totalMass;
+                    const ratioB = massA / totalMass;
+
+                    // ===== GPU DEFORMATION PATH =====
+                    if (WebGPUPhysics.active && A.gpuData && B.gpuData && gpuContacts) {
+                        // GPU path: apply per-contact forces on the GPU
+                        WebGPUPhysics.applyGPUDeformation(A, B, contactsCount, nx, ny);
+                    } else {
+                        // ===== CPU FALLBACK =====
+                        // Kontakt w lokalnych ukĹ‚adach (uwzglÄ™dnij aktualnÄ… deformacjÄ™)
+                        const relX_A = (sA.gridX - cxA) + sA.deformation.x - pivotAx;
+                        const relY_A = (sA.gridY - cyA) + sA.deformation.y - pivotAy;
+                        const relX_B = (hitB.gridX - cxB) + hitB.deformation.x - pivotBx;
+                        const relY_B = (hitB.gridY - cyB) + hitB.deformation.y - pivotBy;
+
+                        const ca_inv = Math.cos(-angA), sa_inv = Math.sin(-angA);
+                        const cb_inv = Math.cos(-angB), sb_inv = Math.sin(-angB);
+
+                        const velK = DESTRUCTOR_CONFIG.crushVelK ?? 0.15;
+                        const penK = DESTRUCTOR_CONFIG.crushPenK ?? 10.0;
+                        const shearK = DESTRUCTOR_CONFIG.shearK ?? 0.06;
+
+                        // (A dostaje -dv, B dostaje +dv) + dokĹ‚adka od penetracji (docisk)
+                        let forceAx = (-dvx * ca_inv - -dvy * sa_inv) * velK * dtScale;
+                        let forceAy = (-dvx * sa_inv + -dvy * ca_inv) * velK * dtScale;
+
+                        let forceBx = (dvx * cb_inv - dvy * sb_inv) * velK * dtScale;
+                        let forceBy = (dvx * sb_inv + dvy * cb_inv) * velK * dtScale;
+
+                        // Penetracja -> wgniatanie wzdĹ‚uĹĽ normalnej (nie zaleĹĽy od prÄ™dkoĹ›ci)
+                        if (pen > 0) {
+                            const penForce = pen * penK * dtScale;
+
+                            // A: +n (normal jest od B do A)
+                            const wPenAx = nx * penForce;
+                            const wPenAy = ny * penForce;
+
+                            // B: -n
+                            const wPenBx = -nx * penForce;
+                            const wPenBy = -ny * penForce;
+
+                            forceAx += wPenAx * ca_inv - wPenAy * sa_inv;
+                            forceAy += wPenAx * sa_inv + wPenAy * ca_inv;
+
+                            forceBx += wPenBx * cb_inv - wPenBy * sb_inv;
+                            forceBy += wPenBx * sb_inv + wPenBy * cb_inv;
+                        }
+
+                        // Shear -> wyginanie przy "szorowaniu"
+                        if (Math.abs(velTangent) > 0.1) {
+                            const shear = velTangent * shearK * dtScale;
+
+                            const wShearAx = tx * shear;
+                            const wShearAy = ty * shear;
+                            const wShearBx = -tx * shear;
+                            const wShearBy = -ty * shear;
+
+                            forceAx += wShearAx * ca_inv - wShearAy * sa_inv;
+                            forceAy += wShearAx * sa_inv + wShearAy * ca_inv;
+
+                            forceBx += wShearBx * cb_inv - wShearBy * sb_inv;
+                            forceBy += wShearBx * sb_inv + wShearBy * cb_inv;
+                        }
+
+                        // Skala deformacji zaleĹĽna od tego czy przekroczyliĹ›my yield
+                        const crushScale = isDestruction ? 1.0 : 0.35;
+                        const dmgScale = doDamage ? 1.0 : 0.0;
+
+                        this.distributeStructuralDamage(
+                            A, relX_A, relY_A,
+                            forceAx * (ratioA * 2) * crushScale,
+                            forceAy * (ratioA * 2) * crushScale,
+                            dmgScale
+                        );
+                        this.distributeStructuralDamage(
+                            B, relX_B, relY_B,
+                            forceBx * (ratioB * 2) * crushScale,
+                            forceBy * (ratioB * 2) * crushScale,
+                            dmgScale
+                        );
+                    }
+                }
+
+                // --- 3. SEPARATION ---
+                const percent = crushActive ? (DESTRUCTOR_CONFIG.crushSeparation ?? 0.25) : 0.8;
+                if (penetration > slop) {
+                    const correctionMag = Math.max(penetration - slop, 0.0) / (invMassA + invMassB) * percent;
+                    const cx = nx * correctionMag;
+                    const cy = ny * correctionMag;
+                    A.x += cx * invMassA;
+                    A.y += cy * invMassA;
+                    B.x -= cx * invMassB;
+                    B.y -= cy * invMassB;
                 }
             },
 
@@ -2067,8 +2845,6 @@
                         wGrid[hs.c + hs.r * cols] = hs;
                     }
                 }
-                WebGPUPhysics.createBuffersForEntity(wreck);
-
                 entities.push(wreck);
             },
             cutByBeam(entity, p1, p2, beamWidth) {
@@ -2382,7 +3158,6 @@
         }
 
         function resetSim() {
-            for (const e of entities) WebGPUPhysics.releaseEntityBuffers(e);
             entities = [];
             player.x = -1200; player.y = 0; player.vx = 0; player.vy = 0; player.angle = 0;
             dummy.x = 1200; dummy.y = 0; dummy.vx = 0; dummy.vy = 0; dummy.angle = Math.PI;
@@ -2413,7 +3188,6 @@
             asteroidImg.onload = () => {
                 // ZWIÄKSZONO MASÄ (1 000 000)
                 initHexBody(ast, asteroidImg, null, false, DESTRUCTOR_CONFIG.asteroidMass);
-                WebGPUPhysics.createBuffersForEntity(ast);
 
                 // ZWIÄKSZONO Ĺ»YCIE (x10)
                 if (ast.hexGrid) {
@@ -2546,7 +3320,6 @@
                 }
             }
 
-            // TUTAJ CZEKAMY NA KARTE GRAFICZNĄ
             await DestructorSystem.update(dt, entities);
 
             Perf.physicsTime += performance.now() - t0;
@@ -2633,12 +3406,10 @@
 
         let lastTime = 0;
         let isLooping = false;
-
-        // FIX Bug 5: Schedule RAF before await to prevent frame drops
         async function loop(timestamp) {
-            requestAnimationFrame(loop); // schedule next frame FIRST
-            if (isLooping) return; // skip if previous frame still processing
+            if (isLooping) return;
             isLooping = true;
+            requestAnimationFrame(loop); // schedule next frame before await
 
             const dt = Math.min((timestamp - lastTime) / 1000, 0.1) || 0.016;
             lastTime = timestamp;
@@ -2672,7 +3443,6 @@
                     damagedImg.src = DAMAGED_URL;
                     damagedImg.onload = () => {
                         initHexBody(player, img, damagedImg, false, DESTRUCTOR_CONFIG.playerStartingMass);
-                        WebGPUPhysics.createBuffersForEntity(player);
                         player.vx = 0;
                         player.vy = 0;
                         statusEl.textContent = "Wczytano nowy sprite: " + file.name;
