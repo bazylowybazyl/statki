@@ -198,7 +198,18 @@ export class HUDSystem {
     constructor() {
         this.menuState = 'IDLE';
         this.menuClearTimer = null;
+        this.stationTerminalLastRefreshMs = 0;
         this.hexHud = null;
+        this.terminalState = {
+            step: 'OFF',
+            targetStation: null,
+            bootTimer: null,
+            connectTimer: null
+        };
+        this.terminalInteraction = {
+            hover: false,
+            pointerDown: false
+        };
         
         // Obiekt do Caching'u DOM - zapobiega DOM Thrashing
         this.cache = {};
@@ -267,9 +278,37 @@ export class HUDSystem {
 
         const btn2 = this.dom.skillRow?.querySelector('.glass-key:nth-child(2)');
         if(btn2) btn2.addEventListener('click', () => this.setBottomMenuState('COMM'));
+
+        const btn3 = this.dom.skillRow?.querySelector('.glass-key:nth-child(3)');
+        if(btn3) btn3.addEventListener('click', () => this.setBottomMenuState('SCAN'));
+
+        const terminalHost = this.dom.drawerContent;
+        if (terminalHost) {
+            terminalHost.addEventListener('pointerenter', () => {
+                this.terminalInteraction.hover = true;
+            });
+            terminalHost.addEventListener('pointerleave', () => {
+                this.terminalInteraction.hover = false;
+                this.terminalInteraction.pointerDown = false;
+            });
+            terminalHost.addEventListener('pointerdown', () => {
+                this.terminalInteraction.pointerDown = true;
+            });
+            terminalHost.addEventListener('pointerup', () => {
+                this.terminalInteraction.pointerDown = false;
+            });
+            terminalHost.addEventListener('pointercancel', () => {
+                this.terminalInteraction.pointerDown = false;
+            });
+        }
         
         window.addEventListener('keydown', (e) => {
+            if (e.repeat) return;
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            if (typeof window.isStationUIOpen === 'function' && window.isStationUIOpen()) return;
+            const digitKey = (e.code && e.code.startsWith('Digit')) ? e.code.slice(5)
+                : (e.code && e.code.startsWith('Numpad')) ? e.code.slice(6)
+                : null;
 
             if (e.key === 'k' || e.key === 'K') {
                 this.toggleTopPanel();
@@ -278,12 +317,16 @@ export class HUDSystem {
             if (this.menuState === 'IDLE') {
                 if (e.key === '1') this.setBottomMenuState('MODE');
                 if (e.key === '2') this.setBottomMenuState('COMM');
+                if (digitKey === '3' || e.key === '3') this.setBottomMenuState('SCAN');
             } else if (this.menuState === 'MODE') {
                 if (e.key === '1') this.handleMenuAction('close');
             } else if (this.menuState === 'COMM') {
                 if (e.key === '1') this.handleMenuAction('gate-toggle');
                 if (e.key === '2') this.handleMenuAction('close');
                 if (e.key === '3') this.handleMenuAction('gate-auto');
+            } else if (this.menuState === 'SCAN' || this.menuState === 'STATION') {
+                if (digitKey === '1' || e.key === '1') this.handleMenuAction('close');
+                if (e.key === '0' || e.key === 'Escape') this.handleMenuAction('close');
             }
         });
     }
@@ -379,6 +422,17 @@ export class HUDSystem {
     update(ship, sys, env) {
         if (this.dom.centerDock && this.dom.centerDock.offsetParent === null) return;
         if (!ship || !this.dom.hpFill) return;
+        if (this.menuState === 'SCAN' || this.menuState === 'STATION') {
+            const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+            const canRefreshStationList =
+                this.terminalState.step === 'LIST' &&
+                !this.terminalInteraction.hover &&
+                !this.terminalInteraction.pointerDown;
+            if (canRefreshStationList && (nowMs - this.stationTerminalLastRefreshMs) >= 1200) {
+                this.refreshOpenMenu();
+                this.stationTerminalLastRefreshMs = nowMs;
+            }
+        }
 
         // DOM CACHING - przeliczamy i ustawiamy wartości tylko jeśli uległy zmianie!
         const hpPct = Math.max(0, (ship.hull.val / ship.hull.max) * 100).toFixed(1);
@@ -520,6 +574,9 @@ export class HUDSystem {
     }
 
     setBottomMenuState(state) {
+        if (state === 'STATION') state = 'SCAN';
+        if (this.menuState === 'STATION') this.menuState = 'SCAN';
+
         if (this.menuClearTimer) {
             clearTimeout(this.menuClearTimer);
             this.menuClearTimer = null;
@@ -531,6 +588,28 @@ export class HUDSystem {
 
         const previousState = this.menuState;
         this.menuState = state;
+
+        if (this.terminalState.bootTimer) {
+            clearTimeout(this.terminalState.bootTimer);
+            this.terminalState.bootTimer = null;
+        }
+        if (this.terminalState.connectTimer) {
+            clearTimeout(this.terminalState.connectTimer);
+            this.terminalState.connectTimer = null;
+        }
+
+        if (state === 'SCAN' && previousState !== 'SCAN') {
+            this.terminalState.step = 'BOOTING';
+            this.terminalState.targetStation = null;
+            this.stationTerminalLastRefreshMs = 0;
+            this.terminalState.bootTimer = setTimeout(() => {
+                this.handleMenuAction('terminal-boot-done');
+            }, 1200);
+        }
+        if (state !== 'SCAN') {
+            this.terminalState.step = 'OFF';
+            this.terminalState.targetStation = null;
+        }
         const drawer = this.dom.bottomDrawer;
         const wrapper = this.dom.drawerContent;
 
@@ -581,11 +660,14 @@ export class HUDSystem {
         } else if (this.menuState === 'COMM') {
             const btn = this.dom.skillRow.querySelector('.glass-key:nth-child(2)'); 
             if(btn) btn.classList.add('active');
+        } else if (this.menuState === 'SCAN' || this.menuState === 'STATION') {
+            const btn = this.dom.skillRow.querySelector('.glass-key:nth-child(3)');
+            if(btn) btn.classList.add('active');
         }
     }
 
-    handleMenuAction(action) {
-        console.log("HUD Action:", action);
+    handleMenuAction(action, payload) {
+        console.log("HUD Action:", action, payload);
         if (action === 'close') {
             this.setBottomMenuState('IDLE');
             return;
@@ -602,13 +684,78 @@ export class HUDSystem {
                 window.setPlanetaryRingGateMode('auto');
             }
             this.refreshOpenMenu();
+            return;
+        }
+        if (action === 'terminal-boot-done') {
+            if (this.menuState !== 'SCAN') return;
+            this.terminalState.step = 'LIST';
+            this.terminalState.bootTimer = null;
+            this.refreshOpenMenu();
+            return;
+        }
+        if (action === 'terminal-connect') {
+            if (this.menuState !== 'SCAN') return;
+            this.terminalState.step = 'CONNECTING';
+            this.terminalState.targetStation = payload || null;
+            this.refreshOpenMenu();
+            if (this.terminalState.connectTimer) {
+                clearTimeout(this.terminalState.connectTimer);
+            }
+            this.terminalState.connectTimer = setTimeout(() => {
+                this.handleMenuAction('terminal-connected');
+            }, 1500);
+            return;
+        }
+        if (action === 'terminal-connected') {
+            if (this.menuState !== 'SCAN') return;
+            this.terminalState.step = 'CONNECTED';
+            this.terminalState.connectTimer = null;
+            this.refreshOpenMenu();
+            return;
+        }
+        if (action === 'terminal-open-service') {
+            const stationId = this.terminalState.targetStation;
+            const stationIdKey = stationId != null ? String(stationId) : '';
+            const stations = Array.isArray(window.stations) ? window.stations : [];
+            let station = stations.find((st) => st && String(st.id) === stationIdKey);
+            if (!station && window.ship?.pos && stations.length) {
+                let bestDist = Infinity;
+                for (let i = 0; i < stations.length; i++) {
+                    const st = stations[i];
+                    if (!st) continue;
+                    const dx = (Number(st.x) || 0) - window.ship.pos.x;
+                    const dy = (Number(st.y) || 0) - window.ship.pos.y;
+                    const distSq = dx * dx + dy * dy;
+                    if (distSq < bestDist) {
+                        bestDist = distSq;
+                        station = st;
+                    }
+                }
+            }
+            if (!station) return;
+            const rawTab = String(payload || 'upgrades').toLowerCase();
+            const tabId = rawTab === 'market' ? 'trade' : rawTab;
+            if (window.stationUI) {
+                window.stationUI.tab = tabId;
+            }
+            if (typeof window.openStationUI === 'function') {
+                window.openStationUI(station, tabId);
+                this.setBottomMenuState('IDLE');
+            }
+            return;
         }
     }
 
     refreshOpenMenu() {
         if (this.menuState === 'IDLE') return;
         if (!this.dom.drawerContent) return;
-        this.dom.drawerContent.innerHTML = this.getMenuHTML(this.menuState);
+        const nextHTML = this.getMenuHTML(this.menuState);
+        if (this.cache.lastMenuHTML === nextHTML) return;
+        this.dom.drawerContent.innerHTML = nextHTML;
+        this.cache.lastMenuHTML = nextHTML;
+        if (this.dom.bottomDrawer) {
+            this.dom.bottomDrawer.style.height = `${this.dom.drawerContent.scrollHeight}px`;
+        }
     }
 
     renderSkillKeys() {
@@ -648,6 +795,55 @@ export class HUDSystem {
                     <div class="menu-btn" onclick="hudSystem.handleMenuAction('gate-toggle')"><div class="key-hint">1</div><div class="label">GATE TOGGLE</div></div>
                     <div class="menu-btn" onclick="hudSystem.handleMenuAction('close')"><div class="key-hint">2</div><div class="label">BACK</div></div>
                     <div class="menu-btn" onclick="hudSystem.handleMenuAction('gate-auto')"><div class="key-hint">3</div><div class="label">MODE: ${mode}</div></div>
+                </div>
+            `;
+        } else if (state === 'SCAN' || state === 'STATION') {
+            let content = '';
+
+            if (this.terminalState.step === 'BOOTING') {
+                content = `<div class="term-text blink">> sys.init()...<br>> uplink.establish()... PENDING<br>> scanning local space...</div>`;
+            } else if (this.terminalState.step === 'LIST') {
+                let stationsListHTML = '<div class="term-text" style="color:#ef4444;">NO SIGNAL DETECTED</div>';
+                if (Array.isArray(window.stations) && window.ship?.pos) {
+                    const sorted = window.stations
+                        .map((st) => ({
+                            ...st,
+                            dist: Math.hypot((st?.x || 0) - window.ship.pos.x, (st?.y || 0) - window.ship.pos.y)
+                        }))
+                        .sort((a, b) => a.dist - b.dist)
+                        .slice(0, 3);
+                    stationsListHTML = sorted.map((st) => {
+                        const distAU = (st.dist / 3000).toFixed(2);
+                        const stName = st.planet ? st.planet.name : (st.name || st.id || 'Station');
+                        return `
+                        <div class="term-row">
+                            <span class="term-target">[${String(st.id || 'N/A').toUpperCase()}] ${stName} - ${distAU} AU</span>
+                            <button class="term-btn" onclick="hudSystem.handleMenuAction('terminal-connect', '${String(st.id || '')}')">CONNECT</button>
+                        </div>`;
+                    }).join('');
+                }
+                content = `<div class="term-text">> LOCAL NETWORK NODES FOUND:</div>${stationsListHTML}`;
+            } else if (this.terminalState.step === 'CONNECTING') {
+                content = `<div class="term-text blink">> Handshake with node [${this.terminalState.targetStation || 'N/A'}]...<br>> Exchanging encryption keys...<br>> Please wait.</div>`;
+            } else if (this.terminalState.step === 'CONNECTED') {
+                content = `
+                    <div class="term-text" style="color: #4ade80;">> CONNECTION ESTABLISHED. AVAILABLE SERVICES:</div>
+                    <div class="term-grid">
+                        <button class="term-btn large" onclick="hudSystem.handleMenuAction('terminal-open-service', 'upgrades')">UPGRADES</button>
+                        <button class="term-btn large" onclick="hudSystem.handleMenuAction('terminal-open-service', 'trade')">MARKET</button>
+                        <button class="term-btn large" onclick="hudSystem.handleMenuAction('terminal-open-service', 'hangar')">HANGAR</button>
+                        <button class="term-btn large" onclick="hudSystem.handleMenuAction('terminal-open-service', 'mechanic')">MECHANIC</button>
+                        <button class="term-btn large" onclick="hudSystem.handleMenuAction('terminal-open-service', 'infrastructure')">INFRASTRUCTURE</button>
+                    </div>
+                `;
+            } else {
+                content = `<div class="term-text">> TERMINAL OFFLINE</div>`;
+            }
+
+            return `
+                <div class="menu-header terminal-menu-header">UPLINK TERMINAL v1.0</div>
+                <div class="terminal-container">
+                    ${content}
                 </div>
             `;
         }

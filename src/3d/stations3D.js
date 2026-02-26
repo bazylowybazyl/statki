@@ -51,28 +51,28 @@ function getTemplate(stationId, path) {
     (gltf) => {
       const scene = gltf.scene;
       const maxAnisotropy = Core3D.renderer ? Core3D.renderer.capabilities.getMaxAnisotropy() : 4;
-      
+
       // --- FIX: ZBIERAMY FAŁSZYWE TŁA DO USUNIĘCIA ---
       const toRemove = [];
 
       scene.traverse((o) => {
         if (!o.isMesh) return;
-        
+
         const name = o.name.toLowerCase();
         // Wykrywamy wbudowane planety/atmosfery z darmowych modeli GLTF
-        const isBackground = name.includes('planet') || name.includes('earth') || 
-                             name.includes('mars') || name.includes('jupiter') || 
-                             name.includes('neptune') || name.includes('clouds') || 
-                             name.includes('atmosphere') || name.includes('bg_') || 
-                             name.includes('background') || name.includes('sphere');
-                             
+        const isBackground = name.includes('planet') || name.includes('earth') ||
+          name.includes('mars') || name.includes('jupiter') ||
+          name.includes('neptune') || name.includes('clouds') ||
+          name.includes('atmosphere') || name.includes('bg_') ||
+          name.includes('background') || name.includes('sphere');
+
         // Zabezpieczenie: usuwamy tylko, jeśli to nie jest sama stacja
         if (isBackground && !name.includes('station') && !name.includes('base') && !name.includes('hub')) {
           toRemove.push(o);
           return; // Przerywamy pętlę, obiekt i tak idzie do kosza
         }
 
-        o.castShadow = false;
+        o.castShadow = true;
         o.receiveShadow = false;
         o.frustumCulled = true;
 
@@ -80,16 +80,16 @@ function getTemplate(stationId, path) {
         for (const m of materials) {
           if (!m) continue;
           if (m.map) m.map.anisotropy = maxAnisotropy;
-          
-          m.roughness = 0.4; 
-          m.metalness = 0.6; 
-          m.envMapIntensity = 0.0; 
-          
-          m.side = THREE.DoubleSide; 
+
+          m.roughness = 0.4;
+          m.metalness = 0.6;
+          m.envMapIntensity = 0.0;
+
+          m.side = THREE.DoubleSide;
           m.transparent = false;
           m.depthWrite = true;
           m.depthTest = true;
-          
+
           if (m.map || m.alphaMap) {
             m.alphaTest = 0.5;
           }
@@ -150,15 +150,15 @@ function getModelUrlsForStation(station) {
   const planet = tryStr(station?.planet?.name) || tryStr(station?.planet?.id);
   const orbit = tryStr(station?.orbit?.name);
   const host = tryStr(station?.host) || tryStr(station?.home);
-  
+
   const candidates = [id, name, style, planet, orbit, host].filter(Boolean).join(' ');
   const keys = Object.keys(MODEL_URLS);
-  
+
   const hit = keys.find((k) => candidates.includes(k));
   if (hit) return MODEL_URLS[hit];
 
   if (!isPirateStation(station)) {
-      return MODEL_URLS.earth; 
+    return MODEL_URLS.earth;
   }
   return null;
 }
@@ -273,11 +273,11 @@ function updateRecordTransform(record, station, devScale, visible) {
   const group = record.group;
   if (!group || !Core3D.scene) return;
   const modelGroup = record.modelGroup || group;
-  
+
   if (group.parent !== Core3D.scene) {
     Core3D.scene.add(group);
   }
-  
+
   const geometryRadius = record.geometryRadius || group.userData.geometryRadius || 1;
   const desiredRadiusRaw = (Number.isFinite(station.r) ? station.r : station.baseR) ?? 1;
   const desiredRadius = Number.isFinite(desiredRadiusRaw) && desiredRadiusRaw > 0 ? desiredRadiusRaw : 1;
@@ -287,7 +287,7 @@ function updateRecordTransform(record, station, devScale, visible) {
   const idKey = getStationIdKey(station);
   const perScale = Number(perMap[idKey]) || 1;
   const globalScalar = Number.isFinite(devScale) && devScale > 0 ? devScale : 1;
-  const effectiveScale = baseScale * globalScalar * perScale * 2.8; 
+  const effectiveScale = baseScale * globalScalar * perScale * 2.8;
 
   const pivot = getStationPivot(station);
   const pivotKey = `${pivot.x}|${pivot.y}|${pivot.z}`;
@@ -301,7 +301,7 @@ function updateRecordTransform(record, station, devScale, visible) {
   }
 
   group.scale.setScalar(effectiveScale);
-  
+
   // Z = -100 utrzymuje stację na odpowiedniej płaszczyźnie
   group.position.set(station.x, -station.y, -100);
 
@@ -399,32 +399,32 @@ export function updateStations3D(stations) {
     activeKeys.add(record.key);
 
     if (!record.group) {
-        const clone = cloneTemplate(station.id, path);
-        if (clone) {
-          const { scene: modelGroup } = clone;
-          modelGroup.visible = true;
+      const clone = cloneTemplate(station.id, path);
+      if (clone) {
+        const { scene: modelGroup } = clone;
+        modelGroup.visible = true;
 
-          const bbox = new THREE.Box3().setFromObject(modelGroup);
-          const center = bbox.getCenter(new THREE.Vector3());
-          modelGroup.children.forEach(child => {
-            child.position.sub(center);
-          });
-          modelGroup.position.set(0, 0, 0);
-          modelGroup.updateMatrixWorld(true);
-          record.modelBaseX = 0;
-          record.modelBaseY = 0;
-          record.modelBaseZ = 0;
+        const bbox = new THREE.Box3().setFromObject(modelGroup);
+        const center = bbox.getCenter(new THREE.Vector3());
+        modelGroup.children.forEach(child => {
+          child.position.sub(center);
+        });
+        modelGroup.position.set(0, 0, 0);
+        modelGroup.updateMatrixWorld(true);
+        record.modelBaseX = 0;
+        record.modelBaseY = 0;
+        record.modelBaseZ = 0;
 
-          bbox.setFromObject(modelGroup);
-          const sphere = bbox.getBoundingSphere(new THREE.Sphere());
-          record.geometryRadius = sphere?.radius > 0 ? sphere.radius : 1;
-          const pivotGroup = new THREE.Group();
-          pivotGroup.visible = false;
-          pivotGroup.add(modelGroup);
-          Core3D.scene.add(pivotGroup);
-          record.group = pivotGroup;
-          record.modelGroup = modelGroup;
-          station._mesh3d = pivotGroup;
+        bbox.setFromObject(modelGroup);
+        const sphere = bbox.getBoundingSphere(new THREE.Sphere());
+        record.geometryRadius = sphere?.radius > 0 ? sphere.radius : 1;
+        const pivotGroup = new THREE.Group();
+        pivotGroup.visible = false;
+        pivotGroup.add(modelGroup);
+        Core3D.scene.add(pivotGroup);
+        record.group = pivotGroup;
+        record.modelGroup = modelGroup;
+        station._mesh3d = pivotGroup;
       }
     }
 
@@ -485,7 +485,7 @@ export function getStationScales() {
 
 if (typeof window !== 'undefined') {
   window.setStationScale = setStationScale;
-  window.setStationSpriteFrame = setStationSpriteFrame; 
+  window.setStationSpriteFrame = setStationSpriteFrame;
   window.getStationScales = getStationScales;
   window.initStations3D = initStations3D;
   window.updateStations3D = updateStations3D;

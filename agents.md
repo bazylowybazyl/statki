@@ -134,4 +134,4 @@ Dodaj TODO z prefiksem `AGENT:`.
 
 ---
 
-> Uwaga techniczna: trzymaj `AGENTS.md` w kodowaniu UTF-8.
+> Uwaga techniczna: trzymaj `AGENTS.md` oraz grę w kodowaniu UTF-8.

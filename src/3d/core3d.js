@@ -56,9 +56,9 @@ export const Core3D = {
   shadowCatcher: null,
   composer: null,
   bloomPass: null,
-  bloomResolutionScale: Math.SQRT1_2,
-  bloomBaseStrength: 0.31,
-  bloomBaseThreshold: 0.2,
+  bloomResolutionScale: 1,
+  bloomBaseStrength: 0.35,
+  bloomBaseThreshold: 0.95,
   pixelRatio: 1,
   width: 0,
   height: 0,
@@ -88,7 +88,8 @@ export const Core3D = {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
-    this.renderer.shadowMap.enabled = false;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setClearColor(0x000000, 0);
 
     this.scene = new THREE.Scene();
@@ -98,7 +99,19 @@ export const Core3D = {
     this.camera.position.set(0, 0, 150000);
     this.camera.lookAt(0, 0, 0);
 
-    this.shadowCatcher = null;
+    // Shadow catcher — catches shadows from ships/rings/stations
+    const shadowGeo = new THREE.PlaneGeometry(500000, 500000);
+    const shadowMat = new THREE.ShadowMaterial({
+      opacity: 0.38,
+      color: 0x050a14,
+      transparent: true,
+      depthWrite: false
+    });
+    this.shadowCatcher = new THREE.Mesh(shadowGeo, shadowMat);
+    this.shadowCatcher.position.set(0, 0, -2);
+    this.shadowCatcher.receiveShadow = true;
+    this.shadowCatcher.renderOrder = -1;
+    this.scene.add(this.shadowCatcher);
 
     const canUseHalfFloatRt =
       this.renderer.capabilities.isWebGL2 ||
@@ -119,7 +132,7 @@ export const Core3D = {
     renderPass.clearAlpha = 0;
     this.composer.addPass(renderPass);
 
-    const bloomScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || Math.SQRT1_2));
+    const bloomScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || 1));
     const bloomPass = new UnrealBloomPass(
       new THREE.Vector2(
         Math.max(1, Math.floor(window.innerWidth * bloomScale)),
@@ -165,7 +178,7 @@ export const Core3D = {
     this.renderer.setSize(width, height, false);
     this.composer.setSize(width, height);
     if (this.bloomPass && typeof this.bloomPass.setSize === 'function') {
-      const bloomScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || Math.SQRT1_2));
+      const bloomScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || 1));
       const bloomW = Math.max(1, Math.floor(width * this.pixelRatio * bloomScale));
       const bloomH = Math.max(1, Math.floor(height * this.pixelRatio * bloomScale));
       this.bloomPass.setSize(bloomW, bloomH);
@@ -192,7 +205,15 @@ export const Core3D = {
     this.camera.bottom = -halfH;
     this.camera.updateProjectionMatrix();
 
-    this.camera.position.set(gameCamera.x, -gameCamera.y, 150000);
+    const shake = (typeof window !== 'undefined') ? window.__weapon3dCameraShake : null;
+    const shakeX = Number(shake?.x) || 0;
+    const shakeY = Number(shake?.y) || 0;
+    this.camera.position.set(gameCamera.x + shakeX, -(gameCamera.y + shakeY), 150000);
+
+    // Keep shadow catcher centered under camera
+    if (this.shadowCatcher) {
+      this.shadowCatcher.position.set(gameCamera.x + shakeX, -(gameCamera.y + shakeY), -2);
+    }
   },
 
   render() {

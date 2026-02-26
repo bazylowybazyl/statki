@@ -1,10 +1,6 @@
 /**
- * Moduł Superbroni (Hexlance) - Warp Fix (Visual State Support)
+ * Moduł Superbroni (Hexlance) - W pełni zintegrowany z Hardpointami
  */
-
-// ... (RESZTA PLIKU BEZ ZMIAN AŻ DO drawSuperweapon) ...
-// Zostawiam początek pliku, config i updateSuperweapon bez zmian.
-// Podmień tylko funkcję drawSuperweapon i to co pod nią.
 
 const VFX_CONFIG = {
     newMinSize: 2.0,
@@ -41,11 +37,16 @@ export const superweaponState = {
     recoilRecovery: 100
 };
 
-// ... (KLASY MainSpark, BgSpark, funkcje rotate, getMuzzlePos, spawnChargeEffect - BEZ ZMIAN) ...
-// ... (Wklej je tu z poprzedniej wersji, bo się nie zmieniają) ...
-// ... (Zakładam, że masz ten kod, więc dla czytelności przechodzę do zmiany) ...
-
-// Żebyś miał pewność, wklejam klasy i update:
+// --- HELPER: Odczytuje aktywne hardpointy dla Hexlance ---
+function getActiveOffsets(ship) {
+    if (ship && ship.weapons && ship.weapons.special) {
+        const specials = ship.weapons.special.filter(l => l.weapon && l.weapon.id === 'hexlance_siege');
+        if (specials.length > 0) {
+            return specials.map(l => l.hp.pos);
+        }
+    }
+    return []; // Brak broni = pusta tablica
+}
 
 class MainSpark {
     constructor(x, y, vx, vy) {
@@ -62,7 +63,6 @@ class MainSpark {
         this.decayPerSec = this.decay * 60;
         this.size = VFX_CONFIG.newMinSize + Math.random() * (VFX_CONFIG.newMaxSize - VFX_CONFIG.newMinSize);
         this.color = VFX_CONFIG.colors[Math.floor(Math.random() * VFX_CONFIG.colors.length)];
-        this.type = 'main';
     }
     update(dt) {
         this.x += this.vx * dt;
@@ -96,7 +96,6 @@ class BgSpark {
         this.size = VFX_CONFIG.oldMinSize + Math.random() * (VFX_CONFIG.oldMaxSize - VFX_CONFIG.oldMinSize);
         this.drag = 0.90 + Math.random() * 0.06;
         this.curve = (Math.random() - 0.5) * 6.0;
-        this.type = 'bg';
     }
     update(dt) {
         if (this.curve) {
@@ -136,9 +135,8 @@ function rotate(v, angle) {
 }
 
 function getMuzzlePos(ship, cannonIndex, barrelIndex, aimPos) {
-    const tuneX = 315; const tuneY = 275;
-    const offsets = [ { x: -tuneX, y: -tuneY }, { x: -tuneX, y: tuneY } ];
-    const off = offsets[cannonIndex];
+    const offsets = getActiveOffsets(ship);
+    const off = offsets[cannonIndex] || { x: 0, y: 0 }; // Pobiera offset z Hardpointu!
     const pivotOffset = rotate(off, ship.angle);
     const pivotPos = { x: ship.pos.x + pivotOffset.x, y: ship.pos.y + pivotOffset.y };
     let dir;
@@ -193,32 +191,33 @@ function fireSingleBarrel(ship, cannonIndex, barrelIndex, aimPos) {
     });
     if (window.spawnParticle) window.spawnParticle({ x: m.x, y: m.y }, { x: m.dir.x * 50, y: m.dir.y * 50 }, 0.08, '#ffffff', 60, true);
     if (window.spawnShockwave) window.spawnShockwave(m.x, m.y, { maxR: 80, maxLife: 0.12, w: 4, color: 'rgba(133, 193, 255,' });
-    const newCount = 12;
-    for(let i=0; i<newCount; i++) {
-        localParticles.push(new MainSpark(m.x, m.y, m.dir.x, m.dir.y));
-    }
-    const oldCount = 60;
-    for (let i = 0; i < oldCount; i++) {
+    for(let i=0; i<12; i++) localParticles.push(new MainSpark(m.x, m.y, m.dir.x, m.dir.y));
+    for (let i = 0; i < 60; i++) {
         const spread = (Math.random() - 0.5) * 1.4; 
         const sparkAngle = angle + spread;
         const speed = 1000 + Math.random() * 1500;
-        const vx = Math.cos(sparkAngle) * speed + ship.vel.x;
-        const vy = Math.sin(sparkAngle) * speed + ship.vel.y;
-        localParticles.push(new BgSpark(m.x, m.y, vx, vy));
+        localParticles.push(new BgSpark(m.x, m.y, Math.cos(sparkAngle) * speed + ship.vel.x, Math.sin(sparkAngle) * speed + ship.vel.y));
     }
 }
 
-function prepareSuperweaponSalvo() {
+function prepareSuperweaponSalvo(ship) {
     superweaponState.queue = [];
     const delay = superweaponState.shotDelay;
-    superweaponState.queue.push({ cannonIndex: 1, barrelIndex: 0, delay: 0 }); 
-    superweaponState.queue.push({ cannonIndex: 0, barrelIndex: 0, delay: delay });
-    superweaponState.queue.push({ cannonIndex: 1, barrelIndex: 1, delay: delay });
-    superweaponState.queue.push({ cannonIndex: 0, barrelIndex: 1, delay: delay });
+    const offsets = getActiveOffsets(ship);
+    let currentDelay = 0;
+    
+    // Dodajemy do kolejki każdą lufę każdej zainstalowanej broni!
+    for (let cannonIndex = 0; cannonIndex < offsets.length; cannonIndex++) {
+        superweaponState.queue.push({ cannonIndex, barrelIndex: 0, delay: currentDelay });
+        currentDelay = delay;
+        superweaponState.queue.push({ cannonIndex, barrelIndex: 1, delay: currentDelay });
+    }
     superweaponState.cooldown = superweaponState.cooldownMax;
 }
 
-export function tryFireSuperweapon() {
+export function tryFireSuperweapon(ship) {
+    if (!ship) return false;
+    if (getActiveOffsets(ship).length === 0) return false; // Brak broni, nie strzelaj
     if (superweaponState.cooldown > 0) return false;
     if (superweaponState.charging) return false;
     if (superweaponState.queue.length > 0) return false;
@@ -237,12 +236,18 @@ export function updateSuperweapon(dt, ship, aimPos) {
     }
     if (superweaponState.charging) {
         superweaponState.chargeProgress += dt;
-        const m = getMuzzlePos(ship, 1, 0, aimPos);
-        for(let k=0; k<3; k++) spawnChargeEffect(m);
+        const offsets = getActiveOffsets(ship);
+        
+        // Ładowanie na każdej z luf
+        for (let i = 0; i < offsets.length; i++) {
+            const m = getMuzzlePos(ship, i, 0, aimPos);
+            for(let k=0; k<3; k++) spawnChargeEffect(m);
+        }
+        
         if (superweaponState.chargeProgress >= superweaponState.chargeTime) {
             superweaponState.charging = false;
             superweaponState.chargeProgress = 0;
-            prepareSuperweaponSalvo();
+            prepareSuperweaponSalvo(ship);
         }
     }
     if (superweaponState.queue.length > 0) {
@@ -262,19 +267,55 @@ export function updateSuperweapon(dt, ship, aimPos) {
     }
     for (let i = hexlanceProjectiles.length - 1; i >= 0; i--) {
         const proj = hexlanceProjectiles[i];
-        const stepDist = Math.hypot(proj.vx, proj.vy) * dt;
-        proj.x += proj.vx * dt; proj.y += proj.vy * dt;
-        proj.life -= dt; proj.traveled += stepDist;
+
+        // Zapisujemy pozycję z poprzedniej klatki (żeby narysować linię cięcia)
+        const prevX = proj.x;
+        const prevY = proj.y;
+
+        const moveX = proj.vx * dt;
+        const moveY = proj.vy * dt;
+        const stepDist = Math.hypot(moveX, moveY);
+
+        proj.x += moveX;
+        proj.y += moveY;
+        proj.life -= dt;
+        proj.traveled += stepDist;
+
         if (window.DestructorSystem && window.npcs) {
             const targets = [...window.npcs, ...(window.wrecks || [])];
             for (const t of targets) {
                 if (!t.hexGrid || (t.dead && !t.isWreck)) continue;
-                const dx = t.x - proj.x; const dy = t.y - proj.y;
-                if (dx*dx + dy*dy < (t.radius + 20)**2) {
-                     window.DestructorSystem.applyImpact(t, proj.x, proj.y, 150, {x: proj.vx, y: proj.vy});
+
+                // BROADPHASE: Znajdź najbliższy punkt na linii lotu pocisku do środka statku
+                const lenSq = moveX * moveX + moveY * moveY;
+                let tParam = 0;
+                if (lenSq > 0) {
+                    tParam = ((t.x - prevX) * moveX + (t.y - prevY) * moveY) / lenSq;
+                    tParam = Math.max(0, Math.min(1, tParam));
+                }
+                const closestX = prevX + tParam * moveX;
+                const closestY = prevY + tParam * moveY;
+
+                const distSq = (t.x - closestX) ** 2 + (t.y - closestY) ** 2;
+                const hitR = (t.radius || 50) + 30; // Promień statku + margines
+
+                if (distSq < hitR * hitR) {
+                    // RAYCAST HIT! Pocisk przeciął statek.
+                    // Krokujemy co 25 pikseli wzdłuż linii cięcia, żeby nie pominąć żadnego heksa
+                    const steps = Math.max(1, Math.ceil(stepDist / 25));
+
+                    for (let s = 0; s <= steps; s++) {
+                        const frac = s / steps;
+                        const testX = prevX + moveX * frac;
+                        const testY = prevY + moveY * frac;
+
+                        // Uderzamy z siłą 1500 DMG (przetnie heksy na wylot jak masło)
+                        window.DestructorSystem.applyImpact(t, testX, testY, 15, { x: proj.vx * 50, y: proj.vy * 50 }, { radius: 35 });
+                    }
                 }
             }
         }
+
         if (proj.life <= 0 || proj.traveled > superweaponState.range) {
             hexlanceProjectiles.splice(i, 1);
         }
@@ -286,10 +327,6 @@ export function updateSuperweapon(dt, ship, aimPos) {
     }
 }
 
-// =========================================================
-// ZMODYFIKOWANA FUNKCJA RYSOWANIA (Obsługuje visualState)
-// =========================================================
-
 export function drawSuperweapon(ctx, camera, ship, worldToScreen, aimPos, visualState = null) {
     if (!spriteReady) return;
     const zoom = camera.zoom;
@@ -299,16 +336,17 @@ export function drawSuperweapon(ctx, camera, ship, worldToScreen, aimPos, visual
         p.draw(ctx, camera, worldToScreen);
     }
 
-    const tuneX = 315; const tuneY = 275; const anchorX = 0.25; const anchorY = 0.5; const tuneScale = 0.2;
+    const offsets = getActiveOffsets(ship);
+    if (offsets.length === 0) return; // Brak broni, nie rysujemy korpusu!
+
+    const anchorX = 0.25; const anchorY = 0.5; const tuneScale = 0.2;
     const spriteScale = tuneScale * zoom;
     const spriteW = sprite.width * spriteScale;
     const spriteH = sprite.height * spriteScale;
     const recoilDrawOffset = -superweaponState.recoilOffset * zoom;
     const drawOffsetX = -spriteW * anchorX + recoilDrawOffset;
     const drawOffsetY = -spriteH * anchorY;
-    const offsets = [ { x: -tuneX, y: -tuneY }, { x: -tuneX, y: tuneY } ];
 
-    // Używamy pozycji interpolowanej (visualState) jeśli dostępna
     const shipX = visualState ? visualState.pos.x : ship.pos.x;
     const shipY = visualState ? visualState.pos.y : ship.pos.y;
     const shipAngle = visualState ? visualState.angle : ship.angle;

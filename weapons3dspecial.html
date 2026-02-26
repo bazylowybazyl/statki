@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zbrojownia AISPACE AAA - Poligon Testowy</title>
+    <style>
+        :root {
+            --bg-color: #03050a;
+            --panel-bg: rgba(9, 14, 23, 0.75);
+            --border-color: rgba(30, 41, 59, 0.5);
+            --text-main: #e2e8f0;
+            --text-muted: #64748b;
+            --accent: #00f0ff; /* Zmieniony na cyberpunkowy cyjan */
+            --accent-glow: rgba(0, 240, 255, 0.4);
+            --danger: #ff003c;
+        }
+
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background-color: var(--bg-color); color: var(--text-main);
+            font-family: 'Rajdhani', 'Segoe UI', Tahoma, sans-serif;
+            overflow: hidden; display: flex;
+            user-select: none;
+        }
+
+        /* Scanlines & Vignette Effect */
+        body::before {
+            content: " "; display: block; position: absolute; top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+            z-index: 999; background-size: 100% 4px, 6px 100%; pointer-events: none;
+        }
+        body::after {
+            content: ""; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            box-shadow: inset 0 0 150px rgba(0,0,0,0.9); pointer-events: none; z-index: 998;
+        }
+
+        #sidebar {
+            width: 380px; background-color: var(--panel-bg);
+            border-right: 1px solid var(--border-color); display: flex; flex-direction: column;
+            box-shadow: 10px 0 30px rgba(0,0,0,0.8); z-index: 10; position: relative;
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+        }
+
+        .header {
+            padding: 30px 25px; border-bottom: 1px solid var(--border-color);
+            background: linear-gradient(135deg, rgba(17, 24, 39, 0.8) 0%, transparent 100%);
+            position: relative; overflow: hidden;
+        }
+        
+        .header::after {
+            content: ''; position: absolute; bottom: 0; left: 0; width: 100%; height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent), transparent);
+            box-shadow: 0 0 10px var(--accent);
+        }
+
+        .header h1 {
+            margin: 0; font-size: 28px; color: #fff; text-transform: uppercase;
+            letter-spacing: 4px; text-shadow: 0 0 15px var(--accent-glow); font-weight: 800;
+        }
+
+        .header p { margin: 10px 0 0 0; font-size: 14px; color: var(--accent); letter-spacing: 1px;}
+
+        #weapon-list { flex: 1; overflow-y: auto; padding: 20px; }
+
+        .weapon-item {
+            display: flex; align-items: center; padding: 15px; margin-bottom: 15px;
+            background: rgba(15, 23, 42, 0.4); border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 4px; cursor: pointer; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative; overflow: hidden;
+        }
+
+        .weapon-item::before {
+            content: ''; position: absolute; left: 0; top: 0; width: 3px; height: 100%; 
+            background: transparent; transition: all 0.3s;
+        }
+
+        .weapon-item:hover { background: rgba(30, 41, 59, 0.8); transform: translateX(5px); border-color: rgba(255,255,255,0.1); }
+        .weapon-item.active { background: rgba(0, 240, 255, 0.05); border-color: rgba(0, 240, 255, 0.3); }
+        .weapon-item.active::before { background: var(--accent); box-shadow: 0 0 15px var(--accent); }
+
+        .checkbox-custom {
+            width: 24px; height: 24px; border: 2px solid var(--text-muted); border-radius: 4px;
+            margin-right: 15px; display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s; flex-shrink: 0; background: rgba(0,0,0,0.5);
+        }
+        .weapon-item.active .checkbox-custom { background-color: var(--accent); border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow);}
+        .weapon-item.active .checkbox-custom::after { content: "✓"; color: #000; font-size: 16px; font-weight: 900; }
+
+        .weapon-info { flex: 1; }
+        .weapon-name { font-weight: 700; font-size: 16px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; letter-spacing: 1px; text-transform: uppercase;}
+        .weapon-color-dot { width: 14px; height: 14px; border-radius: 50%; box-shadow: 0 0 10px currentColor; border: 2px solid rgba(255,255,255,0.2); }
+        .weapon-stats { font-size: 12px; color: var(--text-muted); font-family: 'Courier New', monospace; letter-spacing: 0px;}
+
+        #game-container { flex: 1; position: relative; background-color: #000; }
+        #gameCanvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+        
+        #hud {
+            position: absolute; top: 30px; right: 30px; pointer-events: none;
+            text-align: right; text-shadow: 0 2px 4px rgba(0,0,0,1);
+            font-family: 'Courier New', Courier, monospace; z-index: 100;
+            background: rgba(9, 14, 23, 0.6); padding: 20px; border-radius: 8px; 
+            border: 1px solid var(--accent); box-shadow: 0 0 20px rgba(0, 240, 255, 0.1);
+            backdrop-filter: blur(5px);
+        }
+        #hud div { margin-bottom: 8px; letter-spacing: 1px; }
+        .hud-value { color: var(--accent); font-weight: bold; text-shadow: 0 0 8px var(--accent-glow); }
+        
+        .glitch-text { animation: glitch 2s infinite linear alternate-reverse; }
+        @keyframes glitch {
+            0% { text-shadow: 2px 0 var(--danger), -2px 0 var(--accent); }
+            5% { text-shadow: -2px 0 var(--danger), 2px 0 var(--accent); }
+            10%, 100% { text-shadow: 0 0 0; }
+        }
+
+    </style>
+    <!-- Import Google Font for better UI look -->
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="sidebar">
+        <div class="header">
+            <h1 class="glitch-text">Zbrojownia AAA</h1>
+            <p>OS: ONLINE // SYS_READY</p>
+            <p style="color: var(--text-muted); font-size: 11px;">[SCROLL] ZOOM &nbsp;&nbsp; [LPM] FIRE</p>
+        </div>
+        <div id="weapon-list"></div>
+    </div>
+
+    <div id="game-container">
+        <div id="hud">
+            <div style="color: #64748b; font-size: 14px; font-weight:bold; border-bottom: 1px solid #333; padding-bottom: 5px; margin-bottom: 10px;">DIAGNOSTICS_SYS_V2.4</div>
+            <div style="color: #94a3b8; font-size: 15px;">POCISKI W LOCIE: <span id="bullet-count" class="hud-value">0</span></div>
+            <div style="color: #94a3b8; font-size: 15px;">AKTYWNE VFX: <span id="particle-count" class="hud-value">0</span></div>
+            <div style="color: #94a3b8; font-size: 15px;">TEMPERATURA: <span class="hud-value" style="color:#ffaa00;">OPTYMALNA</span></div>
+        </div>
+        <div id="gameCanvas"></div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // ==========================================
+        // BAZA BRONI (AAA Tuning + Nowe Bronie)
+        // ==========================================
+        const MASTER_WEAPONS = {
+            heavy_autocannon: { 
+                id: 'heavy_autocannon', 
+                name: 'Goliath Autocannon', 
+                type: 'projectile',
+                baseDamage: 45, 
+                baseRange: 2500, 
+                baseSpeed: 3500, 
+                cooldown: 0.1,  // Bardzo szybki ogień
+                spread: 0.03,
+                vfxColor: '#ff6600', // Pomarańczowy kinetyczny
+                coreColor: '#ffffff',
+                recoil: 20,
+                shake: 10,
+                impactScale: 1.0
+            },
+            plasma_gatling: { 
+                id: 'plasma_gatling', 
+                name: 'Ion Plasma Gatling', 
+                type: 'projectile',
+                baseDamage: 60, 
+                baseRange: 2000, 
+                baseSpeed: 2000, 
+                cooldown: 0.15,
+                spread: 0.05,
+                vfxColor: '#00ffff', // Cyjan
+                coreColor: '#ffffff',
+                recoil: 15,
+                shake: 8,
+                impactScale: 1.5
+            },
+            railgun: { 
+                id: 'railgun', 
+                name: 'Valkyrie Railgun', 
+                type: 'beam',
+                baseDamage: 500, 
+                baseRange: 4000, 
+                baseSpeed: 15000, // Prawie natychmiastowe
+                cooldown: 1.5, // Długi czas przeładowania
+                spread: 0.001,
+                vfxColor: '#ff00ff', // Fiolet/Magenta
+                coreColor: '#ffffff',
+                recoil: 60, // Masywny odrzut
+                shake: 45,  // Masywny wstrząs
+                impactScale: 3.5
+            }
+        };
+
+        // ==========================================
+        // STATE
+        // ==========================================
+        const state = {
+            activeWeapons: new Set(['heavy_autocannon']),
+            cooldowns: {},
+            bullets: [],     
+            particles: [],   
+            explosions: [], // NOWA TABLICA NA ZOPTYMALIZOWANE EKSPLOZJE INSTANCED
+            decals: [], // Ślady po trafieniach na ziemi
+            mouse: { x: 0, y: 0, isDown: false, screenX: 0, screenY: 0 },
+            camera: { 
+                z: 1400, targetZ: 1000, 
+                x: 0, y: 0, 
+                shake: 0, shakeVec: new THREE.Vector3() 
+            },
+            ship: { 
+                angle: 0, 
+                lastBarrelFired: 0,
+                flashL: 0, flashR: 0,
+                recoilHousing: 0, recoilL: 0, recoilR: 0, 
+            },
+            // Przesuwamy cel znacznie dalej od statku
+            target: { x: 1800, y: 400, size: 120, mesh: null, hitFlash: 0 }, 
+            lastTime: performance.now()
+        };
+        Object.keys(MASTER_WEAPONS).forEach(id => state.cooldowns[id] = 0);
+
+        // ==========================================
+        // THREE.JS SETUP (AAA GRAPHICS)
+        // ==========================================
+        const container = document.getElementById('gameCanvas');
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio dla wydajności
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        
+        // ZAAWANSOWANE ŚWIATŁO: HDR i ToneMapping
+        renderer.toneMapping = THREE.ACESFilmicToneMapping; 
+        renderer.toneMappingExposure = 1.3;
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x020306);
+        scene.fog = new THREE.FogExp2(0x020306, 0.00015); // Zmniejszona gęstość mgły, żeby widzieć dalej
+
+        // Zwiększony zasięg rysowania kamery z 8000 na 25000 jednostek
+        const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 1, 25000);
+        camera.position.set(0, 0, state.camera.z); 
+
+        const renderScene = new RenderPass(scene, camera);
+        
+        // BLOOM: Konfiguracja AAA 
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.2, 0.8, 0.85);
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        const raycaster = new THREE.Raycaster();
+        const planeZ0 = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+        const targetVec = new THREE.Vector3();
+
+        // OŚWIETLENIE ŚRODOWISKOWE
+        const ambientLight = new THREE.AmbientLight(0x1a2b3c, 1.5); 
+        scene.add(ambientLight);
+        
+        const sunPos = new THREE.Vector3(-1200, 600, 400); 
+        const dirLight = new THREE.DirectionalLight(0xddeeff, 4.0); 
+        dirLight.position.copy(sunPos); 
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        dirLight.shadow.camera.near = 10;
+        dirLight.shadow.camera.far = 3000;
+        dirLight.shadow.camera.left = -800;
+        dirLight.shadow.camera.right = 800;
+        dirLight.shadow.camera.top = 800;
+        dirLight.shadow.camera.bottom = -800;
+        dirLight.shadow.bias = -0.0005;
+        scene.add(dirLight);
+
+        // ==========================================
+        // PROCEDURALNE TEKSTURY (Bez plików)
+        // ==========================================
+        function createRadialGradient() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128; canvas.height = 128;
+            const context = canvas.getContext('2d');
+            const gradient = context.createRadialGradient(64, 64, 0, 64, 64, 64);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+            gradient.addColorStop(0.2, 'rgba(255, 255, 255, 0.8)');
+            gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.2)');
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            context.fillStyle = gradient;
+            context.fillRect(0, 0, 128, 128);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function createHexGridTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#05070a'; ctx.fillRect(0, 0, 512, 512);
+            ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 2;
+            
+            // Prosta siatka krzyżowa zamiast heksów dla lepszego wyglądu płyt
+            for(let i=0; i<512; i+=64) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 512); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(512, i); ctx.stroke();
+            }
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(60, 60); // Gęstsze powtarzanie tekstury dla gigantycznej podłogi
+            return tex;
+        }
+
+        const particleTexture = createRadialGradient();
+        const floorTexture = createHexGridTexture();
+
+        const dummyObj = new THREE.Object3D(); // DUMMY OBIEKT DO INSTANCED MESH
+
+        // ==========================================
+        // MATERIAŁY AAA
+        // ==========================================
+        const matDarkMetal = new THREE.MeshPhysicalMaterial({ color: 0x111318, metalness: 0.8, roughness: 0.3, clearcoat: 0.2 });
+        const matArmorPlate = new THREE.MeshPhysicalMaterial({ color: 0x242a35, metalness: 0.6, roughness: 0.5 });
+        const matGunmetal = new THREE.MeshPhysicalMaterial({ color: 0x0a0a0c, metalness: 0.9, roughness: 0.2 });
+        
+        function getEmissiveMaterial(hexColor, intensity = 5.0, useTexture = false) {
+            return new THREE.MeshStandardMaterial({
+                color: 0x000000,
+                emissive: new THREE.Color(hexColor),
+                emissiveIntensity: intensity,
+                transparent: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                map: useTexture ? particleTexture : null
+            });
+        }
+
+        const matSpark = getEmissiveMaterial('#ffaa44', 20.0, true);
+        const matDebris = new THREE.MeshPhysicalMaterial({ color: 0x222222, metalness: 0.9, roughness: 0.4 });
+        const matScorch = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.8, depthWrite: false, map: particleTexture });
+
+        // Geometrie
+        const geoSpark = new THREE.PlaneGeometry(8, 8);
+        const geoTracerCore = new THREE.CylinderGeometry(1.5, 0.2, 120, 5); 
+        const geoTracerGlow = new THREE.CylinderGeometry(4.0, 0.5, 140, 5);
+        const geoSmoke = new THREE.PlaneGeometry(25, 25);
+        const geoShockwave = new THREE.RingGeometry(0.8, 1, 48); 
+        const geoExplosionCore = new THREE.IcosahedronGeometry(1, 2); 
+        const geoDebris = new THREE.TetrahedronGeometry(2); 
+        const geoScorch = new THREE.PlaneGeometry(30, 30);
+        const geoInstancedSpark = new THREE.PlaneGeometry(1, 0.2);
+
+        // --- BAZOWE MATERIAŁY EKSPLOZJI (ZERO ALOKACJI PAMIĘCI W TRAKCIE GRY) ---
+        const EXPLOSION_MATS = {};
+        function getExpMats(hexColor) {
+            if (!EXPLOSION_MATS[hexColor]) {
+                const color = parseInt(hexColor.replace('#', '0x'));
+                EXPLOSION_MATS[hexColor] = {
+                    flash: new THREE.SpriteMaterial({ map: particleTexture, color: color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }),
+                    core: new THREE.SpriteMaterial({ map: particleTexture, color: 0xffffff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }),
+                    spark: new THREE.MeshBasicMaterial({ color: color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }),
+                    smoke: new THREE.SpriteMaterial({ map: particleTexture, color: 0x030303, transparent: true, depthWrite: false, opacity: 0.6 }), // Stałe opacity!
+                    muzzleSpark: getEmissiveMaterial(hexColor, 15.0, true) // Dodany cache dla iskier z lufy
+                };
+            }
+            return EXPLOSION_MATS[hexColor];
+        }
+
+        // --- CACHE NA MATERIAŁY POCISKÓW (ZAPOBIEGA LAGOM) ---
+        const TRACER_MATS = {};
+        function getTracerMats(weapon) {
+            if (!TRACER_MATS[weapon.id]) {
+                TRACER_MATS[weapon.id] = {
+                    core: getEmissiveMaterial(weapon.coreColor, 50.0),
+                    glow: getEmissiveMaterial(weapon.vfxColor, 10.0)
+                };
+            }
+            return TRACER_MATS[weapon.id];
+        }
+
+        // Cache na materiał dla zwykłego dymu (np. smuga za pociskiem)
+        const sharedMuzzleSmokeMat = new THREE.SpriteMaterial({ map: particleTexture, color: 0x030303, transparent: true, depthWrite: false, opacity: 0.5 });
+
+        // --- PODŁOGA AAA (Z teksturą paneli) ---
+        const floorMesh = new THREE.Mesh(
+            // Znacznie powiększona podłoga (z 8000 na 24000), by nie widzieć końca po oddaleniu kamery
+            new THREE.PlaneGeometry(24000, 24000),
+            new THREE.MeshStandardMaterial({ 
+                color: 0x080a0f, roughness: 0.2, metalness: 0.8, 
+                map: floorTexture, bumpMap: floorTexture, bumpScale: 0.02
+            })
+        );
+        floorMesh.position.z = -15; 
+        floorMesh.receiveShadow = true;
+        scene.add(floorMesh);
+
+        // --- MODEL STATKU (Twój Capital Ship) ---
+        const shipGroup = new THREE.Group();
+        
+        const shipMat = new THREE.MeshStandardMaterial({ 
+            transparent: true,
+            alphaTest: 0.1, // Ważne dla realistycznych cieni! Odcina przezroczystość
+            roughness: 0.8,
+            metalness: 0.2,
+            side: THREE.DoubleSide
+        });
+        
+        // Placeholder, geometria zostanie zaktualizowana po wczytaniu pliku
+        const shipMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), shipMat);
+        shipMesh.position.z = 0; 
+        shipMesh.castShadow = true; 
+        shipMesh.receiveShadow = true;
+        shipGroup.add(shipMesh);
+
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.load('https://raw.githubusercontent.com/bazylowybazyl/statki/refs/heads/main/assets/capital_ship_rect_v1.png', (tex) => {
+            tex.colorSpace = THREE.SRGBColorSpace;
+            shipMat.map = tex;
+            shipMat.needsUpdate = true;
+            
+            // Renderowanie 1:1 na podstawie oryginalnych pikseli obrazu (zero skalowania)
+            shipMesh.geometry.dispose();
+            shipMesh.geometry = new THREE.PlaneGeometry(tex.image.width, tex.image.height);
+        });
+
+        // --- WIEŻYCZKA ---
+        const turretGroup = new THREE.Group();
+        turretGroup.position.set(0, 0, 5); // Centralnie w środku statku!
+
+        const turretBase = new THREE.Mesh(new THREE.CylinderGeometry(35, 40, 15, 24), matDarkMetal);
+        turretBase.rotation.x = Math.PI / 2;
+        turretBase.position.z = 7.5; // Zapobiega przenikaniu podstawy przez teksturę
+        turretBase.castShadow = true; turretBase.receiveShadow = true;
+        turretGroup.add(turretBase);
+
+        const turretYoke = new THREE.Group();
+        const housing = new THREE.Group();
+        
+        const mainBlock = new THREE.Mesh(new THREE.BoxGeometry(55, 30, 26), matArmorPlate);
+        mainBlock.position.set(10, 0, 15);
+        mainBlock.castShadow = true; mainBlock.receiveShadow = true;
+        housing.add(mainBlock);
+
+        const ammoBoxGeo = new THREE.BoxGeometry(40, 14, 20);
+        const ammoL = new THREE.Mesh(ammoBoxGeo, matDarkMetal); ammoL.position.set(5, 25, 12);
+        const ammoR = new THREE.Mesh(ammoBoxGeo, matDarkMetal); ammoR.position.set(5, -25, 12);
+        ammoL.castShadow = true; ammoR.castShadow = true;
+        housing.add(ammoL, ammoR);
+        
+        // Paski LED na obudowie
+        const ledMat = getEmissiveMaterial('#00ffff', 10.0);
+        const ledStripL = new THREE.Mesh(new THREE.BoxGeometry(25, 2, 2), ledMat); ledStripL.position.set(10, 15, 28);
+        const ledStripR = new THREE.Mesh(new THREE.BoxGeometry(25, 2, 2), ledMat); ledStripR.position.set(10, -15, 28);
+        housing.add(ledStripL, ledStripR);
+
+        // Lufy
+        const barrelSysL = new THREE.Group(); const barrelSysR = new THREE.Group();
+        const bBase = new THREE.CylinderGeometry(5.5, 5.5, 25, 16);
+        const bMid = new THREE.CylinderGeometry(3.5, 4.5, 50, 16);
+        const bBrake = new THREE.CylinderGeometry(4.5, 3.5, 15, 16); 
+        
+        const buildBarrel = () => {
+            const group = new THREE.Group();
+            const m1 = new THREE.Mesh(bBase, matGunmetal); m1.position.y = 12.5; m1.castShadow = true;
+            const m2 = new THREE.Mesh(bMid, matGunmetal); m2.position.y = 50; m2.castShadow = true;
+            const m3 = new THREE.Mesh(bBrake, matDarkMetal); m3.position.y = 82.5; m3.castShadow = true;
+            group.add(m1, m2, m3);
+            group.rotation.z = -Math.PI / 2;
+            return group;
+        };
+
+        const barrelL = buildBarrel(); barrelSysL.add(barrelL); barrelSysL.position.set(35, 12, 15);
+        const barrelR = buildBarrel(); barrelSysR.add(barrelR); barrelSysR.position.set(35, -12, 15);
+
+        turretYoke.add(housing, barrelSysL, barrelSysR);
+        turretGroup.add(turretYoke);
+
+        // Muzzle Flashes
+        function createMuzzleFlash() {
+            const group = new THREE.Group();
+            const p1 = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), getEmissiveMaterial('#ffffff', 10.0, true));
+            p1.rotation.y = Math.PI / 2;
+            const p2 = p1.clone(); p2.rotation.x = Math.PI / 2;
+            const core = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), getEmissiveMaterial('#ffffff', 40.0, true));
+            group.add(p1, p2, core);
+            
+            const light = new THREE.PointLight(0xffffff, 0, 400);
+            light.castShadow = true;
+            group.add(light);
+            
+            group.visible = false;
+            return group;
+        }
+
+        // Korekta ułożenia błysku z lufy względem nowego centrum
+        const muzzleFlashL = createMuzzleFlash(); muzzleFlashL.position.set(125, 12, 15);
+        const muzzleFlashR = createMuzzleFlash(); muzzleFlashR.position.set(125, -12, 15);
+        turretGroup.add(muzzleFlashL, muzzleFlashR);
+
+        shipGroup.add(turretGroup);
+        scene.add(shipGroup);
+
+        // --- CEL TESTOWY ---
+        const targetMat = new THREE.MeshPhysicalMaterial({ color: 0x330000, metalness: 0.9, roughness: 0.2, clearcoat: 1.0 });
+        const targetMesh = new THREE.Mesh(new THREE.BoxGeometry(state.target.size, state.target.size, state.target.size), targetMat);
+        targetMesh.position.set(state.target.x, state.target.y, 10);
+        targetMesh.castShadow = true; targetMesh.receiveShadow = true;
+        scene.add(targetMesh);
+        state.target.mesh = targetMesh;
+
+        // Celownik (Ukrywamy systemowy kursor na obszarze canvas)
+        const crosshair = new THREE.Group();
+        const chCoreMat = new THREE.MeshBasicMaterial({color: 0x00ffff, transparent: true, opacity: 0.9, depthTest: false});
+        const chRingMat = new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0.2, depthTest: false});
+        crosshair.add(new THREE.Mesh(new THREE.RingGeometry(25, 28, 32), chRingMat));
+        crosshair.add(new THREE.Mesh(new THREE.CircleGeometry(3, 16), chCoreMat));
+        for(let i=0; i<4; i++) {
+            const line = new THREE.Mesh(new THREE.PlaneGeometry(12, 3), chCoreMat);
+            line.position.x = 35;
+            const pivot = new THREE.Group(); pivot.rotation.z = (Math.PI/2) * i;
+            pivot.add(line); crosshair.add(pivot);
+        }
+        scene.add(crosshair);
+
+        // ==========================================
+        // UI BINDINGS
+        // ==========================================
+        const weaponListEl = document.getElementById('weapon-list');
+        const bulletCountEl = document.getElementById('bullet-count');
+        const particleCountEl = document.getElementById('particle-count');
+
+        function updateWeaponColors(color) {
+            ledStripL.material.emissive.setHex(color);
+            ledStripR.material.emissive.setHex(color);
+            chCoreMat.color.setHex(color);
+            document.documentElement.style.setProperty('--accent', '#' + color.toString(16).padStart(6, '0'));
+            document.documentElement.style.setProperty('--accent-glow', `rgba(${(color>>16)&255}, ${(color>>8)&255}, ${color&255}, 0.4)`);
+        }
+
+        function initUI() {
+            weaponListEl.innerHTML = '';
+            Object.values(MASTER_WEAPONS).forEach(weapon => {
+                const item = document.createElement('div');
+                item.className = `weapon-item ${state.activeWeapons.has(weapon.id) ? 'active' : ''}`;
+                let stats = `RPS: ${(1 / weapon.cooldown).toFixed(1)} | VEL: ${weapon.baseSpeed} | DMG: ${weapon.baseDamage}`;
+                item.innerHTML = `
+                    <div class="checkbox-custom"></div>
+                    <div class="weapon-info">
+                        <div class="weapon-name">
+                            ${weapon.name}
+                            <div class="weapon-color-dot" style="background-color: ${weapon.vfxColor}; color: ${weapon.vfxColor};"></div>
+                        </div>
+                        <div class="weapon-stats">${stats}</div>
+                    </div>
+                `;
+                item.addEventListener('click', () => {
+                    // W tej grze zróbmy toggle by mieć tylko jedną broń aktywną na raz dla lepszego efektu
+                    state.activeWeapons.clear();
+                    state.activeWeapons.add(weapon.id);
+                    document.querySelectorAll('.weapon-item').forEach(el => el.classList.remove('active'));
+                    item.classList.add('active');
+                    updateWeaponColors(parseInt(weapon.vfxColor.replace('#', '0x')));
+                });
+                weaponListEl.appendChild(item);
+            });
+            // Init colors
+            updateWeaponColors(parseInt(MASTER_WEAPONS.heavy_autocannon.vfxColor.replace('#', '0x')));
+        }
+
+        // ==========================================
+        // INPUT
+        // ==========================================
+        window.addEventListener('resize', () => {
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            composer.setSize(container.clientWidth, container.clientHeight);
+        });
+
+        container.addEventListener('mousemove', (e) => {
+            const rect = container.getBoundingClientRect();
+            state.mouse.screenX = (e.clientX - rect.left) / container.clientWidth * 2 - 1;
+            state.mouse.screenY = -((e.clientY - rect.top) / container.clientHeight) * 2 + 1;
+        });
+        container.addEventListener('mousedown', (e) => { if(e.button === 0) state.mouse.isDown = true; });
+        container.addEventListener('mouseup', (e) => { if(e.button === 0) state.mouse.isDown = false; });
+        container.addEventListener('mouseleave', () => state.mouse.isDown = false);
+        container.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            // Zwiększamy szybkość scrollowania i ustalamy gigantyczny limit maksymalnego oddalenia
+            state.camera.targetZ += e.deltaY * 4.0; 
+            state.camera.targetZ = Math.max(600, Math.min(10000, state.camera.targetZ)); // Limit z 3000 na 10000
+        }, { passive: false });
+
+        // ==========================================
+        // SYSTEM EFEKTÓW 3D (VFX AAA)
+        // ==========================================
+        
+        function spawnSpark(x, y, z, vx, vy, vz, life, size, colorHex) {
+            const mat = colorHex ? getExpMats(colorHex).muzzleSpark : matSpark;
+            const mesh = new THREE.Mesh(geoSpark, mat);
+            mesh.position.set(x, y, z); mesh.scale.setScalar(size);
+            scene.add(mesh);
+            state.particles.push({ type: 'spark', mesh, vx, vy, vz, life, maxLife: life, size, customMat: !!colorHex });
+        }
+
+        function spawnSmoke(x, y, z, vx, vy, life, size) {
+            const mesh = new THREE.Sprite(sharedMuzzleSmokeMat); 
+            mesh.position.set(x, y, z + (Math.random()*15 - 7.5));
+            mesh.rotation.z = Math.random() * Math.PI * 2;
+            mesh.scale.setScalar(size);
+            scene.add(mesh);
+            state.particles.push({ type: 'smoke', mesh, vx, vy, life, maxLife: life, size });
+        }
+
+        function spawnScorchMark(x, y, scale) {
+            const mesh = new THREE.Mesh(geoScorch, matScorch); // ZERO KLONOWANIA!
+            mesh.position.set(x, y, -14.9); 
+            mesh.rotation.z = Math.random() * Math.PI;
+            mesh.scale.setScalar(scale);
+            scene.add(mesh);
+            state.decals.push({ mesh, life: 10.0, maxLife: 10.0, initialScale: scale }); // Zapisujemy początkową skalę
+        }
+
+        // --- ZOPTYMALIZOWANA FABRYKA EKSPLOZJI ---
+        function spawnExplosion(x, y, z, colorHex, scale = 1.0, weaponId = 'heavy_autocannon') {
+            const group = new THREE.Group();
+            group.position.set(x, y, z);
+            scene.add(group);
+
+            const mats = getExpMats(colorHex);
+            const isRailgun = weaponId === 'railgun';
+            const duration = isRailgun ? 0.8 : 0.4;
+            let time = 0;
+
+            const flash = new THREE.Sprite(mats.flash);
+            flash.scale.setScalar(60 * scale);
+            group.add(flash);
+
+            const core = new THREE.Sprite(mats.core);
+            core.scale.setScalar(30 * scale);
+            group.add(core);
+
+            const sparkCount = isRailgun ? 120 : 30;
+            const sparks = new THREE.InstancedMesh(geoInstancedSpark, mats.spark, sparkCount);
+            sparks.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+            group.add(sparks);
+
+            const sparkData = [];
+            for(let i=0; i<sparkCount; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = (isRailgun ? 500 + Math.random() * 1200 : 200 + Math.random() * 500) * scale;
+                sparkData.push({
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    vz: (Math.random() - 0.2) * (isRailgun ? 1000 : 400) * scale,
+                    life: 0.2 + Math.random() * duration,
+                    age: 0, x: 0, y: 0, z: 0
+                });
+            }
+
+            const smokes = [];
+            for(let i=0; i<8 * scale; i++) {
+                const smoke = new THREE.Sprite(mats.smoke);
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 120 * scale;
+                smoke.position.set((Math.random()-0.5)*10, (Math.random()-0.5)*10, (Math.random()-0.5)*10);
+                const baseScale = (15 + Math.random()*10) * scale;
+                smoke.scale.setScalar(baseScale);
+                smoke.userData = {
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    vz: Math.random() * 50,
+                    growth: 1.5 + Math.random() * 2,
+                    life: duration + 0.6,
+                    age: 0,
+                    baseScale: baseScale
+                };
+                smokes.push(smoke);
+                group.add(smoke);
+            }
+
+            spawnScorchMark(x, y, scale * (0.8 + Math.random()*0.5));
+
+            const update = (dt) => {
+                time += dt;
+                
+                const flashFade = Math.max(0, 1 - time / (duration * 0.4));
+                flash.scale.setScalar(60 * scale * (1 + time * 8) * flashFade);
+
+                const coreFade = Math.max(0, 1 - time / (duration * 0.25));
+                core.scale.setScalar(30 * scale * Math.max(0.1, 1 - time * 4) * coreFade);
+
+                for (let i = 0; i < smokes.length; i++) {
+                    const sm = smokes[i];
+                    sm.userData.age += dt;
+                    sm.position.x += sm.userData.vx * dt;
+                    sm.position.y += sm.userData.vy * dt;
+                    sm.position.z += sm.userData.vz * dt;
+                    sm.userData.vx *= 0.92; sm.userData.vy *= 0.92;
+                    
+                    const smokeProgress = Math.min(1, sm.userData.age / sm.userData.life);
+                    const smokeFade = 1 - Math.pow(smokeProgress, 4); 
+                    const currentGrowth = 1 + sm.userData.age * sm.userData.growth;
+                    sm.scale.setScalar(sm.userData.baseScale * currentGrowth * smokeFade);
+                }
+
+                for (let i = 0; i < sparkCount; i++) {
+                    const s = sparkData[i];
+                    s.age += dt;
+                    if (s.age < s.life) {
+                        s.x += s.vx * dt; s.y += s.vy * dt; s.z += s.vz * dt;
+                        s.vx *= 0.95; s.vy *= 0.95; 
+                        s.vz -= 1500 * dt; 
+                        
+                        if(z + s.z < -14) { 
+                            s.z = -14 - z; 
+                            s.vz *= -0.5; s.vx *= 0.6; s.vy *= 0.6;
+                        }
+
+                        dummyObj.position.set(s.x, s.y, s.z);
+                        dummyObj.rotation.z = Math.atan2(s.vy, s.vx); 
+                        
+                        const speedMag = Math.sqrt(s.vx*s.vx + s.vy*s.vy + s.vz*s.vz);
+                        const stretch = Math.max(1, speedMag * (isRailgun ? 0.025 : 0.015)); 
+                        const shrink = 1 - (s.age / s.life);
+                        
+                        dummyObj.scale.set(stretch * shrink * 4, 1 * shrink, 1);
+                    } else {
+                        dummyObj.scale.set(0,0,0);
+                    }
+                    dummyObj.updateMatrix();
+                    sparks.setMatrixAt(i, dummyObj.matrix);
+                }
+                sparks.instanceMatrix.needsUpdate = true;
+
+                return time > duration + 0.6; 
+            };
+
+            const dispose = () => {
+                scene.remove(group);
+                // ZERO DISPOSE() NA MATERIAŁACH! Wszystkie są globalnie zcache'owane i reużywane.
+            };
+
+            state.explosions.push({ update, dispose });
+        }
+
+        function createTracerMesh(weapon) {
+            const group = new THREE.Group();
+            
+            // Railgun używa dłuższego pocisku
+            const lengthMult = weapon.id === 'railgun' ? 4 : 1;
+            const widthMult = weapon.id === 'plasma_gatling' ? 2 : 1;
+
+            const mats = getTracerMats(weapon);
+
+            const core = new THREE.Mesh(geoTracerCore, mats.core);
+            core.rotation.z = -Math.PI / 2;
+            core.scale.set(widthMult, lengthMult, widthMult);
+            
+            const glow = new THREE.Mesh(geoTracerGlow, mats.glow);
+            glow.rotation.z = -Math.PI / 2;
+            glow.position.x = -10 * lengthMult; 
+            glow.scale.set(widthMult, lengthMult, widthMult);
+            
+            group.add(core, glow);
+            return group;
+        }
+
+        function executeShot(weapon) {
+            const isLeft = state.ship.lastBarrelFired === 1;
+            state.ship.lastBarrelFired = isLeft ? 0 : 1;
+
+            const barrelYOffset = isLeft ? 12 : -12;
+            
+            // Poprawiony gun offset by zgadzał się z centralną osią statku
+            const gunOffset = new THREE.Vector3(125, barrelYOffset, 20); 
+            gunOffset.applyEuler(new THREE.Euler(0, 0, state.ship.angle));
+            const startX = shipGroup.position.x + gunOffset.x;
+            const startY = shipGroup.position.y + gunOffset.y;
+
+            // Odrzut wg parametrów broni
+            state.ship.recoilHousing = weapon.recoil * 0.4;
+            if (isLeft) {
+                state.ship.recoilL = weapon.recoil;
+                state.ship.flashL = 1.0;
+                muzzleFlashL.visible = true;
+                muzzleFlashL.children[0].material.emissive.setHex(parseInt(weapon.vfxColor.replace('#','0x')));
+                muzzleFlashL.children[1].material.emissive.setHex(parseInt(weapon.vfxColor.replace('#','0x')));
+                muzzleFlashL.children[3].color.setHex(parseInt(weapon.vfxColor.replace('#','0x')));
+                muzzleFlashL.children[3].intensity = 1000; 
+                muzzleFlashL.rotation.x = Math.random() * Math.PI; 
+            } else {
+                state.ship.recoilR = weapon.recoil;
+                state.ship.flashR = 1.0;
+                muzzleFlashR.visible = true;
+                muzzleFlashR.children[0].material.emissive.setHex(parseInt(weapon.vfxColor.replace('#','0x')));
+                muzzleFlashR.children[1].material.emissive.setHex(parseInt(weapon.vfxColor.replace('#','0x')));
+                muzzleFlashR.children[3].color.setHex(parseInt(weapon.vfxColor.replace('#','0x')));
+                muzzleFlashR.children[3].intensity = 1000;
+                muzzleFlashR.rotation.x = Math.random() * Math.PI;
+            }
+
+            state.camera.shake += weapon.shake;
+
+            const dx = state.mouse.x - startX;
+            const dy = state.mouse.y - startY;
+            const baseAngle = Math.atan2(dy, dx);
+            const finalAngle = baseAngle + (Math.random() * 2 - 1) * weapon.spread;
+
+            // Efekty przy lufie (poprawiona oś Z w dymie i iskrach)
+            const sparkCount = weapon.id === 'railgun' ? 10 : 3;
+            for(let i=0; i<sparkCount; i++) {
+                spawnSpark(startX, startY, 20, 
+                    Math.cos(finalAngle)*800 + (Math.random()-0.5)*300, 
+                    Math.sin(finalAngle)*800 + (Math.random()-0.5)*300, 
+                    (Math.random()-0.5)*150, 
+                    0.3, 1.5, weapon.vfxColor
+                );
+            }
+            spawnSmoke(startX + Math.cos(finalAngle)*30, startY + Math.sin(finalAngle)*30, 20, 
+                Math.cos(finalAngle)*100, Math.sin(finalAngle)*100, 
+                0.8, 2.0
+            );
+
+            const mesh = createTracerMesh(weapon);
+            mesh.position.set(startX, startY, 20); 
+            scene.add(mesh);
+
+            state.bullets.push({
+                mesh, weaponId: weapon.id, scale: weapon.impactScale, colorHex: weapon.vfxColor,
+                x: startX, y: startY,
+                vx: Math.cos(finalAngle) * weapon.baseSpeed,
+                vy: Math.sin(finalAngle) * weapon.baseSpeed,
+                life: weapon.baseRange / weapon.baseSpeed
+            });
+        }
+
+        // ==========================================
+        // GŁÓWNA PĘTLA LOGIKI
+        // ==========================================
+        function updateLogic(dt) {
+            // Paralaksa myszki ulepszająca głębię
+            const targetCamX = state.mouse.screenX * 100;
+            const targetCamY = state.mouse.screenY * 100;
+            state.camera.x += (targetCamX - state.camera.x) * dt * 2.0;
+            state.camera.y += (targetCamY - state.camera.y) * dt * 2.0;
+
+            state.camera.z += (state.camera.targetZ - state.camera.z) * dt * 5.0;
+            
+            if (state.camera.shake > 0.1) {
+                state.camera.shakeVec.set(
+                    (Math.random() - 0.5) * state.camera.shake,
+                    (Math.random() - 0.5) * state.camera.shake,
+                    0
+                );
+                state.camera.shake *= 0.85; 
+            } else {
+                state.camera.shakeVec.set(0,0,0);
+            }
+            camera.position.set(state.camera.x + state.camera.shakeVec.x, state.camera.y + state.camera.shakeVec.y, state.camera.z);
+            camera.lookAt(state.camera.x * 0.5, state.camera.y * 0.5, 0);
+
+            // Raycasting i Celownik
+            raycaster.setFromCamera(new THREE.Vector2(state.mouse.screenX, state.mouse.screenY), camera);
+            raycaster.ray.intersectPlane(planeZ0, targetVec);
+            state.mouse.x = targetVec.x; state.mouse.y = targetVec.y;
+            
+            crosshair.position.set(state.mouse.x, state.mouse.y, 25);
+            crosshair.rotation.z -= dt * 2.0;
+            const scalePulse = 1.0 + Math.sin(state.lastTime * 0.005) * 0.1;
+            crosshair.scale.setScalar(scalePulse);
+
+            // Rotacja statku (Delta Kąta)
+            const targetAngle = Math.atan2(state.mouse.y, state.mouse.x);
+            const deltaAngle = targetAngle - state.ship.angle;
+            const normalizedDelta = Math.atan2(Math.sin(deltaAngle), Math.cos(deltaAngle));
+            state.ship.angle += normalizedDelta * dt * 6.0;
+            shipGroup.rotation.z = state.ship.angle;
+
+            // Fizyka sprężynowa odrzutu
+            state.ship.recoilL -= state.ship.recoilL * 15 * dt; 
+            state.ship.recoilR -= state.ship.recoilR * 15 * dt;
+            state.ship.recoilHousing -= state.ship.recoilHousing * 8 * dt;
+
+            barrelSysL.position.x = 35 - state.ship.recoilL;
+            barrelSysR.position.x = 35 - state.ship.recoilR;
+            housing.position.x = -state.ship.recoilHousing;
+
+            // Wygaszanie Muzzle Flash
+            const updateFlash = (flashVal, flashMesh) => {
+                if(flashVal > 0) {
+                    flashVal -= dt * 15;
+                    const scale = 1 + flashVal;
+                    flashMesh.scale.setScalar(scale);
+                    flashMesh.children[3].intensity = flashVal * 1000; 
+                    if(flashVal <= 0) flashMesh.visible = false;
+                }
+                return Math.max(0, flashVal);
+            }
+            state.ship.flashL = updateFlash(state.ship.flashL, muzzleFlashL);
+            state.ship.flashR = updateFlash(state.ship.flashR, muzzleFlashR);
+
+            // Animacja Celu
+            state.target.mesh.rotation.x += dt * 0.4;
+            state.target.mesh.rotation.y += dt * 0.6;
+            if (state.target.hitFlash > 0) {
+                state.target.hitFlash -= dt * 10; 
+                const f = Math.max(0, state.target.hitFlash);
+                state.target.mesh.material.emissive.setHex(0xffaa44);
+                state.target.mesh.material.emissiveIntensity = f * 10.0;
+            } else {
+                state.target.mesh.material.emissiveIntensity = 0;
+            }
+
+            // Strzelanie
+            if (state.mouse.isDown) {
+                Object.values(MASTER_WEAPONS).forEach(w => {
+                    if (state.activeWeapons.has(w.id) && state.cooldowns[w.id] <= 0) {
+                        executeShot(w);
+                        state.cooldowns[w.id] = w.cooldown;
+                    }
+                });
+            }
+            for (let id in state.cooldowns) { if (state.cooldowns[id] > 0) state.cooldowns[id] -= dt; }
+
+            // Aktualizacja Pocisków
+            for (let i = state.bullets.length - 1; i >= 0; i--) {
+                const b = state.bullets[i];
+
+                if (Math.random() > 0.3) {
+                    spawnSmoke(b.x, b.y, 20, -b.vx*0.02, -b.vy*0.02, 0.3, 0.6 * b.scale);
+                }
+
+                b.x += b.vx * dt;
+                b.y += b.vy * dt;
+                b.life -= dt;
+
+                b.mesh.position.set(b.x, b.y, 20); // Pociski lecą odpowiednio wysoko
+                b.mesh.rotation.z = Math.atan2(b.vy, b.vx);
+
+                const tdx = b.x - state.target.x;
+                const tdy = b.y - state.target.y;
+                let hitTarget = false;
+                
+                if (Math.abs(tdx) < state.target.size / 1.5 && Math.abs(tdy) < state.target.size / 1.5) {
+                    b.life = 0; 
+                    state.target.hitFlash = 1.0; 
+                    hitTarget = true;
+                    state.target.mesh.position.x += b.vx * 0.002 * b.scale;
+                    state.target.mesh.position.y += b.vy * 0.002 * b.scale;
+                }
+
+                if (b.life <= 0) {
+                    if (hitTarget) {
+                        spawnExplosion(b.x, b.y, 10, b.colorHex, b.scale, b.weaponId);
+                        state.camera.shake += 5 * b.scale;
+                    }
+                    scene.remove(b.mesh);
+                    state.bullets.splice(i, 1);
+                }
+            }
+            
+            state.target.mesh.position.lerp(new THREE.Vector3(state.target.x, state.target.y, 10), dt * 4);
+
+            // Aktualizacja Cząsteczek
+            for (let i = state.particles.length - 1; i >= 0; i--) {
+                const p = state.particles[i];
+                p.life -= dt;
+                
+                if (p.type === 'spark') {
+                    p.x += p.vx * dt; p.y += p.vy * dt; p.mesh.position.z += p.vz * dt;
+                    p.vx *= 0.92; p.vy *= 0.92; 
+                    p.vz -= 800 * dt; 
+                    
+                    if (p.mesh.position.z < -14) { 
+                        p.mesh.position.z = -14;
+                        p.vz = Math.abs(p.vz) * 0.5; 
+                        p.vx *= 0.7; p.vy *= 0.7;
+                    }
+                    p.mesh.position.set(p.x, p.y, p.mesh.position.z);
+                    p.mesh.scale.setScalar(p.size * (p.life / p.maxLife));
+                } 
+                else if (p.type === 'smoke') {
+                    p.x += p.vx * dt; p.y += p.vy * dt;
+                    p.vx *= 0.95; p.vy *= 0.95;
+                    p.mesh.position.set(p.x, p.y, p.mesh.position.z);
+                    
+                    // Zamiast animacji materiału, zjeżdżamy do zera ze skalą
+                    const progress = 1.0 - (p.life / p.maxLife);
+                    const growScale = p.size * (1.0 + progress * 2);
+                    const fadeScale = 1.0 - Math.pow(progress, 3);
+                    p.mesh.scale.setScalar(growScale * fadeScale); 
+                }
+
+                if (p.life <= 0) {
+                    scene.remove(p.mesh); // Zero zwalniania pamięci (dispose) bo używamy jednego Cache'a na całą grę
+                    state.particles.splice(i, 1);
+                }
+            }
+
+            // Aktualizacja Zoptymalizowanych Eksplozji (Instanced)
+            for (let i = state.explosions.length - 1; i >= 0; i--) {
+                const exp = state.explosions[i];
+                if (exp.update(dt)) {
+                    exp.dispose();
+                    state.explosions.splice(i, 1);
+                }
+            }
+
+            // Aktualizacja Wypaleń (Decals)
+            for (let i = state.decals.length - 1; i >= 0; i--) {
+                const d = state.decals[i];
+                d.life -= dt;
+                if(d.life < 2.0) {
+                    // Animujemy skalę do zera zamiast opacity, dzięki czemu nie musimy klonować materiałów!
+                    d.mesh.scale.setScalar(d.initialScale * (d.life / 2.0)); 
+                }
+                if (d.life <= 0) {
+                    scene.remove(d.mesh); state.decals.splice(i, 1);
+                }
+            }
+
+            bulletCountEl.innerText = state.bullets.length;
+            particleCountEl.innerText = state.particles.length + state.decals.length;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const now = performance.now();
+            const dt = Math.min((now - state.lastTime) / 1000, 0.1); 
+            state.lastTime = now;
+            updateLogic(dt);
+            composer.render();
+        }
+
+        function precompileShaders() {
+            // Wymuszamy stworzenie shaderów przed pierwszym strzałem (ZERO CHRUPANIA)
+            const dummyGroup = new THREE.Group();
+            dummyGroup.position.set(0, 0, -10000); // Ukryte daleko za kamerą
+
+            Object.values(MASTER_WEAPONS).forEach(w => {
+                const tMats = getTracerMats(w);
+                dummyGroup.add(new THREE.Mesh(geoTracerCore, tMats.core));
+                dummyGroup.add(new THREE.Mesh(geoTracerGlow, tMats.glow));
+
+                const eMats = getExpMats(w.vfxColor);
+                dummyGroup.add(new THREE.Sprite(eMats.flash));
+                dummyGroup.add(new THREE.Sprite(eMats.core));
+                dummyGroup.add(new THREE.Sprite(eMats.smoke));
+                dummyGroup.add(new THREE.Mesh(geoSpark, eMats.muzzleSpark));
+                dummyGroup.add(new THREE.InstancedMesh(geoInstancedSpark, eMats.spark, 1));
+            });
+
+            dummyGroup.add(new THREE.Mesh(geoScorch, matScorch));
+            dummyGroup.add(new THREE.Sprite(sharedMuzzleSmokeMat));
+            dummyGroup.add(new THREE.Mesh(geoDebris, matDebris));
+
+            scene.add(dummyGroup);
+
+            // Włączamy flashe luf do kompilacji
+            muzzleFlashL.visible = true;
+            muzzleFlashR.visible = true;
+
+            // Renderujemy wirtualną klatkę testową na GPU
+            renderer.compile(scene, camera);
+
+            // Czystka przed prawdziwą grą
+            scene.remove(dummyGroup);
+            muzzleFlashL.visible = false;
+            muzzleFlashR.visible = false;
+        }
+
+        initUI();
+        precompileShaders();
+        animate();
+    </script>
+</body>
+</html>

@@ -9,7 +9,7 @@ void main() {
 }
 `;
 
-// Magia dzieje się tutaj - SDF wycina falującą elipsę, a uderzenia wginają ten kształt
+// Shield SDF + ripple deformation logic.
 const SHIELD_FRAGMENT_SHADER_LEGACY = `
 uniform float uTime;
 uniform vec3 uBaseColor;
@@ -35,7 +35,7 @@ void main() {
     // Falowanie bazowe (wobble)
     float deform = -(sin(angle * 6.0 + uTime * 3.0) * 0.03 + cos(angle * 4.0 - uTime * 2.0) * 0.03);
 
-    // Animacja włączania tarczy
+    // Shield activation animation
     if (uActivation < 1.0 && uIsBreaking == 0) {
         deform -= sin(angle * 5.0 + uTime * 20.0) * (1.0 - uActivation) * 0.15;
     }
@@ -43,7 +43,7 @@ void main() {
     float impactHitSum = 0.0;
     float spread = 0.5;
 
-    // Aplikowanie do 8 uderzeń pocisków naraz
+    // Apply up to 8 projectile impacts
     for(int i = 0; i < 8; i++) {
         if(i >= uImpactCount) break;
         vec4 imp = uImpacts[i];
@@ -64,30 +64,30 @@ void main() {
         deform += fract(sin(dot(p, vec2(12.9898, 78.233)) + uTime) * 43758.5453) * 0.04;
     }
 
-    // Promień tarczy z uwzględnieniem deformacji (0.75 daje bufor na wybrzuszenia)
+    // Effective shield radius with deformation margin
     float boundary = 0.75 - deform;
     float dist = boundary - r;
 
-    if (dist < 0.0) discard; // Jesteśmy poza tarczą
+    if (dist < 0.0) discard; // Outside shield
 
-    // Krawędź i poświata
+    // Edge and glow
     float edgeGlow = smoothstep(0.0, 0.05, dist) - smoothstep(0.01, 0.15, dist);
     float innerGlow = 1.0 - smoothstep(0.0, 0.4, dist);
     
-    // Tekstura heksagonalna (scrolująca się)
+    // Hex texture (scrolling)
     vec2 hexUv = p * clamp(3.0 + uActivation * 2.0, 3.0, 5.0); 
     hexUv.x -= uTime * 0.4;
     hexUv.y -= uTime * 0.2;
     vec4 hexTex = texture2D(uHexTex, fract(hexUv));
     
-    // Widoczność heksów tylko tam, gdzie coś się dzieje
+    // Hex visibility only where effects are active
     float hexVisibility = clamp(impactHitSum + uEnergyShot + (1.0 - uActivation) + float(uIsBreaking), 0.0, 1.0);
     
     vec3 color = uBaseColor;
     
-    // Błysk od trafienia (Additive)
+    // Additive hit flash
     color = mix(color, uHitColor, clamp(impactHitSum * 1.5, 0.0, 1.0));
-    if (uIsBreaking == 1) color = mix(color, vec3(1.0), 0.5); // Biała, mrugająca przy śmierci
+    if (uIsBreaking == 1) color = mix(color, vec3(1.0), 0.5); // White blink on break
     
     float finalAlpha = (edgeGlow * 2.0 + innerGlow * 0.3) * uAlpha;
     finalAlpha += hexTex.r * hexVisibility * 0.6 * uAlpha;
@@ -120,21 +120,21 @@ void main() {
     // Bazowe, bardzo powolne falowanie przestrzeni
     float deform = -(sin(angle * 4.0 + uTime * 2.0) * 0.015 + cos(angle * 3.0 - uTime * 1.5) * 0.015);
 
-    // Animacja włączania
+    // Activation animation
     if (uActivation < 1.0 && uIsBreaking == 0) {
         deform -= sin(angle * 5.0 + uTime * 20.0) * (1.0 - uActivation) * 0.15;
     }
 
     float impactHitSum = 0.0;
     float spread = 0.5;
-    vec2 uvDistortion = vec2(0.0); // Będzie marszczyć heksy!
-    float surfaceEnergy = 0.0;     // Energia rozlewająca się po tarczy
+    vec2 uvDistortion = vec2(0.0); // Distorts hex UVs
+    float surfaceEnergy = 0.0;     // Energy propagating over shield surface
 
     for(int i = 0; i < 8; i++) {
         if(i >= uImpactCount) break;
         vec4 imp = uImpacts[i];
         
-        // 1. Reakcja Krawędzi
+        // 1. Edge response
         float diff = abs(angle - imp.x);
         if(diff > PI) diff = 2.0 * PI - diff;
         
@@ -144,19 +144,19 @@ void main() {
             impactHitSum += imp.z * wave * imp.y;
         }
 
-        // 2. NOWOŚĆ: Propagacja fal po powierzchni (Ripples)
-        // Obliczamy punkt uderzenia na krawędzi
+        // 2. Surface ripple propagation
+        // Compute impact point on boundary
         vec2 impactPoint = vec2(cos(imp.x), sin(imp.x)) * 0.75; 
         float distToImpact = length(p - impactPoint);
         
-        // Fala energii, która wędruje od uderzenia w kierunku środka (imp.z to czas życia uderzenia)
+        // Energy wave traveling from impact point toward center (imp.z = impact life)
         float expandingWave = sin(distToImpact * 15.0 - (1.0 - imp.z) * 20.0);
-        // Tłumimy falę, żeby nie szła w nieskończoność
+        // Dampen wave so it does not propagate forever
         float waveMask = exp(-distToImpact * 4.0) * imp.z * imp.y; 
         
         surfaceEnergy += max(0.0, expandingWave) * waveMask;
         
-        // Zakrzywiamy UV (siatkę heksów) w kierunku uderzenia
+        // Distort UVs (hex grid) in impact direction
         uvDistortion += normalize(p - impactPoint) * expandingWave * waveMask * 0.05;
     }
 
@@ -170,11 +170,11 @@ void main() {
 
     if (dist < 0.0) discard;
 
-    // NOWOŚĆ: Miękki Fresnel (Złudzenie bańki 3D)
-    // Na środku (r=0) fresnel=0, na krawędzi (r=boundary) fresnel=1
+    // Soft Fresnel for pseudo-3D bubble look
+    // Center (r=0) -> fresnel=0, edge (r=boundary) -> fresnel=1
     float fresnel = pow(clamp(r / boundary, 0.0, 1.0), 2.5);
 
-    // Krawędź
+    // Edge
     float edgeGlow = smoothstep(0.0, 0.03, dist) - smoothstep(0.01, 0.12, dist);
     
     // Tekstura heksagonalna (skalowana, przewijana i zakrzywiana przez uderzenia!)
@@ -183,7 +183,7 @@ void main() {
     hexUv.y -= uTime * 0.1;
     vec4 hexTex = texture2D(uHexTex, fract(hexUv));
     
-    // Heksy są widoczne na krawędziach (fresnel) ORAZ mocno świecą tam gdzie rozchodzi się energia uderzenia
+    // Hexes are visible on edges (fresnel) and strongly lit by traveling impact energy
     float hexVisibility = clamp(fresnel * 0.5 + surfaceEnergy * 2.0 + uEnergyShot + (1.0 - uActivation) + float(uIsBreaking), 0.0, 1.0);
     
     vec3 color = uBaseColor;
@@ -203,7 +203,7 @@ void main() {
         finalColor = mix(vec3(4.0, 0.2, 0.2), vec3(3.0), fract(uTime * 30.0));
     }
     
-    // Miksujemy alfę: krawędź + bańka + heksy
+    // Final alpha mix: edge + bubble + hexes
     float finalAlpha = (edgeGlow * 1.5 + fresnel * 0.2) * uAlpha;
     finalAlpha += hexTex.r * hexVisibility * 0.8 * uAlpha;
 
@@ -217,7 +217,7 @@ const state = {
     hexTexture: null
 };
 
-// Generuje podkład heksagonalny w pamięci, by wysłać go do karty graficznej
+// Generate in-memory hex base texture and upload to GPU
 function generateHexTexture() {
     const scale = 30;
     const tileW = 3 * scale;
@@ -293,7 +293,7 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
     if (!Core3D.isInitialized) return;
     const time = performance.now() / 1000;
     
-    // Garbage collection dla zniszczonych statków
+    // Garbage collect destroyed ship shields
     const activeEntities = new Set();
 
     for (const entity of entities) {
@@ -315,30 +315,36 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
             w = Math.max(w, h); h = w;
         }
         
-        // Powiększamy PlaneGeometry, aby zmieścił całą deformację
+        // Expand PlaneGeometry to fit full deformation envelope
         const scaleX = w * 1.5 * 1.35; 
         const scaleY = h * 1.5 * 1.35;
         mesh.scale.set(scaleX, scaleY, 1);
 
-        // --- Pozycja i kąt ---
+        // --- Position and angle ---
         let pos = { x: entity.x || entity.pos?.x, y: entity.y || entity.pos?.y };
         let visualAngle = entity.angle || 0;
 
-        // Jeżeli to gracz, używamy interpolacji dla płynności!
+        // If player entity, use interpolation for smoothness
         if (interpPoseOverride && entity.isPlayer) {
             pos.x = interpPoseOverride.x;
             pos.y = interpPoseOverride.y;
             visualAngle = interpPoseOverride.angle;
         }
 
-        if (entity.capitalProfile && Number.isFinite(entity.capitalProfile.spriteRotation)) {
-            visualAngle += entity.capitalProfile.spriteRotation;
+        const profile = entity.capitalProfile;
+        if (profile) {
+            if (Number.isFinite(profile.spriteRotation)) {
+                visualAngle += profile.spriteRotation;
+            }
+            if (Number.isFinite(profile.shieldRotation)) {
+                visualAngle += profile.shieldRotation;
+            }
         }
 
         mesh.position.set(pos.x, -pos.y, 1); // Z=1 nad statkiem
         mesh.rotation.z = -visualAngle;
 
-        // --- Przesyłanie danych do Shadera ---
+        // --- Upload data to shader ---
         const mat = mesh.material;
         mat.uniforms.uTime.value = time;
         
@@ -363,8 +369,10 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
         for (let i = 0; i < 8; i++) {
             if (i < impactCount) {
                 const imp = impacts[i];
-                // Wektor: x = angle, y = intensity, z = life, w = deformPower
-                const correctedAngle = imp.localAngle - (visualAngle - (entity.angle || 0));
+                // Add visualAngle to compensate mesh rotation in WebGL.
+                // This maps impact angle to correct local shield UV coordinates.
+                const correctedAngle = imp.localAngle + visualAngle; 
+                
                 mat.uniforms.uImpacts.value[i].set(correctedAngle, imp.intensity, imp.life, imp.deformation || 3.0);
             } else {
                 mat.uniforms.uImpacts.value[i].set(0,0,0,0);
@@ -372,12 +380,12 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
         }
     }
 
-    // Sprzątanie martwych tarcz (Gdy wybuchnie statek)
+    // Cleanup dead shields (ship destroyed)
     for (const [entity, mesh] of state.meshes) {
         if (!activeEntities.has(entity)) {
             Core3D.scene.remove(mesh);
             state.meshes.delete(entity);
-            // Materiał zostaje, bo ThreeJS robi GC, ale możemy wymusić
+            // Material is usually GCed by Three.js; dispose explicitly anyway
             mesh.material.dispose();
         }
     }
