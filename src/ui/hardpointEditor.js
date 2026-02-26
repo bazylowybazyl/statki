@@ -133,7 +133,7 @@ function readGlobalVfxTune() {
   try {
     const raw = localStorage.getItem(VFX_TUNE_STORAGE_KEY);
     if (raw) stored = JSON.parse(raw);
-  } catch {}
+  } catch { }
   const runtimeTune = (typeof window !== 'undefined' && window.VFX_TUNE && typeof window.VFX_TUNE === 'object')
     ? window.VFX_TUNE
     : null;
@@ -150,7 +150,7 @@ function applyVfxTuneToGame(save = true) {
   }
   window.VFX_TUNE = { ...(window.VFX_TUNE || {}), ...patch };
   if (save) {
-    try { localStorage.setItem(VFX_TUNE_STORAGE_KEY, JSON.stringify(window.VFX_TUNE)); } catch {}
+    try { localStorage.setItem(VFX_TUNE_STORAGE_KEY, JSON.stringify(window.VFX_TUNE)); } catch { }
   }
 }
 
@@ -595,7 +595,7 @@ function bindControls() {
   c.copyJson.addEventListener('click', async () => {
     const json = JSON.stringify(buildSingleShipExportData(state.shipId), null, 2);
     c.preview.value = json;
-    try { await navigator.clipboard.writeText(json); } catch {}
+    try { await navigator.clipboard.writeText(json); } catch { }
   });
   c.downloadJson.addEventListener('click', () => {
     const json = JSON.stringify(buildExportData(), null, 2);
@@ -735,6 +735,94 @@ function clearVfxOverride() {
   ship.thrusterInput.leftSide = 0;
   ship.thrusterInput.rightSide = 0;
   ship.thrusterInput.torque = 0;
+  restoreOriginalEngines();
+}
+
+// --- ENGINE EDITOR → THREE.JS VFX SYNC ---
+// Converts editor engine markers into ship.visual.mainThrusters/torqueThrusters
+// so EngineVfxSystem renders real 3D VFX in the editor preview.
+let _savedOriginalEngines = null;
+let _lastSyncKey = '';
+
+function _buildSyncKey(mainMarkers, sideMarkers) {
+  // Build a compact hash so we skip sync when nothing changed
+  const parts = [];
+  for (const m of mainMarkers) {
+    parts.push(`M${m.x},${m.y},${m.deg || 0},${m.offsetX || 0},${m.offsetY || 0}`);
+  }
+  for (const m of sideMarkers) {
+    parts.push(`S${m.x},${m.y},${m.deg || 0},${m.offsetX || 0},${m.offsetY || 0}`);
+  }
+  return parts.join('|');
+}
+
+function _markerToThruster(m) {
+  const ox = Number(m.x) + (Number(m.offsetX) || 0);
+  const oy = Number(m.y) + (Number(m.offsetY) || 0);
+  const deg = Number(m.deg) || 0;
+  const rad = deg * Math.PI / 180;
+  return { ox, oy, fx: -Math.sin(rad), fy: Math.cos(rad) };
+}
+
+function syncEditorEnginesToShip() {
+  const ship = window.ship;
+  if (!ship) return;
+  if (!ship.visual) ship.visual = {};
+
+  const data = ensureShipData(state.shipId);
+  const mainMarkers = data.engines.main || [];
+  const sideMarkers = data.engines.side || [];
+
+  // Dirty check — skip if nothing changed since last sync
+  const syncKey = _buildSyncKey(mainMarkers, sideMarkers);
+  if (syncKey === _lastSyncKey) return;
+  _lastSyncKey = syncKey;
+
+  // Save original data once (for restore on editor close)
+  if (!_savedOriginalEngines) {
+    _savedOriginalEngines = {
+      mainThrusters: ship.visual.mainThrusters ? JSON.parse(JSON.stringify(ship.visual.mainThrusters)) : null,
+      torqueThrusters: ship.visual.torqueThrusters ? JSON.parse(JSON.stringify(ship.visual.torqueThrusters)) : null
+    };
+  }
+
+  // Convert editor markers → mainThrusters format
+  // Editor marker: { x, y, deg, offsetX, offsetY }
+  // Ship format:   { offset: {x, y}, forward: {x, y} }
+  // deg convention: deg=0 → forward=(0,1),  forward.x = -sin(deg), forward.y = cos(deg)
+  if (mainMarkers.length > 0) {
+    ship.visual.mainThrusters = mainMarkers.map(m => {
+      const t = _markerToThruster(m);
+      return { offset: { x: t.ox, y: t.oy }, forward: { x: t.fx, y: t.fy } };
+    });
+  } else if (_savedOriginalEngines.mainThrusters) {
+    ship.visual.mainThrusters = JSON.parse(JSON.stringify(_savedOriginalEngines.mainThrusters));
+  }
+
+  // Convert editor markers → torqueThrusters format
+  // Side thrusters: 'left' if oy < 0, 'right' if oy > 0
+  if (sideMarkers.length > 0) {
+    ship.visual.torqueThrusters = sideMarkers.map(m => {
+      const t = _markerToThruster(m);
+      return { offset: { x: t.ox, y: t.oy }, forward: { x: t.fx, y: t.fy }, side: t.oy < 0 ? 'right' : 'left' };
+    });
+  } else if (_savedOriginalEngines.torqueThrusters) {
+    ship.visual.torqueThrusters = JSON.parse(JSON.stringify(_savedOriginalEngines.torqueThrusters));
+  }
+}
+
+function restoreOriginalEngines() {
+  if (!_savedOriginalEngines) return;
+  const ship = window.ship;
+  if (!ship || !ship.visual) return;
+  if (_savedOriginalEngines.mainThrusters) {
+    ship.visual.mainThrusters = _savedOriginalEngines.mainThrusters;
+  }
+  if (_savedOriginalEngines.torqueThrusters) {
+    ship.visual.torqueThrusters = _savedOriginalEngines.torqueThrusters;
+  }
+  _savedOriginalEngines = null;
+  _lastSyncKey = '';
 }
 
 function refreshVfxLoop() {
@@ -748,6 +836,7 @@ function refreshVfxLoop() {
     runtime.vfxLoopRaf = 0;
     if (!state.visible) return;
     if (!isEnginePreviewActive()) return;
+    syncEditorEnginesToShip();
     applyVfxOverride();
     scheduleDraw();
     runtime.vfxLoopRaf = requestAnimationFrame(tick);
@@ -1605,7 +1694,7 @@ function applyImportedConfigObject(parsed, applyToGame = true) {
   scheduleDraw();
 
   if (applyToGame && typeof window !== 'undefined' && typeof window.__applyHardpointEditorConfig === 'function') {
-    try { window.__applyHardpointEditorConfig(buildExportData()); } catch {}
+    try { window.__applyHardpointEditorConfig(buildExportData()); } catch { }
   }
 }
 
@@ -1629,7 +1718,7 @@ function importConfigFromFile(file) {
 function pushCurrentConfigToGame() {
   if (typeof window === 'undefined') return;
   if (typeof window.__applyHardpointEditorConfig === 'function') {
-    try { window.__applyHardpointEditorConfig(buildExportData()); } catch {}
+    try { window.__applyHardpointEditorConfig(buildExportData()); } catch { }
   }
 }
 
@@ -1732,7 +1821,7 @@ function loadStorage() {
     state.ships = data.ships && typeof data.ships === 'object' ? data.ships : {};
     if (!['erase', 'hardpoint', 'core', 'engine_main', 'engine_side'].includes(state.tool)) state.tool = 'hardpoint';
     if (!HARDPOINT_TYPES.includes(state.hardpointType)) state.hardpointType = 'main';
-  } catch {}
+  } catch { }
 }
 
 function syncControlsFromState() {
@@ -1811,7 +1900,7 @@ export function closeHardpointEditor() {
   if (typeof window !== 'undefined' && typeof window.__onHardpointEditorClosed === 'function') {
     const callback = window.__onHardpointEditorClosed;
     window.__onHardpointEditorClosed = null;
-    try { callback(); } catch {}
+    try { callback(); } catch { }
   }
 }
 

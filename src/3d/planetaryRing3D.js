@@ -41,6 +41,7 @@ const BUILD_GRID = Object.freeze({
 });
 
 const HEX_SCALE = CONFIG.segmentWorldWidth / TEXTURE.width;
+const RING_SEGMENT_MASS = 2500000;
 
 function getRingBandLayout() {
   const totalWorld = Math.max(1, CONFIG.segmentWorldHeight);
@@ -478,7 +479,7 @@ class PlanetaryRing {
       ringSegmentType: type,
       ringSegmentIndex: index,
       noSplit: true,
-      mass: 0,
+      mass: RING_SEGMENT_MASS,
       friction: 1,
       visual: {
         spriteScale: HEX_SCALE,
@@ -498,6 +499,9 @@ class PlanetaryRing {
     entity.hexGrid.cacheDirty = false;
     entity.hexGrid.textureDirty = false;
     entity.hexGrid.ringSegment = true;
+    entity.hexGrid.isSleeping = true;
+    entity.hexGrid.sleepFrames = 9999;
+    entity.hexGrid.wakeHoldFrames = 0;
     return entity;
   }
 

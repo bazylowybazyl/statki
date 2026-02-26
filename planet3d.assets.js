@@ -17,15 +17,15 @@ const SUN_SHADOW_TUNE = Object.freeze({
     intensity: 1.45,
     mapSize: 4096,
     near: 1,
-    far: 320000,
+    far: 10000,
     lightHeight: 120000,
     offsetMin: 70000,
     frustumMul: 1.45,
     frustumPad: 560,
     frustumMin: 2800,
     frustumMax: 22000,
-    bias: -0.00025,
-    normalBias: 0.02
+    bias: -0.0003,
+    normalBias: 0.08
 });
 
 // ==========================================
@@ -234,8 +234,8 @@ void main() {
     float viewDot = dot(normalize(vNormal), vec3(0.0, 0.0, 1.0));
     float fresnel = pow(1.0 - max(viewDot, 0.0), 3.0);
 
-    // Bloom edge tuned to 2.5.
-    finalColor += vec3(2.5, 1.25, 0.42) * fresnel;
+    // Bloom edge tuned down for lower threshold.
+    finalColor += vec3(1.5, 0.75, 0.25) * fresnel;
 
     gl_FragColor = vec4(finalColor, 1.0);
 }
@@ -263,6 +263,7 @@ void main() {
 
 const EARTH_FRAGMENT = `
 precision highp float;
+uniform float uPlanetBloom;
 uniform sampler2D dayTexture;
 uniform sampler2D nightTexture;
 uniform sampler2D specularTexture; 
@@ -357,9 +358,25 @@ void main() {
     float sunsetBand = smoothstep(-0.30, -0.02, NdotL) * (1.0 - smoothstep(-0.02, 0.20, NdotL));
     finalColor = mix(finalColor, finalColor * sunsetTint, sunsetBand * 0.45);
 
-    float dither = (hash12(gl_FragCoord.xy) - 0.5) / 255.0;
-    finalColor += dither;
+    float dither = (hash12(gl_FragCoord.xy) - 0.5) / 1024.0; // 4x słabszy dither
+    // Maska: dither działa najmocniej przy mixFactor 0.5 (terminator)
+    // mixFactor * (1.0 - mixFactor) wygasza dither w pełnym słońcu i w pełnej nocy
+    float ditherMask = mixFactor * (1.0 - mixFactor) * 4.0; 
+
+    finalColor += dither * ditherMask;
     finalColor = max(finalColor, vec3(0.0));
+
+    // --- RĘCZNE PODBICIE DLA BLOOMA (HDR PUSH) ---
+    // Pobieramy jasność piksela
+    float luminance = dot(finalColor, vec3(0.299, 0.587, 0.114));
+    
+    // Zmieniamy 0.4 na 0.85! Teraz tylko absolutnie najjaśniejsze 15% pikseli
+    // (chmury skierowane prosto w słońce) dostanie status HDR i zacznie świecić.
+    float bloomPush = smoothstep(0.85, 1.0, luminance) * uPlanetBloom; 
+    
+    finalColor += finalColor * bloomPush;
+    // ----------------------------------------------
+
     gl_FragColor = vec4(finalColor, 1.0);
 }
 `;
@@ -700,7 +717,11 @@ class DirectPlanet {
         // Planety lądują pod statkiem, ale nad gwiazdami
         this.group.position.z = -50000;
 
+        // Dodaj domyślny mnożnik bazy (przydzielimy go za chwilę)
+        this.basePlanetBloom = 0.0;
+
         this.uniforms = {
+            uPlanetBloom: { value: 0.0 }, // <--- DODANO UNIFORM
             dayTexture: { value: null },
             nightTexture: { value: null },
             specularTexture: { value: null },
@@ -764,6 +785,17 @@ class DirectPlanet {
             this.uniforms.uSunIntensity.value = 0.98;
             this.uniforms.uBrightness.value = 0.93;
             this.uniforms.sunsetTint.value.set(1.2, 0.5, 0.1);
+        }
+
+        // --- USTALAMY INDYWIDUALNY BLOOM DLA PLANET ---
+        if (name === 'earth') {
+            this.basePlanetBloom = 0.8; // Ziemia ma świecić mocniej za dnia
+        } else if (name === 'mars') {
+            this.basePlanetBloom = 0.4; // Mars świeci średnio
+        } else if (name === 'jupiter') {
+            this.basePlanetBloom = 0.05; // Jowisz prawie wcale, żeby się nie przepalił!
+        } else {
+            this.basePlanetBloom = 0.2; // Domyślnie dla reszty
         }
 
         const texPath = `/assets/planety/solar/${name}/${name}_color.jpg`;
@@ -868,6 +900,16 @@ class DirectPlanet {
     update(dt, cam) {
         if (!this.group || !cam) return;
 
+        // --- AKTUALIZACJA BLOOMA PLANET ---
+        // Ustaw domyślnie 1.0, jeśli suwaka w F12 jeszcze nie ruszono
+        const globalTune = (window.DevVFX && window.DevVFX.planetBloomMultiplier !== undefined)
+            ? window.DevVFX.planetBloomMultiplier
+            : 1.0;
+
+        // Mnożymy indywidualną wartość przez suwak z F12
+        this.uniforms.uPlanetBloom.value = this.basePlanetBloom * globalTune;
+        // ----------------------------------
+
         const x = this.data.x;
         const y = -this.data.y; // Odwrócenie Y dla WebGL
         this.group.position.set(x, y, -50000);
@@ -936,7 +978,15 @@ class DirectSun {
 
         // Słońce potrzebuje oświetlać inne planety - wpinamy światło do Core3D
         this.sunLight = new THREE.DirectionalLight(SUN_SHADOW_TUNE.color, SUN_SHADOW_TUNE.intensity);
-        this.sunLight.castShadow = false;
+        this.sunLight.castShadow = true;
+
+        // Shadow map configuration
+        this.sunLight.shadow.mapSize.width = SUN_SHADOW_TUNE.mapSize;
+        this.sunLight.shadow.mapSize.height = SUN_SHADOW_TUNE.mapSize;
+        this.sunLight.shadow.bias = SUN_SHADOW_TUNE.bias;
+        this.sunLight.shadow.normalBias = SUN_SHADOW_TUNE.normalBias;
+        this.sunLight.shadow.camera.near = SUN_SHADOW_TUNE.near;
+        this.sunLight.shadow.camera.far = SUN_SHADOW_TUNE.far;
 
         this.sunTarget = new THREE.Object3D();
         Core3D.scene.add(this.sunTarget);
@@ -1038,6 +1088,43 @@ class DirectSun {
             this.glow.material.opacity = 0.6 + Math.sin(this.uniforms.uTime.value * 2.0) * 0.1;
         }
         this.mesh.rotation.z -= 0.002 * dt;
+
+        // — Sync shadow camera frustum to viewport —
+        if (this.sunLight && this.sunLight.castShadow) {
+            const zoom = Math.max(0.0001, Number(cam.zoom) || 1);
+            const viewportW = Math.max(1, Number(Core3D.width) || window.innerWidth || 1920);
+            const viewportH = Math.max(1, Number(Core3D.height) || window.innerHeight || 1080);
+            const halfW = (viewportW * 0.5) / zoom;
+            const halfH = (viewportH * 0.5) / zoom;
+
+            let halfSpan = Math.max(halfW, halfH) * SUN_SHADOW_TUNE.frustumMul + SUN_SHADOW_TUNE.frustumPad;
+            halfSpan = Math.max(SUN_SHADOW_TUNE.frustumMin, Math.min(SUN_SHADOW_TUNE.frustumMax, halfSpan));
+            halfSpan = Math.round(halfSpan / 8) * 8;
+
+            // Snap light/target positions to texel grid to reduce shadow swimming
+            const mapSize = this.sunLight.shadow.mapSize.width;
+            const texelSize = (halfSpan * 2) / mapSize;
+            if (texelSize > 0) {
+                const snappedTargetX = Math.round(this.sunTarget.position.x / texelSize) * texelSize;
+                const snappedTargetY = Math.round(this.sunTarget.position.y / texelSize) * texelSize;
+                const dx = snappedTargetX - this.sunTarget.position.x;
+                const dy = snappedTargetY - this.sunTarget.position.y;
+                this.sunTarget.position.x = snappedTargetX;
+                this.sunTarget.position.y = snappedTargetY;
+                this.sunLight.position.x += dx;
+                this.sunLight.position.y += dy;
+                this.sunTarget.updateMatrixWorld();
+            }
+
+            const shadowCam = this.sunLight.shadow.camera;
+            shadowCam.left = -halfSpan;
+            shadowCam.right = halfSpan;
+            shadowCam.top = halfSpan;
+            shadowCam.bottom = -halfSpan;
+            shadowCam.updateProjectionMatrix();
+
+            this.sunLight.shadow.needsUpdate = true;
+        }
     }
 
     dispose() {

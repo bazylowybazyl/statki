@@ -125,6 +125,19 @@ const HTML = `
   <div class="small muted">Uklad hardpointow/silnikow + eksport JSON.</div>
 </div>
 <div class="group">
+  <div class="row"><strong>Panele konfiguracyjne</strong></div>
+  <div class="row">
+    <button id="btn-bloom-panel" class="dt-btn" style="width:100%">Bloom panel</button>
+  </div>
+  <div class="row">
+    <button id="btn-destructor-panel" class="dt-btn" style="width:100%">Destructor panel</button>
+  </div>
+  <div class="row">
+    <button id="btn-destructor-mass-panel" class="dt-btn" style="width:100%">Destructor masy</button>
+  </div>
+  <div class="small muted">Otwiera panele suwakow z polami liczbowymi.</div>
+</div>
+<div class="group">
   <div class="row"><strong>Konfiguracja</strong></div>
   <div class="row"><button id="btnCopy">Kopiuj aktualna konfiguracje</button><button id="btnReset" style="margin-left:auto">Reset</button></div>
   <div class="row"><textarea id="cfgOut" readonly></textarea></div>
@@ -174,7 +187,8 @@ function wireDevToolsLogic() {
     cbSunDir: 'dt-show-sundir', cbShake: 'dt-disable-shake', cbPlanetStations3D: 'dt-use-planet-stations',
     cbPirate3D: 'dt-use-3d-pirate', btnCopy: 'btnCopy', btnReset: 'btnReset', cfgOut: 'cfgOut',
     fileGlb: 'dt-file-glb', btnLoadGlb: 'btn-load-glb', glbRot: 'dt-glb-rot', glbZoom: 'dt-glb-zoom', glbScale: 'dt-glb-scale',
-    btnHardpointEditor: 'btn-hardpoint-editor',
+    btnHardpointEditor: 'btn-hardpoint-editor', btnBloomPanel: 'btn-bloom-panel', btnDestructorPanel: 'btn-destructor-panel',
+    btnDestructorMassPanel: 'btn-destructor-mass-panel',
     hudCenterY: 'dt-hud-center-y', hudCenterYNum: 'dt-hud-center-y-num', hudCenterYVal: 'dt-hud-center-y-val',
     hudHexY: 'dt-hud-hex-y', hudHexYNum: 'dt-hud-hex-y-num', hudHexYVal: 'dt-hud-hex-y-val',
     hudShieldY: 'dt-hud-shield-y', hudShieldYNum: 'dt-hud-shield-y-num', hudShieldYVal: 'dt-hud-shield-y-val',
@@ -686,6 +700,30 @@ function wireDevToolsLogic() {
           openHardpointEditor();
         } catch (err) {
           console.error('Blad otwierania edytora hardpointow:', err);
+        }
+      });
+    }
+
+    if (ui.btnBloomPanel) {
+      ui.btnBloomPanel.addEventListener('click', () => {
+        if (window.__bloomPanel && typeof window.__bloomPanel.toggle === 'function') {
+          window.__bloomPanel.toggle();
+        }
+      });
+    }
+
+    if (ui.btnDestructorPanel) {
+      ui.btnDestructorPanel.addEventListener('click', () => {
+        if (window.__destructorPanel && typeof window.__destructorPanel.toggle === 'function') {
+          window.__destructorPanel.toggle();
+        }
+      });
+    }
+
+    if (ui.btnDestructorMassPanel) {
+      ui.btnDestructorMassPanel.addEventListener('click', () => {
+        if (window.__destructorMassPanel && typeof window.__destructorMassPanel.toggle === 'function') {
+          window.__destructorMassPanel.toggle();
         }
       });
     }

@@ -28,12 +28,6 @@ const SHIP_TEMPLATE = {
   vel: { x: 0, y: 0 },
   angle: 0,
   angVel: 0,
-  
-  // Tłumienie ustawiamy na 0, ponieważ dryf i obrót tłumimy ręcznie w pętli gry
-  // przez SHIP_PHYSICS.LINEAR_FRICTION / SHIP_PHYSICS.ANGULAR_FRICTION.
-  linearDamping: 0, 
-  angularDamping: 0,
-
   isCapitalShip: true,
 
   // --- PROFIL WIZUALNY (Capital Ship) ---

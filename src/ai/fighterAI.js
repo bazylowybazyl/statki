@@ -1,3 +1,5 @@
+// src/ai/fighterAI.js
+
 const norm = v => {
   const L = Math.hypot(v.x, v.y);
   return L ? { x: v.x / L, y: v.y / L } : { x: 0, y: 0 };
@@ -6,10 +8,10 @@ const norm = v => {
 function tryFireFighter(npc, target) {
   if (!target || target.dead) return;
 
-  const AISPACE_GUNS = window.AISPACE_GUNS || {};
-  const AISPACE_MISSILES = window.AISPACE_MISSILES || {};
+  const MASTER_WEAPONS = window.MASTER_WEAPONS || {};
 
-  const gunDef = AISPACE_GUNS[npc.gun] || AISPACE_GUNS.laserS;
+  // Używamy nowych ID z MASTER_WEAPONS
+  const gunDef = MASTER_WEAPONS[npc.gun || 'npc_laser_s'];
   if (!gunDef) return;
 
   const tx = target.pos ? target.pos.x : target.x;
@@ -18,7 +20,7 @@ function tryFireFighter(npc, target) {
   const dy = ty - npc.y;
   const dist = Math.hypot(dx, dy);
 
-  if (window.isLineOfFireBlocked?.(npc, target, gunDef.range)) {
+  if (window.isLineOfFireBlocked?.(npc, target, gunDef.baseRange)) {
     return;
   }
 
@@ -26,38 +28,25 @@ function tryFireFighter(npc, target) {
   const myAngle = Number.isFinite(npc.angle) ? npc.angle : Math.atan2(npc.vy || 0, npc.vx || 0);
   const diff = Math.abs(window.wrapAngle(angleToTarget - myAngle));
 
-  if (dist < (gunDef.range || 400) && diff < 0.5 && npc.gunCD <= 0) {
-    window.spawnBulletAdapter(npc, target, gunDef);
-    npc.gunCD = 1.0 / (gunDef.rps || 5);
+  if (dist < (gunDef.baseRange || 400) && diff < 0.5 && npc.gunCD <= 0) {
+    // Strzał używa naszej zunifikowanej funkcji
+    window.spawnBulletAdapter(npc, target, gunDef, { type: gunDef.category });
+    npc.gunCD = gunDef.cooldown || 0.2;
   }
 
   if (npc.mslAmmo > 0 && npc.mslCD <= 0 && dist < 1200 && diff < 0.6) {
     if (Math.random() < 0.1) {
-      const mslDef = AISPACE_MISSILES[npc.msl || 'AF'];
+      const mslDef = MASTER_WEAPONS[npc.msl || 'npc_msl_af'];
       if (!mslDef) return;
-      const dir = norm({ x: dx, y: dy });
-      const speed = mslDef.speed || 300;
-
-      window.bullets.push({
-        x: npc.x, y: npc.y,
-        vx: dir.x * speed + npc.vx * 0.5,
-        vy: dir.y * speed + npc.vy * 0.5,
-        life: mslDef.life || 4,
-        r: 4,
-        owner: npc.friendly ? 'player' : 'npc',
-        damage: mslDef.dmg || 40,
-        type: 'rocket',
-        target: target,
-        color: mslDef.color || '#ffaa00',
-        turnRate: (mslDef.turn || 6) * Math.PI / 180,
-        homingDelay: 0.2,
-        explodeRadius: 40
-      });
-
+      
+      // Odpal rakiete!
+      window.spawnBulletAdapter(npc, target, mslDef, { type: 'rocket' });
       npc.mslAmmo--;
       npc.mslCD = 5.0;
 
-      window.spawnParticle?.({ x: npc.x, y: npc.y }, { x: 0, y: 0 }, 0.5, '#ffffff', 5, true);
+      if(window.spawnParticle) {
+        window.spawnParticle({ x: npc.x, y: npc.y }, { x: 0, y: 0 }, 0.5, '#ffffff', 5, true);
+      }
     }
   }
 }
@@ -328,8 +317,6 @@ export function runAdvancedFighterAI(npc, dt) {
     if (!Number.isFinite(npc.desiredAngle)) {
       if (distToSpot > 50) smoothRotateToVelocity(6.0);
       else if (leader && !isLeader && Number.isFinite(leader.angle)) npc.desiredAngle = leader.angle;
-    } else {
-      // npc.desiredAngle ustawiane przez logikę (np. orbita) – zostawiamy, nie kasujemy.
     }
   }
 }

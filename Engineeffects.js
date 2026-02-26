@@ -104,30 +104,30 @@ void main() {
 function makeFlareTexture() {
     // Anamorficzna flara - ostra pozioma linia
     const canvas = document.createElement('canvas');
-    canvas.width = 256; canvas.height = 32; 
+    canvas.width = 256; canvas.height = 32;
     const ctx = canvas.getContext('2d');
-    
+
     // Gradient poziomy (zanika na końcach)
     const grad = ctx.createLinearGradient(0, 0, 256, 0);
     grad.addColorStop(0.0, 'rgba(0,0,0,0)');
     grad.addColorStop(0.2, 'rgba(100, 200, 255, 0.1)');
-    grad.addColorStop(0.5, 'rgba(255, 255, 255, 1.0)'); 
+    grad.addColorStop(0.5, 'rgba(255, 255, 255, 1.0)');
     grad.addColorStop(0.8, 'rgba(100, 200, 255, 0.1)');
     grad.addColorStop(1.0, 'rgba(0,0,0,0)');
-    
+
     ctx.fillStyle = grad;
     ctx.beginPath();
     // Wysokość tylko 2px dla ostrości
-    ctx.ellipse(128, 16, 128, 2, 0, 0, Math.PI*2);
+    ctx.ellipse(128, 16, 128, 2, 0, 0, Math.PI * 2);
     ctx.fill();
-    
+
     // Hotspot w centrum
-    const coreGrad = ctx.createRadialGradient(128,16,0, 128,16,16);
+    const coreGrad = ctx.createRadialGradient(128, 16, 0, 128, 16, 16);
     coreGrad.addColorStop(0, 'rgba(255,255,255,0.8)');
     coreGrad.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = coreGrad;
     ctx.beginPath();
-    ctx.arc(128, 16, 8, 0, Math.PI*2);
+    ctx.arc(128, 16, 8, 0, Math.PI * 2);
     ctx.fill();
 
     return new THREE.CanvasTexture(canvas);
@@ -137,13 +137,13 @@ function makeGlowTexture() {
     const canvas = document.createElement('canvas');
     canvas.width = 64; canvas.height = 64;
     const ctx = canvas.getContext('2d');
-    const grad = ctx.createRadialGradient(32,32,0,32,32,32);
+    const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
     grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-    grad.addColorStop(0.2, 'rgba(255, 120, 50, 0.8)'); 
-    grad.addColorStop(0.5, 'rgba(255, 60, 0, 0.3)'); 
+    grad.addColorStop(0.2, 'rgba(255, 120, 50, 0.8)');
+    grad.addColorStop(0.5, 'rgba(255, 60, 0, 0.3)');
     grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = grad;
-    ctx.fillRect(0,0,64,64);
+    ctx.fillRect(0, 0, 64, 64);
     return new THREE.CanvasTexture(canvas);
 }
 
@@ -196,7 +196,7 @@ export function createShortNeedleExhaust(opts = {}) {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.y = -0.5;
     // Baza szeroka (48), startowa długość krótka (20)
-    mesh.scale.set(48, 20, 1); 
+    mesh.scale.set(48, 20, 1);
     group.add(mesh);
 
     // 2. DYNAMICZNE ŚWIATŁO
@@ -215,7 +215,7 @@ export function createShortNeedleExhaust(opts = {}) {
         opacity: 0 // Startowo niewidoczna
     });
     const flare = new THREE.Sprite(flareMat);
-    flare.scale.set(100, 10, 1); 
+    flare.scale.set(100, 10, 1);
     flare.position.set(0, 0, 1.5); // U nasady dyszy, na wierzchu
     group.add(flare);
 
@@ -255,7 +255,7 @@ export function createShortNeedleExhaust(opts = {}) {
     let bloomGain = opts.bloomGain || 1.0;
     let baseColorTemp = opts.colorTempK || 8000;
     let shapeCurve = Number.isFinite(opts.curve) ? Number(opts.curve) : 1.8;
-    let heatAccumulator = 0; 
+    let heatAccumulator = 0;
 
     const warpBlue = new THREE.Color(0x0066ff);
     const heatColorCold = new THREE.Color(0x440000); // Ciemna czerwień
@@ -268,7 +268,7 @@ export function createShortNeedleExhaust(opts = {}) {
         if (!Number.isFinite(Number(value))) return;
         shapeCurve = THREE.MathUtils.clamp(Number(value), 0.2, 4.0);
     }
-    
+
     // Funkcja temperatury barwowej (Kelvin -> RGB)
     function kelvinToRGB(k) {
         k = k / 100;
@@ -298,17 +298,19 @@ export function createShortNeedleExhaust(opts = {}) {
         uniforms.uBoost.value = currentWarpBoost;
         uniforms.uCurve.value = shapeCurve;
 
-        const baseLen = 40; 
-        const extraLen = 100 * currentThrottle; 
+        const baseLen = 40;
+        const extraLen = 100 * currentThrottle;
         const warpLen = 110 * currentWarpBoost; // Max długość przy warpie
         const totalLen = baseLen + extraLen + warpLen;
-        
+
         const pulse = 1.0 + 0.05 * Math.sin(uniforms.uTime.value * 20.0);
-        
-        // MESH: Szerokość rośnie z Warpem
-        const totalWidth = 96 * (1.0 + currentWarpBoost * 0.3) * pulse;
+
+        // MESH: Szerokość łagodnie maleje przy braku ciągu (idle)
+        const throttleWidthFactor = 0.4 + 0.6 * currentThrottle; // Od 40% w idle do 100% na pełnym gazie
+        const totalWidth = 96 * throttleWidthFactor * (1.0 + currentWarpBoost * 0.3) * pulse;
+
         mesh.scale.set(totalWidth, totalLen, 1);
-        mesh.position.y = -totalLen / 2; 
+        mesh.position.y = -totalLen / 2;
 
         // --- KOLORY ---
         // Temperatura rośnie z gazem (termicznie), a przy Warpie przechodzi w niebieski
@@ -324,7 +326,7 @@ export function createShortNeedleExhaust(opts = {}) {
         // Intensywność: Idle=2, Thrust=8, Warp=20
         const targetLight = 2.0 + (currentThrottle * 6.0) + (currentWarpBoost * 18.0);
         light.intensity = THREE.MathUtils.lerp(light.intensity, targetLight, 0.2);
-        
+
         // Zasięg: Idle=150, Thrust=300, Warp=800
         const targetDistance = 150 + (currentThrottle * 150) + (currentWarpBoost * 650);
         light.distance = THREE.MathUtils.lerp(light.distance, targetDistance, 0.1);
@@ -333,10 +335,10 @@ export function createShortNeedleExhaust(opts = {}) {
         // Flara widoczna przy gazie i bardzo przy warpie
         const flareOp = (currentThrottle * 0.5 + currentWarpBoost * 1.5) * bloomGain;
         flare.material.opacity = THREE.MathUtils.lerp(flare.material.opacity, flareOp, 0.1);
-        flare.material.color.copy(finalCol); 
-        
-        // Flara skaluje się głównie na szerokość
-        const flareWidth = 100 + currentWarpBoost * 150; 
+        flare.material.color.copy(finalCol);
+
+        // Flara skaluje się głównie na szerokość (oraz gaz)
+        const flareWidth = (100 + currentWarpBoost * 150) * throttleWidthFactor;
         const flareHeight = 6 + currentWarpBoost * 4;
         flare.scale.set(flareWidth, flareHeight, 1);
 
@@ -347,21 +349,21 @@ export function createShortNeedleExhaust(opts = {}) {
         } else {
             heatAccumulator = Math.max(0.0, heatAccumulator - dt * 0.3);
         }
-        
+
         const heatCol = heatColorCold.clone().lerp(heatColorHot, heatAccumulator);
         // Warp ochładza wizualnie (zmienia na niebieski), mimo że jest gorący
         heatCol.lerp(warpBlue, currentWarpBoost * 0.8);
-        
+
         heatGlow.material.color.copy(heatCol);
         heatGlow.material.opacity = heatAccumulator;
-        
-        // Skalowanie Glowa po szerokości przy Warpie (musi pasować do płomienia)
-        const glowWidth = 70 * (1.0 + currentWarpBoost * 0.4); 
+
+        // Skalowanie Glowa po szerokości przy gazie i Warpie (musi pasować do płomienia)
+        const glowWidth = 70 * (1.0 + currentWarpBoost * 0.4) * throttleWidthFactor;
         heatGlow.scale.set(glowWidth, 70, 1);
 
         // Ring widoczny gdy gorąco
         heatRing.material.opacity = heatAccumulator;
-        const ringWidth = 50 * (1.0 + currentWarpBoost * 0.3);
+        const ringWidth = 50 * (1.0 + currentWarpBoost * 0.3) * throttleWidthFactor;
         heatRing.scale.set(ringWidth, 30, 1);
     }
 
@@ -404,7 +406,7 @@ export function getEngineVFX() {
 
     // 5. Renderer Helper
     let localRenderer = null;
-    
+
     function pickRenderer(w, h) {
         if (typeof window.getSharedRenderer === "function") {
             const r = window.getSharedRenderer(w, h);
@@ -436,8 +438,8 @@ export function getEngineVFX() {
         if (typeof renderer.clear === 'function') renderer.clear(true, true, false);
     }
 
-    const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
-    const smoothstep01 = (t) => { const x = clamp(t, 0, 1); return x*x*(3 - 2*x); };
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    const smoothstep01 = (t) => { const x = clamp(t, 0, 1); return x * x * (3 - 2 * x); };
 
     // Eksportujemy obiekt managera
     _engineVFX = {
@@ -449,24 +451,24 @@ export function getEngineVFX() {
 
             // Pobieranie danych wejściowych z globalnego stanu gry (jeśli dostępny)
             // lub fallback do zer.
-            const ship = window.ship || { vel: {x:0, y:0} };
+            const ship = window.ship || { vel: { x: 0, y: 0 } };
             const input = window.input || { main: 0 };
-            const boost = window.boost || { effectDuration:0, effectTime:0 };
-            const warp = window.warp || { state: 'idle', charge:0, chargeTime:1, entryProgress:0 };
+            const boost = window.boost || { effectDuration: 0, effectTime: 0 };
+            const warp = window.warp || { state: 'idle', charge: 0, chargeTime: 1, entryProgress: 0 };
             const optionsVfx = (window.OPTIONS && window.OPTIONS.vfx) ? window.OPTIONS.vfx : { colorTempK: 8000, bloomGain: 1.0 };
 
             // Obliczenia parametrów (Throttle, Boost, Warp)
             const spd = Math.hypot(ship.vel.x, ship.vel.y);
             const moveGlowBase = Math.min(spd / 900, 0.6);
             const thrust = input.main > 0 ? input.main : 0;
-            
+
             const boostAmpBase = (boost.effectDuration > 0)
                 ? clamp(boost.effectTime / boost.effectDuration, 0, 1)
                 : 0;
-                
+
             const warpActiveAmp = (warp.state === 'active') ? smoothstep01(warp.entryProgress) : 0;
             const warpChargeAmp = (warp.state === 'charging')
-                ? smoothstep01(Math.min(1, warp.charge/warp.chargeTime)) * 0.6
+                ? smoothstep01(Math.min(1, warp.charge / warp.chargeTime)) * 0.6
                 : 0;
             const warpAmpBase = Math.max(warpActiveAmp, warpChargeAmp);
 
@@ -474,16 +476,16 @@ export function getEngineVFX() {
             const moveGlow = (overrides && typeof overrides.moveGlowOverride === 'number')
                 ? clamp(overrides.moveGlowOverride, 0, 1)
                 : moveGlowBase;
-                
+
             const throttleBase = Math.max(thrust, moveGlow * 0.8);
             const throttle = (overrides && typeof overrides.throttleOverride === 'number')
                 ? clamp(overrides.throttleOverride, 0, 1)
                 : throttleBase;
-                
+
             const boostAmp = (overrides && typeof overrides.boostOverride === 'number')
                 ? clamp(overrides.boostOverride, 0, 1)
                 : boostAmpBase;
-                
+
             const warpAmp = (overrides && typeof overrides.warpOverride === 'number')
                 ? clamp(overrides.warpOverride, 0, 1)
                 : warpAmpBase;

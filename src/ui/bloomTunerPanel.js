@@ -3,10 +3,11 @@ const STYLE_ID = 'bloom-f12-panel-style';
 const STORAGE_KEY = 'devBloomPanel';
 
 const BLOOM_DEFAULTS = Object.freeze({
-  strength: 0.31,
+  strength: 0.35,
   radius: 0.18,
-  threshold: 0.2,
-  resolutionScale: Math.SQRT1_2
+  threshold: 0.95,
+  resolutionScale: 1,
+  planetBloomMultiplier: 1.0
 });
 
 function clamp(value, min, max) {
@@ -27,6 +28,9 @@ function ensureBloomState() {
   bloom.radius = clamp(toNumber(bloom.radius, BLOOM_DEFAULTS.radius), 0, 2);
   bloom.threshold = clamp(toNumber(bloom.threshold, BLOOM_DEFAULTS.threshold), 0, 2);
   bloom.resolutionScale = clamp(toNumber(bloom.resolutionScale, BLOOM_DEFAULTS.resolutionScale), 0.5, 1.0);
+  bloom.planetBloomMultiplier = clamp(toNumber(bloom.planetBloomMultiplier, BLOOM_DEFAULTS.planetBloomMultiplier), 0, 5);
+
+  devVfx.planetBloomMultiplier = bloom.planetBloomMultiplier;
   return bloom;
 }
 
@@ -48,7 +52,8 @@ function saveBloomState(bloom) {
       strength: bloom.strength,
       radius: bloom.radius,
       threshold: bloom.threshold,
-      resolutionScale: bloom.resolutionScale
+      resolutionScale: bloom.resolutionScale,
+      planetBloomMultiplier: bloom.planetBloomMultiplier
     }));
   } catch {
     // ignore localStorage errors
@@ -72,6 +77,10 @@ function applyToCore3D(bloom) {
   pass.strength = bloom.strength;
   pass.radius = bloom.radius;
   pass.threshold = bloom.threshold;
+
+  if (window.DevVFX) {
+    window.DevVFX.planetBloomMultiplier = bloom.planetBloomMultiplier;
+  }
 }
 
 function ensureStyle() {
@@ -155,7 +164,7 @@ function createPanel(state) {
         <button type="button" data-action="copy">Copy JSON</button>
         <button type="button" data-action="reset">Reset</button>
       </div>
-      <div class="hint">F12 - pokaz/ukryj</div>
+      <div class="hint">Otworz/zamknij z panelu DevTools</div>
     </div>
   `;
 
@@ -164,6 +173,7 @@ function createPanel(state) {
   createControlRow(controls, { label: 'Radius', min: 0, max: 2, step: 0.01, key: 'radius', state });
   createControlRow(controls, { label: 'Threshold', min: 0, max: 2, step: 0.01, key: 'threshold', state });
   createControlRow(controls, { label: 'Resolution', min: 0.5, max: 1.0, step: 0.01, key: 'resolutionScale', state });
+  createControlRow(controls, { label: 'Planet HDR', min: 0, max: 5, step: 0.01, key: 'planetBloomMultiplier', state });
 
   panel.querySelector('button[data-action="copy"]')?.addEventListener('click', async () => {
     const payload = {
@@ -197,6 +207,7 @@ function createPanel(state) {
       createControlRow(controlsRoot, { label: 'Radius', min: 0, max: 2, step: 0.01, key: 'radius', state });
       createControlRow(controlsRoot, { label: 'Threshold', min: 0, max: 2, step: 0.01, key: 'threshold', state });
       createControlRow(controlsRoot, { label: 'Resolution', min: 0.5, max: 1.0, step: 0.01, key: 'resolutionScale', state });
+      createControlRow(controlsRoot, { label: 'Planet HDR', min: 0, max: 5, step: 0.01, key: 'planetBloomMultiplier', state });
     }
   });
 
@@ -204,7 +215,7 @@ function createPanel(state) {
   return panel;
 }
 
-export function initBloomTunerPanel() {
+export function initBloomTunerPanel(options = {}) {
   ensureStyle();
   const bloomState = ensureBloomState();
   applyToCore3D(bloomState);
@@ -216,11 +227,13 @@ export function initBloomTunerPanel() {
     panel.style.display = isHidden ? 'block' : 'none';
   };
 
-  window.addEventListener('keydown', (event) => {
-    if (event.code !== 'F12') return;
-    event.preventDefault();
-    togglePanel();
-  });
+  if (options?.enableHotkey === true) {
+    window.addEventListener('keydown', (event) => {
+      if (event.code !== 'F12') return;
+      event.preventDefault();
+      togglePanel();
+    });
+  }
 
   window.__bloomPanel = {
     show: () => {

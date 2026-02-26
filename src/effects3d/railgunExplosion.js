@@ -55,7 +55,7 @@ export function createRailgunExplosionFactory(scene) {
 
   const dummyObj = new THREE.Object3D();
 
-  return function spawn({ x = 0, y = 0, z, size = 50 } = {}) {
+  return function spawn({ x = 0, y = 0, z, size = 50, sparkCount: sparkCountOpt, sparkColor } = {}) {
     const group = new THREE.Group();
     group.position.set(x, 0, z !== undefined ? z : y);
     group.scale.setScalar(size);
@@ -71,8 +71,10 @@ export function createRailgunExplosionFactory(scene) {
     core.position.y = 0.7;
     group.add(core);
 
-    const sparkCount = 2; 
-    const sparks = new THREE.InstancedMesh(sparkGeometry, sparkMaterial, sparkCount);
+    const sparkCount = Math.max(0, Math.min(96, Math.round(Number(sparkCountOpt) || 2)));
+    const localSparkMaterial = sparkMaterial.clone();
+    if (sparkColor != null) localSparkMaterial.color.set(sparkColor);
+    const sparks = new THREE.InstancedMesh(sparkGeometry, localSparkMaterial, sparkCount);
     sparks.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     group.add(sparks);
 
@@ -181,6 +183,7 @@ export function createRailgunExplosionFactory(scene) {
         group.parent.remove(group);
       }
       // Niszczymy nasz jeden sklonowany materiał
+      localSparkMaterial.dispose();
       localSmokeMaterial.dispose();
     }
 
