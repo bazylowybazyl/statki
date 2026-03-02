@@ -1,15 +1,15 @@
 import * as THREE from 'three';
-import { Core3D } from './src/3d/core3d.js';
+import { Core3D } from './core3d.js';
 
 window.Dev = window.Dev || {};
 const PLANET_SIZE_MULTIPLIER = 4.5;
 const SUN_SIZE_MULTIPLIER = 6.0;
 const HALO_DEFAULTS = Object.freeze({
-    sizeMul: 0.99,
-    coefMul: 1.4,
-    coefAdd: 0.0,
-    powerMul: 1.0,
-    powerAdd: 8.0,
+    sizeMul: 1.475,
+    coefMul: 1.414,
+    coefAdd: 1.78,
+    powerMul: 0.93,
+    powerAdd: 7.44,
     sunMul: 1.0
 });
 const SUN_SHADOW_TUNE = Object.freeze({
@@ -27,6 +27,7 @@ const SUN_SHADOW_TUNE = Object.freeze({
     bias: -0.0003,
     normalBias: 0.08
 });
+const STAR_PLANET_MASK_CAP = 12;
 
 // ==========================================
 // 0. SHADERS: NEBULA (CLEAN / RAW)
@@ -65,7 +66,8 @@ const STARS_VERTEX = `
     uniform float warpFactor;
     uniform float stretchStrength;
     uniform float baseSizeMul;
-    uniform vec2 moveDir; 
+    uniform vec2 moveDir;
+    uniform vec4 planetMasks[${STAR_PLANET_MASK_CAP}];
     
     attribute float size;
     attribute float brightness;
@@ -76,6 +78,7 @@ const STARS_VERTEX = `
     varying vec3 vColor;
     varying float vStretch;
     varying float vScreenSize;
+    varying float vPlanetMask;
 
     void main() {
         vBrightness = brightness;
@@ -90,6 +93,15 @@ const STARS_VERTEX = `
         float halfSize = containerSize / 2.0;
         pos.x = mod(pos.x + halfSize, containerSize) - halfSize;
         pos.y = mod(pos.y + halfSize, containerSize) - halfSize;
+
+        vec4 worldPos = modelMatrix * vec4(pos, 1.0);
+        vPlanetMask = 1.0;
+        for (int i = 0; i < ${STAR_PLANET_MASK_CAP}; i++) {
+            vec4 pm = planetMasks[i];
+            if (pm.z <= 0.0) continue;
+            float distToPlanet = distance(worldPos.xy, pm.xy);
+            vPlanetMask *= step(pm.z, distToPlanet);
+        }
 
         vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
         
@@ -122,8 +134,9 @@ const STARS_FRAGMENT = `
     varying float vBrightness;
     varying float vWarp;
     varying vec3 vColor;
-    varying float vStretch; 
+    varying float vStretch;
     varying float vScreenSize;
+    varying float vPlanetMask;
 
     void main() {
         vec2 rawUV = gl_PointCoord - 0.5;
@@ -131,6 +144,7 @@ const STARS_FRAGMENT = `
         float distFromCenter = length(rawUV);
         float mask = 1.0 - smoothstep(0.4, 0.5, distFromCenter);
         if (mask < 0.01) discard;
+        if (vPlanetMask < 0.5) discard;
 
         vec2 uv = rawUV;
         
@@ -154,9 +168,8 @@ const STARS_FRAGMENT = `
 
         float twinkle = 0.8 + 0.2 * sin(time * 3.0 + vBrightness * 10.0);
         vec3 finalColor = mix(vColor, vec3(0.7, 0.85, 1.0), vWarp * 0.8);
-        float boost = 1.0 + vWarp * 2.5; 
 
-        gl_FragColor = vec4(finalColor * twinkle, tex.a * vBrightness * globalBrightness * boost * mask);
+        gl_FragColor = vec4(finalColor * twinkle, tex.a * vBrightness * globalBrightness * mask);
     }
 `;
 
@@ -234,7 +247,6 @@ void main() {
     float viewDot = dot(normalize(vNormal), vec3(0.0, 0.0, 1.0));
     float fresnel = pow(1.0 - max(viewDot, 0.0), 3.0);
 
-    // Bloom edge tuned down for lower threshold.
     finalColor += vec3(1.5, 0.75, 0.25) * fresnel;
 
     gl_FragColor = vec4(finalColor, 1.0);
@@ -354,28 +366,19 @@ void main() {
         finalColor = dayColor.rgb * uBrightness * lit + nightTint;
     }
 
-    // Sunset tint at terminator
     float sunsetBand = smoothstep(-0.30, -0.02, NdotL) * (1.0 - smoothstep(-0.02, 0.20, NdotL));
     finalColor = mix(finalColor, finalColor * sunsetTint, sunsetBand * 0.45);
 
-    float dither = (hash12(gl_FragCoord.xy) - 0.5) / 1024.0; // 4x słabszy dither
-    // Maska: dither działa najmocniej przy mixFactor 0.5 (terminator)
-    // mixFactor * (1.0 - mixFactor) wygasza dither w pełnym słońcu i w pełnej nocy
+    float dither = (hash12(gl_FragCoord.xy) - 0.5) / 1024.0;
     float ditherMask = mixFactor * (1.0 - mixFactor) * 4.0; 
 
     finalColor += dither * ditherMask;
     finalColor = max(finalColor, vec3(0.0));
 
-    // --- RĘCZNE PODBICIE DLA BLOOMA (HDR PUSH) ---
-    // Pobieramy jasność piksela
     float luminance = dot(finalColor, vec3(0.299, 0.587, 0.114));
-    
-    // Zmieniamy 0.4 na 0.85! Teraz tylko absolutnie najjaśniejsze 15% pikseli
-    // (chmury skierowane prosto w słońce) dostanie status HDR i zacznie świecić.
     float bloomPush = smoothstep(0.85, 1.0, luminance) * uPlanetBloom; 
     
     finalColor += finalColor * bloomPush;
-    // ----------------------------------------------
 
     gl_FragColor = vec4(finalColor, 1.0);
 }
@@ -387,8 +390,8 @@ varying vec3 vNormal;
 varying vec3 vWorldPosition;
 void main() {
     vUv = uv;
-    vNormal = normalize(normalMatrix * normal);
     vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+    vNormal = normalize(mat3(modelMatrix) * normal);
     vWorldPosition = worldPosition.xyz;
     gl_Position = projectionMatrix * viewMatrix * worldPosition;
 }
@@ -419,19 +422,33 @@ void main() {
 `;
 
 const ATMOSPHERE_VERTEX = `
-varying vec3 vNormal;
+varying vec3 vNormalView;
+varying vec3 vNormalWorld;
 varying vec3 vWorldPosition;
 void main() {
-    vNormal = normalize(normalMatrix * normal);
+    vNormalView = normalize(normalMatrix * normal);
+    vNormalWorld = normalize(mat3(modelMatrix) * normal);
+    
     vec4 worldPos = modelMatrix * vec4(position, 1.0);
     vWorldPosition = worldPos.xyz;
-    gl_Position = projectionMatrix * viewMatrix * worldPos;
+    
+    vec4 centerView = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+    vec4 viewPos = modelViewMatrix * vec4(position, 1.0);
+    
+    // FIX PARALAKSY EFEKTU HALO:
+    // Wyrównanie głębi każdego wierzchołka gazowego halo do środka planety (delikatnie z tyłu).
+    // Odłączamy w ten sposób sferyczną dyfrakcję perspektywiczną w rzucie 3D. 
+    // Wynik = Halo staje się płaskim dyskiem z naturalnymi odcieniami 3D, perfekcyjnie centrowanym na planecie, niezależnie od tego z jakiego kąta ekranu na niego patrzysz!
+    viewPos.z = centerView.z - 20.0;
+    
+    gl_Position = projectionMatrix * viewPos;
 }
 `;
 
 const ATMOSPHERE_FRAGMENT = `
 precision highp float;
-varying vec3 vNormal;
+varying vec3 vNormalView;
+varying vec3 vNormalWorld;
 varying vec3 vWorldPosition;
 uniform vec3 glowColor;
 uniform vec3 sunsetTint;
@@ -445,14 +462,15 @@ float hash12(vec2 p) {
     return fract((p3.x + p3.y) * p3.z);
 }
 void main() {
-    // Rim/fresnel — untouched, critical for BackSide rendering
-    float rim = pow(coef - dot(vNormal, vec3(0.0, 0.0, 1.0)), power);
+    vec3 normalW = normalize(vNormalWorld);
+    vec3 normalV = normalize(vNormalView);
+    float innerToOuter = clamp(abs(normalV.z), 0.0, 1.0);
+    float radialFade = pow(innerToOuter, max(0.35, power * 0.18));
+    radialFade = smoothstep(0.0, 1.0, radialFade);
+    float rim = radialFade * clamp(coef, 0.0, 2.0);
     vec3 lightDir = normalize(sunPosition - vWorldPosition);
-    float sunDot = dot(vNormal, lightDir);
-    // Extended range: -0.45 matches the planet surface terminator (~-0.28)
-    // so the atmosphere glow no longer cuts off before the surface darkens
+    float sunDot = dot(normalW, lightDir);
     float dayFactor = smoothstep(-0.45, 0.25, sunDot);
-    // Sunset band: narrow peak at the terminator edge
     float sunsetFactor = smoothstep(-0.35, -0.05, sunDot)
                        * (1.0 - smoothstep(-0.05, 0.25, sunDot));
     vec3 baseColor = mix(glowColor, sunsetTint * 1.5, sunsetFactor * 0.8);
@@ -471,7 +489,7 @@ const NebulaSystem = {
     mesh: null,
     uniforms: null,
     parallaxFactor: 0.98,
-    baseScale: 70000,
+    baseScale: 800000,
     aspectRatio: 1.6,
 
     init: function () {
@@ -502,10 +520,13 @@ const NebulaSystem = {
         });
 
         this.mesh = new THREE.Mesh(geo, mat);
-        this.mesh.position.z = -150000; // Głęboko w tle
+        this.mesh.position.z = -150000;
         this.mesh.renderOrder = -999;
 
         Core3D.scene.add(this.mesh);
+        Core3D.enableBackground3D(this.mesh); // <-- Tło
+        this.mesh.layers.set(0);
+        this.mesh.layers.set(1);
     },
 
     update: function (dt, gameCamera) {
@@ -544,8 +565,11 @@ const NebulaSystem = {
 const StarSystem = {
     mesh: null,
     uniforms: null,
-    count: 40000,
-    worldScale: 100000,
+    // Lokalny kontener gwiazd wokół kamery + ograniczony budżet punktów.
+    count: 26000,
+    worldScale: 220000,
+    starSpeed: 0.9,
+    layerZ: -250,
     lastWarpState: 'idle',
     exitTimer: 0,
 
@@ -561,7 +585,7 @@ const StarSystem = {
         for (let i = 0; i < this.count; i++) {
             positions[i * 3] = (Math.random() - 0.5) * this.worldScale;
             positions[i * 3 + 1] = (Math.random() - 0.5) * this.worldScale;
-            positions[i * 3 + 2] = -100000;
+            positions[i * 3 + 2] = 0;
 
             sizes[i] = 1.0 + Math.pow(Math.random(), 3.0) * 4.0;
             brights[i] = 0.4 + Math.random() * 0.6;
@@ -588,12 +612,15 @@ const StarSystem = {
             cameraOffset: { value: new THREE.Vector2(0, 0) },
             containerSize: { value: this.worldScale },
             perspectiveScale: { value: 800.0 },
-            globalBrightness: { value: 1.2 },
+            globalBrightness: { value: 1.0 }, // Normalna jasność
             warpFactor: { value: 0.0 },
             moveDir: { value: new THREE.Vector2(0, 1) },
             stretchStrength: { value: 25.0 },
             thinningStrength: { value: 45.0 },
-            baseSizeMul: { value: 1.0 }
+            baseSizeMul: { value: 1.8 },
+            planetMasks: {
+                value: Array.from({ length: STAR_PLANET_MASK_CAP }, () => new THREE.Vector4(0, 0, 0, 0))
+            }
         };
 
         const mat = new THREE.ShaderMaterial({
@@ -609,6 +636,9 @@ const StarSystem = {
         this.mesh.renderOrder = -1;
         this.mesh.frustumCulled = false;
         Core3D.scene.add(this.mesh);
+        this.mesh.layers.set(0);
+        Core3D.enableBackground3D(this.mesh); // <-- Tło
+        this.mesh.layers.set(0);
     },
 
     createStarTexture: function () {
@@ -632,16 +662,40 @@ const StarSystem = {
         this.uniforms.time.value += dt;
 
         if (this.mesh) {
-            this.mesh.position.set(cx, -cy, -100000);
+            this.mesh.position.set(cx, -cy, this.layerZ);
+            this.mesh.layers.set(0);
         }
 
-        const starSpeed = 0.9;
+        const starSpeed = this.starSpeed || 0.9;
         const wrapSize = this.worldScale || 100000;
         const offsetXRaw = cx * starSpeed;
         const offsetYRaw = -cy * starSpeed;
         const offsetX = ((offsetXRaw % wrapSize) + wrapSize) % wrapSize;
         const offsetY = ((offsetYRaw % wrapSize) + wrapSize) % wrapSize;
         this.uniforms.cameraOffset.value.set(offsetX, offsetY);
+
+        const planetMasks = this.uniforms.planetMasks?.value;
+        if (Array.isArray(planetMasks) && planetMasks.length) {
+            for (let i = 0; i < STAR_PLANET_MASK_CAP; i++) {
+                const mask = planetMasks[i];
+                if (mask) mask.set(0, 0, 0, 0);
+            }
+
+            const planetList = Array.isArray(window.planets) ? window.planets : null;
+            if (planetList && planetList.length) {
+                let writeIdx = 0;
+                for (let i = 0; i < planetList.length && writeIdx < STAR_PLANET_MASK_CAP; i++) {
+                    const planet = planetList[i];
+                    const px = Number(planet?.x);
+                    const py = Number(planet?.y);
+                    const pr = Number(planet?.r);
+                    if (!Number.isFinite(px) || !Number.isFinite(py) || !Number.isFinite(pr) || pr <= 0) continue;
+                    const maskR = Math.max(0, pr * PLANET_SIZE_MULTIPLIER * 1.06);
+                    planetMasks[writeIdx].set(px, -py, maskR, 0);
+                    writeIdx++;
+                }
+            }
+        }
 
         let dx = 0, dy = 1;
         const interpShipPose = (typeof window !== 'undefined') ? window.__interpShipPose : null;
@@ -689,6 +743,21 @@ const StarSystem = {
         const currentWarp = this.uniforms.warpFactor.value;
         const lerpSpeed = (this.exitTimer > 0) ? 8.0 : 4.0;
         this.uniforms.warpFactor.value += (targetWarp - currentWarp) * lerpSpeed * dt;
+
+        // Dynamiczne wygaszanie gwiazd podczas warpa (unika przepalania blooma)
+        let targetStarBrightness = 1.0;
+        if (window.warp) {
+            if (window.warp.state === 'active') {
+                targetStarBrightness = 0.4;
+            } else if (window.warp.state === 'charging' && window.warp.chargeTime > 0) {
+                const chargeProgress = Math.min(1, window.warp.charge / window.warp.chargeTime);
+                targetStarBrightness = 1.0 - (chargeProgress * 0.6);
+            }
+        }
+        if (this.exitTimer > 0) targetStarBrightness = 1.0;
+
+        const currentStarBrightness = this.uniforms.globalBrightness.value;
+        this.uniforms.globalBrightness.value += (targetStarBrightness - currentStarBrightness) * (lerpSpeed * 1.5) * dt;
     }
 };
 
@@ -714,19 +783,17 @@ class DirectPlanet {
         this.cloudUniforms = null;
         this.atmosphere = null;
         this.group = new THREE.Group();
-        // Planety lądują pod statkiem, ale nad gwiazdami
         this.group.position.z = -50000;
 
-        // Dodaj domyślny mnożnik bazy (przydzielimy go za chwilę)
         this.basePlanetBloom = 0.0;
 
         this.uniforms = {
-            uPlanetBloom: { value: 0.0 }, // <--- DODANO UNIFORM
+            uPlanetBloom: { value: 0.0 },
             dayTexture: { value: null },
             nightTexture: { value: null },
             specularTexture: { value: null },
             normalTexture: { value: null },
-            sunPosition: { value: new THREE.Vector3(0, 0, 0) },
+            sunPosition: { value: new THREE.Vector3(0, 0, -50000) },
             hasNightTexture: { value: 0.0 },
             uBrightness: { value: 1.0 },
             uAmbient: { value: 0.008 },
@@ -787,15 +854,14 @@ class DirectPlanet {
             this.uniforms.sunsetTint.value.set(1.2, 0.5, 0.1);
         }
 
-        // --- USTALAMY INDYWIDUALNY BLOOM DLA PLANET ---
         if (name === 'earth') {
-            this.basePlanetBloom = 0.8; // Ziemia ma świecić mocniej za dnia
+            this.basePlanetBloom = 0.8;
         } else if (name === 'mars') {
-            this.basePlanetBloom = 0.4; // Mars świeci średnio
+            this.basePlanetBloom = 0.4;
         } else if (name === 'jupiter') {
-            this.basePlanetBloom = 0.05; // Jowisz prawie wcale, żeby się nie przepalił!
+            this.basePlanetBloom = 0.05;
         } else {
-            this.basePlanetBloom = 0.2; // Domyślnie dla reszty
+            this.basePlanetBloom = 0.2;
         }
 
         const texPath = `/assets/planety/solar/${name}/${name}_color.jpg`;
@@ -838,7 +904,7 @@ class DirectPlanet {
             cloudTex.colorSpace = THREE.SRGBColorSpace;
             this.cloudUniforms = {
                 cloudTexture: { value: cloudTex },
-                sunPosition: { value: new THREE.Vector3(0, 0, 0) },
+                sunPosition: { value: new THREE.Vector3(0, 0, -50000) },
                 uOpacity: { value: 0.62 }
             };
             const cloudMat = new THREE.ShaderMaterial({
@@ -883,7 +949,7 @@ class DirectPlanet {
                 glowColor: { value: atmColor },
                 sunsetTint: { value: sunsetTint },
                 uSunIntensity: { value: atmSunIntensity },
-                sunPosition: { value: new THREE.Vector3(0, 0, 0) }
+                sunPosition: { value: new THREE.Vector3(0, 0, -50000) }
             },
             transparent: true,
             side: THREE.BackSide,
@@ -894,24 +960,21 @@ class DirectPlanet {
         this.group.add(this.atmosphere);
 
         Core3D.scene.add(this.group);
+        Core3D.enableBackground3D(this.group); // <-- Tło
         if (name === 'earth') window.EARTH = this;
     }
 
     update(dt, cam) {
         if (!this.group || !cam) return;
 
-        // --- AKTUALIZACJA BLOOMA PLANET ---
-        // Ustaw domyślnie 1.0, jeśli suwaka w F12 jeszcze nie ruszono
         const globalTune = (window.DevVFX && window.DevVFX.planetBloomMultiplier !== undefined)
             ? window.DevVFX.planetBloomMultiplier
             : 1.0;
 
-        // Mnożymy indywidualną wartość przez suwak z F12
         this.uniforms.uPlanetBloom.value = this.basePlanetBloom * globalTune;
-        // ----------------------------------
 
         const x = this.data.x;
-        const y = -this.data.y; // Odwrócenie Y dla WebGL
+        const y = -this.data.y;
         this.group.position.set(x, y, -50000);
 
         const currentRadius = (this.data.r || 100);
@@ -919,12 +982,13 @@ class DirectPlanet {
         this.group.scale.set(scale, scale, scale);
 
         if (window.SUN) {
-            this.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, 0);
+            const sunZ = this.group.position.z;
+            this.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, sunZ);
             if (this.cloudUniforms) {
-                this.cloudUniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, 0);
+                this.cloudUniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, sunZ);
             }
             if (this.atmosphere) {
-                this.atmosphere.material.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, 0);
+                this.atmosphere.material.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, sunZ);
             }
         }
 
@@ -937,7 +1001,6 @@ class DirectPlanet {
             this.group.parent.remove(this.group);
         }
     }
-
 }
 
 class DirectSun {
@@ -975,12 +1038,13 @@ class DirectSun {
         this.group.add(this.glow);
 
         Core3D.scene.add(this.group);
+        Core3D.enableBackground3D(this.group); // <-- Tło
 
-        // Słońce potrzebuje oświetlać inne planety - wpinamy światło do Core3D
         this.sunLight = new THREE.DirectionalLight(SUN_SHADOW_TUNE.color, SUN_SHADOW_TUNE.intensity);
         this.sunLight.castShadow = true;
+        this.sunLight.shadow.camera.layers.enableAll();
+        this.sunLight.layers.enableAll(); // Słońce rzuca światło na WSZYSTKIE warstwy
 
-        // Shadow map configuration
         this.sunLight.shadow.mapSize.width = SUN_SHADOW_TUNE.mapSize;
         this.sunLight.shadow.mapSize.height = SUN_SHADOW_TUNE.mapSize;
         this.sunLight.shadow.bias = SUN_SHADOW_TUNE.bias;
@@ -993,7 +1057,9 @@ class DirectSun {
         this.sunLight.target = this.sunTarget;
 
         Core3D.scene.add(this.sunLight);
+
         this.ambientLight = new THREE.AmbientLight(0xffffff, 0.02);
+        this.ambientLight.layers.enableAll(); // Oświetla wszystkie warstwy
         Core3D.scene.add(this.ambientLight);
     }
 
@@ -1089,7 +1155,6 @@ class DirectSun {
         }
         this.mesh.rotation.z -= 0.002 * dt;
 
-        // — Sync shadow camera frustum to viewport —
         if (this.sunLight && this.sunLight.castShadow) {
             const zoom = Math.max(0.0001, Number(cam.zoom) || 1);
             const viewportW = Math.max(1, Number(Core3D.width) || window.innerWidth || 1920);
@@ -1101,7 +1166,6 @@ class DirectSun {
             halfSpan = Math.max(SUN_SHADOW_TUNE.frustumMin, Math.min(SUN_SHADOW_TUNE.frustumMax, halfSpan));
             halfSpan = Math.round(halfSpan / 8) * 8;
 
-            // Snap light/target positions to texel grid to reduce shadow swimming
             const mapSize = this.sunLight.shadow.mapSize.width;
             const texelSize = (halfSpan * 2) / mapSize;
             if (texelSize > 0) {
@@ -1133,7 +1197,6 @@ class DirectSun {
         if (this.sunTarget && this.sunTarget.parent) this.sunTarget.parent.remove(this.sunTarget);
         if (this.ambientLight && this.ambientLight.parent) this.ambientLight.parent.remove(this.ambientLight);
     }
-
 }
 
 // ==========================================
@@ -1165,7 +1228,6 @@ window.initPlanets3D = function (planetList, sunData) {
     return Core3D.scene;
 };
 
-// Aktualizacja w pętli fizyki
 window.updatePlanets3D = function (dt, cam) {
     if (!Core3D.isInitialized || !cam) return;
 
@@ -1179,11 +1241,7 @@ window.updatePlanets3D = function (dt, cam) {
     }
 };
 
-// UWAGA: Ta funkcja jest teraz opcjonalna, bo Core3D renderuje cały ekran naraz 
-// w hexShips3D. Zostawiamy ją jako pustą fasadę, żeby index.html się nie zepsuł.
-window.drawPlanets3D = function (ctx, cam) {
-    // Nic nie robi - renderowaniem zajmuje się teraz Core3D.render() 
-};
+window.drawPlanets3D = function (ctx, cam) { };
 
 window.worldToScreen = function (x, y, cam) {
     if (!cam) return { x: 0, y: 0 };

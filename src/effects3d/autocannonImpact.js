@@ -32,11 +32,33 @@ function ensureGeometries() {
   }
 }
 
+function resolveImpactPalette(color) {
+  const base = new THREE.Color(0xffd49a);
+  if (color != null) {
+    try {
+      base.set(color);
+    } catch (err) { /* ignore invalid color */ }
+  }
+  const white = new THREE.Color(0xffffff);
+  return {
+    flash: white.clone().lerp(base, 0.32),
+    core: base.clone(),
+    ring: base.clone().lerp(white, 0.22),
+    spark: base.clone().lerp(white, 0.30),
+    shard: base.clone().lerp(white, 0.72),
+    ember: base.clone().lerp(white, 0.40),
+    smoke: base.clone().multiplyScalar(0.32),
+    light: base.clone().lerp(white, 0.18),
+  };
+}
+
 export function createAutocannonImpactFactory(scene) {
   ensureTextures();
   ensureGeometries();
 
-  return function spawn({ x = 0, y = 0, z, size = 42 } = {}) {
+  return function spawn({ x = 0, y = 0, z, size = 42, color = null, quality = 1 } = {}) {
+    const q = Math.max(0.35, Math.min(1, Number(quality) || 1));
+    const palette = resolveImpactPalette(color);
     const group = new THREE.Group();
     group.position.set(x, 0, z !== undefined ? z : y);
     group.scale.setScalar(size);
@@ -49,7 +71,7 @@ export function createAutocannonImpactFactory(scene) {
       depthWrite: false,
       depthTest: false,
       opacity: 0.92,
-      color: 0xffffff,
+      color: palette.flash,
     });
     const flash = new THREE.Sprite(flashMaterial);
     flash.scale.setScalar(2.6);
@@ -63,7 +85,7 @@ export function createAutocannonImpactFactory(scene) {
       depthWrite: false,
       depthTest: false,
       opacity: 1,
-      color: 0xffd49a,
+      color: palette.core,
     });
     const core = new THREE.Sprite(coreMaterial);
     core.scale.setScalar(1.1);
@@ -72,7 +94,7 @@ export function createAutocannonImpactFactory(scene) {
 
     const ringGeometry = new THREE.RingGeometry(0.16, 0.38, 40);
     const ringMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffcf9c,
+      color: palette.ring,
       transparent: true,
       opacity: 0.85,
       blending: THREE.AdditiveBlending,
@@ -83,9 +105,9 @@ export function createAutocannonImpactFactory(scene) {
     ring.rotation.x = -Math.PI / 2;
     group.add(ring);
 
-    const sparkCount = 32;
+    const sparkCount = Math.max(4, Math.round(24 * q));
     const sparkMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffd8a0,
+      color: palette.spark,
       transparent: true,
       opacity: 1,
       blending: THREE.AdditiveBlending,
@@ -117,9 +139,9 @@ export function createAutocannonImpactFactory(scene) {
     });
     sparks.instanceMatrix.needsUpdate = true;
 
-    const shardCount = 18;
+    const shardCount = Math.max(3, Math.round(12 * q));
     const shardMaterial = new THREE.MeshBasicMaterial({
-      color: 0xfff0d0,
+      color: palette.shard,
       transparent: true,
       opacity: 1,
       blending: THREE.AdditiveBlending,
@@ -151,16 +173,16 @@ export function createAutocannonImpactFactory(scene) {
     shards.instanceMatrix.needsUpdate = true;
 
     const smokes = [];
-    const baseSmokeMaterial = new THREE.SpriteMaterial({
+    const smokeMaterial = new THREE.SpriteMaterial({
       map: sharedTextures.smoke,
-      color: 0x8493c8,
+      color: palette.smoke,
       transparent: true,
       depthWrite: false,
       opacity: 0.22,
     });
-    for (let i = 0; i < 7; i++) {
-      const mat = baseSmokeMaterial.clone();
-      const smoke = new THREE.Sprite(mat);
+    const smokeCount = Math.max(1, Math.round(4 * q));
+    for (let i = 0; i < smokeCount; i++) {
+      const smoke = new THREE.Sprite(smokeMaterial);
       smoke.position.set((Math.random() - 0.5) * 0.6, 0.1 + Math.random() * 0.12, (Math.random() - 0.5) * 0.6);
       const scale = 0.8 + Math.random() * 0.9;
       smoke.scale.setScalar(scale);
@@ -183,12 +205,12 @@ export function createAutocannonImpactFactory(scene) {
       transparent: true,
       depthWrite: false,
       depthTest: false,
-      color: 0xffd6a0,
+      color: palette.ember,
       opacity: 0.85,
     });
-    for (let i = 0; i < 10; i++) {
-      const mat = emberMaterial.clone();
-      const ember = new THREE.Sprite(mat);
+    const emberCount = Math.max(1, Math.round(6 * q));
+    for (let i = 0; i < emberCount; i++) {
+      const ember = new THREE.Sprite(emberMaterial);
       ember.position.set((Math.random() - 0.5) * 0.4, 0.12 + Math.random() * 0.12, (Math.random() - 0.5) * 0.4);
       ember.scale.setScalar(0.22 + Math.random() * 0.26);
       ember.userData = {
@@ -202,14 +224,9 @@ export function createAutocannonImpactFactory(scene) {
       group.add(ember);
     }
 
-    const light = new THREE.PointLight(0xffd09a, 90, 80 * size, 2.2);
-    light.position.set(0, 3.2, 0);
-    group.add(light);
-
-    const duration = 0.7;
+    const duration = 0.55;
     let time = 0;
     let disposed = false;
-    const sizeBoost = Math.sqrt(size / 42);
 
     function update(dt) {
       if (disposed) return;
@@ -263,41 +280,35 @@ export function createAutocannonImpactFactory(scene) {
       }
       shards.instanceMatrix.needsUpdate = true;
       shardMaterial.opacity = Math.max(0, 1 - time / 0.28);
+      emberMaterial.opacity = 0.85 * Math.max(0, 1 - time / 0.34);
+      smokeMaterial.opacity = 0.22 * Math.max(0, 1 - time / 0.62);
 
-      for (let i = embers.length - 1; i >= 0; i--) {
+      for (let i = 0; i < embers.length; i++) {
         const ember = embers[i];
+        if (!ember.visible) continue;
         const state = ember.userData;
         state.age += dt;
         ember.position.x += state.vx * dt * 0.04;
         ember.position.z += state.vz * dt * 0.04;
         ember.position.y += state.rise * dt * 0.4;
-        const fade = Math.max(0, 1 - state.age / state.life);
-        ember.material.opacity = 0.85 * fade * Math.max(0, 1 - time / 0.32);
         if (state.age >= state.life) {
-          group.remove(ember);
-          ember.material.dispose();
-          embers.splice(i, 1);
+          ember.visible = false;
         }
       }
 
-      for (let i = smokes.length - 1; i >= 0; i--) {
+      for (let i = 0; i < smokes.length; i++) {
         const smoke = smokes[i];
+        if (!smoke.visible) continue;
         const state = smoke.userData;
         state.age += dt;
         smoke.position.x += state.vx * dt * 0.04;
         smoke.position.z += state.vz * dt * 0.04;
         smoke.position.y += state.rise * dt * 0.12;
         smoke.scale.multiplyScalar(1 + state.growth * dt * 0.4);
-        const fade = Math.max(0, 1 - state.age / state.life);
-        smoke.material.opacity = 0.22 * fade * Math.max(0, 1 - time / 0.6);
         if (state.age >= state.life) {
-          group.remove(smoke);
-          smoke.material.dispose();
-          smokes.splice(i, 1);
+          smoke.visible = false;
         }
       }
-
-      light.intensity = 110 * sizeBoost * Math.max(0, 1 - time / 0.14);
 
       if (time > duration + 0.5) {
         dispose();
@@ -318,14 +329,8 @@ export function createAutocannonImpactFactory(scene) {
       sparks.dispose();
       shardMaterial.dispose();
       shards.dispose();
-      baseSmokeMaterial.dispose();
+      smokeMaterial.dispose();
       emberMaterial.dispose();
-      embers.forEach((ember) => {
-        ember.material.dispose();
-      });
-      smokes.forEach((smoke) => {
-        smoke.material.dispose();
-      });
     }
 
     return { group, update, dispose };

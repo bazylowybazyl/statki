@@ -24,10 +24,12 @@ function applyCapitalAutopilot(npc, thrustNorm, strafeNorm, desiredAngle, boostT
 
   const maxV = (npc.maxSpeed || 200) * speedBoost;
   const v = Math.hypot(npc.vx, npc.vy);
+  
+  // POPRAWKA: Zamiast "zamrażać" prędkość w miejscu (co blokowało fizykę i odrzut!),
+  // stosujemy miękkie, aerodynamiczne hamowanie. Pozwala to na lot w korkociągu po zderzeniu!
   if (v > maxV) {
-    const scale = maxV / v;
-    npc.vx *= scale;
-    npc.vy *= scale;
+    npc.vx *= 0.96;
+    npc.vy *= 0.96;
   }
 }
 
@@ -46,7 +48,7 @@ function initAutonomousWeapons(npc) {
       if (!group || !Array.isArray(group)) return;
       for (const loadout of group) {
         const def = loadout.weapon;
-        if (!def) continue;
+        if (!def || loadout?.hp?.destroyed || !loadout?.hp?.mount) continue;
 
         // 1. ROZPOZNAWANIE KIERUNKU LUF NA BAZIE POZYCJI X/Y
         const localY = loadout.hp?.y || loadout.hp?.pos?.y || 0;
@@ -109,6 +111,10 @@ function processAutonomousWeapons(npc, dt) {
     : [window.ship, ...npcs.filter(n => !n.dead && n.friendly)].filter(Boolean);
 
   for (const weapon of npc.autoWeapons) {
+    const hpRef = weapon.hpOffset;
+    if (hpRef && (hpRef.destroyed || !hpRef.mount || (weapon.id && hpRef.mount !== weapon.id))) {
+      continue;
+    }
     // Kąt spoczynkowy działa (np. prosto lub wzdłuż boku)
     const restAngle = (npc.angle || 0) + weapon.mountAngle;
     if (weapon.visualAngle === undefined) weapon.visualAngle = restAngle;

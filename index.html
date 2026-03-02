@@ -577,7 +577,6 @@
     import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
     import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
     import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
-    import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
     import { CopyShader } from "three/addons/shaders/CopyShader.js";
     import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
     import { initWorld3D, attachPirateStation3D, dettachPirateStation3D, updateWorld3D, drawWorld3D } from "./src/3d/world3d.js";
@@ -590,7 +589,6 @@
     import { createArmataImpactFactory } from "./src/effects3d/armataImpact.js";
     import { createAutocannonImpactFactory } from "./src/effects3d/autocannonImpact.js";
     import { createReactorBlowFactory } from "./src/effects3d/reactorblow.js";
-    import * as Space2DBackground from "./src/lib/space2d/tyroBackground.js";
     import { WarpBlackHole } from "./src/vfx/warpBlackHole.js";
     import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
     import { createShipEntity, applyPlayerInput, runShipAI } from "./src/game/shipEntity.js";
@@ -600,7 +598,6 @@
     window.RenderPass = RenderPass;
     window.UnrealBloomPass = UnrealBloomPass;
     window.ShaderPass = ShaderPass;
-    window.OutputPass = OutputPass;
     window.GLTFLoader = GLTFLoader;
     window.initWorld3D = initWorld3D;
     window.attachPirateStation3D = attachPirateStation3D;
@@ -638,7 +635,6 @@
     // Nie modyfikujemy namespace'u modułu THREE (jest niemodyfikowalny).
     // Jeśli coś potrzebuje CopyShader globalnie, wystawiamy go przez window:
     window.CopyShader = CopyShader;
-    window.Space2DBackground = Space2DBackground;
 
     const warpFX = new WarpBlackHole({ zIndex: 45, mode: 'offscreen' });
     warpFX.setEnabled(false);
@@ -646,7 +642,7 @@
 
   </script>
   <!-- przełącznik: aktywuj assetowy renderer planet (klasyczny skrypt, aby globalne API było gotowe zanim ruszy pętla gry) -->
-  <script type="module" src="planet3d.assets.js"></script>
+  <script type="module" src="./src/3d/planet3d.assets.js"></script>
 
   <script type="module">
     import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
@@ -1570,7 +1566,6 @@
 
     function getBackgroundQuality() {
       if (window.Nebula?.getConfig) return window.Nebula.getConfig().quality;
-      if (window.Space2DBackground?.getConfig) return window.Space2DBackground.getConfig().quality;
       return null;
     }
 
@@ -1586,7 +1581,6 @@
 
     function setBackgroundQuality(quality) {
       if (window.Nebula?.setQuality) window.Nebula.setQuality(quality);
-      else if (window.Space2DBackground?.setQuality) window.Space2DBackground.setQuality(quality);
       applyQualitySelection();
     }
 
@@ -1607,8 +1601,6 @@
       zoom: 1.0
     };
 
-    let spaceBg = null;
-    let spaceBgReady = false;
     const warpBlackHoleFX = window.warpBlackHoleFX || null;
     let warpLensMode = 'background';
     let warpLensSource = null;
@@ -1653,18 +1645,10 @@
         warpBlackHoleFX.setSourceParallaxTransform(null);
       }
       if (warpLensMode === 'background') {
-        if (spaceBg && typeof spaceBg.getBackgroundCanvas === 'function') {
-          const descriptor = typeof spaceBg.getBackgroundSampleDescriptor === 'function'
-            ? spaceBg.getBackgroundSampleDescriptor()
-            : null;
-          const src = descriptor?.canvas ?? spaceBg.getBackgroundCanvas();
-          if (src && warpLensSource !== src) {
-            warpLensSource = src;
-            warpBlackHoleFX.setSourceCanvas(src);
-          }
-          if (descriptor && typeof warpBlackHoleFX.setSourceParallaxTransform === 'function') {
-            warpBlackHoleFX.setSourceParallaxTransform(descriptor);
-          }
+        const src = ctx?.canvas || null;
+        if (src && warpLensSource !== src) {
+          warpLensSource = src;
+          warpBlackHoleFX.setSourceCanvas(src);
         }
       } else if (warpLensMode === 'full') {
         if (warpLensSource !== ctx.canvas) {
@@ -1688,47 +1672,6 @@
 
     if (typeof configureWarpLensSource === 'function') {
       configureWarpLensSource();
-    }
-
-    function tryInitSpaceBackground() {
-      if (spaceBgReady) return true;
-      const module = window.Space2DBackground;
-      if (!module) return false;
-      spaceBg = module;
-      try {
-        module.setBgOptions?.({
-          renderSun: false,
-          renderNebulae: true,
-          renderStars: true,
-          renderPointStars: false,
-          shortScale: true
-        });
-        module.initSpaceBg?.(window.SUN?.seed ?? 12345);
-        module.resizeSpaceBg?.(innerWidth, innerHeight);
-        spaceBgReady = true;
-        configureWarpLensSource();
-        window.removeEventListener('DOMContentLoaded', tryInitSpaceBackground);
-        window.removeEventListener('load', tryInitSpaceBackground);
-        return true;
-      } catch (err) {
-        return false;
-      }
-    }
-
-    if (!tryInitSpaceBackground()) {
-      window.addEventListener('DOMContentLoaded', tryInitSpaceBackground);
-      window.addEventListener('load', tryInitSpaceBackground);
-      let spaceBgPollAttempts = 0;
-      const MAX_SPACE_BG_POLL_ATTEMPTS = 240;
-      (function pollSpaceBackground() {
-        if (tryInitSpaceBackground() || spaceBgPollAttempts++ >= MAX_SPACE_BG_POLL_ATTEMPTS) return;
-        requestAnimationFrame(pollSpaceBackground);
-      })();
-    }
-
-    function waitForSpaceBackgroundReady() {
-      if (spaceBgReady) return Promise.resolve();
-      return waitForCondition(() => spaceBgReady, 2500);
     }
 
     let mainScene3D = null;
@@ -2842,6 +2785,25 @@
       return out;
     }
 
+    function buildPlayerDefaultEditorCores() {
+      const playerCfg = getPlayerEditorConfigFromStorage();
+      const src = Array.isArray(playerCfg?.cores) ? playerCfg.cores : [];
+      if (!src.length) return [];
+      const out = [];
+      for (let i = 0; i < src.length; i++) {
+        const marker = src[i];
+        const x = Number(marker?.x);
+        const y = Number(marker?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        out.push({
+          id: marker?.id || uid(),
+          x,
+          y
+        });
+      }
+      return out;
+    }
+
     function normalizeEditorEngineMarker(marker) {
       const x = Number(marker?.x);
       const y = Number(marker?.y);
@@ -3027,6 +2989,7 @@
     ship.inventory = mergedInventory;
     ship.shipFrame = previousPlayer.shipFrame || 'atlas';
     ship.hardpoints = previousPlayer.hardpoints || [];
+    ship.editorCores = buildPlayerDefaultEditorCores();
     ship.weapons = previousPlayer.weapons || {};
     ship.spriteW = previousPlayer.spriteW || ship.spriteW || 260;
     ship.spriteH = previousPlayer.spriteH || ship.spriteH || 520;
@@ -3054,6 +3017,12 @@
 
     function setHardpointMount(hp, weaponId, opts = {}) {
       if (!hp) return;
+      if (hp.destroyed) {
+        hp.mount = null;
+        hp.ammo = null;
+        hp.maxAmmo = null;
+        return;
+      }
       const weapon = weaponId ? WEAPONS[weaponId] : null;
       const inventory = Game.player?.inventory;
       // POPRAWKA: Używamy weapon.mountType zamiast weapon.type
@@ -3079,6 +3048,7 @@
       if (!frame) return;
       const spriteSize = { w: Game.player.spriteW || 260, h: Game.player.spriteH || 520 };
       Game.player.hardpoints = generatePlayerHardpointsForFrame(Game.player.shipFrame, frame, spriteSize);
+      Game.player.editorCores = buildPlayerDefaultEditorCores();
       autoMountDefaults();
       syncWeaponSystems();
     }
@@ -3095,7 +3065,7 @@
       if (!Game.player.inventory.has(weaponId)) return;
       for (const hp of Game.player.hardpoints) {
         if (howMany <= 0) break;
-        if (hp.type === type && !hp.mount) {
+        if (hp.type === type && !hp.mount && !hp.destroyed) {
           setHardpointMount(hp, weaponId);
           howMany--;
         }
@@ -3106,7 +3076,7 @@
       const byType = {};
       for (const type of Object.values(HP)) byType[type] = [];
       for (const hp of Game.player.hardpoints) {
-        if (!hp.mount) continue;
+        if (hp.destroyed || !hp.mount) continue;
         const weapon = WEAPONS[hp.mount];
         if (weapon) byType[hp.type].push({ hp, weapon });
       }
@@ -3115,6 +3085,247 @@
       rocketAmmoMax = missileAmmoCapacity();
       rocketAmmo = missileAmmoTotal();
       updateMainWeaponBehavior();
+    }
+
+    const HARDPOINT_INTEGRITY_CONFIG = Object.freeze({
+      probeEverySec: 0.08,
+      probeRadius: 14,
+      coreProbeRadius: 12,
+      lostChecksToDestroy: 2,
+      coreLostChecksToDestroy: 2,
+      playerHullFracTotal: 0.18,
+      npcHullFracTotal: 0.14,
+      minHullDamage: 2
+    });
+
+    function getEntityHardpoints(entity) {
+      if (!entity) return null;
+      if (entity === ship) {
+        return Array.isArray(Game.player?.hardpoints) ? Game.player.hardpoints : null;
+      }
+      if (Array.isArray(entity.editorHardpoints)) return entity.editorHardpoints;
+      return null;
+    }
+
+    function getEntityHardpointLocalPos(entity, hp) {
+      if (!hp) return null;
+      if (hp.pos && Number.isFinite(hp.pos.x) && Number.isFinite(hp.pos.y)) {
+        return { x: hp.pos.x, y: hp.pos.y };
+      }
+      const x = Number(hp.x);
+      const y = Number(hp.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      const hpScale = (Number.isFinite(entity?.__hardpointScale) && entity.__hardpointScale > 0)
+        ? entity.__hardpointScale
+        : 1;
+      return { x: x * hpScale, y: y * hpScale };
+    }
+
+    function getEntityHardpointWorldPos(entity, hp) {
+      const local = getEntityHardpointLocalPos(entity, hp);
+      if (!local) return null;
+      const baseX = Number.isFinite(entity?.pos?.x) ? entity.pos.x : Number(entity?.x || 0);
+      const baseY = Number.isFinite(entity?.pos?.y) ? entity.pos.y : Number(entity?.y || 0);
+      const spriteRot = (entity === ship) ? 0 : (Number(entity?.capitalProfile?.spriteRotation) || 0);
+      const angle = (Number(entity?.angle) || 0) + spriteRot;
+      const c = Math.cos(angle);
+      const s = Math.sin(angle);
+      return {
+        x: baseX + local.x * c - local.y * s,
+        y: baseY + local.x * s + local.y * c
+      };
+    }
+
+    function getEntityCoreLocalPos(entity, core) {
+      if (!core) return null;
+      const x = Number(core.x);
+      const y = Number(core.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      const hpScale = (Number.isFinite(entity?.__hardpointScale) && entity.__hardpointScale > 0)
+        ? entity.__hardpointScale
+        : 1;
+      return { x: x * hpScale, y: y * hpScale };
+    }
+
+    function isHardpointHexSupported(entity, hp) {
+      if (!entity?.hexGrid) return true;
+      if (!DestructorSystem?.probeImpact) return true;
+      const worldPos = getEntityHardpointWorldPos(entity, hp);
+      if (!worldPos) return true;
+      if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y)) return true;
+      const hpScale = (Number.isFinite(entity?.__hardpointScale) && entity.__hardpointScale > 0)
+        ? entity.__hardpointScale
+        : 1;
+      const r = HARDPOINT_INTEGRITY_CONFIG.probeRadius * hpScale;
+      if (DestructorSystem.probeImpact(entity, worldPos.x + r, worldPos.y)) return true;
+      if (DestructorSystem.probeImpact(entity, worldPos.x - r, worldPos.y)) return true;
+      if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y + r)) return true;
+      if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y - r)) return true;
+      return false;
+    }
+
+    function getEntityCores(entity) {
+      if (!entity) return null;
+      if (entity === ship) return Array.isArray(Game.player?.editorCores) ? Game.player.editorCores : null;
+      return Array.isArray(entity.editorCores) ? entity.editorCores : null;
+    }
+
+    function getEntityCoreWorldPos(entity, core) {
+      const local = getEntityCoreLocalPos(entity, core);
+      if (!local) return null;
+      const baseX = Number.isFinite(entity?.pos?.x) ? entity.pos.x : Number(entity?.x || 0);
+      const baseY = Number.isFinite(entity?.pos?.y) ? entity.pos.y : Number(entity?.y || 0);
+      const spriteRot = (entity === ship) ? 0 : (Number(entity?.capitalProfile?.spriteRotation) || 0);
+      const angle = (Number(entity?.angle) || 0) + spriteRot;
+      const c = Math.cos(angle);
+      const s = Math.sin(angle);
+      return {
+        x: baseX + local.x * c - local.y * s,
+        y: baseY + local.x * s + local.y * c
+      };
+    }
+
+    function isCoreHexSupported(entity, core) {
+      if (!entity?.hexGrid) return true;
+      if (!DestructorSystem?.probeImpact) return true;
+      const worldPos = getEntityCoreWorldPos(entity, core);
+      if (!worldPos) return true;
+      if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y)) return true;
+      const hpScale = (Number.isFinite(entity?.__hardpointScale) && entity.__hardpointScale > 0)
+        ? entity.__hardpointScale
+        : 1;
+      const r = HARDPOINT_INTEGRITY_CONFIG.coreProbeRadius * hpScale;
+      if (DestructorSystem.probeImpact(entity, worldPos.x + r, worldPos.y)) return true;
+      if (DestructorSystem.probeImpact(entity, worldPos.x - r, worldPos.y)) return true;
+      if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y + r)) return true;
+      if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y - r)) return true;
+      return false;
+    }
+
+    function computeHardpointHullDamage(entity, hardpointCount) {
+      const count = Math.max(1, Number(hardpointCount) || 1);
+      if (entity === ship) {
+        const hullMax = Math.max(1, Number(ship?.hull?.max) || 1);
+        return Math.max(HARDPOINT_INTEGRITY_CONFIG.minHullDamage, (hullMax * HARDPOINT_INTEGRITY_CONFIG.playerHullFracTotal) / count);
+      }
+      const hullMax = Math.max(1, Number(entity?.maxHp) || Number(entity?.hp) || 1);
+      return Math.max(HARDPOINT_INTEGRITY_CONFIG.minHullDamage, (hullMax * HARDPOINT_INTEGRITY_CONFIG.npcHullFracTotal) / count);
+    }
+
+    function markHardpointDestroyed(entity, hp, hardpointCount) {
+      if (!hp || hp.destroyed) return false;
+      hp.destroyed = true;
+      hp.mount = null;
+      hp.ammo = null;
+      hp.maxAmmo = null;
+      hp.__supportMisses = 0;
+
+      if (entity && entity !== ship && entity.weapons && typeof entity.weapons === 'object') {
+        for (const key of Object.keys(entity.weapons)) {
+          const arr = entity.weapons[key];
+          if (!Array.isArray(arr)) continue;
+          entity.weapons[key] = arr.filter(loadout => {
+            const ref = loadout?.hp;
+            if (!ref) return false;
+            if (ref === hp) return false;
+            if (hp.id && ref.id && ref.id === hp.id) return false;
+            return true;
+          });
+        }
+        entity._weaponsInit = false;
+      }
+
+      const hpDamage = computeHardpointHullDamage(entity, hardpointCount);
+      if (entity === ship) {
+        applyDamageToPlayer(hpDamage, { bypassShield: true });
+      } else if (entity && !entity.dead) {
+        applyDamageToNPC(entity, hpDamage, 'default', { bypassShield: true });
+      }
+      return true;
+    }
+
+    function destroyEntityFromCore(entity, core) {
+      if (!core || core.destroyed) return false;
+      core.destroyed = true;
+      core.__supportMisses = 0;
+
+      if (entity === ship) {
+        applyDamageToPlayer((Number(ship?.hull?.val) || 0) + 1, { bypassShield: true });
+      } else if (entity && !entity.dead) {
+        applyDamageToNPC(entity, (Number(entity?.hp) || Number(entity?.maxHp) || 0) + 1, 'default', { bypassShield: true });
+      }
+      return true;
+    }
+
+    function updateEntityHardpointIntegrity(entity, dt) {
+      if (!entity || entity.dead || !entity.hexGrid) return false;
+      const hardpoints = getEntityHardpoints(entity);
+      if (!hardpoints || hardpoints.length === 0) return false;
+
+      entity.__hardpointProbeTimer = (Number(entity.__hardpointProbeTimer) || 0) - dt;
+      if (entity.__hardpointProbeTimer > 0) return false;
+      entity.__hardpointProbeTimer = HARDPOINT_INTEGRITY_CONFIG.probeEverySec;
+
+      let changed = false;
+      const total = hardpoints.length;
+      for (let i = 0; i < hardpoints.length; i++) {
+        const hp = hardpoints[i];
+        if (!hp || hp.destroyed) continue;
+        const supported = isHardpointHexSupported(entity, hp);
+        if (supported) {
+          hp.__supportMisses = 0;
+          continue;
+        }
+        hp.__supportMisses = (hp.__supportMisses | 0) + 1;
+        if (hp.__supportMisses >= HARDPOINT_INTEGRITY_CONFIG.lostChecksToDestroy) {
+          if (markHardpointDestroyed(entity, hp, total)) changed = true;
+        }
+      }
+      return changed;
+    }
+
+    function updateEntityCoreIntegrity(entity, dt) {
+      if (!entity || entity.dead || !entity.hexGrid) return false;
+      const cores = getEntityCores(entity);
+      if (!cores || cores.length === 0) return false;
+
+      entity.__coreProbeTimer = (Number(entity.__coreProbeTimer) || 0) - dt;
+      if (entity.__coreProbeTimer > 0) return false;
+      entity.__coreProbeTimer = HARDPOINT_INTEGRITY_CONFIG.probeEverySec;
+
+      let changed = false;
+      for (let i = 0; i < cores.length; i++) {
+        const core = cores[i];
+        if (!core || core.destroyed) continue;
+        const supported = isCoreHexSupported(entity, core);
+        if (supported) {
+          core.__supportMisses = 0;
+          continue;
+        }
+        core.__supportMisses = (core.__supportMisses | 0) + 1;
+        if (core.__supportMisses >= HARDPOINT_INTEGRITY_CONFIG.coreLostChecksToDestroy) {
+          if (destroyEntityFromCore(entity, core)) changed = true;
+        }
+      }
+      return changed;
+    }
+
+    function updateHardpointIntegrity(dt, entities) {
+      let playerChanged = false;
+      if (updateEntityHardpointIntegrity(ship, dt)) playerChanged = true;
+      if (updateEntityCoreIntegrity(ship, dt)) playerChanged = true;
+      if (Array.isArray(entities)) {
+        for (let i = 0; i < entities.length; i++) {
+          const entity = entities[i];
+          if (!entity || entity === ship || entity.dead || entity.isWreck) continue;
+          updateEntityHardpointIntegrity(entity, dt);
+          updateEntityCoreIntegrity(entity, dt);
+        }
+      }
+      if (playerChanged) {
+        syncWeaponSystems();
+        if (typeof renderMechanic === 'function') renderMechanic();
+      }
     }
 
     function syncCiwsFromAuxLoadout(auxLoadouts) {
@@ -3169,7 +3380,7 @@
     function missileAmmoTotal() {
       let total = 0;
       for (const hp of Game.player.hardpoints) {
-        if (hp.type === HP.MISSILE && hp.mount) {
+        if (hp.type === HP.MISSILE && hp.mount && !hp.destroyed) {
           if (typeof hp.ammo === 'number') total += hp.ammo;
         }
       }
@@ -3179,7 +3390,7 @@
     function missileAmmoCapacity() {
       let total = 0;
       for (const hp of Game.player.hardpoints) {
-        if (hp.type === HP.MISSILE && hp.mount) {
+        if (hp.type === HP.MISSILE && hp.mount && !hp.destroyed) {
           if (typeof hp.maxAmmo === 'number') total += hp.maxAmmo;
         }
       }
@@ -3911,7 +4122,6 @@
       H = canvas.height = innerHeight;
       if (window.resizeHexShips3D) window.resizeHexShips3D(W, H);
       resizeShieldSystem(innerWidth, innerHeight);
-      spaceBg?.resizeSpaceBg?.(innerWidth, innerHeight);
       configureWarpLensSource?.();
       if (camera.mode === 'focus' && camera.focusStation) {
         const target = computeStationFocusTarget(camera.focusStation);
@@ -3997,9 +4207,9 @@
       }
     }
 
-    function triggerAutocannonImpact3D(x, y, size = ship.h * 0.2) {
+    function triggerAutocannonImpact3D(x, y, size = ship.h * 0.2, color = null, quality = 1) {
       if (overlay3D && window.makeAutocannonImpact) {
-        const fx = window.makeAutocannonImpact({ x, y, size });
+        const fx = window.makeAutocannonImpact({ x, y, size, color, quality });
         overlay3D.spawn(fx);
       }
     }
@@ -4106,6 +4316,45 @@
       const sprite = loadHullSprite(src);
       if (!sprite || !sprite.ready || sprite.error) return null;
       return sprite;
+    }
+
+    const NPC_HEX_IMAGE_CACHE = new Map();
+    function getNpcHexInitSource(npc, hullSprite) {
+      const fallback = {
+        image: hullSprite?.image || null,
+        hardpointScale: 1.0
+      };
+      if (!npc || !hullSprite?.image || !hullSprite.ready) return fallback;
+
+      const hullClass = getNpcHullClass(npc);
+      if (hullClass !== 'frigate') return fallback;
+
+      const faction = npc?.isPirate ? 'pirate' : 'terran';
+      const destroyerSprite = loadHullSprite(HULL_SPRITE_PATHS[faction]?.destroyer);
+      const destroyerWidth = destroyerSprite?.ready ? Math.max(1, destroyerSprite.width || destroyerSprite.image?.naturalWidth || 768) : 768;
+      const targetWidth = Math.max(256, destroyerWidth * 0.5);
+      const srcW = Math.max(1, hullSprite.width || hullSprite.image.naturalWidth || hullSprite.image.width || 1);
+      const srcH = Math.max(1, hullSprite.height || hullSprite.image.naturalHeight || hullSprite.image.height || 1);
+      const scale = Math.max(0.08, Math.min(1.0, targetWidth / srcW));
+      if (!Number.isFinite(scale) || scale >= 0.999) return fallback;
+
+      const key = `${hullSprite.image.src || hullClass}|${scale.toFixed(4)}`;
+      let canvas = NPC_HEX_IMAGE_CACHE.get(key);
+      if (!canvas) {
+        canvas = document.createElement('canvas');
+        canvas.width = Math.max(2, Math.round(srcW * scale));
+        canvas.height = Math.max(2, Math.round(srcH * scale));
+        const ictx = canvas.getContext('2d', { willReadFrequently: true });
+        if (ictx) {
+          ictx.imageSmoothingEnabled = true;
+          ictx.drawImage(hullSprite.image, 0, 0, canvas.width, canvas.height);
+          NPC_HEX_IMAGE_CACHE.set(key, canvas);
+        } else {
+          canvas = null;
+        }
+      }
+      if (!canvas) return fallback;
+      return { image: canvas, hardpointScale: scale };
     }
 
     function getCapitalShipSprite(src) {
@@ -4258,6 +4507,11 @@
     // --- tryb: REALNY UKLAD SLONECZNY (domyslnie wlaczony) ---
     const solarParams = new URLSearchParams(location.search);
     const USE_SOLAR = solarParams.has('solar') ? solarParams.get('solar') !== '0' : true; // można też sterować paramem URL ?solar=1
+    const WORLD_TARGET_DIAMETER = 10000000;
+    const WORLD_BELT_WIDTH_AU = 2;
+    const WORLD_SAFETY_MARGIN_AU = 2;
+    const WORLD_EDGE_MARGIN_AU = WORLD_SAFETY_MARGIN_AU;
+    const SOLAR_RING_CENTER_OFFSET_AU = 3;
 
     function makeSolarPlanets() {
       // Skala: 1 AU ~= 3000 jednostek swiata (Neptun ~ 90k)
@@ -4272,15 +4526,6 @@
       const earthMarsMinGap = (EARTH_BASE_R + MARS_BASE_R) * PLANET_SCALE * PLANET_3D_SIZE_MULTIPLIER;
       const earthMarsOrbitGapAu = MARS_ORBIT_AU - EARTH_ORBIT_AU;
       const minAuForNoOverlap = earthMarsMinGap / earthMarsOrbitGapAu;
-      const AU = Math.max(BASE_AU, Math.ceil(minAuForNoOverlap));
-      window.BASE_ORBIT = AU;
-      const MIN_SUN_GAP = 600;
-      const MIN_PLANET_GAP = 800;
-      const INNER_PLANET_COUNT = 4;
-      const INNER_EXTRA_ORBIT = 600;
-      const INNER_EXTRA_SUN_GAP = 600;
-      const INNER_EXTRA_PLANET_GAP = 600;
-      const rand = () => Math.random() * Math.PI * 2;
       const defs = [
         { id: 'mercury', name: 'mercury', baseR: 2000, orbitAU: 8.0, type: 'rocky' },
         { id: 'venus', name: 'venus', baseR: 2800, orbitAU: 15.0, type: 'rocky' },
@@ -4303,13 +4548,30 @@
         { id: 'neptune', name: 'neptune', baseR: 2000, orbitAU: 120.00, type: 'gas' },
         // { id:'pluto',   name:'pluto',   baseR:  30, orbitAU:39.50 },
       ];
+      const neptuneOrbitAU = (() => {
+        const n = defs.find(def => def.id === 'neptune');
+        return Number.isFinite(n?.orbitAU) ? n.orbitAU : 120.0;
+      })();
+      const beltHalfWidthAU = WORLD_BELT_WIDTH_AU * 0.5;
+      const outerRadiusAU = neptuneOrbitAU + SOLAR_RING_CENTER_OFFSET_AU + beltHalfWidthAU + WORLD_SAFETY_MARGIN_AU;
+      const minAuForWorldTarget = WORLD_TARGET_DIAMETER / Math.max(1, outerRadiusAU * 2);
+      const AU = Math.max(BASE_AU, minAuForNoOverlap, minAuForWorldTarget);
+      window.BASE_ORBIT = AU;
+
+      const MIN_SUN_GAP = 600;
+      const MIN_PLANET_GAP = 800;
+      const INNER_PLANET_COUNT = 4;
+      const INNER_EXTRA_ORBIT_STEP = Math.max(600, AU * 2.2);
+      const INNER_EXTRA_SUN_GAP = Math.max(600, AU * 0.35);
+      const INNER_EXTRA_PLANET_GAP = Math.max(600, AU * 0.45);
+      const rand = () => Math.random() * Math.PI * 2;
 
       let minOrbitEdge = SUN.r;
       return defs.map((def, index) => {
         const effectiveR = def.baseR * PLANET_SCALE;
         const baseOrbit = def.orbitAU * AU;
         const isInner = index < INNER_PLANET_COUNT;
-        const extraOrbit = isInner ? INNER_EXTRA_ORBIT : 0;
+        const extraOrbit = isInner ? INNER_EXTRA_ORBIT_STEP * (index + 1) : 0;
         const sunGap = SUN.r + effectiveR + MIN_SUN_GAP + (isInner ? INNER_EXTRA_SUN_GAP : 0);
         const neighborGap = minOrbitEdge + effectiveR + MIN_PLANET_GAP + (isInner ? INNER_EXTRA_PLANET_GAP : 0);
         const orbitRadius = Math.max(
@@ -4335,10 +4597,6 @@
       });
     }
 
-    const WORLD_BELT_WIDTH_AU = 2;
-    const WORLD_SAFETY_MARGIN_AU = 2;
-    const WORLD_EDGE_MARGIN_AU = WORLD_SAFETY_MARGIN_AU;
-
     function computeWorldDiameter(planets) {
       const auToWorld = getAuToWorldUnits();
       const beltWidthAU = WORLD_BELT_WIDTH_AU;
@@ -4346,19 +4604,19 @@
       const safetyMarginAU = WORLD_SAFETY_MARGIN_AU;
       const beltCenterAU = (() => {
         const neptune = planets.find(p => p.id === 'neptune' || p.name === 'neptune');
-        if (neptune && Number.isFinite(neptune.orbitAU)) return neptune.orbitAU + 3;
+        if (neptune && Number.isFinite(neptune.orbitAU)) return neptune.orbitAU + SOLAR_RING_CENTER_OFFSET_AU;
 
         const maxOrbitAU = planets
           .map(p => p.orbitAU)
           .filter(Number.isFinite)
           .reduce((max, v) => Math.max(max, v), -Infinity);
-        if (Number.isFinite(maxOrbitAU)) return maxOrbitAU + 3;
+        if (Number.isFinite(maxOrbitAU)) return maxOrbitAU + SOLAR_RING_CENTER_OFFSET_AU;
 
         const maxOrbitRadius = planets
           .map(p => p.orbitRadius)
           .filter(Number.isFinite)
           .reduce((max, v) => Math.max(max, v), -Infinity);
-        if (Number.isFinite(maxOrbitRadius)) return (maxOrbitRadius / auToWorld) + 3;
+        if (Number.isFinite(maxOrbitRadius)) return (maxOrbitRadius / auToWorld) + SOLAR_RING_CENTER_OFFSET_AU;
 
         return 60;
       })();
@@ -4423,7 +4681,7 @@
 
     const PLANET_DATA = USE_SOLAR ? makeSolarPlanets() : makeProceduralPlanets();
 
-    const WORLD_DIAMETER = computeWorldDiameter(PLANET_DATA);
+    const WORLD_DIAMETER = Math.max(WORLD_TARGET_DIAMETER, computeWorldDiameter(PLANET_DATA));
     setWorldSize(WORLD, { width: WORLD_DIAMETER, height: WORLD_DIAMETER });
     alignWorldToCenter(WORLD.w / 2, WORLD.h / 2);
 
@@ -5487,6 +5745,14 @@
     // Lista na martwe, dryfujące kawałki
     window.createWreckage = function (parentEntity, shards) {
       if (!shards || shards.length === 0) return;
+      if (window.DestructorSystem?.spawnWreckEntity && parentEntity?.hexGrid) {
+        try {
+          window.DestructorSystem.spawnWreckEntity(parentEntity, shards, null);
+          return;
+        } catch (err) {
+          console.warn('[createWreckage] DestructorSystem.spawnWreckEntity failed, using fallback:', err);
+        }
+      }
 
       // 1. Oblicz środek masy nowej grupy
       let sumLx = 0, sumLy = 0;
@@ -5522,14 +5788,17 @@
       const wreck = {
         x: worldX,
         y: worldY,
+        pos: { x: worldX, y: worldY },
         vx: (parentEntity.vx || parentEntity.vel?.x || 0),
         vy: (parentEntity.vy || parentEntity.vel?.y || 0),
+        vel: { x: (parentEntity.vx || parentEntity.vel?.x || 0), y: (parentEntity.vy || parentEntity.vel?.y || 0) },
         angle: parentEntity.angle,
         angVel: parentEntity.angVel || 0,
         mass: shards.length * 10,
         friction: 0.998,
         dead: false,
         isWreck: true,
+        isCollidable: true,
         visual: { spriteScale: scale },
 
         hexGrid: {
@@ -6282,8 +6551,13 @@
         const angle = (owner.angle || 0) + (Number(owner.capitalProfile?.spriteRotation) || 0);
         const c = Math.cos(angle);
         const s = Math.sin(angle);
-        muzzlePos.x = owner.x + (opts.hp.x * c - opts.hp.y * s);
-        muzzlePos.y = owner.y + (opts.hp.x * s + opts.hp.y * c);
+        const hpScale = (Number.isFinite(owner?.__hardpointScale) && owner.__hardpointScale > 0)
+          ? owner.__hardpointScale
+          : 1;
+        const hpX = opts.hp.x * hpScale;
+        const hpY = opts.hp.y * hpScale;
+        muzzlePos.x = owner.x + (hpX * c - hpY * s);
+        muzzlePos.y = owner.y + (hpX * s + hpY * c);
       } else if (opts.origin) {
         muzzlePos = opts.origin;
       }
@@ -6709,6 +6983,11 @@
       }
       return fallback || color || '#ffffff';
     }
+    function isWorldPointNearViewport(wx, wy, marginPx = 240) {
+      if (!camera || typeof worldToScreen !== 'function') return true;
+      const s = worldToScreen(wx, wy, camera);
+      return s.x >= -marginPx && s.x <= (W + marginPx) && s.y >= -marginPx && s.y <= (H + marginPx);
+    }
 
     const WEAPON_VFX_PRESETS = {
       rail: {
@@ -6911,6 +7190,9 @@
       if (type === 'ciws') return 'ciws';
       if (type === 'autocannon') return 'autocannon';
       if (type === 'plasma') return 'plasma';
+      if (type === 'rocket') return 'armata';
+      if (type === 'flak') return 'flak';
+      if (type === 'superweapon') return 'armata';
       return 'default';
     }
 
@@ -6927,7 +7209,99 @@
       };
     }
 
+    const projectileImpact3DThrottle = new Map();
+    function getProjectileImpactVfxPressure() {
+      const overlayStats = (typeof window !== 'undefined' && window.overlay3D && typeof window.overlay3D.getStats === 'function')
+        ? window.overlay3D.getStats()
+        : null;
+      const active = Number(overlayStats?.activeEffects) || 0;
+      const renderMs = Number(overlayStats?.lastRenderMs) || 0;
+      const dropped = Number(overlayStats?.droppedEffects) || 0;
+      const effectPressure = Math.max(0, active / 180);
+      const renderPressure = Math.max(0, renderMs / 10);
+      const dropPressure = Math.max(0, dropped > 0 ? 0.35 : 0);
+      return {
+        active,
+        renderMs,
+        pressure: Math.max(effectPressure, renderPressure, dropPressure)
+      };
+    }
+    function resolveImpactColorInt(color, fallback = 0xb0f2ff) {
+      const rgb = hexToRgb(color);
+      if (!rgb) return fallback;
+      return ((rgb.r & 255) << 16) | ((rgb.g & 255) << 8) | (rgb.b & 255);
+    }
+    function shouldSpawnProjectileImpact3D(presetKey, x, y) {
+      const key = String(presetKey || 'default').toLowerCase();
+      const pressureInfo = getProjectileImpactVfxPressure();
+      const pressure = pressureInfo.pressure;
+      let cooldownMs = 0;
+      if (key === 'autocannon' || key === 'ciws' || key === 'vulcan') cooldownMs = 42;
+      else if (key === 'plasma' || key === 'pulse' || key === 'default') cooldownMs = 28;
+      else if (key === 'rail' || key === 'tempest') cooldownMs = 8;
+      else if (key === 'helios') cooldownMs = 34;
+
+      if (pressure > 0.65) {
+        if (key === 'autocannon' || key === 'ciws' || key === 'vulcan' || key === 'default' || key === 'plasma' || key === 'pulse') {
+          const skipProb = Math.min(0.9, (pressure - 0.5) * 1.05);
+          if (Math.random() < skipProb) return false;
+        } else if (key === 'helios') {
+          const skipProb = Math.min(0.75, (pressure - 0.55) * 0.85);
+          if (Math.random() < skipProb) return false;
+        }
+      }
+
+      if (pressure > 0.5) {
+        cooldownMs *= Math.min(3.4, 1 + (pressure - 0.45) * 2.1);
+      }
+      if (cooldownMs <= 0) return true;
+      const cellX = Math.round((Number(x) || 0) / 60);
+      const cellY = Math.round((Number(y) || 0) / 60);
+      const bucketKey = `${key}:${cellX}:${cellY}`;
+      const nowMs = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+      const lastMs = projectileImpact3DThrottle.get(bucketKey) || 0;
+      if ((nowMs - lastMs) < cooldownMs) return false;
+      projectileImpact3DThrottle.set(bucketKey, nowMs);
+      if (projectileImpact3DThrottle.size > 2048) {
+        const threshold = nowMs - 400;
+        for (const [k, t] of projectileImpact3DThrottle) {
+          if (t < threshold) projectileImpact3DThrottle.delete(k);
+        }
+      }
+      return true;
+    }
+    function spawnProjectileImpact3D(presetKey, color, scale = 1, x = 0, y = 0) {
+      const key = String(presetKey || 'default').toLowerCase();
+      if (key === 'beam' || key === 'laser') return;
+      if (!isWorldPointNearViewport(x, y, 260)) return;
+      if (!shouldSpawnProjectileImpact3D(key, x, y)) return;
+      const vfxPressure = getProjectileImpactVfxPressure();
+      const quality = Math.max(0.16, Math.min(1, 1 - Math.max(0, vfxPressure.pressure - 0.35) * 1.15));
+      if (key === 'helios') {
+        triggerAutocannonImpact3D(x, y, ship.h * 0.2 * Math.max(0.72, scale), color || '#ff003c', quality);
+        return;
+      }
+      if (key === 'rail' || key === 'tempest') {
+        triggerRailgunExplosion3D(
+          x,
+          y,
+          ship.h * 0.2 * Math.max(0.65, scale),
+          {
+            sparkCount: key === 'tempest' ? 10 : 4,
+            sparkColor: resolveImpactColorInt(color, key === 'tempest' ? 0x9bf5ff : 0xb0f2ff)
+          }
+        );
+        return;
+      }
+      if (key === 'armata' || key === 'rocket' || key === 'missile' || key === 'flak' || key === 'broadside') {
+        triggerArmataImpact3D(x, y, ship.h * 0.28 * Math.max(0.75, scale));
+        return;
+      }
+      triggerAutocannonImpact3D(x, y, ship.h * 0.18 * Math.max(0.7, scale), color, quality);
+    }
+
     function spawnWeaponImpactFromPreset(presetKey, color, scale = 1, x = 0, y = 0) {
+      spawnProjectileImpact3D(presetKey, color, scale, x, y);
       if (!isCanvasWeaponVfxEnabled()) return;
       const fx = buildBulletVfxInstance(presetKey, color);
       const sparks = Math.round((fx.sparkCount || 12) * scale);
@@ -6980,6 +7354,15 @@
         bullet.vfx = buildBulletVfxInstance(presetKey, bullet.vfxColor || bullet.color);
       }
       return bullet.vfx;
+    }
+
+    function spawnBulletImpactEffect(bullet, x, y, scale = 1) {
+      const presetKey = resolveBulletVfxKey(
+        bullet?.vfxKey || bullet?.weaponId || bullet?.weaponName,
+        bullet?.type
+      );
+      const color = bullet?.vfxColor || bullet?.color || WEAPON_VFX_PRESETS[presetKey]?.color || null;
+      spawnWeaponImpactFromPreset(presetKey, color, scale, x, y);
     }
 
     function drawBulletVisual(ctx, b, cam, alpha = 1) {
@@ -7068,6 +7451,7 @@
       ctx.restore();
     }
     function spawnExplosionPlasma(x, y, scale = 1) {
+      spawnProjectileImpact3D('plasma', '#7cff9c', scale, x, y);
       if (!isCanvasWeaponVfxEnabled()) return;
       spawnParticle(
         { x, y },         // Pozycja
@@ -7086,18 +7470,16 @@
       });
     }
     function spawnRailHitEffect(x, y, scale = 1, weaponId = '') {
-      if (!isCanvasWeaponVfxEnabled()) return;
       const key = String(weaponId || '').toLowerCase();
-      const isTempest = key.includes('tempest') || key === 'railgun_mk1' || key === 'railgun_mk2';
-      triggerRailgunExplosion3D(x, y, ship.h * 0.22 * scale, {
-        sparkCount: isTempest ? 10 : 2,
-        sparkColor: isTempest ? 0x9bf5ff : 0xb0f2ff
-      });
+      const preset = key.includes('tempest') || key === 'railgun_mk1' || key === 'railgun_mk2'
+        ? 'tempest'
+        : 'rail';
+      spawnWeaponImpactFromPreset(preset, null, scale, x, y);
     }
 
     function spawnArmataHitEffect(x, y, scale = 1) {
+      spawnWeaponImpactFromPreset('armata', '#ffb46b', scale, x, y);
       if (!isCanvasWeaponVfxEnabled()) return;
-      triggerArmataImpact3D(x, y, ship.h * 0.3 * scale);
       const count = Math.round(28 * scale);
       for (let i = 0; i < count; i++) {
         const a = Math.random() * Math.PI * 2;
@@ -7117,8 +7499,8 @@
     }
 
     function spawnAutocannonHitEffect(x, y, scale = 1) {
+      spawnWeaponImpactFromPreset('autocannon', '#ffcc8a', scale, x, y);
       if (!isCanvasWeaponVfxEnabled()) return;
-      triggerAutocannonImpact3D(x, y, ship.h * 0.18 * scale);
       const sparkCount = Math.round(20 * scale);
       for (let i = 0; i < sparkCount; i++) {
         const a = Math.random() * Math.PI * 2;
@@ -7296,8 +7678,8 @@
     }
 
     function spawnSiegeHitEffect(x, y, scale = 1) {
+      spawnWeaponImpactFromPreset('armata', '#ffd09a', scale * 1.1, x, y);
       if (!isCanvasWeaponVfxEnabled()) return;
-      triggerArmataImpact3D(x, y, ship.h * 0.36 * scale);
       const count = Math.round(36 * scale);
       for (let i = 0; i < count; i++) {
         const a = Math.random() * Math.PI * 2;
@@ -7316,6 +7698,7 @@
       spawnShockwave(x, y, { r: 16 * scale, maxR: 150 * scale, w: 3.4 * scale, maxLife: 0.42, color: 'rgba(255,195,120,' });
     }
     function spawnDefaultHit(x, y, scale = 1) {
+      spawnProjectileImpact3D('default', '#ffd86b', scale, x, y);
       if (!isCanvasWeaponVfxEnabled()) return;
       spawnParticle(
         { x, y },
@@ -9430,6 +9813,7 @@
     };
     let mechanicWeaponFilter = 'all';
     let mechanicHardpointFilter = 'all';
+    let mechanicBatchMode = '1';
     let mechanicDragWeaponId = null;
 
     function mechanicIconForWeapon(weapon, hpType) {
@@ -9463,14 +9847,51 @@
       return parts.join(' | ');
     }
 
-    function applyWeaponToHardpoint(hp, weaponId) {
+    function applyWeaponToHardpoint(hp, weaponId, options = null) {
       if (!hp) return;
+      if (hp.destroyed) return;
       const weapon = weaponId ? WEAPONS[weaponId] : null;
       setHardpointMount(hp, weaponId);
       if (weapon && weapon.ammo != null) {
         hp.ammo = weapon.ammo;
         hp.maxAmmo = weapon.ammo;
       }
+      if (options?.deferFinalize) return;
+      syncWeaponSystems();
+      renderMechanic();
+      saveLoadout();
+    }
+
+    function applyWeaponBatchToHardpoints(startHp, weaponId) {
+      if (!startHp || !weaponId) return;
+      if (startHp.destroyed) return;
+      const weapon = WEAPONS[weaponId];
+      if (!weapon || weapon.mountType !== startHp.type) return;
+      const typeHardpoints = Game.player.hardpoints.filter(h => h.type === startHp.type && !h.destroyed);
+      const startIdx = typeHardpoints.indexOf(startHp);
+      if (startIdx < 0) return;
+
+      if (mechanicBatchMode === '1') {
+        applyWeaponToHardpoint(startHp, weaponId);
+        return;
+      }
+
+      let extraSlots = 0;
+      if (mechanicBatchMode === 'all') {
+        extraSlots = Number.MAX_SAFE_INTEGER;
+      } else {
+        const parsed = Number(mechanicBatchMode);
+        extraSlots = Number.isFinite(parsed) ? Math.max(0, parsed | 0) : 0;
+      }
+
+      applyWeaponToHardpoint(startHp, weaponId, { deferFinalize: true });
+      let assignedExtra = 0;
+      for (let i = startIdx + 1; i < typeHardpoints.length; i++) {
+        if (assignedExtra >= extraSlots) break;
+        applyWeaponToHardpoint(typeHardpoints[i], weaponId, { deferFinalize: true });
+        assignedExtra++;
+      }
+
       syncWeaponSystems();
       renderMechanic();
       saveLoadout();
@@ -9478,6 +9899,7 @@
 
     function attachSlotDnD(slot, hp) {
       slot.addEventListener('dragover', (e) => {
+        if (hp?.destroyed) return;
         const weaponId = mechanicDragWeaponId || e.dataTransfer?.getData('text/plain');
         const weapon = weaponId ? WEAPONS[weaponId] : null;
         // POPRAWKA: weapon.mountType
@@ -9487,20 +9909,21 @@
       });
       slot.addEventListener('dragleave', () => { slot.classList.remove('drag-over'); });
       slot.addEventListener('drop', (e) => {
+        if (hp?.destroyed) return;
         const weaponId = e.dataTransfer?.getData('text/plain') || mechanicDragWeaponId;
         const weapon = weaponId ? WEAPONS[weaponId] : null;
         slot.classList.remove('drag-over');
         // POPRAWKA: weapon.mountType
         if (!weapon || weapon.mountType !== hp.type) return;
         e.preventDefault();
-        applyWeaponToHardpoint(hp, weapon.id);
+        applyWeaponBatchToHardpoints(hp, weapon.id);
       });
     }
 
     function quickMountWeapon(weapon) {
       if (!weapon) return;
       // POPRAWKA: szukamy po mountType i upewniamy się, że slot jest pusty (!h.mount)
-      const targetHp = Game.player.hardpoints.find(h => h.type === weapon.mountType && !h.mount);
+      const targetHp = Game.player.hardpoints.find(h => h.type === weapon.mountType && !h.mount && !h.destroyed);
       if (targetHp) {
         applyWeaponToHardpoint(targetHp, weapon.id);
       }
@@ -9583,6 +10006,28 @@
       setMechanicFilterActive(containerId, getValue());
     }
 
+    function setMechanicBatchActive(value) {
+      const container = document.getElementById('hp-batch-tabs');
+      if (!container) return;
+      container.querySelectorAll('button[data-batch]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.batch === value);
+      });
+    }
+
+    function initMechanicBatchControls() {
+      const container = document.getElementById('hp-batch-tabs');
+      if (!container) return;
+      container.querySelectorAll('button[data-batch]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const val = btn.dataset.batch;
+          if (!val) return;
+          mechanicBatchMode = val;
+          setMechanicBatchActive(mechanicBatchMode);
+        });
+      });
+      setMechanicBatchActive(mechanicBatchMode);
+    }
+
     function renderAvailableWeapons(root) {
       if (!root) return;
       root.innerHTML = '';
@@ -9639,6 +10084,7 @@
       row.className = 'hp-row'; // Nowa klasa CSS
       row.dataset.hpId = hp.id;
       row.dataset.hpType = hp.type;
+      if (hp.destroyed) row.classList.add('destroyed');
 
       // 1. Ikona zamontowanej broni (lub puste miejsce)
       const weapon = hp.mount ? WEAPONS[hp.mount] : null;
@@ -9664,7 +10110,10 @@
       // 3. Nazwa zamontowanej broni lub "Puste"
       const mountInfo = document.createElement('div');
       mountInfo.className = 'hp-row-mount';
-      if (weapon) {
+      if (hp.destroyed) {
+        mountInfo.textContent = 'Zniszczony';
+        mountInfo.classList.add('empty');
+      } else if (weapon) {
         mountInfo.textContent = weapon.name;
         mountInfo.classList.remove('empty');
       } else {
@@ -9678,7 +10127,7 @@
       clearBtn.className = 'hp-row-clear';
       clearBtn.textContent = '×';
       clearBtn.title = "Odczep broń";
-      clearBtn.disabled = !hp.mount;
+      clearBtn.disabled = !hp.mount || !!hp.destroyed;
       clearBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         applyWeaponToHardpoint(hp, null);
@@ -9731,6 +10180,7 @@
     function renderMechanic() {
       setMechanicFilterActive('weapon-filter-tabs', mechanicWeaponFilter);
       setMechanicFilterActive('hp-filter-tabs', mechanicHardpointFilter);
+      setMechanicBatchActive(mechanicBatchMode);
       renderAvailableWeapons(document.getElementById('mechanic-available'));
       renderInstalledHardpoints(document.getElementById('hp-groups'));
       const sel = document.getElementById('ship-frame-select');
@@ -10192,6 +10642,16 @@
           <button class="mechanic-tab-btn" data-filter="aux">Bron dodatkowa</button>
           <button class="mechanic-tab-btn" data-filter="special">Bron specjalna</button>
         </div>
+        <div class="mechanic-batch-row">
+          <span class="mechanic-batch-label">Hardpointy:</span>
+          <div id="hp-batch-tabs" class="mechanic-batch-tabs">
+            <button class="mechanic-batch-btn" data-batch="1">1</button>
+            <button class="mechanic-batch-btn" data-batch="3">3</button>
+            <button class="mechanic-batch-btn" data-batch="5">5</button>
+            <button class="mechanic-batch-btn" data-batch="10">10</button>
+            <button class="mechanic-batch-btn" data-batch="all">ALL</button>
+          </div>
+        </div>
         <div id="hp-groups" class="hp-groups mechanic-list-scroll"></div>
       </div>
       `;
@@ -10215,6 +10675,7 @@
 
       initMechanicFilter('weapon-filter-tabs', () => mechanicWeaponFilter, (val) => { mechanicWeaponFilter = val; });
       initMechanicFilter('hp-filter-tabs', () => mechanicHardpointFilter, (val) => { mechanicHardpointFilter = val; });
+      initMechanicBatchControls();
       renderMechanic();
     }
 
@@ -12308,10 +12769,14 @@
     }
 
     function enforceNpcHexIntegrityBalance() {
+      const playerHexLossExponent = 2.35;
+      const npcHexLossExponent = 2.2;
+
       if (ship && !ship.destroyed && ship.hexGrid && ship.hull && Number.isFinite(ship.hull.max) && ship.hull.max > 0) {
         const shipState = getHexStructuralState(ship);
         if (shipState && shipState.total > 0) {
-          const shipHullCap = Math.max(0, ship.hull.max * shipState.ratio);
+          const ratioAdjusted = Math.pow(Math.max(0, Math.min(1, shipState.ratio)), playerHexLossExponent);
+          const shipHullCap = Math.max(0, ship.hull.max * ratioAdjusted);
           if (ship.hull.val > shipHullCap + 0.25) {
             applyDamageToPlayer(ship.hull.val - shipHullCap, { bypassShield: true });
           }
@@ -12329,7 +12794,8 @@
         if (!state || state.total <= 0) continue;
 
         const npcMaxHull = Math.max(1, Number(npc.maxHp) || Number(npc.hp) || 1);
-        const npcHullCap = Math.max(0, npcMaxHull * state.ratio);
+        const ratioAdjusted = Math.pow(Math.max(0, Math.min(1, state.ratio)), npcHexLossExponent);
+        const npcHullCap = Math.max(0, npcMaxHull * ratioAdjusted);
         if (npc.hp > npcHullCap + 0.25) {
           applyDamageToNPC(npc, npc.hp - npcHullCap, 'default', { bypassShield: true });
         }
@@ -12436,7 +12902,7 @@
           }
         }
 
-        return { buffer: this._resultBuffer, count: this._resultCount };
+        return this._resultCount;
       }
     };
 
@@ -12571,9 +13037,10 @@
             if (!target && lockedTarget && !lockedTarget.dead) target = lockedTarget;
             if (target) {
               const speed = Math.hypot(b.vx, b.vy);
-              const dir = norm({ x: target.x - b.x, y: target.y - b.y });
+              const dx = target.x - b.x;
+              const dy = target.y - b.y;
               const current = Math.atan2(b.vy, b.vx);
-              const desired = Math.atan2(dir.y, dir.x);
+              const desired = Math.atan2(dy, dx);
               const diff = wrapAngle(desired - current);
               const maxTurn = (b.turnRate || SIDE_ROCKET_TURN_RATE) * dt;
               const turn = Math.abs(diff) < maxTurn ? diff : Math.sign(diff) * maxTurn;
@@ -12592,9 +13059,8 @@
         let hitNPC = null;
         let didHitShield = false;
 
-        const searchResult = SpatialGrid.getPotentialTargets(b.x, b.y);
-        const targetsBuffer = searchResult.buffer;
-        const targetsCount = searchResult.count;
+        const targetsCount = SpatialGrid.getPotentialTargets(b.x, b.y);
+        const targetsBuffer = SpatialGrid._resultBuffer;
 
         for (let k = 0; k < targetsCount; k++) {
           const npc = targetsBuffer[k];
@@ -12717,11 +13183,7 @@
 
             applyDamageToNPC(hitNPC, npcDamage, b.type);
 
-            // Efekty
-            if (b.type === 'armata') spawnArmataHitEffect(b.x, b.y, 1.0);
-            else if (b.type === 'rail') spawnRailHitEffect(b.x, b.y, 1.0, b.vfxKey || b.weaponId || b.weaponName);
-            else if (b.type === 'autocannon') spawnAutocannonHitEffect(b.x, b.y, 1.0);
-            else spawnDefaultHit(b.x, b.y, 1.0);
+            spawnBulletImpactEffect(b, b.x, b.y, 1.0);
 
             if (b.type === 'rail') {
               b.penetration = (b.penetration || 1) - 1;
@@ -12790,10 +13252,7 @@
             const ringDamage = Number.isFinite(b.damage) ? b.damage : 0;
             DestructorSystem.applyImpact(ringHit, ringHitX, ringHitY, ringDamage, { x: b.vx, y: b.vy });
 
-            if (b.type === 'armata') spawnArmataHitEffect(ringHitX, ringHitY, 0.95);
-            else if (b.type === 'rail') spawnRailHitEffect(ringHitX, ringHitY, 0.95, b.vfxKey || b.weaponId || b.weaponName);
-            else if (b.type === 'autocannon') spawnAutocannonHitEffect(ringHitX, ringHitY, 0.95);
-            else spawnDefaultHit(ringHitX, ringHitY, 0.95);
+            spawnBulletImpactEffect(b, ringHitX, ringHitY, 0.95);
 
             if (b.type === 'rail') {
               b.penetration = (b.penetration || 1) - 1;
@@ -12811,7 +13270,7 @@
             if (p && !p.destroyed && b.source !== p && Math.hypot(p.x - b.x, p.y - b.y) < p.radius + b.r) {
               applyDamageToPlatform(p, b.damage || 0);
               triggerMercAggro('platform_hit');
-              spawnExplosionPlasma(b.x, b.y, 1.0);
+              spawnBulletImpactEffect(b, b.x, b.y, 1.0);
               bullets.splice(i, 1);
               break;
             }
@@ -12821,7 +13280,7 @@
           if (st.hp && b.source !== st && Math.hypot(st.x - b.x, st.y - b.y) < st.r + b.r) {
             applyDamageToStation(st, b.damage || 0);
             if (mercMission?.station === st) triggerMercAggro('station_hit');
-            spawnExplosionPlasma(b.x, b.y, 1.0);
+            spawnBulletImpactEffect(b, b.x, b.y, 1.0);
             bullets.splice(i, 1);
             break;
           }
@@ -13823,11 +14282,12 @@
         w.vx *= w.friction;
         w.vy *= w.friction;
         w.angVel *= w.friction;
+        if (w.pos) { w.pos.x = w.x; w.pos.y = w.y; }
+        if (w.vel) { w.vel.x = w.vx; w.vel.y = w.vy; }
 
         // Despawn jeśli wrak nie ma już heksów lub jest bardzo daleko
         const distToPlayer = Math.hypot(w.x - ship.pos.x, w.y - ship.pos.y);
-        const hasHexesLeft = w.hexGrid && w.hexGrid.shards &&
-          w.hexGrid.shards.some(s => s.active && !s.isDebris && s.hp > 0);
+        const hasHexesLeft = w.hexGrid && w.hexGrid.activeStructuralCount > 0;
 
         // Usuń tylko jeśli: brak heksów LUB ekstremalna odległość (50km)
         if (!hasHexesLeft || distToPlayer > 50000) {
@@ -13880,6 +14340,7 @@
       }
       const tDestructor0 = performance.now();
       DestructorSystem.update(dt, allDestructibles);
+      updateHardpointIntegrity(dt, dynamicDestructibles);
       enforceNpcHexIntegrityBalance();
       const destructorMs = performance.now() - tDestructor0;
       PerfHUD.addTiming('destructorTime', destructorMs);
@@ -14687,16 +15148,22 @@
       const c = Math.cos(angle);
       const s = Math.sin(angle);
       const radius = Math.max(1.4, Math.min(4.4, 2.1 * zoom));
+      const hpScale = (Number.isFinite(npc?.__hardpointScale) && npc.__hardpointScale > 0)
+        ? npc.__hardpointScale
+        : 1;
 
       ctx.save();
       ctx.globalCompositeOperation = 'screen';
       for (const hp of hardpoints) {
         if (!hp) continue;
+        if (hp.destroyed) continue;
         const localX = Number(hp.x);
         const localY = Number(hp.y);
         if (!Number.isFinite(localX) || !Number.isFinite(localY)) continue;
-        const x = screenPos.x + (localX * c - localY * s) * zoom;
-        const y = screenPos.y + (localX * s + localY * c) * zoom;
+        const sx = localX * hpScale;
+        const sy = localY * hpScale;
+        const x = screenPos.x + (sx * c - sy * s) * zoom;
+        const y = screenPos.y + (sx * s + sy * c) * zoom;
         const color = NPC_HARDPOINT_COLORS[hp.type] || '#cfe4ff';
         ctx.fillStyle = color;
         ctx.strokeStyle = 'rgba(255,255,255,0.92)';
@@ -14716,6 +15183,7 @@
       let spriteScale = 1;
       if (npc.visual?.spriteScale) spriteScale = npc.visual.spriteScale;
       else if (npc.capitalProfile?.spriteScale) spriteScale = npc.capitalProfile.spriteScale;
+      else if (Number.isFinite(npc.__hardpointScale) && npc.__hardpointScale > 0) spriteScale = npc.__hardpointScale;
       else if (npc.type === 'destroyer') spriteScale = 2.0;
       
       const c = Math.cos(npc.angle || 0);
@@ -14724,6 +15192,7 @@
       for (const weapon of npc.autoWeapons) {
         const hp = weapon.hpOffset;
         if (!hp || hp.x == null || hp.y == null) continue;
+        if (hp.destroyed || !hp.mount) continue;
 
         // 1. Obliczamy pozycję lufy obróconą wraz z całym statkiem
         const localX = hp.x * spriteScale;
@@ -14832,10 +15301,16 @@
         return;
       }
 
-      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip) && !npc.hexGrid) {
+      if ((npc.type === 'destroyer' || npc.type === 'battleship' || npc.isCapitalShip || (npc.type && npc.type.includes('frigate'))) && !npc.hexGrid) {
         const sprite = getHullSpriteForNpc(npc) || (npc.capitalSprite && npc.capitalSprite.ready ? npc.capitalSprite : null);
         if (sprite && sprite.ready && !sprite.error) {
-          initHexBody(npc, sprite.image);
+          const hexInit = getNpcHexInitSource(npc, sprite);
+          if (npc.type && npc.type.includes('frigate')) {
+            npc.__hardpointScale = (hexInit?.hardpointScale && hexInit.hardpointScale > 0) ? hexInit.hardpointScale : 1.0;
+          } else {
+            delete npc.__hardpointScale;
+          }
+          initHexBody(npc, (hexInit?.image || sprite.image));
           drawNPCPretty(ctx, npc, s);
           return;
         }
@@ -15141,7 +15616,7 @@
 
       // 1. Zaktualizuj wszystkie obiekty 3D na podstawie logiki gry
       if (window.updatePlanets3D) window.updatePlanets3D(frameDt, camNoShake);
-      updatePlanetaryRings3D(frameDt, planets);
+      updatePlanetaryRings3D(frameDt, planets, camNoShake);
       if (window.updateStations3D) window.updateStations3D(stations);
       if (window.updateWorld3D) window.updateWorld3D(frameDt, vfxTime);
 
@@ -16200,18 +16675,32 @@
 
       ctx.strokeStyle = 'rgba(255,255,255,0.08)';
       ctx.lineWidth = 1;
-      const gridStep = 4000;
-      const startX = Math.floor(-mapView.viewX / (gridStep * scale)) * gridStep;
-      const startY = Math.floor(-mapView.viewY / (gridStep * scale)) * gridStep;
+      const baseGridStep = 4000;
+      const visibleWorldXMin = clamp((padding - mapView.viewX) / Math.max(1e-6, scale), 0, WORLD.w);
+      const visibleWorldXMax = clamp(((W - padding) - mapView.viewX) / Math.max(1e-6, scale), 0, WORLD.w);
+      const visibleWorldYMin = clamp((padding - mapView.viewY) / Math.max(1e-6, scale), 0, WORLD.h);
+      const visibleWorldYMax = clamp(((H - padding) - mapView.viewY) / Math.max(1e-6, scale), 0, WORLD.h);
+
+      let gridStep = baseGridStep;
+      const MAX_GRID_LINES = 360;
+      const estLines = Math.ceil((visibleWorldXMax - visibleWorldXMin) / baseGridStep) + Math.ceil((visibleWorldYMax - visibleWorldYMin) / baseGridStep);
+      if (estLines > MAX_GRID_LINES) {
+        gridStep *= Math.ceil(estLines / MAX_GRID_LINES);
+      }
+
+      const startX = Math.floor(visibleWorldXMin / gridStep) * gridStep;
+      const endX = Math.ceil(visibleWorldXMax / gridStep) * gridStep;
+      const startY = Math.floor(visibleWorldYMin / gridStep) * gridStep;
+      const endY = Math.ceil(visibleWorldYMax / gridStep) * gridStep;
       ctx.save();
       ctx.beginPath();
-      for (let gx = startX; gx < WORLD.w; gx += gridStep) {
+      for (let gx = startX; gx <= endX; gx += gridStep) {
         const px = toScreen(gx, 0).x;
         if (px < padding || px > W - padding) continue;
         ctx.moveTo(px, padding);
         ctx.lineTo(px, H - padding);
       }
-      for (let gy = startY; gy < WORLD.h; gy += gridStep) {
+      for (let gy = startY; gy <= endY; gy += gridStep) {
         const py = toScreen(0, gy).y;
         if (py < padding || py > H - padding) continue;
         ctx.moveTo(padding, py);

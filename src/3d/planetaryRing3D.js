@@ -1,3 +1,4 @@
+import * as THREE from 'three'; 
 import { Core3D } from './core3d.js';
 import { initHexBody, getHexStructuralState } from '../game/destructor.js';
 
@@ -415,6 +416,14 @@ class PlanetaryRing {
     this.lastPlanetY = 0;
     this.updateTick = 0;
 
+    // --- BUDYNKI 3D NA WARSTWIE 2 (FOREGROUND) ---
+    this.buildings3D = new THREE.Group();
+    if (Core3D.scene) {
+        Core3D.scene.add(this.buildings3D);
+        Core3D.enableForeground3D(this.buildings3D); // Na layer 1 ring przykrywał budynki, więc wracamy na pass FG.
+    }
+    this.visualMeshes = [];
+
     this.build();
     this.updateFromPlanet(planet, 0);
   }
@@ -424,6 +433,10 @@ class PlanetaryRing {
     if (!textures) return;
 
     const layout = getRingBandLayout();
+    const outerBandCenterLocalY = -CONFIG.segmentWorldHeight * 0.5 + (layout.outerWorld * 0.5);
+    const minAbsOffset = Math.abs(layout.gapEndWorld) + 80;
+    const maxAbsOffset = (CONFIG.segmentWorldHeight * 0.5) - 80;
+    const bandJitter = Math.max(40, Math.min(layout.outerWorld, layout.innerWorld) * 0.28);
     const effectiveWidth = CONFIG.segmentWorldWidth - CONFIG.overlap;
     const outerCoverageRadius = this.ringRadius + Math.max(
       CONFIG.segmentWorldHeight * 0.5,
@@ -451,6 +464,99 @@ class PlanetaryRing {
       segment.entity = entity;
 
       this.segmentData.push(segment);
+
+      // --- PROCEDURALNE MIASTO W STYLU GTA 2 (fake oblique/projection) ---
+      if (type === 'WALL' && Math.random() > 0.3) {
+          const group = new THREE.Group();
+
+          const matWall = new THREE.MeshStandardMaterial({
+              color: Math.random() > 0.5 ? 0x1f2a3a : 0x2a3a5a,
+              roughness: 0.72,
+              metalness: 0.28
+          });
+          const matRoof = new THREE.MeshStandardMaterial({
+              color: 0x0a0f18,
+              roughness: 1.0,
+              metalness: 0.0
+          });
+          const materials = [matWall, matWall, matWall, matWall, matRoof, matWall];
+
+          const GTA2_SHEAR_X = 0.0;
+          const GTA2_SHEAR_Y = 0.0;
+          const shear = new THREE.Matrix4().set(
+              1, 0, GTA2_SHEAR_X, 0,
+              0, 1, GTA2_SHEAR_Y, 0,
+              0, 0, 1, 0,
+              0, 0, 0, 1
+          );
+
+          const podiumH = 14 + Math.random() * 16;
+          const towerW = 110 + Math.random() * 70;
+          const towerD = 140 + Math.random() * 90;
+          const towerH = 55 + Math.random() * 70;
+
+          const podiumGeo = new THREE.BoxGeometry(towerW * 1.12, towerD * 1.12, podiumH);
+          podiumGeo.translate(0, 0, podiumH * 0.5);
+          podiumGeo.applyMatrix4(shear);
+          const podiumMesh = new THREE.Mesh(podiumGeo, materials);
+          group.add(podiumMesh);
+
+          const towerGeo = new THREE.BoxGeometry(towerW, towerD, towerH);
+          towerGeo.translate(0, 0, podiumH + towerH * 0.5);
+          towerGeo.applyMatrix4(shear);
+          const towerMesh = new THREE.Mesh(towerGeo, materials);
+          group.add(towerMesh);
+
+          if (Math.random() > 0.5) {
+              const acGeo = new THREE.BoxGeometry(26 + Math.random() * 14, 26 + Math.random() * 14, 12 + Math.random() * 8);
+              acGeo.translate(0, 0, podiumH + towerH + 9);
+              acGeo.applyMatrix4(shear);
+              const acMesh = new THREE.Mesh(acGeo, matWall);
+              group.add(acMesh);
+          }
+
+          const neonGeo = new THREE.EdgesGeometry(towerGeo);
+          const neonMat = new THREE.LineBasicMaterial({ color: 0x44aaff, opacity: 0.22, transparent: true });
+          const neonLines = new THREE.LineSegments(neonGeo, neonMat);
+          group.add(neonLines);
+
+          podiumMesh.castShadow = true;
+          podiumMesh.receiveShadow = true;
+          towerMesh.castShadow = true;
+          towerMesh.receiveShadow = true;
+          group.traverse((node) => {
+            if (node?.isObject3D) node.renderOrder = 10;
+          });
+
+          // WAŻNE: dzieci są dodawane po utworzeniu parenta, więc trzeba jawnie przepiąć całą grupę na layer FG.
+          const tiltWrapper = new THREE.Group();
+          const facingWrapper = new THREE.Group();
+          facingWrapper.add(group);
+          tiltWrapper.add(facingWrapper);
+          if (Core3D?.enableForeground3D) Core3D.enableForeground3D(tiltWrapper);
+          this.buildings3D.add(tiltWrapper);
+
+          const bandCenterOffset = (Math.random() > 0.5)
+            ? layout.innerBandCenterLocalY
+            : outerBandCenterLocalY;
+          let radialOffset = bandCenterOffset + (Math.random() - 0.5) * (bandJitter * 2);
+          const sign = radialOffset >= 0 ? 1 : -1;
+          let absOffset = Math.abs(radialOffset);
+          if (absOffset < minAbsOffset) absOffset = minAbsOffset;
+          if (absOffset > maxAbsOffset) absOffset = maxAbsOffset;
+          radialOffset = sign * absOffset;
+
+          this.visualMeshes.push({
+              mesh: tiltWrapper,
+              facingWrapper,
+              segmentIndex: i,
+              radialOffset,
+              alignToRing: true,
+              screenYaw: 0,
+              tiltX: 0,
+              tiltY: 0
+          });
+      }
     }
     for (let i = 0; i < this.segmentData.length; i++) {
       if (this.segmentTypes[i] !== 'GATE_L_OUTER') continue;
@@ -560,11 +666,15 @@ class PlanetaryRing {
     }
   }
 
-  updateFromPlanet(planet, dt) {
+  updateFromPlanet(planet, dt, viewCamera = null) {
     if (!planet) return;
     this.lastPlanetX = Number(planet.x) || 0;
     this.lastPlanetY = Number(planet.y) || 0;
     this.updateTick++;
+    const camX = Number(viewCamera?.x);
+    const camY = Number(viewCamera?.y);
+    const camZoom = Math.max(0.01, Number(viewCamera?.zoom) || 1);
+    const hasCameraCenter = Number.isFinite(camX) && Number.isFinite(camY);
 
     if (this.rotationSpeed !== 0) {
       this.currentRotation += this.rotationSpeed * dt;
@@ -598,6 +708,55 @@ class PlanetaryRing {
     }
 
     this.updateGates(dt);
+
+    // --- AKTUALIZACJA BUDYNKÓW ---
+    for (const b of this.visualMeshes) {
+        const seg = this.segmentData[b.segmentIndex];
+        if (!seg || !seg.entity || seg.entity.dead) {
+            b.mesh.visible = false;
+            continue;
+        }
+        b.mesh.visible = true;
+
+        const r = this.ringRadius + b.radialOffset;
+        const worldX = this.lastPlanetX + Math.cos(seg.worldAngle) * r;
+        const worldY = this.lastPlanetY + Math.sin(seg.worldAngle) * r;
+
+        b.mesh.position.set(worldX, -worldY, -100);
+        const baseRot = b.alignToRing ? -seg.worldAngle : 0;
+
+        let targetTiltX = 0;
+        let targetTiltY = 0;
+        if (hasCameraCenter) {
+          const relX = worldX - camX;
+          const relY = camY - worldY;
+          const len = Math.hypot(relX, relY);
+          if (len > 1e-3) {
+            const nx = relX / len;
+            const ny = relY / len;
+            const deadZonePx = 100 / camZoom;
+            const response = Math.min(1, Math.max(0, (len - deadZonePx) / (2300 / camZoom)));
+            const maxTilt = 0.44;
+            targetTiltX = ny * maxTilt * response;
+            targetTiltY = -nx * maxTilt * response;
+          }
+        }
+
+        const tiltLerp = Math.min(1, Math.max(0, (Number(dt) || 0) * 7.0));
+        b.tiltX = Number.isFinite(b.tiltX) ? (b.tiltX + (targetTiltX - b.tiltX) * tiltLerp) : targetTiltX;
+        b.tiltY = Number.isFinite(b.tiltY) ? (b.tiltY + (targetTiltY - b.tiltY) * tiltLerp) : targetTiltY;
+
+        b.mesh.rotation.x = b.tiltX;
+        b.mesh.rotation.y = b.tiltY;
+        b.mesh.rotation.z = 0;
+        if (b.facingWrapper) {
+          b.facingWrapper.rotation.x = 0;
+          b.facingWrapper.rotation.y = 0;
+          b.facingWrapper.rotation.z = baseRot + (Number(b.screenYaw) || 0);
+        } else {
+          b.mesh.rotation.z = baseRot + (Number(b.screenYaw) || 0);
+        }
+    }
   }
 
   updateGates(dt) {
@@ -680,10 +839,16 @@ class PlanetaryRing {
     for (const seg of this.segmentData) {
       if (seg?.entity) seg.entity.dead = true;
     }
+
+    if (this.buildings3D && Core3D.scene) {
+        Core3D.scene.remove(this.buildings3D);
+    }
+
     this.segmentData.length = 0;
     this.segmentTypes.length = 0;
     this.gates.length = 0;
     this.constructionSlots.length = 0;
+    this.visualMeshes.length = 0;
   }
 }
 
@@ -776,21 +941,21 @@ export function initPlanetaryRings3D(planets = []) {
   for (const [key, ring] of state.rings) {
     const planet = planetMap.get(key);
     if (!planet) continue;
-    ring.updateFromPlanet(planet, 0);
+    ring.updateFromPlanet(planet, 0, null);
   }
   rebuildEntityList();
   rebuildSpatialIndex();
   return state.rings;
 }
 
-export function updatePlanetaryRings3D(dt, planets = []) {
+export function updatePlanetaryRings3D(dt, planets = [], viewCamera = null) {
   if (!Core3D.isInitialized) return;
   const planetMap = syncRingSystems(planets);
   const step = Number(dt) || 0;
   for (const [key, ring] of state.rings) {
     const planet = planetMap.get(key);
     if (!planet) continue;
-    ring.updateFromPlanet(planet, step);
+    ring.updateFromPlanet(planet, step, viewCamera);
   }
   rebuildEntityList();
   rebuildSpatialIndex();

@@ -42,6 +42,17 @@ function normalizeEditorHardpoint(marker, idx, hpEnum, validTypes) {
   };
 }
 
+function normalizeEditorCore(marker, idx) {
+  const x = Number(marker?.x);
+  const y = Number(marker?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return {
+    id: marker?.id || `core_${idx}`,
+    x,
+    y
+  };
+}
+
 function normalizeEditorEngine(marker, idx) {
   const x = Number(marker?.x);
   const y = Number(marker?.y);
@@ -187,6 +198,13 @@ export function createNpcHardpointRuntime({
       if (hp) hardpoints.push(hp);
     }
     npc.editorHardpoints = hardpoints;
+    const coresRaw = Array.isArray(cfg.cores) ? cfg.cores : [];
+    const cores = [];
+    for (let i = 0; i < coresRaw.length; i++) {
+      const core = normalizeEditorCore(coresRaw[i], i);
+      if (core) cores.push(core);
+    }
+    npc.editorCores = cores;
     npc.editorHardpointCursor = {};
 
     const enginesMainRaw = Array.isArray(cfg?.engines?.main) ? cfg.engines.main : [];
@@ -256,8 +274,11 @@ export function createNpcHardpointRuntime({
     const hp = pickNpcHardpoint(owner, type);
     if (!hp) return null;
 
-    const localX = Number(hp.x) || 0;
-    const localY = Number(hp.y) || 0;
+    const hpScale = (Number.isFinite(owner?.__hardpointScale) && owner.__hardpointScale > 0)
+      ? owner.__hardpointScale
+      : 1;
+    const localX = (Number(hp.x) || 0) * hpScale;
+    const localY = (Number(hp.y) || 0) * hpScale;
     const baseX = Number.isFinite(owner.x) ? owner.x : (owner.pos?.x || 0);
     const baseY = Number.isFinite(owner.y) ? owner.y : (owner.pos?.y || 0);
     const angle = (owner.angle || 0) + (Number(owner.capitalProfile?.spriteRotation) || 0);
