@@ -1,0 +1,2418 @@
+<!DOCTYPE html>
+<html lang="pl">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kokpit Statku Kosmicznego</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0a0a0c;
+            --panel-bg: linear-gradient(145deg, #1a1c23, #111217);
+            --panel-border: #2a2d39;
+            --neon-blue: #00f3ff;
+            --neon-red: #ff003c;
+            --neon-green: #00ff66;
+            --neon-orange: #ff9900;
+            --text-main: #c7d0d8;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+
+        body {
+            background-color: #000;
+            color: var(--text-main);
+            font-family: 'Share Tech Mono', monospace;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* --- SZYBA I PRZESTRZEŃ KOSMICZNA --- */
+        #space-window {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            z-index: 0;
+            background: #000;
+        }
+
+        #starfield {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .window-frame {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at center, transparent 45%, rgba(0, 0, 0, 0.8) 85%, rgba(0, 0, 0, 1) 100%),
+                linear-gradient(to bottom, rgba(10, 10, 12, 0.9) 0%, transparent 10%, transparent 85%, rgba(10, 10, 12, 1) 100%);
+            box-shadow: inset 0 0 100px rgba(0, 0, 0, 1);
+        }
+
+        /* --- WSPÓLNE STYLE PANELI UI --- */
+        .ui-panel {
+            background: var(--panel-bg);
+            border: 4px solid var(--panel-border);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), inset 0 5px 15px rgba(255, 255, 255, 0.05);
+            z-index: 10;
+            transform-style: preserve-3d;
+        }
+
+        /* Wibracje statku rozwiązane marginesem, by nie psuć transform 3D */
+        @keyframes shake-margin {
+            0% {
+                margin-top: 2px;
+                margin-left: 2px;
+            }
+
+            25% {
+                margin-top: -2px;
+                margin-left: -2px;
+            }
+
+            50% {
+                margin-top: 2px;
+                margin-left: -2px;
+            }
+
+            75% {
+                margin-top: -2px;
+                margin-left: 2px;
+            }
+
+            100% {
+                margin-top: 2px;
+                margin-left: 2px;
+            }
+        }
+
+        .shake {
+            animation: shake-margin 0.1s infinite;
+        }
+
+        .panel-section {
+            flex: 1 1 auto;
+            background: rgba(0, 0, 0, 0.4);
+            border: 2px solid var(--panel-border);
+            border-radius: 15px;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.8);
+            position: relative;
+            transform-style: preserve-3d;
+        }
+
+        .panel-section::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: 10%;
+            width: 80%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+        }
+
+        h2 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 14px;
+            color: var(--neon-blue);
+            text-shadow: 0 0 10px var(--neon-blue);
+            text-align: center;
+            margin-bottom: 10px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        /* --- KONSOLA SUFITOWA (OVERHEAD) --- */
+        .overhead-console {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%) perspective(1000px) rotateX(-10deg);
+            transform-origin: top;
+            width: 700px;
+            max-width: 95vw;
+            border-top: none;
+            border-bottom-left-radius: 30px;
+            border-bottom-right-radius: 30px;
+            padding: 10px 30px 20px 30px;
+            /* Zwiększony lekko dolny margines dla lepszego efektu 3D */
+            z-index: 20;
+        }
+
+        .switches-grid {
+            display: flex;
+            flex-direction: row;
+            justify-content: space-around;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .switch-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transform: scale(0.9);
+        }
+
+        .switch-label {
+            font-size: 10px;
+            margin-bottom: 5px;
+            color: #888;
+            text-transform: uppercase;
+            font-weight: bold;
+        }
+
+        .toggle {
+            position: relative;
+            width: 60px;
+            height: 70px;
+            background: #1a1a1a;
+            border-radius: 10px;
+            border: 2px solid #333;
+            box-shadow: inset 0 0 10px #000, 0 5px 10px rgba(0, 0, 0, 0.5);
+            cursor: pointer;
+            transform-style: preserve-3d;
+        }
+
+        .toggle input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-switch {
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            width: 46px;
+            height: 30px;
+            background: linear-gradient(to bottom, #777, #444);
+            border-radius: 5px;
+            /* Symulacja masywnej bryły od dołu przez box-shadow cieniowany po długości */
+            box-shadow:
+                0 1px 0 #222, 0 2px 0 #222, 0 3px 0 #222, 0 4px 0 #222, 0 5px 0 #222, 0 6px 0 #222,
+                0 10px 15px rgba(0, 0, 0, 0.8), inset 0 1px 1px rgba(255, 255, 255, 0.4);
+            transition: 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transform: translateZ(25px);
+            /* Uniesienie z płyty w kosmos */
+        }
+
+        .toggle-switch::after {
+            content: '';
+            width: 20px;
+            height: 4px;
+            background: var(--neon-red);
+            border-radius: 2px;
+            box-shadow: 0 0 10px var(--neon-red);
+            transition: 0.3s;
+        }
+
+        .toggle input:checked+.toggle-switch {
+            transform: translateY(30px) translateZ(25px);
+            background: linear-gradient(to top, #777, #444);
+            box-shadow:
+                0 -1px 0 #222, 0 -2px 0 #222, 0 -3px 0 #222, 0 -4px 0 #222, 0 -5px 0 #222, 0 -6px 0 #222,
+                0 -10px 15px rgba(0, 0, 0, 0.8), inset 0 -1px 1px rgba(255, 255, 255, 0.4);
+        }
+
+        .toggle input:checked+.toggle-switch::after {
+            background: var(--neon-green);
+            box-shadow: 0 0 10px var(--neon-green);
+        }
+
+        /* --- KONSOLA GŁÓWNA (NAWIGACJA ŚRODEK) --- */
+        .main-console {
+            position: absolute;
+            bottom: 220px;
+            left: 50%;
+            width: 850px;
+            max-width: 95vw;
+            transform: translateX(-50%) perspective(1000px) rotateX(10deg);
+            transform-origin: bottom;
+            border-bottom: none;
+            border-bottom-left-radius: 0;
+            border-bottom-right-radius: 0;
+            border-top-left-radius: 40px;
+            border-top-right-radius: 40px;
+            padding: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: stretch;
+            box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.8), inset 0 5px 15px rgba(255, 255, 255, 0.05);
+        }
+
+        /* Radar Prostokątny - TERRA NOVA */
+        .radar-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            min-height: 130px;
+            background: linear-gradient(135deg, #181a1b 0%, #0a0a0c 100%);
+            border: 2px solid #5a5d62;
+            border-radius: 8px;
+            box-shadow: inset 0 0 20px rgba(255, 255, 255, 0.08);
+            overflow: hidden;
+            display: flex;
+        }
+
+        .radar-grid {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image:
+                linear-gradient(rgba(220, 225, 230, 0.15) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(220, 225, 230, 0.15) 1px, transparent 1px);
+            background-size: 25px 25px;
+            background-position: center;
+        }
+
+        .radar-grid::after,
+        .radar-grid::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            border: 1px dashed rgba(220, 225, 230, 0.2);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .radar-grid::after {
+            width: 80%;
+            height: 80%;
+            max-width: 200px;
+            max-height: 200px;
+        }
+
+        .radar-grid::before {
+            width: 40%;
+            height: 40%;
+            max-width: 100px;
+            max-height: 100px;
+        }
+
+        .radar-scanner {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 200%;
+            background: linear-gradient(to bottom, rgba(255, 255, 255, 0.3) 0%, transparent 50%);
+            animation: scan-rect 3s linear infinite;
+        }
+
+        @keyframes scan-rect {
+            0% {
+                transform: translateY(-100%);
+            }
+
+            100% {
+                transform: translateY(50%);
+            }
+        }
+
+        .blip {
+            position: absolute;
+            width: 6px;
+            height: 6px;
+            background: #e0e5ea;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #ffffff, 0 0 20px #ffffff;
+            opacity: 0;
+            animation: blip-fade 2s infinite;
+        }
+
+
+
+        @keyframes blip-fade {
+            0% {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: 0;
+                transform: scale(1.5);
+            }
+
+            100% {
+                opacity: 0;
+            }
+        }
+
+        .blip {
+            cursor: crosshair;
+            transition: border 0.2s, background 0.2s;
+        }
+
+        .blip:hover {
+            border: 2px solid #fff;
+            transform: scale(1.5);
+            opacity: 1;
+            animation: none;
+        }
+
+        .blip.locked {
+            border: 2px solid #cc5500;
+            background: rgba(204, 85, 0, 0.5);
+            animation: none;
+            opacity: 1;
+            box-shadow: 0 0 15px #cc5500;
+            transform: scale(1.8);
+        }
+
+        .blip.locked::after {
+            content: '';
+            position: absolute;
+            top: -4px;
+            left: -4px;
+            right: -4px;
+            bottom: -4px;
+            border: 1px dashed #cc5500;
+            border-radius: 50%;
+            animation: spin 4s linear infinite;
+        }
+
+        @keyframes spin {
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Skrzynia Biegów (H-Pattern) */
+        .shifter-container {
+            display: flex;
+            height: 110px;
+            gap: 8px;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .shifter-labels-left,
+        .shifter-labels-mid,
+        .shifter-labels-right {
+            display: flex;
+            flex-direction: column;
+            height: 100px;
+            font-family: 'Orbitron';
+            font-weight: bold;
+            font-size: 11px;
+            color: #444;
+            padding: 2px 0;
+            width: 12px;
+            justify-content: space-between;
+        }
+
+        .shifter-labels-left {
+            text-align: right;
+            margin-right: 2px;
+        }
+
+        .shifter-labels-mid {
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 5px;
+            text-align: center;
+            margin: 0 auto;
+            z-index: 2;
+            pointer-events: none;
+            height: 100px;
+        }
+
+        .shifter-labels-right {
+            text-align: left;
+            margin-left: 2px;
+        }
+
+        .shifter-labels-left span,
+        .shifter-labels-mid span,
+        .shifter-labels-right span {
+            transition: all 0.2s;
+        }
+
+        span.active-blue {
+            color: var(--neon-blue);
+            text-shadow: 0 0 8px var(--neon-blue);
+        }
+
+        span.active-red {
+            color: var(--neon-red);
+            text-shadow: 0 0 8px var(--neon-red);
+        }
+
+        span.active-grey {
+            color: #fff;
+            text-shadow: 0 0 8px #fff;
+        }
+
+        span.active-orange {
+            color: var(--neon-orange);
+            text-shadow: 0 0 8px var(--neon-orange);
+        }
+
+        span.active-green {
+            color: var(--neon-green);
+            text-shadow: 0 0 8px var(--neon-green);
+        }
+
+        .shifter-slot {
+            position: relative;
+            height: 110px;
+            width: 106px;
+            background: #050505;
+            border-radius: 10px;
+            border: 2px solid #222;
+            box-shadow: inset 0 0 15px #000;
+        }
+
+        .path-line {
+            position: absolute;
+            background: #1a1a1a;
+            border-radius: 3px;
+            pointer-events: none;
+            box-shadow: inset 0 0 5px #000, 0 0 2px rgba(255, 255, 255, 0.05);
+        }
+
+        .path-v0 {
+            top: 15px;
+            bottom: 15px;
+            left: 17px;
+            width: 6px;
+        }
+
+        .path-v1 {
+            top: 15px;
+            bottom: 15px;
+            left: 50px;
+            width: 6px;
+        }
+
+        .path-v2 {
+            top: 15px;
+            bottom: 15px;
+            left: 83px;
+            width: 6px;
+        }
+
+        .path-h {
+            top: 52px;
+            left: 17px;
+            width: 72px;
+            height: 6px;
+        }
+
+        .fake-gear-thumb {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 30px;
+            width: 30px;
+            background: radial-gradient(circle at 35% 35%, #888, #222);
+            border: 2px solid #111;
+            border-radius: 50%;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.9), inset 0 2px 4px rgba(255, 255, 255, 0.5);
+            cursor: grab;
+            touch-action: none;
+            z-index: 5;
+            transform: translate(28px, 40px);
+            /* N position */
+            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s, box-shadow 0.2s;
+        }
+
+        .fake-gear-thumb:active {
+            background: radial-gradient(circle at 35% 35%, #999, #333);
+            cursor: grabbing;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.9), inset 0 2px 4px rgba(255, 255, 255, 0.5);
+            transition: transform 0.05s, background 0.1s;
+        }
+
+        /* Terminal Pokładowy */
+        .status-screen {
+            background: #050a0f;
+            border: 1px solid var(--neon-blue);
+            height: 130px;
+            border-radius: 8px;
+            padding: 10px;
+            box-shadow: inset 0 0 15px rgba(0, 243, 255, 0.2);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .status-screen::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.15) 1px, transparent 1px, transparent 2px);
+            pointer-events: none;
+        }
+
+        .log-line {
+            font-size: 11px;
+            margin-bottom: 4px;
+            color: var(--neon-blue);
+            text-shadow: 0 0 2px var(--neon-blue);
+            opacity: 0.8;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        .log-error {
+            color: var(--neon-red);
+            text-shadow: 0 0 5px var(--neon-red);
+        }
+
+        .log-warn {
+            color: var(--neon-orange);
+            text-shadow: 0 0 5px var(--neon-orange);
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateX(-10px);
+            }
+
+            to {
+                opacity: 0.8;
+                transform: translateX(0);
+            }
+        }
+
+        .status-footer {
+            margin-top: auto;
+            border-top: 1px solid rgba(0, 243, 255, 0.3);
+            padding-top: 5px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .core-temp {
+            color: var(--neon-orange);
+            text-shadow: 0 0 5px var(--neon-orange);
+        }
+
+        .shield-str {
+            color: var(--neon-green);
+            text-shadow: 0 0 5px var(--neon-green);
+        }
+
+        .load-bar-wrapper {
+            margin-top: 5px;
+            height: 6px;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 3px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .load-bar-fill {
+            height: 100%;
+            width: 10%;
+            background: var(--neon-green);
+            box-shadow: 0 0 5px var(--neon-green);
+            transition: width 0.2s, background 0.2s, box-shadow 0.2s;
+        }
+
+        /* --- PANELE BOCZNE WYSUWANE --- */
+        .side-panel {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            height: 75vh;
+            min-height: 480px;
+            width: 280px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            padding: 15px;
+            transition: left 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), right 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+
+        .panel-tab {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 35px;
+            height: 160px;
+            background: var(--panel-bg);
+            border: 3px solid var(--panel-border);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 14px;
+            font-weight: bold;
+            color: var(--neon-orange);
+            text-shadow: 0 0 5px var(--neon-orange);
+            z-index: -1;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.8);
+            writing-mode: vertical-rl;
+            text-orientation: upright;
+            letter-spacing: 4px;
+            transition: background 0.3s, color 0.3s;
+        }
+
+        .panel-tab:hover {
+            background: var(--panel-border);
+            color: #fff;
+            text-shadow: 0 0 8px #fff;
+        }
+
+        .left-panel {
+            left: -280px;
+            border-left: none;
+            border-top-right-radius: 20px;
+            border-bottom-right-radius: 20px;
+        }
+
+        .left-panel.open {
+            left: 0;
+        }
+
+        .tab-left {
+            right: -35px;
+            border-left: none;
+            border-radius: 0 15px 15px 0;
+        }
+
+        .right-panel {
+            right: -280px;
+            border-right: none;
+            border-top-left-radius: 20px;
+            border-bottom-left-radius: 20px;
+        }
+
+        .right-panel.open {
+            right: 0;
+        }
+
+        .tab-right {
+            left: -35px;
+            border-right: none;
+            border-radius: 15px 0 0 15px;
+        }
+
+        /* Ciąg Silników (MOC) */
+        .lever-track {
+            position: relative;
+            height: 110px;
+            width: 30px;
+            background: #000;
+            margin: 0 auto;
+            border-radius: 15px;
+            border: 2px solid #333;
+            box-shadow: inset 0 0 10px rgba(0, 0, 0, 1);
+            display: flex;
+            justify-content: center;
+        }
+
+        .lever-track::before {
+            content: '';
+            position: absolute;
+            top: 5px;
+            bottom: 5px;
+            width: 4px;
+            background: linear-gradient(to bottom, var(--neon-blue), transparent);
+            border-radius: 2px;
+            box-shadow: 0 0 10px var(--neon-blue);
+            transition: background 0.3s;
+        }
+
+        input[type=range].thrust-slider {
+            -webkit-appearance: none;
+            position: absolute;
+            height: 100%;
+            width: 100%;
+            background: transparent;
+            outline: none;
+            writing-mode: bt-lr;
+            -webkit-appearance: slider-vertical;
+            z-index: 10;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        .fake-thrust-thumb {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            margin-left: -25px;
+            height: 30px;
+            width: 50px;
+            background: linear-gradient(to bottom, #4a4d5c, #2a2d39);
+            border: 2px solid #6a6d7c;
+            border-radius: 8px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.8), inset 0 2px 2px rgba(255, 255, 255, 0.4), inset 0 -2px 5px rgba(0, 0, 0, 0.5);
+            pointer-events: none;
+            transform: translateY(var(--thrust-pos, 80px)) scale(1);
+            transition: transform 0.1s ease-out, background 0.1s, box-shadow 0.1s;
+            z-index: 5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        input[type=range]#thrust-lever:active+.fake-thrust-thumb {
+            background: linear-gradient(to bottom, #5a5d6c, #3a3d49);
+            transform: translateY(var(--thrust-pos, 80px)) scale(0.95);
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.8), inset 0 2px 2px rgba(255, 255, 255, 0.4);
+        }
+
+        .lever-grip-lines-new {
+            width: 20px;
+            height: 15px;
+            background: repeating-linear-gradient(to bottom, transparent, transparent 2px, #111 2px, #111 4px);
+        }
+
+        .lever-value {
+            margin-top: 10px;
+            text-align: center;
+            font-family: 'Orbitron';
+            font-weight: bold;
+            color: var(--neon-blue);
+            text-shadow: 0 0 5px var(--neon-blue);
+            font-size: 14px;
+        }
+
+        /* Dystrybucja Mocy */
+        .pwr-container {
+            display: flex;
+            justify-content: space-around;
+            width: 100%;
+            height: 100%;
+            padding-top: 5px;
+        }
+
+        .pwr-track {
+            position: relative;
+            height: 90px;
+            width: 20px;
+            background: #000;
+            border-radius: 10px;
+            border: 1px solid #333;
+            box-shadow: inset 0 0 10px #000;
+            display: flex;
+            justify-content: center;
+        }
+
+        .pwr-track::before {
+            content: '';
+            position: absolute;
+            top: 5px;
+            bottom: 5px;
+            width: 2px;
+            background: linear-gradient(to bottom, #fff, transparent);
+            border-radius: 1px;
+        }
+
+        input[type=range].pwr-slider {
+            -webkit-appearance: none;
+            position: absolute;
+            height: 90px;
+            width: 20px;
+            background: transparent;
+            outline: none;
+            writing-mode: bt-lr;
+            -webkit-appearance: slider-vertical;
+            z-index: 10;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        .fake-pwr-thumb {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            margin-left: -15px;
+            height: 20px;
+            width: 30px;
+            background: linear-gradient(to bottom, #555, #333);
+            border: 1px solid #111;
+            border-radius: 4px;
+            pointer-events: none;
+            transform: translateY(var(--pwr-pos, 35px));
+            transition: transform 0.1s ease-out;
+            z-index: 5;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.8), inset 0 1px 2px rgba(255, 255, 255, 0.3);
+        }
+
+        input[type=range].pwr-slider:active+.fake-pwr-thumb {
+            background: linear-gradient(to bottom, #666, #444);
+            transform: translateY(var(--pwr-pos, 35px)) scale(0.9);
+        }
+
+        .pwr-label {
+            font-size: 9px;
+            color: #aaa;
+            text-align: center;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        .pwr-val {
+            font-size: 10px;
+            color: var(--neon-blue);
+            text-align: center;
+            margin-top: 5px;
+            font-weight: bold;
+        }
+
+        #pwr-eng-val {
+            color: var(--neon-orange);
+            text-shadow: 0 0 5px var(--neon-orange);
+        }
+
+        #pwr-shd-val {
+            color: var(--neon-green);
+            text-shadow: 0 0 5px var(--neon-green);
+        }
+
+        #pwr-wpn-val {
+            color: var(--neon-red);
+            text-shadow: 0 0 5px var(--neon-red);
+        }
+
+        /* RCS Joystick */
+        .rcs-pad {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            background: radial-gradient(circle, #1a1a1a 0%, #050505 100%);
+            border: 3px solid #333;
+            margin: 0 auto;
+            position: relative;
+            box-shadow: inset 0 0 20px #000;
+        }
+
+        .rcs-grid {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(#333 1px, transparent 1px), linear-gradient(90deg, #333 1px, transparent 1px);
+            background-size: 20px 20px;
+            background-position: center;
+            border-radius: 50%;
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        .rcs-stick {
+            width: 36px;
+            height: 36px;
+            background: radial-gradient(circle at 30% 30%, #777, #222);
+            border: 2px solid #111;
+            border-radius: 50%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.9), inset 0 2px 5px rgba(255, 255, 255, 0.4);
+            cursor: grab;
+            touch-action: none;
+        }
+
+        .rcs-stick:active {
+            cursor: grabbing;
+            background: radial-gradient(circle at 30% 30%, #888, #333);
+        }
+
+        .rcs-readout {
+            text-align: center;
+            font-size: 11px;
+            margin-top: 15px;
+            color: #aaa;
+            font-family: 'Share Tech Mono';
+        }
+
+        /* Kalibrator Warp */
+        .warp-coords {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+        }
+
+        .coord-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .coord-label {
+            color: var(--neon-blue);
+            font-weight: bold;
+            width: 15px;
+            text-shadow: 0 0 5px var(--neon-blue);
+        }
+
+        .coord-btn {
+            background: #222;
+            border: 1px solid var(--neon-blue);
+            color: var(--neon-blue);
+            width: 25px;
+            height: 25px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-weight: bold;
+            font-family: 'Share Tech Mono';
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.8);
+        }
+
+        .coord-btn:active {
+            background: var(--neon-blue);
+            color: #000;
+            transform: translateY(2px);
+            box-shadow: none;
+        }
+
+        .coord-display {
+            background: #000;
+            border: 1px solid #444;
+            color: #fff;
+            width: 60px;
+            height: 25px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Share Tech Mono';
+            box-shadow: inset 0 0 8px rgba(0, 243, 255, 0.2);
+            text-shadow: 0 0 3px #fff;
+        }
+
+        .warp-lock-btn {
+            margin-top: 5px;
+            padding: 6px 15px;
+            border-radius: 4px;
+            background: #111;
+            border: 1px solid var(--neon-orange);
+            color: var(--neon-orange);
+            cursor: pointer;
+            font-family: 'Orbitron';
+            font-size: 10px;
+            text-transform: uppercase;
+            box-shadow: 0 0 10px rgba(255, 153, 0, 0.2);
+            transition: all 0.3s;
+        }
+
+        .warp-lock-btn.locked {
+            background: var(--neon-green);
+            color: #000;
+            border-color: var(--neon-green);
+            box-shadow: 0 0 15px var(--neon-green);
+            text-shadow: none;
+            animation: pulse-lock 1s infinite alternate;
+        }
+
+        @keyframes pulse-lock {
+            from {
+                box-shadow: 0 0 10px var(--neon-green);
+            }
+
+            to {
+                box-shadow: 0 0 20px var(--neon-green);
+            }
+        }
+
+        /* Molly Guard i Reaktor System (Obudowy z Głębią Z) */
+        .molly-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            transform-style: preserve-3d;
+        }
+
+        .molly-label {
+            font-size: 11px;
+            color: var(--neon-orange);
+            margin-bottom: 5px;
+            text-shadow: 0 0 5px var(--neon-orange);
+            text-align: center;
+            transform: translateZ(5px);
+        }
+
+        .molly-guard {
+            position: relative;
+            width: 70px;
+            height: 90px;
+            perspective: 600px;
+            transform-style: preserve-3d;
+            transform: translateZ(15px);
+            /* Wyniesienie bazy bezpiecznika w 3D */
+            box-shadow: inset 0 0 10px #000;
+            border: 2px solid #222;
+        }
+
+        .molly-btn {
+            width: 60px;
+            height: 80px;
+            margin: 3px auto;
+            background: radial-gradient(circle, #ff003c, #600016);
+            border: 2px solid #000;
+            border-radius: 8px;
+            color: #fff;
+            font-weight: bold;
+            font-family: 'Orbitron';
+            font-size: 10px;
+            cursor: pointer;
+            display: block;
+            transition: transform 0.1s, box-shadow 0.1s;
+            /* Potężny, gruby przycisk na sprężynie */
+            transform: translateZ(20px);
+            box-shadow:
+                0 1px 0 #300, 0 2px 0 #300, 0 3px 0 #200, 0 4px 0 #200,
+                0 10px 10px rgba(0, 0, 0, 0.8), inset 0 2px 5px rgba(255, 255, 255, 0.4);
+        }
+
+        .molly-btn:active {
+            /* Wciśnięcie guzika powoduje obniżenie go na osi Z prawie do dechy */
+            transform: translateZ(4px);
+            box-shadow:
+                0 0px 0 #300, 0 1px 0 #300,
+                0 2px 5px rgba(0, 0, 0, 0.9), inset 0 -2px 10px rgba(0, 0, 0, 0.8);
+        }
+
+        .molly-flap {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: repeating-linear-gradient(45deg, rgba(255, 200, 0, 0.9), rgba(255, 200, 0, 0.9) 10px, rgba(10, 10, 10, 0.9) 10px, rgba(10, 10, 10, 0.9) 20px);
+            border: 3px inset #ffcc00;
+            border-radius: 5px;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.9);
+            transform-origin: top;
+            transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+            z-index: 10;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            padding-bottom: 5px;
+            font-size: 10px;
+            color: #fff;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px #000;
+            /* Gruby spód klapki */
+            transform: translateZ(28px);
+        }
+
+        .molly-guard.open .molly-flap {
+            /* Obrót z uwzględnieniem podniesienia z Z */
+            transform: translateZ(28px) rotateX(120deg);
+            box-shadow: 0 -10px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        /* --- WSUWANY TABLET (ZZA GŁÓWNEJ KONSOLI) - TERRA NOVA --- */
+        .tablet-wrapper {
+            position: absolute;
+            bottom: calc(100% - 30px);
+            /* Wsuwa się zza górnej krawędzi main-console */
+            left: 50%;
+            transform: translateX(-50%) rotateX(-15deg);
+            /* Kontruje 15-stopniowe pochylenie main-console */
+            transform-origin: bottom center;
+            width: 700px;
+            height: 0px;
+            background: rgba(20, 22, 24, 0.96);
+            border-left: 3px solid #d0d5d9;
+            border-right: 3px solid #d0d5d9;
+            border-top: 3px solid #d0d5d9;
+            border-top-left-radius: 12px;
+            border-top-right-radius: 12px;
+            transition: height 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+            overflow: hidden;
+            box-shadow: 0 -10px 40px rgba(255, 255, 255, 0.15), inset 0 0 15px rgba(255, 255, 255, 0.05);
+            z-index: -1;
+            /* Chowa się fizycznie za zaokrągloną ramką main-console */
+            pointer-events: none;
+        }
+
+        .tablet-wrapper.open {
+            height: 480px;
+            pointer-events: auto;
+        }
+
+        /* --- PRZYCISK SIECIOWY W TERMINALU (WYWOŁYWACZ TABLETU) --- */
+        .terminal-net-btn {
+            background: #111;
+            border: 1px solid #d0d5d9;
+            color: #d0d5d9;
+            font-family: 'Orbitron';
+            font-size: 10px;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            box-shadow: inset 0 0 5px rgba(255, 255, 255, 0.1);
+            transition: 0.2s;
+            float: right;
+            margin-top: -4px;
+        }
+
+        .terminal-net-btn:hover {
+            background: #d0d5d9;
+            color: #000;
+            box-shadow: 0 0 10px #ffffff;
+        }
+
+        .tablet-screen {
+            width: 100%;
+            height: 480px;
+            /* Sztywna wysokość ekranu by zawartość nie skakała przy wsuwaniu */
+            padding: 20px;
+            box-sizing: border-box;
+            position: relative;
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+
+        /* --- DŹWIGNIA ŚLUZY (Fizyczna 3D Wajcha) --- */
+        .airlock-container {
+            position: relative;
+            width: 80px;
+            height: 110px;
+            margin: 0 auto;
+            background: #111;
+            border-radius: 10px;
+            border: 3px solid #333;
+            box-shadow: inset 0 0 25px #000;
+            overflow: visible;
+            /* Potrzebne na grubości 3D! */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transform-style: preserve-3d;
+        }
+
+        .airlock-lever-track {
+            position: absolute;
+            left: 20px;
+            width: 40px;
+            height: 90px;
+            border: 3px dashed #333;
+            border-radius: 20px;
+            box-shadow: inset 0 5px 15px #000;
+        }
+
+        .airlock-lever {
+            width: 60px;
+            height: 25px;
+            background: linear-gradient(0deg, #666, #aaa, #666);
+            border-radius: 8px;
+            cursor: grab;
+            position: absolute;
+            top: 10px;
+            z-index: 10;
+            transition: top 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), transform 0.1s, background 0.2s, box-shadow 0.2s;
+            /* Potężny, trzystopniowy chwyt z 3D paralaksą */
+            transform-style: preserve-3d;
+            transform: translateZ(35px);
+            box-shadow:
+                0 1px 0 #444, 0 2px 0 #444, 0 3px 0 #333, 0 4px 0 #333, 0 5px 0 #222, 0 6px 0 #222, 0 7px 0 #111,
+                0 15px 15px rgba(0, 0, 0, 0.8), inset 0 2px 4px rgba(255, 255, 255, 0.6);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-evenly;
+            align-items: center;
+        }
+
+        .airlock-lever::after {
+            content: '';
+            width: 40px;
+            height: 4px;
+            background: #222;
+            border-radius: 2px;
+            box-shadow: 0 8px 0 #222;
+        }
+
+        .airlock-lever:active {
+            cursor: grabbing;
+            transform: translateZ(25px);
+            /* Chwyt dociska lewarek troszke niżej w osi Z */
+            box-shadow:
+                0 1px 0 #444, 0 2px 0 #444, 0 3px 0 #333,
+                0 8px 10px rgba(0, 0, 0, 0.9), inset 0 2px 4px rgba(255, 255, 255, 0.6);
+        }
+
+        .airlock-lever.open {
+            top: 75px;
+            background: linear-gradient(0deg, #aa0000, #ff3333, #aa0000);
+            box-shadow:
+                0 1px 0 #444, 0 2px 0 #444, 0 3px 0 #333, 0 4px 0 #333, 0 5px 0 #222, 0 6px 0 #222, 0 7px 0 #111,
+                0 15px 15px rgba(0, 0, 0, 0.8), inset 0 2px 4px rgba(255, 255, 255, 0.6),
+                0 0 15px var(--neon-orange), 0 5px 10px rgba(0, 0, 0, 0.8);
+            /* Added original box-shadow for open state */
+        }
+
+        .airlock-warning {
+            position: absolute;
+            top: 2px;
+            font-size: 8px;
+            font-weight: bold;
+            color: var(--neon-red);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .airlock-warning.active {
+            opacity: 1;
+            animation: pulse-reactor-ready 0.5s infinite;
+        }
+
+        /* --- DOLNY PANEL (ZAPŁON I REAKTOR) --- */
+        .bottom-panel {
+            position: absolute;
+            left: 50%;
+            bottom: 0;
+            transform: translateX(-50%) perspective(1000px) rotateX(40deg);
+            transform-origin: top;
+            width: 850px;
+            max-width: 95vw;
+            height: 220px;
+            border-top: none;
+            border-top-left-radius: 0;
+            border-top-right-radius: 0;
+            border-bottom-left-radius: 40px;
+            border-bottom-right-radius: 40px;
+            padding: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: stretch;
+            opacity: 1;
+            pointer-events: auto;
+            z-index: 5;
+        }
+
+        .ignition-slot {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: #0a0a0a;
+            border: 6px solid #222;
+            margin: 10px auto;
+            position: relative;
+            box-shadow: inset 0 0 20px #000, 0 10px 20px rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transform-style: preserve-3d;
+            transform: translateZ(5px);
+        }
+
+        .ignition-key {
+            width: 20px;
+            height: 55px;
+            background: linear-gradient(to right, #888, #eee, #666);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            /* Potężny start kluczyka wysuniętego z zamka */
+            transform-style: preserve-3d;
+            transform: translateZ(40px);
+            box-shadow:
+                -1px 0 0 #444, -2px 0 0 #444, -3px 0 0 #333,
+                -15px 10px 15px rgba(0, 0, 0, 0.7), inset 2px 0 5px rgba(255, 255, 255, 0.7);
+            position: relative;
+        }
+
+        .ignition-key::before {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 10px;
+            bottom: -5px;
+            background: linear-gradient(to right, #222, #444, #111);
+            border-radius: 50%;
+        }
+
+        .ignition-key::after {
+            content: '';
+            position: absolute;
+            top: 5px;
+            left: 50%;
+            transform: translateX(-50%) translateZ(2px);
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--neon-red);
+            box-shadow: 0 0 5px var(--neon-red);
+            transition: 0.3s;
+        }
+
+        .ignition-key.turned {
+            transform: rotate(90deg) translateZ(40px);
+            /* Obrót i trzymanie w górze Z */
+            box-shadow:
+                0 1px 0 #444, 0 2px 0 #444, 0 3px 0 #333,
+                0 15px 15px rgba(0, 0, 0, 0.7), inset 0 -2px 5px rgba(255, 255, 255, 0.7);
+        }
+
+        .ignition-key.turned::after {
+            background: var(--neon-green);
+            box-shadow: 0 0 5px var(--neon-green);
+        }
+
+        .reactor-btn {
+            width: 90px;
+            height: 90px;
+            border-radius: 50%;
+            background: radial-gradient(circle, #3a3a3a, #1a1a1a);
+            border: 4px solid #111;
+            margin: 10px auto;
+            color: #666;
+            font-family: 'Orbitron';
+            font-weight: bold;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            /* Ogromny startowy grzyb - masywny box-shadow rzędu grubości wajchy */
+            transform-style: preserve-3d;
+            transform: translateZ(30px);
+            box-shadow:
+                0 1px 0 #222, 0 2px 0 #222, 0 3px 0 #222, 0 4px 0 #222, 0 5px 0 #1a1a1a, 0 6px 0 #1a1a1a, 0 7px 0 #111, 0 8px 0 #000,
+                0 25px 30px rgba(0, 0, 0, 0.9), inset 0 2px 10px rgba(255, 255, 255, 0.2);
+        }
+
+        .reactor-btn.ready {
+            color: var(--neon-blue);
+            border-color: #0088aa;
+            text-shadow: 0 0 5px var(--neon-blue);
+            background: radial-gradient(circle, #1a3a4a, #001525);
+            animation: pulse-reactor-ready 1.5s infinite alternate;
+        }
+
+        .reactor-btn.active {
+            color: #fff;
+            border-color: var(--neon-blue);
+            background: radial-gradient(circle, var(--neon-blue), #004466);
+            /* Po włączeniu zapada się na amen i gasi animacje - przytulony do panelu wgłębiony o -Z */
+            transform: translateZ(5px);
+            box-shadow:
+                0 1px 0 #001122, 0 2px 0 #000,
+                0 5px 10px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(255, 255, 255, 0.6);
+            text-shadow: 0 0 10px #fff;
+            animation: none;
+        }
+
+        .reactor-btn:active:not(.active) {
+            transform: translateZ(10px);
+            /* Przejściowe wciskanie fizyczne palcem stawia opór na sprężynie */
+            box-shadow:
+                0 1px 0 #222, 0 2px 0 #222, 0 3px 0 #111,
+                0 10px 15px rgba(0, 0, 0, 0.9), inset 0 2px 10px rgba(255, 255, 255, 0.2);
+        }
+
+        @keyframes pulse-reactor-ready {
+            from {
+                box-shadow: 0 0 5px #0088aa;
+            }
+
+            to {
+                box-shadow: 0 0 20px var(--neon-blue);
+            }
+        }
+
+        /* --- MECHANIKA POV (Rozglądanie się 3D) --- */
+        #space-window,
+        .main-console,
+        .overhead-console,
+        .side-panel,
+        .bottom-panel {
+            transition: all 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+        }
+
+        /* WIDOK: CENTRUM (Domyślny) */
+        body[data-view="center"] #space-window {
+            transform: translateX(0) scale(1.05);
+        }
+
+        body[data-view="center"] .main-console {
+            transform: translateX(-50%) translateY(220px) perspective(1000px) rotateX(15deg) rotateY(0deg);
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        body[data-view="center"] .overhead-console {
+            transform: translateX(-50%) perspective(1000px) rotateX(-10deg) rotateY(0deg);
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        body[data-view="center"] .left-panel {
+            left: -250px;
+            transform: translateY(-50%) perspective(1000px) rotateY(20deg);
+            opacity: 0.3;
+        }
+
+        body[data-view="center"] .right-panel {
+            right: -250px;
+            transform: translateY(-50%) perspective(1000px) rotateY(-20deg);
+            opacity: 0.3;
+        }
+
+        body[data-view="center"] .bottom-panel {
+            bottom: 0;
+            transform: translateX(-50%) translateY(220px) perspective(1000px) rotateX(60deg);
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        /* WIDOK: LEWO */
+        body[data-view="left"] #space-window {
+            transform: translateX(5%) scale(1.05);
+        }
+
+        body[data-view="left"] .main-console {
+            transform: translateX(calc(-50% + 400px)) translateY(220px) perspective(1000px) rotateX(15deg) rotateY(25deg);
+            opacity: 0.3;
+            pointer-events: none;
+        }
+
+        body[data-view="left"] .overhead-console {
+            transform: translateX(calc(-50% + 400px)) perspective(1000px) rotateX(-10deg) rotateY(25deg);
+            opacity: 0.3;
+            pointer-events: none;
+        }
+
+        body[data-view="left"] .left-panel {
+            left: 40px;
+            transform: translateY(-50%) perspective(1000px) rotateY(5deg);
+            opacity: 1;
+            z-index: 100;
+        }
+
+        body[data-view="left"] .right-panel {
+            right: -350px;
+            transform: translateY(-50%) perspective(1000px) rotateY(-40deg);
+            opacity: 0;
+        }
+
+        body[data-view="left"] .bottom-panel {
+            bottom: 0;
+            transform: translateX(calc(-50% + 400px)) translateY(220px) perspective(1000px) rotateX(60deg) rotateY(25deg);
+            opacity: 0.3;
+            pointer-events: none;
+        }
+
+        /* WIDOK: PRAWO */
+        body[data-view="right"] #space-window {
+            transform: translateX(-5%) scale(1.05);
+        }
+
+        body[data-view="right"] .main-console {
+            transform: translateX(calc(-50% - 400px)) translateY(220px) perspective(1000px) rotateX(15deg) rotateY(-25deg);
+            opacity: 0.3;
+            pointer-events: none;
+        }
+
+        body[data-view="right"] .overhead-console {
+            transform: translateX(calc(-50% - 400px)) perspective(1000px) rotateX(-10deg) rotateY(-25deg);
+            opacity: 0.3;
+            pointer-events: none;
+        }
+
+        body[data-view="right"] .right-panel {
+            right: 40px;
+            transform: translateY(-50%) perspective(1000px) rotateY(-5deg);
+            opacity: 1;
+            z-index: 100;
+        }
+
+        body[data-view="right"] .left-panel {
+            left: -350px;
+            transform: translateY(-50%) perspective(1000px) rotateY(40deg);
+            opacity: 0;
+        }
+
+        body[data-view="right"] .bottom-panel {
+            bottom: 0;
+            transform: translateX(calc(-50% - 400px)) translateY(220px) perspective(1000px) rotateX(60deg) rotateY(-25deg);
+            opacity: 0.3;
+            pointer-events: none;
+        }
+
+        /* WIDOK: DÓŁ */
+        body[data-view="down"] #space-window {
+            transform: translateY(-10%) scale(1.05) perspective(1000px) rotateX(-5deg);
+        }
+
+        body[data-view="down"] .main-console {
+            transform: translateX(-50%) translateY(0) perspective(1000px) rotateX(0deg);
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        body[data-view="down"] .overhead-console {
+            transform: translateX(-50%) translateY(-100px) perspective(1000px) rotateX(-20deg);
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        body[data-view="down"] .left-panel {
+            left: -350px;
+            opacity: 0;
+        }
+
+        body[data-view="down"] .right-panel {
+            right: -350px;
+            opacity: 0;
+        }
+
+        body[data-view="down"] .bottom-panel {
+            bottom: 0;
+            transform: translateX(-50%) translateY(0) perspective(1000px) rotateX(30deg);
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        /* --- RESPONSIVE OCHRONA --- */
+        @media (max-width: 900px) {
+            .main-console {
+                width: 100%;
+                left: 0;
+                transform: none;
+                border-radius: 0;
+                flex-wrap: wrap;
+            }
+
+            .overhead-console {
+                width: 100%;
+                left: 0;
+                transform: none;
+                border-radius: 0;
+            }
+        }
+    </style>
+</head>
+
+<body data-view="center">
+
+    <!-- GIGANTYCZNE OKNO NA KOSMOS -->
+    <div id="space-window">
+        <canvas id="starfield"></canvas>
+        <div class="window-frame"></div>
+    </div>
+
+    <!-- KONSOLA SUFITOWA -->
+    <div class="ui-panel overhead-console">
+        <div class="switches-grid">
+            <div class="switch-container">
+                <div class="switch-label">Zasilanie</div>
+                <label class="toggle"><input type="checkbox" id="switch-power" checked><span
+                        class="toggle-switch"></span></label>
+            </div>
+            <div class="switch-container">
+                <div class="switch-label">Osłony Polowe</div>
+                <label class="toggle"><input type="checkbox" id="switch-shields" checked><span
+                        class="toggle-switch"></span></label>
+            </div>
+            <div class="switch-container">
+                <div class="switch-label">Uzbrojenie</div>
+                <label class="toggle"><input type="checkbox" id="switch-weapons"><span
+                        class="toggle-switch"></span></label>
+            </div>
+            <div class="switch-container">
+                <div class="switch-label">Podt. Życia</div>
+                <label class="toggle"><input type="checkbox" id="switch-life" checked><span
+                        class="toggle-switch"></span></label>
+            </div>
+            <div class="switch-container">
+                <div class="switch-label">Tłumiki Inercyjne</div>
+                <label class="toggle"><input type="checkbox" id="switch-dampeners" checked><span
+                        class="toggle-switch"></span></label>
+            </div>
+        </div>
+    </div>
+
+    <!-- LEWY PANEL B पीसीएस(NAPĘDY) -->
+    <div class="ui-panel side-panel left-panel" id="panel-engines">
+        <div class="panel-tab tab-left" onclick="setView('left')">N<br>A<br>P<br>Ę<br>D<br>Y</div>
+
+        <div class="panel-section">
+            <h2>Główny Ciąg</h2>
+            <div class="lever-track">
+                <input type="range" class="thrust-slider" id="thrust-lever" min="0" max="100" value="0"
+                    orient="vertical">
+                <div class="fake-thrust-thumb" id="fake-thrust">
+                    <div class="lever-grip-lines-new"></div>
+                </div>
+            </div>
+            <div class="lever-value" id="thrust-val">0%</div>
+        </div>
+
+        <div class="panel-section">
+            <h2>Dystrybucja Mocy</h2>
+            <div class="pwr-container">
+                <div class="lever-wrapper">
+                    <div class="pwr-label">SILNIK</div>
+                    <div class="pwr-track">
+                        <input type="range" class="pwr-slider" id="pwr-eng" min="0" max="100" value="34"
+                            orient="vertical">
+                        <div class="fake-pwr-thumb" id="fake-pwr-eng"></div>
+                    </div>
+                    <div class="pwr-val" id="pwr-eng-val">34%</div>
+                </div>
+                <div class="lever-wrapper">
+                    <div class="pwr-label">OSŁONY</div>
+                    <div class="pwr-track">
+                        <input type="range" class="pwr-slider" id="pwr-shd" min="0" max="100" value="33"
+                            orient="vertical">
+                        <div class="fake-pwr-thumb" id="fake-pwr-shd"></div>
+                    </div>
+                    <div class="pwr-val" id="pwr-shd-val">33%</div>
+                </div>
+                <div class="lever-wrapper">
+                    <div class="pwr-label">BROŃ</div>
+                    <div class="pwr-track">
+                        <input type="range" class="pwr-slider" id="pwr-wpn" min="0" max="100" value="33"
+                            orient="vertical">
+                        <div class="fake-pwr-thumb" id="fake-pwr-wpn"></div>
+                    </div>
+                    <div class="pwr-val" id="pwr-wpn-val">33%</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PRAWY PANEL BOCZNY (TAKTYKA) -->
+    <div class="ui-panel side-panel right-panel" id="panel-tactical">
+        <div class="panel-tab tab-right" onclick="setView('right')">T<br>A<br>K<br>T<br>Y<br>K<br>A</div>
+
+        <div class="panel-section">
+            <h2>RCS (Manewrowanie)</h2>
+            <div class="rcs-pad" id="rcs-pad">
+                <div class="rcs-grid"></div>
+                <div class="rcs-stick" id="rcs-stick"></div>
+            </div>
+            <div class="rcs-readout">OSIE: X: <span id="rcs-x">0</span> | Y: <span id="rcs-y">0</span></div>
+        </div>
+
+        <div class="panel-section">
+            <h2>Kalibrator Skoku</h2>
+            <div class="warp-coords">
+                <div class="coord-row">
+                    <span class="coord-label">X</span>
+                    <button class="coord-btn" onclick="adjWarp('x', -10)">-</button>
+                    <div class="coord-display" id="warp-x">0000</div>
+                    <button class="coord-btn" onclick="adjWarp('x', 10)">+</button>
+                </div>
+                <div class="coord-row">
+                    <span class="coord-label">Y</span>
+                    <button class="coord-btn" onclick="adjWarp('y', -10)">-</button>
+                    <div class="coord-display" id="warp-y">0000</div>
+                    <button class="coord-btn" onclick="adjWarp('y', 10)">+</button>
+                </div>
+                <button class="warp-lock-btn" id="warp-lock-btn">Zablokuj Cel</button>
+            </div>
+        </div>
+        <!-- Usunięto panel Systemy Krytyczne stąd -->
+    </div>
+
+    <!-- GŁÓWNA KONSOLA NAWIGACYJNA -->
+    <div class="ui-panel main-console">
+
+        <!-- WSUWANY TABLET STACJI -->
+        <div class="tablet-wrapper" id="tablet-wrapper">
+            <div class="tablet-screen">
+                <h3
+                    style="color: #ffffff; text-shadow: 0 0 15px #ffffff; text-align: center; margin-top: 150px; font-family: 'Orbitron'; letter-spacing: 2px;">
+                    BRAK POŁĄCZENIA ZE STACJĄ...</h3>
+            </div>
+        </div>
+
+        <div class="panel-section radar-panel" style="flex: 1.5; padding: 10px;">
+            <div class="radar-container" id="radar">
+                <div class="radar-grid"></div>
+                <div class="radar-scanner"></div>
+                <!-- Przykładowe Blipy przeliczane relatywnie względem prostokąta -->
+                <div class="blip" style="top: 20%; left: 30%; animation-delay: 0.2s;" data-target="OBIEKT A42"></div>
+                <div class="blip" style="top: 80%; left: 70%; animation-delay: 1.1s;" data-target="STREFA 9X"></div>
+                <div class="blip"
+                    style="top: 40%; left: 85%; animation-delay: 1.8s; background: #cc5500; box-shadow: 0 0 10px #cc5500;"
+                    data-target="WROGI MYŚLIWIEC">
+                </div>
+            </div>
+        </div>
+
+        <div class="panel-section" style="flex: 1;">
+            <h2>Skrzynia Biegów</h2>
+            <div class="shifter-container">
+                <div class="shifter-labels-left">
+                    <span id="label-5">C</span>
+                    <span></span>
+                    <span id="label-6">B</span>
+                </div>
+                <div class="shifter-slot" id="shifter-slot">
+                    <div class="shifter-labels-mid">
+                        <span id="label-2">I</span>
+                        <span id="label-1" class="active-grey">N</span>
+                        <span id="label-0">R</span>
+                    </div>
+                    <div class="path-line path-v0"></div>
+                    <div class="path-line path-v1"></div>
+                    <div class="path-line path-h"></div>
+                    <div class="path-line path-v2"></div>
+                    <input type="hidden" id="gear-stick" value="1">
+                    <div class="fake-gear-thumb" id="fake-thumb"></div>
+                </div>
+                <div class="shifter-labels-right">
+                    <span id="label-3">W</span>
+                    <span></span>
+                    <span id="label-4">S</span>
+                </div>
+            </div>
+            <div class="lever-value" id="gear-val" style="color: #fff; text-shadow: 0 0 5px #fff; margin-top:0;">LUZ
+            </div>
+        </div>
+
+        <div class="panel-section" style="flex: 2; min-width: 250px;">
+            <h2>Terminal Pokładowy</h2>
+            <div class="status-screen" id="log-screen">
+                <div class="log-line">> SYSTEM GOTOWY</div>
+                <div class="log-line">> INICJALIZACJA NAPĘDÓW... OK</div>
+                <div class="log-line">> OSŁONY AKTYWNE (100%)</div>
+
+                <div class="status-footer">
+                    <div class="core-temp">RDZEŃ: <span id="temp-val">420</span>K</div>
+                    <div class="shield-str">OSŁONY: <span id="shield-val">100</span>%</div>
+                </div>
+                <!-- Pasek Wskaźnika Obciążenia Mocy i Przycisk Sieci -->
+                <div style="margin-top: 5px;">
+                    <button class="terminal-net-btn" id="network-btn">SIEĆ / TABLET</button>
+                    <div class="load-bar-wrapper" style="width: calc(100% - 110px);">
+                        <div class="load-bar-fill" id="load-bar-fill"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- DOLNY PANEL (ZAPŁON I REAKTOR) -->
+    <div class="ui-panel bottom-panel" id="panel-bottom">
+
+        <div class="panel-section" style="flex: 1;">
+            <h2>Zapłon</h2>
+            <div class="ignition-slot">
+                <div class="ignition-key" id="ignition-key"></div>
+            </div>
+            <div class="lever-value" style="text-align:center; margin-top:15px; font-size: 10px; color:#aaa;">WŁÓŻ I
+                PRZEKRĘĆ</div>
+        </div>
+
+        <div class="panel-section" style="flex: 1;">
+            <h2>Reaktor Główny</h2>
+            <div class="reactor-btn" id="reactor-btn">START</div>
+        </div>
+
+        <div class="panel-section" style="flex: 1;">
+            <h2>Systemy Krytyczne</h2>
+            <div class="molly-container">
+                <div class="molly-label">ZRZUT CHŁODZIWA</div>
+                <div class="molly-guard" id="molly-guard-1">
+                    <div class="molly-flap" id="molly-flap-1">POCIĄGNIJ</div>
+                    <button class="molly-btn" id="molly-btn-1">ZRZUT</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel-section" style="flex: 1;">
+            <h2>Śluza Ładowni</h2>
+            <div class="airlock-container">
+                <div class="airlock-warning" id="airlock-warn">UWAGA: PRÓŻNIA</div>
+                <div class="airlock-lever-track"></div>
+                <div class="airlock-lever" id="airlock-lever"></div>
+            </div>
+            <div class="lever-value" style="text-align:center; margin-top:5px; font-size: 10px; color:#aaa;">POCIĄGNIJ W
+                DÓŁ</div>
+        </div>
+    </div>
+
+    <script>
+        // --- SYNTEZATOR DŹWIĘKU ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playBeep(frequency = 600, type = 'sine', duration = 0.1, volume = 0.1) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(volume, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+
+        // --- MECHANIKA POV (Rozglądanie się) ---
+        let currentView = 'center';
+
+        function setView(view) {
+            if (view === currentView) view = 'center';
+            currentView = view;
+            document.body.setAttribute('data-view', currentView);
+
+            // Dźwięk hydrauliki / ruchu kombinezonu
+            playBeep(150, 'sawtooth', 0.4, 0.05);
+            setTimeout(() => playBeep(100, 'square', 0.2, 0.05), 100);
+        }
+
+        window.addEventListener('keydown', (e) => {
+            // Blokujemy domyślne scrollowanie strony na strzałkach
+            if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].indexOf(e.code) > -1) {
+                e.preventDefault();
+            }
+
+            if (e.code === 'ArrowLeft') setView('left');
+            else if (e.code === 'ArrowRight') setView('right');
+            else if (e.code === 'ArrowDown') setView('down');
+            else if (e.code === 'ArrowUp') setView('center'); // Strzałka w górę zawsze wraca na środek
+        }, { passive: false });
+
+        // --- OBSŁUGA STACYJEK ---
+        const switches = document.querySelectorAll('.toggle input');
+        const logScreen = document.getElementById('log-screen');
+        const shieldVal = document.getElementById('shield-val');
+
+        function addLog(message, type = 'normal') {
+            const logs = logScreen.querySelectorAll('.log-line');
+            if (logs.length > 5) logs[0].remove();
+            const newLog = document.createElement('div');
+            newLog.className = `log-line ${type === 'error' ? 'log-error' : type === 'warn' ? 'log-warn' : ''}`;
+            newLog.innerText = `> ${message}`;
+            logScreen.insertBefore(newLog, document.querySelector('.status-footer'));
+        }
+
+        switches.forEach(sw => {
+            sw.addEventListener('change', (e) => {
+                const isChecked = e.target.checked;
+                const sysName = e.target.id.replace('switch-', '').toUpperCase();
+                playBeep(isChecked ? 800 : 400, 'square', 0.1, 0.05);
+                setTimeout(() => playBeep(isChecked ? 1200 : 300, 'sine', 0.1, 0.05), 50);
+
+                if (sysName === 'SHIELDS') {
+                    shieldVal.innerText = isChecked ? '100' : '0';
+                    shieldVal.parentElement.className = isChecked ? 'shield-str' : 'log-error';
+                }
+
+                if (sysName === 'POWER' && !isChecked) {
+                    addLog("UWAGA: UTRATA ZASILANIA GŁÓWNEGO!", "error");
+                    document.body.style.filter = "brightness(0.3) contrast(1.5)";
+
+                    // Efekt "wybijania korków" (kaskadowe wyłączanie reszty)
+                    let delay = 150;
+                    switches.forEach(otherSw => {
+                        if (otherSw.id !== 'switch-power' && otherSw.checked) {
+                            setTimeout(() => {
+                                otherSw.checked = false;
+                                otherSw.dispatchEvent(new Event('change'));
+                            }, delay);
+                            delay += 150; // Każdy kolejny korek wybija ułamek sekundy później
+                        }
+                    });
+
+                } else if (sysName === 'POWER' && isChecked) {
+                    addLog("PRZYWRÓCONO ZASILANIE.", "normal");
+                    document.body.style.filter = "none";
+                } else {
+                    addLog(`SYSTEM ${sysName}: ${isChecked ? 'ONLINE' : 'OFFLINE'}`, isChecked ? 'normal' : 'warn');
+                }
+            });
+        });
+
+        // --- GLOBALNY EFEKT WSTRZĄSU ---
+        function triggerShake(enable) {
+            const elements = document.querySelectorAll('.ui-panel, #space-window');
+            elements.forEach(p => enable ? p.classList.add('shake') : p.classList.remove('shake'));
+        }
+
+        // --- OBSŁUGA WAJCH ---
+        const thrustLever = document.getElementById('thrust-lever');
+        const thrustVal = document.getElementById('thrust-val');
+        const gearStick = document.getElementById('gear-stick');
+        const gearLabels = [
+            document.getElementById('label-0'), document.getElementById('label-1'),
+            document.getElementById('label-2'), document.getElementById('label-3'),
+            document.getElementById('label-4'), document.getElementById('label-5'),
+            document.getElementById('label-6')
+        ];
+        const gearValDisplay = document.getElementById('gear-val');
+        const tempVal = document.getElementById('temp-val');
+
+        let globalSpeed = 0;
+        let lastGearValue = '1';
+
+        function updateEngines() {
+            const thrust = parseInt(thrustLever.value);
+            const stickVal = gearStick.value;
+
+            const fakeThrust = document.getElementById('fake-thrust');
+            const thrustPos = (100 - thrust) / 100 * 80;
+            fakeThrust.style.setProperty('--thrust-pos', `${thrustPos}px`);
+
+            if (stickVal !== lastGearValue) {
+                playBeep(300, 'square', 0.1, 0.1);
+                setTimeout(() => playBeep(200, 'sawtooth', 0.1, 0.1), 50);
+                lastGearValue = stickVal;
+            }
+
+            let gearMultiplier = 0; let gearName = 'LUZ'; let gearColor = '#fff';
+            gearLabels.forEach(l => l.className = '');
+
+            if (stickVal === '6') { gearMultiplier = -1.5; gearName = 'HAMOWANIE'; gearColor = 'var(--neon-red)'; gearLabels[6].className = 'active-red'; }
+            else if (stickVal === '5') { gearMultiplier = 2.0; gearName = 'CRUISE'; gearColor = 'var(--neon-green)'; gearLabels[5].className = 'active-green'; }
+            else if (stickVal === '4') { gearMultiplier = 0; gearName = 'SPOOLING'; gearColor = 'var(--neon-orange)'; gearLabels[4].className = 'active-orange'; }
+            else if (stickVal === '3') { gearMultiplier = 3; gearName = 'WARP'; gearColor = 'var(--neon-blue)'; gearLabels[3].className = 'active-blue'; }
+            else if (stickVal === '2') { gearMultiplier = 1; gearName = 'IMPULS'; gearColor = 'var(--neon-blue)'; gearLabels[2].className = 'active-blue'; }
+            else if (stickVal === '1') { gearMultiplier = 0; gearName = 'LUZ'; gearColor = '#fff'; gearLabels[1].className = 'active-grey'; }
+            else if (stickVal === '0') { gearMultiplier = -0.5; gearName = 'WSTECZNY'; gearColor = 'var(--neon-red)'; gearLabels[0].className = 'active-red'; }
+
+            thrustVal.innerText = thrust + '%';
+            gearValDisplay.innerText = gearName;
+            gearValDisplay.style.color = gearColor;
+            gearValDisplay.style.textShadow = gearMultiplier !== 0 ? `0 0 5px ${gearColor}` : '0 0 5px #fff';
+
+            globalSpeed = thrust * gearMultiplier;
+            const coreTemp = 400 + Math.abs(globalSpeed * 1.5) + (thrust * 0.5);
+            tempVal.innerText = Math.round(coreTemp);
+
+            if (coreTemp > 800) {
+                tempVal.parentElement.className = 'log-error'; triggerShake(true);
+                if (Math.random() > 0.95) addLog("OSTRZEŻENIE: PRZEGRZANIE RDZENIA!", "error");
+            } else if (coreTemp > 600) {
+                tempVal.parentElement.className = 'core-temp'; triggerShake(false);
+            } else {
+                tempVal.parentElement.className = ''; triggerShake(false);
+            }
+
+            // Wskaźnik przeciążenia (Load Bar)
+            const loadBar = document.getElementById('load-bar-fill');
+            if (loadBar) {
+                const loadPercent = Math.min(100, Math.max(0, (Math.abs(globalSpeed) / 3) + (thrust * 0.5) + (Math.random() * 5)));
+                loadBar.style.width = loadPercent + '%';
+                if (loadPercent > 85) { loadBar.style.background = 'var(--neon-red)'; loadBar.style.boxShadow = '0 0 10px var(--neon-red)'; }
+                else if (loadPercent > 50) { loadBar.style.background = 'var(--neon-orange)'; loadBar.style.boxShadow = '0 0 10px var(--neon-orange)'; }
+                else { loadBar.style.background = 'var(--neon-green)'; loadBar.style.boxShadow = '0 0 10px var(--neon-green)'; }
+            }
+
+            if (thrust > 0 && gearMultiplier !== 0) playBeep(100 + Math.abs(globalSpeed), 'sawtooth', 0.1, 0.02 + Math.abs(globalSpeed) / 2000);
+        }
+
+        thrustLever.addEventListener('input', updateEngines);
+
+        // --- OBSŁUGA FIZYKI SKRZYNI BIEGÓW (H-Pattern) ---
+        const fakeThumb = document.getElementById('fake-thumb');
+        const shifterSlot = document.getElementById('shifter-slot');
+        let isDraggingGear = false;
+
+        const GEAR_POS = {
+            '0': { x: 38, y: 78 }, // R    (col 1)
+            '1': { x: 38, y: 40 }, // N    (col 1)
+            '2': { x: 38, y: 2 },  // I    (col 1)
+            '3': { x: 71, y: 2 },  // W    (col 2)
+            '4': { x: 71, y: 78 }, // S    (col 2)
+            '5': { x: 5, y: 2 },   // C    (col 0)
+            '6': { x: 5, y: 78 }   // B    (col 0)
+        };
+
+        let stickX = GEAR_POS['1'].x; let stickY = GEAR_POS['1'].y;
+        fakeThumb.style.transform = `translate(${stickX}px, ${stickY}px)`;
+
+        function getClosestOnSegment(px, py, x1, y1, x2, y2) {
+            let l2 = (x2 - x1) ** 2 + (y2 - y1) ** 2;
+            if (l2 === 0) return { x: x1, y: y1, dist2: (px - x1) ** 2 + (py - y1) ** 2 };
+            let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2;
+            t = Math.max(0, Math.min(1, t));
+            let cx = x1 + t * (x2 - x1); let cy = y1 + t * (y2 - y1);
+            return { x: cx, y: cy, dist2: (px - cx) ** 2 + (py - cy) ** 2 };
+        }
+
+        fakeThumb.addEventListener('pointerdown', (e) => {
+            isDraggingGear = true; fakeThumb.style.transition = 'none';
+            fakeThumb.setPointerCapture(e.pointerId); playBeep(250, 'square', 0.05, 0.05);
+        });
+
+        fakeThumb.addEventListener('pointermove', (e) => {
+            if (!isDraggingGear) return;
+            const rect = shifterSlot.getBoundingClientRect();
+            let mx = e.clientX - rect.left - 15; let my = e.clientY - rect.top - 15;
+
+            let p0 = getClosestOnSegment(mx, my, 5, 2, 5, 78);       // col 0
+            let p1 = getClosestOnSegment(mx, my, 38, 2, 38, 78);     // col 1
+            let p2 = getClosestOnSegment(mx, my, 71, 2, 71, 78);     // col 2
+            let ph = getClosestOnSegment(mx, my, 5, 40, 71, 40);     // horizontal track
+
+            let closest = p0;
+            if (p1.dist2 < closest.dist2) closest = p1;
+            if (p2.dist2 < closest.dist2) closest = p2;
+            if (ph.dist2 < closest.dist2) closest = ph;
+
+            stickX = closest.x; stickY = closest.y;
+            fakeThumb.style.transform = `translate(${stickX}px, ${stickY}px)`;
+        });
+
+        function getNearestGearKey(x, y) {
+            let bestGear = '1'; let minDist = Infinity;
+            for (let key in GEAR_POS) {
+                let dist = (x - GEAR_POS[key].x) ** 2 + (y - GEAR_POS[key].y) ** 2;
+                if (dist < minDist) { minDist = dist; bestGear = key; }
+            }
+            return bestGear;
+        }
+
+        fakeThumb.addEventListener('pointerup', () => {
+            if (!isDraggingGear) return;
+            isDraggingGear = false;
+            fakeThumb.style.transition = 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)';
+
+            let finalGear = getNearestGearKey(stickX, stickY);
+            stickX = GEAR_POS[finalGear].x; stickY = GEAR_POS[finalGear].y;
+            fakeThumb.style.transform = `translate(${stickX}px, ${stickY}px)`;
+
+            if (gearStick.value !== finalGear) {
+                gearStick.value = finalGear; updateEngines();
+            } else { playBeep(200, 'square', 0.05, 0.05); }
+        });
+
+        // --- AKTYWNY RADAR ---
+        const blips = document.querySelectorAll('.blip');
+        blips.forEach(blip => {
+            blip.addEventListener('pointerup', (e) => {
+                const targetName = e.target.getAttribute('data-target') || 'NIEZNANY OBIEKT';
+
+                blips.forEach(b => b.classList.remove('locked'));
+                e.target.classList.add('locked');
+
+                addLog(`ZAMKNIĘTO CEL: ${targetName}`, "warn");
+                playBeep(1800, 'square', 0.05, 0.1);
+                setTimeout(() => playBeep(2000, 'sine', 0.1, 0.1), 80);
+            });
+        });
+
+        // --- DŹWIGNIA ŚLUZY ---
+        const airlockLever = document.getElementById('airlock-lever');
+        const airlockWarn = document.getElementById('airlock-warn');
+        let isAirlockOpen = false;
+
+        if (airlockLever) {
+            airlockLever.addEventListener('pointerdown', (e) => {
+                airlockLever.setPointerCapture(e.pointerId);
+                playBeep(150, 'sawtooth', 0.1, 0.05);
+            });
+
+            airlockLever.addEventListener('pointerup', (e) => {
+                isAirlockOpen = !isAirlockOpen;
+                if (!isAirlockOpen) {
+                    airlockLever.classList.remove('open');
+                    airlockWarn.classList.remove('active');
+                    addLog("ŚLUZA ŁADOWNI ZAMKNIĘTA. CIŚNIENIE STABILNE.", "normal");
+                    playBeep(200, 'sine', 0.3, 0.05);
+                } else {
+                    airlockLever.classList.add('open');
+                    airlockWarn.classList.add('active');
+                    addLog("UWAGA: ROZSZCZELNIENIE ŚLUZY ŁADOWNI, ZAGROŻENIE PRÓŻNIĄ!", "error");
+
+                    triggerShake(true);
+                    setTimeout(() => triggerShake(false), 600);
+
+                    playBeep(250, 'sawtooth', 0.5, 0.2);
+                    setTimeout(() => playBeep(200, 'sawtooth', 0.5, 0.2), 600);
+                }
+            });
+        }
+
+        // --- OBSŁUGA TELEWIZORA (TABLETU) PRZEZ TERMINAL ---
+        const networkBtn = document.getElementById('network-btn');
+        const tabletWrapper = document.getElementById('tablet-wrapper');
+        let isTabletOpen = false;
+
+        if (networkBtn) {
+            networkBtn.addEventListener('pointerup', () => {
+                isTabletOpen = !isTabletOpen;
+                if (isTabletOpen) {
+                    networkBtn.style.background = '#d0d5d9';
+                    networkBtn.style.color = '#000';
+                    tabletWrapper.classList.add('open');
+                    addLog("NAWIĄZYWANIE POŁĄCZENIA SIECIOWEGO...", "normal");
+                    playBeep(300, 'square', 0.2, 0.05);
+                    setTimeout(() => playBeep(500, 'sine', 0.4, 0.05), 200);
+                } else {
+                    networkBtn.style.background = '#111';
+                    networkBtn.style.color = '#d0d5d9';
+                    tabletWrapper.classList.remove('open');
+                    addLog("ROZŁĄCZONO Z SIECIĄ LOKALNĄ.", "warn");
+                    playBeep(400, 'square', 0.2, 0.05);
+                    setTimeout(() => playBeep(250, 'sawtooth', 0.3, 0.05), 200);
+                }
+            });
+        }
+
+        // --- ANIMACJA PRZESTRZENI KOSMICZNEJ ---
+        const canvas = document.getElementById('starfield');
+        const ctx = canvas.getContext('2d');
+        let width, height; let stars = [];
+
+        function resize() { width = canvas.width = canvas.offsetWidth; height = canvas.height = canvas.offsetHeight; initStars(); }
+        function initStars() {
+            stars = [];
+            for (let i = 0; i < 400; i++) stars.push({ x: Math.random() * width - width / 2, y: Math.random() * height - height / 2, z: Math.random() * width });
+        }
+
+        function drawStars() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'; ctx.fillRect(0, 0, width, height);
+            const centerX = width / 2; const centerY = height / 2;
+            ctx.fillStyle = 'white';
+            let actualSpeed = globalSpeed === 0 ? 0.5 : globalSpeed;
+
+            for (let i = 0; i < stars.length; i++) {
+                let star = stars[i];
+                star.z -= actualSpeed * 0.5;
+
+                if (star.z <= 0 && actualSpeed >= 0) { star.x = Math.random() * width - width / 2; star.y = Math.random() * height - height / 2; star.z = width; }
+                else if (star.z > width && actualSpeed < 0) { star.x = Math.random() * width - width / 2; star.y = Math.random() * height - height / 2; star.z = 1; }
+
+                let k = 128.0 / Math.max(0.1, star.z);
+                let px = star.x * k + centerX; let py = star.y * k + centerY;
+                let size = (1 - star.z / width) * 3;
+
+                if (px >= 0 && px <= width && py >= 0 && py <= height) {
+                    if (actualSpeed > 100) { ctx.fillStyle = `hsl(${200 + Math.random() * 60}, 100%, 70%)`; size *= 2; }
+                    else if (actualSpeed < -10) { ctx.fillStyle = `hsl(${0 + Math.random() * 30}, 100%, 70%)`; size *= 1.5; }
+                    else { ctx.fillStyle = 'white'; }
+                    ctx.beginPath(); ctx.arc(px, py, Math.max(0.1, size), 0, Math.PI * 2); ctx.fill();
+                }
+            }
+            requestAnimationFrame(drawStars);
+        }
+
+        window.addEventListener('resize', resize);
+        resize(); drawStars();
+
+        setTimeout(() => {
+            let i = 0;
+            const bootSnd = setInterval(() => {
+                playBeep(400 + (i * 100), 'square', 0.05, 0.05); i++;
+                if (i > 5) clearInterval(bootSnd);
+            }, 100);
+            addLog("UŻYJ WSZYSTKICH 4 STRZAŁEK KLAWIATURY ABY SIĘ ROZGLĄDAĆ.", "warn");
+        }, 500);
+
+        // --- ZAPŁON I REAKTOR ---
+        const ignKey = document.getElementById('ignition-key');
+        const reactorBtn = document.getElementById('reactor-btn');
+        let isKeyTurned = false;
+        let isReactorOn = false;
+
+        ignKey.addEventListener('click', () => {
+            isKeyTurned = !isKeyTurned;
+            ignKey.classList.toggle('turned', isKeyTurned);
+            playBeep(isKeyTurned ? 800 : 400, 'square', 0.1, 0.05);
+
+            if (isKeyTurned) {
+                reactorBtn.classList.add('ready');
+                addLog("ZAPŁON ODBLOKOWANY. REAKTOR GOTOWY DO STARTU.", "warn");
+            } else {
+                reactorBtn.classList.remove('ready');
+                if (isReactorOn) {
+                    isReactorOn = false;
+                    reactorBtn.classList.remove('active');
+                    addLog("ZAPŁON ODCIĘTY. AWARYJNE WYGASZANIE REAKTORA!", "error");
+                    triggerShake(true); setTimeout(() => triggerShake(false), 500);
+
+                    // Automatyczne wybicie zasilania przy odcięciu kluczyka
+                    const pwrSwitch = document.getElementById('switch-power');
+                    if (pwrSwitch.checked) {
+                        pwrSwitch.checked = false;
+                        pwrSwitch.dispatchEvent(new Event('change'));
+                    }
+                } else {
+                    addLog("ZAPŁON ZABLOKOWANY.", "normal");
+                }
+            }
+        });
+
+        reactorBtn.addEventListener('click', () => {
+            if (!isKeyTurned) {
+                playBeep(200, 'sawtooth', 0.2, 0.1);
+                addLog("BŁĄD: BRAK KLUCZA ZAPŁONU W STACYJCE.", "error");
+                return;
+            }
+            if (isReactorOn) return;
+
+            isReactorOn = true;
+            reactorBtn.classList.remove('ready');
+            reactorBtn.classList.add('active');
+
+            // Dźwięk odpalania wielkiego silnika
+            playBeep(100, 'sawtooth', 1.0, 0.2);
+            setTimeout(() => playBeep(200, 'sawtooth', 0.8, 0.2), 200);
+            setTimeout(() => playBeep(400, 'sine', 1.5, 0.3), 400);
+
+            triggerShake(true);
+            setTimeout(() => triggerShake(false), 1500);
+
+            addLog("REAKTOR GŁÓWNY URUCHOMIONY. PEŁNA MOC DOSTĘPNA.", "normal");
+        });
+
+        // --- MOLLY GUARD ---
+        const mollyFlap = document.getElementById('molly-flap-1');
+        const mollyGuard = document.getElementById('molly-guard-1');
+        const mollyBtn = document.getElementById('molly-btn-1');
+
+        mollyFlap.addEventListener('click', () => {
+            mollyGuard.classList.toggle('open');
+            playBeep(mollyGuard.classList.contains('open') ? 900 : 700, 'square', 0.1, 0.05);
+        });
+
+        mollyBtn.addEventListener('click', () => {
+            if (mollyGuard.classList.contains('open')) {
+                playBeep(150, 'sawtooth', 0.8, 0.2);
+                addLog("UWAGA: AWARYJNY ZRZUT CHŁODZIWA!", "error");
+                document.getElementById('temp-val').innerText = '150';
+                triggerShake(true); setTimeout(() => triggerShake(false), 800);
+            }
+        });
+
+        // --- KALIBRATOR WARP ---
+        let warpCoords = { x: 0, y: 0 };
+        const warpBtn = document.getElementById('warp-lock-btn');
+
+        function adjWarp(axis, amount) {
+            warpCoords[axis] += amount;
+            const sign = warpCoords[axis] >= 0 ? '' : '-';
+            const val = Math.abs(warpCoords[axis]).toString().padStart(4, '0');
+            document.getElementById(`warp-${axis}`).innerText = sign + val;
+            playBeep(600, 'sine', 0.05, 0.05);
+
+            if (warpBtn.classList.contains('locked')) {
+                warpBtn.classList.remove('locked');
+                warpBtn.innerText = 'Zablokuj Cel';
+                addLog("CEL ODBLOKOWANY. PODAJ WSPÓŁRZĘDNE.", "warn");
+            }
+        }
+
+        warpBtn.addEventListener('click', () => {
+            const isLocked = warpBtn.classList.toggle('locked');
+            if (isLocked) {
+                warpBtn.innerText = 'ZABLOKOWANO';
+                playBeep(1200, 'square', 0.1, 0.1); setTimeout(() => playBeep(1400, 'square', 0.2, 0.1), 150);
+                addLog(`SKOK SKALIBROWANY: [${warpCoords.x}, ${warpCoords.y}]`, "normal");
+            } else {
+                warpBtn.innerText = 'Zablokuj Cel'; playBeep(400, 'square', 0.1, 0.1);
+            }
+        });
+
+        // --- RCS JOYSTICK ---
+        const rcsPad = document.getElementById('rcs-pad');
+        const rcsStick = document.getElementById('rcs-stick');
+        const rcsX = document.getElementById('rcs-x');
+        const rcsY = document.getElementById('rcs-y');
+        let isDraggingRcs = false; const maxRcsDist = 30;
+
+        rcsStick.addEventListener('pointerdown', (e) => {
+            isDraggingRcs = true; rcsStick.style.transition = 'none'; rcsPad.setPointerCapture(e.pointerId);
+        });
+
+        rcsPad.addEventListener('pointermove', (e) => {
+            if (!isDraggingRcs) return;
+            const rect = rcsPad.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2; const centerY = rect.top + rect.height / 2;
+            let dx = e.clientX - centerX; let dy = e.clientY - centerY;
+
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > maxRcsDist) { dx = (dx / dist) * maxRcsDist; dy = (dy / dist) * maxRcsDist; }
+
+            rcsStick.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+            const valX = Math.round((dx / maxRcsDist) * 100); const valY = Math.round((-dy / maxRcsDist) * 100);
+            rcsX.innerText = valX; rcsY.innerText = valY;
+
+            if (Math.random() > 0.8 && dist > 15) playBeep(200 + Math.abs(valX), 'square', 0.05, 0.01);
+        });
+
+        rcsPad.addEventListener('pointerup', () => {
+            isDraggingRcs = false;
+            rcsStick.style.transition = 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)';
+            rcsStick.style.transform = 'translate(-50%, -50%)';
+            rcsX.innerText = '0'; rcsY.innerText = '0';
+        });
+
+        // --- DYSTRYBUCJA MOCY ---
+        const pwrEng = document.getElementById('pwr-eng');
+        const pwrShd = document.getElementById('pwr-shd');
+        const pwrWpn = document.getElementById('pwr-wpn');
+        const pwrSliders = [pwrEng, pwrShd, pwrWpn];
+
+        function updatePower(changedSlider) {
+            let total = parseInt(pwrEng.value) + parseInt(pwrShd.value) + parseInt(pwrWpn.value);
+            if (total > 100) {
+                const overflow = total - 100;
+                const others = pwrSliders.filter(s => s !== changedSlider);
+                let half = Math.floor(overflow / 2);
+                others[0].value = Math.max(0, parseInt(others[0].value) - half);
+                others[1].value = Math.max(0, parseInt(others[1].value) - (overflow - half));
+            }
+
+            pwrSliders.forEach(slider => {
+                const val = slider.value;
+                document.getElementById(`${slider.id}-val`).innerText = `${val}%`;
+                const pos = (100 - val) / 100 * 70;
+                document.getElementById(`fake-${slider.id}`).style.setProperty('--pwr-pos', `${pos}px`);
+            });
+            playBeep(500, 'sine', 0.05, 0.02);
+        }
+
+        pwrSliders.forEach(s => {
+            s.addEventListener('input', () => updatePower(s));
+            const initPos = (100 - s.value) / 100 * 70;
+            document.getElementById(`fake-${s.id}`).style.setProperty('--pwr-pos', `${initPos}px`);
+        });
+
+    </script>
+</body>
+
+</html>

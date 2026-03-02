@@ -48,6 +48,7 @@ const PALETTE_ITEMS = [
   { id: 'hp_aux', label: 'Hardpoint AUX', tool: 'hardpoint', hardpointType: 'aux', color: COLORS.aux },
   { id: 'hp_hangar', label: 'Hardpoint HANGAR', tool: 'hardpoint', hardpointType: 'hangar', color: COLORS.hangar },
   { id: 'hp_special', label: 'Hardpoint SPECIAL', tool: 'hardpoint', hardpointType: 'special', color: COLORS.special },
+  { id: 'core', label: 'Rdzeń', tool: 'core', hardpointType: null, color: COLORS.core },
   { id: 'engine_main', label: 'Dysza MAIN', tool: 'engine_main', hardpointType: null, color: COLORS.engineMain },
   { id: 'engine_side', label: 'Dysza SIDE', tool: 'engine_side', hardpointType: null, color: COLORS.engineSide }
 ];

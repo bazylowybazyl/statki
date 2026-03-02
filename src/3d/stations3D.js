@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
-import { Core3D } from './core3d.js'; // ZMIEŃ ŚCIEŻKĘ jeśli to konieczne
+import { Core3D } from './core3d.js';
 
 const loader = new GLTFLoader();
 const templateCache = new Map();
@@ -52,24 +52,21 @@ function getTemplate(stationId, path) {
       const scene = gltf.scene;
       const maxAnisotropy = Core3D.renderer ? Core3D.renderer.capabilities.getMaxAnisotropy() : 4;
 
-      // --- FIX: ZBIERAMY FAŁSZYWE TŁA DO USUNIĘCIA ---
       const toRemove = [];
 
       scene.traverse((o) => {
         if (!o.isMesh) return;
 
         const name = o.name.toLowerCase();
-        // Wykrywamy wbudowane planety/atmosfery z darmowych modeli GLTF
         const isBackground = name.includes('planet') || name.includes('earth') ||
           name.includes('mars') || name.includes('jupiter') ||
           name.includes('neptune') || name.includes('clouds') ||
           name.includes('atmosphere') || name.includes('bg_') ||
           name.includes('background') || name.includes('sphere');
 
-        // Zabezpieczenie: usuwamy tylko, jeśli to nie jest sama stacja
         if (isBackground && !name.includes('station') && !name.includes('base') && !name.includes('hub')) {
           toRemove.push(o);
-          return; // Przerywamy pętlę, obiekt i tak idzie do kosza
+          return;
         }
 
         o.castShadow = true;
@@ -97,7 +94,6 @@ function getTemplate(stationId, path) {
         }
       });
 
-      // --- FIX: FIZYCZNE USUNIĘCIE TŁA Z MODELU ---
       toRemove.forEach(obj => {
         if (obj.parent) obj.parent.remove(obj);
       });
@@ -276,6 +272,7 @@ function updateRecordTransform(record, station, devScale, visible) {
 
   if (group.parent !== Core3D.scene) {
     Core3D.scene.add(group);
+    Core3D.enableBackground3D(group); // <-- POPRAWKA Z enablePerspective na enableBackground3D
   }
 
   const geometryRadius = record.geometryRadius || group.userData.geometryRadius || 1;
@@ -302,7 +299,6 @@ function updateRecordTransform(record, station, devScale, visible) {
 
   group.scale.setScalar(effectiveScale);
 
-  // Z = -100 utrzymuje stację na odpowiedniej płaszczyźnie
   group.position.set(station.x, -station.y, -100);
 
   const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
@@ -335,7 +331,10 @@ export function initStations3D(_sceneIgnored, stations) {
     activeKeys.add(record.key);
 
     if (record.group) {
-      if (record.group.parent !== Core3D.scene) Core3D.scene.add(record.group);
+      if (record.group.parent !== Core3D.scene) {
+          Core3D.scene.add(record.group);
+          Core3D.enableBackground3D(record.group); // <-- POPRAWKA
+      }
       station._mesh3d = record.group;
       continue;
     }
@@ -365,6 +364,7 @@ export function initStations3D(_sceneIgnored, stations) {
     pivotGroup.visible = false;
     pivotGroup.add(modelGroup);
     Core3D.scene.add(pivotGroup);
+    Core3D.enableBackground3D(pivotGroup); // <-- POPRAWKA
 
     record.group = pivotGroup;
     record.modelGroup = modelGroup;
@@ -422,6 +422,7 @@ export function updateStations3D(stations) {
         pivotGroup.visible = false;
         pivotGroup.add(modelGroup);
         Core3D.scene.add(pivotGroup);
+        Core3D.enableBackground3D(pivotGroup); // <-- POPRAWKA
         record.group = pivotGroup;
         record.modelGroup = modelGroup;
         station._mesh3d = pivotGroup;

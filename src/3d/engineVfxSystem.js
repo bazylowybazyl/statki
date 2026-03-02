@@ -140,6 +140,11 @@ function updateEffects(entity, fxData, time) {
   fxData.group.rotation.z = -angle;
   fxData.group.scale.set(scale, scale, 1);
 
+  const sceneOriginY = -ey;
+  const sceneAngle = -angle;
+  const cA = Math.cos(sceneAngle);
+  const sA = Math.sin(sceneAngle);
+
   const speed = Math.hypot(entity.vx || entity.vel?.x || 0, entity.vy || entity.vel?.y || 0);
   const moveGlow = Math.min(speed / 900, 0.6) * 0.8;
   const thrustMain = Math.max(
@@ -199,6 +204,18 @@ function updateEffects(entity, fxData, time) {
       if (item.instance.setBloomGain) item.instance.setBloomGain(window.OPTIONS.vfx.bloomGain);
     }
     if (item.instance.update) item.instance.update(time);
+
+    if (slotThrottle > 0.06 && Core3D.pushHeatHazeWorld) {
+      const localX = lx * scale;
+      const localY = ly * scale;
+      const worldX = ex + localX * cA - localY * sA;
+      const worldY = sceneOriginY + localX * sA + localY * cA;
+      const baseRadius = slot.kind === 'side' ? 78 : 110;
+      const radiusWorld = baseRadius * scale * widthMul * (0.55 + slotThrottle * 0.9);
+      const warpState = (typeof window !== 'undefined' && window.warp?.state === 'active') ? 1 : 0;
+      const strength = slotThrottle * (0.7 + moveGlow * 0.5 + warpState * 0.35);
+      Core3D.pushHeatHazeWorld(worldX, worldY, -4, radiusWorld, strength, false);
+    }
   }
 }
 
@@ -213,6 +230,8 @@ export const EngineVfxSystem = {
 
   update(entities = []) {
     if (!Core3D.isInitialized || !Core3D.scene) return;
+
+    if (Core3D.beginHeatHazeFrame) Core3D.beginHeatHazeFrame();
 
     const activeEntities = new Set();
     const time = (typeof performance !== 'undefined') ? performance.now() / 1000 : 0;

@@ -47,7 +47,7 @@ export function initOverlay({ host, getView }) {
     powerPreference: "high-performance"
   });
   
-  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.setPixelRatio(Math.min(1.2, window.devicePixelRatio || 1));
   renderer.setSize(host.clientWidth, host.clientHeight, false);
   renderer.setClearColor(0x000000, 0);
   
@@ -102,8 +102,12 @@ export function initOverlay({ host, getView }) {
   composer.addPass(renderPass);
 
   // Pass 2: Bloom (Parametry ze źródła reactorblow.js)
+  let renderScale = 0.8;
   const bloomPass = new UnrealBloomPass(
-    new THREE.Vector2(host.clientWidth, host.clientHeight), 
+    new THREE.Vector2(
+      Math.max(1, Math.floor(host.clientWidth * renderScale)),
+      Math.max(1, Math.floor(host.clientHeight * renderScale))
+    ),
     2.5,  // Strength: Wysoka wartość dla efektu neonu
     0.5,  // Radius: 0.5 (jak w oryginale) - daje szerszą poświatę
     0.1   // Threshold: 0.1 (jak w oryginale) - pozwala świecić ciemniejszym elementom
@@ -115,6 +119,24 @@ export function initOverlay({ host, getView }) {
   composer.addPass(alphaPass);
 
   const effects = [];
+  const stats = {
+    activeEffects: 0,
+    droppedEffects: 0,
+    lastRenderMs: 0,
+    maxEffects: 72,
+    renderScale,
+    bloomEnabled: true,
+    frameSkip: 1,
+    updateSkip: 1,
+    skippedFrames: 0
+  };
+  const perf = {
+    frameSkip: 1,
+    skipCursor: 0,
+    updateSkip: 1,
+    updateCursor: 0,
+    accumDt: 0
+  };
   let lastSizeW = host.clientWidth;
   let lastSizeH = host.clientHeight;
 
@@ -150,35 +172,151 @@ export function initOverlay({ host, getView }) {
 
     if (lastSizeW !== w || lastSizeH !== h) {
       renderer.setSize(w, h, false);
-      composer.setSize(w, h);
+      composer.setSize(
+        Math.max(1, Math.floor(w * renderScale)),
+        Math.max(1, Math.floor(h * renderScale))
+      );
       lastSizeW = w;
       lastSizeH = h;
     }
   }
 
+  function applyAdaptiveQuality() {
+    const active = effects.length;
+    const prevRenderMs = Number(stats.lastRenderMs) || 0;
+    const pressure = Math.max(active / 70, prevRenderMs / 6.5);
+
+    let targetScale = 0.84;
+    let targetFrameSkip = 1;
+    let targetUpdateSkip = 1;
+    let targetBloom = true;
+    let targetMaxEffects = 96;
+
+    if (pressure > 2.6) {
+      targetScale = 0.34;
+      targetFrameSkip = 4;
+      targetUpdateSkip = 4;
+      targetBloom = false;
+      targetMaxEffects = 40;
+    } else if (pressure > 1.9) {
+      targetScale = 0.42;
+      targetFrameSkip = 3;
+      targetUpdateSkip = 3;
+      targetBloom = false;
+      targetMaxEffects = 52;
+    } else if (pressure > 1.4) {
+      targetScale = 0.5;
+      targetFrameSkip = 2;
+      targetUpdateSkip = 2;
+      targetBloom = false;
+      targetMaxEffects = 62;
+    } else if (pressure > 1.0) {
+      targetScale = 0.58;
+      targetFrameSkip = 2;
+      targetUpdateSkip = 2;
+      targetBloom = false;
+      targetMaxEffects = 72;
+    } else if (pressure > 0.72) {
+      targetScale = 0.68;
+      targetFrameSkip = 2;
+      targetUpdateSkip = 1;
+      targetBloom = false;
+      targetMaxEffects = 82;
+    } else if (pressure > 0.45) {
+      targetScale = 0.76;
+      targetFrameSkip = 1;
+      targetUpdateSkip = 1;
+      targetBloom = true;
+      targetMaxEffects = 92;
+    }
+
+    if (effects.length > targetMaxEffects) {
+      const overflow = effects.length - targetMaxEffects;
+      for (let i = 0; i < overflow; i++) {
+        const fx = effects.pop();
+        if (!fx) break;
+        if (fx.group?.parent) fx.group.parent.remove(fx.group);
+        if (typeof fx.dispose === "function") fx.dispose();
+      }
+      stats.droppedEffects += overflow;
+    }
+
+    if (Math.abs(targetScale - renderScale) > 0.01) {
+      renderScale = targetScale;
+      composer.setSize(
+        Math.max(1, Math.floor(lastSizeW * renderScale)),
+        Math.max(1, Math.floor(lastSizeH * renderScale))
+      );
+    }
+    perf.frameSkip = targetFrameSkip;
+    perf.updateSkip = targetUpdateSkip;
+    stats.maxEffects = targetMaxEffects;
+    if (bloomPass.enabled !== targetBloom) bloomPass.enabled = targetBloom;
+    stats.renderScale = renderScale;
+    stats.bloomEnabled = bloomPass.enabled;
+    stats.frameSkip = perf.frameSkip;
+    stats.updateSkip = perf.updateSkip;
+  }
+
   function tick(dt) {
     syncCamera();
+    applyAdaptiveQuality();
 
-    for (let i = effects.length - 1; i >= 0; i--) {
-      const fx = effects[i];
-      if (fx.update) {
-        fx.update(dt);
+    let updateNow = true;
+    let stepDt = dt;
+    if (perf.updateSkip > 1) {
+      perf.accumDt += dt;
+      perf.updateCursor = (perf.updateCursor + 1) % perf.updateSkip;
+      updateNow = perf.updateCursor === 0;
+      if (updateNow) {
+        stepDt = perf.accumDt;
+        perf.accumDt = 0;
       }
-      if (!fx.group || !fx.group.parent) {
-        effects.splice(i, 1);
+    }
+
+    if (updateNow) {
+      for (let i = effects.length - 1; i >= 0; i--) {
+        const fx = effects[i];
+        if (fx.update) {
+          fx.update(stepDt);
+        }
+        if (!fx.group || !fx.group.parent) {
+          effects.splice(i, 1);
+        }
       }
     }
 
     // Czyścimy renderer do zera przed rysowaniem composera
+    stats.activeEffects = effects.length;
+    if (effects.length === 0) {
+      renderer.clear();
+      stats.lastRenderMs = 0;
+      perf.accumDt = 0;
+      return;
+    }
+    perf.skipCursor = (perf.skipCursor + 1) % perf.frameSkip;
+    if (perf.skipCursor !== 0) {
+      stats.skippedFrames += 1;
+      return;
+    }
+
     renderer.clear();
+    const t0 = (typeof performance !== "undefined") ? performance.now() : 0;
     composer.render();
+    stats.lastRenderMs = (t0 > 0) ? (performance.now() - t0) : 0;
   }
 
   function spawn(effect) {
     if (!effect) return;
+    if (effects.length >= stats.maxEffects) {
+      stats.droppedEffects += 1;
+      if (typeof effect.dispose === "function") effect.dispose();
+      return;
+    }
     if (effect.group) {
         scene.add(effect.group);
         effects.push(effect);
+        stats.activeEffects = effects.length;
     }
   }
 
@@ -196,5 +334,9 @@ export function initOverlay({ host, getView }) {
     renderTarget.dispose();
   }
 
-  return { scene, camera, renderer, composer, tick, spawn, resize, dispose };
+  function getStats() {
+    return { ...stats };
+  }
+
+  return { scene, camera, renderer, composer, tick, spawn, resize, dispose, getStats };
 }

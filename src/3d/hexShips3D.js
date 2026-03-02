@@ -516,6 +516,7 @@ function createEntityMesh(entity) {
 
   // Ring segments are numerous; skip their shadow pass to stabilize frame-time.
   const enableShadowCast = !entity?.isRingSegment;
+  mesh.renderOrder = entity?.isRingSegment ? 0 : 10;
   mesh.castShadow = enableShadowCast;
   mesh.customDepthMaterial = enableShadowCast
     ? createHexShadowDepthMaterial(
