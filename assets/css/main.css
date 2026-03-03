@@ -2034,6 +2034,93 @@
       text-align: right;
     }
 
+    .hangar-hull-entry {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .hangar-hull-summary {
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .hangar-hull-summary:focus-visible {
+      outline: 1px solid rgba(109, 220, 255, 0.75);
+      outline-offset: 2px;
+    }
+
+    .hangar-hull-info {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      gap: 2px;
+    }
+
+    .hangar-hull-role {
+      color: #94a9d6;
+      font-size: 11px;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .hangar-hull-meta {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .hangar-hull-expand {
+      color: #d1dcfb;
+      font-weight: 700;
+      font-size: 11px;
+      opacity: 0.85;
+    }
+
+    .hangar-hull-details {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .hangar-hull-stat {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 8px;
+      background: rgba(10, 16, 30, 0.7);
+      border: 1px dashed rgba(88, 108, 170, 0.4);
+      border-radius: 4px;
+      font-size: 11px;
+    }
+
+    .hangar-hull-stat-label {
+      color: #8da8de;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .hangar-hull-stat-value {
+      color: #dbeafe;
+      font-weight: 600;
+      text-align: right;
+    }
+
+    .hangar-hull-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 2px;
+    }
+
+    .hangar-hull-action-btn {
+      min-width: 120px;
+    }
+
     /* Wiersz Hardpointu (Slot) */
     .hp-row {
       display: grid;

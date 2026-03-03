@@ -117,6 +117,122 @@ function markRingSegmentHot(entity, physicsHoldMs = 2500, visualHoldMs = physics
 
 
 
+function resetGridMeshDirtyRange(grid) {
+
+  if (!grid) return;
+
+  grid.meshDirtyAll = false;
+
+  grid.meshDirtyStart = -1;
+
+  grid.meshDirtyEnd = -1;
+
+}
+
+function markGridMeshDirtyAll(grid) {
+
+  if (!grid) return;
+
+  grid.meshDirty = true;
+
+  const count = Array.isArray(grid.shards) ? grid.shards.length : 0;
+
+  grid.meshDirtyAll = true;
+
+  grid.meshDirtyStart = 0;
+
+  grid.meshDirtyEnd = Math.max(0, count - 1);
+
+}
+
+function markGridMeshDirtyRange(grid, minIndex, maxIndex) {
+
+  if (!grid) return;
+
+  const count = Array.isArray(grid.shards) ? grid.shards.length : 0;
+
+  if (count <= 0) {
+
+    markGridMeshDirtyAll(grid);
+
+    return;
+
+  }
+
+  const a = Number(minIndex);
+
+  const b = Number(maxIndex);
+
+  if (!Number.isFinite(a) || !Number.isFinite(b)) {
+
+    markGridMeshDirtyAll(grid);
+
+    return;
+
+  }
+
+  let start = a | 0;
+
+  let end = b | 0;
+
+  if (end < start) {
+
+    const tmp = start;
+
+    start = end;
+
+    end = tmp;
+
+  }
+
+  if (start < 0 || end < 0 || start >= count || end >= count) {
+
+    markGridMeshDirtyAll(grid);
+
+    return;
+
+  }
+
+  grid.meshDirty = true;
+
+  if (grid.meshDirtyAll) return;
+
+  const curStart = Number(grid.meshDirtyStart);
+
+  const curEnd = Number(grid.meshDirtyEnd);
+
+  if (!Number.isFinite(curStart) || !Number.isFinite(curEnd) || curStart < 0 || curEnd < curStart) {
+
+    grid.meshDirtyStart = start;
+
+    grid.meshDirtyEnd = end;
+
+    return;
+
+  }
+
+  if (start < curStart) grid.meshDirtyStart = start;
+
+  if (end > curEnd) grid.meshDirtyEnd = end;
+
+}
+
+function markGridMeshDirtyByShard(grid, shard) {
+
+  const idx = Number(shard?.__meshIndex);
+
+  if (!Number.isFinite(idx)) {
+
+    markGridMeshDirtyAll(grid);
+
+    return;
+
+  }
+
+  markGridMeshDirtyRange(grid, idx | 0, idx | 0);
+
+}
+
 let HEX_SHIPS_3D_ACTIVE = false;
 
 
@@ -566,6 +682,8 @@ function updateHexCache(entity) {
 
   g.meshDirty = false;
 
+  resetGridMeshDirtyRange(g);
+
   g.gpuTextureNeedsUpdate = false;
 
 }
@@ -580,7 +698,9 @@ export function refreshHexBodyCache(entity) {
 
   const needsMeshRefresh2D = !HEX_SHIPS_3D_ACTIVE && !!grid.meshDirty;
 
-  if (grid.cacheDirty || grid.textureDirty || needsMeshRefresh2D) updateHexCache(entity);
+  const needsTextureRebuild = !HEX_SHIPS_3D_ACTIVE && !!grid.textureDirty;
+
+  if (grid.cacheDirty || needsTextureRebuild || needsMeshRefresh2D) updateHexCache(entity);
 
 }
 
@@ -660,6 +780,10 @@ class HexShard {
 
     this.origLy = 0;
 
+    this._crushStamp = 0;
+
+    this.__meshIndex = -1;
+
   }
 
 
@@ -710,13 +834,15 @@ class HexShard {
 
     const MAX_INSTANT = 8.0;
 
-    const mag = Math.hypot(vecX, vecY);
+    const magSq = vecX * vecX + vecY * vecY;
 
     let instX = vecX, instY = vecY;
 
 
 
-    if (mag > MAX_INSTANT) {
+    if (magSq > MAX_INSTANT * MAX_INSTANT) {
+
+      const mag = Math.sqrt(magSq);
 
       instX = (vecX / mag) * MAX_INSTANT;
 
@@ -746,11 +872,13 @@ class HexShard {
 
 
 
-    const vMag = Math.hypot(this.__collVelX, this.__collVelY);
+    const vSq = this.__collVelX * this.__collVelX + this.__collVelY * this.__collVelY;
 
     const MAX_VEL = Math.max(1.0, 160.0 * waveMult);
 
-    if (vMag > MAX_VEL) {
+    if (vSq > MAX_VEL * MAX_VEL) {
+
+      const vMag = Math.sqrt(vSq);
 
       this.__collVelX = (this.__collVelX / vMag) * MAX_VEL;
 
@@ -1054,6 +1182,198 @@ export const DestructorSystem = {
 
   },
 
+  _liveCollisionDebug: {
+
+    enabled: false,
+
+    intervalMs: 1000,
+
+    startedAt: 0,
+
+    lastFlushAt: 0,
+
+    frames: 0,
+
+    frameMsSum: 0,
+
+    frameMsMax: 0,
+
+    pairCandidates: 0,
+
+    pairNarrow: 0,
+
+    ringPairs: 0,
+
+    queryCandidates: 0,
+
+    queryReturned: 0,
+
+    buckets: Object.create(null)
+
+  },
+
+  _dbgCollisionReset(intervalMs = null) {
+
+    const dbg = this._liveCollisionDebug;
+
+    if (!dbg) return;
+
+    if (intervalMs != null) dbg.intervalMs = Math.max(250, Number(intervalMs) || 1000);
+
+    dbg.frames = 0;
+
+    dbg.frameMsSum = 0;
+
+    dbg.frameMsMax = 0;
+
+    dbg.pairCandidates = 0;
+
+    dbg.pairNarrow = 0;
+
+    dbg.ringPairs = 0;
+
+    dbg.queryCandidates = 0;
+
+    dbg.queryReturned = 0;
+
+    dbg.buckets = Object.create(null);
+
+  },
+
+  setCollisionLiveDebug(enabled = true, intervalMs = 1000) {
+
+    const dbg = this._liveCollisionDebug;
+
+    if (!dbg) return null;
+
+    dbg.enabled = !!enabled;
+
+    dbg.intervalMs = Math.max(250, Number(intervalMs) || 1000);
+
+    const now = nowMs();
+
+    if (dbg.enabled) {
+
+      dbg.startedAt = now;
+
+      dbg.lastFlushAt = now;
+
+      this._dbgCollisionReset();
+
+      console.log(`[ColFuncDBG] ON interval=${dbg.intervalMs}ms`);
+
+    } else {
+
+      console.log('[ColFuncDBG] OFF');
+
+      this._dbgCollisionReset();
+
+    }
+
+    return { enabled: dbg.enabled, intervalMs: dbg.intervalMs };
+
+  },
+
+  _dbgCollisionRecord(name, ms) {
+
+    const dbg = this._liveCollisionDebug;
+
+    if (!dbg?.enabled) return;
+
+    const key = String(name || '');
+
+    let bucket = dbg.buckets[key];
+
+    if (!bucket) {
+
+      bucket = dbg.buckets[key] = { calls: 0, sum: 0, max: 0 };
+
+    }
+
+    bucket.calls++;
+
+    bucket.sum += ms;
+
+    if (ms > bucket.max) bucket.max = ms;
+
+  },
+
+  _dbgCollisionFlush(now = nowMs(), force = false) {
+
+    const dbg = this._liveCollisionDebug;
+
+    if (!dbg?.enabled) return;
+
+    if (!force && (now - dbg.lastFlushAt) < dbg.intervalMs) return;
+
+    const fmt = (name) => {
+
+      const b = dbg.buckets[name];
+
+      if (!b || b.calls <= 0) return '0.000/0.00ms x0';
+
+      const avg = b.sum / b.calls;
+
+      return `${avg.toFixed(3)}/${b.max.toFixed(2)}ms x${b.calls}`;
+
+    };
+
+    let topName = '';
+
+    let topMs = 0;
+
+    for (const [name, b] of Object.entries(dbg.buckets)) {
+
+      if ((b?.max || 0) > topMs) {
+
+        topMs = b.max;
+
+        topName = name;
+
+      }
+
+    }
+
+    const elapsed = (now - dbg.startedAt) / 1000;
+
+    const frameAvg = dbg.frames > 0 ? (dbg.frameMsSum / dbg.frames) : 0;
+
+    console.log(`[ColFuncDBG ${elapsed.toFixed(1)}s]`, {
+
+      frame: `${frameAvg.toFixed(2)}/${dbg.frameMsMax.toFixed(2)}ms x${dbg.frames}`,
+
+      pairs: `cand=${dbg.pairCandidates} narrow=${dbg.pairNarrow} ring=${dbg.ringPairs}`,
+
+      query: `cand=${dbg.queryCandidates} ret=${dbg.queryReturned}`,
+
+      update: fmt('update'),
+
+      prepare: fmt('prepareBroadphase'),
+
+      resolve: fmt('resolveCollisions'),
+
+      queryFn: fmt('queryBroadphase'),
+
+      collide: fmt('collideEntities'),
+
+      elasticity: fmt('simulateElasticity'),
+
+      impact: fmt('applyImpact'),
+
+      deform: fmt('distributeStructuralDamage'),
+
+      split: fmt('processSplits'),
+
+      topSpike: topName ? `${topName}:${topMs.toFixed(2)}ms` : 'n/a'
+
+    });
+
+    dbg.lastFlushAt = now;
+
+    this._dbgCollisionReset();
+
+  },
+
   // --- ZMIENNE OPTYMALIZACYJNE ---
 
   _bpTable: Array.from({ length: 4096 }, () => []),
@@ -1078,9 +1398,19 @@ export const DestructorSystem = {
 
   _splitUniqueBuffer: [],
 
+  _crushStampCounter: 0,
+
+  _crushStampA: 0,
+
+  _crushStampB: 0,
+
 
 
   _prepareBroadphase(entities) {
+
+    const dbgEnabled = this._liveCollisionDebug?.enabled === true;
+
+    const tBroadphase0 = dbgEnabled ? nowMs() : 0;
 
     const cellSize = Math.max(300, Number(DESTRUCTOR_CONFIG.broadphaseCellSize) || 2400);
 
@@ -1108,9 +1438,31 @@ export const DestructorSystem = {
 
       const ent = entities[i];
 
-      if (!ent?.hexGrid || ent.dead || ent.isCollidable === false) continue;
+      if (!ent?.hexGrid || ent.dead || ent.isCollidable === false) {
 
-      if (!hasActiveStructuralHexes(ent)) continue;
+        if (ent) {
+
+          ent._hasActiveHex = false;
+
+          ent._bpRadius = 0;
+
+        }
+
+        continue;
+
+      }
+
+      const hasActiveHex = hasActiveStructuralHexes(ent);
+
+      ent._hasActiveHex = hasActiveHex;
+
+      if (!hasActiveHex) {
+
+        ent._bpRadius = 0;
+
+        continue;
+
+      }
 
 
 
@@ -1126,11 +1478,15 @@ export const DestructorSystem = {
 
       const vy = getEntityVelY(ent) * (1 / 60);
 
-      const speedExtension = Math.min(180, Math.hypot(vx, vy));
+      const speedExtension = Math.min(180, Math.sqrt(vx * vx + vy * vy));
 
 
 
-      const radius = getBroadphaseRadius(ent) + speedExtension;
+      const bpRadius = getBroadphaseRadius(ent);
+
+      ent._bpRadius = bpRadius;
+
+      const radius = bpRadius + speedExtension;
 
       const minCx = Math.floor((x - radius) / cellSize);
 
@@ -1164,11 +1520,31 @@ export const DestructorSystem = {
 
     }
 
+    if (dbgEnabled) this._dbgCollisionRecord('prepareBroadphase', nowMs() - tBroadphase0);
+
   },
 
 
 
   _queryBroadphase(x, y, radius) {
+
+    const dbgEnabled = this._liveCollisionDebug?.enabled === true;
+
+    const tQuery0 = dbgEnabled ? nowMs() : 0;
+
+    const finish = (retCount) => {
+
+      if (dbgEnabled) {
+
+        this._liveCollisionDebug.queryReturned += retCount;
+
+        this._dbgCollisionRecord('queryBroadphase', nowMs() - tQuery0);
+
+      }
+
+      return retCount;
+
+    };
 
     const queryRadius = Math.max(80, Number(radius) || 80);
 
@@ -1214,17 +1590,19 @@ export const DestructorSystem = {
 
           const ent = cell[i];
 
+          if (dbgEnabled) this._liveCollisionDebug.queryCandidates++;
+
           if (ent?._destrBpGather === gatherStamp) continue;
 
           ent._destrBpGather = gatherStamp;
 
-          if (!hasActiveStructuralHexes(ent)) continue;
+          if (!ent?._hasActiveHex) continue;
 
           const dx = x - getEntityPosX(ent);
 
           const dy = y - getEntityPosY(ent);
 
-          const rs = queryRadius + getBroadphaseRadius(ent);
+          const rs = queryRadius + (Number(ent?._bpRadius) || 100);
 
           if (dx * dx + dy * dy > rs * rs) continue;
 
@@ -1234,7 +1612,7 @@ export const DestructorSystem = {
 
             this._bpQueryCount = count;
 
-            return count;
+            return finish(count);
 
           }
 
@@ -1246,7 +1624,7 @@ export const DestructorSystem = {
 
     this._bpQueryCount = count;
 
-    return count;
+    return finish(count);
 
   },
 
@@ -1275,6 +1653,8 @@ export const DestructorSystem = {
 
 
   update(dt, entities) {
+
+    const dbgEnabled = this._liveCollisionDebug?.enabled === true;
 
     const tUpdate0 = nowMs();
 
@@ -1348,6 +1728,24 @@ export const DestructorSystem = {
 
     this.perf.lastContacts = this._frameContacts;
 
+    if (dbgEnabled) {
+
+      const frameMs = tUpdateEnd - tUpdate0;
+
+      const dbg = this._liveCollisionDebug;
+
+      dbg.frames++;
+
+      dbg.frameMsSum += frameMs;
+
+      if (frameMs > dbg.frameMsMax) dbg.frameMsMax = frameMs;
+
+      this._dbgCollisionRecord('update', frameMs);
+
+      this._dbgCollisionFlush(tUpdateEnd, false);
+
+    }
+
   },
 
 
@@ -1374,7 +1772,15 @@ export const DestructorSystem = {
 
       let peakDeformation = 0;
 
-      for (const s of grid.shards) {
+      let dirtyMin = Number.POSITIVE_INFINITY;
+
+      let dirtyMax = -1;
+
+      const shards = grid.shards;
+
+      for (let i = 0; i < shards.length; i++) {
+
+        const s = shards[i];
 
         if (!s.active || s.isDebris) continue;
 
@@ -1392,13 +1798,23 @@ export const DestructorSystem = {
 
         if (amp > peakDeformation) peakDeformation = amp;
 
-        if (s.updateAnimation(dt)) moving = true;
+        if (s.updateAnimation(dt)) {
+
+          moving = true;
+
+          if (i < dirtyMin) dirtyMin = i;
+
+          if (i > dirtyMax) dirtyMax = i;
+
+        }
 
       }
 
       if (moving) {
 
-        grid.meshDirty = true;
+        if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) markGridMeshDirtyRange(grid, dirtyMin, dirtyMax);
+
+        else markGridMeshDirtyAll(grid);
 
         grid.sleepFrames = 0;
 
@@ -1433,6 +1849,12 @@ export const DestructorSystem = {
 
 
   simulateElasticity(entities, dt) {
+
+    const dbgEnabled = this._liveCollisionDebug?.enabled === true;
+
+    const tElastic0 = dbgEnabled ? nowMs() : 0;
+
+    try {
 
     const tension = DESTRUCTOR_CONFIG.softBodyTension;
 
@@ -1480,6 +1902,10 @@ export const DestructorSystem = {
 
       let changed = false;
 
+      let dirtyMin = Number.POSITIVE_INFINITY;
+
+      let dirtyMax = -1;
+
       for (const s of grid.shards) {
 
         if (!s.active || s.isDebris) continue;
@@ -1490,7 +1916,11 @@ export const DestructorSystem = {
 
         const yieldP = DESTRUCTOR_CONFIG.yieldPoint || 80;
 
-        const defLen = Math.hypot(s.targetDeformation.x, s.targetDeformation.y);
+        const tdx = s.targetDeformation.x;
+
+        const tdy = s.targetDeformation.y;
+
+        const defLen = Math.sqrt(tdx * tdx + tdy * tdy);
 
         if (defLen > yieldP) {
 
@@ -1511,6 +1941,22 @@ export const DestructorSystem = {
           s.targetDeformation.y -= ty;
 
           changed = true;
+
+          const idxS = Number(s.__meshIndex);
+
+          if (Number.isFinite(idxS)) {
+
+            if (idxS < dirtyMin) dirtyMin = idxS;
+
+            if (idxS > dirtyMax) dirtyMax = idxS;
+
+          } else {
+
+            dirtyMin = 0;
+
+            dirtyMax = grid.shards.length - 1;
+
+          }
 
         }
 
@@ -1578,6 +2024,38 @@ export const DestructorSystem = {
 
             changed = true;
 
+            const idxS = Number(s.__meshIndex);
+
+            if (Number.isFinite(idxS)) {
+
+              if (idxS < dirtyMin) dirtyMin = idxS;
+
+              if (idxS > dirtyMax) dirtyMax = idxS;
+
+            } else {
+
+              dirtyMin = 0;
+
+              dirtyMax = grid.shards.length - 1;
+
+            }
+
+            const idxN = Number(n.__meshIndex);
+
+            if (Number.isFinite(idxN)) {
+
+              if (idxN < dirtyMin) dirtyMin = idxN;
+
+              if (idxN > dirtyMax) dirtyMax = idxN;
+
+            } else {
+
+              dirtyMin = 0;
+
+              dirtyMax = grid.shards.length - 1;
+
+            }
+
           }
 
 
@@ -1598,13 +2076,21 @@ export const DestructorSystem = {
 
       if (changed) {
 
-        grid.meshDirty = true;
+        if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) markGridMeshDirtyRange(grid, dirtyMin, dirtyMax);
+
+        else markGridMeshDirtyAll(grid);
 
         grid.isSleeping = false;
 
         grid.sleepFrames = 0;
 
       }
+
+    }
+
+    } finally {
+
+      if (dbgEnabled) this._dbgCollisionRecord('simulateElasticity', nowMs() - tElastic0);
 
     }
 
@@ -1642,7 +2128,7 @@ export const DestructorSystem = {
 
         this.wakeHexEntity(e, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
 
-        e.hexGrid.meshDirty = true;
+        markGridMeshDirtyAll(e.hexGrid);
 
         if (!HEX_SHIPS_3D_ACTIVE) {
 
@@ -1787,6 +2273,12 @@ export const DestructorSystem = {
 
   applyImpact(entity, worldX, worldY, damage = 0, bulletVel = { x: 0, y: 0 }, opts = null) {
 
+    const dbgEnabled = this._liveCollisionDebug?.enabled === true;
+
+    const tImpact0 = dbgEnabled ? nowMs() : 0;
+
+    try {
+
     const probe = this._probeImpactData(entity, worldX, worldY);
 
     if (!probe) return false;
@@ -1809,13 +2301,13 @@ export const DestructorSystem = {
 
     let forceY = (-(bulletVel?.x || 0) * s + (bulletVel?.y || 0) * c) / scale;
 
-    if (Math.hypot(forceX, forceY) < 0.001) {
+    if (Math.sqrt(forceX * forceX + forceY * forceY) < 0.001) {
 
       const fx = (hitShard.gridX - cx - pX) - localX;
 
       const fy = (hitShard.gridY - cy - pY) - localY;
 
-      const fm = Math.hypot(fx, fy) || 1;
+      const fm = Math.sqrt(fx * fx + fy * fy) || 1;
 
       forceX = (fx / fm) * Math.max(10, damage * 0.4);
 
@@ -1867,7 +2359,7 @@ export const DestructorSystem = {
 
 
 
-    entity.hexGrid.meshDirty = true;
+    markGridMeshDirtyByShard(entity.hexGrid, hitShard);
 
     if (!HEX_SHIPS_3D_ACTIVE) {
 
@@ -1879,11 +2371,23 @@ export const DestructorSystem = {
 
     return true;
 
+    } finally {
+
+      if (dbgEnabled) this._dbgCollisionRecord('applyImpact', nowMs() - tImpact0);
+
+    }
+
   },
 
 
 
   distributeStructuralDamage(entity, impactLocalX, impactLocalY, forceX, forceY, damageScale = 1.0, customRadius = null) {
+
+    const dbgEnabled = this._liveCollisionDebug?.enabled === true;
+
+    const tDeform0 = dbgEnabled ? nowMs() : 0;
+
+    try {
 
     if (!entity?.hexGrid?.shards) return;
 
@@ -1903,6 +2407,10 @@ export const DestructorSystem = {
 
     let anyMeshChange = false;
 
+    let dirtyMin = Number.POSITIVE_INFINITY;
+
+    let dirtyMax = -1;
+
     let anyTextureChange = false;
 
 
@@ -1917,7 +2425,7 @@ export const DestructorSystem = {
 
 
 
-    const forceMag = Math.hypot(forceX, forceY);
+    const forceMag = Math.sqrt(forceX * forceX + forceY * forceY);
 
 
 
@@ -2035,6 +2543,22 @@ export const DestructorSystem = {
 
           anyMeshChange = true;
 
+          const shardIdx = Number(shard.__meshIndex);
+
+          if (Number.isFinite(shardIdx)) {
+
+            if (shardIdx < dirtyMin) dirtyMin = shardIdx;
+
+            if (shardIdx > dirtyMax) dirtyMax = shardIdx;
+
+          } else {
+
+            dirtyMin = 0;
+
+            dirtyMax = entity.hexGrid.shards.length - 1;
+
+          }
+
 
 
           // Thermal damage and friction scraping
@@ -2085,7 +2609,13 @@ export const DestructorSystem = {
 
     if (anyMeshChange || anyDestroyed) markRingSegmentHot(entity, 1200, 12000);
 
-    if (anyMeshChange) entity.hexGrid.meshDirty = true;
+    if (anyMeshChange) {
+
+      if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) markGridMeshDirtyRange(entity.hexGrid, dirtyMin, dirtyMax);
+
+      else markGridMeshDirtyAll(entity.hexGrid);
+
+    }
 
     if (anyTextureChange && !HEX_SHIPS_3D_ACTIVE) {
 
@@ -2095,11 +2625,23 @@ export const DestructorSystem = {
 
     }
 
+    } finally {
+
+      if (dbgEnabled) this._dbgCollisionRecord('distributeStructuralDamage', nowMs() - tDeform0);
+
+    }
+
   },
 
 
 
   resolveCollisions(entities, dt, doDamage, skipRingPairs = false, broadphasePrepared = false) {
+
+    const dbgEnabled = this._liveCollisionDebug?.enabled === true;
+
+    const tResolve0 = dbgEnabled ? nowMs() : 0;
+
+    try {
 
     const len = entities.length;
 
@@ -2113,7 +2655,7 @@ export const DestructorSystem = {
 
       if (!A?.hexGrid || A.dead || A.isCollidable === false) continue;
 
-      if (!hasActiveStructuralHexes(A)) continue;
+      if (!A?._hasActiveHex) continue;
 
       if (A.isRingSegment) continue;
 
@@ -2121,9 +2663,13 @@ export const DestructorSystem = {
 
       const ay = getEntityPosY(A);
 
-      const ar = getBroadphaseRadius(A);
+      const ar = Number(A?._bpRadius) || 100;
 
-      const speedAMag = Math.hypot(getEntityVelX(A), getEntityVelY(A));
+      const velAx = getEntityVelX(A);
+
+      const velAy = getEntityVelY(A);
+
+      const speedAMag = Math.sqrt(velAx * velAx + velAy * velAy);
 
       if (A.hexGrid?.isSleeping && speedAMag < 0.5 && Math.abs(getEntityAngVel(A)) < 0.01) continue;
 
@@ -2147,7 +2693,7 @@ export const DestructorSystem = {
 
         if (!B?.hexGrid || B.dead || B.isCollidable === false) continue;
 
-        if (!hasActiveStructuralHexes(B)) continue;
+        if (!B?._hasActiveHex) continue;
 
         if (B === A) continue;
 
@@ -2167,15 +2713,25 @@ export const DestructorSystem = {
 
         if (rootA === rootB || rootA === B || rootB === A) continue;
 
+        if (dbgEnabled) this._liveCollisionDebug.pairCandidates++;
+
         const dx = ax - getEntityPosX(B);
 
         const dy = ay - getEntityPosY(B);
 
 
 
-        const speedB = Math.min(180, Math.hypot(getEntityVelX(B), getEntityVelY(B)) * (1 / 60));
+        const velBx = getEntityVelX(B);
 
-        const rs = ar + getBroadphaseRadius(B) + speedA + speedB;
+        const velBy = getEntityVelY(B);
+
+        const speedBMag = Math.sqrt(velBx * velBx + velBy * velBy);
+
+        const speedB = Math.min(180, speedBMag * (1 / 60));
+
+        const br = Number(B?._bpRadius) || 100;
+
+        const rs = ar + br + speedA + speedB;
 
         if (dx * dx + dy * dy > rs * rs) continue;
 
@@ -2187,9 +2743,23 @@ export const DestructorSystem = {
           HEX_SPACING * 6.0
         )) continue;
 
+        if (dbgEnabled) {
+
+          this._liveCollisionDebug.pairNarrow++;
+
+          if (A.isRingSegment || B.isRingSegment) this._liveCollisionDebug.ringPairs++;
+
+        }
+
         this.collideEntities(A, B, dt, doDamage);
 
       }
+
+    }
+
+    } finally {
+
+      if (dbgEnabled) this._dbgCollisionRecord('resolveCollisions', nowMs() - tResolve0);
 
     }
 
@@ -2198,6 +2768,12 @@ export const DestructorSystem = {
 
 
   collideEntities(A, B, dt, doDamage) {
+
+    const dbgEnabled = this._liveCollisionDebug?.enabled === true;
+
+    const tCollide0 = dbgEnabled ? nowMs() : 0;
+
+    try {
 
     let iterator = A;
 
@@ -2297,7 +2873,11 @@ export const DestructorSystem = {
 
     // Obliczamy ile heksów statki pokonają w tej klatce i rozszerzamy poszukiwania
 
-    const relSpeed = Math.hypot(getEntityVelX(A) - getEntityVelX(B), getEntityVelY(A) - getEntityVelY(B));
+    const relVx = getEntityVelX(A) - getEntityVelX(B);
+
+    const relVy = getEntityVelY(A) - getEntityVelY(B);
+
+    const relSpeed = Math.sqrt(relVx * relVx + relVy * relVy);
 
     const speedHexes = Math.ceil((relSpeed * dt) / HEX_SPACING);
 
@@ -2383,9 +2963,9 @@ export const DestructorSystem = {
 
     const contacts = this._contactsBuf;
 
-    // Limit removed: process full contact set in one impact event.
+    // Cap contacts to prevent massive collision spikes
 
-    const maxContacts = 1024;
+    const maxContacts = 128;
 
     let contactsCount = 0;
 
@@ -2489,7 +3069,7 @@ export const DestructorSystem = {
 
           const normalY = worldIy - worldGy;
 
-          const dist = Math.hypot(normalX, normalY);
+          const dist = Math.sqrt(normalX * normalX + normalY * normalY);
 
 
 
@@ -2518,6 +3098,8 @@ export const DestructorSystem = {
           contactsCount++;
 
           if (contactsCount >= maxContacts) break;
+
+          break; // One contact per holder shard is enough — skip remaining offsets
 
         }
 
@@ -2633,7 +3215,7 @@ export const DestructorSystem = {
 
     // Define impactSpeed early so crush logic can use it consistently.
 
-    const impactSpeed = Math.hypot(dvx, dvy);
+    const impactSpeed = Math.sqrt(dvx * dvx + dvy * dvy);
 
 
 
@@ -2899,39 +3481,51 @@ export const DestructorSystem = {
 
 
 
-      const rawCrushMagA = Math.hypot(crushDefAx, crushDefAy);
+      const rawCrushMagA = Math.sqrt(crushDefAx * crushDefAx + crushDefAy * crushDefAy);
 
-      const rawCrushMagB = Math.hypot(crushDefBx, crushDefBy);
+      const rawCrushMagB = Math.sqrt(crushDefBx * crushDefBx + crushDefBy * crushDefBy);
 
 
 
       // --- POPRAWKA: Płynne, potężne wgniatanie taranem ---
 
-      const clampCrush = (fx, fy, ratio, mag) => {
+      // Static reusable objects to avoid GC pressure
 
-        // Limit wgniecenia na JEDNĄ KLATKĘ. 
+      const _clampA = this._clampResultA || (this._clampResultA = { x: 0, y: 0 });
 
-        // Niższy mnożnik sprawia, że statek wgniata się przez 2-3 klatki, generując piękną falę uderzeniową.
+      const _clampB = this._clampResultB || (this._clampResultB = { x: 0, y: 0 });
+
+      const clampCrush = (fx, fy, ratio, mag, out) => {
 
         const limit = maxCrushLimit * (0.15 + ratio * 1.0);
 
-        if (mag > limit) return { x: (fx / mag) * limit, y: (fy / mag) * limit };
+        if (mag > limit) { out.x = (fx / mag) * limit; out.y = (fy / mag) * limit; }
 
-        return { x: fx, y: fy };
+        else { out.x = fx; out.y = fy; }
 
       };
 
 
 
-      const clampA = clampCrush(crushDefAx, crushDefAy, realRatioA, rawCrushMagA);
+      clampCrush(crushDefAx, crushDefAy, realRatioA, rawCrushMagA, _clampA);
 
-      const clampB = clampCrush(crushDefBx, crushDefBy, realRatioB, rawCrushMagB);
+      clampCrush(crushDefBx, crushDefBy, realRatioB, rawCrushMagB, _clampB);
+
+      const clampA = _clampA;
+
+      const clampB = _clampB;
 
 
 
-      const processedA = new Set();
+      let crushStampB = (this._crushStampCounter + 2) | 0;
 
-      const processedB = new Set();
+      if (crushStampB <= 1) crushStampB = 2;
+
+      this._crushStampCounter = crushStampB;
+
+      this._crushStampA = crushStampB - 1;
+
+      this._crushStampB = crushStampB;
 
 
 
@@ -2947,7 +3541,13 @@ export const DestructorSystem = {
 
       const maxDmgPerTick = DESTRUCTOR_CONFIG.shardHP * 0.08;
 
+      let dirtyMinA = Number.POSITIVE_INFINITY;
 
+      let dirtyMaxA = -1;
+
+      let dirtyMinB = Number.POSITIVE_INFINITY;
+
+      let dirtyMaxB = -1;
 
       for (let c = 0; c < contactsCount; c++) {
 
@@ -2961,9 +3561,9 @@ export const DestructorSystem = {
 
         // OBIEKT A
 
-        if (sA && sA.active && !processedA.has(sA)) {
+        if (sA && sA.active && sA._crushStamp !== this._crushStampA) {
 
-          processedA.add(sA);
+          sA._crushStamp = this._crushStampA;
 
 
 
@@ -2978,6 +3578,22 @@ export const DestructorSystem = {
 
 
           sA.applyDeformation(pushX, pushY);
+
+          const idxA = Number(sA.__meshIndex);
+
+          if (Number.isFinite(idxA)) {
+
+            if (idxA < dirtyMinA) dirtyMinA = idxA;
+
+            if (idxA > dirtyMaxA) dirtyMaxA = idxA;
+
+          } else {
+
+            dirtyMinA = 0;
+
+            dirtyMaxA = A.hexGrid.shards.length - 1;
+
+          }
 
 
 
@@ -3007,9 +3623,9 @@ export const DestructorSystem = {
 
         // OBIEKT B
 
-        if (sB && sB.active && !processedB.has(sB)) {
+        if (sB && sB.active && sB._crushStamp !== this._crushStampB) {
 
-          processedB.add(sB);
+          sB._crushStamp = this._crushStampB;
 
 
 
@@ -3022,6 +3638,22 @@ export const DestructorSystem = {
 
 
           sB.applyDeformation(pushX, pushY);
+
+          const idxB = Number(sB.__meshIndex);
+
+          if (Number.isFinite(idxB)) {
+
+            if (idxB < dirtyMinB) dirtyMinB = idxB;
+
+            if (idxB > dirtyMaxB) dirtyMaxB = idxB;
+
+          } else {
+
+            dirtyMinB = 0;
+
+            dirtyMaxB = B.hexGrid.shards.length - 1;
+
+          }
 
 
 
@@ -3045,9 +3677,21 @@ export const DestructorSystem = {
 
       }
 
-      if (A.hexGrid) { A.hexGrid.meshDirty = true; if (!HEX_SHIPS_3D_ACTIVE) A.hexGrid.textureDirty = true; }
+      if (A.hexGrid && dirtyMaxA >= 0 && Number.isFinite(dirtyMinA)) {
 
-      if (B.hexGrid) { B.hexGrid.meshDirty = true; if (!HEX_SHIPS_3D_ACTIVE) B.hexGrid.textureDirty = true; }
+        markGridMeshDirtyRange(A.hexGrid, dirtyMinA, dirtyMaxA);
+
+        if (!HEX_SHIPS_3D_ACTIVE) A.hexGrid.textureDirty = true;
+
+      }
+
+      if (B.hexGrid && dirtyMaxB >= 0 && Number.isFinite(dirtyMinB)) {
+
+        markGridMeshDirtyRange(B.hexGrid, dirtyMinB, dirtyMaxB);
+
+        if (!HEX_SHIPS_3D_ACTIVE) B.hexGrid.textureDirty = true;
+
+      }
 
     }
 
@@ -3081,6 +3725,12 @@ export const DestructorSystem = {
       addEntityPosition(A, nx * corr * invMassA, ny * corr * invMassA);
 
       addEntityPosition(B, -nx * corr * invMassB, -ny * corr * invMassB);
+
+    }
+
+    } finally {
+
+      if (dbgEnabled) this._dbgCollisionRecord('collideEntities', nowMs() - tCollide0);
 
     }
 
@@ -3152,7 +3802,7 @@ export const DestructorSystem = {
 
     }
 
-    entity.hexGrid.meshDirty = true;
+    markGridMeshDirtyByShard(entity.hexGrid, shard);
 
     entity.hexGrid.gpuTextureNeedsUpdate = !skipCanvasErase;
 
@@ -3177,6 +3827,9 @@ export const DestructorSystem = {
 
 
   processSplits(entities) {
+    const dbgEnabled = this._liveCollisionDebug?.enabled === true;
+    const tSplitDbg0 = dbgEnabled ? nowMs() : 0;
+    try {
 
     const queued = this.splitQueue;
 
@@ -3266,6 +3919,9 @@ export const DestructorSystem = {
 
       processedCount++;
 
+    }
+    } finally {
+      if (dbgEnabled) this._dbgCollisionRecord('processSplits', nowMs() - tSplitDbg0);
     }
 
   },
@@ -3398,7 +4054,11 @@ export const DestructorSystem = {
 
     const grid = new Array(cols * rows);
 
-    for (const s of shards) {
+    for (let i = 0; i < shards.length; i++) {
+
+      const s = shards[i];
+
+      s.__meshIndex = i;
 
       map[s.c + ',' + s.r] = s;
 
@@ -3416,11 +4076,21 @@ export const DestructorSystem = {
 
     entity.hexGrid.rows = rows;
 
-    entity.hexGrid.meshDirty = true;
+    if (!HEX_SHIPS_3D_ACTIVE) {
 
-    entity.hexGrid.textureDirty = true;
+      entity.hexGrid.textureDirty = true;
 
-    entity.hexGrid.cacheDirty = true;
+      entity.hexGrid.cacheDirty = true;
+
+    } else {
+
+      entity.hexGrid.textureDirty = false;
+
+      entity.hexGrid.cacheDirty = false;
+
+    }
+
+    markGridMeshDirtyAll(entity.hexGrid);
 
     entity.hexGrid.isSleeping = false;
 
@@ -3550,7 +4220,13 @@ export const DestructorSystem = {
 
           cacheCtx: canvas.getContext('2d', { willReadFrequently: true }),
 
-          pivot: { x: 0, y: 0 }
+          pivot: { x: 0, y: 0 },
+
+          meshDirtyAll: false,
+
+          meshDirtyStart: -1,
+
+          meshDirtyEnd: -1
 
         }
 
@@ -3608,11 +4284,21 @@ export const DestructorSystem = {
 
     wGrid.damagedImage = parent.hexGrid.damagedImage || null;
 
-    wGrid.cacheDirty = true;
+    if (!HEX_SHIPS_3D_ACTIVE) {
 
-    wGrid.textureDirty = true;
+      wGrid.cacheDirty = true;
 
-    wGrid.meshDirty = true;
+      wGrid.textureDirty = true;
+
+    } else {
+
+      wGrid.cacheDirty = false;
+
+      wGrid.textureDirty = false;
+
+    }
+
+    markGridMeshDirtyAll(wGrid);
 
     wGrid.gpuTextureNeedsUpdate = false;
 
@@ -3652,7 +4338,11 @@ export const DestructorSystem = {
 
 
 
-    for (const hs of shards) {
+    for (let i = 0; i < shards.length; i++) {
+
+      const hs = shards[i];
+
+      hs.__meshIndex = i;
 
       wGrid.map[hs.c + ',' + hs.r] = hs;
 
@@ -3798,6 +4488,8 @@ export function initHexBody(entity, image, damagedImage = null, isProjectile = f
 
       const shard = new HexShard(isProjectile ? null : src, damaged, x, y, r, c, ro, isProjectile ? '#ffcc00' : null);
 
+      shard.__meshIndex = shards.length;
+
       shard.lx = x - cx;
 
       shard.ly = y - cy;
@@ -3873,6 +4565,12 @@ export function initHexBody(entity, image, damagedImage = null, isProjectile = f
     textureDirty: false,
 
     meshDirty: false,
+
+    meshDirtyAll: false,
+
+    meshDirtyStart: -1,
+
+    meshDirtyEnd: -1,
 
     gpuTextureNeedsUpdate: false,
 
@@ -4036,6 +4734,12 @@ export function drawHexBodyLocal(ctx, entity, forceRender2D = false) {
 
   ctx.restore();
 
+}
+
+if (typeof window !== 'undefined') {
+  window.ColFuncDbgStart = (intervalMs = 1000) => DestructorSystem.setCollisionLiveDebug(true, intervalMs);
+  window.ColFuncDbgStop = () => DestructorSystem.setCollisionLiveDebug(false);
+  window.ColFuncDbgDump = () => DestructorSystem._dbgCollisionFlush(nowMs(), true);
 }
 
 
