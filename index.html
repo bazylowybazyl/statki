@@ -614,6 +614,32 @@
     window.drawHexShips3D = drawHexShips3D;
     window.updateShields3D = updateShields3D;
     window.Core3D = Core3D;
+    window.Core3DPerfStatus = () => (window.Core3D?.getPerfStatus ? window.Core3D.getPerfStatus() : null);
+    window.Core3DPerf = (opts = {}) => (window.Core3D?.setPerfToggles ? window.Core3D.setPerfToggles(opts) : null);
+    window.Core3DMsaa = (enabled = true, samples = 4) => (window.Core3D?.setMsaaEnabled ? window.Core3D.setMsaaEnabled(enabled, samples) : null);
+    window.Core3DPreset = (name = 'base') => {
+      if (!window.Core3D) return null;
+      const key = String(name || '').toLowerCase();
+      if (key === 'base' || key === 'default') {
+        window.Core3D.setPerfToggles?.({ bloom: true, heatHaze: true, bgPass: true, orthoPass: true, fgPass: true });
+        window.Core3D.setMsaaEnabled?.(true, 4);
+      } else if (key === 'nobloom') {
+        window.Core3D.setPerfToggles?.({ bloom: false });
+      } else if (key === 'noheat') {
+        window.Core3D.setPerfToggles?.({ heatHaze: false });
+      } else if (key === 'nofg') {
+        window.Core3D.setPerfToggles?.({ fgPass: false });
+      } else if (key === 'fast') {
+        window.Core3D.setPerfToggles?.({ bloom: false, heatHaze: false, fgPass: true, bgPass: true, orthoPass: true });
+        window.Core3D.setMsaaEnabled?.(false);
+      } else if (key === 'ultrafast') {
+        window.Core3D.setPerfToggles?.({ bloom: false, heatHaze: false, fgPass: false, bgPass: true, orthoPass: true });
+        window.Core3D.setMsaaEnabled?.(false);
+      }
+      const status = window.Core3D.getPerfStatus?.();
+      console.log('[Core3DPreset]', key, status);
+      return status;
+    };
     window.detachPlanetStations3D = detachPlanetStations3D;
     window.initOverlay3D = initOverlay;
     window.createRailgunExplosionFactory = createRailgunExplosionFactory;
@@ -1028,6 +1054,124 @@
     };
 
     PerfHUD.init();
+
+    const RenderLiveDebug = {
+      enabled: false,
+      intervalMs: 1000,
+      startedAt: 0,
+      lastFlushAt: 0,
+      frames: 0,
+      frameMsSum: 0,
+      frameMsMax: 0,
+      bridge: null,
+      buckets: Object.create(null),
+
+      reset(intervalMs = null) {
+        if (intervalMs != null) this.intervalMs = Math.max(250, Number(intervalMs) || 1000);
+        this.frames = 0;
+        this.frameMsSum = 0;
+        this.frameMsMax = 0;
+        this.buckets = Object.create(null);
+      },
+
+      start(intervalMs = 1000) {
+        this.enabled = true;
+        this.intervalMs = Math.max(250, Number(intervalMs) || 1000);
+        const now = performance.now();
+        this.startedAt = now;
+        this.lastFlushAt = now;
+        if (!this.bridge) {
+          this.bridge = (name, ms) => this.record(name, ms);
+        }
+        window.__renderDbgRecord = this.bridge;
+        this.reset();
+        console.log(`[RenderFuncDBG] ON interval=${this.intervalMs}ms`);
+        return { enabled: this.enabled, intervalMs: this.intervalMs };
+      },
+
+      stop() {
+        if (!this.enabled) return { enabled: false, intervalMs: this.intervalMs };
+        this.flush(performance.now(), true);
+        this.enabled = false;
+        if (window.__renderDbgRecord === this.bridge) {
+          window.__renderDbgRecord = null;
+        }
+        this.reset();
+        console.log('[RenderFuncDBG] OFF');
+        return { enabled: this.enabled, intervalMs: this.intervalMs };
+      },
+
+      record(name, ms) {
+        if (!this.enabled) return;
+        if (!Number.isFinite(ms) || ms < 0) return;
+        const key = String(name || '');
+        let bucket = this.buckets[key];
+        if (!bucket) {
+          bucket = this.buckets[key] = { calls: 0, sum: 0, max: 0 };
+        }
+        bucket.calls++;
+        bucket.sum += ms;
+        if (ms > bucket.max) bucket.max = ms;
+      },
+
+      recordFrame(ms) {
+        if (!this.enabled) return;
+        if (!Number.isFinite(ms) || ms < 0) return;
+        this.frames++;
+        this.frameMsSum += ms;
+        if (ms > this.frameMsMax) this.frameMsMax = ms;
+      },
+
+      flush(now = performance.now(), force = false) {
+        if (!this.enabled) return;
+        if (!force && (now - this.lastFlushAt) < this.intervalMs) return;
+
+        const fmt = (name) => {
+          const b = this.buckets[name];
+          if (!b || b.calls <= 0) return '0.000/0.00ms x0';
+          return `${(b.sum / b.calls).toFixed(3)}/${b.max.toFixed(2)}ms x${b.calls}`;
+        };
+
+        let topName = '';
+        let topMs = 0;
+        for (const [name, b] of Object.entries(this.buckets)) {
+          if ((b?.max || 0) > topMs) {
+            topMs = b.max;
+            topName = name;
+          }
+        }
+
+        const elapsed = (now - this.startedAt) / 1000;
+        const frameAvg = this.frames > 0 ? (this.frameMsSum / this.frames) : 0;
+        console.log(`[RenderFuncDBG ${elapsed.toFixed(1)}s]`, {
+          frame: `${frameAvg.toFixed(2)}/${this.frameMsMax.toFixed(2)}ms x${this.frames}`,
+          camera: fmt('cameraPrep'),
+          warpLens: fmt('warpLens'),
+          planets3d: fmt('updatePlanets3D'),
+          rings3d: fmt('updatePlanetaryRings3D'),
+          stations3d: fmt('updateStations3D'),
+          world3d: fmt('updateWorld3D'),
+          hexUpdate: fmt('updateHexShips3D'),
+          shields3d: fmt('updateShields3D'),
+          hexDraw: fmt('drawHexShips3D'),
+          coreCall: fmt('coreRenderCall'),
+          coreRender: fmt('core3dRenderTotal'),
+          coreComposer: fmt('coreComposerRender'),
+          coreBloomCfg: fmt('coreBloomConfig'),
+          coreHeatCfg: fmt('coreHeatHazeSetup'),
+          coreBlit2D: fmt('coreBlit2D'),
+          post3D2D: fmt('renderPost3D2D'),
+          topSpike: topName ? `${topName}:${topMs.toFixed(2)}ms` : 'n/a'
+        });
+
+        this.lastFlushAt = now;
+        this.reset();
+      }
+    };
+
+    window.RenderDbgStart = (intervalMs = 1000) => RenderLiveDebug.start(intervalMs);
+    window.RenderDbgStop = () => RenderLiveDebug.stop();
+    window.RenderDbgDump = () => RenderLiveDebug.flush(performance.now(), true);
 
     const fleetUIRoot = document.getElementById('panel-fleet');
     const fleetListEl = document.getElementById('fleet-list');
@@ -3008,6 +3152,18 @@
 
     let rocketAmmo = 0;
     let rocketAmmoMax = 0;
+    let rail = {
+      cd: [0, 0],
+      cdMax: 0.15,
+      shotGap: 0.08,
+      burstGap: 0.2,
+      burstsPerClick: 1,
+      barrelsPerShot: 2,
+      queue: [],
+      nextStart: 0,
+      behaviorId: 'default',
+    };
+    let railTimer = 0;
 
     function triggerEnergyShot() {
       if (!ship?.shield) return;
@@ -3356,6 +3512,7 @@
     }
 
     function updateMainWeaponBehavior() {
+      if (!rail) return;
       const mainWeapons = Game.player.weapons?.[HP.MAIN] || [];
       let cdMax = 0.15;
       let barrels = 2;
@@ -3417,7 +3574,10 @@
 
     function saveLoadout() {
       try {
+        syncPlayerHullSnapshot();
         localStorage.setItem('loadout', JSON.stringify({
+          activeHullId: PLAYER.activeHullId || ship.activeHullId || DEFAULT_PLAYER_HULL_ID,
+          ownedHullIds: [...getPlayerOwnedHullIds()],
           shipFrame: Game.player.shipFrame,
           hardpoints: Game.player.hardpoints.map(h => ({ id: h.id, type: h.type, mount: h.mount, ammo: h.ammo, maxAmmo: h.maxAmmo }))
         }));
@@ -3429,6 +3589,12 @@
       if (!raw) { syncWeaponSystems(); return; }
       try {
         const data = JSON.parse(raw);
+        const loadedOwned = Array.isArray(data?.ownedHullIds) ? data.ownedHullIds : [];
+        for (const hullId of loadedOwned) ensurePlayerOwnsHull(hullId);
+        const requestedHull = normalizePlayerHullId(data?.activeHullId || PLAYER.activeHullId || DEFAULT_PLAYER_HULL_ID);
+        ensurePlayerOwnsHull(requestedHull);
+        applyPlayerHullProfile(requestedHull, { preserveDamageRatio: true, syncVisuals: true, persist: false });
+
         if (data.shipFrame && SHIPS[data.shipFrame]) {
           Game.player.shipFrame = data.shipFrame;
         }
@@ -3455,6 +3621,7 @@
       } catch (e) {
         console.warn('Loadout parse error', e);
       }
+      syncPlayerHullSnapshot();
       syncWeaponSystems();
       if (typeof renderMechanic === 'function') renderMechanic();
     }
@@ -10189,8 +10356,177 @@
       }
     }
 
+    const DEFAULT_PLAYER_HULL_ID = 'atlas';
+    const BASE_PLAYER_PHYSICS = {
+      speed: SHIP_PHYSICS.SPEED,
+      reverseMult: SHIP_PHYSICS.REVERSE_MULT,
+      turnAccel: SHIP_PHYSICS.TURN_ACCEL,
+      maxTurnSpeed: SHIP_PHYSICS.MAX_TURN_SPEED,
+      linearFriction: SHIP_PHYSICS.LINEAR_FRICTION,
+      angularFriction: SHIP_PHYSICS.ANGULAR_FRICTION,
+      boostMult: SHIP_PHYSICS.BOOST_MULT
+    };
+    const BASE_PLAYER_PROFILE = {
+      mass: Number(ship?.mass) || SHIP_PHYSICS.PLAYER_MASS,
+      rammingMass: Number(ship?.rammingMass) || SHIP_PHYSICS.PLAYER_MASS,
+      radius: Number(ship?.radius) || 220,
+      hullMax: Number(ship?.hull?.max) || 12000,
+      shieldMax: Number(ship?.shield?.max) || 18000,
+      shieldRegen: Number(ship?.shield?.regenRate) || 150,
+      shieldDelay: Number(ship?.shield?.regenDelay) || 2.5,
+      cargoCap: Number(ship?.cargoCap) || 20
+    };
+
+    function createPlayerHullCatalog() {
+      const frigate = SUPPORT_SHIP_TEMPLATES_DATA?.frigate_pd || {};
+      const destroyer = SUPPORT_SHIP_TEMPLATES_DATA?.destroyer || {};
+      const battleship = SUPPORT_SHIP_TEMPLATES_DATA?.battleship || {};
+      return {
+        atlas: {
+          id: 'atlas',
+          name: 'Atlas',
+          role: 'Capital / Uniwersalny',
+          cost: 0,
+          shipFrame: 'atlas',
+          spriteSrc: "assets/capital_ship_rect_v1.png",
+          cargoCap: BASE_PLAYER_PROFILE.cargoCap,
+          hullMax: BASE_PLAYER_PROFILE.hullMax,
+          shield: {
+            max: BASE_PLAYER_PROFILE.shieldMax,
+            regenRate: BASE_PLAYER_PROFILE.shieldRegen,
+            regenDelay: BASE_PLAYER_PROFILE.shieldDelay
+          },
+          mass: BASE_PLAYER_PROFILE.mass,
+          rammingMass: BASE_PLAYER_PROFILE.rammingMass,
+          radius: BASE_PLAYER_PROFILE.radius,
+          physics: { ...BASE_PLAYER_PHYSICS }
+        },
+        frigate: {
+          id: 'frigate',
+          name: 'Terranova Frigate',
+          role: 'Szybki support',
+          cost: 4200,
+          shipFrame: 'terran_frigate',
+          spriteSrc: terranFrigateImg,
+          cargoCap: 16,
+          hullMax: Math.max(2200, Number(frigate?.stats?.hp) || 2200),
+          shield: {
+            max: Math.max(900, Number(frigate?.shield?.max) || 900),
+            regenRate: Math.max(110, Number(frigate?.shield?.regenRate) || 110),
+            regenDelay: Math.max(2.5, Number(frigate?.shield?.regenDelay) || 2.5)
+          },
+          mass: 220000,
+          rammingMass: 2500,
+          radius: 150,
+          physics: {
+            speed: 440,
+            reverseMult: 0.55,
+            turnAccel: 9.5,
+            maxTurnSpeed: 2.2,
+            linearFriction: 0.992,
+            angularFriction: 0.9,
+            boostMult: 2.2
+          }
+        },
+        destroyer: {
+          id: 'destroyer',
+          name: 'Terranova Destroyer',
+          role: 'Szturmowy',
+          cost: 7600,
+          shipFrame: 'terran_destroyer',
+          spriteSrc: terranDestroyerImg,
+          cargoCap: 30,
+          hullMax: Math.max(6200, Number(destroyer?.stats?.hp) || 6200),
+          shield: {
+            max: Math.max(2200, Number(destroyer?.shield?.max) || 2200),
+            regenRate: Math.max(180, Number(destroyer?.shield?.regenRate) || 180),
+            regenDelay: Math.max(3.5, Number(destroyer?.shield?.regenDelay) || 3.5)
+          },
+          mass: Math.max(260000, Number(destroyer?.stats?.mass) || 260000),
+          rammingMass: Math.max(5000, Number(destroyer?.stats?.rammingMass) || 5000),
+          radius: 220,
+          physics: {
+            speed: 350,
+            reverseMult: 0.52,
+            turnAccel: 7.2,
+            maxTurnSpeed: 1.8,
+            linearFriction: 0.991,
+            angularFriction: 0.91,
+            boostMult: 2.0
+          }
+        },
+        battleship: {
+          id: 'battleship',
+          name: 'Terranova Battleship',
+          role: 'Ciezki kapital',
+          cost: 12400,
+          shipFrame: 'terran_battleship',
+          spriteSrc: terranBattleshipImg,
+          cargoCap: 40,
+          hullMax: Math.max(14000, Number(battleship?.stats?.hp) || 14000),
+          shield: {
+            max: Math.max(7200, Number(battleship?.shield?.max) || 7200),
+            regenRate: Math.max(260, Number(battleship?.shield?.regenRate) || 260),
+            regenDelay: Math.max(4.2, Number(battleship?.shield?.regenDelay) || 4.2)
+          },
+          mass: Math.max(420000, Number(battleship?.stats?.mass) || 420000),
+          rammingMass: Math.max(8000, Number(battleship?.stats?.rammingMass) || 8000),
+          radius: 280,
+          physics: {
+            speed: 260,
+            reverseMult: 0.48,
+            turnAccel: 5.4,
+            maxTurnSpeed: 1.35,
+            linearFriction: 0.99,
+            angularFriction: 0.92,
+            boostMult: 1.85
+          }
+        }
+      };
+    }
+
+    const PLAYER_HULL_CATALOG = createPlayerHullCatalog();
+    const PLAYER_HULL_ORDER = ['atlas', 'frigate', 'destroyer', 'battleship'];
+    const HANGAR_UI_STATE = {
+      marketExpanded: new Set(),
+      ownedExpanded: new Set()
+    };
+
+    function normalizePlayerHullId(hullId) {
+      const key = String(hullId || '').toLowerCase();
+      if (PLAYER_HULL_CATALOG[key]) return key;
+      return DEFAULT_PLAYER_HULL_ID;
+    }
+
+    function isHangarHullExpanded(section, hullId) {
+      const id = normalizePlayerHullId(hullId);
+      const bucket = section === 'owned' ? HANGAR_UI_STATE.ownedExpanded : HANGAR_UI_STATE.marketExpanded;
+      return bucket.has(id);
+    }
+
+    function toggleHangarHullExpanded(section, hullId) {
+      const id = normalizePlayerHullId(hullId);
+      const bucket = section === 'owned' ? HANGAR_UI_STATE.ownedExpanded : HANGAR_UI_STATE.marketExpanded;
+      if (bucket.has(id)) bucket.delete(id);
+      else bucket.add(id);
+      buildHangarPanel();
+      updateStationOverlay(stationUI.tab, stationUI.station);
+    }
+
     // --- Zakładki ---
-    const PLAYER = { credits: 1200, cargo: {}, shipId: 'starter' };
+    const persistedOwnedHulls = Array.isArray(previousPlayer?.ownedHullIds) ? previousPlayer.ownedHullIds : [];
+    const persistedActiveHull = previousPlayer?.activeHullId || previousPlayer?.shipId || DEFAULT_PLAYER_HULL_ID;
+    const PLAYER = {
+      credits: 1200,
+      cargo: {},
+      shipId: normalizePlayerHullId(persistedActiveHull),
+      activeHullId: normalizePlayerHullId(persistedActiveHull),
+      ownedHulls: new Set([
+        DEFAULT_PLAYER_HULL_ID,
+        normalizePlayerHullId(persistedActiveHull),
+        ...persistedOwnedHulls.map(normalizePlayerHullId)
+      ])
+    };
     const BLUEPRINTS = {
       upgrades: [
         { id: 'rail_cooler', name: 'Chłodzenie raila', cost: 600, apply() { rail.heatCap *= 1.25; rail.coolRate *= 1.15; } },
@@ -10209,11 +10545,13 @@
           }
         },
       ],
-      ships: [
-        { id: 'scout', name: 'Scout', cost: 2500, stats: { hp: 0.8, speed: 1.3, cargo: 0.6 } },
-        { id: 'frigate', name: 'Fregata', cost: 4200, stats: { hp: 1.6, speed: 0.85, cargo: 1.4 } },
-      ],
+      ships: PLAYER_HULL_ORDER.map(id => PLAYER_HULL_CATALOG[id]).filter(Boolean),
     };
+
+    ensurePlayerOwnsHull(DEFAULT_PLAYER_HULL_ID);
+    ensurePlayerOwnsHull(PLAYER.activeHullId);
+    syncPlayerHullSnapshot();
+    applyPlayerHullProfile(PLAYER.activeHullId, { preserveDamageRatio: false, syncVisuals: true, persist: false });
 
     const STATION_TAB_LABELS = {
       upgrades: 'Ulepszenia',
@@ -10484,7 +10822,7 @@
       }));
     }
 
-    function buildHangarPanel() {
+    function buildHangarPanelLegacyUnused() {
       const pane = stationOverlayDom.panels.hangar;
       if (!pane) return;
       pane.innerHTML = '';
@@ -10516,6 +10854,211 @@
         });
         pane.appendChild(card);
       }
+    }
+
+    function buildHangarPanel() {
+      const pane = stationOverlayDom.panels.hangar;
+      if (!pane) return;
+      pane.innerHTML = '';
+
+      const currentHullId = normalizePlayerHullId(PLAYER.activeHullId || ship.activeHullId || DEFAULT_PLAYER_HULL_ID);
+      const ownedHulls = getPlayerOwnedHullIds();
+      const allHullDefs = BLUEPRINTS.ships.filter(Boolean);
+      const marketDefs = allHullDefs.filter(def => !ownedHulls.has(def.id));
+      const ownedDefs = allHullDefs.filter(def => ownedHulls.has(def.id));
+
+      const wrap = document.createElement('div');
+      wrap.className = 'mechanic-body';
+      wrap.style.marginTop = '12px';
+      pane.appendChild(wrap);
+
+      function createHullListCard(title, badge) {
+        const card = document.createElement('div');
+        card.className = 'station-card-aero mechanic-station-card mechanic-list-panel';
+        const header = document.createElement('div');
+        header.className = 'card-header';
+        const titleEl = document.createElement('div');
+        titleEl.className = 'card-title';
+        titleEl.textContent = title;
+        const badgeEl = document.createElement('span');
+        badgeEl.className = 'card-badge';
+        badgeEl.textContent = badge;
+        header.appendChild(titleEl);
+        header.appendChild(badgeEl);
+        const desc = document.createElement('p');
+        desc.className = 'card-desc';
+        card.appendChild(header);
+        card.appendChild(desc);
+        return { card, desc };
+      }
+
+      function hullHardpointSummary(def) {
+        const spec = SHIPS[def.shipFrame]?.spec || {};
+        const main = Number(spec.main) || 0;
+        const missile = Number(spec.missile) || 0;
+        const aux = Number(spec.aux) || 0;
+        const hangar = Number(spec.hangar) || 0;
+        const special = Number(spec.special) || 0;
+        const total = main + missile + aux + hangar + special;
+        return { main, missile, aux, hangar, special, total };
+      }
+
+      function createHullRow(def, section) {
+        const isOwned = section === 'owned';
+        const isActive = normalizePlayerHullId(def.id) === currentHullId;
+        const expanded = isHangarHullExpanded(section, def.id);
+        const hpSpec = hullHardpointSummary(def);
+
+        const row = document.createElement('div');
+        row.className = 'hangar-hull-entry';
+        row.dataset.hangarRow = '1';
+        row.dataset.hullId = def.id;
+        row.style.marginBottom = '6px';
+
+        const summary = document.createElement('div');
+        summary.className = 'weapon-row hangar-hull-summary';
+        summary.dataset.expanded = expanded ? '1' : '0';
+        summary.tabIndex = 0;
+        summary.setAttribute('role', 'button');
+        summary.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        summary.addEventListener('click', () => toggleHangarHullExpanded(section, def.id));
+        summary.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            toggleHangarHullExpanded(section, def.id);
+          }
+        });
+
+        const iconWrap = document.createElement('div');
+        const iconSrc = def.spriteSrc || '';
+        if (iconSrc) {
+          iconWrap.className = 'weapon-row-icon';
+          const img = document.createElement('img');
+          img.src = iconSrc;
+          img.alt = def.name;
+          iconWrap.appendChild(img);
+        } else {
+          iconWrap.className = 'weapon-row-icon placeholder';
+          iconWrap.textContent = String(def.name || '?').slice(0, 2).toUpperCase();
+        }
+        summary.appendChild(iconWrap);
+
+        const info = document.createElement('div');
+        info.className = 'hangar-hull-info';
+        const name = document.createElement('div');
+        name.className = 'weapon-row-name';
+        name.textContent = def.name;
+        const role = document.createElement('div');
+        role.className = 'hangar-hull-role';
+        role.textContent = def.role || 'Uniwersalny';
+        info.appendChild(name);
+        info.appendChild(role);
+        summary.appendChild(info);
+
+        const meta = document.createElement('div');
+        meta.className = 'weapon-row-meta hangar-hull-meta';
+
+        if (isOwned) meta.textContent = isActive ? 'ACTIVE' : 'OWNED';
+        else meta.textContent = `${Math.round(def.cost || 0)} CR`;
+
+        const exp = document.createElement('span');
+        exp.className = 'hangar-hull-expand';
+        exp.textContent = expanded ? 'v' : '>';
+        meta.appendChild(exp);
+
+        summary.appendChild(meta);
+        row.appendChild(summary);
+
+        if (expanded) {
+          const details = document.createElement('div');
+          details.className = 'hangar-hull-details';
+          const statRows = [
+            ['Hull HP', `${Math.round(def.hullMax || 0)}`],
+            ['Shield', `${Math.round(def.shield?.max || 0)}`],
+            ['Mass', `${Math.round(def.mass || 0)}`],
+            ['Speed', `${Math.round(def.physics?.speed || 0)}`],
+            ['Turn', `${(Number(def.physics?.maxTurnSpeed) || 0).toFixed(2)}`],
+            ['Hardpoints', `${hpSpec.total}`],
+            ['Main / Missile', `${hpSpec.main} / ${hpSpec.missile}`],
+            ['Aux / Hangar / Special', `${hpSpec.aux} / ${hpSpec.hangar} / ${hpSpec.special}`]
+          ];
+          for (const [labelText, valueText] of statRows) {
+            const line = document.createElement('div');
+            line.className = 'hangar-hull-stat';
+            const label = document.createElement('span');
+            label.className = 'hangar-hull-stat-label';
+            label.textContent = labelText;
+            const value = document.createElement('span');
+            value.className = 'hangar-hull-stat-value';
+            value.textContent = valueText;
+            line.appendChild(label);
+            line.appendChild(value);
+            details.appendChild(line);
+          }
+          row.appendChild(details);
+
+          const actions = document.createElement('div');
+          actions.className = 'hangar-hull-actions';
+
+          const actionBtn = document.createElement('button');
+          actionBtn.type = 'button';
+          actionBtn.dataset.hullId = def.id;
+          actionBtn.className = 'hangar-hull-action-btn';
+          if (isOwned) {
+            actionBtn.dataset.hullAction = 'enter';
+            actionBtn.textContent = isActive ? 'IN SHIP' : 'ENTER SHIP';
+            actionBtn.disabled = isActive;
+            actionBtn.addEventListener('click', () => purchaseShip(def, { activate: true }));
+          } else {
+            actionBtn.dataset.hullAction = 'buy';
+            actionBtn.dataset.cost = `${Math.round(def.cost || 0)}`;
+            actionBtn.textContent = 'BUY';
+            actionBtn.disabled = PLAYER.credits < (def.cost || 0);
+            actionBtn.addEventListener('click', () => purchaseShip(def, { activate: false }));
+          }
+          actions.appendChild(actionBtn);
+          row.appendChild(actions);
+        }
+
+        return row;
+      }
+
+      const marketColumn = document.createElement('div');
+      marketColumn.className = 'mechanic-column mechanic-parts';
+      const marketCard = createHullListCard('Dostepne statki', 'Market');
+      marketCard.desc.textContent = 'Kliknij statek aby rozwinac szczegoly i kupic hull.';
+      const marketList = document.createElement('div');
+      marketList.className = 'weapon-pool mechanic-list-scroll';
+      if (!marketDefs.length) {
+        const empty = document.createElement('div');
+        empty.className = 'card-desc';
+        empty.textContent = 'Brak statkow do zakupu.';
+        marketList.appendChild(empty);
+      } else {
+        marketDefs.forEach(def => marketList.appendChild(createHullRow(def, 'market')));
+      }
+      marketCard.card.appendChild(marketList);
+      marketColumn.appendChild(marketCard.card);
+
+      const ownedColumn = document.createElement('div');
+      ownedColumn.className = 'mechanic-column mechanic-install';
+      const ownedCard = createHullListCard('Twoje statki', 'Inventory');
+      ownedCard.desc.textContent = 'Kliknij statek aby sprawdzic staty i wejsc do wybranego hulla.';
+      const ownedList = document.createElement('div');
+      ownedList.className = 'weapon-pool mechanic-list-scroll';
+      if (!ownedDefs.length) {
+        const empty = document.createElement('div');
+        empty.className = 'card-desc';
+        empty.textContent = 'Nie posiadasz zadnych hulli.';
+        ownedList.appendChild(empty);
+      } else {
+        ownedDefs.forEach(def => ownedList.appendChild(createHullRow(def, 'owned')));
+      }
+      ownedCard.card.appendChild(ownedList);
+      ownedColumn.appendChild(ownedCard.card);
+
+      wrap.appendChild(marketColumn);
+      wrap.appendChild(ownedColumn);
     }
 
     function buildMechanicPanelLegacy() {
@@ -10603,6 +11146,17 @@
       pane.innerHTML = `
       <div class="station-card-aero mechanic-station-card mechanic-frame-card">
         <div class="card-header">
+          <div class="card-title">Naprawy kadluba</div>
+          <span class="card-badge">Serwis</span>
+        </div>
+        <p class="card-desc" data-mechanic-repair-status>Kadlub uszkodzony: 0% • Koszt: 0 CR</p>
+        <div class="card-actions">
+          <button type="button" data-mechanic-action="repair">Napraw kadlub</button>
+        </div>
+      </div>
+
+      <div class="station-card-aero mechanic-station-card mechanic-frame-card">
+        <div class="card-header">
           <div class="card-title">Mechanik</div>
           <span class="card-badge">Warsztat</span>
         </div>
@@ -10673,10 +11227,16 @@
         };
       }
 
+      const mechanicRepairBtn = pane.querySelector('button[data-mechanic-action="repair"]');
+      if (mechanicRepairBtn) {
+        mechanicRepairBtn.onclick = () => handleRepair();
+      }
+
       initMechanicFilter('weapon-filter-tabs', () => mechanicWeaponFilter, (val) => { mechanicWeaponFilter = val; });
       initMechanicFilter('hp-filter-tabs', () => mechanicHardpointFilter, (val) => { mechanicHardpointFilter = val; });
       initMechanicBatchControls();
       renderMechanic();
+      updateMechanicCards();
     }
 
     function buildInfrastructurePanel() {
@@ -10740,17 +11300,18 @@
         pane.classList.toggle('active', match);
         pane.classList.toggle('hidden', !match);
       }
+      const wideStationTab = (tab === 'mechanic' || tab === 'hangar');
       const contentArea = document.getElementById('station-content-area');
       if (contentArea) {
-        contentArea.classList.toggle('mechanic-layout', tab === 'mechanic');
+        contentArea.classList.toggle('mechanic-layout', wideStationTab);
       }
       const topDock = document.getElementById('hud-top-dock');
       if (topDock) {
-        topDock.classList.toggle('mechanic-expanded', tab === 'mechanic');
+        topDock.classList.toggle('mechanic-expanded', wideStationTab);
       }
       const topDrawer = document.getElementById('top-drawer');
       if (topDrawer) {
-        topDrawer.classList.toggle('mechanic-expanded', tab === 'mechanic');
+        topDrawer.classList.toggle('mechanic-expanded', wideStationTab);
       }
     }
 
@@ -10811,7 +11372,28 @@
       });
     }
 
-    function updateHangarCards() {
+    function updateMechanicCards() {
+      const pane = stationOverlayDom.panels.mechanic;
+      if (!pane) return;
+      const status = pane.querySelector('[data-mechanic-repair-status]');
+      const btn = pane.querySelector('button[data-mechanic-action="repair"]');
+      if (!status && !btn) return;
+
+      const hullMax = Math.max(1, Number(ship?.hull?.max) || 1);
+      const hullVal = Math.max(0, Number(ship?.hull?.val) || 0);
+      const damageFrac = 1 - (hullVal / hullMax);
+      const damagePct = Math.ceil(damageFrac * 100);
+      const repairCost = Math.ceil(damageFrac * 600);
+
+      if (status) {
+        status.textContent = `Kadlub uszkodzony: ${damagePct}% • Koszt: ${repairCost} CR`;
+      }
+      if (btn) {
+        btn.disabled = damagePct <= 0 || PLAYER.credits < repairCost;
+      }
+    }
+
+    function updateHangarCardsLegacyUnused() {
       const pane = stationOverlayDom.panels.hangar;
       if (!pane) return;
       const cards = [...pane.querySelectorAll('.station-card-aero')];
@@ -10843,6 +11425,7 @@
       updateStationHeader(station);
       updateUpgradeButtons();
       updateTradeCards(station);
+      updateMechanicCards();
       updateHangarCards();
     }
 
@@ -10875,7 +11458,7 @@
       updateStationOverlay(stationUI.tab, stationUI.station);
     }
 
-    function purchaseShip(shipBP) {
+    function purchaseShipLegacyUnused(shipBP) {
       if (!shipBP) return;
       if (PLAYER.credits >= shipBP.cost) {
         PLAYER.credits -= shipBP.cost;
@@ -10886,6 +11469,54 @@
         toast('Za mało kredytów');
       }
       updateStationOverlay(stationUI.tab, stationUI.station);
+    }
+
+    function updateHangarCards() {
+      const pane = stationOverlayDom.panels.hangar;
+      if (!pane) return;
+      const activeHullId = normalizePlayerHullId(PLAYER.activeHullId || ship.activeHullId || DEFAULT_PLAYER_HULL_ID);
+      for (const btn of pane.querySelectorAll('button[data-hull-action]')) {
+        const action = btn.dataset.hullAction;
+        const hullId = normalizePlayerHullId(btn.dataset.hullId);
+        const cost = Number(btn.dataset.cost) || 0;
+        if (action === 'buy') {
+          btn.disabled = PLAYER.credits < cost;
+        } else if (action === 'enter') {
+          btn.disabled = hullId === activeHullId;
+        }
+      }
+    }
+
+    function purchaseShip(shipBP, opts = {}) {
+      if (!shipBP) return;
+      const hullDef = getPlayerHullDef(shipBP.id);
+      if (!hullDef) return;
+      const shouldActivate = opts.activate !== false;
+
+      let changed = false;
+      if (!playerOwnsHull(hullDef.id)) {
+        if (PLAYER.credits < hullDef.cost) {
+          toast('Za malo kredytow');
+          updateStationOverlay(stationUI.tab, stationUI.station);
+          return false;
+        }
+        PLAYER.credits -= hullDef.cost;
+        ensurePlayerOwnsHull(hullDef.id);
+        HANGAR_UI_STATE.marketExpanded.delete(normalizePlayerHullId(hullDef.id));
+        HANGAR_UI_STATE.ownedExpanded.add(normalizePlayerHullId(hullDef.id));
+        toast(`Zakupiono hull: ${hullDef.name}`);
+        changed = true;
+      }
+
+      if (shouldActivate) {
+        const switched = applyPlayerHullProfile(hullDef.id, { preserveDamageRatio: true, syncVisuals: true });
+        if (switched) changed = true;
+        toast(`Aktywowano: ${hullDef.name}`);
+      }
+
+      if (changed) buildHangarPanel();
+      updateStationOverlay(stationUI.tab, stationUI.station);
+      return true;
     }
 
     function handleRepair() {
@@ -12381,7 +13012,7 @@
     // =============== Rail (Kolejka strzałów gracza) ===============
     const RAIL_SPEED = 2600;
 
-    const rail = {
+    rail = {
       cd: [0, 0],
       cdMax: 0.15,
       shotGap: 0.08,
@@ -12392,7 +13023,7 @@
       nextStart: 0,
       behaviorId: 'default',
     };
-    let railTimer = 0;
+    railTimer = 0;
 
     rebuildHardpointsForFrame();
     loadLoadout();
@@ -13036,7 +13667,7 @@
             let target = b.target;
             if (!target && lockedTarget && !lockedTarget.dead) target = lockedTarget;
             if (target) {
-              const speed = Math.hypot(b.vx, b.vy);
+              const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
               const dx = target.x - b.x;
               const dy = target.y - b.y;
               const current = Math.atan2(b.vy, b.vx);
@@ -13267,7 +13898,11 @@
         // --- KOLIZJE Z INNYMI OBIEKTAMI (BEZ ZMIAN) ---
         if (mercMission?.weaponPlatforms) {
           for (const p of mercMission.weaponPlatforms) {
-            if (p && !p.destroyed && b.source !== p && Math.hypot(p.x - b.x, p.y - b.y) < p.radius + b.r) {
+            if (p && !p.destroyed && b.source !== p) {
+              const pdx = p.x - b.x;
+              const pdy = p.y - b.y;
+              const pr = p.radius + b.r;
+              if (pdx * pdx + pdy * pdy >= pr * pr) continue;
               applyDamageToPlatform(p, b.damage || 0);
               triggerMercAggro('platform_hit');
               spawnBulletImpactEffect(b, b.x, b.y, 1.0);
@@ -13277,7 +13912,11 @@
           }
         }
         for (const st of stations) {
-          if (st.hp && b.source !== st && Math.hypot(st.x - b.x, st.y - b.y) < st.r + b.r) {
+          if (st.hp && b.source !== st) {
+            const sdx = st.x - b.x;
+            const sdy = st.y - b.y;
+            const sr = st.r + b.r;
+            if (sdx * sdx + sdy * sdy >= sr * sr) continue;
             applyDamageToStation(st, b.damage || 0);
             if (mercMission?.station === st) triggerMercAggro('station_hit');
             spawnBulletImpactEffect(b, b.x, b.y, 1.0);
@@ -15438,6 +16077,10 @@
 
     function render(alpha, frameDt) {
       canvas.style.cursor = 'default';
+      const renderDbgEnabled = RenderLiveDebug.enabled;
+      const tRenderStart = renderDbgEnabled ? performance.now() : 0;
+      let tRenderSection = tRenderStart;
+      let tPost3DStart = 0;
       //  cheats (np. nielimitowany warp)
       if (window.ApplyCheats) ApplyCheats();
 
@@ -15520,6 +16163,11 @@
       overlayView.viewport.w = W;
       overlayView.viewport.h = H;
       overlayView.zoom = cam.zoom;
+
+      if (renderDbgEnabled) {
+        RenderLiveDebug.record('cameraPrep', tRenderSection > 0 ? (performance.now() - tRenderSection) : 0);
+        tRenderSection = performance.now();
+      }
 
       // === Warp Lens Pass (rysowany pod warstwą 3D i statkiem) ===
       if (warpBlackHoleFX) {
@@ -15610,15 +16258,30 @@
           }
         }
       }
+      if (renderDbgEnabled) {
+        RenderLiveDebug.record('warpLens', tRenderSection > 0 ? (performance.now() - tRenderSection) : 0);
+        tRenderSection = performance.now();
+      }
       // ==========================================
       // --- UNIFIED 3D UPDATE & RENDER ---
       // ==========================================
 
       // 1. Zaktualizuj wszystkie obiekty 3D na podstawie logiki gry
+      if (renderDbgEnabled) tRenderSection = performance.now();
       if (window.updatePlanets3D) window.updatePlanets3D(frameDt, camNoShake);
+      if (renderDbgEnabled) RenderLiveDebug.record('updatePlanets3D', performance.now() - tRenderSection);
+
+      if (renderDbgEnabled) tRenderSection = performance.now();
       updatePlanetaryRings3D(frameDt, planets, camNoShake);
+      if (renderDbgEnabled) RenderLiveDebug.record('updatePlanetaryRings3D', performance.now() - tRenderSection);
+
+      if (renderDbgEnabled) tRenderSection = performance.now();
       if (window.updateStations3D) window.updateStations3D(stations);
+      if (renderDbgEnabled) RenderLiveDebug.record('updateStations3D', performance.now() - tRenderSection);
+
+      if (renderDbgEnabled) tRenderSection = performance.now();
       if (window.updateWorld3D) window.updateWorld3D(frameDt, vfxTime);
+      if (renderDbgEnabled) RenderLiveDebug.record('updateWorld3D', performance.now() - tRenderSection);
 
       // 2. Statek gracza i system zniszczen (oraz VFX silnikow wewnatrz)
       const renderEntities = [];
@@ -15627,6 +16290,7 @@
       for (const npc of npcs) if (npc && !npc.dead) renderEntities.push(npc);
       for (const w of wrecks) if (w && !w.dead) renderEntities.push(w);
 
+      if (renderDbgEnabled) tRenderSection = performance.now();
       if (window.updateHexShips3D) {
         const zoomNow = Math.max(0.0001, Number(cam?.zoom) || 1);
         const camX = Number(cam?.x) || 0;
@@ -15674,17 +16338,25 @@
         // Ta funkcja aktualizuje statki i ostatecznie wywoluje Core3D.render()
         window.updateHexShips3D(cam, renderEntities);
       }
+      if (renderDbgEnabled) RenderLiveDebug.record('updateHexShips3D', performance.now() - tRenderSection);
 
       // NOWOSC: TARCZA 3D
+      if (renderDbgEnabled) tRenderSection = performance.now();
       if (window.updateShields3D) {
         window.updateShields3D(frameDt, renderEntities, window.__interpShipPose);
       } else {
         updateShields3D(frameDt, renderEntities, window.__interpShipPose);
       }
+      if (renderDbgEnabled) RenderLiveDebug.record('updateShields3D', performance.now() - tRenderSection);
 
       // 3. Rysujemy gotowa klatke z WebGL na glowny Canvas 2D
+      if (renderDbgEnabled) tRenderSection = performance.now();
       if (window.drawHexShips3D) {
         window.drawHexShips3D(ctx, W, H);
+      }
+      if (renderDbgEnabled) {
+        RenderLiveDebug.record('drawHexShips3D', performance.now() - tRenderSection);
+        tPost3DStart = performance.now();
       }
 
       drawPlanetShadowTrails(ctx, cam);
@@ -16522,6 +17194,14 @@
       renderMissionJournal();
       renderZoneMessages();
       renderMissionCompleteBanner();
+      if (renderDbgEnabled) {
+        const tRenderEnd = performance.now();
+        if (tPost3DStart > 0) {
+          RenderLiveDebug.record('renderPost3D2D', tRenderEnd - tPost3DStart);
+        }
+        RenderLiveDebug.recordFrame(tRenderEnd - tRenderStart);
+        RenderLiveDebug.flush(tRenderEnd, false);
+      }
       mouse.click = false;
     }
 
@@ -17012,6 +17692,119 @@
       ship.engines.torqueRight.maxThrust = Math.round(ship.engines.torqueRight.maxThrust * speedMul);
 
       ship.cargoCap = Math.round((ship.cargoCap || 20) * s.cargo);
+    }
+
+    function getPlayerHullDef(hullId) {
+      return PLAYER_HULL_CATALOG[normalizePlayerHullId(hullId)] || PLAYER_HULL_CATALOG[DEFAULT_PLAYER_HULL_ID];
+    }
+
+    function getPlayerOwnedHullIds() {
+      if (!(PLAYER.ownedHulls instanceof Set)) {
+        const fromShip = Array.isArray(ship?.ownedHullIds) ? ship.ownedHullIds : [];
+        PLAYER.ownedHulls = new Set(fromShip.map(normalizePlayerHullId));
+      }
+      PLAYER.ownedHulls.add(DEFAULT_PLAYER_HULL_ID);
+      return PLAYER.ownedHulls;
+    }
+
+    function playerOwnsHull(hullId) {
+      return getPlayerOwnedHullIds().has(normalizePlayerHullId(hullId));
+    }
+
+    function ensurePlayerOwnsHull(hullId) {
+      const id = normalizePlayerHullId(hullId);
+      getPlayerOwnedHullIds().add(id);
+      return id;
+    }
+
+    function syncPlayerHullSnapshot() {
+      const active = normalizePlayerHullId(PLAYER.activeHullId || ship.activeHullId || DEFAULT_PLAYER_HULL_ID);
+      PLAYER.activeHullId = active;
+      PLAYER.shipId = active;
+      ship.activeHullId = active;
+      const owned = [...getPlayerOwnedHullIds()].map(normalizePlayerHullId);
+      ship.ownedHullIds = [...new Set(owned)];
+    }
+
+    function applyPlayerHullProfile(hullId, opts = {}) {
+      const hull = getPlayerHullDef(hullId);
+      if (!hull) return false;
+
+      const preserveDamageRatio = opts.preserveDamageRatio !== false;
+      const syncVisuals = opts.syncVisuals !== false;
+      const prevHullMax = Math.max(1, Number(ship?.hull?.max) || 1);
+      const prevHullVal = Math.max(0, Number(ship?.hull?.val) || 0);
+      const prevShieldMax = Math.max(1, Number(ship?.shield?.max) || 1);
+      const prevShieldVal = Math.max(0, Number(ship?.shield?.val) || 0);
+      const hullRatio = preserveDamageRatio ? clamp(prevHullVal / prevHullMax, 0, 1) : 1;
+      const shieldRatio = preserveDamageRatio ? clamp(prevShieldVal / prevShieldMax, 0, 1) : 1;
+
+      const activeHullId = normalizePlayerHullId(hull.id);
+      const previousHardpoints = Array.isArray(Game.player?.hardpoints)
+        ? Game.player.hardpoints.map(h => ({ type: h.type, mount: h.mount, ammo: h.ammo, maxAmmo: h.maxAmmo }))
+        : [];
+
+      ensurePlayerOwnsHull(activeHullId);
+      PLAYER.activeHullId = activeHullId;
+      PLAYER.shipId = activeHullId;
+      ship.activeHullId = activeHullId;
+
+      const physics = hull.physics || BASE_PLAYER_PHYSICS;
+      SHIP_PHYSICS.PLAYER_MASS = Math.max(1, Number(hull.mass) || BASE_PLAYER_PROFILE.mass);
+      SHIP_PHYSICS.SPEED = Math.max(1, Number(physics.speed) || BASE_PLAYER_PHYSICS.speed);
+      SHIP_PHYSICS.REVERSE_MULT = clamp(Number(physics.reverseMult) || BASE_PLAYER_PHYSICS.reverseMult, 0.1, 1);
+      SHIP_PHYSICS.TURN_ACCEL = Math.max(0.5, Number(physics.turnAccel) || BASE_PLAYER_PHYSICS.turnAccel);
+      SHIP_PHYSICS.MAX_TURN_SPEED = Math.max(0.2, Number(physics.maxTurnSpeed) || BASE_PLAYER_PHYSICS.maxTurnSpeed);
+      SHIP_PHYSICS.LINEAR_FRICTION = clamp(Number(physics.linearFriction) || BASE_PLAYER_PHYSICS.linearFriction, 0.9, 0.9995);
+      SHIP_PHYSICS.ANGULAR_FRICTION = clamp(Number(physics.angularFriction) || BASE_PLAYER_PHYSICS.angularFriction, 0.85, 0.9995);
+      SHIP_PHYSICS.BOOST_MULT = Math.max(1.0, Number(physics.boostMult) || BASE_PLAYER_PHYSICS.boostMult);
+
+      ship.mass = SHIP_PHYSICS.PLAYER_MASS;
+      ship.rammingMass = Math.max(1, Number(hull.rammingMass) || ship.mass);
+      ship.radius = Math.max(20, Number(hull.radius) || BASE_PLAYER_PROFILE.radius);
+      ship.inertia = (1 / 12) * ship.mass * ((ship.w * ship.w) + (ship.h * ship.h));
+
+      ship.cargoCap = Math.max(8, Number(hull.cargoCap) || BASE_PLAYER_PROFILE.cargoCap);
+      ship.hull.max = Math.max(100, Math.round(Number(hull.hullMax) || BASE_PLAYER_PROFILE.hullMax));
+      ship.hull.val = Math.max(1, Math.round(ship.hull.max * hullRatio));
+      if (ship.shield) {
+        ship.shield.max = Math.max(0, Math.round(Number(hull?.shield?.max) || BASE_PLAYER_PROFILE.shieldMax));
+        ship.shield.regenRate = Math.max(0, Number(hull?.shield?.regenRate) || BASE_PLAYER_PROFILE.shieldRegen);
+        ship.shield.regenDelay = Math.max(0.1, Number(hull?.shield?.regenDelay) || BASE_PLAYER_PROFILE.shieldDelay);
+        ship.shield.val = Math.max(0, Math.round(ship.shield.max * shieldRatio));
+      }
+
+      const targetFrame = SHIPS[hull.shipFrame] ? hull.shipFrame : DEFAULT_PLAYER_HULL_ID;
+      Game.player.shipFrame = targetFrame;
+      rebuildHardpointsForFrame();
+      if (previousHardpoints.length) tryPreserveMounts(previousHardpoints);
+      syncWeaponSystems();
+
+      if (syncVisuals) {
+        ship.capitalProfile = ship.capitalProfile || {};
+        ship.capitalProfile.spriteSrc = hull.spriteSrc || ship.capitalProfile.spriteSrc || "assets/capital_ship_rect_v1.png";
+        const desiredSprite = ship.capitalProfile.spriteSrc || "assets/capital_ship_rect_v1.png";
+        const desiredResolved = (() => {
+          try { return new URL(desiredSprite, window.location.href).href; } catch { return desiredSprite; }
+        })();
+        if (shipSprite.src !== desiredResolved) {
+          ship.spriteReady = false;
+          shipSprite.src = desiredSprite;
+        } else if (shipSprite.complete && shipSprite.naturalWidth > 0) {
+          ship.spriteReady = true;
+          ship.spriteW = shipSprite.naturalWidth;
+          ship.spriteH = shipSprite.naturalHeight;
+          Game.player.spriteW = ship.spriteW;
+          Game.player.spriteH = ship.spriteH;
+          initHexBody(ship, shipSprite);
+          applyPlayerDamagedSpriteIfReady();
+        }
+      }
+
+      syncPlayerHullSnapshot();
+      if (typeof renderMechanic === 'function') renderMechanic();
+      if (opts.persist !== false && typeof saveLoadout === 'function') saveLoadout();
+      return true;
     }
 
     function dist(x1, y1, x2, y2) { return Math.hypot(x2 - x1, y2 - y1); }

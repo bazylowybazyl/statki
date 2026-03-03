@@ -182,9 +182,23 @@ function computeShardStress(shard) {
   if (shard && shard.deformation) {
     const sx = shard.deformation.x;
     const sy = shard.deformation.y;
-    return Math.hypot(sx, sy);
+    return Math.sqrt(sx * sx + sy * sy);
   }
   return 0;
+}
+
+function setAttrUpdateRange(attr, start, count) {
+  if (!attr) return;
+  if (typeof attr.clearUpdateRanges === 'function') {
+    attr.clearUpdateRanges();
+    if (typeof attr.addUpdateRange === 'function' && Number.isFinite(count) && count > 0) {
+      attr.addUpdateRange(start, count);
+    }
+    return;
+  }
+  if (!attr.updateRange) attr.updateRange = { offset: 0, count: -1 };
+  attr.updateRange.offset = start;
+  attr.updateRange.count = count;
 }
 
 function createManagedTexture(source) {
@@ -631,13 +645,15 @@ function updateEntityMesh(entity, data, camX, camY) {
   const ey = interpPose ? interpPose.y : getEntityPosY(entity);
   const entityAngle = interpPose ? interpPose.angle : (entity.angle || 0);
 
-  if (!!grid.textureDirty || !!grid.cacheDirty) {
+  if (!!grid.cacheDirty) {
     refreshHexBodyCache(entity);
     data.texture.needsUpdate = true;
     grid.textureDirty = false;
     grid.cacheDirty = false;
-  } else if (!!grid.gpuTextureNeedsUpdate) {
+    grid.gpuTextureNeedsUpdate = false;
+  } else if (!!grid.textureDirty || !!grid.gpuTextureNeedsUpdate) {
     data.texture.needsUpdate = true;
+    grid.textureDirty = false;
     grid.gpuTextureNeedsUpdate = false;
   }
 
@@ -650,7 +666,27 @@ function updateEntityMesh(entity, data, camX, camY) {
     const cy = (grid.srcHeight || 0) * 0.5;
     mesh.count = shards.length;
 
-    for (let i = 0; i < shards.length; i++) {
+    const hasRange =
+      Number.isFinite(grid.meshDirtyStart) &&
+      Number.isFinite(grid.meshDirtyEnd) &&
+      grid.meshDirtyStart >= 0 &&
+      grid.meshDirtyEnd >= grid.meshDirtyStart;
+
+    const fullRefresh = data.needsInstanceRefresh || !!grid.meshDirtyAll || !hasRange;
+
+    let start = 0;
+    let end = shards.length - 1;
+
+    if (!fullRefresh) {
+      start = Math.max(0, grid.meshDirtyStart | 0);
+      end = Math.min(shards.length - 1, grid.meshDirtyEnd | 0);
+      if (end < start) {
+        start = 0;
+        end = shards.length - 1;
+      }
+    }
+
+    for (let i = start; i <= end; i++) {
       const shard = shards[i];
       const offset = i * 16;
 
@@ -682,11 +718,26 @@ function updateEntityMesh(entity, data, camX, camY) {
         hpAttr.array[i] = 0;
       }
     }
+
+    if (fullRefresh) {
+      setAttrUpdateRange(mesh.instanceMatrix, 0, -1);
+      setAttrUpdateRange(stressAttr, 0, -1);
+      setAttrUpdateRange(hpAttr, 0, -1);
+    } else {
+      const count = Math.max(0, end - start + 1);
+      setAttrUpdateRange(mesh.instanceMatrix, start * 16, count * 16);
+      setAttrUpdateRange(stressAttr, start, count);
+      setAttrUpdateRange(hpAttr, start, count);
+    }
+
     mesh.instanceMatrix.needsUpdate = true;
     stressAttr.needsUpdate = true;
     hpAttr.needsUpdate = true;
     data.needsInstanceRefresh = false;
     grid.meshDirty = false;
+    grid.meshDirtyAll = false;
+    grid.meshDirtyStart = -1;
+    grid.meshDirtyEnd = -1;
   }
 
   const tune = getShipLightTuning();
@@ -803,19 +854,30 @@ export function updateHexShips3D(viewCamera, entities = []) {
 
 export function drawHexShips3D(ctx, width, height) {
   if (!ctx || !Core3D.isInitialized) return;
+  const dbgRecord = (typeof window !== 'undefined' && typeof window.__renderDbgRecord === 'function')
+    ? window.__renderDbgRecord
+    : null;
+  const tCoreCall0 = dbgRecord ? performance.now() : 0;
 
   Core3D.render();
+  if (dbgRecord) {
+    dbgRecord('coreRenderCall', performance.now() - tCoreCall0);
+  }
   const src = Core3D.canvas;
   if (!src) return;
 
   const w = Math.max(1, Number(width) || ctx.canvas?.width || 1);
   const h = Math.max(1, Number(height) || ctx.canvas?.height || 1);
+  const tBlit0 = dbgRecord ? performance.now() : 0;
 
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(src, 0, 0, w, h);
   ctx.restore();
+  if (dbgRecord) {
+    dbgRecord('coreBlit2D', performance.now() - tBlit0);
+  }
 }
 
 export function disposeHexShips3D() {

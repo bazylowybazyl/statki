@@ -31,6 +31,58 @@ export const SHIPS = {
       ],
       specials: [{ type: 'special', pos: { x: 0, y: 0 } }]
     }
+  },
+  terran_frigate: {
+    id: 'terran_frigate',
+    name: 'Terranova Frigate',
+    spec: { main: 4, missile: 2, aux: 2, hangar: 1, special: 1 },
+    hardpointLayout: {
+      type: 'lines',
+      rotate: 'cw',
+      lines: [
+        { type: 'main', count: 4, start: { x: -0.1, y: -0.45 }, end: { x: 0.1, y: -0.45 } },
+        { type: 'missile', count: 2, start: { x: -0.36, y: -0.2 }, end: { x: 0.36, y: -0.2 } },
+        { type: 'aux', count: 2, start: { x: -0.14, y: 0.0 }, end: { x: 0.14, y: 0.0 } },
+        { type: 'hangar', count: 1, start: { x: 0.0, y: 0.36 }, end: { x: 0.0, y: 0.36 } }
+      ],
+      specials: [{ type: 'special', pos: { x: 0, y: -0.05 } }]
+    }
+  },
+  terran_destroyer: {
+    id: 'terran_destroyer',
+    name: 'Terranova Destroyer',
+    spec: { main: 10, missile: 4, aux: 4, hangar: 1, special: 1 },
+    hardpointLayout: {
+      type: 'lines',
+      rotate: 'cw',
+      lines: [
+        { type: 'main', count: 6, start: { x: -0.34, y: -0.48 }, end: { x: 0.34, y: -0.48 } },
+        { type: 'main', count: 4, start: { x: -0.22, y: -0.3 }, end: { x: 0.22, y: -0.3 } },
+        { type: 'missile', count: 2, start: { x: -0.42, y: -0.1 }, end: { x: -0.42, y: 0.24 } },
+        { type: 'missile', count: 2, start: { x: 0.42, y: -0.1 }, end: { x: 0.42, y: 0.24 } },
+        { type: 'aux', count: 4, start: { x: -0.2, y: 0.02 }, end: { x: 0.2, y: 0.02 } },
+        { type: 'hangar', count: 1, start: { x: 0.0, y: 0.42 }, end: { x: 0.0, y: 0.42 } }
+      ],
+      specials: [{ type: 'special', pos: { x: 0, y: -0.1 } }]
+    }
+  },
+  terran_battleship: {
+    id: 'terran_battleship',
+    name: 'Terranova Battleship',
+    spec: { main: 12, missile: 6, aux: 6, hangar: 2, special: 1 },
+    hardpointLayout: {
+      type: 'lines',
+      rotate: 'cw',
+      lines: [
+        { type: 'main', count: 6, start: { x: -0.34, y: -0.5 }, end: { x: 0.34, y: -0.5 } },
+        { type: 'main', count: 6, start: { x: -0.3, y: -0.34 }, end: { x: 0.3, y: -0.34 } },
+        { type: 'missile', count: 3, start: { x: -0.46, y: -0.16 }, end: { x: -0.46, y: 0.24 } },
+        { type: 'missile', count: 3, start: { x: 0.46, y: -0.16 }, end: { x: 0.46, y: 0.24 } },
+        { type: 'aux', count: 6, start: { x: -0.26, y: -0.02 }, end: { x: 0.26, y: -0.02 } },
+        { type: 'hangar', count: 2, start: { x: -0.12, y: 0.44 }, end: { x: 0.12, y: 0.44 } }
+      ],
+      specials: [{ type: 'special', pos: { x: 0, y: -0.12 } }]
+    }
   }
 };
 

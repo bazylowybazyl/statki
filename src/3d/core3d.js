@@ -125,6 +125,10 @@ export const Core3D = {
   shadowCatcherFg: null,
   shadowCatchersDebug: false,
   composer: null,
+  composerTarget: null,
+  renderPassBg: null,
+  renderPassOrtho: null,
+  renderPassFg: null,
   heatHazePass: null,
   heatHazeSources: null,
   heatHazeCount: 0,
@@ -135,6 +139,14 @@ export const Core3D = {
   bloomResolutionScale: 1,
   bloomBaseStrength: 0.35,
   bloomBaseThreshold: 0.95,
+  msaaSamples: 0,
+  perfToggles: {
+    bloom: true,
+    heatHaze: true,
+    bgPass: true,
+    orthoPass: true,
+    fgPass: true
+  },
   pixelRatio: 1,
   width: 0,
   height: 0,
@@ -201,6 +213,8 @@ export const Core3D = {
       depthBuffer: true,
       samples: this.renderer.capabilities.isWebGL2 ? 4 : 0
     });
+    this.composerTarget = rt;
+    this.msaaSamples = Number(rt.samples) || 0;
     this.composer = new EffectComposer(this.renderer, rt);
     this.composer.setPixelRatio(this.pixelRatio);
 
@@ -208,6 +222,7 @@ export const Core3D = {
     
     // PASS 1: TŁO 3D (Planety, Gwiazdy) - Warstwa 1
     const renderPassBg = new RenderPass(this.scene, this.cameraPersp);
+    this.renderPassBg = renderPassBg;
     renderPassBg.clearColor = new THREE.Color(0x000000);
     renderPassBg.clearAlpha = 0;
     const origBgRender = renderPassBg.render.bind(renderPassBg);
@@ -218,6 +233,7 @@ export const Core3D = {
     
     // PASS 2: GAMEPLAY 2D (Ring, Statki, Lasery) - Warstwa 0
     const renderPassOrtho = new RenderPass(this.scene, this.cameraOrtho);
+    this.renderPassOrtho = renderPassOrtho;
     renderPassOrtho.clear = false; // Nie czyść kolorów tła!
     const origOrthoRender = renderPassOrtho.render.bind(renderPassOrtho);
     renderPassOrtho.render = function(renderer, writeBuffer, readBuffer, deltaTime, maskActive) {
@@ -228,6 +244,7 @@ export const Core3D = {
 
     // PASS 3: ZABUDOWA 3D (Budynki na ringu) - Warstwa 2
     const renderPassFg = new RenderPass(this.scene, this.cameraPersp);
+    this.renderPassFg = renderPassFg;
     renderPassFg.clear = false; // Nie czyść kolorów!
     const origFgRender = renderPassFg.render.bind(renderPassFg);
     renderPassFg.render = function(renderer, writeBuffer, readBuffer, deltaTime, maskActive) {
@@ -259,12 +276,162 @@ export const Core3D = {
     this.outputPass = new OutputPass();
     this.outputPass.renderToScreen = true;
     this.composer.addPass(this.outputPass);
+    this._applyPassToggles();
 
     this.isInitialized = true;
     this.resize(window.innerWidth, window.innerHeight);
 
     console.log('Core3D initialized (Triple Layer System).');
     return this;
+  },
+
+  _disposeComposerChain() {
+    try {
+      if (this.composer?.passes) {
+        for (const pass of this.composer.passes) {
+          try { pass?.dispose?.(); } catch {}
+        }
+      }
+      try { this.composer?.dispose?.(); } catch {}
+      try { this.composer?.renderTarget1?.dispose?.(); } catch {}
+      try { this.composer?.renderTarget2?.dispose?.(); } catch {}
+      try { this.composerTarget?.dispose?.(); } catch {}
+    } catch {}
+
+    this.composer = null;
+    this.composerTarget = null;
+    this.renderPassBg = null;
+    this.renderPassOrtho = null;
+    this.renderPassFg = null;
+    this.heatHazePass = null;
+    this.bloomPass = null;
+    this.outputPass = null;
+  },
+
+  _buildComposerChain(width, height, samples = 0) {
+    const w = Math.max(1, width | 0);
+    const h = Math.max(1, height | 0);
+    const useSamples = this.renderer?.capabilities?.isWebGL2 ? Math.max(0, samples | 0) : 0;
+
+    const rt = new THREE.WebGLRenderTarget(w, h, {
+      format: THREE.RGBAFormat,
+      type: this.renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType,
+      depthBuffer: true,
+      samples: useSamples
+    });
+    this.composerTarget = rt;
+    this.msaaSamples = Number(rt.samples) || 0;
+
+    this.composer = new EffectComposer(this.renderer, rt);
+    this.composer.setPixelRatio(this.pixelRatio);
+
+    const renderPassBg = new RenderPass(this.scene, this.cameraPersp);
+    renderPassBg.clearColor = new THREE.Color(0x000000);
+    renderPassBg.clearAlpha = 0;
+    const origBgRender = renderPassBg.render.bind(renderPassBg);
+    renderPassBg.render = function (renderer, writeBuffer, readBuffer, deltaTime, maskActive) {
+      this.camera.layers.set(1);
+      origBgRender(renderer, writeBuffer, readBuffer, deltaTime, maskActive);
+    };
+    this.renderPassBg = renderPassBg;
+
+    const renderPassOrtho = new RenderPass(this.scene, this.cameraOrtho);
+    renderPassOrtho.clear = false;
+    const origOrthoRender = renderPassOrtho.render.bind(renderPassOrtho);
+    renderPassOrtho.render = function (renderer, writeBuffer, readBuffer, deltaTime, maskActive) {
+      renderer.clearDepth();
+      this.camera.layers.set(0);
+      origOrthoRender(renderer, writeBuffer, readBuffer, deltaTime, maskActive);
+    };
+    this.renderPassOrtho = renderPassOrtho;
+
+    const renderPassFg = new RenderPass(this.scene, this.cameraPersp);
+    renderPassFg.clear = false;
+    const origFgRender = renderPassFg.render.bind(renderPassFg);
+    renderPassFg.render = function (renderer, writeBuffer, readBuffer, deltaTime, maskActive) {
+      renderer.clearDepth();
+      this.camera.layers.set(2);
+      origFgRender(renderer, writeBuffer, readBuffer, deltaTime, maskActive);
+    };
+    this.renderPassFg = renderPassFg;
+
+    this.composer.addPass(renderPassBg);
+    this.composer.addPass(renderPassOrtho);
+    this.composer.addPass(renderPassFg);
+
+    this.heatHazeSources = new Float32Array(this.heatHazeMaxSources * 4);
+    this.heatHazeCount = 0;
+    this.heatHazePass = new ShaderPass(createHeatHazeShader(this.heatHazeMaxSources));
+    this.composer.addPass(this.heatHazePass);
+
+    const bloomScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || 1));
+    this.bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(Math.floor(w * bloomScale), Math.floor(h * bloomScale)),
+      this.bloomBaseStrength,
+      0.18,
+      this.bloomBaseThreshold
+    );
+    this.composer.addPass(this.bloomPass);
+
+    const alphaPass = new ShaderPass(PreserveAlphaOutputShader);
+    alphaPass.material.toneMapped = false;
+    this.composer.addPass(alphaPass);
+
+    this.outputPass = new OutputPass();
+    this.outputPass.renderToScreen = true;
+    this.composer.addPass(this.outputPass);
+    this._applyPassToggles();
+  },
+
+  _applyPassToggles() {
+    const t = this.perfToggles || {};
+    if (this.renderPassBg) this.renderPassBg.enabled = t.bgPass !== false;
+    if (this.renderPassOrtho) this.renderPassOrtho.enabled = t.orthoPass !== false;
+    if (this.renderPassFg) this.renderPassFg.enabled = t.fgPass !== false;
+    if (this.bloomPass) this.bloomPass.enabled = t.bloom !== false;
+    if (this.heatHazePass && t.heatHaze === false) this.heatHazePass.enabled = false;
+  },
+
+  setPerfToggles(next = {}) {
+    if (!next || typeof next !== 'object') return this.getPerfStatus();
+    const t = this.perfToggles || (this.perfToggles = {});
+    if ('bloom' in next) t.bloom = !!next.bloom;
+    if ('heatHaze' in next) t.heatHaze = !!next.heatHaze;
+    if ('bgPass' in next) t.bgPass = !!next.bgPass;
+    if ('orthoPass' in next) t.orthoPass = !!next.orthoPass;
+    if ('fgPass' in next) t.fgPass = !!next.fgPass;
+    this._applyPassToggles();
+    return this.getPerfStatus();
+  },
+
+  setMsaaEnabled(enabled = true, samples = 4) {
+    if (!this.isInitialized || !this.renderer) return this.getPerfStatus();
+    if (!this.renderer.capabilities.isWebGL2) {
+      this.msaaSamples = 0;
+      return this.getPerfStatus();
+    }
+    const targetSamples = enabled ? Math.max(0, samples | 0) : 0;
+    if (targetSamples === this.msaaSamples) return this.getPerfStatus();
+
+    const width = Math.max(1, this.width || (typeof window !== 'undefined' ? window.innerWidth : 1));
+    const height = Math.max(1, this.height || (typeof window !== 'undefined' ? window.innerHeight : 1));
+    this._disposeComposerChain();
+    this._buildComposerChain(width, height, targetSamples);
+    this.resize(width, height);
+    return this.getPerfStatus();
+  },
+
+  getPerfStatus() {
+    const t = this.perfToggles || {};
+    return {
+      isInitialized: !!this.isInitialized,
+      msaaSamples: this.msaaSamples | 0,
+      bloom: t.bloom !== false,
+      heatHaze: t.heatHaze !== false,
+      bgPass: t.bgPass !== false,
+      orthoPass: t.orthoPass !== false,
+      fgPass: t.fgPass !== false
+    };
   },
 
   enableBackground3D(object3d) {
@@ -331,8 +498,16 @@ export const Core3D = {
 
   render() {
     if (!this.isInitialized) return;
+    this._applyPassToggles();
+    const dbgRecord = (typeof window !== 'undefined' && typeof window.__renderDbgRecord === 'function')
+      ? window.__renderDbgRecord
+      : null;
+    const tRender0 = dbgRecord ? performance.now() : 0;
+    let tSection0 = tRender0;
 
-    if (this.bloomPass && typeof window !== 'undefined') {
+    const bloomEnabled = this.perfToggles?.bloom !== false;
+    if (this.bloomPass) this.bloomPass.enabled = bloomEnabled;
+    if (this.bloomPass && bloomEnabled && typeof window !== 'undefined') {
       const bloomCfg = window?.DevVFX?.bloom;
       const manualStrength = Number(bloomCfg?.strength);
       const manualRadius = Number(bloomCfg?.radius);
@@ -347,6 +522,10 @@ export const Core3D = {
         this.bloomPass.threshold = Math.max(0, Math.min(2, this.bloomBaseThreshold - (gain - 1.0) * 0.2));
       }
     }
+    if (dbgRecord) {
+      dbgRecord('coreBloomConfig', performance.now() - tSection0);
+      tSection0 = performance.now();
+    }
 
     if (this.heatHazePass?.material?.uniforms) {
       const uniforms = this.heatHazePass.material.uniforms;
@@ -358,7 +537,7 @@ export const Core3D = {
       uniforms.uTime.value = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.001;
       uniforms.uSourceCount.value = enabled ? this.heatHazeCount : 0;
       uniforms.uGlobalStrength.value = enabled ? globalStrength : 0;
-      this.heatHazePass.enabled = enabled && this.heatHazeCount > 0;
+      this.heatHazePass.enabled = (this.perfToggles?.heatHaze !== false) && enabled && this.heatHazeCount > 0;
       const src = this.heatHazeSources;
       const dst = uniforms.uHeatSources.value;
       const count = Math.min(this.heatHazeCount, this.heatHazeMaxSources);
@@ -371,8 +550,17 @@ export const Core3D = {
         }
       }
     }
+    if (dbgRecord) {
+      dbgRecord('coreHeatHazeSetup', performance.now() - tSection0);
+      tSection0 = performance.now();
+    }
 
     this.composer.render();
+    if (dbgRecord) {
+      const tNow = performance.now();
+      dbgRecord('coreComposerRender', tNow - tSection0);
+      dbgRecord('core3dRenderTotal', tNow - tRender0);
+    }
   },
 
   beginHeatHazeFrame() {

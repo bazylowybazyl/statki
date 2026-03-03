@@ -13,6 +13,47 @@ function safeUnmap(buffer) {
   try { if (buffer.mapState === 'mapped') buffer.unmap(); } catch { }
 }
 
+function markGridMeshDirtyRange(grid, minIndex, maxIndex) {
+  if (!grid) return;
+  const count = Array.isArray(grid.shards) ? grid.shards.length : 0;
+  if (count <= 0) {
+    grid.meshDirty = true;
+    grid.meshDirtyAll = true;
+    grid.meshDirtyStart = 0;
+    grid.meshDirtyEnd = 0;
+    return;
+  }
+  let start = Number(minIndex);
+  let end = Number(maxIndex);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    start = 0;
+    end = count - 1;
+  } else {
+    start |= 0;
+    end |= 0;
+    if (end < start) {
+      const tmp = start;
+      start = end;
+      end = tmp;
+    }
+    if (start < 0 || end < 0 || start >= count || end >= count) {
+      start = 0;
+      end = count - 1;
+    }
+  }
+  grid.meshDirty = true;
+  if (grid.meshDirtyAll) return;
+  const curStart = Number(grid.meshDirtyStart);
+  const curEnd = Number(grid.meshDirtyEnd);
+  if (!Number.isFinite(curStart) || !Number.isFinite(curEnd) || curStart < 0 || curEnd < curStart) {
+    grid.meshDirtyStart = start;
+    grid.meshDirtyEnd = end;
+    return;
+  }
+  if (start < curStart) grid.meshDirtyStart = start;
+  if (end > curEnd) grid.meshDirtyEnd = end;
+}
+
 function createSoftBodyShader(device) {
   const code = `
 struct ShardData {
@@ -454,9 +495,12 @@ export const DestructorGpuSoftBody = {
       return;
     }
 
-    const shards = entity.hexGrid.shards;
+    const grid = entity.hexGrid;
+    const shards = grid.shards;
     const safeCount = Math.min(count, shards.length);
     let anyChanges = false;
+    let dirtyMin = Number.POSITIVE_INFINITY;
+    let dirtyMax = -1;
 
     for (let i = 0; i < safeCount; i++) {
       const s = shards[i];
@@ -473,6 +517,8 @@ export const DestructorGpuSoftBody = {
         s.targetDeformation.x = s.targetDeformation.x * 0.4 + tx * 0.6;
         s.targetDeformation.y = s.targetDeformation.y * 0.4 + ty * 0.6;
         anyChanges = true;
+        if (i < dirtyMin) dirtyMin = i;
+        if (i > dirtyMax) dirtyMax = i;
       }
 
       s.__velX = vx;
@@ -488,10 +534,12 @@ export const DestructorGpuSoftBody = {
           s.hp = 0;
         }
         anyChanges = true;
+        if (i < dirtyMin) dirtyMin = i;
+        if (i > dirtyMax) dirtyMax = i;
       }
     }
 
-    if (anyChanges) entity.hexGrid.meshDirty = true;
+    if (anyChanges) markGridMeshDirtyRange(grid, dirtyMin, dirtyMax);
     this._arrayPool.push(data);
   },
 

@@ -138,6 +138,30 @@ const HTML = `
   <div class="small muted">Otwiera panele suwakow z polami liczbowymi.</div>
 </div>
 <div class="group">
+  <div class="row"><strong>Performance</strong></div>
+  <div class="row">
+    <button id="btn-perf-tools" class="dt-btn" style="width:100%">Performance</button>
+  </div>
+  <div id="dt-perf-panel" style="display:none; margin-top:8px;">
+    <label style="display:flex;gap:6px;align-items:center;margin-top:6px"><input id="dt-perf-bloom" type="checkbox"> Bloom pass</label>
+    <label style="display:flex;gap:6px;align-items:center;margin-top:6px"><input id="dt-perf-heat" type="checkbox"> Heat haze pass</label>
+    <label style="display:flex;gap:6px;align-items:center;margin-top:6px"><input id="dt-perf-bg" type="checkbox"> Background pass</label>
+    <label style="display:flex;gap:6px;align-items:center;margin-top:6px"><input id="dt-perf-ortho" type="checkbox"> Ortho pass</label>
+    <label style="display:flex;gap:6px;align-items:center;margin-top:6px"><input id="dt-perf-fg" type="checkbox"> Foreground pass</label>
+    <label style="display:flex;gap:6px;align-items:center;margin-top:6px"><input id="dt-perf-msaa" type="checkbox"> MSAA x4</label>
+    <div class="dt-row" style="margin-top:8px;">
+      <button id="dt-perf-preset-base" class="dt-btn" style="flex:1">Base</button>
+      <button id="dt-perf-preset-fast" class="dt-btn" style="flex:1">Fast</button>
+      <button id="dt-perf-preset-ultra" class="dt-btn" style="flex:1">UltraFast</button>
+    </div>
+    <div class="dt-row" style="margin-top:8px;">
+      <button id="dt-renderdbg-start" class="dt-btn" style="flex:1">Render DBG ON</button>
+      <button id="dt-renderdbg-stop" class="dt-btn" style="flex:1">Render DBG OFF</button>
+    </div>
+    <div class="small muted" id="dt-perf-status" style="margin-top:8px;"></div>
+  </div>
+</div>
+<div class="group">
   <div class="row"><strong>Konfiguracja</strong></div>
   <div class="row"><button id="btnCopy">Kopiuj aktualna konfiguracje</button><button id="btnReset" style="margin-left:auto">Reset</button></div>
   <div class="row"><textarea id="cfgOut" readonly></textarea></div>
@@ -189,6 +213,11 @@ function wireDevToolsLogic() {
     fileGlb: 'dt-file-glb', btnLoadGlb: 'btn-load-glb', glbRot: 'dt-glb-rot', glbZoom: 'dt-glb-zoom', glbScale: 'dt-glb-scale',
     btnHardpointEditor: 'btn-hardpoint-editor', btnBloomPanel: 'btn-bloom-panel', btnDestructorPanel: 'btn-destructor-panel',
     btnDestructorMassPanel: 'btn-destructor-mass-panel',
+    btnPerfTools: 'btn-perf-tools', perfPanel: 'dt-perf-panel', perfStatus: 'dt-perf-status',
+    perfBloom: 'dt-perf-bloom', perfHeat: 'dt-perf-heat', perfBg: 'dt-perf-bg', perfOrtho: 'dt-perf-ortho',
+    perfFg: 'dt-perf-fg', perfMsaa: 'dt-perf-msaa',
+    perfPresetBase: 'dt-perf-preset-base', perfPresetFast: 'dt-perf-preset-fast', perfPresetUltra: 'dt-perf-preset-ultra',
+    renderDbgStart: 'dt-renderdbg-start', renderDbgStop: 'dt-renderdbg-stop',
     hudCenterY: 'dt-hud-center-y', hudCenterYNum: 'dt-hud-center-y-num', hudCenterYVal: 'dt-hud-center-y-val',
     hudHexY: 'dt-hud-hex-y', hudHexYNum: 'dt-hud-hex-y-num', hudHexYVal: 'dt-hud-hex-y-val',
     hudShieldY: 'dt-hud-shield-y', hudShieldYNum: 'dt-hud-shield-y-num', hudShieldYVal: 'dt-hud-shield-y-val',
@@ -727,6 +756,67 @@ function wireDevToolsLogic() {
         }
       });
     }
+
+    const getCorePerfStatus = () => {
+      if (typeof window.Core3DPerfStatus === 'function') {
+        return window.Core3DPerfStatus() || null;
+      }
+      if (window.Core3D && typeof window.Core3D.getPerfStatus === 'function') {
+        return window.Core3D.getPerfStatus() || null;
+      }
+      return null;
+    };
+
+    const syncPerfControls = (statusRaw = null) => {
+      const status = statusRaw || getCorePerfStatus();
+      if (!status) {
+        if (ui.perfStatus) ui.perfStatus.textContent = 'Core3D niedostepny';
+        return;
+      }
+      if (ui.perfBloom) ui.perfBloom.checked = !!status.bloom;
+      if (ui.perfHeat) ui.perfHeat.checked = !!status.heatHaze;
+      if (ui.perfBg) ui.perfBg.checked = !!status.bgPass;
+      if (ui.perfOrtho) ui.perfOrtho.checked = !!status.orthoPass;
+      if (ui.perfFg) ui.perfFg.checked = !!status.fgPass;
+      if (ui.perfMsaa) ui.perfMsaa.checked = Number(status.msaaSamples) > 0;
+      if (ui.perfStatus) {
+        ui.perfStatus.textContent = `MSAA=${Number(status.msaaSamples) || 0} | bloom=${status.bloom ? 'on' : 'off'} | heat=${status.heatHaze ? 'on' : 'off'}`;
+      }
+    };
+
+    const applyPerfFromControls = () => {
+      if (typeof window.Core3DPerf === 'function') {
+        window.Core3DPerf({
+          bloom: !!ui.perfBloom?.checked,
+          heatHaze: !!ui.perfHeat?.checked,
+          bgPass: !!ui.perfBg?.checked,
+          orthoPass: !!ui.perfOrtho?.checked,
+          fgPass: !!ui.perfFg?.checked
+        });
+      }
+      if (typeof window.Core3DMsaa === 'function') {
+        window.Core3DMsaa(!!ui.perfMsaa?.checked, 4);
+      }
+      syncPerfControls();
+    };
+
+    if (ui.btnPerfTools && ui.perfPanel) {
+      ui.btnPerfTools.addEventListener('click', () => {
+        const show = ui.perfPanel.style.display === 'none' || ui.perfPanel.style.display === '';
+        ui.perfPanel.style.display = show ? 'block' : 'none';
+        if (show) syncPerfControls();
+      });
+    }
+    [ui.perfBloom, ui.perfHeat, ui.perfBg, ui.perfOrtho, ui.perfFg, ui.perfMsaa].forEach((node) => {
+      if (!node) return;
+      node.addEventListener('change', applyPerfFromControls);
+    });
+    if (ui.perfPresetBase) ui.perfPresetBase.addEventListener('click', () => { if (typeof window.Core3DPreset === 'function') window.Core3DPreset('base'); syncPerfControls(); });
+    if (ui.perfPresetFast) ui.perfPresetFast.addEventListener('click', () => { if (typeof window.Core3DPreset === 'function') window.Core3DPreset('fast'); syncPerfControls(); });
+    if (ui.perfPresetUltra) ui.perfPresetUltra.addEventListener('click', () => { if (typeof window.Core3DPreset === 'function') window.Core3DPreset('ultrafast'); syncPerfControls(); });
+    if (ui.renderDbgStart) ui.renderDbgStart.addEventListener('click', () => { if (typeof window.RenderDbgStart === 'function') window.RenderDbgStart(1000); });
+    if (ui.renderDbgStop) ui.renderDbgStop.addEventListener('click', () => { if (typeof window.RenderDbgStop === 'function') window.RenderDbgStop(); });
+    syncPerfControls();
   }
 
   // --- BOOT ---
