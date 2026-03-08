@@ -1629,6 +1629,19 @@
                     });
                 }
 
+                // Adverts Materials
+                for (let i = 1; i <= 5; i++) {
+                    const id = '0' + i;
+                    synthCityAssets.materials['ads_' + id] = new THREE.MeshPhongMaterial({
+                        emissive: 0xffffff,
+                        emissiveMap: synthCityAssets.textures['ads_' + id],
+                        emissiveIntensity: 0.1, // SynthCity had low base brightness for ads
+                        blending: THREE.AdditiveBlending,
+                        fog: false,
+                        side: THREE.DoubleSide
+                    });
+                }
+
                 init();
                 PerfHUD.init();
                 animate();
@@ -1644,9 +1657,16 @@
                     () => synthCityAssets.textures['building_' + id + '_rough'] = texLoader.load(basePath + 'textures/building_' + id + '_rough.jpg', t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }));
             }
 
+            // Adverts Textures
+            for (let i = 1; i <= 5; i++) {
+                let id = '0' + i;
+                synthCityAssets.textures['ads_' + id] = texLoader.load(basePath + 'textures/ads_' + id + '.jpg');
+            }
+
             synthCityAssets.textures['ground'] = texLoader.load(basePath + 'textures/ground.jpg');
             synthCityAssets.textures['ground_em'] = texLoader.load(basePath + 'textures/ground_em.jpg');
 
+            // Building Models
             objLoader.load(basePath + 'models/s_01_01.obj', obj => synthCityAssets.models['s_01_01'] = obj.children[0].geometry);
             objLoader.load(basePath + 'models/s_01_02.obj', obj => synthCityAssets.models['s_01_02'] = obj.children[0].geometry);
             objLoader.load(basePath + 'models/s_01_03.obj', obj => synthCityAssets.models['s_01_03'] = obj.children[0].geometry);
@@ -1658,9 +1678,14 @@
             objLoader.load(basePath + 'models/ads_s_02_01.obj', obj => synthCityAssets.models['ads_s_02_01'] = obj.children[0].geometry);
             objLoader.load(basePath + 'models/ads_s_02_02.obj', obj => synthCityAssets.models['ads_s_02_02'] = obj.children[0].geometry);
 
-            objLoader.load(basePath + 'models/topper_01.obj', obj => synthCityAssets.models['topper_01'] = obj.children[0].geometry);
-            objLoader.load(basePath + 'models/topper_02.obj', obj => synthCityAssets.models['topper_02'] = obj.children[0].geometry);
-            objLoader.load(basePath + 'models/topper_03.obj', obj => synthCityAssets.models['topper_03'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/ads_s_03_01.obj', obj => synthCityAssets.models['ads_s_03_01'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/ads_s_03_02.obj', obj => synthCityAssets.models['ads_s_03_02'] = obj.children[0].geometry);
+
+            // Toppers (Holograms)
+            for (let i = 1; i <= 12; i++) {
+                let id = i < 10 ? '0' + i : i.toString();
+                objLoader.load(basePath + 'models/topper_' + id + '.obj', obj => synthCityAssets.models['topper_' + id] = obj.children[0].geometry);
+            }
         }
 
         window.addEventListener('load', loadSynthCityAssets);
@@ -1670,8 +1695,9 @@
         // ==========================================
         function init() {
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x020204);
-            // No fog — bloom blows it out into bright mist
+            // --- ATMOSPHERE & FOG (SynthCity Night) ---
+            scene.fog = new THREE.Fog(0x12122a, 1000, 15000); // 15km visibility
+            scene.background = new THREE.Color(0x12122a);
 
             renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -1684,19 +1710,16 @@
             camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 50, 500000);
             updateCameraAltitudeBase();
 
-            // --- LIGHTING ---
-            const sun = new THREE.DirectionalLight(0xffeedd, 1.8);
+            // --- LIGHTING (SynthCity Night Vibes) ---
+            const sun = new THREE.DirectionalLight(0x8b79ff, 0.1);
             sun.position.set(30000, 45000, 20000);
             scene.add(sun);
 
-            const hemi = new THREE.HemisphereLight(0x223355, 0x0a0a14, 0.35);
-            scene.add(hemi);
-
-            const ambient = new THREE.AmbientLight(0x141828, 0.25);
+            const ambient = new THREE.AmbientLight(0x1b2c80, 0.5);
             scene.add(ambient);
 
-            // Core planet glow (fill light from below)
-            const coreLight = new THREE.PointLight(0x3366aa, 1.2, 120000);
+            // Core planet glow (fill light from below) - Dimmed
+            const coreLight = new THREE.PointLight(0x3366aa, 0.4, 120000);
             coreLight.position.set(0, -2000, 0);
             scene.add(coreLight);
 
@@ -2576,25 +2599,94 @@
             }
 
             if (zone === 'residential') {
-                const bTypes = ['s_01_01', 's_01_02', 's_01_03', 's_02_01', 's_02_02'];
+                // Determine base types based on density/ring placement
+                let bTypes, isTower = false;
+                if (radius < RING_MID - 150 && rnd() > 0.8) {
+                    bTypes = ['s_05_01', 's_05_02', 's_05_03'];
+                    isTower = true;
+                } else if (radius > RING_MID + 150 && rnd() > 0.8) {
+                    bTypes = ['s_04_01', 's_04_02', 's_04_03'];
+                } else {
+                    bTypes = ['s_01_01', 's_01_02', 's_01_03', 's_02_01', 's_02_02'];
+                }
+
                 const modelId = bTypes[Math.floor(rnd() * bTypes.length)];
                 const geo = cloneSynthCityGeo(modelId);
                 if (geo) {
                     const texNum = '0' + (1 + Math.floor(rnd() * 5));
 
-                    // --- USTAWIENIA SKALI I ROTACJI (MIESZKALNE) DO TWEAKOWANIA ---
-                    const scaleXZ = globalBuildingScale + rnd() * (globalBuildingScale * 0.8); // Zależy bezpośrednio od suwaka
-                    const scaleY = scaleXZ * (1.4 + rnd() * 1.2); // Wysokość
+                    // --- USTAWIENIA SKALI I ROTACJI (SYNTHCITY PORT) ---
+                    // SynthCity: buildings are scaled ONLY on the Y axis to preserve window texture ratios,
+                    // except for towers (s_04, s_05) which were scaled uniformly.
+                    let scaleXZ = 1.0;
+                    let scaleY = 1.0;
+
+                    const rotateNoise = rnd();
+                    const rotateY = (Math.floor(rotateNoise * 4) * 90) * Math.PI / 180;
+
+                    if (isTower || modelId.startsWith('s_04')) {
+                        const uniformScale = 1.0 + (rotateNoise * 0.5);
+                        scaleXZ = uniformScale * globalBuildingScale;
+                        scaleY = uniformScale * globalBuildingScale;
+                    } else {
+                        scaleXZ = globalBuildingScale;
+                        scaleY = globalBuildingScale * (0.75 + rnd() * 0.45);
+                    }
 
                     geo.scale(scaleXZ, scaleY, scaleXZ);
-                    geo.rotateY(rnd() * Math.PI * 2); // Tylko obrót poziomy (Y)
+                    geo.rotateY(rotateY);
                     geo.translate(0, 0, 0);
-                    totalH = 10.0 * scaleY; // Orientacyjna wysokosc dla klimatyzatorów
-                    // --------------------------------------------------------------
+
+                    // Estimate total height to place holograms on top
+                    totalH = 190 * scaleY; // Approx roof height from origin
 
                     const matKey = 'building_' + texNum;
                     geoMap[matKey] = geoMap[matKey] || [];
                     geoMap[matKey].push(geo);
+
+                    // --- ADVERTS (BILLBOARDS) ---
+                    let adsType = null;
+                    if (modelId.startsWith('s_01')) {
+                        adsType = rnd() > 0.5 ? 'ads_s_01_01' : 'ads_s_01_02';
+                    } else if (modelId.startsWith('s_02')) {
+                        adsType = rnd() > 0.5 ? 'ads_s_02_01' : 'ads_s_02_02';
+                    } else if (modelId.startsWith('s_03')) {
+                        adsType = rnd() > 0.5 ? 'ads_s_03_01' : 'ads_s_03_02';
+                    }
+
+                    if (adsType && rnd() > 0.2) {
+                        const adGeo = cloneSynthCityGeo(adsType);
+                        if (adGeo) {
+                            adGeo.rotateX(-Math.PI / 2); // Stand upright
+                            adGeo.scale(scaleXZ, scaleY, scaleXZ);
+                            // Invert rotation to slap the billboard onto the correct wall
+                            adGeo.rotateY(-rotateY);
+                            adGeo.translate(0, 0, 0);
+
+                            const adTexNum = '0' + (1 + Math.floor(rnd() * 5));
+                            const adMatKey = 'ads_' + adTexNum;
+                            geoMap[adMatKey] = geoMap[adMatKey] || [];
+                            geoMap[adMatKey].push(adGeo);
+                        }
+                    }
+
+                    // --- TOPPERS (HOLOGRAMS) ---
+                    if (rnd() > 0.8) {
+                        const topperId = '0' + (1 + Math.floor(rnd() * 9)); // 1 to 9
+                        const topperGeo = cloneSynthCityGeo('topper_' + topperId);
+                        if (topperGeo) {
+                            topperGeo.rotateX(-Math.PI / 2); // Stand upright
+                            const topperScale = (0.8 + rnd()) * globalBuildingScale;
+                            topperGeo.scale(topperScale, topperScale, topperScale);
+                            topperGeo.rotateY(rnd() * Math.PI * 2);
+                            topperGeo.translate(0, totalH, 0);
+
+                            const adTexNum = '0' + (1 + Math.floor(rnd() * 5));
+                            const adMatKey = 'ads_' + adTexNum;
+                            geoMap[adMatKey] = geoMap[adMatKey] || [];
+                            geoMap[adMatKey].push(topperGeo);
+                        }
+                    }
                 }
             } else if (zone === 'industrial') {
                 // SQUAT with SILOS and CHIMNEYS
