@@ -3129,8 +3129,11 @@
       const x = Number(marker?.x);
       const y = Number(marker?.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-      const baseDeg = normalizeEditorEngineDeg(marker?.deg, 0);
       const mount = normalizeEditorEngineMount(kind, marker?.mount, x, y);
+      const rawDeg = normalizeEditorEngineDeg(marker?.deg, 0);
+      const baseDeg = (kind === 'side')
+        ? (mount.endsWith('_right') ? -90 : 90)
+        : rawDeg;
       const gimbal = normalizeEditorEngineGimbal(kind, marker?.gimbalMinDeg, marker?.gimbalMaxDeg);
       const nozzleRaw = normalizeEditorEngineDeg(marker?.nozzleDeg, baseDeg);
       const nozzleDeg = clampNozzleDegToGimbal(nozzleRaw, baseDeg, gimbal.min, gimbal.max);

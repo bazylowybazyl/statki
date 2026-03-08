@@ -1057,7 +1057,7 @@ function _markerToThruster(m, tool) {
   return {
     ox,
     oy,
-    fx: -Math.sin(rad),
+    fx: Math.sin(rad),
     fy: Math.cos(rad),
     deg,
     mount,
