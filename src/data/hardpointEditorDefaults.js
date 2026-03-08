@@ -1,5 +1,5 @@
 export const PLAYER_EDITOR_DEFAULTS = {
-  "label": "Statek gracza",
+  "label": "Atlas",
   "frontAxis": "+X",
   "hardpoints": [
     {
@@ -542,7 +542,7 @@ export const SHIP_EDITOR_DEFAULTS = {
   version: 1,
   source: 'hardpoint-editor-defaults',
   ships: {
-    player: PLAYER_EDITOR_DEFAULTS,
+    atlas: PLAYER_EDITOR_DEFAULTS,
     "capital_carrier": {
     "label": "Capital Carrier",
     "frontAxis": "+X",
@@ -1139,8 +1139,42 @@ export const SHIP_EDITOR_DEFAULTS = {
     ],
     "cores": [],
     "engines": {
-        "main": [],
-        "side": []
+        "main": [
+            {
+                "id": "m_y4mc84p",
+                "x": -990,
+                "y": -350,
+                "deg": 90,
+                "offsetX": 0,
+                "offsetY": 0
+            },
+            {
+                "id": "m_jred6j8",
+                "x": -990,
+                "y": 360,
+                "deg": 90,
+                "offsetX": 0,
+                "offsetY": 0
+            }
+        ],
+        "side": [
+            {
+                "id": "m_9x86ohy",
+                "x": 440,
+                "y": -300,
+                "deg": 180,
+                "offsetX": 90,
+                "offsetY": 0
+            },
+            {
+                "id": "m_u59faf5",
+                "x": 440,
+                "y": 300,
+                "deg": 0,
+                "offsetX": 90,
+                "offsetY": 0
+            }
+        ]
     }
 },
     "frigate": {
@@ -1294,8 +1328,42 @@ export const SHIP_EDITOR_DEFAULTS = {
     ],
     "cores": [],
     "engines": {
-        "main": [],
-        "side": []
+        "main": [
+            {
+                "id": "m_gqbeyko",
+                "x": -870,
+                "y": -90,
+                "deg": 90,
+                "offsetX": 90,
+                "offsetY": 0
+            },
+            {
+                "id": "m_hlzexid",
+                "x": -870,
+                "y": 90,
+                "deg": 90,
+                "offsetX": 90,
+                "offsetY": 0
+            }
+        ],
+        "side": [
+            {
+                "id": "m_toxwhc0",
+                "x": 410,
+                "y": -260,
+                "deg": 180,
+                "offsetX": 90,
+                "offsetY": 0
+            },
+            {
+                "id": "m_rzxujkq",
+                "x": 410,
+                "y": 260,
+                "deg": 0,
+                "offsetX": 90,
+                "offsetY": 0
+            }
+        ]
     }
 },
     "pirate_battleship": {
@@ -1702,8 +1770,42 @@ export const SHIP_EDITOR_DEFAULTS = {
     ],
     "cores": [],
     "engines": {
-        "main": [],
-        "side": []
+        "main": [
+            {
+                "id": "m_y4mc84p",
+                "x": -990,
+                "y": -350,
+                "deg": 90,
+                "offsetX": 0,
+                "offsetY": 0
+            },
+            {
+                "id": "m_jred6j8",
+                "x": -990,
+                "y": 360,
+                "deg": 90,
+                "offsetX": 0,
+                "offsetY": 0
+            }
+        ],
+        "side": [
+            {
+                "id": "m_9x86ohy",
+                "x": 440,
+                "y": -300,
+                "deg": 180,
+                "offsetX": 90,
+                "offsetY": 0
+            },
+            {
+                "id": "m_u59faf5",
+                "x": 440,
+                "y": 300,
+                "deg": 0,
+                "offsetX": 90,
+                "offsetY": 0
+            }
+        ]
     }
 },
   }

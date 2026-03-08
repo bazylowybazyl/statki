@@ -43,6 +43,20 @@ const BUILD_GRID = Object.freeze({
 
 const HEX_SCALE = CONFIG.segmentWorldWidth / TEXTURE.width;
 const RING_SEGMENT_MASS = 2500000;
+const GATE_GLOW_TEX_PATH = '/assets/effects/glow.png';
+
+let gateGlowTexture = undefined;
+
+function getGateGlowTexture() {
+  if (gateGlowTexture !== undefined) return gateGlowTexture;
+  try {
+    const loader = new THREE.TextureLoader();
+    gateGlowTexture = loader.load(GATE_GLOW_TEX_PATH);
+  } catch {
+    gateGlowTexture = null;
+  }
+  return gateGlowTexture;
+}
 
 function getRingBandLayout() {
   const totalWorld = Math.max(1, CONFIG.segmentWorldHeight);
@@ -411,6 +425,7 @@ class PlanetaryRing {
     this.segmentTypes = [];
     this.constructionSlots = [];
     this.gates = [];
+    this.gateLightSprites = [];
     this.angleStep = 0;
     this.lastPlanetX = 0;
     this.lastPlanetY = 0;
@@ -624,6 +639,25 @@ class PlanetaryRing {
     if (!leftOuter || !leftInner || !rightInner || !rightOuter) return;
 
     const centerBaseAngle = (leftInnerSeg.baseAngle + rightInnerSeg.baseAngle) * 0.5;
+    let gateLightSprite = null;
+    const glowTexture = getGateGlowTexture();
+    if (glowTexture && Core3D.scene) {
+      const gateLightMat = new THREE.SpriteMaterial({
+        map: glowTexture,
+        color: 0x66d9ff,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
+      });
+      gateLightSprite = new THREE.Sprite(gateLightMat);
+      gateLightSprite.visible = false;
+      gateLightSprite.renderOrder = 16;
+      gateLightSprite.layers.set(2);
+      Core3D.scene.add(gateLightSprite);
+      this.gateLightSprites.push(gateLightSprite);
+    }
+
     this.gates.push({
       startIndex,
       baseAngle: centerBaseAngle,
@@ -632,7 +666,10 @@ class PlanetaryRing {
       rightInner,
       rightOuter,
       targetOpen: false,
-      openAmount: 0
+      openAmount: 0,
+      gateLightSprite,
+      worldX: 0,
+      worldY: 0
     });
   }
 
@@ -774,6 +811,8 @@ class PlanetaryRing {
       const centerWorldAngle = entry.baseAngle + this.currentRotation;
       const gateX = this.lastPlanetX + Math.cos(centerWorldAngle) * this.ringRadius;
       const gateY = this.lastPlanetY + Math.sin(centerWorldAngle) * this.ringRadius;
+      entry.worldX = gateX;
+      entry.worldY = gateY;
       const distToShip = hasShip ? Math.hypot(shipX - gateX, shipY - gateY) : Number.POSITIVE_INFINITY;
 
       const autoOpen = entry.targetOpen
@@ -808,6 +847,33 @@ class PlanetaryRing {
       ];
 
       const fullyOpen = entry.openAmount >= 0.98;
+      const gateLightSprite = entry.gateLightSprite;
+      if (gateLightSprite) {
+        const openVis = Math.max(0, Math.min(1, (entry.openAmount - 0.06) / 0.94));
+        gateLightSprite.visible = openVis > 0.01;
+        if (gateLightSprite.visible) {
+          const baseScale = CONFIG.segmentWorldWidth * 2.4;
+          gateLightSprite.position.set(gateX, -gateY, -96);
+          gateLightSprite.scale.set(
+            baseScale * (0.35 + openVis * 0.5),
+            baseScale * (0.45 + openVis * 0.9),
+            1
+          );
+          gateLightSprite.material.opacity = 0.04 + openVis * 0.16;
+
+          if (Core3D.pushGodRayWorld && distToShip < (CONFIG.gateOpenRadius * 1.7)) {
+            Core3D.pushGodRayWorld(
+              gateX,
+              -gateY,
+              -100,
+              1200 + openVis * 800,
+              0.25 + openVis * 0.35,
+              false
+            );
+          }
+        }
+      }
+
       for (const item of moduleStates) {
         const entity = item.entity;
         if (!entity || entity.dead) continue;
@@ -846,6 +912,12 @@ class PlanetaryRing {
 
     this.segmentData.length = 0;
     this.segmentTypes.length = 0;
+    for (const sprite of this.gateLightSprites) {
+      if (!sprite) continue;
+      if (sprite.parent) sprite.parent.remove(sprite);
+      try { sprite.material?.dispose?.(); } catch { }
+    }
+    this.gateLightSprites.length = 0;
     this.gates.length = 0;
     this.constructionSlots.length = 0;
     this.visualMeshes.length = 0;

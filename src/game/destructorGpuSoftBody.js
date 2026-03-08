@@ -240,6 +240,7 @@ export const DestructorGpuSoftBody = {
   _maxQueueLen: 96,
   _droppedReadbacks: 0,
   _tickId: 0,
+  _cleanupStamp: 1,
   _arrayPool: [],
 
   _getFloatArray(size) {
@@ -359,9 +360,9 @@ export const DestructorGpuSoftBody = {
     } catch { }
   },
 
-  _cleanup(activeSet) {
+  _cleanup(activeStamp) {
     for (const [entity, state] of this.entityStates) {
-      if (!activeSet.has(entity) || entity.dead || !entity.hexGrid) {
+      if ((entity?._gpuSoftBodyActiveStamp | 0) !== (activeStamp | 0) || entity.dead || !entity.hexGrid) {
         if (!state.isComputing) {
           this._destroyState(state);
           this.entityStates.delete(entity);
@@ -421,7 +422,7 @@ export const DestructorGpuSoftBody = {
     }
 
     // Mass-based damping: bigger ships get stronger damping so waves die faster
-    const massDampMul = 0.55 + 0.45 * Math.min(1.0, 100 / count);
+    const massDampMul = 0.75 + 0.25 * Math.min(1.0, 200 / count);
     const effectiveDamping = damping * massDampMul;
 
     this._paramsScratch[0] = Math.max(0, Number(k) || 0);
@@ -514,8 +515,27 @@ export const DestructorGpuSoftBody = {
       const newHp = data[base + 6];
 
       if (Math.abs(s.targetDeformation.x - tx) > 0.001 || Math.abs(s.targetDeformation.y - ty) > 0.001) {
-        s.targetDeformation.x = s.targetDeformation.x * 0.4 + tx * 0.6;
-        s.targetDeformation.y = s.targetDeformation.y * 0.4 + ty * 0.6;
+        s.targetDeformation.x = s.targetDeformation.x * 0.35 + tx * 0.65;
+        s.targetDeformation.y = s.targetDeformation.y * 0.35 + ty * 0.65;
+        anyChanges = true;
+        if (i < dirtyMin) dirtyMin = i;
+        if (i > dirtyMax) dirtyMax = i;
+      }
+
+      // GPU plasticity baking: permanent denting above yieldPoint
+      const yieldP = this._yieldPoint || 45;
+      const stx = s.targetDeformation.x;
+      const sty = s.targetDeformation.y;
+      const defMag = Math.sqrt(stx * stx + sty * sty);
+      if (defMag > yieldP) {
+        const excess = defMag - yieldP;
+        const ratio = excess / defMag;
+        const bakeX = stx * ratio;
+        const bakeY = sty * ratio;
+        s.gridX += bakeX;
+        s.gridY += bakeY;
+        s.targetDeformation.x -= bakeX;
+        s.targetDeformation.y -= bakeY;
         anyChanges = true;
         if (i < dirtyMin) dirtyMin = i;
         if (i > dirtyMax) dirtyMax = i;
@@ -545,6 +565,7 @@ export const DestructorGpuSoftBody = {
 
   tick(entities, config, dt) {
     this._ensureInit();
+    this._yieldPoint = Number(config?.yieldPoint) || 45;
     this._tickId = (this._tickId + 1) | 0;
 
     const applyPerTick = Math.max(2, Math.min(32, Number(config?.gpuSoftBodyApplyPerTick) || 16));
@@ -566,7 +587,14 @@ export const DestructorGpuSoftBody = {
     if (!this.ready || !this.active || (config?.gpuSoftBody | 0) !== 1) return;
 
     const list = Array.isArray(entities) ? entities : [];
-    this._cleanup(new Set(list));
+    let cleanupStamp = (this._cleanupStamp + 1) | 0;
+    if (cleanupStamp <= 0) cleanupStamp = 1;
+    this._cleanupStamp = cleanupStamp;
+    for (let i = 0; i < list.length; i++) {
+      const entity = list[i];
+      if (entity) entity._gpuSoftBodyActiveStamp = cleanupStamp;
+    }
+    this._cleanup(cleanupStamp);
 
     const tension = Number(config.softBodyTension) || 0.15;
     if (tension <= 0) return;

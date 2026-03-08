@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Capital - Debug Środowiska VFX</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #010204;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #e5ecff;
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(8, 12, 24, 0.95);
+            padding: 15px 20px;
+            border: 1px solid #1e3a8a;
+            border-radius: 8px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.9);
+            backdrop-filter: blur(12px);
+            z-index: 100;
+            width: 320px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        #ui::-webkit-scrollbar { width: 6px; }
+        #ui::-webkit-scrollbar-thumb { background: #3b82f6; border-radius: 3px; }
+       
+        h1 { margin: 0 0 5px 0; font-size: 15px; color: #60a5fa; text-transform: uppercase; letter-spacing: 1.5px;}
+        p { margin: 0 0 15px 0; font-size: 11px; color: #94a3b8; line-height: 1.4; }
+        .section-title { font-size: 10px; color: #60a5fa; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; border-bottom: 1px solid #1e3a8a; padding-bottom: 3px; }
+       
+        .control-group {
+            margin-bottom: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            background: rgba(255,255,255,0.03);
+            padding: 8px;
+            border-radius: 6px;
+        }
+        .control-group.toggles { gap: 8px; }
+        label { font-size: 11px; display: flex; justify-content: space-between; color: #bfdbfe; font-weight: 600; align-items: center; cursor: pointer;}
+        input[type=range] { width: 100%; accent-color: #3b82f6; }
+        input[type=checkbox] { width: 16px; height: 16px; accent-color: #3b82f6; cursor: pointer; margin: 0;}
+        .btn {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 10px;
+            font-size: 12px;
+            font-weight: bold;
+            border-radius: 4px;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.2s;
+            width: 100%;
+            margin-top: 10px;
+            box-shadow: inset 0 0 10px rgba(255,255,255,0.1);
+        }
+        .btn:hover { background: #3b82f6; }
+        .btn:active { transform: scale(0.97); }
+        .btn.open { background: #dc2626; box-shadow: inset 0 0 10px rgba(0,0,0,0.3); }
+        .btn.open:hover { background: #ef4444; }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="ui">
+        <h1>VFX: Panel Debugowania</h1>
+        <p>Ring 1:1 ze skalą z gry. Otwórz bramę, aby wpuścić snop światła.</p>
+       
+        <div class="section-title">Przełączniki Warstw (Debug)</div>
+        <div class="control-group toggles">
+            <label title="Główne cienie rzucane przez Słońce na podłogę">
+                <span>1. Cienie Słońca (ShadowMap)</span>
+                <input type="checkbox" id="toggleShadows" checked>
+            </label>
+            <label title="Trójwymiarowy gaz w tle">
+                <span>2. Mgławica 3D (Raymarching)</span>
+                <input type="checkbox" id="toggleNebula" checked>
+            </label>
+            <label title="Oświetlenie własne budynków">
+                <span>3. Lokalne Światła (Z Halo)</span>
+                <input type="checkbox" id="toggleLocalLights" checked>
+            </label>
+            <label title="Rozchodzenie się światła w atmosferze">
+                <span>4. Promienie (God Rays)</span>
+                <input type="checkbox" id="toggleGodRays" checked>
+            </label>
+            <label title="Wygładza promienie. Bez niego widać czysty szum.">
+                <span>5. Miękkie Cienie (Blur)</span>
+                <input type="checkbox" id="toggleBlur" checked>
+            </label>
+        </div>
+
+        <div class="section-title">Ustawienia Światła</div>
+        <div class="control-group">
+            <label><span>Kąt słońca</span> <span id="valSun">0° (Przez bramę)</span></label>
+            <input type="range" id="sunAngle" min="-45" max="45" value="0">
+        </div>
+        <div class="control-group">
+            <label><span>Długość Promieni na Ekranie</span></label>
+            <input type="range" id="rayDensity" min="10" max="400" value="180">
+        </div>
+       
+        <div class="control-group">
+            <label><span>Długość Cieni 3D (Wysokość Słońca)</span></label>
+            <input type="range" id="shadowLength" min="0" max="100" value="85">
+        </div>
+
+        <div class="control-group">
+            <label><span>Miękkość Promieni (Siła Blur)</span> <span id="valSoftness">2.5</span></label>
+            <input type="range" id="raySoftness" min="0" max="500" value="250">
+        </div>
+
+        <button id="gateBtn" class="btn">Otwórz Bramę</button>
+    </div>
+   
+    <script type="module">
+        import * as THREE from 'three';
+        import { MapControls } from 'three/addons/controls/MapControls.js';
+
+        let cfgShadows = true;
+        let cfgNebula = true;
+        let cfgLocalLights = true;
+        let cfgGodRays = true;
+        let cfgBlur = true;
+
+        const scene = new THREE.Scene();
+       
+        const aspect = window.innerWidth / window.innerHeight;
+        const frustumSize = 120000; 
+        const camera = new THREE.OrthographicCamera(
+            frustumSize * aspect / -2,
+            frustumSize * aspect / 2,
+            frustumSize / 2,
+            frustumSize / -2,
+            1, 500000
+        );
+        camera.position.set(0, 150000, 0); 
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.autoClear = false;
+       
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+       
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new MapControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.enableRotate = false;
+        controls.enableZoom = false;
+
+        let targetZoom = 1.0;
+        const minZoom = 0.5;
+        const maxZoom = 25.0; 
+
+        window.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomSpeed = 0.0015;
+            const zoomFactor = Math.exp(-e.deltaY * zoomSpeed);
+            targetZoom *= zoomFactor;
+            targetZoom = Math.max(minZoom, Math.min(targetZoom, maxZoom));
+        }, { passive: false });
+
+        const objectsGroup = new THREE.Group();
+        scene.add(objectsGroup);
+        const localLightsObjects = [];
+
+        // MGŁAWICA TŁA
+        const nebulaGeo = new THREE.PlaneGeometry(300000, 300000);
+        const nebulaMat = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uSunDirection: { value: new THREE.Vector3(0, 0, 1) },
+                uSunColor: { value: new THREE.Color(0xffb84d) },
+                uBaseColor: { value: new THREE.Color(0x050f24) }
+            },
+            vertexShader: `
+                varying vec3 vWorldPosition;
+                void main() {
+                    vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+                    vWorldPosition = worldPosition.xyz;
+                    gl_Position = projectionMatrix * viewMatrix * worldPosition;
+                }
+            `,
+            fragmentShader: `
+                varying vec3 vWorldPosition;
+                uniform float uTime;
+                uniform vec3 uSunDirection;
+                uniform vec3 uSunColor;
+                uniform vec3 uBaseColor;
+
+                float hash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+                float noise(vec3 x) { vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f); return mix(mix(mix(hash(i+vec3(0,0,0)),hash(i+vec3(1,0,0)),f.x),mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y), mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z); }
+                float fbm(vec3 p) { float f = 0.0; float amp = 0.5; for(int i=0;i<4;i++){f+=amp*noise(p);p*=2.02;amp*=0.5;} return f; }
+
+                void main() {
+                    vec3 rayOrigin = vWorldPosition * 0.00005;
+                    vec3 rayDir = vec3(0.0, 0.0, -1.0);
+                    vec3 col = vec3(0.0); float transmittance = 1.0;
+                    vec3 pos = rayOrigin + vec3(uTime * 0.02, uTime * 0.01, uTime * 0.05);
+
+                    for(int i=0; i<15; i++) {
+                        float density = fbm(pos) - 0.35;
+                        if(density > 0.0) {
+                            float shadow = fbm(pos + uSunDirection * 0.15) - 0.2;
+                            float light = clamp(1.0 - shadow * 2.5, 0.0, 1.0);
+                            vec3 particleColor = mix(uBaseColor, uSunColor, light * 0.7);
+                            float alpha = (1.0 - exp(-density * 2.0)) * transmittance;
+                            col += particleColor * alpha;
+                            transmittance *= exp(-density * 2.0);
+                        }
+                        pos += rayDir * 0.12;
+                        if(transmittance < 0.05) break;
+                    }
+                    gl_FragColor = vec4(col + vec3(0.01, 0.02, 0.04) * transmittance, 1.0);
+                }
+            `,
+            depthWrite: false
+        });
+        const nebulaMesh = new THREE.Mesh(nebulaGeo, nebulaMat);
+        nebulaMesh.rotation.x = -Math.PI / 2;
+        nebulaMesh.position.y = -2000;
+        scene.add(nebulaMesh);
+
+        const shadowCatcherGeo = new THREE.PlaneGeometry(200000, 200000);
+        const shadowCatcherMat = new THREE.ShadowMaterial({ opacity: 0.75, color: 0x000000, transparent: true, depthWrite: false });
+        const shadowCatcher = new THREE.Mesh(shadowCatcherGeo, shadowCatcherMat);
+        shadowCatcher.rotation.x = -Math.PI / 2;
+        shadowCatcher.position.y = 0;
+        shadowCatcher.receiveShadow = true;
+        scene.add(shadowCatcher);
+
+        // MEGA STRUKTURA
+        const darkMetal = new THREE.MeshStandardMaterial({
+            color: 0x1a2436, roughness: 0.7, metalness: 0.8, emissive: 0x040812, emissiveIntensity: 0.5
+        });
+        const buildingMat = new THREE.MeshStandardMaterial({
+            color: 0x3a4f75, roughness: 0.4, metalness: 0.5, emissive: 0x0a152a, emissiveIntensity: 0.8
+        });
+       
+        const RING_RADIUS = 43680;
+        const TUBE_RADIUS = 1200;
+        const GATE_WIDTH = 3200;
+        const gateAngle = GATE_WIDTH / RING_RADIUS; 
+
+        const ringGeo = new THREE.TorusGeometry(RING_RADIUS, TUBE_RADIUS, 32, 256, Math.PI * 2 - gateAngle);
+        const ring = new THREE.Mesh(ringGeo, darkMetal);
+        ring.rotation.x = Math.PI / 2; 
+        ring.rotation.z = gateAngle / 2;
+        ring.scale.z = 8; 
+        ring.position.y = TUBE_RADIUS * 4; 
+        ring.castShadow = true; ring.receiveShadow = true;
+        objectsGroup.add(ring);
+
+        const gateGeo = new THREE.BoxGeometry(800, 10000, GATE_WIDTH / 2);
+        const gateLeft = new THREE.Mesh(gateGeo, darkMetal);
+        const gateRight = new THREE.Mesh(gateGeo, darkMetal);
+        gateLeft.castShadow = gateRight.castShadow = true; gateLeft.receiveShadow = gateRight.receiveShadow = true;
+        gateLeft.position.set(RING_RADIUS, 5000, -GATE_WIDTH/4);
+        gateRight.position.set(RING_RADIUS, 5000, GATE_WIDTH/4);
+        objectsGroup.add(gateLeft); objectsGroup.add(gateRight);
+
+        // LOKALNE OŚWIETLENIE
+        const canvasGlow = document.createElement('canvas');
+        canvasGlow.width = 64; canvasGlow.height = 64;
+        const ctxGlow = canvasGlow.getContext('2d');
+        const grad = ctxGlow.createRadialGradient(32,32,0, 32,32,32);
+        grad.addColorStop(0, 'rgba(255,255,255,1)');
+        grad.addColorStop(0.15, 'rgba(100,180,255,0.8)');
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctxGlow.fillStyle = grad;
+        ctxGlow.fillRect(0,0,64,64);
+        const glowTex = new THREE.CanvasTexture(canvasGlow);
+        const glowSpriteMat = new THREE.SpriteMaterial({
+            map: glowTex, color: 0x44aaff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+        });
+
+        // WNĘTRZE BAZY
+        for(let i=0; i<300; i++) {
+            const sizeW = 500 + Math.random() * 1000;
+            const sizeD = 500 + Math.random() * 1000;
+            const h = 1000 + Math.random() * 3000;
+            const b = new THREE.Mesh(new THREE.BoxGeometry(sizeW, h, sizeD), buildingMat);
+           
+            const r = Math.random() * (RING_RADIUS - 4000);
+            const a = Math.random() * Math.PI * 2;
+            const wx = Math.cos(a) * r;
+            const wz = Math.sin(a) * r;
+           
+            b.position.set(wx, h/2, wz);
+            b.rotation.y = -a;
+            b.castShadow = true; b.receiveShadow = true;
+            objectsGroup.add(b);
+
+            if(Math.random() > 0.6) {
+                const pointLight = new THREE.PointLight(0x44aaff, 8.0, 3000);
+                pointLight.position.set(wx, h + 200, wz);
+                scene.add(pointLight);
+               
+                const halo = new THREE.Sprite(glowSpriteMat);
+                halo.scale.set(1200, 1200, 1);
+                halo.position.copy(pointLight.position);
+                scene.add(halo);
+
+                localLightsObjects.push(pointLight, halo);
+            }
+        }
+
+        // NA RINGU
+        for(let i=0; i<200; i++) {
+            const sizeW = 800 + Math.random() * 1500;
+            const sizeD = 800 + Math.random() * 1500;
+            const h = 2000 + Math.random() * 5000;
+            const b = new THREE.Mesh(new THREE.BoxGeometry(sizeW, h, sizeD), buildingMat);
+           
+            const r = RING_RADIUS + (Math.random() - 0.5) * 1600;
+            const a = Math.random() * Math.PI * 2;
+
+            if (a < 0.1 || a > Math.PI * 2 - 0.1) continue;
+
+            const wx = Math.cos(a) * r;
+            const wz = Math.sin(a) * r;
+           
+            b.position.set(wx, 9000 + h/2, wz);
+            b.rotation.y = -a;
+            b.castShadow = true; b.receiveShadow = true;
+            objectsGroup.add(b);
+        }
+
+        // ŚWIATŁO GŁÓWNE
+        const ambientLight = new THREE.AmbientLight(0x1a2235, 0.2);
+        scene.add(ambientLight);
+
+        const sunLight = new THREE.DirectionalLight(0xffeedd, 5.0);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 4096;
+        sunLight.shadow.mapSize.height = 4096;
+        sunLight.shadow.camera.left = -50000;
+        sunLight.shadow.camera.right = 50000;
+        sunLight.shadow.camera.top = 50000;
+        sunLight.shadow.camera.bottom = -50000;
+        sunLight.shadow.camera.near = 1000;
+        sunLight.shadow.camera.far = 300000; 
+        sunLight.shadow.bias = -0.0005; 
+        scene.add(sunLight);
+        scene.add(sunLight.target);
+
+
+        // ==========================================
+        // SHADERY POST-PROCESS (NAPRAWIONE KIERUNKI I DŁUGOŚĆ)
+        // ==========================================
+        const whiteFloorMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+        const occluderWallMat = new THREE.ShaderMaterial({
+            vertexShader: `void main() { gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+            fragmentShader: `void main() { gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0); }`,
+            blending: THREE.NoBlending,
+            depthWrite: true, depthTest: true
+        });
+
+        const rtWidth = Math.floor(window.innerWidth / 2);
+        const rtHeight = Math.floor(window.innerHeight / 2);
+        const rtOptions = { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat };
+       
+        const occlusionRenderTarget = new THREE.WebGLRenderTarget(rtWidth, rtHeight, rtOptions);
+        const godRaysRenderTarget = new THREE.WebGLRenderTarget(rtWidth, rtHeight, rtOptions);
+        const blurRenderTarget = new THREE.WebGLRenderTarget(rtWidth, rtHeight, rtOptions);
+       
+        // POPRAWKA: Wyrzucony 'clamp', przywrócony 'break', podbita exposure.
+        const godRaysMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                tDiffuse: { value: occlusionRenderTarget.texture },
+                sunDirection: { value: new THREE.Vector2(-1.0, 0.0) }, 
+                exposure: { value: 0.85 }, // Leciutko podbite dla lepszego efektu
+                decay: { value: 0.98 },    
+                density: { value: 1.0 },   
+                weight: { value: 0.05 },   
+                sunColor: { value: new THREE.Color(0xaaccff) },
+                uDitherMultiplier: { value: 0.6 }
+            },
+            vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position, 1.0); }`,
+            fragmentShader: `
+                varying vec2 vUv;
+                uniform sampler2D tDiffuse;
+                uniform vec2 sunDirection;
+                uniform float exposure;
+                uniform float decay;
+                uniform float density;
+                uniform float weight;
+                uniform vec3 sunColor;
+                uniform float uDitherMultiplier;
+                const int NUM_SAMPLES = 100;
+                float random(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123); }
+                
+                void main() {
+                    vec2 texCoord = vUv;
+                    vec2 stepVec = sunDirection * (density / float(NUM_SAMPLES));
+                    
+                    // Rozditherowanie promieni, żeby zabić twardy banding
+                    texCoord += stepVec * (random(texCoord) * uDitherMultiplier);
+                    
+                    float illuminationDecay = 1.0;
+                    vec3 accumulated = vec3(0.0);
+                    
+                    for(int i=0; i < NUM_SAMPLES; i++) {
+                        texCoord += stepVec;
+                        
+                        // FIX: Wyrzucony clamp, przywrócony break, dzięki czemu cień twardo odcina się 
+                        // i buduje ten potężny "Long Shadow" shaft.
+                        if (texCoord.x < 0.0 || texCoord.x > 1.0 || texCoord.y < 0.0 || texCoord.y > 1.0) break;
+                        
+                        vec4 sampleData = texture2D(tDiffuse, texCoord);
+                        accumulated += sampleData.rgb * illuminationDecay * weight;
+                        illuminationDecay *= decay;
+                    }
+                    gl_FragColor = vec4(accumulated * exposure * sunColor, 1.0);
+                }
+            `,
+            blending: THREE.NoBlending,
+            transparent: false, depthTest: false, depthWrite: false
+        });
+
+        const blurVertexShader = `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position, 1.0); }`;
+        const blurFragmentShader = `
+            varying vec2 vUv;
+            uniform sampler2D tDiffuse;
+            uniform vec2 uResolution;
+            uniform vec2 uDirection;
+            uniform float uBlurRadius;
+            void main() {
+                vec2 uv = vUv;
+                vec4 sum = vec4(0.0);
+                vec2 offset = (uDirection * uBlurRadius) / uResolution;
+                sum += texture2D(tDiffuse, uv - 6.0 * offset) * 0.002216;
+                sum += texture2D(tDiffuse, uv - 5.0 * offset) * 0.008764;
+                sum += texture2D(tDiffuse, uv - 4.0 * offset) * 0.026995;
+                sum += texture2D(tDiffuse, uv - 3.0 * offset) * 0.064759;
+                sum += texture2D(tDiffuse, uv - 2.0 * offset) * 0.120985;
+                sum += texture2D(tDiffuse, uv - 1.0 * offset) * 0.176033;
+                sum += texture2D(tDiffuse, uv) * 0.199471;
+                sum += texture2D(tDiffuse, uv + 1.0 * offset) * 0.176033;
+                sum += texture2D(tDiffuse, uv + 2.0 * offset) * 0.120985;
+                sum += texture2D(tDiffuse, uv + 3.0 * offset) * 0.064759;
+                sum += texture2D(tDiffuse, uv + 4.0 * offset) * 0.026995;
+                sum += texture2D(tDiffuse, uv + 5.0 * offset) * 0.008764;
+                sum += texture2D(tDiffuse, uv + 6.0 * offset) * 0.002216;
+                gl_FragColor = sum;
+            }
+        `;
+
+        const blurMatH = new THREE.ShaderMaterial({
+            uniforms: { tDiffuse: { value: godRaysRenderTarget.texture }, uResolution: { value: new THREE.Vector2(rtWidth, rtHeight) }, uDirection: { value: new THREE.Vector2(1.0, 0.0) }, uBlurRadius: { value: 2.5 } },
+            vertexShader: blurVertexShader, fragmentShader: blurFragmentShader, blending: THREE.NoBlending, transparent: false, depthTest: false, depthWrite: false
+        });
+
+        const blurMatV = new THREE.ShaderMaterial({
+            uniforms: { tDiffuse: { value: blurRenderTarget.texture }, uResolution: { value: new THREE.Vector2(rtWidth, rtHeight) }, uDirection: { value: new THREE.Vector2(0.0, 1.0) }, uBlurRadius: { value: 2.5 } },
+            vertexShader: blurVertexShader, fragmentShader: blurFragmentShader, blending: THREE.AdditiveBlending, transparent: true, depthTest: false, depthWrite: false
+        });
+
+        const postScene = new THREE.Scene();
+        const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        const postQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), godRaysMaterial);
+        postScene.add(postQuad);
+
+        // ==========================================
+        // Wpięcia UI
+        // ==========================================
+        document.getElementById('toggleShadows').addEventListener('change', e => {
+            cfgShadows = e.target.checked;
+            sunLight.castShadow = cfgShadows;
+        });
+        document.getElementById('toggleNebula').addEventListener('change', e => {
+            cfgNebula = e.target.checked;
+        });
+        document.getElementById('toggleLocalLights').addEventListener('change', e => {
+            cfgLocalLights = e.target.checked;
+        });
+        document.getElementById('toggleGodRays').addEventListener('change', e => {
+            cfgGodRays = e.target.checked;
+        });
+        document.getElementById('toggleBlur').addEventListener('change', e => {
+            cfgBlur = e.target.checked;
+        });
+
+        function updateSun() {
+            const angleDeg = document.getElementById('sunAngle').value;
+            document.getElementById('valSun').innerText = angleDeg + '°';
+            const angleRad = angleDeg * (Math.PI / 180);
+           
+            const dirX = Math.cos(angleRad);
+            const dirZ = Math.sin(angleRad);
+            const distance = 160000; 
+           
+            const shadowLenVal = document.getElementById('shadowLength').value;
+            const sunHeight = 160000 - (shadowLenVal / 100) * 155000;
+           
+            sunLight.position.set(dirX * distance, sunHeight, dirZ * distance);
+            sunLight.target.position.set(0, 0, 0);
+
+            // ========================================================
+            // GŁÓWNY FIX KIERUNKU PROMIENI
+            // ========================================================
+            // 1. Kamera ortograficzna patrzy z góry (Top-Down).
+            // 2. W przestrzeni ekranu (UV):
+            //    - Oś X ekranu (+U) rośnie w prawo (tak samo jak 3D +X).
+            //    - Oś Y ekranu (+V) rośnie w GÓRĘ. W naszym świecie 3D "góra" ekranu to -Z.
+            // Dlatego do shadera musimy podać kierunek (dirX, -dirZ), aby promień 
+            // próbkował w stronę słońca, co da efekt rozchodzenia się światła OD słońca.
+            godRaysMaterial.uniforms.sunDirection.value.set(dirX, -dirZ).normalize();
+            
+            // Mgławica to pełne 3D, więc tutaj osie zostają po staremu (X, Y, Z)
+            nebulaMat.uniforms.uSunDirection.value.set(dirX, 0.5, dirZ).normalize();
+        }
+        
+        document.getElementById('sunAngle').addEventListener('input', updateSun);
+        document.getElementById('shadowLength').addEventListener('input', updateSun);
+        
+        let baseRayDensity = document.getElementById('rayDensity').value / 100;
+        godRaysMaterial.uniforms.density.value = baseRayDensity * camera.zoom;
+        
+        document.getElementById('rayDensity').addEventListener('input', (e) => {
+            baseRayDensity = e.target.value / 100;
+            // Skalowanie z zoomem - dzięki temu cienie trzymają spójną wielkość fizyczną!
+            godRaysMaterial.uniforms.density.value = baseRayDensity * camera.zoom;
+        });
+        document.getElementById('raySoftness').addEventListener('input', (e) => {
+            const val = e.target.value / 100;
+            blurMatH.uniforms.uBlurRadius.value = val;
+            blurMatV.uniforms.uBlurRadius.value = val;
+            document.getElementById('valSoftness').innerText = val.toFixed(1);
+        });
+
+        let gateOpen = false;
+        let gateAnimProgress = 0;
+        const gateBtn = document.getElementById('gateBtn');
+        gateBtn.addEventListener('click', () => {
+            gateOpen = !gateOpen;
+            if(gateOpen) {
+                gateBtn.textContent = "Zamknij Bramę";
+                gateBtn.classList.add('open');
+            } else {
+                gateBtn.textContent = "Otwórz Bramę";
+                gateBtn.classList.remove('open');
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            const aspect = window.innerWidth / window.innerHeight;
+            camera.left = -frustumSize * aspect / 2;
+            camera.right = frustumSize * aspect / 2;
+            camera.top = frustumSize / 2;
+            camera.bottom = -frustumSize / 2;
+            camera.updateProjectionMatrix();
+           
+            const newW = window.innerWidth;
+            const newH = window.innerHeight;
+            renderer.setSize(newW, newH);
+           
+            const rtW = Math.floor(newW / 2);
+            const rtH = Math.floor(newH / 2);
+            occlusionRenderTarget.setSize(rtW, rtH);
+            godRaysRenderTarget.setSize(rtW, rtH);
+            blurRenderTarget.setSize(rtW, rtH);
+           
+            blurMatH.uniforms.uResolution.value.set(rtW, rtH);
+            blurMatV.uniforms.uResolution.value.set(rtW, rtH);
+        });
+
+        document.getElementById('sunAngle').value = 0;
+        updateSun();
+       
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            const dt = clock.getDelta();
+           
+            if (Math.abs(camera.zoom - targetZoom) > 0.0001) {
+                camera.zoom += (targetZoom - camera.zoom) * 0.1;
+                camera.updateProjectionMatrix();
+                
+                godRaysMaterial.uniforms.density.value = baseRayDensity * camera.zoom;
+            }
+
+            nebulaMat.uniforms.uTime.value += dt;
+
+            const targetProgress = gateOpen ? 1.0 : 0.0;
+            gateAnimProgress += (targetProgress - gateAnimProgress) * 0.05;
+            
+            const slideDistance = GATE_WIDTH * 0.55; 
+            gateLeft.position.z = -(GATE_WIDTH/4) - (slideDistance * gateAnimProgress);
+            gateRight.position.z = (GATE_WIDTH/4) + (slideDistance * gateAnimProgress);
+
+            localLightsObjects.forEach(obj => obj.visible = cfgLocalLights);
+            nebulaMesh.visible = cfgNebula;
+
+            renderer.setRenderTarget(null);
+            renderer.clear();
+            renderer.render(scene, camera);
+
+            if (cfgGodRays) {
+                const prevAmbient = ambientLight.intensity;
+                const prevSunInt = sunLight.intensity;
+                const prevSunColor = sunLight.color.getHex();
+                const prevFloorMat = shadowCatcher.material;
+               
+                localLightsObjects.forEach(obj => obj.visible = false);
+                nebulaMesh.visible = false;
+
+                ambientLight.intensity = 0.0;
+                sunLight.color.setHex(0xffffff);
+                sunLight.intensity = 6.0;
+               
+                shadowCatcher.material = whiteFloorMat;
+
+                const originalMats = new Map();
+                objectsGroup.traverse((child) => {
+                    if (child.isMesh) {
+                        originalMats.set(child, child.material);
+                        child.material = occluderWallMat;
+                    }
+                });
+
+                renderer.setClearColor(0x000000, 1.0);
+                renderer.setRenderTarget(occlusionRenderTarget);
+                renderer.clear();
+                renderer.render(scene, camera);
+
+                ambientLight.intensity = prevAmbient;
+                sunLight.intensity = prevSunInt;
+                sunLight.color.setHex(prevSunColor);
+                shadowCatcher.material = prevFloorMat;
+               
+                if(cfgNebula) nebulaMesh.visible = true;
+                if(cfgLocalLights) localLightsObjects.forEach(obj => obj.visible = true);
+
+                objectsGroup.traverse((child) => {
+                    if (child.isMesh && originalMats.has(child)) {
+                        child.material = originalMats.get(child);
+                    }
+                });
+
+                if (cfgBlur) {
+                    godRaysMaterial.blending = THREE.NoBlending;
+                    postQuad.material = godRaysMaterial;
+                    renderer.setRenderTarget(godRaysRenderTarget);
+                    renderer.clear();
+                    renderer.render(postScene, postCamera);
+
+                    postQuad.material = blurMatH;
+                    renderer.setRenderTarget(blurRenderTarget);
+                    renderer.clear();
+                    renderer.render(postScene, postCamera);
+
+                    blurMatV.blending = THREE.AdditiveBlending;
+                    postQuad.material = blurMatV;
+                    renderer.setRenderTarget(null);
+                    renderer.render(postScene, postCamera);
+                } else {
+                    godRaysMaterial.blending = THREE.AdditiveBlending;
+                    postQuad.material = godRaysMaterial;
+                    renderer.setRenderTarget(null);
+                    renderer.render(postScene, postCamera);
+                }
+            }
+        }
+
+        animate();
+    </script>
+</body>
+</html>

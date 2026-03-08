@@ -272,7 +272,8 @@ function updateRecordTransform(record, station, devScale, visible) {
 
   if (group.parent !== Core3D.scene) {
     Core3D.scene.add(group);
-    Core3D.enableBackground3D(group); // <-- POPRAWKA Z enablePerspective na enableBackground3D
+    // STACJA NA WIERZCH!
+    Core3D.enableForeground3D(group); 
   }
 
   const geometryRadius = record.geometryRadius || group.userData.geometryRadius || 1;
@@ -333,7 +334,8 @@ export function initStations3D(_sceneIgnored, stations) {
     if (record.group) {
       if (record.group.parent !== Core3D.scene) {
           Core3D.scene.add(record.group);
-          Core3D.enableBackground3D(record.group); // <-- POPRAWKA
+          // STACJA NA WIERZCH!
+          Core3D.enableForeground3D(record.group); 
       }
       station._mesh3d = record.group;
       continue;
@@ -364,7 +366,9 @@ export function initStations3D(_sceneIgnored, stations) {
     pivotGroup.visible = false;
     pivotGroup.add(modelGroup);
     Core3D.scene.add(pivotGroup);
-    Core3D.enableBackground3D(pivotGroup); // <-- POPRAWKA
+    
+    // STACJA NA WIERZCH!
+    Core3D.enableForeground3D(pivotGroup); 
 
     record.group = pivotGroup;
     record.modelGroup = modelGroup;
@@ -422,7 +426,10 @@ export function updateStations3D(stations) {
         pivotGroup.visible = false;
         pivotGroup.add(modelGroup);
         Core3D.scene.add(pivotGroup);
-        Core3D.enableBackground3D(pivotGroup); // <-- POPRAWKA
+        
+        // STACJA NA WIERZCH!
+        Core3D.enableForeground3D(pivotGroup); 
+        
         record.group = pivotGroup;
         record.modelGroup = modelGroup;
         station._mesh3d = pivotGroup;

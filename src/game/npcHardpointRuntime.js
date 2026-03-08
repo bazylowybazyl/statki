@@ -29,6 +29,76 @@ function forwardFromEditorDeg(deg) {
   return { x: Math.sin(rad), y: Math.cos(rad) };
 }
 
+function normalizeEditorEngineDeg(value, fallback = 0) {
+  let deg = Number.isFinite(Number(value)) ? Number(value) : Number(fallback) || 0;
+  while (deg > 180) deg -= 360;
+  while (deg < -180) deg += 360;
+  return deg;
+}
+
+function inferEditorEngineMount(kind, x, y) {
+  const lx = Number(x) || 0;
+  const ly = Number(y) || 0;
+  if (kind === 'side') {
+    const lateral = lx < 0 ? 'left' : 'right';
+    if (Math.abs(ly) <= 12) return `center_${lateral}`;
+    const vertical = ly < 0 ? 'upper' : 'lower';
+    return `${vertical}_${lateral}`;
+  }
+  const longitudinal = lx < 0 ? 'rear' : 'front';
+  if (Math.abs(ly) <= 12) return `${longitudinal}_center`;
+  return `${longitudinal}_${ly < 0 ? 'upper' : 'lower'}`;
+}
+
+function normalizeEditorEngineMount(kind, mount, x, y) {
+  const allowed = kind === 'side'
+    ? ['upper_left', 'center_left', 'lower_left', 'upper_right', 'center_right', 'lower_right']
+    : ['rear_center', 'rear_upper', 'rear_lower', 'front_upper', 'front_lower'];
+  const raw = String(mount || 'auto').toLowerCase();
+  if (raw === 'auto') return inferEditorEngineMount(kind, x, y);
+  if (allowed.includes(raw)) return raw;
+  return inferEditorEngineMount(kind, x, y);
+}
+
+function normalizeEditorEngineGimbal(kind, minDeg, maxDeg) {
+  const fallbackMin = kind === 'side' ? -90 : -45;
+  const fallbackMax = kind === 'side' ? 90 : 45;
+  let min = normalizeEditorEngineDeg(minDeg, fallbackMin);
+  let max = normalizeEditorEngineDeg(maxDeg, fallbackMax);
+  if (min > max) {
+    const tmp = min;
+    min = max;
+    max = tmp;
+  }
+  return { min, max };
+}
+
+function clampNozzleDegToGimbal(nozzleDeg, baseDeg, gimbalMinDeg, gimbalMaxDeg) {
+  const base = normalizeEditorEngineDeg(baseDeg, 0);
+  const nozzle = normalizeEditorEngineDeg(nozzleDeg, base);
+  const rel = normalizeEditorEngineDeg(nozzle - base, 0);
+  const min = Number.isFinite(Number(gimbalMinDeg)) ? Number(gimbalMinDeg) : -45;
+  const max = Number.isFinite(Number(gimbalMaxDeg)) ? Number(gimbalMaxDeg) : 45;
+  const clamped = Math.max(min, Math.min(max, rel));
+  return normalizeEditorEngineDeg(base + clamped, base);
+}
+
+function inferEditorEngineSide(mount, x = 0) {
+  const raw = String(mount || '').toLowerCase();
+  if (raw.endsWith('_left')) return 'left';
+  if (raw.endsWith('_right')) return 'right';
+  return (Number(x) || 0) < 0 ? 'left' : 'right';
+}
+
+function resolveEditorEngineOffset(kind, mount, x, offsetX, offsetY) {
+  let dx = Number(offsetX) || 0;
+  const dy = Number(offsetY) || 0;
+  if (kind === 'side' && Math.abs(dx) > 1e-6) {
+    dx *= inferEditorEngineSide(mount, x) === 'left' ? -1 : 1;
+  }
+  return { dx, dy };
+}
+
 function normalizeEditorHardpoint(marker, idx, hpEnum, validTypes) {
   const x = Number(marker?.x);
   const y = Number(marker?.y);
@@ -53,19 +123,28 @@ function normalizeEditorCore(marker, idx) {
   };
 }
 
-function normalizeEditorEngine(marker, idx) {
+function normalizeEditorEngine(marker, idx, kind = 'main') {
   const x = Number(marker?.x);
   const y = Number(marker?.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  const offsetX = Number(marker?.offsetX) || 0;
-  const offsetY = Number(marker?.offsetY) || 0;
+  const baseDeg = normalizeEditorEngineDeg(marker?.deg, 0);
+  const mount = normalizeEditorEngineMount(kind, marker?.mount, x, y);
+  const gimbal = normalizeEditorEngineGimbal(kind, marker?.gimbalMinDeg, marker?.gimbalMaxDeg);
+  const nozzleRaw = normalizeEditorEngineDeg(marker?.nozzleDeg, baseDeg);
+  const nozzleDeg = clampNozzleDegToGimbal(nozzleRaw, baseDeg, gimbal.min, gimbal.max);
+  const resolvedOffset = resolveEditorEngineOffset(kind, mount, x, marker?.offsetX, marker?.offsetY);
   return {
     id: marker?.id || `eng_${idx}`,
-    x: x + offsetX,
-    y: y + offsetY,
-    deg: Number(marker?.deg) || 0,
-    offsetX,
-    offsetY,
+    x: x + resolvedOffset.dx,
+    y: y + resolvedOffset.dy,
+    deg: baseDeg,
+    baseDeg,
+    nozzleDeg,
+    mount,
+    gimbalMinDeg: gimbal.min,
+    gimbalMaxDeg: gimbal.max,
+    offsetX: resolvedOffset.dx,
+    offsetY: resolvedOffset.dy,
     vfxLengthMin: Number(marker?.vfxLengthMin) || 49,
     vfxLengthMax: Number(marker?.vfxLengthMax) || 354,
     vfxWidthMin: Number(marker?.vfxWidthMin) || 25,
@@ -209,7 +288,7 @@ export function createNpcHardpointRuntime({
 
     const enginesMainRaw = Array.isArray(cfg?.engines?.main) ? cfg.engines.main : [];
     const enginesSideRaw = Array.isArray(cfg?.engines?.side) ? cfg.engines.side : [];
-    const mainEngine = enginesMainRaw.length ? normalizeEditorEngine(enginesMainRaw[0], 0) : null;
+    const mainEngine = enginesMainRaw.length ? normalizeEditorEngine(enginesMainRaw[0], 0, 'main') : null;
 
     if (mainEngine || enginesSideRaw.length) {
       npc.engines = npc.engines || {};
@@ -219,22 +298,32 @@ export function createNpcHardpointRuntime({
     if (mainEngine) {
       npc.engines.main = Object.assign({}, npc.engines.main || {}, {
         vfxOffset: { x: mainEngine.x, y: mainEngine.y },
-        vfxForward: forwardFromEditorDeg(mainEngine.deg),
+        vfxForward: forwardFromEditorDeg(mainEngine.nozzleDeg),
         vfxYNudge: mainEngine.offsetY,
         vfxLengthMin: Number(mainEngine.vfxLengthMin) || 10,
-        vfxLengthMax: Number(mainEngine.vfxLengthMax) || 180
+        vfxLengthMax: Number(mainEngine.vfxLengthMax) || 180,
+        mount: mainEngine.mount,
+        baseDeg: mainEngine.baseDeg,
+        nozzleDeg: mainEngine.nozzleDeg,
+        gimbalMinDeg: mainEngine.gimbalMinDeg,
+        gimbalMaxDeg: mainEngine.gimbalMaxDeg
       });
     }
 
     if (enginesSideRaw.length) {
       const sideThrusters = [];
       for (let i = 0; i < enginesSideRaw.length; i++) {
-        const engine = normalizeEditorEngine(enginesSideRaw[i], i);
+        const engine = normalizeEditorEngine(enginesSideRaw[i], i, 'side');
         if (!engine) continue;
         sideThrusters.push({
           offset: { x: engine.x, y: engine.y },
-          forward: forwardFromEditorDeg(engine.deg),
-          side: null,
+          forward: forwardFromEditorDeg(engine.nozzleDeg),
+          mount: engine.mount,
+          baseDeg: engine.baseDeg,
+          nozzleDeg: engine.nozzleDeg,
+          gimbalMinDeg: engine.gimbalMinDeg,
+          gimbalMaxDeg: engine.gimbalMaxDeg,
+          side: inferEditorEngineSide(engine.mount, engine.x),
           yNudge: engine.offsetY,
           vfxWidthMin: engine.vfxWidthMin,
           vfxWidthMax: engine.vfxWidthMax,

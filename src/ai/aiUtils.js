@@ -81,6 +81,13 @@ export function aiPickBestTarget(self, rangeLimit) {
   return bestTarget;
 }
 
+export function getEffectiveRange(self, target, baseRange) {
+  const selfR = self?.radius || 50;
+  const targetR = target?.radius || 50;
+  return baseRange + selfR + targetR;
+}
+
 window.clampTurnVec = clampTurnVec;
 window.getLeadAim = getLeadAim;
 window.aiPickBestTarget = aiPickBestTarget;
+window.getEffectiveRange = getEffectiveRange;

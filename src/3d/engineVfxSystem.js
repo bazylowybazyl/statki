@@ -16,6 +16,83 @@ function getInterpolatedPose(entity) {
   return pose;
 }
 
+function normalizeDeg(value, fallback = 0) {
+  let deg = Number.isFinite(Number(value)) ? Number(value) : Number(fallback) || 0;
+  while (deg > 180) deg -= 360;
+  while (deg < -180) deg += 360;
+  return deg;
+}
+
+function normalizeForward(forward, fallbackX = 0, fallbackY = 1) {
+  const rawX = Number(forward?.x);
+  const rawY = Number(forward?.y);
+  const x = Number.isFinite(rawX) ? rawX : fallbackX;
+  const y = Number.isFinite(rawY) ? rawY : fallbackY;
+  const lenSq = x * x + y * y;
+  if (lenSq <= 1e-10) return { x: fallbackX, y: fallbackY };
+  const inv = 1 / Math.sqrt(lenSq);
+  return { x: x * inv, y: y * inv };
+}
+
+function forwardToDeg(forward) {
+  const norm = normalizeForward(forward, 0, 1);
+  return normalizeDeg(Math.atan2(norm.x, norm.y) * 180 / Math.PI, 0);
+}
+
+function degToForward(deg) {
+  const rad = normalizeDeg(deg, 0) * Math.PI / 180;
+  return normalizeForward({ x: Math.sin(rad), y: Math.cos(rad) }, 0, 1);
+}
+
+function normalizeGimbal(minDeg, maxDeg, fallbackMin, fallbackMax) {
+  let min = normalizeDeg(minDeg, fallbackMin);
+  let max = normalizeDeg(maxDeg, fallbackMax);
+  if (min > max) {
+    const tmp = min;
+    min = max;
+    max = tmp;
+  }
+  return { min, max };
+}
+
+function clampNozzleDegToGimbal(nozzleDeg, baseDeg, gimbalMinDeg, gimbalMaxDeg) {
+  const base = normalizeDeg(baseDeg, 0);
+  const nozzle = normalizeDeg(nozzleDeg, base);
+  const rel = normalizeDeg(nozzle - base, 0);
+  const min = Number.isFinite(Number(gimbalMinDeg)) ? Number(gimbalMinDeg) : -45;
+  const max = Number.isFinite(Number(gimbalMaxDeg)) ? Number(gimbalMaxDeg) : 45;
+  const clamped = Math.max(min, Math.min(max, rel));
+  return normalizeDeg(base + clamped, base);
+}
+
+function inferSideFromMount(mount, x = 0) {
+  const raw = String(mount || '').toLowerCase();
+  if (raw.endsWith('_left')) return 'left';
+  if (raw.endsWith('_right')) return 'right';
+  return (Number(x) || 0) < 0 ? 'left' : 'right';
+}
+
+function resolveSlotForward(slot) {
+  if (!slot) return { x: 0, y: 1 };
+  const source = slot.source;
+  const baseDeg = Number.isFinite(Number(source?.baseDeg))
+    ? normalizeDeg(source.baseDeg, slot.baseDeg)
+    : normalizeDeg(slot.baseDeg, forwardToDeg(slot.forward));
+  const fallbackMin = slot.kind === 'side' ? -90 : -45;
+  const fallbackMax = slot.kind === 'side' ? 90 : 45;
+  const range = normalizeGimbal(
+    Number.isFinite(Number(source?.gimbalMinDeg)) ? source.gimbalMinDeg : slot.gimbalMinDeg,
+    Number.isFinite(Number(source?.gimbalMaxDeg)) ? source.gimbalMaxDeg : slot.gimbalMaxDeg,
+    fallbackMin,
+    fallbackMax
+  );
+  const nozzleRaw = Number.isFinite(Number(source?.nozzleDeg))
+    ? source.nozzleDeg
+    : (Number.isFinite(Number(slot.nozzleDeg)) ? slot.nozzleDeg : baseDeg);
+  const nozzleDeg = clampNozzleDegToGimbal(nozzleRaw, baseDeg, range.min, range.max);
+  return degToForward(nozzleDeg);
+}
+
 function buildSlots(entity) {
   const slots = [];
 
@@ -26,15 +103,28 @@ function buildSlots(entity) {
       const ox = Number(thruster.offset.x);
       const oy = Number(thruster.offset.y);
       if (!Number.isFinite(ox) || !Number.isFinite(oy)) continue;
-      const fwd = thruster.forward || { x: 0, y: 1 };
+      const fwd = normalizeForward(thruster.forward, 0, 1);
+      const baseDeg = Number.isFinite(Number(thruster?.baseDeg))
+        ? normalizeDeg(thruster.baseDeg, forwardToDeg(fwd))
+        : forwardToDeg(fwd);
+      const gimbal = normalizeGimbal(thruster?.gimbalMinDeg, thruster?.gimbalMaxDeg, -45, 45);
+      const nozzleDeg = clampNozzleDegToGimbal(
+        Number.isFinite(Number(thruster?.nozzleDeg)) ? thruster.nozzleDeg : baseDeg,
+        baseDeg,
+        gimbal.min,
+        gimbal.max
+      );
       slots.push({
         kind: 'main',
         mode: 'absolute',
+        source: thruster,
         offset: { x: ox, y: oy },
-        forward: {
-          x: Number.isFinite(Number(fwd.x)) ? Number(fwd.x) : 0,
-          y: Number.isFinite(Number(fwd.y)) ? Number(fwd.y) : 1
-        },
+        forward: degToForward(nozzleDeg),
+        mount: String(thruster?.mount || ''),
+        baseDeg,
+        nozzleDeg,
+        gimbalMinDeg: gimbal.min,
+        gimbalMaxDeg: gimbal.max,
         side: null
       });
     }
@@ -43,13 +133,28 @@ function buildSlots(entity) {
     if (mainEngine) {
       const mainOffset = mainEngine.vfxOffset || mainEngine.visualOffset || mainEngine.offset;
       if (mainOffset && Number.isFinite(mainOffset.x) && Number.isFinite(mainOffset.y)) {
+        const baseForward = normalizeForward(mainEngine.vfxForward, 0, 1);
+        const baseDeg = Number.isFinite(Number(mainEngine?.baseDeg))
+          ? normalizeDeg(mainEngine.baseDeg, forwardToDeg(baseForward))
+          : forwardToDeg(baseForward);
+        const gimbal = normalizeGimbal(mainEngine?.gimbalMinDeg, mainEngine?.gimbalMaxDeg, -45, 45);
+        const nozzleDeg = clampNozzleDegToGimbal(
+          Number.isFinite(Number(mainEngine?.nozzleDeg)) ? mainEngine.nozzleDeg : baseDeg,
+          baseDeg,
+          gimbal.min,
+          gimbal.max
+        );
         slots.push({
           kind: 'main',
           mode: 'absolute',
+          source: mainEngine,
           offset: { x: Number(mainOffset.x) || 0, y: Number(mainOffset.y) || 0 },
-          forward: (mainEngine.vfxForward && Number.isFinite(mainEngine.vfxForward.x) && Number.isFinite(mainEngine.vfxForward.y))
-            ? { x: Number(mainEngine.vfxForward.x) || 0, y: Number(mainEngine.vfxForward.y) || 1 }
-            : { x: 0, y: 1 },
+          forward: degToForward(nozzleDeg),
+          mount: String(mainEngine?.mount || ''),
+          baseDeg,
+          nozzleDeg,
+          gimbalMinDeg: gimbal.min,
+          gimbalMaxDeg: gimbal.max,
           side: null
         });
       }
@@ -63,16 +168,32 @@ function buildSlots(entity) {
       const ox = Number(thruster.offset.x);
       const oy = Number(thruster.offset.y);
       if (!Number.isFinite(ox) || !Number.isFinite(oy)) continue;
-      const fwd = thruster.forward || { x: 0, y: 1 };
+      const fwd = normalizeForward(thruster.forward, 0, 1);
+      const baseDeg = Number.isFinite(Number(thruster?.baseDeg))
+        ? normalizeDeg(thruster.baseDeg, forwardToDeg(fwd))
+        : forwardToDeg(fwd);
+      const gimbal = normalizeGimbal(thruster?.gimbalMinDeg, thruster?.gimbalMaxDeg, -90, 90);
+      const nozzleDeg = clampNozzleDegToGimbal(
+        Number.isFinite(Number(thruster?.nozzleDeg)) ? thruster.nozzleDeg : baseDeg,
+        baseDeg,
+        gimbal.min,
+        gimbal.max
+      );
+      const mount = String(thruster?.mount || '');
       slots.push({
         kind: 'side',
         mode: 'absolute',
+        source: thruster,
         offset: { x: ox, y: oy },
-        forward: {
-          x: Number.isFinite(Number(fwd.x)) ? Number(fwd.x) : 0,
-          y: Number.isFinite(Number(fwd.y)) ? Number(fwd.y) : 1
-        },
-        side: thruster.side === 'left' || thruster.side === 'right' ? thruster.side : null
+        forward: degToForward(nozzleDeg),
+        mount,
+        baseDeg,
+        nozzleDeg,
+        gimbalMinDeg: gimbal.min,
+        gimbalMaxDeg: gimbal.max,
+        side: thruster.side === 'left' || thruster.side === 'right'
+          ? thruster.side
+          : inferSideFromMount(mount, ox)
       });
     }
   }
@@ -101,12 +222,14 @@ function makeSlotKey(slots) {
   return slots.map((slot) => {
     const mode = slot.mode || 'absolute';
     const kind = slot.kind || 'main';
+    const mount = String(slot.mount || '');
     const side = slot.side || '';
     const ox = Number(slot.offset?.x) || 0;
     const oy = Number(slot.offset?.y) || 0;
-    const fx = Number(slot.forward?.x) || 0;
-    const fy = Number(slot.forward?.y) || 0;
-    return `${mode}|${kind}|${side}|${ox.toFixed(2)}|${oy.toFixed(2)}|${fx.toFixed(4)}|${fy.toFixed(4)}`;
+    const baseDeg = Number(slot.baseDeg) || 0;
+    const gimbalMinDeg = Number(slot.gimbalMinDeg) || 0;
+    const gimbalMaxDeg = Number(slot.gimbalMaxDeg) || 0;
+    return `${mode}|${kind}|${side}|${mount}|${ox.toFixed(2)}|${oy.toFixed(2)}|${baseDeg.toFixed(2)}|${gimbalMinDeg.toFixed(2)}|${gimbalMaxDeg.toFixed(2)}`;
   }).join('||');
 }
 
@@ -117,13 +240,12 @@ function createEffects(slots) {
   const exhausts = [];
   for (const slot of slots) {
     const exhaust = createShortNeedleExhaust();
-    const fwd = slot.forward || { x: 0, y: 1 };
-    const len = Math.hypot(fwd.x || 0, fwd.y || 0) || 1;
-    const nx = (fwd.x || 0) / len;
-    const ny = (fwd.y || 0) / len;
+    const fwd = resolveSlotForward(slot);
+    const nx = fwd.x;
+    const ny = fwd.y;
     exhaust.group.rotation.z = Math.atan2(-ny, nx) - (Math.PI * 0.5);
     group.add(exhaust.group);
-    exhausts.push({ instance: exhaust, slot });
+    exhausts.push({ instance: exhaust, slot, lastForwardX: nx, lastForwardY: ny });
   }
 
   return { group, exhausts, slotKey: makeSlotKey(slots) };
@@ -166,6 +288,12 @@ function updateEffects(entity, fxData, time) {
 
   for (const item of fxData.exhausts) {
     const slot = item.slot || {};
+    const slotForward = resolveSlotForward(slot);
+    if (Math.abs(slotForward.x - item.lastForwardX) > 1e-4 || Math.abs(slotForward.y - item.lastForwardY) > 1e-4) {
+      item.instance.group.rotation.z = Math.atan2(-slotForward.y, slotForward.x) - (Math.PI * 0.5);
+      item.lastForwardX = slotForward.x;
+      item.lastForwardY = slotForward.y;
+    }
     const offset = slot.offset || { x: 0, y: 0 };
     const lx = slot.mode === 'normalized'
       ? (offset.x || 0) * halfL
@@ -174,6 +302,8 @@ function updateEffects(entity, fxData, time) {
       ? -(offset.y || 0) * halfW
       : -(offset.y || 0);
 
+    const forcedThrottleRaw = Number(slot?.source?.__throttle);
+    const hasForcedThrottle = Number.isFinite(forcedThrottleRaw);
     let slotThrottle = mainThrottle;
     if (slot.kind === 'side') {
       const sideDrive = slot.side === 'left'
@@ -181,6 +311,7 @@ function updateEffects(entity, fxData, time) {
         : (slot.side === 'right' ? strafeRight : Math.max(strafeLeft, strafeRight));
       slotThrottle = Math.max(sideDrive, torque * 0.8, moveGlow * 0.55);
     }
+    if (hasForcedThrottle) slotThrottle = forcedThrottleRaw;
     slotThrottle = Math.max(0, Math.min(1, slotThrottle));
 
     const tune = (typeof window !== 'undefined' && window.VFX_TUNE) ? window.VFX_TUNE : null;
@@ -214,7 +345,42 @@ function updateEffects(entity, fxData, time) {
       const radiusWorld = baseRadius * scale * widthMul * (0.55 + slotThrottle * 0.9);
       const warpState = (typeof window !== 'undefined' && window.warp?.state === 'active') ? 1 : 0;
       const strength = slotThrottle * (0.7 + moveGlow * 0.5 + warpState * 0.35);
-      Core3D.pushHeatHazeWorld(worldX, worldY, -4, radiusWorld, strength, false);
+
+      // Dysza -> kosmos: rdzeń + ogon heat haze, zamiast pojedynczej "bańki" nad silnikiem.
+      const fromCenterX = worldX - ex;
+      const fromCenterY = worldY - sceneOriginY;
+      let dirX = fromCenterX;
+      let dirY = fromCenterY;
+      let dirLen = Math.sqrt(dirX * dirX + dirY * dirY);
+      if (dirLen < 0.0001) {
+        const localDirX = Number(slotForward.x) || 0;
+        const localDirY = -(Number(slotForward.y) || 1);
+        dirX = localDirX * cA - localDirY * sA;
+        dirY = localDirX * sA + localDirY * cA;
+        dirLen = Math.sqrt(dirX * dirX + dirY * dirY);
+      }
+      if (dirLen > 0.0001) {
+        dirX /= dirLen;
+        dirY /= dirLen;
+      } else {
+        dirX = 0;
+        dirY = -1;
+      }
+
+      const plumeLen = radiusWorld * (1.3 + slotThrottle * 2.4 + warpState * 0.9);
+      const plumeSteps = slot.kind === 'side'
+        ? (entity.isPlayer ? 2 : 1)
+        : (entity.isPlayer ? 4 : 2);
+
+      Core3D.pushHeatHazeWorld(worldX, worldY, -4, radiusWorld * 0.72, strength * 0.95, false);
+      for (let step = 0; step < plumeSteps; step++) {
+        const t = (step + 1) / plumeSteps;
+        const px = worldX + dirX * plumeLen * t;
+        const py = worldY + dirY * plumeLen * t;
+        const pRadius = radiusWorld * (1.0 - t * 0.55);
+        const pStrength = strength * (1.0 - t * 0.35);
+        Core3D.pushHeatHazeWorld(px, py, -4, pRadius, pStrength, false);
+      }
     }
   }
 }
