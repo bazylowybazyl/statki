@@ -43,6 +43,7 @@ uniform float uDayAmbient;
 uniform float uDayDiffuseMul;
 uniform float uSpecularMul;
 uniform int uIsDebris;
+uniform int uIsOcclusion;
 
 varying vec2 vSpriteUV;
 varying float vStress;
@@ -75,6 +76,12 @@ void main() {
 
   if (alpha < 0.01) discard;
 
+  // --- MASKA OKLUZJI: Sylwetki zgłaszają się jako BIAŁE (1.0), czyli blokery światła ---
+  if (uIsOcclusion == 1) {
+      gl_FragColor = vec4(1.0, 1.0, 1.0, alpha);
+      return;
+  }
+
   vec3 localNormal;
   if (uHasNormalMap == 1) {
     vec4 nTex = texture2D(uNormalMap, vSpriteUV);
@@ -103,13 +110,11 @@ void main() {
   float litMask = smoothstep(-0.02, 0.08, NdotL);
   color += vec3(spec * uSpecularMul * litMask);
 
-  // --- EYE CANDY: HDR Glow ---
-  // Wzmacniamy jasne, niebieskie elementy (np. silniki) i dodajemy krwistoczerwony glow dla uszkodzeń
-  float isGlowing = step(0.6, color.b) * step(color.r, 0.5); // Wyłapuje błękitne/cyjanowe strefy
-  vec3 finalColor = color + (color * isGlowing * 1.5); // Przekroczenie 1.0 "włącza" Bloom
+  float isGlowing = step(0.6, color.b) * step(color.r, 0.5);
+  vec3 finalColor = color + (color * isGlowing * 1.5); 
 
   float stress = clamp(vStress / 20.0, 0.0, 1.0);
-  vec3 stressGlow = vec3(1.0, 0.25, 0.05) * stress * uStressTint * 3.5; // Ekstremalne żarzenie zniszczeń
+  vec3 stressGlow = vec3(1.0, 0.25, 0.05) * stress * uStressTint * 3.5;
   finalColor += stressGlow;
 
   gl_FragColor = vec4(finalColor, alpha);
@@ -118,14 +123,19 @@ void main() {
 
 const state = {
   entityMeshes: new Map(),
-  debrisMeshes: new Map(), // Osobny kontener na odłamki pogrupowane per tekstura statku!
+  debrisMeshes: new Map(),
   dummy: new THREE.Object3D(),
   maxVisibleEntities: 18,
   midDistanceWorld: 2400,
   farDistanceWorld: 5200,
   lastTime: typeof performance !== 'undefined' ? performance.now() : 0,
   frameId: 0,
-  hadRenderableLastFrame: false
+  hadRenderableLastFrame: false,
+  validEntities: [],
+  vfxEntities: [],
+  staleEntities: [],
+  validEntitySet: new Set(),
+  weaponActiveEntities: new Set()
 };
 
 const debrisBucketsPool = new Map();
@@ -158,9 +168,7 @@ function getShipLightTuning() {
   return window.__shipLightTune;
 }
 
-function ensureShipLightPanelApi() {
-  // Zostawiam Twoją oryginalną implementację panela, żebyś jej nie stracił
-}
+function ensureShipLightPanelApi() { }
 
 function getEntityPosX(entity) { return entity?.pos ? entity.pos.x : entity?.x || 0; }
 function getEntityPosY(entity) { return entity?.pos ? entity.pos.y : entity?.y || 0; }
@@ -238,20 +246,15 @@ function disposeMeshData(data) {
   data.normalTexture?.dispose?.();
 }
 
-// ==========================================
-// --- NOWOŚĆ: SYSTEM ODPADKÓW (DEBRIS) ---
-// ==========================================
-const DEBRIS_MAX_COUNT = 1500; // Ilość odłamków obsługiwanych per tekstura
+const DEBRIS_MAX_COUNT = 1500;
 
 function getDebrisMeshForTexture(shard, grid) {
-  // Używamy tekstury (grid.armorImage) jako klucza słownika
   const textureKey = grid.armorImage;
   if (!textureKey) return null;
 
   let data = state.debrisMeshes.get(textureKey);
 
   if (!data) {
-    // Tworzymy nowy system debris dla tego typu statku
     const baseRadius = Math.max(2, Number(shard?.radius) || 20);
     const geometry = new THREE.CircleGeometry(baseRadius * 1.08, 6);
 
@@ -278,7 +281,8 @@ function getDebrisMeshForTexture(shard, grid) {
         uDayAmbient: { value: SHIP_LIGHT_DEFAULTS.dayAmbient },
         uDayDiffuseMul: { value: SHIP_LIGHT_DEFAULTS.dayDiffuseMul },
         uSpecularMul: { value: SHIP_LIGHT_DEFAULTS.specularMul },
-        uIsDebris: { value: 1 } // FLAG W SHADERZE!
+        uIsDebris: { value: 1 },
+        uIsOcclusion: { value: 0 }
       },
       vertexShader: HEX_VERTEX_SHADER,
       fragmentShader: HEX_FRAGMENT_SHADER,
@@ -291,12 +295,9 @@ function getDebrisMeshForTexture(shard, grid) {
     const mesh = new THREE.InstancedMesh(geometry, material, DEBRIS_MAX_COUNT);
     mesh.frustumCulled = false;
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-
-    // Debris shadows are expensive and mostly unreadable at gameplay zoom.
     mesh.castShadow = false;
     mesh.customDepthMaterial = null;
 
-    // Inicjalizacja zerowej matrycy (ukryte)
     const initialArray = mesh.instanceMatrix.array;
     for (let i = 0; i < DEBRIS_MAX_COUNT; i++) {
       const offset = i * 16;
@@ -337,7 +338,6 @@ function getDebrisMeshForTexture(shard, grid) {
 }
 
 function updateDebrisRendering() {
-  // OPTYMALIZACJA: Czyścimy pule zamiast tworzyć nowe Map() - ratujemy Garbage Collector!
   for (const bucket of debrisBucketsPool.values()) {
     bucket.shards.length = 0;
   }
@@ -346,7 +346,6 @@ function updateDebrisRendering() {
 
   for (const shard of allDebris) {
     if (!shard.active || !shard.isDebris) continue;
-
     const textureKey = shard.img || shard.damagedImg;
     if (!textureKey) continue;
 
@@ -366,14 +365,12 @@ function updateDebrisRendering() {
     }
   }
 
-  // Zerujemy widoczność wszystkich meshów debris
   for (const [key, data] of state.debrisMeshes) {
     data.mesh.count = 0;
   }
 
   for (const [textureKey, bucket] of debrisBucketsPool) {
-    if (bucket.shards.length === 0) continue; // Pusty bucket omijamy
-
+    if (bucket.shards.length === 0) continue;
     const data = getDebrisMeshForTexture(bucket.shards[0], bucket.gridRef);
     if (!data) continue;
 
@@ -387,7 +384,6 @@ function updateDebrisRendering() {
     for (let i = 0; i < drawCount; i++) {
       const shard = shards[i];
       const offset = i * 16;
-
       data.gridPosAttr.array[i * 2] = shard.gridX;
       data.gridPosAttr.array[i * 2 + 1] = shard.gridY;
       data.hpAttr.array[i] = Math.max(0, shard.alpha);
@@ -419,22 +415,15 @@ function updateDebrisRendering() {
     }
   }
 }
-// ==========================================
 
-// --- Shadow depth material for hex ship meshes ---
-// Replicates the vertex transform and sprite alpha discard so shadows
-// follow the actual ship silhouette.
 const HEX_SHADOW_DEPTH_VERTEX = `
 attribute vec2 aGridPos;
 uniform vec2 uSpriteSize;
 varying vec2 vSpriteUV;
-
 #include <common>
 #include <morphtarget_pars_vertex>
-
 void main() {
   vSpriteUV = (aGridPos + position.xy) / uSpriteSize;
-
   vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position.xy, 0.0, 1.0);
   gl_Position = projectionMatrix * mvPosition;
 }
@@ -444,7 +433,6 @@ const HEX_SHADOW_DEPTH_FRAGMENT = `
 #include <packing>
 uniform sampler2D uDamagedTex;
 varying vec2 vSpriteUV;
-
 void main() {
   if (vSpriteUV.x < -0.01 || vSpriteUV.x > 1.01 ||
       vSpriteUV.y < -0.01 || vSpriteUV.y > 1.01) discard;
@@ -514,7 +502,8 @@ function createEntityMesh(entity) {
       uDayAmbient: { value: SHIP_LIGHT_DEFAULTS.dayAmbient },
       uDayDiffuseMul: { value: SHIP_LIGHT_DEFAULTS.dayDiffuseMul },
       uSpecularMul: { value: SHIP_LIGHT_DEFAULTS.specularMul },
-      uIsDebris: { value: 0 } // Dla statków: false
+      uIsDebris: { value: 0 },
+      uIsOcclusion: { value: 0 }
     },
     vertexShader: HEX_VERTEX_SHADER,
     fragmentShader: HEX_FRAGMENT_SHADER,
@@ -528,19 +517,13 @@ function createEntityMesh(entity) {
   mesh.frustumCulled = false;
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 
-  // Ring segments are numerous; skip their shadow pass to stabilize frame-time.
   const enableShadowCast = !entity?.isRingSegment;
   mesh.renderOrder = entity?.isRingSegment ? 0 : 10;
   mesh.castShadow = enableShadowCast;
   mesh.customDepthMaterial = enableShadowCast
-    ? createHexShadowDepthMaterial(
-      damagedTexture,
-      grid.srcWidth || 1,
-      grid.srcHeight || 1
-    )
+    ? createHexShadowDepthMaterial(damagedTexture, grid.srcWidth || 1, grid.srcHeight || 1)
     : null;
 
-  // Wypełnij wszystko macierzami identyczności
   const initialArray = mesh.instanceMatrix.array;
   for (let i = 0; i < count; i++) {
     const offset = i * 16;
@@ -765,7 +748,6 @@ function updateEntityMesh(entity, data, camX, camY) {
 
   mesh.material.uniforms.uRotation.value = -entityAngle;
 
-  // --- Aplikowanie pozycji, skali i rotacji (ZWYKŁY RZUT 2D) ---
   mesh.position.set(ex, -ey, 0);
   mesh.rotation.set(0, 0, -entityAngle);
   const scale = getEntityScale(entity);
@@ -800,14 +782,22 @@ export function updateHexShips3D(viewCamera, entities = []) {
   const camX = Number(viewCamera?.x) || 0;
   const camY = Number(viewCamera?.y) || 0;
 
-  const valid = [];
-  const vfxEntities = [];
-  const weaponActiveEntities = new Set();
+  const valid = state.validEntities;
+  const vfxEntities = state.vfxEntities;
+  const stale = state.staleEntities;
+  const validSet = state.validEntitySet;
+  const weaponActiveEntities = state.weaponActiveEntities;
+  valid.length = 0;
+  vfxEntities.length = 0;
+  stale.length = 0;
+  validSet.clear();
+  weaponActiveEntities.clear();
   for (const entity of entities) {
     if (!entity || entity.dead) continue;
     vfxEntities.push(entity);
     if (!entity.hexGrid) continue;
     valid.push(entity);
+    validSet.add(entity);
   }
 
   let hasRenderable = false;
@@ -833,11 +823,8 @@ export function updateHexShips3D(viewCamera, entities = []) {
   Weapon3DSystem.cleanupEntities(weaponActiveEntities);
   Weapon3DSystem.syncProjectiles((typeof window !== 'undefined' && Array.isArray(window.bullets)) ? window.bullets : []);
 
-  // ODPALAMY OPTYMALIZACJĘ DEBRIS
   updateDebrisRendering();
 
-  const validSet = new Set(valid);
-  const stale = [];
   for (const [entity] of state.entityMeshes) {
     if (!validSet.has(entity)) stale.push(entity);
   }
@@ -854,45 +841,36 @@ export function updateHexShips3D(viewCamera, entities = []) {
 
 export function drawHexShips3D(ctx, width, height) {
   if (!ctx || !Core3D.isInitialized) return;
-  const dbgRecord = (typeof window !== 'undefined' && typeof window.__renderDbgRecord === 'function')
-    ? window.__renderDbgRecord
-    : null;
-  const tCoreCall0 = dbgRecord ? performance.now() : 0;
-
   Core3D.render();
-  if (dbgRecord) {
-    dbgRecord('coreRenderCall', performance.now() - tCoreCall0);
-  }
+
   const src = Core3D.canvas;
   if (!src) return;
 
   const w = Math.max(1, Number(width) || ctx.canvas?.width || 1);
   const h = Math.max(1, Number(height) || ctx.canvas?.height || 1);
-  const tBlit0 = dbgRecord ? performance.now() : 0;
 
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(src, 0, 0, w, h);
   ctx.restore();
-  if (dbgRecord) {
-    dbgRecord('coreBlit2D', performance.now() - tBlit0);
-  }
+}
+
+export function invalidateHexShipEntity3D(entity) {
+  if (!entity) return false;
+  const data = state.entityMeshes.get(entity);
+  if (!data) return false;
+  disposeMeshData(data);
+  state.entityMeshes.delete(entity);
+  return true;
 }
 
 export function disposeHexShips3D() {
-  for (const [, data] of state.entityMeshes) {
-    disposeMeshData(data);
-  }
+  for (const [, data] of state.entityMeshes) disposeMeshData(data);
   state.entityMeshes.clear();
-
-  // Czyszczenie śmieci Debris
-  for (const [, data] of state.debrisMeshes) {
-    disposeMeshData(data);
-  }
+  for (const [, data] of state.debrisMeshes) disposeMeshData(data);
   state.debrisMeshes.clear();
   debrisBucketsPool.clear();
-
   EngineVfxSystem.disposeAll();
   Weapon3DSystem.disposeAll();
   state.frameId = 0;

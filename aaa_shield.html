@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="pl">
+
+<head>
+    <meta charset="UTF-8">
+    <title>AAA Shield Demo</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #020205;
+            overflow: hidden;
+            color: #00e5ff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            pointer-events: none;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px 20px;
+            border: 1px solid #00e5ff;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
+        }
+
+        h1 {
+            margin: 0 0 10px 0;
+            font-size: 24px;
+            text-shadow: 0 0 8px #00e5ff;
+        }
+
+        p {
+            margin: 0;
+            font-size: 14px;
+            opacity: 0.8;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        /* --- UI PANEL --- */
+        #shield-ui {
+            position: absolute;
+            top: 50%;
+            left: 20px;
+            transform: translateY(-50%);
+            background: rgba(10, 15, 30, 0.85);
+            border: 1px solid #00e5ff;
+            border-radius: 12px;
+            padding: 15px;
+            box-shadow: 0 0 20px rgba(0, 229, 255, 0.15);
+            z-index: 20;
+            width: 260px;
+            box-sizing: border-box;
+            backdrop-filter: blur(5px);
+        }
+
+        #shield-ui h2 {
+            margin: 0 0 15px 0;
+            font-size: 16px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 1px solid rgba(0, 229, 255, 0.3);
+            padding-bottom: 8px;
+            text-shadow: 0 0 5px #00e5ff;
+        }
+
+        .shield-option {
+            background: rgba(0, 229, 255, 0.05);
+            border: 1px solid rgba(0, 229, 255, 0.2);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+        }
+
+        .shield-option:hover {
+            background: rgba(0, 229, 255, 0.15);
+            border-color: rgba(0, 229, 255, 0.5);
+            transform: translateX(5px);
+        }
+
+        .shield-option.active {
+            background: rgba(0, 229, 255, 0.25);
+            border-color: #00e5ff;
+            box-shadow: 0 0 10px rgba(0, 229, 255, 0.4);
+        }
+
+        .shield-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            min-width: 32px;
+            margin-right: 12px;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+        }
+
+        #icon-hardlight {
+            background: radial-gradient(circle, #00e5ff 0%, #0066ff 100%);
+        }
+
+        #icon-plasma {
+            background: radial-gradient(circle, #ff00aa 0%, #4400ff 100%);
+        }
+
+        .shield-info h3 {
+            margin: 0 0 4px 0;
+            font-size: 14px;
+        }
+
+        .shield-info p {
+            margin: 0;
+            font-size: 11px;
+            color: #a0d8ef;
+        }
+    </style>
+    <!-- Import map for Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+
+<body>
+    <div id="info">
+        <h1>Tarcza AAA - Prototyp</h1>
+        <p>Kliknij w dowolne miejsce, aby wywołać uderzenie (impact).</p>
+    </div>
+
+    <!-- UI Panel: Wybór Tarczy -->
+    <div id="shield-ui">
+        <h2>Systemy Obronne</h2>
+
+        <div class="shield-option active" data-type="type1">
+            <div class="shield-icon" id="icon-hardlight"></div>
+            <div class="shield-info">
+                <h3>Type 1: Hardlight Glass</h3>
+                <p>Czysty fresnel, aktywne heksy na uderzenie. Elegancki i krystaliczny.</p>
+            </div>
+        </div>
+
+        <div class="shield-option" data-type="type2">
+            <div class="shield-icon" id="icon-plasma"></div>
+            <div class="shield-info">
+                <h3>Type 2: Plasma Core</h3>
+                <p>Agresywna, płynna plazma. Gęsta struktura, silna asymetria energii.</p>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- SCENA INIT ---
+        const scene = new THREE.Scene();
+        // Ciemne mgławicowe tło
+        scene.fog = new THREE.FogExp2(0x020205, 0.002);
+
+        // Kamera ortograficzna dla rzutu 2D Top-Down
+        const aspect = window.innerWidth / window.innerHeight;
+        const frustumSize = 300; // Rozmiar widoku (odpowiednik zooma)
+        const camera = new THREE.OrthographicCamera(
+            frustumSize * aspect / -2,
+            frustumSize * aspect / 2,
+            frustumSize / 2,
+            frustumSize / -2,
+            0.1,
+            1000
+        );
+        camera.position.set(0, 0, 200); // Widok z góry
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.enableRotate = false; // W 2D top-down wyłączamy obrót, zostawiamy tylko zoom i ruch
+        controls.mouseButtons = {
+            LEFT: THREE.MOUSE.NONE, // Lewy do klikania w tarczę
+            MIDDLE: THREE.MOUSE.DOLLY,
+            RIGHT: THREE.MOUSE.PAN
+        };
+
+        // --- STATEK (SPRITE/PLANE) ---
+        // Ładujemy sprite statku z plików gry
+        const textureLoader = new THREE.TextureLoader();
+        const shipTexture = textureLoader.load('assets/capital_ship_rect_v1.png');
+        // Sprite zazwyczaj lepiej wygląda z linear filter jeśli to duży statek, alb najbliższy jeśli pixelart
+        shipTexture.minFilter = THREE.LinearMipmapLinearFilter;
+
+        const shipGeo = new THREE.PlaneGeometry(80, 160);
+        const shipMat = new THREE.MeshBasicMaterial({
+            map: shipTexture,
+            transparent: true,
+            alphaTest: 0.1,
+            side: THREE.DoubleSide,
+            depthWrite: false
+        });
+        const shipMesh = new THREE.Mesh(shipGeo, shipMat);
+        scene.add(shipMesh);
+
+        // --- TARCZA AAA (SHADER) ---
+        // Generujemy teksturę hexów do mixowania
+        function generateHexTexture() {
+            const scale = 64;
+            const tileW = 3 * scale;
+            const tileH = Math.round(Math.sqrt(3) * scale);
+            const cvs = document.createElement('canvas');
+            cvs.width = Math.ceil(tileW * 2);
+            cvs.height = Math.ceil(tileH * 2);
+            const c = cvs.getContext('2d');
+            c.fillStyle = '#000000';
+            c.fillRect(0, 0, cvs.width, cvs.height);
+            c.strokeStyle = '#ffffff';
+            c.lineWidth = scale * 0.1;
+            c.lineJoin = 'round';
+            c.beginPath();
+            for (let col = -2; col <= 4; col++) {
+                for (let row = -2; row <= 4; row++) {
+                    const xOffset = col * 1.5 * scale;
+                    const yOffset = row * tileH + (col % 2 === 0 ? 0 : tileH / 2);
+                    for (let i = 0; i < 6; i++) {
+                        const angle = 2 * Math.PI / 6 * i;
+                        const x = xOffset + scale * Math.cos(angle);
+                        const y = yOffset + (tileH / Math.sqrt(3)) * Math.sin(angle);
+                        if (i === 0) c.moveTo(x, y); else c.lineTo(x, y);
+                    }
+                    c.closePath();
+                }
+            }
+            c.stroke();
+            const tex = new THREE.CanvasTexture(cvs);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            // Wygładzanie
+            tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+            return tex;
+        }
+
+        const hexTex = generateHexTexture();
+
+        const shieldGeo = new THREE.SphereGeometry(60, 128, 128);
+        // Do widoku top-down spłaszczamy sferę mocniej wzdłuż osi Z (był to spłaszczony ellipsoid z boku, teraz jest dyskiem od góry)
+        // Zakładamy, że kamera patrzy wzdłuż osi Z, więc statek i tarcza leżą na płaszczyźnie XY. Oś Z to 'wypukłość' tarczy do góry
+        shieldGeo.scale(1.0, 1.8, 0.35);
+
+        const shieldUniforms = {
+            uTime: { value: 0 },
+            uColor: { value: new THREE.Color('#0066ff') },
+            uHitColor: { value: new THREE.Color('#ffffff') }, // Biało-błękitny rozbłysk
+            uHexTex: { value: hexTex },
+            uImpacts: { value: Array(10).fill(null).map(() => new THREE.Vector4(0, 0, 0, -999)) }, // x,y,z uderzenia, w=czas
+            uImpactIndex: { value: 0 }
+        };
+
+        const shieldVert = `
+            varying vec2 vUv;
+            varying vec3 vNormal;
+            varying vec3 vViewPosition;
+            varying vec3 vWorldPosition;
+            
+            uniform float uTime;
+            uniform vec4 uImpacts[10];
+
+            // Simplex 3D Noise dla płynnych, energetycznych fal na powierzchni bąbla
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+            vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+            float snoise(vec3 v) {
+              const vec2  C = vec2(1.0/6.0, 1.0/3.0);
+              const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
+              vec3 i  = floor(v + dot(v, C.yyy));
+              vec3 x0 = v - i + dot(i, C.xxx);
+              vec3 g = step(x0.yzx, x0.xyz);
+              vec3 l = 1.0 - g;
+              vec3 i1 = min(g.xyz, l.zxy);
+              vec3 i2 = max(g.xyz, l.zxy);
+              vec3 x1 = x0 - i1 + C.xxx;
+              vec3 x2 = x0 - i2 + C.yyy;
+              vec3 x3 = x0 - D.yyy;
+              i = mod289(i);
+              vec4 p = permute(permute(permute(
+                         i.z + vec4(0.0, i1.z, i2.z, 1.0))
+                       + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+                       + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+              float n_ = 0.142857142857;
+              vec3  ns = n_ * D.wyz - D.xzx;
+              vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+              vec4 x_ = floor(j * ns.z);
+              vec4 y_ = floor(j - 7.0 * x_);
+              vec4 x = x_ *ns.x + ns.yyyy;
+              vec4 y = y_ *ns.x + ns.yyyy;
+              vec4 h = 1.0 - abs(x) - abs(y);
+              vec4 b0 = vec4(x.xy, y.xy);
+              vec4 b1 = vec4(x.zw, y.zw);
+              vec4 s0 = floor(b0)*2.0 + 1.0;
+              vec4 s1 = floor(b1)*2.0 + 1.0;
+              vec4 sh = -step(h, vec4(0.0));
+              vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+              vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+              vec3 p0 = vec3(a0.xy,h.x);
+              vec3 p1 = vec3(a0.zw,h.y);
+              vec3 p2 = vec3(a1.xy,h.z);
+              vec3 p3 = vec3(a1.zw,h.w);
+              vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+              p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+              vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+              m = m * m;
+              return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+            }
+            
+            void main() {
+                vUv = uv;
+                vNormal = normalize(normalMatrix * normal);
+                
+                vec4 worldPos = modelMatrix * vec4(position, 1.0);
+                vWorldPosition = worldPos.xyz;
+                
+                float deform = 0.0;
+                
+                // Bardzo delikatne, powolne pulsowanie samej bazy (prawie niezauważalne statycznie)
+                deform += sin(position.y * 0.05 + uTime * 1.5) * 0.2;
+                deform += cos(position.x * 0.05 - uTime * 1.0) * 0.2;
+                
+                // Poteżne deformacje verteksów przy trafieniach - falowanie (ripple)
+                for(int i=0; i<10; i++) {
+                    float impTime = uImpacts[i].w;
+                    float age = uTime - impTime;
+                    if(age >= 0.0 && age < 2.5) {
+                        float dist = distance(worldPos.xyz, uImpacts[i].xyz);
+                        // Czysta kinetyczna fala zamiast brudnego noise'u
+                        float wave = sin(dist * 0.8 - age * 25.0);
+                        // Bardzo ostre tłumienie, żeby fala nie wędrowała w nieskończoność
+                        float damp = exp(-dist * 0.08) * max(0.0, 1.0 - (age / 2.0));
+                        deform -= wave * damp * 6.0; 
+                    }
+                }
+                
+                vec3 newPos = position + normal * deform;
+                vec4 mvPosition = modelViewMatrix * vec4(newPos, 1.0);
+                vViewPosition = -mvPosition.xyz;
+                gl_Position = projectionMatrix * mvPosition;
+            }
+        `;
+
+        const shieldFrag = `
+            uniform float uTime;
+            uniform vec3 uColor;
+            uniform vec3 uHitColor;
+            uniform sampler2D uHexTex;
+            uniform vec4 uImpacts[10];
+            
+            varying vec2 vUv;
+            varying vec3 vNormal;
+            varying vec3 vViewPosition;
+            varying vec3 vWorldPosition;
+            
+            // Simplex Noise (Kopia dla Fragment Shadera do sterowania kolorami opartymi o gęstość "energii")
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+            vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+            float snoise(vec3 v) {
+              const vec2  C = vec2(1.0/6.0, 1.0/3.0);
+              const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
+              vec3 i  = floor(v + dot(v, C.yyy));
+              vec3 x0 = v - i + dot(i, C.xxx);
+              vec3 g = step(x0.yzx, x0.xyz);
+              vec3 l = 1.0 - g;
+              vec3 i1 = min(g.xyz, l.zxy);
+              vec3 i2 = max(g.xyz, l.zxy);
+              vec3 x1 = x0 - i1 + C.xxx;
+              vec3 x2 = x0 - i2 + C.yyy;
+              vec3 x3 = x0 - D.yyy;
+              i = mod289(i);
+              vec4 p = permute(permute(permute(
+                         i.z + vec4(0.0, i1.z, i2.z, 1.0))
+                       + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+                       + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+              float n_ = 0.142857142857;
+              vec3  ns = n_ * D.wyz - D.xzx;
+              vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+              vec4 x_ = floor(j * ns.z);
+              vec4 y_ = floor(j - 7.0 * x_);
+              vec4 x = x_ *ns.x + ns.yyyy;
+              vec4 y = y_ *ns.x + ns.yyyy;
+              vec4 h = 1.0 - abs(x) - abs(y);
+              vec4 b0 = vec4(x.xy, y.xy);
+              vec4 b1 = vec4(x.zw, y.zw);
+              vec4 s0 = floor(b0)*2.0 + 1.0;
+              vec4 s1 = floor(b1)*2.0 + 1.0;
+              vec4 sh = -step(h, vec4(0.0));
+              vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+              vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+              vec3 p0 = vec3(a0.xy,h.x);
+              vec3 p1 = vec3(a0.zw,h.y);
+              vec3 p2 = vec3(a1.xy,h.z);
+              vec3 p3 = vec3(a1.zw,h.w);
+              vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+              p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+              vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+              m = m * m;
+              return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+            }
+            
+            void main() {
+                vec3 normal = normalize(vNormal);
+                vec3 viewDir = normalize(vViewPosition); // kierunek patrzenia z kamery
+                
+                // ULEPSZONY FRESNEL Z PROFESJONALNĄ KRZYWĄ (Szklana bańka)
+                float f = dot(viewDir, normal);
+                float fresnelBase = clamp(1.0 - f, 0.0, 1.0);
+                
+                // Bardzo ostra krawędź (Hard Edge Rim)
+                float fresnelRim = pow(fresnelBase, 4.0) * 2.0; 
+                // Delikatna, rozproszona poświata przy krawędzi (Soft Glow)
+                float fresnelGlow = pow(fresnelBase, 2.0) * 0.3; 
+                
+                // Siatka hex z bardzo delikatnym dryfowaniem (Top-Down UV)
+                vec2 hexUv = vWorldPosition.xy * 0.06; // Stała wielkość siatki
+                hexUv.y -= uTime * 0.1;
+                hexUv.x += sin(uTime * 0.05) * 0.02;
+                
+                float impactEnergy = 0.0;
+                vec2 uvOffset = vec2(0.0);
+                vec3 impactColorAdd = vec3(0.0);
+                float chromaticAberrationStr = 0.0;
+                
+                // Sumowanie czystych, kinetycznych fal uderzeniowych
+                for(int i=0; i<10; i++) {
+                    float impTime = uImpacts[i].w;
+                    float age = uTime - impTime;
+                    if(age >= 0.0 && age < 2.5) {
+                        float dist = distance(vWorldPosition, uImpacts[i].xyz);
+                        
+                        // Ostre, geometryczne pierścienie uderzenia (Hard-Light Rings)
+                        float expansionRing = age * 40.0;
+                        float ring1 = smoothstep(expansionRing + 2.0, expansionRing, dist) - smoothstep(expansionRing, expansionRing - 2.0, dist);
+                        float ring2 = smoothstep(expansionRing * 0.7 + 1.0, expansionRing * 0.7, dist) - smoothstep(expansionRing * 0.7, expansionRing * 0.7 - 1.0, dist);
+                        
+                        float damp = exp(-dist * 0.08) * max(0.0, 1.0 - (age / 2.0));
+                        float localEnergy = clamp((ring1 + ring2 * 0.5) * damp, 0.0, 1.0);
+                        
+                        impactEnergy += localEnergy;
+                        
+                        // Gorący rdzeń (błysk) pojawiający się tylko przy samym uderzeniu
+                        float coreDist = distance(vWorldPosition.xy, uImpacts[i].xy);
+                        float coreGlow = exp(-coreDist * 0.15) * max(0.0, 1.0 - age * 3.0);
+                        impactColorAdd += uHitColor * coreGlow * 3.0; // Główny błysk
+                        impactColorAdd += uColor * localEnergy * 2.0;    // Czysty kolor roznoszony po falach
+                        
+                        // Zniekształcenie UV siatki (Refrakcja kryształu) przy przepływie fali
+                        vec3 dir = normalize(vWorldPosition - uImpacts[i].xyz);
+                        uvOffset += dir.xy * localEnergy * 0.15;
+                        
+                        // Chcemy mocnej aberracji chromatycznej wokół krawędzi uderzenia
+                        chromaticAberrationStr += localEnergy;
+                    }
+                }
+                
+                // Próbkowanie z wrzuconą 'wypukłością wizualną' fali dla hexów 
+                vec4 hexColor = texture2D(uHexTex, fract(hexUv + uvOffset));
+                float hexLine = hexColor.r;
+                
+                // Modulacja widoczności linii siatki:
+                // Normalnie siatka jest widoczna TYLKO na samej krawędzi bąbla (fresnel). 
+                // Dopiero gdy przechodzi fala zdrzenia (impactEnergy), siatka nagle rozpala się na jej drodze!
+                float hexVisibility = fresnelRim * 0.5 + (impactEnergy * 3.0);
+                hexVisibility = clamp(hexVisibility, 0.0, 1.0);
+                
+                float visibleHex = hexLine * hexVisibility;
+                
+                // --- BAZA COLOR BLENDING (Czyste Szklane Pole Siłowe) ---
+                // Wewnętrze jest prawie zupenie przezroczyste (ciemne do addytywnego blendingu).
+                vec3 shieldBaseColor = uColor * fresnelGlow;
+                vec3 finalColor = shieldBaseColor;
+                
+                // Podświetlamy siatkę ostrym, hi-tech kolorem bazy
+                finalColor += uColor * visibleHex * 1.5; 
+                
+                // Aberracja na zewnętrznych liniach obwodu i uderzeniach
+                float ca = fresnelRim * 0.5 + chromaticAberrationStr;
+                finalColor.r += uHitColor.r * ca * 0.3;
+                finalColor.b += uHitColor.b * ca * 0.6;
+                
+                // Błyski od uderzeń prosto na sam szczyt malowania
+                finalColor += impactColorAdd;
+                
+                // --- KANAŁ ALPHA (Zarządzenie Przezroczystością) ---
+                // Zwykła przezroczystość bierze pod uwagę tylko obramowanie (Rim) + ewentualne rozpalone heksy + błyski pancerza
+                float alpha = fresnelRim + (visibleHex * 0.8) + impactEnergy;
+                
+                // Środek zostawiamy w 100% przezroczysty, bez dziwnego zabrudzenia. Szkło to szkło.
+                alpha = clamp(alpha, 0.0, 1.0);
+                
+                gl_FragColor = vec4(finalColor, alpha);
+            }
+        `;
+
+        // --- MATERIAŁ TARCZY 1: Hardlight Glass (Obecny) ---
+        const shieldMatType1 = new THREE.ShaderMaterial({
+            vertexShader: shieldVert,
+            fragmentShader: shieldFrag,
+            uniforms: shieldUniforms,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        });
+
+        // --- MATERIAŁ TARCZY 2: Plasma Core (Nowy) ---
+        // Drugi całkowicie odmienny shader - gęsta fioletowo-różowa plazma wolumetryczna
+        const plasmaUniforms = {
+            uTime: { value: 0 },
+            uColorA: { value: new THREE.Color('#4400ff') },   // Głęboki fiolet
+            uColorB: { value: new THREE.Color('#ff00aa') },   // Gorący róż
+            uHitColor: { value: new THREE.Color('#ffffff') }, // Biały rdzeń
+            uImpacts: { value: Array(10).fill(null).map(() => new THREE.Vector4(0, 0, 0, -999)) },
+            uImpactIndex: { value: 0 }
+        };
+
+        const plasmaVert = `
+            varying vec2 vUv;
+            varying vec3 vNormal;
+            varying vec3 vViewPosition;
+            varying vec3 vWorldPosition;
+            uniform float uTime;
+            uniform vec4 uImpacts[10];
+
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+            vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+            float snoise(vec3 v) {
+              const vec2  C = vec2(1.0/6.0, 1.0/3.0);
+              const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
+              vec3 i  = floor(v + dot(v, C.yyy));
+              vec3 x0 = v - i + dot(i, C.xxx);
+              vec3 g = step(x0.yzx, x0.xyz);
+              vec3 l = 1.0 - g;
+              vec3 i1 = min(g.xyz, l.zxy);
+              vec3 i2 = max(g.xyz, l.zxy);
+              vec3 x1 = x0 - i1 + C.xxx;
+              vec3 x2 = x0 - i2 + C.yyy;
+              vec3 x3 = x0 - D.yyy;
+              i = mod289(i);
+              vec4 p = permute(permute(permute(
+                         i.z + vec4(0.0, i1.z, i2.z, 1.0))
+                       + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+                       + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+              float n_ = 0.142857142857;
+              vec3  ns = n_ * D.wyz - D.xzx;
+              vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+              vec4 x_ = floor(j * ns.z);
+              vec4 y_ = floor(j - 7.0 * x_);
+              vec4 x = x_ *ns.x + ns.yyyy;
+              vec4 y = y_ *ns.x + ns.yyyy;
+              vec4 h = 1.0 - abs(x) - abs(y);
+              vec4 b0 = vec4(x.xy, y.xy);
+              vec4 b1 = vec4(x.zw, y.zw);
+              vec4 s0 = floor(b0)*2.0 + 1.0;
+              vec4 s1 = floor(b1)*2.0 + 1.0;
+              vec4 sh = -step(h, vec4(0.0));
+              vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+              vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+              vec3 p0 = vec3(a0.xy,h.x);
+              vec3 p1 = vec3(a0.zw,h.y);
+              vec3 p2 = vec3(a1.xy,h.z);
+              vec3 p3 = vec3(a1.zw,h.w);
+              vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+              p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+              vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+              m = m * m;
+              return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+            }
+            
+            void main() {
+                vUv = uv;
+                vNormal = normalize(normalMatrix * normal);
+                vec4 worldPos = modelMatrix * vec4(position, 1.0);
+                vWorldPosition = worldPos.xyz;
+                
+                float deform = 0.0;
+                
+                // Plazma rzuca się dziko we wszystkie strony (silny noise zawsze włączony)
+                float noiseVal = snoise(position * 0.04 + vec3(uTime * 0.8, -uTime * 0.5, uTime * 0.2));
+                deform += noiseVal * 4.0;
+                
+                for(int i=0; i<10; i++) {
+                    float impTime = uImpacts[i].w;
+                    float age = uTime - impTime;
+                    if(age >= 0.0 && age < 3.0) {
+                        float dist = distance(worldPos.xyz, uImpacts[i].xyz);
+                        // Plazmowe pole ugina się chaotycznie, twarde, ostre impulsy do wewnątrz
+                        float wave = exp(-dist * 0.05) * sin(dist * 0.3 - age * 10.0);
+                        float damp = max(0.0, 1.0 - (age / 3.0));
+                        deform -= wave * damp * 18.0; // Gigantyczna głębokość krateru
+                    }
+                }
+                
+                vec3 newPos = position + normal * deform;
+                vec4 mvPosition = modelViewMatrix * vec4(newPos, 1.0);
+                vViewPosition = -mvPosition.xyz;
+                gl_Position = projectionMatrix * mvPosition;
+            }
+        `;
+
+        const plasmaFrag = `
+            uniform float uTime;
+            uniform vec3 uColorA;
+            uniform vec3 uColorB;
+            uniform vec3 uHitColor;
+            uniform vec4 uImpacts[10];
+
+            varying vec2 vUv;
+            varying vec3 vNormal;
+            varying vec3 vViewPosition;
+            varying vec3 vWorldPosition;
+
+            // Kopia snoise
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+            vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+            float snoise(vec3 v) {
+              const vec2  C = vec2(1.0/6.0, 1.0/3.0);
+              const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
+              vec3 i  = floor(v + dot(v, C.yyy));
+              vec3 x0 = v - i + dot(i, C.xxx);
+              vec3 g = step(x0.yzx, x0.xyz);
+              vec3 l = 1.0 - g;
+              vec3 i1 = min(g.xyz, l.zxy);
+              vec3 i2 = max(g.xyz, l.zxy);
+              vec3 x1 = x0 - i1 + C.xxx;
+              vec3 x2 = x0 - i2 + C.yyy;
+              vec3 x3 = x0 - D.yyy;
+              i = mod289(i);
+              vec4 p = permute(permute(permute(
+                         i.z + vec4(0.0, i1.z, i2.z, 1.0))
+                       + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+                       + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+              float n_ = 0.142857142857;
+              vec3  ns = n_ * D.wyz - D.xzx;
+              vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+              vec4 x_ = floor(j * ns.z);
+              vec4 y_ = floor(j - 7.0 * x_);
+              vec4 x = x_ *ns.x + ns.yyyy;
+              vec4 y = y_ *ns.x + ns.yyyy;
+              vec4 h = 1.0 - abs(x) - abs(y);
+              vec4 b0 = vec4(x.xy, y.xy);
+              vec4 b1 = vec4(x.zw, y.zw);
+              vec4 s0 = floor(b0)*2.0 + 1.0;
+              vec4 s1 = floor(b1)*2.0 + 1.0;
+              vec4 sh = -step(h, vec4(0.0));
+              vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+              vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+              vec3 p0 = vec3(a0.xy,h.x);
+              vec3 p1 = vec3(a0.zw,h.y);
+              vec3 p2 = vec3(a1.xy,h.z);
+              vec3 p3 = vec3(a1.zw,h.w);
+              vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+              p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+              vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+              m = m * m;
+              return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+            }
+
+            void main() {
+                vec3 normal = normalize(vNormal);
+                vec3 viewDir = normalize(vViewPosition);
+                
+                // Mniej sztywny fresnel
+                float f = dot(viewDir, normal);
+                float fresnelBase = clamp(1.0 - f, 0.0, 1.0);
+                float fresnelRim = pow(fresnelBase, 2.5) * 1.5;
+                
+                // Wielowarstwowa chmura plazmy (fractal noise) wygina przestrzeń z wieloma skalami częstotliwości
+                float n1 = snoise(vWorldPosition * 0.02 + vec3(uTime * 0.3, uTime * 0.1, 0.0));
+                float n2 = snoise(vWorldPosition * 0.08 - vec3(uTime * 0.2, uTime * 0.6, 0.0));
+                float plasmaPattern = (n1 * 0.6 + n2 * 0.4) * 0.5 + 0.5;
+                
+                float impactEnergy = 0.0;
+                vec3 impactColorAdd = vec3(0.0);
+                
+                for(int i=0; i<10; i++) {
+                    float impTime = uImpacts[i].w;
+                    float age = uTime - impTime;
+                    if(age >= 0.0 && age < 3.0) {
+                        float dist = distance(vWorldPosition, uImpacts[i].xyz);
+                        
+                        // Zamiast precyzyjnych ringów, szerokie wybuchy ciśnienia plazmowego (kratery energii)
+                        float pressure = exp(-dist * 0.08) * max(0.0, 1.0 - (age / 3.0));
+                        
+                        // Silny wybuch pożerający noise w centrum
+                        float blastCore = exp(-dist * 0.2) * exp(-age * 4.0);
+                        
+                        impactEnergy += pressure;
+                        impactColorAdd += uHitColor * blastCore * 4.0;
+                        impactColorAdd += uColorB * pressure * 1.5;
+                    }
+                }
+                
+                // Plazma to głównie emisja wolumetryczna mętnego gazu z mocnymi 'rzekami' najjaśniejszych fraktali
+                float emission = pow(plasmaPattern, 3.0) * 3.0; // wyciągnięcie jasnych pasm plazmy
+                
+                // Baza to gradient między głębokim fioletem (pustka) a różem (energia) zależny od szumu
+                vec3 plasmaColor = mix(uColorA, uColorB, plasmaPattern);
+                
+                // Dodajemy ostrą plazmę i fresnel rim
+                vec3 finalColor = plasmaColor * (0.5 + emission) + (uColorB * fresnelRim);
+                finalColor += impactColorAdd;
+                
+                // Alpha reaguje potężnie na przepływy plazmy. Gęsta plazma zatrzymuje wzrok
+                float alpha = (plasmaPattern * 0.6) + fresnelRim * 0.5 + impactEnergy;
+                alpha = clamp(alpha, 0.0, 1.0);
+                
+                // Przysmarżanie
+                gl_FragColor = vec4(finalColor, alpha);
+            }
+        `;
+
+        const shieldMatType2 = new THREE.ShaderMaterial({
+            vertexShader: plasmaVert,
+            fragmentShader: plasmaFrag,
+            uniforms: plasmaUniforms,
+            transparent: true,
+            blending: THREE.AdditiveBlending, // lub THREE.NormalBlending dla gęstszego smogu
+            depthWrite: false,
+            side: THREE.DoubleSide
+        });
+
+        // Domyślnie używany oryginalny szklany
+        const shieldMesh = new THREE.Mesh(shieldGeo, shieldMatType1);
+        scene.add(shieldMesh);
+
+        // --- INTERAKCJA ---
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        // Niewidzialna płaszczyzna do łapania kliknięć na odpowiedniej głębokości
+        const clickPlane = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshBasicMaterial({ visible: false }));
+        scene.add(clickPlane);
+
+        window.addEventListener('click', (e) => {
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+
+            // Wymuszamy najpierw znalezienie przecięć na samej sferze tarczy - w widoku z góry (Z=200 do Z=0)
+            const intersects = raycaster.intersectObject(shieldMesh);
+
+            if (intersects.length > 0) {
+                // Skoro kliknęliśmy idealnie w bąbel, bierzemy ten punkt
+                triggerImpact(intersects[0].point);
+            } else {
+                // Zapasowe kliknięcie w płaszczyznę
+                const planeIntersects = raycaster.intersectObject(clickPlane);
+                if (planeIntersects.length > 0) {
+                    const pointOnPlane = planeIntersects[0].point;
+                    pointOnPlane.z = 25.0 - (Math.hypot(pointOnPlane.x, pointOnPlane.y) * 0.2);
+                    triggerImpact(pointOnPlane);
+                }
+            }
+        });
+
+        function triggerImpact(point) {
+            const time = performance.now() / 1000;
+
+            // Obsługa uniformów obu typów tarcz
+            const idx1 = shieldUniforms.uImpactIndex.value;
+            shieldUniforms.uImpacts.value[idx1].set(point.x, point.y, point.z, time);
+            shieldUniforms.uImpactIndex.value = (idx1 + 1) % 10;
+
+            const idx2 = plasmaUniforms.uImpactIndex.value;
+            plasmaUniforms.uImpacts.value[idx2].set(point.x, point.y, point.z, time);
+            plasmaUniforms.uImpactIndex.value = (idx2 + 1) % 10;
+        }
+
+        // --- UI LOGIC ---
+        document.querySelectorAll('.shield-option').forEach(el => {
+            el.addEventListener('click', (e) => {
+                // Usuń active z innych
+                document.querySelectorAll('.shield-option').forEach(opt => opt.classList.remove('active'));
+                // Dodaj do klikniętego
+                el.classList.add('active');
+
+                const type = el.getAttribute('data-type');
+                if (type === 'type1') {
+                    shieldMesh.material = shieldMatType1;
+                } else if (type === 'type2') {
+                    shieldMesh.material = shieldMatType2;
+                }
+            });
+        });
+
+        // Gwiazdy w tle (prosty system cząsteczek)
+        const starsGeo = new THREE.BufferGeometry();
+        const starsPos = [];
+        for (let i = 0; i < 1000; i++) {
+            starsPos.push((Math.random() - 0.5) * 1000);
+            starsPos.push((Math.random() - 0.5) * 1000);
+            starsPos.push((Math.random() - 0.5) * 1000 - 200); // Głębiej w tle
+        }
+        starsGeo.setAttribute('position', new THREE.Float32BufferAttribute(starsPos, 3));
+        const starsMat = new THREE.PointsMaterial({ color: 0x88ccff, size: 1.5, transparent: true, opacity: 0.6 });
+        const stars = new THREE.Points(starsGeo, starsMat);
+        scene.add(stars);
+
+        // --- ANIMACJA ---
+        window.addEventListener('resize', () => {
+            const aspect = window.innerWidth / window.innerHeight;
+            camera.left = -frustumSize * aspect / 2;
+            camera.right = frustumSize * aspect / 2;
+            camera.top = frustumSize / 2;
+            camera.bottom = -frustumSize / 2;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const dt = clock.getDelta();
+            const time = clock.getElapsedTime();
+
+            shieldUniforms.uTime.value = time;
+            plasmaUniforms.uTime.value = time;
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        animate();
+    </script>
+</body>
+
+</html>

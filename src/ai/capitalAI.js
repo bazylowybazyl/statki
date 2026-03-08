@@ -15,7 +15,7 @@ function applyCapitalAutopilot(npc, thrustNorm, strafeNorm, desiredAngle, boostT
   const s = Math.sin(npc.angle || 0);
 
   const sep = window.applySeparationForces?.(npc, 0, 0) || { ax: 0, ay: 0 };
-  
+
   const ax = sep.ax * 1.5 + (c * forwardAccel - s * sideAccel);
   const ay = sep.ay * 1.5 + (s * forwardAccel + c * sideAccel);
 
@@ -24,12 +24,13 @@ function applyCapitalAutopilot(npc, thrustNorm, strafeNorm, desiredAngle, boostT
 
   const maxV = (npc.maxSpeed || 200) * speedBoost;
   const v = Math.hypot(npc.vx, npc.vy);
-  
+
   // POPRAWKA: Zamiast "zamrażać" prędkość w miejscu (co blokowało fizykę i odrzut!),
   // stosujemy miękkie, aerodynamiczne hamowanie. Pozwala to na lot w korkociągu po zderzeniu!
   if (v > maxV) {
-    npc.vx *= 0.96;
-    npc.vy *= 0.96;
+    const dampFactor = 0.96 + Math.min(0.03, (npc.mass || 0) / 5000000 * 0.03);
+    npc.vx *= dampFactor;
+    npc.vy *= dampFactor;
   }
 }
 
@@ -39,7 +40,7 @@ function applyCapitalAutopilot(npc, thrustNorm, strafeNorm, desiredAngle, boostT
 
 function initAutonomousWeapons(npc) {
   if (npc.autoWeapons !== undefined && npc._weaponsInit) return;
-  
+
   npc._weaponsInit = true;
   npc.autoWeapons = [];
 
@@ -54,13 +55,13 @@ function initAutonomousWeapons(npc) {
         const localY = loadout.hp?.y || loadout.hp?.pos?.y || 0;
         let baseAngle = loadout.hp?.rot || loadout.hp?.pos?.rot;
         if (typeof baseAngle !== 'number') {
-            if (localY > 15) baseAngle = Math.PI / 2; // Prawa burta - patrzy w prawo
-            else if (localY < -15) baseAngle = -Math.PI / 2; // Lewa burta - patrzy w lewo
-            else baseAngle = 0; // Środek - patrzy w przód
+          if (localY > 15) baseAngle = Math.PI / 2; // Prawa burta - patrzy w prawo
+          else if (localY < -15) baseAngle = -Math.PI / 2; // Lewa burta - patrzy w lewo
+          else baseAngle = 0; // Środek - patrzy w przód
         }
 
         // 2. NAPRAWA AMUNICJI (null oznacza nieskończoność)
-        let startAmmo = null; 
+        let startAmmo = null;
         if (loadout.hp?.maxAmmo != null) startAmmo = loadout.hp.maxAmmo;
         else if (def.ammo != null) startAmmo = def.ammo;
 
@@ -68,9 +69,9 @@ function initAutonomousWeapons(npc) {
           id: def.id,
           def: def,
           type: def.category,
-          cd: Math.random() * 2, 
+          cd: Math.random() * 2,
           ammo: startAmmo,
-          hpOffset: loadout.hp, 
+          hpOffset: loadout.hp,
           mountAngle: baseAngle,
           arc: arc,
           prefers: prefers
@@ -88,7 +89,7 @@ function initAutonomousWeapons(npc) {
 function getTargetScoreForWeapon(weapon, target, isRocket = false) {
   if (!target) return -1;
   const kind = isRocket ? 'rocket' : (window.getUnitKind?.(target) || 'other');
-  
+
   const prefIndex = weapon.prefers.indexOf(kind);
   let score = 0;
 
@@ -106,7 +107,7 @@ function processAutonomousWeapons(npc, dt) {
   if (!npc.autoWeapons || npc.autoWeapons.length === 0) return;
 
   const npcs = window.npcs || [];
-  const enemies = npc.friendly 
+  const enemies = npc.friendly
     ? npcs.filter(n => !n.dead && n.isPirate)
     : [window.ship, ...npcs.filter(n => !n.dead && n.friendly)].filter(Boolean);
 
@@ -120,13 +121,13 @@ function processAutonomousWeapons(npc, dt) {
     if (weapon.visualAngle === undefined) weapon.visualAngle = restAngle;
 
     weapon.cd -= dt;
-    
+
     // Zabezpieczenie przed pustym magazynkiem (jeśli amunicja nie jest Infinity)
     if (weapon.ammo !== null && weapon.ammo <= 0) {
-        // Wróć działem na pozycję zerową i ignoruj strzelanie
-        let diff = window.wrapAngle(restAngle - weapon.visualAngle);
-        weapon.visualAngle = window.wrapAngle(weapon.visualAngle + diff * 3 * dt);
-        continue;
+      // Wróć działem na pozycję zerową i ignoruj strzelanie
+      let diff = window.wrapAngle(restAngle - weapon.visualAngle);
+      weapon.visualAngle = window.wrapAngle(weapon.visualAngle + diff * 3 * dt);
+      continue;
     }
 
     const range = weapon.def.baseRange || 1000;
@@ -160,7 +161,7 @@ function processAutonomousWeapons(npc, dt) {
 
       const absTargetAngle = Math.atan2(ty - npc.y, tx - npc.x);
       // Ograniczenie kąta sprawdza względem kąta montażu (żeby działa z lewej burty nie strzelały w prawo)
-      const gunLookAngle = restAngle; 
+      const gunLookAngle = restAngle;
       const angleDiff = Math.abs(window.wrapAngle(absTargetAngle - gunLookAngle));
 
       if (angleDiff > weapon.arc) continue;
@@ -177,12 +178,12 @@ function processAutonomousWeapons(npc, dt) {
     if (bestTarget) {
       const tx = bestTarget.pos ? bestTarget.pos.x : bestTarget.x;
       const ty = bestTarget.pos ? bestTarget.pos.y : bestTarget.y;
-      
+
       // Wyprzedzenie celu, żeby AI strzelało celniej
       const speed = weapon.def.baseSpeed || 1000;
-      const lead = window.getLeadAim ? window.getLeadAim({x: npc.x, y: npc.y}, bestTarget, speed) : {x: tx, y: ty};
+      const lead = window.getLeadAim ? window.getLeadAim({ x: npc.x, y: npc.y }, bestTarget, speed) : { x: tx, y: ty };
       const aimAngle = Math.atan2(lead.y - npc.y, lead.x - npc.x);
-      
+
       // Obrót lufy w stronę celu (płynny)
       let diff = window.wrapAngle(aimAngle - weapon.visualAngle);
       weapon.visualAngle = window.wrapAngle(weapon.visualAngle + diff * 8 * dt);
@@ -190,10 +191,10 @@ function processAutonomousWeapons(npc, dt) {
       if (weapon.cd <= 0) {
         if (window.spawnBulletAdapter) {
           // Jako że wieżyczka się celuje, podajemy do strzału jej ZAKTUALIZOWANY KĄT
-          window.spawnBulletAdapter(npc, bestTarget, weapon.def, { 
-              type: weapon.type, 
-              hp: weapon.hpOffset,
-              angleOverride: weapon.visualAngle 
+          window.spawnBulletAdapter(npc, bestTarget, weapon.def, {
+            type: weapon.type,
+            hp: weapon.hpOffset,
+            angleOverride: weapon.visualAngle
           });
         }
         weapon.cd = weapon.def.cooldown || 2.0;
@@ -231,11 +232,13 @@ export function aiFrigate(sim, npc, dt) {
     const dy = ty - npc.y;
     targetAng = Math.atan2(dy, dx);
     const dist = Math.hypot(dx, dy);
-    
-    const idealRange = npc.preferredRange || 750;
+
+    const selfR = npc.radius || 50;
+    const targetR = target.radius || 50;
+    const idealRange = (npc.preferredRange || 750) + selfR + targetR;
     const angleDiff = Math.abs(window.wrapAngle(targetAng - (npc.angle || 0)));
 
-    if (dist < idealRange * 0.85) thrustNorm = -0.7; 
+    if (dist < idealRange * 0.85) thrustNorm = -0.7;
     else if (dist > idealRange * 1.15) {
       if (angleDiff < 0.9) thrustNorm = 0.9;
     } else {
@@ -251,7 +254,7 @@ export function aiFrigate(sim, npc, dt) {
     const px = npc.home.x + Math.cos(npc.patrolAngle) * patrolRadius;
     const py = npc.home.y + Math.sin(npc.patrolAngle) * patrolRadius;
     targetAng = Math.atan2(py - npc.y, px - npc.x);
-    if (Math.abs(window.wrapAngle(targetAng - (npc.angle||0))) < 0.8) thrustNorm = 0.4;
+    if (Math.abs(window.wrapAngle(targetAng - (npc.angle || 0))) < 0.8) thrustNorm = 0.4;
   }
 
   applyCapitalAutopilot(npc, thrustNorm, strafeNorm, targetAng, 0, dt);
@@ -282,9 +285,11 @@ export function aiDestroyer(sim, npc, dt) {
     targetAng = Math.atan2(dy, dx);
     const dist = Math.hypot(dx, dy);
 
-    const range = 800; 
+    const selfR = npc.radius || 50;
+    const targetR = target.radius || 50;
+    const range = 800 + selfR + targetR;
     const wantRange = range * 0.8;
-    const angleDiff = Math.abs(window.wrapAngle(targetAng - (npc.angle||0)));
+    const angleDiff = Math.abs(window.wrapAngle(targetAng - (npc.angle || 0)));
 
     if (dist > range * 0.95 && npc.boostCd <= 0 && angleDiff < 0.4) {
       npc.boostT = npc.boostDur || 2.5;
@@ -292,9 +297,9 @@ export function aiDestroyer(sim, npc, dt) {
     }
     if (dist < wantRange * 0.9) npc.boostT = 0;
 
-    if (dist < wantRange * 0.95) thrustNorm = -1.0; 
+    if (dist < wantRange * 0.95) thrustNorm = -1.0;
     else if (dist > wantRange * 1.05) {
-      if (angleDiff < 0.7) thrustNorm = 1.0; 
+      if (angleDiff < 0.7) thrustNorm = 1.0;
     }
 
     if (dist < range * 1.1) {
@@ -329,8 +334,10 @@ export function aiBattleship(sim, npc, dt) {
     const dist = Math.hypot(dx, dy);
     const toAng = Math.atan2(dy, dx);
 
-    const idealDist = 600; 
-    
+    const selfR = npc.radius || 50;
+    const targetR = target.radius || 50;
+    const idealDist = 600 + selfR + targetR;
+
     const rightAng = toAng + Math.PI / 2;
     const leftAng = toAng - Math.PI / 2;
 
@@ -339,15 +346,15 @@ export function aiBattleship(sim, npc, dt) {
     const diffRight = Math.abs(window.wrapAngle(rightAng - currentAng));
     const diffLeft = Math.abs(window.wrapAngle(leftAng - currentAng));
 
-    if (dist < 750 && (Math.min(diffRight, diffLeft) + 0.2 < diffNose)) {
+    if (dist < (750 + selfR + targetR) && (Math.min(diffRight, diffLeft) + 0.2 < diffNose)) {
       targetAng = (diffRight <= diffLeft) ? rightAng : leftAng;
-      
-      thrustNorm = 0; 
-      if (dist < idealDist * 0.8) strafeNorm = (diffRight <= diffLeft) ? 0.3 : -0.3; 
-      else if (dist > idealDist * 1.1) strafeNorm = (diffRight <= diffLeft) ? -0.3 : 0.3; 
+
+      thrustNorm = 0;
+      if (dist < idealDist * 0.8) strafeNorm = (diffRight <= diffLeft) ? 0.3 : -0.3;
+      else if (dist > idealDist * 1.1) strafeNorm = (diffRight <= diffLeft) ? -0.3 : 0.3;
     } else {
       targetAng = toAng;
-      if (dist < idealDist * 0.9) thrustNorm = -0.6; 
+      if (dist < idealDist * 0.9) thrustNorm = -0.6;
       else if (dist > idealDist * 1.15) {
         if (diffNose < 0.8) thrustNorm = 1.0;
       } else {

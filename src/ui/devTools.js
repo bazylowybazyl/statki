@@ -162,6 +162,14 @@ const HTML = `
   </div>
 </div>
 <div class="group">
+  <div class="row"><strong>Ekonomia</strong></div>
+  <div class="dt-row" style="align-items:center;">
+    <input id="dt-add-credits-amount" type="number" min="1" step="100" value="1000" style="flex:1; background:#060e1c; color:#fff; border:1px solid #2a3a5a; padding:4px; border-radius:4px; text-align:right;">
+    <button id="dt-add-credits-btn" class="dt-btn" style="white-space:nowrap;">Add credits</button>
+  </div>
+  <div class="small muted">Dodaje wskazana ilosc kredytow graczowi.</div>
+</div>
+<div class="group">
   <div class="row"><strong>Konfiguracja</strong></div>
   <div class="row"><button id="btnCopy">Kopiuj aktualna konfiguracje</button><button id="btnReset" style="margin-left:auto">Reset</button></div>
   <div class="row"><textarea id="cfgOut" readonly></textarea></div>
@@ -218,6 +226,7 @@ function wireDevToolsLogic() {
     perfFg: 'dt-perf-fg', perfMsaa: 'dt-perf-msaa',
     perfPresetBase: 'dt-perf-preset-base', perfPresetFast: 'dt-perf-preset-fast', perfPresetUltra: 'dt-perf-preset-ultra',
     renderDbgStart: 'dt-renderdbg-start', renderDbgStop: 'dt-renderdbg-stop',
+    addCreditsAmount: 'dt-add-credits-amount', addCreditsBtn: 'dt-add-credits-btn',
     hudCenterY: 'dt-hud-center-y', hudCenterYNum: 'dt-hud-center-y-num', hudCenterYVal: 'dt-hud-center-y-val',
     hudHexY: 'dt-hud-hex-y', hudHexYNum: 'dt-hud-hex-y-num', hudHexYVal: 'dt-hud-hex-y-val',
     hudShieldY: 'dt-hud-shield-y', hudShieldYNum: 'dt-hud-shield-y-num', hudShieldYVal: 'dt-hud-shield-y-val',
@@ -753,6 +762,30 @@ function wireDevToolsLogic() {
       ui.btnDestructorMassPanel.addEventListener('click', () => {
         if (window.__destructorMassPanel && typeof window.__destructorMassPanel.toggle === 'function') {
           window.__destructorMassPanel.toggle();
+        }
+      });
+    }
+
+    if (ui.addCreditsBtn && ui.addCreditsAmount) {
+      ui.addCreditsBtn.addEventListener('click', () => {
+        const amountRaw = Number(ui.addCreditsAmount.value);
+        const amount = Math.max(0, Math.floor(Number.isFinite(amountRaw) ? amountRaw : 0));
+        if (amount <= 0) return;
+        ui.addCreditsAmount.value = String(amount);
+
+        const addCreditsFn =
+          (window.DevEconomy && typeof window.DevEconomy.addCredits === 'function')
+            ? window.DevEconomy.addCredits
+            : (typeof window.DevAddCredits === 'function' ? window.DevAddCredits : null);
+        if (!addCreditsFn) {
+          console.warn('[DevTools] Brak API dodawania kredytow (DevEconomy.addCredits).');
+          return;
+        }
+
+        const nextCredits = Number(addCreditsFn(amount));
+        if (Number.isFinite(nextCredits)) {
+          if (typeof window.toast === 'function') window.toast(`Dodano ${amount} CR`);
+          console.log(`[DevTools] Dodano ${amount} CR -> saldo ${Math.round(nextCredits)} CR`);
         }
       });
     }

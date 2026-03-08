@@ -38,13 +38,13 @@ function tryFireFighter(npc, target) {
     if (Math.random() < 0.1) {
       const mslDef = MASTER_WEAPONS[npc.msl || 'npc_msl_af'];
       if (!mslDef) return;
-      
+
       // Odpal rakiete!
       window.spawnBulletAdapter(npc, target, mslDef, { type: 'rocket' });
       npc.mslAmmo--;
       npc.mslCD = 5.0;
 
-      if(window.spawnParticle) {
+      if (window.spawnParticle) {
         window.spawnParticle({ x: npc.x, y: npc.y }, { x: 0, y: 0 }, 0.5, '#ffffff', 5, true);
       }
     }
@@ -126,10 +126,11 @@ export function runAdvancedFighterAI(npc, dt) {
       }
     }
     else {
+      const targetR = target.radius || 50;
       if (npc.state === 'bombing') {
-        if (distToTarget > 2500) npc.state = 'engage_formation';
+        if (distToTarget > 2500 + targetR) npc.state = 'engage_formation';
       } else {
-        if (distToTarget < 1500) npc.state = 'bombing';
+        if (distToTarget < 1500 + targetR) npc.state = 'bombing';
         else npc.state = 'engage_formation';
       }
     }
@@ -215,11 +216,12 @@ export function runAdvancedFighterAI(npc, dt) {
       npc.bombardSide = 1;
       npc.lastTargetId = target.id;
     }
-    const lineLen = 1400;
+    const targetR = target.radius || 50;
+    const lineLen = 1400 + targetR;
     const wayX = tx + npc.bombardVec.x * lineLen * npc.bombardSide;
     const wayY = ty + npc.bombardVec.y * lineLen * npc.bombardSide;
 
-    if (Math.hypot(wayX - npc.x, wayY - npc.y) < 250) npc.bombardSide *= -1;
+    if (Math.hypot(wayX - npc.x, wayY - npc.y) < 250 + targetR) npc.bombardSide *= -1;
 
     const dx = wayX - npc.x;
     const dy = wayY - npc.y;

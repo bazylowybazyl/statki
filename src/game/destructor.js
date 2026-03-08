@@ -11,7 +11,7 @@ import { DestructorGpuSoftBody } from './destructorGpuSoftBody.js';
 export const DESTRUCTOR_CONFIG = {
 
   // ── Siatka hexagonalna ──
-  gridDivisions: 9,            // Promień hexagonu (px). HEX_SPACING = 13.5, HEX_HEIGHT = 15.6
+  gridDivisions: 10,            // Promień hexagonu (px). HEX_SPACING = 13.5, HEX_HEIGHT = 15.6
   shardMass: 10.0,             // Masa jednego sharda. Masa wraku = shards × shardMass
   visualRotationOffset: 0,     // Stały offset kąta renderowania siatki (rad)
 
@@ -21,15 +21,15 @@ export const DESTRUCTOR_CONFIG = {
   inflictedDamageMult: 1.0,    // Mnożnik zadawanych obrażeń (legacy)
 
   // ── Deformacja i rwanie materiału ──
-  maxDeform: 100.0,            // Max deformacja (px) — GPU zabija sharda powyżej. 220 = ~16 hex spacings
-  tearThreshold: 80.0,        // Rwanie od rozciągnięcia sąsiadów — GPU kill gdy stretch > próg. 150 = ~11 hex spacings
-  yieldPoint: 100.0,            // Plastyczność — powyżej deformacja "bakes" do gridX/Y (trwała). Sprężyny × 0.1
-  deformMul: 0.01,              // Mnożnik siły deformacji od broni (distributeStructuralDamage)
+  maxDeform: 220.0,            // Max deformacja (px)
+  tearThreshold: 150.0,        // Rwanie od rozciągnięcia sąsiadów
+  yieldPoint: 200.0,           // Punkt wejścia w trwałe odkształcenie
+  deformMul: 0.6,              // Mnożnik siły deformacji od impaktu/broni
   bendingRadius: 30.0,        // Promień wpływu uderzenia (px) z gładką krzywą Hermite'a
 
   // ── Soft Body (sprężyny GPU + CPU) ──
-  softBodyTension: 3.5,        // Stiffness sprężyn → k ≈ 0.97. Wyżej = szybsza propagacja fali
-  gpuPropagationDamping: 0.55, // Tłumienie velocity fali. vel × 0.55 per klatkę@60fps. Po 5kl: ~5%
+  softBodyTension: 0.15,       // Propagacja k
+  gpuPropagationDamping: 0.92, // Tłumienie propagacji
   recoverSpeed: 1.0,           // Prędkość powrotu targetDeformation do 0 (repair)
   repairRate: 100,             // Regeneracja HP sharda per sekundę
   visualLerpSpeed: 5.0,        // Lerp wizualny deformation → targetDeformation
@@ -41,9 +41,9 @@ export const DESTRUCTOR_CONFIG = {
 
   // ── Fizyka kolizji (rigid body) ──
   restitution: 0.05,                  // Sprężystość odbicia (0.05 = prawie brak). Przy crush → 0
-  crashApproachSpeedThreshold: 500.0, // Prędkość zbliżania do aktywacji crush (niszczenie hexów)
+  crashApproachSpeedThreshold: 200.0, // Prędkość zbliżania do aktywacji crush (niszczenie hexów)
   crushPenetrationMin: 0.30,          // Min. penetracja do startu crush
-  crushImpulseScale: 0.25,            // Skala impulsu niszczącego hexsy
+  crushImpulseScale: 0.45,            // Skala impulsu niszczącego hexsy
   shearK: 0.06,                       // Ścinanie tangentne przy otarciu (szlifowanie burt)
   friction: 0.99,                     // Tarcie odłamków (debris). vel × 0.99/klatkę
 
@@ -77,9 +77,175 @@ const HEX_SPACING = HEX_R * 1.5;
 
 const HIT_RAD = HEX_R * 1.3;
 
-const HIT_RAD_SQ = HIT_RAD * HIT_RAD;
-
 const BENDING_RAD_SQ = DESTRUCTOR_CONFIG.bendingRadius * DESTRUCTOR_CONFIG.bendingRadius;
+
+const HEX_MASK_SAMPLE_OFFSETS = [
+  [0.00, 0.00, 2.00],
+  [-0.52, 0.00, 1.00],
+  [0.52, 0.00, 1.00],
+  [-0.26, -0.44, 0.90],
+  [0.26, -0.44, 0.90],
+  [-0.26, 0.44, 0.90],
+  [0.26, 0.44, 0.90],
+  [0.00, -0.62, 0.65],
+  [0.00, 0.62, 0.65]
+];
+
+const HEX_MASK_VERTEX_DIRS = [
+  [1.0, 0.0],
+  [0.5, 0.8660254038],
+  [-0.5, 0.8660254038],
+  [-1.0, 0.0],
+  [-0.5, -0.8660254038],
+  [0.5, -0.8660254038]
+];
+
+const HEX_MASK_RAY_STEPS = [0.18, 0.34, 0.52, 0.70, 0.88, 1.04];
+
+function sampleHexMaskProfile(alphaData, width, height, centerX, centerY, radius, alphaThreshold, sampleThreshold) {
+
+  let centerAlpha = 0;
+
+  let maxAlpha = 0;
+
+  let hitWeight = 0;
+
+  let totalWeight = 0;
+
+  const sampleRadius = radius * 0.92;
+
+  for (let i = 0; i < HEX_MASK_SAMPLE_OFFSETS.length; i++) {
+
+    const sample = HEX_MASK_SAMPLE_OFFSETS[i];
+
+    const px = Math.max(0, Math.min(width - 1, Math.round(centerX + sample[0] * sampleRadius)));
+
+    const py = Math.max(0, Math.min(height - 1, Math.round(centerY + sample[1] * sampleRadius)));
+
+    const alpha = alphaData[(py * width + px) * 4 + 3];
+
+    const weight = sample[2];
+
+    if (i === 0) centerAlpha = alpha;
+
+    if (alpha > maxAlpha) maxAlpha = alpha;
+
+    totalWeight += weight;
+
+    if (alpha > sampleThreshold) hitWeight += weight;
+
+  }
+
+  const coverage = totalWeight > 0 ? (hitWeight / totalWeight) : 0;
+
+  const edgeMask = new Array(6);
+
+  const rayThreshold = Math.max(4, alphaThreshold * 0.45);
+
+
+
+  for (let i = 0; i < 6; i++) {
+
+    const dir = HEX_MASK_VERTEX_DIRS[i];
+
+    let support = 0.0;
+
+    for (let s = 0; s < HEX_MASK_RAY_STEPS.length; s++) {
+
+      const step = HEX_MASK_RAY_STEPS[s];
+
+      const px = Math.max(0, Math.min(width - 1, Math.round(centerX + dir[0] * radius * step)));
+
+      const py = Math.max(0, Math.min(height - 1, Math.round(centerY + dir[1] * radius * step)));
+
+      const alpha = alphaData[(py * width + px) * 4 + 3];
+
+      if (alpha > sampleThreshold) support = step;
+
+      else if (alpha > rayThreshold) support = Math.max(support, step * 0.82);
+
+    }
+
+    const clampedSupport = Math.max(0.16, Math.min(1.0, support));
+
+    edgeMask[i] = clampedSupport;
+
+  }
+
+
+
+  for (let i = 0; i < 6; i++) {
+
+    const prev = edgeMask[(i + 5) % 6];
+
+    const cur = edgeMask[i];
+
+    const next = edgeMask[(i + 1) % 6];
+
+    edgeMask[i] = Math.max(cur, Math.min(1.0, (prev + cur * 2 + next) * 0.25));
+
+  }
+
+
+
+  let smoothedMin = 1;
+
+  let smoothedSum = 0;
+
+  for (let i = 0; i < 6; i++) {
+
+    const v = edgeMask[i];
+
+    smoothedSum += v;
+
+    if (v < smoothedMin) smoothedMin = v;
+
+  }
+
+
+
+  const radialCoverage = smoothedSum / 6;
+
+  const finalCoverage = Math.max(coverage, Math.min(1, radialCoverage * 0.92));
+
+  const keep = centerAlpha > alphaThreshold || finalCoverage >= 0.24 || (maxAlpha > alphaThreshold && finalCoverage >= 0.11);
+
+  return {
+    keep,
+    coverage: finalCoverage,
+    radialCoverage,
+    edgeMask: smoothedMin >= 0.985 ? null : edgeMask
+  };
+
+}
+
+function getShardMass(shard) {
+
+  const mass = Number(shard?.mass);
+
+  return Number.isFinite(mass) && mass > 0 ? mass : DESTRUCTOR_CONFIG.shardMass;
+
+}
+
+function sumShardMass(shards) {
+
+  if (!Array.isArray(shards) || shards.length === 0) return 0;
+
+  let total = 0;
+
+  for (let i = 0; i < shards.length; i++) total += getShardMass(shards[i]);
+
+  return total;
+
+}
+
+function getShardHitRadius(shard) {
+
+  const hitRadius = Number(shard?.hitRadius);
+
+  return Number.isFinite(hitRadius) && hitRadius > 0 ? hitRadius : HIT_RAD;
+
+}
 
 
 
@@ -230,6 +396,26 @@ function markGridMeshDirtyByShard(grid, shard) {
   }
 
   markGridMeshDirtyRange(grid, idx | 0, idx | 0);
+
+}
+
+function clampCrushVector(fx, fy, ratio, mag, maxCrushLimit, out) {
+
+  const limit = maxCrushLimit * (0.15 + ratio * 1.0);
+
+  if (mag > limit) {
+
+    out.x = (fx / mag) * limit;
+
+    out.y = (fy / mag) * limit;
+
+  } else {
+
+    out.x = fx;
+
+    out.y = fy;
+
+  }
 
 }
 
@@ -417,6 +603,8 @@ function circleOverlapsEntityRect(worldX, worldY, worldRadius, entity, extraMarg
 
 
 function getEntitySpriteRotation(entity) {
+
+  if (entity?.isPlayer) return 0;
 
   const r =
 
@@ -734,6 +922,14 @@ class HexShard {
 
     this.hp = this.maxHp;
 
+    this.coverage = 1;
+
+    this.edgeMask = null;
+
+    this.mass = DESTRUCTOR_CONFIG.shardMass;
+
+    this.hitRadius = HIT_RAD;
+
     this.deformation = { x: 0, y: 0 };
 
     this.targetDeformation = { x: 0, y: 0 };
@@ -866,9 +1062,9 @@ class HexShard {
 
     // Weapon velocity (distributeStructuralDamage) stays on __velX and gets damped by GPU.
 
-    this.__collVelX = (Number(this.__collVelX) || 0) + vecX * 1.5 * waveMult;
+    this.__collVelX = (this.__collVelX || 0) + vecX * 1.5 * waveMult;
 
-    this.__collVelY = (Number(this.__collVelY) || 0) + vecY * 1.5 * waveMult;
+    this.__collVelY = (this.__collVelY || 0) + vecY * 1.5 * waveMult;
 
 
 
@@ -954,7 +1150,7 @@ class HexShard {
 
     if (parentEntity.mass) {
 
-      parentEntity.mass -= DESTRUCTOR_CONFIG.shardMass;
+      parentEntity.mass -= getShardMass(this);
 
       if (parentEntity.mass < 10) parentEntity.mass = 10;
 
@@ -1106,21 +1302,31 @@ class HexShard {
 
     ctx.beginPath();
 
-    const overlap = 1.08;
+    this._traceHexPath(ctx, 0, 0, 1.08);
 
-    let fx = this.verts[0].x + this.frays[0].x;
+  }
 
-    let fy = this.verts[0].y + this.frays[0].y;
+  _traceHexPath(ctx, originX, originY, overlap) {
 
-    ctx.moveTo(fx * overlap, fy * overlap);
+    const mask = this.edgeMask;
+
+    let radialScale = mask ? mask[0] : 1;
+
+    let fx = this.verts[0].x * radialScale + this.frays[0].x * radialScale;
+
+    let fy = this.verts[0].y * radialScale + this.frays[0].y * radialScale;
+
+    ctx.moveTo(originX + fx * overlap, originY + fy * overlap);
 
     for (let i = 1; i < 6; i++) {
 
-      fx = this.verts[i].x + this.frays[i].x;
+      radialScale = mask ? mask[i] : 1;
 
-      fy = this.verts[i].y + this.frays[i].y;
+      fx = this.verts[i].x * radialScale + this.frays[i].x * radialScale;
 
-      ctx.lineTo(fx * overlap, fy * overlap);
+      fy = this.verts[i].y * radialScale + this.frays[i].y * radialScale;
+
+      ctx.lineTo(originX + fx * overlap, originY + fy * overlap);
 
     }
 
@@ -1404,6 +1610,10 @@ export const DestructorSystem = {
 
   _crushStampB: 0,
 
+  _destroyVelA: { x: 0, y: 0 },
+
+  _destroyVelB: { x: 0, y: 0 },
+
 
 
   _prepareBroadphase(entities) {
@@ -1650,6 +1860,100 @@ export const DestructorSystem = {
 
   },
 
+  _queueShardErase(entity, shard) {
+
+    const grid = entity?.hexGrid;
+
+    if (!grid || !shard) return;
+
+    let queue = grid._pendingEraseQueue;
+
+    if (!Array.isArray(queue)) {
+
+      queue = [];
+
+      grid._pendingEraseQueue = queue;
+
+    }
+
+    if (shard.__eraseQueued) return;
+
+    shard.__eraseQueued = true;
+
+    queue.push(shard);
+
+  },
+
+  _flushPendingShardErases(entities) {
+
+    const list = Array.isArray(entities) ? entities : [];
+
+    for (let i = 0; i < list.length; i++) {
+
+      const entity = list[i];
+
+      const grid = entity?.hexGrid;
+
+      const queue = grid?._pendingEraseQueue;
+
+      if (!grid || !Array.isArray(queue) || queue.length === 0) continue;
+
+      const ctx = grid.cacheCtx;
+
+      if (ctx) {
+
+        ctx.save();
+
+        ctx.globalCompositeOperation = 'destination-out';
+
+        ctx.beginPath();
+
+        for (let q = 0; q < queue.length; q++) {
+
+          const shard = queue[q];
+
+          if (!shard) continue;
+
+          const x = shard.gridX + shard.deformation.x;
+
+          const y = shard.gridY + shard.deformation.y;
+
+          shard._traceHexPath(ctx, x, y, 1.12);
+
+          shard.__eraseQueued = false;
+
+          queue[q] = null;
+
+        }
+
+        ctx.fill();
+
+        ctx.restore();
+
+        ctx.globalCompositeOperation = 'source-over';
+
+      } else {
+
+        for (let q = 0; q < queue.length; q++) {
+
+          const shard = queue[q];
+
+          if (shard) shard.__eraseQueued = false;
+
+          queue[q] = null;
+
+        }
+
+      }
+
+      queue.length = 0;
+
+      grid.gpuTextureNeedsUpdate = true;
+
+    }
+
+  },
+
 
 
   update(dt, entities) {
@@ -1715,6 +2019,8 @@ export const DestructorSystem = {
     const splitInterval = Math.max(1, DESTRUCTOR_CONFIG.splitCheckInterval | 0);
 
     if (this._tick % splitInterval === 0 && this.splitQueue.length > 0) this.processSplits(list);
+
+    this._flushPendingShardErases(list);
 
     const tUpdateEnd = nowMs();
 
@@ -1856,171 +2162,89 @@ export const DestructorSystem = {
 
     try {
 
-    const tension = DESTRUCTOR_CONFIG.softBodyTension;
+      const tension = DESTRUCTOR_CONFIG.softBodyTension;
 
-    if (tension <= 0) return;
+      if (tension <= 0) return;
 
-    const k = 1 - Math.exp(-tension * dt * 60);
-
-
-
-    // Opcje dla asynchronicznego GPU
-
-    const useGpu = (DESTRUCTOR_CONFIG.gpuSoftBody | 0) === 1;
-
-    const gpuMin = DESTRUCTOR_CONFIG.gpuSoftBodyMinShards || 64;
+      const k = 1 - Math.exp(-tension * dt * 60);
 
 
 
-    for (const e of entities) {
+      // Opcje dla asynchronicznego GPU
 
-      const grid = e?.hexGrid;
+      const useGpu = (DESTRUCTOR_CONFIG.gpuSoftBody | 0) === 1;
 
-      if (!grid?.shards) continue;
-
-      if (grid.isSleeping && (Number(grid.wakeHoldFrames) || 0) <= 0) continue;
+      const gpuMin = DESTRUCTOR_CONFIG.gpuSoftBodyMinShards || 64;
 
 
 
-      // CPU load killer: skip CPU elasticity for ships handled asynchronously by GPU.
+      for (const e of entities) {
 
-      const shardCount = grid.shards.length;
+        const grid = e?.hexGrid;
 
-      if (useGpu && DestructorGpuSoftBody && DestructorGpuSoftBody.active && shardCount >= gpuMin) {
+        if (!grid?.shards) continue;
 
-        continue; // This ship is currently simulated asynchronously on GPU.
-
-      }
+        if (grid.isSleeping && (Number(grid.wakeHoldFrames) || 0) <= 0) continue;
 
 
 
-      if (e?.isRingSegment) continue; // Always skip rings in CPU elasticity loop
+        // CPU load killer: skip CPU elasticity for ships handled asynchronously by GPU.
 
-      // -------------------------------------------------------------
+        const shardCount = grid.shards.length;
 
+        if (useGpu && DestructorGpuSoftBody && DestructorGpuSoftBody.active && shardCount >= gpuMin) {
 
-
-      let changed = false;
-
-      let dirtyMin = Number.POSITIVE_INFINITY;
-
-      let dirtyMax = -1;
-
-      for (const s of grid.shards) {
-
-        if (!s.active || s.isDebris) continue;
-
-
-
-        // True plasticity baking: once yield is exceeded, commit part of the offset to base grid.
-
-        const yieldP = DESTRUCTOR_CONFIG.yieldPoint || 80;
-
-        const tdx = s.targetDeformation.x;
-
-        const tdy = s.targetDeformation.y;
-
-        const defLen = Math.sqrt(tdx * tdx + tdy * tdy);
-
-        if (defLen > yieldP) {
-
-          const excess = defLen - yieldP;
-
-          const ratio = excess / defLen;
-
-          const tx = s.targetDeformation.x * ratio;
-
-          const ty = s.targetDeformation.y * ratio;
-
-          s.gridX += tx;
-
-          s.gridY += ty;
-
-          s.targetDeformation.x -= tx;
-
-          s.targetDeformation.y -= ty;
-
-          changed = true;
-
-          const idxS = Number(s.__meshIndex);
-
-          if (Number.isFinite(idxS)) {
-
-            if (idxS < dirtyMin) dirtyMin = idxS;
-
-            if (idxS > dirtyMax) dirtyMax = idxS;
-
-          } else {
-
-            dirtyMin = 0;
-
-            dirtyMax = grid.shards.length - 1;
-
-          }
+          continue; // This ship is currently simulated asynchronously on GPU.
 
         }
 
-        // Keep CPU elasticity active even for tiny deformation magnitudes.
+
+
+        if (e?.isRingSegment) continue; // Always skip rings in CPU elasticity loop
+
+        // -------------------------------------------------------------
 
 
 
-        for (const n of s.neighbors) {
+        let changed = false;
 
-          if (!n) continue;
+        let dirtyMin = Number.POSITIVE_INFINITY;
 
-          if (!n.active || n.isDebris) continue;
+        let dirtyMax = -1;
 
-          // Prevent double-processing the same shard pair
+        for (const s of grid.shards) {
 
-          if (n.c < s.c || (n.c === s.c && n.r <= s.r)) continue;
-
-
-
-          const ax = s.targetDeformation.x;
-
-          const ay = s.targetDeformation.y;
-
-          const bx = n.targetDeformation.x;
-
-          const by = n.targetDeformation.y;
+          if (!s.active || s.isDebris) continue;
 
 
 
-          // DODANO: Zrywanie/oslabianie sprezyn przy poteznych wgnieceniach
+          // True plasticity baking: once yield is exceeded, commit part of the offset to base grid.
 
-          const defSq = ax * ax + ay * ay;
+          const yieldP = DESTRUCTOR_CONFIG.yieldPoint || 80;
 
-          const yieldSq = DESTRUCTOR_CONFIG.yieldPoint * DESTRUCTOR_CONFIG.yieldPoint;
+          const tdx = s.targetDeformation.x;
 
+          const tdy = s.targetDeformation.y;
 
+          const defLen = Math.sqrt(tdx * tdx + tdy * tdy);
 
-          let currentK = k;
+          if (defLen > yieldP) {
 
-          if (defSq > yieldSq) {
+            const excess = defLen - yieldP;
 
-            currentK = k * 0.1; // Odksztalcenie plastyczne (blacha sie wgniata i nie wraca!)
+            const ratio = excess / defLen;
 
-          }
+            const tx = s.targetDeformation.x * ratio;
 
+            const ty = s.targetDeformation.y * ratio;
 
+            s.gridX += tx;
 
-          const avgX = (ax + bx) * 0.5;
+            s.gridY += ty;
 
-          const avgY = (ay + by) * 0.5;
+            s.targetDeformation.x -= tx;
 
-
-
-          const dax = (avgX - ax) * currentK;
-
-          const day = (avgY - ay) * currentK;
-
-          const dbx = (avgX - bx) * currentK;
-
-          const dby = (avgY - by) * currentK;
-
-
-
-          if (Math.abs(dax) > 1e-5 || Math.abs(day) > 1e-5 || Math.abs(dbx) > 1e-5 || Math.abs(dby) > 1e-5) {
+            s.targetDeformation.y -= ty;
 
             changed = true;
 
@@ -2040,53 +2264,135 @@ export const DestructorSystem = {
 
             }
 
-            const idxN = Number(n.__meshIndex);
+          }
 
-            if (Number.isFinite(idxN)) {
+          // Keep CPU elasticity active even for tiny deformation magnitudes.
 
-              if (idxN < dirtyMin) dirtyMin = idxN;
 
-              if (idxN > dirtyMax) dirtyMax = idxN;
 
-            } else {
+          for (const n of s.neighbors) {
 
-              dirtyMin = 0;
+            if (!n) continue;
 
-              dirtyMax = grid.shards.length - 1;
+            if (!n.active || n.isDebris) continue;
+
+            // Prevent double-processing the same shard pair
+
+            if (n.c < s.c || (n.c === s.c && n.r <= s.r)) continue;
+
+
+
+            const ax = s.targetDeformation.x;
+
+            const ay = s.targetDeformation.y;
+
+            const bx = n.targetDeformation.x;
+
+            const by = n.targetDeformation.y;
+
+
+
+            // DODANO: Zrywanie/oslabianie sprezyn przy poteznych wgnieceniach
+
+            const defSq = ax * ax + ay * ay;
+
+            const yieldSq = DESTRUCTOR_CONFIG.yieldPoint * DESTRUCTOR_CONFIG.yieldPoint;
+
+
+
+            let currentK = k;
+
+            if (defSq > yieldSq) {
+
+              currentK = k * 0.1; // Odksztalcenie plastyczne (blacha sie wgniata i nie wraca!)
 
             }
 
+
+
+            const avgX = (ax + bx) * 0.5;
+
+            const avgY = (ay + by) * 0.5;
+
+
+
+            const dax = (avgX - ax) * currentK;
+
+            const day = (avgY - ay) * currentK;
+
+            const dbx = (avgX - bx) * currentK;
+
+            const dby = (avgY - by) * currentK;
+
+
+
+            if (Math.abs(dax) > 1e-5 || Math.abs(day) > 1e-5 || Math.abs(dbx) > 1e-5 || Math.abs(dby) > 1e-5) {
+
+              changed = true;
+
+              const idxS = Number(s.__meshIndex);
+
+              if (Number.isFinite(idxS)) {
+
+                if (idxS < dirtyMin) dirtyMin = idxS;
+
+                if (idxS > dirtyMax) dirtyMax = idxS;
+
+              } else {
+
+                dirtyMin = 0;
+
+                dirtyMax = grid.shards.length - 1;
+
+              }
+
+              const idxN = Number(n.__meshIndex);
+
+              if (Number.isFinite(idxN)) {
+
+                if (idxN < dirtyMin) dirtyMin = idxN;
+
+                if (idxN > dirtyMax) dirtyMax = idxN;
+
+              } else {
+
+                dirtyMin = 0;
+
+                dirtyMax = grid.shards.length - 1;
+
+              }
+
+            }
+
+
+
+            s.targetDeformation.x += dax;
+
+            s.targetDeformation.y += day;
+
+            n.targetDeformation.x += dbx;
+
+            n.targetDeformation.y += dby;
+
           }
 
+        }
 
 
-          s.targetDeformation.x += dax;
 
-          s.targetDeformation.y += day;
+        if (changed) {
 
-          n.targetDeformation.x += dbx;
+          if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) markGridMeshDirtyRange(grid, dirtyMin, dirtyMax);
 
-          n.targetDeformation.y += dby;
+          else markGridMeshDirtyAll(grid);
+
+          grid.isSleeping = false;
+
+          grid.sleepFrames = 0;
 
         }
 
       }
-
-
-
-      if (changed) {
-
-        if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) markGridMeshDirtyRange(grid, dirtyMin, dirtyMax);
-
-        else markGridMeshDirtyAll(grid);
-
-        grid.isSleeping = false;
-
-        grid.sleepFrames = 0;
-
-      }
-
-    }
 
     } finally {
 
@@ -2232,7 +2538,9 @@ export const DestructorSystem = {
 
       const d2 = (sx - gridX) ** 2 + (sy - gridY) ** 2;
 
-      if (d2 < HIT_RAD_SQ * 4 && d2 < bestD2) {
+      const hitRad = getShardHitRadius(shard) * 2;
+
+      if (d2 < hitRad * hitRad && d2 < bestD2) {
 
         bestD2 = d2;
 
@@ -2279,97 +2587,97 @@ export const DestructorSystem = {
 
     try {
 
-    const probe = this._probeImpactData(entity, worldX, worldY);
+      const probe = this._probeImpactData(entity, worldX, worldY);
 
-    if (!probe) return false;
+      if (!probe) return false;
 
-    const { hitShard, localX, localY, scale, c, s, cx, cy, pX, pY } = probe;
+      const { hitShard, localX, localY, scale, c, s, cx, cy, pX, pY } = probe;
 
 
 
-    if (damage <= 0) {
+      if (damage <= 0) {
 
-      if (opts?.wakeOnProbe === true) this.wakeHexEntity(entity, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
+        if (opts?.wakeOnProbe === true) this.wakeHexEntity(entity, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
+
+        return true;
+
+      }
+
+
+
+      let forceX = ((bulletVel?.x || 0) * c + (bulletVel?.y || 0) * s) / scale;
+
+      let forceY = (-(bulletVel?.x || 0) * s + (bulletVel?.y || 0) * c) / scale;
+
+      if (Math.sqrt(forceX * forceX + forceY * forceY) < 0.001) {
+
+        const fx = (hitShard.gridX - cx - pX) - localX;
+
+        const fy = (hitShard.gridY - cy - pY) - localY;
+
+        const fm = Math.sqrt(fx * fx + fy * fy) || 1;
+
+        forceX = (fx / fm) * Math.max(10, damage * 0.4);
+
+        forceY = (fy / fm) * Math.max(10, damage * 0.4);
+
+      }
+
+
+
+      const damageScale = Math.max(0.35, damage / 80);
+
+      markRingSegmentHot(entity, 1500, 15000);
+
+      this.wakeHexEntity(entity, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
+
+      const customRadius = opts?.radius || DESTRUCTOR_CONFIG.bendingRadius;
+
+      this.distributeStructuralDamage(
+
+        entity,
+
+        localX,
+
+        localY,
+
+        forceX * 0.05 * damageScale,
+
+        forceY * 0.05 * damageScale,
+
+        1.0,
+
+        customRadius
+
+      );
+
+
+
+      hitShard.hp -= Math.max(1, damage * 0.9);
+
+      const splitDamageThreshold = DESTRUCTOR_CONFIG.splitDamageThreshold ?? 200;
+
+      if (hitShard.hp <= 0 && !hitShard.isDebris) {
+
+        this.destroyShard(entity, hitShard, { x: getEntityVelX(entity), y: getEntityVelY(entity) });
+
+        if (!entity.noSplit && damage >= splitDamageThreshold) this.splitQueue.push(entity);
+
+      }
+
+
+
+      markGridMeshDirtyByShard(entity.hexGrid, hitShard);
+
+      if (!HEX_SHIPS_3D_ACTIVE) {
+
+        entity.hexGrid.textureDirty = true;
+
+        entity.hexGrid.cacheDirty = true;
+
+      }
 
       return true;
-
-    }
-
-
-
-    let forceX = ((bulletVel?.x || 0) * c + (bulletVel?.y || 0) * s) / scale;
-
-    let forceY = (-(bulletVel?.x || 0) * s + (bulletVel?.y || 0) * c) / scale;
-
-    if (Math.sqrt(forceX * forceX + forceY * forceY) < 0.001) {
-
-      const fx = (hitShard.gridX - cx - pX) - localX;
-
-      const fy = (hitShard.gridY - cy - pY) - localY;
-
-      const fm = Math.sqrt(fx * fx + fy * fy) || 1;
-
-      forceX = (fx / fm) * Math.max(10, damage * 0.4);
-
-      forceY = (fy / fm) * Math.max(10, damage * 0.4);
-
-    }
-
-
-
-    const damageScale = Math.max(0.35, damage / 80);
-
-    markRingSegmentHot(entity, 1500, 15000);
-
-    this.wakeHexEntity(entity, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
-
-    const customRadius = opts?.radius || DESTRUCTOR_CONFIG.bendingRadius;
-
-    this.distributeStructuralDamage(
-
-      entity,
-
-      localX,
-
-      localY,
-
-      forceX * 0.05 * damageScale,
-
-      forceY * 0.05 * damageScale,
-
-      1.0,
-
-      customRadius
-
-    );
-
-
-
-    hitShard.hp -= Math.max(1, damage * 0.9);
-
-    const splitDamageThreshold = DESTRUCTOR_CONFIG.splitDamageThreshold ?? 200;
-
-    if (hitShard.hp <= 0 && !hitShard.isDebris) {
-
-      this.destroyShard(entity, hitShard, { x: getEntityVelX(entity), y: getEntityVelY(entity) });
-
-      if (!entity.noSplit && damage >= splitDamageThreshold) this.splitQueue.push(entity);
-
-    }
-
-
-
-    markGridMeshDirtyByShard(entity.hexGrid, hitShard);
-
-    if (!HEX_SHIPS_3D_ACTIVE) {
-
-      entity.hexGrid.textureDirty = true;
-
-      entity.hexGrid.cacheDirty = true;
-
-    }
-
-    return true;
 
     } finally {
 
@@ -2389,207 +2697,209 @@ export const DestructorSystem = {
 
     try {
 
-    if (!entity?.hexGrid?.shards) return;
+      if (!entity?.hexGrid?.shards) return;
 
-    this.wakeHexEntity(entity, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
+      this.wakeHexEntity(entity, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
 
 
 
-    const radius = customRadius || DESTRUCTOR_CONFIG.bendingRadius;
+      const radius = customRadius || DESTRUCTOR_CONFIG.bendingRadius;
 
-    const invRadius = 1 / radius;
+      const invRadius = 1 / radius;
 
-    const currentBendingRadSq = radius * radius;
+      const currentBendingRadSq = radius * radius;
 
-    const deformMul = DESTRUCTOR_CONFIG.deformMul;
+      const deformMul = DESTRUCTOR_CONFIG.deformMul;
 
-    let anyDestroyed = false;
+      let anyDestroyed = false;
 
-    let anyMeshChange = false;
+      let anyMeshChange = false;
 
-    let dirtyMin = Number.POSITIVE_INFINITY;
+      let dirtyMin = Number.POSITIVE_INFINITY;
 
-    let dirtyMax = -1;
+      let dirtyMax = -1;
 
-    let anyTextureChange = false;
+      let anyTextureChange = false;
 
 
 
-    const pX = entity.hexGrid.pivot ? entity.hexGrid.pivot.x : 0;
+      const pX = entity.hexGrid.pivot ? entity.hexGrid.pivot.x : 0;
 
-    const pY = entity.hexGrid.pivot ? entity.hexGrid.pivot.y : 0;
+      const pY = entity.hexGrid.pivot ? entity.hexGrid.pivot.y : 0;
 
-    const impactX = impactLocalX + pX;
+      const impactX = impactLocalX + pX;
 
-    const impactY = impactLocalY + pY;
+      const impactY = impactLocalY + pY;
 
 
 
-    const forceMag = Math.sqrt(forceX * forceX + forceY * forceY);
+      const forceMag = Math.sqrt(forceX * forceX + forceY * forceY);
 
 
 
-    const cx = entity.hexGrid.srcWidth * 0.5;
+      const cx = entity.hexGrid.srcWidth * 0.5;
 
-    const cy = entity.hexGrid.srcHeight * 0.5;
+      const cy = entity.hexGrid.srcHeight * 0.5;
 
-    const cols = entity.hexGrid.cols;
+      const cols = entity.hexGrid.cols;
 
-    const rows = entity.hexGrid.rows;
+      const rows = entity.hexGrid.rows;
 
-    const grid = entity.hexGrid.grid;
+      const grid = entity.hexGrid.grid;
 
 
 
-    const approxC = Math.round((impactX + cx) / HEX_SPACING);
+      const approxC = Math.round((impactX + cx) / HEX_SPACING);
 
-    const approxR = Math.round((impactY + cy) / HEX_HEIGHT);
+      const approxR = Math.round((impactY + cy) / HEX_HEIGHT);
 
-    const cellRadC = Math.ceil(radius / HEX_SPACING) + 2;
+      const cellRadC = Math.ceil(radius / HEX_SPACING) + 2;
 
-    const cellRadR = Math.ceil(radius / HEX_HEIGHT) + 2;
+      const cellRadR = Math.ceil(radius / HEX_HEIGHT) + 2;
 
 
 
-    let c0 = approxC - cellRadC;
+      let c0 = approxC - cellRadC;
 
-    let c1 = approxC + cellRadC;
+      let c1 = approxC + cellRadC;
 
-    let r0 = approxR - cellRadR;
+      let r0 = approxR - cellRadR;
 
-    let r1 = approxR + cellRadR;
+      let r1 = approxR + cellRadR;
 
 
 
-    if (grid && cols && rows) {
+      if (grid && cols && rows) {
 
-      if (c0 < 0) c0 = 0;
+        if (c0 < 0) c0 = 0;
 
-      if (r0 < 0) r0 = 0;
+        if (r0 < 0) r0 = 0;
 
-      if (c1 >= cols) c1 = cols - 1;
+        if (c1 >= cols) c1 = cols - 1;
 
-      if (r1 >= rows) r1 = rows - 1;
+        if (r1 >= rows) r1 = rows - 1;
 
 
 
-      for (let r = r0; r <= r1; r++) {
+        for (let r = r0; r <= r1; r++) {
 
-        const rowBase = r * cols;
+          const rowBase = r * cols;
 
-        for (let c = c0; c <= c1; c++) {
+          for (let c = c0; c <= c1; c++) {
 
-          const shard = grid[rowBase + c];
+            const shard = grid[rowBase + c];
 
-          if (!shard || !shard.active || shard.isDebris) continue;
+            if (!shard || !shard.active || shard.isDebris) continue;
 
 
 
-          const dx = (shard.gridX - cx) - impactX;
+            const dx = (shard.gridX - cx) - impactX;
 
-          const dy = (shard.gridY - cy) - impactY;
+            const dy = (shard.gridY - cy) - impactY;
 
-          const d2 = dx * dx + dy * dy;
+            const d2 = dx * dx + dy * dy;
 
-          if (d2 >= currentBendingRadSq) continue;
+            if (d2 >= currentBendingRadSq) continue;
 
 
 
-          const factor = 1 - Math.sqrt(d2) * invRadius;
+            const factor = 1 - Math.sqrt(d2) * invRadius;
 
-          if (factor <= 0) continue;
+            if (factor <= 0) continue;
 
-          const influence = factor * factor * (3 - 2 * factor);
+            const influence = factor * factor * (3 - 2 * factor);
 
 
 
-          // FAZA 2: Wstrzykiwanie kinetyki do GPU (Zgniatanie + Wybąblenie)
-          const dist = Math.sqrt(d2);
-          let radialX = 0, radialY = 0;
+            // FAZA 2: Wstrzykiwanie kinetyki do GPU (Zgniatanie + Wybąblenie)
+            const dist = Math.sqrt(d2);
+            let radialX = 0, radialY = 0;
 
-          // Wylicz wektor promienisty od epicentrum uderzenia
-          if (dist > 0.001) {
-            radialX = dx / dist;
-            radialY = dy / dist;
-          }
+            // Wylicz wektor promienisty od epicentrum uderzenia
+            if (dist > 0.001) {
+              radialX = dx / dist;
+              radialY = dy / dist;
+            }
 
-          // Główna siła wpychająca w głąb (kierunek pocisku)
-          const pushX = forceX * influence * deformMul;
-          const pushY = forceY * influence * deformMul;
+            // Główna siła wpychająca w głąb (kierunek pocisku)
+            const pushX = forceX * influence * deformMul;
+            const pushY = forceY * influence * deformMul;
 
-          // Siła wybąblająca (rozpychanie na boki wokół krateru)
-          // influence maleje do zewnątrz, (1 - factor) rośnie do zewnątrz.
-          // Razem tworzą "oponkę" (największe rozpychanie jest w połowie krateru)
-          const bulgeFactor = influence * (1.0 - factor) * 2.5;
-          const bulgeX = radialX * forceMag * bulgeFactor * deformMul;
-          const bulgeY = radialY * forceMag * bulgeFactor * deformMul;
+            // Siła wybąblająca (rozpychanie na boki wokół krateru)
+            // influence maleje do zewnątrz, (1 - factor) rośnie do zewnątrz.
+            // Razem tworzą "oponkę" (największe rozpychanie jest w połowie krateru)
+            const bulgeFactor = influence * (1.0 - factor) * 2.5;
+            const bulgeX = radialX * forceMag * bulgeFactor * deformMul;
+            const bulgeY = radialY * forceMag * bulgeFactor * deformMul;
 
-          // Łączymy wgniecenie i rozpychanie
-          const appliedDefX = pushX + bulgeX;
-          const appliedDefY = pushY + bulgeY;
+            // Łączymy wgniecenie i rozpychanie
+            const appliedDefX = pushX + bulgeX;
+            const appliedDefY = pushY + bulgeY;
 
 
 
-          // Weapons: small local dent, no hull-wide wave.
-          // Direct targetDeformation (no applyDeformation — that injects __collVelX for collisions).
-          shard.targetDeformation.x += appliedDefX * 0.15;
-          shard.targetDeformation.y += appliedDefY * 0.15;
+            // Weapons: small local dent, no hull-wide wave.
+            // Direct targetDeformation (no applyDeformation — that injects __collVelX for collisions).
+            shard.targetDeformation.x += appliedDefX * 0.15;
+            shard.targetDeformation.y += appliedDefY * 0.15;
 
-          // Tiny velocity for GPU to propagate locally (damped by GPU overwrite cycle)
-          shard.__velX = (Number(shard.__velX) || 0) + (appliedDefX * 0.3);
-          shard.__velY = (Number(shard.__velY) || 0) + (appliedDefY * 0.3);
+            // Tiny velocity for GPU to propagate locally (damped by GPU overwrite cycle)
+            shard.__velX = (Number(shard.__velX) || 0) + (appliedDefX * 0.3);
+            shard.__velY = (Number(shard.__velY) || 0) + (appliedDefY * 0.3);
 
 
 
-          anyMeshChange = true;
+            anyMeshChange = true;
 
-          const shardIdx = Number(shard.__meshIndex);
+            const shardIdx = Number(shard.__meshIndex);
 
-          if (Number.isFinite(shardIdx)) {
+            if (Number.isFinite(shardIdx)) {
 
-            if (shardIdx < dirtyMin) dirtyMin = shardIdx;
+              if (shardIdx < dirtyMin) dirtyMin = shardIdx;
 
-            if (shardIdx > dirtyMax) dirtyMax = shardIdx;
+              if (shardIdx > dirtyMax) dirtyMax = shardIdx;
 
-          } else {
+            } else {
 
-            dirtyMin = 0;
+              dirtyMin = 0;
 
-            dirtyMax = entity.hexGrid.shards.length - 1;
+              dirtyMax = entity.hexGrid.shards.length - 1;
 
-          }
+            }
 
 
 
-          // Thermal damage and friction scraping
+            // Thermal damage and friction scraping
 
-          if (damageScale > 0) {
+            if (damageScale > 0) {
 
-            // CPU no longer instantly deletes shards from pure kinetic spikes.
+              // CPU no longer instantly deletes shards from pure kinetic spikes.
 
-            // Convert impact into heat so damage accumulates over sustained scraping.
+              // Convert impact into heat so damage accumulates over sustained scraping.
 
-            // Shards should wear down over time instead of evaporating in one frame.
+              // Shards should wear down over time instead of evaporating in one frame.
 
-            const frictionHeat = (Math.abs(appliedDefX) + Math.abs(appliedDefY)) * 0.05;
+              const frictionHeat = (Math.abs(appliedDefX) + Math.abs(appliedDefY)) * 0.05;
 
 
 
-            shard.hp -= frictionHeat;
+              shard.hp -= frictionHeat;
 
 
 
-            if (!HEX_SHIPS_3D_ACTIVE && frictionHeat > 0.5) anyTextureChange = true;
+              if (!HEX_SHIPS_3D_ACTIVE && frictionHeat > 0.5) anyTextureChange = true;
 
 
 
-            // Shard dies from friction, or from GPU stress tearing.
+              // Shard dies from friction, or from GPU stress tearing.
 
-            if (shard.hp <= 0 && !shard.isDebris) {
+              if (shard.hp <= 0 && !shard.isDebris) {
 
-              this.destroyShard(entity, shard, { x: getEntityVelX(entity), y: getEntityVelY(entity) });
+                this.destroyShard(entity, shard, { x: getEntityVelX(entity), y: getEntityVelY(entity) });
 
-              anyDestroyed = true;
+                anyDestroyed = true;
+
+              }
 
             }
 
@@ -2599,31 +2909,29 @@ export const DestructorSystem = {
 
       }
 
-    }
 
 
+      const splitForceThreshold = DESTRUCTOR_CONFIG.splitForceThreshold ?? 50;
 
-    const splitForceThreshold = DESTRUCTOR_CONFIG.splitForceThreshold ?? 50;
+      if (!entity.noSplit && damageScale > 0 && anyDestroyed && forceMag > splitForceThreshold) this.splitQueue.push(entity);
 
-    if (!entity.noSplit && damageScale > 0 && anyDestroyed && forceMag > splitForceThreshold) this.splitQueue.push(entity);
+      if (anyMeshChange || anyDestroyed) markRingSegmentHot(entity, 1200, 12000);
 
-    if (anyMeshChange || anyDestroyed) markRingSegmentHot(entity, 1200, 12000);
+      if (anyMeshChange) {
 
-    if (anyMeshChange) {
+        if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) markGridMeshDirtyRange(entity.hexGrid, dirtyMin, dirtyMax);
 
-      if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) markGridMeshDirtyRange(entity.hexGrid, dirtyMin, dirtyMax);
+        else markGridMeshDirtyAll(entity.hexGrid);
 
-      else markGridMeshDirtyAll(entity.hexGrid);
+      }
 
-    }
+      if (anyTextureChange && !HEX_SHIPS_3D_ACTIVE) {
 
-    if (anyTextureChange && !HEX_SHIPS_3D_ACTIVE) {
+        entity.hexGrid.textureDirty = true;
 
-      entity.hexGrid.textureDirty = true;
+        entity.hexGrid.cacheDirty = true;
 
-      entity.hexGrid.cacheDirty = true;
-
-    }
+      }
 
     } finally {
 
@@ -2643,119 +2951,119 @@ export const DestructorSystem = {
 
     try {
 
-    const len = entities.length;
+      const len = entities.length;
 
-    if (len <= 1) return;
+      if (len <= 1) return;
 
-    if (!broadphasePrepared) this._prepareBroadphase(entities);
+      if (!broadphasePrepared) this._prepareBroadphase(entities);
 
-    for (let i = 0; i < len; i++) {
+      for (let i = 0; i < len; i++) {
 
-      const A = entities[i];
+        const A = entities[i];
 
-      if (!A?.hexGrid || A.dead || A.isCollidable === false) continue;
+        if (!A?.hexGrid || A.dead || A.isCollidable === false) continue;
 
-      if (!A?._hasActiveHex) continue;
+        if (!A?._hasActiveHex) continue;
 
-      if (A.isRingSegment) continue;
+        if (A.isRingSegment) continue;
 
-      const ax = getEntityPosX(A);
+        const ax = getEntityPosX(A);
 
-      const ay = getEntityPosY(A);
+        const ay = getEntityPosY(A);
 
-      const ar = Number(A?._bpRadius) || 100;
+        const ar = Number(A?._bpRadius) || 100;
 
-      const velAx = getEntityVelX(A);
+        const velAx = getEntityVelX(A);
 
-      const velAy = getEntityVelY(A);
+        const velAy = getEntityVelY(A);
 
-      const speedAMag = Math.sqrt(velAx * velAx + velAy * velAy);
+        const speedAMag = Math.sqrt(velAx * velAx + velAy * velAy);
 
-      if (A.hexGrid?.isSleeping && speedAMag < 0.5 && Math.abs(getEntityAngVel(A)) < 0.01) continue;
+        if (A.hexGrid?.isSleeping && speedAMag < 0.5 && Math.abs(getEntityAngVel(A)) < 0.01) continue;
 
-      const speedA = Math.min(180, speedAMag * (1 / 60));
+        const speedA = Math.min(180, speedAMag * (1 / 60));
 
-      const queryCount = this._queryBroadphase(ax, ay, Math.max(80, ar));
+        const queryCount = this._queryBroadphase(ax, ay, Math.max(80, ar));
 
-      let queryStamp = (this._bpQueryStamp + 1) | 0;
+        let queryStamp = (this._bpQueryStamp + 1) | 0;
 
-      if (queryStamp <= 0) queryStamp = 1;
+        if (queryStamp <= 0) queryStamp = 1;
 
-      this._bpQueryStamp = queryStamp;
+        this._bpQueryStamp = queryStamp;
 
-      const candidates = this._bpQueryBuffer;
-
-
-
-      for (let ci = 0; ci < queryCount; ci++) {
-
-        const B = candidates[ci];
-
-        if (!B?.hexGrid || B.dead || B.isCollidable === false) continue;
-
-        if (!B?._hasActiveHex) continue;
-
-        if (B === A) continue;
-
-        if (B._destrBpSeen === queryStamp) continue;
-
-        B._destrBpSeen = queryStamp;
-
-        if ((B._destrBpIndex | 0) <= i) continue;
-
-        if (skipRingPairs && B.isRingSegment) continue;
-
-        if (A.isRingSegment && B.isRingSegment) continue;
-
-        const rootA = A.owner || A;
-
-        const rootB = B.owner || B;
-
-        if (rootA === rootB || rootA === B || rootB === A) continue;
-
-        if (dbgEnabled) this._liveCollisionDebug.pairCandidates++;
-
-        const dx = ax - getEntityPosX(B);
-
-        const dy = ay - getEntityPosY(B);
+        const candidates = this._bpQueryBuffer;
 
 
 
-        const velBx = getEntityVelX(B);
+        for (let ci = 0; ci < queryCount; ci++) {
 
-        const velBy = getEntityVelY(B);
+          const B = candidates[ci];
 
-        const speedBMag = Math.sqrt(velBx * velBx + velBy * velBy);
+          if (!B?.hexGrid || B.dead || B.isCollidable === false) continue;
 
-        const speedB = Math.min(180, speedBMag * (1 / 60));
+          if (!B?._hasActiveHex) continue;
 
-        const br = Number(B?._bpRadius) || 100;
+          if (B === A) continue;
 
-        const rs = ar + br + speedA + speedB;
+          if (B._destrBpSeen === queryStamp) continue;
 
-        if (dx * dx + dy * dy > rs * rs) continue;
+          B._destrBpSeen = queryStamp;
 
-        if (B.isRingSegment && !circleOverlapsEntityRect(
-          ax,
-          ay,
-          ar + speedA + speedB,
-          B,
-          HEX_SPACING * 6.0
-        )) continue;
+          if ((B._destrBpIndex | 0) <= i) continue;
 
-        if (dbgEnabled) {
+          if (skipRingPairs && B.isRingSegment) continue;
 
-          this._liveCollisionDebug.pairNarrow++;
+          if (A.isRingSegment && B.isRingSegment) continue;
 
-          if (A.isRingSegment || B.isRingSegment) this._liveCollisionDebug.ringPairs++;
+          const rootA = A.owner || A;
+
+          const rootB = B.owner || B;
+
+          if (rootA === rootB || rootA === B || rootB === A) continue;
+
+          if (dbgEnabled) this._liveCollisionDebug.pairCandidates++;
+
+          const dx = ax - getEntityPosX(B);
+
+          const dy = ay - getEntityPosY(B);
+
+
+
+          const velBx = getEntityVelX(B);
+
+          const velBy = getEntityVelY(B);
+
+          const speedBMag = Math.sqrt(velBx * velBx + velBy * velBy);
+
+          const speedB = Math.min(180, speedBMag * (1 / 60));
+
+          const br = Number(B?._bpRadius) || 100;
+
+          const rs = ar + br + speedA + speedB;
+
+          if (dx * dx + dy * dy > rs * rs) continue;
+
+          if (B.isRingSegment && !circleOverlapsEntityRect(
+            ax,
+            ay,
+            ar + speedA + speedB,
+            B,
+            HEX_SPACING * 6.0
+          )) continue;
+
+          if (dbgEnabled) {
+
+            this._liveCollisionDebug.pairNarrow++;
+
+            if (A.isRingSegment || B.isRingSegment) this._liveCollisionDebug.ringPairs++;
+
+          }
+
+          this.collideEntities(A, B, dt, doDamage);
 
         }
 
-        this.collideEntities(A, B, dt, doDamage);
-
       }
-
-    }
 
     } finally {
 
@@ -2775,331 +3083,370 @@ export const DestructorSystem = {
 
     try {
 
-    let iterator = A;
+      let iterator = A;
 
-    let gridHolder = B;
+      let gridHolder = B;
 
-    if (A.hexGrid.shards.length > B.hexGrid.shards.length) {
+      if (A.hexGrid.shards.length > B.hexGrid.shards.length) {
 
-      iterator = B;
+        iterator = B;
 
-      gridHolder = A;
+        gridHolder = A;
 
-    }
+      }
 
 
 
-    const scaleA = Math.max(0.0001, getFinalScale(A));
+      const scaleA = Math.max(0.0001, getFinalScale(A));
 
-    const scaleB = Math.max(0.0001, getFinalScale(B));
+      const scaleB = Math.max(0.0001, getFinalScale(B));
 
-    const scaleIter = Math.max(0.0001, getFinalScale(iterator));
+      const scaleIter = Math.max(0.0001, getFinalScale(iterator));
 
-    const scaleGrid = Math.max(0.0001, getFinalScale(gridHolder));
+      const scaleGrid = Math.max(0.0001, getFinalScale(gridHolder));
 
 
 
-    const massA = getEntityMass(A);
+      const massA = getEntityMass(A);
 
-    const massB = getEntityMass(B);
+      const massB = getEntityMass(B);
 
 
 
-    const angIter = getEntityHexAngle(iterator);
+      const angIter = getEntityHexAngle(iterator);
 
-    const angGrid = getEntityHexAngle(gridHolder);
+      const angGrid = getEntityHexAngle(gridHolder);
 
-    const cosI = Math.cos(angIter);
+      const cosI = Math.cos(angIter);
 
-    const sinI = Math.sin(angIter);
+      const sinI = Math.sin(angIter);
 
-    const cosG = Math.cos(angGrid);
+      const cosG = Math.cos(angGrid);
 
-    const sinG = Math.sin(angGrid);
+      const sinG = Math.sin(angGrid);
 
 
 
-    const cxI = iterator.hexGrid.srcWidth * 0.5;
+      const cxI = iterator.hexGrid.srcWidth * 0.5;
 
-    const cyI = iterator.hexGrid.srcHeight * 0.5;
+      const cyI = iterator.hexGrid.srcHeight * 0.5;
 
-    const cxG = gridHolder.hexGrid.srcWidth * 0.5;
+      const cxG = gridHolder.hexGrid.srcWidth * 0.5;
 
-    const cyG = gridHolder.hexGrid.srcHeight * 0.5;
+      const cyG = gridHolder.hexGrid.srcHeight * 0.5;
 
 
 
-    const pIx = iterator.hexGrid.pivot ? iterator.hexGrid.pivot.x : 0;
+      const pIx = iterator.hexGrid.pivot ? iterator.hexGrid.pivot.x : 0;
 
-    const pIy = iterator.hexGrid.pivot ? iterator.hexGrid.pivot.y : 0;
+      const pIy = iterator.hexGrid.pivot ? iterator.hexGrid.pivot.y : 0;
 
-    const pGx = gridHolder.hexGrid.pivot ? gridHolder.hexGrid.pivot.x : 0;
+      const pGx = gridHolder.hexGrid.pivot ? gridHolder.hexGrid.pivot.x : 0;
 
-    const pGy = gridHolder.hexGrid.pivot ? gridHolder.hexGrid.pivot.y : 0;
+      const pGy = gridHolder.hexGrid.pivot ? gridHolder.hexGrid.pivot.y : 0;
 
 
 
-    const iterRadius = iterator.radius || 100;
+      const iterRadius = iterator.radius || 100;
 
-    const ix = getEntityPosX(iterator);
+      const ix = getEntityPosX(iterator);
 
-    const iy = getEntityPosY(iterator);
+      const iy = getEntityPosY(iterator);
 
-    const gx = getEntityPosX(gridHolder);
+      const gx = getEntityPosX(gridHolder);
 
-    const gy = getEntityPosY(gridHolder);
+      const gy = getEntityPosY(gridHolder);
 
 
 
-    let minC = Infinity;
+      let minC = Infinity;
 
-    let maxC = -Infinity;
+      let maxC = -Infinity;
 
-    let minR = Infinity;
+      let minR = Infinity;
 
-    let maxR = -Infinity;
+      let maxR = -Infinity;
 
-    const baseSearchR = DESTRUCTOR_CONFIG.collisionSearchRadius ?? 4;
+      const baseSearchR = DESTRUCTOR_CONFIG.collisionSearchRadius ?? 4;
 
-    let searchR = (A.isRingSegment || B.isRingSegment)
+      const isRingCollision = !!(A?.isRingSegment || B?.isRingSegment);
 
-      ? Math.max(2, Math.min(3, baseSearchR | 0))
+      let searchR = isRingCollision
 
-      : baseSearchR;
+        ? Math.max(2, Math.min(3, baseSearchR | 0))
 
+        : baseSearchR;
 
 
-    // --- POPRAWKA 1: Kompensacja prędkości (Tunelowanie) ---
 
-    // Obliczamy ile heksów statki pokonają w tej klatce i rozszerzamy poszukiwania
+      // --- POPRAWKA 1: Kompensacja prędkości (Tunelowanie) ---
 
-    const relVx = getEntityVelX(A) - getEntityVelX(B);
+      // Obliczamy ile heksów statki pokonają w tej klatce i rozszerzamy poszukiwania
 
-    const relVy = getEntityVelY(A) - getEntityVelY(B);
+      const relVx = getEntityVelX(A) - getEntityVelX(B);
 
-    const relSpeed = Math.sqrt(relVx * relVx + relVy * relVy);
+      const relVy = getEntityVelY(A) - getEntityVelY(B);
 
-    const speedHexes = Math.ceil((relSpeed * dt) / HEX_SPACING);
+      const relSpeed = Math.sqrt(relVx * relVx + relVy * relVy);
 
-    // DRASTYCZNE CIĘCIE! Max 6 heksów to absolutny sufit dla ochrony przed lagami (zmniejszenie iteracji o blisko 80%)
+      const speedHexes = Math.ceil((relSpeed * dt) / HEX_SPACING);
 
-    searchR = Math.min(6, searchR + Math.min(3, speedHexes));
+      const searchRCap = 8;
+      searchR = Math.min(searchRCap, searchR + Math.min(3, speedHexes));
 
 
 
-    for (let k = 0; k < 4; k++) {
+      for (let k = 0; k < 4; k++) {
 
-      const sx = (k === 0 || k === 3) ? -iterRadius : iterRadius;
+        const sx = (k === 0 || k === 3) ? -iterRadius : iterRadius;
 
-      const sy = (k < 2) ? -iterRadius : iterRadius;
+        const sy = (k < 2) ? -iterRadius : iterRadius;
 
-      const wx = ix + sx;
+        const wx = ix + sx;
 
-      const wy = iy + sy;
+        const wy = iy + sy;
 
-      const dx = wx - gx;
+        const dx = wx - gx;
 
-      const dy = wy - gy;
+        const dy = wy - gy;
 
-      const hlx = (dx * cosG + dy * sinG) / scaleGrid;
+        const hlx = (dx * cosG + dy * sinG) / scaleGrid;
 
-      const hly = (-dx * sinG + dy * cosG) / scaleGrid;
+        const hly = (-dx * sinG + dy * cosG) / scaleGrid;
 
-      const c = Math.floor((hlx + cxG + pGx) / HEX_SPACING);
+        const c = Math.floor((hlx + cxG + pGx) / HEX_SPACING);
 
-      const r = Math.floor((hly + cyG + pGy) / HEX_HEIGHT);
+        const r = Math.floor((hly + cyG + pGy) / HEX_HEIGHT);
 
-      if (c < minC) minC = c;
+        if (c < minC) minC = c;
 
-      if (c > maxC) maxC = c;
+        if (c > maxC) maxC = c;
 
-      if (r < minR) minR = r;
+        if (r < minR) minR = r;
 
-      if (r > maxR) maxR = r;
+        if (r > maxR) maxR = r;
 
-    }
+      }
 
 
 
-    const pad = searchR + 2;
+      const pad = searchR + 1;
 
-    minC -= pad;
+      minC -= pad;
 
-    maxC += pad;
+      maxC += pad;
 
-    minR -= pad;
+      minR -= pad;
 
-    maxR += pad;
+      maxR += pad;
 
 
 
-    const holderGrid = gridHolder.hexGrid.grid;
+      const holderGrid = gridHolder.hexGrid.grid;
 
-    const iterGrid = iterator.hexGrid.grid;
+      const iterGrid = iterator.hexGrid.grid;
 
-    const holderCols = gridHolder.hexGrid.cols || 0;
+      const holderCols = gridHolder.hexGrid.cols || 0;
 
-    const holderRows = gridHolder.hexGrid.rows || 0;
+      const holderRows = gridHolder.hexGrid.rows || 0;
 
-    const iterCols = iterator.hexGrid.cols || 0;
+      const iterCols = iterator.hexGrid.cols || 0;
 
-    const iterRows = iterator.hexGrid.rows || 0;
+      const iterRows = iterator.hexGrid.rows || 0;
 
-    if (!holderGrid || !iterGrid || holderCols <= 0 || holderRows <= 0 || iterCols <= 0 || iterRows <= 0) return;
+      if (!holderGrid || !iterGrid || holderCols <= 0 || holderRows <= 0 || iterCols <= 0 || iterRows <= 0) return;
 
 
 
-    if (minC < 0) minC = 0;
+      if (minC < 0) minC = 0;
 
-    if (minR < 0) minR = 0;
+      if (minR < 0) minR = 0;
 
-    if (maxC >= holderCols) maxC = holderCols - 1;
+      if (maxC >= holderCols) maxC = holderCols - 1;
 
-    if (maxR >= holderRows) maxR = holderRows - 1;
+      if (maxR >= holderRows) maxR = holderRows - 1;
 
-    if (minC > maxC || minR > maxR) return;
+      if (minC > maxC || minR > maxR) return;
 
 
 
-    const contacts = this._contactsBuf;
+      const contacts = this._contactsBuf;
 
-    // Cap contacts to prevent massive collision spikes
+      // Cap contacts to prevent massive collision spikes
 
-    const maxContacts = 128;
+      const maxContacts = isRingCollision ? 192 : 128;
 
-    let contactsCount = 0;
+      let contactsCount = 0;
 
-    const offsets = getSearchOffsets(searchR);
+      const offsets = getSearchOffsets(searchR);
 
-    const cds = DESTRUCTOR_CONFIG.collisionDeformScale ?? 1.0;
+      const cds = DESTRUCTOR_CONFIG.collisionDeformScale ?? 1.0;
 
 
 
-    for (let r = minR; r <= maxR; r++) {
+      let cellIterations = 0;
 
-      const rowBase = r * holderCols;
+      const maxCellIterations = isRingCollision ? 7000 : 12000;
 
-      for (let c = minC; c <= maxC; c++) {
+      let consecutiveZeroRows = 0;
 
-        const sG = holderGrid[rowBase + c];
+      let seenContactRow = false;
 
-        if (!sG || !sG.active || sG.isDebris) continue;
+      for (let r = minR; r <= maxR; r++) {
 
+        const rowBase = r * holderCols;
 
+        const rowContactsBefore = contactsCount;
 
-        const relGx = (sG.gridX - cxG) + sG.deformation.x * cds - pGx;
+        for (let c = minC; c <= maxC; c++) {
 
-        const relGy = (sG.gridY - cyG) + sG.deformation.y * cds - pGy;
+          cellIterations++;
 
-        const worldGx = gx + (relGx * scaleGrid) * cosG - (relGy * scaleGrid) * sinG;
+          if (cellIterations > maxCellIterations) break;
 
-        const worldGy = gy + (relGx * scaleGrid) * sinG + (relGy * scaleGrid) * cosG;
+          const sG = holderGrid[rowBase + c];
 
+          if (!sG || !sG.active || sG.isDebris) continue;
 
 
-        const dx = worldGx - ix;
 
-        const dy = worldGy - iy;
+          const relGx = (sG.gridX - cxG) + sG.deformation.x * cds - pGx;
 
-        const localIx = (dx * cosI + dy * sinI) / scaleIter;
+          const relGy = (sG.gridY - cyG) + sG.deformation.y * cds - pGy;
 
-        const localIy = (-dx * sinI + dy * cosI) / scaleIter;
+          const worldGx = gx + (relGx * scaleGrid) * cosG - (relGy * scaleGrid) * sinG;
 
-        const gridIx = localIx + cxI + pIx;
+          const worldGy = gy + (relGx * scaleGrid) * sinG + (relGy * scaleGrid) * cosG;
 
-        const gridIy = localIy + cyI + pIy;
 
 
+          const dx = worldGx - ix;
 
-        const approxC = Math.round(gridIx / HEX_SPACING);
+          const dy = worldGy - iy;
 
-        const approxR = Math.round(gridIy / HEX_HEIGHT);
+          const localIx = (dx * cosI + dy * sinI) / scaleIter;
 
+          const localIy = (-dx * sinI + dy * cosI) / scaleIter;
 
+          const gridIx = localIx + cxI + pIx;
 
-        // Quick reject: skip whole offset scan when target cell is far outside iterator grid.
+          const gridIy = localIy + cyI + pIy;
 
-        if (approxC < -searchR || approxC >= iterCols + searchR || approxR < -searchR || approxR >= iterRows + searchR) {
 
-          continue;
 
-        }
+          const approxC = Math.round(gridIx / HEX_SPACING);
 
+          const approxR = Math.round(gridIy / HEX_HEIGHT);
 
 
-        for (let oi = 0; oi < offsets.length; oi += 2) {
 
-          const ic = approxC + offsets[oi];
+          // Quick reject: skip whole offset scan when target cell is far outside iterator grid.
 
-          const ir = approxR + offsets[oi + 1];
+          if (approxC < -searchR || approxC >= iterCols + searchR || approxR < -searchR || approxR >= iterRows + searchR) {
 
-          if (ic < 0 || ir < 0 || ic >= iterCols || ir >= iterRows) continue;
+            continue;
 
+          }
 
 
-          const sI = iterGrid[ic + ir * iterCols];
 
-          if (!sI || !sI.active || sI.isDebris) continue;
+          for (let oi = 0; oi < offsets.length; oi += 2) {
 
+            const ic = approxC + offsets[oi];
 
+            const ir = approxR + offsets[oi + 1];
 
-          const gi = sI.gridX + sI.deformation.x * cds;
+            if (ic < 0 || ir < 0 || ic >= iterCols || ir >= iterRows) continue;
 
-          const gj = sI.gridY + sI.deformation.y * cds;
 
-          const ddx = gi - gridIx;
 
-          const ddy = gj - gridIy;
+            const sI = iterGrid[ic + ir * iterCols];
 
-          if (ddx * ddx + ddy * ddy >= HIT_RAD_SQ) continue;
+            if (!sI || !sI.active || sI.isDebris) continue;
 
 
 
-          const relIx = (sI.gridX - cxI) + sI.deformation.x * cds - pIx;
+            const gi = sI.gridX + sI.deformation.x * cds;
 
-          const relIy = (sI.gridY - cyI) + sI.deformation.y * cds - pIy;
+            const gj = sI.gridY + sI.deformation.y * cds;
 
-          const worldIx = ix + (relIx * scaleIter) * cosI - (relIy * scaleIter) * sinI;
+            const ddx = gi - gridIx;
 
-          const worldIy = iy + (relIx * scaleIter) * sinI + (relIy * scaleIter) * cosI;
+            const ddy = gj - gridIy;
 
+            const hitRad = (getShardHitRadius(sI) + getShardHitRadius(sG)) * 0.5;
 
+            if (ddx * ddx + ddy * ddy >= hitRad * hitRad) continue;
 
-          const normalX = worldIx - worldGx;
 
-          const normalY = worldIy - worldGy;
 
-          const dist = Math.sqrt(normalX * normalX + normalY * normalY);
+            const relIx = (sI.gridX - cxI) + sI.deformation.x * cds - pIx;
 
+            const relIy = (sI.gridY - cyI) + sI.deformation.y * cds - pIy;
 
+            const worldIx = ix + (relIx * scaleIter) * cosI - (relIy * scaleIter) * sinI;
 
-          const swapped = iterator !== A;
+            const worldIy = iy + (relIx * scaleIter) * sinI + (relIy * scaleIter) * cosI;
 
-          const ct = contacts[contactsCount];
 
-          ct.shardA = swapped ? sG : sI;
 
-          ct.shardB = swapped ? sI : sG;
+            const normalX = worldIx - worldGx;
 
-          ct.worldAx = swapped ? worldGx : worldIx;
+            const normalY = worldIy - worldGy;
 
-          ct.worldAy = swapped ? worldGy : worldIy;
+            const dist = Math.sqrt(normalX * normalX + normalY * normalY);
 
-          ct.worldBx = swapped ? worldIx : worldGx;
 
-          ct.worldBy = swapped ? worldIy : worldGy;
 
-          ct.normalX = swapped ? -normalX : normalX;
+            const swapped = iterator !== A;
 
-          ct.normalY = swapped ? -normalY : normalY;
+            const ct = contacts[contactsCount];
 
-          ct.penetration = Math.max(0, HIT_RAD - dist);
+            ct.shardA = swapped ? sG : sI;
 
-          contactsCount++;
+            ct.shardB = swapped ? sI : sG;
+
+            ct.worldAx = swapped ? worldGx : worldIx;
+
+            ct.worldAy = swapped ? worldGy : worldIy;
+
+            ct.worldBx = swapped ? worldIx : worldGx;
+
+            ct.worldBy = swapped ? worldIy : worldGy;
+
+            ct.normalX = swapped ? -normalX : normalX;
+
+            ct.normalY = swapped ? -normalY : normalY;
+
+            ct.penetration = Math.max(0, hitRad - dist);
+
+            contactsCount++;
+
+            if (contactsCount >= maxContacts) break;
+
+            break; // One contact per holder shard is enough — skip remaining offsets
+
+          }
 
           if (contactsCount >= maxContacts) break;
 
-          break; // One contact per holder shard is enough — skip remaining offsets
+        }
+
+        if (cellIterations > maxCellIterations) break;
+
+        const rowContacts = contactsCount - rowContactsBefore;
+
+        if (rowContacts > 0) {
+
+          seenContactRow = true;
+
+          consecutiveZeroRows = 0;
+
+        } else if (isRingCollision && seenContactRow && speedHexes <= 1) {
+
+          consecutiveZeroRows++;
+
+          if (consecutiveZeroRows >= 5) break;
 
         }
 
@@ -3107,626 +3454,618 @@ export const DestructorSystem = {
 
       }
 
-      if (contactsCount >= maxContacts) break;
 
-    }
 
+      if (contactsCount === 0) return;
 
+      this.wakeHexEntity(A, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
 
-    if (contactsCount === 0) return;
+      this.wakeHexEntity(B, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
 
-    this.wakeHexEntity(A, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
+      this._frameContacts += contactsCount;
 
-    this.wakeHexEntity(B, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
 
-    this._frameContacts += contactsCount;
 
+      let worldHitX = 0;
 
+      let worldHitY = 0;
 
-    let worldHitX = 0;
+      let nx = 0;
 
-    let worldHitY = 0;
+      let ny = 0;
 
-    let nx = 0;
+      let penetration = 0;
 
-    let ny = 0;
+      for (let i = 0; i < contactsCount; i++) {
 
-    let penetration = 0;
+        const ct = contacts[i];
 
-    for (let i = 0; i < contactsCount; i++) {
+        worldHitX += (ct.worldAx + ct.worldBx) * 0.5;
 
-      const ct = contacts[i];
+        worldHitY += (ct.worldAy + ct.worldBy) * 0.5;
 
-      worldHitX += (ct.worldAx + ct.worldBx) * 0.5;
+        nx += ct.normalX;
 
-      worldHitY += (ct.worldAy + ct.worldBy) * 0.5;
+        ny += ct.normalY;
 
-      nx += ct.normalX;
-
-      ny += ct.normalY;
-
-      if (ct.penetration > penetration) penetration = ct.penetration;
-
-    }
-
-    worldHitX /= contactsCount;
-
-    worldHitY /= contactsCount;
-
-
-
-    const aX = getEntityPosX(A);
-
-    const aY = getEntityPosY(A);
-
-    const bX = getEntityPosX(B);
-
-    const bY = getEntityPosY(B);
-
-
-
-    let normalLenSq = nx * nx + ny * ny;
-
-    if (normalLenSq < 1e-12) {
-
-      nx = aX - bX;
-
-      ny = aY - bY;
-
-      normalLenSq = nx * nx + ny * ny;
-
-      if (normalLenSq < 1e-12) normalLenSq = 1;
-
-    }
-
-    const invNormalLen = 1 / Math.sqrt(normalLenSq);
-
-    nx *= invNormalLen;
-
-    ny *= invNormalLen;
-
-
-
-    const rAx = worldHitX - aX;
-
-    const rAy = worldHitY - aY;
-
-    const rBx = worldHitX - bX;
-
-    const rBy = worldHitY - bY;
-
-
-
-    const vAx = getEntityVelX(A) - getEntityAngVel(A) * rAy;
-
-    const vAy = getEntityVelY(A) + getEntityAngVel(A) * rAx;
-
-    const vBx = getEntityVelX(B) - getEntityAngVel(B) * rBy;
-
-    const vBy = getEntityVelY(B) + getEntityAngVel(B) * rBx;
-
-
-
-    const dvx = vAx - vBx;
-
-    const dvy = vAy - vBy;
-
-
-
-    // Define impactSpeed early so crush logic can use it consistently.
-
-    const impactSpeed = Math.sqrt(dvx * dvx + dvy * dvy);
-
-
-
-    const velAlongNormal = dvx * nx + dvy * ny;
-
-    const tx = -ny;
-
-    const ty = nx;
-
-    const velTangent = dvx * tx + dvy * ty;
-
-
-
-    const invMassA = 1 / massA;
-
-    const invMassB = 1 / massB;
-
-    const slop = 0.01;
-
-    const pen = Math.max(0, penetration - slop);
-
-
-
-    let isDestruction = false;
-
-
-
-    if (velAlongNormal < 0) {
-
-      const iaScale = 0.5;
-
-      const ra = Math.max(1, A.radius || 100);
-
-      const rb = Math.max(1, B.radius || 100);
-
-      const invIa = 1 / (iaScale * massA * ra * ra);
-
-      const invIb = 1 / (iaScale * massB * rb * rb);
-
-
-
-      const rnA = rAx * ny - rAy * nx;
-
-      const rnB = rBx * ny - rBy * nx;
-
-      const denom = invMassA + invMassB + rnA * rnA * invIa + rnB * rnB * invIb;
-
-
-
-      if (Number.isFinite(denom) && denom > 1e-8) {
-
-        const restBase = DESTRUCTOR_CONFIG.restitution;
-
-        const approachSpeed = -velAlongNormal; // Closing speed along collision normal
-
-
-
-        // Anti-jelly gate:
-
-        // Enable soft-body crush only above crash speed threshold (default 200 px/s).
-
-        // Below threshold, keep rigid behavior for low-speed pushing.
-
-        const crashApproachSpeedThreshold = Number(DESTRUCTOR_CONFIG.crashApproachSpeedThreshold) || 200.0;
-
-        isDestruction = approachSpeed > crashApproachSpeedThreshold;
-
-
-
-        const restitution = isDestruction ? 0.0 : restBase;
-
-        let j = (-(1 + restitution) * velAlongNormal) / denom;
-
-
-
-        // Crash: reduce rigid impulse (0.05) so bodies can interpenetrate and crumple.
-
-        // Non-crash push: keep full rigid impulse (1.0) to block like solid bodies.
-
-        if (isDestruction) {
-
-          const hittingWall = (invMassA === 0 || invMassB === 0) || A.isRingSegment || B.isRingSegment;
-
-          j *= hittingWall ? 0.8 : 0.8;
-
-        }
-
-
-
-        const impulseX = j * nx;
-
-        const impulseY = j * ny;
-
-        addEntityVelocity(A, impulseX * invMassA, impulseY * invMassA);
-
-        addEntityVelocity(B, -impulseX * invMassB, -impulseY * invMassB);
-
-        addEntityAngVel(A, rnA * j * invIa);
-
-        addEntityAngVel(B, -rnB * j * invIb);
-
-
-
-        let jt = -velTangent;
-
-        const tDen = invMassA + invMassB + (rAx * ty - rAy * tx) ** 2 * invIa + (rBx * ty - rBy * tx) ** 2 * invIb;
-
-        jt = (Number.isFinite(tDen) && tDen > 1e-8) ? (jt / tDen) : 0;
-
-        const mu = 0.5;
-
-        const maxF = Math.abs(j) * mu;
-
-        if (Math.abs(jt) > maxF) jt = -maxF * Math.sign(velTangent || 1);
-
-
-
-        // Surface friction: lower in crash mode (0.25), higher in push mode (0.8).
-
-        jt *= isDestruction ? 0.25 : 0.8;
-
-
-
-        const fX = jt * tx;
-
-        const fY = jt * ty;
-
-        addEntityVelocity(A, fX * invMassA, fY * invMassA);
-
-        addEntityVelocity(B, -fX * invMassB, -fY * invMassB);
-
-        addEntityAngVel(A, (rAx * ty - rAy * tx) * jt * invIa);
-
-        addEntityAngVel(B, -(rBx * ty - rBy * tx) * jt * invIb);
+        if (ct.penetration > penetration) penetration = ct.penetration;
 
       }
 
-    }
+      worldHitX /= contactsCount;
+
+      worldHitY /= contactsCount;
 
 
 
-    const penMin = DESTRUCTOR_CONFIG.crushPenetrationMin ?? 0.15;
+      const aX = getEntityPosX(A);
+
+      const aY = getEntityPosY(A);
+
+      const bX = getEntityPosX(B);
+
+      const bY = getEntityPosY(B);
 
 
 
-    // Enable soft-body crushing only during crash events.
+      let normalLenSq = nx * nx + ny * ny;
 
-    const crushActive = isDestruction;
+      if (normalLenSq < 1e-12) {
 
-    const allowCrush = isDestruction;
+        nx = aX - bX;
 
+        ny = aY - bY;
 
+        normalLenSq = nx * nx + ny * ny;
 
-    if (crushActive && allowCrush) {
-
-      const angA = getEntityHexAngle(A);
-
-      const angB = getEntityHexAngle(B);
-
-      const ia = 1 / (DESTRUCTOR_CONFIG.collisionIterations || 1);
-
-      const dtScale = dt * 60 * ia;
-
-
-
-      const totalMass = massA + massB;
-
-      const ca = Math.cos(angA), sa = Math.sin(angA);
-
-      const cb = Math.cos(angB), sb = Math.sin(angB);
-
-      const shearK = DESTRUCTOR_CONFIG.shearK ?? 0.06;
-
-
-
-      const impulse = (totalMass > 0) ? (impactSpeed * (massA * massB) / totalMass) : 0;
-
-      const crushEnergy = impulse * (DESTRUCTOR_CONFIG.crushImpulseScale ?? 0.25) * dtScale;
-
-
-
-      let wForceAx = nx * crushEnergy;
-
-      let wForceAy = ny * crushEnergy;
-
-      let wForceBx = -nx * crushEnergy;
-
-      let wForceBy = -ny * crushEnergy;
-
-
-
-      // Note: removed synthetic crush boost from penetration term.
-
-      // Penetration now only handles separation correction at the end of function.
-
-
-
-      if (Math.abs(velTangent) > 0.1) {
-
-        const sh = velTangent * shearK * dtScale;
-
-        wForceAx += tx * sh;
-
-        wForceAy += ty * sh;
-
-        wForceBx -= tx * sh;
-
-        wForceBy -= ty * sh;
+        if (normalLenSq < 1e-12) normalLenSq = 1;
 
       }
 
+      const invNormalLen = 1 / Math.sqrt(normalLenSq);
 
+      nx *= invNormalLen;
 
-      const forceAx = (wForceAx * ca + wForceAy * sa) / scaleA;
+      ny *= invNormalLen;
 
-      const forceAy = (-wForceAx * sa + wForceAy * ca) / scaleA;
 
-      const forceBx = (wForceBx * cb + wForceBy * sb) / scaleB;
 
-      const forceBy = (-wForceBx * sb + wForceBy * cb) / scaleB;
+      const rAx = worldHitX - aX;
 
+      const rAy = worldHitY - aY;
 
+      const rBx = worldHitX - bX;
 
-      const crushScale = isDestruction ? 1 : 0.35;
+      const rBy = worldHitY - bY;
 
 
 
-      // 2. Nonlinear impact weighting (squared mass ratios)
+      const vAx = getEntityVelX(A) - getEntityAngVel(A) * rAy;
 
-      const baseRatioA = (invMassB === 0) ? 0.0 : (invMassA === 0 ? 1.0 : massB / totalMass);
+      const vAy = getEntityVelY(A) + getEntityAngVel(A) * rAx;
 
-      const baseRatioB = (invMassA === 0) ? 0.0 : (invMassB === 0 ? 1.0 : massA / totalMass);
+      const vBx = getEntityVelX(B) - getEntityAngVel(B) * rBy;
 
+      const vBy = getEntityVelY(B) + getEntityAngVel(B) * rBx;
 
 
-      // Squaring strongly favors damage transfer into lighter body.
 
-      // Example: ship vs ring -> almost all damage stays on the lighter ship.
+      const dvx = vAx - vBx;
 
-      const sumSq = (baseRatioA * baseRatioA) + (baseRatioB * baseRatioB);
+      const dvy = vAy - vBy;
 
-      const realRatioA = (baseRatioA * baseRatioA) / sumSq;
 
-      const realRatioB = (baseRatioB * baseRatioB) / sumSq;
 
+      // Define impactSpeed early so crush logic can use it consistently.
 
+      const impactSpeed = Math.sqrt(dvx * dvx + dvy * dvy);
 
-      let crushDefAx = forceAx * (realRatioA * 2) * crushScale;
 
-      let crushDefAy = forceAy * (realRatioA * 2) * crushScale;
 
-      let crushDefBx = forceBx * (realRatioB * 2) * crushScale;
+      const velAlongNormal = dvx * nx + dvy * ny;
 
-      let crushDefBy = forceBy * (realRatioB * 2) * crushScale;
+      const tx = -ny;
 
+      const ty = nx;
 
+      const velTangent = dvx * tx + dvy * ty;
 
-      // --- POPRAWKA 2: Uwolnienie limitu wgnieceń ---
 
-      // Pozwalamy wgnieceniom przekroczyć tearThreshold (150), żeby GPU mogło rozerwać siatkę
 
-      const maxCrushLimit = DESTRUCTOR_CONFIG.maxDeform || 220.0;
+      const invMassA = 1 / massA;
 
+      const invMassB = 1 / massB;
 
+      const slop = 0.01;
 
-      const rawCrushMagA = Math.sqrt(crushDefAx * crushDefAx + crushDefAy * crushDefAy);
+      const pen = Math.max(0, penetration - slop);
 
-      const rawCrushMagB = Math.sqrt(crushDefBx * crushDefBx + crushDefBy * crushDefBy);
 
 
+      let isDestruction = false;
 
-      // --- POPRAWKA: Płynne, potężne wgniatanie taranem ---
 
-      // Static reusable objects to avoid GC pressure
 
-      const _clampA = this._clampResultA || (this._clampResultA = { x: 0, y: 0 });
+      if (velAlongNormal < 0) {
 
-      const _clampB = this._clampResultB || (this._clampResultB = { x: 0, y: 0 });
+        const iaScale = 0.5;
 
-      const clampCrush = (fx, fy, ratio, mag, out) => {
+        const ra = Math.max(1, A.radius || 100);
 
-        const limit = maxCrushLimit * (0.15 + ratio * 1.0);
+        const rb = Math.max(1, B.radius || 100);
 
-        if (mag > limit) { out.x = (fx / mag) * limit; out.y = (fy / mag) * limit; }
+        const invIa = 1 / (iaScale * massA * ra * ra);
 
-        else { out.x = fx; out.y = fy; }
+        const invIb = 1 / (iaScale * massB * rb * rb);
 
-      };
 
 
+        const rnA = rAx * ny - rAy * nx;
 
-      clampCrush(crushDefAx, crushDefAy, realRatioA, rawCrushMagA, _clampA);
+        const rnB = rBx * ny - rBy * nx;
 
-      clampCrush(crushDefBx, crushDefBy, realRatioB, rawCrushMagB, _clampB);
+        const denom = invMassA + invMassB + rnA * rnA * invIa + rnB * rnB * invIb;
 
-      const clampA = _clampA;
 
-      const clampB = _clampB;
 
+        if (Number.isFinite(denom) && denom > 1e-8) {
 
+          const restBase = DESTRUCTOR_CONFIG.restitution;
 
-      let crushStampB = (this._crushStampCounter + 2) | 0;
+          const approachSpeed = -velAlongNormal; // Closing speed along collision normal
 
-      if (crushStampB <= 1) crushStampB = 2;
 
-      this._crushStampCounter = crushStampB;
 
-      this._crushStampA = crushStampB - 1;
+          // Anti-jelly gate:
 
-      this._crushStampB = crushStampB;
+          // Enable soft-body crush only above crash speed threshold (default 200 px/s).
 
+          // Below threshold, keep rigid behavior for low-speed pushing.
 
+          const crashApproachSpeedThreshold = Number(DESTRUCTOR_CONFIG.crashApproachSpeedThreshold) || 200.0;
 
-      const massAdvantageA = massA / (massB + 1);
+          isDestruction = approachSpeed > crashApproachSpeedThreshold;
 
-      const massAdvantageB = massB / (massA + 1);
 
 
+          const restitution = isDestruction ? 0.0 : restBase;
 
-      // KAGANIEC OBRAŻEŃ CPU: max 30% HP na jedną klatkę fizyki.
+          let j = (-(1 + restitution) * velAlongNormal) / denom;
 
-      // Dajemy heksom ułamek sekundy na przeżycie. Zostaną zniszczone na GPU, gdy naprężenia przekroczą tearThreshold (150).
 
-      const maxDmgPerTick = DESTRUCTOR_CONFIG.shardHP * 0.08;
 
-      let dirtyMinA = Number.POSITIVE_INFINITY;
+          // Crash: reduce rigid impulse (0.05) so bodies can interpenetrate and crumple.
 
-      let dirtyMaxA = -1;
+          // Non-crash push: keep full rigid impulse (1.0) to block like solid bodies.
 
-      let dirtyMinB = Number.POSITIVE_INFINITY;
+          if (isDestruction) {
 
-      let dirtyMaxB = -1;
+            const hittingWall = (invMassA === 0 || invMassB === 0) || A.isRingSegment || B.isRingSegment;
 
-      for (let c = 0; c < contactsCount; c++) {
-
-        const ct = contacts[c];
-
-        const sA = ct.shardA;
-
-        const sB = ct.shardB;
-
-
-
-        // OBIEKT A
-
-        if (sA && sA.active && sA._crushStamp !== this._crushStampA) {
-
-          sA._crushStamp = this._crushStampA;
-
-
-
-          // Wpychamy heksy proporcjonalnie do przewagi masy
-
-          const pushMult = 1.0 + Math.min(6.0, massAdvantageB * 0.2);
-
-          const pushX = clampA.x * pushMult;
-
-          const pushY = clampA.y * pushMult;
-
-
-
-          sA.applyDeformation(pushX, pushY);
-
-          const idxA = Number(sA.__meshIndex);
-
-          if (Number.isFinite(idxA)) {
-
-            if (idxA < dirtyMinA) dirtyMinA = idxA;
-
-            if (idxA > dirtyMaxA) dirtyMaxA = idxA;
-
-          } else {
-
-            dirtyMinA = 0;
-
-            dirtyMaxA = A.hexGrid.shards.length - 1;
+            j *= hittingWall ? 0.8 : 0.8;
 
           }
 
 
 
-          // Wstrzyknięcie dużego pędu dla GPU (tworzy efekt płynnego "rozchodzenia się" wgniecenia na boki)
+          const impulseX = j * nx;
 
-          sA.__collVelX = (Number(sA.__collVelX) || 0) + (pushX * 1.2);
+          const impulseY = j * ny;
 
-          sA.__collVelY = (Number(sA.__collVelY) || 0) + (pushY * 1.2);
+          addEntityVelocity(A, impulseX * invMassA, impulseY * invMassA);
 
+          addEntityVelocity(B, -impulseX * invMassB, -impulseY * invMassB);
 
+          addEntityAngVel(A, rnA * j * invIa);
 
-          if (doDamage) {
-
-            // Mniej natychmiastowych obrażeń, więcej fizycznego rozrywania
-
-            const kineticDmg = (rawCrushMagA * realRatioA * 0.18 * massAdvantageB) / Math.sqrt(contactsCount);
-
-            sA.hp -= Math.min(maxDmgPerTick, kineticDmg);
-
-          }
-
-          if (sA.hp <= 0) this.destroyShard(A, sA, { x: getEntityVelX(A), y: getEntityVelY(A) });
-
-        }
+          addEntityAngVel(B, -rnB * j * invIb);
 
 
 
-        // OBIEKT B
+          let jt = -velTangent;
 
-        if (sB && sB.active && sB._crushStamp !== this._crushStampB) {
+          const tDen = invMassA + invMassB + (rAx * ty - rAy * tx) ** 2 * invIa + (rBx * ty - rBy * tx) ** 2 * invIb;
 
-          sB._crushStamp = this._crushStampB;
+          jt = (Number.isFinite(tDen) && tDen > 1e-8) ? (jt / tDen) : 0;
 
+          const mu = 0.5;
 
+          const maxF = Math.abs(j) * mu;
 
-          const pushMult = 1.0 + Math.min(6.0, massAdvantageA * 0.2);
-
-          const pushX = clampB.x * pushMult;
-
-          const pushY = clampB.y * pushMult;
+          if (Math.abs(jt) > maxF) jt = -maxF * Math.sign(velTangent || 1);
 
 
 
-          sB.applyDeformation(pushX, pushY);
+          // Surface friction: lower in crash mode (0.25), higher in push mode (0.8).
 
-          const idxB = Number(sB.__meshIndex);
-
-          if (Number.isFinite(idxB)) {
-
-            if (idxB < dirtyMinB) dirtyMinB = idxB;
-
-            if (idxB > dirtyMaxB) dirtyMaxB = idxB;
-
-          } else {
-
-            dirtyMinB = 0;
-
-            dirtyMaxB = B.hexGrid.shards.length - 1;
-
-          }
+          jt *= isDestruction ? 0.25 : 0.8;
 
 
 
-          sB.__collVelX = (Number(sB.__collVelX) || 0) + (pushX * 1.2);
+          const fX = jt * tx;
 
-          sB.__collVelY = (Number(sB.__collVelY) || 0) + (pushY * 1.2);
+          const fY = jt * ty;
 
+          addEntityVelocity(A, fX * invMassA, fY * invMassA);
 
+          addEntityVelocity(B, -fX * invMassB, -fY * invMassB);
 
-          if (doDamage) {
+          addEntityAngVel(A, (rAx * ty - rAy * tx) * jt * invIa);
 
-            const kineticDmg = (rawCrushMagB * realRatioB * 0.18 * massAdvantageA) / Math.sqrt(contactsCount);
-
-            sB.hp -= Math.min(maxDmgPerTick, kineticDmg);
-
-          }
-
-          if (sB.hp <= 0) this.destroyShard(B, sB, { x: getEntityVelX(B), y: getEntityVelY(B) });
+          addEntityAngVel(B, -(rBx * ty - rBy * tx) * jt * invIb);
 
         }
 
       }
 
-      if (A.hexGrid && dirtyMaxA >= 0 && Number.isFinite(dirtyMinA)) {
 
-        markGridMeshDirtyRange(A.hexGrid, dirtyMinA, dirtyMaxA);
 
-        if (!HEX_SHIPS_3D_ACTIVE) A.hexGrid.textureDirty = true;
+      const penMin = DESTRUCTOR_CONFIG.crushPenetrationMin ?? 0.15;
+
+
+
+      // Enable soft-body crushing only during crash events.
+
+      const crushActive = isDestruction;
+
+      const allowCrush = isDestruction;
+
+
+
+      if (crushActive && allowCrush) {
+
+        const angA = getEntityHexAngle(A);
+
+        const angB = getEntityHexAngle(B);
+
+        const ia = 1 / (DESTRUCTOR_CONFIG.collisionIterations || 1);
+
+        const dtScale = dt * 60 * ia;
+
+
+
+        const totalMass = massA + massB;
+
+        const ca = Math.cos(angA), sa = Math.sin(angA);
+
+        const cb = Math.cos(angB), sb = Math.sin(angB);
+
+        const shearK = DESTRUCTOR_CONFIG.shearK ?? 0.06;
+
+
+
+        const impulse = (totalMass > 0) ? (impactSpeed * (massA * massB) / totalMass) : 0;
+
+        const crushEnergy = impulse * (DESTRUCTOR_CONFIG.crushImpulseScale ?? 0.25) * dtScale;
+
+
+
+        let wForceAx = nx * crushEnergy;
+
+        let wForceAy = ny * crushEnergy;
+
+        let wForceBx = -nx * crushEnergy;
+
+        let wForceBy = -ny * crushEnergy;
+
+
+
+        // Note: removed synthetic crush boost from penetration term.
+
+        // Penetration now only handles separation correction at the end of function.
+
+
+
+        if (Math.abs(velTangent) > 0.1) {
+
+          const sh = velTangent * shearK * dtScale;
+
+          wForceAx += tx * sh;
+
+          wForceAy += ty * sh;
+
+          wForceBx -= tx * sh;
+
+          wForceBy -= ty * sh;
+
+        }
+
+
+
+        const forceAx = (wForceAx * ca + wForceAy * sa) / scaleA;
+
+        const forceAy = (-wForceAx * sa + wForceAy * ca) / scaleA;
+
+        const forceBx = (wForceBx * cb + wForceBy * sb) / scaleB;
+
+        const forceBy = (-wForceBx * sb + wForceBy * cb) / scaleB;
+
+
+
+        const crushScale = isDestruction ? 1 : 0.35;
+
+
+
+        // 2. Nonlinear impact weighting (squared mass ratios)
+
+        const baseRatioA = (invMassB === 0) ? 0.0 : (invMassA === 0 ? 1.0 : massB / totalMass);
+
+        const baseRatioB = (invMassA === 0) ? 0.0 : (invMassB === 0 ? 1.0 : massA / totalMass);
+
+
+
+        // Squaring strongly favors damage transfer into lighter body.
+
+        // Example: ship vs ring -> almost all damage stays on the lighter ship.
+
+        const sumSq = (baseRatioA * baseRatioA) + (baseRatioB * baseRatioB);
+
+        const realRatioA = (baseRatioA * baseRatioA) / sumSq;
+
+        const realRatioB = (baseRatioB * baseRatioB) / sumSq;
+
+
+
+        let crushDefAx = forceAx * (realRatioA * 2) * crushScale;
+
+        let crushDefAy = forceAy * (realRatioA * 2) * crushScale;
+
+        let crushDefBx = forceBx * (realRatioB * 2) * crushScale;
+
+        let crushDefBy = forceBy * (realRatioB * 2) * crushScale;
+
+
+
+        // --- POPRAWKA 2: Uwolnienie limitu wgnieceń ---
+
+        // Pozwalamy wgnieceniom przekroczyć tearThreshold (150), żeby GPU mogło rozerwać siatkę
+
+        const maxCrushLimit = DESTRUCTOR_CONFIG.maxDeform || 220.0;
+
+
+
+        const rawCrushMagA = Math.sqrt(crushDefAx * crushDefAx + crushDefAy * crushDefAy);
+
+        const rawCrushMagB = Math.sqrt(crushDefBx * crushDefBx + crushDefBy * crushDefBy);
+
+
+
+        // --- POPRAWKA: Płynne, potężne wgniatanie taranem ---
+
+        // Static reusable objects to avoid GC pressure
+
+        const _clampA = this._clampResultA || (this._clampResultA = { x: 0, y: 0 });
+
+        const _clampB = this._clampResultB || (this._clampResultB = { x: 0, y: 0 });
+
+        clampCrushVector(crushDefAx, crushDefAy, realRatioA, rawCrushMagA, maxCrushLimit, _clampA);
+
+        clampCrushVector(crushDefBx, crushDefBy, realRatioB, rawCrushMagB, maxCrushLimit, _clampB);
+
+        const clampA = _clampA;
+
+        const clampB = _clampB;
+
+
+
+        let crushStampB = (this._crushStampCounter + 2) | 0;
+
+        if (crushStampB <= 1) crushStampB = 2;
+
+        this._crushStampCounter = crushStampB;
+
+        this._crushStampA = crushStampB - 1;
+
+        this._crushStampB = crushStampB;
+
+
+
+        const massAdvantageA = massA / (massB + 1);
+
+        const massAdvantageB = massB / (massA + 1);
+
+
+
+        // KAGANIEC OBRAŻEŃ CPU: max 30% HP na jedną klatkę fizyki.
+
+        // Dajemy heksom ułamek sekundy na przeżycie. Zostaną zniszczone na GPU, gdy naprężenia przekroczą tearThreshold (150).
+
+        const maxDmgPerTick = DESTRUCTOR_CONFIG.shardHP * 0.08;
+
+        let dirtyMinA = Number.POSITIVE_INFINITY;
+
+        let dirtyMaxA = -1;
+
+        let dirtyMinB = Number.POSITIVE_INFINITY;
+
+        let dirtyMaxB = -1;
+
+        for (let c = 0; c < contactsCount; c++) {
+
+          const ct = contacts[c];
+
+          const sA = ct.shardA;
+
+          const sB = ct.shardB;
+
+
+
+          // OBIEKT A
+
+          if (sA && sA.active && sA._crushStamp !== this._crushStampA) {
+
+            sA._crushStamp = this._crushStampA;
+
+
+
+            // Wpychamy heksy proporcjonalnie do przewagi masy
+
+            const pushMult = 1.0 + Math.min(6.0, massAdvantageB * 0.2);
+
+            const pushX = clampA.x * pushMult;
+
+            const pushY = clampA.y * pushMult;
+
+
+
+            sA.applyDeformation(pushX, pushY);
+
+            const idxA = Number(sA.__meshIndex);
+
+            if (Number.isFinite(idxA)) {
+
+              if (idxA < dirtyMinA) dirtyMinA = idxA;
+
+              if (idxA > dirtyMaxA) dirtyMaxA = idxA;
+
+            } else {
+
+              dirtyMinA = 0;
+
+              dirtyMaxA = A.hexGrid.shards.length - 1;
+
+            }
+
+
+
+            // Wstrzyknięcie dużego pędu dla GPU (tworzy efekt płynnego "rozchodzenia się" wgniecenia na boki)
+
+            sA.__collVelX = (sA.__collVelX || 0) + (pushX * 1.2);
+
+            sA.__collVelY = (sA.__collVelY || 0) + (pushY * 1.2);
+
+
+
+            if (doDamage) {
+
+              // Mniej natychmiastowych obrażeń, więcej fizycznego rozrywania
+
+              const kineticDmg = (rawCrushMagA * realRatioA * 0.18 * massAdvantageB) / Math.sqrt(contactsCount);
+
+              sA.hp -= Math.min(maxDmgPerTick, kineticDmg);
+
+            }
+
+            if (sA.hp <= 0) {
+
+              this._destroyVelA.x = getEntityVelX(A);
+
+              this._destroyVelA.y = getEntityVelY(A);
+
+              this.destroyShard(A, sA, this._destroyVelA);
+
+            }
+
+          }
+
+
+
+          // OBIEKT B
+
+          if (sB && sB.active && sB._crushStamp !== this._crushStampB) {
+
+            sB._crushStamp = this._crushStampB;
+
+
+
+            const pushMult = 1.0 + Math.min(6.0, massAdvantageA * 0.2);
+
+            const pushX = clampB.x * pushMult;
+
+            const pushY = clampB.y * pushMult;
+
+
+
+            sB.applyDeformation(pushX, pushY);
+
+            const idxB = Number(sB.__meshIndex);
+
+            if (Number.isFinite(idxB)) {
+
+              if (idxB < dirtyMinB) dirtyMinB = idxB;
+
+              if (idxB > dirtyMaxB) dirtyMaxB = idxB;
+
+            } else {
+
+              dirtyMinB = 0;
+
+              dirtyMaxB = B.hexGrid.shards.length - 1;
+
+            }
+
+
+
+            sB.__collVelX = (sB.__collVelX || 0) + (pushX * 1.2);
+
+            sB.__collVelY = (sB.__collVelY || 0) + (pushY * 1.2);
+
+
+
+            if (doDamage) {
+
+              const kineticDmg = (rawCrushMagB * realRatioB * 0.18 * massAdvantageA) / Math.sqrt(contactsCount);
+
+              sB.hp -= Math.min(maxDmgPerTick, kineticDmg);
+
+            }
+
+            if (sB.hp <= 0) {
+
+              this._destroyVelB.x = getEntityVelX(B);
+
+              this._destroyVelB.y = getEntityVelY(B);
+
+              this.destroyShard(B, sB, this._destroyVelB);
+
+            }
+
+          }
+
+        }
+
+        if (A.hexGrid && dirtyMaxA >= 0 && Number.isFinite(dirtyMinA)) {
+
+          markGridMeshDirtyRange(A.hexGrid, dirtyMinA, dirtyMaxA);
+
+          if (!HEX_SHIPS_3D_ACTIVE) A.hexGrid.textureDirty = true;
+
+        }
+
+        if (B.hexGrid && dirtyMaxB >= 0 && Number.isFinite(dirtyMinB)) {
+
+          markGridMeshDirtyRange(B.hexGrid, dirtyMinB, dirtyMaxB);
+
+          if (!HEX_SHIPS_3D_ACTIVE) B.hexGrid.textureDirty = true;
+
+        }
 
       }
 
-      if (B.hexGrid && dirtyMaxB >= 0 && Number.isFinite(dirtyMinB)) {
 
-        markGridMeshDirtyRange(B.hexGrid, dirtyMinB, dirtyMaxB);
 
-        if (!HEX_SHIPS_3D_ACTIVE) B.hexGrid.textureDirty = true;
+      // Anty-przenikanie: utrzymujemy wysoką separację nawet w trybie crush.
+      const massRatio = Math.max(massA, massB) / Math.max(1, Math.min(massA, massB));
+      const deepPenetration = penetration > (HIT_RAD * 0.35);
+      let crushSep = 0.82;
+      if (massRatio > 5) crushSep = 0.75;
+
+      const isHittingWallSep = (invMassA === 0 || invMassB === 0) || isRingCollision;
+      const sepPercent = isHittingWallSep
+        ? 1.0
+        : (crushActive ? (deepPenetration ? 1.0 : crushSep) : 0.92);
+
+
+
+      if (penetration > slop) {
+
+        const corr = Math.max(penetration - slop, 0) / (invMassA + invMassB) * sepPercent;
+
+        addEntityPosition(A, nx * corr * invMassA, ny * corr * invMassA);
+
+        addEntityPosition(B, -nx * corr * invMassB, -ny * corr * invMassB);
 
       }
-
-    }
-
-
-
-    // --- POPRAWKA 4: Miażdżenie taranem ---
-
-    // Jeśli masa jest drastycznie różna (np. 800k vs 30k), niemal wyłączamy odpychanie
-
-    // dla trybu crush. Pozwala to wielkiemu statkowi fizycznie wjechać w mniejszy i go rozerwać.
-
-    const massRatio = Math.max(massA, massB) / Math.max(1, Math.min(massA, massB));
-
-    let crushSep = 0.3;
-
-    if (massRatio > 5) crushSep = 0.05; // Prawie brak separacji - statek wgniata mniejszego
-
-
-
-    const isRingCollision = !!(A?.isRingSegment || B?.isRingSegment);
-    const isHittingWallSep = (invMassA === 0 || invMassB === 0) || isRingCollision;
-
-    const sepPercent = isHittingWallSep ? 1.0 : (crushActive ? crushSep : 0.8);
-
-
-
-    if (penetration > slop) {
-
-      const corr = Math.max(penetration - slop, 0) / (invMassA + invMassB) * sepPercent;
-
-      addEntityPosition(A, nx * corr * invMassA, ny * corr * invMassA);
-
-      addEntityPosition(B, -nx * corr * invMassB, -ny * corr * invMassB);
-
-    }
 
     } finally {
 
@@ -3748,29 +4087,7 @@ export const DestructorSystem = {
 
     const skipCanvasErase = HEX_SHIPS_3D_ACTIVE && entity.isRingSegment;
 
-    if (!skipCanvasErase) {
-
-      const ctx = entity.hexGrid.cacheCtx;
-
-      if (!ctx) return;
-
-      ctx.save();
-
-      ctx.globalCompositeOperation = 'destination-out';
-
-      ctx.translate(shard.gridX + shard.deformation.x, shard.gridY + shard.deformation.y);
-
-      ctx.beginPath();
-
-      ctx.arc(0, 0, shard.radius * 1.12, 0, Math.PI * 2);
-
-      ctx.fill();
-
-      ctx.restore();
-
-      ctx.globalCompositeOperation = 'source-over';
-
-    }
+    if (!skipCanvasErase) this._queueShardErase(entity, shard);
 
     const scale = getFinalScale(entity);
 
@@ -3804,7 +4121,8 @@ export const DestructorSystem = {
 
     markGridMeshDirtyByShard(entity.hexGrid, shard);
 
-    entity.hexGrid.gpuTextureNeedsUpdate = !skipCanvasErase;
+    if (!skipCanvasErase) entity.hexGrid.gpuTextureNeedsUpdate = true;
+    else entity.hexGrid.gpuTextureNeedsUpdate = false;
 
   },
 
@@ -3831,95 +4149,95 @@ export const DestructorSystem = {
     const tSplitDbg0 = dbgEnabled ? nowMs() : 0;
     try {
 
-    const queued = this.splitQueue;
+      const queued = this.splitQueue;
 
-    if (!queued.length) return;
+      if (!queued.length) return;
 
-    this.splitQueue = [];
-
-
-
-    let stamp = (this._splitStamp + 1) | 0;
-
-    if (stamp <= 0) stamp = 1;
-
-    this._splitStamp = stamp;
+      this.splitQueue = [];
 
 
 
-    const queue = this._splitUniqueBuffer;
+      let stamp = (this._splitStamp + 1) | 0;
 
-    queue.length = 0;
+      if (stamp <= 0) stamp = 1;
 
-    for (let i = 0; i < queued.length; i++) {
-
-      const entity = queued[i];
-
-      if (!entity) continue;
-
-      if (entity._destrSplitStamp === stamp) continue;
-
-      entity._destrSplitStamp = stamp;
-
-      queue.push(entity);
-
-    }
+      this._splitStamp = stamp;
 
 
 
-    const splitBudgetMs = Math.max(0.25, Number(DESTRUCTOR_CONFIG.splitTimeBudgetMs) || 1.2);
+      const queue = this._splitUniqueBuffer;
 
-    const splitMaxPerTick = Math.max(1, DESTRUCTOR_CONFIG.splitMaxPerTick | 0);
+      queue.length = 0;
 
-    const startedAt = nowMs();
+      for (let i = 0; i < queued.length; i++) {
 
-    let processedCount = 0;
+        const entity = queued[i];
 
-    const deferred = this.splitQueue;
+        if (!entity) continue;
 
+        if (entity._destrSplitStamp === stamp) continue;
 
+        entity._destrSplitStamp = stamp;
 
-    for (const entity of queue) {
-
-      if (!entity?.hexGrid) continue;
-
-      if (processedCount >= splitMaxPerTick || (nowMs() - startedAt) > splitBudgetMs) {
-
-        deferred.push(entity);
-
-        continue;
+        queue.push(entity);
 
       }
 
-      const groups = this.findIslands(entity.hexGrid);
 
-      if (groups.length <= 1) continue;
 
-      groups.sort((a, b) => b.length - a.length);
+      const splitBudgetMs = Math.max(0.25, Number(DESTRUCTOR_CONFIG.splitTimeBudgetMs) || 1.2);
 
-      const main = groups[0];
+      const splitMaxPerTick = Math.max(1, DESTRUCTOR_CONFIG.splitMaxPerTick | 0);
 
-      const loose = groups.slice(1);
+      const startedAt = nowMs();
 
-      this.rebuildEntityGrid(entity, main);
+      let processedCount = 0;
 
-      for (const group of loose) {
+      const deferred = this.splitQueue;
 
-        if (group.length < 3) {
 
-          for (const s of group) this.destroyShard(entity, s, { x: getEntityVelX(entity), y: getEntityVelY(entity) });
+
+      for (const entity of queue) {
+
+        if (!entity?.hexGrid) continue;
+
+        if (processedCount >= splitMaxPerTick || (nowMs() - startedAt) > splitBudgetMs) {
+
+          deferred.push(entity);
 
           continue;
 
         }
 
-        this.spawnWreckEntity(entity, group, entities);
+        const groups = this.findIslands(entity.hexGrid);
+
+        if (groups.length <= 1) continue;
+
+        groups.sort((a, b) => b.length - a.length);
+
+        const main = groups[0];
+
+        const loose = groups.slice(1);
+
+        this.rebuildEntityGrid(entity, main);
+
+        for (const group of loose) {
+
+          if (group.length < 3) {
+
+            for (const s of group) this.destroyShard(entity, s, { x: getEntityVelX(entity), y: getEntityVelY(entity) });
+
+            continue;
+
+          }
+
+          this.spawnWreckEntity(entity, group, entities);
+
+        }
+
+        processedCount++;
 
       }
-
-      processedCount++;
-
-    }
     } finally {
       if (dbgEnabled) this._dbgCollisionRecord('processSplits', nowMs() - tSplitDbg0);
     }
@@ -4068,6 +4386,9 @@ export const DestructorSystem = {
 
     entity.hexGrid.shards = shards;
 
+    if (!Array.isArray(entity.hexGrid._pendingEraseQueue)) entity.hexGrid._pendingEraseQueue = [];
+    else entity.hexGrid._pendingEraseQueue.length = 0;
+
     entity.hexGrid.map = map;
 
     entity.hexGrid.grid = grid;
@@ -4110,7 +4431,7 @@ export const DestructorSystem = {
 
     rebuildNeighbors(entity.hexGrid);
 
-    if (!entity.isPlayer) entity.mass = Math.max(10, shards.length * DESTRUCTOR_CONFIG.shardMass);
+    if (!entity.isPlayer) entity.mass = Math.max(10, sumShardMass(shards));
 
   },
 
@@ -4222,6 +4543,8 @@ export const DestructorSystem = {
 
           pivot: { x: 0, y: 0 },
 
+          _pendingEraseQueue: [],
+
           meshDirtyAll: false,
 
           meshDirtyStart: -1,
@@ -4252,7 +4575,7 @@ export const DestructorSystem = {
 
     wreck.radius = newRadius;
 
-    wreck.mass = Math.max(10, shards.length * DESTRUCTOR_CONFIG.shardMass);
+    wreck.mass = Math.max(10, sumShardMass(shards));
 
     wreck.friction = 0.998;
 
@@ -4271,6 +4594,9 @@ export const DestructorSystem = {
     const wGrid = wreck.hexGrid;
 
     wGrid.shards = shards;
+
+    if (!Array.isArray(wGrid._pendingEraseQueue)) wGrid._pendingEraseQueue = [];
+    else wGrid._pendingEraseQueue.length = 0;
 
     wGrid.cols = cols;
 
@@ -4464,6 +4790,8 @@ export function initHexBody(entity, image, damagedImage = null, isProjectile = f
 
   const alphaThreshold = Math.max(0, Math.min(255, Number(alphaCutoff) || 40));
 
+  const alphaSampleThreshold = Math.max(8, Math.min(255, alphaThreshold * 0.75));
+
 
 
   for (let c = 0; c < cols; c++) {
@@ -4482,11 +4810,29 @@ export function initHexBody(entity, image, damagedImage = null, isProjectile = f
 
       if (px < 0 || py < 0 || px >= w || py >= h) continue;
 
-      const alpha = data[(py * w + px) * 4 + 3];
+      const maskProfile = sampleHexMaskProfile(data, w, h, x, y, r, alphaThreshold, alphaSampleThreshold);
 
-      if (alpha <= alphaThreshold) continue;
+      if (!maskProfile.keep) continue;
 
       const shard = new HexShard(isProjectile ? null : src, damaged, x, y, r, c, ro, isProjectile ? '#ffcc00' : null);
+
+      const coverage = Math.max(0.18, Math.min(1, Number(maskProfile.coverage) || 1));
+
+      const radialCoverage = Math.max(0.22, Math.min(1, Number(maskProfile.radialCoverage) || coverage));
+
+      const physicalScale = Math.max(0.30, Math.min(1, coverage * 0.82 + radialCoverage * 0.18));
+
+      shard.coverage = coverage;
+
+      shard.edgeMask = maskProfile.edgeMask;
+
+      shard.maxHp = DESTRUCTOR_CONFIG.shardHP * physicalScale;
+
+      shard.hp = shard.maxHp;
+
+      shard.mass = DESTRUCTOR_CONFIG.shardMass * physicalScale;
+
+      shard.hitRadius = HIT_RAD * Math.max(0.42, Math.min(1, radialCoverage * 1.04));
 
       shard.__meshIndex = shards.length;
 
@@ -4560,6 +4906,8 @@ export function initHexBody(entity, image, damagedImage = null, isProjectile = f
 
     cacheCtx,
 
+    _pendingEraseQueue: [],
+
     cacheDirty: false,
 
     textureDirty: false,
@@ -4602,7 +4950,7 @@ export function initHexBody(entity, image, damagedImage = null, isProjectile = f
 
   else if (!Number.isFinite(entity.mass) || entity.mass <= 0) {
 
-    entity.mass = Math.max(10, shards.length * DESTRUCTOR_CONFIG.shardMass);
+    entity.mass = Math.max(10, sumShardMass(shards));
 
   }
 

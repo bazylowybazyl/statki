@@ -4,10 +4,12 @@ import terranBattleshipImg from '../assets/ships/terranbattleship.png';
 import pirateFrigateImg from '../assets/ships/piratefrigate.png';
 import pirateDestroyerImg from '../assets/ships/piratedestroyer.png';
 import pirateBattleshipImg from '../assets/ships/piratebattleship.png';
+import { composeShipThrusterCommand, updateShipThrusterState } from '../game/shipEntity.js';
 
 const STYLE_ID = 'hp-editor-style';
 const ROOT_ID = 'hp-editor-root';
 const STORAGE_KEY = 'hpEditor.v1';
+const CURRENT_SHIP_ID = 'current_ship';
 const VFX_TUNE_STORAGE_KEY = 'engineVfxTune.v1';
 const VFX_TUNE_DEFAULTS = {
   mainW: 2.26,
@@ -17,8 +19,39 @@ const VFX_TUNE_DEFAULTS = {
   curve: 1.8
 };
 
+function normalizeEditorShipId(shipId) {
+  const id = String(shipId || '').toLowerCase();
+  if (!id) return CURRENT_SHIP_ID;
+  if (id === CURRENT_SHIP_ID) return CURRENT_SHIP_ID;
+  if (id === 'player') return 'atlas';
+  if (id.startsWith('terran_')) return id.slice('terran_'.length);
+  return id;
+}
+
+function shipDataHasContent(data) {
+  return !!(
+    (Array.isArray(data?.hardpoints) && data.hardpoints.length) ||
+    (Array.isArray(data?.cores) && data.cores.length) ||
+    (Array.isArray(data?.engines?.main) && data.engines.main.length) ||
+    (Array.isArray(data?.engines?.side) && data.engines.side.length)
+  );
+}
+
+function migrateEditorShipsMap(input) {
+  const out = {};
+  const src = input && typeof input === 'object' ? input : {};
+  for (const [rawKey, value] of Object.entries(src)) {
+    const key = normalizeEditorShipId(rawKey);
+    if (!key) continue;
+    if (!out[key] || (!shipDataHasContent(out[key]) && shipDataHasContent(value))) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 const SHIP_DEFS = [
-  { id: 'player', label: 'Statek gracza', sprite: 'assets/capital_ship_rect_v1.png' },
+  { id: 'atlas', label: 'Atlas', sprite: 'assets/capital_ship_rect_v1.png' },
   { id: 'capital_carrier', label: 'Capital Carrier', sprite: 'assets/carrier.png' },
   { id: 'battleship', label: 'Battleship', sprite: terranBattleshipImg },
   { id: 'destroyer', label: 'Destroyer', sprite: terranDestroyerImg },
@@ -28,7 +61,44 @@ const SHIP_DEFS = [
   { id: 'pirate_frigate', label: 'Piraci: Fregata', sprite: pirateFrigateImg }
 ];
 
+function getShipDef(shipId) {
+  return SHIP_DEFS.find((item) => item.id === shipId) || null;
+}
+
+function getCurrentRuntimeShipId() {
+  const win = (typeof window !== 'undefined') ? window : null;
+  const player = win ? (win.ship || win.Game?.player) : null;
+  const activeHullId = normalizeEditorShipId(player?.activeHullId);
+  if (activeHullId !== CURRENT_SHIP_ID && getShipDef(activeHullId)) return activeHullId;
+  const shipId = normalizeEditorShipId(win?.Game?.player?.shipId);
+  if (shipId !== CURRENT_SHIP_ID && getShipDef(shipId)) return shipId;
+  const shipFrame = normalizeEditorShipId(win?.Game?.player?.shipFrame);
+  if (shipFrame !== CURRENT_SHIP_ID && getShipDef(shipFrame)) return shipFrame;
+  return 'atlas';
+}
+
+function resolveEditorShipId(shipId) {
+  const normalized = normalizeEditorShipId(shipId);
+  if (normalized === CURRENT_SHIP_ID) return getCurrentRuntimeShipId();
+  return normalized;
+}
+
+function getShipSelectDefs() {
+  const currentShipId = getCurrentRuntimeShipId();
+  const currentDef = getShipDef(currentShipId);
+  const currentLabel = currentDef ? `Current Ship (${currentDef.label})` : 'Current Ship';
+  return [
+    { id: CURRENT_SHIP_ID, label: currentLabel, sprite: currentDef?.sprite || '' },
+    ...SHIP_DEFS
+  ];
+}
+
 const HARDPOINT_TYPES = ['main', 'missile', 'aux', 'hangar', 'special'];
+const ENGINE_MAIN_MOUNTS = ['auto', 'rear_center', 'rear_upper', 'rear_lower', 'front_upper', 'front_lower'];
+const ENGINE_SIDE_MOUNTS = ['auto', 'upper_auto', 'center_auto', 'lower_auto', 'upper_left', 'center_left', 'lower_left', 'upper_right', 'center_right', 'lower_right'];
+const ENGINE_SIDE_UI_MOUNTS = ['auto', 'upper_auto', 'center_auto', 'lower_auto'];
+const ENGINE_MAIN_GIMBAL_DEFAULT = Object.freeze({ min: -45, max: 45 });
+const ENGINE_SIDE_GIMBAL_DEFAULT = Object.freeze({ min: -90, max: 90 });
 
 const COLORS = {
   main: '#53a7ff',
@@ -50,16 +120,22 @@ const PALETTE_ITEMS = [
   { id: 'hp_special', label: 'Hardpoint SPECIAL', tool: 'hardpoint', hardpointType: 'special', color: COLORS.special },
   { id: 'core', label: 'Rdzeń', tool: 'core', hardpointType: null, color: COLORS.core },
   { id: 'engine_main', label: 'Dysza MAIN', tool: 'engine_main', hardpointType: null, color: COLORS.engineMain },
-  { id: 'engine_side', label: 'Dysza SIDE', tool: 'engine_side', hardpointType: null, color: COLORS.engineSide }
+  { id: 'engine_side', label: 'Dysza SIDE AUTO', tool: 'engine_side', hardpointType: null, color: COLORS.engineSide, engineMount: 'auto' },
+  { id: 'engine_side_u', label: 'Dysza SIDE Upper', tool: 'engine_side', hardpointType: null, color: COLORS.engineSide, engineMount: 'upper_auto' },
+  { id: 'engine_side_c', label: 'Dysza SIDE Center', tool: 'engine_side', hardpointType: null, color: COLORS.engineSide, engineMount: 'center_auto' },
+  { id: 'engine_side_l', label: 'Dysza SIDE Lower', tool: 'engine_side', hardpointType: null, color: COLORS.engineSide, engineMount: 'lower_auto' }
 ];
 
 const state = {
-  shipId: SHIP_DEFS[0].id,
+  shipId: CURRENT_SHIP_ID,
   tool: 'hardpoint',
   hardpointType: HARDPOINT_TYPES[0],
   engineDeg: 90,
   engineOffsetX: 0,
   engineOffsetY: 0,
+  engineMount: 'auto',
+  engineGimbalMinDeg: ENGINE_MAIN_GIMBAL_DEFAULT.min,
+  engineGimbalMaxDeg: ENGINE_MAIN_GIMBAL_DEFAULT.max,
   mainVfxLengthMin: 10,
   mainVfxLengthMax: 179,
   sideVfxWidthMin: 25,
@@ -97,6 +173,7 @@ const runtime = {
   dragPan: null,
   dragPaint: null,
   vfxLoopRaf: 0,
+  vfxLoopAt: 0,
   controls: {},
   spriteCache: new Map()
 };
@@ -116,6 +193,91 @@ function normalizeDeg(value) {
   while (deg > 180) deg -= 360;
   while (deg < -180) deg += 360;
   return deg;
+}
+
+function clamp01(value) {
+  return Math.max(0, Math.min(1, Number(value) || 0));
+}
+
+function lerp(a, b, t) {
+  const mix = clamp01(t);
+  return a + (b - a) * mix;
+}
+
+function clampDeg(value) {
+  return Math.max(-180, Math.min(180, normalizeDeg(value)));
+}
+
+function normalizeGimbalRange(minDeg, maxDeg, fallback) {
+  const rawMin = Number.isFinite(Number(minDeg)) ? clampDeg(minDeg) : fallback.min;
+  const rawMax = Number.isFinite(Number(maxDeg)) ? clampDeg(maxDeg) : fallback.max;
+  return rawMin <= rawMax
+    ? { min: rawMin, max: rawMax }
+    : { min: rawMax, max: rawMin };
+}
+
+function getEngineToolDefaults(tool) {
+  return tool === 'engine_side' ? ENGINE_SIDE_GIMBAL_DEFAULT : ENGINE_MAIN_GIMBAL_DEFAULT;
+}
+
+function inferEngineMount(tool, x, y) {
+  const lx = Number(x) || 0;
+  const ly = Number(y) || 0;
+  if (tool === 'engine_side') {
+    const lateral = lx < 0 ? 'left' : 'right';
+    if (Math.abs(ly) <= 12) return `center_${lateral}`;
+    const vertical = ly < 0 ? 'upper' : 'lower';
+    return `${vertical}_${lateral}`;
+  }
+  const longitudinal = lx < 0 ? 'rear' : 'front';
+  if (Math.abs(ly) <= 12) return `${longitudinal}_center`;
+  return `${longitudinal}_${ly < 0 ? 'upper' : 'lower'}`;
+}
+
+function collapseSideMountForUi(mount) {
+  const raw = String(mount || 'auto').toLowerCase();
+  if (raw === 'upper_left' || raw === 'upper_right' || raw === 'upper_auto') return 'upper_auto';
+  if (raw === 'center_left' || raw === 'center_right' || raw === 'center_auto') return 'center_auto';
+  if (raw === 'lower_left' || raw === 'lower_right' || raw === 'lower_auto') return 'lower_auto';
+  return 'auto';
+}
+
+function normalizeEngineMountForTool(tool, mount, x, y) {
+  const allowed = tool === 'engine_side' ? ENGINE_SIDE_MOUNTS : ENGINE_MAIN_MOUNTS;
+  const raw = String(mount || 'auto').toLowerCase();
+  if (raw === 'auto') return 'auto';
+  if (allowed.includes(raw)) return raw;
+  return 'auto';
+}
+
+function resolveEngineMountForMarker(tool, mount, x, y) {
+  const normalized = normalizeEngineMountForTool(tool, mount, x, y);
+  if (tool === 'engine_side') {
+    if (normalized === 'auto') return inferEngineMount(tool, x, y);
+    if (normalized === 'upper_auto' || normalized === 'center_auto' || normalized === 'lower_auto') {
+      const vertical = normalized.split('_')[0];
+      const lateral = (Number(x) || 0) < 0 ? 'left' : 'right';
+      return `${vertical}_${lateral}`;
+    }
+  }
+  if (normalized === 'auto') return inferEngineMount(tool, x, y);
+  return normalized;
+}
+
+function inferEngineSideFromMount(mount, x = 0) {
+  const raw = String(mount || '').toLowerCase();
+  if (raw.endsWith('_left')) return 'left';
+  if (raw.endsWith('_right')) return 'right';
+  return (Number(x) || 0) < 0 ? 'left' : 'right';
+}
+
+function resolveEngineMarkerOffset(tool, mount, x, offsetX, offsetY) {
+  let dx = Number(offsetX) || 0;
+  const dy = Number(offsetY) || 0;
+  if (tool === 'engine_side' && Math.abs(dx) > 1e-6) {
+    dx *= inferEngineSideFromMount(mount, x) === 'left' ? -1 : 1;
+  }
+  return { dx, dy };
 }
 
 function sanitizeVfxTune(raw) {
@@ -220,6 +382,9 @@ function createRoot() {
       <div class="hp-c"><label>Silnik deg</label><input id="hp-engine-deg" type="number" step="1" min="-180" max="180" value="90" style="width:70px;"></div>
       <div class="hp-c"><label>Offset X</label><input id="hp-engine-offx" type="number" step="1" value="0" style="width:70px;"></div>
       <div class="hp-c"><label>Offset Y</label><input id="hp-engine-offy" type="number" step="1" value="0" style="width:70px;"></div>
+      <div class="hp-c"><label>Kategoria dyszy</label><select id="hp-engine-mount" style="width:150px;"></select></div>
+      <div class="hp-c"><label>Gimbal min</label><input id="hp-engine-gimbal-min" type="number" step="1" min="-180" max="180" value="-45" style="width:72px;"></div>
+      <div class="hp-c"><label>Gimbal max</label><input id="hp-engine-gimbal-max" type="number" step="1" min="-180" max="180" value="45" style="width:72px;"></div>
       <div class="hp-c"><label>Grid</label><input id="hp-grid" type="number" min="2" max="256" step="1" value="24" style="width:64px;"></div>
       <div class="hp-c"><label>Snap</label><input id="hp-snap" type="checkbox" checked></div>
       <div class="hp-c"><label>Sym L/R</label><input id="hp-mirror-lr" type="checkbox" checked></div>
@@ -271,6 +436,9 @@ function createRoot() {
     engineDeg: root.querySelector('#hp-engine-deg'),
     engineOffX: root.querySelector('#hp-engine-offx'),
     engineOffY: root.querySelector('#hp-engine-offy'),
+    engineMount: root.querySelector('#hp-engine-mount'),
+    engineGimbalMin: root.querySelector('#hp-engine-gimbal-min'),
+    engineGimbalMax: root.querySelector('#hp-engine-gimbal-max'),
     grid: root.querySelector('#hp-grid'),
     snap: root.querySelector('#hp-snap'),
     mirrorLR: root.querySelector('#hp-mirror-lr'),
@@ -312,22 +480,80 @@ function createRoot() {
 
 function fillSelects() {
   const { ship } = runtime.controls;
-  ship.innerHTML = SHIP_DEFS.map((s) => `<option value="${s.id}">${s.label}</option>`).join('');
+  ship.innerHTML = getShipSelectDefs().map((s) => `<option value="${s.id}">${s.label}</option>`).join('');
+  refreshEngineMountSelect();
+}
+
+function refreshEngineMountSelect() {
+  const mountSelect = runtime.controls?.engineMount;
+  if (!mountSelect) return;
+  const tool = state.tool === 'engine_side' ? 'engine_side' : 'engine_main';
+  const options = tool === 'engine_side' ? ENGINE_SIDE_UI_MOUNTS : ENGINE_MAIN_MOUNTS;
+  const labels = {
+    auto: 'AUTO',
+    upper_auto: 'Upper AUTO',
+    center_auto: 'Center AUTO',
+    lower_auto: 'Lower AUTO',
+    rear_center: 'Rear Center',
+    rear_upper: 'Rear Upper',
+    rear_lower: 'Rear Lower',
+    front_upper: 'Front Upper',
+    front_lower: 'Front Lower',
+    upper_left: 'Upper Left',
+    center_left: 'Center Left',
+    lower_left: 'Lower Left',
+    upper_right: 'Upper Right',
+    center_right: 'Center Right',
+    lower_right: 'Lower Right'
+  };
+  mountSelect.innerHTML = options.map((value) => `<option value="${value}">${labels[value] || value}</option>`).join('');
+  const selected = tool === 'engine_side'
+    ? collapseSideMountForUi(state.engineMount)
+    : normalizeEngineMountForTool(tool, state.engineMount, 0, 0);
+  state.engineMount = selected;
+  mountSelect.value = selected;
 }
 
 function activePaletteId() {
   if (state.tool === 'erase') return 'erase';
   if (state.tool === 'hardpoint') return `hp_${state.hardpointType}`;
   if (state.tool === 'engine_main') return 'engine_main';
-  if (state.tool === 'engine_side') return 'engine_side';
+  if (state.tool === 'engine_side') {
+    const mount = collapseSideMountForUi(state.engineMount);
+    if (mount === 'upper_auto') return 'engine_side_u';
+    if (mount === 'center_auto') return 'engine_side_c';
+    if (mount === 'lower_auto') return 'engine_side_l';
+    return 'engine_side';
+  }
   return 'hp_main';
 }
 
 function setBrushFromPalette(itemId) {
+  const previousTool = state.tool;
   const item = PALETTE_ITEMS.find((p) => p.id === itemId);
   if (!item) return;
   state.tool = item.tool;
   if (item.hardpointType) state.hardpointType = item.hardpointType;
+  const explicitEngineMount = (state.tool === 'engine_side' && typeof item.engineMount === 'string')
+    ? normalizeEngineMountForTool('engine_side', item.engineMount, 0, 0)
+    : null;
+  if (state.tool === 'engine_main' || state.tool === 'engine_side') {
+    const defaults = getEngineToolDefaults(state.tool);
+    if (previousTool !== state.tool) {
+      state.engineMount = explicitEngineMount || 'auto';
+      state.engineGimbalMinDeg = defaults.min;
+      state.engineGimbalMaxDeg = defaults.max;
+    } else {
+      const gimbal = normalizeGimbalRange(state.engineGimbalMinDeg, state.engineGimbalMaxDeg, defaults);
+      state.engineGimbalMinDeg = gimbal.min;
+      state.engineGimbalMaxDeg = gimbal.max;
+      state.engineMount = normalizeEngineMountForTool(state.tool, state.engineMount, 0, 0);
+      if (explicitEngineMount) state.engineMount = explicitEngineMount;
+    }
+    refreshEngineMountSelect();
+    if (runtime.controls?.engineGimbalMin) runtime.controls.engineGimbalMin.value = String(state.engineGimbalMinDeg);
+    if (runtime.controls?.engineGimbalMax) runtime.controls.engineGimbalMax.value = String(state.engineGimbalMaxDeg);
+  }
   const previewActive = isEnginePreviewActive();
   if (!previewActive) {
     state.vfxKeys = {};
@@ -370,6 +596,7 @@ function defaultShipData() {
 }
 
 function ensureShipData(shipId) {
+  shipId = resolveEditorShipId(shipId);
   if (!state.ships[shipId]) state.ships[shipId] = defaultShipData();
   const data = state.ships[shipId];
   if (!Array.isArray(data.hardpoints)) data.hardpoints = [];
@@ -386,10 +613,11 @@ function markerId() {
 }
 
 function bootstrapIfNeeded(shipId) {
+  shipId = resolveEditorShipId(shipId);
   const data = state.ships[shipId];
   if (!data || data.__bootstrapped) return;
   data.__bootstrapped = true;
-  if (shipId !== 'player') return;
+  if (shipId !== getCurrentRuntimeShipId()) return;
   const player = window.Game?.player || window.ship;
   if (!player) return;
   if (Array.isArray(player.hardpoints) && player.hardpoints.length && data.hardpoints.length === 0) {
@@ -407,6 +635,13 @@ function bootstrapIfNeeded(shipId) {
   }
   const main = player.engines?.main;
   if (main?.vfxOffset && data.engines.main.length === 0) {
+    const mainMount = normalizeEngineMountForTool(
+      'engine_main',
+      main?.mount || inferEngineMount('engine_main', main.vfxOffset.x || 0, main.vfxOffset.y || 0),
+      main.vfxOffset.x || 0,
+      main.vfxOffset.y || 0
+    );
+    const mainGimbal = normalizeGimbalRange(main?.gimbalMinDeg, main?.gimbalMaxDeg, ENGINE_MAIN_GIMBAL_DEFAULT);
     data.engines.main.push({
       id: markerId(),
       x: round2(main.vfxOffset.x || 0),
@@ -414,6 +649,9 @@ function bootstrapIfNeeded(shipId) {
       deg: round2(toDeg(main.vfxForward)),
       offsetX: 0,
       offsetY: round2(main.vfxYNudge || 0),
+      mount: mainMount,
+      gimbalMinDeg: round2(mainGimbal.min),
+      gimbalMaxDeg: round2(mainGimbal.max),
       vfxLengthMin: round2(Number(main.vfxLengthMin) || 10),
       vfxLengthMax: round2(Number(main.vfxLengthMax) || 179)
     });
@@ -424,6 +662,13 @@ function bootstrapIfNeeded(shipId) {
       const ox = Number(thruster?.offset?.x);
       const oy = Number(thruster?.offset?.y);
       if (!Number.isFinite(ox) || !Number.isFinite(oy)) continue;
+      const sideMount = normalizeEngineMountForTool(
+        'engine_side',
+        thruster?.mount || inferEngineMount('engine_side', ox, oy),
+        ox,
+        oy
+      );
+      const sideGimbal = normalizeGimbalRange(thruster?.gimbalMinDeg, thruster?.gimbalMaxDeg, ENGINE_SIDE_GIMBAL_DEFAULT);
       data.engines.side.push({
         id: markerId(),
         x: round2(ox),
@@ -431,6 +676,9 @@ function bootstrapIfNeeded(shipId) {
         deg: round2(toDeg(thruster?.forward)),
         offsetX: 0,
         offsetY: round2(thruster?.yNudge || 0),
+        mount: sideMount,
+        gimbalMinDeg: round2(sideGimbal.min),
+        gimbalMaxDeg: round2(sideGimbal.max),
         vfxWidthMin: round2(Number(thruster?.vfxWidthMin) || 25),
         vfxWidthMax: round2(Number(thruster?.vfxWidthMax) || 227),
         vfxLengthMin: round2(Number(thruster?.vfxLengthMin) || 49),
@@ -441,12 +689,14 @@ function bootstrapIfNeeded(shipId) {
 }
 
 function getSpriteSource(shipId) {
-  if (shipId === 'player') {
+  const selectedShipId = normalizeEditorShipId(shipId);
+  const resolvedShipId = resolveEditorShipId(selectedShipId);
+  if (selectedShipId === CURRENT_SHIP_ID) {
     const canvas = window.ship?.hexGrid?.cacheCanvas;
-    if (canvas) return { kind: 'canvas', value: canvas, key: `player_canvas_${canvas.width}x${canvas.height}` };
+    if (canvas) return { kind: 'canvas', value: canvas, key: `current_${resolvedShipId}_${canvas.width}x${canvas.height}` };
   }
-  const def = SHIP_DEFS.find((s) => s.id === shipId);
-  return { kind: 'url', value: def?.sprite || '', key: def?.sprite || shipId };
+  const def = getShipDef(resolvedShipId);
+  return { kind: 'url', value: def?.sprite || '', key: def?.sprite || resolvedShipId };
 }
 
 function loadImage(url) {
@@ -475,7 +725,7 @@ async function ensureSprite(shipId) {
 function bindControls() {
   const c = runtime.controls;
   c.ship.addEventListener('change', () => {
-    state.shipId = c.ship.value;
+    state.shipId = normalizeEditorShipId(c.ship.value);
     ensureShipData(state.shipId);
     persist();
     scheduleDraw();
@@ -495,6 +745,29 @@ function bindControls() {
     persist();
     scheduleDraw();
   });
+  c.engineMount.addEventListener('change', () => {
+    const tool = state.tool === 'engine_side' ? 'engine_side' : 'engine_main';
+    state.engineMount = normalizeEngineMountForTool(tool, c.engineMount.value, 0, 0);
+    refreshEngineMountSelect();
+    persist();
+    scheduleDraw();
+  });
+  const syncGimbalControls = () => {
+    c.engineGimbalMin.value = String(state.engineGimbalMinDeg);
+    c.engineGimbalMax.value = String(state.engineGimbalMaxDeg);
+  };
+  const onGimbalInput = () => {
+    const tool = state.tool === 'engine_side' ? 'engine_side' : 'engine_main';
+    const defaults = getEngineToolDefaults(tool);
+    const gimbal = normalizeGimbalRange(c.engineGimbalMin.value, c.engineGimbalMax.value, defaults);
+    state.engineGimbalMinDeg = round2(gimbal.min);
+    state.engineGimbalMaxDeg = round2(gimbal.max);
+    syncGimbalControls();
+    persist();
+    scheduleDraw();
+  };
+  c.engineGimbalMin.addEventListener('input', onGimbalInput);
+  c.engineGimbalMax.addEventListener('input', onGimbalInput);
   c.grid.addEventListener('input', () => { state.gridSize = Math.max(2, Math.min(256, Math.round(Number(c.grid.value) || 24))); scheduleDraw(); });
   c.snap.addEventListener('change', () => { state.snap = !!c.snap.checked; scheduleDraw(); });
   c.mirrorLR.addEventListener('change', () => { state.mirrorLR = !!c.mirrorLR.checked; });
@@ -728,6 +1001,13 @@ function applyVfxOverride() {
   }
 }
 
+function stepEditorThrusterPreview(dt) {
+  const ship = window.ship;
+  if (!ship?.visual) return;
+  composeShipThrusterCommand(ship, { torque: 0 });
+  updateShipThrusterState(ship, dt);
+}
+
 function clearVfxOverride() {
   const ship = window.ship;
   if (!ship) return;
@@ -736,6 +1016,7 @@ function clearVfxOverride() {
   ship.thrusterInput.leftSide = 0;
   ship.thrusterInput.rightSide = 0;
   ship.thrusterInput.torque = 0;
+  runtime.vfxLoopAt = 0;
   restoreOriginalEngines();
 }
 
@@ -749,20 +1030,41 @@ function _buildSyncKey(mainMarkers, sideMarkers) {
   // Build a compact hash so we skip sync when nothing changed
   const parts = [];
   for (const m of mainMarkers) {
-    parts.push(`M${m.x},${m.y},${m.deg || 0},${m.offsetX || 0},${m.offsetY || 0}`);
+    parts.push(`M${m.x},${m.y},${m.deg || 0},${m.offsetX || 0},${m.offsetY || 0},${m.mount || 'auto'},${m.gimbalMinDeg ?? ''},${m.gimbalMaxDeg ?? ''}`);
   }
   for (const m of sideMarkers) {
-    parts.push(`S${m.x},${m.y},${m.deg || 0},${m.offsetX || 0},${m.offsetY || 0}`);
+    parts.push(`S${m.x},${m.y},${m.deg || 0},${m.offsetX || 0},${m.offsetY || 0},${m.mount || 'auto'},${m.gimbalMinDeg ?? ''},${m.gimbalMaxDeg ?? ''}`);
   }
   return parts.join('|');
 }
 
-function _markerToThruster(m) {
-  const ox = Number(m.x) + (Number(m.offsetX) || 0);
-  const oy = Number(m.y) + (Number(m.offsetY) || 0);
+function _markerToThruster(m, tool) {
+  const anchorX = Number(m.x) || 0;
+  const anchorY = Number(m.y) || 0;
   const deg = Number(m.deg) || 0;
   const rad = deg * Math.PI / 180;
-  return { ox, oy, fx: -Math.sin(rad), fy: Math.cos(rad) };
+  const defaults = getEngineToolDefaults(tool);
+  const gimbal = normalizeGimbalRange(m?.gimbalMinDeg, m?.gimbalMaxDeg, defaults);
+  const mount = resolveEngineMountForMarker(
+    tool,
+    normalizeEngineMountForTool(tool, m?.mount, anchorX, anchorY),
+    anchorX,
+    anchorY
+  );
+  const resolvedOffset = resolveEngineMarkerOffset(tool, mount, anchorX, m?.offsetX, m?.offsetY);
+  const ox = anchorX + resolvedOffset.dx;
+  const oy = anchorY + resolvedOffset.dy;
+  return {
+    ox,
+    oy,
+    fx: -Math.sin(rad),
+    fy: Math.cos(rad),
+    deg,
+    mount,
+    gimbalMinDeg: round2(gimbal.min),
+    gimbalMaxDeg: round2(gimbal.max),
+    side: inferEngineSideFromMount(mount, anchorX)
+  };
 }
 
 function syncEditorEnginesToShip() {
@@ -793,19 +1095,36 @@ function syncEditorEnginesToShip() {
   // deg convention: deg=0 → forward=(0,1),  forward.x = -sin(deg), forward.y = cos(deg)
   if (mainMarkers.length > 0) {
     ship.visual.mainThrusters = mainMarkers.map(m => {
-      const t = _markerToThruster(m);
-      return { offset: { x: t.ox, y: t.oy }, forward: { x: t.fx, y: t.fy } };
+      const t = _markerToThruster(m, 'engine_main');
+      return {
+        offset: { x: t.ox, y: t.oy },
+        forward: { x: t.fx, y: t.fy },
+        baseDeg: t.deg,
+        nozzleDeg: t.deg,
+        mount: t.mount,
+        gimbalMinDeg: t.gimbalMinDeg,
+        gimbalMaxDeg: t.gimbalMaxDeg
+      };
     });
   } else if (_savedOriginalEngines.mainThrusters) {
     ship.visual.mainThrusters = JSON.parse(JSON.stringify(_savedOriginalEngines.mainThrusters));
   }
 
   // Convert editor markers → torqueThrusters format
-  // Side thrusters: 'left' if oy < 0, 'right' if oy > 0
+  // Side thrusters: left/right inferred from X position or explicit mount.
   if (sideMarkers.length > 0) {
     ship.visual.torqueThrusters = sideMarkers.map(m => {
-      const t = _markerToThruster(m);
-      return { offset: { x: t.ox, y: t.oy }, forward: { x: t.fx, y: t.fy }, side: t.oy < 0 ? 'right' : 'left' };
+      const t = _markerToThruster(m, 'engine_side');
+      return {
+        offset: { x: t.ox, y: t.oy },
+        forward: { x: t.fx, y: t.fy },
+        baseDeg: t.deg,
+        nozzleDeg: t.deg,
+        mount: t.mount,
+        gimbalMinDeg: t.gimbalMinDeg,
+        gimbalMaxDeg: t.gimbalMaxDeg,
+        side: t.side
+      };
     });
   } else if (_savedOriginalEngines.torqueThrusters) {
     ship.visual.torqueThrusters = JSON.parse(JSON.stringify(_savedOriginalEngines.torqueThrusters));
@@ -831,14 +1150,20 @@ function refreshVfxLoop() {
     cancelAnimationFrame(runtime.vfxLoopRaf);
     runtime.vfxLoopRaf = 0;
   }
+  runtime.vfxLoopAt = 0;
   if (!state.visible) return;
   if (!isEnginePreviewActive()) return;
   const tick = () => {
     runtime.vfxLoopRaf = 0;
     if (!state.visible) return;
     if (!isEnginePreviewActive()) return;
+    const now = performance.now();
+    const prev = runtime.vfxLoopAt || now;
+    runtime.vfxLoopAt = now;
+    const dt = Math.max(1 / 240, Math.min(0.05, (now - prev) * 0.001 || (1 / 60)));
     syncEditorEnginesToShip();
     applyVfxOverride();
+    stepEditorThrusterPreview(dt);
     scheduleDraw();
     runtime.vfxLoopRaf = requestAnimationFrame(tick);
   };
@@ -1117,13 +1442,19 @@ function placeMarker(x, y) {
       placedIds.push(id);
     } else if (state.tool === 'engine_main' || state.tool === 'engine_side') {
       const id = markerId();
+      const defaults = getEngineToolDefaults(state.tool);
+      const gimbal = normalizeGimbalRange(state.engineGimbalMinDeg, state.engineGimbalMaxDeg, defaults);
+      const mount = resolveEngineMountForMarker(state.tool, state.engineMount, pos.x, pos.y);
       const marker = {
         id,
         x: pos.x,
         y: pos.y,
         deg: mirrorDeg(state.engineDeg, pos.mirrorX, pos.mirrorY),
         offsetX: round2(state.engineOffsetX),
-        offsetY: round2(state.engineOffsetY)
+        offsetY: round2(state.engineOffsetY),
+        mount,
+        gimbalMinDeg: round2(gimbal.min),
+        gimbalMaxDeg: round2(gimbal.max)
       };
       if (state.tool === 'engine_main') {
         marker.vfxLengthMin = round2(state.mainVfxLengthMin);
@@ -1325,45 +1656,155 @@ function drawEngineVfxPreview(ctx) {
   const data = ensureShipData(state.shipId);
   const throttle = getVfxPreviewThrottle();
   const scale = getDrawScale();
-  const time = performance.now() * 0.003;
-  const drawJet = (marker, color, power, kind) => {
-    if (!marker || power <= 0) return;
-    const baseX = Number(marker.x) + (Number(marker.offsetX) || 0);
-    const baseY = Number(marker.y) + (Number(marker.offsetY) || 0);
+  const ship = window.ship;
+  const mainSources = Array.isArray(ship?.visual?.mainThrusters) ? ship.visual.mainThrusters : [];
+  const sideSources = Array.isArray(ship?.visual?.torqueThrusters) ? ship.visual.torqueThrusters : [];
+  const time = performance.now() * 0.001;
+  const drawJet = (marker, source, fallbackPower, kind) => {
+    if (!marker) return;
+    const baseX = Number.isFinite(Number(source?.offset?.x))
+      ? Number(source.offset.x)
+      : Number(marker.x) || 0;
+    const baseY = Number.isFinite(Number(source?.offset?.y))
+      ? Number(source.offset.y)
+      : Number(marker.y) || 0;
     const p = localToScreen(baseX, baseY);
-    const deg = Number(marker.deg) || 0;
+    const powerRaw = Number(source?.__throttle);
+    const power = Number.isFinite(powerRaw) ? clamp01(powerRaw) : clamp01(fallbackPower);
+    if (power <= 0.02) return;
+
+    const deg = Number.isFinite(Number(source?.nozzleDeg)) ? Number(source.nozzleDeg) : (Number(marker.deg) || 0);
     const rad = deg * Math.PI / 180;
-    const bx = -Math.sin(rad);
-    const by = Math.cos(rad);
-    const flicker = 0.88 + Math.sin(time + baseX * 0.01 + baseY * 0.01) * 0.12;
-    const len = (22 + (kind === 'main' ? 35 : 24)) * scale * power * flicker;
-    const wid = (8 + 10 * power) * scale;
-    const tipX = p.x + bx * len;
-    const tipY = p.y + by * len;
-    const nx = -by;
-    const ny = bx;
+    const widthTune = kind === 'main'
+      ? Math.max(0.05, Number(state.vfxTune?.mainW) || VFX_TUNE_DEFAULTS.mainW)
+      : Math.max(0.05, Number(state.vfxTune?.sideW) || VFX_TUNE_DEFAULTS.sideW);
+    const lengthTune = kind === 'main'
+      ? Math.max(0.05, Number(state.vfxTune?.mainL) || VFX_TUNE_DEFAULTS.mainL)
+      : Math.max(0.05, Number(state.vfxTune?.sideL) || VFX_TUNE_DEFAULTS.sideL);
+    const boostAmp = throttle.boost ? 1 : 0;
+    const flicker = 0.92 + Math.sin(time * 21 + baseX * 0.011 + baseY * 0.009) * 0.08;
+
+    const lengthMinLocal = kind === 'main'
+      ? Math.max(10, Number(marker.vfxLengthMin) || 10)
+      : Math.max(24, Number(marker.vfxLengthMin) || 49);
+    const lengthMaxLocal = kind === 'main'
+      ? Math.max(lengthMinLocal, Number(marker.vfxLengthMax) || 179)
+      : Math.max(lengthMinLocal, Number(marker.vfxLengthMax) || 354);
+    const widthMinLocal = kind === 'side'
+      ? Math.max(8, Number(marker.vfxWidthMin) || 25)
+      : Math.max(12, lengthMinLocal * 0.34);
+    const widthMaxLocal = kind === 'side'
+      ? Math.max(widthMinLocal, Number(marker.vfxWidthMax) || 227)
+      : Math.max(widthMinLocal, Math.min(lengthMaxLocal * 0.55, 120));
+
+    const plumeLength = Math.max(
+      12,
+      lerp(lengthMinLocal, lengthMaxLocal, power) * lengthTune * scale * (1 + boostAmp * 0.12) * flicker
+    );
+    const plumeWidth = Math.max(
+      6,
+      lerp(widthMinLocal, widthMaxLocal, power) * widthTune * scale * (1 + boostAmp * 0.06)
+    );
+    const outerWidth = plumeWidth;
+    const innerWidth = plumeWidth * 0.44;
+    const glowRadius = Math.max(outerWidth * 0.9, 10 * scale);
+    const heatRadius = Math.max(outerWidth * 0.72, 8 * scale);
+    const flareWidth = outerWidth * (1.45 + power * 0.45 + boostAmp * 0.35);
+    const flareHeight = Math.max(2.5 * scale, outerWidth * 0.12);
+    const ringWidth = outerWidth * 0.66;
+    const ringHeight = ringWidth * 0.34;
+    const wobble = Math.sin(time * (16 + power * 10) + baseX * 0.015 + baseY * 0.01) * outerWidth * 0.07;
+
     ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(rad);
     ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = 0.78;
-    ctx.fillStyle = color;
+
+    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, glowRadius);
+    glow.addColorStop(0, withAlpha('#ffffff', 0.95));
+    glow.addColorStop(0.18, withAlpha('#ffb76a', 0.82));
+    glow.addColorStop(0.55, withAlpha('#ff5a12', 0.34));
+    glow.addColorStop(1, withAlpha('#ff5a12', 0));
+    ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.moveTo(p.x + nx * wid * 0.5, p.y + ny * wid * 0.5);
-    ctx.lineTo(p.x - nx * wid * 0.5, p.y - ny * wid * 0.5);
-    ctx.lineTo(tipX, tipY);
+    ctx.arc(0, 0, glowRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    const heatCore = ctx.createRadialGradient(0, 0, 0, 0, 0, heatRadius);
+    heatCore.addColorStop(0, `rgba(255,255,255,${0.45 + power * 0.25})`);
+    heatCore.addColorStop(0.2, `rgba(255,214,120,${0.35 + power * 0.24})`);
+    heatCore.addColorStop(1, 'rgba(255,90,18,0)');
+    ctx.fillStyle = heatCore;
+    ctx.beginPath();
+    ctx.arc(0, 0, heatRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    const flare = ctx.createLinearGradient(-flareWidth * 0.5, 0, flareWidth * 0.5, 0);
+    flare.addColorStop(0, 'rgba(0,0,0,0)');
+    flare.addColorStop(0.2, 'rgba(74,174,255,0.14)');
+    flare.addColorStop(0.5, `rgba(255,255,255,${0.42 + power * 0.32})`);
+    flare.addColorStop(0.8, 'rgba(74,174,255,0.14)');
+    flare.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = flare;
+    ctx.fillRect(-flareWidth * 0.5, -flareHeight * 0.5, flareWidth, flareHeight);
+
+    ctx.lineWidth = Math.max(1.1 * scale, outerWidth * 0.055);
+    ctx.strokeStyle = `rgba(255,185,92,${0.44 + power * 0.3})`;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, ringWidth, ringHeight, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    const outerGrad = ctx.createLinearGradient(0, 0, 0, plumeLength);
+    outerGrad.addColorStop(0, `rgba(74,174,255,${0.76 + power * 0.12})`);
+    outerGrad.addColorStop(0.28, `rgba(88,192,255,${0.52 + power * 0.14})`);
+    outerGrad.addColorStop(0.78, `rgba(44,128,255,${0.18 + power * 0.1})`);
+    outerGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = outerGrad;
+    ctx.beginPath();
+    ctx.moveTo(outerWidth * 0.5, 0);
+    ctx.bezierCurveTo(outerWidth * 0.42, plumeLength * 0.16, outerWidth * 0.16 + wobble, plumeLength * 0.62, 0, plumeLength);
+    ctx.bezierCurveTo(-outerWidth * 0.16 + wobble, plumeLength * 0.62, -outerWidth * 0.42, plumeLength * 0.16, -outerWidth * 0.5, 0);
     ctx.closePath();
     ctx.fill();
+
+    const innerGrad = ctx.createLinearGradient(0, 0, 0, plumeLength * 0.92);
+    innerGrad.addColorStop(0, `rgba(255,255,255,${0.92 + power * 0.08})`);
+    innerGrad.addColorStop(0.18, `rgba(232,247,255,${0.72 + power * 0.1})`);
+    innerGrad.addColorStop(0.62, `rgba(124,214,255,${0.24 + power * 0.12})`);
+    innerGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = innerGrad;
+    ctx.beginPath();
+    ctx.moveTo(innerWidth * 0.5, 0);
+    ctx.bezierCurveTo(innerWidth * 0.34, plumeLength * 0.13, innerWidth * 0.1 + wobble * 0.6, plumeLength * 0.5, 0, plumeLength * 0.86);
+    ctx.bezierCurveTo(-innerWidth * 0.1 + wobble * 0.6, plumeLength * 0.5, -innerWidth * 0.34, plumeLength * 0.13, -innerWidth * 0.5, 0);
+    ctx.closePath();
+    ctx.fill();
+
+    if (power > 0.42) {
+      ctx.fillStyle = `rgba(255,255,255,${0.12 + power * 0.16})`;
+      const diamonds = 2 + Math.round(power * 2);
+      for (let i = 0; i < diamonds; i++) {
+        const t = (i + 1) / (diamonds + 1);
+        const y = plumeLength * (0.18 + t * 0.48);
+        const w = innerWidth * (0.55 - t * 0.18);
+        const h = Math.max(2.2 * scale, w * 0.16);
+        ctx.beginPath();
+        ctx.ellipse(0, y, Math.max(1.8 * scale, w), h, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
     ctx.restore();
   };
 
-  for (const marker of data.engines.main || []) {
-    drawJet(marker, 'rgba(110,220,255,0.95)', throttle.main, 'main');
+  for (let i = 0; i < (data.engines.main || []).length; i++) {
+    drawJet(data.engines.main[i], mainSources[i], throttle.main, 'main');
   }
-  for (const marker of data.engines.side || []) {
-    drawJet(marker, 'rgba(255,205,120,0.9)', throttle.side, 'side');
+  for (let i = 0; i < (data.engines.side || []).length; i++) {
+    drawJet(data.engines.side[i], sideSources[i], throttle.side, 'side');
   }
 
   if (state.mouseLocal && (state.tool === 'engine_main' || state.tool === 'engine_side')) {
-    const color = state.tool === 'engine_main' ? 'rgba(110,220,255,0.95)' : 'rgba(255,205,120,0.9)';
     const kind = state.tool === 'engine_main' ? 'main' : 'side';
     const power = state.tool === 'engine_main' ? throttle.main : throttle.side;
     const sym = buildSymmetryPositions(state.mouseLocal.x, state.mouseLocal.y);
@@ -1373,8 +1814,12 @@ function drawEngineVfxPreview(ctx) {
         y: pos.y,
         deg: mirrorDeg(state.engineDeg, !!pos.mirrorX, !!pos.mirrorY),
         offsetX: round2(state.engineOffsetX),
-        offsetY: round2(state.engineOffsetY)
-      }, color, power, kind);
+        offsetY: round2(state.engineOffsetY),
+        vfxWidthMin: round2(state.sideVfxWidthMin),
+        vfxWidthMax: round2(state.sideVfxWidthMax),
+        vfxLengthMin: round2(state.tool === 'engine_main' ? state.mainVfxLengthMin : state.sideVfxLengthMin),
+        vfxLengthMax: round2(state.tool === 'engine_main' ? state.mainVfxLengthMax : state.sideVfxLengthMax)
+      }, null, power, kind);
     }
   }
 }
@@ -1547,7 +1992,7 @@ function drawMarkers(ctx) {
 function compactMarker(marker, kind) {
   if (kind === 'hardpoint') return { id: marker.id, type: marker.type, x: round2(marker.x), y: round2(marker.y) };
   if (kind === 'core') return { id: marker.id, x: round2(marker.x), y: round2(marker.y) };
-  return {
+  const out = {
     id: marker.id,
     x: round2(marker.x),
     y: round2(marker.y),
@@ -1555,11 +2000,21 @@ function compactMarker(marker, kind) {
     offsetX: round2(marker.offsetX || 0),
     offsetY: round2(marker.offsetY || 0)
   };
+  if (marker.mount) out.mount = String(marker.mount);
+  if (Number.isFinite(Number(marker.gimbalMinDeg))) out.gimbalMinDeg = round2(marker.gimbalMinDeg);
+  if (Number.isFinite(Number(marker.gimbalMaxDeg))) out.gimbalMaxDeg = round2(marker.gimbalMaxDeg);
+  if (Number.isFinite(Number(marker.vfxWidthMin))) out.vfxWidthMin = round2(marker.vfxWidthMin);
+  if (Number.isFinite(Number(marker.vfxWidthMax))) out.vfxWidthMax = round2(marker.vfxWidthMax);
+  if (Number.isFinite(Number(marker.vfxLengthMin))) out.vfxLengthMin = round2(marker.vfxLengthMin);
+  if (Number.isFinite(Number(marker.vfxLengthMax))) out.vfxLengthMax = round2(marker.vfxLengthMax);
+  return out;
 }
 
 function buildSingleShipExportData(shipId) {
-  const def = SHIP_DEFS.find((item) => item.id === shipId) || { id: shipId, label: shipId };
-  const data = ensureShipData(def.id);
+  shipId = normalizeEditorShipId(shipId);
+  const resolvedShipId = resolveEditorShipId(shipId);
+  const def = getShipDef(resolvedShipId) || { id: resolvedShipId, label: resolvedShipId };
+  const data = ensureShipData(shipId);
   const ships = {
     [def.id]: {
       label: def.label,
@@ -1608,17 +2063,23 @@ function toNum(value, fallback = 0) {
   return Number.isFinite(num) ? num : fallback;
 }
 
-function normalizeImportedEngine(marker) {
+function normalizeImportedEngine(marker, tool) {
   const x = Number(marker?.x);
   const y = Number(marker?.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const defaults = getEngineToolDefaults(tool);
+  const gimbal = normalizeGimbalRange(marker?.gimbalMinDeg, marker?.gimbalMaxDeg, defaults);
+  const mount = normalizeEngineMountForTool(tool, marker?.mount, x, y);
   const out = {
     id: marker?.id || markerId(),
     x: round2(x),
     y: round2(y),
     deg: round2(normalizeDeg(marker?.deg || 0)),
     offsetX: round2(toNum(marker?.offsetX, 0)),
-    offsetY: round2(toNum(marker?.offsetY, 0))
+    offsetY: round2(toNum(marker?.offsetY, 0)),
+    mount,
+    gimbalMinDeg: round2(gimbal.min),
+    gimbalMaxDeg: round2(gimbal.max)
   };
   const vfxWidthMin = Number(marker?.vfxWidthMin);
   const vfxWidthMax = Number(marker?.vfxWidthMax);
@@ -1658,11 +2119,11 @@ function normalizeImportedShip(raw) {
 
   const engines = { main: [], side: [] };
   for (const marker of enginesMainRaw) {
-    const normalized = normalizeImportedEngine(marker);
+    const normalized = normalizeImportedEngine(marker, 'engine_main');
     if (normalized) engines.main.push(normalized);
   }
   for (const marker of enginesSideRaw) {
-    const normalized = normalizeImportedEngine(marker);
+    const normalized = normalizeImportedEngine(marker, 'engine_side');
     if (normalized) engines.side.push(normalized);
   }
 
@@ -1679,7 +2140,7 @@ function applyImportedConfigObject(parsed, applyToGame = true) {
 
   let updated = 0;
   for (const def of SHIP_DEFS) {
-    const shipRaw = shipsBlock[def.id];
+    const shipRaw = shipsBlock[def.id] || (def.id === 'atlas' ? shipsBlock.player : null);
     if (!shipRaw || typeof shipRaw !== 'object') continue;
     state.ships[def.id] = normalizeImportedShip(shipRaw);
     updated++;
@@ -1724,7 +2185,10 @@ function pushCurrentConfigToGame() {
 }
 
 function updateStatsAndPreview() {
-  const data = ensureShipData(state.shipId);
+  const selectedShipId = normalizeEditorShipId(state.shipId);
+  const resolvedShipId = resolveEditorShipId(selectedShipId);
+  const selectedDef = getShipDef(resolvedShipId) || { id: resolvedShipId, label: resolvedShipId };
+  const data = ensureShipData(selectedShipId);
   const brush = PALETTE_ITEMS.find((p) => p.id === activePaletteId());
   const keys = state.vfxKeys || {};
   const keyState = ['W', 'A', 'S', 'D', 'Q', 'E', 'Shift']
@@ -1733,8 +2197,11 @@ function updateStatsAndPreview() {
       return !!keys[`Key${key}`];
     }).join(' ') || '-';
   const mouseLabel = state.mouseLocal ? `${round2(state.mouseLocal.x)}, ${round2(state.mouseLocal.y)}` : '-';
+  const shipLabel = selectedShipId === CURRENT_SHIP_ID
+    ? `Current Ship → ${selectedDef.label}`
+    : selectedDef.label;
   runtime.controls.stats.innerHTML = `
-    <div><strong>${state.shipId}</strong></div>
+    <div><strong>${shipLabel}</strong></div>
     <div>Pędzel: ${brush ? brush.label : '-'}</div>
     <div>Hardpointy: ${data.hardpoints.length}</div>
     <div>Rdzenie: ${data.cores.length}</div>
@@ -1747,7 +2214,7 @@ function updateStatsAndPreview() {
     <div>Podgląd 3D VFX: ${state.vfxThreePreview ? 'ON' : 'OFF'}</div>
     <div>Tune MAIN ${state.vfxTune.mainW}/${state.vfxTune.mainL} | SIDE ${state.vfxTune.sideW}/${state.vfxTune.sideL}</div>
   `;
-  runtime.controls.preview.value = JSON.stringify(buildSingleShipExportData(state.shipId), null, 2);
+  runtime.controls.preview.value = JSON.stringify(buildSingleShipExportData(selectedShipId), null, 2);
 }
 
 function scheduleDraw() {
@@ -1760,6 +2227,7 @@ function scheduleDraw() {
 }
 
 function persist() {
+  state.shipId = normalizeEditorShipId(state.shipId);
   const payload = {
     shipId: state.shipId,
     tool: state.tool,
@@ -1767,6 +2235,9 @@ function persist() {
     engineDeg: state.engineDeg,
     engineOffsetX: state.engineOffsetX,
     engineOffsetY: state.engineOffsetY,
+    engineMount: state.engineMount,
+    engineGimbalMinDeg: state.engineGimbalMinDeg,
+    engineGimbalMaxDeg: state.engineGimbalMaxDeg,
     mirrorLR: state.mirrorLR,
     mirrorUD: state.mirrorUD,
     snap: state.snap,
@@ -1782,7 +2253,7 @@ function persist() {
     sideVfxWidthMax: state.sideVfxWidthMax,
     sideVfxLengthMin: state.sideVfxLengthMin,
     sideVfxLengthMax: state.sideVfxLengthMax,
-    ships: state.ships
+    ships: migrateEditorShipsMap(state.ships)
   };
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -1798,12 +2269,18 @@ function loadStorage() {
     if (!raw) return;
     const data = JSON.parse(raw);
     if (!data || typeof data !== 'object') return;
-    state.shipId = data.shipId || state.shipId;
+    state.shipId = normalizeEditorShipId(data.shipId || state.shipId);
     state.tool = data.tool || state.tool;
     state.hardpointType = data.hardpointType || state.hardpointType;
     state.engineDeg = Number.isFinite(data.engineDeg) ? data.engineDeg : state.engineDeg;
     state.engineOffsetX = Number.isFinite(data.engineOffsetX) ? data.engineOffsetX : state.engineOffsetX;
     state.engineOffsetY = Number.isFinite(data.engineOffsetY) ? data.engineOffsetY : state.engineOffsetY;
+    const activeEngineTool = data.tool === 'engine_side' ? 'engine_side' : 'engine_main';
+    const defaults = getEngineToolDefaults(activeEngineTool);
+    state.engineMount = normalizeEngineMountForTool(activeEngineTool, data.engineMount, 0, 0);
+    const gimbal = normalizeGimbalRange(data.engineGimbalMinDeg, data.engineGimbalMaxDeg, defaults);
+    state.engineGimbalMinDeg = round2(gimbal.min);
+    state.engineGimbalMaxDeg = round2(gimbal.max);
     state.mirrorLR = !!data.mirrorLR;
     state.mirrorUD = !!data.mirrorUD;
     state.snap = data.snap !== false;
@@ -1819,7 +2296,13 @@ function loadStorage() {
     state.sideVfxWidthMax = Math.max(state.sideVfxWidthMin, Math.round(Number(data.sideVfxWidthMax) || state.sideVfxWidthMax));
     state.sideVfxLengthMin = Math.max(1, Math.round(Number(data.sideVfxLengthMin) || state.sideVfxLengthMin));
     state.sideVfxLengthMax = Math.max(state.sideVfxLengthMin, Math.round(Number(data.sideVfxLengthMax) || state.sideVfxLengthMax));
-    state.ships = data.ships && typeof data.ships === 'object' ? data.ships : {};
+    state.ships = migrateEditorShipsMap(data.ships && typeof data.ships === 'object' ? data.ships : {});
+    if (state.shipId === 'atlas' && getCurrentRuntimeShipId() !== 'atlas' && !shipDataHasContent(state.ships?.atlas)) {
+      state.shipId = CURRENT_SHIP_ID;
+    }
+    if (state.shipId !== CURRENT_SHIP_ID && !SHIP_DEFS.some((def) => def.id === state.shipId)) {
+      state.shipId = CURRENT_SHIP_ID;
+    }
     if (!['erase', 'hardpoint', 'core', 'engine_main', 'engine_side'].includes(state.tool)) state.tool = 'hardpoint';
     if (!HARDPOINT_TYPES.includes(state.hardpointType)) state.hardpointType = 'main';
   } catch { }
@@ -1827,10 +2310,21 @@ function loadStorage() {
 
 function syncControlsFromState() {
   const c = runtime.controls;
+  fillSelects();
+  const activeEngineTool = state.tool === 'engine_side' ? 'engine_side' : 'engine_main';
+  state.engineMount = normalizeEngineMountForTool(activeEngineTool, state.engineMount, 0, 0);
+  const defaults = getEngineToolDefaults(activeEngineTool);
+  const gimbal = normalizeGimbalRange(state.engineGimbalMinDeg, state.engineGimbalMaxDeg, defaults);
+  state.engineGimbalMinDeg = round2(gimbal.min);
+  state.engineGimbalMaxDeg = round2(gimbal.max);
   c.ship.value = state.shipId;
   c.engineDeg.value = String(state.engineDeg);
   c.engineOffX.value = String(state.engineOffsetX);
   c.engineOffY.value = String(state.engineOffsetY);
+  refreshEngineMountSelect();
+  c.engineMount.value = state.engineMount;
+  c.engineGimbalMin.value = String(state.engineGimbalMinDeg);
+  c.engineGimbalMax.value = String(state.engineGimbalMaxDeg);
   c.grid.value = String(state.gridSize);
   c.snap.checked = !!state.snap;
   c.mirrorLR.checked = !!state.mirrorLR;

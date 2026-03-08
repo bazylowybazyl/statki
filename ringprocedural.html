@@ -126,6 +126,272 @@
             text-align: right;
             pointer-events: none;
         }
+
+        #perfPanel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 20;
+            pointer-events: none;
+            background: rgba(5, 10, 20, 0.92);
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 1px solid #335;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7);
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 12px;
+            color: #aab;
+            min-width: 240px;
+            transition: opacity 0.25s ease;
+        }
+
+        #perfPanel.hidden {
+            opacity: 0;
+            visibility: hidden;
+        }
+
+        #perfPanel .perf-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: #667;
+            margin-bottom: 6px;
+        }
+
+        #perfPanel .perf-fps {
+            font-size: 28px;
+            font-weight: 700;
+            line-height: 1;
+            margin-bottom: 4px;
+        }
+
+        #perfPanel .perf-fps.good {
+            color: #4f8;
+        }
+
+        #perfPanel .perf-fps.ok {
+            color: #fd4;
+        }
+
+        #perfPanel .perf-fps.bad {
+            color: #f44;
+        }
+
+        #perfPanel .perf-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 1px 0;
+        }
+
+        #perfPanel .perf-label {
+            color: #778;
+            white-space: nowrap;
+        }
+
+        #perfPanel .perf-val {
+            color: #bbc;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        #perfPanel .perf-bar-bg {
+            height: 3px;
+            background: #223;
+            border-radius: 2px;
+            margin: 2px 0;
+            overflow: hidden;
+        }
+
+        #perfPanel .perf-bar {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.25s ease;
+        }
+
+        #perfPanel .perf-sep {
+            border-top: 1px solid #223;
+            margin: 5px 0;
+        }
+
+        #perfGraph {
+            margin-top: 6px;
+            display: block;
+            width: 240px;
+            height: 44px;
+            max-width: 100%;
+        }
+
+        #zoneTools {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 20;
+            pointer-events: auto;
+            background: rgba(8, 10, 18, 0.92);
+            border: 1px solid rgba(0, 243, 255, 0.35);
+            border-radius: 10px;
+            box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+            padding: 12px;
+            width: 220px;
+        }
+
+        #zoneTools h2 {
+            margin: 0 0 8px;
+            font-size: 12px;
+            letter-spacing: 1.4px;
+            text-transform: uppercase;
+            color: #8fdcff;
+        }
+
+        #zoneTools .tools-sub {
+            margin: 0 0 10px;
+            color: #778;
+            font-size: 11px;
+            line-height: 1.35;
+        }
+
+        #zoneTools .tool-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        #zoneTools button,
+        #zoneTools input {
+            font: inherit;
+        }
+
+        #zoneTools .tool-btn {
+            border: 1px solid #234;
+            background: rgba(10, 16, 28, 0.94);
+            color: #c9d7ef;
+            border-radius: 8px;
+            padding: 8px 10px;
+            cursor: pointer;
+            text-align: left;
+            transition: border-color 0.12s ease, background 0.12s ease, transform 0.12s ease;
+        }
+
+        #zoneTools .tool-btn:hover {
+            border-color: #4cc9ff;
+            background: rgba(16, 28, 44, 0.98);
+        }
+
+        #zoneTools .tool-btn.active {
+            border-color: #7cf4ff;
+            background: rgba(0, 140, 180, 0.18);
+            box-shadow: inset 0 0 0 1px rgba(124, 244, 255, 0.28);
+        }
+
+        #zoneTools .tool-btn.zone-residential.active {
+            background: rgba(0, 243, 255, 0.16);
+        }
+
+        #zoneTools .tool-btn.zone-commercial.active {
+            background: rgba(184, 0, 255, 0.16);
+        }
+
+        #zoneTools .tool-btn.zone-industrial.active {
+            background: rgba(252, 238, 10, 0.12);
+        }
+
+        #zoneTools .tool-btn.zone-military.active {
+            background: rgba(255, 0, 60, 0.14);
+        }
+
+        #zoneTools .tool-title {
+            display: block;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        #zoneTools .tool-desc {
+            display: block;
+            margin-top: 3px;
+            font-size: 10px;
+            color: #7c8799;
+        }
+
+        #zoneTools .tool-sep {
+            margin: 10px 0;
+            border-top: 1px solid #1b2736;
+        }
+
+        #zoneTools .brush-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        #zoneTools .brush-row label {
+            font-size: 11px;
+            color: #9aa5b7;
+        }
+
+        #zoneTools .brush-row input[type="range"] {
+            width: 100%;
+            accent-color: #4cc9ff;
+        }
+
+        #zoneTools .brush-value {
+            min-width: 24px;
+            text-align: right;
+            font-weight: 700;
+            color: #d8e7f7;
+        }
+
+        #zoneTools .fill-btn {
+            width: 100%;
+            border: 1px solid #275270;
+            background: linear-gradient(180deg, rgba(22, 40, 58, 0.98), rgba(10, 18, 30, 0.98));
+            color: #dff4ff;
+            border-radius: 8px;
+            padding: 10px 12px;
+            cursor: pointer;
+            font-weight: 700;
+            letter-spacing: 0.4px;
+            transition: border-color 0.12s ease, background 0.12s ease;
+        }
+
+        #zoneTools .fill-btn:hover {
+            border-color: #7cf4ff;
+            background: linear-gradient(180deg, rgba(28, 55, 78, 0.98), rgba(12, 24, 40, 0.98));
+        }
+
+        #zoneTools .fill-sub {
+            margin: 8px 0 10px;
+            color: #77879c;
+            font-size: 10px;
+            line-height: 1.35;
+        }
+
+        #zoneTools .weight-row {
+            display: grid;
+            grid-template-columns: 72px 1fr 34px;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        #zoneTools .weight-row label {
+            font-size: 11px;
+            color: #a7b5c7;
+        }
+
+        #zoneTools .weight-row input[type="range"] {
+            width: 100%;
+            accent-color: #4cc9ff;
+        }
+
+        #zoneTools .weight-value {
+            text-align: right;
+            font-size: 11px;
+            font-weight: 700;
+            color: #d8e7f7;
+        }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
@@ -134,11 +400,82 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/BufferGeometryUtils.js"></script>
 </head>
 
 <body>
     <div id="canvas-container"></div>
     <div id="ui-layer">
+        <div id="zoneTools">
+            <h2>Planowanie stref</h2>
+            <p class="tools-sub">Wybierz pędzel i maluj po siatce ringu. Shift + LPM nadal przesuwa kamerę.</p>
+            <div class="tool-grid">
+                <button class="tool-btn active" data-tool="camera">
+                    <span class="tool-title">Kamera</span>
+                    <span class="tool-desc">Przesuwanie bez malowania</span>
+                </button>
+                <button class="tool-btn zone-residential" data-tool="residential">
+                    <span class="tool-title">Mieszkalna</span>
+                    <span class="tool-desc">Wieże i arkologie</span>
+                </button>
+                <button class="tool-btn zone-commercial" data-tool="commercial">
+                    <span class="tool-title">Handlowa</span>
+                    <span class="tool-desc">Neony i usługi</span>
+                </button>
+                <button class="tool-btn zone-industrial" data-tool="industrial">
+                    <span class="tool-title">Przemysłowa</span>
+                    <span class="tool-desc">Fabryki i silosy</span>
+                </button>
+                <button class="tool-btn zone-military" data-tool="military">
+                    <span class="tool-title">Wojskowa</span>
+                    <span class="tool-desc">Bunkry i radary</span>
+                </button>
+                <button class="tool-btn" data-tool="erase">
+                    <span class="tool-title">Gumka</span>
+                    <span class="tool-desc">Usuwa zabudowę</span>
+                </button>
+            </div>
+            <div class="tool-sep"></div>
+            <div class="brush-row">
+                <label for="brushSize">Rozmiar p&#281;dzla</label>
+                <input id="brushSize" type="range" min="1" max="4" step="1" value="1">
+                <span class="brush-value" id="brushSizeValue">1</span>
+            </div>
+            <div class="brush-row">
+                <label for="buildingScale">Skala budynków</label>
+                <input id="buildingScale" type="range" min="1" max="100" step="1" value="15">
+                <span class="brush-value" id="buildingScaleValue">15</span>
+            </div>
+            <div class="brush-row">
+                <label for="buildingDensity">Zag&#281;szczenie</label>
+                <input id="buildingDensity" type="range" min="0.5" max="2.0" step="0.1" value="1.0">
+                <span class="brush-value" id="buildingDensityValue">1.0</span>
+            </div>
+            <div class="brush-row">
+                <label for="bloomStrength">Siła Bloomu</label>
+                <input id="bloomStrength" type="range" min="0.0" max="15.0" step="0.5" value="7.0">
+                <span class="brush-value" id="bloomStrengthValue">7.0</span>
+            </div>
+            <div class="tool-sep"></div>
+            <button id="fillRingBtn" class="fill-btn" type="button">Fill ring</button>
+            <div class="fill-sub">Wagi decyduja o tym, ktora strefa dominuje przy proceduralnym wypelnieniu ringu.</div>
+            <div class="weight-row">
+                <label for="fillWeightResidential">Mieszkalna</label>
+                <input id="fillWeightResidential" type="range" min="0" max="100" step="1" value="33">
+                <span class="weight-value" id="fillWeightResidentialValue">33%</span>
+            </div>
+            <div class="weight-row">
+                <label for="fillWeightIndustrial">Przemyslowa</label>
+                <input id="fillWeightIndustrial" type="range" min="0" max="100" step="1" value="33">
+                <span class="weight-value" id="fillWeightIndustrialValue">33%</span>
+            </div>
+            <div class="weight-row">
+                <label for="fillWeightMilitary">Wojskowa</label>
+                <input id="fillWeightMilitary" type="range" min="0" max="100" step="1" value="33">
+                <span class="weight-value" id="fillWeightMilitaryValue">33%</span>
+            </div>
+        </div>
         <div class="crosshair"></div>
         <div class="panel">
             <h1>Ring City</h1>
@@ -162,7 +499,51 @@
                 </div>
             </div>
         </div>
-        <div id="info">[LPM] Przesuń kamerę &nbsp;|&nbsp; [Kółko] Zoom</div>
+        <div id="info">[LPM] Pędzel / kamera &nbsp;|&nbsp; [Shift + LPM] Pan &nbsp;|&nbsp; [Kółko] Zoom &nbsp;|&nbsp;
+            [P] Perf</div>
+        <div id="perfPanel">
+            <div class="perf-title">WYDAJNOSC <span style="float:right;color:#556">[P] toggle</span></div>
+            <div class="perf-fps good" id="perfFps">--</div>
+            <div style="color:#556;font-size:10px;margin-bottom:6px" id="perfFrameTime">-- ms/frame</div>
+            <div class="perf-sep"></div>
+            <div class="perf-row"><span class="perf-label">Kamera</span><span class="perf-val" id="perfCamera">--</span>
+            </div>
+            <div class="perf-bar-bg">
+                <div class="perf-bar" id="barCamera" style="width:0%;background:#4af"></div>
+            </div>
+            <div class="perf-row"><span class="perf-label">Tilt budynkow</span><span class="perf-val"
+                    id="perfTilt">--</span></div>
+            <div class="perf-bar-bg">
+                <div class="perf-bar" id="barTilt" style="width:0%;background:#a78bfa"></div>
+            </div>
+            <div class="perf-row"><span class="perf-label">Bramy</span><span class="perf-val" id="perfGates">--</span>
+            </div>
+            <div class="perf-bar-bg">
+                <div class="perf-bar" id="barGates" style="width:0%;background:#f97316"></div>
+            </div>
+            <div class="perf-row"><span class="perf-label">Ruch</span><span class="perf-val" id="perfTraffic">--</span>
+            </div>
+            <div class="perf-bar-bg">
+                <div class="perf-bar" id="barTraffic" style="width:0%;background:#22c55e"></div>
+            </div>
+            <div class="perf-row"><span class="perf-label">Render</span><span class="perf-val" id="perfRender">--</span>
+            </div>
+            <div class="perf-bar-bg">
+                <div class="perf-bar" id="barRender" style="width:0%;background:#f4f"></div>
+            </div>
+            <div class="perf-sep"></div>
+            <div class="perf-row"><span class="perf-label">Budynki</span><span class="perf-val"
+                    id="perfBuildings">--</span></div>
+            <div class="perf-row"><span class="perf-label">Bramy aktywne</span><span class="perf-val"
+                    id="perfGateCount">--</span></div>
+            <div class="perf-row"><span class="perf-label">Lampy</span><span class="perf-val" id="perfLights">--</span>
+            </div>
+            <div class="perf-row"><span class="perf-label">Draw calls</span><span class="perf-val"
+                    id="perfDrawCalls">--</span></div>
+            <div class="perf-row"><span class="perf-label">Triangles</span><span class="perf-val"
+                    id="perfTriangles">--</span></div>
+            <canvas id="perfGraph" width="240" height="44"></canvas>
+        </div>
     </div>
 
     <script>
@@ -182,11 +563,14 @@
             parking: 0x080a10
         };
 
-        const PLANET_RADIUS = 37800;
-        const RING_INNER = 42200;
-        const RING_OUTER = 45100;
-        const RING_MID = (RING_INNER + RING_OUTER) / 2;
-        const RING_WIDTH = RING_OUTER - RING_INNER;
+        const GAME_EARTH_RADIUS = 2800 * 3;
+        const GAME_RING_RADIUS = GAME_EARTH_RADIUS * 5.2;
+        const GAME_RING_WORLD_HEIGHT = 2400;
+        const PLANET_RADIUS = GAME_EARTH_RADIUS;
+        const RING_MID = GAME_RING_RADIUS;
+        const RING_WIDTH = GAME_RING_WORLD_HEIGHT;
+        const RING_INNER = RING_MID - RING_WIDTH * 0.5;
+        const RING_OUTER = RING_MID + RING_WIDTH * 0.5;
 
         const GATE_ANGLES = [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2];
         const GATE_CLEARANCE = 0.06;
@@ -198,16 +582,77 @@
         const LAMP_SPACING = 0.0018;    // lamp every N radians
         const LAMP_HEIGHT = 85;
         const LAMP_HEAD_R = 8;
+        const ZONE_COLS = 192;
+        const ZONE_ROWS = 4;
+        const ZONE_CELL_ARC = (Math.PI * 2) / ZONE_COLS;
+        const ZONE_PAINT_INNER = RING_INNER + STREET_WIDTH + 100;
+        const ZONE_PAINT_OUTER = RING_OUTER - STREET_WIDTH - 100;
+        const ZONE_LANE_DEPTH = (ZONE_PAINT_OUTER - ZONE_PAINT_INNER) / ZONE_ROWS;
+        const GRID_LINE_Y = 6;
+        const ZONE_OVERLAY_Y = 4;
+        const ZONE_PAD_ANGLE = ZONE_CELL_ARC * 0.14;
+        const ZONE_PAD_RADIUS = 70;
+        const DISTRICT_FLOOR_Y = 2.4;
+        const DISTRICT_PATH_Y = 6.0;
+        const DISTRICT_TRACE_Y = 6.8;
+        const DISTRICT_PAD_Y = 5.2;
+        const DISTRICT_DOME_Y = 4.2;
+        const AUTOSTRADA_WIDTH = 180;
+        const AUTOSTRADA_LANE_OFFSET = 34;
+        const AUTOSTRADA_Y = 3.2;
+        const TRAFFIC_ROUTE_Y = 10;
+        const HIGHWAY_ROUTE_SAMPLES = 192;
+        const RING_PEDESTAL_HEIGHT = 180;
+        const RING_PEDESTAL_INNER_OVERHANG = 170;
+        const RING_PEDESTAL_OUTER_OVERHANG = 170;
+        const RING_PEDESTAL_TRIM_HEIGHT = 22;
+        const ZONE_BRUSHES = [
+            { id: 'camera', label: 'Kamera', color: 0x88aacc },
+            { id: 'residential', label: 'Mieszkalna', color: COLORS.residential.num },
+            { id: 'commercial', label: 'Handlowa', color: COLORS.commercial.num },
+            { id: 'industrial', label: 'Przemyslowa', color: COLORS.industrial.num },
+            { id: 'military', label: 'Wojskowa', color: COLORS.military.num },
+            { id: 'erase', label: 'Gumka', color: 0xffffff }
+        ];
+        const FILL_ZONE_KEYS = ['residential', 'industrial', 'military'];
 
         // ==========================================
         // STATE
         // ==========================================
         let scene, camera, renderer, composer;
         let ringGroup, trafficParticles;
+        let districtsGroup, zoneOverlayGroup, gridOverlayGroup, zoneRoadGroup;
         let mechanicalGates = [];
         let visualBuildings = [];
         let lampLights = [];
         let gameTime = 0;
+        let cameraAltitudeBase = 1;
+        let trafficState = null;
+        let trafficRoutes = [];
+        let trafficDirty = true;
+        let zoneConnectivityDirty = true;
+        let zoneCells = [];
+        let zoneCellMeshes = new Map();
+        let zoneHoverMesh = null;
+        let zoneHoverKey = '';
+        let activeZoneTool = 'camera';
+        let brushRadius = 1;
+        let isPainting = false;
+        let lastPaintCellKey = '';
+        let globalBuildingScale = 15;
+        let globalBuildingDensity = 1.0;
+        let globalBloomPass = null;
+
+        // SynthCity Assets Store
+        let synthCityAssets = {
+            models: {},
+            textures: {},
+            materials: {}
+        };
+
+        const mouseNdc = new THREE.Vector2();
+        const paintRaycaster = new THREE.Raycaster();
+        const ringPointerLocal = new THREE.Vector3();
 
         let camTarget = { x: 0, z: RING_MID };
         let actualCam = { x: 0, z: RING_MID };
@@ -216,8 +661,1009 @@
         let prevMouse = { x: 0, y: 0 };
 
         var matCache = {};
-        init();
-        animate();
+
+        function updateCameraAltitudeBase() {
+            const fovRad = THREE.MathUtils.degToRad(camera.fov * 0.5);
+            cameraAltitudeBase = (window.innerHeight * 0.5) / Math.tan(fovRad);
+        }
+
+        function syncTrafficPositions() {
+            if (!trafficState) return;
+            const { positions, routeIndices, segmentIndices, segmentOffsets, heightOffsets, count } = trafficState;
+            for (let i = 0, base = 0; i < count; i++, base += 3) {
+                const route = trafficRoutes[routeIndices[i]];
+                if (!route || route.segmentCount <= 0) {
+                    positions[base] = 0;
+                    positions[base + 1] = 0;
+                    positions[base + 2] = 0;
+                    continue;
+                }
+                let seg = segmentIndices[i];
+                if (seg >= route.segmentCount) seg = 0;
+                const nextSeg = (seg + 1) % route.pointCount;
+                const segLen = Math.max(0.0001, route.segmentLengths[seg]);
+                const t = Math.max(0, Math.min(1, segmentOffsets[i] / segLen));
+                const pBase = seg * 2;
+                const pNext = nextSeg * 2;
+                const x0 = route.points[pBase];
+                const z0 = route.points[pBase + 1];
+                const x1 = route.points[pNext];
+                const z1 = route.points[pNext + 1];
+                positions[base] = x0 + (x1 - x0) * t;
+                positions[base + 1] = route.height + heightOffsets[i];
+                positions[base + 2] = z0 + (z1 - z0) * t;
+            }
+        }
+
+        function markTrafficDirty() {
+            trafficDirty = true;
+        }
+
+        function markZoneConnectivityDirty() {
+            zoneConnectivityDirty = true;
+            markTrafficDirty();
+        }
+
+        function buildTrafficRoute(points, height, type = 'district') {
+            const pointCount = Math.max(0, Math.floor(points.length / 2));
+            if (pointCount < 2) return null;
+            const segmentLengths = new Float32Array(pointCount);
+            let totalLength = 0;
+            for (let i = 0; i < pointCount; i++) {
+                const next = (i + 1) % pointCount;
+                const dx = points[next * 2] - points[i * 2];
+                const dz = points[next * 2 + 1] - points[i * 2 + 1];
+                const len = Math.max(0.0001, Math.sqrt(dx * dx + dz * dz));
+                segmentLengths[i] = len;
+                totalLength += len;
+            }
+            return { points, pointCount, segmentCount: pointCount, segmentLengths, totalLength, height, type };
+        }
+
+        function buildCircularTrafficRoute(radius, clockwise, height) {
+            const points = new Float32Array(HIGHWAY_ROUTE_SAMPLES * 2);
+            for (let i = 0; i < HIGHWAY_ROUTE_SAMPLES; i++) {
+                const t = clockwise ? (1 - i / HIGHWAY_ROUTE_SAMPLES) : (i / HIGHWAY_ROUTE_SAMPLES);
+                const angle = t * Math.PI * 2;
+                points[i * 2] = Math.cos(angle) * radius;
+                points[i * 2 + 1] = Math.sin(angle) * radius;
+            }
+            return buildTrafficRoute(points, height, 'highway');
+        }
+
+        function locateRouteDistance(route, distance) {
+            if (!route || route.segmentCount <= 0) return { seg: 0, offset: 0 };
+            let nextDistance = distance % route.totalLength;
+            if (nextDistance < 0) nextDistance += route.totalLength;
+            for (let seg = 0; seg < route.segmentCount; seg++) {
+                const segLen = route.segmentLengths[seg];
+                if (nextDistance <= segLen) return { seg, offset: nextDistance };
+                nextDistance -= segLen;
+            }
+            return { seg: 0, offset: 0 };
+        }
+
+        function buildDistrictTrafficRoute(entry) {
+            const cell = entry?.cell;
+            if (!cell) return null;
+
+            // Create a rectangular traffic loop around this cell's core
+            const startAngle = cell.angleStart + ZONE_PAD_ANGLE * 2;
+            const endAngle = cell.angleEnd - ZONE_PAD_ANGLE * 2;
+            const innerRadi = cell.innerRadius + ZONE_PAD_RADIUS * 1.5;
+            const outerRadi = cell.outerRadius - ZONE_PAD_RADIUS * 1.5;
+
+            // 4 corners of the district block
+            const p1x = Math.cos(startAngle) * innerRadi;
+            const p1z = Math.sin(startAngle) * innerRadi;
+
+            const p2x = Math.cos(startAngle) * outerRadi;
+            const p2z = Math.sin(startAngle) * outerRadi;
+
+            const p3x = Math.cos(endAngle) * outerRadi;
+            const p3z = Math.sin(endAngle) * outerRadi;
+
+            const p4x = Math.cos(endAngle) * innerRadi;
+            const p4z = Math.sin(endAngle) * innerRadi;
+
+            const points = [
+                p1x, p1z,
+                p2x, p2z,
+                Math.cos((startAngle + endAngle) * 0.5) * outerRadi, Math.sin((startAngle + endAngle) * 0.5) * outerRadi,
+                p3x, p3z,
+                p4x, p4z,
+                Math.cos((startAngle + endAngle) * 0.5) * innerRadi, Math.sin((startAngle + endAngle) * 0.5) * innerRadi,
+                p1x, p1z
+            ];
+
+            return buildTrafficRoute(Float32Array.from(points), TRAFFIC_ROUTE_Y + cell.row * 2.5, 'district');
+        }
+
+        function rebuildTrafficRoutes() {
+            const nextRoutes = [];
+            const innerHighway = buildCircularTrafficRoute(RING_MID - AUTOSTRADA_LANE_OFFSET, false, TRAFFIC_ROUTE_Y + 3);
+            const outerHighway = buildCircularTrafficRoute(RING_MID + AUTOSTRADA_LANE_OFFSET, true, TRAFFIC_ROUTE_Y + 3);
+            if (innerHighway) nextRoutes.push(innerHighway);
+            if (outerHighway) nextRoutes.push(outerHighway);
+            for (const entry of zoneCellMeshes.values()) {
+                const route = buildDistrictTrafficRoute(entry);
+                if (route) nextRoutes.push(route);
+            }
+            trafficRoutes = nextRoutes;
+        }
+
+        function normalizeAngle(angle) {
+            let a = angle % (Math.PI * 2);
+            if (a < 0) a += Math.PI * 2;
+            return a;
+        }
+
+        function angleDistance(a, b) {
+            let diff = Math.abs(a - b);
+            if (diff > Math.PI) diff = Math.PI * 2 - diff;
+            return diff;
+        }
+
+        function isGateAngle(angle) {
+            const normalized = normalizeAngle(angle);
+            for (const gateAngle of GATE_ANGLES) {
+                if (angleDistance(normalized, gateAngle) < GATE_CLEARANCE) return true;
+            }
+            return false;
+        }
+
+        function wrapZoneCol(col) {
+            let next = col % ZONE_COLS;
+            if (next < 0) next += ZONE_COLS;
+            return next;
+        }
+
+        function zoneCellKey(col, row) {
+            return `${wrapZoneCol(col)}:${row}`;
+        }
+
+        function zoneCellIndex(col, row) {
+            return row * ZONE_COLS + wrapZoneCol(col);
+        }
+
+        function getZoneCell(col, row) {
+            if (row < 0 || row >= ZONE_ROWS) return null;
+            return zoneCells[zoneCellIndex(col, row)] || null;
+        }
+
+        function resetZoneGrid() {
+            zoneCells = [];
+            for (let row = 0; row < ZONE_ROWS; row++) {
+                for (let col = 0; col < ZONE_COLS; col++) {
+                    const angleStart = col * ZONE_CELL_ARC;
+                    const angleEnd = angleStart + ZONE_CELL_ARC;
+                    const innerRadius = ZONE_PAINT_INNER + row * ZONE_LANE_DEPTH;
+                    const outerRadius = innerRadius + ZONE_LANE_DEPTH;
+                    zoneCells.push({
+                        col,
+                        row,
+                        key: `${col}:${row}`,
+                        zone: null,
+                        angleStart,
+                        angleEnd,
+                        innerRadius,
+                        outerRadius
+                    });
+                }
+            }
+        }
+
+        function createSeededRandom(seed) {
+            let s = seed >>> 0;
+            return () => {
+                s = (s * 1664525 + 1013904223) >>> 0;
+                return s / 4294967296;
+            };
+        }
+
+        function hashZoneSeed(cell, zone) {
+            let hash = ((cell.col + 1) * 73856093) ^ ((cell.row + 1) * 19349663);
+            for (let i = 0; i < zone.length; i++) {
+                hash = ((hash << 5) - hash + zone.charCodeAt(i)) | 0;
+            }
+            return hash >>> 0;
+        }
+
+        function getBrushColor(toolId) {
+            const brush = ZONE_BRUSHES.find(entry => entry.id === toolId);
+            return brush ? brush.color : 0xffffff;
+        }
+
+        function getCellHubPosition(cell) {
+            const hubAngle = (cell.angleStart + cell.angleEnd) * 0.5;
+            const hubRadius = (cell.innerRadius + cell.outerRadius) * 0.5;
+            return {
+                angle: hubAngle,
+                radius: hubRadius,
+                x: Math.cos(hubAngle) * hubRadius,
+                z: Math.sin(hubAngle) * hubRadius
+            };
+        }
+
+        function getFillWeightsFromUI() {
+            const readWeight = (id) => Math.max(0, Number(document.getElementById(id)?.value) || 0);
+            return {
+                residential: readWeight('fillWeightResidential'),
+                industrial: readWeight('fillWeightIndustrial'),
+                military: readWeight('fillWeightMilitary')
+            };
+        }
+
+        function updateFillWeightValue(inputId, valueId) {
+            const input = document.getElementById(inputId);
+            const valueEl = document.getElementById(valueId);
+            if (!input || !valueEl) return;
+            valueEl.textContent = `${Math.max(0, Number(input.value) || 0)}%`;
+        }
+
+        function clearAllZoneDistricts() {
+            updateZoneHover(null);
+            for (const key of Array.from(zoneCellMeshes.keys())) {
+                clearZoneCellVisual(key);
+            }
+            for (const cell of zoneCells) {
+                cell.zone = null;
+            }
+        }
+
+        function chooseFillZone(rand, col, row, weights, assignments) {
+            const weighted = {};
+            let baseTotal = 0;
+            for (const zone of FILL_ZONE_KEYS) {
+                const base = Math.max(0, Number(weights[zone]) || 0);
+                weighted[zone] = base;
+                baseTotal += base;
+            }
+            if (baseTotal <= 0) {
+                for (const zone of FILL_ZONE_KEYS) weighted[zone] = 1;
+            }
+
+            const left = col > 0 ? assignments[zoneCellIndex(col - 1, row)] : null;
+            const left2 = col > 1 ? assignments[zoneCellIndex(col - 2, row)] : null;
+            const inner = row > 0 ? assignments[zoneCellIndex(col, row - 1)] : null;
+
+            if (left && weighted[left] !== undefined) weighted[left] += Math.max(6, weighted[left] * 0.65);
+            if (left2 && left2 === left && weighted[left2] !== undefined) weighted[left2] += Math.max(4, weighted[left2] * 0.35);
+            if (inner && weighted[inner] !== undefined) weighted[inner] += Math.max(5, weighted[inner] * 0.45);
+
+            let total = 0;
+            for (const zone of FILL_ZONE_KEYS) total += weighted[zone];
+            if (total <= 0) return 'residential';
+
+            let pick = rand() * total;
+            for (const zone of FILL_ZONE_KEYS) {
+                pick -= weighted[zone];
+                if (pick <= 0) return zone;
+            }
+            return FILL_ZONE_KEYS[FILL_ZONE_KEYS.length - 1];
+        }
+
+        function fillRingWithZones() {
+            if (!zoneCells.length) return;
+            const weights = getFillWeightsFromUI();
+            const seed = (((Date.now() >>> 0) ^ ((weights.residential * 31 + weights.industrial * 17 + weights.military * 13) >>> 0))) >>> 0;
+            const rand = createSeededRandom(seed || 1);
+            const assignments = new Array(zoneCells.length).fill(null);
+
+            clearAllZoneDistricts();
+
+            for (let row = 0; row < ZONE_ROWS; row++) {
+                for (let col = 0; col < ZONE_COLS; col++) {
+                    const cell = getZoneCell(col, row);
+                    if (!cell) continue;
+                    const centerAngle = cell.angleStart + ZONE_CELL_ARC * 0.5;
+                    if (isGateAngle(centerAngle)) {
+                        assignments[zoneCellIndex(col, row)] = null;
+                        continue;
+                    }
+                    const zone = chooseFillZone(rand, col, row, weights, assignments);
+                    assignments[zoneCellIndex(col, row)] = zone;
+                    cell.zone = zone;
+                }
+            }
+
+            for (const cell of zoneCells) {
+                if (cell.zone) createDistrictForCell(cell);
+            }
+            rebuildZoneRoadLinks();
+            createTransportTraffic();
+        }
+
+        function setZoneTool(toolId) {
+            activeZoneTool = toolId;
+            const buttons = document.querySelectorAll('#zoneTools .tool-btn');
+            buttons.forEach(button => button.classList.toggle('active', button.dataset.tool === toolId));
+            if (renderer?.domElement) {
+                renderer.domElement.style.cursor = toolId === 'camera' ? 'grab' : 'crosshair';
+            }
+            updateZoneHover(null);
+        }
+
+        function initZonePainterUI() {
+            const buttons = document.querySelectorAll('#zoneTools .tool-btn');
+            buttons.forEach(button => {
+                button.addEventListener('click', () => setZoneTool(button.dataset.tool));
+            });
+            const brushInput = document.getElementById('brushSize');
+            const brushValue = document.getElementById('brushSizeValue');
+            if (brushInput && brushValue) {
+                brushRadius = Number(brushInput.value) || 1;
+                brushValue.textContent = `${brushRadius}`;
+                brushInput.addEventListener('input', () => {
+                    brushRadius = Number(brushInput.value) || 1;
+                    brushValue.textContent = `${brushRadius}`;
+                });
+            }
+
+            const scaleInput = document.getElementById('buildingScale');
+            const scaleValue = document.getElementById('buildingScaleValue');
+            if (scaleInput && scaleValue) {
+                globalBuildingScale = Number(scaleInput.value) || 15;
+                scaleValue.textContent = globalBuildingScale;
+                scaleInput.addEventListener('input', () => {
+                    globalBuildingScale = Number(scaleInput.value) || 15;
+                    scaleValue.textContent = globalBuildingScale;
+                });
+            }
+
+            const densityInput = document.getElementById('buildingDensity');
+            const densityValue = document.getElementById('buildingDensityValue');
+            if (densityInput && densityValue) {
+                globalBuildingDensity = Number(densityInput.value) || 1.0;
+                densityValue.textContent = globalBuildingDensity.toFixed(1);
+                densityInput.addEventListener('input', () => {
+                    globalBuildingDensity = Number(densityInput.value) || 1.0;
+                    densityValue.textContent = globalBuildingDensity.toFixed(1);
+                });
+            }
+
+            const bloomInput = document.getElementById('bloomStrength');
+            const bloomValue = document.getElementById('bloomStrengthValue');
+            if (bloomInput && bloomValue) {
+                bloomValue.textContent = Number(bloomInput.value).toFixed(1);
+                bloomInput.addEventListener('input', () => {
+                    const val = Number(bloomInput.value) || 7.0;
+                    bloomValue.textContent = val.toFixed(1);
+                    if (globalBloomPass) {
+                        globalBloomPass.strength = val;
+                    }
+                });
+            }
+
+            const weightBindings = [
+                ['fillWeightResidential', 'fillWeightResidentialValue'],
+                ['fillWeightIndustrial', 'fillWeightIndustrialValue'],
+                ['fillWeightMilitary', 'fillWeightMilitaryValue']
+            ];
+            for (const [inputId, valueId] of weightBindings) {
+                const input = document.getElementById(inputId);
+                if (!input) continue;
+                updateFillWeightValue(inputId, valueId);
+                input.addEventListener('input', () => updateFillWeightValue(inputId, valueId));
+            }
+            const fillBtn = document.getElementById('fillRingBtn');
+            if (fillBtn) fillBtn.addEventListener('click', fillRingWithZones);
+            setZoneTool(activeZoneTool);
+        }
+
+        function createSectorGeometry(innerRadius, outerRadius, startAngle, endAngle, y = 0) {
+            const span = Math.max(0.0001, endAngle - startAngle);
+            const steps = Math.max(2, Math.ceil(span / (Math.PI / 48)));
+            const positions = [];
+            const uvs = [];
+            const uvScale = 320;
+            for (let i = 0; i < steps; i++) {
+                const t0 = i / steps;
+                const t1 = (i + 1) / steps;
+                const a0 = startAngle + span * t0;
+                const a1 = startAngle + span * t1;
+                const x00 = Math.cos(a0) * innerRadius;
+                const z00 = Math.sin(a0) * innerRadius;
+                const x01 = Math.cos(a1) * innerRadius;
+                const z01 = Math.sin(a1) * innerRadius;
+                const x10 = Math.cos(a0) * outerRadius;
+                const z10 = Math.sin(a0) * outerRadius;
+                const x11 = Math.cos(a1) * outerRadius;
+                const z11 = Math.sin(a1) * outerRadius;
+                positions.push(
+                    x00, y, z00,
+                    x10, y, z10,
+                    x11, y, z11,
+                    x00, y, z00,
+                    x11, y, z11,
+                    x01, y, z01
+                );
+                uvs.push(
+                    x00 / uvScale, z00 / uvScale,
+                    x10 / uvScale, z10 / uvScale,
+                    x11 / uvScale, z11 / uvScale,
+                    x00 / uvScale, z00 / uvScale,
+                    x11 / uvScale, z11 / uvScale,
+                    x01 / uvScale, z01 / uvScale
+                );
+            }
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+            geometry.computeVertexNormals();
+            return geometry;
+        }
+
+        function buildZoneGridOverlay() {
+            if (!gridOverlayGroup) return;
+            while (gridOverlayGroup.children.length) {
+                const child = gridOverlayGroup.children[gridOverlayGroup.children.length - 1];
+                if (child?.geometry) child.geometry.dispose();
+                if (child?.material) child.material.dispose?.();
+                gridOverlayGroup.remove(child);
+            }
+
+            const radialPositions = [];
+            for (let col = 0; col < ZONE_COLS; col++) {
+                const angle = col * ZONE_CELL_ARC;
+                radialPositions.push(
+                    Math.cos(angle) * ZONE_PAINT_INNER, GRID_LINE_Y, Math.sin(angle) * ZONE_PAINT_INNER,
+                    Math.cos(angle) * ZONE_PAINT_OUTER, GRID_LINE_Y, Math.sin(angle) * ZONE_PAINT_OUTER
+                );
+            }
+            const radialGeometry = new THREE.BufferGeometry();
+            radialGeometry.setAttribute('position', new THREE.Float32BufferAttribute(radialPositions, 3));
+            gridOverlayGroup.add(new THREE.LineSegments(
+                radialGeometry,
+                new THREE.LineBasicMaterial({ color: 0x2f7fb0, transparent: true, opacity: 0.28 })
+            ));
+
+            for (let row = 0; row <= ZONE_ROWS; row++) {
+                const radius = ZONE_PAINT_INNER + row * ZONE_LANE_DEPTH;
+                const arcPoints = [];
+                for (let col = 0; col <= ZONE_COLS; col++) {
+                    const angle = col * ZONE_CELL_ARC;
+                    arcPoints.push(new THREE.Vector3(
+                        Math.cos(angle) * radius,
+                        GRID_LINE_Y,
+                        Math.sin(angle) * radius
+                    ));
+                }
+                const arcGeometry = new THREE.BufferGeometry().setFromPoints(arcPoints);
+                gridOverlayGroup.add(new THREE.Line(
+                    arcGeometry,
+                    new THREE.LineBasicMaterial({ color: 0x2f7fb0, transparent: true, opacity: row === 0 || row === ZONE_ROWS ? 0.4 : 0.22 })
+                ));
+            }
+        }
+
+        function disposeObject3D(root) {
+            if (!root) return;
+            root.traverse(obj => {
+                if (obj.geometry) obj.geometry.dispose?.();
+                if (obj.material) {
+                    const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+                    for (const material of materials) {
+                        if (material && !material.userData?.shared) material.dispose?.();
+                    }
+                }
+            });
+            if (root.parent) root.parent.remove(root);
+        }
+
+        function updateZoneHover(cell) {
+            const nextKey = cell ? cell.key : '';
+            if (nextKey === zoneHoverKey && zoneHoverMesh && activeZoneTool !== 'camera') return;
+            zoneHoverKey = nextKey;
+            if (zoneHoverMesh) {
+                disposeObject3D(zoneHoverMesh);
+                zoneHoverMesh = null;
+            }
+            if (!cell || activeZoneTool === 'camera' || !zoneOverlayGroup) return;
+            const color = activeZoneTool === 'erase' ? 0xffffff : getBrushColor(activeZoneTool);
+            zoneHoverMesh = new THREE.Mesh(
+                createSectorGeometry(cell.innerRadius, cell.outerRadius, cell.angleStart, cell.angleEnd, ZONE_OVERLAY_Y + 1),
+                new THREE.MeshBasicMaterial({
+                    color,
+                    transparent: true,
+                    opacity: activeZoneTool === 'erase' ? 0.08 : 0.14,
+                    side: THREE.DoubleSide,
+                    depthWrite: false
+                })
+            );
+            zoneOverlayGroup.add(zoneHoverMesh);
+        }
+
+        function getRingPointFromPointerEvent(event) {
+            if (!renderer || !camera) return null;
+            const rect = renderer.domElement.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            if (x < 0 || y < 0 || x > rect.width || y > rect.height) return null;
+            mouseNdc.x = (x / rect.width) * 2 - 1;
+            mouseNdc.y = -(y / rect.height) * 2 + 1;
+            paintRaycaster.setFromCamera(mouseNdc, camera);
+            const dirY = paintRaycaster.ray.direction.y;
+            if (Math.abs(dirY) < 1e-6) return null;
+            const t = -paintRaycaster.ray.origin.y / dirY;
+            if (t < 0) return null;
+            return paintRaycaster.ray.at(t, new THREE.Vector3());
+        }
+
+        function getZoneCellFromPointerEvent(event) {
+            const point = getRingPointFromPointerEvent(event);
+            if (!point) return null;
+            let localX = point.x;
+            let localZ = point.z;
+            if (ringGroup) {
+                const rotY = ringGroup.rotation.y || 0;
+                if (Math.abs(rotY) > 1e-6) {
+                    const c = Math.cos(rotY);
+                    const s = Math.sin(rotY);
+                    ringPointerLocal.set(
+                        point.x * c - point.z * s,
+                        point.y,
+                        point.x * s + point.z * c
+                    );
+                    localX = ringPointerLocal.x;
+                    localZ = ringPointerLocal.z;
+                }
+            }
+            const radius = Math.sqrt(localX * localX + localZ * localZ);
+            if (radius < ZONE_PAINT_INNER || radius > ZONE_PAINT_OUTER) return null;
+            const angle = normalizeAngle(Math.atan2(localZ, localX));
+            if (isGateAngle(angle)) return null;
+            const col = Math.floor(angle / ZONE_CELL_ARC);
+            const row = Math.min(ZONE_ROWS - 1, Math.max(0, Math.floor((radius - ZONE_PAINT_INNER) / ZONE_LANE_DEPTH)));
+            return getZoneCell(col, row);
+        }
+
+        function clearZoneCellVisual(key) {
+            const existing = zoneCellMeshes.get(key);
+            if (!existing) return;
+            if (Array.isArray(existing.wrappers)) {
+                existing.wrappers.forEach(wrapper => disposeObject3D(wrapper));
+            }
+            if (existing.infrastructure) disposeObject3D(existing.infrastructure);
+            if (existing.overlay) disposeObject3D(existing.overlay);
+            zoneCellMeshes.delete(key);
+            visualBuildings = visualBuildings.filter(entry => entry.zoneCellKey !== key);
+        }
+
+        function createZoneCellOverlay(cell) {
+            const overlay = new THREE.Mesh(
+                createSectorGeometry(
+                    cell.innerRadius,
+                    cell.outerRadius,
+                    cell.angleStart,
+                    cell.angleEnd,
+                    ZONE_OVERLAY_Y
+                ),
+                new THREE.MeshBasicMaterial({
+                    color: getBrushColor(cell.zone),
+                    transparent: true,
+                    opacity: 0.16,
+                    side: THREE.DoubleSide,
+                    depthWrite: false
+                })
+            );
+            zoneOverlayGroup.add(overlay);
+            return overlay;
+        }
+
+        // Helper function removed since we rely strictly on polar grids directly now.
+
+        function createDistrictForCell(cell) {
+            const mats = getZoneMaterials(cell.zone);
+            const rand = createSeededRandom(hashZoneSeed(cell, cell.zone));
+            const wrappers = [];
+            const buildCount = cell.zone === 'residential'
+                ? 10 + Math.floor(rand() * 12)
+                : cell.zone === 'commercial'
+                    ? 8 + Math.floor(rand() * 10)
+                    : cell.zone === 'industrial'
+                        ? 6 + Math.floor(rand() * 8)
+                        : 5 + Math.floor(rand() * 6);
+            const neonColor = COLORS[cell.zone].num;
+
+            const gridCols = 4;
+            const gridRows = 3;
+            // Padding used ONLY for building placement so they don't spawn on the roads
+            const buildStartAngle = cell.angleStart + ZONE_PAD_ANGLE;
+            const buildEndAngle = cell.angleEnd - ZONE_PAD_ANGLE;
+            const buildInnerRadi = cell.innerRadius + ZONE_PAD_RADIUS;
+            const buildOuterRadi = cell.outerRadius - ZONE_PAD_RADIUS;
+
+            const angleStep = (buildEndAngle - buildStartAngle) / gridCols;
+            const radiusStep = (buildOuterRadi - buildInnerRadi) / gridRows;
+
+            const cellGeoMap = {};
+
+            // Place buildings along the pure polar grid
+            for (let r = 0; r < gridRows; r++) {
+                for (let c = 0; c < gridCols; c++) {
+                    const centerAngle = buildStartAngle + (c + 0.5) * angleStep;
+                    const centerRadius = buildInnerRadi + (r + 0.5) * radiusStep;
+
+                    // Highway avoidance
+                    if (Math.abs(centerRadius - RING_MID) < AUTOSTRADA_WIDTH * 0.5 + 40) continue;
+
+                    // Small jitter in polar coordinates
+                    const jAngle = centerAngle + (rand() - 0.5) * angleStep * 0.4;
+                    const jRadius = centerRadius + (rand() - 0.5) * radiusStep * 0.4;
+
+                    const localGeoMap = {};
+                    const bMeta = createBuilding(jAngle, jRadius, cell.zone, mats, neonColor, localGeoMap, rand, { zoneCellKey: cell.key });
+
+                    // Transform and merge this building's geos into the district ones
+                    const rotM = new THREE.Matrix4().makeRotationY(-jAngle);
+                    const posM = new THREE.Matrix4().makeTranslation(
+                        Math.cos(jAngle) * jRadius, 0, Math.sin(jAngle) * jRadius
+                    );
+                    const matrix = posM.multiply(rotM);
+
+                    for (const matKey in localGeoMap) {
+                        for (let geo of localGeoMap[matKey]) {
+                            // Ensure all geometries are non-indexed before merging to prevent `t.getIndex is not a function` error
+                            if (geo.getIndex && geo.getIndex() !== null) {
+                                geo = geo.toNonIndexed();
+                            }
+
+                            // BufferGeometryUtils requires all merged geometries to share EXACTLY the same attributes
+                            const posCount = geo.attributes.position.count;
+                            if (!geo.hasAttribute('normal')) {
+                                geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(posCount * 3), 3));
+                            }
+                            if (!geo.hasAttribute('uv')) {
+                                geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(posCount * 2), 2));
+                            }
+                            // Strip native face sub-ranges so merging array groups resolves smoothly
+                            geo.groups = [];
+
+                            geo.applyMatrix4(matrix);
+                            cellGeoMap[matKey] = cellGeoMap[matKey] || [];
+                            cellGeoMap[matKey].push(geo);
+                        }
+                    }
+                }
+            }
+
+            // Material bindings based on geometry map keys
+            const matDict = {
+                'mats': mats.mats,
+                'wall': mats.wall,
+                'roof': mats.roof,
+                'neonSign': new THREE.MeshBasicMaterial({ color: neonColor, transparent: true, opacity: 0.9, side: THREE.DoubleSide }),
+                'roofDetail': new THREE.MeshStandardMaterial({ color: 0x1a1e28, roughness: 0.8 }),
+                'chimney': new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.8 }),
+                'antennaRed': new THREE.MeshBasicMaterial({ color: 0xff0000 }),
+                'antennaGreen': new THREE.MeshBasicMaterial({ color: 0x00ff88 }),
+                'padSign': new THREE.MeshBasicMaterial({ color: 0x228866, transparent: true, opacity: 0.5, side: THREE.DoubleSide }),
+                'dish': new THREE.MeshStandardMaterial({ color: 0x334455, roughness: 0.3, metalness: 0.7, side: THREE.DoubleSide }),
+                'neonEdges': new THREE.LineBasicMaterial({ color: neonColor, transparent: true, opacity: 0.15 })
+            };
+
+            const cellGroup = new THREE.Group();
+
+            for (const matKey in cellGeoMap) {
+                if (cellGeoMap[matKey].length === 0) continue;
+                const mergedGeo = THREE.BufferGeometryUtils.mergeBufferGeometries(cellGeoMap[matKey], false);
+                if (!mergedGeo) continue;
+
+                let material = matDict[matKey];
+                if (!material) {
+                    if (matKey.startsWith('building_')) {
+                        material = synthCityAssets.materials[matKey];
+                    } else {
+                        material = mats.mats;
+                    }
+                }
+
+                if (matKey === 'neonEdges') {
+                    cellGroup.add(new THREE.LineSegments(mergedGeo, material));
+                } else {
+                    // Force arrays to flat references, sacrificing side-specific textures for massive draw call drops
+                    if (Array.isArray(material)) {
+                        material = material[0];
+                    }
+                    cellGroup.add(new THREE.Mesh(mergedGeo, material));
+                }
+            }
+
+            cellGroup.userData = { zoneCellKey: cell.key };
+            districtsGroup.add(cellGroup);
+            visualBuildings.push({ groupWrapper: cellGroup, tiltX: 0, tiltZ: 0, zoneCellKey: cell.key });
+            wrappers.push(cellGroup);
+
+            const infrastructure = createDistrictInfrastructure(cell, wrappers, cell.zone, rand, gridCols, gridRows);
+            const overlay = createZoneCellOverlay(cell);
+            zoneCellMeshes.set(cell.key, { cell, cellGroup, wrappers, infrastructure, overlay });
+        }
+
+        function setZoneCell(col, row, zone) {
+            const cell = getZoneCell(col, row);
+            if (!cell || cell.zone === zone) return false;
+            clearZoneCellVisual(cell.key);
+            cell.zone = zone;
+            if (zone) createDistrictForCell(cell);
+            markZoneConnectivityDirty();
+            return true;
+        }
+
+        function paintZoneAtCell(cell) {
+            if (!cell || activeZoneTool === 'camera') return;
+            const centerKey = cell.key;
+            if (centerKey === lastPaintCellKey) return;
+            lastPaintCellKey = centerKey;
+            const nextZone = activeZoneTool === 'erase' ? null : activeZoneTool;
+            for (let rowOffset = -brushRadius + 1; rowOffset <= brushRadius - 1; rowOffset++) {
+                for (let colOffset = -brushRadius + 1; colOffset <= brushRadius - 1; colOffset++) {
+                    const nextCell = getZoneCell(cell.col + colOffset, cell.row + rowOffset);
+                    if (!nextCell) continue;
+                    const centerAngle = nextCell.angleStart + ZONE_CELL_ARC * 0.5;
+                    if (isGateAngle(centerAngle)) continue;
+                    setZoneCell(nextCell.col, nextCell.row, nextZone);
+                }
+            }
+        }
+
+        const PerfHUD = {
+            history: new Float32Array(120),
+            histIdx: 0,
+            visible: true,
+            lastFlush: 0,
+            updateInterval: 500,
+            accum: {
+                frameCount: 0,
+                frameMs: 0,
+                cameraTime: 0,
+                tiltTime: 0,
+                gateTime: 0,
+                trafficTime: 0,
+                renderTime: 0
+            },
+            display: {
+                fps: 0,
+                frameMs: 0,
+                cameraTime: 0,
+                tiltTime: 0,
+                gateTime: 0,
+                trafficTime: 0,
+                renderTime: 0,
+                buildings: 0,
+                gates: 0,
+                lights: 0,
+                drawCalls: 0,
+                triangles: 0
+            },
+            els: null,
+            graphCtx: null,
+
+            init() {
+                this.els = {
+                    panel: document.getElementById('perfPanel'),
+                    fps: document.getElementById('perfFps'),
+                    frameMs: document.getElementById('perfFrameTime'),
+                    camera: document.getElementById('perfCamera'),
+                    tilt: document.getElementById('perfTilt'),
+                    gates: document.getElementById('perfGates'),
+                    traffic: document.getElementById('perfTraffic'),
+                    render: document.getElementById('perfRender'),
+                    buildings: document.getElementById('perfBuildings'),
+                    gateCount: document.getElementById('perfGateCount'),
+                    lights: document.getElementById('perfLights'),
+                    drawCalls: document.getElementById('perfDrawCalls'),
+                    triangles: document.getElementById('perfTriangles'),
+                    barCamera: document.getElementById('barCamera'),
+                    barTilt: document.getElementById('barTilt'),
+                    barGates: document.getElementById('barGates'),
+                    barTraffic: document.getElementById('barTraffic'),
+                    barRender: document.getElementById('barRender')
+                };
+                const graph = document.getElementById('perfGraph');
+                this.graphCtx = graph ? graph.getContext('2d') : null;
+                this.history.fill(16.67);
+                this.lastFlush = performance.now();
+            },
+
+            toggle() {
+                this.visible = !this.visible;
+                if (this.els?.panel) this.els.panel.classList.toggle('hidden', !this.visible);
+            },
+
+            addTiming(key, ms) {
+                if (!Number.isFinite(ms) || ms < 0) return;
+                if (!(key in this.accum)) return;
+                this.accum[key] += ms;
+            },
+
+            recordFrameTime(ms) {
+                if (!Number.isFinite(ms) || ms < 0) return;
+                this.accum.frameCount += 1;
+                this.accum.frameMs += ms;
+                this.history[this.histIdx % this.history.length] = ms;
+                this.histIdx += 1;
+            },
+
+            flush(now) {
+                if (now - this.lastFlush < this.updateInterval) return;
+                const frames = Math.max(1, this.accum.frameCount);
+                const avgFrame = this.accum.frameMs / frames;
+                this.display.fps = Math.round(1000 / Math.max(0.001, avgFrame));
+                this.display.frameMs = avgFrame;
+                this.display.cameraTime = this.accum.cameraTime / frames;
+                this.display.tiltTime = this.accum.tiltTime / frames;
+                this.display.gateTime = this.accum.gateTime / frames;
+                this.display.trafficTime = this.accum.trafficTime / frames;
+                this.display.renderTime = this.accum.renderTime / frames;
+                this.display.buildings = visualBuildings.length;
+                this.display.gates = mechanicalGates.length;
+                this.display.lights = lampLights.length;
+                this.display.drawCalls = renderer?.info?.render?.calls || 0;
+                this.display.triangles = renderer?.info?.render?.triangles || 0;
+                this.updateDOM();
+                this.drawGraph();
+                this.resetAccum();
+                this.lastFlush = now;
+            },
+
+            updateDOM() {
+                if (!this.visible || !this.els) return;
+                const e = this.els;
+                const d = this.display;
+                const setMs = (el, value) => { if (el) el.textContent = `${value.toFixed(2)} ms`; };
+                const setBar = (el, valueMs) => {
+                    if (!el) return;
+                    const width = Math.min(100, (valueMs / 16.67) * 100);
+                    el.style.width = `${Math.max(0, width).toFixed(0)}%`;
+                };
+
+                if (e.fps) {
+                    e.fps.textContent = `${d.fps}`;
+                    e.fps.className = `perf-fps ${d.fps >= 55 ? 'good' : d.fps >= 30 ? 'ok' : 'bad'}`;
+                }
+                if (e.frameMs) e.frameMs.textContent = `${d.frameMs.toFixed(1)} ms/frame`;
+
+                setMs(e.camera, d.cameraTime);
+                setMs(e.tilt, d.tiltTime);
+                setMs(e.gates, d.gateTime);
+                setMs(e.traffic, d.trafficTime);
+                setMs(e.render, d.renderTime);
+
+                setBar(e.barCamera, d.cameraTime);
+                setBar(e.barTilt, d.tiltTime);
+                setBar(e.barGates, d.gateTime);
+                setBar(e.barTraffic, d.trafficTime);
+                setBar(e.barRender, d.renderTime);
+
+                if (e.buildings) e.buildings.textContent = `${d.buildings}`;
+                if (e.gateCount) e.gateCount.textContent = `${d.gates}`;
+                if (e.lights) e.lights.textContent = `${d.lights}`;
+                if (e.drawCalls) e.drawCalls.textContent = `${d.drawCalls}`;
+                if (e.triangles) e.triangles.textContent = `${d.triangles}`;
+            },
+
+            drawGraph() {
+                if (!this.visible || !this.graphCtx) return;
+                const ctx2d = this.graphCtx;
+                const graph = ctx2d.canvas;
+                const w = graph.width;
+                const h = graph.height;
+                ctx2d.clearRect(0, 0, w, h);
+                ctx2d.fillStyle = '#0a0e18';
+                ctx2d.fillRect(0, 0, w, h);
+
+                const drawGuide = (ms, color) => {
+                    const y = h - (ms / 50) * h;
+                    ctx2d.strokeStyle = color;
+                    ctx2d.lineWidth = 1;
+                    ctx2d.setLineDash([3, 3]);
+                    ctx2d.beginPath();
+                    ctx2d.moveTo(0, y);
+                    ctx2d.lineTo(w, y);
+                    ctx2d.stroke();
+                    ctx2d.setLineDash([]);
+                };
+                drawGuide(16.67, '#2a3a2a');
+                drawGuide(33.33, '#3a2a2a');
+
+                const len = this.history.length;
+                const barW = w / len;
+                const startIdx = this.histIdx;
+                for (let i = 0; i < len; i++) {
+                    const idx = (startIdx + i) % len;
+                    const ms = this.history[idx];
+                    const barH = Math.min(h, (ms / 50) * h);
+                    const x = i * barW;
+                    if (ms < 17) ctx2d.fillStyle = '#2a6a3a';
+                    else if (ms < 33) ctx2d.fillStyle = '#6a6a2a';
+                    else ctx2d.fillStyle = '#6a2a2a';
+                    ctx2d.fillRect(x, h - barH, Math.max(1, barW - 0.5), barH);
+                }
+            },
+
+            resetAccum() {
+                this.accum.frameCount = 0;
+                this.accum.frameMs = 0;
+                this.accum.cameraTime = 0;
+                this.accum.tiltTime = 0;
+                this.accum.gateTime = 0;
+                this.accum.trafficTime = 0;
+                this.accum.renderTime = 0;
+            }
+        };
+
+        function loadSynthCityAssets() {
+            const manager = new THREE.LoadingManager();
+            const texLoader = new THREE.TextureLoader(manager);
+            const objLoader = new THREE.OBJLoader(manager);
+
+            // Basic UI for loading
+            const loadingDiv = document.createElement('div');
+            loadingDiv.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;justify-content:center;align-items:center;background:#030306;color:#00f3ff;font-family:monospace;font-size:24px;z-index:9999;';
+            const textSpan = document.createElement('span');
+            textSpan.innerText = 'LADOWANIE ASSETOW CYBERPUNK...';
+            const progressSpan = document.createElement('span');
+            progressSpan.style.cssText = 'margin-top:10px;font-size:16px;color:#fff;';
+            loadingDiv.appendChild(textSpan);
+            loadingDiv.appendChild(progressSpan);
+            document.body.appendChild(loadingDiv);
+
+            manager.onProgress = (url, itemsLoaded, itemsTotal) => progressSpan.innerText = `${itemsLoaded} / ${itemsTotal}`;
+
+            manager.onLoad = () => {
+                document.body.removeChild(loadingDiv);
+
+                // Build Materials
+                for (let i = 1; i <= 5; i++) {
+                    const id = '0' + i;
+                    synthCityAssets.materials['building_' + id] = new THREE.MeshPhongMaterial({
+                        map: synthCityAssets.textures['building_' + id],
+                        specular: 0xffffff,
+                        specularMap: synthCityAssets.textures['building_' + id + '_spec'] || synthCityAssets.textures['building_' + id + '_rough'],
+                        emissive: new THREE.Color("hsl(" + (Math.random() * 360) + ", 100%, 95%)"),
+                        emissiveMap: synthCityAssets.textures['building_' + id + '_em'],
+                        emissiveIntensity: 1.5,
+                        bumpMap: synthCityAssets.textures['building_' + id],
+                        bumpScale: 5
+                    });
+                }
+
+                init();
+                PerfHUD.init();
+                animate();
+            };
+
+            const basePath = 'assets/synthcity/';
+
+            for (let i = 1; i <= 5; i++) {
+                let id = '0' + i;
+                synthCityAssets.textures['building_' + id] = texLoader.load(basePath + 'textures/building_' + id + '.jpg', t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; });
+                synthCityAssets.textures['building_' + id + '_em'] = texLoader.load(basePath + 'textures/building_' + id + '_em.jpg', t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; });
+                synthCityAssets.textures['building_' + id + '_spec'] = texLoader.load(basePath + 'textures/building_' + id + '_spec.jpg', t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }, undefined,
+                    () => synthCityAssets.textures['building_' + id + '_rough'] = texLoader.load(basePath + 'textures/building_' + id + '_rough.jpg', t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }));
+            }
+
+            synthCityAssets.textures['ground'] = texLoader.load(basePath + 'textures/ground.jpg');
+            synthCityAssets.textures['ground_em'] = texLoader.load(basePath + 'textures/ground_em.jpg');
+
+            objLoader.load(basePath + 'models/s_01_01.obj', obj => synthCityAssets.models['s_01_01'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/s_01_02.obj', obj => synthCityAssets.models['s_01_02'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/s_01_03.obj', obj => synthCityAssets.models['s_01_03'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/s_02_01.obj', obj => synthCityAssets.models['s_02_01'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/s_02_02.obj', obj => synthCityAssets.models['s_02_02'] = obj.children[0].geometry);
+
+            objLoader.load(basePath + 'models/ads_s_01_01.obj', obj => synthCityAssets.models['ads_s_01_01'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/ads_s_01_02.obj', obj => synthCityAssets.models['ads_s_01_02'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/ads_s_02_01.obj', obj => synthCityAssets.models['ads_s_02_01'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/ads_s_02_02.obj', obj => synthCityAssets.models['ads_s_02_02'] = obj.children[0].geometry);
+
+            objLoader.load(basePath + 'models/topper_01.obj', obj => synthCityAssets.models['topper_01'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/topper_02.obj', obj => synthCityAssets.models['topper_02'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/topper_03.obj', obj => synthCityAssets.models['topper_03'] = obj.children[0].geometry);
+        }
+
+        window.addEventListener('load', loadSynthCityAssets);
 
         // ==========================================
         // INIT
@@ -231,11 +1677,12 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
             renderer.toneMapping = THREE.ACESFilmicToneMapping;
-            renderer.toneMappingExposure = 0.75;
+            renderer.toneMappingExposure = 1.0;
             renderer.outputEncoding = THREE.sRGBEncoding;
             document.getElementById('canvas-container').appendChild(renderer.domElement);
 
             camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 50, 500000);
+            updateCameraAltitudeBase();
 
             // --- LIGHTING ---
             const sun = new THREE.DirectionalLight(0xffeedd, 1.8);
@@ -257,10 +1704,11 @@
             const renderPass = new THREE.RenderPass(scene, camera);
             const bloomPass = new THREE.UnrealBloomPass(
                 new THREE.Vector2(window.innerWidth, window.innerHeight),
-                1.0,    // strength — strong glow on emissive
-                0.4,    // radius
-                0.35    // threshold — lower to catch emissive windows
+                7.0,    // strength — strong glow on emissive
+                1.0,    // radius
+                0.0     // threshold — lower to catch emissive windows
             );
+            globalBloomPass = bloomPass;
             composer = new THREE.EffectComposer(renderer);
             composer.addPass(renderPass);
             composer.addPass(bloomPass);
@@ -269,21 +1717,59 @@
             createPlanetCore();
             ringGroup = new THREE.Group();
             scene.add(ringGroup);
+            resetZoneGrid();
             buildCity();
+            initZonePainterUI();
 
             // --- INPUT ---
-            window.addEventListener('mousedown', e => { if (e.button === 0) { isDragging = true; prevMouse.x = e.clientX; prevMouse.y = e.clientY; } });
-            window.addEventListener('mouseup', e => { if (e.button === 0) isDragging = false; });
-            window.addEventListener('mousemove', e => {
-                if (!isDragging) return;
-                camTarget.x -= (e.clientX - prevMouse.x) * 2.5 / camZoom;
-                camTarget.z -= (e.clientY - prevMouse.y) * 2.5 / camZoom;
-                prevMouse.x = e.clientX; prevMouse.y = e.clientY;
+            renderer.domElement.addEventListener('mousedown', e => {
+                if (e.button !== 0) return;
+                const shouldPan = activeZoneTool === 'camera' || e.shiftKey;
+                if (shouldPan) {
+                    isDragging = true;
+                    prevMouse.x = e.clientX;
+                    prevMouse.y = e.clientY;
+                    renderer.domElement.style.cursor = 'grabbing';
+                    return;
+                }
+                isPainting = true;
+                const cell = getZoneCellFromPointerEvent(e);
+                updateZoneHover(cell);
+                paintZoneAtCell(cell);
             });
-            window.addEventListener('wheel', e => { camZoom = Math.max(0.08, Math.min(6, camZoom * (1 - e.deltaY * 0.0015))); });
+            window.addEventListener('mouseup', e => {
+                if (e.button !== 0) return;
+                isDragging = false;
+                isPainting = false;
+                lastPaintCellKey = '';
+                if (renderer?.domElement) renderer.domElement.style.cursor = activeZoneTool === 'camera' ? 'grab' : 'crosshair';
+            });
+            window.addEventListener('mousemove', e => {
+                const cell = getZoneCellFromPointerEvent(e);
+                updateZoneHover(cell);
+                if (isDragging) {
+                    camTarget.x -= (e.clientX - prevMouse.x) * 2.5 / camZoom;
+                    camTarget.z -= (e.clientY - prevMouse.y) * 2.5 / camZoom;
+                    prevMouse.x = e.clientX;
+                    prevMouse.y = e.clientY;
+                    return;
+                }
+                if (isPainting) {
+                    paintZoneAtCell(cell);
+                }
+            });
+            renderer.domElement.addEventListener('mouseleave', () => updateZoneHover(null));
+            renderer.domElement.addEventListener('wheel', e => {
+                camZoom = Math.max(0.08, Math.min(6, camZoom * (1 - e.deltaY * 0.0015)));
+            });
+            window.addEventListener('keydown', e => {
+                if (e.repeat) return;
+                if (e.code === 'KeyP') PerfHUD.toggle();
+            });
             window.addEventListener('resize', () => {
                 camera.aspect = window.innerWidth / window.innerHeight;
                 camera.updateProjectionMatrix();
+                updateCameraAltitudeBase();
                 renderer.setSize(window.innerWidth, window.innerHeight);
                 composer.setSize(window.innerWidth, window.innerHeight);
             });
@@ -442,6 +1928,154 @@
             return tex;
         }
 
+        function generatePedestalDeckTexture() {
+            const w = 1024, h = 256;
+            const c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            const ctx = c.getContext('2d');
+            const grad = ctx.createLinearGradient(0, 0, 0, h);
+            grad.addColorStop(0, '#0e1622');
+            grad.addColorStop(1, '#070b12');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, w, h);
+
+            for (let y = 0; y < h; y += 32) {
+                ctx.fillStyle = y % 64 === 0 ? 'rgba(150,190,220,0.035)' : 'rgba(255,255,255,0.015)';
+                ctx.fillRect(0, y, w, 2);
+            }
+            for (let x = 0; x < w; x += 64) {
+                ctx.strokeStyle = 'rgba(90,120,150,0.08)';
+                ctx.strokeRect(x + 2, 8, 52, h - 16);
+                if ((x / 64) % 3 === 0) {
+                    ctx.fillStyle = 'rgba(0,243,255,0.07)';
+                    ctx.fillRect(x + 8, 14, 36, 3);
+                }
+            }
+            ctx.strokeStyle = 'rgba(0,243,255,0.11)';
+            ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(0, h * 0.25); ctx.lineTo(w, h * 0.25); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0, h * 0.75); ctx.lineTo(w, h * 0.75); ctx.stroke();
+
+            const tex = new THREE.CanvasTexture(c);
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(18, 2);
+            tex.anisotropy = 4;
+            return tex;
+        }
+
+        function generatePedestalWallTexture() {
+            const w = 512, h = 512;
+            const c = document.createElement('canvas');
+            c.width = c.height = h;
+            const ctx = c.getContext('2d');
+            const grad = ctx.createLinearGradient(0, 0, 0, h);
+            grad.addColorStop(0, '#101723');
+            grad.addColorStop(1, '#04070c');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, w, h);
+
+            for (let x = 0; x < w; x += 32) {
+                ctx.fillStyle = 'rgba(255,255,255,0.02)';
+                ctx.fillRect(x, 0, 3, h);
+                ctx.fillStyle = 'rgba(0,243,255,0.04)';
+                ctx.fillRect(x + 6, 24, 2, h - 48);
+            }
+            for (let y = 0; y < h; y += 48) {
+                ctx.fillStyle = 'rgba(255,255,255,0.02)';
+                ctx.fillRect(0, y, w, 2);
+            }
+            for (let i = 0; i < 18; i++) {
+                const x = Math.random() * (w - 60);
+                const y = Math.random() * (h - 30);
+                ctx.fillStyle = 'rgba(120,160,190,0.05)';
+                ctx.fillRect(x, y, 40 + Math.random() * 40, 8 + Math.random() * 10);
+            }
+
+            const tex = new THREE.CanvasTexture(c);
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(20, 2.4);
+            tex.anisotropy = 4;
+            return tex;
+        }
+
+        function getPedestalMaterials() {
+            if (matCache.pedestal) return matCache.pedestal;
+            const deckTex = generatePedestalDeckTexture();
+            const wallTex = generatePedestalWallTexture();
+            const deckMat = new THREE.MeshStandardMaterial({
+                map: deckTex,
+                color: 0x1b2431,
+                emissive: 0x0d2030,
+                emissiveIntensity: 0.22,
+                roughness: 0.82,
+                metalness: 0.48
+            });
+            const wallMat = new THREE.MeshStandardMaterial({
+                map: wallTex,
+                color: 0x131a24,
+                emissive: 0x08131d,
+                emissiveIntensity: 0.16,
+                roughness: 0.88,
+                metalness: 0.38,
+                side: THREE.DoubleSide
+            });
+            const trimMat = new THREE.MeshBasicMaterial({
+                color: 0x2f6ea4,
+                transparent: true,
+                opacity: 0.3
+            });
+            deckMat.userData.shared = true;
+            wallMat.userData.shared = true;
+            trimMat.userData.shared = true;
+            matCache.pedestal = { deck: deckMat, wall: wallMat, trim: trimMat };
+            return matCache.pedestal;
+        }
+
+        function createRingPedestal() {
+            const { deck, wall, trim } = getPedestalMaterials();
+            const outerRadius = RING_OUTER + RING_PEDESTAL_OUTER_OVERHANG;
+            const innerRadius = RING_INNER - RING_PEDESTAL_INNER_OVERHANG;
+            const baseY = -RING_PEDESTAL_HEIGHT;
+
+            const topGeo = new THREE.RingGeometry(innerRadius, outerRadius, 512);
+            topGeo.rotateX(-Math.PI / 2);
+            const topMesh = new THREE.Mesh(topGeo, deck);
+            topMesh.position.y = 0;
+            ringGroup.add(topMesh);
+
+            const lowerDeckGeo = new THREE.RingGeometry(innerRadius + 26, outerRadius - 26, 512);
+            lowerDeckGeo.rotateX(-Math.PI / 2);
+            const lowerDeck = new THREE.Mesh(lowerDeckGeo, wall);
+            lowerDeck.position.y = baseY;
+            ringGroup.add(lowerDeck);
+
+            const outerWallGeo = new THREE.CylinderGeometry(outerRadius, outerRadius, RING_PEDESTAL_HEIGHT, 256, 1, true);
+            const outerWall = new THREE.Mesh(outerWallGeo, wall);
+            outerWall.position.y = baseY * 0.5;
+            ringGroup.add(outerWall);
+
+            const innerWallGeo = new THREE.CylinderGeometry(innerRadius, innerRadius, RING_PEDESTAL_HEIGHT, 256, 1, true);
+            const innerWall = new THREE.Mesh(innerWallGeo, wall);
+            innerWall.position.y = baseY * 0.5;
+            ringGroup.add(innerWall);
+
+            const trimRadii = [
+                { radius: innerRadius + 18, y: 8, tube: 6, opacity: 0.26 },
+                { radius: outerRadius - 18, y: 8, tube: 6, opacity: 0.26 },
+                { radius: innerRadius + 26, y: baseY + RING_PEDESTAL_TRIM_HEIGHT, tube: 5, opacity: 0.18 },
+                { radius: outerRadius - 26, y: baseY + RING_PEDESTAL_TRIM_HEIGHT, tube: 5, opacity: 0.18 }
+            ];
+            for (const entry of trimRadii) {
+                const rail = new THREE.Mesh(new THREE.TorusGeometry(entry.radius, entry.tube, 4, 256), trim);
+                rail.rotation.x = Math.PI / 2;
+                rail.position.y = entry.y;
+                rail.material = rail.material.clone();
+                rail.material.userData = {};
+                rail.material.opacity = entry.opacity;
+                ringGroup.add(rail);
+            }
+        }
+
         // ==========================================
         // MATERIALS CACHE
         // ==========================================
@@ -459,9 +2093,343 @@
                 metalness: 0.2
             });
             const roofMat = new THREE.MeshStandardMaterial({ map: roofTex, color: 0x0a0e16, roughness: 0.95 });
+            wallMat.userData.shared = true;
+            roofMat.userData.shared = true;
             // BoxGeometry face order: +X, -X, +Y, -Y, +Z, -Z
             matCache[zone] = { wall: wallMat, roof: roofMat, mats: [wallMat, wallMat, roofMat, roofMat, wallMat, wallMat] };
             return matCache[zone];
+        }
+
+        function generateCircuitFloorTexture(zoneColorCss) {
+            const w = 768, h = 768;
+            const c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            const ctx = c.getContext('2d');
+            const grad = ctx.createLinearGradient(0, 0, w, h);
+            grad.addColorStop(0, '#0a1017');
+            grad.addColorStop(1, '#071019');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, w, h);
+
+            ctx.strokeStyle = 'rgba(110,150,190,0.06)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < w; i += 64) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, h); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(w, i); ctx.stroke();
+            }
+
+            ctx.strokeStyle = zoneColorCss;
+            ctx.globalAlpha = 0.18;
+            ctx.lineWidth = 6;
+            for (let i = 0; i < 18; i++) {
+                const sx = 40 + Math.random() * (w - 80);
+                const sy = 40 + Math.random() * (h - 80);
+                const mx = 40 + Math.random() * (w - 80);
+                const ey = 40 + Math.random() * (h - 80);
+                ctx.beginPath();
+                ctx.moveTo(sx, sy);
+                ctx.lineTo(mx, sy);
+                ctx.lineTo(mx, ey);
+                ctx.stroke();
+            }
+
+            ctx.globalAlpha = 0.22;
+            for (let i = 0; i < 36; i++) {
+                const x = 30 + Math.random() * (w - 60);
+                const y = 30 + Math.random() * (h - 60);
+                ctx.fillStyle = zoneColorCss;
+                ctx.beginPath();
+                ctx.arc(x, y, 6 + Math.random() * 10, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            ctx.globalAlpha = 0.08;
+            ctx.fillStyle = '#d8ecff';
+            for (let i = 0; i < 28; i++) {
+                const x = Math.random() * w;
+                const y = Math.random() * h;
+                ctx.fillRect(x, y, 32 + Math.random() * 90, 2);
+            }
+            ctx.globalAlpha = 1.0;
+
+            const tex = new THREE.CanvasTexture(c);
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(1.9, 1.9);
+            tex.anisotropy = 4;
+            return tex;
+        }
+
+        function getDistrictInfrastructureMaterials(zone) {
+            const key = `${zone}_infrastructure`;
+            if (matCache[key]) return matCache[key];
+            const floorTex = generateCircuitFloorTexture(COLORS[zone].css);
+            const floorMat = new THREE.MeshStandardMaterial({
+                map: floorTex,
+                color: 0x0b121a,
+                emissive: COLORS[zone].num,
+                emissiveIntensity: 0.12,
+                roughness: 0.92,
+                metalness: 0.32,
+                side: THREE.DoubleSide
+            });
+            const pathMat = new THREE.MeshStandardMaterial({
+                color: 0x121c27,
+                emissive: 0x0a131d,
+                emissiveIntensity: 0.18,
+                roughness: 0.85,
+                metalness: 0.48,
+                side: THREE.DoubleSide
+            });
+            const traceMat = new THREE.MeshBasicMaterial({
+                color: COLORS[zone].num,
+                transparent: true,
+                opacity: 0.52,
+                side: THREE.DoubleSide,
+                depthWrite: false
+            });
+            const padMat = new THREE.MeshStandardMaterial({
+                color: 0x101a24,
+                emissive: COLORS[zone].num,
+                emissiveIntensity: 0.26,
+                roughness: 0.58,
+                metalness: 0.42
+            });
+            const domeMat = new THREE.MeshStandardMaterial({
+                color: 0x1a2734,
+                emissive: COLORS[zone].num,
+                emissiveIntensity: 0.10,
+                roughness: 0.22,
+                metalness: 0.08,
+                transparent: true,
+                opacity: 0.42
+            });
+            const domeFrameMat = new THREE.MeshBasicMaterial({
+                color: COLORS[zone].num,
+                transparent: true,
+                opacity: 0.26
+            });
+            floorMat.userData.shared = true;
+            pathMat.userData.shared = true;
+            traceMat.userData.shared = true;
+            padMat.userData.shared = true;
+            domeMat.userData.shared = true;
+            domeFrameMat.userData.shared = true;
+            matCache[key] = { floor: floorMat, path: pathMat, trace: traceMat, pad: padMat, dome: domeMat, domeFrame: domeFrameMat };
+            return matCache[key];
+        }
+
+        function getZoneConnectorMaterials() {
+            const key = `zone_connector_infrastructure`;
+            if (matCache[key]) return matCache[key];
+            const pathMat = new THREE.MeshStandardMaterial({
+                color: 0x142232,
+                emissive: 0x11263a,
+                emissiveIntensity: 0.22,
+                roughness: 0.78,
+                metalness: 0.46,
+                side: THREE.DoubleSide
+            });
+            const traceMat = new THREE.MeshBasicMaterial({
+                color: 0x7cc8ff,
+                transparent: true,
+                opacity: 0.34,
+                side: THREE.DoubleSide,
+                depthWrite: false
+            });
+            const padMat = new THREE.MeshStandardMaterial({
+                color: 0x132030,
+                emissive: 0x6db8ff,
+                emissiveIntensity: 0.18,
+                roughness: 0.56,
+                metalness: 0.45
+            });
+            pathMat.userData.shared = true;
+            traceMat.userData.shared = true;
+            padMat.userData.shared = true;
+            matCache[key] = { path: pathMat, trace: traceMat, pad: padMat };
+            return matCache[key];
+        }
+
+        function createPadDisc(x, z, radius, mats, parent, y = DISTRICT_PAD_Y) {
+            const base = new THREE.Mesh(
+                new THREE.CylinderGeometry(radius, radius, 2.4, 16),
+                mats.pad
+            );
+            base.position.set(x, y, z);
+            parent.add(base);
+
+            const glow = new THREE.Mesh(
+                new THREE.RingGeometry(radius * 0.72, radius * 0.98, 20),
+                mats.trace
+            );
+            glow.rotation.x = -Math.PI / 2;
+            glow.position.set(x, y + 1.4, z);
+            parent.add(glow);
+        }
+
+        function createTraceSegment(x0, z0, x1, z1, mats, parent, width = 18) {
+            const dx = x1 - x0;
+            const dz = z1 - z0;
+            const len = Math.sqrt(dx * dx + dz * dz);
+            if (len < 6) return;
+            const angle = Math.atan2(dz, dx);
+            const midX = (x0 + x1) * 0.5;
+            const midZ = (z0 + z1) * 0.5;
+
+            const base = new THREE.Mesh(
+                new THREE.PlaneGeometry(len, width),
+                mats.path
+            );
+            base.rotation.x = -Math.PI / 2;
+            base.rotation.z = angle;
+            base.position.set(midX, DISTRICT_PATH_Y, midZ);
+            parent.add(base);
+
+            const trace = new THREE.Mesh(
+                new THREE.PlaneGeometry(len * 0.94, width * 0.30),
+                mats.trace
+            );
+            trace.rotation.x = -Math.PI / 2;
+            trace.rotation.z = angle;
+            trace.position.set(midX, DISTRICT_TRACE_Y, midZ);
+            parent.add(trace);
+        }
+
+        function createDistrictDome(angle, radius, mats, parent, scaleMul = 1.0, rnd = Math.random) {
+            const domeRadius = (34 + rnd() * 42) * scaleMul;
+            const x = Math.cos(angle) * radius;
+            const z = Math.sin(angle) * radius;
+            const dome = new THREE.Mesh(
+                new THREE.SphereGeometry(domeRadius, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.5),
+                mats.dome
+            );
+            dome.position.set(x, DISTRICT_DOME_Y, z);
+            parent.add(dome);
+
+            const baseRing = new THREE.Mesh(
+                new THREE.TorusGeometry(domeRadius * 0.98, Math.max(2.5, domeRadius * 0.05), 4, 24),
+                mats.domeFrame
+            );
+            baseRing.rotation.x = Math.PI / 2;
+            baseRing.position.set(x, DISTRICT_DOME_Y + 0.5, z);
+            parent.add(baseRing);
+        }
+
+        function createDistrictInfrastructure(cell, wrappers, zone, rnd = Math.random, gridCols = 4, gridRows = 3) {
+            const mats = getDistrictInfrastructureMaterials(zone);
+            const infra = new THREE.Group();
+
+            const floorMesh = new THREE.Mesh(
+                createSectorGeometry(
+                    cell.innerRadius,
+                    cell.outerRadius,
+                    cell.angleStart,
+                    cell.angleEnd,
+                    DISTRICT_FLOOR_Y
+                ),
+                mats.floor
+            );
+            infra.add(floorMesh);
+
+            // Grid must touch the absolute edges of the cell so adjacent cells connect
+            const startAngle = cell.angleStart;
+            const endAngle = cell.angleEnd;
+            const innerRadi = cell.innerRadius;
+            const outerRadi = cell.outerRadius;
+
+            const angleStep = (endAngle - startAngle) / gridCols;
+            const radiusStep = (outerRadi - innerRadi) / gridRows;
+
+            // Draw purely Polar Streets
+            // 1. Angular arcs (curving along the ring)
+            for (let r = 0; r <= gridRows; r++) {
+                const radius = innerRadi + r * radiusStep;
+                const width = (r === 0 || r === gridRows) ? 14 : 10;
+
+                // create arc slice
+                const arcGeo = createSectorGeometry(radius - width * 0.5, radius + width * 0.5, startAngle, endAngle, DISTRICT_PATH_Y);
+                infra.add(new THREE.Mesh(arcGeo, mats.path));
+
+                // inner glowing trace
+                const traceGeo = createSectorGeometry(radius - width * 0.15, radius + width * 0.15, startAngle, endAngle, DISTRICT_TRACE_Y);
+                infra.add(new THREE.Mesh(traceGeo, mats.trace));
+            }
+
+            // 2. Radial spokes (straight cuts pointing to origin)
+            for (let c = 0; c <= gridCols; c++) {
+                const angle = startAngle + c * angleStep;
+                const width = (c === 0 || c === gridCols) ? 14 : 10;
+
+                // Instead of a plane which has Cartesian width, create a very narrow pie slice for true polar intersection
+                // Width at mid-radius determines angle-span
+                const midRadius = (innerRadi + outerRadi) * 0.5;
+                const angleSpan = width / midRadius;
+
+                const spokeGeo = createSectorGeometry(innerRadi, outerRadi, angle - angleSpan * 0.5, angle + angleSpan * 0.5, DISTRICT_PATH_Y);
+                infra.add(new THREE.Mesh(spokeGeo, mats.path));
+
+                const traceGeo = createSectorGeometry(innerRadi, outerRadi, angle - angleSpan * 0.15, angle + angleSpan * 0.15, DISTRICT_TRACE_Y);
+                infra.add(new THREE.Mesh(traceGeo, mats.trace));
+            }
+
+            // Building pads
+            for (const wrapper of wrappers) {
+                const x = wrapper.position.x;
+                const z = wrapper.position.z;
+                const padRadius = Math.max(16, (Number(wrapper?.userData?.footprintRadius) || 80) * 0.22);
+                createPadDisc(x, z, padRadius, mats, infra, DISTRICT_PAD_Y);
+            }
+
+            districtsGroup.add(infra);
+            return infra;
+        }
+
+        function rebuildZoneRoadLinks() {
+            if (!zoneRoadGroup) return;
+            while (zoneRoadGroup.children.length) {
+                disposeObject3D(zoneRoadGroup.children[zoneRoadGroup.children.length - 1]);
+            }
+            const mats = getZoneConnectorMaterials();
+            for (const entry of zoneCellMeshes.values()) {
+                const cell = entry?.cell;
+                if (!cell || !cell.zone) continue;
+                const hub = getCellHubPosition(cell);
+
+                const right = getZoneCell(cell.col + 1, cell.row);
+                if (right?.zone) {
+                    const rightHub = getCellHubPosition(right);
+                    const boundaryAngle = cell.angleEnd;
+                    const junctionRadius = hub.radius;
+                    const junctionX = Math.cos(boundaryAngle) * junctionRadius;
+                    const junctionZ = Math.sin(boundaryAngle) * junctionRadius;
+                    createPadDisc(junctionX, junctionZ, 9, mats, zoneRoadGroup, DISTRICT_PAD_Y + 0.2);
+
+                    // Arc connection using contiguous logical angles (avoiding 2*pi wrapping bug)
+                    const rightAngle = hub.angle + ZONE_CELL_ARC;
+                    const arcGeo = createSectorGeometry(hub.radius - 11, hub.radius + 11, hub.angle, rightAngle, DISTRICT_PATH_Y + 0.1);
+                    zoneRoadGroup.add(new THREE.Mesh(arcGeo, mats.path));
+                    const traceGeo = createSectorGeometry(hub.radius - 3.3, hub.radius + 3.3, hub.angle, rightAngle, DISTRICT_TRACE_Y + 0.1);
+                    zoneRoadGroup.add(new THREE.Mesh(traceGeo, mats.trace));
+                }
+
+                const outer = getZoneCell(cell.col, cell.row + 1);
+                if (outer?.zone) {
+                    const outerHub = getCellHubPosition(outer);
+                    const boundaryRadius = cell.outerRadius;
+                    const junctionX = Math.cos(hub.angle) * boundaryRadius;
+                    const junctionZ = Math.sin(hub.angle) * boundaryRadius;
+                    createPadDisc(junctionX, junctionZ, 9, mats, zoneRoadGroup, DISTRICT_PAD_Y + 0.2);
+
+                    // Spoke connection
+                    const midRadius = (hub.radius + outerHub.radius) * 0.5;
+                    const angleSpan = 22 / midRadius;
+                    const spokeGeo = createSectorGeometry(hub.radius, outerHub.radius, hub.angle - angleSpan * 0.5, hub.angle + angleSpan * 0.5, DISTRICT_PATH_Y + 0.1);
+                    zoneRoadGroup.add(new THREE.Mesh(spokeGeo, mats.path));
+                    const traceGeo2 = createSectorGeometry(hub.radius, outerHub.radius, hub.angle - angleSpan * 0.15, hub.angle + angleSpan * 0.15, DISTRICT_TRACE_Y + 0.1);
+                    zoneRoadGroup.add(new THREE.Mesh(traceGeo2, mats.trace));
+                }
+            }
+            zoneConnectivityDirty = false;
         }
 
         // ==========================================
@@ -480,15 +2448,32 @@
         // CITY BUILDER
         // ==========================================
         function buildCity() {
-            while (ringGroup.children.length) ringGroup.remove(ringGroup.children[0]);
-            mechanicalGates = []; visualBuildings = []; lampLights = [];
+            while (ringGroup.children.length) {
+                const child = ringGroup.children[ringGroup.children.length - 1];
+                disposeObject3D(child);
+            }
+            mechanicalGates = [];
+            visualBuildings = [];
+            lampLights = [];
+            zoneCellMeshes.clear();
+            trafficParticles = null;
+            trafficState = null;
+            trafficRoutes = [];
+            zoneConnectivityDirty = true;
+            markTrafficDirty();
 
-            // --- RING PLATFORM (thick base) ---
-            const platformH = 30;
-            const platformGeo = new THREE.RingGeometry(RING_INNER - 40, RING_OUTER + 40, 512);
-            platformGeo.rotateX(-Math.PI / 2);
-            const platformMat = new THREE.MeshStandardMaterial({ color: 0x0c0f16, roughness: 0.85, metalness: 0.3 });
-            ringGroup.add(new THREE.Mesh(platformGeo, platformMat));
+            districtsGroup = new THREE.Group();
+            zoneOverlayGroup = new THREE.Group();
+            gridOverlayGroup = new THREE.Group();
+            zoneRoadGroup = new THREE.Group();
+            ringGroup.add(zoneOverlayGroup);
+            ringGroup.add(gridOverlayGroup);
+            ringGroup.add(districtsGroup);
+            ringGroup.add(zoneRoadGroup);
+
+            // --- RING PEDESTAL ---
+            createRingPedestal();
+            createCentralAutostrada();
 
             // Edge rails (glowing)
             const railMat = new THREE.MeshBasicMaterial({ color: 0x1a3050, transparent: true, opacity: 0.5 });
@@ -500,68 +2485,48 @@
                 ringGroup.add(rail);
             });
 
-            // --- ZONE ASSIGNMENT ---
-            const zones = ['residential', 'industrial', 'military', 'commercial'];
-            let currentZone = zones[0];
-            let zoneLength = 0;
-            const zoneChangeInterval = 15 + Math.random() * 25;
-
-            // --- BUILD CITY BLOCKS ---
             const streetTex = generateStreetTexture();
             const streetMat = new THREE.MeshStandardMaterial({ map: streetTex, roughness: 0.92, color: 0x0e1018 });
             const parkingTex = generateParkingTexture();
             const parkingMat = new THREE.MeshStandardMaterial({ map: parkingTex, roughness: 0.88, color: 0x0a0d14 });
 
-            for (let angle = 0; angle < Math.PI * 2; angle += BLOCK_ARC) {
-                // Skip gate areas
-                let isGate = false;
-                for (const ga of GATE_ANGLES) {
-                    let diff = Math.abs(angle - ga);
-                    if (diff > Math.PI) diff = 2 * Math.PI - diff;
-                    if (diff < GATE_CLEARANCE) { isGate = true; break; }
-                }
-                if (isGate) continue;
-
-                // Zone transitions
-                zoneLength++;
-                if (zoneLength > zoneChangeInterval) {
-                    currentZone = zones[Math.floor(Math.random() * zones.length)];
-                    zoneLength = 0;
-                }
-
-                const blockMidAngle = angle + BLOCK_ARC * 0.5;
-
-                // Decide block type
-                const roll = Math.random();
-                if (roll < 0.12) {
-                    // PARKING / GARAGE
-                    createParkingBlock(blockMidAngle, currentZone, parkingMat);
-                } else if (roll < 0.18) {
-                    // OPEN SPACE (just street, no buildings)
-                } else {
-                    // CITY BLOCK with buildings
-                    createCityBlock(blockMidAngle, currentZone);
-                }
-
-                // RADIAL STREET between blocks
-                if (Math.random() > 0.4) {
+            for (let col = 0; col < ZONE_COLS; col++) {
+                const angle = col * ZONE_CELL_ARC;
+                if (!isGateAngle(angle)) {
                     createRadialStreet(angle, streetMat);
                 }
-
-                // LAMP POSTS along ring
-                if (Math.random() > 0.3) {
+                const blockMidAngle = angle + ZONE_CELL_ARC * 0.5;
+                if (col % 2 === 0 && !isGateAngle(blockMidAngle)) {
                     createLampPost(blockMidAngle, RING_INNER + STREET_WIDTH * 0.5);
-                }
-                if (Math.random() > 0.3) {
                     createLampPost(blockMidAngle, RING_OUTER - STREET_WIDTH * 0.5);
                 }
-                if (Math.random() > 0.6) {
+                if (col % 4 === 0 && !isGateAngle(blockMidAngle)) {
                     createLampPost(blockMidAngle, RING_MID);
                 }
             }
 
+            for (let row = 0; row < ZONE_ROWS; row++) {
+                const cellRadius = ZONE_PAINT_INNER + row * ZONE_LANE_DEPTH + ZONE_LANE_DEPTH * 0.5;
+                if (row % 2 === 1) {
+                    for (let col = 0; col < ZONE_COLS; col += 16) {
+                        const angle = col * ZONE_CELL_ARC + ZONE_CELL_ARC * 0.5;
+                        if (!isGateAngle(angle)) createParkingBlock(angle, 'commercial', parkingMat);
+                    }
+                }
+                if (cellRadius > 0) {
+                    const beltGeo = new THREE.TorusGeometry(cellRadius, 3, 4, 256);
+                    const belt = new THREE.Mesh(beltGeo, new THREE.MeshBasicMaterial({ color: 0x163049, transparent: true, opacity: 0.18 }));
+                    belt.rotation.x = Math.PI / 2;
+                    belt.position.y = 2.5;
+                    ringGroup.add(belt);
+                }
+            }
+
+            buildZoneGridOverlay();
+
             // Gates
             createMechanicalGates();
+            rebuildZoneRoadLinks();
             // Transport traffic
             createTransportTraffic();
         }
@@ -575,18 +2540,18 @@
 
             // Inner band buildings
             const innerR = RING_INNER + STREET_WIDTH + Math.random() * 80;
-            const nInner = 1 + Math.floor(Math.random() * 3);
+            const nInner = Math.max(1, Math.floor((1 + Math.random() * 3) * globalBuildingDensity));
             for (let i = 0; i < nInner; i++) {
-                const r = innerR + i * (180 + Math.random() * 60);
+                const r = innerR + i * ((180 + Math.random() * 60) / globalBuildingDensity);
                 if (r > RING_MID - CROSS_STREET_WIDTH) break;
                 createBuilding(angle + (Math.random() - 0.5) * 0.002, r, zone, mats, neonColor);
             }
 
             // Outer band buildings
             const outerR = RING_MID + CROSS_STREET_WIDTH + Math.random() * 80;
-            const nOuter = 1 + Math.floor(Math.random() * 3);
+            const nOuter = Math.max(1, Math.floor((1 + Math.random() * 3) * globalBuildingDensity));
             for (let i = 0; i < nOuter; i++) {
-                const r = outerR + i * (180 + Math.random() * 60);
+                const r = outerR + i * ((180 + Math.random() * 60) / globalBuildingDensity);
                 if (r > RING_OUTER - STREET_WIDTH) break;
                 createBuilding(angle + (Math.random() - 0.5) * 0.002, r, zone, mats, neonColor);
             }
@@ -595,174 +2560,256 @@
         // ==========================================
         // BUILDING GENERATOR
         // ==========================================
-        function createBuilding(angle, radius, zone, mats, neonColor) {
-            const group = new THREE.Group();
+        function createBuilding(angle, radius, zone, mats, neonColor, geoMap, rnd = Math.random, meta = null) {
             let totalH = 0;
+            let footprintRadius = 80;
+
+            function cloneSynthCityGeo(mId) {
+                const original = synthCityAssets.models[mId];
+                if (!original) return null;
+                const cloned = original.clone();
+                for (const key in original.attributes) {
+                    cloned.setAttribute(key, original.attributes[key].clone());
+                }
+                if (original.index) cloned.setIndex(original.index.clone());
+                return cloned.index ? cloned.toNonIndexed() : cloned;
+            }
 
             if (zone === 'residential') {
-                // TALL TOWERS with podium
-                const podW = 100 + Math.random() * 80, podD = 120 + Math.random() * 80, podH = 25 + Math.random() * 20;
-                addBox(group, podW, podD, podH, 0, mats.mats);
-                totalH = podH;
-                const towerW = podW * (0.5 + Math.random() * 0.3);
-                const towerD = podD * (0.5 + Math.random() * 0.3);
-                const towerH = 120 + Math.random() * 350;
-                addBox(group, towerW, towerD, towerH, totalH, mats.mats);
-                totalH += towerH;
-                // Secondary shorter tower sometimes
-                if (Math.random() > 0.5) {
-                    const t2H = 60 + Math.random() * 150;
-                    const offX = (Math.random() - 0.5) * podW * 0.4;
-                    addBox(group, towerW * 0.6, towerD * 0.6, t2H, podH, mats.mats, offX);
-                    totalH = Math.max(totalH, podH + t2H);
+                const bTypes = ['s_01_01', 's_01_02', 's_01_03', 's_02_01', 's_02_02'];
+                const modelId = bTypes[Math.floor(rnd() * bTypes.length)];
+                const geo = cloneSynthCityGeo(modelId);
+                if (geo) {
+                    const texNum = '0' + (1 + Math.floor(rnd() * 5));
+
+                    // --- USTAWIENIA SKALI I ROTACJI (MIESZKALNE) DO TWEAKOWANIA ---
+                    const scaleXZ = globalBuildingScale + rnd() * (globalBuildingScale * 0.8); // Zależy bezpośrednio od suwaka
+                    const scaleY = scaleXZ * (1.4 + rnd() * 1.2); // Wysokość
+
+                    geo.scale(scaleXZ, scaleY, scaleXZ);
+                    geo.rotateY(rnd() * Math.PI * 2); // Tylko obrót poziomy (Y)
+                    geo.translate(0, 0, 0);
+                    totalH = 10.0 * scaleY; // Orientacyjna wysokosc dla klimatyzatorów
+                    // --------------------------------------------------------------
+
+                    const matKey = 'building_' + texNum;
+                    geoMap[matKey] = geoMap[matKey] || [];
+                    geoMap[matKey].push(geo);
                 }
             } else if (zone === 'industrial') {
                 // SQUAT with SILOS and CHIMNEYS
-                const baseW = 200 + Math.random() * 250, baseD = 200 + Math.random() * 200, baseH = 40 + Math.random() * 60;
-                addBox(group, baseW, baseD, baseH, 0, mats.mats);
+                const baseW = 200 + rnd() * 250, baseD = 200 + rnd() * 200, baseH = 40 + rnd() * 60;
+                footprintRadius = Math.max(footprintRadius, Math.max(baseW, baseD) * 0.54);
+                addBox(geoMap, baseW, baseD, baseH, 0, 'mats');
                 totalH = baseH;
                 // Silos
-                const nSilos = 1 + Math.floor(Math.random() * 3);
+                const nSilos = 1 + Math.floor(rnd() * 3);
                 for (let i = 0; i < nSilos; i++) {
-                    const siloR = 18 + Math.random() * 25;
-                    const siloH = 50 + Math.random() * 80;
+                    const siloR = 18 + rnd() * 25;
+                    const siloH = 50 + rnd() * 80;
                     const siloGeo = new THREE.CylinderGeometry(siloR, siloR, siloH, 12);
-                    siloGeo.translate((Math.random() - 0.5) * baseW * 0.5, siloH / 2 + baseH, (Math.random() - 0.5) * baseD * 0.4);
-                    const silo = new THREE.Mesh(siloGeo, mats.wall);
-                    group.add(silo);
+                    siloGeo.translate((rnd() - 0.5) * baseW * 0.5, siloH / 2 + baseH, (rnd() - 0.5) * baseD * 0.4);
+                    geoMap['wall'] = geoMap['wall'] || [];
+                    geoMap['wall'].push(siloGeo);
                     totalH = Math.max(totalH, baseH + siloH);
                 }
                 // Chimney with red warning light
-                if (Math.random() > 0.4) {
-                    const chR = 8, chH = totalH + 40 + Math.random() * 60;
+                if (rnd() > 0.4) {
+                    const chR = 8, chH = totalH + 40 + rnd() * 60;
                     const chGeo = new THREE.CylinderGeometry(chR, chR * 1.3, chH, 8);
-                    chGeo.translate((Math.random() - 0.5) * baseW * 0.3, chH / 2, (Math.random() - 0.5) * baseD * 0.3);
-                    group.add(new THREE.Mesh(chGeo, new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.8 })));
+                    const chX = (rnd() - 0.5) * baseW * 0.3;
+                    const chZ = (rnd() - 0.5) * baseD * 0.3;
+                    chGeo.translate(chX, chH / 2, chZ);
+                    geoMap['chimney'] = geoMap['chimney'] || [];
+                    geoMap['chimney'].push(chGeo);
+
                     // Red blinker
-                    const blinker = new THREE.Mesh(
-                        new THREE.SphereGeometry(5, 6, 6),
-                        new THREE.MeshBasicMaterial({ color: 0xff0000 })
-                    );
-                    blinker.position.set((Math.random() - 0.5) * baseW * 0.3, chH, (Math.random() - 0.5) * baseD * 0.3);
-                    group.add(blinker);
+                    const tipGeo = new THREE.SphereGeometry(5, 6, 6);
+                    tipGeo.translate(chX, chH, chZ);
+                    geoMap['antennaRed'] = geoMap['antennaRed'] || [];
+                    geoMap['antennaRed'].push(tipGeo);
                     totalH = chH;
                 }
             } else if (zone === 'military') {
                 // LOW BUNKERS + radar dish
-                const baseW = 280 + Math.random() * 350, baseD = 250 + Math.random() * 300, baseH = 25 + Math.random() * 35;
-                addBox(group, baseW, baseD, baseH, 0, mats.mats);
+                const baseW = 280 + rnd() * 350, baseD = 250 + rnd() * 300, baseH = 25 + rnd() * 35;
+                footprintRadius = Math.max(footprintRadius, Math.max(baseW, baseD) * 0.55);
+                addBox(geoMap, baseW, baseD, baseH, 0, 'mats');
                 totalH = baseH;
                 // Radar dish
-                if (Math.random() > 0.4) {
-                    const dishR = 25 + Math.random() * 20;
-                    const poleH = 30 + Math.random() * 20;
+                if (rnd() > 0.4) {
+                    const dishR = 25 + rnd() * 20;
+                    const poleH = 30 + rnd() * 20;
                     const poleGeo = new THREE.CylinderGeometry(3, 3, poleH, 4);
                     poleGeo.translate(0, baseH + poleH / 2, 0);
-                    group.add(new THREE.Mesh(poleGeo, mats.roof));
+                    geoMap['roof'] = geoMap['roof'] || [];
+                    geoMap['roof'].push(poleGeo);
+
                     const dishGeo = new THREE.CircleGeometry(dishR, 12);
                     dishGeo.translate(0, baseH + poleH + 2, 0);
                     dishGeo.rotateX(-0.4);
-                    const dish = new THREE.Mesh(dishGeo, new THREE.MeshStandardMaterial({ color: 0x334455, roughness: 0.3, metalness: 0.7, side: THREE.DoubleSide }));
-                    group.add(dish);
+                    geoMap['dish'] = geoMap['dish'] || [];
+                    geoMap['dish'].push(dishGeo);
+
                     totalH = baseH + poleH + dishR;
                 }
             } else { // commercial
-                // MEDIUM TOWERS with NEON accent
-                const baseW = 120 + Math.random() * 120, baseD = 130 + Math.random() * 100;
-                const baseH = 20 + Math.random() * 15;
-                addBox(group, baseW * 1.15, baseD * 1.15, baseH, 0, mats.mats);
-                const towerH = 80 + Math.random() * 250;
-                addBox(group, baseW, baseD, towerH, baseH, mats.mats);
-                totalH = baseH + towerH;
-                // Neon sign on side (thin glowing plane)
-                const signGeo = new THREE.PlaneGeometry(baseW * 0.6, 12);
-                signGeo.translate(0, baseH + towerH * 0.65, baseD / 2 + 1);
-                const signMat = new THREE.MeshBasicMaterial({ color: neonColor, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
-                group.add(new THREE.Mesh(signGeo, signMat));
+                const bTypes = ['s_02_01', 's_02_02', 's_01_01', 's_01_02'];
+                const modelId = bTypes[Math.floor(rnd() * bTypes.length)];
+                const geo = cloneSynthCityGeo(modelId);
+
+                if (geo) {
+                    const texNum = '0' + (1 + Math.floor(rnd() * 5));
+
+                    // --- USTAWIENIA SKALI I ROTACJI (HANDLOWE) DO TWEAKOWANIA ---
+                    const scaleXZ = (globalBuildingScale * 0.75) + rnd() * (globalBuildingScale * 0.75); // Handlowe bywają ciut drobniejsze bazowo
+                    const scaleY = scaleXZ * (1.0 + rnd() * 0.8); // Wysokość
+
+                    geo.scale(scaleXZ, scaleY, scaleXZ);
+                    geo.rotateY(rnd() * Math.PI * 2); // Tylko obrót poziomy (Y)
+                    totalH = 10.0 * scaleY;
+                    // ------------------------------------------------------------
+
+                    const matKey = 'building_' + texNum;
+                    geoMap[matKey] = geoMap[matKey] || [];
+                    geoMap[matKey].push(geo.index ? geo.toNonIndexed() : geo);
+
+                    // Add Billboards optionally
+                    if (rnd() > 0.4) {
+                        const adTypes = ['ads_s_01_01', 'ads_s_01_02', 'ads_s_02_01', 'ads_s_02_02'];
+                        const adId = adTypes[Math.floor(rnd() * adTypes.length)];
+                        const adGeo = cloneSynthCityGeo(adId);
+                        if (adGeo) {
+                            adGeo.scale(scaleXZ, scaleY, scaleXZ); // Dopasowanie skali do budynku
+                            adGeo.rotateY(rnd() * Math.PI * 2);
+                            geoMap[matKey].push(adGeo);
+                        }
+                    }
+                }
             }
 
             // --- ROOF DETAILS (all zones) ---
-            addRoofDetails(group, totalH, zone);
+            addRoofDetails(geoMap, totalH, zone, rnd);
+            if (zone === 'residential' && rnd() > 0.6) {
+                // Approximate neon edges for residential using the last added box
+                const lastIdx = geoMap['mats'] ? geoMap['mats'].length - 1 : -1;
+                if (lastIdx >= 0) addNeonEdges(geoMap, geoMap['mats'][lastIdx], rnd);
+            }
 
-            // --- NEON EDGES ---
-            addNeonEdges(group, neonColor);
-
-            // --- POSITION ON RING ---
-            const wrapper = new THREE.Group();
-            wrapper.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
-            const facing = new THREE.Group();
-            facing.rotation.y = -angle;
-            facing.add(group);
-            wrapper.add(facing);
-            ringGroup.add(wrapper);
-
-            visualBuildings.push({ groupWrapper: wrapper, tiltX: 0, tiltZ: 0 });
+            return { footprintRadius, buildingAngle: angle, buildingRadius: radius };
         }
 
-        function addBox(parent, w, d, h, baseY, materials, offsetX) {
+        function addBox(geoMap, w, d, h, baseY, matName, offsetX) {
             const WINDOW_SCALE = 500;
             const geo = new THREE.BoxGeometry(w, h, d);
-            // Fix UVs for world-space tiling
-            const pos = geo.attributes.position;
-            const uv = geo.attributes.uv;
-            const nor = geo.attributes.normal;
+            const nonIndexedGeo = geo.toNonIndexed(); // Make working with faces easier (3 vertices per triangle)
+
+            // Fix UVs and separate faces
+            const pos = nonIndexedGeo.attributes.position;
+            const uv = nonIndexedGeo.attributes.uv;
+            const nor = nonIndexedGeo.attributes.normal;
+
+            const wallIndices = [];
+            const roofIndices = [];
+
             for (let i = 0; i < uv.count; i++) {
                 const nx = nor.getX(i), ny = nor.getY(i), nz = nor.getZ(i);
                 const px = pos.getX(i), py = pos.getY(i), pz = pos.getZ(i);
-                if (Math.abs(nx) > 0.5) uv.setXY(i, (nx > 0 ? -pz : pz) / WINDOW_SCALE, py / WINDOW_SCALE);
-                else if (Math.abs(ny) > 0.5) uv.setXY(i, px / WINDOW_SCALE, (ny > 0 ? -pz : pz) / WINDOW_SCALE);
-                else if (Math.abs(nz) > 0.5) uv.setXY(i, (nz > 0 ? px : -px) / WINDOW_SCALE, py / WINDOW_SCALE);
+
+                if (Math.abs(ny) > 0.5) {
+                    uv.setXY(i, px / WINDOW_SCALE, (ny > 0 ? -pz : pz) / WINDOW_SCALE);
+                    roofIndices.push(i);
+                } else {
+                    if (Math.abs(nx) > 0.5) uv.setXY(i, (nx > 0 ? -pz : pz) / WINDOW_SCALE, py / WINDOW_SCALE);
+                    else if (Math.abs(nz) > 0.5) uv.setXY(i, (nz > 0 ? px : -px) / WINDOW_SCALE, py / WINDOW_SCALE);
+                    wallIndices.push(i);
+                }
             }
-            uv.needsUpdate = true;
-            geo.translate(offsetX || 0, baseY + h / 2, 0);
-            parent.add(new THREE.Mesh(geo, materials));
+
+            nonIndexedGeo.translate(offsetX || 0, baseY + h / 2, 0);
+
+            // Create separate geometries for walls and roofs so mergeBufferGeometries handles materials cleanly
+            if (matName === 'mats') {
+                const wallGeo = extractFacesFromNonIndexed(nonIndexedGeo, wallIndices);
+                const roofGeo = extractFacesFromNonIndexed(nonIndexedGeo, roofIndices);
+
+                geoMap['wall'] = geoMap['wall'] || [];
+                geoMap['wall'].push(wallGeo);
+
+                geoMap['roof'] = geoMap['roof'] || [];
+                geoMap['roof'].push(roofGeo);
+            } else {
+                geoMap[matName] = geoMap[matName] || [];
+                geoMap[matName].push(nonIndexedGeo);
+            }
+
+            return nonIndexedGeo; // Return full geo for neon edges
         }
 
-        function addRoofDetails(group, topY, zone) {
-            const detailMat = new THREE.MeshStandardMaterial({ color: 0x1a1e28, roughness: 0.8 });
+        function extractFacesFromNonIndexed(sourceGeo, validIndices) {
+            const count = validIndices.length;
+            const geo = new THREE.BufferGeometry();
+
+            for (const attrName in sourceGeo.attributes) {
+                const sourceAttr = sourceGeo.attributes[attrName];
+                const itemSize = sourceAttr.itemSize;
+                const arr = new Float32Array(count * itemSize);
+
+                for (let i = 0; i < count; i++) {
+                    const srcIdx = validIndices[i];
+                    for (let c = 0; c < itemSize; c++) {
+                        arr[i * itemSize + c] = sourceAttr.array[srcIdx * itemSize + c];
+                    }
+                }
+                geo.setAttribute(attrName, new THREE.BufferAttribute(arr, itemSize));
+            }
+            return geo;
+        }
+
+        function addRoofDetails(geoMap, topY, zone, rnd = Math.random) {
             // AC units
-            const nAC = Math.floor(Math.random() * 4);
+            const nAC = Math.floor(rnd() * 4);
             for (let i = 0; i < nAC; i++) {
-                const acW = 14 + Math.random() * 16;
-                const acH = 8 + Math.random() * 10;
+                const acW = 14 + rnd() * 16;
+                const acH = 8 + rnd() * 10;
                 const acGeo = new THREE.BoxGeometry(acW, acH, acW);
-                acGeo.translate((Math.random() - 0.5) * 60, topY + acH / 2, (Math.random() - 0.5) * 60);
-                group.add(new THREE.Mesh(acGeo, detailMat));
+                acGeo.translate((rnd() - 0.5) * 60, topY + acH / 2, (rnd() - 0.5) * 60);
+                geoMap['roofDetail'] = geoMap['roofDetail'] || [];
+                geoMap['roofDetail'].push(acGeo);
             }
             // Antenna
-            if (Math.random() > 0.5) {
-                const antH = 20 + Math.random() * 40;
+            if (rnd() > 0.5) {
+                const antH = 20 + rnd() * 40;
                 const antGeo = new THREE.CylinderGeometry(1.5, 1.5, antH, 4);
-                antGeo.translate((Math.random() - 0.5) * 40, topY + antH / 2, (Math.random() - 0.5) * 40);
-                group.add(new THREE.Mesh(antGeo, detailMat));
+                const antX = (rnd() - 0.5) * 40;
+                const antZ = (rnd() - 0.5) * 40;
+                antGeo.translate(antX, topY + antH / 2, antZ);
+                geoMap['roofDetail'] = geoMap['roofDetail'] || [];
+                geoMap['roofDetail'].push(antGeo);
+
                 // Blinking light on tip
                 const tipGeo = new THREE.SphereGeometry(3, 6, 6);
-                tipGeo.translate((Math.random() - 0.5) * 40, topY + antH, (Math.random() - 0.5) * 40);
-                group.add(new THREE.Mesh(tipGeo, new THREE.MeshBasicMaterial({ color: zone === 'military' ? 0xff0000 : 0x00ff88 })));
+                tipGeo.translate(antX, topY + antH, antZ);
+                const colorKey = zone === 'military' ? 'antennaRed' : 'antennaGreen';
+                geoMap[colorKey] = geoMap[colorKey] || [];
+                geoMap[colorKey].push(tipGeo);
             }
             // Landing pad (flat circle with ring glow)
-            if (Math.random() > 0.7) {
-                const padR = 18 + Math.random() * 12;
+            if (rnd() > 0.7) {
+                const padR = 18 + rnd() * 12;
                 const padGeo = new THREE.RingGeometry(padR * 0.7, padR, 16);
                 padGeo.rotateX(-Math.PI / 2);
                 padGeo.translate(0, topY + 1, 0);
-                const padMat = new THREE.MeshBasicMaterial({ color: 0x228866, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
-                group.add(new THREE.Mesh(padGeo, padMat));
+                geoMap['padSign'] = geoMap['padSign'] || [];
+                geoMap['padSign'].push(padGeo);
             }
         }
 
-        function addNeonEdges(group, color) {
-            group.children.forEach(child => {
-                if (child.geometry && child.geometry.type === 'BoxGeometry') {
-                    const edges = new THREE.EdgesGeometry(child.geometry);
-                    const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({
-                        color: color,
-                        transparent: true,
-                        opacity: 0.12 + Math.random() * 0.1
-                    }));
-                    group.add(line);
-                }
-            });
+        function addNeonEdges(geoMap, sourceGeo, rnd = Math.random) {
+            if (!sourceGeo) return;
+            const edges = new THREE.EdgesGeometry(sourceGeo);
+            geoMap['neonEdges'] = geoMap['neonEdges'] || [];
+            geoMap['neonEdges'].push(edges);
         }
 
         // ==========================================
@@ -785,6 +2832,7 @@
             const head = new THREE.Mesh(headGeo, headMat);
             head.position.set(x, LAMP_HEIGHT + LAMP_HEAD_R * 0.6, z);
             ringGroup.add(head);
+            lampLights.push(head);
 
             // Arm
             const armGeo = new THREE.CylinderGeometry(1.5, 1.5, 18, 4);
@@ -866,6 +2914,57 @@
             ringGroup.add(street);
         }
 
+        function createCentralAutostrada() {
+            const roadMat = new THREE.MeshStandardMaterial({
+                color: 0x0c1018,
+                roughness: 0.88,
+                metalness: 0.32,
+                side: THREE.DoubleSide
+            });
+            const road = new THREE.Mesh(
+                createSectorGeometry(RING_MID - AUTOSTRADA_WIDTH * 0.5, RING_MID + AUTOSTRADA_WIDTH * 0.5, 0, Math.PI * 2, AUTOSTRADA_Y),
+                roadMat
+            );
+            ringGroup.add(road);
+
+            const laneMat = new THREE.MeshBasicMaterial({
+                color: 0x3a618a,
+                transparent: true,
+                opacity: 0.34
+            });
+            const lanes = [
+                { radius: RING_MID, tube: 2.8, opacity: 0.36 },
+                { radius: RING_MID - AUTOSTRADA_LANE_OFFSET, tube: 2.2, opacity: 0.22 },
+                { radius: RING_MID + AUTOSTRADA_LANE_OFFSET, tube: 2.2, opacity: 0.22 }
+            ];
+            for (const lane of lanes) {
+                const mat = laneMat.clone();
+                mat.opacity = lane.opacity;
+                const strip = new THREE.Mesh(
+                    new THREE.TorusGeometry(lane.radius, lane.tube, 4, 320),
+                    mat
+                );
+                strip.rotation.x = Math.PI / 2;
+                strip.position.y = AUTOSTRADA_Y + 0.5;
+                ringGroup.add(strip);
+            }
+
+            const shoulderMat = new THREE.MeshBasicMaterial({
+                color: 0x17324b,
+                transparent: true,
+                opacity: 0.12
+            });
+            for (const radius of [RING_MID - AUTOSTRADA_WIDTH * 0.5, RING_MID + AUTOSTRADA_WIDTH * 0.5]) {
+                const shoulder = new THREE.Mesh(
+                    new THREE.TorusGeometry(radius, 4, 4, 320),
+                    shoulderMat
+                );
+                shoulder.rotation.x = Math.PI / 2;
+                shoulder.position.y = AUTOSTRADA_Y + 0.3;
+                ringGroup.add(shoulder);
+            }
+        }
+
         // ==========================================
         // GATES
         // ==========================================
@@ -926,28 +3025,71 @@
         // TRANSPORT TRAFFIC
         // ==========================================
         function createTransportTraffic() {
-            if (trafficParticles) ringGroup.remove(trafficParticles);
-            const count = 5000;
+            if (trafficParticles) {
+                ringGroup.remove(trafficParticles);
+                trafficParticles.geometry.dispose();
+                trafficParticles.material.dispose();
+                trafficParticles = null;
+            }
+            rebuildTrafficRoutes();
+            if (!trafficRoutes.length) {
+                trafficState = null;
+                trafficDirty = false;
+                return;
+            }
+
+            let count = 0;
+            const routeCounts = new Int32Array(trafficRoutes.length);
+            for (let i = 0; i < trafficRoutes.length; i++) {
+                const route = trafficRoutes[i];
+                const routeCount = route.type === 'highway'
+                    ? 640
+                    : Math.max(14, Math.min(42, Math.round(route.totalLength / 110)));
+                routeCounts[i] = routeCount;
+                count += routeCount;
+            }
             const geo = new THREE.BufferGeometry();
             const positions = new Float32Array(count * 3);
             const colors = new Float32Array(count * 3);
+            const routeIndices = new Uint16Array(count);
+            const segmentIndices = new Uint16Array(count);
+            const segmentOffsets = new Float32Array(count);
+            const speed = new Float32Array(count);
+            const heightOffsets = new Float32Array(count);
             const palette = [new THREE.Color(0x00f3ff), new THREE.Color(0xfcee0a), new THREE.Color(0xff003c), new THREE.Color(0xffffff)];
 
-            for (let i = 0; i < count; i++) {
-                const r = RING_INNER + 50 + Math.random() * RING_WIDTH;
-                const a = Math.random() * Math.PI * 2;
-                const h = 5 + Math.random() * 120;
-                positions[i * 3] = Math.cos(a) * r;
-                positions[i * 3 + 1] = h;
-                positions[i * 3 + 2] = Math.sin(a) * r;
-                const c = palette[Math.floor(Math.random() * palette.length)];
-                colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+            let writeIndex = 0;
+            for (let routeIdx = 0; routeIdx < trafficRoutes.length; routeIdx++) {
+                const route = trafficRoutes[routeIdx];
+                const routeCount = routeCounts[routeIdx];
+                const baseSpeed = route.type === 'highway' ? 780 : 160;
+                const speedJitter = route.type === 'highway' ? 260 : 120;
+                for (let n = 0; n < routeCount; n++, writeIndex++) {
+                    const dist = route.totalLength * (n / routeCount);
+                    const located = locateRouteDistance(route, dist);
+                    routeIndices[writeIndex] = routeIdx;
+                    segmentIndices[writeIndex] = located.seg;
+                    segmentOffsets[writeIndex] = located.offset;
+                    speed[writeIndex] = baseSpeed + Math.random() * speedJitter;
+                    heightOffsets[writeIndex] = route.type === 'highway'
+                        ? 3 + Math.random() * 5
+                        : 2 + Math.random() * 8;
+                    const c = route.type === 'highway'
+                        ? palette[(routeIdx + n) % palette.length]
+                        : palette[(routeIdx * 3 + n) % palette.length];
+                    colors[writeIndex * 3] = c.r;
+                    colors[writeIndex * 3 + 1] = c.g;
+                    colors[writeIndex * 3 + 2] = c.b;
+                }
             }
+            trafficState = { count, positions, routeIndices, segmentIndices, segmentOffsets, speed, heightOffsets };
+            syncTrafficPositions();
             geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
             geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
             const mat = new THREE.PointsMaterial({ size: 3.5, vertexColors: true, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending });
             trafficParticles = new THREE.Points(geo, mat);
             ringGroup.add(trafficParticles);
+            trafficDirty = false;
         }
 
         // ==========================================
@@ -956,45 +3098,34 @@
         function animate() {
             requestAnimationFrame(animate);
             const dt = 0.016;
+            const frameStart = performance.now();
             gameTime += dt;
 
             // Camera
+            let tPerf = performance.now();
             actualCam.x += (camTarget.x - actualCam.x) * 0.04;
             actualCam.z += (camTarget.z - actualCam.z) * 0.04;
-            const fovRad = THREE.MathUtils.degToRad(35 * 0.5);
-            const altitude = (window.innerHeight / 2) / Math.tan(fovRad) / camZoom;
+            const altitude = cameraAltitudeBase / camZoom;
             camera.position.set(actualCam.x, altitude, actualCam.z);
             camera.lookAt(actualCam.x, 0, actualCam.z);
-
-            // Building tilt (fake oblique)
-            for (const b of visualBuildings) {
-                const wp = new THREE.Vector3();
-                b.groupWrapper.getWorldPosition(wp);
-                const rx = wp.x - camera.position.x;
-                const rz = wp.z - camera.position.z;
-                const len = Math.hypot(rx, rz);
-                let tx = 0, tz = 0;
-                if (len > 1) {
-                    const nx = rx / len, nz = rz / len;
-                    const deadZone = 80 / camZoom;
-                    const resp = Math.min(1, Math.max(0, (len - deadZone) / (2500 / camZoom)));
-                    const maxT = 0.48;
-                    tx = nz * maxT * resp;
-                    tz = -nx * maxT * resp;
-                }
-                b.tiltX += (tx - b.tiltX) * (dt * 6);
-                b.tiltZ += (tz - b.tiltZ) * (dt * 6);
-                b.groupWrapper.rotation.x = b.tiltX;
-                b.groupWrapper.rotation.z = b.tiltZ;
-            }
+            PerfHUD.addTiming('cameraTime', performance.now() - tPerf);
 
             // Ring slow rotation
             if (ringGroup) {
                 ringGroup.rotation.y += 0.00004;
-                ringGroup.updateMatrixWorld(true);
             }
 
+            const ringRotY = ringGroup ? ringGroup.rotation.y : 0;
+            const ringCos = Math.cos(ringRotY);
+            const ringSin = Math.sin(ringRotY);
+
+            tPerf = performance.now();
+            // Removed custom tilt code which broke the Cartesian alignment.
+            // Buildings are now statically placed according to the grid.
+            PerfHUD.addTiming('tiltTime', performance.now() - tPerf);
+
             // Gate cycle
+            tPerf = performance.now();
             const cycle = (gameTime % 28) / 28;
             const targetOpen = (cycle > 0.1 && cycle < 0.42) ? 1.0 : 0.0;
             for (const gate of mechanicalGates) {
@@ -1007,21 +3138,44 @@
                     door.rotation.y = -a;
                 }
             }
+            PerfHUD.addTiming('gateTime', performance.now() - tPerf);
 
-            // Traffic particles orbit
-            if (trafficParticles) {
-                const p = trafficParticles.geometry.attributes.position.array;
-                for (let i = 0; i < p.length; i += 3) {
-                    const radius = Math.sqrt(p[i] * p[i] + p[i + 2] * p[i + 2]);
-                    let a = Math.atan2(p[i + 2], p[i]);
-                    a += (i % 2 === 0 ? 1 : -1) * (0.00012 + Math.random() * 0.00006);
-                    p[i] = Math.cos(a) * radius;
-                    p[i + 2] = Math.sin(a) * radius;
-                }
-                trafficParticles.geometry.attributes.position.needsUpdate = true;
+            if (zoneConnectivityDirty) {
+                rebuildZoneRoadLinks();
             }
 
+            // Traffic particles orbit
+            tPerf = performance.now();
+            if (trafficDirty) {
+                createTransportTraffic();
+            }
+            if (trafficParticles && trafficState) {
+                const { count, routeIndices, segmentIndices, segmentOffsets, speed } = trafficState;
+                for (let i = 0; i < count; i++) {
+                    const route = trafficRoutes[routeIndices[i]];
+                    if (!route || route.segmentCount <= 0) continue;
+                    let seg = segmentIndices[i];
+                    let nextOffset = segmentOffsets[i] + speed[i] * dt;
+                    while (nextOffset >= route.segmentLengths[seg]) {
+                        nextOffset -= route.segmentLengths[seg];
+                        seg++;
+                        if (seg >= route.segmentCount) seg = 0;
+                    }
+                    segmentIndices[i] = seg;
+                    segmentOffsets[i] = nextOffset;
+                }
+                syncTrafficPositions();
+                trafficParticles.geometry.attributes.position.needsUpdate = true;
+            }
+            PerfHUD.addTiming('trafficTime', performance.now() - tPerf);
+
+            tPerf = performance.now();
             composer.render();
+            PerfHUD.addTiming('renderTime', performance.now() - tPerf);
+
+            const frameEnd = performance.now();
+            PerfHUD.recordFrameTime(frameEnd - frameStart);
+            PerfHUD.flush(frameEnd);
         }
 
     </script>
