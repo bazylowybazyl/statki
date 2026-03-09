@@ -324,8 +324,8 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
         let pos = { x: entity.x || entity.pos?.x, y: entity.y || entity.pos?.y };
         let visualAngle = entity.angle || 0;
 
-        // If player entity, use interpolation for smoothness
-        if (interpPoseOverride && entity.isPlayer) {
+        // If main player entity (P1 only), use interpolation for smoothness
+        if (interpPoseOverride && entity.isPlayer && entity === (typeof window !== 'undefined' ? window.ship : null)) {
             pos.x = interpPoseOverride.x;
             pos.y = interpPoseOverride.y;
             visualAngle = interpPoseOverride.angle;

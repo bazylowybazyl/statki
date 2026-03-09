@@ -430,6 +430,22 @@
           </button>
         </div>
 
+        <!-- GAME MODE SELECTION (after New Game) -->
+        <div id="menu-gamemode-view" class="menu-sub-view">
+          <h2 style="text-align:center; color:#fff; text-transform:uppercase; letter-spacing:4px; margin-bottom:24px;">
+            Tryb Gry
+          </h2>
+          <button id="btn-mode-single" class="menu-btn-styled primary">
+            <span>Single Player</span> <span>&#9654;</span>
+          </button>
+          <button id="btn-mode-split" class="menu-btn-styled primary">
+            <span>Split Screen Co-Op</span> <span>&#127918;</span>
+          </button>
+          <button id="btn-gamemode-back" class="menu-btn-styled" style="justify-content:center; margin-top:12px;">
+            Wróć
+          </button>
+        </div>
+
         <div id="menu-credits-view" class="menu-sub-view">
           <div class="credits-text">
             <h3 style="color:#fff; letter-spacing:2px; margin-bottom:15px;">Dane projektu</h3>
@@ -462,6 +478,140 @@
       <div id="loading-progress" class="loading-progress">0%</div>
     </div>
   </div>
+
+  <!-- SPLIT SCREEN SHIP SELECTION OVERLAY -->
+  <div id="ship-select-overlay" class="hidden" style="
+    position:fixed; inset:0; z-index:9999; background:rgba(2,4,12,0.97);
+    display:flex; font-family:'Segoe UI',Consolas,monospace; color:#ccd;">
+
+    <!-- Player 1 (left half) -->
+    <div class="ship-select-half" id="ship-select-p1" style="
+      flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+      border-right:2px solid #335; position:relative;">
+      <div class="ship-select-player-label" style="
+        position:absolute; top:24px; left:50%; transform:translateX(-50%);
+        font-size:14px; text-transform:uppercase; letter-spacing:3px; color:#4af;">
+        Gracz 1 — Pad #1
+      </div>
+      <div class="ship-select-ship-name" id="p1-ship-name" style="
+        font-size:28px; font-weight:700; margin-bottom:12px; color:#fff; letter-spacing:2px;"></div>
+      <div class="ship-select-ship-role" id="p1-ship-role" style="
+        font-size:13px; color:#88a; margin-bottom:18px; text-transform:uppercase; letter-spacing:1px;"></div>
+      <div style="position:relative; width:320px; height:220px; display:flex; align-items:center; justify-content:center;">
+        <button class="ship-select-arrow ship-select-arrow-left" id="p1-prev" style="
+          position:absolute; left:-48px; top:50%; transform:translateY(-50%);
+          background:none; border:2px solid #4af; color:#4af; font-size:28px; width:40px; height:40px;
+          border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;">&#9664;</button>
+        <img id="p1-ship-img" style="max-width:300px; max-height:200px; object-fit:contain; filter:drop-shadow(0 0 20px rgba(60,140,255,0.4));" />
+        <button class="ship-select-arrow ship-select-arrow-right" id="p1-next" style="
+          position:absolute; right:-48px; top:50%; transform:translateY(-50%);
+          background:none; border:2px solid #4af; color:#4af; font-size:28px; width:40px; height:40px;
+          border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;">&#9654;</button>
+      </div>
+      <div class="ship-select-stats" id="p1-ship-stats" style="
+        margin-top:18px; font-size:12px; color:#99b; text-align:center; line-height:1.8;"></div>
+      <button id="p1-ready-btn" style="
+        margin-top:16px; padding:10px 36px; border:2px solid #4af; color:#4af; border-radius:6px;
+        font-size:16px; font-weight:700; text-transform:uppercase; letter-spacing:3px;
+        background:rgba(60,140,255,0.08); cursor:pointer; transition:all 0.2s;">READY</button>
+    </div>
+
+    <!-- Player 2 (right half) -->
+    <div class="ship-select-half" id="ship-select-p2" style="
+      flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+      position:relative;">
+      <div class="ship-select-player-label" style="
+        position:absolute; top:24px; left:50%; transform:translateX(-50%);
+        font-size:14px; text-transform:uppercase; letter-spacing:3px; color:#f84;">
+        Gracz 2 — Pad #2
+      </div>
+      <div class="ship-select-ship-name" id="p2-ship-name" style="
+        font-size:28px; font-weight:700; margin-bottom:12px; color:#fff; letter-spacing:2px;"></div>
+      <div class="ship-select-ship-role" id="p2-ship-role" style="
+        font-size:13px; color:#88a; margin-bottom:18px; text-transform:uppercase; letter-spacing:1px;"></div>
+      <div style="position:relative; width:320px; height:220px; display:flex; align-items:center; justify-content:center;">
+        <button class="ship-select-arrow ship-select-arrow-left" id="p2-prev" style="
+          position:absolute; left:-48px; top:50%; transform:translateY(-50%);
+          background:none; border:2px solid #f84; color:#f84; font-size:28px; width:40px; height:40px;
+          border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;">&#9664;</button>
+        <img id="p2-ship-img" style="max-width:300px; max-height:200px; object-fit:contain; filter:drop-shadow(0 0 20px rgba(255,120,60,0.4));" />
+        <button class="ship-select-arrow ship-select-arrow-right" id="p2-next" style="
+          position:absolute; right:-48px; top:50%; transform:translateY(-50%);
+          background:none; border:2px solid #f84; color:#f84; font-size:28px; width:40px; height:40px;
+          border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center;">&#9654;</button>
+      </div>
+      <div class="ship-select-stats" id="p2-ship-stats" style="
+        margin-top:18px; font-size:12px; color:#99b; text-align:center; line-height:1.8;"></div>
+      <button id="p2-ready-btn" style="
+        margin-top:16px; padding:10px 36px; border:2px solid #f84; color:#f84; border-radius:6px;
+        font-size:16px; font-weight:700; text-transform:uppercase; letter-spacing:3px;
+        background:rgba(255,120,60,0.08); cursor:pointer; transition:all 0.2s;">READY</button>
+    </div>
+  </div>
+
+  <!-- CONTROLLER SELECTION OVERLAY -->
+  <div id="controller-select-overlay" class="hidden" style="
+    position:fixed; inset:0; z-index:10000; background:rgba(2,4,12,0.97);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    font-family:'Segoe UI',Consolas,monospace; color:#ccd;">
+
+    <h2 style="text-transform:uppercase; letter-spacing:6px; color:#fff; margin-bottom:8px; font-size:22px;">
+      Wybor Kontrolera
+    </h2>
+    <p style="color:#667; font-size:13px; margin-bottom:32px; letter-spacing:1px;">
+      Nacisnij lewo/prawo na wybranym urzadzeniu, aby przypisac je do gracza
+    </p>
+
+    <div style="display:flex; gap:0; width:80%; max-width:900px;">
+      <!-- P1 controller slot -->
+      <div id="ctrl-slot-p1" style="
+        flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+        border:2px solid #335; border-radius:12px 0 0 12px; padding:40px 20px; min-height:260px;
+        background:rgba(60,140,255,0.04); transition:all 0.3s;">
+        <div style="font-size:13px; text-transform:uppercase; letter-spacing:3px; color:#4af; margin-bottom:20px;">
+          Gracz 1
+        </div>
+        <div id="ctrl-p1-icon" style="font-size:64px; margin-bottom:16px; opacity:0.3;">?</div>
+        <div id="ctrl-p1-label" style="font-size:18px; font-weight:700; color:#fff; letter-spacing:1px;">
+          Oczekiwanie...
+        </div>
+        <div id="ctrl-p1-hint" style="font-size:12px; color:#556; margin-top:8px;">
+          Nacisnij lewo lub prawo
+        </div>
+      </div>
+
+      <!-- P2 controller slot -->
+      <div id="ctrl-slot-p2" style="
+        flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+        border:2px solid #335; border-radius:0 12px 12px 0; padding:40px 20px; min-height:260px;
+        background:rgba(255,120,60,0.04); transition:all 0.3s;">
+        <div style="font-size:13px; text-transform:uppercase; letter-spacing:3px; color:#f84; margin-bottom:20px;">
+          Gracz 2
+        </div>
+        <div id="ctrl-p2-icon" style="font-size:64px; margin-bottom:16px; opacity:0.3;">?</div>
+        <div id="ctrl-p2-label" style="font-size:18px; font-weight:700; color:#fff; letter-spacing:1px;">
+          Oczekiwanie...
+        </div>
+        <div id="ctrl-p2-hint" style="font-size:12px; color:#556; margin-top:8px;">
+          Nacisnij lewo lub prawo
+        </div>
+      </div>
+    </div>
+
+    <button id="ctrl-confirm-btn" disabled style="
+      margin-top:32px; padding:14px 48px; border:2px solid #335; color:#556; border-radius:8px;
+      font-size:18px; font-weight:700; text-transform:uppercase; letter-spacing:4px;
+      background:rgba(255,255,255,0.03); cursor:not-allowed; transition:all 0.3s;">
+      Potwierdz
+    </button>
+
+    <button id="ctrl-back-btn" style="
+      margin-top:12px; padding:8px 24px; border:1px solid #334; color:#667; border-radius:6px;
+      font-size:13px; background:none; cursor:pointer; letter-spacing:1px;">
+      Wroc
+    </button>
+  </div>
+
   <div id="infrastructure-overlay" class="station-overlay hidden">
     <h3>Station Infrastructure</h3>
     <ul>
@@ -1509,6 +1659,7 @@
     const menuHomeView = document.getElementById('menu-home-view');
     const menuOptionsView = document.getElementById('menu-options-view');
     const menuCreditsView = document.getElementById('menu-credits-view');
+    const menuGamemodeView = document.getElementById('menu-gamemode-view');
     const MENU_MUSIC_SRC = '/sounds/menu/menu.mp3';
     let menuMusicEl = null;
     let menuMusicFadeId = null;
@@ -1560,14 +1711,12 @@
     }
 
     function setMenuView(nextView = 'home') {
-      if (nextView !== 'options' && nextView !== 'credits') {
-        menuView = 'home';
-      } else {
-        menuView = nextView;
-      }
+      const validViews = ['home', 'options', 'credits', 'gamemode'];
+      menuView = validViews.includes(nextView) ? nextView : 'home';
       if (menuHomeView) menuHomeView.classList.toggle('active', menuView === 'home');
       if (menuOptionsView) menuOptionsView.classList.toggle('active', menuView === 'options');
       if (menuCreditsView) menuCreditsView.classList.toggle('active', menuView === 'credits');
+      if (menuGamemodeView) menuGamemodeView.classList.toggle('active', menuView === 'gamemode');
       if (menuView === 'options') applyQualitySelection();
     }
 
@@ -3345,7 +3494,7 @@
     if (previousPlayer.aiController) shipOverrides.aiController = previousPlayer.aiController;
 
     Game.player = createShipEntity({ world: WORLD, overlayView, overrides: shipOverrides });
-    const ship = Game.player;
+    let ship = Game.player;
     ship.isPlayer = true;
     ship.friendly = true;
     window.ship = ship;
@@ -12771,6 +12920,7 @@
       }
       if (k === 'r') {
         const allDestructibles = [ship, ...npcs, ...wrecks];
+        if (splitScreenMode && player2Ship && !player2Ship.destroyed) allDestructibles.push(player2Ship);
         DestructorSystem.repair(allDestructibles, 0.1);
       }
       if (ship.agility && ship.agility.active && !ship.agility.maneuver) {
@@ -12820,29 +12970,54 @@
       updateInput();
     });
     function updateInput() {
-      if (ship.destroyed) {
-        applyPlayerInput(ship, { controller: 'player', main: 0, thrustX: 0, thrustY: 0, leftSide: 0, rightSide: 0, torque: 0 }, input);
-        return;
+      // Determine which ship keyboard controls
+      const kbControlsP2 = splitScreenMode && controllerAssignment.p2 === 'keyboard';
+      const kbControlsP1 = !splitScreenMode || controllerAssignment.p1 === 'keyboard';
+
+      // P1 keyboard input
+      if (kbControlsP1) {
+        if (ship.destroyed) {
+          applyPlayerInput(ship, { controller: 'player', main: 0, thrustX: 0, thrustY: 0, leftSide: 0, rightSide: 0, torque: 0 }, input);
+          return;
+        }
+        if (ship.agility && ship.agility.active) {
+          applyPlayerInput(ship, { controller: 'player', main: 0, thrustX: 0, thrustY: 0, leftSide: 0, rightSide: 0, torque: 0 }, input);
+          return;
+        }
+        let thrustY = 0;
+        if (keys['w']) thrustY = 1;
+        const leftSide = keys['e'] ? 1 : 0;
+        const rightSide = keys['q'] ? 1 : 0;
+        let torque = 0; if (keys['a']) torque -= 1; if (keys['d']) torque += 1;
+        applyPlayerInput(ship, {
+          controller: 'player',
+          thrustX: torque,
+          thrustY,
+          main: Math.max(0, thrustY),
+          leftSide,
+          rightSide,
+          torque
+        }, input);
+        if (keys['f']) tryFireMountedSpecialWeapons();
       }
-      if (ship.agility && ship.agility.active) {
-        applyPlayerInput(ship, { controller: 'player', main: 0, thrustX: 0, thrustY: 0, leftSide: 0, rightSide: 0, torque: 0 }, input);
-        return;
+
+      // P2 keyboard input (same WASD keys, applied to P2)
+      if (kbControlsP2 && player2Ship && !player2Ship.destroyed) {
+        let thrustY = 0;
+        if (keys['w']) thrustY = 1;
+        const leftSide = keys['e'] ? 1 : 0;
+        const rightSide = keys['q'] ? 1 : 0;
+        let torque = 0; if (keys['a']) torque -= 1; if (keys['d']) torque += 1;
+        applyPlayerInput(player2Ship, {
+          controller: 'player2',
+          thrustX: torque,
+          thrustY,
+          main: Math.max(0, thrustY),
+          leftSide,
+          rightSide,
+          torque
+        }, input2);
       }
-      let thrustY = 0;
-      if (keys['w']) thrustY = 1;
-      const leftSide = keys['e'] ? 1 : 0;
-      const rightSide = keys['q'] ? 1 : 0;
-      let torque = 0; if (keys['a']) torque -= 1; if (keys['d']) torque += 1;
-      applyPlayerInput(ship, {
-        controller: 'player',
-        thrustX: torque,
-        thrustY,
-        main: Math.max(0, thrustY),
-        leftSide,
-        rightSide,
-        torque
-      }, input);
-      if (keys['f']) tryFireMountedSpecialWeapons();
     }
 
     function approachValue(current, target, delta) {
@@ -13376,35 +13551,53 @@
     const GAMEPAD = { enabled: true, dead: 0.15, last: {} };
 
     function applyGamepad() {
-      const pads = navigator.getGamepads?.() || [];
-      const p = pads[0];
-      if (!p) return;
-      const ax = (v) => (Math.abs(v) < GAMEPAD.dead ? 0 : v);
-      const lx = ax(p.axes[0] || 0), ly = ax(p.axes[1] || 0);
-      const rx = ax(p.axes[2] || 0), ry = ax(p.axes[3] || 0);
-      const forward = ly * -1;
-      applyPlayerInput(ship, {
-        controller: 'player',
-        thrustX: -lx,
-        thrustY: forward,
-        aimX: rx,
-        aimY: ry * -1,
-        main: Math.max(0, forward),
-        torque: lx,
-        leftSide: 0,
-        rightSide: 0
-      }, input);
-      // przyciski
-      const btn = (i) => !!(p.buttons[i] && p.buttons[i].pressed);
-      if (btn(0)) triggerRailVolley();      // A / Cross
-      if (btn(1)) fireRocket();             // B / Circle
-      if (btn(2)) {
-        activateBoostIfAllowed();
-      } else if (boost.state === 'active' && !btn(2)) {
-        stopBoost();
+      // Helper to apply gamepad to a ship entity
+      function applyPadToShip(pad, targetShip, targetInput, isP1) {
+        if (!pad || !targetShip) return;
+        const ax = (v) => (Math.abs(v) < GAMEPAD.dead ? 0 : v);
+        const lx = ax(pad.axes[0] || 0), ly = ax(pad.axes[1] || 0);
+        const rx = ax(pad.axes[2] || 0), ry = ax(pad.axes[3] || 0);
+        const forward = ly * -1;
+        applyPlayerInput(targetShip, {
+          controller: isP1 ? 'player' : 'player2',
+          thrustX: -lx,
+          thrustY: forward,
+          aimX: rx,
+          aimY: ry * -1,
+          main: Math.max(0, forward),
+          torque: lx,
+          leftSide: 0,
+          rightSide: 0
+        }, targetInput);
+        const btn = (i) => !!(pad.buttons[i] && pad.buttons[i].pressed);
+        if (isP1) {
+          if (btn(0)) triggerRailVolley();
+          if (btn(1)) fireRocket();
+          if (btn(2)) { activateBoostIfAllowed(); } else if (boost.state === 'active' && !btn(2)) { stopBoost(); }
+          if (btn(3)) attemptWarp();
+        }
+        if (btn(9)) togglePause();
       }
-      if (btn(3)) attemptWarp();            // Y / Triangle
-      if (btn(9)) togglePause();            // START
+
+      // P1 controller
+      const p1Assign = controllerAssignment.p1;
+      if (p1Assign && p1Assign !== 'keyboard') {
+        const p1Pad = getAssignedPad(p1Assign);
+        applyPadToShip(p1Pad, ship, input, true);
+      } else if (!p1Assign) {
+        // Fallback: no assignment (single player) — use pad[0]
+        const pads = navigator.getGamepads?.() || [];
+        applyPadToShip(pads[0], ship, input, true);
+      }
+
+      // P2 controller (split screen only)
+      if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
+        const p2Assign = controllerAssignment.p2;
+        if (p2Assign && p2Assign !== 'keyboard') {
+          const p2Pad = getAssignedPad(p2Assign);
+          applyPadToShip(p2Pad, player2Ship, input2, false);
+        }
+      }
     }
 
     // =============== Side rockets ===============
@@ -14398,6 +14591,29 @@
         }
         SpatialGrid.insert(ship._spatialProxy);
       }
+      // Player 2 into SpatialGrid
+      if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
+        if (!player2Ship._spatialProxy) {
+          player2Ship._spatialProxy = {
+            _isPlayerShip: true,
+            _isPlayer2: true,
+            get x() { return player2Ship.pos.x; },
+            get y() { return player2Ship.pos.y; },
+            get radius() { return player2Ship.radius || 50; },
+            get shield() { return player2Ship.shield; },
+            get hexGrid() { return player2Ship.hexGrid; },
+            get capitalProfile() { return player2Ship.capitalProfile; },
+            get angle() { return player2Ship.angle; },
+            get w() { return player2Ship.w; },
+            get h() { return player2Ship.h; },
+            get dead() { return player2Ship.destroyed; },
+            get friendly() { return true; },
+            get isCollidable() { return true; },
+            get isWreck() { return false; }
+          };
+        }
+        SpatialGrid.insert(player2Ship._spatialProxy);
+      }
 
       for (let i = bullets.length - 1; i >= 0; i--) {
         const b = bullets[i];
@@ -15388,6 +15604,9 @@
       if (ship.shield.regenTimer > 0) ship.shield.regenTimer -= dt;
       else ship.shield.val = clamp(ship.shield.val + ship.shield.regenRate * solarExposureFactor * dt, 0, ship.shield.max);
       updateShieldFx(ship, dt);
+      if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
+        updateShieldFx(player2Ship, dt);
+      }
       rocketCooldown = Math.max(0, rocketCooldown - dt);
       // mouse world position
       const mouseWorld = screenToWorld(mouse.x, mouse.y);
@@ -15730,6 +15949,81 @@
       ship.x = ship.pos.x;
       ship.y = ship.pos.y;
 
+      // ====== PLAYER 2 PHYSICS (Split Screen) ======
+      if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
+        const p2 = player2Ship;
+        // Update thruster state
+        composeShipThrusterCommand(p2, {
+          main: input2.main,
+          torque: input2.torque,
+          leftSide: input2.leftSide,
+          rightSide: input2.rightSide
+        });
+        updateShipThrusterState(p2, dt);
+
+        const p2sin = Math.sin(p2.angle);
+        const p2cos = Math.cos(p2.angle);
+        const p2fwd = { x: p2cos, y: p2sin };
+        const p2right = { x: -p2sin, y: p2cos };
+        const p2mass = Math.max(1, Number(p2.mass) || 200000);
+        const p2inv = 1 / p2mass;
+        const p2inertia = Math.max(1, Number(p2.inertia) || ((1/12) * p2mass * (((p2.w||450)**2)+((p2.h||250)**2))));
+
+        const p2rev = Math.max(0, -(clamp(p2.input?.thrustY ?? 0, -1, 1)));
+        const p2forces = computeShipThrusterForces(p2, {
+          mainForceMul: 1.0,
+          sideForceMul: 1.6,
+          reverseInput: p2rev
+        });
+
+        const p2wfx = (p2fwd.x * p2forces.localFx) + (p2right.x * p2forces.localFy);
+        const p2wfy = (p2fwd.y * p2forces.localFx) + (p2right.y * p2forces.localFy);
+        p2.vel.x += p2wfx * p2inv * dt;
+        p2.vel.y += p2wfy * p2inv * dt;
+
+        p2.angVel = (p2.angVel || 0) + (p2forces.localTorque / p2inertia) * dt;
+        p2.angVel = clamp(p2.angVel, -3.5, 3.5);
+
+        // Damper (always active for P2 simplicity)
+        const p2speed = Math.hypot(p2.vel.x, p2.vel.y);
+        if (p2speed > 1e-4) {
+          const brakeDelta = Math.min(p2speed, p2speed * 0.4 * dt);
+          const invSpd = 1 / p2speed;
+          p2.vel.x -= p2.vel.x * invSpd * brakeDelta;
+          p2.vel.y -= p2.vel.y * invSpd * brakeDelta;
+        }
+        p2.angVel *= Math.exp(-2.0 * dt);
+        if (Math.abs(p2.angVel) < 0.003) p2.angVel = 0;
+
+        p2.angle = wrapAngle((p2.angle || 0) + (p2.angVel || 0) * dt);
+        p2.pos.x += p2.vel.x * dt;
+        p2.pos.y += p2.vel.y * dt;
+        p2.pos.x = clamp(p2.pos.x, margin, WORLD.w - margin);
+        p2.pos.y = clamp(p2.pos.y, margin, WORLD.h - margin);
+        p2.x = p2.pos.x;
+        p2.y = p2.pos.y;
+
+        // Shield regen for P2
+        if (p2.shield) {
+          if (p2.shield.regenTimer > 0) p2.shield.regenTimer -= dt;
+          else p2.shield.val = clamp(p2.shield.val + (p2.shield.regenRate || 150) * dt, 0, p2.shield.max);
+        }
+
+        // Update camera2
+        if (camera2) {
+          camera2.x = p2.pos.x;
+          camera2.y = p2.pos.y;
+          camera2.targetX = p2.pos.x;
+          camera2.targetY = p2.pos.y;
+          if (camera2.shakeTime > 0) {
+            camera2.shakeTime -= dt;
+            if (camera2.shakeTime <= 0) camera2.shakeMag = 0;
+          }
+        }
+      }
+      // P1-P2 hex collision is handled by DestructorSystem (P2 is in dynamicDestructibles)
+      // ====== END PLAYER 2 PHYSICS ======
+
       // obrót (STARY KOD USUNIĘTY - zastąpiony powyżej kinematycznym)
       /* const angAcc = totalTorque / ship.inertia;
       ship.angVel += angAcc * dt;
@@ -15772,6 +16066,9 @@
       bulletsAndCollisionsStep(dt);
       npcShootingStep(dt);
       const dynamicDestructibles = [ship, ...npcs, ...wrecks];
+      if (splitScreenMode && player2Ship && !player2Ship.destroyed && player2Ship.hexGrid) {
+        dynamicDestructibles.push(player2Ship);
+      }
       const shipPx = Number(ship?.pos?.x ?? ship?.x);
       const shipPy = Number(ship?.pos?.y ?? ship?.y);
       const nearbyRingDestructibles = collectNearbyRingDestructibles(
@@ -15781,6 +16078,15 @@
         12000,
         64
       );
+      // Also collect ring segments near P2 if in split screen
+      if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
+        const p2rx = Number(player2Ship.pos?.x ?? 0);
+        const p2ry = Number(player2Ship.pos?.y ?? 0);
+        const p2Ring = collectNearbyRingDestructibles(dynamicDestructibles, p2rx, p2ry, 12000, 64);
+        for (const seg of p2Ring) {
+          if (seg && !nearbyRingDestructibles.includes(seg)) nearbyRingDestructibles.push(seg);
+        }
+      }
       const hotRingDestructibles = collectHotRingDestructibles(
         performance.now(),
         'physics',
@@ -15875,6 +16181,13 @@
         p.pos.y += p.vel.y * dt;
       }
     }
+    // ============== SPLIT SCREEN STATE (early declaration) ==============
+    let splitScreenMode = false;
+    let player2Ship = null;
+    let camera2 = null;
+    let input2 = { main: 0, leftSide: 0, rightSide: 0, torque: 0 };
+    window.splitScreenMode = false;
+
     // =============== Main loop ===============
     let lastTime = performance.now();
     const PHYS_DT = 1 / 120;
@@ -15883,7 +16196,7 @@
     let prevState = null;
     let prevCameraState = { x: camera.x, y: camera.y, zoom: camera.zoom };
     let firstFrameResolver = null;
-    function saveState() { prevState = { pos: { ...ship.pos }, angle: ship.angle, turretAngle: ship.turret.angle, turretAngle2: ship.turret2.angle, turretAngle3: ship.turret3.angle, turretAngle4: ship.turret4.angle, ciwsAngles: ship.ciws.map(c => c.angle) }; }
+    function saveState() { prevState = { pos: { ...ship.pos }, angle: ship.angle, turretAngle: ship.turret.angle, turretAngle2: ship.turret2.angle, turretAngle3: ship.turret3.angle, turretAngle4: ship.turret4.angle, ciwsAngles: ship.ciws.map(c => c.angle) }; if (splitScreenMode && player2Ship) saveState2(); }
     saveState();
     function loop(now) {
       const frameStartMs = performance.now();
@@ -16905,6 +17218,17 @@
       return c;
     }
 
+    // ============== SPLIT SCREEN RENDER ==============
+    let prevState2 = null;
+    function saveState2() {
+      if (!player2Ship) return;
+      prevState2 = {
+        pos: { ...player2Ship.pos },
+        angle: player2Ship.angle
+      };
+    }
+    // ============== END SPLIT SCREEN RENDER ==============
+
     function render(alpha, frameDt) {
       canvas.style.cursor = 'default';
       const renderDbgEnabled = RenderLiveDebug.enabled;
@@ -16942,14 +17266,37 @@
       // Przeniesiona do render(), aby używać interpPos i uniknąć drgań (jitter)
 
       if (camera.mode === 'ship' && !camera.transition) {
-        const lookAheadFactor = 0.3;
-        const centerX = W * 0.5;
-        const centerY = H * 0.5;
-        const zoomSafe = Math.max(0.1, camera.zoom || 1);
-        const mouseOffsetX = (mouse.x - centerX) * lookAheadFactor / zoomSafe;
-        const mouseOffsetY = (mouse.y - centerY) * lookAheadFactor / zoomSafe;
-        const targetCamX = interpPos.x + mouseOffsetX;
-        const targetCamY = interpPos.y + mouseOffsetY;
+        let targetCamX, targetCamY;
+
+        if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
+          // Split screen: camera centered between both players, auto-zoom
+          const p2x = player2Ship.pos.x;
+          const p2y = player2Ship.pos.y;
+          const midX = (interpPos.x + p2x) * 0.5;
+          const midY = (interpPos.y + p2y) * 0.5;
+          const dist = Math.hypot(p2x - interpPos.x, p2y - interpPos.y);
+          // Auto-zoom: ensure both players visible with margin
+          const marginPx = 300;
+          const neededHalfW = (dist * 0.5 + marginPx);
+          const neededHalfH = (dist * 0.5 + marginPx);
+          const zoomForW = W / (2 * neededHalfW);
+          const zoomForH = H / (2 * neededHalfH);
+          const autoZoom = clamp(Math.min(zoomForW, zoomForH), camera.minZoom, camera.maxZoom);
+          camera.zoom = lerp(camera.zoom, autoZoom, 0.08);
+          camera.targetZoom = camera.zoom;
+
+          targetCamX = midX;
+          targetCamY = midY;
+        } else {
+          const lookAheadFactor = 0.3;
+          const centerX = W * 0.5;
+          const centerY = H * 0.5;
+          const zoomSafe = Math.max(0.1, camera.zoom || 1);
+          const mouseOffsetX = (mouse.x - centerX) * lookAheadFactor / zoomSafe;
+          const mouseOffsetY = (mouse.y - centerY) * lookAheadFactor / zoomSafe;
+          targetCamX = interpPos.x + mouseOffsetX;
+          targetCamY = interpPos.y + mouseOffsetY;
+        }
 
         camera.x = targetCamX;
         camera.y = targetCamY;
@@ -17117,6 +17464,7 @@
       const renderEntities = [];
       if (ship && !ship.dead) renderEntities.push(ship);
       if (ship) ship.isPlayer = true;
+      if (splitScreenMode && player2Ship && !player2Ship.destroyed) renderEntities.push(player2Ship);
       for (const npc of npcs) if (npc && !npc.dead) renderEntities.push(npc);
       for (const w of wrecks) if (w && !w.dead) renderEntities.push(w);
 
@@ -17711,6 +18059,108 @@
       });
       ctx.restore(); // ship
       drawShipShadowOverlay(ctx, cam, ship, playerShadowFactor, interpPos);
+
+      // ======= PLAYER 2 SHIP (Split Screen Co-Op) =======
+      if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
+        const p2 = player2Ship;
+        const p2pos = p2.pos;
+        const p2s = worldToScreen(p2pos.x, p2pos.y, cam);
+        const p2scale = p2.visual?.spriteScale || 1;
+        const p2w = (p2.w || 450) * p2scale;
+        const p2h = (p2.h || 250) * p2scale;
+        const p2angle = p2.angle || 0;
+        const p2uses3D = p2.hexGrid && isHexShips3DActive();
+
+        // Hull rendering (skip if 3D system handles it)
+        if (!p2uses3D) {
+          ctx.save();
+          ctx.translate(p2s.x, p2s.y);
+          ctx.scale(camera.zoom, camera.zoom);
+          ctx.rotate(p2angle);
+
+          if (p2.hexGrid) {
+            // 2D hex body fallback
+            drawHexBodyLocal(ctx, p2);
+          } else if (p2.spriteReady && p2.renderSpriteImage) {
+            // Sprite rendering (same as P1)
+            const spriteImg = p2.renderSpriteImage;
+            const sc = (p2.h / (p2.spriteH || p2.h)) * p2scale;
+            const dw = (p2.spriteW || p2.w) * sc;
+            const dh = (p2.spriteH || p2.h) * sc;
+            // Shadow
+            ctx.save();
+            ctx.globalAlpha = 0.33;
+            ctx.drawImage(spriteImg, -dw / 2 + 6, -dh / 2 + 8, dw, dh);
+            ctx.restore();
+            ctx.drawImage(spriteImg, -dw / 2, -dh / 2, dw, dh);
+          } else {
+            // Procedural fallback
+            const g = ctx.createLinearGradient(-p2w / 2, -p2h / 2, p2w / 2, p2h / 2);
+            g.addColorStop(0, '#2d1d20'); g.addColorStop(1, '#3d2b25');
+            ctx.fillStyle = g;
+            roundRect(ctx, -p2w / 2, -p2h / 2, p2w, p2h, 10 * p2scale);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255,120,60,0.25)';
+            ctx.lineWidth = 2;
+            roundRect(ctx, -p2w / 2, -p2h / 2, p2w, p2h, 10 * p2scale);
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(255,120,60,0.5)';
+            ctx.beginPath();
+            ctx.moveTo(p2w * 0.4, 0);
+            ctx.lineTo(-p2w * 0.15, -p2h * 0.25);
+            ctx.lineTo(-p2w * 0.15, p2h * 0.25);
+            ctx.closePath();
+            ctx.fill();
+          }
+
+          // Engine exhaust glow for P2
+          const p2thrust = Math.max(0, input2.main || 0);
+          if (p2thrust > 0.05) {
+            const exhaLen = p2h * 0.3 * p2thrust;
+            ctx.save();
+            ctx.globalAlpha = 0.5 + 0.4 * p2thrust;
+            const eg = ctx.createLinearGradient(0, 0, -exhaLen, 0);
+            eg.addColorStop(0, 'rgba(100,200,255,0.9)');
+            eg.addColorStop(0.4, 'rgba(60,140,255,0.5)');
+            eg.addColorStop(1, 'rgba(30,80,255,0)');
+            ctx.fillStyle = eg;
+            const exhaW = p2h * 0.15;
+            ctx.fillRect(-p2w * 0.5, -exhaW, -exhaLen, exhaW * 2);
+            ctx.restore();
+          }
+
+          ctx.restore();
+        }
+
+        // P2 marker label
+        ctx.save();
+        ctx.font = `bold ${Math.max(10, 12 * camera.zoom)}px Consolas, monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(255,120,60,0.8)';
+        ctx.fillText('P2', p2s.x, p2s.y - (p2.radius || 100) * camera.zoom - 8);
+        ctx.restore();
+
+        // P2 shield/hull bars
+        const barW = 60 * camera.zoom;
+        const barH = 4 * camera.zoom;
+        const barY = p2s.y + (p2.radius || 100) * camera.zoom + 6;
+        if (p2.shield && p2.shield.max > 0) {
+          const sf = clamp(p2.shield.val / p2.shield.max, 0, 1);
+          ctx.fillStyle = 'rgba(0,0,0,0.5)';
+          ctx.fillRect(p2s.x - barW / 2, barY, barW, barH);
+          ctx.fillStyle = 'rgba(60,160,255,0.8)';
+          ctx.fillRect(p2s.x - barW / 2, barY, barW * sf, barH);
+        }
+        if (p2.hull && p2.hull.max > 0) {
+          const hf = clamp(p2.hull.val / p2.hull.max, 0, 1);
+          ctx.fillStyle = 'rgba(0,0,0,0.5)';
+          ctx.fillRect(p2s.x - barW / 2, barY + barH + 1, barW, barH);
+          ctx.fillStyle = 'rgba(60,255,80,0.8)';
+          ctx.fillRect(p2s.x - barW / 2, barY + barH + 1, barW * hf, barH);
+        }
+      }
+      // ======= END PLAYER 2 =======
+
       // === Projectile Pass ===
       for (const b of bullets) {
         if (b.__renderedByThree === true) continue;
@@ -19010,10 +19460,615 @@
     }
     if (newGameButton) {
       newGameButton.addEventListener('click', () => {
-        setMenuView('home');
-        startGame();
+        setMenuView('gamemode');
       });
     }
+
+    // ============== SPLIT SCREEN / GAME MODE LOGIC ==============
+
+    // Ship selection state
+    const SPLIT_SHIP_KEYS = ['atlas', 'frigate', 'destroyer', 'battleship'];
+    const shipSelectState = {
+      active: false,
+      p1: { index: 0, ready: false },
+      p2: { index: 0, ready: false },
+      prevButtons: [new Array(20).fill(false), new Array(20).fill(false)]
+    };
+
+    function getShipSelectData(hullKey) {
+      const cat = PLAYER_HULL_CATALOG[hullKey];
+      if (!cat) return null;
+      return cat;
+    }
+
+    function updateShipSelectUI(player, index) {
+      const prefix = player === 0 ? 'p1' : 'p2';
+      const key = SPLIT_SHIP_KEYS[index];
+      const data = getShipSelectData(key);
+      if (!data) return;
+      const nameEl = document.getElementById(prefix + '-ship-name');
+      const roleEl = document.getElementById(prefix + '-ship-role');
+      const imgEl = document.getElementById(prefix + '-ship-img');
+      const statsEl = document.getElementById(prefix + '-ship-stats');
+      if (nameEl) nameEl.textContent = data.name;
+      if (roleEl) roleEl.textContent = data.role || '';
+      if (imgEl) imgEl.src = data.spriteSrc || '';
+      if (statsEl) statsEl.innerHTML =
+        `Hull: ${data.hullMax} &nbsp;|&nbsp; Shield: ${data.shield?.max || 0}<br>` +
+        `Mass: ${(data.mass/1000).toFixed(0)}t &nbsp;|&nbsp; Speed: ${data.physics?.speed || '?'}`;
+    }
+
+    function updateReadyButton(player, ready) {
+      const btn = document.getElementById(player === 0 ? 'p1-ready-btn' : 'p2-ready-btn');
+      if (!btn) return;
+      if (ready) {
+        btn.textContent = 'GOTOWY \u2714';
+        btn.style.borderColor = '#4f8';
+        btn.style.color = '#4f8';
+        btn.style.background = 'rgba(60,255,120,0.15)';
+        btn.style.boxShadow = '0 0 20px rgba(60,255,120,0.25)';
+      } else {
+        btn.textContent = 'READY';
+        btn.style.borderColor = player === 0 ? '#4af' : '#f84';
+        btn.style.color = player === 0 ? '#4af' : '#f84';
+        btn.style.background = player === 0 ? 'rgba(60,140,255,0.08)' : 'rgba(255,120,60,0.08)';
+        btn.style.boxShadow = 'none';
+      }
+    }
+
+    function setPlayerReady(player, ready) {
+      const st = player === 0 ? shipSelectState.p1 : shipSelectState.p2;
+      st.ready = ready;
+      updateReadyButton(player, ready);
+      // Check if both ready → start
+      if (shipSelectState.p1.ready && shipSelectState.p2.ready) {
+        setTimeout(() => {
+          if (shipSelectState.p1.ready && shipSelectState.p2.ready && shipSelectState.active) {
+            hideShipSelectOverlay();
+            startSplitScreenGame(
+              SPLIT_SHIP_KEYS[shipSelectState.p1.index],
+              SPLIT_SHIP_KEYS[shipSelectState.p2.index]
+            );
+          }
+        }, 350);
+      }
+    }
+
+    function showShipSelectOverlay() {
+      shipSelectState.active = true;
+      shipSelectState.p1 = { index: 0, ready: false };
+      shipSelectState.p2 = { index: 1, ready: false };
+      shipSelectState.prevButtons = [new Array(20).fill(false), new Array(20).fill(false)];
+      const overlay = document.getElementById('ship-select-overlay');
+      if (overlay) { overlay.classList.remove('hidden'); overlay.style.display = 'flex'; }
+      // Update player labels with controller info
+      const p1Label = document.querySelector('#ship-select-p1 .ship-select-player-label');
+      const p2Label = document.querySelector('#ship-select-p2 .ship-select-player-label');
+      if (p1Label) p1Label.textContent = 'Gracz 1 \u2014 ' + getControllerLabel(controllerAssignment.p1);
+      if (p2Label) p2Label.textContent = 'Gracz 2 \u2014 ' + getControllerLabel(controllerAssignment.p2);
+      updateReadyButton(0, false);
+      updateReadyButton(1, false);
+      updateShipSelectUI(0, shipSelectState.p1.index);
+      updateShipSelectUI(1, shipSelectState.p2.index);
+      requestAnimationFrame(shipSelectGamepadLoop);
+    }
+
+    function hideShipSelectOverlay() {
+      shipSelectState.active = false;
+      const overlay = document.getElementById('ship-select-overlay');
+      if (overlay) { overlay.classList.add('hidden'); overlay.style.display = 'none'; }
+    }
+
+    // Helper: get pad object for a controller assignment id
+    function getAssignedPad(assignmentId) {
+      if (!assignmentId || assignmentId === 'keyboard') return null;
+      const idx = parseInt(assignmentId.replace('pad', ''));
+      const pads = navigator.getGamepads?.() || [];
+      return pads[idx] || null;
+    }
+
+    function shipSelectGamepadLoop() {
+      if (!shipSelectState.active) return;
+
+      // Process each player's assigned controller
+      for (let pi = 0; pi < 2; pi++) {
+        const assignId = pi === 0 ? controllerAssignment.p1 : controllerAssignment.p2;
+        const st = pi === 0 ? shipSelectState.p1 : shipSelectState.p2;
+        const prev = shipSelectState.prevButtons[pi];
+
+        if (assignId && assignId !== 'keyboard') {
+          // Gamepad input
+          const pad = getAssignedPad(assignId);
+          if (!pad) continue;
+
+          const btnNow = pad.buttons.map(b => b.pressed);
+          const justPressed = (i) => btnNow[i] && !prev[i];
+
+          if (!st.ready) {
+            if (justPressed(14) || justPressed(4)) {
+              st.index = (st.index - 1 + SPLIT_SHIP_KEYS.length) % SPLIT_SHIP_KEYS.length;
+              updateShipSelectUI(pi, st.index);
+            }
+            if (justPressed(15) || justPressed(5)) {
+              st.index = (st.index + 1) % SPLIT_SHIP_KEYS.length;
+              updateShipSelectUI(pi, st.index);
+            }
+            if (justPressed(0)) setPlayerReady(pi, true);
+          } else {
+            if (justPressed(1)) setPlayerReady(pi, false);
+          }
+
+          const ax = pad.axes[0] || 0;
+          const prevAx = prev._axH || 0;
+          if (!st.ready) {
+            if (ax < -0.5 && prevAx >= -0.5) {
+              st.index = (st.index - 1 + SPLIT_SHIP_KEYS.length) % SPLIT_SHIP_KEYS.length;
+              updateShipSelectUI(pi, st.index);
+            }
+            if (ax > 0.5 && prevAx <= 0.5) {
+              st.index = (st.index + 1) % SPLIT_SHIP_KEYS.length;
+              updateShipSelectUI(pi, st.index);
+            }
+          }
+
+          shipSelectState.prevButtons[pi] = btnNow;
+          shipSelectState.prevButtons[pi]._axH = ax;
+        }
+        // Keyboard input for ship select is handled via keydown listener below
+      }
+
+      if (shipSelectState.active) requestAnimationFrame(shipSelectGamepadLoop);
+    }
+
+    // Keyboard input for ship selection (for whichever player is assigned 'keyboard')
+    window.addEventListener('keydown', (e) => {
+      if (!shipSelectState.active) return;
+      const k = e.key.toLowerCase();
+      // Find which player has keyboard assigned
+      let pi = -1;
+      if (controllerAssignment.p1 === 'keyboard') pi = 0;
+      else if (controllerAssignment.p2 === 'keyboard') pi = 1;
+      if (pi < 0) return;
+
+      const st = pi === 0 ? shipSelectState.p1 : shipSelectState.p2;
+      if (!st.ready) {
+        if (k === 'arrowleft' || k === 'a') {
+          st.index = (st.index - 1 + SPLIT_SHIP_KEYS.length) % SPLIT_SHIP_KEYS.length;
+          updateShipSelectUI(pi, st.index);
+          e.preventDefault();
+        }
+        if (k === 'arrowright' || k === 'd') {
+          st.index = (st.index + 1) % SPLIT_SHIP_KEYS.length;
+          updateShipSelectUI(pi, st.index);
+          e.preventDefault();
+        }
+        if (k === 'enter' || k === ' ') {
+          setPlayerReady(pi, true);
+          e.preventDefault();
+        }
+      } else {
+        if (k === 'escape' || k === 'backspace') {
+          setPlayerReady(pi, false);
+          e.preventDefault();
+        }
+      }
+    });
+
+    // Mouse/click support for ship select arrows
+    document.getElementById('p1-prev')?.addEventListener('click', () => {
+      if (!shipSelectState.active || shipSelectState.p1.ready) return;
+      shipSelectState.p1.index = (shipSelectState.p1.index - 1 + SPLIT_SHIP_KEYS.length) % SPLIT_SHIP_KEYS.length;
+      updateShipSelectUI(0, shipSelectState.p1.index);
+    });
+    document.getElementById('p1-next')?.addEventListener('click', () => {
+      if (!shipSelectState.active || shipSelectState.p1.ready) return;
+      shipSelectState.p1.index = (shipSelectState.p1.index + 1) % SPLIT_SHIP_KEYS.length;
+      updateShipSelectUI(0, shipSelectState.p1.index);
+    });
+    document.getElementById('p2-prev')?.addEventListener('click', () => {
+      if (!shipSelectState.active || shipSelectState.p2.ready) return;
+      shipSelectState.p2.index = (shipSelectState.p2.index - 1 + SPLIT_SHIP_KEYS.length) % SPLIT_SHIP_KEYS.length;
+      updateShipSelectUI(1, shipSelectState.p2.index);
+    });
+    document.getElementById('p2-next')?.addEventListener('click', () => {
+      if (!shipSelectState.active || shipSelectState.p2.ready) return;
+      shipSelectState.p2.index = (shipSelectState.p2.index + 1) % SPLIT_SHIP_KEYS.length;
+      updateShipSelectUI(1, shipSelectState.p2.index);
+    });
+
+    // Ready button click handlers
+    document.getElementById('p1-ready-btn')?.addEventListener('click', () => {
+      if (!shipSelectState.active) return;
+      setPlayerReady(0, !shipSelectState.p1.ready);
+    });
+    document.getElementById('p2-ready-btn')?.addEventListener('click', () => {
+      if (!shipSelectState.active) return;
+      setPlayerReady(1, !shipSelectState.p2.ready);
+    });
+
+    // ============== CONTROLLER SELECTION SYSTEM ==============
+    const controllerAssignment = {
+      active: false,
+      p1: null, // null | 'keyboard' | 'pad0' | 'pad1' | 'pad2' | 'pad3'
+      p2: null,
+      prevPadButtons: [{}, {}, {}, {}],
+      prevPadAxes: [0, 0, 0, 0],
+      prevKeys: {}
+    };
+    window.controllerAssignment = controllerAssignment;
+
+    function getControllerLabel(id) {
+      if (!id) return 'Oczekiwanie...';
+      if (id === 'keyboard') return 'Klawiatura';
+      const pads = navigator.getGamepads?.() || [];
+      const idx = parseInt(id.replace('pad', ''));
+      const pad = pads[idx];
+      const name = pad?.id || ('Pad ' + (idx + 1));
+      // Shorten long gamepad names
+      const short = name.length > 30 ? name.substring(0, 28) + '...' : name;
+      return short;
+    }
+
+    function getControllerIcon(id) {
+      if (!id) return '?';
+      if (id === 'keyboard') return '\u2328'; // keyboard unicode
+      return '\uD83C\uDFAE'; // gamepad unicode
+    }
+
+    function updateControllerSlotUI(player, id) {
+      const prefix = player === 0 ? 'p1' : 'p2';
+      const iconEl = document.getElementById('ctrl-' + prefix + '-icon');
+      const labelEl = document.getElementById('ctrl-' + prefix + '-label');
+      const hintEl = document.getElementById('ctrl-' + prefix + '-hint');
+      const slotEl = document.getElementById('ctrl-slot-' + prefix);
+      if (iconEl) { iconEl.textContent = getControllerIcon(id); iconEl.style.opacity = id ? '1' : '0.3'; }
+      if (labelEl) labelEl.textContent = getControllerLabel(id);
+      if (hintEl) hintEl.textContent = id ? 'Przypisany' : 'Nacisnij lewo lub prawo';
+      if (slotEl) {
+        const color = player === 0 ? '#4af' : '#f84';
+        slotEl.style.borderColor = id ? color : '#335';
+        slotEl.style.boxShadow = id ? ('0 0 20px ' + (player === 0 ? 'rgba(60,140,255,0.15)' : 'rgba(255,120,60,0.15)')) : 'none';
+      }
+    }
+
+    function updateControllerConfirmBtn() {
+      const btn = document.getElementById('ctrl-confirm-btn');
+      if (!btn) return;
+      const ok = controllerAssignment.p1 && controllerAssignment.p2;
+      btn.disabled = !ok;
+      btn.style.borderColor = ok ? '#4f8' : '#335';
+      btn.style.color = ok ? '#4f8' : '#556';
+      btn.style.cursor = ok ? 'pointer' : 'not-allowed';
+      btn.style.background = ok ? 'rgba(60,255,120,0.08)' : 'rgba(255,255,255,0.03)';
+    }
+
+    function tryAssignController(deviceId) {
+      // If already assigned to a player, do nothing (same device can't control both)
+      if (controllerAssignment.p1 === deviceId) return;
+      if (controllerAssignment.p2 === deviceId) return;
+
+      // Assign to first empty slot
+      if (!controllerAssignment.p1) {
+        controllerAssignment.p1 = deviceId;
+        updateControllerSlotUI(0, deviceId);
+        updateControllerConfirmBtn();
+        return;
+      }
+      if (!controllerAssignment.p2) {
+        controllerAssignment.p2 = deviceId;
+        updateControllerSlotUI(1, deviceId);
+        updateControllerConfirmBtn();
+        return;
+      }
+    }
+
+    function showControllerSelectOverlay() {
+      controllerAssignment.active = true;
+      controllerAssignment.p1 = null;
+      controllerAssignment.p2 = null;
+      controllerAssignment.prevPadButtons = [{}, {}, {}, {}];
+      controllerAssignment.prevPadAxes = [0, 0, 0, 0];
+      controllerAssignment.prevKeys = {};
+      const overlay = document.getElementById('controller-select-overlay');
+      if (overlay) { overlay.classList.remove('hidden'); overlay.style.display = 'flex'; }
+      updateControllerSlotUI(0, null);
+      updateControllerSlotUI(1, null);
+      updateControllerConfirmBtn();
+      requestAnimationFrame(controllerSelectLoop);
+    }
+
+    function hideControllerSelectOverlay() {
+      controllerAssignment.active = false;
+      const overlay = document.getElementById('controller-select-overlay');
+      if (overlay) { overlay.classList.add('hidden'); overlay.style.display = 'none'; }
+    }
+
+    function controllerSelectLoop() {
+      if (!controllerAssignment.active) return;
+
+      // Poll gamepads for left/right input
+      const pads = navigator.getGamepads?.() || [];
+      for (let i = 0; i < 4; i++) {
+        const pad = pads[i];
+        if (!pad) continue;
+        const deviceId = 'pad' + i;
+        const prevBtns = controllerAssignment.prevPadButtons[i] || {};
+        const prevAx = controllerAssignment.prevPadAxes[i] || 0;
+
+        const btnNow = {};
+        for (let b = 0; b < pad.buttons.length; b++) btnNow[b] = pad.buttons[b].pressed;
+        const justPressed = (b) => btnNow[b] && !prevBtns[b];
+
+        // D-pad left (14), right (15), or A (0)
+        if (justPressed(14) || justPressed(15) || justPressed(0)) {
+          tryAssignController(deviceId);
+        }
+
+        // Left stick horizontal
+        const ax = pad.axes[0] || 0;
+        if ((ax < -0.5 && prevAx >= -0.5) || (ax > 0.5 && prevAx <= 0.5)) {
+          tryAssignController(deviceId);
+        }
+
+        controllerAssignment.prevPadButtons[i] = btnNow;
+        controllerAssignment.prevPadAxes[i] = ax;
+      }
+
+      requestAnimationFrame(controllerSelectLoop);
+    }
+
+    // Keyboard listener for controller selection
+    window.addEventListener('keydown', (e) => {
+      if (!controllerAssignment.active) return;
+      const k = e.key.toLowerCase();
+      if (controllerAssignment.prevKeys[k]) return; // not a new press
+      controllerAssignment.prevKeys[k] = true;
+
+      if (k === 'arrowleft' || k === 'arrowright' || k === 'a' || k === 'd' || k === 'enter' || k === ' ') {
+        tryAssignController('keyboard');
+      }
+    });
+    window.addEventListener('keyup', (e) => {
+      if (!controllerAssignment.active) return;
+      controllerAssignment.prevKeys[e.key.toLowerCase()] = false;
+    });
+
+    // Click on slot to unassign
+    document.getElementById('ctrl-slot-p1')?.addEventListener('click', () => {
+      if (!controllerAssignment.active || !controllerAssignment.p1) return;
+      controllerAssignment.p1 = null;
+      updateControllerSlotUI(0, null);
+      updateControllerConfirmBtn();
+    });
+    document.getElementById('ctrl-slot-p2')?.addEventListener('click', () => {
+      if (!controllerAssignment.active || !controllerAssignment.p2) return;
+      controllerAssignment.p2 = null;
+      updateControllerSlotUI(1, null);
+      updateControllerConfirmBtn();
+    });
+
+    // Confirm → go to ship select
+    document.getElementById('ctrl-confirm-btn')?.addEventListener('click', () => {
+      if (!controllerAssignment.active) return;
+      if (!controllerAssignment.p1 || !controllerAssignment.p2) return;
+      hideControllerSelectOverlay();
+      showShipSelectOverlay();
+    });
+
+    // Back → return to game mode menu
+    document.getElementById('ctrl-back-btn')?.addEventListener('click', () => {
+      hideControllerSelectOverlay();
+      splitScreenMode = false;
+      window.splitScreenMode = false;
+      if (mainMenuEl) mainMenuEl.classList.remove('hidden');
+      setMenuView('gamemode');
+    });
+
+    // ============== GAME MODE BUTTON HANDLERS ==============
+    document.getElementById('btn-mode-single')?.addEventListener('click', () => {
+      splitScreenMode = false;
+      window.splitScreenMode = false;
+      setMenuView('home');
+      startGame();
+    });
+    document.getElementById('btn-mode-split')?.addEventListener('click', () => {
+      splitScreenMode = true;
+      window.splitScreenMode = true;
+      if (mainMenuEl) mainMenuEl.classList.add('hidden');
+      showControllerSelectOverlay();
+    });
+    document.getElementById('btn-gamemode-back')?.addEventListener('click', () => {
+      setMenuView('home');
+    });
+
+    async function startSplitScreenGame(p1HullKey, p2HullKey) {
+      // Start the game normally first
+      await startGame();
+
+      // Apply P1 hull selection after game started
+      applyPlayerHullProfile(p1HullKey, { preserveDamageRatio: false });
+
+      // Now create player 2
+      setupPlayer2(p2HullKey);
+    }
+
+    function setupPlayer2(hullKey) {
+      const hull = PLAYER_HULL_CATALOG[hullKey];
+      if (!hull) return;
+
+      // Create P2 ship entity with proper size from hull catalog
+      const sizeW = hull.size?.w || 450;
+      const sizeH = hull.size?.h || 250;
+      player2Ship = createShipEntity({ world: WORLD, overlayView, overrides: {
+        w: sizeW, h: sizeH
+      }});
+      player2Ship.isPlayer = true;
+      player2Ship.isPlayer2 = true;
+      player2Ship.friendly = true;
+      player2Ship.isCapitalShip = true;
+      player2Ship.shipFrame = hull.shipFrame;
+      player2Ship.activeHullId = hull.id;
+
+      // Apply hull stats
+      player2Ship.hull = { val: hull.hullMax, max: hull.hullMax };
+      player2Ship.shield = {
+        val: hull.shield.max, max: hull.shield.max,
+        regenRate: hull.shield.regenRate, regenDelay: hull.shield.regenDelay,
+        regenTimer: 0,
+        state: 'active', activationProgress: 1.0, currentAlpha: 1.0,
+        energyShotTimer: 0, energyShotDuration: 0.5,
+        impacts: [],
+        hexScale: 12, baseAlpha: 0.12
+      };
+      player2Ship.mass = hull.mass;
+      player2Ship.rammingMass = hull.rammingMass || hull.mass;
+      player2Ship.radius = hull.radius || 220;
+      player2Ship.w = sizeW;
+      player2Ship.h = sizeH;
+      player2Ship.inertia = (1 / 12) * player2Ship.mass * ((sizeW * sizeW) + (sizeH * sizeH));
+
+      // Apply visual scale and geometry
+      player2Ship.visual = player2Ship.visual || {};
+      player2Ship.visual.spriteScale = hull.spriteScale || 1.0;
+      player2Ship.capitalProfile = player2Ship.capitalProfile || {};
+      player2Ship.capitalProfile.spriteSrc = hull.spriteSrc || "assets/capital_ship_rect_v1.png";
+
+      // Configure engines & thruster geometry (same pipeline as P1)
+      refreshShipGeometry(player2Ship);
+
+      // Apply hull-specific thruster layout for P2
+      {
+        const id = normalizePlayerHullId(hull.id);
+        const w = Math.max(120, Number(player2Ship.w) || 450);
+        const h = Math.max(120, Number(player2Ship.h) || 250);
+
+        const makeMain = (x, y) => {
+          const mount = inferEditorEngineMount('main', x, y);
+          const deg = 90;
+          return {
+            offset: { x, y },
+            forward: editorDegToForward(deg),
+            mount, baseDeg: deg, nozzleDeg: deg,
+            gimbalMinDeg: -45, gimbalMaxDeg: 45,
+            yNudge: 0, vfxLengthMin: 10, vfxLengthMax: 179
+          };
+        };
+        const makeSide = (x, y) => {
+          const mount = inferEditorEngineMount('side', x, y);
+          const deg = x < 0 ? 90 : -90;
+          return {
+            offset: { x, y },
+            forward: editorDegToForward(deg),
+            mount, baseDeg: deg, nozzleDeg: deg,
+            gimbalMinDeg: -90, gimbalMaxDeg: 90,
+            side: inferEditorEngineSide(mount, x),
+            yNudge: 0, vfxWidthMin: 25, vfxWidthMax: 227,
+            vfxLengthMin: 49, vfxLengthMax: 354
+          };
+        };
+
+        let mainThrusters = [];
+        let sideThrusters = [];
+        const aftX = -w * 0.5 + 14;
+
+        if (id === 'frigate') {
+          mainThrusters = [makeMain(aftX, -h * 0.18), makeMain(aftX, h * 0.18)];
+          sideThrusters = [makeSide(-w * 0.1, -h * 0.46), makeSide(-w * 0.1, h * 0.46)];
+        } else if (id === 'destroyer') {
+          mainThrusters = [makeMain(aftX, -h * 0.24), makeMain(aftX, 0), makeMain(aftX, h * 0.24)];
+          sideThrusters = [
+            makeSide(-w * 0.15, -h * 0.48), makeSide(-w * 0.15, h * 0.48),
+            makeSide(w * 0.2, -h * 0.38), makeSide(w * 0.2, h * 0.38)
+          ];
+        } else if (id === 'battleship') {
+          mainThrusters = [
+            makeMain(aftX, -h * 0.28), makeMain(aftX, -h * 0.09),
+            makeMain(aftX, h * 0.09), makeMain(aftX, h * 0.28)
+          ];
+          sideThrusters = [
+            makeSide(-w * 0.2, -h * 0.5), makeSide(-w * 0.2, h * 0.5),
+            makeSide(w * 0.24, -h * 0.36), makeSide(w * 0.24, h * 0.36)
+          ];
+        }
+        // Atlas uses defaults from refreshShipGeometry
+
+        if (mainThrusters.length) {
+          player2Ship.visual.mainThrusters = mainThrusters;
+          player2Ship.visual.torqueThrusters = sideThrusters;
+          if (player2Ship.engines?.main && mainThrusters.length) {
+            const first = mainThrusters[0];
+            player2Ship.engines.main.vfxOffset = { ...first.offset };
+            player2Ship.engines.main.vfxForward = { ...first.forward };
+            player2Ship.engines.main.vfxYNudge = Number(first.yNudge) || 0;
+            player2Ship.engines.main.vfxLengthMin = Number(first.vfxLengthMin) || 10;
+            player2Ship.engines.main.vfxLengthMax = Number(first.vfxLengthMax) || 179;
+          }
+        }
+      }
+
+      // Load sprite and init hex body for P2
+      const p2Sprite = new Image();
+      player2Ship.spriteReady = false;
+      player2Ship.renderSpriteImage = null;
+      p2Sprite.onload = () => {
+        const useRaw = shouldUseRawPlayerHullSprite(hull.id);
+        const renderImage = useRaw
+          ? p2Sprite
+          : (getPlayerHullRenderImage(p2Sprite, player2Ship.w, player2Ship.h) || p2Sprite);
+        const hexInitImage = buildHexInitImageFromRenderSource(renderImage, player2Ship.w, player2Ship.h) || renderImage;
+        player2Ship.renderSpriteImage = renderImage;
+        player2Ship.spriteReady = true;
+        player2Ship.spriteW = useRaw
+          ? Math.max(1, Number(p2Sprite.naturalWidth) || 1)
+          : Math.max(1, Number(renderImage.width) || Number(p2Sprite.naturalWidth) || 1);
+        player2Ship.spriteH = useRaw
+          ? Math.max(1, Number(p2Sprite.naturalHeight) || 1)
+          : Math.max(1, Number(renderImage.height) || Number(p2Sprite.naturalHeight) || 1);
+        // Init hex body for proper 3D/2D rendering
+        initHexBody(player2Ship, hexInitImage);
+        if (player2Ship.hexGrid) {
+          player2Ship.hexGrid.meshDirty = true;
+          player2Ship.hexGrid.meshDirtyAll = true;
+          player2Ship.hexGrid.textureDirty = true;
+          player2Ship.hexGrid.cacheDirty = true;
+          player2Ship.hexGrid.gpuTextureNeedsUpdate = true;
+        }
+        if (player2Ship.hexGrid?.rawRadius && Number.isFinite(player2Ship.hexGrid.rawRadius)) {
+          const scaleNow = Math.max(0.0001, Number(player2Ship.visual?.spriteScale) || 1);
+          player2Ship.radius = player2Ship.hexGrid.rawRadius * scaleNow;
+        }
+        if (window.invalidateHexShipEntity3D) window.invalidateHexShipEntity3D(player2Ship);
+        console.log('[SplitScreen] P2 sprite loaded & hexBody initialized:', hullKey);
+      };
+      p2Sprite.onerror = () => {
+        console.warn('[SplitScreen] P2 sprite failed to load, using fallback');
+        player2Ship.spriteReady = false;
+      };
+      p2Sprite.src = hull.spriteSrc || "assets/capital_ship_rect_v1.png";
+
+      // Spawn near P1 (offset)
+      player2Ship.pos.x = ship.pos.x + 2000;
+      player2Ship.pos.y = ship.pos.y;
+      player2Ship.vel = { x: 0, y: 0 };
+      player2Ship.angle = ship.angle;
+
+      // Create second camera
+      camera2 = {
+        x: player2Ship.pos.x, y: player2Ship.pos.y,
+        targetX: player2Ship.pos.x, targetY: player2Ship.pos.y,
+        zoom: camera.zoom, targetZoom: camera.targetZoom,
+        minZoom: camera.minZoom, maxZoom: camera.maxZoom,
+        mode: 'ship',
+        shakeMag: 0, shakeTime: 0, shakeDur: 0,
+        addShake(mag, dur) { this.shakeMag = mag; this.shakeTime = dur; this.shakeDur = dur; }
+      };
+
+      window.player2Ship = player2Ship;
+      window.camera2 = camera2;
+      console.log('[SplitScreen] Player 2 created:', hullKey);
+    }
+    // ============== END SPLIT SCREEN LOGIC ==============
+
     if (continueButton) {
       continueButton.addEventListener('click', () => {
         if (!gameStarted) return;
