@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx vite build)",
+      "Bash(npx vite build --debug)",
+      "Bash(node -e \":*)",
+      "Bash(xargs grep -l \"physics\\\\|Physics\\\\|collision\\\\|Collision\")",
+      "Bash(ls /c/Users/Szymon/Documents/GitHub/statki/src/game/*.js)"
+    ]
+  }
+}
