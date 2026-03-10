@@ -625,6 +625,7 @@
         let mechanicalGates = [];
         let visualBuildings = [];
         let lampLights = [];
+        let zoneDynamicDecorations = [];
         let gameTime = 0;
         let cameraAltitudeBase = 1;
         let trafficState = null;
@@ -867,6 +868,112 @@
                 hash = ((hash << 5) - hash + zone.charCodeAt(i)) | 0;
             }
             return hash >>> 0;
+        }
+
+        function cloneSynthCityGeometry(modelId) {
+            const original = synthCityAssets.models[modelId];
+            if (!original) return null;
+            const cloned = original.clone();
+            for (const key in original.attributes) {
+                cloned.setAttribute(key, original.attributes[key].clone());
+            }
+            if (original.index) cloned.setIndex(original.index.clone());
+            return cloned.index ? cloned.toNonIndexed() : cloned;
+        }
+
+        function pickArrayEntry(rand, items) {
+            if (!Array.isArray(items) || items.length === 0) return null;
+            return items[Math.floor(rand() * items.length)] || items[0] || null;
+        }
+
+        function pickSynthBuildingMaterialKey(rand, rare = false) {
+            const normalKeys = ['building_01', 'building_02', 'building_03', 'building_04', 'building_05', 'building_07'];
+            const rareKeys = ['building_06', 'building_08', 'building_09', 'building_10'];
+            return rare
+                ? pickArrayEntry(rand, rareKeys)
+                : pickArrayEntry(rand, normalKeys);
+        }
+
+        function pickSynthAdMaterialKey(rand, large = false) {
+            const pool = large
+                ? ['ads_large_01', 'ads_large_02', 'ads_large_03', 'ads_large_04', 'ads_large_05']
+                : ['ads_01', 'ads_02', 'ads_03', 'ads_04', 'ads_05'];
+            return pickArrayEntry(rand, pool);
+        }
+
+        class RingDynamicAdvert {
+            constructor({ x, y, z, scaleX = 1, scaleY = 1, rotationY = 0, modelId, materialKeys, zoneCellKey }) {
+                const geo = cloneSynthCityGeometry(modelId);
+                if (!geo) {
+                    this.dead = true;
+                    return;
+                }
+                const materialKey = Array.isArray(materialKeys) ? materialKeys[0] : materialKeys;
+                const material = synthCityAssets.materials[materialKey];
+                if (!material) {
+                    geo.dispose?.();
+                    this.dead = true;
+                    return;
+                }
+                this.mesh = new THREE.Mesh(geo, material);
+                this.mesh.position.set(x, y, z);
+                this.mesh.scale.set(scaleX, scaleY, scaleX);
+                this.mesh.rotation.y = rotationY;
+                this.materialKeys = Array.isArray(materialKeys) ? materialKeys.slice() : [materialKeys];
+                this.zoneCellKey = zoneCellKey || '';
+                this.switchTimer = 200 + Math.random() * 800;
+                this.switchElapsed = Math.random() * this.switchTimer;
+                this.switches = Math.random() < 0.5;
+                districtsGroup.add(this.mesh);
+            }
+
+            update(dt) {
+                if (!this.mesh || !this.switches || this.materialKeys.length <= 1) return;
+                this.switchElapsed += dt * 60;
+                if (this.switchElapsed < this.switchTimer) return;
+                this.switchElapsed = 0;
+                const nextKey = this.materialKeys[Math.floor(Math.random() * this.materialKeys.length)];
+                const nextMaterial = synthCityAssets.materials[nextKey];
+                if (nextMaterial) this.mesh.material = nextMaterial;
+            }
+
+            remove() {
+                if (!this.mesh) return;
+                if (this.mesh.parent) this.mesh.parent.remove(this.mesh);
+                this.mesh.geometry?.dispose?.();
+                this.mesh = null;
+            }
+        }
+
+        class RingDynamicTopper {
+            constructor({ x, y, z, scale = 1, rotationY = 0, modelId, materialKey, zoneCellKey }) {
+                const geo = cloneSynthCityGeometry(modelId);
+                const material = synthCityAssets.materials[materialKey];
+                if (!geo || !material) {
+                    geo?.dispose?.();
+                    this.dead = true;
+                    return;
+                }
+                this.mesh = new THREE.Mesh(geo, material);
+                this.mesh.position.set(x, y, z);
+                this.mesh.scale.set(scale, scale, scale);
+                this.mesh.rotation.y = rotationY;
+                this.rotationSpeed = Math.random() <= 0.5 ? Math.random() * 0.01 : -Math.random() * 0.01;
+                this.zoneCellKey = zoneCellKey || '';
+                districtsGroup.add(this.mesh);
+            }
+
+            update(dt) {
+                if (!this.mesh) return;
+                this.mesh.rotation.y += this.rotationSpeed * dt * 60;
+            }
+
+            remove() {
+                if (!this.mesh) return;
+                if (this.mesh.parent) this.mesh.parent.remove(this.mesh);
+                this.mesh.geometry?.dispose?.();
+                this.mesh = null;
+            }
         }
 
         function getBrushColor(toolId) {
@@ -1224,10 +1331,14 @@
             if (Array.isArray(existing.wrappers)) {
                 existing.wrappers.forEach(wrapper => disposeObject3D(wrapper));
             }
+            if (Array.isArray(existing.dynamicDecorations)) {
+                existing.dynamicDecorations.forEach(decoration => decoration?.remove?.());
+            }
             if (existing.infrastructure) disposeObject3D(existing.infrastructure);
             if (existing.overlay) disposeObject3D(existing.overlay);
             zoneCellMeshes.delete(key);
             visualBuildings = visualBuildings.filter(entry => entry.zoneCellKey !== key);
+            zoneDynamicDecorations = zoneDynamicDecorations.filter(entry => entry.zoneCellKey !== key);
         }
 
         function createZoneCellOverlay(cell) {
@@ -1257,6 +1368,7 @@
             const mats = getZoneMaterials(cell.zone);
             const rand = createSeededRandom(hashZoneSeed(cell, cell.zone));
             const wrappers = [];
+            const dynamicDecorations = [];
             const buildCount = cell.zone === 'residential'
                 ? 10 + Math.floor(rand() * 12)
                 : cell.zone === 'commercial'
@@ -1293,7 +1405,10 @@
                     const jRadius = centerRadius + (rand() - 0.5) * radiusStep * 0.4;
 
                     const localGeoMap = {};
-                    const bMeta = createBuilding(jAngle, jRadius, cell.zone, mats, neonColor, localGeoMap, rand, { zoneCellKey: cell.key });
+                    createBuilding(jAngle, jRadius, cell.zone, mats, neonColor, localGeoMap, rand, {
+                        zoneCellKey: cell.key,
+                        dynamicDecorations
+                    });
 
                     // Transform and merge this building's geos into the district ones
                     const rotM = new THREE.Matrix4().makeRotationY(-jAngle);
@@ -1377,7 +1492,12 @@
 
             const infrastructure = createDistrictInfrastructure(cell, wrappers, cell.zone, rand, gridCols, gridRows);
             const overlay = createZoneCellOverlay(cell);
-            zoneCellMeshes.set(cell.key, { cell, cellGroup, wrappers, infrastructure, overlay });
+            for (const decoration of dynamicDecorations) {
+                if (!decoration || decoration.dead) continue;
+                decoration.zoneCellKey = cell.key;
+                zoneDynamicDecorations.push(decoration);
+            }
+            zoneCellMeshes.set(cell.key, { cell, cellGroup, wrappers, infrastructure, overlay, dynamicDecorations });
         }
 
         function setZoneCell(col, row, zone) {
@@ -1615,8 +1735,8 @@
                 document.body.removeChild(loadingDiv);
 
                 // Build Materials
-                for (let i = 1; i <= 5; i++) {
-                    const id = '0' + i;
+                for (let i = 1; i <= 10; i++) {
+                    const id = String(i).padStart(2, '0');
                     synthCityAssets.materials['building_' + id] = new THREE.MeshPhongMaterial({
                         map: synthCityAssets.textures['building_' + id],
                         specular: 0xffffff,
@@ -1627,6 +1747,7 @@
                         bumpMap: synthCityAssets.textures['building_' + id],
                         bumpScale: 5
                     });
+                    synthCityAssets.materials['building_' + id].userData.shared = true;
                 }
 
                 // Adverts Materials
@@ -1640,6 +1761,16 @@
                         fog: false,
                         side: THREE.DoubleSide
                     });
+                    synthCityAssets.materials['ads_' + id].userData.shared = true;
+                    synthCityAssets.materials['ads_large_' + id] = new THREE.MeshPhongMaterial({
+                        emissive: 0xffffff,
+                        emissiveMap: synthCityAssets.textures['ads_large_' + id],
+                        emissiveIntensity: 0.12,
+                        blending: THREE.AdditiveBlending,
+                        fog: false,
+                        side: THREE.DoubleSide
+                    });
+                    synthCityAssets.materials['ads_large_' + id].userData.shared = true;
                 }
 
                 init();
@@ -1649,8 +1780,8 @@
 
             const basePath = 'assets/synthcity/';
 
-            for (let i = 1; i <= 5; i++) {
-                let id = '0' + i;
+            for (let i = 1; i <= 10; i++) {
+                let id = String(i).padStart(2, '0');
                 synthCityAssets.textures['building_' + id] = texLoader.load(basePath + 'textures/building_' + id + '.jpg', t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; });
                 synthCityAssets.textures['building_' + id + '_em'] = texLoader.load(basePath + 'textures/building_' + id + '_em.jpg', t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; });
                 synthCityAssets.textures['building_' + id + '_spec'] = texLoader.load(basePath + 'textures/building_' + id + '_spec.jpg', t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }, undefined,
@@ -1659,8 +1790,9 @@
 
             // Adverts Textures
             for (let i = 1; i <= 5; i++) {
-                let id = '0' + i;
+                let id = String(i).padStart(2, '0');
                 synthCityAssets.textures['ads_' + id] = texLoader.load(basePath + 'textures/ads_' + id + '.jpg');
+                synthCityAssets.textures['ads_large_' + id] = texLoader.load(basePath + 'textures/ads_large_' + id + '.jpg');
             }
 
             synthCityAssets.textures['ground'] = texLoader.load(basePath + 'textures/ground.jpg');
@@ -1672,6 +1804,16 @@
             objLoader.load(basePath + 'models/s_01_03.obj', obj => synthCityAssets.models['s_01_03'] = obj.children[0].geometry);
             objLoader.load(basePath + 'models/s_02_01.obj', obj => synthCityAssets.models['s_02_01'] = obj.children[0].geometry);
             objLoader.load(basePath + 'models/s_02_02.obj', obj => synthCityAssets.models['s_02_02'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/s_02_03.obj', obj => synthCityAssets.models['s_02_03'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/s_03_01.obj', obj => synthCityAssets.models['s_03_01'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/s_03_02.obj', obj => synthCityAssets.models['s_03_02'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/s_03_03.obj', obj => synthCityAssets.models['s_03_03'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/s_04_01.obj', obj => synthCityAssets.models['s_04_01'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/s_04_02.obj', obj => synthCityAssets.models['s_04_02'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/s_04_03.obj', obj => synthCityAssets.models['s_04_03'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/s_05_01.obj', obj => synthCityAssets.models['s_05_01'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/s_05_02.obj', obj => synthCityAssets.models['s_05_02'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/s_05_03.obj', obj => synthCityAssets.models['s_05_03'] = obj.children[0].geometry);
 
             objLoader.load(basePath + 'models/ads_s_01_01.obj', obj => synthCityAssets.models['ads_s_01_01'] = obj.children[0].geometry);
             objLoader.load(basePath + 'models/ads_s_01_02.obj', obj => synthCityAssets.models['ads_s_01_02'] = obj.children[0].geometry);
@@ -1680,6 +1822,14 @@
 
             objLoader.load(basePath + 'models/ads_s_03_01.obj', obj => synthCityAssets.models['ads_s_03_01'] = obj.children[0].geometry);
             objLoader.load(basePath + 'models/ads_s_03_02.obj', obj => synthCityAssets.models['ads_s_03_02'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/ads_s_04_01.obj', obj => synthCityAssets.models['ads_s_04_01'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/ads_s_04_02.obj', obj => synthCityAssets.models['ads_s_04_02'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/ads_s_04_03.obj', obj => synthCityAssets.models['ads_s_04_03'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/ads_s_04_04.obj', obj => synthCityAssets.models['ads_s_04_04'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/ads_s_05_01.obj', obj => synthCityAssets.models['ads_s_05_01'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/ads_s_05_02.obj', obj => synthCityAssets.models['ads_s_05_02'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/ads_s_05_03.obj', obj => synthCityAssets.models['ads_s_05_03'] = obj.children[0].geometry);
+            objLoader.load(basePath + 'models/ads_s_05_04.obj', obj => synthCityAssets.models['ads_s_05_04'] = obj.children[0].geometry);
 
             // Toppers (Holograms)
             for (let i = 1; i <= 12; i++) {
@@ -2478,6 +2628,7 @@
             mechanicalGates = [];
             visualBuildings = [];
             lampLights = [];
+            zoneDynamicDecorations = [];
             zoneCellMeshes.clear();
             trafficParticles = null;
             trafficState = null;
@@ -2586,106 +2737,131 @@
         function createBuilding(angle, radius, zone, mats, neonColor, geoMap, rnd = Math.random, meta = null) {
             let totalH = 0;
             let footprintRadius = 80;
+            const zoneCellKey = meta?.zoneCellKey || '';
+            const dynamicDecorations = Array.isArray(meta?.dynamicDecorations) ? meta.dynamicDecorations : null;
+            const worldX = Math.cos(angle) * radius;
+            const worldZ = Math.sin(angle) * radius;
 
-            function cloneSynthCityGeo(mId) {
-                const original = synthCityAssets.models[mId];
-                if (!original) return null;
-                const cloned = original.clone();
-                for (const key in original.attributes) {
-                    cloned.setAttribute(key, original.attributes[key].clone());
-                }
-                if (original.index) cloned.setIndex(original.index.clone());
-                return cloned.index ? cloned.toNonIndexed() : cloned;
-            }
+            const queueAdvert = (modelId, scaleX, scaleY, rotationY, isLarge = false) => {
+                if (!dynamicDecorations || !modelId) return;
+                const materialKeys = isLarge
+                    ? ['ads_large_01', 'ads_large_02', 'ads_large_03', 'ads_large_04', 'ads_large_05']
+                    : ['ads_01', 'ads_02', 'ads_03', 'ads_04', 'ads_05'];
+                dynamicDecorations.push(new RingDynamicAdvert({
+                    x: worldX,
+                    y: 0,
+                    z: worldZ,
+                    scaleX,
+                    scaleY,
+                    rotationY: -angle + rotationY,
+                    modelId,
+                    materialKeys,
+                    zoneCellKey
+                }));
+            };
 
-            if (zone === 'residential') {
-                // Determine base types based on density/ring placement
-                let bTypes, isTower = false;
-                if (radius < RING_MID - 150 && rnd() > 0.8) {
-                    bTypes = ['s_05_01', 's_05_02', 's_05_03'];
-                    isTower = true;
-                } else if (radius > RING_MID + 150 && rnd() > 0.8) {
-                    bTypes = ['s_04_01', 's_04_02', 's_04_03'];
-                } else {
-                    bTypes = ['s_01_01', 's_01_02', 's_01_03', 's_02_01', 's_02_02'];
-                }
+            const queueTopper = (y, scale) => {
+                if (!dynamicDecorations) return;
+                const topperIndex = 1 + Math.floor(rnd() * 12);
+                dynamicDecorations.push(new RingDynamicTopper({
+                    x: worldX,
+                    y,
+                    z: worldZ,
+                    scale,
+                    rotationY: -angle + rnd() * Math.PI * 2,
+                    modelId: `topper_${String(topperIndex).padStart(2, '0')}`,
+                    materialKey: pickSynthAdMaterialKey(rnd, true),
+                    zoneCellKey
+                }));
+            };
 
-                const modelId = bTypes[Math.floor(rnd() * bTypes.length)];
-                const geo = cloneSynthCityGeo(modelId);
-                if (geo) {
-                    const texNum = '0' + (1 + Math.floor(rnd() * 5));
+            if (zone === 'residential' || zone === 'commercial') {
+                const typeNoise = rnd();
+                const subtypeNoise = rnd();
+                const rotateNoise = rnd();
+                const rotateY = (Math.floor(rotateNoise * 4) * 90) * Math.PI / 180;
 
-                    // --- USTAWIENIA SKALI I ROTACJI (SYNTHCITY PORT) ---
-                    // SynthCity: buildings are scaled ONLY on the Y axis to preserve window texture ratios,
-                    // except for towers (s_04, s_05) which were scaled uniformly.
-                    let scaleXZ = 1.0;
-                    let scaleY = 1.0;
+                let modelId = null;
+                let adsType = null;
+                let useTopper = false;
+                let rareMaterial = false;
 
-                    const rotateNoise = rnd();
-                    const rotateY = (Math.floor(rotateNoise * 4) * 90) * Math.PI / 180;
-
-                    if (isTower || modelId.startsWith('s_04')) {
-                        const uniformScale = 1.0 + (rotateNoise * 0.5);
-                        scaleXZ = uniformScale * globalBuildingScale;
-                        scaleY = uniformScale * globalBuildingScale;
+                if (zone === 'residential') {
+                    if (typeNoise < 0.267) {
+                        modelId = pickArrayEntry(rnd, ['s_01_01', 's_01_02', 's_01_03']);
+                        adsType = rnd() > 0.5 ? 'ads_s_01_01' : 'ads_s_01_02';
+                    } else if (typeNoise < 0.534) {
+                        modelId = pickArrayEntry(rnd, ['s_02_01', 's_02_02', 's_02_03']);
+                        adsType = rnd() > 0.5 ? 'ads_s_02_01' : 'ads_s_02_02';
+                    } else if (typeNoise < 0.8) {
+                        modelId = pickArrayEntry(rnd, ['s_03_01', 's_03_02', 's_03_03']);
+                        adsType = rnd() > 0.5 ? 'ads_s_03_01' : 'ads_s_03_02';
+                        useTopper = rnd() > 0.965;
+                    } else if (typeNoise < 0.975) {
+                        modelId = pickArrayEntry(rnd, ['s_04_01', 's_04_02', 's_04_03']);
+                        adsType = pickArrayEntry(rnd, ['ads_s_04_01', 'ads_s_04_02', 'ads_s_04_03', 'ads_s_04_04']);
+                        rareMaterial = subtypeNoise > 0.88;
                     } else {
-                        scaleXZ = globalBuildingScale;
-                        scaleY = globalBuildingScale * (0.75 + rnd() * 0.45);
+                        modelId = pickArrayEntry(rnd, ['s_05_01', 's_05_02', 's_05_03']);
+                        adsType = pickArrayEntry(rnd, ['ads_s_05_01', 'ads_s_05_02', 'ads_s_05_03', 'ads_s_05_04']);
+                        rareMaterial = true;
+                        useTopper = rnd() > 0.78;
+                    }
+                } else {
+                    if (typeNoise < 0.30) {
+                        modelId = pickArrayEntry(rnd, ['s_02_01', 's_02_02', 's_02_03']);
+                        adsType = rnd() > 0.5 ? 'ads_s_02_01' : 'ads_s_02_02';
+                    } else if (typeNoise < 0.62) {
+                        modelId = pickArrayEntry(rnd, ['s_03_01', 's_03_02', 's_03_03']);
+                        adsType = rnd() > 0.5 ? 'ads_s_03_01' : 'ads_s_03_02';
+                        useTopper = rnd() > 0.94;
+                    } else if (typeNoise < 0.90) {
+                        modelId = pickArrayEntry(rnd, ['s_04_01', 's_04_02', 's_04_03']);
+                        adsType = pickArrayEntry(rnd, ['ads_s_04_01', 'ads_s_04_02', 'ads_s_04_03', 'ads_s_04_04']);
+                        rareMaterial = rnd() > 0.6;
+                    } else {
+                        modelId = pickArrayEntry(rnd, ['s_05_01', 's_05_02', 's_05_03']);
+                        adsType = pickArrayEntry(rnd, ['ads_s_05_01', 'ads_s_05_02', 'ads_s_05_03', 'ads_s_05_04']);
+                        rareMaterial = true;
+                        useTopper = rnd() > 0.55;
+                    }
+                }
+
+                const geo = cloneSynthCityGeometry(modelId);
+                if (geo) {
+                    let scaleXZ = globalBuildingScale;
+                    let scaleY = globalBuildingScale * (0.75 + rnd() * 0.45);
+                    const isBig = modelId.startsWith('s_04') || modelId.startsWith('s_05');
+                    if (isBig) {
+                        const uniformScale = (1.0 + rotateNoise * 0.5) * globalBuildingScale;
+                        scaleXZ = uniformScale;
+                        scaleY = uniformScale;
                     }
 
                     geo.scale(scaleXZ, scaleY, scaleXZ);
                     geo.rotateY(rotateY);
-                    geo.translate(0, 0, 0);
 
-                    // Estimate total height to place holograms on top
-                    totalH = 190 * scaleY; // Approx roof height from origin
-
-                    const matKey = 'building_' + texNum;
+                    const matKey = pickSynthBuildingMaterialKey(rnd, rareMaterial);
                     geoMap[matKey] = geoMap[matKey] || [];
                     geoMap[matKey].push(geo);
 
-                    // --- ADVERTS (BILLBOARDS) ---
-                    let adsType = null;
-                    if (modelId.startsWith('s_01')) {
-                        adsType = rnd() > 0.5 ? 'ads_s_01_01' : 'ads_s_01_02';
-                    } else if (modelId.startsWith('s_02')) {
-                        adsType = rnd() > 0.5 ? 'ads_s_02_01' : 'ads_s_02_02';
-                    } else if (modelId.startsWith('s_03')) {
-                        adsType = rnd() > 0.5 ? 'ads_s_03_01' : 'ads_s_03_02';
+                    totalH = modelId.startsWith('s_05')
+                        ? 240 * scaleY
+                        : modelId.startsWith('s_04')
+                            ? 210 * scaleY
+                            : 190 * scaleY;
+
+                    footprintRadius = Math.max(footprintRadius, 85 * scaleXZ);
+
+                    if (typeNoise > 0.33 && typeNoise < 0.66 && !isBig) {
+                        adsType = null;
                     }
 
-                    if (adsType && rnd() > 0.2) {
-                        const adGeo = cloneSynthCityGeo(adsType);
-                        if (adGeo) {
-                            adGeo.rotateX(-Math.PI / 2); // Stand upright
-                            adGeo.scale(scaleXZ, scaleY, scaleXZ);
-                            // Invert rotation to slap the billboard onto the correct wall
-                            adGeo.rotateY(-rotateY);
-                            adGeo.translate(0, 0, 0);
-
-                            const adTexNum = '0' + (1 + Math.floor(rnd() * 5));
-                            const adMatKey = 'ads_' + adTexNum;
-                            geoMap[adMatKey] = geoMap[adMatKey] || [];
-                            geoMap[adMatKey].push(adGeo);
-                        }
+                    if (adsType) {
+                        queueAdvert(adsType, scaleXZ, scaleY, -rotateY, isBig);
                     }
-
-                    // --- TOPPERS (HOLOGRAMS) ---
-                    if (rnd() > 0.8) {
-                        const topperId = '0' + (1 + Math.floor(rnd() * 9)); // 1 to 9
-                        const topperGeo = cloneSynthCityGeo('topper_' + topperId);
-                        if (topperGeo) {
-                            topperGeo.rotateX(-Math.PI / 2); // Stand upright
-                            const topperScale = (0.8 + rnd()) * globalBuildingScale;
-                            topperGeo.scale(topperScale, topperScale, topperScale);
-                            topperGeo.rotateY(rnd() * Math.PI * 2);
-                            topperGeo.translate(0, totalH, 0);
-
-                            const adTexNum = '0' + (1 + Math.floor(rnd() * 5));
-                            const adMatKey = 'ads_' + adTexNum;
-                            geoMap[adMatKey] = geoMap[adMatKey] || [];
-                            geoMap[adMatKey].push(topperGeo);
-                        }
+                    if (useTopper && adsType) {
+                        queueTopper(totalH, (0.8 + rnd()) * globalBuildingScale);
                     }
                 }
             } else if (zone === 'industrial') {
@@ -2744,39 +2920,6 @@
                     geoMap['dish'].push(dishGeo);
 
                     totalH = baseH + poleH + dishR;
-                }
-            } else { // commercial
-                const bTypes = ['s_02_01', 's_02_02', 's_01_01', 's_01_02'];
-                const modelId = bTypes[Math.floor(rnd() * bTypes.length)];
-                const geo = cloneSynthCityGeo(modelId);
-
-                if (geo) {
-                    const texNum = '0' + (1 + Math.floor(rnd() * 5));
-
-                    // --- USTAWIENIA SKALI I ROTACJI (HANDLOWE) DO TWEAKOWANIA ---
-                    const scaleXZ = (globalBuildingScale * 0.75) + rnd() * (globalBuildingScale * 0.75); // Handlowe bywają ciut drobniejsze bazowo
-                    const scaleY = scaleXZ * (1.0 + rnd() * 0.8); // Wysokość
-
-                    geo.scale(scaleXZ, scaleY, scaleXZ);
-                    geo.rotateY(rnd() * Math.PI * 2); // Tylko obrót poziomy (Y)
-                    totalH = 10.0 * scaleY;
-                    // ------------------------------------------------------------
-
-                    const matKey = 'building_' + texNum;
-                    geoMap[matKey] = geoMap[matKey] || [];
-                    geoMap[matKey].push(geo.index ? geo.toNonIndexed() : geo);
-
-                    // Add Billboards optionally
-                    if (rnd() > 0.4) {
-                        const adTypes = ['ads_s_01_01', 'ads_s_01_02', 'ads_s_02_01', 'ads_s_02_02'];
-                        const adId = adTypes[Math.floor(rnd() * adTypes.length)];
-                        const adGeo = cloneSynthCityGeo(adId);
-                        if (adGeo) {
-                            adGeo.scale(scaleXZ, scaleY, scaleXZ); // Dopasowanie skali do budynku
-                            adGeo.rotateY(rnd() * Math.PI * 2);
-                            geoMap[matKey].push(adGeo);
-                        }
-                    }
                 }
             }
 
@@ -3214,6 +3357,9 @@
             tPerf = performance.now();
             // Removed custom tilt code which broke the Cartesian alignment.
             // Buildings are now statically placed according to the grid.
+            for (const decoration of zoneDynamicDecorations) {
+                decoration?.update?.(dt);
+            }
             PerfHUD.addTiming('tiltTime', performance.now() - tPerf);
 
             // Gate cycle

@@ -640,6 +640,19 @@
       filter: grayscale(1);
     }
 
+    .menu-btn-styled.gamepad-focus {
+      background: rgba(50, 90, 150, 0.8);
+      border-color: #7dd3fc;
+      color: #fff;
+      transform: translateX(5px);
+      box-shadow: 0 0 25px rgba(60, 130, 200, 0.4);
+      padding-left: 32px;
+    }
+
+    .menu-btn-styled.gamepad-focus::before {
+      transform: scaleY(1);
+    }
+
     .menu-footer {
       margin-top: 60px;
       font-size: 14px;
