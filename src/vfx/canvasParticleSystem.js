@@ -25,6 +25,9 @@ export const CanvasVFX = {
     flak: { color: '#ffef8a', len: 20, widthOuter: 14, widthInner: 6, glowBlur: 22, sparkCount: 22, sparkSpeed: [200, 360], sparkSize: [1.6, 3.0], smoke: 8, smokeColor: 'rgba(120,90,60,0.4)', shock: { r: 18, maxR: 170, w: 3.8, life: 0.42 } },
     broadside: { color: '#ff9b4b', len: 24, widthOuter: 14, widthInner: 6, glowBlur: 22, sparkCount: 20, sparkSpeed: [220, 360], sparkSize: [1.8, 2.8], smoke: 5, smokeColor: 'rgba(120,80,60,0.45)', shock: { r: 16, maxR: 160, w: 3.4, life: 0.4 } },
     ciws: { color: '#8cffd0', len: 14, widthOuter: 8, widthInner: 3, glowBlur: 14, sparkCount: 10, sparkSpeed: [180, 280], sparkSize: [1.0, 1.8], shock: { r: 8, maxR: 70, w: 2.0, life: 0.2 } },
+    torpedo: { color: '#ff4444', len: 40, widthOuter: 22, widthInner: 8, glowBlur: 34, sparkCount: 32, sparkSpeed: [180, 480], sparkSize: [2.4, 4.2], smoke: 12, smokeColor: 'rgba(160,80,40,0.6)', shock: { r: 28, maxR: 280, w: 5.0, life: 0.6 } },
+    siege: { color: '#aaffff', len: 50, widthOuter: 26, widthInner: 10, glowBlur: 40, sparkCount: 40, sparkSpeed: [300, 600], sparkSize: [3.0, 5.0], smoke: 8, smokeColor: 'rgba(140,200,255,0.45)', shock: { r: 36, maxR: 400, w: 6.0, life: 0.8 } },
+    superweapon: { color: '#d0eaff', len: 60, widthOuter: 30, widthInner: 12, glowBlur: 48, sparkCount: 48, sparkSpeed: [280, 550], sparkSize: [3.2, 5.5], smoke: 10, smokeColor: 'rgba(180,220,255,0.5)', shock: { r: 40, maxR: 500, w: 7.0, life: 1.0 } },
     default: { color: '#ffd86b', len: 18, widthOuter: 10, widthInner: 4, glowBlur: 18, sparkCount: 14, sparkSpeed: [200, 320], sparkSize: [1.2, 2.0], shock: { r: 10, maxR: 100, w: 2.6, life: 0.3 } },
   },
 
@@ -86,6 +89,8 @@ export const CanvasVFX = {
   },
 
   spawnShockwave(x, y, opts = {}) {
+    // Hard cap to prevent unbounded growth
+    if (CanvasVFX.shockwaves.length >= 48) CanvasVFX.shockwaves.shift();
     CanvasVFX.shockwaves.push({
       x, y, r: opts.r || 20, maxR: opts.maxR || 800, w: opts.w || 8,
       life: 0, maxLife: opts.maxLife || 0.6, color: opts.color || 'rgba(180,200,255,'
@@ -94,6 +99,7 @@ export const CanvasVFX = {
 
   spawnLightningSpark(pos, life, size, angle) {
     if (!CanvasVFX.enabled) return;
+    if (CanvasVFX.lightningParticles.length >= 80) CanvasVFX.lightningParticles.shift();
     CanvasVFX.lightningParticles.push({ x: pos.x, y: pos.y, life: life, maxLife: life, size: size, angle: angle, age: 0 });
   },
 
@@ -124,7 +130,11 @@ export const CanvasVFX = {
     if (key.includes('auto') || key.includes('gatling')) return 'autocannon';
     if (key.includes('pulse')) return 'pulse';
     if (key.includes('pd')) return 'ciws';
+    if (key.includes('siege_torpedo') || key.includes('torpedo_salvo')) return 'torpedo';
+    if (key.includes('siege_railgun') || key.includes('mjolnir')) return 'siege';
+    if (key.includes('hexlance')) return 'superweapon';
     if (key.includes('missile') || key.includes('aim-') || key.includes('asm') || key.includes('het') || key.includes('swarm')) return 'armata';
+    if (type === 'torpedo') return 'torpedo';
     if (type === 'beam') return 'beam';
     if (type === 'rail') return 'rail';
     if (type === 'armata') return 'armata';
@@ -133,7 +143,7 @@ export const CanvasVFX = {
     if (type === 'plasma') return 'plasma';
     if (type === 'rocket') return 'armata';
     if (type === 'flak') return 'flak';
-    if (type === 'superweapon') return 'armata';
+    if (type === 'superweapon') return 'superweapon';
     return 'default';
   },
 
@@ -198,32 +208,87 @@ export const CanvasVFX = {
     const quality = Math.max(0.16, Math.min(1, 1 - Math.max(0, pressure - 0.35) * 1.15));
     const h = window.ship?.h || 250;
 
-    if (key === 'helios' && window.triggerAutocannonImpact3D) window.triggerAutocannonImpact3D(x, y, h * 0.2 * Math.max(0.72, scale), color || '#ff003c', quality);
+    // Torpedo: massive armata-style explosion
+    if (key === 'torpedo' && window.triggerArmataImpact3D) {
+      window.triggerArmataImpact3D(x, y, h * 0.5 * Math.max(1.0, scale));
+      // Double explosion for visual weight
+      if (window.triggerRailgunExplosion3D) window.triggerRailgunExplosion3D(x, y, h * 0.35 * scale, { sparkCount: 16, sparkColor: this.resolveImpactColorInt(color || '#ff4444', 0xff4444) });
+    }
+    // Siege railgun: devastating rail explosion
+    else if (key === 'siege' && window.triggerRailgunExplosion3D) {
+      window.triggerRailgunExplosion3D(x, y, h * 0.6 * Math.max(1.2, scale), { sparkCount: 24, sparkColor: this.resolveImpactColorInt(color || '#aaffff', 0xaaffff) });
+    }
+    // Superweapon (hexlance): biggest effect
+    else if (key === 'superweapon') {
+      if (window.triggerRailgunExplosion3D) window.triggerRailgunExplosion3D(x, y, h * 0.7 * scale, { sparkCount: 32, sparkColor: this.resolveImpactColorInt(color || '#d0eaff', 0xd0eaff) });
+      if (window.triggerArmataImpact3D) window.triggerArmataImpact3D(x, y, h * 0.5 * scale);
+    }
+    else if (key === 'helios' && window.triggerAutocannonImpact3D) window.triggerAutocannonImpact3D(x, y, h * 0.2 * Math.max(0.72, scale), color || '#ff003c', quality);
     else if ((key === 'rail' || key === 'tempest') && window.triggerRailgunExplosion3D) window.triggerRailgunExplosion3D(x, y, h * 0.2 * Math.max(0.65, scale), { sparkCount: key === 'tempest' ? 10 : 4, sparkColor: this.resolveImpactColorInt(color, key === 'tempest' ? 0x9bf5ff : 0xb0f2ff) });
     else if (['armata', 'rocket', 'missile', 'flak', 'broadside'].includes(key) && window.triggerArmataImpact3D) window.triggerArmataImpact3D(x, y, h * 0.28 * Math.max(0.75, scale));
     else if (window.triggerAutocannonImpact3D) window.triggerAutocannonImpact3D(x, y, h * 0.18 * Math.max(0.7, scale), color, quality);
   },
 
+  // === HYBRID VFX DISPATCH ===
+  // weaponSize: 'S' | 'M' → canvas 2D only (cheap, many per frame)
+  // weaponSize: 'L' | 'Capital' → Three.js 3D + canvas sparks (expensive, cinematic)
+  spawnWeaponImpact(presetKey, color, scale = 1, x = 0, y = 0, weaponSize = 'M') {
+    const isHeavy = (weaponSize === 'L' || weaponSize === 'Capital');
+    if (isHeavy) {
+      // L/Capital: Three.js 3D impact (the hero effect) + light canvas sparks for fill
+      this.spawnProjectileImpact3D(presetKey, color, scale * (weaponSize === 'Capital' ? 1.5 : 1.0), x, y);
+      // Light canvas supplement — fewer sparks, still gives debris feel
+      if (this.enabled) {
+        const fx = this.buildBulletVfxInstance(presetKey, color);
+        const sparks = Math.round((fx.sparkCount || 12) * scale * 0.5);
+        for (let i = 0; i < sparks; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const speed = (fx.sparkSpeed?.[0] || 200) + Math.random() * ((fx.sparkSpeed?.[1] || 360) - (fx.sparkSpeed?.[0] || 200));
+          const size = (fx.sparkSize?.[0] || 1.4) + Math.random() * ((fx.sparkSize?.[1] || 2.6) - (fx.sparkSize?.[0] || 1.4));
+          this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.24 + Math.random() * 0.2, this.resolveAlphaColor(fx.color, 0.85, fx.color), size * scale, true);
+        }
+        // Heavier shockwave for Capital
+        const shockScale = weaponSize === 'Capital' ? 1.8 : 1.2;
+        this.spawnShockwave(x, y, { r: (fx.shock?.r || 10) * scale * shockScale, maxR: (fx.shock?.maxR || 100) * scale * shockScale, w: (fx.shock?.w || 2.6) * scale * shockScale, maxLife: (fx.shock?.life || 0.32) * 1.3, color: fx.shockColorPrefix });
+      }
+    } else {
+      // S/M: Canvas 2D only — no Three.js overhead, fast and lightweight
+      this._spawnCanvasOnlyImpact(presetKey, color, scale, x, y, weaponSize);
+    }
+  },
+
+  // Legacy compat — existing callers without weaponSize
   spawnWeaponImpactFromPreset(presetKey, color, scale = 1, x = 0, y = 0) {
-    this.spawnProjectileImpact3D(presetKey, color, scale, x, y);
+    this.spawnWeaponImpact(presetKey, color, scale, x, y, 'M');
+  },
+
+  // Canvas-only impact for S/M weapons — no Three.js, purely 2D particles
+  _spawnCanvasOnlyImpact(presetKey, color, scale = 1, x = 0, y = 0, weaponSize = 'M') {
     if (!this.enabled) return;
+    if (!this.isWorldPointNearViewport(x, y, 200)) return;
     const fx = this.buildBulletVfxInstance(presetKey, color);
-    const sparks = Math.round((fx.sparkCount || 12) * scale);
+    // S weapons: fewer, smaller sparks; M weapons: normal amount
+    const sizeMul = weaponSize === 'S' ? 0.5 : 1.0;
+    const sparks = Math.round((fx.sparkCount || 12) * scale * sizeMul);
     for (let i = 0; i < sparks; i++) {
       const a = Math.random() * Math.PI * 2;
       const speed = (fx.sparkSpeed?.[0] || 200) + Math.random() * ((fx.sparkSpeed?.[1] || 360) - (fx.sparkSpeed?.[0] || 200));
       const size = (fx.sparkSize?.[0] || 1.4) + Math.random() * ((fx.sparkSize?.[1] || 2.6) - (fx.sparkSize?.[0] || 1.4));
-      this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.2 + Math.random() * 0.18, this.resolveAlphaColor(fx.color, 0.9, fx.color), size * scale, true);
+      this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.2 + Math.random() * 0.18, this.resolveAlphaColor(fx.color, 0.9, fx.color), size * scale * sizeMul, true);
     }
     if (fx.smoke && fx.smokeColor) {
-      for (let i = 0; i < fx.smoke * scale; i++) {
+      const smokeCount = Math.round(fx.smoke * scale * sizeMul);
+      for (let i = 0; i < smokeCount; i++) {
         const a = Math.random() * Math.PI * 2;
         const speed = 60 + Math.random() * 100;
-        this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.32 + Math.random() * 0.24, fx.smokeColor, 3 * scale, false);
+        this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.32 + Math.random() * 0.24, fx.smokeColor, 3 * scale * sizeMul, false);
       }
     }
-    this.spawnParticle({ x, y }, { x: 0, y: 0 }, 0.12, this.resolveAlphaColor(fx.color, 1, '#ffffff'), (6 + (fx.widthInner || 4)) * 0.7 * scale, true);
-    this.spawnShockwave(x, y, { r: (fx.shock?.r || 10) * scale, maxR: (fx.shock?.maxR || 100) * scale, w: (fx.shock?.w || 2.6) * scale, maxLife: fx.shock?.life || 0.32, color: fx.shockColorPrefix });
+    // Core flash
+    this.spawnParticle({ x, y }, { x: 0, y: 0 }, 0.12, this.resolveAlphaColor(fx.color, 1, '#ffffff'), (6 + (fx.widthInner || 4)) * 0.7 * scale * sizeMul, true);
+    // Shockwave — smaller for S, standard for M
+    const shockScale = weaponSize === 'S' ? 0.6 : 1.0;
+    this.spawnShockwave(x, y, { r: (fx.shock?.r || 10) * scale * shockScale, maxR: (fx.shock?.maxR || 100) * scale * shockScale, w: (fx.shock?.w || 2.6) * scale * shockScale, maxLife: (fx.shock?.life || 0.32) * (weaponSize === 'S' ? 0.7 : 1.0), color: fx.shockColorPrefix });
   },
 
   spawnRailMuzzle(pos, dir, baseVel, scale = 1) {
@@ -435,6 +500,40 @@ export const CanvasVFX = {
     const prevS = window.worldToScreen(b.px ?? rx, b.py ?? ry, cam);
     const angle = Math.atan2(b.vy, b.vx);
     const lenPx = (vfx.len || 50) * cam.zoom;
+
+    if (b.type === 'torpedo') {
+      ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(angle);
+      const torpLen = Math.max(12, 60 * cam.zoom);
+      const torpW = Math.max(4, 16 * cam.zoom);
+      // Body
+      ctx.fillStyle = '#cc3333';
+      ctx.strokeStyle = '#ff6644';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(torpLen * 0.6, 0);
+      ctx.lineTo(-torpLen * 0.4, torpW * 0.5);
+      ctx.lineTo(-torpLen * 0.5, torpW * 0.3);
+      ctx.lineTo(-torpLen * 0.5, -torpW * 0.3);
+      ctx.lineTo(-torpLen * 0.4, -torpW * 0.5);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      // Engine glow
+      const engineGrad = ctx.createRadialGradient(-torpLen * 0.5, 0, 0, -torpLen * 0.5, 0, torpW * 2);
+      engineGrad.addColorStop(0, 'rgba(255,180,60,0.9)');
+      engineGrad.addColorStop(0.5, 'rgba(255,100,30,0.4)');
+      engineGrad.addColorStop(1, 'rgba(255,50,0,0)');
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = engineGrad;
+      ctx.beginPath(); ctx.arc(-torpLen * 0.5, 0, torpW * 2, 0, Math.PI * 2); ctx.fill();
+      // Warhead glow
+      const headGrad = ctx.createRadialGradient(torpLen * 0.5, 0, 0, torpLen * 0.5, 0, torpW);
+      headGrad.addColorStop(0, 'rgba(255,100,100,0.6)');
+      headGrad.addColorStop(1, 'rgba(255,0,0,0)');
+      ctx.fillStyle = headGrad;
+      ctx.beginPath(); ctx.arc(torpLen * 0.5, 0, torpW, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      return;
+    }
 
     if (b.type === 'rail') {
       ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(angle);

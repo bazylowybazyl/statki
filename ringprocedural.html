@@ -293,6 +293,14 @@
             background: rgba(184, 0, 255, 0.16);
         }
 
+        #zoneTools .tool-btn.zone-residential-mega.active {
+            background: rgba(55, 168, 255, 0.18);
+        }
+
+        #zoneTools .tool-btn.zone-commercial-mega.active {
+            background: rgba(255, 76, 244, 0.18);
+        }
+
         #zoneTools .tool-btn.zone-industrial.active {
             background: rgba(252, 238, 10, 0.12);
         }
@@ -419,9 +427,17 @@
                     <span class="tool-title">Mieszkalna</span>
                     <span class="tool-desc">Wieże i arkologie</span>
                 </button>
+                <button class="tool-btn zone-residential-mega" data-tool="residential_mega">
+                    <span class="tool-title">Mieszkalna MEGA</span>
+                    <span class="tool-desc">Mega-arkologie</span>
+                </button>
                 <button class="tool-btn zone-commercial" data-tool="commercial">
                     <span class="tool-title">Handlowa</span>
                     <span class="tool-desc">Neony i usługi</span>
+                </button>
+                <button class="tool-btn zone-commercial-mega" data-tool="commercial_mega">
+                    <span class="tool-title">Handlowa MEGA</span>
+                    <span class="tool-desc">Mega-centra i reklamy</span>
                 </button>
                 <button class="tool-btn zone-industrial" data-tool="industrial">
                     <span class="tool-title">Przemysłowa</span>
@@ -444,8 +460,8 @@
             </div>
             <div class="brush-row">
                 <label for="buildingScale">Skala budynków</label>
-                <input id="buildingScale" type="range" min="1" max="100" step="1" value="15">
-                <span class="brush-value" id="buildingScaleValue">15</span>
+                <input id="buildingScale" type="range" min="1" max="100" step="1" value="3">
+                <span class="brush-value" id="buildingScaleValue">3</span>
             </div>
             <div class="brush-row">
                 <label for="buildingDensity">Zag&#281;szczenie</label>
@@ -454,8 +470,8 @@
             </div>
             <div class="brush-row">
                 <label for="bloomStrength">Siła Bloomu</label>
-                <input id="bloomStrength" type="range" min="0.0" max="15.0" step="0.5" value="7.0">
-                <span class="brush-value" id="bloomStrengthValue">7.0</span>
+                <input id="bloomStrength" type="range" min="0.0" max="15.0" step="0.5" value="1.0">
+                <span class="brush-value" id="bloomStrengthValue">1.0</span>
             </div>
             <div class="tool-sep"></div>
             <button id="fillRingBtn" class="fill-btn" type="button">Fill ring</button>
@@ -552,9 +568,11 @@
         // ==========================================
         const COLORS = {
             residential: { num: 0x00f3ff, css: '#00f3ff' },
+            residential_mega: { num: 0x37a8ff, css: '#37a8ff' },
             industrial: { num: 0xfcee0a, css: '#fcee0a' },
             military: { num: 0xff003c, css: '#ff003c' },
             commercial: { num: 0xb800ff, css: '#b800ff' },
+            commercial_mega: { num: 0xff4cf4, css: '#ff4cf4' },
             base: 0x0a0a0f,
             gate: 0x111622,
             space: 0x020306,
@@ -609,7 +627,9 @@
         const ZONE_BRUSHES = [
             { id: 'camera', label: 'Kamera', color: 0x88aacc },
             { id: 'residential', label: 'Mieszkalna', color: COLORS.residential.num },
+            { id: 'residential_mega', label: 'Mieszkalna MEGA', color: COLORS.residential_mega.num },
             { id: 'commercial', label: 'Handlowa', color: COLORS.commercial.num },
+            { id: 'commercial_mega', label: 'Handlowa MEGA', color: COLORS.commercial_mega.num },
             { id: 'industrial', label: 'Przemyslowa', color: COLORS.industrial.num },
             { id: 'military', label: 'Wojskowa', color: COLORS.military.num },
             { id: 'erase', label: 'Gumka', color: 0xffffff }
@@ -640,7 +660,7 @@
         let brushRadius = 1;
         let isPainting = false;
         let lastPaintCellKey = '';
-        let globalBuildingScale = 15;
+        let globalBuildingScale = 3;
         let globalBuildingDensity = 1.0;
         let globalBloomPass = null;
 
@@ -981,6 +1001,26 @@
             return brush ? brush.color : 0xffffff;
         }
 
+        function getZoneFamily(zone) {
+            if (zone === 'residential_mega') return 'residential';
+            if (zone === 'commercial_mega') return 'commercial';
+            return zone;
+        }
+
+        function isMegaZone(zone) {
+            return zone === 'residential_mega' || zone === 'commercial_mega';
+        }
+
+        function getZoneTargetBuildingCount(zone, rnd = Math.random) {
+            if (zone === 'residential_mega') return 3 + Math.floor(rnd() * 2);
+            if (zone === 'commercial_mega') return 3 + Math.floor(rnd() * 3);
+            if (zone === 'residential') return 8 + Math.floor(rnd() * 4);
+            if (zone === 'commercial') return 7 + Math.floor(rnd() * 4);
+            if (zone === 'industrial') return 5 + Math.floor(rnd() * 3);
+            if (zone === 'military') return 4 + Math.floor(rnd() * 3);
+            return 6;
+        }
+
         function getCellHubPosition(cell) {
             const hubAngle = (cell.angleStart + cell.angleEnd) * 0.5;
             const hubRadius = (cell.innerRadius + cell.outerRadius) * 0.5;
@@ -1110,10 +1150,10 @@
             const scaleInput = document.getElementById('buildingScale');
             const scaleValue = document.getElementById('buildingScaleValue');
             if (scaleInput && scaleValue) {
-                globalBuildingScale = Number(scaleInput.value) || 15;
+                globalBuildingScale = Number(scaleInput.value) || 3;
                 scaleValue.textContent = globalBuildingScale;
                 scaleInput.addEventListener('input', () => {
-                    globalBuildingScale = Number(scaleInput.value) || 15;
+                    globalBuildingScale = Number(scaleInput.value) || 3;
                     scaleValue.textContent = globalBuildingScale;
                 });
             }
@@ -1134,7 +1174,7 @@
             if (bloomInput && bloomValue) {
                 bloomValue.textContent = Number(bloomInput.value).toFixed(1);
                 bloomInput.addEventListener('input', () => {
-                    const val = Number(bloomInput.value) || 7.0;
+                    const val = Number(bloomInput.value) || 1.0;
                     bloomValue.textContent = val.toFixed(1);
                     if (globalBloomPass) {
                         globalBloomPass.strength = val;
@@ -1369,13 +1409,7 @@
             const rand = createSeededRandom(hashZoneSeed(cell, cell.zone));
             const wrappers = [];
             const dynamicDecorations = [];
-            const buildCount = cell.zone === 'residential'
-                ? 10 + Math.floor(rand() * 12)
-                : cell.zone === 'commercial'
-                    ? 8 + Math.floor(rand() * 10)
-                    : cell.zone === 'industrial'
-                        ? 6 + Math.floor(rand() * 8)
-                        : 5 + Math.floor(rand() * 6);
+            const buildCount = getZoneTargetBuildingCount(cell.zone, rand);
             const neonColor = COLORS[cell.zone].num;
 
             const gridCols = 4;
@@ -1391,7 +1425,7 @@
 
             const cellGeoMap = {};
 
-            // Place buildings along the pure polar grid
+            const buildSlots = [];
             for (let r = 0; r < gridRows; r++) {
                 for (let c = 0; c < gridCols; c++) {
                     const centerAngle = buildStartAngle + (c + 0.5) * angleStep;
@@ -1401,44 +1435,59 @@
                     if (Math.abs(centerRadius - RING_MID) < AUTOSTRADA_WIDTH * 0.5 + 40) continue;
 
                     // Small jitter in polar coordinates
-                    const jAngle = centerAngle + (rand() - 0.5) * angleStep * 0.4;
-                    const jRadius = centerRadius + (rand() - 0.5) * radiusStep * 0.4;
-
-                    const localGeoMap = {};
-                    createBuilding(jAngle, jRadius, cell.zone, mats, neonColor, localGeoMap, rand, {
-                        zoneCellKey: cell.key,
-                        dynamicDecorations
+                    buildSlots.push({
+                        angle: centerAngle + (rand() - 0.5) * angleStep * 0.4,
+                        radius: centerRadius + (rand() - 0.5) * radiusStep * 0.4
                     });
+                }
+            }
 
-                    // Transform and merge this building's geos into the district ones
-                    const rotM = new THREE.Matrix4().makeRotationY(-jAngle);
-                    const posM = new THREE.Matrix4().makeTranslation(
-                        Math.cos(jAngle) * jRadius, 0, Math.sin(jAngle) * jRadius
-                    );
-                    const matrix = posM.multiply(rotM);
+            for (let i = buildSlots.length - 1; i > 0; i--) {
+                const j = Math.floor(rand() * (i + 1));
+                const tmp = buildSlots[i];
+                buildSlots[i] = buildSlots[j];
+                buildSlots[j] = tmp;
+            }
 
-                    for (const matKey in localGeoMap) {
-                        for (let geo of localGeoMap[matKey]) {
-                            // Ensure all geometries are non-indexed before merging to prevent `t.getIndex is not a function` error
-                            if (geo.getIndex && geo.getIndex() !== null) {
-                                geo = geo.toNonIndexed();
-                            }
+            for (let slotIndex = 0; slotIndex < Math.min(buildCount, buildSlots.length); slotIndex++) {
+                const slot = buildSlots[slotIndex];
+                const jAngle = slot.angle;
+                const jRadius = slot.radius;
 
-                            // BufferGeometryUtils requires all merged geometries to share EXACTLY the same attributes
-                            const posCount = geo.attributes.position.count;
-                            if (!geo.hasAttribute('normal')) {
-                                geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(posCount * 3), 3));
-                            }
-                            if (!geo.hasAttribute('uv')) {
-                                geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(posCount * 2), 2));
-                            }
-                            // Strip native face sub-ranges so merging array groups resolves smoothly
-                            geo.groups = [];
+                const localGeoMap = {};
+                createBuilding(jAngle, jRadius, cell.zone, mats, neonColor, localGeoMap, rand, {
+                    zoneCellKey: cell.key,
+                    dynamicDecorations
+                });
 
-                            geo.applyMatrix4(matrix);
-                            cellGeoMap[matKey] = cellGeoMap[matKey] || [];
-                            cellGeoMap[matKey].push(geo);
+                // Transform and merge this building's geos into the district ones
+                const rotM = new THREE.Matrix4().makeRotationY(-jAngle);
+                const posM = new THREE.Matrix4().makeTranslation(
+                    Math.cos(jAngle) * jRadius, 0, Math.sin(jAngle) * jRadius
+                );
+                const matrix = posM.multiply(rotM);
+
+                for (const matKey in localGeoMap) {
+                    for (let geo of localGeoMap[matKey]) {
+                        // Ensure all geometries are non-indexed before merging to prevent `t.getIndex is not a function` error
+                        if (geo.getIndex && geo.getIndex() !== null) {
+                            geo = geo.toNonIndexed();
                         }
+
+                        // BufferGeometryUtils requires all merged geometries to share EXACTLY the same attributes
+                        const posCount = geo.attributes.position.count;
+                        if (!geo.hasAttribute('normal')) {
+                            geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(posCount * 3), 3));
+                        }
+                        if (!geo.hasAttribute('uv')) {
+                            geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(posCount * 2), 2));
+                        }
+                        // Strip native face sub-ranges so merging array groups resolves smoothly
+                        geo.groups = [];
+
+                        geo.applyMatrix4(matrix);
+                        cellGeoMap[matKey] = cellGeoMap[matKey] || [];
+                        cellGeoMap[matKey].push(geo);
                     }
                 }
             }
@@ -1845,8 +1894,6 @@
         // ==========================================
         function init() {
             scene = new THREE.Scene();
-            // --- ATMOSPHERE & FOG (SynthCity Night) ---
-            scene.fog = new THREE.Fog(0x12122a, 1000, 15000); // 15km visibility
             scene.background = new THREE.Color(0x12122a);
 
             renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
@@ -1877,7 +1924,7 @@
             const renderPass = new THREE.RenderPass(scene, camera);
             const bloomPass = new THREE.UnrealBloomPass(
                 new THREE.Vector2(window.innerWidth, window.innerHeight),
-                7.0,    // strength — strong glow on emissive
+                1.0,    // strength
                 1.0,    // radius
                 0.0     // threshold — lower to catch emissive windows
             );
@@ -2737,6 +2784,8 @@
         function createBuilding(angle, radius, zone, mats, neonColor, geoMap, rnd = Math.random, meta = null) {
             let totalH = 0;
             let footprintRadius = 80;
+            const zoneFamily = getZoneFamily(zone);
+            const megaZone = isMegaZone(zone);
             const zoneCellKey = meta?.zoneCellKey || '';
             const dynamicDecorations = Array.isArray(meta?.dynamicDecorations) ? meta.dynamicDecorations : null;
             const worldX = Math.cos(angle) * radius;
@@ -2775,7 +2824,7 @@
                 }));
             };
 
-            if (zone === 'residential' || zone === 'commercial') {
+            if (zoneFamily === 'residential' || zoneFamily === 'commercial') {
                 const typeNoise = rnd();
                 const subtypeNoise = rnd();
                 const rotateNoise = rnd();
@@ -2786,8 +2835,19 @@
                 let useTopper = false;
                 let rareMaterial = false;
 
-                if (zone === 'residential') {
-                    if (typeNoise < 0.267) {
+                if (zoneFamily === 'residential') {
+                    if (megaZone) {
+                        if (typeNoise < 0.7) {
+                            modelId = pickArrayEntry(rnd, ['s_04_01', 's_04_02', 's_04_03']);
+                            adsType = pickArrayEntry(rnd, ['ads_s_04_01', 'ads_s_04_02', 'ads_s_04_03', 'ads_s_04_04']);
+                            rareMaterial = subtypeNoise > 0.45;
+                        } else {
+                            modelId = pickArrayEntry(rnd, ['s_05_01', 's_05_02', 's_05_03']);
+                            adsType = pickArrayEntry(rnd, ['ads_s_05_01', 'ads_s_05_02', 'ads_s_05_03', 'ads_s_05_04']);
+                            rareMaterial = true;
+                            useTopper = rnd() > 0.45;
+                        }
+                    } else if (typeNoise < 0.267) {
                         modelId = pickArrayEntry(rnd, ['s_01_01', 's_01_02', 's_01_03']);
                         adsType = rnd() > 0.5 ? 'ads_s_01_01' : 'ads_s_01_02';
                     } else if (typeNoise < 0.534) {
@@ -2808,7 +2868,19 @@
                         useTopper = rnd() > 0.78;
                     }
                 } else {
-                    if (typeNoise < 0.30) {
+                    if (megaZone) {
+                        if (typeNoise < 0.35) {
+                            modelId = pickArrayEntry(rnd, ['s_04_01', 's_04_02', 's_04_03']);
+                            adsType = pickArrayEntry(rnd, ['ads_s_04_01', 'ads_s_04_02', 'ads_s_04_03', 'ads_s_04_04']);
+                            rareMaterial = true;
+                            useTopper = rnd() > 0.5;
+                        } else {
+                            modelId = pickArrayEntry(rnd, ['s_05_01', 's_05_02', 's_05_03']);
+                            adsType = pickArrayEntry(rnd, ['ads_s_05_01', 'ads_s_05_02', 'ads_s_05_03', 'ads_s_05_04']);
+                            rareMaterial = true;
+                            useTopper = rnd() > 0.3;
+                        }
+                    } else if (typeNoise < 0.30) {
                         modelId = pickArrayEntry(rnd, ['s_02_01', 's_02_02', 's_02_03']);
                         adsType = rnd() > 0.5 ? 'ads_s_02_01' : 'ads_s_02_02';
                     } else if (typeNoise < 0.62) {
@@ -2925,7 +2997,7 @@
 
             // --- ROOF DETAILS (all zones) ---
             addRoofDetails(geoMap, totalH, zone, rnd);
-            if (zone === 'residential' && rnd() > 0.6) {
+            if (zoneFamily === 'residential' && rnd() > (megaZone ? 0.35 : 0.6)) {
                 // Approximate neon edges for residential using the last added box
                 const lastIdx = geoMap['mats'] ? geoMap['mats'].length - 1 : -1;
                 if (lastIdx >= 0) addNeonEdges(geoMap, geoMap['mats'][lastIdx], rnd);

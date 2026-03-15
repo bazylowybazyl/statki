@@ -1,3 +1,4 @@
+// src/3d/core3d.js
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -16,7 +17,80 @@ const MAX_HEAT_HAZE_SOURCES = 24;
 const PLANET_RENDER_LAYER = 3;
 const OCCLUSION_RENDER_LAYER = 4;
 
-// --- SHADER: Płaskie Cienie (Overscan Shadow Shafts) ---
+function makeSplitScreenRenderPass(pass, layerId, isOrtho, doClearColor) {
+  pass.clear = false;
+
+  pass.render = function(renderer, writeBuffer, readBuffer) {
+      const oldAutoClear = renderer.autoClear;
+      renderer.autoClear = false; 
+
+      const target = this.renderToScreen ? null : readBuffer;
+      renderer.setRenderTarget(target);
+
+      const tw = target ? target.width : renderer.domElement.width;
+      const th = target ? target.height : renderer.domElement.height;
+      const isSplit = typeof window !== 'undefined' && window.splitScreenMode && Core3D.activeCam2;
+
+      const oldCol = renderer.getClearColor(new THREE.Color());
+      const oldAlpha = renderer.getClearAlpha();
+
+      if (isSplit) {
+          const halfW = Math.floor(tw / 2);
+          renderer.setScissorTest(true);
+
+          // GRACZ 1 (Lewa połówka)
+          renderer.setViewport(0, 0, halfW, th);
+          renderer.setScissor(0, 0, halfW, th);
+          if (doClearColor) {
+              renderer.setClearColor(0x000000, 0.0);
+              renderer.clear(true, true, true);
+          } else {
+              renderer.clear(false, true, false);
+          }
+
+          // KLUCZ: Przekazujemy halfW, aby aspekt kamery wynosił (halfW / th)
+          Core3D.syncCamera(Core3D.activeCam1, halfW, th, 0);
+          this.camera = isOrtho ? Core3D.cameraOrtho : Core3D.cameraPersp;
+          this.camera.layers.set(layerId);
+          renderer.render(this.scene, this.camera);
+
+          // GRACZ 2 (Prawa połówka)
+          renderer.setViewport(halfW, 0, tw - halfW, th);
+          renderer.setScissor(halfW, 0, tw - halfW, th);
+          if (doClearColor) {
+              renderer.setClearColor(0x000000, 0.0);
+              renderer.clear(true, true, true);
+          } else {
+              renderer.clear(false, true, false);
+          }
+
+          Core3D.syncCamera(Core3D.activeCam2, halfW, th, halfW);
+          this.camera = isOrtho ? Core3D.cameraOrtho : Core3D.cameraPersp;
+          this.camera.layers.set(layerId);
+          renderer.render(this.scene, this.camera);
+
+          renderer.setScissorTest(false);
+          renderer.setViewport(0, 0, tw, th);
+      } else {
+          // Tryb Single Player - bez zmian
+          renderer.setViewport(0, 0, tw, th);
+          renderer.setScissorTest(false);
+          if (doClearColor) {
+              renderer.setClearColor(0x000000, 0.0);
+              renderer.clear(true, true, true);
+          } else {
+              renderer.clear(false, true, false);
+          }
+          Core3D.syncCamera(Core3D.activeCam1, tw, th, 0);
+          this.camera = isOrtho ? Core3D.cameraOrtho : Core3D.cameraPersp;
+          this.camera.layers.set(layerId);
+          renderer.render(this.scene, this.camera);
+      }
+      renderer.setClearColor(oldCol, oldAlpha);
+      renderer.autoClear = oldAutoClear;
+  };
+}
+
 function createShadowShaftsShader() {
   return {
     name: 'ShadowShaftsCompositeShader',
@@ -24,7 +98,9 @@ function createShadowShaftsShader() {
       tDiffuse: { value: null },
       uOcclusionMap: { value: null },
       uTime: { value: 0 },
-      uSunDirection: { value: new THREE.Vector2(1.0, 0.0) }, // Kierunek słońca (płaski rzut 2D)
+      uSplitScreen: { value: 0 },
+      uSunDirection: { value: new THREE.Vector2(1.0, 0.0) },
+      uSunDirection2: { value: new THREE.Vector2(1.0, 0.0) },
       uShadowLength: { value: 1.0 },
       uShadowDarkness: { value: 1.8 },
       uLengthMul: { value: 1.2 },
@@ -39,7 +115,9 @@ function createShadowShaftsShader() {
       uniform sampler2D tDiffuse;
       uniform sampler2D uOcclusionMap;
       uniform float uTime;
+      uniform int uSplitScreen;
       uniform vec2 uSunDirection;
+      uniform vec2 uSunDirection2;
       uniform float uShadowLength;
       uniform float uShadowDarkness;
       uniform float uLengthMul;
@@ -60,19 +138,30 @@ function createShadowShaftsShader() {
       void main() {
         vec4 sceneColor = texture2D(tDiffuse, vUv);
         
-        if(length(uSunDirection) < 0.001) {
+        vec2 dirVec = (uSplitScreen == 1 && vUv.x > 0.5) ? uSunDirection2 : uSunDirection;
+        if(length(dirVec) < 0.001) {
             gl_FragColor = sceneColor;
             return;
         }
 
-        // Płaski wektor kierunku słońca
-        vec2 dir = normalize(vec2(uSunDirection.x, uSunDirection.y * uAspectRatio));
+        vec2 dir = normalize(vec2(dirVec.x, dirVec.y * uAspectRatio));
 
-        // Magia Overscanu: Mapujemy nasz mniejszy ekranik na środek wielkiej maski
-        vec2 occUv = (vUv - 0.5) / uOverscan + 0.5;
+        vec2 occUv;
+        if (uSplitScreen == 1) {
+            if (vUv.x < 0.5) {
+                vec2 localUv = vec2(vUv.x * 2.0, vUv.y);
+                vec2 localOcc = (localUv - 0.5) / uOverscan + 0.5;
+                occUv = vec2(localOcc.x * 0.5, localOcc.y);
+            } else {
+                vec2 localUv = vec2((vUv.x - 0.5) * 2.0, vUv.y);
+                vec2 localOcc = (localUv - 0.5) / uOverscan + 0.5;
+                occUv = vec2(localOcc.x * 0.5 + 0.5, localOcc.y);
+            }
+        } else {
+            occUv = (vUv - 0.5) / uOverscan + 0.5;
+        }
+
         vec2 stepVec = dir * (((uShadowLength * uLengthMul) / uOverscan) / float(NUM_SAMPLES));
-        
-        // Szum zapobiegający "schodkowaniu"
         float jitter = (hash12(vUv * vec2(191.13, 137.71) + uTime) - 0.5) * uShadowJitter;
         vec2 sampleUv = occUv + stepVec * (jitter - 0.35);
 
@@ -82,8 +171,6 @@ function createShadowShaftsShader() {
 
         for(int i = 0; i < NUM_SAMPLES; i++) {
             if(sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) break;
-            
-            // 1.0 to przeszkoda, 0.0 to pusty kosmos
             float occluder = texture2D(uOcclusionMap, sampleUv).r;
             shadowAccum += occluder * currentWeight;
             totalWeight += currentWeight;
@@ -91,15 +178,9 @@ function createShadowShaftsShader() {
             sampleUv += stepVec;
         }
 
-        // Siła cienia – min(totalWeight, 4.0) zapobiega rozcieńczeniu dla cienkich przeszkód (daleki zoom)
         float rawShadow = totalWeight > 0.0 ? clamp((shadowAccum / min(totalWeight, 6.0)) * uShadowDarkness, 0.0, 1.0) : 0.0;
-        // Self-mask wyłączony: dawał artefakt "dziury" na planecie przy ruchu kamery/blurze maski.
-        float shadowFactor = rawShadow;
-        
-        // Kinowy, chłodny, mroczny kolor cienia
         vec3 shadowColor = vec3(0.06, 0.10, 0.16); 
-        vec3 finalColor = mix(sceneColor.rgb, sceneColor.rgb * shadowColor, shadowFactor);
-        
+        vec3 finalColor = mix(sceneColor.rgb, sceneColor.rgb * shadowColor, rawShadow);
         gl_FragColor = vec4(finalColor, sceneColor.a);
       }
     `
@@ -123,45 +204,16 @@ function createSeparableBlurMaterial(direction = new THREE.Vector2(1, 0)) {
       uDirection: { value: direction.clone() },
       uRadius: { value: 4.0 }
     },
-    vertexShader: `
-      precision highp float;
-      varying vec2 vUv;
-      void main() {
-        vUv = uv;
-        gl_Position = vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      precision highp float;
-      varying vec2 vUv;
-      uniform sampler2D tDiffuse;
-      uniform vec2 uResolution;
-      uniform vec2 uDirection;
-      uniform float uRadius;
-
-      void main() {
-        vec2 off = (uDirection * uRadius) / max(vec2(1.0), uResolution);
-        vec4 sum = vec4(0.0);
-        sum += texture2D(tDiffuse, vUv - off * 4.0) * 0.05;
-        sum += texture2D(tDiffuse, vUv - off * 3.0) * 0.09;
-        sum += texture2D(tDiffuse, vUv - off * 2.0) * 0.12;
-        sum += texture2D(tDiffuse, vUv - off * 1.0) * 0.15;
-        sum += texture2D(tDiffuse, vUv) * 0.18;
-        sum += texture2D(tDiffuse, vUv + off * 1.0) * 0.15;
-        sum += texture2D(tDiffuse, vUv + off * 2.0) * 0.12;
-        sum += texture2D(tDiffuse, vUv + off * 3.0) * 0.09;
-        sum += texture2D(tDiffuse, vUv + off * 4.0) * 0.05;
-        gl_FragColor = sum;
-      }
-    `,
-    blending: THREE.NoBlending,
-    transparent: false,
-    depthTest: false,
-    depthWrite: false
+    vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position, 1.0); }`,
+    fragmentShader: `precision highp float; varying vec2 vUv; uniform sampler2D tDiffuse; uniform vec2 uResolution; uniform vec2 uDirection; uniform float uRadius; void main() { vec2 off = (uDirection * uRadius) / max(vec2(1.0), uResolution); vec4 sum = vec4(0.0); sum += texture2D(tDiffuse, vUv - off * 4.0) * 0.05; sum += texture2D(tDiffuse, vUv - off * 3.0) * 0.09; sum += texture2D(tDiffuse, vUv - off * 2.0) * 0.12; sum += texture2D(tDiffuse, vUv - off * 1.0) * 0.15; sum += texture2D(tDiffuse, vUv) * 0.18; sum += texture2D(tDiffuse, vUv + off * 1.0) * 0.15; sum += texture2D(tDiffuse, vUv + off * 2.0) * 0.12; sum += texture2D(tDiffuse, vUv + off * 3.0) * 0.09; sum += texture2D(tDiffuse, vUv + off * 4.0) * 0.05; gl_FragColor = sum; }`,
+    blending: THREE.NoBlending, transparent: false, depthTest: false, depthWrite: false
   });
 }
 
 export const Core3D = {
+  activeCam1: { x: 0, y: 0, zoom: 1 },
+  activeCam2: null,
+
   canvas: null, renderer: null, scene: null, cameraOrtho: null, cameraPersp: null,
   shadowCatcher: null, shadowCatcherFg: null, shadowCatchersDebug: false,
   composer: null, composerTarget: null,
@@ -225,26 +277,11 @@ export const Core3D = {
       }
     );
     this.occlusionWhiteMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      side: THREE.DoubleSide,
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.CustomBlending,
-      blendEquation: THREE.MaxEquation,
-      blendEquationAlpha: THREE.MaxEquation,
-      blendSrc: THREE.OneFactor,
-      blendDst: THREE.OneFactor,
-      blendSrcAlpha: THREE.OneFactor,
-      blendDstAlpha: THREE.OneFactor
+      color: 0xffffff, side: THREE.DoubleSide, transparent: true, depthWrite: false, blending: THREE.CustomBlending,
+      blendEquation: THREE.MaxEquation, blendEquationAlpha: THREE.MaxEquation, blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneFactor
     });
-    const blurRtOptions = {
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      format: THREE.RGBAFormat,
-      type: this.renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType,
-      depthBuffer: false,
-      stencilBuffer: false
-    };
+    const blurRtOptions = { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat, type: this.renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType, depthBuffer: false, stencilBuffer: false };
     const blurW = Math.max(1, Math.floor(window.innerWidth / 2));
     const blurH = Math.max(1, Math.floor(window.innerHeight / 2));
     this.occlusionBlurTargetA = new THREE.WebGLRenderTarget(blurW, blurH, blurRtOptions);
@@ -267,54 +304,29 @@ export const Core3D = {
     this.composer = new EffectComposer(this.renderer, rt);
     this.composer.setPixelRatio(this.pixelRatio);
 
-    // WAZNE: Rejestracja passów do głównego obrazu
-    const renderPassBg = new RenderPass(this.scene, this.cameraPersp);
-    this.renderPassBg = renderPassBg; renderPassBg.clearColor = new THREE.Color(0x000000); renderPassBg.clearAlpha = 0;
-    const origBgRender = renderPassBg.render.bind(renderPassBg);
-    renderPassBg.render = function (renderer, writeBuffer, readBuffer, deltaTime, maskActive) {
-      this.camera.layers.set(1); origBgRender(renderer, writeBuffer, readBuffer, deltaTime, maskActive);
-    };
+    this.renderPassBg = new RenderPass(this.scene, this.cameraPersp);
+    makeSplitScreenRenderPass(this.renderPassBg, 1, false, true);
+    this.renderPassPlanets = new RenderPass(this.scene, this.cameraPersp);
+    makeSplitScreenRenderPass(this.renderPassPlanets, PLANET_RENDER_LAYER, false, false);
+    this.renderPassOrtho = new RenderPass(this.scene, this.cameraOrtho);
+    makeSplitScreenRenderPass(this.renderPassOrtho, 0, true, false);
+    this.renderPassFg = new RenderPass(this.scene, this.cameraPersp);
+    makeSplitScreenRenderPass(this.renderPassFg, 2, false, false);
 
-    const renderPassPlanets = new RenderPass(this.scene, this.cameraPersp);
-    this.renderPassPlanets = renderPassPlanets; renderPassPlanets.clear = false;
-    const origPlanetsRender = renderPassPlanets.render.bind(renderPassPlanets);
-    renderPassPlanets.render = function (renderer, writeBuffer, readBuffer, deltaTime, maskActive) {
-      renderer.clearDepth(); this.camera.layers.set(PLANET_RENDER_LAYER); origPlanetsRender(renderer, writeBuffer, readBuffer, deltaTime, maskActive);
-    };
+    this.composer.addPass(this.renderPassBg);
+    this.composer.addPass(this.renderPassPlanets);
+    this.composer.addPass(this.renderPassOrtho);
+    this.composer.addPass(this.renderPassFg);
 
-    const renderPassOrtho = new RenderPass(this.scene, this.cameraOrtho);
-    this.renderPassOrtho = renderPassOrtho; renderPassOrtho.clear = false;
-    const origOrthoRender = renderPassOrtho.render.bind(renderPassOrtho);
-    renderPassOrtho.render = function (renderer, writeBuffer, readBuffer, deltaTime, maskActive) {
-      renderer.clearDepth(); this.camera.layers.set(0); origOrthoRender(renderer, writeBuffer, readBuffer, deltaTime, maskActive);
-    };
-
-    const renderPassFg = new RenderPass(this.scene, this.cameraPersp);
-    this.renderPassFg = renderPassFg; renderPassFg.clear = false;
-    const origFgRender = renderPassFg.render.bind(renderPassFg);
-    renderPassFg.render = function (renderer, writeBuffer, readBuffer, deltaTime, maskActive) {
-      renderer.clearDepth(); this.camera.layers.set(2); origFgRender(renderer, writeBuffer, readBuffer, deltaTime, maskActive);
-    };
-
-    // 1. Tło, planety, statek, budynki (Całość sceny 3D)
-    this.composer.addPass(renderPassBg);
-    this.composer.addPass(renderPassPlanets);
-    this.composer.addPass(renderPassOrtho);
-    this.composer.addPass(renderPassFg);
-
-    // 2. Efekty Post-Process (W tym nasza okluzja) NA SAMYM KOŃCU
     this.heatHazeSources = new Float32Array(this.heatHazeMaxSources * 4);
     this.heatHazePass = new ShaderPass(createHeatHazeShader(this.heatHazeMaxSources));
     this.composer.addPass(this.heatHazePass);
 
     this.shadowShaftsPass = new ShaderPass(createShadowShaftsShader());
-    this.composer.addPass(this.shadowShaftsPass); // <-- TERAZ OBLEWA CZYSTYM CIENIEM WSZYSTKIE 4 WARSTWY
+    this.composer.addPass(this.shadowShaftsPass);
 
     const bloomScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || 1));
-    this.bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(Math.floor(window.innerWidth * bloomScale), Math.floor(window.innerHeight * bloomScale)),
-      this.bloomBaseStrength, 0.18, this.bloomBaseThreshold
-    );
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(Math.floor(window.innerWidth * bloomScale), Math.floor(window.innerHeight * bloomScale)), this.bloomBaseStrength, 0.18, this.bloomBaseThreshold);
     this.composer.addPass(this.bloomPass);
 
     const alphaPass = new ShaderPass(PreserveAlphaOutputShader);
@@ -325,11 +337,7 @@ export const Core3D = {
     this.outputPass.renderToScreen = true;
     this.composer.addPass(this.outputPass);
 
-    // Kolejność passów:
-    // bg -> planets -> shadowShafts -> ortho -> fg -> heatHaze -> bloom -> alpha -> output
-    // Dzięki temu cień planet nie wpływa na statek/ring/budynki (warstwy ortho/fg).
     const movePassBefore = (passToMove, beforePass) => {
-      if (!passToMove || !beforePass || !this.composer?.passes) return;
       const passes = this.composer.passes;
       const from = passes.indexOf(passToMove);
       const to = passes.indexOf(beforePass);
@@ -343,7 +351,6 @@ export const Core3D = {
     movePassBefore(this.heatHazePass, this.bloomPass);
 
     this._applyPassToggles();
-
     this.isInitialized = true;
     this.resize(window.innerWidth, window.innerHeight);
 
@@ -404,10 +411,7 @@ export const Core3D = {
     this.composer.setSize(width, height);
 
     if (this.occlusionTarget) {
-      this.occlusionTarget.setSize(
-        Math.max(1, Math.floor(width / 2)),
-        Math.max(1, Math.floor(height / 2))
-      );
+      this.occlusionTarget.setSize(Math.max(1, Math.floor(width / 2)), Math.max(1, Math.floor(height / 2)));
     }
     if (this.occlusionBlurTargetA && this.occlusionBlurTargetB) {
       const blurW = Math.max(1, Math.floor(width / 2));
@@ -417,35 +421,53 @@ export const Core3D = {
       if (this.occlusionBlurMatH?.uniforms?.uResolution) this.occlusionBlurMatH.uniforms.uResolution.value.set(blurW, blurH);
       if (this.occlusionBlurMatV?.uniforms?.uResolution) this.occlusionBlurMatV.uniforms.uResolution.value.set(blurW, blurH);
     }
-
     if (this.bloomPass && typeof this.bloomPass.setSize === 'function') {
       const bScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || 1));
       this.bloomPass.setSize(Math.floor(width * this.pixelRatio * bScale), Math.floor(height * this.pixelRatio * bScale));
     }
-    this.cameraPersp.aspect = width / height;
-    this.cameraPersp.updateProjectionMatrix();
   },
 
-  syncCamera(gameCamera) {
+  syncCamera(gameCamera, viewWidth, viewHeight, viewOffsetX = 0) {
     if (!this.isInitialized || !gameCamera) return;
+    
+    if (viewWidth === undefined) {
+       this.activeCam1 = gameCamera;
+       if (typeof window !== 'undefined' && window.camera2) {
+           this.activeCam2 = window.camera2;
+       } else {
+           this.activeCam2 = gameCamera;
+       }
+    }
+
+    const w = viewWidth || this.width;
+    const h = viewHeight || this.height;
     const zoom = Math.max(0.0001, gameCamera.zoom || 1);
-    const halfW = (this.width / 2) / zoom;
-    const halfH = (this.height / 2) / zoom;
+    
+    const halfW = (w / 2) / zoom;
+    const halfH = (h / 2) / zoom;
     this.cameraOrtho.left = -halfW;
     this.cameraOrtho.right = halfW;
     this.cameraOrtho.top = halfH;
     this.cameraOrtho.bottom = -halfH;
     this.cameraOrtho.updateProjectionMatrix();
+
+    this.cameraPersp.aspect = w / h;
     const fovRad = THREE.MathUtils.degToRad(this.cameraPersp.fov * 0.5);
-    const targetZ = (this.height / 2) / Math.tan(fovRad) / zoom;
+    const targetZ = (h / 2) / Math.tan(fovRad) / zoom;
+    this.cameraPersp.updateProjectionMatrix();
+
     const shake = (typeof window !== 'undefined') ? window.__weapon3dCameraShake : null;
     const camX = gameCamera.x + (Number(shake?.x) || 0);
     const camY = -(gameCamera.y + (Number(shake?.y) || 0));
+
     this.cameraOrtho.position.set(camX, camY, 150000);
     this.cameraPersp.position.set(camX, camY, targetZ);
     this.cameraPersp.lookAt(camX, camY, 0);
-    if (this.shadowCatcher) this.shadowCatcher.position.set(camX, camY, -2);
-    if (this.shadowCatcherFg) this.shadowCatcherFg.position.set(camX, camY, -100);
+
+    if (viewOffsetX === 0) {
+      if (this.shadowCatcher) this.shadowCatcher.position.set(camX, camY, -2);
+      if (this.shadowCatcherFg) this.shadowCatcherFg.position.set(camX, camY, -100);
+    }
   },
 
   render() {
@@ -456,7 +478,6 @@ export const Core3D = {
     const raysEnabled = this.perfToggles?.shadowShafts !== false;
 
     if (raysEnabled && this.shadowShaftsPass) {
-
       const prevAutoClear = this.renderer.autoClear;
       this.renderer.autoClear = false;
 
@@ -473,124 +494,69 @@ export const Core3D = {
       const origRight = this.cameraOrtho.right;
       const origTop = this.cameraOrtho.top;
       const origBottom = this.cameraOrtho.bottom;
-
       const origPerspZoom = this.cameraPersp.zoom;
 
-      this.cameraOrtho.left *= OVERSCAN;
-      this.cameraOrtho.right *= OVERSCAN;
-      this.cameraOrtho.top *= OVERSCAN;
-      this.cameraOrtho.bottom *= OVERSCAN;
-      this.cameraOrtho.updateProjectionMatrix();
-
-      this.cameraPersp.zoom /= OVERSCAN;
-      this.cameraPersp.updateProjectionMatrix();
-
       this.renderer.setRenderTarget(this.occlusionTarget);
-      this.renderer.setClearColor(0x000000, 0.0);
-      this.renderer.clear();
-
       this.scene.overrideMaterial = this.occlusionWhiteMaterial;
-      if (false) {
 
-      // Maska blokerów światła
-      this.scene.traverse((child) => {
-        if (!child.isMesh && !child.isPoints && !child.isSprite && !child.isLine) return;
+      const isSplit = typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2;
 
-        originalStates.set(child, {
-          material: child.material,
-          visible: child.visible,
-          blendState: null
-        });
+      if (isSplit) {
+          const tw = this.occlusionTarget.width;
+          const th = this.occlusionTarget.height;
+          const halfW = Math.floor(tw / 2);
 
-        const isPlanetLayerObject = (child.layers.mask & planetLayerMask) !== 0;
-        if (!isPlanetLayerObject) {
-          child.visible = false;
-          return;
-        }
+          this.renderer.setScissorTest(true);
+          
+          // --- Lewa Okluzja ---
+          this.renderer.setViewport(0, 0, halfW, th);
+          this.renderer.setScissor(0, 0, halfW, th);
+          this.renderer.setClearColor(0x000000, 0.0);
+          this.renderer.clear(true, true, true);
+          
+          this.syncCamera(this.activeCam1, this.width / 2, this.height, 0);
+          this.cameraOrtho.left *= OVERSCAN; this.cameraOrtho.right *= OVERSCAN;
+          this.cameraOrtho.top *= OVERSCAN; this.cameraOrtho.bottom *= OVERSCAN;
+          this.cameraOrtho.updateProjectionMatrix();
+          this.cameraPersp.zoom /= OVERSCAN; this.cameraPersp.updateProjectionMatrix();
+          this.cameraPersp.layers.set(OCCLUSION_RENDER_LAYER);
+          
+          this.renderer.render(this.scene, this.cameraPersp);
 
-        if (child.name === 'SunMesh' || child.name === 'Nebula' || child.isPoints || child.isSprite) {
-          child.visible = false;
-          return;
-        }
+          // --- Prawa Okluzja ---
+          this.renderer.setViewport(halfW, 0, tw - halfW, th);
+          this.renderer.setScissor(halfW, 0, tw - halfW, th);
+          this.renderer.setClearColor(0x000000, 0.0);
+          this.renderer.clear(true, true, true);
+          
+          this.syncCamera(this.activeCam2, this.width / 2, this.height, this.width / 2); 
+          this.cameraOrtho.left *= OVERSCAN; this.cameraOrtho.right *= OVERSCAN;
+          this.cameraOrtho.top *= OVERSCAN; this.cameraOrtho.bottom *= OVERSCAN;
+          this.cameraOrtho.updateProjectionMatrix();
+          this.cameraPersp.zoom /= OVERSCAN; this.cameraPersp.updateProjectionMatrix();
+          this.cameraPersp.layers.set(OCCLUSION_RENDER_LAYER);
+          
+          this.renderer.render(this.scene, this.cameraPersp);
 
-        if (child.material && child.material.uniforms && child.material.uniforms.uIsOcclusion !== undefined) {
-          const mat = child.material;
-          const state = originalStates.get(child);
-          if (state) {
-            state.blendState = {
-              transparent: mat.transparent,
-              depthWrite: mat.depthWrite,
-              blending: mat.blending,
-              blendEquation: mat.blendEquation,
-              blendEquationAlpha: mat.blendEquationAlpha,
-              blendSrc: mat.blendSrc,
-              blendDst: mat.blendDst,
-              blendSrcAlpha: mat.blendSrcAlpha,
-              blendDstAlpha: mat.blendDstAlpha
-            };
-          }
-          child.visible = true;
-          mat.uniforms.uIsOcclusion.value = 1;
-          mat.transparent = true;
-          mat.depthWrite = false;
-          mat.blending = THREE.CustomBlending;
-          mat.blendEquation = THREE.MaxEquation;
-          mat.blendEquationAlpha = THREE.MaxEquation;
-          mat.blendSrc = THREE.OneFactor;
-          mat.blendDst = THREE.OneFactor;
-          mat.blendSrcAlpha = THREE.OneFactor;
-          mat.blendDstAlpha = THREE.OneFactor;
-          return;
-        }
-
-        if (child.material) {
-          const mat = child.material;
-          if (mat.blending === THREE.AdditiveBlending) {
-            child.visible = false;
-            return;
-          }
-          if (mat.uniforms && mat.uniforms.cloudTexture) {
-            child.visible = false;
-            return;
-          }
-          if (mat.transparent === true) {
-            child.visible = false;
-            return;
-          }
-        }
-
-        child.material = this.occlusionWhiteMaterial;
-      });
-
-      this.cameraPersp.layers.set(3);
-      this.renderer.render(this.scene, this.cameraPersp);
-
-      // Restore oryginalnych materiałów
-      this.scene.traverse((child) => {
-        const state = originalStates.get(child);
-        if (state) {
-          child.visible = state.visible;
-          if (state.blendState && child.material === state.material) {
-            child.material.transparent = state.blendState.transparent;
-            child.material.depthWrite = state.blendState.depthWrite;
-            child.material.blending = state.blendState.blending;
-            child.material.blendEquation = state.blendState.blendEquation;
-            child.material.blendEquationAlpha = state.blendState.blendEquationAlpha;
-            child.material.blendSrc = state.blendState.blendSrc;
-            child.material.blendDst = state.blendState.blendDst;
-            child.material.blendSrcAlpha = state.blendState.blendSrcAlpha;
-            child.material.blendDstAlpha = state.blendState.blendDstAlpha;
-          }
-          child.material = state.material;
-          if (child.material && child.material.uniforms && child.material.uniforms.uIsOcclusion !== undefined) {
-            child.material.uniforms.uIsOcclusion.value = 0;
-          }
-        }
-      });
+          this.renderer.setScissorTest(false);
+      } else {
+          const tw = this.occlusionTarget.width;
+          const th = this.occlusionTarget.height;
+          this.renderer.setViewport(0, 0, tw, th);
+          this.renderer.setScissorTest(false);
+          this.renderer.setClearColor(0x000000, 0.0);
+          this.renderer.clear(true, true, true);
+          
+          this.syncCamera(this.activeCam1, this.width, this.height, 0);
+          this.cameraOrtho.left *= OVERSCAN; this.cameraOrtho.right *= OVERSCAN;
+          this.cameraOrtho.top *= OVERSCAN; this.cameraOrtho.bottom *= OVERSCAN;
+          this.cameraOrtho.updateProjectionMatrix();
+          this.cameraPersp.zoom /= OVERSCAN; this.cameraPersp.updateProjectionMatrix();
+          this.cameraPersp.layers.set(OCCLUSION_RENDER_LAYER);
+          
+          this.renderer.render(this.scene, this.cameraPersp);
       }
 
-      this.cameraPersp.layers.set(OCCLUSION_RENDER_LAYER);
-      this.renderer.render(this.scene, this.cameraPersp);
       this.scene.overrideMaterial = prevOverrideMaterial;
       this.cameraPersp.layers.mask = prevLayerMask;
 
@@ -605,13 +571,9 @@ export const Core3D = {
 
       let occlusionTexture = this.occlusionTarget.texture;
       if (
-        this.occlusionBlurTargetA &&
-        this.occlusionBlurTargetB &&
-        this.occlusionBlurScene &&
-        this.occlusionBlurCamera &&
-        this.occlusionBlurQuad &&
-        this.occlusionBlurMatH &&
-        this.occlusionBlurMatV
+        this.occlusionBlurTargetA && this.occlusionBlurTargetB &&
+        this.occlusionBlurScene && this.occlusionBlurCamera &&
+        this.occlusionBlurQuad && this.occlusionBlurMatH && this.occlusionBlurMatV
       ) {
         this.occlusionBlurMatH.uniforms.tDiffuse.value = this.occlusionTarget.texture;
         this.occlusionBlurQuad.material = this.occlusionBlurMatH;
@@ -633,21 +595,29 @@ export const Core3D = {
 
       this.shadowShaftsPass.material.uniforms.uOcclusionMap.value = occlusionTexture;
 
-      // PRZYWRÓCONA: Matematyka płaskich cieni kierunkowych z symulacji 
       const sun = typeof window !== 'undefined' ? window.SUN : null;
-      let dirX = 0.0;
-      let dirY = 1.0;
-
       if (sun) {
-        // Szukamy wektora od kamery 2D w stronę słońca. (Canvas Y jest odwrócony względem Three.js Y)
-        dirX = sun.x - this.cameraOrtho.position.x;
-        dirY = (-sun.y) - this.cameraOrtho.position.y;
+        const cam1 = this.activeCam1 || { x: 0, y: 0 };
+        const cam2 = this.activeCam2 || cam1;
+
+        if (isSplit) {
+            const dirX1 = sun.x - cam1.x;
+            const dirY1 = (-sun.y) - (-cam1.y);
+            const dirX2 = sun.x - cam2.x;
+            const dirY2 = (-sun.y) - (-cam2.y);
+            this.shadowShaftsPass.material.uniforms.uSplitScreen.value = 1;
+            this.shadowShaftsPass.material.uniforms.uSunDirection.value.set(dirX1, dirY1);
+            this.shadowShaftsPass.material.uniforms.uSunDirection2.value.set(dirX2, dirY2);
+        } else {
+            const dirX = sun.x - cam1.x;
+            const dirY = (-sun.y) - (-cam1.y);
+            this.shadowShaftsPass.material.uniforms.uSplitScreen.value = 0;
+            this.shadowShaftsPass.material.uniforms.uSunDirection.value.set(dirX, dirY);
+        }
       }
 
-      this.shadowShaftsPass.material.uniforms.uSunDirection.value.set(dirX, dirY);
       this.shadowShaftsPass.material.uniforms.uAspectRatio.value = this.width / this.height;
       this.shadowShaftsPass.material.uniforms.uOverscan.value = OVERSCAN;
-
       const worldHeight = Math.abs(origTop - origBottom);
       const desiredWorldShadowLength = 20000.0;
       const minUvLength = 0.15;
@@ -682,49 +652,87 @@ export const Core3D = {
     this.composer.render();
   },
 
+  renderSingle(gameCamera = null) {
+    if (!this.isInitialized) return;
+    const prevCam1 = this.activeCam1;
+    const prevCam2 = this.activeCam2;
+    if (gameCamera) this.activeCam1 = gameCamera;
+    this.activeCam2 = null;
+    this.render();
+    this.activeCam1 = prevCam1;
+    this.activeCam2 = prevCam2;
+  },
+
+  renderSplitScreen(cam1 = null, cam2 = null) {
+    if (!this.isInitialized) return;
+    const prevCam1 = this.activeCam1;
+    const prevCam2 = this.activeCam2;
+    if (cam1) this.activeCam1 = cam1;
+    if (cam2) this.activeCam2 = cam2;
+    this.render();
+    this.activeCam1 = prevCam1;
+    this.activeCam2 = prevCam2;
+  },
+
   beginHeatHazeFrame() { this.heatHazeCount = 0; },
-  beginGodRaysFrame() { },
+  
   pushHeatHazeWorld(worldX, worldY, worldZ = -4, radiusWorld = 80, strength = 1.0) {
     if (!this.isInitialized || !this.heatHazeSources || !this.cameraOrtho) return false;
     if ((this.perfToggles?.heatHaze) === false) return false;
-    const maxSources = this.heatHazeMaxSources | 0;
-    if (this.heatHazeCount >= maxSources) return false;
 
-    const x = Number(worldX);
-    const y = Number(worldY);
-    const z = Number(worldZ);
-    const radius = Math.max(1e-4, Number(radiusWorld) || 0);
-    const amp = Math.max(0.0, Math.min(4.0, Number(strength) || 0));
-    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !Number.isFinite(radius) || !Number.isFinite(amp)) return false;
-    if (amp <= 0.0001) return false;
+    const doPush = (u, v, rUv, amp) => {
+        if (u < -rUv || u > 1.0 + rUv || v < -rUv || v > 1.0 + rUv) return;
+        const maxSources = this.heatHazeMaxSources | 0;
+        if (this.heatHazeCount >= maxSources) return;
+        const outBase = this.heatHazeCount * 4;
+        this.heatHazeSources[outBase + 0] = u;
+        this.heatHazeSources[outBase + 1] = v;
+        this.heatHazeSources[outBase + 2] = rUv;
+        this.heatHazeSources[outBase + 3] = amp;
+        this.heatHazeCount++;
+    };
 
-    const cam = this.cameraOrtho;
-    const left = cam.position.x + cam.left;
-    const right = cam.position.x + cam.right;
-    const bottom = cam.position.y + cam.bottom;
-    const top = cam.position.y + cam.top;
-    const worldW = Math.max(1e-4, right - left);
-    const worldH = Math.max(1e-4, top - bottom);
+    const mapToCamera = (camData, isSplit, isRightSide) => {
+        const zoom = Math.max(0.0001, camData.zoom || 1);
+        const camW = isSplit ? this.width / 2 : this.width;
+        const camH = this.height;
+        const halfW = camW / 2 / zoom;
+        const halfH = camH / 2 / zoom;
+        
+        const left = camData.x - halfW;
+        const bottom = -(camData.y) - halfH;
+        
+        const worldW = halfW * 2;
+        const worldH = halfH * 2;
+        
+        let u = (worldX - left) / worldW;
+        const v = (worldY - bottom) / worldH;
+        const rUv = radiusWorld / Math.min(worldW, worldH);
+        
+        const zoomNow = Math.max(0.0001, camW / worldW);
+        const ampZoomScale = Math.max(0.22, Math.min(1.0, zoomNow));
+        const ampScaled = strength * ampZoomScale;
+        
+        if (isSplit) {
+            u = isRightSide ? (u * 0.5 + 0.5) : (u * 0.5);
+            doPush(u, v, rUv * 0.5, ampScaled); 
+        } else {
+            doPush(u, v, rUv, ampScaled);
+        }
+    };
 
-    const u = (x - left) / worldW;
-    const v = (y - bottom) / worldH;
-    const rUv = radius / Math.min(worldW, worldH);
-    const zoomNow = Math.max(0.0001, this.width / worldW);
-    const ampZoomScale = Math.max(0.22, Math.min(1.0, zoomNow));
-    const ampScaled = amp * ampZoomScale;
-
-    if (u < -rUv || u > 1.0 + rUv || v < -rUv || v > 1.0 + rUv) return false;
-
-    const outBase = this.heatHazeCount * 4;
-    this.heatHazeSources[outBase + 0] = u;
-    this.heatHazeSources[outBase + 1] = v;
-    this.heatHazeSources[outBase + 2] = rUv;
-    this.heatHazeSources[outBase + 3] = ampScaled;
-    this.heatHazeCount++;
+    const isSplit = typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2;
+    if (isSplit) {
+        mapToCamera(this.activeCam1, true, false);
+        mapToCamera(this.activeCam2, true, true);
+    } else {
+        mapToCamera(this.activeCam1, false, false);
+    }
+    
     return true;
   },
-  pushGodRayWorld() { },
 
+  pushGodRayWorld() { },
   setShadowCatchersDebug(enabled = true) { },
   toggleShadowCatchersDebug() { }
 };

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="120" viewBox="0 0 180 120">
+  <defs>
+    <linearGradient id="torp-body" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#cc3333" />
+      <stop offset="50%" stop-color="#882222" />
+      <stop offset="100%" stop-color="#551111" />
+    </linearGradient>
+    <linearGradient id="torp-engine" x1="100%" y1="50%" x2="0%" y2="50%">
+      <stop offset="0%" stop-color="#ff8844" />
+      <stop offset="100%" stop-color="#ff4400" />
+    </linearGradient>
+  </defs>
+  <!-- Torpedo body -->
+  <rect x="30" y="44" width="110" height="32" rx="16" fill="url(#torp-body)" stroke="#2a0808" stroke-width="3" />
+  <!-- Nose cone -->
+  <path d="M138 48 L162 60 L138 72 Z" fill="#aa2222" stroke="#2a0808" stroke-width="2" />
+  <!-- Warhead band -->
+  <rect x="122" y="42" width="6" height="36" rx="1" fill="#ffcc44" opacity="0.7" />
+  <!-- Engine nozzle -->
+  <rect x="18" y="50" width="16" height="20" rx="4" fill="#333" stroke="#2a0808" stroke-width="2" />
+  <!-- Engine glow -->
+  <ellipse cx="14" cy="60" rx="10" ry="8" fill="url(#torp-engine)" opacity="0.6" />
+  <!-- Guidance fins -->
+  <path d="M36 44 L28 30 L40 30 Z" fill="#662222" stroke="#2a0808" stroke-width="1.5" />
+  <path d="M36 76 L28 90 L40 90 Z" fill="#662222" stroke="#2a0808" stroke-width="1.5" />
+  <!-- Seeker window -->
+  <circle cx="152" cy="60" r="4" fill="#ff4444" opacity="0.6" />
+  <!-- Body detail lines -->
+  <rect x="60" y="42" width="2" height="36" rx="1" fill="#440e0e" opacity="0.5" />
+  <rect x="90" y="42" width="2" height="36" rx="1" fill="#440e0e" opacity="0.5" />
+</svg>

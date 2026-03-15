@@ -30,6 +30,33 @@ function drawStorageIcon(ctx, color, label) {
   ctx.restore();
 }
 
+function drawSensorIcon(ctx) {
+  ctx.save();
+  // Dish base
+  ctx.fillStyle = 'rgba(10,16,34,0.9)';
+  ctx.strokeStyle = '#14b8a6'; ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(0, 0, 20, Math.PI * 0.8, Math.PI * 0.2, true);
+  ctx.lineTo(6, 8);
+  ctx.lineTo(-6, 8);
+  ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  // Antenna
+  ctx.strokeStyle = '#5eead4'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, -18); ctx.lineTo(0, -28); ctx.stroke();
+  // Signal waves
+  ctx.lineWidth = 1.5;
+  for (let i = 0; i < 3; i++) {
+    const r = 10 + i * 8;
+    ctx.globalAlpha = 0.7 - i * 0.2;
+    ctx.strokeStyle = '#14b8a6';
+    ctx.beginPath();
+    ctx.arc(0, -28, r, -Math.PI * 0.4, Math.PI * 0.4);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawGenericIcon(ctx) {
   ctx.save();
   ctx.fillStyle = 'rgba(56,80,160,0.9)';
@@ -81,6 +108,9 @@ export function drawInfrastructureIcon(ctx, building, center, size, alpha = 1, i
       break;
     case 'storage':
       drawStorageIcon(ctx, building.color, building.label);
+      break;
+    case 'sensor':
+      drawSensorIcon(ctx);
       break;
     default:
       if (building.icon === 'shipyard') {

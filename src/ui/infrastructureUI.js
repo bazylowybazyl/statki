@@ -19,7 +19,8 @@ const INFRASTRUCTURE_BUILDINGS = [
   { id: 'metal_harvester', name: 'Metal Harvester', buildTime: 95, icon: 'metal_harvester', footprint: { w: 4, h: 4 }, allowedPlanetTypes: ['rocky'] },
   { id: 'metal_refinery', name: 'Metal Refinery', buildTime: 125, icon: 'metal_refinery', footprint: { w: 4, h: 4 }, allowedPlanetTypes: ['rocky'] },
   { id: 'gas_harvester', name: 'Gas Harvester', buildTime: 110, icon: 'gas_harvester', footprint: { w: 4, h: 4 }, requiresSolarSystem: true, allowedPlanetTypes: ['gas'] },
-  { id: 'gas_refinery', name: 'Gas Refinery', buildTime: 140, icon: 'gas_refinery', footprint: { w: 4, h: 4 }, requiresSolarSystem: true, allowedPlanetTypes: ['gas'] }
+  { id: 'gas_refinery', name: 'Gas Refinery', buildTime: 140, icon: 'gas_refinery', footprint: { w: 4, h: 4 }, requiresSolarSystem: true, allowedPlanetTypes: ['gas'] },
+  { id: 'sensor_station', name: 'Stacja Sensorowa', buildTime: 95, icon: 'sensor', footprint: { w: 3, h: 3 } }
 ];
 const ECONOMY_RESOURCES = {
   gas: { label: 'Gaz' },
@@ -1605,4 +1606,5 @@ export const InfrastructureUI = {
   setVisible: setInfrastructureUIVisible,
   hasBuildings: infrastructureHasBuildings,
   ensureEconomy: ensureStationEconomy,
+  getStationKey: getInfrastructureStationKey,
 };

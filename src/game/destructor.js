@@ -1,4 +1,4 @@
-/**
+﻿/**
 
  * Hybrid hex destruction engine ported from
 
@@ -10,61 +10,61 @@ import { DestructorGpuSoftBody } from './destructorGpuSoftBody.js';
 
 export const DESTRUCTOR_CONFIG = {
 
-  // ── Siatka hexagonalna ──
-  gridDivisions: 10,            // Promień hexagonu (px). HEX_SPACING = 13.5, HEX_HEIGHT = 15.6
-  shardMass: 10.0,             // Masa jednego sharda. Masa wraku = shards × shardMass
-  visualRotationOffset: 0,     // Stały offset kąta renderowania siatki (rad)
+  // â”€â”€ Siatka hexagonalna â”€â”€
+  gridDivisions: 8,            // PromieĹ„ hexagonu (px). HEX_SPACING = 13.5, HEX_HEIGHT = 15.6
+  shardMass: 10.0,             // Masa jednego sharda. Masa wraku = shards Ă— shardMass
+  visualRotationOffset: 0,     // StaĹ‚y offset kÄ…ta renderowania siatki (rad)
 
-  // ── HP i obrażenia ──
-  shardHP: 100,                // Startowe HP sharda. Ginie przy hp ≤ 0
-  armorThreshold: 0.8,         // Próg hp/maxHp do wyświetlania tekstury pancerza
-  inflictedDamageMult: 1.0,    // Mnożnik zadawanych obrażeń (legacy)
+  // â”€â”€ HP i obraĹĽenia â”€â”€
+  shardHP: 80,                // Startowe HP sharda. Ginie przy hp â‰¤ 0
+  armorThreshold: 0.8,         // PrĂłg hp/maxHp do wyĹ›wietlania tekstury pancerza
+  inflictedDamageMult: 1.0,    // MnoĹĽnik zadawanych obraĹĽeĹ„ (legacy)
 
-  // ── Deformacja i rwanie materiału ──
-  maxDeform: 220.0,            // Max deformacja (px)
-  tearThreshold: 150.0,        // Rwanie od rozciągnięcia sąsiadów
-  yieldPoint: 200.0,           // Punkt wejścia w trwałe odkształcenie
-  deformMul: 0.6,              // Mnożnik siły deformacji od impaktu/broni
-  bendingRadius: 30.0,        // Promień wpływu uderzenia (px) z gładką krzywą Hermite'a
+  // â”€â”€ Deformacja i rwanie materiaĹ‚u â”€â”€
+  maxDeform: 50.0,            // Max deformacja (px)
+  tearThreshold: 40.0,        // Rwanie od rozciÄ…gniÄ™cia sÄ…siadĂłw
+  yieldPoint: 200.0,           // Punkt wejĹ›cia w trwaĹ‚e odksztaĹ‚cenie
+  deformMul: 0.6,              // MnoĹĽnik siĹ‚y deformacji od impaktu/broni
+  bendingRadius: 30.0,        // PromieĹ„ wpĹ‚ywu uderzenia (px) z gĹ‚adkÄ… krzywÄ… Hermite'a
 
-  // ── Soft Body (sprężyny GPU + CPU) ──
+  // â”€â”€ Soft Body (sprÄ™ĹĽyny GPU + CPU) â”€â”€
   softBodyTension: 0.15,       // Propagacja k
-  gpuPropagationDamping: 0.92, // Tłumienie propagacji
-  recoverSpeed: 1.0,           // Prędkość powrotu targetDeformation do 0 (repair)
-  repairRate: 100,             // Regeneracja HP sharda per sekundę
-  visualLerpSpeed: 5.0,        // Lerp wizualny deformation → targetDeformation
+  gpuPropagationDamping: 0.92, // TĹ‚umienie propagacji
+  recoverSpeed: 1.0,           // PrÄ™dkoĹ›Ä‡ powrotu targetDeformation do 0 (repair)
+  repairRate: 100,             // Regeneracja HP sharda per sekundÄ™
+  visualLerpSpeed: 12.0,       // Lerp wizualny deformation â†’ targetDeformation
 
-  // ── Sleep / Wake ──
-  elasticSleepFrames: 60,      // Klatki ciszy zanim grid zasypia (brak symulacji)
-  elasticSleepThreshold: 0.08, // Peak deformacja poniżej której grid zaczyna zasypiać
+  // â”€â”€ Sleep / Wake â”€â”€
+  elasticSleepFrames: 30,      // Klatki ciszy zanim grid zasypia (brak symulacji)
+  elasticSleepThreshold: 0.15, // Peak deformacja poniĹĽej ktĂłrej grid zaczyna zasypiaÄ‡
   elasticWakeFrames: 20,       // Force-awake po uderzeniu (zapobiega przedwczesnemu zasypianiu)
 
-  // ── Fizyka kolizji (rigid body) ──
-  restitution: 0.05,                  // Sprężystość odbicia (0.05 = prawie brak). Przy crush → 0
-  crashApproachSpeedThreshold: 200.0, // Prędkość zbliżania do aktywacji crush (niszczenie hexów)
+  // â”€â”€ Fizyka kolizji (rigid body) â”€â”€
+  restitution: 0.05,                  // SprÄ™ĹĽystoĹ›Ä‡ odbicia (0.05 = prawie brak). Przy crush â†’ 0
+  crashApproachSpeedThreshold: 200.0, // PrÄ™dkoĹ›Ä‡ zbliĹĽania do aktywacji crush (niszczenie hexĂłw)
   crushPenetrationMin: 0.30,          // Min. penetracja do startu crush
-  crushImpulseScale: 0.45,            // Skala impulsu niszczącego hexsy
-  shearK: 0.06,                       // Ścinanie tangentne przy otarciu (szlifowanie burt)
-  friction: 0.99,                     // Tarcie odłamków (debris). vel × 0.99/klatkę
+  crushImpulseScale: 0.45,            // Skala impulsu niszczÄ…cego hexsy
+  shearK: 0.06,                       // Ĺšcinanie tangentne przy otarciu (szlifowanie burt)
+  friction: 0.99,                     // Tarcie odĹ‚amkĂłw (debris). vel Ă— 0.99/klatkÄ™
 
-  // ── Detekcja kolizji ──
-  collisionDeformScale: 1.0,  // Wpływ deformacji na pozycję w kolizjach (1.0 = pełne)
-  collisionSearchRadius: 5,   // Promień szukania hex sąsiadów w siatce
-  collisionIterations: 1,     // Ile razy per klatkę rozwiązywać kolizje. Damage tylko w 1. iteracji
-  broadphaseCellSize: 2400,   // Rozmiar komórki broadphase hash grid
-  broadphaseMaxCandidates: 256, // Twardy limit kandydatów broadphase na zapytanie
-  ringBroadphaseRadiusCap: 1800, // Limit promienia broadphase dla segmentów ringu
+  // â”€â”€ Detekcja kolizji â”€â”€
+  collisionDeformScale: 1.0,  // WpĹ‚yw deformacji na pozycjÄ™ w kolizjach (1.0 = peĹ‚ne)
+  collisionSearchRadius: 5,   // PromieĹ„ szukania hex sÄ…siadĂłw w siatce
+  collisionIterations: 1,     // Ile razy per klatkÄ™ rozwiÄ…zywaÄ‡ kolizje. Damage tylko w 1. iteracji
+  broadphaseCellSize: 2400,   // Rozmiar komĂłrki broadphase hash grid
+  broadphaseMaxCandidates: 256, // Twardy limit kandydatĂłw broadphase na zapytanie
+  ringBroadphaseRadiusCap: 1800, // Limit promienia broadphase dla segmentĂłw ringu
 
-  // ── Splitting (rozdzielanie wysp) ──
-  splitForceThreshold: 50,    // Min. siła uderzenia do kolejkowania splitu
-  splitDamageThreshold: 200,  // Próg obrażeń w applyImpact → wymuszenie split check
-  splitCheckInterval: 10,     // Co ile klatek przetwarzać kolejkę splitów
-  splitMaxPerTick: 2,         // Max splitów per tick
-  splitTimeBudgetMs: 1.2,     // Budżet ms per tick na processing splitów
+  // â”€â”€ Splitting (rozdzielanie wysp) â”€â”€
+  splitForceThreshold: 50,    // Min. siĹ‚a uderzenia do kolejkowania splitu
+  splitDamageThreshold: 200,  // PrĂłg obraĹĽeĹ„ w applyImpact â†’ wymuszenie split check
+  splitCheckInterval: 10,     // Co ile klatek przetwarzaÄ‡ kolejkÄ™ splitĂłw
+  splitMaxPerTick: 2,         // Max splitĂłw per tick
+  splitTimeBudgetMs: 1.2,     // BudĹĽet ms per tick na processing splitĂłw
 
-  // ── GPU Soft Body ──
-  gpuSoftBody: 1,             // Włącznik GPU soft body (1 = on, 0 = CPU only)
-  gpuSoftBodyMinShards: 64    // Min. shardów do GPU — poniżej → CPU elasticity
+  // â”€â”€ GPU Soft Body â”€â”€
+  gpuSoftBody: 1,             // WĹ‚Ä…cznik GPU soft body (1 = on, 0 = CPU only)
+  gpuSoftBodyMinShards: 64    // Min. shardĂłw do GPU â€” poniĹĽej â†’ CPU elasticity
 };
 
 
@@ -101,6 +101,13 @@ const HEX_MASK_VERTEX_DIRS = [
 ];
 
 const HEX_MASK_RAY_STEPS = [0.18, 0.34, 0.52, 0.70, 0.88, 1.04];
+
+const WRECK_FULL_COLLISION_TIME = 2.5;
+const WRECK_SLEEP_LINEAR_SPEED = 22.0;
+const WRECK_SLEEP_ANGULAR_SPEED = 0.03;
+const WRECK_SLEEP_SETTLE_TIME = 1.4;
+const WRECK_WAKE_REL_SPEED = 70.0;
+const WRECK_WAKE_OVERLAP_PAD = HEX_SPACING * 1.5;
 
 function sampleHexMaskProfile(alphaData, width, height, centerX, centerY, radius, alphaThreshold, sampleThreshold) {
 
@@ -906,6 +913,10 @@ class HexShard {
 
     this.gridY = gridY;
 
+    this.origGridX = gridX;
+
+    this.origGridY = gridY;
+
     this.radius = radius;
 
     this.c = c;
@@ -1026,7 +1037,7 @@ class HexShard {
 
 
 
-  applyDeformation(vecX, vecY, waveMult = 1.0) {
+  applyDeformation(vecX, vecY, waveMult = 1.0, bypassLimit = false) {
 
     const MAX_INSTANT = 8.0;
 
@@ -1036,7 +1047,7 @@ class HexShard {
 
 
 
-    if (magSq > MAX_INSTANT * MAX_INSTANT) {
+    if (!bypassLimit && magSq > MAX_INSTANT * MAX_INSTANT) {
 
       const mag = Math.sqrt(magSq);
 
@@ -1058,7 +1069,7 @@ class HexShard {
 
 
 
-    // Collision velocity goes to __collVelX — survives GPU _applyResult overwrite.
+    // Collision velocity goes to __collVelX â€” survives GPU _applyResult overwrite.
 
     // Weapon velocity (distributeStructuralDamage) stays on __velX and gets damped by GPU.
 
@@ -1144,9 +1155,13 @@ class HexShard {
 
     this.isDebris = true;
 
-    this.active = true;
+    this.active = false;
 
-    DestructorSystem.debris.push(this);
+    if (typeof window !== 'undefined' && window.spawnGpuDebris) {
+
+      window.spawnGpuDebris(this, parentEntity.hexGrid, this.worldX, this.worldY, this.dvx, this.dvy, this.drot, this.angle, scale);
+
+    }
 
     if (parentEntity.mass) {
 
@@ -1206,9 +1221,9 @@ class HexShard {
 
     ctx.clip();
 
-    if (this.damagedImg) ctx.drawImage(this.damagedImg, -this.gridX, -this.gridY);
+    if (this.damagedImg) ctx.drawImage(this.damagedImg, -this.origGridX, -this.origGridY);
 
-    else if (this.img) ctx.drawImage(this.img, -this.gridX, -this.gridY);
+    else if (this.img) ctx.drawImage(this.img, -this.origGridX, -this.origGridY);
 
     else {
 
@@ -1244,7 +1259,7 @@ class HexShard {
 
     } else {
 
-      if (this.damagedImg) ctx.drawImage(this.damagedImg, -this.gridX, -this.gridY);
+      if (this.damagedImg) ctx.drawImage(this.damagedImg, -this.origGridX, -this.origGridY);
 
       else {
 
@@ -1268,7 +1283,7 @@ class HexShard {
 
           ctx.globalAlpha = armorAlpha;
 
-          ctx.drawImage(this.img, -this.gridX, -this.gridY);
+          ctx.drawImage(this.img, -this.origGridX, -this.origGridY);
 
           ctx.globalAlpha = 1;
 
@@ -1616,6 +1631,18 @@ export const DestructorSystem = {
 
 
 
+  wakeWreck(wreck) {
+
+    if (!wreck?.isWreck) return;
+
+    wreck._wreckSleeping = false;
+
+    wreck._wreckSleepTimer = 0;
+
+  },
+
+
+
   _prepareBroadphase(entities) {
 
     const dbgEnabled = this._liveCollisionDebug?.enabled === true;
@@ -1682,13 +1709,12 @@ export const DestructorSystem = {
 
 
 
-      // DODANO: Rozszerzamy broadphase o predkosc, zeby nie gubic statkow w locie!
-
+      // Rozszerzamy broadphase o predkosc â€” cap do 1 cellSize, swept collision ogarnia resztÄ™
       const vx = getEntityVelX(ent) * (1 / 60);
-
       const vy = getEntityVelY(ent) * (1 / 60);
-
-      const speedExtension = Math.min(180, Math.sqrt(vx * vx + vy * vy));
+      const rawSpeed = Math.sqrt(vx * vx + vy * vy);
+      const speedExtension = Math.min(rawSpeed, cellSize);
+      ent._frameSpeed = rawSpeed; // cache for swept collision
 
 
 
@@ -1966,22 +1992,6 @@ export const DestructorSystem = {
 
     const step = Number.isFinite(dt) ? Math.max(0.0001, dt) : (1 / 120);
 
-    for (let i = this.debris.length - 1; i >= 0; i--) {
-
-      const d = this.debris[i];
-
-      d.updateDebris(step);
-
-      if (!d.active) {
-
-        this.debris[i] = this.debris[this.debris.length - 1];
-
-        this.debris.pop();
-
-      }
-
-    }
-
     this._tick++;
 
     const tDeform0 = nowMs();
@@ -2057,103 +2067,58 @@ export const DestructorSystem = {
 
 
   updateVisualDeformation(entities, dt) {
-
     const sleepFramesLimit = Math.max(1, DESTRUCTOR_CONFIG.elasticSleepFrames | 0);
-
     const sleepThreshold = Math.max(0.0001, Number(DESTRUCTOR_CONFIG.elasticSleepThreshold) || 0.08);
-
     for (const e of entities) {
-
       const grid = e?.hexGrid;
-
       if (!grid?.shards) continue;
-
       if ((Number(grid.wakeHoldFrames) || 0) > 0) grid.wakeHoldFrames -= 1;
-
       if (grid.isSleeping && (Number(grid.wakeHoldFrames) || 0) <= 0) continue;
-
-
-
       let moving = false;
-
       let peakDeformation = 0;
-
       let dirtyMin = Number.POSITIVE_INFINITY;
-
       let dirtyMax = -1;
-
       const shards = grid.shards;
-
-      for (let i = 0; i < shards.length; i++) {
-
+      const len = shards.length;
+      for (let i = 0; i < len; i++) {
         const s = shards[i];
-
         if (!s.active || s.isDebris) continue;
-
-        const amp = Math.max(
-
-          Math.abs(s.targetDeformation.x),
-
-          Math.abs(s.targetDeformation.y),
-
-          Math.abs(s.deformation.x),
-
-          Math.abs(s.deformation.y)
-
-        );
-
-        if (amp > peakDeformation) peakDeformation = amp;
-
-        if (s.updateAnimation(dt)) {
-
+        const tdx = s.targetDeformation.x;
+        const tdy = s.targetDeformation.y;
+        const dx = s.deformation.x;
+        const dy = s.deformation.y;
+        const diffX = tdx - dx;
+        const diffY = tdy - dy;
+        const absDiffX = diffX < 0 ? -diffX : diffX;
+        const absDiffY = diffY < 0 ? -diffY : diffY;
+        const localPeak = absDiffX > absDiffY ? absDiffX : absDiffY;
+        if (localPeak > peakDeformation) peakDeformation = localPeak;
+        if (absDiffX > 0.15 || absDiffY > 0.15) {
+          s.deformation.x += diffX * (DESTRUCTOR_CONFIG.visualLerpSpeed * dt);
+          s.deformation.y += diffY * (DESTRUCTOR_CONFIG.visualLerpSpeed * dt);
           moving = true;
-
           if (i < dirtyMin) dirtyMin = i;
-
           if (i > dirtyMax) dirtyMax = i;
-
         }
-
       }
-
       if (moving) {
-
         if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) markGridMeshDirtyRange(grid, dirtyMin, dirtyMax);
-
         else markGridMeshDirtyAll(grid);
-
         grid.sleepFrames = 0;
-
         grid.isSleeping = false;
-
         continue;
-
       }
-
-
-
-      if (peakDeformation <= sleepThreshold && (Number(grid.wakeHoldFrames) || 0) <= 0) {
-
+      const gpuAwake = (Number(e._gpuForceAwakeFrames) || 0) > 0;
+      if (!gpuAwake && peakDeformation <= sleepThreshold && (Number(grid.wakeHoldFrames) || 0) <= 0) {
         const frames = (Number(grid.sleepFrames) || 0) + 1;
-
         grid.sleepFrames = frames;
-
         if (frames >= sleepFramesLimit) grid.isSleeping = true;
-
       } else {
-
         grid.sleepFrames = 0;
-
         grid.isSleeping = false;
-
       }
-
     }
-
   },
-
-
-
   simulateElasticity(entities, dt) {
 
     const dbgEnabled = this._liveCollisionDebug?.enabled === true;
@@ -2192,6 +2157,12 @@ export const DestructorSystem = {
 
         const shardCount = grid.shards.length;
 
+        if (shardCount > 500) {
+
+          continue;
+
+        }
+
         if (useGpu && DestructorGpuSoftBody && DestructorGpuSoftBody.active && shardCount >= gpuMin) {
 
           continue; // This ship is currently simulated asynchronously on GPU.
@@ -2216,15 +2187,23 @@ export const DestructorSystem = {
 
           if (!s.active || s.isDebris) continue;
 
+          const ax = s.targetDeformation.x;
+
+          const ay = s.targetDeformation.y;
+
+          const defSq = ax * ax + ay * ay;
+
+          const isResting = defSq < 0.01;
+
 
 
           // True plasticity baking: once yield is exceeded, commit part of the offset to base grid.
 
           const yieldP = DESTRUCTOR_CONFIG.yieldPoint || 80;
 
-          const tdx = s.targetDeformation.x;
+          const tdx = ax;
 
-          const tdy = s.targetDeformation.y;
+          const tdy = ay;
 
           const defLen = Math.sqrt(tdx * tdx + tdy * tdy);
 
@@ -2282,13 +2261,11 @@ export const DestructorSystem = {
 
 
 
-            const ax = s.targetDeformation.x;
-
-            const ay = s.targetDeformation.y;
-
             const bx = n.targetDeformation.x;
 
             const by = n.targetDeformation.y;
+
+            if (isResting && bx * bx + by * by < 0.01) continue;
 
 
 
@@ -2811,7 +2788,7 @@ export const DestructorSystem = {
 
 
 
-            // FAZA 2: Wstrzykiwanie kinetyki do GPU (Zgniatanie + Wybąblenie)
+            // FAZA 2: Wstrzykiwanie kinetyki do GPU (Zgniatanie + WybÄ…blenie)
             const dist = Math.sqrt(d2);
             let radialX = 0, radialY = 0;
 
@@ -2821,25 +2798,27 @@ export const DestructorSystem = {
               radialY = dy / dist;
             }
 
-            // Główna siła wpychająca w głąb (kierunek pocisku)
+            // GĹ‚Ăłwna siĹ‚a wpychajÄ…ca w gĹ‚Ä…b (kierunek pocisku)
             const pushX = forceX * influence * deformMul;
             const pushY = forceY * influence * deformMul;
 
-            // Siła wybąblająca (rozpychanie na boki wokół krateru)
-            // influence maleje do zewnątrz, (1 - factor) rośnie do zewnątrz.
-            // Razem tworzą "oponkę" (największe rozpychanie jest w połowie krateru)
+            // SiĹ‚a wybÄ…blajÄ…ca (rozpychanie na boki wokĂłĹ‚ krateru)
+            // influence maleje do zewnÄ…trz, (1 - factor) roĹ›nie do zewnÄ…trz.
+            // Razem tworzÄ… "oponkÄ™" (najwiÄ™ksze rozpychanie jest w poĹ‚owie krateru)
             const bulgeFactor = influence * (1.0 - factor) * 2.5;
             const bulgeX = radialX * forceMag * bulgeFactor * deformMul;
             const bulgeY = radialY * forceMag * bulgeFactor * deformMul;
 
-            // Łączymy wgniecenie i rozpychanie
+            // ĹÄ…czymy wgniecenie i rozpychanie
             const appliedDefX = pushX + bulgeX;
             const appliedDefY = pushY + bulgeY;
+
+            entity._gpuForceAwakeFrames = 30;
 
 
 
             // Weapons: small local dent, no hull-wide wave.
-            // Direct targetDeformation (no applyDeformation — that injects __collVelX for collisions).
+            // Direct targetDeformation (no applyDeformation â€” that injects __collVelX for collisions).
             shard.targetDeformation.x += appliedDefX * 0.15;
             shard.targetDeformation.y += appliedDefY * 0.15;
 
@@ -2965,6 +2944,8 @@ export const DestructorSystem = {
 
         if (!A?._hasActiveHex) continue;
 
+        if (A.isWreck && A._wreckSleeping) continue;
+
         if (A.isRingSegment) continue;
 
         const ax = getEntityPosX(A);
@@ -2981,9 +2962,10 @@ export const DestructorSystem = {
 
         if (A.hexGrid?.isSleeping && speedAMag < 0.5 && Math.abs(getEntityAngVel(A)) < 0.01) continue;
 
-        const speedA = Math.min(180, speedAMag * (1 / 60));
-
-        const queryCount = this._queryBroadphase(ax, ay, Math.max(80, ar));
+        const speedA = speedAMag * (1 / 60);
+        // Query uses capped speed â€” swept collision handles the rest
+        const querySpeedA = Math.min(speedA, ar * 2);
+        const queryCount = this._queryBroadphase(ax, ay, Math.max(80, ar + querySpeedA));
 
         let queryStamp = (this._bpQueryStamp + 1) | 0;
 
@@ -3035,18 +3017,64 @@ export const DestructorSystem = {
 
           const speedBMag = Math.sqrt(velBx * velBx + velBy * velBy);
 
-          const speedB = Math.min(180, speedBMag * (1 / 60));
+          const relVx = velAx - velBx;
+
+          const relVy = velAy - velBy;
+
+          const relSpeedSq = relVx * relVx + relVy * relVy;
+
+          const aIsWreck = !!A.isWreck;
+
+          const bIsWreck = !!B.isWreck;
+
+          const speedB = speedBMag * (1 / 60);
 
           const br = Number(B?._bpRadius) || 100;
 
-          const rs = ar + br + speedA + speedB;
+          // Cap speed contribution for distance check â€” swept collision handles high-speed
+          const cappedSpeedA = Math.min(speedA, ar * 2);
+          const cappedSpeedB = Math.min(speedB, br * 2);
+          const rs = ar + br + cappedSpeedA + cappedSpeedB;
 
           if (dx * dx + dy * dy > rs * rs) continue;
+
+          if (bIsWreck && B._wreckSleeping) {
+            const wakeRadius = rs + WRECK_WAKE_OVERLAP_PAD;
+            const overlapWake = (dx * dx + dy * dy) <= (wakeRadius * wakeRadius);
+            if (relSpeedSq >= (WRECK_WAKE_REL_SPEED * WRECK_WAKE_REL_SPEED) || (!aIsWreck && overlapWake)) {
+              this.wakeWreck(B);
+            } else {
+              continue;
+            }
+          }
+
+          if (aIsWreck && B.isRingSegment) {
+            const aColdWreck = A._wreckSleeping || (
+              (Number(A._wreckAge) || 0) > WRECK_FULL_COLLISION_TIME &&
+              speedAMag < WRECK_WAKE_REL_SPEED &&
+              Math.abs(getEntityAngVel(A)) < (WRECK_SLEEP_ANGULAR_SPEED * 2.0)
+            );
+            if (aColdWreck) continue;
+          }
+
+          if (aIsWreck && bIsWreck) {
+            const aColdWreck = A._wreckSleeping || (
+              (Number(A._wreckAge) || 0) > WRECK_FULL_COLLISION_TIME &&
+              speedAMag < WRECK_WAKE_REL_SPEED &&
+              Math.abs(getEntityAngVel(A)) < (WRECK_SLEEP_ANGULAR_SPEED * 2.0)
+            );
+            const bColdWreck = B._wreckSleeping || (
+              (Number(B._wreckAge) || 0) > WRECK_FULL_COLLISION_TIME &&
+              speedBMag < WRECK_WAKE_REL_SPEED &&
+              Math.abs(getEntityAngVel(B)) < (WRECK_SLEEP_ANGULAR_SPEED * 2.0)
+            );
+            if (aColdWreck && bColdWreck) continue;
+          }
 
           if (B.isRingSegment && !circleOverlapsEntityRect(
             ax,
             ay,
-            ar + speedA + speedB,
+            ar + cappedSpeedA + cappedSpeedB,
             B,
             HEX_SPACING * 6.0
           )) continue;
@@ -3059,10 +3087,95 @@ export const DestructorSystem = {
 
           }
 
-          this.collideEntities(A, B, dt, doDamage);
+          // Swept collision: if closing speed is high relative to object sizes,
+          // substep along trajectory to prevent tunneling.
+          const closingSpeed = Math.sqrt(relVx * relVx + relVy * relVy) * dt;
+          const combinedRadius = ar + br;
+          const sweepRatio = combinedRadius > 1 ? closingSpeed / combinedRadius : 0;
+
+          if (sweepRatio > 1.5) {
+            // Need substeps â€” object moves more than 1.5x its combined radius per frame
+            const maxSubsteps = (ar > 300 || br > 300) ? 2 : 8;
+            const substeps = Math.min(maxSubsteps, Math.ceil(sweepRatio));
+            const subDt = dt / substeps;
+            // Save original positions
+            const origAx = getEntityPosX(A);
+            const origAy = getEntityPosY(A);
+            const origBx = getEntityPosX(B);
+            const origBy = getEntityPosY(B);
+            let hit = false;
+            for (let sub = 0; sub < substeps; sub++) {
+              // Interpolate positions along trajectory
+              const t = (sub + 0.5) / substeps;
+              const sweepAx = origAx - velAx * dt * (1 - t);
+              const sweepAy = origAy - velAy * dt * (1 - t);
+              const sweepBx = origBx - velBx * dt * (1 - t);
+              const sweepBy = origBy - velBy * dt * (1 - t);
+              const sdx = sweepAx - sweepBx;
+              const sdy = sweepAy - sweepBy;
+              if (sdx * sdx + sdy * sdy < (ar + br) * (ar + br)) {
+                // Temporarily set positions for collision
+                setEntityPos(A, sweepAx, sweepAy);
+                setEntityPos(B, sweepBx, sweepBy);
+                this.collideEntities(A, B, subDt, doDamage && !hit);
+                hit = true;
+              }
+            }
+            // Restore original positions (physics moves them after collision)
+            setEntityPos(A, origAx, origAy);
+            setEntityPos(B, origBx, origBy);
+          } else {
+            this.collideEntities(A, B, dt, doDamage);
+          }
 
         }
 
+      }
+
+      // === SWEPT PASS for very fast objects (speed > 3x radius per frame) ===
+      // These may have been missed by the capped broadphase query above
+      for (let i = 0; i < len; i++) {
+        const A = entities[i];
+        if (!A?.hexGrid || A.dead || A.isCollidable === false || !A._hasActiveHex) continue;
+        if (A.isRingSegment) continue;
+        const frameSpeed = A._frameSpeed || 0;
+        const ar = Number(A._bpRadius) || 100;
+        if (frameSpeed < ar * 3) continue; // only for ultra-fast objects
+
+        const ax = getEntityPosX(A);
+        const ay = getEntityPosY(A);
+        const velAx = getEntityVelX(A);
+        const velAy = getEntityVelY(A);
+
+        // Sample points along trajectory
+        const steps = Math.min(8, Math.ceil(frameSpeed / ar));
+        for (let s = 1; s <= steps; s++) {
+          const t = s / steps;
+          const sampleX = ax - velAx * dt * t;
+          const sampleY = ay - velAy * dt * t;
+          const qCount = this._queryBroadphase(sampleX, sampleY, ar * 2);
+          const cands = this._bpQueryBuffer;
+          for (let ci = 0; ci < qCount; ci++) {
+            const B = cands[ci];
+            if (!B?.hexGrid || B.dead || B === A || B.isCollidable === false) continue;
+            if (!B._hasActiveHex) continue;
+            const rootA = A.owner || A;
+            const rootB = B.owner || B;
+            if (rootA === rootB || rootA === B || rootB === A) continue;
+            const bx = getEntityPosX(B);
+            const by = getEntityPosY(B);
+            const br = Number(B._bpRadius) || 100;
+            const sdx = sampleX - bx;
+            const sdy = sampleY - by;
+            if (sdx * sdx + sdy * sdy < (ar + br) * (ar + br)) {
+              // Temporarily position A at sample point for collision
+              setEntityPos(A, sampleX, sampleY);
+              this.collideEntities(A, B, dt / steps, doDamage);
+              setEntityPos(A, ax, ay);
+              break; // one hit per sweep pass is enough
+            }
+          }
+        }
       }
 
     } finally {
@@ -3082,6 +3195,10 @@ export const DestructorSystem = {
     const tCollide0 = dbgEnabled ? nowMs() : 0;
 
     try {
+
+      if (A?.isWreck) this.wakeWreck(A);
+
+      if (B?.isWreck) this.wakeWreck(B);
 
       let iterator = A;
 
@@ -3159,14 +3276,6 @@ export const DestructorSystem = {
 
 
 
-      let minC = Infinity;
-
-      let maxC = -Infinity;
-
-      let minR = Infinity;
-
-      let maxR = -Infinity;
-
       const baseSearchR = DESTRUCTOR_CONFIG.collisionSearchRadius ?? 4;
 
       const isRingCollision = !!(A?.isRingSegment || B?.isRingSegment);
@@ -3176,12 +3285,6 @@ export const DestructorSystem = {
         ? Math.max(2, Math.min(3, baseSearchR | 0))
 
         : baseSearchR;
-
-
-
-      // --- POPRAWKA 1: Kompensacja prędkości (Tunelowanie) ---
-
-      // Obliczamy ile heksów statki pokonają w tej klatce i rozszerzamy poszukiwania
 
       const relVx = getEntityVelX(A) - getEntityVelX(B);
 
@@ -3194,267 +3297,86 @@ export const DestructorSystem = {
       const searchRCap = 8;
       searchR = Math.min(searchRCap, searchR + Math.min(3, speedHexes));
 
-
-
-      for (let k = 0; k < 4; k++) {
-
-        const sx = (k === 0 || k === 3) ? -iterRadius : iterRadius;
-
-        const sy = (k < 2) ? -iterRadius : iterRadius;
-
-        const wx = ix + sx;
-
-        const wy = iy + sy;
-
-        const dx = wx - gx;
-
-        const dy = wy - gy;
-
-        const hlx = (dx * cosG + dy * sinG) / scaleGrid;
-
-        const hly = (-dx * sinG + dy * cosG) / scaleGrid;
-
-        const c = Math.floor((hlx + cxG + pGx) / HEX_SPACING);
-
-        const r = Math.floor((hly + cyG + pGy) / HEX_HEIGHT);
-
-        if (c < minC) minC = c;
-
-        if (c > maxC) maxC = c;
-
-        if (r < minR) minR = r;
-
-        if (r > maxR) maxR = r;
-
-      }
-
-
-
-      const pad = searchR + 1;
-
-      minC -= pad;
-
-      maxC += pad;
-
-      minR -= pad;
-
-      maxR += pad;
-
-
-
-      const holderGrid = gridHolder.hexGrid.grid;
-
-      const iterGrid = iterator.hexGrid.grid;
-
-      const holderCols = gridHolder.hexGrid.cols || 0;
-
-      const holderRows = gridHolder.hexGrid.rows || 0;
-
-      const iterCols = iterator.hexGrid.cols || 0;
-
-      const iterRows = iterator.hexGrid.rows || 0;
-
-      if (!holderGrid || !iterGrid || holderCols <= 0 || holderRows <= 0 || iterCols <= 0 || iterRows <= 0) return;
-
-
-
-      if (minC < 0) minC = 0;
-
-      if (minR < 0) minR = 0;
-
-      if (maxC >= holderCols) maxC = holderCols - 1;
-
-      if (maxR >= holderRows) maxR = holderRows - 1;
-
-      if (minC > maxC || minR > maxR) return;
-
-
-
+            const cds = DESTRUCTOR_CONFIG.collisionDeformScale ?? 1.0;
       const contacts = this._contactsBuf;
-
-      // Cap contacts to prevent massive collision spikes
-
       const maxContacts = isRingCollision ? 192 : 128;
-
       let contactsCount = 0;
 
+      const holderGrid = gridHolder.hexGrid.grid;
+      const holderCols = gridHolder.hexGrid.cols || 0;
+      const holderRows = gridHolder.hexGrid.rows || 0;
+
+      const shardsIter = iterator.hexGrid.shards;
+      const lenIter = shardsIter.length;
       const offsets = getSearchOffsets(searchR);
 
-      const cds = DESTRUCTOR_CONFIG.collisionDeformScale ?? 1.0;
+      if (!holderGrid || holderCols <= 0 || holderRows <= 0 || lenIter <= 0) return;
 
+      for (let i = 0; i < lenIter; i++) {
+        const sI = shardsIter[i];
+        if (!sI || !sI.active || sI.isDebris) continue;
 
+        const relIx = (sI.gridX - cxI) + sI.deformation.x * cds - pIx;
+        const relIy = (sI.gridY - cyI) + sI.deformation.y * cds - pIy;
+        const worldIx = ix + (relIx * scaleIter) * cosI - (relIy * scaleIter) * sinI;
+        const worldIy = iy + (relIx * scaleIter) * sinI + (relIy * scaleIter) * cosI;
 
-      let cellIterations = 0;
+        const dx = worldIx - gx;
+        const dy = worldIy - gy;
+        const localGx = (dx * cosG + dy * sinG) / scaleGrid;
+        const localGy = (-dx * sinG + dy * cosG) / scaleGrid;
 
-      const maxCellIterations = isRingCollision ? 7000 : 12000;
+        const gridGx = localGx + cxG + pGx;
+        const gridGy = localGy + cyG + pGy;
 
-      let consecutiveZeroRows = 0;
+        const approxC = Math.round(gridGx / HEX_SPACING);
+        const approxR = Math.round(gridGy / HEX_HEIGHT);
 
-      let seenContactRow = false;
+        if (approxC < -searchR || approxC >= holderCols + searchR || approxR < -searchR || approxR >= holderRows + searchR) {
+          continue;
+        }
 
-      for (let r = minR; r <= maxR; r++) {
+        for (let oi = 0; oi < offsets.length; oi += 2) {
+          const gc = approxC + offsets[oi];
+          const gr = approxR + offsets[oi + 1];
 
-        const rowBase = r * holderCols;
+          if (gc < 0 || gr < 0 || gc >= holderCols || gr >= holderRows) continue;
 
-        const rowContactsBefore = contactsCount;
-
-        for (let c = minC; c <= maxC; c++) {
-
-          cellIterations++;
-
-          if (cellIterations > maxCellIterations) break;
-
-          const sG = holderGrid[rowBase + c];
-
+          const sG = holderGrid[gc + gr * holderCols];
           if (!sG || !sG.active || sG.isDebris) continue;
 
-
-
           const relGx = (sG.gridX - cxG) + sG.deformation.x * cds - pGx;
-
           const relGy = (sG.gridY - cyG) + sG.deformation.y * cds - pGy;
-
           const worldGx = gx + (relGx * scaleGrid) * cosG - (relGy * scaleGrid) * sinG;
-
           const worldGy = gy + (relGx * scaleGrid) * sinG + (relGy * scaleGrid) * cosG;
 
-
-
-          const dx = worldGx - ix;
-
-          const dy = worldGy - iy;
-
-          const localIx = (dx * cosI + dy * sinI) / scaleIter;
-
-          const localIy = (-dx * sinI + dy * cosI) / scaleIter;
-
-          const gridIx = localIx + cxI + pIx;
-
-          const gridIy = localIy + cyI + pIy;
-
-
-
-          const approxC = Math.round(gridIx / HEX_SPACING);
-
-          const approxR = Math.round(gridIy / HEX_HEIGHT);
-
-
-
-          // Quick reject: skip whole offset scan when target cell is far outside iterator grid.
-
-          if (approxC < -searchR || approxC >= iterCols + searchR || approxR < -searchR || approxR >= iterRows + searchR) {
-
-            continue;
-
-          }
-
-
-
-          for (let oi = 0; oi < offsets.length; oi += 2) {
-
-            const ic = approxC + offsets[oi];
-
-            const ir = approxR + offsets[oi + 1];
-
-            if (ic < 0 || ir < 0 || ic >= iterCols || ir >= iterRows) continue;
-
-
-
-            const sI = iterGrid[ic + ir * iterCols];
-
-            if (!sI || !sI.active || sI.isDebris) continue;
-
-
-
-            const gi = sI.gridX + sI.deformation.x * cds;
-
-            const gj = sI.gridY + sI.deformation.y * cds;
-
-            const ddx = gi - gridIx;
-
-            const ddy = gj - gridIy;
-
-            const hitRad = (getShardHitRadius(sI) + getShardHitRadius(sG)) * 0.5;
-
-            if (ddx * ddx + ddy * ddy >= hitRad * hitRad) continue;
-
-
-
-            const relIx = (sI.gridX - cxI) + sI.deformation.x * cds - pIx;
-
-            const relIy = (sI.gridY - cyI) + sI.deformation.y * cds - pIy;
-
-            const worldIx = ix + (relIx * scaleIter) * cosI - (relIy * scaleIter) * sinI;
-
-            const worldIy = iy + (relIx * scaleIter) * sinI + (relIy * scaleIter) * cosI;
-
-
-
-            const normalX = worldIx - worldGx;
-
-            const normalY = worldIy - worldGy;
-
-            const dist = Math.sqrt(normalX * normalX + normalY * normalY);
-
-
-
-            const swapped = iterator !== A;
-
-            const ct = contacts[contactsCount];
-
-            ct.shardA = swapped ? sG : sI;
-
-            ct.shardB = swapped ? sI : sG;
-
-            ct.worldAx = swapped ? worldGx : worldIx;
-
-            ct.worldAy = swapped ? worldGy : worldIy;
-
-            ct.worldBx = swapped ? worldIx : worldGx;
-
-            ct.worldBy = swapped ? worldIy : worldGy;
-
-            ct.normalX = swapped ? -normalX : normalX;
-
-            ct.normalY = swapped ? -normalY : normalY;
-
-            ct.penetration = Math.max(0, hitRad - dist);
-
-            contactsCount++;
-
-            if (contactsCount >= maxContacts) break;
-
-            break; // One contact per holder shard is enough — skip remaining offsets
-
-          }
-
-          if (contactsCount >= maxContacts) break;
-
+          const normalX = worldIx - worldGx;
+          const normalY = worldIy - worldGy;
+          const distSq = normalX * normalX + normalY * normalY;
+
+          const hitRad = (getShardHitRadius(sI) + getShardHitRadius(sG)) * 0.5;
+
+          if (distSq >= hitRad * hitRad) continue;
+
+          const dist = Math.sqrt(distSq);
+
+          const swapped = iterator !== A;
+          const ct = contacts[contactsCount];
+          ct.shardA = swapped ? sG : sI;
+          ct.shardB = swapped ? sI : sG;
+          ct.worldAx = swapped ? worldGx : worldIx;
+          ct.worldAy = swapped ? worldGy : worldIy;
+          ct.worldBx = swapped ? worldIx : worldGx;
+          ct.worldBy = swapped ? worldIy : worldGy;
+          ct.normalX = swapped ? -normalX : normalX;
+          ct.normalY = swapped ? -normalY : normalY;
+          ct.penetration = Math.max(0, hitRad - dist);
+
+          contactsCount++;
+          break;
         }
-
-        if (cellIterations > maxCellIterations) break;
-
-        const rowContacts = contactsCount - rowContactsBefore;
-
-        if (rowContacts > 0) {
-
-          seenContactRow = true;
-
-          consecutiveZeroRows = 0;
-
-        } else if (isRingCollision && seenContactRow && speedHexes <= 1) {
-
-          consecutiveZeroRows++;
-
-          if (consecutiveZeroRows >= 5) break;
-
-        }
-
         if (contactsCount >= maxContacts) break;
-
       }
-
-
 
       if (contactsCount === 0) return;
 
@@ -3714,6 +3636,10 @@ export const DestructorSystem = {
 
       if (crushActive && allowCrush) {
 
+        A._gpuForceAwakeFrames = Math.max(Number(A._gpuForceAwakeFrames) || 0, 30);
+
+        B._gpuForceAwakeFrames = Math.max(Number(B._gpuForceAwakeFrames) || 0, 30);
+
         const angA = getEntityHexAngle(A);
 
         const angB = getEntityHexAngle(B);
@@ -3816,9 +3742,9 @@ export const DestructorSystem = {
 
 
 
-        // --- POPRAWKA 2: Uwolnienie limitu wgnieceń ---
+        // --- POPRAWKA 2: Uwolnienie limitu wgnieceĹ„ ---
 
-        // Pozwalamy wgnieceniom przekroczyć tearThreshold (150), żeby GPU mogło rozerwać siatkę
+        // Pozwalamy wgnieceniom przekroczyÄ‡ tearThreshold (150), ĹĽeby GPU mogĹ‚o rozerwaÄ‡ siatkÄ™
 
         const maxCrushLimit = DESTRUCTOR_CONFIG.maxDeform || 220.0;
 
@@ -3830,7 +3756,7 @@ export const DestructorSystem = {
 
 
 
-        // --- POPRAWKA: Płynne, potężne wgniatanie taranem ---
+        // --- POPRAWKA: PĹ‚ynne, potÄ™ĹĽne wgniatanie taranem ---
 
         // Static reusable objects to avoid GC pressure
 
@@ -3866,9 +3792,9 @@ export const DestructorSystem = {
 
 
 
-        // KAGANIEC OBRAŻEŃ CPU: max 30% HP na jedną klatkę fizyki.
+        // KAGANIEC OBRAĹ»EĹ CPU: max 30% HP na jednÄ… klatkÄ™ fizyki.
 
-        // Dajemy heksom ułamek sekundy na przeżycie. Zostaną zniszczone na GPU, gdy naprężenia przekroczą tearThreshold (150).
+        // Dajemy heksom uĹ‚amek sekundy na przeĹĽycie. ZostanÄ… zniszczone na GPU, gdy naprÄ™ĹĽenia przekroczÄ… tearThreshold (150).
 
         const maxDmgPerTick = DESTRUCTOR_CONFIG.shardHP * 0.08;
 
@@ -3908,7 +3834,7 @@ export const DestructorSystem = {
 
 
 
-            sA.applyDeformation(pushX, pushY);
+            sA.applyDeformation(pushX, pushY, 1.0, true);
 
             const idxA = Number(sA.__meshIndex);
 
@@ -3928,7 +3854,7 @@ export const DestructorSystem = {
 
 
 
-            // Wstrzyknięcie dużego pędu dla GPU (tworzy efekt płynnego "rozchodzenia się" wgniecenia na boki)
+            // WstrzykniÄ™cie duĹĽego pÄ™du dla GPU (tworzy efekt pĹ‚ynnego "rozchodzenia siÄ™" wgniecenia na boki)
 
             sA.__collVelX = (sA.__collVelX || 0) + (pushX * 1.2);
 
@@ -3938,7 +3864,7 @@ export const DestructorSystem = {
 
             if (doDamage) {
 
-              // Mniej natychmiastowych obrażeń, więcej fizycznego rozrywania
+              // Mniej natychmiastowych obraĹĽeĹ„, wiÄ™cej fizycznego rozrywania
 
               const kineticDmg = (rawCrushMagA * realRatioA * 0.18 * massAdvantageB) / Math.sqrt(contactsCount);
 
@@ -3976,7 +3902,7 @@ export const DestructorSystem = {
 
 
 
-            sB.applyDeformation(pushX, pushY);
+            sB.applyDeformation(pushX, pushY, 1.0, true);
 
             const idxB = Number(sB.__meshIndex);
 
@@ -4044,7 +3970,7 @@ export const DestructorSystem = {
 
 
 
-      // Anty-przenikanie: utrzymujemy wysoką separację nawet w trybie crush.
+      // Anty-przenikanie: utrzymujemy wysokÄ… separacjÄ™ nawet w trybie crush.
       const massRatio = Math.max(massA, massB) / Math.max(1, Math.min(massA, massB));
       const deepPenetration = penetration > (HIT_RAD * 0.35);
       let crushSep = 0.82;
@@ -4135,6 +4061,12 @@ export const DestructorSystem = {
     wreck.dead = true;
 
     wreck.isCollidable = false;
+
+    wreck._wreckAge = 0;
+
+    wreck._wreckSleepTimer = 0;
+
+    wreck._wreckSleeping = false;
 
     wreck._inPool = true;
 
@@ -4584,6 +4516,12 @@ export const DestructorSystem = {
     wreck.isWreck = true;
 
     wreck.isCollidable = true;
+
+    wreck._wreckAge = 0;
+
+    wreck._wreckSleepTimer = 0;
+
+    wreck._wreckSleeping = false;
 
     wreck.owner = parent.owner || parent;
 
@@ -5089,6 +5027,8 @@ if (typeof window !== 'undefined') {
   window.ColFuncDbgStop = () => DestructorSystem.setCollisionLiveDebug(false);
   window.ColFuncDbgDump = () => DestructorSystem._dbgCollisionFlush(nowMs(), true);
 }
+
+
 
 
 
