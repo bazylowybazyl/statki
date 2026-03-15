@@ -86,6 +86,68 @@ export const SHIPS = {
   }
 };
 
+const DEFAULT_RENDER_ASPECT = 1.6;
+const MIN_RENDER_SIZE = 64;
+
+export const HULL_RENDER_PROFILES = {
+  atlas: { id: 'atlas', length: 1000, radius: 220 },
+  terran_frigate: { id: 'terran_frigate', length: 320, radius: 120 },
+  terran_destroyer: { id: 'terran_destroyer', length: 480, radius: 170 },
+  terran_battleship: { id: 'terran_battleship', length: 640, radius: 220 },
+  pirate_frigate: { id: 'pirate_frigate', length: 320, radius: 120 },
+  pirate_destroyer: { id: 'pirate_destroyer', length: 480, radius: 170 },
+  pirate_battleship: { id: 'pirate_battleship', length: 640, radius: 220 },
+  capital_carrier: { id: 'capital_carrier', length: 720, radius: 250 }
+};
+
+export const HULL_RENDER_PROFILE_ALIASES = {
+  player: 'atlas',
+  frigate: 'terran_frigate',
+  destroyer: 'terran_destroyer',
+  battleship: 'terran_battleship',
+  carrier: 'capital_carrier'
+};
+
+export function resolveHullRenderProfileId(hullId) {
+  const raw = String(hullId || '').trim().toLowerCase();
+  if (!raw) return 'atlas';
+  if (HULL_RENDER_PROFILES[raw]) return raw;
+  if (HULL_RENDER_PROFILE_ALIASES[raw]) return HULL_RENDER_PROFILE_ALIASES[raw];
+  return 'atlas';
+}
+
+export function getHullRenderProfile(hullId) {
+  return HULL_RENDER_PROFILES[resolveHullRenderProfileId(hullId)] || HULL_RENDER_PROFILES.atlas;
+}
+
+export function getHullRenderSize(hullId, sourceWidth = 0, sourceHeight = 0) {
+  const profile = getHullRenderProfile(hullId);
+  const targetLength = Math.max(MIN_RENDER_SIZE, Number(profile?.length) || 0 || MIN_RENDER_SIZE);
+  const srcW = Math.max(0, Number(sourceWidth) || 0);
+  const srcH = Math.max(0, Number(sourceHeight) || 0);
+
+  let width = targetLength;
+  let height = Math.max(MIN_RENDER_SIZE, Math.round(targetLength / DEFAULT_RENDER_ASPECT));
+
+  if (srcW > 0 && srcH > 0) {
+    if (srcW >= srcH) {
+      width = targetLength;
+      height = Math.max(MIN_RENDER_SIZE, Math.round(targetLength * (srcH / srcW)));
+    } else {
+      height = targetLength;
+      width = Math.max(MIN_RENDER_SIZE, Math.round(targetLength * (srcW / srcH)));
+    }
+  }
+
+  return {
+    id: profile.id,
+    length: targetLength,
+    radius: Math.max(20, Number(profile?.radius) || 20),
+    w: Math.max(MIN_RENDER_SIZE, Math.round(width)),
+    h: Math.max(MIN_RENDER_SIZE, Math.round(height))
+  };
+}
+
 export const SUPPORT_SHIP_TEMPLATES = {
   fighter: {
     color: '#7cff91',

@@ -1,5 +1,7 @@
 ﻿// src/ui/devTools.js
 
+import { isHexDamageTintEnabled, setHexDamageTintEnabled } from '../3d/hexShips3D.js';
+
 const STYLES = `
 #devtools { position: fixed; right: 16px; top: 16px; width: 340px; max-height: 80vh; overflow: auto; padding: 14px; border-radius: 12px; background: rgba(10, 14, 25, .92); border: 1px solid #1b2337; color: #dfe7ff; z-index: 1000; font-family: Inter, system-ui, Segoe UI, Roboto, Arial; display: none }
 #devtools h3 { margin: 0 0 8px 0; font-size: 16px; letter-spacing: .04em; text-transform: uppercase; color: #8fb5ff }
@@ -138,6 +140,14 @@ const HTML = `
   <div class="small muted">Otwiera panele suwakow z polami liczbowymi.</div>
 </div>
 <div class="group">
+  <div class="row"><strong>Shadery statkow</strong></div>
+  <label style="display:flex;gap:6px;align-items:center;margin-top:6px">
+    <input id="dt-toggle-damage-tint" type="checkbox">
+    Damage tint z destructora (pomaranczowy)
+  </label>
+  <div class="small muted">Przelacza pomaranczowe podswietlenie uszkodzen na statkach 3D.</div>
+</div>
+<div class="group">
   <div class="row"><strong>Performance</strong></div>
   <div class="row">
     <button id="btn-perf-tools" class="dt-btn" style="width:100%">Performance</button>
@@ -168,6 +178,17 @@ const HTML = `
     <button id="dt-add-credits-btn" class="dt-btn" style="white-space:nowrap;">Add credits</button>
   </div>
   <div class="small muted">Dodaje wskazana ilosc kredytow graczowi.</div>
+</div>
+<div class="group">
+  <div class="row"><strong>Floty</strong></div>
+  <div class="dt-row" style="align-items:center;">
+    <button id="dt-spawn-pirate-heavy-fleet-btn" class="dt-btn" style="flex:1;">Spawn pirate fleet</button>
+    <button id="dt-spawn-enemy-fighters-btn" class="dt-btn" style="flex:1;">Spawn enemy fighters</button>
+  </div>
+  <div class="dt-row" style="align-items:center; margin-top:8px;">
+    <button id="dt-spawn-support-fleet-btn" class="dt-btn" style="width:100%;">Spawn support fleet</button>
+  </div>
+  <div class="small muted">Piraci i wsparcie spawnuja sie przed dziobem gracza.</div>
 </div>
 <div class="group">
   <div class="row"><strong>Konfiguracja</strong></div>
@@ -220,13 +241,16 @@ function wireDevToolsLogic() {
     cbPirate3D: 'dt-use-3d-pirate', btnCopy: 'btnCopy', btnReset: 'btnReset', cfgOut: 'cfgOut',
     fileGlb: 'dt-file-glb', btnLoadGlb: 'btn-load-glb', glbRot: 'dt-glb-rot', glbZoom: 'dt-glb-zoom', glbScale: 'dt-glb-scale',
     btnHardpointEditor: 'btn-hardpoint-editor', btnBloomPanel: 'btn-bloom-panel', btnDestructorPanel: 'btn-destructor-panel',
-    btnDestructorMassPanel: 'btn-destructor-mass-panel',
+    btnDestructorMassPanel: 'btn-destructor-mass-panel', cbDamageTint: 'dt-toggle-damage-tint',
     btnPerfTools: 'btn-perf-tools', perfPanel: 'dt-perf-panel', perfStatus: 'dt-perf-status',
     perfBloom: 'dt-perf-bloom', perfHeat: 'dt-perf-heat', perfBg: 'dt-perf-bg', perfOrtho: 'dt-perf-ortho',
     perfFg: 'dt-perf-fg', perfMsaa: 'dt-perf-msaa',
     perfPresetBase: 'dt-perf-preset-base', perfPresetFast: 'dt-perf-preset-fast', perfPresetUltra: 'dt-perf-preset-ultra',
     renderDbgStart: 'dt-renderdbg-start', renderDbgStop: 'dt-renderdbg-stop',
     addCreditsAmount: 'dt-add-credits-amount', addCreditsBtn: 'dt-add-credits-btn',
+    spawnPirateHeavyFleetBtn: 'dt-spawn-pirate-heavy-fleet-btn',
+    spawnEnemyFightersBtn: 'dt-spawn-enemy-fighters-btn',
+    spawnSupportFleetBtn: 'dt-spawn-support-fleet-btn',
     hudCenterY: 'dt-hud-center-y', hudCenterYNum: 'dt-hud-center-y-num', hudCenterYVal: 'dt-hud-center-y-val',
     hudHexY: 'dt-hud-hex-y', hudHexYNum: 'dt-hud-hex-y-num', hudHexYVal: 'dt-hud-hex-y-val',
     hudShieldY: 'dt-hud-shield-y', hudShieldYNum: 'dt-hud-shield-y-num', hudShieldYVal: 'dt-hud-shield-y-val',
@@ -766,6 +790,16 @@ function wireDevToolsLogic() {
       });
     }
 
+    if (ui.cbDamageTint) {
+      ui.cbDamageTint.checked = isHexDamageTintEnabled();
+      ui.cbDamageTint.addEventListener('change', () => {
+        const enabled = setHexDamageTintEnabled(!!ui.cbDamageTint.checked);
+        if (typeof window.toast === 'function') {
+          window.toast(enabled ? 'Damage tint ON' : 'Damage tint OFF');
+        }
+      });
+    }
+
     if (ui.addCreditsBtn && ui.addCreditsAmount) {
       ui.addCreditsBtn.addEventListener('click', () => {
         const amountRaw = Number(ui.addCreditsAmount.value);
@@ -787,6 +821,103 @@ function wireDevToolsLogic() {
           if (typeof window.toast === 'function') window.toast(`Dodano ${amount} CR`);
           console.log(`[DevTools] Dodano ${amount} CR -> saldo ${Math.round(nextCredits)} CR`);
         }
+      });
+    }
+
+    if (ui.spawnPirateHeavyFleetBtn) {
+      ui.spawnPirateHeavyFleetBtn.addEventListener('click', () => {
+        const ship = window.ship;
+        const spawnFleetFn = window.spawnPirateHeavyFleet;
+        if (!ship?.pos || typeof spawnFleetFn !== 'function') {
+          console.warn('[DevTools] Brak window.ship lub window.spawnPirateHeavyFleet.');
+          return;
+        }
+
+        const angle = Number(ship.angle) || 0;
+        const spawnDist = 3500;
+        const spawnX = (Number(ship.pos.x) || 0) + Math.cos(angle) * spawnDist;
+        const spawnY = (Number(ship.pos.y) || 0) + Math.sin(angle) * spawnDist;
+        const dummyBeacon = { x: spawnX, y: spawnY, r: 100 };
+
+        if (typeof window.spawnShockwave === 'function') {
+          window.spawnShockwave(spawnX, spawnY, {
+            maxR: 2000,
+            w: 15,
+            maxLife: 1.5,
+            color: 'rgba(255, 50, 50,'
+          });
+        }
+
+        spawnFleetFn(dummyBeacon);
+        if (typeof window.toast === 'function') window.toast('Wykryto ciężką flotę piratów');
+        console.log('%c⚠️ UWAGA: ZABURZENIA CZASOPRZESTRZENI! Wykryto masywne sygnatury wroga!', 'color: #ff5c7c; font-size: 14px; font-weight: bold;');
+      });
+    }
+
+    if (ui.spawnEnemyFightersBtn) {
+      ui.spawnEnemyFightersBtn.addEventListener('click', () => {
+        const ship = window.ship;
+        const spawnSquadFn = window.spawnPirateSquad;
+        if (!ship?.pos || typeof spawnSquadFn !== 'function') {
+          console.warn('[DevTools] Brak window.ship lub window.spawnPirateSquad.');
+          return;
+        }
+
+        const angle = Number(ship.angle) || 0;
+        const spawnDist = 3200;
+        const spawnX = (Number(ship.pos.x) || 0) + Math.cos(angle) * spawnDist;
+        const spawnY = (Number(ship.pos.y) || 0) + Math.sin(angle) * spawnDist;
+        const dummyBeacon = { x: spawnX, y: spawnY, r: 180 };
+
+        if (typeof window.spawnShockwave === 'function') {
+          window.spawnShockwave(spawnX, spawnY, {
+            maxR: 1200,
+            w: 10,
+            maxLife: 0.8,
+            color: 'rgba(255, 80, 80,'
+          });
+        }
+
+        spawnSquadFn(dummyBeacon, 'interceptor', 8, 'attack', { radius: 260, speed: 0.42 });
+        spawnSquadFn(dummyBeacon, 'fighter', 8, 'attack', { radius: 320, speed: 0.38 });
+        if (typeof window.toast === 'function') window.toast('Wrogie eskadry w drodze');
+        console.log('[DevTools] Spawn enemy fighters -> 16 jednostek');
+      });
+    }
+
+    if (ui.spawnSupportFleetBtn) {
+      ui.spawnSupportFleetBtn.addEventListener('click', () => {
+        const ship = window.ship;
+        const spawnSupportFn = window.spawnSupportShip;
+        const spawnCarrierFn = window.spawnFriendlyCarrier;
+        if (!ship?.pos || typeof spawnSupportFn !== 'function' || typeof spawnCarrierFn !== 'function') {
+          console.warn('[DevTools] Brak API wsparcia (spawnSupportShip / spawnFriendlyCarrier).');
+          return;
+        }
+
+        const angle = Number(ship.angle) || 0;
+        const spawnDist = 2600;
+        const spawnPos = {
+          x: (Number(ship.pos.x) || 0) + Math.cos(angle) * spawnDist,
+          y: (Number(ship.pos.y) || 0) + Math.sin(angle) * spawnDist
+        };
+
+        spawnCarrierFn({ pos: spawnPos });
+        spawnSupportFn('battleship', { spawnPos, spawnOffset: { x: -280, y: -420 } });
+        spawnSupportFn('destroyer', { spawnPos, spawnOffset: { x: -220, y: 260 } });
+        spawnSupportFn('frigate_pd', { spawnPos, spawnOffset: { x: -360, y: 520 } });
+        spawnSupportFn('fighter', { spawnPos, spawnOffset: { x: -480, y: 0 } });
+
+        if (typeof window.spawnShockwave === 'function') {
+          window.spawnShockwave(spawnPos.x, spawnPos.y, {
+            maxR: 1400,
+            w: 12,
+            maxLife: 1.0,
+            color: 'rgba(120, 220, 255,'
+          });
+        }
+        if (typeof window.toast === 'function') window.toast('Flota wsparcia przybyla');
+        console.log('[DevTools] Spawn support fleet');
       });
     }
 
@@ -879,6 +1010,7 @@ function wireDevToolsLogic() {
   if (ui.planetScaleAllVal) ui.planetScaleAllVal.textContent = 'x' + (+ui.planetScaleAll?.value).toFixed(2);
   if (ui.pirScaleVal) ui.pirScaleVal.textContent = 'x' + (+ui.pirScale?.value).toFixed(2);
   if (ui.station3DScaleVal) ui.station3DScaleVal.textContent = 'x' + (+ui.station3DScale?.value).toFixed(2);
+  if (ui.cbDamageTint) ui.cbDamageTint.checked = isHexDamageTintEnabled();
 
   wireDevTools();
 

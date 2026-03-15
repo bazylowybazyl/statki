@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "alea": "^1.0.1",
+    "multithreading": "^0.3.50",
     "regl": "^2.1.1",
     "three": "^0.183.2"
   }

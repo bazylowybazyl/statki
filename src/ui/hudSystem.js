@@ -778,8 +778,8 @@ export class HUDSystem {
                 <div class="menu-grid">
                     <div class="menu-btn" onclick="hudSystem.handleMenuAction('close')"><div class="key-hint">1</div><div class="label">BACK</div></div>
                     <div class="menu-btn" onclick="hudSystem.handleMenuAction('battle')" data-mode="battle"><div class="key-hint">2</div><div class="label">BATTLE</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('cruise')" data-mode="cruise"><div class="key-hint">3</div><div class="label">CRUISE</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('salvage')" data-mode="salvage"><div class="key-hint">4</div><div class="label">SALVAGE</div></div>
+                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('hypercruise')" data-mode="hypercruise"><div class="key-hint">3</div><div class="label">HC</div></div>
+                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('cruise')" data-mode="cruise"><div class="key-hint">4</div><div class="label">CRUISE</div></div>
                     <div class="menu-btn" onclick="hudSystem.handleMenuAction('mining')" data-mode="mining"><div class="key-hint">5</div><div class="label">MINING</div></div>
                     <div class="menu-btn" onclick="hudSystem.handleMenuAction('intel')" data-mode="intel"><div class="key-hint">6</div><div class="label">INTEL</div></div>
                 </div>

@@ -372,6 +372,11 @@ export const DestructorGpuSoftBody = {
   },
 
   _isEntityHot(entity, sampleLimit, threshold) {
+    if ((Number(entity._gpuForceAwakeFrames) || 0) > 0) {
+      entity._gpuForceAwakeFrames--;
+      return true;
+    }
+
     const shards = entity?.hexGrid?.shards;
     if (!Array.isArray(shards) || shards.length === 0) return false;
 
@@ -409,14 +414,25 @@ export const DestructorGpuSoftBody = {
     for (let i = 0; i < count; i++) {
       const s = shards[i];
       const base = i * SHARD_STRIDE_FLOATS;
-      data[base + 0] = Number(s?.targetDeformation?.x) || 0;
-      data[base + 1] = Number(s?.targetDeformation?.y) || 0;
+      // Upload pristine grid positions (never modified by baking) so restLength stays stable.
+      // Deformation sent to GPU = targetDeformation + bakedOffset (cumulative bake).
+      const bakedX = Number(s?._bakedOffX) || 0;
+      const bakedY = Number(s?._bakedOffY) || 0;
+      const pristineX = Number(s?._pristineX) || (Number(s?.gridX) || 0) - bakedX;
+      const pristineY = Number(s?._pristineY) || (Number(s?.gridY) || 0) - bakedY;
+      // Lazily initialize pristine coords
+      if (s && s._pristineX === undefined) {
+        s._pristineX = pristineX;
+        s._pristineY = pristineY;
+      }
+      data[base + 0] = (Number(s?.targetDeformation?.x) || 0) + bakedX;
+      data[base + 1] = (Number(s?.targetDeformation?.y) || 0) + bakedY;
       // Merge collision velocity into GPU upload, then consume it
       data[base + 2] = (Number(s?.__velX) || 0) + (Number(s?.__collVelX) || 0);
       data[base + 3] = (Number(s?.__velY) || 0) + (Number(s?.__collVelY) || 0);
       if (s) { s.__collVelX = 0; s.__collVelY = 0; }
-      data[base + 4] = Number(s?.gridX) || 0;
-      data[base + 5] = Number(s?.gridY) || 0;
+      data[base + 4] = pristineX;
+      data[base + 5] = pristineY;
       data[base + 6] = Number(s?.hp) || 0;
       data[base + 7] = (s?.active && !s?.isDebris) ? 1.0 : 0.0;
     }
@@ -508,11 +524,18 @@ export const DestructorGpuSoftBody = {
       if (!s || !s.active || s.isDebris) continue;
 
       const base = i * SHARD_STRIDE_FLOATS;
-      const tx = data[base + 0];
-      const ty = data[base + 1];
+      // GPU returns deformation relative to pristine origin (includes bakedOffset)
+      const gpuDefX = data[base + 0];
+      const gpuDefY = data[base + 1];
       const vx = data[base + 2];
       const vy = data[base + 3];
       const newHp = data[base + 6];
+
+      // Subtract baked offset to get targetDeformation in local space
+      const bakedX = Number(s._bakedOffX) || 0;
+      const bakedY = Number(s._bakedOffY) || 0;
+      const tx = gpuDefX - bakedX;
+      const ty = gpuDefY - bakedY;
 
       if (Math.abs(s.targetDeformation.x - tx) > 0.001 || Math.abs(s.targetDeformation.y - ty) > 0.001) {
         s.targetDeformation.x = s.targetDeformation.x * 0.35 + tx * 0.65;
@@ -523,6 +546,8 @@ export const DestructorGpuSoftBody = {
       }
 
       // GPU plasticity baking: permanent denting above yieldPoint
+      // Bake accumulates in _bakedOffX/Y instead of modifying gridX/gridY,
+      // so GPU restLength (based on pristine positions) stays stable.
       const yieldP = this._yieldPoint || 45;
       const stx = s.targetDeformation.x;
       const sty = s.targetDeformation.y;
@@ -532,6 +557,10 @@ export const DestructorGpuSoftBody = {
         const ratio = excess / defMag;
         const bakeX = stx * ratio;
         const bakeY = sty * ratio;
+        // Accumulate bake offset (visual displacement) without touching pristine grid
+        s._bakedOffX = bakedX + bakeX;
+        s._bakedOffY = bakedY + bakeY;
+        // gridX/gridY still shift for rendering purposes
         s.gridX += bakeX;
         s.gridY += bakeY;
         s.targetDeformation.x -= bakeX;
@@ -627,9 +656,10 @@ export const DestructorGpuSoftBody = {
       if (grid.isSleeping && (Number(grid.wakeHoldFrames) || 0) <= 0) continue;
 
       const state = this._ensureEntityState(entity, count);
+      const forcedAwake = (Number(entity._gpuForceAwakeFrames) || 0) > 0;
 
       if (state.isComputing) continue;
-      if (state.dispatchCooldown > 0) {
+      if (!forcedAwake && state.dispatchCooldown > 0) {
         state.dispatchCooldown--;
         continue;
       }
@@ -646,9 +676,13 @@ export const DestructorGpuSoftBody = {
         Number(config?.gpuSoftBodyDispatchInterval) ||
         (count >= 512 ? 3 : count >= 256 ? 2 : 1)
       );
-      if (queueRatio > 0.2) dispatchInterval += 1;
-      if (queueRatio > 0.35) dispatchInterval += 1;
-      if ((this._tickId % dispatchInterval) !== 0) continue;
+      if (!forcedAwake) {
+        if (queueRatio > 0.2) dispatchInterval += 1;
+        if (queueRatio > 0.35) dispatchInterval += 1;
+        if ((this._tickId % dispatchInterval) !== 0) continue;
+      } else {
+        dispatchInterval = 1;
+      }
 
       this._dispatch(entity, state, k, damping, config);
       state.dispatchCooldown = Math.max(0, dispatchInterval - 1);

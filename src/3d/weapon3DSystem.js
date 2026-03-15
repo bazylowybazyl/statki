@@ -34,9 +34,25 @@ const WEAPON_FX_PROFILE = {
   special_goliath_autocannon: { key: 'vulcan', recoil: 12.0, shake: 7.0 },
   special_plasma_gatling: { key: 'helios', recoil: 10.0, shake: 6.0 },
   special_valkyrie_railgun: { key: 'tempest', recoil: 20.0, shake: 12.0 },
+  special_yamato_cannon: { key: 'yamato', recoil: 60.0, shake: 20.0 },
   tempest_ion_mk1: { key: 'tempest', recoil: 4.0, shake: 2.5 },
   tempest_ion_mk2: { key: 'tempest', recoil: 4.0, shake: 2.5 },
 };
+
+const WEAPON_3D_SCALE_BY_SIZE = Object.freeze({
+  Capital: 1.75,
+  L: 1.02,
+  M: 0.76,
+  S: 0.52
+});
+
+const WEAPON_3D_CATEGORY_TRIM = Object.freeze({
+  beam: 0.94,
+  ciws: 0.88,
+  rocket: 0.82,
+  torpedo: 0.90,
+  default: 1.0
+});
 
 function normalizeWeaponFxKey(weaponId) {
   const id = String(weaponId || '').toLowerCase();
@@ -49,11 +65,38 @@ function normalizeWeaponFxKey(weaponId) {
   if (id.includes('special_goliath')) return 'vulcan';
   if (id.includes('special_plasma')) return 'helios';
   if (id.includes('special_valkyrie')) return 'tempest';
+  if (id.includes('special_yamato')) return 'yamato';
   return id;
 }
 
 function isFiniteNumber(value) {
   return Number.isFinite(Number(value));
+}
+
+function shouldRenderWeapon3D(def) {
+  if (!def) return false;
+  const mountType = String(def.mountType || '').toLowerCase();
+  if (mountType === 'hangar') return false;
+  return true;
+}
+
+function getWeapon3DScale(size, category) {
+  const base = WEAPON_3D_SCALE_BY_SIZE[String(size || '').trim()] || WEAPON_3D_SCALE_BY_SIZE.M;
+  const trim = WEAPON_3D_CATEGORY_TRIM[String(category || '').toLowerCase()] || WEAPON_3D_CATEGORY_TRIM.default;
+  return base * trim;
+}
+
+function getEntityWeaponLocalScale(entity) {
+  const scaleXRaw = Number(entity?.__hardpointScaleX);
+  const scaleYRaw = Number(entity?.__hardpointScaleY);
+  const uniformRaw = Number(entity?.__hardpointScale);
+  const scaleX = Number.isFinite(scaleXRaw) && scaleXRaw > 0 ? scaleXRaw : null;
+  const scaleY = Number.isFinite(scaleYRaw) && scaleYRaw > 0 ? scaleYRaw : null;
+  const uniform = Number.isFinite(uniformRaw) && uniformRaw > 0 ? uniformRaw : 1;
+  return {
+    x: scaleX ?? uniform,
+    y: scaleY ?? uniform
+  };
 }
 
 function makeHeadTexture() {
@@ -121,6 +164,8 @@ function ensureWeaponResources() {
       armata: { key: 'armata', color: '#ffb46b', trailColor: '#ffd6a0', trailWidth: 2.5, coreWidth: 1.2, minLen: 24, stretch: 1.2, z: 14, headScale: 10, ionArcs: false },
       plasma: { key: 'plasma', color: '#7cff9c', trailColor: '#aaffb4', trailWidth: 2.2, coreWidth: 1.1, minLen: 18, stretch: 1.1, z: 14, headScale: 9, ionArcs: false },
       rocket: { key: 'rocket', color: '#ffaaaa', trailColor: '#ffdddd', trailWidth: 1.8, coreWidth: 1.0, minLen: 14, stretch: 1.0, z: 14, headScale: 7, ionArcs: false },
+      torpedo: { key: 'torpedo', color: '#ff4444', trailColor: '#ff6666', trailWidth: 3.5, coreWidth: 1.8, minLen: 24, stretch: 1.2, z: 14, headScale: 14, ionArcs: false },
+      yamato: { key: 'yamato', color: '#ccffff', trailColor: '#00ffff', trailWidth: 7.0, coreWidth: 3.8, minLen: 180, stretch: 1.8, z: 14, headScale: 28, ionArcs: true },
       default: { key: 'default', color: '#ffffff', trailColor: '#ffffff', trailWidth: 1.5, coreWidth: 0.8, minLen: 16, stretch: 1.0, z: 14, headScale: 6, ionArcs: false }
     };
   }
@@ -197,10 +242,10 @@ function ensureBulletInstances() {
     mesh.count = 0;
   }
 
-  bulletInstances.trails.renderOrder = 8;
-  bulletInstances.cores.renderOrder = 9;
-  bulletInstances.heads.renderOrder = 10;
-  bulletInstances.arcs.renderOrder = 11;
+  bulletInstances.trails.renderOrder = 78;
+  bulletInstances.cores.renderOrder = 79;
+  bulletInstances.heads.renderOrder = 80;
+  bulletInstances.arcs.renderOrder = 81;
 
   Core3D.scene.add(bulletInstances.trails);
   Core3D.scene.add(bulletInstances.cores);
@@ -663,6 +708,100 @@ function buildTempestTurret(sizeMult, barrelCount = 1) {
   return group;
 }
 
+function buildYamatoTurret(sizeMult) {
+  const mats = WEP_RESOURCES.mats;
+  const group = new THREE.Group();
+
+  const barbette = new THREE.Mesh(new THREE.CylinderGeometry(16, 18, 6, 6), mats.armor);
+  barbette.position.set(2, 0, 0);
+  barbette.rotation.x = Math.PI / 2;
+  group.add(barbette);
+
+  // Ksztalt Yamato Turret
+  const turretShape = new THREE.Shape();
+  turretShape.moveTo(-11, -14);
+  turretShape.lineTo(11, -14);
+  turretShape.lineTo(17, 0);
+  turretShape.lineTo(7, 19);
+  turretShape.lineTo(-7, 19);
+  turretShape.lineTo(-17, 0);
+  turretShape.lineTo(-11, -14);
+
+  const extrudeSettings = { depth: 10, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: 0.75, bevelThickness: 0.75 };
+  const housing = new THREE.Mesh(new THREE.ExtrudeGeometry(turretShape, extrudeSettings), mats.armor);
+  housing.rotation.x = Math.PI / 2;
+  housing.rotation.z = -Math.PI / 2;
+  housing.position.set(-6, 0, 10);
+  group.add(housing);
+
+  const radiator = new THREE.Mesh(new THREE.BoxGeometry(6, 24, 7), mats.base);
+  radiator.position.set(-2, 0, 8);
+  radiator.rotation.x = Math.PI / 2;
+  group.add(radiator);
+
+  const barrelsGroup = new THREE.Group();
+  barrelsGroup.position.set(6, 0, 12);
+  group.add(barrelsGroup);
+
+  const barrels = [];
+  const muzzlePoints = [];
+
+  const createRailgun = (yOffset, scale = 1) => {
+      const parentGun = new THREE.Group();
+      const gun = new THREE.Group();
+
+      const base = new THREE.Mesh(new THREE.BoxGeometry(12, 6, 4), mats.armor);
+      base.position.set(5, 0, 0);
+      gun.add(base);
+
+      const railGeo = new THREE.BoxGeometry(40, 5, 2);
+      const leftRail = new THREE.Mesh(railGeo, mats.base);
+      leftRail.position.set(25, -1.75, 0);
+      gun.add(leftRail);
+
+      const rightRail = new THREE.Mesh(railGeo, mats.base);
+      rightRail.position.set(25, 1.75, 0);
+      gun.add(rightRail);
+
+      const core = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 38, 8), mats.glowCyan);
+      core.rotation.z = Math.PI / 2;
+      core.position.set(26, 0, 0);
+      gun.add(core);
+
+      gun.position.y = yOffset;
+      gun.scale.set(scale, scale, scale);
+      
+      parentGun.add(gun);
+      return parentGun;
+  };
+
+  const leftGun = createRailgun(7.5, 0.9);
+  const centerGun = createRailgun(0, 1.0);
+  const rightGun = createRailgun(-7.5, 0.9);
+
+  barrels.push(leftGun, centerGun, rightGun);
+  barrelsGroup.add(leftGun, centerGun, rightGun);
+  
+  // Wspolrzedne XY do emitowania particle'i (odpowiada za flash Muzzle)
+  muzzlePoints.push(new THREE.Vector3(56, 7.5 * 0.9, 12));
+  muzzlePoints.push(new THREE.Vector3(58, 0, 12));
+  muzzlePoints.push(new THREE.Vector3(56, -7.5 * 0.9, 12));
+
+  attachWeaponFxData(group, {
+    weaponId: 'special_yamato_cannon',
+    housing: housing,
+    barrels: [leftGun, centerGun, rightGun],
+    muzzlePoints: muzzlePoints,
+    muzzleColor: '#00ffff',
+    recoil: 60,
+    shake: 25
+  });
+
+  group.scale.setScalar(sizeMult);
+  markMeshTree(group, false);
+  return group;
+}
+
 function createFallbackWeaponMesh(category, sizeMult) {
   const group = new THREE.Group();
   const mBase = WEP_RESOURCES.mats.base;
@@ -715,9 +854,7 @@ function createFallbackWeaponMesh(category, sizeMult) {
 
 function createWeapon3DMesh(weaponId, category, size) {
   ensureWeaponResources();
-  const scaleMult = size === 'Capital'
-    ? 2.4
-    : (size === 'L' ? 1.4 : (size === 'M' ? 1.0 : 0.65));
+  const scaleMult = getWeapon3DScale(size, category);
   const key = String(weaponId || '').toLowerCase();
 
   let mesh;
@@ -729,6 +866,7 @@ function createWeapon3DMesh(weaponId, category, size) {
   else if (key === 'special_goliath_autocannon') mesh = buildVulcanTurret(scaleMult);
   else if (key === 'special_plasma_gatling') mesh = buildHeliosTurret(scaleMult);
   else if (key === 'special_valkyrie_railgun') mesh = buildTempestTurret(scaleMult, 2);
+  else if (key === 'special_yamato_cannon') mesh = buildYamatoTurret(scaleMult);
   else if (key === 'railgun_mk1' || key === 'tempest_ion_mk1') mesh = buildTempestTurret(scaleMult, 1);
   else if (key === 'railgun_mk2' || key === 'tempest_ion_mk2') mesh = buildTempestTurret(scaleMult, 2);
   else mesh = createFallbackWeaponMesh(category, scaleMult);
@@ -754,6 +892,7 @@ function resolveBulletVisualStyle(bullet) {
   if (key.includes('special_goliath')) return WEP_RESOURCES.bulletStyles.autocannon;
   if (key.includes('special_plasma')) return WEP_RESOURCES.bulletStyles.plasma;
   if (key.includes('special_valkyrie')) return WEP_RESOURCES.bulletStyles.tempest;
+  if (key.includes('yamato')) return WEP_RESOURCES.bulletStyles.yamato;
   if (key.includes('vulcan')) return WEP_RESOURCES.bulletStyles.vulcan;
   if (key.includes('helios')) return WEP_RESOURCES.bulletStyles.helios;
   if (key.includes('tempest') || key.includes('rail')) return WEP_RESOURCES.bulletStyles.tempest;
@@ -762,6 +901,8 @@ function resolveBulletVisualStyle(bullet) {
   if (key.includes('armata') || key.includes('flak')) return WEP_RESOURCES.bulletStyles.armata;
   if (key.includes('plasma')) return WEP_RESOURCES.bulletStyles.plasma;
   if (key.includes('rocket') || key.includes('missile') || key.includes('aim-') || key.includes('asm')) return WEP_RESOURCES.bulletStyles.rocket;
+  if (key.includes('torpedo')) return WEP_RESOURCES.bulletStyles.torpedo;
+  if (key.includes('siege')) return WEP_RESOURCES.bulletStyles.tempest; // fallback for siege
   return WEP_RESOURCES.bulletStyles.default;
 }
 
@@ -1538,11 +1679,11 @@ export const Weapon3DSystem = {
 
     const wepDataList = [];
 
-    if (entity.autoWeapons && entity.forceWeapon3D === true) {
+    if (entity.autoWeapons) {
       for (let i = 0; i < entity.autoWeapons.length; i++) {
         const w = entity.autoWeapons[i];
         const def = w?.def;
-        if (!def || !w.hpOffset || w.hpOffset.x == null || w.hpOffset.y == null) continue;
+        if (!shouldRenderWeapon3D(def) || !w.hpOffset || w.hpOffset.x == null || w.hpOffset.y == null) continue;
         wepDataList.push({
           uid: `npc_wep_${i}_${def.id || def.category || 'x'}`,
           weaponId: def.id,
@@ -1550,7 +1691,8 @@ export const Weapon3DSystem = {
           size: def.size,
           localX: Number(w.hpOffset.x) || 0,
           localY: Number(w.hpOffset.y) || 0,
-          angle: w.visualAngle !== undefined ? w.visualAngle : shipAngle
+          angle: w.visualAngle !== undefined ? w.visualAngle : shipAngle,
+          useHardpointScale: true
         });
       }
     } else if (entity.isPlayer && entity.weapons) {
@@ -1573,7 +1715,7 @@ export const Weapon3DSystem = {
       for (let i = 0; i < mains.length; i++) {
         const loadout = mains[i];
         const def = loadout?.weapon;
-        if (!def || !def.render3dOnly) continue;
+        if (!shouldRenderWeapon3D(def)) continue;
         const hp = loadout.hp?.pos || loadout.hp;
         let bestIdx = 0;
         let bestDist = Infinity;
@@ -1603,7 +1745,7 @@ export const Weapon3DSystem = {
       for (let i = 0; i < auxes.length; i++) {
         const loadout = auxes[i];
         const def = loadout?.weapon;
-        if (!def || !def.render3dOnly) continue;
+        if (!shouldRenderWeapon3D(def)) continue;
         const c = entity.ciws?.[i];
         const hp = loadout.hp?.pos || loadout.hp;
         wepDataList.push({
@@ -1617,12 +1759,55 @@ export const Weapon3DSystem = {
         });
       }
 
+      const missiles = entity.weapons.missile || [];
+      for (let i = 0; i < missiles.length; i++) {
+        const loadout = missiles[i];
+        const def = loadout?.weapon;
+        if (!shouldRenderWeapon3D(def)) continue;
+        const hp = loadout.hp?.pos || loadout.hp;
+        let bestIdx = 0;
+        let bestDist = Infinity;
+        for (let ti = 0; ti < turrets.length; ti++) {
+          const tur = turrets[ti];
+          const dx = (hp?.x || 0) - (tur.t?.offset?.x || 0);
+          const dy = (hp?.y || 0) - (tur.t?.offset?.y || 0);
+          const d2 = dx * dx + dy * dy;
+          if (d2 < bestDist) {
+            bestDist = d2;
+            bestIdx = ti;
+          }
+        }
+        const turret = turrets[bestIdx];
+        wepDataList.push({
+          uid: `p_missile_${i}_${def.id || def.category || 'x'}`,
+          weaponId: def.id,
+          category: def.category,
+          size: def.size,
+          localX: hp?.x ?? 0,
+          localY: hp?.y ?? 0,
+          angle: turret.ang
+        });
+      }
+
       const specials = entity.weapons.special || [];
       for (let i = 0; i < specials.length; i++) {
         const loadout = specials[i];
         const def = loadout?.weapon;
-        if (!def || !def.render3dOnly) continue;
+        if (!shouldRenderWeapon3D(def)) continue;
         const hp = loadout.hp?.pos || loadout.hp;
+        let bestIdx = 0;
+        let bestDist = Infinity;
+        for (let ti = 0; ti < turrets.length; ti++) {
+          const tur = turrets[ti];
+          const dx = (hp?.x || 0) - (tur.t?.offset?.x || 0);
+          const dy = (hp?.y || 0) - (tur.t?.offset?.y || 0);
+          const d2 = dx * dx + dy * dy;
+          if (d2 < bestDist) {
+            bestDist = d2;
+            bestIdx = ti;
+          }
+        }
+        const turret = turrets[bestIdx];
         wepDataList.push({
           uid: `p_special_${i}_${def.id || def.category || 'x'}`,
           weaponId: def.id,
@@ -1630,7 +1815,7 @@ export const Weapon3DSystem = {
           size: def.size,
           localX: hp?.x ?? 0,
           localY: hp?.y ?? 0,
-          angle: shipAngle
+          angle: turret.ang
         });
       }
     }
@@ -1646,16 +1831,48 @@ export const Weapon3DSystem = {
       container = new THREE.Group();
       container.userData.meshes = new Map();
       container.renderOrder = 60;
+      container.userData.tiltX = 0;
+      container.userData.tiltY = 0;
       Core3D.scene.add(container);
+      Core3D.enableForeground3D(container);
       this.containers.set(entity, container);
     }
 
-    container.position.set(shipEx, -shipEy, 8.0);
+    let targetTiltX = 0;
+    let targetTiltY = 0;
+    if (typeof window !== 'undefined' && window.camera) {
+      const camX = Number(window.camera.x) || 0;
+      const camY = Number(window.camera.y) || 0;
+      const camZoom = Math.max(0.01, Number(window.camera.zoom) || 1);
+      const relX = shipEx - camX;
+      const relY = camY - shipEy;
+      const len = Math.hypot(relX, relY);
+      if (len > 1e-3) {
+        const nx = relX / len;
+        const ny = relY / len;
+        const deadZonePx = 100 / camZoom;
+        const response = Math.min(1, Math.max(0, (len - deadZonePx) / (2300 / camZoom)));
+        const maxTilt = 0.44;
+        targetTiltX = ny * maxTilt * response;
+        targetTiltY = -nx * maxTilt * response;
+      }
+    }
+    
+    const tiltLerp = 0.2;
+    container.userData.tiltX += (targetTiltX - container.userData.tiltX) * tiltLerp;
+    container.userData.tiltY += (targetTiltY - container.userData.tiltY) * tiltLerp;
+
+    container.rotation.x = container.userData.tiltX;
+    container.rotation.y = container.userData.tiltY;
+    container.rotation.z = 0;
+
+    container.position.set(shipEx, -shipEy, 0.0);
 
     const currentMeshes = container.userData.meshes;
     const usedUids = new Set();
     const cosAngle = Math.cos(shipAngle);
     const sinAngle = Math.sin(shipAngle);
+    const weaponLocalScale = getEntityWeaponLocalScale(entity);
 
     for (const wData of wepDataList) {
       usedUids.add(wData.uid);
@@ -1663,11 +1880,14 @@ export const Weapon3DSystem = {
       if (!mesh) {
         mesh = createWeapon3DMesh(wData.weaponId, wData.category, wData.size);
         container.add(mesh);
+        Core3D.enableForeground3D(mesh);
         currentMeshes.set(wData.uid, mesh);
       }
 
-      const lx = (Number(wData.localX) || 0) * shipScale;
-      const ly = (Number(wData.localY) || 0) * shipScale;
+      const positionScaleX = wData.useHardpointScale ? weaponLocalScale.x : shipScale;
+      const positionScaleY = wData.useHardpointScale ? weaponLocalScale.y : shipScale;
+      const lx = (Number(wData.localX) || 0) * positionScaleX;
+      const ly = (Number(wData.localY) || 0) * positionScaleY;
       const rx = lx * cosAngle - ly * sinAngle;
       const ry = lx * sinAngle + ly * cosAngle;
       mesh.position.set(rx, -ry, 0);

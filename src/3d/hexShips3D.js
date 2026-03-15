@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+﻿import * as THREE from 'three';
 import { refreshHexBodyCache, DESTRUCTOR_CONFIG, DestructorSystem } from '../game/destructor.js';
 import { Core3D } from './core3d.js';
 import { EngineVfxSystem } from './engineVfxSystem.js';
@@ -76,7 +76,7 @@ void main() {
 
   if (alpha < 0.01) discard;
 
-  // --- MASKA OKLUZJI: Sylwetki zgłaszają się jako BIAŁE (1.0), czyli blokery światła ---
+  // --- MASKA OKLUZJI: Sylwetki zgĹ‚aszajÄ… siÄ™ jako BIAĹE (1.0), czyli blokery Ĺ›wiatĹ‚a ---
   if (uIsOcclusion == 1) {
       gl_FragColor = vec4(1.0, 1.0, 1.0, alpha);
       return;
@@ -121,9 +121,81 @@ void main() {
 }
 `;
 
+const DEBRIS_VERTEX_SHADER = `
+attribute vec2 aGridPos;
+attribute vec2 aStartPos;
+attribute vec2 aStartVel;
+attribute vec3 aRotationData;
+attribute vec2 aTimeData;
+
+uniform vec2 uSpriteSize;
+uniform float uTime;
+
+varying vec2 vSpriteUV;
+varying float vAlpha;
+
+void main() {
+  float age = uTime - aTimeData.x;
+
+  if (age < 0.0 || age > 5.0) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    return;
+  }
+
+  float k = 0.6;
+  float distMul = (1.0 - exp(-k * age)) / k;
+
+  vec2 currentPos = aStartPos + aStartVel * distMul;
+  float currentAngle = aRotationData.x + aRotationData.y * age;
+  float currentScale = aRotationData.z;
+
+  vAlpha = aTimeData.y - (age * 0.2);
+  if (vAlpha <= 0.01) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    return;
+  }
+
+  vSpriteUV = (aGridPos + position.xy) / uSpriteSize;
+
+  float c = cos(currentAngle);
+  float s = sin(currentAngle);
+  vec2 scaledPos = position.xy * currentScale;
+  vec2 rotatedPos = vec2(
+    scaledPos.x * c - scaledPos.y * s,
+    scaledPos.x * s + scaledPos.y * c
+  );
+
+  vec3 worldPosition = vec3(currentPos.x + rotatedPos.x, -(currentPos.y + rotatedPos.y), 0.0);
+  gl_Position = projectionMatrix * viewMatrix * vec4(worldPosition, 1.0);
+}
+`;
+
+const DEBRIS_FRAGMENT_SHADER = `
+uniform sampler2D uDamagedTex;
+uniform vec3 uLightDir;
+uniform float uDayAmbient;
+uniform float uDayDiffuseMul;
+
+varying vec2 vSpriteUV;
+varying float vAlpha;
+
+void main() {
+  if (vSpriteUV.x < -0.01 || vSpriteUV.x > 1.01 || vSpriteUV.y < -0.01 || vSpriteUV.y > 1.01) discard;
+
+  vec4 color = texture2D(uDamagedTex, vSpriteUV);
+  if (color.a < 0.01) discard;
+
+  vec2 p = vSpriteUV * 2.0 - 1.0;
+  vec3 normal = normalize(vec3(p.x * 0.45, -p.y * 0.45, 1.0));
+  float NdotL = max(0.0, dot(normal, uLightDir));
+  float lightMul = uDayAmbient + NdotL * uDayDiffuseMul;
+
+  gl_FragColor = vec4(color.rgb * lightMul, color.a * vAlpha);
+}
+`;
+
 const state = {
   entityMeshes: new Map(),
-  debrisMeshes: new Map(),
   dummy: new THREE.Object3D(),
   maxVisibleEntities: 18,
   midDistanceWorld: 2400,
@@ -135,10 +207,9 @@ const state = {
   vfxEntities: [],
   staleEntities: [],
   validEntitySet: new Set(),
-  weaponActiveEntities: new Set()
+  weaponActiveEntities: new Set(),
+  damageTintEnabled: true
 };
-
-const debrisBucketsPool = new Map();
 
 const SHIP_LIGHT_DEFAULTS = Object.freeze({
   terminatorStart: -0.08,
@@ -190,7 +261,9 @@ function computeShardStress(shard) {
   if (shard && shard.deformation) {
     const sx = shard.deformation.x;
     const sy = shard.deformation.y;
-    return Math.sqrt(sx * sx + sy * sy);
+    const absX = sx < 0 ? -sx : sx;
+    const absY = sy < 0 ? -sy : sy;
+    return absX > absY ? absX + absY * 0.4 : absY + absX * 0.4;
   }
   return 0;
 }
@@ -246,175 +319,140 @@ function disposeMeshData(data) {
   data.normalTexture?.dispose?.();
 }
 
-const DEBRIS_MAX_COUNT = 1500;
+const GPU_DEBRIS_MAX = 10000;
 
-function getDebrisMeshForTexture(shard, grid) {
-  const textureKey = grid.armorImage;
-  if (!textureKey) return null;
+class GpuDebrisPool {
+  constructor(gridRef) {
+    this.textureKey = gridRef.armorImage;
+    this.currentIndex = 0;
+    this.geometry = new THREE.CircleGeometry(25, 6);
 
-  let data = state.debrisMeshes.get(textureKey);
+    this.startPosArray = new Float32Array(GPU_DEBRIS_MAX * 2);
+    this.startVelArray = new Float32Array(GPU_DEBRIS_MAX * 2);
+    this.rotationArray = new Float32Array(GPU_DEBRIS_MAX * 3);
+    this.timeArray = new Float32Array(GPU_DEBRIS_MAX * 2);
+    this.gridPosArray = new Float32Array(GPU_DEBRIS_MAX * 2);
 
-  if (!data) {
-    const baseRadius = Math.max(2, Number(shard?.radius) || 20);
-    const geometry = new THREE.CircleGeometry(baseRadius * 1.08, 6);
+    this.geometry.setAttribute('aStartPos', new THREE.InstancedBufferAttribute(this.startPosArray, 2));
+    this.geometry.setAttribute('aStartVel', new THREE.InstancedBufferAttribute(this.startVelArray, 2));
+    this.geometry.setAttribute('aRotationData', new THREE.InstancedBufferAttribute(this.rotationArray, 3));
+    this.geometry.setAttribute('aTimeData', new THREE.InstancedBufferAttribute(this.timeArray, 2));
+    this.geometry.setAttribute('aGridPos', new THREE.InstancedBufferAttribute(this.gridPosArray, 2));
 
-    const texture = createManagedTexture(grid.armorImage || grid.cacheCanvas);
-    const damagedTexture = createManagedTexture(grid.damagedImage || grid.armorImage);
-
-    const material = new THREE.ShaderMaterial({
+    this.material = new THREE.ShaderMaterial({
       uniforms: {
-        uSprite: { value: texture },
-        uDamagedTex: { value: damagedTexture },
-        uNormalMap: { value: null },
-        uHasNormalMap: { value: 0 },
-        uArmorThreshold: { value: DESTRUCTOR_CONFIG.armorThreshold || 0.4 },
-        uStressTint: { value: 0.0 },
+        uDamagedTex: { value: createManagedTexture(gridRef.damagedImage || gridRef.armorImage) },
+        uSpriteSize: { value: new THREE.Vector2(gridRef.srcWidth || 1, gridRef.srcHeight || 1) },
+        uTime: { value: 0 },
         uLightDir: { value: new THREE.Vector3(0, 0, 1) },
-        uRotation: { value: 0.0 },
-        uSpriteSize: { value: new THREE.Vector2(grid.srcWidth || 1, grid.srcHeight || 1) },
-        uTerminatorStart: { value: SHIP_LIGHT_DEFAULTS.terminatorStart },
-        uTerminatorEnd: { value: SHIP_LIGHT_DEFAULTS.terminatorEnd },
-        uNightMin: { value: SHIP_LIGHT_DEFAULTS.nightMin },
-        uNightBandStart: { value: SHIP_LIGHT_DEFAULTS.nightBandStart },
-        uNightBandEnd: { value: SHIP_LIGHT_DEFAULTS.nightBandEnd },
-        uNightTint: { value: new THREE.Vector3(SHIP_LIGHT_DEFAULTS.nightTintR, SHIP_LIGHT_DEFAULTS.nightTintG, SHIP_LIGHT_DEFAULTS.nightTintB) },
         uDayAmbient: { value: SHIP_LIGHT_DEFAULTS.dayAmbient },
-        uDayDiffuseMul: { value: SHIP_LIGHT_DEFAULTS.dayDiffuseMul },
-        uSpecularMul: { value: SHIP_LIGHT_DEFAULTS.specularMul },
-        uIsDebris: { value: 1 },
-        uIsOcclusion: { value: 0 }
+        uDayDiffuseMul: { value: SHIP_LIGHT_DEFAULTS.dayDiffuseMul }
       },
-      vertexShader: HEX_VERTEX_SHADER,
-      fragmentShader: HEX_FRAGMENT_SHADER,
+      vertexShader: DEBRIS_VERTEX_SHADER,
+      fragmentShader: DEBRIS_FRAGMENT_SHADER,
       transparent: true,
       depthWrite: false,
       depthTest: false,
       side: THREE.DoubleSide
     });
 
-    const mesh = new THREE.InstancedMesh(geometry, material, DEBRIS_MAX_COUNT);
-    mesh.frustumCulled = false;
-    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    mesh.castShadow = false;
-    mesh.customDepthMaterial = null;
+    this.mesh = new THREE.InstancedMesh(this.geometry, this.material, GPU_DEBRIS_MAX);
+    this.mesh.count = 0;
+    this.mesh.frustumCulled = false;
+    Core3D.scene.add(this.mesh);
+  }
 
-    const initialArray = mesh.instanceMatrix.array;
-    for (let i = 0; i < DEBRIS_MAX_COUNT; i++) {
-      const offset = i * 16;
-      initialArray[offset + 0] = 0.0;
-      initialArray[offset + 5] = 0.0;
-      initialArray[offset + 10] = 1.0;
-      initialArray[offset + 15] = 1.0;
-    }
+  spawn(shard, worldX, worldY, vx, vy, angVel, startAngle, scale, globalTime) {
+    const i = this.currentIndex;
 
-    const gridPosArray = new Float32Array(DEBRIS_MAX_COUNT * 2);
-    const stressArray = new Float32Array(DEBRIS_MAX_COUNT);
-    const hpArray = new Float32Array(DEBRIS_MAX_COUNT);
+    this.startPosArray[i * 2] = worldX;
+    this.startPosArray[i * 2 + 1] = worldY;
+    this.startVelArray[i * 2] = vx;
+    this.startVelArray[i * 2 + 1] = vy;
 
-    mesh.geometry.setAttribute('aGridPos', new THREE.InstancedBufferAttribute(gridPosArray, 2));
-    mesh.geometry.setAttribute('aStress', new THREE.InstancedBufferAttribute(stressArray, 1));
-    mesh.geometry.setAttribute('aHPRatio', new THREE.InstancedBufferAttribute(hpArray, 1));
+    this.rotationArray[i * 3] = startAngle;
+    this.rotationArray[i * 3 + 1] = angVel;
+    this.rotationArray[i * 3 + 2] = scale * ((shard.radius || 20) / 25.0);
 
-    mesh.geometry.getAttribute('aGridPos').setUsage(THREE.DynamicDrawUsage);
-    mesh.geometry.getAttribute('aStress').setUsage(THREE.DynamicDrawUsage);
-    mesh.geometry.getAttribute('aHPRatio').setUsage(THREE.DynamicDrawUsage);
+    this.timeArray[i * 2] = globalTime;
+    this.timeArray[i * 2 + 1] = 1.0;
 
-    Core3D.scene.add(mesh);
+    this.gridPosArray[i * 2] = shard.gridX || shard.origGridX || 0;
+    this.gridPosArray[i * 2 + 1] = shard.gridY || shard.origGridY || 0;
 
-    data = {
-      mesh,
-      texture,
-      damagedTexture,
-      gridPosAttr: mesh.geometry.getAttribute('aGridPos'),
-      stressAttr: mesh.geometry.getAttribute('aStress'),
-      hpAttr: mesh.geometry.getAttribute('aHPRatio'),
-      cx: (grid.srcWidth || 0) * 0.5,
-      cy: (grid.srcHeight || 0) * 0.5
+    const updateAttr = (name, stride) => {
+      const attr = this.geometry.getAttribute(name);
+      setAttrUpdateRange(attr, i * stride, stride);
+      attr.needsUpdate = true;
     };
-    state.debrisMeshes.set(textureKey, data);
+
+    updateAttr('aStartPos', 2);
+    updateAttr('aStartVel', 2);
+    updateAttr('aRotationData', 3);
+    updateAttr('aTimeData', 2);
+    updateAttr('aGridPos', 2);
+
+    this.currentIndex = (this.currentIndex + 1) % GPU_DEBRIS_MAX;
+    if (this.mesh.count < GPU_DEBRIS_MAX) this.mesh.count++;
   }
 
-  return data;
+  dispose() {
+    if (Core3D.scene && this.mesh) Core3D.scene.remove(this.mesh);
+    this.geometry?.dispose?.();
+    this.material?.uniforms?.uDamagedTex?.value?.dispose?.();
+    this.material?.dispose?.();
+  }
 }
 
-function updateDebrisRendering() {
-  for (const bucket of debrisBucketsPool.values()) {
-    bucket.shards.length = 0;
-  }
+const GpuDebrisManager = {
+  pools: new Map(),
+  globalTime: 0,
 
-  const allDebris = DestructorSystem.debris || [];
+  spawn(shard, gridRef, wx, wy, vx, vy, drot, angle, scale) {
+    const texKey = shard.img || shard.damagedImg;
+    if (!texKey) return;
 
-  for (const shard of allDebris) {
-    if (!shard.active || !shard.isDebris) continue;
-    const textureKey = shard.img || shard.damagedImg;
-    if (!textureKey) continue;
-
-    let bucket = debrisBucketsPool.get(textureKey);
-    if (!bucket) {
-      bucket = { shards: [], gridRef: null };
-      debrisBucketsPool.set(textureKey, bucket);
+    let pool = this.pools.get(texKey);
+    if (!pool) {
+      pool = new GpuDebrisPool({
+        armorImage: texKey,
+        damagedImage: shard.damagedImg,
+        srcWidth: texKey.width || gridRef.srcWidth,
+        srcHeight: texKey.height || gridRef.srcHeight
+      });
+      this.pools.set(texKey, pool);
     }
-    bucket.shards.push(shard);
+    pool.spawn(shard, wx, wy, vx, vy, drot, angle, scale, this.globalTime);
+  },
 
-    if (!bucket.gridRef) {
-      bucket.gridRef = {
-        armorImage: textureKey,
-        srcWidth: textureKey.width || 512,
-        srcHeight: textureKey.height || 512
-      };
-    }
-  }
-
-  for (const [key, data] of state.debrisMeshes) {
-    data.mesh.count = 0;
-  }
-
-  for (const [textureKey, bucket] of debrisBucketsPool) {
-    if (bucket.shards.length === 0) continue;
-    const data = getDebrisMeshForTexture(bucket.shards[0], bucket.gridRef);
-    if (!data) continue;
-
-    const mesh = data.mesh;
-    const shards = bucket.shards;
-    const drawCount = Math.min(shards.length, DEBRIS_MAX_COUNT);
-
-    mesh.count = drawCount;
-    const instanceArray = mesh.instanceMatrix.array;
-
-    for (let i = 0; i < drawCount; i++) {
-      const shard = shards[i];
-      const offset = i * 16;
-      data.gridPosAttr.array[i * 2] = shard.gridX;
-      data.gridPosAttr.array[i * 2 + 1] = shard.gridY;
-      data.hpAttr.array[i] = Math.max(0, shard.alpha);
-      data.stressAttr.array[i] = computeShardStress(shard);
-
-      const s = (shard.scale || 1.0);
-      const c = Math.cos(-shard.angle);
-      const sn = Math.sin(-shard.angle);
-
-      instanceArray[offset + 0] = c * s;
-      instanceArray[offset + 4] = -sn * s;
-      instanceArray[offset + 1] = sn * s;
-      instanceArray[offset + 5] = c * s;
-      instanceArray[offset + 12] = shard.worldX;
-      instanceArray[offset + 13] = -shard.worldY;
-    }
-
-    mesh.instanceMatrix.needsUpdate = true;
-    data.gridPosAttr.needsUpdate = true;
-    data.hpAttr.needsUpdate = true;
-    data.stressAttr.needsUpdate = true;
-
+  updateTime(time) {
+    this.globalTime = time;
     const sun = typeof window !== 'undefined' ? window.SUN : null;
-    if (sun && drawCount > 0) {
-      const dx = sun.x - shards[0].worldX;
-      const dy = -(sun.y - shards[0].worldY);
-      const lightVec = new THREE.Vector3(dx, dy, 600).normalize();
-      mesh.material.uniforms.uLightDir.value.copy(lightVec);
+    const camera = typeof window !== 'undefined' ? window.camera : null;
+    for (const pool of this.pools.values()) {
+      pool.material.uniforms.uTime.value = time;
+      if (sun && camera && pool.mesh.count > 0) {
+        const dx = sun.x - camera.x;
+        const dy = -(sun.y - camera.y);
+        pool.material.uniforms.uLightDir.value.copy(new THREE.Vector3(dx, dy, 600).normalize());
+      }
     }
+  },
+
+  dispose() {
+    for (const pool of this.pools.values()) pool.dispose();
+    this.pools.clear();
+    this.globalTime = 0;
   }
+};
+
+if (typeof window !== 'undefined') {
+  window.spawnGpuDebris = (shard, grid, wx, wy, vx, vy, drot, ang, scale) => {
+    GpuDebrisManager.spawn(shard, grid, wx, wy, vx, vy, drot, ang, scale);
+  };
 }
+
+function updateDebrisRendering() { }
 
 const HEX_SHADOW_DEPTH_VERTEX = `
 attribute vec2 aGridPos;
@@ -746,6 +784,7 @@ function updateEntityMesh(entity, data, camX, camY) {
     mesh.material.uniforms.uLightDir.value.copy(lightVec);
   }
 
+  mesh.material.uniforms.uStressTint.value = state.damageTintEnabled ? 0.30 : 0.0;
   mesh.material.uniforms.uRotation.value = -entityAngle;
 
   mesh.position.set(ex, -ey, 0);
@@ -768,6 +807,21 @@ export function prewarmHexShips3D({ canvas = null } = {}) {
 
 export function resizeHexShips3D(width, height) {
   if (Core3D.isInitialized) Core3D.resize(width, height);
+}
+
+export function setHexDamageTintEnabled(enabled) {
+  state.damageTintEnabled = enabled !== false;
+  for (const [, data] of state.entityMeshes) {
+    const uniforms = data?.mesh?.material?.uniforms;
+    if (uniforms?.uStressTint) {
+      uniforms.uStressTint.value = state.damageTintEnabled ? 0.30 : 0.0;
+    }
+  }
+  return state.damageTintEnabled;
+}
+
+export function isHexDamageTintEnabled() {
+  return state.damageTintEnabled !== false;
 }
 
 export function updateHexShips3D(viewCamera, entities = []) {
@@ -823,6 +877,7 @@ export function updateHexShips3D(viewCamera, entities = []) {
   Weapon3DSystem.cleanupEntities(weaponActiveEntities);
   Weapon3DSystem.syncProjectiles((typeof window !== 'undefined' && Array.isArray(window.bullets)) ? window.bullets : []);
 
+  GpuDebrisManager.updateTime(now * 0.001);
   updateDebrisRendering();
 
   for (const [entity] of state.entityMeshes) {
@@ -840,20 +895,17 @@ export function updateHexShips3D(viewCamera, entities = []) {
 }
 
 export function drawHexShips3D(ctx, width, height) {
-  if (!ctx || !Core3D.isInitialized) return;
-  Core3D.render();
+  void ctx;
+  void width;
+  void height;
+  if (!Core3D.isInitialized) return;
+  const isSplit = typeof window !== 'undefined' && window.splitScreenMode && Core3D.activeCam2;
 
-  const src = Core3D.canvas;
-  if (!src) return;
-
-  const w = Math.max(1, Number(width) || ctx.canvas?.width || 1);
-  const h = Math.max(1, Number(height) || ctx.canvas?.height || 1);
-
-  ctx.save();
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(src, 0, 0, w, h);
-  ctx.restore();
+  if (isSplit) {
+    Core3D.renderSplitScreen(Core3D.activeCam1, Core3D.activeCam2);
+  } else {
+    Core3D.renderSingle(Core3D.activeCam1);
+  }
 }
 
 export function invalidateHexShipEntity3D(entity) {
@@ -868,11 +920,10 @@ export function invalidateHexShipEntity3D(entity) {
 export function disposeHexShips3D() {
   for (const [, data] of state.entityMeshes) disposeMeshData(data);
   state.entityMeshes.clear();
-  for (const [, data] of state.debrisMeshes) disposeMeshData(data);
-  state.debrisMeshes.clear();
-  debrisBucketsPool.clear();
+  GpuDebrisManager.dispose();
   EngineVfxSystem.disposeAll();
   Weapon3DSystem.disposeAll();
   state.frameId = 0;
   state.hadRenderableLastFrame = false;
 }
+

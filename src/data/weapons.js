@@ -153,27 +153,27 @@ export const MASTER_WEAPONS = {
   missile_rack: { 
     id: 'missile_rack', name: 'Standard Missile Rack', mountType: 'missile', category: 'rocket', size: 'M',
     baseDamage: 60, baseRange: 1500, baseSpeed: 400, cooldown: 2.5, ammo: 20,
-    turnRate: 350, homingDelay: 0.25, vfxColor: '#ffbb77' 
+    turnRate: 350, homingDelay: 0.25, explosionRadius: 48, vfxColor: '#ffbb77' 
   },
   npc_msl_af: { 
     id: 'npc_msl_af', name: 'AIM-3 Interceptor', mountType: 'missile', category: 'rocket', size: 'S',
     baseDamage: 45, baseRange: 1440, baseSpeed: 360, cooldown: 3.0, ammo: 4,
-    turnRate: 600, homingDelay: 0.1, vfxColor: '#7cd7ff' 
+    turnRate: 600, homingDelay: 0.1, explosionRadius: 36, vfxColor: '#7cd7ff' 
   },
   npc_msl_as: { 
     id: 'npc_msl_as', name: 'ASM-6 Anti-Ship', mountType: 'missile', category: 'rocket', size: 'M',
     baseDamage: 120, baseRange: 1800, baseSpeed: 300, cooldown: 6.0, ammo: 8,
-    turnRate: 320, homingDelay: 0.4, vfxColor: '#ffad7c' 
+    turnRate: 320, homingDelay: 0.4, explosionRadius: 72, vfxColor: '#ffad7c' 
   },
   npc_msl_he: { 
     id: 'npc_msl_he', name: 'HET-4 Heavy', mountType: 'missile', category: 'rocket', size: 'L',
     baseDamage: 160, baseRange: 1400, baseSpeed: 280, cooldown: 8.0, ammo: 4,
-    turnRate: 250, homingDelay: 0.6, vfxColor: '#ff7cf0' 
+    turnRate: 250, homingDelay: 0.6, explosionRadius: 96, vfxColor: '#ff7cf0' 
   },
   npc_msl_sw: { 
     id: 'npc_msl_sw', name: 'Swarm-8', mountType: 'missile', category: 'rocket', size: 'M',
     baseDamage: 18, baseRange: 1020, baseSpeed: 340, cooldown: 4.5, ammo: 16,
-    turnRate: 550, homingDelay: 0.2, swarmCount: 6, spread: 0.3, vfxColor: '#b3ff7c' 
+    turnRate: 550, homingDelay: 0.2, swarmCount: 6, spread: 0.3, explosionRadius: 28, vfxColor: '#b3ff7c' 
   },
 
   // ==========================================================================
@@ -208,10 +208,51 @@ export const MASTER_WEAPONS = {
     recoil: 60, shake: 45, impactScale: 3.5,
     model3D: 'special_valkyrie_railgun', render3dOnly: true
   },
-  hexlance_siege: { 
+  special_yamato_cannon: {
+    id: 'special_yamato_cannon', name: 'Bateria Główna Klasy YAMATO', mountType: 'special', category: 'plasma', size: 'Capital',
+    baseDamage: 850, baseRange: 5000, baseSpeed: 9000, cooldown: 2.5, spread: 0.005,
+    penetration: 5, energyCost: 75, vfxColor: '#00ffff',
+    recoil: 90, shake: 65, impactScale: 4.5, barrelsPerShot: 3,
+    model3D: 'special_yamato_cannon', render3dOnly: true
+  },
+  hexlance_siege: {
     id: 'hexlance_siege', name: 'Hexlance Siege Cannon', mountType: 'special', category: 'superweapon', size: 'Capital',
-    baseDamage: 9999, baseRange: 12000, baseSpeed: 8000, cooldown: 4.0, chargeTime: 0.6,
-    burstCount: 4, burstDelay: 0.25, energyCost: 150, vfxColor: '#d0eaff'
+    baseDamage: 9999, baseRange: 60000, baseSpeed: 12000, cooldown: 6.0, chargeTime: 1.2,
+    burstCount: 4, burstDelay: 0.25, energyCost: 200, vfxColor: '#d0eaff'
+  },
+
+  // ==========================================================================
+  // SIEGE / LONG-RANGE WEAPONS
+  // ==========================================================================
+  siege_torpedo: {
+    id: 'siege_torpedo', name: 'Siege Torpedo Mk I', mountType: 'missile', category: 'torpedo', size: 'L',
+    baseDamage: 800, baseRange: 60000, baseSpeed: 600, cooldown: 12.0, ammo: 6,
+    turnRate: 80, homingDelay: 1.0, vfxColor: '#ff4444',
+    explosionRadius: 200, armorPen: 3,
+    description: 'Heavy anti-capital torpedo. Slow but devastating. Visible on enemy sensors.'
+  },
+  siege_torpedo_mk2: {
+    id: 'siege_torpedo_mk2', name: 'Siege Torpedo Mk II', mountType: 'missile', category: 'torpedo', size: 'Capital',
+    baseDamage: 1400, baseRange: 80000, baseSpeed: 500, cooldown: 18.0, ammo: 4,
+    turnRate: 60, homingDelay: 1.5, vfxColor: '#ff2222',
+    explosionRadius: 350, armorPen: 5,
+    description: 'Capital-grade siege torpedo. Extremely powerful but slow and easy to intercept.'
+  },
+  torpedo_salvo: {
+    id: 'torpedo_salvo', name: 'Torpedo Salvo Launcher', mountType: 'missile', category: 'torpedo', size: 'L',
+    baseDamage: 250, baseRange: 45000, baseSpeed: 800, cooldown: 15.0, ammo: 12,
+    turnRate: 120, homingDelay: 0.8, vfxColor: '#ff8844',
+    burstCount: 6, burstDelay: 0.3,
+    explosionRadius: 120,
+    description: 'Launches a salvo of 6 lighter torpedoes. Harder to intercept all of them.'
+  },
+  siege_railgun: {
+    id: 'siege_railgun', name: 'Mjolnir Siege Railgun', mountType: 'special', category: 'rail', size: 'Capital',
+    baseDamage: 2500, baseRange: 100000, baseSpeed: 25000, cooldown: 8.0, chargeTime: 3.0,
+    spread: 0.0005, penetration: 10, energyCost: 120, vfxColor: '#aaffff',
+    recoil: 120, shake: 80, impactScale: 5.0,
+    requiresStationary: true,
+    description: 'Extreme range railgun. Ship must be stationary to fire. Devastating single-shot damage.'
   }
 };
 
@@ -228,5 +269,13 @@ export const WEAPON_ICON_PATHS = {
   special_goliath_autocannon: 'assets/weapons/heavy_autocannon.svg',
   special_plasma_gatling: 'assets/weapons/railgun.svg',
   special_valkyrie_railgun: 'assets/weapons/railgun.svg',
-  hexlance_siege: 'assets/weapons/supercapitalmain.png'
+  special_yamato_cannon: 'assets/weapons/supercapitalmain.png',
+  hexlance_siege: 'assets/weapons/supercapitalmain.png',
+  siege_torpedo: 'assets/weapons/torpedo.svg',
+  siege_torpedo_mk2: 'assets/weapons/torpedo.svg',
+  torpedo_salvo: 'assets/weapons/torpedo.svg',
+  siege_railgun: 'assets/weapons/railgun.svg',
+  ciws_mk1: 'assets/weapons/ciws.svg',
+  laser_pd_mk1: 'assets/weapons/laser_pd.svg',
+  missile_rack: 'assets/weapons/missile_rack.svg'
 };

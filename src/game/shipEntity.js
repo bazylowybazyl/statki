@@ -378,7 +378,7 @@ function stepThrusterActuator(thruster, dt, isSide) {
   const clampedDt = Math.max(1 / 240, Math.min(0.12, Number(dt) || (1 / 60)));
   const throttleTarget = clamp01(thruster.__throttleTarget);
   const throttleCurrent = Number.isFinite(Number(thruster.__throttle)) ? Number(thruster.__throttle) : throttleTarget;
-  const riseRate = isSide ? 7.5 : 6.5;
+  const riseRate = isSide ? 7.5 : 9.0;
   const fallRate = isSide ? 9.5 : 8.0;
   const throttleRate = throttleTarget >= throttleCurrent ? riseRate : fallRate;
   thruster.__throttle = stepToward(throttleCurrent, throttleTarget, throttleRate * clampedDt);

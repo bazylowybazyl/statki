@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="120" viewBox="0 0 180 120">
+  <defs>
+    <linearGradient id="arm-barrel" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#d4c4a0" />
+      <stop offset="50%" stop-color="#a08860" />
+      <stop offset="100%" stop-color="#705830" />
+    </linearGradient>
+    <radialGradient id="arm-core" cx="35%" cy="50%" r="65%">
+      <stop offset="0%" stop-color="#2e2518" />
+      <stop offset="100%" stop-color="#1a1408" />
+    </radialGradient>
+    <linearGradient id="arm-heat" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#ff6600" />
+      <stop offset="100%" stop-color="#ff9944" />
+    </linearGradient>
+  </defs>
+  <!-- Heavy housing -->
+  <rect x="6" y="34" width="88" height="52" rx="12" fill="url(#arm-core)" stroke="#0e0c06" stroke-width="4" />
+  <!-- Barrel (thick) -->
+  <rect x="88" y="48" width="68" height="24" rx="6" fill="url(#arm-barrel)" stroke="#1a1408" stroke-width="3" />
+  <!-- Muzzle brake -->
+  <rect x="150" y="44" width="8" height="32" rx="2" fill="#705830" stroke="#1a1408" stroke-width="2" />
+  <rect x="160" y="50" width="14" height="20" rx="3" fill="#8a7050" stroke="#1a1408" stroke-width="2" />
+  <!-- Flash -->
+  <path d="M162 48 L178 60 L162 72 Z" fill="#ff5500" opacity="0.6" />
+  <!-- Breech detail -->
+  <rect x="14" y="42" width="30" height="36" rx="6" fill="#1e1a10" stroke="#3a3020" stroke-width="1.5" />
+  <!-- Heat vents -->
+  <rect x="96" y="44" width="3" height="32" rx="1" fill="url(#arm-heat)" opacity="0.5" />
+  <rect x="108" y="44" width="3" height="32" rx="1" fill="url(#arm-heat)" opacity="0.4" />
+  <rect x="120" y="44" width="3" height="32" rx="1" fill="url(#arm-heat)" opacity="0.3" />
+  <!-- Ammo indicator -->
+  <circle cx="30" cy="60" r="8" fill="#1a1408" stroke="#ff6600" stroke-width="2" opacity="0.7" />
+  <circle cx="30" cy="60" r="3" fill="#ff6600" opacity="0.8" />
+  <!-- Top mount -->
+  <rect x="50" y="28" width="20" height="12" rx="4" fill="#2e2518" stroke="#3a3020" stroke-width="1" />
+</svg>
