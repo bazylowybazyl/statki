@@ -10,7 +10,7 @@ const PreserveAlphaOutputShader = {
   name: 'PreserveAlphaOutputShader',
   uniforms: { tDiffuse: { value: null } },
   vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-  fragmentShader: `precision highp float; uniform sampler2D tDiffuse; varying vec2 vUv; void main() { vec4 texColor = texture2D(tDiffuse, vUv); gl_FragColor = vec4(texColor.rgb * texColor.a, texColor.a); }`
+  fragmentShader: `precision highp float; uniform sampler2D tDiffuse; varying vec2 vUv; void main() { vec4 texColor = texture2D(tDiffuse, vUv); gl_FragColor = vec4(texColor.rgb, texColor.a); }`
 };
 
 const MAX_HEAT_HAZE_SOURCES = 24;
@@ -226,7 +226,7 @@ export const Core3D = {
   renderPassBg: null, renderPassPlanets: null, renderPassOrtho: null, renderPassFg: null,
   heatHazePass: null, heatHazeSources: null, heatHazeCount: 0, heatHazeMaxSources: MAX_HEAT_HAZE_SOURCES, _heatHazeWorldScratch: new THREE.Vector3(),
   shadowShaftsPass: null,
-  bloomPass: null, outputPass: null, bloomResolutionScale: 0.75, bloomBaseStrength: 0.35, bloomBaseThreshold: 0.95,
+  bloomPass: null, outputPass: null, bloomResolutionScale: 0.75, bloomBaseStrength: 1.0, bloomBaseThreshold: 0.0,
   msaaSamples: 0,
   perfToggles: { bloom: true, heatHaze: true, shadowShafts: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true },
   pixelRatio: 1, width: 0, height: 0, isInitialized: false,
@@ -250,6 +250,18 @@ export const Core3D = {
 
     this.scene = new THREE.Scene();
     this.scene.background = null;
+
+    const sun = new THREE.DirectionalLight(0x8b79ff, 0.1);
+    sun.position.set(30000, 20000, 45000);
+    sun.layers.enableAll();
+    this.scene.add(sun);
+    const ambient = new THREE.AmbientLight(0x1b2c80, 0.5);
+    ambient.layers.enableAll();
+    this.scene.add(ambient);
+    const coreLight = new THREE.PointLight(0x3366aa, 0.4, 120000);
+    coreLight.position.set(0, 0, -2000);
+    coreLight.layers.enableAll();
+    this.scene.add(coreLight);
 
     this.cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 400000);
     this.cameraPersp = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 100, 500000);

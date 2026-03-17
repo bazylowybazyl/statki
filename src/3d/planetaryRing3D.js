@@ -1,6 +1,10 @@
-import * as THREE from 'three'; 
+import * as THREE from 'three';
 import { Core3D } from './core3d.js';
 import { initHexBody, getHexStructuralState } from '../game/destructor.js';
+import { RingCityZoneGrid } from './ringCityZoneGrid.js';
+import { loadSynthCityAssets } from './ringCityAssets.js';
+import { buildAllDistricts, rebuildDistrictForCell } from './ringCityBuildings.js';
+import { buildAllInfrastructure, createDistrictInfrastructure, rebuildAllInfrastructure } from './ringCityInfrastructure.js';
 
 const RING_PLANETS = new Set(['earth', 'mars']);
 
@@ -111,6 +115,73 @@ function getRingBandLayout() {
     gapStartPx,
     gapEndPx
   };
+}
+
+// --- Pedestal procedural textures ---
+function _generatePedestalDeckTexture() {
+    const w = 1024, h = 256;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, '#0e1622');
+    grad.addColorStop(1, '#070b12');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+    for (let y = 0; y < h; y += 32) {
+        ctx.fillStyle = y % 64 === 0 ? 'rgba(150,190,220,0.035)' : 'rgba(255,255,255,0.015)';
+        ctx.fillRect(0, y, w, 2);
+    }
+    for (let x = 0; x < w; x += 64) {
+        ctx.strokeStyle = 'rgba(90,120,150,0.08)';
+        ctx.strokeRect(x + 2, 8, 52, h - 16);
+        if ((x / 64) % 3 === 0) {
+            ctx.fillStyle = 'rgba(0,243,255,0.07)';
+            ctx.fillRect(x + 8, 14, 36, 3);
+        }
+    }
+    ctx.strokeStyle = 'rgba(0,243,255,0.11)';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0, h * 0.25); ctx.lineTo(w, h * 0.25); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, h * 0.75); ctx.lineTo(w, h * 0.75); ctx.stroke();
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(18, 2);
+    tex.anisotropy = 4;
+    return tex;
+}
+
+function _generatePedestalWallTexture() {
+    const w = 512, h = 512;
+    const c = document.createElement('canvas');
+    c.width = c.height = h;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, '#101723');
+    grad.addColorStop(1, '#04070c');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+    for (let x = 0; x < w; x += 32) {
+        ctx.fillStyle = 'rgba(255,255,255,0.02)';
+        ctx.fillRect(x, 0, 3, h);
+        ctx.fillStyle = 'rgba(0,243,255,0.04)';
+        ctx.fillRect(x + 6, 24, 2, h - 48);
+    }
+    for (let y = 0; y < h; y += 48) {
+        ctx.fillStyle = 'rgba(255,255,255,0.02)';
+        ctx.fillRect(0, y, w, 2);
+    }
+    for (let i = 0; i < 18; i++) {
+        const x = Math.random() * (w - 60);
+        const y = Math.random() * (h - 30);
+        ctx.fillStyle = 'rgba(120,160,190,0.05)';
+        ctx.fillRect(x, y, 40 + Math.random() * 40, 8 + Math.random() * 10);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(20, 2.4);
+    tex.anisotropy = 4;
+    return tex;
 }
 
 const state = {
@@ -438,6 +509,8 @@ class PlanetaryRing {
         Core3D.enableForeground3D(this.buildings3D); // Na layer 1 ring przykrywał budynki, więc wracamy na pass FG.
     }
     this.visualMeshes = [];
+    this.zoneGrid = new RingCityZoneGrid(this.ringRadius, CONFIG.segmentWorldHeight);
+    this.ringFloor = null; // 3D ring pedestal mesh group
 
     this.build();
     this.updateFromPlanet(planet, 0);
@@ -448,10 +521,6 @@ class PlanetaryRing {
     if (!textures) return;
 
     const layout = getRingBandLayout();
-    const outerBandCenterLocalY = -CONFIG.segmentWorldHeight * 0.5 + (layout.outerWorld * 0.5);
-    const minAbsOffset = Math.abs(layout.gapEndWorld) + 80;
-    const maxAbsOffset = (CONFIG.segmentWorldHeight * 0.5) - 80;
-    const bandJitter = Math.max(40, Math.min(layout.outerWorld, layout.innerWorld) * 0.28);
     const effectiveWidth = CONFIG.segmentWorldWidth - CONFIG.overlap;
     const outerCoverageRadius = this.ringRadius + Math.max(
       CONFIG.segmentWorldHeight * 0.5,
@@ -479,106 +548,101 @@ class PlanetaryRing {
       segment.entity = entity;
 
       this.segmentData.push(segment);
-
-      // --- PROCEDURALNE MIASTO W STYLU GTA 2 (fake oblique/projection) ---
-      if (type === 'WALL' && Math.random() > 0.3) {
-          const group = new THREE.Group();
-
-          const matWall = new THREE.MeshStandardMaterial({
-              color: Math.random() > 0.5 ? 0x1f2a3a : 0x2a3a5a,
-              roughness: 0.72,
-              metalness: 0.28
-          });
-          const matRoof = new THREE.MeshStandardMaterial({
-              color: 0x0a0f18,
-              roughness: 1.0,
-              metalness: 0.0
-          });
-          const materials = [matWall, matWall, matWall, matWall, matRoof, matWall];
-
-          const GTA2_SHEAR_X = 0.0;
-          const GTA2_SHEAR_Y = 0.0;
-          const shear = new THREE.Matrix4().set(
-              1, 0, GTA2_SHEAR_X, 0,
-              0, 1, GTA2_SHEAR_Y, 0,
-              0, 0, 1, 0,
-              0, 0, 0, 1
-          );
-
-          const podiumH = 14 + Math.random() * 16;
-          const towerW = 110 + Math.random() * 70;
-          const towerD = 140 + Math.random() * 90;
-          const towerH = 55 + Math.random() * 70;
-
-          const podiumGeo = new THREE.BoxGeometry(towerW * 1.12, towerD * 1.12, podiumH);
-          podiumGeo.translate(0, 0, podiumH * 0.5);
-          podiumGeo.applyMatrix4(shear);
-          const podiumMesh = new THREE.Mesh(podiumGeo, materials);
-          group.add(podiumMesh);
-
-          const towerGeo = new THREE.BoxGeometry(towerW, towerD, towerH);
-          towerGeo.translate(0, 0, podiumH + towerH * 0.5);
-          towerGeo.applyMatrix4(shear);
-          const towerMesh = new THREE.Mesh(towerGeo, materials);
-          group.add(towerMesh);
-
-          if (Math.random() > 0.5) {
-              const acGeo = new THREE.BoxGeometry(26 + Math.random() * 14, 26 + Math.random() * 14, 12 + Math.random() * 8);
-              acGeo.translate(0, 0, podiumH + towerH + 9);
-              acGeo.applyMatrix4(shear);
-              const acMesh = new THREE.Mesh(acGeo, matWall);
-              group.add(acMesh);
-          }
-
-          const neonGeo = new THREE.EdgesGeometry(towerGeo);
-          const neonMat = new THREE.LineBasicMaterial({ color: 0x44aaff, opacity: 0.22, transparent: true });
-          const neonLines = new THREE.LineSegments(neonGeo, neonMat);
-          group.add(neonLines);
-
-          podiumMesh.castShadow = true;
-          podiumMesh.receiveShadow = true;
-          towerMesh.castShadow = true;
-          towerMesh.receiveShadow = true;
-          group.traverse((node) => {
-            if (node?.isObject3D) node.renderOrder = 10;
-          });
-
-          // WAŻNE: dzieci są dodawane po utworzeniu parenta, więc trzeba jawnie przepiąć całą grupę na layer FG.
-          const tiltWrapper = new THREE.Group();
-          const facingWrapper = new THREE.Group();
-          facingWrapper.add(group);
-          tiltWrapper.add(facingWrapper);
-          if (Core3D?.enableForeground3D) Core3D.enableForeground3D(tiltWrapper);
-          this.buildings3D.add(tiltWrapper);
-
-          const bandCenterOffset = (Math.random() > 0.5)
-            ? layout.innerBandCenterLocalY
-            : outerBandCenterLocalY;
-          let radialOffset = bandCenterOffset + (Math.random() - 0.5) * (bandJitter * 2);
-          const sign = radialOffset >= 0 ? 1 : -1;
-          let absOffset = Math.abs(radialOffset);
-          if (absOffset < minAbsOffset) absOffset = minAbsOffset;
-          if (absOffset > maxAbsOffset) absOffset = maxAbsOffset;
-          radialOffset = sign * absOffset;
-
-          this.visualMeshes.push({
-              mesh: tiltWrapper,
-              facingWrapper,
-              segmentIndex: i,
-              radialOffset,
-              alignToRing: true,
-              screenYaw: 0,
-              tiltX: 0,
-              tiltY: 0
-          });
-      }
     }
+
+    // Ring starts empty — player builds zones via zone painter UI
+
     for (let i = 0; i < this.segmentData.length; i++) {
       if (this.segmentTypes[i] !== 'GATE_L_OUTER') continue;
       this.createMechanicalGate(i);
     }
 
     this.buildConstructionSlots(segmentCount);
+    this.buildRingPedestal();
+  }
+
+  buildRingPedestal() {
+    const ringR = this.ringRadius;
+    const halfH = CONFIG.segmentWorldHeight * 0.5;
+    const innerR = ringR - halfH;
+    const outerR = ringR + halfH;
+    const overhang = 170;
+    const pedestalH = 180;
+
+    // Pedestal textures (procedural canvas)
+    const deckTex = _generatePedestalDeckTexture();
+    const wallTex = _generatePedestalWallTexture();
+
+    const deckMat = new THREE.MeshStandardMaterial({
+        map: deckTex, color: 0x1b2431, emissive: 0x0d2030,
+        emissiveIntensity: 0.22, roughness: 0.82, metalness: 0.48, side: THREE.DoubleSide
+    });
+    const wallMat = new THREE.MeshStandardMaterial({
+        map: wallTex, color: 0x131a24, emissive: 0x08131d,
+        emissiveIntensity: 0.16, roughness: 0.88, metalness: 0.38, side: THREE.DoubleSide
+    });
+    const trimMat = new THREE.MeshBasicMaterial({
+        color: 0x2f6ea4, transparent: true, opacity: 0.3
+    });
+
+    const floorGroup = new THREE.Group();
+
+    // Top deck (main floor) — flat ring in XY plane
+    const topGeo = new THREE.RingGeometry(innerR - overhang, outerR + overhang, 512);
+    floorGroup.add(new THREE.Mesh(topGeo, deckMat));
+
+    // Autostrada (central highway)
+    const autoW = 180;
+    const autoGeo = new THREE.RingGeometry(ringR - autoW * 0.5, ringR + autoW * 0.5, 512);
+    const autoMat = new THREE.MeshStandardMaterial({
+        color: 0x0c1018, roughness: 0.88, metalness: 0.32, side: THREE.DoubleSide
+    });
+    const autoMesh = new THREE.Mesh(autoGeo, autoMat);
+    autoMesh.position.z = 0.5; // Slightly above floor
+    floorGroup.add(autoMesh);
+
+    // Lane markers (torus rings)
+    const laneMat = new THREE.MeshBasicMaterial({
+        color: 0x3a618a, transparent: true, opacity: 0.34
+    });
+    const laneOffset = 34;
+    for (const { radius, tube, opacity } of [
+        { radius: ringR, tube: 2.8, opacity: 0.36 },
+        { radius: ringR - laneOffset, tube: 2.2, opacity: 0.22 },
+        { radius: ringR + laneOffset, tube: 2.2, opacity: 0.22 }
+    ]) {
+        const mat = laneMat.clone();
+        mat.opacity = opacity;
+        const strip = new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 4, 320), mat);
+        strip.position.z = 1.0;
+        floorGroup.add(strip);
+    }
+
+    // Shoulder edges
+    const shoulderMat = new THREE.MeshBasicMaterial({
+        color: 0x17324b, transparent: true, opacity: 0.12
+    });
+    for (const radius of [ringR - autoW * 0.5, ringR + autoW * 0.5]) {
+        const shoulder = new THREE.Mesh(new THREE.TorusGeometry(radius, 4, 4, 320), shoulderMat);
+        shoulder.position.z = 0.8;
+        floorGroup.add(shoulder);
+    }
+
+    // Trim rails (edge glow)
+    for (const { radius, tube, opacity } of [
+        { radius: innerR - overhang + 18, tube: 6, opacity: 0.26 },
+        { radius: outerR + overhang - 18, tube: 6, opacity: 0.26 }
+    ]) {
+        const mat = trimMat.clone();
+        mat.opacity = opacity;
+        const rail = new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 4, 256), mat);
+        rail.position.z = 2;
+        floorGroup.add(rail);
+    }
+
+    if (Core3D?.enableForeground3D) Core3D.enableForeground3D(floorGroup);
+    this.buildings3D.add(floorGroup);
+    this.ringFloor = floorGroup;
   }
 
   createSegmentEntity(index, type, image) {
@@ -717,6 +781,12 @@ class PlanetaryRing {
       this.currentRotation += this.rotationSpeed * dt;
     }
 
+    // Position ring floor at planet center
+    if (this.ringFloor) {
+      this.ringFloor.position.set(this.lastPlanetX, -this.lastPlanetY, -100);
+      this.ringFloor.rotation.z = this.currentRotation;
+    }
+
     for (let i = 0; i < this.segmentData.length; i++) {
       const seg = this.segmentData[i];
       const worldAngle = seg.baseAngle + this.currentRotation;
@@ -746,52 +816,74 @@ class PlanetaryRing {
 
     this.updateGates(dt);
 
-    // --- AKTUALIZACJA BUDYNKÓW ---
+    // --- AKTUALIZACJA BUDYNKÓW (z angle-based culling i LOD) ---
+    // Oblicz kąt kamery względem planety (do culling per-cell)
+    let cameraAngle = 0;
+    let cameraDistance = Infinity;
+    if (hasCameraCenter) {
+        const relCX = camX - this.lastPlanetX;
+        const relCY = camY - this.lastPlanetY;
+        cameraAngle = Math.atan2(-relCY, relCX); // -Y bo game Y jest odwrócony
+        cameraDistance = Math.hypot(relCX, relCY);
+    }
+
+    // Szerokość widocznego łuku zależy od zoom i dystansu
+    // Przy zoom=1 i dystansie ~ringRadius, widać ~120° łuku
+    const viewportWorldWidth = hasCameraCenter ? (window.innerWidth || 1920) / camZoom : 99999;
+    const visibleArcHalf = hasCameraCenter
+        ? Math.min(Math.PI, Math.max(0.4, viewportWorldWidth / (this.ringRadius * 1.2)))
+        : Math.PI;
+
+    // LOD: odległy ring = skip animacji dekoracji
+    const lodDistanceSq = hasCameraCenter ? (cameraDistance * cameraDistance) : 0;
+    const LOD_ANIM_DIST_SQ = (this.ringRadius * 3.5) * (this.ringRadius * 3.5);
+    const skipAnimations = lodDistanceSq > LOD_ANIM_DIST_SQ;
+
+    // Chunk arc half-width for culling (chunk covers CHUNK_ARC = PI/8 = 22.5°)
+    const CHUNK_ARC_HALF = Math.PI / 16; // half of 22.5°
+
     for (const b of this.visualMeshes) {
-        const seg = this.segmentData[b.segmentIndex];
-        if (!seg || !seg.entity || seg.entity.dead) {
-            b.mesh.visible = false;
+        // Global infrastructure — always visible (GPU frustum culling handles it)
+        if (b.isGlobalInfra) {
+            b.mesh.visible = true;
             continue;
         }
-        b.mesh.visible = true;
 
-        const r = this.ringRadius + b.radialOffset;
-        const worldX = this.lastPlanetX + Math.cos(seg.worldAngle) * r;
-        const worldY = this.lastPlanetY + Math.sin(seg.worldAngle) * r;
-
-        b.mesh.position.set(worldX, -worldY, -100);
-        const baseRot = b.alignToRing ? -seg.worldAngle : 0;
-
-        let targetTiltX = 0;
-        let targetTiltY = 0;
-        if (hasCameraCenter) {
-          const relX = worldX - camX;
-          const relY = camY - worldY;
-          const len = Math.hypot(relX, relY);
-          if (len > 1e-3) {
-            const nx = relX / len;
-            const ny = relY / len;
-            const deadZonePx = 100 / camZoom;
-            const response = Math.min(1, Math.max(0, (len - deadZonePx) / (2300 / camZoom)));
-            const maxTilt = 0.44;
-            targetTiltX = ny * maxTilt * response;
-            targetTiltY = -nx * maxTilt * response;
-          }
+        // Segment destruction check (for non-chunk entries)
+        if (!b.isChunk && b.segmentIndex !== undefined) {
+            const seg = this.segmentData[b.segmentIndex];
+            if (!seg || !seg.entity || seg.entity.dead) {
+                b.mesh.visible = false;
+                continue;
+            }
         }
 
-        const tiltLerp = Math.min(1, Math.max(0, (Number(dt) || 0) * 7.0));
-        b.tiltX = Number.isFinite(b.tiltX) ? (b.tiltX + (targetTiltX - b.tiltX) * tiltLerp) : targetTiltX;
-        b.tiltY = Number.isFinite(b.tiltY) ? (b.tiltY + (targetTiltY - b.tiltY) * tiltLerp) : targetTiltY;
+        // Angle-based culling: chunks use wider arc, cells use tight arc
+        if (hasCameraCenter && b.baseAngle !== undefined) {
+            const worldAngle = b.baseAngle + this.currentRotation;
+            let angleDiff = worldAngle - cameraAngle;
+            angleDiff = angleDiff - Math.round(angleDiff / (Math.PI * 2)) * (Math.PI * 2);
+            // Chunks are wider — add half chunk arc to the visible margin
+            const margin = b.isChunk ? CHUNK_ARC_HALF + 0.15 : 0.15;
+            if (Math.abs(angleDiff) > visibleArcHalf + margin) {
+                b.mesh.visible = false;
+                continue;
+            }
+        }
 
-        b.mesh.rotation.x = b.tiltX;
-        b.mesh.rotation.y = b.tiltY;
-        b.mesh.rotation.z = 0;
-        if (b.facingWrapper) {
-          b.facingWrapper.rotation.x = 0;
-          b.facingWrapper.rotation.y = 0;
-          b.facingWrapper.rotation.z = baseRot + (Number(b.screenYaw) || 0);
-        } else {
-          b.mesh.rotation.z = baseRot + (Number(b.screenYaw) || 0);
+        b.mesh.visible = true;
+
+        // Animate dynamic decorations (spinning toppers & adverts)
+        // LOD: skip animacji gdy kamera daleko
+        if (!skipAnimations && b.dynamicDecorations) {
+          for (const dd of b.dynamicDecorations) {
+            if (dd.mesh && dd.rotationSpeed) {
+              dd.mesh.rotation.z += dd.rotationSpeed * dt * 60;
+            }
+            if (dd.update) {
+              dd.update(dt);
+            }
+          }
         }
     }
   }
@@ -921,6 +1013,8 @@ class PlanetaryRing {
     this.gates.length = 0;
     this.constructionSlots.length = 0;
     this.visualMeshes.length = 0;
+    this.zoneGrid = null;
+    this.ringFloor = null;
   }
 }
 
@@ -1008,15 +1102,33 @@ function queryPotentialTargets(x, y, radius = 0) {
 
 export function initPlanetaryRings3D(planets = []) {
   if (!Core3D.isInitialized) Core3D.init();
+
+  // 1. Inicjujemy pierścienie od razu (nawet jako płaskie bryły zapasowe)
   disposePlanetaryRings3D();
   const planetMap = syncRingSystems(planets);
   for (const [key, ring] of state.rings) {
     const planet = planetMap.get(key);
-    if (!planet) continue;
-    ring.updateFromPlanet(planet, 0, null);
+    if (planet) ring.updateFromPlanet(planet, 0, null);
   }
   rebuildEntityList();
   rebuildSpatialIndex();
+
+  // 2. Kiedy modele z SynthCity się pobiorą, robimy bezpieczny TWARDY RESET
+  loadSynthCityAssets().then(() => {
+    // disposePlanetaryRings3D usuwa wszystko, czyści pamięć i wyrejestrowuje ze sceny
+    disposePlanetaryRings3D();
+
+    // syncRingSystems odpala na nowo konstruktory, wpinając świeże, załadowane
+    // budynki 3D prosto na warstwę Foreground w Core3D.scene
+    const pm = syncRingSystems(planets);
+    for (const [key, ring] of state.rings) {
+      const p = pm.get(key);
+      if (p) ring.updateFromPlanet(p, 0, null);
+    }
+    rebuildEntityList();
+    rebuildSpatialIndex();
+  }).catch(e => console.warn('[RingCity] Asset load warning:', e));
+
   return state.rings;
 }
 
@@ -1106,6 +1218,25 @@ export function getPlanetaryRingDebug() {
     for (const seg of ring.segmentData) {
       if (seg?.entity && !seg.entity.dead) aliveSegments++;
     }
+    // Performance stats
+    let visibleEntries = 0;
+    let hiddenEntries = 0;
+    let totalDecorations = 0;
+    let drawCalls = 0;
+    let chunkCount = 0;
+    let globalInfraCount = 0;
+    for (const vm of ring.visualMeshes) {
+      if (vm.isChunk) chunkCount++;
+      if (vm.isGlobalInfra) globalInfraCount++;
+      if (vm.mesh.visible) {
+        visibleEntries++;
+        vm.mesh.traverse(c => { if (c.isMesh || c.isLineSegments) drawCalls++; });
+      } else {
+        hiddenEntries++;
+      }
+      if (vm.dynamicDecorations) totalDecorations += vm.dynamicDecorations.length;
+    }
+
     rings[key] = {
       segmentCount: ring.segmentData.length,
       aliveSegments,
@@ -1114,7 +1245,16 @@ export function getPlanetaryRingDebug() {
       slotCount: ring.constructionSlots.length,
       radius: ring.ringRadius,
       rotation: ring.currentRotation,
-      layerLayout: getRingBandLayout()
+      layerLayout: getRingBandLayout(),
+      // Performance (chunk-based system)
+      totalVisualEntries: ring.visualMeshes.length,
+      chunkCount,
+      globalInfraCount,
+      visibleEntries,
+      hiddenEntries,
+      culledPercent: ring.visualMeshes.length > 0 ? Math.round(hiddenEntries / ring.visualMeshes.length * 100) : 0,
+      estimatedDrawCalls: drawCalls,
+      totalDecorations
     };
   }
   return {
@@ -1123,6 +1263,23 @@ export function getPlanetaryRingDebug() {
     entities: state.entities.length,
     spatialCells: state.queryCells.size
   };
+}
+
+export function rebuildRingCityCell(planetKey, cell) {
+  const ring = state.rings.get(String(planetKey || '').toLowerCase());
+  if (!ring) return;
+
+  // Rebuild district (buildings) — chunk-aware: rebuilds entire chunk containing this cell
+  rebuildDistrictForCell(cell, ring);
+
+  // Rebuild ALL infrastructure globally (merges all cells into ~4 meshes)
+  if (ring.zoneGrid) {
+    rebuildAllInfrastructure(ring.zoneGrid, ring);
+  }
+}
+
+export function getPlanetaryRing(planetKey) {
+  return state.rings.get(String(planetKey || '').toLowerCase()) || null;
 }
 
 if (typeof window !== 'undefined') {

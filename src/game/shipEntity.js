@@ -134,10 +134,10 @@ const DEFAULT_ENGINE_VFX = {
     vfxLengthMax: 179
   },
   sides: [
-    { offset: { x: -288, y: -444 }, forward: { x: 1, y: 0 }, side: 'left', mount: 'upper_left', baseDeg: 90, nozzleDeg: 90, gimbalMinDeg: -90, gimbalMaxDeg: 90, yNudge: 0, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
-    { offset: { x: -288, y: 444 }, forward: { x: 1, y: 0 }, side: 'left', mount: 'lower_left', baseDeg: 90, nozzleDeg: 90, gimbalMinDeg: -90, gimbalMaxDeg: 90, yNudge: 0, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
-    { offset: { x: 348, y: -384 }, forward: { x: -1, y: 0 }, side: 'right', mount: 'upper_right', baseDeg: -90, nozzleDeg: -90, gimbalMinDeg: -90, gimbalMaxDeg: 90, yNudge: 0, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
-    { offset: { x: 348, y: 384 }, forward: { x: -1, y: 0 }, side: 'right', mount: 'lower_right', baseDeg: -90, nozzleDeg: -90, gimbalMinDeg: -90, gimbalMaxDeg: 90, yNudge: 0, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 }
+    { offset: { x: -288, y: -444 }, forward: { x: 0, y: 1 }, side: 'left', mount: 'lower_left', baseDeg: 180, nozzleDeg: 180, gimbalMinDeg: -90, gimbalMaxDeg: 90, yNudge: 0, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
+    { offset: { x: -288, y: 444 }, forward: { x: 0, y: -1 }, side: 'right', mount: 'lower_right', baseDeg: 0, nozzleDeg: 0, gimbalMinDeg: -90, gimbalMaxDeg: 90, yNudge: 0, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
+    { offset: { x: 348, y: -384 }, forward: { x: 0, y: 1 }, side: 'left', mount: 'upper_left', baseDeg: 180, nozzleDeg: 180, gimbalMinDeg: -90, gimbalMaxDeg: 90, yNudge: 0, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 },
+    { offset: { x: 348, y: 384 }, forward: { x: 0, y: -1 }, side: 'right', mount: 'upper_right', baseDeg: 0, nozzleDeg: 0, gimbalMinDeg: -90, gimbalMaxDeg: 90, yNudge: 0, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 }
   ]
 };
 
@@ -204,7 +204,7 @@ function clampNozzleDegToGimbal(nozzleDeg, baseDeg, gimbalMinDeg, gimbalMaxDeg, 
 function applyThrusterNozzle(thruster, desiredDeg, isSide = false) {
   if (!thruster || !Number.isFinite(Number(desiredDeg))) return;
   const fallbackBase = isSide
-    ? ((Number(thruster?.offset?.x) || 0) < 0 ? 90 : -90)
+    ? ((Number(thruster?.offset?.y) || 0) < 0 ? 180 : 0) 
     : 90;
   const baseDeg = Number.isFinite(Number(thruster.baseDeg))
     ? Number(thruster.baseDeg)
@@ -246,8 +246,8 @@ function clearThrusterVisualState(ship) {
     thruster.__turnWeightTarget = 0;
     thruster.__turnWeight = 0;
     const base = Number.isFinite(Number(thruster.baseDeg))
-      ? thruster.baseDeg
-      : ((Number(thruster?.offset?.x) || 0) < 0 ? 90 : -90);
+  ? Number(thruster.baseDeg)
+  : ((Number(thruster?.offset?.y) || 0) < 0 ? 180 : 0);
     applyThrusterNozzle(thruster, base, true);
     thruster.__nozzleCurrentDeg = thruster.__nozzleTargetDeg;
     thruster.nozzleDeg = thruster.__nozzleCurrentDeg;
@@ -277,7 +277,7 @@ function applyPlayerThrusterVisualState(ship, target) {
   const mainThrusters = Array.isArray(ship.visual.mainThrusters) ? ship.visual.mainThrusters : [];
   const mainAssist = manualTurnMag * 0.24;
   const mainThrottle = Math.max(mainInput, mainAssist);
-  const mainGimbalAssistDeg = 12 * manualTorqueInput;
+  const mainGimbalAssistDeg = -12 * manualTorqueInput;
 
   for (const thruster of mainThrusters) {
     const base = Number.isFinite(Number(thruster.baseDeg)) ? Number(thruster.baseDeg) : 90;
@@ -291,46 +291,50 @@ function applyPlayerThrusterVisualState(ship, target) {
     const mount = String(thruster?.mount || '').toLowerCase();
     const isLeft = mount.endsWith('_left') || thruster?.side === 'left';
     const isRight = mount.endsWith('_right') || thruster?.side === 'right';
-    const isUpper = mount.startsWith('upper_');
-    const isLower = mount.startsWith('lower_');
+    // Poprawione nazewnictwo: Front to przód (X>0), Rear to tył (X<0)
+    const isFront = mount.startsWith('front_') || mount.startsWith('upper_');
+    const isRear = mount.startsWith('rear_') || mount.startsWith('lower_');
     const isCenter = mount.startsWith('center_');
 
     let throttle = 0;
     let turnWeight = 0;
 
-    // Strafe mapping: ruch w lewo uruchamia prawe dysze i odwrotnie.
-    if (leftInput > 0 && isRight) throttle = Math.max(throttle, leftInput);
-    if (rightInput > 0 && isLeft) throttle = Math.max(throttle, rightInput);
+    // Strafe mapping: E (leftInput) aktywuje lewe dysze by pchnąć statek w prawo!
+    // Q (rightInput) aktywuje prawe dysze by pchnąć w lewo!
+    if (leftInput > 0 && isLeft) throttle = Math.max(throttle, leftInput);
+    if (rightInput > 0 && isRight) throttle = Math.max(throttle, rightInput);
 
-    // Obrót (D = torque > 0): priorytet górna lewa + pomocniczo dolna prawa.
+    // Obrót (D = torque > 0)
     if (torqueInput > 0) {
-      if (mount === 'upper_left') { throttle = Math.max(throttle, turnMag); turnWeight = 1.0; }
-      else if (mount === 'center_left') { throttle = Math.max(throttle, turnMag * 0.55); turnWeight = 0.55; }
-      else if (mount === 'lower_right') { throttle = Math.max(throttle, turnMag * 0.75); turnWeight = 0.75; }
-      else if (mount === 'center_right') { throttle = Math.max(throttle, turnMag * 0.35); turnWeight = 0.35; }
-      else if (!mount && isLeft && isUpper) { throttle = Math.max(throttle, turnMag); turnWeight = 0.8; }
+      if (isFront && isLeft) { throttle = Math.max(throttle, turnMag); turnWeight = 1.0; }
+      else if (isCenter && isLeft) { throttle = Math.max(throttle, turnMag * 0.55); turnWeight = 0.55; }
+      else if (isRear && isRight) { throttle = Math.max(throttle, turnMag * 0.75); turnWeight = 0.75; }
+      else if (isCenter && isRight) { throttle = Math.max(throttle, turnMag * 0.35); turnWeight = 0.35; }
+      else if (!mount && isLeft && isFront) { throttle = Math.max(throttle, turnMag); turnWeight = 0.8; }
     } else if (torqueInput < 0) {
-      if (mount === 'lower_left') { throttle = Math.max(throttle, turnMag); turnWeight = -1.0; }
-      else if (mount === 'center_left') { throttle = Math.max(throttle, turnMag * 0.35); turnWeight = -0.35; }
-      else if (mount === 'upper_right') { throttle = Math.max(throttle, turnMag * 0.75); turnWeight = -0.75; }
-      else if (mount === 'center_right') { throttle = Math.max(throttle, turnMag * 0.55); turnWeight = -0.55; }
-      else if (!mount && isRight && isUpper) { throttle = Math.max(throttle, turnMag); turnWeight = -0.8; }
+      if (isRear && isLeft) { throttle = Math.max(throttle, turnMag); turnWeight = -1.0; }
+      else if (isCenter && isLeft) { throttle = Math.max(throttle, turnMag * 0.35); turnWeight = -0.35; }
+      else if (isFront && isRight) { throttle = Math.max(throttle, turnMag * 0.75); turnWeight = -0.75; }
+      else if (isCenter && isRight) { throttle = Math.max(throttle, turnMag * 0.55); turnWeight = -0.55; }
+      else if (!mount && isRight && isFront) { throttle = Math.max(throttle, turnMag); turnWeight = -0.8; }
     }
 
     let sideGimbalAssist = 0;
     if (turnMag > 1e-3) {
-      if (torqueInput > 0) {
-        if (isUpper || isCenter) sideGimbalAssist = isLeft ? 22 : 12;
-        if (isLower) sideGimbalAssist = isRight ? -18 : -8;
-      } else {
-        if (isUpper || isCenter) sideGimbalAssist = isRight ? -22 : -12;
-        if (isLower) sideGimbalAssist = isLeft ? 18 : 8;
+      if (torqueInput > 0) { // Skręt w prawo
+        if (isFront || isCenter) sideGimbalAssist = isLeft ? -22 : 22;
+        if (isRear) sideGimbalAssist = isRight ? -18 : 18;
+      } else { // Skręt w lewo
+        if (isFront || isCenter) sideGimbalAssist = isRight ? 22 : -22;
+        if (isRear) sideGimbalAssist = isLeft ? 18 : -18;
       }
     }
 
+    // Kąty 0 (lewa burta, pcha w prawo) i 180 (prawa burta, pcha w lewo)
     const base = Number.isFinite(Number(thruster.baseDeg))
       ? Number(thruster.baseDeg)
-      : ((Number(thruster?.offset?.x) || 0) < 0 ? 90 : -90);
+      : ((Number(thruster?.offset?.y) || 0) < 0 ? 180 : 0);
+      
     applyThrusterNozzle(thruster, base + sideGimbalAssist, true);
     thruster.__throttleTarget = clamp01(throttle);
     thruster.__turnWeightTarget = turnWeight;
@@ -497,7 +501,7 @@ export function computeShipThrusterForces(ship, options = {}) {
       : (Number.isFinite(Number(thruster?.baseDeg)) ? Number(thruster.baseDeg) : 90);
     const dir = normalizeDeg(nozzle, 90) * Math.PI / 180;
     const dirX = Math.sin(dir);
-    const dirY = Math.cos(dir);
+    const dirY = -Math.cos(dir);
     const force = mainForcePerThruster * throttle;
     const fx = dirX * force;
     const fy = dirY * force;
@@ -523,7 +527,7 @@ export function computeShipThrusterForces(ship, options = {}) {
       : (Number.isFinite(Number(thruster?.baseDeg)) ? Number(thruster.baseDeg) : 0);
     const dir = normalizeDeg(nozzle, 0) * Math.PI / 180;
     const dirX = Math.sin(dir);
-    const dirY = Math.cos(dir);
+    const dirY = -Math.cos(dir);
     const force = sideForcePerThruster * throttle;
     const fx = dirX * force;
     const fy = dirY * force;

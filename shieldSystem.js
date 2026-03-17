@@ -57,7 +57,8 @@ export function registerShieldImpact(entity, worldX, worldY, damage = 0) {
     localAngle,
     intensity,
     life: 1.0,
-    deformation
+    deformation,
+    startTime: performance.now() / 1000
   });
   if (shield.impacts.length > MAX_IMPACTS) shield.impacts.length = MAX_IMPACTS;
 

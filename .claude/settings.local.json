@@ -10,7 +10,10 @@
       "Bash(node -e \"const fs=require\\(''fs''\\); const code=fs.readFileSync\\(''src/3d/core3d.js'',''utf8''\\); try { new Function\\(code\\); console.log\\(''Syntax OK''\\); } catch\\(e\\) { console.log\\(''Syntax error:'', e.message\\); }\")",
       "Bash(node -e \"const fs=require\\(''fs''\\); const code=fs.readFileSync\\(''src/3d/core3d.js'',''utf8''\\).replace\\(/^import.*$/gm,''//''\\).replace\\(/^export.*$/gm,''//''\\); try { new Function\\(code\\); console.log\\(''Syntax OK''\\); } catch\\(e\\) { console.log\\(''Error:'', e.message\\); }\")",
       "Bash(node -c c:/Users/Szymon/Documents/GitHub/statki/src/game/siegeMode.js)",
-      "Bash(node -e \"const fs = require\\(''fs''\\); const html = fs.readFileSync\\(''index.html'', ''utf8''\\); let depth = 0; let maxDepth = 0; let line = 0; for \\(const ch of html\\) { if \\(ch === ''\\\\n''\\) line++; if \\(ch === ''{''\\) { depth++; if \\(depth > maxDepth\\) maxDepth = depth; } if \\(ch === ''}''\\) depth--; } console.log\\(''Final depth:'', depth, ''Max depth:'', maxDepth, ''Lines:'', line\\);\")"
+      "Bash(node -e \"const fs = require\\(''fs''\\); const html = fs.readFileSync\\(''index.html'', ''utf8''\\); let depth = 0; let maxDepth = 0; let line = 0; for \\(const ch of html\\) { if \\(ch === ''\\\\n''\\) line++; if \\(ch === ''{''\\) { depth++; if \\(depth > maxDepth\\) maxDepth = depth; } if \\(ch === ''}''\\) depth--; } console.log\\(''Final depth:'', depth, ''Max depth:'', maxDepth, ''Lines:'', line\\);\")",
+      "Bash(wc -l \"C:\\\\Users\\\\Szymon\\\\Documents\\\\GitHub\\\\statki\\\\src\\\\3d\"/*.js)",
+      "Bash(find /c/Users/Szymon/Documents/GitHub/statki -name *procedural* -o -name *procgen* -o -name *tile* -o -name *zone*)",
+      "Bash(find \"C:\\\\Users\\\\Szymon\\\\Documents\\\\GitHub\\\\statki\\\\src\\\\3d\" -name \"*.js\" -exec wc -l {} +)"
     ]
   }
 }
