@@ -36,12 +36,12 @@ function normalizeForward(forward, fallbackX = 0, fallbackY = 1) {
 
 function forwardToDeg(forward) {
   const norm = normalizeForward(forward, 0, 1);
-  return normalizeDeg(Math.atan2(norm.x, norm.y) * 180 / Math.PI, 0);
+  return normalizeDeg(Math.atan2(norm.x, -norm.y) * 180 / Math.PI, 0);
 }
 
 function degToForward(deg) {
   const rad = normalizeDeg(deg, 0) * Math.PI / 180;
-  return normalizeForward({ x: Math.sin(rad), y: Math.cos(rad) }, 0, 1);
+  return normalizeForward({ x: Math.sin(rad), y: -Math.cos(rad) }, 0, 1);
 }
 
 function normalizeGimbal(minDeg, maxDeg, fallbackMin, fallbackMax) {
@@ -65,11 +65,11 @@ function clampNozzleDegToGimbal(nozzleDeg, baseDeg, gimbalMinDeg, gimbalMaxDeg) 
   return normalizeDeg(base + clamped, base);
 }
 
-function inferSideFromMount(mount, x = 0) {
+function inferSideFromMount(mount, y = 0) {
   const raw = String(mount || '').toLowerCase();
   if (raw.endsWith('_left')) return 'left';
   if (raw.endsWith('_right')) return 'right';
-  return (Number(x) || 0) < 0 ? 'left' : 'right';
+  return (Number(y) || 0) < 0 ? 'left' : 'right';
 }
 
 function resolveSlotForward(slot) {
@@ -193,7 +193,7 @@ function buildSlots(entity) {
         gimbalMaxDeg: gimbal.max,
         side: thruster.side === 'left' || thruster.side === 'right'
           ? thruster.side
-          : inferSideFromMount(mount, ox)
+          : inferSideFromMount(mount, oy)
       });
     }
   }

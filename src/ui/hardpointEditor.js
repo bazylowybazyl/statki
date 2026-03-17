@@ -184,8 +184,8 @@ function round2(value) {
 
 function toDeg(forward) {
   const x = Number(forward?.x) || 0;
-  const y = Number(forward?.y) || 1;
-  return Math.atan2(x, y) * 180 / Math.PI;
+  const y = Number(forward?.y) || -1;
+  return Math.atan2(x, -y) * 180 / Math.PI;
 }
 
 function normalizeDeg(value) {
@@ -224,14 +224,14 @@ function inferEngineMount(tool, x, y) {
   const lx = Number(x) || 0;
   const ly = Number(y) || 0;
   if (tool === 'engine_side') {
-    const lateral = lx < 0 ? 'left' : 'right';
-    if (Math.abs(ly) <= 12) return `center_${lateral}`;
-    const vertical = ly < 0 ? 'upper' : 'lower';
+    const lateral = ly < 0 ? 'left' : 'right';
+    if (Math.abs(lx) <= 12) return `center_${lateral}`;
+    const vertical = lx > 0 ? 'upper' : 'lower'; // +X to przód statku (upper)
     return `${vertical}_${lateral}`;
   }
   const longitudinal = lx < 0 ? 'rear' : 'front';
   if (Math.abs(ly) <= 12) return `${longitudinal}_center`;
-  return `${longitudinal}_${ly < 0 ? 'upper' : 'lower'}`;
+  return `${longitudinal}_${ly < 0 ? 'left' : 'right'}`;
 }
 
 function collapseSideMountForUi(mount) {
@@ -264,18 +264,18 @@ function resolveEngineMountForMarker(tool, mount, x, y) {
   return normalized;
 }
 
-function inferEngineSideFromMount(mount, x = 0) {
+function inferEngineSideFromMount(mount, y = 0) {
   const raw = String(mount || '').toLowerCase();
   if (raw.endsWith('_left')) return 'left';
   if (raw.endsWith('_right')) return 'right';
-  return (Number(x) || 0) < 0 ? 'left' : 'right';
+  return (Number(y) || 0) < 0 ? 'left' : 'right';
 }
 
-function resolveEngineMarkerOffset(tool, mount, x, offsetX, offsetY) {
+function resolveEngineMarkerOffset(tool, mount, x, y, offsetX, offsetY) {
   let dx = Number(offsetX) || 0;
   const dy = Number(offsetY) || 0;
   if (tool === 'engine_side' && Math.abs(dx) > 1e-6) {
-    dx *= inferEngineSideFromMount(mount, x) === 'left' ? -1 : 1;
+    dx *= inferEngineSideFromMount(mount, y) === 'left' ? -1 : 1;
   }
   return { dx, dy };
 }
@@ -646,7 +646,7 @@ function bootstrapIfNeeded(shipId) {
       id: markerId(),
       x: round2(main.vfxOffset.x || 0),
       y: round2(main.vfxOffset.y || 0),
-      deg: round2(toDeg(main.vfxForward)),
+      deg: round2(Number.isFinite(Number(main?.baseDeg)) ? Number(main.baseDeg) : toDeg(main.vfxForward)),
       offsetX: 0,
       offsetY: round2(main.vfxYNudge || 0),
       mount: mainMount,
@@ -673,7 +673,7 @@ function bootstrapIfNeeded(shipId) {
         id: markerId(),
         x: round2(ox),
         y: round2(oy),
-        deg: round2(toDeg(thruster?.forward)),
+        deg: round2(Number.isFinite(Number(thruster?.baseDeg)) ? Number(thruster.baseDeg) : toDeg(thruster?.forward)),
         offsetX: 0,
         offsetY: round2(thruster?.yNudge || 0),
         mount: sideMount,
@@ -1051,14 +1051,14 @@ function _markerToThruster(m, tool) {
     anchorX,
     anchorY
   );
-  const resolvedOffset = resolveEngineMarkerOffset(tool, mount, anchorX, m?.offsetX, m?.offsetY);
+  const resolvedOffset = resolveEngineMarkerOffset(tool, mount, anchorX, anchorY, m?.offsetX, m?.offsetY);
   const ox = anchorX + resolvedOffset.dx;
   const oy = anchorY + resolvedOffset.dy;
   return {
     ox,
     oy,
     fx: Math.sin(rad),
-    fy: Math.cos(rad),
+    fy: -Math.cos(rad),
     deg,
     mount,
     gimbalMinDeg: round2(gimbal.min),
@@ -1092,7 +1092,7 @@ function syncEditorEnginesToShip() {
   // Convert editor markers → mainThrusters format
   // Editor marker: { x, y, deg, offsetX, offsetY }
   // Ship format:   { offset: {x, y}, forward: {x, y} }
-  // deg convention: deg=0 → forward=(0,1),  forward.x = -sin(deg), forward.y = cos(deg)
+  // deg convention: deg=0 → forward=(0,-1),  forward.x = sin(deg), forward.y = -cos(deg)
   if (mainMarkers.length > 0) {
     ship.visual.mainThrusters = mainMarkers.map(m => {
       const t = _markerToThruster(m, 'engine_main');

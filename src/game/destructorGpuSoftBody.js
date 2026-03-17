@@ -490,12 +490,7 @@ export const DestructorGpuSoftBody = {
       const copiedData = this._getFloatArray(floatCount);
       copiedData.set(new Float32Array(mapped));
       state.readbackBuffer.unmap();
-      if (this._resultsQueue.length < this._maxQueueLen) {
-        this._resultsQueue.push({ entity, count, data: copiedData, shardsRef: state.shardsRef });
-      } else {
-        this._droppedReadbacks = (this._droppedReadbacks || 0) + 1;
-        this._arrayPool.push(copiedData);
-      }
+      this._resultsQueue.push({ entity, count, data: copiedData, shardsRef: state.shardsRef });
     } catch (e) {
       safeUnmap(state.readbackBuffer);
     } finally {

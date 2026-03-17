@@ -26,7 +26,7 @@ function normalizeHpEnum(hardpointEnum) {
 
 function forwardFromEditorDeg(deg) {
   const rad = (Number(deg) || 0) * Math.PI / 180;
-  return { x: Math.sin(rad), y: Math.cos(rad) };
+  return { x: Math.sin(rad), y: -Math.cos(rad) };
 }
 
 function normalizeEditorEngineDeg(value, fallback = 0) {
@@ -39,15 +39,18 @@ function normalizeEditorEngineDeg(value, fallback = 0) {
 function inferEditorEngineMount(kind, x, y) {
   const lx = Number(x) || 0;
   const ly = Number(y) || 0;
+  
+  // y < 0 to lewa burta (góra sprite'a), y > 0 to prawa burta (dół sprite'a)
   if (kind === 'side') {
-    const lateral = lx < 0 ? 'left' : 'right';
-    if (Math.abs(ly) <= 12) return `center_${lateral}`;
-    const vertical = ly < 0 ? 'upper' : 'lower';
-    return `${vertical}_${lateral}`;
+    const lateral = ly < 0 ? 'left' : 'right';
+    if (Math.abs(lx) <= 12) return `center_${lateral}`;
+    const longitudinal = lx < 0 ? 'rear' : 'front';
+    return `${longitudinal}_${lateral}`;
   }
+  
   const longitudinal = lx < 0 ? 'rear' : 'front';
   if (Math.abs(ly) <= 12) return `${longitudinal}_center`;
-  return `${longitudinal}_${ly < 0 ? 'upper' : 'lower'}`;
+  return `${longitudinal}_${ly < 0 ? 'left' : 'right'}`;
 }
 
 function normalizeEditorEngineMount(kind, mount, x, y) {
@@ -83,18 +86,18 @@ function clampNozzleDegToGimbal(nozzleDeg, baseDeg, gimbalMinDeg, gimbalMaxDeg) 
   return normalizeEditorEngineDeg(base + clamped, base);
 }
 
-function inferEditorEngineSide(mount, x = 0) {
+function inferEditorEngineSide(mount, y = 0) {
   const raw = String(mount || '').toLowerCase();
   if (raw.endsWith('_left')) return 'left';
   if (raw.endsWith('_right')) return 'right';
-  return (Number(x) || 0) < 0 ? 'left' : 'right';
+  return (Number(y) || 0) < 0 ? 'left' : 'right';
 }
 
-function resolveEditorEngineOffset(kind, mount, x, offsetX, offsetY) {
+function resolveEditorEngineOffset(kind, mount, y, offsetX, offsetY) {
   let dx = Number(offsetX) || 0;
   const dy = Number(offsetY) || 0;
   if (kind === 'side' && Math.abs(dx) > 1e-6) {
-    dx *= inferEditorEngineSide(mount, x) === 'left' ? -1 : 1;
+    dx *= inferEditorEngineSide(mount, y) === 'left' ? -1 : 1;
   }
   return { dx, dy };
 }
@@ -127,12 +130,15 @@ function normalizeEditorEngine(marker, idx, kind = 'main') {
   const x = Number(marker?.x);
   const y = Number(marker?.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  const baseDeg = normalizeEditorEngineDeg(marker?.deg, 0);
+  const rawDeg = normalizeEditorEngineDeg(marker?.deg, 0);
   const mount = normalizeEditorEngineMount(kind, marker?.mount, x, y);
+  const baseDeg = (kind === 'side')
+    ? (mount.endsWith('_right') ? 90 : -90)
+    : rawDeg;
   const gimbal = normalizeEditorEngineGimbal(kind, marker?.gimbalMinDeg, marker?.gimbalMaxDeg);
   const nozzleRaw = normalizeEditorEngineDeg(marker?.nozzleDeg, baseDeg);
   const nozzleDeg = clampNozzleDegToGimbal(nozzleRaw, baseDeg, gimbal.min, gimbal.max);
-  const resolvedOffset = resolveEditorEngineOffset(kind, mount, x, marker?.offsetX, marker?.offsetY);
+  const resolvedOffset = resolveEditorEngineOffset(kind, mount, y, marker?.offsetX, marker?.offsetY);
   return {
     id: marker?.id || `eng_${idx}`,
     x: x + resolvedOffset.dx,
@@ -323,7 +329,7 @@ export function createNpcHardpointRuntime({
           nozzleDeg: engine.nozzleDeg,
           gimbalMinDeg: engine.gimbalMinDeg,
           gimbalMaxDeg: engine.gimbalMaxDeg,
-          side: inferEditorEngineSide(engine.mount, engine.x),
+          side: inferEditorEngineSide(engine.mount, engine.y),
           yNudge: engine.offsetY,
           vfxWidthMin: engine.vfxWidthMin,
           vfxWidthMax: engine.vfxWidthMax,

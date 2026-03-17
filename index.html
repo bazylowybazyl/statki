@@ -162,6 +162,15 @@
       height: 200px !important;
       filter: drop-shadow(0 0 8px rgba(100, 200, 255, 0.2));
     }
+    .zp-tool-btn.active {
+      border-color: #5af !important;
+      background: #1a2a3a !important;
+      box-shadow: 0 0 6px rgba(85,170,255,0.3);
+    }
+    .zp-tool-btn:hover {
+      border-color: #445 !important;
+      background: #162030 !important;
+    }
   </style>
 
 </head>
@@ -757,6 +766,93 @@
       </div>
     </div>
   </div>
+  <div id="zone-painter-overlay" class="hidden" style="
+    position:fixed; top:80px; right:20px; width:220px;
+    background:rgba(6,10,18,0.92); border:1px solid #1a2a3a;
+    border-radius:8px; padding:14px; z-index:310;
+    font-family:'Courier New',monospace; color:#8af;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <h3 style="margin:0; font-size:13px; color:#5af; letter-spacing:1px;">PLANOWANIE STREF</h3>
+      <button id="zp-closeBtn" style="background:none; border:1px solid #334; color:#667;
+        border-radius:4px; cursor:pointer; font-size:11px; padding:2px 8px;">X</button>
+    </div>
+    <p style="font-size:10px; color:#556; margin:0 0 8px 0;">Wybierz pedzel i maluj po ringu.</p>
+    <div class="zp-tool-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-bottom:8px;">
+      <button class="zp-tool-btn active" data-tool="camera" style="
+        background:#111a28; border:1px solid #223; color:#667; border-radius:4px;
+        padding:4px 6px; cursor:pointer; font-size:10px; text-align:left;">
+        <span style="font-weight:bold;">Kamera</span>
+      </button>
+      <button class="zp-tool-btn" data-tool="residential" style="
+        background:#111a28; border:1px solid #223; color:#00f3ff; border-radius:4px;
+        padding:4px 6px; cursor:pointer; font-size:10px; text-align:left;">
+        <span style="font-weight:bold;">Mieszkalna</span>
+      </button>
+      <button class="zp-tool-btn" data-tool="residential_mega" style="
+        background:#111a28; border:1px solid #223; color:#37a8ff; border-radius:4px;
+        padding:4px 6px; cursor:pointer; font-size:10px; text-align:left;">
+        <span style="font-weight:bold;">Mieszk. MEGA</span>
+      </button>
+      <button class="zp-tool-btn" data-tool="commercial" style="
+        background:#111a28; border:1px solid #223; color:#b800ff; border-radius:4px;
+        padding:4px 6px; cursor:pointer; font-size:10px; text-align:left;">
+        <span style="font-weight:bold;">Handlowa</span>
+      </button>
+      <button class="zp-tool-btn" data-tool="commercial_mega" style="
+        background:#111a28; border:1px solid #223; color:#ff4cf4; border-radius:4px;
+        padding:4px 6px; cursor:pointer; font-size:10px; text-align:left;">
+        <span style="font-weight:bold;">Handl. MEGA</span>
+      </button>
+      <button class="zp-tool-btn" data-tool="industrial" style="
+        background:#111a28; border:1px solid #223; color:#fcee0a; border-radius:4px;
+        padding:4px 6px; cursor:pointer; font-size:10px; text-align:left;">
+        <span style="font-weight:bold;">Przemyslowa</span>
+      </button>
+      <button class="zp-tool-btn" data-tool="military" style="
+        background:#111a28; border:1px solid #223; color:#ff003c; border-radius:4px;
+        padding:4px 6px; cursor:pointer; font-size:10px; text-align:left;">
+        <span style="font-weight:bold;">Wojskowa</span>
+      </button>
+      <button class="zp-tool-btn" data-tool="erase" style="
+        background:#111a28; border:1px solid #223; color:#888; border-radius:4px;
+        padding:4px 6px; cursor:pointer; font-size:10px; text-align:left;">
+        <span style="font-weight:bold;">Gumka</span>
+      </button>
+    </div>
+    <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px; font-size:10px;">
+      <label style="color:#556; white-space:nowrap;">Pedzel:</label>
+      <input id="zp-brushSize" type="range" min="1" max="4" step="1" value="1"
+        style="flex:1; accent-color:#5af;">
+      <span id="zp-brushSizeValue" style="color:#8af; min-width:12px;">1</span>
+    </div>
+    <div style="border-top:1px solid #1a2a3a; padding-top:8px; margin-top:4px;">
+      <button id="zp-fillRingBtn" style="
+        width:100%; padding:6px; background:#0a1a2a; border:1px solid #2a4a6a;
+        color:#5af; border-radius:4px; cursor:pointer; font-size:11px;
+        font-family:'Courier New',monospace; letter-spacing:1px; margin-bottom:6px;">
+        FILL RING
+      </button>
+      <p style="font-size:9px; color:#445; margin:0 0 6px 0;">Wagi stref przy wypelnianiu:</p>
+      <div style="display:flex; align-items:center; gap:4px; margin-bottom:3px; font-size:10px;">
+        <label style="color:#00f3ff; width:50px;">Mieszk.</label>
+        <input id="zp-fillWeightResidential" type="range" min="0" max="100" step="1" value="33"
+          style="flex:1; accent-color:#00f3ff;">
+        <span id="zp-fillWeightResidentialValue" style="color:#556; min-width:28px;">33%</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:4px; margin-bottom:3px; font-size:10px;">
+        <label style="color:#fcee0a; width:50px;">Przem.</label>
+        <input id="zp-fillWeightIndustrial" type="range" min="0" max="100" step="1" value="33"
+          style="flex:1; accent-color:#fcee0a;">
+        <span id="zp-fillWeightIndustrialValue" style="color:#556; min-width:28px;">33%</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:4px; font-size:10px;">
+        <label style="color:#ff003c; width:50px;">Wojsk.</label>
+        <input id="zp-fillWeightMilitary" type="range" min="0" max="100" step="1" value="33"
+          style="flex:1; accent-color:#ff003c;">
+        <span id="zp-fillWeightMilitaryValue" style="color:#556; min-width:28px;">33%</span>
+      </div>
+    </div>
+  </div>
   <div id="zoom-indicator">ZOOM X1.00</div>
   <div id="planet-radar" class="planet-radar"></div>
   <div id="hover-info" class="hover-info hidden">
@@ -972,6 +1068,7 @@
     window.Superweapon = Superweapon;
     import { HUDSystem } from "./src/ui/hudSystem.js";
     import { InfrastructureUI } from "./src/ui/infrastructureUI.js";
+    import { ZonePainterUI } from "./src/ui/zonePainterUI.js";
     import { CanvasVFX } from "./src/vfx/canvasParticleSystem.js";
     import { SensorSystem } from "./src/game/sensorSystem.js";
     window.SensorSystem = SensorSystem;
@@ -1002,7 +1099,8 @@
       getPotentialPlanetaryRingTargets,
       togglePlanetaryRingGates,
       setPlanetaryRingGateMode,
-      getPlanetaryGateControlState
+      getPlanetaryGateControlState,
+      getPlanetaryRing
     } from "./src/3d/planetaryRing3D.js";
     // Statki Terran (Wsparcie)
     import terranFrigateImg from "./src/assets/ships/terranfrigate.png";
@@ -3559,7 +3657,7 @@
 
     function editorDegToForward(deg) {
       const rad = (Number(deg) || 0) * Math.PI / 180;
-      return { x: Math.sin(rad), y: Math.cos(rad) };
+      return { x: Math.sin(rad), y: -Math.cos(rad) };
     }
 
     function normalizeEditorEngineDeg(value, fallback = 0) {
@@ -3572,15 +3670,18 @@
     function inferEditorEngineMount(kind, x, y) {
       const lx = Number(x) || 0;
       const ly = Number(y) || 0;
+      
+      // y < 0 to lewa burta (góra sprite'a), y > 0 to prawa burta (dół sprite'a)
       if (kind === 'side') {
-        const lateral = lx < 0 ? 'left' : 'right';
-        if (Math.abs(ly) <= 12) return `center_${lateral}`;
-        const vertical = ly < 0 ? 'upper' : 'lower';
-        return `${vertical}_${lateral}`;
+        const lateral = ly < 0 ? 'left' : 'right';
+        if (Math.abs(lx) <= 12) return `center_${lateral}`;
+        const longitudinal = lx < 0 ? 'rear' : 'front';
+        return `${longitudinal}_${lateral}`;
       }
+      
       const longitudinal = lx < 0 ? 'rear' : 'front';
       if (Math.abs(ly) <= 12) return `${longitudinal}_center`;
-      return `${longitudinal}_${ly < 0 ? 'upper' : 'lower'}`;
+      return `${longitudinal}_${ly < 0 ? 'left' : 'right'}`;
     }
 
     function normalizeEditorEngineMount(kind, mount, x, y) {
@@ -3593,18 +3694,18 @@
       return inferEditorEngineMount(kind, x, y);
     }
 
-    function inferEditorEngineSide(mount, x = 0) {
+    function inferEditorEngineSide(mount, y = 0) {
       const raw = String(mount || '').toLowerCase();
       if (raw.endsWith('_left')) return 'left';
       if (raw.endsWith('_right')) return 'right';
-      return (Number(x) || 0) < 0 ? 'left' : 'right';
+      return (Number(y) || 0) < 0 ? 'left' : 'right';
     }
 
-    function resolveEditorEngineOffset(kind, mount, x, offsetX, offsetY) {
+    function resolveEditorEngineOffset(kind, mount, y, offsetX, offsetY) {
       let dx = Number(offsetX) || 0;
       const dy = Number(offsetY) || 0;
       if (kind === 'side' && Math.abs(dx) > 1e-6) {
-        dx *= inferEditorEngineSide(mount, x) === 'left' ? -1 : 1;
+        dx *= inferEditorEngineSide(mount, y) === 'left' ? -1 : 1;
       }
       return { dx, dy };
     }
@@ -3694,13 +3795,11 @@
       if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
       const mount = normalizeEditorEngineMount(kind, marker?.mount, x, y);
       const rawDeg = normalizeEditorEngineDeg(marker?.deg, 0);
-      const baseDeg = (kind === 'side')
-        ? (mount.endsWith('_right') ? -90 : 90)
-        : rawDeg;
+      const baseDeg = rawDeg;
       const gimbal = normalizeEditorEngineGimbal(kind, marker?.gimbalMinDeg, marker?.gimbalMaxDeg);
       const nozzleRaw = normalizeEditorEngineDeg(marker?.nozzleDeg, baseDeg);
       const nozzleDeg = clampNozzleDegToGimbal(nozzleRaw, baseDeg, gimbal.min, gimbal.max);
-      const resolvedOffset = resolveEditorEngineOffset(kind, mount, x, marker?.offsetX, marker?.offsetY);
+      const resolvedOffset = resolveEditorEngineOffset(kind, mount, y, marker?.offsetX, marker?.offsetY);
       return {
         x: x + resolvedOffset.dx,
         y: y + resolvedOffset.dy,
@@ -3748,7 +3847,7 @@
         const s = normalizeEditorEngineMarker(rawSide[i], 'side');
         if (!s) continue;
         const sy = s.y * scaleY;
-        const side = inferEditorEngineSide(s.mount, s.x * scaleX);
+        const side = inferEditorEngineSide(s.mount, s.y * scaleY);
         sideThrusters.push({
           offset: { x: s.x * scaleX, y: sy },
           forward: editorDegToForward(s.nozzleDeg),
@@ -8216,6 +8315,7 @@
       stationUI.editorMode = false;
       InfrastructureUI.setActiveStation(null);
       InfrastructureUI.setVisible(false);
+      ZonePainterUI.setVisible(false);
       camera.clearFocus();
       stationTerminal.open = false;
       stationTerminal.phase = 'idle';
@@ -9926,6 +10026,26 @@
           }
         }]
       }));
+
+      // Ring zone painter card
+      pane.appendChild(createStationCard({
+        title: 'Planowanie stref ringu',
+        badge: 'Ring',
+        description: 'Maluj strefy na pierścieniu orbitalnym — mieszkalne, handlowe, przemysłowe, wojskowe.',
+        actions: [{
+          label: 'Otwórz planowanie',
+          onClick: () => {
+            const st = stationUI.station;
+            const pKey = st?.planet?.id || st?.id || '';
+            const r = getPlanetaryRing(pKey);
+            if (!r) {
+              toast('Ta stacja nie posiada pierścienia orbitalnego');
+              return;
+            }
+            ZonePainterUI.setVisible(true, pKey);
+          }
+        }]
+      }));
     }
 
     function initStationOverlay() {
@@ -10215,6 +10335,7 @@
     initMechanicUI();
     InfrastructureUI.init(canvas);
     InfrastructureUI.autopopulate();
+    ZonePainterUI.init(canvas);
     function startMercenaryMission() {
       if (mercMission) { toast('Misja już aktywna. Wciśnij J aby zobaczyć dziennik.'); return; }
 
@@ -13300,54 +13421,30 @@
           let isHit = false;
           const shieldActive = npc.shield && npc.shield.val > 0;
 
-          // 1. SPRAWDZENIE TARCZY
+          // 1. SPRAWDZENIE TARCZY (okrągła — dopasowana do 3D renderingu)
           if (shieldActive) {
-            // Skala 1.5 - taka sama jak w shieldSystem.js
-            const shieldScale = 1.5;
-
-            // Wymiary bazowe
+            // Wymiary bazowe — identyczne jak w shield3D.js
             let w = npc.w || (npc.radius * 2) || 40;
             let h = npc.h || (npc.radius * 2) || 40;
 
             if (npc.capitalProfile) {
               const baseR = npc.radius || 20;
-              const len = baseR * (npc.capitalProfile.lengthScale || 3.2);
-              const wid = baseR * (npc.capitalProfile.widthScale || 1.2);
-              // Bierzemy MAX, tak jak w grafice
-              w = Math.max(w, len);
-              h = Math.max(h, wid);
+              w = Math.max(w, baseR * (npc.capitalProfile.lengthScale || 3.2));
+              h = Math.max(h, baseR * (npc.capitalProfile.widthScale || 1.2));
             } else if (npc.fighter || npc.type === 'fighter') {
               const size = Math.max(w, h);
               w = size; h = size;
             }
 
-            const rx = (w / 2) * shieldScale;
-            const ry = (h / 2) * shieldScale;
-
-            // Obrót tarczy może mieć osobny offset względem kadłuba (np. carrier ze sprite'em dziobem w prawo).
-            const shieldRotation = Number.isFinite(npc.capitalProfile?.shieldRotation) ? npc.capitalProfile.shieldRotation : 0;
-            const effectiveAngle = (npc.angle || 0) + shieldRotation;
+            // Okrągła tarcza: promień = maxDim/2 * 1.15 (margines) — identycznie jak shield3D.js
+            const shieldRadius = Math.max(w, h) * 0.5 * 1.15;
 
             const dx = b.x - npc.x;
             const dy = b.y - npc.y;
-
-            // Obrót punktu względem środka statku (Local Space)
-            // Używamy macierzy odwróconej dla rotacji 2D o kąt 'effectiveAngle'
-            const cos = Math.cos(effectiveAngle);
-            const sin = Math.sin(effectiveAngle);
-            const localX = dx * cos + dy * sin;
-            const localY = -dx * sin + dy * cos;
-
-            // Promień tarczy pod kątem uderzenia
-            const impactAngle = Math.atan2(localY, localX);
-            const rBase = (rx * ry) / Math.sqrt((ry * Math.cos(impactAngle)) ** 2 + (rx * Math.sin(impactAngle)) ** 2);
-
-            // Sprawdzenie czy punkt jest wewnątrz elipsy
-            // Dystans do kwadratu w układzie lokalnym
-            const distSq = localX * localX + localY * localY;
+            const distSq = dx * dx + dy * dy;
 
             // Hitbox tarczy + promień pocisku
-            const hitThreshold = rBase + b.r;
+            const hitThreshold = shieldRadius + b.r;
 
             if (distSq <= hitThreshold * hitThreshold) {
               isHit = true;
@@ -14451,16 +14548,54 @@
       updateEnginePower(dt);
       const manualTorqueInput = clamp(Number(ship?.thrusterInput?.torque) || 0, -1, 1);
       let stabilizerAssistTorque = 0;
-      if (warp.state === 'idle' && flightAssist.stabilizer && Math.abs(manualTorqueInput) < 0.08) {
-        const omega = Number(ship?.angVel) || 0;
-        const absOmega = Math.abs(omega);
-        // Nieliniowa odpowiedź: szybko rośnie do pełnej mocy kontrowania
-        const normalized = clamp(absOmega / (SHIP_PHYSICS.MAX_TURN_SPEED * 0.15), 0, 1);
-        const strength = normalized * (2.0 - normalized); // ease-out curve
-        stabilizerAssistTorque = -Math.sign(omega) * strength;
-        if (absOmega < 0.02) stabilizerAssistTorque = 0;
+      let stabilizerAssistLeft = 0;
+      let stabilizerAssistRight = 0;
+      if (warp.state === 'idle' && flightAssist.stabilizer) {
+        // Stabilizacja obrotu
+        if (Math.abs(manualTorqueInput) < 0.08) {
+          const omega = Number(ship?.angVel) || 0;
+          const absOmega = Math.abs(omega);
+          // Nieliniowa odpowiedź: szybko rośnie do pełnej mocy kontrowania
+          const normalized = clamp(absOmega / (SHIP_PHYSICS.MAX_TURN_SPEED * 0.15), 0, 1);
+          const strength = normalized * (2.0 - normalized); // ease-out curve
+          stabilizerAssistTorque = -Math.sign(omega) * strength;
+          if (absOmega < 0.02) stabilizerAssistTorque = 0;
+        }
+        // Stabilizacja ruchu bocznego (strafe)
+        const manualLeft = clamp(Number(ship?.thrusterInput?.leftSide) || 0, 0, 1);
+        const manualRight = clamp(Number(ship?.thrusterInput?.rightSide) || 0, 0, 1);
+        if (manualLeft < 0.08 && manualRight < 0.08) {
+          const omega = Number(ship?.angVel) || 0;
+          const sinA = Math.sin(ship.angle);
+          const cosA = Math.cos(ship.angle);
+          // Prędkość wzdłuż osi "right" statku: (-sin, cos)
+          const lateralVel = -(ship.vel.x * sinA) + (ship.vel.y * cosA);
+          // Prędkość wzdłuż osi "forward" statku: (cos, sin)
+          const forwardVel = (ship.vel.x * cosA) + (ship.vel.y * sinA);
+          // Kompensacja rotacji: obrót statku zmienia projekcję prędkości na oś boczną.
+          // Tempo zmiany lateralVel z samej rotacji ≈ -forwardVel * omega.
+          // Odejmujemy tę składową, żeby stabilizator nie reagował na pozorny dryf z obrotu.
+          const rotationContrib = -forwardVel * omega;
+          const correctedLateral = lateralVel - rotationContrib * 0.35;
+          const absCorrected = Math.abs(correctedLateral);
+          // Wyciszanie siły stabilizacji gdy statek aktywnie się obraca
+          const absOmega = Math.abs(omega);
+          const rotationDampen = 1 - clamp(absOmega / (SHIP_PHYSICS.MAX_TURN_SPEED * 0.3), 0, 0.85);
+          const lateralNorm = clamp(absCorrected / (SHIP_PHYSICS.SPEED * 0.25), 0, 1);
+          const lateralStrength = lateralNorm * (2.0 - lateralNorm) * rotationDampen;
+          if (absCorrected > 8) {
+            // correctedLateral > 0 = dryf w prawo → odpal prawe dysze (pchną w lewo)
+            // correctedLateral < 0 = dryf w lewo → odpal lewe dysze (pchną w prawo)
+            if (correctedLateral > 0) stabilizerAssistRight = lateralStrength;
+            else stabilizerAssistLeft = lateralStrength;
+          }
+        }
       }
-      const thrusterCommand = composeShipThrusterCommand(ship, { torque: stabilizerAssistTorque });
+      const thrusterCommand = composeShipThrusterCommand(ship, {
+        torque: stabilizerAssistTorque,
+        leftSide: stabilizerAssistLeft,
+        rightSide: stabilizerAssistRight
+      });
       const thrusterDrive = updateShipThrusterState(ship, dt);
       const driveMain = clamp(thrusterDrive?.main ?? input.main, 0, 1);
       const driveLeft = clamp(thrusterDrive?.leftSide ?? input.leftSide, 0, 1);
@@ -16183,53 +16318,8 @@
         const cullHalfW = viewHalfW * OVERSCAN;
         const cullHalfH = viewHalfH * OVERSCAN;
 
-        // Używamy powiększonych wymiarów (cullHalfW / cullHalfH)
-        const ringRenderRadius = Math.hypot(cullHalfW, cullHalfH) + 1800;
-        const ringSearch = getPotentialPlanetaryRingTargets(cullCamX, cullCamY, ringRenderRadius);
-        const ringBuf = ringSearch.buffer;
-        const ringCount = ringSearch.count;
-        const ringRenderSeen = new Set();
-
-        for (let i = 0; i < ringCount; i++) {
-          const seg = ringBuf[i];
-          if (!seg || seg.dead) continue;
-          if (seg.isCollidable === false && !seg.hexGrid) continue;
-          const sx = Number(seg.x) || 0;
-          const sy = Number(seg.y) || 0;
-          const sr = Math.max(80, Number(seg.radius) || 120);
-
-          // Zmiana z viewHalf na cullHalf !
-          if (Math.abs(sx - cullCamX) > cullHalfW + sr + 900) continue;
-          if (Math.abs(sy - cullCamY) > cullHalfH + sr + 900) continue;
-
-          ringRenderSeen.add(seg);
-          renderEntities.push(seg);
-        }
-
-        const hotRingForRender = collectHotRingDestructibles(
-          performance.now(),
-          'visual',
-          cullCamX,
-          cullCamY,
-          Math.hypot(cullHalfW, cullHalfH) + 5600 // Zmiana z viewHalf!
-        );
-
-        const maxHotRingRender = 110;
-        let hotRingAdded = 0;
-        for (const seg of hotRingForRender) {
-          if (hotRingAdded >= maxHotRingRender) break;
-          if (!seg || seg.dead || ringRenderSeen.has(seg)) continue;
-          const sx = Number(seg.x) || 0;
-          const sy = Number(seg.y) || 0;
-          const sr = Math.max(80, Number(seg.radius) || 120);
-
-          // Zmiana z viewHalf na cullHalf !
-          if (Math.abs(sx - cullCamX) > cullHalfW + sr + 4200) continue;
-          if (Math.abs(sy - cullCamY) > cullHalfH + sr + 4200) continue;
-
-          renderEntities.push(seg);
-          hotRingAdded++;
-        }
+        // Ring segments are now rendered as 3D SynthCity buildings/infrastructure.
+        // Old hex segment rendering is disabled — segments still exist for collision only.
 
         window.updateHexShips3D(cam, renderEntities);
       }
@@ -16960,31 +17050,6 @@
         // Rysuj HUD na Canvasie TYLKO jeśli nie jesteśmy w menu
         if (!isMainMenuVisible()) {
           hudRenderNav(ship, cam);
-          for (const wave of scanWaves) {
-            const s = worldToScreen(wave.x, wave.y, cam);
-            const t = clamp(wave.r / Math.max(1, wave.max), 0, 1);
-            const rr = Math.max(4, wave.r * cam.zoom);
-            ctx.save();
-            ctx.strokeStyle = `rgba(110,255,190,${0.24 * (1 - t)})`;
-            ctx.lineWidth = Math.max(1.5, 3 * cam.zoom);
-            ctx.shadowBlur = 14 * cam.zoom;
-            ctx.shadowColor = 'rgba(80,255,170,0.55)';
-            ctx.beginPath();
-            ctx.arc(s.x, s.y, rr, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.restore();
-          }
-          for (const ping of radarPings) {
-            const s = worldToScreen(ping.x, ping.y, cam);
-            const t = ping.age / ping.life;
-            ctx.save();
-            ctx.strokeStyle = `rgba(110,255,190,${0.95 - t})`;
-            ctx.lineWidth = 2;
-            ctx.shadowBlur = 10 * cam.zoom;
-            ctx.shadowColor = 'rgba(90,255,180,0.45)';
-            ctx.beginPath(); ctx.arc(s.x, s.y, 40 * t * cam.zoom, 0, Math.PI * 2); ctx.stroke();
-            ctx.restore();
-          }
         }
 
         if (scan.target && scan.targetType && mouse.overCanvas) {
@@ -18098,7 +18163,7 @@
       };
       const makeSide = (x, y) => {
         const mount = inferEditorEngineMount('side', x, y);
-        const deg = x < 0 ? 90 : -90;
+        const deg = y < 0 ? 180 : 0;
         return {
           offset: { x, y },
           forward: editorDegToForward(deg),
@@ -18960,13 +19025,13 @@
         };
         const makeSide = (x, y) => {
           const mount = inferEditorEngineMount('side', x, y);
-          const deg = x < 0 ? 90 : -90;
+          const deg = y < 0 ? 180 : 0;
           return {
-            offset: { x, y },
+          offset: { x, y },
             forward: editorDegToForward(deg),
             mount, baseDeg: deg, nozzleDeg: deg,
             gimbalMinDeg: -90, gimbalMaxDeg: 90,
-            side: inferEditorEngineSide(mount, x),
+            side: inferEditorEngineSide(mount, y),
             yNudge: 0, vfxWidthMin: 25, vfxWidthMax: 227,
             vfxLengthMin: 49, vfxLengthMax: 354
           };

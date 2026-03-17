@@ -1,4 +1,4 @@
-﻿/**
+/**
 
  * Hybrid hex destruction engine ported from
 
@@ -2093,6 +2093,11 @@ export const DestructorSystem = {
         const absDiffY = diffY < 0 ? -diffY : diffY;
         const localPeak = absDiffX > absDiffY ? absDiffX : absDiffY;
         if (localPeak > peakDeformation) peakDeformation = localPeak;
+
+        // Nie pozwól siatce zasnąć, jeśli jakikolwiek heks jest w stresie (jest pomarańczowy)
+        if (tdx * tdx + tdy * tdy > 25.0) {
+          moving = true;
+        }
         if (absDiffX > 0.15 || absDiffY > 0.15) {
           s.deformation.x += diffX * (DESTRUCTOR_CONFIG.visualLerpSpeed * dt);
           s.deformation.y += diffY * (DESTRUCTOR_CONFIG.visualLerpSpeed * dt);
@@ -3104,6 +3109,11 @@ export const DestructorSystem = {
             const origBx = getEntityPosX(B);
             const origBy = getEntityPosY(B);
             let hit = false;
+
+            // Accumulate physical separation corrections across substeps
+            let accumCorrAx = 0, accumCorrAy = 0;
+            let accumCorrBx = 0, accumCorrBy = 0;
+
             for (let sub = 0; sub < substeps; sub++) {
               // Interpolate positions along trajectory
               const t = (sub + 0.5) / substeps;
@@ -3114,16 +3124,28 @@ export const DestructorSystem = {
               const sdx = sweepAx - sweepBx;
               const sdy = sweepAy - sweepBy;
               if (sdx * sdx + sdy * sdy < (ar + br) * (ar + br)) {
-                // Temporarily set positions for collision
-                setEntityPos(A, sweepAx, sweepAy);
-                setEntityPos(B, sweepBx, sweepBy);
+                // Set interpolated position + accumulated corrections so far
+                setEntityPos(A, sweepAx + accumCorrAx, sweepAy + accumCorrAy);
+                setEntityPos(B, sweepBx + accumCorrBx, sweepBy + accumCorrBy);
+
+                // Record position before collideEntities applies separation
+                const beforeAx = getEntityPosX(A), beforeAy = getEntityPosY(A);
+                const beforeBx = getEntityPosX(B), beforeBy = getEntityPosY(B);
+
                 this.collideEntities(A, B, subDt, doDamage && !hit);
+
+                // Accumulate the separation/push applied by collideEntities
+                accumCorrAx += getEntityPosX(A) - beforeAx;
+                accumCorrAy += getEntityPosY(A) - beforeAy;
+                accumCorrBx += getEntityPosX(B) - beforeBx;
+                accumCorrBy += getEntityPosY(B) - beforeBy;
+
                 hit = true;
               }
             }
-            // Restore original positions (physics moves them after collision)
-            setEntityPos(A, origAx, origAy);
-            setEntityPos(B, origBx, origBy);
+            // Restore end-of-frame positions, keeping the accumulated separation
+            setEntityPos(A, origAx + accumCorrAx, origAy + accumCorrAy);
+            setEntityPos(B, origBx + accumCorrBx, origBy + accumCorrBy);
           } else {
             this.collideEntities(A, B, dt, doDamage);
           }
@@ -3836,6 +3858,17 @@ export const DestructorSystem = {
 
             sA.applyDeformation(pushX, pushY, 1.0, true);
 
+            // Clamp deformation instead of instant kill — let GPU tearThreshold handle destruction
+            const defSqA = sA.targetDeformation.x * sA.targetDeformation.x + sA.targetDeformation.y * sA.targetDeformation.y;
+            const hardLimitSq = maxCrushLimit * maxCrushLimit * 1.5;
+            if (defSqA > hardLimitSq) {
+              const defScale = Math.sqrt(hardLimitSq / defSqA);
+              sA.targetDeformation.x *= defScale;
+              sA.targetDeformation.y *= defScale;
+              sA.deformation.x *= defScale;
+              sA.deformation.y *= defScale;
+            }
+
             const idxA = Number(sA.__meshIndex);
 
             if (Number.isFinite(idxA)) {
@@ -3903,6 +3936,17 @@ export const DestructorSystem = {
 
 
             sB.applyDeformation(pushX, pushY, 1.0, true);
+
+            // Clamp deformation instead of instant kill — let GPU tearThreshold handle destruction
+            const defSqB = sB.targetDeformation.x * sB.targetDeformation.x + sB.targetDeformation.y * sB.targetDeformation.y;
+            const hardLimitSqB = maxCrushLimit * maxCrushLimit * 1.5;
+            if (defSqB > hardLimitSqB) {
+              const defScaleB = Math.sqrt(hardLimitSqB / defSqB);
+              sB.targetDeformation.x *= defScaleB;
+              sB.targetDeformation.y *= defScaleB;
+              sB.deformation.x *= defScaleB;
+              sB.deformation.y *= defScaleB;
+            }
 
             const idxB = Number(sB.__meshIndex);
 
