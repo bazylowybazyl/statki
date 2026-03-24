@@ -1,4 +1,11 @@
-export function clampTurnVec(vx, vy, wantVx, wantVy, dt, maxDeg) {
+// src/ai/aiUtils.js
+
+const _clampTurnOut = { vx: 0, vy: 0 };
+export function clampTurnVec(vx, vy, wantVx, wantVy, dt, maxDeg, out = _clampTurnOut) {
+  // NaN recovery: if current velocity is NaN, treat as zero (stationary)
+  if (!Number.isFinite(vx)) vx = 0;
+  if (!Number.isFinite(vy)) vy = 0;
+  if (!Number.isFinite(wantVx) || !Number.isFinite(wantVy)) { out.vx = vx; out.vy = vy; return out; }
   const maxRad = (maxDeg * Math.PI / 180) * dt;
   const a = Math.atan2(vy, vx);
   const b = Math.atan2(wantVy, wantVx);
@@ -8,14 +15,20 @@ export function clampTurnVec(vx, vy, wantVx, wantVy, dt, maxDeg) {
   const lim = Math.max(-maxRad, Math.min(maxRad, d));
   const speed = Math.hypot(wantVx, wantVy);
   const ang = a + lim;
-  return { vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed };
+  out.vx = Math.cos(ang) * speed;
+  out.vy = Math.sin(ang) * speed;
+  return out;
 }
 
-export function getLeadAim(shooter, target, projSpeed) {
+const _leadAimOut = { x: 0, y: 0 };
+export function getLeadAim(shooter, target, projSpeed, out = _leadAimOut) {
   const targetX = target.pos ? target.pos.x : target.x;
   const targetY = target.pos ? target.pos.y : target.y;
-  const vx = target.vx ?? target.vel?.x ?? 0;
-  const vy = target.vy ?? target.vel?.y ?? 0;
+  // ?? only catches null/undefined, NOT NaN — guard explicitly
+  let vx = target.vx ?? target.vel?.x ?? 0;
+  let vy = target.vy ?? target.vel?.y ?? 0;
+  if (!Number.isFinite(vx)) vx = 0;
+  if (!Number.isFinite(vy)) vy = 0;
   const px = targetX - shooter.x;
   const py = targetY - shooter.y;
   const A = (vx * vx + vy * vy) - projSpeed * projSpeed;
@@ -29,7 +42,28 @@ export function getLeadAim(shooter, target, projSpeed) {
     t = (disc > 0) ? (-B - Math.sqrt(disc)) / (2 * A) : 0;
   }
   t = Math.max(0, Math.min(2.0, t));
-  return { x: targetX + vx * t, y: targetY + vy * t };
+  out.x = targetX + vx * t;
+  out.y = targetY + vy * t;
+  return out;
+}
+
+export function isEnemyUnit(self, other) {
+  if (!self || !other || other.dead || other === self) return false;
+
+  if (other === window.ship) return !self.friendly;
+  if (self === window.ship) return !other.friendly;
+
+  if (typeof self.friendly === 'boolean' && typeof other.friendly === 'boolean') {
+    if (self.friendly !== other.friendly) return true;
+  }
+
+  if (self.team && other.team && self.team !== other.team) return true;
+
+  if (!!self.isPirate !== !!other.isPirate) {
+    if (!!self.friendly === !!other.friendly) return true;
+  }
+
+  return false;
 }
 
 export function aiPickBestTarget(self, rangeLimit) {
@@ -37,40 +71,47 @@ export function aiPickBestTarget(self, rangeLimit) {
   let bestScore = -Infinity;
 
   const npcs = window.npcs || [];
-  const ship = window.ship;
-
-  const enemies = self.friendly
-    ? npcs.filter(n => n.isPirate && !n.dead)
-    : [ship, ...npcs.filter(n => n.friendly && !n.dead)].filter(Boolean);
-
   const MAX_RANGE_SQ = (rangeLimit || 20000) ** 2;
 
-  for (const u of enemies) {
-    const distSq = (u.x - self.x) ** 2 + (u.y - self.y) ** 2;
+  const amFighter = self.fighter || self.type === 'fighter' || self.type === 'interceptor';
+
+  // In-place check for player ship
+  if (!self.friendly && window.ship && isEnemyUnit(self, window.ship)) {
+    const u = window.ship;
+    const dx = u.pos.x - self.x;
+    const dy = u.pos.y - self.y;
+    const distSq = dx * dx + dy * dy;
+    if (distSq <= MAX_RANGE_SQ) {
+      let score = -distSq * 0.00016;
+      score += amFighter ? 1400 : 4200; // player is never a fighter
+      if (distSq < 350 * 350) score += 1200;
+      bestScore = score;
+      bestTarget = u;
+    }
+  }
+
+  // Iterate over npcs without allocating new arrays (.filter)
+  for (let i = 0; i < npcs.length; i++) {
+    const u = npcs[i];
+    if (!isEnemyUnit(self, u)) continue;
+
+    const ux = u.pos ? u.pos.x : u.x;
+    const uy = u.pos ? u.pos.y : u.y;
+    const dx = ux - self.x;
+    const dy = uy - self.y;
+    const distSq = dx * dx + dy * dy;
     if (distSq > MAX_RANGE_SQ) continue;
 
-    let score = 0;
-    score -= distSq * 0.00008;
-
-    const amFighter = self.fighter || self.type === 'fighter' || self.type === 'interceptor';
+    let score = -distSq * 0.00016;
     const isFighter = u.fighter || u.type === 'fighter' || u.type === 'interceptor';
+    
     if (amFighter) {
-      if (isFighter) {
-        if (distSq < 6250000) score += 40000;
-        else score += 1000;
-      } else {
-        score += 1000;
-      }
+      score += isFighter ? 5000 : 1400;
     } else {
-      if (isFighter) score += 2000;
-      else score += 5000;
+      score += isFighter ? 2200 : 4200;
     }
 
-    if (distSq < 122500) {
-      score += 50000;
-    }
-
-    score += Math.random() * 500;
+    if (distSq < 350 * 350) score += 1200;
 
     if (score > bestScore) {
       bestScore = score;
@@ -89,5 +130,6 @@ export function getEffectiveRange(self, target, baseRange) {
 
 window.clampTurnVec = clampTurnVec;
 window.getLeadAim = getLeadAim;
+window.isEnemyUnit = isEnemyUnit;
 window.aiPickBestTarget = aiPickBestTarget;
 window.getEffectiveRange = getEffectiveRange;

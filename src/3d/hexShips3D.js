@@ -205,6 +205,8 @@ const state = {
   hadRenderableLastFrame: false,
   validEntities: [],
   vfxEntities: [],
+  visibleHexEntities: [],
+  visibleVfxEntities: [],
   staleEntities: [],
   validEntitySet: new Set(),
   weaponActiveEntities: new Set(),
@@ -246,6 +248,17 @@ function getEntityPosY(entity) { return entity?.pos ? entity.pos.y : entity?.y |
 function getEntityScale(entity) {
   if (entity?.visual && typeof entity.visual.spriteScale === 'number') return entity.visual.spriteScale;
   return 1.0;
+}
+
+function isEntityInCull(entity, cull) {
+  if (!cull) return true;
+  const x = getEntityPosX(entity);
+  const y = getEntityPosY(entity);
+  const r = Math.max(140, Number(entity?.radius) || Number(entity?.r) || 140);
+  return (
+    Math.abs(x - cull.x) <= cull.halfW + r &&
+    Math.abs(y - cull.y) <= cull.halfH + r
+  );
 }
 
 function getInterpolatedRenderPose(entity) {
@@ -824,7 +837,7 @@ export function isHexDamageTintEnabled() {
   return state.damageTintEnabled !== false;
 }
 
-export function updateHexShips3D(viewCamera, entities = []) {
+export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   if (!Core3D.isInitialized) return;
 
   const now = performance.now();
@@ -838,24 +851,38 @@ export function updateHexShips3D(viewCamera, entities = []) {
 
   const valid = state.validEntities;
   const vfxEntities = state.vfxEntities;
+  const visibleHex = state.visibleHexEntities;
+  const visibleVfx = state.visibleVfxEntities;
   const stale = state.staleEntities;
   const validSet = state.validEntitySet;
   const weaponActiveEntities = state.weaponActiveEntities;
   valid.length = 0;
   vfxEntities.length = 0;
+  visibleHex.length = 0;
+  visibleVfx.length = 0;
   stale.length = 0;
   validSet.clear();
   weaponActiveEntities.clear();
   for (const entity of entities) {
     if (!entity || entity.dead) continue;
-    vfxEntities.push(entity);
-    if (!entity.hexGrid) continue;
     valid.push(entity);
-    validSet.add(entity);
+    if (entity.hexGrid) validSet.add(entity);
+    weaponActiveEntities.add(entity);
+
+    const visible = isEntityInCull(entity, cullInfo);
+    if (!visible) {
+      const data = state.entityMeshes.get(entity);
+      if (data?.mesh) data.mesh.visible = false;
+      continue;
+    }
+
+    visibleVfx.push(entity);
+    if (!entity.hexGrid) continue;
+    visibleHex.push(entity);
   }
 
   let hasRenderable = false;
-  for (const entity of valid) {
+  for (const entity of visibleHex) {
     let data = state.entityMeshes.get(entity);
     if (!data) data = createEntityMesh(entity);
     if (!data) continue;
@@ -865,14 +892,13 @@ export function updateHexShips3D(viewCamera, entities = []) {
     hasRenderable = true;
   }
 
-  for (const entity of vfxEntities) {
+  for (const entity of visibleVfx) {
     const interpPose = getInterpolatedRenderPose(entity);
     const ex = interpPose ? interpPose.x : getEntityPosX(entity);
     const ey = interpPose ? interpPose.y : getEntityPosY(entity);
     const eAngle = interpPose ? interpPose.angle : (entity.angle || 0);
     const scale = getEntityScale(entity);
     Weapon3DSystem.syncWeapons(entity, ex, ey, eAngle, scale);
-    weaponActiveEntities.add(entity);
   }
   Weapon3DSystem.cleanupEntities(weaponActiveEntities);
   Weapon3DSystem.syncProjectiles((typeof window !== 'undefined' && Array.isArray(window.bullets)) ? window.bullets : []);
@@ -889,9 +915,10 @@ export function updateHexShips3D(viewCamera, entities = []) {
     state.entityMeshes.delete(entity);
   }
 
-  EngineVfxSystem.update(vfxEntities);
+  vfxEntities.push(...visibleVfx);
+  EngineVfxSystem.update(visibleVfx);
 
-  state.hadRenderableLastFrame = hasRenderable || valid.length > 0;
+  state.hadRenderableLastFrame = hasRenderable || visibleHex.length > 0;
 }
 
 export function drawHexShips3D(ctx, width, height) {

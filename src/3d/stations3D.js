@@ -81,15 +81,6 @@ function getTemplate(stationId, path) {
           m.roughness = 0.4;
           m.metalness = 0.6;
           m.envMapIntensity = 0.0;
-
-          m.side = THREE.DoubleSide;
-          m.transparent = false;
-          m.depthWrite = true;
-          m.depthTest = true;
-
-          if (m.map || m.alphaMap) {
-            m.alphaTest = 0.5;
-          }
           m.needsUpdate = true;
         }
       });
@@ -304,9 +295,9 @@ function updateRecordTransform(record, station, devScale, visible) {
 
   const baseAngle = typeof station.angle === 'number' ? station.angle : 0;
   record.spinOffset += 0.002;
-  group.rotation.set(Math.PI / 8, baseAngle, 0);
+  group.rotation.set(0, 0, -baseAngle);
   if (modelGroup) {
-    modelGroup.rotation.set(0, record.spinOffset, 0);
+    modelGroup.rotation.set(Math.PI * 0.5, record.spinOffset, 0);
   }
 
   group.visible = visible;
@@ -384,7 +375,7 @@ export function initStations3D(_sceneIgnored, stations) {
   }
 }
 
-export function updateStations3D(stations) {
+export function updateStations3D(stations, cullInfo = null) {
   if (!Core3D.isInitialized || !Array.isArray(stations)) return;
 
   const devScale = getDevScale();
@@ -401,6 +392,16 @@ export function updateStations3D(stations) {
     const record = ensureStationRecord(station);
     if (!record) continue;
     activeKeys.add(record.key);
+
+    const stationCullRadius = Math.max(1, ((Number.isFinite(station.r) ? station.r : station.baseR) || 1) * devScale * 2.8);
+    const inCull = !cullInfo || (
+      Math.abs(((Number(station.x) || 0) - cullInfo.x)) <= cullInfo.halfW + stationCullRadius &&
+      Math.abs(((Number(station.y) || 0) - cullInfo.y)) <= cullInfo.halfH + stationCullRadius
+    );
+    if (!visible || !inCull) {
+      if (record.group) record.group.visible = false;
+      continue;
+    }
 
     if (!record.group) {
       const clone = cloneTemplate(station.id, path);

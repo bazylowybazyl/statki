@@ -215,12 +215,12 @@ export class HUDSystem {
         this.cache = {};
 
         this.skillKeys = [
-            { key: '1', label: 'MODE' },
-            { key: '2', label: 'COMM' },
-            { key: '3', label: 'SCAN' },
-            { key: '4', label: 'MAP' },
-            { key: '5', label: 'AUTO' },
-            { key: '6', label: 'AUX' }
+            { key: '4', label: 'MODE' },
+            { key: '5', label: 'COMM' },
+            { key: 'CAPS', label: 'SCAN' },
+            { key: '6', label: 'MAP' },
+            { key: '7', label: 'AUTO' },
+            { key: '8', label: 'AUX' }
         ];
         
         this.dom = {
@@ -315,18 +315,18 @@ export class HUDSystem {
             }
             
             if (this.menuState === 'IDLE') {
-                if (e.key === '1') this.setBottomMenuState('MODE');
-                if (e.key === '2') this.setBottomMenuState('COMM');
-                if (digitKey === '3' || e.key === '3') this.setBottomMenuState('SCAN');
+                if (digitKey === '4' || e.key === '4') this.setBottomMenuState('MODE');
+                if (digitKey === '5' || e.key === '5') this.setBottomMenuState('COMM');
+                if (e.code === 'CapsLock') this.setBottomMenuState('SCAN');
             } else if (this.menuState === 'MODE') {
-                if (e.key === '1') this.handleMenuAction('close');
+                if (digitKey === '4' || e.key === '4') this.handleMenuAction('close');
             } else if (this.menuState === 'COMM') {
-                if (e.key === '1') this.handleMenuAction('gate-toggle');
-                if (e.key === '2') this.handleMenuAction('close');
-                if (e.key === '3') this.handleMenuAction('gate-auto');
+                if (digitKey === '4' || e.key === '4') this.handleMenuAction('gate-toggle');
+                if (digitKey === '5' || e.key === '5') this.handleMenuAction('close');
+                if (digitKey === '6' || e.key === '6') this.handleMenuAction('gate-auto');
             } else if (this.menuState === 'SCAN' || this.menuState === 'STATION') {
-                if (digitKey === '1' || e.key === '1') this.handleMenuAction('close');
-                if (e.key === '0' || e.key === 'Escape') this.handleMenuAction('close');
+                if (digitKey === '4' || e.key === '4') this.handleMenuAction('close');
+                if (e.key === '0' || e.key === 'Escape' || e.code === 'CapsLock') this.handleMenuAction('close');
             }
         });
     }
@@ -776,12 +776,12 @@ export class HUDSystem {
             return `
                 <div class="menu-header">SHIP OPERATION MODES</div>
                 <div class="menu-grid">
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('close')"><div class="key-hint">1</div><div class="label">BACK</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('battle')" data-mode="battle"><div class="key-hint">2</div><div class="label">BATTLE</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('hypercruise')" data-mode="hypercruise"><div class="key-hint">3</div><div class="label">HC</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('cruise')" data-mode="cruise"><div class="key-hint">4</div><div class="label">CRUISE</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('mining')" data-mode="mining"><div class="key-hint">5</div><div class="label">MINING</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('intel')" data-mode="intel"><div class="key-hint">6</div><div class="label">INTEL</div></div>
+                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('close')"><div class="key-hint">4</div><div class="label">BACK</div></div>
+                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('battle')" data-mode="battle"><div class="key-hint">—</div><div class="label">BATTLE</div></div>
+                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('hypercruise')" data-mode="hypercruise"><div class="key-hint">—</div><div class="label">HC</div></div>
+                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('cruise')" data-mode="cruise"><div class="key-hint">—</div><div class="label">CRUISE</div></div>
+                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('mining')" data-mode="mining"><div class="key-hint">—</div><div class="label">MINING</div></div>
+                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('intel')" data-mode="intel"><div class="key-hint">—</div><div class="label">INTEL</div></div>
                 </div>
             `;
         } else if (state === 'COMM') {
@@ -792,9 +792,9 @@ export class HUDSystem {
             return `
                 <div class="menu-header">COMM / GATE CONTROL</div>
                 <div class="menu-grid" style="align-items:flex-start; height:auto; flex-wrap:wrap; padding-bottom:40px;">
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('gate-toggle')"><div class="key-hint">1</div><div class="label">GATE TOGGLE</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('close')"><div class="key-hint">2</div><div class="label">BACK</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('gate-auto')"><div class="key-hint">3</div><div class="label">MODE: ${mode}</div></div>
+                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('gate-toggle')"><div class="key-hint">4</div><div class="label">GATE TOGGLE</div></div>
+                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('close')"><div class="key-hint">5</div><div class="label">BACK</div></div>
+                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('gate-auto')"><div class="key-hint">6</div><div class="label">MODE: ${mode}</div></div>
                 </div>
             `;
         } else if (state === 'SCAN' || state === 'STATION') {

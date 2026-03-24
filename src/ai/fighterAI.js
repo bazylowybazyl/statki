@@ -1,17 +1,30 @@
 // src/ai/fighterAI.js
 
-const norm = v => {
-  const L = Math.hypot(v.x, v.y);
-  return L ? { x: v.x / L, y: v.y / L } : { x: 0, y: 0 };
+const _turnScratch = { vx: 0, vy: 0 };
+const _leadScratch = { x: 0, y: 0 };
+const _normScratch = { x: 0, y: 0 };
+
+const norm = (vX, vY, out = _normScratch) => {
+  const L = Math.hypot(vX, vY);
+  out.x = L ? vX / L : 0;
+  out.y = L ? vY / L : 0;
+  return out;
+};
+
+// Safe numeric hash for npc.id (string IDs like 'pirate_0' would cause NaN in arithmetic)
+const _npcIdNum = (id) => {
+  if (typeof id === 'number') return id;
+  if (!id) return 0;
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0;
+  return Math.abs(h);
 };
 
 function tryFireFighter(npc, target) {
   if (!target || target.dead) return;
 
   const MASTER_WEAPONS = window.MASTER_WEAPONS || {};
-
-  // Używamy nowych ID z MASTER_WEAPONS
-  const gunDef = MASTER_WEAPONS[npc.gun || 'npc_laser_s'];
+  const gunDef = MASTER_WEAPONS[npc.gun || 'ciws_mk1'];
   if (!gunDef) return;
 
   const tx = target.pos ? target.pos.x : target.x;
@@ -28,18 +41,16 @@ function tryFireFighter(npc, target) {
   const myAngle = Number.isFinite(npc.angle) ? npc.angle : Math.atan2(npc.vy || 0, npc.vx || 0);
   const diff = Math.abs(window.wrapAngle(angleToTarget - myAngle));
 
-  if (dist < (gunDef.baseRange || 400) && diff < 0.5 && npc.gunCD <= 0) {
-    // Strzał używa naszej zunifikowanej funkcji
+  if (dist < (gunDef.baseRange || 400) * 0.95 && diff < 0.75 && npc.gunCD <= 0) {
     window.spawnBulletAdapter(npc, target, gunDef, { type: gunDef.category });
     npc.gunCD = gunDef.cooldown || 0.2;
   }
 
   if (npc.mslAmmo > 0 && npc.mslCD <= 0 && dist < 1200 && diff < 0.6) {
     if (Math.random() < 0.1) {
-      const mslDef = MASTER_WEAPONS[npc.msl || 'npc_msl_af'];
+      const mslDef = MASTER_WEAPONS[npc.msl || 'missile_rack'];
       if (!mslDef) return;
 
-      // Odpal rakiete!
       window.spawnBulletAdapter(npc, target, mslDef, { type: 'rocket' });
       npc.mslAmmo--;
       npc.mslCD = 5.0;
@@ -66,6 +77,8 @@ export function runAdvancedFighterAI(npc, dt) {
   npc.gunCD = Math.max(0, (npc.gunCD || 0) - dt);
   npc.mslCD = Math.max(0, (npc.mslCD || 0) - dt);
   npc.breakOffTimer = Math.max(0, (npc.breakOffTimer || 0) - dt);
+  if (npc.state === 'dogfight3D') npc.dogfightTime = (npc.dogfightTime || 0) + dt;
+  else npc.dogfightTime = 0;
 
   npc.retargetTimer = (npc.retargetTimer || 0) - dt;
   let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : npc.target;
@@ -88,12 +101,19 @@ export function runAdvancedFighterAI(npc, dt) {
       }
     }
 
+    if (!target && npc.friendly && window.pickSquadTargets) {
+      const squadTargets = window.pickSquadTargets();
+      if (Array.isArray(squadTargets) && squadTargets.length > 0) {
+        target = squadTargets[0];
+      }
+    }
+
     npc.target = target || null;
     npc.retargetTimer = 1.0 + Math.random() * 0.5;
   }
 
-  const isSquadWingman = (npc.squad && npc.squad.leader && npc.squad.leader !== npc);
-  if (!target && npc.isPirate && !npc.guardStation && !isSquadWingman) {
+  const isSquadWingman = (npc.squad && npc.squad.leader && !npc.squad.leader.dead && npc.squad.leader !== npc);
+  if (!target && !npc.friendly && !npc.guardStation && !isSquadWingman) {
     target = window.ship;
     npc.target = target;
   }
@@ -120,6 +140,8 @@ export function runAdvancedFighterAI(npc, dt) {
           npc.sub = 'merge';
           npc.subT = 0;
           npc._mergeInit = false;
+          npc.dogfightTime = 0;
+          npc.dogfightMin = 0.8 + Math.random() * 0.6;
         } else {
           npc.state = 'engage_formation';
         }
@@ -141,8 +163,7 @@ export function runAdvancedFighterAI(npc, dt) {
   const smoothRotateToVelocity = (turnSpeed = 8.0) => {
     const speed = Math.hypot(npc.vx, npc.vy);
     if (speed > 10) {
-      const desiredAngle = Math.atan2(npc.vy, npc.vx);
-      npc.desiredAngle = desiredAngle;
+      npc.desiredAngle = Math.atan2(npc.vy, npc.vx);
     }
   };
 
@@ -154,13 +175,15 @@ export function runAdvancedFighterAI(npc, dt) {
     const wantVx = (dirX / len) * npc.maxSpeed;
     const wantVy = (dirY / len) * npc.maxSpeed;
 
-    const turned = window.clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 300);
+    const turned = window.clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 300, _turnScratch);
     npc.vx = turned.vx;
     npc.vy = turned.vy;
 
-    const sep = window.applySeparationForces?.(npc, 0, 0) || { ax: 0, ay: 0 };
-    npc.vx += sep.ax * dt;
-    npc.vy += sep.ay * dt;
+    if (window.applySeparationForces) {
+       const sep = window.applySeparationForces(npc, 0, 0); // Zwraca wbudowany obiekt w v53+
+       npc.vx += sep.ax * dt;
+       npc.vy += sep.ay * dt;
+    }
 
     smoothRotateToVelocity(10.0);
 
@@ -170,16 +193,59 @@ export function runAdvancedFighterAI(npc, dt) {
 
   if (npc.state === 'dogfight3D' && target) {
     if (!npc.sub) npc.sub = 'merge';
+    if (npc.sub === 'core') {
+      let neighbors = 0;
+      const allNpcs = window.npcs || [];
+      for (let i = 0; i < allNpcs.length; i++) {
+        const other = allNpcs[i];
+        if (!other || other === npc || other.dead) continue;
+        const otherKind = window.getUnitKind?.(other) || other.type || '';
+        if (otherKind !== 'fighter' && otherKind !== 'interceptor') continue;
+        const odx = other.x - npc.x;
+        const ody = other.y - npc.y;
+        if (odx * odx + ody * ody < 220 * 220) neighbors++;
+      }
+      const canBreak = (npc.dogfightTime > (npc.dogfightMin || 1.0)) || neighbors > 5;
+      if (canBreak && (neighbors > 3 || (Math.random() < 0.008 && npc.breakOffTimer <= 0))) {
+        npc.sub = 'break_off';
+        npc.subT = 1.5 + Math.random() * 0.7;
+        const awayX = npc.x - tx;
+        const awayY = npc.y - ty;
+        const angle = Math.atan2(awayY, awayX) + (Math.random() - 0.5);
+        npc.breakVector = { x: Math.cos(angle), y: Math.sin(angle) };
+      }
+    }
+
+    if (npc.sub === 'break_off') {
+      const breakVec = npc.breakVector || norm(npc.x - tx, npc.y - ty);
+      const wantVx = breakVec.x * npc.maxSpeed * 1.2;
+      const wantVy = breakVec.y * npc.maxSpeed * 1.2;
+      const turned = window.clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 370, _turnScratch);
+      npc.vx = turned.vx;
+      npc.vy = turned.vy;
+      npc.subT -= dt;
+      if (npc.subT <= 0) {
+        npc.sub = 'merge';
+        npc._mergeInit = false;
+        npc.breakOffTimer = 4.0;
+        npc.dogfightTime = 0;
+        npc.dogfightMin = 1.3 + Math.random() * 0.7;
+      }
+      tryFireFighter(npc, target);
+      return;
+    }
 
     if (npc.sub === 'merge') {
       if (!npc._mergeInit) { npc._mergeInit = true; npc.subT = 0.7 + Math.random() * 0.5; }
-      const lead = window.getLeadAim(npc, target, 500);
+      const gunDef = (window.MASTER_WEAPONS || {})[npc.gun || 'ciws_mk1'];
+      const gunSpeed = gunDef?.baseSpeed || 900;
+      const lead = window.getLeadAim(npc, target, gunSpeed, _leadScratch);
       const dx = lead.x - npc.x;
       const dy = lead.y - npc.y;
       const len = Math.hypot(dx, dy) || 1;
       const wantVx = (dx / len) * npc.maxSpeed * 1.15;
       const wantVy = (dy / len) * npc.maxSpeed * 1.15;
-      const turned = window.clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 400);
+      const turned = window.clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 400, _turnScratch);
       npc.vx = turned.vx; npc.vy = turned.vy;
       npc.subT -= dt;
       if (npc.subT <= 0 || distToTarget < 120) {
@@ -195,13 +261,46 @@ export function runAdvancedFighterAI(npc, dt) {
       const px = -ny * npc._slashSign;
       const py = nx * npc._slashSign;
 
-      const wantVx = (nx * 0.3 + px * 1.2) * npc.maxSpeed;
-      const wantVy = (ny * 0.3 + py * 1.2) * npc.maxSpeed;
+      const wantVx = (nx * 0.85 + px * 0.45) * npc.maxSpeed;
+      const wantVy = (ny * 0.85 + py * 0.45) * npc.maxSpeed;
 
-      const turned = window.clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 450);
+      const turned = window.clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 450, _turnScratch);
       npc.vx = turned.vx; npc.vy = turned.vy;
       npc.subT -= dt;
-      if (npc.subT <= 0) { npc.sub = 'merge'; npc._mergeInit = false; }
+      if (npc.subT <= 0) { npc.sub = 'core'; npc._mergeInit = false; }
+    }
+    else if (npc.sub === 'core') {
+      const gunDef = (window.MASTER_WEAPONS || {})[npc.gun || 'ciws_mk1'];
+      const gunSpeed = gunDef?.baseSpeed || 900;
+      const aim = window.getLeadAim(npc, target, gunSpeed, _leadScratch);
+      const dx = aim.x - npc.x;
+      const dy = aim.y - npc.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const wantVx = (dx / len) * npc.maxSpeed;
+      const wantVy = (dy / len) * npc.maxSpeed;
+      const timeNow = performance.now() * 0.001;
+      const idNum = _npcIdNum(npc.id);
+      const t = timeNow + (idNum % 17) * 0.13;
+      const jrad = (4 * Math.PI / 180) * Math.sin(2 * Math.PI * 0.5 * t);
+      const c = Math.cos(jrad);
+      const s = Math.sin(jrad);
+      const jvx = wantVx * c - wantVy * s;
+      const jvy = wantVx * s + wantVy * c;
+      const turned = window.clampTurnVec(npc.vx, npc.vy, jvx, jvy, dt, 370, _turnScratch);
+      const swirl = Math.sin(timeNow * 2.0 + idNum * 0.37) * 0.10;
+      const rx = -turned.vy;
+      const ry = turned.vx;
+      const mag = Math.hypot(turned.vx, turned.vy) || 1;
+      npc.vx = turned.vx + (rx / mag) * npc.maxSpeed * swirl;
+      npc.vy = turned.vy + (ry / mag) * npc.maxSpeed * swirl;
+
+      if (distToTarget < 140) {
+        const distSafe = Math.max(1, distToTarget);
+        const nx = -(ty - npc.y) / distSafe;
+        const ny = (tx - npc.x) / distSafe;
+        npc.vx += nx * 110;
+        npc.vy += ny * 110;
+      }
     }
 
     smoothRotateToVelocity(12.0);
@@ -230,15 +329,14 @@ export function runAdvancedFighterAI(npc, dt) {
     const wantVx = (dx / len) * npc.maxSpeed * 1.1;
     const wantVy = (dy / len) * npc.maxSpeed * 1.1;
 
-    const turned = window.clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 280);
+    const turned = window.clampTurnVec(npc.vx, npc.vy, wantVx, wantVy, dt, 280, _turnScratch);
     npc.vx = turned.vx;
     npc.vy = turned.vy;
 
     if (distToTarget < 1000) {
       const aimX = tx - npc.x;
       const aimY = ty - npc.y;
-      const desiredAngle = Math.atan2(aimY, aimX);
-      npc.desiredAngle = desiredAngle;
+      npc.desiredAngle = Math.atan2(aimY, aimX);
     } else {
       smoothRotateToVelocity(8.0);
     }
@@ -255,7 +353,33 @@ export function runAdvancedFighterAI(npc, dt) {
   }
 
   if (!leader && !npc.guardStation) {
-    npc.vx *= 0.98; npc.vy *= 0.98;
+    const home = npc.friendly ? window.ship : null;
+
+    // Friendly fighters return to player ship; enemies chase player ship
+    const chaseTarget = home?.pos ? home : (!npc.friendly && window.ship?.pos ? window.ship : null);
+    if (chaseTarget?.pos) {
+      const dx = chaseTarget.pos.x - npc.x;
+      const dy = chaseTarget.pos.y - npc.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const wantSpeed = Math.min(npc.maxSpeed * (npc.friendly ? 0.65 : 1.0), len * 1.4);
+      const turned = window.clampTurnVec(
+        npc.vx || 0,
+        npc.vy || 0,
+        (dx / len) * wantSpeed,
+        (dy / len) * wantSpeed,
+        dt,
+        240,
+        _turnScratch
+      );
+      npc.vx = turned.vx;
+      npc.vy = turned.vy;
+      if (npc.vx * npc.vx + npc.vy * npc.vy > 25) {
+        npc.desiredAngle = Math.atan2(npc.vy, npc.vx);
+      }
+    } else {
+      npc.vx *= 0.995;
+      npc.vy *= 0.995;
+    }
     return;
   }
 
@@ -312,9 +436,11 @@ export function runAdvancedFighterAI(npc, dt) {
     npc.vx += (wantVx - npc.vx) * 4.0 * dt;
     npc.vy += (wantVy - npc.vy) * 4.0 * dt;
 
-    const sep = window.applySeparationForces?.(npc, 0, 0) || { ax: 0, ay: 0 };
-    npc.vx += sep.ax * dt;
-    npc.vy += sep.ay * dt;
+    if (window.applySeparationForces) {
+       const sep = window.applySeparationForces(npc, 0, 0);
+       npc.vx += sep.ax * dt;
+       npc.vy += sep.ay * dt;
+    }
 
     if (!Number.isFinite(npc.desiredAngle)) {
       if (distToSpot > 50) smoothRotateToVelocity(6.0);

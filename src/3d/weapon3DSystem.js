@@ -126,14 +126,25 @@ function makeHeadTexture() {
 
 function ensureWeaponResources() {
   if (!WEP_RESOURCES.mats || !WEP_RESOURCES.geos || !WEP_RESOURCES.bulletStyles) {
+    const makeGlowMaterial = (color, opacity = 0.98) => new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      depthTest: false,
+      side: THREE.DoubleSide,
+      toneMapped: false
+    });
+
     WEP_RESOURCES.mats = {
       base: new THREE.MeshStandardMaterial({ color: 0x3a465b, roughness: 0.72, metalness: 0.62 }),
       barrel: new THREE.MeshStandardMaterial({ color: 0x5a6982, roughness: 0.42, metalness: 0.82 }),
       armor: new THREE.MeshStandardMaterial({ color: 0x647596, roughness: 0.48, metalness: 0.74 }),
-      glowBlue: new THREE.MeshStandardMaterial({ color: 0x8ad9ff, emissive: 0x29b6ff, emissiveIntensity: 2.1, roughness: 0.2 }),
-      glowCyan: new THREE.MeshStandardMaterial({ color: 0x86f4ff, emissive: 0x00cfff, emissiveIntensity: 2.6, roughness: 0.2 }),
-      glowRed: new THREE.MeshStandardMaterial({ color: 0xff7b93, emissive: 0xff003c, emissiveIntensity: 2.5, roughness: 0.2 }),
-      glowAmber: new THREE.MeshStandardMaterial({ color: 0xffd78f, emissive: 0xffa400, emissiveIntensity: 2.2, roughness: 0.2 }),
+      glowBlue: makeGlowMaterial(0x8ad9ff, 0.96),
+      glowCyan: makeGlowMaterial(0x86f4ff, 0.98),
+      glowRed: makeGlowMaterial(0xff7b93, 0.96),
+      glowAmber: makeGlowMaterial(0xffd78f, 0.96),
     };
 
     WEP_RESOURCES.geos = {
@@ -263,18 +274,23 @@ function markMeshTree(root, value = true) {
 
 function promoteWeaponOverlay(root, renderOrder = 60) {
   root.renderOrder = renderOrder;
+  const glowMaterials = WEP_RESOURCES.mats
+    ? new Set([WEP_RESOURCES.mats.glowBlue, WEP_RESOURCES.mats.glowCyan, WEP_RESOURCES.mats.glowRed, WEP_RESOURCES.mats.glowAmber])
+    : new Set();
   root.traverse((obj) => {
     if (!obj.isMesh) return;
-    obj.renderOrder = renderOrder;
-    obj.frustumCulled = false;
     const mat = obj.material;
-    if (!mat) return;
     const materials = Array.isArray(mat) ? mat : [mat];
+    const isGlow = materials.some((material) => material && glowMaterials.has(material));
+    obj.renderOrder = isGlow ? (renderOrder + 3) : renderOrder;
+    obj.frustumCulled = false;
+    if (!mat) return;
     for (const material of materials) {
       if (!material) continue;
       material.depthTest = false;
       material.depthWrite = false;
       material.transparent = true;
+      if (isGlow) material.toneMapped = false;
       if (!Number.isFinite(material.opacity)) material.opacity = 1;
       material.needsUpdate = true;
     }

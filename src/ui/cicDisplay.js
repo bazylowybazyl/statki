@@ -11,7 +11,7 @@
 
 const CIC_CONFIG = {
   zoomDefault: 0.08,       // CIC map zoom (world units → screen)
-  zoomMin: 0.01,
+  zoomMin: 0.0002,         // far enough to see full solar system at any resolution
   zoomMax: 0.4,
   zoomSpeed: 0.0004,
   sweepSpeed: 0.6,          // radians per second
@@ -35,12 +35,37 @@ const CIC_CONFIG = {
 
 let cicActive = false;
 let cicZoom = CIC_CONFIG.zoomDefault;
+let cicTargetZoom = CIC_CONFIG.zoomDefault;  // smooth zoom target
 let cicPanX = 0, cicPanY = 0; // offset from ship
+let cicTargetPanX = 0, cicTargetPanY = 0; // smooth pan targets
 let cicSweepAngle = 0;
-let cicSelectedTarget = null;
+let cicSelectedTarget = null;       // backward-compat alias → cicSelectedContacts[0]
+let cicSelectedContacts = [];       // multi-select (contact objects, not entities)
 let cicDragging = false;
+let cicDragButton = -1;             // which button is dragging
+let cicDragMoved = false;
 let cicDragStart = { x: 0, y: 0 };
 let cicMouseWorld = { x: 0, y: 0 };
+
+// Box-select state (LMB rubber-band)
+let cicBoxSelecting = false;
+let cicBoxStart = { x: 0, y: 0 };  // screen coords
+let cicBoxEnd   = { x: 0, y: 0 };  // screen coords
+
+// System view blend: 0 = tactical, 1 = full system (derived from zoom level)
+const SYSTEM_ZOOM_START = 0.006;  // start blending toward system view
+const SYSTEM_ZOOM_FULL  = 0.0008; // fully in system view
+let cicSystemBlend = 0;           // current blend factor (smoothed)
+
+// Context menu state (right-click)
+// items: array of { label, action: 'attack'|'move'|'cruise'|null (disabled) }
+let cicContextMenu = {
+  open: false,
+  screenX: 0, screenY: 0,
+  worldX: 0, worldY: 0,
+  targetEntity: null,   // non-null when opened on enemy contact
+  items: [],
+};
 
 // Contact list refreshed each frame
 let cicContacts = [];
@@ -52,42 +77,169 @@ export const CICDisplay = {
     cicActive = !cicActive;
     if (cicActive) {
       cicPanX = 0; cicPanY = 0;
+      cicTargetPanX = 0; cicTargetPanY = 0;
       cicZoom = CIC_CONFIG.zoomDefault;
+      cicTargetZoom = CIC_CONFIG.zoomDefault;
       cicSelectedTarget = null;
+      cicSelectedContacts = [];
+      cicBoxSelecting = false;
+      cicSystemBlend = 0;
     }
     return cicActive;
   },
 
-  close() { cicActive = false; },
-  open() { cicActive = true; cicPanX = 0; cicPanY = 0; cicZoom = CIC_CONFIG.zoomDefault; },
+  close() {
+    cicActive = false;
+    cicSystemBlend = 0;
+    cicBoxSelecting = false;
+    cicSelectedContacts = [];
+    cicContextMenu.open = false;
+  },
+  open() {
+    cicActive = true;
+    cicPanX = 0; cicPanY = 0;
+    cicTargetPanX = 0; cicTargetPanY = 0;
+    cicZoom = CIC_CONFIG.zoomDefault;
+    cicTargetZoom = CIC_CONFIG.zoomDefault;
+    cicSelectedContacts = [];
+    cicSystemBlend = 0;
+  },
 
-  getSelectedTarget() { return cicSelectedTarget; },
+  getSelectedTarget()  { return cicSelectedContacts[0]?.entity || cicSelectedTarget || null; },
+  getSelectedTargets() { return cicSelectedContacts.map(c => c.entity).filter(Boolean); },
 
-  /** Handle mouse wheel in CIC */
+  /** Jump to system view (V key) — sets target zoom to system level */
+  toggleSystemView() {
+    if (!cicActive) return;
+    if (cicSystemBlend > 0.5) {
+      // Already in system view → animate back to tactical
+      cicTargetZoom = CIC_CONFIG.zoomDefault;
+      cicTargetPanX = 0;
+      cicTargetPanY = 0;
+    } else {
+      // Jump to system view: compute zoom to fit outermost orbit
+      const planets = window.planets;
+      const SUN = window.SUN;
+      const ship = window.ship;
+      let maxOrbit = 100000;
+      if (planets) {
+        for (const pl of planets) {
+          if (pl && pl.orbitRadius > maxOrbit) maxOrbit = pl.orbitRadius;
+        }
+      }
+      const fitZoom = Math.min(window.innerWidth, window.innerHeight) * 0.42 / (maxOrbit * 1.2);
+      cicTargetZoom = fitZoom;
+      // Center on sun but offset so player stays in view (no hard re-center)
+      if (SUN && ship) {
+        const sunOffX = SUN.x - ship.pos.x;
+        const sunOffY = SUN.y - ship.pos.y;
+        // Lerp halfway toward sun — player stays roughly visible
+        cicTargetPanX = sunOffX * 0.5;
+        cicTargetPanY = sunOffY * 0.5;
+      }
+    }
+  },
+
+  get isSystemView() { return cicSystemBlend > 0.3; },
+
+  /** Handle mouse wheel in CIC — proportional zoom, continuous range */
   onWheel(deltaY) {
     if (!cicActive) return;
-    cicZoom = Math.max(CIC_CONFIG.zoomMin, Math.min(CIC_CONFIG.zoomMax, cicZoom - deltaY * CIC_CONFIG.zoomSpeed));
+    const factor = 1 - deltaY * 0.0015;
+    cicTargetZoom = Math.max(CIC_CONFIG.zoomMin, Math.min(CIC_CONFIG.zoomMax, cicTargetZoom * factor));
   },
 
   /** Handle mouse down in CIC */
   onMouseDown(x, y, button) {
     if (!cicActive) return false;
-    if (button === 2 || button === 1) {
+
+    // Any click closes the context menu first
+    if (cicContextMenu.open && button !== 2) {
+      const ITEM_H = 26, MENU_W = 160;
+      const mx = cicContextMenu.screenX, my = cicContextMenu.screenY;
+      const menuH = cicContextMenu.items.length * ITEM_H;
+      if (x >= mx && x <= mx + MENU_W && y >= my && y <= my + menuH) {
+        const idx = Math.floor((y - my) / ITEM_H);
+        const item = cicContextMenu.items[idx];
+        if (item && item.action) {
+          const { worldX, worldY, targetEntity } = cicContextMenu;
+          if (item.action === 'attack' && window.cicAttackOrder) {
+            if (targetEntity) {
+              window.cicAttackOrder(targetEntity);
+            } else if (cicSelectedContacts.length > 0 && window.cicGroupAttackOrder) {
+              window.cicGroupAttackOrder(cicSelectedContacts.map(c => c.entity).filter(Boolean));
+            }
+          } else if (item.action === 'move') {
+            if (window.ship) window.ship.command = { type: 'moveTo', x: worldX, y: worldY };
+          } else if (item.action === 'cruise') {
+            if (window.setCruiseTarget) window.setCruiseTarget(worldX, worldY);
+          }
+        }
+        cicContextMenu.open = false;
+        return true;
+      }
+      cicContextMenu.open = false;
+      return true;
+    }
+
+    // Right-click: context menu
+    if (button === 2) {
+      const W = window.innerWidth, H = window.innerHeight;
+      const cx = W / 2, cy = H / 2;
+      const shipX = (window.ship?.pos?.x || 0) + cicPanX;
+      const shipY = (window.ship?.pos?.y || 0) + cicPanY;
+      const worldX = shipX + (x - cx) / cicZoom;
+      const worldY = shipY + (y - cy) / cicZoom;
+
+      // Check if click is near a hostile contact
+      let hitContact = null;
+      for (const c of cicContacts) {
+        if (c.isGhost || !c.entity || c.friendly) continue;
+        const ddx = c.screenX - x, ddy = c.screenY - y;
+        if (ddx * ddx + ddy * ddy < 400) { hitContact = c; break; } // 20px radius
+      }
+
+      cicContextMenu.worldX = worldX;
+      cicContextMenu.worldY = worldY;
+      cicContextMenu.screenX = x;
+      cicContextMenu.screenY = y;
+      cicContextMenu.targetEntity = hitContact?.entity || null;
+
+      if (hitContact) {
+        // Clicked directly on enemy → immediate attack, no menu
+        cicContextMenu.open = false;
+        if (window.cicAttackOrder) window.cicAttackOrder(hitContact.entity);
+      } else {
+        // Empty space → show context menu
+        const hasSelected = cicSelectedContacts.length > 0;
+        cicContextMenu.items = [
+          { label: 'ATAK', action: hasSelected ? 'attack' : null },
+          { label: 'RUCH', action: 'move' },
+          { label: 'CRUISE TO', action: 'cruise' },
+        ];
+        cicContextMenu.open = true;
+      }
+      return true;
+    }
+
+    // Middle mouse: always pan
+    if (button === 1) {
       cicDragging = true;
+      cicDragButton = 1;
+      cicDragMoved = false;
       cicDragStart = { x, y };
       return true;
     }
+
+    // LMB: start box-select
     if (button === 0) {
-      // Try to select a contact
-      cicSelectedTarget = null;
-      for (const c of cicContacts) {
-        const dx = c.screenX - x;
-        const dy = c.screenY - y;
-        if (dx * dx + dy * dy < 225) { // 15px click radius
-          cicSelectedTarget = c.entity;
-          return true;
-        }
-      }
+      cicDragging = true;
+      cicDragButton = 0;
+      cicDragMoved = false;
+      cicDragStart = { x, y };
+      cicBoxStart = { x, y };
+      cicBoxEnd = { x, y };
+      cicBoxSelecting = false;
       return true;
     }
     return false;
@@ -97,14 +249,66 @@ export const CICDisplay = {
   onMouseMove(x, y, dx, dy) {
     if (!cicActive) return;
     if (cicDragging) {
-      cicPanX -= dx / cicZoom;
-      cicPanY -= dy / cicZoom;
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) cicDragMoved = true;
+
+      if (cicDragButton === 1) {
+        // MMB — pan
+        const ddx = dx / cicZoom;
+        const ddy = dy / cicZoom;
+        cicPanX -= ddx;
+        cicPanY -= ddy;
+        cicTargetPanX = cicPanX;
+        cicTargetPanY = cicPanY;
+      } else if (cicDragButton === 0 && cicDragMoved) {
+        // LMB drag — box-select
+        cicBoxSelecting = true;
+        cicBoxEnd = { x, y };
+      }
     }
+    // Update mouse world position
+    const W = window.innerWidth, H = window.innerHeight;
+    const cx = W / 2, cy = H / 2;
+    const shipX = (window.ship?.pos?.x || 0) + cicPanX;
+    const shipY = (window.ship?.pos?.y || 0) + cicPanY;
+    cicMouseWorld.x = shipX + (x - cx) / cicZoom;
+    cicMouseWorld.y = shipY + (y - cy) / cicZoom;
   },
 
   /** Handle mouse up in CIC */
-  onMouseUp() {
+  onMouseUp(x, y, button) {
+    if (button === 0) {
+      if (cicBoxSelecting) {
+        // Finalize box-select: collect all contacts inside the rectangle
+        const x0 = Math.min(cicBoxStart.x, cicBoxEnd.x);
+        const x1 = Math.max(cicBoxStart.x, cicBoxEnd.x);
+        const y0 = Math.min(cicBoxStart.y, cicBoxEnd.y);
+        const y1 = Math.max(cicBoxStart.y, cicBoxEnd.y);
+        cicSelectedContacts = cicContacts.filter(c =>
+          !c.isGhost && c.entity &&
+          c.screenX >= x0 && c.screenX <= x1 &&
+          c.screenY >= y0 && c.screenY <= y1
+        );
+        cicSelectedTarget = cicSelectedContacts[0]?.entity || null;
+      } else if (!cicDragMoved) {
+        // Short click → point-select nearest contact within 15px
+        cicSelectedContacts = [];
+        const px = x || cicDragStart.x;
+        const py = y || cicDragStart.y;
+        for (const c of cicContacts) {
+          if (c.isGhost) continue;
+          const ddx = c.screenX - px, ddy = c.screenY - py;
+          if (ddx * ddx + ddy * ddy < 225) {
+            cicSelectedContacts = [c];
+            break;
+          }
+        }
+        cicSelectedTarget = cicSelectedContacts[0]?.entity || null;
+      }
+      cicBoxSelecting = false;
+    }
     cicDragging = false;
+    cicDragMoved = false;
+    cicDragButton = -1;
   },
 
   /**
@@ -171,6 +375,27 @@ export const CICDisplay = {
 
     const cx = W / 2;
     const cy = H / 2;
+
+    // ── Smooth zoom interpolation (logarithmic lerp for natural feel) ──
+    const zoomRatio = cicTargetZoom / cicZoom;
+    if (Math.abs(zoomRatio - 1) > 0.001) {
+      cicZoom *= Math.pow(zoomRatio, 0.12); // smooth log-lerp
+    } else {
+      cicZoom = cicTargetZoom;
+    }
+
+    // ── System blend factor (0 = tactical, 1 = full system) ──
+    const rawBlend = Math.max(0, Math.min(1,
+      (SYSTEM_ZOOM_START - cicZoom) / (SYSTEM_ZOOM_START - SYSTEM_ZOOM_FULL)
+    ));
+    cicSystemBlend += (rawBlend - cicSystemBlend) * 0.1; // smooth blend
+
+    // ── Smooth pan interpolation (no auto-centering — user controls pan freely) ──
+    cicPanX += (cicTargetPanX - cicPanX) * 0.14;
+    cicPanY += (cicTargetPanY - cicPanY) * 0.14;
+
+    const isSystemScale = cicSystemBlend > 0.3;
+
     const shipX = ship.pos.x + cicPanX;
     const shipY = ship.pos.y + cicPanY;
 
@@ -186,8 +411,10 @@ export const CICDisplay = {
     ctx.fillStyle = CIC_CONFIG.colors.bg;
     ctx.fillRect(0, 0, W, H);
 
-    // === GRID ===
-    const gridSpacing = CIC_CONFIG.gridSpacing;
+    // === GRID (adaptive spacing based on zoom) ===
+    let gridSpacing = CIC_CONFIG.gridSpacing;
+    // At very far zoom, increase grid spacing so lines don't become invisible
+    while (gridSpacing * cicZoom < 30) gridSpacing *= 5;
     const gridScreenSpacing = gridSpacing * cicZoom;
 
     if (gridScreenSpacing > 15) {
@@ -199,16 +426,17 @@ export const CICDisplay = {
       const startWY = Math.floor((shipY - cy / cicZoom) / gridSpacing) * gridSpacing;
       const endWY = shipY + cy / cicZoom;
 
+      const majorMul = gridSpacing * 5;
       for (let wx = startWX; wx <= endWX; wx += gridSpacing) {
         const sx = toScreen(wx, 0).x;
-        const isMajor = Math.abs(wx % (gridSpacing * 5)) < 1;
+        const isMajor = Math.abs(wx % majorMul) < gridSpacing * 0.1;
         ctx.strokeStyle = isMajor ? CIC_CONFIG.colors.gridMajor : CIC_CONFIG.colors.grid;
         ctx.lineWidth = isMajor ? 1 : 0.5;
         ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.stroke();
       }
       for (let wy = startWY; wy <= endWY; wy += gridSpacing) {
         const sy = toScreen(0, wy).y;
-        const isMajor = Math.abs(wy % (gridSpacing * 5)) < 1;
+        const isMajor = Math.abs(wy % majorMul) < gridSpacing * 0.1;
         ctx.strokeStyle = isMajor ? CIC_CONFIG.colors.gridMajor : CIC_CONFIG.colors.grid;
         ctx.lineWidth = isMajor ? 1 : 0.5;
         ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(W, sy); ctx.stroke();
@@ -316,18 +544,38 @@ export const CICDisplay = {
     // === PLAYER SHIP ICON ===
     ctx.save();
     ctx.translate(shipScr.x, shipScr.y);
-    ctx.rotate(ship.angle || 0);
-    ctx.fillStyle = '#e2e8f0';
-    ctx.strokeStyle = '#38bdf8';
-    ctx.lineWidth = 2;
-    const ss = Math.max(8, 220 * cicZoom);
-    ctx.beginPath();
-    ctx.moveTo(ss * 1.2, 0);
-    ctx.lineTo(-ss * 0.7, ss * 0.6);
-    ctx.lineTo(-ss * 0.5, 0);
-    ctx.lineTo(-ss * 0.7, -ss * 0.6);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
+    if (isSystemScale) {
+      // In system view: pulsing beacon dot
+      const pulse = 0.6 + 0.4 * Math.sin(gameTime * 3);
+      const beaconR = 4 + cicSystemBlend * 3;
+      ctx.shadowColor = '#38bdf8';
+      ctx.shadowBlur = beaconR * 3 * pulse;
+      ctx.fillStyle = '#e2e8f0';
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, beaconR, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      ctx.shadowBlur = 0;
+      // Label
+      ctx.font = 'bold 11px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillText('ATLAS', 0, beaconR + 14);
+    } else {
+      ctx.rotate(ship.angle || 0);
+      ctx.fillStyle = '#e2e8f0';
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      const ss = Math.max(8, 220 * cicZoom);
+      ctx.beginPath();
+      ctx.moveTo(ss * 1.2, 0);
+      ctx.lineTo(-ss * 0.7, ss * 0.6);
+      ctx.lineTo(-ss * 0.5, 0);
+      ctx.lineTo(-ss * 0.7, -ss * 0.6);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    }
     ctx.restore();
 
     // === CONTACTS ===
@@ -339,7 +587,7 @@ export const CICDisplay = {
       // Skip if off screen
       if (sp.x < -50 || sp.x > W + 50 || sp.y < -50 || sp.y > H + 50) continue;
 
-      const isSelected = c.entity && c.entity === cicSelectedTarget;
+      const isSelected = c.entity && cicSelectedContacts.some(s => s.entity === c.entity);
       const size = Math.max(5, Math.min(14, c.radius * cicZoom * 2));
 
       if (c.isGhost) {
@@ -436,12 +684,80 @@ export const CICDisplay = {
       ctx.restore();
     }
 
+    // === BOX-SELECT RECTANGLE ===
+    if (cicBoxSelecting) {
+      const bx0 = Math.min(cicBoxStart.x, cicBoxEnd.x);
+      const by0 = Math.min(cicBoxStart.y, cicBoxEnd.y);
+      const bw  = Math.abs(cicBoxEnd.x - cicBoxStart.x);
+      const bh  = Math.abs(cicBoxEnd.y - cicBoxStart.y);
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)';
+      ctx.fillStyle   = 'rgba(56, 189, 248, 0.06)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.fillRect(bx0, by0, bw, bh);
+      ctx.strokeRect(bx0, by0, bw, bh);
+      ctx.setLineDash([]);
+    }
+
+    // === CONTEXT MENU ===
+    if (cicContextMenu.open) {
+      const ITEM_H = 26, MENU_W = 160;
+      const mx = cicContextMenu.screenX;
+      const my = cicContextMenu.screenY;
+      const items = cicContextMenu.items;
+      const menuH = items.length * ITEM_H;
+      ctx.fillStyle = 'rgba(4, 12, 28, 0.95)';
+      ctx.strokeStyle = 'rgba(80, 160, 255, 0.6)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([]);
+      ctx.fillRect(mx, my, MENU_W, menuH);
+      ctx.strokeRect(mx, my, MENU_W, menuH);
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const iy = my + i * ITEM_H;
+        if (i > 0) {
+          ctx.strokeStyle = 'rgba(80, 160, 255, 0.25)';
+          ctx.beginPath(); ctx.moveTo(mx, iy); ctx.lineTo(mx + MENU_W, iy); ctx.stroke();
+        }
+        const disabled = !item.action;
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = disabled ? 'rgba(148, 163, 184, 0.35)' : '#94d4ff';
+        ctx.fillText('▶ ' + item.label, mx + 10, iy + 17);
+      }
+    }
+
+    // === CRUISE NAV MARKER ===
+    if (window.cruiseNav?.active && window.cruiseNav.target) {
+      const ct = window.cruiseNav.target;
+      const ctScr = toScreen(ct.x, ct.y);
+      ctx.save();
+      ctx.strokeStyle = '#22d3ee';
+      ctx.fillStyle = 'rgba(34, 211, 238, 0.15)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      const cmk = 10;
+      ctx.beginPath();
+      ctx.moveTo(ctScr.x, ctScr.y - cmk);
+      ctx.lineTo(ctScr.x + cmk, ctScr.y);
+      ctx.lineTo(ctScr.x, ctScr.y + cmk);
+      ctx.lineTo(ctScr.x - cmk, ctScr.y);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = '8px monospace';
+      ctx.fillStyle = '#22d3ee';
+      ctx.textAlign = 'center';
+      ctx.fillText('CRUISE TARGET', ctScr.x, ctScr.y + cmk + 12);
+      ctx.restore();
+    }
+
     // === HUD OVERLAY ===
     // Top-left: CIC title
     ctx.fillStyle = CIC_CONFIG.colors.textBright;
     ctx.font = 'bold 14px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText('COMBAT INFORMATION CENTER', 20, 30);
+    ctx.fillText(isSystemScale ? 'CIC — SYSTEM OVERVIEW' : 'COMBAT INFORMATION CENTER', 20, 30);
 
     // Contact count
     ctx.font = '11px monospace';
@@ -451,7 +767,9 @@ export const CICDisplay = {
     ctx.fillText(`CONTACTS: ${cicContacts.length}  HOSTILE: ${hostileCount}  GHOSTS: ${ghostCount}`, 20, 50);
 
     // Zoom level
-    ctx.fillText(`ZOOM: ${cicZoom.toFixed(3)}  GRID: ${(CIC_CONFIG.gridSpacing / 1000).toFixed(0)}km`, 20, 66);
+    const viewRadius = Math.round((W / 2) / cicZoom);
+    const viewLabel = viewRadius > 50000 ? `${(viewRadius / 3000).toFixed(0)} AU` : `${(viewRadius / 1000).toFixed(0)}km`;
+    ctx.fillText(`ZOOM: ${cicZoom.toFixed(4)}  VIEW: ±${viewLabel}`, 20, 66);
 
     // Probe status
     const probes = SensorSystem.getProbes();
@@ -466,9 +784,10 @@ export const CICDisplay = {
       ctx.fillText(`DRONES: ${drones.length}/${DroneSystem.config.maxDrones}  CD: ${droneCd > 0 ? droneCd.toFixed(1) + 's' : 'READY'}`, 20, 98);
     }
 
-    // Selected target info panel (bottom right)
-    if (cicSelectedTarget && !cicSelectedTarget.dead) {
-      const t = cicSelectedTarget;
+    // Selected target info panel (bottom right) — shows first selected contact
+    const _panelTarget = cicSelectedContacts[0]?.entity || null;
+    if (_panelTarget && !_panelTarget.dead) {
+      const t = _panelTarget;
       const panelX = W - 260;
       const panelY = H - 180;
 
@@ -498,16 +817,24 @@ export const CICDisplay = {
         ctx.fillText(lines[i], panelX + 10, panelY + 40 + i * 16);
       }
 
-      // Lock button hint
+      // Selection info
       ctx.fillStyle = '#38bdf8';
-      ctx.fillText('[ENTER] LOCK TARGET  [DEL] ENGAGE', panelX + 10, panelY + 148);
+      const selCount = cicSelectedContacts.length;
+      const hint = selCount > 1
+        ? `${selCount} ZAZNACZONE  [PPM] ATAK`
+        : '[PPM] ATAK / RUCH / CRUISE';
+      ctx.fillText(hint, panelX + 10, panelY + 148);
     }
 
     // Bottom center: key hints
     ctx.fillStyle = CIC_CONFIG.colors.text;
     ctx.font = '10px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('[TAB] Close CIC    [SCROLL] Zoom    [RMB] Pan    [LMB] Select    [N] Probe  [F] Drone  [ENTER] Lock Target', W / 2, H - 16);
+    if (isSystemScale) {
+      ctx.fillText('[TAB] Zamknij    [V] Widok taktyczny    [SCROLL] Zoom    [MMB] Pan    [LMB] Zaznacz    [PPM] Rozkaz', W / 2, H - 16);
+    } else {
+      ctx.fillText('[TAB] Zamknij    [V] Widok systemu    [SCROLL] Zoom    [MMB] Pan    [LMB] Zaznacz/Box    [PPM] Atak/Ruch/Cruise', W / 2, H - 16);
+    }
 
     ctx.restore();
   },
@@ -533,19 +860,23 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
   const planets = window.planets;
   if (!SUN || !planets) return;
 
+  const isSystemScale = cicSystemBlend > 0.3;
   const sunScr = toScreen(SUN.x, SUN.y);
 
   // === SUN ===
-  const sunScreenR = Math.max(3, SUN.r * zoom);
+  const blend = cicSystemBlend;
+  const sunMinR = 3 + blend * 9;
+  const sunScreenR = Math.max(sunMinR, SUN.r * zoom);
   // Sun glow
   ctx.save();
-  const sunGlow = ctx.createRadialGradient(sunScr.x, sunScr.y, sunScreenR * 0.3, sunScr.x, sunScr.y, sunScreenR * 4);
-  sunGlow.addColorStop(0, 'rgba(255, 220, 100, 0.25)');
-  sunGlow.addColorStop(0.4, 'rgba(255, 180, 60, 0.08)');
+  const glowR = sunScreenR * (4 + blend * 2);
+  const sunGlow = ctx.createRadialGradient(sunScr.x, sunScr.y, sunScreenR * 0.3, sunScr.x, sunScr.y, glowR);
+  sunGlow.addColorStop(0, 'rgba(255, 220, 100, 0.35)');
+  sunGlow.addColorStop(0.4, 'rgba(255, 180, 60, 0.12)');
   sunGlow.addColorStop(1, 'rgba(255, 140, 30, 0)');
   ctx.fillStyle = sunGlow;
   ctx.beginPath();
-  ctx.arc(sunScr.x, sunScr.y, sunScreenR * 4, 0, Math.PI * 2);
+  ctx.arc(sunScr.x, sunScr.y, glowR, 0, Math.PI * 2);
   ctx.fill();
 
   // Sun body
@@ -559,12 +890,11 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
   ctx.fill();
 
   // Sun label
-  if (sunScreenR > 2) {
-    ctx.fillStyle = '#ffcc44';
-    ctx.font = '8px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('SOL', sunScr.x, sunScr.y + sunScreenR + 12);
-  }
+  ctx.fillStyle = '#ffcc44';
+  const sunLabelSize = Math.round(8 + blend * 4);
+  ctx.font = blend > 0.5 ? `bold ${sunLabelSize}px monospace` : `${sunLabelSize}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillText('SOL', sunScr.x, sunScr.y + sunScreenR + 12 + blend * 4);
   ctx.restore();
 
   // === PLANET ORBITS & PLANETS ===
@@ -578,8 +908,8 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
     // Orbit ring (only if large enough to see)
     if (orbitScreenR > 15 && orbitScreenR < W * 3) {
       ctx.save();
-      ctx.strokeStyle = 'rgba(60, 100, 160, 0.15)';
-      ctx.lineWidth = 0.7;
+      ctx.strokeStyle = `rgba(60, 100, 160, ${0.15 + blend * 0.15})`;
+      ctx.lineWidth = 0.7 + blend * 0.3;
       ctx.beginPath();
       ctx.arc(sunScr.x, sunScr.y, orbitScreenR, 0, Math.PI * 2);
       ctx.stroke();
@@ -593,21 +923,28 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
     if (plScr.x < -100 || plScr.x > W + 100 || plScr.y < -100 || plScr.y > H + 100) continue;
 
     const planetScreenR = Math.max(2, pl.r * zoom);
-    const dotR = Math.max(3, Math.min(planetScreenR, 14));
+    const tacticalR = Math.max(3, Math.min(planetScreenR, 14));
+    const systemR = Math.max(8, 10 * Math.sqrt(zoom * 500));
+    const dotR = tacticalR + (systemR - tacticalR) * blend;
 
     ctx.save();
 
-    // Planet glow (subtle)
-    if (dotR > 4) {
-      ctx.globalAlpha = 0.15;
-      const plGlow = ctx.createRadialGradient(plScr.x, plScr.y, dotR * 0.5, plScr.x, plScr.y, dotR * 3);
+    // Planet glow
+    const glowAlpha = 0.15 + blend * 0.1;
+    const glowMul = 3 + blend;
+    if (dotR > 3) {
+      ctx.globalAlpha = glowAlpha;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = dotR * 2;
+      const plGlow = ctx.createRadialGradient(plScr.x, plScr.y, dotR * 0.3, plScr.x, plScr.y, dotR * glowMul);
       plGlow.addColorStop(0, color);
       plGlow.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = plGlow;
       ctx.beginPath();
-      ctx.arc(plScr.x, plScr.y, dotR * 3, 0, Math.PI * 2);
+      ctx.arc(plScr.x, plScr.y, dotR * glowMul, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
+      ctx.shadowBlur = 0;
     }
 
     // Planet body
@@ -618,8 +955,8 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
 
     // Planet outline
     ctx.strokeStyle = color;
-    ctx.globalAlpha = 0.5;
-    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.5 + blend * 0.3;
+    ctx.lineWidth = 1 + blend;
     ctx.beginPath();
     ctx.arc(plScr.x, plScr.y, dotR + 1, 0, Math.PI * 2);
     ctx.stroke();
@@ -627,18 +964,22 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
 
     // Label
     ctx.fillStyle = color;
-    ctx.globalAlpha = 0.7;
-    ctx.font = '9px monospace';
+    ctx.globalAlpha = 0.7 + blend * 0.2;
+    const labelSize = Math.round(9 + blend * 4);
+    ctx.font = blend > 0.5 ? `bold ${labelSize}px monospace` : `${labelSize}px monospace`;
     ctx.textAlign = 'center';
     const name = (pl.name || pl.id || '').toUpperCase();
-    ctx.fillText(name, plScr.x, plScr.y + dotR + 12);
+    ctx.fillText(name, plScr.x, plScr.y + dotR + 12 + blend * 4);
 
-    // Distance from player (small, below name)
+    // Distance from player
     if (window.ship) {
       const dist = Math.hypot(pl.x - window.ship.pos.x, pl.y - window.ship.pos.y);
-      ctx.font = '7px monospace';
-      ctx.globalAlpha = 0.4;
-      ctx.fillText(`${(dist / 1000).toFixed(0)}km`, plScr.x, plScr.y + dotR + 22);
+      ctx.font = `${Math.round(7 + blend * 3)}px monospace`;
+      ctx.globalAlpha = 0.4 + blend * 0.2;
+      const distLabel = dist > 10000
+        ? `${(dist / 3000).toFixed(1)} AU`
+        : `${(dist / 1000).toFixed(0)}km`;
+      ctx.fillText(distLabel, plScr.x, plScr.y + dotR + 22 + blend * 6);
     }
 
     ctx.restore();

@@ -161,6 +161,7 @@ function normalizeEditorEngine(marker, idx, kind = 'main') {
 function getEditorShipIdForNpc(npc) {
   if (!npc) return null;
   const type = String(npc.type || '').toLowerCase();
+  if (type === 'supercapital') return 'atlas';
   if (type === 'capital_carrier' || type === 'carrier') return 'capital_carrier';
   if (type === 'battleship') return npc.isPirate ? 'pirate_battleship' : 'battleship';
   if (type === 'destroyer') return npc.isPirate ? 'pirate_destroyer' : 'destroyer';

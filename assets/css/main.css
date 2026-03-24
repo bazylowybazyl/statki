@@ -2472,6 +2472,37 @@
     }
 
     /* CSS Icons for Ships */
+    .icon-supercapital {
+      display: flex;
+      align-items: center;
+      gap: 1px;
+    }
+
+    .icon-sc-hull {
+      width: 16px;
+      height: 24px;
+      background: #b0c4de;
+      border: 1px solid #6b8bb5;
+      position: relative;
+    }
+
+    .icon-sc-hull::after {
+      content: '';
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      right: 3px;
+      bottom: 3px;
+      border: 1px solid rgba(120, 180, 255, 0.5);
+    }
+
+    .icon-sc-wing {
+      width: 7px;
+      height: 18px;
+      background: #94a8c4;
+      border: 1px solid #6b8bb5;
+    }
+
     .icon-capital {
       display: flex;
       align-items: center;
