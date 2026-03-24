@@ -2,6 +2,15 @@
 // Per-ship weapon controller for split-screen P1/P2 independence
 // Extracts firing logic from index.html into reusable instances
 
+// OPTYMALIZACJA: Pre-alokowany obiekt, używany wielokrotnie podczas wyliczania Muzzle.
+// Zabija to powstawanie setek tysięcy obiektów na sekundę dla Garbage Collectora.
+const _muzzleScratch = {
+  pos: { x: 0, y: 0 },
+  dir: { x: 0, y: 0 },
+  baseVel: { x: 0, y: 0 },
+  emitterUid: ''
+};
+
 export class WeaponController {
   constructor({ ship, getMouseRef, getLockedTarget, setLockedTarget, getLockedTargets, owner, screenToWorldFn }) {
     this.ship = ship;
@@ -76,17 +85,21 @@ export class WeaponController {
     const start = this.rail.nextStart;
     this.rail.nextStart ^= 1;
     const barrels = Math.max(1, this.rail.barrelsPerShot || 2);
-    const orderPair = barrels === 1 ? [start] : [start, 1 - start];
+    
+    // OPTYMALIZACJA: brak tablic lokalnych, szybsze mapowanie luf
+    const order0 = start;
+    const order1 = barrels === 1 ? -1 : 1 - start;
 
     for (let b = 0; b < this.rail.burstsPerClick; b++) {
-      const baseDelay = b * (orderPair.length * this.rail.shotGap + this.rail.burstGap);
-      for (let idx = 0; idx < orderPair.length; idx++) {
+      const baseDelay = b * ((barrels === 1 ? 1 : 2) * this.rail.shotGap + this.rail.burstGap);
+      for (let idx = 0; idx < barrels; idx++) {
         const barrelBaseTime = baseDelay + idx * this.rail.shotGap;
+        const currentBarrel = idx === 0 ? order0 : order1;
+        
         for (let w = 0; w < mainWeapons.length; w++) {
-          const jitter = Math.random() * 0.12;
           this.rail.queue.push({
-            timer: barrelBaseTime + jitter,
-            barrel: orderPair[idx],
+            timer: barrelBaseTime + Math.random() * 0.12,
+            barrel: currentBarrel,
             weaponIndex: w,
             ignoreCD: true
           });
@@ -118,6 +131,8 @@ export class WeaponController {
       const barrelsPerShot = Number.isFinite(Number(weaponData.barrelsPerShot))
         ? Math.max(1, Math.round(Number(weaponData.barrelsPerShot)))
         : (weaponData.size === 'L' ? 1 : 2);
+        
+      // Zwraca wskaźnik na mutowalny obiekt _muzzleScratch
       const muzzle = this._computeMainMuzzle(muzzleOffset, aimAngle, barIndex, barrelsPerShot);
       const baseEmitterUid = `${this.owner}_main_${i}_${weaponData.id || 'x'}`;
       muzzle.emitterUid = barrelsPerShot > 1 ? `${baseEmitterUid}:b${barIndex}` : baseEmitterUid;
@@ -127,12 +142,17 @@ export class WeaponController {
         const rng = weaponData.baseRange || 1000;
         const fmRangeScale = (this.owner === 'player' && typeof window.getFiringModeModifiers === 'function') ? (window.getFiringModeModifiers()?.rangeMul || 1.0) : 1.0;
         const actualRng = rng * fmRangeScale;
-        const valid = this.lockedTargets.filter(t => Math.hypot(t.x - ship.pos.x, t.y - ship.pos.y) <= actualRng);
-        if (valid.length > 0) {
-            targetToPass = valid[Math.floor(Math.random() * valid.length)];
+        
+        // OPTYMALIZACJA: Wyszukiwanie celu w locie (bez alokacji z filter)
+        let validTargets = [];
+        for(let j=0; j<this.lockedTargets.length; j++) {
+           const ltar = this.lockedTargets[j];
+           if (Math.hypot(ltar.x - ship.pos.x, ltar.y - ship.pos.y) <= actualRng) validTargets.push(ltar);
+        }
+        if (validTargets.length > 0) {
+            targetToPass = validTargets[Math.floor(Math.random() * validTargets.length)];
         } else {
-            // Cannot fire this individual weapon, out of range
-            continue;
+            continue; // Cannot fire this individual weapon, out of range
         }
       }
 
@@ -188,8 +208,11 @@ export class WeaponController {
     if (!weapon || !hp) return false;
 
     if (!this._consumeMissileAmmo(loadout)) return;
+    
+    // Zwraca wskaźnik na mutowalny obiekt _muzzleScratch
     const muzzle = this._computeMissileMuzzle(hp);
     muzzle.emitterUid = `${this.owner}_missile_${weapon.id || 'x'}_${hp.id || 'hp'}`;
+    
     const cd = window.fireWeaponCore(ship, target, weapon.id, muzzle);
     hp.missileCd = Math.max(0.01, Number(cd) || Number(weapon.cooldown) || 0.25);
     return true;
@@ -237,14 +260,16 @@ export class WeaponController {
       const dy = mouseWorld.y - muzzleY;
       const len = Math.hypot(dx, dy) || 1;
 
-      const muzzle = {
-        pos: { x: muzzleX, y: muzzleY },
-        dir: { x: dx / len, y: dy / len },
-        baseVel: { x: shipVel.x || 0, y: shipVel.y || 0 },
-        emitterUid: `${this.owner}_special:${hp?.id || i}`
-      };
+      // Recycle the scratch object for special weapons too
+      _muzzleScratch.pos.x = muzzleX;
+      _muzzleScratch.pos.y = muzzleY;
+      _muzzleScratch.dir.x = dx / len;
+      _muzzleScratch.dir.y = dy / len;
+      _muzzleScratch.baseVel.x = shipVel.x || 0;
+      _muzzleScratch.baseVel.y = shipVel.y || 0;
+      _muzzleScratch.emitterUid = `${this.owner}_special:${hp?.id || i}`;
 
-      const cd = window.fireWeaponCore(ship, target, weapon.id, muzzle);
+      const cd = window.fireWeaponCore(ship, target, weapon.id, _muzzleScratch);
       hp.specialCd = Math.max(0.01, Number(cd) || Number(weapon.cooldown) || 0.25);
       fired = true;
     }
@@ -338,7 +363,16 @@ export class WeaponController {
     const isHostile = window.isHostileNpc || (() => true);
     const lt = this.lockedTarget;
     if (lt && (!isHostile(lt) || lt.dead)) this.lockedTarget = null;
-    this._lockedTargets = this._lockedTargets.filter(t => isHostile(t) && !t.dead);
+    
+    // OPTYMALIZACJA: In-place filtering dla locked targets (bez alokacji)
+    let validCount = 0;
+    for (let i = 0; i < this._lockedTargets.length; i++) {
+        const t = this._lockedTargets[i];
+        if (isHostile(t) && !t.dead) {
+            this._lockedTargets[validCount++] = t;
+        }
+    }
+    this._lockedTargets.length = validCount;
   }
 
   // ==================== PRIVATE HELPERS ====================
@@ -373,29 +407,28 @@ export class WeaponController {
   }
 
   _computeMainMuzzle(offset, angle, barIndex, barrelsPerShot) {
-    const ship = this.ship;
-    const spriteScale = ship.visual?.spriteScale || 1;
-    const forwardLen = Math.min((ship.h * spriteScale) * 0.40, 52 * spriteScale);
-    const gap = 10 * spriteScale;
-    const normalizedIndex = Math.min(barIndex, barrelsPerShot - 1);
-    const offsetFrac = barrelsPerShot === 1 ? 0 : (normalizedIndex / (barrelsPerShot - 1) - 0.5) * 2;
-    const lateralOffset = (gap * 0.5) * offsetFrac;
-    const a = angle;
-    const f = { x: Math.cos(a), y: Math.sin(a) };
-    const p = { x: -Math.sin(a), y: Math.cos(a) };
-    const rotate = window.rotate || ((v, ang) => ({
-      x: v.x * Math.cos(ang) - v.y * Math.sin(ang),
-      y: v.x * Math.sin(ang) + v.y * Math.cos(ang)
-    }));
-    const off = rotate(offset || { x: 0, y: 0 }, ship.angle);
-    return {
-      pos: {
-        x: ship.pos.x + off.x + f.x * forwardLen + p.x * lateralOffset,
-        y: ship.pos.y + off.y + f.y * forwardLen + p.y * lateralOffset
-      },
-      dir: f,
-      baseVel: { x: ship.vel.x, y: ship.vel.y }
-    };
+    const spriteScale = this.ship.visual?.spriteScale || 1;
+    const forwardLen = Math.min((this.ship.h * spriteScale) * 0.40, 52 * spriteScale);
+    const offsetFrac = barrelsPerShot === 1 ? 0 : (Math.min(barIndex, barrelsPerShot - 1) / (barrelsPerShot - 1) - 0.5) * 2;
+    const lateralOffset = (5 * spriteScale) * offsetFrac; // gap * 0.5 uproszczony
+    
+    const fX = Math.cos(angle);
+    const fY = Math.sin(angle);
+    
+    // Obrot offsetu
+    const c = Math.cos(this.ship.angle);
+    const s = Math.sin(this.ship.angle);
+    const offX = offset ? (offset.x * c - offset.y * s) : 0;
+    const offY = offset ? (offset.x * s + offset.y * c) : 0;
+    
+    _muzzleScratch.pos.x = this.ship.pos.x + offX + fX * forwardLen + (-fY) * lateralOffset;
+    _muzzleScratch.pos.y = this.ship.pos.y + offY + fY * forwardLen + fX * lateralOffset;
+    _muzzleScratch.dir.x = fX;
+    _muzzleScratch.dir.y = fY;
+    _muzzleScratch.baseVel.x = this.ship.vel.x;
+    _muzzleScratch.baseVel.y = this.ship.vel.y;
+    
+    return _muzzleScratch;
   }
 
   _selectMissileLoadout(side) {
@@ -439,19 +472,19 @@ export class WeaponController {
   }
 
   _computeMissileMuzzle(hp) {
-    const ship = this.ship;
     const hpPos = hp?.pos || hp || { x: 0, y: 0 };
     const localX = Number(hpPos.x) || 0;
     const localY = Number(hpPos.y) || 0;
-    const c = Math.cos(ship.angle || 0);
-    const s = Math.sin(ship.angle || 0);
-    return {
-      pos: {
-        x: ship.pos.x + (localX * c - localY * s),
-        y: ship.pos.y + (localX * s + localY * c)
-      },
-      dir: { x: c, y: s },
-      baseVel: { x: ship.vel?.x || ship.vx || 0, y: ship.vel?.y || ship.vy || 0 }
-    };
+    const c = Math.cos(this.ship.angle || 0);
+    const s = Math.sin(this.ship.angle || 0);
+    
+    _muzzleScratch.pos.x = this.ship.pos.x + (localX * c - localY * s);
+    _muzzleScratch.pos.y = this.ship.pos.y + (localX * s + localY * c);
+    _muzzleScratch.dir.x = c;
+    _muzzleScratch.dir.y = s;
+    _muzzleScratch.baseVel.x = this.ship.vel?.x || this.ship.vx || 0;
+    _muzzleScratch.baseVel.y = this.ship.vel?.y || this.ship.vy || 0;
+    
+    return _muzzleScratch;
   }
 }

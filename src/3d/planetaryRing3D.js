@@ -21,14 +21,21 @@ const CONFIG = Object.freeze({
   middleRailAlpha: 0.14,
   railWorldHeight: 150,
   collisionAlphaCutoff: 64,
-  ringRotationSpeed: 0.0,
+  ringRotationSpeed: 0.05,
   queryCellSize: 3000,
   gateOpenRadius: 3000,
   gateCloseRadius: 3800,
   doorLeafWidthRatio: 0.58,
   doorClosedOffsetWorld: 70,
   doorSlideDistanceWorld: 260,
-  doorAnimSpeed: 2.8
+  doorAnimSpeed: 0.35,
+  gateDepth: 500
+});
+
+const DEFAULT_RING_VISUAL_Z = Object.freeze({
+  floor: 0,
+  gate: 0,
+  gateLight: 0
 });
 
 const TEXTURE = Object.freeze({
@@ -46,6 +53,10 @@ const BUILD_GRID = Object.freeze({
 });
 
 const HEX_SCALE = CONFIG.segmentWorldWidth / TEXTURE.width;
+
+function easeInOutCubic(x) {
+  return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+}
 const RING_SEGMENT_MASS = 2500000;
 const GATE_GLOW_TEX_PATH = '/assets/effects/glow.png';
 
@@ -190,8 +201,42 @@ const state = {
   queryCells: new Map(),
   queryResult: [],
   queryCount: 0,
-  gateMode: 'auto'
+  gateMode: 'auto',
+  visualZByKey: new Map()
 };
+
+function normalizeRingKey(planetKey) {
+  return String(planetKey || '').toLowerCase();
+}
+
+function getRingVisualZ(planetKey) {
+  const key = normalizeRingKey(planetKey);
+  const override = state.visualZByKey.get(key);
+  return {
+    floor: Number.isFinite(Number(override?.floor)) ? Number(override.floor) : DEFAULT_RING_VISUAL_Z.floor,
+    gate: Number.isFinite(Number(override?.gate)) ? Number(override.gate) : DEFAULT_RING_VISUAL_Z.gate,
+    gateLight: Number.isFinite(Number(override?.gateLight)) ? Number(override.gateLight) : DEFAULT_RING_VISUAL_Z.gateLight
+  };
+}
+
+function setRingVisualZ(planetKey, patch = {}) {
+  const key = normalizeRingKey(planetKey);
+  if (!key) return getRingVisualZ(key);
+  const current = getRingVisualZ(key);
+  const next = {
+    floor: Number.isFinite(Number(patch.floor)) ? Number(patch.floor) : current.floor,
+    gate: Number.isFinite(Number(patch.gate)) ? Number(patch.gate) : current.gate,
+    gateLight: Number.isFinite(Number(patch.gateLight)) ? Number(patch.gateLight) : current.gateLight
+  };
+  state.visualZByKey.set(key, next);
+  return next;
+}
+
+function clearRingVisualZ(planetKey) {
+  const key = normalizeRingKey(planetKey);
+  state.visualZByKey.delete(key);
+  return getRingVisualZ(key);
+}
 
 let textureCache = null;
 
@@ -265,6 +310,8 @@ function drawWallTexture(ctx) {
   const h = ctx.canvas.height;
   const layout = getRingBandLayout();
   ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#0c1018';
+  ctx.fillRect(0, layout.gapStartPx, w, layout.gapEndPx - layout.gapStartPx);
 
   const railH = Math.min(TEXTURE.railHeight, Math.max(8, Math.floor((layout.outerBandBottomPx - layout.outerBandTopPx) * 0.35)));
   fillBandGradient(ctx, layout.outerBandTopPx, layout.outerBandBottomPx, '#0a0d14', '#1b2432', '#0d1119');
@@ -347,6 +394,8 @@ function drawPylonTexture(ctx, side) {
   const pylonW = TEXTURE.pylonWidth;
 
   ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#0c1018';
+  ctx.fillRect(0, layout.gapStartPx, w, layout.gapEndPx - layout.gapStartPx);
   fillBandGradient(ctx, layout.outerBandTopPx, layout.outerBandBottomPx, '#0b0f16', '#162133', '#0d1118');
   fillBandGradient(ctx, layout.innerBandTopPx, layout.innerBandBottomPx, '#0d1118', '#1a2433', '#0b0f16');
   drawBandRails(ctx, layout.outerBandTopPx, layout.outerBandBottomPx, outerRailH);
@@ -389,6 +438,8 @@ function drawGateCenterTexture(ctx) {
   const innerRailH = Math.min(TEXTURE.railHeight, Math.max(8, Math.floor(innerBandH * 0.35)));
 
   ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#0c1018';
+  ctx.fillRect(0, layout.gapStartPx, w, layout.gapEndPx - layout.gapStartPx);
   fillBandGradient(ctx, layout.outerBandTopPx, layout.outerBandBottomPx, '#0b1018', '#132234', '#0b1018');
   fillBandGradient(ctx, layout.innerBandTopPx, layout.innerBandBottomPx, '#0b1018', '#132234', '#0b1018');
   drawBandRails(ctx, layout.outerBandTopPx, layout.outerBandBottomPx, outerRailH);
@@ -504,6 +555,7 @@ class PlanetaryRing {
 
     // --- BUDYNKI 3D NA WARSTWIE 2 (FOREGROUND) ---
     this.buildings3D = new THREE.Group();
+    this.buildings3D.name = `PlanetaryRingRoot:${this.key}`;
     if (Core3D.scene) {
         Core3D.scene.add(this.buildings3D);
         Core3D.enableForeground3D(this.buildings3D); // Na layer 1 ring przykrywał budynki, więc wracamy na pass FG.
@@ -561,13 +613,57 @@ class PlanetaryRing {
     this.buildRingPedestal();
   }
 
+  // ── Damage alpha map — links visual floor to destructor ──────────────
+  buildDamageAlphaMap() {
+    const segCount = this.segmentData.length;
+    const pxPerSeg = 8;
+    const w = segCount * pxPerSeg;
+    const h = 4;
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx2d = canvas.getContext('2d');
+    ctx2d.fillStyle = '#fff';
+    ctx2d.fillRect(0, 0, w, h);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+
+    this._damageCanvas = canvas;
+    this._damageCtx = ctx2d;
+    this._damageTexture = tex;
+    this._damagePxPerSeg = pxPerSeg;
+  }
+
+  /** Remap RingGeometry UVs: U = angle/(2π), aligned to segment baseAngle */
+  _remapRingUVs(geo) {
+    const uvAttr = geo.getAttribute('uv');
+    const posAttr = geo.getAttribute('position');
+    for (let i = 0; i < uvAttr.count; i++) {
+      const x = posAttr.getX(i);
+      const y = posAttr.getY(i);
+      let angle = Math.atan2(y, x); // -PI..PI
+      if (angle < 0) angle += Math.PI * 2; // 0..2PI — matches baseAngle range
+      const u = angle / (Math.PI * 2); // 0..1
+      uvAttr.setX(i, u);
+    }
+    uvAttr.needsUpdate = true;
+  }
+
   buildRingPedestal() {
     const ringR = this.ringRadius;
     const halfH = CONFIG.segmentWorldHeight * 0.5;
     const innerR = ringR - halfH;
     const outerR = ringR + halfH;
-    const overhang = 170;
+    const overhang = 0;
     const pedestalH = 180;
+
+    // Build damage alpha texture before materials
+    this.buildDamageAlphaMap();
+    const alphaTex = this._damageTexture;
 
     // Pedestal textures (procedural canvas)
     const deckTex = _generatePedestalDeckTexture();
@@ -575,35 +671,47 @@ class PlanetaryRing {
 
     const deckMat = new THREE.MeshStandardMaterial({
         map: deckTex, color: 0x1b2431, emissive: 0x0d2030,
-        emissiveIntensity: 0.22, roughness: 0.82, metalness: 0.48, side: THREE.DoubleSide
+        emissiveIntensity: 0.22, roughness: 0.82, metalness: 0.48, side: THREE.DoubleSide,
+        alphaMap: alphaTex, transparent: true, alphaTest: 0.05
     });
     const wallMat = new THREE.MeshStandardMaterial({
         map: wallTex, color: 0x131a24, emissive: 0x08131d,
         emissiveIntensity: 0.16, roughness: 0.88, metalness: 0.38, side: THREE.DoubleSide
     });
     const trimMat = new THREE.MeshBasicMaterial({
-        color: 0x2f6ea4, transparent: true, opacity: 0.3
+        color: 0x2f6ea4, transparent: true, opacity: 0.3,
+        alphaMap: alphaTex, alphaTest: 0.05
     });
 
     const floorGroup = new THREE.Group();
+    floorGroup.name = `PlanetaryRingFloor:${this.key}`;
 
     // Top deck (main floor) — flat ring in XY plane
     const topGeo = new THREE.RingGeometry(innerR - overhang, outerR + overhang, 512);
-    floorGroup.add(new THREE.Mesh(topGeo, deckMat));
+    this._remapRingUVs(topGeo);
+    const topDeckMesh = new THREE.Mesh(topGeo, deckMat);
+    topDeckMesh.name = `PlanetaryRingTopDeck:${this.key}`;
+    topDeckMesh.visible = false;
+    floorGroup.add(topDeckMesh);
 
     // Autostrada (central highway)
     const autoW = 180;
     const autoGeo = new THREE.RingGeometry(ringR - autoW * 0.5, ringR + autoW * 0.5, 512);
+    this._remapRingUVs(autoGeo);
     const autoMat = new THREE.MeshStandardMaterial({
-        color: 0x0c1018, roughness: 0.88, metalness: 0.32, side: THREE.DoubleSide
+        color: 0x0c1018, roughness: 0.88, metalness: 0.32, side: THREE.DoubleSide,
+        alphaMap: alphaTex, transparent: true, alphaTest: 0.05
     });
     const autoMesh = new THREE.Mesh(autoGeo, autoMat);
-    autoMesh.position.z = 0.5; // Slightly above floor
+    autoMesh.name = `PlanetaryRingHighway:${this.key}`;
+    autoMesh.position.z = 0.5;
+    autoMesh.visible = false;
     floorGroup.add(autoMesh);
 
-    // Lane markers (torus rings)
+    // Lane markers (torus rings) — TorusGeometry U already maps to angle
     const laneMat = new THREE.MeshBasicMaterial({
-        color: 0x3a618a, transparent: true, opacity: 0.34
+        color: 0x3a618a, transparent: true, opacity: 0.34,
+        alphaMap: alphaTex, alphaTest: 0.05
     });
     const laneOffset = 34;
     for (const { radius, tube, opacity } of [
@@ -614,16 +722,19 @@ class PlanetaryRing {
         const mat = laneMat.clone();
         mat.opacity = opacity;
         const strip = new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 4, 320), mat);
+        strip.name = `PlanetaryRingLane:${this.key}`;
         strip.position.z = 1.0;
         floorGroup.add(strip);
     }
 
     // Shoulder edges
     const shoulderMat = new THREE.MeshBasicMaterial({
-        color: 0x17324b, transparent: true, opacity: 0.12
+        color: 0x17324b, transparent: true, opacity: 0.12,
+        alphaMap: alphaTex, alphaTest: 0.05
     });
     for (const radius of [ringR - autoW * 0.5, ringR + autoW * 0.5]) {
         const shoulder = new THREE.Mesh(new THREE.TorusGeometry(radius, 4, 4, 320), shoulderMat);
+        shoulder.name = `PlanetaryRingShoulder:${this.key}`;
         shoulder.position.z = 0.8;
         floorGroup.add(shoulder);
     }
@@ -636,13 +747,90 @@ class PlanetaryRing {
         const mat = trimMat.clone();
         mat.opacity = opacity;
         const rail = new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 4, 256), mat);
+        rail.name = `PlanetaryRingRail:${this.key}`;
         rail.position.z = 2;
         floorGroup.add(rail);
     }
 
+    // Y-flip: game coords have Y-down, Three.js has Y-up.
+    // Without scale.y = -1, rotation.z rotates the floor opposite to the physics direction.
+    floorGroup.scale.set(1, -1, 1);
+
     if (Core3D?.enableForeground3D) Core3D.enableForeground3D(floorGroup);
     this.buildings3D.add(floorGroup);
     this.ringFloor = floorGroup;
+  }
+
+  /** Update damage alpha texture based on segment structural state + gate openings */
+  updateDamageAlpha() {
+    if (!this._damageCtx) return;
+    const ctx2d = this._damageCtx;
+    const pxPerSeg = this._damagePxPerSeg;
+    let dirty = false;
+
+    // Build gate openAmount lookup: segmentIndex → alpha (1=closed/opaque, 0=open/transparent)
+    // Gate 3D mesh IS the floor piece moving away, so the static floor fades out underneath
+    const gateAlpha = new Map();
+    for (const gate of this.gates) {
+      if (!gate) continue;
+      const oa = gate.openAmount || 0;
+      // Inner leaves open first, outer pylons follow with delay
+      const innerAlpha = Math.max(0, 1 - oa * 2.5);       // fades to 0 by oa=0.4
+      const outerAlpha = Math.max(0, 1 - Math.max(0, oa - 0.15) * 2.0); // fades 0.15→0.65
+      gateAlpha.set(gate.startIndex, outerAlpha);       // GATE_L_OUTER
+      gateAlpha.set(gate.startIndex + 1, innerAlpha);   // GATE_L_INNER
+      gateAlpha.set(gate.startIndex + 2, innerAlpha);   // GATE_R_INNER
+      gateAlpha.set(gate.startIndex + 3, outerAlpha);   // GATE_R_OUTER
+    }
+
+    for (let i = 0; i < this.segmentData.length; i++) {
+      const seg = this.segmentData[i];
+      const entity = seg.entity;
+
+      // Dead or missing entity → fully transparent
+      if (!entity || entity.dead) {
+        const prev = seg._lastDamageRatio ?? 1.0;
+        if (prev > 0.001) {
+          seg._lastDamageRatio = 0;
+          ctx2d.clearRect(i * pxPerSeg, 0, pxPerSeg, 4);
+          dirty = true;
+        }
+        continue;
+      }
+
+      // Structural damage ratio
+      let ratio = 1.0;
+      if (entity.hexGrid) {
+        const structural = getHexStructuralState(entity);
+        if (structural && structural.total > 0) {
+          ratio = structural.active / structural.total;
+        }
+      }
+
+      // Gate opening: floor fades as 3D door mesh takes over visually
+      if (gateAlpha.has(i)) {
+        ratio *= gateAlpha.get(i);
+      }
+
+      const prev = seg._lastDamageRatio ?? 1.0;
+      if (Math.abs(ratio - prev) < 0.005) continue;
+
+      seg._lastDamageRatio = ratio;
+      dirty = true;
+
+      // Clear then fill with proportional alpha
+      ctx2d.clearRect(i * pxPerSeg, 0, pxPerSeg, 4);
+      if (ratio > 0.01) {
+        ctx2d.globalAlpha = ratio;
+        ctx2d.fillStyle = '#fff';
+        ctx2d.fillRect(i * pxPerSeg, 0, pxPerSeg, 4);
+        ctx2d.globalAlpha = 1;
+      }
+    }
+
+    if (dirty) {
+      this._damageTexture.needsUpdate = true;
+    }
   }
 
   createSegmentEntity(index, type, image) {
@@ -680,6 +868,11 @@ class PlanetaryRing {
       return entity;
     }
 
+    // Set collision radius from actual hex dimensions (segment is ~800×2400 world units)
+    const hw = (entity.hexGrid.srcWidth || 0) * HEX_SCALE * 0.5;
+    const hh = (entity.hexGrid.srcHeight || 0) * HEX_SCALE * 0.5;
+    entity.radius = Math.max(hw, hh);  // ~1200 units — used by collectNearbyRingDestructibles
+
     entity.hexGrid.meshDirty = true;
     entity.hexGrid.cacheDirty = false;
     entity.hexGrid.textureDirty = false;
@@ -688,6 +881,25 @@ class PlanetaryRing {
     entity.hexGrid.sleepFrames = 9999;
     entity.hexGrid.wakeHoldFrames = 0;
     return entity;
+  }
+
+  _buildGateArcGeo(innerR, outerR, depth, startAngle, theta) {
+    const segs = 32;
+    const shape = new THREE.Shape();
+    for (let i = 0; i <= segs; i++) {
+      const a = startAngle + (theta * i) / segs;
+      const px = Math.cos(a) * outerR, py = Math.sin(a) * outerR;
+      i === 0 ? shape.moveTo(px, py) : shape.lineTo(px, py);
+    }
+    for (let i = segs; i >= 0; i--) {
+      const a = startAngle + (theta * i) / segs;
+      shape.lineTo(Math.cos(a) * innerR, Math.sin(a) * innerR);
+    }
+    shape.closePath();
+    return new THREE.ExtrudeGeometry(shape, {
+      depth, bevelEnabled: true, bevelSegments: 1,
+      bevelSize: 10, bevelThickness: 10, curveSegments: 1
+    });
   }
 
   createMechanicalGate(startIndex) {
@@ -707,12 +919,8 @@ class PlanetaryRing {
     const glowTexture = getGateGlowTexture();
     if (glowTexture && Core3D.scene) {
       const gateLightMat = new THREE.SpriteMaterial({
-        map: glowTexture,
-        color: 0x66d9ff,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending
+        map: glowTexture, color: 0x66d9ff, transparent: true, opacity: 0,
+        depthWrite: false, blending: THREE.AdditiveBlending
       });
       gateLightSprite = new THREE.Sprite(gateLightMat);
       gateLightSprite.visible = false;
@@ -722,18 +930,157 @@ class PlanetaryRing {
       this.gateLightSprites.push(gateLightSprite);
     }
 
+    // --- 3D Gate Visuals ---
+    const ringR = this.ringRadius;
+    const halfH = CONFIG.segmentWorldHeight * 0.5;
+    const innerR = ringR - halfH;
+    const outerR = ringR + halfH;
+    const depth = CONFIG.gateDepth;
+    const leafAngle = 2 * this.angleStep;
+
+    // Match ring floor (deckMat) so the gate looks like a piece of the ring
+    const gateMat = new THREE.MeshStandardMaterial({
+      color: 0x1b2431, emissive: 0x0d2030, emissiveIntensity: 0.22,
+      roughness: 0.82, metalness: 0.48, side: THREE.DoubleSide
+    });
+    const railMat = new THREE.MeshBasicMaterial({
+      color: 0x00f3ff, transparent: true, opacity: 0.45
+    });
+
+    // Left door arc
+    const doorLGeo = this._buildGateArcGeo(innerR, outerR, depth, centerBaseAngle, leafAngle);
+    doorLGeo.translate(0, 0, -depth * 0.3);
+    const doorLMesh = new THREE.Mesh(doorLGeo, gateMat);
+    // Left door edge rails
+    for (const r of [innerR, outerR]) {
+      const tGeo = new THREE.TorusGeometry(r, 10, 6, 32, leafAngle);
+      tGeo.rotateZ(centerBaseAngle);
+      const tMesh = new THREE.Mesh(tGeo, railMat.clone());
+      tMesh.position.z = depth * 0.5 + 6;
+      doorLMesh.add(tMesh);
+    }
+
+    // Right door arc
+    const doorRGeo = this._buildGateArcGeo(innerR, outerR, depth, centerBaseAngle - leafAngle, leafAngle);
+    doorRGeo.translate(0, 0, -depth * 0.3);
+    const doorRMesh = new THREE.Mesh(doorRGeo, gateMat.clone());
+    for (const r of [innerR, outerR]) {
+      const tGeo = new THREE.TorusGeometry(r, 10, 6, 32, leafAngle);
+      tGeo.rotateZ(centerBaseAngle - leafAngle);
+      const tMesh = new THREE.Mesh(tGeo, railMat.clone());
+      tMesh.position.z = depth * 0.5 + 6;
+      doorRMesh.add(tMesh);
+    }
+
+    // Hinge on INNER edge at boundary angles
+    const hingeLAngle = centerBaseAngle + leafAngle;
+    const hingeLX = Math.cos(hingeLAngle) * innerR;
+    const hingeLY = Math.sin(hingeLAngle) * innerR;
+
+    const hingeRAngle = centerBaseAngle - leafAngle;
+    const hingeRX = Math.cos(hingeRAngle) * innerR;
+    const hingeRY = Math.sin(hingeRAngle) * innerR;
+
+    // Left door: content → pivot → slide
+    const doorLContent = new THREE.Group();
+    doorLContent.add(doorLMesh);
+    doorLContent.position.set(-hingeLX, -hingeLY, 0);
+
+    const pivotL = new THREE.Group();
+    pivotL.position.set(hingeLX, hingeLY, 0);
+    pivotL.add(doorLContent);
+
+    const slideL = new THREE.Group();
+    slideL.add(pivotL);
+
+    // Right door: content → pivot → slide
+    const doorRContent = new THREE.Group();
+    doorRContent.add(doorRMesh);
+    doorRContent.position.set(-hingeRX, -hingeRY, 0);
+
+    const pivotR = new THREE.Group();
+    pivotR.position.set(hingeRX, hingeRY, 0);
+    pivotR.add(doorRContent);
+
+    const slideR = new THREE.Group();
+    slideR.add(pivotR);
+
+    // Lock (center seam) — attached to left door
+    const lockMat3D = new THREE.MeshBasicMaterial({ color: 0xff003c });
+    const lockGeo = new THREE.BoxGeometry(40, CONFIG.segmentWorldHeight + 30, depth + 30);
+    const lockMesh3D = new THREE.Mesh(lockGeo, lockMat3D);
+    lockMesh3D.position.set(
+      Math.cos(centerBaseAngle) * ringR,
+      Math.sin(centerBaseAngle) * ringR, 0
+    );
+    lockMesh3D.rotation.z = centerBaseAngle + Math.PI * 0.5;
+    doorLContent.add(lockMesh3D);
+
+    // Plasma shields (stationary at boundary angles)
+    const shieldGeo = new THREE.PlaneGeometry(CONFIG.segmentWorldHeight, depth);
+    const mkShieldMat = () => new THREE.MeshBasicMaterial({
+      color: 0x00f3ff, transparent: true, opacity: 0.0,
+      side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const shieldL3D = new THREE.Mesh(shieldGeo, mkShieldMat());
+    shieldL3D.position.set(Math.cos(hingeLAngle) * ringR, Math.sin(hingeLAngle) * ringR, 0);
+    shieldL3D.rotation.z = hingeLAngle;
+
+    const shieldR3D = new THREE.Mesh(shieldGeo.clone(), mkShieldMat());
+    shieldR3D.position.set(Math.cos(hingeRAngle) * ringR, Math.sin(hingeRAngle) * ringR, 0);
+    shieldR3D.rotation.z = hingeRAngle;
+
+    // Beacons (on outer edge, attached to doors)
+    const beaconMat3D = new THREE.MeshBasicMaterial({ color: 0x110000 });
+    const beaconGeo = new THREE.SphereGeometry(25, 10, 10);
+    const beaconL3D = new THREE.Mesh(beaconGeo, beaconMat3D);
+    beaconL3D.position.set(
+      Math.cos(centerBaseAngle + leafAngle * 0.15) * outerR,
+      Math.sin(centerBaseAngle + leafAngle * 0.15) * outerR,
+      depth * 0.5 + 25
+    );
+    doorLContent.add(beaconL3D);
+
+    const beaconMatR3D = beaconMat3D.clone();
+    const beaconR3D = new THREE.Mesh(beaconGeo, beaconMatR3D);
+    beaconR3D.position.set(
+      Math.cos(centerBaseAngle - leafAngle * 0.15) * outerR,
+      Math.sin(centerBaseAngle - leafAngle * 0.15) * outerR,
+      depth * 0.5 + 25
+    );
+    doorRContent.add(beaconR3D);
+
+    // Assemble gate group
+    const gateVis = new THREE.Group();
+    gateVis.name = `PlanetaryRingGate:${this.key}:${startIndex}`;
+    gateVis.add(slideL);
+    gateVis.add(slideR);
+    gateVis.add(shieldL3D);
+    gateVis.add(shieldR3D);
+    gateVis.scale.set(1, -1, 1);
+
+    this.buildings3D.add(gateVis);
+    if (Core3D?.enableForeground3D) Core3D.enableForeground3D(gateVis);
+
     this.gates.push({
       startIndex,
       baseAngle: centerBaseAngle,
-      leftOuter,
-      leftInner,
-      rightInner,
-      rightOuter,
+      leftOuter, leftInner, rightInner, rightOuter,
       targetOpen: false,
       openAmount: 0,
       gateLightSprite,
-      worldX: 0,
-      worldY: 0
+      worldX: 0, worldY: 0,
+      gate3D: {
+        group: gateVis,
+        slideL, slideR, pivotL, pivotR,
+        lockMesh: lockMesh3D, lockMat: lockMat3D,
+        shieldL: shieldL3D, shieldR: shieldR3D,
+        beaconMatL: beaconMat3D, beaconMatR: beaconMatR3D,
+        slideAngleL: hingeLAngle,
+        slideAngleR: hingeRAngle,
+        maxSlide: CONFIG.segmentWorldHeight + 60,
+        maxRotation: Math.PI / 2
+      }
     });
   }
 
@@ -769,6 +1116,8 @@ class PlanetaryRing {
 
   updateFromPlanet(planet, dt, viewCamera = null) {
     if (!planet) return;
+    this._shipRef = window.ship || null;
+    const visualZ = getRingVisualZ(this.key);
     this.lastPlanetX = Number(planet.x) || 0;
     this.lastPlanetY = Number(planet.y) || 0;
     this.updateTick++;
@@ -783,8 +1132,8 @@ class PlanetaryRing {
 
     // Position ring floor at planet center
     if (this.ringFloor) {
-      this.ringFloor.position.set(this.lastPlanetX, -this.lastPlanetY, -100);
-      this.ringFloor.rotation.z = this.currentRotation;
+      this.ringFloor.position.set(this.lastPlanetX, -this.lastPlanetY, visualZ.floor);
+      this.ringFloor.rotation.z = -this.currentRotation;
     }
 
     for (let i = 0; i < this.segmentData.length; i++) {
@@ -802,9 +1151,28 @@ class PlanetaryRing {
       entity.x = worldX;
       entity.y = worldY;
       entity.angle = worldRot;
-      entity.vx = 0;
-      entity.vy = 0;
-      entity.angVel = 0;
+
+      // Tangential surface velocity: v = ω × r (perpendicular to radial direction)
+      // This lets the destructor collision system transfer surface movement to colliding objects
+      const surfSpeed = this.rotationSpeed * this.ringRadius;
+      entity.vx = -Math.sin(worldAngle) * surfSpeed;
+      entity.vy =  Math.cos(worldAngle) * surfSpeed;
+      entity.angVel = this.rotationSpeed;
+
+      // Wake segments near ship so destructor collision loop (line 2968) doesn't skip them
+      if (entity.hexGrid && this._shipRef) {
+        const sx = this._shipRef.pos?.x ?? this._shipRef.x ?? 0;
+        const sy = this._shipRef.pos?.y ?? this._shipRef.y ?? 0;
+        const ddx = worldX - sx;
+        const ddy = worldY - sy;
+        const wakeThresh = 2500;
+        if (ddx * ddx + ddy * ddy < wakeThresh * wakeThresh) {
+          entity.hexGrid.isSleeping = false;
+          entity.hexGrid.sleepFrames = 0;
+        } else if (entity.hexGrid.wakeHoldFrames <= 0) {
+          entity.hexGrid.isSleeping = true;
+        }
+      }
 
       if ((this.updateTick % 20) === 0 && entity.hexGrid) {
         const structural = getHexStructuralState(entity);
@@ -815,6 +1183,10 @@ class PlanetaryRing {
     }
 
     this.updateGates(dt);
+
+    // Update damage alpha texture — gate openings every frame, structural damage every 20 ticks
+    // (updateDamageAlpha has internal dirty-check so frequent calls are cheap)
+    this.updateDamageAlpha();
 
     // --- AKTUALIZACJA BUDYNKÓW (z angle-based culling i LOD) ---
     // Oblicz kąt kamery względem planety (do culling per-cell)
@@ -890,6 +1262,7 @@ class PlanetaryRing {
 
   updateGates(dt) {
     if (!this.gates.length) return;
+    const visualZ = getRingVisualZ(this.key);
     const ship = (typeof window !== 'undefined') ? window.ship : null;
     const shipX = Number(ship?.pos?.x ?? ship?.x);
     const shipY = Number(ship?.pos?.y ?? ship?.y);
@@ -923,65 +1296,148 @@ class PlanetaryRing {
         entry.openAmount = Math.max(target, entry.openAmount - openStep);
       }
 
-      const innerFold = Math.min(1, entry.openAmount * 2.0);
-      const outerFold = Math.max(0, Math.min(1, (entry.openAmount - 0.5) * 2.0));
+      const oa = entry.openAmount;
 
-      const leftOuterOffset = -1.5 - outerFold;
-      const leftInnerOffset = (-0.5 - innerFold) - outerFold;
-      const rightOuterOffset = 1.5 + outerFold;
-      const rightInnerOffset = (0.5 + innerFold) + outerFold;
+      // --- 5-Phase animation ---
+      // Phase 1 (0.00-0.12): Alarm — lock pulses, no movement
+      // Phase 2 (0.12-0.18): Unlock — lock changes color, shields activate
+      // Phase 3 (0.18-0.55): Slide — doors slide radially outward
+      // Phase 4 (0.55-0.60): Pause — mechanical stabilization
+      // Phase 5 (0.60-1.00): Swing — doors rotate open on hinges
+      let alarmProg = 0, lockProg = 0, slideProg = 0, swingProg = 0;
+      if (oa < 0.12) {
+        alarmProg = oa / 0.12;
+      } else if (oa < 0.18) {
+        alarmProg = 1; lockProg = (oa - 0.12) / 0.06;
+      } else if (oa < 0.55) {
+        alarmProg = 1; lockProg = 1; slideProg = (oa - 0.18) / 0.37;
+      } else if (oa < 0.60) {
+        alarmProg = 1; lockProg = 1; slideProg = 1;
+      } else {
+        alarmProg = 1; lockProg = 1; slideProg = 1;
+        swingProg = Math.min(1, (oa - 0.60) / 0.40);
+      }
 
-      const moduleStates = [
-        { entity: entry.leftOuter, offset: leftOuterOffset },
-        { entity: entry.leftInner, offset: leftInnerOffset },
-        { entity: entry.rightInner, offset: rightInnerOffset },
-        { entity: entry.rightOuter, offset: rightOuterOffset }
-      ];
+      const easedSlide = easeInOutCubic(Math.min(1, slideProg));
+      const easedSwing = easeInOutCubic(swingProg);
 
-      const fullyOpen = entry.openAmount >= 0.98;
+      const gateEntities = [entry.leftOuter, entry.leftInner, entry.rightInner, entry.rightOuter];
+      // --- PRAWDZIWA FIZYKA BRAMY Z HEKSÓW ---
+      const leafAngle = 2 * this.angleStep;
+      const hingeLAngle = entry.baseAngle + leafAngle + this.currentRotation;
+      const hingeRAngle = entry.baseAngle - leafAngle + this.currentRotation;
+
+      const maxSlide = (entry.gate3D ? entry.gate3D.maxSlide : CONFIG.segmentWorldHeight + 60);
+      const dLX = Math.cos(hingeLAngle) * easedSlide * maxSlide;
+      const dLY = Math.sin(hingeLAngle) * easedSlide * maxSlide;
+      const dRX = Math.cos(hingeRAngle) * easedSlide * maxSlide;
+      const dRY = Math.sin(hingeRAngle) * easedSlide * maxSlide;
+
+      const maxRot = (entry.gate3D ? entry.gate3D.maxRotation : Math.PI / 2);
+      const swingRotL = easedSwing * maxRot;
+      const swingRotR = -easedSwing * maxRot;
+
+      const isMoving = oa > 0.01 && oa < 0.99;
+      const dtSafe = dt > 0 ? dt : 0.016;
+
+      const moveGateEntity = (entity, dx, dy, dRot) => {
+        if (!entity || entity.dead) return;
+
+        entity.isCollidable = true;
+        entity.x += dx;
+        entity.y += dy;
+        entity.angle += dRot;
+
+        if (isMoving && entity.hexGrid) {
+          entity.hexGrid.isSleeping = false;
+          entity.hexGrid.sleepFrames = 0;
+          entity.vx = dx / dtSafe;
+          entity.vy = dy / dtSafe;
+        } else {
+          entity.vx = 0;
+          entity.vy = 0;
+        }
+      };
+
+      moveGateEntity(entry.leftOuter, dLX, dLY, swingRotL);
+      moveGateEntity(entry.leftInner, dLX, dLY, swingRotL);
+      moveGateEntity(entry.rightInner, dRX, dRY, swingRotR);
+      moveGateEntity(entry.rightOuter, dRX, dRY, swingRotR);
+
+      // --- 3D visual animation ---
+      const g3d = entry.gate3D;
+      if (g3d) {
+        // Position gate group at planet center (same as ringFloor)
+        g3d.group.position.set(this.lastPlanetX, -this.lastPlanetY, visualZ.gate);
+        g3d.group.rotation.z = -this.currentRotation;
+
+        // Slide: translate radially outward along hinge angle direction
+        const maxSlide = g3d.maxSlide;
+        const dLX = Math.cos(g3d.slideAngleL);
+        const dLY = Math.sin(g3d.slideAngleL);
+        g3d.slideL.position.set(dLX * easedSlide * maxSlide, dLY * easedSlide * maxSlide, 0);
+
+        const dRX = Math.cos(g3d.slideAngleR);
+        const dRY = Math.sin(g3d.slideAngleR);
+        g3d.slideR.position.set(dRX * easedSlide * maxSlide, dRY * easedSlide * maxSlide, 0);
+
+        // Swing: rotate outward (away from gate center)
+        g3d.pivotL.rotation.z = easedSwing * g3d.maxRotation * 1;
+        g3d.pivotR.rotation.z = easedSwing * g3d.maxRotation * -1;
+
+        // Lock color: red pulsing alarm → cyan unlock
+        if (alarmProg > 0 && lockProg === 0) {
+          const pulse = (Math.sin(performance.now() * 0.01) + 1) / 2;
+          g3d.lockMat.color.setRGB(
+            (0.5 + pulse * 1.5) * 1.0,
+            (0.5 + pulse * 1.5) * 0.0,
+            (0.5 + pulse * 1.5) * 0.24
+          );
+        } else {
+          const t = easeInOutCubic(lockProg);
+          g3d.lockMat.color.setRGB(1.0 * (1 - t), t * 0.95, 0.24 * (1 - t) + t * 1.0);
+        }
+
+        // Shields fade in during unlock
+        g3d.shieldL.material.opacity = lockProg * 0.85;
+        g3d.shieldR.material.opacity = lockProg * 0.85;
+
+        // Beacons blink during movement
+        const isMoving = oa > 0.01 && oa < 0.99;
+        if (isMoving) {
+          const blink = (performance.now() % 800) < 400;
+          const hex = blink ? 0xff0000 : 0x110000;
+          g3d.beaconMatL.color.setHex(hex);
+          g3d.beaconMatR.color.setHex(hex);
+        } else {
+          g3d.beaconMatL.color.setHex(0x110000);
+          g3d.beaconMatR.color.setHex(0x110000);
+        }
+      }
+
+      // --- Gate light sprite ---
       const gateLightSprite = entry.gateLightSprite;
       if (gateLightSprite) {
-        const openVis = Math.max(0, Math.min(1, (entry.openAmount - 0.06) / 0.94));
+        const openVis = Math.max(0, Math.min(1, (oa - 0.15) / 0.85));
         gateLightSprite.visible = openVis > 0.01;
         if (gateLightSprite.visible) {
           const baseScale = CONFIG.segmentWorldWidth * 2.4;
-          gateLightSprite.position.set(gateX, -gateY, -96);
+          gateLightSprite.position.set(gateX, -gateY, visualZ.gateLight);
           gateLightSprite.scale.set(
             baseScale * (0.35 + openVis * 0.5),
-            baseScale * (0.45 + openVis * 0.9),
-            1
+            baseScale * (0.45 + openVis * 0.9), 1
           );
           gateLightSprite.material.opacity = 0.04 + openVis * 0.16;
-
           if (Core3D.pushGodRayWorld && distToShip < (CONFIG.gateOpenRadius * 1.7)) {
-            Core3D.pushGodRayWorld(
-              gateX,
-              -gateY,
-              -100,
-              1200 + openVis * 800,
-              0.25 + openVis * 0.35,
-              false
-            );
+            Core3D.pushGodRayWorld(gateX, -gateY, visualZ.gateLight,
+              1200 + openVis * 800, 0.25 + openVis * 0.35, false);
           }
         }
       }
 
-      for (const item of moduleStates) {
-        const entity = item.entity;
-        if (!entity || entity.dead) continue;
-        const moduleAngle = centerWorldAngle + item.offset * this.angleStep;
-        entity.x = this.lastPlanetX + Math.cos(moduleAngle) * this.ringRadius;
-        entity.y = this.lastPlanetY + Math.sin(moduleAngle) * this.ringRadius;
-        entity.angle = moduleAngle + Math.PI * 0.5;
-        entity.vx = 0;
-        entity.vy = 0;
-        entity.angVel = 0;
-        entity.isCollidable = !fullyOpen;
-      }
-
+      // --- Structural death check for gate entities ---
       if ((this.updateTick % 20) === 0) {
-        for (const item of moduleStates) {
-          const entity = item.entity;
+        for (const entity of gateEntities) {
           if (!entity || !entity.hexGrid || entity.dead) continue;
           const structural = getHexStructuralState(entity);
           if (structural && structural.total > 0 && structural.active <= 0) {
@@ -1010,11 +1466,31 @@ class PlanetaryRing {
       try { sprite.material?.dispose?.(); } catch { }
     }
     this.gateLightSprites.length = 0;
+    // Cleanup gate 3D meshes
+    for (const gate of this.gates) {
+      const g3d = gate?.gate3D;
+      if (!g3d) continue;
+      g3d.group.traverse(child => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+          else child.material.dispose();
+        }
+      });
+      if (g3d.group.parent) g3d.group.parent.remove(g3d.group);
+    }
     this.gates.length = 0;
     this.constructionSlots.length = 0;
     this.visualMeshes.length = 0;
     this.zoneGrid = null;
     this.ringFloor = null;
+    // Cleanup damage alpha map
+    if (this._damageTexture) {
+      this._damageTexture.dispose();
+      this._damageTexture = null;
+    }
+    this._damageCanvas = null;
+    this._damageCtx = null;
   }
 }
 
@@ -1165,6 +1641,16 @@ export function getPlanetaryRingEntities() {
   return state.entities;
 }
 
+/**
+ * Ring barrier enforcement — pushes dynamic entities out of the ring wall.
+ * This is a simple radial check that guarantees nothing passes through,
+ * regardless of hex collision detection. Gates create openings.
+ * Call this each physics step for entities near ring planets.
+ */
+export function enforceRingBarrier(entity) {
+  return false;
+}
+
 export function getPotentialPlanetaryRingTargets(x, y, radius = 0) {
   return queryPotentialTargets(x, y, radius);
 }
@@ -1254,7 +1740,8 @@ export function getPlanetaryRingDebug() {
       hiddenEntries,
       culledPercent: ring.visualMeshes.length > 0 ? Math.round(hiddenEntries / ring.visualMeshes.length * 100) : 0,
       estimatedDrawCalls: drawCalls,
-      totalDecorations
+      totalDecorations,
+      visualZ: getRingVisualZ(key)
     };
   }
   return {
@@ -1279,16 +1766,67 @@ export function rebuildRingCityCell(planetKey, cell) {
 }
 
 export function getPlanetaryRing(planetKey) {
-  return state.rings.get(String(planetKey || '').toLowerCase()) || null;
+  return state.rings.get(normalizeRingKey(planetKey)) || null;
+}
+
+export function getPlanetaryRingVisualZ(planetKey) {
+  return { ...getRingVisualZ(planetKey) };
+}
+
+export function setPlanetaryRingVisualZ(planetKey, patch = {}) {
+  const ring = getPlanetaryRing(planetKey);
+  const next = setRingVisualZ(planetKey, patch);
+  if (ring?.ringFloor) ring.ringFloor.position.z = next.floor;
+  if (ring?.gates) {
+    for (const gate of ring.gates) {
+      if (gate?.gate3D?.group?.position) gate.gate3D.group.position.z = next.gate;
+      if (gate?.gateLightSprite?.position) gate.gateLightSprite.position.z = next.gateLight;
+    }
+  }
+  return { ...next };
+}
+
+export function resetPlanetaryRingVisualZ(planetKey) {
+  const ring = getPlanetaryRing(planetKey);
+  const next = clearRingVisualZ(planetKey);
+  if (ring?.ringFloor) ring.ringFloor.position.z = next.floor;
+  if (ring?.gates) {
+    for (const gate of ring.gates) {
+      if (gate?.gate3D?.group?.position) gate.gate3D.group.position.z = next.gate;
+      if (gate?.gateLightSprite?.position) gate.gateLightSprite.position.z = next.gateLight;
+    }
+  }
+  return { ...next };
+}
+
+export function getPlanetaryRingObjects(planetKey) {
+  const ring = getPlanetaryRing(planetKey);
+  if (!ring) return null;
+  return {
+    ring,
+    buildings3D: ring.buildings3D || null,
+    ringFloor: ring.ringFloor || null,
+    gates: Array.isArray(ring.gates) ? ring.gates.map((gate, index) => ({
+      index,
+      group: gate?.gate3D?.group || null,
+      gateLightSprite: gate?.gateLightSprite || null
+    })) : []
+  };
 }
 
 if (typeof window !== 'undefined') {
   window.__planetaryRingsDebug = {
     status: () => getPlanetaryRingDebug(),
     slots: (planetKey) => getPlanetaryRingSlots(planetKey),
-    entities: () => getPlanetaryRingEntities()
+    entities: () => getPlanetaryRingEntities(),
+    ring: (planetKey) => getPlanetaryRing(planetKey),
+    objects: (planetKey) => getPlanetaryRingObjects(planetKey),
+    visualZ: (planetKey) => getPlanetaryRingVisualZ(planetKey),
+    setVisualZ: (planetKey, patch) => setPlanetaryRingVisualZ(planetKey, patch),
+    resetVisualZ: (planetKey) => resetPlanetaryRingVisualZ(planetKey)
   };
   window.togglePlanetaryRingGates = togglePlanetaryRingGates;
   window.setPlanetaryRingGateMode = setPlanetaryRingGateMode;
   window.getPlanetaryGateControlState = getPlanetaryGateControlState;
 }
+

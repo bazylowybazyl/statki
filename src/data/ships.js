@@ -91,6 +91,7 @@ const MIN_RENDER_SIZE = 64;
 
 export const HULL_RENDER_PROFILES = {
   atlas: { id: 'atlas', length: 2000, radius: 500 },
+  supercapital: { id: 'supercapital', length: 2000, radius: 500 },
   terran_frigate: { id: 'terran_frigate', length: 320, radius: 120 },
   terran_destroyer: { id: 'terran_destroyer', length: 480, radius: 170 },
   terran_battleship: { id: 'terran_battleship', length: 640, radius: 220 },
@@ -286,6 +287,46 @@ export const CAPITAL_SHIP_TEMPLATES = {
         { x: 0.38, y: 0.92 }
       ],
       engineGlowSize: 0.28,
+      engineOffsetMode: 'relative'
+    }
+  },
+  supercapital: {
+    id: 'supercapital',
+    displayName: 'Atlas II',
+    roleText: 'Supercapital',
+    hull: 85000,
+    mass: 800000,
+    rammingMass: 800000,
+    shield: 52000,
+    shieldRegen: 400,
+    shieldDelay: 8,
+    accel: 120,
+    maxSpeed: 500,
+    turn: 1.2,
+    radius: 220,
+    hardpoints: { large: 4, medium: 4 },
+    formationOffset: { x: -1200, y: -500 },
+    weaponRange: 3200,
+    weapons: {},
+    profile: {
+      lengthScale: 2.1,
+      widthScale: 1.2,
+      hullColor: '#3d5a8a',
+      deckColor: '#1a2940',
+      accentColor: '#7ab5ff',
+      engineColor: 'rgba(100, 200, 255, 0.85)',
+      spriteSrc: 'assets/capital_ship_rect_v1.png',
+      spriteScale: 1.0,
+      spriteRotation: 0,
+      spriteOffset: { x: 0, y: 0 },
+      spriteLayer: 2,
+      spriteEngineGlow: false,
+      engineOffsets: [
+        { x: -0.42, y: -0.15 },
+        { x: -0.42, y: 0.15 },
+        { x: -0.45, y: 0 }
+      ],
+      engineGlowSize: 0.35,
       engineOffsetMode: 'relative'
     }
   }

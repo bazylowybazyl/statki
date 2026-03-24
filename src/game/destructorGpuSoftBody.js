@@ -127,7 +127,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let actualDx = nPosX - myPosX;
             let actualDy = nPosY - myPosY;
 
-            let projLength = actualDx * expDirX + actualDy * expDirY;
+            var projLength = actualDx * expDirX + actualDy * expDirY;
+            let minProj = restLength * 0.22;
+            if (projLength < minProj) {
+                projLength = minProj;
+            }
             var diff = projLength - restLength;
             
             var forceMag = diff * stiffness;
@@ -135,28 +139,19 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             var bulgeForceX = 0.0;
             var bulgeForceY = 0.0;
 
-            if (projLength < 0.0) {
-                forceMag = forceMag * 8.0; 
+            if (diff < 0.0) {
+                forceMag = forceMag * 3.2;
                 if (-diff > maxStretch) { maxStretch = -diff; }
-            } else if (diff < 0.0) {
-                // KOMPRESJA (Wgniecenie materiału)
-                forceMag = forceMag * 4.5; 
-                if (-diff > maxStretch) { maxStretch = -diff; } 
-                
-                // WYBĄBLENIE MATERIAŁU (Buckling effect)
-                // Jeśli sprężyna jest ściśnięta o więcej niż 15% swojej długości, materiał ucieka na boki
-                if (diff < -restLength * 0.15) {
-                    // Wektor prostopadły do sprężyny
+
+                if (diff < -restLength * 0.12 && projLength > restLength * 0.45) {
                     let perpX = -expDirY;
                     let perpY = expDirX;
-                    
-                    // Sprawdzamy, w którą stronę heks już jest lekko odchylony, by tam go kontynuować wypychać
+
                     let lateralOffset = actualDx * perpX + actualDy * perpY;
                     var bulgeDir = sign(lateralOffset);
-                    if (bulgeDir == 0.0) { bulgeDir = 1.0; } // Domyślny kierunek jeśli jest idealnie na wprost
-                    
-                    // Im mocniej ściśnięty, tym drastyczniej ucieka w bok
-                    let bulgeMag = (-diff) * stiffness * 2.2; 
+                    if (bulgeDir == 0.0) { bulgeDir = 1.0; }
+
+                    let bulgeMag = min((-diff) * stiffness * 0.8, restLength * stiffness * 0.45);
                     bulgeForceX = perpX * bulgeDir * bulgeMag;
                     bulgeForceY = perpY * bulgeDir * bulgeMag;
                 }
@@ -208,6 +203,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   var nextDefX = me.defX + nextVelX;
   var nextDefY = me.defY + nextVelY;
   let newDefLen = length(vec2<f32>(nextDefX, nextDefY));
+  if (newDefLen > params.maxDeform) {
+      let scl = params.maxDeform / max(0.0001, newDefLen);
+      nextDefX = nextDefX * scl;
+      nextDefY = nextDefY * scl;
+      newHp = 0.0;
+  }
+  
   
   // GWARANTOWANE RWANIE MATERIAŁU
   if (maxStretch > params.tearThreshold || newDefLen > params.maxDeform) {
@@ -390,15 +392,15 @@ export const DestructorGpuSoftBody = {
     for (let i = 0; i < count && sampled < limit; i += step, sampled++) {
       const s = shards[i];
       if (!s || !s.active || s.isDebris) continue;
-      const tx = Math.abs(Number(s.targetDeformation?.x) || 0);
-      const ty = Math.abs(Number(s.targetDeformation?.y) || 0);
-      const dx = Math.abs(Number(s.deformation?.x) || 0);
-      const dy = Math.abs(Number(s.deformation?.y) || 0);
-      const vx = Math.abs(Number(s.__velX) || 0);
-      const vy = Math.abs(Number(s.__velY) || 0);
-      const cvx = Math.abs(Number(s.__collVelX) || 0);
-      const cvy = Math.abs(Number(s.__collVelY) || 0);
-      if (tx > defThreshold || ty > defThreshold || dx > defThreshold || dy > defThreshold || vx > velThreshold || vy > velThreshold || cvx > velThreshold || cvy > velThreshold) {
+      const tx = Number(s.targetDeformation?.x) || 0;
+      const ty = Number(s.targetDeformation?.y) || 0;
+      const dx = Number(s.deformation?.x) || 0;
+      const dy = Number(s.deformation?.y) || 0;
+      const diffX = Math.abs(tx - dx);
+      const diffY = Math.abs(ty - dy);
+      const vx = Math.abs(Number(s.__velX) || 0) + Math.abs(Number(s.__collVelX) || 0);
+      const vy = Math.abs(Number(s.__velY) || 0) + Math.abs(Number(s.__collVelY) || 0);
+      if (diffX > defThreshold || diffY > defThreshold || vx > velThreshold || vy > velThreshold) {
         return true;
       }
     }
@@ -552,12 +554,12 @@ export const DestructorGpuSoftBody = {
         const ratio = excess / defMag;
         const bakeX = stx * ratio;
         const bakeY = sty * ratio;
-        // Accumulate bake offset (visual displacement) without touching pristine grid
         s._bakedOffX = bakedX + bakeX;
         s._bakedOffY = bakedY + bakeY;
-        // gridX/gridY still shift for rendering purposes
         s.gridX += bakeX;
         s.gridY += bakeY;
+        s.deformation.x -= bakeX;
+        s.deformation.y -= bakeY;
         s.targetDeformation.x -= bakeX;
         s.targetDeformation.y -= bakeY;
         anyChanges = true;

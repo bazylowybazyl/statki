@@ -182,13 +182,14 @@ export const SpotterDroneSystem = {
   /**
    * Get sensor sources from drones (to register with SensorSystem).
    */
-  getSensorSources() {
-    return drones.filter(d => !d.dead).map(d => ({
-      x: d.x,
-      y: d.y,
-      range: d.sensorRange,
-      type: 'drone',
-    }));
+  populateSensorSources(getNextSourceFn) {
+    for (let i=0; i<drones.length; i++) {
+      const d = drones[i];
+      if (!d.dead) {
+        const src = getNextSourceFn();
+        src.x = d.x; src.y = d.y; src.range = d.sensorRange; src.type = 'drone';
+      }
+    }
   },
 
   /**

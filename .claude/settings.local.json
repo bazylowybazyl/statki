@@ -13,7 +13,9 @@
       "Bash(node -e \"const fs = require\\(''fs''\\); const html = fs.readFileSync\\(''index.html'', ''utf8''\\); let depth = 0; let maxDepth = 0; let line = 0; for \\(const ch of html\\) { if \\(ch === ''\\\\n''\\) line++; if \\(ch === ''{''\\) { depth++; if \\(depth > maxDepth\\) maxDepth = depth; } if \\(ch === ''}''\\) depth--; } console.log\\(''Final depth:'', depth, ''Max depth:'', maxDepth, ''Lines:'', line\\);\")",
       "Bash(wc -l \"C:\\\\Users\\\\Szymon\\\\Documents\\\\GitHub\\\\statki\\\\src\\\\3d\"/*.js)",
       "Bash(find /c/Users/Szymon/Documents/GitHub/statki -name *procedural* -o -name *procgen* -o -name *tile* -o -name *zone*)",
-      "Bash(find \"C:\\\\Users\\\\Szymon\\\\Documents\\\\GitHub\\\\statki\\\\src\\\\3d\" -name \"*.js\" -exec wc -l {} +)"
+      "Bash(find \"C:\\\\Users\\\\Szymon\\\\Documents\\\\GitHub\\\\statki\\\\src\\\\3d\" -name \"*.js\" -exec wc -l {} +)",
+      "Bash(grep -rn clampTurnVecs*= C:UsersSzymonDocumentsGitHubstatki --include=*.js)",
+      "Bash(ls -la /c/Users/Szymon/Documents/GitHub/statki/*.html /c/Users/Szymon/Documents/GitHub/statki/*.js)"
     ]
   }
 }

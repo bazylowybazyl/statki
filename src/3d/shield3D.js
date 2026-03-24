@@ -5,6 +5,7 @@
 // ============================================================
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
+import { isShieldSuppressed } from '../../shieldSystem.js';
 
 const MAX_HITS = 8;
 
@@ -13,10 +14,13 @@ const SHIELD_VERTEX = `
 varying vec3 vNormal;
 varying vec3 vViewDir;
 varying vec3 vObjPos;
+varying float vWorldY;
 
 void main() {
     vObjPos  = position;
     vNormal  = normalize(normalMatrix * normal);
+    vec4 worldPos = modelMatrix * vec4(position, 1.0);
+    vWorldY = worldPos.y;
     vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
     vViewDir = normalize(-mvPos.xyz);
     gl_Position = projectionMatrix * mvPos;
@@ -63,6 +67,7 @@ uniform float uEnergyShot;
 varying vec3 vNormal;
 varying vec3 vViewDir;
 varying vec3 vObjPos;
+varying float vWorldY;
 
 // ── Simplex 3D noise ────────────────────────────────────────────────────────
 vec3 mod289v3(vec3 x){ return x - floor(x*(1./289.))*289.; }
@@ -229,6 +234,7 @@ void main(){
     float energyBoost = uEnergyShot * 0.5;
 
     // ── Combine ───────────────────────────────────────────────────────────────
+    // ── Combine ───────────────────────────────────────────────────────────────
     vec3  lColor = lifeColor(uLife);
 
     // Breaking: shift to red/white
@@ -250,10 +256,7 @@ void main(){
 
     float alpha = clamp(intensity*uOpacity*revealMask + revealEdge*uNoiseEdgeIntensity, 0.0, 1.0);
 
-    // ── Bottom fade ─────────────────────────────────────────────────────────
-    float normY = vObjPos.y / 1.8;
-    alpha *= smoothstep(-1.0, uFadeStart, normY);
-
+    // Pełna okrągła tarcza w 3D - żadnego wycinania
     gl_FragColor = vec4(shieldColor + edgeGlow, alpha);
 }
 `;
@@ -355,7 +358,7 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
 
     for (const entity of entities) {
         const shield = entity?.shield;
-        if (!shield || !shield.max || shield.state === 'off') continue;
+        if (!shield || !shield.max || shield.state === 'off' || isShieldSuppressed(entity)) continue;
 
         let mesh = state.meshes.get(entity);
         if (!mesh) mesh = createShieldMesh(entity);
@@ -375,7 +378,10 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
         // Uniform scale: sphere radius=1.8, shield covers half the longest dimension + 15% margin
         const maxDim = Math.max(w, h);
         const s = (maxDim * 0.5 * 1.15) / 1.8;
-        mesh.scale.set(s, s, s);
+        // During activation, shield grows from center; during breaking, stays full size
+        const ap = Math.max(0, Math.min(1, shield.activationProgress || 0));
+        const scaleProgress = shield.state === 'breaking' ? 1 : Math.max(0.02, ap);
+        mesh.scale.set(s * scaleProgress, s * scaleProgress, s * scaleProgress);
 
         // --- Position and angle ---
         let pos = { x: entity.x || entity.pos?.x, y: entity.y || entity.pos?.y };
@@ -394,7 +400,7 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
         }
 
         mesh.position.set(pos.x, -pos.y, 1);
-        mesh.rotation.z = -visualAngle;
+        mesh.rotation.set(Math.PI / 2, -visualAngle, 0);
 
         // --- Upload uniforms ---
         const u = mesh.material.uniforms;
@@ -404,15 +410,15 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
         u.uLife.value = Math.max(0, Math.min(1, (shield.val || 0) / (shield.max || 1)));
 
         // Reveal mapping from state machine
-        const activationProgress = Math.max(0, Math.min(1, shield.activationProgress || 0));
+        // During activating: shield grows from center (scale handles it), fully visible
+        // During breaking: dissolve out via reveal
         if (shield.state === 'activating') {
-            // Reveal: 1 (hidden) -> 0 (visible)
-            u.uReveal.value = 1.0 - activationProgress;
+            u.uReveal.value = 0.0; // fully visible, growing via scale
         } else if (shield.state === 'active') {
             u.uReveal.value = 0.0;
         } else if (shield.state === 'breaking') {
-            // Dissolve out: activationProgress goes 1->0 during break
-            u.uReveal.value = 1.0 - activationProgress;
+            const breakProgress = Math.max(0, Math.min(1, shield.activationProgress || 0));
+            u.uReveal.value = 1.0 - breakProgress; // dissolve out
         }
 
         // Breaking state
@@ -461,7 +467,7 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
             if (hit && (time - hit.startTime) < HIT_DURATION) {
                 // Object-space angle: localAngle + visualAngle (compensate mesh rotation.z = -visualAngle)
                 const a = hit.localAngle + visualAngle;
-                u.uHitPos.value[i].set(Math.cos(a) * 1.8, Math.sin(a) * 1.8, 0);
+                u.uHitPos.value[i].set(Math.cos(a) * 1.8, 0, -Math.sin(a) * 1.8);
                 u.uHitTime.value[i] = hit.startTime;
             } else {
                 u.uHitTime.value[i] = -999;
