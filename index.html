@@ -967,47 +967,29 @@
       <div class="perf-bar" id="barDraw" style="width:0%;background:#f4f"></div>
     </div>
 
-    <div class="perf-row"><span class="perf-label"> |- Planety 3D</span><span class="perf-val"
-        id="perfPlanets">--</span></div>
-    <div class="perf-bar-bg">
-      <div class="perf-bar" id="barPlanets" style="width:0%;background:#60a5fa"></div>
-    </div>
-
-    <div class="perf-row"><span class="perf-label"> |- Stacje 3D</span><span class="perf-val"
-        id="perfStations">--</span></div>
-    <div class="perf-bar-bg">
-      <div class="perf-bar" id="barStations" style="width:0%;background:#22c55e"></div>
-    </div>
-
-    <div class="perf-row"><span class="perf-label"> |- World 3D</span><span class="perf-val" id="perfWorld3d">--</span>
-    </div>
-    <div class="perf-bar-bg">
-      <div class="perf-bar" id="barWorld3d" style="width:0%;background:#eab308"></div>
-    </div>
-
-    <div class="perf-row"><span class="perf-label"> |- HexShips 3D</span><span class="perf-val" id="perfHex3d">--</span>
-    </div>
-    <div class="perf-bar-bg">
-      <div class="perf-bar" id="barHex3d" style="width:0%;background:#14b8a6"></div>
-    </div>
-
-    <div class="perf-row"><span class="perf-label">VFX update</span><span class="perf-val" id="perfVfxUpdate">--</span>
-    </div>
-    <div class="perf-bar-bg">
-      <div class="perf-bar" id="barVfxUpdate" style="width:0%;background:#f97316"></div>
-    </div>
-
     <div class="perf-sep"></div>
-    <div class="perf-row"><span class="perf-label">Phys steps/frame</span><span class="perf-val"
-        id="perfPhysicsSteps">--</span></div>
-    <div class="perf-row"><span class="perf-label">Entities</span><span class="perf-val" id="perfEntities">--</span>
-    </div>
     <div class="perf-row"><span class="perf-label">Shardy (aktywne)</span><span class="perf-val"
         id="perfShards">--</span></div>
     <div class="perf-row"><span class="perf-label">Debris</span><span class="perf-val" id="perfDebris">--</span></div>
     <div class="perf-row"><span class="perf-label">Kontakty/klatka</span><span class="perf-val"
         id="perfContacts">--</span></div>
     <canvas id="perfGraph" width="240" height="44"></canvas>
+    <div class="perf-sep"></div>
+    <div class="perf-row"><strong style="color:#8fb5ff;font-size:10px;letter-spacing:.04em">RENDER</strong></div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px 8px;margin:4px 0;pointer-events:auto">
+      <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#9fb0d8;cursor:pointer"><input id="perfToggleBloom" type="checkbox" style="margin:0"> Bloom</label>
+      <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#9fb0d8;cursor:pointer"><input id="perfToggleHeat" type="checkbox" style="margin:0"> Heat</label>
+      <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#9fb0d8;cursor:pointer"><input id="perfToggleBg" type="checkbox" style="margin:0"> BG</label>
+      <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#9fb0d8;cursor:pointer"><input id="perfToggleOrtho" type="checkbox" style="margin:0"> Ortho</label>
+      <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#9fb0d8;cursor:pointer"><input id="perfToggleFg" type="checkbox" style="margin:0"> FG</label>
+      <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#9fb0d8;cursor:pointer"><input id="perfToggleMsaa" type="checkbox" style="margin:0"> MSAA</label>
+    </div>
+    <div class="perf-controls" style="grid-template-columns:repeat(3,1fr)">
+      <button class="perf-btn" id="perfPresetBase" type="button">Base</button>
+      <button class="perf-btn" id="perfPresetFast" type="button">Fast</button>
+      <button class="perf-btn" id="perfPresetUltra" type="button">Ultra</button>
+    </div>
+    <div style="color:#556;font-size:9px;margin-top:2px;pointer-events:none" id="perfRenderStatus"></div>
   </div>
   <script type="importmap">
 {
@@ -1073,7 +1055,7 @@
       if (!window.Core3D) return null;
       const key = String(name || '').toLowerCase();
       if (key === 'base' || key === 'default') {
-        window.Core3D.setPerfToggles?.({ bloom: true, heatHaze: true, bgPass: true, orthoPass: true, fgPass: true });
+        window.Core3D.setPerfToggles?.({ bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true });
         window.Core3D.setMsaaEnabled?.(true, 4);
       } else if (key === 'nobloom') {
         window.Core3D.setPerfToggles?.({ bloom: false });
@@ -1085,7 +1067,7 @@
         window.Core3D.setPerfToggles?.({ bloom: false, heatHaze: false, fgPass: true, bgPass: true, orthoPass: true });
         window.Core3D.setMsaaEnabled?.(false);
       } else if (key === 'ultrafast') {
-        window.Core3D.setPerfToggles?.({ bloom: false, heatHaze: false, fgPass: false, bgPass: true, orthoPass: true });
+        window.Core3D.setPerfToggles?.({ bloom: false, heatHaze: false, shadowShafts: false, threeShadows: false, fgPass: false, planetPass: false, bgPass: true, orthoPass: true });
         window.Core3D.setMsaaEnabled?.(false);
       }
       const status = window.Core3D.getPerfStatus?.();
@@ -1140,8 +1122,10 @@
     import { InfrastructureUI } from "./src/ui/infrastructureUI.js";
     import { ZonePainterUI } from "./src/ui/zonePainterUI.js";
     import { CanvasVFX } from "./src/vfx/canvasParticleSystem.js";
+    import { SparkSystem3D } from './src/3d/sparkSystem3D.js';
     import { SensorSystem } from "./src/game/sensorSystem.js";
     window.SensorSystem = SensorSystem;
+    window.SparkSystem3D = SparkSystem3D;
     import { CICDisplay } from "./src/ui/cicDisplay.js";
     import { SpotterDroneSystem } from "./src/game/spotterDrone.js";
     import { WeaponController } from "./src/game/weaponController.js";
@@ -1167,9 +1151,6 @@
       updatePlanetaryRings3D,
       getPlanetaryRingEntities,
       getPotentialPlanetaryRingTargets,
-      togglePlanetaryRingGates,
-      setPlanetaryRingGateMode,
-      getPlanetaryGateControlState,
       getPlanetaryRing
     } from "./src/3d/planetaryRing3D.js";
     // Statki Terran (Wsparcie)
@@ -1235,10 +1216,6 @@
     const hud = new HUDSystem();
     hud.init();
     window.hudSystem = hud;
-    window.togglePlanetaryRingGates = togglePlanetaryRingGates;
-    window.setPlanetaryRingGateMode = setPlanetaryRingGateMode;
-    window.getPlanetaryGateControlState = getPlanetaryGateControlState;
-
     // LOKALNY alias na potrzeby tego modułu (ESM nie widzi 'gołych' globali z window):
     const PLANET_SCALE =
       (typeof window !== 'undefined' && typeof window.DEFAULT_PLANET_SCALE !== 'undefined')
@@ -1355,13 +1332,6 @@
           deform: document.getElementById('perfDeform'),
           ai: document.getElementById('perfAi'),
           draw: document.getElementById('perfDraw'),
-          planets: document.getElementById('perfPlanets'),
-          stations: document.getElementById('perfStations'),
-          world3d: document.getElementById('perfWorld3d'),
-          hex3d: document.getElementById('perfHex3d'),
-          vfxUpdate: document.getElementById('perfVfxUpdate'),
-          physicsSteps: document.getElementById('perfPhysicsSteps'),
-          entities: document.getElementById('perfEntities'),
           shards: document.getElementById('perfShards'),
           debris: document.getElementById('perfDebris'),
           contacts: document.getElementById('perfContacts'),
@@ -1371,17 +1341,22 @@
           barDeform: document.getElementById('barDeform'),
           barAi: document.getElementById('barAi'),
           barDraw: document.getElementById('barDraw'),
-          barPlanets: document.getElementById('barPlanets'),
-          barStations: document.getElementById('barStations'),
-          barWorld3d: document.getElementById('barWorld3d'),
-          barHex3d: document.getElementById('barHex3d'),
-          barVfxUpdate: document.getElementById('barVfxUpdate'),
           colStart: document.getElementById('perfColStart'),
           colStop: document.getElementById('perfColStop'),
           renderStart: document.getElementById('perfRenderStart'),
           renderStop: document.getElementById('perfRenderStop'),
           aiStart: document.getElementById('perfAiStart'),
-          aiStop: document.getElementById('perfAiStop')
+          aiStop: document.getElementById('perfAiStop'),
+          toggleBloom: document.getElementById('perfToggleBloom'),
+          toggleHeat: document.getElementById('perfToggleHeat'),
+          toggleBg: document.getElementById('perfToggleBg'),
+          toggleOrtho: document.getElementById('perfToggleOrtho'),
+          toggleFg: document.getElementById('perfToggleFg'),
+          toggleMsaa: document.getElementById('perfToggleMsaa'),
+          presetBase: document.getElementById('perfPresetBase'),
+          presetFast: document.getElementById('perfPresetFast'),
+          presetUltra: document.getElementById('perfPresetUltra'),
+          renderStatus: document.getElementById('perfRenderStatus')
         };
         this.graphCtx = graph ? graph.getContext('2d') : null;
         this.history.fill(16.67);
@@ -1402,9 +1377,33 @@
           bind(this.els.renderStop, () => window.RenderDbgStop?.());
           bind(this.els.aiStart, () => window.AIFuncDbgStart?.(1000));
           bind(this.els.aiStop, () => window.AIFuncDbgStop?.());
+
+          const applyRenderToggles = () => {
+            if (typeof window.Core3DPerf === 'function') {
+              window.Core3DPerf({
+                bloom: !!this.els.toggleBloom?.checked,
+                heatHaze: !!this.els.toggleHeat?.checked,
+                bgPass: !!this.els.toggleBg?.checked,
+                orthoPass: !!this.els.toggleOrtho?.checked,
+                fgPass: !!this.els.toggleFg?.checked
+              });
+            }
+            if (typeof window.Core3DMsaa === 'function') {
+              window.Core3DMsaa(!!this.els.toggleMsaa?.checked, 4);
+            }
+            this.syncRenderToggles();
+          };
+          [this.els.toggleBloom, this.els.toggleHeat, this.els.toggleBg, this.els.toggleOrtho, this.els.toggleFg, this.els.toggleMsaa].forEach(el => {
+            if (el) el.addEventListener('change', applyRenderToggles);
+          });
+          bind(this.els.presetBase, () => { if (typeof window.Core3DPreset === 'function') window.Core3DPreset('base'); this.syncRenderToggles(); });
+          bind(this.els.presetFast, () => { if (typeof window.Core3DPreset === 'function') window.Core3DPreset('fast'); this.syncRenderToggles(); });
+          bind(this.els.presetUltra, () => { if (typeof window.Core3DPreset === 'function') window.Core3DPreset('ultrafast'); this.syncRenderToggles(); });
+
           this._debugButtonsBound = true;
         }
         this.refreshDebugButtons();
+        this.syncRenderToggles();
       },
 
       toggle() {
@@ -1463,6 +1462,7 @@
         this.display.debris = counts.debris;
 
         this.updateDOM();
+        this.syncRenderToggles();
         this.drawGraph();
         this.resetAccum();
         this.lastFlush = now;
@@ -1516,26 +1516,12 @@
         setMs(e.deform, d.deformTime);
         setMs(e.ai, d.aiTime);
         setMs(e.draw, d.drawTime);
-        setMs(e.planets, d.planetsTime);
-        setMs(e.stations, d.stationsTime);
-        setMs(e.world3d, d.world3dTime);
-        setMs(e.hex3d, d.hex3dTime);
-        setMs(e.vfxUpdate, d.vfxUpdateTime);
-
         setBar(e.barPhysics, d.physicsTime);
         setBar(e.barDestructor, d.destructorTime);
         setBar(e.barCollisions, d.collisionTime);
         setBar(e.barDeform, d.deformTime);
         setBar(e.barAi, d.aiTime);
         setBar(e.barDraw, d.drawTime);
-        setBar(e.barPlanets, d.planetsTime);
-        setBar(e.barStations, d.stationsTime);
-        setBar(e.barWorld3d, d.world3dTime);
-        setBar(e.barHex3d, d.hex3dTime);
-        setBar(e.barVfxUpdate, d.vfxUpdateTime);
-
-        if (e.physicsSteps) e.physicsSteps.textContent = d.physicsSteps.toFixed(2);
-        if (e.entities) e.entities.textContent = `${d.entities}`;
         if (e.shards) e.shards.textContent = `${d.shards}`;
         if (e.debris) e.debris.textContent = `${d.debris}`;
         if (e.contacts) e.contacts.textContent = `${Math.round(d.contacts)}`;
@@ -1613,6 +1599,24 @@
         setActive(this.els.renderStop, !renderOn);
         setActive(this.els.aiStart, aiOn);
         setActive(this.els.aiStop, !aiOn);
+      },
+
+      syncRenderToggles() {
+        if (!this.els) return;
+        const status = typeof window.Core3DPerfStatus === 'function' ? window.Core3DPerfStatus() : null;
+        if (!status) {
+          if (this.els.renderStatus) this.els.renderStatus.textContent = 'Core3D niedostepny';
+          return;
+        }
+        if (this.els.toggleBloom) this.els.toggleBloom.checked = !!status.bloom;
+        if (this.els.toggleHeat) this.els.toggleHeat.checked = !!status.heatHaze;
+        if (this.els.toggleBg) this.els.toggleBg.checked = !!status.bgPass;
+        if (this.els.toggleOrtho) this.els.toggleOrtho.checked = !!status.orthoPass;
+        if (this.els.toggleFg) this.els.toggleFg.checked = !!status.fgPass;
+        if (this.els.toggleMsaa) this.els.toggleMsaa.checked = Number(status.msaaSamples) > 0;
+        if (this.els.renderStatus) {
+          this.els.renderStatus.textContent = `MSAA=${Number(status.msaaSamples) || 0} | bloom=${status.bloom ? 'on' : 'off'} | heat=${status.heatHaze ? 'on' : 'off'}`;
+        }
       }
     };
 
@@ -5355,6 +5359,12 @@
       const ov = init({ host, getView: () => overlayView });
       overlay3D = ov;
       window.overlay3D = ov;
+      if (window.SparkSystem3D) {
+        if (window.SparkSystem3D.isInitialized) {
+          window.SparkSystem3D.dispose();
+        }
+        window.SparkSystem3D.init(ov.scene);
+      }
       window.makeRailgunExplosion = railFactory(ov.scene);
       if (armataFactory) {
         window.makeArmataImpact = armataFactory(ov.scene);
@@ -5403,12 +5413,18 @@
       }
     }
 
-    function triggerReactorBlow3D(x, y, size = ship.h * 0.35) {
+    function triggerReactorBlow3D(x, y, size = ship.h * 0.35, options = {}) {
       if (overlay3D && window.makeReactorBlow) {
-        const fx = window.makeReactorBlow({ x, y, size });
+        const fx = window.makeReactorBlow({ x, y, size, ...options });
         overlay3D.spawn(fx);
       }
     }
+
+    // Expose trigger functions on window so canvasParticleSystem and spawnBulletImpactEffect can find them
+    window.triggerRailgunExplosion3D = triggerRailgunExplosion3D;
+    window.triggerArmataImpact3D = triggerArmataImpact3D;
+    window.triggerAutocannonImpact3D = triggerAutocannonImpact3D;
+    window.triggerReactorBlow3D = triggerReactorBlow3D;
 
     // Resize: utrzymuj rozmiar overlayu = okna
     function resizeOverlay3D() {
@@ -8259,17 +8275,41 @@
 
 
     // =============== Bullets & effects ===============
+    window.CANVAS_WEAPON_VFX_ENABLED = true;
+    window.CANVAS_IMPACT_VFX_ENABLED = false;
     CanvasVFX.init();
+    CanvasVFX.enabled = true;
     window.spawnParticle = (...args) => CanvasVFX.spawnParticle(...args);
     window.spawnShockwave = (...args) => CanvasVFX.spawnShockwave(...args);
     window.spawnWeaponImpactFromPreset = (...args) => CanvasVFX.spawnWeaponImpactFromPreset?.(...args);
     function isCanvasWeaponVfxEnabled() { return window.CANVAS_WEAPON_VFX_ENABLED !== false; }
 
     function spawnBulletImpactEffect(b, x, y, scale = 1.0) {
-      if (!CanvasVFX.enabled) return;
-      const key = CanvasVFX.resolveBulletVfxKey(b.vfxKey || b.weaponId || b.weaponName, b.type);
-      const weaponSize = b.weaponSize || 'M';
-      CanvasVFX.spawnWeaponImpact(key, b.vfxColor || b.color, scale, x, y, weaponSize);
+      if (CanvasVFX.enabled && window.CANVAS_IMPACT_VFX_ENABLED === true) {
+        const key = CanvasVFX.resolveBulletVfxKey(b.vfxKey || b.weaponId || b.weaponName, b.type);
+        const weaponSize = b.weaponSize || 'M';
+        CanvasVFX.spawnWeaponImpact(key, b.vfxColor || b.color, scale, x, y, weaponSize);
+      }
+
+      if (window.overlay3D) {
+        const baseSize = 40 * scale;
+        if (b.type === 'plasma' || b.type === 'rocket' || b.type === 'torpedo' || b.type === 'armata') {
+          if (window.triggerArmataImpact3D) triggerArmataImpact3D(x, y, baseSize * 1.5);
+        } else if (b.type === 'rail') {
+          if (window.triggerRailgunExplosion3D) triggerRailgunExplosion3D(x, y, baseSize * 1.2);
+        } else {
+          if (window.triggerAutocannonImpact3D) triggerAutocannonImpact3D(x, y, baseSize, b.color || b.vfxColor);
+        }
+        // GPU sparks alongside 3D effects
+        const spark3D = window.SparkSystem3D;
+        if (spark3D && spark3D.isInitialized) {
+          const isHeavy = (b.weaponSize === 'L' || b.weaponSize === 'Capital');
+          const sparkCount = isHeavy ? Math.round(16 * scale) : Math.round(8 * scale);
+          const sparkSpeed = isHeavy ? 400 * scale : 280 * scale;
+          const sparkSize = isHeavy ? 0.6 : 0.4;
+          spark3D.burst(x, y, sparkCount, sparkSpeed, 0.3, sparkSize);
+        }
+      }
     }
     window.spawnBulletImpactEffect = spawnBulletImpactEffect;
 
@@ -11981,8 +12021,9 @@
         updateSelectionRect(cur);
       }
       if (gameBoxSel.active) {
-        gameBoxSel.x1 = e.clientX;
-        gameBoxSel.y1 = e.clientY;
+        const _bsRect = canvas.getBoundingClientRect();
+        gameBoxSel.x1 = e.clientX - _bsRect.left;
+        gameBoxSel.y1 = e.clientY - _bsRect.top;
       }
       if (stationUI.open && stationUI.dragging) {
         stationUI.x = mouse.x - stationUI.dragDX;
@@ -12105,9 +12146,12 @@
           return;
         }
         // Start in-game box-select for enemy targeting
-        gameBoxSel.active = true;
-        gameBoxSel.x0 = gameBoxSel.x1 = e.clientX;
-        gameBoxSel.y0 = gameBoxSel.y1 = e.clientY;
+        {
+          const _bsRect = canvas.getBoundingClientRect();
+          gameBoxSel.active = true;
+          gameBoxSel.x0 = gameBoxSel.x1 = e.clientX - _bsRect.left;
+          gameBoxSel.y0 = gameBoxSel.y1 = e.clientY - _bsRect.top;
+        }
       }
       if (e.button === 2) {
         e.preventDefault();
@@ -12170,7 +12214,8 @@
           const dragDist = Math.hypot(gameBoxSel.x1 - gameBoxSel.x0, gameBoxSel.y1 - gameBoxSel.y0);
           if (dragDist < 8) {
             // Single click — select nearest enemy
-            const pt = screenToWorld(e.clientX, e.clientY);
+            const _bsRect2 = canvas.getBoundingClientRect();
+            const pt = screenToWorld(e.clientX - _bsRect2.left, e.clientY - _bsRect2.top);
             let best = null, bestDist = Infinity;
             for (const npc of npcs) {
               if (!npc || npc.dead || npc.friendly) continue;
@@ -13189,8 +13234,23 @@
           }
         }
 
-        if (cause === 'plasma') { CanvasVFX.spawnExplosionPlasma(npc.x, npc.y, 1.2); }
-        else if (cause === 'default') { CanvasVFX.spawnDefaultHit(npc.x, npc.y, 1.2); }
+        if (window.overlay3D && window.makeReactorBlow) {
+          const npcType = String(npc.type || '').toLowerCase();
+          const isFighterLike =
+            !!npc.fighter ||
+            npcType === 'fighter' ||
+            npcType === 'interceptor' ||
+            npcType === 'drone' ||
+            npcType === 'ally_fighter' ||
+            npcType === 'carrier_fighter';
+          const blowSize = isFighterLike
+            ? Math.max(12, (npc.radius || 12) * 1.15)
+            : (npc.radius || 40) * 1.5;
+          triggerReactorBlow3D(npc.x, npc.y, blowSize, { profile: isFighterLike ? 'fighter' : 'capital' });
+        } else {
+          if (cause === 'plasma') { CanvasVFX.spawnExplosionPlasma(npc.x, npc.y, 1.2); }
+          else if (cause === 'default') { CanvasVFX.spawnDefaultHit(npc.x, npc.y, 1.2); }
+        }
       }
     }
 
@@ -15319,6 +15379,9 @@
     let _wtsVpOffX = 0;
     let _wtsVpOffY = 0;
 
+    // Active camera for the current split-screen pass (used by draw helpers that can't take cam param)
+    let _currentCam = camera;
+
     function getViewportForCamera(cam) {
       const vpW = Math.max(1, Number(cam?.viewportW) || _wtsVpW || W);
       const vpH = Math.max(1, Number(cam?.viewportH) || _wtsVpH || H);
@@ -15349,14 +15412,15 @@
       ctx.save();
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
-      const fontSize = Math.round(clamp(18 * camera.zoom, 12, 30));
+      const _camZoom = cam?.zoom ?? camera.zoom ?? 1;
+      const fontSize = Math.round(clamp(18 * _camZoom, 12, 30));
       ctx.font = `600 ${fontSize}px Inter,system-ui,monospace`;
       ctx.lineJoin = 'round';
       for (const pl of planets) {
         if (!pl || !pl.label) continue;
         const screen = worldToScreen(pl.x, pl.y, cam);
         if (screen.x < -160 || screen.x > W + 160 || screen.y < -160 || screen.y > H + 160) continue;
-        const offset = ((pl.r || 0) + 40) * camera.zoom;
+        const offset = ((pl.r || 0) + 40) * _camZoom;
         const y = screen.y - offset;
         ctx.save();
         ctx.shadowColor = 'rgba(12, 22, 42, 0.7)';
@@ -15375,8 +15439,9 @@
     function drawRangeRuler(ctx, cam) {
       if (!DevFlags.showRuler) return;
 
-      const cx = W / 2;
-      const cy = H / 2;
+      const _vp = getViewportForCamera(cam);
+      const cx = _vp.x + _vp.w / 2;
+      const cy = _vp.y + _vp.h / 2;
       const zoom = cam?.zoom ?? camera.zoom ?? 1;
 
       ctx.save();
@@ -15450,7 +15515,7 @@
     function drawNpcHardpointOverlay(ctx, npc, screenPos) {
       const hardpoints = Array.isArray(npc?.editorHardpoints) ? npc.editorHardpoints : null;
       if (!hardpoints || hardpoints.length === 0) return;
-      const zoom = Math.max(0.0001, Number(camera.zoom) || 1);
+      const zoom = Math.max(0.0001, Number(_currentCam.zoom) || 1);
       const angle = (npc.angle || 0) + (Number(npc.capitalProfile?.spriteRotation) || 0);
       const c = Math.cos(angle);
       const s = Math.sin(angle);
@@ -15518,7 +15583,8 @@
     }
 
     function drawNPCPretty(ctx, npc, s) {
-      const statusSize = (npc.radius || 20) * camera.zoom;
+      const _zoom = _currentCam.zoom;
+      const statusSize = (npc.radius || 20) * _zoom;
 
       if (npc.hexGrid) {
         drawNpcHardpointOverlay(ctx, npc, s);
@@ -15527,13 +15593,13 @@
       }
 
       if (npc.fighter) {
-        const size = Math.max(4, (npc.radius || 12) * camera.zoom);
+        const size = Math.max(4, (npc.radius || 12) * _zoom);
         ctx.save();
         ctx.translate(s.x, s.y);
         ctx.rotate((npc.angle || 0) - Math.PI / 2);
         ctx.fillStyle   = npc.friendly ? '#5cf' : '#f55';
         ctx.strokeStyle = npc.friendly ? '#aef' : '#faa';
-        ctx.lineWidth = Math.max(0.5, camera.zoom * 0.8);
+        ctx.lineWidth = Math.max(0.5, _zoom * 0.8);
         ctx.beginPath();
         ctx.moveTo(0,           -size * 1.2);
         ctx.lineTo( size * 0.7,  size * 0.6);
@@ -15920,6 +15986,9 @@
           ctx.restore();
         }
 
+        // Set active camera for draw helpers that use _currentCam instead of parameter
+        _currentCam = cam;
+
         // ==========================================
         if (stationUI.editorMode && stationUI.station) {
           const infraState = InfrastructureUI.ensureState(stationUI.station);
@@ -15935,7 +16004,7 @@
         for (const key in warpRoutes) {
           const route = warpRoutes[key];
           const perp = { x: -route.dir.y, y: route.dir.x };
-          const w = 6 * camera.zoom;
+          const w = 6 * cam.zoom;
           const s1 = worldToScreen(route.start.x, route.start.y, cam);
           const s2 = worldToScreen(route.end.x, route.end.y, cam);
           ctx.strokeStyle = '#88aaff';
@@ -15956,16 +16025,16 @@
           for (const st of stations) {
             const s = worldToScreen(st.x, st.y, cam);
             const visR = (st.baseR || st.r) * stationScaleFor(st);
-            const rr = visR * camera.zoom;
+            const rr = visR * cam.zoom;
 
             for (let i = 0; i < st.ports.length; i++) {
               const pw = stationPortWorld(st, i);
               const ps = worldToScreen(pw.x, pw.y, cam);
               ctx.fillStyle = '#60a5fa';
-              ctx.beginPath(); ctx.arc(ps.x, ps.y, 4 * camera.zoom, 0, Math.PI * 2); ctx.fill();
+              ctx.beginPath(); ctx.arc(ps.x, ps.y, 4 * cam.zoom, 0, Math.PI * 2); ctx.fill();
             }
-            ctx.fillStyle = '#dfe7ff'; ctx.font = `${12 * camera.zoom}px monospace`;
-            ctx.fillText('ST' + st.id, s.x - rr * 0.35, s.y + 4 * camera.zoom);
+            ctx.fillStyle = '#dfe7ff'; ctx.font = `${12 * cam.zoom}px monospace`;
+            ctx.fillText('ST' + st.id, s.x - rr * 0.35, s.y + 4 * cam.zoom);
           }
         }
 
@@ -15973,7 +16042,7 @@
           for (const platform of mercMission.weaponPlatforms) {
             if (!platform || platform.removed) continue;
             const s = worldToScreen(platform.x, platform.y, cam);
-            const size = platform.radius * 2 * camera.zoom;
+            const size = platform.radius * 2 * cam.zoom;
             const baseAlpha = platform.destroyed ? Math.max(0, 1 - platform.deathTimer / 1.5) : 1;
             if (baseAlpha <= 0) continue;
             ctx.save();
@@ -15995,7 +16064,7 @@
               ctx.save();
               ctx.translate(s.x, s.y);
               ctx.globalAlpha = 0.45 + 0.35 * frac;
-              ctx.lineWidth = Math.max(1.2, 2.4 * camera.zoom);
+              ctx.lineWidth = Math.max(1.2, 2.4 * cam.zoom);
               ctx.strokeStyle = 'rgba(120,200,255,0.8)';
               ctx.beginPath(); ctx.arc(0, 0, size * 0.62, 0, Math.PI * 2); ctx.stroke();
               ctx.restore();
@@ -16030,7 +16099,7 @@
             const baseR = unit.radius || unit.w || 30;
             const screen = worldToScreen(pos.x, pos.y, cam);
             ctx.beginPath();
-            ctx.arc(screen.x, screen.y, Math.max(20, baseR + 12) * camera.zoom, 0, Math.PI * 2);
+            ctx.arc(screen.x, screen.y, Math.max(20, baseR + 12) * cam.zoom, 0, Math.PI * 2);
             ctx.stroke();
           }
           ctx.restore();
@@ -16241,7 +16310,7 @@
           if (!p2uses3D) {
             ctx.save();
             ctx.translate(p2s.x, p2s.y);
-            ctx.scale(camera.zoom, camera.zoom);
+            ctx.scale(cam.zoom, cam.zoom);
             ctx.rotate(p2angle);
 
             if (p2.spriteReady && p2.renderSpriteImage) {
@@ -16297,16 +16366,16 @@
 
           // P2 marker label
           ctx.save();
-          ctx.font = `bold ${Math.max(10, 12 * camera.zoom)}px Consolas, monospace`;
+          ctx.font = `bold ${Math.max(10, 12 * cam.zoom)}px Consolas, monospace`;
           ctx.textAlign = 'center';
           ctx.fillStyle = 'rgba(255,120,60,0.8)';
-          ctx.fillText('P2', p2s.x, p2s.y - (p2.radius || 100) * camera.zoom - 8);
+          ctx.fillText('P2', p2s.x, p2s.y - (p2.radius || 100) * cam.zoom - 8);
           ctx.restore();
 
           // P2 shield/hull bars
-          const barW = 60 * camera.zoom;
-          const barH = 4 * camera.zoom;
-          const barY = p2s.y + (p2.radius || 100) * camera.zoom + 6;
+          const barW = 60 * cam.zoom;
+          const barH = 4 * cam.zoom;
+          const barY = p2s.y + (p2.radius || 100) * cam.zoom + 6;
           if (p2.shield && p2.shield.max > 0) {
             const sf = clamp(p2.shield.val / p2.shield.max, 0, 1);
             ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -16355,23 +16424,23 @@
           const base = (obj.radius || obj.r || 60);
           const outerExtra = scan.targetType === 'station' ? 28 : 14;
           const innerExtra = scan.targetType === 'station' ? 12 : 8;
-          const outerR = (base + outerExtra) * camera.zoom;
-          const innerR = Math.max(2, (base + innerExtra) * camera.zoom);
+          const outerR = (base + outerExtra) * cam.zoom;
+          const innerR = Math.max(2, (base + innerExtra) * cam.zoom);
           const color = scan.targetType === 'station'
             ? 'rgba(143,181,255,0.95)'
             : (obj.friendly ? 'rgba(96,192,255,0.95)' : 'rgba(255,160,122,0.95)');
 
           ctx.save();
           ctx.strokeStyle = color;
-          ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(camera.zoom));
-          ctx.shadowBlur = 18 * camera.zoom;
+          ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.zoom));
+          ctx.shadowBlur = 18 * cam.zoom;
           ctx.shadowColor = color;
           ctx.globalAlpha = 0.9;
           ctx.beginPath(); ctx.arc(s.x, s.y, outerR, 0, Math.PI * 2); ctx.stroke();
 
           ctx.shadowBlur = 0;
           ctx.globalAlpha = 0.55;
-          ctx.setLineDash([6 * camera.zoom, 6 * camera.zoom]);
+          ctx.setLineDash([6 * cam.zoom, 6 * cam.zoom]);
           ctx.beginPath(); ctx.arc(s.x, s.y, innerR, 0, Math.PI * 2); ctx.stroke();
           ctx.restore();
 
@@ -16466,6 +16535,7 @@
       } // end split pass loop
 
       // Restore original state after split loop
+      _currentCam = camera;
       if (_splitPassCount > 1) {
         cam = _origCam;
         _wtsVpW = 0;
@@ -16502,7 +16572,7 @@
           ctx.save();
           ctx.translate(s.x, s.y);
           ctx.rotate(ang);
-          const size = 18 * camera.zoom;
+          const size = 18 * cam.zoom;
           ctx.beginPath();
           ctx.fillStyle = 'rgba(120,200,255,0.9)';
           ctx.moveTo(0, -size * 0.5);
@@ -16516,7 +16586,7 @@
           const ts = worldToScreen(tx, ty, cam);
           ctx.save();
           ctx.fillStyle = '#dfe7ff';
-          ctx.font = `${12 * camera.zoom}px monospace`;
+          ctx.font = `${12 * cam.zoom}px monospace`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(`${Math.round(Math.hypot(dx, dy))}u`, ts.x, ts.y);

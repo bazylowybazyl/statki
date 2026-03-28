@@ -74,10 +74,129 @@ function ensureResources() {
   }
 }
 
+function createFighterBlowInstance(scene, { x = 0, y = 0, size = 24 } = {}) {
+  const group = new THREE.Group();
+  group.position.set(x, 0, y);
+  group.scale.setScalar(size);
+  group.renderOrder = 9999;
+  scene.add(group);
+
+  const flashMat = new THREE.MeshBasicMaterial({
+    map: sharedResources.textures.glowNew,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    depthTest: false,
+    toneMapped: false
+  });
+  const flash = new THREE.Mesh(sharedResources.geometries.planeGlow, flashMat);
+  flash.rotation.x = -Math.PI / 2;
+  flash.scale.set(1.5, 1.5, 1);
+  group.add(flash);
+
+  const ringMat = new THREE.ShaderMaterial({
+    vertexShader: shockVertex,
+    fragmentShader: shockFragment,
+    uniforms: {
+      progress: { value: 0 },
+      uGlobalFade: { value: 1.0 },
+      uOpacity: { value: 0.75 }
+    },
+    transparent: true,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    depthTest: false
+  });
+  const ring = new THREE.Mesh(sharedResources.geometries.planeShock, ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.scale.set(1.6, 1.6, 1);
+  group.add(ring);
+
+  const sparkCount = 18;
+  const sparkGeo = new THREE.BufferGeometry();
+  const sparkPos = new Float32Array(sparkCount * 3);
+  const sparkVel = new Float32Array(sparkCount * 3);
+  for (let i = 0; i < sparkCount; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 0.9 + Math.random() * 1.8;
+    const i3 = i * 3;
+    sparkVel[i3] = Math.cos(angle) * speed;
+    sparkVel[i3 + 1] = 0.08 + Math.random() * 0.18;
+    sparkVel[i3 + 2] = Math.sin(angle) * speed;
+  }
+  sparkGeo.setAttribute("position", new THREE.BufferAttribute(sparkPos, 3));
+  const sparkMat = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 4.0,
+    map: sharedResources.textures.spark,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    depthTest: false,
+    toneMapped: false
+  });
+  const sparks = new THREE.Points(sparkGeo, sparkMat);
+  group.add(sparks);
+
+  let time = 0;
+  let disposed = false;
+  const TOTAL_TIME = 0.55;
+
+  function update(dt) {
+    if (disposed) return;
+    time += dt;
+    const progress = Math.min(1, time / TOTAL_TIME);
+    if (progress >= 1) {
+      dispose();
+      return;
+    }
+
+    const fade = 1.0 - progress;
+    flashMat.opacity = Math.max(0, (1.0 - progress * 1.25) * 0.95);
+    const flashScale = 1.2 + progress * 4.2;
+    flash.scale.set(flashScale, flashScale, 1);
+
+    ringMat.uniforms.progress.value = Math.min(1.0, progress * 1.35);
+    ringMat.uniforms.uGlobalFade.value = 1.0 - Math.pow(progress, 1.6);
+    const ringScale = 1.4 + progress * 5.6;
+    ring.scale.set(ringScale, ringScale, 1);
+
+    const positions = sparkGeo.attributes.position.array;
+    for (let i = 0; i < sparkCount; i++) {
+      const i3 = i * 3;
+      sparkVel[i3] *= 0.92;
+      sparkVel[i3 + 1] = Math.max(-0.04, sparkVel[i3 + 1] - dt * 0.32);
+      sparkVel[i3 + 2] *= 0.92;
+      positions[i3] += sparkVel[i3] * dt * 42;
+      positions[i3 + 1] += sparkVel[i3 + 1] * dt * 42;
+      positions[i3 + 2] += sparkVel[i3 + 2] * dt * 42;
+    }
+    sparkGeo.attributes.position.needsUpdate = true;
+    sparkMat.opacity = Math.max(0, fade * fade);
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    if (group.parent) group.parent.remove(group);
+    flashMat.dispose();
+    ringMat.dispose();
+    sparkGeo.dispose();
+    sparkMat.dispose();
+  }
+
+  return { group, update, dispose };
+}
+
 export function createReactorBlowFactory(scene) {
   ensureResources();
 
-  return function spawn({ x = 0, y = 0, size = 100 } = {}) {
+  return function spawn({ x = 0, y = 0, size = 100, profile = "capital" } = {}) {
+    if (profile === "fighter") {
+      return createFighterBlowInstance(scene, { x, y, size });
+    }
     // DEBUG: Potwierdzenie spawnu
     // console.log(`ReactorBlow spawned at: ${x}, ${y} with size: ${size}`);
 

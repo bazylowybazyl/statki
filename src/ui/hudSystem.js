@@ -672,20 +672,6 @@ export class HUDSystem {
             this.setBottomMenuState('IDLE');
             return;
         }
-        if (action === 'gate-toggle') {
-            if (typeof window.togglePlanetaryRingGates === 'function') {
-                window.togglePlanetaryRingGates();
-            }
-            this.refreshOpenMenu();
-            return;
-        }
-        if (action === 'gate-auto') {
-            if (typeof window.setPlanetaryRingGateMode === 'function') {
-                window.setPlanetaryRingGateMode('auto');
-            }
-            this.refreshOpenMenu();
-            return;
-        }
         if (action === 'terminal-boot-done') {
             if (this.menuState !== 'SCAN') return;
             this.terminalState.step = 'LIST';
@@ -785,16 +771,14 @@ export class HUDSystem {
                 </div>
             `;
         } else if (state === 'COMM') {
-            const gateState = (typeof window.getPlanetaryGateControlState === 'function')
-                ? window.getPlanetaryGateControlState()
-                : null;
-            const mode = String(gateState?.mode || 'auto').toUpperCase();
             return `
-                <div class="menu-header">COMM / GATE CONTROL</div>
+                <div class="menu-header">COMM</div>
                 <div class="menu-grid" style="align-items:flex-start; height:auto; flex-wrap:wrap; padding-bottom:40px;">
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('gate-toggle')"><div class="key-hint">4</div><div class="label">GATE TOGGLE</div></div>
                     <div class="menu-btn" onclick="hudSystem.handleMenuAction('close')"><div class="key-hint">5</div><div class="label">BACK</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('gate-auto')"><div class="key-hint">6</div><div class="label">MODE: ${mode}</div></div>
+                </div>
+                <div class="term-text" style="padding:12px; color:#66d9ff; font-size:11px;">
+                    POLE SIŁOWE: AUTO<br>
+                    Bariery energetyczne otwierają się automatycznie przy zbliżeniu.
                 </div>
             `;
         } else if (state === 'SCAN' || state === 'STATION') {

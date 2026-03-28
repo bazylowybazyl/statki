@@ -295,7 +295,7 @@ function setAttrUpdateRange(attr, start, count) {
   attr.updateRange.count = count;
 }
 
-function createManagedTexture(source) {
+function createManagedTexture(source, isLinearData = false) {
   if (!source) return null;
   const isCanvas =
     (typeof HTMLCanvasElement !== 'undefined' && source instanceof HTMLCanvasElement) ||
@@ -316,6 +316,7 @@ function createManagedTexture(source) {
   } else {
     texture.anisotropy = 1;
   }
+  texture.colorSpace = isLinearData ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
   texture.needsUpdate = true;
   return texture;
 }
@@ -530,7 +531,7 @@ function createEntityMesh(entity) {
 
   let normalTexture = null;
   if (grid.normalMapImage) {
-    normalTexture = createManagedTexture(grid.normalMapImage);
+    normalTexture = createManagedTexture(grid.normalMapImage, true);
   }
 
   const material = new THREE.ShaderMaterial({
@@ -922,17 +923,41 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
 }
 
 export function drawHexShips3D(ctx, width, height) {
-  void ctx;
-  void width;
-  void height;
-  if (!Core3D.isInitialized) return;
-  const isSplit = typeof window !== 'undefined' && window.splitScreenMode && Core3D.activeCam2;
+  if (!ctx || !Core3D.isInitialized) return;
+  const src = Core3D.canvas;
+  if (!src) return;
+
+  const w = Math.max(1, Number(width) || ctx.canvas?.width || 1);
+  const h = Math.max(1, Number(height) || ctx.canvas?.height || 1);
+  const isSplit = typeof window !== 'undefined'
+    && window.splitScreenMode && Core3D.activeCam2;
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
 
   if (isSplit) {
-    Core3D.renderSplitScreen(Core3D.activeCam1, Core3D.activeCam2);
+    const halfW = Math.floor(w / 2);
+    const srcW = src.width;
+    const srcH = src.height;
+    // Crop center 50% of the full render — correct perspective for half-screen
+    const srcCropX = Math.floor(srcW / 4);
+    const srcCropW = Math.floor(srcW / 2);
+
+    // P1 (left half)
+    Core3D.renderSingle(Core3D.activeCam1);
+    ctx.drawImage(src, srcCropX, 0, srcCropW, srcH, 0, 0, halfW, h);
+
+    // P2 (right half)
+    Core3D.renderSingle(Core3D.activeCam2);
+    ctx.drawImage(src, srcCropX, 0, srcCropW, srcH, halfW, 0, w - halfW, h);
   } else {
     Core3D.renderSingle(Core3D.activeCam1);
+    ctx.drawImage(src, 0, 0, w, h);
   }
+
+  ctx.restore();
 }
 
 export function invalidateHexShipEntity3D(entity) {

@@ -5,10 +5,11 @@ let sharedTextures = null;
 function ensureTextures() {
   if (sharedTextures) return;
   const loader = new THREE.TextureLoader();
-  sharedTextures = {
-    flash: loader.load('./assets/tex/flash01.png'),
-    smoke: loader.load('./assets/tex/smoke04.png'),
-  };
+  const flash = loader.load('./assets/tex/flash01.png');
+  flash.colorSpace = THREE.SRGBColorSpace;
+  const smoke = loader.load('./assets/tex/smoke04.png');
+  smoke.colorSpace = THREE.SRGBColorSpace;
+  sharedTextures = { flash, smoke };
 }
 
 export function createRailgunExplosionFactory(scene) {

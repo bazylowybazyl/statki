@@ -2347,6 +2347,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const pen = Math.max(0, penetration - slop);
 
       let isDestruction = false;
+      let bounceForce = 0;
 
       if (velAlongNormal < 0) {
         const iaScale = 0.5;
@@ -2361,22 +2362,18 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
         if (Number.isFinite(denom) && denom > 1e-8) {
           const restBase = DESTRUCTOR_CONFIG.restitution;
-          const approachSpeed = -velAlongNormal; // Closing speed along collision normal
-
-          // Anti-jelly gate:
-          // Enable soft-body crush only above crash speed threshold (default 200 px/s).
-          // Below threshold, keep rigid behavior for low-speed pushing.
+          const approachSpeed = -velAlongNormal;
           const crashApproachSpeedThreshold = Number(DESTRUCTOR_CONFIG.crashApproachSpeedThreshold) || 200.0;
           isDestruction = approachSpeed > crashApproachSpeedThreshold;
           const restitution = isDestruction ? 0.0 : restBase;
           let j = (-(1 + restitution) * velAlongNormal) / denom;
 
-          // Crash: reduce rigid impulse (0.05) so bodies can interpenetrate and crumple.
-          // Non-crash push: keep full rigid impulse (1.0) to block like solid bodies.
           if (isDestruction) {
             const hittingWall = (invMassA === 0 || invMassB === 0) || A.isRingSegment || B.isRingSegment;
             j *= hittingWall ? 0.8 : 0.8;
           }
+
+          bounceForce = Math.abs(j);
 
           const impulseX = j * nx;
           const impulseY = j * ny;
@@ -2394,7 +2391,6 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           const maxF = Math.abs(j) * mu;
           if (Math.abs(jt) > maxF) jt = -maxF * Math.sign(velTangent || 1);
 
-          // Surface friction: lower in crash mode (0.25), higher in push mode (0.8).
           jt *= isDestruction ? 0.25 : 0.8;
 
           const fX = jt * tx;
@@ -2404,7 +2400,27 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           addEntityVelocity(B, -fX * invMassB, -fY * invMassB);
           addEntityAngVel(A, (rAx * ty - rAy * tx) * jt * invIa);
           addEntityAngVel(B, -(rBx * ty - rBy * tx) * jt * invIb);
+
+          // GPU collision sparks — scale with impact violence
         }
+      }
+
+      // === ISKRY PRZENIESIONE NA ZEWNATRZ ===
+      // Teraz zawsze sprawdzamy obcierki, niezaleznie od tego czy uderzenie bylo czolowe!
+      const slideSpeed = velTangent;
+      const totalEnergy = bounceForce + Math.abs(slideSpeed) * 3.0;
+
+      if (totalEnergy > 15 && typeof window !== 'undefined' && window.SparkSystem3D?.isInitialized) {
+        const baseVx = vAx * 0.4;
+        const baseVy = vAy * 0.4;
+        window.SparkSystem3D.grindingBurst(
+          worldHitX, worldHitY,
+          -nx, -ny,
+          tx, ty,
+          bounceForce,
+          slideSpeed,
+          baseVx, baseVy
+        );
       }
 
       const penMin = DESTRUCTOR_CONFIG.crushPenetrationMin ?? 0.15;

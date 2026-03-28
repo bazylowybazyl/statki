@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kokpit 3D — Super Capital</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #000; cursor: crosshair; }
+        canvas { display: block; }
+        #info {
+            position: absolute; bottom: 12px; left: 12px;
+            color: rgba(255,255,255,0.25); font-family: 'Share Tech Mono', monospace;
+            font-size: 11px; pointer-events: none; letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">KOKPIT 3D — Poruszaj myszą | Klikaj przełączniki i biegi</div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+    import * as THREE from 'three';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+    // ═══════ CONSTANTS ═══════
+    const C = {
+        BLUE: 0x00f3ff, GREEN: 0x00ff66, RED: 0xff003c, ORANGE: 0xff9900,
+        PANEL: 0xa09888, DARK: 0x0a0a0c, FRAME: 0x222222
+    };
+    const SWITCH_DEFS = [
+        { id:'power',label:'ZASILANIE',on:true },
+        { id:'shields',label:'OSŁONY',on:true },
+        { id:'weapons',label:'BROŃ',on:false },
+        { id:'life',label:'ŻYCIE',on:true },
+        { id:'dampeners',label:'TŁUMIKI',on:true },
+    ];
+    const GEAR_MAP = {
+        'HC':{col:0,row:0,name:'HYPERCRUISE',color:'#00f3ff'},
+        'I': {col:1,row:0,name:'IMPULS',color:'#00f3ff'},
+        'W': {col:2,row:0,name:'WARP',color:'#00f3ff'},
+        'N': {col:1,row:1,name:'LUZ',color:'#ffffff'},
+        'C': {col:0,row:2,name:'CRUISE',color:'#00ff66'},
+        'R': {col:1,row:2,name:'WSTECZNY',color:'#ff003c'},
+        'S': {col:2,row:2,name:'SPOOLING',color:'#ff9900'},
+    };
+
+    // ═══════ GLOBALS ═══════
+    let scene, camera, renderer, composer, clock;
+    let raycaster = new THREE.Raycaster(), mouseVec = new THREE.Vector2();
+    let targetLookX=0, targetLookY=0, curLookX=0, curLookY=0;
+    const baseCamPos = new THREE.Vector3(0, 0.75, 0.6);
+    let panelMat, darkMat, frameMat, switchMetalMat;
+    let switchObjects=[], gearHitboxes=[], gearKnob, currentGear='N';
+    let targetKnobX=0, targetKnobY=0;
+    let radarCtx, radarTex, termCtx, termTex, gearCtx, gearTex;
+    let radarAngle=0, cursorBlink=0;
+    let terminalLogs=[];
+    let radarBlips=[
+        {x:0.3,y:0.2,label:'OBIEKT A42',hostile:false},
+        {x:0.7,y:0.8,label:'STREFA 9X',hostile:false},
+        {x:0.85,y:0.4,label:'WROGI MYŚLIWIEC',hostile:true},
+    ];
+    let lockedBlip=-1;
+    const audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+
+    // ═══════ AUDIO ═══════
+    function beep(f=600,t='sine',d=0.1,v=0.1){
+        if(audioCtx.state==='suspended')audioCtx.resume();
+        const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+        o.type=t;o.frequency.setValueAtTime(f,audioCtx.currentTime);
+        g.gain.setValueAtTime(v,audioCtx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+d);
+        o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+d);
+    }
+
+    function addLog(msg,type='normal'){
+        terminalLogs.push({msg,type,t:performance.now()});
+        if(terminalLogs.length>8)terminalLogs.shift();
+    }
+
+    // ═══════ TEXT HELPER ═══════
+    function makeTextTex(text,opts={}){
+        const w=opts.w||256,h=opts.h||64;
+        const c=document.createElement('canvas');c.width=w;c.height=h;
+        const x=c.getContext('2d');
+        if(opts.bg){x.fillStyle=opts.bg;x.fillRect(0,0,w,h);}
+        x.fillStyle=opts.color||'#00f3ff';
+        x.font=`${opts.weight||'bold'} ${opts.size||20}px ${opts.font||"'Orbitron',sans-serif"}`;
+        x.textAlign='center';x.textBaseline='middle';
+        if(opts.glow){x.shadowColor=opts.color||'#00f3ff';x.shadowBlur=opts.glow;}
+        x.fillText(text,w/2,h/2);
+        const t=new THREE.CanvasTexture(c);t.minFilter=THREE.LinearFilter;return t;
+    }
+    function makeLabel(text,opts={}){
+        const t=makeTextTex(text,opts);
+        const m=new THREE.SpriteMaterial({map:t,transparent:true,depthTest:false});
+        const s=new THREE.Sprite(m);
+        const sc=opts.scale||0.12;s.scale.set(sc*((opts.w||256)/(opts.h||64)),sc,1);
+        return s;
+    }
+
+    // ═══════ CANVAS TEXTURES ═══════
+    function initRadarCanvas(){
+        const c=document.createElement('canvas');c.width=512;c.height=512;
+        radarCtx=c.getContext('2d');
+        radarTex=new THREE.CanvasTexture(c);radarTex.minFilter=THREE.LinearFilter;
+    }
+    function initTerminalCanvas(){
+        const c=document.createElement('canvas');c.width=512;c.height=400;
+        termCtx=c.getContext('2d');
+        termTex=new THREE.CanvasTexture(c);termTex.minFilter=THREE.LinearFilter;
+    }
+    function initGearCanvas(){
+        const c=document.createElement('canvas');c.width=256;c.height=80;
+        gearCtx=c.getContext('2d');
+        gearTex=new THREE.CanvasTexture(c);gearTex.minFilter=THREE.LinearFilter;
+    }
+
+    function updateRadar(dt){
+        const ctx=radarCtx,w=512,h=512;
+        ctx.fillStyle='rgba(10,12,15,0.25)';ctx.fillRect(0,0,w,h);
+        // Grid
+        ctx.strokeStyle='rgba(220,225,230,0.1)';ctx.lineWidth=1;
+        for(let i=0;i<w;i+=40){ctx.beginPath();ctx.moveTo(i,0);ctx.lineTo(i,h);ctx.stroke();}
+        for(let i=0;i<h;i+=40){ctx.beginPath();ctx.moveTo(0,i);ctx.lineTo(w,i);ctx.stroke();}
+        // Range rings
+        ctx.strokeStyle='rgba(220,225,230,0.12)';ctx.setLineDash([4,6]);
+        for(let r of[100,200]){ctx.beginPath();ctx.arc(w/2,h/2,r,0,Math.PI*2);ctx.stroke();}
+        ctx.setLineDash([]);
+        // Scan line
+        radarAngle+=dt*1.5;
+        const sx=w/2+Math.cos(radarAngle)*240,sy=h/2+Math.sin(radarAngle)*240;
+        const grad=ctx.createLinearGradient(w/2,h/2,sx,sy);
+        grad.addColorStop(0,'rgba(255,255,255,0.4)');grad.addColorStop(1,'transparent');
+        ctx.strokeStyle=grad;ctx.lineWidth=3;
+        ctx.beginPath();ctx.moveTo(w/2,h/2);ctx.lineTo(sx,sy);ctx.stroke();
+        // Blips
+        radarBlips.forEach((b,i)=>{
+            const bx=b.x*w,by=b.y*h;
+            const isLocked=i===lockedBlip;
+            ctx.fillStyle=b.hostile?'#cc5500':'#e0e5ea';
+            ctx.shadowColor=b.hostile?'#cc5500':'#fff';ctx.shadowBlur=isLocked?20:10;
+            ctx.beginPath();ctx.arc(bx,by,isLocked?6:4,0,Math.PI*2);ctx.fill();
+            if(isLocked){
+                ctx.strokeStyle='#cc5500';ctx.lineWidth=2;ctx.setLineDash([3,3]);
+                ctx.beginPath();ctx.arc(bx,by,12,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
+            }
+            ctx.shadowBlur=0;
+        });
+        // Border
+        ctx.strokeStyle='#5a5d62';ctx.lineWidth=4;ctx.strokeRect(2,2,w-4,h-4);
+        radarTex.needsUpdate=true;
+    }
+
+    function updateTerminal(dt){
+        const ctx=termCtx,w=512,h=400;
+        ctx.fillStyle='#050a0f';ctx.fillRect(0,0,w,h);
+        // Scan lines
+        ctx.fillStyle='rgba(0,0,0,0.12)';
+        for(let y=0;y<h;y+=3){ctx.fillRect(0,y,w,1);}
+        // Grid
+        ctx.strokeStyle='rgba(255,255,255,0.02)';ctx.lineWidth=1;
+        for(let i=0;i<w;i+=20){ctx.beginPath();ctx.moveTo(i,0);ctx.lineTo(i,h);ctx.stroke();}
+        for(let i=0;i<h;i+=20){ctx.beginPath();ctx.moveTo(0,i);ctx.lineTo(w,i);ctx.stroke();}
+        // Log lines
+        ctx.font="14px 'Share Tech Mono',monospace";
+        terminalLogs.forEach((log,i)=>{
+            const lc=log.type==='error'?'#ff003c':log.type==='warn'?'#ff9900':'#00f3ff';
+            ctx.fillStyle=lc;ctx.shadowColor=lc;ctx.shadowBlur=4;
+            ctx.fillText(log.msg,15,30+i*28);
+        });
+        ctx.shadowBlur=0;
+        // Cursor
+        cursorBlink+=dt*3;
+        if(Math.sin(cursorBlink)>0){
+            ctx.fillStyle='#00f3ff';
+            ctx.fillRect(15,30+terminalLogs.length*28,8,16);
+        }
+        // Status bar
+        ctx.fillStyle='rgba(0,243,255,0.2)';ctx.fillRect(0,h-40,w,1);
+        ctx.fillStyle='#ff9900';ctx.shadowColor='#ff9900';ctx.shadowBlur=5;
+        ctx.font="bold 13px 'Orbitron',sans-serif";
+        ctx.fillText('RDZEŃ: 420K',15,h-15);
+        ctx.fillStyle='#00ff66';ctx.shadowColor='#00ff66';
+        ctx.fillText('OSŁONY: 100%',w-140,h-15);
+        ctx.shadowBlur=0;
+        // Border
+        ctx.strokeStyle='#00f3ff';ctx.lineWidth=2;
+        ctx.strokeRect(1,1,w-2,h-2);
+        termTex.needsUpdate=true;
+    }
+
+    function updateGearDisplay(){
+        const ctx=gearCtx,w=256,h=80;
+        const g=GEAR_MAP[currentGear];
+        ctx.fillStyle='#000';ctx.fillRect(0,0,w,h);
+        ctx.strokeStyle='#333';ctx.lineWidth=2;ctx.strokeRect(1,1,w-2,h-2);
+        ctx.fillStyle=g.color;ctx.shadowColor=g.color;ctx.shadowBlur=15;
+        const fs=g.name.length<=4?36:g.name.length<=8?24:18;
+        ctx.font=`900 ${fs}px 'Orbitron',sans-serif`;
+        ctx.textAlign='center';ctx.textBaseline='middle';
+        ctx.fillText(g.name,w/2,h/2);
+        ctx.shadowBlur=0;
+        gearTex.needsUpdate=true;
+    }
+
+    // ═══════ MATERIALS ═══════
+    function createMaterials(){
+        const bmt=createBrushedMetal();
+        panelMat=new THREE.MeshStandardMaterial({map:bmt,color:C.PANEL,metalness:0.7,roughness:0.35});
+        darkMat=new THREE.MeshStandardMaterial({color:C.DARK,metalness:0.1,roughness:0.95});
+        frameMat=new THREE.MeshStandardMaterial({color:C.FRAME,metalness:0.85,roughness:0.3});
+        switchMetalMat=new THREE.MeshStandardMaterial({color:0x888888,metalness:0.9,roughness:0.2});
+    }
+    function createBrushedMetal(){
+        const c=document.createElement('canvas');c.width=512;c.height=512;
+        const x=c.getContext('2d');
+        x.fillStyle='#b0a898';x.fillRect(0,0,512,512);
+        for(let i=0;i<800;i++){
+            x.strokeStyle=`rgba(255,255,255,${Math.random()*0.1})`;
+            x.lineWidth=Math.random()*1.5;x.beginPath();
+            const y=Math.random()*512;x.moveTo(0,y);x.lineTo(512,y+(Math.random()-0.5)*4);x.stroke();
+        }
+        for(let i=0;i<200;i++){
+            x.strokeStyle=`rgba(0,0,0,${Math.random()*0.07})`;
+            x.lineWidth=Math.random()*2;x.beginPath();
+            const y=Math.random()*512;x.moveTo(0,y);x.lineTo(512,y+(Math.random()-0.5)*3);x.stroke();
+        }
+        const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;return t;
+    }
+
+    // ═══════ LIGHTS ═══════
+    function setupLights(){
+        scene.add(new THREE.AmbientLight(0x1a1a2e,1.0));
+        const dl=new THREE.DirectionalLight(0xffeedd,0.6);dl.position.set(0,3,2);
+        dl.castShadow=true;dl.shadow.mapSize.set(1024,1024);scene.add(dl);
+        // Screen glow — from front of panels toward player
+        const rg=new THREE.PointLight(C.BLUE,0.6,3);rg.position.set(-0.5,0.4,-0.4);scene.add(rg);
+        const tg=new THREE.PointLight(C.BLUE,0.5,3);tg.position.set(0.5,0.4,-0.4);scene.add(tg);
+        const rl=new THREE.DirectionalLight(0x334466,0.3);rl.position.set(0,0.5,2);scene.add(rl);
+        const ug=new THREE.PointLight(0x443322,0.5,3);ug.position.set(0,1.6,0);scene.add(ug);
+    }
+
+    // ═══════ STARFIELD ═══════
+    function buildStarfield(){
+        const n=3000,pos=new Float32Array(n*3);
+        for(let i=0;i<n;i++){
+            const th=Math.random()*Math.PI*2,ph=Math.random()*Math.PI,r=20+Math.random()*60;
+            pos[i*3]=r*Math.sin(ph)*Math.cos(th);
+            pos[i*3+1]=r*Math.sin(ph)*Math.sin(th);
+            pos[i*3+2]=-r*Math.cos(ph);
+        }
+        const g=new THREE.BufferGeometry();
+        g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+        scene.add(new THREE.Points(g,new THREE.PointsMaterial({color:0xffffff,size:0.15,sizeAttenuation:true,transparent:true,opacity:0.8})));
+    }
+
+    // ═══════ COCKPIT FRAME ═══════
+    function buildCockpitFrame(){
+        const fr=new THREE.Group();
+        const sv=new THREE.BoxGeometry(0.06,2.0,0.06);
+        const sh=new THREE.BoxGeometry(2.0,0.06,0.06);
+        const ls=new THREE.Mesh(sv,frameMat);ls.position.set(-0.95,0.7,-0.9);ls.rotation.z=0.06;fr.add(ls);
+        const rs=new THREE.Mesh(sv,frameMat);rs.position.set(0.95,0.7,-0.9);rs.rotation.z=-0.06;fr.add(rs);
+        const tb=new THREE.Mesh(sh,frameMat);tb.position.set(0,1.7,-0.9);fr.add(tb);
+        const sl=new THREE.Mesh(new THREE.BoxGeometry(1.95,0.04,0.1),frameMat);sl.position.set(0,-0.15,-0.9);fr.add(sl);
+        scene.add(fr);
+    }
+
+    // ═══════ LOWER PANEL ═══════
+    // Panel stands UPRIGHT facing the player (like a car dashboard)
+    function buildLowerPanel(){
+        const panel=new THREE.Group();
+        // Position: in front of camera, below eye level, slight lean back
+        panel.position.set(0, 0.1, -0.6);
+        panel.rotation.x = -0.25; // lean top slightly away from player
+
+        // Body — VERTICAL panel: wide, tall, thin
+        panel.add(makeMesh(new THREE.BoxGeometry(1.7, 0.65, 0.1), panelMat));
+        // Front face highlight
+        const em=new THREE.MeshStandardMaterial({color:0xc0b8a8,metalness:0.8,roughness:0.3});
+        const edge=makeMesh(new THREE.BoxGeometry(1.72, 0.67, 0.005),em);
+        edge.position.z = 0.053; panel.add(edge);
+        // Dividers — vertical strips on front face
+        const dm=new THREE.MeshStandardMaterial({color:0x555048,metalness:0.6,roughness:0.4});
+        [-0.27, 0.27].forEach(x=>{
+            const d=makeMesh(new THREE.BoxGeometry(0.008, 0.56, 0.04),dm);
+            d.position.set(x, 0, 0.07); panel.add(d);
+        });
+
+        // === RADAR SECTION (left) ===
+        initRadarCanvas();
+        const radarGroup=new THREE.Group(); radarGroup.position.set(-0.55, 0, 0);
+        // Recess on front face
+        const rec=makeMesh(new THREE.BoxGeometry(0.48, 0.5, 0.1),darkMat);
+        rec.position.z = 0.03; radarGroup.add(rec);
+        // Screen — faces player (+Z)
+        const rsMat=new THREE.MeshBasicMaterial({map:radarTex});
+        const rs=makeMesh(new THREE.PlaneGeometry(0.44, 0.46), rsMat);
+        rs.position.z = 0.085; radarGroup.add(rs);
+        // Label
+        const rl=makeLabel('RADAR',{color:'#00f3ff',scale:0.06,glow:8});
+        rl.position.set(0, 0.3, 0.1); radarGroup.add(rl);
+        panel.add(radarGroup);
+
+        // === GEAR SECTION (center) ===
+        initGearCanvas();
+        const gearGroup=new THREE.Group(); gearGroup.position.set(0, 0, 0);
+        // Recess
+        const gr=makeMesh(new THREE.BoxGeometry(0.4, 0.5, 0.1),darkMat);
+        gr.position.z = 0.03; gearGroup.add(gr);
+        // Gear display (top of section) — faces player
+        const gdMat=new THREE.MeshBasicMaterial({map:gearTex});
+        const gd=makeMesh(new THREE.PlaneGeometry(0.25, 0.08), gdMat);
+        gd.position.set(0, 0.18, 0.085); gearGroup.add(gd); updateGearDisplay();
+        // H-pattern tracks on front face
+        const tkMat=new THREE.MeshStandardMaterial({color:0x1a1a1a,metalness:0.3,roughness:0.8});
+        [-0.08, 0, 0.08].forEach(cx=>{
+            const tk=makeMesh(new THREE.BoxGeometry(0.015, 0.22, 0.03), tkMat);
+            tk.position.set(cx, -0.03, 0.065); gearGroup.add(tk);
+        });
+        // Horizontal track
+        const ht=makeMesh(new THREE.BoxGeometry(0.18, 0.015, 0.03), tkMat);
+        ht.position.set(0, -0.03, 0.065); gearGroup.add(ht);
+        // Gear positions — now on front face, X=left/right, Y=up/down
+        const hitMat=new THREE.MeshBasicMaterial({visible:false});
+        for(let key in GEAR_MAP){
+            const g=GEAR_MAP[key];
+            const gx=(g.col-1)*0.08;
+            const gy=-0.03 + (1-g.row)*0.09; // row 0=top, 1=mid, 2=bottom
+            const dotMat=new THREE.MeshStandardMaterial({color:new THREE.Color(g.color),emissive:new THREE.Color(g.color),emissiveIntensity:0.5});
+            const dot=makeMesh(new THREE.SphereGeometry(0.008,8,8),dotMat);
+            dot.position.set(gx, gy, 0.082); gearGroup.add(dot);
+            const lb=makeLabel(key,{color:g.color,scale:0.04,size:28,glow:6});
+            lb.position.set(gx, gy, 0.1); gearGroup.add(lb);
+            const hb=makeMesh(new THREE.BoxGeometry(0.05, 0.06, 0.05),hitMat);
+            hb.position.set(gx, gy, 0.08);
+            hb.userData={type:'gear',key,gx,gy}; gearGroup.add(hb); gearHitboxes.push(hb);
+        }
+        // Gear knob — on front face
+        const knobMat=new THREE.MeshStandardMaterial({color:0x777777,metalness:0.9,roughness:0.15});
+        gearKnob=makeMesh(new THREE.SphereGeometry(0.028,16,16),knobMat);
+        targetKnobX=0; targetKnobY=-0.03;
+        gearKnob.position.set(0, -0.03, 0.1); gearGroup.add(gearKnob);
+        panel.add(gearGroup);
+
+        // === TERMINAL SECTION (right) ===
+        initTerminalCanvas();
+        const termGroup=new THREE.Group(); termGroup.position.set(0.55, 0, 0);
+        const tr=makeMesh(new THREE.BoxGeometry(0.48, 0.5, 0.1),darkMat);
+        tr.position.z = 0.03; termGroup.add(tr);
+        const tsMat=new THREE.MeshBasicMaterial({map:termTex});
+        const ts=makeMesh(new THREE.PlaneGeometry(0.44, 0.42), tsMat);
+        ts.position.z = 0.085; termGroup.add(ts);
+        const tl=makeLabel('TERMINAL',{color:'#00f3ff',scale:0.06,glow:8});
+        tl.position.set(0, 0.3, 0.1); termGroup.add(tl);
+        panel.add(termGroup);
+
+        // Bolts at corners — on front face
+        const boltMat=new THREE.MeshStandardMaterial({color:0x555555,metalness:0.9,roughness:0.2});
+        const boltGeo=new THREE.CylinderGeometry(0.012,0.012,0.02,8);
+        boltGeo.rotateX(Math.PI/2); // bolts face forward
+        [[-0.82,0.28,0.06],[0.82,0.28,0.06],[-0.82,-0.28,0.06],[0.82,-0.28,0.06]].forEach(p=>{
+            const b=makeMesh(boltGeo,boltMat);b.position.set(...p);panel.add(b);
+        });
+
+        scene.add(panel);
+    }
+
+    // ═══════ UPPER PANEL ═══════
+    // Overhead panel — hangs from above, face angled down toward pilot
+    function buildUpperPanel(){
+        const panel=new THREE.Group();
+        panel.position.set(0, 1.45, -0.65);
+        panel.rotation.x = 0.5; // tilt face downward toward pilot
+
+        // Body — horizontal-ish panel overhead
+        panel.add(makeMesh(new THREE.BoxGeometry(1.2, 0.08, 0.35), panelMat));
+        const em=new THREE.MeshStandardMaterial({color:0xc0b8a8,metalness:0.8,roughness:0.3});
+        const edge=makeMesh(new THREE.BoxGeometry(1.22, 0.005, 0.37),em);
+        edge.position.y = -0.043; panel.add(edge);
+
+        // Switches on bottom face (facing down toward pilot)
+        const spacing=0.2;
+        SWITCH_DEFS.forEach((def,i)=>{
+            const sx=(i-2)*spacing;
+            const swGroup=new THREE.Group();
+            swGroup.position.set(sx, -0.01, 0);
+
+            // Slot recess
+            const slot=makeMesh(new THREE.BoxGeometry(0.08, 0.09, 0.12),darkMat);
+            slot.position.y = -0.01; swGroup.add(slot);
+
+            // Lever pivot group
+            const leverGroup=new THREE.Group(); leverGroup.position.y = -0.01;
+            const lever=makeMesh(new THREE.BoxGeometry(0.04, 0.06, 0.02),switchMetalMat);
+            lever.position.y = -0.03; leverGroup.add(lever);
+            const handle=makeMesh(new THREE.BoxGeometry(0.05, 0.005, 0.025),
+                new THREE.MeshStandardMaterial({color:0xaaaaaa,metalness:0.9,roughness:0.15}));
+            handle.position.y = -0.06; leverGroup.add(handle);
+            leverGroup.rotation.x = def.on ? 0.5 : -0.5;
+            swGroup.add(leverGroup);
+
+            // LED
+            const ledColor = def.on ? C.GREEN : C.RED;
+            const ledMat = new THREE.MeshStandardMaterial({
+                color:ledColor, emissive:ledColor, emissiveIntensity: def.on?1.5:0.3
+            });
+            const led=makeMesh(new THREE.SphereGeometry(0.008,8,8),ledMat);
+            led.position.set(0, -0.065, 0); swGroup.add(led);
+
+            // Label
+            const lb=makeLabel(def.label,{color:'#aaa',scale:0.05,size:16,font:"'Share Tech Mono',monospace"});
+            lb.position.set(0, 0.06, 0); swGroup.add(lb);
+
+            // Hitbox
+            const hb=makeMesh(new THREE.BoxGeometry(0.12, 0.12, 0.16),
+                new THREE.MeshBasicMaterial({visible:false}));
+            hb.userData={type:'switch',index:i,def,leverGroup,led:led};
+            swGroup.add(hb); switchObjects.push(hb);
+
+            panel.add(swGroup);
+        });
+
+        // Panel label
+        const pl=makeLabel('SYSTEMY POKŁADOWE',{color:'#ff9900',scale:0.07,glow:6});
+        pl.position.set(0, -0.08, 0.2); panel.add(pl);
+
+        // Bolts
+        const boltMat=new THREE.MeshStandardMaterial({color:0x555555,metalness:0.9,roughness:0.2});
+        const bg=new THREE.CylinderGeometry(0.01,0.01,0.015,8);
+        [[-0.57,-0.04,0.15],[0.57,-0.04,0.15],[-0.57,-0.04,-0.15],[0.57,-0.04,-0.15]].forEach(p=>{
+            const b=makeMesh(bg,boltMat);b.position.set(...p);panel.add(b);
+        });
+
+        scene.add(panel);
+    }
+
+    function makeMesh(geo,mat){const m=new THREE.Mesh(geo,mat);m.castShadow=true;m.receiveShadow=true;return m;}
+
+    // ═══════ INTERACTION ═══════
+    function onMouseMove(e){
+        targetLookX=((e.clientY/window.innerHeight)*2-1)*0.12;
+        targetLookY=-((e.clientX/window.innerWidth)*2-1)*0.18;
+        mouseVec.x=(e.clientX/window.innerWidth)*2-1;
+        mouseVec.y=-(e.clientY/window.innerHeight)*2+1;
+    }
+
+    function onClick(e){
+        if(audioCtx.state==='suspended')audioCtx.resume();
+        mouseVec.x=(e.clientX/window.innerWidth)*2-1;
+        mouseVec.y=-(e.clientY/window.innerHeight)*2+1;
+        raycaster.setFromCamera(mouseVec,camera);
+
+        // Check switches
+        const swHits=raycaster.intersectObjects(switchObjects);
+        if(swHits.length>0){
+            const ud=swHits[0].object.userData;
+            const def=ud.def;def.on=!def.on;
+            ud.leverGroup.rotation.x=def.on?0.5:-0.5;
+            const lc=def.on?C.GREEN:C.RED;
+            ud.led.material.color.setHex(lc);ud.led.material.emissive.setHex(lc);
+            ud.led.material.emissiveIntensity=def.on?1.5:0.3;
+            beep(def.on?800:400,'square',0.1,0.05);
+            setTimeout(()=>beep(def.on?1200:300,'sine',0.1,0.05),50);
+            addLog(`SYSTEM ${def.label}: ${def.on?'ONLINE':'OFFLINE'}`,def.on?'normal':'warn');
+            return;
+        }
+
+        // Check gears
+        const gHits=raycaster.intersectObjects(gearHitboxes);
+        if(gHits.length>0){
+            const key=gHits[0].object.userData.key;
+            if(key!==currentGear){
+                currentGear=key;
+                const ud=gHits[0].object.userData;
+                targetKnobX=ud.gx; targetKnobY=ud.gy;
+                updateGearDisplay();
+                beep(300,'square',0.1,0.1);setTimeout(()=>beep(200,'sawtooth',0.1,0.1),50);
+                addLog(`BIEG: ${GEAR_MAP[key].name}`,'normal');
+            }
+        }
+    }
+
+    function onKeyDown(e){
+        if(e.code==='KeyP'){/* perf */}
+    }
+
+    // ═══════ RESIZE ═══════
+    function onResize(){
+        camera.aspect=window.innerWidth/window.innerHeight;camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth,window.innerHeight);
+        composer.setSize(window.innerWidth,window.innerHeight);
+    }
+
+    // ═══════ ANIMATE ═══════
+    function animate(){
+        requestAnimationFrame(animate);
+        const dt=clock.getDelta();
+
+        // Smooth camera look
+        curLookX+=(targetLookX-curLookX)*0.04;
+        curLookY+=(targetLookY-curLookY)*0.04;
+        camera.position.copy(baseCamPos);
+        camera.lookAt(baseCamPos.x+curLookY*2, baseCamPos.y-0.2+curLookX*1.5, baseCamPos.z-2);
+
+        // Gear knob lerp (moves in X/Y on front face)
+        if(gearKnob){
+            gearKnob.position.x+=(targetKnobX-gearKnob.position.x)*0.12;
+            gearKnob.position.y+=(targetKnobY-gearKnob.position.y)*0.12;
+        }
+
+        // Update canvases
+        updateRadar(dt);
+        updateTerminal(dt);
+
+        composer.render();
+    }
+
+    // ═══════ START ═══════
+    function init(){
+        scene=new THREE.Scene();scene.background=new THREE.Color(0x020204);
+        camera=new THREE.PerspectiveCamera(62,window.innerWidth/window.innerHeight,0.05,200);
+        camera.position.copy(baseCamPos);
+        renderer=new THREE.WebGLRenderer({antialias:true});
+        renderer.setSize(window.innerWidth,window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+        renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.3;
+        renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+        document.body.appendChild(renderer.domElement);
+        composer=new EffectComposer(renderer);composer.addPass(new RenderPass(scene,camera));
+        composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth,window.innerHeight),0.6,0.4,0.82));
+        clock=new THREE.Clock();
+        createMaterials();setupLights();buildStarfield();buildCockpitFrame();
+        buildLowerPanel();buildUpperPanel();
+        window.addEventListener('resize',onResize);
+        window.addEventListener('mousemove',onMouseMove);
+        window.addEventListener('click',onClick);
+        window.addEventListener('keydown',onKeyDown);
+        addLog('> SYSTEM GOTOWY');addLog('> KOKPIT 3D AKTYWNY');
+        addLog('> NAPĘDY ZAINICJALIZOWANE');addLog('> OSŁONY AKTYWNE (100%)');
+        setTimeout(()=>{for(let i=0;i<5;i++)setTimeout(()=>beep(400+i*100,'square',0.05,0.05),i*100);},500);
+        animate();
+    }
+    document.fonts.ready.then(()=>init());
+    </script>
+</body>
+</html>
