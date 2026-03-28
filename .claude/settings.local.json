@@ -15,7 +15,9 @@
       "Bash(find /c/Users/Szymon/Documents/GitHub/statki -name *procedural* -o -name *procgen* -o -name *tile* -o -name *zone*)",
       "Bash(find \"C:\\\\Users\\\\Szymon\\\\Documents\\\\GitHub\\\\statki\\\\src\\\\3d\" -name \"*.js\" -exec wc -l {} +)",
       "Bash(grep -rn clampTurnVecs*= C:UsersSzymonDocumentsGitHubstatki --include=*.js)",
-      "Bash(ls -la /c/Users/Szymon/Documents/GitHub/statki/*.html /c/Users/Szymon/Documents/GitHub/statki/*.js)"
+      "Bash(ls -la /c/Users/Szymon/Documents/GitHub/statki/*.html /c/Users/Szymon/Documents/GitHub/statki/*.js)",
+      "Bash(grep -r \"rakiet\\\\|missile\\\\|projectile\\\\|rocket\" /c/Users/Szymon/Documents/GitHub/statki --include=*.html --include=*.js)",
+      "Bash(grep -l \"spark\\\\|flare\\\\|particle\\\\|flame\\\\|trail\\\\|exhaust\" /c/Users/Szymon/Documents/GitHub/statki/*.html)"
     ]
   }
 }

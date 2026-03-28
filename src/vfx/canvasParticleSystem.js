@@ -235,11 +235,18 @@ export const CanvasVFX = {
   spawnWeaponImpact(presetKey, color, scale = 1, x = 0, y = 0, weaponSize = 'M') {
     const isHeavy = (weaponSize === 'L' || weaponSize === 'Capital');
     if (isHeavy) {
-      // L/Capital: Three.js 3D impact (the hero effect) + light canvas sparks for fill
+      // L/Capital: Three.js 3D impact (the hero effect) + GPU sparks for fill
       this.spawnProjectileImpact3D(presetKey, color, scale * (weaponSize === 'Capital' ? 1.5 : 1.0), x, y);
-      // Light canvas supplement — fewer sparks, still gives debris feel
-      if (this.enabled) {
-        const fx = this.buildBulletVfxInstance(presetKey, color);
+      const fx = this.buildBulletVfxInstance(presetKey, color);
+      // GPU spark supplement for heavy weapons
+      const spark3D = typeof window !== 'undefined' && window.SparkSystem3D;
+      if (spark3D && spark3D.isInitialized) {
+        const sparkCount = Math.round((fx.sparkCount || 12) * scale * 0.5);
+        const avgSpeed = ((fx.sparkSpeed?.[0] || 200) + (fx.sparkSpeed?.[1] || 360)) * 0.5;
+        const avgSize = ((fx.sparkSize?.[0] || 1.4) + (fx.sparkSize?.[1] || 2.6)) * 0.5;
+        spark3D.burst(x, y, sparkCount, avgSpeed * scale, 0.35, avgSize * scale * 0.5);
+      } else if (this.enabled) {
+        // Fallback: canvas sparks
         const sparks = Math.round((fx.sparkCount || 12) * scale * 0.5);
         for (let i = 0; i < sparks; i++) {
           const a = Math.random() * Math.PI * 2;
@@ -247,7 +254,9 @@ export const CanvasVFX = {
           const size = (fx.sparkSize?.[0] || 1.4) + Math.random() * ((fx.sparkSize?.[1] || 2.6) - (fx.sparkSize?.[0] || 1.4));
           this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.24 + Math.random() * 0.2, this.resolveAlphaColor(fx.color, 0.85, fx.color), size * scale, true);
         }
-        // Heavier shockwave for Capital
+      }
+      if (this.enabled) {
+        // Heavier shockwave for Capital — canvas
         const shockScale = weaponSize === 'Capital' ? 1.8 : 1.2;
         this.spawnShockwave(x, y, { r: (fx.shock?.r || 10) * scale * shockScale, maxR: (fx.shock?.maxR || 100) * scale * shockScale, w: (fx.shock?.w || 2.6) * scale * shockScale, maxLife: (fx.shock?.life || 0.32) * 1.3, color: fx.shockColorPrefix });
       }
@@ -262,20 +271,32 @@ export const CanvasVFX = {
     this.spawnWeaponImpact(presetKey, color, scale, x, y, 'M');
   },
 
-  // Canvas-only impact for S/M weapons — no Three.js, purely 2D particles
+  // Canvas-only impact for S/M weapons — GPU sparks + canvas shockwave/flash
   _spawnCanvasOnlyImpact(presetKey, color, scale = 1, x = 0, y = 0, weaponSize = 'M') {
-    if (!this.enabled) return;
     if (!this.isWorldPointNearViewport(x, y, 200)) return;
     const fx = this.buildBulletVfxInstance(presetKey, color);
-    // S weapons: fewer, smaller sparks; M weapons: normal amount
     const sizeMul = weaponSize === 'S' ? 0.5 : 1.0;
-    const sparks = Math.round((fx.sparkCount || 12) * scale * sizeMul);
-    for (let i = 0; i < sparks; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const speed = (fx.sparkSpeed?.[0] || 200) + Math.random() * ((fx.sparkSpeed?.[1] || 360) - (fx.sparkSpeed?.[0] || 200));
-      const size = (fx.sparkSize?.[0] || 1.4) + Math.random() * ((fx.sparkSize?.[1] || 2.6) - (fx.sparkSize?.[0] || 1.4));
-      this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.2 + Math.random() * 0.18, this.resolveAlphaColor(fx.color, 0.9, fx.color), size * scale * sizeMul, true);
+
+    // GPU GLSL sparks — replace canvas particles
+    const spark3D = typeof window !== 'undefined' && window.SparkSystem3D;
+    if (spark3D && spark3D.isInitialized) {
+      const sparkCount = Math.round((fx.sparkCount || 12) * scale * sizeMul);
+      const avgSpeed = ((fx.sparkSpeed?.[0] || 200) + (fx.sparkSpeed?.[1] || 360)) * 0.5;
+      const avgSize = ((fx.sparkSize?.[0] || 1.4) + (fx.sparkSize?.[1] || 2.6)) * 0.5;
+      spark3D.burst(x, y, sparkCount, avgSpeed * scale, 0.3, avgSize * scale * sizeMul * 0.5);
+    } else if (this.enabled) {
+      // Fallback: canvas sparks if GPU system not ready
+      const sparks = Math.round((fx.sparkCount || 12) * scale * sizeMul);
+      for (let i = 0; i < sparks; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const speed = (fx.sparkSpeed?.[0] || 200) + Math.random() * ((fx.sparkSpeed?.[1] || 360) - (fx.sparkSpeed?.[0] || 200));
+        const size = (fx.sparkSize?.[0] || 1.4) + Math.random() * ((fx.sparkSize?.[1] || 2.6) - (fx.sparkSize?.[0] || 1.4));
+        this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.2 + Math.random() * 0.18, this.resolveAlphaColor(fx.color, 0.9, fx.color), size * scale * sizeMul, true);
+      }
     }
+
+    if (!this.enabled) return;
+    // Canvas smoke stays as-is
     if (fx.smoke && fx.smokeColor) {
       const smokeCount = Math.round(fx.smoke * scale * sizeMul);
       for (let i = 0; i < smokeCount; i++) {
@@ -284,9 +305,9 @@ export const CanvasVFX = {
         this.spawnParticle({ x, y }, { x: Math.cos(a) * speed, y: Math.sin(a) * speed }, 0.32 + Math.random() * 0.24, fx.smokeColor, 3 * scale * sizeMul, false);
       }
     }
-    // Core flash
+    // Core flash — canvas
     this.spawnParticle({ x, y }, { x: 0, y: 0 }, 0.12, this.resolveAlphaColor(fx.color, 1, '#ffffff'), (6 + (fx.widthInner || 4)) * 0.7 * scale * sizeMul, true);
-    // Shockwave — smaller for S, standard for M
+    // Shockwave — canvas
     const shockScale = weaponSize === 'S' ? 0.6 : 1.0;
     this.spawnShockwave(x, y, { r: (fx.shock?.r || 10) * scale * shockScale, maxR: (fx.shock?.maxR || 100) * scale * shockScale, w: (fx.shock?.w || 2.6) * scale * shockScale, maxLife: (fx.shock?.life || 0.32) * (weaponSize === 'S' ? 0.7 : 1.0), color: fx.shockColorPrefix });
   },

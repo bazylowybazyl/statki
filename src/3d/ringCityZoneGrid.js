@@ -9,8 +9,8 @@ export const ZONE_COLS = 192;
 export const ZONE_ROWS = 4;
 export const ZONE_CELL_ARC = (Math.PI * 2) / ZONE_COLS;
 
-const GATE_ANGLES = [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2];
-const GATE_CLEARANCE = 0.06;
+let HOLE_ANGLES = [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2]; // updated by ring at init
+const GATE_CLEARANCE = 0.14;
 
 export const ZONE_PAD_ANGLE = ZONE_CELL_ARC * 0.14;
 export const ZONE_PAD_RADIUS = 70;
@@ -51,10 +51,16 @@ function angleDistance(a, b) {
 
 export function isGateAngle(angle) {
     const normalized = normalizeAngle(angle);
-    for (const gateAngle of GATE_ANGLES) {
-        if (angleDistance(normalized, gateAngle) < GATE_CLEARANCE) return true;
+    for (const holeAngle of HOLE_ANGLES) {
+        if (angleDistance(normalized, holeAngle) < GATE_CLEARANCE) return true;
     }
     return false;
+}
+
+export function setHoleAngles(angles) {
+    if (Array.isArray(angles) && angles.length > 0) {
+        HOLE_ANGLES = angles;
+    }
 }
 
 export function createSeededRandom(seed) {
@@ -105,8 +111,8 @@ export class RingCityZoneGrid {
         this.ringHeight = ringHeight;
 
         const streetWidth = 55;
-        this.paintInner = ringRadius - ringHeight * 0.5 + streetWidth + 100;
-        this.paintOuter = ringRadius + ringHeight * 0.5 - streetWidth - 100;
+        this.paintInner = ringRadius - ringHeight * 0.5 + streetWidth + 180;
+        this.paintOuter = ringRadius + ringHeight * 0.5 - streetWidth - 180;
 
         // Autostrada dzieli ring na dwie połówki:
         // - Wewnętrzna (rows 0-1): paintInner → ringRadius - AUTOSTRADA_WIDTH/2

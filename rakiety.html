@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Symulacja Rakiet 3D Top-Down - GPU PARTICLES V3</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #020205;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+            user-select: none;
+            touch-action: none; 
+        }
+        canvas {
+            display: block;
+        }
+        #ui {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            pointer-events: none;
+            background: rgba(10, 15, 30, 0.85);
+            padding: 15px 25px;
+            border-radius: 8px;
+            border: 1px solid #3366aa;
+            box-shadow: 0 4px 25px rgba(0,100,255,0.3);
+            backdrop-filter: blur(4px);
+        }
+        h1 { margin: 0 0 10px 0; font-size: 1.2rem; color: #55aaff; text-transform: uppercase; letter-spacing: 2px;}
+        p { margin: 5px 0; font-size: 0.9rem; color: #eeeeee; }
+        .highlight { color: #ffaa33; font-weight: bold; }
+        #warning {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            text-align: center;
+            font-size: 2rem;
+            color: #ff3333;
+            font-weight: bold;
+            letter-spacing: 10px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.5s;
+            text-shadow: 0 0 20px #ff0000;
+        }
+
+        /* --- PANEL DO TUNINGU OGNIA --- */
+        #tuning-ui {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(10, 15, 30, 0.85);
+            padding: 15px 20px;
+            border-radius: 8px;
+            border: 1px solid #ff5533;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            pointer-events: auto;
+            width: 280px;
+            backdrop-filter: blur(4px);
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .tune-row { margin-bottom: 12px; display: flex; flex-direction: column; }
+        .tune-row-header { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 5px; color: #ffccaa; }
+        .tune-row input[type=range] { width: 100%; cursor: pointer; accent-color: #ff5533; }
+        #copy-btn { 
+            width: 100%; padding: 10px; margin-top: 10px;
+            background: #98322a; color: white; border: 1px solid #ff5533; 
+            border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s;
+        }
+        #copy-btn:hover { background: #ca443b; }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="warning">MISSILE LAUNCH DETECTED</div>
+
+    <div id="ui">
+        <h1>Pojedynek Gigantów v3</h1>
+        <p>LPM - Odpal potężną salwę</p>
+        <p>PPM - Przesuwanie kamery | Kółko - Zoom</p>
+        <p style="font-size: 0.8em; color: #aaa; margin-top: 10px;">
+            NOWOŚĆ: <span class="highlight">Wielowarstwowe eksplozje (Błysk, Rdzeń, Iskry, Dym).</span><br>
+            Teren to czarna pustnia, brak spadków FPS.
+        </p>
+    </div>
+
+    <div id="tuning-ui">
+        <h3 style="margin-top:0; margin-bottom:15px; font-size:1.1rem; color:#fff; text-align:center;">Tuning Płomieni</h3>
+        
+        <div class="tune-row">
+            <div class="tune-row-header"><label>Rozciągnięcie Smugi</label><span id="val-stretch">1.50</span></div>
+            <input type="range" id="flame-stretch" min="0.0" max="6.0" step="0.1" value="1.5">
+        </div>
+        <div class="tune-row">
+            <div class="tune-row-header"><label>Jasność HDR (Bloom)</label><span id="val-hdr">3.50</span></div>
+            <input type="range" id="flame-hdr" min="0.5" max="10.0" step="0.5" value="3.5">
+        </div>
+        <div class="tune-row">
+            <div class="tune-row-header"><label>Krycie Ognia</label><span id="val-falpha">0.60</span></div>
+            <input type="range" id="flame-falpha" min="0.05" max="1.0" step="0.05" value="0.6">
+        </div>
+        <div class="tune-row">
+            <div class="tune-row-header"><label>Prędkość Ognia</label><span id="val-vel">0.10</span></div>
+            <input type="range" id="flame-vel" min="0.05" max="1.0" step="0.05" value="0.10">
+        </div>
+        <div class="tune-row">
+            <div class="tune-row-header"><label>Szerokość Początkowa</label><span id="val-size">28.00</span></div>
+            <input type="range" id="flame-size" min="10" max="200" step="2" value="28">
+        </div>
+        <div class="tune-row">
+            <div class="tune-row-header"><label>Gęstość i Rozmiar Dymu</label><span id="val-smoke-size">180.00</span></div>
+            <input type="range" id="smoke-size" min="10" max="800" step="10" value="180">
+        </div>
+
+        <div class="tune-row">
+            <div class="tune-row-header"><label>Skala Eksplozji</label><span id="val-explosionSize">1.00</span></div>
+            <input type="range" id="flame-explosionSize" min="0.1" max="5.0" step="0.1" value="1.0">
+        </div>
+
+        <button id="copy-btn">Kopiuj Ustawienia</button>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import Stats from 'three/addons/libs/stats.module.js';
+
+        const PHYSICS = { gravity: 9.81 * 80, airDrag: 0.0005 };
+
+        let scene, camera, renderer, composer, controls, stats;
+        let friendlyShips = [], enemyShips = [];
+        let lastTime;
+        let globalTime = 0; 
+        
+        let rocketManager;
+        let fireParticleSystem;
+        let smokeParticleSystem;
+        let targetDistance = 0; 
+        let armiesReady = false;
+
+        window.FlameSettings = {
+            stretchMult: 1.5,
+            velMult: 0.10,
+            startSize: 28.0,
+            growth: 1.0,
+            life: 0.25,
+            smokeSize: 180.0,
+            hdrIntensity: 3.5,
+            fireAlpha: 0.60,
+            explosionSize: 1.0
+        };
+
+        const _dummy = new THREE.Object3D();
+        const _force = new THREE.Vector3();
+        const _forward = new THREE.Vector3();
+        const _drag = new THREE.Vector3();
+        const _targetDir = new THREE.Vector3();
+        const _qTarget = new THREE.Quaternion();
+        const _exhaustPos = new THREE.Vector3();
+
+        function setupTuningUI() {
+            const bindSlider = (id, key, valId) => {
+                const el = document.getElementById(id);
+                const valEl = document.getElementById(valId);
+                el.value = window.FlameSettings[key];
+                valEl.innerText = window.FlameSettings[key].toFixed(2);
+
+                el.addEventListener('input', (e) => {
+                    const val = parseFloat(e.target.value);
+                    window.FlameSettings[key] = val;
+                    valEl.innerText = val.toFixed(2);
+                    
+                    const uniformsToUpdate = ['u_' + key];
+                    [fireParticleSystem, smokeParticleSystem].forEach(sys => {
+                        if (sys && sys.material) {
+                            uniformsToUpdate.forEach(u => {
+                                if(sys.material.uniforms[u]) sys.material.uniforms[u].value = val;
+                            });
+                        }
+                    });
+                });
+            };
+
+            bindSlider('flame-stretch', 'stretchMult', 'val-stretch');
+            bindSlider('flame-hdr', 'hdrIntensity', 'val-hdr');
+            bindSlider('flame-falpha', 'fireAlpha', 'val-falpha');
+            bindSlider('flame-vel', 'velMult', 'val-vel');
+            bindSlider('flame-size', 'startSize', 'val-size');
+            bindSlider('smoke-size', 'smokeSize', 'val-smoke-size');
+            bindSlider('flame-explosionSize', 'explosionSize', 'val-explosionSize');
+
+            document.getElementById('copy-btn').addEventListener('click', () => {
+                navigator.clipboard.writeText(JSON.stringify(window.FlameSettings, null, 2));
+            });
+        }
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x020205, 0.000012); 
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 10, 300000);
+            camera.position.set(0, -35000, 45000); 
+            
+            renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', desynchronized: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.0;
+            document.body.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
+            controls.enableZoom = false; 
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05; 
+            controls.panSpeed = 2.5; 
+            controls.minDistance = 2000;     
+            controls.maxDistance = 200000; 
+            controls.maxPolarAngle = Math.PI / 2.1; 
+
+            const renderScene = new RenderPass(scene, camera);
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.2, 0.4, 0.2);
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+
+            const planeGeo = new THREE.PlaneGeometry(200000, 200000);
+            const planeMat = new THREE.MeshBasicMaterial({ color: 0x010102 });
+            const groundPlane = new THREE.Mesh(planeGeo, planeMat);
+            groundPlane.position.z = -10;
+            scene.add(groundPlane);
+
+            // SYSTEM OGNIA - Ekstremalne limity na potrzeby STRESS TESTU
+            fireParticleSystem = new GPUInstancedParticleManager(scene, 300000, THREE.AdditiveBlending);
+            // SYSTEM DYMU
+            smokeParticleSystem = new GPUParticleManager(scene, 200000, THREE.NormalBlending);
+            
+            rocketManager = new RocketManager(scene, 2000); 
+
+            // INICJALIZACJA LICZNIKA FPS
+            stats = new Stats();
+            stats.dom.style.position = 'absolute';
+            stats.dom.style.top = '20px';
+            stats.dom.style.left = '20px';
+            document.body.appendChild(stats.dom);
+
+            createShips();
+            setupTuningUI();
+
+            targetDistance = camera.position.distanceTo(controls.target);
+
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('mousedown', onMouseDown);
+            window.addEventListener('contextmenu', e => e.preventDefault()); 
+            window.addEventListener('wheel', (e) => {
+                if(e.target.closest('#tuning-ui')) return;
+                targetDistance += e.deltaY * 25.0; 
+                targetDistance = THREE.MathUtils.clamp(targetDistance, controls.minDistance, controls.maxDistance);
+            }, { passive: false });
+        }
+
+        function createShips() {
+            const textureLoader = new THREE.TextureLoader();
+            textureLoader.load('https://raw.githubusercontent.com/bazylowybazyl/statki/refs/heads/main/assets/capital_ship_rect_v1.png', (atlasTex) => {
+                atlasTex.colorSpace = THREE.SRGBColorSpace;
+                const targetLength = 2500;
+                const srcW = atlasTex.image.width;
+                const srcH = atlasTex.image.height;
+                let finalW = targetLength, finalH = Math.round(targetLength * (srcH / srcW));
+
+                const spriteGeo = new THREE.PlaneGeometry(finalW, finalH);
+                const baseGeo = new THREE.BoxGeometry(finalW * 0.95, finalH * 0.92, 280);
+                const baseMat = new THREE.MeshStandardMaterial({ color: 0x060912, roughness: 0.9, metalness: 0.2 });
+
+                // Tworzymy po 10 statków na stronę
+                for (let i = 0; i < 10; i++) {
+                    const yOffset = (i - 4.5) * 4000; 
+
+                    let fShip = new THREE.Group();
+                    fShip.position.set(-14000, yOffset, 150); 
+                    let pMat = new THREE.MeshStandardMaterial({ map: atlasTex, transparent: true, alphaTest: 0.1, color: 0xaaccff, emissive: 0x000000, depthWrite: false });
+                    let pSprite = new THREE.Mesh(spriteGeo, pMat); pSprite.position.z = 150; 
+                    fShip.add(new THREE.Mesh(baseGeo, baseMat), pSprite);
+                    fShip.userData.hitMaterial = pMat; 
+                    scene.add(fShip);
+                    friendlyShips.push(fShip);
+
+                    let eShip = new THREE.Group();
+                    eShip.position.set(14000, yOffset, 150);
+                    eShip.rotation.z = Math.PI; 
+                    let eMat = new THREE.MeshStandardMaterial({ map: atlasTex, transparent: true, alphaTest: 0.1, color: 0xffaaaa, emissive: 0x000000, depthWrite: false });
+                    let eSprite = new THREE.Mesh(spriteGeo, eMat); eSprite.position.z = 150;
+                    eShip.add(new THREE.Mesh(baseGeo, baseMat), eSprite);
+                    eShip.userData.hitMaterial = eMat;
+                    scene.add(eShip);
+                    enemyShips.push(eShip);
+                }
+                
+                armiesReady = true; 
+            });
+        }
+
+        // --- GPU INSTANCED PARTICLE MANAGER ---
+        class GPUInstancedParticleManager {
+            constructor(scene, maxParticles, blendingType) {
+                this.maxParticles = maxParticles;
+                this.activeIndex = 0; 
+                
+                const baseGeo = new THREE.PlaneGeometry(1, 1);
+                const geo = new THREE.InstancedBufferGeometry();
+                geo.index = baseGeo.index;
+                geo.setAttribute('position', baseGeo.attributes.position);
+                geo.setAttribute('uv', baseGeo.attributes.uv);
+
+                this.startPos = new Float32Array(maxParticles * 3);
+                this.startVel = new Float32Array(maxParticles * 3);
+                this.dataInfo = new Float32Array(maxParticles * 4); 
+                
+                geo.setAttribute('aStartPos', new THREE.InstancedBufferAttribute(this.startPos, 3));
+                geo.setAttribute('aStartVel', new THREE.InstancedBufferAttribute(this.startVel, 3));
+                geo.setAttribute('aData', new THREE.InstancedBufferAttribute(this.dataInfo, 4));
+
+                const canvas = document.createElement('canvas');
+                canvas.width = 64; canvas.height = 64;
+                const ctx = canvas.getContext('2d');
+                // Bardziej miękki, organiczny gradient
+                const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+                grad.addColorStop(0, 'rgba(255,255,255,1)');
+                grad.addColorStop(0.3, 'rgba(255,255,255,0.7)');
+                grad.addColorStop(0.6, 'rgba(255,255,255,0.1)');
+                grad.addColorStop(1, 'rgba(255,255,255,0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0,0,64,64);
+                const texture = new THREE.CanvasTexture(canvas);
+
+                this.material = new THREE.ShaderMaterial({
+                    uniforms: { 
+                        uTime: { value: 0 },
+                        uTexture: { value: texture },
+                        u_startSize: { value: window.FlameSettings.startSize },
+                        u_growth: { value: window.FlameSettings.growth },
+                        u_hdrIntensity: { value: window.FlameSettings.hdrIntensity },
+                        u_fireAlpha: { value: window.FlameSettings.fireAlpha },
+                        u_stretchMult: { value: window.FlameSettings.stretchMult },
+                        u_explosionSize: { value: window.FlameSettings.explosionSize }
+                    },
+                    vertexShader: `
+                        attribute vec3 aStartPos;
+                        attribute vec3 aStartVel;
+                        attribute vec4 aData; 
+                        
+                        uniform float uTime;
+                        uniform float u_startSize;
+                        uniform float u_growth;
+                        uniform float u_hdrIntensity;
+                        uniform float u_fireAlpha;
+                        uniform float u_stretchMult;
+                        uniform float u_explosionSize;
+                        
+                        varying vec3 vColor;
+                        varying float vAlpha;
+                        varying vec2 vUv;
+                        varying float vType; // NEW - przekazujemy typ do Fragment Shadera
+
+                        void main() {
+                            vUv = uv;
+                            vType = aData.w; // Zapisz typ
+                            float startTime = aData.x;
+                            float maxLife = aData.y;
+                            float type = aData.w;
+                            float age = uTime - startTime;
+
+                            if (age < 0.0 || age > maxLife) {
+                                gl_Position = vec4(9999.0, 9999.0, 9999.0, 1.0);
+                                return;
+                            }
+
+                            float ratio = 1.0 - (age / maxLife); 
+                            float ageNorm = age / maxLife; // 0.0 to 1.0
+                            
+                            vec3 pos = aStartPos + aStartVel * age;
+                            float currentSize = aData.z; 
+                            float stretchFactor = 1.0;
+
+                            // LOGIKA OGNIA - ZAPOBIEGANIE "SMYCZOM"
+                            if (type < 0.5) { // MAIN FIRE
+                                // 1. Tapering - płomień zaczyna się pełny, a pod koniec mocno się zwęża
+                                float shape = 1.0 - pow(ageNorm, 2.5);
+                                
+                                // 2. Diamenty Macha - oscylacja szerokości wzdłuż smugi
+                                float mach = 1.0 + sin(ageNorm * 30.0) * 0.3 * (1.0 - ageNorm);
+                                
+                                currentSize = u_startSize * shape * mach * (1.0 + ageNorm * u_growth);
+                                
+                                // 3. Turbulencja ogona - im starsza cząstka, tym mocniej rzuca nią na boki
+                                float scatter = pow(ageNorm, 3.0) * 60.0;
+                                pos.x += sin(age * 50.0 + aStartPos.z) * scatter;
+                                pos.y += cos(age * 43.0 + aStartPos.x) * scatter;
+
+                                // 4. Ewolucja koloru: Biel/Żółć na początku, wiśniowa czerwień na końcu
+                                vec3 fireCore = vec3(1.0, 0.9, 0.6); 
+                                vec3 fireEdge = vec3(1.0, 0.1, 0.0);
+                                vColor = mix(fireCore, fireEdge, pow(ageNorm, 0.8)) * u_hdrIntensity;
+                                
+                                // Opadanie Alphy z krzywą
+                                vAlpha = pow(ratio, 1.5) * u_fireAlpha;
+                                
+                                // Rozciągnięcie - skalowane w mniejszym stopniu żeby zapobiegać litym liniom
+                                stretchFactor = 1.0 + length(aStartVel) * 0.0003 * u_stretchMult * shape;
+                            } 
+                            else if (type < 2.5) { // RCS (Sterowanie)
+                                currentSize += age * 600.0;
+                                vColor = vec3(0.2, 0.5, 1.0) * u_hdrIntensity;
+                                vAlpha = ratio * 0.4;
+                                stretchFactor = 1.0 + length(aStartVel) * 0.0003 * u_stretchMult;
+                            } 
+                            else if (type < 3.5) { // EXPLOSION CORE (Rdzeń wybuchu)
+                                // Bardziej dynamiczna eksplozja
+                                float explosionAge = ageNorm;
+                                // Szybki rozbłysk, potem zanikanie
+                                float flash = 1.0 - pow(explosionAge, 0.5); 
+                                
+                                currentSize += age * 4000.0 * u_explosionSize;
+                                
+                                // Kolor od białego do pomarańczowego i czerwonego
+                                vec3 expCore = vec3(1.0, 1.0, 0.8);
+                                vec3 expMid = vec3(1.0, 0.5, 0.0);
+                                vec3 expEdge = vec3(0.8, 0.1, 0.0);
+                                
+                                if (explosionAge < 0.3) {
+                                     vColor = mix(expCore, expMid, explosionAge / 0.3);
+                                } else {
+                                     vColor = mix(expMid, expEdge, (explosionAge - 0.3) / 0.7);
+                                }
+                                vColor *= u_hdrIntensity * 3.0 * flash;
+                                
+                                vAlpha = ratio * ratio; 
+                                stretchFactor = 1.0; 
+                            }
+                            else if (type < 4.5) { // SPARKS (Iskry/Odłamki)
+                                // Małe, szybkie, mocno rozciągnięte
+                                currentSize = u_startSize * 0.8 * (1.0 - ageNorm);
+                                // Bardzo jasne, żółto-białe
+                                vColor = vec3(1.0, 0.9, 0.7) * u_hdrIntensity * 4.0;
+                                vAlpha = ratio;
+                                // Silne rozciągnięcie zależne od prędkości
+                                stretchFactor = 1.0 + length(aStartVel) * 0.002 * u_stretchMult;
+                            }
+                            else { // SHOCKWAVE / HEAT WAVE (Fala uderzeniowa)
+                                float waveAge = pow(ageNorm, 0.4); // Szybki rozrost na początku
+                                currentSize = u_startSize * 80.0 * u_explosionSize * (0.05 + waveAge * 2.5);
+                                vColor = vec3(1.0, 0.9, 0.8) * u_hdrIntensity * 2.0; // Gorąca biel
+                                vAlpha = pow(1.0 - ageNorm, 2.0) * 0.6; // Płynne zanikanie
+                                stretchFactor = 1.0; 
+                            }
+
+                            vec4 mvPosition;
+                            
+                            if (type > 4.5) {
+                                // FALA UDERZENIOWA: Leży całkowicie płasko w świecie 3D (osie XY)
+                                vec3 flatPos = pos;
+                                flatPos.x += position.x * currentSize;
+                                flatPos.y += position.y * currentSize;
+                                mvPosition = modelViewMatrix * vec4(flatPos, 1.0);
+                            } else {
+                                // KLASYCZNY BILLBOARD: Cząsteczka zawsze patrzy w stronę kamery
+                                mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                                
+                                vec3 viewVel = (modelViewMatrix * vec4(aStartVel, 0.0)).xyz;
+                                vec2 dir = normalize(viewVel.xy);
+                                if (length(viewVel.xy) < 0.1) dir = vec2(0.0, 1.0);
+
+                                float width = currentSize;
+                                float height = currentSize * stretchFactor;
+
+                                vec2 scaledOffset = position.xy;
+                                scaledOffset.x *= width;
+                                scaledOffset.y *= height; 
+
+                                vec2 rotatedOffset;
+                                rotatedOffset.x = scaledOffset.x * dir.y + scaledOffset.y * dir.x;
+                                rotatedOffset.y = -scaledOffset.x * dir.x + scaledOffset.y * dir.y;
+
+                                mvPosition.xy += rotatedOffset;
+                            } // Koniec warunku położenia
+                            
+                            gl_Position = projectionMatrix * mvPosition;
+                        }
+                    `,
+                    fragmentShader: `
+                        uniform sampler2D uTexture;
+                        varying vec3 vColor;
+                        varying float vAlpha;
+                        varying vec2 vUv;
+                        varying float vType; // Odbiór typu z Vertex Shadera
+
+                        void main() {
+                            if (vType > 4.5) {
+                                // Generowanie matematycznego pierścienia (Brak tekstury!)
+                                float dist = length(vUv - vec2(0.5)) * 2.0; 
+                                
+                                // MASKA: Całkowicie odcina rogi kwadratu (wszystko gdzie dist >= 1.0)
+                                float outerMask = 1.0 - smoothstep(0.95, 1.0, dist);
+                                
+                                // Ostra krawędź zewnętrzna, miękkie rozmycie wewnątrz
+                                float ring = smoothstep(0.85, 0.95, dist);
+                                float innerHeat = smoothstep(0.0, 0.9, dist) * 0.15; // Wypełnienie centrum fali
+                                
+                                gl_FragColor = vec4(vColor, (ring + innerHeat) * outerMask * vAlpha);
+                            } else {
+                                // Zwykły render tekstury dla reszty efektów
+                                vec4 texColor = texture2D(uTexture, vUv);
+                                gl_FragColor = vec4(vColor, pow(texColor.a, 1.5) * vAlpha);
+                            }
+                        }
+                    `,
+                    blending: blendingType,
+                    depthWrite: false, 
+                    depthTest: true, 
+                    transparent: true
+                });
+
+                this.mesh = new THREE.Mesh(geo, this.material);
+                this.mesh.frustumCulled = false; 
+                this.mesh.renderOrder = 1000; 
+                scene.add(this.mesh);
+            }
+
+            spawn(x, y, z, vx, vy, vz, size, life, type) {
+                let i = this.activeIndex;
+                this.activeIndex = (this.activeIndex + 1) % this.maxParticles;
+                let i3 = i * 3, i4 = i * 4;
+                
+                this.startPos[i3]=x; this.startPos[i3+1]=y; this.startPos[i3+2]=z;
+                this.startVel[i3]=vx; this.startVel[i3+1]=vy; this.startVel[i3+2]=vz;
+                
+                this.dataInfo[i4] = globalTime;     
+                this.dataInfo[i4+1] = life;         
+                this.dataInfo[i4+2] = size;         
+                this.dataInfo[i4+3] = type;         
+                
+                const geo = this.mesh.geometry;
+                geo.attributes.aStartPos.needsUpdate = true;
+                geo.attributes.aStartVel.needsUpdate = true;
+                geo.attributes.aData.needsUpdate = true;
+            }
+
+            update() {
+                this.material.uniforms.uTime.value = globalTime;
+            }
+        }
+
+        // --- ZWYKŁY GPU PARTICLE MANAGER ---
+        class GPUParticleManager {
+            constructor(scene, maxParticles, blendingType) {
+                this.maxParticles = maxParticles;
+                this.activeIndex = 0; 
+                
+                const geo = new THREE.BufferGeometry();
+                this.startPos = new Float32Array(maxParticles * 3);
+                this.startVel = new Float32Array(maxParticles * 3);
+                this.dataInfo = new Float32Array(maxParticles * 4); 
+                const dummyPos = new Float32Array(maxParticles * 3);
+                
+                geo.setAttribute('position', new THREE.BufferAttribute(dummyPos, 3)); 
+                geo.setAttribute('aStartPos', new THREE.BufferAttribute(this.startPos, 3));
+                geo.setAttribute('aStartVel', new THREE.BufferAttribute(this.startVel, 3));
+                geo.setAttribute('aData', new THREE.BufferAttribute(this.dataInfo, 4));
+
+                const canvas = document.createElement('canvas');
+                canvas.width = 64; canvas.height = 64;
+                const ctx = canvas.getContext('2d');
+                const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+                grad.addColorStop(0, 'rgba(255,255,255,1)');
+                grad.addColorStop(0.2, 'rgba(255,255,255,0.8)');
+                grad.addColorStop(0.5, 'rgba(255,255,255,0.2)');
+                grad.addColorStop(1, 'rgba(255,255,255,0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0,0,64,64);
+                const texture = new THREE.CanvasTexture(canvas);
+
+                this.material = new THREE.ShaderMaterial({
+                    uniforms: { 
+                        uTime: { value: 0 },
+                        uTexture: { value: texture },
+                        u_smokeSize: { value: window.FlameSettings.smokeSize }
+                    },
+                    vertexShader: `
+                        attribute vec3 aStartPos;
+                        attribute vec3 aStartVel;
+                        attribute vec4 aData; 
+                        
+                        uniform float uTime;
+                        uniform float u_smokeSize;
+                        
+                        varying vec3 vColor;
+                        varying float vAlpha;
+
+                        void main() {
+                            float startTime = aData.x;
+                            float maxLife = aData.y;
+                            float age = uTime - startTime;
+
+                            if (age < 0.0 || age > maxLife) {
+                                gl_Position = vec4(9999.0, 9999.0, 9999.0, 1.0);
+                                return;
+                            }
+
+                            float ratio = 1.0 - (age / maxLife); 
+                            float ageNorm = age / maxLife;
+                            
+                            float noiseX = sin(age * 10.0 + aStartPos.y * 0.02) * 20.0;
+                            float noiseY = cos(age * 12.0 + aStartPos.x * 0.02) * 20.0;
+                            
+                            vec3 pos = aStartPos + aStartVel * age;
+                            pos.x += noiseX * age * 2.0;
+                            pos.y += noiseY * age * 2.0;
+                            // Dym unosi się do góry (buoyancy)
+                            pos.z += 80.0 * age + age * age * 150.0; 
+                            
+                            // Szybszy wzrost dymu
+                            float currentSize = u_smokeSize + (age * 600.0);
+                            vColor = vec3(0.08, 0.09, 0.10); 
+                            vAlpha = smoothstep(0.0, 0.2, ageNorm) * ratio * 0.6;
+
+                            vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                            gl_PointSize = currentSize * (2000.0 / -mvPosition.z); 
+                            gl_Position = projectionMatrix * mvPosition;
+                        }
+                    `,
+                    fragmentShader: `
+                        uniform sampler2D uTexture;
+                        varying vec3 vColor;
+                        varying float vAlpha;
+                        void main() {
+                            vec4 texColor = texture2D(uTexture, gl_PointCoord);
+                            gl_FragColor = vec4(vColor, texColor.a * vAlpha);
+                        }
+                    `,
+                    blending: blendingType,
+                    depthWrite: false, 
+                    depthTest: true, 
+                    transparent: true
+                });
+
+                this.points = new THREE.Points(geo, this.material);
+                this.points.frustumCulled = false; 
+                this.points.renderOrder = 999; 
+                scene.add(this.points);
+            }
+
+            spawn(x, y, z, vx, vy, vz, size, life, type) {
+                let i = this.activeIndex;
+                this.activeIndex = (this.activeIndex + 1) % this.maxParticles;
+                let i3 = i * 3, i4 = i * 4;
+                
+                this.startPos[i3]=x; this.startPos[i3+1]=y; this.startPos[i3+2]=z;
+                this.startVel[i3]=vx; this.startVel[i3+1]=vy; this.startVel[i3+2]=vz;
+                
+                this.dataInfo[i4] = globalTime;     
+                this.dataInfo[i4+1] = life;         
+                this.dataInfo[i4+2] = size;         
+                this.dataInfo[i4+3] = type;         
+                
+                const geo = this.points.geometry;
+                geo.attributes.aStartPos.needsUpdate = true;
+                geo.attributes.aStartVel.needsUpdate = true;
+                geo.attributes.aData.needsUpdate = true;
+            }
+
+            update() {
+                this.material.uniforms.uTime.value = globalTime;
+            }
+        }
+
+        class RocketManager {
+            constructor(scene, maxRockets) {
+                this.maxRockets = maxRockets;
+                this.rockets = [];
+                const geo = new THREE.CylinderGeometry(8, 16, 160, 8);
+                geo.rotateX(Math.PI / 2); 
+                const mat = new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: 0.9, roughness: 0.2 });
+                this.mesh = new THREE.InstancedMesh(geo, mat, maxRockets);
+                this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+                this.mesh.frustumCulled = false; 
+                scene.add(this.mesh);
+                
+                for(let i=0; i<maxRockets; i++) {
+                    this.rockets.push({ active: false, prevExhaustPos: new THREE.Vector3() });
+                    _dummy.position.set(0,0,-999999);
+                    _dummy.updateMatrix();
+                    this.mesh.setMatrixAt(i, _dummy.matrix);
+                }
+            }
+
+            fire(startPos, targetObj, colorTheme) {
+                let r = null, index = -1;
+                for(let i=0; i<this.maxRockets; i++) {
+                    if(!this.rockets[i].active) { r = this.rockets[i]; index = i; break; }
+                }
+                if(!r) return; 
+                r.active = true;
+                r.index = index;
+                r.position = startPos.clone();
+                r.velocity = new THREE.Vector3((Math.random()-0.5)*1500, (Math.random()-0.5)*1500, 1500 + Math.random()*1000);
+                r.quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,-1), new THREE.Vector3(0,0,1));
+                r.target = targetObj;
+                r.state = 'EJECTED';
+                r.timeSinceLaunch = 0;
+                r.mass = 8000; 
+                r.maxThrust = 18000000; 
+                r.currentThrust = 0;
+                r.turnSpeed = 1.0 + Math.random() * 0.6; 
+                r.prevExhaustPos.copy(startPos);
+
+                const isRed = colorTheme === 'red';
+                const themeCol = isRed ? new THREE.Color(0xff3333) : new THREE.Color(0x3377ff);
+                this.mesh.setColorAt(index, themeCol);
+                this.mesh.instanceColor.needsUpdate = true;
+            }
+
+            update(delta) {
+                let matricesUpdated = false;
+                for(let i=0; i<this.maxRockets; i++) {
+                    let r = this.rockets[i];
+                    if(!r.active) continue;
+                    matricesUpdated = true;
+                    r.timeSinceLaunch += delta;
+
+                    if (r.state === 'EJECTED') {
+                        if (r.velocity.z < -50 || r.timeSinceLaunch > 1.0) {
+                            r.state = 'POWERED';
+                            r.currentThrust = r.maxThrust; 
+                        }
+                    }
+
+                    const weight = r.mass * PHYSICS.gravity;
+                    _force.set(0, 0, -weight);
+                    _forward.set(0, 0, -1).applyQuaternion(r.quaternion).normalize();
+                    if (r.currentThrust > 0) _force.addScaledVector(_forward, r.currentThrust);
+                    
+                    const speedSq = r.velocity.lengthSq();
+                    if (speedSq > 0) {
+                        _drag.copy(r.velocity).normalize().negate();
+                        _force.addScaledVector(_drag, speedSq * PHYSICS.airDrag);
+                    }
+                    
+                    r.velocity.addScaledVector(_force.divideScalar(r.mass), delta);
+                    r.position.addScaledVector(r.velocity, delta);
+
+                    _dummy.position.copy(r.position);
+                    _dummy.quaternion.copy(r.quaternion);
+                    _dummy.updateMatrix();
+                    this.mesh.setMatrixAt(r.index, _dummy.matrix);
+
+                    // Cofnięto wylot do 60 (z 80), aby ogień wychodził delikatnie ze ŚRODKA dyszy, ukrywając lukę
+                    _exhaustPos.set(0, 0, 60).applyMatrix4(_dummy.matrix);
+                    
+                    if (r.currentThrust > 0) {
+                        const distSinceLast = _exhaustPos.distanceTo(r.prevExhaustPos);
+                        const steps = Math.min(15, Math.ceil(distSinceLast / 12)); 
+                        
+                        for(let s = 0; s < steps; s++) {
+                            // Lekkie zaburzenie interpolacji, żeby nie spawnować w idealnych odstępach
+                            const jitterT = (s + (Math.random()*0.4 - 0.2)) / steps;
+                            const t = THREE.MathUtils.clamp(jitterT, 0.0, 1.0);
+                            const spawnX = THREE.MathUtils.lerp(r.prevExhaustPos.x, _exhaustPos.x, t);
+                            const spawnY = THREE.MathUtils.lerp(r.prevExhaustPos.y, _exhaustPos.y, t);
+                            const spawnZ = THREE.MathUtils.lerp(r.prevExhaustPos.z, _exhaustPos.z, t);
+                            
+                            // Większy randomowy spread na boki
+                            const velX = -_forward.x * 1200 * window.FlameSettings.velMult + (Math.random()-0.5)*180;
+                            const velY = -_forward.y * 1200 * window.FlameSettings.velMult + (Math.random()-0.5)*180;
+                            const velZ = -_forward.z * 1200 * window.FlameSettings.velMult + (Math.random()-0.5)*180;
+
+                            fireParticleSystem.spawn(spawnX, spawnY, spawnZ, velX, velY, velZ, 0, window.FlameSettings.life + Math.random()*0.05, 0); 
+                        }
+                        
+                        if(Math.random() > 0.6) {
+                            smokeParticleSystem.spawn(_exhaustPos.x, _exhaustPos.y, _exhaustPos.z,
+                                (Math.random()-0.5)*300, (Math.random()-0.5)*300, 50 + Math.random()*150,
+                                0, 1.5 + Math.random()*1.5, 1);
+                        }
+                    } else if (r.state === 'EJECTED' && Math.random() > 0.5) {
+                        smokeParticleSystem.spawn(_exhaustPos.x, _exhaustPos.y, _exhaustPos.z, 0,0,-200, 0, 0.3, 1);
+                    }
+
+                    r.prevExhaustPos.copy(_exhaustPos);
+
+                    if (r.state === 'POWERED' && r.target) {
+                        _targetDir.subVectors(r.target.position, r.position).normalize();
+                        _qTarget.setFromUnitVectors(new THREE.Vector3(0,0,-1), _targetDir);
+                        r.quaternion.slerp(_qTarget, r.turnSpeed * delta);
+                    }
+
+                    if (r.position.z <= 160 && r.velocity.z < 0) {
+                        this.explode(r);
+                    } else if (r.target && r.position.distanceTo(r.target.position) < 800) {
+                        if (r.target.userData.hitMaterial) {
+                            r.target.userData.hitMaterial.emissive.setHex(0x333333);
+                            setTimeout(() => { if (r.target && r.target.userData.hitMaterial) r.target.userData.hitMaterial.emissive.setHex(0x000000); }, 50);
+                        }
+                        this.explode(r);
+                    }
+                }
+                if(matricesUpdated) this.mesh.instanceMatrix.needsUpdate = true;
+            }
+
+            explode(r) {
+                r.active = false;
+                _dummy.position.set(0,0,-999999);
+                _dummy.updateMatrix();
+                this.mesh.setMatrixAt(r.index, _dummy.matrix);
+                
+                const explodeZ = Math.max(r.position.z, 160);
+                const eSize = window.FlameSettings.explosionSize;
+                
+                // 1. FLASH - jeden wielki, krótki rozbłysk (typ 3, ale krótki czas życia i ogromny rozmiar)
+                fireParticleSystem.spawn(r.position.x, r.position.y, explodeZ, 0,0,0, 250 * eSize, 0.1, 3);
+
+                // 2. CORE EXPLOSION - więcej cząsteczek ognia (typ 3)
+                for(let i=0; i<80; i++) {
+                    const speed = (500 + Math.random() * 3500) * eSize;
+                    // Losowy kierunek na sferze
+                    const theta = Math.random() * Math.PI * 2;
+                    const phi = Math.acos(2 * Math.random() - 1);
+                    const vx = speed * Math.sin(phi) * Math.cos(theta);
+                    const vy = speed * Math.sin(phi) * Math.sin(theta);
+                    const vz = speed * Math.cos(phi);
+
+                    fireParticleSystem.spawn(r.position.x, r.position.y, explodeZ,
+                        vx, vy, vz, 
+                        (30 + Math.random()*40)*eSize, 
+                        0.2 + Math.random()*0.4, 
+                        3);
+                }
+                
+                // 3. SPARKS - odłamki (nowy typ 4)
+                for(let i=0; i<60; i++) {
+                    const speed = (2000 + Math.random() * 5000) * eSize;
+                    const theta = Math.random() * Math.PI * 2;
+                    const phi = Math.acos(2 * Math.random() - 1);
+                    const vx = speed * Math.sin(phi) * Math.cos(theta);
+                    const vy = speed * Math.sin(phi) * Math.sin(theta);
+                    const vz = speed * Math.cos(phi);
+
+                    fireParticleSystem.spawn(r.position.x, r.position.y, explodeZ,
+                        vx, vy, vz,
+                        (5 + Math.random()*10)*eSize,
+                        0.3 + Math.random()*0.3,
+                        4); 
+                }
+
+                // 4. SMOKE - więcej dymu, który się unosi (typ 1)
+                for(let i=0; i<50; i++) {
+                     const speed = (100 + Math.random() * 1500) * eSize;
+                    const theta = Math.random() * Math.PI * 2;
+                    const phi = Math.acos(2 * Math.random() - 1);
+                    const vx = speed * Math.sin(phi) * Math.cos(theta);
+                    const vy = speed * Math.sin(phi) * Math.sin(theta);
+                    const vz = speed * Math.cos(phi);
+                    
+                    smokeParticleSystem.spawn(r.position.x, r.position.y, explodeZ,
+                        vx, vy, vz + 500, // Dodatkowy pęd w górę dla dymu
+                        (100*eSize + Math.random()*200*eSize), 
+                        1.5 + Math.random()*1.5, 
+                        1);
+                }
+
+                // 5. SHOCKWAVE / HEAT WAVE - Rozszerzający się, płaski okrąg wokół eksplozji
+                fireParticleSystem.spawn(r.position.x, r.position.y, explodeZ + 10,
+                    0, 0, 0, // Bez wektora prędkości (poszerza się przez Shader)
+                    0, // Start Size ignorowany
+                    0.5 + Math.random()*0.2, // Krótki czas życia fali (0.5 - 0.7s)
+                    5); // TYP 5 (Shockwave)
+            }
+        }
+
+        function fireSalvo() {
+            const warn = document.getElementById('warning');
+            warn.style.opacity = 1;
+            setTimeout(() => warn.style.opacity = 0, 2000);
+            if (!armiesReady || friendlyShips.length === 0 || enemyShips.length === 0) return;
+            
+            friendlyShips.forEach((ship) => {
+                for(let i=0; i<20; i++) {
+                    setTimeout(() => {
+                        const target = enemyShips[Math.floor(Math.random() * enemyShips.length)];
+                        const offset = new THREE.Vector3((Math.random()-0.5)*400, (Math.random()-0.5)*400, 400);
+                        rocketManager.fire(ship.position.clone().add(offset), target, 'blue');
+                    }, i * 100 + Math.random() * 80);
+                }
+            });
+
+            enemyShips.forEach((ship) => {
+                for(let i=0; i<20; i++) {
+                    setTimeout(() => {
+                        const target = friendlyShips[Math.floor(Math.random() * friendlyShips.length)];
+                        const offset = new THREE.Vector3((Math.random()-0.5)*400, (Math.random()-0.5)*400, 400);
+                        rocketManager.fire(ship.position.clone().add(offset), target, 'red');
+                    }, 1000 + i * 100 + Math.random() * 80 + Math.random() * 500); 
+                }
+            });
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function onMouseDown(event) {
+            if(event.target.closest('#tuning-ui')) return;
+            if (event.button === 0) fireSalvo();
+        }
+
+        function animate() {
+            setTimeout(animate, 0);
+            
+            if (stats) stats.update(); 
+            
+            const now = performance.now();
+            const delta = Math.min((now - lastTime) / 1000, 0.05); 
+            lastTime = now;
+            globalTime += delta; 
+            
+            if (targetDistance > 0) {
+                const currentDistance = camera.position.distanceTo(controls.target);
+                const newDistance = THREE.MathUtils.lerp(currentDistance, targetDistance, delta * 12);
+                const direction = new THREE.Vector3().subVectors(camera.position, controls.target).normalize();
+                camera.position.copy(controls.target).add(direction.multiplyScalar(newDistance));
+            }
+            controls.update();
+            rocketManager.update(delta);
+            
+            fireParticleSystem.update(); 
+            smokeParticleSystem.update();
+            
+            composer.render();
+        }
+
+        init();
+        lastTime = performance.now();
+        animate();
+    </script>
+</body>
+</html>

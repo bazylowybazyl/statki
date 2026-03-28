@@ -6,9 +6,38 @@ const BLOOM_DEFAULTS = Object.freeze({
   strength: 0.35,
   radius: 0.18,
   threshold: 0.95,
-  resolutionScale: 1,
+  resolutionScale: 1.0,
+  overlayStrength: 2.5,
+  overlayRadius: 0.5,
+  overlayThreshold: 0.1,
   planetBloomMultiplier: 1.0
 });
+
+const CONTROL_SECTIONS = Object.freeze([
+  {
+    title: 'Core3D',
+    controls: [
+      { label: 'Strength', min: 0, max: 5, step: 0.01, key: 'strength' },
+      { label: 'Radius', min: 0, max: 2, step: 0.01, key: 'radius' },
+      { label: 'Threshold', min: 0, max: 2, step: 0.01, key: 'threshold' },
+      { label: 'Resolution', min: 0.5, max: 1.0, step: 0.01, key: 'resolutionScale' }
+    ]
+  },
+  {
+    title: 'Overlay FX',
+    controls: [
+      { label: 'FX Strength', min: 0, max: 5, step: 0.01, key: 'overlayStrength' },
+      { label: 'FX Radius', min: 0, max: 2, step: 0.01, key: 'overlayRadius' },
+      { label: 'FX Threshold', min: 0, max: 2, step: 0.01, key: 'overlayThreshold' }
+    ]
+  },
+  {
+    title: 'Planets',
+    controls: [
+      { label: 'Planet HDR', min: 0, max: 5, step: 0.01, key: 'planetBloomMultiplier' }
+    ]
+  }
+]);
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -28,6 +57,9 @@ function ensureBloomState() {
   bloom.radius = clamp(toNumber(bloom.radius, BLOOM_DEFAULTS.radius), 0, 2);
   bloom.threshold = clamp(toNumber(bloom.threshold, BLOOM_DEFAULTS.threshold), 0, 2);
   bloom.resolutionScale = clamp(toNumber(bloom.resolutionScale, BLOOM_DEFAULTS.resolutionScale), 0.5, 1.0);
+  bloom.overlayStrength = clamp(toNumber(bloom.overlayStrength, BLOOM_DEFAULTS.overlayStrength), 0, 5);
+  bloom.overlayRadius = clamp(toNumber(bloom.overlayRadius, BLOOM_DEFAULTS.overlayRadius), 0, 2);
+  bloom.overlayThreshold = clamp(toNumber(bloom.overlayThreshold, BLOOM_DEFAULTS.overlayThreshold), 0, 2);
   bloom.planetBloomMultiplier = clamp(toNumber(bloom.planetBloomMultiplier, BLOOM_DEFAULTS.planetBloomMultiplier), 0, 5);
 
   devVfx.planetBloomMultiplier = bloom.planetBloomMultiplier;
@@ -53,6 +85,9 @@ function saveBloomState(bloom) {
       radius: bloom.radius,
       threshold: bloom.threshold,
       resolutionScale: bloom.resolutionScale,
+      overlayStrength: bloom.overlayStrength,
+      overlayRadius: bloom.overlayRadius,
+      overlayThreshold: bloom.overlayThreshold,
       planetBloomMultiplier: bloom.planetBloomMultiplier
     }));
   } catch {
@@ -60,7 +95,11 @@ function saveBloomState(bloom) {
   }
 }
 
-function applyToCore3D(bloom) {
+function applyBloomState(bloom) {
+  const devVfx = (window.DevVFX = window.DevVFX || {});
+  devVfx.bloom = bloom;
+  devVfx.planetBloomMultiplier = bloom.planetBloomMultiplier;
+
   const core3d = window.Core3D || null;
   if (core3d) {
     const nextScale = clamp(toNumber(bloom.resolutionScale, BLOOM_DEFAULTS.resolutionScale), 0.5, 1.0);
@@ -70,16 +109,21 @@ function applyToCore3D(bloom) {
         core3d.resize(core3d.width || window.innerWidth, core3d.height || window.innerHeight);
       }
     }
+    if (typeof core3d._applyBloomPassConfig === 'function') {
+      core3d._applyBloomPassConfig();
+    } else if (core3d.bloomPass) {
+      core3d.bloomPass.strength = bloom.strength;
+      core3d.bloomPass.radius = bloom.radius;
+      core3d.bloomPass.threshold = bloom.threshold;
+    }
   }
 
-  const pass = window.Core3D?.bloomPass;
-  if (!pass) return;
-  pass.strength = bloom.strength;
-  pass.radius = bloom.radius;
-  pass.threshold = bloom.threshold;
-
-  if (window.DevVFX) {
-    window.DevVFX.planetBloomMultiplier = bloom.planetBloomMultiplier;
+  if (window.overlay3D?.setBloomConfig) {
+    window.overlay3D.setBloomConfig({
+      strength: bloom.overlayStrength,
+      radius: bloom.overlayRadius,
+      threshold: bloom.overlayThreshold
+    });
   }
 }
 
@@ -99,6 +143,11 @@ function ensureStyle() {
   text-transform:uppercase; color:#9fc1ff;
 }
 #${PANEL_ID} .body{ padding:10px 12px 12px; }
+#${PANEL_ID} .section{
+  margin:10px 0 4px; padding-top:8px; border-top:1px solid rgba(60,85,134,.45);
+  font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:#8fb3ff;
+}
+#${PANEL_ID} .section:first-child{ margin-top:0; padding-top:0; border-top:none; }
 #${PANEL_ID} .row{
   display:grid; grid-template-columns:95px 1fr 78px 56px; gap:8px; align-items:center; margin:8px 0;
 }
@@ -120,8 +169,15 @@ function ensureStyle() {
   document.head.appendChild(style);
 }
 
-function createControlRow(parent, options) {
-  const { label, min, max, step, key, state } = options;
+function createSectionHeader(parent, title) {
+  const section = document.createElement('div');
+  section.className = 'section';
+  section.textContent = title;
+  parent.appendChild(section);
+}
+
+function createControlRow(parent, options, state) {
+  const { label, min, max, step, key } = options;
   const row = document.createElement('div');
   row.className = 'row';
   row.innerHTML = `
@@ -141,7 +197,7 @@ function createControlRow(parent, options) {
     number.value = String(next);
     value.textContent = Number(next).toFixed(2);
     saveBloomState(state);
-    applyToCore3D(state);
+    applyBloomState(state);
   };
 
   range.addEventListener('input', () => apply(range.value));
@@ -149,6 +205,16 @@ function createControlRow(parent, options) {
 
   apply(state[key]);
   parent.appendChild(row);
+}
+
+function buildControls(parent, state) {
+  parent.innerHTML = '';
+  for (const section of CONTROL_SECTIONS) {
+    createSectionHeader(parent, section.title);
+    for (const control of section.controls) {
+      createControlRow(parent, control, state);
+    }
+  }
 }
 
 function createPanel(state) {
@@ -169,11 +235,7 @@ function createPanel(state) {
   `;
 
   const controls = panel.querySelector('.controls');
-  createControlRow(controls, { label: 'Strength', min: 0, max: 5, step: 0.01, key: 'strength', state });
-  createControlRow(controls, { label: 'Radius', min: 0, max: 2, step: 0.01, key: 'radius', state });
-  createControlRow(controls, { label: 'Threshold', min: 0, max: 2, step: 0.01, key: 'threshold', state });
-  createControlRow(controls, { label: 'Resolution', min: 0.5, max: 1.0, step: 0.01, key: 'resolutionScale', state });
-  createControlRow(controls, { label: 'Planet HDR', min: 0, max: 5, step: 0.01, key: 'planetBloomMultiplier', state });
+  buildControls(controls, state);
 
   panel.querySelector('button[data-action="copy"]')?.addEventListener('click', async () => {
     const payload = {
@@ -181,7 +243,11 @@ function createPanel(state) {
         strength: state.strength,
         radius: state.radius,
         threshold: state.threshold,
-        resolutionScale: state.resolutionScale
+        resolutionScale: state.resolutionScale,
+        overlayStrength: state.overlayStrength,
+        overlayRadius: state.overlayRadius,
+        overlayThreshold: state.overlayThreshold,
+        planetBloomMultiplier: state.planetBloomMultiplier
       }
     };
     const text = JSON.stringify(payload, null, 2);
@@ -194,21 +260,13 @@ function createPanel(state) {
   });
 
   panel.querySelector('button[data-action="reset"]')?.addEventListener('click', () => {
-    state.strength = BLOOM_DEFAULTS.strength;
-    state.radius = BLOOM_DEFAULTS.radius;
-    state.threshold = BLOOM_DEFAULTS.threshold;
-    state.resolutionScale = BLOOM_DEFAULTS.resolutionScale;
-    saveBloomState(state);
-    applyToCore3D(state);
-    const controlsRoot = panel.querySelector('.controls');
-    if (controlsRoot) {
-      controlsRoot.innerHTML = '';
-      createControlRow(controlsRoot, { label: 'Strength', min: 0, max: 5, step: 0.01, key: 'strength', state });
-      createControlRow(controlsRoot, { label: 'Radius', min: 0, max: 2, step: 0.01, key: 'radius', state });
-      createControlRow(controlsRoot, { label: 'Threshold', min: 0, max: 2, step: 0.01, key: 'threshold', state });
-      createControlRow(controlsRoot, { label: 'Resolution', min: 0.5, max: 1.0, step: 0.01, key: 'resolutionScale', state });
-      createControlRow(controlsRoot, { label: 'Planet HDR', min: 0, max: 5, step: 0.01, key: 'planetBloomMultiplier', state });
+    for (const [key, value] of Object.entries(BLOOM_DEFAULTS)) {
+      state[key] = value;
     }
+    saveBloomState(state);
+    applyBloomState(state);
+    const controlsRoot = panel.querySelector('.controls');
+    if (controlsRoot) buildControls(controlsRoot, state);
   });
 
   document.body.appendChild(panel);
@@ -218,7 +276,7 @@ function createPanel(state) {
 export function initBloomTunerPanel(options = {}) {
   ensureStyle();
   const bloomState = ensureBloomState();
-  applyToCore3D(bloomState);
+  applyBloomState(bloomState);
   const panel = createPanel(bloomState);
 
   const togglePanel = () => {
@@ -252,7 +310,11 @@ export function initBloomTunerPanel(options = {}) {
       strength: bloomState.strength,
       radius: bloomState.radius,
       threshold: bloomState.threshold,
-      resolutionScale: bloomState.resolutionScale
+      resolutionScale: bloomState.resolutionScale,
+      overlayStrength: bloomState.overlayStrength,
+      overlayRadius: bloomState.overlayRadius,
+      overlayThreshold: bloomState.overlayThreshold,
+      planetBloomMultiplier: bloomState.planetBloomMultiplier
     }),
     set: (next = {}) => {
       if (next && typeof next === 'object') {
@@ -260,8 +322,14 @@ export function initBloomTunerPanel(options = {}) {
         if (next.radius != null) bloomState.radius = clamp(toNumber(next.radius, bloomState.radius), 0, 2);
         if (next.threshold != null) bloomState.threshold = clamp(toNumber(next.threshold, bloomState.threshold), 0, 2);
         if (next.resolutionScale != null) bloomState.resolutionScale = clamp(toNumber(next.resolutionScale, bloomState.resolutionScale), 0.5, 1.0);
+        if (next.overlayStrength != null) bloomState.overlayStrength = clamp(toNumber(next.overlayStrength, bloomState.overlayStrength), 0, 5);
+        if (next.overlayRadius != null) bloomState.overlayRadius = clamp(toNumber(next.overlayRadius, bloomState.overlayRadius), 0, 2);
+        if (next.overlayThreshold != null) bloomState.overlayThreshold = clamp(toNumber(next.overlayThreshold, bloomState.overlayThreshold), 0, 2);
+        if (next.planetBloomMultiplier != null) bloomState.planetBloomMultiplier = clamp(toNumber(next.planetBloomMultiplier, bloomState.planetBloomMultiplier), 0, 5);
         saveBloomState(bloomState);
-        applyToCore3D(bloomState);
+        applyBloomState(bloomState);
+        const controlsRoot = panel?.querySelector('.controls');
+        if (controlsRoot) buildControls(controlsRoot, bloomState);
       }
       return window.__bloomPanel;
     }

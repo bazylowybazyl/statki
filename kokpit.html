@@ -1633,11 +1633,14 @@
         #space-window,
         .cockpit-base,
         .overhead-console,
-        .side-panel {
-            transition: all 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+        .side-panel,
+        .bottom-panel {
+            transition: transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1),
+                        opacity 0.6s cubic-bezier(0.2, 0.8, 0.2, 1),
+                        pointer-events 0s 0.3s !important;
         }
 
-        /* WIDOK: CENTRUM (Domyślny) */
+        /* WIDOK: CENTRUM (Domyślny) — overhead console UKRYTA */
         body[data-view="center"] #space-window {
             transform: translateX(0) scale(1.05);
         }
@@ -1649,9 +1652,9 @@
         }
 
         body[data-view="center"] .overhead-console {
-            transform: translateX(-50%) rotateX(-10deg);
-            opacity: 1;
-            pointer-events: auto;
+            transform: translateX(-50%) translateY(-100%) rotateX(-20deg);
+            opacity: 0;
+            pointer-events: none;
         }
 
         body[data-view="center"] .left-panel {
@@ -1666,6 +1669,33 @@
             opacity: 0.4;
         }
 
+        /* WIDOK: GÓRA — overhead console WIDOCZNA */
+        body[data-view="up"] #space-window {
+            transform: translateX(0) translateY(5%) scale(1.05) rotateX(3deg);
+        }
+
+        body[data-view="up"] .cockpit-base {
+            transform: translateX(-50%) translateY(320px) rotateX(15deg);
+            opacity: 0.3;
+            pointer-events: none;
+        }
+
+        body[data-view="up"] .overhead-console {
+            transform: translateX(-50%) translateY(10px) rotateX(-5deg);
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        body[data-view="up"] .left-panel {
+            left: -350px;
+            opacity: 0;
+        }
+
+        body[data-view="up"] .right-panel {
+            right: -350px;
+            opacity: 0;
+        }
+
         /* WIDOK: LEWO */
         body[data-view="left"] #space-window {
             transform: translateX(5%) scale(1.05);
@@ -1678,8 +1708,8 @@
         }
 
         body[data-view="left"] .overhead-console {
-            transform: translateX(calc(-50% + 400px)) rotateX(-10deg) rotateY(25deg);
-            opacity: 0.3;
+            transform: translateX(calc(-50% + 400px)) translateY(-100%) rotateX(-20deg) rotateY(25deg);
+            opacity: 0;
             pointer-events: none;
         }
 
@@ -1708,8 +1738,8 @@
         }
 
         body[data-view="right"] .overhead-console {
-            transform: translateX(calc(-50% - 400px)) rotateX(-10deg) rotateY(-25deg);
-            opacity: 0.3;
+            transform: translateX(calc(-50% - 400px)) translateY(-100%) rotateX(-20deg) rotateY(-25deg);
+            opacity: 0;
             pointer-events: none;
         }
 
@@ -1737,8 +1767,12 @@
             pointer-events: auto;
         }
 
+        body[data-view="down"] .bottom-panel {
+            transform: rotateX(25deg);
+        }
+
         body[data-view="down"] .overhead-console {
-            transform: translateX(-50%) translateY(-100px) rotateX(-20deg);
+            transform: translateX(-50%) translateY(-100%) rotateX(-20deg);
             opacity: 0;
             pointer-events: none;
         }
@@ -1751,6 +1785,12 @@
         body[data-view="down"] .right-panel {
             right: -350px;
             opacity: 0;
+        }
+
+        /* Zachowanie pochylenia dolnego panelu we WSZYSTKICH widokach */
+        body[data-view="left"] .bottom-panel,
+        body[data-view="right"] .bottom-panel {
+            transform: rotateX(25deg);
         }
 
         /* --- RESPONSIVE OCHRONA --- */
@@ -2069,7 +2109,7 @@
             if (e.code === 'ArrowLeft') setView('left');
             else if (e.code === 'ArrowRight') setView('right');
             else if (e.code === 'ArrowDown') setView('down');
-            else if (e.code === 'ArrowUp') setView('center'); // Strzałka w górę zawsze wraca na środek
+            else if (e.code === 'ArrowUp') setView('up'); // Strzałka w górę pokazuje konsolę sufitową
         }, { passive: false });
 
         // --- OBSŁUGA STACYJEK ---

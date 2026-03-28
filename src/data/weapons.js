@@ -28,7 +28,7 @@ export const MASTER_WEAPONS = {
   },
   vulcan_minigun: { 
     id: 'vulcan_minigun', name: 'Vulcan Minigun', mountType: 'main', category: 'autocannon', size: 'M',
-    baseDamage: 4, baseRange: 8000, baseSpeed: 4000, cooldown: 0.04, spread: 0.04,
+    baseDamage: 4, baseRange: 5000, baseSpeed: 4000, cooldown: 0.04, spread: 0.04,
     penetration: 0, energyCost: 5, vfxColor: '#ffaa00',
     model3D: 'vulcan_minigun', render3dOnly: true
   },
@@ -40,12 +40,12 @@ export const MASTER_WEAPONS = {
   },
   heavy_autocannon: { 
     id: 'heavy_autocannon', name: 'Heavy Autocannon', mountType: 'main', category: 'autocannon', size: 'M',
-    baseDamage: 28, baseRange: 9000, baseSpeed: 3000, cooldown: 0.16, spread: 0.04,
+    baseDamage: 28, baseRange: 7000, baseSpeed: 3000, cooldown: 0.16, spread: 0.04,
     penetration: 1, energyCost: 5, vfxColor: '#ffcc8a'
   },
   armata_mk1: { 
     id: 'armata_mk1', name: 'Armata Oblężnicza', mountType: 'main', category: 'armata', size: 'L',
-    baseDamage: 150, baseRange: 10000, baseSpeed: 2500, cooldown: 0.8, spread: 0.005,
+    baseDamage: 150, baseRange: 7000, baseSpeed: 2500, cooldown: 0.8, spread: 0.005,
     explodeRadius: 140, energyCost: 14, vfxColor: '#ff5500',
     recoil: 15, shake: 8, impactScale: 1.0, barrelsPerShot: 1,
     model3D: 'armata_mk1', render3dOnly: true
@@ -70,12 +70,12 @@ export const MASTER_WEAPONS = {
   // ==========================================================================
   ciws_mk1: { 
     id: 'ciws_mk1', name: 'CIWS Mk I', mountType: 'aux', category: 'ciws', size: 'S',
-    baseDamage: 12, baseRange: 600, baseSpeed: 900, cooldown: 0.06, spread: 0.05,
+    baseDamage: 12, baseRange: 2500, baseSpeed: 2000, cooldown: 0.06, spread: 0.05,
     energyCost: 2, vfxColor: '#8cffd0'
   },
   laser_pd_mk1: { 
     id: 'laser_pd_mk1', name: 'Helios PD Laser', mountType: 'aux', category: 'beam', size: 'S',
-    baseDamage: 16, baseRange: 620, baseSpeed: Infinity, cooldown: 0.18, duration: 0.09, spread: 0.0,
+    baseDamage: 16, baseRange: 1500, baseSpeed: Infinity, cooldown: 0.18, duration: 0.09, spread: 0.0,
     energyCost: 3, vfxColor: 'rgba(110,200,255,0.9)'
   },
 

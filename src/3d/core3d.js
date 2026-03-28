@@ -285,6 +285,30 @@ export const Core3D = {
   pixelRatio: 1, width: 0, height: 0, isInitialized: false,
   _clearColorScratch: new THREE.Color(),
 
+  _getBloomConfig() {
+    const bloom = (typeof window !== 'undefined' && window.DevVFX?.bloom) ? window.DevVFX.bloom : null;
+    const strength = Number.isFinite(Number(bloom?.strength)) ? Number(bloom.strength) : this.bloomBaseStrength;
+    const radius = Number.isFinite(Number(bloom?.radius)) ? Number(bloom.radius) : 0.18;
+    const threshold = Number.isFinite(Number(bloom?.threshold)) ? Number(bloom.threshold) : this.bloomBaseThreshold;
+    const resolutionScale = Number.isFinite(Number(bloom?.resolutionScale))
+      ? Number(bloom.resolutionScale)
+      : this.bloomResolutionScale;
+    return {
+      strength: Math.max(0, strength),
+      radius: Math.max(0, radius),
+      threshold: Math.max(0, threshold),
+      resolutionScale: Math.max(0.1, Math.min(1, resolutionScale))
+    };
+  },
+
+  _applyBloomPassConfig() {
+    if (!this.bloomPass) return;
+    const cfg = this._getBloomConfig();
+    this.bloomPass.strength = cfg.strength;
+    this.bloomPass.radius = cfg.radius;
+    this.bloomPass.threshold = cfg.threshold;
+  },
+
   init(canvasElement) {
     if (this.isInitialized) return this;
 
@@ -388,8 +412,15 @@ export const Core3D = {
     this.composer.addPass(this.renderPassOrtho);
     this.composer.addPass(this.renderPassFg);
 
+    const bloomCfg = this._getBloomConfig();
+    this.bloomResolutionScale = bloomCfg.resolutionScale;
     const bloomScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || 1));
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(Math.floor(window.innerWidth * bloomScale), Math.floor(window.innerHeight * bloomScale)), this.bloomBaseStrength, 0.18, this.bloomBaseThreshold);
+    this.bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(Math.floor(window.innerWidth * bloomScale), Math.floor(window.innerHeight * bloomScale)),
+      bloomCfg.strength,
+      bloomCfg.radius,
+      bloomCfg.threshold
+    );
     this.composer.addPass(this.bloomPass);
 
     this.uberPass = new ShaderPass(UberPostShader);
@@ -427,8 +458,8 @@ export const Core3D = {
     if (this.renderPassOrtho) this.renderPassOrtho.enabled = t.orthoPass !== false;
     if (this.renderPassFg) this.renderPassFg.enabled = t.fgPass !== false;
     if (this.bloomPass) this.bloomPass.enabled = t.bloom !== false;
-    if (this.shadowShaftsPass) this.shadowShaftsPass.enabled = true;
-    if (this.uberPass) this.uberPass.enabled = true;
+    if (this.shadowShaftsPass) this.shadowShaftsPass.enabled = t.shadowShafts !== false;
+    if (this.uberPass) this.uberPass.enabled = true; // zawsze wlaczony — ACES + sRGB
     if (this.renderer?.shadowMap) {
       this.renderer.shadowMap.enabled = t.threeShadows !== false;
       this.renderer.shadowMap.needsUpdate = t.threeShadows !== false;
@@ -590,16 +621,9 @@ export const Core3D = {
     let origTop = this.cameraOrtho.top;
     let origBottom = this.cameraOrtho.bottom;
 
-    // BYPASS: gdy wszystkie efekty wyĹ‚Ä…czone, renderuj bezpoĹ›rednio bez compositora
-    if (!bloomOn && !raysEnabled && !heatEnabled && !(typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2)) {
-        // Włączamy natywny Tone Mapping Three.js, by statki nie straciły kinowych kolorów
-        this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        this._renderDirect(dbgEnabled, tRenderTotal0);
-        return; // ZAKOŃCZ TUTAJ! Pomijamy cały morderczy EffectComposer!
-    } else {
-        // Gdy włączamy efekty, UberShader zajmie się Tone Mappingiem
-        this.renderer.toneMapping = THREE.NoToneMapping;
-    }
+    // UberPost zawsze wlaczony — ACES tonemapping + linear→sRGB
+    // Composer dziala nawet gdy bloom/heatHaze/shadowShafts sa off (passes disabled).
+    this.renderer.toneMapping = THREE.NoToneMapping;
 
     if (raysEnabled && this.shadowShaftsPass) {
       const prevAutoClear = this.renderer.autoClear;
@@ -718,9 +742,7 @@ export const Core3D = {
     }
 
     const tBloom0 = dbgEnabled ? performance.now() : 0;
-    if (this.bloomPass && bloomOn) {
-      this.bloomPass.strength = this.bloomBaseStrength * 1.5;
-    }
+    if (this.bloomPass && bloomOn) this._applyBloomPassConfig();
     if (dbgEnabled) recordRenderDbg('coreBloomConfig', performance.now() - tBloom0);
 
     const tPost0 = dbgEnabled ? performance.now() : 0;
@@ -793,6 +815,7 @@ export const Core3D = {
     const renderer = this.renderer;
     const isSplit = typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2;
 
+    // ShaderMaterial outputuje wartosci sRGB bezposrednio - nie zmieniamy colorSpace.
     renderer.autoClear = false;
     renderer.setRenderTarget(null);
     renderer.setClearColor(0x000000, 0.0);

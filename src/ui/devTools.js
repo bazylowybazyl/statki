@@ -30,6 +30,18 @@ const HTML = `
   <div class="row"><label>Slonce - promien 3D (R)</label><input id="sunR3D" type="range" min="50" max="1500" step="1" value="399"><div class="val" id="sunR3DVal"></div></div>
   <div class="row"><label>Planety - skala globalna (x)</label><input id="planetScaleAll" type="range" min="0.5" max="3" step="0.01" value="1"><div class="val" id="planetScaleAllVal"></div></div>
 </div>
+<div class="group">
+  <div class="row"><strong>Earth Lighting</strong> <span class="small muted">(live shader)</span></div>
+  <div class="row"><label>Ambient</label><input id="dt-earth-ambient" type="range" min="0" max="0.05" step="0.001" value="0.05"><input id="dt-earth-ambient-num" type="number" min="0" max="0.05" step="0.001" value="0.05" style="width:72px;"><div class="val" id="dt-earth-ambient-val"></div></div>
+  <div class="row"><label>Sun intensity</label><input id="dt-earth-sunintensity" type="range" min="0.2" max="2.0" step="0.01" value="1"><input id="dt-earth-sunintensity-num" type="number" min="0.2" max="2.0" step="0.01" value="1" style="width:72px;"><div class="val" id="dt-earth-sunintensity-val"></div></div>
+  <div class="row"><label>Specular</label><input id="dt-earth-specular" type="range" min="0" max="1.2" step="0.01" value="1.2"><input id="dt-earth-specular-num" type="number" min="0" max="1.2" step="0.01" value="1.2" style="width:72px;"><div class="val" id="dt-earth-specular-val"></div></div>
+  <div class="row"><label>Sun wrap</label><input id="dt-earth-sunwrap" type="range" min="-0.5" max="0.5" step="0.01" value="0.5"><input id="dt-earth-sunwrap-num" type="number" min="-0.5" max="0.5" step="0.01" value="0.5" style="width:72px;"><div class="val" id="dt-earth-sunwrap-val"></div></div>
+  <div class="row"><label>Brightness</label><input id="dt-earth-brightness" type="range" min="0.5" max="2.0" step="0.01" value="1.2"><input id="dt-earth-brightness-num" type="number" min="0.5" max="2.0" step="0.01" value="1.2" style="width:72px;"><div class="val" id="dt-earth-brightness-val"></div></div>
+  <div class="row"><label>Sunset R</label><input id="dt-earth-sunset-r" type="range" min="0" max="3.0" step="0.01" value="1.4"><input id="dt-earth-sunset-r-num" type="number" min="0" max="3.0" step="0.01" value="1.4" style="width:72px;"><div class="val" id="dt-earth-sunset-r-val"></div></div>
+  <div class="row"><label>Sunset G</label><input id="dt-earth-sunset-g" type="range" min="0" max="3.0" step="0.01" value="0.1"><input id="dt-earth-sunset-g-num" type="number" min="0" max="3.0" step="0.01" value="0.1" style="width:72px;"><div class="val" id="dt-earth-sunset-g-val"></div></div>
+  <div class="row"><label>Sunset B</label><input id="dt-earth-sunset-b" type="range" min="0" max="3.0" step="0.01" value="0.1"><input id="dt-earth-sunset-b-num" type="number" min="0" max="3.0" step="0.01" value="0.1" style="width:72px;"><div class="val" id="dt-earth-sunset-b-val"></div></div>
+  <div class="row"><label>Earth bloom</label><input id="dt-earth-planet-bloom" type="range" min="0" max="2.0" step="0.01" value="0.78"><input id="dt-earth-planet-bloom-num" type="number" min="0" max="2.0" step="0.01" value="0.78" style="width:72px;"><div class="val" id="dt-earth-planet-bloom-val"></div></div>
+</div>
 <div class="group" id="planetsGroup"><div class="row"><strong>Planety (R)</strong> <span class="small muted">(per-planeta)</span></div></div>
 <div class="group" id="distancesGroup"><div class="row"><strong>Dystanse od Slonca</strong> <span class="small muted">(AU -> promien orbity)</span></div></div>
 <div class="group">
@@ -254,7 +266,16 @@ function wireDevToolsLogic() {
     hudCenterY: 'dt-hud-center-y', hudCenterYNum: 'dt-hud-center-y-num', hudCenterYVal: 'dt-hud-center-y-val',
     hudHexY: 'dt-hud-hex-y', hudHexYNum: 'dt-hud-hex-y-num', hudHexYVal: 'dt-hud-hex-y-val',
     hudShieldY: 'dt-hud-shield-y', hudShieldYNum: 'dt-hud-shield-y-num', hudShieldYVal: 'dt-hud-shield-y-val',
-    hudHpY: 'dt-hud-hp-y', hudHpYNum: 'dt-hud-hp-y-num', hudHpYVal: 'dt-hud-hp-y-val'
+    hudHpY: 'dt-hud-hp-y', hudHpYNum: 'dt-hud-hp-y-num', hudHpYVal: 'dt-hud-hp-y-val',
+    earthAmbient: 'dt-earth-ambient', earthAmbientNum: 'dt-earth-ambient-num', earthAmbientVal: 'dt-earth-ambient-val',
+    earthSunIntensity: 'dt-earth-sunintensity', earthSunIntensityNum: 'dt-earth-sunintensity-num', earthSunIntensityVal: 'dt-earth-sunintensity-val',
+    earthSpecular: 'dt-earth-specular', earthSpecularNum: 'dt-earth-specular-num', earthSpecularVal: 'dt-earth-specular-val',
+    earthSunWrap: 'dt-earth-sunwrap', earthSunWrapNum: 'dt-earth-sunwrap-num', earthSunWrapVal: 'dt-earth-sunwrap-val',
+    earthBrightness: 'dt-earth-brightness', earthBrightnessNum: 'dt-earth-brightness-num', earthBrightnessVal: 'dt-earth-brightness-val',
+    earthSunsetR: 'dt-earth-sunset-r', earthSunsetRNum: 'dt-earth-sunset-r-num', earthSunsetRVal: 'dt-earth-sunset-r-val',
+    earthSunsetG: 'dt-earth-sunset-g', earthSunsetGNum: 'dt-earth-sunset-g-num', earthSunsetGVal: 'dt-earth-sunset-g-val',
+    earthSunsetB: 'dt-earth-sunset-b', earthSunsetBNum: 'dt-earth-sunset-b-num', earthSunsetBVal: 'dt-earth-sunset-b-val',
+    earthPlanetBloom: 'dt-earth-planet-bloom', earthPlanetBloomNum: 'dt-earth-planet-bloom-num', earthPlanetBloomVal: 'dt-earth-planet-bloom-val'
   };
   function refreshUIRefs() { for (const [k, id] of Object.entries(uiIds)) ui[k] = el(id); }
   refreshUIRefs();
@@ -262,12 +283,24 @@ function wireDevToolsLogic() {
   // Domyślne wartości
   const DEFAULT_PIRATE_SCALE = 6;
   const DEFAULT_STATION3D_SCALE = 2.70;
+  const DEFAULT_EARTH_LIGHT = Object.freeze({
+    ambient: 0.05,
+    sunIntensity: 1.0,
+    specular: 1.2,
+    sunWrap: 0.5,
+    brightness: 1.2,
+    sunsetR: 1.4,
+    sunsetG: 0.1,
+    sunsetB: 0.1,
+    planetBloom: 0.78
+  });
 
   const DevConfig = window.DevConfig || {
     sunR2D: 823, sunR3D: 399, planetRById: {}, planetOrbitAUById: {},
     planetScaleAll: 1, pirateScale: DEFAULT_PIRATE_SCALE, station3DScale: DEFAULT_STATION3D_SCALE, stationSpriteSize: 1024,
     stationSpriteFrame: 3.00, stationSpriteFrameById: {}, stationScaleById: {},
-    hudOffsets: { centerY: 0, hexY: 0, shieldY: 0, hpY: 0 }
+    hudOffsets: { centerY: 0, hexY: 0, shieldY: 0, hpY: 0 },
+    earthLight: { ...DEFAULT_EARTH_LIGHT }
   };
   window.DevConfig = DevConfig;
   
@@ -289,6 +322,16 @@ function wireDevToolsLogic() {
     }
     for (const [k, v] of Object.entries(DEFAULT_HUD_OFFSETS)) {
       if (!Number.isFinite(DevConfig.hudOffsets[k])) DevConfig.hudOffsets[k] = v;
+    }
+  }
+
+  function ensureEarthLightShape() {
+    if (!DevConfig.earthLight || typeof DevConfig.earthLight !== 'object') {
+      DevConfig.earthLight = { ...DEFAULT_EARTH_LIGHT };
+      return;
+    }
+    for (const [k, v] of Object.entries(DEFAULT_EARTH_LIGHT)) {
+      if (!Number.isFinite(DevConfig.earthLight[k])) DevConfig.earthLight[k] = v;
     }
   }
 
@@ -318,11 +361,39 @@ function wireDevToolsLogic() {
     setHudYOffset('hp-unit', DevConfig.hudOffsets.hpY);
   }
 
+  function applyEarthLightingTo3D() {
+    ensureEarthLightShape();
+    const earth = window.EARTH;
+    const cfg = DevConfig.earthLight;
+    if (!earth?.uniforms) return;
+
+    if (earth.uniforms.uAmbient) earth.uniforms.uAmbient.value = cfg.ambient;
+    if (earth.uniforms.uSunIntensity) earth.uniforms.uSunIntensity.value = cfg.sunIntensity;
+    if (earth.uniforms.uSpecular) earth.uniforms.uSpecular.value = cfg.specular;
+    if (earth.uniforms.uSunWrap) earth.uniforms.uSunWrap.value = cfg.sunWrap;
+    if (earth.uniforms.uBrightness) earth.uniforms.uBrightness.value = cfg.brightness;
+    if (earth.uniforms.sunsetTint?.value?.set) {
+      earth.uniforms.sunsetTint.value.set(cfg.sunsetR, cfg.sunsetG, cfg.sunsetB);
+    }
+    earth.basePlanetBloom = cfg.planetBloom;
+    if (earth.uniforms.uPlanetBloom) {
+      const mul = (window.DevVFX && Number.isFinite(window.DevVFX.planetBloomMultiplier))
+        ? window.DevVFX.planetBloomMultiplier
+        : 1.0;
+      earth.uniforms.uPlanetBloom.value = cfg.planetBloom * mul;
+    }
+    const atmUniforms = earth.atmosphere?.material?.uniforms;
+    if (atmUniforms?.sunsetTint?.value?.set) {
+      atmUniforms.sunsetTint.value.set(cfg.sunsetR, cfg.sunsetG, cfg.sunsetB);
+    }
+  }
+
   function loadLS() {
     try { Object.assign(DevConfig, JSON.parse(localStorage.getItem('devConfig') || '{}')); } catch { }
     // Synchronizacja z Dev
     window.Dev.station3DScale = DevConfig.station3DScale;
     ensureHudOffsetsShape();
+    ensureEarthLightShape();
     try {
       const savedFlags = JSON.parse(localStorage.getItem('devFlags') || '{}');
       if (!window.DevFlags) window.DevFlags = {};
@@ -650,6 +721,44 @@ function wireDevToolsLogic() {
       if (item.range) item.range.addEventListener('input', () => apply(item.range.value));
       if (item.num) item.num.addEventListener('input', () => apply(item.num.value));
       apply(initial);
+    }
+  }
+
+  function setupEarthLightingControls() {
+    ensureEarthLightShape();
+
+    const links = [
+      { key: 'ambient', range: ui.earthAmbient, num: ui.earthAmbientNum, val: ui.earthAmbientVal, min: 0, max: 0.05, digits: 3 },
+      { key: 'sunIntensity', range: ui.earthSunIntensity, num: ui.earthSunIntensityNum, val: ui.earthSunIntensityVal, min: 0.2, max: 2.0, digits: 2 },
+      { key: 'specular', range: ui.earthSpecular, num: ui.earthSpecularNum, val: ui.earthSpecularVal, min: 0, max: 1.2, digits: 2 },
+      { key: 'sunWrap', range: ui.earthSunWrap, num: ui.earthSunWrapNum, val: ui.earthSunWrapVal, min: -0.5, max: 0.5, digits: 2 },
+      { key: 'brightness', range: ui.earthBrightness, num: ui.earthBrightnessNum, val: ui.earthBrightnessVal, min: 0.5, max: 2.0, digits: 2 },
+      { key: 'sunsetR', range: ui.earthSunsetR, num: ui.earthSunsetRNum, val: ui.earthSunsetRVal, min: 0, max: 3.0, digits: 2 },
+      { key: 'sunsetG', range: ui.earthSunsetG, num: ui.earthSunsetGNum, val: ui.earthSunsetGVal, min: 0, max: 3.0, digits: 2 },
+      { key: 'sunsetB', range: ui.earthSunsetB, num: ui.earthSunsetBNum, val: ui.earthSunsetBVal, min: 0, max: 3.0, digits: 2 },
+      { key: 'planetBloom', range: ui.earthPlanetBloom, num: ui.earthPlanetBloomNum, val: ui.earthPlanetBloomVal, min: 0, max: 2.0, digits: 2 }
+    ];
+
+    for (const item of links) {
+      const clamp = (raw) => {
+        let v = Number(raw);
+        if (!Number.isFinite(v)) v = DEFAULT_EARTH_LIGHT[item.key];
+        return Math.max(item.min, Math.min(item.max, v));
+      };
+      const apply = (vRaw) => {
+        const v = clamp(vRaw);
+        DevConfig.earthLight[item.key] = v;
+        if (item.range) item.range.value = String(v);
+        if (item.num) item.num.value = String(v);
+        if (item.val) item.val.textContent = v.toFixed(item.digits);
+        applyEarthLightingTo3D();
+        saveLS();
+        reflectToCfg();
+      };
+
+      if (item.range) item.range.addEventListener('input', () => apply(item.range.value));
+      if (item.num) item.num.addEventListener('input', () => apply(item.num.value));
+      apply(DevConfig.earthLight[item.key]);
     }
   }
 
@@ -995,7 +1104,9 @@ function wireDevToolsLogic() {
   buildStationFramesUI();
   setupPerStationScales();
   setupHudOffsetControls();
+  setupEarthLightingControls();
   applyHudOffsetsToDom();
+  applyEarthLightingTo3D();
 
   // Wypełnienie wartości początkowych w UI
   if (ui.sunR2D) ui.sunR2D.value = DevConfig.sunR2D || 823;
@@ -1017,6 +1128,7 @@ function wireDevToolsLogic() {
   // Pętla odświeżania dla dynamicznie ładowanych obiektów
   setInterval(() => {
     buildStationFramesUI();
+    applyEarthLightingTo3D();
   }, 2000);
 }
 

@@ -39,6 +39,23 @@ export function initOverlay({ host, getView }) {
     throw new Error("initOverlay: host element is required");
   }
 
+  function getOverlayBloomConfig() {
+    const bloom = (typeof window !== 'undefined' && window.DevVFX?.bloom) ? window.DevVFX.bloom : null;
+    return {
+      strength: Math.max(0, Number.isFinite(Number(bloom?.overlayStrength)) ? Number(bloom.overlayStrength) : 2.5),
+      radius: Math.max(0, Number.isFinite(Number(bloom?.overlayRadius)) ? Number(bloom.overlayRadius) : 0.5),
+      threshold: Math.max(0, Number.isFinite(Number(bloom?.overlayThreshold)) ? Number(bloom.overlayThreshold) : 0.1)
+    };
+  }
+
+  function applyOverlayBloomConfig() {
+    const cfg = getOverlayBloomConfig();
+    bloomPass.strength = cfg.strength;
+    bloomPass.radius = cfg.radius;
+    bloomPass.threshold = cfg.threshold;
+    return cfg;
+  }
+
   // 1. Renderer
   const renderer = new THREE.WebGLRenderer({
     antialias: false,
@@ -51,10 +68,10 @@ export function initOverlay({ host, getView }) {
   renderer.setSize(host.clientWidth, host.clientHeight, false);
   renderer.setClearColor(0x000000, 0);
   
-  // Ważne: Tone Mapping musi być taki sam jak w źródle, żeby kolory nie były wyprane
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0; // Wartość 1.0 jest bardziej naturalna dla neonów
+  // Overlay uzywa CSS mix-blend-mode: screen — nie stosujemy tonemappingu
+  // (kompresowałby jasnosc efektow addytywnych). Kolory w linear space.
+  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  renderer.toneMapping = THREE.NoToneMapping;
 
   const dom = renderer.domElement;
   dom.classList.add("overlay3d");
@@ -103,14 +120,15 @@ export function initOverlay({ host, getView }) {
 
   // Pass 2: Bloom (Parametry ze źródła reactorblow.js)
   let renderScale = 0.8;
+  const initialBloom = getOverlayBloomConfig();
   const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(
       Math.max(1, Math.floor(host.clientWidth * renderScale)),
       Math.max(1, Math.floor(host.clientHeight * renderScale))
     ),
-    2.5,  // Strength: Wysoka wartość dla efektu neonu
-    0.5,  // Radius: 0.5 (jak w oryginale) - daje szerszą poświatę
-    0.1   // Threshold: 0.1 (jak w oryginale) - pozwala świecić ciemniejszym elementom
+    initialBloom.strength,
+    initialBloom.radius,
+    initialBloom.threshold
   );
   composer.addPass(bloomPass);
 
@@ -261,6 +279,12 @@ export function initOverlay({ host, getView }) {
   function tick(dt) {
     syncCamera();
     applyAdaptiveQuality();
+    applyOverlayBloomConfig();
+
+    // GPU spark system — always update time, even when effects are skipped
+    if (typeof window !== 'undefined' && window.SparkSystem3D?.isInitialized) {
+      window.SparkSystem3D.update(dt);
+    }
 
     let updateNow = true;
     let stepDt = dt;
@@ -288,7 +312,8 @@ export function initOverlay({ host, getView }) {
 
     // Czyścimy renderer do zera przed rysowaniem composera
     stats.activeEffects = effects.length;
-    if (effects.length === 0) {
+    const hasPersistentSceneContent = scene.children.length > 0;
+    if (effects.length === 0 && !hasPersistentSceneContent) {
       renderer.clear();
       stats.lastRenderMs = 0;
       perf.accumDt = 0;
@@ -338,5 +363,18 @@ export function initOverlay({ host, getView }) {
     return { ...stats };
   }
 
-  return { scene, camera, renderer, composer, tick, spawn, resize, dispose, getStats };
+  return {
+    scene, camera, renderer, composer, tick, spawn, resize, dispose, getStats,
+    getBloomConfig: () => ({ ...getOverlayBloomConfig() }),
+    setBloomConfig: (next = {}) => {
+      const devVfx = (window.DevVFX = window.DevVFX || {});
+      const bloom = (devVfx.bloom = Object.assign({}, devVfx.bloom || {}));
+      if (next && typeof next === "object") {
+        if (next.strength != null) bloom.overlayStrength = Number(next.strength);
+        if (next.radius != null) bloom.overlayRadius = Number(next.radius);
+        if (next.threshold != null) bloom.overlayThreshold = Number(next.threshold);
+      }
+      return applyOverlayBloomConfig();
+    }
+  };
 }
