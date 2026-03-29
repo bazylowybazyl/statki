@@ -34,21 +34,34 @@ const RestoreAlphaShader = {
   `
 };
 
-export function initOverlay({ host, getView }) {
+export function initOverlay({
+  host,
+  getView,
+  mode = "screen",
+  zIndex = 20,
+  useBloom = true,
+  useAlphaPass = true,
+  adaptiveQuality = true,
+  updateSparkSystem = true,
+  baseRenderScale = 0.8
+} = {}) {
   if (!host) {
     throw new Error("initOverlay: host element is required");
   }
 
+  const useComposer = !!(useBloom || useAlphaPass);
+
   function getOverlayBloomConfig() {
     const bloom = (typeof window !== 'undefined' && window.DevVFX?.bloom) ? window.DevVFX.bloom : null;
     return {
-      strength: Math.max(0, Number.isFinite(Number(bloom?.overlayStrength)) ? Number(bloom.overlayStrength) : 2.5),
+      strength: Math.max(0, Number.isFinite(Number(bloom?.overlayStrength)) ? Number(bloom.overlayStrength) : 1.0),
       radius: Math.max(0, Number.isFinite(Number(bloom?.overlayRadius)) ? Number(bloom.overlayRadius) : 0.5),
-      threshold: Math.max(0, Number.isFinite(Number(bloom?.overlayThreshold)) ? Number(bloom.overlayThreshold) : 0.1)
+      threshold: Math.max(0, Number.isFinite(Number(bloom?.overlayThreshold)) ? Number(bloom.overlayThreshold) : 0.3)
     };
   }
 
   function applyOverlayBloomConfig() {
+    if (!bloomPass) return null;
     const cfg = getOverlayBloomConfig();
     bloomPass.strength = cfg.strength;
     bloomPass.radius = cfg.radius;
@@ -78,13 +91,13 @@ export function initOverlay({ host, getView }) {
   dom.style.pointerEvents = "none";
   dom.style.position = "absolute";
   dom.style.inset = "0";
-  dom.style.zIndex = "20"; 
+  dom.style.zIndex = String(zIndex);
   dom.style.background = "transparent";
   
   // --- KLUCZOWA ZMIANA WIZUALNA ---
   // Tryb mieszania 'screen' sprawia, że overlay zachowuje się jak światło.
   // Czarne tło staje się niewidoczne, a kolory dodają się do tła gry.
-  dom.style.mixBlendMode = "screen"; 
+  dom.style.mixBlendMode = mode === "raw" ? "normal" : "screen";
 
   host.appendChild(dom);
 
@@ -96,45 +109,53 @@ export function initOverlay({ host, getView }) {
   camera.position.set(0, 120, 0);
   camera.lookAt(0, 0, 0);
 
-  // 2. RenderTarget (RGBA + Float dla lepszego HDR)
-  const renderTarget = new THREE.WebGLRenderTarget(
-    host.clientWidth * renderer.getPixelRatio(),
-    host.clientHeight * renderer.getPixelRatio(),
-    {
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      format: THREE.RGBAFormat,
-      type: THREE.HalfFloatType,
-      stencilBuffer: false,
-      depthBuffer: true
+  let renderScale = Math.max(0.25, Number(baseRenderScale) || 0.8);
+  let renderTarget = null;
+  let composer = null;
+  let bloomPass = null;
+
+  if (useComposer) {
+    renderTarget = new THREE.WebGLRenderTarget(
+      host.clientWidth * renderer.getPixelRatio(),
+      host.clientHeight * renderer.getPixelRatio(),
+      {
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        format: THREE.RGBAFormat,
+        type: THREE.HalfFloatType,
+        stencilBuffer: false,
+        depthBuffer: true
+      }
+    );
+
+    composer = new EffectComposer(renderer, renderTarget);
+
+    const renderPass = new RenderPass(scene, camera);
+    renderPass.clearColor = new THREE.Color(0, 0, 0);
+    renderPass.clearAlpha = 0;
+    composer.addPass(renderPass);
+
+    if (useBloom) {
+      const initialBloom = getOverlayBloomConfig();
+      bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(
+          Math.max(1, Math.floor(host.clientWidth * renderScale)),
+          Math.max(1, Math.floor(host.clientHeight * renderScale))
+        ),
+        initialBloom.strength,
+        initialBloom.radius,
+        initialBloom.threshold
+      );
+      composer.addPass(bloomPass);
     }
-  );
 
-  const composer = new EffectComposer(renderer, renderTarget);
-  
-  // Pass 1: Scena
-  const renderPass = new RenderPass(scene, camera);
-  renderPass.clearColor = new THREE.Color(0, 0, 0);
-  renderPass.clearAlpha = 0; 
-  composer.addPass(renderPass);
-
-  // Pass 2: Bloom (Parametry ze źródła reactorblow.js)
-  let renderScale = 0.8;
-  const initialBloom = getOverlayBloomConfig();
-  const bloomPass = new UnrealBloomPass(
-    new THREE.Vector2(
-      Math.max(1, Math.floor(host.clientWidth * renderScale)),
-      Math.max(1, Math.floor(host.clientHeight * renderScale))
-    ),
-    initialBloom.strength,
-    initialBloom.radius,
-    initialBloom.threshold
-  );
-  composer.addPass(bloomPass);
-
-  // Pass 3: Naprawa Alfy (żeby tło zniknęło, a glow został)
-  const alphaPass = new ShaderPass(RestoreAlphaShader);
-  composer.addPass(alphaPass);
+    if (useAlphaPass) {
+      const alphaPass = new ShaderPass(RestoreAlphaShader);
+      composer.addPass(alphaPass);
+    }
+  } else {
+    renderScale = 1.0;
+  }
 
   const effects = [];
   const stats = {
@@ -143,7 +164,7 @@ export function initOverlay({ host, getView }) {
     lastRenderMs: 0,
     maxEffects: 72,
     renderScale,
-    bloomEnabled: true,
+    bloomEnabled: !!bloomPass,
     frameSkip: 1,
     updateSkip: 1,
     skippedFrames: 0
@@ -190,17 +211,31 @@ export function initOverlay({ host, getView }) {
 
     if (lastSizeW !== w || lastSizeH !== h) {
       renderer.setSize(w, h, false);
-      composer.setSize(
-        Math.max(1, Math.floor(w * renderScale)),
-        Math.max(1, Math.floor(h * renderScale))
-      );
+      if (composer) {
+        composer.setSize(
+          Math.max(1, Math.floor(w * renderScale)),
+          Math.max(1, Math.floor(h * renderScale))
+        );
+      }
       lastSizeW = w;
       lastSizeH = h;
     }
   }
 
   function applyAdaptiveQuality() {
+    if (!adaptiveQuality || !composer) {
+      perf.frameSkip = 1;
+      perf.updateSkip = 1;
+      stats.maxEffects = 96;
+      stats.renderScale = renderScale;
+      stats.bloomEnabled = !!bloomPass?.enabled;
+      stats.frameSkip = perf.frameSkip;
+      stats.updateSkip = perf.updateSkip;
+      return;
+    }
     const active = effects.length;
+    const hasPersistentSceneContent = scene.children.length > 0;
+    const persistentOnly = active === 0 && hasPersistentSceneContent;
     const prevRenderMs = Number(stats.lastRenderMs) || 0;
     const pressure = Math.max(active / 70, prevRenderMs / 6.5);
 
@@ -248,6 +283,15 @@ export function initOverlay({ host, getView }) {
       targetMaxEffects = 92;
     }
 
+    // Persistent systems like rockets / sparks should stay temporally stable.
+    // Frame skipping here causes visible blinking because they are not spawned
+    // through overlay.spawn(...), but live in the scene continuously.
+    if (persistentOnly) {
+      targetFrameSkip = 1;
+      targetUpdateSkip = 1;
+      targetScale = Math.max(targetScale, 0.76);
+    }
+
     if (effects.length > targetMaxEffects) {
       const overflow = effects.length - targetMaxEffects;
       for (let i = 0; i < overflow; i++) {
@@ -269,9 +313,9 @@ export function initOverlay({ host, getView }) {
     perf.frameSkip = targetFrameSkip;
     perf.updateSkip = targetUpdateSkip;
     stats.maxEffects = targetMaxEffects;
-    if (bloomPass.enabled !== targetBloom) bloomPass.enabled = targetBloom;
+    if (bloomPass && bloomPass.enabled !== targetBloom) bloomPass.enabled = targetBloom;
     stats.renderScale = renderScale;
-    stats.bloomEnabled = bloomPass.enabled;
+    stats.bloomEnabled = !!bloomPass?.enabled;
     stats.frameSkip = perf.frameSkip;
     stats.updateSkip = perf.updateSkip;
   }
@@ -279,10 +323,10 @@ export function initOverlay({ host, getView }) {
   function tick(dt) {
     syncCamera();
     applyAdaptiveQuality();
-    applyOverlayBloomConfig();
+    if (useBloom) applyOverlayBloomConfig();
 
     // GPU spark system — always update time, even when effects are skipped
-    if (typeof window !== 'undefined' && window.SparkSystem3D?.isInitialized) {
+    if (updateSparkSystem && typeof window !== 'undefined' && window.SparkSystem3D?.isInitialized) {
       window.SparkSystem3D.update(dt);
     }
 
@@ -327,7 +371,11 @@ export function initOverlay({ host, getView }) {
 
     renderer.clear();
     const t0 = (typeof performance !== "undefined") ? performance.now() : 0;
-    composer.render();
+    if (composer) {
+      composer.render();
+    } else {
+      renderer.render(scene, camera);
+    }
     stats.lastRenderMs = (t0 > 0) ? (performance.now() - t0) : 0;
   }
 
@@ -354,9 +402,9 @@ export function initOverlay({ host, getView }) {
     if (dom.parentElement === host) {
       host.removeChild(dom);
     }
-    composer.dispose();
+    if (composer) composer.dispose();
     renderer.dispose();
-    renderTarget.dispose();
+    if (renderTarget) renderTarget.dispose();
   }
 
   function getStats() {
