@@ -1,0 +1,1176 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Space Survivors — gwiazdy na całej mapie + duży silnik plazmowy</title>
+<style>
+  html,body{height:100%;margin:0;background:#030417;color:#dfe7ff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
+  #ui{position:absolute;left:12px;top:12px;z-index:20;background:rgba(8,10,20,0.6);padding:10px;border-radius:8px;backdrop-filter:blur(6px)}
+  canvas{display:block;width:100vw;height:100vh}
+  .stat{font-family:monospace;font-size:13px}
+  small{color:#a8b4d9}
+</style>
+</head>
+<body>
+  <div id="ui">
+    <div><strong>Space Survivors — gwiazdy na całej mapie + duży silnik plazmowy</strong></div>
+    <div class="stat">W — ciąg (duży silnik plazmowy) · Q/E — strafe · A/D — obrót</div>
+    <div class="stat">LPM — rail (A→B, A→B) · PPM — boczne rakiety · F — superbroń · SHIFT — warp · SPACJA — dopalacz</div>
+    <div style="margin-top:6px"><small>Gwiazdy są proceduralne w całej galaktyce. Silnik: niebieski exhaust + krótki ślad przy ruchu.</small></div>
+  </div>
+  <canvas id="c"></canvas>
+
+<script>
+// =============== Canvas & utils ===============
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W = canvas.width = innerWidth, H = canvas.height = innerHeight;
+window.addEventListener('resize', ()=>{ W = canvas.width = innerWidth; H = canvas.height = innerHeight; initStars(true); });
+
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const add = (a,b)=>({x:a.x+b.x,y:a.y+b.y});
+const mul = (v,s)=>({x:v.x*s,y:v.y*s});
+const len = v=>Math.hypot(v.x,v.y);
+const norm = v=>{ const L=len(v); return L?{x:v.x/L,y:v.y/L}:{x:0,y:0}; };
+function rotate(local,a){ const c=Math.cos(a), s=Math.sin(a); return {x: local.x*c - local.y*s, y: local.x*s + local.y*c}; }
+function rotateInv(world,a){ return rotate(world, -a); }
+function wrapAngle(a){ while(a>Math.PI) a-=2*Math.PI; while(a<-Math.PI) a+=2*Math.PI; return a; }
+function interpAngleShort(prev,curr,t){ const d = wrapAngle(curr - prev); return wrapAngle(prev + d * t); }
+function shuffleArray(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
+function leadTarget(shooter, shooterVel, target, speed){
+  const tx = target.x, ty = target.y;
+  const tvx = target.vx || 0, tvy = target.vy || 0;
+  const rx = tx - shooter.x, ry = ty - shooter.y;
+  const rvx = tvx - shooterVel.x, rvy = tvy - shooterVel.y;
+  const a = rvx*rvx + rvy*rvy - speed*speed;
+  const b = 2*(rx*rvx + ry*rvy);
+  const c = rx*rx + ry*ry;
+  let t = 0;
+  if(Math.abs(a) < 1e-6){
+    if(Math.abs(b) > 1e-6) t = -c / b;
+  } else {
+    const disc = b*b - 4*a*c;
+    if(disc >= 0){
+      const sqrtDisc = Math.sqrt(disc);
+      const t1 = (-b - sqrtDisc)/(2*a);
+      const t2 = (-b + sqrtDisc)/(2*a);
+      t = Math.min(t1, t2);
+      if(t < 0) t = Math.max(t1, t2);
+    }
+  }
+  if(!isFinite(t) || t < 0) t = 0;
+  return { x: tx + tvx*t, y: ty + tvy*t };
+}
+
+// =============== World / camera ===============
+const WORLD = { w: 120000, h: 80000 };
+const camera = { zoom: 1.0, defaultZoom:1.0, altZoom:0.7, minZoom:0.35, maxZoom:2.2, wheelSpeed:0.002 };
+
+// =============== Ship ===============
+const ship = {
+  w:75, h:200, mass:140,
+  pos:{x:WORLD.w/2, y:WORLD.h/2}, vel:{x:0,y:0},
+  angle:0, angVel:0, inertia:null,
+  linearDamping:0.9, angularDamping:1.6,
+  engines:{},
+  turret:{ angle:0, angVel:0, maxSpeed:1.8, maxAccel:8.0, damping:2.0,
+           recoil:0, recoilMax:12, recoilRecover:48, recoilKick:14 },
+  shield:{ max:120, val:120, regenRate:6, regenDelay:2, regenTimer:0 },
+  hull:{ max:200, val:200 },
+  special:{ cooldown:10, cooldownTimer:0 }
+};
+ship.inertia = (1/12) * ship.mass * ((ship.w*ship.w)+(ship.h*ship.h));
+(function configureShip(){
+  const hw = ship.w/2, hh = ship.h/2;
+  // Jeden DUŻY engine na środku rufy (moc ≈ suma poprzednich)
+  ship.engines.main = { offset:{x:0, y: Math.round(hh-8)}, maxThrust: 6400 };
+
+  ship.engines.sideLeft  =  { offset:{x:-Math.round(hw-8), y: 0}, maxThrust:1400 };
+  ship.engines.sideRight =  { offset:{x: Math.round(hw-8), y: 0}, maxThrust:1400 };
+  ship.engines.torqueLeft  =  { offset:{x:0,y:-Math.round(hh-8)}, maxThrust:1200 };
+  ship.engines.torqueRight =  { offset:{x:0,y: Math.round(hh-8)}, maxThrust:1200 };
+
+  ship.sideGunsLeft = []; ship.sideGunsRight = [];
+  const gunsPer = 8, inset=6, margin=12;
+  for(let i=0;i<gunsPer;i++){
+    const t = gunsPer===1?0.5:(i/(gunsPer-1));
+    const yLocal = -hh + margin + t * ((hh - margin) - (-hh + margin));
+    ship.sideGunsLeft.push({ x: -Math.round(hw - inset), y: Math.round(yLocal) });
+    ship.sideGunsRight.push({ x:  Math.round(hw - inset), y: Math.round(yLocal) });
+  }
+})();
+
+// =============== Proceduralne gwiazdy na CAŁEJ MAPIE ===============
+// Generujemy je "na żądanie" w kafelkach 1024×1024 z deterministycznym seedem.
+// Dzięki temu gwiazdy są wszędzie, ale pamięć i CPU trzymamy w ryzach.
+const STAR_CELL = 1024;
+const starCells = new Map(); // key "ix,iy" -> {stars:[...] , lastSeen: frameId}
+let frameId = 0;
+
+function mulberry32(a){ return function(){ var t=a+=0x6D2B79F5; t=Math.imul(t^t>>>15,t|1); t^=t+Math.imul(t^t>>>7,t|61); return ((t^t>>>14)>>>0)/4294967296; } }
+function key(ix,iy){ return ix+','+iy; }
+
+function generateCell(ix,iy){
+  const seed = ((ix*73856093) ^ (iy*19349663) ^ 0x9e3779b9) >>> 0;
+  const rnd = mulberry32(seed);
+  const count = 14 + Math.floor(rnd()*10); // 14–23 gwiazdy na komórkę
+  const stars = [];
+  for(let i=0;i<count;i++){
+    const x = ix*STAR_CELL + rnd()*STAR_CELL;
+    const y = iy*STAR_CELL + rnd()*STAR_CELL;
+    const size = 0.7 + rnd()*2.1;
+    const bright = 0.35 + rnd()*0.65;
+    stars.push({x,y,size,bright});
+  }
+  const obj = { stars, lastSeen: frameId };
+  starCells.set(key(ix,iy), obj);
+  return obj;
+}
+function getCell(ix,iy){
+  const k = key(ix,iy);
+  let c = starCells.get(k);
+  if(!c) c = generateCell(ix,iy);
+  c.lastSeen = frameId;
+  return c;
+}
+function pruneStarCells(){
+  // Trzymajmy ~ 600 ostatnio widzianych komórek (wystarczy z zapasem)
+  if(starCells.size <= 600) return;
+  // Proste LRU: wyrzucamy najstarsze
+  const arr = [...starCells.entries()];
+  arr.sort((a,b)=>a[1].lastSeen - b[1].lastSeen);
+  const toDrop = arr.slice(0, Math.max(0, arr.length - 600));
+  for(const [k] of toDrop) starCells.delete(k);
+}
+function initStars(reset=false){
+  if(reset){ starCells.clear(); }
+}
+
+// =============== Stacje & NPC (stała siatka) ===============
+const STATION_COORDS = (() => {
+  const list = []; const cols = 6, rows = 4;
+  const sx = WORLD.w/(cols+1), sy = WORLD.h/(rows+1);
+  let seed = 1337; const rnd = ()=> (seed = (seed*1664525+1013904223)|0, ((seed>>>0)%10000)/10000);
+  for(let j=1;j<=rows;j++) for(let i=1;i<=cols;i++){
+    const x = Math.round(i*sx + (rnd()-0.5)*sx*0.35);
+    const y = Math.round(j*sy + (rnd()-0.5)*sy*0.35);
+    list.push({x,y,r:48+Math.floor(rnd()*36)});
+  }
+  return list;
+})();
+let stations = STATION_COORDS.map((p,idx)=>({id:idx, x:p.x, y:p.y, r:p.r}));
+
+const NPC_COUNT = 30;
+let npcs = [];
+function pickNextStation(npcId, lastStationId){ let idx = Math.floor(Math.random()*stations.length); if(stations.length>1 && stations[idx].id === lastStationId) idx = (idx+1)%stations.length; return stations[idx].id; }
+function initNPCs(){
+  npcs = [];
+  for(let i=0;i<NPC_COUNT;i++){
+    const st = stations[Math.floor(Math.random()*stations.length)];
+    npcs.push({ id:i, x: st.x + (Math.random()-0.5)*140, y: st.y + (Math.random()-0.5)*140,
+      vx:(Math.random()-0.5)*40, vy:(Math.random()-0.5)*40, angle:Math.random()*Math.PI*2,
+      target: pickNextStation(i, st.id), speed:70+Math.random()*90, radius:12+Math.random()*8,
+      hp:40+Math.random()*80, maxHp:80, color:`hsl(${Math.random()*360},70%,60%)`,
+      dead:false, respawnTimer:0 });
+  }
+}
+initNPCs();
+
+// =============== Bullets & effects ===============
+const bullets = [];
+const particles = [];
+function spawnParticle(pos, vel, life, color, size, flash){
+  particles.push({ pos:{...pos}, vel:{...vel}, life, age:0, color: color||'#ffb677', size: size||2, flash: !!flash });
+}
+function spawnExplosionPlasma(x,y,scale=1){
+  const count = Math.round(22 * scale);
+  for(let i=0;i<count;i++){
+    const a = Math.random()*Math.PI*2;
+    const s = 120 + Math.random()*260 * scale;
+    spawnParticle({x,y}, {x:Math.cos(a)*s, y:Math.sin(a)*s}, 0.45 + Math.random()*0.5, '#7CFF7C', 2 + Math.random()*3, true);
+  }
+}
+function spawnRailHitEffect(x,y,scale=1){
+  for(let i=0;i<12 * scale;i++){
+    const a = Math.random()*Math.PI*2;
+    const s = 80 + Math.random()*220 * scale;
+    spawnParticle({x,y}, {x:Math.cos(a)*s, y:Math.sin(a)*s}, 0.25 + Math.random()*0.35, '#bfe7ff', 1 + Math.random()*2, true);
+  }
+  spawnParticle({x,y}, {x:0,y:0}, 0.12, '#ffffff', 6 * scale, true);
+}
+function spawnDefaultHit(x,y,scale=1){
+  for(let i=0;i<14*scale;i++){
+    const a = Math.random()*Math.PI*2;
+    const s = 80 + Math.random()*160 * scale;
+    spawnParticle({x,y}, {x:Math.cos(a)*s, y:Math.sin(a)*s}, 0.24 + Math.random()*0.36, '#ffb36b', 1 + Math.random()*2, true);
+  }
+  spawnParticle({x,y}, {x:0,y:0}, 0.08, '#ffffff', 4 * scale, true);
+}
+
+// =============== Input ===============
+const input = { main:0, leftSide:0, rightSide:0, torque:0 };
+const keys = {};
+window.addEventListener('keydown', e=>{
+  if(e.repeat) return;
+  const k = e.key.toLowerCase();
+  keys[k] = true;
+  if(e.key === ' '){
+    if(boost.state==='idle' && boost.fuel>=boost.cost){ boost.state='charging'; boost.charge=0; }
+  }
+  if(k === 'x') triggerScanWave();
+  if(k === 'r') lockedTarget = scan.scanned || null;
+  updateInput();
+});
+window.addEventListener('keyup', e=>{
+  const k = e.key.toLowerCase();
+  keys[k] = false;
+  if(e.key === ' ' && boost.state==='charging'){ boost.state='idle'; boost.charge=0; }
+  updateInput();
+});
+function updateInput(){
+  input.main = keys['w']?1:0;
+  input.leftSide  = keys['q']?1:0;
+  input.rightSide = keys['e']?1:0;
+  let torque = 0; if(keys['a']) torque -= 1; if(keys['d']) torque += 1; input.torque = torque;
+  if(keys['f']) tryFireSpecial();
+}
+
+// targeting / scanning
+const SCAN_TIME = 1.0;
+const SCAN_RANGE = 10000;
+const SCAN_VFX_SPEED = 4000;
+const SCAN_ARROW_LIFE = 1.5;
+const scan = { target:null, progress:0, scanned:null };
+let lockedTarget = null;
+const radarPings = [];
+const scanWaves = [];
+const scanArrows = [];
+function spawnRadarPing(x,y){ radarPings.push({x,y,age:0,life:1}); }
+function triggerScanWave(){
+  const wave = {x:ship.pos.x,y:ship.pos.y,r:0,speed:SCAN_VFX_SPEED,max:SCAN_RANGE,hit:new Set()};
+  scanWaves.push(wave);
+  scanArrows.length = 0;
+  for(const st of stations){
+    const dist = Math.hypot(st.x - ship.pos.x, st.y - ship.pos.y);
+    spawnRadarPing(st.x, st.y);
+    if(dist <= SCAN_RANGE){
+      scanArrows.push({target:st,age:0,life:SCAN_ARROW_LIFE});
+      wave.hit.add(st);
+    }
+  }
+}
+
+const mouse = { x: W/2, y: H/2, left:false, right:false };
+canvas.addEventListener('mousemove', e=>{ mouse.x = e.clientX; mouse.y = e.clientY; });
+canvas.addEventListener('mousedown', e=>{
+  if(e.button===0){ mouse.left=true; if(!warp.isBusy()) triggerRailVolley(); }
+  if(e.button===2){ e.preventDefault(); mouse.right=true;
+    if(!warp.isBusy()){
+      const mouseWorld = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom, y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
+      const local = rotateInv({ x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y }, ship.angle);
+      const side = (local.x >= 0) ? 'right' : 'left'; requestSalvo(side);
+    }
+  }
+  if(e.button===1){ e.preventDefault(); camera.zoom = Math.abs(camera.zoom - camera.defaultZoom) < 0.03 ? camera.altZoom : camera.defaultZoom; }
+});
+canvas.addEventListener('mouseup', e=>{ if(e.button===0) mouse.left=false; if(e.button===2) mouse.right=false; });
+canvas.addEventListener('contextmenu', e=>e.preventDefault());
+canvas.addEventListener('wheel', e=>{ e.preventDefault(); const f = 1 - e.deltaY * camera.wheelSpeed; camera.zoom *= f; camera.zoom = clamp(camera.zoom, camera.minZoom, camera.maxZoom); }, {passive:false});
+
+// =============== Side rockets ===============
+const SIDE_RELOAD_TIME = 5.0; let reloadLeft = 1.0, reloadRight = 1.0;
+const SIDE_BULLET_SPEED = 760, SIDE_BULLET_DAMAGE = 20;
+const SIDE_PLASMA_EXPLODE_RADIUS = 48;
+const SIDE_ROCKET_TURN_RATE = 6;
+const SIDE_ROCKET_HOMING_DELAY = 0.25;
+const SPECIAL_COOLDOWN = 10; ship.special.cooldownTimer = 0;
+
+const activeSalvos = [];
+const SALVO_DEFAULT = { rounds: 6 * 4, burstInterval: 0.11, gunsPerBurst: 1 };
+
+function requestSalvo(side){
+  if(side==='left' && reloadLeft < 1) return;
+  if(side==='right' && reloadRight < 1) return;
+  if(activeSalvos.some(s=>s.side===side)) return;
+  const set = (side==='left') ? ship.sideGunsLeft.slice() : ship.sideGunsRight.slice();
+  shuffleArray(set);
+  activeSalvos.push({ side, guns: set, nextIndex: 0, timeToNext: 0.0, roundsLeft: SALVO_DEFAULT.rounds, burstInterval: SALVO_DEFAULT.burstInterval, gunsPerBurst: SALVO_DEFAULT.gunsPerBurst });
+  if(side==='left') reloadLeft = 0; else reloadRight = 0;
+}
+
+function fireSideGunAtOffset(gunOff, side){
+  const gunWorld = add(ship.pos, rotate(gunOff, ship.angle));
+  const dl = side === 'left' ? -1 : 1;
+  const dir = rotate({x:dl, y:0}, ship.angle);
+  bullets.push({ x: gunWorld.x, y: gunWorld.y, px: gunWorld.x, py: gunWorld.y,
+    vx: dir.x*SIDE_BULLET_SPEED + ship.vel.x, vy: dir.y*SIDE_BULLET_SPEED + ship.vel.y,
+    life:2.4, r:5, owner:'player', damage:SIDE_BULLET_DAMAGE, penetration:0, type:'rocket',
+    explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS, homingDelay: SIDE_ROCKET_HOMING_DELAY });
+  spawnParticle({x:gunWorld.x, y:gunWorld.y}, {x:dir.x*120 + ship.vel.x*0.1, y:dir.y*120 + ship.vel.y*0.1}, 0.14, '#b4ffb4', 3.2, true);
+  for(let k=0;k<6;k++){
+    const aa = Math.atan2(dir.y, dir.x) + (Math.random()-0.5)*0.9;
+    spawnParticle({x:gunWorld.x + Math.cos(aa)*6, y:gunWorld.y + Math.sin(aa)*6}, {x:Math.cos(aa)*160, y:Math.sin(aa)*160}, 0.14 + Math.random()*0.06, '#a8ff9a', 1.1, true);
+  }
+}
+
+// =============== Rail (2 lufy: serie A→B, A→B) ===============
+const rail = { cd:[0,0], cdMax:0.38, shotGap:0.07, burstGap:0.18, burstsPerClick:2, queue:[], nextStart:0 };
+let railTimer = 0;
+const RAIL_SPEED = 2600, RAIL_PEN = 3, RAIL_DAMAGE = 60;
+
+function triggerRailVolley(){
+  if(rail.queue.length) return;
+  const start = rail.nextStart; rail.nextStart ^= 1;
+  const orderPair = [start, 1-start];
+  for(let b=0;b<rail.burstsPerClick;b++){
+    const base = b*(rail.shotGap*2 + rail.burstGap);
+    rail.queue.push({ timer: base + 0*rail.shotGap, barrel: orderPair[0] });
+    rail.queue.push({ timer: base + 1*rail.shotGap, barrel: orderPair[1] });
+  }
+}
+function fireRailBarrel(barIndex){
+  const a = ship.turret.angle;
+  const f = {x:Math.cos(a), y:Math.sin(a)};
+  const p = {x:-Math.sin(a), y:Math.cos(a)};
+  const forwardLen = Math.min(ship.h*0.36, 46);
+  const gap = 10;
+  const sign = (barIndex===0) ? -1 : +1;
+  const px = ship.pos.x + f.x * forwardLen + p.x * (sign * gap/2);
+  const py = ship.pos.y + f.y * forwardLen + p.y * (sign * gap/2);
+  bullets.push({ x:px, y:py, vx: f.x*RAIL_SPEED + ship.vel.x, vy: f.y*RAIL_SPEED + ship.vel.y, life: 2.0, r:4, owner:'player', damage:RAIL_DAMAGE, penetration:RAIL_PEN, type:'rail' });
+  ship.turret.recoil = Math.min(ship.turret.recoil + ship.turret.recoilKick, ship.turret.recoilMax);
+  spawnParticle({x:px, y:py}, {x:0,y:0}, 0.10, '#bfe7ff', 6, true);
+  for(let i=0;i<5;i++){
+    const aa = a + (Math.random()-0.5)*0.14;
+    spawnParticle({x:px + Math.cos(aa)*6, y:py + Math.sin(aa)*6},{x:Math.cos(aa)*220 + ship.vel.x*0.2, y:Math.sin(aa)*220 + ship.vel.y*0.2},0.12,'#bfe7ff',1.6,true);
+  }
+  rail.cd[barIndex] = rail.cdMax;
+}
+
+// =============== Specjal & dmg ===============
+function tryFireSpecial(){
+  if(ship.special.cooldownTimer>0) return;
+  ship.special.cooldownTimer = SPECIAL_COOLDOWN;
+  const a = ship.turret.angle;
+  const cx = ship.pos.x + Math.cos(a)*160;
+  const cy = ship.pos.y + Math.sin(a)*160;
+  const radius = 160;
+  for(const npc of npcs){
+    if(npc.dead) continue;
+    const d = Math.hypot(npc.x-cx, npc.y-cy);
+    if(d < radius + npc.radius){
+      applyDamageToNPC(npc,80,'none');
+      spawnExplosionPlasma(npc.x,npc.y,1.2);
+    }
+  }
+  spawnExplosionPlasma(cx,cy,2);
+}
+function applyDamageToPlayer(amount){
+  if(ship.shield.val>0){ const s = Math.min(ship.shield.val, amount); ship.shield.val -= s; amount -= s; ship.shield.regenTimer = ship.shield.regenDelay; }
+  if(amount>0) ship.hull.val = Math.max(0, ship.hull.val - amount);
+}
+function applyDamageToNPC(npc, dmg, cause='default'){
+  if(npc.dead) return;
+  npc.hp -= dmg;
+  if(npc.hp<=0){
+    npc.dead = true; npc.respawnTimer = 3 + Math.random()*6;
+    if(cause === 'plasma'){ spawnExplosionPlasma(npc.x, npc.y, 1.2); }
+    else if(cause === 'default'){ spawnDefaultHit(npc.x, npc.y, 1.2); }
+  }
+}
+
+// =============== Collisions & particles ===============
+function bulletsAndCollisionsStep(dt){
+  for(let i=bullets.length-1;i>=0;i--){
+    const b = bullets[i];
+    b.px = b.x; b.py = b.y;
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    b.life -= dt;
+
+    if(b.type === 'plasma' || b.type === 'rocket'){
+      const trailVel = { x: -b.vx*0.02 + (Math.random()-0.5)*10, y: -b.vy*0.02 + (Math.random()-0.5)*10 };
+      spawnParticle({x:b.x + (Math.random()-0.5)*3, y:b.y + (Math.random()-0.5)*3}, trailVel, 0.28, '#8cff8c', 1.0, false);
+      if(b.type === 'rocket'){
+        if(b.homingDelay > 0){
+          b.homingDelay -= dt;
+        } else {
+          let target = null;
+          if(lockedTarget && !lockedTarget.dead){
+            target = {x:lockedTarget.x, y:lockedTarget.y};
+          } else {
+            let dist = Infinity;
+            for(const npc of npcs){
+              if(npc.dead) continue;
+              const d = Math.hypot(npc.x - b.x, npc.y - b.y);
+              if(d < dist){ dist = d; target = {x:npc.x, y:npc.y}; }
+            }
+            if(!target){
+              target = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom,
+                         y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
+            }
+          }
+          const speed = Math.hypot(b.vx, b.vy);
+          const dir = norm({x:target.x - b.x, y:target.y - b.y});
+          const current = Math.atan2(b.vy, b.vx);
+          const desired = Math.atan2(dir.y, dir.x);
+          const diff = wrapAngle(desired - current);
+          const maxTurn = SIDE_ROCKET_TURN_RATE * dt;
+          const turn = Math.abs(diff) < maxTurn ? diff : Math.sign(diff) * maxTurn;
+          const newAng = current + turn;
+          b.vx = Math.cos(newAng) * speed;
+          b.vy = Math.sin(newAng) * speed;
+        }
+      }
+    }
+
+    if(b.life <= 0){ bullets.splice(i,1); continue; }
+
+    // hit NPC
+    let hitNPC = null;
+    for(const npc of npcs){
+      if(npc.dead) continue;
+      const d = Math.hypot(npc.x - b.x, npc.y - b.y);
+      if(d < npc.radius + b.r){ hitNPC = npc; break; }
+    }
+
+    if(hitNPC){
+      if(b.type === 'plasma' || b.type === 'rocket'){
+        const ex = b.x, ey = b.y;
+        spawnExplosionPlasma(ex, ey, 1.0);
+        for(const npc of npcs){
+          if(npc.dead) continue;
+          const d2 = Math.hypot(npc.x - ex, npc.y - ey);
+          if(d2 <= b.explodeRadius + npc.radius){
+            const falloff = 1 - (d2 / (b.explodeRadius + npc.radius));
+            applyDamageToNPC(npc, Math.round(b.damage * (0.9 * falloff + 0.1)), 'plasma');
+          }
+        }
+        bullets.splice(i,1);
+        continue;
+      } else if(b.type === 'rail'){
+        applyDamageToNPC(hitNPC, b.damage, 'rail');
+        spawnRailHitEffect(b.x, b.y, 1.0);
+        b.penetration = (b.penetration !== undefined) ? b.penetration - 1 : (RAIL_PEN - 1);
+        if(b.penetration <= 0){ bullets.splice(i,1); }
+        continue;
+      } else {
+        applyDamageToNPC(hitNPC, b.damage, 'default');
+        spawnDefaultHit(b.x, b.y, 1.0);
+        bullets.splice(i,1);
+        continue;
+      }
+    }
+
+    // hit player
+    if(b.owner !== 'player'){
+      const hitR = Math.max(ship.w, ship.h) * 0.45;
+      const d = Math.hypot(ship.pos.x - b.x, ship.pos.y - b.y);
+      if(d < hitR + b.r){
+        applyDamageToPlayer(b.damage);
+        spawnDefaultHit(b.x, b.y, 1.0);
+        bullets.splice(i,1);
+        continue;
+      }
+    }
+  }
+
+  // particles
+  for(let i=particles.length-1;i>=0;i--){
+    const p = particles[i];
+    p.age += dt; if(p.age >= p.life){ particles.splice(i,1); continue; }
+    p.vel.x *= 0.98; p.vel.y *= 0.98; p.vel.y += 8*dt;
+    p.pos.x += p.vel.x*dt; p.pos.y += p.vel.y*dt;
+  }
+}
+
+// =============== NPC movement/shooting ===============
+let npcFireTimer = 0;
+function npcShootingStep(dt){
+  npcFireTimer -= dt;
+  if(npcFireTimer <= 0){
+    npcFireTimer = 0.45 + Math.random()*0.8;
+    const candidates = npcs.filter(n=>!n.dead && Math.hypot(n.x-ship.pos.x, n.y-ship.pos.y) < 900);
+    if(candidates.length){
+      const shooter = candidates[Math.floor(Math.random()*candidates.length)];
+      const dir = norm({x: ship.pos.x - shooter.x, y: ship.pos.y - shooter.y});
+      const bx = shooter.x + dir.x*(shooter.radius+6), by = shooter.y + dir.y*(shooter.radius+6);
+      bullets.push({ x:bx, y:by, vx: dir.x*220 + shooter.vx, vy: dir.y*220 + shooter.vy, life: 4, r:3, owner:'npc', damage:12 });
+    }
+  }
+}
+function npcStep(dt){
+  for(const npc of npcs){
+    if(npc.dead){ npc.respawnTimer -= dt; if(npc.respawnTimer<=0){ const s = stations[Math.floor(Math.random()*stations.length)]; npc.x = s.x + (Math.random()-0.5)*140; npc.y = s.y + (Math.random()-0.5)*140; npc.hp = npc.maxHp; npc.dead=false; npc.target = pickNextStation(npc.id, s.id); } continue; }
+    const st = stations.find(s=>s.id===npc.target);
+    if(!st){ npc.target = pickNextStation(npc.id, -1); continue; }
+    const to = { x: st.x - npc.x, y: st.y - npc.y }; const d = Math.hypot(to.x,to.y);
+    const dir = d?{x:to.x/d,y:to.y/d}:{x:0,y:0};
+    const desiredSpeed = npc.speed * (d < 120 ? (d/120) : 1);
+    const desiredV = { x: dir.x*desiredSpeed, y: dir.y*desiredSpeed };
+    npc.vx += (desiredV.x - (npc.vx||0)) * clamp(1.5*dt,0,1);
+    npc.vy += (desiredV.y - (npc.vy||0)) * clamp(1.5*dt,0,1);
+    const toP = { x: ship.pos.x - npc.x, y: ship.pos.y - npc.y }; const dp = Math.hypot(toP.x,toP.y);
+    if(dp < 120){ npc.vx -= (toP.x/dp) * 40*dt; npc.vy -= (toP.y/dp) * 40*dt; }
+    npc.x += npc.vx*dt; npc.y += npc.vy*dt; npc.angle = Math.atan2(npc.vy||0, npc.vx||0);
+    if(d < 20) npc.target = pickNextStation(npc.id, st.id);
+  }
+}
+
+// =============== Warp (jak wcześniej) ===============
+const warp = {
+  state:'idle', // idle | charging | active
+  charge:0, chargeTime:0.8,
+  orientTolerance: Math.PI/30,
+  speed:3800,
+  fuelMax:6, fuel:6, consumeRate:1.0, regenRate:0.5,
+  dir:{x:0,y:0},
+  isBusy(){ return this.state!=='idle'; }
+};
+
+const boost = {
+  state:'idle',
+  charge:0, chargeTime:0.6,
+  speed:1600,
+  fuelMax:3, fuel:3, cost:1, regenRate:0.5,
+  effectTime:0, effectDuration:0.4, effectDir:{x:0,y:0}
+};
+function engageBoost(){
+  const speed = len(ship.vel);
+  let dir;
+  if(speed > 1) dir = {x: ship.vel.x/speed, y: ship.vel.y/speed};
+  else dir = rotate({x:0,y:-1}, ship.angle);
+  ship.vel.x += dir.x * boost.speed;
+  ship.vel.y += dir.y * boost.speed;
+  boost.fuel = clamp(boost.fuel - boost.cost, 0, boost.fuelMax);
+  boost.state = 'idle';
+  boost.charge = 0;
+  boost.effectTime = boost.effectDuration;
+  boost.effectDir = {x: dir.x, y: dir.y};
+}
+window.addEventListener('keydown', (e)=>{
+  if(e.key.toLowerCase() === 'shift'){
+    if(warp.state==='idle' && warp.fuel>0){ warp.state='charging'; warp.charge=0; }
+  }
+});
+window.addEventListener('keyup', (e)=>{
+  if(e.key.toLowerCase() === 'shift'){
+    if(warp.state==='charging'){ warp.state='idle'; warp.charge=0; }
+    else if(warp.state==='active'){ warp.state='idle'; }
+  }
+});
+function engageWarp(dir){
+  warp.dir = dir;
+  ship.angle = Math.atan2(dir.y, dir.x) + Math.PI/2;
+  ship.angVel = 0;
+  warp.state='active';
+  spawnParticle({x:ship.pos.x, y:ship.pos.y}, {x:0,y:0}, 0.14, '#bfe7ff', 8, true);
+  for(let i=0;i<18;i++){
+    const a = Math.random()*Math.PI*2;
+    spawnParticle({x:ship.pos.x, y:ship.pos.y}, {x:Math.cos(a)*320, y:Math.sin(a)*320}, 0.18+Math.random()*0.18, '#cce6ff', 1.4, false);
+  }
+}
+
+// =============== Fizyk ===============
+function physicsStep(dt){
+  // regen paliwa gdy nie warpuje
+  if(warp.state!=='active') warp.fuel = clamp(warp.fuel + warp.regenRate*dt, 0, warp.fuelMax);
+  if(boost.state==='idle' && boost.effectTime<=0) boost.fuel = clamp(boost.fuel + boost.regenRate*dt, 0, boost.fuelMax);
+  if(boost.state==='charging'){
+    boost.charge += dt;
+    if(boost.charge >= boost.chargeTime && boost.fuel>=boost.cost){ engageBoost(); }
+  }
+  if(boost.effectTime>0) boost.effectTime = Math.max(0, boost.effectTime - dt);
+
+  // rail queue/cd
+  rail.cd[0] = Math.max(0, rail.cd[0]-dt);
+  rail.cd[1] = Math.max(0, rail.cd[1]-dt);
+  for(const q of rail.queue) q.timer -= dt;
+  let firedSomething = true;
+  while(firedSomething){
+    firedSomething = false;
+    for(let i=0;i<rail.queue.length;i++){
+      const q = rail.queue[i];
+      if(q.timer <= 0 && rail.cd[q.barrel] <= 0 && !warp.isBusy()){
+        fireRailBarrel(q.barrel);
+        rail.queue.splice(i,1);
+        firedSomething = true;
+        break;
+      }
+    }
+  }
+  railTimer = Math.min(rail.cd[0], rail.cd[1]);
+
+  ship.special.cooldownTimer = Math.max(0, ship.special.cooldownTimer - dt);
+  if(ship.shield.regenTimer > 0) ship.shield.regenTimer -= dt;
+  else ship.shield.val = clamp(ship.shield.val + ship.shield.regenRate * dt, 0, ship.shield.max);
+  reloadLeft = clamp(reloadLeft + dt/SIDE_RELOAD_TIME, 0, 1);
+  reloadRight = clamp(reloadRight + dt/SIDE_RELOAD_TIME, 0, 1);
+  // mouse world position
+  const mouseWorld = { x: ship.pos.x + (mouse.x - W/2)/camera.zoom, y: ship.pos.y + (mouse.y - H/2)/camera.zoom };
+
+  // hover scanning
+  let hover = null;
+  for(const npc of npcs){
+    if(npc.dead) continue;
+    if(Math.hypot(npc.x - mouseWorld.x, npc.y - mouseWorld.y) < npc.radius + 20){ hover = npc; break; }
+  }
+  if(!hover){
+    for(const st of stations){
+      if(Math.hypot(st.x - mouseWorld.x, st.y - mouseWorld.y) < st.r + 20){ hover = st; break; }
+    }
+  }
+  if(hover !== scan.target){ scan.target = hover; scan.progress = 0; }
+  if(scan.target){
+    if(scan.progress < SCAN_TIME){
+      scan.progress += dt;
+      if(scan.progress >= SCAN_TIME){
+        scan.progress = SCAN_TIME;
+        scan.scanned = scan.target;
+        spawnRadarPing(scan.target.x, scan.target.y);
+      }
+    }
+  } else {
+    scan.scanned = null;
+    scan.progress = 0;
+  }
+  if(lockedTarget && lockedTarget.dead) lockedTarget = null;
+
+  // update radar pings
+  for(let i=radarPings.length-1;i>=0;i--){
+    const p = radarPings[i];
+    p.age += dt; if(p.age>p.life) radarPings.splice(i,1);
+  }
+  // update scan waves
+  for(let i=scanWaves.length-1;i>=0;i--){
+    const w = scanWaves[i];
+    w.r += w.speed*dt;
+    for(const npc of npcs){
+      if(npc.dead) continue;
+      if(!w.hit.has(npc) && Math.hypot(npc.x-w.x, npc.y-w.y) <= w.r){ w.hit.add(npc); spawnRadarPing(npc.x,npc.y); }
+    }
+    for(const st of stations){
+      if(!w.hit.has(st) && Math.hypot(st.x-w.x, st.y-w.y) <= w.r){ w.hit.add(st); spawnRadarPing(st.x,st.y); }
+    }
+    if(w.r > w.max) scanWaves.splice(i,1);
+  }
+
+  // update scan arrows
+  for(let i=scanArrows.length-1;i>=0;i--){
+    const a = scanArrows[i];
+    if(warp.state !== 'active') a.age += dt;
+    if(a.age > a.life) scanArrows.splice(i,1);
+  }
+
+  // turret aim (poza warp active)
+  const aimPos = (lockedTarget && !lockedTarget.dead)
+    ? leadTarget(ship.pos, ship.vel, lockedTarget, RAIL_SPEED)
+    : mouseWorld;
+  if(warp.state!=='active'){
+    let diffT = wrapAngle(Math.atan2(aimPos.y - ship.pos.y, aimPos.x - ship.pos.x) - ship.turret.angle);
+    let desiredVel = clamp(diffT * 6.5, -ship.turret.maxSpeed, ship.turret.maxSpeed);
+    const velDelta = desiredVel - ship.turret.angVel;
+    const maxDelta = ship.turret.maxAccel * dt;
+    ship.turret.angVel += clamp(velDelta, -maxDelta, maxDelta);
+    ship.turret.angVel *= Math.exp(-ship.turret.damping * dt);
+    ship.turret.angVel = clamp(ship.turret.angVel, -ship.turret.maxSpeed, ship.turret.maxSpeed);
+    ship.turret.angle = wrapAngle(ship.turret.angle + ship.turret.angVel * dt);
+  }
+  ship.turret.recoil = Math.max(0, ship.turret.recoil - ship.turret.recoilRecover * dt);
+
+  // siły
+  let totalF = {x:0,y:0}, totalTorque = 0;
+  const forwardLocal = {x:0, y:-1};
+
+  if(warp.state==='active'){
+    const dirToMouse = norm({x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y});
+    const targetV = { x: warp.dir.x*warp.speed, y: warp.dir.y*warp.speed };
+    ship.vel.x += (targetV.x - ship.vel.x) * clamp(6*dt,0,1);
+    ship.vel.y += (targetV.y - ship.vel.y) * clamp(6*dt,0,1);
+    ship.angVel *= Math.exp(-8*dt);
+    warp.fuel = clamp(warp.fuel - warp.consumeRate*dt, 0, warp.fuelMax);
+    if(warp.fuel<=0) warp.state='idle';
+  }
+  else if(warp.state==='charging'){
+    const dirToMouse = norm({x: mouseWorld.x - ship.pos.x, y: mouseWorld.y - ship.pos.y});
+    const desiredBodyAngle = Math.atan2(dirToMouse.y, dirToMouse.x) + Math.PI/2;
+    const kp = 5.5, maxSpin=2.5, accel=8.0;
+    const diffB = wrapAngle(desiredBodyAngle - ship.angle);
+    const desiredSpin = clamp(diffB * kp, -maxSpin, maxSpin);
+    const delta = clamp(desiredSpin - ship.angVel, -accel*dt, accel*dt);
+    ship.angVel += delta;
+    if(warp.charge < warp.chargeTime) warp.charge += dt;
+    if(warp.charge >= warp.chargeTime && Math.abs(diffB) <= warp.orientTolerance && warp.fuel>0){
+      engageWarp(dirToMouse);
+    }
+  }
+  else {
+    // GŁÓWNY DUŻY SILNIK — ciąg do przodu
+    if(input.main>0){
+      const e = ship.engines.main;
+      const thrust = e.maxThrust * input.main;
+      const wo = rotate(e.offset, ship.angle);
+      const wf = rotate(forwardLocal, ship.angle);
+      totalF.x += wf.x * thrust; totalF.y += wf.y * thrust;
+      totalTorque += (wo.x * (wf.y * thrust) - wo.y * (wf.x * thrust));
+    }
+    // mały krótki ślad przy poruszaniu (bez gazu)
+    const spd = len(ship.vel);
+    if(spd > 60){
+      const e = ship.engines.main;
+      const wo = rotate(e.offset, ship.angle);
+      const backDir = norm({x:-ship.vel.x, y:-ship.vel.y});
+      spawnParticle({x: ship.pos.x + wo.x, y: ship.pos.y + wo.y},
+                    {x: backDir.x*50 + (Math.random()-0.5)*20, y: backDir.y*50 + (Math.random()-0.5)*20},
+                    0.18, '#bfe7ff', 1.2, false);
+    }
+
+    // boczne i moment
+    if(input.leftSide>0){
+      const e = ship.engines.sideLeft;
+      const thrust = e.maxThrust * input.leftSide;
+      const wo = rotate(e.offset, ship.angle);
+      const lateral = rotate({x:1,y:0}, ship.angle);
+      const worldForce = {x: lateral.x * thrust, y: lateral.y * thrust};
+      totalF.x += worldForce.x; totalF.y += worldForce.y;
+      totalTorque += (wo.x * worldForce.y - wo.y * worldForce.x);
+      spawnParticle(add(ship.pos, wo), add(ship.vel, mul(worldForce,-0.002)), 0.30, '#cfe7ff', 1.0);
+    }
+    if(input.rightSide>0){
+      const e = ship.engines.sideRight;
+      const thrust = e.maxThrust * input.rightSide;
+      const wo = rotate(e.offset, ship.angle);
+      const lateral = rotate({x:-1,y:0}, ship.angle);
+      const worldForce = {x: lateral.x * thrust, y: lateral.y * thrust};
+      totalF.x += worldForce.x; totalF.y += worldForce.y;
+      totalTorque += (wo.x * worldForce.y - wo.y * worldForce.x);
+      spawnParticle(add(ship.pos, wo), add(ship.vel, mul(worldForce,-0.002)), 0.30, '#cfe7ff', 1.0);
+    }
+    if(input.torque !== 0){
+      const sign = Math.sign(input.torque);
+      const left = ship.engines.torqueLeft; const right = ship.engines.torqueRight;
+      const thrust = left.maxThrust * Math.abs(input.torque);
+      const o1 = rotate(left.offset, ship.angle), o2 = rotate(right.offset, ship.angle);
+      const lateral1 = rotate({x:1,y:0}, ship.angle), lateral2 = rotate({x:-1,y:0}, ship.angle);
+      const f1 = mul(lateral1, thrust * sign), f2 = mul(lateral2, thrust * sign);
+      totalF.x += f1.x + f2.x; totalF.y += f1.y + f2.y;
+      totalTorque += (o1.x * f1.y - o1.y * f1.x) + (o2.x * f2.y - o2.y * f2.x);
+      spawnParticle(add(ship.pos, o1), add(ship.vel, mul(f1,-0.002)), 0.22, '#cfe7ff',1.0);
+      spawnParticle(add(ship.pos, o2), add(ship.vel, mul(f2,-0.002)), 0.22, '#cfe7ff',1.0);
+    }
+  }
+
+  // integracja ruchu
+  const ax = totalF.x / ship.mass, ay = totalF.y / ship.mass;
+  ship.vel.x += ax*dt; ship.vel.y += ay*dt;
+  const linDamp = Math.exp(-ship.linearDamping*dt);
+  if(warp.state!=='active'){ ship.vel.x *= linDamp; ship.vel.y *= linDamp; }
+  ship.pos.x += ship.vel.x*dt; ship.pos.y += ship.vel.y*dt;
+
+  // granice
+  const margin = 50;
+  ship.pos.x = clamp(ship.pos.x, margin, WORLD.w - margin);
+  ship.pos.y = clamp(ship.pos.y, margin, WORLD.h - margin);
+
+  // obrót
+  const angAcc = totalTorque / ship.inertia;
+  ship.angVel += angAcc*dt;
+  ship.angVel *= Math.exp(-ship.angularDamping*dt);
+  ship.angle += ship.angVel*dt;
+
+  // salwy boczne (idle)
+  if(warp.state==='idle'){
+    for(let si = activeSalvos.length - 1; si >= 0; si--){
+      const salvo = activeSalvos[si];
+      salvo.timeToNext -= dt;
+      if(salvo.timeToNext <= 0 && salvo.roundsLeft > 0){
+        for(let g=0; g < salvo.gunsPerBurst; g++){
+          const idx = (salvo.nextIndex + g) % salvo.guns.length;
+          const gunOff = salvo.guns[idx];
+          fireSideGunAtOffset(gunOff, salvo.side);
+        }
+        salvo.nextIndex = (salvo.nextIndex + salvo.gunsPerBurst) % salvo.guns.length;
+        salvo.roundsLeft--;
+        salvo.timeToNext += salvo.burstInterval;
+      }
+      if(salvo.roundsLeft <= 0) activeSalvos.splice(si,1);
+    }
+  }
+
+  npcStep(dt);
+  bulletsAndCollisionsStep(dt);
+  npcShootingStep(dt);
+}
+
+// ======= Efekty VFX =======
+function glowDot(ctx,x,y,r,color,alpha=1){ ctx.save(); ctx.globalAlpha=alpha; ctx.shadowBlur=r*1.6; ctx.shadowColor=color; ctx.fillStyle=color; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.restore(); }
+function plumeGradient(ctx,x,y,len,wide,c1,c2){ const g=ctx.createLinearGradient(x,y,x,y-len); g.addColorStop(0,c1); g.addColorStop(1,c2); ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(x-wide/2,y); ctx.quadraticCurveTo(x,y-len*0.5,x,y-len); ctx.quadraticCurveTo(x,y-len*0.5,x+wide/2,y); ctx.closePath(); ctx.fill(); }
+function drawBraided(state,ctx,o){ const L=120,A=20,t=state.t*2.5;ctx.lineWidth=3.2;ctx.lineCap='round'; for(let k=0;k<3;k++){ const phase=k*2.1;ctx.beginPath();ctx.strokeStyle=`hsla(${200+20*k},100%,75%,0.85)`; for(let y=0;y<=L;y+=4){const p=y/L;const x=o.x+Math.sin(-t+p*8+phase)*A*(1-p*0.8);ctx[p?'lineTo':'moveTo'](x,o.y-y);}ctx.stroke(); } plumeGradient(ctx,o.x,o.y,L,60,'rgba(100,180,255,0.25)','rgba(100,180,255,0)'); glowDot(ctx,o.x,o.y,10,'#dff',0.9); }
+function drawPhotonBeamLocal(alpha){ const L=200; ctx.save(); ctx.lineCap='round'; ctx.shadowBlur=28; ctx.shadowColor=`rgba(230,250,255,${0.95*alpha})`; ctx.strokeStyle=`rgba(255,255,255,${0.95*alpha})`; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-L*0.96); ctx.stroke(); ctx.restore(); plumeGradient(ctx,0,0,L,100,`rgba(160,210,255,${0.25*alpha})`,`rgba(160,210,255,0)`); for(let i=0;i<4;i++){ const phase=((vfxTime*0.8)+i*0.25)%1; const y=-phase*L; const r=20+40*(1-phase); ctx.strokeStyle=`rgba(200,240,255,${(1-phase)*alpha})`; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(0,y,r,0,Math.PI*2); ctx.stroke(); } glowDot(ctx,0,0,12,'#fff',alpha); }
+function drawMainEngineVfx(pos, forward, cam){ const s=worldToScreen(pos.x,pos.y,cam); ctx.save(); ctx.translate(s.x,s.y); ctx.scale(camera.zoom,camera.zoom); ctx.rotate(Math.atan2(-forward.x, forward.y)); ctx.globalCompositeOperation='lighter'; drawBraided({t:vfxTime},ctx,{x:0,y:0}); ctx.restore(); }
+function drawBoostBeam(pos, dir, cam, alpha){ const s=worldToScreen(pos.x,pos.y,cam); ctx.save(); ctx.translate(s.x,s.y); ctx.scale(camera.zoom,camera.zoom); ctx.rotate(Math.atan2(-dir.x, dir.y)); ctx.globalCompositeOperation='lighter'; drawPhotonBeamLocal(alpha); ctx.restore(); }
+
+// =============== Main loop ===============
+let lastTime = performance.now();
+const PHYS_DT = 1/120;
+let acc = 0;
+let vfxTime = 0;
+let prevState = null;
+function saveState(){ prevState = { pos:{...ship.pos}, angle: ship.angle, turretAngle: ship.turret.angle }; }
+saveState();
+function loop(now){
+  const frame = Math.min(0.033, (now - lastTime)/1000);
+  lastTime = now;
+  acc += frame;
+  vfxTime += frame;
+  saveState();
+  let steps = 0;
+  while(acc >= PHYS_DT && steps < 10){
+    physicsStep(PHYS_DT);
+    acc -= PHYS_DT; steps++;
+  }
+  const alpha = acc / PHYS_DT;
+  frameId++;
+  render(alpha);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// =============== Render ===============
+function worldToScreen(wx,wy,cam){ return { x: (wx - cam.x)*camera.zoom + W/2, y: (wy - cam.y)*camera.zoom + H/2 }; }
+
+function drawStars(cam){
+  // jak daleko poza ekran ładować komórki
+  const marginW = (W/2)/camera.zoom + 2000;
+  const marginH = (H/2)/camera.zoom + 2000;
+  const minX = Math.floor((cam.x - marginW)/STAR_CELL);
+  const maxX = Math.floor((cam.x + marginW)/STAR_CELL);
+  const minY = Math.floor((cam.y - marginH)/STAR_CELL);
+  const maxY = Math.floor((cam.y + marginH)/STAR_CELL);
+
+  for(let iy=minY; iy<=maxY; iy++){
+    for(let ix=minX; ix<=maxX; ix++){
+      const cell = getCell(ix,iy);
+      for(const s of cell.stars){
+        const sx = (s.x - cam.x) * camera.zoom + W/2;
+        const sy = (s.y - cam.y) * camera.zoom + H/2;
+        if(sx < -50 || sx > W+50 || sy < -50 || sy > H+50) continue;
+
+        if(warp.state==='active'){
+          // Smugi przy warp
+          const L = 24 * (1 + 1.2*(warp.fuel/warp.fuelMax));
+          const dx = -warp.dir.x * L, dy = -warp.dir.y * L;
+          ctx.strokeStyle = 'rgba(200,220,255,0.35)';
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(sx+dx, sy+dy); ctx.lineTo(sx, sy); ctx.stroke();
+        } else {
+          ctx.globalAlpha = s.bright;
+          ctx.fillStyle = '#ffffff';
+          const sz = Math.max(0.6, s.size * (0.8 + 0.2*Math.random()));
+          ctx.fillRect(Math.round(sx), Math.round(sy), Math.ceil(sz), Math.ceil(sz));
+          ctx.globalAlpha = 1;
+        }
+      }
+    }
+  }
+  pruneStarCells();
+}
+
+function render(alpha){
+  // Interpolacja stanu
+  const interpPos = {
+    x: prevState.pos.x*(1-alpha) + ship.pos.x*alpha,
+    y: prevState.pos.y*(1-alpha) + ship.pos.y*alpha
+  };
+  const interpAngle = prevState.angle*(1-alpha) + ship.angle*alpha;
+  const interpTurretAngle = interpAngleShort(prevState.turretAngle, ship.turret.angle, alpha);
+
+  // Kamera
+  const cam = { x: interpPos.x, y: interpPos.y };
+
+  // Czyścimy ekran
+  ctx.clearRect(0,0,W,H);
+
+  // Gwiazdy (proceduralne kafelki na całej mapie)
+  drawStars(cam);
+
+  // scan waves
+  for(const w of scanWaves){
+    const s = worldToScreen(w.x, w.y, cam);
+    ctx.strokeStyle = 'rgba(120,200,255,0.18)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, w.r * camera.zoom, 0, Math.PI*2); ctx.stroke();
+  }
+
+  // Stacje
+  for(const st of stations){
+    const s = worldToScreen(st.x, st.y, cam);
+    const rr = st.r * camera.zoom;
+    ctx.fillStyle = '#273447';
+    roundRectScreen(s.x - rr, s.y - rr*0.6, rr*2, rr*1.2, 6*camera.zoom); ctx.fill();
+    ctx.strokeStyle = 'rgba(175,210,255,0.12)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, rr*1.05, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle = '#dfe7ff'; ctx.font = `${12*camera.zoom}px monospace`;
+    ctx.fillText('ST'+st.id, s.x - rr*0.35, s.y + 4*camera.zoom);
+  }
+
+  // Pociski
+  for(const b of bullets){
+    const s = worldToScreen(b.x, b.y, cam);
+    if(b.type === 'rail'){
+      const a = Math.atan2(b.vy, b.vx);
+      const lenPx = 28;
+      const dx = Math.cos(a) * (lenPx*0.5);
+      const dy = Math.sin(a) * (lenPx*0.5);
+
+      // glow
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.shadowBlur = 20 * camera.zoom;
+      ctx.shadowColor = 'rgba(140,200,255,0.9)';
+      ctx.strokeStyle = 'rgba(160,210,255,0.6)';
+      ctx.lineWidth = 12 * camera.zoom;
+      ctx.beginPath(); ctx.moveTo(s.x - dx, s.y - dy); ctx.lineTo(s.x + dx, s.y + dy); ctx.stroke();
+      ctx.restore();
+
+      // rdzeń
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = 'rgba(240,255,255,1.0)';
+      ctx.lineWidth = 4 * camera.zoom;
+      ctx.beginPath(); ctx.moveTo(s.x - dx*0.4, s.y - dy*0.4); ctx.lineTo(s.x + dx*0.9, s.y + dy*0.9); ctx.stroke();
+      ctx.lineCap = 'butt';
+    } else if(b.type === 'plasma'){
+      const sp = worldToScreen(b.px, b.py, cam);
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.shadowBlur = 20 * camera.zoom;
+      ctx.shadowColor = 'rgba(100,255,120,0.85)';
+      ctx.strokeStyle = 'rgba(80,240,120,0.55)';
+      ctx.lineWidth = 8 * camera.zoom;
+      ctx.beginPath(); ctx.moveTo(sp.x, sp.y); ctx.lineTo(s.x, s.y); ctx.stroke();
+      ctx.restore();
+      ctx.beginPath(); ctx.fillStyle = '#9eff9a';
+      ctx.arc(s.x, s.y, Math.max(2, b.r*camera.zoom*0.8), 0, Math.PI*2); ctx.fill();
+    } else {
+      ctx.beginPath(); ctx.fillStyle = '#ffd86b';
+      ctx.arc(s.x, s.y, Math.max(1.5, b.r*camera.zoom), 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  // NPC
+  for(const npc of npcs){
+    if(npc.dead) continue;
+    const s = worldToScreen(npc.x, npc.y, cam);
+    ctx.save(); ctx.translate(s.x,s.y); ctx.rotate(npc.angle);
+    ctx.fillStyle = npc.color;
+    roundRectScreen(-npc.radius*camera.zoom, -npc.radius*camera.zoom,
+                    npc.radius*2*camera.zoom, npc.radius*1.2*camera.zoom, 4*camera.zoom);
+    ctx.fill();
+    const hpw = (npc.hp / npc.maxHp) * (npc.radius*2*camera.zoom);
+    ctx.fillStyle = '#ff6b6b';
+    ctx.fillRect(-npc.radius*camera.zoom, -npc.radius*camera.zoom - 8*camera.zoom, hpw, 4*camera.zoom);
+    ctx.restore();
+  }
+
+  // radar pings
+  for(const ping of radarPings){
+    const s = worldToScreen(ping.x, ping.y, cam);
+    const t = ping.age/ping.life;
+    ctx.strokeStyle = `rgba(120,200,255,${1-t})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, 40 * t * camera.zoom, 0, Math.PI*2); ctx.stroke();
+  }
+
+  // scan indicator and lock
+  if(scan.target){
+    const obj = scan.target;
+    const s = worldToScreen(obj.x, obj.y, cam);
+    const rad = ((obj.radius||obj.r) + 10) * camera.zoom;
+    const t = scan.progress/SCAN_TIME;
+    ctx.strokeStyle = 'rgba(120,200,255,0.7)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, rad, -Math.PI/2, -Math.PI/2 + Math.PI*2*t); ctx.stroke();
+  }
+  if(lockedTarget){
+    const obj = lockedTarget;
+    const s = worldToScreen(obj.x, obj.y, cam);
+    const rad = ((obj.radius||obj.r) + 14) * camera.zoom;
+    ctx.strokeStyle = 'rgba(255,80,80,0.8)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, rad, 0, Math.PI*2); ctx.stroke();
+  }
+
+  // Particles (za statkiem)
+  for(const p of particles){
+    if(p.flash) continue;
+    const s = worldToScreen(p.pos.x, p.pos.y, cam);
+    const t = clamp(1 - p.age/p.life, 0, 1);
+    ctx.globalAlpha = t;
+    ctx.beginPath(); ctx.fillStyle = p.color;
+    ctx.arc(s.x, s.y, p.size * camera.zoom, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // Efekty silnika i dopalacza
+  if(input.main>0){
+    const e = ship.engines.main;
+    const origin = add(interpPos, rotate(e.offset, interpAngle));
+    const forward = rotate({x:0,y:-1}, interpAngle);
+    drawMainEngineVfx(origin, forward, cam);
+  }
+  if(boost.effectTime>0){
+    const e = ship.engines.main;
+    const origin = add(interpPos, rotate(e.offset, interpAngle));
+    drawBoostBeam(origin, boost.effectDir, cam, boost.effectTime/boost.effectDuration);
+  }
+
+  // ======= STATEK =======
+  const shipS = worldToScreen(interpPos.x, interpPos.y, cam);
+  ctx.save(); ctx.translate(shipS.x, shipS.y); ctx.scale(camera.zoom, camera.zoom); ctx.rotate(interpAngle);
+
+  // cień + kadłub
+  ctx.fillStyle = 'rgba(3,8,18,0.8)';
+  ctx.fillRect(-ship.w/2 + 6, -ship.h/2 + 8, ship.w, ship.h);
+  const g = ctx.createLinearGradient(-ship.w/2, -ship.h/2, ship.w/2, ship.h/2);
+  g.addColorStop(0, '#1d2740'); g.addColorStop(1, '#2d3b55');
+  ctx.fillStyle = g; roundRect(ctx, -ship.w/2, -ship.h/2, ship.w, ship.h, 10); ctx.fill();
+  ctx.fillStyle = '#a8d1ff'; ctx.beginPath();
+  ctx.ellipse(0, -6, ship.w*0.22, ship.h*0.22, 0, 0, Math.PI*2); ctx.fill();
+
+  // główny niebieski nozzle
+  const mainE = ship.engines.main;
+  ctx.save(); ctx.translate(mainE.offset.x, mainE.offset.y);
+  ctx.fillStyle = '#2a3a56'; roundRect(ctx, -14, -9, 28, 18, 6); ctx.fill();
+  ctx.save(); ctx.globalAlpha = 0.8; ctx.shadowBlur = 20; ctx.shadowColor = 'rgba(150,200,255,0.9)';
+  ctx.fillStyle = 'rgba(160,210,255,0.75)'; roundRect(ctx, -8, -6, 16, 12, 4); ctx.fill();
+  ctx.restore(); ctx.restore();
+
+  // boczne/torque nozzles
+  for(const k of ['sideLeft','sideRight','torqueLeft','torqueRight']){
+    const e = ship.engines[k];
+    ctx.save(); ctx.translate(e.offset.x, e.offset.y);
+    ctx.fillStyle = '#2f3b57'; roundRect(ctx, -6,-6,12,12,3); ctx.fill(); ctx.restore();
+  }
+
+  // krótkie lufy boczne
+  ctx.fillStyle = '#cbd6ff';
+  for(const off of ship.sideGunsLeft){ ctx.save(); ctx.translate(off.x, off.y); roundRect(ctx, -12,-3,8,6,3); ctx.fill(); ctx.restore(); }
+  for(const off of ship.sideGunsRight){ ctx.save(); ctx.translate(off.x, off.y); roundRect(ctx, 4,-3,8,6,3); ctx.fill(); ctx.restore(); }
+
+  // tarcza
+  const sp = ship.shield.val / ship.shield.max;
+  if(sp > 0.005){
+    ctx.beginPath(); ctx.strokeStyle = `rgba(120,200,255,${0.18 + 0.4*sp})`;
+    ctx.lineWidth = 3; ctx.arc(0,0, Math.max(ship.w,ship.h)*0.6, 0, Math.PI*2); ctx.stroke();
+  }
+
+  // wieżyczka podwójna z recoilem
+  ctx.save();
+  ctx.rotate(interpTurretAngle - interpAngle);
+  const baseW = 16, baseH = 24, barrelLen = Math.max(22, Math.round(ship.h * 0.24)), barrelH = 6, gap = 10;
+  const recoil = ship.turret.recoil;
+  ctx.fillStyle = '#9ab7ff'; roundRect(ctx, -baseW/2, -baseH/2, baseW, baseH, 5); ctx.fill();
+  ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(30,50,90,0.45)'; ctx.stroke();
+  ctx.fillStyle = '#f1f6ff';
+  roundRect(ctx, 6 - recoil, -gap/2 - barrelH/2, barrelLen, barrelH, 3); ctx.fill(); ctx.stroke();
+  roundRect(ctx, 6 - recoil,  gap/2 - barrelH/2, barrelLen, barrelH, 3); ctx.fill(); ctx.stroke();
+  ctx.restore(); // turret
+  ctx.restore(); // ship
+
+  // scan arrows pointing to stations
+  if(warp.state !== 'active'){
+    const shieldR = Math.max(ship.w, ship.h) * 0.6;
+    for(const a of scanArrows){
+      const st = a.target;
+      const dx = st.x - ship.pos.x;
+      const dy = st.y - ship.pos.y;
+      const ang = Math.atan2(dy, dx);
+      const baseR = shieldR + 10;
+      const ax = ship.pos.x + Math.cos(ang) * baseR;
+      const ay = ship.pos.y + Math.sin(ang) * baseR;
+      const s = worldToScreen(ax, ay, cam);
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(ang);
+      const size = 18 * camera.zoom;
+      ctx.beginPath();
+      ctx.fillStyle = 'rgba(120,200,255,0.9)';
+      ctx.moveTo(0, -size*0.5);
+      ctx.lineTo(size, 0);
+      ctx.lineTo(0, size*0.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+      const tx = ship.pos.x + Math.cos(ang) * (baseR + 14);
+      const ty = ship.pos.y + Math.sin(ang) * (baseR + 14);
+      const ts = worldToScreen(tx, ty, cam);
+      ctx.save();
+      ctx.fillStyle = '#dfe7ff';
+      ctx.font = `${12*camera.zoom}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${Math.round(Math.hypot(dx,dy))}u`, ts.x, ts.y);
+      ctx.restore();
+    }
+  }
+
+  // Particles typu "flash" na samym wierzchu
+  for(const p of particles){
+    if(!p.flash) continue;
+    const s = worldToScreen(p.pos.x, p.pos.y, cam);
+    const t = clamp(1 - p.age/p.life, 0, 1);
+    ctx.globalAlpha = t;
+    ctx.save();
+    ctx.shadowBlur = 20 * camera.zoom * (p.size/2);
+    let shadowColor = p.color;
+    if(p.color === '#bfe7ff') shadowColor = 'rgba(120,200,255,0.9)';
+    if(p.color === '#ffd8c4') shadowColor = 'rgba(255,180,120,0.9)';
+    if(p.color === '#7CFF7C' || p.color === '#a8ff9a') shadowColor = 'rgba(120,255,140,0.95)';
+    if(p.color === '#ffffff') shadowColor = 'rgba(255,255,255,0.95)';
+    ctx.shadowColor = shadowColor;
+    ctx.beginPath(); ctx.fillStyle = p.color;
+    ctx.arc(s.x, s.y, (p.size * 3) * camera.zoom, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+    ctx.beginPath(); ctx.fillStyle = p.color;
+    ctx.arc(s.x, s.y, p.size * camera.zoom, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // HUD
+  ctx.fillStyle = '#dfe7ff'; ctx.font = '12px monospace';
+  ctx.fillText(`HP: ${Math.round(ship.hull.val)}/${ship.hull.max}`, 12, H-100);
+  ctx.fillText(`Shield: ${Math.round(ship.shield.val)}/${ship.shield.max}`, 12, H-84);
+  const warpText = warp.state==='active' ? `ACTIVE`
+                  : warp.state==='charging' ? `CHARGING ${(Math.min(1,warp.charge/warp.chargeTime)*100).toFixed(0)}%`
+                  : 'READY';
+  ctx.fillText(`Warp: ${warpText}`, 12, H-68);
+  const fw = 200, fh = 10, ffrac = warp.fuel/warp.fuelMax;
+  ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.strokeRect(12-1, H-52-fh, fw+2, fh+2);
+  ctx.fillStyle = '#60a5fa'; ctx.fillRect(12, H-52-fh, fw*ffrac, fh);
+  ctx.fillStyle = '#dfe7ff'; ctx.fillText(`${warp.fuel.toFixed(1)}s / ${warp.fuelMax}s`, 12 + fw + 8, H-42-fh);
+  const boostText = boost.state==='charging' ? `CHARGING ${(Math.min(1,boost.charge/boost.chargeTime)*100).toFixed(0)}%` : 'READY';
+  ctx.fillText(`Boost: ${boostText} (${boost.fuel.toFixed(1)}/${boost.fuelMax})`, 12, H-44);
+  const railTimerHUD = Math.min(rail.cd[0], rail.cd[1]);
+  ctx.fillText(`Rail: ${railTimerHUD>0?railTimerHUD.toFixed(2)+'s':'READY'}  Special: ${ship.special.cooldownTimer>0?ship.special.cooldownTimer.toFixed(1)+'s':'READY'}`, 12, H-28);
+
+  // paski bocznych
+  const bw = 160, bh = 10;
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.strokeRect(12-1, H-12-bh-12, bw+2, bh+2);
+  ctx.fillStyle = '#3b82f6'; ctx.fillRect(12, H-12-bh-12, bw*reloadLeft, bh);
+  ctx.fillStyle = '#dfe7ff'; ctx.fillText('Left salvos', 12 + bw + 8, H-12-bh-6-12);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.strokeRect(12-1, H-12, bw+2, bh+2);
+  ctx.fillStyle = '#ef4444'; ctx.fillRect(12, H-12, bw*reloadRight, bh);
+  ctx.fillStyle = '#dfe7ff'; ctx.fillText('Right salvos', 12 + bw + 8, H-12 + bh - 2);
+}
+
+// =============== Helpers ===============
+function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function roundRectScreen(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+
+// init
+initStars(true);
+console.log('Gwiazdy: proceduralne kafelki 1024px na całej mapie. Silnik: warkocz jonowy, dopalacz: wiązka fotonów.');
+</script>
+</body>
+</html>
