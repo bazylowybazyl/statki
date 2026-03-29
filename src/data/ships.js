@@ -94,11 +94,11 @@ export const HULL_RENDER_PROFILES = {
   supercapital: { id: 'supercapital', length: 2000, radius: 500 },
   terran_frigate: { id: 'terran_frigate', length: 320, radius: 120 },
   terran_destroyer: { id: 'terran_destroyer', length: 480, radius: 170 },
-  terran_battleship: { id: 'terran_battleship', length: 640, radius: 220 },
+  terran_battleship: { id: 'terran_battleship', length: 1040, radius: 220 },
   pirate_frigate: { id: 'pirate_frigate', length: 320, radius: 120 },
-  pirate_destroyer: { id: 'pirate_destroyer', length: 480, radius: 170 },
-  pirate_battleship: { id: 'pirate_battleship', length: 640, radius: 220 },
-  capital_carrier: { id: 'capital_carrier', length: 720, radius: 250 }
+  pirate_destroyer: { id: 'pirate_destroyer', length: 600, radius: 170 },
+  pirate_battleship: { id: 'pirate_battleship', length: 1200, radius: 220 },
+  capital_carrier: { id: 'capital_carrier', length: 1200, radius: 250 }
 };
 
 export const HULL_RENDER_PROFILE_ALIASES = {

@@ -1022,6 +1022,7 @@
     import { createArmataImpactFactory } from "./src/effects3d/armataImpact.js";
     import { createAutocannonImpactFactory } from "./src/effects3d/autocannonImpact.js";
     import { createReactorBlowFactory } from "./src/effects3d/reactorblow.js";
+    import { initRocketSystem3D, updateRocketSystem3D, fireRocket3D } from "./src/effects3d/rocketSystem3D.js";
     import { WarpBlackHole } from "./src/vfx/warpBlackHole.js";
     import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
     import { createShipEntity, applyPlayerInput, refreshShipGeometry, composeShipThrusterCommand, updateShipThrusterState, computeShipThrusterForces, SHIP_PHYSICS } from "./src/game/shipEntity.js";
@@ -1080,6 +1081,8 @@
     window.createArmataImpactFactory = createArmataImpactFactory;
     window.createAutocannonImpactFactory = createAutocannonImpactFactory;
     window.createReactorBlowFactory = createReactorBlowFactory;
+    window.initRocketSystem3D = initRocketSystem3D;
+    window.fireRocket3D = fireRocket3D;
     window.createShipEntity = createShipEntity;
     window.applyPlayerInput = applyPlayerInput;
     window.refreshShipGeometry = refreshShipGeometry;
@@ -5305,6 +5308,7 @@
     }
     // Bezpieczna, odroczona inicjalizacja overlayu 3D
     let overlay3D = null;
+    let rocketOverlay3D = null;
 
     window.addEventListener('resize', () => {
       W = canvas.width = innerWidth;
@@ -5359,6 +5363,19 @@
       const ov = init({ host, getView: () => overlayView });
       overlay3D = ov;
       window.overlay3D = ov;
+      const rocketOv = init({
+        host,
+        getView: () => overlayView,
+        mode: 'raw',
+        zIndex: 21,
+        useBloom: false,
+        useAlphaPass: false,
+        adaptiveQuality: false,
+        updateSparkSystem: false,
+        baseRenderScale: 1.0
+      });
+      rocketOverlay3D = rocketOv;
+      window.rocketOverlay3D = rocketOv;
       if (window.SparkSystem3D) {
         if (window.SparkSystem3D.isInitialized) {
           window.SparkSystem3D.dispose();
@@ -5374,6 +5391,10 @@
       }
       if (reactorFactory) {
         window.makeReactorBlow = reactorFactory(ov.scene);
+      }
+      // 3D Rocket System (fire/smoke GPU particles + physics)
+      if (window.initRocketSystem3D) {
+        window.initRocketSystem3D(rocketOv.scene);
       }
       resizeOverlay3D();
       return true;
@@ -5431,6 +5452,7 @@
       overlayView.viewport.w = innerWidth;
       overlayView.viewport.h = innerHeight;
       if (overlay3D) overlay3D.resize();
+      if (rocketOverlay3D) rocketOverlay3D.resize();
     }
 
     resizeOverlay3D();
@@ -7820,29 +7842,44 @@
           // --- LOGIKA POCISKÓW I RAKIET ---
           const life = range / Math.max(speed, 1);
 
-          window.bullets.push({
-            x: muzzleData.pos.x,
-            y: muzzleData.pos.y,
-            vx: dirX * speed + (muzzleData.baseVel?.x || 0) * 0.2,
-            vy: dirY * speed + (muzzleData.baseVel?.y || 0) * 0.2,
-            life: life,
-            r: weapon.category === 'torpedo' ? 10 : (weapon.size === 'L' ? 6 : (weapon.size === 'M' ? 4 : 2)),
-            owner: isP2Ship ? 'player2' : (shooterIsFriendly ? 'player' : 'npc'),
-            damage: damage,
-            type: weapon.category, // 'rail', 'plasma', 'rocket', etc.
-            weaponSize: weapon.size || 'M', // S, M, L, Capital — for VFX tier
-            color: weapon.vfxColor,
-            source: shooter,
-            penetration: weapon.penetration || 0,
-            explodeRadius: weapon.explodeRadius || weapon.explosionRadius || 0,
+          // 3D Rocket intercept — replace 2D bullet with full 3D rocket
+          if (weapon.category === 'rocket' && window.rocketSystem3D) {
+            const colorTheme = shooterIsFriendly ? 'blue' : 'red';
+            // If no locked target and player is firing, aim at mouse cursor
+            let rocketTarget = target;
+            if (!rocketTarget && isP1Ship && window.screenToWorld && typeof mouse !== 'undefined') {
+              const mw = window.screenToWorld(mouse.x, mouse.y);
+              rocketTarget = { x: mw.x, y: mw.y, dead: false, _isPositionTarget: true };
+            }
+            window.rocketSystem3D.fire(
+              muzzleData.pos.x, muzzleData.pos.y,
+              rocketTarget, damage, weapon, colorTheme
+            );
+          } else {
+            window.bullets.push({
+              x: muzzleData.pos.x,
+              y: muzzleData.pos.y,
+              vx: dirX * speed + (muzzleData.baseVel?.x || 0) * 0.2,
+              vy: dirY * speed + (muzzleData.baseVel?.y || 0) * 0.2,
+              life: life,
+              r: weapon.category === 'torpedo' ? 10 : (weapon.size === 'L' ? 6 : (weapon.size === 'M' ? 4 : 2)),
+              owner: isP2Ship ? 'player2' : (shooterIsFriendly ? 'player' : 'npc'),
+              damage: damage,
+              type: weapon.category, // 'rail', 'plasma', 'rocket', etc.
+              weaponSize: weapon.size || 'M', // S, M, L, Capital — for VFX tier
+              color: weapon.vfxColor,
+              source: shooter,
+              penetration: weapon.penetration || 0,
+              explodeRadius: weapon.explodeRadius || weapon.explosionRadius || 0,
 
-            // Specyficzne dla rakiet i torped
-            target: (weapon.category === 'rocket' || weapon.category === 'torpedo') ? target : null,
-            turnRate: weapon.turnRate ? (weapon.turnRate * Math.PI / 180) : 0,
-            homingDelay: weapon.homingDelay || 0,
-            vfxKey: weapon.id,
-            lockOwner: isP2Ship ? 'player2' : (isP1Ship ? 'player' : null)
-          });
+              // Specyficzne dla rakiet i torped
+              target: (weapon.category === 'rocket' || weapon.category === 'torpedo') ? target : null,
+              turnRate: weapon.turnRate ? (weapon.turnRate * Math.PI / 180) : 0,
+              homingDelay: weapon.homingDelay || 0,
+              vfxKey: weapon.id,
+              lockOwner: isP2Ship ? 'player2' : (isP1Ship ? 'player' : null)
+            });
+          }
         }
       }
 
@@ -15286,8 +15323,12 @@
         updateCameraTarget(frame);
         zoomIndicator.update(frame);
         render(0, frame);
+        if (window.rocketSystem3D) window.rocketSystem3D.update(frame);
         if (overlay3D) {
           overlay3D.tick(frame);
+        }
+        if (rocketOverlay3D) {
+          rocketOverlay3D.tick(frame);
         }
         if (firstFrameResolver) {
           firstFrameResolver();
@@ -15359,8 +15400,12 @@
       window.spawnShockwave = spawnShockwave;
       window.worldToScreen = worldToScreen;
 
+      if (window.rocketSystem3D) window.rocketSystem3D.update(frame);
       if (overlay3D) {
         overlay3D.tick(frame);
+      }
+      if (rocketOverlay3D) {
+        rocketOverlay3D.tick(frame);
       }
       if (firstFrameResolver) {
         firstFrameResolver();
