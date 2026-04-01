@@ -84,8 +84,8 @@ export const MASTER_WEAPONS = {
   // ==========================================================================
   missile_rack: { 
     id: 'missile_rack', name: 'Standard Missile Rack', mountType: 'missile', category: 'rocket', size: 'M',
-    baseDamage: 60, baseRange: 1500, baseSpeed: 400, cooldown: 2.5, ammo: 20,
-    turnRate: 350, homingDelay: 0.25, explosionRadius: 48, vfxColor: '#ffbb77' 
+    baseDamage: 90, baseRange: 12000, baseSpeed: 1800, cooldown: 2.5, ammo: 20,
+    turnRate: 420, homingDelay: 0.2, explosionRadius: 72, vfxColor: '#ffbb77' 
   },
   // ==========================================================================
   // HANGARY

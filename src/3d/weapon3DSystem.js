@@ -31,12 +31,21 @@ const WEAPON_FX_PROFILE = {
   armata_mk1: { key: 'armata', recoil: 12.0, shake: 6.5 },
   beam_continuous: { key: 'beam', recoil: 1.0, shake: 1.5 },
   beam_pulse: { key: 'beam', recoil: 6.0, shake: 3.5 },
-  special_goliath_autocannon: { key: 'vulcan', recoil: 12.0, shake: 7.0 },
-  special_plasma_gatling: { key: 'helios', recoil: 10.0, shake: 6.0 },
+  special_goliath_autocannon: { key: 'goliath', recoil: 20.0, shake: 10.0 },
+  special_plasma_gatling: { key: 'plasmaGatling', recoil: 15.0, shake: 8.0 },
   special_valkyrie_railgun: { key: 'tempest', recoil: 20.0, shake: 12.0 },
   special_yamato_cannon: { key: 'yamato', recoil: 60.0, shake: 20.0 },
   tempest_ion_mk1: { key: 'tempest', recoil: 4.0, shake: 2.5 },
   tempest_ion_mk2: { key: 'tempest', recoil: 4.0, shake: 2.5 },
+  heavy_autocannon: { key: 'autocannon', recoil: 8.0, shake: 4.0 },
+  ciws_mk1: { key: 'ciws', recoil: 1.5, shake: 1.0 },
+  laser_pd_mk1: { key: 'laserPD', recoil: 0.5, shake: 0.3 },
+  missile_rack: { key: 'rocket', recoil: 4.0, shake: 2.0 },
+  siege_torpedo: { key: 'torpedo', recoil: 6.0, shake: 3.0 },
+  siege_torpedo_mk2: { key: 'torpedo', recoil: 8.0, shake: 4.0 },
+  torpedo_salvo: { key: 'torpedo', recoil: 5.0, shake: 2.5 },
+  hexlance_siege: { key: 'hexlance', recoil: 30.0, shake: 15.0 },
+  siege_railgun: { key: 'siegeRail', recoil: 120.0, shake: 80.0 },
 };
 
 const WEAPON_3D_SCALE_BY_SIZE = Object.freeze({
@@ -62,8 +71,16 @@ function normalizeWeaponFxKey(weaponId) {
   if (id.includes('tempest') || id === 'railgun_mk1' || id === 'railgun_mk2') return 'tempest';
   if (id.includes('armata') || id.includes('heavy_cannon')) return 'armata';
   if (id.includes('beam_continuous') || id.includes('beam_pulse')) return 'beam';
-  if (id.includes('special_goliath')) return 'vulcan';
-  if (id.includes('special_plasma')) return 'helios';
+  if (id.includes('special_goliath')) return 'goliath';
+  if (id.includes('special_plasma')) return 'plasmaGatling';
+  if (id.includes('heavy_auto')) return 'autocannon';
+  if (id.includes('ciws')) return 'ciws';
+  if (id.includes('laser_pd')) return 'laserPD';
+  if (id.includes('missile_rack')) return 'rocket';
+  if (id.includes('siege_torpedo')) return 'torpedo';
+  if (id.includes('torpedo_salvo')) return 'torpedo';
+  if (id.includes('hexlance')) return 'hexlance';
+  if (id.includes('siege_railgun')) return 'siegeRail';
   if (id.includes('special_valkyrie')) return 'tempest';
   if (id.includes('special_yamato')) return 'yamato';
   return id;
@@ -148,6 +165,7 @@ function ensureWeaponResources() {
     };
 
     WEP_RESOURCES.geos = {
+      // Original shared
       railBase: new THREE.BoxGeometry(18, 22, 6),
       railBarrel: new THREE.BoxGeometry(38, 3, 3),
       railGlow: new THREE.BoxGeometry(28, 1, 1),
@@ -160,9 +178,54 @@ function ensureWeaponResources() {
       defaultBase: new THREE.BoxGeometry(14, 18, 6),
       barrelTube: new THREE.CylinderGeometry(1.15, 1.15, 24, 8),
       planeUnit: new THREE.PlaneGeometry(1, 1),
+      // Goliath — shared barrel + brake
+      goliathBarrel: new THREE.CylinderGeometry(3.5, 4.5, 36, 10),
+      goliathHousing: new THREE.BoxGeometry(30, 28, 18),
+      // Plasma Gatling — shared barrel (no bulbs)
+      plasmaBarrel: new THREE.CylinderGeometry(3, 3.5, 18, 8),
+      plasmaHousing: new THREE.CylinderGeometry(14, 16, 14, 8),
+      // Beam Emitter — dish + crystal
+      beamDish: new THREE.CylinderGeometry(10, 10, 2, 12),
+      beamHousing: new THREE.BoxGeometry(18, 20, 10),
+      beamCrystal: new THREE.OctahedronGeometry(2.5, 0),
+      // Heavy Autocannon
+      heavyAutoHousing: new THREE.BoxGeometry(16, 14, 6),
+      heavyAutoBarrel: new THREE.CylinderGeometry(2.5, 3.5, 28, 8),
+      // CIWS — dome + single cluster barrel
+      ciwsDome: new THREE.SphereGeometry(6, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.5),
+      ciwsClusterBarrel: new THREE.CylinderGeometry(2.5, 2.5, 18, 8),
+      // Laser PD — single glow lens
+      laserPDLens: new THREE.CylinderGeometry(2.5, 2, 10, 8),
+      // Missile Rack — housing + glow strip
+      missileHousing: new THREE.BoxGeometry(20, 18, 14),
+      missileGlowStrip: new THREE.BoxGeometry(16, 14, 2),
+      // Siege Torpedo — housing + tube
+      torpedoHousing: new THREE.BoxGeometry(24, 26, 16),
+      torpedoTube: new THREE.CylinderGeometry(5, 5.5, 28, 10),
+      // Hexlance — hex housing + core + glow + ring
+      hexHousing: new THREE.CylinderGeometry(16, 18, 10, 6),
+      hexCore: new THREE.CylinderGeometry(3, 3, 40, 6),
+      hexCoreGlow: new THREE.CylinderGeometry(2, 2, 38, 6),
+      hexFrontRing: new THREE.TorusGeometry(12, 1.5, 6, 6),
+      // Siege Railgun — housing + rails + core
+      siegeHousing: new THREE.BoxGeometry(28, 26, 18),
+      siegeRailBar: new THREE.BoxGeometry(60, 4, 5),
+      siegeCore: new THREE.CylinderGeometry(1.5, 1.5, 58, 8),
     };
     WEP_RESOURCES.geos.autoBase.rotateX(Math.PI / 2);
     WEP_RESOURCES.geos.barrelTube.rotateZ(Math.PI * 0.5);
+    WEP_RESOURCES.geos.goliathBarrel.rotateZ(Math.PI * 0.5);
+    WEP_RESOURCES.geos.plasmaBarrel.rotateZ(Math.PI * 0.5);
+    WEP_RESOURCES.geos.plasmaHousing.rotateX(Math.PI / 2);
+    WEP_RESOURCES.geos.beamDish.rotateZ(Math.PI * 0.5);
+    WEP_RESOURCES.geos.heavyAutoBarrel.rotateZ(Math.PI * 0.5);
+    WEP_RESOURCES.geos.ciwsClusterBarrel.rotateZ(Math.PI * 0.5);
+    WEP_RESOURCES.geos.laserPDLens.rotateZ(Math.PI * 0.5);
+    WEP_RESOURCES.geos.torpedoTube.rotateZ(Math.PI * 0.5);
+    WEP_RESOURCES.geos.hexHousing.rotateX(Math.PI / 2);
+    WEP_RESOURCES.geos.hexCore.rotateZ(Math.PI * 0.5);
+    WEP_RESOURCES.geos.hexCoreGlow.rotateZ(Math.PI * 0.5);
+    WEP_RESOURCES.geos.siegeCore.rotateZ(Math.PI * 0.5);
 
     WEP_RESOURCES.bulletHeadTex = makeHeadTexture();
 
@@ -177,6 +240,11 @@ function ensureWeaponResources() {
       rocket: { key: 'rocket', color: '#ffaaaa', trailColor: '#ffdddd', trailWidth: 1.8, coreWidth: 1.0, minLen: 14, stretch: 1.0, z: 14, headScale: 7, ionArcs: false },
       torpedo: { key: 'torpedo', color: '#ff4444', trailColor: '#ff6666', trailWidth: 3.5, coreWidth: 1.8, minLen: 24, stretch: 1.2, z: 14, headScale: 14, ionArcs: false },
       yamato: { key: 'yamato', color: '#ccffff', trailColor: '#00ffff', trailWidth: 7.0, coreWidth: 3.8, minLen: 180, stretch: 1.8, z: 14, headScale: 28, ionArcs: true },
+      goliath: { key: 'goliath', color: '#ff8833', trailColor: '#ffaa55', trailWidth: 4.0, coreWidth: 2.0, minLen: 28, stretch: 1.2, z: 14, headScale: 14, ionArcs: false },
+      plasmaGatling: { key: 'plasmaGatling', color: '#00ffcc', trailColor: '#66ffdd', trailWidth: 3.5, coreWidth: 1.6, minLen: 22, stretch: 1.3, z: 14, headScale: 12, ionArcs: false },
+      laserPD: { key: 'laserPD', color: '#6ec8ff', trailColor: '#a0dfff', trailWidth: 1.2, coreWidth: 0.6, minLen: 10, stretch: 0.7, z: 14, headScale: 4, ionArcs: false },
+      hexlance: { key: 'hexlance', color: '#aaddff', trailColor: '#d0eaff', trailWidth: 6.0, coreWidth: 3.2, minLen: 140, stretch: 1.6, z: 14, headScale: 24, ionArcs: true },
+      siegeRail: { key: 'siegeRail', color: '#88ffff', trailColor: '#aaffff', trailWidth: 8.0, coreWidth: 4.5, minLen: 200, stretch: 2.0, z: 14, headScale: 32, ionArcs: true },
       default: { key: 'default', color: '#ffffff', trailColor: '#ffffff', trailWidth: 1.5, coreWidth: 0.8, minLen: 16, stretch: 1.0, z: 14, headScale: 6, ionArcs: false }
     };
   }
@@ -818,6 +886,304 @@ function buildYamatoTurret(sizeMult) {
   return group;
 }
 
+// ── NEW WEAPON BUILDERS (optimized: max 2-4 meshes each) ────────
+
+function buildGoliathTurret(sizeMult) {
+  const { mats, geos } = WEP_RESOURCES;
+  const group = new THREE.Group();
+  // 1. Housing (shared)
+  const housing = new THREE.Mesh(geos.goliathHousing, mats.armor);
+  housing.position.set(4, 0, 10);
+  group.add(housing);
+  // 2-3. Two barrel groups (shared barrel geo, recoil-capable)
+  const barrels = [];
+  const muzzlePoints = [];
+  for (const yOff of [7, -7]) {
+    const bGroup = new THREE.Group();
+    bGroup.position.set(20, yOff, 10);
+    const barrel = new THREE.Mesh(geos.goliathBarrel, mats.barrel);
+    barrel.position.set(18, 0, 0);
+    bGroup.add(barrel);
+    barrels.push(bGroup);
+    group.add(bGroup);
+    muzzlePoints.push(new THREE.Vector3(58, yOff, 10));
+  }
+  // Total: 3 meshes (1 housing + 2 barrels)
+  attachWeaponFxData(group, {
+    weaponId: 'special_goliath_autocannon', housing, barrels, muzzlePoints,
+    muzzleColor: '#ff6600', recoil: 20, shake: 10
+  });
+  group.scale.setScalar(sizeMult);
+  markMeshTree(group, false);
+  return group;
+}
+
+function buildPlasmaGatlingTurret(sizeMult) {
+  const { mats, geos } = WEP_RESOURCES;
+  const group = new THREE.Group();
+  // 1. Housing (shared cylinder)
+  const housing = new THREE.Mesh(geos.plasmaHousing, mats.armor);
+  housing.position.set(2, 0, 8);
+  group.add(housing);
+  // 2-3. Two barrels in spin group (shared barrel geo)
+  const barrelPivot = new THREE.Group();
+  barrelPivot.position.set(16, 0, 8);
+  barrelPivot.rotation.z = -Math.PI * 0.5;
+  group.add(barrelPivot);
+  const spinGroup = new THREE.Group();
+  for (let i = 0; i < 2; i++) {
+    const angle = (i / 2) * Math.PI * 2;
+    const barrel = new THREE.Mesh(geos.plasmaBarrel, mats.glowCyan);
+    barrel.position.set(Math.cos(angle) * 6, 9, Math.sin(angle) * 6);
+    spinGroup.add(barrel);
+  }
+  barrelPivot.add(spinGroup);
+  // Total: 3 meshes (1 housing + 2 barrels)
+  attachWeaponFxData(group, {
+    weaponId: 'special_plasma_gatling', housing, barrels: [barrelPivot],
+    muzzlePoints: [new THREE.Vector3(42, 0, 8)],
+    muzzleColor: '#00ffff', recoil: 15, shake: 8
+  });
+  group.userData.spinGroup = spinGroup;
+  group.scale.setScalar(sizeMult);
+  markMeshTree(group, false);
+  return group;
+}
+
+function buildBeamEmitterTurret(sizeMult) {
+  const { mats, geos } = WEP_RESOURCES;
+  const group = new THREE.Group();
+  // 1. Housing (shared)
+  const housing = new THREE.Mesh(geos.beamHousing, mats.armor);
+  housing.position.set(0, 0, 7);
+  group.add(housing);
+  // Barrel group (for recoil)
+  const barrelGroup = new THREE.Group();
+  barrelGroup.position.set(10, 0, 7);
+  group.add(barrelGroup);
+  // 2. Dish (shared)
+  const dish = new THREE.Mesh(geos.beamDish, mats.base);
+  dish.position.set(22, 0, 0);
+  barrelGroup.add(dish);
+  // 3. Crystal (shared)
+  const crystal = new THREE.Mesh(geos.beamCrystal, mats.glowCyan);
+  crystal.position.set(26, 0, 0);
+  barrelGroup.add(crystal);
+  // Total: 3 meshes (1 housing + 1 dish + 1 crystal)
+  attachWeaponFxData(group, {
+    weaponId: 'beam_continuous', housing, barrels: [barrelGroup],
+    muzzlePoints: [new THREE.Vector3(48, 0, 7)],
+    muzzleColor: '#00ffcc', recoil: 1, shake: 1.5
+  });
+  group.scale.setScalar(sizeMult);
+  markMeshTree(group, false);
+  return group;
+}
+
+function buildHeavyAutocannonTurret(sizeMult) {
+  const { mats, geos } = WEP_RESOURCES;
+  const group = new THREE.Group();
+  // 1. Base (reused autoBase)
+  const base = new THREE.Mesh(geos.autoBase, mats.base);
+  base.position.set(2, 0, 6);
+  group.add(base);
+  // 2. Housing (shared)
+  const housing = new THREE.Mesh(geos.heavyAutoHousing, mats.armor);
+  housing.position.set(6, 0, 8);
+  group.add(housing);
+  // 3. Barrel (shared, in pivot for recoil)
+  const barrelGroup = new THREE.Group();
+  barrelGroup.position.set(14, 0, 8);
+  group.add(barrelGroup);
+  const mainBarrel = new THREE.Mesh(geos.heavyAutoBarrel, mats.barrel);
+  mainBarrel.position.set(14, 0, 0);
+  barrelGroup.add(mainBarrel);
+  // Total: 3 meshes (1 base + 1 housing + 1 barrel)
+  attachWeaponFxData(group, {
+    weaponId: 'heavy_autocannon', housing, barrels: [barrelGroup],
+    muzzlePoints: [new THREE.Vector3(42, 0, 8)],
+    muzzleColor: '#ffcc8a', recoil: 8, shake: 4
+  });
+  group.scale.setScalar(sizeMult);
+  markMeshTree(group, false);
+  return group;
+}
+
+function buildCIWSTurret(sizeMult) {
+  const { mats, geos } = WEP_RESOURCES;
+  const group = new THREE.Group();
+  // 1. Base plate (reused ciwsBase)
+  const basePlate = new THREE.Mesh(geos.ciwsBase, mats.base);
+  group.add(basePlate);
+  // 2. Dome (shared hemisphere)
+  const dome = new THREE.Mesh(geos.ciwsDome, mats.armor);
+  dome.position.set(0, 0, 3);
+  group.add(dome);
+  // 3. Single cluster barrel (shared thick cylinder, no spin overhead)
+  const barrelGroup = new THREE.Group();
+  barrelGroup.position.set(6, 0, 5);
+  group.add(barrelGroup);
+  const barrel = new THREE.Mesh(geos.ciwsClusterBarrel, mats.barrel);
+  barrel.position.set(9, 0, 0);
+  barrelGroup.add(barrel);
+  // Total: 3 meshes (1 base + 1 dome + 1 barrel)
+  attachWeaponFxData(group, {
+    weaponId: 'ciws_mk1', housing: dome, barrels: [barrelGroup],
+    muzzlePoints: [new THREE.Vector3(22, 0, 5)],
+    muzzleColor: '#8cffd0', recoil: 1.5, shake: 1
+  });
+  group.scale.setScalar(sizeMult);
+  markMeshTree(group, false);
+  return group;
+}
+
+function buildLaserPDTurret(sizeMult) {
+  const { mats, geos } = WEP_RESOURCES;
+  const group = new THREE.Group();
+  // 1. Base (reused ciwsBase)
+  const base = new THREE.Mesh(geos.ciwsBase, mats.base);
+  base.position.set(0, 0, 2);
+  group.add(base);
+  // 2. Lens barrel (shared, glowBlue material = visible emitter)
+  const barrelGroup = new THREE.Group();
+  barrelGroup.position.set(8, 0, 5);
+  group.add(barrelGroup);
+  const lens = new THREE.Mesh(geos.laserPDLens, mats.glowBlue);
+  lens.position.set(5, 0, 0);
+  barrelGroup.add(lens);
+  // Total: 2 meshes (1 base + 1 lens)
+  attachWeaponFxData(group, {
+    weaponId: 'laser_pd_mk1', housing: base, barrels: [barrelGroup],
+    muzzlePoints: [new THREE.Vector3(18, 0, 5)],
+    muzzleColor: '#6ec8ff', recoil: 0.5, shake: 0.3
+  });
+  group.scale.setScalar(sizeMult);
+  markMeshTree(group, false);
+  return group;
+}
+
+function buildMissileRackTurret(sizeMult) {
+  const { mats, geos } = WEP_RESOURCES;
+  const group = new THREE.Group();
+  // 1. Housing (shared)
+  const housing = new THREE.Mesh(geos.missileHousing, mats.armor);
+  housing.position.set(4, 0, 8);
+  group.add(housing);
+  // 2. Glow strip (shared — suggests loaded warheads inside)
+  const glowStrip = new THREE.Mesh(geos.missileGlowStrip, mats.glowAmber);
+  glowStrip.position.set(14, 0, 8);
+  group.add(glowStrip);
+  // Total: 2 meshes (1 housing + 1 glow strip)
+  attachWeaponFxData(group, {
+    weaponId: 'missile_rack', housing, barrels: [],
+    muzzlePoints: [
+      new THREE.Vector3(16, -5, 5), new THREE.Vector3(16, 0, 5), new THREE.Vector3(16, 5, 5),
+      new THREE.Vector3(16, -5, 11), new THREE.Vector3(16, 0, 11), new THREE.Vector3(16, 5, 11)
+    ],
+    muzzleColor: '#ffbb77', recoil: 4, shake: 2
+  });
+  group.scale.setScalar(sizeMult);
+  markMeshTree(group, false);
+  return group;
+}
+
+function buildSiegeTorpedoTurret(sizeMult) {
+  const { mats, geos } = WEP_RESOURCES;
+  const group = new THREE.Group();
+  // 1. Housing (shared)
+  const housing = new THREE.Mesh(geos.torpedoHousing, mats.armor);
+  housing.position.set(0, 0, 9);
+  group.add(housing);
+  // 2-3. Two torpedo tubes (shared geo, as barrel groups for alternating recoil)
+  const barrels = [];
+  const muzzlePoints = [];
+  for (const yOff of [7, -7]) {
+    const tubeGroup = new THREE.Group();
+    tubeGroup.position.set(12, yOff, 9);
+    const tube = new THREE.Mesh(geos.torpedoTube, mats.barrel);
+    tubeGroup.add(tube);
+    barrels.push(tubeGroup);
+    group.add(tubeGroup);
+    muzzlePoints.push(new THREE.Vector3(30, yOff, 9));
+  }
+  // Total: 3 meshes (1 housing + 2 tubes)
+  attachWeaponFxData(group, {
+    weaponId: 'siege_torpedo', housing, barrels, muzzlePoints,
+    muzzleColor: '#ff4444', recoil: 6, shake: 3
+  });
+  group.scale.setScalar(sizeMult);
+  markMeshTree(group, false);
+  return group;
+}
+
+function buildHexlanceTurret(sizeMult) {
+  const { mats, geos } = WEP_RESOURCES;
+  const group = new THREE.Group();
+  // 1. Housing (shared hex cylinder)
+  const housing = new THREE.Mesh(geos.hexHousing, mats.armor);
+  housing.position.set(0, 0, 8);
+  group.add(housing);
+  // Barrel group (for recoil)
+  const barrelGroup = new THREE.Group();
+  barrelGroup.position.set(10, 0, 8);
+  group.add(barrelGroup);
+  // 2. Core barrel (shared)
+  const core = new THREE.Mesh(geos.hexCore, mats.barrel);
+  core.position.set(20, 0, 0);
+  barrelGroup.add(core);
+  // 3. Core glow (shared)
+  const coreGlow = new THREE.Mesh(geos.hexCoreGlow, mats.glowBlue);
+  coreGlow.position.set(20, 0, 0);
+  barrelGroup.add(coreGlow);
+  // 4. Front ring (shared)
+  const frontRing = new THREE.Mesh(geos.hexFrontRing, mats.glowBlue);
+  frontRing.rotation.y = Math.PI * 0.5;
+  frontRing.position.set(32, 0, 0);
+  barrelGroup.add(frontRing);
+  // Total: 4 meshes (1 housing + 1 core + 1 coreGlow + 1 ring)
+  attachWeaponFxData(group, {
+    weaponId: 'hexlance_siege', housing, barrels: [barrelGroup],
+    muzzlePoints: [new THREE.Vector3(52, 0, 8)],
+    muzzleColor: '#d0eaff', recoil: 30, shake: 15
+  });
+  group.scale.setScalar(sizeMult);
+  markMeshTree(group, false);
+  return group;
+}
+
+function buildSiegeRailgunTurret(sizeMult) {
+  const { mats, geos } = WEP_RESOURCES;
+  const group = new THREE.Group();
+  // 1. Housing (shared)
+  const housing = new THREE.Mesh(geos.siegeHousing, mats.armor);
+  housing.position.set(0, 0, 10);
+  group.add(housing);
+  // Barrel group (for recoil)
+  const barrelGroup = new THREE.Group();
+  barrelGroup.position.set(14, 0, 10);
+  group.add(barrelGroup);
+  // 2-3. Two rails (shared)
+  const railL = new THREE.Mesh(geos.siegeRailBar, mats.barrel);
+  railL.position.set(30, 5, 0);
+  barrelGroup.add(railL);
+  const railR = new THREE.Mesh(geos.siegeRailBar, mats.barrel);
+  railR.position.set(30, -5, 0);
+  barrelGroup.add(railR);
+  // 4. Core glow (shared)
+  const core = new THREE.Mesh(geos.siegeCore, mats.glowCyan);
+  core.position.set(30, 0, 0);
+  barrelGroup.add(core);
+  // Total: 4 meshes (1 housing + 2 rails + 1 core)
+  attachWeaponFxData(group, {
+    weaponId: 'siege_railgun', housing, barrels: [barrelGroup],
+    muzzlePoints: [new THREE.Vector3(80, 0, 10)],
+    muzzleColor: '#aaffff', recoil: 120, shake: 80
+  });
+  group.scale.setScalar(sizeMult);
+  markMeshTree(group, false);
+  return group;
+}
+
 function createFallbackWeaponMesh(category, sizeMult) {
   const group = new THREE.Group();
   const mBase = WEP_RESOURCES.mats.base;
@@ -877,14 +1243,22 @@ function createWeapon3DMesh(weaponId, category, size) {
   if (key === 'vulcan_minigun') mesh = buildVulcanTurret(scaleMult);
   else if (key === 'helios_laser') mesh = buildHeliosTurret(scaleMult);
   else if (key === 'armata_mk1') mesh = buildArmataTurret(scaleMult);
-  else if (key === 'beam_continuous') mesh = buildBeamContinuousTurret(scaleMult);
+  else if (key === 'beam_continuous') mesh = buildBeamEmitterTurret(scaleMult);
   else if (key === 'beam_pulse') mesh = buildBeamPulseTurret(scaleMult);
-  else if (key === 'special_goliath_autocannon') mesh = buildVulcanTurret(scaleMult);
-  else if (key === 'special_plasma_gatling') mesh = buildHeliosTurret(scaleMult);
+  else if (key === 'special_goliath_autocannon') mesh = buildGoliathTurret(scaleMult);
+  else if (key === 'special_plasma_gatling') mesh = buildPlasmaGatlingTurret(scaleMult);
   else if (key === 'special_valkyrie_railgun') mesh = buildTempestTurret(scaleMult, 2);
   else if (key === 'special_yamato_cannon') mesh = buildYamatoTurret(scaleMult);
   else if (key === 'railgun_mk1' || key === 'tempest_ion_mk1') mesh = buildTempestTurret(scaleMult, 1);
   else if (key === 'railgun_mk2' || key === 'tempest_ion_mk2') mesh = buildTempestTurret(scaleMult, 2);
+  else if (key === 'heavy_autocannon') mesh = buildHeavyAutocannonTurret(scaleMult);
+  else if (key === 'ciws_mk1') mesh = buildCIWSTurret(scaleMult);
+  else if (key === 'laser_pd_mk1') mesh = buildLaserPDTurret(scaleMult);
+  else if (key === 'missile_rack') mesh = buildMissileRackTurret(scaleMult);
+  else if (key === 'siege_torpedo' || key === 'siege_torpedo_mk2') mesh = buildSiegeTorpedoTurret(scaleMult);
+  else if (key === 'torpedo_salvo') mesh = buildMissileRackTurret(scaleMult);
+  else if (key === 'hexlance_siege') mesh = buildHexlanceTurret(scaleMult);
+  else if (key === 'siege_railgun') mesh = buildSiegeRailgunTurret(scaleMult);
   else mesh = createFallbackWeaponMesh(category, scaleMult);
   if (!mesh.userData.weaponFx) {
     attachWeaponFxData(mesh, {
@@ -905,20 +1279,24 @@ function resolveBulletVisualStyle(bullet) {
   ensureWeaponResources();
   const key = String(bullet?.vfxKey || bullet?.weaponId || bullet?.weaponName || bullet?.type || '').toLowerCase();
 
-  if (key.includes('special_goliath')) return WEP_RESOURCES.bulletStyles.autocannon;
-  if (key.includes('special_plasma')) return WEP_RESOURCES.bulletStyles.plasma;
+  if (key.includes('special_goliath')) return WEP_RESOURCES.bulletStyles.goliath;
+  if (key.includes('special_plasma')) return WEP_RESOURCES.bulletStyles.plasmaGatling;
   if (key.includes('special_valkyrie')) return WEP_RESOURCES.bulletStyles.tempest;
   if (key.includes('yamato')) return WEP_RESOURCES.bulletStyles.yamato;
+  if (key.includes('hexlance')) return WEP_RESOURCES.bulletStyles.hexlance;
+  if (key.includes('siege_railgun')) return WEP_RESOURCES.bulletStyles.siegeRail;
   if (key.includes('vulcan')) return WEP_RESOURCES.bulletStyles.vulcan;
   if (key.includes('helios')) return WEP_RESOURCES.bulletStyles.helios;
   if (key.includes('tempest') || key.includes('rail')) return WEP_RESOURCES.bulletStyles.tempest;
+  if (key.includes('laser_pd')) return WEP_RESOURCES.bulletStyles.laserPD;
   if (key.includes('ciws') || key.includes('pd')) return WEP_RESOURCES.bulletStyles.ciws;
+  if (key.includes('heavy_auto')) return WEP_RESOURCES.bulletStyles.autocannon;
   if (key.includes('auto') || key.includes('gatling')) return WEP_RESOURCES.bulletStyles.autocannon;
   if (key.includes('armata') || key.includes('flak')) return WEP_RESOURCES.bulletStyles.armata;
   if (key.includes('plasma')) return WEP_RESOURCES.bulletStyles.plasma;
   if (key.includes('rocket') || key.includes('missile') || key.includes('aim-') || key.includes('asm')) return WEP_RESOURCES.bulletStyles.rocket;
   if (key.includes('torpedo')) return WEP_RESOURCES.bulletStyles.torpedo;
-  if (key.includes('siege')) return WEP_RESOURCES.bulletStyles.tempest; // fallback for siege
+  if (key.includes('siege')) return WEP_RESOURCES.bulletStyles.siegeRail;
   return WEP_RESOURCES.bulletStyles.default;
 }
 

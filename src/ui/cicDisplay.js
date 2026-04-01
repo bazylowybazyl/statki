@@ -58,7 +58,7 @@ const SYSTEM_ZOOM_FULL  = 0.0008; // fully in system view
 let cicSystemBlend = 0;           // current blend factor (smoothed)
 
 // Context menu state (right-click)
-// items: array of { label, action: 'attack'|'move'|'cruise'|null (disabled) }
+// items: array of { label, action: 'attack'|'move'|'cruise'|'drone'|'recallDrones'|null (disabled) }
 let cicContextMenu = {
   open: false,
   screenX: 0, screenY: 0,
@@ -173,6 +173,18 @@ export const CICDisplay = {
             if (window.ship) window.ship.command = { type: 'moveTo', x: worldX, y: worldY };
           } else if (item.action === 'cruise') {
             if (window.setCruiseTarget) window.setCruiseTarget(worldX, worldY);
+          } else if (item.action === 'drone') {
+            const droneSystem = window.SpotterDroneSystem;
+            const ship = window.ship;
+            if (droneSystem && ship?.pos) {
+              droneSystem.deploy(ship.pos.x, ship.pos.y, worldX, worldY);
+            }
+          } else if (item.action === 'recallDrones') {
+            const droneSystem = window.SpotterDroneSystem;
+            const ship = window.ship;
+            if (droneSystem && ship?.pos) {
+              droneSystem.recallAll(ship.pos.x, ship.pos.y);
+            }
           }
         }
         cicContextMenu.open = false;
@@ -212,10 +224,15 @@ export const CICDisplay = {
       } else {
         // Empty space → show context menu
         const hasSelected = cicSelectedContacts.length > 0;
+        const droneSystem = window.SpotterDroneSystem;
+        const hasDroneSystem = !!droneSystem;
+        const hasActiveDrones = !!droneSystem?.getDrones?.().some(d => d && !d.dead);
         cicContextMenu.items = [
           { label: 'ATAK', action: hasSelected ? 'attack' : null },
           { label: 'RUCH', action: 'move' },
           { label: 'CRUISE TO', action: 'cruise' },
+          { label: 'SEND DRONE', action: hasDroneSystem ? 'drone' : null },
+          { label: 'RECALL DRONES', action: hasActiveDrones ? 'recallDrones' : null },
         ];
         cicContextMenu.open = true;
       }
@@ -822,7 +839,7 @@ export const CICDisplay = {
       const selCount = cicSelectedContacts.length;
       const hint = selCount > 1
         ? `${selCount} ZAZNACZONE  [PPM] ATAK`
-        : '[PPM] ATAK / RUCH / CRUISE';
+        : '[PPM] ATAK / RUCH / CRUISE / DRONE';
       ctx.fillText(hint, panelX + 10, panelY + 148);
     }
 
@@ -833,7 +850,7 @@ export const CICDisplay = {
     if (isSystemScale) {
       ctx.fillText('[TAB] Zamknij    [V] Widok taktyczny    [SCROLL] Zoom    [MMB] Pan    [LMB] Zaznacz    [PPM] Rozkaz', W / 2, H - 16);
     } else {
-      ctx.fillText('[TAB] Zamknij    [V] Widok systemu    [SCROLL] Zoom    [MMB] Pan    [LMB] Zaznacz/Box    [PPM] Atak/Ruch/Cruise', W / 2, H - 16);
+      ctx.fillText('[TAB] Zamknij    [V] Widok systemu    [SCROLL] Zoom    [MMB] Pan    [LMB] Zaznacz/Box    [PPM] Atak/Ruch/Cruise/Drone', W / 2, H - 16);
     }
 
     ctx.restore();

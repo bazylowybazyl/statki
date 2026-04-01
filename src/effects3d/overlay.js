@@ -77,7 +77,9 @@ export function initOverlay({
     powerPreference: "high-performance"
   });
   
-  renderer.setPixelRatio(Math.min(1.2, window.devicePixelRatio || 1));
+  const dpr = Math.min(1.2, window.devicePixelRatio || 1);
+  renderer.setPixelRatio(dpr);
+  window._overlayDpr = dpr;
   renderer.setSize(host.clientWidth, host.clientHeight, false);
   renderer.setClearColor(0x000000, 0);
   

@@ -185,7 +185,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
       maxSpeed: 280,
       turn: 1.2,
       radius: 45,
-      mass: 2.5,
+      mass: 10000,
       rammingMass: 1000,
       friction: 0.985,
       separationRange: 160
@@ -200,7 +200,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
       maxSpeed: 250,
       turn: 1.2,
       radius: 45,
-      mass: 2.5,
+      mass: 10000,
       rammingMass: 1200,
       friction: 0.985,
       separationRange: 150
@@ -215,7 +215,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
       maxSpeed: 200,
       turn: 0.9,
       radius: 35,
-      mass: 300000,
+      mass: 25000,
       rammingMass: 5000,
       friction: 0.986,
       separationRange: 120
@@ -230,7 +230,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
       maxSpeed: 105,
       turn: 0.6,
       radius: 140,
-      mass: 450000,
+      mass: 50000,
       rammingMass: 8000,
       friction: 0.99,
       separationRange: 440
@@ -295,7 +295,7 @@ export const CAPITAL_SHIP_TEMPLATES = {
     displayName: 'Atlas II',
     roleText: 'Supercapital',
     hull: 85000,
-    mass: 800000,
+    mass: 100000,
     rammingMass: 800000,
     shield: 52000,
     shieldRegen: 400,

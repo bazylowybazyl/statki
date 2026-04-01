@@ -97,6 +97,7 @@ function applyPlayerThrusterVisualState(ship, target) {
   const mainInput = clamp01(target.main);
   const leftInput = clamp01(target.leftSide);
   const rightInput = clamp01(target.rightSide);
+  const retroInput = clamp01(target.retro);
   const hasAssistTorque = Number.isFinite(Number(target.manualTorque)) || Number.isFinite(Number(target.assistTorque));
   
   const manualTorqueInput = hasAssistTorque ? clampSym(target.manualTorque, 1) : clampSym(target.torque, 1);
@@ -125,6 +126,7 @@ function applyPlayerThrusterVisualState(ship, target) {
     const isCenter = mount.startsWith('center_');
 
     let throttle = 0, turnWeight = 0;
+    let desiredNozzle = Number.isFinite(Number(t.baseDeg)) ? Number(t.baseDeg) : ((Number(t.offset?.y) || 0) < 0 ? 180 : 0);
     if (leftInput > 0 && isLeft) throttle = Math.max(throttle, leftInput);
     if (rightInput > 0 && isRight) throttle = Math.max(throttle, rightInput);
 
@@ -152,8 +154,15 @@ function applyPlayerThrusterVisualState(ship, target) {
         if (isRear) sideGimbalAssist = isLeft ? 18 : -18;
       }
     }
-    const base = Number.isFinite(Number(t.baseDeg)) ? Number(t.baseDeg) : ((Number(t.offset?.y) || 0) < 0 ? 180 : 0);
-    applyThrusterNozzle(t, base + sideGimbalAssist, true);
+    if (retroInput > 1e-3) {
+      // Retro-brake: side thrusters swivel toward the bow and provide reverse thrust.
+      throttle = Math.max(throttle, retroInput);
+      turnWeight = 0;
+      desiredNozzle = -90;
+    } else {
+      desiredNozzle += sideGimbalAssist;
+    }
+    applyThrusterNozzle(t, desiredNozzle, true);
     t.__throttleTarget = clamp01(throttle);
     t.__turnWeightTarget = turnWeight;
   }
@@ -161,11 +170,12 @@ function applyPlayerThrusterVisualState(ship, target) {
 
 export function composeShipThrusterCommand(ship, assist = null) {
   const manual = ship.thrusterInput || {};
-  const command = ship.__thrusterCommand || (ship.__thrusterCommand = { main: 0, leftSide: 0, rightSide: 0, torque: 0, manualTorque: 0, assistTorque: 0 });
+  const command = ship.__thrusterCommand || (ship.__thrusterCommand = { main: 0, leftSide: 0, rightSide: 0, retro: 0, torque: 0, manualTorque: 0, assistTorque: 0 });
 
   command.main = clamp01(Math.max(Number(manual.main) || 0, Number(assist?.main) || 0));
   command.leftSide = clamp01(Math.max(Number(manual.leftSide) || 0, Number(assist?.leftSide) || 0));
   command.rightSide = clamp01(Math.max(Number(manual.rightSide) || 0, Number(assist?.rightSide) || 0));
+  command.retro = clamp01(Math.max(Number(manual.retro) || 0, Number(assist?.retro) || 0));
   command.manualTorque = clampSym(manual.torque, 1);
   command.assistTorque = clampSym(assist?.torque, 1);
   command.torque = clampSym(command.manualTorque + command.assistTorque, 1);
@@ -210,7 +220,7 @@ function stepThrusterActuator(thruster, dt, isSide) {
 }
 
 export function updateShipThrusterState(ship, dt) {
-  const out = ship.__thrusterDrive || (ship.__thrusterDrive = { main: 0, leftSide: 0, rightSide: 0, torque: 0, mainTorqueAssist: 0 });
+  const out = ship.__thrusterDrive || (ship.__thrusterDrive = { main: 0, leftSide: 0, rightSide: 0, retro: 0, torque: 0, mainTorqueAssist: 0 });
   if (!ship?.visual) return out;
   const clampedDt = Math.max(1 / 240, Math.min(0.12, Number(dt) || (1 / 60)));
 
@@ -228,7 +238,7 @@ export function updateShipThrusterState(ship, dt) {
     mainAssistWeight += throttle;
   }
 
-  let leftSum = 0, leftCount = 0, rightSum = 0, rightCount = 0, torqueWeighted = 0, torqueWeightAbs = 0;
+  let leftSum = 0, leftCount = 0, rightSum = 0, rightCount = 0, retroSum = 0, retroCount = 0, torqueWeighted = 0, torqueWeightAbs = 0;
   const sides = ship.visual.torqueThrusters || [];
   for (let i=0; i<sides.length; i++) {
     const t = sides[i];
@@ -237,7 +247,13 @@ export function updateShipThrusterState(ship, dt) {
     const mount = String(t.mount || '').toLowerCase();
     if (mount.endsWith('_left') || t.side === 'left') { leftSum += throttle; leftCount++; }
     if (mount.endsWith('_right') || t.side === 'right') { rightSum += throttle; rightCount++; }
-    
+    const nozzle = Number.isFinite(Number(t.nozzleDeg)) ? Number(t.nozzleDeg) : (Number.isFinite(Number(t.baseDeg)) ? Number(t.baseDeg) : 0);
+    const retroAlign = clamp01(1 - (Math.abs(normalizeDeg(nozzle - (-90), 0)) / 55));
+    if (retroAlign > 1e-3) {
+      retroSum += throttle * retroAlign;
+      retroCount++;
+    }
+
     const turnWeight = clampSym(t.__turnWeight, 1);
     if (Math.abs(turnWeight) > 1e-4) {
       torqueWeighted += throttle * turnWeight;
@@ -248,6 +264,7 @@ export function updateShipThrusterState(ship, dt) {
   out.main = stepToward(Number(out.main) || 0, mainCount > 0 ? (mainSum / mainCount) : 0, 8.5 * clampedDt);
   out.leftSide = stepToward(Number(out.leftSide) || 0, leftCount > 0 ? (leftSum / leftCount) : 0, 10.0 * clampedDt);
   out.rightSide = stepToward(Number(out.rightSide) || 0, rightCount > 0 ? (rightSum / rightCount) : 0, 10.0 * clampedDt);
+  out.retro = stepToward(Number(out.retro) || 0, retroCount > 0 ? clamp01(retroSum / retroCount) : 0, 10.0 * clampedDt);
   out.torque = stepToward(Number(out.torque) || 0, torqueWeightAbs > 1e-6 ? clampSym(torqueWeighted / torqueWeightAbs, 1.2) : 0, 9.0 * clampedDt);
   out.mainTorqueAssist = stepToward(Number(out.mainTorqueAssist) || 0, mainAssistWeight > 1e-6 ? clampSym((mainAssistSum / mainAssistWeight) * 0.45, 0.45) : 0, 7.5 * clampedDt);
 
@@ -284,21 +301,19 @@ export function computeShipThrusterForces(ship, options = {}, outResult = _defau
     localTorque += (ox * fy) - (oy * fx);
   }
 
-  if (reverseInput > 1e-4) {
-    localFx -= (mainForceTotal * SHIP_PHYSICS.REVERSE_MULT * 0.8) * reverseInput;
-  }
-
   const sides = ship?.visual?.torqueThrusters || [];
   const sideForceTotal = mass * SHIP_PHYSICS.SPEED * 0.55 * sideForceMul;
   const sideForcePerThruster = sideForceTotal / Math.max(1, sides.length);
+  let retroCoverage = 0;
   
   for (let i=0; i<sides.length; i++) {
     const t = sides[i];
     const throttle = clamp01(t.__throttle);
     if (throttle <= 1e-4) continue;
     const nozzle = Number.isFinite(Number(t.nozzleDeg)) ? Number(t.nozzleDeg) : (Number.isFinite(Number(t.baseDeg)) ? Number(t.baseDeg) : 0);
+    const retroAlign = clamp01(1 - (Math.abs(normalizeDeg(nozzle - (-90), 0)) / 55));
     const dir = normalizeDeg(nozzle, 0) * Math.PI / 180;
-    const force = sideForcePerThruster * throttle;
+    const force = sideForcePerThruster * throttle * (1 + retroAlign * 0.65);
     const fx = Math.sin(dir) * force;
     const fy = -Math.cos(dir) * force;
     const ox = Number(t.offset?.x) || 0;
@@ -306,6 +321,13 @@ export function computeShipThrusterForces(ship, options = {}, outResult = _defau
     localFx += fx;
     localFy += fy;
     localTorque += (ox * fy) - (oy * fx);
+    retroCoverage += throttle * retroAlign;
+  }
+
+  if (reverseInput > 1e-4) {
+    const retroAssist = clamp01(retroCoverage / Math.max(1, sides.length * 0.35));
+    const syntheticReverseScale = 0.14 + ((1 - retroAssist) * 0.46);
+    localFx -= (mainForceTotal * SHIP_PHYSICS.REVERSE_MULT * syntheticReverseScale) * reverseInput;
   }
 
   outResult.localFx = localFx;
@@ -439,7 +461,7 @@ export function createShipEntity(options = {}) {
     special: { cooldown: 10, cooldownTimer: 0 },
     agility: { active: false, cooldowns: { dash: 0, strafe: 0, arc: 0 }, maxCooldowns: { dash: 2.5, strafe: 2.5, arc: 5.0 }, arcCharge: 0, arcDir: 0, lastPivot: null, maneuver: null },
     input: { thrustX: 0, thrustY: 0, aimX: 0, aimY: 0 },
-    thrusterInput: { main: 0, leftSide: 0, rightSide: 0, torque: 0 },
+    thrusterInput: { main: 0, leftSide: 0, rightSide: 0, retro: 0, torque: 0 },
     controller: 'player',
     aiController: null
   };
@@ -470,7 +492,7 @@ export function applyPlayerInput(ship, control = {}, thrusterTarget) {
   if (control.aimY !== undefined) ship.input.aimY = control.aimY;
 
   // FIX: Zawsze upewniamy się, że referencja thrusterInput statku wskazuje na aktywny cel (czyli globalne 'input' z index.html)
-  const target = thrusterTarget || ship.thrusterInput || { main: 0, leftSide: 0, rightSide: 0, torque: 0 };
+  const target = thrusterTarget || ship.thrusterInput || { main: 0, leftSide: 0, rightSide: 0, retro: 0, torque: 0 };
   ship.thrusterInput = target; 
 
   if (control.main !== undefined) target.main = control.main;
@@ -478,6 +500,8 @@ export function applyPlayerInput(ship, control = {}, thrusterTarget) {
 
   if (control.leftSide !== undefined) target.leftSide = control.leftSide;
   if (control.rightSide !== undefined) target.rightSide = control.rightSide;
+  if (control.retro !== undefined) target.retro = clamp01(control.retro);
+  else if (ship.input.thrustY !== undefined) target.retro = Math.max(0, -(Number(ship.input.thrustY) || 0));
   if (control.torque !== undefined) target.torque = control.torque;
 
   if (ship.destroyed) clearThrusterVisualState(ship);

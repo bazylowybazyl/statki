@@ -10,7 +10,9 @@
 
 const DRONE_CONFIG = {
   maxDrones: 3,
-  speed: 800,              // world units per second
+  speed: 40000,            // max world units per second
+  accel: 26000,            // smooth acceleration toward cruise speed
+  brakeAccel: 42000,       // stronger braking so drone can settle on target
   turnRate: 2.5,           // radians per second
   hp: 80,
   sensorRange: 25000,
@@ -20,6 +22,7 @@ const DRONE_CONFIG = {
   deployRange: 80000,      // max distance from ship to deploy
   lifetime: 90,            // seconds before drone runs out of fuel (0 = infinite)
   cooldown: 5,             // seconds between drone launches
+  arriveRadius: 300,
 };
 
 const drones = [];
@@ -61,7 +64,7 @@ export const SpotterDroneSystem = {
       y: shipY,
       targetX, targetY,
       angle,
-      speed: DRONE_CONFIG.speed,
+      speed: 0,
       hp: DRONE_CONFIG.hp,
       maxHp: DRONE_CONFIG.hp,
       sensorRange: DRONE_CONFIG.sensorRange,
@@ -127,8 +130,10 @@ export const SpotterDroneSystem = {
         const dx = d.targetX - d.x;
         const dy = d.targetY - d.y;
         const dist = Math.hypot(dx, dy);
+        const arriveRadius = DRONE_CONFIG.arriveRadius;
 
-        if (dist < 200) {
+        if (dist < arriveRadius && d.speed < 1200) {
+          d.speed = 0;
           if (d.state === 'transit') {
             d.state = 'station';
           } else {
@@ -143,6 +148,16 @@ export const SpotterDroneSystem = {
           const diff = wrapAngle(desired - d.angle);
           const maxTurn = DRONE_CONFIG.turnRate * dt;
           d.angle += Math.abs(diff) < maxTurn ? diff : Math.sign(diff) * maxTurn;
+
+          const turnPenalty = Math.max(0.2, Math.cos(Math.min(Math.abs(diff), Math.PI * 0.5)));
+          const maxApproachSpeed = Math.sqrt(Math.max(0, 2 * DRONE_CONFIG.brakeAccel * Math.max(0, dist - arriveRadius)));
+          const desiredSpeed = Math.min(DRONE_CONFIG.speed * turnPenalty, maxApproachSpeed);
+
+          if (d.speed < desiredSpeed) {
+            d.speed = Math.min(desiredSpeed, d.speed + DRONE_CONFIG.accel * dt);
+          } else {
+            d.speed = Math.max(desiredSpeed, d.speed - DRONE_CONFIG.brakeAccel * dt);
+          }
 
           d.x += Math.cos(d.angle) * d.speed * dt;
           d.y += Math.sin(d.angle) * d.speed * dt;

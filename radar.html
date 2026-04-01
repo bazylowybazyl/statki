@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Symulacja: W PEŁNI ZOPTYMALIZOWANE CIC</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050510; color: #fff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; user-select: none; }
+        #webgl-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; }
+        #hud-layer { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 5; }
+        
+        #ui {
+            position: absolute; top: 20px; left: 20px; pointer-events: none;
+            background: rgba(6, 16, 26, 0.85); padding: 15px; border: 1px solid #33ff33; border-radius: 8px;
+            box-shadow: 0 0 15px rgba(51, 255, 51, 0.2); z-index: 20;
+        }
+        h1 { margin: 0 0 10px 0; font-size: 18px; color: #33ff33; text-transform: uppercase; }
+        p { margin: 5px 0; font-size: 14px; color: #ddd; }
+        .highlight { color: #33ff33; font-weight: bold; }
+        .locked-text { color: #ff3333; font-weight: bold; }
+        .key { display: inline-block; background: #112233; border: 1px solid #33ff33; color: #33ff33; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 12px;}
+        .status-off { color: #888; font-weight: bold; }
+        .status-cmd { color: #38bdf8; font-weight: bold; text-shadow: 0 0 8px rgba(56, 189, 248, 0.6); }
+        
+        #labels-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 10; }
+        .label-container { position: absolute; top: 0; left: 0; pointer-events: none; display: none; }
+
+        .target-label {
+            position: relative; color: #33ff33; font-family: 'Courier New', Courier, monospace;
+            font-size: 11px; background: rgba(4, 12, 20, 0.8); padding: 6px 8px;
+            box-shadow: 0 0 5px rgba(51, 255, 51, 0.2); border-left: 2px solid #33ff33; border-right: 1px solid transparent;
+            pointer-events: auto; cursor: crosshair; 
+            text-transform: uppercase; transform-origin: left center;
+            animation: frame-enter 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards; opacity: 0.75; 
+            will-change: transform;
+            
+            /* Domyślne wartości i opóźnienia do zwijania ramki */
+            max-width: 140px;
+            transition: background 0.15s, border-color 0.15s, transform 0.1s, opacity 0.2s, max-width 0.3s cubic-bezier(0.25, 1, 0.5, 1) 0s;
+        }
+        
+        .target-label:hover { background: rgba(10, 40, 20, 0.95); border-color: #aaffaa; opacity: 1; }
+        .target-label.locked {
+            background: rgba(40, 5, 5, 0.9); border-left: 3px solid #ff3333; border-right: 1px solid #ff3333;
+            color: #ffaa33; box-shadow: 0 0 10px rgba(255, 51, 51, 0.5); animation: none; opacity: 1;
+        }
+
+        /* 3-etapowa animacja rozszerzania po skanie */
+        .target-label.scanned {
+            max-width: 360px; /* Z 140px na 360px w bok */
+            transition: background 0.15s, border-color 0.15s, transform 0.1s, opacity 0.2s, max-width 0.3s cubic-bezier(0.25, 1, 0.5, 1) 0.3s; 
+        }
+
+        .target-label table { border-collapse: collapse; border: none; width: 100%; }
+        .target-label td { padding: 1px 2px; border: none; white-space: nowrap; }
+        .target-label .hdr { color: #4ade80; font-weight: bold; transition: color 0.2s; padding-right: 8px;}
+        .target-label.locked .hdr { color: #ef4444; }
+
+        .action-menu {
+            max-height: 0; opacity: 0; overflow: hidden;
+            transition: max-height 0.3s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.2s ease-in-out, margin-top 0.2s ease-in-out;
+            display: flex; flex-direction: column; gap: 4px;
+        }
+        .target-label.expanded .action-menu { max-height: 150px; opacity: 1; margin-top: 8px; }
+        .action-menu::before {
+            content: ''; display: block; width: 100%; height: 1px;
+            background: linear-gradient(90deg, rgba(51, 255, 51, 0.8), transparent);
+            margin-bottom: 4px; transition: background 0.2s;
+        }
+        .target-label.locked .action-menu::before { background: linear-gradient(90deg, rgba(239, 68, 68, 0.8), transparent); }
+
+        .action-btn {
+            background: rgba(6, 20, 30, 0.8); border: 1px solid rgba(51, 255, 51, 0.3); color: #94a3b8; padding: 5px 8px; 
+            font-family: inherit; font-size: 10px; text-transform: uppercase; cursor: pointer; text-align: left;
+            transition: background 0.2s, color 0.2s, border-color 0.2s, padding-left 0.2s;
+        }
+        .action-btn:hover { background: rgba(51, 255, 51, 0.2); color: #e0f2fe; border-color: #33ff33; padding-left: 12px; }
+        .action-btn.scan-btn { border-color: rgba(56, 189, 248, 0.4); color: #bae6fd; }
+        .action-btn.scan-btn:hover { background: rgba(56, 189, 248, 0.2); color: #e0f2fe; border-color: #38bdf8; }
+
+        /* --- DIRECT SCAN RESULTS: CSS GRID I ODDZIELNE KOLUMNY --- */
+        .scan-results {
+            max-height: 0; opacity: 0; overflow: hidden;
+            display: flex; flex-direction: row; gap: 15px; 
+            font-size: 9px; color: #bae6fd; cursor: default;
+            transition: max-height 0.3s cubic-bezier(0.25, 1, 0.5, 1) 0.3s, opacity 0.2s ease-in-out 0.3s; /* Przy zwijaniu czeka aż zwinie się szerokość */
+        }
+        .target-label.scanned .scan-results { 
+            max-height: 250px; opacity: 1; margin-top: 8px; 
+            transition: max-height 0.3s cubic-bezier(0.25, 1, 0.5, 1) 0s, opacity 0.2s ease-in-out 0s; /* Zrzut w dół NATYCHMIAST */
+        }
+        
+        .scan-col-text { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 120px; }
+        
+        /* Kolumna ze schematem pojawia się na końcu */
+        .scan-col-blueprint {
+            width: 180px; display: flex; flex-direction: column; gap: 2px;
+            opacity: 0; transition: opacity 0.2s ease-in-out 0s;
+        }
+        .target-label.scanned .scan-col-blueprint {
+            opacity: 1; transition: opacity 0.4s ease-in-out 0.6s; /* Czeka na opadnięcie w dół (0.3) i rozsunięcie w prawo (0.3) */
+        }
+        .blueprint-canvas {
+            background: rgba(4, 12, 20, 0.5); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 4px; margin-top: 4px;
+            box-shadow: inset 0 0 10px rgba(56, 189, 248, 0.1);
+        }
+
+        .scan-hdr { color: #38bdf8; font-weight: bold; border-bottom: 1px solid rgba(56,189,248,0.3); margin-top: 6px; padding-bottom: 2px; }
+        .scan-row { display: flex; justify-content: space-between; padding: 1px 0; }
+        .scan-row span:first-child { color: #7dd3fc; }
+        .scan-row span:last-child { color: #e0f2fe; font-weight: bold; text-align: right; }
+        .glitch-text { opacity: 0; animation: text-glitch 0.45s steps(8) forwards; animation-delay: 0.1s; }
+
+        @keyframes frame-enter {
+            0% { transform: scaleX(0) scaleY(0.02); opacity: 0; background: rgba(51, 255, 51, 0.9); }
+            30% { transform: scaleX(1) scaleY(0.02); opacity: 1; background: rgba(51, 255, 51, 0.6); }
+            60% { transform: scaleX(1) scaleY(1.1); background: rgba(4, 12, 20, 0.8); }
+            100% { transform: scaleX(1) scaleY(1); opacity: 1; }
+        }
+        @keyframes text-glitch {
+            0% { opacity: 0; clip-path: inset(50% 0 50% 0); transform: translateX(-15px); }
+            10% { opacity: 1; clip-path: inset(10% 0 60% 0); transform: translateX(10px); text-shadow: 2px 0 #33ff33, -2px 0 #ff3333; }
+            20% { clip-path: inset(80% 0 5% 0); transform: translateX(-5px); text-shadow: -2px 0 #33ff33, 2px 0 #ff3333; }
+            30% { clip-path: inset(20% 0 30% 0); transform: translateX(4px); text-shadow: 2px 0 #33ff33, -2px 0 #ff3333; }
+            45% { clip-path: inset(0 0 0 0); transform: translateX(0); text-shadow: none; }
+            100% { opacity: 1; clip-path: inset(0 0 0 0); transform: translateX(0); }
+        }
+    </style>
+</head>
+<body>
+    <div id="webgl-container"></div>
+    <canvas id="hud-layer"></canvas>
+    <div id="labels-container"></div>
+    
+    <div id="ui">
+        <h1>CIC: System Taktyczny</h1>
+        <p>Napęd: <span class="key">W</span> <span class="key">S</span> &nbsp; Obrót: <span class="key">A</span> <span class="key">D</span></p>
+        <p>Skaner Sieci: <span class="key" style="background: #33ff33; color: black; border-color: #fff;">X</span></p>
+        <p style="font-size: 11px; color:#88a;">
+            LPM na ramkę: Zablokuj cel<br>
+            PPM na ramkę: Direct Scan kadłuba statku!<br>
+            LPM w próżnię: <strong style="color: #ff3333;">Odznacz cele</strong><br>
+            <span class="key">1</span> <span class="key">2</span> <span class="key">3</span> <span class="key">4</span>: Strzał bronią
+        </p>
+        <p>Status: <span id="sys-status" class="status-off">OFFLINE</span></p>
+        <p>Zablokowane cele: <span id="target-count" class="locked-text">0</span></p>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <script>
+        window.addEventListener('contextmenu', (e) => e.preventDefault());
+        window.addEventListener('click', (e) => {
+            if (!e.target.closest('.target-label')) {
+                document.querySelectorAll('.target-label.expanded').forEach(el => el.classList.remove('expanded'));
+            }
+            if (!e.target.closest('.target-label') && !e.target.closest('#ui')) {
+                let clearedAny = false;
+                enemies.forEach(enemy => {
+                    if (enemy.userData.isMarked) {
+                        enemy.userData.isMarked = false;
+                        if (enemy.userData.labelEl) {
+                            enemy.userData.labelEl.classList.remove('locked');
+                            const statusRow = enemy.userData.labelEl.querySelector('.status-row');
+                            if (statusRow) statusRow.style.display = 'none';
+                        }
+                        if (enemy.userData.isScanned) enemy.material.color.setHex(0xfbbf24); 
+                        else enemy.material.color.setHex(0x64748b);
+                        clearedAny = true;
+                    }
+                });
+                if (clearedAny) {
+                    markedCount = 0; document.getElementById('target-count').innerText = markedCount;
+                    const statusEl = document.getElementById('sys-status');
+                    if (targetingSystemActive) {
+                        statusEl.innerText = "ONLINE"; statusEl.className = 'highlight';
+                    } else {
+                        statusEl.innerText = "OFFLINE"; statusEl.className = 'status-off';
+                    }
+                }
+            }
+        });
+
+        const _projVector = new THREE.Vector3();
+        function worldToScreen(vector3, camera) {
+            _projVector.copy(vector3).project(camera);
+            return { 
+                x: (_projVector.x * 0.5 + 0.5) * window.innerWidth, 
+                y: (_projVector.y * -0.5 + 0.5) * window.innerHeight, 
+                z: _projVector.z 
+            };
+        }
+
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.setCrossOrigin('anonymous');
+        
+        const texPlayer = textureLoader.load('https://raw.githubusercontent.com/bazylowybazyl/statki/refs/heads/main/assets/capital_ship_rect_v1.png');
+        const texBattleship = textureLoader.load('https://raw.githubusercontent.com/bazylowybazyl/statki/refs/heads/main/src/assets/ships/terranbattleship.png');
+        const texDestroyer = textureLoader.load('https://raw.githubusercontent.com/bazylowybazyl/statki/refs/heads/main/src/assets/ships/terrandestroyer.png');
+        const texFrigate = textureLoader.load('https://raw.githubusercontent.com/bazylowybazyl/statki/refs/heads/main/src/assets/ships/terranfrigate.png');
+
+        const MOCK_WEAPONS = ['Railgun MK1', 'Railgun MK2', 'Laser PD', 'CIWS', 'Torpedy', 'Plazma'];
+        const MOCK_CARGO = ['Paliwo', 'Złom', 'Woda', 'Części', 'Amunicja', 'Uran'];
+        function getRandomElements(arr, count) { return arr.slice().sort(() => 0.5 - Math.random()).slice(0, count); }
+
+        function projectToScreenEdge(dirX, dirY, margin) {
+            const halfW = (window.innerWidth / 2) - margin;
+            const halfH = (window.innerHeight / 2) - margin;
+            const safeX = Math.abs(dirX) < 1e-3 ? 1e-3 : dirX;
+            const safeY = Math.abs(dirY) < 1e-3 ? 1e-3 : dirY;
+            const scale = Math.min(halfW / Math.abs(safeX), halfH / Math.abs(safeY));
+            return { x: window.innerWidth / 2 + dirX * scale, y: window.innerHeight / 2 + dirY * scale };
+        }
+
+        // --- MOCK GENERATOR SIATKI HEKSÓW DLA STATKU ---
+        function generateMockBlueprint(shipLength, shipWidth) {
+            const hexes = [];
+            const r = 4; // Rozmiar wirtualnego heksa
+            const h = Math.sqrt(3) * r;
+            const w = r * 1.5;
+            const cols = Math.floor(shipLength / w);
+            const rows = Math.floor(shipWidth / h);
+            
+            for(let c = 0; c < cols; c++) {
+                for(let ro = 0; ro < rows; ro++) {
+                    const x = c * w - shipLength/2;
+                    let y = ro * h - shipWidth/2;
+                    if (c % 2 !== 0) y += h/2;
+                    
+                    // Odgórna maska kształtu statku - robimy szorstki diament by wyglądało realistycznie
+                    const nx = x / (shipLength/2);
+                    const ny = y / (shipWidth/2);
+                    if (Math.abs(nx) + Math.abs(ny) * 1.3 < 1.05) { 
+                        hexes.push({
+                            x: x, y: y,
+                            hp: Math.random() > 0.15 ? 1.0 : Math.random(), // Większość zdrowa, reszta uszkodzona
+                            isHardpoint: Math.random() > 0.94 // Kilka heksów zostaje niebieskimi modułami
+                        });
+                    }
+                }
+            }
+            return hexes;
+        }
+
+        // --- FUNKCJA RYSOWANIA SCHEMATU W CANVASIE ---
+        function drawBlueprintCanvas(canvas, hexes, shipLength, shipWidth) {
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.translate(canvas.width/2, canvas.height/2);
+            
+            const padding = 15;
+            const scale = Math.min((canvas.width - padding) / shipLength, (canvas.height - padding) / shipWidth);
+            ctx.scale(scale, scale);
+            
+            const r = 4;
+            for(const hex of hexes) {
+                ctx.beginPath();
+                for(let i=0; i<6; i++) {
+                    const a = i * Math.PI / 3;
+                    const hx = hex.x + Math.cos(a)*r;
+                    const hy = hex.y + Math.sin(a)*r;
+                    if(i===0) ctx.moveTo(hx, hy);
+                    else ctx.lineTo(hx, hy);
+                }
+                ctx.closePath();
+                
+                // Kolory wg stanu (HP)
+                if (hex.hp > 0.6) ctx.fillStyle = 'rgba(51, 255, 51, 0.25)'; // Zielony (Sprawny)
+                else if (hex.hp > 0.2) ctx.fillStyle = 'rgba(255, 170, 51, 0.45)'; // Pomarańczowy (Uszkodzony)
+                else ctx.fillStyle = 'rgba(255, 51, 51, 0.6)'; // Czerwony (Krytyczny)
+                
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(56, 189, 248, 0.15)';
+                ctx.lineWidth = 0.5 / scale; // Aby linie wciąż były cieniutkie
+                ctx.stroke();
+                
+                // Rysowanie zidentyfikowanych modułów / Hardpointów
+                if (hex.isHardpoint) {
+                    ctx.fillStyle = '#38bdf8';
+                    ctx.beginPath(); ctx.arc(hex.x, hex.y, r*0.7, 0, Math.PI*2); ctx.fill();
+                    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1 / scale; ctx.stroke();
+                }
+            }
+            ctx.restore();
+        }
+
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x040c18, 0.003);
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 200, 50); camera.lookAt(0, 0, 0);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.getElementById('webgl-container').appendChild(renderer.domElement);
+        scene.add(new THREE.GridHelper(1000, 50, 0x1e3a5f, 0x0f1c2e));
+
+        const hudCanvas = document.getElementById('hud-layer');
+        hudCanvas.width = window.innerWidth; hudCanvas.height = window.innerHeight;
+        const ctx = hudCanvas.getContext('2d');
+
+        const geoCapital = new THREE.PlaneGeometry(64, 32); geoCapital.rotateX(-Math.PI / 2);
+        const geoDestroyer = new THREE.PlaneGeometry(40, 20); geoDestroyer.rotateX(-Math.PI / 2);
+        const geoFrigate = new THREE.PlaneGeometry(24, 16); geoFrigate.rotateX(-Math.PI / 2);
+
+        const player = new THREE.Mesh(geoCapital, new THREE.MeshBasicMaterial({ map: texPlayer, color: 0x38bdf8, transparent: true }));
+        player.scale.set(1.5, 1.5, 1.5); scene.add(player);
+
+        const enemies = [];
+        const unitClasses = ['KORWETA', 'FREGATA', 'NISZCZYCIEL', 'KRĄŻOWNIK'];
+
+        // PRE-KOMPILACJA DANYCH I STRUKTURY HTML Z KOLUMNAMI
+        function preBakeScanHTML(rawWeapons, cargo, unitId) {
+            const weaponCounts = {};
+            rawWeapons.forEach(hp => {
+                if (!weaponCounts[hp.name]) weaponCounts[hp.name] = { type: hp.type, name: hp.name, count: 0 };
+                weaponCounts[hp.name].count++;
+            });
+            const aggregatedWeapons = Object.values(weaponCounts).sort((a,b) => b.count - a.count);
+            let hpRows = aggregatedWeapons.map(w => `<div class="scan-row"><span>${w.type}</span><span>${w.count}x ${w.name}</span></div>`).join('');
+            let cgRows = cargo.map(c => `<div class="scan-row"><span>${c.name}</span><span>${c.amount}</span></div>`).join('');
+            
+            if (!hpRows) hpRows = `<div class="scan-row"><span>-</span><span>Brak Danych</span></div>`;
+            if (!cgRows) cgRows = `<div class="scan-row"><span>-</span><span>Pusta</span></div>`;
+            
+            return `
+                <div class="scan-col-text">
+                    <div class="scan-hdr">UZBROJENIE</div>${hpRows}
+                    <div class="scan-hdr">ŁADOWNIA</div>${cgRows}
+                </div>
+                <div class="scan-col-blueprint">
+                    <div class="scan-hdr" style="margin-top: 6px;">HARDPOINT HEALTH</div>
+                    <canvas id="blueprint-${unitId}" class="blueprint-canvas" width="180" height="120"></canvas>
+                </div>
+            `;
+        }
+
+        // TWORZENIE FLOTY NA BAZIE ASSETÓW
+        for (let i = 0; i < 50; i++) {
+            const uClass = unitClasses[Math.floor(Math.random() * unitClasses.length)];
+            let tex = texFrigate, geo = geoFrigate, shipLength = 24, shipWidth = 16;
+            
+            if (uClass === 'KRĄŻOWNIK') { tex = texBattleship; geo = geoCapital; shipLength = 64; shipWidth = 32; }
+            else if (uClass === 'NISZCZYCIEL') { tex = texDestroyer; geo = geoDestroyer; shipLength = 40; shipWidth = 20; }
+
+            const enemy = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex, color: 0x64748b, transparent: true }));
+            
+            enemy.position.set((Math.random() - 0.5) * 1200, 0, (Math.random() - 0.5) * 1200);
+            enemy.rotation.y = Math.random() * Math.PI * 2;
+            const scale = 1.2; enemy.scale.set(scale, scale, scale);
+            
+            const isCapital = (uClass === 'NISZCZYCIEL' || uClass === 'KRĄŻOWNIK');
+            const rawWeaponsList = [];
+            const hpCount = isCapital ? Math.floor(Math.random() * 40) + 10 : Math.floor(Math.random() * 8) + 2;
+            const chosenWeaponTypes = getRandomElements(MOCK_WEAPONS, isCapital ? 3 : 1);
+            for(let j = 0; j < hpCount; j++) {
+                rawWeaponsList.push({ type: Math.random() > 0.25 ? 'MAIN' : 'AUX', name: chosenWeaponTypes[Math.floor(Math.random() * chosenWeaponTypes.length)] });
+            }
+            const cargoList = getRandomElements(MOCK_CARGO, isCapital ? 3 : 1).map(c => ({ name: c, amount: Math.floor(Math.random()*100)+10 + 't' }));
+            
+            const unitId = 'TGT-' + Math.floor(Math.random() * 9000 + 1000);
+            const bakedScanHtml = preBakeScanHTML(rawWeaponsList, cargoList, unitId);
+            
+            // Generowanie danych do mapy heksów!
+            const mockBlueprint = generateMockBlueprint(shipLength * scale, shipWidth * scale);
+
+            enemy.userData = {
+                isScanned: false, isMarked: false, containerEl: null, unitClass: uClass,
+                unitId: unitId,
+                bakedScanHtml: bakedScanHtml, 
+                mockBlueprint: mockBlueprint, // Zapisz model strukturalny statku do renderingu na Canvasie!
+                driftSpeed: 15,
+                shipLength: shipLength, shipWidth: shipWidth, scale: scale,
+                _lockScale: 1.0, _lockRot: 0.0, _timeLocked: 0,
+                isScanning: false, scanTimer: 0,
+                distEl: null, lastDist: -1, labelEl: null
+            };
+            scene.add(enemy); enemies.push(enemy);
+        }
+
+        const LOCK_RANGE = 450; 
+        let markedCount = 0; let targetingSystemActive = false;
+        const activeLasers = [];
+
+        function toggleTargetingSystem() {
+            targetingSystemActive = !targetingSystemActive;
+            const statusEl = document.getElementById('sys-status');
+            if (targetingSystemActive) {
+                statusEl.innerText = "ONLINE"; statusEl.className = "highlight";
+            } else {
+                statusEl.innerText = "OFFLINE"; statusEl.className = "status-off";
+                enemies.forEach(enemy => {
+                    if (enemy.userData.isScanned) {
+                        enemy.userData.isScanned = false; 
+                        enemy.userData.isScanning = false; 
+                        if (enemy.userData.containerEl) { 
+                            enemy.userData.containerEl.remove(); 
+                            enemy.userData.containerEl = null; 
+                            enemy.userData.labelEl = null;
+                            enemy.userData.distEl = null;
+                        }
+                        if (!enemy.userData.isMarked) enemy.material.color.setHex(0x64748b);
+                    }
+                });
+            }
+        }
+
+        const keys = { w: false, a: false, s: false, d: false };
+        window.addEventListener('keydown', (e) => {
+            const k = e.key.toLowerCase(); if (keys.hasOwnProperty(k)) keys[k] = true;
+            if (k === 'x') toggleTargetingSystem();
+            if (['1', '2', '3', '4'].includes(k)) {
+                const markedEnemies = enemies.filter(enemy => enemy.userData.isMarked);
+                const statusEl = document.getElementById('sys-status');
+                if (markedEnemies.length > 0) {
+                    statusEl.innerText = `BROŃ [${k}] ODPALONA W ${markedEnemies.length} CELÓW!`; statusEl.className = 'status-cmd';
+                    const weaponColor = k === '1' ? '#38bdf8' : k === '2' ? '#ef4444' : k === '3' ? '#4ade80' : '#fbbf24';
+                    markedEnemies.forEach(enemy => { activeLasers.push({ target: enemy, life: 0.25, color: weaponColor }); });
+                } else {
+                    statusEl.innerText = `BROŃ [${k}]: BRAK ZABLOKOWANYCH CELÓW`; statusEl.className = 'status-off';
+                }
+            }
+        });
+        window.addEventListener('keyup', (e) => { const k = e.key.toLowerCase(); if (keys.hasOwnProperty(k)) keys[k] = false; });
+
+        const clock = new THREE.Clock();
+        const playerSpeed = 60; const playerTurnSpeed = 2.5;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            if (keys.a) player.rotation.y += playerTurnSpeed * delta;
+            if (keys.d) player.rotation.y -= playerTurnSpeed * delta;
+            let thrust = 0;
+            if (keys.w) thrust = 1; if (keys.s) thrust = -0.5;
+
+            if (thrust !== 0) {
+                player.position.x += Math.cos(player.rotation.y) * playerSpeed * thrust * delta;
+                player.position.z -= Math.sin(player.rotation.y) * playerSpeed * thrust * delta;
+            }
+
+            if (targetingSystemActive) {
+                enemies.forEach(enemy => {
+                    const distance = player.position.distanceTo(enemy.position);
+                    
+                    if (distance <= LOCK_RANGE) {
+                        if (!enemy.userData.isScanned) {
+                            enemy.userData.isScanned = true;
+                            if (!enemy.userData.isMarked) enemy.material.color.setHex(0xfbbf24); 
+                            
+                            const container = document.createElement('div'); container.className = 'label-container';
+                            const label = document.createElement('div'); 
+                            
+                            const lockedClass = enemy.userData.isMarked ? 'locked' : '';
+                            const statusDisplay = enemy.userData.isMarked ? 'table-row' : 'none';
+                            label.className = `target-label ${lockedClass}`;
+                            
+                            label.innerHTML = `
+                                <table class="glitch-text">
+                                    <tr><td class="hdr">NAME</td><td>${enemy.userData.unitId}</td></tr>
+                                    <tr><td class="hdr">CLASS</td><td>${enemy.userData.unitClass}</td></tr>
+                                    <tr class="dist-row"><td class="hdr">DST</td><td class="dist-val">0 u</td></tr>
+                                    <tr class="status-row" style="display:${statusDisplay};"><td colspan="2" class="hdr" style="color:#ff4444; text-align:center;">LOCKED</td></tr>
+                                </table>
+                                <div class="scan-results">${enemy.userData.bakedScanHtml}</div>
+                                <div class="action-menu">
+                                    <button class="action-btn" data-action="approach">▶ Approach</button>
+                                    <button class="action-btn" data-action="orbit">▶ Orbit</button>
+                                    <button class="action-btn" data-action="warp">▶ Jump (Warp)</button>
+                                    <button class="action-btn scan-btn" data-action="scan">▶ Direct Scan</button>
+                                </div>
+                            `;
+                            
+                            label.addEventListener('click', (e) => {
+                                if (e.target.closest('.action-btn') || e.target.closest('.scan-results')) return;
+                                enemy.userData.isMarked = !enemy.userData.isMarked;
+                                if (enemy.userData.isMarked) {
+                                    markedCount++; 
+                                    label.classList.add('locked'); label.querySelector('.status-row').style.display = 'table-row';
+                                    enemy.material.color.setHex(0xef4444); 
+                                    enemy.userData._lockScale = 8.0; enemy.userData._lockRot = Math.PI; enemy.userData._timeLocked = 0;
+                                } else {
+                                    markedCount--;
+                                    label.classList.remove('locked'); label.querySelector('.status-row').style.display = 'none';
+                                    enemy.material.color.setHex(0xfbbf24); 
+                                }
+                                document.getElementById('target-count').innerText = markedCount;
+                            });
+
+                            label.addEventListener('contextmenu', (e) => {
+                                e.preventDefault();
+                                document.querySelectorAll('.target-label.expanded').forEach(el => { if(el !== label) el.classList.remove('expanded'); });
+                                label.classList.toggle('expanded');
+                            });
+
+                            label.querySelectorAll('.action-btn').forEach(btn => {
+                                btn.addEventListener('click', (e) => {
+                                    e.stopPropagation(); const action = btn.dataset.action; const targetId = enemy.userData.unitId;
+                                    const statusEl = document.getElementById('sys-status');
+                                    
+                                    if (action === 'approach') { statusEl.innerText = `ROZKAZ: ZBLIŻANIE DO ${targetId}`; statusEl.className = 'status-cmd'; label.classList.remove('expanded'); }
+                                    else if (action === 'orbit') { statusEl.innerText = `ROZKAZ: ORBITUJ CEL ${targetId}`; statusEl.className = 'status-cmd'; label.classList.remove('expanded'); }
+                                    else if (action === 'warp') { statusEl.innerText = `ROZKAZ: OBLICZANIE SKOKU DO ${targetId}...`; statusEl.className = 'status-cmd'; label.classList.remove('expanded'); }
+                                    else if (action === 'scan') { 
+                                        statusEl.innerText = `ROZKAZ: GŁĘBOKI SKAN...`; statusEl.className = 'status-cmd'; 
+                                        label.classList.remove('expanded'); 
+                                        
+                                        enemy.userData.isScanning = true;
+                                        enemy.userData.scanTimer = 2.0; 
+                                    }
+                                });
+                            });
+                            
+                            enemy.userData.distEl = label.querySelector('.dist-val');
+                            enemy.userData.labelEl = label; container.appendChild(label); document.getElementById('labels-container').appendChild(container);
+                            enemy.userData.containerEl = container;
+                        }
+                        
+                        if (enemy.userData.distEl) {
+                            const currentDist = Math.round(distance);
+                            if (enemy.userData.lastDist !== currentDist) {
+                                enemy.userData.distEl.textContent = currentDist + ' u'; 
+                                enemy.userData.lastDist = currentDist;
+                            }
+                        }
+                        
+                        const s = worldToScreen(enemy.position, camera);
+                        const isOffScreen = s.z >= 1 || s.x < 0 || s.x > window.innerWidth || s.y < 0 || s.y > window.innerHeight;
+
+                        if (!isOffScreen) {
+                            enemy.userData.containerEl.style.transform = `translate(${s.x + (enemy.userData.shipLength / 2) + 15}px, ${s.y - 40}px)`;
+                            enemy.userData.containerEl.style.display = 'block';
+                        } else { 
+                            enemy.userData.containerEl.style.display = 'none'; 
+                        }
+                        
+                    } else if (enemy.userData.isScanned && distance > LOCK_RANGE * 1.5) {
+                        enemy.userData.isScanned = false;
+                        enemy.userData.isScanning = false;
+                        if (enemy.userData.containerEl) { 
+                            enemy.userData.containerEl.remove(); 
+                            enemy.userData.containerEl = null; 
+                            enemy.userData.labelEl = null;
+                            enemy.userData.distEl = null;
+                        }
+                        if (!enemy.userData.isMarked) {
+                            enemy.material.color.setHex(0x64748b);
+                        }
+                    }
+                });
+            }
+
+            enemies.forEach(enemy => {
+                enemy.position.x += Math.cos(enemy.rotation.y) * enemy.userData.driftSpeed * delta;
+                enemy.position.z -= Math.sin(enemy.rotation.y) * enemy.userData.driftSpeed * delta;
+                if(enemy.position.x > 800) enemy.position.x = -800; if(enemy.position.x < -800) enemy.position.x = 800;
+                if(enemy.position.z > 800) enemy.position.z = -800; if(enemy.position.z < -800) enemy.position.z = 800;
+            });
+
+            camera.position.x += (player.position.x - camera.position.x) * 0.1;
+            camera.position.z += (player.position.z + 100 - camera.position.z) * 0.1;
+
+            renderer.render(scene, camera);
+
+            ctx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
+
+            for (let i = activeLasers.length - 1; i >= 0; i--) {
+                const laser = activeLasers[i];
+                laser.life -= delta;
+
+                if (laser.life <= 0) {
+                    activeLasers.splice(i, 1);
+                    continue;
+                }
+
+                const pScr = worldToScreen(player.position, camera);
+                const eScr = worldToScreen(laser.target.position, camera);
+
+                if (pScr.z < 1 && eScr.z < 1) {
+                    ctx.save(); ctx.beginPath(); ctx.moveTo(pScr.x, pScr.y); ctx.lineTo(eScr.x, eScr.y);
+                    ctx.strokeStyle = laser.color; ctx.lineWidth = 6 * (laser.life / 0.25); 
+                    ctx.shadowBlur = 15; ctx.shadowColor = laser.color; ctx.stroke(); ctx.restore();
+                }
+            }
+
+            enemies.forEach(enemy => {
+                if (!enemy.userData.isScanned && !enemy.userData.isMarked) return;
+
+                const s = worldToScreen(enemy.position, camera);
+                const isOffScreen = s.z >= 1 || s.x < 0 || s.x > window.innerWidth || s.y < 0 || s.y > window.innerHeight;
+
+                if (enemy.userData.isMarked && isOffScreen) {
+                    const cx = window.innerWidth / 2; const cy = window.innerHeight / 2;
+                    let dirX = s.x - cx; let dirY = s.y - cy;
+                    if (s.z >= 1) { dirX = -dirX; dirY = -dirY; } 
+                    
+                    const edgePos = projectToScreenEdge(dirX, dirY, 30);
+                    const angle = Math.atan2(dirY, dirX);
+
+                    ctx.save(); ctx.translate(edgePos.x, edgePos.y); ctx.rotate(angle);
+                    ctx.fillStyle = 'rgba(239, 68, 68, 0.8)'; ctx.shadowBlur = 8; ctx.shadowColor = 'rgba(239, 68, 68, 0.5)';
+                    ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(-10, -8); ctx.lineTo(-5, 0); ctx.lineTo(-10, 8);
+                    ctx.closePath(); ctx.fill(); ctx.restore();
+                    return; 
+                }
+
+                if (s.z >= 1) return;
+
+                if (enemy.userData.isScanned && !enemy.userData.isScanning) {
+                    const futurePos = enemy.position.clone();
+                    futurePos.x += Math.cos(enemy.rotation.y) * enemy.userData.driftSpeed * 2.0;
+                    futurePos.z -= Math.sin(enemy.rotation.y) * enemy.userData.driftSpeed * 2.0;
+
+                    const fScr = worldToScreen(futurePos, camera);
+                    if (fScr.z < 1) {
+                        ctx.save();
+                        ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(fScr.x, fScr.y);
+                        ctx.strokeStyle = 'rgba(251, 191, 36, 0.4)'; ctx.lineWidth = 1.5;
+                        ctx.setLineDash([2, 4]); ctx.stroke(); ctx.setLineDash([]);
+                        ctx.beginPath(); ctx.arc(fScr.x, fScr.y, 2, 0, Math.PI*2); 
+                        ctx.fillStyle = 'rgba(251, 191, 36, 0.6)'; ctx.fill();
+                        ctx.restore();
+                    }
+                }
+
+                const distToCam = camera.position.distanceTo(enemy.position);
+                const fov = THREE.MathUtils.degToRad(camera.fov);
+                const height = 2 * Math.tan(fov / 2) * distToCam;
+                const zoomFactor = window.innerHeight / height;
+
+                const forwardVec = new THREE.Vector3(Math.cos(enemy.rotation.y), 0, -Math.sin(enemy.rotation.y));
+                const forwardWorld = enemy.position.clone().add(forwardVec);
+                const scrForward = worldToScreen(forwardWorld, camera);
+                const screenAngle = Math.atan2(scrForward.y - s.y, scrForward.x - s.x);
+
+                if (enemy.userData.isScanning) {
+                    enemy.userData.scanTimer -= delta;
+                    
+                    const progress = 1.0 - (enemy.userData.scanTimer / 2.0); 
+                    const hw = (enemy.userData.shipLength * zoomFactor * enemy.userData.scale) / 2;
+                    const hh = (enemy.userData.shipWidth * zoomFactor * enemy.userData.scale) / 2;
+                    
+                    ctx.save();
+                    ctx.translate(s.x, s.y);
+                    ctx.rotate(screenAngle); 
+                    
+                    ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(-hw - 4, -hh - 4, hw * 2 + 8, hh * 2 + 8); 
+
+                    const scanX = -hw + (hw * 2) * progress;
+                    
+                    ctx.strokeStyle = '#38bdf8';
+                    ctx.lineWidth = 2;
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = '#38bdf8';
+                    ctx.beginPath();
+                    ctx.moveTo(scanX, -hh - 12);
+                    ctx.lineTo(scanX, hh + 12);
+                    ctx.stroke();
+
+                    ctx.fillStyle = 'rgba(56, 189, 248, 0.15)';
+                    ctx.fillRect(-hw, -hh, scanX - (-hw), hh * 2);
+                    
+                    ctx.fillStyle = '#e0f2fe';
+                    ctx.shadowBlur = 0;
+                    ctx.font = 'bold 10px monospace';
+                    ctx.textAlign = 'left';
+                    ctx.textBaseline = 'middle';
+                    
+                    ctx.save(); 
+                    ctx.translate(scanX + 8, -hh - 10);
+                    ctx.rotate(-screenAngle); 
+                    ctx.fillText(`ANLZ: ${Math.floor(progress * 100)}%`, 0, 0);
+                    ctx.font = '8px monospace';
+                    ctx.fillStyle = '#7dd3fc';
+                    ctx.fillText(`SIG: 0x${Math.floor(Math.random()*10000).toString(16).toUpperCase()}`, 0, 12);
+                    ctx.restore();
+                    
+                    ctx.restore();
+
+                    if (enemy.userData.scanTimer <= 0) {
+                        enemy.userData.isScanning = false;
+                        if (enemy.userData.labelEl) {
+                            enemy.userData.labelEl.classList.add('scanned'); 
+                            document.getElementById('sys-status').innerText = `SKAN ZAKOŃCZONY`; 
+                            document.getElementById('sys-status').className = 'status-off';
+                            
+                            // Wywołanie renderowania schematu heksów do małego Canvasa w HTML po rozszerzeniu GUI
+                            setTimeout(() => {
+                                const cvs = document.getElementById(`blueprint-${enemy.userData.unitId}`);
+                                if (cvs) {
+                                    drawBlueprintCanvas(cvs, enemy.userData.mockBlueprint, enemy.userData.shipLength * enemy.userData.scale, enemy.userData.shipWidth * enemy.userData.scale);
+                                }
+                            }, 50); 
+                        }
+                    }
+                }
+
+                if (!enemy.userData.isMarked) return;
+
+                enemy.userData._timeLocked += delta;
+                if (enemy.userData._lockScale > 1.02) {
+                    enemy.userData._lockScale += (1.0 - enemy.userData._lockScale) * 12 * delta;
+                    enemy.userData._lockRot += (0.0 - enemy.userData._lockRot) * 12 * delta;
+                } else {
+                    enemy.userData._lockScale = 1.0; enemy.userData._lockRot = 0.0;
+                }
+
+                const baseRad = (enemy.userData.shipLength / 2) * zoomFactor * enemy.userData.scale + 10; 
+                const rad = baseRad * enemy.userData._lockScale;
+                const isCatching = enemy.userData._lockScale > 1.05;
+                const pulse = 0.82 + 0.18 * Math.sin(enemy.userData._timeLocked * 6);
+
+                ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(enemy.userData._lockRot);
+                const strokeColor = isCatching ? `rgba(56,189,248,${pulse})` : `rgba(239,68,68,${0.92 * pulse})`;
+                const shadowColor = isCatching ? 'rgba(56,189,248,0.8)' : 'rgba(239,68,68,0.45)';
+                ctx.strokeStyle = strokeColor; ctx.lineWidth = Math.max(2, 3); ctx.shadowBlur = 12; ctx.shadowColor = shadowColor;
+
+                ctx.beginPath(); ctx.moveTo(0, -rad); ctx.lineTo(rad, 0); ctx.lineTo(0, rad); ctx.lineTo(-rad, 0); ctx.closePath(); ctx.stroke();
+
+                if (!isCatching) {
+                    const corner = Math.max(8, rad * 0.35); const inner = rad * 0.72;
+                    ctx.beginPath();
+                    ctx.moveTo(-rad, -inner); ctx.lineTo(-rad, -rad); ctx.lineTo(-inner, -rad);
+                    ctx.moveTo(inner, -rad); ctx.lineTo(rad, -rad); ctx.lineTo(rad, -inner);
+                    ctx.moveTo(-rad, inner); ctx.lineTo(-rad, rad); ctx.lineTo(-inner, rad);
+                    ctx.moveTo(inner, rad); ctx.lineTo(rad, rad); ctx.lineTo(rad, inner);
+                    ctx.stroke();
+
+                    ctx.globalAlpha = 0.35; ctx.setLineDash([4, 5]); ctx.beginPath(); ctx.arc(0, 0, rad + corner * 0.15, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+                }
+                ctx.restore();
+            });
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            hudCanvas.width = window.innerWidth; hudCanvas.height = window.innerHeight;
+        });
+
+        window.onload = animate;
+    </script>
+</body>
+</html>

@@ -1130,10 +1130,9 @@
     window.SensorSystem = SensorSystem;
     window.SparkSystem3D = SparkSystem3D;
     import { CICDisplay } from "./src/ui/cicDisplay.js";
+    import { initRadarTargetingUI } from "./src/ui/radarTargetingUI.js";
     import { SpotterDroneSystem } from "./src/game/spotterDrone.js";
     import { WeaponController } from "./src/game/weaponController.js";
-    import { SiegeMode } from "./src/game/siegeMode.js";
-    window.SiegeMode = SiegeMode;
     import { MASTER_WEAPONS, WEAPON_ICON_PATHS } from "./src/data/weapons.js";
 
     // Alias dla kompatybilności starego ekwipunku gracza, dopóki go nie zaktualizujemy
@@ -3276,12 +3275,39 @@
       npc.target = null;
     }
 
+    function softBrakeNpc(npc, dt, strength = 1) {
+      const vx = Number(npc.vx) || 0;
+      const vy = Number(npc.vy) || 0;
+      const speed = Math.hypot(vx, vy);
+      if (speed <= 1e-4) {
+        npc.vx = 0;
+        npc.vy = 0;
+        return 0;
+      }
+      const brake = Math.min(speed, Math.max(70, speed * (1.8 + strength * 1.2)) * dt * strength);
+      const invSpeed = 1 / speed;
+      npc.vx -= vx * invSpeed * brake;
+      npc.vy -= vy * invSpeed * brake;
+      return speed - brake;
+    }
+
     function steerNpcTowards(npc, target, dt, opts = {}) {
       const dx = target.x - npc.x;
       const dy = target.y - npc.y;
       const dist = Math.hypot(dx, dy) || 1;
       const dir = { x: dx / dist, y: dy / dist };
-      const wantSpeed = Math.min(opts.maxSpeed || npc.maxSpeed || 240, dist * (opts.speedScale || 1.2));
+      const maxSpeed = opts.maxSpeed || npc.maxSpeed || npc.speed || 240;
+      const currentSpeed = Math.hypot(npc.vx || 0, npc.vy || 0);
+      const arrival = Math.max(0, Number(opts.arrival) || 0);
+      const brakeDistance = arrival > 0
+        ? Math.max(arrival + 35, arrival + (currentSpeed * 0.38) + ((currentSpeed * currentSpeed) / Math.max(220, maxSpeed * 2.2)))
+        : 0;
+      let wantSpeed = Math.min(maxSpeed, dist * (opts.speedScale || 1.2));
+      if (arrival > 0 && dist <= brakeDistance) {
+        const approachT = clamp((dist - arrival) / Math.max(brakeDistance - arrival, 1), 0, 1);
+        const brakeSpeed = maxSpeed * Math.pow(approachT, 0.82);
+        wantSpeed = Math.min(wantSpeed, brakeSpeed);
+      }
       const turned = window.clampTurnVec(npc.vx || 0, npc.vy || 0, dir.x * wantSpeed, dir.y * wantSpeed, dt, opts.turnLimit || 220);
       npc.vx = turned.vx;
       npc.vy = turned.vy;
@@ -3429,24 +3455,106 @@
       return { ax: clamped.x, ay: clamped.y };
     }
     window.applySeparationForces = applySeparationForces;
-    function handleCommandedNpc(npc, dt) {
-      const cmd = npc.command;
-      if (!cmd || !cmd.target) return false;
+    function getCommandTargetPos(unit, cmd) {
+      if (!cmd) return null;
+      const ent = cmd.targetEntity;
+      if (ent && !ent.dead) {
+        return {
+          x: Number(ent.x ?? ent.pos?.x) || 0,
+          y: Number(ent.y ?? ent.pos?.y) || 0
+        };
+      }
+      if (cmd.target && Number.isFinite(cmd.target.x) && Number.isFinite(cmd.target.y)) {
+        return cmd.target;
+      }
+      return null;
+    }
+
+    function computeOrbitSteerVector(unit, center, orbitRadius, orbitDir = 1) {
+      const ux = Number(unit?.x ?? unit?.pos?.x) || 0;
+      const uy = Number(unit?.y ?? unit?.pos?.y) || 0;
+      const dx = ux - center.x;
+      const dy = uy - center.y;
+      const dist = Math.max(1, Math.hypot(dx, dy));
+      const radialX = dx / dist;
+      const radialY = dy / dist;
+      const tangentX = -radialY * (orbitDir >= 0 ? 1 : -1);
+      const tangentY = radialX * (orbitDir >= 0 ? 1 : -1);
+      const radialError = dist - Math.max(80, orbitRadius || RTS_DEFAULT_ORBIT_RADIUS);
+      const radialCorrection = clamp(-radialError / Math.max(orbitRadius || RTS_DEFAULT_ORBIT_RADIUS, 1), -0.85, 0.85);
+      const desiredX = tangentX + radialX * radialCorrection;
+      const desiredY = tangentY + radialY * radialCorrection;
+      const len = Math.max(1e-6, Math.hypot(desiredX, desiredY));
+      return {
+        dirX: desiredX / len,
+        dirY: desiredY / len,
+        dist
+      };
+    }
+
+    function executeNpcCommand(npc, cmd, dt) {
+      if (!cmd) return false;
+      if (cmd.type === 'hold') {
+        softBrakeNpc(npc, dt, 1.35);
+        npc.forceTarget = null;
+        return true;
+      }
+
+      const targetPos = getCommandTargetPos(npc, cmd);
+      if (!targetPos) {
+        npc.command = null;
+        npc.forceTarget = null;
+        return false;
+      }
+
       const attackMove = cmd.type === 'attack-move';
       if (attackMove) {
-        const target = aiPickTarget(npc);
+        const target = (cmd.targetEntity && !cmd.targetEntity.dead) ? cmd.targetEntity : aiPickTarget(npc);
         if (target) {
           npc.forceTarget = target;
           return false;
         }
       }
+
+      if (cmd.type === 'orbit') {
+        const orbit = computeOrbitSteerVector(npc, targetPos, cmd.orbitRadius, cmd.orbitDir);
+        const orbitSpeedMax = npc.maxSpeed || npc.speed || 240;
+        const radialError = Math.abs(orbit.dist - Math.max(80, cmd.orbitRadius || RTS_DEFAULT_ORBIT_RADIUS));
+        const wantSpeed = Math.min(
+          orbitSpeedMax,
+          Math.max(90, orbitSpeedMax * clamp(0.52 + (radialError / Math.max(cmd.orbitRadius || RTS_DEFAULT_ORBIT_RADIUS, 1)), 0.52, 0.88))
+        );
+        const turned = window.clampTurnVec(npc.vx || 0, npc.vy || 0, orbit.dirX * wantSpeed, orbit.dirY * wantSpeed, dt, 260);
+        npc.vx = turned.vx;
+        npc.vy = turned.vy;
+        if (radialError < 30) softBrakeNpc(npc, dt, 0.24);
+        if (npc.vx * npc.vx + npc.vy * npc.vy > 25) {
+          npc.desiredAngle = Math.atan2(npc.vy || 0, npc.vx || 0);
+        }
+        return true;
+      }
+
       const arrival = cmd.arrival || (npc.radius || 20) + 20;
-      const dist = steerNpcTowards(npc, cmd.target, dt, { turnLimit: attackMove ? 260 : 220 });
+      const dist = steerNpcTowards(npc, targetPos, dt, {
+        turnLimit: attackMove ? 260 : 220,
+        speedScale: cmd.type === 'approach' ? 0.9 : 1.2,
+        arrival
+      });
+      const speed = Math.hypot(npc.vx || 0, npc.vy || 0);
+      const brakeZone = arrival + Math.max(45, speed * 0.42);
+      if (dist <= brakeZone) {
+        softBrakeNpc(npc, dt, clamp((brakeZone - dist) / Math.max(brakeZone - arrival, 1), 0.18, 1.1));
+      }
       if (dist <= arrival) {
+        softBrakeNpc(npc, dt, cmd.type === 'approach' ? 1.4 : 1.1);
         npc.command = null;
         npc.forceTarget = null;
       }
       return true;
+    }
+
+    function handleCommandedNpc(npc, dt) {
+      return executeNpcCommand(npc, npc.command, dt);
     }
 
     // === FIX SUPPORT AI (Guard vs Engage) ===
@@ -5058,8 +5166,8 @@
         this.shakeTime = dur;
         this.shakeDur = dur;
       },
-      enterFreeMode() {
-        this.mode = 'free';
+      enterRtsMode() {
+        this.mode = 'rts';
         this.focusStation = null;
         this.targetX = this.x;
         this.targetY = this.y;
@@ -5069,7 +5177,7 @@
         this.lastPointerX = null;
         this.lastPointerY = null;
       },
-      exitFreeMode() {
+      exitRtsMode() {
         this.mode = 'ship';
         this.focusStation = null;
         this.focusArrived = false;
@@ -5085,9 +5193,9 @@
         });
         this.manualZoom = true;
       },
-      toggleFreeMode() {
-        if (this.mode === 'free') this.exitFreeMode();
-        else this.enterFreeMode();
+      toggleRtsMode() {
+        if (this.mode === 'rts') this.exitRtsMode();
+        else this.enterRtsMode();
       },
       beginTransition(x, y, zoom, duration = 0.8, onComplete) {
         const targetZoom = clamp(zoom, this.minZoom, this.maxZoom);
@@ -5194,28 +5302,9 @@
     overlayView.zoom = camera.zoom;
 
     function updateCameraTarget(dt) {
-      if (camera.mode === 'ship') {
-        let targetCamX, targetCamY;
-
-        const lookAheadFactor = 0.3;
-        const centerX = W * 0.5;
-        const centerY = H * 0.5;
-        const zoomSafe = Math.max(0.1, camera.zoom || 1);
-
-        const mouseOffsetX = splitScreenMode ? 0 : (mouse.x - centerX) * lookAheadFactor / zoomSafe;
-        const mouseOffsetY = splitScreenMode ? 0 : (mouse.y - centerY) * lookAheadFactor / zoomSafe;
-
-        targetCamX = ship.pos.x + mouseOffsetX;
-        targetCamY = ship.pos.y + mouseOffsetY;
-
-        camera.x = targetCamX;
-        camera.y = targetCamY;
-        camera.targetX = targetCamX;
-        camera.targetY = targetCamY;
-
-        if (!camera.transition && !camera.manualZoom) camera.targetZoom = camera.defaultZoom;
-
-      } else if (camera.mode === 'free') {
+      // Ship camera is resolved later in render() using interpolated position
+      // to avoid jitter. Only non-ship modes are updated here.
+      if (camera.mode === 'rts') {
         const moveX = (keys['arrowright'] ? 1 : 0) - (keys['arrowleft'] ? 1 : 0);
         const moveY = (keys['arrowdown'] ? 1 : 0) - (keys['arrowup'] ? 1 : 0);
         if (moveX || moveY) {
@@ -5223,13 +5312,6 @@
           const panSpeed = camera.freeKeyPanSpeed / Math.max(0.0001, camera.zoom);
           camera.x += (moveX / len) * panSpeed * dt;
           camera.y += (moveY / len) * panSpeed * dt;
-        }
-        if (mouse.overCanvas && !stationUI.open && !showMap) {
-          const panSpeed = (camera.freePanSpeed || 1) / Math.max(0.0001, camera.zoom);
-          if (mouse.dx || mouse.dy) {
-            camera.x += mouse.dx * panSpeed;
-            camera.y += mouse.dy * panSpeed;
-          }
         }
         camera.targetX = camera.x;
         camera.targetY = camera.y;
@@ -7015,8 +7097,6 @@
       npc.mission = true;
       npc.color = '#ff5c7c'; // Czerwony kolor pirata
 
-      if (kind === 'destroyer') npc.mass = 350000;
-      else if (kind === 'battleship') npc.mass = 500000;
 
       // Przypisanie referencji do stacji (ważne dla logiki patrolu)
       npc.home = station;
@@ -7845,11 +7925,32 @@
           // 3D Rocket intercept — replace 2D bullet with full 3D rocket
           if (weapon.category === 'rocket' && window.rocketSystem3D) {
             const colorTheme = shooterIsFriendly ? 'blue' : 'red';
-            // If no locked target and player is firing, aim at mouse cursor
             let rocketTarget = target;
-            if (!rocketTarget && isP1Ship && window.screenToWorld && typeof mouse !== 'undefined') {
-              const mw = window.screenToWorld(mouse.x, mouse.y);
-              rocketTarget = { x: mw.x, y: mw.y, dead: false, _isPositionTarget: true };
+            if (!rocketTarget) {
+              let pointTargetX = muzzleData.pos.x + dirX * range;
+              let pointTargetY = muzzleData.pos.y + dirY * range;
+              if (isP1Ship && window.screenToWorld && typeof mouse !== 'undefined') {
+                const mw = window.screenToWorld(mouse.x, mouse.y);
+                if (mw && Number.isFinite(mw.x) && Number.isFinite(mw.y)) {
+                  const dx = mw.x - muzzleData.pos.x;
+                  const dy = mw.y - muzzleData.pos.y;
+                  const mouseDist = Math.hypot(dx, dy);
+                  const safeMinDist = Math.max(
+                    700,
+                    (weapon.explosionRadius || weapon.explodeRadius || 0) * 6,
+                    (weapon.baseSpeed || speed || 0) * 0.35
+                  );
+                  const targetDist = Math.max(mouseDist, safeMinDist);
+                  pointTargetX = muzzleData.pos.x + dirX * Math.min(range, targetDist);
+                  pointTargetY = muzzleData.pos.y + dirY * Math.min(range, targetDist);
+                }
+              }
+              rocketTarget = {
+                x: pointTargetX,
+                y: pointTargetY,
+                dead: false,
+                _isPositionTarget: true
+              };
             }
             window.rocketSystem3D.fire(
               muzzleData.pos.x, muzzleData.pos.y,
@@ -9256,6 +9357,7 @@
     };
 
     function createPlayerHullCatalog() {
+      const atlas = CAPITAL_SHIP_TEMPLATES_DATA?.supercapital || {};
       const frigate = SUPPORT_SHIP_TEMPLATES_DATA?.frigate_pd || {};
       const destroyer = SUPPORT_SHIP_TEMPLATES_DATA?.destroyer || {};
       const battleship = SUPPORT_SHIP_TEMPLATES_DATA?.battleship || {};
@@ -9280,8 +9382,8 @@
             regenRate: BASE_PLAYER_PROFILE.shieldRegen,
             regenDelay: BASE_PLAYER_PROFILE.shieldDelay
           },
-          mass: BASE_PLAYER_PROFILE.mass,
-          rammingMass: BASE_PLAYER_PROFILE.rammingMass,
+          mass: Number(atlas?.mass),
+          rammingMass: Number(atlas?.rammingMass),
           radius: atlasSize.radius,
           physics: { ...BASE_PLAYER_PHYSICS }
         },
@@ -9301,8 +9403,8 @@
             regenRate: Math.max(110, Number(frigate?.shield?.regenRate) || 110),
             regenDelay: Math.max(2.5, Number(frigate?.shield?.regenDelay) || 2.5)
           },
-          mass: 220000,
-          rammingMass: 2500,
+          mass: Number(frigate?.stats?.mass),
+          rammingMass: Number(frigate?.stats?.rammingMass),
           radius: frigateSize.radius,
           physics: {
             speed: 720,
@@ -9330,8 +9432,8 @@
             regenRate: Math.max(180, Number(destroyer?.shield?.regenRate) || 180),
             regenDelay: Math.max(3.5, Number(destroyer?.shield?.regenDelay) || 3.5)
           },
-          mass: Math.max(260000, Number(destroyer?.stats?.mass) || 260000),
-          rammingMass: Math.max(5000, Number(destroyer?.stats?.rammingMass) || 5000),
+          mass: Number(destroyer?.stats?.mass),
+          rammingMass: Number(destroyer?.stats?.rammingMass),
           radius: destroyerSize.radius,
           physics: {
             speed: 520,
@@ -9359,8 +9461,8 @@
             regenRate: Math.max(260, Number(battleship?.shield?.regenRate) || 260),
             regenDelay: Math.max(4.2, Number(battleship?.shield?.regenDelay) || 4.2)
           },
-          mass: Math.max(420000, Number(battleship?.stats?.mass) || 420000),
-          rammingMass: Math.max(8000, Number(battleship?.stats?.rammingMass) || 8000),
+          mass: Number(battleship?.stats?.mass),
+          rammingMass: Number(battleship?.stats?.rammingMass),
           radius: battleshipSize.radius,
           physics: {
             speed: 340,
@@ -10765,7 +10867,7 @@
     }
 
     // =============== Input ===============
-    const input = { main: 0, leftSide: 0, rightSide: 0, torque: 0 };
+    const input = { main: 0, leftSide: 0, rightSide: 0, retro: 0, torque: 0 };
     const flightAssist = {
       damper: false,
       stabilizer: false
@@ -10812,7 +10914,6 @@
       obstacleMargin: 1100
     };
     let PAUSED = false;
-    let lastCameraModeBeforePause = null;
 
     function closeMapContextMenu() {
       mapContextMenu.open = false;
@@ -11167,15 +11268,6 @@
       const next = !!state;
       if (next === PAUSED) return;
       PAUSED = next;
-      if (PAUSED) {
-        lastCameraModeBeforePause = camera.mode;
-        if (camera.mode !== 'free') camera.enterFreeMode();
-      } else {
-        if (lastCameraModeBeforePause && lastCameraModeBeforePause !== 'free') {
-          camera.exitFreeMode();
-        }
-        lastCameraModeBeforePause = null;
-      }
     }
 
     function togglePause() {
@@ -11215,38 +11307,134 @@
     }
 
     function playerHasManualInput() {
+      if (camera.mode === 'rts') return false;
       return keys['w'] || keys['s'] || keys['a'] || keys['d'] || keys['q'] || keys['e'];
+    }
+
+    function computePlayerHoldControl(ship) {
+      const sinA = Math.sin(ship.angle);
+      const cosA = Math.cos(ship.angle);
+      const forwardVel = (ship.vel.x * cosA) + (ship.vel.y * sinA);
+      const lateralVel = -(ship.vel.x * sinA) + (ship.vel.y * cosA);
+      const speed = Math.hypot(ship.vel.x, ship.vel.y);
+      const torque = clamp(-(ship.angVel || 0) / Math.max(0.06, SHIP_PHYSICS.MAX_TURN_SPEED * 0.28), -0.6, 0.6);
+      const retro = clamp(Math.max(0, forwardVel) / 520, 0, 1);
+      const main = clamp(Math.max(0, -forwardVel) / 460, 0, 0.65);
+      const rightSide = clamp(Math.max(0, lateralVel) / 360, 0, 1);
+      const leftSide = clamp(Math.max(0, -lateralVel) / 360, 0, 1);
+      return {
+        controller: 'player',
+        thrustY: retro > 0.05 ? -retro : main,
+        main,
+        retro,
+        torque,
+        leftSide,
+        rightSide,
+        settled: speed < 28 && Math.abs(ship.angVel || 0) < 0.01
+      };
     }
 
     function updatePlayerCommand(dt) {
       if (ship.destroyed) return;
       const cmd = ship.command;
-      if (!cmd || !cmd.target) return;
+      if (!cmd) return;
       if (PAUSED || warp.state !== 'idle') return;
       if (playerHasManualInput()) { ship.command = null; return; }
 
-      const dx = cmd.target.x - ship.pos.x;
-      const dy = cmd.target.y - ship.pos.y;
-      const dist = Math.hypot(dx, dy);
-      const arrival = cmd.arrival || 90;
-      if (dist <= arrival) {
-        ship.command = null;
-        applyPlayerInput(ship, { controller: 'player', main: 0, thrustY: 0, torque: 0, leftSide: 0, rightSide: 0 }, input);
+      if (cmd.type === 'hold') {
+        const hold = computePlayerHoldControl(ship);
+        applyPlayerInput(ship, hold.settled
+          ? { controller: 'player', main: 0, thrustY: 0, torque: 0, leftSide: 0, rightSide: 0, retro: 0 }
+          : hold, input);
         return;
       }
 
-      const desiredAng = Math.atan2(dy, dx);
+      const targetPos = getCommandTargetPos(ship, cmd);
+      if (!targetPos) {
+        ship.command = null;
+        return;
+      }
+
+      let desiredVecX = targetPos.x - ship.pos.x;
+      let desiredVecY = targetPos.y - ship.pos.y;
+      let dist = Math.hypot(desiredVecX, desiredVecY);
+      const arrival = cmd.arrival || 90;
+
+      if (cmd.type === 'orbit') {
+        const orbit = computeOrbitSteerVector(ship, targetPos, cmd.orbitRadius, cmd.orbitDir);
+        desiredVecX = orbit.dirX;
+        desiredVecY = orbit.dirY;
+        dist = orbit.dist;
+      } else if (dist <= arrival) {
+        ship.command = { type: 'hold' };
+        const hold = computePlayerHoldControl(ship);
+        applyPlayerInput(ship, hold.settled
+          ? { controller: 'player', main: 0, thrustY: 0, torque: 0, leftSide: 0, rightSide: 0, retro: 0 }
+          : hold, input);
+        return;
+      }
+
+      const desiredAng = Math.atan2(desiredVecY, desiredVecX);
       const angDiff = wrapAngle(desiredAng - ship.angle);
       const torque = clamp(angDiff * 2.2, -1, 1);
-      const main = clamp(dist / 800, 0, 1);
+      const alignment = Math.max(0, Math.cos(angDiff));
+      const alignDrive = clamp((alignment - 0.08) / 0.92, 0, 1);
+      const forward = { x: Math.cos(ship.angle), y: Math.sin(ship.angle) };
+      const forwardVel = (ship.vel.x * forward.x) + (ship.vel.y * forward.y);
+      const massFactor = clamp(Math.sqrt(Math.max(1, Number(ship.mass) || SHIP_PHYSICS.PLAYER_MASS) / Math.max(1, SHIP_PHYSICS.PLAYER_MASS || 1)), 0.85, 2.3);
+      const retroCapability = clamp((ship.visual?.torqueThrusters?.length || 0) / 5, 0.65, 1.45);
+      let main = 0;
+      let retro = 0;
+      let leftSide = 0;
+      let rightSide = 0;
+      if (cmd.type === 'orbit') {
+        main = clamp(0.28 + alignDrive * 0.52, 0.12, 0.82);
+      } else if (cmd.type === 'approach') {
+        main = clamp((dist - arrival) / (980 * massFactor), 0, 0.82) * alignDrive;
+      } else {
+        main = clamp(dist / (860 * massFactor), 0, 1) * alignDrive;
+      }
+
+      if (cmd.type !== 'orbit') {
+        const brakeDistance = Math.max(
+          arrival + (140 * massFactor),
+          Math.abs(forwardVel) * 0.28 + ((forwardVel * forwardVel) / Math.max(1100, 2100 * retroCapability))
+        );
+        if (Math.abs(angDiff) > 1.15) {
+          main *= 0.18;
+        } else if (Math.abs(angDiff) > 0.7) {
+          main *= 0.45;
+        }
+        if (forwardVel > 20 && dist <= brakeDistance) {
+          const brakeNorm = clamp((brakeDistance - dist) / Math.max(brakeDistance - arrival, 1), 0, 1);
+          retro = clamp(0.18 + brakeNorm * 0.92 + clamp(forwardVel / (720 * retroCapability), 0, 0.7), 0, 1);
+          main = Math.min(main, clamp(0.85 - brakeNorm * 1.15, 0, 0.28));
+        }
+        if (dist <= arrival * 1.6) {
+          const hold = computePlayerHoldControl(ship);
+          leftSide = hold.leftSide;
+          rightSide = hold.rightSide;
+          retro = Math.max(retro, hold.retro * 0.9);
+          main = Math.min(main, hold.main);
+        }
+      } else {
+        const sinA = Math.sin(ship.angle);
+        const cosA = Math.cos(ship.angle);
+        const lateralVel = -(ship.vel.x * sinA) + (ship.vel.y * cosA);
+        if (Math.abs(lateralVel) > 80) {
+          rightSide = clamp(Math.max(0, lateralVel) / 320, 0, 0.7);
+          leftSide = clamp(Math.max(0, -lateralVel) / 320, 0, 0.7);
+        }
+      }
 
       applyPlayerInput(ship, {
         controller: 'player',
-        thrustY: main,
+        thrustY: retro > 0.05 ? -retro : main,
         main,
+        retro,
         torque,
-        leftSide: 0,
-        rightSide: 0
+        leftSide,
+        rightSide
       }, input);
     }
 
@@ -11261,6 +11449,11 @@
       if (warp.state === 'charging') { warp.state = 'idle'; warp.charge = 0; }
       else if (warp.state === 'active') { warp.state = 'idle'; exitWarp(); }
     }
+
+    // Auto-fire toggle flags (keys 1/2/3 with locked targets)
+    let mainAutoFire = false;
+    let specialAutoFire = false;
+    let rocketAutoFire = false;
 
     function handleShiftDown() {
       if (ship.destroyed) return;
@@ -11289,32 +11482,57 @@
       if (isMainMenuVisible()) return;
       const k = e.key.toLowerCase();
       keys[k] = true;
-      if (warp.state === 'active' && k === 'w') {
+      const inRtsMode = camera.mode === 'rts';
+      if (!inRtsMode && warp.state === 'active' && k === 'w') {
         shiftWarpGearUp();
         updateInput();
         return;
       }
-      if (k === 'shift') {
+      if (!inRtsMode && k === 'shift') {
         handleShiftDown();
       }
       if (k === 'p') {
         PerfHUD.toggle();
       }
-      // Weapon keys (1=main, 2=special, 3=missiles) — only outside station/CIC/warp
+      // Weapon keys (1=main, 2=special, 3=missiles) — toggle auto-fire or single shot
       if (e.code === 'Digit1' && !stationUI.open && !CICDisplay.active && !e.repeat) {
-        if (!warp.isBusy() && p1WeaponCtrl) {
-          p1WeaponCtrl.autoFire = true;
-          triggerRailVolley();
+        if (!warp.isBusy()) {
+          const hasTargets = lockedTargets && lockedTargets.length > 0;
+          if (hasTargets) {
+            mainAutoFire = !mainAutoFire;
+            pushZoneMessage(mainAutoFire ? 'BROŃ GŁÓWNA: AUTO-FIRE ON' : 'BROŃ GŁÓWNA: AUTO-FIRE OFF', 1.5);
+          } else {
+            const requiredBarrels = Math.max(1, rail.barrelsPerShot || 2);
+            const secondaryReady = requiredBarrels < 2 || rail.cd[1] <= 0;
+            if (rail.queue.length === 0 && rail.cd[0] <= 0 && secondaryReady) {
+              triggerRailVolley();
+            }
+          }
         }
       }
-      if (e.code === 'Digit2' && !stationUI.open && !CICDisplay.active) {
-        tryFireMountedSpecialWeapons();
+      if (e.code === 'Digit2' && !stationUI.open && !CICDisplay.active && !e.repeat) {
+        const hasTargets = lockedTargets && lockedTargets.length > 0;
+        if (hasTargets) {
+          specialAutoFire = !specialAutoFire;
+          pushZoneMessage(specialAutoFire ? 'BROŃ SPECJALNA: AUTO-FIRE ON' : 'BROŃ SPECJALNA: AUTO-FIRE OFF', 1.5);
+        } else {
+          tryFireMountedSpecialWeapons();
+        }
       }
       if (e.code === 'Digit3' && !stationUI.open && !CICDisplay.active && !e.repeat) {
-        const mw = screenToWorld(mouse.x, mouse.y);
-        const local = rotateInv({ x: mw.x - ship.pos.x, y: mw.y - ship.pos.y }, ship.angle);
-        const side = (local.y >= 0) ? 'right' : 'left';
-        if (rocketCooldown <= 0 && fireRocket(side)) rocketCooldown = ROCKET_FIRE_INTERVAL;
+        const hasTargets = lockedTargets && lockedTargets.length > 0;
+        if (hasTargets) {
+          rocketAutoFire = !rocketAutoFire;
+          pushZoneMessage(rocketAutoFire ? 'RAKIETY: AUTO-FIRE ON' : 'RAKIETY: AUTO-FIRE OFF', 1.5);
+        } else {
+          const mw = screenToWorld(mouse.x, mouse.y);
+          const local = rotateInv({ x: mw.x - ship.pos.x, y: mw.y - ship.pos.y }, ship.angle);
+          const side = (local.y >= 0) ? 'right' : 'left';
+          if (rocketCooldown <= 0 && fireRocket(side)) rocketCooldown = ROCKET_FIRE_INTERVAL;
+        }
+      }
+      if (e.code === 'Digit5' && !stationUI.open && !CICDisplay.active && !e.repeat) {
+        triggerEnergyShot();
       }
       // SCAN menu moved to CapsLock
       if (e.code === 'CapsLock' && !stationUI.open) {
@@ -11338,8 +11556,18 @@
       }
       if (k === 'j') MISSIONS.show = !MISSIONS.show;
       if (k === 'g' && !stationUI.open) {
-        camera.toggleFreeMode();
-        pushZoneMessage(camera.mode === 'free' ? 'Free camera mode ON' : 'Free camera mode OFF');
+        if (splitScreenMode) {
+          pushZoneMessage('RTS MODE niedostepny w split-screen', 1.6);
+        } else {
+          camera.toggleRtsMode();
+          if (camera.mode === 'rts') {
+            Selection.units.clear();
+            Selection.units.add(ship);
+            pushZoneMessage('RTS MODE: ONLINE', 1.5);
+          } else {
+            pushZoneMessage('RTS MODE: OFFLINE', 1.5);
+          }
+        }
       }
       if (k === 'c') {
         flightAssist.damper = !flightAssist.damper;
@@ -11355,9 +11583,24 @@
         return;
       }
       if (k === 'x') {
-        setScannerActive(!scannerState.active);
-        hudPingNpcStations();
-        togglePlanetRadarVisibility(scannerState.active);
+        if (inRtsMode) {
+          e.preventDefault();
+          const scannerWasActive = !!scannerState.active;
+          if (!scannerWasActive) {
+            setScannerActive(true);
+            hudPingNpcStations();
+            togglePlanetRadarVisibility(scannerState.active);
+            pushZoneMessage('RTS: SKANER AKTYWNY', 1.1);
+            return;
+          }
+          const menuTarget = radarTargetingUI?.togglePrimaryActionMenu?.();
+          if (!menuTarget) pushZoneMessage('RTS: BRAK WIDOCZNEGO CELU', 1.1);
+          return;
+        } else {
+          setScannerActive(!scannerState.active);
+          hudPingNpcStations();
+          togglePlanetRadarVisibility(scannerState.active);
+        }
       }
       if (e.code === 'Tab' && !stationUI.open) {
         e.preventDefault();
@@ -11410,24 +11653,14 @@
           toast('Myśliwce: ESKORTA');
         }
       }
-      if (k === 't') {
-        if (highlightedEnemies.length) {
-          lockedTargets = highlightedEnemies.filter(isHostileNpc)
-            .sort((a, b) => Math.hypot(a.x - ship.pos.x, a.y - ship.pos.y) - Math.hypot(b.x - ship.pos.x, b.y - ship.pos.y));
-          highlightTimer = 0;
-          highlightedEnemies = [];
-        } else if (scan.scanned && isHostileNpc(scan.scanned)) {
-          lockedTarget = scan.scanned;
-        } else {
-          lockedTarget = null;
-        }
-      }
-      if (k === 'r') {
+      if (e.code === 'KeyR' && e.shiftKey) {
         const allDestructibles = [ship, ...npcs, ...wrecks];
         if (splitScreenMode && player2Ship && !player2Ship.destroyed) allDestructibles.push(player2Ship);
         DestructorSystem.repair(allDestructibles, 0.1);
+      } else if (k === 'r') {
+        lockNearestVisibleContacts();
       }
-      if (ship.agility && ship.agility.active && !ship.agility.maneuver) {
+      if (!inRtsMode && ship.agility && ship.agility.active && !ship.agility.maneuver) {
         if ((k === 'w' || k === 's') && ship.agility.cooldowns.dash <= 0) {
           const dir = (k === 'w') ? 1 : -1;
           const dashPower = dir * 2800;
@@ -11453,15 +11686,6 @@
           spawnParticle(ship.pos, { x: -rightX * 1000, y: -rightY * 1000 }, 0.4, '#ffffff', 8, true);
         }
       }
-      if (k === 'y' && !stationUI.open) {
-        // Determine which player has keyboard
-        const siegePlayerIdx = (splitScreenMode && controllerAssignment.p2 === 'keyboard') ? 1 : 0;
-        const siegeShip = siegePlayerIdx === 1 ? player2Ship : ship;
-        if (siegeShip && !siegeShip.destroyed) {
-          const entered = SiegeMode.toggle(siegePlayerIdx, siegeShip);
-          pushZoneMessage(entered ? 'SIEGE MODE: AKTYWNY' : 'SIEGE MODE: WYŁĄCZONY', 2);
-        }
-      }
       if (k === 'v' && ship.agility) {
         ship.agility.active = !ship.agility.active;
         if (!ship.agility.active) {
@@ -11477,12 +11701,8 @@
     window.addEventListener('keyup', e => {
       const k = e.key.toLowerCase();
       keys[k] = false;
-      if (k === 'shift') {
+      if (k === 'shift' && camera.mode !== 'rts') {
         handleShiftUp();
-      }
-      // Stop autoFire when releasing weapon key 1
-      if (e.code === 'Digit1' && p1WeaponCtrl) {
-        p1WeaponCtrl.autoFire = false;
       }
       updateInput();
     });
@@ -11523,13 +11743,14 @@
       // P1 keyboard input
       if (kbControlsP1) {
         const p1Zero = { controller: 'player', main: 0, thrustX: 0, thrustY: 0, leftSide: 0, rightSide: 0, torque: 0 };
-        if (ship.destroyed || SiegeMode.isActive(0)) {
+        if (ship.destroyed || camera.mode === 'rts') {
           applyPlayerInput(ship, p1Zero, input);
         } else if (ship.agility && ship.agility.active) {
           applyPlayerInput(ship, p1Zero, input);
         } else {
           let thrustY = 0;
-          if (keys['w']) thrustY = 1;
+          if (keys['w'] && !keys['s']) thrustY = 1;
+          else if (keys['s'] && !keys['w']) thrustY = -1;
           const leftSide = keys['e'] ? 1 : 0;
           const rightSide = keys['q'] ? 1 : 0;
           let torque = 0; if (keys['a']) torque -= 1; if (keys['d']) torque += 1;
@@ -11538,6 +11759,7 @@
             thrustX: torque,
             thrustY,
             main: Math.max(0, thrustY),
+            retro: Math.max(0, -thrustY),
             leftSide,
             rightSide,
             torque
@@ -11554,24 +11776,22 @@
 
       // P2 keyboard input (same WASD keys, applied to P2)
       if (kbControlsP2 && player2Ship && !player2Ship.destroyed) {
-        if (SiegeMode.isActive(1)) {
-          applyPlayerInput(player2Ship, { controller: 'player2', main: 0, thrustX: 0, thrustY: 0, leftSide: 0, rightSide: 0, torque: 0 }, input2);
-        } else {
-          let thrustY = 0;
-          if (keys['w']) thrustY = 1;
-          const leftSide = keys['e'] ? 1 : 0;
-          const rightSide = keys['q'] ? 1 : 0;
-          let torque = 0; if (keys['a']) torque -= 1; if (keys['d']) torque += 1;
-          applyPlayerInput(player2Ship, {
-            controller: 'player2',
-            thrustX: torque,
-            thrustY,
-            main: Math.max(0, thrustY),
-            leftSide,
-            rightSide,
-            torque
-          }, input2);
-        }
+        let thrustY = 0;
+        if (keys['w'] && !keys['s']) thrustY = 1;
+        else if (keys['s'] && !keys['w']) thrustY = -1;
+        const leftSide = keys['e'] ? 1 : 0;
+        const rightSide = keys['q'] ? 1 : 0;
+        let torque = 0; if (keys['a']) torque -= 1; if (keys['d']) torque += 1;
+        applyPlayerInput(player2Ship, {
+          controller: 'player2',
+          thrustX: torque,
+          thrustY,
+          main: Math.max(0, thrustY),
+          retro: Math.max(0, -thrustY),
+          leftSide,
+          rightSide,
+          torque
+        }, input2);
       }
     }
 
@@ -11596,7 +11816,7 @@
       }
       const manualInput = playerHasManualInput();
       if (ship.command && !manualInput) {
-        enginePower.target = clamp(input.main, 0, 1);
+        enginePower.target = Math.max(clamp(input.main, 0, 1), clamp(input.retro || 0, 0, 1) * 0.92);
         enginePower.current = enginePower.target;
         return;
       }
@@ -11606,17 +11826,50 @@
       // Gamepad: left stick Y (forward) also drives engine power.
       let target = 0;
       if (keys['w']) target = 1.0;
+      if (keys['s']) target = Math.max(target, 0.92);
 
       // Gamepad forward thrust should come from the real pad state, not from ship.thrusterInput,
       // bo to tworzy pętlę sprzężenia zwrotnego po puszczeniu W.
       const gamepadMain = getP1GamepadForwardInput();
       target = Math.max(target, gamepadMain);
+      target = Math.max(
+        target,
+        clamp(Number(ship?.thrusterInput?.retro) || 0, 0, 1) * 0.92,
+        clamp(Number(input?.retro) || 0, 0, 1) * 0.92
+      );
 
       enginePower.target = target;
 
       // Szybka reakcja paska (6.0), żeby wizualnie pasowało do nowej fizyki
       enginePower.current = approachValue(enginePower.current, enginePower.target, 6.0 * dt);
       input.main = enginePower.current;
+    }
+
+    function emitShipSideThrusterParticles(ship, forward, right) {
+      const thrusters = ship?.visual?.torqueThrusters || [];
+      for (let i = 0; i < thrusters.length; i++) {
+        const t = thrusters[i];
+        const throttle = clamp(Number(t.__throttle) || 0, 0, 1);
+        if (throttle <= 0.12) continue;
+        const nozzle = Number.isFinite(Number(t.nozzleDeg)) ? Number(t.nozzleDeg) : (Number.isFinite(Number(t.baseDeg)) ? Number(t.baseDeg) : 0);
+        const dir = ((((nozzle % 360) + 540) % 360) - 180) * Math.PI / 180;
+        const exhaustLocalX = -Math.sin(dir);
+        const exhaustLocalY = Math.cos(dir);
+        const exhaustWorld = {
+          x: (forward.x * exhaustLocalX) + (right.x * exhaustLocalY),
+          y: (forward.y * exhaustLocalX) + (right.y * exhaustLocalY)
+        };
+        const offset = rotate(t.offset || { x: 0, y: 0 }, ship.angle);
+        const speed = 80 + throttle * 160;
+        spawnParticle(
+          add(ship.pos, offset),
+          add(ship.vel, mul(exhaustWorld, speed)),
+          0.16 + throttle * 0.12,
+          '#cfe7ff',
+          0.75 + throttle * 0.35,
+          true
+        );
+      }
     }
 
     function updateAgilityLogic(dt, mouseWorld) {
@@ -11729,22 +11982,16 @@
     // targeting / scanning
     const SCAN_RANGE = 10000;
     const SCAN_VFX_SPEED = 4000;
-    const SCAN_ARROW_LIFE = 1.5;
     const scan = { target: null, scanned: null, targetType: null };
     let lockedTarget = null;
     let lockedTargets = [];
     let lockedTarget2 = null; // P2 target lock
-    let highlightedEnemies = [];
-    let highlightTimer = 0;
 
     // Weapon controllers (initialized after game start)
     let p1WeaponCtrl = null;
     let p2WeaponCtrl = null;
-    const HIGHLIGHT_TIME = 3;
-    const HIGHLIGHT_RANGE = 2000;
     const radarPings = [];
     const scanWaves = [];
-    const scanArrows = [];
     const scannerContacts = [];
     const SCANNER_ACTIVE_RANGE = 25000;
     const SCANNER_REFRESH_INTERVAL = 0.55;
@@ -11754,20 +12001,14 @@
       pulseTimer: 0,
       lockAnim: 0
     };
+    const RADAR_UI_MAX_TARGETS = 8;
+    const RADAR_UI_DEEP_SCAN_DURATION = 2.0;
 
     function isHostileNpc(n) {
       return !!(n && !n.dead && !n.friendly);
     }
     window.isHostileNpc = isHostileNpc;
 
-    function isPirateScanTarget(n) {
-      if (!isHostileNpc(n)) return false;
-      if (!n.isPirate) return false;
-      const type = String(n.type || '').toLowerCase();
-      if (type === 'destroyer' || type === 'battleship') return false;
-      if (n.isCapitalShip) return false;
-      return true;
-    }
     function isFriendlyScanTarget(n) {
       return !!(n && !n.dead && n.friendly);
     }
@@ -11785,8 +12026,7 @@
     }
     function refreshScannerContacts() {
       scannerContacts.length = 0;
-      highlightedEnemies = [];
-      const range = scannerState.active ? SCANNER_ACTIVE_RANGE : HIGHLIGHT_RANGE;
+      const range = SCANNER_ACTIVE_RANGE;
       const inRange = (obj) => Math.hypot((obj.x || 0) - ship.pos.x, (obj.y || 0) - ship.pos.y) <= range;
 
       for (const npc of npcs) {
@@ -11794,7 +12034,6 @@
         const dist = Math.hypot(npc.x - ship.pos.x, npc.y - ship.pos.y);
         if (isHostileNpc(npc)) {
           pushScannerContact(npc, 'ship', 'hostile', dist);
-          highlightedEnemies.push(npc);
         } else if (isFriendlyScanTarget(npc)) {
           pushScannerContact(npc, 'ship', 'friendly', dist);
         } else {
@@ -11815,28 +12054,17 @@
           pushScannerContact(platform, 'platform', 'hostile', dist);
         }
       }
-
-      highlightedEnemies = highlightedEnemies
-        .sort((a, b) => Math.hypot(a.x - ship.pos.x, a.y - ship.pos.y) - Math.hypot(b.x - ship.pos.x, b.y - ship.pos.y));
     }
     const NPC_DESPAWN_RADIUS = 20000;
     function spawnRadarPing(x, y) { radarPings.push({ x, y, age: 0, life: 1 }); }
     function triggerScanWave() {
       const wave = { x: ship.pos.x, y: ship.pos.y, r: 0, speed: SCAN_VFX_SPEED, max: SCAN_RANGE, hit: new Set() };
       scanWaves.push(wave);
-      scanArrows.length = 0;
-      // Merge of branches:
-      // 1) codex/add-various-npc-types-and-groups → prefer enemies that have weapons
-      // 2) main → only highlight those within HIGHLIGHT_RANGE
-      const inRange = (n) => Math.hypot(n.x - ship.pos.x, n.y - ship.pos.y) <= HIGHLIGHT_RANGE;
-      highlightedEnemies = npcs.filter(n => isPirateScanTarget(n) && inRange(n));
-      highlightTimer = HIGHLIGHT_TIME;
       refreshScannerContacts();
       for (const st of stations) {
         const dist = Math.hypot(st.x - ship.pos.x, st.y - ship.pos.y);
         spawnRadarPing(st.x, st.y);
         if (dist <= SCAN_RANGE) {
-          scanArrows.push({ target: st, age: 0, life: SCAN_ARROW_LIFE });
           wave.hit.add(st);
         }
       }
@@ -11850,33 +12078,291 @@
         pushZoneMessage('Active Scanner: ONLINE', 1.3);
       } else {
         scannerContacts.length = 0;
-        highlightedEnemies = [];
-        highlightTimer = 0;
         pushZoneMessage('Active Scanner: OFFLINE', 1.1);
       }
     }
 
+    function setLockedTargetsExact(nextTargets) {
+      const valid = Array.isArray(nextTargets) ? nextTargets.filter(isHostileNpc) : [];
+      lockedTargets = valid;
+      lockedTarget = valid[0] || null;
+    }
+
+    function clearLockedTargetsUi() {
+      if (!lockedTargets.length && !lockedTarget) return;
+      lockedTargets = [];
+      lockedTarget = null;
+      pushZoneMessage('CELE ODBLOKOWANE', 1.1);
+    }
+
+    function toggleLockedTargetUi(target) {
+      if (!isHostileNpc(target)) return;
+      const idx = lockedTargets.indexOf(target);
+      if (idx >= 0) {
+        const next = lockedTargets.slice();
+        next.splice(idx, 1);
+        setLockedTargetsExact(next);
+        pushZoneMessage('CEL ODBLOKOWANY', 1.0);
+        return;
+      }
+      const next = lockedTargets.slice(0, RADAR_UI_MAX_TARGETS - 1);
+      next.unshift(target);
+      setLockedTargetsExact(next);
+      pushZoneMessage(`CEL ZABLOKOWANY${next.length > 1 ? ` (${next.length})` : ''}`, 1.0);
+    }
+
+    function lockNearestVisibleContacts(maxTargets = RADAR_UI_MAX_TARGETS) {
+      const hostileContacts = scannerContacts
+        .filter(c => c && c.tone === 'hostile' && c.target && !c.target.dead && c.type !== 'station')
+        .sort((a, b) => (a.distance || 0) - (b.distance || 0))
+        .slice(0, maxTargets)
+        .map(c => c.target);
+      if (hostileContacts.length) {
+        setLockedTargetsExact(hostileContacts);
+        pushZoneMessage(`CELE ZABLOKOWANE: ${hostileContacts.length}`, 1.4);
+        return;
+      }
+      clearLockedTargetsUi();
+    }
+
+    function getRadarTargetUnitClass(target) {
+      const type = String(target?.type || '').toLowerCase();
+      if (type.includes('platform')) return 'PLATFORMA';
+      if (type.includes('station')) return 'STACJA';
+      if (type.includes('battleship') || type.includes('carrier') || type.includes('supercapital')) return 'KRAZOWNIK';
+      if (type.includes('destroyer')) return 'NISZCZYCIEL';
+      if (type.includes('frigate')) return 'FREGATA';
+      if (type.includes('fighter') || type.includes('interceptor') || type.includes('drone')) return 'MYSLIWIEC';
+      if (target?.isCapitalShip) return 'KAPITAL';
+      return 'KONTAKT';
+    }
+
+    function getRadarTargetUnitId(target) {
+      if (target?.__radarUnitId) return target.__radarUnitId;
+      const prefix = target?.isPirate ? 'PIR' : 'TGT';
+      const raw = Number(target?.id) || Math.floor(Math.abs((target?.x || 0) * 0.13 + (target?.y || 0) * 0.07 + Math.random() * 9000));
+      target.__radarUnitId = `${prefix}-${String(raw % 10000).padStart(4, '0')}`;
+      return target.__radarUnitId;
+    }
+
+    function getRadarTargetMeta(target) {
+      const hpScale = (Number.isFinite(target?.__hardpointScale) && target.__hardpointScale > 0)
+        ? target.__hardpointScale
+        : 1;
+      const srcW = Number(target?.hexGrid?.srcWidth);
+      const srcH = Number(target?.hexGrid?.srcHeight);
+      const radius = Math.max(20, Number(target?.radius) || 20);
+      return {
+        unitId: getRadarTargetUnitId(target),
+        unitClass: getRadarTargetUnitClass(target),
+        shipLength: Number.isFinite(srcW) && srcW > 0 ? srcW * hpScale : radius * 3.0,
+        shipWidth: Number.isFinite(srcH) && srcH > 0 ? srcH * hpScale : radius * 1.8
+      };
+    }
+
+    function buildRadarWeaponsSummary(target) {
+      const buckets = new Map();
+      const groups = target?.weapons && typeof target.weapons === 'object' ? Object.values(target.weapons) : [];
+      for (const group of groups) {
+        if (!Array.isArray(group)) continue;
+        for (const entry of group) {
+          const weaponId = entry?.weapon?.id || entry?.hp?.mount;
+          const weaponDef = weaponId ? WEAPONS[weaponId] : null;
+          const name = weaponDef?.name || weaponId || 'UNKNOWN';
+          const type = String(entry?.hp?.type || weaponDef?.mountType || 'main').toUpperCase();
+          const key = `${type}:${name}`;
+          const prev = buckets.get(key);
+          if (prev) prev.count += 1;
+          else buckets.set(key, { type, name, count: 1 });
+        }
+      }
+      return [...buckets.values()].sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name));
+    }
+
+    function buildRadarCargoSummary(target) {
+      const rows = [];
+      if (Number.isFinite(Number(target?.mass))) rows.push({ name: 'Mass', amount: `${Math.round(Number(target.mass))}` });
+      if (target?.shield && Number.isFinite(Number(target.shield?.max))) rows.push({ name: 'Shield', amount: `${Math.round(Number(target.shield.max))}` });
+      const hpMax = Math.max(0, Number(target?.maxHp) || Number(target?.hp) || 0);
+      if (hpMax > 0) rows.push({ name: 'Hull', amount: `${Math.round(hpMax)}` });
+      if (Number.isFinite(Number(target?.cargoCap))) rows.push({ name: 'Cargo', amount: `${Math.round(Number(target.cargoCap))}` });
+      return rows;
+    }
+
+    function buildRadarBlueprintData(target) {
+      const grid = target?.hexGrid;
+      const hpScale = (Number.isFinite(target?.__hardpointScale) && target.__hardpointScale > 0)
+        ? target.__hardpointScale
+        : 1;
+      const shards = Array.isArray(grid?.shards)
+        ? grid.shards.map((shard) => ({
+            x: (Number(shard?.origLx) || 0) * hpScale,
+            y: (Number(shard?.origLy) || 0) * hpScale,
+            hp: Number(shard?.hp) || 0,
+            maxHp: Number(shard?.maxHp) || 1,
+            active: !!(shard?.active && !shard?.isDebris)
+          }))
+        : [];
+      const hardpoints = (getEntityHardpoints(target) || []).map((hp) => {
+        const local = getEntityHardpointLocalPos(target, hp) || { x: 0, y: 0 };
+        return { x: local.x, y: local.y, destroyed: !!hp?.destroyed };
+      });
+      const cores = (getEntityCores(target) || []).map((core) => {
+        const local = getEntityCoreLocalPos(target, core) || { x: 0, y: 0 };
+        return { x: local.x, y: local.y, destroyed: !!core?.destroyed };
+      });
+      return {
+        width: (Number(grid?.srcWidth) || Math.max(120, (Number(target?.radius) || 40) * 3)) * hpScale,
+        height: (Number(grid?.srcHeight) || Math.max(80, (Number(target?.radius) || 40) * 2)) * hpScale,
+        shards,
+        hardpoints,
+        cores
+      };
+    }
+
+    function getRadarTargetScanData(target) {
+      return {
+        weapons: buildRadarWeaponsSummary(target),
+        cargo: buildRadarCargoSummary(target),
+        blueprint: buildRadarBlueprintData(target)
+      };
+    }
+
+    function handleRadarAction(action, target) {
+      if (!target || target.dead) return;
+      const label = getRadarTargetUnitId(target);
+      if (action === 'approach') {
+        ship.command = {
+          type: 'approach',
+          target: { x: target.x, y: target.y },
+          targetEntity: target,
+          arrival: Math.max(90, (Number(target.radius) || 40) + 80)
+        };
+        pushZoneMessage(`ROZKAZ: ZBLIZANIE DO ${label}`, 1.5);
+      } else if (action === 'orbit') {
+        ship.command = {
+          type: 'orbit',
+          target: { x: target.x, y: target.y },
+          targetEntity: target,
+          orbitRadius: Math.max(RTS_DEFAULT_ORBIT_RADIUS, (Number(target.radius || target.r) || 60) + 180),
+          orbitDir: 1,
+          arrival: Math.max(90, (Number(target.radius || target.r) || 60) + 120)
+        };
+        pushZoneMessage(`ROZKAZ: ORBITA WOKOL ${label}`, 1.5);
+      } else if (action === 'warp') {
+        setCruiseTarget(target.x, target.y);
+        pushZoneMessage(`ROZKAZ: JUMP DO ${label}`, 1.6);
+      }
+    }
+
+    const radarTargetingUI = initRadarTargetingUI({
+      clearLocks: clearLockedTargetsUi
+    });
+
     const mouse = { x: W / 2, y: H / 2, left: false, right: false, click: false, overCanvas: false, dx: 0, dy: 0 };
     const mouse2 = { x: W / 2, y: H / 2, left: false, right: false, click: false, overCanvas: false, dx: 0, dy: 0 };
     window.mouse2 = mouse2;
-    const Selection = { active: false, rect: null, units: new Set() };
+    const RTS_SELECTION_DRAG_THRESHOLD = 8;
+    const RTS_PAN_DRAG_THRESHOLD = 8;
+    const RTS_DEFAULT_ORBIT_RADIUS = 420;
+    const Selection = {
+      active: false,
+      dragging: false,
+      rect: null,
+      startScreenX: 0,
+      startScreenY: 0,
+      additive: false,
+      units: new Set()
+    };
+    const rtsState = {
+      panPrimed: false,
+      panDragging: false,
+      panStartX: 0,
+      panStartY: 0,
+      pendingOrder: null,
+      pendingLabel: '',
+      commandSuppressedByDrag: false
+    };
+    window.rtsState = rtsState;
 
-    // In-game box-select for targeting enemies (screen coords)
-    let gameBoxSel = { active: false, x0: 0, y0: 0, x1: 0, y1: 0 };
+    function isRtsModeActive() {
+      return camera.mode === 'rts';
+    }
+
+    function clearPendingRtsOrder() {
+      rtsState.pendingOrder = null;
+      rtsState.pendingLabel = '';
+    }
+
+    function queuePendingRtsOrder(orderType, label) {
+      rtsState.pendingOrder = orderType || null;
+      rtsState.pendingLabel = label || '';
+      if (rtsState.pendingOrder) {
+        pushZoneMessage(`RTS: ${rtsState.pendingLabel || String(rtsState.pendingOrder).toUpperCase()} — wybierz PPM cel`, 1.4);
+      }
+    }
+
+    window.clearPendingRtsOrder = clearPendingRtsOrder;
+    window.queuePendingRtsOrder = queuePendingRtsOrder;
 
     function clearSelection() {
       Selection.active = false;
+      Selection.dragging = false;
       Selection.rect = null;
       Selection.units.clear();
+      Selection.additive = false;
     }
 
-    function startSelection(worldPoint) {
+    function selectablePointOf(unit) {
+      return unit?.pos || unit || { x: 0, y: 0 };
+    }
+
+    function selectableRadiusOf(unit) {
+      return Math.max(24, Number(unit?.radius || unit?.w || 24) || 24);
+    }
+
+    function setSelectionUnits(units, additive = false) {
+      if (!additive) Selection.units.clear();
+      for (const unit of units || []) {
+        if (!unit || unit.dead) continue;
+        Selection.units.add(unit);
+      }
+    }
+
+    function pickSelectableAllyAtWorld(worldPoint) {
+      if (!worldPoint) return null;
+      let best = null;
+      let bestDistSq = Infinity;
+      for (const unit of selectableAllies()) {
+        const pos = selectablePointOf(unit);
+        const dx = pos.x - worldPoint.x;
+        const dy = pos.y - worldPoint.y;
+        const distSq = dx * dx + dy * dy;
+        const hitR = selectableRadiusOf(unit) + 20;
+        if (distSq <= hitR * hitR && distSq < bestDistSq) {
+          bestDistSq = distSq;
+          best = unit;
+        }
+      }
+      return best;
+    }
+
+    function startSelection(worldPoint, screenPoint, additive = false) {
       Selection.active = true;
+      Selection.dragging = false;
       Selection.rect = { x0: worldPoint.x, y0: worldPoint.y, x1: worldPoint.x, y1: worldPoint.y };
+      Selection.startScreenX = Number(screenPoint?.x) || 0;
+      Selection.startScreenY = Number(screenPoint?.y) || 0;
+      Selection.additive = !!additive;
     }
 
-    function updateSelectionRect(worldPoint) {
+    function updateSelectionRect(worldPoint, screenPoint) {
       if (!Selection.active || !Selection.rect) return;
+      const dx = (Number(screenPoint?.x) || 0) - Selection.startScreenX;
+      const dy = (Number(screenPoint?.y) || 0) - Selection.startScreenY;
+      if (!Selection.dragging && Math.hypot(dx, dy) >= RTS_SELECTION_DRAG_THRESHOLD) {
+        Selection.dragging = true;
+      }
       Selection.rect.x1 = worldPoint.x;
       Selection.rect.y1 = worldPoint.y;
     }
@@ -11897,15 +12383,20 @@
       const y0 = Math.min(Selection.rect.y0, Selection.rect.y1);
       const x1 = Math.max(Selection.rect.x0, Selection.rect.x1);
       const y1 = Math.max(Selection.rect.y0, Selection.rect.y1);
-      Selection.units.clear();
+      const next = [];
       for (const unit of selectableAllies()) {
-        const ux = unit.pos ? unit.pos.x : unit.x;
-        const uy = unit.pos ? unit.pos.y : unit.y;
+        const pos = selectablePointOf(unit);
+        const ux = pos.x;
+        const uy = pos.y;
         if (ux >= x0 && ux <= x1 && uy >= y0 && uy <= y1) {
-          Selection.units.add(unit);
+          next.push(unit);
         }
       }
+      setSelectionUnits(next, Selection.additive);
       Selection.active = false;
+      Selection.dragging = false;
+      Selection.rect = null;
+      Selection.additive = false;
     }
 
     function categorizeUnit(unit) {
@@ -11964,6 +12455,64 @@
       return result;
     }
 
+    function issueUnitCommand(unit, command) {
+      if (!unit || unit.dead || !command) return;
+      unit.command = command;
+      if ('forceTarget' in unit) {
+        unit.forceTarget = command.targetEntity || null;
+      }
+    }
+
+    function pickEnemyTargetAtWorld(worldPoint) {
+      if (!worldPoint) return null;
+      let best = null;
+      let bestDistSq = Infinity;
+      for (const npc of npcs) {
+        if (!npc || npc.dead || npc.friendly) continue;
+        const dx = npc.x - worldPoint.x;
+        const dy = npc.y - worldPoint.y;
+        const distSq = dx * dx + dy * dy;
+        const hitR = (npc.radius || 20) + 24;
+        if (distSq <= hitR * hitR && distSq < bestDistSq) {
+          bestDistSq = distSq;
+          best = npc;
+        }
+      }
+      if (mercMission && mercMission.weaponPlatforms) {
+        for (const platform of mercMission.weaponPlatforms) {
+          if (!platform || platform.destroyed || platform.removed) continue;
+          const dx = platform.x - worldPoint.x;
+          const dy = platform.y - worldPoint.y;
+          const distSq = dx * dx + dy * dy;
+          const hitR = (platform.radius || 28) + 20;
+          if (distSq <= hitR * hitR && distSq < bestDistSq) {
+            bestDistSq = distSq;
+            best = platform;
+          }
+        }
+      }
+      return best;
+    }
+
+    function pickCommandTargetAtWorld(worldPoint) {
+      const enemy = pickEnemyTargetAtWorld(worldPoint);
+      if (enemy) return enemy;
+      let best = null;
+      let bestDistSq = Infinity;
+      for (const st of stations) {
+        if (!st) continue;
+        const dx = st.x - worldPoint.x;
+        const dy = st.y - worldPoint.y;
+        const distSq = dx * dx + dy * dy;
+        const hitR = (st.r || st.radius || 80) + 30;
+        if (distSq <= hitR * hitR && distSq < bestDistSq) {
+          bestDistSq = distSq;
+          best = st;
+        }
+      }
+      return best;
+    }
+
     function issueMoveOrder(point, opts = {}) {
       const units = [...Selection.units].filter(u => u && !u.dead);
       if (!units.length) return;
@@ -11971,7 +12520,108 @@
       for (const unit of units) {
         const t = targets.get(unit) || point;
         const arrival = (unit.radius || unit.w || 30) + 25;
-        unit.command = { type: opts.attackMove ? 'attack-move' : 'move', target: { x: t.x, y: t.y }, arrival };
+        issueUnitCommand(unit, {
+          type: opts.attackMove ? 'attack-move' : 'move',
+          target: { x: t.x, y: t.y },
+          targetEntity: opts.targetEntity || null,
+          arrival
+        });
+      }
+    }
+
+    function issueApproachOrder(point, targetEntity = null) {
+      const units = [...Selection.units].filter(u => u && !u.dead);
+      if (!units.length) return;
+      const anchor = targetEntity
+        ? { x: Number(targetEntity.x) || 0, y: Number(targetEntity.y) || 0 }
+        : point;
+      const targets = formationTargets(units, anchor);
+      for (const unit of units) {
+        const t = targets.get(unit) || anchor;
+        const arrival = (unit.radius || unit.w || 30) + (targetEntity ? (targetEntity.radius || targetEntity.r || 40) : 110);
+        issueUnitCommand(unit, {
+          type: 'approach',
+          target: { x: t.x, y: t.y },
+          targetEntity,
+          arrival
+        });
+      }
+    }
+
+    function issueOrbitOrder(point, targetEntity = null) {
+      const units = [...Selection.units].filter(u => u && !u.dead);
+      if (!units.length) return;
+      const anchor = targetEntity
+        ? { x: Number(targetEntity.x) || 0, y: Number(targetEntity.y) || 0 }
+        : point;
+      const targets = formationTargets(units, anchor);
+      units.forEach((unit, index) => {
+        const t = targets.get(unit) || anchor;
+        const radiusBase = targetEntity
+          ? Math.max(RTS_DEFAULT_ORBIT_RADIUS, (targetEntity.radius || targetEntity.r || 90) + 180)
+          : RTS_DEFAULT_ORBIT_RADIUS;
+        issueUnitCommand(unit, {
+          type: 'orbit',
+          target: { x: t.x, y: t.y },
+          targetEntity,
+          orbitRadius: radiusBase + index * 26,
+          orbitDir: (index % 2 === 0) ? 1 : -1,
+          arrival: radiusBase
+        });
+      });
+    }
+
+    function issueHoldOrder() {
+      const units = [...Selection.units].filter(u => u && !u.dead);
+      if (!units.length) return;
+      for (const unit of units) {
+        issueUnitCommand(unit, { type: 'hold' });
+      }
+      pushZoneMessage(`RTS: HOLD x${units.length}`, 1.2);
+    }
+
+    function issueDirectScanOrder(targetEntity) {
+      if (!targetEntity || targetEntity.dead) {
+        pushZoneMessage('RTS: BRAK CELU DO SKANU', 1.2);
+        return;
+      }
+      if (!scannerState.active) {
+        setScannerActive(true);
+        hudPingNpcStations();
+        togglePlanetRadarVisibility(scannerState.active);
+      }
+      if (isHostileNpc(targetEntity)) {
+        setLockedTargetsExact([targetEntity]);
+      }
+      pushZoneMessage('RTS: DIRECT SCAN', 1.2);
+    }
+
+    function handleRtsAdvancedOrderAtWorld(worldPoint) {
+      const targetEntity = pickCommandTargetAtWorld(worldPoint);
+      const order = rtsState.pendingOrder;
+      clearPendingRtsOrder();
+      if (!order) return false;
+      if (order === 'approach') {
+        issueApproachOrder(worldPoint, targetEntity);
+        return true;
+      }
+      if (order === 'orbit') {
+        issueOrbitOrder(worldPoint, targetEntity);
+        return true;
+      }
+      if (order === 'direct-scan') {
+        issueDirectScanOrder(targetEntity || pickEnemyTargetAtWorld(worldPoint));
+        return true;
+      }
+      return false;
+    }
+
+    function handleSingleSelectionClick(worldPoint, additive = false) {
+      const picked = pickSelectableAllyAtWorld(worldPoint);
+      if (!additive) Selection.units.clear();
+      if (picked) {
+        if (additive && Selection.units.has(picked)) Selection.units.delete(picked);
+        else Selection.units.add(picked);
       }
     }
 
@@ -11979,22 +12629,18 @@
       if (!Selection.units.size) return true;
       const rect = canvas.getBoundingClientRect();
       const pt = screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
-      let clickedEnemy = null;
-      let bestDistSq = Infinity;
-      for (const npc of npcs) {
-        if (!npc || npc.dead || npc.friendly) continue;
-        const dx = npc.x - pt.x;
-        const dy = npc.y - pt.y;
-        const distSq = dx * dx + dy * dy;
-        const hitR = (npc.radius || 20) + 20;
-        if (distSq < hitR * hitR && distSq < bestDistSq) {
-          bestDistSq = distSq;
-          clickedEnemy = npc;
-        }
-      }
-      issueMoveOrder(clickedEnemy ? { x: clickedEnemy.x, y: clickedEnemy.y } : pt, { attackMove: !!clickedEnemy });
+      if (handleRtsAdvancedOrderAtWorld(pt)) return true;
+      const clickedEnemy = pickEnemyTargetAtWorld(pt);
+      issueMoveOrder(clickedEnemy ? { x: clickedEnemy.x, y: clickedEnemy.y } : pt, {
+        attackMove: !!clickedEnemy,
+        targetEntity: clickedEnemy || null
+      });
       return true;
     }
+
+    window.applyImmediateRtsOrder = (action) => {
+      if (action === 'hold') issueHoldOrder();
+    };
 
     // Helper: in split-screen, determine which mouse object gets input
     // based on controllerAssignment (keyboard player gets the real mouse)
@@ -12052,15 +12698,25 @@
         mapView.viewY = clamped.y;
         return;
       }
-      if (PAUSED && Selection.active) {
+      if (isRtsModeActive() && Selection.active) {
         const rect = canvas.getBoundingClientRect();
         const cur = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
-        updateSelectionRect(cur);
+        updateSelectionRect(cur, { x: e.clientX, y: e.clientY });
       }
-      if (gameBoxSel.active) {
-        const _bsRect = canvas.getBoundingClientRect();
-        gameBoxSel.x1 = e.clientX - _bsRect.left;
-        gameBoxSel.y1 = e.clientY - _bsRect.top;
+      if (isRtsModeActive() && !showMap && !stationUI.open && !CICDisplay.active && rtsState.panPrimed) {
+        const dxFromStart = e.clientX - rtsState.panStartX;
+        const dyFromStart = e.clientY - rtsState.panStartY;
+        if (!rtsState.panDragging && Math.hypot(dxFromStart, dyFromStart) >= RTS_PAN_DRAG_THRESHOLD) {
+          rtsState.panDragging = true;
+          rtsState.commandSuppressedByDrag = true;
+        }
+        if (rtsState.panDragging && (movementX || movementY)) {
+          const panScale = 1 / Math.max(0.0001, camera.zoom);
+          camera.x -= movementX * panScale;
+          camera.y -= movementY * panScale;
+          camera.targetX = camera.x;
+          camera.targetY = camera.y;
+        }
       }
       if (stationUI.open && stationUI.dragging) {
         stationUI.x = mouse.x - stationUI.dragDX;
@@ -12091,28 +12747,13 @@
       hideHoverInfo();
       camera.lastPointerX = null;
       camera.lastPointerY = null;
+      rtsState.panPrimed = false;
+      rtsState.panDragging = false;
+      Selection.active = false;
+      Selection.dragging = false;
+      Selection.rect = null;
     });
     canvas.addEventListener('mousedown', e => {
-      // === SIEGE MODE CLICK HANDLING ===
-      {
-        const siegePlayerIdx = (splitScreenMode && controllerAssignment.p2 === 'keyboard') ? 1 : 0;
-        if (SiegeMode.isActive(siegePlayerIdx)) {
-          const ss = SiegeMode.getState(siegePlayerIdx);
-          if (e.button === 0) {
-            // LPM = snap to target at siege camera center
-            SiegeMode.trySnapAtPosition(siegePlayerIdx, ss.targetWorld.x, ss.targetWorld.y, npcs);
-          }
-          if (e.button === 2) {
-            e.preventDefault();
-            // PPM = fire siege weapons at target
-            ss.fireTimer = 1.0;
-            // Trigger the actual weapon fire via mouse right-click
-            const { m } = _getMouseForScreen(e.clientX);
-            m.right = true;
-          }
-          return;
-        }
-      }
       // Split-screen: route clicks to the correct player's mouse
       if (splitScreenMode) {
         const { m, isP2 } = _getMouseForScreen(e.clientX);
@@ -12131,6 +12772,23 @@
         CICDisplay.onMouseDown(e.clientX, e.clientY, e.button);
         if (e.button === 2) e.preventDefault();
         return;
+      }
+      if (isRtsModeActive() && !showMap && !stationUI.open) {
+        const rect = canvas.getBoundingClientRect();
+        const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+        if (e.button === 0) {
+          startSelection(world, { x: e.clientX, y: e.clientY }, e.shiftKey);
+          return;
+        }
+        if (e.button === 2) {
+          e.preventDefault();
+          rtsState.panPrimed = true;
+          rtsState.panDragging = false;
+          rtsState.panStartX = e.clientX;
+          rtsState.panStartY = e.clientY;
+          rtsState.commandSuppressedByDrag = false;
+          return;
+        }
       }
       if (showMap && e.button === 0) {
         const action = mapContextActionAt(e.clientX, e.clientY);
@@ -12161,12 +12819,6 @@
         mapView.viewY = clamped.y;
         return;
       }
-      if (PAUSED && !stationUI.open && e.button === 0) {
-        const rect = canvas.getBoundingClientRect();
-        const start = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
-        startSelection(start);
-        return;
-      }
       if (e.button === 0) {
         if (stationUI.open) {
           const interactive = stationUI.visible && !stationUI.awaitingCamera && stationUI.appear > 0.05;
@@ -12182,13 +12834,6 @@
           }
           return;
         }
-        // Start in-game box-select for enemy targeting
-        {
-          const _bsRect = canvas.getBoundingClientRect();
-          gameBoxSel.active = true;
-          gameBoxSel.x0 = gameBoxSel.x1 = e.clientX - _bsRect.left;
-          gameBoxSel.y0 = gameBoxSel.y1 = e.clientY - _bsRect.top;
-        }
       }
       if (e.button === 2) {
         e.preventDefault();
@@ -12197,7 +12842,6 @@
           mouse.right = false;
           return;
         }
-        if (PAUSED && Selection.units.size && !stationUI.open) return;
       }
       if (e.button === 1) {
         e.preventDefault();
@@ -12225,6 +12869,30 @@
         }
       }
       if (CICDisplay.active) { CICDisplay.onMouseUp(e.clientX, e.clientY, e.button); return; }
+      if (isRtsModeActive() && !showMap && !stationUI.open) {
+        const rect = canvas.getBoundingClientRect();
+        const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+        if (e.button === 0) {
+          if (Selection.active) {
+            if (Selection.dragging) finishSelection();
+            else handleSingleSelectionClick(world, e.shiftKey);
+            Selection.active = false;
+            Selection.dragging = false;
+            Selection.rect = null;
+            Selection.additive = false;
+            return;
+          }
+        }
+        if (e.button === 2) {
+          const shouldIssueCommand = !rtsState.panDragging && !rtsState.commandSuppressedByDrag;
+          rtsState.panPrimed = false;
+          rtsState.panDragging = false;
+          if (shouldIssueCommand) {
+            handleSelectionCommand(e);
+          }
+          return;
+        }
+      }
       if (showMap && e.button === 0) {
         mapView.dragging = false;
         mouse.left = false;
@@ -12232,10 +12900,6 @@
         return;
       }
       if (e.button === 0) {
-        if (PAUSED && Selection.active) {
-          finishSelection();
-          return;
-        }
         const wasDragging = stationUI.dragging;
         if (stationUI.dragging) {
           stationUI.dragging = false;
@@ -12244,44 +12908,6 @@
           if (!wasDragging) {
             mouse.click = true;
           }
-          return;
-        }
-        // Finalize in-game box-select for enemy targeting
-        if (gameBoxSel.active) {
-          const dragDist = Math.hypot(gameBoxSel.x1 - gameBoxSel.x0, gameBoxSel.y1 - gameBoxSel.y0);
-          if (dragDist < 8) {
-            // Single click — select nearest enemy
-            const _bsRect2 = canvas.getBoundingClientRect();
-            const pt = screenToWorld(e.clientX - _bsRect2.left, e.clientY - _bsRect2.top);
-            let best = null, bestDist = Infinity;
-            for (const npc of npcs) {
-              if (!npc || npc.dead || npc.friendly) continue;
-              const d = Math.hypot(npc.x - pt.x, npc.y - pt.y);
-              const hitR = (npc.radius || 20) * 2.5;
-              if (d < hitR && d < bestDist) { bestDist = d; best = npc; }
-            }
-            lockedTarget = best;
-            lockedTargets = best ? [best] : [];
-            if (best) pushZoneMessage('CEL WYBRANY', 1.2);
-            else { lockedTarget = null; lockedTargets = []; }
-          } else {
-            // Box-select — collect enemies inside screen rectangle
-            const x0s = Math.min(gameBoxSel.x0, gameBoxSel.x1);
-            const x1s = Math.max(gameBoxSel.x0, gameBoxSel.x1);
-            const y0s = Math.min(gameBoxSel.y0, gameBoxSel.y1);
-            const y1s = Math.max(gameBoxSel.y0, gameBoxSel.y1);
-            const selected = [];
-            for (const npc of npcs) {
-              if (!npc || npc.dead || npc.friendly) continue;
-              const s = worldToScreen(npc.x, npc.y, camera);
-              if (s.x >= x0s && s.x <= x1s && s.y >= y0s && s.y <= y1s) selected.push(npc);
-            }
-            lockedTargets = selected;
-            lockedTarget = selected[0] || null;
-            if (selected.length) pushZoneMessage(`ZAZNACZONO: ${selected.length} CEL${selected.length > 1 ? 'E' : ''}`, 1.5);
-          }
-          gameBoxSel.active = false;
-          mouse.left = false;
           return;
         }
         mouse.left = false;
@@ -12304,11 +12930,6 @@
           mouse.right = false;
           return;
         }
-        if (PAUSED && Selection.units.size && !stationUI.open) {
-          handleSelectionCommand(e);
-          mouse.right = false;
-          return;
-        }
         if (stationUI.open) return;
         mouse.right = false;
       }
@@ -12318,14 +12939,6 @@
       if (stationUI.open) return;
       e.preventDefault();
       if (CICDisplay.active) { CICDisplay.onWheel(e.deltaY); return; }
-      // Siege mode zoom
-      {
-        const siegeIdx = (splitScreenMode && controllerAssignment.p2 === 'keyboard') ? 1 : 0;
-        if (SiegeMode.isActive(siegeIdx)) {
-          SiegeMode.zoom(siegeIdx, e.deltaY);
-          return;
-        }
-      }
       if (showMap) {
         const zoomFactor = 1 - e.deltaY * 0.0016;
         mapView.targetZoom = clamp(mapView.targetZoom * zoomFactor, mapView.minZoom, mapView.maxZoom);
@@ -12337,7 +12950,31 @@
       if (splitScreenMode && camera2 && _getMouseForScreen(e.clientX).isP2) {
         camera2.targetZoom = clamp(camera2.targetZoom * f, camera2.minZoom, camera2.maxZoom);
       } else {
-        camera.targetZoom = clamp(camera.targetZoom * f, camera.minZoom, camera.maxZoom);
+        const camBefore = { x: camera.x, y: camera.y, zoom: camera.zoom };
+        const rect = canvas.getBoundingClientRect();
+        const sx = e.clientX - rect.left;
+        const sy = e.clientY - rect.top;
+        const worldBefore = screenToWorld(sx, sy, camBefore);
+        if (camera.mode === 'rts') {
+          const nextZoom = clamp(camera.zoom * f, camera.minZoom, camera.maxZoom);
+          const camAfter = { x: camera.x, y: camera.y, zoom: nextZoom };
+          const worldAfter = screenToWorld(sx, sy, camAfter);
+          const dx = worldBefore.x - worldAfter.x;
+          const dy = worldBefore.y - worldAfter.y;
+          camera.x += dx;
+          camera.y += dy;
+          camera.targetX = camera.x;
+          camera.targetY = camera.y;
+          camera.zoom = nextZoom;
+          camera.targetZoom = nextZoom;
+          if (prevCameraState) {
+            prevCameraState.x = camera.x;
+            prevCameraState.y = camera.y;
+            prevCameraState.zoom = camera.zoom;
+          }
+        } else {
+          camera.targetZoom = clamp(camera.targetZoom * f, camera.minZoom, camera.maxZoom);
+        }
         camera.manualZoom = true;
         if (camera.transition && camera.transition.kind === 'ship') camera.transition = null;
       }
@@ -12359,20 +12996,8 @@
         const rx = ax(pad.axes[2] || 0), ry = ax(pad.axes[3] || 0);
         const forward = ly * -1;
 
-        // Siege mode: left stick pans camera, ship stays still
-        const siegeIdx = isP1 ? 0 : 1;
-        if (SiegeMode.isActive(siegeIdx)) {
-          // Store pad state for siege update to read
-          SiegeMode.getState(siegeIdx)._padState = { lx, ly: ly * -1, rx, ry };
-          applyPlayerInput(targetShip, {
-            controller: isP1 ? 'player' : 'player2',
-            main: 0, thrustX: 0, thrustY: 0, leftSide: 0, rightSide: 0, torque: 0
-          }, targetInput);
-          // Still need to process buttons below, so don't return here
-        }
-
         // In single player: merge gamepad with keyboard (take strongest input)
-        if (!SiegeMode.isActive(siegeIdx)) {
+        if (!(isP1 && camera.mode === 'rts')) {
           const p1IsKeyboardOrNull = !controllerAssignment.p1 || controllerAssignment.p1 === 'keyboard';
           const keyboardOwnsThisShip = isP1
             ? ((!splitScreenMode || p1IsKeyboardOrNull) && !isGamepadActiveForP1())
@@ -12398,6 +13023,11 @@
             torque: mergedTorque,
             leftSide: kbLeftSide,
             rightSide: kbRightSide
+          }, targetInput);
+        } else {
+          applyPlayerInput(targetShip, {
+            controller: isP1 ? 'player' : 'player2',
+            main: 0, thrustX: 0, thrustY: 0, leftSide: 0, rightSide: 0, torque: 0
           }, targetInput);
         }
         const btn = (i) => !!(pad.buttons[i] && pad.buttons[i].pressed);
@@ -12498,14 +13128,10 @@
             mouse2.overCanvas = true;
           }
 
-          // Select (8) — rising edge → toggle siege mode for P2
+          // Select (8) — reserved for future P2 command UI
           const p2PadId = pad.index ?? 'p2';
           const p2SelNow = btn(8);
           const p2SelPrev = !!_padPrevSelect[p2PadId];
-          if (p2SelNow && !p2SelPrev && player2Ship) {
-            const entered = SiegeMode.toggle(1, player2Ship);
-            pushZoneMessage(entered ? 'P2 SIEGE MODE: AKTYWNY' : 'P2 SIEGE MODE: WYŁĄCZONY', 2);
-          }
           _padPrevSelect[p2PadId] = p2SelNow;
         }
         // Start button (9) — rising edge only → toggle menu
@@ -12990,8 +13616,25 @@
         const baseEmitterUid = `p_main_${i}_${weaponData.id || 'x'}`;
         muzzle.emitterUid = barrelsPerShot > 1 ? `${baseEmitterUid}:b${barIndex}` : baseEmitterUid;
 
-        // UŻYWAMY NOWEGO RDZENIA STRZELANIA ZAMIAST STAREGO BEHAVIOR!
-        const cd = window.fireWeaponCore(ship, lockedTarget, weaponData.id, muzzle);
+        // Dystrybucja ognia po wielu celach (jeśli lockedTargets > 1)
+        let targetToPass = lockedTarget;
+        if (lockedTargets && lockedTargets.length > 1) {
+          const rng = weaponData.baseRange || weaponData.range || 1000;
+          const fmRangeScale = (typeof getFiringModeModifiers === 'function') ? (getFiringModeModifiers()?.rangeMul || 1.0) : 1.0;
+          const actualRng = rng * fmRangeScale;
+          const valid = [];
+          for (let j = 0; j < lockedTargets.length; j++) {
+            const lt = lockedTargets[j];
+            if (!lt || lt.dead) continue;
+            const dx = (lt.pos ? lt.pos.x : lt.x) - ship.pos.x;
+            const dy = (lt.pos ? lt.pos.y : lt.y) - ship.pos.y;
+            if (dx * dx + dy * dy <= actualRng * actualRng) valid.push(lt);
+          }
+          if (valid.length > 0) {
+            targetToPass = valid[i % valid.length];
+          }
+        }
+        const cd = window.fireWeaponCore(ship, targetToPass, weaponData.id, muzzle);
 
         // Zarządzanie odrzutem wizualnym wieżyczki
         const recoilKick = weaponData.category === 'beam' ? 6 : 12;
@@ -14558,6 +15201,16 @@
       const requiredBarrels = Math.max(1, rail.barrelsPerShot || 2);
       const secondaryReady = requiredBarrels < 2 || rail.cd[1] <= 0;
       if (!stationUI.open && mouse.left && rail.queue.length === 0 && rail.cd[0] <= 0 && secondaryReady && !warp.isBusy()) { triggerRailVolley(); }
+      // Auto-fire: ciągły ogień na namierzone cele (toggle z klawisza 1/2/3)
+      if (mainAutoFire && lockedTargets.length > 0 && !stationUI.open && rail.queue.length === 0 && rail.cd[0] <= 0 && secondaryReady && !warp.isBusy()) {
+        triggerRailVolley();
+      }
+      if (specialAutoFire && lockedTargets.length > 0 && !stationUI.open && !warp.isBusy()) {
+        tryFireMountedSpecialWeapons();
+      }
+      if (rocketAutoFire && lockedTargets.length > 0 && !stationUI.open && !warp.isBusy() && rocketCooldown <= 0) {
+        if (fireRocket(Math.random() < 0.5 ? 'right' : 'left')) rocketCooldown = ROCKET_FIRE_INTERVAL;
+      }
       for (const q of rail.queue) q.timer -= dt;
       let firedSomething = true;
       while (firedSomething) {
@@ -14588,14 +15241,6 @@
         // P2 weapon controller update — handles main guns, missiles, specials
         if (p2WeaponCtrl) p2WeaponCtrl.update(dt);
       }
-      // === SIEGE MODE UPDATE ===
-      SiegeMode.update(dt, 0, ship, keys, mouse, camera, npcs, SiegeMode.p1._padState || null);
-      SiegeMode.p1._padState = null;
-      if (splitScreenMode && player2Ship) {
-        SiegeMode.update(dt, 1, player2Ship, null, mouse2, camera2, npcs, SiegeMode.p2._padState || null);
-        SiegeMode.p2._padState = null;
-      }
-
       rocketCooldown = Math.max(0, rocketCooldown - dt);
       for (const loadout of (Game.player.weapons?.[HP.MISSILE] || [])) {
         const hp = loadout?.hp;
@@ -14658,7 +15303,7 @@
         scan.targetType = hoverType;
         scan.scanned = hover;
         updateHoverInfo(hover, hoverType);
-        if (!stationUI.open && mouse.click && hoverType === 'station') {
+        if (!stationUI.open && mouse.click && hoverType === 'station' && !isRtsModeActive()) {
           openStationUI(hover);
           mouse.click = false;
         }
@@ -14672,11 +15317,12 @@
       }
       if (lockedTarget && (!isHostileNpc(lockedTarget) || lockedTarget.dead)) lockedTarget = null;
       lockedTargets = lockedTargets.filter(t => isHostileNpc(t) && !t.dead);
-      scannerState.lockAnim += dt * SCANNER_LOCK_PULSE_SPEED;
-      if (highlightTimer > 0) {
-        highlightTimer -= dt;
-        if (highlightTimer <= 0) { highlightTimer = 0; highlightedEnemies = []; }
+      if (lockedTargets.length === 0) {
+        if (mainAutoFire) { mainAutoFire = false; pushZoneMessage('AUTO-FIRE OFF — brak celów', 1.5); }
+        if (specialAutoFire) specialAutoFire = false;
+        if (rocketAutoFire) rocketAutoFire = false;
       }
+      scannerState.lockAnim += dt * SCANNER_LOCK_PULSE_SPEED;
       if (scannerState.active) {
         scannerState.pulseTimer -= dt;
         if (scannerState.pulseTimer <= 0) {
@@ -14686,6 +15332,29 @@
           refreshScannerContacts();
         }
       }
+      const radarUiEnabled = scannerState.active && !CICDisplay.active && !stationUI.open && !showMap && !splitScreenMode;
+      radarTargetingUI.update({
+        enabled: radarUiEnabled,
+        dt,
+        deepScanDuration: RADAR_UI_DEEP_SCAN_DURATION,
+        width: W,
+        height: H,
+        camera,
+        worldToScreen,
+        lockAnim: scannerState.lockAnim,
+        ship,
+        targets: scannerContacts
+          .filter(c => c && c.tone === 'hostile' && c.target && !c.target.dead && c.type !== 'station')
+          .map(c => c.target),
+        distanceTo: (target) => Math.hypot((target?.x || 0) - ship.pos.x, (target?.y || 0) - ship.pos.y),
+        getMeta: getRadarTargetMeta,
+        getScanData: getRadarTargetScanData,
+        isLocked: (target) => lockedTargets.includes(target) || target === lockedTarget,
+        toggleLock: toggleLockedTargetUi,
+        onAction: handleRadarAction,
+        onStatus: (text) => pushZoneMessage(text, 1.2),
+        onDeepScanComplete: () => pushZoneMessage('SKAN ZAKONCZONY', 1.2)
+      });
 
       // update radar pings
       for (let i = radarPings.length - 1; i >= 0; i--) {
@@ -14713,13 +15382,6 @@
           }
         }
         if (w.r > w.max) scanWaves.splice(i, 1);
-      }
-
-      // update scan arrows
-      for (let i = scanArrows.length - 1; i >= 0; i--) {
-        const a = scanArrows[i];
-        if (warp.state !== 'active') a.age += dt;
-        if (a.age > a.life) scanArrows.splice(i, 1);
       }
 
       // === SPOTTER DRONES UPDATE ===
@@ -14791,6 +15453,7 @@
       updatePlayerCommand(dt);
       updateEnginePower(dt);
       const manualTorqueInput = clamp(Number(ship?.thrusterInput?.torque) || 0, -1, 1);
+      const stabilizerState = ship.__stabilizerState || (ship.__stabilizerState = { torqueSign: 0 });
       let stabilizerAssistTorque = 0;
       let stabilizerAssistLeft = 0;
       let stabilizerAssistRight = 0;
@@ -14799,11 +15462,17 @@
         if (Math.abs(manualTorqueInput) < 0.08) {
           const omega = Number(ship?.angVel) || 0;
           const absOmega = Math.abs(omega);
-          // Nieliniowa odpowiedź: szybko rośnie do pełnej mocy kontrowania
-          const normalized = clamp(absOmega / (SHIP_PHYSICS.MAX_TURN_SPEED * 0.15), 0, 1);
-          const strength = normalized * (2.0 - normalized); // ease-out curve
-          stabilizerAssistTorque = -Math.sign(omega) * strength;
-          if (absOmega < 0.02) stabilizerAssistTorque = 0;
+          const engageOmega = 0.05;
+          const releaseOmega = 0.018;
+          if (absOmega >= engageOmega) stabilizerState.torqueSign = -Math.sign(omega);
+          else if (absOmega <= releaseOmega) stabilizerState.torqueSign = 0;
+          if (stabilizerState.torqueSign !== 0) {
+            const normalized = clamp((absOmega - releaseOmega) / (SHIP_PHYSICS.MAX_TURN_SPEED * 0.16), 0, 1);
+            const strength = normalized * (2.0 - normalized);
+            stabilizerAssistTorque = stabilizerState.torqueSign * strength;
+          }
+        } else {
+          stabilizerState.torqueSign = 0;
         }
         // Stabilizacja ruchu bocznego (strafe)
         const manualLeft = clamp(Number(ship?.thrusterInput?.leftSide) || 0, 0, 1);
@@ -14824,16 +15493,19 @@
           const absCorrected = Math.abs(correctedLateral);
           // Wyciszanie siły stabilizacji gdy statek aktywnie się obraca
           const absOmega = Math.abs(omega);
-          const rotationDampen = 1 - clamp(absOmega / (SHIP_PHYSICS.MAX_TURN_SPEED * 0.3), 0, 0.85);
-          const lateralNorm = clamp(absCorrected / (SHIP_PHYSICS.SPEED * 0.25), 0, 1);
+          const rotationDampen = 1 - clamp(absOmega / (SHIP_PHYSICS.MAX_TURN_SPEED * 0.24), 0, 0.72);
+          const lateralNorm = clamp(absCorrected / (SHIP_PHYSICS.SPEED * 0.2), 0, 1);
           const lateralStrength = lateralNorm * (2.0 - lateralNorm) * rotationDampen;
-          if (absCorrected > 8) {
+          if (absCorrected > 12) {
             // correctedLateral > 0 = dryf w prawo → odpal prawe dysze (pchną w lewo)
             // correctedLateral < 0 = dryf w lewo → odpal lewe dysze (pchną w prawo)
-            if (correctedLateral > 0) stabilizerAssistRight = lateralStrength;
-            else stabilizerAssistLeft = lateralStrength;
+            if (correctedLateral > 0) stabilizerAssistRight = clamp(lateralStrength * 0.85, 0, 0.9);
+            else stabilizerAssistLeft = clamp(lateralStrength * 0.85, 0, 0.9);
           }
         }
+      }
+      else {
+        stabilizerState.torqueSign = 0;
       }
       const thrusterCommand = composeShipThrusterCommand(ship, {
         torque: stabilizerAssistTorque,
@@ -14844,6 +15516,7 @@
       const driveMain = clamp(thrusterDrive?.main ?? input.main, 0, 1);
       const driveLeft = clamp(thrusterDrive?.leftSide ?? input.leftSide, 0, 1);
       const driveRight = clamp(thrusterDrive?.rightSide ?? input.rightSide, 0, 1);
+      const driveRetro = clamp(thrusterDrive?.retro ?? input.retro, 0, 1);
       const driveTurn = clamp((thrusterDrive?.torque || 0) + (thrusterDrive?.mainTorqueAssist || 0), -1, 1);
       const commandTurn = clamp(Number(thrusterCommand?.manualTorque) || 0, -1, 1);
 
@@ -14958,8 +15631,11 @@
         const damperPower = clamp(damperState.power, 0, 1);
 
         if (damperPower > 1e-4) {
-          const linearBrakeBase = lerp(SHIP_PHYSICS.SPEED * 0.7, SHIP_PHYSICS.SPEED * 16.0, damperPower);
-          const linearBrakeDynamic = speed * lerp(0.18, 1.25, damperPower);
+          const retroAssist = Math.max(reverseInput, driveRetro);
+          const lowSpeedAssist = clamp(1 - (speed / 260), 0, 1);
+          const damperLinearScale = retroAssist > 0.05 ? lerp(0.28, 1.0, lowSpeedAssist) : 1.0;
+          const linearBrakeBase = lerp(SHIP_PHYSICS.SPEED * 0.7, SHIP_PHYSICS.SPEED * 16.0, damperPower) * damperLinearScale;
+          const linearBrakeDynamic = speed * lerp(0.18, 1.25, damperPower) * damperLinearScale;
           if (speed > 1e-4) {
             const brakeDelta = Math.min(speed, Math.max(linearBrakeBase, linearBrakeDynamic) * dt);
             const invSpeed = 1 / speed;
@@ -14974,38 +15650,19 @@
             ship.vel.x = 0;
             ship.vel.y = 0;
           }
-          if (Math.abs(ship.angVel) < 0.0012 && damperPower > 0.88) {
+          if (Math.abs(ship.angVel) < 0.001 && damperPower > 0.94 && retroAssist < 0.08) {
             ship.angVel = 0;
           }
         }
 
         ship.angVel = clamp(ship.angVel, -SHIP_PHYSICS.MAX_TURN_SPEED, SHIP_PHYSICS.MAX_TURN_SPEED);
-        if (flightAssist.stabilizer && Math.abs(commandTurn) < 0.08 && Math.abs(ship.angVel) < 0.04) {
+        if (flightAssist.stabilizer && Math.abs(commandTurn) < 0.03 && Math.abs(ship.angVel) < 0.0035) {
           ship.angVel = 0;
         }
         ship.angle = wrapAngle(ship.angle + ship.angVel * dt);
 
-        if (Math.abs(turnInput) > 1e-3) {
-          if (turnInput < 0) {
-            const e = ship.engines.torqueRight;
-            const wo = rotate(e.offset, ship.angle);
-            spawnParticle(add(ship.pos, wo), add(ship.vel, mul(right, 100)), 0.22, '#cfe7ff', 1.0);
-          } else {
-            const e = ship.engines.torqueLeft;
-            const wo = rotate(e.offset, ship.angle);
-            spawnParticle(add(ship.pos, wo), add(ship.vel, mul(right, -100)), 0.22, '#cfe7ff', 1.0);
-          }
-        }
-
-        if (driveLeft > 0) {
-          const e = ship.engines.sideRight;
-          const wo = rotate(e.offset, ship.angle);
-          spawnParticle(add(ship.pos, wo), add(ship.vel, mul(right, 150)), 0.30, '#cfe7ff', 1.0);
-        }
-        if (driveRight > 0) {
-          const e = ship.engines.sideLeft;
-          const wo = rotate(e.offset, ship.angle);
-          spawnParticle(add(ship.pos, wo), add(ship.vel, mul(right, -150)), 0.30, '#cfe7ff', 1.0);
+        if (Math.abs(turnInput) > 1e-3 || driveLeft > 0.05 || driveRight > 0.05 || driveRetro > 0.05) {
+          emitShipSideThrusterParticles(ship, forward, right);
         }
 
         if (boostActive) {
@@ -15036,6 +15693,7 @@
         // Update thruster state
         composeShipThrusterCommand(p2, {
           main: input2.main,
+          retro: input2.retro,
           torque: input2.torque,
           leftSide: input2.leftSide,
           rightSide: input2.rightSide
@@ -15300,7 +15958,7 @@
     let splitScreenMode = false;
     let player2Ship = null;
     let camera2 = null;
-    let input2 = { main: 0, leftSide: 0, rightSide: 0, torque: 0 };
+    let input2 = { main: 0, leftSide: 0, rightSide: 0, retro: 0, torque: 0 };
     window.splitScreenMode = false;
 
     // =============== Main loop ===============
@@ -15724,7 +16382,7 @@
 
       if (camera.mode === 'ship' && !camera.transition) {
         let targetCamX, targetCamY;
-        const lookAheadFactor = 0.3;
+        const lookAheadFactor = 2.0;
         const centerX = W * 0.5;
         const centerY = H * 0.5;
         const zoomSafe = Math.max(0.1, camera.zoom || 1);
@@ -15757,7 +16415,7 @@
       let camBaseX = camera.x;
       let camBaseY = camera.y;
       let camBaseZoom = camera.zoom;
-      if (camera.mode === 'free' && prevCameraState) {
+      if (camera.mode === 'rts' && prevCameraState) {
         camBaseX = lerp(prevCameraState.x, camera.x, alpha);
         camBaseY = lerp(prevCameraState.y, camera.y, alpha);
         camBaseZoom = lerp(prevCameraState.zoom, camera.zoom, alpha);
@@ -15970,24 +16628,13 @@
       const _fullW = W;
 
       for (let _sp = 0; _sp < _splitPassCount; _sp++) {
-        // Single-player siege camera override
-        if (_splitPassCount === 1) {
-          const _siegeCamSP = SiegeMode.getSiegeCamera(0, 0, 0, W, H);
-          if (_siegeCamSP) cam = _siegeCamSP;
-        }
         if (_splitPassCount > 1) {
           const halfW = Math.floor(_fullW / 2);
           const isP2 = _sp === 1;
           const vpW = isP2 ? (_fullW - halfW) : halfW;
           const vpOffX = isP2 ? halfW : 0;
 
-          // Check siege mode camera override
-          const _siegePlayerIdx = isP2 ? 1 : 0;
-          const _siegeCam = SiegeMode.getSiegeCamera(_siegePlayerIdx, vpOffX, 0, vpW, H);
-
-          if (_siegeCam) {
-            cam = _siegeCam;
-          } else if (isP2 && camera2) {
+          if (isP2 && camera2) {
             cam = {
               x: camera2.x,
               y: camera2.y,
@@ -16150,7 +16797,7 @@
           ctx.restore();
         }
 
-        if (PAUSED && Selection.active && Selection.rect) {
+        if (Selection.active && Selection.dragging && Selection.rect) {
           const x0 = Math.min(Selection.rect.x0, Selection.rect.x1);
           const y0 = Math.min(Selection.rect.y0, Selection.rect.y1);
           const x1 = Math.max(Selection.rect.x0, Selection.rect.x1);
@@ -16162,23 +16809,6 @@
           ctx.globalAlpha = 0.8;
           ctx.lineWidth = 2;
           ctx.strokeRect(Math.min(s0.x, s1.x), Math.min(s0.y, s1.y), Math.abs(s1.x - s0.x), Math.abs(s1.y - s0.y));
-          ctx.restore();
-        }
-
-        // In-game box-select rectangle for enemy targeting
-        if (gameBoxSel.active) {
-          const bx = Math.min(gameBoxSel.x0, gameBoxSel.x1);
-          const by = Math.min(gameBoxSel.y0, gameBoxSel.y1);
-          const bw = Math.abs(gameBoxSel.x1 - gameBoxSel.x0);
-          const bh = Math.abs(gameBoxSel.y1 - gameBoxSel.y0);
-          ctx.save();
-          ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
-          ctx.fillStyle   = 'rgba(56, 189, 248, 0.06)';
-          ctx.lineWidth = 1.5;
-          ctx.setLineDash([4, 3]);
-          ctx.fillRect(bx, by, bw, bh);
-          ctx.strokeRect(bx, by, bw, bh);
-          ctx.setLineDash([]);
           ctx.restore();
         }
 
@@ -16493,7 +17123,21 @@
             canvas.style.cursor = 'pointer';
           }
         }
-        if (scannerState.active && scannerContacts.length) {
+        const radarUiActive = scannerState.active && !CICDisplay.active && !stationUI.open && !showMap && !splitScreenMode;
+        if (radarUiActive) {
+          radarTargetingUI.draw(ctx, {
+            width: W,
+            height: H,
+            camera: cam,
+            worldToScreen,
+            lockAnim: scannerState.lockAnim,
+            targets: scannerContacts
+              .filter(c => c && c.tone === 'hostile' && c.target && !c.target.dead && c.type !== 'station')
+              .map(c => c.target),
+            isLocked: (target) => lockedTargets.includes(target) || target === lockedTarget
+          });
+        }
+        if (!radarUiActive && scannerState.active && scannerContacts.length) {
           for (const contact of scannerContacts) {
             const obj = contact.target;
             if (!obj || obj.dead) continue;
@@ -16529,7 +17173,7 @@
           }
         }
         const lockRenderList = lockedTargets.length ? lockedTargets : (lockedTarget ? [lockedTarget] : []);
-        if (lockRenderList.length) {
+        if (!radarUiActive && lockRenderList.length) {
           for (const obj of lockRenderList) {
             if (!obj || obj.dead) continue;
             const s = worldToScreen(obj.x, obj.y, cam);
@@ -16561,16 +17205,6 @@
             ctx.restore();
           }
         }
-        // === SIEGE MODE OVERLAY ===
-        {
-          const _siegeIdx = (_splitPassCount > 1 && _sp === 1) ? 1 : 0;
-          const _siegeShip = _siegeIdx === 1 ? player2Ship : ship;
-          if (_siegeShip && SiegeMode.isActive(_siegeIdx)) {
-            const vp = getViewportForCamera(cam);
-            SiegeMode.draw(ctx, _siegeIdx, _siegeShip, cam, vp.x, vp.y, vp.w, vp.h, gameTime, npcs);
-          }
-        }
-
         // ==========================================
         // END SPLIT-SCREEN 2D OVERLAY LOOP
         // ==========================================
@@ -16599,44 +17233,6 @@
         ctx.lineTo(Math.floor(_fullW / 2), H);
         ctx.stroke();
         ctx.restore();
-      }
-
-      // legacy scan arrows pointing to stations (P1 only, screen-space)
-      if (warp.state !== 'active' && !scannerState.active) {
-        const shipSpriteScale = ship.visual?.spriteScale || 1;
-        const shieldR = Math.max(ship.w * shipSpriteScale, ship.h * shipSpriteScale) * 0.6;
-        for (const a of scanArrows) {
-          const st = a.target;
-          const dx = st.x - ship.pos.x;
-          const dy = st.y - ship.pos.y;
-          const ang = Math.atan2(dy, dx);
-          const baseR = shieldR + 10;
-          const ax = ship.pos.x + Math.cos(ang) * baseR;
-          const ay = ship.pos.y + Math.sin(ang) * baseR;
-          const s = worldToScreen(ax, ay, cam);
-          ctx.save();
-          ctx.translate(s.x, s.y);
-          ctx.rotate(ang);
-          const size = 18 * cam.zoom;
-          ctx.beginPath();
-          ctx.fillStyle = 'rgba(120,200,255,0.9)';
-          ctx.moveTo(0, -size * 0.5);
-          ctx.lineTo(size, 0);
-          ctx.lineTo(0, size * 0.5);
-          ctx.closePath();
-          ctx.fill();
-          ctx.restore();
-          const tx = ship.pos.x + Math.cos(ang) * (baseR + 14);
-          const ty = ship.pos.y + Math.sin(ang) * (baseR + 14);
-          const ts = worldToScreen(tx, ty, cam);
-          ctx.save();
-          ctx.fillStyle = '#dfe7ff';
-          ctx.font = `${12 * cam.zoom}px monospace`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(`${Math.round(Math.hypot(dx, dy))}u`, ts.x, ts.y);
-          ctx.restore();
-        }
       }
 
       // --- Flash rendering (handled by CanvasVFX) ---
