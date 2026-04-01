@@ -18,6 +18,7 @@ export function attachPirateStation3D(_sceneIgnored, station2D) {
   // Tworzymy stację piratów z jej fabryki
   pirateStation3D = createPirateStation({ worldRadius: 360 }); 
   pirateStation2D = station2D || null;
+  pirateStation3D.object3d.rotation.x = Math.PI * 0.5;
   
   // Z = -100 utrzymuje stację na głębokości planet (żeby statki mogły nad nią latać)
   // Minus przy osi Y wyrównuje Canvas do WebGL.
@@ -26,6 +27,7 @@ export function attachPirateStation3D(_sceneIgnored, station2D) {
   // Dodajemy Bezpośrednio do naszego głównego świata 3D!
   if (Core3D.scene) {
       Core3D.scene.add(pirateStation3D.object3d);
+      Core3D.enableForeground3D(pirateStation3D.object3d);
   }
   
   initialRadius = pirateStation3D.radius;

@@ -54,7 +54,8 @@ export class RocketSmokeGPU {
                 uTexture:     { value: texture },
                 u_smokeSize:  { value: smokeSize },
                 u_worldScale: { value: WS },
-                u_zoom:       { value: 1.0 }
+                u_zoom:       { value: 1.0 },
+                u_dpr:        { value: 1.0 }
             },
 
             /* ─── VERTEX SHADER ─── */
@@ -67,6 +68,7 @@ export class RocketSmokeGPU {
                 uniform float u_smokeSize;
                 uniform float u_worldScale;
                 uniform float u_zoom;
+                uniform float u_dpr;
 
                 varying vec3  vColor;
                 varying float vAlpha;
@@ -102,11 +104,10 @@ export class RocketSmokeGPU {
                     vAlpha = smoothstep(0.0, 0.2, ageNorm) * ratio * 0.95;
 
                     vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                    // Point sprites are sized in screen pixels, so they must follow
-                    // orthographic zoom directly. A large floor here makes smoke
-                    // appear bigger and bigger relative to the world when zooming out.
-                    float zoomScale = clamp(u_zoom, 0.01, 1.0);
-                    gl_PointSize = max(1.0, currentSize * zoomScale);
+                    // Point sprites are in screen pixels. Multiply by zoom so they
+                    // shrink proportionally with the orthographic projection.
+                    float zoomScale = max(0.01, u_zoom);
+                    gl_PointSize = max(0.5, currentSize * zoomScale * u_dpr);
                     gl_Position  = projectionMatrix * mvPosition;
                 }
             `,

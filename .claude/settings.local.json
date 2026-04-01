@@ -17,7 +17,9 @@
       "Bash(grep -rn clampTurnVecs*= C:UsersSzymonDocumentsGitHubstatki --include=*.js)",
       "Bash(ls -la /c/Users/Szymon/Documents/GitHub/statki/*.html /c/Users/Szymon/Documents/GitHub/statki/*.js)",
       "Bash(grep -r \"rakiet\\\\|missile\\\\|projectile\\\\|rocket\" /c/Users/Szymon/Documents/GitHub/statki --include=*.html --include=*.js)",
-      "Bash(grep -l \"spark\\\\|flare\\\\|particle\\\\|flame\\\\|trail\\\\|exhaust\" /c/Users/Szymon/Documents/GitHub/statki/*.html)"
+      "Bash(grep -l \"spark\\\\|flare\\\\|particle\\\\|flame\\\\|trail\\\\|exhaust\" /c/Users/Szymon/Documents/GitHub/statki/*.html)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(git -C /c/Users/Szymon/Documents/GitHub/statki log --oneline --all -20 -- *rocket* *missile*)"
     ]
   }
 }

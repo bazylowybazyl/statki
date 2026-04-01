@@ -25,12 +25,12 @@ const WS = 0.1;
 
 const PHYSICS = Object.freeze({
     gravity:  9.81 * 80 * WS,   // 78.48 u/s²
-    airDrag:  0.0005
+    airDrag:  0.0001
 });
 
 const ROCKET = Object.freeze({
     mass:            8000,
-    maxThrust:       18_000_000 * WS,   // 1 800 000
+    maxThrust:       28_000_000 * WS,   // 2 800 000
     turnSpeedMin:    1.0,
     turnSpeedMax:    1.6,
     ejectUp:         1500 * WS,          // 150 u/s
@@ -44,7 +44,8 @@ const ROCKET = Object.freeze({
     exhaustVel:      1200 * WS,          // 120
     exhaustSpread:   180  * WS,          // 18
     exhaustGap:      12   * WS,          // 1.2 (min distance between particles)
-    maxRockets:      2000
+    maxRockets:      2000,
+    maxAltitude:     500  * WS
 });
 
 /* ── Reusable temp vectors (allocated once) ── */
@@ -113,7 +114,13 @@ class RocketSystem3D {
                 currentThrust:  0,
                 turnSpeed:      0,
                 damage:         0,
+                blastRadius:    0,
+                desiredSpeed:   0,
+                maxLife:        0,
+                hitRadius:      0,
+                didImpactDamage:false,
                 weaponDef:      null,
+                launchPos:      new THREE.Vector3(),
                 visualDir:      new THREE.Vector3(0, 0, 1)
             });
             _dummy.position.set(0, -999999, 0);
@@ -157,11 +164,21 @@ class RocketSystem3D {
         r.target          = target;
         r.state           = "EJECTED";
         r.timeSinceLaunch = 0;
+        r.launchPos.copy(r.position);
         r.mass            = ROCKET.mass;
-        r.maxThrust       = ROCKET.maxThrust;
+        const weaponSpeed = Math.max(400, Number(weaponDef?.baseSpeed) || Number(weaponDef?.speed) || 1200);
+        const weaponRange = Math.max(1500, Number(weaponDef?.baseRange) || Number(weaponDef?.range) || 6000);
+        const weaponBlast = Math.max(24, Number(weaponDef?.explodeRadius) || Number(weaponDef?.explosionRadius) || 48);
+        const speedScale = Math.max(0.9, weaponSpeed / 900);
+        r.maxThrust       = ROCKET.maxThrust * speedScale;
         r.currentThrust   = 0;
-        r.turnSpeed       = ROCKET.turnSpeedMin + Math.random() * (ROCKET.turnSpeedMax - ROCKET.turnSpeedMin);
+        r.turnSpeed       = (ROCKET.turnSpeedMin + Math.random() * (ROCKET.turnSpeedMax - ROCKET.turnSpeedMin)) * THREE.MathUtils.clamp((Number(weaponDef?.turnRate) || 300) / 300, 0.8, 1.8);
         r.damage          = damage || 60;
+        r.blastRadius     = weaponBlast;
+        r.desiredSpeed    = weaponSpeed;
+        r.maxLife         = THREE.MathUtils.clamp((weaponRange / Math.max(weaponSpeed, 1)) * 2.5, 8.0, 40);
+        r.hitRadius       = THREE.MathUtils.clamp(weaponBlast * 0.9, 50, 180);
+        r.didImpactDamage = false;
         r.weaponDef       = weaponDef;
         r.prevExhaustPos.copy(r.position);
 
@@ -182,9 +199,11 @@ class RocketSystem3D {
         this.fireGPU.update(this.globalTime);
         this.smokeGPU.update(this.globalTime);
 
-        // Pass zoom to smoke so gl_PointSize scales correctly
-        const zoom = window.overlayView?.zoom ?? 1;
+        // Pass zoom and DPR from the main game camera so smoke tracks the
+        // real orthographic view instead of the intermediate overlay model.
+        const zoom = window.camera?.zoom ?? 1;
         this.smokeGPU.material.uniforms.u_zoom.value = zoom;
+        this.smokeGPU.material.uniforms.u_dpr.value = window._overlayDpr ?? (window.devicePixelRatio || 1);
 
         let matricesUpdated = false;
         const R  = ROCKET;
@@ -201,6 +220,28 @@ class RocketSystem3D {
                 if (r.velocity.y < -5 * WS || r.timeSinceLaunch > 1.0) {
                     r.state = "POWERED";
                     r.currentThrust = r.maxThrust;
+                }
+            }
+
+            /* ── Guidance (slerp toward target) before thrust integration ── */
+            if (r.state === "POWERED" && r.target && !r.target.dead) {
+                const tx = Number(r.target.x ?? r.target.pos?.x) || 0;
+                const ty = Number(r.target.y ?? r.target.pos?.y) || 0;
+                const isPointTarget = !!r.target._isPositionTarget;
+                const altitudeBias = isPointTarget
+                    ? Math.max(r.position.y * 1.2, 10 * WS)
+                    : Math.max(r.position.y * 0.8, 5 * WS);
+                _targetDir.set(
+                    tx - r.position.x,
+                    -altitudeBias,
+                    ty - r.position.z
+                );
+                const len = _targetDir.length();
+                if (len > 0.1) {
+                    _targetDir.divideScalar(len);
+                    _qTarget.setFromUnitVectors(_BASE_FWD, _targetDir);
+                    const steerRate = isPointTarget ? r.turnSpeed * 1.45 : r.turnSpeed;
+                    r.quaternion.slerp(_qTarget, steerRate * dt);
                 }
             }
 
@@ -223,6 +264,18 @@ class RocketSystem3D {
                 _force.divideScalar(r.mass), dt
             );
             r.position.addScaledVector(r.velocity, dt);
+
+            if (r.position.y > R.maxAltitude) {
+                r.position.y = R.maxAltitude;
+                if (r.velocity.y > 0) r.velocity.y *= 0.2;
+            }
+
+            if (r.state === "POWERED") {
+                const speed = r.velocity.length();
+                const desiredSpeed = Math.max(300, r.desiredSpeed || 1200);
+                const throttleNorm = THREE.MathUtils.clamp(((desiredSpeed - speed) / desiredSpeed) * 1.4 + 0.25, 0.12, 1.0);
+                r.currentThrust = r.maxThrust * throttleNorm;
+            }
 
             /* ── Instance matrix ── */
             _renderDir.set(r.velocity.x, 0, r.velocity.z);
@@ -284,23 +337,6 @@ class RocketSystem3D {
 
             r.prevExhaustPos.copy(_exhaustP);
 
-            /* ── Guidance (slerp toward target) ── */
-            if (r.state === "POWERED" && r.target && !r.target.dead) {
-                const tx = Number(r.target.x ?? r.target.pos?.x) || 0;
-                const ty = Number(r.target.y ?? r.target.pos?.y) || 0;
-                _targetDir.set(
-                    tx - r.position.x,
-                    -r.position.y,             // target is at Y=0 (ground)
-                    ty - r.position.z
-                );
-                const len = _targetDir.length();
-                if (len > 0.1) {
-                    _targetDir.divideScalar(len);
-                    _qTarget.setFromUnitVectors(_BASE_FWD, _targetDir);
-                    r.quaternion.slerp(_qTarget, r.turnSpeed * dt);
-                }
-            }
-
             /* ── Hit detection ── */
             if (r.target && !r.target.dead) {
                 const tx = Number(r.target.x ?? r.target.pos?.x) || 0;
@@ -308,8 +344,18 @@ class RocketSystem3D {
                 const dx = tx - r.position.x;
                 const dz = ty - r.position.z;
                 const dist2D = Math.sqrt(dx * dx + dz * dz);
+                const isPointTarget = !!r.target._isPositionTarget;
+                const traveled2D = Math.hypot(
+                    r.position.x - r.launchPos.x,
+                    r.position.z - r.launchPos.z
+                );
+                const minArmTime = isPointTarget ? 0.7 : 0.18;
+                const minArmDistance = isPointTarget
+                    ? Math.max(320, (r.hitRadius || R.hitRadius) * 4.0)
+                    : Math.max(90, (r.hitRadius || R.hitRadius) * 1.25);
+                const isArmed = (r.timeSinceLaunch >= minArmTime) && (traveled2D >= minArmDistance);
                 // Must be close horizontally AND low enough (descended toward target)
-                if (dist2D < R.hitRadius && r.position.y < R.hitRadius * 2) {
+                if (isArmed && dist2D < (r.hitRadius || R.hitRadius) && r.position.y < (r.hitRadius || R.hitRadius) * 2.2) {
                     this._onHit(r);
                     this._explode(r);
                     continue;
@@ -317,8 +363,21 @@ class RocketSystem3D {
             }
 
             /* ── Ground / timeout ── */
-            if ((r.position.y <= 0 && r.velocity.y < 0 && r.timeSinceLaunch > 0.5)
-                || r.timeSinceLaunch > 20) {
+            const traveled = Math.hypot(
+                r.position.x - r.launchPos.x,
+                r.position.z - r.launchPos.z
+            );
+            if (r.position.y <= 0 && r.velocity.y < 0 && r.timeSinceLaunch > 0.5) {
+                // Don't explode on ground until rocket traveled meaningful distance
+                // or is close to the target — otherwise clamp above ground and keep flying
+                const minGroundTravel = Math.max(200, (r.hitRadius || R.hitRadius) * 3);
+                if (traveled > minGroundTravel || r.timeSinceLaunch > 3.0) {
+                    this._explode(r);
+                } else {
+                    r.position.y = 0.5;
+                    r.velocity.y = Math.abs(r.velocity.y) * 0.3;
+                }
+            } else if (r.timeSinceLaunch > (r.maxLife || 20)) {
                 this._explode(r);
             }
         }
@@ -331,17 +390,55 @@ class RocketSystem3D {
     _onHit(r) {
         const target = r.target;
         if (!target || target.dead) return;
+        if (target._isPositionTarget) return;
 
         const dmg = r.damage || 60;
         const applyNpc    = window.applyDamageToNPC;
         const applyPlayer = window.applyDamageToPlayer;
 
         // Determine if target is the player
-        const isPlayer = (target === window.Game?.player);
+        const isPlayer = (target === window.ship) || !!target._isPlayerShip || (target === window.Game?.player);
         if (isPlayer) {
             if (applyPlayer) applyPlayer(dmg);
         } else {
             if (applyNpc) applyNpc(target, dmg, "rocket");
+        }
+        r.didImpactDamage = true;
+    }
+
+    _applyBlastDamage(r, ex, ez) {
+        const blastRadius = Math.max(0, Number(r.blastRadius) || 0);
+        if (blastRadius <= 0) return;
+        const damageBase = Math.max(0, Number(r.damage) || 0);
+        if (damageBase <= 0) return;
+
+        const applyNpc = window.applyDamageToNPC;
+        const applyPlayer = window.applyDamageToPlayer;
+        const player = window.ship;
+
+        if (player && !player.destroyed && (!r.didImpactDamage || r.target !== player)) {
+            const dx = (player.pos?.x ?? player.x ?? 0) - ex;
+            const dz = (player.pos?.y ?? player.y ?? 0) - ez;
+            const dist = Math.hypot(dx, dz);
+            if (dist <= blastRadius && applyPlayer) {
+                const falloff = THREE.MathUtils.clamp(1 - (dist / blastRadius), 0, 1);
+                const dmg = damageBase * (0.3 + falloff * 0.7);
+                if (dmg > 1) applyPlayer(dmg);
+            }
+        }
+
+        const npcs = Array.isArray(window.npcs) ? window.npcs : [];
+        for (let i = 0; i < npcs.length; i++) {
+            const npc = npcs[i];
+            if (!npc || npc.dead) continue;
+            if (r.didImpactDamage && npc === r.target) continue;
+            const dx = (npc.x ?? npc.pos?.x ?? 0) - ex;
+            const dz = (npc.y ?? npc.pos?.y ?? 0) - ez;
+            const dist = Math.hypot(dx, dz);
+            if (dist > blastRadius) continue;
+            const falloff = THREE.MathUtils.clamp(1 - (dist / blastRadius), 0, 1);
+            const dmg = damageBase * (0.35 + falloff * 0.65);
+            if (dmg > 1 && applyNpc) applyNpc(npc, dmg, "rocket");
         }
     }
 
@@ -357,6 +454,7 @@ class RocketSystem3D {
         const ey = Math.max(r.position.y, 0);
         const ez = r.position.z;
         const eS = WS * Math.max(0.1, Number(FlameSettings.explosionSize) || 1.0);
+        this._applyBlastDamage(r, ex, ez);
 
         // 1. FLASH — one big, short burst
         this.fireGPU.spawn(ex, ey, ez, 0, 0, 0,  250 * eS,  0.1,  3);
