@@ -7929,20 +7929,18 @@
             if (!rocketTarget) {
               let pointTargetX = muzzleData.pos.x + dirX * range;
               let pointTargetY = muzzleData.pos.y + dirY * range;
-              if (isP1Ship && window.screenToWorld && typeof mouse !== 'undefined') {
-                const mw = window.screenToWorld(mouse.x, mouse.y);
+              const mouseRef = isP2Ship ? window.mouse2 : mouse;
+              const camRef = isP2Ship ? (window.camera2 || undefined) : undefined;
+              if (mouseRef && window.screenToWorld) {
+                const mw = window.screenToWorld(mouseRef.x, mouseRef.y, camRef);
                 if (mw && Number.isFinite(mw.x) && Number.isFinite(mw.y)) {
                   const dx = mw.x - muzzleData.pos.x;
                   const dy = mw.y - muzzleData.pos.y;
                   const mouseDist = Math.hypot(dx, dy);
-                  const safeMinDist = Math.max(
-                    700,
-                    (weapon.explosionRadius || weapon.explodeRadius || 0) * 6,
-                    (weapon.baseSpeed || speed || 0) * 0.35
-                  );
-                  const targetDist = Math.max(mouseDist, safeMinDist);
-                  pointTargetX = muzzleData.pos.x + dirX * Math.min(range, targetDist);
-                  pointTargetY = muzzleData.pos.y + dirY * Math.min(range, targetDist);
+                  const nx = mouseDist > 1e-6 ? (dx / mouseDist) : dirX;
+                  const ny = mouseDist > 1e-6 ? (dy / mouseDist) : dirY;
+                  pointTargetX = muzzleData.pos.x + nx * Math.min(range, mouseDist);
+                  pointTargetY = muzzleData.pos.y + ny * Math.min(range, mouseDist);
                 }
               }
               rocketTarget = {
@@ -13872,6 +13870,7 @@
         handlePlayerDestroyed();
       }
     }
+    window.applyDamageToPlayer = applyDamageToPlayer;
     function applyDamageToNPC(npc, dmg, cause = 'default', opts = {}) {
       if (npc.dead) return;
       if (!Number.isFinite(dmg) || dmg <= 0) return;
@@ -13933,6 +13932,7 @@
         }
       }
     }
+    window.applyDamageToNPC = applyDamageToNPC;
 
     function enforceNpcHexIntegrityBalance() {
       const playerHexLossExponent = 2.35;

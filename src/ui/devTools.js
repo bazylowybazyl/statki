@@ -793,6 +793,24 @@ function wireDevToolsLogic() {
       });
     }
 
+    if (ui.cbRuler) {
+      ui.cbRuler.checked = !!(window.DevFlags && window.DevFlags.showRuler);
+      ui.cbRuler.addEventListener('change', (e) => {
+        if (!window.DevFlags) window.DevFlags = {};
+        window.DevFlags.showRuler = !!e.target.checked;
+        saveLS();
+      });
+    }
+
+    if (ui.cbPlanetOrbits) {
+      ui.cbPlanetOrbits.checked = !!(window.DevFlags && window.DevFlags.showPlanetOrbits);
+      ui.cbPlanetOrbits.addEventListener('change', (e) => {
+        if (!window.DevFlags) window.DevFlags = {};
+        window.DevFlags.showPlanetOrbits = !!e.target.checked;
+        saveLS();
+      });
+    }
+
     if (ui.planetScaleAll) {
       ui.planetScaleAll.addEventListener('input', () => {
         DevConfig.planetScaleAll = +ui.planetScaleAll.value;
