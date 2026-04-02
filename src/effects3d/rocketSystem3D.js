@@ -60,6 +60,74 @@ const _BASE_FWD  = new THREE.Vector3(0, 1, 0);  // rocket nose in local space
 const _VISUAL_FWD = new THREE.Vector3(0, 0, 1);
 const _renderDir = new THREE.Vector3();
 const _renderQuat = new THREE.Quaternion();
+const _leadAim2D = { x: 0, y: 0 };
+
+function getTargetVelocity2D(target) {
+    if (!target) return { x: 0, y: 0 };
+    const vel = target.vel || target.velocity || null;
+    return {
+        x: Number(target.vx ?? vel?.x) || 0,
+        y: Number(target.vy ?? vel?.y) || 0
+    };
+}
+
+function solveLeadAim2D(shooterPos, shooterVel, target, projectileSpeed, out = _leadAim2D) {
+    const tx = Number(target?.x ?? target?.pos?.x) || 0;
+    const ty = Number(target?.y ?? target?.pos?.y) || 0;
+    const tv = getTargetVelocity2D(target);
+    const speed = Math.max(1, projectileSpeed);
+    const rx = tx - shooterPos.x;
+    const ry = ty - shooterPos.y;
+    const rvx = tv.x - (Number(shooterVel?.x) || 0);
+    const rvy = tv.y - (Number(shooterVel?.y) || 0);
+    const a = rvx * rvx + rvy * rvy - speed * speed;
+    const b = 2 * (rx * rvx + ry * rvy);
+    const c = rx * rx + ry * ry;
+    let t = 0;
+    if (Math.abs(a) < 1e-6) {
+        if (Math.abs(b) > 1e-6) t = -c / b;
+    } else {
+        const disc = b * b - 4 * a * c;
+        if (disc >= 0) {
+            const sqrtDisc = Math.sqrt(disc);
+            const t1 = (-b - sqrtDisc) / (2 * a);
+            const t2 = (-b + sqrtDisc) / (2 * a);
+            t = Math.min(t1, t2);
+            if (t < 0) t = Math.max(t1, t2);
+        }
+    }
+    if (!Number.isFinite(t) || t < 0) t = 0;
+    out.x = tx + tv.x * t;
+    out.y = ty + tv.y * t;
+    return out;
+}
+
+function resolveRocketProfile(weaponDef) {
+    const desiredSpeed = Math.max(400, Number(weaponDef?.baseSpeed) || Number(weaponDef?.speed) || 1200);
+    const maxRange = Math.max(3000, Number(weaponDef?.baseRange) || Number(weaponDef?.range) || 12000);
+    const blastRadius = Math.max(24, Number(weaponDef?.explodeRadius) || Number(weaponDef?.explosionRadius) || 48);
+    const turnRateDeg = Math.max(25, Number(weaponDef?.turnRate) || 180);
+    const homingDelay = THREE.MathUtils.clamp(Number(weaponDef?.homingDelay) || 0, 0, 3);
+    const ignitionDelayRaw = Number(weaponDef?.ignitionDelay);
+    const speedScale = Math.max(0.9, desiredSpeed / 900);
+    const cruiseAltitudeDefault = Math.min(ROCKET.maxAltitude * 0.72, Math.max(10, desiredSpeed * 0.015));
+    const cruiseAltitudeRaw = Number(weaponDef?.cruiseAltitude);
+    return {
+        desiredSpeed,
+        maxRange,
+        blastRadius,
+        turnRateRad: THREE.MathUtils.degToRad(turnRateDeg),
+        homingDelay: Number.isFinite(homingDelay) ? homingDelay : 0,
+        ignitionDelay: Number.isFinite(ignitionDelayRaw)
+            ? THREE.MathUtils.clamp(ignitionDelayRaw, 0.05, 0.35)
+            : 0.12,
+        maxThrust: ROCKET.maxThrust * speedScale,
+        cruiseAltitude: Number.isFinite(cruiseAltitudeRaw)
+            ? THREE.MathUtils.clamp(cruiseAltitudeRaw, 0, ROCKET.maxAltitude * 0.9)
+            : cruiseAltitudeDefault,
+        hitRadius: THREE.MathUtils.clamp(Number(weaponDef?.proximityRadius) || (blastRadius * 0.9), 50, 220)
+    };
+}
 
 /* ── Singleton ── */
 let instance = null;
@@ -112,15 +180,21 @@ class RocketSystem3D {
                 mass:           0,
                 maxThrust:      0,
                 currentThrust:  0,
-                turnSpeed:      0,
+                turnRateRad:    0,
+                homingDelay:    0,
+                ignitionDelay:  0,
+                cruiseAltitude: 0,
                 damage:         0,
                 blastRadius:    0,
                 desiredSpeed:   0,
-                maxLife:        0,
+                maxRange:       0,
                 hitRadius:      0,
                 didImpactDamage:false,
                 weaponDef:      null,
                 launchPos:      new THREE.Vector3(),
+                prevTravelPos:  new THREE.Vector3(),
+                travelDistance: 0,
+                closestTargetDist: Infinity,
                 visualDir:      new THREE.Vector3(0, 0, 1)
             });
             _dummy.position.set(0, -999999, 0);
@@ -165,22 +239,43 @@ class RocketSystem3D {
         r.state           = "EJECTED";
         r.timeSinceLaunch = 0;
         r.launchPos.copy(r.position);
+        r.prevTravelPos.copy(r.position);
+        r.travelDistance  = 0;
         r.mass            = ROCKET.mass;
-        const weaponSpeed = Math.max(400, Number(weaponDef?.baseSpeed) || Number(weaponDef?.speed) || 1200);
-        const weaponRange = Math.max(1500, Number(weaponDef?.baseRange) || Number(weaponDef?.range) || 6000);
-        const weaponBlast = Math.max(24, Number(weaponDef?.explodeRadius) || Number(weaponDef?.explosionRadius) || 48);
-        const speedScale = Math.max(0.9, weaponSpeed / 900);
-        r.maxThrust       = ROCKET.maxThrust * speedScale;
+        const profile = resolveRocketProfile(weaponDef);
+        r.maxThrust       = profile.maxThrust;
         r.currentThrust   = 0;
-        r.turnSpeed       = (ROCKET.turnSpeedMin + Math.random() * (ROCKET.turnSpeedMax - ROCKET.turnSpeedMin)) * THREE.MathUtils.clamp((Number(weaponDef?.turnRate) || 300) / 300, 0.8, 1.8);
+        r.turnRateRad     = profile.turnRateRad;
+        r.homingDelay     = profile.homingDelay;
+        r.ignitionDelay   = profile.ignitionDelay;
+        r.cruiseAltitude  = profile.cruiseAltitude;
         r.damage          = damage || 60;
-        r.blastRadius     = weaponBlast;
-        r.desiredSpeed    = weaponSpeed;
-        r.maxLife         = THREE.MathUtils.clamp((weaponRange / Math.max(weaponSpeed, 1)) * 2.5, 8.0, 40);
-        r.hitRadius       = THREE.MathUtils.clamp(weaponBlast * 0.9, 50, 180);
+        r.blastRadius     = profile.blastRadius;
+        r.desiredSpeed    = profile.desiredSpeed;
+        r.maxRange        = profile.maxRange;
+        r.hitRadius       = profile.hitRadius;
         r.didImpactDamage = false;
         r.weaponDef       = weaponDef;
+        r.closestTargetDist = Infinity;
         r.prevExhaustPos.copy(r.position);
+
+        const initialAim = target && !target.dead
+            ? (target._isPositionTarget
+                ? { x: Number(target.x ?? target.pos?.x) || gameX, y: Number(target.y ?? target.pos?.y) || gameY }
+                : solveLeadAim2D(
+                    { x: gameX, y: gameY },
+                    { x: 0, y: 0 },
+                    target,
+                    profile.desiredSpeed
+                ))
+            : null;
+        if (initialAim) {
+            _targetDir.set(initialAim.x - gameX, profile.cruiseAltitude, initialAim.y - gameY);
+            if (_targetDir.lengthSq() > 1e-6) {
+                _targetDir.normalize();
+                r.quaternion.setFromUnitVectors(_BASE_FWD, _targetDir);
+            }
+        }
 
         // Color per-instance
         const col = colorTheme === "red" ? 0xff3333 : 0x3377ff;
@@ -217,31 +312,46 @@ class RocketSystem3D {
 
             /* ── State transition: EJECTED → POWERED ── */
             if (r.state === "EJECTED") {
-                if (r.velocity.y < -5 * WS || r.timeSinceLaunch > 1.0) {
+                if (r.velocity.y < -5 * WS || r.timeSinceLaunch > r.ignitionDelay) {
                     r.state = "POWERED";
                     r.currentThrust = r.maxThrust;
                 }
             }
 
             /* ── Guidance (slerp toward target) before thrust integration ── */
-            if (r.state === "POWERED" && r.target && !r.target.dead) {
-                const tx = Number(r.target.x ?? r.target.pos?.x) || 0;
-                const ty = Number(r.target.y ?? r.target.pos?.y) || 0;
+            if (r.target && !r.target.dead) {
                 const isPointTarget = !!r.target._isPositionTarget;
-                const altitudeBias = isPointTarget
-                    ? Math.max(r.position.y * 1.2, 10 * WS)
-                    : Math.max(r.position.y * 0.8, 5 * WS);
+                const planarSpeed = Math.max(300, Math.hypot(r.velocity.x, r.velocity.z), r.desiredSpeed || 0);
+                const aim = isPointTarget
+                    ? {
+                        x: Number(r.target.x ?? r.target.pos?.x) || r.position.x,
+                        y: Number(r.target.y ?? r.target.pos?.y) || r.position.z
+                    }
+                    : solveLeadAim2D(
+                        { x: r.position.x, y: r.position.z },
+                        { x: r.velocity.x, y: r.velocity.z },
+                        r.target,
+                        planarSpeed
+                    );
+                const dx = aim.x - r.position.x;
+                const dz = aim.y - r.position.z;
+                const dist2D = Math.hypot(dx, dz);
+                const cruiseThreshold = Math.max(600, (r.hitRadius || R.hitRadius) * 8);
+                const targetY = dist2D > cruiseThreshold ? r.cruiseAltitude : 0;
                 _targetDir.set(
-                    tx - r.position.x,
-                    -altitudeBias,
-                    ty - r.position.z
+                    dx,
+                    THREE.MathUtils.clamp(targetY - r.position.y, -Math.max(60, r.cruiseAltitude), Math.max(120, r.cruiseAltitude)),
+                    dz
                 );
-                const len = _targetDir.length();
-                if (len > 0.1) {
-                    _targetDir.divideScalar(len);
+
+                if (_targetDir.lengthSq() > 1e-6) {
+                    _targetDir.normalize();
                     _qTarget.setFromUnitVectors(_BASE_FWD, _targetDir);
-                    const steerRate = isPointTarget ? r.turnSpeed * 1.45 : r.turnSpeed;
-                    r.quaternion.slerp(_qTarget, steerRate * dt);
+                    if (r.timeSinceLaunch >= r.homingDelay) {
+                        r.quaternion.rotateTowards(_qTarget, Math.max(0.001, r.turnRateRad) * dt);
+                    } else {
+                        r.quaternion.slerp(_qTarget, THREE.MathUtils.clamp(dt * 6, 0, 0.18));
+                    }
                 }
             }
 
@@ -264,6 +374,11 @@ class RocketSystem3D {
                 _force.divideScalar(r.mass), dt
             );
             r.position.addScaledVector(r.velocity, dt);
+            r.travelDistance += Math.hypot(
+                r.position.x - r.prevTravelPos.x,
+                r.position.z - r.prevTravelPos.z
+            );
+            r.prevTravelPos.copy(r.position);
 
             if (r.position.y > R.maxAltitude) {
                 r.position.y = R.maxAltitude;
@@ -278,7 +393,7 @@ class RocketSystem3D {
             }
 
             /* ── Instance matrix ── */
-            _renderDir.set(r.velocity.x, 0, r.velocity.z);
+            _renderDir.copy(_forward);
             if (_renderDir.lengthSq() < 1e-6) {
                 _renderDir.copy(r.visualDir);
             } else {
@@ -337,6 +452,8 @@ class RocketSystem3D {
 
             r.prevExhaustPos.copy(_exhaustP);
 
+            const traveled = r.travelDistance;
+
             /* ── Hit detection ── */
             if (r.target && !r.target.dead) {
                 const tx = Number(r.target.x ?? r.target.pos?.x) || 0;
@@ -345,39 +462,42 @@ class RocketSystem3D {
                 const dz = ty - r.position.z;
                 const dist2D = Math.sqrt(dx * dx + dz * dz);
                 const isPointTarget = !!r.target._isPositionTarget;
-                const traveled2D = Math.hypot(
-                    r.position.x - r.launchPos.x,
-                    r.position.z - r.launchPos.z
+                const targetRadius = isPointTarget ? 0 : Math.max(
+                    Number(r.target.radius) || 0,
+                    (Number(r.target.w) || 0) * 0.5,
+                    (Number(r.target.h) || 0) * 0.5
                 );
+                const fuseRadius = Math.max((r.hitRadius || R.hitRadius), targetRadius * 0.9);
                 const minArmTime = isPointTarget ? 0.7 : 0.18;
                 const minArmDistance = isPointTarget
-                    ? Math.max(320, (r.hitRadius || R.hitRadius) * 4.0)
-                    : Math.max(90, (r.hitRadius || R.hitRadius) * 1.25);
-                const isArmed = (r.timeSinceLaunch >= minArmTime) && (traveled2D >= minArmDistance);
-                // Must be close horizontally AND low enough (descended toward target)
-                if (isArmed && dist2D < (r.hitRadius || R.hitRadius) && r.position.y < (r.hitRadius || R.hitRadius) * 2.2) {
+                    ? Math.max(320, fuseRadius * 4.0)
+                    : Math.max(90, fuseRadius * 1.1);
+                const isArmed = (r.timeSinceLaunch >= minArmTime) && (traveled >= minArmDistance);
+                const passedClosest =
+                    Number.isFinite(r.closestTargetDist) &&
+                    dist2D > (r.closestTargetDist + Math.max(18, fuseRadius * 0.12));
+                const shouldDetonate =
+                    isArmed &&
+                    (
+                        dist2D <= fuseRadius ||
+                        (passedClosest && r.closestTargetDist <= fuseRadius * 1.35)
+                    );
+                r.closestTargetDist = Math.min(r.closestTargetDist, dist2D);
+                if (shouldDetonate) {
                     this._onHit(r);
                     this._explode(r);
                     continue;
                 }
             }
 
-            /* ── Ground / timeout ── */
-            const traveled = Math.hypot(
-                r.position.x - r.launchPos.x,
-                r.position.z - r.launchPos.z
-            );
+            /* ── Ground / range expiry ── */
             if (r.position.y <= 0 && r.velocity.y < 0 && r.timeSinceLaunch > 0.5) {
-                // Don't explode on ground until rocket traveled meaningful distance
-                // or is close to the target — otherwise clamp above ground and keep flying
-                const minGroundTravel = Math.max(200, (r.hitRadius || R.hitRadius) * 3);
-                if (traveled > minGroundTravel || r.timeSinceLaunch > 3.0) {
-                    this._explode(r);
-                } else {
-                    r.position.y = 0.5;
-                    r.velocity.y = Math.abs(r.velocity.y) * 0.3;
-                }
-            } else if (r.timeSinceLaunch > (r.maxLife || 20)) {
+                // Ground contact should not kill the rocket early; range or target hit is the source of truth.
+                r.position.y = 0.5;
+                r.velocity.y = Math.abs(r.velocity.y) * 0.25;
+            }
+
+            if (traveled >= (r.maxRange || 0)) {
                 this._explode(r);
             }
         }
@@ -415,13 +535,19 @@ class RocketSystem3D {
         const applyNpc = window.applyDamageToNPC;
         const applyPlayer = window.applyDamageToPlayer;
         const player = window.ship;
+        const getEntityRadius = (entity) => Math.max(
+            Number(entity?.radius) || 0,
+            (Number(entity?.w) || 0) * 0.5,
+            (Number(entity?.h) || 0) * 0.5
+        );
 
         if (player && !player.destroyed && (!r.didImpactDamage || r.target !== player)) {
             const dx = (player.pos?.x ?? player.x ?? 0) - ex;
             const dz = (player.pos?.y ?? player.y ?? 0) - ez;
             const dist = Math.hypot(dx, dz);
-            if (dist <= blastRadius && applyPlayer) {
-                const falloff = THREE.MathUtils.clamp(1 - (dist / blastRadius), 0, 1);
+            const effectiveRadius = blastRadius + getEntityRadius(player) * 0.65;
+            if (dist <= effectiveRadius && applyPlayer) {
+                const falloff = THREE.MathUtils.clamp(1 - (dist / Math.max(1, effectiveRadius)), 0, 1);
                 const dmg = damageBase * (0.3 + falloff * 0.7);
                 if (dmg > 1) applyPlayer(dmg);
             }
@@ -435,8 +561,9 @@ class RocketSystem3D {
             const dx = (npc.x ?? npc.pos?.x ?? 0) - ex;
             const dz = (npc.y ?? npc.pos?.y ?? 0) - ez;
             const dist = Math.hypot(dx, dz);
-            if (dist > blastRadius) continue;
-            const falloff = THREE.MathUtils.clamp(1 - (dist / blastRadius), 0, 1);
+            const effectiveRadius = blastRadius + getEntityRadius(npc) * 0.65;
+            if (dist > effectiveRadius) continue;
+            const falloff = THREE.MathUtils.clamp(1 - (dist / Math.max(1, effectiveRadius)), 0, 1);
             const dmg = damageBase * (0.35 + falloff * 0.65);
             if (dmg > 1 && applyNpc) applyNpc(npc, dmg, "rocket");
         }
