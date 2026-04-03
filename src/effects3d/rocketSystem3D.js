@@ -107,11 +107,29 @@ function resolveRocketProfile(weaponDef) {
     const maxRange = Math.max(3000, Number(weaponDef?.baseRange) || Number(weaponDef?.range) || 12000);
     const blastRadius = Math.max(24, Number(weaponDef?.explodeRadius) || Number(weaponDef?.explosionRadius) || 48);
     const turnRateDeg = Math.max(25, Number(weaponDef?.turnRate) || 180);
+    const speedFactor = THREE.MathUtils.clamp(desiredSpeed / 1200, 0.6, 4.0);
+    const turnPenalty = THREE.MathUtils.clamp(180 / turnRateDeg, 0.45, 4.0);
     const homingDelay = THREE.MathUtils.clamp(Number(weaponDef?.homingDelay) || 0, 0, 3);
     const ignitionDelayRaw = Number(weaponDef?.ignitionDelay);
     const speedScale = Math.max(0.9, desiredSpeed / 900);
     const cruiseAltitudeDefault = Math.min(ROCKET.maxAltitude * 0.72, Math.max(10, desiredSpeed * 0.015));
     const cruiseAltitudeRaw = Number(weaponDef?.cruiseAltitude);
+    const proximityDefault = Math.max(blastRadius * 0.9, 38 * speedFactor * Math.sqrt(turnPenalty));
+    const proximityRadius = THREE.MathUtils.clamp(
+        Number(weaponDef?.proximityRadius) || proximityDefault,
+        50,
+        320
+    );
+    const terminalRadius = THREE.MathUtils.clamp(
+        Number(weaponDef?.terminalRadius) || Math.max(proximityRadius * 2.15, desiredSpeed * 0.16 * turnPenalty),
+        proximityRadius * 1.2,
+        Math.max(proximityRadius * 4.5, 900)
+    );
+    const reacquireRadius = THREE.MathUtils.clamp(
+        Number(weaponDef?.reacquireRadius) || Math.max(terminalRadius * 1.45, desiredSpeed * 0.36 * turnPenalty),
+        terminalRadius,
+        Math.max(terminalRadius * 4.0, 2400)
+    );
     return {
         desiredSpeed,
         maxRange,
@@ -125,7 +143,40 @@ function resolveRocketProfile(weaponDef) {
         cruiseAltitude: Number.isFinite(cruiseAltitudeRaw)
             ? THREE.MathUtils.clamp(cruiseAltitudeRaw, 0, ROCKET.maxAltitude * 0.9)
             : cruiseAltitudeDefault,
-        hitRadius: THREE.MathUtils.clamp(Number(weaponDef?.proximityRadius) || (blastRadius * 0.9), 50, 220)
+        proximityRadius,
+        terminalRadius,
+        reacquireRadius,
+        reacquireTurnMultiplier: THREE.MathUtils.clamp(
+            Number(weaponDef?.reacquireTurnMultiplier) || THREE.MathUtils.lerp(2.3, 1.55, THREE.MathUtils.clamp(turnRateDeg / 420, 0, 1)),
+            1.2,
+            3.2
+        ),
+        reacquireSpeedFactor: THREE.MathUtils.clamp(
+            Number(weaponDef?.reacquireSpeedFactor) || THREE.MathUtils.lerp(0.52, 0.72, THREE.MathUtils.clamp(turnRateDeg / 420, 0, 1)),
+            0.35,
+            0.95
+        ),
+        terminalSpeedFactor: THREE.MathUtils.clamp(
+            Number(weaponDef?.terminalSpeedFactor) || THREE.MathUtils.lerp(0.68, 0.86, THREE.MathUtils.clamp(turnRateDeg / 420, 0, 1)),
+            0.45,
+            1.0
+        ),
+        leadHorizon: THREE.MathUtils.clamp(
+            Number(weaponDef?.leadHorizon) || THREE.MathUtils.lerp(0.82, 0.38, THREE.MathUtils.clamp(turnRateDeg / 420, 0, 1)),
+            0,
+            1
+        ),
+        terminalLeadHorizon: THREE.MathUtils.clamp(
+            Number(weaponDef?.terminalLeadHorizon) || THREE.MathUtils.lerp(0.18, 0.06, THREE.MathUtils.clamp(turnRateDeg / 420, 0, 1)),
+            0,
+            0.5
+        ),
+        bodyScale: THREE.MathUtils.clamp(Number(weaponDef?.bodyScale) || 1, 0.35, 3.0),
+        exhaustScale: THREE.MathUtils.clamp(Number(weaponDef?.exhaustScale) || 1, 0.35, 3.0),
+        fireScale: THREE.MathUtils.clamp(Number(weaponDef?.fireScale) || 1, 0.2, 3.0),
+        smokeScale: THREE.MathUtils.clamp(Number(weaponDef?.smokeScale) || 1, 0.2, 3.0),
+        explosionVisualScale: THREE.MathUtils.clamp(Number(weaponDef?.explosionVisualScale) || 1, 0.25, 4.0),
+        hitRadius: proximityRadius
     };
 }
 
@@ -184,17 +235,36 @@ class RocketSystem3D {
                 homingDelay:    0,
                 ignitionDelay:  0,
                 cruiseAltitude: 0,
+                guidancePhase:  "launch",
                 damage:         0,
                 blastRadius:    0,
                 desiredSpeed:   0,
                 maxRange:       0,
                 hitRadius:      0,
+                proximityRadius: 0,
+                terminalRadius: 0,
+                reacquireRadius: 0,
+                reacquireTurnMultiplier: 1,
+                reacquireSpeedFactor: 1,
+                terminalSpeedFactor: 1,
+                leadHorizon: 0,
+                terminalLeadHorizon: 0,
+                bodyScale: 1,
+                exhaustScale: 1,
+                fireScale: 1,
+                smokeScale: 1,
+                explosionVisualScale: 1,
                 didImpactDamage:false,
                 weaponDef:      null,
                 launchPos:      new THREE.Vector3(),
                 prevTravelPos:  new THREE.Vector3(),
                 travelDistance: 0,
                 closestTargetDist: Infinity,
+                lastTargetDist: Infinity,
+                missCount: 0,
+                reacquireUntil: 0,
+                terminalEnteredAtDist: Infinity,
+                missGrowTime: 0,
                 visualDir:      new THREE.Vector3(0, 0, 1)
             });
             _dummy.position.set(0, -999999, 0);
@@ -237,6 +307,7 @@ class RocketSystem3D {
         r.quaternion.identity();
         r.target          = target;
         r.state           = "EJECTED";
+        r.guidancePhase   = "launch";
         r.timeSinceLaunch = 0;
         r.launchPos.copy(r.position);
         r.prevTravelPos.copy(r.position);
@@ -254,9 +325,27 @@ class RocketSystem3D {
         r.desiredSpeed    = profile.desiredSpeed;
         r.maxRange        = profile.maxRange;
         r.hitRadius       = profile.hitRadius;
+        r.proximityRadius = profile.proximityRadius;
+        r.terminalRadius = profile.terminalRadius;
+        r.reacquireRadius = profile.reacquireRadius;
+        r.reacquireTurnMultiplier = profile.reacquireTurnMultiplier;
+        r.reacquireSpeedFactor = profile.reacquireSpeedFactor;
+        r.terminalSpeedFactor = profile.terminalSpeedFactor;
+        r.leadHorizon = profile.leadHorizon;
+        r.terminalLeadHorizon = profile.terminalLeadHorizon;
+        r.bodyScale = profile.bodyScale;
+        r.exhaustScale = profile.exhaustScale;
+        r.fireScale = profile.fireScale;
+        r.smokeScale = profile.smokeScale;
+        r.explosionVisualScale = profile.explosionVisualScale;
         r.didImpactDamage = false;
         r.weaponDef       = weaponDef;
         r.closestTargetDist = Infinity;
+        r.lastTargetDist = Infinity;
+        r.missCount = 0;
+        r.reacquireUntil = 0;
+        r.terminalEnteredAtDist = Infinity;
+        r.missGrowTime = 0;
         r.prevExhaustPos.copy(r.position);
 
         const initialAim = target && !target.dead
@@ -318,26 +407,98 @@ class RocketSystem3D {
                 }
             }
 
-            /* ── Guidance (slerp toward target) before thrust integration ── */
+            let guidanceDesiredSpeed = Math.max(300, r.desiredSpeed || 1200);
+
+            /* ── Guidance phases: launch / intercept / terminal / reacquire ── */
             if (r.target && !r.target.dead) {
                 const isPointTarget = !!r.target._isPositionTarget;
-                const planarSpeed = Math.max(300, Math.hypot(r.velocity.x, r.velocity.z), r.desiredSpeed || 0);
-                const aim = isPointTarget
-                    ? {
-                        x: Number(r.target.x ?? r.target.pos?.x) || r.position.x,
-                        y: Number(r.target.y ?? r.target.pos?.y) || r.position.z
+                const tx = Number(r.target.x ?? r.target.pos?.x) || r.position.x;
+                const ty = Number(r.target.y ?? r.target.pos?.y) || r.position.z;
+                const targetRadius = isPointTarget ? 0 : Math.max(
+                    Number(r.target.radius) || 0,
+                    (Number(r.target.w) || 0) * 0.5,
+                    (Number(r.target.h) || 0) * 0.5
+                );
+                const fuseRadius = Math.max(r.proximityRadius || r.hitRadius || R.hitRadius, targetRadius * 0.9);
+                const terminalRadius = Math.max(r.terminalRadius || fuseRadius * 2, fuseRadius * 1.35);
+                const reacquireRadius = Math.max(r.reacquireRadius || terminalRadius * 1.4, terminalRadius);
+
+                const directDx = tx - r.position.x;
+                const directDz = ty - r.position.z;
+                const dist2D = Math.hypot(directDx, directDz);
+
+                if (isPointTarget) {
+                    r.guidancePhase = (r.state === "EJECTED") ? "launch" : "intercept";
+                } else if (r.guidancePhase === "launch" && r.state === "POWERED") {
+                    r.guidancePhase = "intercept";
+                }
+
+                if (!isPointTarget) {
+                    if (r.guidancePhase !== "reacquire" && dist2D <= terminalRadius) {
+                        if (r.guidancePhase !== "terminal") {
+                            r.guidancePhase = "terminal";
+                            r.terminalEnteredAtDist = dist2D;
+                            r.missGrowTime = 0;
+                        }
+                    } else if (r.guidancePhase === "reacquire" && (dist2D <= terminalRadius * 1.15 || r.timeSinceLaunch >= r.reacquireUntil)) {
+                        r.guidancePhase = dist2D <= terminalRadius ? "terminal" : "intercept";
+                        if (r.guidancePhase === "terminal") r.terminalEnteredAtDist = dist2D;
+                        r.missGrowTime = 0;
                     }
+
+                    if (r.guidancePhase === "terminal" && Number.isFinite(r.lastTargetDist)) {
+                        const missThreshold = Math.max(14, fuseRadius * 0.1);
+                        const closeEnoughForMiss = r.lastTargetDist <= Math.max(reacquireRadius, fuseRadius * 1.9);
+                        if (dist2D > r.lastTargetDist + missThreshold && closeEnoughForMiss && dist2D > fuseRadius * 1.08) {
+                            r.missGrowTime += dt;
+                            if (r.missGrowTime >= 0.06) {
+                                r.guidancePhase = "reacquire";
+                                r.missCount += 1;
+                                r.reacquireUntil = r.timeSinceLaunch + THREE.MathUtils.clamp(0.24 + r.missCount * 0.08, 0.24, 0.9);
+                                r.missGrowTime = 0;
+                            }
+                        } else {
+                            r.missGrowTime = Math.max(0, r.missGrowTime - dt * 2.5);
+                        }
+                    }
+                }
+
+                const planarSpeed = Math.max(300, Math.hypot(r.velocity.x, r.velocity.z), guidanceDesiredSpeed);
+                const leadPoint = isPointTarget
+                    ? { x: tx, y: ty }
                     : solveLeadAim2D(
                         { x: r.position.x, y: r.position.z },
                         { x: r.velocity.x, y: r.velocity.z },
                         r.target,
                         planarSpeed
                     );
-                const dx = aim.x - r.position.x;
-                const dz = aim.y - r.position.z;
-                const dist2D = Math.hypot(dx, dz);
-                const cruiseThreshold = Math.max(600, (r.hitRadius || R.hitRadius) * 8);
-                const targetY = dist2D > cruiseThreshold ? r.cruiseAltitude : 0;
+
+                let leadWeight = 0;
+                let targetY = 0;
+                let effectiveTurnRate = Math.max(0.001, r.turnRateRad);
+                if (r.guidancePhase === "launch") {
+                    leadWeight = isPointTarget ? 0 : 0.15;
+                    targetY = r.cruiseAltitude * 0.65;
+                } else if (r.guidancePhase === "intercept") {
+                    leadWeight = isPointTarget ? 0 : r.leadHorizon;
+                    targetY = dist2D > terminalRadius ? r.cruiseAltitude : 0;
+                } else if (r.guidancePhase === "terminal") {
+                    leadWeight = isPointTarget ? 0 : r.terminalLeadHorizon;
+                    targetY = 0;
+                    guidanceDesiredSpeed *= r.terminalSpeedFactor;
+                    effectiveTurnRate *= 1.25;
+                } else if (r.guidancePhase === "reacquire") {
+                    leadWeight = isPointTarget ? 0 : Math.min(0.18, r.terminalLeadHorizon);
+                    targetY = 0;
+                    guidanceDesiredSpeed *= r.reacquireSpeedFactor;
+                    effectiveTurnRate *= r.reacquireTurnMultiplier;
+                }
+
+                const aimX = THREE.MathUtils.lerp(tx, leadPoint.x, leadWeight);
+                const aimZ = THREE.MathUtils.lerp(ty, leadPoint.y, leadWeight);
+                const dx = aimX - r.position.x;
+                const dz = aimZ - r.position.z;
+
                 _targetDir.set(
                     dx,
                     THREE.MathUtils.clamp(targetY - r.position.y, -Math.max(60, r.cruiseAltitude), Math.max(120, r.cruiseAltitude)),
@@ -347,12 +508,34 @@ class RocketSystem3D {
                 if (_targetDir.lengthSq() > 1e-6) {
                     _targetDir.normalize();
                     _qTarget.setFromUnitVectors(_BASE_FWD, _targetDir);
-                    if (r.timeSinceLaunch >= r.homingDelay) {
-                        r.quaternion.rotateTowards(_qTarget, Math.max(0.001, r.turnRateRad) * dt);
+                    _forward.set(0, 1, 0).applyQuaternion(r.quaternion).normalize();
+
+                    const planarForwardLen = Math.hypot(_forward.x, _forward.z);
+                    let angleError = 0;
+                    if (planarForwardLen > 1e-6) {
+                        const fx = _forward.x / planarForwardLen;
+                        const fz = _forward.z / planarForwardLen;
+                        const aimLen = Math.hypot(dx, dz);
+                        if (aimLen > 1e-6) {
+                            const ax = dx / aimLen;
+                            const az = dz / aimLen;
+                            angleError = Math.acos(THREE.MathUtils.clamp(fx * ax + fz * az, -1, 1));
+                        }
+                    }
+
+                    if (r.guidancePhase === "reacquire" || r.guidancePhase === "terminal") {
+                        const anglePenalty = THREE.MathUtils.clamp(angleError / Math.PI, 0, 1);
+                        guidanceDesiredSpeed *= THREE.MathUtils.lerp(1.0, 0.45, anglePenalty);
+                    }
+
+                    if (r.timeSinceLaunch >= r.homingDelay || r.guidancePhase === "reacquire" || r.guidancePhase === "terminal") {
+                        r.quaternion.rotateTowards(_qTarget, effectiveTurnRate * dt);
                     } else {
                         r.quaternion.slerp(_qTarget, THREE.MathUtils.clamp(dt * 6, 0, 0.18));
                     }
                 }
+
+                r.lastTargetDist = dist2D;
             }
 
             /* ── Physics ── */
@@ -387,7 +570,7 @@ class RocketSystem3D {
 
             if (r.state === "POWERED") {
                 const speed = r.velocity.length();
-                const desiredSpeed = Math.max(300, r.desiredSpeed || 1200);
+                const desiredSpeed = Math.max(220, guidanceDesiredSpeed);
                 const throttleNorm = THREE.MathUtils.clamp(((desiredSpeed - speed) / desiredSpeed) * 1.4 + 0.25, 0.12, 1.0);
                 r.currentThrust = r.maxThrust * throttleNorm;
             }
@@ -404,16 +587,18 @@ class RocketSystem3D {
 
             _dummy.position.copy(r.position);
             _dummy.quaternion.copy(_renderQuat);
+            _dummy.scale.setScalar(r.bodyScale || 1);
             _dummy.updateMatrix();
             this.mesh.setMatrixAt(r.index, _dummy.matrix);
 
             /* ── Exhaust position (behind rocket: local -Z for top-down visual) ── */
-            _exhaustP.set(0, 0, -R.exhaustOffset).applyMatrix4(_dummy.matrix);
+            _exhaustP.set(0, 0, -R.exhaustOffset * (r.exhaustScale || 1)).applyMatrix4(_dummy.matrix);
 
             /* ── Spawn FIRE particles ── */
             if (r.currentThrust > 0) {
                 const dist = _exhaustP.distanceTo(r.prevExhaustPos);
                 const steps = Math.min(15, Math.ceil(dist / Math.max(R.exhaustGap, 0.3)));
+                const exhaustScale = Math.max(0.35, r.exhaustScale || 1);
 
                 for (let s = 0; s < steps; s++) {
                     const jt = (s + Math.random() * 0.4 - 0.2) / steps;
@@ -422,22 +607,24 @@ class RocketSystem3D {
                     const sy = r.prevExhaustPos.y + (_exhaustP.y - r.prevExhaustPos.y) * t;
                     const sz = r.prevExhaustPos.z + (_exhaustP.z - r.prevExhaustPos.z) * t;
 
-                    const vx = -_renderDir.x * R.exhaustVel * FS.velMult + (Math.random() - 0.5) * R.exhaustSpread;
-                    const vy = (-12 * WS) + (Math.random() - 0.5) * R.exhaustSpread * 0.18;
-                    const vz = -_renderDir.z * R.exhaustVel * FS.velMult + (Math.random() - 0.5) * R.exhaustSpread;
+                    const vx = -_renderDir.x * R.exhaustVel * exhaustScale * FS.velMult + (Math.random() - 0.5) * R.exhaustSpread * exhaustScale;
+                    const vy = (-12 * WS) + (Math.random() - 0.5) * R.exhaustSpread * exhaustScale * 0.18;
+                    const vz = -_renderDir.z * R.exhaustVel * exhaustScale * FS.velMult + (Math.random() - 0.5) * R.exhaustSpread * exhaustScale;
 
                     this.fireGPU.spawn(sx, sy, sz, vx, vy, vz,
-                        0,                                      // size (computed by shader for type 0)
-                        FS.life + Math.random() * 0.05,         // life
+                        Math.max(0.1, r.fireScale || 1),
+                        Math.max(0.08, (FS.life + Math.random() * 0.05) * THREE.MathUtils.lerp(0.78, 1.0, Math.min(1, r.fireScale || 1))),
                         0);                                     // type = FIRE
 
                     if ((s & 1) === 0) {
                         this.smokeGPU.spawn(
                             sx, sy, sz,
-                            -_renderDir.x * R.exhaustVel * 0.18 + (Math.random() - 0.5) * R.exhaustSpread * 1.4,
+                            -_renderDir.x * R.exhaustVel * 0.18 * exhaustScale + (Math.random() - 0.5) * R.exhaustSpread * 1.4 * exhaustScale,
                             4 + Math.random() * 10,
-                            -_renderDir.z * R.exhaustVel * 0.18 + (Math.random() - 0.5) * R.exhaustSpread * 1.4,
-                            0, 1.6 + Math.random() * 1.4, 1
+                            -_renderDir.z * R.exhaustVel * 0.18 * exhaustScale + (Math.random() - 0.5) * R.exhaustSpread * 1.4 * exhaustScale,
+                            Math.max(0.15, r.smokeScale || 1),
+                            Math.max(0.5, (1.6 + Math.random() * 1.4) * THREE.MathUtils.lerp(0.72, 1.0, Math.min(1, r.smokeScale || 1))),
+                            1
                         );
                     }
                 }
@@ -446,7 +633,7 @@ class RocketSystem3D {
                 this.smokeGPU.spawn(
                     _exhaustP.x, _exhaustP.y, _exhaustP.z,
                     0, -20 * WS, 0,
-                    0, 0.3, 1
+                    Math.max(0.15, r.smokeScale || 1), Math.max(0.18, 0.3 * Math.max(0.6, r.smokeScale || 1)), 1
                 );
             }
 
@@ -473,16 +660,7 @@ class RocketSystem3D {
                     ? Math.max(320, fuseRadius * 4.0)
                     : Math.max(90, fuseRadius * 1.1);
                 const isArmed = (r.timeSinceLaunch >= minArmTime) && (traveled >= minArmDistance);
-                const passedClosest =
-                    Number.isFinite(r.closestTargetDist) &&
-                    dist2D > (r.closestTargetDist + Math.max(18, fuseRadius * 0.12));
-                const shouldDetonate =
-                    isArmed &&
-                    (
-                        dist2D <= fuseRadius ||
-                        (passedClosest && r.closestTargetDist <= fuseRadius * 1.35)
-                    );
-                r.closestTargetDist = Math.min(r.closestTargetDist, dist2D);
+                const shouldDetonate = isArmed && dist2D <= fuseRadius;
                 if (shouldDetonate) {
                     this._onHit(r);
                     this._explode(r);
@@ -580,7 +758,7 @@ class RocketSystem3D {
         const ex = r.position.x;
         const ey = Math.max(r.position.y, 0);
         const ez = r.position.z;
-        const eS = WS * Math.max(0.1, Number(FlameSettings.explosionSize) || 1.0);
+        const eS = WS * Math.max(0.1, Number(FlameSettings.explosionSize) || 1.0) * Math.max(0.25, r.explosionVisualScale || 1);
         this._applyBlastDamage(r, ex, ez);
 
         // 1. FLASH — one big, short burst

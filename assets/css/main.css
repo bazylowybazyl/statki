@@ -3169,6 +3169,7 @@
       gap: 8px;
       justify-content: center;
       margin-top: 4px;
+      flex-wrap: wrap;
     }
 
     .glass-key {
@@ -3190,15 +3191,25 @@
       transition: all 0.1s ease;
       cursor: pointer;
       pointer-events: auto;
+      overflow: hidden;
     }
 
-    .glass-key span {
+    .glass-key .glass-key-hint {
       position: absolute;
       top: 3px;
       left: 5px;
       font-size: 9px;
       color: rgba(255, 255, 255, 0.4);
-      font-family: var(--fa-font);
+      font-family: 'Consolas', monospace;
+      letter-spacing: 0.08em;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .glass-key .glass-key-code {
+      position: relative;
+      z-index: 2;
+      pointer-events: none;
     }
 
     .glass-key.active {
@@ -3212,6 +3223,150 @@
     .glass-key:hover {
       border-color: rgba(255, 255, 255, 0.4);
       background: linear-gradient(145deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%);
+    }
+
+    .glass-key.glass-key-weapon {
+      width: 46px;
+      height: 46px;
+      border-radius: 10px;
+      background: linear-gradient(180deg, rgba(21, 29, 48, 0.96), rgba(10, 16, 28, 0.96));
+      border-color: rgba(132, 156, 210, 0.18);
+    }
+
+    .glass-key.glass-key-weapon .glass-key-hint {
+      top: 4px;
+      left: 5px;
+      font-size: 8px;
+      color: rgba(188, 203, 236, 0.56);
+    }
+
+    .glass-key.glass-key-weapon .glass-key-code {
+      position: absolute;
+      right: 6px;
+      bottom: 4px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.88);
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+    }
+
+    .glass-key-weapon-icon {
+      position: absolute;
+      left: 6px;
+      right: 6px;
+      top: 11px;
+      bottom: 6px;
+      border-radius: 8px;
+      background: radial-gradient(circle at 50% 35%, rgba(112, 144, 220, 0.18), rgba(12, 18, 32, 0.94));
+      border: 1px solid rgba(104, 124, 186, 0.22);
+      box-shadow: inset 0 0 14px rgba(9, 14, 28, 0.88);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease, filter 0.18s ease;
+      z-index: 1;
+    }
+
+    .glass-key-weapon-icon img {
+      width: 88%;
+      height: 88%;
+      object-fit: contain;
+      image-rendering: auto;
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
+      pointer-events: none;
+    }
+
+    .glass-key-weapon-placeholder {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      color: #7d8eb7;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+
+    .glass-key-weapon-placeholder[data-type="main"] {
+      color: #90b4ff;
+    }
+
+    .glass-key-weapon-placeholder[data-type="missile"] {
+      color: #86e1c4;
+    }
+
+    .glass-key-weapon-placeholder[data-type="special"] {
+      color: #ffb2b2;
+    }
+
+    .glass-key.glass-key-weapon.weapon-slot-empty {
+      opacity: 0.72;
+    }
+
+    .glass-key.glass-key-weapon.weapon-slot-empty .glass-key-weapon-icon {
+      border-style: dashed;
+      background: rgba(10, 16, 28, 0.92);
+    }
+
+    .glass-key.glass-key-weapon.weapon-slot-standby {
+      border-color: rgba(248, 113, 113, 0.75);
+      box-shadow: 0 0 14px rgba(220, 38, 38, 0.14), inset 0 0 0 1px rgba(248, 113, 113, 0.08);
+    }
+
+    .glass-key.glass-key-weapon.weapon-slot-standby .glass-key-weapon-icon {
+      border-color: rgba(248, 113, 113, 0.4);
+      background: radial-gradient(circle at 50% 35%, rgba(248, 113, 113, 0.18), rgba(26, 12, 18, 0.96));
+      box-shadow: inset 0 0 14px rgba(33, 8, 10, 0.9), 0 0 12px rgba(239, 68, 68, 0.18);
+    }
+
+    .glass-key.glass-key-weapon.weapon-slot-armed {
+      border-color: rgba(74, 222, 128, 0.82);
+      box-shadow: 0 0 18px rgba(34, 197, 94, 0.24), inset 0 0 0 1px rgba(134, 239, 172, 0.12);
+    }
+
+    .glass-key.glass-key-weapon.weapon-slot-armed::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(74, 222, 128, 0.16), rgba(22, 163, 74, 0) 52%, rgba(187, 247, 208, 0.18));
+      opacity: 0.95;
+      pointer-events: none;
+      animation: weapon-slot-sheen 1.7s ease-in-out infinite;
+    }
+
+    .glass-key.glass-key-weapon.weapon-slot-armed .glass-key-weapon-icon {
+      border-color: rgba(74, 222, 128, 0.5);
+      background: radial-gradient(circle at 50% 35%, rgba(74, 222, 128, 0.22), rgba(8, 22, 13, 0.96));
+      box-shadow: inset 0 0 14px rgba(6, 20, 9, 0.92), 0 0 16px rgba(34, 197, 94, 0.28);
+      filter: saturate(1.16);
+      animation: weapon-slot-pulse 1.1s ease-in-out infinite;
+    }
+
+    .glass-key.glass-key-weapon.weapon-slot-armed .glass-key-code,
+    .glass-key.glass-key-weapon.weapon-slot-armed .glass-key-hint {
+      color: #ddffe9;
+    }
+
+    @keyframes weapon-slot-pulse {
+      0%, 100% {
+        transform: scale(1);
+        box-shadow: inset 0 0 14px rgba(6, 20, 9, 0.92), 0 0 12px rgba(34, 197, 94, 0.22);
+      }
+      50% {
+        transform: scale(1.035);
+        box-shadow: inset 0 0 18px rgba(10, 32, 16, 0.94), 0 0 22px rgba(74, 222, 128, 0.36);
+      }
+    }
+
+    @keyframes weapon-slot-sheen {
+      0%, 100% {
+        opacity: 0.7;
+      }
+      50% {
+        opacity: 1;
+      }
     }
 
     /* Menu Grid */

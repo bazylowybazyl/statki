@@ -41,6 +41,7 @@ const WEAPON_FX_PROFILE = {
   ciws_mk1: { key: 'ciws', recoil: 1.5, shake: 1.0 },
   laser_pd_mk1: { key: 'laserPD', recoil: 0.5, shake: 0.3 },
   missile_rack: { key: 'rocket', recoil: 4.0, shake: 2.0 },
+  fast_missile_rack: { key: 'rocket', recoil: 3.0, shake: 1.5 },
   siege_torpedo: { key: 'torpedo', recoil: 6.0, shake: 3.0 },
   siege_torpedo_mk2: { key: 'torpedo', recoil: 8.0, shake: 4.0 },
   torpedo_salvo: { key: 'torpedo', recoil: 5.0, shake: 2.5 },
@@ -76,6 +77,7 @@ function normalizeWeaponFxKey(weaponId) {
   if (id.includes('heavy_auto')) return 'autocannon';
   if (id.includes('ciws')) return 'ciws';
   if (id.includes('laser_pd')) return 'laserPD';
+  if (id.includes('fast_missile_rack')) return 'rocket';
   if (id.includes('missile_rack')) return 'rocket';
   if (id.includes('siege_torpedo')) return 'torpedo';
   if (id.includes('torpedo_salvo')) return 'torpedo';
@@ -1254,7 +1256,7 @@ function createWeapon3DMesh(weaponId, category, size) {
   else if (key === 'heavy_autocannon') mesh = buildHeavyAutocannonTurret(scaleMult);
   else if (key === 'ciws_mk1') mesh = buildCIWSTurret(scaleMult);
   else if (key === 'laser_pd_mk1') mesh = buildLaserPDTurret(scaleMult);
-  else if (key === 'missile_rack') mesh = buildMissileRackTurret(scaleMult);
+  else if (key === 'missile_rack' || key === 'fast_missile_rack') mesh = buildMissileRackTurret(scaleMult);
   else if (key === 'siege_torpedo' || key === 'siege_torpedo_mk2') mesh = buildSiegeTorpedoTurret(scaleMult);
   else if (key === 'torpedo_salvo') mesh = buildMissileRackTurret(scaleMult);
   else if (key === 'hexlance_siege') mesh = buildHexlanceTurret(scaleMult);

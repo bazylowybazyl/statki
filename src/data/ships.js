@@ -236,6 +236,23 @@ export const SUPPORT_SHIP_TEMPLATES = {
       separationRange: 440
     },
     configureId: 'battleship'
+  },
+  pirate_battleship: {
+    shield: { max: 7200, val: 7200, regenRate: 320, regenDelay: 5.2, impacts: [], state: 'activating' },
+    stats: {
+      hp: 12000,
+      accel: 91,
+      maxSpeed: 105,
+      turn: 0.6,
+      radius: 140,
+      mass: 50000,
+      rammingMass: 8000,
+      friction: 0.99,
+      separationRange: 440
+    },
+    configureId: 'battleship',
+    supportType: 'battleship',
+    pirate: true
   }
 };
 

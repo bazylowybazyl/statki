@@ -290,6 +290,16 @@
               Capital</span></div>
           <div class="support-count">x5</div>
         </div>
+        <div class="support-card" data-support-spawn="pirate_battleship">
+          <div class="ship-icon-wrap">
+            <div class="icon-battleship">
+              <div class="icon-bs-rect"></div>
+              <div class="icon-bs-chevron"></div>
+            </div>
+          </div>
+          <div class="support-details"><span class="ship-name">Pirate Battleship</span><span class="ship-role">Target Dummy</span></div>
+          <div class="support-count">x1</div>
+        </div>
         <div class="support-card" data-support-spawn="destroyer">
           <div class="ship-icon-wrap">
             <div class="icon-destroyer"></div>
@@ -1138,6 +1148,7 @@
     // Alias dla kompatybilności starego ekwipunku gracza, dopóki go nie zaktualizujemy
     const WEAPONS = MASTER_WEAPONS;
     window.MASTER_WEAPONS = MASTER_WEAPONS;
+    window.WEAPON_ICON_PATHS = WEAPON_ICON_PATHS;
     import {
       SHIPS as SHIP_FRAMES,
       SUPPORT_SHIP_TEMPLATES as SUPPORT_SHIP_TEMPLATES_DATA,
@@ -1861,7 +1872,8 @@
       'frigate_pd',
       'frigate_laser',
       'destroyer',
-      'battleship'
+      'battleship',
+      'pirate_battleship'
     ]);
     const SUPPORT_CLICK_TYPES = new Set([
       'fighter',
@@ -2940,6 +2952,7 @@
       frigate_laser: 'Fregata Laserowa',
       destroyer: 'Destroyer',
       battleship: 'Battleship',
+      pirate_battleship: 'Pirate Battleship',
       carrier: 'Capital',
       capital: 'Capital',
       supercapital: 'Supercapital'
@@ -3116,7 +3129,7 @@
     }
 
     const SUPPORT_FORMATION = {
-      lineOrder: ['frigate_laser', 'frigate_pd', 'destroyer', 'battleship', 'carrier', 'supercapital', 'fighter'],
+      lineOrder: ['frigate_laser', 'frigate_pd', 'destroyer', 'battleship', 'pirate_battleship', 'carrier', 'supercapital', 'fighter'],
       lead: 0,
       lineGap: 200,
       lateralGap: 1500,
@@ -4163,6 +4176,7 @@
       'beam_pulse',
       'heavy_autocannon',
       'missile_rack',
+      'fast_missile_rack',
       'ciws_mk1',
       'laser_pd_mk1',
       'fighter_bay',
@@ -5094,9 +5108,38 @@
         warpSpeed: warp?.speed ?? 0
       };
       const envData = {
-        locationName: zoneState.current?.label || 'UNKNOWN SECTOR'
+        locationName: zoneState.current?.label || 'UNKNOWN SECTOR',
+        weaponHud: buildWeaponHudState()
       };
       window.hudSystem.update(ship, sysData, envData);
+    }
+
+    function getHudWeaponByType(type) {
+      const entries = Game.player?.weapons?.[type] || [];
+      for (let i = 0; i < entries.length; i++) {
+        const weapon = entries[i]?.weapon;
+        if (weapon) return weapon;
+      }
+      return null;
+    }
+
+    function buildWeaponHudState() {
+      const hasTargets = !!(lockedTargets && lockedTargets.length > 0);
+      return {
+        hasTargets,
+        main: {
+          weapon: getHudWeaponByType(HP.MAIN),
+          enabled: !!mainAutoFire
+        },
+        special: {
+          weapon: getHudWeaponByType(HP.SPECIAL),
+          enabled: !!specialAutoFire
+        },
+        missile: {
+          weapon: getHudWeaponByType(HP.MISSILE),
+          enabled: !!rocketAutoFire
+        }
+      };
     }
     function wrapAngle(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; }
     window.wrapAngle = wrapAngle;
@@ -6874,6 +6917,7 @@
       const created = [];
       const count = Math.max(1, template.count || 1);
       const spawnFormation = SUPPORT_FORMATION.spawn || { perRow: 4, rowGap: 70 };
+      const isEnemyDummy = template.pirate === true;
       for (let i = 0; i < count; i++) {
         const jitter = (Math.random() * 12 - 6);
         const offset = {
@@ -6883,19 +6927,25 @@
         const rotated = rotate(offset, baseAngle);
         const spawnPos = { x: basePos.x + rotated.x, y: basePos.y + rotated.y };
         const npc = makeNPCBase(spawnPos, { ...template.stats, shield: template.shield });
-        npc.friendly = true;
+        npc.friendly = !isEnemyDummy;
         npc.mission = true;
-        npc.color = template.color || '#7cff91';
-        npc.type = templateKey;
+        npc.color = template.color || (isEnemyDummy ? '#ff5c7c' : '#7cff91');
+        npc.type = template.supportType || templateKey;
+        if (template.pirate) npc.isPirate = true;
         assignNpcShipFrame(npc);
         npc.vx = anchorVel.x ?? npc.vx;
         npc.vy = anchorVel.y ?? npc.vy;
-        npc.supportData = { npc, type: templateKey, slotIndex: SupportWing.units.length + created.length, leader: anchor };
         template.configure?.(npc, i);
         applyEditorLayoutToNpc(npc);
-        equipNpcWeapons(npc, 'terran');
-        npc.ai = dt => runSupportAI(npc, dt);
-        SupportWing.units.push(npc.supportData);
+        equipNpcWeapons(npc, template.pirate ? 'pirate' : 'terran');
+        if (isEnemyDummy) {
+          npc.ai = null;
+          npc.supportData = null;
+        } else {
+          npc.supportData = { npc, type: template.supportType || templateKey, slotIndex: SupportWing.units.length + created.length, leader: anchor };
+          npc.ai = dt => runSupportAI(npc, dt);
+          SupportWing.units.push(npc.supportData);
+        }
         npcs.push(npc);
         created.push(npc);
       }
