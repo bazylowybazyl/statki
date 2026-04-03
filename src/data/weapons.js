@@ -83,9 +83,19 @@ export const MASTER_WEAPONS = {
   // RAKIETY
   // ==========================================================================
   missile_rack: { 
-    id: 'missile_rack', name: 'Standard Missile Rack', mountType: 'missile', category: 'rocket', size: 'M',
+    id: 'missile_rack', name: 'Cruise Missile Rack', mountType: 'missile', category: 'rocket', size: 'M',
     baseDamage: 90, baseRange: 24000, baseSpeed: 1800, cooldown: 2.5, ammo: 20,
     turnRate: 420, homingDelay: 0.2, explosionRadius: 72, vfxColor: '#ffbb77' 
+  },
+  fast_missile_rack: {
+    id: 'fast_missile_rack', name: 'Fast Missile Rack', mountType: 'missile', category: 'rocket', size: 'S',
+    baseDamage: 55, baseRange: 12000, baseSpeed: 3200, cooldown: 1.6, ammo: 28,
+    turnRate: 920, homingDelay: 0.08, explosionRadius: 42, vfxColor: '#ffd27a',
+    bodyScale: 0.56, exhaustScale: 0.6, fireScale: 0.58, smokeScale: 0.55, explosionVisualScale: 0.72,
+    proximityRadius: 58, terminalRadius: 150, reacquireRadius: 420,
+    reacquireTurnMultiplier: 2.75, reacquireSpeedFactor: 0.5, terminalSpeedFactor: 0.62,
+    leadHorizon: 0.3, terminalLeadHorizon: 0.04,
+    description: 'Short-range high-agility missile rack. Smaller, faster missiles built for nimble targets.'
   },
   // ==========================================================================
   // HANGARY
@@ -188,5 +198,6 @@ export const WEAPON_ICON_PATHS = {
   siege_railgun: 'assets/weapons/railgun.svg',
   ciws_mk1: 'assets/weapons/ciws.svg',
   laser_pd_mk1: 'assets/weapons/laser_pd.svg',
-  missile_rack: 'assets/weapons/missile_rack.svg'
+  missile_rack: 'assets/weapons/missile_rack.svg',
+  fast_missile_rack: 'assets/weapons/missile_rack.svg'
 };

@@ -130,9 +130,10 @@ export class RocketFireGPU {
 
                     // ── FIRE (type 0) ──
                     if (type < 0.5) {
+                        float flameScale = max(0.05, aData.z);
                         float shape = 1.0 - pow(ageNorm, 2.5);
                         float mach  = 1.0 + sin(ageNorm * 30.0) * 0.3 * (1.0 - ageNorm);
-                        currentSize = u_startSize * shape * mach * (1.0 + ageNorm * u_growth);
+                        currentSize = u_startSize * flameScale * shape * mach * (1.0 + ageNorm * u_growth);
 
                         // Turbulence on horizontal plane (X, Z in Y-up)
                         float scatter = pow(ageNorm, 3.0) * 60.0 * u_worldScale;

@@ -98,7 +98,8 @@ export class RocketSmokeGPU {
                     // Buoyancy (smoke rises in +Y)
                     pos.y += (80.0 * u_worldScale) * age + age * age * (150.0 * u_worldScale);
 
-                    float currentSize = u_smokeSize + age * 600.0 * u_worldScale;
+                    float smokeScale = max(0.05, aData.z);
+                    float currentSize = smokeScale * (u_smokeSize + age * 600.0 * u_worldScale);
 
                     vColor = vec3(0.42, 0.38, 0.34);
                     vAlpha = smoothstep(0.0, 0.2, ageNorm) * ratio * 0.95;

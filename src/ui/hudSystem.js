@@ -215,9 +215,12 @@ export class HUDSystem {
         this.cache = {};
 
         this.skillKeys = [
-            { key: '4', label: 'MODE' },
-            { key: '5', label: 'COMM' },
-            { key: 'CAPS', label: 'SCAN' },
+            { key: '1', label: 'MAIN', weaponType: 'main' },
+            { key: '2', label: 'SPEC', weaponType: 'special' },
+            { key: '3', label: 'MISS', weaponType: 'missile' },
+            { key: '4', label: 'MODE', menuState: 'MODE' },
+            { key: '5', label: 'COMM', menuState: 'COMM' },
+            { key: 'CAPS', label: 'SCAN', menuState: 'SCAN' },
             { key: '6', label: 'MAP' },
             { key: '7', label: 'AUTO' },
             { key: '8', label: 'AUX' }
@@ -273,13 +276,13 @@ export class HUDSystem {
             if(panel) panel.classList.toggle('collapsed');
         };
 
-        const btn1 = this.dom.skillRow?.querySelector('.glass-key:nth-child(1)');
+        const btn1 = this.dom.skillRow?.querySelector('.glass-key[data-menu-state="MODE"]');
         if(btn1) btn1.addEventListener('click', () => this.setBottomMenuState('MODE'));
 
-        const btn2 = this.dom.skillRow?.querySelector('.glass-key:nth-child(2)');
+        const btn2 = this.dom.skillRow?.querySelector('.glass-key[data-menu-state="COMM"]');
         if(btn2) btn2.addEventListener('click', () => this.setBottomMenuState('COMM'));
 
-        const btn3 = this.dom.skillRow?.querySelector('.glass-key:nth-child(3)');
+        const btn3 = this.dom.skillRow?.querySelector('.glass-key[data-menu-state="SCAN"]');
         if(btn3) btn3.addEventListener('click', () => this.setBottomMenuState('SCAN'));
 
         const terminalHost = this.dom.drawerContent;
@@ -402,7 +405,7 @@ export class HUDSystem {
         if (!supportPanel) return;
 
         const cards = supportPanel.querySelectorAll('.support-card');
-        const spawnTypes = ['carrier_capital', 'battleship', 'destroyer', 'frigate_pd', 'fighter'];
+        const spawnTypes = ['carrier_capital', 'battleship', 'pirate_battleship', 'destroyer', 'frigate_pd', 'fighter'];
 
         cards.forEach((card, index) => {
             const spawnKey = card.dataset.supportSpawn || card.dataset.spawnType || spawnTypes[index];
@@ -422,6 +425,7 @@ export class HUDSystem {
     update(ship, sys, env) {
         if (this.dom.centerDock && this.dom.centerDock.offsetParent === null) return;
         if (!ship || !this.dom.hpFill) return;
+        this.updateWeaponSlots(env?.weaponHud);
         if (this.menuState === 'SCAN' || this.menuState === 'STATION') {
             const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
             const canRefreshStationList =
@@ -655,13 +659,13 @@ export class HUDSystem {
         btns.forEach(b => b.classList.remove('active'));
         
         if (this.menuState === 'MODE') {
-            const btn = this.dom.skillRow.querySelector('.glass-key:nth-child(1)'); 
+            const btn = this.dom.skillRow.querySelector('.glass-key[data-menu-state="MODE"]'); 
             if(btn) btn.classList.add('active');
         } else if (this.menuState === 'COMM') {
-            const btn = this.dom.skillRow.querySelector('.glass-key:nth-child(2)'); 
+            const btn = this.dom.skillRow.querySelector('.glass-key[data-menu-state="COMM"]'); 
             if(btn) btn.classList.add('active');
         } else if (this.menuState === 'SCAN' || this.menuState === 'STATION') {
-            const btn = this.dom.skillRow.querySelector('.glass-key:nth-child(3)');
+            const btn = this.dom.skillRow.querySelector('.glass-key[data-menu-state="SCAN"]');
             if(btn) btn.classList.add('active');
         }
     }
@@ -750,10 +754,82 @@ export class HUDSystem {
             const keyEl = document.createElement('div');
             keyEl.className = 'glass-key';
             const hint = document.createElement('span');
+            hint.className = 'glass-key-hint';
             hint.textContent = entry.label;
-            keyEl.appendChild(hint);
-            keyEl.appendChild(document.createTextNode(entry.key));
+            keyEl.dataset.key = entry.key;
+            if (entry.weaponType) {
+                keyEl.classList.add('glass-key-weapon');
+                keyEl.dataset.weaponType = entry.weaponType;
+                const icon = document.createElement('div');
+                icon.className = 'glass-key-weapon-icon';
+                icon.dataset.placeholder = entry.weaponType;
+                keyEl.appendChild(hint);
+                keyEl.appendChild(icon);
+                const code = document.createElement('span');
+                code.className = 'glass-key-code';
+                code.textContent = entry.key;
+                keyEl.appendChild(code);
+            } else {
+                if (entry.menuState) keyEl.dataset.menuState = entry.menuState;
+                keyEl.appendChild(hint);
+                const code = document.createElement('span');
+                code.className = 'glass-key-code';
+                code.textContent = entry.key;
+                keyEl.appendChild(code);
+            }
             this.dom.skillRow.appendChild(keyEl);
+        });
+    }
+
+    updateWeaponSlots(weaponHud) {
+        if (!this.dom.skillRow) return;
+        const slots = this.dom.skillRow.querySelectorAll('.glass-key[data-weapon-type]');
+        if (!slots.length) return;
+
+        const iconPaths = window.WEAPON_ICON_PATHS || {};
+        const slotState = weaponHud || {};
+        const hasTargets = !!slotState.hasTargets;
+
+        slots.forEach((slot) => {
+            const weaponType = slot.dataset.weaponType;
+            const state = slotState[weaponType] || null;
+            const weapon = state?.weapon || null;
+            const enabled = !!state?.enabled;
+            const iconHost = slot.querySelector('.glass-key-weapon-icon');
+            if (!iconHost) return;
+
+            const weaponId = weapon?.id || '';
+            const iconPath = weaponId ? iconPaths[weaponId] : '';
+            const cacheKey = `${weaponType}:${weaponId}:${iconPath || 'none'}`;
+            if (slot.dataset.weaponCacheKey !== cacheKey) {
+                iconHost.innerHTML = '';
+                if (iconPath) {
+                    const img = document.createElement('img');
+                    img.src = iconPath;
+                    img.loading = 'lazy';
+                    img.alt = weapon?.name || weaponType;
+                    iconHost.appendChild(img);
+                } else {
+                    const placeholder = document.createElement('div');
+                    placeholder.className = 'glass-key-weapon-placeholder';
+                    placeholder.dataset.type = weaponType;
+                    placeholder.textContent = weapon ? 'NO ART' : 'EMPTY';
+                    iconHost.appendChild(placeholder);
+                }
+                slot.dataset.weaponCacheKey = cacheKey;
+                slot.title = weapon?.name || '';
+            }
+
+            slot.classList.remove('weapon-slot-neutral', 'weapon-slot-standby', 'weapon-slot-armed', 'weapon-slot-empty');
+            if (!weapon) {
+                slot.classList.add('weapon-slot-empty');
+                return;
+            }
+            if (!hasTargets) {
+                slot.classList.add('weapon-slot-neutral');
+                return;
+            }
+            slot.classList.add(enabled ? 'weapon-slot-armed' : 'weapon-slot-standby');
         });
     }
 
