@@ -1,3 +1,5 @@
+import { SUPPORT_SHIP_TEMPLATES, CAPITAL_SHIP_TEMPLATES } from '../data/ships.js';
+
 const PANEL_ID = 'destructor-mass-panel';
 const STYLE_ID = 'destructor-mass-panel-style';
 const STORAGE_KEY = 'devDestructorMassConfig';
@@ -11,16 +13,16 @@ const CONTROLS = [
   { key: 'ringMass', label: 'Ring planetarny', min: 10, max: 50000000, step: 1000 }
 ];
 
-const FALLBACK_DEFAULTS = {
-  playerMass: 800000,
-  npcBattleshipMass: 450000,
-  npcDestroyerMass: 300000,
-  npcCapitalMass: 600000,
+const SHIP_DEFAULTS = {
+  playerMass: Math.round(Number(CAPITAL_SHIP_TEMPLATES?.supercapital?.mass) || 200000),
+  npcBattleshipMass: Math.round(Number(SUPPORT_SHIP_TEMPLATES?.battleship?.stats?.mass) || 50000),
+  npcDestroyerMass: Math.round(Number(SUPPORT_SHIP_TEMPLATES?.destroyer?.stats?.mass) || 25000),
+  npcCapitalMass: Math.round(Number(CAPITAL_SHIP_TEMPLATES?.carrier?.mass) || 100000),
   ringMass: 2500000
 };
 
-let defaults = { ...FALLBACK_DEFAULTS };
-let state = { ...FALLBACK_DEFAULTS, version: 1 };
+let defaults = { ...SHIP_DEFAULTS };
+let state = { ...SHIP_DEFAULTS, version: 1 };
 let autoApplyTimer = null;
 
 function toNumber(value, fallback) {
@@ -91,19 +93,7 @@ function pickNpcMassByKey(key) {
 }
 
 function resolveDefaultsFromRuntime() {
-  const next = { ...FALLBACK_DEFAULTS };
-
-  const playerMass = Number(window.ship?.mass);
-  if (Number.isFinite(playerMass) && playerMass > 0) next.playerMass = Math.round(playerMass);
-
-  const npcBattleshipMass = pickNpcMassByKey('npcBattleshipMass');
-  if (Number.isFinite(npcBattleshipMass) && npcBattleshipMass > 0) next.npcBattleshipMass = Math.round(npcBattleshipMass);
-
-  const npcDestroyerMass = pickNpcMassByKey('npcDestroyerMass');
-  if (Number.isFinite(npcDestroyerMass) && npcDestroyerMass > 0) next.npcDestroyerMass = Math.round(npcDestroyerMass);
-
-  const npcCapitalMass = pickNpcMassByKey('npcCapitalMass');
-  if (Number.isFinite(npcCapitalMass) && npcCapitalMass > 0) next.npcCapitalMass = Math.round(npcCapitalMass);
+  const next = { ...SHIP_DEFAULTS };
 
   const ringMass = Number(getRingEntities().find(e => e && e.isRingSegment && !e.dead)?.mass);
   if (Number.isFinite(ringMass) && ringMass > 0) next.ringMass = Math.round(ringMass);

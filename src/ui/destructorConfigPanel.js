@@ -4,17 +4,96 @@ const PANEL_ID = 'destructor-config-panel';
 const STYLE_ID = 'destructor-config-panel-style';
 const STORAGE_KEY = 'devDestructorConfig';
 
-const CONTROLS = [
-  { key: 'tearThreshold', label: 'teargpu px', min: 20, max: 600, step: 1 },
-  { key: 'gpuPropagationDamping', label: 'tlumienie propagacji', min: 0.7, max: 0.999, step: 0.001 },
-  { key: 'softBodyTension', label: 'propagacja k', min: 0.01, max: 0.8, step: 0.005 },
-  { key: 'yieldPoint', label: 'yield px', min: 10, max: 400, step: 1 },
-  { key: 'maxDeform', label: 'max deform px', min: 40, max: 800, step: 1 },
-  { key: 'deformMul', label: 'impact deform mul', min: 0.1, max: 2.5, step: 0.01 },
-  { key: 'collisionDeformScale', label: 'collision deform scale', min: 0.2, max: 2.0, step: 0.01 },
-  { key: 'crushImpulseScale', label: 'crush impulse', min: 0.05, max: 1.5, step: 0.01 },
-  { key: 'crashApproachSpeedThreshold', label: 'crash speed px/s', min: 20, max: 400, step: 1 }
+const CONTROL_SECTIONS = [
+  {
+    title: 'Deform',
+    controls: [
+      { key: 'tearThreshold', label: 'tear threshold', min: 20, max: 600, step: 1 },
+      { key: 'yieldPoint', label: 'yield point', min: 10, max: 400, step: 1 },
+      { key: 'maxDeform', label: 'max deform', min: 40, max: 800, step: 1 },
+      { key: 'deformMul', label: 'impact deform mul', min: 0.1, max: 2.5, step: 0.01 },
+      { key: 'bendingRadius', label: 'bending radius', min: 4, max: 120, step: 1 },
+      { key: 'collisionDeformScale', label: 'collision deform', min: 0.2, max: 2.0, step: 0.01 },
+      { key: 'armorThreshold', label: 'armor threshold', min: 0.05, max: 4.0, step: 0.01 },
+      { key: 'inflictedDamageMult', label: 'damage multiplier', min: 0.05, max: 4.0, step: 0.01 }
+    ]
+  },
+  {
+    title: 'Soft Body',
+    controls: [
+      { key: 'softBodyTension', label: 'soft body tension', min: 0.01, max: 0.8, step: 0.005 },
+      { key: 'gpuPropagationDamping', label: 'gpu damping', min: 0.7, max: 0.999, step: 0.001 },
+      { key: 'recoverSpeed', label: 'recover speed', min: 0, max: 8.0, step: 0.05 },
+      { key: 'repairRate', label: 'repair rate', min: 0, max: 800, step: 5 },
+      { key: 'visualLerpSpeed', label: 'visual lerp', min: 0.1, max: 40, step: 0.1 },
+      { key: 'friction', label: 'shard friction', min: 0.7, max: 1.0, step: 0.001 }
+    ]
+  },
+  {
+    title: 'Collision',
+    controls: [
+      { key: 'collisionIterations', label: 'iterations', min: 1, max: 6, step: 1, integer: true },
+      { key: 'collisionSearchRadius', label: 'search radius', min: 2, max: 12, step: 1, integer: true },
+      { key: 'restitution', label: 'restitution', min: 0, max: 0.4, step: 0.01 },
+      { key: 'crushImpulseScale', label: 'crush impulse', min: 0.05, max: 1.5, step: 0.01 },
+      { key: 'crushPenetrationMin', label: 'crush penetration', min: 0.05, max: 1.0, step: 0.01 },
+      { key: 'shearK', label: 'shear k', min: 0, max: 0.25, step: 0.005 },
+      { key: 'crashApproachSpeedThreshold', label: 'crash speed', min: 20, max: 400, step: 1 }
+    ]
+  },
+  {
+    title: 'Sleep / Wake',
+    controls: [
+      { key: 'elasticSleepFrames', label: 'sleep frames', min: 1, max: 120, step: 1, integer: true },
+      { key: 'elasticSleepThreshold', label: 'sleep threshold', min: 0.0001, max: 2.0, step: 0.001 },
+      { key: 'elasticWakeFrames', label: 'wake frames', min: 1, max: 120, step: 1, integer: true }
+    ]
+  },
+  {
+    title: 'Broadphase',
+    controls: [
+      { key: 'broadphaseCellSize', label: 'cell size', min: 200, max: 5000, step: 50, integer: true },
+      { key: 'broadphaseMaxCandidates', label: 'max candidates', min: 16, max: 512, step: 8, integer: true },
+      { key: 'ringBroadphaseRadiusCap', label: 'ring radius cap', min: 200, max: 5000, step: 50, integer: true }
+    ]
+  },
+  {
+    title: 'Split',
+    controls: [
+      { key: 'splitForceThreshold', label: 'force threshold', min: 10, max: 300, step: 1 },
+      { key: 'splitDamageThreshold', label: 'damage threshold', min: 20, max: 600, step: 1 },
+      { key: 'splitCheckInterval', label: 'check interval', min: 1, max: 60, step: 1, integer: true },
+      { key: 'splitMaxPerTick', label: 'max per tick', min: 1, max: 12, step: 1, integer: true },
+      { key: 'splitTimeBudgetMs', label: 'time budget ms', min: 0.1, max: 10.0, step: 0.1 }
+    ]
+  },
+  {
+    title: 'GPU / Shards',
+    controls: [
+      { key: 'gpuSoftBody', label: 'gpu soft body', min: 0, max: 1, step: 1, integer: true },
+      { key: 'gpuSoftBodyMinShards', label: 'gpu min shards', min: 1, max: 512, step: 1, integer: true },
+      { key: 'shardHP', label: 'shard hp', min: 1, max: 500, step: 1 },
+      { key: 'shardMass', label: 'shard mass', min: 0.1, max: 100, step: 0.1 }
+    ]
+  },
+  {
+    title: 'Shield',
+    controls: [
+      { key: 'shieldRestitution', label: 'shield restitution', min: 0, max: 1.0, step: 0.01 },
+      { key: 'shieldCollisionDamageScale', label: 'collision damage', min: 0, max: 2.0, step: 0.01 },
+      { key: 'shieldSeparationPercent', label: 'separation percent', min: 0, max: 1.0, step: 0.01 },
+      { key: 'shieldSeparationSlop', label: 'separation slop', min: 0, max: 10.0, step: 0.1 },
+      { key: 'shieldCollisionCooldown', label: 'collision cooldown', min: 0, max: 1.0, step: 0.01 },
+      { key: 'shieldActivationDamageMult', label: 'activation damage', min: 0, max: 1.0, step: 0.01 },
+      { key: 'shieldCapitalDominanceRatio', label: 'capital dominance', min: 1.0, max: 8.0, step: 0.05 },
+      { key: 'shieldCapitalDominanceHeavyDamageMult', label: 'dominance heavy dmg', min: 0.01, max: 1.0, step: 0.01 },
+      { key: 'shieldAuthorityShieldMaxExp', label: 'authority shield exp', min: 0, max: 2.0, step: 0.01 },
+      { key: 'shieldAuthorityMassExp', label: 'authority mass exp', min: 0, max: 2.0, step: 0.01 }
+    ]
+  }
 ];
+
+const CONTROLS = CONTROL_SECTIONS.flatMap((section) => section.controls);
 
 const DEFAULTS = Object.freeze(
   CONTROLS.reduce((acc, control) => {
@@ -71,6 +150,14 @@ function saveState() {
   }
 }
 
+function clearSavedState() {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 function applyControlValue(control, nextRaw) {
   let next = clamp(toNumber(nextRaw, DESTRUCTOR_CONFIG[control.key]), control.min, control.max);
   if (control.integer) next = Math.round(next);
@@ -103,6 +190,16 @@ function ensureStyle() {
   text-transform:uppercase; color:#9fc1ff;
 }
 #${PANEL_ID} .body{ padding:10px 12px 12px; }
+#${PANEL_ID} .section{
+  margin-top:12px; padding-top:10px; border-top:1px solid rgba(52,71,112,.55);
+}
+#${PANEL_ID} .section:first-child{
+  margin-top:0; padding-top:0; border-top:none;
+}
+#${PANEL_ID} .section-title{
+  margin:0 0 8px 0; color:#9fc1ff; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+  font-size:11px;
+}
 #${PANEL_ID} .row{
   display:grid; grid-template-columns:145px 1fr 82px 64px; gap:8px; align-items:center; margin:8px 0;
 }
@@ -154,7 +251,16 @@ function createControlRow(parent, control) {
 
 function rebuildControls(root) {
   root.innerHTML = '';
-  for (const control of CONTROLS) createControlRow(root, control);
+  for (const section of CONTROL_SECTIONS) {
+    const sectionEl = document.createElement('div');
+    sectionEl.className = 'section';
+    const titleEl = document.createElement('div');
+    titleEl.className = 'section-title';
+    titleEl.textContent = section.title;
+    sectionEl.appendChild(titleEl);
+    for (const control of section.controls) createControlRow(sectionEl, control);
+    root.appendChild(sectionEl);
+  }
 }
 
 function createPanel() {
@@ -169,7 +275,8 @@ function createPanel() {
       <div class="controls"></div>
       <div class="buttons">
         <button type="button" data-action="copy">Copy JSON</button>
-        <button type="button" data-action="reset">Reset</button>
+        <button type="button" data-action="code-defaults">Reset to code defaults</button>
+        <button type="button" data-action="clear-saved">Clear saved</button>
       </div>
       <div class="hint">Panel sterowany z DevTools</div>
     </div>
@@ -189,11 +296,19 @@ function createPanel() {
     console.log(text);
   });
 
-  panel.querySelector('button[data-action="reset"]')?.addEventListener('click', () => {
+  panel.querySelector('button[data-action="code-defaults"]')?.addEventListener('click', () => {
     for (const control of CONTROLS) {
       DESTRUCTOR_CONFIG[control.key] = DEFAULTS[control.key];
     }
     saveState();
+    rebuildControls(controlsRoot);
+  });
+
+  panel.querySelector('button[data-action="clear-saved"]')?.addEventListener('click', () => {
+    clearSavedState();
+    for (const control of CONTROLS) {
+      DESTRUCTOR_CONFIG[control.key] = DEFAULTS[control.key];
+    }
     rebuildControls(controlsRoot);
   });
 
@@ -246,7 +361,15 @@ export function initDestructorConfigPanel() {
       const controlsRoot = panel?.querySelector('.controls');
       if (controlsRoot) rebuildControls(controlsRoot);
       return window.__destructorPanel;
+    },
+    clearSaved: () => {
+      clearSavedState();
+      for (const control of CONTROLS) {
+        DESTRUCTOR_CONFIG[control.key] = DEFAULTS[control.key];
+      }
+      const controlsRoot = panel?.querySelector('.controls');
+      if (controlsRoot) rebuildControls(controlsRoot);
+      return window.__destructorPanel;
     }
   };
 }
-

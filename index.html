@@ -1472,6 +1472,7 @@
         const counts = this.collectCounts();
         this.display.entities = counts.entities;
         this.display.shards = counts.shards;
+        this.display.sleepingShards = counts.sleepingShards;
         this.display.debris = counts.debris;
 
         this.updateDOM();
@@ -1484,6 +1485,7 @@
       collectCounts() {
         let entitiesCount = 0;
         let activeShards = 0;
+        let sleepingShards = 0;
         const all = [];
         if (ship && ship.hexGrid && !ship.dead) all.push(ship);
         for (const npc of npcs) {
@@ -1496,13 +1498,16 @@
         for (const e of all) {
           const shards = e?.hexGrid?.shards;
           if (!Array.isArray(shards)) continue;
+          const isSleeping = e.isWreck && e._wreckSleeping;
           for (let i = 0; i < shards.length; i++) {
             const s = shards[i];
-            if (s?.active && !s.isDebris) activeShards++;
+            if (!s?.active || s.isDebris) continue;
+            if (isSleeping) sleepingShards++;
+            else activeShards++;
           }
         }
         const debris = Array.isArray(DestructorSystem?.debris) ? DestructorSystem.debris.length : 0;
-        return { entities: entitiesCount, shards: activeShards, debris };
+        return { entities: entitiesCount, shards: activeShards, sleepingShards, debris };
       },
 
       updateDOM() {
@@ -1535,7 +1540,7 @@
         setBar(e.barDeform, d.deformTime);
         setBar(e.barAi, d.aiTime);
         setBar(e.barDraw, d.drawTime);
-        if (e.shards) e.shards.textContent = `${d.shards}`;
+        if (e.shards) e.shards.textContent = d.sleepingShards > 0 ? `${d.shards} (${d.sleepingShards} zz)` : `${d.shards}`;
         if (e.debris) e.debris.textContent = `${d.debris}`;
         if (e.contacts) e.contacts.textContent = `${Math.round(d.contacts)}`;
       },
@@ -4392,6 +4397,20 @@
       return null;
     }
 
+    function getEntityHardpointScale(entity) {
+      const scaleXRaw = Number(entity?.__hardpointScaleX);
+      const scaleYRaw = Number(entity?.__hardpointScaleY);
+      const uniformRaw = Number(entity?.__hardpointScale);
+      const uniform = (Number.isFinite(uniformRaw) && uniformRaw > 0) ? uniformRaw : 1;
+      const scaleX = (Number.isFinite(scaleXRaw) && scaleXRaw > 0) ? scaleXRaw : uniform;
+      const scaleY = (Number.isFinite(scaleYRaw) && scaleYRaw > 0) ? scaleYRaw : uniform;
+      return {
+        x: scaleX,
+        y: scaleY,
+        uniform: (scaleX + scaleY) * 0.5
+      };
+    }
+
     function getEntityHardpointLocalPos(entity, hp) {
       if (!hp) return null;
       if (hp.pos && Number.isFinite(hp.pos.x) && Number.isFinite(hp.pos.y)) {
@@ -4400,10 +4419,8 @@
       const x = Number(hp.x);
       const y = Number(hp.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-      const hpScale = (Number.isFinite(entity?.__hardpointScale) && entity.__hardpointScale > 0)
-        ? entity.__hardpointScale
-        : 1;
-      return { x: x * hpScale, y: y * hpScale };
+      const hpScale = getEntityHardpointScale(entity);
+      return { x: x * hpScale.x, y: y * hpScale.y };
     }
 
     function getEntityHardpointWorldPos(entity, hp) {
@@ -4428,10 +4445,8 @@
       const x = Number(core.x);
       const y = Number(core.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-      const hpScale = (Number.isFinite(entity?.__hardpointScale) && entity.__hardpointScale > 0)
-        ? entity.__hardpointScale
-        : 1;
-      return { x: x * hpScale, y: y * hpScale };
+      const hpScale = getEntityHardpointScale(entity);
+      return { x: x * hpScale.x, y: y * hpScale.y };
     }
 
     function isHardpointHexSupported(entity, hp) {
@@ -4440,10 +4455,8 @@
       const worldPos = getEntityHardpointWorldPos(entity, hp);
       if (!worldPos) return true;
       if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y)) return true;
-      const hpScale = (Number.isFinite(entity?.__hardpointScale) && entity.__hardpointScale > 0)
-        ? entity.__hardpointScale
-        : 1;
-      const r = HARDPOINT_INTEGRITY_CONFIG.probeRadius * hpScale;
+      const hpScale = getEntityHardpointScale(entity);
+      const r = HARDPOINT_INTEGRITY_CONFIG.probeRadius * hpScale.uniform;
       if (DestructorSystem.probeImpact(entity, worldPos.x + r, worldPos.y)) return true;
       if (DestructorSystem.probeImpact(entity, worldPos.x - r, worldPos.y)) return true;
       if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y + r)) return true;
@@ -4478,10 +4491,8 @@
       const worldPos = getEntityCoreWorldPos(entity, core);
       if (!worldPos) return true;
       if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y)) return true;
-      const hpScale = (Number.isFinite(entity?.__hardpointScale) && entity.__hardpointScale > 0)
-        ? entity.__hardpointScale
-        : 1;
-      const r = HARDPOINT_INTEGRITY_CONFIG.coreProbeRadius * hpScale;
+      const hpScale = getEntityHardpointScale(entity);
+      const r = HARDPOINT_INTEGRITY_CONFIG.coreProbeRadius * hpScale.uniform;
       if (DestructorSystem.probeImpact(entity, worldPos.x + r, worldPos.y)) return true;
       if (DestructorSystem.probeImpact(entity, worldPos.x - r, worldPos.y)) return true;
       if (DestructorSystem.probeImpact(entity, worldPos.x, worldPos.y + r)) return true;
@@ -5123,21 +5134,86 @@
       return null;
     }
 
+    function getMainWeaponHudCharge() {
+      const weapon = getHudWeaponByType(HP.MAIN);
+      const cdMax = Math.max(0.01, Number(rail?.cdMax) || Number(weapon?.cooldown) || 0.15);
+      const barrels = Math.max(1, Number(rail?.barrelsPerShot) || 1);
+      const cdLeft = barrels > 1
+        ? Math.max(Number(rail?.cd?.[0]) || 0, Number(rail?.cd?.[1]) || 0)
+        : Math.max(0, Number(rail?.cd?.[0]) || 0);
+      return clamp(1 - (cdLeft / cdMax), 0, 1);
+    }
+
+    function getSpecialWeaponHudState() {
+      const entries = Game.player?.weapons?.[HP.SPECIAL] || [];
+      let weapon = null;
+      let bestCdLeft = Infinity;
+      let bestCdMax = 0;
+      for (let i = 0; i < entries.length; i++) {
+        const loadout = entries[i];
+        if (!weapon && loadout?.weapon) weapon = loadout.weapon;
+        const hp = loadout?.hp;
+        const wpn = loadout?.weapon;
+        if (!hp || !wpn) continue;
+        const cdLeft = Math.max(0, Number(hp.specialCd) || 0);
+        const cdMax = Math.max(0.01, Number(wpn.cooldown) || cdLeft || 0.25);
+        if (cdLeft < bestCdLeft) {
+          bestCdLeft = cdLeft;
+          bestCdMax = cdMax;
+          weapon = wpn;
+        }
+      }
+      if (!weapon) return { weapon: null, charge: 0 };
+      if (!Number.isFinite(bestCdLeft)) return { weapon, charge: 1 };
+      return { weapon, charge: clamp(1 - (bestCdLeft / Math.max(0.01, bestCdMax)), 0, 1) };
+    }
+
+    function getMissileWeaponHudState() {
+      const entries = Game.player?.weapons?.[HP.MISSILE] || [];
+      let weapon = null;
+      let bestCombinedCd = Infinity;
+      let bestCdMax = 0;
+      for (let i = 0; i < entries.length; i++) {
+        const loadout = entries[i];
+        const hp = loadout?.hp;
+        const wpn = loadout?.weapon;
+        if (!weapon && wpn) weapon = wpn;
+        if (!hp || !wpn || hp.destroyed || !hp.mount) continue;
+        if (typeof hp.ammo === 'number' && hp.ammo <= 0) continue;
+        const perLauncherCd = Math.max(0, Number(hp.missileCd) || 0);
+        const combinedCd = Math.max(Math.max(0, rocketCooldown || 0), perLauncherCd);
+        const cdMax = Math.max(0.01, Number(wpn.cooldown) || 0.25, ROCKET_FIRE_INTERVAL);
+        if (combinedCd < bestCombinedCd) {
+          bestCombinedCd = combinedCd;
+          bestCdMax = cdMax;
+          weapon = wpn;
+        }
+      }
+      if (!weapon) return { weapon: null, charge: 0 };
+      if (!Number.isFinite(bestCombinedCd)) return { weapon, charge: 1 };
+      return { weapon, charge: clamp(1 - (bestCombinedCd / Math.max(0.01, bestCdMax)), 0, 1) };
+    }
+
     function buildWeaponHudState() {
       const hasTargets = !!(lockedTargets && lockedTargets.length > 0);
+      const specialHud = getSpecialWeaponHudState();
+      const missileHud = getMissileWeaponHudState();
       return {
         hasTargets,
         main: {
           weapon: getHudWeaponByType(HP.MAIN),
-          enabled: !!mainAutoFire
+          enabled: !!mainAutoFire,
+          charge: getMainWeaponHudCharge()
         },
         special: {
-          weapon: getHudWeaponByType(HP.SPECIAL),
-          enabled: !!specialAutoFire
+          weapon: specialHud.weapon,
+          enabled: !!specialAutoFire,
+          charge: specialHud.charge
         },
         missile: {
-          weapon: getHudWeaponByType(HP.MISSILE),
-          enabled: !!rocketAutoFire
+          weapon: missileHud.weapon,
+          enabled: !!rocketAutoFire,
+          charge: missileHud.charge
         }
       };
     }
@@ -5684,6 +5760,8 @@
     function getNpcHexInitSource(npc, hullSprite) {
       const fallback = {
         image: hullSprite?.image || null,
+        hardpointScaleX: 1.0,
+        hardpointScaleY: 1.0,
         hardpointScale: 1.0
       };
       if (!npc || !hullSprite?.image || !hullSprite.ready) return fallback;
@@ -5718,7 +5796,12 @@
         }
       }
       if (!canvas) return fallback;
-      return { image: canvas, hardpointScale: uniformScale };
+      return {
+        image: canvas,
+        hardpointScaleX: scaleX,
+        hardpointScaleY: scaleY,
+        hardpointScale: uniformScale
+      };
     }
 
     function getCapitalShipSprite(src) {
@@ -8167,11 +8250,9 @@
         const angle = (owner.angle || 0) + (Number(owner.capitalProfile?.spriteRotation) || 0);
         const c = Math.cos(angle);
         const s = Math.sin(angle);
-        const hpScale = (Number.isFinite(owner?.__hardpointScale) && owner.__hardpointScale > 0)
-          ? owner.__hardpointScale
-          : 1;
-        const hpX = opts.hp.x * hpScale;
-        const hpY = opts.hp.y * hpScale;
+        const hpScale = getEntityHardpointScale(owner);
+        const hpX = opts.hp.x * hpScale.x;
+        const hpY = opts.hp.y * hpScale.y;
         muzzlePos.x = owner.x + (hpX * c - hpY * s);
         muzzlePos.y = owner.y + (hpX * s + hpY * c);
       } else if (opts.origin) {
@@ -12194,17 +12275,15 @@
     }
 
     function getRadarTargetMeta(target) {
-      const hpScale = (Number.isFinite(target?.__hardpointScale) && target.__hardpointScale > 0)
-        ? target.__hardpointScale
-        : 1;
+      const hpScale = getEntityHardpointScale(target);
       const srcW = Number(target?.hexGrid?.srcWidth);
       const srcH = Number(target?.hexGrid?.srcHeight);
       const radius = Math.max(20, Number(target?.radius) || 20);
       return {
         unitId: getRadarTargetUnitId(target),
         unitClass: getRadarTargetUnitClass(target),
-        shipLength: Number.isFinite(srcW) && srcW > 0 ? srcW * hpScale : radius * 3.0,
-        shipWidth: Number.isFinite(srcH) && srcH > 0 ? srcH * hpScale : radius * 1.8
+        shipLength: Number.isFinite(srcW) && srcW > 0 ? srcW * hpScale.x : radius * 3.0,
+        shipWidth: Number.isFinite(srcH) && srcH > 0 ? srcH * hpScale.y : radius * 1.8
       };
     }
 
@@ -12239,13 +12318,11 @@
 
     function buildRadarBlueprintData(target) {
       const grid = target?.hexGrid;
-      const hpScale = (Number.isFinite(target?.__hardpointScale) && target.__hardpointScale > 0)
-        ? target.__hardpointScale
-        : 1;
+      const hpScale = getEntityHardpointScale(target);
       const shards = Array.isArray(grid?.shards)
         ? grid.shards.map((shard) => ({
-            x: (Number(shard?.origLx) || 0) * hpScale,
-            y: (Number(shard?.origLy) || 0) * hpScale,
+            x: (Number(shard?.origLx) || 0) * hpScale.x,
+            y: (Number(shard?.origLy) || 0) * hpScale.y,
             hp: Number(shard?.hp) || 0,
             maxHp: Number(shard?.maxHp) || 1,
             active: !!(shard?.active && !shard?.isDebris)
@@ -12260,8 +12337,8 @@
         return { x: local.x, y: local.y, destroyed: !!core?.destroyed };
       });
       return {
-        width: (Number(grid?.srcWidth) || Math.max(120, (Number(target?.radius) || 40) * 3)) * hpScale,
-        height: (Number(grid?.srcHeight) || Math.max(80, (Number(target?.radius) || 40) * 2)) * hpScale,
+        width: (Number(grid?.srcWidth) || Math.max(120, (Number(target?.radius) || 40) * 3)) * hpScale.x,
+        height: (Number(grid?.srcHeight) || Math.max(80, (Number(target?.radius) || 40) * 2)) * hpScale.y,
         shards,
         hardpoints,
         cores
@@ -15825,7 +15902,9 @@
       ship.angle += ship.angVel * dt;
       */
       // ship.angle = wrapAngle(ship.angle);
-      // Aktualizacja wraków
+      // Aktualizacja wraków — podział na aktywne i śpiące
+      const _activeWrecks = [];
+      const _sleepingWrecks = [];
       for (let i = wrecks.length - 1; i >= 0; i--) {
         const w = wrecks[i];
         const wreckFreshTime = 2.5;
@@ -15833,15 +15912,17 @@
         const wreckSleepAngVel = 0.03;
         const wreckSleepDelay = 1.4;
 
-        // Fizyka ruchu
-        w.x += w.vx * dt;
-        w.y += w.vy * dt;
-        w.angle += w.angVel * dt;
-        w.vx *= w.friction;
-        w.vy *= w.friction;
-        w.angVel *= w.friction;
-        if (w.pos) { w.pos.x = w.x; w.pos.y = w.y; }
-        if (w.vel) { w.vel.x = w.vx; w.vel.y = w.vy; }
+        // Fizyka ruchu (tylko dla nie-śpiących)
+        if (!w._wreckSleeping) {
+          w.x += w.vx * dt;
+          w.y += w.vy * dt;
+          w.angle += w.angVel * dt;
+          w.vx *= w.friction;
+          w.vy *= w.friction;
+          w.angVel *= w.friction;
+          if (w.pos) { w.pos.x = w.x; w.pos.y = w.y; }
+          if (w.vel) { w.vel.x = w.vx; w.vel.y = w.vy; }
+        }
         w._wreckAge = (Number(w._wreckAge) || 0) + dt;
         const wreckSpeedSq = (w.vx * w.vx) + (w.vy * w.vy);
         const wreckSlowEnough = wreckSpeedSq < (wreckSleepSpeed * wreckSleepSpeed) && Math.abs(w.angVel) < wreckSleepAngVel;
@@ -15853,6 +15934,23 @@
             w.vy = 0;
             w.angVel = 0;
             if (w.vel) { w.vel.x = 0; w.vel.y = 0; }
+            // Wymuś usypianie gridu — nie czekaj na naturalny cykl deformacji
+            const wg = w.hexGrid;
+            if (wg && !wg.isSleeping) {
+              wg.isSleeping = true;
+              wg.sleepFrames = 9999;
+              wg.wakeHoldFrames = 0;
+              // Wyzeruj rezydualne prędkości shardów
+              const wShards = wg.shards;
+              if (Array.isArray(wShards)) {
+                for (let si = 0; si < wShards.length; si++) {
+                  const ws = wShards[si];
+                  if (!ws || !ws.active) continue;
+                  ws.__velX = 0; ws.__velY = 0;
+                  ws.__collVelX = 0; ws.__collVelY = 0;
+                }
+              }
+            }
           }
         } else {
           w._wreckSleepTimer = 0;
@@ -15869,6 +15967,14 @@
             window.DestructorSystem.recycleWreck(w);
           }
           wrecks.splice(i, 1);
+          continue;
+        }
+
+        // Fully sleeping: wrak się nie rusza — wykluczony z destruktora
+        if (w._wreckSleeping) {
+          _sleepingWrecks.push(w);
+        } else {
+          _activeWrecks.push(w);
         }
       }
       const aiDbgEnabled = AILiveDebug.enabled;
@@ -15908,12 +16014,52 @@
       ciwsStep(dt);
       bulletsAndCollisionsStep(dt);
       npcShootingStep(dt);
-      const dynamicDestructibles = [ship, ...npcs, ...wrecks];
+      const dynamicDestructibles = [ship, ...npcs, ..._activeWrecks];
       if (splitScreenMode && player2Ship && !player2Ship.destroyed && player2Ship.hexGrid) {
         dynamicDestructibles.push(player2Ship);
       }
       const shipPx = Number(ship?.pos?.x ?? ship?.x);
       const shipPy = Number(ship?.pos?.y ?? ship?.y);
+
+      // Wake sweep: budź sleeping wraki gdy szybki obiekt zbliża się do nich
+      for (let si = _sleepingWrecks.length - 1; si >= 0; si--) {
+        const sw = _sleepingWrecks[si];
+        const swx = sw.x, swy = sw.y;
+        const swR = Number(sw._bpRadius) || 100;
+        let woken = false;
+
+        for (let ai = 0; ai < dynamicDestructibles.length; ai++) {
+          const active = dynamicDestructibles[ai];
+          if (!active || active.dead || active === sw) continue;
+          const avx = Number(active.vel?.x ?? active.vx ?? 0);
+          const avy = Number(active.vel?.y ?? active.vy ?? 0);
+          const speedSq = avx * avx + avy * avy;
+          if (speedSq < 225) continue; // < 15 u/s — nie budź
+
+          const ax = Number(active.pos?.x ?? active.x ?? 0);
+          const ay = Number(active.pos?.y ?? active.y ?? 0);
+          const aR = Number(active._bpRadius) || 100;
+          const dx = swx - ax, dy = swy - ay;
+          const distSq = dx * dx + dy * dy;
+          const speed = Math.sqrt(speedSq);
+          const wakeR = swR + aR + speed * 3; // 3-klatkowy look-ahead
+
+          if (distSq < wakeR * wakeR) {
+            sw._wreckSleeping = false;
+            sw._wreckSleepTimer = 0;
+            if (sw.hexGrid) {
+              sw.hexGrid.isSleeping = false;
+              sw.hexGrid.sleepFrames = 0;
+              sw.hexGrid.wakeHoldFrames = 20;
+            }
+            dynamicDestructibles.push(sw);
+            _sleepingWrecks.splice(si, 1);
+            woken = true;
+            break;
+          }
+        }
+      }
+
       const nearbyRingDestructibles = collectNearbyRingDestructibles(
         dynamicDestructibles,
         shipPx,
@@ -16273,9 +16419,7 @@
       const c = Math.cos(angle);
       const s = Math.sin(angle);
       const radius = Math.max(0.45, Math.min(4.4, 2.1 * zoom));
-      const hpScale = (Number.isFinite(npc?.__hardpointScale) && npc.__hardpointScale > 0)
-        ? npc.__hardpointScale
-        : 1;
+      const hpScale = getEntityHardpointScale(npc);
 
       ctx.save();
       ctx.globalCompositeOperation = 'screen';
@@ -16285,8 +16429,8 @@
         const localX = Number(hp.x);
         const localY = Number(hp.y);
         if (!Number.isFinite(localX) || !Number.isFinite(localY)) continue;
-        const sx = localX * hpScale;
-        const sy = localY * hpScale;
+        const sx = localX * hpScale.x;
+        const sy = localY * hpScale.y;
         const x = screenPos.x + (sx * c - sy * s) * zoom;
         const y = screenPos.y + (sx * s + sy * c) * zoom;
         const color = NPC_HARDPOINT_COLORS[hp.type] || '#cfe4ff';
@@ -16371,6 +16515,8 @@
         const sprite = getHullSpriteForNpc(npc) || (npc.capitalSprite && npc.capitalSprite.ready ? npc.capitalSprite : null);
         if (sprite && sprite.ready && !sprite.error) {
           const hexInit = getNpcHexInitSource(npc, sprite);
+          npc.__hardpointScaleX = (hexInit?.hardpointScaleX && hexInit.hardpointScaleX > 0) ? hexInit.hardpointScaleX : 1.0;
+          npc.__hardpointScaleY = (hexInit?.hardpointScaleY && hexInit.hardpointScaleY > 0) ? hexInit.hardpointScaleY : 1.0;
           npc.__hardpointScale = (hexInit?.hardpointScale && hexInit.hardpointScale > 0) ? hexInit.hardpointScale : 1.0;
           initHexBody(npc, (hexInit?.image || sprite.image));
           logHullScaleSnapshot(npc, `npc:${getNpcHullRenderProfileId(npc) || npc.type || 'unknown'}`);

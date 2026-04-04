@@ -210,6 +210,17 @@ function pickNpcHardpoint(owner, preferredType) {
   return pool[idx % pool.length] || null;
 }
 
+function getOwnerHardpointScale(owner) {
+  const scaleXRaw = Number(owner?.__hardpointScaleX);
+  const scaleYRaw = Number(owner?.__hardpointScaleY);
+  const uniformRaw = Number(owner?.__hardpointScale);
+  const uniform = (Number.isFinite(uniformRaw) && uniformRaw > 0) ? uniformRaw : 1;
+  return {
+    x: (Number.isFinite(scaleXRaw) && scaleXRaw > 0) ? scaleXRaw : uniform,
+    y: (Number.isFinite(scaleYRaw) && scaleYRaw > 0) ? scaleYRaw : uniform
+  };
+}
+
 export function createNpcHardpointRuntime({
   hardpointEnum = DEFAULT_HP,
   storageKey = 'hpEditor.v1',
@@ -370,11 +381,9 @@ export function createNpcHardpointRuntime({
     const hp = pickNpcHardpoint(owner, type);
     if (!hp) return null;
 
-    const hpScale = (Number.isFinite(owner?.__hardpointScale) && owner.__hardpointScale > 0)
-      ? owner.__hardpointScale
-      : 1;
-    const localX = (Number(hp.x) || 0) * hpScale;
-    const localY = (Number(hp.y) || 0) * hpScale;
+    const hpScale = getOwnerHardpointScale(owner);
+    const localX = (Number(hp.x) || 0) * hpScale.x;
+    const localY = (Number(hp.y) || 0) * hpScale.y;
     const baseX = Number.isFinite(owner.x) ? owner.x : (owner.pos?.x || 0);
     const baseY = Number.isFinite(owner.y) ? owner.y : (owner.pos?.y || 0);
     const angle = (owner.angle || 0) + (Number(owner.capitalProfile?.spriteRotation) || 0);

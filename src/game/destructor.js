@@ -1568,6 +1568,7 @@ export const DestructorSystem = {
       const damageScale = Math.max(0.35, damage / 80);
       markRingSegmentHot(entity, 1500, 15000);
       this.wakeHexEntity(entity, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
+      if (entity.isWreck) this.wakeWreck(entity);
 
       const customRadius = opts?.radius || DESTRUCTOR_CONFIG.bendingRadius;
 
@@ -1838,9 +1839,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           }
 
           if (bIsWreck && B._wreckSleeping) {
-            const wakeRadius = rs + WRECK_WAKE_OVERLAP_PAD;
-            const overlapWake = (dx * dx + dy * dy) <= (wakeRadius * wakeRadius);
-            if (relSpeedSq >= (WRECK_WAKE_REL_SPEED * WRECK_WAKE_REL_SPEED) || (!aIsWreck && overlapWake)) {
+            // Budź TYLKO przy znaczącej prędkości względnej (nie przy wolnym przelocie obok)
+            if (relSpeedSq >= (WRECK_WAKE_REL_SPEED * WRECK_WAKE_REL_SPEED)) {
               this.wakeWreck(B);
             } else {
               continue;

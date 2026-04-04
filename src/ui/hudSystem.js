@@ -763,6 +763,9 @@ export class HUDSystem {
                 const icon = document.createElement('div');
                 icon.className = 'glass-key-weapon-icon';
                 icon.dataset.placeholder = entry.weaponType;
+                const charge = document.createElement('div');
+                charge.className = 'glass-key-weapon-charge';
+                icon.appendChild(charge);
                 keyEl.appendChild(hint);
                 keyEl.appendChild(icon);
                 const code = document.createElement('span');
@@ -795,14 +798,19 @@ export class HUDSystem {
             const state = slotState[weaponType] || null;
             const weapon = state?.weapon || null;
             const enabled = !!state?.enabled;
+            const charge = Math.max(0, Math.min(1, Number(state?.charge) || 0));
             const iconHost = slot.querySelector('.glass-key-weapon-icon');
             if (!iconHost) return;
+            const chargeEl = iconHost.querySelector('.glass-key-weapon-charge');
 
             const weaponId = weapon?.id || '';
             const iconPath = weaponId ? iconPaths[weaponId] : '';
             const cacheKey = `${weaponType}:${weaponId}:${iconPath || 'none'}`;
             if (slot.dataset.weaponCacheKey !== cacheKey) {
+                const preservedCharge = chargeEl || document.createElement('div');
+                preservedCharge.className = 'glass-key-weapon-charge';
                 iconHost.innerHTML = '';
+                iconHost.appendChild(preservedCharge);
                 if (iconPath) {
                     const img = document.createElement('img');
                     img.src = iconPath;
@@ -823,13 +831,17 @@ export class HUDSystem {
             slot.classList.remove('weapon-slot-neutral', 'weapon-slot-standby', 'weapon-slot-armed', 'weapon-slot-empty');
             if (!weapon) {
                 slot.classList.add('weapon-slot-empty');
+                const liveCharge = iconHost.querySelector('.glass-key-weapon-charge');
+                if (liveCharge) liveCharge.style.transform = 'scaleY(0)';
                 return;
             }
             if (!hasTargets) {
                 slot.classList.add('weapon-slot-neutral');
-                return;
+            } else {
+                slot.classList.add(enabled ? 'weapon-slot-armed' : 'weapon-slot-standby');
             }
-            slot.classList.add(enabled ? 'weapon-slot-armed' : 'weapon-slot-standby');
+            const liveCharge = iconHost.querySelector('.glass-key-weapon-charge');
+            if (liveCharge) liveCharge.style.transform = `scaleY(${charge.toFixed(3)})`;
         });
     }
 
