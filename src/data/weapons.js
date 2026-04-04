@@ -70,12 +70,12 @@ export const MASTER_WEAPONS = {
   // ==========================================================================
   ciws_mk1: { 
     id: 'ciws_mk1', name: 'CIWS Mk I', mountType: 'aux', category: 'ciws', size: 'S',
-    baseDamage: 12, baseRange: 2500, baseSpeed: 2000, cooldown: 0.06, spread: 0.05,
+    baseDamage: 12, baseRange: 5500, baseSpeed: 2000, cooldown: 0.06, spread: 0.05,
     energyCost: 2, vfxColor: '#8cffd0'
   },
   laser_pd_mk1: { 
     id: 'laser_pd_mk1', name: 'Helios PD Laser', mountType: 'aux', category: 'beam', size: 'S',
-    baseDamage: 16, baseRange: 1500, baseSpeed: Infinity, cooldown: 0.18, duration: 0.09, spread: 0.0,
+    baseDamage: 16, baseRange: 4500, baseSpeed: Infinity, cooldown: 0.18, duration: 0.09, spread: 0.0,
     energyCost: 3, vfxColor: 'rgba(110,200,255,0.9)'
   },
 
