@@ -26,6 +26,7 @@ export function attachPirateStation3D(_sceneIgnored, station2D) {
   
   // Dodajemy Bezpośrednio do naszego głównego świata 3D!
   if (Core3D.scene) {
+      pirateStation3D.object3d.userData.fgCategory = 'stations';
       Core3D.scene.add(pirateStation3D.object3d);
       Core3D.enableForeground3D(pirateStation3D.object3d);
   }

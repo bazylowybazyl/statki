@@ -334,6 +334,7 @@ class PlanetaryRing {
     // --- BUDYNKI 3D NA WARSTWIE 2 (FOREGROUND) ---
     this.buildings3D = new THREE.Group();
     this.buildings3D.name = `PlanetaryRingRoot:${this.key}`;
+    this.buildings3D.userData.fgCategory = 'buildings';
     if (Core3D.scene) {
         Core3D.scene.add(this.buildings3D);
         Core3D.enableForeground3D(this.buildings3D); // Na layer 1 ring przykrywał budynki, więc wracamy na pass FG.

@@ -8,6 +8,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 const MAX_HEAT_HAZE_SOURCES = 24;
 const PLANET_RENDER_LAYER = 3;
 const OCCLUSION_RENDER_LAYER = 4;
+const PLANET_HALO_RENDER_LAYER = 5;
 
 function createShadowShaftsShader() {
   return {
@@ -91,6 +92,28 @@ function createShadowShaftsShader() {
         float rawShadow = totalWeight > 0.0 ? clamp((shadowAccum / min(totalWeight, 4.0)) * uShadowDarkness, 0.0, 1.0) : 0.0;
         vec3 finalColor = mix(sceneColor.rgb, sceneColor.rgb * vec3(0.06, 0.10, 0.16), rawShadow);
         gl_FragColor = vec4(finalColor, sceneColor.a);
+      }
+    `
+  };
+}
+
+function createPlanetHaloCompositeShader() {
+  return {
+    name: 'PlanetHaloCompositeShader',
+    uniforms: {
+      tDiffuse: { value: null },
+      tPlanetHalo: { value: null }
+    },
+    vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `
+      precision highp float;
+      uniform sampler2D tDiffuse;
+      uniform sampler2D tPlanetHalo;
+      varying vec2 vUv;
+      void main() {
+        vec4 sceneColor = texture2D(tDiffuse, vUv);
+        vec4 haloColor = texture2D(tPlanetHalo, vUv);
+        gl_FragColor = vec4(sceneColor.rgb + haloColor.rgb, max(sceneColor.a, haloColor.a));
       }
     `
   };
@@ -269,19 +292,20 @@ export const Core3D = {
   canvas: null, renderer: null, scene: null, cameraOrtho: null, cameraPersp: null,
   shadowCatcher: null, shadowCatcherFg: null, shadowCatchersDebug: false,
   composer: null, composerTarget: null,
+  planetHaloTarget: null, haloDepthMaskMaterial: null,
 
   occlusionTarget: null, occlusionWhiteMaterial: null,
   occlusionBlurTargetA: null, occlusionBlurTargetB: null,
   occlusionBlurScene: null, occlusionBlurCamera: null, occlusionBlurQuad: null,
   occlusionBlurMatH: null, occlusionBlurMatV: null,
 
-  renderPassBg: null, renderPassPlanets: null, renderPassOrtho: null, renderPassFg: null,
+  renderPassBg: null, renderPassPlanets: null, planetHaloPass: null, renderPassOrtho: null, renderPassFg: null,
   heatHazeSources: null, heatHazeCount: 0, heatHazeMaxSources: MAX_HEAT_HAZE_SOURCES, _heatHazeWorldScratch: new THREE.Vector3(),
   shadowShaftsPass: null,
   uberPass: null,
   bloomPass: null, bloomResolutionScale: 0.75, bloomBaseStrength: 1.0, bloomBaseThreshold: 0.0,
   msaaSamples: 0,
-  perfToggles: { bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true },
+  perfToggles: { bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, fgBuildings: true, fgStations: true, fgWeapons: true, fgShadows: true },
   pixelRatio: 1, width: 0, height: 0, isInitialized: false,
   _clearColorScratch: new THREE.Color(),
 
@@ -390,6 +414,17 @@ export const Core3D = {
     });
     this.composerTarget = rt;
     this.msaaSamples = Number(rt.samples) || 0;
+    this.planetHaloTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
+      format: THREE.RGBAFormat,
+      type: this.renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType,
+      depthBuffer: true,
+      stencilBuffer: false,
+      samples: 0
+    });
+    this.haloDepthMaskMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
+    this.haloDepthMaskMaterial.colorWrite = false;
+    this.haloDepthMaskMaterial.depthWrite = true;
+    this.haloDepthMaskMaterial.depthTest = true;
     this.composer = new EffectComposer(this.renderer, rt);
     this.composer.setPixelRatio(this.pixelRatio);
 
@@ -397,6 +432,7 @@ export const Core3D = {
     makeSplitScreenRenderPass(this.renderPassBg, 1, false, true);
     this.renderPassPlanets = new RenderPass(this.scene, this.cameraPersp);
     makeSplitScreenRenderPass(this.renderPassPlanets, PLANET_RENDER_LAYER, false, false);
+    this.planetHaloPass = new ShaderPass(createPlanetHaloCompositeShader());
     this.renderPassOrtho = new RenderPass(this.scene, this.cameraOrtho);
     makeSplitScreenRenderPass(this.renderPassOrtho, 0, true, false);
     this.renderPassFg = new RenderPass(this.scene, this.cameraPersp);
@@ -405,6 +441,7 @@ export const Core3D = {
     this.heatHazeSources = new Float32Array(this.heatHazeMaxSources * 4);
     this.composer.addPass(this.renderPassBg);
     this.composer.addPass(this.renderPassPlanets);
+    this.composer.addPass(this.planetHaloPass);
 
     this.shadowShaftsPass = new ShaderPass(createShadowShaftsShader());
     this.composer.addPass(this.shadowShaftsPass);
@@ -428,6 +465,9 @@ export const Core3D = {
     this.uberPass.material.needsUpdate = true;
     this.uberPass.renderToScreen = true;
     this.composer.addPass(this.uberPass);
+    if (this.planetHaloPass?.uniforms) {
+      this.planetHaloPass.uniforms.tPlanetHalo.value = this.planetHaloTarget.texture;
+    }
 
     this._applyPassToggles();
     this.isInitialized = true;
@@ -441,6 +481,8 @@ export const Core3D = {
       if (this.composer?.passes) for (const pass of this.composer.passes) try { pass?.dispose?.(); } catch { }
       try { this.composer?.dispose?.(); } catch { }
       try { this.composerTarget?.dispose?.(); } catch { }
+      try { this.planetHaloTarget?.dispose?.(); } catch { }
+      try { this.haloDepthMaskMaterial?.dispose?.(); } catch { }
       try { this.occlusionTarget?.dispose?.(); } catch { }
       try { this.occlusionBlurTargetA?.dispose?.(); } catch { }
       try { this.occlusionBlurTargetB?.dispose?.(); } catch { }
@@ -455,6 +497,7 @@ export const Core3D = {
     const t = this.perfToggles || {};
     if (this.renderPassBg) this.renderPassBg.enabled = t.bgPass !== false;
     if (this.renderPassPlanets) this.renderPassPlanets.enabled = t.planetPass !== false;
+    if (this.planetHaloPass) this.planetHaloPass.enabled = t.planetPass !== false;
     if (this.renderPassOrtho) this.renderPassOrtho.enabled = t.orthoPass !== false;
     if (this.renderPassFg) this.renderPassFg.enabled = t.fgPass !== false;
     if (this.bloomPass) this.bloomPass.enabled = t.bloom !== false;
@@ -465,7 +508,19 @@ export const Core3D = {
       this.renderer.shadowMap.needsUpdate = t.threeShadows !== false;
     }
     if (this.shadowCatcher) this.shadowCatcher.visible = t.threeShadows !== false;
-    if (this.shadowCatcherFg) this.shadowCatcherFg.visible = t.threeShadows !== false;
+    if (this.shadowCatcherFg) this.shadowCatcherFg.visible = (t.fgShadows !== false) && (t.threeShadows !== false);
+    // FG sub-toggles: kontroluj visible per kategoria obiektów
+    if (this.scene) {
+      const fgB = t.fgBuildings !== false;
+      const fgS = t.fgStations !== false;
+      const fgW = t.fgWeapons !== false;
+      for (const child of this.scene.children) {
+        const cat = child.userData?.fgCategory;
+        if (cat === 'buildings') child.visible = fgB;
+        else if (cat === 'stations') child.visible = fgS;
+        else if (cat === 'weapons') child.visible = fgW;
+      }
+    }
   },
 
   setPerfToggles(next = {}) {
@@ -525,11 +580,16 @@ export const Core3D = {
       planetPass: t.planetPass !== false,
       orthoPass: t.orthoPass !== false,
       fgPass: t.fgPass !== false,
+      fgBuildings: t.fgBuildings !== false,
+      fgStations: t.fgStations !== false,
+      fgWeapons: t.fgWeapons !== false,
+      fgShadows: t.fgShadows !== false,
       msaaSamples: Number(this.msaaSamples) || 0
     };
   },
   enableBackground3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(1); }); },
   enablePlanet3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(PLANET_RENDER_LAYER); }); },
+  enablePlanetHalo3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(PLANET_HALO_RENDER_LAYER); }); },
   enablePlanetOccluder3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.enable(OCCLUSION_RENDER_LAYER); }); },
   enableForeground3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(2); }); },
 
@@ -546,6 +606,9 @@ export const Core3D = {
 
     if (this.occlusionTarget) {
       this.occlusionTarget.setSize(Math.max(1, Math.floor(width / 8)), Math.max(1, Math.floor(height / 8)));
+    }
+    if (this.planetHaloTarget) {
+      this.planetHaloTarget.setSize(width, height);
     }
     if (this.occlusionBlurTargetA && this.occlusionBlurTargetB) {
       const blurW = Math.max(1, Math.floor(width / 8));
@@ -620,6 +683,57 @@ export const Core3D = {
     let isSplit = false;
     let origTop = this.cameraOrtho.top;
     let origBottom = this.cameraOrtho.bottom;
+
+    if (this.planetHaloTarget && this.planetHaloPass && this.haloDepthMaskMaterial) {
+      const prevAutoClear = this.renderer.autoClear;
+      const prevTarget = this.renderer.getRenderTarget();
+      const prevClearAlpha = this.renderer.getClearAlpha();
+      const prevClearColor = this._clearColorScratch;
+      this.renderer.getClearColor(prevClearColor);
+      const prevOverrideMaterial = this.scene.overrideMaterial;
+      const prevPerspLayerMask = this.cameraPersp.layers.mask;
+
+      const renderPlanetHaloViewport = (camData, vpX, vpY, vpW, vpH) => {
+        this.renderer.setViewport(vpX, vpY, vpW, vpH);
+        this.renderer.setScissor(vpX, vpY, vpW, vpH);
+        this.renderer.setScissorTest(true);
+        this.renderer.clear(true, true, true);
+
+        this.syncCamera(camData, vpW, vpH, vpX);
+
+        this.scene.overrideMaterial = this.haloDepthMaskMaterial;
+        this.cameraPersp.layers.set(PLANET_RENDER_LAYER);
+        this.renderer.render(this.scene, this.cameraPersp);
+
+        this.scene.overrideMaterial = prevOverrideMaterial;
+        this.cameraPersp.layers.set(PLANET_HALO_RENDER_LAYER);
+        this.renderer.render(this.scene, this.cameraPersp);
+      };
+
+      this.renderer.autoClear = false;
+      this.renderer.setRenderTarget(this.planetHaloTarget);
+      this.renderer.setClearColor(0x000000, 0.0);
+
+      isSplit = typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2;
+      const haloW = this.planetHaloTarget.width;
+      const haloH = this.planetHaloTarget.height;
+      if (isSplit) {
+        const halfW = Math.floor(haloW / 2);
+        renderPlanetHaloViewport(this.activeCam1, 0, 0, halfW, haloH);
+        renderPlanetHaloViewport(this.activeCam2, halfW, 0, haloW - halfW, haloH);
+      } else {
+        renderPlanetHaloViewport(this.activeCam1, 0, 0, haloW, haloH);
+      }
+
+      this.renderer.setScissorTest(false);
+      this.renderer.setViewport(0, 0, haloW, haloH);
+      this.scene.overrideMaterial = prevOverrideMaterial;
+      this.cameraPersp.layers.mask = prevPerspLayerMask;
+      this.renderer.setRenderTarget(prevTarget);
+      this.renderer.setClearColor(prevClearColor, prevClearAlpha);
+      this.renderer.autoClear = prevAutoClear;
+      this.planetHaloPass.uniforms.tPlanetHalo.value = this.planetHaloTarget.texture;
+    }
 
     // UberPost zawsze wlaczony — ACES tonemapping + linear→sRGB
     // Composer dziala nawet gdy bloom/heatHaze/shadowShafts sa off (passes disabled).

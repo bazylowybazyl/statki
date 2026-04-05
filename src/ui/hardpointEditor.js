@@ -5,6 +5,7 @@ import pirateFrigateImg from '../assets/ships/piratefrigate.png';
 import pirateDestroyerImg from '../assets/ships/piratedestroyer.png';
 import pirateBattleshipImg from '../assets/ships/piratebattleship.png';
 import { composeShipThrusterCommand, updateShipThrusterState } from '../game/shipEntity.js';
+import { SHIP_EDITOR_DEFAULTS } from '../data/hardpointEditorDefaults.js';
 
 const STYLE_ID = 'hp-editor-style';
 const ROOT_ID = 'hp-editor-root';
@@ -595,9 +596,25 @@ function defaultShipData() {
   };
 }
 
+function cloneShipData(data) {
+  if (!data || typeof data !== 'object') return defaultShipData();
+  try {
+    return JSON.parse(JSON.stringify(data));
+  } catch {
+    return defaultShipData();
+  }
+}
+
+function getDefaultShipDataForEditorKey(shipId) {
+  const normalized = normalizeEditorShipId(shipId);
+  if (normalized === CURRENT_SHIP_ID) return defaultShipData();
+  const defaults = SHIP_EDITOR_DEFAULTS?.ships?.[normalized];
+  return defaults ? cloneShipData(defaults) : defaultShipData();
+}
+
 function ensureShipData(shipId) {
-  shipId = resolveEditorShipId(shipId);
-  if (!state.ships[shipId]) state.ships[shipId] = defaultShipData();
+  shipId = normalizeEditorShipId(shipId);
+  if (!state.ships[shipId]) state.ships[shipId] = getDefaultShipDataForEditorKey(shipId);
   const data = state.ships[shipId];
   if (!Array.isArray(data.hardpoints)) data.hardpoints = [];
   if (!Array.isArray(data.cores)) data.cores = [];
@@ -613,11 +630,11 @@ function markerId() {
 }
 
 function bootstrapIfNeeded(shipId) {
-  shipId = resolveEditorShipId(shipId);
+  shipId = normalizeEditorShipId(shipId);
   const data = state.ships[shipId];
   if (!data || data.__bootstrapped) return;
   data.__bootstrapped = true;
-  if (shipId !== getCurrentRuntimeShipId()) return;
+  if (shipId !== CURRENT_SHIP_ID) return;
   const player = window.Game?.player || window.ship;
   if (!player) return;
   if (Array.isArray(player.hardpoints) && player.hardpoints.length && data.hardpoints.length === 0) {
@@ -686,6 +703,45 @@ function bootstrapIfNeeded(shipId) {
       });
     }
   }
+}
+
+function collectMarkerExtents(shipData) {
+  const maxAbs = { x: 0, y: 0 };
+  const push = (x, y) => {
+    const nx = Math.abs(Number(x) || 0);
+    const ny = Math.abs(Number(y) || 0);
+    if (nx > maxAbs.x) maxAbs.x = nx;
+    if (ny > maxAbs.y) maxAbs.y = ny;
+  };
+  for (const hp of Array.isArray(shipData?.hardpoints) ? shipData.hardpoints : []) push(hp?.x, hp?.y);
+  for (const core of Array.isArray(shipData?.cores) ? shipData.cores : []) push(core?.x, core?.y);
+  for (const eng of Array.isArray(shipData?.engines?.main) ? shipData.engines.main : []) push(eng?.x, eng?.y);
+  for (const eng of Array.isArray(shipData?.engines?.side) ? shipData.engines.side : []) push(eng?.x, eng?.y);
+  return maxAbs;
+}
+
+function shouldRepairAtlasFromDefaults(atlasData) {
+  const atlasDefaults = SHIP_EDITOR_DEFAULTS?.ships?.atlas;
+  if (!atlasDefaults || !shipDataHasContent(atlasData)) return false;
+  const liveShipId = getCurrentRuntimeShipId();
+  if (liveShipId !== 'atlas') return false;
+  const stored = collectMarkerExtents(atlasData);
+  const source = collectMarkerExtents(atlasDefaults);
+  if (source.x <= 0 || source.y <= 0) return false;
+  const ratioX = stored.x / source.x;
+  const ratioY = stored.y / source.y;
+  return ratioX > 0.2 && ratioX < 0.7 && ratioY > 0.2 && ratioY < 0.7;
+}
+
+function repairLegacyAtlasStorageIfNeeded() {
+  const atlasData = state.ships?.atlas;
+  const hasCurrentShipData = shipDataHasContent(state.ships?.[CURRENT_SHIP_ID]);
+  if (!shouldRepairAtlasFromDefaults(atlasData)) return false;
+  if (!hasCurrentShipData && shipDataHasContent(atlasData)) {
+    state.ships[CURRENT_SHIP_ID] = cloneShipData(atlasData);
+  }
+  state.ships.atlas = getDefaultShipDataForEditorKey('atlas');
+  return true;
 }
 
 function getSpriteSource(shipId) {
@@ -2297,6 +2353,7 @@ function loadStorage() {
     state.sideVfxLengthMin = Math.max(1, Math.round(Number(data.sideVfxLengthMin) || state.sideVfxLengthMin));
     state.sideVfxLengthMax = Math.max(state.sideVfxLengthMin, Math.round(Number(data.sideVfxLengthMax) || state.sideVfxLengthMax));
     state.ships = migrateEditorShipsMap(data.ships && typeof data.ships === 'object' ? data.ships : {});
+    const repairedLegacyAtlas = repairLegacyAtlasStorageIfNeeded();
     if (state.shipId === 'atlas' && getCurrentRuntimeShipId() !== 'atlas' && !shipDataHasContent(state.ships?.atlas)) {
       state.shipId = CURRENT_SHIP_ID;
     }
@@ -2305,6 +2362,7 @@ function loadStorage() {
     }
     if (!['erase', 'hardpoint', 'core', 'engine_main', 'engine_side'].includes(state.tool)) state.tool = 'hardpoint';
     if (!HARDPOINT_TYPES.includes(state.hardpointType)) state.hardpointType = 'main';
+    if (repairedLegacyAtlas) persist();
   } catch { }
 }
 
