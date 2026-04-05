@@ -2069,9 +2069,25 @@ export const Weapon3DSystem = {
 
   syncWeapons(entity, shipEx, shipEy, shipAngle, shipScale) {
     if (!this._preloaded) this._preloadShaders();
-    
+
     ensureWeaponResources();
     this._ensureShotListener();
+
+    // Distance culling: hide weapon meshes for ships far from camera
+    const cam = typeof window !== 'undefined' ? window.camera : null;
+    if (cam) {
+      const camZoom = Math.max(0.01, Number(cam.zoom) || 1);
+      const dx = shipEx - (Number(cam.x) || 0);
+      const dy = shipEy - (Number(cam.y) || 0);
+      const dist2 = dx * dx + dy * dy;
+      // Visibility threshold scales with zoom: closer zoom = smaller threshold
+      const threshold = 4000 / camZoom;
+      if (dist2 > threshold * threshold) {
+        const container = this.containers.get(entity);
+        if (container) container.visible = false;
+        return;
+      }
+    }
 
     const wepDataList = [];
 
@@ -2234,6 +2250,7 @@ export const Weapon3DSystem = {
       Core3D.enableForeground3D(container);
       this.containers.set(entity, container);
     }
+    container.visible = true;
 
     let targetTiltX = 0;
     let targetTiltY = 0;

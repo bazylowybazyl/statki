@@ -876,18 +876,35 @@ class PlanetaryRing {
         ? Math.min(Math.PI, Math.max(0.4, viewportWorldWidth / (this.ringRadius * 1.2)))
         : Math.PI;
 
-    // LOD: odległy ring = skip animacji dekoracji
+    // LOD: dystans kamery od ringu → poziomy szczegółowości
     const lodDistanceSq = hasCameraCenter ? (cameraDistance * cameraDistance) : 0;
-    const LOD_ANIM_DIST_SQ = (this.ringRadius * 3.5) * (this.ringRadius * 3.5);
-    const skipAnimations = lodDistanceSq > LOD_ANIM_DIST_SQ;
+    const R = this.ringRadius;
+    // LOD thresholds (squared for fast comparison)
+    const LOD_DETAIL_SQ = (R * 2.5) * (R * 2.5);   // > 2.5R: hide DETAIL meshes (antennas, pads, edges)
+    const LOD_MEDIUM_SQ = (R * 4.5) * (R * 4.5);   // > 4.5R: hide MEDIUM meshes (neon signs, chimneys)
+    const LOD_HIDE_SQ   = (R * 8) * (R * 8);        // > 8R:   hide all districts
+    const skipAnimations = lodDistanceSq > LOD_DETAIL_SQ;
+    const hideAllDistricts = hasCameraCenter && lodDistanceSq > LOD_HIDE_SQ;
 
-    // Chunk arc half-width for culling (chunk covers CHUNK_ARC = PI/8 = 22.5°)
-    const CHUNK_ARC_HALF = Math.PI / 16; // half of 22.5°
+    // Determine current LOD level for chunk children
+    // 0 = full detail, 1 = hide DETAIL, 2 = hide DETAIL+MEDIUM, 3 = hide all
+    let lodLevel = 0;
+    if (hasCameraCenter) {
+      if (lodDistanceSq > LOD_HIDE_SQ) lodLevel = 3;
+      else if (lodDistanceSq > LOD_MEDIUM_SQ) lodLevel = 2;
+      else if (lodDistanceSq > LOD_DETAIL_SQ) lodLevel = 1;
+    }
 
     for (const b of this.visualMeshes) {
         // Global infrastructure — always visible (GPU frustum culling handles it)
         if (b.isGlobalInfra) {
             b.mesh.visible = true;
+            continue;
+        }
+
+        // LOD: hide all districts when camera is very far away
+        if (hideAllDistricts && b.isDistrict) {
+            b.mesh.visible = false;
             continue;
         }
 
@@ -900,30 +917,43 @@ class PlanetaryRing {
             }
         }
 
-        // Angle-based culling: chunks use wider arc, cells use tight arc
+        // Angle-based culling for chunks and individual district meshes
         if (hasCameraCenter && b.baseAngle !== undefined) {
             const worldAngle = b.baseAngle + this.currentRotation;
             let angleDiff = worldAngle - cameraAngle;
             angleDiff = angleDiff - Math.round(angleDiff / (Math.PI * 2)) * (Math.PI * 2);
-            // Chunks are wider — add half chunk arc to the visible margin
-            const margin = b.isChunk ? CHUNK_ARC_HALF + 0.15 : 0.15;
+            const margin = b.isChunk ? 0.25 : 0.15;
             if (Math.abs(angleDiff) > visibleArcHalf + margin) {
                 b.mesh.visible = false;
                 continue;
             }
         }
-
         b.mesh.visible = true;
 
+        // LOD: per-child visibility based on lodLevel tag
+        if (b.isChunk && lodLevel > 0 && b.mesh.children) {
+          for (const child of b.mesh.children) {
+            const lod = child.userData.lodLevel;
+            if (!lod) { child.visible = true; continue; }
+            if (lod === 'DETAIL') child.visible = lodLevel < 1;
+            else if (lod === 'MEDIUM') child.visible = lodLevel < 2;
+            else child.visible = true; // CORE always visible
+          }
+        } else if (b.isChunk && b.mesh.children) {
+          for (const child of b.mesh.children) child.visible = true;
+        }
+
         // Animate dynamic decorations (spinning toppers & adverts)
-        // LOD: skip animacji gdy kamera daleko
-        if (!skipAnimations && b.dynamicDecorations) {
+        if (b.dynamicDecorations) {
           for (const dd of b.dynamicDecorations) {
-            if (dd.mesh && dd.rotationSpeed) {
-              dd.mesh.rotation.z += dd.rotationSpeed * dt * 60;
-            }
-            if (dd.update) {
-              dd.update(dt);
+            if (dd.mesh) dd.mesh.visible = !skipAnimations;
+            if (!skipAnimations) {
+              if (dd.mesh && dd.rotationSpeed) {
+                dd.mesh.rotation.z += dd.rotationSpeed * dt * 60;
+              }
+              if (dd.update) {
+                dd.update(dt);
+              }
             }
           }
         }

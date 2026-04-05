@@ -28,6 +28,19 @@ const WINDOW_SCALE = 500;
 const NUM_CHUNKS = 16;
 const CHUNK_ARC = (Math.PI * 2) / NUM_CHUNKS;
 
+// LOD levels per material — controls visibility at different camera distances
+const LOD_LEVEL_BY_MAT = {
+    wall: 'CORE',
+    roof: 'CORE',
+    neonSign: 'MEDIUM',
+    chimney: 'MEDIUM',
+    roofDetail: 'DETAIL',
+    antennaRed: 'DETAIL',
+    antennaGreen: 'DETAIL',
+    padSign: 'DETAIL',
+    dish: 'DETAIL',
+};
+
 // --- Material dict cache per zone ---
 const matDictCache = {};
 
@@ -822,7 +835,9 @@ export function buildAllDistricts(zoneGrid, ring) {
             }
             if (!material) continue;
 
-            chunkGroup.add(new THREE.Mesh(mergedGeo, material));
+            const mesh = new THREE.Mesh(mergedGeo, material);
+            mesh.userData.lodLevel = LOD_LEVEL_BY_MAT[matKey] || 'MEDIUM';
+            chunkGroup.add(mesh);
         }
 
         // Merge neon edges
@@ -836,7 +851,11 @@ export function buildAllDistricts(zoneGrid, ring) {
             }
             if (mergedEdges) {
                 const edgeMat = getMatDict(primaryZone).neonEdges;
-                if (edgeMat) chunkGroup.add(new THREE.LineSegments(mergedEdges, edgeMat));
+                if (edgeMat) {
+                    const edgeMesh = new THREE.LineSegments(mergedEdges, edgeMat);
+                    edgeMesh.userData.lodLevel = 'DETAIL';
+                    chunkGroup.add(edgeMesh);
+                }
             }
         }
 
@@ -1023,7 +1042,9 @@ export function rebuildDistrictForCell(cell, ring) {
             if (material) break;
         }
         if (!material) continue;
-        chunkGroup.add(new THREE.Mesh(mergedGeo, material));
+        const mesh = new THREE.Mesh(mergedGeo, material);
+        mesh.userData.lodLevel = LOD_LEVEL_BY_MAT[matKey] || 'MEDIUM';
+        chunkGroup.add(mesh);
     }
 
     if (chunk.neonEdgeGeos.length > 0) {
@@ -1035,7 +1056,11 @@ export function rebuildDistrictForCell(cell, ring) {
         }
         if (mergedEdges) {
             const edgeMat = getMatDict(primaryZone).neonEdges;
-            if (edgeMat) chunkGroup.add(new THREE.LineSegments(mergedEdges, edgeMat));
+            if (edgeMat) {
+                const edgeMesh = new THREE.LineSegments(mergedEdges, edgeMat);
+                edgeMesh.userData.lodLevel = 'DETAIL';
+                chunkGroup.add(edgeMesh);
+            }
         }
     }
 
