@@ -994,6 +994,12 @@
       <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#9fb0d8;cursor:pointer"><input id="perfToggleFg" type="checkbox" style="margin:0"> FG</label>
       <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#9fb0d8;cursor:pointer"><input id="perfToggleMsaa" type="checkbox" style="margin:0"> MSAA</label>
     </div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px 8px;margin:2px 0;pointer-events:auto">
+      <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#7a9bbf;cursor:pointer"><input id="perfToggleFgBldg" type="checkbox" style="margin:0"> Bldg</label>
+      <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#7a9bbf;cursor:pointer"><input id="perfToggleFgStations" type="checkbox" style="margin:0"> Stacje</label>
+      <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#7a9bbf;cursor:pointer"><input id="perfToggleFgWeapons" type="checkbox" style="margin:0"> Bronie</label>
+      <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#7a9bbf;cursor:pointer"><input id="perfToggleFgShadows" type="checkbox" style="margin:0"> Cienie</label>
+    </div>
     <div class="perf-controls" style="grid-template-columns:repeat(3,1fr)">
       <button class="perf-btn" id="perfPresetBase" type="button">Base</button>
       <button class="perf-btn" id="perfPresetFast" type="button">Fast</button>
@@ -1366,6 +1372,10 @@
           toggleOrtho: document.getElementById('perfToggleOrtho'),
           toggleFg: document.getElementById('perfToggleFg'),
           toggleMsaa: document.getElementById('perfToggleMsaa'),
+          toggleFgBldg: document.getElementById('perfToggleFgBldg'),
+          toggleFgStations: document.getElementById('perfToggleFgStations'),
+          toggleFgWeapons: document.getElementById('perfToggleFgWeapons'),
+          toggleFgShadows: document.getElementById('perfToggleFgShadows'),
           presetBase: document.getElementById('perfPresetBase'),
           presetFast: document.getElementById('perfPresetFast'),
           presetUltra: document.getElementById('perfPresetUltra'),
@@ -1398,7 +1408,11 @@
                 heatHaze: !!this.els.toggleHeat?.checked,
                 bgPass: !!this.els.toggleBg?.checked,
                 orthoPass: !!this.els.toggleOrtho?.checked,
-                fgPass: !!this.els.toggleFg?.checked
+                fgPass: !!this.els.toggleFg?.checked,
+                fgBuildings: !!this.els.toggleFgBldg?.checked,
+                fgStations: !!this.els.toggleFgStations?.checked,
+                fgWeapons: !!this.els.toggleFgWeapons?.checked,
+                fgShadows: !!this.els.toggleFgShadows?.checked
               });
             }
             if (typeof window.Core3DMsaa === 'function') {
@@ -1406,7 +1420,8 @@
             }
             this.syncRenderToggles();
           };
-          [this.els.toggleBloom, this.els.toggleHeat, this.els.toggleBg, this.els.toggleOrtho, this.els.toggleFg, this.els.toggleMsaa].forEach(el => {
+          [this.els.toggleBloom, this.els.toggleHeat, this.els.toggleBg, this.els.toggleOrtho, this.els.toggleFg, this.els.toggleMsaa,
+           this.els.toggleFgBldg, this.els.toggleFgStations, this.els.toggleFgWeapons, this.els.toggleFgShadows].forEach(el => {
             if (el) el.addEventListener('change', applyRenderToggles);
           });
           bind(this.els.presetBase, () => { if (typeof window.Core3DPreset === 'function') window.Core3DPreset('base'); this.syncRenderToggles(); });
@@ -1632,6 +1647,10 @@
         if (this.els.toggleOrtho) this.els.toggleOrtho.checked = !!status.orthoPass;
         if (this.els.toggleFg) this.els.toggleFg.checked = !!status.fgPass;
         if (this.els.toggleMsaa) this.els.toggleMsaa.checked = Number(status.msaaSamples) > 0;
+        if (this.els.toggleFgBldg) this.els.toggleFgBldg.checked = !!status.fgBuildings;
+        if (this.els.toggleFgStations) this.els.toggleFgStations.checked = !!status.fgStations;
+        if (this.els.toggleFgWeapons) this.els.toggleFgWeapons.checked = !!status.fgWeapons;
+        if (this.els.toggleFgShadows) this.els.toggleFgShadows.checked = !!status.fgShadows;
         if (this.els.renderStatus) {
           this.els.renderStatus.textContent = `MSAA=${Number(status.msaaSamples) || 0} | bloom=${status.bloom ? 'on' : 'off'} | heat=${status.heatHaze ? 'on' : 'off'}`;
         }

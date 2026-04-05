@@ -264,7 +264,8 @@ function updateRecordTransform(record, station, devScale, visible) {
   if (group.parent !== Core3D.scene) {
     Core3D.scene.add(group);
     // STACJA NA WIERZCH!
-    Core3D.enableForeground3D(group); 
+    Core3D.enableForeground3D(group);
+    group.userData.fgCategory = 'stations';
   }
 
   const geometryRadius = record.geometryRadius || group.userData.geometryRadius || 1;
@@ -326,7 +327,8 @@ export function initStations3D(_sceneIgnored, stations) {
       if (record.group.parent !== Core3D.scene) {
           Core3D.scene.add(record.group);
           // STACJA NA WIERZCH!
-          Core3D.enableForeground3D(record.group); 
+          Core3D.enableForeground3D(record.group);
+          record.group.userData.fgCategory = 'stations';
       }
       station._mesh3d = record.group;
       continue;
@@ -357,9 +359,10 @@ export function initStations3D(_sceneIgnored, stations) {
     pivotGroup.visible = false;
     pivotGroup.add(modelGroup);
     Core3D.scene.add(pivotGroup);
-    
+
     // STACJA NA WIERZCH!
-    Core3D.enableForeground3D(pivotGroup); 
+    Core3D.enableForeground3D(pivotGroup);
+    pivotGroup.userData.fgCategory = 'stations';
 
     record.group = pivotGroup;
     record.modelGroup = modelGroup;
@@ -427,10 +430,11 @@ export function updateStations3D(stations, cullInfo = null) {
         pivotGroup.visible = false;
         pivotGroup.add(modelGroup);
         Core3D.scene.add(pivotGroup);
-        
+
         // STACJA NA WIERZCH!
-        Core3D.enableForeground3D(pivotGroup); 
-        
+        Core3D.enableForeground3D(pivotGroup);
+        pivotGroup.userData.fgCategory = 'stations';
+
         record.group = pivotGroup;
         record.modelGroup = modelGroup;
         station._mesh3d = pivotGroup;

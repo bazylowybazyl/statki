@@ -2226,6 +2226,7 @@ export const Weapon3DSystem = {
     if (!container) {
       container = new THREE.Group();
       container.userData.meshes = new Map();
+      container.userData.fgCategory = 'weapons';
       container.renderOrder = 60;
       container.userData.tiltX = 0;
       container.userData.tiltY = 0;

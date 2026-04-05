@@ -49,6 +49,12 @@ function enablePlanetLayer(object3d) {
     else Core3D.enableBackground3D(object3d);
 }
 
+function enablePlanetHaloLayer(object3d) {
+    if (!object3d) return;
+    if (typeof Core3D.enablePlanetHalo3D === 'function') Core3D.enablePlanetHalo3D(object3d);
+    else enablePlanetLayer(object3d);
+}
+
 function enablePlanetOcclusion(object3d) {
     if (!object3d) return;
     if (typeof Core3D.enablePlanetOccluder3D === 'function') Core3D.enablePlanetOccluder3D(object3d);
@@ -341,7 +347,7 @@ class DirectPlanet {
         const atmMat = new THREE.ShaderMaterial({ vertexShader: ATMOSPHERE_VERTEX, fragmentShader: ATMOSPHERE_FRAGMENT, uniforms: { coef: { value: atmCoef }, power: { value: atmPower }, glowColor: { value: atmColor }, sunsetTint: { value: sunsetTint }, uSunIntensity: { value: 1.1 * HALO_DEFAULTS.sunMul }, sunPosition: { value: new THREE.Vector3(0, 0, -50000) } }, transparent: true, side: THREE.BackSide, depthWrite: false, blending: THREE.AdditiveBlending });
         this.atmosphere = new THREE.Mesh(new THREE.SphereGeometry(atmSize, 64, 64), atmMat); this.group.add(this.atmosphere);
 
-        Core3D.scene.add(this.group); enablePlanetLayer(this.group); enablePlanetOcclusion(this.mesh);
+        Core3D.scene.add(this.group); enablePlanetLayer(this.group); enablePlanetHaloLayer(this.atmosphere); enablePlanetOcclusion(this.mesh);
         if (name === 'earth') window.EARTH = this;
     }
     update(dt, cam) {
