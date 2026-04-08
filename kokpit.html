@@ -32,10 +32,10 @@
             background-color: #000;
             color: var(--text-main);
             font-family: 'Share Tech Mono', monospace;
+            width: 100vw;
             height: 100vh;
             overflow: hidden;
-            display: flex;
-            flex-direction: column;
+            position: relative;
             perspective: 1200px;
             perspective-origin: 50% 55%;
         }
@@ -252,7 +252,7 @@
 
         /* --- KONTENER KOKPITU (GÓRNA + DOLNA KONSOLA RAZEM) --- */
         .cockpit-base {
-            position: absolute;
+            position: fixed;
             bottom: 0;
             left: 50%;
             transform: translateX(-50%);
@@ -1185,8 +1185,8 @@
             position: relative;
             width: 100%;
             z-index: 15;
-            display: flex;
-            flex-direction: column-reverse;
+            height: 28px;
+            overflow: visible;
         }
 
         /* Szczelina napędu — zawsze widoczna metalowa belka */
@@ -1237,11 +1237,15 @@
 
         /* Ekran tabletu — wysuwa się w górę z belki */
         .tablet-screen-wrap {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 100%;
             width: 100%;
             max-height: 0;
             overflow: hidden;
             transition: max-height 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
-            position: relative;
+            z-index: 1;
         }
 
         .tablet-screen-wrap.open {
@@ -1479,9 +1483,14 @@
 
         /* --- DOLNY PANEL (ZAPŁON I REAKTOR) --- */
         .bottom-panel {
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: calc(100% - 10px);
             width: 100%;
-            height: 220px;
-            transform: rotateX(25deg);
+            height: 250px;
+            box-sizing: border-box;
+            transform: rotateX(110deg) translateY(-16px);
             transform-origin: top;
             border-top: none;
             border-top-left-radius: 0;
@@ -1492,8 +1501,12 @@
             display: flex;
             gap: 15px;
             align-items: stretch;
-            opacity: 1;
-            pointer-events: auto;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.4s ease,
+                        transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+            overflow: visible;
+            z-index: 0;
         }
 
         .ignition-slot {
@@ -1640,15 +1653,21 @@
                         pointer-events 0s 0.3s !important;
         }
 
-        /* WIDOK: CENTRUM (Domyślny) — overhead console UKRYTA */
+        /* WIDOK: CENTRUM (Domyślny) — kokpit na dole, dolny panel ukryty pod krawędzią */
         body[data-view="center"] #space-window {
             transform: translateX(0) scale(1.05);
         }
 
         body[data-view="center"] .cockpit-base {
-            transform: translateX(-50%) translateY(220px) rotateX(12deg);
+            transform: translateX(-50%) translateY(0) rotateX(12deg);
             opacity: 1;
             pointer-events: auto;
+        }
+
+        body[data-view="center"] .bottom-panel {
+            opacity: 0;
+            pointer-events: none;
+            transform: rotateX(110deg) translateY(-16px);
         }
 
         body[data-view="center"] .overhead-console {
@@ -1675,7 +1694,7 @@
         }
 
         body[data-view="up"] .cockpit-base {
-            transform: translateX(-50%) translateY(320px) rotateX(15deg);
+            transform: translateX(-50%) translateY(200px) rotateX(15deg);
             opacity: 0.3;
             pointer-events: none;
         }
@@ -1702,7 +1721,7 @@
         }
 
         body[data-view="left"] .cockpit-base {
-            transform: translateX(calc(-50% + 400px)) translateY(220px) rotateX(12deg) rotateY(25deg);
+            transform: translateX(calc(-50% + 400px)) translateY(0) rotateX(12deg) rotateY(25deg);
             opacity: 0.3;
             pointer-events: none;
         }
@@ -1732,7 +1751,7 @@
         }
 
         body[data-view="right"] .cockpit-base {
-            transform: translateX(calc(-50% - 400px)) translateY(220px) rotateX(12deg) rotateY(-25deg);
+            transform: translateX(calc(-50% - 400px)) translateY(0) rotateX(12deg) rotateY(-25deg);
             opacity: 0.3;
             pointer-events: none;
         }
@@ -1762,13 +1781,15 @@
         }
 
         body[data-view="down"] .cockpit-base {
-            transform: translateX(-50%) translateY(0) rotateX(0deg);
+            transform: translateX(-50%) translateY(-80px) rotateX(0deg);
             opacity: 1;
             pointer-events: auto;
         }
 
         body[data-view="down"] .bottom-panel {
-            transform: rotateX(25deg);
+            opacity: 1;
+            pointer-events: auto;
+            transform: rotateX(25deg) translateY(0);
         }
 
         body[data-view="down"] .overhead-console {
@@ -1790,7 +1811,243 @@
         /* Zachowanie pochylenia dolnego panelu we WSZYSTKICH widokach */
         body[data-view="left"] .bottom-panel,
         body[data-view="right"] .bottom-panel {
-            transform: rotateX(25deg);
+            transform: rotateX(110deg) translateY(-16px);
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* ========== VERTICAL STAT BARS (HP / SHIELD) — inline separators ========== */
+        .cockpit-stat-separator {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            padding: 8px 2px;
+            flex-shrink: 0;
+            width: 28px;
+        }
+
+        .cockpit-stat-label {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 7px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: #94a3b8;
+            font-weight: 700;
+        }
+
+        .cockpit-stat-value {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 10px;
+            font-weight: 900;
+            text-shadow: 0 0 8px currentColor;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+        }
+
+        .cockpit-stat-value.hp-val {
+            color: #ef4444;
+        }
+
+        .cockpit-stat-value.shield-val {
+            color: #3b82f6;
+        }
+
+        .cockpit-vbar {
+            width: 10px;
+            flex: 1;
+            min-height: 60px;
+            background: rgba(0, 0, 0, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 5px;
+            position: relative;
+            overflow: hidden;
+            box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.8), 0 0 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .cockpit-vbar-ghost {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.5);
+            transition: height 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.15s;
+            box-shadow: 0 0 8px rgba(255, 255, 255, 0.2);
+        }
+
+        .cockpit-vbar-fill {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transition: height 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 2;
+        }
+
+        .cockpit-vbar-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: 40%;
+            background: linear-gradient(to right, rgba(255, 255, 255, 0.35), transparent);
+        }
+
+        .cockpit-vbar-fill.hp {
+            background: linear-gradient(0deg, #991b1b, #ef4444);
+            box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
+        }
+
+        .cockpit-vbar-fill.shield {
+            background: linear-gradient(0deg, #1e40af, #3b82f6);
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.4);
+        }
+
+        /* Pulsacja przy krytycznym poziomie */
+        @keyframes bar-critical-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .cockpit-vbar.critical .cockpit-vbar-fill {
+            animation: bar-critical-pulse 0.8s infinite;
+        }
+
+        .cockpit-vbar.critical {
+            border-color: rgba(239, 68, 68, 0.6);
+            box-shadow: inset 0 0 10px rgba(239, 68, 68, 0.2), 0 0 12px rgba(239, 68, 68, 0.3);
+        }
+
+        /* Segmenty na paskach */
+        .cockpit-vbar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent 0px,
+                transparent 10px,
+                rgba(0, 0, 0, 0.35) 10px,
+                rgba(0, 0, 0, 0.35) 11px
+            );
+            z-index: 3;
+            pointer-events: none;
+        }
+
+        /* ========== HOTKEY BAR (SKILL ROW) ========== */
+        .cockpit-hotkey-bar {
+            display: flex;
+            gap: 4px;
+            justify-content: center;
+            align-items: center;
+            padding: 6px 20px;
+            background: linear-gradient(180deg, #a8a098, #8a8278 40%, #7a7268 60%, #928a80);
+            border: 4px solid var(--panel-border);
+            border-top: 2px solid rgba(255, 255, 255, 0.15);
+            border-bottom-left-radius: 40px;
+            border-bottom-right-radius: 40px;
+            margin: 0;
+            transform-style: preserve-3d;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5), inset 0 1px 2px rgba(255, 255, 255, 0.2);
+        }
+
+        .hotkey-slot {
+            width: 40px;
+            height: 38px;
+            border-radius: 6px;
+            background: linear-gradient(145deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.01) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-top: 1px solid rgba(255, 255, 255, 0.25);
+            box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            position: relative;
+            pointer-events: auto;
+        }
+
+        .hotkey-slot:hover {
+            border-color: rgba(255, 255, 255, 0.35);
+            background: linear-gradient(145deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.03) 100%);
+            transform: translateY(-1px);
+        }
+
+        .hotkey-slot:active {
+            transform: translateY(1px);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+        }
+
+        .hotkey-slot.active {
+            background: linear-gradient(145deg, rgba(0, 243, 255, 0.2) 0%, rgba(0, 100, 200, 0.1) 100%);
+            border-color: var(--neon-blue);
+            box-shadow: 0 0 12px rgba(0, 243, 255, 0.3), inset 0 0 8px rgba(0, 243, 255, 0.15);
+        }
+
+        .hotkey-slot.weapon-slot {
+            width: 46px;
+            height: 42px;
+            border-radius: 8px;
+            background: linear-gradient(180deg, rgba(21, 29, 48, 0.95), rgba(10, 16, 28, 0.95));
+            border-color: rgba(132, 156, 210, 0.18);
+        }
+
+        .hotkey-hint {
+            font-size: 7px;
+            color: rgba(255, 255, 255, 0.35);
+            font-family: 'Orbitron', sans-serif;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            line-height: 1;
+        }
+
+        .hotkey-key {
+            font-size: 12px;
+            font-weight: 700;
+            color: rgba(255, 255, 255, 0.7);
+            font-family: 'Share Tech Mono', monospace;
+            line-height: 1;
+        }
+
+        .hotkey-slot.weapon-slot .hotkey-key {
+            font-size: 10px;
+            position: absolute;
+            right: 4px;
+            bottom: 3px;
+            color: rgba(255, 255, 255, 0.55);
+        }
+
+        .hotkey-slot.weapon-slot .hotkey-hint {
+            position: absolute;
+            top: 3px;
+            left: 4px;
+            font-size: 6px;
+            color: rgba(188, 203, 236, 0.5);
+        }
+
+        .weapon-icon-area {
+            width: 28px;
+            height: 22px;
+            border-radius: 4px;
+            background: radial-gradient(circle at 50% 35%, rgba(112, 144, 220, 0.15), rgba(12, 18, 32, 0.9));
+            border: 1px solid rgba(104, 124, 186, 0.18);
+            box-shadow: inset 0 0 8px rgba(9, 14, 28, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 7px;
+            color: rgba(125, 142, 183, 0.7);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
         /* --- RESPONSIVE OCHRONA --- */
@@ -1808,6 +2065,10 @@
                 left: 0;
                 transform: none;
                 border-radius: 0;
+            }
+
+            .cockpit-stat-separator {
+                display: none;
             }
         }
     </style>
@@ -1939,6 +2200,8 @@
     <!-- KONTENER KOKPITU (GÓRNA + DOLNA JAKO JEDEN OBIEKT) -->
     <div class="cockpit-base">
 
+
+
         <!-- TABLET - SLOT DVD/PROJEKTOR (wysuwa się w górę nad kokpitem) -->
         <div class="tablet-slot" id="tablet-slot">
             <div class="tablet-bezel" id="tablet-bezel">
@@ -1966,15 +2229,20 @@
                 <div class="radar-container" id="radar">
                     <div class="radar-grid"></div>
                     <div class="radar-scanner"></div>
-                    <!-- Przykładowe Blipy przeliczane relatywnie względem prostokąta -->
-                    <div class="blip" style="top: 20%; left: 30%; animation-delay: 0.2s;" data-target="OBIEKT A42">
-                    </div>
+                    <div class="blip" style="top: 20%; left: 30%; animation-delay: 0.2s;" data-target="OBIEKT A42"></div>
                     <div class="blip" style="top: 80%; left: 70%; animation-delay: 1.1s;" data-target="STREFA 9X"></div>
-                    <div class="blip"
-                        style="top: 40%; left: 85%; animation-delay: 1.8s; background: #cc5500; box-shadow: 0 0 10px #cc5500;"
-                        data-target="WROGI MYŚLIWIEC">
-                    </div>
+                    <div class="blip" style="top: 40%; left: 85%; animation-delay: 1.8s; background: #cc5500; box-shadow: 0 0 10px #cc5500;" data-target="WROGI MYŚLIWIEC"></div>
                 </div>
+            </div>
+
+            <!-- HP BAR SEPARATOR (radar ↔ gear) -->
+            <div class="cockpit-stat-separator">
+                <div class="cockpit-stat-label">HP</div>
+                <div class="cockpit-vbar" id="ck-hp-bar">
+                    <div class="cockpit-vbar-ghost" id="ck-hp-ghost"></div>
+                    <div class="cockpit-vbar-fill hp" id="ck-hp-fill"></div>
+                </div>
+                <div class="cockpit-stat-value hp-val" id="ck-hp-val">4200</div>
             </div>
 
             <div class="panel-section" style="flex: 1;">
@@ -2006,6 +2274,16 @@
                 </div>
             </div>
 
+            <!-- SHIELD BAR SEPARATOR (gear ↔ terminal) -->
+            <div class="cockpit-stat-separator">
+                <div class="cockpit-stat-label">SHD</div>
+                <div class="cockpit-vbar" id="ck-sh-bar">
+                    <div class="cockpit-vbar-ghost" id="ck-sh-ghost"></div>
+                    <div class="cockpit-vbar-fill shield" id="ck-sh-fill"></div>
+                </div>
+                <div class="cockpit-stat-value shield-val" id="ck-sh-val">2800</div>
+            </div>
+
             <div class="panel-section" style="flex: 2; min-width: 250px; display: flex; flex-direction: column;">
                 <div class="status-screen" id="log-screen">
                     <div class="log-line">> SYSTEM GOTOWY</div>
@@ -2026,6 +2304,49 @@
                 </div>
             </div>
         </div>
+
+            <!-- HOTKEY BAR -->
+            <div class="cockpit-hotkey-bar" id="cockpit-hotkey-bar">
+                <div class="hotkey-slot weapon-slot" data-key="1" data-type="main">
+                    <span class="hotkey-hint">MAIN</span>
+                    <div class="weapon-icon-area">RAIL</div>
+                    <span class="hotkey-key">1</span>
+                </div>
+                <div class="hotkey-slot weapon-slot" data-key="2" data-type="special">
+                    <span class="hotkey-hint">SPEC</span>
+                    <div class="weapon-icon-area">—</div>
+                    <span class="hotkey-key">2</span>
+                </div>
+                <div class="hotkey-slot weapon-slot" data-key="3" data-type="missile">
+                    <span class="hotkey-hint">MISS</span>
+                    <div class="weapon-icon-area">MSL</div>
+                    <span class="hotkey-key">3</span>
+                </div>
+                <div class="hotkey-slot" data-key="4" data-action="mode">
+                    <span class="hotkey-hint">MODE</span>
+                    <span class="hotkey-key">4</span>
+                </div>
+                <div class="hotkey-slot" data-key="5" data-action="comm">
+                    <span class="hotkey-hint">COMM</span>
+                    <span class="hotkey-key">5</span>
+                </div>
+                <div class="hotkey-slot" data-key="caps" data-action="scan">
+                    <span class="hotkey-hint">SCAN</span>
+                    <span class="hotkey-key">⇪</span>
+                </div>
+                <div class="hotkey-slot" data-key="6" data-action="map">
+                    <span class="hotkey-hint">MAP</span>
+                    <span class="hotkey-key">6</span>
+                </div>
+                <div class="hotkey-slot" data-key="7" data-action="auto">
+                    <span class="hotkey-hint">AUTO</span>
+                    <span class="hotkey-key">7</span>
+                </div>
+                <div class="hotkey-slot" data-key="8" data-action="aux">
+                    <span class="hotkey-hint">AUX</span>
+                    <span class="hotkey-key">8</span>
+                </div>
+            </div>
 
         <!-- DOLNY PANEL (ZAPŁON I REAKTOR) -->
         <div class="ui-panel bottom-panel" id="panel-bottom">
@@ -2442,6 +2763,93 @@
         window.addEventListener('resize', resize);
         resize(); drawStars();
 
+        // --- SYMULACJA HP/SHIELD BARS ---
+        const ckHpFill = document.getElementById('ck-hp-fill');
+        const ckHpGhost = document.getElementById('ck-hp-ghost');
+        const ckHpVal = document.getElementById('ck-hp-val');
+        const ckHpBar = document.getElementById('ck-hp-bar');
+        const ckShFill = document.getElementById('ck-sh-fill');
+        const ckShGhost = document.getElementById('ck-sh-ghost');
+        const ckShVal = document.getElementById('ck-sh-val');
+
+        let simHp = { val: 4200, max: 4200 };
+        let simShield = { val: 2800, max: 2800 };
+
+        function updateCockpitBars() {
+            const hpPct = Math.max(0, (simHp.val / simHp.max) * 100);
+            ckHpFill.style.height = hpPct + '%';
+            ckHpGhost.style.height = hpPct + '%';
+            ckHpVal.textContent = Math.round(simHp.val);
+            ckHpBar.classList.toggle('critical', hpPct < 30);
+
+            const shPct = Math.max(0, (simShield.val / simShield.max) * 100);
+            ckShFill.style.height = shPct + '%';
+            ckShGhost.style.height = shPct + '%';
+            ckShVal.textContent = Math.round(simShield.val);
+        }
+        updateCockpitBars();
+
+        // Symulacja obrażeń co kilka sekund
+        setInterval(() => {
+            if (Math.random() > 0.5) {
+                const dmg = Math.round(Math.random() * 400 + 50);
+                if (simShield.val > 0) {
+                    simShield.val = Math.max(0, simShield.val - dmg);
+                    addLog(`TRAFIENIE W OSŁONY: -${dmg}`, 'warn');
+                } else {
+                    simHp.val = Math.max(0, simHp.val - dmg);
+                    addLog(`TRAFIENIE W KADŁUB: -${dmg}`, 'error');
+                }
+            } else {
+                // regeneracja
+                if (simShield.val < simShield.max) {
+                    simShield.val = Math.min(simShield.max, simShield.val + 120);
+                }
+                if (simHp.val < simHp.max && simHp.val > 0) {
+                    simHp.val = Math.min(simHp.max, simHp.val + 30);
+                }
+            }
+            updateCockpitBars();
+        }, 3000);
+
+        // --- HOTKEY BAR INTERAKCJA ---
+        const hotkeySlots = document.querySelectorAll('.hotkey-slot');
+
+        hotkeySlots.forEach(slot => {
+            slot.addEventListener('click', () => {
+                const action = slot.dataset.action;
+                const key = slot.dataset.key;
+
+                // Deaktywacja wszystkich (z wyjątkiem weapon slots)
+                hotkeySlots.forEach(s => {
+                    if (!s.classList.contains('weapon-slot')) s.classList.remove('active');
+                });
+
+                if (action) {
+                    slot.classList.toggle('active');
+                    addLog(`HOTKEY [${key.toUpperCase()}]: ${action.toUpperCase()}`, 'normal');
+                    playBeep(800, 'square', 0.08, 0.06);
+                } else {
+                    addLog(`BROŃ [${key}]: AKTYWACJA`, 'warn');
+                    playBeep(600, 'sine', 0.1, 0.06);
+                }
+            });
+        });
+
+        // Obsługa klawiszy 1-8 + CapsLock
+        window.addEventListener('keydown', (e) => {
+            if (e.repeat) return;
+            let targetKey = null;
+
+            if (e.code === 'CapsLock') targetKey = 'caps';
+            else if (e.key >= '1' && e.key <= '8') targetKey = e.key;
+
+            if (targetKey) {
+                const slot = document.querySelector(`.hotkey-slot[data-key="${targetKey}"]`);
+                if (slot) slot.click();
+            }
+        });
+
         setTimeout(() => {
             let i = 0;
             const bootSnd = setInterval(() => {
@@ -2449,6 +2857,7 @@
                 if (i > 5) clearInterval(bootSnd);
             }, 100);
             addLog("UŻYJ WSZYSTKICH 4 STRZAŁEK KLAWIATURY ABY SIĘ ROZGLĄDAĆ.", "warn");
+            addLog("KLAWISZE 1-8 + CAPS: HOTKEY BAR", "normal");
         }, 500);
 
         // --- ZAPŁON I REAKTOR ---

@@ -9,6 +9,7 @@ import { Core3D } from './core3d.js';
 import {
     ZONE_COLS, ZONE_PAD_ANGLE, ZONE_PAD_RADIUS,
     AUTOSTRADA_WIDTH,
+    RING_INNER, RING_INDUSTRIAL, RING_MILITARY,
     COLORS, createSeededRandom, hashZoneSeed,
     getZoneFamily, isMegaZone, getZoneTargetBuildingCount,
     pickArrayEntry
@@ -736,11 +737,25 @@ export function createDistrictForCell(cell, ring) {
 export function buildAllDistricts(zoneGrid, ring) {
     if (!zoneGrid || !ring) return [];
 
-    const cells = zoneGrid.getPopulatedCells();
+    // Process each ring separately so chunks carry a ringId and zone types
+    // never bleed across rings.
+    const results = [];
+    for (const ringId of [RING_INNER, RING_INDUSTRIAL, RING_MILITARY]) {
+        const ringCells = zoneGrid.getCellsForRing
+            ? zoneGrid.getCellsForRing(ringId).filter(c => c.zone)
+            : zoneGrid.getPopulatedCells().filter(c => c.ring === ringId);
+        if (!ringCells.length) continue;
+        const ringResults = buildChunksForRing(ringCells, ringId, ring);
+        results.push(...ringResults);
+    }
+    return results;
+}
+
+// Build merged chunk meshes for a specific ring's populated cells.
+function buildChunksForRing(cells, ringId, ring) {
     if (!cells.length) return [];
 
     // Initialize chunk buckets
-    // Each chunk: { geoByMat: { matKey: [geos] }, decorations: [...], zones: Set, cellKeys: [] }
     const chunks = [];
     for (let i = 0; i < NUM_CHUNKS; i++) {
         chunks.push({
@@ -911,11 +926,20 @@ export function buildAllDistricts(zoneGrid, ring) {
         if (Core3D?.enableForeground3D) Core3D.enableForeground3D(chunkGroup);
         ring.ringFloor.add(chunkGroup);
 
+        // Pick a representative radius for this ring (from its layout band)
+        const ringBand = ring.layout?.[ringId];
+        const ringRadius = ringBand
+            ? (ringBand.innerR + ringBand.outerR) * 0.5
+            : ring.ringRadius;
+
+        chunkGroup.userData.ringId = ringId;
+
         results.push({
             mesh: chunkGroup,
             segmentIndex: 0,
             baseAngle: chunkCenterAngle,
-            radius: ring.ringRadius,
+            radius: ringRadius,
+            ringId,
             radialOffset: 0,
             tiltX: 0,
             tiltY: 0,
@@ -939,11 +963,12 @@ export function rebuildDistrictForCell(cell, ring) {
 
     const cellCenterAngle = (cell.angleStart + cell.angleEnd) * 0.5;
     const chunkIdx = getChunkIndex(cellCenterAngle);
+    const targetRingId = cell.ring || null;
 
-    // Remove existing chunk mesh for this chunk index
+    // Remove existing chunk mesh for this chunk index (only within the same ring)
     for (let i = ring.visualMeshes.length - 1; i >= 0; i--) {
         const vm = ring.visualMeshes[i];
-        if (vm.isDistrict && vm.isChunk && vm.chunkIndex === chunkIdx) {
+        if (vm.isDistrict && vm.isChunk && vm.chunkIndex === chunkIdx && vm.ringId === targetRingId) {
             ring.ringFloor.remove(vm.mesh);
             // Dispose geometries to free GPU memory
             vm.mesh.traverse(child => {
@@ -961,13 +986,14 @@ export function rebuildDistrictForCell(cell, ring) {
         }
     }
 
-    // Get all cells in this chunk from the zone grid
+    // Get all cells in this chunk from the zone grid (restricted to the same ring)
     const zoneGrid = ring.zoneGrid;
     if (!zoneGrid) return;
 
     const allCells = zoneGrid.getPopulatedCells();
     const chunkCells = allCells.filter(c => {
         if (!c.zone) return false;
+        if (targetRingId && c.ring !== targetRingId) return false;
         const a = (c.angleStart + c.angleEnd) * 0.5;
         return getChunkIndex(a) === chunkIdx;
     });
@@ -1112,11 +1138,20 @@ export function rebuildDistrictForCell(cell, ring) {
     if (Core3D?.enableForeground3D) Core3D.enableForeground3D(chunkGroup);
     ring.ringFloor.add(chunkGroup);
 
+    // Use the cell's own ring band for radius (not the outer ringRadius)
+    const ringBand = targetRingId ? ring.layout?.[targetRingId] : null;
+    const ringRadius = ringBand
+        ? (ringBand.innerR + ringBand.outerR) * 0.5
+        : ring.ringRadius;
+
+    chunkGroup.userData.ringId = targetRingId;
+
     ring.visualMeshes.push({
         mesh: chunkGroup,
         segmentIndex: 0,
         baseAngle: chunkCenterAngle,
-        radius: ring.ringRadius,
+        radius: ringRadius,
+        ringId: targetRingId,
         radialOffset: 0,
         tiltX: 0,
         tiltY: 0,

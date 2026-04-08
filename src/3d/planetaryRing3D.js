@@ -5,6 +5,7 @@ import { RingCityZoneGrid, setHoleAngles } from './ringCityZoneGrid.js';
 import { loadSynthCityAssets } from './ringCityAssets.js';
 import { buildAllDistricts, rebuildDistrictForCell } from './ringCityBuildings.js';
 import { buildAllInfrastructure, createDistrictInfrastructure, rebuildAllInfrastructure } from './ringCityInfrastructure.js';
+import { RingShipParking } from './ringShipParking.js';
 
 const RING_PLANETS = new Set(['earth', 'mars']);
 
@@ -47,6 +48,40 @@ const BUILD_GRID = Object.freeze({
 const HEX_SCALE = CONFIG.segmentWorldWidth / TEXTURE.width;
 
 const RING_SEGMENT_MASS = 2500000;
+
+// ============================================================
+// NEW RING LAYOUT — 3 separate rings with gaps
+// Multipliers are relative to planet radius (planet.r)
+// ============================================================
+const RING_LAYOUT = Object.freeze({
+  station:    { innerMul: 0.0, outerMul: 1.0 },  // central station + infra
+  gapInner:   { innerMul: 1.0, outerMul: 1.2 },  // buffer before inner ring
+  inner:      { innerMul: 1.2, outerMul: 1.8 },  // residential + commercial
+  gapSmall:   { innerMul: 1.8, outerMul: 1.9 },  // thin visual gap
+  industrial: { innerMul: 1.9, outerMul: 2.4 },  // industrial zones
+  gapParking: { innerMul: 2.4, outerMul: 3.3 },  // ship parking (~0.9R)
+  military:   { innerMul: 3.3, outerMul: 3.8 }   // military zones (outer)
+});
+
+function computeRingLayout(planetR) {
+  const R = Math.max(2000, planetR || 2800);
+  const band = (cfg) => ({ innerR: R * cfg.innerMul, outerR: R * cfg.outerMul });
+  return {
+    planetR: R,
+    station:    band(RING_LAYOUT.station),
+    inner:      band(RING_LAYOUT.inner),
+    industrial: band(RING_LAYOUT.industrial),
+    parking:    band(RING_LAYOUT.gapParking),
+    military:   band(RING_LAYOUT.military),
+    innerRadius:  R * RING_LAYOUT.inner.innerMul,     // innermost edge (for station proximity)
+    outerRadius:  R * RING_LAYOUT.military.outerMul,  // outermost edge (for forceFields, LOD)
+    // Center radii per-ring — handy for autostrada lane markers, parking center
+    innerCenter:      R * (RING_LAYOUT.inner.innerMul      + RING_LAYOUT.inner.outerMul)      * 0.5,
+    industrialCenter: R * (RING_LAYOUT.industrial.innerMul + RING_LAYOUT.industrial.outerMul) * 0.5,
+    parkingCenter:    R * (RING_LAYOUT.gapParking.innerMul + RING_LAYOUT.gapParking.outerMul) * 0.5,
+    militaryCenter:   R * (RING_LAYOUT.military.innerMul   + RING_LAYOUT.military.outerMul)   * 0.5
+  };
+}
 
 function getRingBandLayout() {
   const totalWorld = Math.max(1, CONFIG.segmentWorldHeight);
@@ -319,7 +354,11 @@ function buildSegmentTypes(segmentCount) {
 class PlanetaryRing {
   constructor(planet, key) {
     this.key = key;
-    this.ringRadius = Math.max(5000, (Number(planet?.r) || 2800) * CONFIG.ringRadiusMul);
+    // NEW: compute multi-ring layout (3 narrower rings with gaps)
+    this.layout = computeRingLayout(Number(planet?.r) || 2800);
+    // Legacy ringRadius — now represents the outermost edge (military ring outer).
+    // Used by forceField, LOD distance calcs, query cells, etc.
+    this.ringRadius = this.layout.outerRadius;
     this.currentRotation = 0;
     this.rotationSpeed = CONFIG.ringRotationSpeed;
     this.segmentData = [];
@@ -340,7 +379,7 @@ class PlanetaryRing {
         Core3D.enableForeground3D(this.buildings3D); // Na layer 1 ring przykrywał budynki, więc wracamy na pass FG.
     }
     this.visualMeshes = [];
-    this.zoneGrid = new RingCityZoneGrid(this.ringRadius, CONFIG.segmentWorldHeight);
+    this.zoneGrid = new RingCityZoneGrid(this.layout);
     this.ringFloor = null; // 3D ring pedestal mesh group
 
     this.build();
@@ -395,6 +434,16 @@ class PlanetaryRing {
     this.buildForceFields();
     this.buildConstructionSlots(segmentCount);
     this.buildRingPedestal();
+    this.buildShipParking();
+  }
+
+  buildShipParking() {
+    if (!this.ringFloor || !this.layout) return;
+    const parkingSeed = ((this.layout.planetR || 1) * 7919 + (this.key?.length || 1) * 31) >>> 0;
+    this.shipParking = new RingShipParking(this.layout);
+    this.shipParking.generate({ seed: parkingSeed });
+    if (Core3D?.enableForeground3D) Core3D.enableForeground3D(this.shipParking.group);
+    this.ringFloor.add(this.shipParking.group);
   }
 
   // ── Damage alpha map — links visual floor to destructor ──────────────
@@ -423,67 +472,58 @@ class PlanetaryRing {
   }
 
   buildRingPedestal() {
-    const ringR = this.ringRadius;
-    const halfH = CONFIG.segmentWorldHeight * 0.5;
-    const innerR = ringR - halfH;
-    const outerR = ringR + halfH;
-    const overhang = 0;
-
     // Build damage alpha texture before materials
     this.buildDamageAlphaMap();
     const alphaTex = this._damageTexture;
 
-    const trimMat = new THREE.MeshBasicMaterial({
-        color: 0x2f6ea4, transparent: true, opacity: 0.3,
-        alphaMap: alphaTex, alphaTest: 0.05
-    });
-
     const floorGroup = new THREE.Group();
     floorGroup.name = `PlanetaryRingFloor:${this.key}`;
 
-    // Lane markers (torus rings) — TorusGeometry U already maps to angle
-    const laneMat = new THREE.MeshBasicMaterial({
+    // Per-ring pedestal bands — one group per ring band (inner / industrial / military).
+    // Gaps (gapInner, gapSmall, gapParking) are intentionally left empty.
+    const bands = [
+        { id: 'inner',      band: this.layout?.inner },
+        { id: 'industrial', band: this.layout?.industrial },
+        { id: 'military',   band: this.layout?.military }
+    ];
+
+    const trimMatProto = new THREE.MeshBasicMaterial({
+        color: 0x2f6ea4, transparent: true, opacity: 0.3,
+        alphaMap: alphaTex, alphaTest: 0.05
+    });
+    const laneMatProto = new THREE.MeshBasicMaterial({
         color: 0x3a618a, transparent: true, opacity: 0.34,
         alphaMap: alphaTex, alphaTest: 0.05
     });
-    const laneOffset = 34;
-    for (const { radius, tube, opacity } of [
-        { radius: ringR, tube: 2.8, opacity: 0.36 },
-        { radius: ringR - laneOffset, tube: 2.2, opacity: 0.22 },
-        { radius: ringR + laneOffset, tube: 2.2, opacity: 0.22 }
-    ]) {
-        const mat = laneMat.clone();
-        mat.opacity = opacity;
-        const strip = new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 4, 320), mat);
-        strip.name = `PlanetaryRingLane:${this.key}`;
-        strip.position.z = 1.0;
-        floorGroup.add(strip);
-    }
 
-    // Shoulder edges
-    const shoulderMat = new THREE.MeshBasicMaterial({
-        color: 0x17324b, transparent: true, opacity: 0.12,
-        alphaMap: alphaTex, alphaTest: 0.05
-    });
-    const autoW = 180;
-    for (const radius of [ringR - autoW * 0.5, ringR + autoW * 0.5]) {
-        const shoulder = new THREE.Mesh(new THREE.TorusGeometry(radius, 4, 4, 320), shoulderMat);
-        shoulder.name = `PlanetaryRingShoulder:${this.key}`;
-        shoulder.position.z = 0.8;
-        floorGroup.add(shoulder);
-    }
+    for (const { id, band } of bands) {
+        if (!band) continue;
+        const innerR = band.innerR;
+        const outerR = band.outerR;
+        const centerR = (innerR + outerR) * 0.5;
 
-    // Trim rails (edge glow)
-    for (const { radius, tube, opacity } of [
-        { radius: innerR - overhang + 18, tube: 6, opacity: 0.26 },
-        { radius: outerR + overhang - 18, tube: 6, opacity: 0.26 }
-    ]) {
-        const mat = trimMat.clone();
-        mat.opacity = opacity;
-        const rail = new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 4, 256), mat);
-        rail.name = `PlanetaryRingRail:${this.key}`;
-        rail.position.z = 2;
-        floorGroup.add(rail);
+        // Lane marker at band center (single torus stripe)
+        {
+            const mat = laneMatProto.clone();
+            mat.opacity = 0.32;
+            const strip = new THREE.Mesh(new THREE.TorusGeometry(centerR, 2.6, 4, 320), mat);
+            strip.name = `PlanetaryRingLane:${this.key}:${id}`;
+            strip.position.z = 1.0;
+            floorGroup.add(strip);
+        }
+
+        // Trim rails at band edges (inner + outer)
+        for (const { radius, tube, opacity } of [
+            { radius: innerR + 18, tube: 6, opacity: 0.26 },
+            { radius: outerR - 18, tube: 6, opacity: 0.26 }
+        ]) {
+            const mat = trimMatProto.clone();
+            mat.opacity = opacity;
+            const rail = new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 4, 256), mat);
+            rail.name = `PlanetaryRingRail:${this.key}:${id}`;
+            rail.position.z = 2;
+            floorGroup.add(rail);
+        }
     }
 
     // Y-flip: game coords have Y-down, Three.js has Y-up.

@@ -6,7 +6,32 @@ import * as THREE from 'three';
 
 // --- Constants ---
 export const ZONE_COLS = 192;
-export const ZONE_ROWS = 4;
+
+// Per-ring row counts (inner = residential+commercial, middle = industrial, outer = military)
+export const INNER_RING_ROWS = 3;
+export const INDUSTRIAL_RING_ROWS = 2;
+export const MILITARY_RING_ROWS = 2;
+export const ZONE_ROWS = INNER_RING_ROWS + INDUSTRIAL_RING_ROWS + MILITARY_RING_ROWS; // 7
+
+// Ring identifiers
+export const RING_INNER = 'inner';
+export const RING_INDUSTRIAL = 'industrial';
+export const RING_MILITARY = 'military';
+
+// Row → ring mapping (used for reverse lookup)
+export function getRingForRow(row) {
+    if (row < INNER_RING_ROWS) return RING_INNER;
+    if (row < INNER_RING_ROWS + INDUSTRIAL_RING_ROWS) return RING_INDUSTRIAL;
+    return RING_MILITARY;
+}
+
+// Which zone types are allowed per ring
+export const RING_ZONE_POOLS = {
+    [RING_INNER]: ['residential', 'commercial'],
+    [RING_INDUSTRIAL]: ['industrial'],
+    [RING_MILITARY]: ['military']
+};
+
 export const ZONE_CELL_ARC = (Math.PI * 2) / ZONE_COLS;
 
 let HOLE_ANGLES = [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2]; // updated by ring at init
@@ -15,11 +40,11 @@ const GATE_CLEARANCE = 0.14;
 export const ZONE_PAD_ANGLE = ZONE_CELL_ARC * 0.14;
 export const ZONE_PAD_RADIUS = 70;
 
+// Legacy (kept for decorative lane markers on pedestals)
 export const AUTOSTRADA_WIDTH = 180;
 export const AUTOSTRADA_LANE_OFFSET = 34;
 
 export const ZONE_TYPES = ['residential', 'residential_mega', 'commercial', 'commercial_mega', 'industrial', 'military'];
-const FILL_ZONE_KEYS = ['residential', 'industrial', 'military'];
 
 export const COLORS = {
     residential:      { num: 0x00f3ff, css: '#00f3ff' },
@@ -106,24 +131,12 @@ export function pickArrayEntry(rand, items) {
 
 // --- Zone Grid Class ---
 export class RingCityZoneGrid {
-    constructor(ringRadius, ringHeight) {
-        this.ringRadius = ringRadius;
-        this.ringHeight = ringHeight;
-
-        const streetWidth = 55;
-        this.paintInner = ringRadius - ringHeight * 0.5 + streetWidth + 180;
-        this.paintOuter = ringRadius + ringHeight * 0.5 - streetWidth - 180;
-
-        // Autostrada dzieli ring na dwie połówki:
-        // - Wewnętrzna (rows 0-1): paintInner → ringRadius - AUTOSTRADA_WIDTH/2
-        // - Zewnętrzna (rows 2-3): ringRadius + AUTOSTRADA_WIDTH/2 → paintOuter
-        const halfAuto = AUTOSTRADA_WIDTH * 0.5 + 30; // +30 margines bezpieczeństwa
-        this.innerBandOuter = ringRadius - halfAuto;  // górna krawędź wewnętrznego pasma
-        this.outerBandInner = ringRadius + halfAuto;   // dolna krawędź zewnętrznego pasma
-
-        const ROWS_PER_BAND = ZONE_ROWS / 2; // 2 rzędy na każdą stronę
-        this.innerLaneDepth = (this.innerBandOuter - this.paintInner) / ROWS_PER_BAND;
-        this.outerLaneDepth = (this.paintOuter - this.outerBandInner) / ROWS_PER_BAND;
+    constructor(layout) {
+        // layout = { inner: {innerR, outerR}, industrial: {innerR, outerR}, military: {innerR, outerR}, outerRadius, innerRadius }
+        this.layout = layout;
+        // Backwards-compat references (some callsites still read these)
+        this.ringRadius = layout?.outerRadius || 0;
+        this.ringHeight = (layout?.military?.outerR || 0) - (layout?.inner?.innerR || 0);
 
         this.cells = [];
         this.cellMeshes = new Map(); // key -> visual data
@@ -133,31 +146,35 @@ export class RingCityZoneGrid {
 
     reset() {
         this.cells = [];
-        const ROWS_PER_BAND = ZONE_ROWS / 2;
-        for (let row = 0; row < ZONE_ROWS; row++) {
-            for (let col = 0; col < ZONE_COLS; col++) {
-                const angleStart = col * ZONE_CELL_ARC;
-                const angleEnd = angleStart + ZONE_CELL_ARC;
+        const L = this.layout;
+        if (!L) return;
 
-                let innerRadius, outerRadius;
-                if (row < ROWS_PER_BAND) {
-                    // Wewnętrzne pasmo (bliżej planety)
-                    innerRadius = this.paintInner + row * this.innerLaneDepth;
-                    outerRadius = innerRadius + this.innerLaneDepth;
-                } else {
-                    // Zewnętrzne pasmo (dalej od planety)
-                    const outerRow = row - ROWS_PER_BAND;
-                    innerRadius = this.outerBandInner + outerRow * this.outerLaneDepth;
-                    outerRadius = innerRadius + this.outerLaneDepth;
+        const rings = [
+            { id: RING_INNER,      rows: INNER_RING_ROWS,      band: L.inner,      rowOffset: 0 },
+            { id: RING_INDUSTRIAL, rows: INDUSTRIAL_RING_ROWS, band: L.industrial, rowOffset: INNER_RING_ROWS },
+            { id: RING_MILITARY,   rows: MILITARY_RING_ROWS,   band: L.military,   rowOffset: INNER_RING_ROWS + INDUSTRIAL_RING_ROWS }
+        ];
+
+        for (const ring of rings) {
+            if (!ring.band || ring.rows <= 0) continue;
+            const laneDepth = (ring.band.outerR - ring.band.innerR) / ring.rows;
+            for (let r = 0; r < ring.rows; r++) {
+                const row = ring.rowOffset + r;
+                const cellInner = ring.band.innerR + r * laneDepth;
+                const cellOuter = cellInner + laneDepth;
+                for (let col = 0; col < ZONE_COLS; col++) {
+                    const angleStart = col * ZONE_CELL_ARC;
+                    const angleEnd = angleStart + ZONE_CELL_ARC;
+                    this.cells.push({
+                        col, row,
+                        ring: ring.id,
+                        key: `${col}:${row}`,
+                        zone: null,
+                        angleStart, angleEnd,
+                        innerRadius: cellInner,
+                        outerRadius: cellOuter
+                    });
                 }
-
-                this.cells.push({
-                    col, row,
-                    key: `${col}:${row}`,
-                    zone: null,
-                    angleStart, angleEnd,
-                    innerRadius, outerRadius
-                });
             }
         }
     }
@@ -193,66 +210,86 @@ export class RingCityZoneGrid {
         };
     }
 
-    // Weighted fill algorithm with neighbor clustering
-    fillWithZones(weights = { residential: 50, industrial: 30, military: 20 }) {
-        const seed = (((Date.now() >>> 0) ^ ((weights.residential * 31 + weights.industrial * 17 + weights.military * 13) >>> 0))) >>> 0;
+    // Weighted fill — each ring is filled independently from its own zone pool.
+    fillWithZones(weights = { residential: 60, commercial: 40, industrial: 100, military: 100 }) {
+        const wSum = ((weights.residential || 0) * 31 +
+                      (weights.commercial || 0) * 23 +
+                      (weights.industrial || 0) * 17 +
+                      (weights.military || 0) * 13) >>> 0;
+        const seed = ((Date.now() >>> 0) ^ wSum) >>> 0;
         const rand = createSeededRandom(seed || 1);
         const assignments = new Array(this.cells.length).fill(null);
 
         // Clear existing
-        for (const cell of this.cells) {
-            cell.zone = null;
-        }
+        for (const cell of this.cells) cell.zone = null;
 
-        for (let row = 0; row < ZONE_ROWS; row++) {
-            for (let col = 0; col < ZONE_COLS; col++) {
-                const cell = this.getCell(col, row);
-                if (!cell) continue;
-                const centerAngle = cell.angleStart + ZONE_CELL_ARC * 0.5;
-                if (isGateAngle(centerAngle)) {
-                    assignments[this.cellIndex(col, row)] = null;
-                    continue;
+        // Per-ring fill — pool limited to that ring's allowed types
+        for (const ringId of [RING_INNER, RING_INDUSTRIAL, RING_MILITARY]) {
+            const pool = RING_ZONE_POOLS[ringId];
+            if (!pool || pool.length === 0) continue;
+
+            for (let row = 0; row < ZONE_ROWS; row++) {
+                if (getRingForRow(row) !== ringId) continue;
+                for (let col = 0; col < ZONE_COLS; col++) {
+                    const cell = this.getCell(col, row);
+                    if (!cell) continue;
+                    const centerAngle = cell.angleStart + ZONE_CELL_ARC * 0.5;
+                    if (isGateAngle(centerAngle)) {
+                        assignments[this.cellIndex(col, row)] = null;
+                        continue;
+                    }
+                    const zone = this._chooseFillZoneForRing(rand, col, row, pool, weights, assignments);
+                    assignments[this.cellIndex(col, row)] = zone;
+                    cell.zone = zone;
                 }
-                const zone = this._chooseFillZone(rand, col, row, weights, assignments);
-                assignments[this.cellIndex(col, row)] = zone;
-                cell.zone = zone;
             }
         }
 
         return this.cells.filter(c => c.zone !== null);
     }
 
-    _chooseFillZone(rand, col, row, weights, assignments) {
+    _chooseFillZoneForRing(rand, col, row, pool, weights, assignments) {
+        // If pool has only one zone type, return it directly (common for industrial/military)
+        if (pool.length === 1) return pool[0];
+
         const weighted = {};
         let baseTotal = 0;
-        for (const zone of FILL_ZONE_KEYS) {
+        for (const zone of pool) {
             const base = Math.max(0, Number(weights[zone]) || 0);
             weighted[zone] = base;
             baseTotal += base;
         }
         if (baseTotal <= 0) {
-            for (const zone of FILL_ZONE_KEYS) weighted[zone] = 1;
+            for (const zone of pool) weighted[zone] = 1;
         }
 
-        // Neighbor clustering bias
-        const left = col > 0 ? assignments[this.cellIndex(col - 1, row)] : null;
+        // Neighbor clustering bias — but only consider neighbors in the same ring
+        const currentRingId = getRingForRow(row);
+        const inSameRing = (r) => r >= 0 && r < ZONE_ROWS && getRingForRow(r) === currentRingId;
+
+        const left  = col > 0 ? assignments[this.cellIndex(col - 1, row)] : null;
         const left2 = col > 1 ? assignments[this.cellIndex(col - 2, row)] : null;
-        const inner = row > 0 ? assignments[this.cellIndex(col, row - 1)] : null;
+        const inner = inSameRing(row - 1) ? assignments[this.cellIndex(col, row - 1)] : null;
 
         if (left && weighted[left] !== undefined) weighted[left] += Math.max(6, weighted[left] * 0.65);
         if (left2 && left2 === left && weighted[left2] !== undefined) weighted[left2] += Math.max(4, weighted[left2] * 0.35);
         if (inner && weighted[inner] !== undefined) weighted[inner] += Math.max(5, weighted[inner] * 0.45);
 
         let total = 0;
-        for (const zone of FILL_ZONE_KEYS) total += weighted[zone];
-        if (total <= 0) return 'residential';
+        for (const zone of pool) total += weighted[zone];
+        if (total <= 0) return pool[0];
 
         let pick = rand() * total;
-        for (const zone of FILL_ZONE_KEYS) {
+        for (const zone of pool) {
             pick -= weighted[zone];
             if (pick <= 0) return zone;
         }
-        return FILL_ZONE_KEYS[FILL_ZONE_KEYS.length - 1];
+        return pool[pool.length - 1];
+    }
+
+    // Return cells belonging to a specific ring (used by buildings/infrastructure)
+    getCellsForRing(ringId) {
+        return this.cells.filter(c => c.ring === ringId);
     }
 
     // Map zone cell to overlapping ring segment indices
