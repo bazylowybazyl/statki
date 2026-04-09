@@ -356,9 +356,13 @@ class PlanetaryRing {
     this.key = key;
     // NEW: compute multi-ring layout (3 narrower rings with gaps)
     this.layout = computeRingLayout(Number(planet?.r) || 2800);
-    // Legacy ringRadius — now represents the outermost edge (military ring outer).
-    // Used by forceField, LOD distance calcs, query cells, etc.
+    // Legacy ringRadius — outermost edge (military ring outer).
+    // Used by LOD distance calcs, query cells, external API.
     this.ringRadius = this.layout.outerRadius;
+    // wallRadius — center of the military band, where hex segments / force fields
+    // / construction slots physically sit. Inner positioning code uses this so the
+    // canvas wall texture (±1200u radially) is centered on the actual military band.
+    this.wallRadius = this.layout.militaryCenter;
     this.currentRotation = 0;
     this.rotationSpeed = CONFIG.ringRotationSpeed;
     this.segmentData = [];
@@ -392,7 +396,7 @@ class PlanetaryRing {
 
     const layout = getRingBandLayout();
     const effectiveWidth = CONFIG.segmentWorldWidth - CONFIG.overlap;
-    const outerCoverageRadius = this.ringRadius + Math.max(
+    const outerCoverageRadius = this.wallRadius + Math.max(
       CONFIG.segmentWorldHeight * 0.5,
       Math.abs(layout.gapStartWorld)
     );
@@ -662,7 +666,7 @@ class PlanetaryRing {
       const centerAngle = startAngle + arcAngle * 0.5;
 
       // Build arc geometry matching the ring curvature
-      const ringR = this.ringRadius;
+      const ringR = this.wallRadius;
       const halfH = CONFIG.segmentWorldHeight * 0.5;
       const innerR = ringR - halfH;
       const outerR = ringR + halfH;
@@ -768,8 +772,8 @@ class PlanetaryRing {
 
       // Distance check
       const worldAngle = ff.centerAngle + this.currentRotation;
-      const ffX = this.lastPlanetX + Math.cos(worldAngle) * this.ringRadius;
-      const ffY = this.lastPlanetY + Math.sin(worldAngle) * this.ringRadius;
+      const ffX = this.lastPlanetX + Math.cos(worldAngle) * this.wallRadius;
+      const ffY = this.lastPlanetY + Math.sin(worldAngle) * this.wallRadius;
       const dist = hasShip ? Math.hypot(shipX - ffX, shipY - ffY) : Infinity;
 
       // Hysteresis open/close
@@ -818,7 +822,7 @@ class PlanetaryRing {
       this.constructionSlots.push({
         index: i,
         baseAngle: seg.baseAngle,
-        attachRadius: this.ringRadius - layout.innerBandCenterLocalY,
+        attachRadius: this.wallRadius - layout.innerBandCenterLocalY,
         width: safeWidth
       });
     }
@@ -851,8 +855,8 @@ class PlanetaryRing {
       const worldAngle = seg.baseAngle + this.currentRotation;
       seg.worldAngle = worldAngle;
 
-      const worldX = this.lastPlanetX + Math.cos(worldAngle) * this.ringRadius;
-      const worldY = this.lastPlanetY + Math.sin(worldAngle) * this.ringRadius;
+      const worldX = this.lastPlanetX + Math.cos(worldAngle) * this.wallRadius;
+      const worldY = this.lastPlanetY + Math.sin(worldAngle) * this.wallRadius;
       const worldRot = worldAngle + Math.PI * 0.5;
 
       const entity = seg.entity;
@@ -864,7 +868,7 @@ class PlanetaryRing {
 
       // Tangential surface velocity: v = ω × r (perpendicular to radial direction)
       // This lets the destructor collision system transfer surface movement to colliding objects
-      const surfSpeed = this.rotationSpeed * this.ringRadius;
+      const surfSpeed = this.rotationSpeed * this.wallRadius;
       entity.vx = -Math.sin(worldAngle) * surfSpeed;
       entity.vy =  Math.cos(worldAngle) * surfSpeed;
       entity.angVel = this.rotationSpeed;
@@ -910,11 +914,18 @@ class PlanetaryRing {
     }
 
     // Szerokość widocznego łuku zależy od zoom i dystansu
-    // Przy zoom=1 i dystansie ~ringRadius, widać ~120° łuku
+    // Każdy ring band ma własny promień centralny → liczymy łuk per-ring,
+    // bo mniejszy promień = ten sam viewport pokrywa szerszy łuk kątowy.
     const viewportWorldWidth = hasCameraCenter ? (window.innerWidth || 1920) / camZoom : 99999;
-    const visibleArcHalf = hasCameraCenter
-        ? Math.min(Math.PI, Math.max(0.4, viewportWorldWidth / (this.ringRadius * 1.2)))
+    const computeArcHalf = (radius) => hasCameraCenter
+        ? Math.min(Math.PI, Math.max(0.4, viewportWorldWidth / (radius * 1.2)))
         : Math.PI;
+    const arcHalfByRing = {
+        inner:      computeArcHalf(this.layout.innerCenter),
+        industrial: computeArcHalf(this.layout.industrialCenter),
+        military:   computeArcHalf(this.layout.militaryCenter)
+    };
+    const fallbackArcHalf = computeArcHalf(this.wallRadius);
 
     // LOD: dystans kamery od ringu → poziomy szczegółowości
     const lodDistanceSq = hasCameraCenter ? (cameraDistance * cameraDistance) : 0;
@@ -957,13 +968,18 @@ class PlanetaryRing {
             }
         }
 
-        // Angle-based culling for chunks and individual district meshes
-        if (hasCameraCenter && b.baseAngle !== undefined) {
+        // Angle-based culling — only for non-chunk legacy entries.
+        // Chunks rely on Three.js built-in frustum culling (per merged mesh
+        // bounding sphere), which is correct regardless of camera position
+        // relative to the planet center. The previous angle math assumed the
+        // camera looks at the ring from planet center; offset/zoomed cameras
+        // produced false culls and the user saw bare zone overlay.
+        if (hasCameraCenter && !b.isChunk && b.baseAngle !== undefined) {
             const worldAngle = b.baseAngle + this.currentRotation;
             let angleDiff = worldAngle - cameraAngle;
             angleDiff = angleDiff - Math.round(angleDiff / (Math.PI * 2)) * (Math.PI * 2);
-            const margin = b.isChunk ? 0.25 : 0.15;
-            if (Math.abs(angleDiff) > visibleArcHalf + margin) {
+            const arcHalf = (b.ringId && arcHalfByRing[b.ringId]) || fallbackArcHalf;
+            if (Math.abs(angleDiff) > arcHalf + 0.15) {
                 b.mesh.visible = false;
                 continue;
             }

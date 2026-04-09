@@ -115,12 +115,12 @@ export function isMegaZone(zone) {
 }
 
 export function getZoneTargetBuildingCount(zone, rnd = Math.random) {
-    if (zone === 'residential_mega') return 3 + Math.floor(rnd() * 2);
-    if (zone === 'commercial_mega') return 3 + Math.floor(rnd() * 3);
-    if (zone === 'residential') return 8 + Math.floor(rnd() * 4);
-    if (zone === 'commercial') return 7 + Math.floor(rnd() * 4);
-    if (zone === 'industrial') return 5 + Math.floor(rnd() * 3);
-    if (zone === 'military') return 4 + Math.floor(rnd() * 3);
+    if (zone === 'residential_mega') return 1 + Math.floor(rnd() * 2);
+    if (zone === 'commercial_mega') return 1 + Math.floor(rnd() * 3);
+    if (zone === 'residential') return 1 + Math.floor(rnd() * 4);
+    if (zone === 'commercial') return 1 + Math.floor(rnd() * 4);
+    if (zone === 'industrial') return 1 + Math.floor(rnd() * 3);
+    if (zone === 'military') return 1 + Math.floor(rnd() * 3);
     return 6;
 }
 
