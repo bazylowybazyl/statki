@@ -195,15 +195,33 @@ export function runAdvancedFighterAI(npc, dt) {
     if (!npc.sub) npc.sub = 'merge';
     if (npc.sub === 'core') {
       let neighbors = 0;
-      const allNpcs = window.npcs || [];
-      for (let i = 0; i < allNpcs.length; i++) {
-        const other = allNpcs[i];
-        if (!other || other === npc || other.dead) continue;
-        const otherKind = window.getUnitKind?.(other) || other.type || '';
-        if (otherKind !== 'fighter' && otherKind !== 'interceptor') continue;
-        const odx = other.x - npc.x;
-        const ody = other.y - npc.y;
-        if (odx * odx + ody * ody < 220 * 220) neighbors++;
+      // Spatial grid query — only walks local cells (radius 220) instead of full NPC scan.
+      if (window.queryAIGrid) {
+        const __nq = window.queryAIGrid(npc.x, npc.y, 220);
+        const __nbuf = __nq.buffer;
+        const __nn = __nq.count;
+        for (let i = 0; i < __nn; i++) {
+          const other = __nbuf[i];
+          if (!other || other === npc || other.dead) continue;
+          if (other === window.ship) continue;
+          const otherKind = window.getUnitKind?.(other) || other.type || '';
+          if (otherKind !== 'fighter' && otherKind !== 'interceptor') continue;
+          // Exact dist check — grid cells are 600u, query may overshoot
+          const odx = other.x - npc.x;
+          const ody = other.y - npc.y;
+          if (odx * odx + ody * ody < 220 * 220) neighbors++;
+        }
+      } else {
+        const allNpcs = window.npcs || [];
+        for (let i = 0; i < allNpcs.length; i++) {
+          const other = allNpcs[i];
+          if (!other || other === npc || other.dead) continue;
+          const otherKind = window.getUnitKind?.(other) || other.type || '';
+          if (otherKind !== 'fighter' && otherKind !== 'interceptor') continue;
+          const odx = other.x - npc.x;
+          const ody = other.y - npc.y;
+          if (odx * odx + ody * ody < 220 * 220) neighbors++;
+        }
       }
       const canBreak = (npc.dogfightTime > (npc.dogfightMin || 1.0)) || neighbors > 5;
       if (canBreak && (neighbors > 3 || (Math.random() < 0.008 && npc.breakOffTimer <= 0))) {

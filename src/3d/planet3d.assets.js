@@ -352,6 +352,23 @@ class DirectPlanet {
     }
     update(dt, cam) {
         if (!this.group || !cam) return;
+
+        // Off-screen skip: if planet center is far outside camera viewport,
+        // hide the entire group and skip uniform/position/rotation updates.
+        // Saves dozens of draw calls + uniform uploads × ~8 planets × every frame.
+        const camZoom = cam.zoom || 1;
+        const planetRadius = (this.data.r || 100) * PLANET_SIZE_MULTIPLIER;
+        const halfVpX = (window.innerWidth || 1920) * 0.5 / camZoom + planetRadius * 1.5;
+        const halfVpY = (window.innerHeight || 1080) * 0.5 / camZoom + planetRadius * 1.5;
+        const dx = this.data.x - (cam.x || 0);
+        const dy = this.data.y - (cam.y || 0);
+        const offScreen = Math.abs(dx) > halfVpX || Math.abs(dy) > halfVpY;
+        if (offScreen) {
+            if (this.group.visible) this.group.visible = false;
+            return;
+        }
+        if (!this.group.visible) this.group.visible = true;
+
         this.uniforms.uPlanetBloom.value = this.basePlanetBloom * ((window.DevVFX && window.DevVFX.planetBloomMultiplier !== undefined) ? window.DevVFX.planetBloomMultiplier : 1.0);
         this.group.position.set(this.data.x, -this.data.y, -50000);
         const scale = (this.data.r || 100) * PLANET_SIZE_MULTIPLIER;

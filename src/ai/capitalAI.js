@@ -193,6 +193,7 @@ function processAutonomousWeapons(npc, dt) {
   initAutonomousWeapons(npc);
   if (!npc.autoWeapons || npc.autoWeapons.length === 0) return;
 
+  const tWeap0 = (typeof performance !== 'undefined') ? performance.now() : 0;
   const npcs = window.npcs || [];
 
   for (let wIdx = 0; wIdx < npc.autoWeapons.length; wIdx++) {
@@ -268,13 +269,28 @@ function processAutonomousWeapons(npc, dt) {
           checkAndScoreTarget(window.ship);
       }
 
-      for (let i = 0; i < npcs.length; i++) {
-        const enemy = npcs[i];
-        if (!enemy || enemy.dead) continue;
-        if (npc.friendly && !enemy.isPirate) continue;
-        if (!npc.friendly && enemy.friendly === false && enemy !== window.ship) continue;
-
-        checkAndScoreTarget(enemy);
+      // Spatial grid query — only iterate entities within weapon range
+      // instead of full O(N) NPC scan. Cell hash returns local candidates.
+      if (window.queryAIGrid) {
+        const __wq = window.queryAIGrid(npc.x, npc.y, range);
+        const __wbuf = __wq.buffer;
+        const __wn = __wq.count;
+        for (let i = 0; i < __wn; i++) {
+          const enemy = __wbuf[i];
+          if (!enemy || enemy.dead || enemy === npc) continue;
+          if (enemy === window.ship) continue; // already scored above
+          if (npc.friendly && !enemy.isPirate) continue;
+          if (!npc.friendly && enemy.friendly === false && enemy !== window.ship) continue;
+          checkAndScoreTarget(enemy);
+        }
+      } else {
+        for (let i = 0; i < npcs.length; i++) {
+          const enemy = npcs[i];
+          if (!enemy || enemy.dead) continue;
+          if (npc.friendly && !enemy.isPirate) continue;
+          if (!npc.friendly && enemy.friendly === false && enemy !== window.ship) continue;
+          checkAndScoreTarget(enemy);
+        }
       }
 
       weapon.cachedTarget = bestTarget || null;
@@ -332,6 +348,10 @@ function processAutonomousWeapons(npc, dt) {
       let diff = window.wrapAngle(restAngle - weapon.visualAngle);
       weapon.visualAngle = window.wrapAngle(weapon.visualAngle + diff * 3 * dt);
     }
+  }
+
+  if (typeof performance !== 'undefined') {
+    window.__aiWeaponScanMs = (window.__aiWeaponScanMs || 0) + (performance.now() - tWeap0);
   }
 }
 
