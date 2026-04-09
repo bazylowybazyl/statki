@@ -108,6 +108,12 @@ function mergeAndCreateMesh(geos, material) {
     if (!mergedGeo) return null;
 
     mergedGeo.applyMatrix4(swapYZ);
+    // Pre-compute bounds so the first frustum-cull check (when camera pans
+    // a new section into view) doesn't trigger a lazy O(N-vertices) compute.
+    // Without this, large merged ring-floor meshes cause one-time hitches
+    // every time the camera reveals a new portion of the ring.
+    mergedGeo.computeBoundingSphere();
+    mergedGeo.computeBoundingBox();
     return new THREE.Mesh(mergedGeo, material);
 }
 

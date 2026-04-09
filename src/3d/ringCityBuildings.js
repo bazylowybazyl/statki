@@ -842,6 +842,15 @@ function buildChunksForRing(cells, ringId, ring) {
             }
             if (!mergedGeo) continue;
 
+            // Pre-compute bounding sphere/box at build time. Without this,
+            // Three.js computes them lazily on the first frustum-cull check
+            // (i.e. the first frame the chunk enters the camera view), which
+            // causes a per-chunk hitch as the camera pans and new chunks
+            // appear. Doing it once at build time is essentially free and
+            // eliminates camera "jumps" during movement.
+            mergedGeo.computeBoundingSphere();
+            mergedGeo.computeBoundingBox();
+
             // Find correct material — check each zone's matDict and synthCity mats
             let material = null;
             for (const zone of chunk.zones) {
@@ -865,6 +874,10 @@ function buildChunksForRing(cells, ringId, ring) {
                 catch (e2) { mergedEdges = null; }
             }
             if (mergedEdges) {
+                // Same rationale as merged building geos: pre-compute bounds
+                // so the first frustum check during camera movement is cheap.
+                mergedEdges.computeBoundingSphere();
+                mergedEdges.computeBoundingBox();
                 const edgeMat = getMatDict(primaryZone).neonEdges;
                 if (edgeMat) {
                     const edgeMesh = new THREE.LineSegments(mergedEdges, edgeMat);
@@ -1062,6 +1075,10 @@ export function rebuildDistrictForCell(cell, ring) {
         }
         if (!mergedGeo) continue;
 
+        // Pre-compute bounds (see buildChunksForRing for rationale).
+        mergedGeo.computeBoundingSphere();
+        mergedGeo.computeBoundingBox();
+
         let material = null;
         for (const zone of chunk.zones) {
             material = resolveMaterial(matKey, zone);
@@ -1081,6 +1098,8 @@ export function rebuildDistrictForCell(cell, ring) {
             catch (e2) { mergedEdges = null; }
         }
         if (mergedEdges) {
+            mergedEdges.computeBoundingSphere();
+            mergedEdges.computeBoundingBox();
             const edgeMat = getMatDict(primaryZone).neonEdges;
             if (edgeMat) {
                 const edgeMesh = new THREE.LineSegments(mergedEdges, edgeMat);
