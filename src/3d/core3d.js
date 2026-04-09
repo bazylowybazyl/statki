@@ -348,6 +348,9 @@ export const Core3D = {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.setClearColor(0x000000, 0);
+    // Disable per-render auto-reset so renderer.info accumulates across all
+    // composer passes — we manually reset once per frame before composer.render().
+    this.renderer.info.autoReset = false;
 
     this.scene = new THREE.Scene();
     this.scene.background = null;
@@ -509,16 +512,20 @@ export const Core3D = {
     }
     if (this.shadowCatcher) this.shadowCatcher.visible = t.threeShadows !== false;
     if (this.shadowCatcherFg) this.shadowCatcherFg.visible = (t.fgShadows !== false) && (t.threeShadows !== false);
-    // FG sub-toggles: kontroluj visible per kategoria obiektów
+    // FG sub-toggles: only FORCE-HIDE when toggle is OFF. When the toggle
+    // is ON, leave visibility alone so per-system distance culling (e.g.
+    // PlanetaryRing.updateFromPlanet) can manage visibility per-frame.
+    // (Previously this loop unconditionally set child.visible = fgB every
+    // render, undoing all distance-gate hides.)
     if (this.scene) {
       const fgB = t.fgBuildings !== false;
       const fgS = t.fgStations !== false;
       const fgW = t.fgWeapons !== false;
       for (const child of this.scene.children) {
         const cat = child.userData?.fgCategory;
-        if (cat === 'buildings') child.visible = fgB;
-        else if (cat === 'stations') child.visible = fgS;
-        else if (cat === 'weapons') child.visible = fgW;
+        if (cat === 'buildings') { if (!fgB) child.visible = false; }
+        else if (cat === 'stations') { if (!fgS) child.visible = false; }
+        else if (cat === 'weapons') { if (!fgW) child.visible = false; }
       }
     }
   },
@@ -918,10 +925,22 @@ export const Core3D = {
     if (dbgEnabled) recordRenderDbg('coreUberSetup', performance.now() - tPost0);
 
     const tComposer0 = dbgEnabled ? performance.now() : 0;
+    // Reset renderer info once per frame; it will accumulate across all passes.
+    this.renderer.info.reset();
     this.composer.render();
     if (dbgEnabled) {
       recordRenderDbg('coreComposerRender', performance.now() - tComposer0);
       recordRenderDbg('core3dRenderTotal', performance.now() - tRenderTotal0);
+    }
+    // Expose renderer info for perf debugging — read with window.__rendererInfo
+    if (typeof window !== 'undefined') {
+      const info = this.renderer.info.render;
+      window.__rendererInfo = {
+        calls: info.calls,
+        triangles: info.triangles,
+        points: info.points,
+        lines: info.lines
+      };
     }
   },
 

@@ -373,6 +373,9 @@ class PlanetaryRing {
     this.lastPlanetX = 0;
     this.lastPlanetY = 0;
     this.updateTick = 0;
+    // Distance-gate hysteresis flag — true when entire ring root is hidden
+    // because it's off-screen or too small. See updateFromPlanet().
+    this._ringHidden = false;
 
     // --- BUDYNKI 3D NA WARSTWIE 2 (FOREGROUND) ---
     this.buildings3D = new THREE.Group();
@@ -755,6 +758,17 @@ class PlanetaryRing {
 
   updateForceFields(dt) {
     if (!this.forceFields.length) return;
+
+    // Defensive: if root group is hidden, force fields are invisible too.
+    // Force field meshes have frustumCulled = false (line 740), so without
+    // explicitly hiding them they'd still get submitted to the renderer.
+    if (this.buildings3D && !this.buildings3D.visible) {
+      for (const ff of this.forceFields) {
+        if (ff?.mesh) ff.mesh.visible = false;
+      }
+      return;
+    }
+
     const ship = (typeof window !== 'undefined') ? window.ship : null;
     const shipX = Number(ship?.pos?.x ?? ship?.x);
     const shipY = Number(ship?.pos?.y ?? ship?.y);
@@ -844,11 +858,70 @@ class PlanetaryRing {
       this.currentRotation += this.rotationSpeed * dt;
     }
 
+    // ============================================================
+    // Ring root distance gate — early-out when ring is invisible.
+    // Hides the entire `buildings3D` group (chunks, infrastructure,
+    // ringFloor, force fields) and skips ALL per-frame CPU work
+    // (segment loop, force field update, damage texture, visualMeshes
+    // culling loop). This single check is the biggest perf win — at
+    // full zoom-out the ring projects to ~40 px and contributes
+    // hundreds of wasted draw calls + CPU work.
+    // ============================================================
+    if (hasCameraCenter && this.buildings3D) {
+      const dxCam = this.lastPlanetX - camX;
+      const dyCam = this.lastPlanetY - camY;
+      // Pixel size of ring's outer extent (orthographic: world * zoom).
+      const ringPixelRadius = this.ringRadius * camZoom;
+      // Hysteresis prevents flicker at the threshold.
+      const HIDE_PX = this._ringHidden ? 110 : 90;
+      const ringTooSmall = ringPixelRadius < HIDE_PX;
+      // Off-screen if planet center is outside (ringRadius + half-viewport).
+      const halfViewportX = (window.innerWidth || 1920) * 0.5 / camZoom;
+      const halfViewportY = (window.innerHeight || 1080) * 0.5 / camZoom;
+      const ringOffScreen =
+        Math.abs(dxCam) > this.ringRadius + halfViewportX + 200 ||
+        Math.abs(dyCam) > this.ringRadius + halfViewportY + 200;
+
+      const shouldHideRoot = ringTooSmall || ringOffScreen;
+      if (this.buildings3D.visible !== !shouldHideRoot) {
+        this.buildings3D.visible = !shouldHideRoot;
+      }
+      this._ringHidden = shouldHideRoot;
+
+      if (shouldHideRoot) {
+        // currentRotation already advanced above so segments will be
+        // at correct world coords next time the ring becomes visible.
+        return;
+      }
+    } else if (this.buildings3D && !this.buildings3D.visible) {
+      // No camera info — be safe and show the ring.
+      this.buildings3D.visible = true;
+      this._ringHidden = false;
+    }
+
     // Position ring floor at planet center
     if (this.ringFloor) {
       this.ringFloor.position.set(this.lastPlanetX, -this.lastPlanetY, visualZ.floor);
       this.ringFloor.rotation.z = -this.currentRotation;
     }
+
+    // Per-segment update gating: full update (velocity/wake/structural)
+    // only when the ship is within 1.5× ringRadius. Far away, we still
+    // refresh world positions (cheap) so anything that queries entity
+    // coords gets up-to-date values, but we skip the heavy work and
+    // park hex grids to sleep so the destructor system skips them.
+    const shipRef = this._shipRef;
+    let shipNearRing = false;
+    let shipX = 0, shipY = 0;
+    if (shipRef) {
+      shipX = shipRef.pos?.x ?? shipRef.x ?? 0;
+      shipY = shipRef.pos?.y ?? shipRef.y ?? 0;
+      const dShipSq = (shipX - this.lastPlanetX) * (shipX - this.lastPlanetX)
+                    + (shipY - this.lastPlanetY) * (shipY - this.lastPlanetY);
+      const nearThresh = this.ringRadius * 1.5;
+      shipNearRing = dShipSq < nearThresh * nearThresh;
+    }
+    const surfSpeed = this.rotationSpeed * this.wallRadius;
 
     for (let i = 0; i < this.segmentData.length; i++) {
       const seg = this.segmentData[i];
@@ -866,32 +939,37 @@ class PlanetaryRing {
       entity.y = worldY;
       entity.angle = worldRot;
 
-      // Tangential surface velocity: v = ω × r (perpendicular to radial direction)
-      // This lets the destructor collision system transfer surface movement to colliding objects
-      const surfSpeed = this.rotationSpeed * this.wallRadius;
-      entity.vx = -Math.sin(worldAngle) * surfSpeed;
-      entity.vy =  Math.cos(worldAngle) * surfSpeed;
-      entity.angVel = this.rotationSpeed;
+      if (shipNearRing) {
+        // Tangential surface velocity: v = ω × r (perpendicular to radial direction)
+        // This lets the destructor collision system transfer surface movement to colliding objects
+        entity.vx = -Math.sin(worldAngle) * surfSpeed;
+        entity.vy =  Math.cos(worldAngle) * surfSpeed;
+        entity.angVel = this.rotationSpeed;
 
-      // Wake segments near ship so destructor collision loop (line 2968) doesn't skip them
-      if (entity.hexGrid && this._shipRef) {
-        const sx = this._shipRef.pos?.x ?? this._shipRef.x ?? 0;
-        const sy = this._shipRef.pos?.y ?? this._shipRef.y ?? 0;
-        const ddx = worldX - sx;
-        const ddy = worldY - sy;
-        const wakeThresh = 2500;
-        if (ddx * ddx + ddy * ddy < wakeThresh * wakeThresh) {
-          entity.hexGrid.isSleeping = false;
-          entity.hexGrid.sleepFrames = 0;
-        } else if (entity.hexGrid.wakeHoldFrames <= 0) {
-          entity.hexGrid.isSleeping = true;
+        // Wake segments near ship so destructor collision loop (line 2968) doesn't skip them
+        if (entity.hexGrid) {
+          const ddx = worldX - shipX;
+          const ddy = worldY - shipY;
+          const wakeThresh = 2500;
+          if (ddx * ddx + ddy * ddy < wakeThresh * wakeThresh) {
+            entity.hexGrid.isSleeping = false;
+            entity.hexGrid.sleepFrames = 0;
+          } else if (entity.hexGrid.wakeHoldFrames <= 0) {
+            entity.hexGrid.isSleeping = true;
+          }
         }
-      }
 
-      if ((this.updateTick % 20) === 0 && entity.hexGrid) {
-        const structural = getHexStructuralState(entity);
-        if (structural && structural.total > 0 && structural.active <= 0) {
-          entity.dead = true;
+        if ((this.updateTick % 20) === 0 && entity.hexGrid) {
+          const structural = getHexStructuralState(entity);
+          if (structural && structural.total > 0 && structural.active <= 0) {
+            entity.dead = true;
+          }
+        }
+      } else {
+        // Ship far from this ring → park hex grid to sleep so destructor
+        // collision pass skips it. Saves CPU in the broader physics loop.
+        if (entity.hexGrid && entity.hexGrid.wakeHoldFrames <= 0) {
+          entity.hexGrid.isSleeping = true;
         }
       }
     }
@@ -947,9 +1025,10 @@ class PlanetaryRing {
     }
 
     for (const b of this.visualMeshes) {
-        // Global infrastructure — always visible (GPU frustum culling handles it)
+        // Global infrastructure — 4 large merged meshes (floor/path/trace/overlay).
+        // Even at extreme zoom-out the LOD_HIDE_SQ check should hide them.
         if (b.isGlobalInfra) {
-            b.mesh.visible = true;
+            b.mesh.visible = !hideAllDistricts;
             continue;
         }
 
@@ -1099,8 +1178,23 @@ function getSpatialKey(x, y) {
   return `${cx},${cy}`;
 }
 
-function rebuildSpatialIndex() {
-  state.queryCells.clear();
+let _lastEntityCountSig = -1;
+let _spatialTick = 0;
+
+function rebuildSpatialIndex(force = false) {
+  // Throttle: rings rotate slowly so cell membership changes rarely.
+  // Rebuild only when entity count changes (segment died) OR every 10 ticks.
+  // Skips ~90% of per-frame index rebuilds with their associated allocations.
+  const sig = state.entities.length;
+  _spatialTick++;
+  if (!force && sig === _lastEntityCountSig && (_spatialTick % 10) !== 0) {
+    return;
+  }
+  _lastEntityCountSig = sig;
+
+  // Reuse existing cell arrays (clear instead of realloc) — eliminates GC pressure.
+  for (const cell of state.queryCells.values()) cell.length = 0;
+
   for (const entity of state.entities) {
     const key = getSpatialKey(entity.x, entity.y);
     let cell = state.queryCells.get(key);
@@ -1143,7 +1237,7 @@ export function initPlanetaryRings3D(planets = []) {
     if (planet) ring.updateFromPlanet(planet, 0, null);
   }
   rebuildEntityList();
-  rebuildSpatialIndex();
+  rebuildSpatialIndex(true);
 
   // 2. Kiedy modele z SynthCity się pobiorą, robimy bezpieczny TWARDY RESET
   loadSynthCityAssets().then(() => {
@@ -1158,7 +1252,7 @@ export function initPlanetaryRings3D(planets = []) {
       if (p) ring.updateFromPlanet(p, 0, null);
     }
     rebuildEntityList();
-    rebuildSpatialIndex();
+    rebuildSpatialIndex(true);
   }).catch(e => console.warn('[RingCity] Asset load warning:', e));
 
   return state.rings;

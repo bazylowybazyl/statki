@@ -67,11 +67,13 @@ export function isEnemyUnit(self, other) {
 }
 
 export function aiPickBestTarget(self, rangeLimit) {
+  const tPick0 = (typeof performance !== 'undefined') ? performance.now() : 0;
+
   let bestTarget = null;
   let bestScore = -Infinity;
 
-  const npcs = window.npcs || [];
-  const MAX_RANGE_SQ = (rangeLimit || 20000) ** 2;
+  const MAX_RANGE = rangeLimit || 20000;
+  const MAX_RANGE_SQ = MAX_RANGE * MAX_RANGE;
 
   const amFighter = self.fighter || self.type === 'fighter' || self.type === 'interceptor';
 
@@ -90,7 +92,12 @@ export function aiPickBestTarget(self, rangeLimit) {
     }
   }
 
-  // Iterate over npcs without allocating new arrays (.filter)
+  // Note: spatial grid is intentionally NOT used here. Realistic SEARCH_RANGE
+  // values (6000-30000) blow past the grid's useful span (cell size 600 →
+  // hundreds of cells), and aiPickBestTarget is already throttled by
+  // retargetTimer (1-1.5s/fighter), so a per-call iteration over npcs[] is
+  // both simpler and faster than going through the shared result buffer.
+  const npcs = window.npcs || [];
   for (let i = 0; i < npcs.length; i++) {
     const u = npcs[i];
     if (!isEnemyUnit(self, u)) continue;
@@ -104,7 +111,7 @@ export function aiPickBestTarget(self, rangeLimit) {
 
     let score = -distSq * 0.00016;
     const isFighter = u.fighter || u.type === 'fighter' || u.type === 'interceptor';
-    
+
     if (amFighter) {
       score += isFighter ? 5000 : 1400;
     } else {
@@ -117,6 +124,10 @@ export function aiPickBestTarget(self, rangeLimit) {
       bestScore = score;
       bestTarget = u;
     }
+  }
+
+  if (typeof window !== 'undefined' && typeof performance !== 'undefined') {
+    window.__aiTargetPickMs = (window.__aiTargetPickMs || 0) + (performance.now() - tPick0);
   }
 
   return bestTarget;
