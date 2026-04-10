@@ -45,7 +45,7 @@ const BUILD_GRID = Object.freeze({
   slotWidthRatio: 0.92
 });
 
-const HEX_SCALE = CONFIG.segmentWorldWidth / TEXTURE.width;
+const HEX_SCALE_X = CONFIG.segmentWorldWidth / TEXTURE.width;
 
 const RING_SEGMENT_MASS = 2500000;
 
@@ -62,6 +62,25 @@ const RING_LAYOUT = Object.freeze({
   gapParking: { innerMul: 2.4, outerMul: 3.3 },  // ship parking (~0.9R)
   military:   { innerMul: 3.3, outerMul: 3.8 }   // military zones (outer)
 });
+
+const COLLISION_FLOOR_LAYOUT = Object.freeze((() => {
+  const floorStartMul = RING_LAYOUT.inner.innerMul;
+  const floorEndMul = RING_LAYOUT.military.outerMul;
+  const totalMul = Math.max(0.0001, floorEndMul - floorStartMul);
+  const mapBand = (cfg) => ({
+    start: (cfg.innerMul - floorStartMul) / totalMul,
+    end: (cfg.outerMul - floorStartMul) / totalMul
+  });
+  return {
+    floorStartMul,
+    floorEndMul,
+    inner: mapBand(RING_LAYOUT.inner),
+    gapSmall: mapBand(RING_LAYOUT.gapSmall),
+    industrial: mapBand(RING_LAYOUT.industrial),
+    gapParking: mapBand(RING_LAYOUT.gapParking),
+    military: mapBand(RING_LAYOUT.military)
+  };
+})());
 
 function computeRingLayout(planetR) {
   const R = Math.max(2000, planetR || 2800);
@@ -84,57 +103,27 @@ function computeRingLayout(planetR) {
 }
 
 function getRingBandLayout() {
-  const totalWorld = Math.max(1, CONFIG.segmentWorldHeight);
-  const minBandWorld = totalWorld * 0.12;
-  const minGapWorld = totalWorld * CONFIG.minMiddleGapRatio;
-
-  let outerWorld = Math.max(minBandWorld, totalWorld * CONFIG.outerLayerRatio);
-  let innerWorld = Math.max(minBandWorld, totalWorld * CONFIG.innerLayerRatio);
-
-  let gapWorld = totalWorld - outerWorld - innerWorld;
-  if (gapWorld < minGapWorld) {
-    const deficit = minGapWorld - gapWorld;
-    const shrinkOuter = Math.min(deficit * 0.5, Math.max(0, outerWorld - minBandWorld));
-    const shrinkInner = Math.min(deficit * 0.5, Math.max(0, innerWorld - minBandWorld));
-    outerWorld -= shrinkOuter;
-    innerWorld -= shrinkInner;
-    gapWorld = totalWorld - outerWorld - innerWorld;
-  }
-  if (gapWorld < minGapWorld) {
-    gapWorld = minGapWorld;
-    const rest = totalWorld - gapWorld;
-    outerWorld = Math.max(minBandWorld, rest * 0.5);
-    innerWorld = Math.max(minBandWorld, rest - outerWorld);
-  }
-
-  const pxPerWorld = TEXTURE.height / totalWorld;
-  const outerPx = Math.max(8, Math.round(outerWorld * pxPerWorld));
-  const innerPx = Math.max(8, Math.round(innerWorld * pxPerWorld));
-  const gapStartPx = outerPx;
-  const gapEndPx = Math.max(gapStartPx + 6, TEXTURE.height - innerPx);
-
-  const outerBandTopPx = 0;
-  const outerBandBottomPx = gapStartPx;
-  const innerBandTopPx = Math.min(TEXTURE.height - 1, gapEndPx);
-  const innerBandBottomPx = TEXTURE.height;
-
-  const gapStartWorld = -totalWorld * 0.5 + outerWorld;
-  const gapEndWorld = totalWorld * 0.5 - innerWorld;
-  const innerBandCenterLocalY = totalWorld * 0.5 - innerWorld * 0.5;
-
+  const toPxRange = (band) => {
+    const top = Math.round(TEXTURE.height * (1 - band.end));
+    const bottom = Math.round(TEXTURE.height * (1 - band.start));
+    return [top, Math.max(top + 1, bottom)];
+  };
+  const [innerBandTopPx, innerBandBottomPx] = toPxRange(COLLISION_FLOOR_LAYOUT.inner);
+  const [industrialBandTopPx, industrialBandBottomPx] = toPxRange(COLLISION_FLOOR_LAYOUT.industrial);
+  const [militaryBandTopPx, militaryBandBottomPx] = toPxRange(COLLISION_FLOOR_LAYOUT.military);
+  const [gapSmallTopPx, gapSmallBottomPx] = toPxRange(COLLISION_FLOOR_LAYOUT.gapSmall);
+  const [gapParkingTopPx, gapParkingBottomPx] = toPxRange(COLLISION_FLOOR_LAYOUT.gapParking);
   return {
-    outerWorld,
-    innerWorld,
-    gapWorld,
-    gapStartWorld,
-    gapEndWorld,
-    innerBandCenterLocalY,
-    outerBandTopPx,
-    outerBandBottomPx,
     innerBandTopPx,
     innerBandBottomPx,
-    gapStartPx,
-    gapEndPx
+    industrialBandTopPx,
+    industrialBandBottomPx,
+    militaryBandTopPx,
+    militaryBandBottomPx,
+    gapSmallTopPx,
+    gapSmallBottomPx,
+    gapParkingTopPx,
+    gapParkingBottomPx
   };
 }
 
@@ -249,77 +238,55 @@ function drawWallTexture(ctx) {
   const h = ctx.canvas.height;
   const layout = getRingBandLayout();
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = '#0c1018';
-  ctx.fillRect(0, layout.gapStartPx, w, layout.gapEndPx - layout.gapStartPx);
+  const paintBand = (top, bottom, colors, options = {}) => {
+    const bandH = Math.max(1, bottom - top);
+    fillBandGradient(ctx, top, bottom, colors[0], colors[1], colors[2]);
+    const railH = Math.min(TEXTURE.railHeight, Math.max(6, Math.floor(bandH * 0.28)));
+    drawBandRails(ctx, top, bottom, railH);
+    if (options.grid) {
+      ctx.fillStyle = options.grid;
+      for (let i = 0; i < 30; i++) {
+        const gx = 4 + ((i * 23) % Math.max(8, w - 8));
+        const gy = top + 4 + ((i * 13) % Math.max(8, bandH - 8));
+        ctx.fillRect(gx, gy, 2 + (i % 4), 2 + ((i * 2) % 3));
+      }
+    }
+    if (options.decks) {
+      ctx.fillStyle = options.decks.fill;
+      const deckW = Math.max(18, Math.round(w * 0.28));
+      const deckH = Math.max(10, Math.round(bandH * 0.42));
+      for (let i = 0; i < 2; i++) {
+        const dx = Math.round(w * 0.1 + i * w * 0.48);
+        const dy = Math.round(top + bandH * 0.24);
+        ctx.fillRect(dx, dy, deckW, deckH);
+        ctx.strokeStyle = options.decks.stroke;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(dx, dy, deckW, deckH);
+      }
+    }
+    if (options.bulkheads) {
+      const defenseY = Math.round(top + bandH * 0.18);
+      const defenseH = Math.max(10, Math.round(bandH * 0.64));
+      ctx.fillStyle = 'rgba(26, 34, 48, 0.92)';
+      ctx.fillRect(0, defenseY, w, defenseH);
+      ctx.fillStyle = '#101724';
+      for (let i = 1; i <= 3; i++) {
+        const y = defenseY + (i * defenseH) / 4;
+        ctx.fillRect(0, Math.round(y), w, 2);
+      }
+    }
+  };
 
-  const railH = Math.min(TEXTURE.railHeight, Math.max(8, Math.floor((layout.outerBandBottomPx - layout.outerBandTopPx) * 0.35)));
-  fillBandGradient(ctx, layout.outerBandTopPx, layout.outerBandBottomPx, '#0a0d14', '#1b2432', '#0d1119');
-  drawBandRails(ctx, layout.outerBandTopPx, layout.outerBandBottomPx, railH);
-
-  const defenseY = Math.round(layout.outerBandTopPx + (layout.outerBandBottomPx - layout.outerBandTopPx) * 0.18);
-  const defenseH = Math.max(10, Math.round((layout.outerBandBottomPx - layout.outerBandTopPx) * 0.64));
-  ctx.fillStyle = 'rgba(26, 34, 48, 0.92)';
-  ctx.fillRect(0, defenseY, w, defenseH);
-  ctx.fillStyle = '#101724';
-  for (let i = 1; i <= 3; i++) {
-    const y = defenseY + (i * defenseH) / 4;
-    ctx.fillRect(0, Math.round(y), w, 2);
-  }
-
-  const hardRows = 2;
-  const rowH = defenseH / hardRows;
-  for (let r = 0; r < hardRows; r++) {
-    const cx = Math.round(w * 0.5);
-    const cy = Math.round(defenseY + r * rowH + rowH * 0.5);
-    const radius = Math.max(8, Math.round(w * 0.16));
-    ctx.fillStyle = '#2b3649';
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(150, 45, 45, 0.8)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius + 3, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = '#0a0a0a';
-    ctx.fillRect(cx - Math.max(3, Math.round(radius * 0.22)), cy - Math.max(6, Math.round(radius * 0.55)), Math.max(6, Math.round(radius * 0.44)), Math.max(12, Math.round(radius * 1.1)));
-  }
-
-  const innerBandH = layout.innerBandBottomPx - layout.innerBandTopPx;
-  const innerRailH = Math.min(TEXTURE.railHeight, Math.max(8, Math.floor(innerBandH * 0.35)));
-  fillBandGradient(ctx, layout.innerBandTopPx, layout.innerBandBottomPx, '#101722', '#1a2536', '#0d121b');
-  drawBandRails(ctx, layout.innerBandTopPx, layout.innerBandBottomPx, innerRailH);
-
-  ctx.fillStyle = 'rgba(255,255,255,0.08)';
-  for (let i = 0; i < 30; i++) {
-    const gx = 4 + ((i * 23) % Math.max(8, w - 8));
-    const gy = layout.innerBandTopPx + 4 + ((i * 13) % Math.max(8, innerBandH - 8));
-    ctx.fillRect(gx, gy, 2 + (i % 4), 2 + ((i * 2) % 3));
-  }
-
-  ctx.fillStyle = 'rgba(255, 190, 30, 0.22)';
-  const dockW = Math.max(18, Math.round(w * 0.28));
-  const dockH = Math.max(12, Math.round(innerBandH * 0.48));
-  for (let i = 0; i < 2; i++) {
-    const dx = Math.round(w * 0.1 + i * w * 0.48);
-    const dy = Math.round(layout.innerBandTopPx + innerBandH * 0.24);
-    ctx.fillRect(dx, dy, dockW, dockH);
-    ctx.strokeStyle = 'rgba(200,160,20,0.72)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(dx, dy, dockW, dockH);
-  }
-
-  const middleInsetPx = Math.max(1, Math.round((CONFIG.middleRailInsetWorld / CONFIG.segmentWorldHeight) * h));
-  const railTop = Math.min(layout.gapEndPx - 1, layout.gapStartPx + middleInsetPx);
-  const railBottom = Math.max(layout.gapStartPx + 1, layout.gapEndPx - middleInsetPx);
-  ctx.strokeStyle = `rgba(100, 180, 255, ${CONFIG.middleRailAlpha})`;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(6, railTop);
-  ctx.lineTo(w - 6, railTop);
-  ctx.moveTo(6, railBottom);
-  ctx.lineTo(w - 6, railBottom);
-  ctx.stroke();
+  paintBand(layout.innerBandTopPx, layout.innerBandBottomPx, ['#101722', '#1a2536', '#0d121b'], {
+    grid: 'rgba(255,255,255,0.08)',
+    decks: { fill: 'rgba(255,190,30,0.22)', stroke: 'rgba(200,160,20,0.72)' }
+  });
+  paintBand(layout.industrialBandTopPx, layout.industrialBandBottomPx, ['#0e1318', '#1d262d', '#11161d'], {
+    grid: 'rgba(180,210,255,0.05)'
+  });
+  paintBand(layout.militaryBandTopPx, layout.militaryBandBottomPx, ['#0a0d14', '#1b2432', '#0d1119'], {
+    bulkheads: true
+  });
 }
 
 function getSegmentTextures() {
@@ -356,13 +323,14 @@ class PlanetaryRing {
     this.key = key;
     // NEW: compute multi-ring layout (3 narrower rings with gaps)
     this.layout = computeRingLayout(Number(planet?.r) || 2800);
-    // Legacy ringRadius — outermost edge (military ring outer).
-    // Used by LOD distance calcs, query cells, external API.
+    // Outer radius of the whole populated city ring.
     this.ringRadius = this.layout.outerRadius;
-    // wallRadius — center of the military band, where hex segments / force fields
-    // / construction slots physically sit. Inner positioning code uses this so the
-    // canvas wall texture (±1200u radially) is centered on the actual military band.
-    this.wallRadius = this.layout.militaryCenter;
+    // Destructor floor spans all populated bands: inner + industrial + military.
+    this.floorInnerRadius = this.layout.inner.innerR;
+    this.floorOuterRadius = this.layout.military.outerR;
+    this.segmentWorldHeight = Math.max(1, this.floorOuterRadius - this.floorInnerRadius);
+    // Segment entities sit at the center of the full populated floor span.
+    this.wallRadius = (this.floorInnerRadius + this.floorOuterRadius) * 0.5;
     this.currentRotation = 0;
     this.rotationSpeed = CONFIG.ringRotationSpeed;
     this.segmentData = [];
@@ -397,12 +365,8 @@ class PlanetaryRing {
     const textures = getSegmentTextures();
     if (!textures) return;
 
-    const layout = getRingBandLayout();
     const effectiveWidth = CONFIG.segmentWorldWidth - CONFIG.overlap;
-    const outerCoverageRadius = this.wallRadius + Math.max(
-      CONFIG.segmentWorldHeight * 0.5,
-      Math.abs(layout.gapStartWorld)
-    );
+    const outerCoverageRadius = this.floorOuterRadius;
     const circumference = Math.PI * 2 * outerCoverageRadius;
     const segmentCount = Math.max(24, Math.ceil(circumference / effectiveWidth));
     this.angleStep = (Math.PI * 2) / segmentCount;
@@ -479,59 +443,8 @@ class PlanetaryRing {
   }
 
   buildRingPedestal() {
-    // Build damage alpha texture before materials
-    this.buildDamageAlphaMap();
-    const alphaTex = this._damageTexture;
-
     const floorGroup = new THREE.Group();
     floorGroup.name = `PlanetaryRingFloor:${this.key}`;
-
-    // Per-ring pedestal bands — one group per ring band (inner / industrial / military).
-    // Gaps (gapInner, gapSmall, gapParking) are intentionally left empty.
-    const bands = [
-        { id: 'inner',      band: this.layout?.inner },
-        { id: 'industrial', band: this.layout?.industrial },
-        { id: 'military',   band: this.layout?.military }
-    ];
-
-    const trimMatProto = new THREE.MeshBasicMaterial({
-        color: 0x2f6ea4, transparent: true, opacity: 0.3,
-        alphaMap: alphaTex, alphaTest: 0.05
-    });
-    const laneMatProto = new THREE.MeshBasicMaterial({
-        color: 0x3a618a, transparent: true, opacity: 0.34,
-        alphaMap: alphaTex, alphaTest: 0.05
-    });
-
-    for (const { id, band } of bands) {
-        if (!band) continue;
-        const innerR = band.innerR;
-        const outerR = band.outerR;
-        const centerR = (innerR + outerR) * 0.5;
-
-        // Lane marker at band center (single torus stripe)
-        {
-            const mat = laneMatProto.clone();
-            mat.opacity = 0.32;
-            const strip = new THREE.Mesh(new THREE.TorusGeometry(centerR, 2.6, 4, 320), mat);
-            strip.name = `PlanetaryRingLane:${this.key}:${id}`;
-            strip.position.z = 1.0;
-            floorGroup.add(strip);
-        }
-
-        // Trim rails at band edges (inner + outer)
-        for (const { radius, tube, opacity } of [
-            { radius: innerR + 18, tube: 6, opacity: 0.26 },
-            { radius: outerR - 18, tube: 6, opacity: 0.26 }
-        ]) {
-            const mat = trimMatProto.clone();
-            mat.opacity = opacity;
-            const rail = new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 4, 256), mat);
-            rail.name = `PlanetaryRingRail:${this.key}:${id}`;
-            rail.position.z = 2;
-            floorGroup.add(rail);
-        }
-    }
 
     // Y-flip: game coords have Y-down, Three.js has Y-up.
     // Without scale.y = -1, rotation.z rotates the floor opposite to the physics direction.
@@ -615,7 +528,9 @@ class PlanetaryRing {
       mass: RING_SEGMENT_MASS,
       friction: 1,
       visual: {
-        spriteScale: HEX_SCALE,
+        spriteScale: HEX_SCALE_X,
+        spriteScaleX: HEX_SCALE_X,
+        spriteScaleY: Math.max(0.0001, this.segmentWorldHeight / TEXTURE.height),
         spriteRotation: 0
       },
       hp: 1,
@@ -629,8 +544,10 @@ class PlanetaryRing {
     }
 
     // Set collision radius from actual hex dimensions (segment is ~800×2400 world units)
-    const hw = (entity.hexGrid.srcWidth || 0) * HEX_SCALE * 0.5;
-    const hh = (entity.hexGrid.srcHeight || 0) * HEX_SCALE * 0.5;
+    const scaleX = Math.max(0.0001, Number(entity.visual?.spriteScaleX) || HEX_SCALE_X);
+    const scaleY = Math.max(0.0001, Number(entity.visual?.spriteScaleY) || scaleX);
+    const hw = (entity.hexGrid.srcWidth || 0) * scaleX * 0.5;
+    const hh = (entity.hexGrid.srcHeight || 0) * scaleY * 0.5;
     entity.radius = Math.max(hw, hh);  // ~1200 units — used by collectNearbyRingDestructibles
 
     entity.hexGrid.meshDirty = true;
@@ -669,10 +586,8 @@ class PlanetaryRing {
       const centerAngle = startAngle + arcAngle * 0.5;
 
       // Build arc geometry matching the ring curvature
-      const ringR = this.wallRadius;
-      const halfH = CONFIG.segmentWorldHeight * 0.5;
-      const innerR = ringR - halfH;
-      const outerR = ringR + halfH;
+      const innerR = this.floorInnerRadius;
+      const outerR = this.floorOuterRadius;
       const segs = 32;
 
       const shape = new THREE.Shape();
@@ -813,7 +728,6 @@ class PlanetaryRing {
   }
 
   buildConstructionSlots(segmentCount) {
-    const layout = getRingBandLayout();
     this.constructionSlots.length = 0;
     const effectiveWidth = CONFIG.segmentWorldWidth - CONFIG.overlap;
     const slotsCount = Math.floor(segmentCount / BUILD_GRID.stride);
@@ -836,7 +750,7 @@ class PlanetaryRing {
       this.constructionSlots.push({
         index: i,
         baseAngle: seg.baseAngle,
-        attachRadius: this.wallRadius - layout.innerBandCenterLocalY,
+        attachRadius: this.layout.innerCenter,
         width: safeWidth
       });
     }

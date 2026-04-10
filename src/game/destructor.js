@@ -325,9 +325,20 @@ function isHexEligible(entity) {
   return true;
 }
 
-function getFinalScale(entity) {
+function getFinalScaleX(entity) {
+  if (entity?.visual && typeof entity.visual.spriteScaleX === 'number') return entity.visual.spriteScaleX;
   if (entity?.visual && typeof entity.visual.spriteScale === 'number') return entity.visual.spriteScale;
   return 1.0;
+}
+
+function getFinalScaleY(entity) {
+  if (entity?.visual && typeof entity.visual.spriteScaleY === 'number') return entity.visual.spriteScaleY;
+  if (entity?.visual && typeof entity.visual.spriteScale === 'number') return entity.visual.spriteScale;
+  return 1.0;
+}
+
+function getFinalScale(entity) {
+  return Math.max(getFinalScaleX(entity), getFinalScaleY(entity));
 }
 
 function hasActiveStructuralHexes(entity) {
@@ -378,15 +389,16 @@ function circleOverlapsEntityRect(worldX, worldY, worldRadius, entity, extraMarg
   const height = Number(grid.srcHeight) || 0;
   if (width <= 0 || height <= 0) return true;
 
-  const scale = Math.max(0.0001, getFinalScale(entity));
+  const scaleX = Math.max(0.0001, getFinalScaleX(entity));
+  const scaleY = Math.max(0.0001, getFinalScaleY(entity));
   const angle = getEntityHexAngle(entity);
   const c = Math.cos(angle);
   const s = Math.sin(angle);
   const dx = worldX - getEntityPosX(entity);
   const dy = worldY - getEntityPosY(entity);
 
-  const lx = (dx * c + dy * s) / scale;
-  const ly = (-dx * s + dy * c) / scale;
+  const lx = (dx * c + dy * s) / scaleX;
+  const ly = (-dx * s + dy * c) / scaleY;
   const pX = grid.pivot ? grid.pivot.x : 0;
   const pY = grid.pivot ? grid.pivot.y : 0;
   const cx = width * 0.5;
@@ -395,13 +407,14 @@ function circleOverlapsEntityRect(worldX, worldY, worldRadius, entity, extraMarg
   const maxX = width - cx - pX;
   const minY = -cy - pY;
   const maxY = height - cy - pY;
-  const margin = (Math.max(0, Number(worldRadius) || 0) / scale) + Math.max(0, Number(extraMargin) || 0);
+  const marginX = (Math.max(0, Number(worldRadius) || 0) / scaleX) + Math.max(0, Number(extraMargin) || 0);
+  const marginY = (Math.max(0, Number(worldRadius) || 0) / scaleY) + Math.max(0, Number(extraMargin) || 0);
 
   return (
-    lx >= (minX - margin) &&
-    lx <= (maxX + margin) &&
-    ly >= (minY - margin) &&
-    ly <= (maxY + margin)
+    lx >= (minX - marginX) &&
+    lx <= (maxX + marginX) &&
+    ly >= (minY - marginY) &&
+    ly <= (maxY + marginY)
   );
 }
 
@@ -1472,14 +1485,15 @@ export const DestructorSystem = {
     if (!entity?.hexGrid || !isHexEligible(entity)) return null;
 
     const angle = getEntityHexAngle(entity);
-    const scale = Math.max(0.0001, getFinalScale(entity));
+    const scaleX = Math.max(0.0001, getFinalScaleX(entity));
+    const scaleY = Math.max(0.0001, getFinalScaleY(entity));
     const c = Math.cos(angle);
     const s = Math.sin(angle);
     const dx = worldX - getEntityPosX(entity);
     const dy = worldY - getEntityPosY(entity);
 
-    const localX = (dx * c + dy * s) / scale;
-    const localY = (-dx * s + dy * c) / scale;
+    const localX = (dx * c + dy * s) / scaleX;
+    const localY = (-dx * s + dy * c) / scaleY;
     const cx = entity.hexGrid.srcWidth * 0.5;
     const cy = entity.hexGrid.srcHeight * 0.5;
     const pX = entity.hexGrid.pivot ? entity.hexGrid.pivot.x : 0;
@@ -1524,7 +1538,9 @@ export const DestructorSystem = {
     _staticProbeResult.hitShard = hitShard;
     _staticProbeResult.localX = localX;
     _staticProbeResult.localY = localY;
-    _staticProbeResult.scale = scale;
+    _staticProbeResult.scaleX = scaleX;
+    _staticProbeResult.scaleY = scaleY;
+    _staticProbeResult.scale = Math.max(scaleX, scaleY);
     _staticProbeResult.c = c;
     _staticProbeResult.s = s;
     _staticProbeResult.cx = cx;
@@ -1547,15 +1563,15 @@ export const DestructorSystem = {
       const probe = this._probeImpactData(entity, worldX, worldY);
       if (!probe) return false;
 
-      const { hitShard, localX, localY, scale, c, s, cx, cy, pX, pY } = probe;
+      const { hitShard, localX, localY, scaleX, scaleY, c, s, cx, cy, pX, pY } = probe;
 
       if (damage <= 0) {
         if (opts?.wakeOnProbe === true) this.wakeHexEntity(entity, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
         return true;
       }
 
-      let forceX = ((bulletVel?.x || 0) * c + (bulletVel?.y || 0) * s) / scale;
-      let forceY = (-(bulletVel?.x || 0) * s + (bulletVel?.y || 0) * c) / scale;
+      let forceX = ((bulletVel?.x || 0) * c + (bulletVel?.y || 0) * s) / Math.max(0.0001, scaleX || 1);
+      let forceY = (-(bulletVel?.x || 0) * s + (bulletVel?.y || 0) * c) / Math.max(0.0001, scaleY || 1);
 
       if (Math.sqrt(forceX * forceX + forceY * forceY) < 0.001) {
         const fx = (getShardCollisionGridX(hitShard) - cx - pX) - localX;
@@ -2166,10 +2182,14 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         gridHolder = A;
       }
 
-      const scaleA = Math.max(0.0001, getFinalScale(A));
-      const scaleB = Math.max(0.0001, getFinalScale(B));
-      const scaleIter = Math.max(0.0001, getFinalScale(iterator));
-      const scaleGrid = Math.max(0.0001, getFinalScale(gridHolder));
+      const scaleAX = Math.max(0.0001, getFinalScaleX(A));
+      const scaleAY = Math.max(0.0001, getFinalScaleY(A));
+      const scaleBX = Math.max(0.0001, getFinalScaleX(B));
+      const scaleBY = Math.max(0.0001, getFinalScaleY(B));
+      const scaleIterX = Math.max(0.0001, getFinalScaleX(iterator));
+      const scaleIterY = Math.max(0.0001, getFinalScaleY(iterator));
+      const scaleGridX = Math.max(0.0001, getFinalScaleX(gridHolder));
+      const scaleGridY = Math.max(0.0001, getFinalScaleY(gridHolder));
       const massA = getEntityMass(A);
       const massB = getEntityMass(B);
       const angIter = getEntityHexAngle(iterator);
@@ -2226,13 +2246,13 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
         const relIx = (getShardCollisionGridX(sI) - cxI) - pIx;
         const relIy = (getShardCollisionGridY(sI) - cyI) - pIy;
-        const worldIx = ix + (relIx * scaleIter) * cosI - (relIy * scaleIter) * sinI;
-        const worldIy = iy + (relIx * scaleIter) * sinI + (relIy * scaleIter) * cosI;
+        const worldIx = ix + (relIx * scaleIterX) * cosI - (relIy * scaleIterY) * sinI;
+        const worldIy = iy + (relIx * scaleIterX) * sinI + (relIy * scaleIterY) * cosI;
 
         const dx = worldIx - gx;
         const dy = worldIy - gy;
-        const localGx = (dx * cosG + dy * sinG) / scaleGrid;
-        const localGy = (-dx * sinG + dy * cosG) / scaleGrid;
+        const localGx = (dx * cosG + dy * sinG) / scaleGridX;
+        const localGy = (-dx * sinG + dy * cosG) / scaleGridY;
         const gridGx = localGx + cxG + pGx;
         const gridGy = localGy + cyG + pGy;
         const approxC = Math.round(gridGx / HEX_SPACING);
@@ -2250,8 +2270,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
           const relGx = (getShardCollisionGridX(sG) - cxG) - pGx;
           const relGy = (getShardCollisionGridY(sG) - cyG) - pGy;
-          const worldGx = gx + (relGx * scaleGrid) * cosG - (relGy * scaleGrid) * sinG;
-          const worldGy = gy + (relGx * scaleGrid) * sinG + (relGy * scaleGrid) * cosG;
+          const worldGx = gx + (relGx * scaleGridX) * cosG - (relGy * scaleGridY) * sinG;
+          const worldGy = gy + (relGx * scaleGridX) * sinG + (relGy * scaleGridY) * cosG;
 
           const normalX = worldIx - worldGx;
           const normalY = worldIy - worldGy;
@@ -2458,10 +2478,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           wForceBy -= ty * sh;
         }
 
-        const forceAx = (wForceAx * ca + wForceAy * sa) / scaleA;
-        const forceAy = (-wForceAx * sa + wForceAy * ca) / scaleA;
-        const forceBx = (wForceBx * cb + wForceBy * sb) / scaleB;
-        const forceBy = (-wForceBx * sb + wForceBy * cb) / scaleB;
+        const forceAx = (wForceAx * ca + wForceAy * sa) / scaleAX;
+        const forceAy = (-wForceAx * sa + wForceAy * ca) / scaleAY;
+        const forceBx = (wForceBx * cb + wForceBy * sb) / scaleBX;
+        const forceBy = (-wForceBx * sb + wForceBy * cb) / scaleBY;
         const crushScale = isDestruction ? 1 : 0.35;
 
         // 2. Nonlinear impact weighting (squared mass ratios)
@@ -2870,13 +2890,14 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     }
 
     const newRadius = Math.sqrt(maxD2) + DESTRUCTOR_CONFIG.gridDivisions * 2;
-    const scale = getFinalScale(parent);
+    const scaleX = getFinalScaleX(parent);
+    const scaleY = getFinalScaleY(parent);
     const ang = getEntityHexAngle(parent);
     const c = Math.cos(ang);
     const s = Math.sin(ang);
 
-    const worldX = getEntityPosX(parent) + (relX * scale) * c - (relY * scale) * s;
-    const worldY = getEntityPosY(parent) + (relX * scale) * s + (relY * scale) * c;
+    const worldX = getEntityPosX(parent) + (relX * scaleX) * c - (relY * scaleY) * s;
+    const worldY = getEntityPosY(parent) + (relX * scaleX) * s + (relY * scaleY) * c;
 
     const angVel = getEntityAngVel(parent);
     let wreckVx = getEntityVelX(parent);
@@ -2928,7 +2949,12 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     wreck._wreckSleepTimer = 0;
     wreck._wreckSleeping = false;
     wreck.owner = parent.owner || parent;
-    wreck.visual = { spriteScale: scale, spriteRotation: getEntitySpriteRotation(parent) };
+    wreck.visual = {
+      spriteScale: Math.max(scaleX, scaleY),
+      spriteScaleX: scaleX,
+      spriteScaleY: scaleY,
+      spriteRotation: getEntitySpriteRotation(parent)
+    };
 
     const wGrid = wreck.hexGrid;
     wGrid.shards = shards;
@@ -3113,7 +3139,7 @@ export function initHexBody(entity, image, damagedImage = null, isProjectile = f
 
   rebuildNeighbors(entity.hexGrid);
 
-  entity.radius = entity.hexGrid.rawRadius * getFinalScale(entity);
+  entity.radius = entity.hexGrid.rawRadius * Math.max(getFinalScaleX(entity), getFinalScaleY(entity));
   entity.isProjectile = !!isProjectile;
 
   if (Number.isFinite(massOverride)) entity.mass = massOverride;
