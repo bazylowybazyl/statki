@@ -122,39 +122,7 @@ function mergeAndCreateMesh(geos, material) {
 // Used only by rebuildRingCityCell when repainting a single cell.
 // ============================================================
 export function createDistrictInfrastructure(cell, ring) {
-    if (!cell || !cell.zone) return null;
-
-    const mats = getDistrictInfrastructureMaterials(cell.zone);
-    const infraGroup = new THREE.Group();
-    const cellGeos = collectCellInfraGeometries(cell);
-
-    const matMap = {
-        floor: mats.floor,
-        overlay: overlayMatCache[cell.zone],
-        path: mats.path,
-        trace: mats.trace
-    };
-
-    for (const key in cellGeos) {
-        const mesh = mergeAndCreateMesh(cellGeos[key], matMap[key]);
-        if (mesh) infraGroup.add(mesh);
-    }
-
-    const cellCenterAngle = (cell.angleStart + cell.angleEnd) * 0.5;
-    const cellCenterRadius = (cell.innerRadius + cell.outerRadius) * 0.5;
-    const segmentIndex = Math.round(cellCenterAngle / ring.angleStep) % ring.segmentData.length;
-    const radialOffset = cellCenterRadius - ring.ringRadius;
-
-    if (Core3D?.enableForeground3D) Core3D.enableForeground3D(infraGroup);
-
-    return {
-        infraGroup,
-        segmentIndex: Math.max(0, segmentIndex),
-        baseAngle: cellCenterAngle,
-        radius: cellCenterRadius,
-        radialOffset,
-        cellKey: cell.key
-    };
+    return null;
 }
 
 // ============================================================
@@ -163,82 +131,7 @@ export function createDistrictInfrastructure(cell, ring) {
 // merges each layer into ONE mesh. Result: 4 draw calls total.
 // ============================================================
 export function buildAllInfrastructure(zoneGrid, ring) {
-    if (!zoneGrid || !ring) return [];
-
-    const cells = zoneGrid.getPopulatedCells();
-    if (!cells.length) return [];
-
-    // Global geometry buckets — one per material layer, per zone (for overlay colors)
-    const globalGeos = {
-        floor: [],
-        path: [],
-        trace: []
-    };
-    // Overlay needs per-zone separation (different colors)
-    const overlayByZone = {};
-
-    // Collect geometries from ALL cells
-    for (const cell of cells) {
-        if (!cell.zone) continue;
-        // Ensure materials exist for this zone
-        getDistrictInfrastructureMaterials(cell.zone);
-
-        const cellGeos = collectCellInfraGeometries(cell);
-
-        globalGeos.floor.push(...cellGeos.floor);
-        globalGeos.path.push(...cellGeos.path);
-        globalGeos.trace.push(...cellGeos.trace);
-
-        if (cellGeos.overlay.length > 0) {
-            if (!overlayByZone[cell.zone]) overlayByZone[cell.zone] = [];
-            overlayByZone[cell.zone].push(...cellGeos.overlay);
-        }
-    }
-
-    // Get any zone's materials for floor/path/trace (they're shared across zones)
-    const anyZone = cells[0].zone;
-    const mats = getDistrictInfrastructureMaterials(anyZone);
-
-    const results = [];
-    const infraGroup = new THREE.Group();
-
-    // Merge floor — 1 mesh
-    const floorMesh = mergeAndCreateMesh(globalGeos.floor, mats.floor);
-    if (floorMesh) infraGroup.add(floorMesh);
-
-    // Merge path — 1 mesh
-    const pathMesh = mergeAndCreateMesh(globalGeos.path, mats.path);
-    if (pathMesh) infraGroup.add(pathMesh);
-
-    // Merge trace — 1 mesh
-    const traceMesh = mergeAndCreateMesh(globalGeos.trace, mats.trace);
-    if (traceMesh) infraGroup.add(traceMesh);
-
-    // Merge overlays — 1 mesh per zone color
-    for (const zone in overlayByZone) {
-        const overlayMat = overlayMatCache[zone];
-        if (!overlayMat) continue;
-        const overlayMesh = mergeAndCreateMesh(overlayByZone[zone], overlayMat);
-        if (overlayMesh) infraGroup.add(overlayMesh);
-    }
-
-    if (Core3D?.enableForeground3D) Core3D.enableForeground3D(infraGroup);
-    ring.ringFloor.add(infraGroup);
-
-    // Single entry for ALL infrastructure — no per-cell culling needed
-    // (infrastructure is flat on the ring, GPU frustum culling handles visibility)
-    results.push({
-        mesh: infraGroup,
-        segmentIndex: 0,
-        baseAngle: 0,
-        radius: ring.ringRadius,
-        radialOffset: 0,
-        isInfrastructure: true,
-        isGlobalInfra: true,  // marker: don't angle-cull this
-        cellKey: '__global_infra__'
-    });
-
-    return results;
+    return [];
 }
 
 // ============================================================

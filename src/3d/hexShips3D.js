@@ -245,9 +245,20 @@ function ensureShipLightPanelApi() { }
 
 function getEntityPosX(entity) { return entity?.pos ? entity.pos.x : entity?.x || 0; }
 function getEntityPosY(entity) { return entity?.pos ? entity.pos.y : entity?.y || 0; }
-function getEntityScale(entity) {
+function getEntityScaleX(entity) {
+  if (entity?.visual && typeof entity.visual.spriteScaleX === 'number') return entity.visual.spriteScaleX;
   if (entity?.visual && typeof entity.visual.spriteScale === 'number') return entity.visual.spriteScale;
   return 1.0;
+}
+
+function getEntityScaleY(entity) {
+  if (entity?.visual && typeof entity.visual.spriteScaleY === 'number') return entity.visual.spriteScaleY;
+  if (entity?.visual && typeof entity.visual.spriteScale === 'number') return entity.visual.spriteScale;
+  return 1.0;
+}
+
+function getEntityScale(entity) {
+  return Math.max(getEntityScaleX(entity), getEntityScaleY(entity));
 }
 
 function isEntityInCull(entity, cull) {
@@ -803,8 +814,9 @@ function updateEntityMesh(entity, data, camX, camY) {
 
   mesh.position.set(ex, -ey, 0);
   mesh.rotation.set(0, 0, -entityAngle);
-  const scale = getEntityScale(entity);
-  mesh.scale.set(scale, -scale, 1);
+  const scaleX = getEntityScaleX(entity);
+  const scaleY = getEntityScaleY(entity);
+  mesh.scale.set(scaleX, -scaleY, 1);
 }
 
 export function initHexShips3D({ canvas = null } = {}) {

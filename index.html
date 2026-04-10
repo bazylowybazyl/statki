@@ -6654,9 +6654,16 @@
     if (!hasSavedShipPosition) {
       const earthStation = stations.find(st => st.id === 'earth');
       if (earthStation) {
+        // Spawn player just beyond Earth's gravity well boundary (not inside the orbit).
+        // Player needs to fly IN to approach Earth — wchodzisz do systemu, nie rodzisz się w dokach.
+        const planet = earthStation.planet;
+        const radii = planet && window.planetOrbitRadii ? window.planetOrbitRadii(planet) : null;
+        const gravityWell = (radii && Number.isFinite(radii.gravityWell)) ? radii.gravityWell : null;
         const planetRadius = earthStation.planet?.r || 0;
         const orbitPadding = 900;
-        const spawnOrbitRadius = Math.max(planetRadius + orbitPadding, earthStation.r + 200);
+        const spawnOrbitRadius = gravityWell
+          ? gravityWell + 1500 // "trochę za" gravity well — tuż poza granicą przyciągania
+          : Math.max(planetRadius + orbitPadding, earthStation.r + 200);
         const spawnAngle = earthStation.planet?.angle || 0;
         const spawnPos = {
           x: earthStation.x + Math.cos(spawnAngle) * spawnOrbitRadius,
