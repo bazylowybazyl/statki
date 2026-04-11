@@ -14,11 +14,6 @@ const localParticles = [];
 const hexlanceProjectiles = [];
 let globalTime = 0;
 
-const sprite = new Image();
-let spriteReady = false;
-sprite.onload = () => { spriteReady = true; };
-sprite.src = "assets/weapons/supercapitalmain.png"; 
-
 export const superweaponState = {
     cooldown: 0,
     cooldownMax: 4.0, 
@@ -37,15 +32,20 @@ export const superweaponState = {
     recoilRecovery: 100
 };
 
-// --- HELPER: Odczytuje aktywne hardpointy dla Hexlance ---
-function getActiveOffsets(ship) {
-    if (ship && ship.weapons && ship.weapons.special) {
-        const specials = ship.weapons.special.filter(l => l.weapon && l.weapon.id === 'hexlance_siege');
-        if (specials.length > 0) {
-            return specials.map(l => l.hp.pos);
+function editorDegToForward(deg = 90) {
+    const rad = (Number(deg) || 0) * Math.PI / 180;
+    return { x: Math.sin(rad), y: -Math.cos(rad) };
+}
+
+// --- HELPER: Odczytuje aktywne hardpointy BUILT-IN dla Hexlance ---
+function getActiveMounts(ship) {
+    if (ship && ship.weapons && ship.weapons.builtin) {
+        const builtins = ship.weapons.builtin.filter(l => l.weapon && l.weapon.id === 'hexlance_siege' && l.hp);
+        if (builtins.length > 0) {
+            return builtins;
         }
     }
-    return []; // Brak broni = pusta tablica
+    return [];
 }
 
 class MainSpark {
@@ -134,19 +134,15 @@ function rotate(v, angle) {
     return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
 }
 
-function getMuzzlePos(ship, cannonIndex, barrelIndex, aimPos) {
-    const offsets = getActiveOffsets(ship);
-    const off = offsets[cannonIndex] || { x: 0, y: 0 }; // Pobiera offset z Hardpointu!
+function getMuzzlePos(ship, cannonIndex, barrelIndex) {
+    const mounts = getActiveMounts(ship);
+    const hp = mounts[cannonIndex]?.hp || mounts[cannonIndex] || null;
+    const hpPos = hp?.pos || hp || { x: 0, y: 0, rot: 90 };
+    const off = { x: Number(hpPos.x) || 0, y: Number(hpPos.y) || 0 };
     const pivotOffset = rotate(off, ship.angle);
     const pivotPos = { x: ship.pos.x + pivotOffset.x, y: ship.pos.y + pivotOffset.y };
-    let dir;
-    if (aimPos) {
-        const dx = aimPos.x - pivotPos.x; const dy = aimPos.y - pivotPos.y;
-        const dist = Math.hypot(dx, dy) || 1;
-        dir = { x: dx / dist, y: dy / dist };
-    } else {
-        dir = { x: Math.cos(ship.angle), y: Math.sin(ship.angle) };
-    }
+    const localDir = editorDegToForward(Number.isFinite(Number(hpPos.rot)) ? Number(hpPos.rot) : 90);
+    const dir = rotate(localDir, ship.angle);
     const perp = { x: -dir.y, y: dir.x };
     const recoilShift = -superweaponState.recoilOffset;
     const currentLength = superweaponState.barrelLength + recoilShift;
@@ -173,8 +169,8 @@ function spawnChargeEffect(targetPos) {
     }
 }
 
-function fireSingleBarrel(ship, cannonIndex, barrelIndex, aimPos) {
-    const m = getMuzzlePos(ship, cannonIndex, barrelIndex, aimPos);
+function fireSingleBarrel(ship, cannonIndex, barrelIndex) {
+    const m = getMuzzlePos(ship, cannonIndex, barrelIndex);
     const angle = Math.atan2(m.dir.y, m.dir.x);
     superweaponState.recoilOffset = Math.min(25, superweaponState.recoilOffset + 12);
     if (window.camera && window.camera.addShake) window.camera.addShake(8, 0.25);
@@ -203,11 +199,11 @@ function fireSingleBarrel(ship, cannonIndex, barrelIndex, aimPos) {
 function prepareSuperweaponSalvo(ship) {
     superweaponState.queue = [];
     const delay = superweaponState.shotDelay;
-    const offsets = getActiveOffsets(ship);
+    const mounts = getActiveMounts(ship);
     let currentDelay = 0;
     
     // Dodajemy do kolejki każdą lufę każdej zainstalowanej broni!
-    for (let cannonIndex = 0; cannonIndex < offsets.length; cannonIndex++) {
+    for (let cannonIndex = 0; cannonIndex < mounts.length; cannonIndex++) {
         superweaponState.queue.push({ cannonIndex, barrelIndex: 0, delay: currentDelay });
         currentDelay = delay;
         superweaponState.queue.push({ cannonIndex, barrelIndex: 1, delay: currentDelay });
@@ -217,7 +213,7 @@ function prepareSuperweaponSalvo(ship) {
 
 export function tryFireSuperweapon(ship) {
     if (!ship) return false;
-    if (getActiveOffsets(ship).length === 0) return false; // Brak broni, nie strzelaj
+    if (getActiveMounts(ship).length === 0) return false; // Brak broni, nie strzelaj
     if (superweaponState.cooldown > 0) return false;
     if (superweaponState.charging) return false;
     if (superweaponState.queue.length > 0) return false;
@@ -236,11 +232,11 @@ export function updateSuperweapon(dt, ship, aimPos) {
     }
     if (superweaponState.charging) {
         superweaponState.chargeProgress += dt;
-        const offsets = getActiveOffsets(ship);
+        const mounts = getActiveMounts(ship);
         
         // Ładowanie na każdej z luf
-        for (let i = 0; i < offsets.length; i++) {
-            const m = getMuzzlePos(ship, i, 0, aimPos);
+        for (let i = 0; i < mounts.length; i++) {
+            const m = getMuzzlePos(ship, i, 0);
             for(let k=0; k<3; k++) spawnChargeEffect(m);
         }
         
@@ -253,13 +249,13 @@ export function updateSuperweapon(dt, ship, aimPos) {
     if (superweaponState.queue.length > 0) {
         const nextShot = superweaponState.queue[0];
         if (nextShot.delay > 0 && nextShot.delay <= 0.22) {
-             const m = getMuzzlePos(ship, nextShot.cannonIndex, nextShot.barrelIndex, aimPos);
+             const m = getMuzzlePos(ship, nextShot.cannonIndex, nextShot.barrelIndex);
              for(let k=0; k<3; k++) spawnChargeEffect(m);
         }
         nextShot.delay -= dt;
         while (superweaponState.queue.length > 0 && superweaponState.queue[0].delay <= 0) {
             const shot = superweaponState.queue.shift();
-            fireSingleBarrel(ship, shot.cannonIndex, shot.barrelIndex, aimPos);
+            fireSingleBarrel(ship, shot.cannonIndex, shot.barrelIndex);
             if (superweaponState.queue.length > 0) {
                 superweaponState.queue[0].delay += shot.delay; 
             }
@@ -328,51 +324,11 @@ export function updateSuperweapon(dt, ship, aimPos) {
 }
 
 export function drawSuperweapon(ctx, camera, ship, worldToScreen, aimPos, visualState = null) {
-    if (!spriteReady) return;
-    const zoom = camera.zoom;
     drawHexlanceProjectiles(ctx, camera, worldToScreen);
     
     for (const p of localParticles) {
         p.draw(ctx, camera, worldToScreen);
     }
-
-    const offsets = getActiveOffsets(ship);
-    if (offsets.length === 0) return; // Brak broni, nie rysujemy korpusu!
-
-    const anchorX = 0.25; const anchorY = 0.5; const tuneScale = 0.2;
-    const spriteScale = tuneScale * zoom;
-    const spriteW = sprite.width * spriteScale;
-    const spriteH = sprite.height * spriteScale;
-    const recoilDrawOffset = -superweaponState.recoilOffset * zoom;
-    const drawOffsetX = -spriteW * anchorX + recoilDrawOffset;
-    const drawOffsetY = -spriteH * anchorY;
-
-    const shipX = visualState ? visualState.pos.x : ship.pos.x;
-    const shipY = visualState ? visualState.pos.y : ship.pos.y;
-    const shipAngle = visualState ? visualState.angle : ship.angle;
-
-    offsets.forEach(off => {
-        const c = Math.cos(shipAngle);
-        const s = Math.sin(shipAngle);
-        const rotatedOffX = off.x * c - off.y * s;
-        const rotatedOffY = off.x * s + off.y * c;
-        const mountWorldX = shipX + rotatedOffX;
-        const mountWorldY = shipY + rotatedOffY;
-        const sPos = worldToScreen(mountWorldX, mountWorldY, camera);
-        
-        let turretAngle = shipAngle;
-        if (aimPos) {
-            const dx = aimPos.x - mountWorldX;
-            const dy = aimPos.y - mountWorldY;
-            turretAngle = Math.atan2(dy, dx);
-        }
-
-        ctx.save();
-        ctx.translate(sPos.x, sPos.y);
-        ctx.rotate(turretAngle);
-        ctx.drawImage(sprite, drawOffsetX, drawOffsetY, spriteW, spriteH);
-        ctx.restore();
-    });
 }
 
 function drawHexlanceProjectiles(ctx, camera, worldToScreen) {

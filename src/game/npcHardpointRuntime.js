@@ -3,7 +3,8 @@ const DEFAULT_HP = Object.freeze({
   MISSILE: 'missile',
   AUX: 'aux',
   HANGAR: 'hangar',
-  SPECIAL: 'special'
+  SPECIAL: 'special',
+  BUILTIN: 'builtin'
 });
 
 const DEFAULT_COLORS = Object.freeze({
@@ -11,7 +12,8 @@ const DEFAULT_COLORS = Object.freeze({
   missile: '#65e58e',
   aux: '#f8bd53',
   hangar: '#be7fff',
-  special: '#ff6a6a'
+  special: '#ff6a6a',
+  builtin: '#7ee7ff'
 });
 
 function normalizeHpEnum(hardpointEnum) {
@@ -20,7 +22,8 @@ function normalizeHpEnum(hardpointEnum) {
     MISSILE: hardpointEnum?.MISSILE || DEFAULT_HP.MISSILE,
     AUX: hardpointEnum?.AUX || DEFAULT_HP.AUX,
     HANGAR: hardpointEnum?.HANGAR || DEFAULT_HP.HANGAR,
-    SPECIAL: hardpointEnum?.SPECIAL || DEFAULT_HP.SPECIAL
+    SPECIAL: hardpointEnum?.SPECIAL || DEFAULT_HP.SPECIAL,
+    BUILTIN: hardpointEnum?.BUILTIN || DEFAULT_HP.BUILTIN
   };
 }
 
@@ -105,13 +108,15 @@ function resolveEditorEngineOffset(kind, mount, y, offsetX, offsetY) {
 function normalizeEditorHardpoint(marker, idx, hpEnum, validTypes) {
   const x = Number(marker?.x);
   const y = Number(marker?.y);
+  const rot = Number(marker?.rot);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   const type = String(marker?.type || hpEnum.MAIN).toLowerCase();
   return {
     id: marker?.id || `ehp_${idx}`,
     type: validTypes.includes(type) ? type : hpEnum.MAIN,
     x,
-    y
+    y,
+    rot: Number.isFinite(rot) ? normalizeEditorEngineDeg(rot, 90) : (type === hpEnum.BUILTIN ? 90 : 0)
   };
 }
 
@@ -228,13 +233,14 @@ export function createNpcHardpointRuntime({
   pollInterval = 0.35
 } = {}) {
   const HP = normalizeHpEnum(hardpointEnum);
-  const validTypes = [HP.MAIN, HP.MISSILE, HP.AUX, HP.HANGAR, HP.SPECIAL];
+  const validTypes = [HP.MAIN, HP.MISSILE, HP.AUX, HP.HANGAR, HP.SPECIAL, HP.BUILTIN];
   const colors = {
     [HP.MAIN]: DEFAULT_COLORS.main,
     [HP.MISSILE]: DEFAULT_COLORS.missile,
     [HP.AUX]: DEFAULT_COLORS.aux,
     [HP.HANGAR]: DEFAULT_COLORS.hangar,
-    [HP.SPECIAL]: DEFAULT_COLORS.special
+    [HP.SPECIAL]: DEFAULT_COLORS.special,
+    [HP.BUILTIN]: DEFAULT_COLORS.builtin
   };
 
   const state = {
@@ -362,6 +368,8 @@ export function createNpcHardpointRuntime({
   function resolveWeaponHardpointType(weaponDef, opts = {}) {
     const explicit = String(opts.hardpointType || '').toLowerCase();
     if (validTypes.includes(explicit)) return explicit;
+    const mountType = String(weaponDef?.mountType || '').toLowerCase();
+    if (validTypes.includes(mountType)) return mountType;
 
     const kind = String(opts.type || '').toLowerCase();
     if (kind === 'rocket' || kind.includes('missile')) return HP.MISSILE;
@@ -392,7 +400,8 @@ export function createNpcHardpointRuntime({
 
     return {
       x: baseX + localX * c - localY * s,
-      y: baseY + localX * s + localY * c
+      y: baseY + localX * s + localY * c,
+      rot: Number.isFinite(Number(hp?.rot)) ? normalizeEditorEngineDeg(hp.rot, 90) : 0
     };
   }
 

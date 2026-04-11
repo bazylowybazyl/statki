@@ -95,7 +95,7 @@ function isFiniteNumber(value) {
 function shouldRenderWeapon3D(def) {
   if (!def) return false;
   const mountType = String(def.mountType || '').toLowerCase();
-  if (mountType === 'hangar') return false;
+  if (mountType === 'hangar' || mountType === 'builtin') return false;
   return true;
 }
 

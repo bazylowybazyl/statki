@@ -71,6 +71,10 @@ export class WeaponController {
     return this.weapons[window.HP?.SPECIAL || 'special'] || [];
   }
 
+  get builtInWeapons() {
+    return this.weapons[window.HP?.BUILTIN || 'builtin'] || [];
+  }
+
   get auxWeapons() {
     return this.weapons[window.HP?.AUX || 'aux'] || [];
   }
@@ -222,14 +226,15 @@ export class WeaponController {
 
   tryFireSpecialWeapons() {
     const specials = this.specialWeapons;
-    if (specials.length === 0) return false;
+    const builtins = this.builtInWeapons;
+    if (specials.length === 0 && builtins.length === 0) return false;
 
     const ship = this.ship;
     let fired = false;
 
     // Hexlance (only for P1 for now — Superweapon system is global)
     if (this.owner === 'player') {
-      const hasHexlance = specials.some(l => l?.weapon?.id === 'hexlance_siege');
+      const hasHexlance = builtins.some(l => l?.weapon?.id === 'hexlance_siege');
       if (hasHexlance && window.Superweapon?.tryFireSuperweapon(ship)) fired = true;
     }
 

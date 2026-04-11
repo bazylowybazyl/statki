@@ -163,6 +163,28 @@ export function loadSynthCityAssets() {
                 () => {} // Toppers are optional
             );
         }
+
+        // Storefronts model — intersection connector with bridges/pipes at multiple heights
+        objLoader.load(basePath + 'models/storefronts.obj',
+            obj => {
+                // storefronts.obj may have multiple children — merge them into one geometry
+                const geos = [];
+                obj.traverse(child => {
+                    if (child.isMesh && child.geometry) geos.push(child.geometry);
+                });
+                if (geos.length === 1) {
+                    synthCityAssets.models['storefronts'] = geos[0];
+                } else if (geos.length > 1) {
+                    try {
+                        synthCityAssets.models['storefronts'] = BufferGeometryUtils.mergeGeometries(geos, false);
+                    } catch (e) {
+                        synthCityAssets.models['storefronts'] = geos[0]; // fallback
+                    }
+                }
+            },
+            undefined,
+            () => console.warn('[RingCityAssets] Missing model: storefronts')
+        );
     });
 }
 
