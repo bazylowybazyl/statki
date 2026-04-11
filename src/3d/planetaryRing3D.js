@@ -292,15 +292,26 @@ function drawWallTexture(ctx) {
 function getSegmentTextures() {
   if (textureCache) return textureCache;
 
-  const wall = createCanvas(TEXTURE.width, TEXTURE.height);
-  if (!wall) {
+  const wallDisplay = createCanvas(TEXTURE.width, TEXTURE.height);
+  const wallCollision = createCanvas(TEXTURE.width, TEXTURE.height);
+  if (!wallDisplay || !wallCollision) {
     textureCache = null;
     return null;
   }
 
-  drawWallTexture(wall.getContext('2d'));
+  drawWallTexture(wallDisplay.getContext('2d'));
 
-  textureCache = Object.freeze({ WALL: wall });
+  const collisionCtx = wallCollision.getContext('2d');
+  // Keep collision mask aligned with the display texture.
+  // Ring hex geometry is generated from the collision image, so flipping only
+  // the mask vertically makes the active shard bands diverge from the visual
+  // floor bands and can "remove" a band from the zone it should sit under.
+  collisionCtx.drawImage(wallDisplay, 0, 0);
+
+  textureCache = Object.freeze({
+    WALL_DISPLAY: wallDisplay,
+    WALL_COLLISION: wallCollision
+  });
   return textureCache;
 }
 
@@ -385,8 +396,9 @@ class PlanetaryRing {
       };
 
       if (type !== 'HOLE') {
-        const image = textures.WALL;
-        const entity = this.createSegmentEntity(i, type, image);
+        const image = textures.WALL_DISPLAY;
+        const collisionImage = textures.WALL_COLLISION || image;
+        const entity = this.createSegmentEntity(i, type, image, collisionImage);
         segment.entity = entity;
       }
 
@@ -506,7 +518,7 @@ class PlanetaryRing {
     }
   }
 
-  createSegmentEntity(index, type, image) {
+  createSegmentEntity(index, type, image, collisionImage = image) {
     const entity = {
       id: `ring_${this.key}_${index}`,
       name: `Ring ${this.key} ${index}`,
@@ -537,10 +549,18 @@ class PlanetaryRing {
       maxHp: 1
     };
 
-    initHexBody(entity, image, null, false, null, CONFIG.collisionAlphaCutoff);
+    initHexBody(entity, collisionImage, null, false, null, CONFIG.collisionAlphaCutoff);
     if (!entity.hexGrid) {
       entity.dead = true;
       return entity;
+    }
+
+    if (image && entity.hexGrid) {
+      entity.hexGrid.armorImage = image;
+      if (entity.hexGrid.cacheCanvas && entity.hexGrid.cacheCtx) {
+        entity.hexGrid.cacheCtx.clearRect(0, 0, entity.hexGrid.cacheCanvas.width, entity.hexGrid.cacheCanvas.height);
+        entity.hexGrid.cacheCtx.drawImage(image, 0, 0, entity.hexGrid.cacheCanvas.width, entity.hexGrid.cacheCanvas.height);
+      }
     }
 
     // Set collision radius from actual hex dimensions (segment is ~800×2400 world units)
@@ -585,9 +605,13 @@ class PlanetaryRing {
       const arcAngle = endAngle - startAngle;
       const centerAngle = startAngle + arcAngle * 0.5;
 
-      // Build arc geometry matching the ring curvature
-      const innerR = this.floorInnerRadius;
-      const outerR = this.floorOuterRadius;
+      // Gate shields belong to the outer military ring only.
+      // The city floor/destructor spans multiple bands, but the entry barrier
+      // should only close the actual outer gate band instead of cutting through
+      // inner/industrial slices.
+      const innerR = this.layout.military.innerR;
+      const outerR = this.layout.military.outerR;
+      const gateRadius = (innerR + outerR) * 0.5;
       const segs = 32;
 
       const shape = new THREE.Shape();
@@ -663,6 +687,7 @@ class PlanetaryRing {
       this.forceFields.push({
         startIndex: startIdx,
         centerAngle,
+        radius: gateRadius,
         mesh,
         targetOpacity: 0.6,
         currentOpacity: 0.6,
@@ -701,8 +726,9 @@ class PlanetaryRing {
 
       // Distance check
       const worldAngle = ff.centerAngle + this.currentRotation;
-      const ffX = this.lastPlanetX + Math.cos(worldAngle) * this.wallRadius;
-      const ffY = this.lastPlanetY + Math.sin(worldAngle) * this.wallRadius;
+      const ffRadius = Number(ff.radius) || this.layout.militaryCenter || this.wallRadius;
+      const ffX = this.lastPlanetX + Math.cos(worldAngle) * ffRadius;
+      const ffY = this.lastPlanetY + Math.sin(worldAngle) * ffRadius;
       const dist = hasShip ? Math.hypot(shipX - ffX, shipY - ffY) : Infinity;
 
       // Hysteresis open/close

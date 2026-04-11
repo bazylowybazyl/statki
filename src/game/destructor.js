@@ -357,10 +357,8 @@ function getBroadphaseRadius(entity) {
     const gridRadius = Number(entity?.hexGrid?.rawRadius);
     if (Number.isFinite(gridRadius) && gridRadius > 0) {
       const scaledGridRadius = gridRadius * Math.max(0.0001, getFinalScale(entity));
-      radius = Math.min(radius, Math.max(140, scaledGridRadius + 80));
+      radius = Math.max(radius, Math.max(140, scaledGridRadius + 80));
     }
-    const ringCap = Math.max(200, Number(DESTRUCTOR_CONFIG.ringBroadphaseRadiusCap) || 1800);
-    radius = Math.min(radius, ringCap);
   }
   return radius;
 }
