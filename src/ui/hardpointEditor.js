@@ -94,7 +94,7 @@ function getShipSelectDefs() {
   ];
 }
 
-const HARDPOINT_TYPES = ['main', 'missile', 'aux', 'hangar', 'special'];
+const HARDPOINT_TYPES = ['main', 'missile', 'aux', 'hangar', 'special', 'builtin'];
 const ENGINE_MAIN_MOUNTS = ['auto', 'rear_center', 'rear_upper', 'rear_lower', 'front_upper', 'front_lower'];
 const ENGINE_SIDE_MOUNTS = ['auto', 'upper_auto', 'center_auto', 'lower_auto', 'upper_left', 'center_left', 'lower_left', 'upper_right', 'center_right', 'lower_right'];
 const ENGINE_SIDE_UI_MOUNTS = ['auto', 'upper_auto', 'center_auto', 'lower_auto'];
@@ -107,6 +107,7 @@ const COLORS = {
   aux: '#f8bd53',
   hangar: '#be7fff',
   special: '#ff6a6a',
+  builtin: '#7ee7ff',
   core: '#ff3c3c',
   engineMain: '#7ae4ff',
   engineSide: '#ffd46a'
@@ -119,6 +120,7 @@ const PALETTE_ITEMS = [
   { id: 'hp_aux', label: 'Hardpoint AUX', tool: 'hardpoint', hardpointType: 'aux', color: COLORS.aux },
   { id: 'hp_hangar', label: 'Hardpoint HANGAR', tool: 'hardpoint', hardpointType: 'hangar', color: COLORS.hangar },
   { id: 'hp_special', label: 'Hardpoint SPECIAL', tool: 'hardpoint', hardpointType: 'special', color: COLORS.special },
+  { id: 'hp_builtin', label: 'Hardpoint BUILT-IN', tool: 'hardpoint', hardpointType: 'builtin', color: COLORS.builtin },
   { id: 'core', label: 'Rdzeń', tool: 'core', hardpointType: null, color: COLORS.core },
   { id: 'engine_main', label: 'Dysza MAIN', tool: 'engine_main', hardpointType: null, color: COLORS.engineMain },
   { id: 'engine_side', label: 'Dysza SIDE AUTO', tool: 'engine_side', hardpointType: null, color: COLORS.engineSide, engineMount: 'auto' },
@@ -131,6 +133,7 @@ const state = {
   shipId: CURRENT_SHIP_ID,
   tool: 'hardpoint',
   hardpointType: HARDPOINT_TYPES[0],
+  hardpointDeg: 90,
   engineDeg: 90,
   engineOffsetX: 0,
   engineOffsetY: 0,
@@ -377,10 +380,11 @@ function createRoot() {
   const root = document.createElement('div');
   root.id = ROOT_ID;
   root.innerHTML = `
-  <div class="hp-editor-shell">
-    <div class="hp-editor-top">
-      <div class="hp-c"><label>Statek</label><select id="hp-ship"></select></div>
-      <div class="hp-c"><label>Silnik deg</label><input id="hp-engine-deg" type="number" step="1" min="-180" max="180" value="90" style="width:70px;"></div>
+    <div class="hp-editor-shell">
+      <div class="hp-editor-top">
+        <div class="hp-c"><label>Statek</label><select id="hp-ship"></select></div>
+        <div class="hp-c"><label>Built-In deg</label><input id="hp-hardpoint-deg" type="number" step="1" min="-180" max="180" value="90" style="width:72px;"></div>
+        <div class="hp-c"><label>Silnik deg</label><input id="hp-engine-deg" type="number" step="1" min="-180" max="180" value="90" style="width:70px;"></div>
       <div class="hp-c"><label>Offset X</label><input id="hp-engine-offx" type="number" step="1" value="0" style="width:70px;"></div>
       <div class="hp-c"><label>Offset Y</label><input id="hp-engine-offy" type="number" step="1" value="0" style="width:70px;"></div>
       <div class="hp-c"><label>Kategoria dyszy</label><select id="hp-engine-mount" style="width:150px;"></select></div>
@@ -434,6 +438,7 @@ function createRoot() {
   runtime.controls = {
     ship: root.querySelector('#hp-ship'),
     palette: root.querySelector('#hp-palette'),
+    hardpointDeg: root.querySelector('#hp-hardpoint-deg'),
     engineDeg: root.querySelector('#hp-engine-deg'),
     engineOffX: root.querySelector('#hp-engine-offx'),
     engineOffY: root.querySelector('#hp-engine-offy'),
@@ -612,6 +617,29 @@ function getDefaultShipDataForEditorKey(shipId) {
   return defaults ? cloneShipData(defaults) : defaultShipData();
 }
 
+function upgradeBuiltInHardpoints(shipId, data) {
+  if (!data || !Array.isArray(data.hardpoints)) return false;
+  const resolvedShipId = resolveEditorShipId(shipId);
+  let changed = false;
+  for (const marker of data.hardpoints) {
+    if (!marker || typeof marker !== 'object') continue;
+    if (resolvedShipId === 'atlas' && String(marker.id || '') === 'm_1zez2h7' && String(marker.type || '').toLowerCase() === 'special') {
+      marker.type = 'builtin';
+      if (!Number.isFinite(Number(marker.rot))) marker.rot = 90;
+      changed = true;
+    }
+    if (String(marker.type || '').toLowerCase() === 'builtin') {
+      const rot = Number(marker.rot);
+      const nextRot = Number.isFinite(rot) ? normalizeDeg(rot) : 90;
+      if (!Number.isFinite(rot) || nextRot !== rot) {
+        marker.rot = round2(nextRot);
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
 function ensureShipData(shipId) {
   shipId = normalizeEditorShipId(shipId);
   if (!state.ships[shipId]) state.ships[shipId] = getDefaultShipDataForEditorKey(shipId);
@@ -621,6 +649,7 @@ function ensureShipData(shipId) {
   if (!data.engines || typeof data.engines !== 'object') data.engines = { main: [], side: [] };
   if (!Array.isArray(data.engines.main)) data.engines.main = [];
   if (!Array.isArray(data.engines.side)) data.engines.side = [];
+  upgradeBuiltInHardpoints(shipId, data);
   bootstrapIfNeeded(shipId);
   return state.ships[shipId];
 }
@@ -646,7 +675,8 @@ function bootstrapIfNeeded(shipId) {
         id: markerId(),
         x: round2(x),
         y: round2(y),
-        type: hp.type || 'main'
+        type: String(hp?.type || 'main').toLowerCase(),
+        rot: round2(Number.isFinite(Number(hp?.pos?.rot)) ? normalizeDeg(hp.pos.rot) : (String(hp?.type || '').toLowerCase() === 'builtin' ? 90 : 0))
       });
     }
   }
@@ -783,6 +813,11 @@ function bindControls() {
   c.ship.addEventListener('change', () => {
     state.shipId = normalizeEditorShipId(c.ship.value);
     ensureShipData(state.shipId);
+    persist();
+    scheduleDraw();
+  });
+  c.hardpointDeg.addEventListener('input', () => {
+    state.hardpointDeg = normalizeDeg(c.hardpointDeg.value);
     persist();
     scheduleDraw();
   });
@@ -1258,6 +1293,7 @@ function normalizeBrushState() {
   if (!HARDPOINT_TYPES.includes(state.hardpointType)) {
     state.hardpointType = 'main';
   }
+  state.hardpointDeg = clampDeg(state.hardpointDeg);
 }
 
 function removeMarkersNearPoint(x, y, radiusLocal) {
@@ -1490,7 +1526,11 @@ function placeMarker(x, y) {
   for (const pos of sym) {
     if (state.tool === 'hardpoint') {
       const id = markerId();
-      addMarker('hardpoint', { id, x: pos.x, y: pos.y, type: state.hardpointType });
+      const marker = { id, x: pos.x, y: pos.y, type: state.hardpointType };
+      if (state.hardpointType === 'builtin') {
+        marker.rot = round2(mirrorDeg(state.hardpointDeg, !!pos.mirrorX, !!pos.mirrorY));
+      }
+      addMarker('hardpoint', marker);
       placedIds.push(id);
     } else if (state.tool === 'core') {
       const id = markerId();
@@ -1902,8 +1942,10 @@ function drawBrushPreview(ctx) {
       ctx.moveTo(p.x + radius * 0.8, p.y - radius * 0.8);
       ctx.lineTo(p.x - radius * 0.8, p.y + radius * 0.8);
       ctx.stroke();
-    } else if (state.tool === 'engine_main' || state.tool === 'engine_side') {
-      const deg = mirrorDeg(state.engineDeg, !!pos.mirrorX, !!pos.mirrorY);
+    } else if (state.tool === 'engine_main' || state.tool === 'engine_side' || (state.tool === 'hardpoint' && state.hardpointType === 'builtin')) {
+      const deg = (state.tool === 'hardpoint')
+        ? mirrorDeg(state.hardpointDeg, !!pos.mirrorX, !!pos.mirrorY)
+        : mirrorDeg(state.engineDeg, !!pos.mirrorX, !!pos.mirrorY);
       const rad = deg * Math.PI / 180;
       const dx = Math.sin(rad) * radius * 2.2;
       const dy = -Math.cos(rad) * radius * 2.2;
@@ -1974,8 +2016,9 @@ function drawCursorBrushBadge(ctx) {
     ctx.moveTo(iconX + 6, iconY - 6);
     ctx.lineTo(iconX - 6, iconY + 6);
     ctx.stroke();
-  } else if (item.tool === 'engine_main' || item.tool === 'engine_side') {
-    const rad = (Number(state.engineDeg) || 0) * Math.PI / 180;
+    } else if (item.tool === 'engine_main' || item.tool === 'engine_side' || (item.tool === 'hardpoint' && item.hardpointType === 'builtin')) {
+      const sourceDeg = (item.tool === 'hardpoint') ? state.hardpointDeg : state.engineDeg;
+      const rad = (Number(sourceDeg) || 0) * Math.PI / 180;
     const dx = Math.sin(rad) * 11;
     const dy = -Math.cos(rad) * 11;
     ctx.strokeStyle = item.color;
@@ -2027,8 +2070,10 @@ function drawMarkers(ctx) {
     ctx.moveTo(p.x, p.y - radius * 0.8);
     ctx.lineTo(p.x, p.y + radius * 0.8);
     ctx.stroke();
-    if (item.kind === 'engine_main' || item.kind === 'engine_side') {
-      const deg = Number(marker.deg) || 0;
+    if (item.kind === 'engine_main' || item.kind === 'engine_side' || (item.kind === 'hardpoint' && marker.type === 'builtin')) {
+      const deg = (item.kind === 'hardpoint')
+        ? (Number.isFinite(Number(marker.rot)) ? Number(marker.rot) : 90)
+        : (Number(marker.deg) || 0);
       const rad = deg * Math.PI / 180;
       const dx = Math.sin(rad) * radius * 2.2;
       const dy = -Math.cos(rad) * radius * 2.2;
@@ -2046,7 +2091,12 @@ function drawMarkers(ctx) {
 }
 
 function compactMarker(marker, kind) {
-  if (kind === 'hardpoint') return { id: marker.id, type: marker.type, x: round2(marker.x), y: round2(marker.y) };
+  if (kind === 'hardpoint') {
+    const out = { id: marker.id, type: marker.type, x: round2(marker.x), y: round2(marker.y) };
+    const rot = Number(marker?.rot);
+    if (Number.isFinite(rot) && (marker.type === 'builtin' || Math.abs(rot) > 1e-6)) out.rot = round2(normalizeDeg(rot));
+    return out;
+  }
   if (kind === 'core') return { id: marker.id, x: round2(marker.x), y: round2(marker.y) };
   const out = {
     id: marker.id,
@@ -2162,7 +2212,14 @@ function normalizeImportedShip(raw) {
     const type = HARDPOINT_TYPES.includes(String(marker?.type || '').toLowerCase())
       ? String(marker.type).toLowerCase()
       : 'main';
-    hardpoints.push({ id: marker?.id || markerId(), type, x: round2(x), y: round2(y) });
+    const rotRaw = Number(marker?.rot);
+    hardpoints.push({
+      id: marker?.id || markerId(),
+      type,
+      x: round2(x),
+      y: round2(y),
+      rot: round2(Number.isFinite(rotRaw) ? normalizeDeg(rotRaw) : (type === 'builtin' ? 90 : 0))
+    });
   }
 
   const cores = [];
@@ -2288,6 +2345,7 @@ function persist() {
     shipId: state.shipId,
     tool: state.tool,
     hardpointType: state.hardpointType,
+    hardpointDeg: state.hardpointDeg,
     engineDeg: state.engineDeg,
     engineOffsetX: state.engineOffsetX,
     engineOffsetY: state.engineOffsetY,
@@ -2328,6 +2386,7 @@ function loadStorage() {
     state.shipId = normalizeEditorShipId(data.shipId || state.shipId);
     state.tool = data.tool || state.tool;
     state.hardpointType = data.hardpointType || state.hardpointType;
+    state.hardpointDeg = Number.isFinite(Number(data.hardpointDeg)) ? clampDeg(data.hardpointDeg) : state.hardpointDeg;
     state.engineDeg = Number.isFinite(data.engineDeg) ? data.engineDeg : state.engineDeg;
     state.engineOffsetX = Number.isFinite(data.engineOffsetX) ? data.engineOffsetX : state.engineOffsetX;
     state.engineOffsetY = Number.isFinite(data.engineOffsetY) ? data.engineOffsetY : state.engineOffsetY;
@@ -2376,6 +2435,7 @@ function syncControlsFromState() {
   state.engineGimbalMinDeg = round2(gimbal.min);
   state.engineGimbalMaxDeg = round2(gimbal.max);
   c.ship.value = state.shipId;
+  c.hardpointDeg.value = String(state.hardpointDeg);
   c.engineDeg.value = String(state.engineDeg);
   c.engineOffX.value = String(state.engineOffsetX);
   c.engineOffY.value = String(state.engineOffsetY);

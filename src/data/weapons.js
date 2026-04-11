@@ -3,7 +3,7 @@
 /**
  * MASTER_WEAPONS - Ustandaryzowana baza uzbrojenia Super Capital
  * * Parametry:
- * - mountType: 'main', 'aux', 'missile', 'hangar', 'special' (gdzie można zamontować)
+ * - mountType: 'main', 'aux', 'missile', 'hangar', 'special', 'builtin' (gdzie można zamontować)
  * - category: 'rail', 'beam', 'plasma', 'autocannon', 'rocket', 'ciws', 'flak', 'superweapon' (dla renderera)
  * - size: 'S', 'M', 'L', 'Capital' (wymagany rozmiar hardpointu)
  * - baseRange: Twardy zasięg w jednostkach silnika (silnik sam wyliczy life pocisku: range/speed)
@@ -137,7 +137,7 @@ export const MASTER_WEAPONS = {
     model3D: 'special_yamato_cannon', render3dOnly: true
   },
   hexlance_siege: {
-    id: 'hexlance_siege', name: 'Hexlance Siege Cannon', mountType: 'special', category: 'superweapon', size: 'Capital',
+    id: 'hexlance_siege', name: 'Hexlance Siege Cannon', mountType: 'builtin', category: 'superweapon', size: 'Capital',
     baseDamage: 9999, baseRange: 60000, baseSpeed: 12000, cooldown: 6.0, chargeTime: 1.2,
     burstCount: 4, burstDelay: 0.25, energyCost: 200, vfxColor: '#d0eaff'
   },

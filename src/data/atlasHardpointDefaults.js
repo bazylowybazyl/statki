@@ -346,9 +346,10 @@ export const ATLAS_EDITOR_DEFAULTS = {
     },
     {
       "id": "m_1zez2h7",
-      "type": "special",
+      "type": "builtin",
       "x": 1238.93,
-      "y": -22.94
+      "y": -22.94,
+      "rot": 90
     },
     {
       "id": "m_vsk8cz4",

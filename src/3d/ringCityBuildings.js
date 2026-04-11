@@ -583,6 +583,44 @@ function generateCellBuildingData(cell, ring) {
         }
     }
 
+    // ---- Storefronts (bridge/pipe connectors between cells) ----
+    // Placed every other cell in the angular direction, at the tangential
+    // boundary — analogous to SynthCity's storefronts at every-other
+    // intersection.  Uses the storefronts.obj geometry which contains
+    // horizontal walkways and vertical pipes at multiple heights.
+    if ((cell.col % 2) === 0) {
+        const sfGeo = cloneSynthCityGeometry('storefronts');
+        if (sfGeo) {
+            const SF_SCALE = 3.0;
+            // OBJ is in XZ plane with Y up.  Ring cell-local is
+            // X=radial, Y=tangential, Z=height.
+            // Rotate X 90° to swap Y→Z (up), then scale.
+            sfGeo.rotateX(Math.PI / 2);
+            sfGeo.scale(SF_SCALE, SF_SCALE, SF_SCALE);
+
+            // Position at the angular edge of the cell (tangential boundary)
+            // so it sits between this cell and the next one.
+            const edgeY = (cell.angleEnd - cellCenterAngle) * cellCenterRadius;
+            const sfMatrix = new THREE.Matrix4().makeTranslation(0, edgeY, 0);
+            sfGeo.applyMatrix4(sfMatrix);
+
+            // Ensure matching attributes for merge
+            const posCount = sfGeo.attributes.position.count;
+            if (!sfGeo.hasAttribute('normal')) {
+                sfGeo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(posCount * 3), 3));
+            }
+            if (!sfGeo.hasAttribute('uv')) {
+                sfGeo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(posCount * 2), 2));
+            }
+            sfGeo.groups = [];
+
+            // Use a random building material for color variety (like SynthCity)
+            const sfMatKey = pickSynthBuildingMaterialKey(rand, false);
+            cellGeoMap[sfMatKey] = cellGeoMap[sfMatKey] || [];
+            cellGeoMap[sfMatKey].push(sfGeo);
+        }
+    }
+
     return {
         cellGeoMap,
         dynamicDecorationData,
@@ -640,7 +678,12 @@ export function createDistrictForCell(cell, ring) {
         }
         if (!mergedGeo) continue;
 
-        const material = resolveMaterial(matKey, zone);
+        let material = resolveMaterial(matKey, zone);
+        if (matKey.startsWith('building_')) {
+            material = material.clone();
+            material.emissive = new THREE.Color().setHSL(Math.random(), 1.0, 0.95);
+            material.emissiveIntensity = 1.5;
+        }
         if (matKey === 'neonEdges') {
             cellGroup.add(new THREE.LineSegments(mergedGeo, material));
         } else {
@@ -858,6 +901,17 @@ function buildChunksForRing(cells, ringId, ring) {
                 if (material) break;
             }
             if (!material) continue;
+
+            // Per-chunk random emissive for SynthCity building materials.
+            // Each chunk clones the shared material and gets its own unique neon
+            // hue — instead of all chunks sharing the same 10 colors, we get
+            // up to 16 × 10 = 160 distinct colors across the ring.
+            if (matKey.startsWith('building_')) {
+                material = material.clone();
+                material.emissive = new THREE.Color().setHSL(Math.random(), 1.0, 0.95);
+                material.emissiveIntensity = 1.5;
+                material.needsUpdate = true;
+            }
 
             const mesh = new THREE.Mesh(mergedGeo, material);
             mesh.userData.lodLevel = LOD_LEVEL_BY_MAT[matKey] || 'MEDIUM';

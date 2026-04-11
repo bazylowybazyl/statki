@@ -3730,7 +3730,8 @@
       MISSILE: 'missile',
       AUX: 'aux',
       HANGAR: 'hangar',
-      SPECIAL: 'special'
+      SPECIAL: 'special',
+      BUILTIN: 'builtin'
     };
     window.HP = HP;
 
@@ -3777,10 +3778,16 @@
           placeLineNormalized(hp, line.type, line.count, line.start, line.end, layoutBounds);
         }
         for (const special of layout.specials || []) {
+          const specialType = String(special?.type || HP.SPECIAL).toLowerCase();
+          const fallbackRot = specialType === HP.BUILTIN ? 90 : 0;
           hp.push({
             id: uid(),
-            type: special.type,
-            pos: { x: (special.pos?.x || 0) * layoutBounds.w, y: (special.pos?.y || 0) * layoutBounds.h, rot: 0 },
+            type: specialType,
+            pos: {
+              x: (special.pos?.x || 0) * layoutBounds.w,
+              y: (special.pos?.y || 0) * layoutBounds.h,
+              rot: Number.isFinite(Number(special?.rot)) ? normalizeEditorEngineDeg(special.rot, fallbackRot) : fallbackRot
+            },
             mount: null,
             ammo: null,
             maxAmmo: null
@@ -3989,6 +3996,7 @@
 
     function buildPlayerDefaultEditorHardpoints(preferredKey = null) {
       const playerCfg = getPlayerEditorConfigFromStorage(preferredKey);
+      const resolvedKey = resolvePlayerEditorKey(preferredKey);
       const src = Array.isArray(playerCfg?.hardpoints) ? playerCfg.hardpoints : [];
       if (!src.length) return [];
       const validTypes = new Set(Object.values(HP));
@@ -4000,11 +4008,20 @@
         const y = Number(marker?.y);
         if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
         const rawType = String(marker?.type || HP.MAIN).toLowerCase();
-        const type = validTypes.has(rawType) ? rawType : HP.MAIN;
+        let type = validTypes.has(rawType) ? rawType : HP.MAIN;
+        if (resolvedKey === 'atlas' && type === HP.SPECIAL && String(marker?.id || '') === 'm_1zez2h7') {
+          type = HP.BUILTIN;
+        }
+        const rotRaw = Number(marker?.rot);
+        const fallbackRot = type === HP.BUILTIN ? 90 : 0;
         out.push({
           id: marker?.id || uid(),
           type,
-          pos: { x: x * scaleX, y: y * scaleY, rot: 0 },
+          pos: {
+            x: x * scaleX,
+            y: y * scaleY,
+            rot: Number.isFinite(rotRaw) ? normalizeEditorEngineDeg(rotRaw, fallbackRot) : fallbackRot
+          },
           mount: null,
           ammo: null,
           maxAmmo: null
@@ -4191,9 +4208,11 @@
         if (rotation === 'cw') {
           hp.pos.x = y;
           hp.pos.y = -x;
+          if (Number.isFinite(Number(hp?.pos?.rot))) hp.pos.rot = normalizeEditorEngineDeg((Number(hp.pos.rot) || 0) - 90, 0);
         } else if (rotation === 'ccw') {
           hp.pos.x = -y;
           hp.pos.y = x;
+          if (Number.isFinite(Number(hp?.pos?.rot))) hp.pos.rot = normalizeEditorEngineDeg((Number(hp.pos.rot) || 0) + 90, 0);
         }
       }
       return hardpoints;
@@ -4391,7 +4410,7 @@
       mountFirstFree(HP.MISSILE, 'missile_rack', 8);
       mountFirstFree(HP.AUX, 'ciws_mk1', 8);
       mountFirstFree(HP.HANGAR, 'fighter_bay', 4);
-      mountFirstFree(HP.SPECIAL, 'hexlance_siege', 2);
+      mountFirstFree(HP.BUILTIN, 'hexlance_siege', 1);
     }
 
     function mountFirstFree(type, weaponId, howMany) {
@@ -5189,6 +5208,18 @@
     }
 
     function getSpecialWeaponHudState() {
+      const builtins = Game.player?.weapons?.[HP.BUILTIN] || [];
+      const hexlance = builtins.find(loadout => loadout?.weapon?.id === 'hexlance_siege')?.weapon || null;
+      if (hexlance) {
+        const sw = Superweapon?.superweaponState || null;
+        if (!sw) return { weapon: hexlance, charge: 1 };
+        if (sw.charging) {
+          return { weapon: hexlance, charge: clamp((Number(sw.chargeProgress) || 0) / Math.max(0.01, Number(sw.chargeTime) || 1), 0, 1) };
+        }
+        const cdLeft = Math.max(0, Number(sw.cooldown) || 0);
+        const cdMax = Math.max(0.01, Number(sw.cooldownMax) || cdLeft || 1);
+        return { weapon: hexlance, charge: clamp(1 - (cdLeft / cdMax), 0, 1) };
+      }
       const entries = Game.player?.weapons?.[HP.SPECIAL] || [];
       let weapon = null;
       let bestCdLeft = Infinity;
@@ -8195,10 +8226,11 @@
 
     function tryFireMountedSpecialWeapons() {
       const specials = Game.player?.weapons?.[HP.SPECIAL] || [];
-      if (specials.length === 0) return false;
+      const builtins = Game.player?.weapons?.[HP.BUILTIN] || [];
+      if (specials.length === 0 && builtins.length === 0) return false;
 
       let fired = false;
-      const hasHexlance = specials.some(loadout => loadout?.weapon?.id === 'hexlance_siege');
+      const hasHexlance = builtins.some(loadout => loadout?.weapon?.id === 'hexlance_siege');
       if (hasHexlance && Superweapon.tryFireSuperweapon(ship)) fired = true;
 
       const target = (lockedTarget && !lockedTarget.dead) ? lockedTarget : null;
@@ -8266,19 +8298,17 @@
     function equipNpcWeapons(npc, faction) {
       if (!npc.editorHardpoints) return;
 
-      npc.weapons = { main: [], aux: [], missile: [], hangar: [], special: [] };
+      npc.weapons = { main: [], aux: [], missile: [], hangar: [], special: [], builtin: [] };
 
       // Definiujemy zestawy zgodnie z frakcją
       const loadout = faction === 'pirate' ? {
         main: 'armata_mk1',
         aux: 'ciws_mk1',
-        missile: 'missile_rack',
-        special: 'hexlance_siege'
+        missile: 'missile_rack'
       } : {
         main: 'railgun_mk2',
         aux: 'laser_pd_mk1',
-        missile: 'missile_rack',
-        special: 'hexlance_siege'
+        missile: 'missile_rack'
       };
 
       // Przypisz fizyczne bronie do pustych hardpointów
@@ -9136,6 +9166,7 @@
       [HP.AUX]: { title: 'Broń dodatkowa', css: 'hp-aux' },
       [HP.HANGAR]: { title: 'Hangary', css: 'hp-hangar' },
       [HP.SPECIAL]: { title: 'Broń specjalna', css: 'hp-spec' },
+      [HP.BUILTIN]: { title: 'Built-In', css: 'hp-spec' },
     };
     let mechanicWeaponFilter = 'all';
     let mechanicHardpointFilter = 'all';
@@ -19429,7 +19460,6 @@
         if (hp.type === HP.MAIN) weaponId = 'railgun_mk2';
         else if (hp.type === HP.MISSILE) weaponId = 'missile_rack';
         else if (hp.type === HP.AUX) weaponId = 'ciws_mk1';
-        else if (hp.type === HP.SPECIAL) weaponId = 'hexlance_siege';
         if (weaponId && WEAPONS[weaponId]) {
           hp.mount = weaponId;
           const weapon = WEAPONS[weaponId];
