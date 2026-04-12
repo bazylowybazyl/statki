@@ -3731,6 +3731,7 @@
       AUX: 'aux',
       HANGAR: 'hangar',
       SPECIAL: 'special',
+      SPECIAL_MISSILE: 'special_missile',
       BUILTIN: 'builtin'
     };
     window.HP = HP;
@@ -4252,6 +4253,7 @@
       'special_plasma_gatling',
       'special_valkyrie_railgun',
       'special_yamato_cannon',
+      'supernova_missile',
       'hexlance_siege',
       'siege_torpedo',
       'siege_torpedo_mk2',
@@ -5228,8 +5230,20 @@
       return { weapon: fallbackWeapon, charge: fallbackWeapon ? 1 : 0 };
     }
 
+    const _combinedSpecialLoadouts = [];
+    function getCombinedSpecialLoadouts(shipRef = Game.player) {
+      const standard = shipRef?.weapons?.[HP.SPECIAL] || [];
+      const specialMissiles = shipRef?.weapons?.[HP.SPECIAL_MISSILE] || [];
+      if (!standard.length) return specialMissiles;
+      if (!specialMissiles.length) return standard;
+      _combinedSpecialLoadouts.length = 0;
+      for (let i = 0; i < standard.length; i++) _combinedSpecialLoadouts.push(standard[i]);
+      for (let i = 0; i < specialMissiles.length; i++) _combinedSpecialLoadouts.push(specialMissiles[i]);
+      return _combinedSpecialLoadouts;
+    }
+
     function getSpecialWeaponHudState() {
-      const entries = Game.player?.weapons?.[HP.SPECIAL] || [];
+      const entries = getCombinedSpecialLoadouts(Game.player);
       let weapon = null;
       let bestCdLeft = Infinity;
       let bestCdMax = 0;
@@ -8251,7 +8265,7 @@
     };
 
     function updateSpecialWeaponCooldowns(dt) {
-      const specials = Game.player?.weapons?.[HP.SPECIAL] || [];
+      const specials = getCombinedSpecialLoadouts(Game.player);
       for (let i = 0; i < specials.length; i++) {
         const hp = specials[i]?.hp;
         if (!hp) continue;
@@ -8262,7 +8276,7 @@
     }
 
     function tryFireMountedSpecialWeapons() {
-      const specials = Game.player?.weapons?.[HP.SPECIAL] || [];
+      const specials = getCombinedSpecialLoadouts(Game.player);
       if (specials.length === 0) return false;
 
       let fired = false;
@@ -8340,7 +8354,7 @@
     function equipNpcWeapons(npc, faction) {
       if (!npc.editorHardpoints) return;
 
-      npc.weapons = { main: [], aux: [], missile: [], hangar: [], special: [], builtin: [] };
+      npc.weapons = { main: [], aux: [], missile: [], hangar: [], special: [], special_missile: [], builtin: [] };
 
       // Definiujemy zestawy zgodnie z frakcją
       const loadout = faction === 'pirate' ? {
@@ -9208,6 +9222,7 @@
       [HP.AUX]: { title: 'Broń dodatkowa', css: 'hp-aux' },
       [HP.HANGAR]: { title: 'Hangary', css: 'hp-hangar' },
       [HP.SPECIAL]: { title: 'Broń specjalna', css: 'hp-spec' },
+      [HP.SPECIAL_MISSILE]: { title: 'Rakieta specjalna', css: 'hp-spec' },
       [HP.BUILTIN]: { title: 'Built-In', css: 'hp-spec' },
     };
     let mechanicWeaponFilter = 'all';
@@ -17797,7 +17812,7 @@
           _pushWeaponStatus(statusRows, 'MAIN', aimDist <= mainRange, mainReady);
         }
 
-        const specialEntries = shipRef.weapons?.[HP.SPECIAL] || [];
+        const specialEntries = getCombinedSpecialLoadouts(shipRef);
         if (specialEntries.length) {
           let specialRange = 0;
           let specialReady = false;

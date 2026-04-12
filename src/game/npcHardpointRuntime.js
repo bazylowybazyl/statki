@@ -4,6 +4,7 @@ const DEFAULT_HP = Object.freeze({
   AUX: 'aux',
   HANGAR: 'hangar',
   SPECIAL: 'special',
+  SPECIAL_MISSILE: 'special_missile',
   BUILTIN: 'builtin'
 });
 
@@ -13,6 +14,7 @@ const DEFAULT_COLORS = Object.freeze({
   aux: '#f8bd53',
   hangar: '#be7fff',
   special: '#ff6a6a',
+  special_missile: '#ff7ae6',
   builtin: '#7ee7ff'
 });
 
@@ -23,6 +25,7 @@ function normalizeHpEnum(hardpointEnum) {
     AUX: hardpointEnum?.AUX || DEFAULT_HP.AUX,
     HANGAR: hardpointEnum?.HANGAR || DEFAULT_HP.HANGAR,
     SPECIAL: hardpointEnum?.SPECIAL || DEFAULT_HP.SPECIAL,
+    SPECIAL_MISSILE: hardpointEnum?.SPECIAL_MISSILE || DEFAULT_HP.SPECIAL_MISSILE,
     BUILTIN: hardpointEnum?.BUILTIN || DEFAULT_HP.BUILTIN
   };
 }
@@ -233,13 +236,14 @@ export function createNpcHardpointRuntime({
   pollInterval = 0.35
 } = {}) {
   const HP = normalizeHpEnum(hardpointEnum);
-  const validTypes = [HP.MAIN, HP.MISSILE, HP.AUX, HP.HANGAR, HP.SPECIAL, HP.BUILTIN];
+  const validTypes = [HP.MAIN, HP.MISSILE, HP.AUX, HP.HANGAR, HP.SPECIAL, HP.SPECIAL_MISSILE, HP.BUILTIN];
   const colors = {
     [HP.MAIN]: DEFAULT_COLORS.main,
     [HP.MISSILE]: DEFAULT_COLORS.missile,
     [HP.AUX]: DEFAULT_COLORS.aux,
     [HP.HANGAR]: DEFAULT_COLORS.hangar,
     [HP.SPECIAL]: DEFAULT_COLORS.special,
+    [HP.SPECIAL_MISSILE]: DEFAULT_COLORS.special_missile,
     [HP.BUILTIN]: DEFAULT_COLORS.builtin
   };
 

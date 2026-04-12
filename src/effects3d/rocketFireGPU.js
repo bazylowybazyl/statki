@@ -4,11 +4,15 @@
  * Coordinate system: Y-up (overlay convention).
  *
  * Particle types:
- *   0 = main fire (exhaust flame)
- *   2 = RCS thruster (blue)
- *   3 = explosion core
- *   4 = sparks / shrapnel
- *   5 = shockwave ring (flat in XZ)
+ *   0  = main fire (exhaust flame)
+ *   2  = RCS thruster (blue)
+ *   3  = explosion core
+ *   4  = sparks / shrapnel
+ *   5  = shockwave ring (flat in XZ)
+ *   10 = supernova exhaust
+ *   13 = supernova explosion core
+ *   14 = supernova sparks
+ *   15 = supernova shockwave ring
  */
 import * as THREE from "three";
 
@@ -110,10 +114,12 @@ export class RocketFireGPU {
 
                 void main() {
                     vUv   = uv;
-                    vType = aData.w;
                     float startTime = aData.x;
                     float maxLife   = aData.y;
                     float type      = aData.w;
+                    bool  isNova    = type >= 9.5;
+                    float mode      = isNova ? (type - 10.0) : type;
+                    vType = mode;
                     float age       = uTime - startTime;
 
                     if (age < 0.0 || age > maxLife) {
@@ -129,7 +135,7 @@ export class RocketFireGPU {
                     float stretchFactor = 1.0;
 
                     // ── FIRE (type 0) ──
-                    if (type < 0.5) {
+                    if (mode < 0.5) {
                         float flameScale = max(0.05, aData.z);
                         float shape = 1.0 - pow(ageNorm, 2.5);
                         float mach  = 1.0 + sin(ageNorm * 30.0) * 0.3 * (1.0 - ageNorm);
@@ -140,57 +146,58 @@ export class RocketFireGPU {
                         pos.x += sin(age * 50.0 + aStartPos.y) * scatter;
                         pos.z += cos(age * 43.0 + aStartPos.x) * scatter;
 
-                        vec3 fireCore = vec3(1.0, 0.9, 0.6);
-                        vec3 fireEdge = vec3(1.0, 0.1, 0.0);
+                        vec3 fireCore = isNova ? vec3(1.0, 0.74, 0.96) : vec3(1.0, 0.9, 0.6);
+                        vec3 fireEdge = isNova ? vec3(0.82, 0.18, 1.0) : vec3(1.0, 0.1, 0.0);
                         vColor = mix(fireCore, fireEdge, pow(ageNorm, 0.8)) * u_hdrIntensity * u_overlayHdrComp;
                         vAlpha = pow(ratio, 1.5) * u_fireAlpha * u_overlayAlphaComp;
                         stretchFactor = 1.0 + (length(aStartVel) / max(u_worldScale, 0.001)) * 0.0003 * u_stretchMult * shape;
                     }
                     // ── RCS (type 2) ──
-                    else if (type < 2.5) {
+                    else if (mode < 2.5) {
                         currentSize += age * 600.0 * u_worldScale;
                         vColor = vec3(0.2, 0.5, 1.0) * u_hdrIntensity * u_overlayHdrComp;
                         vAlpha = ratio * 0.4 * u_overlayAlphaComp;
                         stretchFactor = 1.0 + (length(aStartVel) / max(u_worldScale, 0.001)) * 0.0003 * u_stretchMult;
                     }
                     // ── EXPLOSION CORE (type 3) ──
-                    else if (type < 3.5) {
+                    else if (mode < 3.5) {
                         float explosionAge = ageNorm;
                         float flash = 1.0 - pow(explosionAge, 0.5);
                         currentSize += age * 4000.0 * u_explosionSize;
 
-                        vec3 expCore = vec3(1.0, 1.0, 0.8);
-                        vec3 expMid  = vec3(1.0, 0.5, 0.0);
-                        vec3 expEdge = vec3(0.8, 0.1, 0.0);
+                        vec3 expCore = isNova ? vec3(1.0, 0.95, 1.0) : vec3(1.0, 1.0, 0.8);
+                        vec3 expMid  = isNova ? vec3(1.0, 0.35, 0.92) : vec3(1.0, 0.5, 0.0);
+                        vec3 expEdge = isNova ? vec3(0.22, 0.95, 1.0) : vec3(0.8, 0.1, 0.0);
 
                         if (explosionAge < 0.3) {
                             vColor = mix(expCore, expMid, explosionAge / 0.3);
                         } else {
                             vColor = mix(expMid, expEdge, (explosionAge - 0.3) / 0.7);
                         }
-                        vColor *= u_hdrIntensity * 3.0 * flash * u_overlayHdrComp;
-                        vAlpha  = ratio * ratio * u_overlayAlphaComp;
+                        vColor *= u_hdrIntensity * (isNova ? 4.4 : 3.0) * flash * u_overlayHdrComp;
+                        vAlpha  = ratio * ratio * (isNova ? 1.08 : 1.0) * u_overlayAlphaComp;
                         stretchFactor = 1.0;
                     }
                     // ── SPARKS (type 4) ──
-                    else if (type < 4.5) {
+                    else if (mode < 4.5) {
                         currentSize = u_startSize * 0.8 * (1.0 - ageNorm);
-                        vColor = vec3(1.0, 0.9, 0.7) * u_hdrIntensity * 4.0 * u_overlayHdrComp;
+                        vColor = (isNova ? vec3(1.0, 0.78, 0.98) : vec3(1.0, 0.9, 0.7)) * u_hdrIntensity * 4.0 * u_overlayHdrComp;
                         vAlpha = ratio * u_overlayAlphaComp;
                         stretchFactor = 1.0 + (length(aStartVel) / max(u_worldScale, 0.001)) * 0.002 * u_stretchMult;
                     }
                     // ── SHOCKWAVE (type 5) ──
                     else {
                         float waveAge = pow(ageNorm, 0.4);
-                        currentSize = u_startSize * 80.0 * u_explosionSize * (0.05 + waveAge * 2.5);
-                        vColor = vec3(1.0, 0.9, 0.8) * u_hdrIntensity * 2.0 * u_overlayHdrComp;
-                        vAlpha = pow(1.0 - ageNorm, 2.0) * 0.6 * u_overlayAlphaComp;
+                        float waveScale = max(0.05, aData.z);
+                        currentSize = waveScale * u_startSize * 80.0 * u_explosionSize * (0.05 + waveAge * 2.5);
+                        vColor = (isNova ? vec3(0.56, 0.95, 1.0) : vec3(1.0, 0.9, 0.8)) * u_hdrIntensity * (isNova ? 2.8 : 2.0) * u_overlayHdrComp;
+                        vAlpha = pow(1.0 - ageNorm, 2.0) * (isNova ? 0.72 : 0.6) * u_overlayAlphaComp;
                         stretchFactor = 1.0;
                     }
 
                     vec4 mvPosition;
 
-                    if (type > 4.5) {
+                    if (mode > 4.5) {
                         // SHOCKWAVE — flat in XZ plane (Y-up world)
                         vec3 flatPos = pos;
                         flatPos.x += position.x * currentSize;
