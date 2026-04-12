@@ -239,13 +239,16 @@ const StarSystem = {
 };
 
 const textureLoader = new THREE.TextureLoader();
+const _planetCullCenter = new THREE.Vector3();
+const _planetCullEdgeX = new THREE.Vector3();
+const _planetCullEdgeY = new THREE.Vector3();
 function loadTex(path) { const tex = textureLoader.load(path); if (Core3D.renderer) tex.anisotropy = Core3D.renderer.capabilities.getMaxAnisotropy(); return tex; }
 
 class DirectPlanet {
     constructor(data) {
         this.data = data; this.name = (data?.name || data?.id || 'earth').toLowerCase();
         this.mesh = null; this.clouds = null; this.cloudUniforms = null; this.atmosphere = null; this.saturnRing = null;
-        this.group = new THREE.Group(); this.group.position.z = -50000; this.basePlanetBloom = 0.0;
+        this.group = new THREE.Group(); this.group.position.z = -50000; this.basePlanetBloom = 0.0; this.visibleRadiusMul = 1.0;
         this.uniforms = {
             uPlanetBloom: { value: 0.0 }, dayTexture: { value: null }, nightTexture: { value: null }, specularTexture: { value: null },
             normalTexture: { value: null }, sunPosition: { value: new THREE.Vector3(0, 0, -50000) }, hasNightTexture: { value: 0.0 },
@@ -346,6 +349,7 @@ class DirectPlanet {
         atmSize *= HALO_DEFAULTS.sizeMul; atmCoef = atmCoef * HALO_DEFAULTS.coefMul + HALO_DEFAULTS.coefAdd; atmPower = atmPower * HALO_DEFAULTS.powerMul + HALO_DEFAULTS.powerAdd;
         const atmMat = new THREE.ShaderMaterial({ vertexShader: ATMOSPHERE_VERTEX, fragmentShader: ATMOSPHERE_FRAGMENT, uniforms: { coef: { value: atmCoef }, power: { value: atmPower }, glowColor: { value: atmColor }, sunsetTint: { value: sunsetTint }, uSunIntensity: { value: 1.1 * HALO_DEFAULTS.sunMul }, sunPosition: { value: new THREE.Vector3(0, 0, -50000) } }, transparent: true, side: THREE.BackSide, depthWrite: false, blending: THREE.AdditiveBlending });
         this.atmosphere = new THREE.Mesh(new THREE.SphereGeometry(atmSize, 64, 64), atmMat); this.group.add(this.atmosphere);
+        this.visibleRadiusMul = Math.max(1.0, atmSize, name === 'saturn' ? SATURN_VISUAL_RING.outerRadius : 1.0);
 
         Core3D.scene.add(this.group); enablePlanetLayer(this.group); enablePlanetHaloLayer(this.atmosphere); enablePlanetOcclusion(this.mesh);
         if (name === 'earth') window.EARTH = this;
@@ -356,13 +360,33 @@ class DirectPlanet {
         // Off-screen skip: if planet center is far outside camera viewport,
         // hide the entire group and skip uniform/position/rotation updates.
         // Saves dozens of draw calls + uniform uploads × ~8 planets × every frame.
-        const camZoom = cam.zoom || 1;
-        const planetRadius = (this.data.r || 100) * PLANET_SIZE_MULTIPLIER;
-        const halfVpX = (window.innerWidth || 1920) * 0.5 / camZoom + planetRadius * 1.5;
-        const halfVpY = (window.innerHeight || 1080) * 0.5 / camZoom + planetRadius * 1.5;
-        const dx = this.data.x - (cam.x || 0);
-        const dy = this.data.y - (cam.y || 0);
-        const offScreen = Math.abs(dx) > halfVpX || Math.abs(dy) > halfVpY;
+        this.group.position.set(this.data.x, -this.data.y, -50000);
+        const scale = (this.data.r || 100) * PLANET_SIZE_MULTIPLIER;
+        this.group.scale.set(scale, scale, scale);
+        let offScreen = false;
+        const perspCam = Core3D.cameraPersp;
+        if (perspCam) {
+            const worldCullRadius = scale * Math.max(1.0, this.visibleRadiusMul || 1.0);
+            _planetCullCenter.set(this.group.position.x, this.group.position.y, this.group.position.z).project(perspCam);
+            _planetCullEdgeX.set(this.group.position.x + worldCullRadius, this.group.position.y, this.group.position.z).project(perspCam);
+            _planetCullEdgeY.set(this.group.position.x, this.group.position.y + worldCullRadius, this.group.position.z).project(perspCam);
+            const ndcRadiusX = Math.max(0.001, Math.abs(_planetCullEdgeX.x - _planetCullCenter.x));
+            const ndcRadiusY = Math.max(0.001, Math.abs(_planetCullEdgeY.y - _planetCullCenter.y));
+            const ndcPad = 0.04;
+            offScreen =
+                _planetCullCenter.x < (-1 - ndcRadiusX - ndcPad) ||
+                _planetCullCenter.x > (1 + ndcRadiusX + ndcPad) ||
+                _planetCullCenter.y < (-1 - ndcRadiusY - ndcPad) ||
+                _planetCullCenter.y > (1 + ndcRadiusY + ndcPad);
+        } else {
+            const camZoom = cam.zoom || 1;
+            const planetRadius = scale * Math.max(1.0, this.visibleRadiusMul || 1.0);
+            const halfVpX = (window.innerWidth || 1920) * 0.5 / camZoom + planetRadius;
+            const halfVpY = (window.innerHeight || 1080) * 0.5 / camZoom + planetRadius;
+            const dx = this.data.x - (cam.x || 0);
+            const dy = this.data.y - (cam.y || 0);
+            offScreen = Math.abs(dx) > halfVpX || Math.abs(dy) > halfVpY;
+        }
         if (offScreen) {
             if (this.group.visible) this.group.visible = false;
             return;
@@ -370,9 +394,6 @@ class DirectPlanet {
         if (!this.group.visible) this.group.visible = true;
 
         this.uniforms.uPlanetBloom.value = this.basePlanetBloom * ((window.DevVFX && window.DevVFX.planetBloomMultiplier !== undefined) ? window.DevVFX.planetBloomMultiplier : 1.0);
-        this.group.position.set(this.data.x, -this.data.y, -50000);
-        const scale = (this.data.r || 100) * PLANET_SIZE_MULTIPLIER;
-        this.group.scale.set(scale, scale, scale);
         if (window.SUN) {
             const sunZ = this.group.position.z;
             this.uniforms.sunPosition.value.set(window.SUN.x, -window.SUN.y, sunZ);
