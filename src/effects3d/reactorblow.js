@@ -339,105 +339,118 @@ class GPUParticleManager {
 }
 
 // ============================================================================
-// GŁÓWNA FABRYKA EKSPLOZJI REAKTORA
+// GŁÓWNA FABRYKA EKSPLOZJI REAKTORA (Z OPTYCZNĄ FALĄ UDERZENIOWĄ)
 // ============================================================================
 export function createReactorBlowFactory(scene) {
-    // 1. Inicjalizujemy globalne pule cząstek dla całej sceny (Tylko raz!)
-    // Zwiększone bufory dla swobodnej destrukcji floty
     const fireParticleSystem = new GPUInstancedParticleManager(scene, 100000, THREE.AdditiveBlending);
     const smokeParticleSystem = new GPUParticleManager(scene, 15000, THREE.NormalBlending);
 
-    // 2. Zwracamy funkcję spawn
     return function spawn({ x = 0, y = 0, size = 100, profile = "capital" } = {}) {
-        // Kontener zastępczy do wpięcia w Twoją logikę (jeśli system tego oczekuje)
         const group = new THREE.Group();
         group.position.set(x, 0, y);
         scene.add(group);
 
-        // Skalowanie wielkości na bazie wejściowego "size"
-        let eSize = (size / 100) * 3.5;
-        if (profile === "fighter") eSize *= 0.3; // Myśliwce mają znacznie mniejszy wybuch
+        const isFighter = profile === "fighter";
 
-        // Światło środowiskowe dla game feel (Oświetla błękitem sąsiednie statki)
-        const light = new THREE.PointLight(0x00ffff, 0, size * 15);
+        const lightDist = isFighter ? size * 4 : size * 20;
+        const light = new THREE.PointLight(0x00ffff, 0, lightDist);
         light.position.set(x, size * 0.5, y);
         scene.add(light);
 
-        let time = 0;
+        // Czasy 1:1 z plikiem HTML dla capitali
+        const CHARGE_TIME = isFighter ? 0.05 : 0.8;
+        const EXPLOSION_DURATION = isFighter ? 0.2 : 3.0; 
+
+        const expX = x;
+        const expY = 5;
+        const expZ = y; // W przestrzeni 3D gry Y to Z
+
+        const initTime = performance.now() / 1000;
         let phase = 'CHARGE';
         let disposed = false;
 
-        const CHARGE_TIME = 0.8;
-        const EXPLOSION_DURATION = 3.0; 
+        // Faza ładowania
+        const chargeSize = isFighter ? size * 1.5 : size * 3.5;
+        fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, chargeSize, CHARGE_TIME + 0.1, 5, initTime);
 
-        // Pozycja w 3D (Twoje 'y' z wejścia to z w Three.js)
-        const expX = x;
-        const expY = 5; // Minimalnie nad ziemią
-        const expZ = y;
-
-        // Odpalamy startowy efekt: CHARGE (Narastający rdzeń plazmy)
-        const initTime = performance.now() / 1000;
-        fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, 18000 * eSize, CHARGE_TIME + 0.1, 5, initTime);
-
-        // Zwracamy obiekt zgodny z Twoim interfejsem
         function update(dt) {
             if (disposed) return;
-            time += dt;
 
-            // Aktualizacja zegara w shaderach
             const gt = performance.now() / 1000;
+            const time = gt - initTime; 
+
             fireParticleSystem.material.uniforms.uTime.value = gt;
             smokeParticleSystem.material.uniforms.uTime.value = gt;
 
-            // Obsługa oświetlenia
             if (phase === 'CHARGE') {
-                light.intensity = (time / CHARGE_TIME) * 4.0;
+                light.intensity = (time / CHARGE_TIME) * (isFighter ? 1.0 : 4.0);
             } else {
                 const expTime = time - CHARGE_TIME;
-                light.intensity = Math.max(0, 15.0 * (1.0 - expTime / 1.5));
-            }
+                const dropOff = isFighter ? 0.15 : 1.5;
+                light.intensity = Math.max(0, (isFighter ? 2.0 : 15.0) * (1.0 - expTime / dropOff));
 
-            // FAZA DETONACJI
-            if (phase === 'CHARGE' && time >= CHARGE_TIME) {
-                phase = 'EXPLODE';
+                // --- OPTYCZNA FALA UDERZENIOWA (Załamanie światła przez Core3D) ---
+                if (!isFighter && expTime < 2.0 && typeof window !== 'undefined' && window.Core3D) {
+                    // Resetujemy bufor fal uderzeniowych co klatkę (zabezpieczenie)
+                    if (window.Core3D._lastHeatHazeFrame !== gt) {
+                        window.Core3D._lastHeatHazeFrame = gt;
+                        if (window.Core3D.beginHeatHazeFrame) window.Core3D.beginHeatHazeFrame();
+                    }
 
-                // 1. ANAMORPHIC FLASH (Oślepiający błysk poziomy)
-                fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, 60000 * eSize, 1.2, 5, gt);
+                    // Promień rośnie wraz z upływem czasu
+                    const currentRadius = size * 2 + (expTime * size * 25);
+                    // Siła załamania płynnie zanika
+                    const distortionStrength = Math.max(0, 1.0 - (expTime / 2.0)) * 6.0;
 
-                // 2. FRACTAL ENERGY RING (Pierścień uderzeniowy reaktora - Cyan)
-                fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, 85000 * eSize, 1.5, 6, gt);
-
-                // 3. DARK OUTER SHOCKWAVE (Mroczna fala tnąca na płaszczyźnie)
-                smokeParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, 95000 * eSize, 1.6, 1, gt);
-
-                // 4. SPIKES (Gigantyczne, uciekające płasko promienie plazmy)
-                const spikeCount = profile === "fighter" ? 15 : 60;
-                for (let i = 0; i < spikeCount; i++) {
-                    const speed = (60000 + Math.random() * 60000) * eSize;
-                    const angle = Math.random() * Math.PI * 2;
-                    // Kolce rozchodzą się głównie płasko na XZ
-                    const vx = Math.cos(angle) * speed;
-                    const vy = (Math.random() - 0.5) * speed * 0.15; // Lekki rozrzut pionowy
-                    const vz = Math.sin(angle) * speed;
-
-                    fireParticleSystem.spawn(expX, expY, expZ, 
-                        vx, vy, vz, 
-                        (200 + Math.random() * 200) * eSize, // Bardzo grube
-                        0.3 + Math.random() * 0.2, // Krótki błysk
-                        4, gt);
+                    // Pchamy fale do głównego potoku post-processingu gry
+                    window.Core3D.pushHeatHazeWorld(expX, expZ, -4, currentRadius, distortionStrength);
                 }
             }
 
-            // FAZA ISKIER (Minimalne opóźnienie po wybuchu by światło lekko zgasło)
-            if (phase === 'EXPLODE' && time >= CHARGE_TIME + 0.1) {
+            if (phase === 'CHARGE' && time >= CHARGE_TIME) {
+                phase = 'EXPLODE';
+
+                if (!isFighter) {
+                    // WYBUCH CAPITALA (Proporcje i ilości z pliku HTML)
+                    
+                    // 1. Anamorphic Flash (Błysk)
+                    fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, size * 12, 1.2, 5, gt);
+
+                    // 2. Fractal Energy Ring (Pierścień)
+                    fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, size * 17, 1.5, 6, gt);
+
+                    // 3. Dark Outer Shockwave (Mroczna fala dymu)
+                    smokeParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, size * 19, 1.6, 1, gt);
+
+                    // 4. Spikes (Dokładnie 60 potężnych kolców jak w HTML)
+                    for (let i = 0; i < 60; i++) {
+                        const speed = size * (12 + Math.random() * 12);
+                        const angle = Math.random() * Math.PI * 2;
+                        const vx = Math.cos(angle) * speed;
+                        const vy = (Math.random() - 0.5) * speed * 0.15;
+                        const vz = Math.sin(angle) * speed;
+
+                        fireParticleSystem.spawn(expX, expY, expZ, 
+                            vx, vy, vz, 
+                            size * (0.4 + Math.random() * 0.4), // Grubości
+                            0.3 + Math.random() * 0.2, // Krótki czas
+                            4, gt);
+                    }
+                } else {
+                    fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, size * 4, 0.15, 5, gt);
+                }
+            }
+
+            // Opóźnienie wybuchu iskier jak w HTML
+            const sparkDelay = isFighter ? 0.02 : 0.1;
+            if (phase === 'EXPLODE' && time >= CHARGE_TIME + sparkDelay) {
                 phase = 'SPARKS';
 
-                // 5. REACTOR SPARKS (Pełny, sferyczny rozrzut tysięcy drobin plazmy)
-                const sparkCount = profile === "fighter" ? 600 : 4000;
+                // Dokładnie 4000 iskier jak w Twoim pliku HTML!
+                const sparkCount = isFighter ? 20 : 4000;
                 for (let i = 0; i < sparkCount; i++) {
-                    const speed = (20000 + Math.random() * 50000) * eSize;
+                    const speed = size * (isFighter ? (2 + Math.random() * 4) : (4 + Math.random() * 10));
                     
-                    // Rozkład w pełni sferyczny (3D kula pyłu)
                     const angle = Math.random() * Math.PI * 2;
                     const phi = Math.acos(2 * Math.random() - 1);
                     
@@ -447,13 +460,12 @@ export function createReactorBlowFactory(scene) {
 
                     fireParticleSystem.spawn(expX, expY, expZ,
                         vx, vy, vz,
-                        (30 + Math.random() * 50) * eSize, 
-                        1.5 + Math.random() * 2.5, 
+                        size * (isFighter ? 0.08 : (0.06 + Math.random() * 0.1)), 
+                        isFighter ? (0.1 + Math.random() * 0.1) : (1.5 + Math.random() * 2.5), 
                         4, gt); 
                 }
             }
 
-            // ZAKOŃCZENIE CYKLU ŻYCIA
             if (time > CHARGE_TIME + EXPLOSION_DURATION) {
                 dispose();
             }
@@ -462,15 +474,11 @@ export function createReactorBlowFactory(scene) {
         function dispose() {
             if (disposed) return;
             disposed = true;
-            
             if (group.parent) group.parent.remove(group);
             if (light.parent) light.parent.remove(light);
-            
-            // W instancjonowanym poolu NIE robimy .dispose() na geometriach ani materiałach, 
-            // ponieważ bufor używa ich ciągle do kolejnych wybuchów! 
-            // Usuwamy tylko obiekty pomocnicze (Light, Group).
         }
 
-        return { group, update, dispose };
+        // DODANO: important: true
+        return { group, update, dispose, important: true };
     };
 }

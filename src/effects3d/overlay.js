@@ -4,7 +4,6 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 
-// Shader naprawiający alfę, ale z podbiciem intensywności ("punch")
 const RestoreAlphaShader = {
   uniforms: {
     'tDiffuse': { value: null }
@@ -21,14 +20,8 @@ const RestoreAlphaShader = {
     varying vec2 vUv;
     void main() {
       vec4 tex = texture2D( tDiffuse, vUv );
-      
-      // Obliczamy jasność piksela
       float brightness = max(tex.r, max(tex.g, tex.b));
-      
-      // FIX: Podbijamy alfę (mnożnik 1.5), żeby słabsze poświaty (glow) 
-      // nie były zbyt przezroczyste i nie znikały na tle gry.
       float alpha = min(1.0, brightness * 1.5);
-      
       gl_FragColor = vec4( tex.rgb, alpha );
     }
   `
@@ -45,9 +38,7 @@ export function initOverlay({
   updateSparkSystem = true,
   baseRenderScale = 0.8
 } = {}) {
-  if (!host) {
-    throw new Error("initOverlay: host element is required");
-  }
+  if (!host) throw new Error("initOverlay: host element is required");
 
   const useComposer = !!(useBloom || useAlphaPass);
 
@@ -69,7 +60,6 @@ export function initOverlay({
     return cfg;
   }
 
-  // 1. Renderer
   const renderer = new THREE.WebGLRenderer({
     antialias: false,
     alpha: true, 
@@ -83,8 +73,6 @@ export function initOverlay({
   renderer.setSize(host.clientWidth, host.clientHeight, false);
   renderer.setClearColor(0x000000, 0);
   
-  // Overlay uzywa CSS mix-blend-mode: screen — nie stosujemy tonemappingu
-  // (kompresowałby jasnosc efektow addytywnych). Kolory w linear space.
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
   renderer.toneMapping = THREE.NoToneMapping;
 
@@ -95,10 +83,6 @@ export function initOverlay({
   dom.style.inset = "0";
   dom.style.zIndex = String(zIndex);
   dom.style.background = "transparent";
-  
-  // --- KLUCZOWA ZMIANA WIZUALNA ---
-  // Tryb mieszania 'screen' sprawia, że overlay zachowuje się jak światło.
-  // Czarne tło staje się niewidoczne, a kolory dodają się do tła gry.
   dom.style.mixBlendMode = mode === "raw" ? "normal" : "screen";
 
   host.appendChild(dom);
@@ -131,7 +115,6 @@ export function initOverlay({
     );
 
     composer = new EffectComposer(renderer, renderTarget);
-
     const renderPass = new RenderPass(scene, camera);
     renderPass.clearColor = new THREE.Color(0, 0, 0);
     renderPass.clearAlpha = 0;
@@ -171,13 +154,7 @@ export function initOverlay({
     updateSkip: 1,
     skippedFrames: 0
   };
-  const perf = {
-    frameSkip: 1,
-    skipCursor: 0,
-    updateSkip: 1,
-    updateCursor: 0,
-    accumDt: 0
-  };
+  const perf = { frameSkip: 1, skipCursor: 0, updateSkip: 1, updateCursor: 0, accumDt: 0 };
   let lastSizeW = host.clientWidth;
   let lastSizeH = host.clientHeight;
 
@@ -214,10 +191,7 @@ export function initOverlay({
     if (lastSizeW !== w || lastSizeH !== h) {
       renderer.setSize(w, h, false);
       if (composer) {
-        composer.setSize(
-          Math.max(1, Math.floor(w * renderScale)),
-          Math.max(1, Math.floor(h * renderScale))
-        );
+        composer.setSize(Math.max(1, Math.floor(w * renderScale)), Math.max(1, Math.floor(h * renderScale)));
       }
       lastSizeW = w;
       lastSizeH = h;
@@ -226,13 +200,8 @@ export function initOverlay({
 
   function applyAdaptiveQuality() {
     if (!adaptiveQuality || !composer) {
-      perf.frameSkip = 1;
-      perf.updateSkip = 1;
-      stats.maxEffects = 96;
-      stats.renderScale = renderScale;
-      stats.bloomEnabled = !!bloomPass?.enabled;
-      stats.frameSkip = perf.frameSkip;
-      stats.updateSkip = perf.updateSkip;
+      perf.frameSkip = 1; perf.updateSkip = 1; stats.maxEffects = 96; stats.renderScale = renderScale;
+      stats.bloomEnabled = !!bloomPass?.enabled; stats.frameSkip = perf.frameSkip; stats.updateSkip = perf.updateSkip;
       return;
     }
     const active = effects.length;
@@ -241,85 +210,50 @@ export function initOverlay({
     const prevRenderMs = Number(stats.lastRenderMs) || 0;
     const pressure = Math.max(active / 70, prevRenderMs / 6.5);
 
-    let targetScale = 0.84;
-    let targetFrameSkip = 1;
-    let targetUpdateSkip = 1;
-    let targetBloom = true;
-    let targetMaxEffects = 96;
+    let targetScale = 0.84, targetFrameSkip = 1, targetUpdateSkip = 1, targetBloom = true, targetMaxEffects = 96;
 
-    if (pressure > 2.6) {
-      targetScale = 0.34;
-      targetFrameSkip = 4;
-      targetUpdateSkip = 4;
-      targetBloom = false;
-      targetMaxEffects = 40;
-    } else if (pressure > 1.9) {
-      targetScale = 0.42;
-      targetFrameSkip = 3;
-      targetUpdateSkip = 3;
-      targetBloom = false;
-      targetMaxEffects = 52;
-    } else if (pressure > 1.4) {
-      targetScale = 0.5;
-      targetFrameSkip = 2;
-      targetUpdateSkip = 2;
-      targetBloom = false;
-      targetMaxEffects = 62;
-    } else if (pressure > 1.0) {
-      targetScale = 0.58;
-      targetFrameSkip = 2;
-      targetUpdateSkip = 2;
-      targetBloom = false;
-      targetMaxEffects = 72;
-    } else if (pressure > 0.72) {
-      targetScale = 0.68;
-      targetFrameSkip = 2;
-      targetUpdateSkip = 1;
-      targetBloom = false;
-      targetMaxEffects = 82;
-    } else if (pressure > 0.45) {
-      targetScale = 0.76;
-      targetFrameSkip = 1;
-      targetUpdateSkip = 1;
-      targetBloom = true;
-      targetMaxEffects = 92;
-    }
+    if (pressure > 2.6) { targetScale = 0.34; targetFrameSkip = 4; targetUpdateSkip = 4; targetBloom = false; targetMaxEffects = 40; }
+    else if (pressure > 1.9) { targetScale = 0.42; targetFrameSkip = 3; targetUpdateSkip = 3; targetBloom = false; targetMaxEffects = 52; }
+    else if (pressure > 1.4) { targetScale = 0.5; targetFrameSkip = 2; targetUpdateSkip = 2; targetBloom = false; targetMaxEffects = 62; }
+    else if (pressure > 1.0) { targetScale = 0.58; targetFrameSkip = 2; targetUpdateSkip = 2; targetBloom = false; targetMaxEffects = 72; }
+    else if (pressure > 0.72) { targetScale = 0.68; targetFrameSkip = 2; targetUpdateSkip = 1; targetBloom = false; targetMaxEffects = 82; }
+    else if (pressure > 0.45) { targetScale = 0.76; targetFrameSkip = 1; targetUpdateSkip = 1; targetBloom = true; targetMaxEffects = 92; }
 
-    // Persistent systems like rockets / sparks should stay temporally stable.
-    // Frame skipping here causes visible blinking because they are not spawned
-    // through overlay.spawn(...), but live in the scene continuously.
-    if (persistentOnly) {
-      targetFrameSkip = 1;
-      targetUpdateSkip = 1;
-      targetScale = Math.max(targetScale, 0.76);
-    }
+    if (persistentOnly) { targetFrameSkip = 1; targetUpdateSkip = 1; targetScale = Math.max(targetScale, 0.76); }
 
     if (effects.length > targetMaxEffects) {
       const overflow = effects.length - targetMaxEffects;
-      for (let i = 0; i < overflow; i++) {
-        const fx = effects.pop();
-        if (!fx) break;
+      let removedCount = 0;
+      
+      // 1. Zrzucamy najstarsze ZWYKŁE efekty (omijamy important: true)
+      for (let i = 0; i < effects.length && removedCount < overflow; i++) {
+        if (!effects[i].important) {
+          const fx = effects.splice(i, 1)[0];
+          if (fx.group?.parent) fx.group.parent.remove(fx.group);
+          if (typeof fx.dispose === "function") fx.dispose();
+          removedCount++;
+          i--; // Cofamy wskaźnik, bo usunęliśmy element
+        }
+      }
+      
+      // 2. Fallback (bardzo rzadkie): usuwamy cokolwiek, jeśli wszystko to important
+      while (removedCount < overflow && effects.length > 0) {
+        const fx = effects.shift();
         if (fx.group?.parent) fx.group.parent.remove(fx.group);
         if (typeof fx.dispose === "function") fx.dispose();
+        removedCount++;
       }
       stats.droppedEffects += overflow;
     }
 
     if (Math.abs(targetScale - renderScale) > 0.01) {
       renderScale = targetScale;
-      composer.setSize(
-        Math.max(1, Math.floor(lastSizeW * renderScale)),
-        Math.max(1, Math.floor(lastSizeH * renderScale))
-      );
+      composer.setSize(Math.max(1, Math.floor(lastSizeW * renderScale)), Math.max(1, Math.floor(lastSizeH * renderScale)));
     }
-    perf.frameSkip = targetFrameSkip;
-    perf.updateSkip = targetUpdateSkip;
-    stats.maxEffects = targetMaxEffects;
+    perf.frameSkip = targetFrameSkip; perf.updateSkip = targetUpdateSkip; stats.maxEffects = targetMaxEffects;
     if (bloomPass && bloomPass.enabled !== targetBloom) bloomPass.enabled = targetBloom;
-    stats.renderScale = renderScale;
-    stats.bloomEnabled = !!bloomPass?.enabled;
-    stats.frameSkip = perf.frameSkip;
-    stats.updateSkip = perf.updateSkip;
+    stats.renderScale = renderScale; stats.bloomEnabled = !!bloomPass?.enabled;
+    stats.frameSkip = perf.frameSkip; stats.updateSkip = perf.updateSkip;
   }
 
   function tick(dt) {
@@ -327,7 +261,6 @@ export function initOverlay({
     applyAdaptiveQuality();
     if (useBloom) applyOverlayBloomConfig();
 
-    // GPU spark system — always update time, even when effects are skipped
     if (updateSparkSystem && typeof window !== 'undefined' && window.SparkSystem3D?.isInitialized) {
       window.SparkSystem3D.update(dt);
     }
@@ -338,56 +271,57 @@ export function initOverlay({
       perf.accumDt += dt;
       perf.updateCursor = (perf.updateCursor + 1) % perf.updateSkip;
       updateNow = perf.updateCursor === 0;
-      if (updateNow) {
-        stepDt = perf.accumDt;
-        perf.accumDt = 0;
-      }
+      if (updateNow) { stepDt = perf.accumDt; perf.accumDt = 0; }
     }
 
     if (updateNow) {
       for (let i = effects.length - 1; i >= 0; i--) {
         const fx = effects[i];
-        if (fx.update) {
-          fx.update(stepDt);
-        }
-        if (!fx.group || !fx.group.parent) {
-          effects.splice(i, 1);
-        }
+        if (fx.update) fx.update(stepDt);
+        if (!fx.group || !fx.group.parent) effects.splice(i, 1);
       }
     }
 
-    // Czyścimy renderer do zera przed rysowaniem composera
     stats.activeEffects = effects.length;
     const hasPersistentSceneContent = scene.children.length > 0;
     if (effects.length === 0 && !hasPersistentSceneContent) {
       renderer.clear();
-      stats.lastRenderMs = 0;
-      perf.accumDt = 0;
+      stats.lastRenderMs = 0; perf.accumDt = 0;
       return;
     }
     perf.skipCursor = (perf.skipCursor + 1) % perf.frameSkip;
-    if (perf.skipCursor !== 0) {
-      stats.skippedFrames += 1;
-      return;
-    }
+    if (perf.skipCursor !== 0) { stats.skippedFrames += 1; return; }
 
     renderer.clear();
     const t0 = (typeof performance !== "undefined") ? performance.now() : 0;
-    if (composer) {
-      composer.render();
-    } else {
-      renderer.render(scene, camera);
-    }
+    if (composer) composer.render(); else renderer.render(scene, camera);
     stats.lastRenderMs = (t0 > 0) ? (performance.now() - t0) : 0;
   }
 
   function spawn(effect) {
     if (!effect) return;
+    
+    // Jeśli brak miejsca w kolejce - inteligentne wyrzucanie starych, nieważnych cząstek
     if (effects.length >= stats.maxEffects) {
+      let removed = false;
+      for (let i = 0; i < effects.length; i++) {
+        if (!effects[i].important) {
+          const oldFx = effects.splice(i, 1)[0];
+          if (oldFx.group?.parent) oldFx.group.parent.remove(oldFx.group);
+          if (typeof oldFx.dispose === "function") oldFx.dispose();
+          removed = true;
+          break;
+        }
+      }
+      // Ostateczność
+      if (!removed) {
+        const oldFx = effects.shift();
+        if (oldFx && oldFx.group?.parent) oldFx.group.parent.remove(oldFx.group);
+        if (oldFx && typeof oldFx.dispose === "function") oldFx.dispose();
+      }
       stats.droppedEffects += 1;
-      if (typeof effect.dispose === "function") effect.dispose();
-      return;
     }
+    
     if (effect.group) {
         scene.add(effect.group);
         effects.push(effect);
@@ -395,26 +329,18 @@ export function initOverlay({
     }
   }
 
-  function resize() {
-    syncCamera();
-  }
+  function resize() { syncCamera(); }
 
   function dispose() {
     effects.length = 0;
-    if (dom.parentElement === host) {
-      host.removeChild(dom);
-    }
+    if (dom.parentElement === host) host.removeChild(dom);
     if (composer) composer.dispose();
     renderer.dispose();
     if (renderTarget) renderTarget.dispose();
   }
 
-  function getStats() {
-    return { ...stats };
-  }
-
   return {
-    scene, camera, renderer, composer, tick, spawn, resize, dispose, getStats,
+    scene, camera, renderer, composer, tick, spawn, resize, dispose, getStats: () => ({ ...stats }),
     getBloomConfig: () => ({ ...getOverlayBloomConfig() }),
     setBloomConfig: (next = {}) => {
       const devVfx = (window.DevVFX = window.DevVFX || {});

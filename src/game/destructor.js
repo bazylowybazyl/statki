@@ -7,13 +7,13 @@ import { DestructorGpuSoftBody } from './destructorGpuSoftBody.js';
 import { getEntityShieldBlockingProgress } from '../../shieldSystem.js';
 
 export const DESTRUCTOR_CONFIG = {
-  gridDivisions: 8, //
+  gridDivisions: 9, //
   shardMass: 10.0, //
   visualRotationOffset: 0, //
   shardHP: 80, //
   armorThreshold: 0.8, //
   inflictedDamageMult: 1.0, //
-  maxDeform: 46.0,            // Max deformacja (px)
+  maxDeform: 100.0,            // Max deformacja (px)
   tearThreshold: 34.0, //
   yieldPoint: 22.0, //
   deformMul: 0.45, //
