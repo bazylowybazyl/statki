@@ -222,8 +222,8 @@
   <!-- --- HUD TOP CONTAINER --- -->
   <div id="hud-top-container">
     <div class="hud-dock" id="hud-top-dock">
-      <div class="location-display">
-        <span class="loc-label">CURRENT SECTOR</span>
+      <div class="location-display is-hidden" id="location-display">
+        <span class="loc-label" id="loc-label">CURRENT SECTOR</span>
         <span class="loc-name" id="loc-text">INTERPLANETARY SPACE</span>
       </div>
       <div class="hud-drawer" id="top-drawer">
@@ -5183,6 +5183,7 @@
       };
       const envData = {
         locationName: zoneState.current?.label || 'UNKNOWN SECTOR',
+        bannerMessage: zoneState.messages[0] || null,
         weaponHud: buildWeaponHudState()
       };
       window.hudSystem.update(ship, sysData, envData);
@@ -5207,7 +5208,7 @@
       return clamp(1 - (cdLeft / cdMax), 0, 1);
     }
 
-    function getSpecialWeaponHudState() {
+    function getBuiltInWeaponHudState() {
       const builtins = Game.player?.weapons?.[HP.BUILTIN] || [];
       const hexlance = builtins.find(loadout => loadout?.weapon?.id === 'hexlance_siege')?.weapon || null;
       if (hexlance) {
@@ -5216,10 +5217,18 @@
         if (sw.charging) {
           return { weapon: hexlance, charge: clamp((Number(sw.chargeProgress) || 0) / Math.max(0.01, Number(sw.chargeTime) || 1), 0, 1) };
         }
+        if (sw.armed) {
+          return { weapon: hexlance, charge: 1, armed: true };
+        }
         const cdLeft = Math.max(0, Number(sw.cooldown) || 0);
         const cdMax = Math.max(0.01, Number(sw.cooldownMax) || cdLeft || 1);
         return { weapon: hexlance, charge: clamp(1 - (cdLeft / cdMax), 0, 1) };
       }
+      const fallbackWeapon = builtins.find(loadout => loadout?.weapon)?.weapon || null;
+      return { weapon: fallbackWeapon, charge: fallbackWeapon ? 1 : 0 };
+    }
+
+    function getSpecialWeaponHudState() {
       const entries = Game.player?.weapons?.[HP.SPECIAL] || [];
       let weapon = null;
       let bestCdLeft = Infinity;
@@ -5272,6 +5281,7 @@
     function buildWeaponHudState() {
       const hasTargets = !!(lockedTargets && lockedTargets.length > 0);
       const specialHud = getSpecialWeaponHudState();
+      const builtInHud = getBuiltInWeaponHudState();
       const missileHud = getMissileWeaponHudState();
       return {
         hasTargets,
@@ -5284,6 +5294,11 @@
           weapon: specialHud.weapon,
           enabled: !!specialAutoFire,
           charge: specialHud.charge
+        },
+        builtin: {
+          weapon: builtInHud.weapon,
+          enabled: !!builtInHud.armed,
+          charge: builtInHud.charge
         },
         missile: {
           weapon: missileHud.weapon,
@@ -6326,6 +6341,7 @@
       initialized: false,
       messages: []
     };
+    let zoneMessageSeq = 0;
 
     function makeInterplanetaryZone() {
       return {
@@ -6556,8 +6572,22 @@
       return { current: enhanceZoneDescriptor(current), approaching: enhanceZoneDescriptor(approaching) };
     }
 
-    function pushZoneMessage(text, duration = 3.5) {
-      zoneState.messages.push({ text, life: duration, maxLife: duration });
+    function pushZoneMessage(text, duration = 3.5, options = {}) {
+      if (typeof text !== 'string' || !text.trim()) return;
+      const label = typeof options?.label === 'string' && options.label.trim()
+        ? options.label.trim()
+        : 'SHIP ALERT';
+      const tone = typeof options?.tone === 'string' && options.tone.trim()
+        ? options.tone.trim()
+        : 'status';
+      zoneState.messages = [{
+        id: ++zoneMessageSeq,
+        text: text.trim(),
+        life: duration,
+        maxLife: duration,
+        label,
+        tone
+      }];
     }
 
     function updateZoneMessages(dt) {
@@ -6578,8 +6608,13 @@
         zoneState.lastZoneKey = zoneState.current?.key || null;
         zoneState.lastZoneId = zoneState.current?.id || null;
         zoneState.initialized = true;
+        if (zoneState.current?.label) {
+          pushZoneMessage(zoneState.current.label, 2.8, { label: 'CURRENT SECTOR', tone: 'sector' });
+        }
       } else if (zoneState.current && zoneState.current.key !== zoneState.lastZoneKey) {
-        if (zoneState.current.label) pushZoneMessage(zoneState.current.label);
+        if (zoneState.current.label) {
+          pushZoneMessage(zoneState.current.label, 2.8, { label: 'CURRENT SECTOR', tone: 'sector' });
+        }
         zoneState.lastZoneKey = zoneState.current.key;
       }
 
@@ -6594,7 +6629,9 @@
         approachKey !== zoneState.current?.key &&
         approachKey !== prevZoneKey
       ) {
-        if (zoneState.approaching?.enteringLabel) pushZoneMessage(zoneState.approaching.enteringLabel);
+        if (zoneState.approaching?.enteringLabel) {
+          pushZoneMessage(zoneState.approaching.enteringLabel, 2.4, { label: 'APPROACH VECTOR', tone: 'status' });
+        }
       }
       zoneState.lastApproachKey = approachKey;
 
@@ -8226,13 +8263,9 @@
 
     function tryFireMountedSpecialWeapons() {
       const specials = Game.player?.weapons?.[HP.SPECIAL] || [];
-      const builtins = Game.player?.weapons?.[HP.BUILTIN] || [];
-      if (specials.length === 0 && builtins.length === 0) return false;
+      if (specials.length === 0) return false;
 
       let fired = false;
-      const hasHexlance = builtins.some(loadout => loadout?.weapon?.id === 'hexlance_siege');
-      if (hasHexlance && Superweapon.tryFireSuperweapon(ship)) fired = true;
-
       const target = (lockedTarget && !lockedTarget.dead) ? lockedTarget : null;
       const mouseWorld = screenToWorld(mouse.x, mouse.y);
       const shipAngle = ship.angle;
@@ -8273,6 +8306,15 @@
       }
 
       return fired;
+    }
+
+    function tryFireMountedBuiltInWeapons() {
+      const builtins = Game.player?.weapons?.[HP.BUILTIN] || [];
+      if (builtins.length === 0) return false;
+
+      const hasHexlance = builtins.some(loadout => loadout?.weapon?.id === 'hexlance_siege');
+      if (!hasHexlance) return false;
+      return !!Superweapon.tryFireSuperweapon(ship);
     }
 
 
@@ -11705,7 +11747,7 @@
       if (k === 'p') {
         PerfHUD.toggle();
       }
-      // Weapon keys (1=main, 2=special, 3=missiles) — toggle auto-fire or single shot
+      // Weapon keys (1=main, 2=special, 3=missiles, 4=built-in) — toggle auto-fire or single shot
       if (e.code === 'Digit1' && !stationUI.open && !CICDisplay.active && !e.repeat) {
         if (!warp.isBusy()) {
           const hasTargets = lockedTargets && lockedTargets.length > 0;
@@ -11741,6 +11783,9 @@
           const side = (local.y >= 0) ? 'right' : 'left';
           if (rocketCooldown <= 0 && fireRocket(side)) rocketCooldown = ROCKET_FIRE_INTERVAL;
         }
+      }
+      if (e.code === 'Digit4' && !stationUI.open && !CICDisplay.active && !e.repeat) {
+        tryFireMountedBuiltInWeapons();
       }
       if (e.code === 'Digit5' && !stationUI.open && !CICDisplay.active && !e.repeat) {
         triggerEnergyShot();
@@ -17532,6 +17577,144 @@
       // --- Flash rendering (handled by CanvasVFX) ---
       CanvasVFX.drawFlashes?.(ctx, cam);
 
+      // --- Linie celowania broni (weapon aim lines, Starsector-style) ---
+      function _drawWeaponAimLines(camRef) {
+        if (!ship || ship.destroyed) return;
+        const weapons = Game.player?.weapons;
+        if (!weapons) return;
+
+        const _turrets = [ship.turret, ship.turret2, ship.turret3, ship.turret4];
+        const _tAngles = [interpTurretAngle, interpTurretAngle2, interpTurretAngle3, interpTurretAngle4];
+        const _sA = interpAngle;
+        const _cosA = Math.cos(_sA);
+        const _sinA = Math.sin(_sA);
+        const AIM_LINE_LEN = 350;
+
+        ctx.save();
+        ctx.lineCap = 'round';
+
+        function _aimLine(wx, wy, dx, dy, len, colReady, colDim, ready) {
+          const lineLen = Math.max(40, Number(len) || AIM_LINE_LEN);
+          const p0 = worldToScreen(wx, wy, camRef);
+          const p1 = worldToScreen(wx + dx * lineLen, wy + dy * lineLen, camRef);
+          const grad = ctx.createLinearGradient(p0.x, p0.y, p1.x, p1.y);
+          const col = ready ? colReady : colDim;
+          grad.addColorStop(0, col);
+          grad.addColorStop(0.65, col);
+          grad.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.globalAlpha = ready ? 0.88 : 0.45;
+          ctx.strokeStyle = grad;
+          ctx.lineWidth = ready ? 2.2 : 1.5;
+          ctx.shadowColor = ready ? colReady : 'transparent';
+          ctx.shadowBlur = ready ? 8 : 0;
+          ctx.beginPath();
+          ctx.moveTo(p0.x, p0.y);
+          ctx.lineTo(p1.x, p1.y);
+          ctx.stroke();
+          if (ready) {
+            ctx.fillStyle = colReady;
+            ctx.globalAlpha = 0.9;
+            ctx.shadowBlur = 3;
+            ctx.beginPath();
+            ctx.arc(p0.x, p0.y, 2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+
+        function _getInterpolatedHardpointWorldPos(hp) {
+          const local = getEntityHardpointLocalPos(ship, hp);
+          if (!local) return null;
+          return {
+            x: interpPos.x + (local.x * _cosA - local.y * _sinA),
+            y: interpPos.y + (local.x * _sinA + local.y * _cosA)
+          };
+        }
+
+        function _getAimRangeForWeapon(weapon) {
+          let range = Number(weapon?.baseRange);
+          if (!Number.isFinite(range) || range <= 0) range = Number(weapon?.range);
+          if ((!Number.isFinite(range) || range <= 0) && weapon?.id === 'hexlance_siege') {
+            range = Number(Superweapon?.superweaponState?.range);
+          }
+          if (!Number.isFinite(range) || range <= 0) range = AIM_LINE_LEN;
+          return Math.max(80, range);
+        }
+
+        // MAIN weapons — cyan, one line per turret
+        const mainW = [];
+        if (mainW.length) {
+          const mReady = rail.cd[0] <= 0;
+          for (let i = 0; i < mainW.length; i++) {
+            const loadout = mainW[i];
+            const hp = loadout?.hp;
+            const origin = _getInterpolatedHardpointWorldPos(hp);
+            if (!origin) continue;
+            const hpPos = hp?.pos;
+            const tIdx = hpPos ? getNearestTurretIndex(hpPos, _turrets) : (i % _turrets.length);
+            const tA = _tAngles[tIdx];
+            _aimLine(
+              origin.x,
+              origin.y,
+              Math.cos(tA),
+              Math.sin(tA),
+              _getAimRangeForWeapon(loadout?.weapon, true),
+              '#7dd3fc',
+              '#2a4f60',
+              mReady
+            );
+          }
+        }
+
+        // BUILTIN weapons — orange
+        const builtW = weapons[HP.BUILTIN] || [];
+        for (let i = 0; i < builtW.length; i++) {
+          const loadout = builtW[i];
+          const hp = loadout?.hp;
+          const hpPos = hp?.pos || hp;
+          const origin = _getInterpolatedHardpointWorldPos(hp);
+          if (!hpPos || !origin) continue;
+          const localDir = editorDegToForward(Number.isFinite(Number(hpPos.rot)) ? Number(hpPos.rot) : 90);
+          const dir = rotate(localDir, _sA);
+          const sw = Superweapon?.superweaponState || null;
+          const visible = !!(sw?.charging || sw?.armed);
+          if (!visible) continue;
+          const ready = !!sw?.armed;
+          _aimLine(
+            origin.x,
+            origin.y,
+            dir.x,
+            dir.y,
+            _getAimRangeForWeapon(loadout?.weapon),
+            '#7ef29a',
+            '#7a5520',
+            ready
+          );
+        }
+
+        // SPECIAL weapons — violet
+        const specW = [];
+        for (let i = 0; i < specW.length; i++) {
+          const loadout = specW[i];
+          const hp = loadout?.hp;
+          const origin = _getInterpolatedHardpointWorldPos(hp);
+          if (!origin) continue;
+          const cdLeft = Number(hp?.specialCd) || 0;
+          const dir = _resolveMouseDir(origin.x, origin.y, _cosA, _sinA);
+          _aimLine(
+            origin.x,
+            origin.y,
+            dir.x,
+            dir.y,
+            _getAimRangeForWeapon(loadout?.weapon),
+            '#b388ff',
+            '#4a2a60',
+            cdLeft <= 0
+          );
+        }
+
+        ctx.restore();
+      }
+
       // --- Celowniki trybu ostrzału (firing reticles) ---
       // Draws a crosshair for a given mouse, camera, and viewport clip region
       function _drawReticle(mouseRef, camRef, shipRef, clipX, clipW) {
@@ -17572,6 +17755,132 @@
         ctx.setLineDash([12 * z, 12 * z]);
         ctx.stroke();
         ctx.restore();
+
+        function _getReticleWeaponRange(weapon, applyMode = false) {
+          let range = Number(weapon?.baseRange);
+          if (!Number.isFinite(range) || range <= 0) range = Number(weapon?.range);
+          if ((!Number.isFinite(range) || range <= 0) && weapon?.id === 'hexlance_siege') {
+            range = Number(Superweapon?.superweaponState?.range);
+          }
+          if (!Number.isFinite(range) || range <= 0) return 0;
+          if (applyMode) {
+            const mul = Number(cfg?.rangeMul);
+            if (Number.isFinite(mul) && mul > 0) range *= mul;
+          }
+          return range;
+        }
+
+        function _pushWeaponStatus(rows, label, inRange, ready) {
+          if (!inRange) {
+            rows.push({ text: `${label} OUT OF RANGE`, color: '#ff6b6b' });
+            return;
+          }
+          if (ready) {
+            rows.push({ text: `${label} IN RANGE`, color: '#7ef29a' });
+            return;
+          }
+          rows.push({ text: `${label} IN RANGE / CD`, color: '#fbbf24' });
+        }
+
+        const aimDist = Math.hypot(mw.x - shipRef.pos.x, mw.y - shipRef.pos.y);
+        const statusRows = [];
+
+        const mainEntries = shipRef.weapons?.[HP.MAIN] || [];
+        if (mainEntries.length) {
+          let mainRange = 0;
+          for (let i = 0; i < mainEntries.length; i++) {
+            mainRange = Math.max(mainRange, _getReticleWeaponRange(mainEntries[i]?.weapon, true));
+          }
+          const requiredBarrels = Math.max(1, Number(rail?.barrelsPerShot) || 1);
+          const secondaryReady = requiredBarrels < 2 || (Math.max(0, Number(rail?.cd?.[1]) || 0) <= 0);
+          const mainReady = (rail?.queue?.length || 0) === 0 && (Math.max(0, Number(rail?.cd?.[0]) || 0) <= 0) && secondaryReady;
+          _pushWeaponStatus(statusRows, 'MAIN', aimDist <= mainRange, mainReady);
+        }
+
+        const specialEntries = shipRef.weapons?.[HP.SPECIAL] || [];
+        if (specialEntries.length) {
+          let specialRange = 0;
+          let specialReady = false;
+          for (let i = 0; i < specialEntries.length; i++) {
+            const loadout = specialEntries[i];
+            specialRange = Math.max(specialRange, _getReticleWeaponRange(loadout?.weapon));
+            if ((Math.max(0, Number(loadout?.hp?.specialCd) || 0) <= 0)) specialReady = true;
+          }
+          _pushWeaponStatus(statusRows, 'SPECIAL', aimDist <= specialRange, specialReady);
+        }
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(clipX, 0, clipW, H);
+        ctx.clip();
+
+        const braceHalfH = Math.max(12, size * z * 1.15);
+        const braceDepth = Math.max(10, size * z * 0.9);
+        const braceGap = Math.max(7, size * z * 0.55);
+        const tickLen = Math.max(6, size * z * 0.45);
+
+        ctx.strokeStyle = modeColor;
+        ctx.lineWidth = 1.8;
+        ctx.globalAlpha = 0.88;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(scr.x - braceGap - braceDepth, scr.y - braceHalfH);
+        ctx.lineTo(scr.x - braceGap, scr.y - braceHalfH);
+        ctx.lineTo(scr.x - braceGap, scr.y + braceHalfH);
+        ctx.lineTo(scr.x - braceGap - braceDepth, scr.y + braceHalfH);
+        ctx.moveTo(scr.x + braceGap + braceDepth, scr.y - braceHalfH);
+        ctx.lineTo(scr.x + braceGap, scr.y - braceHalfH);
+        ctx.lineTo(scr.x + braceGap, scr.y + braceHalfH);
+        ctx.lineTo(scr.x + braceGap + braceDepth, scr.y + braceHalfH);
+        ctx.stroke();
+
+        ctx.globalAlpha = 0.72;
+        ctx.beginPath();
+        ctx.moveTo(scr.x - tickLen - 3, scr.y);
+        ctx.lineTo(scr.x - 3, scr.y);
+        ctx.moveTo(scr.x + 3, scr.y);
+        ctx.lineTo(scr.x + tickLen + 3, scr.y);
+        ctx.moveTo(scr.x, scr.y - tickLen - 3);
+        ctx.lineTo(scr.x, scr.y - 3);
+        ctx.moveTo(scr.x, scr.y + 3);
+        ctx.lineTo(scr.x, scr.y + tickLen + 3);
+        ctx.stroke();
+
+        ctx.globalAlpha = 0.95;
+        ctx.fillStyle = modeColor;
+        ctx.beginPath();
+        ctx.arc(scr.x, scr.y, 1.75, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (statusRows.length) {
+          const statusBlockW = 156;
+          const preferRight = scr.x + braceGap + braceDepth + 18 + statusBlockW < (clipX + clipW - 6);
+          const statusX = preferRight
+            ? (scr.x + braceGap + braceDepth + 18)
+            : Math.max(clipX + 8, scr.x - braceGap - braceDepth - 18 - statusBlockW);
+          const statusStartY = scr.y - ((statusRows.length - 1) * 13) * 0.5;
+          ctx.font = '11px monospace';
+          ctx.textAlign = 'left';
+          for (let i = 0; i < statusRows.length; i++) {
+            const row = statusRows[i];
+            ctx.globalAlpha = 0.95;
+            ctx.fillStyle = row.color;
+            ctx.shadowColor = row.color;
+            ctx.shadowBlur = 5;
+            ctx.fillText(row.text, statusX, statusStartY + i * 13);
+          }
+        }
+
+        ctx.restore();
+
+        ctx.save();
+        ctx.fillStyle = modeColor;
+        ctx.globalAlpha = 0.7;
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${FIRE_MODE_ICONS[firingMode.current]} ${FIRE_MODE_NAMES[firingMode.current]}`, clipX + 10, H - 10);
+        ctx.restore();
+        return;
 
         ctx.save();
         // Clip to viewport
@@ -17656,6 +17965,7 @@
           // P1 crosshair (left half)
           const p1Cam = { x: cam.x, y: cam.y, zoom: cam.zoom, viewportX: 0, viewportY: 0, viewportW: halfW, viewportH: H };
           _wtsVpW = halfW; _wtsVpH = H; _wtsVpOffX = 0; _wtsVpOffY = 0;
+          _drawWeaponAimLines(p1Cam);
           _drawReticle(mouse, p1Cam, ship, 0, halfW);
           // P2 crosshair (right half)
           const p2Cam = { x: camera2.x, y: camera2.y, zoom: camera2.zoom, viewportX: halfW, viewportY: 0, viewportW: W - halfW, viewportH: H };
@@ -17664,6 +17974,7 @@
           // Reset viewport params
           _wtsVpW = 0; _wtsVpH = 0; _wtsVpOffX = 0; _wtsVpOffY = 0;
         } else {
+          _drawWeaponAimLines(cam);
           _drawReticle(mouse, cam, ship, 0, W);
         }
       }
@@ -17834,6 +18145,7 @@
     }
 
     function renderZoneMessages() {
+      if (window.hudSystem) return;
       if (!zoneState.messages.length) return;
 
       ctx.save();
@@ -18399,7 +18711,9 @@
       // do prostoty – klawiszami [ i ] zmieniasz ostatni slider; lub klik + ruch (opcjonalnie)
       // Możesz podpiąć realny input według swojej architektury.
     }
-    function toast(t) { /* opcjonalnie dopisz do kolejki komunikatów HUD */ }
+    function toast(t) {
+      if (typeof pushZoneMessage === 'function') pushZoneMessage(t, 2.2, { label: 'STATUS UPDATE', tone: 'status' });
+    }
     function applyShipStats(s) {
       ship.hull.max = Math.round(ship.hull.max * s.hp);
       ship.hull.val = Math.min(ship.hull.val, ship.hull.max);

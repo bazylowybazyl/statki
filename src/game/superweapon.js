@@ -2,6 +2,8 @@
  * Moduł Superbroni (Hexlance) - W pełni zintegrowany z Hardpointami
  */
 
+import { MASTER_WEAPONS } from '../data/weapons.js';
+
 const VFX_CONFIG = {
     newMinSize: 2.0,
     newMaxSize: 5.0,
@@ -13,24 +15,41 @@ const VFX_CONFIG = {
 const localParticles = []; 
 const hexlanceProjectiles = [];
 let globalTime = 0;
+const HEXLANCE_DEF = MASTER_WEAPONS?.hexlance_siege || {};
+
+function getHexlanceStat(key, fallback) {
+    const value = Number(HEXLANCE_DEF?.[key]);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function syncSuperweaponProfile() {
+    superweaponState.cooldownMax = getHexlanceStat('cooldown', 6.0);
+    superweaponState.chargeTime = getHexlanceStat('chargeTime', 1.2);
+    superweaponState.projectileSpeed = getHexlanceStat('baseSpeed', 12000);
+    superweaponState.range = getHexlanceStat('baseRange', 60000);
+    superweaponState.damage = getHexlanceStat('baseDamage', 9999);
+    superweaponState.shotDelay = getHexlanceStat('burstDelay', 0.12);
+}
 
 export const superweaponState = {
     cooldown: 0,
-    cooldownMax: 4.0, 
-    chargeTime: 0.6,
+    cooldownMax: getHexlanceStat('cooldown', 6.0),
+    chargeTime: getHexlanceStat('chargeTime', 1.2),
     charging: false,
     chargeProgress: 0,
-    projectileSpeed: 8000,
+    armed: false,
+    armedTimer: 0,
+    armedDuration: 5.0,
+    projectileSpeed: getHexlanceStat('baseSpeed', 12000),
     beamWidth: 8,
-    range: 12000,
-    damage: 9999, 
+    range: getHexlanceStat('baseRange', 60000),
+    damage: getHexlanceStat('baseDamage', 9999), 
     queue: [],
-    shotDelay: 0.25,
-    barrelLength: 160,
-    barrelSpacing: 35,
+    shotDelay: getHexlanceStat('burstDelay', 0.12),
     recoilOffset: 0,
     recoilRecovery: 100
 };
+syncSuperweaponProfile();
 
 function editorDegToForward(deg = 90) {
     const rad = (Number(deg) || 0) * Math.PI / 180;
@@ -134,7 +153,7 @@ function rotate(v, angle) {
     return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
 }
 
-function getMuzzlePos(ship, cannonIndex, barrelIndex) {
+function getMuzzlePos(ship, cannonIndex) {
     const mounts = getActiveMounts(ship);
     const hp = mounts[cannonIndex]?.hp || mounts[cannonIndex] || null;
     const hpPos = hp?.pos || hp || { x: 0, y: 0, rot: 90 };
@@ -143,14 +162,9 @@ function getMuzzlePos(ship, cannonIndex, barrelIndex) {
     const pivotPos = { x: ship.pos.x + pivotOffset.x, y: ship.pos.y + pivotOffset.y };
     const localDir = editorDegToForward(Number.isFinite(Number(hpPos.rot)) ? Number(hpPos.rot) : 90);
     const dir = rotate(localDir, ship.angle);
-    const perp = { x: -dir.y, y: dir.x };
-    const recoilShift = -superweaponState.recoilOffset;
-    const currentLength = superweaponState.barrelLength + recoilShift;
-    const currentSpacing = superweaponState.barrelSpacing;
-    const sideOffset = (barrelIndex === 0 ? -0.5 : 0.5) * currentSpacing;
     return {
-        x: pivotPos.x + (dir.x * currentLength) + (perp.x * sideOffset),
-        y: pivotPos.y + (dir.y * currentLength) + (perp.y * sideOffset),
+        x: pivotPos.x,
+        y: pivotPos.y,
         dir: dir
     };
 }
@@ -169,19 +183,20 @@ function spawnChargeEffect(targetPos) {
     }
 }
 
-function fireSingleBarrel(ship, cannonIndex, barrelIndex) {
-    const m = getMuzzlePos(ship, cannonIndex, barrelIndex);
+function fireSingleMount(ship, cannonIndex) {
+    const m = getMuzzlePos(ship, cannonIndex);
     const angle = Math.atan2(m.dir.y, m.dir.x);
     superweaponState.recoilOffset = Math.min(25, superweaponState.recoilOffset + 12);
     if (window.camera && window.camera.addShake) window.camera.addShake(8, 0.25);
     window.dispatchEvent(new CustomEvent('game_weapon_fired', { 
         detail: { weaponId: 'hexlance', x: m.x, y: m.y } 
     }));
+    const projectileLife = Math.max(8, (superweaponState.range / Math.max(1, superweaponState.projectileSpeed)) + 2);
     hexlanceProjectiles.push({
         x: m.x, y: m.y,
-        vx: m.dir.x * superweaponState.projectileSpeed + ship.vel.x,
-        vy: m.dir.y * superweaponState.projectileSpeed + ship.vel.y,
-        life: 2.0, traveled: 0,
+        vx: m.dir.x * superweaponState.projectileSpeed + (ship.vel?.x || 0),
+        vy: m.dir.y * superweaponState.projectileSpeed + (ship.vel?.y || 0),
+        life: projectileLife, traveled: 0,
         beamWidth: superweaponState.beamWidth,
         angle: angle
     });
@@ -202,60 +217,77 @@ function prepareSuperweaponSalvo(ship) {
     const mounts = getActiveMounts(ship);
     let currentDelay = 0;
     
-    // Dodajemy do kolejki każdą lufę każdej zainstalowanej broni!
+    // Built-in fires directly from the hardpoint pivot, one shot per mount.
     for (let cannonIndex = 0; cannonIndex < mounts.length; cannonIndex++) {
-        superweaponState.queue.push({ cannonIndex, barrelIndex: 0, delay: currentDelay });
-        currentDelay = delay;
-        superweaponState.queue.push({ cannonIndex, barrelIndex: 1, delay: currentDelay });
+        superweaponState.queue.push({ cannonIndex, delay: currentDelay });
+        currentDelay += delay;
     }
     superweaponState.cooldown = superweaponState.cooldownMax;
 }
 
 export function tryFireSuperweapon(ship) {
+    syncSuperweaponProfile();
     if (!ship) return false;
     if (getActiveMounts(ship).length === 0) return false; // Brak broni, nie strzelaj
-    if (superweaponState.cooldown > 0) return false;
-    if (superweaponState.charging) return false;
     if (superweaponState.queue.length > 0) return false;
+    if (superweaponState.charging) return false;
+
+    if (superweaponState.armed) {
+        superweaponState.armed = false;
+        superweaponState.armedTimer = 0;
+        prepareSuperweaponSalvo(ship);
+        return true;
+    }
+
+    if (superweaponState.cooldown > 0) return false;
     superweaponState.charging = true;
     superweaponState.chargeProgress = 0;
     return true;
 }
 
 export function updateSuperweapon(dt, ship, aimPos) {
+    syncSuperweaponProfile();
     globalTime += dt;
     if (superweaponState.recoilOffset > 0) {
         superweaponState.recoilOffset = Math.max(0, superweaponState.recoilOffset - superweaponState.recoilRecovery * dt);
     }
-    if (superweaponState.cooldown > 0 && !superweaponState.charging && superweaponState.queue.length === 0) {
+    if (superweaponState.cooldown > 0 && !superweaponState.charging && !superweaponState.armed && superweaponState.queue.length === 0) {
         superweaponState.cooldown = Math.max(0, superweaponState.cooldown - dt);
     }
     if (superweaponState.charging) {
         superweaponState.chargeProgress += dt;
         const mounts = getActiveMounts(ship);
         
-        // Ładowanie na każdej z luf
+        // Ładowanie na każdym built-in hardpoincie
         for (let i = 0; i < mounts.length; i++) {
-            const m = getMuzzlePos(ship, i, 0);
+            const m = getMuzzlePos(ship, i);
             for(let k=0; k<3; k++) spawnChargeEffect(m);
         }
         
         if (superweaponState.chargeProgress >= superweaponState.chargeTime) {
             superweaponState.charging = false;
+            superweaponState.chargeProgress = superweaponState.chargeTime;
+            superweaponState.armed = true;
+            superweaponState.armedTimer = superweaponState.armedDuration;
+        }
+    }
+    if (superweaponState.armed) {
+        superweaponState.armedTimer = Math.max(0, superweaponState.armedTimer - dt);
+        if (superweaponState.armedTimer <= 0) {
+            superweaponState.armed = false;
             superweaponState.chargeProgress = 0;
-            prepareSuperweaponSalvo(ship);
         }
     }
     if (superweaponState.queue.length > 0) {
         const nextShot = superweaponState.queue[0];
         if (nextShot.delay > 0 && nextShot.delay <= 0.22) {
-             const m = getMuzzlePos(ship, nextShot.cannonIndex, nextShot.barrelIndex);
+             const m = getMuzzlePos(ship, nextShot.cannonIndex);
              for(let k=0; k<3; k++) spawnChargeEffect(m);
         }
         nextShot.delay -= dt;
         while (superweaponState.queue.length > 0 && superweaponState.queue[0].delay <= 0) {
             const shot = superweaponState.queue.shift();
-            fireSingleBarrel(ship, shot.cannonIndex, shot.barrelIndex);
+            fireSingleMount(ship, shot.cannonIndex);
             if (superweaponState.queue.length > 0) {
                 superweaponState.queue[0].delay += shot.delay; 
             }
