@@ -130,6 +130,17 @@ function resolveRocketProfile(weaponDef) {
         terminalRadius,
         Math.max(terminalRadius * 4.0, 2400)
     );
+    const fireVfx = String(weaponDef?.rocketFireVfx || '').toLowerCase();
+    const smokeVfx = String(weaponDef?.rocketSmokeVfx || '').toLowerCase();
+    const explosionVfx = String(weaponDef?.rocketExplosionVfx || '').toLowerCase();
+    let bodyColorHex = null;
+    if (weaponDef?.rocketBodyColor) {
+        try {
+            bodyColorHex = new THREE.Color(weaponDef.rocketBodyColor).getHex();
+        } catch {
+            bodyColorHex = null;
+        }
+    }
     return {
         desiredSpeed,
         maxRange,
@@ -176,7 +187,14 @@ function resolveRocketProfile(weaponDef) {
         fireScale: THREE.MathUtils.clamp(Number(weaponDef?.fireScale) || 1, 0.2, 3.0),
         smokeScale: THREE.MathUtils.clamp(Number(weaponDef?.smokeScale) || 1, 0.2, 3.0),
         explosionVisualScale: THREE.MathUtils.clamp(Number(weaponDef?.explosionVisualScale) || 1, 0.25, 4.0),
-        hitRadius: proximityRadius
+        hitRadius: proximityRadius,
+        bodyColorHex,
+        fireVfxType: fireVfx === 'supernova' ? 10 : 0,
+        smokeVfxType: smokeVfx === 'chemical' ? 2 : 1,
+        explosionCoreType: explosionVfx === 'supernova' ? 13 : 3,
+        explosionSparkType: explosionVfx === 'supernova' ? 14 : 4,
+        shockwaveType: explosionVfx === 'supernova' ? 15 : 5,
+        explosionStyle: explosionVfx === 'supernova' ? 'supernova' : 'default'
     };
 }
 
@@ -254,6 +272,13 @@ class RocketSystem3D {
                 fireScale: 1,
                 smokeScale: 1,
                 explosionVisualScale: 1,
+                bodyColorHex: null,
+                fireVfxType: 0,
+                smokeVfxType: 1,
+                explosionCoreType: 3,
+                explosionSparkType: 4,
+                shockwaveType: 5,
+                explosionStyle: "default",
                 didImpactDamage:false,
                 weaponDef:      null,
                 launchPos:      new THREE.Vector3(),
@@ -338,6 +363,13 @@ class RocketSystem3D {
         r.fireScale = profile.fireScale;
         r.smokeScale = profile.smokeScale;
         r.explosionVisualScale = profile.explosionVisualScale;
+        r.bodyColorHex = profile.bodyColorHex;
+        r.fireVfxType = profile.fireVfxType;
+        r.smokeVfxType = profile.smokeVfxType;
+        r.explosionCoreType = profile.explosionCoreType;
+        r.explosionSparkType = profile.explosionSparkType;
+        r.shockwaveType = profile.shockwaveType;
+        r.explosionStyle = profile.explosionStyle;
         r.didImpactDamage = false;
         r.weaponDef       = weaponDef;
         r.closestTargetDist = Infinity;
@@ -367,7 +399,9 @@ class RocketSystem3D {
         }
 
         // Color per-instance
-        const col = colorTheme === "red" ? 0xff3333 : 0x3377ff;
+        const col = Number.isFinite(r.bodyColorHex)
+            ? r.bodyColorHex
+            : (colorTheme === "red" ? 0xff3333 : 0x3377ff);
         this.mesh.setColorAt(r.index, new THREE.Color(col));
         if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
     }
@@ -614,7 +648,7 @@ class RocketSystem3D {
                     this.fireGPU.spawn(sx, sy, sz, vx, vy, vz,
                         Math.max(0.1, r.fireScale || 1),
                         Math.max(0.08, (FS.life + Math.random() * 0.05) * THREE.MathUtils.lerp(0.78, 1.0, Math.min(1, r.fireScale || 1))),
-                        0);                                     // type = FIRE
+                        r.fireVfxType || 0);
 
                     if ((s & 1) === 0) {
                         this.smokeGPU.spawn(
@@ -624,7 +658,7 @@ class RocketSystem3D {
                             -_renderDir.z * R.exhaustVel * 0.18 * exhaustScale + (Math.random() - 0.5) * R.exhaustSpread * 1.4 * exhaustScale,
                             Math.max(0.15, r.smokeScale || 1),
                             Math.max(0.5, (1.6 + Math.random() * 1.4) * THREE.MathUtils.lerp(0.72, 1.0, Math.min(1, r.smokeScale || 1))),
-                            1
+                            r.smokeVfxType || 1
                         );
                     }
                 }
@@ -633,7 +667,7 @@ class RocketSystem3D {
                 this.smokeGPU.spawn(
                     _exhaustP.x, _exhaustP.y, _exhaustP.z,
                     0, -20 * WS, 0,
-                    Math.max(0.15, r.smokeScale || 1), Math.max(0.18, 0.3 * Math.max(0.6, r.smokeScale || 1)), 1
+                    Math.max(0.15, r.smokeScale || 1), Math.max(0.18, 0.3 * Math.max(0.6, r.smokeScale || 1)), r.smokeVfxType || 1
                 );
             }
 
@@ -761,56 +795,117 @@ class RocketSystem3D {
         const eS = WS * Math.max(0.1, Number(FlameSettings.explosionSize) || 1.0) * Math.max(0.25, r.explosionVisualScale || 1);
         this._applyBlastDamage(r, ex, ez);
 
-        // 1. FLASH — one big, short burst
-        this.fireGPU.spawn(ex, ey, ez, 0, 0, 0,  250 * eS,  0.1,  3);
+        const coreType = r.explosionCoreType || 3;
+        const sparkType = r.explosionSparkType || 4;
+        const shockwaveType = r.shockwaveType || 5;
+        const smokeType = r.smokeVfxType || 1;
 
-        // 2. CORE EXPLOSION — many fire particles
-        for (let j = 0; j < 80; j++) {
-            const spd   = (500 + Math.random() * 3500) * eS;
-            const theta = Math.random() * Math.PI * 2;
-            const phi   = Math.acos(2 * Math.random() - 1);
-            const vx = spd * Math.sin(phi) * Math.cos(theta);
-            const vy = spd * Math.cos(phi);
-            const vz = spd * Math.sin(phi) * Math.sin(theta);
+        if (r.explosionStyle === "supernova") {
+            // Nova-style core flash inspired by nova.html: magenta core, cyan ring, chemical cloud.
+            this.fireGPU.spawn(ex, ey + 2 * eS, ez, 0, 0, 0, 320 * eS, 0.18, coreType);
+            this.fireGPU.spawn(ex, ey + 12 * eS, ez, 0, 0, 0, 540 * eS, 0.95, coreType);
 
-            this.fireGPU.spawn(ex, ey, ez, vx, vy, vz,
-                (30 + Math.random() * 40) * eS,
-                0.2 + Math.random() * 0.4,  3);
+            for (let j = 0; j < 120; j++) {
+                const spd = (700 + Math.random() * 4200) * eS;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                const vx = spd * Math.sin(phi) * Math.cos(theta);
+                const vy = spd * Math.cos(phi);
+                const vz = spd * Math.sin(phi) * Math.sin(theta);
+                this.fireGPU.spawn(
+                    ex, ey, ez,
+                    vx, vy, vz,
+                    (42 + Math.random() * 60) * eS,
+                    0.32 + Math.random() * 0.55,
+                    coreType
+                );
+            }
+
+            for (let j = 0; j < 110; j++) {
+                const spd = (2600 + Math.random() * 7200) * eS;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                const vx = spd * Math.sin(phi) * Math.cos(theta);
+                const vy = spd * Math.cos(phi) * 0.55;
+                const vz = spd * Math.sin(phi) * Math.sin(theta);
+                this.fireGPU.spawn(
+                    ex, ey + 8 * eS, ez,
+                    vx, vy, vz,
+                    (8 + Math.random() * 16) * eS,
+                    0.55 + Math.random() * 0.45,
+                    sparkType
+                );
+            }
+
+            for (let j = 0; j < 72; j++) {
+                const angle = Math.random() * Math.PI * 2;
+                const ringSpeed = (400 + Math.random() * 1800) * eS;
+                const vx = Math.cos(angle) * ringSpeed;
+                const vy = (20 + Math.random() * 100) * eS;
+                const vz = Math.sin(angle) * ringSpeed;
+                this.smokeGPU.spawn(
+                    ex, ey, ez,
+                    vx, vy, vz,
+                    (140 * eS + Math.random() * 260 * eS),
+                    1.9 + Math.random() * 1.8,
+                    smokeType
+                );
+            }
+
+            this.fireGPU.spawn(ex, ey + 1, ez, 0, 0, 0, Math.max(0.45, eS * 1.85), 0.95, shockwaveType);
+            this.fireGPU.spawn(ex, ey + 1, ez, 0, 0, 0, Math.max(0.28, eS * 1.05), 1.45, shockwaveType);
+        } else {
+            // 1. FLASH — one big, short burst
+            this.fireGPU.spawn(ex, ey, ez, 0, 0, 0, 250 * eS, 0.1, coreType);
+
+            // 2. CORE EXPLOSION — many fire particles
+            for (let j = 0; j < 80; j++) {
+                const spd   = (500 + Math.random() * 3500) * eS;
+                const theta = Math.random() * Math.PI * 2;
+                const phi   = Math.acos(2 * Math.random() - 1);
+                const vx = spd * Math.sin(phi) * Math.cos(theta);
+                const vy = spd * Math.cos(phi);
+                const vz = spd * Math.sin(phi) * Math.sin(theta);
+
+                this.fireGPU.spawn(ex, ey, ez, vx, vy, vz,
+                    (30 + Math.random() * 40) * eS,
+                    0.2 + Math.random() * 0.4, coreType);
+            }
+
+            // 3. SPARKS — fast, stretched shrapnel
+            for (let j = 0; j < 60; j++) {
+                const spd   = (2000 + Math.random() * 5000) * eS;
+                const theta = Math.random() * Math.PI * 2;
+                const phi   = Math.acos(2 * Math.random() - 1);
+                const vx = spd * Math.sin(phi) * Math.cos(theta);
+                const vy = spd * Math.cos(phi);
+                const vz = spd * Math.sin(phi) * Math.sin(theta);
+
+                this.fireGPU.spawn(ex, ey, ez, vx, vy, vz,
+                    (5 + Math.random() * 10) * eS,
+                    0.3 + Math.random() * 0.3, sparkType);
+            }
+
+            // 4. SMOKE — warm haze rising upward
+            for (let j = 0; j < 50; j++) {
+                const spd   = (100 + Math.random() * 1500) * eS;
+                const theta = Math.random() * Math.PI * 2;
+                const phi   = Math.acos(2 * Math.random() - 1);
+                const vx = spd * Math.sin(phi) * Math.cos(theta);
+                const vy = spd * Math.cos(phi) + 50 * eS;
+                const vz = spd * Math.sin(phi) * Math.sin(theta);
+
+                this.smokeGPU.spawn(ex, ey, ez, vx, vy, vz,
+                    (100 * eS + Math.random() * 200 * eS),
+                    1.5 + Math.random() * 1.5, smokeType);
+            }
+
+            // 5. SHOCKWAVE — expanding flat ring in XZ plane
+            this.fireGPU.spawn(ex, ey + 1, ez, 0, 0, 0,
+                Math.max(0.2, eS),
+                0.5 + Math.random() * 0.2,
+                shockwaveType);
         }
-
-        // 3. SPARKS — fast, stretched shrapnel
-        for (let j = 0; j < 60; j++) {
-            const spd   = (2000 + Math.random() * 5000) * eS;
-            const theta = Math.random() * Math.PI * 2;
-            const phi   = Math.acos(2 * Math.random() - 1);
-            const vx = spd * Math.sin(phi) * Math.cos(theta);
-            const vy = spd * Math.cos(phi);
-            const vz = spd * Math.sin(phi) * Math.sin(theta);
-
-            this.fireGPU.spawn(ex, ey, ez, vx, vy, vz,
-                (5 + Math.random() * 10) * eS,
-                0.3 + Math.random() * 0.3,  4);
-        }
-
-        // 4. SMOKE — warm haze rising upward
-        for (let j = 0; j < 50; j++) {
-            const spd   = (100 + Math.random() * 1500) * eS;
-            const theta = Math.random() * Math.PI * 2;
-            const phi   = Math.acos(2 * Math.random() - 1);
-            const vx = spd * Math.sin(phi) * Math.cos(theta);
-            const vy = spd * Math.cos(phi) + 50 * eS;   // extra lift
-            const vz = spd * Math.sin(phi) * Math.sin(theta);
-
-            this.smokeGPU.spawn(ex, ey, ez, vx, vy, vz,
-                (100 * eS + Math.random() * 200 * eS),
-                1.5 + Math.random() * 1.5,  1);
-        }
-
-        // 5. SHOCKWAVE — expanding flat ring in XZ plane
-        this.fireGPU.spawn(ex, ey + 1, ez,  0, 0, 0,
-            0,                                // size (shader computes)
-            0.5 + Math.random() * 0.2,       // life
-            5);                               // type = SHOCKWAVE
 
     }
 

@@ -5,6 +5,10 @@
  *
  * Kept as close as practical to rakiety.html, with only zoom scaling
  * adapted for the overlay orthographic camera used in the game.
+ *
+ * Smoke types:
+ *   1 = default warm exhaust smoke
+ *   2 = chemical red/purple/pink smoke
  */
 import * as THREE from "three";
 
@@ -77,6 +81,7 @@ export class RocketSmokeGPU {
                     float startTime = aData.x;
                     float maxLife   = aData.y;
                     float age       = uTime - startTime;
+                    float smokeType = aData.w;
 
                     if (age < 0.0 || age > maxLife) {
                         gl_Position = vec4(9999.0, 9999.0, 9999.0, 1.0);
@@ -101,7 +106,15 @@ export class RocketSmokeGPU {
                     float smokeScale = max(0.05, aData.z);
                     float currentSize = smokeScale * (u_smokeSize + age * 600.0 * u_worldScale);
 
-                    vColor = vec3(0.42, 0.38, 0.34);
+                    if (smokeType >= 1.5) {
+                        vec3 chemA = vec3(0.72, 0.16, 0.24);
+                        vec3 chemB = vec3(0.62, 0.18, 0.74);
+                        vec3 chemC = vec3(0.96, 0.36, 0.72);
+                        vec3 chemMix = mix(chemA, chemB, smoothstep(0.0, 0.6, ageNorm));
+                        vColor = mix(chemMix, chemC, smoothstep(0.35, 1.0, ageNorm));
+                    } else {
+                        vColor = vec3(0.42, 0.38, 0.34);
+                    }
                     vAlpha = smoothstep(0.0, 0.2, ageNorm) * ratio * 0.95;
 
                     vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);

@@ -71,6 +71,10 @@ export class WeaponController {
     return this.weapons[window.HP?.SPECIAL || 'special'] || [];
   }
 
+  get specialMissileWeapons() {
+    return this.weapons[window.HP?.SPECIAL_MISSILE || 'special_missile'] || [];
+  }
+
   get builtInWeapons() {
     return this.weapons[window.HP?.BUILTIN || 'builtin'] || [];
   }
@@ -225,8 +229,9 @@ export class WeaponController {
   // ==================== SPECIAL WEAPONS ====================
 
   tryFireSpecialWeapons() {
-    const specials = this.specialWeapons;
-    if (specials.length === 0) return false;
+    const standardSpecials = this.specialWeapons;
+    const specialMissiles = this.specialMissileWeapons;
+    if (standardSpecials.length === 0 && specialMissiles.length === 0) return false;
 
     const ship = this.ship;
     let fired = false;
@@ -238,38 +243,43 @@ export class WeaponController {
     const s = Math.sin(ship.angle);
     const shipVel = ship.vel || { x: ship.vx || 0, y: ship.vy || 0 };
 
-    for (let i = 0; i < specials.length; i++) {
-      const loadout = specials[i];
-      const weapon = loadout?.weapon;
-      if (!weapon || weapon.id === 'hexlance_siege') continue;
+    const groups = [standardSpecials, specialMissiles];
+    for (let g = 0; g < groups.length; g++) {
+      const specials = groups[g];
+      const emitterPrefix = g === 0 ? 'special' : 'special_missile';
+      for (let i = 0; i < specials.length; i++) {
+        const loadout = specials[i];
+        const weapon = loadout?.weapon;
+        if (!weapon || weapon.id === 'hexlance_siege') continue;
 
-      const hp = loadout?.hp;
-      const hpPos = hp?.pos || hp;
-      if (!hp || !hpPos) continue;
+        const hp = loadout?.hp;
+        const hpPos = hp?.pos || hp;
+        if (!hp || !hpPos) continue;
 
-      const cdLeft = Math.max(0, Number(hp.specialCd) || 0);
-      if (cdLeft > 0) continue;
+        const cdLeft = Math.max(0, Number(hp.specialCd) || 0);
+        if (cdLeft > 0) continue;
 
-      const localX = Number(hpPos.x) || 0;
-      const localY = Number(hpPos.y) || 0;
-      const muzzleX = ship.pos.x + (localX * c - localY * s);
-      const muzzleY = ship.pos.y + (localX * s + localY * c);
-      const dx = mouseWorld.x - muzzleX;
-      const dy = mouseWorld.y - muzzleY;
-      const len = Math.hypot(dx, dy) || 1;
+        const localX = Number(hpPos.x) || 0;
+        const localY = Number(hpPos.y) || 0;
+        const muzzleX = ship.pos.x + (localX * c - localY * s);
+        const muzzleY = ship.pos.y + (localX * s + localY * c);
+        const dx = mouseWorld.x - muzzleX;
+        const dy = mouseWorld.y - muzzleY;
+        const len = Math.hypot(dx, dy) || 1;
 
-      // Recycle the scratch object for special weapons too
-      _muzzleScratch.pos.x = muzzleX;
-      _muzzleScratch.pos.y = muzzleY;
-      _muzzleScratch.dir.x = dx / len;
-      _muzzleScratch.dir.y = dy / len;
-      _muzzleScratch.baseVel.x = shipVel.x || 0;
-      _muzzleScratch.baseVel.y = shipVel.y || 0;
-      _muzzleScratch.emitterUid = `${this.owner}_special:${hp?.id || i}`;
+        // Recycle the scratch object for special weapons too
+        _muzzleScratch.pos.x = muzzleX;
+        _muzzleScratch.pos.y = muzzleY;
+        _muzzleScratch.dir.x = dx / len;
+        _muzzleScratch.dir.y = dy / len;
+        _muzzleScratch.baseVel.x = shipVel.x || 0;
+        _muzzleScratch.baseVel.y = shipVel.y || 0;
+        _muzzleScratch.emitterUid = `${this.owner}_${emitterPrefix}:${hp?.id || i}`;
 
-      const cd = window.fireWeaponCore(ship, target, weapon.id, _muzzleScratch);
-      hp.specialCd = Math.max(0.01, Number(cd) || Number(weapon.cooldown) || 0.25);
-      fired = true;
+        const cd = window.fireWeaponCore(ship, target, weapon.id, _muzzleScratch);
+        hp.specialCd = Math.max(0.01, Number(cd) || Number(weapon.cooldown) || 0.25);
+        fired = true;
+      }
     }
 
     return fired;
@@ -361,9 +371,14 @@ export class WeaponController {
     }
 
     // Special weapon cooldowns
-    for (const s of this.specialWeapons) {
-      if (s?.hp && typeof s.hp.specialCd === 'number') {
-        s.hp.specialCd = Math.max(0, s.hp.specialCd - dt);
+    const specialGroups = [this.specialWeapons, this.specialMissileWeapons];
+    for (let g = 0; g < specialGroups.length; g++) {
+      const specials = specialGroups[g];
+      for (let i = 0; i < specials.length; i++) {
+        const hp = specials[i]?.hp;
+        if (hp && typeof hp.specialCd === 'number') {
+          hp.specialCd = Math.max(0, hp.specialCd - dt);
+        }
       }
     }
 

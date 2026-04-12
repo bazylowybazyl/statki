@@ -3,7 +3,7 @@
 /**
  * MASTER_WEAPONS - Ustandaryzowana baza uzbrojenia Super Capital
  * * Parametry:
- * - mountType: 'main', 'aux', 'missile', 'hangar', 'special', 'builtin' (gdzie można zamontować)
+ * - mountType: 'main', 'aux', 'missile', 'hangar', 'special', 'special_missile', 'builtin' (gdzie można zamontować)
  * - category: 'rail', 'beam', 'plasma', 'autocannon', 'rocket', 'ciws', 'flak', 'superweapon' (dla renderera)
  * - size: 'S', 'M', 'L', 'Capital' (wymagany rozmiar hardpointu)
  * - baseRange: Twardy zasięg w jednostkach silnika (silnik sam wyliczy life pocisku: range/speed)
@@ -96,6 +96,20 @@ export const MASTER_WEAPONS = {
     reacquireTurnMultiplier: 2.75, reacquireSpeedFactor: 0.5, terminalSpeedFactor: 0.62,
     leadHorizon: 0.3, terminalLeadHorizon: 0.04,
     description: 'Short-range high-agility missile rack. Smaller, faster missiles built for nimble targets.'
+  },
+  supernova_missile: {
+    id: 'supernova_missile', name: 'Supernova Missile', mountType: 'special_missile', category: 'rocket', size: 'Capital',
+    baseDamage: 220, baseRange: 42000, baseSpeed: 3600, cooldown: 6.0, ammo: 8,
+    turnRate: 980, homingDelay: 0.06, explosionRadius: 132, vfxColor: '#ff7cf2',
+    bodyScale: 1.95, exhaustScale: 1.5, fireScale: 1.6, smokeScale: 1.45, explosionVisualScale: 2.15,
+    proximityRadius: 98, terminalRadius: 260, reacquireRadius: 760,
+    reacquireTurnMultiplier: 2.9, reacquireSpeedFactor: 0.44, terminalSpeedFactor: 0.58,
+    leadHorizon: 0.28, terminalLeadHorizon: 0.03,
+    rocketBodyColor: '#ff8de9',
+    rocketFireVfx: 'supernova',
+    rocketSmokeVfx: 'chemical',
+    rocketExplosionVfx: 'supernova',
+    description: 'Capital-grade special missile. Fast guidance, long reach, chemical plume and a nova-style detonation.'
   },
   // ==========================================================================
   // HANGARY
@@ -192,6 +206,7 @@ export const WEAPON_ICON_PATHS = {
   special_valkyrie_railgun: 'assets/weapons/railgun.svg',
   special_yamato_cannon: 'assets/weapons/supercapitalmain.png',
   hexlance_siege: 'assets/weapons/supercapitalmain.png',
+  supernova_missile: 'assets/weapons/torpedo.svg',
   siege_torpedo: 'assets/weapons/torpedo.svg',
   siege_torpedo_mk2: 'assets/weapons/torpedo.svg',
   torpedo_salvo: 'assets/weapons/torpedo.svg',

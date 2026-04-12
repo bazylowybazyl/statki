@@ -94,7 +94,7 @@ function getShipSelectDefs() {
   ];
 }
 
-const HARDPOINT_TYPES = ['main', 'missile', 'aux', 'hangar', 'special', 'builtin'];
+const HARDPOINT_TYPES = ['main', 'missile', 'aux', 'hangar', 'special', 'special_missile', 'builtin'];
 const ENGINE_MAIN_MOUNTS = ['auto', 'rear_center', 'rear_upper', 'rear_lower', 'front_upper', 'front_lower'];
 const ENGINE_SIDE_MOUNTS = ['auto', 'upper_auto', 'center_auto', 'lower_auto', 'upper_left', 'center_left', 'lower_left', 'upper_right', 'center_right', 'lower_right'];
 const ENGINE_SIDE_UI_MOUNTS = ['auto', 'upper_auto', 'center_auto', 'lower_auto'];
@@ -107,6 +107,7 @@ const COLORS = {
   aux: '#f8bd53',
   hangar: '#be7fff',
   special: '#ff6a6a',
+  special_missile: '#ff7ae6',
   builtin: '#7ee7ff',
   core: '#ff3c3c',
   engineMain: '#7ae4ff',
@@ -120,6 +121,7 @@ const PALETTE_ITEMS = [
   { id: 'hp_aux', label: 'Hardpoint AUX', tool: 'hardpoint', hardpointType: 'aux', color: COLORS.aux },
   { id: 'hp_hangar', label: 'Hardpoint HANGAR', tool: 'hardpoint', hardpointType: 'hangar', color: COLORS.hangar },
   { id: 'hp_special', label: 'Hardpoint SPECIAL', tool: 'hardpoint', hardpointType: 'special', color: COLORS.special },
+  { id: 'hp_special_missile', label: 'Hardpoint SPECIAL MISSILE', tool: 'hardpoint', hardpointType: 'special_missile', color: COLORS.special_missile },
   { id: 'hp_builtin', label: 'Hardpoint BUILT-IN', tool: 'hardpoint', hardpointType: 'builtin', color: COLORS.builtin },
   { id: 'core', label: 'Rdzeń', tool: 'core', hardpointType: null, color: COLORS.core },
   { id: 'engine_main', label: 'Dysza MAIN', tool: 'engine_main', hardpointType: null, color: COLORS.engineMain },
