@@ -218,12 +218,12 @@ export class HUDSystem {
             { key: '1', label: 'MAIN', weaponType: 'main' },
             { key: '2', label: 'SPEC', weaponType: 'special' },
             { key: '3', label: 'MISS', weaponType: 'missile' },
-            { key: '4', label: 'MODE', menuState: 'MODE' },
+            { key: '4', label: 'B-IN', weaponType: 'builtin' },
             { key: '5', label: 'COMM', menuState: 'COMM' },
             { key: 'CAPS', label: 'SCAN', menuState: 'SCAN' },
             { key: '6', label: 'MAP' },
             { key: '7', label: 'AUTO' },
-            { key: '8', label: 'AUX' }
+            { key: '8', label: 'MODE', menuState: 'MODE' }
         ];
         
         this.dom = {
@@ -243,6 +243,8 @@ export class HUDSystem {
             warpText: document.getElementById('warp-text'),
             
             speedVal: document.getElementById('val-speed'),
+            locDisplay: document.getElementById('location-display'),
+            locLabel: document.getElementById('loc-label'),
             locText: document.getElementById('loc-text'),
             
             centerDock: document.getElementById('hud-center-dock'),
@@ -318,17 +320,15 @@ export class HUDSystem {
             }
             
             if (this.menuState === 'IDLE') {
-                if (digitKey === '4' || e.key === '4') this.setBottomMenuState('MODE');
+                if (digitKey === '8' || e.key === '8') this.setBottomMenuState('MODE');
                 if (digitKey === '5' || e.key === '5') this.setBottomMenuState('COMM');
                 if (e.code === 'CapsLock') this.setBottomMenuState('SCAN');
             } else if (this.menuState === 'MODE') {
-                if (digitKey === '4' || e.key === '4') this.handleMenuAction('close');
+                if (digitKey === '8' || e.key === '8') this.handleMenuAction('close');
             } else if (this.menuState === 'COMM') {
-                if (digitKey === '4' || e.key === '4') this.handleMenuAction('gate-toggle');
                 if (digitKey === '5' || e.key === '5') this.handleMenuAction('close');
-                if (digitKey === '6' || e.key === '6') this.handleMenuAction('gate-auto');
             } else if (this.menuState === 'SCAN' || this.menuState === 'STATION') {
-                if (digitKey === '4' || e.key === '4') this.handleMenuAction('close');
+                if (digitKey === '8' || e.key === '8') this.handleMenuAction('close');
                 if (e.key === '0' || e.key === 'Escape' || e.code === 'CapsLock') this.handleMenuAction('close');
             }
         });
@@ -522,9 +522,39 @@ export class HUDSystem {
             this.cache.speed = speed;
         }
         
-        if (env && env.locationName && this.cache.locName !== env.locationName) {
-            this.dom.locText.textContent = env.locationName;
-            this.cache.locName = env.locationName;
+        if (this.dom.locDisplay && this.dom.locText && this.dom.locLabel) {
+            const banner = env?.bannerMessage || null;
+            const visible = !!banner;
+            if (visible) {
+                const nextLabel = banner?.label || 'SHIP ALERT';
+                const nextText = banner?.text || '';
+                const nextTone = (banner?.tone || 'status').toLowerCase();
+
+                if (this.cache.locBannerLabel !== nextLabel) {
+                    this.dom.locLabel.textContent = nextLabel;
+                    this.cache.locBannerLabel = nextLabel;
+                }
+                if (this.cache.locBannerText !== nextText) {
+                    this.dom.locText.textContent = nextText;
+                    this.cache.locBannerText = nextText;
+                }
+                if (this.cache.locTone !== nextTone) {
+                    this.dom.locDisplay.classList.remove('tone-sector', 'tone-status', 'tone-warning');
+                    this.dom.locDisplay.classList.add(
+                        nextTone === 'sector' ? 'tone-sector' :
+                        (nextTone === 'warning' ? 'tone-warning' : 'tone-status')
+                    );
+                    this.cache.locTone = nextTone;
+                }
+            }
+            if (this.cache.locVisible !== visible) {
+                this.dom.locDisplay.classList.toggle('is-visible', visible);
+                this.dom.locDisplay.classList.toggle('is-hidden', !visible);
+                this.cache.locVisible = visible;
+            }
+            if (!visible && env?.locationName) {
+                this.cache.locName = env.locationName;
+            }
         }
 
         // --- AKTUALIZACJA UI AGILITY (Z CACHINGIEM) ---
@@ -850,7 +880,7 @@ export class HUDSystem {
             return `
                 <div class="menu-header">SHIP OPERATION MODES</div>
                 <div class="menu-grid">
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('close')"><div class="key-hint">4</div><div class="label">BACK</div></div>
+                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('close')"><div class="key-hint">8</div><div class="label">BACK</div></div>
                     <div class="menu-btn" onclick="hudSystem.handleMenuAction('battle')" data-mode="battle"><div class="key-hint">—</div><div class="label">BATTLE</div></div>
                     <div class="menu-btn" onclick="hudSystem.handleMenuAction('hypercruise')" data-mode="hypercruise"><div class="key-hint">—</div><div class="label">HC</div></div>
                     <div class="menu-btn" onclick="hudSystem.handleMenuAction('cruise')" data-mode="cruise"><div class="key-hint">—</div><div class="label">CRUISE</div></div>

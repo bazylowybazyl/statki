@@ -1,577 +1,476 @@
 import * as THREE from "three";
 
-// --- SHADERS (GLSL) ---
-
-const shockVertex = `
-    varying vec2 vUv;
-    void main() {
-        vUv = uv;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+// --- BAZOWY SZUM GLSL ---
+const noiseChunk = `
+    float hash(float n) { return fract(sin(n) * 43758.5453123); }
+    float noise(vec3 x) {
+        vec3 p = floor(x);
+        vec3 f = fract(x);
+        f = f * f * (3.0 - 2.0 * f);
+        float n = p.x + p.y * 57.0 + 113.0 * p.z;
+        return mix(mix(mix(hash(n + 0.0), hash(n + 1.0), f.x),
+                       mix(hash(n + 57.0), hash(n + 58.0), f.x), f.y),
+                   mix(mix(hash(n + 113.0), hash(n + 114.0), f.x),
+                       mix(hash(n + 170.0), hash(n + 171.0), f.x), f.y), f.z);
+    }
+    float fbm(vec3 p) {
+        float f = 0.0;
+        f += 0.5000 * noise(p); p *= 2.02;
+        f += 0.2500 * noise(p); p *= 2.03;
+        f += 0.1250 * noise(p); p *= 2.01;
+        return f;
     }
 `;
 
-const shockFragment = `
-    uniform float progress;
-    uniform float uGlobalFade;
-    uniform float uOpacity; 
-    varying vec2 vUv;
-    
-    void main() {
-        // Dystans od środka UV (0.5, 0.5)
-        float dist = distance(vUv, vec2(0.5));
+// --- ADDITIVE PARTICLE MANAGER (Światło, Iskry, Ring, Kolce) ---
+class GPUInstancedParticleManager {
+    constructor(scene, maxParticles, blendingType) {
+        this.maxParticles = maxParticles;
+        this.activeIndex = 0; 
         
-        // Ring effect
-        float ringWidth = 0.15;
-        float ringRadius = 0.5 * progress; // Rośnie z czasem
+        const baseGeo = new THREE.PlaneGeometry(1, 1);
+        const geo = new THREE.InstancedBufferGeometry();
+        geo.index = baseGeo.index;
+        geo.setAttribute('position', baseGeo.attributes.position);
+        geo.setAttribute('uv', baseGeo.attributes.uv);
+
+        this.startPos = new Float32Array(maxParticles * 3);
+        this.startVel = new Float32Array(maxParticles * 3);
+        this.dataInfo = new Float32Array(maxParticles * 4); 
         
-        // Kształt pierścienia
-        float ring = smoothstep(ringRadius, ringRadius - 0.05, dist) * smoothstep(ringRadius - ringWidth, ringRadius - 0.02, dist);
-        
-        // Iskry/Szum w pierścieniu
-        float sparks = sin(vUv.x * 80.0 + progress * 30.0) * 0.5 + 0.5;
-        ring *= (0.6 + sparks * 0.4);
+        geo.setAttribute('aStartPos', new THREE.InstancedBufferAttribute(this.startPos, 3));
+        geo.setAttribute('aStartVel', new THREE.InstancedBufferAttribute(this.startVel, 3));
+        geo.setAttribute('aData', new THREE.InstancedBufferAttribute(this.dataInfo, 4));
+        geo.instanceCount = maxParticles;
 
-        vec3 color = vec3(0.1, 0.9, 1.0) * 3.0; // Bardzo jasny cyjan
-        
-        float fade = 1.0 - smoothstep(0.5, 1.0, progress);
-        float alpha = ring * fade * uGlobalFade * uOpacity;
-        
-        if (alpha < 0.01) discard;
+        this.material = new THREE.ShaderMaterial({
+            uniforms: { uTime: { value: 0 } },
+            vertexShader: `
+                attribute vec3 aStartPos;
+                attribute vec3 aStartVel;
+                attribute vec4 aData; 
+                
+                uniform float uTime;
+                
+                varying vec3 vColor;
+                varying float vAlpha;
+                varying vec2 vUv;
+                varying float vType;
+                varying float vAgeNorm;
 
-        gl_FragColor = vec4(color, alpha);
-    }
-`;
+                float hash(float n) { return fract(sin(n) * 43758.5453123); }
 
-// --- ZASOBY WSPÓŁDZIELONE (SINGLETON) ---
-const sharedResources = {
-  textures: { glow: null, spark: null, glowNew: null },
-  geometries: {
-    sphere: null, 
-    torusImplosion: null, 
-    planeShock: null, 
-    planeGlow: null, 
-    spike: null,
-  }
-};
+                void main() {
+                    vUv = uv;
+                    vType = aData.w; 
+                    float startTime = aData.x;
+                    float maxLife = aData.y;
+                    float age = uTime - startTime;
 
-function ensureResources() {
-  if (!sharedResources.textures.glow) sharedResources.textures.glow = makeSoftGlow(64, "rgba(255,255,255,1)", "rgba(100,220,255,0.4)");
-  if (!sharedResources.textures.glowNew) sharedResources.textures.glowNew = makeSoftGlow(128, "rgba(0, 200, 255, 1)", "rgba(0, 50, 255, 0.2)");
-  if (!sharedResources.textures.spark) sharedResources.textures.spark = makeSparkTexture(64);
+                    if (age < 0.0 || age > maxLife) {
+                        gl_Position = vec4(9999.0, 9999.0, 9999.0, 1.0);
+                        return;
+                    }
 
-  // Zmniejszone geometrie bazowe (Unit size ~1.0)
-  if (!sharedResources.geometries.sphere) sharedResources.geometries.sphere = new THREE.SphereGeometry(0.5, 16, 16);
-  if (!sharedResources.geometries.torusImplosion) sharedResources.geometries.torusImplosion = new THREE.TorusGeometry(1.5, 0.05, 8, 50);
-  
-  if (!sharedResources.geometries.planeShock) sharedResources.geometries.planeShock = new THREE.PlaneGeometry(1, 1);
-  if (!sharedResources.geometries.planeGlow) sharedResources.geometries.planeGlow = new THREE.PlaneGeometry(1, 1);
-  
-  if (!sharedResources.geometries.spike) {
-    // Stożek/Kolec: promień góry 0, dołu 0.1, wysokość 1
-    sharedResources.geometries.spike = new THREE.CylinderGeometry(0, 0.1, 1, 4); 
-    sharedResources.geometries.spike.translate(0, 0.5, 0); // Pivot u podstawy
-    sharedResources.geometries.spike.rotateX(Math.PI / 2); // Obrót, by celował w bok (na płaszczyźnie)
-  }
-}
+                    float ratio = 1.0 - (age / maxLife); 
+                    vAgeNorm = age / maxLife; 
+                    
+                    vec3 pos = aStartPos + aStartVel * age;
+                    float currentSize = aData.z; 
+                    float stretchFactor = 1.0;
+                    vec4 mvPosition;
 
-function createFighterBlowInstance(scene, { x = 0, y = 0, size = 24 } = {}) {
-  const group = new THREE.Group();
-  group.position.set(x, 0, y);
-  group.scale.setScalar(size);
-  group.renderOrder = 9999;
-  scene.add(group);
+                    if (vType < 4.5) { // 4: KOLCE (SPIKES) & ISKRY
+                        float drag = 3.5 + hash(aData.x) * 2.0; 
+                        pos = aStartPos + aStartVel * ((1.0 - exp(-age * drag)) / drag);
+                        
+                        vec3 currentVel = aStartVel * exp(-age * drag);
+                        float speed = length(currentVel);
+                        
+                        // Oślepiająca biel z lodowym błękitem na końcu
+                        vec3 hot = vec3(1.0, 1.0, 1.0) * 5.0;
+                        vec3 cold = vec3(0.0, 0.4, 1.0) * 2.0; 
+                        vColor = mix(hot, cold, pow(vAgeNorm, 0.5)); 
+                        
+                        vAlpha = pow(ratio, 0.5) * 1.5; 
+                        
+                        mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                        
+                        vec3 viewVel = (modelViewMatrix * vec4(currentVel, 0.0)).xyz;
+                        vec2 dir = normalize(viewVel.xy);
+                        if (length(viewVel.xy) < 0.1) dir = vec2(0.0, 1.0);
 
-  const flashMat = new THREE.MeshBasicMaterial({
-    map: sharedResources.textures.glowNew,
-    transparent: true,
-    opacity: 0,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    depthTest: false,
-    toneMapped: false
-  });
-  const flash = new THREE.Mesh(sharedResources.geometries.planeGlow, flashMat);
-  flash.rotation.x = -Math.PI / 2;
-  flash.scale.set(1.5, 1.5, 1);
-  group.add(flash);
+                        float width = aData.z;
+                        float stretch = aData.z * speed * 0.003; // Rozciągnięcie
+                        
+                        float tailFactor = 0.5 - position.y; 
+                        
+                        vec2 scaledOffset;
+                        scaledOffset.x = position.x * width;
+                        scaledOffset.y = -tailFactor * stretch; 
+                        
+                        vec2 rotatedOffset;
+                        rotatedOffset.x = scaledOffset.x * dir.y + scaledOffset.y * dir.x;
+                        rotatedOffset.y = -scaledOffset.x * dir.x + scaledOffset.y * dir.y;
+                        
+                        mvPosition.xy += rotatedOffset;
+                    }
+                    else if (vType < 5.5) { // 5: ANAMORPHIC CORE (Rdzeń i Błysk)
+                        currentSize = aData.z * (0.5 + vAgeNorm * 0.5);
+                        vColor = vec3(0.2, 0.8, 1.0) * 10.0; // Cyjanowy Overdrive
+                        vAlpha = pow(ratio, 3.0); 
+                        
+                        mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                        mvPosition.xy += position.xy * currentSize;
+                    }
+                    else { // 6: FRACTAL ENERGY RING (Pierścień uderzeniowy płasko na ziemi)
+                        float waveCurve = pow(vAgeNorm, 0.4); 
+                        currentSize = aData.z * waveCurve;
+                        vColor = vec3(0.0, 0.8, 1.0) * 4.0; // Cyjan
+                        vAlpha = pow(1.0 - vAgeNorm, 1.5); 
+                        
+                        vec3 flatPos = pos;
+                        flatPos.x += position.x * currentSize;
+                        // Orientacja pozioma (Zamiana Y na Z by leżało na płaszczyźnie XZ)
+                        flatPos.z += position.y * currentSize; 
+                        mvPosition = modelViewMatrix * vec4(flatPos, 1.0);
+                    }
 
-  const ringMat = new THREE.ShaderMaterial({
-    vertexShader: shockVertex,
-    fragmentShader: shockFragment,
-    uniforms: {
-      progress: { value: 0 },
-      uGlobalFade: { value: 1.0 },
-      uOpacity: { value: 0.75 }
-    },
-    transparent: true,
-    side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    depthTest: false
-  });
-  const ring = new THREE.Mesh(sharedResources.geometries.planeShock, ringMat);
-  ring.rotation.x = -Math.PI / 2;
-  ring.scale.set(1.6, 1.6, 1);
-  group.add(ring);
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                varying vec3 vColor;
+                varying float vAlpha;
+                varying vec2 vUv;
+                varying float vType; 
+                varying float vAgeNorm;
+                uniform float uTime;
+                
+                ${noiseChunk}
 
-  const sparkCount = 18;
-  const sparkGeo = new THREE.BufferGeometry();
-  const sparkPos = new Float32Array(sparkCount * 3);
-  const sparkVel = new Float32Array(sparkCount * 3);
-  for (let i = 0; i < sparkCount; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const speed = 0.9 + Math.random() * 1.8;
-    const i3 = i * 3;
-    sparkVel[i3] = Math.cos(angle) * speed;
-    sparkVel[i3 + 1] = 0.08 + Math.random() * 0.18;
-    sparkVel[i3 + 2] = Math.sin(angle) * speed;
-  }
-  sparkGeo.setAttribute("position", new THREE.BufferAttribute(sparkPos, 3));
-  const sparkMat = new THREE.PointsMaterial({
-    color: 0xffffff,
-    size: 4.0,
-    map: sharedResources.textures.spark,
-    transparent: true,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    depthTest: false,
-    toneMapped: false
-  });
-  const sparks = new THREE.Points(sparkGeo, sparkMat);
-  group.add(sparks);
+                void main() {
+                    vec2 uv = vUv - vec2(0.5);
+                    float dist = length(uv) * 2.0; 
 
-  let time = 0;
-  let disposed = false;
-  const TOTAL_TIME = 0.55;
-
-  function update(dt) {
-    if (disposed) return;
-    time += dt;
-    const progress = Math.min(1, time / TOTAL_TIME);
-    if (progress >= 1) {
-      dispose();
-      return;
-    }
-
-    const fade = 1.0 - progress;
-    flashMat.opacity = Math.max(0, (1.0 - progress * 1.25) * 0.95);
-    const flashScale = 1.2 + progress * 4.2;
-    flash.scale.set(flashScale, flashScale, 1);
-
-    ringMat.uniforms.progress.value = Math.min(1.0, progress * 1.35);
-    ringMat.uniforms.uGlobalFade.value = 1.0 - Math.pow(progress, 1.6);
-    const ringScale = 1.4 + progress * 5.6;
-    ring.scale.set(ringScale, ringScale, 1);
-
-    const positions = sparkGeo.attributes.position.array;
-    for (let i = 0; i < sparkCount; i++) {
-      const i3 = i * 3;
-      sparkVel[i3] *= 0.92;
-      sparkVel[i3 + 1] = Math.max(-0.04, sparkVel[i3 + 1] - dt * 0.32);
-      sparkVel[i3 + 2] *= 0.92;
-      positions[i3] += sparkVel[i3] * dt * 42;
-      positions[i3 + 1] += sparkVel[i3 + 1] * dt * 42;
-      positions[i3 + 2] += sparkVel[i3 + 2] * dt * 42;
-    }
-    sparkGeo.attributes.position.needsUpdate = true;
-    sparkMat.opacity = Math.max(0, fade * fade);
-  }
-
-  function dispose() {
-    if (disposed) return;
-    disposed = true;
-    if (group.parent) group.parent.remove(group);
-    flashMat.dispose();
-    ringMat.dispose();
-    sparkGeo.dispose();
-    sparkMat.dispose();
-  }
-
-  return { group, update, dispose };
-}
-
-export function createReactorBlowFactory(scene) {
-  ensureResources();
-
-  return function spawn({ x = 0, y = 0, size = 100, profile = "capital" } = {}) {
-    if (profile === "fighter") {
-      return createFighterBlowInstance(scene, { x, y, size });
-    }
-    // DEBUG: Potwierdzenie spawnu
-    // console.log(`ReactorBlow spawned at: ${x}, ${y} with size: ${size}`);
-
-    const group = new THREE.Group();
-    
-    // --- KLUCZOWA POPRAWKA POZYCJI ---
-    // Mapujemy 2D (x, y) gry na 3D (x, 0, z)
-    // Dzięki temu obiekt leży na płaszczyźnie, na którą patrzy kamera
-    group.position.set(x, 0, y); 
-    
-    // Skala: size to promień w jednostkach gry.
-    const scaleFactor = size; 
-    group.scale.setScalar(scaleFactor);
-    
-    // RenderOrder: wymusza rysowanie NA WIERZCHU wszystkiego innego (poza UI)
-    group.renderOrder = 9999;
-
-    scene.add(group);
-
-    // --- FAZA 1: RDZEŃ & IMPLOZJA ---
-    // depthTest: false -> widać przez ściany/inne obiekty
-    const coreMaterial = new THREE.MeshBasicMaterial({ 
-        color: 0x00ffff, 
-        toneMapped: false, 
-        transparent: true,
-        depthTest: false 
-    });
-    const core = new THREE.Mesh(sharedResources.geometries.sphere, coreMaterial);
-    group.add(core);
-
-    const implosionMat = new THREE.MeshBasicMaterial({ 
-        color: 0x00ffff, 
-        transparent: true, 
-        opacity: 0,
-        depthTest: false 
-    });
-    const implosionRing = new THREE.Mesh(sharedResources.geometries.torusImplosion, implosionMat);
-    // Obrót, by leżał płasko na XZ
-    implosionRing.rotation.x = Math.PI / 2;
-    implosionRing.scale.set(0, 0, 0);
-    group.add(implosionRing);
-
-    // Błyskawice
-    const lightningPos = new Float32Array(40 * 2 * 3);
-    const lightningGeo = new THREE.BufferGeometry();
-    lightningGeo.setAttribute('position', new THREE.BufferAttribute(lightningPos, 3));
-    const lightningMat = new THREE.LineBasicMaterial({ 
-        color: 0x88ffff, 
-        transparent: true, 
-        opacity: 0.8, 
-        blending: THREE.AdditiveBlending,
-        depthTest: false
-    });
-    const lightning = new THREE.LineSegments(lightningGeo, lightningMat);
-    lightning.visible = false;
-    group.add(lightning);
-
-    // Cząsteczki wciągane
-    const pCount = 200;
-    const pGeo = new THREE.BufferGeometry();
-    const pPos = new Float32Array(pCount * 3);
-    for(let i=0; i<pCount; i++) {
-        const angle = Math.random() * Math.PI * 2;
-        const r = 1.5 + Math.random();
-        // Rozkład na płaszczyźnie XZ
-        pPos[i*3] = Math.cos(angle) * r;     // X
-        pPos[i*3+1] = 0;                     // Y (płasko)
-        pPos[i*3+2] = Math.sin(angle) * r;   // Z
-    }
-    pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-    const particlesMat = new THREE.PointsMaterial({
-        color: 0x00ffff, 
-        size: 8.0, 
-        map: sharedResources.textures.glow,
-        blending: THREE.AdditiveBlending, 
-        depthWrite: false, 
-        depthTest: false, // Ważne
-        transparent: true, 
-        opacity: 0
-    });
-    const particles = new THREE.Points(pGeo, particlesMat);
-    group.add(particles);
-
-    const light = new THREE.PointLight(0x00ffff, 0, size * 2);
-    light.position.set(0, 10, 0); // Lekko nad ziemią
-    group.add(light);
-
-    // --- FAZA 3: EKSPLOZJA ---
-    const explosionGroup = new THREE.Group();
-    explosionGroup.visible = false;
-    group.add(explosionGroup);
-
-    // Kolce (Spikes)
-    const spikeCount = 16;
-    const spikeGroup = new THREE.Group();
-    const spikeMat = new THREE.MeshBasicMaterial({ 
-        color: 0xffffff, 
-        transparent: true, 
-        opacity: 1, 
-        blending: THREE.AdditiveBlending, 
-        depthWrite: false,
-        depthTest: false
-    });
-    const spikes = [];
-    for(let i=0; i<spikeCount; i++) {
-        const mesh = new THREE.Mesh(sharedResources.geometries.spike, spikeMat);
-        // Obracamy wokół osi Y (płaszczyzna XZ)
-        mesh.rotation.y = Math.random() * Math.PI * 2;
-        mesh.userData = {
-            maxScaleY: 1.5 + Math.random() * 1.5,
-            widthScale: 0.5 + Math.random() * 1.0
-        };
-        mesh.scale.set(0,0,0);
-        spikeGroup.add(mesh);
-        spikes.push(mesh);
-    }
-    explosionGroup.add(spikeGroup);
-
-    // Fala uderzeniowa (Shockwave)
-    const ring1Mat = new THREE.ShaderMaterial({
-        vertexShader: shockVertex, fragmentShader: shockFragment,
-        uniforms: {
-            progress: { value: 0 },
-            uGlobalFade: { value: 1.0 },
-            uOpacity: { value: 1.0 }
-        },
-        transparent: true, 
-        side: THREE.DoubleSide, 
-        blending: THREE.AdditiveBlending, 
-        depthWrite: false,
-        depthTest: false
-    });
-    const ring1 = new THREE.Mesh(sharedResources.geometries.planeShock, ring1Mat);
-    ring1.rotation.x = -Math.PI / 2; // Płasko na ziemi
-    ring1.scale.set(4, 4, 1); 
-    explosionGroup.add(ring1);
-
-    const glowMat = new THREE.MeshBasicMaterial({
-        map: sharedResources.textures.glowNew, 
-        transparent: true, 
-        opacity: 0, 
-        blending: THREE.AdditiveBlending, 
-        depthWrite: false,
-        depthTest: false
-    });
-    const glowSprite = new THREE.Mesh(sharedResources.geometries.planeGlow, glowMat);
-    glowSprite.rotation.x = -Math.PI / 2; // Płasko na ziemi
-    glowSprite.scale.set(5, 5, 1);
-    explosionGroup.add(glowSprite);
-
-    // Iskry
-    const sparkCount = 120;
-    const sparkPos = new Float32Array(sparkCount * 3);
-    const sparkVel = [];
-    for(let i=0; i<sparkCount; i++) {
-        const speed = 0.5 + Math.random() * 1.5; 
-        const angle = Math.random() * Math.PI * 2;
-        // Rozrzut w płaszczyźnie XZ
-        sparkVel.push({
-            x: Math.cos(angle) * speed,
-            y: (Math.random()) * 0.5, // Lekko w górę
-            z: Math.sin(angle) * speed
+                    if (vType < 4.5) { // ISKRY & KOLCE
+                        vec2 pt = vUv - vec2(0.5);
+                        float glowX = pow(max(0.0, 0.5 - abs(pt.x)) * 2.0, 3.0);
+                        
+                        // Zaokrąglone końce
+                        float fadeY = smoothstep(1.0, 0.8, vUv.y) * smoothstep(0.0, 0.2, vUv.y); 
+                        float baseAlpha = glowX * fadeY;
+                        
+                        // Efekt brokatu / iskrzenia
+                        float twinkle = pow(sin(uTime * 30.0 + vColor.g * 100.0 + pt.x * 10.0), 2.0);
+                        float twinkleBlend = smoothstep(0.05, 0.15, vAgeNorm); 
+                        baseAlpha *= mix(1.0, twinkle, twinkleBlend);
+                        
+                        gl_FragColor = vec4(vColor, baseAlpha * vAlpha);
+                    }
+                    else if (vType < 5.5) { // ANAMORPHIC CORE
+                        float core = max(0.0, 1.0 - smoothstep(0.0, 0.3, dist));
+                        float flareY = max(0.0, 1.0 - smoothstep(0.0, 0.02, abs(uv.y)));
+                        float flareX = max(0.0, 1.0 - smoothstep(0.0, 0.5, abs(uv.x)));
+                        float flare = flareY * flareX * 2.0;
+                        float aura = max(0.0, 1.0 - dist);
+                        
+                        float finalIntensity = max(0.0, core + flare + aura * 0.3);
+                        gl_FragColor = vec4(vColor * finalIntensity, finalIntensity * vAlpha);
+                    }
+                    else { // FRACTAL ENERGY RING
+                        if(dist > 1.0) discard;
+                        float ringShape = max(0.0, 1.0 - smoothstep(0.0, 0.15, abs(dist - 0.7))); 
+                        float angle = atan(uv.y, uv.x);
+                        float n = fbm(vec3(angle * 10.0, dist * 5.0 - uTime * 2.0, uTime));
+                        float finalRing = ringShape * (n * 2.5);
+                        float innerGlow = max(0.0, smoothstep(0.0, 0.8, dist)) * 0.2;
+                        
+                        gl_FragColor = vec4(vColor, (finalRing + innerGlow) * vAlpha);
+                    }
+                }
+            `,
+            blending: blendingType,
+            depthWrite: false, 
+            depthTest: false, 
+            transparent: true
         });
-    }
-    const sparkGeo = new THREE.BufferGeometry();
-    sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
-    const sparks = new THREE.Points(sparkGeo, new THREE.PointsMaterial({
-        color: 0xffffff, 
-        size: 6.0, 
-        map: sharedResources.textures.spark, 
-        transparent: true, 
-        blending: THREE.AdditiveBlending, 
-        depthWrite: false,
-        depthTest: false
-    }));
-    explosionGroup.add(sparks);
 
-    // --- LOGIKA ANIMACJI ---
-    let time = 0;
-    let disposed = false;
-    
-    const CHARGE_TIME = 1.8;
-    const IMPLOSION_DURATION = 0.6;
-    const EXPLOSION_DURATION = 3.0; 
-    const TOTAL_IMPLOSION_END = CHARGE_TIME + IMPLOSION_DURATION;
-
-    function updateLightning(radius) {
-        const positions = lightningGeo.attributes.position.array;
-        for (let i = 0; i < 40; i++) {
-            const jit = 0.1;
-            // Centrum (jitter wokół 0,0,0)
-            positions[i*6] = (Math.random()-0.5) * jit;
-            positions[i*6+1] = (Math.random()-0.5) * jit;
-            positions[i*6+2] = (Math.random()-0.5) * jit;
-            
-            // Koniec linii na obwodzie (XZ)
-            const r = radius * (0.8 + Math.random()*0.4);
-            const angle = Math.random() * Math.PI * 2;
-            positions[i*6+3] = Math.cos(angle) * r;
-            positions[i*6+4] = (Math.random()-0.5) * jit; // Płasko
-            positions[i*6+5] = Math.sin(angle) * r;
-        }
-        lightningGeo.attributes.position.needsUpdate = true;
-        lightningMat.opacity = Math.random();
+        this.mesh = new THREE.Mesh(geo, this.material);
+        this.mesh.frustumCulled = false; 
+        this.mesh.renderOrder = 1000; 
+        scene.add(this.mesh);
     }
 
-    function suckParticles(factor) {
-        const positions = particles.geometry.attributes.position.array;
-        for(let i=0; i < positions.length; i+=3) {
-            positions[i] *= factor;
-            // Y zostawiamy bez zmian lub minimalnie
-            positions[i+2] *= factor;
-        }
-        particles.geometry.attributes.position.needsUpdate = true;
-        particles.material.color.setHex(0xffffff);
-        particles.material.opacity = 0.8;
+    spawn(x, y, z, vx, vy, vz, size, life, type, globalTime) {
+        let i = this.activeIndex;
+        this.activeIndex = (this.activeIndex + 1) % this.maxParticles;
+        let i3 = i * 3, i4 = i * 4;
+        
+        this.startPos[i3]=x; this.startPos[i3+1]=y; this.startPos[i3+2]=z;
+        this.startVel[i3]=vx; this.startVel[i3+1]=vy; this.startVel[i3+2]=vz;
+        
+        this.dataInfo[i4] = globalTime;     
+        this.dataInfo[i4+1] = life;         
+        this.dataInfo[i4+2] = size;         
+        this.dataInfo[i4+3] = type;         
+        
+        const geo = this.mesh.geometry;
+        geo.attributes.aStartPos.needsUpdate = true;
+        geo.attributes.aStartVel.needsUpdate = true;
+        geo.attributes.aData.needsUpdate = true;
     }
-
-    function update(dt) {
-      if (disposed) return;
-      time += dt;
-
-      // 1. ŁADOWANIE
-      if (time < CHARGE_TIME) {
-        const t = time / CHARGE_TIME;
-        const pulse = 1.0 + Math.sin(time * 15) * 0.1 * t;
-        core.scale.setScalar(pulse);
-        
-        const lightness = 0.5 + t * 0.5;
-        core.material.color.setHSL(0.5, 1.0, lightness);
-        
-        lightning.visible = true;
-        updateLightning(1.2 + t * 0.5);
-        
-        light.intensity = t * 2.0;
-        
-        particles.material.opacity = Math.min(1, t * 2.0);
-      } 
-      // 2. IMPLOZJA
-      else if (time < TOTAL_IMPLOSION_END) {
-        const localTime = time - CHARGE_TIME;
-        const progress = localTime / IMPLOSION_DURATION;
-        
-        if (progress < 0.5) {
-            const s = progress * 2.0; 
-            implosionRing.scale.setScalar(s);
-            implosionRing.material.opacity = progress * 2.0;
-        } else {
-            const s = (1.0 - progress) * 4.0; 
-            implosionRing.scale.setScalar(s);
-        }
-        
-        core.scale.setScalar(Math.max(0.01, 1.0 - progress));
-        suckParticles(0.85);
-        lightning.visible = progress < 0.8;
-      } 
-      // 3. EKSPLOZJA
-      else {
-        const explosionTime = time - TOTAL_IMPLOSION_END;
-        const progress = explosionTime / EXPLOSION_DURATION;
-
-        if (progress >= 1.0) {
-            dispose();
-            return;
-        }
-
-        if (!explosionGroup.visible) {
-            explosionGroup.visible = true;
-            core.visible = false;
-            lightning.visible = false;
-            implosionRing.visible = false;
-            particles.visible = false;
-        }
-
-        const globalFade = 1.0 - Math.pow(progress, 3.0);
-
-        ring1Mat.uniforms.progress.value = progress;
-        ring1Mat.uniforms.uGlobalFade.value = globalFade;
-        const ringScale = 1.0 + progress * 5.0;
-        ring1.scale.set(ringScale * 4, ringScale * 4, 1);
-
-        glowMat.opacity = (1.0 - progress) * 0.8;
-        glowSprite.scale.setScalar(2.0 + progress * 8.0);
-
-        const spikeGrow = Math.min(1.0, explosionTime * 10.0);
-        const spikeFade = Math.max(0, 1.0 - progress * 1.2);
-        
-        for(let i=0; i<spikeCount; i++) {
-            const m = spikes[i];
-            m.scale.set(
-                m.userData.widthScale * spikeGrow * spikeFade, 
-                m.userData.maxScaleY * spikeGrow * spikeFade, 
-                m.userData.widthScale * spikeGrow * spikeFade
-            );
-        }
-        spikeMat.opacity = spikeFade;
-
-        const spkPos = sparks.geometry.attributes.position.array;
-        for(let i=0; i<sparkVel.length; i++) {
-            const vel = sparkVel[i];
-            vel.x *= 0.95; 
-            vel.z *= 0.95; // Opór na XZ
-            
-            spkPos[i*3]   += vel.x * dt * 60; 
-            spkPos[i*3+1] += vel.y * dt * 60;
-            spkPos[i*3+2] += vel.z * dt * 60;
-        }
-        sparks.geometry.attributes.position.needsUpdate = true;
-        
-        const sparkFade = Math.max(0, 1.0 - progress * 1.5);
-        sparks.material.opacity = sparkFade;
-
-        light.intensity = (1.0 - progress) * 5.0;
-      }
-    }
-
-    function dispose() {
-      if (disposed) return;
-      disposed = true;
-      if (group.parent) group.parent.remove(group);
-      
-      coreMaterial.dispose(); 
-      implosionMat.dispose(); 
-      lightningGeo.dispose(); lightningMat.dispose();
-      particlesMat.dispose(); pGeo.dispose();
-      
-      ring1Mat.dispose(); 
-      glowMat.dispose(); 
-      
-      spikeMat.dispose(); 
-      sparks.geometry.dispose(); sparks.material.dispose();
-    }
-
-    return { group, update, dispose };
-  };
 }
 
-// --- HELPERY ---
+// --- NORMAL BLENDING PARTICLE MANAGER (Mroczna Fala Uderzeniowa na ziemi) ---
+class GPUParticleManager {
+    constructor(scene, maxParticles, blendingType) {
+        this.maxParticles = maxParticles;
+        this.activeIndex = 0; 
+        
+        const baseGeo = new THREE.PlaneGeometry(1, 1);
+        const geo = new THREE.InstancedBufferGeometry();
+        geo.index = baseGeo.index;
+        geo.setAttribute('position', baseGeo.attributes.position);
+        geo.setAttribute('uv', baseGeo.attributes.uv);
 
-function makeSoftGlow(size, colorCore, colorOuter) {
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  const center = size / 2;
-  const gradient = ctx.createRadialGradient(center, center, 0, center, center, center);
-  gradient.addColorStop(0, colorCore);
-  gradient.addColorStop(0.2, colorCore);
-  gradient.addColorStop(0.5, colorOuter);
-  gradient.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, size, size);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
+        this.startPos = new Float32Array(maxParticles * 3);
+        this.startVel = new Float32Array(maxParticles * 3);
+        this.dataInfo = new Float32Array(maxParticles * 4); 
+        
+        geo.setAttribute('aStartPos', new THREE.InstancedBufferAttribute(this.startPos, 3));
+        geo.setAttribute('aStartVel', new THREE.InstancedBufferAttribute(this.startVel, 3));
+        geo.setAttribute('aData', new THREE.InstancedBufferAttribute(this.dataInfo, 4));
+        geo.instanceCount = maxParticles;
+
+        this.material = new THREE.ShaderMaterial({
+            uniforms: { uTime: { value: 0 } },
+            vertexShader: `
+                attribute vec3 aStartPos;
+                attribute vec3 aStartVel;
+                attribute vec4 aData; 
+                uniform float uTime;
+
+                varying vec3 vColor;
+                varying float vAlpha;
+                varying vec2 vUv;
+                varying float vAgeNorm;
+
+                void main() {
+                    vUv = uv;
+                    float startTime = aData.x;
+                    float maxLife = aData.y;
+                    float age = uTime - startTime;
+
+                    if (age < 0.0 || age > maxLife) {
+                        gl_Position = vec4(9999.0, 9999.0, 9999.0, 1.0);
+                        return;
+                    }
+
+                    vAgeNorm = age / maxLife; 
+                    float waveCurve = pow(vAgeNorm, 0.4); 
+                    float currentSize = aData.z * waveCurve;
+                    
+                    vColor = vec3(0.02, 0.05, 0.1); // Mroczny granat reaktora
+                    vAlpha = pow(1.0 - vAgeNorm, 2.0) * 0.9; 
+                    
+                    vec3 flatPos = aStartPos;
+                    flatPos.x += position.x * currentSize;
+                    // Orientacja pozioma na płaszczyźnie XZ
+                    flatPos.z += position.y * currentSize; 
+                    vec4 mvPosition = modelViewMatrix * vec4(flatPos, 1.0);
+
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                varying vec3 vColor;
+                varying float vAlpha;
+                varying vec2 vUv;
+                varying float vAgeNorm;
+                uniform float uTime;
+                
+                ${noiseChunk}
+
+                void main() {
+                    vec2 uv = vUv - vec2(0.5);
+                    float dist = length(uv) * 2.0; 
+                    if(dist > 1.0) discard;
+                    
+                    // SHOCKWAVE RING 
+                    float ringShape = max(0.0, 1.0 - smoothstep(0.0, 0.4, abs(dist - 0.7))); 
+                    float angle = atan(uv.y, uv.x);
+                    float n = fbm(vec3(angle * 12.0, dist * 3.0 - uTime, uTime * 0.5));
+                    
+                    float finalAlpha = ringShape * n * vAlpha;
+                    gl_FragColor = vec4(vColor, finalAlpha);
+                }
+            `,
+            blending: blendingType,
+            depthWrite: false, 
+            depthTest: false, 
+            transparent: true
+        });
+
+        this.mesh = new THREE.Mesh(geo, this.material);
+        this.mesh.frustumCulled = false; 
+        this.mesh.renderOrder = 999; 
+        scene.add(this.mesh);
+    }
+
+    spawn(x, y, z, vx, vy, vz, size, life, type, globalTime) {
+        let i = this.activeIndex;
+        this.activeIndex = (this.activeIndex + 1) % this.maxParticles;
+        let i3 = i * 3, i4 = i * 4;
+        
+        this.startPos[i3]=x; this.startPos[i3+1]=y; this.startPos[i3+2]=z;
+        this.startVel[i3]=vx; this.startVel[i3+1]=vy; this.startVel[i3+2]=vz;
+        
+        this.dataInfo[i4] = globalTime;     
+        this.dataInfo[i4+1] = life;         
+        this.dataInfo[i4+2] = size;         
+        this.dataInfo[i4+3] = type;         
+        
+        const geo = this.mesh.geometry;
+        geo.attributes.aStartPos.needsUpdate = true;
+        geo.attributes.aStartVel.needsUpdate = true;
+        geo.attributes.aData.needsUpdate = true;
+    }
 }
 
-function makeSparkTexture(size) {
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  const center = size / 2;
-  const gradient = ctx.createRadialGradient(center, center, 0, center, center, center);
-  gradient.addColorStop(0, "rgba(255, 255, 255, 1)");
-  gradient.addColorStop(0.4, "rgba(200, 240, 255, 0.2)");
-  gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, size, size);
-  ctx.fillStyle = "rgba(255, 255, 255, 1)";
-  ctx.beginPath();
-  ctx.ellipse(center, center, size * 0.45, size * 0.05, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(center, center, size * 0.45, size * 0.05, Math.PI / 2, 0, Math.PI * 2);
-  ctx.fill();
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
+// ============================================================================
+// GŁÓWNA FABRYKA EKSPLOZJI REAKTORA
+// ============================================================================
+export function createReactorBlowFactory(scene) {
+    // 1. Inicjalizujemy globalne pule cząstek dla całej sceny (Tylko raz!)
+    // Zwiększone bufory dla swobodnej destrukcji floty
+    const fireParticleSystem = new GPUInstancedParticleManager(scene, 100000, THREE.AdditiveBlending);
+    const smokeParticleSystem = new GPUParticleManager(scene, 15000, THREE.NormalBlending);
+
+    // 2. Zwracamy funkcję spawn
+    return function spawn({ x = 0, y = 0, size = 100, profile = "capital" } = {}) {
+        // Kontener zastępczy do wpięcia w Twoją logikę (jeśli system tego oczekuje)
+        const group = new THREE.Group();
+        group.position.set(x, 0, y);
+        scene.add(group);
+
+        // Skalowanie wielkości na bazie wejściowego "size"
+        let eSize = (size / 100) * 3.5;
+        if (profile === "fighter") eSize *= 0.3; // Myśliwce mają znacznie mniejszy wybuch
+
+        // Światło środowiskowe dla game feel (Oświetla błękitem sąsiednie statki)
+        const light = new THREE.PointLight(0x00ffff, 0, size * 15);
+        light.position.set(x, size * 0.5, y);
+        scene.add(light);
+
+        let time = 0;
+        let phase = 'CHARGE';
+        let disposed = false;
+
+        const CHARGE_TIME = 0.8;
+        const EXPLOSION_DURATION = 3.0; 
+
+        // Pozycja w 3D (Twoje 'y' z wejścia to z w Three.js)
+        const expX = x;
+        const expY = 5; // Minimalnie nad ziemią
+        const expZ = y;
+
+        // Odpalamy startowy efekt: CHARGE (Narastający rdzeń plazmy)
+        const initTime = performance.now() / 1000;
+        fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, 18000 * eSize, CHARGE_TIME + 0.1, 5, initTime);
+
+        // Zwracamy obiekt zgodny z Twoim interfejsem
+        function update(dt) {
+            if (disposed) return;
+            time += dt;
+
+            // Aktualizacja zegara w shaderach
+            const gt = performance.now() / 1000;
+            fireParticleSystem.material.uniforms.uTime.value = gt;
+            smokeParticleSystem.material.uniforms.uTime.value = gt;
+
+            // Obsługa oświetlenia
+            if (phase === 'CHARGE') {
+                light.intensity = (time / CHARGE_TIME) * 4.0;
+            } else {
+                const expTime = time - CHARGE_TIME;
+                light.intensity = Math.max(0, 15.0 * (1.0 - expTime / 1.5));
+            }
+
+            // FAZA DETONACJI
+            if (phase === 'CHARGE' && time >= CHARGE_TIME) {
+                phase = 'EXPLODE';
+
+                // 1. ANAMORPHIC FLASH (Oślepiający błysk poziomy)
+                fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, 60000 * eSize, 1.2, 5, gt);
+
+                // 2. FRACTAL ENERGY RING (Pierścień uderzeniowy reaktora - Cyan)
+                fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, 85000 * eSize, 1.5, 6, gt);
+
+                // 3. DARK OUTER SHOCKWAVE (Mroczna fala tnąca na płaszczyźnie)
+                smokeParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, 95000 * eSize, 1.6, 1, gt);
+
+                // 4. SPIKES (Gigantyczne, uciekające płasko promienie plazmy)
+                const spikeCount = profile === "fighter" ? 15 : 60;
+                for (let i = 0; i < spikeCount; i++) {
+                    const speed = (60000 + Math.random() * 60000) * eSize;
+                    const angle = Math.random() * Math.PI * 2;
+                    // Kolce rozchodzą się głównie płasko na XZ
+                    const vx = Math.cos(angle) * speed;
+                    const vy = (Math.random() - 0.5) * speed * 0.15; // Lekki rozrzut pionowy
+                    const vz = Math.sin(angle) * speed;
+
+                    fireParticleSystem.spawn(expX, expY, expZ, 
+                        vx, vy, vz, 
+                        (200 + Math.random() * 200) * eSize, // Bardzo grube
+                        0.3 + Math.random() * 0.2, // Krótki błysk
+                        4, gt);
+                }
+            }
+
+            // FAZA ISKIER (Minimalne opóźnienie po wybuchu by światło lekko zgasło)
+            if (phase === 'EXPLODE' && time >= CHARGE_TIME + 0.1) {
+                phase = 'SPARKS';
+
+                // 5. REACTOR SPARKS (Pełny, sferyczny rozrzut tysięcy drobin plazmy)
+                const sparkCount = profile === "fighter" ? 600 : 4000;
+                for (let i = 0; i < sparkCount; i++) {
+                    const speed = (20000 + Math.random() * 50000) * eSize;
+                    
+                    // Rozkład w pełni sferyczny (3D kula pyłu)
+                    const angle = Math.random() * Math.PI * 2;
+                    const phi = Math.acos(2 * Math.random() - 1);
+                    
+                    const vx = Math.sin(phi) * Math.cos(angle) * speed;
+                    const vy = Math.cos(phi) * speed;
+                    const vz = Math.sin(phi) * Math.sin(angle) * speed;
+
+                    fireParticleSystem.spawn(expX, expY, expZ,
+                        vx, vy, vz,
+                        (30 + Math.random() * 50) * eSize, 
+                        1.5 + Math.random() * 2.5, 
+                        4, gt); 
+                }
+            }
+
+            // ZAKOŃCZENIE CYKLU ŻYCIA
+            if (time > CHARGE_TIME + EXPLOSION_DURATION) {
+                dispose();
+            }
+        }
+
+        function dispose() {
+            if (disposed) return;
+            disposed = true;
+            
+            if (group.parent) group.parent.remove(group);
+            if (light.parent) light.parent.remove(light);
+            
+            // W instancjonowanym poolu NIE robimy .dispose() na geometriach ani materiałach, 
+            // ponieważ bufor używa ich ciągle do kolejnych wybuchów! 
+            // Usuwamy tylko obiekty pomocnicze (Light, Group).
+        }
+
+        return { group, update, dispose };
+    };
 }

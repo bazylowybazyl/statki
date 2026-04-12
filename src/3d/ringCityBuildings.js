@@ -588,7 +588,7 @@ function generateCellBuildingData(cell, ring) {
     // boundary — analogous to SynthCity's storefronts at every-other
     // intersection.  Uses the storefronts.obj geometry which contains
     // horizontal walkways and vertical pipes at multiple heights.
-    if ((cell.col % 2) === 0) {
+    if ((cell.col % 4) === 0) {
         const sfGeo = cloneSynthCityGeometry('storefronts');
         if (sfGeo) {
             const SF_SCALE = 3.0;
