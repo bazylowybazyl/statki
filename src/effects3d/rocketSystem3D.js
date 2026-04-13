@@ -194,6 +194,8 @@ function resolveRocketProfile(weaponDef) {
         explosionCoreType: explosionVfx === 'supernova' ? 13 : 3,
         explosionSparkType: explosionVfx === 'supernova' ? 14 : 4,
         shockwaveType: explosionVfx === 'supernova' ? 15 : 5,
+        anamorphicType: explosionVfx === 'supernova' ? 16 : 0,
+        fractalRingType: explosionVfx === 'supernova' ? 17 : 0,
         explosionStyle: explosionVfx === 'supernova' ? 'supernova' : 'default'
     };
 }
@@ -213,6 +215,7 @@ class RocketSystem3D {
         /* ── GPU particle systems ── */
         this.fireGPU  = new RocketFireGPU(overlayScene, 300000);
         this.smokeGPU = new RocketSmokeGPU(overlayScene, 200000);
+        this.heatHazeBursts = [];
 
         /* ── Rocket body InstancedMesh ── */
         const geo = new THREE.CylinderGeometry(
@@ -278,6 +281,8 @@ class RocketSystem3D {
                 explosionCoreType: 3,
                 explosionSparkType: 4,
                 shockwaveType: 5,
+                anamorphicType: 0,
+                fractalRingType: 0,
                 explosionStyle: "default",
                 didImpactDamage:false,
                 weaponDef:      null,
@@ -369,6 +374,8 @@ class RocketSystem3D {
         r.explosionCoreType = profile.explosionCoreType;
         r.explosionSparkType = profile.explosionSparkType;
         r.shockwaveType = profile.shockwaveType;
+        r.anamorphicType = profile.anamorphicType;
+        r.fractalRingType = profile.fractalRingType;
         r.explosionStyle = profile.explosionStyle;
         r.didImpactDamage = false;
         r.weaponDef       = weaponDef;
@@ -416,6 +423,7 @@ class RocketSystem3D {
         // Update GPU particle clocks FIRST (so spawned particles get correct time)
         this.fireGPU.update(this.globalTime);
         this.smokeGPU.update(this.globalTime);
+        this._updateHeatHaze(dt);
 
         // Pass zoom and DPR from the main game camera so smoke tracks the
         // real orthographic view instead of the intermediate overlay model.
@@ -719,6 +727,50 @@ class RocketSystem3D {
 
     /* ─────────────────── DAMAGE ─────────────────── */
 
+    _spawnHeatHazeBurst(x, z, radiusStart, radiusEnd, strength, life) {
+        this.heatHazeBursts.push({
+            x,
+            z,
+            age: 0,
+            life: Math.max(0.05, life || 0.6),
+            radiusStart: Math.max(1, radiusStart || 1),
+            radiusEnd: Math.max(1, radiusEnd || radiusStart || 1),
+            strength: Math.max(0, strength || 0)
+        });
+    }
+
+    _updateHeatHaze(dt) {
+        if (!this.heatHazeBursts.length) return;
+        const core = window.Core3D;
+        if (!core?.pushHeatHazeWorld || !core?.beginHeatHazeFrame) {
+            this.heatHazeBursts.length = 0;
+            return;
+        }
+
+        for (let i = this.heatHazeBursts.length - 1; i >= 0; i--) {
+            const burst = this.heatHazeBursts[i];
+            burst.age += dt;
+            if (burst.age >= burst.life) this.heatHazeBursts.splice(i, 1);
+        }
+        if (!this.heatHazeBursts.length) return;
+
+        const nowSec = performance.now() / 1000;
+        const lastStamp = Number(core._lastHeatHazeFrame) || -Infinity;
+        if (Math.abs(nowSec - lastStamp) > 0.003) {
+            core._lastHeatHazeFrame = nowSec;
+            core.beginHeatHazeFrame();
+        }
+
+        for (let i = 0; i < this.heatHazeBursts.length; i++) {
+            const burst = this.heatHazeBursts[i];
+            const t = THREE.MathUtils.clamp(burst.age / Math.max(0.001, burst.life), 0, 1);
+            const easeOut = 1.0 - Math.pow(1.0 - t, 3.0);
+            const radius = THREE.MathUtils.lerp(burst.radiusStart, burst.radiusEnd, easeOut);
+            const amp = Math.max(0, burst.strength * Math.pow(1.0 - t, 1.4));
+            if (amp > 0.001) core.pushHeatHazeWorld(burst.x, burst.z, -4, radius, amp);
+        }
+    }
+
     _onHit(r) {
         const target = r.target;
         if (!target || target.dead) return;
@@ -798,62 +850,64 @@ class RocketSystem3D {
         const coreType = r.explosionCoreType || 3;
         const sparkType = r.explosionSparkType || 4;
         const shockwaveType = r.shockwaveType || 5;
+        const anamorphicType = r.anamorphicType || 0;
+        const fractalRingType = r.fractalRingType || 0;
         const smokeType = r.smokeVfxType || 1;
 
         if (r.explosionStyle === "supernova") {
-            // Nova-style core flash inspired by nova.html: magenta core, cyan ring, chemical cloud.
-            this.fireGPU.spawn(ex, ey + 2 * eS, ez, 0, 0, 0, 320 * eS, 0.18, coreType);
-            this.fireGPU.spawn(ex, ey + 12 * eS, ez, 0, 0, 0, 540 * eS, 0.95, coreType);
-
-            for (let j = 0; j < 120; j++) {
-                const spd = (700 + Math.random() * 4200) * eS;
-                const theta = Math.random() * Math.PI * 2;
-                const phi = Math.acos(2 * Math.random() - 1);
-                const vx = spd * Math.sin(phi) * Math.cos(theta);
-                const vy = spd * Math.cos(phi);
-                const vz = spd * Math.sin(phi) * Math.sin(theta);
-                this.fireGPU.spawn(
-                    ex, ey, ez,
-                    vx, vy, vz,
-                    (42 + Math.random() * 60) * eS,
-                    0.32 + Math.random() * 0.55,
-                    coreType
+            const overlaySpawn = window.overlay3D?.spawn;
+            const supernovaFactory = window.makeSupernovaMissileBlow;
+            if (typeof overlaySpawn === "function" && typeof supernovaFactory === "function") {
+                const novaSize = Math.max(
+                    22,
+                    20 * Math.max(0.6, r.explosionVisualScale || 1) * Math.sqrt(Math.max(1, (r.blastRadius || 48) / 48))
                 );
+                const fx = supernovaFactory({ x: ex, y: ez, size: novaSize });
+                overlaySpawn.call(window.overlay3D, fx);
+                return;
             }
 
-            for (let j = 0; j < 110; j++) {
-                const spd = (2600 + Math.random() * 7200) * eS;
+            // Closer to nova.html: anamorphic flash + fractal ring + heat haze, with smoke heavily reduced.
+            const flashSize = Math.max(22, 360 * eS);
+            const ringSize = Math.max(34, 540 * eS);
+
+            if (anamorphicType) {
+                this.fireGPU.spawn(ex, ey + 4 * eS, ez, 0, 0, 0, flashSize, 0.95, anamorphicType);
+            }
+            if (fractalRingType) {
+                this.fireGPU.spawn(ex, ey + 2 * eS, ez, 0, 0, 0, ringSize, 1.2, fractalRingType);
+            }
+
+            this.fireGPU.spawn(ex, ey + 2 * eS, ez, 0, 0, 0, 220 * eS, 0.16, coreType);
+            this.fireGPU.spawn(ex, ey + 9 * eS, ez, 0, 0, 0, 300 * eS, 0.4, coreType);
+
+            for (let j = 0; j < 46; j++) {
+                const spd = (2200 + Math.random() * 5200) * eS;
                 const theta = Math.random() * Math.PI * 2;
                 const phi = Math.acos(2 * Math.random() - 1);
                 const vx = spd * Math.sin(phi) * Math.cos(theta);
-                const vy = spd * Math.cos(phi) * 0.55;
+                const vy = spd * Math.cos(phi) * 0.45;
                 const vz = spd * Math.sin(phi) * Math.sin(theta);
                 this.fireGPU.spawn(
-                    ex, ey + 8 * eS, ez,
+                    ex, ey + 6 * eS, ez,
                     vx, vy, vz,
-                    (8 + Math.random() * 16) * eS,
-                    0.55 + Math.random() * 0.45,
+                    (10 + Math.random() * 18) * eS,
+                    0.45 + Math.random() * 0.35,
                     sparkType
                 );
             }
 
-            for (let j = 0; j < 72; j++) {
-                const angle = Math.random() * Math.PI * 2;
-                const ringSpeed = (400 + Math.random() * 1800) * eS;
-                const vx = Math.cos(angle) * ringSpeed;
-                const vy = (20 + Math.random() * 100) * eS;
-                const vz = Math.sin(angle) * ringSpeed;
-                this.smokeGPU.spawn(
-                    ex, ey, ez,
-                    vx, vy, vz,
-                    (140 * eS + Math.random() * 260 * eS),
-                    1.9 + Math.random() * 1.8,
-                    smokeType
-                );
-            }
+            this.fireGPU.spawn(ex, ey + 1, ez, 0, 0, 0, Math.max(0.5, eS * 1.45), 0.8, shockwaveType);
+            this.fireGPU.spawn(ex, ey + 1, ez, 0, 0, 0, Math.max(0.32, eS * 0.92), 1.25, shockwaveType);
 
-            this.fireGPU.spawn(ex, ey + 1, ez, 0, 0, 0, Math.max(0.45, eS * 1.85), 0.95, shockwaveType);
-            this.fireGPU.spawn(ex, ey + 1, ez, 0, 0, 0, Math.max(0.28, eS * 1.05), 1.45, shockwaveType);
+            this._spawnHeatHazeBurst(
+                ex,
+                ez,
+                Math.max(80, r.blastRadius * 0.9),
+                Math.max(260, r.blastRadius * 5.5),
+                4.8,
+                0.85
+            );
         } else {
             // 1. FLASH — one big, short burst
             this.fireGPU.spawn(ex, ey, ez, 0, 0, 0, 250 * eS, 0.1, coreType);
@@ -887,7 +941,7 @@ class RocketSystem3D {
             }
 
             // 4. SMOKE — warm haze rising upward
-            for (let j = 0; j < 50; j++) {
+            for (let j = 0; j < 18; j++) {
                 const spd   = (100 + Math.random() * 1500) * eS;
                 const theta = Math.random() * Math.PI * 2;
                 const phi   = Math.acos(2 * Math.random() - 1);
@@ -896,8 +950,8 @@ class RocketSystem3D {
                 const vz = spd * Math.sin(phi) * Math.sin(theta);
 
                 this.smokeGPU.spawn(ex, ey, ez, vx, vy, vz,
-                    (100 * eS + Math.random() * 200 * eS),
-                    1.5 + Math.random() * 1.5, smokeType);
+                    (65 * eS + Math.random() * 110 * eS),
+                    0.7 + Math.random() * 0.7, smokeType);
             }
 
             // 5. SHOCKWAVE — expanding flat ring in XZ plane
