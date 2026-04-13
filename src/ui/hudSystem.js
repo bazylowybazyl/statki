@@ -219,7 +219,7 @@ export class HUDSystem {
             { key: '2', label: 'SPEC', weaponType: 'special' },
             { key: '3', label: 'MISS', weaponType: 'missile' },
             { key: '4', label: 'B-IN', weaponType: 'builtin' },
-            { key: '5', label: 'COMM', menuState: 'COMM' },
+            { key: '5', label: 'SP.MISS', weaponType: 'special_missile' },
             { key: 'CAPS', label: 'SCAN', menuState: 'SCAN' },
             { key: '6', label: 'MAP' },
             { key: '7', label: 'AUTO' },
@@ -281,8 +281,7 @@ export class HUDSystem {
         const btn1 = this.dom.skillRow?.querySelector('.glass-key[data-menu-state="MODE"]');
         if(btn1) btn1.addEventListener('click', () => this.setBottomMenuState('MODE'));
 
-        const btn2 = this.dom.skillRow?.querySelector('.glass-key[data-menu-state="COMM"]');
-        if(btn2) btn2.addEventListener('click', () => this.setBottomMenuState('COMM'));
+        // slot 5 is now SP.MISS weapon, no COMM menu
 
         const btn3 = this.dom.skillRow?.querySelector('.glass-key[data-menu-state="SCAN"]');
         if(btn3) btn3.addEventListener('click', () => this.setBottomMenuState('SCAN'));
@@ -321,12 +320,9 @@ export class HUDSystem {
             
             if (this.menuState === 'IDLE') {
                 if (digitKey === '8' || e.key === '8') this.setBottomMenuState('MODE');
-                if (digitKey === '5' || e.key === '5') this.setBottomMenuState('COMM');
                 if (e.code === 'CapsLock') this.setBottomMenuState('SCAN');
             } else if (this.menuState === 'MODE') {
                 if (digitKey === '8' || e.key === '8') this.handleMenuAction('close');
-            } else if (this.menuState === 'COMM') {
-                if (digitKey === '5' || e.key === '5') this.handleMenuAction('close');
             } else if (this.menuState === 'SCAN' || this.menuState === 'STATION') {
                 if (digitKey === '8' || e.key === '8') this.handleMenuAction('close');
                 if (e.key === '0' || e.key === 'Escape' || e.code === 'CapsLock') this.handleMenuAction('close');

@@ -1039,6 +1039,7 @@
     import { createArmataImpactFactory } from "./src/effects3d/armataImpact.js";
     import { createAutocannonImpactFactory } from "./src/effects3d/autocannonImpact.js";
     import { createReactorBlowFactory } from "./src/effects3d/reactorblow.js";
+    import { createSupernovaMissileBlowFactory } from "./src/effects3d/supernovaMissileBlow.js";
     import { initRocketSystem3D, updateRocketSystem3D, fireRocket3D } from "./src/effects3d/rocketSystem3D.js";
     import { WarpBlackHole } from "./src/vfx/warpBlackHole.js";
     import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
@@ -1098,6 +1099,7 @@
     window.createArmataImpactFactory = createArmataImpactFactory;
     window.createAutocannonImpactFactory = createAutocannonImpactFactory;
     window.createReactorBlowFactory = createReactorBlowFactory;
+    window.createSupernovaMissileBlowFactory = createSupernovaMissileBlowFactory;
     window.initRocketSystem3D = initRocketSystem3D;
     window.fireRocket3D = fireRocket3D;
     window.createShipEntity = createShipEntity;
@@ -4413,6 +4415,7 @@
       mountFirstFree(HP.AUX, 'ciws_mk1', 8);
       mountFirstFree(HP.HANGAR, 'fighter_bay', 4);
       mountFirstFree(HP.BUILTIN, 'hexlance_siege', 1);
+      mountFirstFree(HP.SPECIAL_MISSILE, 'supernova_missile', 4);
     }
 
     function mountFirstFree(type, weaponId, howMany) {
@@ -5242,8 +5245,7 @@
       return _combinedSpecialLoadouts;
     }
 
-    function getSpecialWeaponHudState() {
-      const entries = getCombinedSpecialLoadouts(Game.player);
+    function _specialHudFromEntries(entries) {
       let weapon = null;
       let bestCdLeft = Infinity;
       let bestCdMax = 0;
@@ -5264,6 +5266,12 @@
       if (!weapon) return { weapon: null, charge: 0 };
       if (!Number.isFinite(bestCdLeft)) return { weapon, charge: 1 };
       return { weapon, charge: clamp(1 - (bestCdLeft / Math.max(0.01, bestCdMax)), 0, 1) };
+    }
+    function getSpecialWeaponHudState() {
+      return _specialHudFromEntries(Game.player?.weapons?.[HP.SPECIAL] || []);
+    }
+    function getSpecialMissileHudState() {
+      return _specialHudFromEntries(Game.player?.weapons?.[HP.SPECIAL_MISSILE] || []);
     }
 
     function getMissileWeaponHudState() {
@@ -5297,6 +5305,7 @@
       const specialHud = getSpecialWeaponHudState();
       const builtInHud = getBuiltInWeaponHudState();
       const missileHud = getMissileWeaponHudState();
+      const spMissHud = getSpecialMissileHudState();
       return {
         hasTargets,
         main: {
@@ -5318,6 +5327,11 @@
           weapon: missileHud.weapon,
           enabled: !!rocketAutoFire,
           charge: missileHud.charge
+        },
+        special_missile: {
+          weapon: spMissHud.weapon,
+          enabled: !!specialMissileAutoFire,
+          charge: spMissHud.charge
         }
       };
     }
@@ -5660,6 +5674,7 @@
       const armataFactory = window.createArmataImpactFactory;
       const autocannonFactory = window.createAutocannonImpactFactory;
       const reactorFactory = window.createReactorBlowFactory;
+      const supernovaFactory = window.createSupernovaMissileBlowFactory;
       const host = document.getElementById('game-root');
 
       // Musimy mieć: API z modułu + host z DOM + overlayView z tego skryptu
@@ -5696,6 +5711,9 @@
       }
       if (reactorFactory) {
         window.makeReactorBlow = reactorFactory(ov.scene);
+      }
+      if (supernovaFactory) {
+        window.makeSupernovaMissileBlow = supernovaFactory(ov.scene);
       }
       // 3D Rocket System (fire/smoke GPU particles + physics)
       if (window.initRocketSystem3D) {
@@ -8275,10 +8293,8 @@
       }
     }
 
-    function tryFireMountedSpecialWeapons() {
-      const specials = getCombinedSpecialLoadouts(Game.player);
-      if (specials.length === 0) return false;
-
+    function _fireSpecialGroup(loadouts) {
+      if (!loadouts.length) return false;
       let fired = false;
       const target = (lockedTarget && !lockedTarget.dead) ? lockedTarget : null;
       const mouseWorld = screenToWorld(mouse.x, mouse.y);
@@ -8287,8 +8303,8 @@
       const s = Math.sin(shipAngle);
       const shipVel = ship.vel || { x: ship.vx || 0, y: ship.vy || 0 };
 
-      for (let i = 0; i < specials.length; i++) {
-        const loadout = specials[i];
+      for (let i = 0; i < loadouts.length; i++) {
+        const loadout = loadouts[i];
         const weapon = loadout?.weapon;
         if (!weapon || weapon.id === 'hexlance_siege') continue;
 
@@ -8318,8 +8334,15 @@
         hp.specialCd = Math.max(0.01, Number(cd) || Number(weapon.cooldown) || 0.25);
         fired = true;
       }
-
       return fired;
+    }
+
+    function tryFireMountedSpecialWeapons() {
+      return _fireSpecialGroup(Game.player?.weapons?.[HP.SPECIAL] || []);
+    }
+
+    function tryFireSpecialMissiles() {
+      return _fireSpecialGroup(Game.player?.weapons?.[HP.SPECIAL_MISSILE] || []);
     }
 
     function tryFireMountedBuiltInWeapons() {
@@ -9451,7 +9474,7 @@
         .map(id => WEAPONS[id])
         .filter(Boolean)
         // ZMIANA Z type NA mountType:
-        .filter(w => filter === 'all' || w.mountType === filter);
+        .filter(w => filter === 'all' || w.mountType === filter || (filter === 'special' && w.mountType === 'special_missile'));
 
       // Sortowanie i grupowanie (BEZPIECZNIE)
       const grouped = {};
@@ -9518,7 +9541,8 @@
       // 2. Typ slotu (np. MAIN #1) - mała etykieta
       const label = document.createElement('div');
       label.className = 'hp-row-label';
-      label.textContent = `${hp.type.toUpperCase()} #${idx + 1}`;
+      const hpLabel = hp.type === 'special_missile' ? 'MISSILE SPECIAL' : hp.type.toUpperCase();
+      label.textContent = `${hpLabel} #${idx + 1}`;
       row.appendChild(label);
 
       // 3. Nazwa zamontowanej broni lub "Puste"
@@ -9560,7 +9584,7 @@
       const filter = mechanicHardpointFilter;
       const source = filter === 'all'
         ? Game.player.hardpoints
-        : Game.player.hardpoints.filter(hp => hp.type === filter);
+        : Game.player.hardpoints.filter(hp => hp.type === filter || (filter === 'special' && hp.type === 'special_missile'));
 
       const listByType = {};
       for (const t of Object.values(HP)) listByType[t] = [];
@@ -11722,6 +11746,7 @@
     let mainAutoFire = false;
     let specialAutoFire = false;
     let rocketAutoFire = false;
+    let specialMissileAutoFire = false;
 
     function handleShiftDown() {
       if (ship.destroyed) return;
@@ -11803,7 +11828,13 @@
         tryFireMountedBuiltInWeapons();
       }
       if (e.code === 'Digit5' && !stationUI.open && !CICDisplay.active && !e.repeat) {
-        triggerEnergyShot();
+        const hasTargets = lockedTargets && lockedTargets.length > 0;
+        if (hasTargets) {
+          specialMissileAutoFire = !specialMissileAutoFire;
+          pushZoneMessage(specialMissileAutoFire ? 'SPECIAL MISSILE: AUTO-FIRE ON' : 'SPECIAL MISSILE: AUTO-FIRE OFF', 1.5);
+        } else {
+          tryFireSpecialMissiles();
+        }
       }
       // SCAN menu moved to CapsLock
       if (e.code === 'CapsLock' && !stationUI.open) {
@@ -15481,6 +15512,9 @@
       if (specialAutoFire && lockedTargets.length > 0 && !stationUI.open && !warp.isBusy()) {
         tryFireMountedSpecialWeapons();
       }
+      if (specialMissileAutoFire && lockedTargets.length > 0 && !stationUI.open && !warp.isBusy()) {
+        tryFireSpecialMissiles();
+      }
       if (rocketAutoFire && lockedTargets.length > 0 && !stationUI.open && !warp.isBusy() && rocketCooldown <= 0) {
         if (fireRocket(Math.random() < 0.5 ? 'right' : 'left')) rocketCooldown = ROCKET_FIRE_INTERVAL;
       }
@@ -15594,6 +15628,7 @@
         if (mainAutoFire) { mainAutoFire = false; pushZoneMessage('AUTO-FIRE OFF — brak celów', 1.5); }
         if (specialAutoFire) specialAutoFire = false;
         if (rocketAutoFire) rocketAutoFire = false;
+        if (specialMissileAutoFire) specialMissileAutoFire = false;
       }
       scannerState.lockAnim += dt * SCANNER_LOCK_PULSE_SPEED;
       if (scannerState.active) {
@@ -17812,16 +17847,27 @@
           _pushWeaponStatus(statusRows, 'MAIN', aimDist <= mainRange, mainReady);
         }
 
-        const specialEntries = getCombinedSpecialLoadouts(shipRef);
-        if (specialEntries.length) {
+        const specialOnly = shipRef?.weapons?.[HP.SPECIAL] || [];
+        if (specialOnly.length) {
           let specialRange = 0;
           let specialReady = false;
-          for (let i = 0; i < specialEntries.length; i++) {
-            const loadout = specialEntries[i];
+          for (let i = 0; i < specialOnly.length; i++) {
+            const loadout = specialOnly[i];
             specialRange = Math.max(specialRange, _getReticleWeaponRange(loadout?.weapon));
             if ((Math.max(0, Number(loadout?.hp?.specialCd) || 0) <= 0)) specialReady = true;
           }
           _pushWeaponStatus(statusRows, 'SPECIAL', aimDist <= specialRange, specialReady);
+        }
+        const specMissiles = shipRef?.weapons?.[HP.SPECIAL_MISSILE] || [];
+        if (specMissiles.length) {
+          let smRange = 0;
+          let smReady = false;
+          for (let i = 0; i < specMissiles.length; i++) {
+            const loadout = specMissiles[i];
+            smRange = Math.max(smRange, _getReticleWeaponRange(loadout?.weapon));
+            if ((Math.max(0, Number(loadout?.hp?.specialCd) || 0) <= 0)) smReady = true;
+          }
+          _pushWeaponStatus(statusRows, 'SP.MISSILE', aimDist <= smRange, smReady);
         }
 
         ctx.save();

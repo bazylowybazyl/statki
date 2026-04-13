@@ -13,6 +13,8 @@
  *   13 = supernova explosion core
  *   14 = supernova sparks
  *   15 = supernova shockwave ring
+ *   16 = supernova anamorphic core
+ *   17 = supernova fractal energy ring
  */
 import * as THREE from "three";
 
@@ -186,7 +188,7 @@ export class RocketFireGPU {
                         stretchFactor = 1.0 + (length(aStartVel) / max(u_worldScale, 0.001)) * 0.002 * u_stretchMult;
                     }
                     // ── SHOCKWAVE (type 5) ──
-                    else {
+                    else if (mode < 5.5) {
                         float waveAge = pow(ageNorm, 0.4);
                         float waveScale = max(0.05, aData.z);
                         currentSize = waveScale * u_startSize * 80.0 * u_explosionSize * (0.05 + waveAge * 2.5);
@@ -195,9 +197,23 @@ export class RocketFireGPU {
                         stretchFactor = 1.0;
                     }
 
+                    else if (mode < 6.5) {
+                        currentSize = max(0.05, aData.z) * (0.5 + ageNorm * 0.5);
+                        vColor = (isNova ? vec3(0.72, 1.0, 1.0) : vec3(0.5, 1.0, 1.0)) * u_hdrIntensity * (isNova ? 6.8 : 5.2) * u_overlayHdrComp;
+                        vAlpha = pow(ratio, 3.0) * (isNova ? 1.05 : 1.0) * u_overlayAlphaComp;
+                        stretchFactor = 1.0;
+                    }
+                    else {
+                        float waveAge = pow(ageNorm, 0.4);
+                        currentSize = max(0.05, aData.z) * (0.35 + waveAge * 1.65);
+                        vColor = (isNova ? vec3(1.0, 0.24, 0.95) : vec3(0.9, 0.1, 1.0)) * u_hdrIntensity * (isNova ? 3.2 : 4.0) * u_overlayHdrComp;
+                        vAlpha = pow(1.0 - ageNorm, 1.5) * (isNova ? 0.9 : 0.75) * u_overlayAlphaComp;
+                        stretchFactor = 1.0;
+                    }
+
                     vec4 mvPosition;
 
-                    if (mode > 4.5) {
+                    if ((mode > 4.5 && mode < 5.5) || mode > 6.5) {
                         // SHOCKWAVE — flat in XZ plane (Y-up world)
                         vec3 flatPos = pos;
                         flatPos.x += position.x * currentSize;
@@ -237,14 +253,53 @@ export class RocketFireGPU {
                 varying vec2  vUv;
                 varying float vType;
 
+                float hash(float n) { return fract(sin(n) * 43758.5453123); }
+                float noise(vec3 x) {
+                    vec3 p = floor(x);
+                    vec3 f = fract(x);
+                    f = f * f * (3.0 - 2.0 * f);
+                    float n = p.x + p.y * 57.0 + 113.0 * p.z;
+                    return mix(mix(mix(hash(n + 0.0), hash(n + 1.0), f.x),
+                                   mix(hash(n + 57.0), hash(n + 58.0), f.x), f.y),
+                               mix(mix(hash(n + 113.0), hash(n + 114.0), f.x),
+                                   mix(hash(n + 170.0), hash(n + 171.0), f.x), f.y), f.z);
+                }
+                float fbm(vec3 p) {
+                    float f = 0.0;
+                    f += 0.5000 * noise(p); p *= 2.02;
+                    f += 0.2500 * noise(p); p *= 2.03;
+                    f += 0.1250 * noise(p); p *= 2.01;
+                    return f;
+                }
+
                 void main() {
-                    if (vType > 4.5) {
+                    if (vType > 4.5 && vType < 5.5) {
                         // Shockwave ring (procedural)
                         float dist = length(vUv - vec2(0.5)) * 2.0;
                         float outerMask = 1.0 - smoothstep(0.95, 1.0, dist);
                         float ring      = smoothstep(0.85, 0.95, dist);
                         float innerHeat = smoothstep(0.0, 0.9, dist) * 0.15;
                         gl_FragColor = vec4(vColor, (ring + innerHeat) * outerMask * vAlpha);
+                    } else if (vType > 5.5 && vType < 6.5) {
+                        vec2 uv = vUv - vec2(0.5);
+                        float dist = length(uv) * 2.0;
+                        float core = max(0.0, 1.0 - smoothstep(0.0, 0.3, dist));
+                        float flareY = max(0.0, 1.0 - smoothstep(0.0, 0.02, abs(uv.y)));
+                        float flareX = max(0.0, 1.0 - smoothstep(0.0, 0.5, abs(uv.x)));
+                        float flare = flareY * flareX * 2.0;
+                        float aura = max(0.0, 1.0 - dist);
+                        float finalIntensity = max(0.0, core + flare + aura * 0.3);
+                        gl_FragColor = vec4(vColor * finalIntensity, finalIntensity * vAlpha);
+                    } else if (vType > 6.5) {
+                        vec2 uv = vUv - vec2(0.5);
+                        float dist = length(uv) * 2.0;
+                        if (dist > 1.0) discard;
+                        float ringShape = max(0.0, 1.0 - smoothstep(0.0, 0.15, abs(dist - 0.7)));
+                        float angle = atan(uv.y, uv.x);
+                        float n = fbm(vec3(angle * 10.0, dist * 5.0, 0.0));
+                        float finalRing = ringShape * (n * 2.5);
+                        float innerGlow = max(0.0, smoothstep(0.0, 0.8, dist)) * 0.2;
+                        gl_FragColor = vec4(vColor, (finalRing + innerGlow) * vAlpha);
                     } else {
                         vec4 texColor = texture2D(uTexture, vUv);
                         gl_FragColor  = vec4(vColor, pow(texColor.a, 1.5) * vAlpha);
