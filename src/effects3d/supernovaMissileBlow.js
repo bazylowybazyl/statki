@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { Weapon3DSystem } from "../3d/weapon3DSystem.js";
 
 const noiseChunk = `
     float hash(float n) { return fract(sin(n) * 43758.5453123); }
@@ -77,7 +78,29 @@ class NovaAdditiveParticleManager {
                     float currentSize = aData.z;
                     vec4 mvPosition;
 
-                    if (vType < 4.5) {
+                    if (vType < 3.5) {
+                        // EXPLOSION CORE (type 3) — expanding orange/red fireball
+                        float explosionAge = vAgeNorm;
+                        currentSize += age * (aData.z * 40.0);
+
+                        vec3 expCore = vec3(1.0, 0.7, 0.1);
+                        vec3 expMid = vec3(0.8, 0.2, 0.0);
+                        vec3 expEdge = vec3(0.3, 0.0, 0.0);
+
+                        if (explosionAge < 0.3) {
+                            vColor = mix(expCore, expMid, explosionAge / 0.3);
+                        } else {
+                            vColor = mix(expMid, expEdge, (explosionAge - 0.3) / 0.7);
+                        }
+                        vColor *= 1.5;
+                        vAlpha = pow(ratio, 1.5);
+
+                        vec3 flatPos = pos;
+                        flatPos.x += position.x * currentSize;
+                        flatPos.z += position.y * currentSize;
+                        mvPosition = modelViewMatrix * vec4(flatPos, 1.0);
+                    } else if (vType < 4.5) {
+                        // RAILGUN SPARKS (type 4)
                         float drag = 3.5 + hash(aData.x) * 2.0;
                         pos = aStartPos + aStartVel * ((1.0 - exp(-age * drag)) / drag);
                         vec3 currentVel = aStartVel * exp(-age * drag);
@@ -108,6 +131,7 @@ class NovaAdditiveParticleManager {
 
                         mvPosition.xy += rotatedOffset;
                     } else if (vType < 5.5) {
+                        // ANAMORPHIC CORE (type 5)
                         currentSize = aData.z * (0.5 + vAgeNorm * 0.5);
                         vColor = vec3(0.5, 1.0, 1.0) * 10.0;
                         vAlpha = pow(ratio, 3.0);
@@ -115,6 +139,7 @@ class NovaAdditiveParticleManager {
                         mvPosition = modelViewMatrix * vec4(pos, 1.0);
                         mvPosition.xy += position.xy * currentSize;
                     } else {
+                        // FRACTAL ENERGY RING (type 6)
                         float waveCurve = pow(vAgeNorm, 0.4);
                         currentSize = aData.z * waveCurve;
                         vColor = vec3(0.9, 0.1, 1.0) * 4.0;
@@ -143,7 +168,13 @@ class NovaAdditiveParticleManager {
                     vec2 uv = vUv - vec2(0.5);
                     float dist = length(uv) * 2.0;
 
-                    if (vType < 4.5) {
+                    if (vType < 3.5) {
+                        // EXPLOSION CORE — radial glow
+                        float glow = max(0.0, 1.0 - pow(dist, 1.5));
+                        if (dist > 1.0) discard;
+                        gl_FragColor = vec4(vColor, glow * vAlpha);
+                    } else if (vType < 4.5) {
+                        // RAILGUN SPARKS
                         vec2 pt = vUv - vec2(0.5);
                         float glowX = pow(max(0.0, 0.5 - abs(pt.x)) * 2.0, 3.0);
                         float fadeY = smoothstep(1.0, 0.8, vUv.y) * smoothstep(0.0, 0.2, vUv.y);
@@ -153,6 +184,7 @@ class NovaAdditiveParticleManager {
                         baseAlpha *= mix(1.0, twinkle, twinkleBlend);
                         gl_FragColor = vec4(vColor, baseAlpha * vAlpha);
                     } else if (vType < 5.5) {
+                        // ANAMORPHIC CORE
                         float core = max(0.0, 1.0 - smoothstep(0.0, 0.3, dist));
                         float flareY = max(0.0, 1.0 - smoothstep(0.0, 0.02, abs(uv.y)));
                         float flareX = max(0.0, 1.0 - smoothstep(0.0, 0.5, abs(uv.x)));
@@ -161,6 +193,7 @@ class NovaAdditiveParticleManager {
                         float finalIntensity = max(0.0, core + flare + aura * 0.3);
                         gl_FragColor = vec4(vColor * finalIntensity, finalIntensity * vAlpha);
                     } else {
+                        // FRACTAL ENERGY RING
                         if (dist > 1.0) discard;
                         float ringShape = max(0.0, 1.0 - smoothstep(0.0, 0.15, abs(dist - 0.7)));
                         float angle = atan(uv.y, uv.x);
@@ -327,6 +360,51 @@ class NovaDarkShockwaveManager {
     }
 }
 
+// Module-level bloom boost tracking for concurrent explosions
+let _activeNovaCount = 0;
+let _savedBloomStrength = null;
+let _savedBloomRadius = null;
+let _savedBloomThreshold = null;
+
+function _boostBloom() {
+    if (_activeNovaCount > 0) return; // already boosted
+    const overlay = typeof window !== 'undefined' && window.overlay3D;
+    if (overlay?.getBloomConfig) {
+        const cfg = overlay.getBloomConfig();
+        _savedBloomStrength = cfg.strength;
+        _savedBloomRadius = cfg.radius;
+        _savedBloomThreshold = cfg.threshold;
+    }
+    _activeNovaCount++;
+}
+
+function _updateBloom(expTime) {
+    const overlay = typeof window !== 'undefined' && window.overlay3D;
+    if (!overlay?.setBloomConfig || _savedBloomStrength == null) return;
+    const t = Math.max(0, 1.0 - expTime / 1.8);
+    overlay.setBloomConfig({
+        strength: _savedBloomStrength + t * 2.5,
+        radius: (_savedBloomRadius ?? 0.5) + t * 0.3,
+        threshold: 0.05
+    });
+}
+
+function _restoreBloom() {
+    _activeNovaCount = Math.max(0, _activeNovaCount - 1);
+    if (_activeNovaCount > 0) return; // other explosions still active
+    const overlay = typeof window !== 'undefined' && window.overlay3D;
+    if (overlay?.setBloomConfig && _savedBloomStrength != null) {
+        overlay.setBloomConfig({
+            strength: _savedBloomStrength,
+            radius: _savedBloomRadius,
+            threshold: _savedBloomThreshold
+        });
+    }
+    _savedBloomStrength = null;
+    _savedBloomRadius = null;
+    _savedBloomThreshold = null;
+}
+
 export function createSupernovaMissileBlowFactory(scene) {
     const fireParticleSystem = new NovaAdditiveParticleManager(scene, 140000);
     const darkShockwaveSystem = new NovaDarkShockwaveManager(scene, 12000);
@@ -347,21 +425,36 @@ export function createSupernovaMissileBlowFactory(scene) {
         let sparksSpawned = false;
         let disposed = false;
 
-        fireParticleSystem.spawn(expX, expY, expZ + size * 0.15, 0, 0, 0, size * 12, 1.2, 5, initTime);
-        fireParticleSystem.spawn(expX, expY, expZ + size * 0.05, 0, 0, 0, size * 17, 1.5, 6, initTime);
-        darkShockwaveSystem.spawn(expX, expY, expZ, size * 19, 1.6, initTime);
-
-        function pushHeatHaze(gt, expTime) {
-            if (typeof window === "undefined" || !window.Core3D || expTime >= 1.8) return;
-            const core = window.Core3D;
-            if (core._lastHeatHazeFrame !== gt) {
-                core._lastHeatHazeFrame = gt;
-                core.beginHeatHazeFrame?.();
-            }
-            const currentRadius = size * 2 + (expTime * size * 25);
-            const distortionStrength = Math.max(0, 1.0 - (expTime / 1.8)) * 6.0;
-            core.pushHeatHazeWorld?.(expX, expZ, -4, currentRadius, distortionStrength);
+        // --- Fix #3: Screen shake ---
+        if (Weapon3DSystem?._cameraShakeMag !== undefined) {
+            Weapon3DSystem._cameraShakeMag = Math.min(18, Weapon3DSystem._cameraShakeMag + 14);
         }
+
+        // --- Fix #2: Bloom burst ---
+        _boostBloom();
+
+        // --- Fix #4: Explosion Core (type 3) — expanding orange/red fireball ---
+        for (let i = 0; i < 6; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist = Math.random() * size * 0.3;
+            const ox = Math.cos(angle) * dist;
+            const oz = Math.sin(angle) * dist;
+            fireParticleSystem.spawn(
+                expX + ox, expY, expZ + oz,
+                0, 0, 0,
+                size * (2.5 + Math.random() * 2.0),
+                0.8 + Math.random() * 0.5,
+                3,
+                initTime
+            );
+        }
+
+        // Anamorphic core (type 5)
+        fireParticleSystem.spawn(expX, expY, expZ + size * 0.15, 0, 0, 0, size * 12, 1.2, 5, initTime);
+        // Fractal energy ring (type 6)
+        fireParticleSystem.spawn(expX, expY, expZ + size * 0.05, 0, 0, 0, size * 17, 1.5, 6, initTime);
+        // Dark shockwave
+        darkShockwaveSystem.spawn(expX, expY, expZ, size * 19, 1.6, initTime);
 
         function spawnNovaSparks(gt) {
             for (let i = 0; i < 3000; i++) {
@@ -396,7 +489,10 @@ export function createSupernovaMissileBlowFactory(scene) {
             fireParticleSystem.update(gt);
             darkShockwaveSystem.update(gt);
 
-            pushHeatHaze(gt, expTime);
+            // --- Fix #2: Update bloom boost ---
+            if (expTime < 1.8) {
+                _updateBloom(expTime);
+            }
 
             if (!sparksSpawned && expTime >= 1.0) {
                 sparksSpawned = true;
@@ -411,6 +507,7 @@ export function createSupernovaMissileBlowFactory(scene) {
         function dispose() {
             if (disposed) return;
             disposed = true;
+            _restoreBloom();
             if (group.parent) group.parent.remove(group);
         }
 

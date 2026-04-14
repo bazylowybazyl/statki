@@ -90,7 +90,7 @@ const DEFAULT_RENDER_ASPECT = 1.6;
 const MIN_RENDER_SIZE = 64;
 
 export const HULL_RENDER_PROFILES = {
-  atlas: { id: 'atlas', length: 2000, radius: 500 },
+  atlas: { id: 'atlas', length: 3000, radius: 500 },
   supercapital: { id: 'supercapital', length: 2000, radius: 500 },
   terran_frigate: { id: 'terran_frigate', length: 320, radius: 120 },
   terran_destroyer: { id: 'terran_destroyer', length: 480, radius: 170 },

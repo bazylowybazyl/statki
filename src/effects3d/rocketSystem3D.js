@@ -855,6 +855,22 @@ class RocketSystem3D {
         const smokeType = r.smokeVfxType || 1;
 
         if (r.explosionStyle === "supernova") {
+            const triggerShockwave = window.trigger3DShockwave;
+            const useShockwave3D = typeof triggerShockwave === "function";
+            if (useShockwave3D) {
+                const shockwaveScale = Math.max(
+                    420,
+                    (Number(r.blastRadius) || 48) * 10 * Math.max(0.9, r.explosionVisualScale || 1)
+                );
+                triggerShockwave(
+                    ex,
+                    -ez,
+                    0,
+                    shockwaveScale,
+                    1.2,
+                    0x55ffff
+                );
+            }
             const overlaySpawn = window.overlay3D?.spawn;
             const supernovaFactory = window.makeSupernovaMissileBlow;
             if (typeof overlaySpawn === "function" && typeof supernovaFactory === "function") {
@@ -900,14 +916,16 @@ class RocketSystem3D {
             this.fireGPU.spawn(ex, ey + 1, ez, 0, 0, 0, Math.max(0.5, eS * 1.45), 0.8, shockwaveType);
             this.fireGPU.spawn(ex, ey + 1, ez, 0, 0, 0, Math.max(0.32, eS * 0.92), 1.25, shockwaveType);
 
-            this._spawnHeatHazeBurst(
-                ex,
-                ez,
-                Math.max(80, r.blastRadius * 0.9),
-                Math.max(260, r.blastRadius * 5.5),
-                4.8,
-                0.85
-            );
+            if (!useShockwave3D) {
+                this._spawnHeatHazeBurst(
+                    ex,
+                    ez,
+                    Math.max(80, r.blastRadius * 0.9),
+                    Math.max(260, r.blastRadius * 5.5),
+                    4.8,
+                    0.85
+                );
+            }
         } else {
             // 1. FLASH — one big, short burst
             this.fireGPU.spawn(ex, ey, ez, 0, 0, 0, 250 * eS, 0.1, coreType);

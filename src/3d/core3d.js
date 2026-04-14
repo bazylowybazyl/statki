@@ -4,6 +4,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { Shockwave3DManager } from '../effects3d/shockwave3D.js';
 
 const MAX_HEAT_HAZE_SOURCES = 24;
 const PLANET_RENDER_LAYER = 3;
@@ -292,6 +293,7 @@ export const Core3D = {
   canvas: null, renderer: null, scene: null, cameraOrtho: null, cameraPersp: null,
   shadowCatcher: null, shadowCatcherFg: null, shadowCatchersDebug: false,
   composer: null, composerTarget: null,
+  refractionTarget: null, shockwave3DManager: null, _shockwavePrevTime: 0,
   planetHaloTarget: null, haloDepthMaskMaterial: null,
 
   occlusionTarget: null, occlusionWhiteMaterial: null,
@@ -370,6 +372,27 @@ export const Core3D = {
     this.cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 400000);
     this.cameraPersp = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 100, 500000);
 
+    this.refractionTarget = new THREE.WebGLRenderTarget(
+      Math.max(1, Math.floor(window.innerWidth * this.pixelRatio)),
+      Math.max(1, Math.floor(window.innerHeight * this.pixelRatio)),
+      {
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        format: THREE.RGBAFormat,
+        depthBuffer: true,
+        stencilBuffer: false
+      }
+    );
+    this.shockwave3DManager = new Shockwave3DManager(this.scene, 8, this.refractionTarget);
+    this._shockwavePrevTime = 0;
+    if (typeof window !== 'undefined') {
+      window.trigger3DShockwave = (x, y, z, scale, life, colorHex) => {
+        if (this.shockwave3DManager) {
+          this.shockwave3DManager.spawn(x, y, z, scale, life, colorHex);
+        }
+      };
+    }
+	
     const shadowGeo = new THREE.PlaneGeometry(500000, 500000);
     const shadowMat = new THREE.ShadowMaterial({ opacity: 0.6, color: 0x000000, transparent: true, depthWrite: false, depthTest: false });
     this.shadowCatcher = new THREE.Mesh(shadowGeo, shadowMat);
@@ -484,6 +507,8 @@ export const Core3D = {
       if (this.composer?.passes) for (const pass of this.composer.passes) try { pass?.dispose?.(); } catch { }
       try { this.composer?.dispose?.(); } catch { }
       try { this.composerTarget?.dispose?.(); } catch { }
+      try { this.refractionTarget?.dispose?.(); } catch { }
+      try { this.shockwave3DManager?.dispose?.(); } catch { }
       try { this.planetHaloTarget?.dispose?.(); } catch { }
       try { this.haloDepthMaskMaterial?.dispose?.(); } catch { }
       try { this.occlusionTarget?.dispose?.(); } catch { }
@@ -494,6 +519,9 @@ export const Core3D = {
       try { this.occlusionBlurMatV?.dispose?.(); } catch { }
     } catch { }
     this.isInitialized = false;
+    this.refractionTarget = null;
+    this.shockwave3DManager = null;
+    this._shockwavePrevTime = 0;
   },
 
   _applyPassToggles() {
@@ -611,6 +639,12 @@ export const Core3D = {
     this.renderer.setSize(width, height, false);
     this.composer.setSize(width, height);
 
+    if (this.refractionTarget) {
+      this.refractionTarget.setSize(
+        Math.max(1, Math.floor(width * this.pixelRatio)),
+        Math.max(1, Math.floor(height * this.pixelRatio))
+      );
+    }
     if (this.occlusionTarget) {
       this.occlusionTarget.setSize(Math.max(1, Math.floor(width / 8)), Math.max(1, Math.floor(height / 8)));
     }
@@ -927,6 +961,68 @@ export const Core3D = {
     const tComposer0 = dbgEnabled ? performance.now() : 0;
     // Reset renderer info once per frame; it will accumulate across all passes.
     this.renderer.info.reset();
+
+    if (this.shockwave3DManager) {
+      const shockDt = this._shockwavePrevTime > 0
+        ? Math.max(1 / 240, Math.min(1 / 20, nowSec - this._shockwavePrevTime))
+        : 1 / 60;
+      this._shockwavePrevTime = nowSec;
+      this.shockwave3DManager.update(shockDt);
+
+      if (this.refractionTarget && this.shockwave3DManager.hasActive()) {
+        const prevAutoClear = this.renderer.autoClear;
+        const prevTarget = this.renderer.getRenderTarget();
+        const prevClearAlpha = this.renderer.getClearAlpha();
+        const prevClearColor = this._clearColorScratch;
+        this.renderer.getClearColor(prevClearColor);
+        const prevPerspLayerMask = this.cameraPersp.layers.mask;
+        const prevOrthoLayerMask = this.cameraOrtho.layers.mask;
+
+        const layers = [];
+        if (t.bgPass !== false) layers.push({ layer: 1, ortho: false });
+        if (t.planetPass !== false) layers.push({ layer: PLANET_RENDER_LAYER, ortho: false });
+        if (t.orthoPass !== false) layers.push({ layer: 0, ortho: true });
+        if (t.fgPass !== false) layers.push({ layer: 2, ortho: false });
+
+        const renderRefractionViewport = (camData, vpX, vpY, vpW, vpH) => {
+          this.renderer.setViewport(vpX, vpY, vpW, vpH);
+          this.renderer.setScissor(vpX, vpY, vpW, vpH);
+          this.renderer.setScissorTest(true);
+          this.renderer.clear(true, true, true);
+          this.syncCamera(camData, vpW, vpH, vpX);
+          for (const { layer, ortho } of layers) {
+            const cam = ortho ? this.cameraOrtho : this.cameraPersp;
+            cam.layers.set(layer);
+            this.renderer.render(this.scene, cam);
+          }
+        };
+
+        this.shockwave3DManager.hideAll();
+        this.renderer.autoClear = false;
+        this.renderer.setRenderTarget(this.refractionTarget);
+        this.renderer.setClearColor(0x000000, 0.0);
+
+        if (isSplit) {
+          const rtW = this.refractionTarget.width;
+          const rtH = this.refractionTarget.height;
+          const halfW = Math.floor(rtW / 2);
+          renderRefractionViewport(this.activeCam1, 0, 0, halfW, rtH);
+          renderRefractionViewport(this.activeCam2, halfW, 0, rtW - halfW, rtH);
+        } else {
+          renderRefractionViewport(this.activeCam1, 0, 0, this.refractionTarget.width, this.refractionTarget.height);
+        }
+
+        this.shockwave3DManager.showAll();
+        this.renderer.setScissorTest(false);
+        this.renderer.setViewport(0, 0, this.refractionTarget.width, this.refractionTarget.height);
+        this.cameraPersp.layers.mask = prevPerspLayerMask;
+        this.cameraOrtho.layers.mask = prevOrthoLayerMask;
+        this.renderer.setRenderTarget(prevTarget);
+        this.renderer.setClearColor(prevClearColor, prevClearAlpha);
+        this.renderer.autoClear = prevAutoClear;
+      }
+    }
+
     this.composer.render();
     if (dbgEnabled) {
       recordRenderDbg('coreComposerRender', performance.now() - tComposer0);

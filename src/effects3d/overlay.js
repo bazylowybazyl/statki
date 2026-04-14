@@ -18,11 +18,30 @@ const RestoreAlphaShader = {
   fragmentShader: `
     uniform sampler2D tDiffuse;
     varying vec2 vUv;
+
+    // Funkcja ACES Filmic
+    vec3 ACESFilmicToneMapping(vec3 color) {
+      color *= 1.2; // Ekspozycja
+      return clamp((color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14), 0.0, 1.0);
+    }
+
+    // Konwersja do sRGB
+    vec3 LinearTosRGB(vec3 color) {
+      return mix(pow(color, vec3(0.41666)) * 1.055 - vec3(0.055), color * 12.92, vec3(lessThanEqual(color, vec3(0.0031308))));
+    }
+
     void main() {
       vec4 tex = texture2D( tDiffuse, vUv );
+
+      // Alfę liczymy z SUROWEGO, potężnego sygnału HDR, żeby dym i poświata były widoczne
       float brightness = max(tex.r, max(tex.g, tex.b));
       float alpha = min(1.0, brightness * 1.5);
-      gl_FragColor = vec4( tex.rgb, alpha );
+
+      // Aplikujemy Tone Mapping do kolorów
+      vec3 mappedColor = ACESFilmicToneMapping(tex.rgb);
+      mappedColor = LinearTosRGB(mappedColor);
+
+      gl_FragColor = vec4(mappedColor, alpha);
     }
   `
 };
