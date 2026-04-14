@@ -13993,17 +13993,22 @@
         if (i >= auxWeapons.length) break;
         const loadout = auxWeapons[i];
         if (!loadout || !loadout.weapon) continue;
-        const weaponId = loadout.weapon.id;
-        const pdDef = loadout.weapon.aispacePdId ? AISPACE_PD[loadout.weapon.aispacePdId] : null;
-        const flakDef = loadout.weapon.aispaceFlakId ? AISPACE_FLAK[loadout.weapon.aispaceFlakId] : null;
-        const isLaser = weaponId === 'laser_pd_mk1' || loadout.weapon.aispacePdId === 'pd_laser';
+        const wDef = loadout.weapon;
+        const weaponId = wDef.id;
+        const pdDef = wDef.aispacePdId ? AISPACE_PD[wDef.aispacePdId] : null;
+        const flakDef = wDef.aispaceFlakId ? AISPACE_FLAK[wDef.aispaceFlakId] : null;
+        const isLaser = weaponId === 'laser_pd_mk1' || wDef.aispacePdId === 'pd_laser';
         const stats = pdDef || flakDef;
         const gun = ship.ciws[i];
         gun.cd = Math.max(0, gun.cd - dt);
         const off = rotate(gun.offset, ship.angle);
         const base = { x: ship.pos.x + off.x, y: ship.pos.y + off.y };
         const baseVel = { x: ship.vel.x - ship.angVel * off.y, y: ship.vel.y + ship.angVel * off.x };
-        const range = stats?.range || (isLaser ? LASER_PD_RANGE : CIWS_RANGE);
+
+        // Zasięg z definicji broni, nie z hardcoded stałych
+        const range = stats?.range || wDef.baseRange || (isLaser ? LASER_PD_RANGE : CIWS_RANGE);
+        const bulletSpeed = stats?.speed || wDef.baseSpeed || CIWS_BULLET_SPEED;
+
         let target = null; let dist = range;
         for (const npc of npcs) {
           if (npc.dead || npc.friendly || !npc.isPirate) continue;
@@ -14012,51 +14017,65 @@
         }
         if (!target) continue;
 
+        // Lead targeting z prędkością z definicji broni
         const aimPoint = isLaser ? { x: target.x, y: target.y }
-          : leadTarget(base, baseVel, target, stats?.speed || CIWS_BULLET_SPEED);
-        const desired = Math.atan2(aimPoint.y - base.y, aimPoint.x - base.x);
+          : leadTarget(base, baseVel, target, bulletSpeed);
+        let desired = Math.atan2(aimPoint.y - base.y, aimPoint.x - base.x);
+
+        // --- Barrage sweep: CIWS oscyluje po łuku wokół celu ---
+        if (!isLaser && !flakDef) {
+          if (gun._sweepPhase == null) gun._sweepPhase = Math.random() * Math.PI * 2;
+          gun._sweepPhase += dt * 7.5;
+          const sweepArc = 0.18 * Math.max(0.3, 1.0 - dist / range);
+          desired += Math.sin(gun._sweepPhase) * sweepArc;
+        }
+
         let diff = wrapAngle(desired - gun.angle);
-        const aimStrength = isLaser ? 9 : 8;
-        const maxVel = isLaser ? 6.5 : 6;
+        const aimStrength = isLaser ? 9 : 10;
+        const maxVel = isLaser ? 6.5 : 8;
         let desiredVel = clamp(diff * aimStrength, -maxVel, maxVel);
         const velDelta = desiredVel - gun.angVel;
-        const maxDelta = 40 * dt;
+        const maxDelta = 50 * dt;
         gun.angVel += clamp(velDelta, -maxDelta, maxDelta);
-        gun.angVel *= Math.exp(-8 * dt);
+        gun.angVel *= Math.exp(-6 * dt);
         gun.angVel = clamp(gun.angVel, -maxVel, maxVel);
         gun.angle = wrapAngle(gun.angle + gun.angVel * dt);
 
-        const aimTolerance = isLaser ? 0.1 : 0.15;
+        // CIWS ma luźniejszą tolerancję — strzela w trakcie sweep
+        const aimTolerance = isLaser ? 0.1 : 0.35;
         if (Math.abs(diff) >= aimTolerance || gun.cd > 0) continue;
 
-        const fireInterval = stats?.rps ? (1 / stats.rps) : (isLaser ? LASER_PD_FIRE_INTERVAL : CIWS_FIRE_INTERVAL);
+        const fireInterval = stats?.rps ? (1 / stats.rps) : (wDef.cooldown || (isLaser ? LASER_PD_FIRE_INTERVAL : CIWS_FIRE_INTERVAL));
         if (flakDef) {
           fireAispaceFlakShell(gun, base, baseVel, target, flakDef, fireInterval);
         } else if (isLaser) {
           firePointDefenseLaser(gun, base, baseVel, target, pdDef, fireInterval);
         } else {
-          fireCIWSGun(gun, base, baseVel, pdDef, fireInterval);
+          fireCIWSGun(gun, base, baseVel, wDef, fireInterval);
         }
       }
     }
 
-    function fireCIWSGun(gun, base, baseVel, stats, fireInterval) {
-      const dir = { x: Math.cos(gun.angle), y: Math.sin(gun.angle) };
+    function fireCIWSGun(gun, base, baseVel, wDef, fireInterval) {
+      const spread = wDef?.spread || 0.05;
+      const shotAngle = gun.angle + (Math.random() - 0.5) * spread;
+      const dir = { x: Math.cos(shotAngle), y: Math.sin(shotAngle) };
       const px = base.x + dir.x * 6;
       const py = base.y + dir.y * 6;
-      const damage = stats?.dmg ?? stats?.damage ?? CIWS_DAMAGE;
-      const speed = stats?.speed ?? CIWS_BULLET_SPEED;
+      const damage = wDef?.baseDamage ?? CIWS_DAMAGE;
+      const speed = wDef?.baseSpeed ?? CIWS_BULLET_SPEED;
+      const range = wDef?.baseRange ?? CIWS_RANGE;
       window.bullets.push({
         x: px,
         y: py,
         vx: dir.x * speed + baseVel.x,
         vy: dir.y * speed + baseVel.y,
-        life: 1.2,
+        life: range / speed,
         r: 2,
         owner: 'player',
         source: ship,
         damage,
-        color: stats?.color,
+        color: wDef?.vfxColor,
         type: 'ciws'
       });
       spawnParticle(

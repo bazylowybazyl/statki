@@ -368,6 +368,8 @@ export function createReactorBlowFactory(scene) {
         const initTime = performance.now() / 1000;
         let phase = 'CHARGE';
         let disposed = false;
+        const triggerShockwave3D = (typeof window !== 'undefined') ? window.trigger3DShockwave : null;
+        const useShockwave3D = !isFighter && typeof triggerShockwave3D === 'function';
 
         // Faza ładowania
         const chargeSize = isFighter ? size * 1.5 : size * 3.5;
@@ -390,7 +392,7 @@ export function createReactorBlowFactory(scene) {
                 light.intensity = Math.max(0, (isFighter ? 2.0 : 15.0) * (1.0 - expTime / dropOff));
 
                 // --- OPTYCZNA FALA UDERZENIOWA (Załamanie światła przez Core3D) ---
-                if (!isFighter && expTime < 2.0 && typeof window !== 'undefined' && window.Core3D) {
+                if (!useShockwave3D && !isFighter && expTime < 2.0 && typeof window !== 'undefined' && window.Core3D) {
                     // Resetujemy bufor fal uderzeniowych co klatkę (zabezpieczenie)
                     if (window.Core3D._lastHeatHazeFrame !== gt) {
                         window.Core3D._lastHeatHazeFrame = gt;
@@ -409,6 +411,16 @@ export function createReactorBlowFactory(scene) {
 
             if (phase === 'CHARGE' && time >= CHARGE_TIME) {
                 phase = 'EXPLODE';
+                if (useShockwave3D) {
+                    triggerShockwave3D(
+                        expX,
+                        -expZ,
+                        0,
+                        Math.max(140, size * 7.5),
+                        1.1,
+                        0x33ccff
+                    );
+                }
 
                 if (!isFighter) {
                     // WYBUCH CAPITALA (Proporcje i ilości z pliku HTML)

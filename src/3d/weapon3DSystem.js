@@ -349,21 +349,33 @@ function promoteWeaponOverlay(root, renderOrder = 60) {
   const glowMaterials = WEP_RESOURCES.mats
     ? new Set([WEP_RESOURCES.mats.glowBlue, WEP_RESOURCES.mats.glowCyan, WEP_RESOURCES.mats.glowRed, WEP_RESOURCES.mats.glowAmber])
     : new Set();
+    
   root.traverse((obj) => {
     if (!obj.isMesh) return;
     const mat = obj.material;
     const materials = Array.isArray(mat) ? mat : [mat];
     const isGlow = materials.some((material) => material && glowMaterials.has(material));
+    
     obj.renderOrder = isGlow ? (renderOrder + 3) : renderOrder;
-    obj.frustumCulled = false;
+    obj.frustumCulled = true;
+    
     if (!mat) return;
     for (const material of materials) {
       if (!material) continue;
-      material.depthTest = false;
-      material.depthWrite = false;
-      material.transparent = true;
-      if (isGlow) material.toneMapped = false;
-      if (!Number.isFinite(material.opacity)) material.opacity = 1;
+      
+      // FIX: Tylko świecące części (lasery, rdzenie) są przezroczyste i bez depthTestu!
+      if (isGlow || material.blending === THREE.AdditiveBlending) {
+        material.depthTest = false;
+        material.depthWrite = false;
+        material.transparent = true;
+        material.toneMapped = false;
+        if (!Number.isFinite(material.opacity)) material.opacity = 1;
+      } else {
+        // Zwykły metalowy pancerz i lufy MUSZĄ mieć włączony Depth Test!
+        material.depthTest = true;
+        material.depthWrite = true;
+        material.transparent = false; 
+      }
       material.needsUpdate = true;
     }
   });
@@ -1281,28 +1293,32 @@ function createWeapon3DMesh(weaponId, category, size) {
 }
 
 function resolveBulletVisualStyle(bullet) {
-  ensureWeaponResources();
+  if (bullet.__cachedStyle) return bullet.__cachedStyle;
   const key = String(bullet?.vfxKey || bullet?.weaponId || bullet?.weaponName || bullet?.type || '').toLowerCase();
+  let result;
 
-  if (key.includes('special_goliath')) return WEP_RESOURCES.bulletStyles.goliath;
-  if (key.includes('special_plasma')) return WEP_RESOURCES.bulletStyles.plasmaGatling;
-  if (key.includes('special_valkyrie')) return WEP_RESOURCES.bulletStyles.tempest;
-  if (key.includes('yamato')) return WEP_RESOURCES.bulletStyles.yamato;
-  if (key.includes('hexlance')) return WEP_RESOURCES.bulletStyles.hexlance;
-  if (key.includes('siege_railgun')) return WEP_RESOURCES.bulletStyles.siegeRail;
-  if (key.includes('vulcan')) return WEP_RESOURCES.bulletStyles.vulcan;
-  if (key.includes('helios')) return WEP_RESOURCES.bulletStyles.helios;
-  if (key.includes('tempest') || key.includes('rail')) return WEP_RESOURCES.bulletStyles.tempest;
-  if (key.includes('laser_pd')) return WEP_RESOURCES.bulletStyles.laserPD;
-  if (key.includes('ciws') || key.includes('pd')) return WEP_RESOURCES.bulletStyles.ciws;
-  if (key.includes('heavy_auto')) return WEP_RESOURCES.bulletStyles.autocannon;
-  if (key.includes('auto') || key.includes('gatling')) return WEP_RESOURCES.bulletStyles.autocannon;
-  if (key.includes('armata') || key.includes('flak')) return WEP_RESOURCES.bulletStyles.armata;
-  if (key.includes('plasma')) return WEP_RESOURCES.bulletStyles.plasma;
-  if (key.includes('rocket') || key.includes('missile') || key.includes('aim-') || key.includes('asm')) return WEP_RESOURCES.bulletStyles.rocket;
-  if (key.includes('torpedo')) return WEP_RESOURCES.bulletStyles.torpedo;
-  if (key.includes('siege')) return WEP_RESOURCES.bulletStyles.siegeRail;
-  return WEP_RESOURCES.bulletStyles.default;
+  if (key.includes('special_goliath')) result = WEP_RESOURCES.bulletStyles.goliath;
+  else if (key.includes('special_plasma')) result = WEP_RESOURCES.bulletStyles.plasmaGatling;
+  else if (key.includes('special_valkyrie')) result = WEP_RESOURCES.bulletStyles.tempest;
+  else if (key.includes('yamato')) result = WEP_RESOURCES.bulletStyles.yamato;
+  else if (key.includes('hexlance')) result = WEP_RESOURCES.bulletStyles.hexlance;
+  else if (key.includes('siege_railgun')) result = WEP_RESOURCES.bulletStyles.siegeRail;
+  else if (key.includes('vulcan')) result = WEP_RESOURCES.bulletStyles.vulcan;
+  else if (key.includes('helios')) result = WEP_RESOURCES.bulletStyles.helios;
+  else if (key.includes('tempest') || key.includes('rail')) result = WEP_RESOURCES.bulletStyles.tempest;
+  else if (key.includes('laser_pd')) result = WEP_RESOURCES.bulletStyles.laserPD;
+  else if (key.includes('ciws') || key.includes('pd')) result = WEP_RESOURCES.bulletStyles.ciws;
+  else if (key.includes('heavy_auto')) result = WEP_RESOURCES.bulletStyles.autocannon;
+  else if (key.includes('auto') || key.includes('gatling')) result = WEP_RESOURCES.bulletStyles.autocannon;
+  else if (key.includes('armata') || key.includes('flak')) result = WEP_RESOURCES.bulletStyles.armata;
+  else if (key.includes('plasma')) result = WEP_RESOURCES.bulletStyles.plasma;
+  else if (key.includes('rocket') || key.includes('missile') || key.includes('aim-') || key.includes('asm')) result = WEP_RESOURCES.bulletStyles.rocket;
+  else if (key.includes('torpedo')) result = WEP_RESOURCES.bulletStyles.torpedo;
+  else if (key.includes('siege')) result = WEP_RESOURCES.bulletStyles.siegeRail;
+  else result = WEP_RESOURCES.bulletStyles.default;
+
+  bullet.__cachedStyle = result;
+  return result;
 }
 
 function resetBulletInstanceCounts() {
@@ -1665,6 +1681,7 @@ export const Weapon3DSystem = {
   containers: new Map(),
   _preloaded: false,
   _lastFxTimeSec: 0,
+  _matrixWorldFrame: 0,
   _cameraShakeMag: 0,
   _shotListenerBound: false,
   _shotListener: null,
@@ -1765,8 +1782,11 @@ export const Weapon3DSystem = {
     for (const [, container] of this.containers) {
       const meshes = container?.userData?.meshes;
       if (!meshes || meshes.size === 0) continue;
-      
-      container.updateMatrixWorld(true);
+
+      if (container.userData._lastMatrixFrame !== this._matrixWorldFrame) {
+        container.updateMatrixWorld(true);
+        container.userData._lastMatrixFrame = this._matrixWorldFrame;
+      }
 
       for (const [uid, mesh] of meshes) {
         const fx = mesh?.userData?.weaponFx;
@@ -1812,7 +1832,10 @@ export const Weapon3DSystem = {
       const mesh = meshes.get(meshUid);
       if (!mesh) continue;
 
-      container.updateMatrixWorld(true);
+      if (container.userData._lastMatrixFrame !== this._matrixWorldFrame) {
+        container.updateMatrixWorld(true);
+        container.userData._lastMatrixFrame = this._matrixWorldFrame;
+      }
       const fx = mesh.userData?.weaponFx;
       const points = fx?.muzzlePoints;
       if (Array.isArray(points) && points.length > 0) {
@@ -2002,7 +2025,10 @@ export const Weapon3DSystem = {
     for (const [, container] of this.containers) {
       const meshes = container?.userData?.meshes;
       if (!meshes || meshes.size === 0) continue;
-      container.updateMatrixWorld(true);
+      if (container.userData._lastMatrixFrame !== this._matrixWorldFrame) {
+        container.updateMatrixWorld(true);
+        container.userData._lastMatrixFrame = this._matrixWorldFrame;
+      }
       for (const [, mesh] of meshes) {
         const fx = mesh?.userData?.weaponFx;
         if (!fx) continue;
@@ -2042,6 +2068,7 @@ export const Weapon3DSystem = {
 
   _updateWeaponFx(dt) {
     for (const [, container] of this.containers) {
+      if (!container?.visible) continue;
       const meshes = container?.userData?.meshes;
       if (!meshes) continue;
       for (const [, mesh] of meshes) {
@@ -2083,8 +2110,8 @@ export const Weapon3DSystem = {
       const dx = shipEx - (Number(cam.x) || 0);
       const dy = shipEy - (Number(cam.y) || 0);
       const dist2 = dx * dx + dy * dy;
-      // Visibility threshold scales with zoom: closer zoom = smaller threshold
-      const threshold = 4000 / camZoom;
+      // Zoom out → mniej detali (mniejszy threshold), zoom in → więcej
+      const threshold = 2500 * camZoom;
       if (dist2 > threshold * threshold) {
         const container = this.containers.get(entity);
         if (container) container.visible = false;
@@ -2255,40 +2282,15 @@ export const Weapon3DSystem = {
     }
     container.visible = true;
 
-    let targetTiltX = 0;
-    let targetTiltY = 0;
-    if (typeof window !== 'undefined' && window.camera) {
-      const camX = Number(window.camera.x) || 0;
-      const camY = Number(window.camera.y) || 0;
-      const camZoom = Math.max(0.01, Number(window.camera.zoom) || 1);
-      const relX = shipEx - camX;
-      const relY = camY - shipEy;
-      const len = Math.hypot(relX, relY);
-      if (len > 1e-3) {
-        const nx = relX / len;
-        const ny = relY / len;
-        const deadZonePx = 100 / camZoom;
-        const response = Math.min(1, Math.max(0, (len - deadZonePx) / (2300 / camZoom)));
-        const maxTilt = 0.44;
-        targetTiltX = ny * maxTilt * response;
-        targetTiltY = -nx * maxTilt * response;
-      }
-    }
-    
-    const tiltLerp = 0.2;
-    container.userData.tiltX += (targetTiltX - container.userData.tiltX) * tiltLerp;
-    container.userData.tiltY += (targetTiltY - container.userData.tiltY) * tiltLerp;
-
-    container.rotation.x = container.userData.tiltX;
-    container.rotation.y = container.userData.tiltY;
-    container.rotation.z = 0;
+    // GTA-2 style: container obraca się z okrętem, brak tiltu perspektywicznego
+    container.rotation.x = 0;
+    container.rotation.y = 0;
+    container.rotation.z = -shipAngle;
 
     container.position.set(shipEx, -shipEy, 0.0);
 
     const currentMeshes = container.userData.meshes;
     const usedUids = new Set();
-    const cosAngle = Math.cos(shipAngle);
-    const sinAngle = Math.sin(shipAngle);
     const weaponLocalScale = getEntityWeaponLocalScale(entity);
 
     for (const wData of wepDataList) {
@@ -2301,14 +2303,14 @@ export const Weapon3DSystem = {
         currentMeshes.set(wData.uid, mesh);
       }
 
+      // Pozycje w lokalnych współrzędnych okrętu (container już obraca)
       const positionScaleX = wData.useHardpointScale ? weaponLocalScale.x : shipScale;
       const positionScaleY = wData.useHardpointScale ? weaponLocalScale.y : shipScale;
       const lx = (Number(wData.localX) || 0) * positionScaleX;
       const ly = (Number(wData.localY) || 0) * positionScaleY;
-      const rx = lx * cosAngle - ly * sinAngle;
-      const ry = lx * sinAngle + ly * cosAngle;
-      mesh.position.set(rx, -ry, 0);
-      mesh.rotation.z = -wData.angle;
+      mesh.position.set(lx, -ly, 0);
+      // Kąt wieżyczki relatywny do okrętu
+      mesh.rotation.z = -(wData.angle - shipAngle);
     }
 
     for (const [uid, mesh] of currentMeshes.entries()) {
@@ -2336,6 +2338,7 @@ export const Weapon3DSystem = {
     const dt = this._lastFxTimeSec > 0 ? Math.max(0.001, Math.min(0.05, timeSec - this._lastFxTimeSec)) : (1 / 60);
     this._lastFxTimeSec = timeSec;
 
+    this._matrixWorldFrame++;
     this._updateWeaponFx(dt);
     this._updateBeamFx(dt, timeSec);
     this._updateCameraShake(dt);
@@ -2415,20 +2418,26 @@ export const Weapon3DSystem = {
       instanceCount++;
     }
 
+    const prevCount = bulletInstances.trails.count || 0;
     bulletInstances.trails.count = instanceCount;
     bulletInstances.cores.count = instanceCount;
     bulletInstances.heads.count = instanceCount;
     bulletInstances.arcs.count = arcInstanceCount;
 
-    bulletInstances.trails.instanceMatrix.needsUpdate = true;
-    bulletInstances.cores.instanceMatrix.needsUpdate = true;
-    bulletInstances.heads.instanceMatrix.needsUpdate = true;
-    bulletInstances.arcs.instanceMatrix.needsUpdate = true;
-
-    if (bulletInstances.trails.instanceColor) bulletInstances.trails.instanceColor.needsUpdate = true;
-    if (bulletInstances.cores.instanceColor) bulletInstances.cores.instanceColor.needsUpdate = true;
-    if (bulletInstances.heads.instanceColor) bulletInstances.heads.instanceColor.needsUpdate = true;
-    if (bulletInstances.arcs.instanceColor) bulletInstances.arcs.instanceColor.needsUpdate = true;
+    // Skip GPU buffer upload when nothing to render
+    if (instanceCount > 0 || prevCount > 0) {
+      bulletInstances.trails.instanceMatrix.needsUpdate = true;
+      bulletInstances.cores.instanceMatrix.needsUpdate = true;
+      bulletInstances.heads.instanceMatrix.needsUpdate = true;
+      if (bulletInstances.trails.instanceColor) bulletInstances.trails.instanceColor.needsUpdate = true;
+      if (bulletInstances.cores.instanceColor) bulletInstances.cores.instanceColor.needsUpdate = true;
+      if (bulletInstances.heads.instanceColor) bulletInstances.heads.instanceColor.needsUpdate = true;
+    }
+    if (arcInstanceCount > 0 || (bulletInstances.arcs._prevCount || 0) > 0) {
+      bulletInstances.arcs.instanceMatrix.needsUpdate = true;
+      if (bulletInstances.arcs.instanceColor) bulletInstances.arcs.instanceColor.needsUpdate = true;
+    }
+    bulletInstances.arcs._prevCount = arcInstanceCount;
   },
 
   disposeEntity(entity) {
