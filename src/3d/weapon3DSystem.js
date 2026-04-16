@@ -1,5 +1,7 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Core3D } from './core3d.js';
+import { CICDisplay } from '../ui/cicDisplay.js';
 
 const WEP_RESOURCES = {
   mats: null,
@@ -416,17 +418,14 @@ function getMuzzleFlashMats(colorHex) {
 function createMuzzleFlash(colorHex, baseScale = 11) {
   const group = new THREE.Group();
   const mats = getMuzzleFlashMats(colorHex);
-  const plane = WEP_RESOURCES.geos.planeUnit;
-
-  const p1 = new THREE.Mesh(plane, mats.outer);
-  p1.scale.set(baseScale, baseScale, 1);
-  const p2 = new THREE.Mesh(plane, mats.outer);
-  p2.scale.set(baseScale * 0.9, baseScale * 0.9, 1);
-  p2.rotation.x = Math.PI * 0.5;
-  const core = new THREE.Mesh(plane, mats.inner);
+  // Merge 2 outer planes → 1 mesh (same material, different rotations)
+  const outerMerged = mergeTurretParts([
+    { geo: WEP_RESOURCES.geos.planeUnit, scale: new THREE.Vector3(baseScale, baseScale, 1) },
+    { geo: WEP_RESOURCES.geos.planeUnit, scale: new THREE.Vector3(baseScale * 0.9, baseScale * 0.9, 1), rotation: new THREE.Euler(Math.PI * 0.5, 0, 0) }
+  ], mats.outer);
+  const core = new THREE.Mesh(WEP_RESOURCES.geos.planeUnit, mats.inner);
   core.scale.set(baseScale * 0.45, baseScale * 0.45, 1);
-
-  group.add(p1, p2, core);
+  group.add(outerMerged, core);
   group.visible = false;
   group.userData.baseScale = new THREE.Vector3(1, 1, 1);
   return group;
@@ -554,43 +553,107 @@ function updateMeshWeaponFx(mesh, dt) {
   }
 }
 
+// ── Merge helper: combine primitives into single Mesh ──────────
+const _tmpMat4 = new THREE.Matrix4();
+const _tmpQuat = new THREE.Quaternion();
+const _tmpVec = new THREE.Vector3(1, 1, 1);
+
+function mergeTurretParts(parts, material) {
+  const geos = [];
+  for (const p of parts) {
+    const g = p.geo.clone();
+    _tmpQuat.identity();
+    if (p.rotation) _tmpQuat.setFromEuler(p.rotation);
+    _tmpVec.set(1, 1, 1);
+    if (p.scale) _tmpVec.copy(p.scale);
+    _tmpMat4.compose(p.position || new THREE.Vector3(), _tmpQuat, _tmpVec);
+    g.applyMatrix4(_tmpMat4);
+    geos.push(g);
+  }
+
+  // Normalize index: convert all to non-indexed so mergeGeometries doesn't
+  // fail on mixed indexed / non-indexed inputs (e.g. ExtrudeGeometry vs BoxGeometry)
+  for (let i = 0; i < geos.length; i++) {
+    if (geos[i].index) {
+      const nonIndexed = geos[i].toNonIndexed();
+      geos[i].dispose();
+      geos[i] = nonIndexed;
+    }
+  }
+
+  // Normalize attributes: ensure all geometries share the same attribute set
+  if (geos.length > 1) {
+    // Find common attributes present in ALL geometries
+    const commonAttrs = new Set(Object.keys(geos[0].attributes));
+    for (let i = 1; i < geos.length; i++) {
+      const attrs = new Set(Object.keys(geos[i].attributes));
+      for (const a of commonAttrs) {
+        if (!attrs.has(a)) commonAttrs.delete(a);
+      }
+    }
+    // Remove attributes not present in all geometries
+    for (const g of geos) {
+      for (const attrName of Object.keys(g.attributes)) {
+        if (!commonAttrs.has(attrName)) {
+          g.deleteAttribute(attrName);
+        }
+      }
+    }
+  }
+
+  const merged = mergeGeometries(geos, false);
+  for (const g of geos) g.dispose();
+
+  if (merged) {
+    return new THREE.Mesh(merged, material);
+  }
+
+  // Fallback: if merge still fails, return a group of individual meshes
+  console.warn('mergeTurretParts: mergeGeometries returned null, using fallback group');
+  const fallbackGroup = new THREE.Group();
+  for (const p of parts) {
+    const mesh = new THREE.Mesh(p.geo, material);
+    if (p.position) mesh.position.copy(p.position);
+    if (p.rotation) mesh.rotation.copy(p.rotation);
+    if (p.scale) mesh.scale.copy(p.scale);
+    fallbackGroup.add(mesh);
+  }
+  return fallbackGroup;
+}
+
 function buildVulcanTurret(sizeMult) {
   const mats = WEP_RESOURCES.mats;
   const geos = WEP_RESOURCES.geos;
   const group = new THREE.Group();
-
+  // Merge housing into metal mesh
   const housing = new THREE.Mesh(new THREE.BoxGeometry(26, 16, 14), mats.armor);
   housing.position.set(5, 0, 8);
   group.add(housing);
-
-  const barrelPivot = new THREE.Group();
-  barrelPivot.rotation.z = -Math.PI * 0.5;
-  barrelPivot.position.set(18, 0, 8);
-  group.add(barrelPivot);
-
-  const spinGroup = new THREE.Group();
+  // Merge 6 barrel tubes → 1 mesh (skip spin — invisible at game zoom)
+  // barrelPivot was at (18,0,8) rotated z=-PI/2, barrels at y=12 + circular offsets
+  const barrelParts = [];
   for (let i = 0; i < 6; i++) {
-    const barrel = new THREE.Mesh(geos.barrelTube, mats.barrel);
-    barrel.position.y = 12;
-    barrel.position.x = Math.cos((i / 6) * Math.PI * 2) * 3;
-    barrel.position.z = Math.sin((i / 6) * Math.PI * 2) * 3;
-    spinGroup.add(barrel);
+    const angle = (i / 6) * Math.PI * 2;
+    // After parent rotation z=-PI/2: local (cx, 12, cz) → world offset (12, -cx, cz)
+    barrelParts.push({
+      geo: geos.barrelTube,
+      position: new THREE.Vector3(18 + 12, -(Math.cos(angle) * 3), 8 + Math.sin(angle) * 3),
+      rotation: new THREE.Euler(0, 0, -Math.PI * 0.5)
+    });
   }
-  barrelPivot.add(spinGroup);
-
+  const barrelsMerged = mergeTurretParts(barrelParts, mats.barrel);
+  group.add(barrelsMerged);
+  // Glow ring
   const glowRing = new THREE.Mesh(new THREE.TorusGeometry(4, 0.75, 8, 20), mats.glowAmber);
   glowRing.rotation.x = Math.PI * 0.5;
   glowRing.position.set(26, 0, 8);
   group.add(glowRing);
-
+  // 3 meshes instead of 8
   attachWeaponFxData(group, {
-    weaponId: 'vulcan_minigun',
-    housing,
-    barrels: [barrelPivot],
+    weaponId: 'vulcan_minigun', housing, barrels: [],
     muzzlePoints: [new THREE.Vector3(45, 0, 8)],
     muzzleColor: '#ffaa00'
   });
-  group.userData.spinGroup = spinGroup;
   group.scale.setScalar(sizeMult);
   markMeshTree(group, false);
   return group;
@@ -599,36 +662,23 @@ function buildVulcanTurret(sizeMult) {
 function buildHeliosTurret(sizeMult) {
   const mats = WEP_RESOURCES.mats;
   const group = new THREE.Group();
-
-  const housing = new THREE.Mesh(new THREE.BoxGeometry(20, 22, 12), mats.armor);
-  housing.position.set(2, 0, 8);
-  group.add(housing);
-
-  const createLaserBarrel = (yPos) => {
-    const barrelGroup = new THREE.Group();
-    const barrel = new THREE.Mesh(new THREE.BoxGeometry(35, 3, 4), mats.barrel);
-    barrel.position.x = 17.5;
-    barrelGroup.add(barrel);
-    const glow = new THREE.Mesh(new THREE.BoxGeometry(30, 1.5, 4.2), mats.glowRed);
-    glow.position.x = 17.5;
-    barrelGroup.add(glow);
-    barrelGroup.position.set(12, yPos, 8);
-    return barrelGroup;
-  };
-
-  const barrelL = createLaserBarrel(6);
-  const barrelR = createLaserBarrel(-6);
-  group.add(barrelL);
-  group.add(barrelR);
-
-  const noseGlow = new THREE.Mesh(new THREE.BoxGeometry(4, 15, 5), mats.glowRed);
-  noseGlow.position.set(43, 0, 8);
-  group.add(noseGlow);
-
+  // Merge housing + 2 barrel tubes → 1 metal mesh
+  const metal = mergeTurretParts([
+    { geo: new THREE.BoxGeometry(20, 22, 12), position: new THREE.Vector3(2, 0, 8) },
+    { geo: new THREE.BoxGeometry(35, 3, 4), position: new THREE.Vector3(29.5, 6, 8) },
+    { geo: new THREE.BoxGeometry(35, 3, 4), position: new THREE.Vector3(29.5, -6, 8) }
+  ], mats.armor);
+  group.add(metal);
+  // Merge 2 barrel glows + noseGlow → 1 glow mesh
+  const glow = mergeTurretParts([
+    { geo: new THREE.BoxGeometry(30, 1.5, 4.2), position: new THREE.Vector3(29.5, 6, 8) },
+    { geo: new THREE.BoxGeometry(30, 1.5, 4.2), position: new THREE.Vector3(29.5, -6, 8) },
+    { geo: new THREE.BoxGeometry(4, 15, 5), position: new THREE.Vector3(43, 0, 8) }
+  ], mats.glowRed);
+  group.add(glow);
+  // 2 meshes instead of 5
   attachWeaponFxData(group, {
-    weaponId: 'helios_laser',
-    housing,
-    barrels: [barrelL, barrelR],
+    weaponId: 'helios_laser', housing: metal, barrels: [],
     muzzlePoints: [new THREE.Vector3(47, 6, 8), new THREE.Vector3(47, -6, 8)],
     muzzleColor: '#ff003c'
   });
@@ -640,34 +690,26 @@ function buildHeliosTurret(sizeMult) {
 function buildArmataTurret(sizeMult) {
   const mats = WEP_RESOURCES.mats;
   const group = new THREE.Group();
-  const housing = new THREE.Mesh(new THREE.BoxGeometry(26, 24, 16), mats.armor);
-  housing.position.set(3, 0, 9);
-  group.add(housing);
-
-  const barrelPivot = new THREE.Group();
-  barrelPivot.position.set(14, 0, 9);
-  barrelPivot.rotation.z = -Math.PI * 0.5;
-  group.add(barrelPivot);
-
-  const railL = new THREE.Mesh(new THREE.BoxGeometry(2, 35, 6), mats.barrel);
-  railL.position.set(-6, 17.5, 0);
-  const railR = new THREE.Mesh(new THREE.BoxGeometry(2, 35, 6), mats.barrel);
-  railR.position.set(6, 17.5, 0);
-  const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(3, 1), mats.glowAmber);
-  crystal.position.y = 5;
-  const focusRing = new THREE.Mesh(new THREE.TorusGeometry(5, 1, 8, 16), mats.glowAmber);
-  focusRing.position.y = 35;
-  focusRing.rotation.x = Math.PI * 0.5;
-  barrelPivot.add(railL, railR, crystal, focusRing);
-
+  const rotZ = new THREE.Euler(0, 0, -Math.PI * 0.5);
+  // Merge housing + rails → 1 metal mesh
+  // barrelPivot was at (14,0,9) rotated z=-PI/2: local y → world x
+  const metal = mergeTurretParts([
+    { geo: new THREE.BoxGeometry(26, 24, 16), position: new THREE.Vector3(3, 0, 9) },
+    { geo: new THREE.BoxGeometry(2, 35, 6), position: new THREE.Vector3(31.5, 6, 9), rotation: rotZ },
+    { geo: new THREE.BoxGeometry(2, 35, 6), position: new THREE.Vector3(31.5, -6, 9), rotation: rotZ }
+  ], mats.armor);
+  group.add(metal);
+  // Merge crystal + focusRing → 1 glow mesh
+  const glow = mergeTurretParts([
+    { geo: new THREE.OctahedronGeometry(3, 1), position: new THREE.Vector3(19, 0, 9), rotation: rotZ },
+    { geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(49, 0, 9), rotation: new THREE.Euler(0, 0, -Math.PI * 0.5) }
+  ], mats.glowAmber);
+  group.add(glow);
+  // 2 meshes instead of 5
   attachWeaponFxData(group, {
-    weaponId: 'armata_mk1',
-    housing,
-    barrels: [barrelPivot],
+    weaponId: 'armata_mk1', housing: metal, barrels: [],
     muzzlePoints: [new THREE.Vector3(55, 0, 10)],
-    muzzleColor: '#ff5500',
-    recoil: 15,
-    shake: 8
+    muzzleColor: '#ff5500', recoil: 15, shake: 8
   });
   group.scale.setScalar(sizeMult);
   markMeshTree(group, false);
@@ -677,34 +719,25 @@ function buildArmataTurret(sizeMult) {
 function buildBeamContinuousTurret(sizeMult) {
   const mats = WEP_RESOURCES.mats;
   const group = new THREE.Group();
-  const housing = new THREE.Mesh(new THREE.BoxGeometry(26, 24, 16), mats.armor);
-  housing.position.set(3, 0, 9);
-  group.add(housing);
-
-  const barrelPivot = new THREE.Group();
-  barrelPivot.position.set(15, 0, 9);
-  barrelPivot.rotation.z = -Math.PI * 0.5;
-  group.add(barrelPivot);
-
-  const railL = new THREE.Mesh(new THREE.BoxGeometry(2, 35, 6), mats.barrel);
-  railL.position.set(-6, 17.5, 0);
-  const railR = new THREE.Mesh(new THREE.BoxGeometry(2, 35, 6), mats.barrel);
-  railR.position.set(6, 17.5, 0);
-  const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(3, 1), mats.glowCyan);
-  crystal.position.y = 5;
-  const focusRing = new THREE.Mesh(new THREE.TorusGeometry(5, 1, 8, 16), mats.glowCyan);
-  focusRing.position.y = 35;
-  focusRing.rotation.x = Math.PI * 0.5;
-  barrelPivot.add(railL, railR, crystal, focusRing);
-
+  const rotZ = new THREE.Euler(0, 0, -Math.PI * 0.5);
+  // Merge housing + rails → 1 metal mesh
+  const metal = mergeTurretParts([
+    { geo: new THREE.BoxGeometry(26, 24, 16), position: new THREE.Vector3(3, 0, 9) },
+    { geo: new THREE.BoxGeometry(2, 35, 6), position: new THREE.Vector3(32.5, 6, 9), rotation: rotZ },
+    { geo: new THREE.BoxGeometry(2, 35, 6), position: new THREE.Vector3(32.5, -6, 9), rotation: rotZ }
+  ], mats.armor);
+  group.add(metal);
+  // Merge crystal + focusRing → 1 glow mesh
+  const glow = mergeTurretParts([
+    { geo: new THREE.OctahedronGeometry(3, 1), position: new THREE.Vector3(20, 0, 9), rotation: rotZ },
+    { geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(50, 0, 9), rotation: rotZ }
+  ], mats.glowCyan);
+  group.add(glow);
+  // 2 meshes instead of 4
   attachWeaponFxData(group, {
-    weaponId: 'beam_continuous',
-    housing,
-    barrels: [barrelPivot],
+    weaponId: 'beam_continuous', housing: metal, barrels: [],
     muzzlePoints: [new THREE.Vector3(55, 0, 10)],
-    muzzleColor: '#00ffcc',
-    recoil: 1,
-    shake: 1.5
+    muzzleColor: '#00ffcc', recoil: 1, shake: 1.5
   });
   group.scale.setScalar(sizeMult);
   markMeshTree(group, false);
@@ -714,37 +747,31 @@ function buildBeamContinuousTurret(sizeMult) {
 function buildBeamPulseTurret(sizeMult) {
   const mats = WEP_RESOURCES.mats;
   const group = new THREE.Group();
-  const housing = new THREE.Mesh(new THREE.BoxGeometry(20, 20, 15), mats.armor);
-  housing.position.set(5, 0, 10);
-  group.add(housing);
-
-  const barrels = [];
-  const muzzlePoints = [];
+  const rotZ = new THREE.Euler(0, 0, -Math.PI * 0.5);
   const positions = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
-  for (let i = 0; i < positions.length; i++) {
-    const pos = positions[i];
-    const pivot = new THREE.Group();
-    pivot.rotation.z = -Math.PI * 0.5;
-    pivot.position.set(15, pos[1] * 6, 10 + pos[0] * 4);
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 20, 8), mats.barrel);
-    barrel.position.y = 10;
-    pivot.add(barrel);
-    const glow = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.8, 5, 8), mats.glowRed);
-    glow.position.y = 18;
-    pivot.add(glow);
-    barrels.push(pivot);
-    group.add(pivot);
-    muzzlePoints.push(new THREE.Vector3(38, pos[1] * 6, 10 + pos[0] * 4));
+  // Merge housing + 4 barrel cylinders → 1 metal mesh
+  const metalParts = [
+    { geo: new THREE.BoxGeometry(20, 20, 15), position: new THREE.Vector3(5, 0, 10) }
+  ];
+  const glowParts = [];
+  const muzzlePoints = [];
+  for (const pos of positions) {
+    const yOff = pos[1] * 6;
+    const zOff = 10 + pos[0] * 4;
+    // pivot at (15, yOff, zOff) rotated z=-PI/2; barrel at local y=10 → world x+10
+    metalParts.push({ geo: new THREE.CylinderGeometry(1.5, 1.5, 20, 8), position: new THREE.Vector3(25, yOff, zOff), rotation: rotZ });
+    // glow at local y=18 → world x+18
+    glowParts.push({ geo: new THREE.CylinderGeometry(1.8, 1.8, 5, 8), position: new THREE.Vector3(33, yOff, zOff), rotation: rotZ });
+    muzzlePoints.push(new THREE.Vector3(38, yOff, zOff));
   }
-
+  const metal = mergeTurretParts(metalParts, mats.armor);
+  group.add(metal);
+  const glow = mergeTurretParts(glowParts, mats.glowRed);
+  group.add(glow);
+  // 2 meshes instead of 9
   attachWeaponFxData(group, {
-    weaponId: 'beam_pulse',
-    housing,
-    barrels,
-    muzzlePoints,
-    muzzleColor: '#ff003c',
-    recoil: 6,
-    shake: 3.5
+    weaponId: 'beam_pulse', housing: metal, barrels: [],
+    muzzlePoints, muzzleColor: '#ff003c', recoil: 6, shake: 3.5
   });
   group.scale.setScalar(sizeMult);
   markMeshTree(group, false);
@@ -754,54 +781,40 @@ function buildBeamPulseTurret(sizeMult) {
 function buildTempestTurret(sizeMult, barrelCount = 1) {
   const mats = WEP_RESOURCES.mats;
   const group = new THREE.Group();
-
-  const housing = new THREE.Mesh(new THREE.BoxGeometry(18, 16, 16), mats.armor);
-  housing.position.set(2, 0, 8);
-  group.add(housing);
-
-  const makeBarrel = (yOffset = 0) => {
-    const barrelSys = new THREE.Group();
-    const mainBarrel = new THREE.Mesh(new THREE.CylinderGeometry(4, 5, 20, 12), mats.barrel);
-    mainBarrel.position.y = 10;
-    barrelSys.add(mainBarrel);
-
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(5, 1, 8, 16), mats.glowCyan);
-    ring.position.y = 16;
-    ring.rotation.x = Math.PI * 0.5;
-    barrelSys.add(ring);
-
-    barrelSys.rotation.z = -Math.PI * 0.5;
-    barrelSys.position.set(11, yOffset, 8);
-    return barrelSys;
-  };
-
-  const barrels = [];
+  const rotZ = new THREE.Euler(0, 0, -Math.PI * 0.5);
+  // Merge housing + barrel cylinders → 1 metal mesh
+  // makeBarrel at (11, yOff, 8) rotated z=-PI/2, barrel at local y=10 → world x offset +10
+  const metalParts = [
+    { geo: new THREE.BoxGeometry(18, 16, 16), position: new THREE.Vector3(2, 0, 8) }
+  ];
   if (barrelCount <= 1) {
-    const single = makeBarrel(0);
-    barrels.push(single);
-    group.add(single);
+    metalParts.push({ geo: new THREE.CylinderGeometry(4, 5, 20, 12), position: new THREE.Vector3(21, 0, 8), rotation: rotZ });
   } else {
-    const left = makeBarrel(-5);
-    const right = makeBarrel(5);
-    barrels.push(left, right);
-    group.add(left);
-    group.add(right);
+    metalParts.push({ geo: new THREE.CylinderGeometry(4, 5, 20, 12), position: new THREE.Vector3(21, -5, 8), rotation: rotZ });
+    metalParts.push({ geo: new THREE.CylinderGeometry(4, 5, 20, 12), position: new THREE.Vector3(21, 5, 8), rotation: rotZ });
   }
-
-  const muzzleGlow = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 10, 8), mats.glowCyan);
-  muzzleGlow.rotation.z = Math.PI * 0.5;
-  muzzleGlow.position.set(34, 0, 8);
-  group.add(muzzleGlow);
-
+  const metal = mergeTurretParts(metalParts, mats.armor);
+  group.add(metal);
+  // Merge rings + muzzleGlow → 1 glow mesh
+  const glowParts = [
+    { geo: new THREE.CylinderGeometry(1.2, 1.2, 10, 8), position: new THREE.Vector3(34, 0, 8), rotation: rotZ }
+  ];
+  if (barrelCount <= 1) {
+    glowParts.push({ geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(27, 0, 8), rotation: rotZ });
+  } else {
+    glowParts.push({ geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(27, -5, 8), rotation: rotZ });
+    glowParts.push({ geo: new THREE.TorusGeometry(5, 1, 8, 16), position: new THREE.Vector3(27, 5, 8), rotation: rotZ });
+  }
+  const glow = mergeTurretParts(glowParts, mats.glowCyan);
+  group.add(glow);
+  // 2 meshes instead of 4-6
   const muzzlePoints = barrelCount <= 1
     ? [new THREE.Vector3(34, 0, 8)]
     : [new THREE.Vector3(34, -5, 8), new THREE.Vector3(34, 5, 8)];
   attachWeaponFxData(group, {
     weaponId: barrelCount <= 1 ? 'railgun_mk1' : 'railgun_mk2',
-    housing,
-    barrels,
-    muzzlePoints,
-    muzzleColor: '#00ccff'
+    housing: metal, barrels: [],
+    muzzlePoints, muzzleColor: '#00ccff'
   });
   group.scale.setScalar(sizeMult);
   markMeshTree(group, false);
@@ -812,12 +825,7 @@ function buildYamatoTurret(sizeMult) {
   const mats = WEP_RESOURCES.mats;
   const group = new THREE.Group();
 
-  const barbette = new THREE.Mesh(new THREE.CylinderGeometry(16, 18, 6, 6), mats.armor);
-  barbette.position.set(2, 0, 0);
-  barbette.rotation.x = Math.PI / 2;
-  group.add(barbette);
-
-  // Ksztalt Yamato Turret
+  // Yamato turret shape (ExtrudeGeometry)
   const turretShape = new THREE.Shape();
   turretShape.moveTo(-11, -14);
   turretShape.lineTo(11, -14);
@@ -826,77 +834,55 @@ function buildYamatoTurret(sizeMult) {
   turretShape.lineTo(-7, 19);
   turretShape.lineTo(-17, 0);
   turretShape.lineTo(-11, -14);
-
   const extrudeSettings = { depth: 10, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: 0.75, bevelThickness: 0.75 };
-  const housing = new THREE.Mesh(new THREE.ExtrudeGeometry(turretShape, extrudeSettings), mats.armor);
-  housing.rotation.x = Math.PI / 2;
-  housing.rotation.z = -Math.PI / 2;
-  housing.position.set(-6, 0, 10);
-  group.add(housing);
 
-  const radiator = new THREE.Mesh(new THREE.BoxGeometry(6, 24, 7), mats.base);
-  radiator.position.set(-2, 0, 8);
-  radiator.rotation.x = Math.PI / 2;
-  group.add(radiator);
+  const rotXHalf = new THREE.Euler(Math.PI / 2, 0, 0);
+  const rotHousing = new THREE.Euler(Math.PI / 2, 0, -Math.PI / 2);
+  const rotZ90 = new THREE.Euler(0, 0, Math.PI / 2);
 
-  const barrelsGroup = new THREE.Group();
-  barrelsGroup.position.set(6, 0, 12);
-  group.add(barrelsGroup);
+  // Merge all metal parts → 1 mesh
+  // barrelsGroup offset = (6, 0, 12)
+  const metalParts = [
+    { geo: new THREE.CylinderGeometry(16, 18, 6, 6), position: new THREE.Vector3(2, 0, 0), rotation: rotXHalf },
+    { geo: new THREE.ExtrudeGeometry(turretShape, extrudeSettings), position: new THREE.Vector3(-6, 0, 10), rotation: rotHousing },
+    { geo: new THREE.BoxGeometry(6, 24, 7), position: new THREE.Vector3(-2, 0, 8), rotation: rotXHalf }
+  ];
 
-  const barrels = [];
-  const muzzlePoints = [];
+  // 3 guns: at barrelsGroup (6,0,12) + gun offsets
+  const gunConfigs = [
+    { yOff: 7.5, scale: 0.9 },
+    { yOff: 0, scale: 1.0 },
+    { yOff: -7.5, scale: 0.9 }
+  ];
+  const glowParts = [];
 
-  const createRailgun = (yOffset, scale = 1) => {
-      const parentGun = new THREE.Group();
-      const gun = new THREE.Group();
+  for (const cfg of gunConfigs) {
+    const s = cfg.scale;
+    const gy = cfg.yOff;
+    // gun base at (5*s, 0, 0) offset by barrelsGroup (6, gy, 12)
+    metalParts.push({ geo: new THREE.BoxGeometry(12 * s, 6 * s, 4 * s), position: new THREE.Vector3(6 + 5 * s, gy, 12) });
+    // rails at (25*s, ±1.75*s, 0)
+    metalParts.push({ geo: new THREE.BoxGeometry(40 * s, 5 * s, 2 * s), position: new THREE.Vector3(6 + 25 * s, gy - 1.75 * s, 12) });
+    metalParts.push({ geo: new THREE.BoxGeometry(40 * s, 5 * s, 2 * s), position: new THREE.Vector3(6 + 25 * s, gy + 1.75 * s, 12) });
+    // core glow
+    glowParts.push({ geo: new THREE.CylinderGeometry(0.75 * s, 0.75 * s, 38 * s, 8), position: new THREE.Vector3(6 + 26 * s, gy, 12), rotation: rotZ90 });
+  }
 
-      const base = new THREE.Mesh(new THREE.BoxGeometry(12, 6, 4), mats.armor);
-      base.position.set(5, 0, 0);
-      gun.add(base);
+  const metal = mergeTurretParts(metalParts, mats.armor);
+  group.add(metal);
+  const glow = mergeTurretParts(glowParts, mats.glowCyan);
+  group.add(glow);
 
-      const railGeo = new THREE.BoxGeometry(40, 5, 2);
-      const leftRail = new THREE.Mesh(railGeo, mats.base);
-      leftRail.position.set(25, -1.75, 0);
-      gun.add(leftRail);
-
-      const rightRail = new THREE.Mesh(railGeo, mats.base);
-      rightRail.position.set(25, 1.75, 0);
-      gun.add(rightRail);
-
-      const core = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 38, 8), mats.glowCyan);
-      core.rotation.z = Math.PI / 2;
-      core.position.set(26, 0, 0);
-      gun.add(core);
-
-      gun.position.y = yOffset;
-      gun.scale.set(scale, scale, scale);
-      
-      parentGun.add(gun);
-      return parentGun;
-  };
-
-  const leftGun = createRailgun(7.5, 0.9);
-  const centerGun = createRailgun(0, 1.0);
-  const rightGun = createRailgun(-7.5, 0.9);
-
-  barrels.push(leftGun, centerGun, rightGun);
-  barrelsGroup.add(leftGun, centerGun, rightGun);
-  
-  // Wspolrzedne XY do emitowania particle'i (odpowiada za flash Muzzle)
-  muzzlePoints.push(new THREE.Vector3(56, 7.5 * 0.9, 12));
-  muzzlePoints.push(new THREE.Vector3(58, 0, 12));
-  muzzlePoints.push(new THREE.Vector3(56, -7.5 * 0.9, 12));
-
+  // 2 meshes instead of 14
   attachWeaponFxData(group, {
-    weaponId: 'special_yamato_cannon',
-    housing: housing,
-    barrels: [leftGun, centerGun, rightGun],
-    muzzlePoints: muzzlePoints,
-    muzzleColor: '#00ffff',
-    recoil: 60,
-    shake: 25
+    weaponId: 'special_yamato_cannon', housing: metal, barrels: [],
+    muzzlePoints: [
+      new THREE.Vector3(56, 7.5 * 0.9, 12),
+      new THREE.Vector3(58, 0, 12),
+      new THREE.Vector3(56, -7.5 * 0.9, 12)
+    ],
+    muzzleColor: '#00ffff', recoil: 60, shake: 25
   });
-
   group.scale.setScalar(sizeMult);
   markMeshTree(group, false);
   return group;
@@ -907,26 +893,16 @@ function buildYamatoTurret(sizeMult) {
 function buildGoliathTurret(sizeMult) {
   const { mats, geos } = WEP_RESOURCES;
   const group = new THREE.Group();
-  // 1. Housing (shared)
-  const housing = new THREE.Mesh(geos.goliathHousing, mats.armor);
-  housing.position.set(4, 0, 10);
-  group.add(housing);
-  // 2-3. Two barrel groups (shared barrel geo, recoil-capable)
-  const barrels = [];
-  const muzzlePoints = [];
-  for (const yOff of [7, -7]) {
-    const bGroup = new THREE.Group();
-    bGroup.position.set(20, yOff, 10);
-    const barrel = new THREE.Mesh(geos.goliathBarrel, mats.barrel);
-    barrel.position.set(18, 0, 0);
-    bGroup.add(barrel);
-    barrels.push(bGroup);
-    group.add(bGroup);
-    muzzlePoints.push(new THREE.Vector3(58, yOff, 10));
-  }
-  // Total: 3 meshes (1 housing + 2 barrels)
+  // Merge housing + 2 barrels → 1 metal mesh
+  const merged = mergeTurretParts([
+    { geo: geos.goliathHousing, position: new THREE.Vector3(4, 0, 10) },
+    { geo: geos.goliathBarrel, position: new THREE.Vector3(38, 7, 10) },
+    { geo: geos.goliathBarrel, position: new THREE.Vector3(38, -7, 10) }
+  ], mats.armor);
+  group.add(merged);
   attachWeaponFxData(group, {
-    weaponId: 'special_goliath_autocannon', housing, barrels, muzzlePoints,
+    weaponId: 'special_goliath_autocannon', housing: merged, barrels: [],
+    muzzlePoints: [new THREE.Vector3(58, 7, 10), new THREE.Vector3(58, -7, 10)],
     muzzleColor: '#ff6600', recoil: 20, shake: 10
   });
   group.scale.setScalar(sizeMult);
@@ -937,30 +913,22 @@ function buildGoliathTurret(sizeMult) {
 function buildPlasmaGatlingTurret(sizeMult) {
   const { mats, geos } = WEP_RESOURCES;
   const group = new THREE.Group();
-  // 1. Housing (shared cylinder)
+  // Merge housing (metal)
   const housing = new THREE.Mesh(geos.plasmaHousing, mats.armor);
   housing.position.set(2, 0, 8);
   group.add(housing);
-  // 2-3. Two barrels in spin group (shared barrel geo)
-  const barrelPivot = new THREE.Group();
-  barrelPivot.position.set(16, 0, 8);
-  barrelPivot.rotation.z = -Math.PI * 0.5;
-  group.add(barrelPivot);
-  const spinGroup = new THREE.Group();
-  for (let i = 0; i < 2; i++) {
-    const angle = (i / 2) * Math.PI * 2;
-    const barrel = new THREE.Mesh(geos.plasmaBarrel, mats.glowCyan);
-    barrel.position.set(Math.cos(angle) * 6, 9, Math.sin(angle) * 6);
-    spinGroup.add(barrel);
-  }
-  barrelPivot.add(spinGroup);
-  // Total: 3 meshes (1 housing + 2 barrels)
+  // Merge 2 barrels → 1 glow mesh (skip spin — invisible at game zoom)
+  const barrels = mergeTurretParts([
+    { geo: geos.plasmaBarrel, position: new THREE.Vector3(25, 6, 8) },
+    { geo: geos.plasmaBarrel, position: new THREE.Vector3(25, -6, 8) }
+  ], mats.glowCyan);
+  group.add(barrels);
+  // 2 meshes instead of 3 (no spin overhead)
   attachWeaponFxData(group, {
-    weaponId: 'special_plasma_gatling', housing, barrels: [barrelPivot],
+    weaponId: 'special_plasma_gatling', housing, barrels: [],
     muzzlePoints: [new THREE.Vector3(42, 0, 8)],
     muzzleColor: '#00ffff', recoil: 15, shake: 8
   });
-  group.userData.spinGroup = spinGroup;
   group.scale.setScalar(sizeMult);
   markMeshTree(group, false);
   return group;
@@ -969,25 +937,19 @@ function buildPlasmaGatlingTurret(sizeMult) {
 function buildBeamEmitterTurret(sizeMult) {
   const { mats, geos } = WEP_RESOURCES;
   const group = new THREE.Group();
-  // 1. Housing (shared)
-  const housing = new THREE.Mesh(geos.beamHousing, mats.armor);
-  housing.position.set(0, 0, 7);
-  group.add(housing);
-  // Barrel group (for recoil)
-  const barrelGroup = new THREE.Group();
-  barrelGroup.position.set(10, 0, 7);
-  group.add(barrelGroup);
-  // 2. Dish (shared)
-  const dish = new THREE.Mesh(geos.beamDish, mats.base);
-  dish.position.set(22, 0, 0);
-  barrelGroup.add(dish);
-  // 3. Crystal (shared)
+  // Merge housing + dish → 1 metal mesh
+  const metal = mergeTurretParts([
+    { geo: geos.beamHousing, position: new THREE.Vector3(0, 0, 7) },
+    { geo: geos.beamDish, position: new THREE.Vector3(32, 0, 7) }
+  ], mats.armor);
+  group.add(metal);
+  // Crystal (glow, 1 mesh)
   const crystal = new THREE.Mesh(geos.beamCrystal, mats.glowCyan);
-  crystal.position.set(26, 0, 0);
-  barrelGroup.add(crystal);
-  // Total: 3 meshes (1 housing + 1 dish + 1 crystal)
+  crystal.position.set(36, 0, 7);
+  group.add(crystal);
+  // 2 meshes instead of 3
   attachWeaponFxData(group, {
-    weaponId: 'beam_continuous', housing, barrels: [barrelGroup],
+    weaponId: 'beam_continuous', housing: metal, barrels: [],
     muzzlePoints: [new THREE.Vector3(48, 0, 7)],
     muzzleColor: '#00ffcc', recoil: 1, shake: 1.5
   });
@@ -999,24 +961,15 @@ function buildBeamEmitterTurret(sizeMult) {
 function buildHeavyAutocannonTurret(sizeMult) {
   const { mats, geos } = WEP_RESOURCES;
   const group = new THREE.Group();
-  // 1. Base (reused autoBase)
-  const base = new THREE.Mesh(geos.autoBase, mats.base);
-  base.position.set(2, 0, 6);
-  group.add(base);
-  // 2. Housing (shared)
-  const housing = new THREE.Mesh(geos.heavyAutoHousing, mats.armor);
-  housing.position.set(6, 0, 8);
-  group.add(housing);
-  // 3. Barrel (shared, in pivot for recoil)
-  const barrelGroup = new THREE.Group();
-  barrelGroup.position.set(14, 0, 8);
-  group.add(barrelGroup);
-  const mainBarrel = new THREE.Mesh(geos.heavyAutoBarrel, mats.barrel);
-  mainBarrel.position.set(14, 0, 0);
-  barrelGroup.add(mainBarrel);
-  // Total: 3 meshes (1 base + 1 housing + 1 barrel)
+  // Merge base + housing + barrel → 1 metal mesh
+  const merged = mergeTurretParts([
+    { geo: geos.autoBase, position: new THREE.Vector3(2, 0, 6) },
+    { geo: geos.heavyAutoHousing, position: new THREE.Vector3(6, 0, 8) },
+    { geo: geos.heavyAutoBarrel, position: new THREE.Vector3(28, 0, 8) }
+  ], mats.armor);
+  group.add(merged);
   attachWeaponFxData(group, {
-    weaponId: 'heavy_autocannon', housing, barrels: [barrelGroup],
+    weaponId: 'heavy_autocannon', housing: merged, barrels: [],
     muzzlePoints: [new THREE.Vector3(42, 0, 8)],
     muzzleColor: '#ffcc8a', recoil: 8, shake: 4
   });
@@ -1028,23 +981,15 @@ function buildHeavyAutocannonTurret(sizeMult) {
 function buildCIWSTurret(sizeMult) {
   const { mats, geos } = WEP_RESOURCES;
   const group = new THREE.Group();
-  // 1. Base plate (reused ciwsBase)
-  const basePlate = new THREE.Mesh(geos.ciwsBase, mats.base);
-  group.add(basePlate);
-  // 2. Dome (shared hemisphere)
-  const dome = new THREE.Mesh(geos.ciwsDome, mats.armor);
-  dome.position.set(0, 0, 3);
-  group.add(dome);
-  // 3. Single cluster barrel (shared thick cylinder, no spin overhead)
-  const barrelGroup = new THREE.Group();
-  barrelGroup.position.set(6, 0, 5);
-  group.add(barrelGroup);
-  const barrel = new THREE.Mesh(geos.ciwsClusterBarrel, mats.barrel);
-  barrel.position.set(9, 0, 0);
-  barrelGroup.add(barrel);
-  // Total: 3 meshes (1 base + 1 dome + 1 barrel)
+  // Merge base+dome+barrel → 1 metal mesh
+  const merged = mergeTurretParts([
+    { geo: geos.ciwsBase, position: new THREE.Vector3(0, 0, 0) },
+    { geo: geos.ciwsDome, position: new THREE.Vector3(0, 0, 3) },
+    { geo: geos.ciwsClusterBarrel, position: new THREE.Vector3(15, 0, 5) }
+  ], mats.armor);
+  group.add(merged);
   attachWeaponFxData(group, {
-    weaponId: 'ciws_mk1', housing: dome, barrels: [barrelGroup],
+    weaponId: 'ciws_mk1', housing: merged, barrels: [],
     muzzlePoints: [new THREE.Vector3(22, 0, 5)],
     muzzleColor: '#8cffd0', recoil: 1.5, shake: 1
   });
@@ -1056,20 +1001,17 @@ function buildCIWSTurret(sizeMult) {
 function buildLaserPDTurret(sizeMult) {
   const { mats, geos } = WEP_RESOURCES;
   const group = new THREE.Group();
-  // 1. Base (reused ciwsBase)
+  // 1. Base (metal)
   const base = new THREE.Mesh(geos.ciwsBase, mats.base);
   base.position.set(0, 0, 2);
   group.add(base);
-  // 2. Lens barrel (shared, glowBlue material = visible emitter)
-  const barrelGroup = new THREE.Group();
-  barrelGroup.position.set(8, 0, 5);
-  group.add(barrelGroup);
+  // 2. Lens (glow — separate material, 1 draw call)
   const lens = new THREE.Mesh(geos.laserPDLens, mats.glowBlue);
-  lens.position.set(5, 0, 0);
-  barrelGroup.add(lens);
-  // Total: 2 meshes (1 base + 1 lens)
+  lens.position.set(13, 0, 5);
+  group.add(lens);
+  // Total: 2 meshes (different materials — can't merge further)
   attachWeaponFxData(group, {
-    weaponId: 'laser_pd_mk1', housing: base, barrels: [barrelGroup],
+    weaponId: 'laser_pd_mk1', housing: base, barrels: [],
     muzzlePoints: [new THREE.Vector3(18, 0, 5)],
     muzzleColor: '#6ec8ff', recoil: 0.5, shake: 0.3
   });
@@ -1081,15 +1023,13 @@ function buildLaserPDTurret(sizeMult) {
 function buildMissileRackTurret(sizeMult) {
   const { mats, geos } = WEP_RESOURCES;
   const group = new THREE.Group();
-  // 1. Housing (shared)
   const housing = new THREE.Mesh(geos.missileHousing, mats.armor);
   housing.position.set(4, 0, 8);
   group.add(housing);
-  // 2. Glow strip (shared — suggests loaded warheads inside)
   const glowStrip = new THREE.Mesh(geos.missileGlowStrip, mats.glowAmber);
   glowStrip.position.set(14, 0, 8);
   group.add(glowStrip);
-  // Total: 2 meshes (1 housing + 1 glow strip)
+  // 2 meshes (different materials)
   attachWeaponFxData(group, {
     weaponId: 'missile_rack', housing, barrels: [],
     muzzlePoints: [
@@ -1106,25 +1046,16 @@ function buildMissileRackTurret(sizeMult) {
 function buildSiegeTorpedoTurret(sizeMult) {
   const { mats, geos } = WEP_RESOURCES;
   const group = new THREE.Group();
-  // 1. Housing (shared)
-  const housing = new THREE.Mesh(geos.torpedoHousing, mats.armor);
-  housing.position.set(0, 0, 9);
-  group.add(housing);
-  // 2-3. Two torpedo tubes (shared geo, as barrel groups for alternating recoil)
-  const barrels = [];
-  const muzzlePoints = [];
-  for (const yOff of [7, -7]) {
-    const tubeGroup = new THREE.Group();
-    tubeGroup.position.set(12, yOff, 9);
-    const tube = new THREE.Mesh(geos.torpedoTube, mats.barrel);
-    tubeGroup.add(tube);
-    barrels.push(tubeGroup);
-    group.add(tubeGroup);
-    muzzlePoints.push(new THREE.Vector3(30, yOff, 9));
-  }
-  // Total: 3 meshes (1 housing + 2 tubes)
+  // Merge housing + 2 tubes → 1 metal mesh
+  const merged = mergeTurretParts([
+    { geo: geos.torpedoHousing, position: new THREE.Vector3(0, 0, 9) },
+    { geo: geos.torpedoTube, position: new THREE.Vector3(12, 7, 9) },
+    { geo: geos.torpedoTube, position: new THREE.Vector3(12, -7, 9) }
+  ], mats.armor);
+  group.add(merged);
   attachWeaponFxData(group, {
-    weaponId: 'siege_torpedo', housing, barrels, muzzlePoints,
+    weaponId: 'siege_torpedo', housing: merged, barrels: [],
+    muzzlePoints: [new THREE.Vector3(30, 7, 9), new THREE.Vector3(30, -7, 9)],
     muzzleColor: '#ff4444', recoil: 6, shake: 3
   });
   group.scale.setScalar(sizeMult);
@@ -1135,30 +1066,21 @@ function buildSiegeTorpedoTurret(sizeMult) {
 function buildHexlanceTurret(sizeMult) {
   const { mats, geos } = WEP_RESOURCES;
   const group = new THREE.Group();
-  // 1. Housing (shared hex cylinder)
-  const housing = new THREE.Mesh(geos.hexHousing, mats.armor);
-  housing.position.set(0, 0, 8);
-  group.add(housing);
-  // Barrel group (for recoil)
-  const barrelGroup = new THREE.Group();
-  barrelGroup.position.set(10, 0, 8);
-  group.add(barrelGroup);
-  // 2. Core barrel (shared)
-  const core = new THREE.Mesh(geos.hexCore, mats.barrel);
-  core.position.set(20, 0, 0);
-  barrelGroup.add(core);
-  // 3. Core glow (shared)
-  const coreGlow = new THREE.Mesh(geos.hexCoreGlow, mats.glowBlue);
-  coreGlow.position.set(20, 0, 0);
-  barrelGroup.add(coreGlow);
-  // 4. Front ring (shared)
-  const frontRing = new THREE.Mesh(geos.hexFrontRing, mats.glowBlue);
-  frontRing.rotation.y = Math.PI * 0.5;
-  frontRing.position.set(32, 0, 0);
-  barrelGroup.add(frontRing);
-  // Total: 4 meshes (1 housing + 1 core + 1 coreGlow + 1 ring)
+  // Merge housing + core barrel → 1 metal mesh
+  const metal = mergeTurretParts([
+    { geo: geos.hexHousing, position: new THREE.Vector3(0, 0, 8) },
+    { geo: geos.hexCore, position: new THREE.Vector3(30, 0, 8) }
+  ], mats.armor);
+  group.add(metal);
+  // Merge coreGlow + frontRing → 1 glow mesh
+  const glow = mergeTurretParts([
+    { geo: geos.hexCoreGlow, position: new THREE.Vector3(30, 0, 8) },
+    { geo: geos.hexFrontRing, position: new THREE.Vector3(42, 0, 8), rotation: new THREE.Euler(0, Math.PI * 0.5, 0) }
+  ], mats.glowBlue);
+  group.add(glow);
+  // 2 meshes instead of 4
   attachWeaponFxData(group, {
-    weaponId: 'hexlance_siege', housing, barrels: [barrelGroup],
+    weaponId: 'hexlance_siege', housing: metal, barrels: [],
     muzzlePoints: [new THREE.Vector3(52, 0, 8)],
     muzzleColor: '#d0eaff', recoil: 30, shake: 15
   });
@@ -1170,28 +1092,20 @@ function buildHexlanceTurret(sizeMult) {
 function buildSiegeRailgunTurret(sizeMult) {
   const { mats, geos } = WEP_RESOURCES;
   const group = new THREE.Group();
-  // 1. Housing (shared)
-  const housing = new THREE.Mesh(geos.siegeHousing, mats.armor);
-  housing.position.set(0, 0, 10);
-  group.add(housing);
-  // Barrel group (for recoil)
-  const barrelGroup = new THREE.Group();
-  barrelGroup.position.set(14, 0, 10);
-  group.add(barrelGroup);
-  // 2-3. Two rails (shared)
-  const railL = new THREE.Mesh(geos.siegeRailBar, mats.barrel);
-  railL.position.set(30, 5, 0);
-  barrelGroup.add(railL);
-  const railR = new THREE.Mesh(geos.siegeRailBar, mats.barrel);
-  railR.position.set(30, -5, 0);
-  barrelGroup.add(railR);
-  // 4. Core glow (shared)
+  // Merge housing + 2 rails → 1 metal mesh
+  const metal = mergeTurretParts([
+    { geo: geos.siegeHousing, position: new THREE.Vector3(0, 0, 10) },
+    { geo: geos.siegeRailBar, position: new THREE.Vector3(44, 5, 10) },
+    { geo: geos.siegeRailBar, position: new THREE.Vector3(44, -5, 10) }
+  ], mats.armor);
+  group.add(metal);
+  // Core glow (1 mesh)
   const core = new THREE.Mesh(geos.siegeCore, mats.glowCyan);
-  core.position.set(30, 0, 0);
-  barrelGroup.add(core);
-  // Total: 4 meshes (1 housing + 2 rails + 1 core)
+  core.position.set(44, 0, 10);
+  group.add(core);
+  // 2 meshes instead of 4
   attachWeaponFxData(group, {
-    weaponId: 'siege_railgun', housing, barrels: [barrelGroup],
+    weaponId: 'siege_railgun', housing: metal, barrels: [],
     muzzlePoints: [new THREE.Vector3(80, 0, 10)],
     muzzleColor: '#aaffff', recoil: 120, shake: 80
   });
@@ -1208,37 +1122,38 @@ function createFallbackWeaponMesh(category, sizeMult) {
   const mGlowR = WEP_RESOURCES.mats.glowRed;
 
   if (category === 'rail') {
-    const base = new THREE.Mesh(WEP_RESOURCES.geos.railBase, mBase);
-    base.position.z = 3;
-    const b1 = new THREE.Mesh(WEP_RESOURCES.geos.railBarrel, mBarrel);
-    b1.position.set(15, -5, 3);
-    const b2 = new THREE.Mesh(WEP_RESOURCES.geos.railBarrel, mBarrel);
-    b2.position.set(15, 5, 3);
-    const g1 = new THREE.Mesh(WEP_RESOURCES.geos.railGlow, mGlowB);
-    g1.position.set(15, -5, 4.6);
-    const g2 = new THREE.Mesh(WEP_RESOURCES.geos.railGlow, mGlowB);
-    g2.position.set(15, 5, 4.6);
-    group.add(base, b1, b2, g1, g2);
+    // Merge base + 2 barrels → 1 metal, 2 glows → 1 glow
+    const metal = mergeTurretParts([
+      { geo: WEP_RESOURCES.geos.railBase, position: new THREE.Vector3(0, 0, 3) },
+      { geo: WEP_RESOURCES.geos.railBarrel, position: new THREE.Vector3(15, -5, 3) },
+      { geo: WEP_RESOURCES.geos.railBarrel, position: new THREE.Vector3(15, 5, 3) }
+    ], mBase);
+    const glow = mergeTurretParts([
+      { geo: WEP_RESOURCES.geos.railGlow, position: new THREE.Vector3(15, -5, 4.6) },
+      { geo: WEP_RESOURCES.geos.railGlow, position: new THREE.Vector3(15, 5, 4.6) }
+    ], mGlowB);
+    group.add(metal, glow);
   } else if (category === 'armata' || category === 'plasma') {
-    const base = new THREE.Mesh(WEP_RESOURCES.geos.armataBase, mBase);
-    base.position.z = 4;
-    const barrel = new THREE.Mesh(WEP_RESOURCES.geos.armataBarrel, mBarrel);
-    barrel.position.set(14, 0, 4);
+    // Merge base + barrel → 1 metal mesh
+    const metal = mergeTurretParts([
+      { geo: WEP_RESOURCES.geos.armataBase, position: new THREE.Vector3(0, 0, 4) },
+      { geo: WEP_RESOURCES.geos.armataBarrel, position: new THREE.Vector3(14, 0, 4) }
+    ], mBase);
     const g = new THREE.Mesh(new THREE.BoxGeometry(20, 2, 8.2), category === 'plasma' ? mGlowB : mGlowR);
     g.position.set(16, 0, 4);
-    group.add(base, barrel, g);
+    group.add(metal, g);
   } else if (category === 'autocannon') {
-    const base = new THREE.Mesh(WEP_RESOURCES.geos.autoBase, mBase);
-    base.position.z = 4;
-    const barrel = new THREE.Mesh(WEP_RESOURCES.geos.autoBarrel, mBarrel);
-    barrel.position.set(11, 0, 4);
-    group.add(base, barrel);
+    const merged = mergeTurretParts([
+      { geo: WEP_RESOURCES.geos.autoBase, position: new THREE.Vector3(0, 0, 4) },
+      { geo: WEP_RESOURCES.geos.autoBarrel, position: new THREE.Vector3(11, 0, 4) }
+    ], mBase);
+    group.add(merged);
   } else if (category === 'ciws' || category === 'beam') {
-    const base = new THREE.Mesh(WEP_RESOURCES.geos.ciwsBase, mBase);
-    base.position.z = 2.5;
-    const barrel = new THREE.Mesh(WEP_RESOURCES.geos.ciwsBarrel, category === 'beam' ? mGlowB : mBarrel);
-    barrel.position.set(7, 0, 2.5);
-    group.add(base, barrel);
+    const merged = mergeTurretParts([
+      { geo: WEP_RESOURCES.geos.ciwsBase, position: new THREE.Vector3(0, 0, 2.5) },
+      { geo: WEP_RESOURCES.geos.ciwsBarrel, position: new THREE.Vector3(7, 0, 2.5) }
+    ], category === 'beam' ? mGlowB : mBarrel);
+    group.add(merged);
   } else {
     const base = new THREE.Mesh(WEP_RESOURCES.geos.defaultBase, mBase);
     base.position.z = 3;
@@ -2103,20 +2018,11 @@ export const Weapon3DSystem = {
     ensureWeaponResources();
     this._ensureShotListener();
 
-    // Distance culling: hide weapon meshes for ships far from camera
-    const cam = typeof window !== 'undefined' ? window.camera : null;
-    if (cam) {
-      const camZoom = Math.max(0.01, Number(cam.zoom) || 1);
-      const dx = shipEx - (Number(cam.x) || 0);
-      const dy = shipEy - (Number(cam.y) || 0);
-      const dist2 = dx * dx + dy * dy;
-      // Zoom out → mniej detali (mniejszy threshold), zoom in → więcej
-      const threshold = 2500 * camZoom;
-      if (dist2 > threshold * threshold) {
-        const container = this.containers.get(entity);
-        if (container) container.visible = false;
-        return;
-      }
+    // Hide weapons when CIC (tactical overlay) is active
+    if (CICDisplay.active) {
+      const container = this.containers.get(entity);
+      if (container) container.visible = false;
+      return;
     }
 
     const wepDataList = [];
