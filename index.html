@@ -8296,12 +8296,14 @@
     function _fireSpecialGroup(loadouts) {
       if (!loadouts.length) return false;
       let fired = false;
-      const target = (lockedTarget && !lockedTarget.dead) ? lockedTarget : null;
       const mouseWorld = screenToWorld(mouse.x, mouse.y);
       const shipAngle = ship.angle;
       const c = Math.cos(shipAngle);
       const s = Math.sin(shipAngle);
       const shipVel = ship.vel || { x: ship.vx || 0, y: ship.vy || 0 };
+
+      // Build valid live target list for round-robin distribution
+      const liveTargets = (lockedTargets || []).filter(t => t && !t.dead);
 
       for (let i = 0; i < loadouts.length; i++) {
         const loadout = loadouts[i];
@@ -8329,6 +8331,9 @@
           baseVel: { x: shipVel.x || 0, y: shipVel.y || 0 },
           emitterUid: `special:${hp?.id || i}`
         };
+
+        // Round-robin across live locked targets; fallback to null (mouse aim)
+        const target = liveTargets.length > 0 ? liveTargets[i % liveTargets.length] : null;
 
         const cd = window.fireWeaponCore(ship, target, weapon.id, muzzle);
         hp.specialCd = Math.max(0.01, Number(cd) || Number(weapon.cooldown) || 0.25);
@@ -13467,7 +13472,7 @@
     // =============== Side rockets ===============
     const ROCKET_FIRE_INTERVAL = 0.11;
     let rocketCooldown = 0;
-    let nextRocketIndexLeft = 0, nextRocketIndexRight = 0;
+    let nextRocketIndexLeft = 0, nextRocketIndexRight = 0, rocketTargetIndex = 0;
     const SIDE_BULLET_SPEED = 760, SIDE_BULLET_DAMAGE = 20;
     const SIDE_PLASMA_EXPLODE_RADIUS = 48;
     const SIDE_ROCKET_TURN_RATE = 6;
@@ -13530,7 +13535,10 @@
       const guns = side === 'left' ? ship.sideGunsLeft : ship.sideGunsRight;
       const idx = side === 'left' ? nextRocketIndexLeft : nextRocketIndexRight;
       const gunOff = guns[idx % guns.length];
-      const target = (lockedTarget && !lockedTarget.dead) ? lockedTarget : null;
+      // Round-robin across live locked targets; fallback to null (free-flight)
+      const liveTargets = (lockedTargets || []).filter(t => t && !t.dead);
+      const target = liveTargets.length > 0 ? liveTargets[rocketTargetIndex % liveTargets.length] : null;
+      if (liveTargets.length > 0) rocketTargetIndex = (rocketTargetIndex + 1) % liveTargets.length;
       if (!consumeMissileAmmo(loadout)) return;
       const missileDef = getMissileStats(loadout);
       fireSideGunAtOffset(gunOff, side, target, missileDef);

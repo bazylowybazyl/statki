@@ -14,38 +14,38 @@ export const MASTER_WEAPONS = {
   // ==========================================================================
   // BRONIE GŁÓWNE GRACZA (Main)
   // ==========================================================================
-  railgun_mk1: { 
+  railgun_mk1: {
     id: 'railgun_mk1', name: 'Tempest Ion Mk I', mountType: 'main', category: 'rail', size: 'M',
-    baseDamage: 8, baseRange: 10000, baseSpeed: 7000, cooldown: 0.12, spread: 0.02,
+    baseDamage: 8, baseRange: 10000, baseSpeed: 7000, cooldown: 1.0, spread: 0.02,
     penetration: 1, energyCost: 6, vfxColor: '#00ccff',
     barrelsPerShot: 1, model3D: 'tempest_ion', render3dOnly: true
   },
-  railgun_mk2: { 
+  railgun_mk2: {
     id: 'railgun_mk2', name: 'Tempest Ion Mk II', mountType: 'main', category: 'rail', size: 'M',
-    baseDamage: 10, baseRange: 14000, baseSpeed: 8000, cooldown: 0.12, spread: 0.018,
+    baseDamage: 10, baseRange: 14000, baseSpeed: 8000, cooldown: 0.8, spread: 0.018,
     penetration: 2, energyCost: 8, vfxColor: '#55deff',
     barrelsPerShot: 2, model3D: 'tempest_ion', render3dOnly: true
   },
-  vulcan_minigun: { 
+  vulcan_minigun: {
     id: 'vulcan_minigun', name: 'Vulcan Minigun', mountType: 'main', category: 'autocannon', size: 'M',
-    baseDamage: 4, baseRange: 5000, baseSpeed: 4000, cooldown: 0.04, spread: 0.04,
+    baseDamage: 4, baseRange: 5000, baseSpeed: 4000, cooldown: 0.07, spread: 0.04,
     penetration: 0, energyCost: 5, vfxColor: '#ffaa00',
     model3D: 'vulcan_minigun', render3dOnly: true
   },
-  helios_laser: { 
+  helios_laser: {
     id: 'helios_laser', name: 'Helios Laser', mountType: 'main', category: 'plasma', size: 'M',
-    baseDamage: 12, baseRange: 15000, baseSpeed: 10000, cooldown: 0.18, spread: 0.01,
+    baseDamage: 12, baseRange: 15000, baseSpeed: 10000, cooldown: 0.55, spread: 0.01,
     penetration: 1, energyCost: 7, vfxColor: '#ff003c',
     model3D: 'helios_laser', render3dOnly: true
   },
-  heavy_autocannon: { 
+  heavy_autocannon: {
     id: 'heavy_autocannon', name: 'Heavy Autocannon', mountType: 'main', category: 'autocannon', size: 'M',
-    baseDamage: 28, baseRange: 7000, baseSpeed: 3000, cooldown: 0.16, spread: 0.04,
+    baseDamage: 28, baseRange: 7000, baseSpeed: 3000, cooldown: 0.5, spread: 0.04,
     penetration: 1, energyCost: 5, vfxColor: '#ffcc8a'
   },
-  armata_mk1: { 
+  armata_mk1: {
     id: 'armata_mk1', name: 'Armata Oblężnicza', mountType: 'main', category: 'armata', size: 'L',
-    baseDamage: 150, baseRange: 7000, baseSpeed: 2500, cooldown: 0.8, spread: 0.005,
+    baseDamage: 150, baseRange: 7000, baseSpeed: 2500, cooldown: 2.5, spread: 0.005,
     explodeRadius: 140, energyCost: 14, vfxColor: '#ff5500',
     recoil: 15, shake: 8, impactScale: 1.0, barrelsPerShot: 1,
     model3D: 'armata_mk1', render3dOnly: true
@@ -59,7 +59,7 @@ export const MASTER_WEAPONS = {
   },
   beam_pulse: {
     id: 'beam_pulse', name: 'Laser Wiązkowy (Puls)', mountType: 'main', category: 'beam', size: 'M',
-    baseDamage: 45, baseRange: 6000, baseSpeed: Infinity, cooldown: 0.25, spread: 0.002, duration: 0.15,
+    baseDamage: 45, baseRange: 6000, baseSpeed: Infinity, cooldown: 0.65, spread: 0.002, duration: 0.15,
     penetration: 1, energyCost: 10, vfxColor: '#ff003c',
     recoil: 6, shake: 3.5, impactScale: 0.7, beamMode: 'pulse', barrelsPerShot: 1,
     model3D: 'beam_pulse', render3dOnly: true
@@ -84,13 +84,13 @@ export const MASTER_WEAPONS = {
   // ==========================================================================
   missile_rack: { 
     id: 'missile_rack', name: 'Cruise Missile Rack', mountType: 'missile', category: 'rocket', size: 'M',
-    baseDamage: 90, baseRange: 24000, baseSpeed: 1800, cooldown: 2.5, ammo: 20,
-    turnRate: 420, homingDelay: 0.2, explosionRadius: 72, vfxColor: '#ffbb77' 
+    baseDamage: 1000, baseRange: 24000, baseSpeed: 1800, cooldown: 2.5, ammo: 20,
+    turnRate: 900, homingDelay: 0.2, explosionRadius: 72, vfxColor: '#ffbb77' 
   },
   fast_missile_rack: {
     id: 'fast_missile_rack', name: 'Fast Missile Rack', mountType: 'missile', category: 'rocket', size: 'S',
-    baseDamage: 55, baseRange: 12000, baseSpeed: 3200, cooldown: 1.6, ammo: 28,
-    turnRate: 920, homingDelay: 0.08, explosionRadius: 42, vfxColor: '#ffd27a',
+    baseDamage: 700, baseRange: 12000, baseSpeed: 3200, cooldown: 1.6, ammo: 28,
+    turnRate: 1560, homingDelay: 0.08, explosionRadius: 42, vfxColor: '#ffd27a',
     bodyScale: 0.56, exhaustScale: 0.6, fireScale: 0.58, smokeScale: 0.55, explosionVisualScale: 0.72,
     proximityRadius: 58, terminalRadius: 150, reacquireRadius: 420,
     reacquireTurnMultiplier: 2.75, reacquireSpeedFactor: 0.5, terminalSpeedFactor: 0.62,
@@ -99,7 +99,7 @@ export const MASTER_WEAPONS = {
   },
   supernova_missile: {
     id: 'supernova_missile', name: 'Supernova Missile', mountType: 'special_missile', category: 'rocket', size: 'Capital',
-    baseDamage: 220, baseRange: 42000, baseSpeed: 3600, cooldown: 6.0, ammo: 8,
+    baseDamage: 10000, baseRange: 42000, baseSpeed: 3600, cooldown: 6.0, ammo: 8,
     turnRate: 980, homingDelay: 0.06, explosionRadius: 132, vfxColor: '#ff7cf2',
     bodyScale: 1.95, exhaustScale: 1.5, fireScale: 1.6, smokeScale: 1.45, explosionVisualScale: 2.15,
     proximityRadius: 98, terminalRadius: 260, reacquireRadius: 760,
@@ -124,28 +124,28 @@ export const MASTER_WEAPONS = {
   // ==========================================================================
   special_goliath_autocannon: {
     id: 'special_goliath_autocannon', name: 'Goliath Autocannon (Special)', mountType: 'special', category: 'autocannon', size: 'Capital',
-    baseDamage: 45, baseRange: 15000, baseSpeed: 3500, cooldown: 0.10, spread: 0.03,
+    baseDamage: 45, baseRange: 15000, baseSpeed: 3500, cooldown: 0.32, spread: 0.03,
     penetration: 1, energyCost: 18, vfxColor: '#ff6600',
     recoil: 20, shake: 10, impactScale: 1.0,
     model3D: 'special_goliath_autocannon', render3dOnly: true
   },
   special_plasma_gatling: {
     id: 'special_plasma_gatling', name: 'Ion Plasma Gatling (Special)', mountType: 'special', category: 'plasma', size: 'Capital',
-    baseDamage: 60, baseRange: 15000, baseSpeed: 2000, cooldown: 0.15, spread: 0.05,
+    baseDamage: 60, baseRange: 15000, baseSpeed: 2000, cooldown: 0.25, spread: 0.05,
     penetration: 1, energyCost: 22, vfxColor: '#00ffff',
     recoil: 15, shake: 8, impactScale: 1.5,
     model3D: 'special_plasma_gatling', render3dOnly: true
   },
   special_valkyrie_railgun: {
     id: 'special_valkyrie_railgun', name: 'Valkyrie Railgun (Special)', mountType: 'special', category: 'rail', size: 'Capital',
-    baseDamage: 500, baseRange: 25000, baseSpeed: 15000, cooldown: 1.5, spread: 0.001,
+    baseDamage: 500, baseRange: 25000, baseSpeed: 15000, cooldown: 3.0, spread: 0.001,
     penetration: 3, energyCost: 40, vfxColor: '#ff00ff',
     recoil: 60, shake: 45, impactScale: 3.5,
     model3D: 'special_valkyrie_railgun', render3dOnly: true
   },
   special_yamato_cannon: {
     id: 'special_yamato_cannon', name: 'Bateria Główna Klasy YAMATO', mountType: 'special', category: 'plasma', size: 'Capital',
-    baseDamage: 850, baseRange: 20000, baseSpeed: 9000, cooldown: 2.5, spread: 0.005,
+    baseDamage: 850, baseRange: 20000, baseSpeed: 9000, cooldown: 5.0, spread: 0.005,
     penetration: 5, energyCost: 75, vfxColor: '#00ffff',
     recoil: 90, shake: 65, impactScale: 4.5, barrelsPerShot: 3,
     model3D: 'special_yamato_cannon', render3dOnly: true
