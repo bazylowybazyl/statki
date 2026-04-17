@@ -12362,6 +12362,7 @@
         }
       }
     }
+
     const NPC_DESPAWN_RADIUS = 20000;
     function spawnRadarPing(x, y) { radarPings.push({ x, y, age: 0, life: 1 }); }
     function triggerScanWave() {
@@ -15650,7 +15651,13 @@
         hideHoverInfo();
       }
       if (lockedTarget && (!isHostileNpc(lockedTarget) || lockedTarget.dead)) lockedTarget = null;
-      lockedTargets = lockedTargets.filter(t => isHostileNpc(t) && !t.dead);
+      lockedTargets = lockedTargets.filter(t => {
+        if (!isHostileNpc(t) || t.dead) return false;
+        if (scannerState.active) {
+          return scannerContacts.some(c => c.target === t);
+        }
+        return true;
+      });
       if (lockedTargets.length === 0) {
         if (mainAutoFire) { mainAutoFire = false; pushZoneMessage('AUTO-FIRE OFF — brak celów', 1.5); }
         if (specialAutoFire) specialAutoFire = false;
@@ -15667,7 +15674,16 @@
           refreshScannerContacts();
         }
       }
-      const radarUiEnabled = scannerState.active && !CICDisplay.active && !stationUI.open && !showMap && !splitScreenMode;
+      const radarUiEnabled = (scannerState.active || lockedTargets.length > 0) && !CICDisplay.active && !stationUI.open && !showMap && !splitScreenMode;
+      // Locked targets always shown; scanner contacts shown when scanner active (excluding already-locked)
+      const _radarTargets = lockedTargets.filter(t => t && !t.dead);
+      if (scannerState.active) {
+        for (const _c of scannerContacts) {
+          if (_c && _c.tone === 'hostile' && _c.target && !_c.target.dead && _c.type !== 'station' && !lockedTargets.includes(_c.target)) {
+            _radarTargets.push(_c.target);
+          }
+        }
+      }
       radarTargetingUI.update({
         enabled: radarUiEnabled,
         dt,
@@ -15678,9 +15694,7 @@
         worldToScreen,
         lockAnim: scannerState.lockAnim,
         ship,
-        targets: scannerContacts
-          .filter(c => c && c.tone === 'hostile' && c.target && !c.target.dead && c.type !== 'station')
-          .map(c => c.target),
+        targets: _radarTargets,
         distanceTo: (target) => Math.hypot((target?.x || 0) - ship.pos.x, (target?.y || 0) - ship.pos.y),
         getMeta: getRadarTargetMeta,
         getScanData: getRadarTargetScanData,

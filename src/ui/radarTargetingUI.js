@@ -2,8 +2,8 @@ const STYLE_ID = 'radar-targeting-ui-style';
 const ROOT_ID = 'radar-targeting-labels';
 
 const STYLES = `
-#${ROOT_ID} { position:absolute; top:0; left:0; width:100vw; height:100vh; pointer-events:none; z-index:32; }
-#${ROOT_ID} .label-container { position:absolute; top:0; left:0; pointer-events:none; display:none; }
+#${ROOT_ID} { position:fixed; bottom:160px; left:50%; transform:translateX(-50%); display:flex; flex-wrap:wrap; gap:8px; justify-content:center; max-width:90vw; pointer-events:none; z-index:200; }
+#${ROOT_ID} .label-container { position:relative; pointer-events:none; display:none; flex-shrink:0; }
 #${ROOT_ID} .target-label {
   position:relative; color:#33ff33; font-family:'Courier New', Courier, monospace;
   font-size:11px; background:rgba(4,12,20,0.8); padding:6px 8px;
@@ -331,7 +331,6 @@ export function initRadarTargetingUI(opts = {}) {
   }
 
   function hideAll() {
-    root.style.display = 'none';
     root.querySelectorAll('.label-container').forEach((el) => { el.style.display = 'none'; });
   }
 
@@ -390,7 +389,6 @@ export function initRadarTargetingUI(opts = {}) {
       return;
     }
 
-    root.style.display = 'block';
     const active = new Set();
     const targets = Array.isArray(runtime.targets) ? runtime.targets : [];
     for (let i = 0; i < targets.length; i++) {
@@ -399,20 +397,7 @@ export function initRadarTargetingUI(opts = {}) {
       active.add(target);
       const state = ensureLabel(target, runtime);
       updateScanVisuals(target, runtime, state);
-
-      const sx = runtime.worldToScreen(target.x, target.y, runtime.camera);
-      const offscreen =
-        sx.x < 0 || sx.x > runtime.width ||
-        sx.y < 0 || sx.y > runtime.height;
-
-      if (!offscreen) {
-        const meta = state.meta || runtime.getMeta(target);
-        const pxLength = (Number(meta.shipLength) || 40) * Math.max(0.0001, Number(runtime.camera?.zoom) || 1);
-        state.containerEl.style.transform = `translate(${sx.x + pxLength * 0.5 + 15}px, ${sx.y - 40}px)`;
-        state.containerEl.style.display = 'block';
-      } else {
-        state.containerEl.style.display = 'none';
-      }
+      state.containerEl.style.display = 'block';
 
       const dist = Math.round(runtime.distanceTo(target));
       if (state.distEl && state.lastDist !== dist) {
