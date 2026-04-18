@@ -19,7 +19,9 @@
       "Bash(grep -r \"rakiet\\\\|missile\\\\|projectile\\\\|rocket\" /c/Users/Szymon/Documents/GitHub/statki --include=*.html --include=*.js)",
       "Bash(grep -l \"spark\\\\|flare\\\\|particle\\\\|flame\\\\|trail\\\\|exhaust\" /c/Users/Szymon/Documents/GitHub/statki/*.html)",
       "mcp__Claude_Preview__preview_start",
-      "Bash(git -C /c/Users/Szymon/Documents/GitHub/statki log --oneline --all -20 -- *rocket* *missile*)"
+      "Bash(git -C /c/Users/Szymon/Documents/GitHub/statki log --oneline --all -20 -- *rocket* *missile*)",
+      "Bash(node -e \"const fs=require\\('fs'\\);const c=fs.readFileSync\\('C:/Users/Szymon/Documents/GitHub/statki/warp — glsl.html','utf8'\\);const m=c.match\\(/<script>\\([\\\\s\\\\S]*?\\)<\\\\/script>/g\\);console.log\\('scripts:',m?m.length:0\\);const inline=m[m.length-1].replace\\(/^<script>/,''\\).replace\\(/<\\\\/script>$/,''\\);try{new Function\\(inline\\);console.log\\('OK: inline script parses'\\);}catch\\(e\\){console.log\\('ERR:',e.message\\);}\")",
+      "Bash(node -e \"const fs=require\\('fs'\\);const c=fs.readFileSync\\('C:/Users/Szymon/Documents/GitHub/statki/warp — glsl.html','utf8'\\);const m=c.match\\(/<script>\\([\\\\s\\\\S]*?\\)<\\\\/script>/g\\);const inline=m[m.length-1].replace\\(/^<script>/,''\\).replace\\(/<\\\\/script>$/,''\\);try{new Function\\(inline\\);console.log\\('OK'\\);}catch\\(e\\){console.log\\('ERR:',e.message\\);}\")"
     ]
   }
 }

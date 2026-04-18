@@ -34,7 +34,7 @@ export const DESTRUCTOR_CONFIG = {
   friction: 0.99, //
 
   collisionDeformScale: 1.15, //
-  collisionSearchRadius: 7, //
+  collisionSearchRadius: 5, //
   collisionIterations: 2, //
   broadphaseCellSize: 1200, //
   broadphaseMaxCandidates: 128, //
@@ -42,12 +42,21 @@ export const DESTRUCTOR_CONFIG = {
 
   splitForceThreshold: 50, //
   splitDamageThreshold: 200, //
-  splitCheckInterval: 10, //
-  splitMaxPerTick: 2, //
+  splitCheckInterval: 12, //
+  splitMaxPerTick: 1, //
   splitTimeBudgetMs: 1.2, //
+  splitCrashDeferTicks: 8, //
+  splitCrashSpeedThreshold: 140, //
 
   gpuSoftBody: 1, //
   gpuSoftBodyMinShards: 64, //
+  gpuSoftBodyCrashShardThreshold: 1200, //
+  gpuSoftBodyCrashIters: 1, //
+
+  wreckSplitLinearResponse: 0.23, //
+  wreckSplitOutwardKick: 0.010, //
+  wreckSplitAngularResponse: 0.030, //
+  wreckSplitMinAngularKick: 0.012, //
 
   shieldRestitution: 0.35,
   shieldCollisionDamageScale: 0.8,
@@ -1217,7 +1226,7 @@ export const DestructorSystem = {
     for (let i = 0; i < iters; i++) {
       const doDamage = (i === 0);
       const skipRingPairs = (i > 0);
-      this.resolveCollisions(list, step, doDamage, skipRingPairs, true);
+      this.resolveCollisions(list, step, doDamage, skipRingPairs, true, i);
     }
 
     const tAfterCollision = nowMs();
@@ -1773,7 +1782,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     }
   },
 
-  resolveCollisions(entities, dt, doDamage, skipRingPairs = false, broadphasePrepared = false) {
+  resolveCollisions(entities, dt, doDamage, skipRingPairs = false, broadphasePrepared = false, iterIndex = 0) {
     const dbgEnabled = this._liveCollisionDebug?.enabled === true;
     const tResolve0 = dbgEnabled ? nowMs() : 0;
 
@@ -1834,6 +1843,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           const relVx = velAx - velBx;
           const relVy = velAy - velBy;
           const relSpeedSq = relVx * relVx + relVy * relVy;
+          const shardSum = (A.hexGrid?.shards?.length || 0) + (B.hexGrid?.shards?.length || 0);
+          const heavyPair = shardSum > 2500;
+          const crashApproachSpeedThreshold = Number(DESTRUCTOR_CONFIG.crashApproachSpeedThreshold) || 200.0;
+          const isCrashFrame = relSpeedSq > (crashApproachSpeedThreshold * crashApproachSpeedThreshold);
           const aIsWreck = !!A.isWreck;
           const bIsWreck = !!B.isWreck;
           const speedB = speedBMag * (1 / 60);
@@ -1843,6 +1856,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           const rs = ar + br + cappedSpeedA + cappedSpeedB;
 
           if (dx * dx + dy * dy > rs * rs) continue;
+          if (iterIndex > 0 && (heavyPair || isCrashFrame)) continue;
 
           // Shield collision: check before hull narrowphase
           const srA = A._shieldRadius || 0;
@@ -1989,6 +2003,13 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             const rootA = A.owner || A;
             const rootB = B.owner || B;
             if (rootA === rootB || rootA === B || rootB === A) continue;
+            const relVx = velAx - getEntityVelX(B);
+            const relVy = velAy - getEntityVelY(B);
+            const shardSum = (A.hexGrid?.shards?.length || 0) + (B.hexGrid?.shards?.length || 0);
+            const heavyPair = shardSum > 2500;
+            const crashApproachSpeedThreshold = Number(DESTRUCTOR_CONFIG.crashApproachSpeedThreshold) || 200.0;
+            const isCrashFrame = (relVx * relVx + relVy * relVy) > (crashApproachSpeedThreshold * crashApproachSpeedThreshold);
+            if (iterIndex > 0 && (heavyPair || isCrashFrame)) continue;
 
             const bx = getEntityPosX(B);
             const by = getEntityPosY(B);
@@ -2212,22 +2233,31 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const iy = getEntityPosY(iterator);
       const gx = getEntityPosX(gridHolder);
       const gy = getEntityPosY(gridHolder);
-      const baseSearchR = DESTRUCTOR_CONFIG.collisionSearchRadius ?? 4;
+      const baseSearchR = Math.max(3, Number(DESTRUCTOR_CONFIG.collisionSearchRadius) || 4);
       const isRingCollision = !!(A?.isRingSegment || B?.isRingSegment);
+      const shardSum = (A.hexGrid?.shards?.length || 0) + (B.hexGrid?.shards?.length || 0);
+      const heavyPair = shardSum > 2500;
 
       let searchR = isRingCollision
-        ? Math.max(2, Math.min(3, baseSearchR | 0))
-        : baseSearchR;
+        ? Math.max(2, Math.min(4, baseSearchR | 0))
+        : (heavyPair ? Math.max(3, Math.min(4, (baseSearchR | 0) - 1)) : baseSearchR);
 
       const relVx = getEntityVelX(A) - getEntityVelX(B);
       const relVy = getEntityVelY(A) - getEntityVelY(B);
       const relSpeed = Math.sqrt(relVx * relVx + relVy * relVy);
+      const scrapeSpeedThreshold = (Number(DESTRUCTOR_CONFIG.crashApproachSpeedThreshold) || 200.0) * 0.45;
+      const scrapePair = relSpeed < scrapeSpeedThreshold;
       const speedHexes = Math.ceil((relSpeed * dt) / HEX_SPACING);
-      const searchRCap = 8;
-      searchR = Math.min(searchRCap, searchR + Math.min(3, speedHexes));
+      const searchRCap = isRingCollision ? 5 : (heavyPair ? 5 : 6);
+      if (scrapePair) searchR = Math.min(searchR, 3);
+      else if (!isRingCollision && heavyPair) searchR = Math.min(searchR, 4);
+      const searchBoost = Math.min(isRingCollision ? 1 : (heavyPair ? 1 : 2), speedHexes);
+      searchR = Math.min(searchRCap, searchR + searchBoost);
 
       const contacts = this._contactsBuf;
-      const maxContacts = isRingCollision ? 192 : 128;
+      const maxContacts = isRingCollision
+        ? 64
+        : (heavyPair ? 24 : ((shardSum > 1400 || scrapePair) ? 28 : 32));
       let contactsCount = 0;
       const holderGrid = gridHolder.hexGrid.grid;
       const holderCols = gridHolder.hexGrid.cols || 0;
@@ -2442,18 +2472,27 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       }
 
       const penMin = DESTRUCTOR_CONFIG.crushPenetrationMin ?? 0.15;
-      // Enable soft-body crushing only during crash events.
+      // Enable soft-body crushing only during crash events, and only on the damage pass.
       const crushActive = isDestruction;
       const allowCrush = isDestruction;
+      const heavyCrushPass = crushActive && allowCrush && doDamage;
 
-      if (crushActive && allowCrush) {
-        A._gpuForceAwakeFrames = Math.max(Number(A._gpuForceAwakeFrames) || 0, 30);
-        B._gpuForceAwakeFrames = Math.max(Number(B._gpuForceAwakeFrames) || 0, 30);
+      if (heavyCrushPass) {
+        const gpuAwakeFrames = heavyPair ? 12 : 16;
+        A._gpuForceAwakeFrames = Math.max(Number(A._gpuForceAwakeFrames) || 0, gpuAwakeFrames);
+        B._gpuForceAwakeFrames = Math.max(Number(B._gpuForceAwakeFrames) || 0, gpuAwakeFrames);
+
+        const splitCrashSpeedThreshold = Math.max(40, Number(DESTRUCTOR_CONFIG.splitCrashSpeedThreshold) || 140);
+        if (impactSpeed > splitCrashSpeedThreshold || heavyPair) {
+          const deferTicks = Math.max(4, Number(DESTRUCTOR_CONFIG.splitCrashDeferTicks) || 8) + (heavyPair ? 2 : 0);
+          const deferUntilTick = this._tick + deferTicks;
+          if (!A.noSplit) A._splitDeferUntilTick = Math.max(Number(A._splitDeferUntilTick) || 0, deferUntilTick);
+          if (!B.noSplit) B._splitDeferUntilTick = Math.max(Number(B._splitDeferUntilTick) || 0, deferUntilTick);
+        }
 
         const angA = getEntityHexAngle(A);
         const angB = getEntityHexAngle(B);
-        const ia = 1 / (DESTRUCTOR_CONFIG.collisionIterations || 1);
-        const dtScale = dt * 60 * ia;
+        const dtScale = dt * 60;
         const totalMass = massA + massB;
         const ca = Math.cos(angA), sa = Math.sin(angA);
         const cb = Math.cos(angB), sb = Math.sin(angB);
@@ -2719,12 +2758,25 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
       const splitBudgetMs = Math.max(0.25, Number(DESTRUCTOR_CONFIG.splitTimeBudgetMs) || 1.2);
       const splitMaxPerTick = Math.max(1, DESTRUCTOR_CONFIG.splitMaxPerTick | 0);
+      const splitCrashSpeedThreshold = Math.max(40, Number(DESTRUCTOR_CONFIG.splitCrashSpeedThreshold) || 140);
+      const splitCrashAngThreshold = Math.max(0.02, WRECK_SLEEP_ANGULAR_SPEED * 3.0);
       const startedAt = nowMs();
       let processedCount = 0;
       const deferred = this.splitQueue;
 
       for (const entity of queue) {
         if (!entity?.hexGrid) continue;
+
+        const splitDeferUntilTick = Number(entity._splitDeferUntilTick) || 0;
+        if (splitDeferUntilTick > 0) {
+          const speedNow = Math.hypot(getEntityVelX(entity), getEntityVelY(entity));
+          const angSpeedNow = Math.abs(getEntityAngVel(entity));
+          if (splitDeferUntilTick > this._tick || speedNow > splitCrashSpeedThreshold || angSpeedNow > splitCrashAngThreshold) {
+            deferred.push(entity);
+            continue;
+          }
+          entity._splitDeferUntilTick = 0;
+        }
 
         if (processedCount >= splitMaxPerTick || (nowMs() - startedAt) > splitBudgetMs) {
           deferred.push(entity);
@@ -2908,6 +2960,58 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       wreckVy += angVel * rx;
     }
 
+    let shardImpulseX = 0;
+    let shardImpulseY = 0;
+    let shardTorque = 0;
+    let energizedShards = 0;
+    for (const shard of shards) {
+      const localVx = (Number(shard?.__velX) || 0) + (Number(shard?.__collVelX) || 0);
+      const localVy = (Number(shard?.__velY) || 0) + (Number(shard?.__collVelY) || 0);
+      const speedSq = localVx * localVx + localVy * localVy;
+      if (speedSq < 0.0001) continue;
+      shardImpulseX += localVx;
+      shardImpulseY += localVy;
+      shardTorque += (((shard.gridX + shard.deformation.x) - avgX) * localVy) - (((shard.gridY + shard.deformation.y) - avgY) * localVx);
+      energizedShards++;
+    }
+
+    const localToWorldX = (x, y) => (x * scaleX) * c - (y * scaleY) * s;
+    const localToWorldY = (x, y) => (x * scaleX) * s + (y * scaleY) * c;
+
+    if (energizedShards > 0) {
+      const invEnergized = 1 / energizedShards;
+      const avgImpulseX = shardImpulseX * invEnergized;
+      const avgImpulseY = shardImpulseY * invEnergized;
+      const splitLinearResponse = Math.max(0.05, Number(DESTRUCTOR_CONFIG.wreckSplitLinearResponse) || 0.20);
+      wreckVx += localToWorldX(avgImpulseX, avgImpulseY) * splitLinearResponse;
+      wreckVy += localToWorldY(avgImpulseX, avgImpulseY) * splitLinearResponse;
+    }
+
+    const radialWorldX = localToWorldX(relX, relY);
+    const radialWorldY = localToWorldY(relX, relY);
+    const radialLen = Math.hypot(radialWorldX, radialWorldY);
+    if (radialLen > 0.001) {
+      const outwardKickMul = Math.max(0.002, Number(DESTRUCTOR_CONFIG.wreckSplitOutwardKick) || 0.010);
+      const outwardKick = Math.min(12, Math.max(2, newRadius * outwardKickMul));
+      wreckVx += (radialWorldX / radialLen) * outwardKick;
+      wreckVy += (radialWorldY / radialLen) * outwardKick;
+    }
+
+    let splitAngKick = 0;
+    if (energizedShards > 0) {
+      const angResponse = Math.max(0.004, Number(DESTRUCTOR_CONFIG.wreckSplitAngularResponse) || 0.030);
+      const torqueDenom = Math.max(80, energizedShards * Math.max(18, newRadius * newRadius * 0.08));
+      splitAngKick = (shardTorque / torqueDenom) * angResponse;
+    }
+
+    if (Math.abs(splitAngKick) < 0.003 && radialLen > 0.001) {
+      const dominantAxisSign = Math.abs(relX) >= Math.abs(relY)
+        ? Math.sign(relX || 1)
+        : -Math.sign(relY || 1);
+      const minSpin = Math.max(0.002, Number(DESTRUCTOR_CONFIG.wreckSplitMinAngularKick) || 0.012);
+      splitAngKick = dominantAxisSign * Math.min(0.035, Math.max(minSpin, newRadius / 2200));
+    }
+
     const cols = parent.hexGrid.cols || Math.ceil(parent.hexGrid.srcWidth / HEX_SPACING);
     const rows = parent.hexGrid.rows || Math.ceil(parent.hexGrid.srcHeight / HEX_HEIGHT);
 
@@ -2936,10 +3040,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     wreck.vx = wreckVx;
     wreck.vy = wreckVy;
     wreck.angle = getEntityAngle(parent);
-    wreck.angVel = getEntityAngVel(parent);
+    wreck.angVel = getEntityAngVel(parent) + splitAngKick;
     wreck.radius = newRadius;
     wreck.mass = Math.max(10, sumShardMass(shards));
-    wreck.friction = 0.998;
+    wreck.friction = 0.9986;
     wreck.dead = false;
     wreck.isWreck = true;
     wreck.isCollidable = true;

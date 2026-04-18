@@ -463,8 +463,14 @@ export const DestructorGpuSoftBody = {
 
     const shardBytes = count * SHARD_STRIDE_BYTES;
     const workgroups = Math.ceil(count / WORKGROUP_SIZE);
-    // Multi-iteration: 3 compute passes per dispatch for faster wave propagation
-    const GPU_ITERS = 3;
+    const forcedAwake = (Number(entity?._gpuForceAwakeFrames) || 0) > 0;
+    const crashShardThreshold = Math.max(256, Number(config?.gpuSoftBodyCrashShardThreshold) || 1200);
+    let GPU_ITERS = 3;
+    if (forcedAwake && count >= crashShardThreshold) {
+      GPU_ITERS = Math.max(1, Number(config?.gpuSoftBodyCrashIters) || 1);
+    } else if (forcedAwake && count >= Math.floor(crashShardThreshold * 0.6)) {
+      GPU_ITERS = 2;
+    }
     const encoder = this.device.createCommandEncoder();
     for (let iter = 0; iter < GPU_ITERS; iter++) {
       if (iter > 0) {
@@ -678,7 +684,9 @@ export const DestructorGpuSoftBody = {
         if (queueRatio > 0.35) dispatchInterval += 1;
         if ((this._tickId % dispatchInterval) !== 0) continue;
       } else {
-        dispatchInterval = 1;
+        const crashShardThreshold = Math.max(256, Number(config?.gpuSoftBodyCrashShardThreshold) || 1200);
+        dispatchInterval = count >= crashShardThreshold ? 2 : 1;
+        if ((this._tickId % dispatchInterval) !== 0) continue;
       }
 
       this._dispatch(entity, state, k, damping, config);

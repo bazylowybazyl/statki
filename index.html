@@ -11777,6 +11777,7 @@
       if (e.repeat) return;
       if (e.code === 'Space') { e.preventDefault(); }
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') { e.preventDefault(); }
+      if (e.code === 'AltLeft' || e.code === 'AltRight') { e.preventDefault(); }
       if (isMainMenuVisible()) return;
       const k = e.key.toLowerCase();
       keys[k] = true;
@@ -16774,7 +16775,7 @@
     // ============== END SPLIT SCREEN RENDER ==============
 
     function render(alpha, frameDt) {
-      canvas.style.cursor = 'default';
+      canvas.style.cursor = keys['alt'] ? 'auto' : 'default';
       ctx.clearRect(0, 0, W, H);
       const renderDbgEnabled = RenderLiveDebug.enabled;
       const tRenderStart = renderDbgEnabled ? performance.now() : 0;
@@ -16816,8 +16817,8 @@
         const centerX = W * 0.5;
         const centerY = H * 0.5;
         const zoomSafe = Math.max(0.1, camera.zoom || 1);
-        const mouseOffsetX = splitScreenMode ? 0 : (mouse.x - centerX) * lookAheadFactor / zoomSafe;
-        const mouseOffsetY = splitScreenMode ? 0 : (mouse.y - centerY) * lookAheadFactor / zoomSafe;
+        const mouseOffsetX = (splitScreenMode || keys['alt']) ? 0 : (mouse.x - centerX) * lookAheadFactor / zoomSafe;
+        const mouseOffsetY = (splitScreenMode || keys['alt']) ? 0 : (mouse.y - centerY) * lookAheadFactor / zoomSafe;
 
         targetCamX = interpPos.x + mouseOffsetX;
         targetCamY = interpPos.y + mouseOffsetY;
@@ -18234,6 +18235,25 @@
       renderMissionJournal();
       renderZoneMessages();
       renderMissionCompleteBanner();
+      if (keys['alt'] && !splitScreenMode) {
+        ctx.save();
+        const label = 'ALT  ·  WOLNA MYSZ';
+        ctx.font = 'bold 12px "Courier New", monospace';
+        const tw = ctx.measureText(label).width;
+        const px = 12, py = 6;
+        const rx = W / 2 - tw / 2 - px, ry = 14;
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.beginPath();
+        ctx.roundRect(rx, ry, tw + px * 2, 12 + py * 2, 4);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(100,220,255,0.55)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(100,220,255,0.9)';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, rx + px, ry + py + 6);
+        ctx.restore();
+      }
       if (renderDbgEnabled) {
         const tRenderEnd = performance.now();
         if (tPost3DStart > 0) {

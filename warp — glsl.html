@@ -99,14 +99,47 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
     <script>
+        // --- 0. CONFIG + HELPERS ---
+        const WARP_CONFIG = {
+            spoolDuration:        4.0,
+            jumpFlashDuration:    0.5,   // JUMP -> TUNNEL crossfade
+            exitPunchDuration:    0.4,   // 0.0 - 0.4s "punch out"
+            exitDecelDuration:    1.1,   // 0.4 - 1.5s decel
+            exitSettleDuration:   1.5,   // 1.5 - 3.0s settle into destination
+            exitTotalDuration:    3.0,
+            baseFov:              60.0,
+            spoolPeakFov:         72.0,
+            exitPunchFov:         80.0,
+            tunnelEventMinGap:    3.0,
+            tunnelEventMaxGap:    7.0,
+            cameraBaseY:          2500,
+            cameraExitZoomY:      1800,
+            cameraExitPullY:      3500
+        };
+
+        // Frame-rate-independent damping (cache-warm, accurate at any dt).
+        // value approaches target with characteristic rate `rate` (higher = snappier).
+        function damp(value, target, rate, dt) {
+            return value + (target - value) * (1.0 - Math.exp(-rate * dt));
+        }
+        function smoothstep(edge0, edge1, x) {
+            const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+            return t * t * (3 - 2 * t);
+        }
+        function lerp(a, b, t) { return a + (b - a) * t; }
+        function easeOutQuart(t) { return 1.0 - Math.pow(1.0 - t, 4.0); }
+
         // --- 1. SETUP SCENY ---
         const scene = new THREE.Scene();
-        let globalTime = 0; 
-        
-        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 25000);
-        let targetCameraY = 2500; 
-        let baseCameraX = 0; 
-        let baseCameraZ = 0; 
+        let globalTime = 0;
+
+        const camera = new THREE.PerspectiveCamera(WARP_CONFIG.baseFov, window.innerWidth / window.innerHeight, 1, 25000);
+        let targetCameraY = WARP_CONFIG.cameraBaseY;
+        let baseCameraX = 0;
+        let baseCameraZ = 0;
+        let targetFov = WARP_CONFIG.baseFov;
+        let cameraRollTarget = 0.0;
+        let currentCameraRoll = 0.0;
         camera.position.set(baseCameraX, targetCameraY, baseCameraZ);
         camera.lookAt(0, 0, 0);
 
@@ -116,9 +149,87 @@
         renderer.autoClear = false;
         document.body.appendChild(renderer.domElement);
 
-        const shipContainer = new THREE.Group(); 
-        shipContainer.position.y = 50; 
+        const shipContainer = new THREE.Group();
+        shipContainer.position.y = 50;
         scene.add(shipContainer);
+
+        // --- 1B. STARFIELD (always visible, distorts during warp) ---
+        const STARFIELD_COUNT = 1500;
+        const starGeo = new THREE.BufferGeometry();
+        const starPositions = new Float32Array(STARFIELD_COUNT * 3);
+        const starSizes = new Float32Array(STARFIELD_COUNT);
+        const starSeeds = new Float32Array(STARFIELD_COUNT);
+        for (let i = 0; i < STARFIELD_COUNT; i++) {
+            // Distribute stars on a far plane below the camera (top-down view)
+            starPositions[i * 3 + 0] = (Math.random() - 0.5) * 30000;
+            starPositions[i * 3 + 1] = -8000 - Math.random() * 4000; // far below ship
+            starPositions[i * 3 + 2] = (Math.random() - 0.5) * 30000;
+            starSizes[i] = 6.0 + Math.pow(Math.random(), 3.0) * 50.0;
+            starSeeds[i] = Math.random();
+        }
+        starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+        starGeo.setAttribute('aSize', new THREE.BufferAttribute(starSizes, 1));
+        starGeo.setAttribute('aSeed', new THREE.BufferAttribute(starSeeds, 1));
+
+        const uniformsStarfield = {
+            uTime: { value: 0.0 },
+            uExitProgress: { value: 0.0 },     // 0 = streaks, 1 = points (used during EXIT settle)
+            uWarpStretch: { value: 0.0 },      // overall stretch from warp travel speed
+            uVisibility: { value: 1.0 },       // 0 = hidden (deep tunnel), 1 = full
+            uPixelRatio: { value: renderer ? renderer.getPixelRatio() : 1.0 }
+        };
+
+        const starMaterial = new THREE.ShaderMaterial({
+            uniforms: uniformsStarfield,
+            vertexShader: `
+                uniform float uTime;
+                uniform float uExitProgress;
+                uniform float uWarpStretch;
+                uniform float uPixelRatio;
+                attribute float aSize;
+                attribute float aSeed;
+                varying float vAlpha;
+                varying float vSeed;
+                void main() {
+                    vSeed = aSeed;
+                    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+                    float twinkle = 0.7 + 0.3 * sin(uTime * 2.0 + aSeed * 12.566);
+                    // Slight size pulse + warp stretch contributes to perceived size
+                    float sz = aSize * twinkle * (1.0 + uWarpStretch * 0.4);
+                    gl_PointSize = sz * uPixelRatio * (300.0 / -mv.z);
+                    vAlpha = twinkle;
+                    gl_Position = projectionMatrix * mv;
+                }
+            `,
+            fragmentShader: `
+                uniform float uExitProgress;
+                uniform float uWarpStretch;
+                uniform float uVisibility;
+                varying float vAlpha;
+                varying float vSeed;
+                void main() {
+                    vec2 pt = gl_PointCoord - vec2(0.5);
+                    // During warp, stretch the star sprite vertically (tunnel axis = world Z, but
+                    // viewed top-down so screen-Y is the travel direction).
+                    float stretch = mix(1.0, 0.18, uExitProgress); // EXIT shrinks streaks toward dots
+                    float warpBoost = mix(0.0, 1.0, uWarpStretch);
+                    pt.y *= mix(1.0, 0.08, warpBoost) * (1.0 / stretch);
+                    float d = length(pt);
+                    float core = pow(max(0.0, 0.5 - d) * 2.0, 2.0);
+                    vec3 col = mix(vec3(0.7, 0.85, 1.0), vec3(1.0, 0.95, 0.85), vSeed);
+                    float a = core * vAlpha * uVisibility;
+                    if (a < 0.01) discard;
+                    gl_FragColor = vec4(col * a, a);
+                }
+            `,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        const starfield = new THREE.Points(starGeo, starMaterial);
+        starfield.renderOrder = -1;
+        starfield.frustumCulled = false;
+        scene.add(starfield);
 
         const uniformsShip = {
             tDiffuse: { value: null },
@@ -222,8 +333,12 @@
             uniform float uAlphaMult; 
             uniform vec3 uColorBase;
             uniform vec3 uColorBright;
-            uniform float uLightning; 
-            
+            uniform float uLightning;
+            uniform float uExitProgress;   // 0..1 EXIT collapse-to-axis
+            uniform float uEventFlash;     // 0..1 event brightness boost
+            uniform vec3  uColorAccent;    // event color override
+            uniform float uColorShift;     // 0..1 destination color gradient
+
             varying vec2 vUv;
 
             float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -287,8 +402,21 @@
                 float edgeFade = smoothstep(0.0, 0.2, vUv.y) * (1.0 - smoothstep(0.8, 1.0, vUv.y));
                 float currentMask = mix(edgeFade, spoolMask * 1.5, uBowFocus);
 
-                vec3 colorIridescent = mix(uColorBright, vec3(0.8, 0.2, 1.0), sin(uTime * 3.0 + n1 * 10.0) * 0.5 + 0.5);
-                vec3 finalColor = mix(uColorBase, colorIridescent, energy * 2.0);
+                // Distance-based color gradient: blue -> violet -> warm gold (destination).
+                vec3 colBase = uColorBase;
+                vec3 colBright = uColorBright;
+                vec3 violet = vec3(0.45, 0.15, 0.85);
+                vec3 gold = vec3(1.0, 0.75, 0.3);
+                float seg1 = smoothstep(0.0, 0.5, uColorShift);
+                float seg2 = smoothstep(0.5, 1.0, uColorShift);
+                vec3 shiftedBase = mix(colBase, mix(colBase * 0.7 + violet * 0.4, gold * 0.3, seg2), seg1);
+                vec3 shiftedBright = mix(colBright, mix(violet * 1.2, gold, seg2), seg1);
+                // Event flash overrides bright color momentarily.
+                shiftedBright = mix(shiftedBright, uColorAccent, uEventFlash);
+
+                vec3 colorIridescent = mix(shiftedBright, vec3(0.8, 0.2, 1.0), sin(uTime * 3.0 + n1 * 10.0) * 0.5 + 0.5);
+                vec3 finalColor = mix(shiftedBase, colorIridescent, energy * 2.0);
+                finalColor *= 1.0 + uEventFlash * 0.6;
                 
                 float arcs = 0.0;
                 arcs += electricArcTunnel(uv, uTime, 0.1, 0.0005, stripesX);
@@ -300,6 +428,12 @@
                 finalColor += arcColor; 
                 
                 float alpha = (energy * uIntensity + (arcs * uLightning * 0.5)) * currentMask * uAlphaMult;
+                // Tunnel collapses toward its central axis as exit progresses.
+                // collapseR shrinks from 1.0 (full tunnel) toward 0.0 (axis line).
+                float collapseR = max(0.0, 1.0 - smoothstep(0.0, 0.85, uExitProgress));
+                float distFromAxis = abs(vUv.x - 0.5) * 2.0;
+                float collapseFade = 1.0 - smoothstep(collapseR * 0.85, collapseR + 0.02, distFromAxis);
+                alpha *= mix(1.0, collapseFade, step(0.001, uExitProgress));
                 alpha = clamp(alpha, 0.0, 1.0);
 
                 gl_FragColor = vec4(finalColor, alpha);
@@ -310,16 +444,20 @@
             return {
                 uTime: { value: 0.0 },
                 uTravelOffset: { value: 0.0 },
-                uFlowSpeed: { value: 0.0 },       
-                uRibbonScale: { value: 12.0 },    
-                uEnergyThreshold: { value: 0.15 }, 
+                uFlowSpeed: { value: 0.0 },
+                uRibbonScale: { value: 12.0 },
+                uEnergyThreshold: { value: 0.15 },
                 uIntensity: { value: 0.0 },
                 uTwist: { value: 0.0 },
-                uBowFocus: { value: 0.0 }, 
-                uAlphaMult: { value: alpha }, 
-                uLightning: { value: 0.0 }, 
-                uColorBase: { value: new THREE.Color(0x001155) }, 
-                uColorBright: { value: new THREE.Color(0x88ddff) } 
+                uBowFocus: { value: 0.0 },
+                uAlphaMult: { value: alpha },
+                uLightning: { value: 0.0 },
+                uColorBase: { value: new THREE.Color(0x001155) },
+                uColorBright: { value: new THREE.Color(0x88ddff) },
+                uExitProgress: { value: 0.0 },
+                uEventFlash: { value: 0.0 },
+                uColorAccent: { value: new THREE.Color(1.0, 0.8, 0.3) },
+                uColorShift: { value: 0.0 }
             };
         }
 
@@ -821,8 +959,134 @@
 
         const exitConeMesh = new THREE.Mesh(exitConeGeo, exitConeMaterial);
         exitConeMesh.renderOrder = 4;
-        exitConeMesh.frustumCulled = false; 
+        exitConeMesh.frustumCulled = false;
         shipContainer.add(exitConeMesh);
+
+
+        // --- 3D. PLASMA BALL AT BOW (charges during SPOOL, discharges on JUMP) ---
+        // Ship's bow points along +X (after the rotateY(PI/2) on the plane geometry).
+        // Place the ball ~1000u in front of the bow.
+        const plasmaBallGeo = new THREE.SphereGeometry(220, 24, 16);
+        const uniformsPlasma = {
+            uTime: { value: 0.0 },
+            uSpoolProgress: { value: 0.0 },  // 0..1 charge
+            uSpoolPeak: { value: 0.0 },      // 0..1 anticipation peak
+            uDischarge: { value: 0.0 }       // 0..1 momentary flash on JUMP
+        };
+        const plasmaMaterial = new THREE.ShaderMaterial({
+            uniforms: uniformsPlasma,
+            vertexShader: `
+                varying vec3 vNormal;
+                varying vec3 vViewDir;
+                void main() {
+                    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+                    vNormal = normalize(normalMatrix * normal);
+                    vViewDir = normalize(-mv.xyz);
+                    gl_Position = projectionMatrix * mv;
+                }
+            `,
+            fragmentShader: `
+                uniform float uTime;
+                uniform float uSpoolProgress;
+                uniform float uSpoolPeak;
+                uniform float uDischarge;
+                varying vec3 vNormal;
+                varying vec3 vViewDir;
+
+                float hash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
+                float noise(vec3 p) {
+                    vec3 i = floor(p); vec3 f = fract(p);
+                    f = f * f * (3.0 - 2.0 * f);
+                    float n000 = hash(i);
+                    float n100 = hash(i + vec3(1,0,0));
+                    float n010 = hash(i + vec3(0,1,0));
+                    float n110 = hash(i + vec3(1,1,0));
+                    float n001 = hash(i + vec3(0,0,1));
+                    float n101 = hash(i + vec3(1,0,1));
+                    float n011 = hash(i + vec3(0,1,1));
+                    float n111 = hash(i + vec3(1,1,1));
+                    return mix(
+                        mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
+                        mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y),
+                        f.z
+                    );
+                }
+
+                void main() {
+                    float fres = pow(1.0 - max(0.0, dot(vNormal, vViewDir)), 2.0);
+                    vec3 nUv = vNormal * 3.0 + vec3(uTime * 0.6);
+                    float n = noise(nUv) * 0.6 + noise(nUv * 2.5) * 0.3;
+
+                    float pulse = 0.6 + 0.4 * sin(uTime * 8.0);
+                    float intensity = uSpoolProgress * (0.6 + n * 0.5) * pulse;
+                    intensity += uSpoolPeak * (0.5 + 0.5 * sin(uTime * 40.0));
+                    intensity += uDischarge * 2.0;
+
+                    vec3 colCore = vec3(0.7, 0.95, 1.0);
+                    vec3 colHot = vec3(1.0, 1.0, 1.2);
+                    vec3 col = mix(colCore, colHot, fres + uDischarge);
+                    float a = (fres * 0.9 + 0.3) * intensity;
+                    a = clamp(a, 0.0, 1.0);
+                    gl_FragColor = vec4(col * intensity * 1.6, a);
+                }
+            `,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        const plasmaBall = new THREE.Mesh(plasmaBallGeo, plasmaMaterial);
+        plasmaBall.position.set(1000, 0, 0); // bow direction in shipContainer local space
+        plasmaBall.scale.setScalar(0.001);   // hidden initially
+        plasmaBall.renderOrder = 2;
+        shipContainer.add(plasmaBall);
+
+
+        // --- 3E. BOW SHOCK RIM (radial flash on EXIT punch-out) ---
+        const bowShockGeo = new THREE.RingGeometry(800, 1400, 64);
+        bowShockGeo.rotateX(-Math.PI / 2); // lay it flat (XZ plane)
+        const uniformsBowShock = {
+            uTime: { value: 0.0 },
+            uShockTime: { value: -999.0 },
+            uDuration: { value: 0.6 }
+        };
+        const bowShockMaterial = new THREE.ShaderMaterial({
+            uniforms: uniformsBowShock,
+            vertexShader: `
+                uniform float uTime;
+                uniform float uShockTime;
+                uniform float uDuration;
+                varying float vAlpha;
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    float t = (uTime - uShockTime) / uDuration;
+                    float life = clamp(t, 0.0, 1.0);
+                    float scale = mix(0.4, 2.6, life);
+                    vec3 p = position * scale;
+                    vAlpha = (t < 0.0 || t > 1.0) ? 0.0 : pow(1.0 - life, 1.5);
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+                }
+            `,
+            fragmentShader: `
+                varying float vAlpha;
+                varying vec2 vUv;
+                void main() {
+                    // Radial soft band: vUv.y goes 0..1 across ring width.
+                    float band = pow(1.0 - abs(vUv.y - 0.5) * 2.0, 2.0);
+                    vec3 col = mix(vec3(0.7, 0.95, 1.0), vec3(1.0, 1.0, 1.2), band);
+                    float a = band * vAlpha;
+                    if (a < 0.005) discard;
+                    gl_FragColor = vec4(col * a * 2.5, a);
+                }
+            `,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        const bowShock = new THREE.Mesh(bowShockGeo, bowShockMaterial);
+        bowShock.renderOrder = 5;
+        bowShock.frustumCulled = false;
+        shipContainer.add(bowShock);
 
 
         // --- 4. ZAAWANSOWANY POST-PROCESSING ---
@@ -833,8 +1097,10 @@
         const uniformsPP = {
             tDiffuse: { value: renderTarget.texture },
             uAberration: { value: 0.0 },
-            uRadialBlur: { value: 0.0 }, 
-            uFlash: { value: 0.0 }       
+            uRadialBlur: { value: 0.0 },
+            uFlash: { value: 0.0 },
+            uVignette: { value: 0.2 },     // NEW: dark corners (ramps in SPOOL peak + EXIT)
+            uDopplerY: { value: 1.0 }      // NEW: vertical blur multiplier (>1 stretches blur in Y)
         };
 
         const ppMaterial = new THREE.ShaderMaterial({
@@ -845,8 +1111,10 @@
                 uniform float uAberration;
                 uniform float uRadialBlur;
                 uniform float uFlash;
+                uniform float uVignette;
+                uniform float uDopplerY;
                 varying vec2 vUv;
-                
+
                 void main() {
                     vec2 center = vec2(0.5, 0.5);
                     vec2 uv = vUv;
@@ -855,14 +1123,18 @@
 
                     vec3 color = vec3(0.0);
                     float totalWeight = 0.0;
-                    const int samples = 12; 
+                    const int samples = 12;
                     float blurAmount = uRadialBlur * 0.06;
-                    
+
                     float shift = uAberration * pow(dist, 2.0) * 0.03;
 
+                    // Doppler stretch: bias the blur direction toward Y for hyperspace look.
+                    vec2 blurDir = dir;
+                    blurDir.y *= uDopplerY;
+
                     for(int i = 0; i < samples; i++) {
-                        float f = float(i) / float(samples - 1); 
-                        vec2 offsetUv = uv - dir * (f * blurAmount);
+                        float f = float(i) / float(samples - 1);
+                        vec2 offsetUv = uv - blurDir * (f * blurAmount);
 
                         float r = texture2D(tDiffuse, offsetUv + vec2(0.0, shift)).r;
                         float g = texture2D(tDiffuse, offsetUv).g;
@@ -873,7 +1145,12 @@
                     }
                     color /= totalWeight;
 
+                    // Flash (brief white-out)
                     color = mix(color, vec3(1.0, 1.0, 1.1), uFlash);
+
+                    // Vignette: dark corners scale with uVignette.
+                    float vig = 1.0 - smoothstep(0.3, 0.95, dist) * uVignette;
+                    color *= vig;
 
                     gl_FragColor = vec4(color, 1.0);
                 }
@@ -904,7 +1181,7 @@
         let targetDrift = 0.0;
 
 
-        // --- 6. MASZYNA STANÓW I LERPING ---
+        // --- 6. MASZYNA STANÓW I DAMPING ---
         const target = {
             speed: 0.0,
             flowSpeed: 0.0,
@@ -914,29 +1191,60 @@
             twist: 0.0,
             bowFocus: 0.0,
             aberration: 0.0,
-            radialBlur: 0.0,   
+            radialBlur: 0.0,
             shake: 0.0,
-            lightning: 0.0   
+            lightning: 0.0,
+            vignette: 0.2,
+            dopplerY: 1.0,
+            colorShift: 0.0
         };
-        
+
         let currentFlash = 0.0;
         let currentShake = 0.0;
 
         let currentVisualSpeed = 0.0;
-        let globalTravelOffset = 0.0; 
-        
+        let globalTravelOffset = 0.0;
+
         const statusEl = document.getElementById('status');
         const progressBarContainer = document.getElementById('progress-container');
         const progressBar = document.getElementById('progress-bar');
-        
+
         let currentStage = 'IDLE';
-        
+
         let isSpooling = false;
         let spoolTimer = 0.0;
-        const spoolDuration = 4.0; 
+        const spoolDuration = WARP_CONFIG.spoolDuration;
 
         let isExiting = false;
         let exitTimer = 0.0;
+
+        // Clock-based stage transitions (replace setTimeouts).
+        // When >= 0, the animate loop will fire the transition at the given globalTime.
+        let pendingTunnelAt = -1.0;
+        let pendingExitSettleAt = -1.0;
+
+        // Tunnel event scheduler
+        let nextTunnelEventAt = 0.0;
+        let tunnelEventEndAt = -1.0;
+        let tunnelEventStrength = 0.0;
+        const tunnelEventColor = new THREE.Color(1.0, 0.8, 0.3);
+
+        function scheduleNextTunnelEvent() {
+            const gap = WARP_CONFIG.tunnelEventMinGap +
+                        Math.random() * (WARP_CONFIG.tunnelEventMaxGap - WARP_CONFIG.tunnelEventMinGap);
+            nextTunnelEventAt = globalTime + gap;
+        }
+
+        function fireTunnelEvent() {
+            // Random color: gold, magenta, ice-cyan
+            const r = Math.random();
+            if (r < 0.5)       tunnelEventColor.setRGB(1.0, 0.75, 0.25);   // gold
+            else if (r < 0.8)  tunnelEventColor.setRGB(1.0, 0.35, 0.9);    // magenta
+            else               tunnelEventColor.setRGB(0.6, 1.0, 1.2);     // ice
+            tunnelEventEndAt = globalTime + 0.55;
+            tunnelEventStrength = 1.0;
+            scheduleNextTunnelEvent();
+        }
 
         function setStage(stage) {
             currentStage = stage;
@@ -946,87 +1254,97 @@
                 isSpooling = true;
                 isExiting = false;
                 spoolTimer = 0.0;
+                pendingTunnelAt = -1.0;
+                pendingExitSettleAt = -1.0;
                 progressBarContainer.style.display = 'block';
                 progressBar.style.width = '0%';
-                
-                target.bowFocus = 1.0; 
-                target.speed = 0.0; 
+
+                target.bowFocus = 1.0;
+                target.speed = 0.0;
                 target.aberration = 0.2;
                 target.lightning = 0.0;
-                
-                target.shake = 0.15;    
+                target.shake = 0.05;
                 target.radialBlur = 0.0;
-            } 
+                target.vignette = 0.2;
+                target.dopplerY = 1.0;
+                target.colorShift = 0.0;
+                targetFov = WARP_CONFIG.baseFov;
+                targetCameraY = WARP_CONFIG.cameraBaseY;
+                cameraRollTarget = 0.0;
+            }
             else if (stage === 'JUMP') {
                 isSpooling = false;
                 isExiting = false;
+                pendingExitSettleAt = -1.0;
                 progressBarContainer.style.display = 'none';
-                
+
+                // Bow shock spawn (punch through membrane).
+                uniformsBowShock.uShockTime.value = globalTime;
+                uniformsPlasma.uDischarge.value = 1.0; // discharges, then damped down
+
                 // Blast u dołu statku (+Z) jako ciąg silnika
                 uniformsBlast.uShootTime.value = globalTime;
-                uniformsBlast.uShipZ.value = 1000.0; 
+                uniformsBlast.uShipZ.value = 1000.0;
 
-                target.speed = 18.0; 
-                target.flowSpeed = 0.0; 
-                target.ribbonScale = 12.0; 
-                target.energyThreshold = 0.15; 
+                target.speed = 18.0;
+                target.flowSpeed = 0.0;
+                target.ribbonScale = 12.0;
+                target.energyThreshold = 0.15;
                 target.intensity = 1.5;
-                target.twist = 0.0; 
-                target.bowFocus = 0.0; 
-                
+                target.twist = 0.0;
+                target.bowFocus = 0.0;
+
                 target.aberration = 1.0;
-                target.lightning = 1.2;    
-                
-                currentFlash = 1.0;        
-                currentShake = 1.5;        
-                target.shake = 0.4;        
-                
-                setTimeout(() => {
-                    if (currentStage === 'JUMP') {
-                        currentStage = 'TUNNEL';
-                        statusEl.innerText = "STATUS: TUNNEL";
-                        target.speed = 8.0; 
-                        target.intensity = 1.0;
-                        target.twist = 0.2; 
-                        
-                        target.aberration = 0.3; 
-                        target.lightning = 0.6; 
-                        
-                        target.shake = 0.1; 
-                        target.radialBlur = 0.5; 
-                    }
-                }, 500);
-            } 
+                target.lightning = 1.2;
+
+                currentFlash = 1.0;
+                currentShake = 1.5;
+                target.shake = 0.4;
+                target.vignette = 0.6;
+                target.dopplerY = 1.6;
+                target.colorShift = 0.0;
+                targetFov = WARP_CONFIG.baseFov + 12.0; // FOV pop on jump
+                targetCameraY = WARP_CONFIG.cameraBaseY;
+
+                // Schedule TUNNEL transition via clock (no setTimeout — frame-rate independent).
+                pendingTunnelAt = globalTime + WARP_CONFIG.jumpFlashDuration;
+            }
             else if (stage === 'EXIT') {
                 isSpooling = false;
                 isExiting = true;
                 exitTimer = 0.0;
+                pendingTunnelAt = -1.0;
                 progressBarContainer.style.display = 'none';
-                
+
                 // NOWE: Odpalenie fali uderzeniowej do GÓRY (Cone z Railguna)
                 uniformsExitCone.uShootTime.value = globalTime;
+                // Bow shock on exit (popping through into normal space).
+                uniformsBowShock.uShockTime.value = globalTime;
 
-                target.speed = 0.0; 
-                target.flowSpeed = 5.0; 
+                // Phase-1 "punch out" targets — animate() will sweep these
+                // through phase 2 (decel) and phase 3 (settle).
+                target.speed = 8.0;          // start of decel; ramps to 0 over decel phase
+                target.flowSpeed = 5.0;
                 target.ribbonScale = 20.0;
                 target.energyThreshold = 0.6;
-                target.intensity = 0.0; 
-                target.twist = 12.0;   
-                
-                target.aberration = 1.5; 
-                target.lightning = 0.0; 
-                
-                currentFlash = 1.0;
-                currentShake = 2.5;     
-                target.radialBlur = 0.0;  
-                target.shake = 0.0; 
-                
-                setTimeout(() => {
-                    if (currentStage === 'EXIT') {
-                        target.flowSpeed = 0.0;   
-                        target.aberration = 0.0;
-                    }
-                }, 800);
+                target.intensity = 0.0;
+                target.twist = 6.0;          // SOFTENED from 12.0 (motion-sickness)
+
+                target.aberration = 1.2;
+                target.lightning = 0.0;
+
+                currentFlash = 1.5;
+                currentShake = 2.0;
+                target.radialBlur = 0.0;
+                target.shake = 0.0;
+                target.vignette = 0.5;
+                target.dopplerY = 1.4;
+
+                targetFov = WARP_CONFIG.exitPunchFov; // FOV pop
+                cameraRollTarget = 0.0;
+
+                // Settle clean-up scheduled via clock.
+                pendingExitSettleAt = globalTime + WARP_CONFIG.exitTotalDuration;
             }
         }
 
@@ -1034,68 +1352,211 @@
         // --- 7. PĘTLA RENDEROWANIA ---
         const clock = new THREE.Clock();
 
+        // Spool sub-uniforms for the plasma ball anticipation peak
+        let spoolPeakValue = 0.0;
+
         function animate() {
             requestAnimationFrame(animate);
             const delta = clock.getDelta();
-            globalTime += delta; 
+            globalTime += delta;
 
             uniformsBack.uTime.value = globalTime;
             uniformsFront.uTime.value = globalTime;
             uniformsSparks.uTime.value = globalTime;
             uniformsBlast.uTime.value = globalTime;
-            uniformsExitCone.uTime.value = globalTime; // NOWE
-            uniformsShip.uTime.value = globalTime; 
+            uniformsExitCone.uTime.value = globalTime;
+            uniformsShip.uTime.value = globalTime;
+            uniformsStarfield.uTime.value = globalTime;
+            uniformsPlasma.uTime.value = globalTime;
+            uniformsBowShock.uTime.value = globalTime;
 
+            // ===== Clock-based stage transitions (replace setTimeout) =====
+            if (pendingTunnelAt > 0 && globalTime >= pendingTunnelAt && currentStage === 'JUMP') {
+                pendingTunnelAt = -1.0;
+                currentStage = 'TUNNEL';
+                statusEl.innerText = "STATUS: TUNNEL";
+                target.speed = 8.0;
+                target.intensity = 1.0;
+                target.twist = 0.2;
+                target.aberration = 0.3;
+                target.lightning = 0.6;
+                target.shake = 0.1;
+                target.radialBlur = 0.5;
+                target.vignette = 0.35;
+                target.dopplerY = 1.8;
+                targetFov = WARP_CONFIG.baseFov;
+                // Start tunnel events scheduler.
+                scheduleNextTunnelEvent();
+            }
+
+            if (pendingExitSettleAt > 0 && globalTime >= pendingExitSettleAt && currentStage === 'EXIT') {
+                pendingExitSettleAt = -1.0;
+                // After full exit duration, kill warp visuals — destination space remains.
+                target.flowSpeed = 0.0;
+                target.aberration = 0.0;
+                target.intensity = 0.0;
+                target.twist = 0.0;
+                target.radialBlur = 0.0;
+                target.vignette = 0.2;
+                target.dopplerY = 1.0;
+                targetFov = WARP_CONFIG.baseFov;
+                targetCameraY = WARP_CONFIG.cameraBaseY;
+                isExiting = false; // freeze exit progress
+            }
+
+            // ===== SPOOL: 3-phase progress curve =====
             if (isSpooling) {
                 spoolTimer += delta;
-                let p = Math.min(spoolTimer / spoolDuration, 1.0); 
-                
-                progressBar.style.width = (p * 100) + '%';
-                
-                target.intensity = p * 0.9;         
-                target.flowSpeed = p * 2.5;         
-                target.twist = p * 6.0;             
-                target.ribbonScale = 35.0 - (p * 10.0); 
-                target.energyThreshold = 0.70 - (p * 0.30); 
-                
-                uniformsShip.uSpoolProgress.value = p; 
-            } else {
-                uniformsShip.uSpoolProgress.value += (0.0 - uniformsShip.uSpoolProgress.value) * 10.0 * delta;
-            }
+                const p = Math.min(spoolTimer / spoolDuration, 1.0);
 
+                progressBar.style.width = (p * 100) + '%';
+
+                const charge = smoothstep(0.0, 0.5, p);
+                const arc    = smoothstep(0.5, 0.85, p);
+                const peak   = smoothstep(0.85, 1.0, p);
+
+                // Lightning crackles louder & faster as peak nears.
+                const peakFlicker = 0.5 + 0.5 * Math.sin(globalTime * 40.0);
+                target.lightning = charge * 0.3 + arc * 1.2 + peak * (1.5 + peakFlicker);
+                target.intensity = charge * 0.4 + arc * 0.7 + peak * 1.1;
+                target.shake     = charge * 0.05 + arc * 0.20 + peak * 0.55;
+                target.flowSpeed = charge * 1.0 + arc * 2.0 + peak * 3.0;
+                target.twist     = charge * 1.0 + arc * 3.5 + peak * 6.0;
+                target.ribbonScale     = 35.0 - (charge * 5.0 + arc * 8.0 + peak * 12.0);
+                target.energyThreshold = 0.70 - (charge * 0.10 + arc * 0.15 + peak * 0.10);
+                target.aberration = 0.1 + p * 0.5;
+                target.vignette   = 0.2 + peak * 0.6;
+
+                // FOV pump in peak phase: 60 -> 72, then snap back in last 0.2s.
+                const lastWindow = Math.max(0, (p - 0.92) / 0.08); // 0..1 in last 8%
+                targetFov = WARP_CONFIG.baseFov + peak * (WARP_CONFIG.spoolPeakFov - WARP_CONFIG.baseFov) * (1.0 - lastWindow);
+
+                uniformsShip.uSpoolProgress.value = p;
+                uniformsPlasma.uSpoolProgress.value = charge * 0.5 + arc + peak;
+                spoolPeakValue = peak;
+                uniformsPlasma.uSpoolPeak.value = peak;
+
+                // Plasma ball grows with charge progress.
+                const ballScale = 0.001 + (charge * 0.6 + arc * 0.4) * (1.0 + peak * 0.3);
+                plasmaBall.scale.setScalar(ballScale);
+            } else {
+                uniformsShip.uSpoolProgress.value = damp(uniformsShip.uSpoolProgress.value, 0.0, 8.0, delta);
+                uniformsPlasma.uSpoolProgress.value = damp(uniformsPlasma.uSpoolProgress.value, 0.0, 4.0, delta);
+                uniformsPlasma.uSpoolPeak.value = damp(uniformsPlasma.uSpoolPeak.value, 0.0, 6.0, delta);
+                plasmaBall.scale.setScalar(damp(plasmaBall.scale.x, 0.001, 4.0, delta));
+                spoolPeakValue = 0.0;
+            }
+            // Plasma discharge decays after JUMP.
+            uniformsPlasma.uDischarge.value = damp(uniformsPlasma.uDischarge.value, 0.0, 4.0, delta);
+
+            // ===== EXIT: 3-phase punch / decel / settle =====
             if (isExiting) {
                 exitTimer += delta;
-                let ep = Math.min(exitTimer / 2.5, 1.0); 
-                uniformsSparks.uExitProgress.value = ep;
-                
-                globalTravelOffset += delta * (1.0 - ep) * 40.0; 
+                const totalP = Math.min(exitTimer / WARP_CONFIG.exitTotalDuration, 1.0);
+                uniformsSparks.uExitProgress.value = totalP;
+
+                // Phase booleans (with smooth curve for decel)
+                const t = exitTimer;
+                const T = WARP_CONFIG;
+                if (t < T.exitPunchDuration) {
+                    // Phase 1: PUNCH OUT
+                    target.twist = 6.0;
+                    target.intensity = lerp(1.0, 0.4, t / T.exitPunchDuration);
+                    target.aberration = 1.2;
+                    target.dopplerY = 1.6;
+                } else if (t < T.exitPunchDuration + T.exitDecelDuration) {
+                    // Phase 2: DECEL — smooth speed brake
+                    const decelP = (t - T.exitPunchDuration) / T.exitDecelDuration;
+                    target.speed = lerp(8.0, 0.0, easeOutQuart(decelP));
+                    target.twist = lerp(6.0, 0.5, easeOutQuart(decelP));
+                    target.intensity = lerp(0.4, 0.05, decelP);
+                    target.aberration = lerp(1.2, 0.4, decelP);
+                    target.dopplerY = lerp(1.6, 1.1, decelP);
+                    target.lightning = lerp(0.8, 0.15, decelP); // residual sparks
+                    targetFov = lerp(WARP_CONFIG.exitPunchFov, WARP_CONFIG.baseFov, decelP);
+                    targetCameraY = lerp(WARP_CONFIG.cameraBaseY, WARP_CONFIG.cameraExitZoomY, decelP);
+                } else {
+                    // Phase 3: SETTLE — destination space materialises
+                    const settleP = Math.min((t - T.exitPunchDuration - T.exitDecelDuration) / T.exitSettleDuration, 1.0);
+                    target.speed = 0.0;
+                    target.twist = lerp(0.5, 0.0, settleP);
+                    target.intensity = 0.0;
+                    target.aberration = lerp(0.4, 0.0, settleP);
+                    target.dopplerY = lerp(1.1, 1.0, settleP);
+                    target.lightning = lerp(0.15, 0.0, settleP);
+                    target.vignette = lerp(0.5, 0.2, settleP);
+                    targetCameraY = lerp(WARP_CONFIG.cameraExitZoomY, WARP_CONFIG.cameraExitPullY, easeOutQuart(settleP));
+                }
+
+                globalTravelOffset += delta * (1.0 - totalP) * 40.0;
             } else {
-                uniformsSparks.uExitProgress.value = 0.0;
+                // Damp exit progress back to 0 when not exiting.
+                uniformsSparks.uExitProgress.value = damp(uniformsSparks.uExitProgress.value, 0.0, 4.0, delta);
             }
 
-            let lerpSpeed = 2.0 * delta; 
-            let twistLerpMult = 0.5; 
+            // Tunnel uExitProgress: drives collapse-to-axis.
+            const exitProgress = uniformsSparks.uExitProgress.value;
+            uniformsBack.uExitProgress.value = exitProgress;
+            uniformsFront.uExitProgress.value = exitProgress;
 
-            if (currentStage === 'JUMP') { lerpSpeed = 4.0 * delta; }
-            if (currentStage === 'EXIT') { lerpSpeed = 3.5 * delta; twistLerpMult = 1.8; }
+            // ===== TUNNEL: events + color shift + pulsing twist + camera roll =====
+            if (currentStage === 'TUNNEL') {
+                // Pulsing twist (subtle breathing).
+                target.twist = 0.2 + Math.sin(globalTime * 0.4) * 0.25;
+                // Camera roll (very subtle hyperspace banking).
+                cameraRollTarget = Math.sin(globalTime * 0.18) * 0.05;
 
-            currentFlash += (0.0 - currentFlash) * 5.0 * delta;
-            currentShake += (target.shake - currentShake) * 5.0 * delta;
+                // Distance-based color shift advances slowly.
+                target.colorShift = Math.min(1.0, target.colorShift + delta * 0.025);
+
+                // Schedule events
+                if (nextTunnelEventAt > 0 && globalTime >= nextTunnelEventAt) {
+                    fireTunnelEvent();
+                }
+                if (tunnelEventEndAt > 0) {
+                    if (globalTime >= tunnelEventEndAt) {
+                        tunnelEventEndAt = -1.0;
+                        tunnelEventStrength = 0.0;
+                    } else {
+                        const eventDur = 0.55;
+                        const tt = (tunnelEventEndAt - globalTime) / eventDur; // 1 -> 0
+                        tunnelEventStrength = Math.sin(Math.max(0, Math.min(1, tt)) * Math.PI); // bell curve
+                    }
+                }
+            } else if (currentStage !== 'EXIT') {
+                cameraRollTarget = 0.0;
+                if (currentStage !== 'TUNNEL') target.colorShift = damp(target.colorShift, 0.0, 1.5, delta);
+            }
+
+            // Damping rates: stage-dependent for snappiness on JUMP/EXIT.
+            let rate = 2.0;
+            let twistRate = 1.0;
+            if (currentStage === 'JUMP') rate = 5.0;
+            if (currentStage === 'EXIT') { rate = 4.0; twistRate = 5.0; }
+            if (currentStage === 'TUNNEL') twistRate = 0.8;
+
+            // ===== Frame-rate-independent damping for all values =====
+            currentFlash = damp(currentFlash, 0.0, 5.0, delta);
+            currentShake = damp(currentShake, target.shake, 5.0, delta);
             uniformsPP.uFlash.value = currentFlash;
 
-            uniformsPP.uAberration.value += (target.aberration - uniformsPP.uAberration.value) * lerpSpeed;
-            uniformsPP.uRadialBlur.value += (target.radialBlur - uniformsPP.uRadialBlur.value) * lerpSpeed;
+            uniformsPP.uAberration.value = damp(uniformsPP.uAberration.value, target.aberration, rate, delta);
+            uniformsPP.uRadialBlur.value = damp(uniformsPP.uRadialBlur.value, target.radialBlur, rate, delta);
+            uniformsPP.uVignette.value   = damp(uniformsPP.uVignette.value,   target.vignette,   rate, delta);
+            uniformsPP.uDopplerY.value   = damp(uniformsPP.uDopplerY.value,   target.dopplerY,   rate, delta);
 
-            currentVisualSpeed += (target.speed - currentVisualSpeed) * lerpSpeed;
+            currentVisualSpeed = damp(currentVisualSpeed, target.speed, rate, delta);
             globalTravelOffset += currentVisualSpeed * delta;
 
-            const curIntensity = uniformsBack.uIntensity.value + (target.intensity - uniformsBack.uIntensity.value) * lerpSpeed;
-            const curTwist = uniformsBack.uTwist.value + (target.twist - uniformsBack.uTwist.value) * (lerpSpeed * twistLerpMult);
-            const curBowFocus = uniformsBack.uBowFocus.value + (target.bowFocus - uniformsBack.uBowFocus.value) * lerpSpeed;
-            const curFlowSpeed = uniformsBack.uFlowSpeed.value + (target.flowSpeed - uniformsBack.uFlowSpeed.value) * lerpSpeed;
-            const curRibbonScale = uniformsBack.uRibbonScale.value + (target.ribbonScale - uniformsBack.uRibbonScale.value) * lerpSpeed;
-            const curEnergyThreshold = uniformsBack.uEnergyThreshold.value + (target.energyThreshold - uniformsBack.uEnergyThreshold.value) * lerpSpeed;
-            const curLightning = uniformsBack.uLightning.value + (target.lightning - uniformsBack.uLightning.value) * lerpSpeed;
+            const curIntensity       = damp(uniformsBack.uIntensity.value,       target.intensity,       rate, delta);
+            const curTwist           = damp(uniformsBack.uTwist.value,           target.twist,           twistRate, delta);
+            const curBowFocus        = damp(uniformsBack.uBowFocus.value,        target.bowFocus,        rate, delta);
+            const curFlowSpeed       = damp(uniformsBack.uFlowSpeed.value,       target.flowSpeed,       rate, delta);
+            const curRibbonScale     = damp(uniformsBack.uRibbonScale.value,     target.ribbonScale,     rate, delta);
+            const curEnergyThreshold = damp(uniformsBack.uEnergyThreshold.value, target.energyThreshold, rate, delta);
+            const curLightning       = damp(uniformsBack.uLightning.value,       target.lightning,       rate, delta);
+            const curColorShift      = damp(uniformsBack.uColorShift.value,      target.colorShift,      1.5, delta);
+            const curEventFlash      = damp(uniformsBack.uEventFlash.value,      tunnelEventStrength,    8.0, delta);
 
             uniformsBack.uTravelOffset.value = globalTravelOffset;
             uniformsFront.uTravelOffset.value = globalTravelOffset;
@@ -1111,33 +1572,58 @@
             uniformsBack.uTwist.value = curTwist; uniformsFront.uTwist.value = curTwist;
             uniformsBack.uBowFocus.value = curBowFocus; uniformsFront.uBowFocus.value = curBowFocus;
             uniformsBack.uLightning.value = curLightning; uniformsFront.uLightning.value = curLightning;
-            
+            uniformsBack.uColorShift.value = curColorShift; uniformsFront.uColorShift.value = curColorShift;
+            uniformsBack.uEventFlash.value = curEventFlash; uniformsFront.uEventFlash.value = curEventFlash;
+            uniformsBack.uColorAccent.value.copy(tunnelEventColor);
+            uniformsFront.uColorAccent.value.copy(tunnelEventColor);
+
             uniformsSparks.uIntensity.value = curIntensity;
             uniformsSparks.uTwist.value = curTwist;
             uniformsSparks.uBowFocus.value = curBowFocus;
 
-            let lerpedCamY = camera.position.y + (targetCameraY - camera.position.y) * 5.0 * delta;
+            // Starfield: stretch streaks scale with travel speed; visibility dims inside tunnel.
+            const tunnelOcclusion = (currentStage === 'TUNNEL' || currentStage === 'JUMP') ? 0.25 : 1.0;
+            uniformsStarfield.uVisibility.value = damp(uniformsStarfield.uVisibility.value, tunnelOcclusion, 2.5, delta);
+            uniformsStarfield.uWarpStretch.value = damp(uniformsStarfield.uWarpStretch.value, Math.min(1.0, currentVisualSpeed / 12.0), 4.0, delta);
+            uniformsStarfield.uExitProgress.value = damp(uniformsStarfield.uExitProgress.value,
+                isExiting ? smoothstep(WARP_CONFIG.exitPunchDuration + WARP_CONFIG.exitDecelDuration * 0.5, WARP_CONFIG.exitTotalDuration, exitTimer) : (currentStage === 'IDLE' ? 1.0 : 0.0), 2.0, delta);
+
+            // FOV damping
+            camera.fov = damp(camera.fov, targetFov, 4.0, delta);
+            camera.updateProjectionMatrix();
+
+            // Camera roll damping (very subtle)
+            currentCameraRoll = damp(currentCameraRoll, cameraRollTarget, 1.5, delta);
+
+            // Camera position with shake.
+            // IMPORTANT: do NOT call lookAt() every frame. The camera was oriented at startup
+            // (top-down). Calling lookAt(0,0,0) here combined with random per-frame shake
+            // would re-aim the camera each frame, making the entire scene appear to spin
+            // around the center. Just translate position; orientation stays from startup.
+            const lerpedCamY = damp(camera.position.y, targetCameraY, 5.0, delta);
             camera.position.set(
                 baseCameraX + (Math.random() - 0.5) * currentShake * 150.0,
                 lerpedCamY + (Math.random() - 0.5) * currentShake * 150.0,
                 baseCameraZ + (Math.random() - 0.5) * currentShake * 150.0
             );
+            // Camera roll: apply only to local Z, preserving the startup -PI/2 X rotation.
+            camera.rotation.z = currentCameraRoll;
 
             targetDrift = 0.0;
-            if (keys.a) targetDrift = 0.6;  
-            if (keys.d) targetDrift = -0.6; 
-            
-            currentDrift += (targetDrift - currentDrift) * 5.0 * delta;
-            
+            if (keys.a) targetDrift = 0.6;
+            if (keys.d) targetDrift = -0.6;
+
+            currentDrift = damp(currentDrift, targetDrift, 5.0, delta);
+
             shipContainer.rotation.y = currentDrift;
-            tunnelBack.rotation.y = currentDrift * 0.7; 
-            tunnelFront.rotation.y = currentDrift * 0.7; 
-            sparksMesh.rotation.y = currentDrift * 0.7; 
+            tunnelBack.rotation.y = currentDrift * 0.7;
+            tunnelFront.rotation.y = currentDrift * 0.7;
+            sparksMesh.rotation.y = currentDrift * 0.7;
 
             renderer.setRenderTarget(renderTarget);
             renderer.clear();
             renderer.render(scene, camera);
-            
+
             renderer.setRenderTarget(null);
             renderer.clear();
             renderer.render(orthoScene, orthoCamera);
