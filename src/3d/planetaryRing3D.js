@@ -946,33 +946,28 @@ class PlanetaryRing {
     const fallbackArcHalf = computeArcHalf(this.wallRadius);
 
     // LOD: dystans kamery od ringu → poziomy szczegółowości
-    const lodDistanceSq = hasCameraCenter ? (cameraDistance * cameraDistance) : 0;
-    const R = this.ringRadius;
-    // LOD thresholds (squared for fast comparison)
-    const LOD_DETAIL_SQ = (R * 2.5) * (R * 2.5);   // > 2.5R: hide DETAIL meshes (antennas, pads, edges)
-    const LOD_MEDIUM_SQ = (R * 4.5) * (R * 4.5);   // > 4.5R: hide MEDIUM meshes (neon signs, chimneys)
-    const LOD_HIDE_SQ   = (R * 8) * (R * 8);        // > 8R:   hide all districts
-    const skipAnimations = lodDistanceSq > LOD_DETAIL_SQ;
-    const hideAllDistricts = hasCameraCenter && lodDistanceSq > LOD_HIDE_SQ;
+    const safeCamZoom = Math.max(0.0001, Number(camZoom) || 0.0001);
+    const ringPixelRadius = this.ringRadius * safeCamZoom;
 
-    // Determine current LOD level for chunk children
-    // 0 = full detail, 1 = hide DETAIL, 2 = hide DETAIL+MEDIUM, 3 = hide all
+    // Determine current LOD level for chunk children from on-screen size.
+    // 0 = full detail, 1 = hide DETAIL, 2 = hide DETAIL+MEDIUM, 3 = max cheap
     let lodLevel = 0;
-    if (hasCameraCenter) {
-      if (lodDistanceSq > LOD_HIDE_SQ) lodLevel = 3;
-      else if (lodDistanceSq > LOD_MEDIUM_SQ) lodLevel = 2;
-      else if (lodDistanceSq > LOD_DETAIL_SQ) lodLevel = 1;
-    }
+    if (ringPixelRadius < 380) lodLevel = 3;
+    else if (ringPixelRadius < 700) lodLevel = 2;
+    else if (ringPixelRadius < 1200) lodLevel = 1;
+    const skipAnimations = lodLevel >= 1;
+    const hideAllDistricts = false;
+    const useFarChunkMaterials = lodLevel >= 1;
 
     for (const b of this.visualMeshes) {
         // Global infrastructure — 4 large merged meshes (floor/path/trace/overlay).
-        // Even at extreme zoom-out the LOD_HIDE_SQ check should hide them.
+        // Keep them visible even on the farthest LOD.
         if (b.isGlobalInfra) {
             b.mesh.visible = !hideAllDistricts;
             continue;
         }
 
-        // LOD: hide all districts when camera is very far away
+        // LOD: keep district chunks alive even on the farthest zoom-out.
         if (hideAllDistricts && b.isDistrict) {
             b.mesh.visible = false;
             continue;
@@ -1013,9 +1008,24 @@ class PlanetaryRing {
             if (lod === 'DETAIL') child.visible = lodLevel < 1;
             else if (lod === 'MEDIUM') child.visible = lodLevel < 2;
             else child.visible = true; // CORE always visible
+            const farMaterial = child.userData?.farMaterial;
+            if (farMaterial) {
+              const wantsFar = child.visible && useFarChunkMaterials;
+              if (child.userData.usingFarMaterial !== wantsFar) {
+                child.material = wantsFar ? farMaterial : (child.userData.nearMaterial || child.material);
+                child.userData.usingFarMaterial = wantsFar;
+              }
+            }
           }
         } else if (b.isChunk && b.mesh.children) {
-          for (const child of b.mesh.children) child.visible = true;
+          for (const child of b.mesh.children) {
+            child.visible = true;
+            const nearMaterial = child.userData?.nearMaterial;
+            if (nearMaterial && child.userData.usingFarMaterial) {
+              child.material = nearMaterial;
+              child.userData.usingFarMaterial = false;
+            }
+          }
         }
 
         // Animate dynamic decorations (spinning toppers & adverts)

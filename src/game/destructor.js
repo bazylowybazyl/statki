@@ -870,8 +870,12 @@ export const DestructorSystem = {
   perf: {
     lastUpdateMs: 0,
     lastDeformMs: 0,
+    lastVisualDeformMs: 0,
+    lastGpuSoftBodyMs: 0,
+    lastElasticityMs: 0,
     lastCollisionMs: 0,
     lastSplitMs: 0,
+    lastEraseMs: 0,
     lastContacts: 0
   },
 
@@ -966,6 +970,9 @@ export const DestructorSystem = {
       pairs: `cand=${dbg.pairCandidates} narrow=${dbg.pairNarrow} ring=${dbg.ringPairs}`,
       query: `cand=${dbg.queryCandidates} ret=${dbg.queryReturned}`,
       update: fmt('update'),
+      deformTotal: `${(Number(this.perf?.lastDeformMs) || 0).toFixed(2)}ms`,
+      visualDeform: fmt('updateVisualDeformation'),
+      gpuSoftBody: fmt('gpuSoftBodyTick'),
       prepare: fmt('prepareBroadphase'),
       resolve: fmt('resolveCollisions'),
       queryFn: fmt('queryBroadphase'),
@@ -974,6 +981,7 @@ export const DestructorSystem = {
       impact: fmt('applyImpact'),
       deform: fmt('distributeStructuralDamage'),
       split: fmt('processSplits'),
+      eraseFlush: fmt('flushPendingShardErases'),
       topSpike: topName ? `${topName}:${topMs.toFixed(2)}ms` : 'n/a'
     });
 
@@ -1214,9 +1222,11 @@ export const DestructorSystem = {
     this._tick++;
     const tDeform0 = nowMs();
     this.updateVisualDeformation(list, step);
+    const tAfterVisualDeform = nowMs();
     DestructorGpuSoftBody.tick(list, DESTRUCTOR_CONFIG, step);
-    const tAfterDeform = nowMs();
+    const tAfterGpuSoftBody = nowMs();
     this.simulateElasticity(list, step);
+    const tAfterDeform = nowMs();
 
     this._frameContacts = 0;
     const tCollision0 = nowMs();
@@ -1235,16 +1245,25 @@ export const DestructorSystem = {
 
     if (this._tick % splitInterval === 0 && this.splitQueue.length > 0) this.processSplits(list);
 
+    const tErase0 = nowMs();
     this._flushPendingShardErases(list);
+    const tAfterErase = nowMs();
 
-    const tUpdateEnd = nowMs();
+    const tUpdateEnd = tAfterErase;
     this.perf.lastUpdateMs = tUpdateEnd - tUpdate0;
     this.perf.lastDeformMs = tAfterDeform - tDeform0;
+    this.perf.lastVisualDeformMs = tAfterVisualDeform - tDeform0;
+    this.perf.lastGpuSoftBodyMs = tAfterGpuSoftBody - tAfterVisualDeform;
+    this.perf.lastElasticityMs = tAfterDeform - tAfterGpuSoftBody;
     this.perf.lastCollisionMs = tAfterCollision - tCollision0;
-    this.perf.lastSplitMs = tUpdateEnd - tSplit0;
+    this.perf.lastSplitMs = tAfterErase - tSplit0;
+    this.perf.lastEraseMs = tAfterErase - tErase0;
     this.perf.lastContacts = this._frameContacts;
 
     if (dbgEnabled) {
+      this._dbgCollisionRecord('updateVisualDeformation', tAfterVisualDeform - tDeform0);
+      this._dbgCollisionRecord('gpuSoftBodyTick', tAfterGpuSoftBody - tAfterVisualDeform);
+      this._dbgCollisionRecord('flushPendingShardErases', tAfterErase - tErase0);
       const frameMs = tUpdateEnd - tUpdate0;
       const dbg = this._liveCollisionDebug;
       dbg.frames++;

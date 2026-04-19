@@ -521,6 +521,7 @@ export class HUDSystem {
         if (this.dom.locDisplay && this.dom.locText && this.dom.locLabel) {
             const banner = env?.bannerMessage || null;
             const visible = !!banner;
+            const topDockExpanded = !!this.dom.topDock?.classList.contains('expanded');
             if (visible) {
                 const nextLabel = banner?.label || 'SHIP ALERT';
                 const nextText = banner?.text || '';
@@ -547,6 +548,11 @@ export class HUDSystem {
                 this.dom.locDisplay.classList.toggle('is-visible', visible);
                 this.dom.locDisplay.classList.toggle('is-hidden', !visible);
                 this.cache.locVisible = visible;
+            }
+            const topDockHidden = !visible && !topDockExpanded;
+            if (this.dom.topDock && this.cache.topDockHidden !== topDockHidden) {
+                this.dom.topDock.classList.toggle('banner-hidden', topDockHidden);
+                this.cache.topDockHidden = topDockHidden;
             }
             if (!visible && env?.locationName) {
                 this.cache.locName = env.locationName;

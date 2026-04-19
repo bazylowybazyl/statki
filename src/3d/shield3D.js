@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { Core3D } from './core3d.js';
 import { isShieldSuppressed } from '../../shieldSystem.js';
 
-const MAX_HITS = 8;
+const MAX_HITS = 24;
 
 // ── Vertex shader ────────────────────────────────────────────────────────────
 const SHIELD_VERTEX = `
@@ -29,7 +29,7 @@ void main() {
 
 // ── Fragment shader ──────────────────────────────────────────────────────────
 const SHIELD_FRAGMENT = `
-#define MAX_HITS 8
+#define MAX_HITS 24
 
 uniform float uTime;
 uniform vec3  uColor;
@@ -339,6 +339,24 @@ function createShieldMaterial() {
     });
 }
 
+function pickHitSlot(hits, timeNow) {
+    for (let i = 0; i < hits.length; i++) {
+        const hit = hits[i];
+        if (!hit || (timeNow - (Number(hit.startTime) || 0)) >= HIT_DURATION) return i;
+    }
+
+    let oldestIdx = 0;
+    let oldestTime = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < hits.length; i++) {
+        const hitTime = Number(hits[i]?.startTime) || 0;
+        if (hitTime < oldestTime) {
+            oldestTime = hitTime;
+            oldestIdx = i;
+        }
+    }
+    return oldestIdx;
+}
+
 // ── Create shield mesh for entity ────────────────────────────────────────────
 function createShieldMesh(entity) {
     const material = createShieldMaterial();
@@ -436,28 +454,27 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
         // but the shader ring effect needs 1.5s. We maintain our own ring buffer
         // that keeps hits alive for the full shader duration.
         if (!state.hitBuffers.has(entity)) {
-            state.hitBuffers.set(entity, { hits: new Array(MAX_HITS).fill(null), idx: 0, seen: new Set() });
+            state.hitBuffers.set(entity, { hits: new Array(MAX_HITS).fill(null), seen: new Map() });
         }
         const hb = state.hitBuffers.get(entity);
 
-        // Detect new impacts by startTime — copy them into our ring buffer
+        // Detect new impacts by stable impact id; startTime alone can collide under multi-hit same-frame fire.
         const impacts = shield.impacts || [];
         for (const imp of impacts) {
-            const key = imp.startTime;
+            const key = Number.isFinite(imp?.id) ? `id:${imp.id}` : `t:${imp.startTime}`;
+            const hitStartTime = Number(imp?.startTime) || time;
             if (key && !hb.seen.has(key)) {
-                hb.seen.add(key);
-                const slot = hb.idx % MAX_HITS;
-                hb.idx++;
-                // Store angle in world-space (localAngle) and startTime
-                hb.hits[slot] = { localAngle: imp.localAngle || 0, startTime: key };
+                hb.seen.set(key, hitStartTime);
+                const slot = pickHitSlot(hb.hits, time);
+                hb.hits[slot] = { localAngle: imp.localAngle || 0, startTime: hitStartTime };
             }
         }
 
         // Clean up old seen keys (prevent memory leak)
-        if (hb.seen.size > 64) {
+        if (hb.seen.size > 96) {
             const cutoff = time - HIT_DURATION * 2;
-            for (const key of hb.seen) {
-                if (key < cutoff) hb.seen.delete(key);
+            for (const [key, seenAt] of hb.seen) {
+                if ((Number(seenAt) || 0) < cutoff) hb.seen.delete(key);
             }
         }
 
