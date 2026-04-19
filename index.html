@@ -1397,7 +1397,7 @@
               this.refreshDebugButtons();
             });
           };
-          bind(this.els.colStart, () => window.ColFuncDbgStart?.(2000));
+          bind(this.els.colStart, () => window.ColFuncDbgStart?.(1000));
           bind(this.els.colStop, () => window.ColFuncDbgStop?.());
           bind(this.els.renderStart, () => window.RenderDbgStart?.(1000));
           bind(this.els.renderStop, () => window.RenderDbgStop?.());

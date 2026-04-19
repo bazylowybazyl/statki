@@ -1,4 +1,4 @@
-const MAX_IMPACTS = 8;
+const MAX_IMPACTS = 16;
 const DEFAULT_ENERGY_SHOT_DURATION = 0.5;
 const ACTIVATION_SPEED = 1.8;
 const BREAK_DURATION = 0.28;
@@ -21,6 +21,7 @@ function ensureShield(shield) {
     shield.energyShotDuration = DEFAULT_ENERGY_SHOT_DURATION;
   }
   if (!Number.isFinite(shield.energyShotTimer)) shield.energyShotTimer = 0;
+  if (!Number.isFinite(shield._impactSeq)) shield._impactSeq = 0;
   const threshold = Math.max(1, shield.max * SHIELD_REACTIVATION_HP_THRESHOLD);
   if (typeof shield.state !== 'string') shield.state = shield.val >= threshold ? 'active' : 'off';
   if (!Number.isFinite(shield.activationProgress)) shield.activationProgress = shield.state === 'off' ? 0 : 1;
@@ -108,6 +109,7 @@ export function registerShieldImpact(entity, worldX, worldY, damage = 0) {
   const deformation = clamp(2.5 + dmg / 120, 1.5, 8.0);
 
   shield.impacts.unshift({
+    id: ++shield._impactSeq,
     localAngle,
     intensity,
     life: 1.0,

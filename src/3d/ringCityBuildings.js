@@ -44,6 +44,7 @@ const LOD_LEVEL_BY_MAT = {
 
 // --- Material dict cache per zone ---
 const matDictCache = {};
+const farMaterialCache = new WeakMap();
 
 // ============================================================
 // DYNAMICZNE HOLOGRAMY I REKLAMY
@@ -649,6 +650,95 @@ function resolveMaterial(matKey, zone) {
     return material;
 }
 
+function resolveChunkMaterial(matKey, zones) {
+    let material = null;
+    for (const zone of zones) {
+        material = resolveMaterial(matKey, zone);
+        if (material) break;
+    }
+    if (!material) return null;
+
+    if (matKey.startsWith('building_')) {
+        material = material.clone();
+        material.userData = { ...(material.userData || {}), shared: false };
+        material.emissive = new THREE.Color().setHSL(Math.random(), 1.0, 0.95);
+        material.emissiveIntensity = 1.5;
+        material.needsUpdate = true;
+    }
+
+    return material;
+}
+
+function getFarMaterial(sourceMaterial, matKey) {
+    if (!sourceMaterial) return null;
+    if (sourceMaterial.isMeshBasicMaterial || sourceMaterial.isLineBasicMaterial) return sourceMaterial;
+
+    const cached = farMaterialCache.get(sourceMaterial);
+    if (cached) return cached;
+
+    const farMaterial = new THREE.MeshLambertMaterial({
+        color: sourceMaterial.color ? sourceMaterial.color.clone() : new THREE.Color(0xffffff),
+        map: sourceMaterial.map || null,
+        emissive: sourceMaterial.emissive ? sourceMaterial.emissive.clone() : new THREE.Color(0x000000),
+        emissiveMap: sourceMaterial.emissiveMap || null,
+        emissiveIntensity: Number.isFinite(sourceMaterial.emissiveIntensity) ? sourceMaterial.emissiveIntensity : 1,
+        transparent: !!sourceMaterial.transparent,
+        opacity: sourceMaterial.opacity ?? 1,
+        side: sourceMaterial.side,
+        fog: sourceMaterial.fog !== false,
+        blending: sourceMaterial.blending,
+        depthWrite: sourceMaterial.depthWrite,
+        depthTest: sourceMaterial.depthTest,
+        alphaTest: sourceMaterial.alphaTest || 0,
+        vertexColors: !!sourceMaterial.vertexColors
+    });
+    farMaterial.name = `${sourceMaterial.name || matKey || 'ring_far'}_far`;
+    farMaterial.userData = {
+        ...(farMaterial.userData || {}),
+        shared: !!sourceMaterial.userData?.shared
+    };
+    farMaterialCache.set(sourceMaterial, farMaterial);
+    return farMaterial;
+}
+
+function createChunkMesh(geometry, material, matKey) {
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.userData.lodLevel = matKey.startsWith('building_')
+        ? 'CORE'
+        : (LOD_LEVEL_BY_MAT[matKey] || 'MEDIUM');
+
+    const farMaterial = getFarMaterial(material, matKey);
+    if (farMaterial && farMaterial !== material) {
+        mesh.userData.nearMaterial = material;
+        mesh.userData.farMaterial = farMaterial;
+        mesh.userData.usingFarMaterial = false;
+    }
+    return mesh;
+}
+
+function disposeChunkRenderables(root) {
+    if (!root) return;
+    const disposed = new Set();
+    root.traverse(child => {
+        if (child.geometry) child.geometry.dispose();
+
+        const materials = Array.isArray(child.material)
+            ? child.material
+            : child.material ? [child.material] : [];
+        for (const material of materials) {
+            if (!material || material.userData?.shared || disposed.has(material)) continue;
+            disposed.add(material);
+            material.dispose?.();
+        }
+
+        const farMaterial = child.userData?.farMaterial;
+        if (farMaterial && !farMaterial.userData?.shared && !disposed.has(farMaterial)) {
+            disposed.add(farMaterial);
+            farMaterial.dispose?.();
+        }
+    });
+}
+
 // ============================================================
 // createDistrictForCell — per-cell fallback (for single cell rebuild)
 // Used by rebuildDistrictForCell when repainting a single cell.
@@ -681,6 +771,7 @@ export function createDistrictForCell(cell, ring) {
         let material = resolveMaterial(matKey, zone);
         if (matKey.startsWith('building_')) {
             material = material.clone();
+            material.userData = { ...(material.userData || {}), shared: false };
             material.emissive = new THREE.Color().setHSL(Math.random(), 1.0, 0.95);
             material.emissiveIntensity = 1.5;
         }
@@ -895,26 +986,14 @@ function buildChunksForRing(cells, ringId, ring) {
             mergedGeo.computeBoundingBox();
 
             // Find correct material — check each zone's matDict and synthCity mats
-            let material = null;
-            for (const zone of chunk.zones) {
-                material = resolveMaterial(matKey, zone);
-                if (material) break;
-            }
+            let material = resolveChunkMaterial(matKey, chunk.zones);
             if (!material) continue;
 
             // Per-chunk random emissive for SynthCity building materials.
             // Each chunk clones the shared material and gets its own unique neon
             // hue — instead of all chunks sharing the same 10 colors, we get
             // up to 16 × 10 = 160 distinct colors across the ring.
-            if (matKey.startsWith('building_')) {
-                material = material.clone();
-                material.emissive = new THREE.Color().setHSL(Math.random(), 1.0, 0.95);
-                material.emissiveIntensity = 1.5;
-                material.needsUpdate = true;
-            }
-
-            const mesh = new THREE.Mesh(mergedGeo, material);
-            mesh.userData.lodLevel = LOD_LEVEL_BY_MAT[matKey] || 'MEDIUM';
+            const mesh = createChunkMesh(mergedGeo, material, matKey);
             chunkGroup.add(mesh);
         }
 
@@ -1037,18 +1116,13 @@ export function rebuildDistrictForCell(cell, ring) {
         const vm = ring.visualMeshes[i];
         if (vm.isDistrict && vm.isChunk && vm.chunkIndex === chunkIdx && vm.ringId === targetRingId) {
             ring.ringFloor.remove(vm.mesh);
-            // Dispose geometries to free GPU memory
-            vm.mesh.traverse(child => {
-                if (child.geometry) child.geometry.dispose();
-            });
+            disposeChunkRenderables(vm.mesh);
             ring.visualMeshes.splice(i, 1);
         }
         // Also remove old-style per-cell entries for this cell
         if (vm.isDistrict && !vm.isChunk && vm.cellKey === cell.key) {
             ring.ringFloor.remove(vm.mesh);
-            vm.mesh.traverse(child => {
-                if (child.geometry) child.geometry.dispose();
-            });
+            disposeChunkRenderables(vm.mesh);
             ring.visualMeshes.splice(i, 1);
         }
     }
@@ -1133,14 +1207,9 @@ export function rebuildDistrictForCell(cell, ring) {
         mergedGeo.computeBoundingSphere();
         mergedGeo.computeBoundingBox();
 
-        let material = null;
-        for (const zone of chunk.zones) {
-            material = resolveMaterial(matKey, zone);
-            if (material) break;
-        }
+        let material = resolveChunkMaterial(matKey, chunk.zones);
         if (!material) continue;
-        const mesh = new THREE.Mesh(mergedGeo, material);
-        mesh.userData.lodLevel = LOD_LEVEL_BY_MAT[matKey] || 'MEDIUM';
+        const mesh = createChunkMesh(mergedGeo, material, matKey);
         chunkGroup.add(mesh);
     }
 
