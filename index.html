@@ -3632,6 +3632,27 @@
       return executeNpcCommand(npc, npc.command, dt);
     }
 
+    function getSupportInheritedTarget(npc, searchRangeSq) {
+      const leader = npc?.supportData?.leader;
+      if (!leader || leader.dead || leader === npc) return null;
+
+      let target = null;
+      if (leader.forceTarget && !leader.forceTarget.dead) target = leader.forceTarget;
+      else if (leader.target && !leader.target.dead) target = leader.target;
+      else if (leader === ship && lockedTarget && !lockedTarget.dead) target = lockedTarget;
+
+      if (!target) return null;
+      if (window.isEnemyUnit && !window.isEnemyUnit(npc, target)) return null;
+
+      const tx = target.pos ? target.pos.x : target.x;
+      const ty = target.pos ? target.pos.y : target.y;
+      const dx = tx - npc.x;
+      const dy = ty - npc.y;
+      if (dx * dx + dy * dy > searchRangeSq) return null;
+
+      return target;
+    }
+
     // === FIX SUPPORT AI (Guard vs Engage) ===
     function runSupportAI(npc, dt) {
       const data = npc.supportData;
@@ -3647,25 +3668,26 @@
 
       npc.supportOrder = order; // przyda się w fighter AI
 
-      const ENGAGE_RANGE = 25000; // zasięg polowania w ENGAGE
+      const ENGAGE_RANGE = 14000; // zasięg polowania w ENGAGE
       const GUARD_ATTACK_RANGE = 6000;  // zasięg odpalenia ataku w GUARD
 
       const searchRange = (order === 'engage') ? ENGAGE_RANGE : GUARD_ATTACK_RANGE;
+      const searchRangeSq = searchRange * searchRange;
 
       npc.supportRetargetT = (npc.supportRetargetT || 0) - dt;
 
       let target = (npc.forceTarget && !npc.forceTarget.dead) ? npc.forceTarget : npc.target;
 
       if (!target || npc.supportRetargetT <= 0) {
-        target = null;
+        target = getSupportInheritedTarget(npc, searchRangeSq);
 
-        if (window.aiPickBestTarget) {
+        if (!target && window.aiPickBestTarget) {
           target = window.aiPickBestTarget(npc, searchRange);
-        } else if (window.aiPickTarget) {
+        } else if (!target && window.aiPickTarget) {
           target = window.aiPickTarget(npc);
           if (target) {
             const d2 = dist2(npc, target);
-            if (d2 > searchRange * searchRange) target = null;
+            if (d2 > searchRangeSq) target = null;
           }
         }
 
@@ -3678,6 +3700,7 @@
             const dx = n.x - npc.x;
             const dy = n.y - npc.y;
             const d2 = dx * dx + dy * dy;
+            if (d2 > searchRangeSq) continue;
             if (d2 < bestD2) {
               bestD2 = d2;
               best = n;
@@ -3688,7 +3711,7 @@
 
         npc.forceTarget = target || null;
         npc.target = target || null;
-        npc.supportRetargetT = 0.3 + Math.random() * 0.4;
+        npc.supportRetargetT = 0.7 + Math.random() * 0.4;
       }
 
       // 3. Wykonanie AI
@@ -14352,53 +14375,39 @@
     // Optymalizacja 1: Prosty Spatial Grid (bez generowania GC)
     const SpatialGrid = {
       cellSize: 4000,
+      cellInv: 1 / 4000,
       cells: new Map(),
-      _arrayPool: [],
-      _poolIndex: 0,
       _resultBuffer: [],
       _resultCount: 0,
 
-      _getArray() {
-        if (this._poolIndex < this._arrayPool.length) {
-          const arr = this._arrayPool[this._poolIndex++];
-          arr.length = 0;
-          return arr;
-        }
-        const arr = [];
-        this._arrayPool.push(arr);
-        this._poolIndex++;
-        return arr;
+      _hash(cx, cy) {
+        return (cx * 73856093) ^ (cy * 19349663);
       },
 
       clear() {
-        this.cells.clear();
-        this._poolIndex = 0;
-      },
-
-      getKey(x, y) {
-        const cx = Math.floor(x / this.cellSize);
-        const cy = Math.floor(y / this.cellSize);
-        return cx + "," + cy;
+        for (const cell of this.cells.values()) cell.length = 0;
       },
 
       insert(entity) {
-        const key = this.getKey(entity.x, entity.y);
+        const cx = Math.floor(entity.x * this.cellInv);
+        const cy = Math.floor(entity.y * this.cellInv);
+        const key = this._hash(cx, cy);
         let cell = this.cells.get(key);
         if (!cell) {
-          cell = this._getArray();
+          cell = [];
           this.cells.set(key, cell);
         }
         cell.push(entity);
       },
 
       getPotentialTargets(x, y) {
-        const cx = Math.floor(x / this.cellSize);
-        const cy = Math.floor(y / this.cellSize);
+        const cx = Math.floor(x * this.cellInv);
+        const cy = Math.floor(y * this.cellInv);
         this._resultCount = 0;
 
         for (let i = -1; i <= 1; i++) {
           for (let j = -1; j <= 1; j++) {
-            const key = (cx + i) + "," + (cy + j);
+            const key = this._hash(cx + i, cy + j);
             const cell = this.cells.get(key);
             if (!cell) continue;
             const len = cell.length;
@@ -14408,6 +14417,7 @@
           }
         }
 
+        if (this._resultBuffer.length > this._resultCount) this._resultBuffer.length = this._resultCount;
         return this._resultCount;
       }
     };
@@ -14416,6 +14426,57 @@
     const _ringNearSeen = new Set();
     const _ringHotEntitiesBuffer = [];
     const _ringHotSeen = new Set();
+    const _activeWrecksBuffer = [];
+    const _sleepingWrecksBuffer = [];
+    const _dynamicDestructibles = [];
+    const _mergedDestructibles = [];
+    const _mergedSeen = new Set();
+    const _combinedRingDestructibles = [];
+    const _combinedRingSeen = new Set();
+
+    function buildDynamicDestructibles(shipEntity, npcList, wreckList, p2Entity = null) {
+      _dynamicDestructibles.length = 0;
+      if (shipEntity) _dynamicDestructibles.push(shipEntity);
+      for (let i = 0; i < npcList.length; i++) _dynamicDestructibles.push(npcList[i]);
+      for (let i = 0; i < wreckList.length; i++) _dynamicDestructibles.push(wreckList[i]);
+      if (p2Entity) _dynamicDestructibles.push(p2Entity);
+      return _dynamicDestructibles;
+    }
+
+    function mergeDestructibles(base, near, hot) {
+      _mergedDestructibles.length = 0;
+      _mergedSeen.clear();
+
+      for (let i = 0; i < base.length; i++) {
+        const e = base[i];
+        if (!e || _mergedSeen.has(e)) continue;
+        _mergedSeen.add(e);
+        _mergedDestructibles.push(e);
+      }
+      for (let i = 0; i < near.length; i++) {
+        const e = near[i];
+        if (!e || _mergedSeen.has(e)) continue;
+        _mergedSeen.add(e);
+        _mergedDestructibles.push(e);
+      }
+      for (let i = 0; i < hot.length; i++) {
+        const e = hot[i];
+        if (!e || _mergedSeen.has(e)) continue;
+        _mergedSeen.add(e);
+        _mergedDestructibles.push(e);
+      }
+      return _mergedDestructibles;
+    }
+
+    function appendUniqueEntities(out, seen, source) {
+      for (let i = 0; i < source.length; i++) {
+        const e = source[i];
+        if (!e || seen.has(e)) continue;
+        seen.add(e);
+        out.push(e);
+      }
+      return out;
+    }
     function collectNearbyRingDestructibles(
       dynamicEntities,
       centerX = null,
@@ -14849,15 +14910,28 @@
       npcFireTimer -= dt;
       if (npcFireTimer <= 0) {
         npcFireTimer = 0.45 + Math.random() * 0.8;
-        const candidates = npcs.filter(n => !n.dead && n.weapon && !n.friendly && Math.hypot(n.x - ship.pos.x, n.y - ship.pos.y) < 900);
-        if (candidates.length) {
-          const shooter = candidates[Math.floor(Math.random() * candidates.length)];
-          const dir = norm({ x: ship.pos.x - shooter.x, y: ship.pos.y - shooter.y });
-          const bx = shooter.x + dir.x * (shooter.radius + 6), by = shooter.y + dir.y * (shooter.radius + 6);
+        let shooter = null;
+        let seen = 0;
+        for (let i = 0; i < npcs.length; i++) {
+          const n = npcs[i];
+          if (!n || n.dead || !n.weapon || n.friendly) continue;
+          const dx = n.x - ship.pos.x;
+          const dy = n.y - ship.pos.y;
+          if (dx * dx + dy * dy >= 900 * 900) continue;
+          seen++;
+          if (Math.random() * seen < 1) shooter = n;
+        }
+        if (shooter) {
+          const dx = ship.pos.x - shooter.x;
+          const dy = ship.pos.y - shooter.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const dirX = dx / len;
+          const dirY = dy / len;
+          const bx = shooter.x + dirX * (shooter.radius + 6), by = shooter.y + dirY * (shooter.radius + 6);
           if (shooter.weapon === 'railgun') {
-            window.bullets.push({ x: bx, y: by, vx: dir.x * 600 + shooter.vx, vy: dir.y * 600 + shooter.vy, life: 2.0, r: 4, owner: 'npc', damage: 40, type: 'rail', penetration: 1, source: shooter });
+            window.bullets.push({ x: bx, y: by, vx: dirX * 600 + shooter.vx, vy: dirY * 600 + shooter.vy, life: 2.0, r: 4, owner: 'npc', damage: 40, type: 'rail', penetration: 1, source: shooter });
           } else {
-            window.bullets.push({ x: bx, y: by, vx: dir.x * 220 + shooter.vx, vy: dir.y * 220 + shooter.vy, life: 4, r: 3, owner: 'npc', damage: 12, source: shooter });
+            window.bullets.push({ x: bx, y: by, vx: dirX * 220 + shooter.vx, vy: dirY * 220 + shooter.vy, life: 4, r: 3, owner: 'npc', damage: 12, source: shooter });
           }
         }
       }
@@ -16137,8 +16211,8 @@
       */
       // ship.angle = wrapAngle(ship.angle);
       // Aktualizacja wraków — podział na aktywne i śpiące
-      const _activeWrecks = [];
-      const _sleepingWrecks = [];
+      _activeWrecksBuffer.length = 0;
+      _sleepingWrecksBuffer.length = 0;
       for (let i = wrecks.length - 1; i >= 0; i--) {
         const w = wrecks[i];
         const wreckFreshTime = 2.5;
@@ -16206,9 +16280,9 @@
 
         // Fully sleeping: wrak się nie rusza — wykluczony z destruktora
         if (w._wreckSleeping) {
-          _sleepingWrecks.push(w);
+          _sleepingWrecksBuffer.push(w);
         } else {
-          _activeWrecks.push(w);
+          _activeWrecksBuffer.push(w);
         }
       }
       const aiDbgEnabled = AILiveDebug.enabled;
@@ -16260,20 +16334,20 @@
       ciwsStep(dt);
       bulletsAndCollisionsStep(dt);
       npcShootingStep(dt);
-      const dynamicDestructibles = [ship, ...npcs, ..._activeWrecks];
-      if (splitScreenMode && player2Ship && !player2Ship.destroyed && player2Ship.hexGrid) {
-        dynamicDestructibles.push(player2Ship);
-      }
+      const dynamicDestructibles = buildDynamicDestructibles(
+        ship,
+        npcs,
+        _activeWrecksBuffer,
+        (splitScreenMode && player2Ship && !player2Ship.destroyed && player2Ship.hexGrid) ? player2Ship : null
+      );
       const shipPx = Number(ship?.pos?.x ?? ship?.x);
       const shipPy = Number(ship?.pos?.y ?? ship?.y);
 
       // Wake sweep: budź sleeping wraki gdy szybki obiekt zbliża się do nich
-      for (let si = _sleepingWrecks.length - 1; si >= 0; si--) {
-        const sw = _sleepingWrecks[si];
+      for (let si = _sleepingWrecksBuffer.length - 1; si >= 0; si--) {
+        const sw = _sleepingWrecksBuffer[si];
         const swx = sw.x, swy = sw.y;
         const swR = Number(sw._bpRadius) || 100;
-        let woken = false;
-
         for (let ai = 0; ai < dynamicDestructibles.length; ai++) {
           const active = dynamicDestructibles[ai];
           if (!active || active.dead || active === sw) continue;
@@ -16299,28 +16373,34 @@
               sw.hexGrid.wakeHoldFrames = 20;
             }
             dynamicDestructibles.push(sw);
-            _sleepingWrecks.splice(si, 1);
-            woken = true;
+            _sleepingWrecksBuffer.splice(si, 1);
             break;
           }
         }
       }
 
-      const nearbyRingDestructibles = collectNearbyRingDestructibles(
-        dynamicDestructibles,
-        shipPx,
-        shipPy,
-        12000,
-        128
+      _combinedRingDestructibles.length = 0;
+      _combinedRingSeen.clear();
+      appendUniqueEntities(
+        _combinedRingDestructibles,
+        _combinedRingSeen,
+        collectNearbyRingDestructibles(
+          dynamicDestructibles,
+          shipPx,
+          shipPy,
+          12000,
+          128
+        )
       );
       // Also collect ring segments near P2 if in split screen
       if (splitScreenMode && player2Ship && !player2Ship.destroyed) {
         const p2rx = Number(player2Ship.pos?.x ?? 0);
         const p2ry = Number(player2Ship.pos?.y ?? 0);
-        const p2Ring = collectNearbyRingDestructibles(dynamicDestructibles, p2rx, p2ry, 12000, 128);
-        for (const seg of p2Ring) {
-          if (seg && !nearbyRingDestructibles.includes(seg)) nearbyRingDestructibles.push(seg);
-        }
+        appendUniqueEntities(
+          _combinedRingDestructibles,
+          _combinedRingSeen,
+          collectNearbyRingDestructibles(dynamicDestructibles, p2rx, p2ry, 12000, 128)
+        );
       }
       const hotRingDestructibles = collectHotRingDestructibles(
         performance.now(),
@@ -16329,22 +16409,9 @@
         shipPy,
         11000
       );
-      let allDestructibles = dynamicDestructibles;
-      if (nearbyRingDestructibles.length || hotRingDestructibles.length) {
-        const merged = dynamicDestructibles.slice();
-        const seen = new Set(merged);
-        for (const seg of nearbyRingDestructibles) {
-          if (!seg || seen.has(seg)) continue;
-          seen.add(seg);
-          merged.push(seg);
-        }
-        for (const seg of hotRingDestructibles) {
-          if (!seg || seen.has(seg)) continue;
-          seen.add(seg);
-          merged.push(seg);
-        }
-        allDestructibles = merged;
-      }
+      const allDestructibles = (_combinedRingDestructibles.length || hotRingDestructibles.length)
+        ? mergeDestructibles(dynamicDestructibles, _combinedRingDestructibles, hotRingDestructibles)
+        : dynamicDestructibles;
       const tDestructor0 = performance.now();
       DestructorSystem.update(dt, allDestructibles);
       updateHardpointIntegrity(dt, dynamicDestructibles);
