@@ -1322,10 +1322,12 @@
         fps: 0,
         frameMs: 0,
           physicsTime: 0,
+          physicsPerStep: 0,
           destructorTime: 0,
           collisionTime: 0,
           deformTime: 0,
           aiTime: 0,
+          aiPerStep: 0,
           drawTime: 0,
         planetsTime: 0,
         stationsTime: 0,
@@ -1474,10 +1476,12 @@
         this.display.fps = Math.round(1000 / Math.max(0.001, avgFrame));
         this.display.frameMs = avgFrame;
         this.display.physicsTime = this.accum.physicsTime / frames;
+        this.display.physicsPerStep = this.accum.physicsTime / Math.max(1, this.accum.physicsSteps);
         this.display.destructorTime = this.accum.destructorTime / frames;
         this.display.collisionTime = this.accum.collisionTime / frames;
         this.display.deformTime = this.accum.deformTime / frames;
         this.display.aiTime = this.accum.aiTime / frames;
+        this.display.aiPerStep = this.accum.aiTime / Math.max(1, this.accum.physicsSteps);
         this.display.drawTime = this.accum.drawTime / frames;
         this.display.planetsTime = this.accum.planetsTime / frames;
         this.display.stationsTime = this.accum.stationsTime / frames;
@@ -1534,6 +1538,10 @@
         const e = this.els;
         const d = this.display;
         const setMs = (el, value) => { if (el) el.textContent = `${value.toFixed(2)} ms`; };
+        const setMsWithStep = (el, frameValue, stepValue) => {
+          if (!el) return;
+          el.textContent = `${frameValue.toFixed(2)} ms | ${stepValue.toFixed(2)}/step`;
+        };
         const setBar = (el, valueMs) => {
           if (!el) return;
           const width = Math.min(100, (valueMs / 16.67) * 100);
@@ -1546,11 +1554,11 @@
         }
         if (e.frameMs) e.frameMs.textContent = `${d.frameMs.toFixed(1)} ms/frame`;
 
-        setMs(e.physics, d.physicsTime);
+        setMsWithStep(e.physics, d.physicsTime, d.physicsPerStep);
         setMs(e.destructor, d.destructorTime);
         setMs(e.collisions, d.collisionTime);
         setMs(e.deform, d.deformTime);
-        setMs(e.ai, d.aiTime);
+        setMsWithStep(e.ai, d.aiTime, d.aiPerStep);
         setMs(e.draw, d.drawTime);
         setBar(e.barPhysics, d.physicsTime);
         setBar(e.barDestructor, d.destructorTime);
@@ -1864,6 +1872,9 @@
           supportWing: fmt('supportWing'),
           npcStep: fmt('npcStep'),
           npcBrain: fmt('npcBrain'),
+          separationForces: fmt('separationForces'),
+          weaponTargetScan: fmt('weaponTargetScan'),
+          targetPick: fmt('targetPick'),
           pirateMission: fmt('pirateMission'),
           topSpike: topName ? `${topName}:${topMs.toFixed(2)}ms` : 'n/a'
         });

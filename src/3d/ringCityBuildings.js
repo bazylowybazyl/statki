@@ -676,12 +676,25 @@ function getFarMaterial(sourceMaterial, matKey) {
     const cached = farMaterialCache.get(sourceMaterial);
     if (cached) return cached;
 
+    const baseEmissiveIntensity = Number.isFinite(sourceMaterial.emissiveIntensity)
+        ? sourceMaterial.emissiveIntensity
+        : (sourceMaterial.emissiveMap ? 1 : 0);
+    const emissiveBoost = matKey.startsWith('building_')
+        ? 2.15
+        : (matKey === 'wall' ? 1.55 : 1.0);
+    const emissiveIntensity = sourceMaterial.emissiveMap
+        ? Math.max(
+            baseEmissiveIntensity * emissiveBoost,
+            matKey.startsWith('building_') ? 3.0 : (matKey === 'wall' ? 2.1 : baseEmissiveIntensity)
+        )
+        : baseEmissiveIntensity;
+
     const farMaterial = new THREE.MeshLambertMaterial({
         color: sourceMaterial.color ? sourceMaterial.color.clone() : new THREE.Color(0xffffff),
         map: sourceMaterial.map || null,
         emissive: sourceMaterial.emissive ? sourceMaterial.emissive.clone() : new THREE.Color(0x000000),
         emissiveMap: sourceMaterial.emissiveMap || null,
-        emissiveIntensity: Number.isFinite(sourceMaterial.emissiveIntensity) ? sourceMaterial.emissiveIntensity : 1,
+        emissiveIntensity,
         transparent: !!sourceMaterial.transparent,
         opacity: sourceMaterial.opacity ?? 1,
         side: sourceMaterial.side,
