@@ -45,9 +45,10 @@ function initAutonomousWeapons(npc) {
 
   npc._weaponsInit = true;
   npc.autoWeapons = [];
+  npc._shipScanCaches = Object.create(null);
 
   if (npc.weapons) {
-    const addWeaponsFromGroup = (group, arc, prefers) => {
+    const addWeaponsFromGroup = (group, arc, prefers, scanProfile) => {
       if (!group || !Array.isArray(group)) return;
       for (let i = 0; i < group.length; i++) {
         const loadout = group[i];
@@ -71,18 +72,20 @@ function initAutonomousWeapons(npc) {
           def: def,
           type: def.category,
           cd: Math.random() * 2,
+          scanCd: getNextWeaponScanInterval(scanProfile),
           ammo: startAmmo,
           hpOffset: loadout.hp,
           mountAngle: baseAngle,
           arc: arc,
-          prefers: prefers
+          prefers: prefers,
+          scanProfile
         });
       }
     };
 
-    addWeaponsFromGroup(npc.weapons.main, 0.55, ['battleship', 'destroyer', 'frigate']);
-    addWeaponsFromGroup(npc.weapons.aux, Math.PI * 2, ['rocket', 'fighter']);
-    addWeaponsFromGroup(npc.weapons.missile, 1.2, ['battleship', 'destroyer', 'frigate', 'fighter']);
+    addWeaponsFromGroup(npc.weapons.main, 0.55, ['battleship', 'destroyer', 'frigate'], 'slow');
+    addWeaponsFromGroup(npc.weapons.aux, Math.PI * 2, ['rocket', 'fighter'], 'fast');
+    addWeaponsFromGroup(npc.weapons.missile, 1.2, ['battleship', 'destroyer', 'frigate', 'fighter'], 'slow');
   }
 }
 
@@ -103,6 +106,93 @@ function getTargetScoreForWeapon(weapon, target, isRocket = false) {
 
 const SUBSYSTEM_PRIORITY = ['main', 'missile', 'aux', 'special', 'hangar'];
 const SUBSYSTEM_RESCAN_INTERVAL = 1.5;
+
+function getNextWeaponScanInterval(scanProfile) {
+  if (scanProfile === 'fast') return 0.08 + Math.random() * 0.06;
+  return 0.24 + Math.random() * 0.16;
+}
+
+function buildShipScanCache(npc, dt, scanProfile = 'slow') {
+  let caches = npc._shipScanCaches;
+  if (!caches) caches = npc._shipScanCaches = Object.create(null);
+
+  let cache = caches[scanProfile];
+  if (!cache) {
+    cache = caches[scanProfile] = {
+      ttl: 0,
+      x: 0,
+      y: 0,
+      enemies: [],
+      rockets: [],
+      maxRange: 0
+    };
+  }
+
+  cache.ttl -= dt;
+  const moveThreshold = scanProfile === 'fast' ? 140 : 180;
+  const movedFar = ((npc.x - cache.x) ** 2 + (npc.y - cache.y) ** 2) > (moveThreshold * moveThreshold);
+  if (cache.ttl > 0 && !movedFar) return cache;
+
+  cache.x = npc.x;
+  cache.y = npc.y;
+  cache.enemies.length = 0;
+  cache.rockets.length = 0;
+
+  let maxRange = 0;
+  let needsRocketThreats = false;
+  for (let i = 0; i < npc.autoWeapons.length; i++) {
+    const weapon = npc.autoWeapons[i];
+    if ((weapon.scanProfile || 'slow') !== scanProfile) continue;
+    maxRange = Math.max(maxRange, Number(weapon.def?.baseRange) || 1000);
+    if (!needsRocketThreats && weapon.prefers?.includes('rocket')) needsRocketThreats = true;
+  }
+  if (!(maxRange > 0)) maxRange = 1000;
+  cache.maxRange = maxRange;
+
+  if (!npc.friendly && window.ship && !window.ship.dead) {
+    cache.enemies.push(window.ship);
+  }
+
+  if (window.queryAIGrid) {
+    const query = window.queryAIGrid(npc.x, npc.y, maxRange);
+    const buffer = query.buffer;
+    const count = query.count;
+    for (let i = 0; i < count; i++) {
+      const enemy = buffer[i];
+      if (!enemy || enemy.dead || enemy === npc) continue;
+      if (enemy === window.ship) continue;
+      if (npc.friendly && !enemy.isPirate) continue;
+      if (!npc.friendly && enemy.friendly === false) continue;
+      cache.enemies.push(enemy);
+    }
+  } else {
+    const npcs = window.npcs || [];
+    for (let i = 0; i < npcs.length; i++) {
+      const enemy = npcs[i];
+      if (!enemy || enemy.dead || enemy === npc) continue;
+      if (npc.friendly && !enemy.isPirate) continue;
+      if (!npc.friendly && enemy.friendly === false) continue;
+      cache.enemies.push(enemy);
+    }
+  }
+
+  if (needsRocketThreats && window.bullets) {
+    const myTeam = npc.friendly ? 'player' : 'npc';
+    for (let i = 0; i < window.bullets.length; i++) {
+      const b = window.bullets[i];
+      if (!b || b.owner === myTeam) continue;
+      if (b.type !== 'rocket' && b.type !== 'torpedo') continue;
+      const distSq = (b.x - npc.x) ** 2 + (b.y - npc.y) ** 2;
+      if (distSq > (maxRange * maxRange)) continue;
+      cache.rockets.push(b);
+    }
+  }
+
+  cache.ttl = scanProfile === 'fast'
+    ? (0.08 + Math.random() * 0.06)
+    : (0.24 + Math.random() * 0.16);
+  return cache;
+}
 
 function getSubsystemWorldPos(target, hp) {
   if (window.getEntityHardpointWorldPos) {
@@ -194,7 +284,7 @@ function processAutonomousWeapons(npc, dt) {
   if (!npc.autoWeapons || npc.autoWeapons.length === 0) return;
 
   const tWeap0 = (typeof performance !== 'undefined') ? performance.now() : 0;
-  const npcs = window.npcs || [];
+  const scanCaches = Object.create(null);
 
   for (let wIdx = 0; wIdx < npc.autoWeapons.length; wIdx++) {
     const weapon = npc.autoWeapons[wIdx];
@@ -227,19 +317,18 @@ function processAutonomousWeapons(npc, dt) {
 
     if (mustRescan) {
       bestTarget = null;
+      const scanProfile = weapon.scanProfile || 'slow';
+      const cache = scanCaches[scanProfile] || (scanCaches[scanProfile] = buildShipScanCache(npc, dt, scanProfile));
 
-      if (weapon.prefers.includes('rocket') && window.bullets) {
-        const myTeam = npc.friendly ? 'player' : 'npc';
-        for (let i = 0; i < window.bullets.length; i++) {
-          const b = window.bullets[i];
-          if (b.type === 'rocket' && b.owner !== myTeam) {
-            const distSq = (b.x - npc.x) ** 2 + (b.y - npc.y) ** 2;
-            if (distSq <= rangeSq) {
-              const score = getTargetScoreForWeapon(weapon, b, true) - distSq * 0.001;
-              if (score > bestScore) {
-                bestScore = score;
-                bestTarget = b;
-              }
+      if (weapon.prefers.includes('rocket')) {
+        for (let i = 0; i < cache.rockets.length; i++) {
+          const b = cache.rockets[i];
+          const distSq = (b.x - npc.x) ** 2 + (b.y - npc.y) ** 2;
+          if (distSq <= rangeSq) {
+            const score = getTargetScoreForWeapon(weapon, b, true) - distSq * 0.001;
+            if (score > bestScore) {
+              bestScore = score;
+              bestTarget = b;
             }
           }
         }
@@ -265,36 +354,12 @@ function processAutonomousWeapons(npc, dt) {
         }
       };
 
-      if (!npc.friendly && window.ship && !window.ship.dead) {
-          checkAndScoreTarget(window.ship);
-      }
-
-      // Spatial grid query — only iterate entities within weapon range
-      // instead of full O(N) NPC scan. Cell hash returns local candidates.
-      if (window.queryAIGrid) {
-        const __wq = window.queryAIGrid(npc.x, npc.y, range);
-        const __wbuf = __wq.buffer;
-        const __wn = __wq.count;
-        for (let i = 0; i < __wn; i++) {
-          const enemy = __wbuf[i];
-          if (!enemy || enemy.dead || enemy === npc) continue;
-          if (enemy === window.ship) continue; // already scored above
-          if (npc.friendly && !enemy.isPirate) continue;
-          if (!npc.friendly && enemy.friendly === false && enemy !== window.ship) continue;
-          checkAndScoreTarget(enemy);
-        }
-      } else {
-        for (let i = 0; i < npcs.length; i++) {
-          const enemy = npcs[i];
-          if (!enemy || enemy.dead) continue;
-          if (npc.friendly && !enemy.isPirate) continue;
-          if (!npc.friendly && enemy.friendly === false && enemy !== window.ship) continue;
-          checkAndScoreTarget(enemy);
-        }
+      for (let i = 0; i < cache.enemies.length; i++) {
+        checkAndScoreTarget(cache.enemies[i]);
       }
 
       weapon.cachedTarget = bestTarget || null;
-      weapon.scanCd = 0.12 + Math.random() * 0.08;
+      weapon.scanCd = getNextWeaponScanInterval(scanProfile);
     }
 
     if (bestTarget) {

@@ -3,6 +3,10 @@
 const _turnScratch = { vx: 0, vy: 0 };
 const _leadScratch = { x: 0, y: 0 };
 const _normScratch = { x: 0, y: 0 };
+const FIGHTER_LONG_SEARCH_RANGE = 16000;
+const FIGHTER_GUARD_SEARCH_RANGE = 6000;
+const FIGHTER_RETARGET_MIN = 1.6;
+const FIGHTER_RETARGET_SPREAD = 0.8;
 
 const norm = (vX, vY, out = _normScratch) => {
   const L = Math.hypot(vX, vY);
@@ -62,6 +66,35 @@ function tryFireFighter(npc, target) {
   }
 }
 
+function getEntityAssignedTarget(entity) {
+  if (!entity || entity.dead) return null;
+  if (entity.forceTarget && !entity.forceTarget.dead) return entity.forceTarget;
+  if (entity.target && !entity.target.dead) return entity.target;
+  return null;
+}
+
+function getInheritedWingmanTarget(npc, rangeSq = Infinity) {
+  let leader = null;
+  if (npc.squad?.leader && npc.squad.leader !== npc && !npc.squad.leader.dead) {
+    leader = npc.squad.leader;
+  } else if (npc.supportData?.leader && npc.supportData.leader !== npc && !npc.supportData.leader.dead) {
+    leader = npc.supportData.leader;
+  }
+  if (!leader) return null;
+
+  const inherited = getEntityAssignedTarget(leader);
+  if (!inherited) return null;
+  if (window.isEnemyUnit && !window.isEnemyUnit(npc, inherited)) return null;
+
+  const tx = (inherited.pos && inherited.pos.x !== undefined) ? inherited.pos.x : inherited.x;
+  const ty = (inherited.pos && inherited.pos.y !== undefined) ? inherited.pos.y : inherited.y;
+  const dx = tx - npc.x;
+  const dy = ty - npc.y;
+  if (dx * dx + dy * dy > rangeSq) return null;
+
+  return inherited;
+}
+
 export function runAdvancedFighterAI(npc, dt) {
   const isSupport = npc.isSupportWing || !!npc.supportData;
   let order = 'engage';
@@ -70,7 +103,8 @@ export function runAdvancedFighterAI(npc, dt) {
     order = window.SupportWing.order || 'guard';
   }
 
-  const SEARCH_RANGE = (order === 'engage' || npc.isPirate) ? 30000 : 6000;
+  const SEARCH_RANGE = (order === 'engage' || npc.isPirate) ? FIGHTER_LONG_SEARCH_RANGE : FIGHTER_GUARD_SEARCH_RANGE;
+  const SEARCH_RANGE_SQ = SEARCH_RANGE * SEARCH_RANGE;
   const DOGFIGHT_ENTER_DIST = 600;
   const DOGFIGHT_EXIT_DIST = 1100;
 
@@ -85,8 +119,17 @@ export function runAdvancedFighterAI(npc, dt) {
 
   if (target && target.dead) target = null;
 
+  const inheritedWingTarget = getInheritedWingmanTarget(npc, SEARCH_RANGE_SQ);
+  if (target && npc.retargetTimer <= 0 && inheritedWingTarget && inheritedWingTarget !== target) {
+    target = inheritedWingTarget;
+    npc.target = inheritedWingTarget;
+    npc.retargetTimer = FIGHTER_RETARGET_MIN + Math.random() * FIGHTER_RETARGET_SPREAD;
+  }
+
   if (!target && npc.retargetTimer <= 0) {
-    if (window.aiPickBestTarget) {
+    if (inheritedWingTarget) {
+      target = inheritedWingTarget;
+    } else if (window.aiPickBestTarget) {
       target = window.aiPickBestTarget(npc, SEARCH_RANGE);
     } else if (window.aiPickTarget) {
       target = window.aiPickTarget(npc);
@@ -95,7 +138,7 @@ export function runAdvancedFighterAI(npc, dt) {
         const ty = (target.pos && target.pos.y !== undefined) ? target.pos.y : target.y;
         const dx = tx - npc.x;
         const dy = ty - npc.y;
-        if (dx * dx + dy * dy > SEARCH_RANGE * SEARCH_RANGE) {
+        if (dx * dx + dy * dy > SEARCH_RANGE_SQ) {
           target = null;
         }
       }
@@ -109,7 +152,7 @@ export function runAdvancedFighterAI(npc, dt) {
     }
 
     npc.target = target || null;
-    npc.retargetTimer = 1.0 + Math.random() * 0.5;
+    npc.retargetTimer = FIGHTER_RETARGET_MIN + Math.random() * FIGHTER_RETARGET_SPREAD;
   }
 
   const isSquadWingman = (npc.squad && npc.squad.leader && !npc.squad.leader.dead && npc.squad.leader !== npc);
