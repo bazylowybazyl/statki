@@ -30,6 +30,16 @@ export function attachPirateStation3D(_sceneIgnored, station2D) {
       Core3D.scene.add(pirateStation3D.object3d);
       Core3D.enableForeground3D(pirateStation3D.object3d);
   }
+
+  // Link 3D mesh to 2D entity so destroyStation3D() can find it
+  if (station2D) {
+      station2D._mesh3d = pirateStation3D.object3d;
+  }
+
+  // Pre-bake geometry for Tier-1 GPU shatter (amortises cost, runs once per load)
+  if (typeof window !== 'undefined' && window.Destruction3D?.prebake) {
+      window.Destruction3D.prebake(pirateStation3D.object3d);
+  }
   
   initialRadius = pirateStation3D.radius;
   

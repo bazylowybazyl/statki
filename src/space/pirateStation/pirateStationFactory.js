@@ -142,11 +142,20 @@ function buildPirateStation(THREE, opts = {}) {
   core.receiveShadow = true;
   group.add(core);
 
+  // Named section group — Tier-2 dismantle target
+  const cargoDock = new THREE.Group();
+  cargoDock.name = 'cargo_dock';
+
   const capBot = new THREE.Mesh(new THREE.CylinderGeometry(coreRadius, coreRadius * 0.35, 4 * scale, 24), darkMetal);
   capBot.position.y = -coreHeight * 0.5 - 2 * scale;
   capBot.castShadow = true;
   capBot.receiveShadow = true;
-  group.add(capBot);
+  cargoDock.add(capBot);
+  group.add(cargoDock);
+
+  // Named section group — Tier-2 dismantle target
+  const commsTower = new THREE.Group();
+  commsTower.name = 'comms_tower';
 
   const resR = coreRadius * 1.25;
   const resH = 6 * scale;
@@ -154,13 +163,14 @@ function buildPirateStation(THREE, opts = {}) {
   res.position.y = coreHeight * 0.5 + resH * 0.5 + 0.5 * scale;
   res.castShadow = true;
   res.receiveShadow = true;
-  group.add(res);
+  commsTower.add(res);
 
   const dome = new THREE.Mesh(new THREE.SphereGeometry(resR * 0.92, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2), darkMetal);
   dome.position.y = res.position.y + resH * 0.5 - 0.2 * scale;
   dome.castShadow = true;
   dome.receiveShadow = true;
-  group.add(dome);
+  commsTower.add(dome);
+  group.add(commsTower);
 
   function addCurvedWindowBands(radius, yLevels, palette, offProb = 0.15, segLen = Math.PI / 28) {
     const rWin = radius + 0.02 * scale;
@@ -231,13 +241,17 @@ function buildPirateStation(THREE, opts = {}) {
   for (let i = 0; i < 8; i++) lowerY.push((0 - 0.8 * scale) - i * 1.2 * scale);
   addCurvedWindowBands(coreRadius, lowerY, [0xff4040, 0xff77ff, 0xc24bff, 0x8e2bff, 0xffffff], 0.2);
 
+  // Named section group — Tier-2 dismantle target
+  const habitatRing = new THREE.Group();
+  habitatRing.name = 'habitat_ring';
+
   const ringR = 18 * scale;
   const ringT = 2.4 * scale;
   const ring = new THREE.Mesh(new THREE.TorusGeometry(ringR, ringT, 20, 72), metal);
   ring.rotation.x = Math.PI / 2;
   ring.castShadow = true;
   ring.receiveShadow = true;
-  group.add(ring);
+  habitatRing.add(ring);
 
   const spokeGeo = new THREE.CylinderGeometry(0.9 * scale, 0.9 * scale, ringR * 2 - 4 * scale, 12);
   for (let i = 0; i < 4; i++) {
@@ -248,7 +262,7 @@ function buildPirateStation(THREE, opts = {}) {
     spoke.castShadow = true;
     spoke.receiveShadow = true;
     g.add(spoke);
-    group.add(g);
+    habitatRing.add(g);
   }
 
   const hRingY = 3.2 * scale;
@@ -258,7 +272,8 @@ function buildPirateStation(THREE, opts = {}) {
   hangarRing.rotation.x = Math.PI / 2;
   hangarRing.castShadow = true;
   hangarRing.receiveShadow = true;
-  group.add(hangarRing);
+  habitatRing.add(hangarRing);
+  group.add(habitatRing);
 
   const glowTex = makeGlowTexture(256);
   const beacons = [];
@@ -296,7 +311,12 @@ function buildPirateStation(THREE, opts = {}) {
   const screen = new THREE.Mesh(screenGeo, screenMat);
   screen.rotation.y = Math.PI;
   screen.renderOrder = 0;
-  group.add(screen);
+
+  // Named section group — Tier-2 dismantle target
+  const bridgeGroup = new THREE.Group();
+  bridgeGroup.name = 'bridge';
+  bridgeGroup.add(screen);
+  group.add(bridgeGroup);
 
   const arrowTexFwd = makeArrowTexture('>>>');
   const arrowTexBack = makeArrowTexture('<<<');

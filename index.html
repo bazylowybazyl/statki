@@ -1030,7 +1030,7 @@
     import { CopyShader } from "three/addons/shaders/CopyShader.js";
     import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
     import { initWorld3D, attachPirateStation3D, dettachPirateStation3D, updateWorld3D, drawWorld3D } from "./src/3d/world3d.js";
-    import { initStations3D, updateStations3D, detachPlanetStations3D, drawStations3D } from "./src/3d/stations3D.js";
+    import { initStations3D, updateStations3D, detachPlanetStations3D, drawStations3D, destroyStation3D } from "./src/3d/stations3D.js";
     import { initHexShips3D, prewarmHexShips3D, updateHexShips3D, resizeHexShips3D, drawHexShips3D, invalidateHexShipEntity3D } from "./src/3d/hexShips3D.js";
     import { updateShields3D } from "./src/3d/shield3D.js";
     import { Core3D } from "./src/3d/core3d.js";
@@ -1042,6 +1042,7 @@
     import { createSupernovaMissileBlowFactory } from "./src/effects3d/supernovaMissileBlow.js";
     import { initRocketSystem3D, updateRocketSystem3D, fireRocket3D } from "./src/effects3d/rocketSystem3D.js";
     import { WarpBlackHole } from "./src/vfx/warpBlackHole.js";
+    import { Destruction3D } from "./src/vfx/destruction3D.js";
     import { drawInfrastructureIcon, updateInfrastructureAnimations } from './src/buildings/infrastructureView.js';
     import { createShipEntity, applyPlayerInput, refreshShipGeometry, composeShipThrusterCommand, updateShipThrusterState, computeShipThrusterForces, SHIP_PHYSICS } from "./src/game/shipEntity.js";
     import { DestructorSystem, initHexBody, setHexShips3DActive, getHexStructuralState, DESTRUCTOR_CONFIG } from "./src/game/destructor.js";
@@ -1099,6 +1100,8 @@
     window.createArmataImpactFactory = createArmataImpactFactory;
     window.createAutocannonImpactFactory = createAutocannonImpactFactory;
     window.createReactorBlowFactory = createReactorBlowFactory;
+    window.Destruction3D = Destruction3D;
+    window.destroyStation3D = destroyStation3D;
     window.createSupernovaMissileBlowFactory = createSupernovaMissileBlowFactory;
     window.initRocketSystem3D = initRocketSystem3D;
     window.fireRocket3D = fireRocket3D;
@@ -5746,6 +5749,14 @@
       if (reactorFactory) {
         window.makeReactorBlow = reactorFactory(ov.scene);
       }
+      // Init 3D destruction engine — needs scene + sparks factory + shockwave manager
+      if (window.Destruction3D) {
+        window.Destruction3D.init({
+          scene:            window.Core3D?.scene,
+          reactorFactory:   window.makeReactorBlow,
+          shockwaveManager: window.Core3D?.shockwave3DManager,
+        });
+      }
       if (supernovaFactory) {
         window.makeSupernovaMissileBlow = supernovaFactory(ov.scene);
       }
@@ -6773,7 +6784,13 @@
         y,
         ports,
         style,
-        warpGate
+        warpGate,
+        // Combat stats — required for bullet collision check (if (st.hp && ...))
+        hp: 3000, maxHp: 3000,
+        hitFlash: 0,
+        // Bullet collision radius — 3D model renders at r*2.8, so hitR ≈ r*2.2 gives
+        // hits across most of the visual model without extending past the edges
+        hitR: Math.round(r * 2.2),
       };
     });
     window.stations = stations;
@@ -7981,7 +7998,7 @@
           const wreckList = Array.isArray(window.wrecks) ? window.wrecks : null;
           const pushTarget = (obj) => {
             if (!obj || obj === shooter) return;
-            if (obj.dead || obj.destroyed || obj.removed) return;
+            if (obj.dead || obj.destroyed || obj.removed || obj._destroyed3D) return;
             if (obj.isCollidable === false) return;
             targets.push(obj);
           };
@@ -8005,7 +8022,7 @@
           const beamHexHeight = Math.sqrt(3) * beamHexR;
           const beamHitRadSq = Math.max(90, (beamHexR * 1.45) * (beamHexR * 1.45));
           const getBeamTargetRadius = (pt) => {
-            let radius = Math.max(20, Number(pt?.radius || pt?.r) || 20);
+            let radius = Math.max(20, Number(pt?.hitR || pt?.radius || pt?.r) || 20);
             if (pt?.hexGrid?.srcWidth && pt?.hexGrid?.srcHeight) {
               const hexScale = Math.max(0.0001, pt.visual?.spriteScale || pt.capitalProfile?.spriteScale || pt.profile?.spriteScale || 1.0);
               const halfW = (Number(pt.hexGrid.srcWidth) || 0) * 0.5 * hexScale;
@@ -14338,6 +14355,7 @@
     function applyDamageToStation(station, amount) {
       let dmg = amount || 0;
       if (dmg <= 0) return 0;
+      if (station._destroyed3D) return 0;       // already dead, no more damage
       if (isEntityShieldBlocking(station)) {
         station.shield.regenTimer = station.shield.regenDelay;
         const absorbed = Math.min(station.shield.val, dmg);
@@ -14345,7 +14363,29 @@
         dmg -= absorbed;
       }
       if (dmg > 0) {
+        const hpBefore = station.hp;
+        const wasDead  = station.hp <= 0;
         station.hp = Math.max(0, station.hp - dmg);
+        station.hitFlash = 0.18;
+
+        // Progressive chunk detachment at 75 / 50 / 25 % HP thresholds
+        if (!wasDead && !station._destroyed3D && station._mesh3d) {
+          const maxHp = station.maxHp || 3000;
+          for (const t of [0.75, 0.50, 0.25]) {
+            if (hpBefore > maxHp * t && station.hp <= maxHp * t) {
+              window.Destruction3D?.detachChunk(station._mesh3d);
+              break; // at most one chunk per hit
+            }
+          }
+        }
+
+        if (!wasDead && station.hp <= 0) {
+          // First death — trigger 3D destruction effect
+          station._destroyed3D = true;
+          if (typeof window.destroyStation3D === 'function') {
+            window.destroyStation3D(station, { shockwave: true });
+          }
+        }
       }
       return dmg;
     }
@@ -14890,11 +14930,11 @@
           }
         }
         for (const st of stations) {
-          if (st.hp && b.source !== st) {
+          if (st.hp && !st._destroyed3D && b.source !== st) {
             const sdx = st.x - b.x;
             const sdy = st.y - b.y;
-            const sr = st.r + b.r;
-            if (sdx * sdx + sdy * sdy >= sr * sr) continue;
+            const collisionR = (st.hitR || st.r) + b.r;
+            if (sdx * sdx + sdy * sdy >= collisionR * collisionR) continue;
             applyDamageToStation(st, b.damage || 0);
             if (mercMission?.station === st) triggerMercAggro('station_hit');
             spawnBulletImpactEffect(b, b.x, b.y, 1.0);
@@ -17063,6 +17103,10 @@
       if (renderDbgEnabled) tRenderSection = performance.now();
       if (window.updateWorld3D) window.updateWorld3D(frameDt, vfxTime);
       if (renderDbgEnabled) RenderLiveDebug.record('updateWorld3D', performance.now() - tRenderSection);
+
+      if (renderDbgEnabled) tRenderSection = performance.now();
+      if (window.Destruction3D) window.Destruction3D.update(vfxTime, frameDt);
+      if (renderDbgEnabled) RenderLiveDebug.record('Destruction3D.update', performance.now() - tRenderSection);
 
       // 2. Statek gracza i system zniszczen (oraz VFX silnikow wewnatrz)
       const renderEntities = [];

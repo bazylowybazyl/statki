@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { Core3D } from './core3d.js';
+import { Destruction3D } from '../vfx/destruction3D.js';
 
 const loader = new GLTFLoader();
 const templateCache = new Map();
@@ -364,6 +365,9 @@ export function initStations3D(_sceneIgnored, stations) {
     Core3D.enableForeground3D(pivotGroup);
     pivotGroup.userData.fgCategory = 'stations';
 
+    // Pre-bake shatter geometry — amortised cost, no lag at explosion time
+    Destruction3D.prebake(modelGroup);
+
     record.group = pivotGroup;
     record.modelGroup = modelGroup;
     record.geometryRadius = geometryRadius;
@@ -435,6 +439,9 @@ export function updateStations3D(stations, cullInfo = null) {
         Core3D.enableForeground3D(pivotGroup);
         pivotGroup.userData.fgCategory = 'stations';
 
+        // Pre-bake shatter geometry — amortised cost, no lag at explosion time
+        Destruction3D.prebake(modelGroup);
+
         record.group = pivotGroup;
         record.modelGroup = modelGroup;
         station._mesh3d = pivotGroup;
@@ -453,6 +460,39 @@ export function updateStations3D(stations, cullInfo = null) {
 }
 
 export function drawStations3D(ctx, cam, worldToScreen) { }
+
+/**
+ * Trigger 3D destruction for a station entity.
+ * Call this when the station's HP reaches 0 (before removing it from the game state).
+ *
+ * @param {object} station    Game station entity (must have _mesh3d)
+ * @param {object} [opts]     Passed to Destruction3D.shatter() — supports all options
+ *                            including preset:'pirate'|'civilian', onImpactStart, etc.
+ */
+export function destroyStation3D(station, opts = {}) {
+  const mesh = station?._mesh3d;
+  if (!mesh) return;
+
+  const preset = opts.preset ??
+    (station.type === 'pirate' || station.faction === 'pirate' ? 'pirate' : 'civilian');
+
+  // Normalise fragmentDrift so death explosion is ~400 world units
+  // regardless of the GLB model's geometry scale.
+  let normalizedDrift;
+  if (!opts.fragmentDrift) {
+    const worldScale = new THREE.Vector3();
+    mesh.getWorldScale(worldScale);
+    const modelScale = Math.max(0.001, worldScale.x);
+    normalizedDrift = 400 / modelScale;
+  }
+
+  Destruction3D.shatter(mesh, {
+    preset,
+    shockwave: true,
+    ...(normalizedDrift !== undefined ? { fragmentDrift: normalizedDrift } : {}),
+    ...opts,
+  });
+}
 
 export function detachPlanetStations3D(_sceneIgnored) {
   for (const record of stationRecords.values()) {
