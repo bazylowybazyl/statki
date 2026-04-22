@@ -97,7 +97,8 @@ export class Shockwave3DManager {
                 active:      false,
                 age:         0,
                 maxLife:     1.8,
-                targetScale: 10000
+                targetScale: 10000,
+                axisScale:   new THREE.Vector3(1, 1, 1)
             });
         }
     }
@@ -110,7 +111,7 @@ export class Shockwave3DManager {
      * @param {number} life     Czas życia w sekundach
      * @param {number} colorHex Kolor tinta (np. 0x55ffff)
      */
-    spawn(x, y, z, scale, life = 1.8, colorHex = 0x55ffff) {
+    spawn(x, y, z, scale, life = 1.8, colorHex = 0x55ffff, opts = null) {
         const wave = this.waves.find(w => !w.active);
         if (!wave) return; // wszystkie sloty zajęte
 
@@ -118,6 +119,11 @@ export class Shockwave3DManager {
         wave.age         = 0;
         wave.maxLife     = life;
         wave.targetScale = scale;
+        wave.axisScale.set(
+            Math.max(0.001, Number(opts?.axisScale?.x) || 1),
+            Math.max(0.001, Number(opts?.axisScale?.y) || 1),
+            Math.max(0.001, Number(opts?.axisScale?.z) || 1)
+        );
         wave.mesh.position.set(x, y, z);
         wave.mesh.scale.set(1, 1, 1);
         wave.mesh.material.uniforms.progress.value = 0;
@@ -145,7 +151,11 @@ export class Shockwave3DManager {
             const scale   = easeOut * wave.targetScale;
 
             // Spłaszczenie na Y → kształt dysku tnącego przestrzeń (jak nova.html)
-            wave.mesh.scale.set(scale, scale, scale);
+            wave.mesh.scale.set(
+                scale * wave.axisScale.x,
+                scale * wave.axisScale.y,
+                scale * wave.axisScale.z
+            );
         }
     }
 

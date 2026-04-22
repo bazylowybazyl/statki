@@ -1,0 +1,1251 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Yamato Impact Preview 2</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #050915;
+            --panel: rgba(6, 12, 28, 0.82);
+            --border: rgba(86, 168, 255, 0.32);
+            --text: #e5efff;
+            --muted: #8aa7d7;
+            --accent: #7fd5ff;
+        }
+        html, body {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at top, #102346 0%, #060a17 34%, #03050c 100%);
+            font-family: "Segoe UI", Tahoma, sans-serif;
+            color: var(--text);
+            user-select: none;
+        }
+        canvas { display: block; }
+        #ui, #tag {
+            position: absolute;
+            z-index: 2;
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+            background: var(--panel);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+            pointer-events: none;
+        }
+        #ui {
+            left: 22px;
+            bottom: 22px;
+            padding: 16px 20px;
+            border-radius: 16px;
+            max-width: 340px;
+        }
+        #tag {
+            top: 18px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 7px 14px;
+            border-radius: 999px;
+            font-size: 12px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+        h1 {
+            margin: 0 0 8px;
+            font-size: 17px;
+            line-height: 1.15;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--accent);
+        }
+        p {
+            margin: 4px 0;
+            line-height: 1.45;
+            font-size: 13px;
+            color: var(--muted);
+        }
+        .accent {
+            color: var(--text);
+        }
+    </style>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+<div id="tag">No Bloom / Particles + GLSL</div>
+<div id="ui">
+    <h1>Yamato Preview 2</h1>
+    <p><span class="accent">LPM</span> - detonate impact on ground</p>
+    <p><span class="accent">PPM / wheel</span> - orbit camera</p>
+    <p>New proposal: procedural core, shock dome, energy rings, smoke and shrapnel without bloom pass.</p>
+</div>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x050913, 0.00011);
+
+const camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 1, 400000);
+camera.position.set(0, 4200, 9800);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    powerPreference: "high-performance"
+});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+renderer.setClearColor(0x03050d, 1);
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.enablePan = true;
+controls.enableZoom = false;
+controls.dampingFactor = 0.055;
+controls.panSpeed = 1.8;
+controls.minDistance = 900;
+controls.maxDistance = 32000;
+controls.mouseButtons = {
+    LEFT: null,
+    MIDDLE: THREE.MOUSE.ROTATE,
+    RIGHT: THREE.MOUSE.PAN
+};
+
+let targetDistance = camera.position.distanceTo(controls.target);
+window.addEventListener("wheel", (event) => {
+    targetDistance = THREE.MathUtils.clamp(
+        targetDistance + event.deltaY * 28,
+        controls.minDistance,
+        controls.maxDistance
+    );
+}, { passive: true });
+
+const ambient = new THREE.HemisphereLight(0x72a4ff, 0x020307, 0.55);
+scene.add(ambient);
+
+const keyLight = new THREE.DirectionalLight(0x5fa7ff, 0.7);
+keyLight.position.set(-0.9, 1.8, 0.5).multiplyScalar(10000);
+scene.add(keyLight);
+
+const hitPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(220000, 220000),
+    new THREE.MeshBasicMaterial({ visible: false })
+);
+hitPlane.rotation.x = -Math.PI * 0.5;
+scene.add(hitPlane);
+
+const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(90000, 90000, 1, 1),
+    new THREE.MeshStandardMaterial({
+        color: 0x0a1222,
+        roughness: 0.92,
+        metalness: 0.08
+    })
+);
+floor.rotation.x = -Math.PI * 0.5;
+floor.position.y = -12;
+scene.add(floor);
+
+const floorGlow = new THREE.Mesh(
+    new THREE.CircleGeometry(36000, 96),
+    new THREE.MeshBasicMaterial({
+        color: 0x081221,
+        transparent: true,
+        opacity: 0.6,
+        depthWrite: false
+    })
+);
+floorGlow.rotation.x = -Math.PI * 0.5;
+floorGlow.position.y = -11.5;
+scene.add(floorGlow);
+
+const grid = new THREE.GridHelper(38000, 60, 0x1f4f88, 0x0a1830);
+grid.position.y = -11;
+grid.material.opacity = 0.22;
+grid.material.transparent = true;
+scene.add(grid);
+
+const starGeo = new THREE.BufferGeometry();
+const starCount = 720;
+const starPos = new Float32Array(starCount * 3);
+for (let i = 0; i < starCount; i++) {
+    const radius = 36000 + Math.random() * 140000;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(THREE.MathUtils.randFloatSpread(2));
+    starPos[i * 3 + 0] = Math.sin(phi) * Math.cos(theta) * radius;
+    starPos[i * 3 + 1] = Math.cos(phi) * radius * 0.36 + 15000;
+    starPos[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * radius;
+}
+starGeo.setAttribute("position", new THREE.BufferAttribute(starPos, 3));
+const stars = new THREE.Points(
+    starGeo,
+    new THREE.PointsMaterial({
+        color: 0xa7c7ff,
+        size: 48,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0.75,
+        depthWrite: false
+    })
+);
+scene.add(stars);
+
+const noiseChunk = `
+    float hash(float n) { return fract(sin(n) * 43758.5453123); }
+    float noise(vec3 x) {
+        vec3 p = floor(x);
+        vec3 f = fract(x);
+        f = f * f * (3.0 - 2.0 * f);
+        float n = p.x + p.y * 57.0 + 113.0 * p.z;
+        return mix(
+            mix(
+                mix(hash(n + 0.0), hash(n + 1.0), f.x),
+                mix(hash(n + 57.0), hash(n + 58.0), f.x),
+                f.y
+            ),
+            mix(
+                mix(hash(n + 113.0), hash(n + 114.0), f.x),
+                mix(hash(n + 170.0), hash(n + 171.0), f.x),
+                f.y
+            ),
+            f.z
+        );
+    }
+    float fbm(vec3 p) {
+        float f = 0.0;
+        f += 0.5000 * noise(p); p *= 2.02;
+        f += 0.2500 * noise(p); p *= 2.03;
+        f += 0.1250 * noise(p); p *= 2.01;
+        f += 0.0625 * noise(p);
+        return f;
+    }
+`;
+
+const sharedBillboardGeo = new THREE.PlaneGeometry(1, 1, 1, 1);
+const sharedGroundGeo = new THREE.PlaneGeometry(2, 2, 100, 100);
+const sharedDomeGeo = new THREE.SphereGeometry(1, 44, 24, 0, Math.PI * 2, 0, Math.PI * 0.64);
+
+class AttributeTracker {
+    constructor(attribute) {
+        this.attribute = attribute;
+        this.reset();
+    }
+    mark(offset, count) {
+        this.min = Math.min(this.min, offset);
+        this.max = Math.max(this.max, offset + count);
+    }
+    flush() {
+        if (this.max <= this.min) return;
+        this.attribute.updateRange.offset = this.min;
+        this.attribute.updateRange.count = this.max - this.min;
+        this.attribute.needsUpdate = true;
+        this.reset();
+    }
+    reset() {
+        this.min = Number.POSITIVE_INFINITY;
+        this.max = -1;
+    }
+}
+
+class EnergyParticleSystem {
+    constructor(sceneRef, maxParticles, blending) {
+        this.maxParticles = maxParticles;
+        this.cursor = 0;
+
+        const geometry = new THREE.InstancedBufferGeometry();
+        geometry.index = sharedBillboardGeo.index;
+        geometry.setAttribute("position", sharedBillboardGeo.attributes.position);
+        geometry.setAttribute("uv", sharedBillboardGeo.attributes.uv);
+
+        this.startPos = new Float32Array(maxParticles * 3);
+        this.startVel = new Float32Array(maxParticles * 3);
+        this.dataA = new Float32Array(maxParticles * 4);
+        this.dataB = new Float32Array(maxParticles * 4);
+
+        this.attrStartPos = new THREE.InstancedBufferAttribute(this.startPos, 3);
+        this.attrStartVel = new THREE.InstancedBufferAttribute(this.startVel, 3);
+        this.attrDataA = new THREE.InstancedBufferAttribute(this.dataA, 4);
+        this.attrDataB = new THREE.InstancedBufferAttribute(this.dataB, 4);
+
+        geometry.setAttribute("aStartPos", this.attrStartPos);
+        geometry.setAttribute("aStartVel", this.attrStartVel);
+        geometry.setAttribute("aDataA", this.attrDataA);
+        geometry.setAttribute("aDataB", this.attrDataB);
+        geometry.instanceCount = maxParticles;
+
+        this.trackers = [
+            new AttributeTracker(this.attrStartPos),
+            new AttributeTracker(this.attrStartVel),
+            new AttributeTracker(this.attrDataA),
+            new AttributeTracker(this.attrDataB)
+        ];
+
+        this.material = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 }
+            },
+            vertexShader: `
+                attribute vec3 aStartPos;
+                attribute vec3 aStartVel;
+                attribute vec4 aDataA;
+                attribute vec4 aDataB;
+
+                uniform float uTime;
+
+                varying vec2 vUv;
+                varying float vType;
+                varying float vAgeNorm;
+                varying float vAlpha;
+                varying float vSeed;
+                varying vec3 vColor;
+
+                void main() {
+                    vUv = uv;
+                    vType = aDataA.w;
+                    vSeed = aDataB.x;
+
+                    float startTime = aDataA.x;
+                    float maxLife = aDataA.y;
+                    float age = uTime - startTime;
+
+                    if (age < 0.0 || age > maxLife) {
+                        gl_Position = vec4(9999.0, 9999.0, 9999.0, 1.0);
+                        return;
+                    }
+
+                    float t = age / maxLife;
+                    float decay = 1.0 - t;
+                    vAgeNorm = t;
+
+                    vec3 pos = aStartPos;
+                    vec4 mvPosition;
+                    float size = aDataA.z;
+
+                    if (vType < 1.5) {
+                        size *= mix(0.35, 1.28, pow(t, 0.2));
+                        vColor = mix(vec3(2.0, 1.75, 1.4), vec3(0.45, 1.15, 1.8), t) * aDataB.w;
+                        vAlpha = pow(decay, 2.8);
+                        mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                        mvPosition.xy += position.xy * size;
+                    } else if (vType < 2.5) {
+                        float drag = 1.35 + aDataB.y * 1.4;
+                        pos += aStartVel * ((1.0 - exp(-age * drag)) / drag);
+                        pos.y += sin(age * 12.0 + aDataB.x * 7.0) * size * 0.06;
+                        size *= mix(0.42, 1.65, pow(t, 0.58));
+                        vColor = mix(vec3(1.35, 1.25, 1.1), vec3(0.12, 0.85, 1.85), pow(t, 0.7)) * (0.95 + aDataB.w * 0.25);
+                        vAlpha = pow(decay, 1.05);
+                        mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                        mvPosition.xy += position.xy * size;
+                    } else if (vType < 3.5) {
+                        float drag = 1.8 + aDataB.y * 2.2;
+                        pos += aStartVel * ((1.0 - exp(-age * drag)) / drag);
+                        vec3 currentVel = aStartVel * exp(-age * drag);
+                        vec4 viewVel4 = modelViewMatrix * vec4(currentVel, 0.0);
+                        vec2 dir = normalize(viewVel4.xy);
+                        if (length(viewVel4.xy) < 0.15) dir = vec2(0.0, 1.0);
+                        vColor = mix(vec3(2.8, 2.5, 2.2), vec3(0.12, 0.7, 1.7), pow(t, 0.55)) * (0.8 + aDataB.w * 0.4);
+                        vAlpha = pow(decay, 0.58);
+                        mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                        float width = size * 0.5;
+                        float stretch = size * (0.8 + length(currentVel) * 0.0032);
+                        float tail = 0.5 - position.y;
+                        vec2 scaledOffset = vec2(position.x * width, -tail * stretch);
+                        vec2 rotatedOffset = vec2(
+                            scaledOffset.x * dir.y + scaledOffset.y * dir.x,
+                            -scaledOffset.x * dir.x + scaledOffset.y * dir.y
+                        );
+                        mvPosition.xy += rotatedOffset;
+                    } else if (vType < 4.5) {
+                        float drag = 0.55 + aDataB.y * 0.7;
+                        pos += aStartVel * ((1.0 - exp(-age * drag)) / drag);
+                        pos.y -= 260.0 * age * age * (0.35 + aDataB.z * 0.7);
+                        size *= mix(1.0, 0.72, t);
+                        vColor = mix(vec3(1.8, 1.55, 1.35), vec3(0.08, 0.45, 1.35), pow(t, 0.75)) * (0.72 + aDataB.w * 0.22);
+                        vAlpha = pow(decay, 0.42);
+                        mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                        mvPosition.xy += position.xy * size;
+                    } else {
+                        float drag = 0.9 + aDataB.y * 0.55;
+                        pos += aStartVel * ((1.0 - exp(-age * drag)) / drag);
+                        pos.y += age * size * 0.12;
+                        size *= mix(0.65, 1.2, t);
+                        vColor = mix(vec3(1.0, 0.95, 0.9), vec3(0.25, 0.9, 1.7), pow(t, 0.8)) * (0.55 + aDataB.w * 0.25);
+                        vAlpha = pow(decay, 1.4);
+                        mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                        mvPosition.xy += position.xy * size;
+                    }
+
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                varying vec2 vUv;
+                varying float vType;
+                varying float vAgeNorm;
+                varying float vAlpha;
+                varying float vSeed;
+                varying vec3 vColor;
+
+                uniform float uTime;
+
+                ${noiseChunk}
+
+                void main() {
+                    vec2 uv = vUv * 2.0 - 1.0;
+                    float dist = length(uv);
+                    float alpha = 0.0;
+                    vec3 color = vColor;
+
+                    if (vType < 1.5) {
+                        float n = fbm(vec3(uv * 3.0, uTime * 0.8 + vSeed * 19.0));
+                        float shell = 1.0 - smoothstep(0.1, 1.0, dist + (n - 0.5) * 0.25);
+                        float core = smoothstep(0.75, 0.0, dist);
+                        float crossA = pow(max(0.0, 1.0 - abs(uv.x) * 15.0), 5.0);
+                        float crossB = pow(max(0.0, 1.0 - abs(uv.y) * 15.0), 5.0);
+                        alpha = (core * 1.4 + shell * 0.9 + (crossA + crossB) * 0.55) * vAlpha;
+                    } else if (vType < 2.5) {
+                        float n = fbm(vec3(uv * 3.7 + vSeed, vAgeNorm * 2.4 + uTime * 0.35));
+                        float body = 1.0 - smoothstep(0.12, 1.02, dist + (n - 0.5) * 0.34);
+                        float veins = smoothstep(0.45, 0.9, n) * smoothstep(1.0, 0.2, dist);
+                        alpha = (body + veins * 0.7) * vAlpha;
+                        color *= 1.0 + veins * 0.35;
+                    } else if (vType < 3.5) {
+                        float glowX = pow(max(0.0, 1.0 - abs(uv.x) * 3.0), 5.0);
+                        float head = smoothstep(1.0, 0.0, dist);
+                        float tip = smoothstep(0.0, 0.28, vUv.y) * smoothstep(1.0, 0.15, vUv.y);
+                        float sparkle = 0.8 + 0.2 * sin(uTime * 32.0 + vSeed * 40.0 + uv.x * 6.0);
+                        alpha = (glowX * tip * 1.2 + head * 0.22) * sparkle * vAlpha;
+                    } else if (vType < 4.5) {
+                        float n = fbm(vec3(uv * 5.0 + vSeed, uTime * 0.6));
+                        float body = 1.0 - smoothstep(0.12, 0.85, dist + (n - 0.5) * 0.18);
+                        float sparkle = pow(max(0.0, 1.0 - dist), 5.0);
+                        alpha = (body * 0.9 + sparkle * 0.6) * vAlpha;
+                    } else {
+                        float soft = smoothstep(1.0, 0.0, dist);
+                        float pulse = 0.82 + 0.18 * sin(uTime * 10.0 + vSeed * 30.0);
+                        alpha = soft * pulse * vAlpha;
+                    }
+
+                    if (alpha <= 0.001) discard;
+                    gl_FragColor = vec4(color, alpha);
+                }
+            `,
+            blending,
+            transparent: true,
+            depthWrite: false,
+            depthTest: false
+        });
+
+        this.mesh = new THREE.Mesh(geometry, this.material);
+        this.mesh.frustumCulled = false;
+        this.mesh.renderOrder = 1000;
+        sceneRef.add(this.mesh);
+    }
+
+    spawn(x, y, z, vx, vy, vz, size, life, type, globalTime, seed = Math.random(), dragSeed = Math.random(), gravitySeed = Math.random(), boost = 1) {
+        const index = this.cursor;
+        this.cursor = (this.cursor + 1) % this.maxParticles;
+
+        const base3 = index * 3;
+        const base4 = index * 4;
+
+        this.startPos[base3 + 0] = x;
+        this.startPos[base3 + 1] = y;
+        this.startPos[base3 + 2] = z;
+
+        this.startVel[base3 + 0] = vx;
+        this.startVel[base3 + 1] = vy;
+        this.startVel[base3 + 2] = vz;
+
+        this.dataA[base4 + 0] = globalTime;
+        this.dataA[base4 + 1] = life;
+        this.dataA[base4 + 2] = size;
+        this.dataA[base4 + 3] = type;
+
+        this.dataB[base4 + 0] = seed;
+        this.dataB[base4 + 1] = dragSeed;
+        this.dataB[base4 + 2] = gravitySeed;
+        this.dataB[base4 + 3] = boost;
+
+        this.trackers[0].mark(base3, 3);
+        this.trackers[1].mark(base3, 3);
+        this.trackers[2].mark(base4, 4);
+        this.trackers[3].mark(base4, 4);
+    }
+
+    update(globalTime) {
+        this.material.uniforms.uTime.value = globalTime;
+        for (let i = 0; i < this.trackers.length; i++) {
+            this.trackers[i].flush();
+        }
+    }
+}
+
+class SmokeParticleSystem {
+    constructor(sceneRef, maxParticles) {
+        this.maxParticles = maxParticles;
+        this.cursor = 0;
+
+        const geometry = new THREE.InstancedBufferGeometry();
+        geometry.index = sharedBillboardGeo.index;
+        geometry.setAttribute("position", sharedBillboardGeo.attributes.position);
+        geometry.setAttribute("uv", sharedBillboardGeo.attributes.uv);
+
+        this.startPos = new Float32Array(maxParticles * 3);
+        this.startVel = new Float32Array(maxParticles * 3);
+        this.dataA = new Float32Array(maxParticles * 4);
+        this.dataB = new Float32Array(maxParticles * 4);
+
+        this.attrStartPos = new THREE.InstancedBufferAttribute(this.startPos, 3);
+        this.attrStartVel = new THREE.InstancedBufferAttribute(this.startVel, 3);
+        this.attrDataA = new THREE.InstancedBufferAttribute(this.dataA, 4);
+        this.attrDataB = new THREE.InstancedBufferAttribute(this.dataB, 4);
+
+        geometry.setAttribute("aStartPos", this.attrStartPos);
+        geometry.setAttribute("aStartVel", this.attrStartVel);
+        geometry.setAttribute("aDataA", this.attrDataA);
+        geometry.setAttribute("aDataB", this.attrDataB);
+        geometry.instanceCount = maxParticles;
+
+        this.trackers = [
+            new AttributeTracker(this.attrStartPos),
+            new AttributeTracker(this.attrStartVel),
+            new AttributeTracker(this.attrDataA),
+            new AttributeTracker(this.attrDataB)
+        ];
+
+        this.material = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 }
+            },
+            vertexShader: `
+                attribute vec3 aStartPos;
+                attribute vec3 aStartVel;
+                attribute vec4 aDataA;
+                attribute vec4 aDataB;
+
+                uniform float uTime;
+
+                varying vec2 vUv;
+                varying float vAgeNorm;
+                varying float vAlpha;
+                varying float vSeed;
+                varying float vType;
+                varying vec3 vColor;
+
+                void main() {
+                    vUv = uv;
+                    vType = aDataA.w;
+                    vSeed = aDataB.x;
+
+                    float age = uTime - aDataA.x;
+                    float life = aDataA.y;
+                    if (age < 0.0 || age > life) {
+                        gl_Position = vec4(9999.0, 9999.0, 9999.0, 1.0);
+                        return;
+                    }
+
+                    float t = age / life;
+                    float drag = 0.24 + aDataB.y * 0.32;
+                    vec3 pos = aStartPos + aStartVel * ((1.0 - exp(-age * drag)) / drag);
+                    pos.y += age * aDataA.z * 0.045;
+
+                    float size = aDataA.z * mix(0.4, 1.8, pow(t, 0.78));
+                    vAgeNorm = t;
+                    vAlpha = pow(1.0 - t, 1.45);
+                    vColor = mix(vec3(0.28, 0.34, 0.46), vec3(0.02, 0.05, 0.09), pow(t, 0.85));
+                    if (vType > 1.5) {
+                        vColor = mix(vec3(0.18, 0.28, 0.45), vec3(0.02, 0.05, 0.09), pow(t, 0.82));
+                        vAlpha *= 0.78;
+                    }
+
+                    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                    mvPosition.xy += position.xy * size;
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                varying vec2 vUv;
+                varying float vAgeNorm;
+                varying float vAlpha;
+                varying float vSeed;
+                varying float vType;
+                varying vec3 vColor;
+
+                uniform float uTime;
+
+                ${noiseChunk}
+
+                void main() {
+                    vec2 uv = vUv * 2.0 - 1.0;
+                    float dist = length(uv);
+                    float base = 1.0 - smoothstep(0.15, 1.0, dist);
+                    float swirl = fbm(vec3(uv * 2.8 + vSeed * 5.0, uTime * 0.12 + vAgeNorm * 2.2));
+                    float wisps = fbm(vec3(uv * 5.5 - vSeed * 2.0, uTime * 0.18 + vAgeNorm * 3.7));
+                    float alpha = base * smoothstep(0.18, 0.95, swirl) * vAlpha;
+                    alpha *= 0.75 + wisps * 0.45;
+                    if (vType > 1.5) {
+                        float ring = smoothstep(0.18, 0.0, abs(dist - 0.62));
+                        alpha = max(alpha * 0.7, ring * (0.35 + swirl * 0.4) * vAlpha);
+                    }
+                    if (alpha <= 0.001) discard;
+                    gl_FragColor = vec4(vColor, alpha);
+                }
+            `,
+            blending: THREE.NormalBlending,
+            transparent: true,
+            depthWrite: false,
+            depthTest: false
+        });
+
+        this.mesh = new THREE.Mesh(geometry, this.material);
+        this.mesh.frustumCulled = false;
+        this.mesh.renderOrder = 995;
+        sceneRef.add(this.mesh);
+    }
+
+    spawn(x, y, z, vx, vy, vz, size, life, type, globalTime, seed = Math.random(), dragSeed = Math.random()) {
+        const index = this.cursor;
+        this.cursor = (this.cursor + 1) % this.maxParticles;
+
+        const base3 = index * 3;
+        const base4 = index * 4;
+
+        this.startPos[base3 + 0] = x;
+        this.startPos[base3 + 1] = y;
+        this.startPos[base3 + 2] = z;
+
+        this.startVel[base3 + 0] = vx;
+        this.startVel[base3 + 1] = vy;
+        this.startVel[base3 + 2] = vz;
+
+        this.dataA[base4 + 0] = globalTime;
+        this.dataA[base4 + 1] = life;
+        this.dataA[base4 + 2] = size;
+        this.dataA[base4 + 3] = type;
+
+        this.dataB[base4 + 0] = seed;
+        this.dataB[base4 + 1] = dragSeed;
+        this.dataB[base4 + 2] = 0;
+        this.dataB[base4 + 3] = 0;
+
+        this.trackers[0].mark(base3, 3);
+        this.trackers[1].mark(base3, 3);
+        this.trackers[2].mark(base4, 4);
+        this.trackers[3].mark(base4, 4);
+    }
+
+    update(globalTime) {
+        this.material.uniforms.uTime.value = globalTime;
+        for (let i = 0; i < this.trackers.length; i++) {
+            this.trackers[i].flush();
+        }
+    }
+}
+
+function createCoreBillboard(size, life, seed) {
+    const material = new THREE.ShaderMaterial({
+        uniforms: {
+            uAge: { value: 0 },
+            uLife: { value: life },
+            uSeed: { value: seed }
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            varying vec2 vUv;
+            uniform float uAge;
+            uniform float uLife;
+            uniform float uSeed;
+
+            ${noiseChunk}
+
+            void main() {
+                float t = clamp(uAge / uLife, 0.0, 1.0);
+                vec2 uv = vUv * 2.0 - 1.0;
+                float dist = length(uv);
+                float n = fbm(vec3(uv * 4.8 + uSeed * 3.0, t * 4.0));
+                float core = 1.0 - smoothstep(0.04, 0.55, dist);
+                float flareX = pow(max(0.0, 1.0 - abs(uv.x) * 20.0), 4.0);
+                float flareY = pow(max(0.0, 1.0 - abs(uv.y) * 20.0), 4.0);
+                float halo = 1.0 - smoothstep(0.15, 1.1, dist + (n - 0.5) * 0.24);
+                float arcs = pow(max(0.0, sin(atan(uv.y, uv.x) * 6.0 + n * 6.0 - t * 20.0)), 10.0);
+                float alpha = (core * 1.9 + halo * 0.55 + (flareX + flareY) * 0.45 + arcs * halo * 0.25) * pow(1.0 - t, 2.0);
+                vec3 color = mix(vec3(2.2, 1.9, 1.6), vec3(0.32, 1.22, 1.95), t);
+                if (alpha <= 0.001) discard;
+                gl_FragColor = vec4(color, alpha);
+            }
+        `,
+        blending: THREE.AdditiveBlending,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false
+    });
+    const mesh = new THREE.Mesh(sharedBillboardGeo, material);
+    mesh.renderOrder = 1100;
+
+    return {
+        mesh,
+        update(localTime) {
+            material.uniforms.uAge.value = localTime;
+            const t = THREE.MathUtils.clamp(localTime / life, 0, 1);
+            const scale = size * (26 + Math.pow(t, 0.24) * 58);
+            mesh.scale.set(scale, scale * 0.82, 1);
+            mesh.visible = localTime <= life;
+        },
+        dispose() {
+            material.dispose();
+        }
+    };
+}
+
+function createGroundWave(size, life, seed, colorScale) {
+    const material = new THREE.ShaderMaterial({
+        uniforms: {
+            uAge: { value: 0 },
+            uLife: { value: life },
+            uSeed: { value: seed },
+            uColorScale: { value: colorScale }
+        },
+        vertexShader: `
+            uniform float uAge;
+            uniform float uLife;
+            uniform float uSeed;
+
+            varying vec2 vUv;
+            varying float vAgeNorm;
+
+            ${noiseChunk}
+
+            void main() {
+                vUv = uv;
+                float t = clamp(uAge / uLife, 0.0, 1.0);
+                vAgeNorm = t;
+
+                vec3 pos = position;
+                vec2 centered = uv * 2.0 - 1.0;
+                float dist = length(centered);
+                float ring = exp(-pow((dist - (0.1 + t * 0.78)) * 11.0, 2.0));
+                float ripple = fbm(vec3(centered * 5.0, t * 1.8 + uSeed));
+                pos.z += ring * (0.02 + ripple * 0.05) * (1.0 - t);
+
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform float uAge;
+            uniform float uLife;
+            uniform float uSeed;
+            uniform float uColorScale;
+
+            varying vec2 vUv;
+            varying float vAgeNorm;
+
+            ${noiseChunk}
+
+            void main() {
+                vec2 p = vUv * 2.0 - 1.0;
+                float dist = length(p);
+                if (dist > 1.0) discard;
+
+                float t = clamp(uAge / uLife, 0.0, 1.0);
+                float angle = atan(p.y, p.x);
+                float ring = smoothstep(0.18, 0.0, abs(dist - (0.12 + t * 0.78)));
+                float inner = smoothstep(0.22, 0.0, abs(dist - (0.05 + t * 0.34)));
+                float n = fbm(vec3(angle * 3.2, dist * 6.0 - t * 4.5, uSeed * 5.0));
+                float arcs = pow(max(0.0, sin(angle * 12.0 + n * 5.0 - t * 18.0)), 9.0);
+                float alpha = (ring * (0.6 + n * 0.85) + inner * 0.22 + arcs * ring * 0.65) * pow(1.0 - t, 1.35);
+                vec3 color = mix(vec3(0.08, 0.24, 0.66), vec3(0.42, 1.05, 1.75), ring) * uColorScale;
+                if (alpha <= 0.001) discard;
+                gl_FragColor = vec4(color, alpha);
+            }
+        `,
+        blending: THREE.AdditiveBlending,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+        side: THREE.DoubleSide
+    });
+
+    const mesh = new THREE.Mesh(sharedGroundGeo, material);
+    mesh.rotation.x = -Math.PI * 0.5;
+    mesh.renderOrder = 1020;
+
+    return {
+        mesh,
+        update(localTime) {
+            material.uniforms.uAge.value = localTime;
+            const t = THREE.MathUtils.clamp(localTime / life, 0, 1);
+            const scale = size * (0.55 + t * 1.25);
+            mesh.scale.set(scale, scale, 1);
+            mesh.visible = localTime <= life;
+        },
+        dispose() {
+            material.dispose();
+        }
+    };
+}
+
+function createDustDisc(size, life, seed) {
+    const material = new THREE.ShaderMaterial({
+        uniforms: {
+            uAge: { value: 0 },
+            uLife: { value: life },
+            uSeed: { value: seed }
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            varying vec2 vUv;
+            uniform float uAge;
+            uniform float uLife;
+            uniform float uSeed;
+
+            ${noiseChunk}
+
+            void main() {
+                float t = clamp(uAge / uLife, 0.0, 1.0);
+                vec2 p = vUv * 2.0 - 1.0;
+                float dist = length(p);
+                if (dist > 1.0) discard;
+
+                float ring = smoothstep(0.28, 0.0, abs(dist - (0.25 + t * 0.45)));
+                float cloud = fbm(vec3(p * 4.2 + uSeed * 3.0, t * 2.5));
+                float wisps = fbm(vec3(p * 8.0 - uSeed * 2.0, t * 3.7));
+                float alpha = max(ring * (0.25 + cloud * 0.45), (1.0 - smoothstep(0.15, 1.0, dist)) * 0.12 * wisps);
+                alpha *= pow(1.0 - t, 1.4);
+                vec3 color = mix(vec3(0.16, 0.24, 0.42), vec3(0.03, 0.05, 0.08), t);
+                if (alpha <= 0.001) discard;
+                gl_FragColor = vec4(color, alpha);
+            }
+        `,
+        blending: THREE.NormalBlending,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+        side: THREE.DoubleSide
+    });
+
+    const mesh = new THREE.Mesh(sharedGroundGeo, material);
+    mesh.rotation.x = -Math.PI * 0.5;
+    mesh.position.y = 8;
+    mesh.renderOrder = 980;
+
+    return {
+        mesh,
+        update(localTime) {
+            material.uniforms.uAge.value = localTime;
+            const t = THREE.MathUtils.clamp(localTime / life, 0, 1);
+            const scale = size * (0.35 + t * 1.4);
+            mesh.scale.set(scale, scale, 1);
+            mesh.visible = localTime <= life;
+        },
+        dispose() {
+            material.dispose();
+        }
+    };
+}
+
+function createShockDome(size, life, seed) {
+    const material = new THREE.ShaderMaterial({
+        uniforms: {
+            uAge: { value: 0 },
+            uLife: { value: life },
+            uSeed: { value: seed }
+        },
+        vertexShader: `
+            uniform float uAge;
+            uniform float uLife;
+            uniform float uSeed;
+
+            varying vec3 vWorldPos;
+            varying vec3 vWorldNormal;
+            varying float vAgeNorm;
+
+            ${noiseChunk}
+
+            void main() {
+                float t = clamp(uAge / uLife, 0.0, 1.0);
+                vAgeNorm = t;
+
+                vec3 n = normalize(normal);
+                float nA = fbm(n * 4.5 + vec3(uSeed, t * 1.8, t * 0.8));
+                float nB = fbm(n * 8.5 + vec3(t * 3.0, uSeed * 2.0, t * 2.4));
+                vec3 displaced = n * (1.0 + (nA - 0.5) * 0.14 + (nB - 0.5) * 0.06);
+
+                vec4 worldPos = modelMatrix * vec4(displaced, 1.0);
+                vWorldPos = worldPos.xyz;
+                vWorldNormal = normalize(mat3(modelMatrix) * n);
+                gl_Position = projectionMatrix * viewMatrix * worldPos;
+            }
+        `,
+        fragmentShader: `
+            uniform float uAge;
+            uniform float uLife;
+            uniform float uSeed;
+
+            varying vec3 vWorldPos;
+            varying vec3 vWorldNormal;
+            varying float vAgeNorm;
+
+            ${noiseChunk}
+
+            void main() {
+                float t = clamp(uAge / uLife, 0.0, 1.0);
+                vec3 viewDir = normalize(cameraPosition - vWorldPos);
+                float fresnel = pow(1.0 - max(dot(normalize(vWorldNormal), viewDir), 0.0), 2.3);
+                float horizon = smoothstep(-0.2, 0.55, vWorldNormal.y);
+                float n = fbm(vWorldPos * 0.0026 + vec3(uSeed * 2.0, t * 2.6, 0.0));
+                float ripples = pow(max(0.0, sin((1.0 - abs(vWorldNormal.y)) * 14.0 - t * 20.0 + n * 5.5)), 7.0);
+                float alpha = (fresnel * (0.35 + ripples * 0.9) + ripples * 0.15) * pow(1.0 - t, 1.1) * horizon;
+                vec3 color = mix(vec3(0.08, 0.35, 0.9), vec3(0.55, 1.15, 1.8), fresnel + ripples * 0.2);
+                if (alpha <= 0.001) discard;
+                gl_FragColor = vec4(color, alpha);
+            }
+        `,
+        blending: THREE.AdditiveBlending,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+        side: THREE.DoubleSide
+    });
+
+    const mesh = new THREE.Mesh(sharedDomeGeo, material);
+    mesh.position.y = 4;
+    mesh.scale.setScalar(size * 0.1);
+    mesh.renderOrder = 1010;
+
+    return {
+        mesh,
+        update(localTime) {
+            material.uniforms.uAge.value = localTime;
+            const t = THREE.MathUtils.clamp(localTime / life, 0, 1);
+            const radius = size * (0.08 + Math.pow(t, 0.6) * 1.08);
+            mesh.scale.set(radius, radius * 0.72, radius);
+            mesh.visible = localTime <= life;
+        },
+        dispose() {
+            material.dispose();
+        }
+    };
+}
+
+const energySystem = new EnergyParticleSystem(scene, 64000, THREE.AdditiveBlending);
+const smokeSystem = new SmokeParticleSystem(scene, 18000);
+const activeEffects = [];
+
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+const tmpDir = new THREE.Vector3();
+const baseCamera = new THREE.Vector3();
+const shakeOffset = new THREE.Vector3();
+let shakeAmount = 0;
+baseCamera.copy(camera.position);
+
+function spawnPrimaryBurst(x, y, z, size, globalTime, scale = 1) {
+    energySystem.spawn(x, y, z, 0, 0, 0, size * 86 * scale, 0.18, 1, globalTime, Math.random(), Math.random(), Math.random(), 1.45);
+    energySystem.spawn(x, y, z, 0, 0, 0, size * 38 * scale, 0.48, 1, globalTime, Math.random(), Math.random(), Math.random(), 0.8);
+
+    for (let i = 0; i < Math.round(24 * scale); i++) {
+        const a = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        const speed = (8 + Math.random() * 24) * size;
+        energySystem.spawn(
+            x, y, z,
+            Math.sin(phi) * Math.cos(a) * speed,
+            Math.cos(phi) * speed * 0.4 + Math.random() * size * 3.2,
+            Math.sin(phi) * Math.sin(a) * speed,
+            (4.8 + Math.random() * 8.5) * size * 0.58 * scale,
+            0.85 + Math.random() * 0.55,
+            2,
+            globalTime
+        );
+    }
+
+    for (let i = 0; i < Math.round(92 * scale); i++) {
+        const a = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        const speed = (42 + Math.random() * 150) * size;
+        energySystem.spawn(
+            x, y, z,
+            Math.sin(phi) * Math.cos(a) * speed,
+            Math.cos(phi) * speed * 0.35 + Math.random() * size * 8.0,
+            Math.sin(phi) * Math.sin(a) * speed,
+            (0.45 + Math.random() * 0.8) * size * 0.18 * scale,
+            0.55 + Math.random() * 0.45,
+            3,
+            globalTime
+        );
+    }
+
+    for (let i = 0; i < Math.round(240 * scale); i++) {
+        const a = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        const speed = (26 + Math.random() * 92) * size;
+        energySystem.spawn(
+            x, y, z,
+            Math.sin(phi) * Math.cos(a) * speed,
+            Math.cos(phi) * speed * 0.6 + Math.random() * size * 12.0,
+            Math.sin(phi) * Math.sin(a) * speed,
+            (0.14 + Math.random() * 0.18) * size * scale,
+            1.0 + Math.random() * 1.2,
+            4,
+            globalTime
+        );
+    }
+
+    for (let i = 0; i < Math.round(36 * scale); i++) {
+        const a = Math.random() * Math.PI * 2;
+        const speed = (5 + Math.random() * 16) * size;
+        energySystem.spawn(
+            x, y, z,
+            Math.cos(a) * speed,
+            Math.random() * size * 1.5,
+            Math.sin(a) * speed,
+            (1.5 + Math.random() * 3.2) * size * 0.1 * scale,
+            1.3 + Math.random() * 0.75,
+            5,
+            globalTime
+        );
+    }
+
+    for (let i = 0; i < Math.round(28 * scale); i++) {
+        const a = Math.random() * Math.PI * 2;
+        const dist = Math.random() * size * 2.3;
+        const speed = (4 + Math.random() * 10) * size;
+        smokeSystem.spawn(
+            x + Math.cos(a) * dist,
+            y,
+            z + Math.sin(a) * dist,
+            Math.cos(a) * speed,
+            Math.random() * size * 0.3,
+            Math.sin(a) * speed,
+            (16 + Math.random() * 20) * size * 0.42 * scale,
+            1.6 + Math.random() * 1.1,
+            1,
+            globalTime
+        );
+    }
+
+    for (let i = 0; i < Math.round(12 * scale); i++) {
+        const a = Math.random() * Math.PI * 2;
+        const dist = size * (4 + Math.random() * 8);
+        smokeSystem.spawn(
+            x + Math.cos(a) * dist,
+            y + 8,
+            z + Math.sin(a) * dist,
+            Math.cos(a) * size * 2,
+            0,
+            Math.sin(a) * size * 2,
+            (12 + Math.random() * 10) * size * 0.65 * scale,
+            1.2 + Math.random() * 0.75,
+            2,
+            globalTime
+        );
+    }
+}
+
+function spawnSecondaryBurst(x, y, z, size, globalTime, scale) {
+    energySystem.spawn(x, y, z, 0, 0, 0, size * 26 * scale, 0.14, 1, globalTime, Math.random(), Math.random(), Math.random(), 0.9);
+    for (let i = 0; i < Math.round(9 * scale); i++) {
+        const a = Math.random() * Math.PI * 2;
+        const speed = (6 + Math.random() * 18) * size;
+        energySystem.spawn(
+            x, y, z,
+            Math.cos(a) * speed,
+            Math.random() * size * 2.4,
+            Math.sin(a) * speed,
+            (3.2 + Math.random() * 4.8) * size * 0.32 * scale,
+            0.45 + Math.random() * 0.32,
+            2,
+            globalTime
+        );
+    }
+    for (let i = 0; i < Math.round(48 * scale); i++) {
+        const a = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        const speed = (16 + Math.random() * 44) * size;
+        energySystem.spawn(
+            x, y, z,
+            Math.sin(phi) * Math.cos(a) * speed,
+            Math.cos(phi) * speed * 0.5,
+            Math.sin(phi) * Math.sin(a) * speed,
+            (0.1 + Math.random() * 0.12) * size,
+            0.7 + Math.random() * 0.7,
+            4,
+            globalTime
+        );
+    }
+    smokeSystem.spawn(x, y, z, 0, 0, 0, size * (7 + Math.random() * 5), 0.9 + Math.random() * 0.5, 1, globalTime);
+}
+
+function spawnYamatoImpact(x, z, size = 105) {
+    const originY = 6;
+    const startTime = performance.now() * 0.001;
+
+    const root = new THREE.Group();
+    root.position.set(x, 0, z);
+    scene.add(root);
+
+    const light = new THREE.PointLight(0x78d8ff, 0, size * 34);
+    light.position.set(0, size * 0.24, 0);
+    root.add(light);
+
+    const coreBillboard = createCoreBillboard(size, 0.62, Math.random());
+    coreBillboard.mesh.position.set(0, size * 0.24, 0);
+    root.add(coreBillboard.mesh);
+
+    const groundWave = createGroundWave(size * 9.4, 1.0, Math.random(), 1.0);
+    groundWave.mesh.position.set(0, 5, 0);
+    root.add(groundWave.mesh);
+
+    const secondaryWave = createGroundWave(size * 6.8, 1.25, Math.random(), 0.68);
+    secondaryWave.mesh.position.set(0, 11, 0);
+    root.add(secondaryWave.mesh);
+
+    const dustDisc = createDustDisc(size * 11.2, 1.45, Math.random());
+    dustDisc.mesh.position.set(0, 10, 0);
+    root.add(dustDisc.mesh);
+
+    const dome = createShockDome(size * 9.5, 0.95, Math.random());
+    dome.mesh.position.set(0, 4, 0);
+    root.add(dome.mesh);
+
+    spawnPrimaryBurst(x, originY, z, size, startTime, 1);
+    shakeAmount = Math.max(shakeAmount, size * 4.2);
+
+    const secondaryTimings = [0.09, 0.18, 0.29, 0.44].map((value) => value + Math.random() * 0.05);
+    let secondaryIndex = 0;
+    let disposed = false;
+
+    function update() {
+        const globalTime = performance.now() * 0.001;
+        const localTime = globalTime - startTime;
+
+        coreBillboard.mesh.quaternion.copy(camera.quaternion);
+        coreBillboard.update(localTime);
+        groundWave.update(localTime);
+        secondaryWave.update(Math.max(0, localTime - 0.08));
+        dustDisc.update(localTime);
+        dome.update(localTime);
+
+        light.intensity = Math.max(0, 8.8 * Math.pow(1 - Math.min(localTime / 0.52, 1), 1.5));
+        light.distance = size * (18 + Math.pow(Math.min(localTime / 0.42, 1), 0.4) * 30);
+
+        while (secondaryIndex < secondaryTimings.length && localTime >= secondaryTimings[secondaryIndex]) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist = size * (7 + Math.random() * 18);
+            const burstScale = 0.36 + Math.random() * 0.32;
+            const px = x + Math.cos(angle) * dist;
+            const pz = z + Math.sin(angle) * dist;
+            spawnSecondaryBurst(px, originY, pz, size, globalTime, burstScale);
+            shakeAmount = Math.max(shakeAmount, size * (1.2 + burstScale * 1.5));
+            secondaryIndex++;
+        }
+
+        if (localTime >= 1.75) {
+            dispose();
+        }
+    }
+
+    function dispose() {
+        if (disposed) return;
+        disposed = true;
+        coreBillboard.dispose();
+        groundWave.dispose();
+        secondaryWave.dispose();
+        dustDisc.dispose();
+        dome.dispose();
+        if (root.parent) root.parent.remove(root);
+        const idx = activeEffects.indexOf(effect);
+        if (idx >= 0) activeEffects.splice(idx, 1);
+    }
+
+    const effect = { update, dispose };
+    activeEffects.push(effect);
+    return effect;
+}
+
+window.addEventListener("mousedown", (event) => {
+    if (event.button !== 0) return;
+    mouse.set((event.clientX / innerWidth) * 2 - 1, -(event.clientY / innerHeight) * 2 + 1);
+    raycaster.setFromCamera(mouse, camera);
+    const hit = raycaster.intersectObject(hitPlane);
+    if (!hit.length) return;
+    spawnYamatoImpact(hit[0].point.x, hit[0].point.z, 110);
+});
+
+window.addEventListener("contextmenu", (event) => event.preventDefault());
+
+window.addEventListener("resize", () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+});
+
+spawnYamatoImpact(0, 0, 110);
+
+const clock = new THREE.Clock();
+function animate() {
+    requestAnimationFrame(animate);
+    const dt = Math.min(clock.getDelta(), 0.05);
+
+    camera.position.copy(baseCamera);
+    controls.update();
+
+    const currentDistance = camera.position.distanceTo(controls.target);
+    const nextDistance = THREE.MathUtils.lerp(currentDistance, targetDistance, dt * 12);
+    tmpDir.subVectors(camera.position, controls.target).normalize();
+    baseCamera.copy(controls.target).addScaledVector(tmpDir, nextDistance);
+    if (shakeAmount > 0.001) {
+        shakeOffset.set(
+            (Math.random() - 0.5) * shakeAmount,
+            (Math.random() - 0.5) * shakeAmount,
+            (Math.random() - 0.5) * shakeAmount
+        );
+        camera.position.copy(baseCamera).add(shakeOffset);
+        shakeAmount *= 0.88;
+    } else {
+        camera.position.copy(baseCamera);
+        shakeAmount = 0;
+    }
+
+    for (let i = activeEffects.length - 1; i >= 0; i--) {
+        activeEffects[i].update();
+    }
+
+    const globalTime = performance.now() * 0.001;
+    energySystem.update(globalTime);
+    smokeSystem.update(globalTime);
+
+    renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
