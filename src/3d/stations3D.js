@@ -260,6 +260,11 @@ function ensureStationRecord(station) {
 function updateRecordTransform(record, station, devScale, visible) {
   const group = record.group;
   if (!group || !Core3D.scene) return;
+  if (group.userData?.destructionOwned || station?._destroyed3D) {
+    group.visible = true;
+    station._mesh3d = group;
+    return;
+  }
   const modelGroup = record.modelGroup || group;
 
   if (group.parent !== Core3D.scene) {
@@ -364,6 +369,7 @@ export function initStations3D(_sceneIgnored, stations) {
     // STACJA NA WIERZCH!
     Core3D.enableForeground3D(pivotGroup);
     pivotGroup.userData.fgCategory = 'stations';
+    pivotGroup.userData.destructionPreset = 'civilian';
 
     // Pre-bake shatter geometry — amortised cost, no lag at explosion time
     Destruction3D.prebake(modelGroup);
@@ -438,6 +444,7 @@ export function updateStations3D(stations, cullInfo = null) {
         // STACJA NA WIERZCH!
         Core3D.enableForeground3D(pivotGroup);
         pivotGroup.userData.fgCategory = 'stations';
+        pivotGroup.userData.destructionPreset = 'civilian';
 
         // Pre-bake shatter geometry — amortised cost, no lag at explosion time
         Destruction3D.prebake(modelGroup);
@@ -488,6 +495,7 @@ export function destroyStation3D(station, opts = {}) {
 
   Destruction3D.shatter(mesh, {
     preset,
+    debrisStyle: opts.debrisStyle ?? 'panelHybrid',
     shockwave: true,
     ...(normalizedDrift !== undefined ? { fragmentDrift: normalizedDrift } : {}),
     ...opts,

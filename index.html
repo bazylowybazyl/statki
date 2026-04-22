@@ -14251,6 +14251,512 @@
       }
     }
     window.applyDamageToPlayer = applyDamageToPlayer;
+
+    // ── Critical Reactor Blow system ──────────────────────────────────────
+    window.flyingHexDebris = [];
+    let _critChainDepth = 0;
+
+    function isFighterNPC(npc) {
+      if (!npc) return false;
+      if (npc.fighter) return true;
+      const t = String(npc.type || '').toLowerCase();
+      return t === 'fighter' || t === 'interceptor' || t === 'drone' ||
+             t === 'ally_fighter' || t === 'carrier_fighter';
+    }
+
+    function applyAoeExplosionDamage(pos, radius, baseDamage, sourceEntity) {
+      const radiusSq = radius * radius;
+      const prevDepth = _critChainDepth;
+      _critChainDepth = prevDepth + 1;
+      try {
+        if (window.DEBUG_CRIT_BLOW) {
+          console.log('[CritBlow AOE] pos=', pos.x | 0, pos.y | 0, 'radius=', radius | 0, 'baseDmg=', baseDamage | 0);
+        }
+        if (window.npcs) {
+          for (const npc of window.npcs) {
+            if (!npc || npc === sourceEntity || npc.dead) continue;
+            if (npc.x === undefined || npc.y === undefined) continue;
+            const dx = npc.x - pos.x, dy = npc.y - pos.y;
+            const dSq = dx * dx + dy * dy;
+            if (dSq >= radiusSq) continue;
+            const t = 1 - Math.sqrt(dSq) / radius;
+            const dmg = baseDamage * t;
+            if (dmg > 0) applyDamageToNPC(npc, dmg, 'aoe_explosion', { bypassShield: false });
+          }
+        }
+        if (ship && !ship.destroyed && ship.pos) {
+          const dx = ship.pos.x - pos.x, dy = ship.pos.y - pos.y;
+          const dSq = dx * dx + dy * dy;
+          if (dSq < radiusSq) {
+            const d = Math.sqrt(dSq);
+            const t = 1 - d / radius;
+            // Reactor blast is an impulse — part of it bypasses shields at close range.
+            // Inside 40% of radius: half bypasses shield, half hits normally.
+            const totalDmg = baseDamage * t * 0.65;
+            const closeness = Math.max(0, 1 - d / (radius * 0.4));
+            const bypassPart = totalDmg * (0.15 + closeness * 0.45); // 15..60% bypass
+            const shieldPart = totalDmg - bypassPart;
+            if (shieldPart > 0) applyDamageToPlayer(shieldPart, { bypassShield: false });
+            if (bypassPart > 0) applyDamageToPlayer(bypassPart, { bypassShield: true });
+            if (window.DEBUG_CRIT_BLOW) {
+              console.log('[CritBlow AOE] player hit dist=', d | 0, 'shield=', shieldPart | 0, 'hull=', bypassPart | 0);
+            }
+          }
+        }
+      } finally {
+        _critChainDepth = prevDepth;
+      }
+    }
+
+    function spawnFlyingHexDebris(entity, explosionPos, countOrShards, opts = null) {
+      // Works with either wreck or npc (anything with hexGrid.shards + x/y/angle).
+      const shards = entity?.hexGrid?.shards;
+      if (!shards || shards.length === 0) return;
+      const options = opts || {};
+      const srcWidth  = entity.hexGrid.srcWidth  || 256;
+      const srcHeight = entity.hexGrid.srcHeight || 256;
+      const cx     = srcWidth * 0.5;
+      const cy     = srcHeight * 0.5;
+      const pivotX = entity.hexGrid.pivot?.x || 0;
+      const pivotY = entity.hexGrid.pivot?.y || 0;
+      const scaleX = entity.visual?.spriteScaleX || entity.visual?.spriteScale || 1;
+      const scaleY = entity.visual?.spriteScaleY || entity.visual?.spriteScale || 1;
+      const ang  = (entity.angle || 0) + (entity.visual?.spriteRotation || 0);
+      const cosA = Math.cos(ang), sinA = Math.sin(ang);
+      const hexWorldR = 9 * Math.max(scaleX, scaleY);
+      const entX = (entity.x !== undefined) ? entity.x : (entity.pos?.x || 0);
+      const entY = (entity.y !== undefined) ? entity.y : (entity.pos?.y || 0);
+      const entVX = entity.vx || entity.vel?.x || 0;
+      const entVY = entity.vy || entity.vel?.y || 0;
+
+      // Prefer edge shards (fewer neighbors) for a punchier "chunks fly off" look
+      const suppliedShards = Array.isArray(countOrShards) ? countOrShards : null;
+      const eligible = (suppliedShards || shards).filter(s => s && s.active !== false && !s.isDebris && Number.isFinite(s.gridX));
+      if (eligible.length === 0) return;
+      if (!suppliedShards) {
+        // Shuffle for variety
+        for (let i = eligible.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [eligible[i], eligible[j]] = [eligible[j], eligible[i]];
+        }
+      }
+      const pick = Math.min(suppliedShards ? eligible.length : Math.max(0, countOrShards | 0), eligible.length);
+      const speedMin = Math.max(120, Number(options.speedMin) || 260);
+      const speedMax = Math.max(speedMin, Number(options.speedMax) || 820);
+      const lateralJitter = Math.max(0, Number(options.lateralJitter) || 140);
+      const tangentialKick = Math.max(0, Number(options.tangentialKick) || 0);
+      const radiusMul = Math.max(0.4, Number(options.radiusMul) || 1);
+      const lifeMin = Math.max(0.6, Number(options.lifeMin) || 2.4);
+      const lifeMax = Math.max(0, Number(options.lifeMax) || 2.6);
+      const angVelMul = Math.max(0.1, Number(options.angVelMul) || 1);
+      for (let i = 0; i < pick && window.flyingHexDebris.length < 512; i++) {
+        const shard = eligible[i];
+        const relX = (shard.gridX - cx - pivotX) * scaleX;
+        const relY = (shard.gridY - cy - pivotY) * scaleY;
+        const wx = entX + relX * cosA - relY * sinA;
+        const wy = entY + relX * sinA + relY * cosA;
+        let toX = wx - explosionPos.x, toY = wy - explosionPos.y;
+        let dist = Math.hypot(toX, toY);
+        if (dist < 0.001) {
+          // Shard sits on epicenter — give it a random outward vector
+          const a = Math.random() * Math.PI * 2;
+          toX = Math.cos(a); toY = Math.sin(a); dist = 1;
+        }
+        const nx = toX / dist;
+        const ny = toY / dist;
+        const tx = -ny;
+        const ty = nx;
+        const speed = speedMin + Math.random() * (speedMax - speedMin);
+        const tangent = (Math.random() - 0.5) * tangentialKick;
+        window.flyingHexDebris.push({
+          x: wx, y: wy,
+          vx: entVX + nx * speed + tx * tangent + (Math.random() - 0.5) * lateralJitter,
+          vy: entVY + ny * speed + ty * tangent + (Math.random() - 0.5) * lateralJitter,
+          angle: Math.random() * Math.PI * 2,
+          angVel: (Math.random() - 0.5) * 0.35 * angVelMul,
+          life: 1.0,
+          lifetime: lifeMin + Math.random() * lifeMax,
+          hexR: hexWorldR * radiusMul * (0.7 + Math.random() * 0.6),
+        });
+      }
+    }
+
+    function updateFlyingHexDebris(dt) {
+      const debris = window.flyingHexDebris;
+      for (let i = debris.length - 1; i >= 0; i--) {
+        const d = debris[i];
+        d.x += d.vx * dt;
+        d.y += d.vy * dt;
+        d.vx *= 0.991;
+        d.vy *= 0.991;
+        d.angle += d.angVel * dt;
+        d.life -= dt / d.lifetime;
+        if (d.life <= 0) debris.splice(i, 1);
+      }
+    }
+
+    function drawFlyingHexDebris(ctx, cam) {
+      const debris = window.flyingHexDebris;
+      if (!debris || debris.length === 0) return;
+      ctx.save();
+      for (const d of debris) {
+        const alpha = Math.max(0, d.life * d.life);
+        if (alpha < 0.01) continue;
+        const s = worldToScreen(d.x, d.y, cam);
+        const screenR = d.hexR * cam.zoom;
+        if (screenR < 0.3) continue;
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(d.angle);
+        ctx.globalAlpha = alpha;
+        const heatT = Math.max(0, Math.min(1, d.life * 2 - 0.3));
+        const r = Math.round(70 + heatT * 185);
+        const g = Math.round(80 + heatT * 70);
+        const b = Math.round(100 - heatT * 55);
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2;
+          if (i === 0) ctx.moveTo(Math.cos(a) * screenR, Math.sin(a) * screenR);
+          else ctx.lineTo(Math.cos(a) * screenR, Math.sin(a) * screenR);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = `rgba(0,0,0,${0.5 * alpha})`;
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+    window.drawFlyingHexDebris = drawFlyingHexDebris;
+
+    function pickReactorBlowDebrisShards(entity, sourceShards, desiredCount) {
+      if (!entity?.hexGrid || !Array.isArray(sourceShards) || desiredCount <= 0) return [];
+      const srcWidth = entity.hexGrid.srcWidth || 256;
+      const srcHeight = entity.hexGrid.srcHeight || 256;
+      const centerX = srcWidth * 0.5 + (entity.hexGrid.pivot?.x || 0);
+      const centerY = srcHeight * 0.5 + (entity.hexGrid.pivot?.y || 0);
+      const sourceSet = new Set(sourceShards);
+      const candidates = [];
+      let maxRadiusSq = 1;
+      for (const shard of sourceShards) {
+        if (!shard || shard.active === false || shard.isDebris) continue;
+        const localX = (Number(shard.gridX) || 0) + (Number(shard.deformation?.x) || 0) - centerX;
+        const localY = (Number(shard.gridY) || 0) + (Number(shard.deformation?.y) || 0) - centerY;
+        const radiusSq = localX * localX + localY * localY;
+        if (radiusSq > maxRadiusSq) maxRadiusSq = radiusSq;
+        let linkedNeighbors = 0;
+        for (const neighbor of shard.neighbors || []) {
+          if (!neighbor || neighbor.active === false || neighbor.isDebris) continue;
+          if (sourceSet.has(neighbor)) linkedNeighbors++;
+        }
+        candidates.push({
+          shard,
+          radiusSq,
+          edgeScore: Math.max(0, 6 - linkedNeighbors),
+          jitter: Math.random()
+        });
+      }
+      candidates.sort((a, b) => {
+        const aScore = (a.radiusSq / maxRadiusSq) * 1.15 + a.edgeScore * 0.55 + a.jitter * 0.18;
+        const bScore = (b.radiusSq / maxRadiusSq) * 1.15 + b.edgeScore * 0.55 + b.jitter * 0.18;
+        return bScore - aScore;
+      });
+      const picked = [];
+      for (let i = 0; i < candidates.length && picked.length < desiredCount; i++) {
+        picked.push(candidates[i].shard);
+      }
+      return picked;
+    }
+
+    function buildReactorBlowFragmentGroups(entity, sourceShards, desiredCount) {
+      if (!entity?.hexGrid || !Array.isArray(sourceShards) || sourceShards.length < 3) return [];
+      const groupCount = Math.max(1, desiredCount | 0);
+      const srcWidth = entity.hexGrid.srcWidth || 256;
+      const srcHeight = entity.hexGrid.srcHeight || 256;
+      const centerX = srcWidth * 0.5 + (entity.hexGrid.pivot?.x || 0);
+      const centerY = srcHeight * 0.5 + (entity.hexGrid.pivot?.y || 0);
+      const angleOffset = Math.random() * Math.PI * 2;
+      const sectorSize = (Math.PI * 2) / groupCount;
+      const buckets = Array.from({ length: groupCount }, () => []);
+      for (const shard of sourceShards) {
+        if (!shard) continue;
+        const localX = (Number(shard.gridX) || 0) + (Number(shard.deformation?.x) || 0) - centerX;
+        const localY = (Number(shard.gridY) || 0) + (Number(shard.deformation?.y) || 0) - centerY;
+        let ang = Math.atan2(localY, localX) - angleOffset;
+        ang = ((ang % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+        const idx = Math.min(groupCount - 1, Math.floor(ang / sectorSize));
+        buckets[idx].push(shard);
+      }
+
+      const viable = [];
+      const leftovers = [];
+      const minGroupSize = Math.max(3, Math.min(8, Math.floor(sourceShards.length * 0.14)));
+      for (const bucket of buckets) {
+        if (bucket.length >= minGroupSize || (groupCount === 1 && bucket.length >= 3)) viable.push(bucket);
+        else leftovers.push(...bucket);
+      }
+      if (viable.length === 0) {
+        return sourceShards.length >= 3 ? [sourceShards.slice()] : [];
+      }
+      let cursor = 0;
+      for (const shard of leftovers) {
+        viable[cursor].push(shard);
+        cursor = (cursor + 1) % viable.length;
+      }
+      return viable.filter(group => group.length >= 3);
+    }
+
+    function spawnReactorBlowBreakup(entity, sourceShards, explosionPos, severity = 0) {
+      if (!entity?.hexGrid || !window.DestructorSystem?.spawnWreckEntity) {
+        if (window.DEBUG_CRIT_BLOW) console.warn('[CritBlow breakup] aborted: missing entity/hexGrid/Destructor');
+        return { fragments: 0, debris: 0 };
+      }
+
+      const eligible = Array.isArray(sourceShards)
+        ? sourceShards.filter(s => s && s.active !== false && !s.isDebris && (s.hp == null || s.hp > 0))
+        : [];
+      if (eligible.length === 0) return { fragments: 0, debris: 0 };
+
+      const severityClamped = Math.max(0, Math.min(1.4, Number(severity) || 0));
+      let fragCount = 2;
+      if (eligible.length >= 18) fragCount++;
+      if (eligible.length >= 36) fragCount++;
+      if (eligible.length >= 54 && severityClamped > 0.95) fragCount++;
+      const minFragmentShards = 4;
+      fragCount = Math.max(1, Math.min(fragCount, Math.floor(eligible.length / minFragmentShards) || 1));
+
+      let debrisCount = Math.floor(eligible.length * (0.22 + Math.min(0.28, severityClamped * 0.20)));
+      debrisCount = eligible.length >= 20 ? Math.max(debrisCount, 10) : Math.max(debrisCount, 4);
+      const maxDebrisCount = Math.max(0, eligible.length - fragCount * minFragmentShards);
+      debrisCount = Math.min(debrisCount, maxDebrisCount);
+
+      const debrisShards = debrisCount > 0
+        ? pickReactorBlowDebrisShards(entity, eligible, debrisCount)
+        : [];
+      const debrisSet = new Set(debrisShards);
+      const fragmentSource = eligible.filter(shard => !debrisSet.has(shard));
+      const groups = buildReactorBlowFragmentGroups(entity, fragmentSource, fragCount);
+      const wrecksArr = Array.isArray(window.wrecks) ? window.wrecks : null;
+      const prevCount = wrecksArr ? wrecksArr.length : 0;
+
+      for (const group of groups) {
+        if (group.length < 3) continue;
+        try { window.DestructorSystem.spawnWreckEntity(entity, group, null); }
+        catch (_) {}
+      }
+
+      const createdCount = wrecksArr ? Math.max(0, wrecksArr.length - prevCount) : 0;
+      const speedMul = 1 + Math.min(0.8, severityClamped * 0.55);
+      if (wrecksArr) {
+        for (let i = prevCount; i < wrecksArr.length; i++) {
+          const sw = wrecksArr[i];
+          if (!sw) continue;
+          const dx = sw.x - explosionPos.x;
+          const dy = sw.y - explosionPos.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          const nx = dx / dist;
+          const ny = dy / dist;
+          const tx = -ny;
+          const ty = nx;
+          const radialSpeed = (150 + Math.random() * 180) * speedMul;
+          const tangentialSpeed = (Math.random() - 0.5) * 220 * speedMul;
+          sw.vx = (sw.vx || 0) + nx * radialSpeed + tx * tangentialSpeed;
+          sw.vy = (sw.vy || 0) + ny * radialSpeed + ty * tangentialSpeed;
+          sw.angVel = (sw.angVel || 0) + (Math.random() - 0.5) * 0.42 * speedMul;
+        }
+      }
+
+      const debrisSource = createdCount > 0
+        ? debrisShards
+        : eligible;
+      if (debrisSource.length > 0) {
+        spawnFlyingHexDebris(entity, explosionPos, debrisSource, {
+          speedMin: 420,
+          speedMax: 980,
+          lateralJitter: 180,
+          tangentialKick: 240,
+          radiusMul: 1.08,
+          lifeMin: 2.8,
+          lifeMax: 3.4,
+          angVelMul: 1.35
+        });
+      }
+
+      if (window.DEBUG_CRIT_BLOW) {
+        console.log('[CritBlow breakup] eligible=' + eligible.length + ', fragments=' + createdCount + ', debris=' + debrisSource.length);
+      }
+      return { fragments: createdCount, debris: debrisSource.length };
+    }
+
+    function releaseNpcHexBody(npc) {
+      if (!npc?.hexGrid) return;
+      if (window.invalidateHexShipEntity3D) {
+        try { window.invalidateHexShipEntity3D(npc); } catch (_) {}
+      }
+      npc.hexGrid = null;
+    }
+
+    function splitWreckIntoFragments(wreck, explosionPos, fragCount) {
+      if (!wreck || !wreck.hexGrid || !window.DestructorSystem?.spawnWreckEntity) {
+        if (window.DEBUG_CRIT_BLOW) console.warn('[CritBlow split] aborted: missing wreck/hexGrid/Destructor', !!wreck, !!wreck?.hexGrid, !!window.DestructorSystem?.spawnWreckEntity);
+        return;
+      }
+      const wrecksArr = window.wrecks;
+      if (!Array.isArray(wrecksArr)) return;
+      const idx = wrecksArr.indexOf(wreck);
+      if (idx === -1) {
+        if (window.DEBUG_CRIT_BLOW) console.warn('[CritBlow split] wreck not in window.wrecks');
+        return;
+      }
+
+      const allShards = wreck.hexGrid.shards;
+      if (!allShards || allShards.length < 3) {
+        if (window.DEBUG_CRIT_BLOW) console.warn('[CritBlow split] too few shards to split:', allShards?.length);
+        return;
+      }
+      if (window.DEBUG_CRIT_BLOW) console.log('[CritBlow split] starting: shards=' + allShards.length + ', fragCount=' + fragCount);
+
+      // Always spawn a flash of single hexes flying outward
+      const debrisCount = Math.min(50, Math.max(16, Math.floor(allShards.length * 0.28)));
+      spawnFlyingHexDebris(wreck, explosionPos, debrisCount);
+
+      // K-nearest partition using random seed shards. Pick seeds that are far apart
+      // so partitions are actually spatially distinct.
+      const seedPool = allShards.slice();
+      const seeds = [];
+      const firstIdx = Math.floor(Math.random() * seedPool.length);
+      seeds.push(seedPool[firstIdx]);
+      for (let k = 1; k < fragCount; k++) {
+        // Pick the shard whose min-distance to existing seeds is largest
+        let bestShard = null, bestMinD = -1;
+        for (const s of seedPool) {
+          let minD = Infinity;
+          for (const seed of seeds) {
+            const dx = s.gridX - seed.gridX, dy = s.gridY - seed.gridY;
+            const d = dx * dx + dy * dy;
+            if (d < minD) minD = d;
+          }
+          if (minD > bestMinD) { bestMinD = minD; bestShard = s; }
+        }
+        if (bestShard) seeds.push(bestShard);
+      }
+
+      const groups = Array.from({ length: seeds.length }, () => []);
+      for (const shard of allShards) {
+        let best = 0, bestDist = Infinity;
+        for (let i = 0; i < seeds.length; i++) {
+          const dx = shard.gridX - seeds[i].gridX, dy = shard.gridY - seeds[i].gridY;
+          const d = dx * dx + dy * dy;
+          if (d < bestDist) { bestDist = d; best = i; }
+        }
+        groups[best].push(shard);
+      }
+
+      // Only now remove the original wreck — we've already taken what we needed.
+      wrecksArr.splice(idx, 1);
+
+      const prevCount = wrecksArr.length;
+      for (const group of groups) {
+        if (group.length >= 3) {
+          try { window.DestructorSystem.spawnWreckEntity(wreck, group, null); }
+          catch (_) {}
+        }
+      }
+      const createdCount = wrecksArr.length - prevCount;
+      if (window.DEBUG_CRIT_BLOW) console.log('[CritBlow split] created sub-wrecks:', createdCount);
+
+      // Kick sub-wrecks outward from explosion epicenter + add spin
+      for (let i = prevCount; i < wrecksArr.length; i++) {
+        const sw = wrecksArr[i];
+        if (!sw) continue;
+        const dx = sw.x - explosionPos.x, dy = sw.y - explosionPos.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const speed = 120 + Math.random() * 320;
+        sw.vx = (sw.vx || 0) + (dx / dist) * speed;
+        sw.vy = (sw.vy || 0) + (dy / dist) * speed;
+        sw.angVel = (sw.angVel || 0) + (Math.random() - 0.5) * 0.25;
+      }
+
+      if (createdCount === 0) {
+        // Split failed (all groups too small or spawn errored) — burst the remaining
+        // shards as flying hex debris instead of letting the wreck vanish silently.
+        spawnFlyingHexDebris(wreck, explosionPos,
+          Math.min(80, Math.max(debrisCount, allShards.length)));
+      }
+
+      // Clean up original wreck
+      wreck.hexGrid.shards = [];
+      if (window.DestructorSystem?.recycleWreck) {
+        try { window.DestructorSystem.recycleWreck(wreck); } catch (_) {}
+      }
+    }
+
+    function tryTriggerCriticalReactorBlow(npc, overkillDmg, aliveRatio, survivingShards, chainDepth) {
+      if (isFighterNPC(npc)) {
+        if (window.DEBUG_CRIT_BLOW) console.log('[CritBlow] skip fighter', npc?.type);
+        return false;
+      }
+      if (chainDepth > 1) return false;
+      const maxHull = Math.max(1, Number(npc.maxHp) || 100);
+      const overkillRatio = Math.max(0, Number(overkillDmg) || 0) / maxHull;
+      const aliveRatioClamped = Math.max(0, Math.min(1, Number(aliveRatio) || 0));
+      // Severity metric: take the bigger signal of
+      //   (a) big burst HP overkill (bulk damage weapon finishing the ship),
+      //   (b) many hexes still alive at death (fast burst kill via hex damage)
+      const severity = Math.max(overkillRatio, aliveRatioClamped);
+      const severityGate = chainDepth > 0 ? 0.72 : 0.48;
+      if (severity < severityGate) return false;
+      const normalizedSeverity = Math.max(0, Math.min(1, (severity - severityGate) / Math.max(0.0001, 1 - severityGate)));
+      const critChance = Math.min(0.26 + normalizedSeverity * 0.52, 0.78);
+      const roll = Math.random();
+      if (window.DEBUG_CRIT_BLOW) {
+        console.log('[CritBlow] try',
+          'type=' + (npc.type || '?'),
+          'overkill=' + overkillDmg?.toFixed?.(1),
+          'maxHp=' + maxHull,
+          'overkillRatio=' + overkillRatio.toFixed(3),
+          'aliveRatio=' + aliveRatioClamped.toFixed(3),
+          'severity=' + severity.toFixed(3),
+          'chance=' + critChance.toFixed(3),
+          'roll=' + roll.toFixed(3),
+          'surviving=' + (survivingShards?.length || 0),
+          'chainDepth=' + chainDepth);
+      }
+      if (roll > critChance) return false;
+
+      const posX = npc.x, posY = npc.y;
+      const size = (npc.radius || 40) * 1.5;
+      try { triggerReactorBlow3D(posX, posY, size * 1.8, { profile: 'capital' }); } catch (_) {}
+
+      if (chainDepth === 0) {
+        const aoeR = Math.max(700, (npc.radius || 40) * 6);
+        const aoeDmg = Math.max(60, maxHull * 0.45);
+        applyAoeExplosionDamage({ x: posX, y: posY }, aoeR, aoeDmg, npc);
+      }
+
+      // Screen shake for feedback when near epicenter
+      if (typeof camera !== 'undefined' && camera.addShake && ship && !ship.destroyed) {
+        const dx = (ship.pos?.x || 0) - posX, dy = (ship.pos?.y || 0) - posY;
+        const d = Math.hypot(dx, dy);
+        const shakeR = (npc.radius || 40) * 10;
+        if (d < shakeR) {
+          const k = 1 - d / shakeR;
+          camera.addShake(6 * k, 0.55);
+        }
+      }
+
+      // Critical blow turns surviving structure into a few heavy fragments plus a cloud of single hexes.
+      const explPos = { x: posX, y: posY };
+      const sourceShards = survivingShards?.length
+        ? survivingShards
+        : (npc.hexGrid?.shards || []);
+      spawnReactorBlowBreakup(npc, sourceShards, explPos, severity);
+      return true;
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
     function applyDamageToNPC(npc, dmg, cause = 'default', opts = {}) {
       if (npc.dead) return;
       if (!Number.isFinite(dmg) || dmg <= 0) return;
@@ -14284,32 +14790,45 @@
       if (npc.hp <= 0) {
         npc.dead = true;
         npc.respawnTimer = 3 + Math.random() * 6;
+        const overkillDmg = -npc.hp; // hp is negative here
+        const npcType = String(npc.type || '').toLowerCase();
+        const isFighterLike =
+          !!npc.fighter ||
+          npcType === 'fighter' ||
+          npcType === 'interceptor' ||
+          npcType === 'drone' ||
+          npcType === 'ally_fighter' ||
+          npcType === 'carrier_fighter';
 
-        // Create wreck from surviving hexes (if any)
-        if (npc.hexGrid && npc.hexGrid.shards && window.createWreckage) {
-          const survivingShards = npc.hexGrid.shards.filter(s => s.active && !s.isDebris && s.hp > 0);
-          if (survivingShards.length > 3) { // Only create wreck if enough hexes survived
+        // Measure hex alive ratio BEFORE creating wreckage / destructor cleanup,
+        // so "many hexes alive = fast burst kill" can drive critical severity
+        // even when the killing blow is a 1-damage integrity-finisher hit.
+        let hexTotal = 0, hexAlive = 0;
+        let survivingShards = [];
+        if (npc.hexGrid?.shards) {
+          for (const s of npc.hexGrid.shards) {
+            hexTotal++;
+            if (s.active && !s.isDebris && s.hp > 0) hexAlive++;
+          }
+          survivingShards = npc.hexGrid.shards.filter(s => s.active && !s.isDebris && s.hp > 0);
+        }
+        const aliveRatio = hexTotal > 0 ? hexAlive / hexTotal : 0;
+        const didCritBlow = tryTriggerCriticalReactorBlow(npc, overkillDmg, aliveRatio, survivingShards, _critChainDepth);
+
+        if (!didCritBlow) {
+          if (survivingShards.length > 3 && window.createWreckage) {
             window.createWreckage(npc, survivingShards);
+          }
+          if (cause === 'plasma') {
+            CanvasVFX.spawnExplosionPlasma(npc.x, npc.y, isFighterLike ? 1.2 : 1.45);
+          } else if (cause === 'default') {
+            CanvasVFX.spawnDefaultHit(npc.x, npc.y, isFighterLike ? 1.2 : 1.35);
+          } else {
+            CanvasVFX.spawnExplosionPlasma(npc.x, npc.y, isFighterLike ? 1.05 : 1.35);
           }
         }
 
-        if (window.overlay3D && window.makeReactorBlow) {
-          const npcType = String(npc.type || '').toLowerCase();
-          const isFighterLike =
-            !!npc.fighter ||
-            npcType === 'fighter' ||
-            npcType === 'interceptor' ||
-            npcType === 'drone' ||
-            npcType === 'ally_fighter' ||
-            npcType === 'carrier_fighter';
-          const blowSize = isFighterLike
-            ? Math.max(12, (npc.radius || 12) * 1.15)
-            : (npc.radius || 40) * 1.5;
-          triggerReactorBlow3D(npc.x, npc.y, blowSize, { profile: isFighterLike ? 'fighter' : 'capital' });
-        } else {
-          if (cause === 'plasma') { CanvasVFX.spawnExplosionPlasma(npc.x, npc.y, 1.2); }
-          else if (cause === 'default') { CanvasVFX.spawnDefaultHit(npc.x, npc.y, 1.2); }
-        }
+        releaseNpcHexBody(npc);
       }
     }
     window.applyDamageToNPC = applyDamageToNPC;
@@ -16250,6 +16769,8 @@
       ship.angle += ship.angVel * dt;
       */
       // ship.angle = wrapAngle(ship.angle);
+      updateFlyingHexDebris(dt);
+
       // Aktualizacja wraków — podział na aktywne i śpiące
       _activeWrecksBuffer.length = 0;
       _sleepingWrecksBuffer.length = 0;
@@ -17265,6 +17786,7 @@
         }
 
         CanvasVFX.drawShockwaves(ctx, cam);
+        drawFlyingHexDebris(ctx, cam);
 
         if (!window.USE_STATION_3D) {
           for (const st of stations) {

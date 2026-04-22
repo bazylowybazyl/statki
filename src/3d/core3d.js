@@ -340,6 +340,7 @@ export const Core3D = {
 
     this.canvas = canvasElement || document.getElementById('webgl-layer');
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, alpha: true, antialias: false, powerPreference: 'high-performance', premultipliedAlpha: true, logarithmicDepthBuffer: false });
+    this.renderer.localClippingEnabled = true;
 
     const dpr = (typeof window !== 'undefined' ? Number(window.devicePixelRatio) : 1) || 1;
     this.pixelRatio = Math.min(1.0, Math.max(1, dpr));

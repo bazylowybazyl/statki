@@ -27,6 +27,7 @@ export function attachPirateStation3D(_sceneIgnored, station2D) {
   // Dodajemy Bezpośrednio do naszego głównego świata 3D!
   if (Core3D.scene) {
       pirateStation3D.object3d.userData.fgCategory = 'stations';
+      pirateStation3D.object3d.userData.destructionPreset = 'pirate';
       Core3D.scene.add(pirateStation3D.object3d);
       Core3D.enableForeground3D(pirateStation3D.object3d);
   }
@@ -62,6 +63,7 @@ export function dettachPirateStation3D(_sceneIgnored) {
 
 export function updateWorld3D(dt, t) {
   if (!Core3D.isInitialized || !pirateStation3D) return;
+  if (pirateStation3D.object3d?.userData?.destructionOwned || pirateStation2D?._destroyed3D) return;
   
   // Animacje proceduralne stacji (obrót pierścieni itp.)
   if (pirateStation3D?.update) {
