@@ -31,6 +31,19 @@ import * as THREE from 'three';
 import { bakeShatterGeometry, bakeShatterMesh } from './shatterShaderBake.js';
 import { createShatterMaterial } from './shatterMaterial.js';
 import { DebrisManager } from './destructionDebrisManager.js';
+import { PanelShardManager } from './panelShardManager.js';
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const TMP_OUT = new THREE.Vector3();
+const TMP_TANGENT = new THREE.Vector3();
+const TMP_SIZE_BOX = new THREE.Box3();
+const TMP_SIZE_SPHERE = new THREE.Sphere();
+const TMP_WORLD_POS = new THREE.Vector3();
+const TMP_WORLD_SCALE = new THREE.Vector3();
+const TMP_WORLD_QUAT = new THREE.Quaternion();
+const TMP_SHELL_DIR = new THREE.Vector3();
+const TMP_SHELL_AXIS_A = new THREE.Vector3();
+const TMP_SHELL_AXIS_B = new THREE.Vector3();
+const TMP_SHELL_NORMAL_MATRIX = new THREE.Matrix3();
 
 // ── Implosion (Tier 3) GLSL ─────────────────────────────────────────────────
 const IMPLODE_VERT = /* glsl */`
@@ -111,6 +124,7 @@ class DismantleSection {
         this._rotTravel.y += rotStepY;
         this._rotTravel.z += rotStepZ;
         this.angVel.multiplyScalar(Math.pow(this.angularDrag, dt * 60));
+        this.opts.onMotion?.(this.mesh, this.age, dt, this.vel, this.angVel);
 
         if (!this.shattered && this.preShatterBursts > 0) {
             const burstStart = Math.max(0.04, this.shatterAt - this.preShatterWindow);
@@ -119,6 +133,7 @@ class DismantleSection {
                 const burstTime = burstStart + this.preShatterWindow * tNorm;
                 if (this.age < burstTime) break;
                 _spawnDetachBurst(this.mesh, this.opts, this._burstIndex, this.preShatterBursts);
+                _applyBurstImpulse(this.mesh, this.vel, this.angVel, this.opts, this._burstIndex, this.preShatterBursts);
                 this._burstIndex++;
             }
         }
@@ -126,10 +141,12 @@ class DismantleSection {
         // Trigger shatter on self after delayedShatter seconds
         if (!this.shattered && this.age >= this.shatterAt) {
             this.shattered = true;
+            const breakupVel = this.vel.clone();
+            const breakupAng = this.angVel.clone();
             // Stop physical motion — GPU shader handles all movement from here
             this.vel.set(0, 0, 0);
             this.angVel.set(0, 0, 0);
-            _applyShatterToHierarchy(this.mesh, this.opts, _worldTime);
+            _triggerHierarchyBreakup(this.mesh, this.opts, _worldTime, breakupVel, breakupAng);
         }
     }
 }
@@ -141,10 +158,13 @@ let   _reactorFactory  = null;       // createReactorBlowFactory result
 let   _shockwaveMgr    = null;       // Shockwave3DManager instance
 
 const _debrisMgr       = new DebrisManager();
+let   _panelShardMgr   = null;
 /** @type {Set<THREE.Mesh>} tracked shatter meshes — avoids full scene traverse */
 const _shatterMeshes   = new Set();
 /** @type {DismantleSection[]} */
 const _dismantling     = [];
+/** @type {Array<object>} */
+const _rootFades       = [];
 /** @type {Array<{time:number, fn:Function}>} */
 const _pendingCallbacks = [];
 /** @type {Map<string, Function[]>} */
@@ -168,6 +188,10 @@ export const DESTRUCTION_CONFIG = {
     gravity:         0,
     staggerWindow:   0.55,
     burstStrength:   0.65,
+    debrisStyle:     'triangles',
+    shardScale:      1.0,
+    shardLifetime:   3.1,
+    emissiveShardRatio: 0.16,
     // VFX defaults
     sparks:          600,
     flash:           1.0,
@@ -186,6 +210,9 @@ export const DESTRUCTION_PRESETS = {
         heatGlow:       1.4,
         staggerWindow:  0.40,
         burstStrength:  0.55,
+        shardScale:     1.08,
+        shardLifetime:  3.2,
+        emissiveShardRatio: 0.12,
         flashColor:     new THREE.Color(1.0, 0.6, 0.2),
         sparks:         900,
     },
@@ -195,6 +222,9 @@ export const DESTRUCTION_PRESETS = {
         heatGlow:       0.8,
         staggerWindow:  0.65,
         burstStrength:  0.78,
+        shardScale:     1.0,
+        shardLifetime:  3.0,
+        emissiveShardRatio: 0.24,
         flashColor:     new THREE.Color(0.8, 0.9, 1.0),
         sparks:         500,
     },
@@ -262,7 +292,7 @@ function _shatterSingle(mesh, opts, worldTime) {
 
     const burstPulses = Math.max(0, opts.burstPulses ?? 0);
     if (burstPulses > 0) {
-        const worldPos = _meshWorldPos(mesh);
+        const overlayPos = _meshOverlayPos(mesh);
         const burstSpacing = Math.max(0.04, opts.burstSpacing ?? 0.16);
         const burstSize = opts.burstSize ?? 14;
         for (let i = 0; i < burstPulses; i++) {
@@ -271,8 +301,8 @@ function _shatterSingle(mesh, opts, worldTime) {
                 const radius = 10 + i * 8;
                 const angle = Math.random() * Math.PI * 2;
                 const burstFx = _reactorFactory({
-                    x: worldPos.x + Math.cos(angle) * radius,
-                    y: worldPos.z + Math.sin(angle) * radius,
+                    x: overlayPos.x + Math.cos(angle) * radius,
+                    y: overlayPos.y + Math.sin(angle) * radius,
                     size: burstSize * (1.0 + i * 0.22),
                     profile: 'fighter',
                 });
@@ -287,6 +317,19 @@ function _meshWorldPos(mesh) {
     const p = new THREE.Vector3();
     mesh.getWorldPosition(p);
     return p;
+}
+
+function _meshOverlayPos(mesh) {
+    const p = _meshWorldPos(mesh);
+    return { x: p.x, y: -p.y, worldPos: p };
+}
+
+function _estimateObjectWorldRadius(object3D) {
+    if (!object3D) return 1;
+    TMP_SIZE_BOX.setFromObject(object3D);
+    if (TMP_SIZE_BOX.isEmpty()) return 1;
+    TMP_SIZE_BOX.getBoundingSphere(TMP_SIZE_SPHERE);
+    return Math.max(1, TMP_SIZE_SPHERE.radius || 1);
 }
 
 function _clampSignedStep(current, step, limit) {
@@ -329,17 +372,270 @@ function _computePlanarDetachVelocity(centerPos, originPos, speed, planarBias = 
 
 function _spawnDetachBurst(object3D, opts, burstIndex = 0, burstCount = 1) {
     if (!_reactorFactory || typeof window === 'undefined' || !window.overlay3D?.spawn) return;
-    const worldPos = _meshWorldPos(object3D);
+    const overlayPos = _meshOverlayPos(object3D);
+    const worldRadius = _estimateObjectWorldRadius(object3D);
     const phase = burstCount > 0 ? (burstIndex / Math.max(1, burstCount - 1)) : 0;
     const jitterR = (opts.preBurstRadius ?? 12) * (1.0 + phase * 0.6);
     const angle = Math.random() * Math.PI * 2;
+    const burstSize = (opts.preBurstSize ?? 12) * (1.0 + phase * 0.35) * THREE.MathUtils.clamp(0.9 + worldRadius * 0.018, 1.0, 2.6);
+    const profile = (worldRadius > 58 || phase > 0.45) ? 'capital' : 'fighter';
     const fx = _reactorFactory({
-        x: worldPos.x + Math.cos(angle) * jitterR,
-        y: worldPos.z + Math.sin(angle) * jitterR,
-        size: (opts.preBurstSize ?? 12) * (1.0 + phase * 0.35),
-        profile: 'fighter',
+        x: overlayPos.x + Math.cos(angle) * jitterR,
+        y: overlayPos.y + Math.sin(angle) * jitterR,
+        size: burstSize,
+        profile,
     });
     if (fx) window.overlay3D.spawn(fx);
+}
+
+function _spawnBreakupBurst(object3D, opts = {}, kind = 'breakup') {
+    if (!_reactorFactory || typeof window === 'undefined' || !window.overlay3D?.spawn || !object3D) return;
+    const overlayPos = _meshOverlayPos(object3D);
+    const worldRadius = _estimateObjectWorldRadius(object3D);
+    const profile = worldRadius > 72 || kind !== 'carrier' ? 'capital' : 'fighter';
+    const baseSize =
+        kind === 'shellFinal' ? 18 :
+        kind === 'shellSplit' ? 20 :
+        kind === 'carrier' ? 16 : 14;
+    const sizeMul =
+        kind === 'shellFinal' ? 1.55 :
+        kind === 'shellSplit' ? 1.35 :
+        kind === 'carrier' ? 1.18 : 1.0;
+    const fx = _reactorFactory({
+        x: overlayPos.x,
+        y: overlayPos.y,
+        size: (opts.breakupBurstSize ?? baseSize) * sizeMul * THREE.MathUtils.clamp(0.95 + worldRadius * 0.022, 1.0, 3.2),
+        profile,
+    });
+    if (fx) window.overlay3D.spawn(fx);
+}
+
+function _applyBurstImpulse(object3D, vel, angVel, opts, burstIndex = 0, burstCount = 1) {
+    const phase = burstCount > 0 ? (burstIndex / Math.max(1, burstCount - 1)) : 0;
+    const center = _meshWorldPos(object3D);
+    const origin = opts.detachOrigin || opts.origin || center;
+
+    TMP_OUT.subVectors(center, origin);
+    TMP_OUT.z *= 0.18;
+    if (TMP_OUT.lengthSq() < 1e-4) {
+        TMP_OUT.set(Math.random() - 0.5, Math.random() - 0.5, (Math.random() - 0.5) * 0.18);
+    }
+    TMP_OUT.normalize();
+
+    TMP_TANGENT.crossVectors(TMP_OUT, WORLD_UP);
+    if (TMP_TANGENT.lengthSq() < 1e-4) TMP_TANGENT.set(1, 0, 0);
+    TMP_TANGENT.normalize();
+
+    const kickBase = opts.preBurstImpulse ?? 18;
+    const kick = kickBase * (0.78 + phase * 0.52);
+    const tangentKick = kickBase * (0.08 + phase * 0.08) * (Math.random() - 0.5);
+    vel.addScaledVector(TMP_OUT, kick);
+    vel.addScaledVector(TMP_TANGENT, tangentKick);
+    vel.z += (Math.random() - 0.5) * kickBase * 0.035;
+
+    const angKick = (opts.preBurstAngularKick ?? 0.035) * (0.85 + phase * 0.55);
+    angVel.x += (Math.random() - 0.5) * angKick;
+    angVel.y += (Math.random() - 0.5) * angKick;
+    angVel.z += (Math.random() - 0.5) * angKick;
+
+    const maxSpeed = opts.maxCarrierSpeed ?? 240;
+    if (vel.length() > maxSpeed) vel.setLength(maxSpeed);
+}
+
+function _cloneShellHierarchy(rootObject) {
+    const clone = rootObject.clone(true);
+    const srcMeshes = [];
+    const dstMeshes = [];
+
+    rootObject.traverse(child => {
+        if (child.isMesh) srcMeshes.push(child);
+    });
+    clone.traverse(child => {
+        if (child.isMesh) dstMeshes.push(child);
+    });
+
+    const count = Math.min(srcMeshes.length, dstMeshes.length);
+    for (let i = 0; i < count; i++) {
+        const src = srcMeshes[i];
+        const dst = dstMeshes[i];
+        if (src.geometry) {
+            const g = src.geometry.clone();
+            if (src.geometry.boundingSphere) g.boundingSphere = src.geometry.boundingSphere.clone();
+            if (src.geometry.boundingBox) g.boundingBox = src.geometry.boundingBox.clone();
+            if (src.geometry.__shardSpawnData) g.__shardSpawnData = src.geometry.__shardSpawnData;
+            if (src.geometry.__shatterBaked) g.__shatterBaked = src.geometry.__shatterBaked;
+            dst.geometry = g;
+        }
+        if (Array.isArray(src.material)) {
+            dst.material = src.material.map(m => m?.clone?.() ?? m);
+        } else if (src.material?.clone) {
+            dst.material = src.material.clone();
+        }
+        dst.frustumCulled = false;
+        dst.castShadow = src.castShadow;
+        dst.receiveShadow = src.receiveShadow;
+    }
+
+    rootObject.updateWorldMatrix(true, true);
+    rootObject.matrixWorld.decompose(TMP_WORLD_POS, TMP_WORLD_QUAT, TMP_WORLD_SCALE);
+    clone.position.copy(TMP_WORLD_POS);
+    clone.quaternion.copy(TMP_WORLD_QUAT);
+    clone.scale.copy(TMP_WORLD_SCALE);
+    clone.visible = true;
+    clone.userData = { ...(rootObject.userData || {}) };
+    return clone;
+}
+
+function _makePlane(normal, negate = false) {
+    const n = negate ? normal.clone().multiplyScalar(-1) : normal.clone();
+    return new THREE.Plane(n.normalize(), 0);
+}
+
+function _buildShellSplitDefs(count) {
+    const pieceCount = Math.max(2, Math.min(4, count | 0));
+    const baseAngle = Math.random() * Math.PI * 2;
+    TMP_SHELL_AXIS_A.set(Math.cos(baseAngle), Math.sin(baseAngle), (Math.random() - 0.5) * 0.18).normalize();
+    TMP_SHELL_AXIS_B.set(-TMP_SHELL_AXIS_A.y, TMP_SHELL_AXIS_A.x, (Math.random() - 0.5) * 0.14).normalize();
+
+    const aPos = TMP_SHELL_AXIS_A.clone();
+    const aNeg = TMP_SHELL_AXIS_A.clone().multiplyScalar(-1);
+    const bPos = TMP_SHELL_AXIS_B.clone();
+    const bNeg = TMP_SHELL_AXIS_B.clone().multiplyScalar(-1);
+
+    if (pieceCount === 2) {
+        return [
+            { dir: aPos.clone(), localPlanes: [_makePlane(aPos)] },
+            { dir: aNeg.clone(), localPlanes: [_makePlane(aPos, true)] },
+        ];
+    }
+
+    if (pieceCount === 3) {
+        return [
+            { dir: aPos.clone().addScaledVector(bPos, 0.35).normalize(), localPlanes: [_makePlane(aPos), _makePlane(bPos)] },
+            { dir: aPos.clone().addScaledVector(bNeg, 0.35).normalize(), localPlanes: [_makePlane(aPos), _makePlane(bPos, true)] },
+            { dir: aNeg.clone(), localPlanes: [_makePlane(aPos, true)] },
+        ];
+    }
+
+    return [
+        { dir: aPos.clone().add(bPos).normalize(), localPlanes: [_makePlane(aPos), _makePlane(bPos)] },
+        { dir: aPos.clone().add(bNeg).normalize(), localPlanes: [_makePlane(aPos), _makePlane(bPos, true)] },
+        { dir: aNeg.clone().add(bPos).normalize(), localPlanes: [_makePlane(aPos, true), _makePlane(bPos)] },
+        { dir: aNeg.clone().add(bNeg).normalize(), localPlanes: [_makePlane(aPos, true), _makePlane(bPos, true)] },
+    ];
+}
+
+function _computeAdaptiveShellPieceCount(rootObject, opts = {}) {
+    if (Number.isFinite(opts.shellPieceCount)) {
+        return Math.max(2, Math.min(6, opts.shellPieceCount | 0));
+    }
+    const radius = _estimateObjectWorldRadius(rootObject);
+    if (radius >= 520) return 6;
+    if (radius >= 340) return 5;
+    if (radius >= 220) return 4;
+    if (radius >= 120) return 3;
+    return 2;
+}
+
+function _createShellClipContext(rootObject, localPlanes) {
+    const worldPlanes = localPlanes.map(p => p.clone());
+    const materials = [];
+    rootObject.traverse(child => {
+        if (!child.isMesh) return;
+        child.frustumCulled = false;
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        for (const mat of mats) {
+            if (!mat) continue;
+            mat.clippingPlanes = worldPlanes;
+            mat.clipIntersection = false;
+            mat.clipShadows = false;
+            materials.push(mat);
+        }
+    });
+    return { localPlanes, worldPlanes, materials };
+}
+
+function _updateShellClipContext(rootObject, clipCtx) {
+    if (!rootObject || !clipCtx) return;
+    rootObject.updateWorldMatrix(true, false);
+    TMP_SHELL_NORMAL_MATRIX.getNormalMatrix(rootObject.matrixWorld);
+    for (let i = 0; i < clipCtx.localPlanes.length; i++) {
+        clipCtx.worldPlanes[i].copy(clipCtx.localPlanes[i]).applyMatrix4(rootObject.matrixWorld, TMP_SHELL_NORMAL_MATRIX);
+    }
+}
+
+function _spawnShellSplit(rootObject, opts, worldTime, baseVelocity = null, baseAngular = null) {
+    if (!_scene || opts.shellSplitEnabled === false) return false;
+    const shellRadius = _estimateObjectWorldRadius(rootObject);
+    const pieceCount = _computeAdaptiveShellPieceCount(rootObject, opts);
+    const defs = _buildShellSplitDefs(pieceCount);
+    if (!defs.length) return false;
+
+    _spawnBreakupBurst(rootObject, opts, 'shellSplit');
+    const origin = _meshWorldPos(rootObject);
+    let spawnedPieces = 0;
+    for (let i = 0; i < defs.length; i++) {
+        const def = defs[i];
+        const pieceRoot = _cloneShellHierarchy(rootObject);
+        pieceRoot.name = `${rootObject.name || 'shell'}__piece${i}`;
+        pieceRoot.userData.destructionOwned = true;
+        pieceRoot.userData.destructionPreset = opts.preset || rootObject.userData?.destructionPreset || 'default';
+        _scene.add(pieceRoot);
+
+        const clipCtx = _createShellClipContext(pieceRoot, def.localPlanes);
+        _updateShellClipContext(pieceRoot, clipCtx);
+
+        TMP_SHELL_DIR.copy(def.dir).applyQuaternion(pieceRoot.quaternion).normalize();
+        const breakupOrigin = origin.clone().addScaledVector(TMP_SHELL_DIR, shellRadius * 0.18);
+        const pieceVel = (baseVelocity ? baseVelocity.clone() : new THREE.Vector3())
+            .multiplyScalar(0.88)
+            .addScaledVector(TMP_SHELL_DIR, (opts.shellPieceKick ?? 42) * (0.92 + i * 0.08));
+        pieceVel.z += (Math.random() - 0.5) * (opts.shellPieceKick ?? 42) * 0.018;
+
+        const pieceAng = (baseAngular ? baseAngular.clone() : new THREE.Vector3()).multiplyScalar(0.38);
+        const shellSpin = opts.shellPieceSpin ?? 0.18;
+        pieceAng.x += (Math.random() - 0.5) * shellSpin;
+        pieceAng.y += (Math.random() - 0.5) * shellSpin;
+        pieceAng.z += (Math.random() - 0.5) * shellSpin;
+
+        const pieceOpts = {
+            ...opts,
+            shellSplitEnabled: false,
+            clipPlanes: clipCtx.worldPlanes,
+            onMotion: () => _updateShellClipContext(pieceRoot, clipCtx),
+            delayedShatter: opts.shellPieceShatterDelay ?? THREE.MathUtils.clamp(1.25 + shellRadius * 0.0045, 1.35, 3.6),
+            drag: opts.shellPieceDrag ?? 0.99725,
+            angularDrag: opts.shellPieceAngularDrag ?? 0.99625,
+            launchRamp: opts.shellPieceLaunchRamp ?? 0.14,
+            rotationDelay: opts.shellPieceRotationDelay ?? THREE.MathUtils.clamp(0.72 + shellRadius * 0.0018, 0.8, 1.45),
+            maxRotationBeforeShatter: opts.shellPieceMaxRotation ?? 0.16,
+            preShatterBursts: opts.shellPieceBursts ?? Math.max(3, Math.min(6, pieceCount)),
+            preShatterWindow: opts.shellPieceBurstWindow ?? THREE.MathUtils.clamp(0.9 + shellRadius * 0.0022, 0.95, 1.85),
+            preBurstSize: opts.shellPieceBurstSize ?? 14,
+            preBurstRadius: opts.shellPieceBurstRadius ?? 10,
+            preBurstImpulse: opts.shellPieceBurstImpulse ?? 16,
+            preBurstAngularKick: opts.shellPieceBurstAngularKick ?? 0.028,
+            maxCarrierSpeed: opts.shellPieceMaxSpeed ?? 225,
+            shardScale: (opts.shardScale ?? DESTRUCTION_CONFIG.shardScale) * 0.84,
+            shardLifetime: opts.shellPieceShardLifetime ?? Math.max(4.2, (opts.shardLifetime ?? DESTRUCTION_CONFIG.shardLifetime) * 1.18),
+            emissiveShardRatio: opts.shellPieceEmissiveShardRatio ?? opts.emissiveShardRatio ?? DESTRUCTION_CONFIG.emissiveShardRatio,
+            shardDrag: opts.shellPieceShardDrag ?? 0.9972,
+            shardAngularDrag: opts.shellPieceShardAngularDrag ?? 0.9961,
+            shardFadeStartMul: opts.shellPieceShardFadeStartMul ?? 0.84,
+            driftMul: opts.shellPieceDriftMul ?? 1.16,
+            detachOrigin: origin.clone(),
+            breakupOrigin,
+            preset: opts.preset || rootObject.userData?.destructionPreset || 'default',
+        };
+
+        _dismantling.push(new DismantleSection(pieceRoot, pieceVel, pieceAng, _scene, pieceOpts));
+        _spawnDetachBurst(pieceRoot, { ...opts, preBurstSize: pieceOpts.preBurstSize, preBurstRadius: pieceOpts.preBurstRadius }, i, defs.length);
+        spawnedPieces++;
+    }
+
+    rootObject.visible = false;
+    if (rootObject.parent) rootObject.parent.remove(rootObject);
+    return spawnedPieces > 0;
 }
 
 function _applyShatterToHierarchy(rootObject, opts, worldTime) {
@@ -353,6 +649,113 @@ function _applyShatterToHierarchy(rootObject, opts, worldTime) {
         const expiry = worldTime + (opts.debrisLifetime ?? DESTRUCTION_CONFIG.debrisLifetime) + 2;
         _debrisMgr.register(rootObject, _scene, expiry);
     }
+}
+
+function _hasShardSpawnData(rootObject) {
+    let found = false;
+    rootObject.traverse(child => {
+        if (found || !child.isMesh) return;
+        const data = child.geometry?.__shardSpawnData;
+        if (data?.count > 0) found = true;
+    });
+    return found;
+}
+
+function _shouldUsePanelHybrid(rootObject, opts) {
+    return (opts.debrisStyle === 'panelHybrid') && !!_panelShardMgr && _hasShardSpawnData(rootObject);
+}
+
+function _markDestructionOwned(rootObject, opts) {
+    if (!rootObject) return;
+    rootObject.userData = rootObject.userData || {};
+    rootObject.userData.destructionOwned = true;
+    if (opts?.preset) rootObject.userData.destructionPreset = opts.preset;
+}
+
+function _registerRootCleanup(rootObject, worldTime, opts, extra = 0.8) {
+    const expiry = worldTime + (opts.shardLifetime ?? opts.debrisLifetime ?? DESTRUCTION_CONFIG.shardLifetime) + extra;
+    _debrisMgr.register(rootObject, _scene, expiry);
+}
+
+function _beginRootFade(rootObject, worldTime, opts) {
+    const duration = Math.max(0.08, Math.min(0.12, opts.flashFadeDuration ?? 0.10));
+    const flashColor = (opts.flashColor instanceof THREE.Color ? opts.flashColor : new THREE.Color(opts.flashColor ?? 0xffffff)).clone();
+    const entries = [];
+    rootObject.traverse(child => {
+        if (!child.isMesh) return;
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        const snapshots = [];
+        for (const mat of mats) {
+            if (!mat) continue;
+            snapshots.push({
+                mat,
+                opacity: Number.isFinite(mat.opacity) ? mat.opacity : 1,
+                transparent: !!mat.transparent,
+                depthWrite: mat.depthWrite !== false,
+                emissive: mat.emissive?.clone?.() ?? null,
+                emissiveIntensity: Number.isFinite(mat.emissiveIntensity) ? mat.emissiveIntensity : 1,
+            });
+            mat.transparent = true;
+            mat.depthWrite = false;
+        }
+        if (snapshots.length) entries.push({ snapshots });
+    });
+
+    if (entries.length) {
+        _rootFades.push({
+            root: rootObject,
+            start: worldTime,
+            end: worldTime + duration,
+            flashColor,
+            entries,
+        });
+    } else {
+        _scheduleCallback(duration, () => {
+            if (rootObject) rootObject.visible = false;
+        });
+    }
+}
+
+function _spawnPanelHybrid(rootObject, opts, worldTime, baseVelocity = null, baseAngular = null) {
+    if (!_panelShardMgr) return false;
+    _markDestructionOwned(rootObject, opts);
+    const spawned = _panelShardMgr.spawnFromObject(rootObject, {
+        preset: opts.preset || rootObject.userData?.destructionPreset || 'default',
+        fragmentDrift: opts.fragmentDrift ?? DESTRUCTION_CONFIG.fragmentDrift,
+        shardScale: opts.shardScale ?? DESTRUCTION_CONFIG.shardScale,
+        shardLifetime: opts.shardLifetime ?? DESTRUCTION_CONFIG.shardLifetime,
+        emissiveShardRatio: opts.emissiveShardRatio ?? DESTRUCTION_CONFIG.emissiveShardRatio,
+        clipPlanes: opts.clipPlanes,
+        baseVelocity,
+        baseAngular,
+        origin: opts.breakupOrigin ?? opts.origin,
+        driftMul: opts.driftMul,
+        gravity: opts.gravity ?? 0,
+    });
+    if (spawned <= 0) return false;
+    _registerRootCleanup(rootObject, worldTime, opts);
+    return true;
+}
+
+function _triggerHierarchyBreakup(rootObject, opts, worldTime, baseVelocity = null, baseAngular = null) {
+    if (_spawnShellSplit(rootObject, opts, worldTime, baseVelocity, baseAngular)) {
+        return true;
+    }
+    if (_shouldUsePanelHybrid(rootObject, opts)) {
+        _markDestructionOwned(rootObject, opts);
+        if (_spawnPanelHybrid(rootObject, opts, worldTime, baseVelocity, baseAngular)) {
+            _spawnBreakupBurst(rootObject, opts, opts.clipPlanes ? 'shellFinal' : 'carrier');
+            if (opts.clipPlanes || opts.instantHideOnBreakup) {
+                rootObject.visible = false;
+                if (rootObject.parent) rootObject.parent.remove(rootObject);
+            } else {
+                _beginRootFade(rootObject, worldTime, opts);
+            }
+            return true;
+        }
+    }
+    _applyShatterToHierarchy(rootObject, opts, worldTime);
+    return false;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -369,6 +772,8 @@ export const Destruction3D = {
         _scene          = scene;
         _reactorFactory = reactorFactory;
         _shockwaveMgr   = shockwaveManager;
+        if (_panelShardMgr?.disposeAll) _panelShardMgr.disposeAll();
+        _panelShardMgr  = scene ? new PanelShardManager(scene) : null;
     },
 
     /**
@@ -427,6 +832,23 @@ export const Destruction3D = {
 
         // --- T1 Shatter ---
         const worldPos = _meshWorldPos(rootMesh);
+        _markDestructionOwned(rootMesh, opts);
+
+        if (_shouldUsePanelHybrid(rootMesh, opts)) {
+            if (_spawnPanelHybrid(rootMesh, opts, now)) {
+                _beginRootFade(rootMesh, now, opts);
+                this._spawnVFX(worldPos, opts);
+
+                const dur = opts.duration ?? DESTRUCTION_CONFIG.duration;
+                opts.onImpactStart?.();
+                _scheduleCallback(dur * 0.30, () => opts.onShatterPeak?.());
+                _scheduleCallback(dur,        () => opts.onCollapseEnd?.());
+                _scheduleCallback(dur * 1.5,  () => opts.onSettle?.());
+
+                this.emit('shatterStart', { mesh: rootMesh, worldTime: now });
+                return;
+            }
+        }
 
         // Shatter every Mesh descendant under one cleanup root
         _applyShatterToHierarchy(rootMesh, opts, now);
@@ -473,6 +895,7 @@ export const Destruction3D = {
 
         // Detach to centered pivot so rotation doesn't orbit around an off-center origin.
         const detachedRoot = _detachWithCenteredPivot(section);
+        const sectionRadius = _estimateObjectWorldRadius(detachedRoot);
 
         const stationCenter = new THREE.Vector3();
         stationRoot.getWorldPosition(stationCenter);
@@ -493,19 +916,32 @@ export const Destruction3D = {
 
         const ds = new DismantleSection(detachedRoot, vel, angVel, _scene, {
             ...opts,
-            delayedShatter: opts.delayedShatter ?? 1.15,
-            drag: opts.drag ?? 0.992,
-            angularDrag: opts.angularDrag ?? 0.993,
+            debrisStyle: opts.debrisStyle ?? 'panelHybrid',
+            preset: opts.preset ?? stationRoot.userData?.destructionPreset ?? 'default',
+            shardScale: opts.shardScale ?? DESTRUCTION_CONFIG.shardScale,
+            shardLifetime: opts.shardLifetime ?? DESTRUCTION_CONFIG.shardLifetime,
+            emissiveShardRatio: opts.emissiveShardRatio ?? DESTRUCTION_CONFIG.emissiveShardRatio,
+            delayedShatter: opts.delayedShatter ?? THREE.MathUtils.clamp(2.3 + sectionRadius * 0.0035, 2.4, 4.6),
+            drag: opts.drag ?? 0.9971,
+            angularDrag: opts.angularDrag ?? 0.9961,
             launchRamp: opts.launchRamp ?? 0.16,
-            rotationDelay: opts.rotationDelay ?? 0.46,
+            rotationDelay: opts.rotationDelay ?? THREE.MathUtils.clamp(1.15 + sectionRadius * 0.0014, 1.2, 1.9),
             maxRotationBeforeShatter: opts.maxRotationBeforeShatter ?? 0.12,
             staggerWindow: opts.staggerWindow ?? 0.65,
             burstStrength: opts.burstStrength ?? 0.78,
             burstPulses: opts.burstPulses ?? 0,
-            preShatterBursts: opts.preShatterBursts ?? 4,
-            preShatterWindow: opts.preShatterWindow ?? 0.62,
-            preBurstSize: opts.preBurstSize ?? 13,
-            preBurstRadius: opts.preBurstRadius ?? 10,
+            preShatterBursts: opts.preShatterBursts ?? Math.max(5, Math.min(8, 3 + Math.round(sectionRadius / 120))),
+            preShatterWindow: opts.preShatterWindow ?? THREE.MathUtils.clamp(1.55 + sectionRadius * 0.0018, 1.6, 2.4),
+            preBurstSize: opts.preBurstSize ?? 16,
+            preBurstRadius: opts.preBurstRadius ?? 14,
+            preBurstImpulse: opts.preBurstImpulse ?? 22,
+            preBurstAngularKick: opts.preBurstAngularKick ?? 0.045,
+            maxCarrierSpeed: opts.maxCarrierSpeed ?? 300,
+            detachOrigin: opts.detachOrigin ?? stationCenter.clone(),
+            shellSplitEnabled: opts.shellSplitEnabled ?? true,
+            shellPieceKick: opts.shellPieceKick ?? 46,
+            shellPieceShatterDelay: opts.shellPieceShatterDelay ?? 1.15,
+            shellPieceBursts: opts.shellPieceBursts ?? 3,
             onCollapseEnd: () => opts.onCollapseEnd?.(),
         });
         _dismantling.push(ds);
@@ -562,6 +998,7 @@ export const Destruction3D = {
         _scene.add(mesh);
         const detachedRoot = _detachWithCenteredPivot(mesh);
         const detachedCenter = _meshWorldPos(detachedRoot);
+        const chunkRadius = _estimateObjectWorldRadius(detachedRoot);
 
         // ── 4. Velocity: outward from station centre + upward bias ────────
         const stationCenter = new THREE.Vector3();
@@ -577,18 +1014,20 @@ export const Destruction3D = {
             (Math.random() - 0.5) * spinRate
         );
 
-        const shatterDelay = opts.shatterDelay ?? 0.95;
+        const shatterDelay = opts.shatterDelay ?? THREE.MathUtils.clamp(2.2 + chunkRadius * 0.0038, 2.25, 4.2);
 
         // Normalize fragmentDrift so world-space displacement stays meaningfully
         // outside the source hull, even for large station chunks.
         // regardless of model geometry scale (worldScale already captured above).
         const modelScale = Math.max(0.001, worldScale.x);
-        const targetWorldDrift = 320;
+        const targetWorldDrift = 460;
         const normalizedDrift  = targetWorldDrift / modelScale;
 
         // ── 5. Hand off to DismantleSection fake physics ──────────────────
         // After shatterDelay, the chunk shatters via GPU shader
         const ds = new DismantleSection(detachedRoot, vel, angVel, _scene, {
+            debrisStyle: opts.debrisStyle ?? 'panelHybrid',
+            preset: opts.preset ?? stationRoot.userData?.destructionPreset ?? 'default',
             delayedShatter: shatterDelay,
             // Chunk shatter opts — quicker, tighter than full station collapse
             duration:       1.05,
@@ -600,23 +1039,35 @@ export const Destruction3D = {
             staggerWindow:  0.72,
             burstStrength:  0.95,
             burstPulses:    0,
-            preShatterBursts: 4,
-            preShatterWindow: 0.58,
-            preBurstSize:   15,
-            preBurstRadius: 12,
-            drag:           0.993,
-            angularDrag:    0.993,
-            launchRamp:     0.14,
-            rotationDelay:  0.42,
-            maxRotationBeforeShatter: 0.14,
+            preShatterBursts: 5,
+            preShatterWindow: 1.08,
+            preBurstSize:   18,
+            preBurstRadius: 14,
+            preBurstImpulse: 24,
+            preBurstAngularKick: 0.05,
+            shardScale:     opts.shardScale ?? 1.06,
+            shardLifetime:  opts.shardLifetime ?? 3.4,
+            emissiveShardRatio: opts.emissiveShardRatio ?? 0.18,
+            drag:           0.99725,
+            angularDrag:    0.99625,
+            launchRamp:     0.18,
+            rotationDelay:  THREE.MathUtils.clamp(1.05 + chunkRadius * 0.0016, 1.1, 1.85),
+            maxRotationBeforeShatter: 0.12,
+            maxCarrierSpeed: 315,
+            detachOrigin:   stationCenter.clone(),
+            shellSplitEnabled: opts.shellSplitEnabled ?? true,
+            shellPieceKick: opts.shellPieceKick ?? 54,
+            shellPieceShatterDelay: opts.shellPieceShatterDelay ?? THREE.MathUtils.clamp(1.6 + chunkRadius * 0.0028, 1.7, 3.2),
+            shellPieceBursts: opts.shellPieceBursts ?? Math.max(3, Math.min(6, 2 + Math.round(chunkRadius / 140))),
         });
         _dismantling.push(ds);
 
         // ── 6. Small spark burst at the breakaway point ───────────────────
         if (_reactorFactory) {
+            const overlayPos = _meshOverlayPos(detachedRoot);
             const fx = _reactorFactory({
-                x:       detachedCenter.x,
-                y:       detachedCenter.z,   // top-down: world-Z maps to reactorblow Y
+                x:       overlayPos.x,
+                y:       overlayPos.y,
                 size:    18 + Math.random() * 18,
                 profile: 'fighter',
             });
@@ -683,6 +1134,10 @@ export const Destruction3D = {
         // Debris cleanup
         _debrisMgr.update(worldTime);
 
+        if (_panelShardMgr) {
+            _panelShardMgr.update(dt);
+        }
+
         // Dismantle fake physics
         for (let i = _dismantling.length - 1; i >= 0; i--) {
             const ds = _dismantling[i];
@@ -698,6 +1153,30 @@ export const Destruction3D = {
             if (worldTime >= cb.time) {
                 cb.fn();
                 _pendingCallbacks.splice(i, 1);
+            }
+        }
+
+        for (let i = _rootFades.length - 1; i >= 0; i--) {
+            const fade = _rootFades[i];
+            if (!fade.root || !fade.root.parent) {
+                _rootFades.splice(i, 1);
+                continue;
+            }
+            const t = Math.max(0, Math.min(1, (worldTime - fade.start) / Math.max(0.001, fade.end - fade.start)));
+            const inv = 1.0 - t;
+            for (const entry of fade.entries) {
+                for (const snap of entry.snapshots) {
+                    const mat = snap.mat;
+                    mat.opacity = snap.opacity * inv;
+                    if (snap.emissive) {
+                        mat.emissive.copy(snap.emissive).lerp(fade.flashColor, inv * 0.55);
+                        mat.emissiveIntensity = snap.emissiveIntensity + inv * 1.3;
+                    }
+                }
+            }
+            if (t >= 1.0) {
+                fade.root.visible = false;
+                _rootFades.splice(i, 1);
             }
         }
     },
@@ -730,13 +1209,16 @@ export const Destruction3D = {
         const flash  = opts.flash    ?? DESTRUCTION_CONFIG.flash;
         const sparks = opts.sparks   ?? DESTRUCTION_CONFIG.sparks;
         const doShock = opts.shockwave ?? DESTRUCTION_CONFIG.shockwave;
+        const overlayY = -worldPos.y;
 
         // Sparks via reactorFactory
         if (_reactorFactory && sparks > 0) {
             const size = Math.sqrt(sparks) * 6;
             const fx = _reactorFactory({
                 x:       worldPos.x,
+                y:       overlayY,
                 y:       worldPos.z,   // reactorblow uses top-down XY → Z maps to Y in world
+                y:       overlayY,
                 size,
                 profile: 'capital',
             });
@@ -760,6 +1242,7 @@ export const Destruction3D = {
     _implodeSingle(mesh, opts) {
         const worldPos = _meshWorldPos(mesh);
         const dur = opts.implodeDuration ?? DESTRUCTION_CONFIG.implodeDuration;
+        _markDestructionOwned(mesh, opts);
 
         mesh.traverse(child => {
             if (!child.isMesh) return;
@@ -810,8 +1293,11 @@ export const Destruction3D = {
      */
     dispose() {
         _debrisMgr.disposeAll();
+        if (_panelShardMgr?.disposeAll) _panelShardMgr.disposeAll();
+        _panelShardMgr = null;
         _shatterMeshes.clear();
         _dismantling.length     = 0;
+        _rootFades.length       = 0;
         _pendingCallbacks.length = 0;
         _listeners.clear();
     },

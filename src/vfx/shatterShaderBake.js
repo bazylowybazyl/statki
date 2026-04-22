@@ -27,6 +27,93 @@ const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _centroid = new THREE.Vector3();
 const _rand = new THREE.Vector3();
+const _edge1 = new THREE.Vector3();
+const _edge2 = new THREE.Vector3();
+const _normal = new THREE.Vector3();
+
+function clampInt(v, min, max) {
+    return Math.max(min, Math.min(max, v));
+}
+
+function buildShardSpawnData(nonIndexed, triCount) {
+    if (triCount <= 0) {
+        return {
+            count: 0,
+            panelCount: 0,
+            blockCount: 0,
+            centroids: new Float32Array(0),
+            normals: new Float32Array(0),
+            seeds: new Float32Array(0),
+            areaWeights: new Float32Array(0),
+            kind: new Uint8Array(0),
+        };
+    }
+
+    const pos = nonIndexed.attributes.position;
+    const triCentroids = new Float32Array(triCount * 3);
+    const triNormals = new Float32Array(triCount * 3);
+    const triAreas = new Float32Array(triCount);
+    const cdf = new Float32Array(triCount);
+    let totalArea = 0;
+
+    for (let i = 0; i < triCount; i++) {
+        const base = i * 3;
+
+        _v0.fromBufferAttribute(pos, base);
+        _v1.fromBufferAttribute(pos, base + 1);
+        _v2.fromBufferAttribute(pos, base + 2);
+
+        _centroid.copy(_v0).add(_v1).add(_v2).divideScalar(3);
+        _edge1.subVectors(_v1, _v0);
+        _edge2.subVectors(_v2, _v0);
+        _normal.crossVectors(_edge1, _edge2);
+        const area = Math.max(0.0001, _normal.length() * 0.5);
+        _normal.normalize();
+
+        const out = i * 3;
+        triCentroids[out] = _centroid.x;
+        triCentroids[out + 1] = _centroid.y;
+        triCentroids[out + 2] = _centroid.z;
+        triNormals[out] = _normal.x;
+        triNormals[out + 1] = _normal.y;
+        triNormals[out + 2] = _normal.z;
+        triAreas[i] = area;
+        totalArea += area;
+        cdf[i] = totalArea;
+    }
+
+    const avgArea = totalArea / Math.max(1, triCount);
+    const panelCount = clampInt(Math.round(Math.sqrt(triCount) * 2.35), 18, 104);
+    const blockCount = clampInt(Math.round(panelCount * 0.12), 1, 8);
+    const count = panelCount + blockCount;
+    const centroids = new Float32Array(count * 3);
+    const normals = new Float32Array(count * 3);
+    const seeds = new Float32Array(count * 3);
+    const areaWeights = new Float32Array(count);
+    const kind = new Uint8Array(count);
+
+    for (let i = 0; i < count; i++) {
+        const pick = Math.random() * totalArea;
+        let triIndex = 0;
+        while (triIndex < triCount - 1 && cdf[triIndex] < pick) triIndex++;
+
+        const triBase = triIndex * 3;
+        const out = i * 3;
+        centroids[out] = triCentroids[triBase];
+        centroids[out + 1] = triCentroids[triBase + 1];
+        centroids[out + 2] = triCentroids[triBase + 2];
+        normals[out] = triNormals[triBase];
+        normals[out + 1] = triNormals[triBase + 1];
+        normals[out + 2] = triNormals[triBase + 2];
+        seeds[out] = Math.random();
+        seeds[out + 1] = Math.random();
+        seeds[out + 2] = Math.random();
+        areaWeights[i] = clampInt(Math.round(Math.sqrt(triAreas[triIndex] / Math.max(0.0001, avgArea)) * 100), 55, 165) / 100;
+        kind[i] = (i < panelCount) ? 0 : 1;
+    }
+
+    return { count, panelCount, blockCount, centroids, normals, seeds, areaWeights, kind };
+}
 
 /**
  * Bake a single geometry.  Returns the non-indexed baked geometry (cached).
@@ -77,6 +164,10 @@ export function bakeShatterGeometry(geo) {
 
     nonIndexed.setAttribute('aCentroid', new THREE.BufferAttribute(centroids, 3));
     nonIndexed.setAttribute('aRandom3',  new THREE.BufferAttribute(randoms,   3));
+
+    const shardSpawnData = buildShardSpawnData(nonIndexed, triCount);
+    nonIndexed.__shardSpawnData = shardSpawnData;
+    geo.__shardSpawnData = shardSpawnData;
 
     geo.__shatterBaked = nonIndexed;
     return nonIndexed;
