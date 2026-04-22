@@ -92,12 +92,39 @@ function clearThrusterVisualState(ship) {
   }
 }
 
+const _retroBrakeDirScratch = { x: -1, y: 0 };
+
+function sampleRetroBrakeDirection(ship, out = _retroBrakeDirScratch) {
+  const vx = Number(ship?.vel?.x ?? ship?.vx) || 0;
+  const vy = Number(ship?.vel?.y ?? ship?.vy) || 0;
+  const angle = Number(ship?.angle) || 0;
+  const sinA = Math.sin(angle);
+  const cosA = Math.cos(angle);
+  const localForwardVel = (vx * cosA) + (vy * sinA);
+  const localLateralVel = -(vx * sinA) + (vy * cosA);
+  const brakeX = -localForwardVel;
+  const brakeY = -localLateralVel;
+  const lenSq = brakeX * brakeX + brakeY * brakeY;
+
+  if (lenSq <= (16 * 16)) {
+    out.x = -1;
+    out.y = 0;
+    return out;
+  }
+
+  const invLen = 1 / Math.sqrt(lenSq);
+  out.x = brakeX * invLen;
+  out.y = brakeY * invLen;
+  return out;
+}
+
 function applyPlayerThrusterVisualState(ship, target) {
   if (!ship?.visual) return;
   const mainInput = clamp01(target.main);
   const leftInput = clamp01(target.leftSide);
   const rightInput = clamp01(target.rightSide);
   const retroInput = clamp01(target.retro);
+  const retroBrakeDir = retroInput > 1e-3 ? sampleRetroBrakeDirection(ship) : null;
   const hasAssistTorque = Number.isFinite(Number(target.manualTorque)) || Number.isFinite(Number(target.assistTorque));
   
   const manualTorqueInput = hasAssistTorque ? clampSym(target.manualTorque, 1) : clampSym(target.torque, 1);
@@ -155,10 +182,29 @@ function applyPlayerThrusterVisualState(ship, target) {
       }
     }
     if (retroInput > 1e-3) {
-      // Retro-brake: side thrusters swivel toward the bow and provide reverse thrust.
-      throttle = Math.max(throttle, retroInput);
+      // Retro-brake follows actual local velocity, so side thrusters brake opposite the drift.
+      const desiredRetroDeg = normalizeDeg(
+        Math.atan2(retroBrakeDir?.x ?? -1, -(retroBrakeDir?.y ?? 0)) * 180 / Math.PI,
+        -90
+      );
+      const retroNozzle = clampNozzleDegToGimbal(
+        desiredRetroDeg,
+        desiredNozzle,
+        t.gimbalMinDeg,
+        t.gimbalMaxDeg,
+        -90,
+        90
+      );
+      const retroRad = normalizeDeg(retroNozzle, 0) * Math.PI / 180;
+      const retroFx = Math.sin(retroRad);
+      const retroFy = -Math.cos(retroRad);
+      const retroAlign = Math.max(
+        0,
+        (retroFx * (retroBrakeDir?.x ?? -1)) + (retroFy * (retroBrakeDir?.y ?? 0))
+      );
+      throttle = Math.max(throttle, retroInput * retroAlign);
       turnWeight = 0;
-      desiredNozzle = -90;
+      desiredNozzle = retroNozzle;
     } else {
       desiredNozzle += sideGimbalAssist;
     }

@@ -3,1099 +3,470 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Symulator Eksplozji 3D - YAMATO ARTILLERY IMPACT</title>
+    <title>Yamato Impact Preview — 1:1 z grą</title>
     <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            background-color: #050a1a;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            color: white;
-            user-select: none;
-            touch-action: none;
-        }
-        canvas {
-            display: block;
-        }
+        body { margin:0; overflow:hidden; background:#060812; font-family:'Segoe UI',sans-serif; color:white; user-select:none; }
+        canvas { display:block; }
         #ui {
-            position: absolute;
-            bottom: 20px;
-            left: 20px;
-            pointer-events: none;
-            background: rgba(5, 10, 30, 0.85);
-            padding: 15px 25px;
-            border-radius: 8px;
-            border: 1px solid #3388ff;
-            box-shadow: 0 4px 25px rgba(50,150,255,0.3);
-            backdrop-filter: blur(4px);
+            position:absolute; bottom:20px; left:20px; pointer-events:none;
+            background:rgba(5,10,30,0.85); padding:14px 22px; border-radius:8px;
+            border:1px solid #2255cc; box-shadow:0 4px 20px rgba(40,100,255,0.25); backdrop-filter:blur(4px);
         }
-        h1 { margin: 0 0 10px 0; font-size: 1.2rem; color: #55aaff; text-transform: uppercase; letter-spacing: 2px;}
-        p { margin: 5px 0; font-size: 0.9rem; color: #cce0ff; }
-        .highlight { color: #99ccff; font-weight: bold; }
-
-        #tuning-ui {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            background: rgba(5, 10, 30, 0.85);
-            padding: 15px 20px;
-            border-radius: 8px;
-            border: 1px solid #3388ff;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            pointer-events: auto;
-            width: 280px;
-            backdrop-filter: blur(4px);
-            max-height: 80vh;
-            overflow-y: auto;
+        h1 { margin:0 0 8px; font-size:1.1rem; color:#6abaff; text-transform:uppercase; letter-spacing:2px; }
+        p  { margin:4px 0; font-size:0.85rem; color:#c0d8ff; }
+        .hl { color:#88ddff; font-weight:bold; }
+        #info {
+            position:absolute; top:16px; left:50%; transform:translateX(-50%);
+            font-size:0.75rem; color:#4488cc; background:rgba(5,10,30,0.7);
+            padding:4px 14px; border-radius:20px; border:1px solid #224; pointer-events:none;
         }
-        .tune-row { margin-bottom: 12px; display: flex; flex-direction: column; }
-        .tune-row-header { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 5px; color: #aaccff; }
-        .tune-row input[type=range] { width: 100%; cursor: pointer; accent-color: #3388ff; }
-        #copy-btn {
-            width: 100%; padding: 10px; margin-top: 10px;
-            background: #112244; color: white; border: 1px solid #3388ff;
-            border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s;
-        }
-        #copy-btn:hover { background: #224488; }
-        #bg-label:hover { background: #224488 !important; }
     </style>
     <script type="importmap">
-        {
-            "imports": {
-                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-            }
-        }
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }}
     </script>
 </head>
 <body>
+<div id="ui">
+    <h1>Yamato — trafienie (preview)</h1>
+    <p>LPM — detonuj pocisk</p>
+    <p>PPM / kółko — kamera</p>
+    <p style="margin-top:8px;font-size:0.78rem;color:#6699cc;">
+        <span class="hl">1:1 z grą</span> — te same shadery GLSL co <code>yamato.js</code>
+    </p>
+</div>
+<div id="info">GPU GLSL particles • AdditiveBlending • InstancedBufferGeometry</div>
 
-    <div id="ui">
-        <h1>Yamato: Trafienie Artyleryjskie</h1>
-        <p>LPM - Detonacja pocisku w miejscu kliknięcia</p>
-        <p>PPM - Przesuwanie kamery | Kółko - Zoom</p>
-        <p style="font-size: 0.8em; color: #aacfff; margin-top: 10px;">
-            <span class="highlight">Punch + Fragmenty + Łańcuch wtórnych</span><br>
-            Kanoniczny styl artyleryjski, nie plazma.
-        </p>
-    </div>
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OrbitControls }   from 'three/addons/controls/OrbitControls.js';
 
-    <div id="tuning-ui">
-        <h3 style="margin-top:0; margin-bottom:15px; font-size:1.1rem; color:#fff; text-align:center;">Parametry Trafienia</h3>
+// ─── Scene ────────────────────────────────────────────────────────────────────
+const scene    = new THREE.Scene();
+scene.fog      = new THREE.FogExp2(0x060812, 0.0000015);
+const camera   = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 1, 500000);
+camera.position.set(0, 5000, 10000);
+camera.lookAt(0, 0, 0);
 
-        <div class="tune-row">
-            <div class="tune-row-header"><label>Rozciągnięcie Smugi</label><span id="val-stretch">1.20</span></div>
-            <input type="range" id="flame-stretch" min="0.0" max="6.0" step="0.1" value="1.2">
-        </div>
-        <div class="tune-row">
-            <div class="tune-row-header"><label>Jasność HDR (Mnożnik)</label><span id="val-hdr">2.50</span></div>
-            <input type="range" id="flame-hdr" min="0.5" max="15.0" step="0.5" value="2.5">
-        </div>
-        <div class="tune-row">
-            <div class="tune-row-header"><label>Skala Wybuchu</label><span id="val-explosionSize">1.00</span></div>
-            <input type="range" id="flame-explosionSize" min="0.2" max="3.0" step="0.1" value="1.0">
-        </div>
+const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.3;
+document.body.appendChild(renderer.domElement);
 
-        <div class="tune-row">
-            <div class="tune-row-header"><label>Bloom Siła</label><span id="val-bloomStrength">2.20</span></div>
-            <input type="range" id="flame-bloomStrength" min="0.0" max="5.0" step="0.1" value="2.2">
-        </div>
-        <div class="tune-row">
-            <div class="tune-row-header"><label>Bloom Promień</label><span id="val-bloomRadius">0.75</span></div>
-            <input type="range" id="flame-bloomRadius" min="0.0" max="2.0" step="0.05" value="0.75">
-        </div>
-        <div class="tune-row">
-            <div class="tune-row-header"><label>Bloom Próg</label><span id="val-bloomThreshold">0.10</span></div>
-            <input type="range" id="flame-bloomThreshold" min="0.0" max="1.0" step="0.05" value="0.10">
-        </div>
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.mouseButtons = { LEFT:null, MIDDLE:THREE.MOUSE.ROTATE, RIGHT:THREE.MOUSE.PAN };
+controls.enableZoom = false; controls.enableDamping = true;
+controls.dampingFactor = 0.06; controls.panSpeed = 2;
+controls.minDistance = 500; controls.maxDistance = 120000;
 
-        <div class="tune-row" style="margin-top: 15px;">
-            <label for="bg-upload" id="bg-label" style="cursor:pointer; background: #112244; padding: 10px; text-align: center; border: 1px solid #3388ff; border-radius: 4px; font-weight: bold; transition: 0.2s;">Wgraj własne tło (PNG/JPG)</label>
-            <input type="file" id="bg-upload" accept="image/png, image/jpeg" style="display: none;">
-        </div>
+let targetDist = camera.position.distanceTo(controls.target);
+window.addEventListener('wheel', e => {
+    targetDist = THREE.MathUtils.clamp(targetDist + e.deltaY*30, controls.minDistance, controls.maxDistance);
+}, { passive:true });
 
-        <button id="copy-btn">Kopiuj Ustawienia</button>
-    </div>
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1.9, 0.8, 0.08));
 
-    <script type="module">
-        import * as THREE from 'three';
-        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+// ground + bg
+const groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(2000000,2000000), new THREE.MeshBasicMaterial({visible:false}));
+groundMesh.rotation.x = -Math.PI/2; scene.add(groundMesh);
+const bgMesh = new THREE.Mesh(new THREE.PlaneGeometry(400000,400000), new THREE.MeshBasicMaterial({color:0x080d1c, depthWrite:false}));
+bgMesh.rotation.x = -Math.PI/2; bgMesh.position.y = -20; scene.add(bgMesh);
+scene.add(new THREE.GridHelper(40000, 60, 0x112244, 0x0a1830));
 
-        let scene, camera, renderer, composer, controls, bloomPass;
-        let rtTexture;
-        let lastTime;
-        let globalTime = 0;
-        let screenShake = 0;
+// ─── Shake ────────────────────────────────────────────────────────────────────
+let shakeAmt = 0;
+const origCam = new THREE.Vector3();
 
-        let fireParticleSystem;
-        let smokeParticleSystem;
-        let distortionManager;
-        let targetDistance = 0;
-        let groundPlaneMesh;
-        let nebulaMesh;
+// ─── GLSL noise (1:1 z yamato.js) ────────────────────────────────────────────
+const noiseChunk = `
+    float hash(float n) { return fract(sin(n) * 43758.5453123); }
+    float noise(vec3 x) {
+        vec3 p = floor(x); vec3 f = fract(x);
+        f = f*f*(3.0-2.0*f);
+        float n = p.x + p.y*57.0 + 113.0*p.z;
+        return mix(mix(mix(hash(n+0.),hash(n+1.),f.x),mix(hash(n+57.),hash(n+58.),f.x),f.y),
+                   mix(mix(hash(n+113.),hash(n+114.),f.x),mix(hash(n+170.),hash(n+171.),f.x),f.y),f.z);
+    }
+    float fbm(vec3 p) {
+        float f=0.; f+=0.5*noise(p); p*=2.02; f+=0.25*noise(p); p*=2.03; f+=0.125*noise(p); return f;
+    }
+`;
 
-        const raycaster = new THREE.Raycaster();
-        const mouse = new THREE.Vector2();
+// ─── GPUInstancedParticleManager (identyczny z yamato.js) ────────────────────
+class GPUInstancedParticleManager {
+    constructor(scene, maxParticles, blendingType) {
+        this.maxParticles = maxParticles;
+        this.activeIndex  = 0;
+        this.dirty        = false;
 
-        window.FlameSettings = {
-            stretchMult: 1.2,
-            velMult: 0.15,
-            startSize: 80.0,
-            growth: 1.0,
-            life: 0.30,
-            smokeSize: 250.0,
-            hdrIntensity: 2.5,
-            fireAlpha: 0.85,
-            explosionSize: 1.0,
-            bloomStrength: 2.2,
-            bloomRadius: 0.75,
-            bloomThreshold: 0.10
-        };
+        const baseGeo = new THREE.PlaneGeometry(1,1);
+        const geo     = new THREE.InstancedBufferGeometry();
+        geo.index = baseGeo.index;
+        geo.setAttribute('position', baseGeo.attributes.position);
+        geo.setAttribute('uv',       baseGeo.attributes.uv);
+        this.startPos = new Float32Array(maxParticles*3);
+        this.startVel = new Float32Array(maxParticles*3);
+        this.dataInfo = new Float32Array(maxParticles*4);
+        geo.setAttribute('aStartPos', new THREE.InstancedBufferAttribute(this.startPos,3));
+        geo.setAttribute('aStartVel', new THREE.InstancedBufferAttribute(this.startVel,3));
+        geo.setAttribute('aData',     new THREE.InstancedBufferAttribute(this.dataInfo,4));
+        geo.instanceCount = maxParticles;
 
-        const noiseChunk = `
-            float hash(float n) { return fract(sin(n) * 43758.5453123); }
-            float noise(vec3 x) {
-                vec3 p = floor(x);
-                vec3 f = fract(x);
-                f = f * f * (3.0 - 2.0 * f);
-                float n = p.x + p.y * 57.0 + 113.0 * p.z;
-                return mix(mix(mix(hash(n + 0.0), hash(n + 1.0), f.x),
-                               mix(hash(n + 57.0), hash(n + 58.0), f.x), f.y),
-                           mix(mix(hash(n + 113.0), hash(n + 114.0), f.x),
-                               mix(hash(n + 170.0), hash(n + 171.0), f.x), f.y), f.z);
-            }
-            float fbm(vec3 p) {
-                float f = 0.0;
-                f += 0.5000 * noise(p); p *= 2.02;
-                f += 0.2500 * noise(p); p *= 2.03;
-                f += 0.1250 * noise(p); p *= 2.01;
-                return f;
-            }
-        `;
+        this.material = new THREE.ShaderMaterial({
+            uniforms: { uTime:{value:0} },
+            vertexShader: `
+                attribute vec3 aStartPos; attribute vec3 aStartVel; attribute vec4 aData;
+                uniform float uTime;
+                varying vec3 vColor; varying float vAlpha; varying vec2 vUv;
+                varying float vType; varying float vAgeNorm; varying float vSeed;
+                float hash(float n){return fract(sin(n)*43758.5453123);}
+                void main(){
+                    vUv=uv; vType=aData.w; vSeed=hash(aData.x);
+                    float age=uTime-aData.x;
+                    if(age<0.||age>aData.y){gl_Position=vec4(9999,9999,9999,1);return;}
+                    float ratio=1.-(age/aData.y); vAgeNorm=age/aData.y;
+                    vec3 pos=aStartPos+aStartVel*age;
+                    float sz=aData.z; vec4 mvp;
 
-        function setupTuningUI() {
-            const bindSlider = (id, key, valId) => {
-                const el = document.getElementById(id);
-                const valEl = document.getElementById(valId);
-                el.value = window.FlameSettings[key];
-                valEl.innerText = window.FlameSettings[key].toFixed(2);
-
-                el.addEventListener('input', (e) => {
-                    const val = parseFloat(e.target.value);
-                    window.FlameSettings[key] = val;
-                    valEl.innerText = val.toFixed(2);
-
-                    const uniformsToUpdate = ['u_' + key];
-                    [fireParticleSystem, smokeParticleSystem].forEach(sys => {
-                        if (sys && sys.material) {
-                            uniformsToUpdate.forEach(u => {
-                                if(sys.material.uniforms[u]) sys.material.uniforms[u].value = val;
-                            });
-                        }
-                    });
-                });
-            };
-
-            const bindBloomSlider = (id, key, valId, bloomProp) => {
-                const el = document.getElementById(id);
-                const valEl = document.getElementById(valId);
-                el.value = window.FlameSettings[key];
-                valEl.innerText = window.FlameSettings[key].toFixed(2);
-
-                el.addEventListener('input', (e) => {
-                    const val = parseFloat(e.target.value);
-                    window.FlameSettings[key] = val;
-                    valEl.innerText = val.toFixed(2);
-                    if (bloomPass) {
-                        bloomPass[bloomProp] = val;
+                    if(vType<1.5){ // PUNCH FLASH
+                        sz=aData.z*(0.3+pow(1.-ratio,0.25)*0.7);
+                        vColor=mix(vec3(1,1,1),vec3(0.4,0.7,1),vAgeNorm)*2.5;
+                        vAlpha=pow(ratio,3.);
+                        mvp=modelViewMatrix*vec4(pos,1); mvp.xy+=position.xy*sz;
+                    } else if(vType<2.5){ // FIREBALL
+                        sz=aData.z*(0.4+pow(vAgeNorm,0.4)*1.4);
+                        vec3 hc=vec3(1,.95,.9),mf=vec3(.6,.8,1),de=vec3(.05,.15,.4);
+                        vColor=(vAgeNorm<.25)?mix(hc,mf,vAgeNorm/.25):mix(mf,de,(vAgeNorm-.25)/.75); vColor*=1.5;
+                        vAlpha=pow(ratio,1.4);
+                        mvp=modelViewMatrix*vec4(pos,1); mvp.xy+=position.xy*sz;
+                    } else if(vType<3.5){ // TRAILED DEBRIS
+                        float drag=1.5+vSeed*1.5;
+                        pos=aStartPos+aStartVel*((1.-exp(-age*drag))/drag);
+                        vec3 cv=aStartVel*exp(-age*drag); float spd=length(cv);
+                        vColor=mix(vec3(1,.98,.95)*4.,vec3(.15,.45,1)*1.5,pow(vAgeNorm,.6));
+                        vAlpha=pow(ratio,.7);
+                        mvp=modelViewMatrix*vec4(pos,1);
+                        vec2 dir=normalize((modelViewMatrix*vec4(cv,0)).xy);
+                        if(length((modelViewMatrix*vec4(cv,0)).xy)<.1) dir=vec2(0,1);
+                        float w=aData.z*.4, str=aData.z*spd*.0025, tf=.5-position.y;
+                        vec2 so; so.x=position.x*w; so.y=-tf*str;
+                        mvp.xy+=vec2(so.x*dir.y+so.y*dir.x,-so.x*dir.x+so.y*dir.y);
+                    } else if(vType<4.5){ // SHRAPNEL
+                        float drag=.6+vSeed*.6;
+                        pos=aStartPos+aStartVel*((1.-exp(-age*drag))/drag);
+                        pos.y-=380.*age*age*(.4+vSeed);
+                        vColor=mix(vec3(1,.85,.7),vec3(.1,.3,.7),pow(vAgeNorm,.5))*1.3;
+                        vAlpha=pow(ratio,.4); sz=aData.z*(1.-vAgeNorm*.3);
+                        mvp=modelViewMatrix*vec4(pos,1); mvp.xy+=position.xy*sz;
+                    } else if(vType<5.5){ // ANAMORPHIC
+                        sz=aData.z*(.5+vAgeNorm*.5);
+                        vColor=vec3(.6,.85,1)*14.; vAlpha=pow(ratio,4.);
+                        mvp=modelViewMatrix*vec4(pos,1); mvp.xy+=position.xy*sz;
+                    } else if(vType<6.5){ // PERCUSSIVE RING
+                        sz=aData.z*pow(vAgeNorm,.3);
+                        vColor=vec3(.4,.75,1)*6.; vAlpha=pow(1.-vAgeNorm,2.);
+                        vec3 fp=pos; fp.x+=position.x*sz; fp.z+=position.y*sz;
+                        mvp=modelViewMatrix*vec4(fp,1);
+                    } else { // HOT DEBRIS
+                        float drag=1.+vSeed;
+                        pos=aStartPos+aStartVel*((1.-exp(-age*drag))/drag);
+                        pos.y-=240.*age*age*(.3+vSeed);
+                        vec3 h=vec3(1,.9,.7),m=vec3(.3,.6,1),c=vec3(.05,.15,.4);
+                        vColor=(vAgeNorm<.3)?mix(h,m,vAgeNorm/.3):mix(m,c,(vAgeNorm-.3)/.7); vColor*=1.4;
+                        vAlpha=pow(ratio,.7); sz=aData.z*(1.-vAgeNorm*.5);
+                        float sp=(vSeed-.5)*12., cn=cos(age*sp), sn=sin(age*sp);
+                        vec2 rp=vec2(position.x*cn-position.y*sn, position.x*sn+position.y*cn);
+                        mvp=modelViewMatrix*vec4(pos,1); mvp.xy+=rp*sz;
                     }
-                });
-            };
-
-            bindSlider('flame-stretch', 'stretchMult', 'val-stretch');
-            bindSlider('flame-hdr', 'hdrIntensity', 'val-hdr');
-            bindSlider('flame-explosionSize', 'explosionSize', 'val-explosionSize');
-
-            bindBloomSlider('flame-bloomStrength', 'bloomStrength', 'val-bloomStrength', 'strength');
-            bindBloomSlider('flame-bloomRadius', 'bloomRadius', 'val-bloomRadius', 'radius');
-            bindBloomSlider('flame-bloomThreshold', 'bloomThreshold', 'val-bloomThreshold', 'threshold');
-
-            document.getElementById('copy-btn').addEventListener('click', () => {
-                navigator.clipboard.writeText(JSON.stringify(window.FlameSettings, null, 2));
-            });
-        }
-
-        function init() {
-            scene = new THREE.Scene();
-            scene.fog = new THREE.FogExp2(0x050a1a, 0.000002);
-
-            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 10, 400000);
-            camera.position.set(0, -100, 30000);
-
-            renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', desynchronized: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-            renderer.toneMapping = THREE.ACESFilmicToneMapping;
-            renderer.toneMappingExposure = 1.2;
-            document.body.appendChild(renderer.domElement);
-
-            rtTexture = new THREE.WebGLRenderTarget(
-                window.innerWidth, window.innerHeight,
-                { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat }
-            );
-
-            controls = new OrbitControls(camera, renderer.domElement);
-            controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
-            controls.enableZoom = false;
-            controls.enableDamping = true;
-            controls.dampingFactor = 0.05;
-            controls.panSpeed = 2.5;
-            controls.minDistance = 2000;
-            controls.maxDistance = 150000;
-
-            const renderScene = new RenderPass(scene, camera);
-            bloomPass = new UnrealBloomPass(
-                new THREE.Vector2(window.innerWidth, window.innerHeight),
-                window.FlameSettings.bloomStrength,
-                window.FlameSettings.bloomRadius,
-                window.FlameSettings.bloomThreshold
-            );
-            composer = new EffectComposer(renderer);
-            composer.addPass(renderScene);
-            composer.addPass(bloomPass);
-
-            const planeGeo = new THREE.PlaneGeometry(2000000, 2000000);
-            const planeMat = new THREE.MeshBasicMaterial({ visible: false });
-            groundPlaneMesh = new THREE.Mesh(planeGeo, planeMat);
-            groundPlaneMesh.position.z = -10;
-            scene.add(groundPlaneMesh);
-
-            const bgPlaneGeo = new THREE.PlaneGeometry(300000, 300000);
-            const bgPlaneMat = new THREE.MeshBasicMaterial({
-                color: 0x080820,
-                depthWrite: false
-            });
-            nebulaMesh = new THREE.Mesh(bgPlaneGeo, bgPlaneMat);
-            nebulaMesh.position.z = -5000;
-            scene.add(nebulaMesh);
-
-            document.getElementById('bg-upload').addEventListener('change', function(e) {
-                const file = e.target.files[0];
-                if (!file) return;
-
-                const reader = new FileReader();
-                reader.onload = function(event) {
-                    const img = new Image();
-                    img.onload = function() {
-                        const texture = new THREE.Texture(img);
-                        texture.needsUpdate = true;
-                        texture.colorSpace = THREE.SRGBColorSpace;
-
-                        const aspect = img.width / img.height;
-                        const newPlaneGeo = new THREE.PlaneGeometry(300000 * aspect, 300000);
-                        nebulaMesh.geometry.dispose();
-                        nebulaMesh.geometry = newPlaneGeo;
-
-                        bgPlaneMat.map = texture;
-                        bgPlaneMat.color.setHex(0xaaaaaa);
-                        bgPlaneMat.needsUpdate = true;
-                    };
-                    img.src = event.target.result;
-                };
-                reader.readAsDataURL(file);
-            });
-
-            fireParticleSystem = new GPUInstancedParticleManager(scene, 80000, THREE.AdditiveBlending);
-            smokeParticleSystem = new GPUParticleManager(scene, 15000, THREE.NormalBlending);
-
-            distortionManager = new DistortionManager(scene, 8, rtTexture);
-
-            setupTuningUI();
-
-            targetDistance = camera.position.distanceTo(controls.target);
-
-            window.addEventListener('resize', onWindowResize);
-            window.addEventListener('mousedown', onMouseDown);
-            window.addEventListener('contextmenu', e => e.preventDefault());
-            window.addEventListener('wheel', (e) => {
-                targetDistance += e.deltaY * 50.0;
-                targetDistance = THREE.MathUtils.clamp(targetDistance, controls.minDistance, controls.maxDistance);
-            }, { passive: false });
-        }
-
-        // --- DISTORTION MANAGER (mała, krótka fala uderzeniowa - punch) ---
-        class DistortionManager {
-            constructor(scene, maxWaves, rtTexture) {
-                this.waves = [];
-                const geo = new THREE.SphereGeometry(1, 24, 24);
-
-                for(let i=0; i<maxWaves; i++) {
-                    const mat = new THREE.ShaderMaterial({
-                        uniforms: {
-                            tDiffuse: { value: rtTexture.texture },
-                            progress: { value: 0.0 }
-                        },
-                        vertexShader: `
-                            varying vec4 vScreenPos; varying vec3 vNormal; varying vec3 vViewPosition;
-                            void main() {
-                                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-                                gl_Position = projectionMatrix * mvPosition;
-                                vScreenPos = gl_Position;
-                                vNormal = normalize(normalMatrix * normal);
-                                vViewPosition = -mvPosition.xyz;
-                            }
-                        `,
-                        fragmentShader: `
-                            uniform sampler2D tDiffuse; uniform float progress;
-                            varying vec4 vScreenPos; varying vec3 vNormal; varying vec3 vViewPosition;
-
-                            float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-
-                            void main() {
-                                vec2 uv = (vScreenPos.xy / vScreenPos.w) * 0.5 + 0.5;
-                                vec3 normal = normalize(vNormal);
-                                vec3 viewDir = normalize(vViewPosition);
-
-                                // Wąski, ostry pierścień - krótki impuls zamiast bańki plazmy
-                                float fresnel = 1.0 - abs(dot(normal, viewDir));
-                                float ring = pow(fresnel, 8.0);
-                                float strength = (1.0 - progress) * 0.18;
-
-                                vec2 distortion = normal.xy * ring * strength;
-                                vec4 bgColor = texture2D(tDiffuse, uv - distortion);
-
-                                gl_FragColor = vec4(bgColor.rgb, 1.0);
-                            }
-                        `,
-                        transparent: true,
-                        depthWrite: false
-                    });
-
-                    const mesh = new THREE.Mesh(geo, mat);
-                    mesh.visible = false;
-                    scene.add(mesh);
-
-                    this.waves.push({ mesh, active: false, age: 0, maxLife: 0.45, targetScale: 5000 });
+                    gl_Position=projectionMatrix*mvp;
                 }
-            }
-
-            spawn(x, y, z, maxScale, life) {
-                const wave = this.waves.find(w => !w.active);
-                if (!wave) return;
-
-                wave.active = true;
-                wave.age = 0;
-                wave.maxLife = life;
-                wave.targetScale = maxScale;
-                wave.mesh.position.set(x, y, z);
-                wave.mesh.scale.set(1, 1, 1);
-                wave.mesh.material.uniforms.progress.value = 0;
-                wave.mesh.visible = true;
-            }
-
-            update(delta) {
-                for (let wave of this.waves) {
-                    if (!wave.active) continue;
-
-                    wave.age += delta;
-                    if (wave.age >= wave.maxLife) {
-                        wave.active = false;
-                        wave.mesh.visible = false;
-                        continue;
+            `,
+            fragmentShader: `
+                varying vec3 vColor; varying float vAlpha; varying vec2 vUv;
+                varying float vType; varying float vAgeNorm; varying float vSeed;
+                uniform float uTime;
+                ${noiseChunk}
+                void main(){
+                    vec2 uv=vUv-vec2(.5); float dist=length(uv)*2.;
+                    if(vType<1.5){
+                        float c=max(0.,1.-smoothstep(0.,.4,dist));
+                        float sy=max(0.,1.-smoothstep(0.,.05,abs(uv.y)))*(1.-abs(uv.x)*1.6);
+                        float sx=max(0.,1.-smoothstep(0.,.05,abs(uv.x)))*(1.-abs(uv.y)*1.6);
+                        gl_FragColor=vec4(vColor,(c*1.5+sy+sx*.6)*vAlpha);
+                    } else if(vType<2.5){
+                        if(dist>1.) discard;
+                        float n=fbm(vec3(uv*3.,vSeed*50.+uTime*.5));
+                        float l=smoothstep(0.,.6,n+max(0.,1.-dist)*.7-.4);
+                        gl_FragColor=vec4(vColor,l*vAlpha);
+                    } else if(vType<3.5){
+                        vec2 pt=vUv-vec2(.5);
+                        float gx=pow(max(0.,.5-abs(pt.x))*2.,2.5);
+                        float fy=smoothstep(1.,.85,vUv.y)*smoothstep(0.,.15,vUv.y);
+                        float hd=smoothstep(.6,.95,vUv.y)*1.5;
+                        gl_FragColor=vec4(vColor,gx*(fy+hd)*vAlpha);
+                    } else if(vType<4.5){
+                        if(dist>1.) discard;
+                        float c=max(0.,1.-smoothstep(0.,.6,dist));
+                        float h=max(0.,1.-smoothstep(0.,1.,dist))*.3;
+                        gl_FragColor=vec4(vColor,(c+h)*vAlpha);
+                    } else if(vType<5.5){
+                        float c=max(0.,1.-smoothstep(0.,.25,dist));
+                        float fy=max(0.,1.-smoothstep(0.,.015,abs(uv.y)));
+                        float fx=max(0.,1.-smoothstep(0.,.55,abs(uv.x)));
+                        float fi=max(0.,c+fy*fx*2.5+max(0.,1.-dist)*.5);
+                        gl_FragColor=vec4(vColor*fi,fi*vAlpha);
+                    } else if(vType<6.5){
+                        if(dist>1.) discard;
+                        float e=max(0.,1.-smoothstep(0.,.06,abs(dist-.85)));
+                        float n=.7+.3*fbm(vec3(atan(uv.y,uv.x)*8.,dist*3.,uTime*.3));
+                        gl_FragColor=vec4(vColor,e*n*vAlpha);
+                    } else {
+                        float n=fbm(vec3(uv*4.,vSeed*30.));
+                        float ch=smoothstep(.45,.65,n*.6+max(0.,1.-dist*1.2));
+                        if(ch<.05) discard;
+                        gl_FragColor=vec4(vColor+vec3(.5,.4,.2)*max(0.,1.-smoothstep(0.,.4,dist))*1.5, ch*vAlpha);
                     }
-
-                    const progress = wave.age / wave.maxLife;
-                    const easeOut = 1.0 - Math.pow(1.0 - progress, 3.0);
-                    const scale = easeOut * wave.targetScale;
-
-                    wave.mesh.scale.set(scale, scale, scale * 0.5);
-                    wave.mesh.material.uniforms.progress.value = progress;
                 }
-            }
+            `,
+            blending:blendingType, depthWrite:false, depthTest:false, transparent:true
+        });
 
-            hideAll() {
-                for (let wave of this.waves) {
-                    if (wave.active) wave.mesh.visible = false;
+        this.mesh = new THREE.Mesh(geo, this.material);
+        this.mesh.frustumCulled = false; this.mesh.renderOrder = 1000;
+        scene.add(this.mesh);
+    }
+    spawn(x,y,z,vx,vy,vz,size,life,type,gt){
+        const i=this.activeIndex; this.activeIndex=(this.activeIndex+1)%this.maxParticles;
+        const i3=i*3,i4=i*4;
+        this.startPos[i3]=x; this.startPos[i3+1]=y; this.startPos[i3+2]=z;
+        this.startVel[i3]=vx;this.startVel[i3+1]=vy;this.startVel[i3+2]=vz;
+        this.dataInfo[i4]=gt; this.dataInfo[i4+1]=life; this.dataInfo[i4+2]=size; this.dataInfo[i4+3]=type;
+        this.dirty=true;
+    }
+    update(gt){
+        this.material.uniforms.uTime.value=gt;
+        if(this.dirty){
+            const g=this.mesh.geometry;
+            g.attributes.aStartPos.needsUpdate=true;
+            g.attributes.aStartVel.needsUpdate=true;
+            g.attributes.aData.needsUpdate=true;
+            this.dirty=false;
+        }
+    }
+}
+
+// ─── GPUParticleManager (dym — identyczny z yamato.js) ───────────────────────
+class GPUParticleManager {
+    constructor(scene,maxParticles,blendingType){
+        this.maxParticles=maxParticles; this.activeIndex=0; this.dirty=false;
+        const baseGeo=new THREE.PlaneGeometry(1,1);
+        const geo=new THREE.InstancedBufferGeometry();
+        geo.index=baseGeo.index;
+        geo.setAttribute('position',baseGeo.attributes.position);
+        geo.setAttribute('uv',baseGeo.attributes.uv);
+        this.startPos=new Float32Array(maxParticles*3);
+        this.startVel=new Float32Array(maxParticles*3);
+        this.dataInfo=new Float32Array(maxParticles*4);
+        geo.setAttribute('aStartPos',new THREE.InstancedBufferAttribute(this.startPos,3));
+        geo.setAttribute('aStartVel',new THREE.InstancedBufferAttribute(this.startVel,3));
+        geo.setAttribute('aData',    new THREE.InstancedBufferAttribute(this.dataInfo,4));
+        geo.instanceCount=maxParticles;
+        this.material=new THREE.ShaderMaterial({
+            uniforms:{uTime:{value:0}},
+            vertexShader:`
+                attribute vec3 aStartPos;attribute vec3 aStartVel;attribute vec4 aData;
+                uniform float uTime;
+                varying vec3 vColor;varying float vAlpha;varying vec2 vUv;
+                varying float vAgeNorm;varying float vSeed;
+                float hash(float n){return fract(sin(n)*43758.5453123);}
+                void main(){
+                    vUv=uv; vSeed=hash(aData.x);
+                    float age=uTime-aData.x;
+                    if(age<0.||age>aData.y){gl_Position=vec4(9999,9999,9999,1);return;}
+                    vAgeNorm=age/aData.y;
+                    float sz=aData.z*(0.3+pow(vAgeNorm,.5)*.9);
+                    vColor=vec3(.03,.06,.13); vAlpha=pow(1.-vAgeNorm,1.8)*.9;
+                    vec3 pos=aStartPos+aStartVel*age;
+                    pos.y+=age*40.*vSeed;
+                    vec3 fp=pos; fp.x+=position.x*sz; fp.z+=position.y*sz;
+                    gl_Position=projectionMatrix*modelViewMatrix*vec4(fp,1);
                 }
-            }
-
-            showActive() {
-                for (let wave of this.waves) {
-                    if (wave.active) wave.mesh.visible = true;
+            `,
+            fragmentShader:`
+                varying vec3 vColor;varying float vAlpha;varying vec2 vUv;
+                varying float vAgeNorm;varying float vSeed;
+                uniform float uTime;
+                ${noiseChunk}
+                void main(){
+                    vec2 uv=vUv-vec2(.5); float dist=length(uv)*2.;
+                    if(dist>1.) discard;
+                    float cloud=max(0.,1.-smoothstep(.2,1.,dist));
+                    float n=fbm(vec3(uv*4.+vSeed*30.,uTime*.15));
+                    gl_FragColor=vec4(vColor,smoothstep(0.,.7,n*.7+cloud)*vAlpha);
                 }
+            `,
+            blending:blendingType,depthWrite:false,depthTest:false,transparent:true
+        });
+        this.mesh=new THREE.Mesh(geo,this.material);
+        this.mesh.frustumCulled=false; this.mesh.renderOrder=999;
+        scene.add(this.mesh);
+    }
+    spawn(x,y,z,vx,vy,vz,size,life,type,gt){
+        const i=this.activeIndex; this.activeIndex=(this.activeIndex+1)%this.maxParticles;
+        const i3=i*3,i4=i*4;
+        this.startPos[i3]=x;this.startPos[i3+1]=y;this.startPos[i3+2]=z;
+        this.startVel[i3]=vx;this.startVel[i3+1]=vy;this.startVel[i3+2]=vz;
+        this.dataInfo[i4]=gt;this.dataInfo[i4+1]=life;this.dataInfo[i4+2]=size;this.dataInfo[i4+3]=type;
+        this.dirty=true;
+    }
+    update(gt){
+        this.material.uniforms.uTime.value=gt;
+        if(this.dirty){
+            const g=this.mesh.geometry;
+            g.attributes.aStartPos.needsUpdate=true;
+            g.attributes.aStartVel.needsUpdate=true;
+            g.attributes.aData.needsUpdate=true;
+            this.dirty=false;
+        }
+    }
+}
+
+// ─── Shared systems ────────────────────────────────────────────────────────────
+const fireSystem  = new GPUInstancedParticleManager(scene, 60000, THREE.AdditiveBlending);
+const smokeSystem = new GPUParticleManager(scene, 12000, THREE.NormalBlending);
+const activeEffects = [];
+
+// ─── Spawn (logika identyczna z yamato.js) ─────────────────────────────────────
+function spawnYamatoImpact(x, worldZ, size=110, q=1.0) {
+    q = Math.max(0.55, Math.min(1.25, q));
+    const eX=x, eY=5, eZ=worldZ;
+    const gt0 = performance.now()/1000;
+
+    shakeAmt = Math.max(shakeAmt, 600);
+
+    // 3D light
+    const light = new THREE.PointLight(0x66ccff, 8, size*14);
+    light.position.set(eX, size*.5, eZ);
+    scene.add(light);
+
+    fireSystem.spawn(eX,eY,eZ, 0,0,0, size*72, 0.18, 1, gt0);
+    fireSystem.spawn(eX,eY,eZ, 0,0,0, size*100, 0.5, 5, gt0);
+    fireSystem.spawn(eX,eY,eZ, 0,0,0, size*63, 0.35, 6, gt0);
+
+    for(let i=0;i<Math.round(28*q);i++){
+        const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1), sp=(1.8+Math.random()*7.5)*size;
+        fireSystem.spawn(eX,eY,eZ, Math.sin(phi)*Math.cos(a)*sp, Math.cos(phi)*sp*.4+Math.random()*size*.5, Math.sin(phi)*Math.sin(a)*sp, (10+Math.random()*14)*size, .8+Math.random()*.6, 2, gt0);
+    }
+    for(let i=0;i<Math.round(80*q);i++){
+        const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1), sp=(35+Math.random()*110)*size;
+        fireSystem.spawn(eX,eY,eZ, Math.sin(phi)*Math.cos(a)*sp, Math.cos(phi)*sp*.35+Math.random()*size*3, Math.sin(phi)*Math.sin(a)*sp, (.5+Math.random()*.75)*size, .6+Math.random()*.5, 3, gt0);
+    }
+    for(let i=0;i<Math.round(16*q);i++){
+        const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1), sp=(13+Math.random()*36)*size;
+        fireSystem.spawn(eX,eY,eZ, Math.sin(phi)*Math.cos(a)*sp, Math.cos(phi)*sp*.5+Math.random()*size*2, Math.sin(phi)*Math.sin(a)*sp, (1.8+Math.random()*3.2)*size, 1.2+Math.random()*.8, 7, gt0);
+    }
+    for(let i=0;i<Math.round(350*q);i++){
+        const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1), sp=(22+Math.random()*82)*size;
+        fireSystem.spawn(eX,eY,eZ, Math.sin(phi)*Math.cos(a)*sp, Math.cos(phi)*sp*.6+Math.random()*size*13, Math.sin(phi)*Math.sin(a)*sp, (.13+Math.random()*.22)*size, 1+Math.random()*1.5, 4, gt0);
+    }
+    for(let i=0;i<Math.round(25*q);i++){
+        const a=Math.random()*Math.PI*2, d=Math.random()*1.5*size, sp=(2.5+Math.random()*7)*size;
+        smokeSystem.spawn(eX+Math.cos(a)*d, eY, eZ+Math.sin(a)*d, Math.cos(a)*sp,0, Math.sin(a)*sp, (26+Math.random()*26)*size, 1.5+Math.random()*1.2, 1, gt0);
+    }
+
+    const secDelays = [0.08,0.19,0.30,0.43].map(d=>d+Math.random()*.06);
+    let secIdx=0;
+    const initTime = gt0;
+    let disposed=false;
+
+    function update(dt){
+        if(disposed) return;
+        const gt=performance.now()/1000;
+        const time=gt-initTime;
+        fireSystem.update(gt);
+        smokeSystem.update(gt);
+        light.intensity = Math.max(0, 8*(1-time/.4));
+
+        while(secIdx<4 && time>=secDelays[secIdx]){
+            const pA=Math.random()*Math.PI*2, pD=(7+Math.random()*20)*size, ps=.35+Math.random()*.35;
+            const px=eX+Math.cos(pA)*pD, pz=eZ+Math.sin(pA)*pD;
+            fireSystem.spawn(px,eY,pz, 0,0,0, size*36*ps, .13, 1, gt);
+            fireSystem.spawn(px,eY,pz, 0,0,0, size*28*ps, .25, 6, gt);
+            for(let k=0;k<8;k++){
+                const a=Math.random()*Math.PI*2, sp=(3+Math.random()*7)*size;
+                fireSystem.spawn(px,eY,pz, Math.cos(a)*sp, Math.random()*size*2, Math.sin(a)*sp, (5+Math.random()*7)*size*ps, .5+Math.random()*.4, 2, gt);
             }
+            for(let k=0;k<45;k++){
+                const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1), sp=(12+Math.random()*40)*size;
+                fireSystem.spawn(px,eY,pz, Math.sin(phi)*Math.cos(a)*sp, Math.cos(phi)*sp*.5, Math.sin(phi)*Math.sin(a)*sp, (.1+Math.random()*.18)*size, .8+Math.random(), 4, gt);
+            }
+            smokeSystem.spawn(px,eY,pz, 0,0,0, (14+Math.random()*12)*size*ps, 1+Math.random()*.8, 1, gt);
+            secIdx++;
         }
 
-        // ============================================================================
-        // GŁÓWNY MENADŻER CZĄSTECZEK ARTYLERYJSKICH
-        // Typy:
-        //  1: PUNCH FLASH      - krótki ostry rozbłysk
-        //  2: FIREBALL CHUNK   - kawałki ognistej kuli z FBM
-        //  3: TRAILED DEBRIS   - rozżarzone odłamki z dragiem (smuga ciągniona)
-        //  4: SHRAPNEL         - małe odłamki rozrzucone z grawitacją
-        //  5: ANAMORPHIC FLASH - poziomy lens-flare (krótki)
-        //  6: PERCUSSIVE RING  - ostry, szybki pierścień uderzeniowy
-        //  7: HOT DEBRIS CHUNK - duży świecący fragment z rotacją
-        // ============================================================================
-        class GPUInstancedParticleManager {
-            constructor(scene, maxParticles, blendingType) {
-                this.maxParticles = maxParticles;
-                this.activeIndex = 0;
-
-                const baseGeo = new THREE.PlaneGeometry(1, 1);
-                const geo = new THREE.InstancedBufferGeometry();
-                geo.index = baseGeo.index;
-                geo.setAttribute('position', baseGeo.attributes.position);
-                geo.setAttribute('uv', baseGeo.attributes.uv);
-
-                this.startPos = new Float32Array(maxParticles * 3);
-                this.startVel = new Float32Array(maxParticles * 3);
-                this.dataInfo = new Float32Array(maxParticles * 4);
-
-                geo.setAttribute('aStartPos', new THREE.InstancedBufferAttribute(this.startPos, 3));
-                geo.setAttribute('aStartVel', new THREE.InstancedBufferAttribute(this.startVel, 3));
-                geo.setAttribute('aData', new THREE.InstancedBufferAttribute(this.dataInfo, 4));
-                geo.instanceCount = maxParticles;
-
-                this.material = new THREE.ShaderMaterial({
-                    uniforms: {
-                        uTime: { value: 0 },
-                        u_hdrIntensity: { value: window.FlameSettings.hdrIntensity },
-                        u_stretchMult: { value: window.FlameSettings.stretchMult },
-                        u_explosionSize: { value: window.FlameSettings.explosionSize }
-                    },
-                    vertexShader: `
-                        attribute vec3 aStartPos;
-                        attribute vec3 aStartVel;
-                        attribute vec4 aData;
-
-                        uniform float uTime;
-                        uniform float u_hdrIntensity;
-                        uniform float u_stretchMult;
-                        uniform float u_explosionSize;
-
-                        varying vec3 vColor;
-                        varying float vAlpha;
-                        varying vec2 vUv;
-                        varying float vType;
-                        varying float vAgeNorm;
-                        varying float vSeed;
-
-                        float hash(float n) { return fract(sin(n) * 43758.5453123); }
-
-                        void main() {
-                            vUv = uv;
-                            vType = aData.w;
-                            float startTime = aData.x;
-                            float maxLife = aData.y;
-                            float age = uTime - startTime;
-                            vSeed = hash(aData.x);
-
-                            if (age < 0.0 || age > maxLife) {
-                                gl_Position = vec4(9999.0, 9999.0, 9999.0, 1.0);
-                                return;
-                            }
-
-                            float ratio = 1.0 - (age / maxLife);
-                            vAgeNorm = age / maxLife;
-
-                            vec3 pos = aStartPos + aStartVel * age;
-                            float currentSize = aData.z;
-                            vec4 mvPosition;
-
-                            if (vType < 1.5) { // PUNCH FLASH (Typ 1)
-                                // Eksplozyjny wzrost na początku, szybki zanik
-                                float burst = pow(1.0 - ratio, 0.25);
-                                currentSize = aData.z * (0.3 + burst * 0.7);
-                                vec3 hot = vec3(1.0, 1.0, 1.0);
-                                vec3 cool = vec3(0.4, 0.7, 1.0);
-                                vColor = mix(hot, cool, vAgeNorm) * u_hdrIntensity * 2.5;
-                                vAlpha = pow(ratio, 3.0);
-
-                                mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                                mvPosition.xy += position.xy * currentSize;
-                            }
-                            else if (vType < 2.5) { // FIREBALL CHUNK (Typ 2) - kłąb ognia
-                                // Szybki wzrost i zanik
-                                float growth = pow(vAgeNorm, 0.4);
-                                currentSize = aData.z * (0.4 + growth * 1.4);
-                                vec3 hotCore = vec3(1.0, 0.95, 0.9);
-                                vec3 midFire = vec3(0.6, 0.8, 1.0);
-                                vec3 darkEdge = vec3(0.05, 0.15, 0.4);
-                                if (vAgeNorm < 0.25) {
-                                    vColor = mix(hotCore, midFire, vAgeNorm / 0.25);
-                                } else {
-                                    vColor = mix(midFire, darkEdge, (vAgeNorm - 0.25) / 0.75);
-                                }
-                                vColor *= u_hdrIntensity * 1.2;
-                                vAlpha = pow(ratio, 1.4);
-
-                                mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                                mvPosition.xy += position.xy * currentSize;
-                            }
-                            else if (vType < 3.5) { // TRAILED DEBRIS (Typ 3) - rozżarzona smuga z dragiem
-                                float drag = 1.5 + vSeed * 1.5;
-                                pos = aStartPos + aStartVel * ((1.0 - exp(-age * drag)) / drag);
-                                vec3 currentVel = aStartVel * exp(-age * drag);
-                                float speed = length(currentVel);
-
-                                // Zimne metalowe odłamki - od białego do ciemnego niebieskiego
-                                vec3 hot = vec3(1.0, 0.98, 0.95) * 4.0;
-                                vec3 cold = vec3(0.15, 0.45, 1.0) * 1.5;
-                                vColor = mix(hot, cold, pow(vAgeNorm, 0.6)) * u_hdrIntensity;
-                                vAlpha = pow(ratio, 0.7);
-
-                                mvPosition = modelViewMatrix * vec4(pos, 1.0);
-
-                                vec3 viewVel = (modelViewMatrix * vec4(currentVel, 0.0)).xyz;
-                                vec2 dir = normalize(viewVel.xy);
-                                if (length(viewVel.xy) < 0.1) dir = vec2(0.0, 1.0);
-
-                                float width = aData.z * 0.4;
-                                float stretch = aData.z * speed * 0.0025 * u_stretchMult;
-
-                                float tailFactor = 0.5 - position.y;
-
-                                vec2 scaledOffset;
-                                scaledOffset.x = position.x * width;
-                                scaledOffset.y = -tailFactor * stretch;
-
-                                vec2 rotatedOffset;
-                                rotatedOffset.x = scaledOffset.x * dir.y + scaledOffset.y * dir.x;
-                                rotatedOffset.y = -scaledOffset.x * dir.x + scaledOffset.y * dir.y;
-
-                                mvPosition.xy += rotatedOffset;
-                            }
-                            else if (vType < 4.5) { // SHRAPNEL (Typ 4) - małe odłamki balistyczne
-                                // Lekki drag + grawitacyjny "opad" dla balistyki
-                                float drag = 0.6 + vSeed * 0.6;
-                                pos = aStartPos + aStartVel * ((1.0 - exp(-age * drag)) / drag);
-                                pos.z -= 800.0 * age * age * (0.5 + vSeed); // ciężar fragmentu
-
-                                vec3 hot = vec3(1.0, 0.85, 0.7);
-                                vec3 cold = vec3(0.1, 0.3, 0.7);
-                                vColor = mix(hot, cold, pow(vAgeNorm, 0.5)) * u_hdrIntensity * 1.3;
-                                vAlpha = pow(ratio, 0.4);
-
-                                // Stałe małe punkciki, lekko rozciągnięte ruchem
-                                currentSize = aData.z * (1.0 - vAgeNorm * 0.3);
-
-                                mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                                mvPosition.xy += position.xy * currentSize;
-                            }
-                            else if (vType < 5.5) { // ANAMORPHIC FLASH (Typ 5)
-                                currentSize = aData.z * (0.5 + vAgeNorm * 0.5);
-                                vColor = vec3(0.6, 0.85, 1.0) * 14.0;
-                                vAlpha = pow(ratio, 4.0);
-
-                                mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                                mvPosition.xy += position.xy * currentSize;
-                            }
-                            else if (vType < 6.5) { // PERCUSSIVE RING (Typ 6) - ostry pierścień
-                                // Szybki wzrost na początku i nagły zanik
-                                float waveCurve = pow(vAgeNorm, 0.3);
-                                currentSize = aData.z * waveCurve;
-                                vColor = vec3(0.4, 0.75, 1.0) * 6.0 * u_hdrIntensity;
-                                vAlpha = pow(1.0 - vAgeNorm, 2.0);
-
-                                vec3 flatPos = pos;
-                                flatPos.x += position.x * currentSize;
-                                flatPos.y += position.y * currentSize;
-                                mvPosition = modelViewMatrix * vec4(flatPos, 1.0);
-                            }
-                            else { // HOT DEBRIS CHUNK (Typ 7) - duży obracający się fragment
-                                float drag = 1.0 + vSeed * 1.0;
-                                pos = aStartPos + aStartVel * ((1.0 - exp(-age * drag)) / drag);
-                                pos.z -= 400.0 * age * age * (0.3 + vSeed);
-
-                                // Bardzo gorący rdzeń stygnący do ciemnego błękitu
-                                vec3 hot = vec3(1.0, 0.9, 0.7);
-                                vec3 mid = vec3(0.3, 0.6, 1.0);
-                                vec3 cold = vec3(0.05, 0.15, 0.4);
-                                if (vAgeNorm < 0.3) {
-                                    vColor = mix(hot, mid, vAgeNorm / 0.3);
-                                } else {
-                                    vColor = mix(mid, cold, (vAgeNorm - 0.3) / 0.7);
-                                }
-                                vColor *= u_hdrIntensity * 1.4;
-                                vAlpha = pow(ratio, 0.7);
-
-                                currentSize = aData.z * (1.0 - vAgeNorm * 0.5);
-
-                                // Rotacja wokół własnej osi (na płaszczyźnie ekranu)
-                                float spinSpeed = (vSeed - 0.5) * 12.0;
-                                float spin = age * spinSpeed;
-                                float c = cos(spin), s = sin(spin);
-                                vec2 rotPos = vec2(position.x * c - position.y * s,
-                                                   position.x * s + position.y * c);
-
-                                mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                                mvPosition.xy += rotPos * currentSize;
-                            }
-
-                            gl_Position = projectionMatrix * mvPosition;
-                        }
-                    `,
-                    fragmentShader: `
-                        varying vec3 vColor;
-                        varying float vAlpha;
-                        varying vec2 vUv;
-                        varying float vType;
-                        varying float vAgeNorm;
-                        varying float vSeed;
-                        uniform float uTime;
-
-                        ${noiseChunk}
-
-                        void main() {
-                            vec2 uv = vUv - vec2(0.5);
-                            float dist = length(uv) * 2.0;
-
-                            if (vType < 1.5) { // PUNCH FLASH - twarda kula plus poziomy spike
-                                float core = max(0.0, 1.0 - smoothstep(0.0, 0.4, dist));
-                                float spike = max(0.0, 1.0 - smoothstep(0.0, 0.05, abs(uv.y))) * (1.0 - abs(uv.x) * 1.6);
-                                float spike2 = max(0.0, 1.0 - smoothstep(0.0, 0.05, abs(uv.x))) * (1.0 - abs(uv.y) * 1.6);
-                                float total = core * 1.5 + spike + spike2 * 0.6;
-                                gl_FragColor = vec4(vColor, total * vAlpha);
-                            }
-                            else if (vType < 2.5) { // FIREBALL CHUNK - poszarpany ognisty kłąb
-                                if(dist > 1.0) discard;
-                                vec3 noisePos = vec3(uv * 3.0, vSeed * 50.0 + uTime * 0.5);
-                                float n = fbm(noisePos);
-                                float radial = max(0.0, 1.0 - dist);
-                                float lump = smoothstep(0.0, 0.6, n + radial * 0.7 - 0.4);
-                                gl_FragColor = vec4(vColor, lump * vAlpha);
-                            }
-                            else if (vType < 3.5) { // TRAILED DEBRIS - smuga z białym czołem
-                                vec2 pt = vUv - vec2(0.5);
-                                float glowX = pow(max(0.0, 0.5 - abs(pt.x)) * 2.0, 2.5);
-                                float fadeY = smoothstep(1.0, 0.85, vUv.y) * smoothstep(0.0, 0.15, vUv.y);
-                                float headPunch = smoothstep(0.6, 0.95, vUv.y) * 1.5;
-                                float baseAlpha = glowX * (fadeY + headPunch);
-                                gl_FragColor = vec4(vColor, baseAlpha * vAlpha);
-                            }
-                            else if (vType < 4.5) { // SHRAPNEL - mały twardy punkt
-                                if(dist > 1.0) discard;
-                                float core = max(0.0, 1.0 - smoothstep(0.0, 0.6, dist));
-                                float halo = max(0.0, 1.0 - smoothstep(0.0, 1.0, dist)) * 0.3;
-                                gl_FragColor = vec4(vColor, (core + halo) * vAlpha);
-                            }
-                            else if (vType < 5.5) { // ANAMORPHIC FLASH
-                                float core = max(0.0, 1.0 - smoothstep(0.0, 0.25, dist));
-                                float flareY = max(0.0, 1.0 - smoothstep(0.0, 0.015, abs(uv.y)));
-                                float flareX = max(0.0, 1.0 - smoothstep(0.0, 0.55, abs(uv.x)));
-                                float flare = flareY * flareX * 2.5;
-                                float aura = max(0.0, 1.0 - dist) * 0.5;
-                                float finalIntensity = max(0.0, core + flare + aura);
-                                gl_FragColor = vec4(vColor * finalIntensity, finalIntensity * vAlpha);
-                            }
-                            else if (vType < 6.5) { // PERCUSSIVE RING - cienki, ostry pierścień
-                                if(dist > 1.0) discard;
-                                float ringEdge = max(0.0, 1.0 - smoothstep(0.0, 0.06, abs(dist - 0.85)));
-                                float angle = atan(uv.y, uv.x);
-                                float n = 0.7 + 0.3 * fbm(vec3(angle * 8.0, dist * 3.0, uTime * 0.3));
-                                float finalRing = ringEdge * n;
-                                gl_FragColor = vec4(vColor, finalRing * vAlpha);
-                            }
-                            else { // HOT DEBRIS CHUNK - nieregularny kawałek
-                                vec3 noisePos = vec3(uv * 4.0, vSeed * 30.0);
-                                float n = fbm(noisePos);
-                                float radial = max(0.0, 1.0 - dist * 1.2);
-                                float chunk = smoothstep(0.45, 0.65, n * 0.6 + radial);
-                                if (chunk < 0.05) discard;
-                                // Gorący rdzeń przy środku, ciemniejszy outline
-                                float coreHot = max(0.0, 1.0 - smoothstep(0.0, 0.4, dist)) * 1.5;
-                                vec3 finalColor = vColor + vec3(0.5, 0.4, 0.2) * coreHot;
-                                gl_FragColor = vec4(finalColor, chunk * vAlpha);
-                            }
-                        }
-                    `,
-                    blending: THREE.AdditiveBlending,
-                    depthWrite: false,
-                    depthTest: false,
-                    transparent: true
-                });
-
-                this.mesh = new THREE.Mesh(geo, this.material);
-                this.mesh.frustumCulled = false;
-                this.mesh.renderOrder = 1000;
-                scene.add(this.mesh);
-            }
-
-            spawn(x, y, z, vx, vy, vz, size, life, type) {
-                let i = this.activeIndex;
-                this.activeIndex = (this.activeIndex + 1) % this.maxParticles;
-                let i3 = i * 3, i4 = i * 4;
-
-                this.startPos[i3]=x; this.startPos[i3+1]=y; this.startPos[i3+2]=z;
-                this.startVel[i3]=vx; this.startVel[i3+1]=vy; this.startVel[i3+2]=vz;
-
-                this.dataInfo[i4] = globalTime;
-                this.dataInfo[i4+1] = life;
-                this.dataInfo[i4+2] = size;
-                this.dataInfo[i4+3] = type;
-
-                const geo = this.mesh.geometry;
-                geo.attributes.aStartPos.needsUpdate = true;
-                geo.attributes.aStartVel.needsUpdate = true;
-                geo.attributes.aData.needsUpdate = true;
-            }
-
-            update() {
-                this.material.uniforms.uTime.value = globalTime;
-            }
-        }
-
-        // Smoke - kłębiasty dym artyleryjski (mroczny, nieprzezroczysty)
-        class GPUParticleManager {
-            constructor(scene, maxParticles, blendingType) {
-                this.maxParticles = maxParticles;
-                this.activeIndex = 0;
-
-                const baseGeo = new THREE.PlaneGeometry(1, 1);
-                const geo = new THREE.InstancedBufferGeometry();
-                geo.index = baseGeo.index;
-                geo.setAttribute('position', baseGeo.attributes.position);
-                geo.setAttribute('uv', baseGeo.attributes.uv);
-
-                this.startPos = new Float32Array(maxParticles * 3);
-                this.startVel = new Float32Array(maxParticles * 3);
-                this.dataInfo = new Float32Array(maxParticles * 4);
-
-                geo.setAttribute('aStartPos', new THREE.InstancedBufferAttribute(this.startPos, 3));
-                geo.setAttribute('aStartVel', new THREE.InstancedBufferAttribute(this.startVel, 3));
-                geo.setAttribute('aData', new THREE.InstancedBufferAttribute(this.dataInfo, 4));
-                geo.instanceCount = maxParticles;
-
-                this.material = new THREE.ShaderMaterial({
-                    uniforms: { uTime: { value: 0 } },
-                    vertexShader: `
-                        attribute vec3 aStartPos;
-                        attribute vec3 aStartVel;
-                        attribute vec4 aData;
-                        uniform float uTime;
-
-                        varying vec3 vColor;
-                        varying float vAlpha;
-                        varying vec2 vUv;
-                        varying float vAgeNorm;
-                        varying float vType;
-                        varying float vSeed;
-
-                        float hash(float n) { return fract(sin(n) * 43758.5453123); }
-
-                        void main() {
-                            vUv = uv;
-                            vType = aData.w;
-                            vSeed = hash(aData.x);
-                            float startTime = aData.x;
-                            float maxLife = aData.y;
-                            float age = uTime - startTime;
-
-                            if (age < 0.0 || age > maxLife) {
-                                gl_Position = vec4(9999.0, 9999.0, 9999.0, 1.0);
-                                return;
-                            }
-
-                            vAgeNorm = age / maxLife;
-                            float waveCurve = pow(vAgeNorm, 0.5);
-                            float currentSize = aData.z * (0.3 + waveCurve * 0.9);
-
-                            // Mroczny granat dla artyleryjskiego dymu
-                            vColor = vec3(0.03, 0.06, 0.13);
-                            vAlpha = pow(1.0 - vAgeNorm, 1.8) * 0.9;
-
-                            vec3 pos = aStartPos + aStartVel * age;
-                            // Lekkie unoszenie dymu w czasie
-                            pos.z += age * 50.0 * vSeed;
-
-                            vec3 flatPos = pos;
-                            flatPos.x += position.x * currentSize;
-                            flatPos.y += position.y * currentSize;
-                            vec4 mvPosition = modelViewMatrix * vec4(flatPos, 1.0);
-
-                            gl_Position = projectionMatrix * mvPosition;
-                        }
-                    `,
-                    fragmentShader: `
-                        varying vec3 vColor;
-                        varying float vAlpha;
-                        varying vec2 vUv;
-                        varying float vAgeNorm;
-                        varying float vType;
-                        varying float vSeed;
-                        uniform float uTime;
-
-                        ${noiseChunk}
-
-                        void main() {
-                            vec2 uv = vUv - vec2(0.5);
-                            float dist = length(uv) * 2.0;
-                            if(dist > 1.0) discard;
-
-                            // Kłębiasty dym z fbm
-                            float cloud = max(0.0, 1.0 - smoothstep(0.2, 1.0, dist));
-                            vec3 noisePos = vec3(uv * 4.0 + vSeed * 30.0, uTime * 0.15);
-                            float n = fbm(noisePos);
-                            float lump = smoothstep(0.0, 0.7, n * 0.7 + cloud);
-                            float finalAlpha = lump * vAlpha;
-                            gl_FragColor = vec4(vColor, finalAlpha);
-                        }
-                    `,
-                    blending: blendingType,
-                    depthWrite: false,
-                    depthTest: false,
-                    transparent: true
-                });
-
-                this.mesh = new THREE.Mesh(geo, this.material);
-                this.mesh.frustumCulled = false;
-                this.mesh.renderOrder = 999;
-                scene.add(this.mesh);
-            }
-
-            spawn(x, y, z, vx, vy, vz, size, life, type) {
-                let i = this.activeIndex;
-                this.activeIndex = (this.activeIndex + 1) % this.maxParticles;
-                let i3 = i * 3, i4 = i * 4;
-
-                this.startPos[i3]=x; this.startPos[i3+1]=y; this.startPos[i3+2]=z;
-                this.startVel[i3]=vx; this.startVel[i3+1]=vy; this.startVel[i3+2]=vz;
-
-                this.dataInfo[i4] = globalTime;
-                this.dataInfo[i4+1] = life;
-                this.dataInfo[i4+2] = size;
-                this.dataInfo[i4+3] = type;
-
-                const geo = this.mesh.geometry;
-                geo.attributes.aStartPos.needsUpdate = true;
-                geo.attributes.aStartVel.needsUpdate = true;
-                geo.attributes.aData.needsUpdate = true;
-            }
-
-            update() {
-                this.material.uniforms.uTime.value = globalTime;
-            }
-        }
-
-        // --- TRAFIENIE ARTYLERYJSKIE YAMATO ---
-        function triggerYamatoImpact(x, y, z) {
-            const explodeZ = Math.max(z, 160);
-            const eSize = window.FlameSettings.explosionSize;
-
-            // Krótki, ostry shake (artyleryjski punch)
-            screenShake = 600 * eSize;
-
-            const expX = x;
-            const expY = y;
-
-            // 0. MAŁA OPTYCZNA FALA - krótki impuls (wcześniej była ogromna bańka)
-            distortionManager.spawn(expX, expY, explodeZ, 4500 * eSize, 0.4);
-
-            // 1. PUNCH FLASH - wielki krzyż początkowy
-            fireParticleSystem.spawn(expX, expY, explodeZ + 200, 0,0,0, 8000 * eSize, 0.18, 1);
-
-            // 2. ANAMORPHIC FLASH - poziomy lens-flare
-            fireParticleSystem.spawn(expX, expY, explodeZ + 150, 0,0,0, 11000 * eSize, 0.5, 5);
-
-            // 3. PERCUSSIVE RING - ostry pierścień (BARDZO mały i krótki)
-            fireParticleSystem.spawn(expX, expY, explodeZ + 50, 0,0,0, 7000 * eSize, 0.35, 6);
-
-            // 4. KULA OGNIA - kilkanaście chunkow tworzących kłąb płomieni
-            for (let i = 0; i < 28; i++) {
-                const angle = Math.random() * Math.PI * 2;
-                const phi = Math.acos(2 * Math.random() - 1);
-                const speed = (200 + Math.random() * 800) * eSize;
-                const vx = Math.sin(phi) * Math.cos(angle) * speed;
-                const vy = Math.sin(phi) * Math.sin(angle) * speed;
-                const vz = Math.cos(phi) * speed * 0.4;
-                const sz = (1200 + Math.random() * 1600) * eSize;
-                const lf = 0.8 + Math.random() * 0.6;
-                fireParticleSystem.spawn(expX, expY, explodeZ + 100, vx, vy, vz, sz, lf, 2);
-            }
-
-            // 5. ROZŻARZONE ODŁAMKI Z SMUGAMI - ~80 dłuższych smug ciągniętych
-            for (let i = 0; i < 80; i++) {
-                const speed = (4000 + Math.random() * 12000) * eSize;
-                const angle = Math.random() * Math.PI * 2;
-                const phi = Math.acos(2 * Math.random() - 1);
-                const vx = Math.sin(phi) * Math.cos(angle) * speed;
-                const vy = Math.sin(phi) * Math.sin(angle) * speed;
-                const vz = Math.cos(phi) * speed * 0.3;
-                const sz = (60 + Math.random() * 80) * eSize;
-                const lf = 0.6 + Math.random() * 0.5;
-                fireParticleSystem.spawn(expX, expY, explodeZ + 100, vx, vy, vz, sz, lf, 3);
-            }
-
-            // 6. DUŻE GORĄCE FRAGMENTY OBROTOWE - ~16 sztuk (wyróżniają się rotacją)
-            for (let i = 0; i < 16; i++) {
-                const angle = Math.random() * Math.PI * 2;
-                const phi = Math.acos(2 * Math.random() - 1);
-                const speed = (1500 + Math.random() * 4000) * eSize;
-                const vx = Math.sin(phi) * Math.cos(angle) * speed;
-                const vy = Math.sin(phi) * Math.sin(angle) * speed;
-                const vz = Math.cos(phi) * speed * 0.5;
-                const sz = (200 + Math.random() * 350) * eSize;
-                const lf = 1.2 + Math.random() * 0.8;
-                fireParticleSystem.spawn(expX, expY, explodeZ + 100, vx, vy, vz, sz, lf, 7);
-            }
-
-            // 7. SHRAPNEL - dużo małych odłamków balistycznych z grawitacją
-            for (let i = 0; i < 600; i++) {
-                const angle = Math.random() * Math.PI * 2;
-                const phi = Math.acos(2 * Math.random() - 1);
-                const speed = (2500 + Math.random() * 9000) * eSize;
-                const vx = Math.sin(phi) * Math.cos(angle) * speed;
-                const vy = Math.sin(phi) * Math.sin(angle) * speed;
-                const vz = Math.cos(phi) * speed * 0.6 + 1500 * Math.random();
-                const sz = (15 + Math.random() * 25) * eSize;
-                const lf = 1.0 + Math.random() * 1.5;
-                fireParticleSystem.spawn(expX, expY, explodeZ + 100, vx, vy, vz, sz, lf, 4);
-            }
-
-            // 8. KŁĘBY DYMU - rozproszone wokół centrum
-            for (let i = 0; i < 25; i++) {
-                const angle = Math.random() * Math.PI * 2;
-                const dist = Math.random() * 1500 * eSize;
-                const sx = expX + Math.cos(angle) * dist;
-                const sy = expY + Math.sin(angle) * dist;
-                const speed = (300 + Math.random() * 800) * eSize;
-                const vx = Math.cos(angle) * speed;
-                const vy = Math.sin(angle) * speed;
-                const sz = (3000 + Math.random() * 3000) * eSize;
-                const lf = 1.5 + Math.random() * 1.2;
-                smokeParticleSystem.spawn(sx, sy, explodeZ, vx, vy, 100 * Math.random(), sz, lf, 2);
-            }
-
-            // 9. ŁAŃCUCH WTÓRNYCH WYBUCHÓW - 4 mniejsze pop-y w pobliżu w odstępach
-            for (let s = 0; s < 4; s++) {
-                const delay = 80 + s * 110 + Math.random() * 60;
-                setTimeout(() => {
-                    const popAngle = Math.random() * Math.PI * 2;
-                    const popDist = (800 + Math.random() * 2200) * eSize;
-                    const px = expX + Math.cos(popAngle) * popDist;
-                    const py = expY + Math.sin(popAngle) * popDist;
-                    const popScale = 0.35 + Math.random() * 0.35;
-
-                    // Mini punch
-                    fireParticleSystem.spawn(px, py, explodeZ + 150, 0,0,0,
-                        4000 * eSize * popScale, 0.14, 1);
-                    // Mini ring
-                    fireParticleSystem.spawn(px, py, explodeZ + 50, 0,0,0,
-                        2800 * eSize * popScale, 0.25, 6);
-                    // Mini fireball chunks
-                    for (let k = 0; k < 8; k++) {
-                        const ang = Math.random() * Math.PI * 2;
-                        const sp = (400 + Math.random() * 700) * eSize;
-                        fireParticleSystem.spawn(px, py, explodeZ + 80,
-                            Math.cos(ang)*sp, Math.sin(ang)*sp, (Math.random()-0.3)*sp*0.4,
-                            (500 + Math.random() * 700) * eSize * popScale,
-                            0.5 + Math.random() * 0.4, 2);
-                    }
-                    // Mini shrapnel
-                    for (let k = 0; k < 80; k++) {
-                        const ang = Math.random() * Math.PI * 2;
-                        const phi = Math.acos(2 * Math.random() - 1);
-                        const sp = (1200 + Math.random() * 4000) * eSize;
-                        fireParticleSystem.spawn(px, py, explodeZ + 80,
-                            Math.sin(phi)*Math.cos(ang)*sp,
-                            Math.sin(phi)*Math.sin(ang)*sp,
-                            Math.cos(phi)*sp*0.5,
-                            (10 + Math.random() * 18) * eSize,
-                            0.8 + Math.random() * 1.0, 4);
-                    }
-                    // Mini dymek
-                    smokeParticleSystem.spawn(px, py, explodeZ, 0,0,0,
-                        (1400 + Math.random() * 1200) * eSize * popScale,
-                        1.0 + Math.random() * 0.8, 2);
-
-                    // Lekki dodatkowy shake
-                    screenShake = Math.max(screenShake, 250 * eSize * popScale);
-                }, delay);
-            }
-        }
-
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            composer.setSize(window.innerWidth, window.innerHeight);
-            rtTexture.setSize(window.innerWidth, window.innerHeight);
-        }
-
-        function onMouseDown(event) {
-            if(event.target.closest('#ui') || event.target.closest('#tuning-ui')) return;
-
-            if (event.button === 0) {
-                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-                mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
-                raycaster.setFromCamera(mouse, camera);
-                const intersects = raycaster.intersectObject(groundPlaneMesh);
-
-                if (intersects.length > 0) {
-                    triggerYamatoImpact(intersects[0].point.x, intersects[0].point.y, 160);
-                }
-            }
-        }
-
-        const originalCameraPos = new THREE.Vector3();
-
-        function animate() {
-            setTimeout(animate, 0);
-
-            const now = performance.now();
-            const delta = Math.min((now - lastTime) / 1000, 0.05);
-            lastTime = now;
-            globalTime += delta;
-
-            if (targetDistance > 0) {
-                const currentDistance = camera.position.distanceTo(controls.target);
-                const newDistance = THREE.MathUtils.lerp(currentDistance, targetDistance, delta * 12);
-                const direction = new THREE.Vector3().subVectors(camera.position, controls.target).normalize();
-                originalCameraPos.copy(controls.target).add(direction.multiplyScalar(newDistance));
-            } else {
-                originalCameraPos.copy(camera.position);
-            }
-
-            if (screenShake > 0) {
-                camera.position.x = originalCameraPos.x + (Math.random() - 0.5) * screenShake;
-                camera.position.y = originalCameraPos.y + (Math.random() - 0.5) * screenShake;
-                camera.position.z = originalCameraPos.z + (Math.random() - 0.5) * screenShake;
-                screenShake *= 0.90;
-                if (screenShake < 1) screenShake = 0;
-            } else {
-                camera.position.copy(originalCameraPos);
-            }
-
-            controls.update();
-
-            fireParticleSystem.update();
-            smokeParticleSystem.update();
-            distortionManager.update(delta);
-
-            const hasDistortion = distortionManager.waves.some(w => w.active);
-
-            if (hasDistortion) {
-                distortionManager.hideAll();
-
-                renderer.setRenderTarget(rtTexture);
-                renderer.clear();
-                renderer.render(scene, camera);
-
-                distortionManager.showActive();
-            }
-
-            renderer.setRenderTarget(null);
-            composer.render();
-        }
-
-        init();
-        lastTime = performance.now();
-        animate();
-    </script>
+        if(time>=1.6){ dispose(); }
+    }
+
+    function dispose(){
+        if(disposed) return; disposed=true;
+        if(light.parent) light.parent.remove(light);
+        const idx=activeEffects.indexOf(eff);
+        if(idx!==-1) activeEffects.splice(idx,1);
+    }
+
+    const eff={update,dispose};
+    return eff;
+}
+
+// ─── Input ────────────────────────────────────────────────────────────────────
+const raycaster=new THREE.Raycaster(), mouse=new THREE.Vector2();
+window.addEventListener('mousedown', e=>{
+    if(e.button!==0) return;
+    mouse.set((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1);
+    raycaster.setFromCamera(mouse, camera);
+    const h=raycaster.intersectObject(groundMesh);
+    if(!h.length) return;
+    const eff=spawnYamatoImpact(h[0].point.x, h[0].point.z, 110);
+    activeEffects.push(eff);
+});
+window.addEventListener('contextmenu', e=>e.preventDefault());
+window.addEventListener('resize', ()=>{
+    camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight); composer.setSize(innerWidth,innerHeight);
+});
+
+// ─── Animate ──────────────────────────────────────────────────────────────────
+const clock=new THREE.Clock();
+function animate(){
+    requestAnimationFrame(animate);
+    const dt=Math.min(clock.getDelta(),.05);
+
+    if(targetDist>0){
+        const cur=camera.position.distanceTo(controls.target);
+        const nd=THREE.MathUtils.lerp(cur,targetDist,dt*12);
+        const dir=new THREE.Vector3().subVectors(camera.position,controls.target).normalize();
+        origCam.copy(controls.target).addScaledVector(dir,nd);
+    } else origCam.copy(camera.position);
+
+    if(shakeAmt>0){
+        camera.position.set(origCam.x+(Math.random()-.5)*shakeAmt,origCam.y+(Math.random()-.5)*shakeAmt,origCam.z+(Math.random()-.5)*shakeAmt);
+        shakeAmt*=.88; if(shakeAmt<.5) shakeAmt=0;
+    } else camera.position.copy(origCam);
+
+    controls.update();
+    for(let i=activeEffects.length-1;i>=0;i--) activeEffects[i].update(dt);
+    composer.render();
+}
+animate();
+</script>
 </body>
 </html>

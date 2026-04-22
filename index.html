@@ -1039,6 +1039,7 @@
     import { createArmataImpactFactory } from "./src/effects3d/armataImpact.js";
     import { createAutocannonImpactFactory } from "./src/effects3d/autocannonImpact.js";
     import { createReactorBlowFactory } from "./src/effects3d/reactorblow.js";
+    import { createYamatoImpactFactory } from "./src/effects3d/yamato.js";
     import { createSupernovaMissileBlowFactory } from "./src/effects3d/supernovaMissileBlow.js";
     import { initRocketSystem3D, updateRocketSystem3D, fireRocket3D } from "./src/effects3d/rocketSystem3D.js";
     import { WarpBlackHole } from "./src/vfx/warpBlackHole.js";
@@ -1100,6 +1101,7 @@
     window.createArmataImpactFactory = createArmataImpactFactory;
     window.createAutocannonImpactFactory = createAutocannonImpactFactory;
     window.createReactorBlowFactory = createReactorBlowFactory;
+    window.createYamatoImpactFactory = createYamatoImpactFactory;
     window.Destruction3D = Destruction3D;
     window.destroyStation3D = destroyStation3D;
     window.createSupernovaMissileBlowFactory = createSupernovaMissileBlowFactory;
@@ -5711,6 +5713,7 @@
       const armataFactory = window.createArmataImpactFactory;
       const autocannonFactory = window.createAutocannonImpactFactory;
       const reactorFactory = window.createReactorBlowFactory;
+      const yamatoFactory = window.createYamatoImpactFactory;
       const supernovaFactory = window.createSupernovaMissileBlowFactory;
       const host = document.getElementById('game-root');
 
@@ -5748,6 +5751,9 @@
       }
       if (reactorFactory) {
         window.makeReactorBlow = reactorFactory(ov.scene);
+      }
+      if (yamatoFactory) {
+        window.makeYamatoImpact = yamatoFactory(ov.scene);
       }
       // Init 3D destruction engine — needs scene + sparks factory + shockwave manager
       if (window.Destruction3D) {
@@ -5809,11 +5815,28 @@
       }
     }
 
+    function resolveOverlayImpactQuality() {
+      const stats = window.overlay3D?.getStats?.();
+      const active = Number(stats?.activeEffects) || 0;
+      const renderMs = Number(stats?.lastRenderMs) || 0;
+      const pressure = Math.max(active / 70, renderMs / 6.5);
+      return Math.max(0.58, Math.min(1.15, 1 - Math.max(0, pressure - 0.32) * 0.22));
+    }
+
+    function triggerYamatoImpact3D(x, y, size = ship.h * 0.42, color = null, quality = null) {
+      if (overlay3D && window.makeYamatoImpact) {
+        const resolvedQuality = Number.isFinite(Number(quality)) ? Number(quality) : resolveOverlayImpactQuality();
+        const fx = window.makeYamatoImpact({ x, y, size, color, quality: resolvedQuality });
+        overlay3D.spawn(fx);
+      }
+    }
+
     // Expose trigger functions on window so canvasParticleSystem and spawnBulletImpactEffect can find them
     window.triggerRailgunExplosion3D = triggerRailgunExplosion3D;
     window.triggerArmataImpact3D = triggerArmataImpact3D;
     window.triggerAutocannonImpact3D = triggerAutocannonImpact3D;
     window.triggerReactorBlow3D = triggerReactorBlow3D;
+    window.triggerYamatoImpact3D = triggerYamatoImpact3D;
 
     // Resize: utrzymuj rozmiar overlayu = okna
     function resizeOverlay3D() {
@@ -8767,16 +8790,27 @@
     window.spawnWeaponImpactFromPreset = (...args) => CanvasVFX.spawnWeaponImpactFromPreset?.(...args);
     function isCanvasWeaponVfxEnabled() { return window.CANVAS_WEAPON_VFX_ENABLED !== false; }
 
+    function resolveProjectileImpact3DKey(b) {
+      const rawKey = String(b?.vfxKey || b?.weaponId || b?.weaponName || '').toLowerCase();
+      if (rawKey.includes('yamato')) return 'yamato';
+      if (b?.type === 'plasma' || b?.type === 'rocket' || b?.type === 'torpedo' || b?.type === 'armata') return 'armata';
+      if (b?.type === 'rail') return 'rail';
+      return 'default';
+    }
+
     function spawnBulletImpactEffect(b, x, y, scale = 1.0) {
+      const impactKey = resolveProjectileImpact3DKey(b);
       if (CanvasVFX.enabled && window.CANVAS_IMPACT_VFX_ENABLED === true) {
-        const key = CanvasVFX.resolveBulletVfxKey(b.vfxKey || b.weaponId || b.weaponName, b.type);
         const weaponSize = b.weaponSize || 'M';
-        CanvasVFX.spawnWeaponImpact(key, b.vfxColor || b.color, scale, x, y, weaponSize);
+        const canvasImpactKey = CanvasVFX.resolveBulletVfxKey(b.vfxKey || b.weaponId || b.weaponName, b.type);
+        CanvasVFX.spawnWeaponImpact(canvasImpactKey, b.vfxColor || b.color, scale, x, y, weaponSize);
       }
 
       if (window.overlay3D) {
         const baseSize = 40 * scale;
-        if (b.type === 'plasma' || b.type === 'rocket' || b.type === 'torpedo' || b.type === 'armata') {
+        if (impactKey === 'yamato') {
+          if (window.triggerYamatoImpact3D) triggerYamatoImpact3D(x, y, baseSize * 2.4, b.color || b.vfxColor);
+        } else if (b.type === 'plasma' || b.type === 'rocket' || b.type === 'torpedo' || b.type === 'armata') {
           if (window.triggerArmataImpact3D) triggerArmataImpact3D(x, y, baseSize * 1.5);
         } else if (b.type === 'rail') {
           if (window.triggerRailgunExplosion3D) triggerRailgunExplosion3D(x, y, baseSize * 1.2);
@@ -12181,23 +12215,29 @@
       }
 
       // Reaktywny pasek mocy:
-      // W = 100% mocy, brak ciągu = 0%. S jest teraz hamulcem/damperem.
+      // W = 100% mocy, brak ciągu = 0%.
+      // S / reverse to hamulec, więc nie podbijają mocy głównych silników.
       // Gamepad: left stick Y (forward) also drives engine power.
+      const reverseInput = Math.max(
+        clamp(Number(ship?.thrusterInput?.retro) || 0, 0, 1),
+        clamp(Number(input?.retro) || 0, 0, 1)
+      );
+      const brakeHeld = !!keys['s'] || reverseInput > 0.05;
       let target = 0;
-      if (keys['w']) target = 1.0;
-      if (keys['s']) target = Math.max(target, 0.92);
+      if (keys['w'] && !brakeHeld) target = 1.0;
 
       // Gamepad forward thrust should come from the real pad state, not from ship.thrusterInput,
       // bo to tworzy pętlę sprzężenia zwrotnego po puszczeniu W.
       const gamepadMain = getP1GamepadForwardInput();
-      target = Math.max(target, gamepadMain);
-      target = Math.max(
-        target,
-        clamp(Number(ship?.thrusterInput?.retro) || 0, 0, 1) * 0.92,
-        clamp(Number(input?.retro) || 0, 0, 1) * 0.92
-      );
+      if (!brakeHeld) target = Math.max(target, gamepadMain);
 
       enginePower.target = target;
+
+      if (brakeHeld && enginePower.target <= 1e-3) {
+        enginePower.current = 0;
+        input.main = 0;
+        return;
+      }
 
       // Szybka reakcja paska (6.0), żeby wizualnie pasowało do nowej fizyki
       enginePower.current = approachValue(enginePower.current, enginePower.target, 6.0 * dt);
