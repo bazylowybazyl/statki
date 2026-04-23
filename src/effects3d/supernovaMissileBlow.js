@@ -406,8 +406,11 @@ function _restoreBloom() {
 }
 
 export function createSupernovaMissileBlowFactory(scene) {
-    const fireParticleSystem = new NovaAdditiveParticleManager(scene, 140000);
-    const darkShockwaveSystem = new NovaDarkShockwaveManager(scene, 12000);
+    // OPTIMIZATION: Pool reduced 140k→40k (3.5x), 12k→4k (3x)
+    // Still enough headroom for 3000 sparks + core + rings, but dramatically cuts
+    // GPU vertex shader invocations per frame (was processing 140k × 4 verts = 560k even when empty)
+    const fireParticleSystem = new NovaAdditiveParticleManager(scene, 40000);
+    const darkShockwaveSystem = new NovaDarkShockwaveManager(scene, 4000);
 
     return function spawn({ x = 0, y = 0, size = 60 } = {}) {
         const group = new THREE.Group();
@@ -423,7 +426,9 @@ export function createSupernovaMissileBlowFactory(scene) {
         const expZ = y;
         const initTime = performance.now() / 1000;
         let sparksSpawned = false;
+        let sparkBatchesLeft = 0;         // OPTIMIZATION: stagger 3000 sparks across frames
         let disposed = false;
+        let _lastLightIntensity = -1;      // OPTIMIZATION: avoid redundant light writes
 
         // --- Fix #3: Screen shake ---
         if (Weapon3DSystem?._cameraShakeMag !== undefined) {
@@ -456,15 +461,22 @@ export function createSupernovaMissileBlowFactory(scene) {
         // Dark shockwave
         darkShockwaveSystem.spawn(expX, expY, expZ, size * 19, 1.6, initTime);
 
-        function spawnNovaSparks(gt) {
-            for (let i = 0; i < 3000; i++) {
+        // OPTIMIZATION: split 3000 sparks into 6 batches of 500 (one per frame).
+        // Previously all 3000 spawned in a single frame → buffer re-upload stall + FPS drop.
+        // Visually identical because explosion still pulses for ~2s.
+        const SPARK_TOTAL = 3000;
+        const SPARK_BATCH_SIZE = 500;
+        function spawnSparkBatch(gt, count) {
+            for (let i = 0; i < count; i++) {
                 const speed = (size * 80) + Math.random() * (size * 220);
                 const angle = Math.random() * Math.PI * 2;
-                const vx = Math.cos(angle) * speed;
-                const vz = Math.sin(angle) * speed;
+                const cosA = Math.cos(angle);
+                const sinA = Math.sin(angle);
+                const vx = cosA * speed;
+                const vz = sinA * speed;
                 const startDist = Math.random() * size * 24;
-                const startX = expX + Math.cos(angle) * startDist;
-                const startZ = expZ + Math.sin(angle) * startDist;
+                const startX = expX + cosA * startDist;
+                const startZ = expZ + sinA * startDist;
                 fireParticleSystem.spawn(
                     startX,
                     expY + size * 0.18,
@@ -496,10 +508,20 @@ export function createSupernovaMissileBlowFactory(scene) {
 
             if (!sparksSpawned && expTime >= 1.0) {
                 sparksSpawned = true;
-                spawnNovaSparks(gt);
+                sparkBatchesLeft = Math.ceil(SPARK_TOTAL / SPARK_BATCH_SIZE);
+            }
+            if (sparkBatchesLeft > 0) {
+                spawnSparkBatch(gt, SPARK_BATCH_SIZE);
+                sparkBatchesLeft--;
             }
 
-            light.intensity = Math.max(0, 12.0 * (1.0 - expTime / 1.5));
+            // OPTIMIZATION: only write light intensity when changed (quantized to 0.25 steps)
+            const newIntensity = Math.max(0, 12.0 * (1.0 - expTime / 1.5));
+            const quantized = Math.round(newIntensity * 4) / 4;
+            if (quantized !== _lastLightIntensity) {
+                light.intensity = quantized;
+                _lastLightIntensity = quantized;
+            }
 
             if (expTime > 4.6) dispose();
         }
