@@ -1,3 +1,5 @@
+import { getHullRenderSize, resolveHullRenderProfileId } from '../data/ships.js';
+
 // =============================================================================
 // CIC — COMBAT INFORMATION CENTER
 // =============================================================================
@@ -11,12 +13,13 @@
 
 const CIC_CONFIG = {
   zoomDefault: 0.08,       // CIC map zoom (world units → screen)
-  zoomMin: 0.0002,         // far enough to see full solar system at any resolution
+  zoomMin: 0.0001,         // farther strategic overview before hitting CIC zoom-out limit
   zoomMax: 0.4,
   zoomSpeed: 0.0004,
   sweepSpeed: 0.6,          // radians per second
   sweepRange: 60000,        // radar sweep max range (world units)
   gridSpacing: 10000,       // world units between grid lines
+  silhouetteMinPx: 18,
   colors: {
     bg: 'rgba(4, 12, 24, 0.95)',
     grid: 'rgba(30, 80, 140, 0.25)',
@@ -32,6 +35,231 @@ const CIC_CONFIG = {
     textBright: '#e2e8f0',
   }
 };
+
+const CIC_FIGHTER_TYPES = new Set(['fighter', 'interceptor', 'drone']);
+const CIC_SILHOUETTE_CACHE = new Map();
+const CIC_SOURCE_IDS = new WeakMap();
+let cicSourceIdSeq = 1;
+
+function readPositiveNumber(value, fallback = 0) {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : fallback;
+}
+
+function readSignedNumber(value, fallback = 0) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function getEntityScaleX(entity) {
+  return Math.max(
+    0.0001,
+    readPositiveNumber(entity?.visual?.spriteScaleX, readPositiveNumber(entity?.visual?.spriteScale, 1))
+  );
+}
+
+function getEntityScaleY(entity) {
+  return Math.max(
+    0.0001,
+    readPositiveNumber(entity?.visual?.spriteScaleY, readPositiveNumber(entity?.visual?.spriteScale, 1))
+  );
+}
+
+function getEntitySpriteRotation(entity) {
+  if (Number.isFinite(Number(entity?.visual?.spriteRotation))) return Number(entity.visual.spriteRotation);
+  if (Number.isFinite(Number(entity?.capitalProfile?.spriteRotation))) return Number(entity.capitalProfile.spriteRotation);
+  if (Number.isFinite(Number(entity?.profile?.spriteRotation))) return Number(entity.profile.spriteRotation);
+  return 0;
+}
+
+function getEntityHullProfileId(entity) {
+  const explicitId = String(entity?.activeHullId || entity?.shipFrame || entity?.shipId || '').trim().toLowerCase();
+  if (explicitId) return resolveHullRenderProfileId(explicitId);
+
+  const type = String(entity?.type || '').trim().toLowerCase();
+  if (!type) return null;
+  if (type.includes('battleship')) return resolveHullRenderProfileId(entity?.isPirate ? 'pirate_battleship' : 'terran_battleship');
+  if (type.includes('destroyer')) return resolveHullRenderProfileId(entity?.isPirate ? 'pirate_destroyer' : 'terran_destroyer');
+  if (type.includes('frigate')) return resolveHullRenderProfileId(entity?.isPirate ? 'pirate_frigate' : 'terran_frigate');
+  if (type === 'supercapital') return resolveHullRenderProfileId('supercapital');
+  if (type === 'carrier' || type === 'capital_carrier') return resolveHullRenderProfileId('capital_carrier');
+  return null;
+}
+
+function getEntitySpriteSource(entity) {
+  const direct = entity?.renderSpriteImage || entity?.spriteImage || entity?.sprite;
+  if (direct && readPositiveNumber(direct.width || direct.naturalWidth, 0) > 0) return direct;
+  if (entity?.capitalSprite?.ready && entity.capitalSprite.image) return entity.capitalSprite.image;
+  const armorImage = entity?.hexGrid?.armorImage;
+  if (armorImage && readPositiveNumber(armorImage.width || armorImage.naturalWidth, 0) > 0) return armorImage;
+  const cacheCanvas = entity?.hexGrid?.cacheCanvas;
+  if (cacheCanvas && readPositiveNumber(cacheCanvas.width, 0) > 0 && readPositiveNumber(cacheCanvas.height, 0) > 0) return cacheCanvas;
+  return null;
+}
+
+function quantizeCicSize(value) {
+  const px = Math.max(2, Number(value) || 2);
+  const step = px >= 220 ? 10 : px >= 120 ? 8 : px >= 48 ? 4 : 2;
+  return Math.max(2, Math.round(px / step) * step);
+}
+
+function getCicSourceId(source) {
+  if (!source || typeof source !== 'object') return 'none';
+  let id = CIC_SOURCE_IDS.get(source);
+  if (!id) {
+    id = `src_${cicSourceIdSeq++}`;
+    CIC_SOURCE_IDS.set(source, id);
+  }
+  return id;
+}
+
+function getCicTintedSilhouette(source, width, height, tint) {
+  if (!source) return null;
+  const qW = quantizeCicSize(width);
+  const qH = quantizeCicSize(height);
+  const key = `${getCicSourceId(source)}|${qW}x${qH}|${tint}`;
+  let cached = CIC_SILHOUETTE_CACHE.get(key);
+  if (cached) return cached;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = qW;
+  canvas.height = qH;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+
+  ctx.clearRect(0, 0, qW, qH);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(source, 0, 0, qW, qH);
+  ctx.globalCompositeOperation = 'source-in';
+  ctx.fillStyle = tint;
+  ctx.fillRect(0, 0, qW, qH);
+  ctx.globalCompositeOperation = 'source-over';
+  CIC_SILHOUETTE_CACHE.set(key, canvas);
+  return canvas;
+}
+
+function getEntityHullMetrics(entity, zoom) {
+  const scaleX = getEntityScaleX(entity);
+  const scaleY = getEntityScaleY(entity);
+
+  let worldW = 0;
+  let worldH = 0;
+
+  const gridW = readPositiveNumber(entity?.hexGrid?.srcWidth, 0);
+  const gridH = readPositiveNumber(entity?.hexGrid?.srcHeight, 0);
+  if (gridW > 0 && gridH > 0) {
+    worldW = gridW * scaleX;
+    worldH = gridH * scaleY;
+  }
+
+  if (!(worldW > 0 && worldH > 0)) {
+    const entityW = readPositiveNumber(entity?.w, 0);
+    const entityH = readPositiveNumber(entity?.h, 0);
+    if (entityW > 0 && entityH > 0) {
+      worldW = entityW * scaleX;
+      worldH = entityH * scaleY;
+    }
+  }
+
+  if (!(worldW > 0 && worldH > 0)) {
+    const profileId = getEntityHullProfileId(entity);
+    if (profileId) {
+      const source = getEntitySpriteSource(entity);
+      const srcW = readPositiveNumber(source?.naturalWidth || source?.width, 0);
+      const srcH = readPositiveNumber(source?.naturalHeight || source?.height, 0);
+      const size = getHullRenderSize(profileId, srcW, srcH);
+      worldW = readPositiveNumber(size?.w, worldW) * scaleX;
+      worldH = readPositiveNumber(size?.h, worldH) * scaleY;
+    }
+  }
+
+  if (!(worldW > 0 && worldH > 0)) {
+    const baseR = Math.max(1, readPositiveNumber(entity?.radius, readPositiveNumber(entity?.r, 14)));
+    if (entity?.capitalProfile) {
+      worldW = Math.max(worldW, baseR * Math.max(1.2, readPositiveNumber(entity.capitalProfile.lengthScale, 3.2)));
+      worldH = Math.max(worldH, baseR * Math.max(1.0, readPositiveNumber(entity.capitalProfile.widthScale, 1.2)));
+    } else {
+      worldW = Math.max(worldW, baseR * 2);
+      worldH = Math.max(worldH, baseR * 2);
+    }
+  }
+
+  return {
+    worldW,
+    worldH,
+    drawW: worldW * zoom,
+    drawH: worldH * zoom
+  };
+}
+
+function getContactPalette(isSelected, friendly, hostile) {
+  if (isSelected) {
+    return {
+      marker: CIC_CONFIG.colors.selected,
+      body: 'rgba(14, 34, 48, 0.96)',
+      accent: 'rgba(56, 189, 248, 0.72)',
+      glow: 'rgba(56, 189, 248, 0.52)'
+    };
+  }
+  if (friendly) {
+    return {
+      marker: CIC_CONFIG.colors.friendly,
+      body: 'rgba(10, 30, 18, 0.96)',
+      accent: 'rgba(74, 222, 128, 0.64)',
+      glow: 'rgba(74, 222, 128, 0.36)'
+    };
+  }
+  if (hostile) {
+    return {
+      marker: CIC_CONFIG.colors.hostile,
+      body: 'rgba(38, 12, 16, 0.96)',
+      accent: 'rgba(239, 68, 68, 0.68)',
+      glow: 'rgba(239, 68, 68, 0.36)'
+    };
+  }
+  return {
+    marker: CIC_CONFIG.colors.unknown,
+    body: 'rgba(36, 30, 12, 0.96)',
+    accent: 'rgba(251, 191, 36, 0.68)',
+    glow: 'rgba(251, 191, 36, 0.34)'
+  };
+}
+
+function canDrawContactSilhouette(entity, contact, metrics, isSystemScale) {
+  if (!entity || isSystemScale || contact?.isGhost) return false;
+  if (entity.fighter || CIC_FIGHTER_TYPES.has(String(entity?.type || '').toLowerCase())) return false;
+  const trackedAwareness = window.SensorSystem?.AWARENESS?.TRACKED || 3;
+  if (Number.isFinite(Number(contact?.awareness)) && Number(contact.awareness) < trackedAwareness) return false;
+  if (!getEntitySpriteSource(entity)) return false;
+  return Math.max(metrics.drawW, metrics.drawH) >= CIC_CONFIG.silhouetteMinPx;
+}
+
+function drawShipSilhouette(ctx, entity, screenX, screenY, metrics, palette, accentAlpha = 0.22) {
+  const source = getEntitySpriteSource(entity);
+  if (!source) return false;
+
+  const drawW = Math.max(8, Number(metrics?.drawW) || 0);
+  const drawH = Math.max(8, Number(metrics?.drawH) || 0);
+  if (!(drawW > 0 && drawH > 0)) return false;
+
+  const bodyCanvas = getCicTintedSilhouette(source, drawW, drawH, palette.body);
+  if (!bodyCanvas) return false;
+  const accentCanvas = getCicTintedSilhouette(source, drawW, drawH, palette.accent);
+
+  ctx.save();
+  ctx.translate(screenX, screenY);
+  ctx.rotate(readSignedNumber(entity?.angle, 0) + getEntitySpriteRotation(entity));
+  ctx.globalAlpha = 0.98;
+  ctx.drawImage(bodyCanvas, -drawW * 0.5, -drawH * 0.5, drawW, drawH);
+  if (accentCanvas) {
+    ctx.globalAlpha = accentAlpha;
+    ctx.shadowColor = palette.glow;
+    ctx.shadowBlur = Math.max(4, Math.min(18, Math.max(drawW, drawH) * 0.08));
+    ctx.drawImage(accentCanvas, -drawW * 0.5, -drawH * 0.5, drawW, drawH);
+  }
+  ctx.restore();
+  return true;
+}
 
 let cicActive = false;
 let cicZoom = CIC_CONFIG.zoomDefault;
@@ -208,7 +436,8 @@ export const CICDisplay = {
       for (const c of cicContacts) {
         if (c.isGhost || !c.entity || c.friendly) continue;
         const ddx = c.screenX - x, ddy = c.screenY - y;
-        if (ddx * ddx + ddy * ddy < 400) { hitContact = c; break; } // 20px radius
+        const hitRadius = Math.max(12, Number(c.hitRadius) || 20);
+        if (ddx * ddx + ddy * ddy < hitRadius * hitRadius) { hitContact = c; break; }
       }
 
       cicContextMenu.worldX = worldX;
@@ -314,7 +543,8 @@ export const CICDisplay = {
         for (const c of cicContacts) {
           if (c.isGhost) continue;
           const ddx = c.screenX - px, ddy = c.screenY - py;
-          if (ddx * ddx + ddy * ddy < 225) {
+          const hitRadius = Math.max(10, Number(c.hitRadius) || 15);
+          if (ddx * ddx + ddy * ddy < hitRadius * hitRadius) {
             cicSelectedContacts = [c];
             break;
           }
@@ -361,6 +591,7 @@ export const CICDisplay = {
         awareness: vis.awareness,
         distance: Math.hypot(npc.x - ship.pos.x, npc.y - ship.pos.y),
         screenX: 0, screenY: 0, // filled during draw
+        hitRadius: 16,
       });
     }
 
@@ -377,6 +608,7 @@ export const CICDisplay = {
         distance: Math.hypot(ghost.x - ship.pos.x, ghost.y - ship.pos.y),
         isGhost: true,
         screenX: 0, screenY: 0,
+        hitRadius: 16,
       });
     }
 
@@ -559,9 +791,9 @@ export const CICDisplay = {
     }
 
     // === PLAYER SHIP ICON ===
-    ctx.save();
-    ctx.translate(shipScr.x, shipScr.y);
     if (isSystemScale) {
+      ctx.save();
+      ctx.translate(shipScr.x, shipScr.y);
       // In system view: pulsing beacon dot
       const pulse = 0.6 + 0.4 * Math.sin(gameTime * 3);
       const beaconR = 4 + cicSystemBlend * 3;
@@ -579,21 +811,28 @@ export const CICDisplay = {
       ctx.textAlign = 'center';
       ctx.fillStyle = '#38bdf8';
       ctx.fillText('ATLAS', 0, beaconR + 14);
+      ctx.restore();
     } else {
-      ctx.rotate(ship.angle || 0);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 2;
-      const ss = Math.max(8, 220 * cicZoom);
-      ctx.beginPath();
-      ctx.moveTo(ss * 1.2, 0);
-      ctx.lineTo(-ss * 0.7, ss * 0.6);
-      ctx.lineTo(-ss * 0.5, 0);
-      ctx.lineTo(-ss * 0.7, -ss * 0.6);
-      ctx.closePath();
-      ctx.fill(); ctx.stroke();
+      const playerMetrics = getEntityHullMetrics(ship, cicZoom);
+      const playerPalette = getContactPalette(true, true, false);
+      if (!drawShipSilhouette(ctx, ship, shipScr.x, shipScr.y, playerMetrics, playerPalette, 0.28)) {
+        ctx.save();
+        ctx.translate(shipScr.x, shipScr.y);
+        ctx.rotate(ship.angle || 0);
+        ctx.fillStyle = '#e2e8f0';
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 2;
+        const ss = Math.max(8, 220 * cicZoom);
+        ctx.beginPath();
+        ctx.moveTo(ss * 1.2, 0);
+        ctx.lineTo(-ss * 0.7, ss * 0.6);
+        ctx.lineTo(-ss * 0.5, 0);
+        ctx.lineTo(-ss * 0.7, -ss * 0.6);
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+        ctx.restore();
+      }
     }
-    ctx.restore();
 
     // === CONTACTS ===
     for (const c of cicContacts) {
@@ -605,7 +844,13 @@ export const CICDisplay = {
       if (sp.x < -50 || sp.x > W + 50 || sp.y < -50 || sp.y > H + 50) continue;
 
       const isSelected = c.entity && cicSelectedContacts.some(s => s.entity === c.entity);
+      const palette = getContactPalette(isSelected, c.friendly, c.hostile);
+      const metrics = c.entity ? getEntityHullMetrics(c.entity, cicZoom) : null;
+      const hullExtent = metrics ? Math.max(metrics.drawW, metrics.drawH) * 0.5 : 0;
       const size = Math.max(5, Math.min(14, c.radius * cicZoom * 2));
+      const markerSize = Math.max(size, Math.min(28, hullExtent * 0.32));
+      const iconSize = Math.max(markerSize, hullExtent);
+      c.hitRadius = Math.max(14, Math.min(160, iconSize * 0.5 + 6));
 
       if (c.isGhost) {
         // Ghost: dashed diamond
@@ -615,21 +860,20 @@ export const CICDisplay = {
         ctx.lineWidth = 1;
         ctx.setLineDash([3, 3]);
         ctx.beginPath();
-        ctx.moveTo(sp.x, sp.y - size); ctx.lineTo(sp.x + size, sp.y);
-        ctx.lineTo(sp.x, sp.y + size); ctx.lineTo(sp.x - size, sp.y);
+        ctx.moveTo(sp.x, sp.y - markerSize); ctx.lineTo(sp.x + markerSize, sp.y);
+        ctx.lineTo(sp.x, sp.y + markerSize); ctx.lineTo(sp.x - markerSize, sp.y);
         ctx.closePath(); ctx.stroke();
         ctx.setLineDash([]);
         ctx.restore();
         continue;
       }
 
-      // Determine color
-      let color = CIC_CONFIG.colors.unknown;
-      if (c.friendly) color = CIC_CONFIG.colors.friendly;
-      else if (c.hostile) color = CIC_CONFIG.colors.hostile;
-      if (isSelected) color = CIC_CONFIG.colors.selected;
-
+      const color = palette.marker;
       ctx.save();
+      const drewSilhouette = canDrawContactSilhouette(c.entity, c, metrics, isSystemScale)
+        ? drawShipSilhouette(ctx, c.entity, sp.x, sp.y, metrics, palette, isSelected ? 0.3 : 0.2)
+        : false;
+      const visualSize = drewSilhouette ? Math.max(markerSize, hullExtent * 0.5) : markerSize;
 
       // DETECTED: small diamond, no detail
       if (c.awareness === (window.SensorSystem?.AWARENESS?.DETECTED || 2)) {
@@ -637,32 +881,33 @@ export const CICDisplay = {
         ctx.strokeStyle = color;
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(sp.x, sp.y - size); ctx.lineTo(sp.x + size, sp.y);
-        ctx.lineTo(sp.x, sp.y + size); ctx.lineTo(sp.x - size, sp.y);
+        ctx.moveTo(sp.x, sp.y - markerSize); ctx.lineTo(sp.x + markerSize, sp.y);
+        ctx.lineTo(sp.x, sp.y + markerSize); ctx.lineTo(sp.x - markerSize, sp.y);
         ctx.closePath(); ctx.stroke();
         ctx.font = '8px monospace';
         ctx.fillStyle = color;
         ctx.textAlign = 'center';
-        ctx.fillText(c.type.toUpperCase(), sp.x, sp.y + size + 10);
+        ctx.fillText(c.type.toUpperCase(), sp.x, sp.y + markerSize + 10);
       } else {
-        // TRACKED: full marker
-        // NATO-style: hostile = diamond filled, friendly = circle, capital = larger
-        if (c.hostile) {
-          ctx.fillStyle = color + '44';
-          ctx.strokeStyle = color;
-          ctx.lineWidth = isSelected ? 2.5 : 1.5;
-          const s2 = c.isCapital ? size * 1.8 : size;
-          ctx.beginPath();
-          ctx.moveTo(sp.x, sp.y - s2); ctx.lineTo(sp.x + s2, sp.y);
-          ctx.lineTo(sp.x, sp.y + s2); ctx.lineTo(sp.x - s2, sp.y);
-          ctx.closePath(); ctx.fill(); ctx.stroke();
-        } else {
-          ctx.fillStyle = color + '44';
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.arc(sp.x, sp.y, size, 0, Math.PI * 2);
-          ctx.fill(); ctx.stroke();
+        if (!drewSilhouette) {
+          // Fallback for contacts without a sprite silhouette.
+          if (c.hostile) {
+            ctx.fillStyle = color + '44';
+            ctx.strokeStyle = color;
+            ctx.lineWidth = isSelected ? 2.5 : 1.5;
+            const s2 = c.isCapital ? markerSize * 1.8 : markerSize;
+            ctx.beginPath();
+            ctx.moveTo(sp.x, sp.y - s2); ctx.lineTo(sp.x + s2, sp.y);
+            ctx.lineTo(sp.x, sp.y + s2); ctx.lineTo(sp.x - s2, sp.y);
+            ctx.closePath(); ctx.fill(); ctx.stroke();
+          } else {
+            ctx.fillStyle = color + '44';
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(sp.x, sp.y, markerSize, 0, Math.PI * 2);
+            ctx.fill(); ctx.stroke();
+          }
         }
 
         // Type label
@@ -670,21 +915,21 @@ export const CICDisplay = {
         ctx.fillStyle = color;
         ctx.textAlign = 'center';
         const label = c.isCapital ? 'CAPITAL' : c.type.toUpperCase();
-        ctx.fillText(label, sp.x, sp.y + size + 11);
+        ctx.fillText(label, sp.x, sp.y + visualSize + 11);
 
         // Distance
         ctx.fillStyle = CIC_CONFIG.colors.text;
         ctx.font = '8px monospace';
-        ctx.fillText(`${(c.distance / 1000).toFixed(1)}k`, sp.x, sp.y + size + 21);
+        ctx.fillText(`${(c.distance / 1000).toFixed(1)}k`, sp.x, sp.y + visualSize + 21);
 
         // HP bar for tracked targets
         if (c.hp != null && c.maxHp) {
           const barW = 24, barH = 3;
           const hpRatio = Math.max(0, c.hp / c.maxHp);
           ctx.fillStyle = 'rgba(0,0,0,0.5)';
-          ctx.fillRect(sp.x - barW / 2, sp.y - size - 8, barW, barH);
+          ctx.fillRect(sp.x - barW / 2, sp.y - visualSize - 8, barW, barH);
           ctx.fillStyle = hpRatio > 0.5 ? '#4ade80' : hpRatio > 0.25 ? '#fbbf24' : '#ef4444';
-          ctx.fillRect(sp.x - barW / 2, sp.y - size - 8, barW * hpRatio, barH);
+          ctx.fillRect(sp.x - barW / 2, sp.y - visualSize - 8, barW * hpRatio, barH);
         }
       }
 
@@ -693,7 +938,7 @@ export const CICDisplay = {
         ctx.strokeStyle = CIC_CONFIG.colors.selected;
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 4]);
-        const selR = size + 8;
+        const selR = visualSize + 8;
         ctx.beginPath(); ctx.arc(sp.x, sp.y, selR, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
       }

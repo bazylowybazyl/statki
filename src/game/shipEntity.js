@@ -92,9 +92,19 @@ function clearThrusterVisualState(ship) {
   }
 }
 
-const _retroBrakeDirScratch = { x: -1, y: 0 };
+const RETRO_REVERSE_ENGAGE_SPEED = 22;
+const RETRO_REVERSE_RELEASE_FORWARD_SPEED = 44;
 
-function sampleRetroBrakeDirection(ship, out = _retroBrakeDirScratch) {
+function resolveRetroThrusterState(ship, retroInput = 0) {
+  const state = ship.__retroState || (ship.__retroState = {
+    x: -1,
+    y: 0,
+    speed: 0,
+    localForwardVel: 0,
+    localLateralVel: 0,
+    mode: 'idle',
+    reverseEngaged: false
+  });
   const vx = Number(ship?.vel?.x ?? ship?.vx) || 0;
   const vy = Number(ship?.vel?.y ?? ship?.vy) || 0;
   const angle = Number(ship?.angle) || 0;
@@ -105,17 +115,42 @@ function sampleRetroBrakeDirection(ship, out = _retroBrakeDirScratch) {
   const brakeX = -localForwardVel;
   const brakeY = -localLateralVel;
   const lenSq = brakeX * brakeX + brakeY * brakeY;
+  const speed = lenSq > 1e-8 ? Math.sqrt(lenSq) : 0;
+  const retroHeld = clamp01(retroInput) > 1e-3;
 
-  if (lenSq <= (16 * 16)) {
-    out.x = -1;
-    out.y = 0;
-    return out;
+  let reverseEngaged = retroHeld ? !!state.reverseEngaged : false;
+  if (!retroHeld) {
+    reverseEngaged = false;
+  } else if (reverseEngaged) {
+    if (localForwardVel > RETRO_REVERSE_RELEASE_FORWARD_SPEED) reverseEngaged = false;
+  } else if (speed <= RETRO_REVERSE_ENGAGE_SPEED) {
+    reverseEngaged = true;
+  }
+
+  state.speed = speed;
+  state.localForwardVel = localForwardVel;
+  state.localLateralVel = localLateralVel;
+  state.reverseEngaged = reverseEngaged;
+
+  if (!retroHeld) {
+    state.mode = 'idle';
+    state.x = -1;
+    state.y = 0;
+    return state;
+  }
+
+  if (reverseEngaged || lenSq <= (16 * 16)) {
+    state.mode = reverseEngaged ? 'reverse' : 'brake';
+    state.x = -1;
+    state.y = 0;
+    return state;
   }
 
   const invLen = 1 / Math.sqrt(lenSq);
-  out.x = brakeX * invLen;
-  out.y = brakeY * invLen;
-  return out;
+  state.mode = 'brake';
+  state.x = brakeX * invLen;
+  state.y = brakeY * invLen;
+  return state;
 }
 
 function applyPlayerThrusterVisualState(ship, target) {
@@ -124,7 +159,7 @@ function applyPlayerThrusterVisualState(ship, target) {
   const leftInput = clamp01(target.leftSide);
   const rightInput = clamp01(target.rightSide);
   const retroInput = clamp01(target.retro);
-  const retroBrakeDir = retroInput > 1e-3 ? sampleRetroBrakeDirection(ship) : null;
+  const retroState = resolveRetroThrusterState(ship, retroInput);
   const hasAssistTorque = Number.isFinite(Number(target.manualTorque)) || Number.isFinite(Number(target.assistTorque));
   
   const manualTorqueInput = hasAssistTorque ? clampSym(target.manualTorque, 1) : clampSym(target.torque, 1);
@@ -182,9 +217,9 @@ function applyPlayerThrusterVisualState(ship, target) {
       }
     }
     if (retroInput > 1e-3) {
-      // Retro-brake follows actual local velocity, so side thrusters brake opposite the drift.
+      // Manual retro first brakes opposite the real drift, then switches into bow-facing reverse thrust.
       const desiredRetroDeg = normalizeDeg(
-        Math.atan2(retroBrakeDir?.x ?? -1, -(retroBrakeDir?.y ?? 0)) * 180 / Math.PI,
+        Math.atan2(retroState?.x ?? -1, -(retroState?.y ?? 0)) * 180 / Math.PI,
         -90
       );
       const retroNozzle = clampNozzleDegToGimbal(
@@ -200,7 +235,7 @@ function applyPlayerThrusterVisualState(ship, target) {
       const retroFy = -Math.cos(retroRad);
       const retroAlign = Math.max(
         0,
-        (retroFx * (retroBrakeDir?.x ?? -1)) + (retroFy * (retroBrakeDir?.y ?? 0))
+        (retroFx * (retroState?.x ?? -1)) + (retroFy * (retroState?.y ?? 0))
       );
       throttle = Math.max(throttle, retroInput * retroAlign);
       turnWeight = 0;

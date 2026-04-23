@@ -639,7 +639,10 @@ class RocketSystem3D {
             /* ── Spawn FIRE particles ── */
             if (r.currentThrust > 0) {
                 const dist = _exhaustP.distanceTo(r.prevExhaustPos);
-                const steps = Math.min(15, Math.ceil(dist / Math.max(R.exhaustGap, 0.3)));
+                // OPTIMIZATION: cap reduced 15→8. Supernova (speed=3600) was hitting 15 every frame,
+                // spawning 15 fire + 8 smoke = 23 particles/frame/rocket. With 8 ammo burst-firing this
+                // meant 184 particles/frame just from exhaust, tanking FPS.
+                const steps = Math.min(8, Math.ceil(dist / Math.max(R.exhaustGap, 0.3)));
                 const exhaustScale = Math.max(0.35, r.exhaustScale || 1);
 
                 for (let s = 0; s < steps; s++) {
@@ -808,9 +811,12 @@ class RocketSystem3D {
         if (player && !player.destroyed && (!r.didImpactDamage || r.target !== player)) {
             const dx = (player.pos?.x ?? player.x ?? 0) - ex;
             const dz = (player.pos?.y ?? player.y ?? 0) - ez;
-            const dist = Math.hypot(dx, dz);
+            // OPTIMIZATION: distSq early-reject, sqrt only if inside radius
+            const distSq = dx * dx + dz * dz;
             const effectiveRadius = blastRadius + getEntityRadius(player) * 0.65;
-            if (dist <= effectiveRadius && applyPlayer) {
+            const effRadSq = effectiveRadius * effectiveRadius;
+            if (distSq <= effRadSq && applyPlayer) {
+                const dist = Math.sqrt(distSq);
                 const falloff = THREE.MathUtils.clamp(1 - (dist / Math.max(1, effectiveRadius)), 0, 1);
                 const dmg = damageBase * (0.3 + falloff * 0.7);
                 if (dmg > 1) applyPlayer(dmg);
@@ -824,9 +830,13 @@ class RocketSystem3D {
             if (r.didImpactDamage && npc === r.target) continue;
             const dx = (npc.x ?? npc.pos?.x ?? 0) - ex;
             const dz = (npc.y ?? npc.pos?.y ?? 0) - ez;
-            const dist = Math.hypot(dx, dz);
+            // OPTIMIZATION: distSq early-reject avoids sqrt for far NPCs (blast radius is small
+            // relative to NPC count — most NPCs are out of range and now skip Math.hypot entirely)
+            const distSq = dx * dx + dz * dz;
             const effectiveRadius = blastRadius + getEntityRadius(npc) * 0.65;
-            if (dist > effectiveRadius) continue;
+            const effRadSq = effectiveRadius * effectiveRadius;
+            if (distSq > effRadSq) continue;
+            const dist = Math.sqrt(distSq);
             const falloff = THREE.MathUtils.clamp(1 - (dist / Math.max(1, effectiveRadius)), 0, 1);
             const dmg = damageBase * (0.35 + falloff * 0.65);
             if (dmg > 1 && applyNpc) applyNpc(npc, dmg, "rocket");

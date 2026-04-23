@@ -1154,6 +1154,7 @@
     window.SensorSystem = SensorSystem;
     window.SparkSystem3D = SparkSystem3D;
     import { CICDisplay } from "./src/ui/cicDisplay.js";
+    import { ContactMarkers } from "./src/ui/contactMarkers.js";
     import { initRadarTargetingUI } from "./src/ui/radarTargetingUI.js";
     import { SpotterDroneSystem } from "./src/game/spotterDrone.js";
     import { WeaponController } from "./src/game/weaponController.js";
@@ -5410,7 +5411,7 @@
       zoom: 1.0,
       defaultZoom: 1.0,
       altZoom: 0.7,
-      minZoom: 0.06,
+      minZoom: 0.035,
       maxZoom: 3.2,
       wheelSpeed: 0.002,
       manualZoom: false,
@@ -13452,14 +13453,22 @@
           // --- L1 (4) = zoom out, R1 (5) = zoom in ---
           const zoomSpeed = 0.025;
           if (btn(4)) {
-            camera.targetZoom = clamp(camera.targetZoom * (1 - zoomSpeed), camera.minZoom, camera.maxZoom);
-            camera.manualZoom = true;
-            if (camera.transition && camera.transition.kind === 'ship') camera.transition = null;
+            if (CICDisplay.active) {
+              CICDisplay.onWheel(140);
+            } else {
+              camera.targetZoom = clamp(camera.targetZoom * (1 - zoomSpeed), camera.minZoom, camera.maxZoom);
+              camera.manualZoom = true;
+              if (camera.transition && camera.transition.kind === 'ship') camera.transition = null;
+            }
           }
           if (btn(5)) {
-            camera.targetZoom = clamp(camera.targetZoom * (1 + zoomSpeed), camera.minZoom, camera.maxZoom);
-            camera.manualZoom = true;
-            if (camera.transition && camera.transition.kind === 'ship') camera.transition = null;
+            if (CICDisplay.active) {
+              CICDisplay.onWheel(-140);
+            } else {
+              camera.targetZoom = clamp(camera.targetZoom * (1 + zoomSpeed), camera.minZoom, camera.maxZoom);
+              camera.manualZoom = true;
+              if (camera.transition && camera.transition.kind === 'ship') camera.transition = null;
+            }
           }
 
           // --- Right stick → move crosshair (virtual mouse) ---
@@ -16401,7 +16410,13 @@
         w.r += w.speed * dt;
         for (const npc of npcs) {
           if (npc.dead) continue;
-          if (!w.hit.has(npc) && Math.hypot(npc.x - w.x, npc.y - w.y) <= w.r) { w.hit.add(npc); spawnRadarPing(npc.x, npc.y); }
+          // Myśliwce całkowicie pomijamy — brak hypot, brak alokacji w hit-set
+          const _t = String(npc.type || '').toLowerCase();
+          if (!npc.isCapitalShip && (_t === 'fighter' || _t === 'interceptor' || _t === 'drone')) continue;
+          if (!w.hit.has(npc) && Math.hypot(npc.x - w.x, npc.y - w.y) <= w.r) {
+            w.hit.add(npc);
+            spawnRadarPing(npc.x, npc.y);
+          }
         }
         for (const st of stations) {
           if (!w.hit.has(st) && Math.hypot(st.x - w.x, st.y - w.y) <= w.r) { w.hit.add(st); spawnRadarPing(st.x, st.y); }
@@ -16620,10 +16635,14 @@
         const cos = Math.cos(ship.angle);
         const forward = { x: cos, y: sin };
         const right = { x: -sin, y: cos };
-        const gamepadReverse = (ship.input?.thrustY ?? 0) < -0.15;
-        const damperActive = !!(flightAssist.damper || keys['s'] || gamepadReverse);
-
         const reverseInput = Math.max(0, -(clamp(ship.input?.thrustY ?? 0, -1, 1)));
+        const retroState = ship.__retroState;
+        const gamepadReverse = (ship.input?.thrustY ?? 0) < -0.15;
+        const manualBrakeHeld = !!(keys['s'] || gamepadReverse);
+        const reverseEngaged = !!(reverseInput > 0.05 && retroState?.reverseEngaged);
+        const manualReverseHeld = manualBrakeHeld && reverseEngaged;
+        const damperActive = !!((flightAssist.damper && !manualReverseHeld) || (manualBrakeHeld && !reverseEngaged));
+        const reverseThrustInput = reverseEngaged ? reverseInput : 0;
         const massSafe = Math.max(1, Number(ship.mass) || SHIP_PHYSICS.PLAYER_MASS || 1);
         const invMass = 1 / massSafe;
         const inertiaSafe = Math.max(
@@ -16640,7 +16659,7 @@
         const thrusterForces = computeShipThrusterForces(ship, {
           mainForceMul: (boostActive ? SHIP_PHYSICS.BOOST_MULT : 1.0) * counterThrustMul,
           sideForceMul: 1.6,
-          reverseInput
+          reverseInput: reverseThrustInput
         }, _p1ForceScratch);
 
         const worldFx = (forward.x * thrusterForces.localFx) + (right.x * thrusterForces.localFy);
@@ -16657,15 +16676,19 @@
         const speedRampNorm = clamp(speed / 40000, 0, 1);
         const damperRampIn = lerp(11.0, 3.4, speedRampNorm);
         const damperRampOut = 7.5;
-        damperState.power = approachValue(
-          Number(damperState.power) || 0,
-          damperActive ? 1 : 0,
-          (damperActive ? damperRampIn : damperRampOut) * dt
-        );
+        if (manualReverseHeld) {
+          damperState.power = 0;
+        } else {
+          damperState.power = approachValue(
+            Number(damperState.power) || 0,
+            damperActive ? 1 : 0,
+            (damperActive ? damperRampIn : damperRampOut) * dt
+          );
+        }
         const damperPower = clamp(damperState.power, 0, 1);
 
         if (damperPower > 1e-4) {
-          const retroAssist = Math.max(reverseInput, driveRetro);
+          const retroAssist = Math.max(reverseThrustInput, driveRetro);
           const lowSpeedAssist = clamp(1 - (speed / 260), 0, 1);
           const damperLinearScale = retroAssist > 0.05 ? lerp(0.28, 1.0, lowSpeedAssist) : 1.0;
           const linearBrakeBase = lerp(SHIP_PHYSICS.SPEED * 0.7, SHIP_PHYSICS.SPEED * 16.0, damperPower) * damperLinearScale;
@@ -16743,12 +16766,14 @@
         const p2inertia = Math.max(1, Number(p2.inertia) || ((1 / 12) * p2mass * (((p2.w || 450) ** 2) + ((p2.h || 250) ** 2))));
 
         const p2rev = Math.max(0, -(clamp(p2.input?.thrustY ?? 0, -1, 1)));
+        const p2retroState = p2.__retroState;
+        const p2reverseEngaged = !!(p2rev > 0.05 && p2retroState?.reverseEngaged);
         const p2VelAlongForward = (p2.vel.x * p2fwd.x) + (p2.vel.y * p2fwd.y);
         const p2CounterNorm = clamp((-p2VelAlongForward) / Math.max(600, SHIP_PHYSICS.SPEED * 4.0), 0, 1);
         const p2forces = computeShipThrusterForces(p2, {
           mainForceMul: 1.0 + (p2CounterNorm * 1.75),
           sideForceMul: 1.6,
-          reverseInput: p2rev
+          reverseInput: p2reverseEngaged ? p2rev : 0
         }, _p2ForceScratch);
 
         const p2wfx = (p2fwd.x * p2forces.localFx) + (p2right.x * p2forces.localFy);
@@ -16762,7 +16787,8 @@
         // Damper (always active for P2 simplicity)
         const p2speed = Math.hypot(p2.vel.x, p2.vel.y);
         if (p2speed > 1e-4) {
-          const brakeDelta = Math.min(p2speed, p2speed * 0.4 * dt);
+          const brakeRate = p2reverseEngaged ? 0.06 : 0.4;
+          const brakeDelta = Math.min(p2speed, p2speed * brakeRate * dt);
           const invSpd = 1 / p2speed;
           p2.vel.x -= p2.vel.x * invSpd * brakeDelta;
           p2.vel.y -= p2.vel.y * invSpd * brakeDelta;
@@ -18911,6 +18937,11 @@
       // === SPOTTER DRONE PiP ===
       if (!CICDisplay.active && !showMap && gameStarted) {
         SpotterDroneSystem.drawPiP(ctx, W, H, cam, npcs, worldToScreen);
+      }
+
+      // === CONTACT MARKERS (taktyczne znaczniki w przestrzeni 3D) ===
+      if (!CICDisplay.active && !showMap && gameStarted) {
+        ContactMarkers.draw(ctx, W, H, ship, SensorSystem, gameTime, cam, mercMission);
       }
 
       if (showMap) drawSectorMap();
