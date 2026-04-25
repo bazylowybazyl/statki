@@ -45,7 +45,7 @@ const BUILD_GRID = Object.freeze({
   slotWidthRatio: 0.92
 });
 
-const HEX_SCALE_X = CONFIG.segmentWorldWidth / TEXTURE.width;
+const RING_HEX_WORLD_SCALE = CONFIG.segmentWorldWidth / TEXTURE.width;
 
 const RING_SEGMENT_MASS = 2500000;
 
@@ -62,6 +62,8 @@ const RING_LAYOUT = Object.freeze({
   gapParking: { innerMul: 2.4, outerMul: 3.3 },  // ship parking (~0.9R)
   military:   { innerMul: 3.3, outerMul: 3.8 }   // military zones (outer)
 });
+
+const RING_SEGMENT_BANDS = Object.freeze(['inner', 'industrial', 'military']);
 
 const COLLISION_FLOOR_LAYOUT = Object.freeze((() => {
   const floorStartMul = RING_LAYOUT.inner.innerMul;
@@ -125,6 +127,14 @@ function getRingBandLayout() {
     gapParkingTopPx,
     gapParkingBottomPx
   };
+}
+
+function getBandTextureRangePx(bandId) {
+  const layout = getRingBandLayout();
+  if (bandId === 'inner') return [layout.innerBandTopPx, layout.innerBandBottomPx];
+  if (bandId === 'industrial') return [layout.industrialBandTopPx, layout.industrialBandBottomPx];
+  if (bandId === 'military') return [layout.militaryBandTopPx, layout.militaryBandBottomPx];
+  return [0, TEXTURE.height];
 }
 
 
@@ -329,6 +339,17 @@ function buildSegmentTypes(segmentCount) {
   return types;
 }
 
+function segmentHasLiveEntity(seg) {
+  if (!seg) return false;
+  const entities = Array.isArray(seg.entities) ? seg.entities : null;
+  const count = entities ? entities.length : (seg.entity ? 1 : 0);
+  for (let i = 0; i < count; i++) {
+    const entity = entities ? entities[i] : seg.entity;
+    if (entity && !entity.dead) return true;
+  }
+  return false;
+}
+
 class PlanetaryRing {
   constructor(planet, key) {
     this.key = key;
@@ -382,6 +403,7 @@ class PlanetaryRing {
     const segmentCount = Math.max(24, Math.ceil(circumference / effectiveWidth));
     this.angleStep = (Math.PI * 2) / segmentCount;
     this.segmentTypes = buildSegmentTypes(segmentCount);
+    const bandTextures = this.createSegmentBandTextures(textures);
     this.segmentData.length = 0;
 
     for (let i = 0; i < segmentCount; i++) {
@@ -392,14 +414,25 @@ class PlanetaryRing {
         type,
         baseAngle,
         worldAngle: baseAngle,
-        entity: null
+        entity: null,
+        entities: []
       };
 
       if (type !== 'HOLE') {
-        const image = textures.WALL_DISPLAY;
-        const collisionImage = textures.WALL_COLLISION || image;
-        const entity = this.createSegmentEntity(i, type, image, collisionImage);
-        segment.entity = entity;
+        for (let b = 0; b < bandTextures.length; b++) {
+          const bandTex = bandTextures[b];
+          const entity = this.createSegmentEntity(
+            i,
+            type,
+            bandTex.id,
+            bandTex.display,
+            bandTex.collision,
+            bandTex
+          );
+          if (!entity || entity.dead) continue;
+          segment.entities.push(entity);
+          if (!segment.entity) segment.entity = entity;
+        }
       }
 
       this.segmentData.push(segment);
@@ -418,6 +451,52 @@ class PlanetaryRing {
     this.buildConstructionSlots(segmentCount);
     this.buildRingPedestal();
     this.buildShipParking();
+  }
+
+  createSegmentBandTextures(textures) {
+    const result = [];
+    const sourceDisplay = textures.WALL_DISPLAY;
+    const sourceCollision = textures.WALL_COLLISION || sourceDisplay;
+    if (!sourceDisplay) return result;
+
+    for (const id of RING_SEGMENT_BANDS) {
+      const band = this.layout?.[id];
+      if (!band) continue;
+      const radius = (band.innerR + band.outerR) * 0.5;
+      const worldWidth = Math.max(2, (Number(this.angleStep) || 0) * radius + CONFIG.overlap);
+      const worldHeight = Math.max(1, band.outerR - band.innerR);
+      const canvasWidth = Math.max(2, Math.round(worldWidth / RING_HEX_WORLD_SCALE));
+      const canvasHeight = Math.max(2, Math.round(worldHeight / RING_HEX_WORLD_SCALE));
+      const [srcTop, srcBottom] = getBandTextureRangePx(id);
+      const srcHeight = Math.max(1, srcBottom - srcTop);
+      const display = createCanvas(canvasWidth, canvasHeight);
+      const collision = createCanvas(canvasWidth, canvasHeight);
+      if (!display || !collision) continue;
+
+      display.getContext('2d').drawImage(
+        sourceDisplay,
+        0, srcTop, TEXTURE.width, srcHeight,
+        0, 0, canvasWidth, canvasHeight
+      );
+      collision.getContext('2d').drawImage(
+        sourceCollision,
+        0, srcTop, TEXTURE.width, srcHeight,
+        0, 0, canvasWidth, canvasHeight
+      );
+
+      result.push({
+        id,
+        display,
+        collision,
+        innerR: band.innerR,
+        outerR: band.outerR,
+        radius,
+        worldWidth,
+        worldHeight
+      });
+    }
+
+    return result;
   }
 
   buildShipParking() {
@@ -476,10 +555,11 @@ class PlanetaryRing {
 
     for (let i = 0; i < this.segmentData.length; i++) {
       const seg = this.segmentData[i];
-      const entity = seg.entity;
+      const entities = Array.isArray(seg.entities) ? seg.entities : null;
+      const entityCount = entities ? entities.length : (seg.entity ? 1 : 0);
 
       // Dead, missing, or HOLE → fully transparent
-      if (!entity || entity.dead) {
+      if (entityCount <= 0) {
         const prev = seg._lastDamageRatio ?? 1.0;
         if (prev > 0.001) {
           seg._lastDamageRatio = 0;
@@ -490,12 +570,29 @@ class PlanetaryRing {
       }
 
       // Structural damage ratio
-      let ratio = 1.0;
-      if (entity.hexGrid) {
+      let active = 0;
+      let total = 0;
+      let aliveAny = false;
+      for (let e = 0; e < entityCount; e++) {
+        const entity = entities ? entities[e] : seg.entity;
+        if (!entity) continue;
+        if (!entity.dead) aliveAny = true;
+        if (!entity.hexGrid) continue;
         const structural = getHexStructuralState(entity);
         if (structural && structural.total > 0) {
-          ratio = structural.active / structural.total;
+          active += entity.dead ? 0 : structural.active;
+          total += structural.total;
         }
+      }
+      const ratio = total > 0 ? active / total : (aliveAny ? 1.0 : 0.0);
+      if (!aliveAny && ratio <= 0) {
+        const prev = seg._lastDamageRatio ?? 1.0;
+        if (prev > 0.001) {
+          seg._lastDamageRatio = 0;
+          ctx2d.clearRect(i * pxPerSeg, 0, pxPerSeg, 4);
+          dirty = true;
+        }
+        continue;
       }
 
       const prev = seg._lastDamageRatio ?? 1.0;
@@ -518,10 +615,10 @@ class PlanetaryRing {
     }
   }
 
-  createSegmentEntity(index, type, image, collisionImage = image) {
+  createSegmentEntity(index, type, bandId, image, collisionImage = image, band = null) {
     const entity = {
-      id: `ring_${this.key}_${index}`,
-      name: `Ring ${this.key} ${index}`,
+      id: `ring_${this.key}_${bandId}_${index}`,
+      name: `Ring ${this.key} ${bandId} ${index}`,
       type: 'ring_segment',
       owner: this,
       x: 0,
@@ -534,15 +631,21 @@ class PlanetaryRing {
       isCollidable: true,
       isRingSegment: true,
       ringPlanetKey: this.key,
+      ringBandId: bandId,
+      ringBandRadius: Number(band?.radius) || this.wallRadius,
+      ringBandInnerRadius: Number(band?.innerR) || 0,
+      ringBandOuterRadius: Number(band?.outerR) || 0,
+      ringBandWorldWidth: Number(band?.worldWidth) || CONFIG.segmentWorldWidth,
+      ringBandWorldHeight: Number(band?.worldHeight) || this.segmentWorldHeight,
       ringSegmentType: type,
       ringSegmentIndex: index,
       noSplit: true,
       mass: RING_SEGMENT_MASS,
       friction: 1,
       visual: {
-        spriteScale: HEX_SCALE_X,
-        spriteScaleX: HEX_SCALE_X,
-        spriteScaleY: Math.max(0.0001, this.segmentWorldHeight / TEXTURE.height),
+        spriteScale: RING_HEX_WORLD_SCALE,
+        spriteScaleX: RING_HEX_WORLD_SCALE,
+        spriteScaleY: RING_HEX_WORLD_SCALE,
         spriteRotation: 0
       },
       hp: 1,
@@ -563,12 +666,12 @@ class PlanetaryRing {
       }
     }
 
-    // Set collision radius from actual hex dimensions (segment is ~800×2400 world units)
-    const scaleX = Math.max(0.0001, Number(entity.visual?.spriteScaleX) || HEX_SCALE_X);
+    // Set collision radius from actual layer dimensions.
+    const scaleX = Math.max(0.0001, Number(entity.visual?.spriteScaleX) || RING_HEX_WORLD_SCALE);
     const scaleY = Math.max(0.0001, Number(entity.visual?.spriteScaleY) || scaleX);
     const hw = (entity.hexGrid.srcWidth || 0) * scaleX * 0.5;
     const hh = (entity.hexGrid.srcHeight || 0) * scaleY * 0.5;
-    entity.radius = Math.max(hw, hh);  // ~1200 units — used by collectNearbyRingDestructibles
+    entity.radius = Math.max(hw, hh);
 
     entity.hexGrid.meshDirty = true;
     entity.hexGrid.cacheDirty = false;
@@ -861,27 +964,31 @@ class PlanetaryRing {
       const nearThresh = this.ringRadius * 1.5;
       shipNearRing = dShipSq < nearThresh * nearThresh;
     }
-    const surfSpeed = this.rotationSpeed * this.wallRadius;
-
     for (let i = 0; i < this.segmentData.length; i++) {
       const seg = this.segmentData[i];
       const worldAngle = seg.baseAngle + this.currentRotation;
       seg.worldAngle = worldAngle;
 
-      const worldX = this.lastPlanetX + Math.cos(worldAngle) * this.wallRadius;
-      const worldY = this.lastPlanetY + Math.sin(worldAngle) * this.wallRadius;
       const worldRot = worldAngle + Math.PI * 0.5;
 
-      const entity = seg.entity;
-      if (!entity || entity.dead) continue;
+      const entities = Array.isArray(seg.entities) ? seg.entities : null;
+      const entityCount = entities ? entities.length : (seg.entity ? 1 : 0);
+      for (let e = 0; e < entityCount; e++) {
+        const entity = entities ? entities[e] : seg.entity;
+        if (!entity || entity.dead) continue;
 
-      entity.x = worldX;
-      entity.y = worldY;
-      entity.angle = worldRot;
+        const bandRadius = Math.max(1, Number(entity.ringBandRadius) || this.wallRadius);
+        const worldX = this.lastPlanetX + Math.cos(worldAngle) * bandRadius;
+        const worldY = this.lastPlanetY + Math.sin(worldAngle) * bandRadius;
 
-      if (shipNearRing) {
+        entity.x = worldX;
+        entity.y = worldY;
+        entity.angle = worldRot;
+
+        if (shipNearRing) {
         // Tangential surface velocity: v = ω × r (perpendicular to radial direction)
         // This lets the destructor collision system transfer surface movement to colliding objects
+        const surfSpeed = this.rotationSpeed * bandRadius;
         entity.vx = -Math.sin(worldAngle) * surfSpeed;
         entity.vy =  Math.cos(worldAngle) * surfSpeed;
         entity.angVel = this.rotationSpeed;
@@ -905,13 +1012,14 @@ class PlanetaryRing {
             entity.dead = true;
           }
         }
-      } else {
+        } else {
         // Ship far from this ring → park hex grid to sleep so destructor
         // collision pass skips it. Saves CPU in the broader physics loop.
         if (entity.hexGrid && entity.hexGrid.wakeHoldFrames <= 0) {
           entity.hexGrid.isSleeping = true;
         }
       }
+    }
     }
 
     this.updateForceFields(dt);
@@ -976,7 +1084,7 @@ class PlanetaryRing {
         // Segment destruction check (for non-chunk entries)
         if (!b.isChunk && b.segmentIndex !== undefined) {
             const seg = this.segmentData[b.segmentIndex];
-            if (!seg || !seg.entity || seg.entity.dead) {
+            if (!segmentHasLiveEntity(seg)) {
                 b.mesh.visible = false;
                 continue;
             }
@@ -1048,7 +1156,12 @@ class PlanetaryRing {
 
   dispose() {
     for (const seg of this.segmentData) {
-      if (seg?.entity) seg.entity.dead = true;
+      const entities = Array.isArray(seg?.entities) ? seg.entities : null;
+      const count = entities ? entities.length : (seg?.entity ? 1 : 0);
+      for (let i = 0; i < count; i++) {
+        const entity = entities ? entities[i] : seg.entity;
+        if (entity) entity.dead = true;
+      }
     }
 
     if (this.buildings3D && Core3D.scene) {
@@ -1114,9 +1227,13 @@ function rebuildEntityList() {
   state.entities.length = 0;
   for (const [, ring] of state.rings) {
     for (const seg of ring.segmentData) {
-      if (!seg?.entity || seg.entity.dead) continue;
-      if (!seg.entity.hexGrid) continue;
-      state.entities.push(seg.entity);
+      const entities = Array.isArray(seg?.entities) ? seg.entities : null;
+      const count = entities ? entities.length : (seg?.entity ? 1 : 0);
+      for (let i = 0; i < count; i++) {
+        const entity = entities ? entities[i] : seg.entity;
+        if (!entity || entity.dead || !entity.hexGrid) continue;
+        state.entities.push(entity);
+      }
     }
   }
 }
@@ -1257,8 +1374,18 @@ export function getPlanetaryRingDebug() {
   const rings = {};
   for (const [key, ring] of state.rings) {
     let aliveSegments = 0;
+    let aliveSegmentLayers = 0;
     for (const seg of ring.segmentData) {
-      if (seg?.entity && !seg.entity.dead) aliveSegments++;
+      let segmentAlive = false;
+      const entities = Array.isArray(seg?.entities) ? seg.entities : null;
+      const count = entities ? entities.length : (seg?.entity ? 1 : 0);
+      for (let i = 0; i < count; i++) {
+        const entity = entities ? entities[i] : seg.entity;
+        if (!entity || entity.dead) continue;
+        aliveSegmentLayers++;
+        segmentAlive = true;
+      }
+      if (segmentAlive) aliveSegments++;
     }
     // Performance stats
     let visibleEntries = 0;
@@ -1282,6 +1409,7 @@ export function getPlanetaryRingDebug() {
     rings[key] = {
       segmentCount: ring.segmentData.length,
       aliveSegments,
+      aliveSegmentLayers,
       forceFieldCount: ring.forceFields.length,
       slotCount: ring.constructionSlots.length,
       radius: ring.ringRadius,
