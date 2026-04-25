@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Destruction Effects Preview — chain / cut / scatter</title>
+    <style>
+        body { margin:0; overflow:hidden; background:#060812; font-family:'Segoe UI',sans-serif; color:white; user-select:none; }
+        canvas { display:block; }
+        #legend {
+            position:absolute; bottom:20px; left:20px; pointer-events:none;
+            background:rgba(5,10,30,0.85); padding:14px 22px; border-radius:8px;
+            border:1px solid #cc6633; box-shadow:0 4px 20px rgba(255,100,40,0.2); backdrop-filter:blur(4px);
+        }
+        #legend h1 { margin:0 0 8px; font-size:1.05rem; color:#ffaa66; text-transform:uppercase; letter-spacing:2px; }
+        #legend p  { margin:4px 0; font-size:0.85rem; color:#f8ddc0; }
+        #legend kbd {
+            display:inline-block; min-width:18px; padding:1px 6px; margin-right:4px;
+            background:#2a1a10; border:1px solid #884422; border-radius:3px;
+            color:#ffcc99; font-family:'Consolas',monospace; font-size:0.75rem; text-align:center;
+        }
+        #legend .hl { color:#ffcc88; font-weight:bold; }
+        #info {
+            position:absolute; top:16px; left:50%; transform:translateX(-50%);
+            font-size:0.75rem; color:#cc7744; background:rgba(5,10,30,0.7);
+            padding:4px 14px; border-radius:20px; border:1px solid #442; pointer-events:none;
+        }
+        #panel {
+            position:absolute; top:16px; right:16px; width:240px;
+            background:rgba(5,10,30,0.9); padding:12px 16px; border-radius:8px;
+            border:1px solid #553322; font-size:0.78rem; color:#e8ccaa;
+            box-shadow:0 4px 20px rgba(80,40,10,0.25);
+        }
+        #panel h2 { margin:0 0 10px; font-size:0.82rem; color:#ffaa66; text-transform:uppercase; letter-spacing:1.5px; }
+        #panel .row { display:flex; justify-content:space-between; align-items:center; margin:6px 0; gap:8px; }
+        #panel .row label { flex:0 0 72px; color:#c8a888; }
+        #panel .row input[type=range] { flex:1; }
+        #panel .row .val { flex:0 0 36px; text-align:right; color:#ffddaa; font-family:'Consolas',monospace; }
+        #panel hr { border:none; border-top:1px solid #332; margin:10px 0; }
+        #panel .mode { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; margin-top:4px; }
+        #panel .mode button {
+            background:#1a0e08; border:1px solid #553322; color:#c8a888; padding:5px;
+            border-radius:4px; cursor:pointer; font-size:0.72rem; font-family:inherit;
+        }
+        #panel .mode button.active {
+            background:#3a2010; border-color:#cc7733; color:#ffdd99; box-shadow:0 0 8px rgba(255,120,40,0.3);
+        }
+        #fps {
+            position:absolute; bottom:20px; right:20px;
+            background:rgba(5,10,30,0.7); padding:5px 10px; border-radius:4px;
+            border:1px solid #333; color:#8fffaa; font-family:'Consolas',monospace;
+            font-size:0.75rem; pointer-events:none;
+        }
+    </style>
+    <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }}
+    </script>
+</head>
+<body>
+<div id="legend">
+    <h1>Destruction Effects — preview</h1>
+    <p><kbd>1</kbd> chain reaction (małe popy modułów)</p>
+    <p><kbd>2</kbd> cut blast (kierunkowy, cięcie shelli)</p>
+    <p><kbd>3</kbd> final scatter (rozrzut modelu)</p>
+    <p style="margin-top:6px;"><kbd>LMB</kbd> spawn wybranego efektu w punkcie</p>
+    <p><kbd>R</kbd> pokaż/ukryj stację placeholder</p>
+    <p style="margin-top:6px; color:#ffaa66;">Oś cięcia (effekt 2):</p>
+    <p><kbd>Q</kbd> X • <kbd>W</kbd> Y • <kbd>E</kbd> Z • <kbd>C</kbd> kamera • <kbd>V</kbd> losowa</p>
+    <p><kbd>⇧</kbd> <span class="hl">Shift+2</span> — jednorazowo losowa oś</p>
+</div>
+<div id="info">GPU GLSL particles • 3 custom explosion types • AdditiveBlending + NormalBlending</div>
+<div id="cutAxisHud" style="position:absolute;top:52px;left:50%;transform:translateX(-50%);font-size:0.72rem;color:#ffcc88;background:rgba(5,10,30,0.7);padding:3px 12px;border-radius:20px;border:1px solid #552;pointer-events:none;">Oś cięcia: kamera</div>
+
+<div id="panel">
+    <h2>Bloom / tuning</h2>
+    <div class="row"><label>Strength</label><input id="bStr" type="range" min="0" max="3" step="0.05" value="1.4"><span class="val" id="bStrV">1.40</span></div>
+    <div class="row"><label>Radius</label><input id="bRad" type="range" min="0" max="2" step="0.05" value="0.75"><span class="val" id="bRadV">0.75</span></div>
+    <div class="row"><label>Threshold</label><input id="bThr" type="range" min="0" max="0.5" step="0.01" value="0.12"><span class="val" id="bThrV">0.12</span></div>
+    <div class="row"><label>Exposure</label><input id="exp" type="range" min="0.5" max="2" step="0.05" value="1.2"><span class="val" id="expV">1.20</span></div>
+    <hr>
+    <h2>LMB spawn</h2>
+    <div class="mode">
+        <button data-mode="1" class="active">Chain</button>
+        <button data-mode="2">Cut</button>
+        <button data-mode="3">Scatter</button>
+    </div>
+</div>
+<div id="fps">— fps</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OrbitControls }   from 'three/addons/controls/OrbitControls.js';
+
+// ─── Scene ────────────────────────────────────────────────────────────────────
+const scene  = new THREE.Scene();
+scene.fog    = new THREE.FogExp2(0x060812, 0.0000015);
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 1, 500000);
+camera.position.set(0, 1800, 3600);
+camera.lookAt(0, 200, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 200, 0);
+controls.mouseButtons = { LEFT:null, MIDDLE:THREE.MOUSE.ROTATE, RIGHT:THREE.MOUSE.PAN };
+controls.enableZoom = false; controls.enableDamping = true;
+controls.dampingFactor = 0.06; controls.panSpeed = 2;
+controls.minDistance = 500; controls.maxDistance = 120000;
+let targetDist = camera.position.distanceTo(controls.target);
+window.addEventListener('wheel', e => {
+    targetDist = THREE.MathUtils.clamp(targetDist + e.deltaY*30, controls.minDistance, controls.maxDistance);
+}, { passive:true });
+
+// ─── Post-processing ──────────────────────────────────────────────────────────
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1.4, 0.75, 0.12);
+composer.addPass(bloomPass);
+
+// ─── Scene dressing ───────────────────────────────────────────────────────────
+const groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(2000000,2000000), new THREE.MeshBasicMaterial({visible:false}));
+groundMesh.rotation.x = -Math.PI/2; scene.add(groundMesh);
+const bgMesh = new THREE.Mesh(new THREE.PlaneGeometry(400000,400000), new THREE.MeshBasicMaterial({color:0x080d1c, depthWrite:false}));
+bgMesh.rotation.x = -Math.PI/2; bgMesh.position.y = -20; scene.add(bgMesh);
+scene.add(new THREE.GridHelper(40000, 60, 0x112244, 0x0a1830));
+
+// ─── Placeholder "station" (do Effect 3 visual) ───────────────────────────────
+const stationGroup = new THREE.Group();
+(function buildStation(){
+    const bodyMat = new THREE.MeshStandardMaterial({color:0x3a4050, metalness:0.65, roughness:0.4, transparent:true, opacity:1});
+    const accentMat = new THREE.MeshStandardMaterial({color:0x222834, metalness:0.7, roughness:0.35, transparent:true, opacity:1});
+    const hotMat = new THREE.MeshStandardMaterial({color:0x221308, emissive:0xff5522, emissiveIntensity:0.6, metalness:0.3, roughness:0.5, transparent:true, opacity:1});
+    const core = new THREE.Mesh(new THREE.BoxGeometry(520,260,820), bodyMat);
+    stationGroup.add(core);
+    const m1 = new THREE.Mesh(new THREE.BoxGeometry(280,180,320), accentMat); m1.position.set(0, 220, 140);
+    const m2 = new THREE.Mesh(new THREE.BoxGeometry(160,120,180), accentMat); m2.position.set(-260, -180, 320);
+    const m3 = new THREE.Mesh(new THREE.BoxGeometry(180,140,160), accentMat); m3.position.set(280, -160, -260);
+    const m4 = new THREE.Mesh(new THREE.BoxGeometry(120,120,120), hotMat);    m4.position.set(-160, 180, -380);
+    const m5 = new THREE.Mesh(new THREE.BoxGeometry(100,100,100), hotMat);    m5.position.set(220, 200, 380);
+    stationGroup.add(m1, m2, m3, m4, m5);
+    stationGroup.userData.materials = [bodyMat, accentMat, hotMat];
+})();
+stationGroup.position.set(0, 260, 0);
+scene.add(stationGroup);
+
+// Lights for station (delikatne, żeby tło nie było płaskie)
+const ambLight  = new THREE.AmbientLight(0x334466, 0.35); scene.add(ambLight);
+const keyLight  = new THREE.DirectionalLight(0xaaccff, 0.7); keyLight.position.set(1,1,1); scene.add(keyLight);
+const fillLight = new THREE.DirectionalLight(0xff8855, 0.25); fillLight.position.set(-1,0.2,-0.5); scene.add(fillLight);
+
+// ─── Camera shake ─────────────────────────────────────────────────────────────
+let shakeAmt = 0;
+const origCam = new THREE.Vector3();
+
+// ─── GLSL noise (1:1 z yamato.js) ────────────────────────────────────────────
+const noiseChunk = `
+    float hash(float n) { return fract(sin(n) * 43758.5453123); }
+    float noise(vec3 x) {
+        vec3 p = floor(x); vec3 f = fract(x);
+        f = f*f*(3.0-2.0*f);
+        float n = p.x + p.y*57.0 + 113.0*p.z;
+        return mix(mix(mix(hash(n+0.),hash(n+1.),f.x),mix(hash(n+57.),hash(n+58.),f.x),f.y),
+                   mix(mix(hash(n+113.),hash(n+114.),f.x),mix(hash(n+170.),hash(n+171.),f.x),f.y),f.z);
+    }
+    float fbm(vec3 p) {
+        float f=0.; f+=0.5*noise(p); p*=2.02; f+=0.25*noise(p); p*=2.03; f+=0.125*noise(p); return f;
+    }
+`;
+
+// ─── GPUInstancedParticleManager (rozszerzony o aExtra dla types 8–11) ──────
+class GPUInstancedParticleManager {
+    constructor(scene, maxParticles, blendingType) {
+        this.maxParticles = maxParticles;
+        this.activeIndex  = 0;
+        this.dirty        = false;
+
+        const baseGeo = new THREE.PlaneGeometry(1,1);
+        const geo     = new THREE.InstancedBufferGeometry();
+        geo.index = baseGeo.index;
+        geo.setAttribute('position', baseGeo.attributes.position);
+        geo.setAttribute('uv',       baseGeo.attributes.uv);
+        this.startPos = new Float32Array(maxParticles*3);
+        this.startVel = new Float32Array(maxParticles*3);
+        this.dataInfo = new Float32Array(maxParticles*4);
+        this.extra    = new Float32Array(maxParticles*4);
+        geo.setAttribute('aStartPos', new THREE.InstancedBufferAttribute(this.startPos,3));
+        geo.setAttribute('aStartVel', new THREE.InstancedBufferAttribute(this.startVel,3));
+        geo.setAttribute('aData',     new THREE.InstancedBufferAttribute(this.dataInfo,4));
+        geo.setAttribute('aExtra',    new THREE.InstancedBufferAttribute(this.extra,4));
+        geo.instanceCount = maxParticles;
+
+        this.material = new THREE.ShaderMaterial({
+            uniforms: { uTime:{value:0} },
+            vertexShader: `
+                attribute vec3 aStartPos; attribute vec3 aStartVel; attribute vec4 aData; attribute vec4 aExtra;
+                uniform float uTime;
+                varying vec3 vColor; varying float vAlpha; varying vec2 vUv;
+                varying float vType; varying float vAgeNorm; varying float vSeed;
+                varying vec4 vExtra;
+                float hash(float n){return fract(sin(n)*43758.5453123);}
+                void main(){
+                    vUv=uv; vType=aData.w; vSeed=hash(aData.x+aExtra.w*17.13);
+                    vExtra=aExtra;
+                    float age=uTime-aData.x;
+                    if(age<0.||age>aData.y){gl_Position=vec4(9999,9999,9999,1);return;}
+                    float ratio=1.-(age/aData.y); vAgeNorm=age/aData.y;
+                    vec3 pos=aStartPos+aStartVel*age;
+                    float sz=aData.z; vec4 mvp;
+
+                    if(vType<1.5){ // TYPE 1: PUNCH FLASH
+                        sz=aData.z*(0.3+pow(1.-ratio,0.25)*0.7);
+                        // color tint from aExtra.xyz if non-zero, else default warm
+                        vec3 tint=(length(aExtra.xyz)>0.01)?aExtra.xyz:vec3(1.5,1.2,0.7);
+                        vColor=mix(vec3(1.6,1.4,1.0),tint,vAgeNorm)*2.0;
+                        vAlpha=pow(ratio,3.);
+                        mvp=modelViewMatrix*vec4(pos,1); mvp.xy+=position.xy*sz;
+                    } else if(vType<2.5){ // TYPE 2: FIREBALL CHUNK
+                        sz=aData.z*(0.4+pow(vAgeNorm,0.4)*1.4);
+                        vec3 tint=(length(aExtra.xyz)>0.01)?aExtra.xyz:vec3(1.0,0.55,0.25);
+                        vec3 hc=vec3(1.8,1.4,0.9), mf=tint, de=vec3(0.15,0.06,0.02);
+                        vColor=(vAgeNorm<.25)?mix(hc,mf,vAgeNorm/.25):mix(mf,de,(vAgeNorm-.25)/.75);
+                        vColor*=1.4;
+                        vAlpha=pow(ratio,1.4);
+                        mvp=modelViewMatrix*vec4(pos,1); mvp.xy+=position.xy*sz;
+                    } else if(vType<3.5){ // TYPE 3: TRAILED DEBRIS (space — no gravity)
+                        float drag=1.5+vSeed*1.5;
+                        pos=aStartPos+aStartVel*((1.-exp(-age*drag))/drag);
+                        vec3 cv=aStartVel*exp(-age*drag); float spd=length(cv);
+                        vColor=mix(vec3(1.4,1.1,0.8),vec3(0.6,0.2,0.05),pow(vAgeNorm,.5))*1.4;
+                        vAlpha=pow(ratio,.7);
+                        mvp=modelViewMatrix*vec4(pos,1);
+                        vec2 dir=normalize((modelViewMatrix*vec4(cv,0)).xy);
+                        if(length((modelViewMatrix*vec4(cv,0)).xy)<.1) dir=vec2(0,1);
+                        float w=aData.z*.4, str=aData.z*spd*.0022, tf=.5-position.y;
+                        vec2 so; so.x=position.x*w; so.y=-tf*str;
+                        mvp.xy+=vec2(so.x*dir.y+so.y*dir.x,-so.x*dir.x+so.y*dir.y);
+                    } else if(vType<4.5){ // TYPE 4: SHRAPNEL (space — no gravity)
+                        float drag=.6+vSeed*.6;
+                        pos=aStartPos+aStartVel*((1.-exp(-age*drag))/drag);
+                        vec3 tint=(length(aExtra.xyz)>0.01)?aExtra.xyz:vec3(1.2,0.8,0.3);
+                        vColor=mix(tint,vec3(0.4,0.1,0.02),pow(vAgeNorm,.5))*1.6;
+                        vAlpha=pow(ratio,.4); sz=aData.z*(1.-vAgeNorm*.3);
+                        mvp=modelViewMatrix*vec4(pos,1); mvp.xy+=position.xy*sz;
+                    } else if(vType<5.5){ // TYPE 5: ANAMORPHIC FLASH
+                        sz=aData.z*(.5+vAgeNorm*.5);
+                        vec3 tint=(length(aExtra.xyz)>0.01)?aExtra.xyz:vec3(1.1,0.85,0.55);
+                        vColor=tint*5.5; vAlpha=pow(ratio,4.);
+                        mvp=modelViewMatrix*vec4(pos,1); mvp.xy+=position.xy*sz;
+                    } else if(vType<6.5){ // TYPE 6: SPHERICAL SHOCKWAVE (billboarded — always visible)
+                        sz=aData.z*pow(vAgeNorm,.3);
+                        vec3 tint=(length(aExtra.xyz)>0.01)?aExtra.xyz:vec3(1.0,0.55,0.3);
+                        vColor=tint*2.8; vAlpha=pow(1.-vAgeNorm,2.);
+                        mvp=modelViewMatrix*vec4(pos,1); mvp.xy+=position.xy*sz;
+                    } else if(vType<7.5){ // TYPE 7: HOT DEBRIS (space — no gravity)
+                        float drag=1.+vSeed;
+                        pos=aStartPos+aStartVel*((1.-exp(-age*drag))/drag);
+                        vec3 h=vec3(1.6,1.2,0.6),m=vec3(0.9,0.3,0.1),c=vec3(0.1,0.03,0.01);
+                        vColor=(vAgeNorm<.3)?mix(h,m,vAgeNorm/.3):mix(m,c,(vAgeNorm-.3)/.7);
+                        vColor*=1.3;
+                        vAlpha=pow(ratio,.7); sz=aData.z*(1.-vAgeNorm*.5);
+                        float sp=(vSeed-.5)*12., cn=cos(age*sp), sn=sin(age*sp);
+                        vec2 rp=vec2(position.x*cn-position.y*sn, position.x*sn+position.y*cn);
+                        mvp=modelViewMatrix*vec4(pos,1); mvp.xy+=rp*sz;
+                    } else if(vType<8.5){ // TYPE 8: DIRECTIONAL JET (space — no gravity, inertia only)
+                        float drag=0.8+vSeed*0.5;
+                        pos=aStartPos+aStartVel*((1.-exp(-age*drag))/drag);
+                        vec3 cv=aStartVel*exp(-age*drag); float spd=length(cv);
+                        // Hot core → dim orange
+                        vec3 tint=(length(aExtra.xyz)>0.01)?aExtra.xyz:vec3(1.4,1.0,0.55);
+                        vColor=mix(vec3(2.0,1.6,0.9),tint,pow(vAgeNorm,0.5))*1.6;
+                        vColor=mix(vColor,vec3(0.25,0.06,0.02),pow(vAgeNorm,1.4));
+                        vAlpha=pow(ratio,.75);
+                        sz=aData.z*(0.6+vAgeNorm*0.9);
+                        mvp=modelViewMatrix*vec4(pos,1);
+                        vec2 dir=normalize((modelViewMatrix*vec4(cv,0)).xy);
+                        if(length((modelViewMatrix*vec4(cv,0)).xy)<.1) dir=vec2(0,1);
+                        float w=sz*0.55, str=sz*spd*0.0040;
+                        float tf=.5-position.y;
+                        vec2 so; so.x=position.x*w; so.y=-tf*str;
+                        mvp.xy+=vec2(so.x*dir.y+so.y*dir.x,-so.x*dir.x+so.y*dir.y);
+                    } else if(vType<9.5){ // TYPE 9: TUMBLING CHUNK (space — no gravity, pure inertia + drag)
+                        float drag=0.3+vSeed*0.25;
+                        pos=aStartPos+aStartVel*((1.-exp(-age*drag))/drag);
+                        vAlpha=pow(ratio,0.55);
+                        // HDR orange fade do deep red
+                        vec3 h=vec3(1.8,1.2,0.45), m=vec3(1.0,0.4,0.1), c=vec3(0.25,0.05,0.015);
+                        vColor=(vAgeNorm<.35)?mix(h,m,vAgeNorm/.35):mix(m,c,(vAgeNorm-.35)/.65);
+                        vColor*=2.2;
+                        // Rotacja quadu — 2D spin + squish na osi Y (fake 3D tumble)
+                        float spinSpeed=(vSeed-0.5)*14.0 + aExtra.z;
+                        float spin=age*spinSpeed;
+                        float cs=cos(spin), sn=sin(spin);
+                        float squish=0.55+0.45*cos(age*(spinSpeed*1.3)+aExtra.w*6.28);
+                        vec2 rp=vec2(position.x*cs-position.y*sn, position.x*sn+position.y*cs);
+                        rp.y*=squish;
+                        sz=aData.z*(1.0-vAgeNorm*0.25);
+                        mvp=modelViewMatrix*vec4(pos,1); mvp.xy+=rp*sz;
+                    } else if(vType<10.5){ // TYPE 10: LINGERING EMBER (space — drift with inertia only)
+                        float drag=0.9+vSeed*0.4;
+                        pos=aStartPos+aStartVel*((1.-exp(-age*drag))/drag);
+                        sz=aData.z*(0.7+0.3*sin(age*10.+vSeed*12.));
+                        vec3 h=vec3(1.6,0.8,0.25), c=vec3(0.5,0.08,0.01);
+                        vColor=mix(h,c,pow(vAgeNorm,0.4))*1.4;
+                        // Flicker alpha
+                        float flick=0.55+0.45*sin(age*14.+vSeed*9.);
+                        vAlpha=pow(ratio,1.2)*flick;
+                        mvp=modelViewMatrix*vec4(pos,1); mvp.xy+=position.xy*sz;
+                    } else { // TYPE 11: SHOCK DISC (planarny, zorientowany aExtra.xyz normalem)
+                        // Build basis from normal
+                        vec3 n=normalize(aExtra.xyz+vec3(0,0.0001,0));
+                        vec3 up=abs(n.y)<0.95?vec3(0,1,0):vec3(1,0,0);
+                        vec3 e1=normalize(cross(up,n));
+                        vec3 e2=cross(n,e1);
+                        sz=aData.z*pow(vAgeNorm,0.45);
+                        vec3 fp=pos + (e1*position.x + e2*position.y)*sz;
+                        vec3 tint=vec3(1.2,0.95,0.55);
+                        vColor=tint*3.2;
+                        vAlpha=pow(1.-vAgeNorm,1.4);
+                        mvp=modelViewMatrix*vec4(fp,1);
+                    }
+                    gl_Position=projectionMatrix*mvp;
+                }
+            `,
+            fragmentShader: `
+                varying vec3 vColor; varying float vAlpha; varying vec2 vUv;
+                varying float vType; varying float vAgeNorm; varying float vSeed;
+                varying vec4 vExtra;
+                uniform float uTime;
+                ${noiseChunk}
+                void main(){
+                    vec2 uv=vUv-vec2(.5); float dist=length(uv)*2.;
+                    if(vType<1.5){ // PUNCH FLASH
+                        float c=max(0.,1.-smoothstep(0.,.4,dist));
+                        float sy=max(0.,1.-smoothstep(0.,.05,abs(uv.y)))*(1.-abs(uv.x)*1.6);
+                        float sx=max(0.,1.-smoothstep(0.,.05,abs(uv.x)))*(1.-abs(uv.y)*1.6);
+                        gl_FragColor=vec4(vColor,(c*1.5+sy+sx*.6)*vAlpha);
+                    } else if(vType<2.5){ // FIREBALL
+                        if(dist>1.) discard;
+                        float n=fbm(vec3(uv*3.,vSeed*50.+uTime*.5));
+                        float l=smoothstep(0.,.6,n+max(0.,1.-dist)*.7-.4);
+                        gl_FragColor=vec4(vColor,l*vAlpha);
+                    } else if(vType<3.5){ // TRAILED DEBRIS
+                        vec2 pt=vUv-vec2(.5);
+                        float gx=pow(max(0.,.5-abs(pt.x))*2.,2.5);
+                        float fy=smoothstep(1.,.85,vUv.y)*smoothstep(0.,.15,vUv.y);
+                        float hd=smoothstep(.6,.95,vUv.y)*1.5;
+                        gl_FragColor=vec4(vColor,gx*(fy+hd)*vAlpha);
+                    } else if(vType<4.5){ // SHRAPNEL
+                        if(dist>1.) discard;
+                        float c=max(0.,1.-smoothstep(0.,.6,dist));
+                        float h=max(0.,1.-smoothstep(0.,1.,dist))*.3;
+                        gl_FragColor=vec4(vColor,(c+h)*vAlpha);
+                    } else if(vType<5.5){ // ANAMORPHIC
+                        float c=max(0.,1.-smoothstep(0.,.25,dist));
+                        float fy=max(0.,1.-smoothstep(0.,.015,abs(uv.y)));
+                        float fx=max(0.,1.-smoothstep(0.,.55,abs(uv.x)));
+                        float fi=max(0.,c+fy*fx*2.5+max(0.,1.-dist)*.5);
+                        gl_FragColor=vec4(vColor*fi,fi*vAlpha);
+                    } else if(vType<6.5){ // PERCUSSIVE RING
+                        if(dist>1.) discard;
+                        float e=max(0.,1.-smoothstep(0.,.06,abs(dist-.85)));
+                        float n=.7+.3*fbm(vec3(atan(uv.y,uv.x)*8.,dist*3.,uTime*.3));
+                        gl_FragColor=vec4(vColor,e*n*vAlpha);
+                    } else if(vType<7.5){ // HOT DEBRIS
+                        float n=fbm(vec3(uv*4.,vSeed*30.));
+                        float ch=smoothstep(.45,.65,n*.6+max(0.,1.-dist*1.2));
+                        if(ch<.05) discard;
+                        gl_FragColor=vec4(vColor+vec3(.5,.25,.08)*max(0.,1.-smoothstep(0.,.4,dist))*1.3, ch*vAlpha);
+                    } else if(vType<8.5){ // DIRECTIONAL JET
+                        vec2 pt=vUv-vec2(.5);
+                        float gx=pow(max(0.,.5-abs(pt.x))*2.,3.0);
+                        float fy=smoothstep(1.,.70,vUv.y)*smoothstep(0.,.10,vUv.y);
+                        float hd=smoothstep(.55,1.0,vUv.y)*2.2;
+                        float n=fbm(vec3(vUv*6.0, vSeed*40.+uTime*1.5));
+                        float streak = gx*(fy + hd)*(0.55+0.9*n);
+                        gl_FragColor=vec4(vColor, streak*vAlpha);
+                    } else if(vType<9.5){ // TUMBLING CHUNK
+                        // FBM wrinkled surface z hot rim
+                        if(dist>1.0) discard;
+                        vec2 ruv = uv*1.8;
+                        float n=fbm(vec3(ruv*2.5+vSeed*50., vSeed*20.+uTime*0.3));
+                        float body=smoothstep(0.95,0.15,dist) * (0.4+0.7*n);
+                        // Hot rim (edge glow)
+                        float rim = smoothstep(0.55,0.95,dist) * (1.0-smoothstep(0.95,1.0,dist));
+                        rim *= 1.5;
+                        float a = body + rim;
+                        if(a<.05) discard;
+                        vec3 col = vColor + vec3(0.8,0.35,0.1)*rim*1.5;
+                        gl_FragColor=vec4(col, a*vAlpha);
+                    } else if(vType<10.5){ // LINGERING EMBER
+                        if(dist>1.) discard;
+                        float c=max(0.,1.-smoothstep(0.,.5,dist));
+                        float h=max(0.,1.-smoothstep(0.,1.,dist))*.35;
+                        gl_FragColor=vec4(vColor,(c*1.3+h)*vAlpha);
+                    } else { // SHOCK DISC
+                        if(dist>1.) discard;
+                        float ring=max(0.,1.-smoothstep(0.0,.12,abs(dist-.82)));
+                        float inner=max(0.,1.-smoothstep(.0,.82,dist))*0.15;
+                        float n=.6+.4*fbm(vec3(atan(uv.y,uv.x)*7., dist*4., uTime*.5));
+                        gl_FragColor=vec4(vColor,(ring*n+inner)*vAlpha);
+                    }
+                }
+            `,
+            blending:blendingType, depthWrite:false, depthTest:false, transparent:true
+        });
+
+        this.mesh = new THREE.Mesh(geo, this.material);
+        this.mesh.frustumCulled = false; this.mesh.renderOrder = 1000;
+        scene.add(this.mesh);
+    }
+    // spawn(x,y,z, vx,vy,vz, size,life,type, gt, ex=0,ey=0,ez=0,ew=0)
+    spawn(x,y,z,vx,vy,vz,size,life,type,gt, ex=0,ey=0,ez=0,ew=0){
+        const i=this.activeIndex; this.activeIndex=(this.activeIndex+1)%this.maxParticles;
+        const i3=i*3,i4=i*4;
+        this.startPos[i3]=x; this.startPos[i3+1]=y; this.startPos[i3+2]=z;
+        this.startVel[i3]=vx;this.startVel[i3+1]=vy;this.startVel[i3+2]=vz;
+        this.dataInfo[i4]=gt; this.dataInfo[i4+1]=life; this.dataInfo[i4+2]=size; this.dataInfo[i4+3]=type;
+        this.extra[i4]=ex; this.extra[i4+1]=ey; this.extra[i4+2]=ez; this.extra[i4+3]=ew;
+        this.dirty=true;
+    }
+    update(gt){
+        this.material.uniforms.uTime.value=gt;
+        if(this.dirty){
+            const g=this.mesh.geometry;
+            g.attributes.aStartPos.needsUpdate=true;
+            g.attributes.aStartVel.needsUpdate=true;
+            g.attributes.aData.needsUpdate=true;
+            g.attributes.aExtra.needsUpdate=true;
+            this.dirty=false;
+        }
+    }
+}
+
+// ─── GPUParticleManager (dym) ────────────────────────────────────────────────
+class GPUParticleManager {
+    constructor(scene,maxParticles,blendingType){
+        this.maxParticles=maxParticles; this.activeIndex=0; this.dirty=false;
+        const baseGeo=new THREE.PlaneGeometry(1,1);
+        const geo=new THREE.InstancedBufferGeometry();
+        geo.index=baseGeo.index;
+        geo.setAttribute('position',baseGeo.attributes.position);
+        geo.setAttribute('uv',baseGeo.attributes.uv);
+        this.startPos=new Float32Array(maxParticles*3);
+        this.startVel=new Float32Array(maxParticles*3);
+        this.dataInfo=new Float32Array(maxParticles*4);
+        geo.setAttribute('aStartPos',new THREE.InstancedBufferAttribute(this.startPos,3));
+        geo.setAttribute('aStartVel',new THREE.InstancedBufferAttribute(this.startVel,3));
+        geo.setAttribute('aData',    new THREE.InstancedBufferAttribute(this.dataInfo,4));
+        geo.instanceCount=maxParticles;
+        this.material=new THREE.ShaderMaterial({
+            uniforms:{uTime:{value:0}},
+            vertexShader:`
+                attribute vec3 aStartPos;attribute vec3 aStartVel;attribute vec4 aData;
+                uniform float uTime;
+                varying vec3 vColor;varying float vAlpha;varying vec2 vUv;
+                varying float vAgeNorm;varying float vSeed;
+                float hash(float n){return fract(sin(n)*43758.5453123);}
+                void main(){
+                    vUv=uv; vSeed=hash(aData.x);
+                    float age=uTime-aData.x;
+                    if(age<0.||age>aData.y){gl_Position=vec4(9999,9999,9999,1);return;}
+                    vAgeNorm=age/aData.y;
+                    float sz=aData.z*(0.3+pow(vAgeNorm,.5)*.9);
+                    vColor=vec3(.035,.028,.024);
+                    vAlpha=pow(1.-vAgeNorm,1.8)*.9;
+                    // Kosmos — brak "heat rise", wyłącznie inercja z aStartVel
+                    vec3 pos=aStartPos+aStartVel*age;
+                    vec3 fp=pos; fp.x+=position.x*sz; fp.z+=position.y*sz;
+                    gl_Position=projectionMatrix*modelViewMatrix*vec4(fp,1);
+                }
+            `,
+            fragmentShader:`
+                varying vec3 vColor;varying float vAlpha;varying vec2 vUv;
+                varying float vAgeNorm;varying float vSeed;
+                uniform float uTime;
+                ${noiseChunk}
+                void main(){
+                    vec2 uv=vUv-vec2(.5); float dist=length(uv)*2.;
+                    if(dist>1.) discard;
+                    float cloud=max(0.,1.-smoothstep(.2,1.,dist));
+                    float n=fbm(vec3(uv*4.+vSeed*30.,uTime*.15));
+                    gl_FragColor=vec4(vColor,smoothstep(0.,.7,n*.7+cloud)*vAlpha);
+                }
+            `,
+            blending:blendingType,depthWrite:false,depthTest:false,transparent:true
+        });
+        this.mesh=new THREE.Mesh(geo,this.material);
+        this.mesh.frustumCulled=false; this.mesh.renderOrder=999;
+        scene.add(this.mesh);
+    }
+    spawn(x,y,z,vx,vy,vz,size,life,type,gt){
+        const i=this.activeIndex; this.activeIndex=(this.activeIndex+1)%this.maxParticles;
+        const i3=i*3,i4=i*4;
+        this.startPos[i3]=x;this.startPos[i3+1]=y;this.startPos[i3+2]=z;
+        this.startVel[i3]=vx;this.startVel[i3+1]=vy;this.startVel[i3+2]=vz;
+        this.dataInfo[i4]=gt;this.dataInfo[i4+1]=life;this.dataInfo[i4+2]=size;this.dataInfo[i4+3]=type;
+        this.dirty=true;
+    }
+    update(gt){
+        this.material.uniforms.uTime.value=gt;
+        if(this.dirty){
+            const g=this.mesh.geometry;
+            g.attributes.aStartPos.needsUpdate=true;
+            g.attributes.aStartVel.needsUpdate=true;
+            g.attributes.aData.needsUpdate=true;
+            this.dirty=false;
+        }
+    }
+}
+
+// ─── Shared systems ───────────────────────────────────────────────────────────
+const fireSystem  = new GPUInstancedParticleManager(scene, 80000, THREE.AdditiveBlending);
+const smokeSystem = new GPUParticleManager(scene, 15000, THREE.NormalBlending);
+const activeEffects = [];
+
+// ─── EFFECT 1: spawnModulePop (pojedynczy pop) ────────────────────────────────
+function spawnModulePop({pos, color=null, size=1.0, gt=null}){
+    const gt0 = (gt!==null)?gt:performance.now()/1000;
+    const x=pos.x, y=pos.y, z=pos.z;
+    const tintR = color?color.r:1.4;
+    const tintG = color?color.g:0.7;
+    const tintB = color?color.b:0.25;
+
+    // Core punch flash
+    fireSystem.spawn(x,y,z, 0,0,0, 14*size, 0.12, 1, gt0, tintR*1.2, tintG*1.0, tintB*0.7, 0);
+
+    // Fireball chunks (4) — sferycznie rozrzucone, bez bias Y
+    for(let i=0;i<4;i++){
+        const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1);
+        const sp=(6+Math.random()*12)*size;
+        fireSystem.spawn(x,y,z,
+            Math.sin(phi)*Math.cos(a)*sp, Math.cos(phi)*sp, Math.sin(phi)*Math.sin(a)*sp,
+            (9+Math.random()*6)*size, 0.28+Math.random()*0.15, 2, gt0,
+            tintR, tintG*0.9, tintB*0.9, 0);
+    }
+
+    // Sparks (24) — sferycznie, bez grawitacji i bez bias Y
+    for(let i=0;i<24;i++){
+        const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1);
+        const sp=(40+Math.random()*90)*size;
+        fireSystem.spawn(x,y,z,
+            Math.sin(phi)*Math.cos(a)*sp, Math.cos(phi)*sp, Math.sin(phi)*Math.sin(a)*sp,
+            (0.9+Math.random()*0.7)*size, 0.22+Math.random()*0.22, 4, gt0,
+            tintR*1.1, tintG*1.1, tintB*0.6, 0);
+    }
+
+    // Small billboarded ring (TYPE 6, camera-facing)
+    fireSystem.spawn(x,y,z, 0,0,0, 40*size, 0.35, 6, gt0, tintR, tintG*0.9, tintB*0.8, 0);
+
+    // Smoke puffs (3) — sferycznie
+    for(let i=0;i<3;i++){
+        const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1);
+        const sp=(2+Math.random()*4)*size;
+        smokeSystem.spawn(x,y,z,
+            Math.sin(phi)*Math.cos(a)*sp, Math.cos(phi)*sp, Math.sin(phi)*Math.sin(a)*sp,
+            (16+Math.random()*10)*size, 0.7+Math.random()*0.35, 1, gt0);
+    }
+}
+
+// ─── EFFECT 1b: spawnChainReaction (kilka popów rozłożonych w czasie) ─────────
+function spawnChainReaction({center, count=8, radius=280, duration=0.8, color=null, size=1.0}){
+    const gt0 = performance.now()/1000;
+    const popSchedule = [];
+    for(let i=0;i<count;i++){
+        const delay = Math.random()*duration;
+        const r = Math.pow(Math.random(), 0.6) * radius;
+        const a = Math.random()*Math.PI*2;
+        const phi = Math.acos(2*Math.random()-1);
+        // Sferycznie rozlokowane pop-y (kosmos — brak "góry/dołu")
+        const pos = new THREE.Vector3(
+            center.x + Math.sin(phi)*Math.cos(a)*r,
+            center.y + Math.cos(phi)*r,
+            center.z + Math.sin(phi)*Math.sin(a)*r
+        );
+        // Jittered color
+        const c = color ? color.clone() : new THREE.Color(1.4, 0.7, 0.25);
+        c.r *= 0.85 + Math.random()*0.3;
+        c.g *= 0.85 + Math.random()*0.3;
+        c.b *= 0.85 + Math.random()*0.3;
+        popSchedule.push({delay, pos, color:c, size: size*(0.75+Math.random()*0.5)});
+    }
+    shakeAmt = Math.max(shakeAmt, 120);
+
+    // Auxiliary light (dim, flickering)
+    const light = new THREE.PointLight(0xff8833, 4, 800);
+    light.position.copy(center);
+    scene.add(light);
+
+    let disposed=false, fired=0;
+    function update(dt){
+        if(disposed) return;
+        const gt = performance.now()/1000;
+        const t = gt - gt0;
+        while(fired<popSchedule.length && popSchedule[fired].delay<=t){
+            const p = popSchedule[fired];
+            spawnModulePop({pos:p.pos, color:p.color, size:p.size, gt});
+            shakeAmt = Math.max(shakeAmt, 60);
+            fired++;
+        }
+        // Light flickers over duration+0.5s
+        if(t < duration+0.3){
+            light.intensity = (3 + Math.random()*3) * Math.max(0, 1 - t/(duration+0.3));
+            light.position.set(
+                center.x + (Math.random()-0.5)*radius*0.3,
+                center.y + (Math.random()-0.5)*radius*0.3,
+                center.z + (Math.random()-0.5)*radius*0.3
+            );
+        } else {
+            light.intensity = 0;
+        }
+        if(t >= duration + 1.5){ dispose(); }
+    }
+    function dispose(){
+        if(disposed) return; disposed=true;
+        if(light.parent) light.parent.remove(light);
+        const idx=activeEffects.indexOf(eff); if(idx!==-1) activeEffects.splice(idx,1);
+    }
+    const eff={update,dispose};
+    return eff;
+}
+
+// ─── EFFECT 2: spawnCutBlast (kierunkowy, cut-point) ──────────────────────────
+function spawnCutBlast({pos, cutAxis=new THREE.Vector3(1,0,0), size=1.0}){
+    const gt0 = performance.now()/1000;
+    const x=pos.x, y=pos.y, z=pos.z;
+    const axis = cutAxis.clone().normalize();
+    shakeAmt = Math.max(shakeAmt, 400);
+
+    // Dynamic light
+    const light = new THREE.PointLight(0xff9944, 12, 2200);
+    light.position.set(x, y, z);
+    scene.add(light);
+
+    // Central anamorphic flash + punch (aligned along cut axis via color tint only — orient via vis)
+    fireSystem.spawn(x,y,z, 0,0,0, 180*size, 0.22, 5, gt0, 1.3, 1.05, 0.65, 0);
+    fireSystem.spawn(x,y,z, 0,0,0, 90*size, 0.14, 1, gt0, 1.6, 1.2, 0.75, 0);
+
+    // Fireball core (30)
+    for(let i=0;i<30;i++){
+        const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1);
+        const sp=(8+Math.random()*18)*size;
+        fireSystem.spawn(
+            x+(Math.random()-0.5)*40*size,
+            y+(Math.random()-0.5)*40*size,
+            z+(Math.random()-0.5)*40*size,
+            Math.sin(phi)*Math.cos(a)*sp, Math.cos(phi)*sp*0.4+Math.random()*5*size, Math.sin(phi)*Math.sin(a)*sp,
+            (40+Math.random()*40)*size, 0.6+Math.random()*0.45, 2, gt0,
+            1.0, 0.55, 0.25, 0);
+    }
+
+    // Build perpendicular basis for jet spread
+    const up = Math.abs(axis.y)<0.95 ? new THREE.Vector3(0,1,0) : new THREE.Vector3(1,0,0);
+    const perp1 = new THREE.Vector3().crossVectors(up, axis).normalize();
+    const perp2 = new THREE.Vector3().crossVectors(axis, perp1);
+
+    // Directional jets: +axis and -axis, each 140 particles
+    // Szerszy stożek (0.35) — pozwala iskrom "wejść" w moduł jeśli stożek na niego skierowany
+    for(let side=0; side<2; side++){
+        const sign = side===0 ? 1 : -1;
+        for(let i=0;i<140;i++){
+            const spread = 0.35; // szerszy stożek
+            const ang = Math.random()*Math.PI*2;
+            const rad = Math.pow(Math.random(), 1.6) * spread;
+            const dir = axis.clone().multiplyScalar(sign)
+                .add(perp1.clone().multiplyScalar(Math.cos(ang)*rad))
+                .add(perp2.clone().multiplyScalar(Math.sin(ang)*rad))
+                .normalize();
+            const spd = (200+Math.random()*650)*size;
+            fireSystem.spawn(
+                x + dir.x*20*size + (Math.random()-0.5)*15*size,
+                y + dir.y*20*size + (Math.random()-0.5)*15*size,
+                z + dir.z*20*size + (Math.random()-0.5)*15*size,
+                dir.x*spd, dir.y*spd, dir.z*spd,
+                (8+Math.random()*10)*size, 0.55+Math.random()*0.65, 8, gt0,
+                1.3+Math.random()*0.3, 0.85+Math.random()*0.2, 0.45+Math.random()*0.2, Math.random());
+        }
+    }
+
+    // Shrapnel sparks w stożkach wzdłuż osi (200) — bez bias Y (kosmos)
+    for(let i=0;i<200;i++){
+        const sideSign = (Math.random()<0.5)?1:-1;
+        const ang = Math.random()*Math.PI*2;
+        const rad = Math.pow(Math.random(), 1.6) * 0.7;
+        const dir = axis.clone().multiplyScalar(sideSign)
+            .add(perp1.clone().multiplyScalar(Math.cos(ang)*rad))
+            .add(perp2.clone().multiplyScalar(Math.sin(ang)*rad))
+            .normalize();
+        const spd = (90+Math.random()*380)*size;
+        fireSystem.spawn(x,y,z, dir.x*spd, dir.y*spd, dir.z*spd,
+            (0.9+Math.random()*0.9)*size, 0.5+Math.random()*0.6, 4, gt0,
+            1.3, 0.85, 0.4, 0);
+    }
+
+    // ── KOŁO — fala uderzeniowa: 3 komplementarne warstwy w płaszczyźnie cięcia ──
+
+    // (a) Planar SHOCK DISC (TYPE 11) — widoczny gdy kamera patrzy pod kątem na płaszczyznę
+    fireSystem.spawn(x,y,z, 0,0,0, 1200*size, 0.55, 11, gt0, axis.x, axis.y, axis.z, 0);
+
+    // (b) Radialny ring PARTICLES w płaszczyźnie cięcia (96 cząstek, widoczny zawsze — quady)
+    // Każda cząstka leci radialnie w płaszczyźnie prostopadłej do axis, tworząc volumetryczny ring
+    const ringN = 96;
+    for(let i=0;i<ringN;i++){
+        const ang = (i/ringN)*Math.PI*2 + (Math.random()-0.5)*0.08;
+        const rdir = perp1.clone().multiplyScalar(Math.cos(ang))
+                  .add(perp2.clone().multiplyScalar(Math.sin(ang)));
+        const spd = (260+Math.random()*280)*size;
+        fireSystem.spawn(x,y,z,
+            rdir.x*spd, rdir.y*spd, rdir.z*spd,
+            (2.2+Math.random()*1.6)*size, 0.55+Math.random()*0.35, 4, gt0,
+            1.5, 1.1, 0.55, 0);
+    }
+
+    // (c) BILLBOARDED RING (TYPE 6) — duży camera-facing ring, zawsze widoczny jako okrąg
+    fireSystem.spawn(x,y,z, 0,0,0, 900*size, 0.7, 6, gt0, 1.2, 0.75, 0.35, 0);
+
+    // Thick smoke (40) — rozchodzi się w płaszczyźnie cięcia + wzdłuż osi
+    for(let i=0;i<40;i++){
+        const ang = Math.random()*Math.PI*2;
+        const rad = Math.pow(Math.random(), 0.6) * 0.7;
+        const dir = axis.clone().multiplyScalar((Math.random()<0.5)?1:-1)
+            .add(perp1.clone().multiplyScalar(Math.cos(ang)*rad))
+            .add(perp2.clone().multiplyScalar(Math.sin(ang)*rad));
+        const sp = (3+Math.random()*8)*size;
+        smokeSystem.spawn(x,y,z, dir.x*sp, dir.y*sp, dir.z*sp,
+            (60+Math.random()*60)*size, 1.4+Math.random()*0.8, 1, gt0);
+    }
+
+    // Secondary timing
+    let disposed=false, sec2Fired=false;
+    function update(dt){
+        if(disposed) return;
+        const gt = performance.now()/1000;
+        const t = gt - gt0;
+        light.intensity = Math.max(0, 12*(1-t/0.5));
+        if(!sec2Fired && t>=0.18){
+            // Secondary — większy disc w płaszczyźnie cięcia + billboarded ring
+            fireSystem.spawn(x,y,z, 0,0,0, 1800*size, 0.75, 11, gt, axis.x, axis.y, axis.z, 0);
+            fireSystem.spawn(x,y,z, 0,0,0, 1500*size, 0.9, 6, gt, 1.0, 0.7, 0.4, 0);
+            // Secondary radial particle ring (węższy, później)
+            const sN = 48;
+            for(let i=0;i<sN;i++){
+                const ang = (i/sN)*Math.PI*2 + (Math.random()-0.5)*0.12;
+                const rdir = perp1.clone().multiplyScalar(Math.cos(ang))
+                          .add(perp2.clone().multiplyScalar(Math.sin(ang)));
+                const spd = (180+Math.random()*180)*size;
+                fireSystem.spawn(x,y,z,
+                    rdir.x*spd, rdir.y*spd, rdir.z*spd,
+                    (1.8+Math.random()*1.2)*size, 0.5+Math.random()*0.3, 4, gt,
+                    1.3, 0.9, 0.4, 0);
+            }
+            sec2Fired=true;
+        }
+        if(t >= 2.2){ dispose(); }
+    }
+    function dispose(){
+        if(disposed) return; disposed=true;
+        if(light.parent) light.parent.remove(light);
+        const idx=activeEffects.indexOf(eff); if(idx!==-1) activeEffects.splice(idx,1);
+    }
+    const eff={update,dispose};
+    return eff;
+}
+
+// ─── EFFECT 3: spawnFinalScatter (katastroficzna dezintegracja) ───────────────
+function spawnFinalScatter({pos, modelRadius=300, size=1.0, fadeStationGroup=null}){
+    const gt0 = performance.now()/1000;
+    const x=pos.x, y=pos.y, z=pos.z;
+    shakeAmt = Math.max(shakeAmt, 900);
+
+    // Main light
+    const light = new THREE.PointLight(0xffaa66, 18, 3500);
+    light.position.set(x,y,z); scene.add(light);
+
+    // t=0 central flash
+    fireSystem.spawn(x,y,z, 0,0,0, 220*size, 0.15, 1, gt0, 1.7, 1.3, 0.85, 0);
+    fireSystem.spawn(x,y,z, 0,0,0, 320*size, 0.35, 5, gt0, 1.2, 0.95, 0.6, 0);
+    fireSystem.spawn(x,y,z, 0,0,0, 280*size, 0.5, 5, gt0, 1.15, 0.8, 0.55, 0);
+
+    // Sferyczna fala uderzeniowa (billboarded TYPE 6) — widoczna z każdej strony
+    fireSystem.spawn(x,y,z, 0,0,0, 1400*size, 1.0, 6, gt0, 1.3, 0.75, 0.35, 0);
+    // Drugi wolniejszy ring (camera-facing)
+    fireSystem.spawn(x,y,z, 0,0,0, 2000*size, 1.6, 6, gt0, 1.1, 0.55, 0.25, 0);
+
+    // Wolumetryczna "sfera" z radialnych cząstek — 3 orthogonalne ringi dają iluzję sferycznej fali
+    const sphereAxes = [
+        new THREE.Vector3(1,0,0),
+        new THREE.Vector3(0,1,0),
+        new THREE.Vector3(0,0,1)
+    ];
+    for(const sa of sphereAxes){
+        const up = Math.abs(sa.y)<0.95 ? new THREE.Vector3(0,1,0) : new THREE.Vector3(1,0,0);
+        const p1 = new THREE.Vector3().crossVectors(up, sa).normalize();
+        const p2 = new THREE.Vector3().crossVectors(sa, p1);
+        const ringN = 48;
+        for(let i=0;i<ringN;i++){
+            const ang = (i/ringN)*Math.PI*2 + (Math.random()-0.5)*0.1;
+            const rdir = p1.clone().multiplyScalar(Math.cos(ang))
+                      .add(p2.clone().multiplyScalar(Math.sin(ang)));
+            const spd = (280+Math.random()*220)*size;
+            fireSystem.spawn(x,y,z,
+                rdir.x*spd, rdir.y*spd, rdir.z*spd,
+                (1.8+Math.random()*1.6)*size, 0.7+Math.random()*0.45, 4, gt0,
+                1.4, 0.95, 0.45, 0);
+        }
+    }
+
+    // Primary fireballs (80) — sferycznie bez bias Y
+    for(let i=0;i<80;i++){
+        const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1);
+        const sp=(20+Math.random()*85)*size;
+        const r = Math.random()*modelRadius*0.6;
+        const sxx=Math.sin(phi)*Math.cos(a), syy=Math.cos(phi), szz=Math.sin(phi)*Math.sin(a);
+        fireSystem.spawn(
+            x+sxx*r, y+syy*r, z+szz*r,
+            sxx*sp, syy*sp, szz*sp,
+            (40+Math.random()*60)*size, 1.0+Math.random()*0.8, 2, gt0,
+            1.0, 0.5, 0.2, 0);
+    }
+
+    // SCATTER CHUNKS (TYPE 9) — 45 szt., sferycznie wyrzucone z inercją (brak grawitacji)
+    for(let i=0;i<45;i++){
+        const a=Math.random()*Math.PI*2;
+        const phi=Math.acos(2*Math.random()-1);
+        const r0 = modelRadius*(0.3+Math.random()*0.55);
+        const sxx=Math.sin(phi)*Math.cos(a), syy=Math.cos(phi), szz=Math.sin(phi)*Math.sin(a);
+        const sx = sxx*r0, sy = syy*r0, sz = szz*r0;
+        // Velocity purely radial outward — kosmos, brak "góry"
+        const sp = (130+Math.random()*320)*size;
+        const vx = sxx*sp + (Math.random()-0.5)*40*size;
+        const vy = syy*sp + (Math.random()-0.5)*40*size;
+        const vz = szz*sp + (Math.random()-0.5)*40*size;
+        const chSize = (20+Math.random()*22)*size;
+        const life = 2.4+Math.random()*0.8;
+        const spinBoost = (Math.random()-0.5)*8.0;
+        const seed2 = Math.random();
+        fireSystem.spawn(x+sx, y+sy, z+sz, vx,vy,vz, chSize, life, 9, gt0,
+            (Math.random()-0.5)*2, (Math.random()-0.5)*2, spinBoost, seed2);
+    }
+
+    // Chunk trails (180 TYPE 3) — sferycznie bez bias Y
+    for(let i=0;i<180;i++){
+        const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1);
+        const sp=(40+Math.random()*180)*size;
+        const r = Math.random()*modelRadius*0.4;
+        const sxx=Math.sin(phi)*Math.cos(a), syy=Math.cos(phi), szz=Math.sin(phi)*Math.sin(a);
+        fireSystem.spawn(
+            x+sxx*r, y+syy*r, z+szz*r,
+            sxx*sp, syy*sp, szz*sp,
+            (3+Math.random()*4)*size, 0.8+Math.random()*0.6, 3, gt0);
+    }
+
+    // Shrapnel (400) — sferycznie bez bias Y
+    for(let i=0;i<400;i++){
+        const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1);
+        const sp=(60+Math.random()*420)*size;
+        const sxx=Math.sin(phi)*Math.cos(a), syy=Math.cos(phi), szz=Math.sin(phi)*Math.sin(a);
+        fireSystem.spawn(x,y,z,
+            sxx*sp, syy*sp, szz*sp,
+            (1.1+Math.random()*1.0)*size, 0.8+Math.random()*0.8, 4, gt0,
+            1.2, 0.8, 0.35, 0);
+    }
+
+    // Embers (250) — długo trwające, sferycznie rozrzucone, drift bez grawitacji
+    for(let i=0;i<250;i++){
+        const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1);
+        const sp=(20+Math.random()*180)*size;
+        const r = Math.random()*modelRadius*0.5;
+        const sxx=Math.sin(phi)*Math.cos(a), syy=Math.cos(phi), szz=Math.sin(phi)*Math.sin(a);
+        fireSystem.spawn(
+            x+sxx*r, y+syy*r, z+szz*r,
+            sxx*sp, syy*sp, szz*sp,
+            (0.9+Math.random()*1.2)*size, 3.0+Math.random()*3.0, 10, gt0);
+    }
+
+    // Thick smoke (200) — sferycznie bez bias Y
+    for(let i=0;i<200;i++){
+        const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1);
+        const sp=(4+Math.random()*12)*size;
+        const r = Math.random()*modelRadius*0.5;
+        const sxx=Math.sin(phi)*Math.cos(a), syy=Math.cos(phi), szz=Math.sin(phi)*Math.sin(a);
+        smokeSystem.spawn(
+            x+sxx*r, y+syy*r, z+szz*r,
+            sxx*sp, syy*sp, szz*sp,
+            (80+Math.random()*100)*size, 2.5+Math.random()*1.5, 1, gt0);
+    }
+
+    // Station fade-out
+    const fadeGroup = fadeStationGroup;
+    const fadeStart = 0.1, fadeEnd = 0.55;
+
+    // Sequenced secondary bursts
+    const secondaries = [
+        {t:0.25, offset: 0.4, sizeScale:0.6, sub:28},
+        {t:0.45, offset: 0.5, sizeScale:0.5, sub:22},
+        {t:0.70, type:'shock', sizeScale:1.3},
+        {t:1.05, offset: 0.35, sizeScale:0.4, sub:18}
+    ];
+    let secIdx=0;
+    let disposed=false;
+
+    function update(dt){
+        if(disposed) return;
+        const gt = performance.now()/1000;
+        const t = gt - gt0;
+
+        // Main light fades over 0.7s
+        light.intensity = Math.max(0, 18*(1-t/0.7));
+
+        // Station fade opacity
+        if(fadeGroup && fadeGroup.userData.materials){
+            const k = THREE.MathUtils.clamp((t-fadeStart)/(fadeEnd-fadeStart), 0, 1);
+            const op = 1 - k;
+            fadeGroup.userData.materials.forEach(m => { m.opacity = op; m.transparent = true; });
+            if(k>=1) fadeGroup.visible = false;
+        }
+
+        // Fire secondary bursts
+        while(secIdx<secondaries.length && secondaries[secIdx].t<=t){
+            const s = secondaries[secIdx];
+            if(s.type==='shock'){
+                // Large late shockwave (cyan-ish tint by using RING type with different color)
+                fireSystem.spawn(x,y,z, 0,0,0, 2400*size*s.sizeScale, 1.5, 6, gt, 0.75, 0.95, 1.2, 0);
+            } else {
+                // Offset sferyczny (kosmos — brak "góry/dołu")
+                const oa=Math.random()*Math.PI*2, ophi=Math.acos(2*Math.random()-1);
+                const orr = Math.random()*modelRadius*s.offset;
+                const ox = Math.sin(ophi)*Math.cos(oa)*orr;
+                const oy = Math.cos(ophi)*orr;
+                const oz = Math.sin(ophi)*Math.sin(oa)*orr;
+                const px=x+ox, py=y+oy, pz=z+oz;
+                const ss = s.sizeScale;
+                // mini flash + billboarded ring
+                fireSystem.spawn(px,py,pz, 0,0,0, 120*size*ss, 0.14, 1, gt, 1.6, 1.2, 0.7, 0);
+                fireSystem.spawn(px,py,pz, 0,0,0, 180*size*ss, 0.3, 6, gt, 1.2, 0.7, 0.3, 0);
+                // mini fireballs — sferycznie bez bias Y
+                for(let k=0;k<Math.round(s.sub*0.4);k++){
+                    const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1);
+                    const sp=(10+Math.random()*30)*size*ss;
+                    fireSystem.spawn(px,py,pz,
+                        Math.sin(phi)*Math.cos(a)*sp, Math.cos(phi)*sp, Math.sin(phi)*Math.sin(a)*sp,
+                        (18+Math.random()*20)*size*ss, 0.5+Math.random()*0.5, 2, gt,
+                        1.0, 0.5, 0.2, 0);
+                }
+                // mini shrapnel — sferycznie
+                for(let k=0;k<s.sub;k++){
+                    const a=Math.random()*Math.PI*2, phi=Math.acos(2*Math.random()-1);
+                    const sp=(50+Math.random()*180)*size*ss;
+                    fireSystem.spawn(px,py,pz,
+                        Math.sin(phi)*Math.cos(a)*sp, Math.cos(phi)*sp, Math.sin(phi)*Math.sin(a)*sp,
+                        (0.8+Math.random()*0.6)*size, 0.6+Math.random()*0.5, 4, gt,
+                        1.2, 0.8, 0.35, 0);
+                }
+                shakeAmt = Math.max(shakeAmt, 300);
+            }
+            secIdx++;
+        }
+
+        if(t >= 6.2){ dispose(); }
+    }
+
+    function dispose(){
+        if(disposed) return; disposed=true;
+        if(light.parent) light.parent.remove(light);
+        // Restore station (for demo replay)
+        if(fadeGroup && fadeGroup.userData.materials){
+            fadeGroup.userData.materials.forEach(m => { m.opacity = 1; });
+            fadeGroup.visible = true;
+        }
+        const idx=activeEffects.indexOf(eff); if(idx!==-1) activeEffects.splice(idx,1);
+    }
+
+    const eff={update,dispose};
+    return eff;
+}
+
+// ─── Update systems every frame ───────────────────────────────────────────────
+function updateAllSystems(gt){
+    fireSystem.update(gt);
+    smokeSystem.update(gt);
+}
+
+// ─── Input ────────────────────────────────────────────────────────────────────
+const raycaster=new THREE.Raycaster(), mouse=new THREE.Vector2();
+let lmbMode = 1; // 1/2/3
+// Preset oś cięcia: 'x' | 'y' | 'z' | 'cam' | 'random'
+let cutAxisMode = 'cam';
+
+function getCutAxis(){
+    if(cutAxisMode==='x') return new THREE.Vector3(1,0,0);
+    if(cutAxisMode==='y') return new THREE.Vector3(0,1,0);
+    if(cutAxisMode==='z') return new THREE.Vector3(0,0,1);
+    if(cutAxisMode==='random') return new THREE.Vector3().randomDirection();
+    // camera-right w XZ płaszczyźnie
+    const cf = new THREE.Vector3();
+    camera.getWorldDirection(cf);
+    const a = new THREE.Vector3(cf.z, 0, -cf.x);
+    if(a.lengthSq()<0.01) a.set(1,0,0);
+    return a.normalize();
+}
+
+function spawnEffect(effectNo, pos, shifted=false){
+    if(effectNo===1){
+        const eff = spawnChainReaction({center:pos, count:8, radius:280, duration:0.8});
+        activeEffects.push(eff);
+    } else if(effectNo===2){
+        const axis = shifted ? new THREE.Vector3().randomDirection() : getCutAxis();
+        const eff = spawnCutBlast({pos, cutAxis: axis});
+        activeEffects.push(eff);
+    } else if(effectNo===3){
+        // If station group is near pos, fade it (only when spawning at center)
+        const distToStation = pos.distanceTo(stationGroup.position);
+        const fadeGroup = (distToStation < 400 && stationGroup.visible) ? stationGroup : null;
+        const eff = spawnFinalScatter({pos, modelRadius:420, fadeStationGroup:fadeGroup});
+        activeEffects.push(eff);
+    }
+}
+
+window.addEventListener('keydown', e=>{
+    if(e.key==='1'){
+        const p = stationGroup.visible ? stationGroup.position.clone() : new THREE.Vector3(0,200,0);
+        spawnEffect(1, p);
+    } else if(e.key==='2'){
+        const p = stationGroup.visible ? stationGroup.position.clone() : new THREE.Vector3(0,200,0);
+        spawnEffect(2, p, e.shiftKey);
+    } else if(e.key==='3'){
+        const p = stationGroup.visible ? stationGroup.position.clone() : new THREE.Vector3(0,200,0);
+        spawnEffect(3, p);
+    } else if(e.key==='r' || e.key==='R'){
+        stationGroup.visible = !stationGroup.visible;
+        if(stationGroup.visible && stationGroup.userData.materials){
+            stationGroup.userData.materials.forEach(m => { m.opacity = 1; });
+        }
+    } else if(e.key==='q' || e.key==='Q'){
+        cutAxisMode = 'x'; updateCutAxisHud();
+    } else if(e.key==='w' || e.key==='W'){
+        cutAxisMode = 'y'; updateCutAxisHud();
+    } else if(e.key==='e' || e.key==='E'){
+        cutAxisMode = 'z'; updateCutAxisHud();
+    } else if(e.key==='c' || e.key==='C'){
+        cutAxisMode = 'cam'; updateCutAxisHud();
+    } else if(e.key==='v' || e.key==='V'){
+        cutAxisMode = 'random'; updateCutAxisHud();
+    }
+});
+
+function updateCutAxisHud(){
+    const el = document.getElementById('cutAxisHud');
+    if(!el) return;
+    const labels = { x:'X (poziom L-P)', y:'Y (pion)', z:'Z (głębia)', cam:'prostopadła do kamery', random:'losowa' };
+    el.textContent = 'Oś cięcia: ' + (labels[cutAxisMode] || cutAxisMode);
+}
+
+window.addEventListener('mousedown', e=>{
+    if(e.button!==0) return;
+    mouse.set((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1);
+    raycaster.setFromCamera(mouse, camera);
+    const h=raycaster.intersectObject(groundMesh);
+    if(!h.length) return;
+    const p = h[0].point.clone();
+    p.y = 200; // lift from ground so XZ plane effects read well
+    spawnEffect(lmbMode, p, e.shiftKey);
+});
+window.addEventListener('contextmenu', e=>e.preventDefault());
+window.addEventListener('resize', ()=>{
+    camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight); composer.setSize(innerWidth,innerHeight);
+});
+
+// Panel controls
+function bindSlider(id, valId, fn){
+    const el = document.getElementById(id), vEl = document.getElementById(valId);
+    el.addEventListener('input', ()=>{ const v=parseFloat(el.value); vEl.textContent=v.toFixed(2); fn(v); });
+}
+bindSlider('bStr','bStrV', v=>{ bloomPass.strength=v; });
+bindSlider('bRad','bRadV', v=>{ bloomPass.radius=v; });
+bindSlider('bThr','bThrV', v=>{ bloomPass.threshold=v; });
+bindSlider('exp','expV', v=>{ renderer.toneMappingExposure=v; });
+
+// Mode buttons
+document.querySelectorAll('#panel .mode button').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+        lmbMode = parseInt(btn.dataset.mode);
+        document.querySelectorAll('#panel .mode button').forEach(b=>b.classList.toggle('active', b===btn));
+    });
+});
+
+// ─── Animate ──────────────────────────────────────────────────────────────────
+const clock=new THREE.Clock();
+const fpsEl = document.getElementById('fps');
+let fpsSamples = [], fpsLast = performance.now();
+
+function animate(){
+    requestAnimationFrame(animate);
+    const dt=Math.min(clock.getDelta(),.05);
+    const gt = performance.now()/1000;
+
+    // FPS
+    const now = performance.now();
+    const frameMs = now - fpsLast; fpsLast = now;
+    fpsSamples.push(frameMs); if(fpsSamples.length>30) fpsSamples.shift();
+    const avg = fpsSamples.reduce((a,b)=>a+b,0)/fpsSamples.length;
+    fpsEl.textContent = `${(1000/avg).toFixed(0)} fps`;
+
+    // Camera smooth zoom
+    if(targetDist>0){
+        const cur=camera.position.distanceTo(controls.target);
+        const nd=THREE.MathUtils.lerp(cur,targetDist,dt*12);
+        const dir=new THREE.Vector3().subVectors(camera.position,controls.target).normalize();
+        origCam.copy(controls.target).addScaledVector(dir,nd);
+    } else origCam.copy(camera.position);
+
+    // Shake
+    if(shakeAmt>0){
+        camera.position.set(
+            origCam.x+(Math.random()-.5)*shakeAmt*0.08,
+            origCam.y+(Math.random()-.5)*shakeAmt*0.08,
+            origCam.z+(Math.random()-.5)*shakeAmt*0.08);
+        shakeAmt*=.90; if(shakeAmt<.5) shakeAmt=0;
+    } else camera.position.copy(origCam);
+
+    controls.update();
+
+    // Update effects
+    for(let i=activeEffects.length-1;i>=0;i--) activeEffects[i].update(dt);
+    updateAllSystems(gt);
+    composer.render();
+}
+animate();
+</script>
+</body>
+</html>

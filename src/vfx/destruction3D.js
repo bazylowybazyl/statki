@@ -44,6 +44,9 @@ const TMP_SHELL_DIR = new THREE.Vector3();
 const TMP_SHELL_AXIS_A = new THREE.Vector3();
 const TMP_SHELL_AXIS_B = new THREE.Vector3();
 const TMP_SHELL_NORMAL_MATRIX = new THREE.Matrix3();
+const TMP_SAMPLE_BOX = new THREE.Box3();
+const TMP_SAMPLE_CENTER = new THREE.Vector3();
+const TMP_SAMPLE_SIZE = new THREE.Vector3();
 
 // ── Implosion (Tier 3) GLSL ─────────────────────────────────────────────────
 const IMPLODE_VERT = /* glsl */`
@@ -156,10 +159,19 @@ class DismantleSection {
             const splitPlan = _prepareShellSplit(this.mesh, this.opts);
             if (splitPlan && this.preSplitFuse > 0.001) {
                 _spawnShellSplitBursts(this.mesh, splitPlan.defs, this.opts, splitPlan.shellRadius);
+                const stationSlowSplit = _isStationExplosionPreset(this.opts);
                 _applyBurstImpulse(this.mesh, this.vel, this.angVel, {
                     ...this.opts,
-                    preBurstImpulse: this.opts.splitBurstImpulse ?? Math.max(this.opts.preBurstImpulse ?? 18, 24),
-                    preBurstAngularKick: this.opts.splitBurstAngularKick ?? Math.max(this.opts.preBurstAngularKick ?? 0.04, 0.055),
+                    preBurstImpulse: this.opts.splitBurstImpulse ?? (
+                        stationSlowSplit
+                            ? Math.max(this.opts.preBurstImpulse ?? 10, 12)
+                            : Math.max(this.opts.preBurstImpulse ?? 18, 24)
+                    ),
+                    preBurstAngularKick: this.opts.splitBurstAngularKick ?? (
+                        stationSlowSplit
+                            ? Math.max(this.opts.preBurstAngularKick ?? 0.018, 0.026)
+                            : Math.max(this.opts.preBurstAngularKick ?? 0.04, 0.055)
+                    ),
                 }, this.preShatterBursts, this.preShatterBursts + 1);
                 splitPlan.burstSpawned = true;
                 this._pendingShellSplit = {
@@ -184,6 +196,7 @@ let   _scene           = null;
 let   _worldTime       = 0;
 let   _reactorFactory  = null;       // createReactorBlowFactory result
 let   _shockwaveMgr    = null;       // Shockwave3DManager instance
+let   _stationEffects  = null;       // station-only staged explosion effect manager
 
 const _debrisMgr       = new DebrisManager();
 let   _panelShardMgr   = null;
@@ -352,7 +365,41 @@ function _meshOverlayPos(mesh) {
     return { x: p.x, y: -p.y, worldPos: p };
 }
 
+function _sampleObjectMeshWorldPoint(object3D, opts = {}) {
+    if (!object3D) return null;
+    let chosenCenter = null;
+    let chosenSize = null;
+    let totalWeight = 0;
+    object3D.traverse(child => {
+        if (!child.isMesh || !child.visible) return;
+        TMP_SAMPLE_BOX.setFromObject(child);
+        if (TMP_SAMPLE_BOX.isEmpty()) return;
+        TMP_SAMPLE_BOX.getCenter(TMP_SAMPLE_CENTER);
+        TMP_SAMPLE_BOX.getSize(TMP_SAMPLE_SIZE);
+        const weight = Math.max(1, Math.min(12000, TMP_SAMPLE_SIZE.length()));
+        totalWeight += weight;
+        if (Math.random() * totalWeight <= weight) {
+            if (!chosenCenter) chosenCenter = new THREE.Vector3();
+            if (!chosenSize) chosenSize = new THREE.Vector3();
+            chosenCenter.copy(TMP_SAMPLE_CENTER);
+            chosenSize.copy(TMP_SAMPLE_SIZE);
+        }
+    });
+    if (!chosenCenter || !chosenSize) return null;
+    const jitter = THREE.MathUtils.clamp(opts.burstMeshJitter ?? 0.14, 0, 0.35);
+    return chosenCenter.clone().add(new THREE.Vector3(
+        (Math.random() - 0.5) * chosenSize.x * jitter,
+        (Math.random() - 0.5) * chosenSize.y * jitter,
+        (Math.random() - 0.5) * chosenSize.z * jitter
+    ));
+}
+
 function _computeBurstWorldPos(object3D, opts = {}, phase = 0) {
+    if (_isStationExplosionPreset(opts) && opts.burstInModel !== false) {
+        const sampled = _sampleObjectMeshWorldPoint(object3D, opts);
+        if (sampled) return sampled;
+    }
+
     const center = _meshWorldPos(object3D);
     const radius = _estimateObjectWorldRadius(object3D);
     const crackOrigin = opts.breakupOrigin || opts.detachOrigin || opts.origin || null;
@@ -380,17 +427,81 @@ function _computeBurstWorldPos(object3D, opts = {}, phase = 0) {
         .addScaledVector(TMP_TANGENT, jitter);
 }
 
+function _isStationExplosionPreset(opts = {}) {
+    return opts?.preset === 'civilian' || opts?.preset === 'pirate';
+}
+
+function _vec3Clone(v, fallback = null) {
+    if (v?.isVector3) return v.clone();
+    if (Array.isArray(v)) return new THREE.Vector3(v[0] || 0, v[1] || 0, v[2] || 0);
+    if (v && Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z)) {
+        return new THREE.Vector3(v.x, v.y, v.z);
+    }
+    return fallback ? fallback.clone() : new THREE.Vector3();
+}
+
+function _spawnStationEffectAtWorldPos(worldPos, worldRadius, opts = {}, kind = 'breakup', phase = 0) {
+    if (!_stationEffects || !_isStationExplosionPreset(opts) || opts.useStationEffects === false || !worldPos) return false;
+    const pos = _vec3Clone(worldPos);
+
+    if (kind === 'carrier') {
+        _stationEffects.spawnChainReaction?.({
+            center: pos,
+            count: opts.chainBurstCount ?? Math.max(4, Math.min(8, 4 + Math.round(worldRadius / 260))),
+            radius: opts.chainBurstRadius ?? THREE.MathUtils.clamp(worldRadius * 0.13, 45, 160),
+            duration: opts.chainBurstDuration ?? THREE.MathUtils.clamp(1.4 + worldRadius * 0.0032, 1.7, 3.8),
+            size: opts.chainBurstSize ?? THREE.MathUtils.clamp(0.65 + worldRadius * 0.0032, 0.85, 2.2),
+        });
+        return true;
+    }
+
+    if (kind === 'shellSplit' || kind === 'shellFinal') {
+        const fallbackAxis = TMP_OUT.subVectors(pos, opts.detachOrigin || opts.origin || pos);
+        if (fallbackAxis.lengthSq() < 1e-4) fallbackAxis.set(1, 0, 0);
+        const axis = _vec3Clone(opts.cutAxis || opts.splitAxis, fallbackAxis).normalize();
+        _stationEffects.spawnCutBlast?.({
+            pos,
+            cutAxis: axis,
+            size: opts.cutBlastSize ?? THREE.MathUtils.clamp(0.72 + worldRadius * 0.0022, 0.85, 2.6),
+        });
+        return true;
+    }
+
+    if (kind === 'final') {
+        _stationEffects.spawnFinalScatter?.({
+            pos,
+            modelRadius: opts.finalModelRadius ?? Math.max(260, worldRadius),
+            size: opts.finalScatterSize ?? THREE.MathUtils.clamp(0.85 + worldRadius * 0.0012, 1.0, 3.0),
+        });
+        return true;
+    }
+
+    return false;
+}
+
+function _resolveBurstProfile(kind, worldRadius, opts = {}) {
+    if (!_isStationExplosionPreset(opts)) {
+        return (worldRadius > 72 || kind !== 'carrier') ? 'capital' : 'fighter';
+    }
+    if (kind === 'carrier') return opts.chainBurstProfile ?? 'chain';
+    if (kind === 'shellSplit') return opts.cutBurstProfile ?? 'cut';
+    if (kind === 'shellFinal') return opts.shellFinalBurstProfile ?? 'cut';
+    return worldRadius > 72 ? (opts.cutBurstProfile ?? 'cut') : (opts.chainBurstProfile ?? 'chain');
+}
+
 function _spawnBurstAtWorldPos(worldPos, worldRadius, opts = {}, kind = 'breakup', phase = 0) {
-    if (!_reactorFactory || typeof window === 'undefined' || !window.overlay3D?.spawn || !worldPos) return;
-    const profile = worldRadius > 72 || kind !== 'carrier' ? 'capital' : 'fighter';
+    if (!worldPos) return;
+    if (_spawnStationEffectAtWorldPos(worldPos, worldRadius, opts, kind, phase)) return;
+    if (!_reactorFactory || typeof window === 'undefined' || !window.overlay3D?.spawn) return;
+    const profile = _resolveBurstProfile(kind, worldRadius, opts);
     const baseSize =
         kind === 'shellFinal' ? 18 :
-        kind === 'shellSplit' ? 20 :
-        kind === 'carrier' ? 16 : 14;
+        kind === 'shellSplit' ? 22 :
+        kind === 'carrier' ? 12 : 14;
     const sizeMul =
-        kind === 'shellFinal' ? 1.55 :
-        kind === 'shellSplit' ? 1.35 :
-        kind === 'carrier' ? 1.18 : 1.0;
+        kind === 'shellFinal' ? 1.35 :
+        kind === 'shellSplit' ? 1.65 :
+        kind === 'carrier' ? 0.95 : 1.0;
     const fx = _reactorFactory({
         x: worldPos.x,
         y: -worldPos.y,
@@ -447,21 +558,22 @@ function _computePlanarDetachVelocity(centerPos, originPos, speed, planarBias = 
 }
 
 function _spawnDetachBurst(object3D, opts, burstIndex = 0, burstCount = 1) {
-    if (!_reactorFactory || typeof window === 'undefined' || !window.overlay3D?.spawn) return;
+    if ((!_stationEffects || !_isStationExplosionPreset(opts)) && (!_reactorFactory || typeof window === 'undefined' || !window.overlay3D?.spawn)) return;
     const worldRadius = _estimateObjectWorldRadius(object3D);
     const phase = burstCount > 0 ? (burstIndex / Math.max(1, burstCount - 1)) : 0;
     const burstWorldPos = _computeBurstWorldPos(object3D, opts, phase);
     _spawnBurstAtWorldPos(
         burstWorldPos,
         worldRadius,
-        { breakupBurstSize: (opts.preBurstSize ?? 12) * (1.0 + phase * 0.35) * THREE.MathUtils.clamp(0.9 + worldRadius * 0.018, 1.0, 2.6) },
-        (worldRadius > 58 || phase > 0.45) ? 'shellSplit' : 'carrier',
+        { ...opts, breakupBurstSize: (opts.preBurstSize ?? 12) * (1.0 + phase * 0.35) * THREE.MathUtils.clamp(0.9 + worldRadius * 0.018, 1.0, 2.6) },
+        'carrier',
         phase
     );
 }
 
 function _spawnBreakupBurst(object3D, opts = {}, kind = 'breakup') {
-    if (!_reactorFactory || typeof window === 'undefined' || !window.overlay3D?.spawn || !object3D) return;
+    if (!object3D) return;
+    if ((!_stationEffects || !_isStationExplosionPreset(opts)) && (!_reactorFactory || typeof window === 'undefined' || !window.overlay3D?.spawn)) return;
     const worldRadius = _estimateObjectWorldRadius(object3D);
     const phase = kind === 'shellSplit' ? 0.75 : kind === 'shellFinal' ? 1.0 : 0.35;
     const burstWorldPos = _computeBurstWorldPos(object3D, opts, phase);
@@ -469,14 +581,20 @@ function _spawnBreakupBurst(object3D, opts = {}, kind = 'breakup') {
 }
 
 function _spawnShellSplitBursts(rootObject, defs, opts = {}, shellRadius = 1) {
-    if (!_reactorFactory || !defs?.length) return;
+    if (!defs?.length) return;
+    if ((!_stationEffects || !_isStationExplosionPreset(opts)) && !_reactorFactory) return;
     const origin = _meshWorldPos(rootObject);
-    const surfaceMul = THREE.MathUtils.clamp(Number(opts.shellSplitBurstSurfaceMul) || 0.26, 0.08, 0.55);
-    const tangentMul = THREE.MathUtils.clamp(Number(opts.shellSplitBurstTangentMul) || 0.06, 0.0, 0.2);
+    const stationPreset = _isStationExplosionPreset(opts);
+    const surfaceMul = THREE.MathUtils.clamp(Number(opts.shellSplitBurstSurfaceMul) || (stationPreset ? 0.07 : 0.26), 0.0, 0.55);
+    const tangentMul = THREE.MathUtils.clamp(Number(opts.shellSplitBurstTangentMul) || (stationPreset ? 0.025 : 0.06), 0.0, 0.2);
+    const sequential = opts.sequentialShellSplitBursts ?? _isStationExplosionPreset(opts);
+    const spacingBase = opts.shellSplitBurstSpacing ?? THREE.MathUtils.clamp(0.72 + shellRadius * 0.0012, 0.78, 1.45);
+    const delayBase = opts.shellSplitBurstInitialDelay ?? THREE.MathUtils.clamp(0.25 + shellRadius * 0.0005, 0.25, 0.65);
 
     for (let i = 0; i < defs.length; i++) {
         const phase = defs.length > 1 ? (i / (defs.length - 1)) : 0.5;
         TMP_SHELL_DIR.copy(defs[i].dir).applyQuaternion(rootObject.quaternion).normalize();
+        const cutAxis = TMP_SHELL_DIR.clone();
         TMP_TANGENT.crossVectors(TMP_SHELL_DIR, WORLD_UP);
         if (TMP_TANGENT.lengthSq() < 1e-4) TMP_TANGENT.set(1, 0, 0);
         TMP_TANGENT.normalize();
@@ -485,13 +603,19 @@ function _spawnShellSplitBursts(rootObject, defs, opts = {}, shellRadius = 1) {
             .addScaledVector(TMP_SHELL_DIR, shellRadius * surfaceMul)
             .addScaledVector(TMP_TANGENT, shellRadius * tangentMul * (phase - 0.5));
 
-        _spawnBurstAtWorldPos(
+        const spawn = () => _spawnBurstAtWorldPos(
             burstWorldPos,
             shellRadius,
-            { ...opts, breakupBurstSize: (opts.breakupBurstSize ?? 20) * 0.72 },
+            { ...opts, cutAxis, breakupBurstSize: (opts.breakupBurstSize ?? 20) * 0.72 },
             'shellSplit',
             phase
         );
+        if (sequential) {
+            const jitter = (Math.random() - 0.5) * spacingBase * 0.28;
+            _scheduleCallback(Math.max(0, delayBase + i * spacingBase + jitter), spawn);
+        } else {
+            spawn();
+        }
     }
 }
 
@@ -697,21 +821,21 @@ function _spawnShellSplit(rootObject, opts, worldTime, baseVelocity = null, base
             shellSplitEnabled: false,
             clipPlanes: clipCtx.worldPlanes,
             onMotion: () => _updateShellClipContext(pieceRoot, clipCtx),
-            delayedShatter: opts.shellPieceShatterDelay ?? THREE.MathUtils.clamp(1.25 + shellRadius * 0.0045, 1.35, 3.6),
-            drag: opts.shellPieceDrag ?? 0.99725,
-            angularDrag: opts.shellPieceAngularDrag ?? 0.99625,
+            delayedShatter: opts.shellPieceShatterDelay ?? THREE.MathUtils.clamp(5.2 + shellRadius * 0.010, 5.8, 11.5),
+            drag: opts.shellPieceDrag ?? 0.99855,
+            angularDrag: opts.shellPieceAngularDrag ?? 0.9978,
             launchRamp: opts.shellPieceLaunchRamp ?? 0.14,
-            rotationDelay: opts.shellPieceRotationDelay ?? THREE.MathUtils.clamp(0.72 + shellRadius * 0.0018, 0.8, 1.45),
+            rotationDelay: opts.shellPieceRotationDelay ?? THREE.MathUtils.clamp(2.4 + shellRadius * 0.0035, 2.6, 4.8),
             maxRotationBeforeShatter: opts.shellPieceMaxRotation ?? 0.16,
-            preShatterBursts: opts.shellPieceBursts ?? Math.max(3, Math.min(6, pieceCount)),
-            preShatterWindow: opts.shellPieceBurstWindow ?? THREE.MathUtils.clamp(0.9 + shellRadius * 0.0022, 0.95, 1.85),
+            preShatterBursts: opts.shellPieceBursts ?? Math.max(4, Math.min(7, 3 + Math.round(pieceCount * 0.75))),
+            preShatterWindow: opts.shellPieceBurstWindow ?? THREE.MathUtils.clamp(3.0 + shellRadius * 0.0045, 3.4, 6.4),
             preBurstSize: opts.shellPieceBurstSize ?? 14,
             preBurstRadius: opts.shellPieceBurstRadius ?? 10,
-            preBurstImpulse: opts.shellPieceBurstImpulse ?? 16,
-            preBurstAngularKick: opts.shellPieceBurstAngularKick ?? 0.028,
-            maxCarrierSpeed: opts.shellPieceMaxSpeed ?? 225,
+            preBurstImpulse: opts.shellPieceBurstImpulse ?? 10,
+            preBurstAngularKick: opts.shellPieceBurstAngularKick ?? 0.018,
+            maxCarrierSpeed: opts.shellPieceMaxSpeed ?? 150,
             shardScale: (opts.shardScale ?? DESTRUCTION_CONFIG.shardScale) * 0.84,
-            shardLifetime: opts.shellPieceShardLifetime ?? Math.max(4.2, (opts.shardLifetime ?? DESTRUCTION_CONFIG.shardLifetime) * 1.18),
+            shardLifetime: opts.shellPieceShardLifetime ?? Math.max(7.5, (opts.shardLifetime ?? DESTRUCTION_CONFIG.shardLifetime) * 1.45),
             emissiveShardRatio: opts.shellPieceEmissiveShardRatio ?? opts.emissiveShardRatio ?? DESTRUCTION_CONFIG.emissiveShardRatio,
             shardDrag: opts.shellPieceShardDrag ?? 0.9972,
             shardAngularDrag: opts.shellPieceShardAngularDrag ?? 0.9961,
@@ -764,6 +888,39 @@ function _markDestructionOwned(rootObject, opts) {
     rootObject.userData = rootObject.userData || {};
     rootObject.userData.destructionOwned = true;
     if (opts?.preset) rootObject.userData.destructionPreset = opts.preset;
+}
+
+function _buildFinalShatterOpts(rootMesh, opts = {}) {
+    if (!_isStationExplosionPreset(opts)) return opts;
+    const radius = _estimateObjectWorldRadius(rootMesh);
+    const baseFragmentDrift = Number.isFinite(opts.fragmentDrift)
+        ? opts.fragmentDrift
+        : (DESTRUCTION_PRESETS[opts.preset]?.fragmentDrift ?? DESTRUCTION_CONFIG.fragmentDrift);
+    const baseShardLifetime = Number.isFinite(opts.shardLifetime)
+        ? opts.shardLifetime
+        : (DESTRUCTION_PRESETS[opts.preset]?.shardLifetime ?? DESTRUCTION_CONFIG.shardLifetime);
+
+    return {
+        ...opts,
+        finalExplosionProfile: opts.finalExplosionProfile ?? 'final',
+        fragmentDrift: Math.max(baseFragmentDrift, radius * 1.8),
+        driftMul: opts.driftMul ?? (opts.preset === 'pirate' ? 1.85 : 1.65),
+        shardLifetime: Math.max(baseShardLifetime * 1.45, 4.6 + radius * 0.004),
+        shardScale: opts.shardScale ?? (opts.preset === 'pirate' ? 1.12 : 1.06),
+        emissiveShardRatio: opts.emissiveShardRatio ?? (opts.preset === 'pirate' ? 0.18 : 0.28),
+        sparks: Math.max(opts.sparks ?? 0, opts.preset === 'pirate' ? 2600 : 2200),
+        flash: Math.max(opts.flash ?? 0, 1.15),
+        shockwave: opts.shockwave ?? true,
+        shockwaveAxisScale: opts.shockwaveAxisScale ?? { x: 1.0, y: 1.0, z: 0.16 },
+        finalSecondaryBursts: opts.finalSecondaryBursts ?? Math.max(3, Math.min(6, 2 + Math.round(radius / 180))),
+        finalSecondaryBurstSpread: opts.finalSecondaryBurstSpread ?? THREE.MathUtils.clamp(radius * 0.34, 80, 220),
+        finalSecondaryBurstSizeMul: opts.finalSecondaryBurstSizeMul ?? 0.22,
+        shockwaveScale: opts.shockwaveScale ?? Math.max(1200, radius * 4.5),
+        shockwaveLife: opts.shockwaveLife ?? 2.0,
+        shockwaveColor: opts.shockwaveColor ?? 0x77f0ff,
+        finalModelRadius: opts.finalModelRadius ?? radius,
+        finalScatterSize: opts.finalScatterSize ?? THREE.MathUtils.clamp(0.95 + radius * 0.0012, 1.0, 2.8),
+    };
 }
 
 function _registerRootCleanup(rootObject, worldTime, opts, extra = 0.8) {
@@ -861,11 +1018,13 @@ export const Destruction3D = {
      * @param {THREE.Scene}  cfg.scene
      * @param {Function}     [cfg.reactorFactory]   createReactorBlowFactory(scene) return value
      * @param {object}       [cfg.shockwaveManager] Shockwave3DManager instance
+     * @param {object}       [cfg.stationEffects] station destruction effects manager
      */
-    init({ scene, reactorFactory = null, shockwaveManager = null }) {
+    init({ scene, reactorFactory = null, shockwaveManager = null, stationEffects = null }) {
         _scene          = scene;
         _reactorFactory = reactorFactory;
         _shockwaveMgr   = shockwaveManager;
+        _stationEffects = stationEffects;
         if (_panelShardMgr?.disposeAll) _panelShardMgr.disposeAll();
         _panelShardMgr  = scene ? new PanelShardManager(scene) : null;
     },
@@ -909,6 +1068,7 @@ export const Destruction3D = {
         // Merge preset
         const preset = opts.preset ? (DESTRUCTION_PRESETS[opts.preset] ?? {}) : {};
         opts = { ...preset, ...opts };
+        opts = _buildFinalShatterOpts(rootMesh, opts);
 
         // LOD / burst guard
         const now = _worldTime;
@@ -1015,28 +1175,29 @@ export const Destruction3D = {
             shardScale: opts.shardScale ?? DESTRUCTION_CONFIG.shardScale,
             shardLifetime: opts.shardLifetime ?? DESTRUCTION_CONFIG.shardLifetime,
             emissiveShardRatio: opts.emissiveShardRatio ?? DESTRUCTION_CONFIG.emissiveShardRatio,
-            delayedShatter: opts.delayedShatter ?? THREE.MathUtils.clamp(2.3 + sectionRadius * 0.0035, 2.4, 4.6),
-            drag: opts.drag ?? 0.9971,
-            angularDrag: opts.angularDrag ?? 0.9961,
-            launchRamp: opts.launchRamp ?? 0.16,
-            rotationDelay: opts.rotationDelay ?? THREE.MathUtils.clamp(1.15 + sectionRadius * 0.0014, 1.2, 1.9),
-            maxRotationBeforeShatter: opts.maxRotationBeforeShatter ?? 0.12,
+            delayedShatter: opts.delayedShatter ?? THREE.MathUtils.clamp(6.4 + sectionRadius * 0.006, 6.8, 10.5),
+            drag: opts.drag ?? 0.99845,
+            angularDrag: opts.angularDrag ?? 0.9977,
+            launchRamp: opts.launchRamp ?? 0.24,
+            rotationDelay: opts.rotationDelay ?? THREE.MathUtils.clamp(3.1 + sectionRadius * 0.0024, 3.2, 5.2),
+            maxRotationBeforeShatter: opts.maxRotationBeforeShatter ?? 0.10,
             staggerWindow: opts.staggerWindow ?? 0.65,
             burstStrength: opts.burstStrength ?? 0.78,
             burstPulses: opts.burstPulses ?? 0,
-            preShatterBursts: opts.preShatterBursts ?? Math.max(5, Math.min(8, 3 + Math.round(sectionRadius / 120))),
-            preShatterWindow: opts.preShatterWindow ?? THREE.MathUtils.clamp(1.55 + sectionRadius * 0.0018, 1.6, 2.4),
+            preShatterBursts: opts.preShatterBursts ?? Math.max(4, Math.min(7, 3 + Math.round(sectionRadius / 220))),
+            preShatterWindow: opts.preShatterWindow ?? THREE.MathUtils.clamp(4.0 + sectionRadius * 0.0038, 4.4, 7.4),
             preBurstSize: opts.preBurstSize ?? 16,
             preBurstRadius: opts.preBurstRadius ?? 14,
-            preBurstImpulse: opts.preBurstImpulse ?? 22,
-            preBurstAngularKick: opts.preBurstAngularKick ?? 0.045,
-            maxCarrierSpeed: opts.maxCarrierSpeed ?? 300,
+            preBurstImpulse: opts.preBurstImpulse ?? 12,
+            preBurstAngularKick: opts.preBurstAngularKick ?? 0.026,
+            maxCarrierSpeed: opts.maxCarrierSpeed ?? 190,
             detachOrigin: opts.detachOrigin ?? stationCenter.clone(),
             shellSplitEnabled: opts.shellSplitEnabled ?? true,
-            preSplitFuse: opts.preSplitFuse ?? THREE.MathUtils.clamp(0.18 + sectionRadius * 0.00045, 0.18, 0.34),
-            shellPieceKick: opts.shellPieceKick ?? 46,
-            shellPieceShatterDelay: opts.shellPieceShatterDelay ?? 1.15,
-            shellPieceBursts: opts.shellPieceBursts ?? 3,
+            preSplitFuse: opts.preSplitFuse ?? THREE.MathUtils.clamp(2.8 + sectionRadius * 0.0032, 3.0, 6.0),
+            shellSplitBurstSpacing: opts.shellSplitBurstSpacing ?? THREE.MathUtils.clamp(0.75 + sectionRadius * 0.0008, 0.8, 1.35),
+            shellPieceKick: opts.shellPieceKick ?? 28,
+            shellPieceShatterDelay: opts.shellPieceShatterDelay ?? THREE.MathUtils.clamp(5.4 + sectionRadius * 0.007, 5.8, 10.5),
+            shellPieceBursts: opts.shellPieceBursts ?? 4,
             onCollapseEnd: () => opts.onCollapseEnd?.(),
         });
         _dismantling.push(ds);
@@ -1098,18 +1259,18 @@ export const Destruction3D = {
         // ── 4. Velocity: outward from station centre + upward bias ────────
         const stationCenter = new THREE.Vector3();
         stationRoot.getWorldPosition(stationCenter);
-        const baseSpeed = (opts.velocity ?? 170) * (0.75 + Math.random() * 0.45);
+        const baseSpeed = (opts.velocity ?? 125) * (0.75 + Math.random() * 0.35);
         const vel = _computePlanarDetachVelocity(detachedCenter, stationCenter, baseSpeed, 0.12);
         vel.z += (Math.random() - 0.5) * baseSpeed * 0.008;
 
-        const spinRate = 0.16 + Math.random() * 0.16;
+        const spinRate = 0.08 + Math.random() * 0.10;
         const angVel = new THREE.Vector3(
             (Math.random() - 0.5) * spinRate,
             (Math.random() - 0.5) * spinRate,
             (Math.random() - 0.5) * spinRate
         );
 
-        const shatterDelay = opts.shatterDelay ?? THREE.MathUtils.clamp(2.2 + chunkRadius * 0.0038, 2.25, 4.2);
+        const shatterDelay = opts.shatterDelay ?? THREE.MathUtils.clamp(6.2 + chunkRadius * 0.0075, 6.8, 12.0);
 
         // Normalize fragmentDrift so world-space displacement stays meaningfully
         // outside the source hull, even for large station chunks.
@@ -1125,52 +1286,58 @@ export const Destruction3D = {
             preset: opts.preset ?? stationRoot.userData?.destructionPreset ?? 'default',
             delayedShatter: shatterDelay,
             // Chunk shatter opts — quicker, tighter than full station collapse
-            duration:       1.05,
-            debrisLifetime: 12,
+            duration:       opts.duration ?? 2.2,
+            debrisLifetime: opts.debrisLifetime ?? 22,
             fragmentDrift:  normalizedDrift,
             spin:           5.0,
             heatGlow:       0.5,
             shrink:         0.55,
-            staggerWindow:  0.72,
+            staggerWindow:  opts.staggerWindow ?? 1.25,
             burstStrength:  0.95,
             burstPulses:    0,
-            preShatterBursts: 5,
-            preShatterWindow: 1.08,
+            preShatterBursts: opts.preShatterBursts ?? Math.max(4, Math.min(7, 3 + Math.round(chunkRadius / 220))),
+            preShatterWindow: opts.preShatterWindow ?? THREE.MathUtils.clamp(4.0 + chunkRadius * 0.0038, 4.4, 7.4),
             preBurstSize:   18,
             preBurstRadius: 14,
-            preBurstImpulse: 24,
-            preBurstAngularKick: 0.05,
+            preBurstImpulse: opts.preBurstImpulse ?? 12,
+            preBurstAngularKick: opts.preBurstAngularKick ?? 0.026,
             shardScale:     opts.shardScale ?? 1.06,
-            shardLifetime:  opts.shardLifetime ?? 3.4,
+            shardLifetime:  opts.shardLifetime ?? 8.5,
             emissiveShardRatio: opts.emissiveShardRatio ?? 0.18,
-            drag:           0.99725,
-            angularDrag:    0.99625,
-            launchRamp:     0.18,
-            rotationDelay:  THREE.MathUtils.clamp(1.05 + chunkRadius * 0.0016, 1.1, 1.85),
-            maxRotationBeforeShatter: 0.12,
-            maxCarrierSpeed: 315,
+            drag:           opts.drag ?? 0.99845,
+            angularDrag:    opts.angularDrag ?? 0.9977,
+            launchRamp:     opts.launchRamp ?? 0.24,
+            rotationDelay:  opts.rotationDelay ?? THREE.MathUtils.clamp(3.1 + chunkRadius * 0.0024, 3.2, 5.2),
+            maxRotationBeforeShatter: opts.maxRotationBeforeShatter ?? 0.10,
+            maxCarrierSpeed: opts.maxCarrierSpeed ?? 190,
             detachOrigin:   stationCenter.clone(),
             shellSplitEnabled: opts.shellSplitEnabled ?? true,
-            preSplitFuse: opts.preSplitFuse ?? THREE.MathUtils.clamp(0.2 + chunkRadius * 0.00042, 0.2, 0.34),
-            shellPieceKick: opts.shellPieceKick ?? 54,
-            shellPieceShatterDelay: opts.shellPieceShatterDelay ?? THREE.MathUtils.clamp(1.6 + chunkRadius * 0.0028, 1.7, 3.2),
-            shellPieceBursts: opts.shellPieceBursts ?? Math.max(3, Math.min(6, 2 + Math.round(chunkRadius / 140))),
+            preSplitFuse: opts.preSplitFuse ?? THREE.MathUtils.clamp(2.8 + chunkRadius * 0.0032, 3.0, 6.0),
+            shellSplitBurstSpacing: opts.shellSplitBurstSpacing ?? THREE.MathUtils.clamp(0.75 + chunkRadius * 0.0008, 0.8, 1.35),
+            shellPieceKick: opts.shellPieceKick ?? 28,
+            shellPieceShatterDelay: opts.shellPieceShatterDelay ?? THREE.MathUtils.clamp(5.4 + chunkRadius * 0.007, 5.8, 10.5),
+            shellPieceBursts: opts.shellPieceBursts ?? Math.max(4, Math.min(7, 3 + Math.round(chunkRadius / 260))),
+            shellPieceBurstWindow: opts.shellPieceBurstWindow ?? THREE.MathUtils.clamp(3.0 + chunkRadius * 0.0045, 3.4, 6.4),
         });
         _dismantling.push(ds);
 
         // ── 6. Small spark burst at the breakaway point ───────────────────
-        if (_reactorFactory) {
-            const burstWorldPos = _computeBurstWorldPos(detachedRoot, { detachOrigin: stationCenter }, 0.3);
-            const fx = _reactorFactory({
-                x:       burstWorldPos.x,
-                y:       -burstWorldPos.y,
-                size:    18 + Math.random() * 18,
-                profile: 'fighter',
-            });
-            if (fx && typeof window !== 'undefined' && window.overlay3D?.spawn) {
-                window.overlay3D.spawn(fx);
-            }
-        }
+        const burstWorldPos = _computeBurstWorldPos(detachedRoot, { ...opts, detachOrigin: stationCenter }, 0.3);
+        _spawnBurstAtWorldPos(
+            burstWorldPos,
+            chunkRadius,
+            {
+                ...opts,
+                preset: opts.preset ?? stationRoot.userData?.destructionPreset ?? 'default',
+                chainBurstCount: opts.detachChainBurstCount ?? 4,
+                chainBurstDuration: opts.detachChainBurstDuration ?? 1.35,
+                chainBurstRadius: opts.detachChainBurstRadius ?? THREE.MathUtils.clamp(chunkRadius * 0.22, 70, 180),
+                chainBurstSize: opts.detachChainBurstSize ?? THREE.MathUtils.clamp(0.55 + chunkRadius * 0.002, 0.7, 1.45),
+                breakupBurstSize: opts.detachBurstSize ?? (18 + Math.random() * 18),
+            },
+            'carrier',
+            0.3
+        );
 
         this.emit('chunkDetached', { mesh: detachedRoot, worldPos: detachedCenter, worldTime: _worldTime });
     },
@@ -1232,6 +1399,9 @@ export const Destruction3D = {
 
         if (_panelShardMgr) {
             _panelShardMgr.update(dt);
+        }
+        if (_stationEffects?.update) {
+            _stationEffects.update(dt);
         }
 
         // Dismantle fake physics
@@ -1306,32 +1476,66 @@ export const Destruction3D = {
         const sparks = opts.sparks   ?? DESTRUCTION_CONFIG.sparks;
         const doShock = opts.shockwave ?? DESTRUCTION_CONFIG.shockwave;
         const overlayY = -worldPos.y;
+        const reactorProfile = opts.finalExplosionProfile
+            ?? (_isStationExplosionPreset(opts) ? 'final' : 'capital');
         const shockwaveOpts = opts.shockwaveAxisScale
             ? { axisScale: opts.shockwaveAxisScale }
             : ((opts.preset === 'civilian' || opts.preset === 'pirate')
                 ? { axisScale: { x: 1.0, y: 1.0, z: 0.16 } }
                 : null);
+        const stationFinalHandled = _spawnStationEffectAtWorldPos(
+            worldPos,
+            opts.finalModelRadius ?? opts.shockwaveScale ?? 600,
+            opts,
+            'final',
+            1.0
+        );
 
         // Sparks via reactorFactory
-        if (_reactorFactory && sparks > 0) {
+        if (!stationFinalHandled && _reactorFactory && sparks > 0) {
             const size = Math.sqrt(sparks) * 6;
             const fx = _reactorFactory({
                 x:       worldPos.x,
                 y:       overlayY,
-                y:       worldPos.z,   // reactorblow uses top-down XY → Z maps to Y in world
-                y:       overlayY,
                 size,
-                profile: 'capital',
+                profile: reactorProfile,
             });
             // Register with overlay so the effect gets update() called each frame
             if (fx && typeof window !== 'undefined' && window.overlay3D?.spawn) {
                 window.overlay3D.spawn(fx);
             }
+
+            if (reactorProfile === 'final' && typeof window !== 'undefined' && window.overlay3D?.spawn) {
+                const secondaryBursts = Math.max(0, opts.finalSecondaryBursts ?? 0);
+                const spread = Math.max(40, opts.finalSecondaryBurstSpread ?? 120);
+                const burstSize = size * Math.max(0.08, opts.finalSecondaryBurstSizeMul ?? 0.22);
+                for (let i = 0; i < secondaryBursts; i++) {
+                    const angle = (Math.PI * 2 * i) / Math.max(1, secondaryBursts) + Math.random() * 0.35;
+                    const radius = spread * (0.72 + Math.random() * 0.4);
+                    _scheduleCallback(0.06 + i * 0.05, () => {
+                        const burstFx = _reactorFactory({
+                            x: worldPos.x + Math.cos(angle) * radius,
+                            y: overlayY + Math.sin(angle) * radius,
+                            size: burstSize * (0.9 + Math.random() * 0.35),
+                            profile: 'chain',
+                        });
+                        if (burstFx) window.overlay3D.spawn(burstFx);
+                    });
+                }
+            }
         }
 
         // Shockwave
         if (doShock && _shockwaveMgr) {
-            _shockwaveMgr.spawn(worldPos.x, worldPos.y, worldPos.z, 1200, 1.8, 0x55ffff, shockwaveOpts);
+            _shockwaveMgr.spawn(
+                worldPos.x,
+                worldPos.y,
+                worldPos.z,
+                opts.shockwaveScale ?? 1200,
+                opts.shockwaveLife ?? 1.8,
+                opts.shockwaveColor ?? 0x55ffff,
+                shockwaveOpts
+            );
         }
 
         // Flash: inject into global PP uniform if available
@@ -1395,6 +1599,7 @@ export const Destruction3D = {
     dispose() {
         _debrisMgr.disposeAll();
         if (_panelShardMgr?.disposeAll) _panelShardMgr.disposeAll();
+        _stationEffects = null;
         _panelShardMgr = null;
         _shatterMeshes.clear();
         _dismantling.length     = 0;
