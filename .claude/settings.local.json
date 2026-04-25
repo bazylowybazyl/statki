@@ -21,7 +21,10 @@
       "mcp__Claude_Preview__preview_start",
       "Bash(git -C /c/Users/Szymon/Documents/GitHub/statki log --oneline --all -20 -- *rocket* *missile*)",
       "Bash(node -e \"const fs=require\\('fs'\\);const c=fs.readFileSync\\('C:/Users/Szymon/Documents/GitHub/statki/warp — glsl.html','utf8'\\);const m=c.match\\(/<script>\\([\\\\s\\\\S]*?\\)<\\\\/script>/g\\);console.log\\('scripts:',m?m.length:0\\);const inline=m[m.length-1].replace\\(/^<script>/,''\\).replace\\(/<\\\\/script>$/,''\\);try{new Function\\(inline\\);console.log\\('OK: inline script parses'\\);}catch\\(e\\){console.log\\('ERR:',e.message\\);}\")",
-      "Bash(node -e \"const fs=require\\('fs'\\);const c=fs.readFileSync\\('C:/Users/Szymon/Documents/GitHub/statki/warp — glsl.html','utf8'\\);const m=c.match\\(/<script>\\([\\\\s\\\\S]*?\\)<\\\\/script>/g\\);const inline=m[m.length-1].replace\\(/^<script>/,''\\).replace\\(/<\\\\/script>$/,''\\);try{new Function\\(inline\\);console.log\\('OK'\\);}catch\\(e\\){console.log\\('ERR:',e.message\\);}\")"
+      "Bash(node -e \"const fs=require\\('fs'\\);const c=fs.readFileSync\\('C:/Users/Szymon/Documents/GitHub/statki/warp — glsl.html','utf8'\\);const m=c.match\\(/<script>\\([\\\\s\\\\S]*?\\)<\\\\/script>/g\\);const inline=m[m.length-1].replace\\(/^<script>/,''\\).replace\\(/<\\\\/script>$/,''\\);try{new Function\\(inline\\);console.log\\('OK'\\);}catch\\(e\\){console.log\\('ERR:',e.message\\);}\")",
+      "Bash(findstr /n \"vType<\" \"C:\\\\Users\\\\Szymon\\\\Documents\\\\GitHub\\\\statki\\\\destructioneffects.html\")",
+      "Bash(powershell -NoProfile -Command \"\\(Get-Content 'C:\\\\Users\\\\Szymon\\\\Documents\\\\GitHub\\\\statki\\\\destructioneffects.html' | Measure-Object -Line\\).Lines\")",
+      "Bash(powershell -NoProfile -Command \"Get-Content 'C:\\\\Users\\\\Szymon\\\\Documents\\\\GitHub\\\\statki\\\\destructioneffects.html' | Select-Object -Last 15\")"
     ]
   }
 }

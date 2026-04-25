@@ -642,7 +642,7 @@ export function createYamatoImpactFactory(scene) {
                     1.0 + Math.random() * 0.8, 1, gt);
             }
 
-            if (time >= 1.6) dispose();
+            if (time >= 2.9) dispose(); // >= max particle lifetime (smoke 2.7s) + margines
         }
 
         function dispose() {

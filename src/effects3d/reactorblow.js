@@ -1,4 +1,7 @@
 import * as THREE from "three";
+import { STATION_CHAIN_REACTOR_PROFILE } from "./reactorProfiles/stationChainProfile.js";
+import { STATION_CUT_REACTOR_PROFILE } from "./reactorProfiles/stationCutProfile.js";
+import { STATION_FINAL_REACTOR_PROFILE } from "./reactorProfiles/stationFinalProfile.js";
 
 // --- BAZOWY SZUM GLSL ---
 const noiseChunk = `
@@ -345,21 +348,100 @@ export function createReactorBlowFactory(scene) {
     const fireParticleSystem = new GPUInstancedParticleManager(scene, 100000, THREE.AdditiveBlending);
     const smokeParticleSystem = new GPUParticleManager(scene, 15000, THREE.NormalBlending);
 
+    const PROFILE_CONFIGS = Object.freeze({
+        fighter: Object.freeze({
+            chargeTime: 0.05,
+            explosionDuration: 0.2,
+            chargeSizeMul: 1.5,
+            lightDistMul: 4.0,
+            lightChargeIntensity: 1.0,
+            lightExplodeIntensity: 2.0,
+            lightDropOff: 0.15,
+            flashSizeMul: 4.0,
+            flashLife: 0.15,
+            ringSizeMul: 0.0,
+            ringLife: 0.0,
+            smokeSizeMul: 0.0,
+            smokeLife: 0.0,
+            spikeCount: 0,
+            spikeSpeedMinMul: 0.0,
+            spikeSpeedMaxMul: 0.0,
+            spikeSizeMinMul: 0.0,
+            spikeSizeMaxMul: 0.0,
+            spikeLifeMin: 0.0,
+            spikeLifeMax: 0.0,
+            sparkDelay: 0.02,
+            sparkCount: 20,
+            sparkSpeedMinMul: 2.0,
+            sparkSpeedMaxMul: 6.0,
+            sparkSizeMinMul: 0.08,
+            sparkSizeMaxMul: 0.12,
+            sparkLifeMin: 0.10,
+            sparkLifeMax: 0.20,
+            shockwave3D: null,
+            heatHaze: null,
+        }),
+        chain: STATION_CHAIN_REACTOR_PROFILE,
+        cut: STATION_CUT_REACTOR_PROFILE,
+        capital: Object.freeze({
+            chargeTime: 0.8,
+            explosionDuration: 3.0,
+            chargeSizeMul: 3.5,
+            lightDistMul: 20.0,
+            lightChargeIntensity: 4.0,
+            lightExplodeIntensity: 15.0,
+            lightDropOff: 1.5,
+            flashSizeMul: 12.0,
+            flashLife: 1.2,
+            ringSizeMul: 17.0,
+            ringLife: 1.5,
+            smokeSizeMul: 19.0,
+            smokeLife: 1.6,
+            spikeCount: 60,
+            spikeSpeedMinMul: 12.0,
+            spikeSpeedMaxMul: 24.0,
+            spikeSizeMinMul: 0.4,
+            spikeSizeMaxMul: 0.8,
+            spikeLifeMin: 0.3,
+            spikeLifeMax: 0.5,
+            sparkDelay: 0.1,
+            sparkCount: 4000,
+            sparkSpeedMinMul: 4.0,
+            sparkSpeedMaxMul: 14.0,
+            sparkSizeMinMul: 0.06,
+            sparkSizeMaxMul: 0.16,
+            sparkLifeMin: 1.5,
+            sparkLifeMax: 4.0,
+            shockwave3D: Object.freeze({
+                scaleMul: 7.5,
+                minScale: 140,
+                life: 1.1,
+                color: 0x33ccff,
+            }),
+            heatHaze: Object.freeze({
+                duration: 2.0,
+                startScaleMul: 2.0,
+                growthMul: 25.0,
+                strength: 6.0,
+            }),
+        }),
+        final: STATION_FINAL_REACTOR_PROFILE,
+    });
+
     return function spawn({ x = 0, y = 0, size = 100, profile = "capital" } = {}) {
         const group = new THREE.Group();
         group.position.set(x, 0, y);
         scene.add(group);
 
-        const isFighter = profile === "fighter";
+        const cfg = PROFILE_CONFIGS[profile] || PROFILE_CONFIGS.capital;
 
-        const lightDist = isFighter ? size * 4 : size * 20;
+        const lightDist = size * cfg.lightDistMul;
         const light = new THREE.PointLight(0x00ffff, 0, lightDist);
         light.position.set(x, size * 0.5, y);
         scene.add(light);
 
-        // Czasy 1:1 z plikiem HTML dla capitali
-        const CHARGE_TIME = isFighter ? 0.05 : 0.8;
-        const EXPLOSION_DURATION = isFighter ? 0.2 : 3.0; 
+        const CHARGE_TIME = cfg.chargeTime;
+        const EXPLOSION_DURATION = cfg.explosionDuration;
 
         const expX = x;
         const expY = 5;
@@ -369,10 +451,9 @@ export function createReactorBlowFactory(scene) {
         let phase = 'CHARGE';
         let disposed = false;
         const triggerShockwave3D = (typeof window !== 'undefined') ? window.trigger3DShockwave : null;
-        const useShockwave3D = !isFighter && typeof triggerShockwave3D === 'function';
+        const useShockwave3D = !!cfg.shockwave3D && typeof triggerShockwave3D === 'function';
 
-        // Faza ładowania
-        const chargeSize = isFighter ? size * 1.5 : size * 3.5;
+        const chargeSize = size * cfg.chargeSizeMul;
         fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, chargeSize, CHARGE_TIME + 0.1, 5, initTime);
 
         function update(dt) {
@@ -385,26 +466,19 @@ export function createReactorBlowFactory(scene) {
             smokeParticleSystem.material.uniforms.uTime.value = gt;
 
             if (phase === 'CHARGE') {
-                light.intensity = (time / CHARGE_TIME) * (isFighter ? 1.0 : 4.0);
+                light.intensity = (time / Math.max(0.001, CHARGE_TIME)) * cfg.lightChargeIntensity;
             } else {
                 const expTime = time - CHARGE_TIME;
-                const dropOff = isFighter ? 0.15 : 1.5;
-                light.intensity = Math.max(0, (isFighter ? 2.0 : 15.0) * (1.0 - expTime / dropOff));
+                light.intensity = Math.max(0, cfg.lightExplodeIntensity * (1.0 - expTime / Math.max(0.001, cfg.lightDropOff)));
 
-                // --- OPTYCZNA FALA UDERZENIOWA (Załamanie światła przez Core3D) ---
-                if (!useShockwave3D && !isFighter && expTime < 2.0 && typeof window !== 'undefined' && window.Core3D) {
-                    // Resetujemy bufor fal uderzeniowych co klatkę (zabezpieczenie)
+                if (!useShockwave3D && cfg.heatHaze && expTime < cfg.heatHaze.duration && typeof window !== 'undefined' && window.Core3D) {
                     if (window.Core3D._lastHeatHazeFrame !== gt) {
                         window.Core3D._lastHeatHazeFrame = gt;
                         if (window.Core3D.beginHeatHazeFrame) window.Core3D.beginHeatHazeFrame();
                     }
 
-                    // Promień rośnie wraz z upływem czasu
-                    const currentRadius = size * 2 + (expTime * size * 25);
-                    // Siła załamania płynnie zanika
-                    const distortionStrength = Math.max(0, 1.0 - (expTime / 2.0)) * 6.0;
-
-                    // Pchamy fale do głównego potoku post-processingu gry
+                    const currentRadius = size * cfg.heatHaze.startScaleMul + (expTime * size * cfg.heatHaze.growthMul);
+                    const distortionStrength = Math.max(0, 1.0 - (expTime / cfg.heatHaze.duration)) * cfg.heatHaze.strength;
                     window.Core3D.pushHeatHazeWorld(expX, expZ, -4, currentRadius, distortionStrength);
                 }
             }
@@ -416,27 +490,21 @@ export function createReactorBlowFactory(scene) {
                         expX,
                         -expZ,
                         0,
-                        Math.max(140, size * 7.5),
-                        1.1,
-                        0x33ccff
+                        Math.max(cfg.shockwave3D.minScale, size * cfg.shockwave3D.scaleMul),
+                        cfg.shockwave3D.life,
+                        cfg.shockwave3D.color
                     );
                 }
 
-                if (!isFighter) {
-                    // WYBUCH CAPITALA (Proporcje i ilości z pliku HTML)
-                    
-                    // 1. Anamorphic Flash (Błysk)
-                    fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, size * 12, 1.2, 5, gt);
-
-                    // 2. Fractal Energy Ring (Pierścień)
-                    fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, size * 17, 1.5, 6, gt);
-
-                    // 3. Dark Outer Shockwave (Mroczna fala dymu)
-                    smokeParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, size * 19, 1.6, 1, gt);
-
-                    // 4. Spikes (Dokładnie 60 potężnych kolców jak w HTML)
-                    for (let i = 0; i < 60; i++) {
-                        const speed = size * (12 + Math.random() * 12);
+                fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, size * cfg.flashSizeMul, cfg.flashLife, 5, gt);
+                if (cfg.ringSizeMul > 0 && cfg.ringLife > 0) {
+                    fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, size * cfg.ringSizeMul, cfg.ringLife, 6, gt);
+                }
+                if (cfg.smokeSizeMul > 0 && cfg.smokeLife > 0) {
+                    smokeParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, size * cfg.smokeSizeMul, cfg.smokeLife, 1, gt);
+                }
+                for (let i = 0; i < cfg.spikeCount; i++) {
+                        const speed = size * (cfg.spikeSpeedMinMul + Math.random() * Math.max(0.001, cfg.spikeSpeedMaxMul - cfg.spikeSpeedMinMul));
                         const angle = Math.random() * Math.PI * 2;
                         const vx = Math.cos(angle) * speed;
                         const vy = (Math.random() - 0.5) * speed * 0.15;
@@ -444,24 +512,16 @@ export function createReactorBlowFactory(scene) {
 
                         fireParticleSystem.spawn(expX, expY, expZ, 
                             vx, vy, vz, 
-                            size * (0.4 + Math.random() * 0.4), // Grubości
-                            0.3 + Math.random() * 0.2, // Krótki czas
+                            size * (cfg.spikeSizeMinMul + Math.random() * Math.max(0.001, cfg.spikeSizeMaxMul - cfg.spikeSizeMinMul)),
+                            cfg.spikeLifeMin + Math.random() * Math.max(0.001, cfg.spikeLifeMax - cfg.spikeLifeMin),
                             4, gt);
-                    }
-                } else {
-                    fireParticleSystem.spawn(expX, expY, expZ, 0, 0, 0, size * 4, 0.15, 5, gt);
                 }
             }
 
-            // Opóźnienie wybuchu iskier jak w HTML
-            const sparkDelay = isFighter ? 0.02 : 0.1;
-            if (phase === 'EXPLODE' && time >= CHARGE_TIME + sparkDelay) {
+            if (phase === 'EXPLODE' && time >= CHARGE_TIME + cfg.sparkDelay) {
                 phase = 'SPARKS';
-
-                // Dokładnie 4000 iskier jak w Twoim pliku HTML!
-                const sparkCount = isFighter ? 20 : 4000;
-                for (let i = 0; i < sparkCount; i++) {
-                    const speed = size * (isFighter ? (2 + Math.random() * 4) : (4 + Math.random() * 10));
+                for (let i = 0; i < cfg.sparkCount; i++) {
+                    const speed = size * (cfg.sparkSpeedMinMul + Math.random() * Math.max(0.001, cfg.sparkSpeedMaxMul - cfg.sparkSpeedMinMul));
                     
                     const angle = Math.random() * Math.PI * 2;
                     const phi = Math.acos(2 * Math.random() - 1);
@@ -472,8 +532,8 @@ export function createReactorBlowFactory(scene) {
 
                     fireParticleSystem.spawn(expX, expY, expZ,
                         vx, vy, vz,
-                        size * (isFighter ? 0.08 : (0.06 + Math.random() * 0.1)), 
-                        isFighter ? (0.1 + Math.random() * 0.1) : (1.5 + Math.random() * 2.5), 
+                        size * (cfg.sparkSizeMinMul + Math.random() * Math.max(0.001, cfg.sparkSizeMaxMul - cfg.sparkSizeMinMul)), 
+                        cfg.sparkLifeMin + Math.random() * Math.max(0.001, cfg.sparkLifeMax - cfg.sparkLifeMin), 
                         4, gt); 
                 }
             }

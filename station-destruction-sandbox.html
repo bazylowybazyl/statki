@@ -1,0 +1,969 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Station Destruction Sandbox</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg0: #04070d;
+      --bg1: #0b1424;
+      --panel: rgba(9, 16, 30, 0.82);
+      --line: rgba(120, 170, 255, 0.22);
+      --text: #d8e6ff;
+      --muted: #8fa4c6;
+      --accent: #78e2ff;
+      --danger: #ff7b8a;
+      --warn: #ffd166;
+      --ok: #89ffb1;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 20%, rgba(26, 54, 96, 0.22), transparent 40%),
+        radial-gradient(circle at 50% 80%, rgba(7, 24, 58, 0.36), transparent 45%),
+        linear-gradient(180deg, var(--bg1), var(--bg0));
+      color: var(--text);
+      font: 13px/1.4 "Segoe UI", Tahoma, sans-serif;
+    }
+
+    #app {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    #stage {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      cursor: crosshair;
+    }
+
+    #stage canvas {
+      position: absolute;
+      inset: 0;
+      display: block;
+    }
+
+    #flash {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: radial-gradient(circle at center, rgba(140, 210, 255, 0.22), rgba(90, 160, 255, 0.08), transparent 70%);
+      opacity: 0;
+      transition: opacity 0.05s linear;
+      mix-blend-mode: screen;
+    }
+
+    .hud {
+      position: absolute;
+      z-index: 30;
+      backdrop-filter: blur(18px);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    }
+
+    #panel {
+      top: 18px;
+      left: 18px;
+      width: 330px;
+      padding: 14px 16px 12px;
+      border-radius: 18px;
+    }
+
+    #panel h1 {
+      margin: 0 0 8px;
+      font-size: 15px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    #panel .sub {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 6px 0;
+    }
+
+    .label {
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: 11px;
+    }
+
+    .value {
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+
+    select.value {
+      min-width: 170px;
+      border: 1px solid rgba(120, 170, 255, 0.22);
+      background: rgba(10, 18, 34, 0.92);
+      color: var(--text);
+      padding: 7px 10px;
+      border-radius: 10px;
+      font: inherit;
+    }
+
+    .hpbar {
+      width: 100%;
+      height: 10px;
+      margin: 10px 0 8px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .hpfill {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, #4fe1ff, #82ffbc);
+      transform-origin: left center;
+    }
+
+    .buttons {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: rgba(10, 18, 34, 0.9);
+      color: var(--text);
+      padding: 9px 12px;
+      border-radius: 12px;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    button:hover {
+      border-color: rgba(120, 170, 255, 0.38);
+      background: rgba(16, 28, 52, 0.96);
+    }
+
+    #hint {
+      right: 18px;
+      bottom: 18px;
+      width: 360px;
+      padding: 12px 14px;
+      border-radius: 16px;
+    }
+
+    #hint strong {
+      color: var(--accent);
+    }
+
+    #hint .line {
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    #crosshair {
+      position: absolute;
+      z-index: 22;
+      pointer-events: none;
+      width: 24px;
+      height: 24px;
+      margin-left: -12px;
+      margin-top: -12px;
+      opacity: 0.92;
+    }
+
+    #crosshair::before,
+    #crosshair::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border: 1px solid rgba(132, 232, 255, 0.75);
+    }
+
+    #crosshair::before {
+      clip-path: polygon(0 35%, 35% 35%, 35% 0, 65% 0, 65% 35%, 100% 35%, 100% 65%, 65% 65%, 65% 100%, 35% 100%, 35% 65%, 0 65%);
+    }
+
+    #crosshair::after {
+      inset: 7px;
+      border-color: rgba(255, 255, 255, 0.38);
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="stage"></div>
+    <div id="flash"></div>
+    <div id="crosshair"></div>
+
+    <section id="panel" class="hud">
+      <h1 id="panelTitle">Earth Civilian Station Sandbox</h1>
+      <p class="sub">Ten sandbox odpala ten sam pipeline destrukcji 3D, overlay reactor blow i shockwave, tylko bez reszty gry.</p>
+      <div class="row">
+        <span class="label">Station</span>
+        <select id="stationSelect" class="value">
+          <option value="earth">Earth Civilian</option>
+          <option value="mars">Mars Civilian</option>
+          <option value="jupiter">Jupiter Civilian</option>
+          <option value="neptune">Neptune Civilian</option>
+          <option value="pirate">Pirate Station</option>
+        </select>
+      </div>
+      <div class="row"><span class="label">Status</span><span class="value" id="status">Loading station...</span></div>
+      <div class="row"><span class="label">HP</span><span class="value" id="hpText">0 / 0</span></div>
+      <div class="hpbar"><div class="hpfill" id="hpFill"></div></div>
+      <div class="row"><span class="label">Zoom</span><span class="value" id="zoomText">0.00</span></div>
+      <div class="row"><span class="label">Hits</span><span class="value" id="hitsText">0</span></div>
+      <div class="row"><span class="label">Last Event</span><span class="value" id="eventText">-</span></div>
+      <div class="buttons">
+        <button id="resetBtn" type="button">Reset Sandbox</button>
+        <button id="chunkBtn" type="button">Detach Chunk</button>
+        <button id="killBtn" type="button">Full Shatter</button>
+      </div>
+    </section>
+
+    <section id="hint" class="hud">
+      <strong>Controls</strong>
+      <div class="line">LPM: fire test weapon</div>
+      <div class="line">PPM drag: pan camera</div>
+      <div class="line">Wheel: zoom (same perspective camera style as in game)</div>
+      <div class="line">1/2/3: test chain / cut / final station effects</div>
+      <div class="line">R: reset sandbox</div>
+      <div class="line">K: full shatter</div>
+    </section>
+  </div>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+    import { createPirateStation } from "./src/space/pirateStation/pirateStationFactory.js";
+    import { initOverlay } from "./src/effects3d/overlay.js";
+    import { createReactorBlowFactory } from "./src/effects3d/reactorblow.js";
+    import { createStationDestructionEffectsFactory } from "./src/effects3d/stationDestructionEffects.js";
+    import { Shockwave3DManager } from "./src/effects3d/shockwave3D.js";
+    import { Destruction3D } from "./src/vfx/destruction3D.js";
+
+    const STATION_MAX_HP = 2200;
+    const PRIMARY_DAMAGE = 180;
+    const DETACH_THRESHOLDS = [0.88, 0.76, 0.64, 0.52, 0.40, 0.28, 0.16];
+    const STATION_DEFS = Object.freeze({
+      earth: Object.freeze({
+        key: "earth",
+        title: "Earth Civilian Station Sandbox",
+        label: "Earth Civilian",
+        kind: "gltf",
+        preset: "civilian",
+        desiredRadius: 2800,
+        url: new URL("./src/stations/earth-station.glb", import.meta.url).href
+      }),
+      mars: Object.freeze({
+        key: "mars",
+        title: "Mars Civilian Station Sandbox",
+        label: "Mars Civilian",
+        kind: "gltf",
+        preset: "civilian",
+        desiredRadius: 3000,
+        url: new URL("./src/stations/mars-station.glb", import.meta.url).href
+      }),
+      jupiter: Object.freeze({
+        key: "jupiter",
+        title: "Jupiter Civilian Station Sandbox",
+        label: "Jupiter Civilian",
+        kind: "gltf",
+        preset: "civilian",
+        desiredRadius: 3800,
+        url: new URL("./src/stations/jupiter-station.glb", import.meta.url).href
+      }),
+      neptune: Object.freeze({
+        key: "neptune",
+        title: "Neptune Civilian Station Sandbox",
+        label: "Neptune Civilian",
+        kind: "gltf",
+        preset: "civilian",
+        desiredRadius: 2000,
+        url: new URL("./src/stations/neptune-station.glb", import.meta.url).href
+      }),
+      pirate: Object.freeze({
+        key: "pirate",
+        title: "Pirate Station Sandbox",
+        label: "Pirate Station",
+        kind: "pirate",
+        preset: "pirate",
+        desiredRadius: 2800
+      })
+    });
+
+    const app = document.getElementById("app");
+    const stage = document.getElementById("stage");
+    const flashEl = document.getElementById("flash");
+    const crosshair = document.getElementById("crosshair");
+    const panelTitleEl = document.getElementById("panelTitle");
+    const stationSelectEl = document.getElementById("stationSelect");
+    const statusEl = document.getElementById("status");
+    const hpTextEl = document.getElementById("hpText");
+    const hpFillEl = document.getElementById("hpFill");
+    const zoomTextEl = document.getElementById("zoomText");
+    const hitsTextEl = document.getElementById("hitsText");
+    const eventTextEl = document.getElementById("eventText");
+    const resetBtn = document.getElementById("resetBtn");
+    const chunkBtn = document.getElementById("chunkBtn");
+    const killBtn = document.getElementById("killBtn");
+
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: false,
+      powerPreference: "high-performance"
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    renderer.localClippingEnabled = true;
+    renderer.domElement.style.position = "absolute";
+    renderer.domElement.style.inset = "0";
+    stage.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x04070d);
+
+    const camera = new THREE.PerspectiveCamera(35, 1, 100, 500000);
+    camera.layers.enable(2);
+
+    const refractionTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat
+    });
+    const shockwave3DManager = new Shockwave3DManager(scene, 8, refractionTarget);
+    window.trigger3DShockwave = (x, y, z, scale, life, colorHex, opts = null) => {
+      shockwave3DManager.spawn(x, y, z, scale, life, colorHex, opts);
+    };
+
+    const ambient = new THREE.AmbientLight(0xa8c4ff, 1.7);
+    scene.add(ambient);
+
+    const sun = new THREE.DirectionalLight(0xbfd8ff, 2.3);
+    sun.position.set(30000, 20000, 45000);
+    scene.add(sun);
+
+    const rim = new THREE.DirectionalLight(0x58b4ff, 1.15);
+    rim.position.set(-24000, 12000, 18000);
+    scene.add(rim);
+
+    const fill = new THREE.PointLight(0x88ddff, 1.2, 50000, 2.0);
+    fill.position.set(0, 0, 9000);
+    scene.add(fill);
+
+    const starGeo = new THREE.BufferGeometry();
+    const starCount = 1800;
+    const starPos = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      const i3 = i * 3;
+      starPos[i3] = (Math.random() - 0.5) * 120000;
+      starPos[i3 + 1] = (Math.random() - 0.5) * 120000;
+      starPos[i3 + 2] = -15000 - Math.random() * 80000;
+    }
+    starGeo.setAttribute("position", new THREE.BufferAttribute(starPos, 3));
+    const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({
+      color: 0xa7d0ff,
+      size: 34,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false
+    }));
+    scene.add(stars);
+
+    const overlay3D = initOverlay({
+      host: stage,
+      getView: () => ({
+        center: { x: cameraState.centerX, y: cameraState.centerY },
+        zoom: cameraState.zoom,
+        viewport: { w: stage.clientWidth, h: stage.clientHeight }
+      }),
+      mode: "screen",
+      zIndex: 12,
+      useBloom: true,
+      useAlphaPass: true,
+      adaptiveQuality: true,
+      updateSparkSystem: false,
+      baseRenderScale: 1.0
+    });
+    window.overlay3D = overlay3D;
+    window.makeReactorBlow = createReactorBlowFactory(overlay3D.scene);
+    const stationDestructionEffects = createStationDestructionEffectsFactory(scene);
+    window.stationDestructionEffects = stationDestructionEffects;
+
+    Destruction3D.init({
+      scene,
+      reactorFactory: window.makeReactorBlow,
+      shockwaveManager: shockwave3DManager,
+      stationEffects: stationDestructionEffects
+    });
+
+    const loader = new GLTFLoader();
+    const clock = new THREE.Clock();
+    const raycaster = new THREE.Raycaster();
+    const mouseNdc = new THREE.Vector2();
+    const missPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 100);
+    const tmpVec = new THREE.Vector3();
+    const tmpQuat = new THREE.Quaternion();
+    const tmpScale = new THREE.Vector3();
+    const tmpBox = new THREE.Box3();
+    const tmpSphere = new THREE.Sphere();
+    const tmpPlaneHit = new THREE.Vector3();
+    const tmpTarget = new THREE.Vector3();
+    const search = new URLSearchParams(window.location.search);
+    const selectedStationKey = STATION_DEFS[search.get("station")] ? search.get("station") : "earth";
+    const currentStationDef = STATION_DEFS[selectedStationKey];
+    stationSelectEl.value = currentStationDef.key;
+    panelTitleEl.textContent = currentStationDef.title;
+
+    const cameraState = {
+      centerX: 0,
+      centerY: 0,
+      zoom: 0.16,
+      minZoom: 0.06,
+      maxZoom: 0.72,
+      panDrag: null
+    };
+
+    const stationState = {
+      currentDef: currentStationDef,
+      templateCache: new Map(),
+      root: null,
+      model: null,
+      meshes: [],
+      hp: STATION_MAX_HP,
+      maxHp: STATION_MAX_HP,
+      hits: 0,
+      destroyed: false,
+      thresholdIndex: 0,
+      spinOffset: 0,
+      lastEvent: "Booting...",
+      customUpdate: null,
+      proceduralHandle: null
+    };
+
+    const beams = [];
+
+    function setStatus(text) {
+      stationState.lastEvent = text;
+      eventTextEl.textContent = text;
+    }
+
+    function updateHud() {
+      panelTitleEl.textContent = stationState.currentDef.title;
+      statusEl.textContent = stationState.destroyed
+        ? "Station destroyed"
+        : stationState.root
+          ? "Station online"
+          : "Loading station...";
+      hpTextEl.textContent = `${Math.max(0, Math.round(stationState.hp))} / ${stationState.maxHp}`;
+      hpFillEl.style.transform = `scaleX(${THREE.MathUtils.clamp(stationState.hp / stationState.maxHp, 0, 1)})`;
+      zoomTextEl.textContent = cameraState.zoom.toFixed(3);
+      hitsTextEl.textContent = String(stationState.hits);
+    }
+
+    function navigateToStation(key) {
+      const next = STATION_DEFS[key] ? key : "earth";
+      const url = new URL(window.location.href);
+      url.searchParams.set("station", next);
+      window.location.href = url.toString();
+    }
+
+    function deepCloneScene(template) {
+      const clone = template.clone(true);
+      clone.traverse(child => {
+        if (!child.isMesh) return;
+        if (Array.isArray(child.material)) {
+          child.material = child.material.map(mat => mat?.clone?.() ?? mat);
+        } else if (child.material?.clone) {
+          child.material = child.material.clone();
+        }
+        child.frustumCulled = false;
+      });
+      return clone;
+    }
+
+    function refreshStationMeshes() {
+      stationState.meshes.length = 0;
+      if (!stationState.root) return;
+      stationState.root.traverse(child => {
+        if (child.isMesh && child.visible) {
+          stationState.meshes.push(child);
+        }
+      });
+    }
+
+    async function ensureTemplateLoaded() {
+      const def = stationState.currentDef;
+      if (!def || def.kind !== "gltf") return null;
+      if (stationState.templateCache.has(def.key)) {
+        return stationState.templateCache.get(def.key);
+      }
+      const gltf = await loader.loadAsync(def.url);
+      const template = gltf.scene;
+      template.traverse(child => {
+        if (!child.isMesh) return;
+        child.frustumCulled = false;
+      });
+      stationState.templateCache.set(def.key, template);
+      return template;
+    }
+
+    async function spawnStation() {
+      const def = stationState.currentDef;
+      let root = null;
+      let model = null;
+
+      if (def.kind === "pirate") {
+        const pirate = createPirateStation({
+          worldRadius: def.desiredRadius,
+          name: "PirateStationSandbox"
+        });
+        root = pirate.object3d;
+        root.rotation.set(Math.PI * 0.5, 0, 0);
+        root.position.set(0, 0, -100);
+        root.userData.destructionPreset = def.preset;
+        scene.add(root);
+        stationState.customUpdate = pirate.update || null;
+        stationState.proceduralHandle = pirate;
+      } else {
+        const template = await ensureTemplateLoaded();
+        root = new THREE.Group();
+        root.name = `${def.key}CivilianStationSandbox`;
+        root.position.set(0, 0, -100);
+        root.userData.destructionPreset = def.preset;
+
+        model = deepCloneScene(template);
+        model.rotation.set(Math.PI * 0.5, 0, 0);
+        root.add(model);
+        scene.add(root);
+
+        tmpBox.setFromObject(model);
+        tmpBox.getBoundingSphere(tmpSphere);
+        const geometryRadius = Math.max(1, tmpSphere.radius || 1);
+        const scale = (def.desiredRadius / geometryRadius) * 2.8;
+        root.scale.setScalar(scale);
+        stationState.customUpdate = null;
+        stationState.proceduralHandle = null;
+      }
+
+      stationState.root = root;
+      stationState.model = model;
+      stationState.hp = STATION_MAX_HP;
+      stationState.maxHp = STATION_MAX_HP;
+      stationState.hits = 0;
+      stationState.destroyed = false;
+      stationState.thresholdIndex = 0;
+      stationState.spinOffset = 0;
+      setStatus(`${def.label} ready`);
+
+      Destruction3D.prebake(root);
+      refreshStationMeshes();
+      updateHud();
+    }
+
+    function updateCamera() {
+      const w = Math.max(1, stage.clientWidth);
+      const h = Math.max(1, stage.clientHeight);
+      renderer.setSize(w, h, false);
+      refractionTarget.setSize(w, h);
+      camera.aspect = w / h;
+      const fovRad = THREE.MathUtils.degToRad(camera.fov * 0.5);
+      const targetZ = (h / 2) / Math.tan(fovRad) / cameraState.zoom;
+      camera.position.set(cameraState.centerX, -cameraState.centerY, targetZ);
+      camera.lookAt(cameraState.centerX, -cameraState.centerY, 0);
+      camera.updateProjectionMatrix();
+    }
+
+    function updateFlash(dt) {
+      const value = Math.max(0, Number(window.__ppFlash) || 0);
+      flashEl.style.opacity = String(Math.min(0.42, value * 0.22));
+      window.__ppFlash = Math.max(0, value - dt * 1.9);
+    }
+
+    function spawnImpactExplosion(worldPos, size = 20, profile = "fighter") {
+      if (profile === "fighter" && stationDestructionEffects?.spawnModulePop) {
+        stationDestructionEffects.spawnModulePop({
+          pos: worldPos,
+          size: THREE.MathUtils.clamp(size / 28, 0.55, 1.2)
+        });
+        return;
+      }
+      const fx = window.makeReactorBlow?.({
+        x: worldPos.x,
+        y: -worldPos.y,
+        size,
+        profile
+      });
+      if (fx && window.overlay3D?.spawn) {
+        window.overlay3D.spawn(fx);
+      }
+    }
+
+    function getStationEffectSphere() {
+      if (!stationState.root) return null;
+      tmpBox.setFromObject(stationState.root);
+      if (tmpBox.isEmpty()) {
+        stationState.root.getWorldPosition(tmpSphere.center);
+        tmpSphere.radius = 600;
+      } else {
+        tmpBox.getBoundingSphere(tmpSphere);
+      }
+      return {
+        center: tmpSphere.center.clone(),
+        radius: Math.max(120, tmpSphere.radius || 600)
+      };
+    }
+
+    function getRandomStationEffectPoint(surfaceMul = 0.35) {
+      refreshStationMeshes();
+      let chosenCenter = null;
+      let chosenSize = null;
+      let totalWeight = 0;
+      for (let i = 0; i < stationState.meshes.length; i++) {
+        const mesh = stationState.meshes[i];
+        if (!mesh || !mesh.visible) continue;
+        tmpBox.setFromObject(mesh);
+        if (tmpBox.isEmpty()) continue;
+        tmpBox.getCenter(tmpTarget);
+        tmpBox.getSize(tmpScale);
+        const weight = Math.max(1, Math.min(12000, tmpScale.length()));
+        totalWeight += weight;
+        if (Math.random() * totalWeight <= weight) {
+          if (!chosenCenter) chosenCenter = new THREE.Vector3();
+          if (!chosenSize) chosenSize = new THREE.Vector3();
+          chosenCenter.copy(tmpTarget);
+          chosenSize.copy(tmpScale);
+        }
+      }
+      if (chosenCenter && chosenSize) {
+        const jitter = THREE.MathUtils.clamp(surfaceMul, 0.02, 0.24);
+        return chosenCenter.add(new THREE.Vector3(
+          (Math.random() - 0.5) * chosenSize.x * jitter,
+          (Math.random() - 0.5) * chosenSize.y * jitter,
+          (Math.random() - 0.5) * chosenSize.z * jitter
+        ));
+      }
+
+      const sphere = getStationEffectSphere();
+      if (!sphere) return null;
+      const a = Math.random() * Math.PI * 2;
+      const r = sphere.radius * Math.min(surfaceMul, 0.08) * (0.35 + Math.random() * 0.5);
+      return sphere.center.clone().add(new THREE.Vector3(
+        Math.cos(a) * r,
+        Math.sin(a) * r,
+        (Math.random() - 0.5) * sphere.radius * 0.035
+      ));
+    }
+
+    function getManualCutAxis(randomize = false) {
+      if (randomize) {
+        const a = Math.random() * Math.PI * 2;
+        return new THREE.Vector3(Math.cos(a), Math.sin(a), (Math.random() - 0.5) * 0.18).normalize();
+      }
+      const cf = new THREE.Vector3();
+      camera.getWorldDirection(cf);
+      const axis = new THREE.Vector3(cf.y, -cf.x, 0);
+      if (axis.lengthSq() < 0.01) axis.set(1, 0, 0);
+      return axis.normalize();
+    }
+
+    function spawnManualStationEffect(effectNo, randomizeAxis = false) {
+      const sphere = getStationEffectSphere();
+      if (!sphere || !stationDestructionEffects) return;
+      if (effectNo === 1) {
+        stationDestructionEffects.spawnChainReaction({
+          center: getRandomStationEffectPoint(0.12) || sphere.center,
+          count: 8,
+          radius: THREE.MathUtils.clamp(sphere.radius * 0.035, 70, 190),
+          duration: 3.2,
+          size: THREE.MathUtils.clamp(sphere.radius / 1700, 0.85, 1.8)
+        });
+        setStatus("Manual effect 1: slow chain reaction");
+      } else if (effectNo === 2) {
+        stationDestructionEffects.spawnCutBlast({
+          pos: getRandomStationEffectPoint(0.10) || sphere.center,
+          cutAxis: getManualCutAxis(randomizeAxis),
+          size: THREE.MathUtils.clamp(sphere.radius / 2100, 0.9, 1.9)
+        });
+        setStatus("Manual effect 2: directional cut blast");
+      } else if (effectNo === 3) {
+        stationDestructionEffects.spawnFinalScatter({
+          pos: sphere.center,
+          modelRadius: sphere.radius,
+          size: THREE.MathUtils.clamp(sphere.radius / 2600, 1.0, 2.4)
+        });
+        setStatus("Manual effect 3: final scatter");
+      }
+    }
+
+    function spawnShotBeam(targetWorldPos, hit = false) {
+      const from = new THREE.Vector3(
+        targetWorldPos.x + (Math.random() - 0.5) * 80,
+        targetWorldPos.y + (Math.random() - 0.5) * 80,
+        camera.position.z * 0.42
+      );
+      const to = targetWorldPos.clone();
+      const dir = new THREE.Vector3().subVectors(to, from);
+      const len = dir.length();
+      if (len < 1) return;
+
+      const beam = new THREE.Mesh(
+        new THREE.CylinderGeometry(hit ? 10 : 7, 1.8, len, 8, 1, true),
+        new THREE.MeshBasicMaterial({
+          color: hit ? 0xff73b9 : 0x9ce6ff,
+          transparent: true,
+          opacity: 0.95,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false
+        })
+      );
+      beam.position.copy(from).add(to).multiplyScalar(0.5);
+      beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+      scene.add(beam);
+      beams.push({ mesh: beam, age: 0, life: hit ? 0.085 : 0.06 });
+    }
+
+    function updateBeams(dt) {
+      for (let i = beams.length - 1; i >= 0; i--) {
+        const beam = beams[i];
+        beam.age += dt;
+        const t = beam.age / beam.life;
+        beam.mesh.material.opacity = Math.max(0, 1 - t * 1.2);
+        if (t >= 1) {
+          if (beam.mesh.parent) beam.mesh.parent.remove(beam.mesh);
+          beam.mesh.geometry.dispose();
+          beam.mesh.material.dispose();
+          beams.splice(i, 1);
+        }
+      }
+    }
+
+    function damageStation(hitPoint) {
+      if (!stationState.root || stationState.destroyed) return;
+
+      stationState.hp = Math.max(0, stationState.hp - PRIMARY_DAMAGE);
+      stationState.hits += 1;
+      setStatus(`Hit registered @ ${Math.round(hitPoint.x)}, ${Math.round(hitPoint.y)}`);
+
+      const healthRatio = stationState.hp / stationState.maxHp;
+      while (stationState.thresholdIndex < DETACH_THRESHOLDS.length && healthRatio <= DETACH_THRESHOLDS[stationState.thresholdIndex]) {
+        Destruction3D.detachChunk(stationState.root, {
+          preset: stationState.currentDef.preset,
+          debrisStyle: "panelHybrid"
+        });
+        stationState.thresholdIndex += 1;
+      }
+
+      if (stationState.hp <= 0) {
+        stationState.destroyed = true;
+        stationState.root._destroyed3D = true;
+        setStatus("Full shatter triggered");
+        Destruction3D.shatter(stationState.root, {
+          preset: stationState.currentDef.preset,
+          debrisStyle: "panelHybrid",
+          sparks: 1800,
+          flash: 1.15,
+          shockwave: true,
+          shockwaveAxisScale: { x: 1.0, y: 1.0, z: 0.16 }
+        });
+      }
+
+      updateHud();
+    }
+
+    function firePrimary(clientX, clientY) {
+      if (!stationState.root) return;
+
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouseNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      mouseNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouseNdc, camera);
+
+      refreshStationMeshes();
+      const hits = raycaster.intersectObjects(stationState.meshes, false);
+      const hit = hits[0] || null;
+
+      let targetWorldPos = null;
+      if (hit?.point) {
+        targetWorldPos = hit.point.clone();
+      } else if (raycaster.ray.intersectPlane(missPlane, tmpPlaneHit)) {
+        targetWorldPos = tmpPlaneHit.clone();
+      }
+
+      if (!targetWorldPos) return;
+
+      spawnShotBeam(targetWorldPos, !!hit);
+      if (!hit) {
+        setStatus("Miss");
+        updateHud();
+        return;
+      }
+
+      spawnImpactExplosion(hit.point, 20 + Math.random() * 10, "fighter");
+      damageStation(hit.point);
+    }
+
+    function fullShatter() {
+      if (!stationState.root || stationState.destroyed) return;
+      stationState.hp = 0;
+      stationState.destroyed = true;
+      stationState.root._destroyed3D = true;
+      setStatus("Forced full shatter");
+      Destruction3D.shatter(stationState.root, {
+        preset: stationState.currentDef.preset,
+        debrisStyle: "panelHybrid",
+        sparks: 2200,
+        flash: 1.2,
+        shockwave: true,
+        shockwaveAxisScale: { x: 1.0, y: 1.0, z: 0.16 }
+      });
+      updateHud();
+    }
+
+    function detachChunk() {
+      if (!stationState.root || stationState.destroyed) return;
+      Destruction3D.detachChunk(stationState.root, {
+        preset: stationState.currentDef.preset,
+        debrisStyle: "panelHybrid"
+      });
+      setStatus("Manual detachChunk()");
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(0.05, clock.getDelta());
+
+      if (stationState.customUpdate && stationState.root && !stationState.root.userData?.destructionOwned && !stationState.destroyed) {
+        stationState.customUpdate(clock.elapsedTime, dt);
+      } else if (stationState.model && stationState.root && !stationState.root.userData?.destructionOwned && !stationState.destroyed) {
+        stationState.spinOffset += dt * 0.12;
+        stationState.model.rotation.set(Math.PI * 0.5, stationState.spinOffset, 0);
+      }
+
+      updateCamera();
+      updateBeams(dt);
+      Destruction3D.update(clock.elapsedTime, dt);
+      updateFlash(dt);
+
+      shockwave3DManager.update(dt);
+      if (shockwave3DManager.hasActive()) {
+        const prevTarget = renderer.getRenderTarget();
+        const prevAutoClear = renderer.autoClear;
+        shockwave3DManager.hideAll();
+        renderer.autoClear = true;
+        renderer.setRenderTarget(refractionTarget);
+        renderer.clear();
+        renderer.render(scene, camera);
+        shockwave3DManager.showAll();
+        renderer.setRenderTarget(prevTarget);
+        renderer.autoClear = prevAutoClear;
+      }
+
+      renderer.setRenderTarget(null);
+      renderer.clear();
+      renderer.render(scene, camera);
+      overlay3D.tick(dt);
+      updateHud();
+    }
+
+    renderer.domElement.addEventListener("mousemove", (event) => {
+      crosshair.style.left = `${event.clientX}px`;
+      crosshair.style.top = `${event.clientY}px`;
+
+      if (!cameraState.panDrag) return;
+      const dx = (event.clientX - cameraState.panDrag.startClientX) / cameraState.zoom;
+      const dy = (event.clientY - cameraState.panDrag.startClientY) / cameraState.zoom;
+      cameraState.centerX = cameraState.panDrag.startCenterX - dx;
+      cameraState.centerY = cameraState.panDrag.startCenterY + dy;
+    });
+
+    renderer.domElement.addEventListener("mousedown", (event) => {
+      if (event.button === 2) {
+        cameraState.panDrag = {
+          startClientX: event.clientX,
+          startClientY: event.clientY,
+          startCenterX: cameraState.centerX,
+          startCenterY: cameraState.centerY
+        };
+        return;
+      }
+      if (event.button === 0) {
+        firePrimary(event.clientX, event.clientY);
+      }
+    });
+
+    window.addEventListener("mouseup", () => {
+      cameraState.panDrag = null;
+    });
+
+    renderer.domElement.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      const mul = event.deltaY > 0 ? 0.92 : 1.08;
+      cameraState.zoom = THREE.MathUtils.clamp(cameraState.zoom * mul, cameraState.minZoom, cameraState.maxZoom);
+    }, { passive: false });
+
+    renderer.domElement.addEventListener("contextmenu", (event) => event.preventDefault());
+
+    window.addEventListener("keydown", (event) => {
+      if (event.code === "KeyR") {
+        navigateToStation(stationState.currentDef.key);
+      } else if (event.code === "KeyK") {
+        fullShatter();
+      } else if (event.code === "Digit1") {
+        spawnManualStationEffect(1);
+      } else if (event.code === "Digit2") {
+        spawnManualStationEffect(2, event.shiftKey);
+      } else if (event.code === "Digit3") {
+        spawnManualStationEffect(3);
+      }
+    });
+
+    stationSelectEl.addEventListener("change", () => navigateToStation(stationSelectEl.value));
+    resetBtn.addEventListener("click", () => navigateToStation(stationState.currentDef.key));
+    chunkBtn.addEventListener("click", () => detachChunk());
+    killBtn.addEventListener("click", () => fullShatter());
+
+    window.addEventListener("resize", () => {
+      updateCamera();
+      overlay3D.resize();
+    });
+
+    window.fireSandboxWeaponAtCenter = () => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      firePrimary(rect.left + rect.width * 0.5, rect.top + rect.height * 0.5);
+    };
+    window.selectSandboxStation = (key) => navigateToStation(key);
+    window.detachSandboxChunk = detachChunk;
+    window.shatterSandboxStation = fullShatter;
+    window.resetSandboxStation = () => navigateToStation(stationState.currentDef.key);
+
+    setStatus("Loading GLB...");
+    await spawnStation();
+    animate();
+  </script>
+</body>
+</html>
