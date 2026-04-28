@@ -25,6 +25,8 @@ export const DESTRUCTOR_CONFIG = {
   visualLerpSpeed: 14.0, //
   elasticSleepFrames: 30,      // Klatki ciszy zanim grid zasypia (brak symulacji)
   elasticSleepThreshold: 0.15, //
+  elasticSleepVelocityThreshold: 0.03, //
+  elasticSleepSnapThreshold: 0.04, //
   elasticWakeFrames: 20,       // Force-awake po uderzeniu (zapobiega przedwczesnemu zasypianiu)
   restitution: 0.05, //
   crashApproachSpeedThreshold: 200.0, //
@@ -672,15 +674,74 @@ class HexShard {
     this.origLx = 0;
     this.origLy = 0;
     this._crushStamp = 0;
+    this._bakedOffX = 0;
+    this._bakedOffY = 0;
+    this._pristineX = gridX;
+    this._pristineY = gridY;
     this.__meshIndex = -1;
   }
 
   repair(dt) {
-    if (!this.active || this.isDebris) return;
+    if (!this.active || this.isDebris) return false;
     const k = Math.min(1, DESTRUCTOR_CONFIG.recoverSpeed * dt);
-    this.targetDeformation.x *= (1 - k);
-    this.targetDeformation.y *= (1 - k);
+    const keep = 1 - k;
+    const snap = Math.max(0.0001, Number(DESTRUCTOR_CONFIG.elasticSleepSnapThreshold) || 0.04);
+    let changed = false;
+
+    const defX = Number(this.deformation.x) || 0;
+    const defY = Number(this.deformation.y) || 0;
+    const targetX = Number(this.targetDeformation.x) || 0;
+    const targetY = Number(this.targetDeformation.y) || 0;
+    if (Math.abs(defX) > 0.0001 || Math.abs(defY) > 0.0001 || Math.abs(targetX) > 0.0001 || Math.abs(targetY) > 0.0001) {
+      let nextX = defX * keep;
+      let nextY = defY * keep;
+      if (Math.abs(nextX) <= snap) nextX = 0;
+      if (Math.abs(nextY) <= snap) nextY = 0;
+      this.deformation.x = nextX;
+      this.deformation.y = nextY;
+      this.targetDeformation.x = nextX;
+      this.targetDeformation.y = nextY;
+      changed = true;
+    }
+
+    const offX = (Number(this.gridX) || 0) - this.origGridX;
+    const offY = (Number(this.gridY) || 0) - this.origGridY;
+    if (Math.abs(offX) > 0.0001 || Math.abs(offY) > 0.0001) {
+      let nextGridX = this.gridX - offX * k;
+      let nextGridY = this.gridY - offY * k;
+      if (Math.abs(nextGridX - this.origGridX) <= snap) nextGridX = this.origGridX;
+      if (Math.abs(nextGridY - this.origGridY) <= snap) nextGridY = this.origGridY;
+      this.gridX = nextGridX;
+      this.gridY = nextGridY;
+      this._bakedOffX = this.gridX - this.origGridX;
+      this._bakedOffY = this.gridY - this.origGridY;
+      changed = true;
+    } else if (Math.abs(Number(this._bakedOffX) || 0) > 0.0001 || Math.abs(Number(this._bakedOffY) || 0) > 0.0001) {
+      this._bakedOffX = 0;
+      this._bakedOffY = 0;
+      changed = true;
+    }
+
+    if (
+      Math.abs(Number(this.__velX) || 0) > 0.0001 ||
+      Math.abs(Number(this.__velY) || 0) > 0.0001 ||
+      Math.abs(Number(this.__collVelX) || 0) > 0.0001 ||
+      Math.abs(Number(this.__collVelY) || 0) > 0.0001
+    ) {
+      this.__velX = 0;
+      this.__velY = 0;
+      this.__collVelX = 0;
+      this.__collVelY = 0;
+      changed = true;
+    }
+
+    this._pristineX = this.origGridX;
+    this._pristineY = this.origGridY;
+
+    const oldHp = this.hp;
     this.hp = Math.min(this.maxHp, this.hp + DESTRUCTOR_CONFIG.repairRate * dt);
+    if (this.hp !== oldHp) changed = true;
+    return changed;
   }
 
   updateAnimation(dt) {
@@ -1277,6 +1338,10 @@ export const DestructorSystem = {
   updateVisualDeformation(entities, dt) {
     const sleepFramesLimit = Math.max(1, DESTRUCTOR_CONFIG.elasticSleepFrames | 0);
     const sleepThreshold = Math.max(0.0001, Number(DESTRUCTOR_CONFIG.elasticSleepThreshold) || 0.08);
+    const velThreshold = Math.max(0.0001, Number(DESTRUCTOR_CONFIG.elasticSleepVelocityThreshold) || 0.03);
+    const snapThreshold = Math.max(0.0001, Number(DESTRUCTOR_CONFIG.elasticSleepSnapThreshold) || 0.04);
+    const visThreshold = 0.05;
+    const lerpK = Math.min(1, Math.max(0, DESTRUCTOR_CONFIG.visualLerpSpeed * dt));
 
     for (const e of entities) {
       const grid = e?.hexGrid;
@@ -1306,23 +1371,66 @@ export const DestructorSystem = {
         const absDiffX = Math.abs(diffX);
         const absDiffY = Math.abs(diffY);
 
-        const localPeak = Math.max(absDiffX, absDiffY);
-        if (localPeak > peakDeformation) peakDeformation = localPeak;
-
         const velX = Math.abs(Number(s.__velX) || 0) + Math.abs(Number(s.__collVelX) || 0);
         const velY = Math.abs(Number(s.__velY) || 0) + Math.abs(Number(s.__collVelY) || 0);
 
-        if (velX > 0.03 || velY > 0.03) keepAwake = true;
+        if (velX > velThreshold || velY > velThreshold) keepAwake = true;
 
-        const visThreshold = 0.05;
-
-		if (absDiffX > visThreshold || absDiffY > visThreshold) {
-          s.deformation.x += diffX * (DESTRUCTOR_CONFIG.visualLerpSpeed * dt);
-          s.deformation.y += diffY * (DESTRUCTOR_CONFIG.visualLerpSpeed * dt);
+        if (absDiffX > visThreshold || absDiffY > visThreshold) {
+          s.deformation.x += diffX * lerpK;
+          s.deformation.y += diffY * lerpK;
           visualChanged = true;
           keepAwake = true;
           if (i < dirtyMin) dirtyMin = i;
           if (i > dirtyMax) dirtyMax = i;
+          const afterPeak = Math.max(
+            Math.abs(s.targetDeformation.x - s.deformation.x),
+            Math.abs(s.targetDeformation.y - s.deformation.y)
+          );
+          if (afterPeak > peakDeformation) peakDeformation = afterPeak;
+          continue;
+        }
+
+        const restPeak = Math.max(
+          Math.abs(tdx), Math.abs(tdy),
+          Math.abs(dx), Math.abs(dy),
+          absDiffX, absDiffY,
+          velX, velY
+        );
+        const activityPeak = Math.max(absDiffX, absDiffY, velX, velY);
+
+        if (restPeak <= snapThreshold) {
+          const hadResidual =
+            Math.abs(tdx) > 0.0001 || Math.abs(tdy) > 0.0001 ||
+            Math.abs(dx) > 0.0001 || Math.abs(dy) > 0.0001 ||
+            Math.abs(Number(s.__velX) || 0) > 0.0001 ||
+            Math.abs(Number(s.__velY) || 0) > 0.0001 ||
+            Math.abs(Number(s.__collVelX) || 0) > 0.0001 ||
+            Math.abs(Number(s.__collVelY) || 0) > 0.0001;
+          if (hadResidual) {
+            s.deformation.x = 0;
+            s.deformation.y = 0;
+            s.targetDeformation.x = 0;
+            s.targetDeformation.y = 0;
+            s.__velX = 0;
+            s.__velY = 0;
+            s.__collVelX = 0;
+            s.__collVelY = 0;
+            visualChanged = true;
+            if (i < dirtyMin) dirtyMin = i;
+            if (i > dirtyMax) dirtyMax = i;
+          }
+        } else {
+          if (activityPeak <= velThreshold && (velX > 0.0001 || velY > 0.0001)) {
+            s.__velX = 0;
+            s.__velY = 0;
+            s.__collVelX = 0;
+            s.__collVelY = 0;
+            visualChanged = true;
+            if (i < dirtyMin) dirtyMin = i;
+            if (i > dirtyMax) dirtyMax = i;
+          }
+          if (activityPeak > peakDeformation) peakDeformation = activityPeak;
         }
       }
 
@@ -1341,7 +1449,10 @@ export const DestructorSystem = {
       if (!gpuAwake && peakDeformation <= sleepThreshold && (Number(grid.wakeHoldFrames) || 0) <= 0) {
         const frames = (Number(grid.sleepFrames) || 0) + 1;
         grid.sleepFrames = frames;
-        if (frames >= sleepFramesLimit) grid.isSleeping = true;
+        if (frames >= sleepFramesLimit) {
+          if (!grid.isSleeping) markGridMeshDirtyAll(grid);
+          grid.isSleeping = true;
+        }
       } else {
         grid.sleepFrames = 0;
         grid.isSleeping = false;
@@ -1399,6 +1510,8 @@ export const DestructorSystem = {
             const ty = s.targetDeformation.y * ratio;
             s.gridX += tx;
             s.gridY += ty;
+            s._bakedOffX = (Number(s._bakedOffX) || 0) + tx;
+            s._bakedOffY = (Number(s._bakedOffY) || 0) + ty;
             s.targetDeformation.x -= tx;
             s.targetDeformation.y -= ty;
             changed = true;
@@ -1483,28 +1596,58 @@ export const DestructorSystem = {
   repair(entities, dt) {
     const list = Array.isArray(entities) ? entities : [];
     const step = Number.isFinite(dt) ? Math.max(0.0001, dt) : 0.1;
+    let repairedAny = false;
 
     for (const e of list) {
       if (!e?.hexGrid?.shards) continue;
       let anyFix = false;
+      let dirtyMin = Number.POSITIVE_INFINITY;
+      let dirtyMax = -1;
+      const shards = e.hexGrid.shards;
 
-      for (const s of e.hexGrid.shards) {
+      for (let i = 0; i < shards.length; i++) {
+        const s = shards[i];
         if (!s.active || s.isDebris) continue;
-        if (Math.abs(s.deformation.x) > 0.1 || Math.abs(s.deformation.y) > 0.1 || s.hp < s.maxHp) {
-          s.repair(step);
+        const needsRepair =
+          Math.abs(s.deformation.x) > 0.001 ||
+          Math.abs(s.deformation.y) > 0.001 ||
+          Math.abs(s.targetDeformation.x) > 0.001 ||
+          Math.abs(s.targetDeformation.y) > 0.001 ||
+          Math.abs((Number(s.gridX) || 0) - s.origGridX) > 0.001 ||
+          Math.abs((Number(s.gridY) || 0) - s.origGridY) > 0.001 ||
+          Math.abs(Number(s._bakedOffX) || 0) > 0.001 ||
+          Math.abs(Number(s._bakedOffY) || 0) > 0.001 ||
+          Math.abs(Number(s.__velX) || 0) > 0.001 ||
+          Math.abs(Number(s.__velY) || 0) > 0.001 ||
+          Math.abs(Number(s.__collVelX) || 0) > 0.001 ||
+          Math.abs(Number(s.__collVelY) || 0) > 0.001 ||
+          s.hp < s.maxHp;
+        if (needsRepair && s.repair(step)) {
           anyFix = true;
+          repairedAny = true;
+          const idx = Number(s.__meshIndex);
+          if (Number.isFinite(idx) && idx >= 0) {
+            if (idx < dirtyMin) dirtyMin = idx;
+            if (idx > dirtyMax) dirtyMax = idx;
+          } else {
+            dirtyMin = 0;
+            dirtyMax = shards.length - 1;
+          }
         }
       }
 
       if (anyFix) {
+        e._gpuRepairStamp = ((Number(e._gpuRepairStamp) || 0) + 1) | 0;
         this.wakeHexEntity(e, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
-        markGridMeshDirtyAll(e.hexGrid);
+        if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) markGridMeshDirtyRange(e.hexGrid, dirtyMin, dirtyMax);
+        else markGridMeshDirtyAll(e.hexGrid);
         if (!HEX_SHIPS_3D_ACTIVE) {
           e.hexGrid.textureDirty = true;
           e.hexGrid.cacheDirty = true;
         }
       }
     }
+    return repairedAny;
   },
 
   _probeImpactData(entity, worldX, worldY) {

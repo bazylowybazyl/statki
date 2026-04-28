@@ -13,3 +13,10 @@ assets/planety/**/*.psd
 dist/
 dist-ssr/
 *.local
+
+# Electron / packaged build artifacts
+release/
+*.asar
+
+# Local agent worktrees
+**/.claude/worktrees/

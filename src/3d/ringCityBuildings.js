@@ -28,6 +28,11 @@ import {
 const WINDOW_SCALE = 500;
 const NUM_CHUNKS = 16;
 const CHUNK_ARC = (Math.PI * 2) / NUM_CHUNKS;
+const BUILDING_FLOOR_CLEARANCE = 56;
+
+function clampNumber(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
 
 // LOD levels per material — controls visibility at different camera distances
 const LOD_LEVEL_BY_MAT = {
@@ -527,9 +532,20 @@ function generateCellBuildingData(cell, ring) {
         const localGeoMap = {};
 
         const buildResult = createBuilding(zone, localGeoMap, rand);
-
-        const localX = slot.radius - cellCenterRadius;
+        const rawFootprintRadius = Math.max(1, Number(buildResult.footprintRadius) || 80);
+        const radialRoom = Math.max(1, (cell.outerRadius - cell.innerRadius) * 0.5 - BUILDING_FLOOR_CLEARANCE);
+        const footprintFitScale = Math.min(1, radialRoom / rawFootprintRadius);
+        const footprintRadius = rawFootprintRadius * footprintFitScale;
+        const minRadius = cell.innerRadius + footprintRadius + BUILDING_FLOOR_CLEARANCE;
+        const maxRadius = cell.outerRadius - footprintRadius - BUILDING_FLOOR_CLEARANCE;
+        const radius = minRadius <= maxRadius
+            ? clampNumber(slot.radius, minRadius, maxRadius)
+            : cellCenterRadius;
+        const localX = radius - cellCenterRadius;
         const localY = (slot.angle - cellCenterAngle) * cellCenterRadius;
+        const fitMatrix = footprintFitScale < 0.999
+            ? new THREE.Matrix4().makeScale(footprintFitScale, footprintFitScale, 1)
+            : null;
         const translationMatrix = new THREE.Matrix4().makeTranslation(localX, localY, 0);
 
         if (buildResult.adsType) {
@@ -542,7 +558,7 @@ function generateCellBuildingData(cell, ring) {
                 type: 'advert',
                 localX, localY,
                 height: 0,
-                scaleX: buildResult.scaleXY || 1,
+                scaleX: (buildResult.scaleXY || 1) * footprintFitScale,
                 scaleZ: buildResult.scaleZ || 1,
                 rotationZ: buildResult.rotateZ || 0,
                 modelId: buildResult.adsType,
@@ -556,7 +572,7 @@ function generateCellBuildingData(cell, ring) {
                 type: 'topper',
                 localX, localY,
                 height: buildResult.totalH,
-                scale: (0.8 + rand()) * (buildResult.scaleXY || 3.0),
+                scale: (0.8 + rand()) * (buildResult.scaleXY || 3.0) * footprintFitScale,
                 modelId: `topper_${String(topperIndex).padStart(2, '0')}`,
                 materialKey: pickSynthAdMaterialKey(rand, true)
             });
@@ -577,6 +593,7 @@ function generateCellBuildingData(cell, ring) {
                 }
                 geo.groups = [];
 
+                if (fitMatrix) geo.applyMatrix4(fitMatrix);
                 geo.applyMatrix4(translationMatrix);
                 cellGeoMap[matKey] = cellGeoMap[matKey] || [];
                 cellGeoMap[matKey].push(geo);

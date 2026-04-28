@@ -2,18 +2,38 @@
   "name": "statki",
   "version": "1.0.0",
   "description": "Space Survivor: Battleship - prosta gra w HTML/JS",
+  "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "electron": "electron .",
+    "package": "vite build && electron-builder"
+  },
+  "build": {
+    "appId": "com.statki.demo",
+    "productName": "Statki Demo",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "asar": false,
+    "win": {
+      "target": "portable",
+      "signAndEditExecutable": false
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ]
   },
   "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
     "http-server": "^14.1.1",
     "vite": "^7.3.0"
   },
   "dependencies": {
     "alea": "^1.0.1",
-    "multithreading": "^0.3.50",
     "regl": "^2.1.1",
     "three": "^0.183.2"
   }

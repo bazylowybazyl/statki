@@ -283,11 +283,17 @@ function getInterpolatedRenderPose(entity) {
 
 function computeShardStress(shard) {
   if (shard && shard.deformation) {
-    const sx = shard.deformation.x;
-    const sy = shard.deformation.y;
+    const def = shard.deformation;
+    const target = shard.targetDeformation || def;
+    const sx = (Number(target.x) || 0) - (Number(def.x) || 0);
+    const sy = (Number(target.y) || 0) - (Number(def.y) || 0);
     const absX = sx < 0 ? -sx : sx;
     const absY = sy < 0 ? -sy : sy;
-    return absX > absY ? absX + absY * 0.4 : absY + absX * 0.4;
+    const defStress = absX > absY ? absX + absY * 0.4 : absY + absX * 0.4;
+    const velX = Math.abs(Number(shard.__velX) || 0) + Math.abs(Number(shard.__collVelX) || 0);
+    const velY = Math.abs(Number(shard.__velY) || 0) + Math.abs(Number(shard.__collVelY) || 0);
+    const velStress = (velX > velY ? velX + velY * 0.4 : velY + velX * 0.4) * 0.18;
+    return defStress > velStress ? defStress : velStress;
   }
   return 0;
 }
@@ -879,6 +885,12 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   for (const entity of entities) {
     if (!entity || entity.dead) continue;
     valid.push(entity);
+    const hideHexVisual = entity.hideHexVisual === true || entity.visual?.hideHexMesh === true;
+    if (hideHexVisual) {
+      const data = state.entityMeshes.get(entity);
+      if (data?.mesh) data.mesh.visible = false;
+      continue;
+    }
     if (entity.hexGrid) validSet.add(entity);
     weaponActiveEntities.add(entity);
 

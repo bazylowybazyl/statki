@@ -1134,7 +1134,6 @@
 
   <script type="module">
     
-    import { spawn, move, Mutex } from "multithreading"; 
     import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
     import { WORLD, setWorldSize } from './src/world/world.js';
     import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff } from './shieldSystem.js';
@@ -1199,48 +1198,6 @@
     window.DEFAULT_PLANET_SCALE ??= DEFAULT_PLANET_SCALE;
     window.TIME_SCALE ??= TIME_SCALE;
     window.WORLD ??= WORLD;
-	async function runMultithreadingTest() {
-      try {
-        console.log("[Test] Inicjalizacja pamięci współdzielonej...");
-        
-        // Tworzymy 4 bajty współdzielonej pamięci
-        const sharedMemory = new Int32Array(new SharedArrayBuffer(4));
-        const myMutex = new Mutex(sharedMemory);
-        
-        console.log("[Test] Odpalam workera w tle...");
-
-        // Wysyłamy Mutexa do Workera. 
-        const handle = spawn(move(myMutex), async (mutex) => {
-            // Ponieważ używasz czystego JS (nie TS z pollyfilami),
-            // używamy manualnego zwalniania blokady (dispose).
-            const guard = await mutex.lock();
-            try {
-                guard.value[0] = 42; // Modyfikujemy pamięć z poziomu Workera
-            } finally {
-                guard.dispose(); // Zwalniamy blokadę
-            }
-            return "Worker skończył pracę!";
-        });
-
-        const result = await handle.join();
-        console.log("[Test] Odpowiedź workera:", result);
-        
-        // Sprawdzamy w głównym wątku, czy wartość się zmieniła
-        const mainGuard = await myMutex.lock();
-        try {
-            console.log("[Test] Wartość w pamięci współdzielonej (powinno być 42):", mainGuard.value[0]);
-        } finally {
-            mainGuard.dispose();
-        }
-        
-      } catch (err) {
-        console.error("[Test] Błąd wielowątkowości! Sprawdź nagłówki Vite w vite.config.js.", err);
-      }
-    }
-
-    // Odpalamy test
-    runMultithreadingTest();
-    // --- KONIEC TESTU MULTITHREADING ---
     const hud = new HUDSystem();
     hud.init();
     window.hudSystem = hud;
@@ -2234,7 +2191,7 @@
     const menuCreditsView = document.getElementById('menu-credits-view');
     const menuKeybindsView = document.getElementById('menu-keybinds-view');
     const menuGamemodeView = document.getElementById('menu-gamemode-view');
-    const MENU_MUSIC_SRC = '/sounds/menu/menu.mp3';
+    const MENU_MUSIC_SRC = './sounds/menu/menu.mp3';
     let menuMusicEl = null;
     let menuMusicFadeId = null;
     let menuMusicUnlockAttached = false;
@@ -9794,7 +9751,7 @@
             reverseMult: 0.68,
             turnAccel: 16.0,
             maxTurnSpeed: 3.2,
-            linearFriction: 0.994,
+            linearFriction: 0.997,  // v_max ≈ 4000 u/s
             angularFriction: 0.875,
             boostMult: 2.5
           }
@@ -9823,7 +9780,7 @@
             reverseMult: 0.58,
             turnAccel: 10.4,
             maxTurnSpeed: 2.35,
-            linearFriction: 0.992,
+            linearFriction: 0.9973, // v_max ≈ 3200 u/s
             angularFriction: 0.89,
             boostMult: 2.2
           }
@@ -9852,7 +9809,7 @@
             reverseMult: 0.52,
             turnAccel: 6.8,
             maxTurnSpeed: 1.6,
-            linearFriction: 0.99,
+            linearFriction: 0.9969, // v_max ≈ 1800 u/s
             angularFriction: 0.92,
             boostMult: 1.85
           }
@@ -11838,6 +11795,7 @@
     let specialAutoFire = false;
     let rocketAutoFire = false;
     let specialMissileAutoFire = false;
+    let playerRepairActive = false;
 
     function handleShiftDown() {
       if (ship.destroyed) return;
@@ -12047,12 +12005,12 @@
           toast('Myśliwce: ESKORTA');
         }
       }
-      if (e.code === 'KeyR' && e.shiftKey) {
-        const allDestructibles = [ship, ...npcs, ...wrecks];
-        if (splitScreenMode && player2Ship && !player2Ship.destroyed) allDestructibles.push(player2Ship);
-        DestructorSystem.repair(allDestructibles, 0.1);
-      } else if (k === 'r') {
+      if (k === 't') {
         lockNearestVisibleContacts();
+      } else if (k === 'r') {
+        e.preventDefault();
+        playerRepairActive = !playerRepairActive;
+        pushZoneMessage(playerRepairActive ? 'REPAIR: ON' : 'REPAIR: OFF', 0.8);
       }
       if (!inRtsMode && ship.agility && ship.agility.active && !ship.agility.maneuver) {
         if ((k === 'w' || k === 's') && ship.agility.cooldowns.dash <= 0) {
@@ -14120,12 +14078,28 @@
         const bulletSpeed = stats?.speed || wDef.baseSpeed || CIWS_BULLET_SPEED;
 
         let target = null; let dist = range;
-        for (const npc of npcs) {
-          if (npc.dead || npc.friendly || !npc.isPirate) continue;
-          const d = Math.hypot(npc.x - base.x, npc.y - base.y);
-          if (d < dist) { dist = d; target = npc; }
+
+        // Priorytet 1: rakiety/torpedy wroga w zasięgu (intercept)
+        for (let bi = 0; bi < bullets.length; bi++) {
+          const rb = bullets[bi];
+          if (!rb || rb.life <= 0) continue;
+          if (rb.owner === 'player' || rb.owner === 'player2') continue;
+          if (rb.type !== 'rocket' && rb.type !== 'torpedo') continue;
+          const d = Math.hypot(rb.x - base.x, rb.y - base.y);
+          if (d < dist) { dist = d; target = rb; }
+        }
+
+        // Priorytet 2: myśliwce i statki NPC
+        if (!target) {
+          for (const npc of npcs) {
+            if (npc.dead || npc.friendly || !npc.isPirate) continue;
+            const d = Math.hypot(npc.x - base.x, npc.y - base.y);
+            if (d < dist) { dist = d; target = npc; }
+          }
         }
         if (!target) continue;
+
+        const isRocketTarget = target.type === 'rocket' || target.type === 'torpedo';
 
         // Lead targeting z prędkością z definicji broni
         const aimPoint = isLaser ? { x: target.x, y: target.y }
@@ -14159,7 +14133,26 @@
         if (flakDef) {
           fireAispaceFlakShell(gun, base, baseVel, target, flakDef, fireInterval);
         } else if (isLaser) {
-          firePointDefenseLaser(gun, base, baseVel, target, pdDef, fireInterval);
+          if (isRocketTarget) {
+            // Laser niszczy rakietę natychmiast
+            const rIdx = bullets.indexOf(target);
+            if (rIdx !== -1) {
+              spawnBulletImpactEffect(target, target.x, target.y, 1.2);
+              spawnPointDefenseLaserHit(target.x, target.y);
+              const lDir = { x: Math.cos(gun.angle), y: Math.sin(gun.angle) };
+              const lMuz = { x: base.x + lDir.x * 6, y: base.y + lDir.y * 6 };
+              spawnLaserBeam(lMuz, { x: target.x, y: target.y }, LASER_PD_BEAM_WIDTH, {
+                life: 0.09, colorOuter: stats?.color || 'rgba(110,200,255,0.9)',
+                colorInner: 'rgba(250,255,255,1.0)', glowColor: stats?.color || 'rgba(90,180,255,0.95)',
+                glowBlur: 22, outerWidthMul: 1.05, innerWidthMul: 0.45
+              });
+              spawnPointDefenseLaserMuzzle(lMuz, lDir, baseVel);
+              bullets.splice(rIdx, 1);
+            }
+            gun.cd = fireInterval;
+          } else {
+            firePointDefenseLaser(gun, base, baseVel, target, pdDef, fireInterval);
+          }
         } else {
           fireCIWSGun(gun, base, baseVel, wDef, fireInterval);
         }
@@ -14204,7 +14197,10 @@
       const muzzle = { x: base.x + dir.x * 6, y: base.y + dir.y * 6 };
       const toTarget = { x: target.x - muzzle.x, y: target.y - muzzle.y };
       const range = stats?.range ?? LASER_PD_RANGE;
-      const damage = stats?.dmg ?? LASER_PD_DAMAGE;
+
+      // Laser_pd: 100% vs myśliwce, 20% vs hull/tarcza statków
+      const _laserFighter = !!(target.fighter || target.type === 'fighter');
+      const damage = (stats?.dmg ?? LASER_PD_DAMAGE) * (_laserFighter ? 1.0 : 0.2);
       const distance = clamp(Math.hypot(toTarget.x, toTarget.y), 0, range);
       const beamEnd = { x: muzzle.x + dir.x * distance, y: muzzle.y + dir.y * distance };
 
@@ -15041,6 +15037,7 @@
     const _mergedSeen = new Set();
     const _combinedRingDestructibles = [];
     const _combinedRingSeen = new Set();
+    const _playerRepairBuffer = [];
 
     function buildDynamicDestructibles(shipEntity, npcList, wreckList, p2Entity = null) {
       _dynamicDestructibles.length = 0;
@@ -15284,6 +15281,30 @@
 
         if (b.life <= 0) { bullets.splice(i, 1); continue; }
 
+        // --- CIWS INTERCEPT RAKIET ---
+        // Pocisk CIWS gracza vs rakiety/torpedy wroga (bullet-on-bullet)
+        if (b.type === 'ciws' && b.owner === 'player') {
+          let intercepted = false;
+          for (let j = bullets.length - 1; j >= 0; j--) {
+            if (j === i) continue;
+            const rb = bullets[j];
+            if (!rb || rb.life <= 0) continue;
+            if (rb.owner !== 'npc') continue;
+            if (rb.type !== 'rocket' && rb.type !== 'torpedo') continue;
+            const dx = b.x - rb.x, dy = b.y - rb.y;
+            const hitR = (b.r || 2) + (rb.r || 5);
+            if (dx * dx + dy * dy > hitR * hitR) continue;
+            // Trafiono rakietę!
+            spawnBulletImpactEffect(rb, rb.x, rb.y, 1.3);
+            bullets.splice(j, 1);
+            if (j < i) i--;      // rakieta była przed CIWS — indeks przesuwa się
+            bullets.splice(i, 1); // usuń pocisk CIWS
+            intercepted = true;
+            break;
+          }
+          if (intercepted) continue;
+        }
+
         // --- GLOWNA PETLA KOLIZJI ---
         let hitNPC = null;
         let didHitShield = false;
@@ -15349,7 +15370,11 @@
         }
 
         if (hitNPC) {
-          const npcDamage = Number.isFinite(b.damage) ? b.damage : 0;
+          const _rawDmg = Number.isFinite(b.damage) ? b.damage : 0;
+          // CIWS/laser_pd: 100% vs myśliwce, 20% vs hull/tarcza statków
+          const _isCIWSBullet = b.type === 'ciws';
+          const _isFighterTarget = !!(hitNPC.fighter || hitNPC.type === 'fighter');
+          const npcDamage = (_isCIWSBullet && !_isFighterTarget) ? _rawDmg * 0.2 : _rawDmg;
 
           // === FAILSAFE ===
           // Jeśli tarcza jest aktywna, ale z jakiegoś powodu matematyka elipsy zawiodła (np. lag, tunelowanie),
@@ -16667,6 +16692,14 @@
         ship.vel.x += worldFx * invMass * dt;
         ship.vel.y += worldFy * invMass * dt;
 
+        // Liniowy drag — naturalny terminal velocity z linearFriction każdego hulla
+        // v_max = speed / (-ln(friction) * 60)  np. friction=0.996 → v_max≈2500 u/s
+        {
+          const _drag = Math.pow(SHIP_PHYSICS.LINEAR_FRICTION, dt * 60);
+          ship.vel.x *= _drag;
+          ship.vel.y *= _drag;
+        }
+
         let angularAcc = thrusterForces.localTorque / inertiaSafe;
         ship.angVel += angularAcc * dt;
 
@@ -17040,6 +17073,18 @@
         ? mergeDestructibles(dynamicDestructibles, _combinedRingDestructibles, hotRingDestructibles)
         : dynamicDestructibles;
       const tDestructor0 = performance.now();
+      if (playerRepairActive && (!ship.hexGrid || ship.destroyed || stationUI.open)) {
+        playerRepairActive = false;
+      }
+      if (playerRepairActive) {
+        _playerRepairBuffer.length = 0;
+        _playerRepairBuffer.push(ship);
+        const didRepair = DestructorSystem.repair(_playerRepairBuffer, dt);
+        if (!didRepair) {
+          playerRepairActive = false;
+          pushZoneMessage('REPAIR: COMPLETE', 0.8);
+        }
+      }
       DestructorSystem.update(dt, allDestructibles);
       updateHardpointIntegrity(dt, dynamicDestructibles);
       enforceNpcHexIntegrityBalance();
@@ -17458,6 +17503,7 @@
           npc.__hardpointScaleX = (hexInit?.hardpointScaleX && hexInit.hardpointScaleX > 0) ? hexInit.hardpointScaleX : 1.0;
           npc.__hardpointScaleY = (hexInit?.hardpointScaleY && hexInit.hardpointScaleY > 0) ? hexInit.hardpointScaleY : 1.0;
           npc.__hardpointScale = (hexInit?.hardpointScale && hexInit.hardpointScale > 0) ? hexInit.hardpointScale : 1.0;
+          applyEditorLayoutToNpc(npc);
           initHexBody(npc, (hexInit?.image || sprite.image));
           logHullScaleSnapshot(npc, `npc:${getNpcHullRenderProfileId(npc) || npc.type || 'unknown'}`);
           drawNPCPretty(ctx, npc, s);
@@ -17525,8 +17571,27 @@
         const mouseOffsetX = (splitScreenMode || keys['alt']) ? 0 : (mouse.x - centerX) * lookAheadFactor / zoomSafe;
         const mouseOffsetY = (splitScreenMode || keys['alt']) ? 0 : (mouse.y - centerY) * lookAheadFactor / zoomSafe;
 
-        targetCamX = interpPos.x + mouseOffsetX;
-        targetCamY = interpPos.y + mouseOffsetY;
+        // Velocity-based camera lead — zawsze ~15% szerokości ekranu w world units,
+        // niezależnie od zooma i prędkości hulla.
+        const _cvls = ship.__camVelLead || (ship.__camVelLead = { x: 0, y: 0 });
+        const _cvSpd = Math.hypot(ship.vel.x, ship.vel.y);
+        // Aktualny v_max tego hulla (z drag physics) — lead normalizowany do niego
+        const _cvHullVmax = Math.max(100, SHIP_PHYSICS.SPEED / Math.max(1e-6, -Math.log(SHIP_PHYSICS.LINEAR_FRICTION) * 60));
+        // Max lead w game units = 15% szerokości viewportu (stały % ekranu przy każdym zoomie)
+        const _cvMaxLead = W * 0.15 / Math.max(0.001, zoomSafe);
+        const _cvNorm = Math.min(_cvSpd, _cvHullVmax) / _cvHullVmax;
+        // Wolniejszy lerp = mniej agresywna kamera (czas ~0.5s)
+        const _cvLerp = 1 - Math.exp(-2 * (frameDt || 0.016));
+        if (_cvSpd > 1) {
+          _cvls.x += ((ship.vel.x / _cvSpd) * _cvNorm * _cvMaxLead - _cvls.x) * _cvLerp;
+          _cvls.y += ((ship.vel.y / _cvSpd) * _cvNorm * _cvMaxLead - _cvls.y) * _cvLerp;
+        } else {
+          _cvls.x *= (1 - _cvLerp);
+          _cvls.y *= (1 - _cvLerp);
+        }
+
+        targetCamX = interpPos.x + mouseOffsetX + _cvls.x;
+        targetCamY = interpPos.y + mouseOffsetY + _cvls.y;
 
         camera.x = targetCamX;
         camera.y = targetCamY;
@@ -19887,10 +19952,10 @@
       // --- AUDIO START ---
       AudioSys.init();
       await Promise.all([
-        AudioSys.loadSound('engine', '/sounds/engine/thruster_loop.wav'),
-        AudioSys.loadSound('shieldHit', '/sounds/465540__steaq__sci-fi-shield-hit-wav.wav'),
-        AudioSys.loadSound('specialTurret', '/sounds/weapons/specialturret.wav'),
-        AudioSys.loadSound('sfx_hexlance', '/sounds/weapons/specialturret.wav'),
+        AudioSys.loadSound('engine', './sounds/engine/thruster_loop.wav'),
+        AudioSys.loadSound('shieldHit', './sounds/465540__steaq__sci-fi-shield-hit-wav.wav'),
+        AudioSys.loadSound('specialTurret', './sounds/weapons/specialturret.wav'),
+        AudioSys.loadSound('sfx_hexlance', './sounds/weapons/specialturret.wav'),
         AudioSys.loadSound('sfx_railgun', './sounds/weapons/Laser.wav')
       ]);
 

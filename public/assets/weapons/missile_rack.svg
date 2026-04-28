@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="120" viewBox="0 0 180 120">
+  <defs>
+    <radialGradient id="msl-housing" cx="40%" cy="40%" r="65%">
+      <stop offset="0%" stop-color="#2a3248" />
+      <stop offset="100%" stop-color="#141a28" />
+    </radialGradient>
+    <linearGradient id="msl-tube" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#4a5a78" />
+      <stop offset="100%" stop-color="#2a3248" />
+    </linearGradient>
+  </defs>
+  <!-- Launcher housing -->
+  <rect x="10" y="24" width="70" height="72" rx="8" fill="url(#msl-housing)" stroke="#0e1424" stroke-width="3" />
+  <!-- Missile tubes (2x3 grid) -->
+  <rect x="82" y="28" width="72" height="16" rx="8" fill="url(#msl-tube)" stroke="#1a2440" stroke-width="2" />
+  <rect x="82" y="52" width="72" height="16" rx="8" fill="url(#msl-tube)" stroke="#1a2440" stroke-width="2" />
+  <rect x="82" y="76" width="72" height="16" rx="8" fill="url(#msl-tube)" stroke="#1a2440" stroke-width="2" />
+  <!-- Missile tips visible in tubes -->
+  <circle cx="150" cy="36" r="4" fill="#ffbb77" opacity="0.7" />
+  <circle cx="150" cy="60" r="4" fill="#ffbb77" opacity="0.7" />
+  <circle cx="150" cy="84" r="4" fill="#ffbb77" opacity="0.7" />
+  <!-- Housing details -->
+  <rect x="18" y="34" width="24" height="14" rx="3" fill="#1a2440" stroke="#2a3a58" stroke-width="1" />
+  <rect x="18" y="54" width="24" height="14" rx="3" fill="#1a2440" stroke="#2a3a58" stroke-width="1" />
+  <rect x="18" y="74" width="24" height="14" rx="3" fill="#1a2440" stroke="#2a3a58" stroke-width="1" />
+  <!-- Ammo count indicators -->
+  <circle cx="30" cy="41" r="2.5" fill="#10b981" opacity="0.8" />
+  <circle cx="30" cy="61" r="2.5" fill="#10b981" opacity="0.8" />
+  <circle cx="30" cy="81" r="2.5" fill="#10b981" opacity="0.8" />
+  <!-- Top panel -->
+  <rect x="50" y="30" width="18" height="8" rx="2" fill="#1e2d50" stroke="#2a4472" stroke-width="1" />
+</svg>

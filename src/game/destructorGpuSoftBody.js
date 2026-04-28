@@ -487,6 +487,7 @@ export const DestructorGpuSoftBody = {
     encoder.copyBufferToBuffer(state.shardOutBuffer, 0, state.readbackBuffer, 0, shardBytes);
     this.device.queue.submit([encoder.finish()]);
 
+    state.repairStamp = Number(entity?._gpuRepairStamp) || 0;
     this._readback(entity, state, count);
   },
 
@@ -498,7 +499,7 @@ export const DestructorGpuSoftBody = {
       const copiedData = this._getFloatArray(floatCount);
       copiedData.set(new Float32Array(mapped));
       state.readbackBuffer.unmap();
-      this._resultsQueue.push({ entity, count, data: copiedData, shardsRef: state.shardsRef });
+      this._resultsQueue.push({ entity, count, data: copiedData, shardsRef: state.shardsRef, repairStamp: state.repairStamp || 0 });
     } catch (e) {
       safeUnmap(state.readbackBuffer);
     } finally {
@@ -507,10 +508,15 @@ export const DestructorGpuSoftBody = {
   },
 
   _applyResult(res) {
-    const { entity, count, data, shardsRef } = res;
+    const { entity, count, data, shardsRef, repairStamp } = res;
     this._debugAppliedCount = (this._debugAppliedCount || 0) + 1;
 
-    if (entity.dead || !entity.hexGrid || entity.hexGrid.shards !== shardsRef) {
+    if (
+      entity.dead ||
+      !entity.hexGrid ||
+      entity.hexGrid.shards !== shardsRef ||
+      (Number(entity._gpuRepairStamp) || 0) !== (Number(repairStamp) || 0)
+    ) {
       this._arrayPool.push(data);
       return;
     }
@@ -533,6 +539,8 @@ export const DestructorGpuSoftBody = {
       const vx = data[base + 2];
       const vy = data[base + 3];
       const newHp = data[base + 6];
+      const oldVx = Number(s.__velX) || 0;
+      const oldVy = Number(s.__velY) || 0;
 
       // Subtract baked offset to get targetDeformation in local space
       const bakedX = Number(s._bakedOffX) || 0;
@@ -575,6 +583,11 @@ export const DestructorGpuSoftBody = {
 
       s.__velX = vx;
       s.__velY = vy;
+      if (Math.abs(oldVx - vx) > 0.03 || Math.abs(oldVy - vy) > 0.03) {
+        anyChanges = true;
+        if (i < dirtyMin) dirtyMin = i;
+        if (i > dirtyMax) dirtyMax = i;
+      }
 
       if (newHp <= 0 && s.hp > 0) {
         if (window.DestructorSystem) {

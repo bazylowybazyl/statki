@@ -12,15 +12,15 @@ const MOON_TUNE = Object.freeze({
     orbitPeriodSec: 220,
     sizeRatioToParent: 0.24,
     z: -50020,
-    colorTex: '/assets/planety/images/moonmap.jpg',
-    bumpTex: '/assets/planety/images/moonbump.jpg',
+    colorTex: 'assets/planety/images/moonmap.jpg',
+    bumpTex: 'assets/planety/images/moonbump.jpg',
     bumpScale: 0.07
 });
 const JUPITER_MOONS_TUNE = Object.freeze([
-    Object.freeze({ id: 'io', orbitRadius: 20000, orbitPeriodSec: 82, sizeRatioToParent: 0.072, phase: 0.0, colorTex: '/assets/planety/images/jupiterIo.jpg' }),
-    Object.freeze({ id: 'europa', orbitRadius: 28000, orbitPeriodSec: 110, sizeRatioToParent: 0.061, phase: 1.4, colorTex: '/assets/planety/images/jupiterEuropa.jpg' }),
-    Object.freeze({ id: 'ganymede', orbitRadius: 37000, orbitPeriodSec: 150, sizeRatioToParent: 0.086, phase: 2.2, colorTex: '/assets/planety/images/jupiterGanymede.jpg' }),
-    Object.freeze({ id: 'callisto', orbitRadius: 48000, orbitPeriodSec: 195, sizeRatioToParent: 0.080, phase: 3.1, colorTex: '/assets/planety/images/jupiterCallisto.jpg' })
+    Object.freeze({ id: 'io', orbitRadius: 20000, orbitPeriodSec: 82, sizeRatioToParent: 0.072, phase: 0.0, colorTex: 'assets/planety/images/jupiterIo.jpg' }),
+    Object.freeze({ id: 'europa', orbitRadius: 28000, orbitPeriodSec: 110, sizeRatioToParent: 0.061, phase: 1.4, colorTex: 'assets/planety/images/jupiterEuropa.jpg' }),
+    Object.freeze({ id: 'ganymede', orbitRadius: 37000, orbitPeriodSec: 150, sizeRatioToParent: 0.086, phase: 2.2, colorTex: 'assets/planety/images/jupiterGanymede.jpg' }),
+    Object.freeze({ id: 'callisto', orbitRadius: 48000, orbitPeriodSec: 195, sizeRatioToParent: 0.080, phase: 3.1, colorTex: 'assets/planety/images/jupiterCallisto.jpg' })
 ]);
 const SATURN_VISUAL_RING = Object.freeze({
     innerRadius: 1.22,
@@ -34,7 +34,7 @@ const SATURN_VISUAL_RING = Object.freeze({
     uvRepeatX: 1.0,
     uvOffsetX: 0.0,
     uvRotate: 0.0,
-    texture: '/assets/planety/solar/saturn/rings_alpha.png'
+    texture: 'assets/planety/solar/saturn/rings_alpha.png'
 });
 const STAR_PLANET_MASK_CAP = 12;
 
@@ -130,7 +130,7 @@ const NebulaSystem = {
     mesh: null, uniforms: null, parallaxFactor: 0.98, baseScale: 800000, aspectRatio: 1.6,
     init: function () {
         if (!Core3D.isInitialized) return;
-        const tex = new THREE.TextureLoader().load('/assets/nebula.png');
+        const tex = new THREE.TextureLoader().load('assets/nebula.png');
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.wrapS = THREE.ClampToEdgeWrapping; tex.wrapT = THREE.ClampToEdgeWrapping;
         tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter;
@@ -271,11 +271,11 @@ class DirectPlanet {
 
         if (name === 'earth') this.basePlanetBloom = 0.78; else if (name === 'mars') this.basePlanetBloom = 0.4; else if (name === 'jupiter') this.basePlanetBloom = 0.05; else this.basePlanetBloom = 0.2;
 
-        const dayTex = loadTex(`/assets/planety/solar/${name}/${name}_color.jpg`); dayTex.colorSpace = THREE.SRGBColorSpace; this.uniforms.dayTexture.value = dayTex;
+        const dayTex = loadTex(`assets/planety/solar/${name}/${name}_color.jpg`); dayTex.colorSpace = THREE.SRGBColorSpace; this.uniforms.dayTexture.value = dayTex;
         if (name === 'earth') {
-            const nightTex = loadTex(`/assets/planety/images/earth_nightmap.jpg`); nightTex.colorSpace = THREE.SRGBColorSpace; this.uniforms.nightTexture.value = nightTex;
-            this.uniforms.specularTexture.value = loadTex(`/assets/planety/images/earth_specularmap.jpg`);
-            this.uniforms.normalTexture.value = loadTex(`/assets/planety/solar/earth/earth_normal.jpg`);
+            const nightTex = loadTex(`assets/planety/images/earth_nightmap.jpg`); nightTex.colorSpace = THREE.SRGBColorSpace; this.uniforms.nightTexture.value = nightTex;
+            this.uniforms.specularTexture.value = loadTex(`assets/planety/images/earth_specularmap.jpg`);
+            this.uniforms.normalTexture.value = loadTex(`assets/planety/solar/earth/earth_normal.jpg`);
             this.uniforms.hasNightTexture.value = 1.0;
         } else {
             const empty = new THREE.Texture(); this.uniforms.specularTexture.value = empty; this.uniforms.normalTexture.value = empty; this.uniforms.hasNightTexture.value = 0.0;
@@ -331,7 +331,7 @@ class DirectPlanet {
         }
 
         if (name === 'earth') {
-            const cloudTex = loadTex(`/assets/planety/solar/earth/earth_clouds.jpg`); cloudTex.colorSpace = THREE.SRGBColorSpace;
+            const cloudTex = loadTex(`assets/planety/solar/earth/earth_clouds.jpg`); cloudTex.colorSpace = THREE.SRGBColorSpace;
             this.cloudUniforms = { cloudTexture: { value: cloudTex }, sunPosition: { value: new THREE.Vector3(0, 0, -50000) }, uOpacity: { value: 0.62 } };
             const cloudMat = new THREE.ShaderMaterial({ uniforms: this.cloudUniforms, vertexShader: CLOUD_VERTEX, fragmentShader: CLOUD_FRAGMENT, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.NormalBlending });
             this.clouds = new THREE.Mesh(new THREE.SphereGeometry(1.005, 128, 128), cloudMat); this.group.add(this.clouds);
@@ -487,7 +487,7 @@ class DirectSun {
         this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 64), material);
         this.mesh.name = 'SunMesh'; // <---
 
-        const spriteMat = new THREE.SpriteMaterial({ map: loadTex('/assets/effects/glow.png'), color: 0xffaa00, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
+        const spriteMat = new THREE.SpriteMaterial({ map: loadTex('assets/effects/glow.png'), color: 0xffaa00, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
         this.glow = new THREE.Sprite(spriteMat);
         
         this.group.add(this.mesh); this.group.add(this.glow);
