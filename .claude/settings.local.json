@@ -24,7 +24,22 @@
       "Bash(node -e \"const fs=require\\('fs'\\);const c=fs.readFileSync\\('C:/Users/Szymon/Documents/GitHub/statki/warp — glsl.html','utf8'\\);const m=c.match\\(/<script>\\([\\\\s\\\\S]*?\\)<\\\\/script>/g\\);const inline=m[m.length-1].replace\\(/^<script>/,''\\).replace\\(/<\\\\/script>$/,''\\);try{new Function\\(inline\\);console.log\\('OK'\\);}catch\\(e\\){console.log\\('ERR:',e.message\\);}\")",
       "Bash(findstr /n \"vType<\" \"C:\\\\Users\\\\Szymon\\\\Documents\\\\GitHub\\\\statki\\\\destructioneffects.html\")",
       "Bash(powershell -NoProfile -Command \"\\(Get-Content 'C:\\\\Users\\\\Szymon\\\\Documents\\\\GitHub\\\\statki\\\\destructioneffects.html' | Measure-Object -Line\\).Lines\")",
-      "Bash(powershell -NoProfile -Command \"Get-Content 'C:\\\\Users\\\\Szymon\\\\Documents\\\\GitHub\\\\statki\\\\destructioneffects.html' | Select-Object -Last 15\")"
+      "Bash(powershell -NoProfile -Command \"Get-Content 'C:\\\\Users\\\\Szymon\\\\Documents\\\\GitHub\\\\statki\\\\destructioneffects.html' | Select-Object -Last 15\")",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(npx electron-builder *)",
+      "Bash(powershell -Command \"Compress-Archive -Path 'win-unpacked' -DestinationPath 'statki-demo.zip' -Force\")",
+      "Bash(tasklist)",
+      "Bash(powershell -Command 'Get-Process | Where-Object { $_.Name -like '\\\\''*statki*'\\\\'' -or $_.MainWindowTitle -like '\\\\''*Statki*'\\\\'' } | Select-Object Id, Name, MainWindowTitle')",
+      "Bash(grep -E \"\\\\.\\(png|svg\\)$\")",
+      "Bash(taskkill /F /IM \"Statki Demo.exe\")",
+      "Bash(taskkill /F /IM \"electron.exe\")",
+      "PowerShell(Stop-Process -Name \"Statki Demo\" -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Name \"electron\" -Force -ErrorAction SilentlyContinue)",
+      "Bash(grep -E \"\\\\.exe$\")",
+      "Bash(cat)",
+      "Bash(bash /tmp/count_assets.sh)",
+      "Bash(git checkout *)"
     ]
   }
 }

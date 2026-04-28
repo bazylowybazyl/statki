@@ -38,6 +38,17 @@ const TEXTURE = Object.freeze({
   railHeight: 42
 });
 
+const FLOOR_DAMAGE = Object.freeze({
+  pxPerSegment: 18,
+  height: 72
+});
+
+const FLOOR_THEME = Object.freeze({
+  inner:      { color: 0x111923, emissive: 0x0b5f7a, line: '#27d7ff' },
+  industrial: { color: 0x151610, emissive: 0x665400, line: '#fcee0a' },
+  military:   { color: 0x130f15, emissive: 0x6a001d, line: '#ff2b55' }
+});
+
 const BUILD_GRID = Object.freeze({
   stride: 3,
   floors: 5,
@@ -135,6 +146,105 @@ function getBandTextureRangePx(bandId) {
   if (bandId === 'industrial') return [layout.industrialBandTopPx, layout.industrialBandBottomPx];
   if (bandId === 'military') return [layout.militaryBandTopPx, layout.militaryBandBottomPx];
   return [0, TEXTURE.height];
+}
+
+function createRingBandGeometry(innerRadius, outerRadius, z = 0) {
+  const steps = 384;
+  const positions = [];
+  const uvs = [];
+  for (let i = 0; i < steps; i++) {
+    const t0 = i / steps;
+    const t1 = (i + 1) / steps;
+    const a0 = t0 * Math.PI * 2;
+    const a1 = t1 * Math.PI * 2;
+    const x00 = Math.cos(a0) * innerRadius;
+    const y00 = Math.sin(a0) * innerRadius;
+    const x01 = Math.cos(a1) * innerRadius;
+    const y01 = Math.sin(a1) * innerRadius;
+    const x10 = Math.cos(a0) * outerRadius;
+    const y10 = Math.sin(a0) * outerRadius;
+    const x11 = Math.cos(a1) * outerRadius;
+    const y11 = Math.sin(a1) * outerRadius;
+
+    positions.push(
+      x00, y00, z,
+      x10, y10, z,
+      x11, y11, z,
+      x00, y00, z,
+      x11, y11, z,
+      x01, y01, z
+    );
+    uvs.push(
+      t0, 0,
+      t0, 1,
+      t1, 1,
+      t0, 0,
+      t1, 1,
+      t1, 0
+    );
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+  geometry.computeBoundingBox();
+  return geometry;
+}
+
+function createThemedFloorTexture(theme) {
+  const canvas = createCanvas(512, 256);
+  if (!canvas) return null;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#080b10';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  grad.addColorStop(0, 'rgba(255,255,255,0.05)');
+  grad.addColorStop(0.5, 'rgba(255,255,255,0.015)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.20)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.055)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= canvas.width; x += 32) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvas.height);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= canvas.height; y += 24) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = theme?.line || '#42d9ff';
+  ctx.globalAlpha = 0.22;
+  ctx.lineWidth = 2;
+  for (let y = 28; y < canvas.height; y += 56) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(18, 2.4);
+  texture.anisotropy = 4;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function hash01(seed) {
+  let x = (seed | 0) + 0x6D2B79F5;
+  x = Math.imul(x ^ (x >>> 15), x | 1);
+  x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+  return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
 }
 
 
@@ -388,6 +498,7 @@ class PlanetaryRing {
     this.visualMeshes = [];
     this.zoneGrid = new RingCityZoneGrid(this.layout);
     this.ringFloor = null; // 3D ring pedestal mesh group
+    this.floorDamageBands = [];
 
     this.build();
     this.updateFromPlanet(planet, 0);
@@ -408,14 +519,15 @@ class PlanetaryRing {
 
     for (let i = 0; i < segmentCount; i++) {
       const type = this.segmentTypes[i];
-      const baseAngle = i * this.angleStep;
+      const baseAngle = (i + 0.5) * this.angleStep;
       const segment = {
         index: i,
         type,
         baseAngle,
         worldAngle: baseAngle,
         entity: null,
-        entities: []
+        entities: [],
+        entityByBand: Object.create(null)
       };
 
       if (type !== 'HOLE') {
@@ -431,6 +543,7 @@ class PlanetaryRing {
           );
           if (!entity || entity.dead) continue;
           segment.entities.push(entity);
+          segment.entityByBand[bandTex.id] = entity;
           if (!segment.entity) segment.entity = entity;
         }
       }
@@ -450,6 +563,7 @@ class PlanetaryRing {
     this.buildForceFields();
     this.buildConstructionSlots(segmentCount);
     this.buildRingPedestal();
+    this.buildVisualFloor();
     this.buildShipParking();
   }
 
@@ -463,7 +577,8 @@ class PlanetaryRing {
       const band = this.layout?.[id];
       if (!band) continue;
       const radius = (band.innerR + band.outerR) * 0.5;
-      const worldWidth = Math.max(2, (Number(this.angleStep) || 0) * radius + CONFIG.overlap);
+      const coverageRadius = Math.max(radius, Number(band.outerR) || radius);
+      const worldWidth = Math.max(2, (Number(this.angleStep) || 0) * coverageRadius + CONFIG.overlap);
       const worldHeight = Math.max(1, band.outerR - band.innerR);
       const canvasWidth = Math.max(2, Math.round(worldWidth / RING_HEX_WORLD_SCALE));
       const canvasHeight = Math.max(2, Math.round(worldHeight / RING_HEX_WORLD_SCALE));
@@ -546,8 +661,222 @@ class PlanetaryRing {
     this.ringFloor = floorGroup;
   }
 
+  buildVisualFloor() {
+    if (!this.ringFloor || !this.segmentData.length) return;
+    this.floorDamageBands.length = 0;
+
+    for (const bandId of RING_SEGMENT_BANDS) {
+      const band = this.layout?.[bandId];
+      if (!band) continue;
+
+      const theme = FLOOR_THEME[bandId] || FLOOR_THEME.inner;
+      const geometry = createRingBandGeometry(band.innerR, band.outerR, 0.15);
+      const damageCanvas = createCanvas(
+        Math.max(1, this.segmentData.length * FLOOR_DAMAGE.pxPerSegment),
+        FLOOR_DAMAGE.height
+      );
+      if (!damageCanvas) {
+        geometry.dispose();
+        continue;
+      }
+
+      const damageCtx = damageCanvas.getContext('2d');
+      const damageTexture = new THREE.CanvasTexture(damageCanvas);
+      damageTexture.wrapS = THREE.RepeatWrapping;
+      damageTexture.wrapT = THREE.ClampToEdgeWrapping;
+      damageTexture.minFilter = THREE.LinearFilter;
+      damageTexture.magFilter = THREE.LinearFilter;
+
+      const material = new THREE.MeshStandardMaterial({
+        color: theme.color,
+        emissive: theme.emissive,
+        emissiveIntensity: 0.22,
+        map: createThemedFloorTexture(theme),
+        alphaMap: damageTexture,
+        transparent: true,
+        depthWrite: false,
+        roughness: 0.86,
+        metalness: 0.42,
+        side: THREE.DoubleSide
+      });
+
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = `PlanetaryRingFloorBand:${this.key}:${bandId}`;
+      mesh.renderOrder = -4;
+      mesh.userData.fgCategory = 'buildings';
+      mesh.userData.isRingFloorBand = true;
+      if (Core3D?.enableForeground3D) Core3D.enableForeground3D(mesh);
+      this.ringFloor.add(mesh);
+
+      const entry = {
+        id: bandId,
+        mesh,
+        damageCanvas,
+        damageCtx,
+        damageTexture,
+        pxPerSegment: FLOOR_DAMAGE.pxPerSegment,
+        lastRatios: new Float32Array(this.segmentData.length),
+        lastActiveCounts: new Int32Array(this.segmentData.length)
+      };
+      entry.lastRatios.fill(-1);
+      entry.lastActiveCounts.fill(-1);
+
+      for (let i = 0; i < this.segmentData.length; i++) {
+        const seg = this.segmentData[i];
+        const ratio = seg?.type === 'HOLE' ? 0 : 1;
+        this.paintFloorDamageStripe(entry, i, ratio);
+        entry.lastRatios[i] = ratio;
+      }
+      damageTexture.needsUpdate = true;
+      this.floorDamageBands.push(entry);
+    }
+  }
+
+  paintFloorDamageStripe(entry, segmentIndex, ratio) {
+    const ctx2d = entry?.damageCtx;
+    if (!ctx2d) return;
+    const px = entry.pxPerSegment;
+    const h = entry.damageCanvas.height;
+    const x = segmentIndex * px;
+    const clamped = Math.max(0, Math.min(1, Number(ratio) || 0));
+
+    ctx2d.clearRect(x, 0, px, h);
+    if (clamped <= 0.01) {
+      ctx2d.fillStyle = '#000';
+      ctx2d.fillRect(x, 0, px, h);
+      return;
+    }
+
+    ctx2d.fillStyle = '#fff';
+    ctx2d.fillRect(x, 0, px, h);
+
+    const damage = 1 - clamped;
+    if (damage <= 0.01) return;
+
+    const bandSeed = entry.id === 'inner' ? 11 : entry.id === 'industrial' ? 37 : 73;
+    const holeCount = Math.max(1, Math.ceil(damage * 9));
+    const baseRadius = Math.min(px, h) * (0.22 + damage * 0.16);
+
+    for (let i = 0; i < holeCount; i++) {
+      const seed = segmentIndex * 92821 + bandSeed * 131 + i * 6151;
+      const cx = x + hash01(seed) * px;
+      const cy = hash01(seed + 17) * h;
+      const radius = baseRadius * (0.7 + hash01(seed + 31) * 1.35);
+      const alpha = Math.min(0.95, 0.30 + damage * 0.95);
+      const grad = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, radius);
+      grad.addColorStop(0, `rgba(0,0,0,${alpha})`);
+      grad.addColorStop(0.62, `rgba(0,0,0,${alpha * 0.72})`);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx2d.fillStyle = grad;
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx2d.fill();
+    }
+  }
+
+  paintFloorDamageFromEntity(entry, segmentIndex, entity, ratio) {
+    const ctx2d = entry?.damageCtx;
+    const grid = entity?.hexGrid;
+    if (!ctx2d || !grid?.shards) {
+      this.paintFloorDamageStripe(entry, segmentIndex, ratio);
+      return;
+    }
+
+    const px = entry.pxPerSegment;
+    const h = entry.damageCanvas.height;
+    const x = segmentIndex * px;
+    const srcW = Math.max(1, Number(grid.srcWidth) || 1);
+    const srcH = Math.max(1, Number(grid.srcHeight) || 1);
+    const clampedRatio = Math.max(0, Math.min(1, Number(ratio) || 0));
+
+    ctx2d.clearRect(x, 0, px, h);
+    if (clampedRatio <= 0.01 || entity.dead) {
+      ctx2d.fillStyle = '#000';
+      ctx2d.fillRect(x, 0, px, h);
+      return;
+    }
+
+    ctx2d.fillStyle = '#fff';
+    ctx2d.fillRect(x, 0, px, h);
+
+    for (const shard of grid.shards) {
+      if (!shard) continue;
+      const maxHp = Math.max(0.0001, Number(shard.maxHp) || 1);
+      const hpRatio = Math.max(0, Math.min(1, (Number(shard.hp) || 0) / maxHp));
+      const missing = !shard.active || shard.isDebris || hpRatio < 0.55;
+      if (!missing) continue;
+
+      const gx = Number(shard.gridX);
+      const gy = Number(shard.gridY);
+      if (!Number.isFinite(gx) || !Number.isFinite(gy)) continue;
+
+      const u = Math.max(0, Math.min(1, gx / srcW));
+      const v = 1 - Math.max(0, Math.min(1, gy / srcH));
+      const cx = x + u * px;
+      const cy = v * h;
+      const hitRadius = Math.max(1, Number(shard.hitRadius) || 1);
+      const radius = Math.max(
+        1.6,
+        Math.min(px, h) * 0.08,
+        Math.max(px / srcW, h / srcH) * hitRadius * 2.4
+      );
+      const alpha = (!shard.active || shard.isDebris)
+        ? 0.95
+        : Math.max(0.25, Math.min(0.8, 1 - hpRatio));
+      const grad = ctx2d.createRadialGradient(cx, cy, 0, cx, cy, radius);
+      grad.addColorStop(0, `rgba(0,0,0,${alpha})`);
+      grad.addColorStop(0.7, `rgba(0,0,0,${alpha * 0.75})`);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx2d.fillStyle = grad;
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx2d.fill();
+    }
+  }
+
+  updateFloorDamageMaps() {
+    if (!this.floorDamageBands.length) return false;
+    let anyDirty = false;
+
+    for (const band of this.floorDamageBands) {
+      let dirty = false;
+      for (let i = 0; i < this.segmentData.length; i++) {
+        const seg = this.segmentData[i];
+        const entity = seg?.entityByBand?.[band.id] || null;
+        let ratio = 0;
+        let activeCount = 0;
+        if (entity && !entity.dead && entity.hexGrid) {
+          const structural = getHexStructuralState(entity);
+          ratio = (structural && structural.total > 0)
+            ? Math.max(0, Math.min(1, structural.active / structural.total))
+            : 1;
+          activeCount = (structural && Number.isFinite(structural.active)) ? structural.active | 0 : 0;
+        }
+
+        const prev = band.lastRatios[i];
+        const prevActive = band.lastActiveCounts[i];
+        if (activeCount === prevActive && Math.abs(ratio - prev) < 0.002) continue;
+        band.lastRatios[i] = ratio;
+        band.lastActiveCounts[i] = activeCount;
+        if (entity && !entity.dead && entity.hexGrid) this.paintFloorDamageFromEntity(band, i, entity, ratio);
+        else this.paintFloorDamageStripe(band, i, ratio);
+        dirty = true;
+      }
+      if (dirty) {
+        band.damageTexture.needsUpdate = true;
+        anyDirty = true;
+      }
+    }
+
+    return anyDirty;
+  }
+
   /** Update damage alpha texture based on segment structural state */
   updateDamageAlpha() {
+    if (this.floorDamageBands.length) {
+      this.updateFloorDamageMaps();
+      return;
+    }
     if (!this._damageCtx) return;
     const ctx2d = this._damageCtx;
     const pxPerSeg = this._damagePxPerSeg;
@@ -630,6 +959,7 @@ class PlanetaryRing {
       dead: false,
       isCollidable: true,
       isRingSegment: true,
+      hideHexVisual: true,
       ringPlanetKey: this.key,
       ringBandId: bandId,
       ringBandRadius: Number(band?.radius) || this.wallRadius,
@@ -646,6 +976,7 @@ class PlanetaryRing {
         spriteScale: RING_HEX_WORLD_SCALE,
         spriteScaleX: RING_HEX_WORLD_SCALE,
         spriteScaleY: RING_HEX_WORLD_SCALE,
+        hideHexMesh: true,
         spriteRotation: 0
       },
       hp: 1,
@@ -699,8 +1030,8 @@ class PlanetaryRing {
       }
       if (!allHoles) continue;
 
-      const rawStart = this.segmentData[startIdx].baseAngle;
-      const rawEnd = this.segmentData[startIdx + holeSize - 1].baseAngle + this.angleStep;
+      const rawStart = this.segmentData[startIdx].baseAngle - this.angleStep * 0.5;
+      const rawEnd = this.segmentData[startIdx + holeSize - 1].baseAngle + this.angleStep * 0.5;
       // Extend arc by half a segment on each side for seamless overlap with wall edges
       const overlap = this.angleStep * 0.5;
       const startAngle = rawStart - overlap;
@@ -986,40 +1317,40 @@ class PlanetaryRing {
         entity.angle = worldRot;
 
         if (shipNearRing) {
-        // Tangential surface velocity: v = ω × r (perpendicular to radial direction)
-        // This lets the destructor collision system transfer surface movement to colliding objects
-        const surfSpeed = this.rotationSpeed * bandRadius;
-        entity.vx = -Math.sin(worldAngle) * surfSpeed;
-        entity.vy =  Math.cos(worldAngle) * surfSpeed;
-        entity.angVel = this.rotationSpeed;
+          // Tangential surface velocity: v = ω × r (perpendicular to radial direction)
+          // This lets the destructor collision system transfer surface movement to colliding objects
+          const surfSpeed = this.rotationSpeed * bandRadius;
+          entity.vx = -Math.sin(worldAngle) * surfSpeed;
+          entity.vy =  Math.cos(worldAngle) * surfSpeed;
+          entity.angVel = this.rotationSpeed;
 
-        // Wake segments near ship so destructor collision loop (line 2968) doesn't skip them
-        if (entity.hexGrid) {
-          const ddx = worldX - shipX;
-          const ddy = worldY - shipY;
-          const wakeThresh = 2500;
-          if (ddx * ddx + ddy * ddy < wakeThresh * wakeThresh) {
-            entity.hexGrid.isSleeping = false;
-            entity.hexGrid.sleepFrames = 0;
-          } else if (entity.hexGrid.wakeHoldFrames <= 0) {
+          // Wake segments near ship so destructor collision loop (line 2968) doesn't skip them
+          if (entity.hexGrid) {
+            const ddx = worldX - shipX;
+            const ddy = worldY - shipY;
+            const wakeThresh = 2500;
+            if (ddx * ddx + ddy * ddy < wakeThresh * wakeThresh) {
+              entity.hexGrid.isSleeping = false;
+              entity.hexGrid.sleepFrames = 0;
+            } else if (entity.hexGrid.wakeHoldFrames <= 0) {
+              entity.hexGrid.isSleeping = true;
+            }
+          }
+
+          if ((this.updateTick % 20) === 0 && entity.hexGrid) {
+            const structural = getHexStructuralState(entity);
+            if (structural && structural.total > 0 && structural.active <= 0) {
+              entity.dead = true;
+            }
+          }
+        } else {
+          // Ship far from this ring → park hex grid to sleep so destructor
+          // collision pass skips it. Saves CPU in the broader physics loop.
+          if (entity.hexGrid && entity.hexGrid.wakeHoldFrames <= 0) {
             entity.hexGrid.isSleeping = true;
           }
         }
-
-        if ((this.updateTick % 20) === 0 && entity.hexGrid) {
-          const structural = getHexStructuralState(entity);
-          if (structural && structural.total > 0 && structural.active <= 0) {
-            entity.dead = true;
-          }
-        }
-        } else {
-        // Ship far from this ring → park hex grid to sleep so destructor
-        // collision pass skips it. Saves CPU in the broader physics loop.
-        if (entity.hexGrid && entity.hexGrid.wakeHoldFrames <= 0) {
-          entity.hexGrid.isSleeping = true;
-        }
       }
-    }
     }
 
     this.updateForceFields(dt);
@@ -1178,6 +1509,22 @@ class PlanetaryRing {
       if (ff.mesh.material) ff.mesh.material.dispose();
     }
     this.forceFields.length = 0;
+    for (const band of this.floorDamageBands) {
+      if (band?.mesh?.parent) band.mesh.parent.remove(band.mesh);
+      band?.mesh?.geometry?.dispose?.();
+      if (band?.mesh?.material) {
+        const material = band.mesh.material;
+        material.map?.dispose?.();
+        if (material.alphaMap && material.alphaMap !== band.damageTexture) {
+          material.alphaMap.dispose?.();
+        }
+        material.alphaMap = null;
+        material.map = null;
+        material.dispose?.();
+      }
+      band?.damageTexture?.dispose?.();
+    }
+    this.floorDamageBands.length = 0;
     this.constructionSlots.length = 0;
     this.visualMeshes.length = 0;
     this.zoneGrid = null;

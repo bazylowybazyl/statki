@@ -2,9 +2,9 @@
 
 // --- KONFIGURACJA PLIKÓW ---
 const BACKGROUNDS = {
-  '8k':  '/assets/nebula_8k.png',
-  '4k':  '/assets/nebula_4k.png',
-  '2k':  '/assets/nebula_2k.png'
+  '8k':  'assets/nebula_8k.png',
+  '4k':  'assets/nebula_4k.png',
+  '2k':  'assets/nebula_2k.png'
 };
 
 let currentImage = null;

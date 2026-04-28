@@ -294,7 +294,12 @@ export function createNpcHardpointRuntime({
 
     const cfg = state.ships?.[editorShipId];
     if (!cfg || typeof cfg !== 'object') return false;
-    if (npc.__editorLayoutVersion === state.version && npc.__editorLayoutShipId === editorShipId) {
+
+    const hpScaleX = (Number.isFinite(Number(npc.__hardpointScaleX)) && Number(npc.__hardpointScaleX) > 0) ? Number(npc.__hardpointScaleX) : 1;
+    const hpScaleY = (Number.isFinite(Number(npc.__hardpointScaleY)) && Number(npc.__hardpointScaleY) > 0) ? Number(npc.__hardpointScaleY) : 1;
+
+    if (npc.__editorLayoutVersion === state.version && npc.__editorLayoutShipId === editorShipId &&
+        npc.__editorEngineScaleX === hpScaleX && npc.__editorEngineScaleY === hpScaleY) {
       return true;
     }
 
@@ -325,9 +330,9 @@ export function createNpcHardpointRuntime({
 
     if (mainEngine) {
       npc.engines.main = Object.assign({}, npc.engines.main || {}, {
-        vfxOffset: { x: mainEngine.x, y: mainEngine.y },
+        vfxOffset: { x: mainEngine.x * hpScaleX, y: mainEngine.y * hpScaleY },
         vfxForward: forwardFromEditorDeg(mainEngine.nozzleDeg),
-        vfxYNudge: mainEngine.offsetY,
+        vfxYNudge: mainEngine.offsetY * hpScaleY,
         vfxLengthMin: Number(mainEngine.vfxLengthMin) || 10,
         vfxLengthMax: Number(mainEngine.vfxLengthMax) || 180,
         mount: mainEngine.mount,
@@ -344,7 +349,7 @@ export function createNpcHardpointRuntime({
         const engine = normalizeEditorEngine(enginesSideRaw[i], i, 'side');
         if (!engine) continue;
         sideThrusters.push({
-          offset: { x: engine.x, y: engine.y },
+          offset: { x: engine.x * hpScaleX, y: engine.y * hpScaleY },
           forward: forwardFromEditorDeg(engine.nozzleDeg),
           mount: engine.mount,
           baseDeg: engine.baseDeg,
@@ -352,7 +357,7 @@ export function createNpcHardpointRuntime({
           gimbalMinDeg: engine.gimbalMinDeg,
           gimbalMaxDeg: engine.gimbalMaxDeg,
           side: inferEditorEngineSide(engine.mount, engine.y),
-          yNudge: engine.offsetY,
+          yNudge: engine.offsetY * hpScaleY,
           vfxWidthMin: engine.vfxWidthMin,
           vfxWidthMax: engine.vfxWidthMax,
           vfxLengthMin: engine.vfxLengthMin,
@@ -364,6 +369,8 @@ export function createNpcHardpointRuntime({
       }
     }
 
+    npc.__editorEngineScaleX = hpScaleX;
+    npc.__editorEngineScaleY = hpScaleY;
     npc.__editorLayoutShipId = editorShipId;
     npc.__editorLayoutVersion = state.version;
     return true;
