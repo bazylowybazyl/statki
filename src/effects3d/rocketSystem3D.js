@@ -642,8 +642,12 @@ class RocketSystem3D {
                 // OPTIMIZATION: cap reduced 15→8. Supernova (speed=3600) was hitting 15 every frame,
                 // spawning 15 fire + 8 smoke = 23 particles/frame/rocket. With 8 ammo burst-firing this
                 // meant 184 particles/frame just from exhaust, tanking FPS.
-                const steps = Math.min(8, Math.ceil(dist / Math.max(R.exhaustGap, 0.3)));
+                // Per-weapon override: weaponDef.exhaustStepCap (e.g. fighter micro-missile uses 2).
+                const stepsCap = (r.weaponDef?.exhaustStepCap) || 8;
+                const steps = Math.min(stepsCap, Math.ceil(dist / Math.max(R.exhaustGap, 0.3)));
                 const exhaustScale = Math.max(0.35, r.exhaustScale || 1);
+                const fireLifeMul = r.weaponDef?.fireParticleLifeMul || 1.0;
+                const skipSmoke = !!r.weaponDef?.skipSmoke;
 
                 for (let s = 0; s < steps; s++) {
                     const jt = (s + Math.random() * 0.4 - 0.2) / steps;
@@ -658,10 +662,10 @@ class RocketSystem3D {
 
                     this.fireGPU.spawn(sx, sy, sz, vx, vy, vz,
                         Math.max(0.1, r.fireScale || 1),
-                        Math.max(0.08, (FS.life + Math.random() * 0.05) * THREE.MathUtils.lerp(0.78, 1.0, Math.min(1, r.fireScale || 1))),
+                        Math.max(0.08, (FS.life + Math.random() * 0.05) * THREE.MathUtils.lerp(0.78, 1.0, Math.min(1, r.fireScale || 1)) * fireLifeMul),
                         r.fireVfxType || 0);
 
-                    if ((s & 1) === 0) {
+                    if (!skipSmoke && (s & 1) === 0) {
                         this.smokeGPU.spawn(
                             sx, sy, sz,
                             -_renderDir.x * R.exhaustVel * 0.18 * exhaustScale + (Math.random() - 0.5) * R.exhaustSpread * 1.4 * exhaustScale,

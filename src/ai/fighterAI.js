@@ -50,17 +50,30 @@ function tryFireFighter(npc, target) {
     npc.gunCD = gunDef.cooldown || 0.2;
   }
 
-  if (npc.mslAmmo > 0 && npc.mslCD <= 0 && dist < 1200 && diff < 0.6) {
-    if (Math.random() < 0.1) {
-      const mslDef = MASTER_WEAPONS[npc.msl || 'missile_rack'];
-      if (!mslDef) return;
+  if (npc.mslAmmo > 0 && npc.mslCD <= 0) {
+    const mslDef = MASTER_WEAPONS[npc.msl || 'missile_rack'];
+    if (!mslDef) return;
 
+    const isLightMsl = mslDef.id === 'osa_micro_missile';
+    const fireRange = isLightMsl ? 2800 : 1200;
+    const fireDiff  = isLightMsl ? 0.85 : 0.6;
+    const fireProb  = isLightMsl ? 0.18 : 0.10;
+    const cdReset   = isLightMsl ? (mslDef.cooldown || 1.0) : 5.0;
+
+    if (dist < fireRange && diff < fireDiff && Math.random() < fireProb) {
       window.spawnBulletAdapter(npc, target, mslDef, { type: 'rocket' });
       npc.mslAmmo--;
-      npc.mslCD = 5.0;
+      npc.mslCD = cdReset;
 
       if (window.spawnParticle) {
-        window.spawnParticle({ x: npc.x, y: npc.y }, { x: 0, y: 0 }, 0.5, '#ffffff', 5, true);
+        window.spawnParticle(
+          { x: npc.x, y: npc.y },
+          { x: 0, y: 0 },
+          isLightMsl ? 0.25 : 0.5,
+          isLightMsl ? '#9be8ff' : '#ffffff',
+          isLightMsl ? 2.5 : 5,
+          true
+        );
       }
     }
   }

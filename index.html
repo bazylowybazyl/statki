@@ -7082,16 +7082,16 @@
       fighter(npc) {
         npc.fighter = true;
         npc.gun = 'ciws_mk1';
-        npc.msl = 'missile_rack';
-        npc.mslAmmo = 2;
+        npc.msl = 'osa_micro_missile';
+        npc.mslAmmo = 8;
         npc.gunCD = 0;
         npc.ai = (dt) => { if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
       },
       interceptor(npc) {
         npc.fighter = true;
         npc.gun = 'laser_pd_mk1';
-        npc.msl = 'missile_rack';
-        npc.mslAmmo = 1;
+        npc.msl = 'osa_micro_missile';
+        npc.mslAmmo = 6;
         npc.ai = (dt) => { if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
       },
       frigate_pd(npc) {
@@ -13730,7 +13730,7 @@
 
         // Uzbrojenie
         f.gun = 'ciws_mk1';
-        f.msl = 'missile_rack'; f.mslAmmo = 4;
+        f.msl = 'osa_micro_missile'; f.mslAmmo = 10;
         f.gunCD = 0.5;
 
         // Zarządzanie eskadrą

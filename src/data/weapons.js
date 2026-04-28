@@ -97,6 +97,20 @@ export const MASTER_WEAPONS = {
     leadHorizon: 0.3, terminalLeadHorizon: 0.04,
     description: 'Short-range high-agility missile rack. Smaller, faster missiles built for nimble targets.'
   },
+  osa_micro_missile: {
+    id: 'osa_micro_missile', name: 'Osa Mk I', mountType: 'missile', category: 'rocket', size: 'S',
+    baseDamage: 280, baseRange: 3600, baseSpeed: 3800, cooldown: 1.0, ammo: 10,
+    turnRate: 3000, homingDelay: 0.04, explosionRadius: 32, vfxColor: '#7ef0ff',
+    bodyScale: 0.3, exhaustScale: 0.32, fireScale: 0.32, smokeScale: 0.3, explosionVisualScale: 0.45,
+    proximityRadius: 26, terminalRadius: 90, reacquireRadius: 240,
+    reacquireTurnMultiplier: 3.0, reacquireSpeedFactor: 0.55, terminalSpeedFactor: 0.7,
+    leadHorizon: 0.18, terminalLeadHorizon: 0.02,
+    rocketBodyColor: '#7ef0ff',
+    exhaustStepCap: 2,
+    skipSmoke: true,
+    fireParticleLifeMul: 0.55,
+    description: 'Lekka, zwrotna rakieta myśliwska. Krótki zasięg, wysoka kadencja, plazmowy ogon.'
+  },
   supernova_missile: {
     id: 'supernova_missile', name: 'Supernova Missile', mountType: 'special_missile', category: 'rocket', size: 'Capital',
     baseDamage: 10000, baseRange: 42000, baseSpeed: 3600, cooldown: 6.0, ammo: 8,
