@@ -811,7 +811,7 @@ class PlanetaryRing {
       if (!Number.isFinite(gx) || !Number.isFinite(gy)) continue;
 
       const u = Math.max(0, Math.min(1, gx / srcW));
-      const v = 1 - Math.max(0, Math.min(1, gy / srcH));
+      const v = Math.max(0, Math.min(1, gy / srcH));
       const cx = x + u * px;
       const cy = v * h;
       const hitRadius = Math.max(1, Number(shard.hitRadius) || 1);
