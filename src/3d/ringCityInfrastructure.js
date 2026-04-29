@@ -5,14 +5,14 @@
 // ============================================================
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
-import { createSectorGeometry, COLORS } from './ringCityZoneGrid.js';
-import { getDistrictInfrastructureMaterials, BufferGeometryUtils } from './ringCityAssets.js';
+import { createSectorGeometry, COLORS, RING_INNER, INNER_RING_ROWS, getZoneFamily } from './ringCityZoneGrid.js';
+import { getDistrictInfrastructureMaterials, BufferGeometryUtils, synthCityAssets } from './ringCityAssets.js';
 
 // --- Z offsets for infrastructure layers ---
-const FLOOR_Z = 0.5;
-const OVERLAY_Z = 0.7;
-const PATH_Z = 1.0;
-const TRACE_Z = 1.5;
+const FLOOR_Z = 0.18;
+const OVERLAY_Z = 0.22;
+const PATH_Z = 0.26;
+const TRACE_Z = 0.34;
 
 // --- Zone overlay material cache ---
 const overlayMatCache = {};
@@ -27,6 +27,9 @@ const swapYZ = new THREE.Matrix4().set(
 
 const GRID_COLS = 4;
 const GRID_ROWS = 3;
+const ROAD_COL_STRIDE = 4;
+const ROAD_WIDTH = 30;
+const TRACE_WIDTH = 7;
 
 // ============================================================
 // collectCellInfraGeometries — gather raw geometries for one cell
@@ -117,6 +120,33 @@ function mergeAndCreateMesh(geos, material) {
     return new THREE.Mesh(mergedGeo, material);
 }
 
+function addInfraResult(results, ring, mesh, name, renderOrder) {
+    if (!mesh || !ring?.ringFloor) return;
+    mesh.name = name;
+    mesh.renderOrder = renderOrder;
+    mesh.userData.fgCategory = 'buildings';
+    mesh.userData.isRingInfrastructure = true;
+    if (Core3D?.enableForeground3D) Core3D.enableForeground3D(mesh);
+    ring.ringFloor.add(mesh);
+    results.push({
+        mesh,
+        isInfrastructure: true,
+        isGlobalInfra: true,
+        isChunk: true,
+        dynamicDecorations: []
+    });
+}
+
+function pushRadialRoad(geos, cell, angle, width, z) {
+    const midRadius = Math.max(1, (cell.innerRadius + cell.outerRadius) * 0.5);
+    const halfAngle = (width * 0.5) / midRadius;
+    geos.push(createSectorGeometry(cell.innerRadius, cell.outerRadius, angle - halfAngle, angle + halfAngle, z));
+}
+
+function pushRingRoad(geos, radius, startAngle, endAngle, width, z) {
+    geos.push(createSectorGeometry(radius - width * 0.5, radius + width * 0.5, startAngle, endAngle, z));
+}
+
 // ============================================================
 // createDistrictInfrastructure — per-cell fallback (for single cell rebuild)
 // Used only by rebuildRingCityCell when repainting a single cell.
@@ -131,7 +161,69 @@ export function createDistrictInfrastructure(cell, ring) {
 // merges each layer into ONE mesh. Result: 4 draw calls total.
 // ============================================================
 export function buildAllInfrastructure(zoneGrid, ring) {
-    return [];
+    if (!zoneGrid || !ring?.ringFloor) return [];
+
+    const sourceCells = zoneGrid.getCellsForRing
+        ? zoneGrid.getCellsForRing(RING_INNER)
+        : zoneGrid.getPopulatedCells().filter(c => c.ring === RING_INNER);
+    const cells = sourceCells.filter(cell => {
+        if (!cell?.zone) return false;
+        const family = getZoneFamily(cell.zone);
+        return family === 'residential' || family === 'commercial';
+    });
+    if (!cells.length) return [];
+
+    const floorGeos = [];
+    const pathGeos = [];
+    const traceGeos = [];
+
+    for (const cell of cells) {
+        floorGeos.push(createSectorGeometry(cell.innerRadius, cell.outerRadius, cell.angleStart, cell.angleEnd, FLOOR_Z));
+
+        if ((cell.col % ROAD_COL_STRIDE) === 0) {
+            pushRadialRoad(pathGeos, cell, cell.angleStart, ROAD_WIDTH, PATH_Z);
+            pushRadialRoad(traceGeos, cell, cell.angleStart, TRACE_WIDTH, TRACE_Z);
+        }
+
+        pushRingRoad(pathGeos, cell.innerRadius, cell.angleStart, cell.angleEnd, ROAD_WIDTH, PATH_Z);
+        pushRingRoad(traceGeos, cell.innerRadius, cell.angleStart, cell.angleEnd, TRACE_WIDTH, TRACE_Z);
+
+        const isLastInnerRow = cell.row === INNER_RING_ROWS - 1;
+        if (isLastInnerRow) {
+            pushRingRoad(pathGeos, cell.outerRadius, cell.angleStart, cell.angleEnd, ROAD_WIDTH, PATH_Z);
+            pushRingRoad(traceGeos, cell.outerRadius, cell.angleStart, cell.angleEnd, TRACE_WIDTH, TRACE_Z);
+        }
+    }
+
+    const materials = getDistrictInfrastructureMaterials('commercial');
+    const floorMat = synthCityAssets.materials.ground || materials.floor;
+    const pathMat = materials.path;
+    const traceMat = materials.trace;
+    const results = [];
+
+    addInfraResult(
+        results,
+        ring,
+        mergeAndCreateMesh(floorGeos, floorMat),
+        `RingCityGround:${ring.key || 'ring'}`,
+        -3
+    );
+    addInfraResult(
+        results,
+        ring,
+        mergeAndCreateMesh(pathGeos, pathMat),
+        `RingCityRoads:${ring.key || 'ring'}`,
+        -2
+    );
+    addInfraResult(
+        results,
+        ring,
+        mergeAndCreateMesh(traceGeos, traceMat),
+        `RingCityRoadTraces:${ring.key || 'ring'}`,
+        -1
+    );
+
+    return results;
 }
 
 // ============================================================

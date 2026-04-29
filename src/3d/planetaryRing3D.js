@@ -52,11 +52,17 @@ const FLOOR_THEME = Object.freeze({
 });
 
 const RING_EDGE = Object.freeze({
-  railLaneWidth: 260,
-  railWallGap: 34,
-  railReserve: 340,
-  wallHeight: 380,
-  innerWallHeight: 220,
+  railLaneWidth: 220,
+  railWallGap: 24,
+  railReserve: 380,
+  railOuterMargin: 20,
+  wallSetback: 28,
+  wallThickness: 88,
+  railBeamWidth: 24,
+  railBeamHeight: 34,
+  wallHeight: 420,
+  innerWallHeight: 180,
+  innerWallThickness: 54,
   billboardWidth: 620,
   billboardHeight: 170,
   billboardBottom: 92
@@ -232,36 +238,53 @@ function createRingBandGeometry(innerRadius, outerRadius, z = 0) {
   return geometry;
 }
 
-function createRingWallGeometry(radius, height, z = 0) {
+function createRingAnnularBoxGeometry(innerRadius, outerRadius, height, z = 0) {
   const steps = 384;
   const positions = [];
   const uvs = [];
+  const inner = Math.max(1, Math.min(innerRadius, outerRadius));
+  const outer = Math.max(inner + 1, Math.max(innerRadius, outerRadius));
+  const z0 = z;
+  const z1 = z + height;
+
+  const pushQuad = (ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, uv) => {
+    positions.push(
+      ax, ay, az,
+      bx, by, bz,
+      cx, cy, cz,
+      ax, ay, az,
+      cx, cy, cz,
+      dx, dy, dz
+    );
+    const q = uv || [0, 0, 1, 0, 1, 1, 0, 1];
+    uvs.push(
+      q[0], q[1],
+      q[2], q[3],
+      q[4], q[5],
+      q[0], q[1],
+      q[4], q[5],
+      q[6], q[7]
+    );
+  };
+
   for (let i = 0; i < steps; i++) {
     const t0 = i / steps;
     const t1 = (i + 1) / steps;
     const a0 = t0 * Math.PI * 2;
     const a1 = t1 * Math.PI * 2;
-    const x0 = Math.cos(a0) * radius;
-    const y0 = Math.sin(a0) * radius;
-    const x1 = Math.cos(a1) * radius;
-    const y1 = Math.sin(a1) * radius;
+    const io0x = Math.cos(a0) * inner;
+    const io0y = Math.sin(a0) * inner;
+    const io1x = Math.cos(a1) * inner;
+    const io1y = Math.sin(a1) * inner;
+    const oo0x = Math.cos(a0) * outer;
+    const oo0y = Math.sin(a0) * outer;
+    const oo1x = Math.cos(a1) * outer;
+    const oo1y = Math.sin(a1) * outer;
 
-    positions.push(
-      x0, y0, z,
-      x1, y1, z,
-      x1, y1, z + height,
-      x0, y0, z,
-      x1, y1, z + height,
-      x0, y0, z + height
-    );
-    uvs.push(
-      t0, 0,
-      t1, 0,
-      t1, 1,
-      t0, 0,
-      t1, 1,
-      t0, 1
-    );
+    pushQuad(oo0x, oo0y, z0, oo1x, oo1y, z0, oo1x, oo1y, z1, oo0x, oo0y, z1, [t0, 0, t1, 0, t1, 1, t0, 1]); // outer face
+    pushQuad(io1x, io1y, z0, io0x, io0y, z0, io0x, io0y, z1, io1x, io1y, z1, [t1, 0, t0, 0, t0, 1, t1, 1]); // inner face
+    pushQuad(io0x, io0y, z1, oo0x, oo0y, z1, oo1x, oo1y, z1, io1x, io1y, z1, [t0, 0, t0, 1, t1, 1, t1, 0]); // top cap
+    pushQuad(io1x, io1y, z0, oo1x, oo1y, z0, oo0x, oo0y, z0, io0x, io0y, z0, [t1, 0, t1, 1, t0, 1, t0, 0]); // bottom cap
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -359,19 +382,41 @@ function createThemedFloorTexture(theme) {
 }
 
 function createWallTexture(theme, repeatX = 24) {
-  const canvas = createCanvas(512, 128);
+  const canvas = createCanvas(1024, 256);
   if (!canvas) return null;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#070a10';
+  ctx.fillStyle = '#05070b';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  grad.addColorStop(0, 'rgba(255,255,255,0.09)');
-  grad.addColorStop(0.55, 'rgba(255,255,255,0.025)');
-  grad.addColorStop(1, 'rgba(0,0,0,0.38)');
+  grad.addColorStop(0, 'rgba(255,255,255,0.14)');
+  grad.addColorStop(0.18, 'rgba(255,255,255,0.055)');
+  grad.addColorStop(0.62, 'rgba(0,0,0,0.08)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.58)');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+  const panelW = 128;
+  const panelH = 78;
+  for (let y = 10; y < canvas.height; y += panelH) {
+    const row = Math.floor(y / panelH);
+    const offset = row % 2 ? panelW * 0.5 : 0;
+    for (let x = -panelW; x < canvas.width + panelW; x += panelW) {
+      const px = x + offset;
+      const tone = 0.035 + hash01(row * 911 + x * 13) * 0.055;
+      ctx.fillStyle = `rgba(255,255,255,${tone})`;
+      ctx.fillRect(px + 5, y + 5, panelW - 10, panelH - 10);
+      ctx.strokeStyle = 'rgba(0,0,0,0.52)';
+      ctx.strokeRect(px + 5.5, y + 5.5, panelW - 11, panelH - 11);
+      ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+      ctx.strokeRect(px + 12.5, y + 12.5, panelW - 25, panelH - 25);
+    }
+  }
+
+  ctx.fillStyle = 'rgba(0,0,0,0.36)';
+  for (let x = 0; x <= canvas.width; x += 64) {
+    ctx.fillRect(x - 2, 0, 4, canvas.height);
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
   ctx.lineWidth = 1;
   for (let x = 0; x <= canvas.width; x += 32) {
     ctx.beginPath();
@@ -380,13 +425,31 @@ function createWallTexture(theme, repeatX = 24) {
     ctx.stroke();
   }
 
-  ctx.strokeStyle = theme?.line || '#39d7ff';
-  ctx.globalAlpha = 0.34;
-  ctx.lineWidth = 3;
+  const accent = theme?.line || '#39d7ff';
+  ctx.strokeStyle = accent;
+  ctx.globalAlpha = 0.55;
+  for (const y of [canvas.height * 0.22, canvas.height * 0.72]) {
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 0.26;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([42, 26]);
   ctx.beginPath();
-  ctx.moveTo(0, canvas.height * 0.72);
-  ctx.lineTo(canvas.width, canvas.height * 0.72);
+  ctx.moveTo(0, canvas.height * 0.47);
+  ctx.lineTo(canvas.width, canvas.height * 0.47);
   ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.globalAlpha = 0.72;
+  ctx.fillStyle = accent;
+  for (let x = 28; x < canvas.width; x += 128) {
+    ctx.fillRect(x, 24, 22, 4);
+    ctx.fillRect(x + 66, canvas.height - 38, 30, 4);
+  }
   ctx.globalAlpha = 1;
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -405,8 +468,8 @@ function createRailTexture(theme) {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = 'rgba(255,255,255,0.04)';
   for (let x = 0; x < canvas.width; x += 36) ctx.fillRect(x, 0, 10, canvas.height);
-  ctx.strokeStyle = theme?.line || '#39d7ff';
-  ctx.globalAlpha = 0.62;
+  ctx.strokeStyle = theme?.railLine || '#7f8893';
+  ctx.globalAlpha = 0.5;
   ctx.lineWidth = 5;
   for (const y of [34, 94]) {
     ctx.beginPath();
@@ -414,7 +477,7 @@ function createRailTexture(theme) {
     ctx.lineTo(canvas.width, y);
     ctx.stroke();
   }
-  ctx.globalAlpha = 0.22;
+  ctx.globalAlpha = 0.18;
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(0, canvas.height * 0.5);
@@ -472,8 +535,22 @@ const state = {
   queryCells: new Map(),
   queryResult: [],
   queryCount: 0,
+  querySerial: 0,
   visualZByKey: new Map()
 };
+
+function normalizeAnglePositive(angle) {
+  const twoPi = Math.PI * 2;
+  let a = Number(angle) || 0;
+  a = a - Math.floor(a / twoPi) * twoPi;
+  return a < 0 ? a + twoPi : a;
+}
+
+function nextQuerySerial() {
+  state.querySerial = (state.querySerial + 1) & 0x7fffffff;
+  if (state.querySerial <= 0) state.querySerial = 1;
+  return state.querySerial;
+}
 
 function normalizeRingKey(planetKey) {
   return String(planetKey || '').toLowerCase();
@@ -533,26 +610,26 @@ function drawBandRails(ctx, y0, y1, railH) {
   const bottomY = Math.max(y0, y1 - railH);
 
   const topRail = ctx.createLinearGradient(0, topY, 0, topY + railH);
-  topRail.addColorStop(0, '#07090f');
-  topRail.addColorStop(0.45, '#222a36');
-  topRail.addColorStop(1, '#080b12');
+  topRail.addColorStop(0, '#030405');
+  topRail.addColorStop(0.45, '#10151b');
+  topRail.addColorStop(1, '#040507');
   ctx.fillStyle = topRail;
   ctx.fillRect(0, topY, w, Math.max(1, railH));
 
   const bottomRail = ctx.createLinearGradient(0, bottomY, 0, y1);
-  bottomRail.addColorStop(0, '#080b12');
-  bottomRail.addColorStop(0.55, '#222a36');
-  bottomRail.addColorStop(1, '#07090f');
+  bottomRail.addColorStop(0, '#040507');
+  bottomRail.addColorStop(0.55, '#10151b');
+  bottomRail.addColorStop(1, '#030405');
   ctx.fillStyle = bottomRail;
   ctx.fillRect(0, bottomY, w, Math.max(1, y1 - bottomY));
 
   const glowSize = Math.max(1, Math.round(railH * 0.12));
-  ctx.fillStyle = 'rgba(0, 110, 230, 0.42)';
+  ctx.fillStyle = 'rgba(120, 132, 145, 0.28)';
   ctx.fillRect(0, topY + railH - glowSize, w, glowSize);
   ctx.fillRect(0, bottomY, w, glowSize);
 
   const stripeH = Math.max(1, Math.round(railH * 0.1));
-  ctx.fillStyle = 'rgba(18, 20, 24, 0.95)';
+  ctx.fillStyle = 'rgba(12, 14, 17, 0.95)';
   const seg = Math.max(10, Math.round(w * 0.1));
   const gap = Math.max(8, Math.round(seg * 0.8));
   for (let x = 0; x < w; x += seg + gap) {
@@ -615,14 +692,14 @@ function drawWallTexture(ctx) {
     }
   };
 
-  paintBand(layout.innerBandTopPx, layout.innerBandBottomPx, ['#101722', '#1a2536', '#0d121b'], {
-    grid: 'rgba(255,255,255,0.08)',
-    decks: { fill: 'rgba(255,190,30,0.22)', stroke: 'rgba(200,160,20,0.72)' }
+  paintBand(layout.innerBandTopPx, layout.innerBandBottomPx, ['#030405', '#090d12', '#020304'], {
+    grid: 'rgba(255,255,255,0.055)',
+    decks: { fill: 'rgba(160,170,180,0.16)', stroke: 'rgba(150,160,172,0.45)' }
   });
-  paintBand(layout.industrialBandTopPx, layout.industrialBandBottomPx, ['#0e1318', '#1d262d', '#11161d'], {
-    grid: 'rgba(180,210,255,0.05)'
+  paintBand(layout.industrialBandTopPx, layout.industrialBandBottomPx, ['#030403', '#0b0c0a', '#020302'], {
+    grid: 'rgba(255,255,255,0.045)'
   });
-  paintBand(layout.militaryBandTopPx, layout.militaryBandBottomPx, ['#0a0d14', '#1b2432', '#0d1119'], {
+  paintBand(layout.militaryBandTopPx, layout.militaryBandBottomPx, ['#040303', '#0d090a', '#030202'], {
     bulkheads: true
   });
 }
@@ -640,11 +717,12 @@ function getSegmentTextures() {
   drawWallTexture(wallDisplay.getContext('2d'));
 
   const collisionCtx = wallCollision.getContext('2d');
-  // Keep collision mask aligned with the display texture.
-  // Ring hex geometry is generated from the collision image, so flipping only
-  // the mask vertically makes the active shard bands diverge from the visual
-  // floor bands and can "remove" a band from the zone it should sit under.
-  collisionCtx.drawImage(wallDisplay, 0, 0);
+  // Collision must be independent from decorative floor/wall graphics.
+  // Each band crop gets a fully opaque mask, while holes are handled by
+  // segment type. This prevents a visual texture tweak from moving/removing
+  // the physical destructor layer.
+  collisionCtx.fillStyle = '#fff';
+  collisionCtx.fillRect(0, 0, wallCollision.width, wallCollision.height);
 
   textureCache = Object.freeze({
     WALL_DISPLAY: wallDisplay,
@@ -908,7 +986,6 @@ class PlanetaryRing {
       const band = this.layout?.[bandId];
       if (!band) continue;
 
-      const theme = FLOOR_THEME[bandId] || FLOOR_THEME.inner;
       const geometry = createRingBandGeometry(band.innerR, band.outerR, 0.15);
       const damageCanvas = createCanvas(
         Math.max(1, this.segmentData.length * FLOOR_DAMAGE.pxPerSegment),
@@ -927,15 +1004,14 @@ class PlanetaryRing {
       damageTexture.magFilter = THREE.LinearFilter;
 
       const material = new THREE.MeshStandardMaterial({
-        color: theme.color,
-        emissive: theme.emissive,
-        emissiveIntensity: 0.22,
-        map: createThemedFloorTexture(theme),
+        color: 0x000000,
+        emissive: 0x000000,
+        emissiveIntensity: 0,
         alphaMap: damageTexture,
         transparent: true,
         depthWrite: false,
-        roughness: 0.86,
-        metalness: 0.42,
+        roughness: 0.92,
+        metalness: 0.18,
         side: THREE.DoubleSide
       });
 
@@ -980,17 +1056,35 @@ class PlanetaryRing {
       if (!band) continue;
 
       const theme = FLOOR_THEME[bandId] || FLOOR_THEME.inner;
-      const railOuter = Math.max(band.innerR + 20, band.outerR - RING_EDGE.railWallGap);
-      const railInner = Math.max(band.innerR + 20, railOuter - RING_EDGE.railLaneWidth);
-      const repeatX = Math.max(12, Math.round((Math.PI * 2 * band.outerR) / 900));
+      const buildBand = this.buildableLayout?.[bandId] || band;
+      const maxWallInner = band.outerR
+        - RING_EDGE.railOuterMargin
+        - RING_EDGE.railLaneWidth
+        - RING_EDGE.railWallGap
+        - RING_EDGE.wallThickness;
+      const wallInner = Math.max(
+        band.innerR + 20,
+        Math.min(buildBand.outerR + RING_EDGE.wallSetback, maxWallInner)
+      );
+      const wallOuter = Math.min(
+        band.outerR - RING_EDGE.railOuterMargin - RING_EDGE.railLaneWidth - RING_EDGE.railWallGap,
+        wallInner + RING_EDGE.wallThickness
+      );
+      const railInner = Math.min(
+        band.outerR - RING_EDGE.railOuterMargin - 10,
+        wallOuter + RING_EDGE.railWallGap
+      );
+      const railOuter = Math.min(band.outerR - RING_EDGE.railOuterMargin, railInner + RING_EDGE.railLaneWidth);
+      const railWidth = Math.max(1, railOuter - railInner);
+      const repeatX = Math.max(12, Math.round((Math.PI * 2 * wallInner) / 900));
 
       const railMesh = new THREE.Mesh(
         createRingBandGeometry(railInner, railOuter, 0.42),
         new THREE.MeshStandardMaterial({
-          color: 0x0a0d12,
-          emissive: theme.emissive,
-          emissiveIntensity: 0.28,
-          map: createRailTexture(theme),
+          color: 0x040506,
+          emissive: 0x000000,
+          emissiveIntensity: 0,
+          map: createRailTexture(null),
           transparent: true,
           opacity: 0.92,
           roughness: 0.58,
@@ -1006,12 +1100,37 @@ class PlanetaryRing {
       if (Core3D?.enableForeground3D) Core3D.enableForeground3D(railMesh);
       this.wallRailMeshes.push(railMesh);
 
+      const beamCenters = [
+        railInner + railWidth * 0.32,
+        railInner + railWidth * 0.68
+      ];
+      for (let i = 0; i < beamCenters.length; i++) {
+        const center = beamCenters[i];
+        const halfBeam = Math.min(RING_EDGE.railBeamWidth, railWidth * 0.18) * 0.5;
+        const railBeam = new THREE.Mesh(
+          createRingAnnularBoxGeometry(center - halfBeam, center + halfBeam, RING_EDGE.railBeamHeight, 0.45),
+          new THREE.MeshStandardMaterial({
+            color: 0x161d24,
+            emissive: 0x000000,
+            emissiveIntensity: 0,
+            roughness: 0.48,
+            metalness: 0.78
+          })
+        );
+        railBeam.name = `PlanetaryRingDockRailBeam:${this.key}:${bandId}:${i}`;
+        railBeam.renderOrder = -1;
+        railBeam.userData.fgCategory = 'buildings';
+        this.ringFloor.add(railBeam);
+        if (Core3D?.enableForeground3D) Core3D.enableForeground3D(railBeam);
+        this.wallRailMeshes.push(railBeam);
+      }
+
       const outerWall = new THREE.Mesh(
-        createRingWallGeometry(band.outerR, RING_EDGE.wallHeight, 0),
+        createRingAnnularBoxGeometry(wallInner, wallOuter, RING_EDGE.wallHeight, 0.2),
         new THREE.MeshStandardMaterial({
           color: 0x0b0f16,
-          emissive: theme.emissive,
-          emissiveIntensity: 0.18,
+          emissive: 0x020304,
+          emissiveIntensity: 0.04,
           map: createWallTexture(theme, repeatX),
           roughness: 0.78,
           metalness: 0.45,
@@ -1024,12 +1143,14 @@ class PlanetaryRing {
       if (Core3D?.enableForeground3D) Core3D.enableForeground3D(outerWall);
       this.wallRailMeshes.push(outerWall);
 
+      const innerWallInner = band.innerR + 8;
+      const innerWallOuter = Math.min(band.outerR - 20, innerWallInner + RING_EDGE.innerWallThickness);
       const innerWall = new THREE.Mesh(
-        createRingWallGeometry(band.innerR, RING_EDGE.innerWallHeight, 0),
+        createRingAnnularBoxGeometry(innerWallInner, innerWallOuter, RING_EDGE.innerWallHeight, 0.18),
         new THREE.MeshStandardMaterial({
           color: 0x080b11,
-          emissive: theme.emissive,
-          emissiveIntensity: 0.11,
+          emissive: 0x010203,
+          emissiveIntensity: 0.03,
           map: createWallTexture(theme, Math.max(8, Math.round(repeatX * 0.72))),
           roughness: 0.82,
           metalness: 0.38,
@@ -1049,6 +1170,7 @@ class PlanetaryRing {
           : ['PORT', 'TRANSIT', 'MARKET'];
       const billboardCount = Math.max(8, Math.round((Math.PI * 2 * band.outerR) / 3600));
       const billboardOffset = bandId === 'inner' ? 0.08 : bandId === 'industrial' ? 0.18 : 0.28;
+      const billboardRadius = wallInner - 6;
 
       for (let i = 0; i < billboardCount; i++) {
         const angle = ((i + 0.5) / billboardCount) * Math.PI * 2 + billboardOffset;
@@ -1057,12 +1179,12 @@ class PlanetaryRing {
         if (!texture) continue;
         const billboard = new THREE.Mesh(
           createBillboardPanelGeometry(
-            band.outerR,
+            billboardRadius,
             angle,
             RING_EDGE.billboardWidth,
             RING_EDGE.billboardHeight,
             RING_EDGE.billboardBottom,
-            -10
+            0
           ),
           new THREE.MeshBasicMaterial({
             map: texture,
@@ -1997,6 +2119,82 @@ function rebuildSpatialIndex(force = false) {
   }
 }
 
+function appendQueryTarget(entity) {
+  if (!entity || entity.dead || !entity.hexGrid) return false;
+  if (entity.__ringQuerySerial === state.querySerial) return false;
+  entity.__ringQuerySerial = state.querySerial;
+  state.queryResult[state.queryCount++] = entity;
+  return true;
+}
+
+function updateRingQueryEntityPose(ring, seg, entity) {
+  if (!ring || !seg || !entity) return;
+  const worldAngle = seg.baseAngle + ring.currentRotation;
+  const worldRot = worldAngle + Math.PI * 0.5;
+  const bandRadius = Math.max(1, Number(entity.ringBandRadius) || ring.wallRadius);
+  entity.x = ring.lastPlanetX + Math.cos(worldAngle) * bandRadius;
+  entity.y = ring.lastPlanetY + Math.sin(worldAngle) * bandRadius;
+  entity.angle = worldRot;
+  entity.vx = -Math.sin(worldAngle) * ring.rotationSpeed * bandRadius;
+  entity.vy =  Math.cos(worldAngle) * ring.rotationSpeed * bandRadius;
+  entity.angVel = ring.rotationSpeed;
+  seg.worldAngle = worldAngle;
+}
+
+function appendOnDemandRingTargets(x, y, radius = 0) {
+  const qx = Number(x);
+  const qy = Number(y);
+  if (!Number.isFinite(qx) || !Number.isFinite(qy)) return;
+  const qr = Math.max(0, Number(radius) || 0);
+
+  for (const [, ring] of state.rings) {
+    if (!ring?.segmentData?.length || !(ring.angleStep > 0)) continue;
+
+    const dx = qx - ring.lastPlanetX;
+    const dy = qy - ring.lastPlanetY;
+    const dist = Math.hypot(dx, dy);
+    const radialPad = qr + 1800;
+    if (dist + radialPad < ring.floorInnerRadius) continue;
+    if (dist - radialPad > ring.floorOuterRadius) continue;
+
+    const localAngle = normalizeAnglePositive(Math.atan2(dy, dx) - ring.currentRotation);
+    const segmentCount = ring.segmentData.length;
+    let centerIndex = Math.floor(localAngle / ring.angleStep);
+    centerIndex = ((centerIndex % segmentCount) + segmentCount) % segmentCount;
+
+    const arcRadius = Math.max(1, Math.min(Math.max(dist, ring.floorInnerRadius), ring.floorOuterRadius));
+    const arcWorldPerSegment = Math.max(1, ring.angleStep * arcRadius);
+    const spanSegments = Math.min(
+      Math.ceil(segmentCount * 0.5),
+      Math.max(2, Math.ceil((qr + 1800) / arcWorldPerSegment) + 2)
+    );
+
+    for (let offset = -spanSegments; offset <= spanSegments; offset++) {
+      const idx = (centerIndex + offset + segmentCount) % segmentCount;
+      const seg = ring.segmentData[idx];
+      if (!seg || seg.type === 'HOLE') continue;
+
+      const entities = Array.isArray(seg.entities) ? seg.entities : null;
+      const count = entities ? entities.length : (seg.entity ? 1 : 0);
+      for (let i = 0; i < count; i++) {
+        const entity = entities ? entities[i] : seg.entity;
+        if (!entity || entity.dead || entity.isCollidable === false || !entity.hexGrid) continue;
+        updateRingQueryEntityPose(ring, seg, entity);
+
+        const er = Math.max(80, Number(entity.radius) || 120);
+        const ex = Number(entity.x) || 0;
+        const ey = Number(entity.y) || 0;
+        const reach = qr + er + 320;
+        const edx = ex - qx;
+        const edy = ey - qy;
+        if (edx * edx + edy * edy > reach * reach) continue;
+
+        appendQueryTarget(entity);
+      }
+    }
+  }
+}
+
 function queryPotentialTargets(x, y, radius = 0) {
   const cellSize = CONFIG.queryCellSize;
   const baseX = Math.floor((Number(x) || 0) / cellSize);
@@ -2004,16 +2202,18 @@ function queryPotentialTargets(x, y, radius = 0) {
   const span = Math.max(1, Math.ceil((Number(radius) || 0) / cellSize) + 1);
 
   state.queryCount = 0;
+  nextQuerySerial();
   for (let ix = -span; ix <= span; ix++) {
     for (let iy = -span; iy <= span; iy++) {
       const key = `${baseX + ix},${baseY + iy}`;
       const cell = state.queryCells.get(key);
       if (!cell) continue;
       for (let i = 0; i < cell.length; i++) {
-        state.queryResult[state.queryCount++] = cell[i];
+        appendQueryTarget(cell[i]);
       }
     }
   }
+  appendOnDemandRingTargets(x, y, radius);
   return { buffer: state.queryResult, count: state.queryCount };
 }
 

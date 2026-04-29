@@ -29,6 +29,9 @@ const WINDOW_SCALE = 500;
 const NUM_CHUNKS = 16;
 const CHUNK_ARC = (Math.PI * 2) / NUM_CHUNKS;
 const BUILDING_FLOOR_CLEARANCE = 56;
+const STOREFRONT_COL_STRIDE = 8;
+const STOREFRONT_INNER_ROW = 1;
+const STOREFRONT_MODEL_WIDTH = 304.86;
 
 function clampNumber(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -45,6 +48,7 @@ const LOD_LEVEL_BY_MAT = {
     antennaGreen: 'DETAIL',
     padSign: 'DETAIL',
     dish: 'DETAIL',
+    storefronts: 'MEDIUM',
 };
 
 // --- Material dict cache per zone ---
@@ -601,25 +605,34 @@ function generateCellBuildingData(cell, ring) {
         }
     }
 
-    // ---- Storefronts (bridge/pipe connectors between cells) ----
-    // Placed every other cell in the angular direction, at the tangential
-    // boundary — analogous to SynthCity's storefronts at every-other
-    // intersection.  Uses the storefronts.obj geometry which contains
-    // horizontal walkways and vertical pipes at multiple heights.
-    if ((cell.col % 4) === 0) {
+    // ---- Storefronts (sparse bridge/pipe modules at district intersections) ----
+    // Keep SynthCity storefront modules sparse and fitted to ring-cell corners.
+    const zoneFamily = getZoneFamily(zone);
+    if (
+        cell.ring === RING_INNER &&
+        cell.row === STOREFRONT_INNER_ROW &&
+        (zoneFamily === 'residential' || zoneFamily === 'commercial') &&
+        (cell.col % STOREFRONT_COL_STRIDE) === 0
+    ) {
         const sfGeo = cloneSynthCityGeometry('storefronts');
         if (sfGeo) {
-            const SF_SCALE = 3.0;
+            const cellArcWidth = Math.max(1, (cell.angleEnd - cell.angleStart) * cellCenterRadius);
+            const cellDepth = Math.max(1, cell.outerRadius - cell.innerRadius);
+            const sfScale = clampNumber(
+                Math.min(cellArcWidth * 2.1, cellDepth * 1.12) / STOREFRONT_MODEL_WIDTH,
+                0.45,
+                1.05
+            );
             // OBJ is in XZ plane with Y up.  Ring cell-local is
             // X=radial, Y=tangential, Z=height.
-            // Rotate X 90° to swap Y→Z (up), then scale.
+            // Rotate X 90 degrees to swap Y to Z (up), then scale.
             sfGeo.rotateX(Math.PI / 2);
-            sfGeo.scale(SF_SCALE, SF_SCALE, SF_SCALE);
+            sfGeo.scale(sfScale, sfScale, sfScale);
 
-            // Position at the angular edge of the cell (tangential boundary)
-            // so it sits between this cell and the next one.
+            // Place near the outer road junction so it reads as infrastructure.
+            const edgeX = (cell.outerRadius - cellCenterRadius) - Math.min(35, cellDepth * 0.08);
             const edgeY = (cell.angleEnd - cellCenterAngle) * cellCenterRadius;
-            const sfMatrix = new THREE.Matrix4().makeTranslation(0, edgeY, 0);
+            const sfMatrix = new THREE.Matrix4().makeTranslation(edgeX, edgeY, 0);
             sfGeo.applyMatrix4(sfMatrix);
 
             // Ensure matching attributes for merge
@@ -632,10 +645,8 @@ function generateCellBuildingData(cell, ring) {
             }
             sfGeo.groups = [];
 
-            // Use a random building material for color variety (like SynthCity)
-            const sfMatKey = pickSynthBuildingMaterialKey(rand, false);
-            cellGeoMap[sfMatKey] = cellGeoMap[sfMatKey] || [];
-            cellGeoMap[sfMatKey].push(sfGeo);
+            cellGeoMap.storefronts = cellGeoMap.storefronts || [];
+            cellGeoMap.storefronts.push(sfGeo);
         }
     }
 
@@ -655,10 +666,7 @@ function generateCellBuildingData(cell, ring) {
 // ============================================================
 function resolveMaterial(matKey, zone) {
     const matDict = getMatDict(zone);
-    let material = matDict[matKey];
-    if (!material && matKey.startsWith('building_')) {
-        material = synthCityAssets.materials[matKey];
-    }
+    let material = matDict[matKey] || synthCityAssets.materials[matKey];
     if (!material) {
         const mats = getZoneMaterials(zone);
         material = mats.wall;
