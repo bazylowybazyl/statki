@@ -82,6 +82,26 @@ export function loadSynthCityAssets() {
                 synthCityAssets.materials['ads_large_' + id].userData.shared = true;
             }
 
+            synthCityAssets.materials.ground = new THREE.MeshPhongMaterial({
+                map: synthCityAssets.textures.ground,
+                emissive: 0x0090ff,
+                emissiveMap: synthCityAssets.textures.ground_em,
+                emissiveIntensity: 0.2,
+                shininess: 0,
+                side: THREE.DoubleSide
+            });
+            synthCityAssets.materials.ground.userData.shared = true;
+
+            synthCityAssets.materials.storefronts = new THREE.MeshPhongMaterial({
+                map: synthCityAssets.textures.storefronts,
+                emissive: 0xffffff,
+                emissiveMap: synthCityAssets.textures.storefronts_em,
+                emissiveIntensity: 1.5,
+                shininess: 0,
+                side: THREE.DoubleSide
+            });
+            synthCityAssets.materials.storefronts.userData.shared = true;
+
             synthCityAssets.loaded = true;
             synthCityAssets.loading = false;
             resolve(synthCityAssets);
@@ -118,9 +138,25 @@ export function loadSynthCityAssets() {
             synthCityAssets.textures['ads_large_' + id] = texLoader.load(basePath + 'textures/ads_large_' + id + '.jpg', t => { t.colorSpace = THREE.SRGBColorSpace; });
         }
 
-        // Ground textures
-        synthCityAssets.textures['ground'] = texLoader.load(basePath + 'textures/ground.jpg', t => { t.colorSpace = THREE.SRGBColorSpace; });
-        synthCityAssets.textures['ground_em'] = texLoader.load(basePath + 'textures/ground_em.jpg');
+        // Ground/storefront textures from SynthCity.
+        synthCityAssets.textures.ground = texLoader.load(basePath + 'textures/ground.jpg', t => {
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+            t.anisotropy = 8;
+            t.colorSpace = THREE.SRGBColorSpace;
+        });
+        synthCityAssets.textures.ground_em = texLoader.load(basePath + 'textures/ground_em.jpg', t => {
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+            t.anisotropy = 8;
+        });
+        synthCityAssets.textures.storefronts = texLoader.load(basePath + 'textures/storefronts_01.jpg', t => {
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+            t.anisotropy = 8;
+            t.colorSpace = THREE.SRGBColorSpace;
+        });
+        synthCityAssets.textures.storefronts_em = texLoader.load(basePath + 'textures/storefronts_01_em.jpg', t => {
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+            t.anisotropy = 8;
+        });
 
         // Building models
         const buildingModels = [
