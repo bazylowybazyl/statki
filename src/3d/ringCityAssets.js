@@ -102,6 +102,26 @@ export function loadSynthCityAssets() {
             });
             synthCityAssets.materials.storefronts.userData.shared = true;
 
+            synthCityAssets.materials.storefrontBridge = new THREE.MeshStandardMaterial({
+                color: 0x101722,
+                emissive: 0x05121a,
+                emissiveIntensity: 0.28,
+                roughness: 0.68,
+                metalness: 0.72,
+                side: THREE.DoubleSide
+            });
+            synthCityAssets.materials.storefrontBridge.userData.shared = true;
+
+            synthCityAssets.materials.storefrontPromenade = new THREE.MeshStandardMaterial({
+                color: 0x071018,
+                emissive: 0x003d62,
+                emissiveIntensity: 0.38,
+                roughness: 0.55,
+                metalness: 0.62,
+                side: THREE.DoubleSide
+            });
+            synthCityAssets.materials.storefrontPromenade.userData.shared = true;
+
             synthCityAssets.loaded = true;
             synthCityAssets.loading = false;
             resolve(synthCityAssets);

@@ -8239,7 +8239,8 @@
           const life = range / Math.max(speed, 1);
 
           // 3D Rocket intercept — replace 2D bullet with full 3D rocket
-          if (weapon.category === 'rocket' && window.rocketSystem3D) {
+          // Skip for `forceCanvas` weapons (e.g. osa_micro_missile) — they fly on the lightweight 2D path below.
+          if (weapon.category === 'rocket' && window.rocketSystem3D && !weapon.forceCanvas) {
             const colorTheme = shooterIsFriendly ? 'blue' : 'red';
             let rocketTarget = target;
             if (!rocketTarget) {
@@ -8277,7 +8278,8 @@
               vx: dirX * speed + (muzzleData.baseVel?.x || 0) * 0.2,
               vy: dirY * speed + (muzzleData.baseVel?.y || 0) * 0.2,
               life: life,
-              r: weapon.category === 'torpedo' ? 10 : (weapon.size === 'L' ? 6 : (weapon.size === 'M' ? 4 : 2)),
+              // weapon.bulletRadius opt-in override (e.g. osa_micro_missile sets r=8 to widen fuse for fast-mover)
+              r: weapon.bulletRadius || (weapon.category === 'torpedo' ? 10 : (weapon.size === 'L' ? 6 : (weapon.size === 'M' ? 4 : 2))),
               owner: isP2Ship ? 'player2' : (shooterIsFriendly ? 'player' : 'npc'),
               damage: damage,
               type: weapon.category, // 'rail', 'plasma', 'rocket', etc.
@@ -8292,6 +8294,7 @@
               turnRate: weapon.turnRate ? (weapon.turnRate * Math.PI / 180) : 0,
               homingDelay: weapon.homingDelay || 0,
               vfxKey: weapon.id,
+              forceCanvas: !!weapon.forceCanvas,  // tells weapon3DSystem to skip 3D bullet render
               lockOwner: isP2Ship ? 'player2' : (isP1Ship ? 'player' : null)
             });
           }
@@ -15249,12 +15252,18 @@
         const threeVisual = b.__renderedByThree === true;
         if (!threeVisual && (b.type === 'plasma' || b.type === 'rocket' || b.type === 'torpedo')) {
           const isTorpedo = b.type === 'torpedo';
-          const trailColor = isTorpedo ? '#ff6644' : '#8cff8c';
+          // Use bullet's actual color when available (e.g. cyan #7ef0ff for osa_micro_missile),
+          // fall back to type-default for legacy bullets without explicit color.
+          const trailColor = isTorpedo ? '#ff6644' : (b.color || '#8cff8c');
           const trailVel = { x: -b.vx * 0.02 + (Math.random() - 0.5) * 10, y: -b.vy * 0.02 + (Math.random() - 0.5) * 10 };
           spawnParticle({ x: b.x + (Math.random() - 0.5) * 3, y: b.y + (Math.random() - 0.5) * 3 }, trailVel, isTorpedo ? 0.5 : 0.28, trailColor, isTorpedo ? 2.0 : 1.0, false);
           // Extra engine glow for torpedoes
           if (isTorpedo) {
             spawnParticle({ x: b.x, y: b.y }, { x: (Math.random() - 0.5) * 20, y: (Math.random() - 0.5) * 20 }, 0.3, '#ffaa33', 1.5, false);
+          }
+          // Bright additive head glow for canvas-only fighter missiles — cheap (one extra particle/frame).
+          if (b.forceCanvas) {
+            spawnParticle({ x: b.x, y: b.y }, { x: 0, y: 0 }, 0.12, b.color || '#7ef0ff', 1.6, true);
           }
 
           if ((b.type === 'rocket' || b.type === 'torpedo') && b.homingDelay <= 0) {
@@ -15262,9 +15271,12 @@
             if ((!target || target.dead) && b.lockOwner === 'player2' && lockedTarget2 && !lockedTarget2.dead) target = lockedTarget2;
             if ((!target || target.dead) && b.lockOwner === 'player' && lockedTarget && !lockedTarget.dead) target = lockedTarget;
             if (target) {
+              // Fallback to .pos.x/.pos.y for entities like player ship that store coords there (NPCs use .x/.y directly)
+              const tx = (target.x !== undefined) ? target.x : (target.pos?.x ?? 0);
+              const ty = (target.y !== undefined) ? target.y : (target.pos?.y ?? 0);
               const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
-              const dx = target.x - b.x;
-              const dy = target.y - b.y;
+              const dx = tx - b.x;
+              const dy = ty - b.y;
               const current = Math.atan2(b.vy, b.vx);
               const desired = Math.atan2(dy, dx);
               const diff = wrapAngle(desired - current);

@@ -21,7 +21,7 @@ const CONFIG = Object.freeze({
   middleRailAlpha: 0.14,
   railWorldHeight: 150,
   collisionAlphaCutoff: 64,
-  ringRotationSpeed: 0.05,
+  ringRotationSpeed: 0.00,
   queryCellSize: 3000,
   forceFieldOpenRadius: 3000,
   forceFieldCloseRadius: 3800,
@@ -57,6 +57,11 @@ const RING_EDGE = Object.freeze({
   railReserve: 380,
   railOuterMargin: 20,
   wallSetback: 28,
+  gateGapPadRatio: 0.18,
+  gateReturnWallWidth: 128,
+  gateReturnWallSetback: 96,
+  gateRailTurnLength: 460,
+  gateRailSideWidth: 150,
   wallThickness: 88,
   railBeamWidth: 24,
   railBeamHeight: 34,
@@ -76,6 +81,7 @@ const BUILD_GRID = Object.freeze({
 });
 
 const RING_HEX_WORLD_SCALE = CONFIG.segmentWorldWidth / TEXTURE.width;
+const RING_FULL_ARC = Math.PI * 2;
 
 const RING_SEGMENT_MASS = 2500000;
 
@@ -194,6 +200,161 @@ function getBandTextureRangePx(bandId) {
   return [0, TEXTURE.height];
 }
 
+function normalizeArcAngle(angle) {
+  let next = Number(angle) % RING_FULL_ARC;
+  if (next < 0) next += RING_FULL_ARC;
+  return next;
+}
+
+function createBufferedGeometry(positions, uvs) {
+  if (!positions.length) return null;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+  geometry.computeBoundingBox();
+  return geometry;
+}
+
+function pushQuad(positions, uvs, ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, uv) {
+  positions.push(
+    ax, ay, az,
+    bx, by, bz,
+    cx, cy, cz,
+    ax, ay, az,
+    cx, cy, cz,
+    dx, dy, dz
+  );
+  const q = uv || [0, 0, 1, 0, 1, 1, 0, 1];
+  uvs.push(
+    q[0], q[1],
+    q[2], q[3],
+    q[4], q[5],
+    q[0], q[1],
+    q[4], q[5],
+    q[6], q[7]
+  );
+}
+
+function getArcStepCount(innerRadius, outerRadius, startAngle, endAngle) {
+  const span = Math.max(0, endAngle - startAngle);
+  const radius = Math.max(1, (Math.abs(innerRadius) + Math.abs(outerRadius)) * 0.5);
+  const byAngle = Math.ceil((span / RING_FULL_ARC) * 384);
+  const byLength = Math.ceil((span * radius) / 180);
+  return Math.max(1, Math.min(512, Math.max(byAngle, byLength)));
+}
+
+export function buildRingSolidArcRanges(segmentData, angleStep, gapPadAngle = 0) {
+  const segments = Array.isArray(segmentData) ? segmentData : [];
+  const count = segments.length;
+  const step = Number(angleStep) || 0;
+  if (!count || step <= 0) return [];
+
+  const isSolid = (seg) => seg && seg.type !== 'HOLE';
+  const hasSolid = segments.some(isSolid);
+  if (!hasSolid) return [];
+  if (segments.every(isSolid)) return [{ start: 0, end: RING_FULL_ARC }];
+
+  const firstHole = segments.findIndex(seg => !isSolid(seg));
+  const startIndex = (firstHole + 1) % count;
+  const ranges = [];
+  let runStart = null;
+  let runEnd = null;
+
+  for (let offset = 0; offset < count; offset++) {
+    const index = (startIndex + offset) % count;
+    const seg = segments[index];
+    const wrap = index <= firstHole ? 1 : 0;
+    const fallbackBase = (index + 0.5) * step;
+    const center = (Number.isFinite(seg?.baseAngle) ? seg.baseAngle : fallbackBase) + wrap * RING_FULL_ARC;
+    const segStart = center - step * 0.5;
+    const segEnd = center + step * 0.5;
+
+    if (isSolid(seg)) {
+      if (runStart === null) runStart = segStart;
+      runEnd = segEnd;
+    } else if (runStart !== null) {
+      const start = runStart + gapPadAngle;
+      const end = runEnd - gapPadAngle;
+      if (end > start) ranges.push({ start, end });
+      runStart = null;
+      runEnd = null;
+    }
+  }
+
+  if (runStart !== null) {
+    const start = runStart + gapPadAngle;
+    const end = runEnd - gapPadAngle;
+    if (end > start) ranges.push({ start, end });
+  }
+
+  return ranges;
+}
+
+function angleInArcRanges(angle, ranges, margin = 0) {
+  if (!Array.isArray(ranges) || !ranges.length) return false;
+  const a = normalizeArcAngle(angle);
+  const candidates = [a, a + RING_FULL_ARC, a - RING_FULL_ARC];
+  for (const range of ranges) {
+    const start = Number(range?.start) + margin;
+    const end = Number(range?.end) - margin;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    if (candidates.some(candidate => candidate >= start && candidate <= end)) return true;
+  }
+  return false;
+}
+
+export function buildRingGateReturnEndpointAngles(ranges) {
+  const result = [];
+  for (const range of ranges || []) {
+    if (!Number.isFinite(range?.start) || !Number.isFinite(range?.end) || range.end <= range.start) continue;
+    result.push(range.start, range.end);
+  }
+  return result;
+}
+
+export function computeGateReturnWallOuterRadius(wallInner, wallOuter, innerWallOuter, setback) {
+  const safeWallInner = Number(wallInner) || 0;
+  const safeWallOuter = Math.max(safeWallInner + 1, Number(wallOuter) || 0);
+  const safeInnerWallOuter = Number(innerWallOuter) || safeWallInner;
+  const safeSetback = Math.max(0, Number(setback) || 0);
+  const minOuter = Math.min(
+    safeWallOuter,
+    Math.max(safeWallInner + 20, safeInnerWallOuter + 24)
+  );
+  return Math.max(minOuter, safeWallOuter - safeSetback);
+}
+
+export function shouldBuildDockRailsForBand(bandId) {
+  return bandId === 'industrial' || bandId === 'military';
+}
+
+export function buildGateRailTurnArcRanges(ranges, turnAngle) {
+  const safeTurn = Math.max(0, Number(turnAngle) || 0);
+  if (!safeTurn) return [];
+  const result = [];
+  for (const range of ranges || []) {
+    if (!Number.isFinite(range?.start) || !Number.isFinite(range?.end) || range.end <= range.start) continue;
+    result.push(
+      { start: range.start - safeTurn, end: range.start },
+      { start: range.end, end: range.end + safeTurn }
+    );
+  }
+  return result;
+}
+
+function buildGateRailSideAngles(ranges, turnAngle) {
+  const safeTurn = Math.max(0, Number(turnAngle) || 0);
+  if (!safeTurn) return [];
+  const result = [];
+  for (const range of ranges || []) {
+    if (!Number.isFinite(range?.start) || !Number.isFinite(range?.end) || range.end <= range.start) continue;
+    result.push(range.start - safeTurn, range.end + safeTurn);
+  }
+  return result;
+}
+
 function createRingBandGeometry(innerRadius, outerRadius, z = 0) {
   const steps = 384;
   const positions = [];
@@ -294,6 +455,166 @@ function createRingAnnularBoxGeometry(innerRadius, outerRadius, height, z = 0) {
   geometry.computeBoundingSphere();
   geometry.computeBoundingBox();
   return geometry;
+}
+
+function appendRingBandArc(positions, uvs, innerRadius, outerRadius, startAngle, endAngle, z = 0) {
+  const inner = Math.max(1, Math.min(innerRadius, outerRadius));
+  const outer = Math.max(inner + 1, Math.max(innerRadius, outerRadius));
+  const steps = getArcStepCount(inner, outer, startAngle, endAngle);
+
+  for (let i = 0; i < steps; i++) {
+    const a0 = startAngle + ((endAngle - startAngle) * i) / steps;
+    const a1 = startAngle + ((endAngle - startAngle) * (i + 1)) / steps;
+    const u0 = a0 / RING_FULL_ARC;
+    const u1 = a1 / RING_FULL_ARC;
+    const x00 = Math.cos(a0) * inner;
+    const y00 = Math.sin(a0) * inner;
+    const x01 = Math.cos(a1) * inner;
+    const y01 = Math.sin(a1) * inner;
+    const x10 = Math.cos(a0) * outer;
+    const y10 = Math.sin(a0) * outer;
+    const x11 = Math.cos(a1) * outer;
+    const y11 = Math.sin(a1) * outer;
+
+    positions.push(
+      x00, y00, z,
+      x10, y10, z,
+      x11, y11, z,
+      x00, y00, z,
+      x11, y11, z,
+      x01, y01, z
+    );
+    uvs.push(
+      u0, 0,
+      u0, 1,
+      u1, 1,
+      u0, 0,
+      u1, 1,
+      u1, 0
+    );
+  }
+}
+
+function createRingBandRangesGeometry(innerRadius, outerRadius, ranges, z = 0) {
+  const positions = [];
+  const uvs = [];
+  for (const range of ranges || []) {
+    if (!Number.isFinite(range?.start) || !Number.isFinite(range?.end) || range.end <= range.start) continue;
+    appendRingBandArc(positions, uvs, innerRadius, outerRadius, range.start, range.end, z);
+  }
+  return createBufferedGeometry(positions, uvs);
+}
+
+function appendRingAnnularBoxArc(positions, uvs, innerRadius, outerRadius, height, z, startAngle, endAngle) {
+  const inner = Math.max(1, Math.min(innerRadius, outerRadius));
+  const outer = Math.max(inner + 1, Math.max(innerRadius, outerRadius));
+  const z0 = z;
+  const z1 = z + height;
+  const steps = getArcStepCount(inner, outer, startAngle, endAngle);
+
+  for (let i = 0; i < steps; i++) {
+    const a0 = startAngle + ((endAngle - startAngle) * i) / steps;
+    const a1 = startAngle + ((endAngle - startAngle) * (i + 1)) / steps;
+    const u0 = a0 / RING_FULL_ARC;
+    const u1 = a1 / RING_FULL_ARC;
+    const io0x = Math.cos(a0) * inner;
+    const io0y = Math.sin(a0) * inner;
+    const io1x = Math.cos(a1) * inner;
+    const io1y = Math.sin(a1) * inner;
+    const oo0x = Math.cos(a0) * outer;
+    const oo0y = Math.sin(a0) * outer;
+    const oo1x = Math.cos(a1) * outer;
+    const oo1y = Math.sin(a1) * outer;
+
+    pushQuad(positions, uvs, oo0x, oo0y, z0, oo1x, oo1y, z0, oo1x, oo1y, z1, oo0x, oo0y, z1, [u0, 0, u1, 0, u1, 1, u0, 1]);
+    pushQuad(positions, uvs, io1x, io1y, z0, io0x, io0y, z0, io0x, io0y, z1, io1x, io1y, z1, [u1, 0, u0, 0, u0, 1, u1, 1]);
+    pushQuad(positions, uvs, io0x, io0y, z1, oo0x, oo0y, z1, oo1x, oo1y, z1, io1x, io1y, z1, [u0, 0, u0, 1, u1, 1, u1, 0]);
+    pushQuad(positions, uvs, io1x, io1y, z0, oo1x, oo1y, z0, oo0x, oo0y, z0, io0x, io0y, z0, [u1, 0, u1, 1, u0, 1, u0, 0]);
+  }
+
+  for (const angle of [startAngle, endAngle]) {
+    const u = angle / RING_FULL_ARC;
+    const ix = Math.cos(angle) * inner;
+    const iy = Math.sin(angle) * inner;
+    const ox = Math.cos(angle) * outer;
+    const oy = Math.sin(angle) * outer;
+    pushQuad(positions, uvs, ix, iy, z0, ox, oy, z0, ox, oy, z1, ix, iy, z1, [u, 0, u, 1, u, 1, u, 0]);
+  }
+}
+
+function createRingAnnularBoxRangesGeometry(innerRadius, outerRadius, height, z, ranges) {
+  const positions = [];
+  const uvs = [];
+  for (const range of ranges || []) {
+    if (!Number.isFinite(range?.start) || !Number.isFinite(range?.end) || range.end <= range.start) continue;
+    appendRingAnnularBoxArc(positions, uvs, innerRadius, outerRadius, height, z, range.start, range.end);
+  }
+  return createBufferedGeometry(positions, uvs);
+}
+
+function appendTri(positions, uvs, ax, ay, az, bx, by, bz, cx, cy, cz, uv) {
+  positions.push(ax, ay, az, bx, by, bz, cx, cy, cz);
+  const q = uv || [0, 0, 1, 0, 0.5, 1];
+  uvs.push(q[0], q[1], q[2], q[3], q[4], q[5]);
+}
+
+function appendRadialCapsuleBox(positions, uvs, angle, innerRadius, outerRadius, width, height, z = 0, capSegments = 10) {
+  const inner = Math.max(1, Math.min(innerRadius, outerRadius));
+  const outer = Math.max(inner + 1, Math.max(innerRadius, outerRadius));
+  const halfWidth = Math.max(1, width * 0.5);
+  const z0 = z;
+  const z1 = z + Math.max(0.01, height);
+  const radialX = Math.cos(angle);
+  const radialY = Math.sin(angle);
+  const tangentX = -radialY;
+  const tangentY = radialX;
+  const localPoints = [];
+  const segs = Math.max(4, Math.floor(capSegments));
+
+  for (let i = 0; i <= segs; i++) {
+    const theta = Math.PI * 0.5 - (Math.PI * i) / segs;
+    localPoints.push({
+      r: outer + Math.cos(theta) * halfWidth,
+      t: Math.sin(theta) * halfWidth
+    });
+  }
+  for (let i = 0; i <= segs; i++) {
+    const theta = -Math.PI * 0.5 - (Math.PI * i) / segs;
+    localPoints.push({
+      r: inner + Math.cos(theta) * halfWidth,
+      t: Math.sin(theta) * halfWidth
+    });
+  }
+
+  const points = localPoints.map(p => ({
+    x: radialX * p.r + tangentX * p.t,
+    y: radialY * p.r + tangentY * p.t
+  }));
+  const centerR = (inner + outer) * 0.5;
+  const centerX = radialX * centerR;
+  const centerY = radialY * centerR;
+
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    pushQuad(positions, uvs, a.x, a.y, z0, b.x, b.y, z0, b.x, b.y, z1, a.x, a.y, z1);
+  }
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    appendTri(positions, uvs, centerX, centerY, z1, a.x, a.y, z1, b.x, b.y, z1);
+    appendTri(positions, uvs, centerX, centerY, z0, b.x, b.y, z0, a.x, a.y, z0);
+  }
+}
+
+function createRadialCapsuleBoxesGeometry(angles, innerRadius, outerRadius, width, height, z = 0, capSegments = 10) {
+  const positions = [];
+  const uvs = [];
+  for (const angle of angles || []) {
+    if (!Number.isFinite(angle)) continue;
+    appendRadialCapsuleBox(positions, uvs, angle, innerRadius, outerRadius, width, height, z, capSegments);
+  }
+  return createBufferedGeometry(positions, uvs);
 }
 
 function createBillboardPanelGeometry(radius, angle, width, height, zBottom, radialOffset = 0) {
@@ -1050,6 +1371,13 @@ class PlanetaryRing {
   buildRingWallsAndRails() {
     if (!this.ringFloor || !this.layout) return;
     this.wallRailMeshes.length = 0;
+    const arcRanges = buildRingSolidArcRanges(
+      this.segmentData,
+      this.angleStep,
+      this.angleStep * RING_EDGE.gateGapPadRatio
+    );
+    if (!arcRanges.length) return;
+    const gateReturnAngles = buildRingGateReturnEndpointAngles(arcRanges);
 
     for (const bandId of RING_SEGMENT_BANDS) {
       const band = this.layout?.[bandId];
@@ -1077,91 +1405,234 @@ class PlanetaryRing {
       const railOuter = Math.min(band.outerR - RING_EDGE.railOuterMargin, railInner + RING_EDGE.railLaneWidth);
       const railWidth = Math.max(1, railOuter - railInner);
       const repeatX = Math.max(12, Math.round((Math.PI * 2 * wallInner) / 900));
-
-      const railMesh = new THREE.Mesh(
-        createRingBandGeometry(railInner, railOuter, 0.42),
-        new THREE.MeshStandardMaterial({
-          color: 0x040506,
-          emissive: 0x000000,
-          emissiveIntensity: 0,
-          map: createRailTexture(null),
-          transparent: true,
-          opacity: 0.92,
-          roughness: 0.58,
-          metalness: 0.62,
-          depthWrite: false,
-          side: THREE.DoubleSide
-        })
+      const innerWallInner = band.innerR + 8;
+      const innerWallOuter = Math.min(band.outerR - 20, innerWallInner + RING_EDGE.innerWallThickness);
+      const gateReturnWallOuter = computeGateReturnWallOuterRadius(
+        wallInner,
+        wallOuter,
+        innerWallOuter,
+        RING_EDGE.gateReturnWallSetback
       );
-      railMesh.name = `PlanetaryRingDockRail:${this.key}:${bandId}`;
-      railMesh.renderOrder = -2;
-      railMesh.userData.fgCategory = 'buildings';
-      this.ringFloor.add(railMesh);
-      if (Core3D?.enableForeground3D) Core3D.enableForeground3D(railMesh);
-      this.wallRailMeshes.push(railMesh);
+      const returnWallRepeatX = Math.max(4, Math.round((Math.max(1, gateReturnWallOuter - innerWallInner) / 900) * 6));
+      const hasDockRails = shouldBuildDockRailsForBand(bandId);
+      const railTurnAngle = hasDockRails
+        ? Math.min(this.angleStep * 1.35, RING_EDGE.gateRailTurnLength / Math.max(1, railOuter))
+        : 0;
+      const railTurnArcRanges = buildGateRailTurnArcRanges(arcRanges, railTurnAngle);
+      const railRanges = hasDockRails ? arcRanges.concat(railTurnArcRanges) : [];
+      const railSideAngles = buildGateRailSideAngles(arcRanges, railTurnAngle);
+      const railSideInner = Math.min(
+        railInner,
+        Math.max(innerWallOuter + RING_EDGE.railWallGap, band.innerR + 24)
+      );
+
+      if (hasDockRails) {
+        const railGeometry = createRingBandRangesGeometry(railInner, railOuter, railRanges, 0.42);
+        if (railGeometry) {
+          const railMesh = new THREE.Mesh(
+            railGeometry,
+            new THREE.MeshStandardMaterial({
+              color: 0x040506,
+              emissive: 0x000000,
+              emissiveIntensity: 0,
+              map: createRailTexture(null),
+              transparent: true,
+              opacity: 0.92,
+              roughness: 0.58,
+              metalness: 0.62,
+              depthWrite: false,
+              side: THREE.DoubleSide
+            })
+          );
+          railMesh.name = `PlanetaryRingDockRail:${this.key}:${bandId}`;
+          railMesh.renderOrder = -2;
+          railMesh.userData.fgCategory = 'buildings';
+          this.ringFloor.add(railMesh);
+          if (Core3D?.enableForeground3D) Core3D.enableForeground3D(railMesh);
+          this.wallRailMeshes.push(railMesh);
+        }
+
+        const railReturnGeometry = createRadialCapsuleBoxesGeometry(
+          railSideAngles,
+          railSideInner,
+          railOuter,
+          RING_EDGE.gateRailSideWidth,
+          3,
+          0.41,
+          14
+        );
+        if (railReturnGeometry) {
+          const railReturn = new THREE.Mesh(
+            railReturnGeometry,
+            new THREE.MeshStandardMaterial({
+              color: 0x040506,
+              emissive: 0x000000,
+              emissiveIntensity: 0,
+              map: createRailTexture(null),
+              transparent: true,
+              opacity: 0.92,
+              roughness: 0.58,
+              metalness: 0.62,
+              depthWrite: false,
+              side: THREE.DoubleSide
+            })
+          );
+          railReturn.name = `PlanetaryRingDockRailTurn:${this.key}:${bandId}`;
+          railReturn.renderOrder = -2;
+          railReturn.userData.fgCategory = 'buildings';
+          this.ringFloor.add(railReturn);
+          if (Core3D?.enableForeground3D) Core3D.enableForeground3D(railReturn);
+          this.wallRailMeshes.push(railReturn);
+        }
+      }
 
       const beamCenters = [
         railInner + railWidth * 0.32,
         railInner + railWidth * 0.68
       ];
-      for (let i = 0; i < beamCenters.length; i++) {
-        const center = beamCenters[i];
-        const halfBeam = Math.min(RING_EDGE.railBeamWidth, railWidth * 0.18) * 0.5;
-        const railBeam = new THREE.Mesh(
-          createRingAnnularBoxGeometry(center - halfBeam, center + halfBeam, RING_EDGE.railBeamHeight, 0.45),
-          new THREE.MeshStandardMaterial({
-            color: 0x161d24,
-            emissive: 0x000000,
-            emissiveIntensity: 0,
-            roughness: 0.48,
-            metalness: 0.78
-          })
+      if (hasDockRails) {
+        for (let i = 0; i < beamCenters.length; i++) {
+          const center = beamCenters[i];
+          const halfBeam = Math.min(RING_EDGE.railBeamWidth, railWidth * 0.18) * 0.5;
+          const beamGeometry = createRingAnnularBoxRangesGeometry(
+            center - halfBeam,
+            center + halfBeam,
+            RING_EDGE.railBeamHeight,
+            0.45,
+            railRanges
+          );
+          if (!beamGeometry) continue;
+          const railBeam = new THREE.Mesh(
+            beamGeometry,
+            new THREE.MeshStandardMaterial({
+              color: 0x161d24,
+              emissive: 0x000000,
+              emissiveIntensity: 0,
+              roughness: 0.48,
+              metalness: 0.78,
+              side: THREE.DoubleSide
+            })
+          );
+          railBeam.name = `PlanetaryRingDockRailBeam:${this.key}:${bandId}:${i}`;
+          railBeam.renderOrder = -1;
+          railBeam.userData.fgCategory = 'buildings';
+          this.ringFloor.add(railBeam);
+          if (Core3D?.enableForeground3D) Core3D.enableForeground3D(railBeam);
+          this.wallRailMeshes.push(railBeam);
+        }
+
+        const railBeamTurnGeometry = createRadialCapsuleBoxesGeometry(
+          railSideAngles,
+          railSideInner,
+          railOuter,
+          Math.max(RING_EDGE.railBeamWidth * 1.6, 34),
+          RING_EDGE.railBeamHeight,
+          0.45,
+          12
         );
-        railBeam.name = `PlanetaryRingDockRailBeam:${this.key}:${bandId}:${i}`;
-        railBeam.renderOrder = -1;
-        railBeam.userData.fgCategory = 'buildings';
-        this.ringFloor.add(railBeam);
-        if (Core3D?.enableForeground3D) Core3D.enableForeground3D(railBeam);
-        this.wallRailMeshes.push(railBeam);
+        if (railBeamTurnGeometry) {
+          const railBeamTurn = new THREE.Mesh(
+            railBeamTurnGeometry,
+            new THREE.MeshStandardMaterial({
+              color: 0x161d24,
+              emissive: 0x000000,
+              emissiveIntensity: 0,
+              roughness: 0.48,
+              metalness: 0.78,
+              side: THREE.DoubleSide
+            })
+          );
+          railBeamTurn.name = `PlanetaryRingDockRailBeamTurn:${this.key}:${bandId}`;
+          railBeamTurn.renderOrder = -1;
+          railBeamTurn.userData.fgCategory = 'buildings';
+          this.ringFloor.add(railBeamTurn);
+          if (Core3D?.enableForeground3D) Core3D.enableForeground3D(railBeamTurn);
+          this.wallRailMeshes.push(railBeamTurn);
+        }
       }
 
-      const outerWall = new THREE.Mesh(
-        createRingAnnularBoxGeometry(wallInner, wallOuter, RING_EDGE.wallHeight, 0.2),
-        new THREE.MeshStandardMaterial({
-          color: 0x0b0f16,
-          emissive: 0x020304,
-          emissiveIntensity: 0.04,
-          map: createWallTexture(theme, repeatX),
-          roughness: 0.78,
-          metalness: 0.45,
-          side: THREE.DoubleSide
-        })
+      const outerWallGeometry = createRingAnnularBoxRangesGeometry(
+        wallInner,
+        wallOuter,
+        RING_EDGE.wallHeight,
+        0.2,
+        arcRanges
       );
-      outerWall.name = `PlanetaryRingOuterWall:${this.key}:${bandId}`;
-      outerWall.userData.fgCategory = 'buildings';
-      this.ringFloor.add(outerWall);
-      if (Core3D?.enableForeground3D) Core3D.enableForeground3D(outerWall);
-      this.wallRailMeshes.push(outerWall);
+      if (outerWallGeometry) {
+        const outerWall = new THREE.Mesh(
+          outerWallGeometry,
+          new THREE.MeshStandardMaterial({
+            color: 0x0b0f16,
+            emissive: 0x020304,
+            emissiveIntensity: 0.04,
+            map: createWallTexture(theme, repeatX),
+            roughness: 0.78,
+            metalness: 0.45,
+            side: THREE.DoubleSide
+          })
+        );
+        outerWall.name = `PlanetaryRingOuterWall:${this.key}:${bandId}`;
+        outerWall.userData.fgCategory = 'buildings';
+        this.ringFloor.add(outerWall);
+        if (Core3D?.enableForeground3D) Core3D.enableForeground3D(outerWall);
+        this.wallRailMeshes.push(outerWall);
+      }
 
-      const innerWallInner = band.innerR + 8;
-      const innerWallOuter = Math.min(band.outerR - 20, innerWallInner + RING_EDGE.innerWallThickness);
-      const innerWall = new THREE.Mesh(
-        createRingAnnularBoxGeometry(innerWallInner, innerWallOuter, RING_EDGE.innerWallHeight, 0.18),
-        new THREE.MeshStandardMaterial({
-          color: 0x080b11,
-          emissive: 0x010203,
-          emissiveIntensity: 0.03,
-          map: createWallTexture(theme, Math.max(8, Math.round(repeatX * 0.72))),
-          roughness: 0.82,
-          metalness: 0.38,
-          side: THREE.DoubleSide
-        })
+      const returnWallGeometry = createRadialCapsuleBoxesGeometry(
+        gateReturnAngles,
+        innerWallInner,
+        gateReturnWallOuter,
+        RING_EDGE.gateReturnWallWidth,
+        RING_EDGE.wallHeight,
+        0.22,
+        14
       );
-      innerWall.name = `PlanetaryRingInnerWall:${this.key}:${bandId}`;
-      innerWall.userData.fgCategory = 'buildings';
-      this.ringFloor.add(innerWall);
-      if (Core3D?.enableForeground3D) Core3D.enableForeground3D(innerWall);
-      this.wallRailMeshes.push(innerWall);
+      if (returnWallGeometry) {
+        const returnWall = new THREE.Mesh(
+          returnWallGeometry,
+          new THREE.MeshStandardMaterial({
+            color: 0x0b0f16,
+            emissive: 0x020304,
+            emissiveIntensity: 0.04,
+            map: createWallTexture(theme, returnWallRepeatX),
+            roughness: 0.78,
+            metalness: 0.45,
+            side: THREE.DoubleSide
+          })
+        );
+        returnWall.name = `PlanetaryRingGateReturnWall:${this.key}:${bandId}`;
+        returnWall.userData.fgCategory = 'buildings';
+        this.ringFloor.add(returnWall);
+        if (Core3D?.enableForeground3D) Core3D.enableForeground3D(returnWall);
+        this.wallRailMeshes.push(returnWall);
+      }
+
+      const innerWallGeometry = createRingAnnularBoxRangesGeometry(
+        innerWallInner,
+        innerWallOuter,
+        RING_EDGE.innerWallHeight,
+        0.18,
+        arcRanges
+      );
+      if (innerWallGeometry) {
+        const innerWall = new THREE.Mesh(
+          innerWallGeometry,
+          new THREE.MeshStandardMaterial({
+            color: 0x080b11,
+            emissive: 0x010203,
+            emissiveIntensity: 0.03,
+            map: createWallTexture(theme, Math.max(8, Math.round(repeatX * 0.72))),
+            roughness: 0.82,
+            metalness: 0.38,
+            side: THREE.DoubleSide
+          })
+        );
+        innerWall.name = `PlanetaryRingInnerWall:${this.key}:${bandId}`;
+        innerWall.userData.fgCategory = 'buildings';
+        this.ringFloor.add(innerWall);
+        if (Core3D?.enableForeground3D) Core3D.enableForeground3D(innerWall);
+        this.wallRailMeshes.push(innerWall);
+      }
 
       const billboardLabels = bandId === 'military'
         ? ['MIL DOCK', 'ARMORY', 'DRY BAY']
@@ -1174,7 +1645,8 @@ class PlanetaryRing {
 
       for (let i = 0; i < billboardCount; i++) {
         const angle = ((i + 0.5) / billboardCount) * Math.PI * 2 + billboardOffset;
-        if (isGateAngle(angle)) continue;
+        const billboardMargin = Math.max(this.angleStep * 0.25, (RING_EDGE.billboardWidth * 0.5) / Math.max(1, billboardRadius));
+        if (isGateAngle(angle) || !angleInArcRanges(angle, arcRanges, billboardMargin)) continue;
         const texture = createBillboardTexture(theme, billboardLabels[i % billboardLabels.length], i);
         if (!texture) continue;
         const billboard = new THREE.Mesh(
