@@ -1208,6 +1208,9 @@ function createWeapon3DMesh(weaponId, category, size) {
 }
 
 function resolveBulletVisualStyle(bullet) {
+  // Opt-out for canvas-only weapons (e.g. osa_micro_missile). Returning null causes
+  // the render loop at line 2273 to set __renderedByThree=false → canvas path renders it.
+  if (bullet?.forceCanvas) return null;
   if (bullet.__cachedStyle) return bullet.__cachedStyle;
   const key = String(bullet?.vfxKey || bullet?.weaponId || bullet?.weaponName || bullet?.type || '').toLowerCase();
   let result;

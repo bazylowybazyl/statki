@@ -99,16 +99,15 @@ export const MASTER_WEAPONS = {
   },
   osa_micro_missile: {
     id: 'osa_micro_missile', name: 'Osa Mk I', mountType: 'missile', category: 'rocket', size: 'S',
-    baseDamage: 280, baseRange: 3600, baseSpeed: 3800, cooldown: 1.0, ammo: 10,
-    turnRate: 3000, homingDelay: 0.04, explosionRadius: 32, vfxColor: '#7ef0ff',
-    bodyScale: 0.3, exhaustScale: 0.32, fireScale: 0.32, smokeScale: 0.3, explosionVisualScale: 0.45,
-    proximityRadius: 26, terminalRadius: 90, reacquireRadius: 240,
-    reacquireTurnMultiplier: 3.0, reacquireSpeedFactor: 0.55, terminalSpeedFactor: 0.7,
-    leadHorizon: 0.18, terminalLeadHorizon: 0.02,
-    rocketBodyColor: '#7ef0ff',
-    exhaustStepCap: 2,
-    skipSmoke: true,
-    fireParticleLifeMul: 0.55,
+    baseDamage: 280, baseRange: 4000, baseSpeed: 3000, cooldown: 1.0, ammo: 10,
+    turnRate: 2400, homingDelay: 0, explosionRadius: 36, vfxColor: '#7ef0ff',
+    // Canvas-only render path — bypasses rocketSystem3D entirely.
+    // No ejection / quaternion guidance / multi-phase homing. Just simple turn-rate clamp
+    // homing on the 2D bullet plane (index.html:15260). Direct, predictable, scalable.
+    forceCanvas: true,
+    // Override default size→radius mapping (S=2u). Fighter radius is 12u, so fuse=12+8=20u —
+    // wide enough that step/frame (3000/60=50u) doesn't tunnel through.
+    bulletRadius: 8,
     description: 'Lekka, zwrotna rakieta myśliwska. Krótki zasięg, wysoka kadencja, plazmowy ogon.'
   },
   supernova_missile: {

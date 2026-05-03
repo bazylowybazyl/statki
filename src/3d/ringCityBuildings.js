@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
 import {
-    ZONE_COLS, ZONE_PAD_ANGLE, ZONE_PAD_RADIUS,
+    ZONE_COLS, ZONE_PAD_ANGLE, ZONE_PAD_RADIUS, INNER_RING_ROWS,
     AUTOSTRADA_WIDTH,
     RING_INNER, RING_INDUSTRIAL, RING_MILITARY,
     COLORS, createSeededRandom, hashZoneSeed,
@@ -29,9 +29,25 @@ const WINDOW_SCALE = 500;
 const NUM_CHUNKS = 16;
 const CHUNK_ARC = (Math.PI * 2) / NUM_CHUNKS;
 const BUILDING_FLOOR_CLEARANCE = 56;
-const STOREFRONT_COL_STRIDE = 8;
-const STOREFRONT_INNER_ROW = 1;
+const STOREFRONT_BRIDGE_MIN_BUILDING_H = 70;
+const STOREFRONT_BRIDGE_MIN_LENGTH = 38;
+const STOREFRONT_BRIDGE_WIDTH = 24;
+const STOREFRONT_BRIDGE_HEIGHT = 14;
+const STOREFRONT_PROMENADE_WIDTH = 34;
+const STOREFRONT_PROMENADE_HEIGHT = 10;
+const STOREFRONT_BRIDGE_DOCK_INSET_RATIO = 0.18;
+const STOREFRONT_BRIDGE_MAX_DOCK_INSET = 42;
+const STOREFRONT_RADIAL_COL_STRIDE = 2;
+const STOREFRONT_TANGENTIAL_COL_STRIDE = 4;
+const STOREFRONT_MAX_RADIAL_DISTANCE = 760;
+const STOREFRONT_MAX_TANGENTIAL_DISTANCE = 360;
+const STOREFRONT_MAX_HEIGHT_DELTA = 190;
 const STOREFRONT_MODEL_WIDTH = 304.86;
+const STOREFRONT_MODEL_DEPTH = 304.86;
+const STOREFRONT_SYNTH_PITCH = 304;
+const STOREFRONT_LANE_RADIAL_FILL = 0.42;
+const STOREFRONT_LANE_ARC_SCALE = 1.0;
+const STOREFRONT_LANE_BASE_Z = 2;
 
 function clampNumber(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -49,6 +65,8 @@ const LOD_LEVEL_BY_MAT = {
     padSign: 'DETAIL',
     dish: 'DETAIL',
     storefronts: 'MEDIUM',
+    storefrontBridge: 'MEDIUM',
+    storefrontPromenade: 'MEDIUM',
 };
 
 // --- Material dict cache per zone ---
@@ -486,13 +504,334 @@ function buildCellToWorldMatrix(cellCenterAngle, cellCenterRadius) {
     );
 }
 
+function normalizePositiveAngle(angle) {
+    const full = Math.PI * 2;
+    let next = angle % full;
+    if (next < 0) next += full;
+    return next;
+}
+
+export function createPolarWrappedStorefrontGeometry(sourceGeometry, centerAngle, centerRadius, options = {}) {
+    if (!sourceGeometry || !Number.isFinite(centerAngle) || !Number.isFinite(centerRadius)) return null;
+
+    const geo = sourceGeometry.index ? sourceGeometry.toNonIndexed() : sourceGeometry.clone();
+    if (!geo.hasAttribute('position')) {
+        geo.dispose?.();
+        return null;
+    }
+
+    geo.computeBoundingBox();
+    const box = geo.boundingBox;
+    if (!box) return geo;
+
+    const scaleU = Number.isFinite(options.scaleU) ? options.scaleU : 1;
+    const scaleR = Number.isFinite(options.scaleR) ? options.scaleR : 1;
+    const scaleH = Number.isFinite(options.scaleH) ? options.scaleH : 1;
+    const baseZ = Number.isFinite(options.baseZ) ? options.baseZ : STOREFRONT_LANE_BASE_Z;
+    const originX = (box.min.x + box.max.x) * 0.5;
+    const originZ = (box.min.z + box.max.z) * 0.5;
+    const originY = box.min.y;
+    const angleRadius = Math.max(1, centerRadius);
+    const pos = geo.attributes.position;
+
+    for (let i = 0; i < pos.count; i++) {
+        const localU = (pos.getX(i) - originX) * scaleU;
+        const localR = (pos.getZ(i) - originZ) * scaleR;
+        const localH = (pos.getY(i) - originY) * scaleH;
+        const radius = Math.max(1, centerRadius + localR);
+        const angle = centerAngle + (localU / angleRadius);
+        pos.setXYZ(
+            i,
+            Math.cos(angle) * radius,
+            Math.sin(angle) * radius,
+            baseZ + localH
+        );
+    }
+
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
+    geo.computeBoundingBox();
+    return geo;
+}
+
+function getCellByRowCol(cells) {
+    const map = new Map();
+    for (const cell of cells || []) {
+        if (!cell || !Number.isFinite(Number(cell.row)) || !Number.isFinite(Number(cell.col))) continue;
+        map.set(`${cell.row}:${wrapBridgeCol(cell.col)}`, cell);
+    }
+    return map;
+}
+
+function appendPolarStorefrontLanesToChunks(chunks, cells) {
+    if (!chunks?.length || !cells?.length) return;
+    const source = synthCityAssets.models.storefronts;
+    if (!source) return;
+
+    const byRowCol = getCellByRowCol(cells);
+    for (let lane = 0; lane < INNER_RING_ROWS - 1; lane++) {
+        const sample = byRowCol.get(`${lane}:0`) || cells.find(c => c.row === lane);
+        const nextSample = byRowCol.get(`${lane + 1}:0`) || cells.find(c => c.row === lane + 1);
+        if (!sample || !nextSample) continue;
+
+        const rowDepth = Math.max(1, sample.outerRadius - sample.innerRadius);
+        const laneRadius = (sample.outerRadius + nextSample.innerRadius) * 0.5;
+        const cellAngleSpan = Math.max(0.0001, sample.angleEnd - sample.angleStart);
+        const arcPerCol = Math.max(1, laneRadius * cellAngleSpan);
+        const colStep = Math.max(1, Math.round(STOREFRONT_SYNTH_PITCH / arcPerCol));
+        const scaleU = STOREFRONT_LANE_ARC_SCALE;
+        const scaleR = clampNumber((rowDepth * STOREFRONT_LANE_RADIAL_FILL) / STOREFRONT_MODEL_DEPTH, 0.38, 0.78);
+
+        for (let col = lane % colStep; col < ZONE_COLS; col += colStep) {
+            const aCell = byRowCol.get(`${lane}:${wrapBridgeCol(col)}`);
+            const bCell = byRowCol.get(`${lane + 1}:${wrapBridgeCol(col)}`);
+            if (!aCell?.zone || !bCell?.zone) continue;
+
+            const centerAngle = normalizePositiveAngle(aCell.angleStart + cellAngleSpan * colStep * 0.5);
+            const geo = createPolarWrappedStorefrontGeometry(source, centerAngle, laneRadius, {
+                scaleU,
+                scaleR,
+                baseZ: STOREFRONT_LANE_BASE_Z
+            });
+            if (!geo) continue;
+
+            const chunkIdx = chunks.length === NUM_CHUNKS ? getChunkIndex(centerAngle) : 0;
+            const chunk = chunks[chunkIdx] || chunks[0];
+            if (!chunk) {
+                geo.dispose?.();
+                continue;
+            }
+            if (!chunk.geoByMat.storefronts) chunk.geoByMat.storefronts = [];
+            chunk.geoByMat.storefronts.push(geo);
+            chunk.zones.add(aCell.zone || bCell.zone || 'commercial');
+        }
+    }
+}
+
 // ============================================================
-// generateCellBuildingData — generate geometries + decoration data for one cell
-// Returns { geoMap, dynamicDecorationData, cellCenterAngle, cellCenterRadius }
+// Storefront bridge network helpers
+// Shared helpers for bridge/storefront network generation.
+// ============================================================
+function wrapBridgeCol(col, zoneCols = ZONE_COLS) {
+    const count = Math.max(1, Math.floor(zoneCols) || ZONE_COLS);
+    let next = Math.floor(Number(col) || 0) % count;
+    if (next < 0) next += count;
+    return next;
+}
+
+function anchorCoord(anchor, axis) {
+    if (!anchor) return 0;
+    const worldKey = axis === 'x' ? 'worldX' : 'worldY';
+    if (Number.isFinite(anchor[worldKey])) return anchor[worldKey];
+    if (Number.isFinite(anchor[axis])) return anchor[axis];
+    return 0;
+}
+
+function anchorHeight(anchor) {
+    if (!anchor) return 0;
+    if (Number.isFinite(anchor.bridgeZ)) return anchor.bridgeZ;
+    if (Number.isFinite(anchor.height)) return anchor.height;
+    if (Number.isFinite(anchor.worldZ)) return anchor.worldZ;
+    return 0;
+}
+
+function anchorKey(anchor) {
+    if (!anchor) return 'missing';
+    if (anchor.id) return String(anchor.id);
+    return `${anchor.row}:${anchor.col}:${anchor.slotRow ?? 0}:${anchor.slotCol ?? 0}:${Math.round(anchorCoord(anchor, 'x'))}:${Math.round(anchorCoord(anchor, 'y'))}`;
+}
+
+function isStorefrontAnchor(anchor) {
+    if (!anchor) return false;
+    if (anchor.ringId && anchor.ringId !== RING_INNER) return false;
+    const family = anchor.zoneFamily || getZoneFamily(anchor.zone || '');
+    if (family !== 'residential' && family !== 'commercial') return false;
+    if ((Number(anchor.height) || 0) < STOREFRONT_BRIDGE_MIN_BUILDING_H) return false;
+    return Number.isFinite(Number(anchor.row)) && Number.isFinite(Number(anchor.col));
+}
+
+function selectPrimaryAnchor(anchors) {
+    let best = null;
+    let bestScore = -Infinity;
+    for (const anchor of anchors) {
+        const height = Number(anchor.height) || 0;
+        const radius = Number(anchor.footprintRadius) || 0;
+        const score = height * 1.35 - radius * 0.12;
+        if (score > bestScore) {
+            best = anchor;
+            bestScore = score;
+        }
+    }
+    return best;
+}
+
+export function selectStorefrontBridgePairs(anchors, options = {}) {
+    const zoneCols = Math.max(1, Math.floor(options.zoneCols || ZONE_COLS));
+    const innerRows = Math.max(1, Math.floor(options.innerRows || INNER_RING_ROWS));
+    const radialStride = Math.max(1, Math.floor(options.radialColStride || STOREFRONT_RADIAL_COL_STRIDE));
+    const tangentialStride = Math.max(1, Math.floor(options.tangentialColStride || STOREFRONT_TANGENTIAL_COL_STRIDE));
+    const maxRadialDistance = Number(options.maxRadialDistance) || STOREFRONT_MAX_RADIAL_DISTANCE;
+    const maxTangentialDistance = Number(options.maxTangentialDistance) || STOREFRONT_MAX_TANGENTIAL_DISTANCE;
+    const maxHeightDelta = Number(options.maxHeightDelta) || STOREFRONT_MAX_HEIGHT_DELTA;
+
+    const grouped = new Map();
+    for (const anchor of anchors || []) {
+        if (!isStorefrontAnchor(anchor)) continue;
+        const row = Math.floor(Number(anchor.row));
+        if (row < 0 || row >= innerRows) continue;
+        const col = wrapBridgeCol(anchor.col, zoneCols);
+        const key = `${row}:${col}`;
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push({ ...anchor, row, col });
+    }
+
+    const primary = new Map();
+    for (const [key, items] of grouped) {
+        const anchor = selectPrimaryAnchor(items);
+        if (anchor) primary.set(key, anchor);
+    }
+
+    const pairs = [];
+    const seen = new Set();
+    const getPrimary = (row, col) => primary.get(`${row}:${wrapBridgeCol(col, zoneCols)}`);
+    const maybeAdd = (a, b, kind) => {
+        if (!a || !b || a === b) return;
+        const dx = anchorCoord(b, 'x') - anchorCoord(a, 'x');
+        const dy = anchorCoord(b, 'y') - anchorCoord(a, 'y');
+        const distance = Math.hypot(dx, dy);
+        const maxDistance = kind === 'radial' ? maxRadialDistance : maxTangentialDistance;
+        if (distance < STOREFRONT_BRIDGE_MIN_LENGTH || distance > maxDistance) return;
+        if (Math.abs(anchorHeight(a) - anchorHeight(b)) > maxHeightDelta) return;
+        const ids = [anchorKey(a), anchorKey(b)].sort();
+        const key = `${ids[0]}|${ids[1]}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        pairs.push({ a, b, kind, distance });
+    };
+
+    for (let col = 0; col < zoneCols; col++) {
+        if ((col % radialStride) !== 0) continue;
+        for (let row = 0; row < innerRows - 1; row++) {
+            maybeAdd(getPrimary(row, col), getPrimary(row + 1, col), 'radial');
+        }
+    }
+
+    for (let row = 0; row < innerRows; row++) {
+        for (let col = 0; col < zoneCols; col++) {
+            if (((col + row) % tangentialStride) !== 0) continue;
+            maybeAdd(getPrimary(row, col), getPrimary(row, col + 1), 'tangential');
+        }
+    }
+
+    return pairs;
+}
+
+function createOrientedBoxGeometry(startX, startY, endX, endY, centerZ, length, width, height) {
+    const midX = (startX + endX) * 0.5;
+    const midY = (startY + endY) * 0.5;
+    const angle = Math.atan2(endY - startY, endX - startX);
+    const geo = new THREE.BoxGeometry(length, width, height);
+    geo.rotateZ(angle);
+    geo.translate(midX, midY, centerZ);
+    return geo.toNonIndexed();
+}
+
+export function createStorefrontBridgeGeometries(pair) {
+    const ax = anchorCoord(pair.a, 'x');
+    const ay = anchorCoord(pair.a, 'y');
+    const bx = anchorCoord(pair.b, 'x');
+    const by = anchorCoord(pair.b, 'y');
+    const dx = bx - ax;
+    const dy = by - ay;
+    const distance = Math.hypot(dx, dy);
+    if (distance < STOREFRONT_BRIDGE_MIN_LENGTH) return null;
+
+    const dirX = dx / distance;
+    const dirY = dy / distance;
+    const trimA = Math.min(
+        distance * 0.12,
+        Math.max(6, (Number(pair.a.footprintRadius) || 70) * STOREFRONT_BRIDGE_DOCK_INSET_RATIO),
+        STOREFRONT_BRIDGE_MAX_DOCK_INSET
+    );
+    const trimB = Math.min(
+        distance * 0.12,
+        Math.max(6, (Number(pair.b.footprintRadius) || 70) * STOREFRONT_BRIDGE_DOCK_INSET_RATIO),
+        STOREFRONT_BRIDGE_MAX_DOCK_INSET
+    );
+    const startX = ax + dirX * trimA;
+    const startY = ay + dirY * trimA;
+    const endX = bx - dirX * trimB;
+    const endY = by - dirY * trimB;
+    const length = Math.hypot(endX - startX, endY - startY);
+    if (length < STOREFRONT_BRIDGE_MIN_LENGTH) return null;
+
+    const lowerBuildingH = Math.min(Number(pair.a.height) || 90, Number(pair.b.height) || 90);
+    const bridgeZ = clampNumber(lowerBuildingH * 0.42, 62, Math.max(64, lowerBuildingH - 18));
+    const promenadeZ = STOREFRONT_PROMENADE_HEIGHT * 0.5 + 7;
+
+    const bridge = createOrientedBoxGeometry(
+        startX, startY, endX, endY,
+        bridgeZ,
+        length,
+        pair.kind === 'radial' ? STOREFRONT_BRIDGE_WIDTH + 4 : STOREFRONT_BRIDGE_WIDTH,
+        STOREFRONT_BRIDGE_HEIGHT
+    );
+    const promenade = createOrientedBoxGeometry(
+        startX, startY, endX, endY,
+        promenadeZ,
+        length * 0.94,
+        pair.kind === 'radial' ? STOREFRONT_PROMENADE_WIDTH + 6 : STOREFRONT_PROMENADE_WIDTH,
+        STOREFRONT_PROMENADE_HEIGHT
+    );
+
+    const edges = new THREE.EdgesGeometry(bridge);
+    return { bridge, promenade, edges };
+}
+
+function appendStorefrontBridgeNetworkToChunks(chunks, anchors, options = {}) {
+    if (!chunks?.length || !anchors?.length) return;
+    const pairs = selectStorefrontBridgePairs(anchors, options);
+    for (const pair of pairs) {
+        const geos = createStorefrontBridgeGeometries(pair);
+        if (!geos) continue;
+        const midX = (anchorCoord(pair.a, 'x') + anchorCoord(pair.b, 'x')) * 0.5;
+        const midY = (anchorCoord(pair.a, 'y') + anchorCoord(pair.b, 'y')) * 0.5;
+        const chunkIdx = chunks.length === NUM_CHUNKS ? getChunkIndex(Math.atan2(midY, midX)) : 0;
+        const chunk = chunks[chunkIdx] || chunks[0];
+        if (!chunk) continue;
+        if (!chunk.geoByMat.storefrontBridge) chunk.geoByMat.storefrontBridge = [];
+        if (!chunk.geoByMat.storefrontPromenade) chunk.geoByMat.storefrontPromenade = [];
+        chunk.geoByMat.storefrontPromenade.push(geos.promenade);
+        chunk.geoByMat.storefrontBridge.push(geos.bridge);
+        chunk.neonEdgeGeos.push(geos.edges);
+        chunk.hasNeonEdges = true;
+    }
+}
+
+function appendWorldBridgeAnchors(target, bridgeAnchorData, cellToWorld, cellCenterAngle, zone) {
+    if (!bridgeAnchorData?.length) return;
+    for (const anchor of bridgeAnchorData) {
+        const worldPos = new THREE.Vector3(anchor.localX, anchor.localY, anchor.bridgeZ);
+        worldPos.applyMatrix4(cellToWorld);
+        target.push({
+            ...anchor,
+            zone,
+            worldX: worldPos.x,
+            worldY: worldPos.y,
+            worldZ: worldPos.z,
+            cellAngle: cellCenterAngle,
+        });
+    }
+}
+
+// ============================================================
+// generateCellBuildingData - generate geometries + decoration data for one cell
 // Geometries are in cell-local coords (NOT yet transformed to world).
 // ============================================================
 function generateCellBuildingData(cell, ring) {
     const zone = cell.zone;
+    const zoneFamily = getZoneFamily(zone);
     const rand = createSeededRandom(hashZoneSeed(cell, zone));
     const buildCount = getZoneTargetBuildingCount(zone, rand);
 
@@ -515,6 +854,8 @@ function generateCellBuildingData(cell, ring) {
             const centerAngle = buildStartAngle + (c + 0.5) * angleStep;
             const centerRadius = buildInnerRadi + (r + 0.5) * radiusStep;
             buildSlots.push({
+                row: r,
+                col: c,
                 angle: centerAngle + (rand() - 0.5) * angleStep * 0.4,
                 radius: centerRadius + (rand() - 0.5) * radiusStep * 0.4
             });
@@ -530,6 +871,7 @@ function generateCellBuildingData(cell, ring) {
 
     const cellGeoMap = {};
     const dynamicDecorationData = [];
+    const bridgeAnchorData = [];
 
     for (let si = 0; si < Math.min(buildCount, buildSlots.length); si++) {
         const slot = buildSlots[si];
@@ -551,6 +893,29 @@ function generateCellBuildingData(cell, ring) {
             ? new THREE.Matrix4().makeScale(footprintFitScale, footprintFitScale, 1)
             : null;
         const translationMatrix = new THREE.Matrix4().makeTranslation(localX, localY, 0);
+
+        if (
+            cell.ring === RING_INNER &&
+            (zoneFamily === 'residential' || zoneFamily === 'commercial') &&
+            (Number(buildResult.totalH) || 0) >= STOREFRONT_BRIDGE_MIN_BUILDING_H
+        ) {
+            bridgeAnchorData.push({
+                id: `${cell.key}:${slot.row}:${slot.col}`,
+                cellKey: cell.key,
+                ringId: cell.ring,
+                row: cell.row,
+                col: cell.col,
+                slotRow: slot.row,
+                slotCol: slot.col,
+                zone,
+                zoneFamily,
+                localX,
+                localY,
+                height: buildResult.totalH,
+                bridgeZ: clampNumber(buildResult.totalH * 0.42, 62, Math.max(64, buildResult.totalH - 18)),
+                footprintRadius,
+            });
+        }
 
         if (buildResult.adsType) {
             const isBig = buildResult.modelId && (buildResult.modelId.startsWith('s_04') || buildResult.modelId.startsWith('s_05'));
@@ -605,54 +970,10 @@ function generateCellBuildingData(cell, ring) {
         }
     }
 
-    // ---- Storefronts (sparse bridge/pipe modules at district intersections) ----
-    // Keep SynthCity storefront modules sparse and fitted to ring-cell corners.
-    const zoneFamily = getZoneFamily(zone);
-    if (
-        cell.ring === RING_INNER &&
-        cell.row === STOREFRONT_INNER_ROW &&
-        (zoneFamily === 'residential' || zoneFamily === 'commercial') &&
-        (cell.col % STOREFRONT_COL_STRIDE) === 0
-    ) {
-        const sfGeo = cloneSynthCityGeometry('storefronts');
-        if (sfGeo) {
-            const cellArcWidth = Math.max(1, (cell.angleEnd - cell.angleStart) * cellCenterRadius);
-            const cellDepth = Math.max(1, cell.outerRadius - cell.innerRadius);
-            const sfScale = clampNumber(
-                Math.min(cellArcWidth * 2.1, cellDepth * 1.12) / STOREFRONT_MODEL_WIDTH,
-                0.45,
-                1.05
-            );
-            // OBJ is in XZ plane with Y up.  Ring cell-local is
-            // X=radial, Y=tangential, Z=height.
-            // Rotate X 90 degrees to swap Y to Z (up), then scale.
-            sfGeo.rotateX(Math.PI / 2);
-            sfGeo.scale(sfScale, sfScale, sfScale);
-
-            // Place near the outer road junction so it reads as infrastructure.
-            const edgeX = (cell.outerRadius - cellCenterRadius) - Math.min(35, cellDepth * 0.08);
-            const edgeY = (cell.angleEnd - cellCenterAngle) * cellCenterRadius;
-            const sfMatrix = new THREE.Matrix4().makeTranslation(edgeX, edgeY, 0);
-            sfGeo.applyMatrix4(sfMatrix);
-
-            // Ensure matching attributes for merge
-            const posCount = sfGeo.attributes.position.count;
-            if (!sfGeo.hasAttribute('normal')) {
-                sfGeo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(posCount * 3), 3));
-            }
-            if (!sfGeo.hasAttribute('uv')) {
-                sfGeo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(posCount * 2), 2));
-            }
-            sfGeo.groups = [];
-
-            cellGeoMap.storefronts = cellGeoMap.storefronts || [];
-            cellGeoMap.storefronts.push(sfGeo);
-        }
-    }
-
     return {
         cellGeoMap,
         dynamicDecorationData,
+        bridgeAnchorData,
         cellCenterAngle,
         cellCenterRadius,
         zone,
@@ -985,6 +1306,10 @@ function buildChunksForRing(cells, ringId, ring) {
         }
     }
 
+    if (ringId === RING_INNER) {
+        appendPolarStorefrontLanesToChunks(chunks, cells);
+    }
+
     // Build merged meshes per chunk
     const results = [];
 
@@ -1223,6 +1548,10 @@ export function rebuildDistrictForCell(cell, ring) {
                 zone
             });
         }
+    }
+
+    if (targetRingId === RING_INNER) {
+        appendPolarStorefrontLanesToChunks([chunk], chunkCells);
     }
 
     const chunkGroup = new THREE.Group();
