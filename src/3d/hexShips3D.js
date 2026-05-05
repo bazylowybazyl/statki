@@ -241,6 +241,54 @@ function getShipLightTuning() {
   return window.__shipLightTune;
 }
 
+// Tune-epoch: globalne wartości tuningu zmieniają się rzadko (panel debug),
+// więc zamiast pisać 9 uniformów per statek per klatkę, sprawdzamy raz
+// na klatkę czy się zmieniły i propagujemy do meshy tylko gdy trzeba.
+let _tuneEpoch = 0;
+const _tuneSnapshot = {
+  terminatorStart: NaN,
+  terminatorEnd: NaN,
+  nightMin: NaN,
+  nightBandStart: NaN,
+  nightBandEnd: NaN,
+  nightTintR: NaN,
+  nightTintG: NaN,
+  nightTintB: NaN,
+  dayAmbient: NaN,
+  dayDiffuseMul: NaN,
+  specularMul: NaN
+};
+function refreshTuneEpoch() {
+  const t = getShipLightTuning();
+  if (
+    t.terminatorStart !== _tuneSnapshot.terminatorStart ||
+    t.terminatorEnd !== _tuneSnapshot.terminatorEnd ||
+    t.nightMin !== _tuneSnapshot.nightMin ||
+    t.nightBandStart !== _tuneSnapshot.nightBandStart ||
+    t.nightBandEnd !== _tuneSnapshot.nightBandEnd ||
+    t.nightTintR !== _tuneSnapshot.nightTintR ||
+    t.nightTintG !== _tuneSnapshot.nightTintG ||
+    t.nightTintB !== _tuneSnapshot.nightTintB ||
+    t.dayAmbient !== _tuneSnapshot.dayAmbient ||
+    t.dayDiffuseMul !== _tuneSnapshot.dayDiffuseMul ||
+    t.specularMul !== _tuneSnapshot.specularMul
+  ) {
+    _tuneSnapshot.terminatorStart = t.terminatorStart;
+    _tuneSnapshot.terminatorEnd = t.terminatorEnd;
+    _tuneSnapshot.nightMin = t.nightMin;
+    _tuneSnapshot.nightBandStart = t.nightBandStart;
+    _tuneSnapshot.nightBandEnd = t.nightBandEnd;
+    _tuneSnapshot.nightTintR = t.nightTintR;
+    _tuneSnapshot.nightTintG = t.nightTintG;
+    _tuneSnapshot.nightTintB = t.nightTintB;
+    _tuneSnapshot.dayAmbient = t.dayAmbient;
+    _tuneSnapshot.dayDiffuseMul = t.dayDiffuseMul;
+    _tuneSnapshot.specularMul = t.specularMul;
+    _tuneEpoch++;
+  }
+  return t;
+}
+
 function ensureShipLightPanelApi() { }
 
 function getEntityPosX(entity) { return entity?.pos ? entity.pos.x : entity?.x || 0; }
@@ -465,7 +513,8 @@ const GpuDebrisManager = {
       if (sun && camera && pool.mesh.count > 0) {
         const dx = sun.x - camera.x;
         const dy = -(sun.y - camera.y);
-        pool.material.uniforms.uLightDir.value.copy(new THREE.Vector3(dx, dy, 600).normalize());
+        // In-place: bez alokacji Vector3 per pool per klatkę
+        pool.material.uniforms.uLightDir.value.set(dx, dy, 600).normalize();
       }
     }
   },
@@ -577,9 +626,9 @@ function createEntityMesh(entity) {
     vertexShader: HEX_VERTEX_SHADER,
     fragmentShader: HEX_FRAGMENT_SHADER,
     transparent: true,
-    depthWrite: false,
-    depthTest: false,
-    side: THREE.DoubleSide
+    depthWrite: true,
+    depthTest: true,
+    side: THREE.FrontSide
   });
 
   const mesh = new THREE.InstancedMesh(geometry, material, count);
@@ -588,10 +637,8 @@ function createEntityMesh(entity) {
 
   const enableShadowCast = !entity?.isRingSegment;
   mesh.renderOrder = entity?.isRingSegment ? 0 : 10;
-  mesh.castShadow = enableShadowCast;
-  mesh.customDepthMaterial = enableShadowCast
-    ? createHexShadowDepthMaterial(damagedTexture, grid.srcWidth || 1, grid.srcHeight || 1)
-    : null;
+  mesh.castShadow = false;           // <-- CAŁKOWICIE WYŁĄCZONE RZUCANIE CIENIA
+  mesh.customDepthMaterial = null;   // <-- CAŁKOWICIE WYŁĄCZONY MATERIAŁ DLA CIENI
 
   const initialArray = mesh.instanceMatrix.array;
   for (let i = 0; i < count; i++) {
@@ -792,27 +839,32 @@ function updateEntityMesh(entity, data, camX, camY) {
     grid.meshDirtyEnd = -1;
   }
 
-  const tune = getShipLightTuning();
-  mesh.material.uniforms.uTerminatorStart.value = clamp(tune.terminatorStart, -1.0, 0.9);
-  mesh.material.uniforms.uTerminatorEnd.value = clamp(tune.terminatorEnd, -0.8, 1.0);
-  mesh.material.uniforms.uNightMin.value = clamp(tune.nightMin, 0.0, 0.8);
-  mesh.material.uniforms.uNightBandStart.value = clamp(tune.nightBandStart, -1.0, 0.8);
-  mesh.material.uniforms.uNightBandEnd.value = clamp(tune.nightBandEnd, -0.8, 1.0);
-  mesh.material.uniforms.uNightTint.value.set(
-    clamp(tune.nightTintR, 0.0, 0.3),
-    clamp(tune.nightTintG, 0.0, 0.3),
-    clamp(tune.nightTintB, 0.0, 0.3)
-  );
-  mesh.material.uniforms.uDayAmbient.value = clamp(tune.dayAmbient, 0.0, 1.0);
-  mesh.material.uniforms.uDayDiffuseMul.value = clamp(tune.dayDiffuseMul, 0.0, 3.0);
-  mesh.material.uniforms.uSpecularMul.value = clamp(tune.specularMul, 0.0, 1.5);
+  // Tuning uniformy: aplikuj tylko gdy epoka tuningu się zmieniła dla tego mesha.
+  // _tuneEpoch jest odświeżany raz na klatkę w updateHexShips3D (refreshTuneEpoch()).
+  if (data._tuneEpoch !== _tuneEpoch) {
+    const tune = _tuneSnapshot;
+    mesh.material.uniforms.uTerminatorStart.value = clamp(tune.terminatorStart, -1.0, 0.9);
+    mesh.material.uniforms.uTerminatorEnd.value = clamp(tune.terminatorEnd, -0.8, 1.0);
+    mesh.material.uniforms.uNightMin.value = clamp(tune.nightMin, 0.0, 0.8);
+    mesh.material.uniforms.uNightBandStart.value = clamp(tune.nightBandStart, -1.0, 0.8);
+    mesh.material.uniforms.uNightBandEnd.value = clamp(tune.nightBandEnd, -0.8, 1.0);
+    mesh.material.uniforms.uNightTint.value.set(
+      clamp(tune.nightTintR, 0.0, 0.3),
+      clamp(tune.nightTintG, 0.0, 0.3),
+      clamp(tune.nightTintB, 0.0, 0.3)
+    );
+    mesh.material.uniforms.uDayAmbient.value = clamp(tune.dayAmbient, 0.0, 1.0);
+    mesh.material.uniforms.uDayDiffuseMul.value = clamp(tune.dayDiffuseMul, 0.0, 3.0);
+    mesh.material.uniforms.uSpecularMul.value = clamp(tune.specularMul, 0.0, 1.5);
+    data._tuneEpoch = _tuneEpoch;
+  }
 
   const sun = typeof window !== 'undefined' ? window.SUN : null;
   if (sun) {
     const dx = sun.x - ex;
     const dy = -(sun.y - ey);
-    const lightVec = new THREE.Vector3(dx, dy, 600).normalize();
-    mesh.material.uniforms.uLightDir.value.copy(lightVec);
+    // In-place: bez alokacji Vector3 per klatkę per statek
+    mesh.material.uniforms.uLightDir.value.set(dx, dy, 600).normalize();
   }
 
   mesh.material.uniforms.uStressTint.value = state.damageTintEnabled ? 0.30 : 0.0;
@@ -864,6 +916,10 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   state.frameId++;
 
   Core3D.syncCamera(viewCamera);
+
+  // Raz na klatkę: aktualizujemy migawkę globalnego tuningu, by per-mesh
+  // updateEntityMesh mogło pominąć 9 zapisów uniformów gdy nic się nie zmieniło.
+  refreshTuneEpoch();
 
   const camX = Number(viewCamera?.x) || 0;
   const camY = Number(viewCamera?.y) || 0;

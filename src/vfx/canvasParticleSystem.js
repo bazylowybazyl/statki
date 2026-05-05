@@ -6,6 +6,7 @@ export const CanvasVFX = {
   MAX_PARTICLES_DRAW: 4500,
   
   particlePool: [],
+  activeParticles: [],
   nextParticleIndex: 0,
   shockwaves: [],
   lightningParticles: [],
@@ -33,11 +34,13 @@ export const CanvasVFX = {
 
   init() {
     this.enabled = window.CANVAS_WEAPON_VFX_ENABLED !== false;
+    this.activeParticles = [];
     for (let i = 0; i < this.MAX_PARTICLES; i++) {
       this.particlePool.push({
         pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, life: 0, age: 0, color: '#fff', size: 1, flash: false, beam: false,
         start: { x: 0, y: 0 }, end: { x: 0, y: 0 }, width: 0, alpha: 1, fadeWithLife: true,
-        glowColor: null, colorOuter: null, colorInner: null, glowBlur: 0, outerWidthMul: 1, innerWidthMul: 1, active: false
+        glowColor: null, colorOuter: null, colorInner: null, glowBlur: 0, outerWidthMul: 1, innerWidthMul: 1, active: false,
+        _activeIdx: -1
       });
     }
   },
@@ -80,11 +83,20 @@ export const CanvasVFX = {
 
   spawnParticle(pos, vel, life, color, size, flash) {
     const p = CanvasVFX.particlePool[CanvasVFX.nextParticleIndex];
+    if (p.active) {
+      const idx = p._activeIdx;
+      const last = CanvasVFX.activeParticles[CanvasVFX.activeParticles.length - 1];
+      CanvasVFX.activeParticles[idx] = last;
+      last._activeIdx = idx;
+      CanvasVFX.activeParticles.pop();
+    }
     p.pos.x = pos.x; p.pos.y = pos.y; p.vel.x = vel.x; p.vel.y = vel.y;
     p.life = life; p.age = 0; p.color = color || '#ffb677'; p.size = size || 2;
     p.flash = !!flash; p.beam = false; p.alpha = 1; p.fadeWithLife = true;
     p.colorOuter = null; p.colorInner = null; p.glowColor = null; p.glowBlur = 0;
     p.outerWidthMul = 1; p.innerWidthMul = 1; p.active = true;
+    p._activeIdx = CanvasVFX.activeParticles.length;
+    CanvasVFX.activeParticles.push(p);
     CanvasVFX.nextParticleIndex = (CanvasVFX.nextParticleIndex + 1) % CanvasVFX.MAX_PARTICLES;
   },
 
@@ -106,6 +118,13 @@ export const CanvasVFX = {
   spawnLaserBeam(start, end, width, opts = {}) {
     if (!CanvasVFX.enabled) return;
     const p = CanvasVFX.particlePool[CanvasVFX.nextParticleIndex];
+    if (p.active) {
+      const idx = p._activeIdx;
+      const last = CanvasVFX.activeParticles[CanvasVFX.activeParticles.length - 1];
+      CanvasVFX.activeParticles[idx] = last;
+      last._activeIdx = idx;
+      CanvasVFX.activeParticles.pop();
+    }
     p.pos.x = start.x; p.pos.y = start.y; p.vel.x = 0; p.vel.y = 0;
     p.life = opts?.life ?? 0.12; p.age = 0; p.flash = false; p.beam = true;
     p.start.x = start.x; p.start.y = start.y; p.end.x = end.x; p.end.y = end.y;
@@ -114,6 +133,8 @@ export const CanvasVFX = {
     p.colorInner = opts?.colorInner ?? null; p.glowColor = opts?.glowColor ?? null;
     p.glowBlur = opts?.glowBlur ?? 0; p.outerWidthMul = opts?.outerWidthMul ?? 1;
     p.innerWidthMul = opts?.innerWidthMul ?? 1; p.size = 0; p.color = '#fff'; p.active = true;
+    p._activeIdx = CanvasVFX.activeParticles.length;
+    CanvasVFX.activeParticles.push(p);
     CanvasVFX.nextParticleIndex = (CanvasVFX.nextParticleIndex + 1) % CanvasVFX.MAX_PARTICLES;
   },
 
@@ -375,10 +396,18 @@ export const CanvasVFX = {
   },
 
   update(dt) {
-    for (const p of this.particlePool) {
-      if (!p.active) continue;
+    // Backwards loop: swap-delete nie powoduje pomijania elementów
+    for (let i = this.activeParticles.length - 1; i >= 0; i--) {
+      const p = this.activeParticles[i];
       p.age += dt;
-      if (p.age >= p.life) { p.active = false; continue; }
+      if (p.age >= p.life) {
+        const last = this.activeParticles[this.activeParticles.length - 1];
+        this.activeParticles[i] = last;
+        last._activeIdx = i;
+        this.activeParticles.pop();
+        p.active = false;
+        continue;
+      }
       if (p.beam) continue;
       p.vel.x *= 0.98; p.vel.y *= 0.98; p.vel.y += 8 * dt;
       p.pos.x += p.vel.x * dt; p.pos.y += p.vel.y * dt;
@@ -403,8 +432,8 @@ export const CanvasVFX = {
   },
 
   drawBeams(ctx, cam) {
-    for (const p of this.particlePool) {
-      if (!p.active || !p.beam) continue;
+    for (const p of this.activeParticles) {
+      if (!p.beam) continue;
       const s1 = window.worldToScreen(p.start.x, p.start.y, cam);
       const s2 = window.worldToScreen(p.end.x, p.end.y, cam);
       const alphaFactor = Math.max(0, Math.min(1, 1 - p.age / Math.max(p.life, 0.0001)));
@@ -434,8 +463,8 @@ export const CanvasVFX = {
   drawParticles(ctx, cam) {
     ctx.save();
     let drawn = 0;
-    for (const p of this.particlePool) {
-      if (!p.active || p.flash || p.beam) continue;
+    for (const p of this.activeParticles) {
+      if (p.flash || p.beam) continue;
       if (drawn >= this.MAX_PARTICLES_DRAW) break;
       drawn++;
       const s = window.worldToScreen(p.pos.x, p.pos.y, cam);
@@ -452,8 +481,8 @@ export const CanvasVFX = {
   drawFlashes(ctx, cam) {
     ctx.save();
     let drawn = 0;
-    for (const p of this.particlePool) {
-      if (!p.active || !p.flash) continue;
+    for (const p of this.activeParticles) {
+      if (!p.flash) continue;
       if (drawn >= this.MAX_PARTICLES_DRAW) break;
       drawn++;
       const s = window.worldToScreen(p.pos.x, p.pos.y, cam);

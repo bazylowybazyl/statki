@@ -72,6 +72,12 @@ export const DESTRUCTOR_CONFIG = {
   shieldAuthorityMassExp: 0.08,
 };
 
+// Prekomputowane stringi koloru stresu — unikamy template literal per shard w drawShape()
+const STRESS_COLORS = Array.from({ length: 32 }, (_, i) => {
+  const r = i / 31;
+  return `rgba(255,${Math.floor(r * 100)},0,${(r * 0.6).toFixed(3)})`;
+});
+
 const SHIELD_AUTHORITY_BY_CLASS = Object.freeze({
   atlas: 3.8,
   supercapital: 3.8,
@@ -845,7 +851,6 @@ class HexShard {
     ctx.save();
     ctx.translate(this.gridX + this.deformation.x, this.gridY + this.deformation.y);
     this._drawHexPath(ctx);
-    ctx.save();
     ctx.clip();
 
     if (this.color) {
@@ -873,12 +878,10 @@ class HexShard {
       }
     }
 
-    ctx.restore();
-
     const stressSq = this.deformation.x * this.deformation.x + this.deformation.y * this.deformation.y;
     if (stressSq > 25) {
       const ratio = Math.min(1, Math.sqrt(stressSq) / DESTRUCTOR_CONFIG.tearThreshold);
-      ctx.fillStyle = `rgba(255, ${Math.floor(ratio * 100)}, 0, ${ratio * 0.6})`;
+      ctx.fillStyle = STRESS_COLORS[Math.min(31, Math.round(ratio * 31))];
       ctx.fill();
     }
     ctx.restore();

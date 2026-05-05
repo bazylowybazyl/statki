@@ -364,19 +364,18 @@ function promoteWeaponOverlay(root, renderOrder = 60) {
     if (!mat) return;
     for (const material of materials) {
       if (!material) continue;
-      
-      // FIX: Tylko świecące części (lasery, rdzenie) są przezroczyste i bez depthTestu!
+
+      // FIX: Światła i rdzenie mają włączony depthTest, wyłączony depthWrite
       if (isGlow || material.blending === THREE.AdditiveBlending) {
-        material.depthTest = false;
-        material.depthWrite = false;
+        material.depthTest = true; // <--- KRYTYCZNA ZMIANA (było false)
+        material.depthWrite = false; // Nie zapisujemy do głębi, żeby nie ucinać innych świateł
         material.transparent = true;
         material.toneMapped = false;
         if (!Number.isFinite(material.opacity)) material.opacity = 1;
       } else {
-        // Zwykły metalowy pancerz i lufy MUSZĄ mieć włączony Depth Test!
         material.depthTest = true;
         material.depthWrite = true;
-        material.transparent = false; 
+        material.transparent = false;
       }
       material.needsUpdate = true;
     }
