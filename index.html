@@ -1139,6 +1139,8 @@
     import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff } from './shieldSystem.js';
     // DODANO IMPORT SHIP_PHYSICS
     import { createShipEntity, applyPlayerInput, refreshShipGeometry, composeShipThrusterCommand, updateShipThrusterState, computeShipThrusterForces, SHIP_PHYSICS } from "./src/game/shipEntity.js";
+    import { computePlayerCommandControl, computePlayerHoldControl as computePlayerHoldControlFromFlight } from "./src/game/flight/playerAutopilot.js";
+    import { shouldZeroStabilizedAngularVelocity, updateHeadingStabilizer } from "./src/game/flight/stabilizer.js";
     import { DestructorSystem, initHexBody, isHexShips3DActive, getHexStructuralState, DESTRUCTOR_CONFIG } from "./src/game/destructor.js";
     import { updateShields3D } from "./src/3d/shield3D.js";
     // IMPORTUJEMY NOWY MODUL SUPERBRONI
@@ -5127,6 +5129,78 @@
         drawArrowOnRing(s.x, s.y, R, ang, 12, '#60a5fa');
         ctx.restore();
       }
+    }
+
+    function drawStabilizerHeadingMarker(ship, cam, renderPos = null, renderAngle = null) {
+      if (!flightAssist?.stabilizer || !ship || ship.destroyed) return;
+      const st = ship.__stabilizerState;
+      const targetAngle = Number.isFinite(Number(st?.output?.targetAngle))
+        ? Number(st.output.targetAngle)
+        : Number(st?.targetAngle);
+      if (!Number.isFinite(targetAngle)) return;
+
+      const pos = renderPos || ship.pos;
+      const s = worldToScreen(pos.x, pos.y, cam);
+      const zoom = Math.max(0.0001, Number(cam?.zoom) || Number(camera.zoom) || 1);
+      const baseRadius = Math.max(ship.radius || 0, ship.w || 0, ship.h || 0);
+      const innerR = Math.max(34, baseRadius * zoom * 0.34);
+      const outerR = Math.max(innerR + 34, baseRadius * zoom * 0.62 + 42);
+      const dx = Math.cos(targetAngle);
+      const dy = Math.sin(targetAngle);
+      const currentAngle = Number.isFinite(Number(renderAngle)) ? Number(renderAngle) : (Number(ship.angle) || 0);
+      const error = wrapAngle(targetAngle - currentAngle);
+      const errorNorm = clamp(Math.abs(error) / (Math.PI / 3), 0, 1);
+      const color = errorNorm > 0.32 ? 'rgba(255,216,116,0.96)' : 'rgba(96,232,255,0.96)';
+      const softColor = errorNorm > 0.32 ? 'rgba(255,180,82,0.26)' : 'rgba(85,210,255,0.24)';
+
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.shadowBlur = 16;
+      ctx.shadowColor = color;
+
+      ctx.strokeStyle = softColor;
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.moveTo(s.x + dx * innerR, s.y + dy * innerR);
+      ctx.lineTo(s.x + dx * outerR, s.y + dy * outerR);
+      ctx.stroke();
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.2;
+      ctx.setLineDash([10, 9]);
+      ctx.beginPath();
+      ctx.moveTo(s.x + dx * innerR, s.y + dy * innerR);
+      ctx.lineTo(s.x + dx * outerR, s.y + dy * outerR);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      if (Math.abs(error) > 0.015) {
+        ctx.globalAlpha = 0.55;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, innerR + 9, currentAngle, targetAngle, error < 0);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
+      ctx.translate(s.x + dx * outerR, s.y + dy * outerR);
+      ctx.rotate(targetAngle);
+      const size = clamp(13 * Math.sqrt(zoom), 10, 18);
+      ctx.fillStyle = color;
+      ctx.strokeStyle = 'rgba(4,10,20,0.75)';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(size * 1.15, 0);
+      ctx.lineTo(-size * 0.72, -size * 0.7);
+      ctx.lineTo(-size * 0.28, 0);
+      ctx.lineTo(-size * 0.72, size * 0.7);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fill();
+      ctx.restore();
     }
 
     // =============== Zoom indicator ===============
@@ -11216,6 +11290,20 @@
       stabilizer: false
     };
     window.flightAssist = flightAssist;
+    function getShipStabilizerState(shipRef = ship) {
+      return shipRef.__stabilizerState || (shipRef.__stabilizerState = {});
+    }
+    function setFlightStabilizerEnabled(enabled) {
+      flightAssist.stabilizer = !!enabled;
+      const st = getShipStabilizerState(ship);
+      st.enabled = flightAssist.stabilizer;
+      st.targetAngle = Number.isFinite(Number(ship?.angle)) ? wrapAngle(ship.angle) : 0;
+      if (!flightAssist.stabilizer && st.output) {
+        st.output.active = false;
+        st.output.torque = 0;
+        st.output.targetAngle = st.targetAngle;
+      }
+    }
     const enginePower = { target: 0, current: 0 };
     const ENGINE_TARGET_RATE = 2.4; // 0..1 na sekundę (szybka regulacja)
     const ENGINE_RESPONSE_RATE = 1.6; // jak szybko aktualna moc dogania target
@@ -11655,26 +11743,7 @@
     }
 
     function computePlayerHoldControl(ship) {
-      const sinA = Math.sin(ship.angle);
-      const cosA = Math.cos(ship.angle);
-      const forwardVel = (ship.vel.x * cosA) + (ship.vel.y * sinA);
-      const lateralVel = -(ship.vel.x * sinA) + (ship.vel.y * cosA);
-      const speed = Math.hypot(ship.vel.x, ship.vel.y);
-      const torque = clamp(-(ship.angVel || 0) / Math.max(0.06, SHIP_PHYSICS.MAX_TURN_SPEED * 0.28), -0.6, 0.6);
-      const retro = clamp(Math.max(0, forwardVel) / 520, 0, 1);
-      const main = clamp(Math.max(0, -forwardVel) / 460, 0, 0.65);
-      const rightSide = clamp(Math.max(0, lateralVel) / 360, 0, 1);
-      const leftSide = clamp(Math.max(0, -lateralVel) / 360, 0, 1);
-      return {
-        controller: 'player',
-        thrustY: retro > 0.05 ? -retro : main,
-        main,
-        retro,
-        torque,
-        leftSide,
-        rightSide,
-        settled: speed < 28 && Math.abs(ship.angVel || 0) < 0.01
-      };
+      return computePlayerHoldControlFromFlight(ship, SHIP_PHYSICS);
     }
 
     function updatePlayerCommand(dt) {
@@ -11684,101 +11753,18 @@
       if (PAUSED || warp.state !== 'idle') return;
       if (playerHasManualInput()) { ship.command = null; return; }
 
-      if (cmd.type === 'hold') {
-        const hold = computePlayerHoldControl(ship);
-        applyPlayerInput(ship, hold.settled
-          ? { controller: 'player', main: 0, thrustY: 0, torque: 0, leftSide: 0, rightSide: 0, retro: 0 }
-          : hold, input);
-        return;
-      }
-
-      const targetPos = getCommandTargetPos(ship, cmd);
-      if (!targetPos) {
+      const result = computePlayerCommandControl(ship, cmd, {
+        defaultArrival: 90,
+        physics: SHIP_PHYSICS
+      });
+      if (!result || result.clearCommand) {
         ship.command = null;
         return;
       }
-
-      let desiredVecX = targetPos.x - ship.pos.x;
-      let desiredVecY = targetPos.y - ship.pos.y;
-      let dist = Math.hypot(desiredVecX, desiredVecY);
-      const arrival = cmd.arrival || 90;
-
-      if (cmd.type === 'orbit') {
-        const orbit = computeOrbitSteerVector(ship, targetPos, cmd.orbitRadius, cmd.orbitDir);
-        desiredVecX = orbit.dirX;
-        desiredVecY = orbit.dirY;
-        dist = orbit.dist;
-      } else if (dist <= arrival) {
-        ship.command = { type: 'hold' };
-        const hold = computePlayerHoldControl(ship);
-        applyPlayerInput(ship, hold.settled
-          ? { controller: 'player', main: 0, thrustY: 0, torque: 0, leftSide: 0, rightSide: 0, retro: 0 }
-          : hold, input);
-        return;
+      if (result.nextCommand) {
+        ship.command = result.nextCommand;
       }
-
-      const desiredAng = Math.atan2(desiredVecY, desiredVecX);
-      const angDiff = wrapAngle(desiredAng - ship.angle);
-      const torque = clamp(angDiff * 2.2, -1, 1);
-      const alignment = Math.max(0, Math.cos(angDiff));
-      const alignDrive = clamp((alignment - 0.08) / 0.92, 0, 1);
-      const forward = { x: Math.cos(ship.angle), y: Math.sin(ship.angle) };
-      const forwardVel = (ship.vel.x * forward.x) + (ship.vel.y * forward.y);
-      const massFactor = clamp(Math.sqrt(Math.max(1, Number(ship.mass) || SHIP_PHYSICS.PLAYER_MASS) / Math.max(1, SHIP_PHYSICS.PLAYER_MASS || 1)), 0.85, 2.3);
-      const retroCapability = clamp((ship.visual?.torqueThrusters?.length || 0) / 5, 0.65, 1.45);
-      let main = 0;
-      let retro = 0;
-      let leftSide = 0;
-      let rightSide = 0;
-      if (cmd.type === 'orbit') {
-        main = clamp(0.28 + alignDrive * 0.52, 0.12, 0.82);
-      } else if (cmd.type === 'approach') {
-        main = clamp((dist - arrival) / (980 * massFactor), 0, 0.82) * alignDrive;
-      } else {
-        main = clamp(dist / (860 * massFactor), 0, 1) * alignDrive;
-      }
-
-      if (cmd.type !== 'orbit') {
-        const brakeDistance = Math.max(
-          arrival + (140 * massFactor),
-          Math.abs(forwardVel) * 0.28 + ((forwardVel * forwardVel) / Math.max(1100, 2100 * retroCapability))
-        );
-        if (Math.abs(angDiff) > 1.15) {
-          main *= 0.18;
-        } else if (Math.abs(angDiff) > 0.7) {
-          main *= 0.45;
-        }
-        if (forwardVel > 20 && dist <= brakeDistance) {
-          const brakeNorm = clamp((brakeDistance - dist) / Math.max(brakeDistance - arrival, 1), 0, 1);
-          retro = clamp(0.18 + brakeNorm * 0.92 + clamp(forwardVel / (720 * retroCapability), 0, 0.7), 0, 1);
-          main = Math.min(main, clamp(0.85 - brakeNorm * 1.15, 0, 0.28));
-        }
-        if (dist <= arrival * 1.6) {
-          const hold = computePlayerHoldControl(ship);
-          leftSide = hold.leftSide;
-          rightSide = hold.rightSide;
-          retro = Math.max(retro, hold.retro * 0.9);
-          main = Math.min(main, hold.main);
-        }
-      } else {
-        const sinA = Math.sin(ship.angle);
-        const cosA = Math.cos(ship.angle);
-        const lateralVel = -(ship.vel.x * sinA) + (ship.vel.y * cosA);
-        if (Math.abs(lateralVel) > 80) {
-          rightSide = clamp(Math.max(0, lateralVel) / 320, 0, 0.7);
-          leftSide = clamp(Math.max(0, -lateralVel) / 320, 0, 0.7);
-        }
-      }
-
-      applyPlayerInput(ship, {
-        controller: 'player',
-        thrustY: retro > 0.05 ? -retro : main,
-        main,
-        retro,
-        torque,
-        leftSide,
-        rightSide
-      }, input);
+      if (result.control) applyPlayerInput(ship, result.control, input);
     }
 
     function handleWarpKeyDown() {
@@ -11929,7 +11915,7 @@
         pushZoneMessage(flightAssist.damper ? 'Gravity Damper: ON' : 'Gravity Damper: OFF', 1.2);
       }
       if (k === 'b') {
-        flightAssist.stabilizer = !flightAssist.stabilizer;
+        setFlightStabilizerEnabled(!flightAssist.stabilizer);
         pushZoneMessage(flightAssist.stabilizer ? 'Stabilizer: ON' : 'Stabilizer: OFF', 1.2);
       }
       if (k === ' ') {
@@ -16539,27 +16525,19 @@
       updatePlayerCommand(dt);
       updateEnginePower(dt);
       const manualTorqueInput = clamp(Number(ship?.thrusterInput?.torque) || 0, -1, 1);
-      const stabilizerState = ship.__stabilizerState || (ship.__stabilizerState = { torqueSign: 0 });
+      const stabilizerState = getShipStabilizerState(ship);
       let stabilizerAssistTorque = 0;
       let stabilizerAssistLeft = 0;
       let stabilizerAssistRight = 0;
       if (warp.state === 'idle' && flightAssist.stabilizer) {
-        // Stabilizacja obrotu
-        if (Math.abs(manualTorqueInput) < 0.08) {
-          const omega = Number(ship?.angVel) || 0;
-          const absOmega = Math.abs(omega);
-          const engageOmega = 0.05;
-          const releaseOmega = 0.018;
-          if (absOmega >= engageOmega) stabilizerState.torqueSign = -Math.sign(omega);
-          else if (absOmega <= releaseOmega) stabilizerState.torqueSign = 0;
-          if (stabilizerState.torqueSign !== 0) {
-            const normalized = clamp((absOmega - releaseOmega) / (SHIP_PHYSICS.MAX_TURN_SPEED * 0.16), 0, 1);
-            const strength = normalized * (2.0 - normalized);
-            stabilizerAssistTorque = stabilizerState.torqueSign * strength;
-          }
-        } else {
-          stabilizerState.torqueSign = 0;
-        }
+        const manualHeadingInput = (keys['a'] || keys['d']) ? manualTorqueInput : 0;
+        const headingAssist = updateHeadingStabilizer(stabilizerState, ship, dt, {
+          enabled: true,
+          manualTorque: manualHeadingInput,
+          physics: SHIP_PHYSICS
+        });
+        stabilizerAssistTorque = headingAssist.torque;
+
         // Stabilizacja ruchu bocznego (strafe)
         const manualLeft = clamp(Number(ship?.thrusterInput?.leftSide) || 0, 0, 1);
         const manualRight = clamp(Number(ship?.thrusterInput?.rightSide) || 0, 0, 1);
@@ -16591,7 +16569,11 @@
         }
       }
       else {
-        stabilizerState.torqueSign = 0;
+        updateHeadingStabilizer(stabilizerState, ship, dt, {
+          enabled: false,
+          manualTorque: 0,
+          physics: SHIP_PHYSICS
+        });
       }
       const thrusterCommand = composeShipThrusterCommand(ship, {
         torque: stabilizerAssistTorque,
@@ -16605,6 +16587,7 @@
       const driveRetro = clamp(thrusterDrive?.retro ?? input.retro, 0, 1);
       const driveTurn = clamp((thrusterDrive?.torque || 0) + (thrusterDrive?.mainTorqueAssist || 0), -1, 1);
       const commandTurn = clamp(Number(thrusterCommand?.manualTorque) || 0, -1, 1);
+      const activeTurnCommand = clamp(Number(thrusterCommand?.torque) || 0, -1, 1);
 
       if (warp.state === 'active') {
         const turnInput = commandTurn;
@@ -16758,7 +16741,11 @@
         }
 
         ship.angVel = clamp(ship.angVel, -SHIP_PHYSICS.MAX_TURN_SPEED, SHIP_PHYSICS.MAX_TURN_SPEED);
-        if (flightAssist.stabilizer && Math.abs(commandTurn) < 0.03 && Math.abs(ship.angVel) < 0.0035) {
+        if (shouldZeroStabilizedAngularVelocity({
+          stabilizerEnabled: flightAssist.stabilizer,
+          activeTurnCommand,
+          angVel: ship.angVel
+        })) {
           ship.angVel = 0;
         }
         ship.angle = wrapAngle(ship.angle + ship.angVel * dt);
@@ -18309,6 +18296,7 @@
         // Rysuj HUD na Canvasie TYLKO jeśli nie jesteśmy w menu
         if (!isMainMenuVisible()) {
           hudRenderNav(ship, cam);
+          drawStabilizerHeadingMarker(ship, cam, interpPos, interpAngle);
         }
 
         if (scan.target && scan.targetType && mouse.overCanvas) {
@@ -18462,8 +18450,6 @@
         const weapons = Game.player?.weapons;
         if (!weapons) return;
 
-        const _turrets = [ship.turret, ship.turret2, ship.turret3, ship.turret4];
-        const _tAngles = [interpTurretAngle, interpTurretAngle2, interpTurretAngle3, interpTurretAngle4];
         const _sA = interpAngle;
         const _cosA = Math.cos(_sA);
         const _sinA = Math.sin(_sA);
@@ -18484,8 +18470,8 @@
           ctx.globalAlpha = ready ? 0.88 : 0.45;
           ctx.strokeStyle = grad;
           ctx.lineWidth = ready ? 2.2 : 1.5;
-          ctx.shadowColor = ready ? colReady : 'transparent';
-          ctx.shadowBlur = ready ? 8 : 0;
+          // Cienie wyłączone dla wydajności!
+          ctx.shadowBlur = 0;
           ctx.beginPath();
           ctx.moveTo(p0.x, p0.y);
           ctx.lineTo(p1.x, p1.y);
@@ -18493,7 +18479,6 @@
           if (ready) {
             ctx.fillStyle = colReady;
             ctx.globalAlpha = 0.9;
-            ctx.shadowBlur = 3;
             ctx.beginPath();
             ctx.arc(p0.x, p0.y, 2, 0, Math.PI * 2);
             ctx.fill();
@@ -18519,32 +18504,7 @@
           return Math.max(80, range);
         }
 
-        // MAIN weapons — cyan, one line per turret
-        const mainW = [];
-        if (mainW.length) {
-          const mReady = rail.cd[0] <= 0;
-          for (let i = 0; i < mainW.length; i++) {
-            const loadout = mainW[i];
-            const hp = loadout?.hp;
-            const origin = _getInterpolatedHardpointWorldPos(hp);
-            if (!origin) continue;
-            const hpPos = hp?.pos;
-            const tIdx = hpPos ? getNearestTurretIndex(hpPos, _turrets) : (i % _turrets.length);
-            const tA = _tAngles[tIdx];
-            _aimLine(
-              origin.x,
-              origin.y,
-              Math.cos(tA),
-              Math.sin(tA),
-              _getAimRangeForWeapon(loadout?.weapon, true),
-              '#7dd3fc',
-              '#2a4f60',
-              mReady
-            );
-          }
-        }
-
-        // BUILTIN weapons — orange
+        // BUILTIN weapons — TYLKO TO ZOSTAJE (Pomarańczowa linia dla Superbroni)
         const builtW = weapons[HP.BUILTIN] || [];
         for (let i = 0; i < builtW.length; i++) {
           const loadout = builtW[i];
@@ -18559,35 +18519,9 @@
           if (!visible) continue;
           const ready = !!sw?.armed;
           _aimLine(
-            origin.x,
-            origin.y,
-            dir.x,
-            dir.y,
+            origin.x, origin.y, dir.x, dir.y,
             _getAimRangeForWeapon(loadout?.weapon),
-            '#7ef29a',
-            '#7a5520',
-            ready
-          );
-        }
-
-        // SPECIAL weapons — violet
-        const specW = [];
-        for (let i = 0; i < specW.length; i++) {
-          const loadout = specW[i];
-          const hp = loadout?.hp;
-          const origin = _getInterpolatedHardpointWorldPos(hp);
-          if (!origin) continue;
-          const cdLeft = Number(hp?.specialCd) || 0;
-          const dir = _resolveMouseDir(origin.x, origin.y, _cosA, _sinA);
-          _aimLine(
-            origin.x,
-            origin.y,
-            dir.x,
-            dir.y,
-            _getAimRangeForWeapon(loadout?.weapon),
-            '#b388ff',
-            '#4a2a60',
-            cdLeft <= 0
+            '#7ef29a', '#7a5520', ready
           );
         }
 
