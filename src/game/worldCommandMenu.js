@@ -160,6 +160,44 @@ export function computeCommandMenuOpenAnimation({ elapsed = 0, duration = 0.24 }
   };
 }
 
+export function computeAttackAutopilotState({
+  distance = 0,
+  weaponRanges = [],
+  targetRadius = 0,
+  minOrbitRadius = 420
+} = {}) {
+  const ranges = Array.from(weaponRanges || [])
+    .map((range) => Number(range) || 0)
+    .filter((range) => range > 0);
+  const maxWeaponRange = ranges.length ? Math.max(...ranges) : 0;
+  if (maxWeaponRange <= 0) {
+    return {
+      hasWeaponRange: false,
+      inWeaponRange: false,
+      commandType: null,
+      maxWeaponRange: 0,
+      approachArrival: 0,
+      orbitRadius: 0
+    };
+  }
+
+  const radius = Math.max(0, Number(targetRadius) || 0);
+  const inWeaponRange = (Number(distance) || 0) <= maxWeaponRange;
+  const approachArrival = Math.max(radius + 120, maxWeaponRange * 0.86);
+  const orbitRadius = Math.min(
+    maxWeaponRange * 0.92,
+    Math.max(radius + 260, maxWeaponRange * 0.72, Number(minOrbitRadius) || 420)
+  );
+  return {
+    hasWeaponRange: true,
+    inWeaponRange,
+    commandType: inWeaponRange ? 'orbit' : 'approach',
+    maxWeaponRange,
+    approachArrival,
+    orbitRadius
+  };
+}
+
 export function hitTestCommandMenu(menu, x, y) {
   if (!menu || !Array.isArray(menu.items)) return null;
   const width = Number(menu.width) || 0;
