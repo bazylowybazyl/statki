@@ -1140,6 +1140,15 @@
     // DODANO IMPORT SHIP_PHYSICS
     import { createShipEntity, applyPlayerInput, refreshShipGeometry, composeShipThrusterCommand, updateShipThrusterState, computeShipThrusterForces, SHIP_PHYSICS } from "./src/game/shipEntity.js";
     import { computePlayerCommandControl, computePlayerHoldControl as computePlayerHoldControlFromFlight } from "./src/game/flight/playerAutopilot.js";
+    import {
+      buildNormalCommandMenuItems,
+      buildRtsCommandMenuItems,
+      createApproachCommand,
+      createOrbitCommand,
+      createMoveCommand,
+      computeFormationTargets as computeCommandFormationTargets,
+      hitTestCommandMenu
+    } from "./src/game/worldCommandMenu.js";
     import { shouldZeroStabilizedAngularVelocity, updateHeadingStabilizer } from "./src/game/flight/stabilizer.js";
     import { DestructorSystem, initHexBody, isHexShips3DActive, getHexStructuralState, DESTRUCTOR_CONFIG } from "./src/game/destructor.js";
     import { updateShields3D } from "./src/3d/shield3D.js";
@@ -3498,7 +3507,7 @@
     function getCommandTargetPos(unit, cmd) {
       if (!cmd) return null;
       const ent = cmd.targetEntity;
-      if (ent && !ent.dead) {
+      if (ent && !ent.dead && !ent.destroyed && !ent.removed) {
         return {
           x: Number(ent.x ?? ent.pos?.x) || 0,
           y: Number(ent.y ?? ent.pos?.y) || 0
@@ -3537,6 +3546,9 @@
       if (cmd.type === 'hold') {
         softBrakeNpc(npc, dt, 1.35);
         npc.forceTarget = null;
+        if (Number.isFinite(cmd.faceAngle)) {
+          npc.desiredAngle = cmd.faceAngle;
+        }
         return true;
       }
 
@@ -3587,7 +3599,12 @@
       }
       if (dist <= arrival) {
         softBrakeNpc(npc, dt, cmd.type === 'approach' ? 1.4 : 1.1);
-        npc.command = null;
+        if (Number.isFinite(cmd.faceAngle)) {
+          npc.command = { type: 'hold', faceAngle: cmd.faceAngle };
+          npc.desiredAngle = cmd.faceAngle;
+        } else {
+          npc.command = null;
+        }
         npc.forceTarget = null;
       }
       return true;
@@ -11711,6 +11728,11 @@
     window.addEventListener('keydown', e => {
       if (e.code !== 'Escape') return;
       if (stationUI.open) return;
+      if (worldCommandMenu.open) {
+        closeWorldCommandMenu();
+        e.preventDefault();
+        return;
+      }
       if (!gameStarted) {
         showMainMenu('home');
         return;
@@ -11883,6 +11905,7 @@
       }
       if (k === 'm') {
         showMap = !showMap;
+        closeWorldCommandMenu();
         if (showMap) {
           mapView.targetZoom = clamp(mapView.targetZoom, mapView.minZoom, mapView.maxZoom);
           mapView.viewX = null;
@@ -11897,6 +11920,7 @@
       }
       if (k === 'j') MISSIONS.show = !MISSIONS.show;
       if (k === 'g' && !stationUI.open) {
+        closeWorldCommandMenu();
         if (splitScreenMode) {
           pushZoneMessage('RTS MODE niedostepny w split-screen', 1.6);
         } else {
@@ -12356,6 +12380,14 @@
     }
     window.isHostileNpc = isHostileNpc;
 
+    function isCommandEntityAlive(entity) {
+      return !!(entity && !entity.dead && !entity.destroyed && !entity.removed);
+    }
+
+    function isValidLockedTarget(target) {
+      return isCommandEntityAlive(target) && isHostileNpc(target);
+    }
+
     function isFriendlyScanTarget(n) {
       return !!(n && !n.dead && n.friendly);
     }
@@ -12431,7 +12463,7 @@
     }
 
     function setLockedTargetsExact(nextTargets) {
-      const valid = Array.isArray(nextTargets) ? nextTargets.filter(isHostileNpc) : [];
+      const valid = Array.isArray(nextTargets) ? nextTargets.filter(isValidLockedTarget) : [];
       lockedTargets = valid;
       lockedTarget = valid[0] || null;
     }
@@ -12444,7 +12476,7 @@
     }
 
     function toggleLockedTargetUi(target) {
-      if (!isHostileNpc(target)) return;
+      if (!isValidLockedTarget(target)) return;
       const idx = lockedTargets.indexOf(target);
       if (idx >= 0) {
         const next = lockedTargets.slice();
@@ -12628,6 +12660,35 @@
       commandSuppressedByDrag: false
     };
     window.rtsState = rtsState;
+
+    const WORLD_COMMAND_MENU_W = 188;
+    const WORLD_COMMAND_MENU_ITEM_H = 28;
+    const WORLD_COMMAND_MENU_MARGIN = 10;
+    const WORLD_COMMAND_PLACEMENT_DRAG_THRESHOLD = 12;
+    const worldCommandMenu = {
+      open: false,
+      mode: 'normal',
+      x: 0,
+      y: 0,
+      width: WORLD_COMMAND_MENU_W,
+      itemHeight: WORLD_COMMAND_MENU_ITEM_H,
+      items: [],
+      worldPoint: null,
+      targetEntity: null,
+      rightHeld: false,
+      pressScreenX: 0,
+      pressScreenY: 0,
+      pressWorld: null,
+      placement: {
+        active: false,
+        action: null,
+        anchor: null,
+        pointer: null,
+        faceAngle: 0,
+        units: [],
+        targets: new Map()
+      }
+    };
 
     function isRtsModeActive() {
       return camera.mode === 'rts';
@@ -12860,16 +12921,21 @@
     function issueMoveOrder(point, opts = {}) {
       const units = [...Selection.units].filter(u => u && !u.dead);
       if (!units.length) return;
-      const targets = formationTargets(units, point);
+      const hasFaceAngle = Number.isFinite(opts.faceAngle);
+      const targets = hasFaceAngle
+        ? computeCommandFormationTargets(units, point, opts.faceAngle)
+        : formationTargets(units, point);
       for (const unit of units) {
         const t = targets.get(unit) || point;
         const arrival = (unit.radius || unit.w || 30) + 25;
-        issueUnitCommand(unit, {
-          type: opts.attackMove ? 'attack-move' : 'move',
-          target: { x: t.x, y: t.y },
-          targetEntity: opts.targetEntity || null,
-          arrival
+        const command = createMoveCommand({
+          point: { x: t.x, y: t.y },
+          arrival,
+          faceAngle: hasFaceAngle ? (Number.isFinite(t.faceAngle) ? t.faceAngle : opts.faceAngle) : null
         });
+        if (opts.attackMove) command.type = 'attack-move';
+        if (opts.targetEntity) command.targetEntity = opts.targetEntity;
+        issueUnitCommand(unit, command);
       }
     }
 
@@ -12938,6 +13004,383 @@
         setLockedTargetsExact([targetEntity]);
       }
       pushZoneMessage('RTS: DIRECT SCAN', 1.2);
+    }
+
+    function commandEntityPoint(entity, fallback = null) {
+      if (!entity) return fallback ? { x: fallback.x, y: fallback.y } : null;
+      const source = entity.pos || entity;
+      const x = Number(source.x);
+      const y = Number(source.y);
+      if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
+      return fallback ? { x: fallback.x, y: fallback.y } : null;
+    }
+
+    function commandEntityRadius(entity) {
+      return Math.max(24, Number(entity?.radius || entity?.r || entity?.baseR || entity?.w || 24) || 24);
+    }
+
+    function resetWorldCommandPlacement() {
+      const placement = worldCommandMenu.placement;
+      placement.active = false;
+      placement.action = null;
+      placement.anchor = null;
+      placement.pointer = null;
+      placement.faceAngle = 0;
+      placement.units = [];
+      placement.targets.clear();
+    }
+
+    function closeWorldCommandMenu() {
+      worldCommandMenu.open = false;
+      worldCommandMenu.rightHeld = false;
+      worldCommandMenu.items = [];
+      worldCommandMenu.worldPoint = null;
+      worldCommandMenu.targetEntity = null;
+      resetWorldCommandPlacement();
+    }
+
+    function openWorldCommandMenuAt(mode, sx, sy, worldPoint, targetEntity, items) {
+      resetWorldCommandPlacement();
+      worldCommandMenu.open = true;
+      worldCommandMenu.mode = mode || 'normal';
+      worldCommandMenu.items = Array.isArray(items) ? items : [];
+      worldCommandMenu.worldPoint = worldPoint ? { x: worldPoint.x, y: worldPoint.y } : null;
+      worldCommandMenu.targetEntity = targetEntity || null;
+      worldCommandMenu.width = WORLD_COMMAND_MENU_W;
+      worldCommandMenu.itemHeight = WORLD_COMMAND_MENU_ITEM_H;
+      const menuH = worldCommandMenu.items.length * worldCommandMenu.itemHeight;
+      worldCommandMenu.x = clamp(sx + 10, WORLD_COMMAND_MENU_MARGIN, W - worldCommandMenu.width - WORLD_COMMAND_MENU_MARGIN);
+      worldCommandMenu.y = clamp(sy + 10, WORLD_COMMAND_MENU_MARGIN, H - menuH - WORLD_COMMAND_MENU_MARGIN);
+      worldCommandMenu.pressScreenX = sx;
+      worldCommandMenu.pressScreenY = sy;
+      worldCommandMenu.pressWorld = worldPoint ? { x: worldPoint.x, y: worldPoint.y } : null;
+      closeMapContextMenu();
+    }
+
+    function openNormalWorldCommandMenuAt(sx, sy) {
+      const rect = canvas.getBoundingClientRect();
+      const worldPoint = screenToWorld(sx - rect.left, sy - rect.top);
+      const targetEntity = pickEnemyTargetAtWorld(worldPoint);
+      openWorldCommandMenuAt(
+        'normal',
+        sx,
+        sy,
+        worldPoint,
+        targetEntity,
+        buildNormalCommandMenuItems({ targetEntity })
+      );
+    }
+
+    function openRtsWorldCommandMenuAt(sx, sy, worldPoint) {
+      const selectedCount = [...Selection.units].filter(u => u && !u.dead).length;
+      if (!selectedCount) return false;
+      const targetEntity = pickCommandTargetAtWorld(worldPoint);
+      openWorldCommandMenuAt(
+        'rts',
+        sx,
+        sy,
+        worldPoint,
+        targetEntity,
+        buildRtsCommandMenuItems({ selectedCount })
+      );
+      return true;
+    }
+
+    function isMovePlacementAction(action) {
+      return action === 'move' || action === 'move-formation';
+    }
+
+    function updateRtsMovePlacement(pointerWorld) {
+      const placement = worldCommandMenu.placement;
+      if (!placement.active || !placement.anchor) return;
+      placement.pointer = pointerWorld ? { x: pointerWorld.x, y: pointerWorld.y } : placement.anchor;
+      const dx = placement.pointer.x - placement.anchor.x;
+      const dy = placement.pointer.y - placement.anchor.y;
+      if (Math.hypot(dx, dy) > 10) {
+        placement.faceAngle = Math.atan2(dy, dx);
+      }
+      placement.targets = computeCommandFormationTargets(placement.units, placement.anchor, placement.faceAngle);
+    }
+
+    function beginRtsMovePlacement(action, anchorWorld, pointerWorld = null) {
+      const units = [...Selection.units].filter(u => u && !u.dead);
+      if (!units.length || !anchorWorld) return false;
+      const placement = worldCommandMenu.placement;
+      placement.active = true;
+      placement.action = isMovePlacementAction(action) ? action : 'move';
+      placement.anchor = { x: anchorWorld.x, y: anchorWorld.y };
+      placement.pointer = pointerWorld ? { x: pointerWorld.x, y: pointerWorld.y } : { x: anchorWorld.x, y: anchorWorld.y };
+      placement.faceAngle = Number.isFinite(ship?.angle) ? ship.angle : 0;
+      placement.units = units;
+      updateRtsMovePlacement(placement.pointer);
+      return true;
+    }
+
+    function commitRtsMovePlacement() {
+      const placement = worldCommandMenu.placement;
+      if (!placement.active || !placement.anchor) return false;
+      issueMoveOrder(placement.anchor, { faceAngle: placement.faceAngle });
+      pushZoneMessage(`RTS: MOVE${placement.units.length > 1 ? ' FORMATION' : ''} x${placement.units.length}`, 1.2);
+      closeWorldCommandMenu();
+      return true;
+    }
+
+    function setPlayerAttackTarget(targetEntity) {
+      if (!isValidLockedTarget(targetEntity)) {
+        pushZoneMessage('ATTACK: BRAK CELU', 1.2);
+        return false;
+      }
+      const next = [targetEntity, ...lockedTargets.filter(t => t !== targetEntity && isValidLockedTarget(t))]
+        .slice(0, RADAR_UI_MAX_TARGETS);
+      setLockedTargetsExact(next);
+      mainAutoFire = true;
+      pushZoneMessage(`ATTACK: ${getRadarTargetUnitId(targetEntity)}`, 1.4);
+      return true;
+    }
+
+    function issueAttackOrder(targetEntity) {
+      if (!isValidLockedTarget(targetEntity)) {
+        pushZoneMessage('RTS: BRAK CELU ATAKU', 1.2);
+        return;
+      }
+      const units = [...Selection.units].filter(u => u && !u.dead);
+      if (!units.length) return;
+      const point = commandEntityPoint(targetEntity, { x: 0, y: 0 });
+      for (const unit of units) {
+        if (unit === ship) {
+          setPlayerAttackTarget(targetEntity);
+          continue;
+        }
+        const arrival = (unit.radius || unit.w || 30) + commandEntityRadius(targetEntity) + 120;
+        issueUnitCommand(unit, {
+          type: 'attack-move',
+          target: point,
+          targetEntity,
+          arrival
+        });
+      }
+      pushZoneMessage(`RTS: ATTACK x${units.length}`, 1.2);
+    }
+
+    function issueWorldScan(targetEntity, point) {
+      const target = targetEntity || pickEnemyTargetAtWorld(point);
+      if (target) {
+        issueDirectScanOrder(target);
+        return;
+      }
+      if (!scannerState.active) {
+        setScannerActive(true);
+        hudPingNpcStations();
+        togglePlanetRadarVisibility(scannerState.active);
+      } else {
+        triggerScanWave();
+      }
+      pushZoneMessage('SCAN: ACTIVE PING', 1.2);
+    }
+
+    function executeNormalWorldCommandAction(action, point, targetEntity) {
+      const liveTarget = isCommandEntityAlive(targetEntity) ? targetEntity : null;
+      const targetPoint = commandEntityPoint(liveTarget, point) || point;
+      if (!targetPoint) return;
+      if (action === 'attack') {
+        setPlayerAttackTarget(liveTarget);
+        return;
+      }
+      if (action === 'approach') {
+        cruiseNav.active = false;
+        ship.command = createApproachCommand({
+          point: targetPoint,
+          targetEntity: liveTarget,
+          arrival: liveTarget ? Math.max(90, commandEntityRadius(liveTarget) + 80) : 180
+        });
+        pushZoneMessage(liveTarget ? 'ROZKAZ: APPROACH TARGET' : 'ROZKAZ: APPROACH POINT', 1.3);
+        return;
+      }
+      if (action === 'orbit') {
+        cruiseNav.active = false;
+        const radiusBase = liveTarget
+          ? Math.max(900, commandEntityRadius(liveTarget) + 260)
+          : 900;
+        ship.command = createOrbitCommand({
+          point: targetPoint,
+          targetEntity: liveTarget,
+          orbitRadius: radiusBase,
+          orbitDir: 1,
+          arrival: liveTarget ? Math.max(90, commandEntityRadius(liveTarget) + 120) : 120
+        });
+        pushZoneMessage(liveTarget ? 'ROZKAZ: ORBIT TARGET' : 'ROZKAZ: ORBIT POINT', 1.3);
+        return;
+      }
+      if (action === 'jump' || action === 'cruise') {
+        setCruiseTarget(targetPoint.x, targetPoint.y);
+        if (action === 'jump') pushZoneMessage('JUMP TARGET SET', 1.2);
+        return;
+      }
+      if (action === 'scan') {
+        issueWorldScan(liveTarget, targetPoint);
+      }
+    }
+
+    function executeRtsWorldCommandAction(action, point, targetEntity) {
+      const liveTarget = isCommandEntityAlive(targetEntity) ? targetEntity : null;
+      const enemyTarget = isValidLockedTarget(liveTarget) ? liveTarget : pickEnemyTargetAtWorld(point);
+      if (isMovePlacementAction(action)) {
+        const faceAngle = Number.isFinite(ship?.angle) ? ship.angle : 0;
+        issueMoveOrder(point, { faceAngle });
+        pushZoneMessage(`RTS: ${Selection.units.size > 1 ? 'MOVE FORMATION' : 'MOVE'}`, 1.2);
+        return;
+      }
+      if (action === 'approach') {
+        issueApproachOrder(point, liveTarget);
+        return;
+      }
+      if (action === 'orbit') {
+        issueOrbitOrder(point, liveTarget);
+        return;
+      }
+      if (action === 'attack') {
+        issueAttackOrder(enemyTarget);
+        return;
+      }
+      if (action === 'hold') {
+        issueHoldOrder();
+        return;
+      }
+      if (action === 'scan') {
+        issueDirectScanOrder(liveTarget || enemyTarget);
+      }
+    }
+
+    function executeWorldCommandItem(item) {
+      if (!item || !item.action || !worldCommandMenu.open) return false;
+      const point = worldCommandMenu.worldPoint;
+      const targetEntity = worldCommandMenu.targetEntity;
+      if (worldCommandMenu.mode === 'rts') {
+        executeRtsWorldCommandAction(item.action, point, targetEntity);
+      } else {
+        executeNormalWorldCommandAction(item.action, point, targetEntity);
+      }
+      closeWorldCommandMenu();
+      return true;
+    }
+
+    function handleWorldCommandMenuRightDrag(sx, sy, worldPoint) {
+      if (!worldCommandMenu.open || !worldCommandMenu.rightHeld || worldCommandMenu.mode !== 'rts') return false;
+      const placement = worldCommandMenu.placement;
+      if (placement.active) {
+        updateRtsMovePlacement(worldPoint);
+        return true;
+      }
+      const dx = sx - worldCommandMenu.pressScreenX;
+      const dy = sy - worldCommandMenu.pressScreenY;
+      if (Math.hypot(dx, dy) >= WORLD_COMMAND_PLACEMENT_DRAG_THRESHOLD) {
+        const firstAction = worldCommandMenu.items[0]?.action || 'move';
+        beginRtsMovePlacement(firstAction, worldCommandMenu.pressWorld || worldCommandMenu.worldPoint, worldPoint);
+        return true;
+      }
+      return false;
+    }
+
+    function handleRtsWorldCommandRightUp(sx, sy) {
+      if (!worldCommandMenu.open || worldCommandMenu.mode !== 'rts') return false;
+      if (worldCommandMenu.placement.active) {
+        return commitRtsMovePlacement();
+      }
+      worldCommandMenu.rightHeld = false;
+      const item = hitTestCommandMenu(worldCommandMenu, sx, sy);
+      if (item) return executeWorldCommandItem(item);
+      return true;
+    }
+
+    function drawRtsPlacementGhosts(renderCtx, cam) {
+      const placement = worldCommandMenu.placement;
+      if (!placement.active || !placement.anchor || !placement.units.length) return;
+      const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
+      const anchorScreen = worldToScreen(placement.anchor.x, placement.anchor.y, cam);
+      const pointer = placement.pointer || placement.anchor;
+      const pointerScreen = worldToScreen(pointer.x, pointer.y, cam);
+
+      renderCtx.save();
+      renderCtx.strokeStyle = 'rgba(122, 196, 255, 0.65)';
+      renderCtx.fillStyle = 'rgba(64, 180, 255, 0.12)';
+      renderCtx.lineWidth = 1.5;
+      renderCtx.setLineDash([8, 6]);
+      renderCtx.beginPath();
+      renderCtx.moveTo(anchorScreen.x, anchorScreen.y);
+      renderCtx.lineTo(pointerScreen.x, pointerScreen.y);
+      renderCtx.stroke();
+      renderCtx.setLineDash([]);
+
+      for (const unit of placement.units) {
+        if (!unit || unit.dead) continue;
+        const target = placement.targets.get(unit);
+        if (!target) continue;
+        const screen = worldToScreen(target.x, target.y, cam);
+        const radius = Math.max(26, Number(unit.radius || unit.w || 30) || 30);
+        const length = Math.max(54, radius * 2.2) * zoom;
+        const width = Math.max(28, radius * 1.15) * zoom;
+        renderCtx.save();
+        renderCtx.translate(screen.x, screen.y);
+        renderCtx.rotate(Number.isFinite(target.faceAngle) ? target.faceAngle : placement.faceAngle);
+        renderCtx.globalAlpha = unit === ship ? 0.82 : 0.68;
+        renderCtx.fillStyle = unit === ship ? 'rgba(116, 235, 255, 0.20)' : 'rgba(122, 166, 255, 0.16)';
+        renderCtx.strokeStyle = unit === ship ? 'rgba(136, 250, 255, 0.9)' : 'rgba(154, 188, 255, 0.82)';
+        renderCtx.lineWidth = Math.max(1, 1.6 * zoom);
+        renderCtx.beginPath();
+        renderCtx.moveTo(length * 0.55, 0);
+        renderCtx.lineTo(-length * 0.42, -width * 0.5);
+        renderCtx.lineTo(-length * 0.24, 0);
+        renderCtx.lineTo(-length * 0.42, width * 0.5);
+        renderCtx.closePath();
+        renderCtx.fill();
+        renderCtx.stroke();
+        renderCtx.beginPath();
+        renderCtx.moveTo(0, 0);
+        renderCtx.lineTo(length * 0.72, 0);
+        renderCtx.stroke();
+        renderCtx.restore();
+      }
+
+      renderCtx.fillStyle = 'rgba(122, 235, 255, 0.95)';
+      renderCtx.beginPath();
+      renderCtx.arc(anchorScreen.x, anchorScreen.y, 4, 0, Math.PI * 2);
+      renderCtx.fill();
+      renderCtx.restore();
+    }
+
+    function drawWorldCommandMenu(renderCtx) {
+      if (!worldCommandMenu.open || worldCommandMenu.placement.active || !worldCommandMenu.items.length) return;
+      const mx = worldCommandMenu.x;
+      const my = worldCommandMenu.y;
+      const mw = worldCommandMenu.width;
+      const rowH = worldCommandMenu.itemHeight;
+      const mh = rowH * worldCommandMenu.items.length;
+      const hover = hitTestCommandMenu(worldCommandMenu, mouse.x, mouse.y);
+
+      renderCtx.save();
+      renderCtx.setTransform(1, 0, 0, 1, 0, 0);
+      renderCtx.fillStyle = 'rgba(6, 16, 34, 0.94)';
+      renderCtx.strokeStyle = 'rgba(118, 244, 255, 0.65)';
+      renderCtx.lineWidth = 1.4;
+      roundRect(renderCtx, mx, my, mw, mh, 8);
+      renderCtx.fill();
+      renderCtx.stroke();
+
+      renderCtx.textAlign = 'left';
+      renderCtx.textBaseline = 'middle';
+      renderCtx.font = '700 12px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif';
+      for (let i = 0; i < worldCommandMenu.items.length; i++) {
+        const item = worldCommandMenu.items[i];
+        const y = my + i * rowH;
+        if (item === hover) {
+          renderCtx.fillStyle = 'rgba(90, 255, 214, 0.18)';
+          roundRect(renderCtx, mx + 6, y + 4, mw - 12, rowH - 8, 5);
+          renderCtx.fill();
+        }
+        renderCtx.fillStyle = item === hover ? '#b6ffe9' : 'rgba(218, 238, 255, 0.92)';
+        renderCtx.fillText(item.label || String(item.action || '').toUpperCase(), mx + 14, y + rowH * 0.5);
+      }
+      renderCtx.restore();
     }
 
     function handleRtsAdvancedOrderAtWorld(worldPoint) {
@@ -13042,6 +13485,11 @@
         mapView.viewY = clamped.y;
         return;
       }
+      if (worldCommandMenu.open && worldCommandMenu.rightHeld && worldCommandMenu.mode === 'rts' && !showMap && !stationUI.open && !CICDisplay.active) {
+        const rect = canvas.getBoundingClientRect();
+        const cur = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+        handleWorldCommandMenuRightDrag(e.clientX, e.clientY, cur);
+      }
       if (isRtsModeActive() && Selection.active) {
         const rect = canvas.getBoundingClientRect();
         const cur = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
@@ -13085,6 +13533,7 @@
       mouse.click = false;
       mapView.dragging = false;
       closeMapContextMenu();
+      closeWorldCommandMenu();
       scan.target = null;
       scan.scanned = null;
       scan.targetType = null;
@@ -13117,15 +13566,28 @@
         if (e.button === 2) e.preventDefault();
         return;
       }
+      if (worldCommandMenu.open && e.button === 0) {
+        const item = hitTestCommandMenu(worldCommandMenu, e.clientX, e.clientY);
+        if (item) executeWorldCommandItem(item);
+        else closeWorldCommandMenu();
+        mouse.left = false;
+        mouse.click = false;
+        return;
+      }
       if (isRtsModeActive() && !showMap && !stationUI.open) {
         const rect = canvas.getBoundingClientRect();
         const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
         if (e.button === 0) {
+          closeWorldCommandMenu();
           startSelection(world, { x: e.clientX, y: e.clientY }, e.shiftKey);
           return;
         }
         if (e.button === 2) {
           e.preventDefault();
+          if (Selection.units.size && openRtsWorldCommandMenuAt(e.clientX, e.clientY, world)) {
+            worldCommandMenu.rightHeld = true;
+            return;
+          }
           rtsState.panPrimed = true;
           rtsState.panDragging = false;
           rtsState.panStartX = e.clientX;
@@ -13186,6 +13648,12 @@
           mouse.right = false;
           return;
         }
+        if (gameStarted && !stationUI.open && !CICDisplay.active) {
+          openNormalWorldCommandMenuAt(e.clientX, e.clientY);
+          worldCommandMenu.rightHeld = true;
+          mouse.right = false;
+          return;
+        }
       }
       if (e.button === 1) {
         e.preventDefault();
@@ -13213,6 +13681,18 @@
         }
       }
       if (CICDisplay.active) { CICDisplay.onMouseUp(e.clientX, e.clientY, e.button); return; }
+      if (e.button === 2 && worldCommandMenu.open) {
+        e.preventDefault();
+        mouse.right = false;
+        if (worldCommandMenu.mode === 'rts') {
+          handleRtsWorldCommandRightUp(e.clientX, e.clientY);
+          return;
+        }
+        worldCommandMenu.rightHeld = false;
+        const item = hitTestCommandMenu(worldCommandMenu, e.clientX, e.clientY);
+        if (item) executeWorldCommandItem(item);
+        return;
+      }
       if (isRtsModeActive() && !showMap && !stationUI.open) {
         const rect = canvas.getBoundingClientRect();
         const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
@@ -16367,9 +16847,9 @@
         }
         hideHoverInfo();
       }
-      if (lockedTarget && (!isHostileNpc(lockedTarget) || lockedTarget.dead)) lockedTarget = null;
+      if (lockedTarget && !isValidLockedTarget(lockedTarget)) lockedTarget = null;
       lockedTargets = lockedTargets.filter(t => {
-        if (!isHostileNpc(t) || t.dead) return false;
+        if (!isValidLockedTarget(t)) return false;
         if (scannerState.active) {
           return scannerContacts.some(c => c.target === t);
         }
@@ -18002,6 +18482,8 @@
           ctx.restore();
         }
 
+        drawRtsPlacementGhosts(ctx, cam);
+
         if (Selection.active && Selection.dragging && Selection.rect) {
           const x0 = Math.min(Selection.rect.x0, Selection.rect.x1);
           const y0 = Math.min(Selection.rect.y0, Selection.rect.y1);
@@ -18959,6 +19441,9 @@
       renderStationUI();
       renderOptions();
       renderMissionJournal();
+      if (!showMap && !CICDisplay.active && !stationUI.open) {
+        drawWorldCommandMenu(ctx);
+      }
       renderZoneMessages();
       renderMissionCompleteBanner();
       if (keys['alt'] && !splitScreenMode) {

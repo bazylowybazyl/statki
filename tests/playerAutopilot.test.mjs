@@ -70,3 +70,27 @@ test('hold control cancels lateral drift with the opposite side thrusters', () =
   assert.equal(control.leftSide, 0);
   assert.ok(Math.abs(control.torque) < 0.01);
 });
+
+test('move command transitions to hold-facing when it reaches arrival', () => {
+  const ship = makeShip({ pos: { x: 95, y: 0 }, vel: { x: 0, y: 0 }, angle: 0 });
+
+  const result = computePlayerCommandControl(ship, {
+    type: 'move',
+    target: { x: 100, y: 0 },
+    arrival: 20,
+    faceAngle: Math.PI / 2
+  });
+
+  assert.equal(result.clearCommand, false);
+  assert.equal(result.nextCommand.type, 'hold');
+  assert.equal(result.nextCommand.faceAngle, Math.PI / 2);
+});
+
+test('hold command with faceAngle rotates toward final facing', () => {
+  const ship = makeShip({ angle: 0, angVel: 0, vel: { x: 0, y: 0 } });
+
+  const result = computePlayerCommandControl(ship, { type: 'hold', faceAngle: Math.PI / 2 });
+
+  assert.ok(result.control.torque > 0.25);
+  assert.equal(result.clearCommand, false);
+});

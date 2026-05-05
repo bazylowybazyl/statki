@@ -1,0 +1,141 @@
+const NORMAL_TARGET_ACTIONS = [
+  ['attack', 'ATTACK'],
+  ['approach', 'APPROACH'],
+  ['orbit', 'ORBIT'],
+  ['jump', 'JUMP'],
+  ['cruise', 'CRUISE'],
+  ['scan', 'SCAN']
+];
+
+const NORMAL_EMPTY_ACTIONS = NORMAL_TARGET_ACTIONS.slice(1);
+
+const RTS_ACTIONS = [
+  ['approach', 'APPROACH'],
+  ['orbit', 'ORBIT'],
+  ['attack', 'ATTACK'],
+  ['hold', 'HOLD'],
+  ['scan', 'SCAN']
+];
+
+function menuItem([action, label]) {
+  return { action, label };
+}
+
+function pointFrom(point) {
+  return {
+    x: Number(point?.x) || 0,
+    y: Number(point?.y) || 0
+  };
+}
+
+function entityPoint(entity) {
+  if (!entity) return null;
+  return pointFrom(entity.pos || entity);
+}
+
+function unitSortKey(unit, index) {
+  const id = unit?.id ?? unit?.uid ?? unit?.name;
+  return id == null ? `~${index}` : String(id);
+}
+
+function unitRadius(unit) {
+  return Math.max(8, Number(unit?.radius) || Number(unit?.r) || 20);
+}
+
+export function buildNormalCommandMenuItems({ targetEntity = null } = {}) {
+  return (targetEntity ? NORMAL_TARGET_ACTIONS : NORMAL_EMPTY_ACTIONS).map(menuItem);
+}
+
+export function buildRtsCommandMenuItems({ selectedCount = 0 } = {}) {
+  const formation = Number(selectedCount) > 1;
+  return [
+    { action: formation ? 'move-formation' : 'move', label: formation ? 'MOVE FORMATION' : 'MOVE' },
+    ...RTS_ACTIONS.map(menuItem)
+  ];
+}
+
+export function createApproachCommand({ point, targetEntity = null, arrival = 280 } = {}) {
+  return {
+    type: 'approach',
+    target: targetEntity ? entityPoint(targetEntity) : pointFrom(point),
+    targetEntity: targetEntity || null,
+    arrival
+  };
+}
+
+export function createOrbitCommand({
+  point,
+  targetEntity = null,
+  arrival = 120,
+  orbitRadius = 900,
+  orbitDir = 1
+} = {}) {
+  return {
+    type: 'orbit',
+    target: targetEntity ? entityPoint(targetEntity) : pointFrom(point),
+    targetEntity: targetEntity || null,
+    arrival,
+    orbitRadius,
+    orbitDir
+  };
+}
+
+export function createMoveCommand({ point, arrival = 90, faceAngle = null } = {}) {
+  const command = {
+    type: 'move',
+    target: pointFrom(point),
+    arrival
+  };
+  if (Number.isFinite(faceAngle)) command.faceAngle = faceAngle;
+  return command;
+}
+
+export function computeFormationTargets(units, anchor, faceAngle = 0) {
+  const list = Array.from(units || []);
+  const targets = new Map();
+  if (!list.length) return targets;
+
+  const sorted = list
+    .map((unit, index) => ({ unit, index, key: unitSortKey(unit, index) }))
+    .sort((a, b) => a.key.localeCompare(b.key) || a.index - b.index);
+
+  const center = pointFrom(anchor);
+  const angle = Number.isFinite(faceAngle) ? faceAngle : 0;
+  const forwardX = Math.cos(angle);
+  const forwardY = Math.sin(angle);
+  const sideX = -forwardY;
+  const sideY = forwardX;
+  const maxRadius = sorted.reduce((max, item) => Math.max(max, unitRadius(item.unit)), 20);
+  const spacing = Math.max(80, maxRadius * 3);
+  const cols = sorted.length <= 3 ? sorted.length : Math.ceil(Math.sqrt(sorted.length));
+  const rows = Math.ceil(sorted.length / cols);
+
+  for (let i = 0; i < sorted.length; i++) {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const itemsInRow = row === rows - 1 ? sorted.length - row * cols : cols;
+    const sideOffset = (col - (itemsInRow - 1) / 2) * spacing;
+    const forwardOffset = (row - (rows - 1) / 2) * spacing;
+    targets.set(sorted[i].unit, {
+      x: center.x + sideX * sideOffset + forwardX * forwardOffset,
+      y: center.y + sideY * sideOffset + forwardY * forwardOffset,
+      faceAngle: angle
+    });
+  }
+
+  return targets;
+}
+
+export function hitTestCommandMenu(menu, x, y) {
+  if (!menu || !Array.isArray(menu.items)) return null;
+  const width = Number(menu.width) || 0;
+  const itemHeight = Number(menu.itemHeight) || 0;
+  const mx = Number(menu.x) || 0;
+  const my = Number(menu.y) || 0;
+  const px = Number(x);
+  const py = Number(y);
+  if (!Number.isFinite(px) || !Number.isFinite(py) || width <= 0 || itemHeight <= 0) return null;
+  if (px < mx || px > mx + width || py < my || py >= my + itemHeight * menu.items.length) return null;
+  const index = Math.floor((py - my) / itemHeight);
+  return menu.items[index] || null;
+}
