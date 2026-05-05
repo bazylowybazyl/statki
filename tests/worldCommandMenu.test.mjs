@@ -8,6 +8,8 @@ import {
   createOrbitCommand,
   createMoveCommand,
   computeFormationTargets,
+  computeRtsCameraPanDelta,
+  computeCommandMenuOpenAnimation,
   hitTestCommandMenu
 } from '../src/game/worldCommandMenu.js';
 
@@ -51,4 +53,26 @@ test('menu hit testing returns the expected action', () => {
   assert.equal(hitTestCommandMenu(menu, 30, 45)?.action, 'move');
   assert.equal(hitTestCommandMenu(menu, 30, 72)?.action, 'hold');
   assert.equal(hitTestCommandMenu(menu, 5, 72), null);
+});
+
+test('RTS camera pan uses WASD and normalizes diagonal movement', () => {
+  const delta = computeRtsCameraPanDelta({ w: true, d: true }, { speed: 1200, zoom: 2, dt: 0.5 });
+  const expected = (1200 / 2) * 0.5 / Math.SQRT2;
+  assert.ok(Math.abs(delta.x - expected) < 1e-9);
+  assert.ok(Math.abs(delta.y + expected) < 1e-9);
+});
+
+test('RTS camera pan still accepts arrow keys', () => {
+  const delta = computeRtsCameraPanDelta({ arrowleft: true, arrowdown: true }, { speed: 900, zoom: 1.5, dt: 1 });
+  const expected = (900 / 1.5) / Math.SQRT2;
+  assert.ok(Math.abs(delta.x + expected) < 1e-9);
+  assert.ok(Math.abs(delta.y - expected) < 1e-9);
+});
+
+test('command menu open animation clamps to a finished radar-style reveal', () => {
+  assert.deepEqual(computeCommandMenuOpenAnimation({ elapsed: -1 }), { alpha: 0, scaleY: 0.02, reveal: 0 });
+  const finished = computeCommandMenuOpenAnimation({ elapsed: 1, duration: 0.24 });
+  assert.equal(finished.alpha, 1);
+  assert.equal(finished.scaleY, 1);
+  assert.equal(finished.reveal, 1);
 });
