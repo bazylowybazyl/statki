@@ -10,6 +10,7 @@ import {
   computeFormationTargets,
   computeRtsCameraPanDelta,
   computeCommandMenuOpenAnimation,
+  computeAttackAutopilotState,
   hitTestCommandMenu
 } from '../src/game/worldCommandMenu.js';
 
@@ -75,4 +76,30 @@ test('command menu open animation clamps to a finished radar-style reveal', () =
   assert.equal(finished.alpha, 1);
   assert.equal(finished.scaleY, 1);
   assert.equal(finished.reveal, 1);
+});
+
+test('attack autopilot approaches before weapon range and orbits inside range', () => {
+  const far = computeAttackAutopilotState({
+    distance: 2600,
+    weaponRanges: [1800, 900],
+    targetRadius: 120
+  });
+  assert.equal(far.commandType, 'approach');
+  assert.equal(far.inWeaponRange, false);
+  assert.ok(far.approachArrival < 1800);
+
+  const close = computeAttackAutopilotState({
+    distance: 1500,
+    weaponRanges: [1800, 900],
+    targetRadius: 120
+  });
+  assert.equal(close.commandType, 'orbit');
+  assert.equal(close.inWeaponRange, true);
+  assert.ok(close.orbitRadius <= 1800);
+});
+
+test('attack autopilot reports no range when the ship has no usable weapons', () => {
+  const state = computeAttackAutopilotState({ distance: 500, weaponRanges: [0, NaN] });
+  assert.equal(state.hasWeaponRange, false);
+  assert.equal(state.commandType, null);
 });

@@ -1149,6 +1149,7 @@
       computeFormationTargets as computeCommandFormationTargets,
       computeRtsCameraPanDelta,
       computeCommandMenuOpenAnimation,
+      computeAttackAutopilotState,
       hitTestCommandMenu
     } from "./src/game/worldCommandMenu.js";
     import { shouldZeroStabilizedAngularVelocity, updateHeadingStabilizer } from "./src/game/flight/stabilizer.js";
@@ -11810,6 +11811,12 @@
     let rocketAutoFire = false;
     let specialMissileAutoFire = false;
     let playerRepairActive = false;
+    const playerAttackState = {
+      active: false,
+      target: null,
+      phase: null,
+      statusKey: ''
+    };
 
     function handleShiftDown() {
       if (ship.destroyed) return;
@@ -12488,6 +12495,7 @@
       if (!lockedTargets.length && !lockedTarget) return;
       lockedTargets = [];
       lockedTarget = null;
+      clearPlayerAttackState();
       pushZoneMessage('CELE ODBLOKOWANE', 1.1);
     }
 
@@ -12498,6 +12506,7 @@
         const next = lockedTargets.slice();
         next.splice(idx, 1);
         setLockedTargetsExact(next);
+        if (playerAttackState.target === target) clearPlayerAttackState(target);
         pushZoneMessage('CEL ODBLOKOWANY', 1.0);
         return;
       }
@@ -12622,6 +12631,7 @@
 
     function handleRadarAction(action, target) {
       if (!target || target.dead) return;
+      clearPlayerAttackState(target);
       const label = getRadarTargetUnitId(target);
       if (action === 'approach') {
         ship.command = {
@@ -13151,8 +13161,14 @@
       const next = [targetEntity, ...lockedTargets.filter(t => t !== targetEntity && isValidLockedTarget(t))]
         .slice(0, RADAR_UI_MAX_TARGETS);
       setLockedTargetsExact(next);
+      playerAttackState.active = true;
+      playerAttackState.target = targetEntity;
+      playerAttackState.phase = null;
+      playerAttackState.statusKey = '';
+      cruiseNav.active = false;
       mainAutoFire = true;
       pushZoneMessage(`ATTACK: ${getRadarTargetUnitId(targetEntity)}`, 1.4);
+      updatePlayerAttackCommand(0);
       return true;
     }
 
@@ -13196,6 +13212,127 @@
       pushZoneMessage('SCAN: ACTIVE PING', 1.2);
     }
 
+    function clearPlayerAttackState(target = null) {
+      if (target && playerAttackState.target !== target) return;
+      playerAttackState.active = false;
+      playerAttackState.target = null;
+      playerAttackState.phase = null;
+      playerAttackState.statusKey = '';
+    }
+
+    function getPlayerWeaponRange(weapon, applyFiringMode = true) {
+      let range = Number(weapon?.baseRange);
+      if (!Number.isFinite(range) || range <= 0) range = Number(weapon?.range);
+      if ((!Number.isFinite(range) || range <= 0) && weapon?.id === 'hexlance_siege') {
+        range = Number(Superweapon?.superweaponState?.range);
+      }
+      if (!Number.isFinite(range) || range <= 0) return 0;
+      const modRange = Number(ship?.modifiers?.range);
+      if (Number.isFinite(modRange) && modRange > 0) range *= modRange;
+      if (applyFiringMode) {
+        const fmRangeScale = (typeof getFiringModeModifiers === 'function')
+          ? (Number(getFiringModeModifiers()?.rangeMul) || 1.0)
+          : 1.0;
+        range *= fmRangeScale;
+      }
+      return range;
+    }
+
+    function getPlayerMainWeaponRanges() {
+      const ranges = [];
+      const mainWeapons = Game.player?.weapons?.[HP.MAIN] || [];
+      for (const loadout of mainWeapons) {
+        const range = getPlayerWeaponRange(loadout?.weapon, true);
+        if (range > 0) ranges.push(range);
+      }
+      return ranges;
+    }
+
+    function distanceFromShipToTarget(target) {
+      const pos = commandEntityPoint(target, null);
+      if (!pos) return Infinity;
+      return Math.hypot(pos.x - ship.pos.x, pos.y - ship.pos.y);
+    }
+
+    function getPlayerAttackRangeState(target) {
+      return computeAttackAutopilotState({
+        distance: distanceFromShipToTarget(target),
+        weaponRanges: getPlayerMainWeaponRanges(),
+        targetRadius: commandEntityRadius(target),
+        minOrbitRadius: RTS_DEFAULT_ORBIT_RADIUS
+      });
+    }
+
+    function selectLockedTargetInRangeForWeapon(weapon, seedIndex = 0) {
+      const targets = (lockedTargets && lockedTargets.length) ? lockedTargets : (lockedTarget ? [lockedTarget] : []);
+      if (!targets.length) return null;
+      const range = getPlayerWeaponRange(weapon, true);
+      if (range <= 0) return null;
+      const valid = [];
+      for (let i = 0; i < targets.length; i++) {
+        const target = targets[i];
+        if (!isValidLockedTarget(target)) continue;
+        if (distanceFromShipToTarget(target) <= range) valid.push(target);
+      }
+      return valid.length ? valid[Math.abs(seedIndex | 0) % valid.length] : null;
+    }
+
+    function hasAnyLockedTargetInMainWeaponRange() {
+      const targets = (lockedTargets && lockedTargets.length) ? lockedTargets : (lockedTarget ? [lockedTarget] : []);
+      if (!targets.length) return false;
+      const mainWeapons = Game.player?.weapons?.[HP.MAIN] || [];
+      for (let i = 0; i < mainWeapons.length; i++) {
+        const weapon = mainWeapons[i]?.weapon;
+        if (selectLockedTargetInRangeForWeapon(weapon, i)) return true;
+      }
+      return false;
+    }
+
+    function updatePlayerAttackCommand(dt = 0) {
+      if (!playerAttackState.active) return;
+      const target = playerAttackState.target;
+      if (!isValidLockedTarget(target)) {
+        clearPlayerAttackState(target);
+        return;
+      }
+      if (playerHasManualInput()) {
+        clearPlayerAttackState(target);
+        return;
+      }
+
+      const state = getPlayerAttackRangeState(target);
+      if (!state.hasWeaponRange) {
+        mainAutoFire = false;
+        clearPlayerAttackState(target);
+        pushZoneMessage('ATTACK: BRAK BRONI GLOWNEJ', 1.3);
+        return;
+      }
+
+      mainAutoFire = true;
+      cruiseNav.active = false;
+      const phase = state.commandType;
+      if (phase === 'orbit') {
+        ship.command = createOrbitCommand({
+          point: commandEntityPoint(target, ship.pos),
+          targetEntity: target,
+          orbitRadius: state.orbitRadius,
+          orbitDir: 1,
+          arrival: Math.max(90, commandEntityRadius(target) + 120)
+        });
+      } else {
+        ship.command = createApproachCommand({
+          point: commandEntityPoint(target, ship.pos),
+          targetEntity: target,
+          arrival: state.approachArrival
+        });
+      }
+
+      if (playerAttackState.phase !== phase) {
+        playerAttackState.phase = phase;
+        pushZoneMessage(phase === 'orbit' ? 'ATTACK: ORBITA / OGIEN' : 'ATTACK: APPROACH DO ZASIEGU', 1.2);
+      }
+    }
+
     function executeNormalWorldCommandAction(action, point, targetEntity) {
       const liveTarget = isCommandEntityAlive(targetEntity) ? targetEntity : null;
       const targetPoint = commandEntityPoint(liveTarget, point) || point;
@@ -13204,6 +13341,7 @@
         setPlayerAttackTarget(liveTarget);
         return;
       }
+      clearPlayerAttackState();
       if (action === 'approach') {
         cruiseNav.active = false;
         ship.command = createApproachCommand({
@@ -14513,7 +14651,10 @@
 
         // Dystrybucja ognia po wielu celach (jeśli lockedTargets > 1)
         let targetToPass = lockedTarget;
-        if (lockedTargets && lockedTargets.length > 1) {
+        if (mainAutoFire && lockedTargets && lockedTargets.length > 0) {
+          targetToPass = selectLockedTargetInRangeForWeapon(weaponData, i);
+          if (!targetToPass) continue;
+        } else if (lockedTargets && lockedTargets.length > 1) {
           const rng = weaponData.baseRange || weaponData.range || 1000;
           const fmRangeScale = (typeof getFiringModeModifiers === 'function') ? (getFiringModeModifiers()?.rangeMul || 1.0) : 1.0;
           const actualRng = rng * fmRangeScale;
@@ -16784,6 +16925,8 @@
       }
       if (!boostActive && boost.effectTime > 0) boost.effectTime = Math.max(0, boost.effectTime - dt);
 
+      updatePlayerAttackCommand(dt);
+
       // rail queue/cd
       rail.cd[0] = Math.max(0, rail.cd[0] - dt);
       rail.cd[1] = Math.max(0, rail.cd[1] - dt);
@@ -16791,7 +16934,7 @@
       const secondaryReady = requiredBarrels < 2 || rail.cd[1] <= 0;
       if (!stationUI.open && mouse.left && rail.queue.length === 0 && rail.cd[0] <= 0 && secondaryReady && !warp.isBusy()) { triggerRailVolley(); }
       // Auto-fire: ciągły ogień na namierzone cele (toggle z klawisza 1/2/3)
-      if (mainAutoFire && lockedTargets.length > 0 && !stationUI.open && rail.queue.length === 0 && rail.cd[0] <= 0 && secondaryReady && !warp.isBusy()) {
+      if (mainAutoFire && lockedTargets.length > 0 && hasAnyLockedTargetInMainWeaponRange() && !stationUI.open && rail.queue.length === 0 && rail.cd[0] <= 0 && secondaryReady && !warp.isBusy()) {
         triggerRailVolley();
       }
       if (specialAutoFire && lockedTargets.length > 0 && !stationUI.open && !warp.isBusy()) {
