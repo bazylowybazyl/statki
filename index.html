@@ -1147,6 +1147,8 @@
       createOrbitCommand,
       createMoveCommand,
       computeFormationTargets as computeCommandFormationTargets,
+      computeRtsCameraPanDelta,
+      computeCommandMenuOpenAnimation,
       hitTestCommandMenu
     } from "./src/game/worldCommandMenu.js";
     import { shouldZeroStabilizedAngularVelocity, updateHeadingStabilizer } from "./src/game/flight/stabilizer.js";
@@ -5630,13 +5632,14 @@
       // Ship camera is resolved later in render() using interpolated position
       // to avoid jitter. Only non-ship modes are updated here.
       if (camera.mode === 'rts') {
-        const moveX = (keys['arrowright'] ? 1 : 0) - (keys['arrowleft'] ? 1 : 0);
-        const moveY = (keys['arrowdown'] ? 1 : 0) - (keys['arrowup'] ? 1 : 0);
-        if (moveX || moveY) {
-          const len = Math.hypot(moveX, moveY) || 1;
-          const panSpeed = camera.freeKeyPanSpeed / Math.max(0.0001, camera.zoom);
-          camera.x += (moveX / len) * panSpeed * dt;
-          camera.y += (moveY / len) * panSpeed * dt;
+        const pan = computeRtsCameraPanDelta(keys, {
+          speed: camera.freeKeyPanSpeed,
+          zoom: camera.zoom,
+          dt
+        });
+        if (pan.x || pan.y) {
+          camera.x += pan.x;
+          camera.y += pan.y;
         }
         camera.targetX = camera.x;
         camera.targetY = camera.y;
@@ -12179,6 +12182,13 @@
         input.main = 0;
         return;
       }
+      if (camera.mode === 'rts') {
+        enginePower.target = 0;
+        enginePower.current = 0;
+        input.main = 0;
+        input.retro = 0;
+        return;
+      }
       const manualInput = playerHasManualInput();
       if (ship.command && !manualInput) {
         enginePower.target = Math.max(clamp(input.main, 0, 1), clamp(input.retro || 0, 0, 1) * 0.92);
@@ -12304,6 +12314,12 @@
 
         // Mniej agresywne efekty dymu (bo statek leci wolniej)
         spawnParticle(ship.pos, { x: -ship.vel.x * 0.15, y: -ship.vel.y * 0.15 }, 0.3, '#66ffcc', 3, true);
+        return;
+      }
+
+      if (isRtsModeActive()) {
+        ag.arcCharge = 0;
+        ag.lastPivot = null;
         return;
       }
 
@@ -12661,8 +12677,8 @@
     };
     window.rtsState = rtsState;
 
-    const WORLD_COMMAND_MENU_W = 188;
-    const WORLD_COMMAND_MENU_ITEM_H = 28;
+    const WORLD_COMMAND_MENU_W = 206;
+    const WORLD_COMMAND_MENU_ITEM_H = 30;
     const WORLD_COMMAND_MENU_MARGIN = 10;
     const WORLD_COMMAND_PLACEMENT_DRAG_THRESHOLD = 12;
     const worldCommandMenu = {
@@ -12679,6 +12695,7 @@
       pressScreenX: 0,
       pressScreenY: 0,
       pressWorld: null,
+      openedAt: 0,
       placement: {
         active: false,
         action: null,
@@ -13054,6 +13071,7 @@
       worldCommandMenu.pressScreenX = sx;
       worldCommandMenu.pressScreenY = sy;
       worldCommandMenu.pressWorld = worldPoint ? { x: worldPoint.x, y: worldPoint.y } : null;
+      worldCommandMenu.openedAt = (typeof performance !== 'undefined' ? performance.now() : 0) * 0.001;
       closeMapContextMenu();
     }
 
@@ -13356,29 +13374,71 @@
       const rowH = worldCommandMenu.itemHeight;
       const mh = rowH * worldCommandMenu.items.length;
       const hover = hitTestCommandMenu(worldCommandMenu, mouse.x, mouse.y);
+      const now = (typeof performance !== 'undefined' ? performance.now() : 0) * 0.001;
+      const anim = computeCommandMenuOpenAnimation({ elapsed: now - (worldCommandMenu.openedAt || now) });
+      const revealH = mh * anim.reveal;
+      const hasTarget = !!worldCommandMenu.targetEntity;
+      const accent = hasTarget ? '#ff3333' : (worldCommandMenu.mode === 'rts' ? '#38bdf8' : '#33ff33');
+      const accentSoft = hasTarget ? 'rgba(255,51,51,0.38)' : (worldCommandMenu.mode === 'rts' ? 'rgba(56,189,248,0.36)' : 'rgba(51,255,51,0.32)');
+      const accentFill = hasTarget ? 'rgba(40,5,5,0.92)' : 'rgba(4,12,20,0.92)';
 
       renderCtx.save();
       renderCtx.setTransform(1, 0, 0, 1, 0, 0);
-      renderCtx.fillStyle = 'rgba(6, 16, 34, 0.94)';
-      renderCtx.strokeStyle = 'rgba(118, 244, 255, 0.65)';
-      renderCtx.lineWidth = 1.4;
-      roundRect(renderCtx, mx, my, mw, mh, 8);
-      renderCtx.fill();
-      renderCtx.stroke();
+      renderCtx.globalAlpha = anim.alpha;
+      renderCtx.beginPath();
+      renderCtx.rect(mx - 10, my - 10, mw + 20, Math.max(0, revealH + 20));
+      renderCtx.clip();
+      renderCtx.shadowColor = accentSoft;
+      renderCtx.shadowBlur = 12;
+      renderCtx.fillStyle = accentFill;
+      renderCtx.fillRect(mx, my, mw, mh);
+      renderCtx.shadowBlur = 0;
+      renderCtx.strokeStyle = accentSoft;
+      renderCtx.lineWidth = 1;
+      renderCtx.strokeRect(mx + 0.5, my + 0.5, mw - 1, mh - 1);
+      renderCtx.fillStyle = accent;
+      renderCtx.fillRect(mx, my, 3, mh);
+
+      const grad = renderCtx.createLinearGradient(mx + 3, my, mx + mw, my);
+      grad.addColorStop(0, accentSoft);
+      grad.addColorStop(0.62, 'rgba(0,0,0,0)');
+      renderCtx.fillStyle = grad;
+      renderCtx.fillRect(mx + 3, my + 4, mw - 8, 1);
 
       renderCtx.textAlign = 'left';
       renderCtx.textBaseline = 'middle';
-      renderCtx.font = '700 12px Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif';
+      renderCtx.font = '700 11px "Courier New", monospace';
       for (let i = 0; i < worldCommandMenu.items.length; i++) {
         const item = worldCommandMenu.items[i];
         const y = my + i * rowH;
+        const rowReveal = clamp((anim.reveal - i * 0.065) / 0.45, 0, 1);
+        if (rowReveal <= 0) continue;
+        const isHover = item === hover;
+        const isScan = item.action === 'scan';
+        const isAttack = item.action === 'attack';
+        const rowAccent = isAttack ? '#ff8844' : (isScan ? '#38bdf8' : accent);
+        renderCtx.globalAlpha = anim.alpha * rowReveal;
+        renderCtx.fillStyle = isHover ? 'rgba(51,255,51,0.18)' : 'rgba(6,20,30,0.78)';
+        renderCtx.fillRect(mx + 8, y + 4, mw - 16, rowH - 8);
+        renderCtx.strokeStyle = isHover ? rowAccent : (isScan ? 'rgba(56,189,248,0.42)' : accentSoft);
+        renderCtx.lineWidth = 1;
+        renderCtx.strokeRect(mx + 8.5, y + 4.5, mw - 17, rowH - 9);
         if (item === hover) {
-          renderCtx.fillStyle = 'rgba(90, 255, 214, 0.18)';
-          roundRect(renderCtx, mx + 6, y + 4, mw - 12, rowH - 8, 5);
-          renderCtx.fill();
+          renderCtx.fillStyle = rowAccent;
+          renderCtx.fillRect(mx + 8, y + 4, 2, rowH - 8);
         }
-        renderCtx.fillStyle = item === hover ? '#b6ffe9' : 'rgba(218, 238, 255, 0.92)';
-        renderCtx.fillText(item.label || String(item.action || '').toUpperCase(), mx + 14, y + rowH * 0.5);
+        renderCtx.fillStyle = isHover ? '#e0f2fe' : (isScan ? '#bae6fd' : 'rgba(148,163,184,0.96)');
+        renderCtx.fillText('> ' + (item.label || String(item.action || '').toUpperCase()), mx + 18 + (isHover ? 4 : 0), y + rowH * 0.5);
+      }
+      if (anim.reveal < 1) {
+        renderCtx.globalAlpha = Math.max(0.15, anim.alpha);
+        renderCtx.strokeStyle = accent;
+        renderCtx.shadowColor = accent;
+        renderCtx.shadowBlur = 10;
+        renderCtx.beginPath();
+        renderCtx.moveTo(mx, my + revealH);
+        renderCtx.lineTo(mx + mw, my + revealH);
+        renderCtx.stroke();
       }
       renderCtx.restore();
     }
@@ -17138,7 +17198,7 @@
         const reverseInput = Math.max(0, -(clamp(ship.input?.thrustY ?? 0, -1, 1)));
         const retroState = ship.__retroState;
         const gamepadReverse = (ship.input?.thrustY ?? 0) < -0.15;
-        const manualBrakeHeld = !!(keys['s'] || gamepadReverse);
+        const manualBrakeHeld = !!((!isRtsModeActive() && keys['s']) || gamepadReverse);
         const reverseEngaged = !!(reverseInput > 0.05 && retroState?.reverseEngaged);
         const manualReverseHeld = manualBrakeHeld && reverseEngaged;
         const damperActive = !!((flightAssist.damper && !manualReverseHeld) || (manualBrakeHeld && !reverseEngaged));

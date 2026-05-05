@@ -42,6 +42,15 @@ function unitRadius(unit) {
   return Math.max(8, Number(unit?.radius) || Number(unit?.r) || 20);
 }
 
+function clamp01(value) {
+  return Math.max(0, Math.min(1, Number(value) || 0));
+}
+
+function smoothstep01(value) {
+  const t = clamp01(value);
+  return t * t * (3 - 2 * t);
+}
+
 export function buildNormalCommandMenuItems({ targetEntity = null } = {}) {
   return (targetEntity ? NORMAL_TARGET_ACTIONS : NORMAL_EMPTY_ACTIONS).map(menuItem);
 }
@@ -124,6 +133,31 @@ export function computeFormationTargets(units, anchor, faceAngle = 0) {
   }
 
   return targets;
+}
+
+export function computeRtsCameraPanDelta(keys = {}, { speed = 1200, zoom = 1, dt = 0 } = {}) {
+  const right = (keys.d || keys.arrowright) ? 1 : 0;
+  const left = (keys.a || keys.arrowleft) ? 1 : 0;
+  const down = (keys.s || keys.arrowdown) ? 1 : 0;
+  const up = (keys.w || keys.arrowup) ? 1 : 0;
+  const x = right - left;
+  const y = down - up;
+  if (!x && !y) return { x: 0, y: 0 };
+  const len = Math.hypot(x, y) || 1;
+  const distance = (Number(speed) || 0) * (Number(dt) || 0) / Math.max(0.0001, Number(zoom) || 1);
+  return {
+    x: (x / len) * distance,
+    y: (y / len) * distance
+  };
+}
+
+export function computeCommandMenuOpenAnimation({ elapsed = 0, duration = 0.24 } = {}) {
+  const t = clamp01((Number(elapsed) || 0) / Math.max(0.0001, Number(duration) || 0.24));
+  return {
+    alpha: smoothstep01(t),
+    scaleY: 0.02 + 0.98 * smoothstep01(t),
+    reveal: t
+  };
 }
 
 export function hitTestCommandMenu(menu, x, y) {
