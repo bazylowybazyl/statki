@@ -27,7 +27,7 @@ function getEntityPos(entity) {
 function getCommandTargetPos(cmd) {
   if (!cmd) return null;
   const ent = cmd.targetEntity;
-  if (ent && !ent.dead) return getEntityPos(ent);
+  if (ent && !ent.dead && !ent.destroyed && !ent.removed) return getEntityPos(ent);
   if (cmd.target && Number.isFinite(cmd.target.x) && Number.isFinite(cmd.target.y)) {
     return cmd.target;
   }
@@ -57,7 +57,7 @@ function computeOrbitSteerVector(ship, center, orbitRadius, orbitDir = 1) {
   };
 }
 
-export function computePlayerHoldControl(ship, physics = SHIP_PHYSICS) {
+export function computePlayerHoldControl(ship, physics = SHIP_PHYSICS, faceAngle = null) {
   const angle = Number(ship?.angle) || 0;
   const sinA = Math.sin(angle);
   const cosA = Math.cos(angle);
@@ -66,7 +66,12 @@ export function computePlayerHoldControl(ship, physics = SHIP_PHYSICS) {
   const lateralVel = -((Number(vel.x) || 0) * sinA) + ((Number(vel.y) || 0) * cosA);
   const speed = Math.hypot(Number(vel.x) || 0, Number(vel.y) || 0);
   const maxTurn = Math.max(0.06, (Number(physics?.MAX_TURN_SPEED) || SHIP_PHYSICS.MAX_TURN_SPEED) * 0.28);
-  const torque = clamp(-(Number(ship?.angVel) || 0) / maxTurn, -0.6, 0.6);
+  const omega = Number(ship?.angVel) || 0;
+  const hasFaceAngle = Number.isFinite(faceAngle);
+  const headingError = hasFaceAngle ? wrapAngle(faceAngle - angle) : 0;
+  const torque = hasFaceAngle
+    ? clamp((headingError * 1.35) - (omega * 1.1), -0.6, 0.6)
+    : clamp(-omega / maxTurn, -0.6, 0.6);
   const retro = clamp(Math.max(0, forwardVel) / 520, 0, 1);
   const main = clamp(Math.max(0, -forwardVel) / 460, 0, 0.65);
   const rightSide = clamp(Math.max(0, lateralVel) / 360, 0, 1);
@@ -79,7 +84,7 @@ export function computePlayerHoldControl(ship, physics = SHIP_PHYSICS) {
     torque,
     leftSide,
     rightSide,
-    settled: speed < 28 && Math.abs(Number(ship?.angVel) || 0) < 0.01
+    settled: speed < 28 && Math.abs(omega) < 0.01 && (!hasFaceAngle || Math.abs(headingError) < 0.03)
   };
 }
 
@@ -123,7 +128,7 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
   }
 
   if (cmd.type === 'hold') {
-    const hold = computePlayerHoldControl(ship, options.physics || SHIP_PHYSICS);
+    const hold = computePlayerHoldControl(ship, options.physics || SHIP_PHYSICS, cmd.faceAngle);
     return {
       control: hold.settled
         ? { controller: 'player', main: 0, thrustY: 0, torque: 0, leftSide: 0, rightSide: 0, retro: 0 }
@@ -151,11 +156,14 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
     dist = orbit.dist;
   } else if (dist <= arrival) {
     const hold = computePlayerHoldControl(ship, options.physics || SHIP_PHYSICS);
+    const nextCommand = Number.isFinite(cmd.faceAngle)
+      ? { type: 'hold', faceAngle: cmd.faceAngle }
+      : { type: 'hold' };
     return {
       control: hold.settled
         ? { controller: 'player', main: 0, thrustY: 0, torque: 0, leftSide: 0, rightSide: 0, retro: 0 }
         : hold,
-      nextCommand: { type: 'hold' },
+      nextCommand,
       clearCommand: false
     };
   }
