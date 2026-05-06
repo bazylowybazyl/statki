@@ -11,6 +11,7 @@ import {
   computeRtsCameraPanDelta,
   computeCommandMenuOpenAnimation,
   computeAttackAutopilotState,
+  computeApproachPathLine,
   hitTestCommandMenu
 } from '../src/game/worldCommandMenu.js';
 
@@ -102,4 +103,21 @@ test('attack autopilot reports no range when the ship has no usable weapons', ()
   const state = computeAttackAutopilotState({ distance: 500, weaponRanges: [0, NaN] });
   assert.equal(state.hasWeaponRange, false);
   assert.equal(state.commandType, null);
+});
+
+test('approach path line follows the live target entity when present', () => {
+  const target = { pos: { x: 1200, y: 900 } };
+  const command = createApproachCommand({
+    point: { x: 100, y: 200 },
+    targetEntity: target,
+    arrival: 180
+  });
+
+  target.pos.x = 1300;
+
+  const line = computeApproachPathLine(command, { x: 20, y: 30 });
+
+  assert.deepEqual(line.start, { x: 20, y: 30 });
+  assert.deepEqual(line.end, { x: 1300, y: 900 });
+  assert.equal(line.arrival, 180);
 });

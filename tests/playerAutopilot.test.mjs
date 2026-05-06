@@ -61,6 +61,22 @@ test('approach order brakes with retro when closing too fast', () => {
   assert.ok(result.control.retro > result.control.main, 'braking should dominate forward thrust');
 });
 
+test('approach order turns the bow before translating sideways', () => {
+  const ship = makeShip({ angle: 0, vel: { x: 0, y: 0 } });
+
+  const result = computePlayerCommandControl(ship, {
+    type: 'approach',
+    target: { x: 0, y: 2400 },
+    arrival: 180
+  });
+
+  assert.ok(result.control.torque > 0.65, 'approach should turn hard toward the target heading');
+  assert.ok(result.control.main < 0.12, 'approach should not accelerate hard before the bow is aligned');
+  assert.ok(result.control.retro < 0.05, 'approach should not reverse toward a side target');
+  assert.ok(result.control.leftSide < 0.12, 'approach should not strafe toward a far side target');
+  assert.ok(result.control.rightSide < 0.12, 'approach should not strafe away from a far side target');
+});
+
 test('hold control cancels lateral drift with the opposite side thrusters', () => {
   const ship = makeShip({ vel: { x: 0, y: 420 } });
 
