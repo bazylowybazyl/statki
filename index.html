@@ -13505,6 +13505,48 @@
       renderCtx.restore();
     }
 
+    function drawPlayerApproachPath(renderCtx, cam, renderPos = null) {
+      const line = computeApproachPathLine(ship.command, renderPos || ship.pos);
+      if (!line) return;
+      const start = worldToScreen(line.start.x, line.start.y, cam);
+      const end = worldToScreen(line.end.x, line.end.y, cam);
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 4) return;
+      const nx = dx / len;
+      const ny = dy / len;
+      const pulse = 0.5 + 0.5 * Math.sin(((typeof performance !== 'undefined' ? performance.now() : 0) * 0.006));
+      const markerR = Math.max(8, Math.min(18, (Number(line.arrival) || 120) * (Number(cam?.zoom) || 1) * 0.18));
+
+      renderCtx.save();
+      renderCtx.strokeStyle = `rgba(126, 255, 226, ${0.48 + pulse * 0.18})`;
+      renderCtx.lineWidth = Math.max(1.4, 2.2 * Math.sqrt(Math.max(0.2, Number(cam?.zoom) || 1)));
+      renderCtx.setLineDash([14, 9]);
+      renderCtx.beginPath();
+      renderCtx.moveTo(start.x, start.y);
+      renderCtx.lineTo(end.x, end.y);
+      renderCtx.stroke();
+      renderCtx.setLineDash([]);
+
+      renderCtx.strokeStyle = `rgba(214, 255, 244, ${0.65 + pulse * 0.25})`;
+      renderCtx.fillStyle = `rgba(126, 255, 226, ${0.12 + pulse * 0.08})`;
+      renderCtx.beginPath();
+      renderCtx.arc(end.x, end.y, markerR, 0, Math.PI * 2);
+      renderCtx.fill();
+      renderCtx.stroke();
+
+      const arrowLen = Math.max(14, markerR * 1.35);
+      const arrowWing = arrowLen * 0.52;
+      renderCtx.beginPath();
+      renderCtx.moveTo(end.x, end.y);
+      renderCtx.lineTo(end.x - nx * arrowLen - ny * arrowWing, end.y - ny * arrowLen + nx * arrowWing);
+      renderCtx.moveTo(end.x, end.y);
+      renderCtx.lineTo(end.x - nx * arrowLen + ny * arrowWing, end.y - ny * arrowLen - nx * arrowWing);
+      renderCtx.stroke();
+      renderCtx.restore();
+    }
+
     function drawWorldCommandMenu(renderCtx) {
       if (!worldCommandMenu.open || worldCommandMenu.placement.active || !worldCommandMenu.items.length) return;
       const mx = worldCommandMenu.x;
@@ -18668,6 +18710,8 @@
           npc.shadowFactor = 0;
           drawNPCPretty(ctx, npc, s);
         }
+
+        drawPlayerApproachPath(ctx, cam, interpPos);
 
         if (Selection.units.size) {
           ctx.save();
