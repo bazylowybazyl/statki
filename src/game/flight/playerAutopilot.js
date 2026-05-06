@@ -178,7 +178,8 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
   const localTargetY = -desiredVecX * sinA + desiredVecY * cosA;
   const lateralRatio = Math.abs(localTargetY) / Math.max(1, Math.abs(localTargetX) + Math.abs(localTargetY));
   const closeStrafeT = 1 - smoothstep01((dist - 260) / 1500);
-  const preferStrafeHeading = cmd.type !== 'orbit' && closeStrafeT > 0.05 && lateralRatio > 0.42 && Math.abs(localTargetY) > 120;
+  const allowStrafeHeading = cmd.type === 'move' || cmd.preferStrafeHeading === true;
+  const preferStrafeHeading = allowStrafeHeading && closeStrafeT > 0.05 && lateralRatio > 0.42 && Math.abs(localTargetY) > 120;
 
   const len = Math.max(1e-6, Math.hypot(desiredVecX, desiredVecY));
   const dirX = desiredVecX / len;
@@ -206,12 +207,19 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
     }
   }
 
-  const localAx = desiredAx * cosA + desiredAy * sinA;
-  const localAy = -desiredAx * sinA + desiredAy * cosA;
+  let localAx = desiredAx * cosA + desiredAy * sinA;
+  let localAy = -desiredAx * sinA + desiredAy * cosA;
   const desiredHeading = preferStrafeHeading
     ? angle
     : Math.atan2(desiredVecY, desiredVecX);
   const headingError = wrapAngle(desiredHeading - angle);
+  if (cmd.type === 'approach') {
+    const headingAlignment = Math.max(0, Math.cos(headingError));
+    const forwardGate = smoothstep01((headingAlignment - 0.28) / 0.72);
+    const lateralVel = (-vx * sinA) + (vy * cosA);
+    localAx *= forwardGate;
+    localAy = clamp(-lateralVel / Math.max(0.2, tuning.velocityTau), -SHIP_PHYSICS.SPEED * 0.75, SHIP_PHYSICS.SPEED * 0.75);
+  }
 
   return {
     control: makeControlFromLocalAccel(ship, localAx, localAy, headingError, preferStrafeHeading),

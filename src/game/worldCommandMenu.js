@@ -198,6 +198,19 @@ export function computeAttackAutopilotState({
   };
 }
 
+export function computeApproachPathLine(command, from) {
+  if (!command || command.type !== 'approach') return null;
+  const target = command.targetEntity && !command.targetEntity.dead && !command.targetEntity.destroyed && !command.targetEntity.removed
+    ? entityPoint(command.targetEntity)
+    : entityPoint(command.target);
+  if (!target) return null;
+  return {
+    start: pointFrom(from),
+    end: target,
+    arrival: Math.max(0, Number(command.arrival) || 0)
+  };
+}
+
 export function hitTestCommandMenu(menu, x, y) {
   if (!menu || !Array.isArray(menu.items)) return null;
   const width = Number(menu.width) || 0;
