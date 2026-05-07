@@ -1167,7 +1167,12 @@
     import { SensorSystem } from "./src/game/sensorSystem.js";
     window.SensorSystem = SensorSystem;
     window.SparkSystem3D = SparkSystem3D;
-    import { CICDisplay } from "./src/ui/cicDisplay.js";
+    import {
+      CICDisplay,
+      drawCicShipSilhouette,
+      getCicEntityHullMetrics,
+      getCicPlacementGhostPalette
+    } from "./src/ui/cicDisplay.js";
     import { ContactMarkers } from "./src/ui/contactMarkers.js";
     import { initRadarTargetingUI } from "./src/ui/radarTargetingUI.js";
     import { SpotterDroneSystem } from "./src/game/spotterDrone.js";
@@ -13473,13 +13478,31 @@
         const target = placement.targets.get(unit);
         if (!target) continue;
         const screen = worldToScreen(target.x, target.y, cam);
+        const faceAngle = Number.isFinite(target.faceAngle) ? target.faceAngle : placement.faceAngle;
+        const palette = getCicPlacementGhostPalette({ player: unit === ship });
+        const metrics = getCicEntityHullMetrics(unit, zoom);
+        const drewSilhouette = drawCicShipSilhouette(
+          renderCtx,
+          unit,
+          screen.x,
+          screen.y,
+          metrics,
+          palette,
+          {
+            angle: faceAngle,
+            alpha: unit === ship ? 0.76 : 0.62,
+            accentAlpha: unit === ship ? 0.34 : 0.26
+          }
+        );
+        if (drewSilhouette) continue;
+
         const radius = Math.max(26, Number(unit.radius || unit.w || 30) || 30);
         const length = Math.max(54, radius * 2.2) * zoom;
         const width = Math.max(28, radius * 1.15) * zoom;
         renderCtx.save();
         renderCtx.translate(screen.x, screen.y);
-        renderCtx.rotate(Number.isFinite(target.faceAngle) ? target.faceAngle : placement.faceAngle);
-        renderCtx.globalAlpha = unit === ship ? 0.82 : 0.68;
+        renderCtx.rotate(faceAngle);
+        renderCtx.globalAlpha = unit === ship ? 0.55 : 0.42;
         renderCtx.fillStyle = unit === ship ? 'rgba(116, 235, 255, 0.20)' : 'rgba(122, 166, 255, 0.16)';
         renderCtx.strokeStyle = unit === ship ? 'rgba(136, 250, 255, 0.9)' : 'rgba(154, 188, 255, 0.82)';
         renderCtx.lineWidth = Math.max(1, 1.6 * zoom);
@@ -17304,7 +17327,8 @@
       const thrusterCommand = composeShipThrusterCommand(ship, {
         torque: stabilizerAssistTorque,
         leftSide: stabilizerAssistLeft,
-        rightSide: stabilizerAssistRight
+        rightSide: stabilizerAssistRight,
+        suppressManualTorque: warp.state === 'idle' && flightAssist.stabilizer
       });
       const thrusterDrive = updateShipThrusterState(ship, dt);
       const driveMain = clamp(thrusterDrive?.main ?? input.main, 0, 1);

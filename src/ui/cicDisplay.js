@@ -192,6 +192,10 @@ function getEntityHullMetrics(entity, zoom) {
   };
 }
 
+export function getCicEntityHullMetrics(entity, zoom) {
+  return getEntityHullMetrics(entity, zoom);
+}
+
 function getContactPalette(isSelected, friendly, hostile) {
   if (isSelected) {
     return {
@@ -225,6 +229,22 @@ function getContactPalette(isSelected, friendly, hostile) {
   };
 }
 
+export function getCicPlacementGhostPalette({ player = false } = {}) {
+  return player
+    ? {
+      marker: CIC_CONFIG.colors.selected,
+      body: 'rgba(6, 34, 46, 0.54)',
+      accent: 'rgba(126, 255, 226, 0.82)',
+      glow: 'rgba(126, 255, 226, 0.56)'
+    }
+    : {
+      marker: '#7aa8ff',
+      body: 'rgba(10, 22, 48, 0.48)',
+      accent: 'rgba(154, 188, 255, 0.72)',
+      glow: 'rgba(122, 166, 255, 0.42)'
+    };
+}
+
 function canDrawContactSilhouette(entity, contact, metrics, isSystemScale) {
   if (!entity || isSystemScale || contact?.isGhost) return false;
   if (entity.fighter || CIC_FIGHTER_TYPES.has(String(entity?.type || '').toLowerCase())) return false;
@@ -234,7 +254,7 @@ function canDrawContactSilhouette(entity, contact, metrics, isSystemScale) {
   return Math.max(metrics.drawW, metrics.drawH) >= CIC_CONFIG.silhouetteMinPx;
 }
 
-function drawShipSilhouette(ctx, entity, screenX, screenY, metrics, palette, accentAlpha = 0.22) {
+function drawShipSilhouette(ctx, entity, screenX, screenY, metrics, palette, accentAlpha = 0.22, options = {}) {
   const source = getEntitySpriteSource(entity);
   if (!source) return false;
 
@@ -248,8 +268,11 @@ function drawShipSilhouette(ctx, entity, screenX, screenY, metrics, palette, acc
 
   ctx.save();
   ctx.translate(screenX, screenY);
-  ctx.rotate(readSignedNumber(entity?.angle, 0) + getEntitySpriteRotation(entity));
-  ctx.globalAlpha = 0.98;
+  const angle = Number.isFinite(Number(options?.angle))
+    ? Number(options.angle)
+    : readSignedNumber(entity?.angle, 0);
+  ctx.rotate(angle + getEntitySpriteRotation(entity));
+  ctx.globalAlpha = readPositiveNumber(options?.alpha, 0.98);
   ctx.drawImage(bodyCanvas, -drawW * 0.5, -drawH * 0.5, drawW, drawH);
   if (accentCanvas) {
     ctx.globalAlpha = accentAlpha;
@@ -259,6 +282,19 @@ function drawShipSilhouette(ctx, entity, screenX, screenY, metrics, palette, acc
   }
   ctx.restore();
   return true;
+}
+
+export function drawCicShipSilhouette(ctx, entity, screenX, screenY, metrics, palette, options = {}) {
+  return drawShipSilhouette(
+    ctx,
+    entity,
+    screenX,
+    screenY,
+    metrics,
+    palette,
+    readPositiveNumber(options?.accentAlpha, 0.22),
+    options
+  );
 }
 
 let cicActive = false;
