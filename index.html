@@ -1141,16 +1141,26 @@
     import { createShipEntity, applyPlayerInput, refreshShipGeometry, composeShipThrusterCommand, updateShipThrusterState, computeShipThrusterForces, SHIP_PHYSICS } from "./src/game/shipEntity.js";
     import { computePlayerCommandControl, computePlayerHoldControl as computePlayerHoldControlFromFlight } from "./src/game/flight/playerAutopilot.js";
     import {
+      applyNpcFlightVector,
+      executeNpcFlightCommand,
+      npcHasPhysicalThrusters,
+      syncNpcFlightState
+    } from "./src/game/flight/npcFlight.js";
+    import {
       buildNormalCommandMenuItems,
       buildRtsCommandMenuItems,
       createApproachCommand,
       createOrbitCommand,
+      createRamCommand,
       createMoveCommand,
+      buildOrbitRangeMenuItems,
+      resolveOrbitRadiusForUnit,
       computeFormationTargets as computeCommandFormationTargets,
       computeRtsCameraPanDelta,
       computeCommandMenuOpenAnimation,
       computeAttackAutopilotState,
       computeApproachPathLine,
+      computeCommandVisual,
       hitTestCommandMenu
     } from "./src/game/worldCommandMenu.js";
     import { shouldZeroStabilizedAngularVelocity, updateHeadingStabilizer } from "./src/game/flight/stabilizer.js";
@@ -1159,6 +1169,10 @@
     // IMPORTUJEMY NOWY MODUL SUPERBRONI
     import * as Superweapon from "./src/game/superweapon.js";
     window.Superweapon = Superweapon;
+    window.applyNpcFlightVector = applyNpcFlightVector;
+    window.executeNpcFlightCommand = executeNpcFlightCommand;
+    window.npcHasPhysicalThrusters = npcHasPhysicalThrusters;
+    window.syncNpcFlightState = syncNpcFlightState;
     import { HUDSystem } from "./src/ui/hudSystem.js";
     import { InfrastructureUI } from "./src/ui/infrastructureUI.js";
     import { ZonePainterUI } from "./src/ui/zonePainterUI.js";
@@ -3276,6 +3290,19 @@
         const dist = Math.hypot(pushX, pushY) || 1;
         const dir = { x: pushX / dist, y: pushY / dist };
 
+        if (npcHasPhysicalThrusters(npc)) {
+          const escapeRange = Math.max(minSafeDist, (npc.radius || 30) * 3);
+          const flight = executeNpcFlightCommand(npc, {
+            type: 'move',
+            target: {
+              x: npc.x + dir.x * escapeRange,
+              y: npc.y + dir.y * escapeRange
+            },
+            arrival: Math.max(70, (npc.radius || 30) + 35)
+          }, dt);
+          if (flight?.usedThrusters) return;
+        }
+
         // Wymuś odlot od lidera
         const wantSpeed = npc.maxSpeed * 0.9;
         const turned = window.clampTurnVec(npc.vx, npc.vy, dir.x * wantSpeed, dir.y * wantSpeed, dt, 360);
@@ -3292,6 +3319,19 @@
       const dx = slot.x - npc.x;
       const dy = slot.y - npc.y;
       const dist = Math.hypot(dx, dy) || 1;
+      if (npcHasPhysicalThrusters(npc)) {
+        const flight = executeNpcFlightCommand(npc, {
+          type: 'move',
+          target: slot,
+          arrival: Math.max(80, (npc.radius || 30) + 45),
+          faceAngle: leader.angle
+        }, dt);
+        if (flight?.usedThrusters) {
+          npc.forceTarget = null;
+          npc.target = null;
+          return;
+        }
+      }
       const dir = { x: dx / dist, y: dy / dist };
       const wantSpeed = Math.min(npc.maxSpeed || 240, dist * 1.4);
       const turned = window.clampTurnVec(npc.vx, npc.vy, dir.x * wantSpeed, dir.y * wantSpeed, dt, 220);
@@ -3538,20 +3578,37 @@
       const radialY = dy / dist;
       const tangentX = -radialY * (orbitDir >= 0 ? 1 : -1);
       const tangentY = radialX * (orbitDir >= 0 ? 1 : -1);
-      const radialError = dist - Math.max(80, orbitRadius || RTS_DEFAULT_ORBIT_RADIUS);
-      const radialCorrection = clamp(-radialError / Math.max(orbitRadius || RTS_DEFAULT_ORBIT_RADIUS, 1), -0.85, 0.85);
-      const desiredX = tangentX + radialX * radialCorrection;
-      const desiredY = tangentY + radialY * radialCorrection;
+      const radius = Math.max(80, orbitRadius || RTS_DEFAULT_ORBIT_RADIUS);
+      const radialError = dist - radius;
+      const absError = Math.abs(radialError);
+      const radialCorrection = clamp(-radialError / Math.max(radius * 0.12, 220), -1.35, 1.35);
+      const tangentT = Math.max(0, Math.min(1, absError / Math.max(radius * 0.45, 700)));
+      const smoothT = tangentT * tangentT * (3 - 2 * tangentT);
+      const tangentWeight = 1.0 + (0.12 - 1.0) * smoothT;
+      const desiredX = tangentX * tangentWeight + radialX * radialCorrection;
+      const desiredY = tangentY * tangentWeight + radialY * radialCorrection;
       const len = Math.max(1e-6, Math.hypot(desiredX, desiredY));
       return {
         dirX: desiredX / len,
         dirY: desiredY / len,
-        dist
+        dist,
+        radius,
+        radialError,
+        absError
       };
     }
 
     function executeNpcCommand(npc, cmd, dt) {
       if (!cmd) return false;
+      if (cmd.type === 'hold' && npcHasPhysicalThrusters(npc)) {
+        const flight = executeNpcFlightCommand(npc, cmd, dt, {
+          defaultArrival: cmd.arrival || Math.max(90, (npc.radius || 20) + 20),
+          onRamImpulse: (unit, impulse) => triggerRamImpulse(unit, impulse, { effects: true, shakePower: 8 })
+        });
+        if (flight?.handled) {
+          return true;
+        }
+      }
       if (cmd.type === 'hold') {
         softBrakeNpc(npc, dt, 1.35);
         npc.forceTarget = null;
@@ -3577,15 +3634,46 @@
         }
       }
 
+      if (npcHasPhysicalThrusters(npc)) {
+        const flight = executeNpcFlightCommand(npc, cmd, dt, {
+          defaultArrival: cmd.arrival || Math.max(90, (npc.radius || 20) + 20),
+          onRamImpulse: (unit, impulse) => triggerRamImpulse(unit, impulse, { effects: true, shakePower: 8 })
+        });
+        if (flight?.handled) return true;
+      }
+
+      if (cmd.type === 'ram') {
+        const dist = steerNpcTowards(npc, targetPos, dt, {
+          turnLimit: 320,
+          speedScale: 1.8,
+          maxSpeed: (npc.maxSpeed || npc.speed || 240) * 1.35,
+          arrival: 0
+        });
+        const triggerDistance = Math.max(180, Math.min(cmd.arrival || Infinity, commandEntityRadius(cmd.targetEntity) + (npc.radius || 20) + 260));
+        if (!cmd.ramImpulseDone && dist <= triggerDistance) {
+          cmd.ramImpulseDone = true;
+          triggerRamImpulse(npc, {
+            power: Math.max(1600, Number(cmd.ramImpulse) || 3200)
+          }, { effects: true, shakePower: 8 });
+          npc.command = null;
+        }
+        return true;
+      }
+
       if (cmd.type === 'orbit') {
         const orbit = computeOrbitSteerVector(npc, targetPos, cmd.orbitRadius, cmd.orbitDir);
-        const orbitSpeedMax = npc.maxSpeed || npc.speed || 240;
-        const radialError = Math.abs(orbit.dist - Math.max(80, cmd.orbitRadius || RTS_DEFAULT_ORBIT_RADIUS));
+        const orbitSpeedMax = Math.max(npc.maxSpeed || npc.speed || 240, 900);
+        const radialError = Math.abs(orbit.radialError);
+        const radius = Math.max(80, cmd.orbitRadius || RTS_DEFAULT_ORBIT_RADIUS);
+        const tangentSpeed = clamp(Math.sqrt(radius * 600 * 0.62), 360, orbitSpeedMax);
+        const radialSpeed = clamp(radialError * 1.2, 0, orbitSpeedMax);
+        const radialT = clamp(radialError / Math.max(radius * 0.18, 450), 0, 1);
+        const radialSmooth = radialT * radialT * (3 - 2 * radialT);
         const wantSpeed = Math.min(
           orbitSpeedMax,
-          Math.max(90, orbitSpeedMax * clamp(0.52 + (radialError / Math.max(cmd.orbitRadius || RTS_DEFAULT_ORBIT_RADIUS, 1)), 0.52, 0.88))
+          Math.max(tangentSpeed, tangentSpeed + (Math.max(tangentSpeed, radialSpeed) - tangentSpeed) * radialSmooth)
         );
-        const turned = window.clampTurnVec(npc.vx || 0, npc.vy || 0, orbit.dirX * wantSpeed, orbit.dirY * wantSpeed, dt, 260);
+        const turned = window.clampTurnVec(npc.vx || 0, npc.vy || 0, orbit.dirX * wantSpeed, orbit.dirY * wantSpeed, dt, 420);
         npc.vx = turned.vx;
         npc.vy = turned.vy;
         if (radialError < 30) softBrakeNpc(npc, dt, 0.24);
@@ -11769,6 +11857,66 @@
       }
     }
 
+    function triggerForwardImpulse(entity, power = 0, opts = {}) {
+      if (!entity || entity.dead || entity.destroyed) return false;
+      const impulse = Number(power) || 0;
+      if (Math.abs(impulse) <= 1e-4) return false;
+      const angle = Number(entity.angle) || 0;
+      const dirX = Number.isFinite(Number(opts.dirX)) ? Number(opts.dirX) : Math.cos(angle);
+      const dirY = Number.isFinite(Number(opts.dirY)) ? Number(opts.dirY) : Math.sin(angle);
+      const len = Math.max(1e-6, Math.hypot(dirX, dirY));
+      const vx = (dirX / len) * impulse;
+      const vy = (dirY / len) * impulse;
+      if (entity.vel) {
+        entity.vel.x = (Number(entity.vel.x) || 0) + vx;
+        entity.vel.y = (Number(entity.vel.y) || 0) + vy;
+        entity.vx = entity.vel.x;
+        entity.vy = entity.vel.y;
+      } else {
+        entity.vx = (Number(entity.vx) || 0) + vx;
+        entity.vy = (Number(entity.vy) || 0) + vy;
+      }
+      const px = Number(entity.pos?.x ?? entity.x) || 0;
+      const py = Number(entity.pos?.y ?? entity.y) || 0;
+      if (opts.effects !== false) {
+        spawnShockwave(px, py, {
+          maxR: Number(opts.maxR) || 420,
+          w: Number(opts.width) || 12,
+          color: opts.color || 'rgba(150,255,150,'
+        });
+        if (opts.shake !== false) camera.addShake(Number(opts.shakePower) || 15, Number(opts.shakeTime) || 0.3);
+      }
+      return true;
+    }
+
+    function triggerAgilityDash(dir = 1, opts = {}) {
+      const power = (Number(opts.power) || 2800) * (dir >= 0 ? 1 : -1);
+      const ok = triggerForwardImpulse(ship, power, opts);
+      if (ok && opts.cooldown !== false && ship.agility) {
+        ship.agility.cooldowns.dash = ship.agility.maxCooldowns.dash;
+      }
+      return ok;
+    }
+
+    function triggerRamImpulse(entity, impulse = {}, opts = {}) {
+      const power = Math.max(1600, Number(impulse?.power) || 3400);
+      const ok = triggerForwardImpulse(entity, power, {
+        dirX: impulse?.dirX,
+        dirY: impulse?.dirY,
+        effects: opts.effects,
+        maxR: opts.maxR || 560,
+        width: opts.width || 14,
+        color: opts.color || 'rgba(255,210,95,',
+        shakePower: opts.shakePower || (entity === ship ? 22 : 10),
+        shakeTime: opts.shakeTime || 0.32,
+        shake: opts.shake
+      });
+      if (ok && entity?.agility?.cooldowns) {
+        entity.agility.cooldowns.dash = Math.max(entity.agility.cooldowns.dash || 0, entity.agility.maxCooldowns?.dash || 1.4);
+      }
+      return ok;
+    }
+
     function playerHasManualInput() {
       if (camera.mode === 'rts') return false;
       return keys['w'] || keys['s'] || keys['a'] || keys['d'] || keys['q'] || keys['e'];
@@ -11797,6 +11945,13 @@
         ship.command = result.nextCommand;
       }
       if (result.control) applyPlayerInput(ship, result.control, input);
+      if (result.ramImpulse && cmd && !cmd.ramImpulseDone) {
+        if (triggerRamImpulse(ship, result.ramImpulse, { effects: true })) {
+          cmd.ramImpulseDone = true;
+          ship.command = null;
+          pushZoneMessage('RAM: GRAVITY IMPULSE', 1.1);
+        }
+      }
     }
 
     function handleWarpKeyDown() {
@@ -12044,14 +12199,7 @@
       if (!inRtsMode && ship.agility && ship.agility.active && !ship.agility.maneuver) {
         if ((k === 'w' || k === 's') && ship.agility.cooldowns.dash <= 0) {
           const dir = (k === 'w') ? 1 : -1;
-          const dashPower = dir * 2800;
-
-          ship.vel.x += Math.cos(ship.angle) * dashPower;
-          ship.vel.y += Math.sin(ship.angle) * dashPower;
-
-          ship.agility.cooldowns.dash = ship.agility.maxCooldowns.dash;
-          spawnShockwave(ship.pos.x, ship.pos.y, { maxR: 350, w: 10, color: 'rgba(150,255,150,' });
-          camera.addShake(15, 0.3);
+          triggerAgilityDash(dir, { maxR: 350, width: 10, color: 'rgba(150,255,150,' });
         }
 
         if ((k === 'q' || k === 'e') && ship.agility.cooldowns.strafe <= 0) {
@@ -12707,6 +12855,7 @@
       items: [],
       worldPoint: null,
       targetEntity: null,
+      submenu: null,
       rightHeld: false,
       pressScreenX: 0,
       pressScreenY: 0,
@@ -12991,25 +13140,31 @@
       }
     }
 
-    function issueOrbitOrder(point, targetEntity = null) {
+    function issueOrbitOrder(point, targetEntity = null, opts = {}) {
       const units = [...Selection.units].filter(u => u && !u.dead);
       if (!units.length) return;
-      const anchor = targetEntity
-        ? { x: Number(targetEntity.x) || 0, y: Number(targetEntity.y) || 0 }
-        : point;
-      const targets = formationTargets(units, anchor);
+      const anchor = getOrbitCommandCenter(point, targetEntity);
+      if (!anchor) return;
       units.forEach((unit, index) => {
-        const t = targets.get(unit) || anchor;
         const radiusBase = targetEntity
           ? Math.max(RTS_DEFAULT_ORBIT_RADIUS, (targetEntity.radius || targetEntity.r || 90) + 180)
           : RTS_DEFAULT_ORBIT_RADIUS;
+        const requestedRadius = opts.requestedRadius ?? opts.orbitRadius ?? radiusBase;
+        const radius = resolveOrbitRadiusForUnit({
+          unit,
+          targetPoint: anchor,
+          requestedRadius,
+          fallbackRadius: radiusBase,
+          minRadius: targetEntity ? commandEntityRadius(targetEntity) + 180 : RTS_DEFAULT_ORBIT_RADIUS
+        });
+        const spread = requestedRadius === 'current' ? 0 : index * 26;
         issueUnitCommand(unit, {
           type: 'orbit',
-          target: { x: t.x, y: t.y },
+          target: { x: anchor.x, y: anchor.y },
           targetEntity,
-          orbitRadius: radiusBase + index * 26,
+          orbitRadius: radius + spread,
           orbitDir: (index % 2 === 0) ? 1 : -1,
-          arrival: radiusBase
+          arrival: radius + spread
         });
       });
     }
@@ -13069,16 +13224,18 @@
       worldCommandMenu.items = [];
       worldCommandMenu.worldPoint = null;
       worldCommandMenu.targetEntity = null;
+      worldCommandMenu.submenu = null;
       resetWorldCommandPlacement();
     }
 
-    function openWorldCommandMenuAt(mode, sx, sy, worldPoint, targetEntity, items) {
+    function openWorldCommandMenuAt(mode, sx, sy, worldPoint, targetEntity, items, submenu = null) {
       resetWorldCommandPlacement();
       worldCommandMenu.open = true;
       worldCommandMenu.mode = mode || 'normal';
       worldCommandMenu.items = Array.isArray(items) ? items : [];
       worldCommandMenu.worldPoint = worldPoint ? { x: worldPoint.x, y: worldPoint.y } : null;
       worldCommandMenu.targetEntity = targetEntity || null;
+      worldCommandMenu.submenu = submenu || null;
       worldCommandMenu.width = WORLD_COMMAND_MENU_W;
       worldCommandMenu.itemHeight = WORLD_COMMAND_MENU_ITEM_H;
       const menuH = worldCommandMenu.items.length * worldCommandMenu.itemHeight;
@@ -13089,6 +13246,66 @@
       worldCommandMenu.pressWorld = worldPoint ? { x: worldPoint.x, y: worldPoint.y } : null;
       worldCommandMenu.openedAt = (typeof performance !== 'undefined' ? performance.now() : 0) * 0.001;
       closeMapContextMenu();
+    }
+
+    function getOrbitCommandCenter(point, targetEntity) {
+      return commandEntityPoint(targetEntity, point) || point || null;
+    }
+
+    function getOrbitRangeReferenceUnit(mode) {
+      if (mode === 'rts') {
+        for (const unit of Selection.units) {
+          if (unit && !unit.dead) return unit;
+        }
+      }
+      return ship;
+    }
+
+    function computeCurrentOrbitRange(mode, point, targetEntity) {
+      const center = getOrbitCommandCenter(point, targetEntity);
+      const unit = getOrbitRangeReferenceUnit(mode);
+      if (!center || !unit) return null;
+      const pos = commandEntityPoint(unit, unit.pos || unit);
+      if (!pos) return null;
+      return Math.hypot(pos.x - center.x, pos.y - center.y);
+    }
+
+    function openOrbitRangeMenuFromCurrent() {
+      const point = worldCommandMenu.worldPoint;
+      const targetEntity = worldCommandMenu.targetEntity;
+      const mode = worldCommandMenu.mode || 'normal';
+      const currentRange = computeCurrentOrbitRange(mode, point, targetEntity);
+      openWorldCommandMenuAt(
+        mode,
+        worldCommandMenu.x,
+        worldCommandMenu.y,
+        point,
+        targetEntity,
+        buildOrbitRangeMenuItems({ currentRange }),
+        'orbit-range'
+      );
+    }
+
+    function isOrbitRangeMenuItem(item) {
+      return String(item?.action || '').startsWith('orbit-range-');
+    }
+
+    function requestedOrbitRangeFromMenuItem(item, mode, point, targetEntity) {
+      if (!item) return null;
+      if (item.orbitRangeMode === 'current') return 'current';
+      if (item.orbitRangeMode === 'custom') {
+        const current = Math.round(computeCurrentOrbitRange(mode, point, targetEntity) || 5000);
+        const raw = window.prompt ? window.prompt('Orbit range', String(current)) : String(current);
+        if (raw == null) return null;
+        const value = Number(String(raw).replace(',', '.').trim());
+        if (!Number.isFinite(value) || value <= 0) {
+          pushZoneMessage('ORBIT: NIEPRAWIDLOWY DYSTANS', 1.2);
+          return null;
+        }
+        return value;
+      }
+      const radius = Number(item.orbitRadius);
+      return Number.isFinite(radius) && radius > 0 ? radius : null;
     }
 
     function openNormalWorldCommandMenuAt(sx, sy) {
@@ -13200,6 +13417,32 @@
         });
       }
       pushZoneMessage(`RTS: ATTACK x${units.length}`, 1.2);
+    }
+
+    function issueRamOrder(targetEntity) {
+      if (!isCommandEntityAlive(targetEntity)) {
+        pushZoneMessage('RTS: BRAK CELU DO RAM', 1.2);
+        return;
+      }
+      const units = [...Selection.units].filter(u => u && !u.dead);
+      if (!units.length) return;
+      const point = commandEntityPoint(targetEntity, { x: 0, y: 0 });
+      for (const unit of units) {
+        const command = createRamCommand({
+          point,
+          targetEntity,
+          arrival: (unit.radius || unit.w || 30) + commandEntityRadius(targetEntity) + 260,
+          ramImpulse: unit === ship ? 3400 : 3200
+        });
+        if (unit === ship) {
+          clearPlayerAttackState();
+          cruiseNav.active = false;
+          ship.command = command;
+        } else {
+          issueUnitCommand(unit, command);
+        }
+      }
+      pushZoneMessage(`RTS: RAM x${units.length}`, 1.2);
     }
 
     function issueWorldScan(targetEntity, point) {
@@ -13339,12 +13582,28 @@
       }
     }
 
-    function executeNormalWorldCommandAction(action, point, targetEntity) {
+    function executeNormalWorldCommandAction(action, point, targetEntity, opts = {}) {
       const liveTarget = isCommandEntityAlive(targetEntity) ? targetEntity : null;
       const targetPoint = commandEntityPoint(liveTarget, point) || point;
       if (!targetPoint) return;
       if (action === 'attack') {
         setPlayerAttackTarget(liveTarget);
+        return;
+      }
+      if (action === 'ram') {
+        if (!liveTarget) {
+          pushZoneMessage('RAM: BRAK CELU', 1.2);
+          return;
+        }
+        clearPlayerAttackState();
+        cruiseNav.active = false;
+        ship.command = createRamCommand({
+          point: targetPoint,
+          targetEntity: liveTarget,
+          arrival: commandEntityRadius(liveTarget) + (ship.radius || 220) + 260,
+          ramImpulse: 3400
+        });
+        pushZoneMessage('ROZKAZ: RAM TARGET', 1.3);
         return;
       }
       clearPlayerAttackState();
@@ -13360,17 +13619,24 @@
       }
       if (action === 'orbit') {
         cruiseNav.active = false;
-        const radiusBase = liveTarget
+        const fallbackRadius = liveTarget
           ? Math.max(900, commandEntityRadius(liveTarget) + 260)
           : 900;
+        const orbitRadius = resolveOrbitRadiusForUnit({
+          unit: ship,
+          targetPoint,
+          requestedRadius: opts.requestedRadius ?? opts.orbitRadius ?? fallbackRadius,
+          fallbackRadius,
+          minRadius: liveTarget ? commandEntityRadius(liveTarget) + 180 : 80
+        });
         ship.command = createOrbitCommand({
           point: targetPoint,
           targetEntity: liveTarget,
-          orbitRadius: radiusBase,
+          orbitRadius,
           orbitDir: 1,
           arrival: liveTarget ? Math.max(90, commandEntityRadius(liveTarget) + 120) : 120
         });
-        pushZoneMessage(liveTarget ? 'ROZKAZ: ORBIT TARGET' : 'ROZKAZ: ORBIT POINT', 1.3);
+        pushZoneMessage(liveTarget ? `ROZKAZ: ORBIT TARGET ${orbitRadius}` : `ROZKAZ: ORBIT POINT ${orbitRadius}`, 1.3);
         return;
       }
       if (action === 'jump' || action === 'cruise') {
@@ -13383,7 +13649,7 @@
       }
     }
 
-    function executeRtsWorldCommandAction(action, point, targetEntity) {
+    function executeRtsWorldCommandAction(action, point, targetEntity, opts = {}) {
       const liveTarget = isCommandEntityAlive(targetEntity) ? targetEntity : null;
       const enemyTarget = isValidLockedTarget(liveTarget) ? liveTarget : pickEnemyTargetAtWorld(point);
       if (isMovePlacementAction(action)) {
@@ -13397,11 +13663,15 @@
         return;
       }
       if (action === 'orbit') {
-        issueOrbitOrder(point, liveTarget);
+        issueOrbitOrder(point, liveTarget, opts);
         return;
       }
       if (action === 'attack') {
         issueAttackOrder(enemyTarget);
+        return;
+      }
+      if (action === 'ram') {
+        issueRamOrder(liveTarget || enemyTarget);
         return;
       }
       if (action === 'hold') {
@@ -13417,6 +13687,21 @@
       if (!item || !item.action || !worldCommandMenu.open) return false;
       const point = worldCommandMenu.worldPoint;
       const targetEntity = worldCommandMenu.targetEntity;
+      if (item.action === 'orbit' && worldCommandMenu.submenu !== 'orbit-range') {
+        openOrbitRangeMenuFromCurrent();
+        return true;
+      }
+      if (isOrbitRangeMenuItem(item)) {
+        const requestedRadius = requestedOrbitRangeFromMenuItem(item, worldCommandMenu.mode, point, targetEntity);
+        if (requestedRadius == null) return true;
+        if (worldCommandMenu.mode === 'rts') {
+          executeRtsWorldCommandAction('orbit', point, targetEntity, { requestedRadius });
+        } else {
+          executeNormalWorldCommandAction('orbit', point, targetEntity, { requestedRadius });
+        }
+        closeWorldCommandMenu();
+        return true;
+      }
       if (worldCommandMenu.mode === 'rts') {
         executeRtsWorldCommandAction(item.action, point, targetEntity);
       } else {
@@ -13568,6 +13853,205 @@
       renderCtx.lineTo(end.x - nx * arrowLen + ny * arrowWing, end.y - ny * arrowLen - nx * arrowWing);
       renderCtx.stroke();
       renderCtx.restore();
+    }
+
+    function drawCommandArrow(renderCtx, from, to, color, opts = {}) {
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 4) return;
+      const nx = dx / len;
+      const ny = dy / len;
+      const arrowLen = Math.max(12, Number(opts.arrowLen) || 20);
+      const arrowWing = arrowLen * 0.52;
+      renderCtx.strokeStyle = color;
+      renderCtx.lineWidth = Number(opts.lineWidth) || 2;
+      if (opts.dash) renderCtx.setLineDash(opts.dash);
+      renderCtx.beginPath();
+      renderCtx.moveTo(from.x, from.y);
+      renderCtx.lineTo(to.x, to.y);
+      renderCtx.stroke();
+      if (opts.dash) renderCtx.setLineDash([]);
+      renderCtx.beginPath();
+      renderCtx.moveTo(to.x, to.y);
+      renderCtx.lineTo(to.x - nx * arrowLen - ny * arrowWing, to.y - ny * arrowLen + nx * arrowWing);
+      renderCtx.moveTo(to.x, to.y);
+      renderCtx.lineTo(to.x - nx * arrowLen + ny * arrowWing, to.y - ny * arrowLen - nx * arrowWing);
+      renderCtx.stroke();
+    }
+
+    function drawCommandShipGhost(renderCtx, cam, unit, ghost, opts = {}) {
+      if (!ghost?.pos) return;
+      const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
+      const screen = worldToScreen(ghost.pos.x, ghost.pos.y, cam);
+      const isPlayer = unit === ship;
+      const basePalette = getCicPlacementGhostPalette({ player: isPlayer });
+      const palette = opts.palette || basePalette;
+      const metrics = getCicEntityHullMetrics(unit, zoom);
+      const drewSilhouette = drawCicShipSilhouette(
+        renderCtx,
+        unit,
+        screen.x,
+        screen.y,
+        metrics,
+        palette,
+        {
+          angle: Number.isFinite(Number(ghost.angle)) ? Number(ghost.angle) : Number(unit?.angle) || 0,
+          alpha: isPlayer ? 0.72 : 0.58,
+          accentAlpha: isPlayer ? 0.32 : 0.24
+        }
+      );
+      if (drewSilhouette) return;
+
+      const radius = Math.max(26, Number(unit?.radius || unit?.w || 30) || 30);
+      const length = Math.max(54, radius * 2.2) * zoom;
+      const width = Math.max(28, radius * 1.15) * zoom;
+      renderCtx.save();
+      renderCtx.translate(screen.x, screen.y);
+      renderCtx.rotate(Number.isFinite(Number(ghost.angle)) ? Number(ghost.angle) : Number(unit?.angle) || 0);
+      renderCtx.globalAlpha = isPlayer ? 0.55 : 0.42;
+      renderCtx.fillStyle = opts.fill || (isPlayer ? 'rgba(116, 235, 255, 0.20)' : 'rgba(122, 166, 255, 0.16)');
+      renderCtx.strokeStyle = opts.stroke || (isPlayer ? 'rgba(136, 250, 255, 0.9)' : 'rgba(154, 188, 255, 0.82)');
+      renderCtx.lineWidth = Math.max(1, 1.6 * zoom);
+      renderCtx.beginPath();
+      renderCtx.moveTo(length * 0.55, 0);
+      renderCtx.lineTo(-length * 0.42, -width * 0.5);
+      renderCtx.lineTo(-length * 0.24, 0);
+      renderCtx.lineTo(-length * 0.42, width * 0.5);
+      renderCtx.closePath();
+      renderCtx.fill();
+      renderCtx.stroke();
+      renderCtx.beginPath();
+      renderCtx.moveTo(0, 0);
+      renderCtx.lineTo(length * 0.72, 0);
+      renderCtx.stroke();
+      renderCtx.restore();
+    }
+
+    function commandMarkerColors(type, isPlayer) {
+      if (type === 'ram') {
+        return {
+          line: 'rgba(255, 210, 95, 0.82)',
+          soft: 'rgba(255, 210, 95, 0.16)',
+          palette: {
+            marker: '#ffd25f',
+            body: 'rgba(54, 34, 6, 0.52)',
+            accent: 'rgba(255, 210, 95, 0.78)',
+            glow: 'rgba(255, 210, 95, 0.46)'
+          }
+        };
+      }
+      if (type === 'orbit') {
+        return {
+          line: isPlayer ? 'rgba(190, 126, 255, 0.78)' : 'rgba(160, 170, 255, 0.70)',
+          soft: 'rgba(190, 126, 255, 0.12)'
+        };
+      }
+      if (type === 'move' || type === 'attack-move') {
+        return {
+          line: isPlayer ? 'rgba(122, 196, 255, 0.80)' : 'rgba(122, 166, 255, 0.70)',
+          soft: 'rgba(64, 180, 255, 0.12)'
+        };
+      }
+      return {
+        line: isPlayer ? 'rgba(126, 255, 226, 0.78)' : 'rgba(126, 214, 255, 0.68)',
+        soft: 'rgba(126, 255, 226, 0.12)'
+      };
+    }
+
+    function drawCommandVisualOverlay(renderCtx, cam, unit, visual) {
+      if (!visual) return;
+      const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
+      const isPlayer = unit === ship;
+      const colors = commandMarkerColors(visual.type, isPlayer);
+      const pulse = 0.5 + 0.5 * Math.sin(((typeof performance !== 'undefined' ? performance.now() : 0) * 0.006));
+      const lineWidth = Math.max(1.25, 2.0 * Math.sqrt(Math.max(0.2, zoom)));
+
+      renderCtx.save();
+      renderCtx.globalAlpha = 0.78 + pulse * 0.18;
+
+      if (visual.type === 'orbit' && visual.orbit) {
+        const center = worldToScreen(visual.orbit.center.x, visual.orbit.center.y, cam);
+        const orbitR = Math.max(8, visual.orbit.radius * zoom);
+        renderCtx.strokeStyle = colors.line;
+        renderCtx.fillStyle = colors.soft;
+        renderCtx.lineWidth = lineWidth;
+        renderCtx.setLineDash([14, 9]);
+        renderCtx.beginPath();
+        renderCtx.arc(center.x, center.y, orbitR, 0, Math.PI * 2);
+        renderCtx.stroke();
+        renderCtx.setLineDash([]);
+
+        const pathStart = worldToScreen(visual.path.start.x, visual.path.start.y, cam);
+        const pathEnd = worldToScreen(visual.path.end.x, visual.path.end.y, cam);
+        drawCommandArrow(renderCtx, pathStart, pathEnd, colors.line, {
+          lineWidth: Math.max(1, lineWidth * 0.72),
+          dash: [8, 7],
+          arrowLen: Math.max(12, 18 * Math.sqrt(zoom))
+        });
+
+        const arrowStart = worldToScreen(visual.orbit.arrow.start.x, visual.orbit.arrow.start.y, cam);
+        const arrowEnd = worldToScreen(visual.orbit.arrow.end.x, visual.orbit.arrow.end.y, cam);
+        drawCommandArrow(renderCtx, arrowStart, arrowEnd, colors.line, {
+          lineWidth,
+          arrowLen: Math.max(16, 24 * Math.sqrt(zoom))
+        });
+        renderCtx.beginPath();
+        renderCtx.arc(pathEnd.x, pathEnd.y, Math.max(5, 7 * Math.sqrt(zoom)), 0, Math.PI * 2);
+        renderCtx.fill();
+        renderCtx.stroke();
+        renderCtx.restore();
+        return;
+      }
+
+      if (visual.path) {
+        const start = worldToScreen(visual.path.start.x, visual.path.start.y, cam);
+        const end = worldToScreen(visual.path.end.x, visual.path.end.y, cam);
+        drawCommandArrow(renderCtx, start, end, colors.line, {
+          lineWidth,
+          dash: visual.type === 'move' || visual.type === 'attack-move' ? [10, 7] : [14, 9],
+          arrowLen: Math.max(14, 21 * Math.sqrt(zoom))
+        });
+      }
+
+      if (visual.arrival > 0 && visual.target) {
+        const end = worldToScreen(visual.target.x, visual.target.y, cam);
+        const markerR = Math.max(8, Math.min(36, visual.arrival * zoom * 0.18));
+        renderCtx.strokeStyle = colors.line;
+        renderCtx.fillStyle = colors.soft;
+        renderCtx.lineWidth = lineWidth;
+        renderCtx.beginPath();
+        renderCtx.arc(end.x, end.y, markerR, 0, Math.PI * 2);
+        renderCtx.fill();
+        renderCtx.stroke();
+      }
+
+      if (visual.ghost) {
+        drawCommandShipGhost(renderCtx, cam, unit, visual.ghost, {
+          palette: colors.palette
+        });
+      }
+      renderCtx.restore();
+    }
+
+    function drawActiveCommandMarkers(renderCtx, cam, playerRenderPos = null) {
+      const seen = new Set();
+      const drawForUnit = (unit, renderPos = null) => {
+        if (!unit || unit.dead || unit.destroyed || !unit.command || seen.has(unit)) return;
+        seen.add(unit);
+        const posSource = renderPos || unit.pos || unit;
+        const visual = computeCommandVisual(unit.command, posSource, unit);
+        drawCommandVisualOverlay(renderCtx, cam, unit, visual);
+      };
+
+      drawForUnit(ship, playerRenderPos || ship.pos);
+      for (const unit of Selection.units) {
+        drawForUnit(unit, unit === ship ? (playerRenderPos || ship.pos) : null);
+      }
+      for (const npc of npcs) {
+        if (!npc || npc.dead || !npc.command) continue;
+        if (npc.friendly || Selection.units.has(npc)) drawForUnit(npc);
+      }
     }
 
     function drawWorldCommandMenu(renderCtx) {
@@ -16363,6 +16847,7 @@
         // --- LOGIKA MISJI I WALKI ---
         if (npc.mission) {
           if (npc.dead) continue;
+          npc.__npcFlightIntegrated = false;
 
           if (npc.state === 'warping_in' && npc.warpData) {
             const dx = npc.warpData.targetX - npc.x;
@@ -16401,6 +16886,10 @@
 
           // 1. Komendy RTS (priorytet)
           if (handleCommandedNpc(npc, dt)) {
+            if (npc.__npcFlightIntegrated) {
+              npc.__npcFlightIntegrated = false;
+              continue;
+            }
             npc.vx *= (npc.friction || 0.99);
             npc.vy *= (npc.friction || 0.99);
             npc.x += (npc.vx || 0) * dt;
@@ -16429,6 +16918,11 @@
             } else {
               npc.ai(dt);
             }
+          }
+
+          if (npc.__npcFlightIntegrated) {
+            npc.__npcFlightIntegrated = false;
+            continue;
           }
 
           // 3. Fizyka (Ruch)
@@ -18736,7 +19230,7 @@
           drawNPCPretty(ctx, npc, s);
         }
 
-        drawPlayerApproachPath(ctx, cam, interpPos);
+        drawActiveCommandMarkers(ctx, cam, interpPos);
 
         if (Selection.units.size) {
           ctx.save();

@@ -5,6 +5,7 @@ import { SHIP_PHYSICS, estimateShipTurnAcceleration } from './thrusterModel.js';
 import { computePlannedHeadingTorque, wrapAngle } from './headingControl.js';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, Number(value) || 0));
+const lerp = (a, b, t) => a + (b - a) * t;
 
 function smoothstep01(t) {
   const x = clamp(t, 0, 1);
@@ -59,14 +60,23 @@ function computeOrbitSteerVector(ship, center, orbitRadius, orbitDir = 1) {
   const tangentY = radialX * tangentSign;
   const radius = Math.max(80, Number(orbitRadius) || 900);
   const radialError = dist - radius;
-  const radialCorrection = clamp(-radialError / Math.max(radius, 1), -0.85, 0.85);
-  const desiredX = tangentX + radialX * radialCorrection;
-  const desiredY = tangentY + radialY * radialCorrection;
+  const absError = Math.abs(radialError);
+  const radialCorrection = clamp(-radialError / Math.max(radius * 0.12, 220), -1.35, 1.35);
+  const tangentWeight = lerp(
+    1.0,
+    0.12,
+    smoothstep01(absError / Math.max(radius * 0.45, 700))
+  );
+  const desiredX = tangentX * tangentWeight + radialX * radialCorrection;
+  const desiredY = tangentY * tangentWeight + radialY * radialCorrection;
   const len = Math.max(1e-6, Math.hypot(desiredX, desiredY));
   return {
     dirX: desiredX / len,
     dirY: desiredY / len,
-    dist
+    dist,
+    radius,
+    radialError,
+    absError
   };
 }
 
@@ -114,6 +124,17 @@ export function computePlayerHoldControl(ship, physics = SHIP_PHYSICS, faceAngle
 }
 
 function commandTuning(type) {
+  if (type === 'ram') {
+    return {
+      maxSpeed: 3600,
+      speedK: 1.8,
+      velocityTau: 0.45,
+      arrivalBrake: 0,
+      stopAccelScale: 0,
+      stopLeadTime: 0,
+      stopSpeedScale: 1
+    };
+  }
   if (type === 'approach') {
     return {
       maxSpeed: 3200,
@@ -126,7 +147,13 @@ function commandTuning(type) {
     };
   }
   if (type === 'orbit') {
-    return { maxSpeed: 520, speedK: 0.7, velocityTau: 0.72, arrivalBrake: 0.85 };
+    return {
+      maxSpeed: 2600,
+      minTangentSpeed: 720,
+      speedK: 1.2,
+      velocityTau: 0.46,
+      arrivalBrake: 0.0
+    };
   }
   return { maxSpeed: 940, speedK: 0.72, velocityTau: 0.68, arrivalBrake: 1.0 };
 }
@@ -137,6 +164,7 @@ function computeLinearStopAccel(tuning) {
 
 function computeCommandSpeedBudget(cmdType, dist, arrival, tuning) {
   if (cmdType === 'orbit') return tuning.maxSpeed;
+  if (cmdType === 'ram') return tuning.maxSpeed;
 
   const remaining = Math.max(0, dist - arrival);
   let budget = clamp(remaining * tuning.speedK, 0, tuning.maxSpeed);
@@ -148,6 +176,21 @@ function computeCommandSpeedBudget(cmdType, dist, arrival, tuning) {
   const safeStopSpeed = Math.max(0, Math.sqrt(2 * stopAccel * remaining) - (stopAccel * leadTime)) * stopScale;
   budget = Math.min(budget, safeStopSpeed);
   return clamp(budget, 0, tuning.maxSpeed);
+}
+
+function computeOrbitSpeedBudget(orbit, tuning) {
+  const radius = Math.max(80, Number(orbit?.radius) || 900);
+  const absError = Math.max(0, Number(orbit?.absError) || 0);
+  const maxSpeed = Math.max(720, Number(tuning?.maxSpeed) || 2600);
+  const minTangentSpeed = Math.max(360, Number(tuning?.minTangentSpeed) || 720);
+  const sustainableTangent = clamp(
+    Math.sqrt(radius * SHIP_PHYSICS.SPEED * 0.62),
+    minTangentSpeed,
+    maxSpeed
+  );
+  const radialRunSpeed = clamp(absError * (Number(tuning?.speedK) || 1.2), 0, maxSpeed);
+  const radialT = smoothstep01(absError / Math.max(radius * 0.18, 450));
+  return clamp(lerp(sustainableTangent, Math.max(sustainableTangent, radialRunSpeed), radialT), minTangentSpeed, maxSpeed);
 }
 
 function makeControlFromLocalAccel(ship, localAx, localAy, headingError, preferStrafeHeading) {
@@ -190,6 +233,7 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
   if (!ship || !cmd) {
     return { control: null, nextCommand: null, clearCommand: true };
   }
+  const isRam = cmd.type === 'ram';
 
   if (cmd.type === 'hold') {
     const hold = computePlayerHoldControl(ship, options.physics || SHIP_PHYSICS, cmd.faceAngle);
@@ -211,6 +255,7 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
   let desiredVecX = targetPos.x - pos.x;
   let desiredVecY = targetPos.y - pos.y;
   let dist = Math.hypot(desiredVecX, desiredVecY);
+  let orbitNav = null;
   const arrival = Number(cmd.arrival) || Number(options.defaultArrival) || 90;
   const arrivalVel = ship.vel || { x: ship.vx || 0, y: ship.vy || 0 };
   const arrivalSpeed = Math.hypot(Number(arrivalVel.x) || 0, Number(arrivalVel.y) || 0);
@@ -218,11 +263,11 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
   const arrived = dist <= arrival || (dist <= arrival + arrivalSlack && arrivalSpeed < 32);
 
   if (cmd.type === 'orbit') {
-    const orbit = computeOrbitSteerVector(ship, targetPos, cmd.orbitRadius, cmd.orbitDir);
-    desiredVecX = orbit.dirX;
-    desiredVecY = orbit.dirY;
-    dist = orbit.dist;
-  } else if (arrived) {
+    orbitNav = computeOrbitSteerVector(ship, targetPos, cmd.orbitRadius, cmd.orbitDir);
+    desiredVecX = orbitNav.dirX;
+    desiredVecY = orbitNav.dirY;
+    dist = orbitNav.dist;
+  } else if (!isRam && arrived) {
     const hold = computePlayerHoldControl(ship, options.physics || SHIP_PHYSICS);
     const nextCommand = Number.isFinite(cmd.faceAngle)
       ? { type: 'hold', faceAngle: cmd.faceAngle }
@@ -253,14 +298,16 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
   const dirX = desiredVecX / len;
   const dirY = desiredVecY / len;
   const tuning = commandTuning(cmd.type);
-  const speedBudget = computeCommandSpeedBudget(cmd.type, dist, arrival, tuning);
+  const speedBudget = cmd.type === 'orbit'
+    ? computeOrbitSpeedBudget(orbitNav, tuning)
+    : computeCommandSpeedBudget(cmd.type, dist, arrival, tuning);
   const desiredVx = dirX * speedBudget;
   const desiredVy = dirY * speedBudget;
   const tau = Math.max(0.18, tuning.velocityTau);
   let desiredAx = (desiredVx - vx) / tau;
   let desiredAy = (desiredVy - vy) / tau;
 
-  if (cmd.type !== 'orbit') {
+  if (cmd.type !== 'orbit' && !isRam) {
     const toTargetSpeed = (vx * dirX) + (vy * dirY);
     const stopAccel = computeLinearStopAccel(tuning);
     const leadTime = Math.max(0, Number(tuning.stopLeadTime) || 0);
@@ -282,16 +329,34 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
     ? angle
     : Math.atan2(desiredVecY, desiredVecX);
   const headingError = wrapAngle(desiredHeading - angle);
-  if (cmd.type === 'approach') {
+  if (cmd.type === 'approach' || isRam) {
     const forwardGate = computeApproachForwardGate(headingError, ship?.angVel);
     const lateralVel = (-vx * sinA) + (vy * cosA);
     if (localAx > 0) localAx *= forwardGate;
     localAy = clamp(-lateralVel / Math.max(0.2, tuning.velocityTau), -SHIP_PHYSICS.SPEED * 0.75, SHIP_PHYSICS.SPEED * 0.75);
   }
 
+  const targetRadius = Math.max(0, Number(cmd.targetEntity?.radius || cmd.targetEntity?.r || cmd.targetEntity?.baseR || 0) || 0);
+  const shipRadius = Math.max(0, Number(ship?.radius || ship?.r || 0) || 0);
+  const ramTriggerDistance = Math.max(
+    180,
+    Number(cmd.ramTriggerDistance) || 0,
+    Math.min(Number(cmd.arrival) || Infinity, targetRadius + shipRadius + 260)
+  );
+  const ramAligned = Math.abs(headingError) < 0.28 && Math.abs(Number(ship?.angVel) || 0) < 0.55;
+  const ramImpulse = isRam && !cmd.ramImpulseDone && dist <= ramTriggerDistance && ramAligned
+    ? {
+      power: Math.max(1600, Number(cmd.ramImpulse) || 3400),
+      dirX: Math.cos(angle),
+      dirY: Math.sin(angle),
+      distance: dist
+    }
+    : null;
+
   return {
     control: makeControlFromLocalAccel(ship, localAx, localAy, headingError, preferStrafeHeading),
     nextCommand: null,
-    clearCommand: false
+    clearCommand: false,
+    ramImpulse
   };
 }

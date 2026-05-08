@@ -233,6 +233,66 @@ test('approach order holds main thrust while first turn is still overspeed', () 
   assert.ok(result.control.main < 0.12, 'approach should not add main thrust while the bow still has too much spin');
 });
 
+test('ram order keeps driving through the target instead of braking', () => {
+  const ship = makeAtlasShip({
+    pos: { x: 5400, y: 0 },
+    vel: { x: 1900, y: 0 },
+    angle: 0,
+    angVel: 0
+  });
+
+  const result = computePlayerCommandControl(ship, {
+    type: 'ram',
+    target: { x: 6000, y: 0 },
+    targetEntity: { x: 6000, y: 0, radius: 260 },
+    arrival: 620,
+    ramImpulse: 3200
+  });
+
+  assert.equal(result.clearCommand, false);
+  assert.equal(result.nextCommand, null);
+  assert.ok(result.control.main > 0.6, 'ram should keep pushing at contact range');
+  assert.ok(result.control.retro < 0.05, 'ram must not brake at the end like approach');
+  assert.ok(result.ramImpulse?.power >= 3200, 'ram should request the forward gravity/agility impulse near target');
+});
+
+test('orbit order expands outward hard when requested radius is outside current range', () => {
+  const ship = makeAtlasShip({
+    pos: { x: 5000, y: 0 },
+    vel: { x: 0, y: 0 },
+    angle: 0,
+    angVel: 0
+  });
+
+  const result = computePlayerCommandControl(ship, {
+    type: 'orbit',
+    target: { x: 0, y: 0 },
+    orbitRadius: 10000,
+    orbitDir: 1
+  });
+
+  assert.ok(result.control.main > 0.75, 'orbit should use main thrust to escape to a larger orbit radius');
+  assert.ok(result.control.main > result.control.leftSide, 'outward radius correction should dominate tangent strafing while far inside the orbit');
+});
+
+test('large orbit keeps accelerating beyond the old low orbit speed cap', () => {
+  const ship = makeAtlasShip({
+    pos: { x: 10000, y: 0 },
+    vel: { x: 0, y: 520 },
+    angle: Math.PI / 2,
+    angVel: 0
+  });
+
+  const result = computePlayerCommandControl(ship, {
+    type: 'orbit',
+    target: { x: 0, y: 0 },
+    orbitRadius: 10000,
+    orbitDir: 1
+  });
+
+  assert.ok(result.control.main > 0.45, 'large orbit should keep using engine power instead of coasting at the old crawl speed');
+});
+
 test('hold control cancels lateral drift with the opposite side thrusters', () => {
   const ship = makeShip({ vel: { x: 0, y: 420 } });
 
