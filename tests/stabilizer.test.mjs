@@ -15,7 +15,7 @@ function makeShip(overrides = {}) {
   };
 }
 
-test('manual turn input moves the stabilizer target heading', () => {
+test('manual turn input moves the stabilizer target and stabilizer steers toward it', () => {
   const state = { enabled: true, targetAngle: 0 };
 
   let result = null;
@@ -30,7 +30,7 @@ test('manual turn input moves the stabilizer target heading', () => {
   assert.ok(result.manualActive, 'manual turn should be reported while A/D is held');
   assert.ok(result.targetAngle > 0.7, 'D should advance the chevron target to the right');
   assert.equal(state.targetAngle, result.targetAngle);
-  assert.equal(result.torque, 0, 'stabilizer should not fight active manual turning');
+  assert.ok(result.torque > 0.75, 'stabilizer should own the turn and drive toward the moving chevron');
 });
 
 test('stabilizer counters overshoot back to the locked target heading', () => {
@@ -74,6 +74,49 @@ test('stabilizer brakes before crossing the target when angular momentum would o
   assert.ok(result.headingError > 0, 'ship has not crossed the target heading yet');
   assert.ok(result.torque < -0.1, 'stabilizer should counter before crossing if stopping distance exceeds remaining angle');
   assert.equal(result.predictiveBrake, true);
+});
+
+test('stabilizer uses decisive counter torque when stopping distance threatens the locked line', () => {
+  const state = {
+    enabled: true,
+    targetAngle: Math.PI / 2
+  };
+  const ship = makeShip({
+    angle: 55 * Math.PI / 180,
+    angVel: 1.05
+  });
+
+  const result = updateHeadingStabilizer(state, ship, 1 / 60, {
+    enabled: true,
+    manualTorque: 0,
+    brakeAccel: 0.8,
+    physics: { MAX_TURN_SPEED: 2.5 }
+  });
+
+  assert.equal(result.predictiveBrake, true);
+  assert.ok(result.torque <= -0.85, 'imminent overshoot should request a strong counter-thrust command');
+});
+
+test('manual chevron steering still brakes if current spin cannot stop on the line', () => {
+  const state = {
+    enabled: true,
+    targetAngle: Math.PI / 2
+  };
+  const ship = makeShip({
+    angle: 55 * Math.PI / 180,
+    angVel: 2.2
+  });
+
+  const result = updateHeadingStabilizer(state, ship, 1 / 60, {
+    enabled: true,
+    manualTorque: 1,
+    brakeAccel: 0.8,
+    physics: { MAX_TURN_SPEED: 2.5 }
+  });
+
+  assert.ok(result.manualActive, 'D should still move the chevron');
+  assert.ok(result.targetAngle > Math.PI / 2, 'manual input advances the line');
+  assert.ok(result.torque <= -0.75, 'stabilizer should brake even while D is held if release-now overshoot is likely');
 });
 
 test('disabled stabilizer follows current heading without assist torque', () => {

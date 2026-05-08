@@ -19,6 +19,8 @@ function writeOutput(state, values) {
     targetAngle: 0,
     headingError: 0,
     torque: 0,
+    targetRate: 0,
+    desiredRate: 0,
     predictiveBrake: false,
     stoppingAngle: 0,
     dirX: 1,
@@ -29,6 +31,8 @@ function writeOutput(state, values) {
   out.targetAngle = Number(values.targetAngle) || 0;
   out.headingError = Number(values.headingError) || 0;
   out.torque = Number(values.torque) || 0;
+  out.targetRate = Number(values.targetRate) || 0;
+  out.desiredRate = Number(values.desiredRate) || 0;
   out.predictiveBrake = !!values.predictiveBrake;
   out.stoppingAngle = Math.max(0, Number(values.stoppingAngle) || 0);
   out.dirX = Math.cos(out.targetAngle);
@@ -51,7 +55,9 @@ export function updateHeadingStabilizer(state, ship, dt, options = {}) {
       manualActive: false,
       targetAngle: angle,
       headingError: 0,
-      torque: 0
+      torque: 0,
+      targetRate: 0,
+      desiredRate: 0
     });
   }
 
@@ -65,6 +71,7 @@ export function updateHeadingStabilizer(state, ship, dt, options = {}) {
   const manualTorque = clamp(options.manualTorque, -1, 1);
   const manualMag = Math.abs(manualTorque);
   const manualActive = manualMag > manualDeadzone;
+  let targetRate = 0;
 
   if (manualActive) {
     const manualNorm = ((manualMag - manualDeadzone) / Math.max(1e-6, 1 - manualDeadzone)) * Math.sign(manualTorque);
@@ -72,7 +79,8 @@ export function updateHeadingStabilizer(state, ship, dt, options = {}) {
       0.2,
       Number(options.targetTurnRate) || Math.max(1.4, Number(physics?.MAX_TURN_SPEED) || SHIP_PHYSICS.MAX_TURN_SPEED)
     );
-    s.targetAngle = wrapAngle((Number(s.targetAngle) || 0) + manualNorm * targetTurnRate * clampedDt);
+    targetRate = manualNorm * targetTurnRate;
+    s.targetAngle = wrapAngle((Number(s.targetAngle) || 0) + targetRate * clampedDt);
   }
 
   const targetAngle = wrapAngle(s.targetAngle);
@@ -81,35 +89,48 @@ export function updateHeadingStabilizer(state, ship, dt, options = {}) {
   const headingKp = Math.max(0, Number(options.headingKp) || 2.2);
   const headingKd = Math.max(0, Number(options.headingKd) || 1.2);
   const maxAssist = Math.max(0, Number(options.maxAssist) || 1);
-  let torque = manualActive
-    ? 0
-    : clamp((headingError * headingKp) - (omega * headingKd), -maxAssist, maxAssist);
+  const brakeAccel = Math.max(0.1, Number(options.brakeAccel) || 0.85);
+  let desiredRate = targetRate;
+  if (manualActive && Math.abs(targetRate) > 1e-4) {
+    const headingSign = Math.sign(headingError);
+    const targetSign = Math.sign(targetRate);
+    const remainingAngle = Math.abs(headingError);
+    if (headingSign !== 0 && headingSign === targetSign && remainingAngle > 1e-4) {
+      const stopBufferAngle = clamp(options.stopBufferAngle ?? 0.035, 0, 0.35);
+      const safeAngle = Math.max(0, remainingAngle - stopBufferAngle);
+      const safeRateFactor = clamp(options.safeRateFactor ?? 0.78, 0.35, 1.15);
+      const safeRate = Math.sqrt(2 * brakeAccel * safeAngle) * safeRateFactor;
+      const minTrackRate = Math.min(Math.abs(targetRate), Math.max(0, Number(options.minTrackRate) || 0.12));
+      desiredRate = targetSign * Math.max(minTrackRate, Math.min(Math.abs(targetRate), safeRate));
+    }
+  }
+  const relativeOmega = omega - desiredRate;
+  let torque = clamp((headingError * headingKp) - (relativeOmega * headingKd), -maxAssist, maxAssist);
 
   let predictiveBrake = false;
   let stoppingAngle = 0;
-  if (!manualActive && maxAssist > 0) {
+  if (maxAssist > 0) {
     const remainingAngle = Math.abs(headingError);
-    const absOmega = Math.abs(omega);
+    const absRelativeOmega = Math.abs(relativeOmega);
     const headingSign = Math.sign(headingError);
-    const omegaSign = Math.sign(omega);
-    const movingTowardTarget = headingSign !== 0 && omegaSign === headingSign;
-    const brakeAccel = Math.max(0.1, Number(options.brakeAccel) || 0.85);
-    stoppingAngle = (absOmega * absOmega) / (2 * brakeAccel);
+    const relativeOmegaSign = Math.sign(relativeOmega);
+    const movingTowardTarget = headingSign !== 0 && relativeOmegaSign === headingSign;
+    stoppingAngle = (absRelativeOmega * absRelativeOmega) / (2 * brakeAccel);
 
-    if (movingTowardTarget && absOmega > 0.025) {
-      const leadFactor = clamp(options.brakeLeadFactor ?? 0.86, 0.45, 1.35);
+    if (movingTowardTarget && absRelativeOmega > 0.025) {
+      const leadFactor = clamp(options.brakeLeadFactor ?? 0.78, 0.35, 1.35);
       const triggerAngle = Math.max(0.025, remainingAngle * leadFactor);
       if (stoppingAngle >= triggerAngle) {
         predictiveBrake = true;
         const maxTurnSpeed = Math.max(0.2, Number(physics?.MAX_TURN_SPEED) || SHIP_PHYSICS.MAX_TURN_SPEED);
         const overshootRatio = stoppingAngle / Math.max(triggerAngle, 0.025);
-        const minBrakeStrength = Math.min(0.28, maxAssist);
+        const minBrakeStrength = Math.min(0.82, maxAssist);
         const brakeStrength = clamp(
-          0.28 + ((overshootRatio - 1) * 0.42) + (absOmega / (maxTurnSpeed * 1.25)) * 0.35,
+          0.82 + ((overshootRatio - 1) * 0.38) + (absRelativeOmega / maxTurnSpeed) * 0.18,
           minBrakeStrength,
           maxAssist
         );
-        torque = -omegaSign * Math.max(Math.abs(torque), brakeStrength);
+        torque = -relativeOmegaSign * Math.max(Math.abs(torque), brakeStrength);
       }
     }
   }
@@ -120,6 +141,8 @@ export function updateHeadingStabilizer(state, ship, dt, options = {}) {
     targetAngle,
     headingError,
     torque,
+    targetRate,
+    desiredRate,
     predictiveBrake,
     stoppingAngle,
   });
