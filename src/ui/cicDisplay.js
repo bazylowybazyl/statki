@@ -295,6 +295,9 @@ let cicContextMenu = {
   items: [],
 };
 
+// WSAD pan keys currently held
+const cicKeys = new Set();
+
 // Contact list refreshed each frame
 let cicContacts = [];
 
@@ -312,6 +315,8 @@ export const CICDisplay = {
       cicSelectedContacts = [];
       cicBoxSelecting = false;
       cicSystemBlend = 0;
+    } else {
+      cicKeys.clear();
     }
     return cicActive;
   },
@@ -322,6 +327,7 @@ export const CICDisplay = {
     cicBoxSelecting = false;
     cicSelectedContacts = [];
     cicContextMenu.open = false;
+    cicKeys.clear();
   },
   open() {
     cicActive = true;
@@ -369,6 +375,21 @@ export const CICDisplay = {
   },
 
   get isSystemView() { return cicSystemBlend > 0.3; },
+
+  /** WSAD key pressed — returns true if consumed */
+  onKeyDown(code) {
+    if (!cicActive) return false;
+    if (code === 'KeyW' || code === 'KeyA' || code === 'KeyS' || code === 'KeyD') {
+      cicKeys.add(code);
+      return true;
+    }
+    return false;
+  },
+
+  /** WSAD key released */
+  onKeyUp(code) {
+    cicKeys.delete(code);
+  },
 
   /** Handle mouse wheel in CIC — proportional zoom, continuous range */
   onWheel(deltaY) {
@@ -565,6 +586,15 @@ export const CICDisplay = {
     if (!cicActive) return;
 
     cicSweepAngle = (cicSweepAngle + CIC_CONFIG.sweepSpeed * dt) % (Math.PI * 2);
+
+    // WSAD camera pan — speed scales with visible area so it feels consistent at any zoom
+    if (cicKeys.size > 0) {
+      const panSpeed = 500 / cicZoom;
+      if (cicKeys.has('KeyA')) cicTargetPanX -= panSpeed * dt;
+      if (cicKeys.has('KeyD')) cicTargetPanX += panSpeed * dt;
+      if (cicKeys.has('KeyW')) cicTargetPanY -= panSpeed * dt;
+      if (cicKeys.has('KeyS')) cicTargetPanY += panSpeed * dt;
+    }
 
     // Build contact list from sensor-visible entities
     cicContacts.length = 0;
@@ -1093,9 +1123,9 @@ export const CICDisplay = {
     ctx.font = '10px monospace';
     ctx.textAlign = 'center';
     if (isSystemScale) {
-      ctx.fillText('[TAB] Zamknij    [V] Widok taktyczny    [SCROLL] Zoom    [MMB] Pan    [LMB] Zaznacz    [PPM] Rozkaz', W / 2, H - 16);
+      ctx.fillText('[TAB] Zamknij    [V] Widok taktyczny    [SCROLL] Zoom    [WSAD/MMB] Pan    [LMB] Zaznacz    [PPM] Rozkaz', W / 2, H - 16);
     } else {
-      ctx.fillText('[TAB] Zamknij    [V] Widok systemu    [SCROLL] Zoom    [MMB] Pan    [LMB] Zaznacz/Box    [PPM] Atak/Ruch/Cruise/Drone', W / 2, H - 16);
+      ctx.fillText('[TAB] Zamknij    [V] Widok systemu    [SCROLL] Zoom    [WSAD/MMB] Pan    [LMB] Zaznacz/Box    [PPM] Atak/Ruch/Cruise/Drone', W / 2, H - 16);
     }
 
     ctx.restore();

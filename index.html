@@ -11948,6 +11948,10 @@
         const state = CICDisplay.toggle();
         pushZoneMessage(state ? 'CIC: ONLINE' : 'CIC: OFFLINE', 1.5);
       }
+      if (CICDisplay.active && CICDisplay.onKeyDown(e.code)) {
+        e.preventDefault();
+        return;
+      }
       if (k === 'f' && !stationUI.open && !warp.isBusy()) {
         // Fire rockets from F key — determine side from mouse position
         const mw = screenToWorld(mouse.x, mouse.y);
@@ -12042,6 +12046,7 @@
     window.addEventListener('keyup', e => {
       const k = e.key.toLowerCase();
       keys[k] = false;
+      CICDisplay.onKeyUp(e.code);
       if (k === 'shift' && camera.mode !== 'rts') {
         handleShiftUp();
       }
