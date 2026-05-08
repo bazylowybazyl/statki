@@ -143,8 +143,9 @@ export function applyPlayerThrusterVisualState(ship, target) {
   const turnMag = Math.abs(torqueInput);
 
   const mainThrusters = ship.visual.mainThrusters || [];
-  const mainThrottle = Math.max(mainInput, Math.abs(manualTorqueInput) * 0.24);
-  const mainGimbalAssistDeg = -12 * manualTorqueInput;
+  const mainTurnThrottle = turnMag > 1e-3 ? Math.min(0.78, 0.18 + (turnMag * 0.52)) : 0;
+  const mainThrottle = Math.max(mainInput, mainTurnThrottle);
+  const mainGimbalAssistDeg = -26 * torqueInput;
 
   for (let i = 0; i < mainThrusters.length; i++) {
     const t = mainThrusters[i];
@@ -274,7 +275,7 @@ export function composeShipThrusterCommand(ship, assist = null) {
   command.leftSide = clamp01(Math.max(Number(manual.leftSide) || 0, Number(assist?.leftSide) || 0));
   command.rightSide = clamp01(Math.max(Number(manual.rightSide) || 0, Number(assist?.rightSide) || 0));
   command.retro = clamp01(Math.max(Number(manual.retro) || 0, Number(assist?.retro) || 0));
-  command.manualTorque = clampSym(manual.torque, 1);
+  command.manualTorque = assist?.suppressManualTorque ? 0 : clampSym(manual.torque, 1);
   command.assistTorque = clampSym(assist?.torque, 1);
   command.torque = clampSym(command.manualTorque + command.assistTorque, 1);
 
@@ -336,7 +337,7 @@ export function updateShipThrusterState(ship, dt) {
     const base = Number.isFinite(Number(t.baseDeg)) ? Number(t.baseDeg) : 90;
     const nozzle = Number.isFinite(Number(t.nozzleDeg)) ? Number(t.nozzleDeg) : base;
     const gimbalAbs = Math.max(8, Math.abs(Number(t.gimbalMinDeg) || 0), Math.abs(Number(t.gimbalMaxDeg) || 0));
-    mainAssistSum += (normalizeDeg(nozzle - base, 0) / gimbalAbs) * throttle;
+    mainAssistSum += -(normalizeDeg(nozzle - base, 0) / gimbalAbs) * throttle;
     mainAssistWeight += throttle;
   }
 
@@ -378,6 +379,114 @@ export function updateShipThrusterState(ship, dt) {
   out.mainTorqueAssist = stepToward(Number(out.mainTorqueAssist) || 0, mainAssistWeight > 1e-6 ? clampSym((mainAssistSum / mainAssistWeight) * 0.45, 0.45) : 0, 7.5 * clampedDt);
 
   return out;
+}
+
+function estimateTorqueThrusterCommand(thruster, torqueInput) {
+  const turnMag = Math.abs(torqueInput);
+  if (turnMag <= 1e-3) return { throttle: 0, nozzleDeg: Number(thruster?.baseDeg) || 0 };
+
+  const mount = String(thruster?.mount || '').toLowerCase();
+  const isLeft = mount.endsWith('_left') || thruster?.side === 'left';
+  const isRight = mount.endsWith('_right') || thruster?.side === 'right';
+  const isFront = mount.startsWith('front_') || mount.startsWith('upper_');
+  const isRear = mount.startsWith('rear_') || mount.startsWith('lower_');
+  const isCenter = mount.startsWith('center_');
+
+  let throttle = 0;
+  let sideGimbalAssist = 0;
+  if (torqueInput > 0) {
+    if (isFront && isLeft) throttle = Math.max(throttle, turnMag);
+    else if (isCenter && isLeft) throttle = Math.max(throttle, turnMag * 0.55);
+    else if (isRear && isRight) throttle = Math.max(throttle, turnMag * 0.75);
+    else if (isCenter && isRight) throttle = Math.max(throttle, turnMag * 0.35);
+    else if (!mount && isLeft && isFront) throttle = Math.max(throttle, turnMag);
+
+    if (isFront || isCenter) sideGimbalAssist = isLeft ? -22 : 22;
+    if (isRear) sideGimbalAssist = isRight ? -18 : 18;
+  } else {
+    if (isRear && isLeft) throttle = Math.max(throttle, turnMag);
+    else if (isCenter && isLeft) throttle = Math.max(throttle, turnMag * 0.35);
+    else if (isFront && isRight) throttle = Math.max(throttle, turnMag * 0.75);
+    else if (isCenter && isRight) throttle = Math.max(throttle, turnMag * 0.55);
+    else if (!mount && isRight && isFront) throttle = Math.max(throttle, turnMag);
+
+    if (isFront || isCenter) sideGimbalAssist = isRight ? 22 : -22;
+    if (isRear) sideGimbalAssist = isLeft ? 18 : -18;
+  }
+
+  const base = Number.isFinite(Number(thruster?.baseDeg))
+    ? Number(thruster.baseDeg)
+    : ((Number(thruster?.offset?.y) || 0) < 0 ? 180 : 0);
+  return {
+    throttle: clamp01(throttle),
+    nozzleDeg: clampNozzleDegToGimbal(
+      base + sideGimbalAssist,
+      base,
+      thruster?.gimbalMinDeg,
+      thruster?.gimbalMaxDeg,
+      -90,
+      90
+    )
+  };
+}
+
+export function estimateShipTurnAcceleration(ship, torqueInput = 1, options = {}) {
+  const turn = clampSym(torqueInput, 1);
+  if (!ship || Math.abs(turn) <= 1e-3) return 0;
+
+  const mass = Math.max(1, Number(ship?.mass) || SHIP_PHYSICS.PLAYER_MASS || 1);
+  const inertia = Math.max(
+    1,
+    Number(ship?.inertia) || ((1 / 12) * mass * (((ship?.w || 450) ** 2) + ((ship?.h || 250) ** 2)))
+  );
+  const mainForceMul = Math.max(0, Number(options.mainForceMul) || 1.0);
+  const sideForceMul = Math.max(0, Number(options.sideForceMul) || 1.6);
+  let localTorque = 0;
+
+  const mains = ship?.visual?.mainThrusters || [];
+  const mainForceTotal = mass * SHIP_PHYSICS.SPEED * mainForceMul;
+  const mainForcePerThruster = mainForceTotal / Math.max(1, mains.length);
+  const turnMag = Math.abs(turn);
+  const mainTurnThrottle = turnMag > 1e-3 ? Math.min(0.78, 0.18 + (turnMag * 0.52)) : 0;
+  const mainGimbalAssistDeg = -26 * turn;
+
+  for (let i = 0; i < mains.length; i++) {
+    const t = mains[i];
+    const base = Number.isFinite(Number(t?.baseDeg)) ? Number(t.baseDeg) : 90;
+    const nozzle = clampNozzleDegToGimbal(
+      base + mainGimbalAssistDeg,
+      base,
+      t?.gimbalMinDeg,
+      t?.gimbalMaxDeg,
+      -45,
+      45
+    );
+    const dir = normalizeDeg(nozzle, 90) * Math.PI / 180;
+    const force = mainForcePerThruster * mainTurnThrottle;
+    const fx = Math.sin(dir) * force;
+    const fy = -Math.cos(dir) * force;
+    const ox = Number(t?.offset?.x) || 0;
+    const oy = Number(t?.offset?.y) || 0;
+    localTorque += (ox * fy) - (oy * fx);
+  }
+
+  const sides = ship?.visual?.torqueThrusters || [];
+  const sideForceTotal = mass * SHIP_PHYSICS.SPEED * 0.55 * sideForceMul;
+  const sideForcePerThruster = sideForceTotal / Math.max(1, sides.length);
+  for (let i = 0; i < sides.length; i++) {
+    const t = sides[i];
+    const cmd = estimateTorqueThrusterCommand(t, turn);
+    if (cmd.throttle <= 1e-4) continue;
+    const dir = normalizeDeg(cmd.nozzleDeg, 0) * Math.PI / 180;
+    const force = sideForcePerThruster * cmd.throttle;
+    const fx = Math.sin(dir) * force;
+    const fy = -Math.cos(dir) * force;
+    const ox = Number(t?.offset?.x) || 0;
+    const oy = Number(t?.offset?.y) || 0;
+    localTorque += (ox * fy) - (oy * fx);
+  }
+
+  return Math.abs(localTorque / inertia);
 }
 
 const _defaultForces = { localFx: 0, localFy: 0, localTorque: 0 };

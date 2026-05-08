@@ -12195,17 +12195,17 @@
         input.main = 0;
         return;
       }
+      const manualInput = playerHasManualInput();
+      if (ship.command && !manualInput && !PAUSED && warp.state === 'idle') {
+        enginePower.target = Math.max(clamp(input.main, 0, 1), clamp(input.retro || 0, 0, 1) * 0.92);
+        enginePower.current = enginePower.target;
+        return;
+      }
       if (camera.mode === 'rts') {
         enginePower.target = 0;
         enginePower.current = 0;
         input.main = 0;
         input.retro = 0;
-        return;
-      }
-      const manualInput = playerHasManualInput();
-      if (ship.command && !manualInput) {
-        enginePower.target = Math.max(clamp(input.main, 0, 1), clamp(input.retro || 0, 0, 1) * 0.92);
-        enginePower.current = enginePower.target;
         return;
       }
 
@@ -17275,10 +17275,11 @@
       updateEnginePower(dt);
       const manualTorqueInput = clamp(Number(ship?.thrusterInput?.torque) || 0, -1, 1);
       const stabilizerState = getShipStabilizerState(ship);
+      const commandHeadingActive = !!ship.command && !playerHasManualInput();
       let stabilizerAssistTorque = 0;
       let stabilizerAssistLeft = 0;
       let stabilizerAssistRight = 0;
-      if (warp.state === 'idle' && flightAssist.stabilizer) {
+      if (warp.state === 'idle' && flightAssist.stabilizer && !commandHeadingActive) {
         const manualHeadingInput = (keys['a'] || keys['d']) ? manualTorqueInput : 0;
         const headingAssist = updateHeadingStabilizer(stabilizerState, ship, dt, {
           enabled: true,
@@ -17328,7 +17329,7 @@
         torque: stabilizerAssistTorque,
         leftSide: stabilizerAssistLeft,
         rightSide: stabilizerAssistRight,
-        suppressManualTorque: warp.state === 'idle' && flightAssist.stabilizer
+        suppressManualTorque: warp.state === 'idle' && flightAssist.stabilizer && !commandHeadingActive
       });
       const thrusterDrive = updateShipThrusterState(ship, dt);
       const driveMain = clamp(thrusterDrive?.main ?? input.main, 0, 1);
