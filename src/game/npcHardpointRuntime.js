@@ -321,26 +321,46 @@ export function createNpcHardpointRuntime({
 
     const enginesMainRaw = Array.isArray(cfg?.engines?.main) ? cfg.engines.main : [];
     const enginesSideRaw = Array.isArray(cfg?.engines?.side) ? cfg.engines.side : [];
-    const mainEngine = enginesMainRaw.length ? normalizeEditorEngine(enginesMainRaw[0], 0, 'main') : null;
 
-    if (mainEngine || enginesSideRaw.length) {
+    if (enginesMainRaw.length || enginesSideRaw.length) {
       npc.engines = npc.engines || {};
       npc.visual = npc.visual || {};
     }
 
-    if (mainEngine) {
-      npc.engines.main = Object.assign({}, npc.engines.main || {}, {
-        vfxOffset: { x: mainEngine.x * hpScaleX, y: mainEngine.y * hpScaleY },
-        vfxForward: forwardFromEditorDeg(mainEngine.nozzleDeg),
-        vfxYNudge: mainEngine.offsetY * hpScaleY,
-        vfxLengthMin: Number(mainEngine.vfxLengthMin) || 10,
-        vfxLengthMax: Number(mainEngine.vfxLengthMax) || 180,
-        mount: mainEngine.mount,
-        baseDeg: mainEngine.baseDeg,
-        nozzleDeg: mainEngine.nozzleDeg,
-        gimbalMinDeg: mainEngine.gimbalMinDeg,
-        gimbalMaxDeg: mainEngine.gimbalMaxDeg
-      });
+    if (enginesMainRaw.length) {
+      const mainThrusters = [];
+      for (let i = 0; i < enginesMainRaw.length; i++) {
+        const engine = normalizeEditorEngine(enginesMainRaw[i], i, 'main');
+        if (!engine) continue;
+        mainThrusters.push({
+          offset: { x: engine.x * hpScaleX, y: engine.y * hpScaleY },
+          forward: forwardFromEditorDeg(engine.nozzleDeg),
+          mount: engine.mount,
+          baseDeg: engine.baseDeg,
+          nozzleDeg: engine.nozzleDeg,
+          gimbalMinDeg: engine.gimbalMinDeg,
+          gimbalMaxDeg: engine.gimbalMaxDeg,
+          yNudge: engine.offsetY * hpScaleY,
+          vfxLengthMin: engine.vfxLengthMin,
+          vfxLengthMax: engine.vfxLengthMax
+        });
+      }
+      if (mainThrusters.length) {
+        npc.visual.mainThrusters = mainThrusters;
+        const mainEngine = mainThrusters[0];
+        npc.engines.main = Object.assign({}, npc.engines.main || {}, {
+          vfxOffset: { x: mainEngine.offset.x, y: mainEngine.offset.y },
+          vfxForward: { ...mainEngine.forward },
+          vfxYNudge: Number(mainEngine.yNudge) || 0,
+          vfxLengthMin: Number(mainEngine.vfxLengthMin) || 10,
+          vfxLengthMax: Number(mainEngine.vfxLengthMax) || 180,
+          mount: mainEngine.mount,
+          baseDeg: mainEngine.baseDeg,
+          nozzleDeg: mainEngine.nozzleDeg,
+          gimbalMinDeg: mainEngine.gimbalMinDeg,
+          gimbalMaxDeg: mainEngine.gimbalMaxDeg
+        });
+      }
     }
 
     if (enginesSideRaw.length) {

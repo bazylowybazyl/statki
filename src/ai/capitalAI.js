@@ -8,6 +8,18 @@ function applyCapitalAutopilot(npc, thrustNorm, strafeNorm, desiredAngle, boostT
   npc.desiredAngle = desiredAngle;
   const speedBoost = (boostT > 0) ? 1.7 : 1.0;
 
+  if (window.applyNpcFlightVector && window.npcHasPhysicalThrusters?.(npc)) {
+    const sep = window.applySeparationForces ? window.applySeparationForces(npc, 0, 0) : null;
+    const flight = window.applyNpcFlightVector(npc, {
+      thrustNorm,
+      strafeNorm,
+      desiredAngle,
+      boostT,
+      separation: sep
+    }, dt);
+    if (flight?.usedThrusters) return;
+  }
+
   const forwardAccel = thrustNorm * (npc.accel || 150) * speedBoost;
   const sideAccel = strafeNorm * (npc.accel || 150) * speedBoost;
 

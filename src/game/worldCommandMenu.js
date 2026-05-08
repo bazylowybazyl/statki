@@ -1,5 +1,6 @@
 const NORMAL_TARGET_ACTIONS = [
   ['attack', 'ATTACK'],
+  ['ram', 'RAM'],
   ['approach', 'APPROACH'],
   ['orbit', 'ORBIT'],
   ['jump', 'JUMP'],
@@ -7,15 +8,18 @@ const NORMAL_TARGET_ACTIONS = [
   ['scan', 'SCAN']
 ];
 
-const NORMAL_EMPTY_ACTIONS = NORMAL_TARGET_ACTIONS.slice(1);
+const NORMAL_EMPTY_ACTIONS = NORMAL_TARGET_ACTIONS.filter(([action]) => action !== 'attack' && action !== 'ram');
 
 const RTS_ACTIONS = [
   ['approach', 'APPROACH'],
   ['orbit', 'ORBIT'],
   ['attack', 'ATTACK'],
+  ['ram', 'RAM'],
   ['hold', 'HOLD'],
   ['scan', 'SCAN']
 ];
+
+const ORBIT_RANGE_PRESETS = [1000, 3000, 5000, 10000, 15000];
 
 function menuItem([action, label]) {
   return { action, label };
@@ -31,6 +35,13 @@ function pointFrom(point) {
 function entityPoint(entity) {
   if (!entity) return null;
   return pointFrom(entity.pos || entity);
+}
+
+function commandTargetPoint(command) {
+  if (!command) return null;
+  const ent = command.targetEntity;
+  if (ent && !ent.dead && !ent.destroyed && !ent.removed) return entityPoint(ent);
+  return entityPoint(command.target);
 }
 
 function unitSortKey(unit, index) {
@@ -63,12 +74,70 @@ export function buildRtsCommandMenuItems({ selectedCount = 0 } = {}) {
   ];
 }
 
+export function buildOrbitRangeMenuItems({ currentRange = null } = {}) {
+  const current = Math.max(80, Math.round(Number(currentRange) || 0));
+  const currentLabel = current > 80 ? `CURRENT RANGE ${current}` : 'CURRENT RANGE';
+  return [
+    {
+      action: 'orbit-range-current',
+      label: currentLabel,
+      orbitRangeMode: 'current',
+      orbitRadius: current
+    },
+    ...ORBIT_RANGE_PRESETS.map((radius) => ({
+      action: `orbit-range-${radius}`,
+      label: String(radius),
+      orbitRangeMode: 'preset',
+      orbitRadius: radius
+    })),
+    {
+      action: 'orbit-range-custom',
+      label: 'X',
+      orbitRangeMode: 'custom',
+      orbitRadius: null
+    }
+  ];
+}
+
+export function resolveOrbitRadiusForUnit({
+  unit = null,
+  targetPoint = null,
+  requestedRadius = null,
+  fallbackRadius = 900,
+  minRadius = 80
+} = {}) {
+  const minimum = Math.max(80, Number(minRadius) || 80);
+  if (requestedRadius === 'current') {
+    const unitPoint = entityPoint(unit);
+    const target = entityPoint(targetPoint);
+    if (unitPoint && target) {
+      const dist = Math.hypot(unitPoint.x - target.x, unitPoint.y - target.y);
+      if (Number.isFinite(dist) && dist > 1e-3) return Math.max(minimum, Math.round(dist));
+    }
+  }
+  const numeric = Number(requestedRadius);
+  if (Number.isFinite(numeric) && numeric > 0) return Math.max(minimum, Math.round(numeric));
+  return Math.max(minimum, Math.round(Number(fallbackRadius) || 900));
+}
+
 export function createApproachCommand({ point, targetEntity = null, arrival = 280 } = {}) {
   return {
     type: 'approach',
     target: targetEntity ? entityPoint(targetEntity) : pointFrom(point),
     targetEntity: targetEntity || null,
     arrival
+  };
+}
+
+export function createRamCommand({ point, targetEntity = null, arrival = null, ramImpulse = 3400 } = {}) {
+  const targetRadius = targetEntity ? unitRadius(targetEntity) : 120;
+  const hitArrival = Math.max(180, targetRadius + 260);
+  return {
+    type: 'ram',
+    target: targetEntity ? entityPoint(targetEntity) : pointFrom(point),
+    targetEntity: targetEntity || null,
+    arrival: arrival != null && Number.isFinite(Number(arrival)) ? Number(arrival) : hitArrival,
+    ramImpulse: Math.max(1600, Number(ramImpulse) || 3400)
   };
 }
 
@@ -84,8 +153,8 @@ export function createOrbitCommand({
     target: targetEntity ? entityPoint(targetEntity) : pointFrom(point),
     targetEntity: targetEntity || null,
     arrival,
-    orbitRadius,
-    orbitDir
+    orbitRadius: Math.max(80, Math.round(Number(orbitRadius) || 900)),
+    orbitDir: (Number(orbitDir) || 1) >= 0 ? 1 : -1
   };
 }
 
@@ -199,15 +268,85 @@ export function computeAttackAutopilotState({
 }
 
 export function computeApproachPathLine(command, from) {
-  if (!command || command.type !== 'approach') return null;
-  const target = command.targetEntity && !command.targetEntity.dead && !command.targetEntity.destroyed && !command.targetEntity.removed
-    ? entityPoint(command.targetEntity)
-    : entityPoint(command.target);
+  if (!command || (command.type !== 'approach' && command.type !== 'ram')) return null;
+  const target = commandTargetPoint(command);
   if (!target) return null;
   return {
     start: pointFrom(from),
     end: target,
     arrival: Math.max(0, Number(command.arrival) || 0)
+  };
+}
+
+export function computeCommandVisual(command, from, unit = null) {
+  if (!command) return null;
+  const type = String(command.type || '').toLowerCase();
+  if (!['move', 'attack-move', 'approach', 'ram', 'orbit'].includes(type)) return null;
+
+  const target = commandTargetPoint(command);
+  if (!target) return null;
+
+  const start = pointFrom(from);
+  const dx = target.x - start.x;
+  const dy = target.y - start.y;
+  const dist = Math.hypot(dx, dy);
+  const arrival = Math.max(0, Number(command.arrival) || 0);
+  const unitAngle = Number.isFinite(Number(unit?.angle)) ? Number(unit.angle) : 0;
+  const faceAngle = Number.isFinite(Number(command.faceAngle))
+    ? Number(command.faceAngle)
+    : (dist > 1e-6 ? Math.atan2(dy, dx) : unitAngle);
+
+  if (type === 'orbit') {
+    const radius = Math.max(80, Number(command.orbitRadius) || 900);
+    const orbitDir = (Number(command.orbitDir) || 1) >= 0 ? 1 : -1;
+    const radialX = dist > 1e-6 ? (start.x - target.x) / dist : 1;
+    const radialY = dist > 1e-6 ? (start.y - target.y) / dist : 0;
+    const point = {
+      x: target.x + radialX * radius,
+      y: target.y + radialY * radius
+    };
+    const tangentX = -radialY * orbitDir;
+    const tangentY = radialX * orbitDir;
+    const arrowLen = Math.max(120, Math.min(420, radius * 0.24));
+    const arrow = {
+      start: {
+        x: point.x - tangentX * arrowLen * 0.5,
+        y: point.y - tangentY * arrowLen * 0.5
+      },
+      end: {
+        x: point.x + tangentX * arrowLen * 0.5,
+        y: point.y + tangentY * arrowLen * 0.5
+      }
+    };
+    return {
+      type,
+      target,
+      path: { start, end: point },
+      arrow,
+      orbit: {
+        center: target,
+        radius,
+        dir: orbitDir,
+        point,
+        arrow
+      }
+    };
+  }
+
+  const showGhost = type === 'move' || type === 'attack-move' || type === 'approach' || type === 'ram';
+  return {
+    type,
+    target,
+    arrival,
+    path: { start, end: target },
+    arrow: dist > 1e-6 ? { start, end: target } : null,
+    ghost: showGhost
+      ? {
+        pos: target,
+        angle: faceAngle,
+        arrival
+      }
+      : null
   };
 }
 
