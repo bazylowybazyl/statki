@@ -1,20 +1,33 @@
 // src/game/flight/playerAutopilot.js
 // Command-level player autopilot. Produces player input/thruster targets; does not integrate physics.
 
-import { SHIP_PHYSICS } from './thrusterModel.js';
+import { SHIP_PHYSICS, estimateShipTurnAcceleration } from './thrusterModel.js';
+import { computePlannedHeadingTorque, wrapAngle } from './headingControl.js';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, Number(value) || 0));
-
-function wrapAngle(angle) {
-  let a = Number(angle) || 0;
-  while (a > Math.PI) a -= Math.PI * 2;
-  while (a < -Math.PI) a += Math.PI * 2;
-  return a;
-}
 
 function smoothstep01(t) {
   const x = clamp(t, 0, 1);
   return x * x * (3 - 2 * x);
+}
+
+function computeApproachForwardGate(headingError, omega) {
+  const headingAlignment = Math.max(0, Math.cos(headingError));
+  const headingGate = smoothstep01((headingAlignment - 0.82) / 0.18);
+  const spinGate = 1 - smoothstep01((Math.abs(Number(omega) || 0) - 0.18) / 0.48);
+  return headingGate * spinGate;
+}
+
+function resolveShipBrakeAccel(ship, fallbackBrakeAccel) {
+  const fallback = Math.max(0.1, Number(fallbackBrakeAccel) || 0.1);
+  const positiveTurnAccel = estimateShipTurnAcceleration(ship, 1);
+  const negativeTurnAccel = estimateShipTurnAcceleration(ship, -1);
+  const measured = Math.min(
+    positiveTurnAccel > 1e-4 ? positiveTurnAccel : Infinity,
+    negativeTurnAccel > 1e-4 ? negativeTurnAccel : Infinity
+  );
+  if (!Number.isFinite(measured) || measured <= 1e-4) return fallback;
+  return Math.min(fallback, Math.max(0.08, measured * 0.72));
 }
 
 function getEntityPos(entity) {
@@ -70,12 +83,24 @@ export function computePlayerHoldControl(ship, physics = SHIP_PHYSICS, faceAngle
   const hasFaceAngle = Number.isFinite(faceAngle);
   const headingError = hasFaceAngle ? wrapAngle(faceAngle - angle) : 0;
   const torque = hasFaceAngle
-    ? clamp((headingError * 1.35) - (omega * 1.1), -0.6, 0.6)
+    ? computePlannedHeadingTorque({
+      headingError,
+      omega,
+      maxTurnSpeed: Math.max(0.45, (Number(physics?.MAX_TURN_SPEED) || SHIP_PHYSICS.MAX_TURN_SPEED) * 0.72),
+      brakeAccel: resolveShipBrakeAccel(ship, Math.max(1.0, (Number(physics?.TURN_ACCEL) || SHIP_PHYSICS.TURN_ACCEL) * 0.16)),
+      torqueLimit: 0.6,
+      leadTime: 0.28,
+      profileScale: 0.9,
+      minCounterTorque: 0.22
+    }).torque
     : clamp(-omega / maxTurn, -0.6, 0.6);
   const retro = clamp(Math.max(0, forwardVel) / 520, 0, 1);
   const main = clamp(Math.max(0, -forwardVel) / 460, 0, 0.65);
   const rightSide = clamp(Math.max(0, lateralVel) / 360, 0, 1);
   const leftSide = clamp(Math.max(0, -lateralVel) / 360, 0, 1);
+  const angularSettled = hasFaceAngle
+    ? Math.abs(omega) < 0.0016 && Math.abs(headingError) < 0.0045
+    : Math.abs(omega) < 0.003;
   return {
     controller: 'player',
     thrustY: retro > 0.05 ? -retro : main,
@@ -84,18 +109,45 @@ export function computePlayerHoldControl(ship, physics = SHIP_PHYSICS, faceAngle
     torque,
     leftSide,
     rightSide,
-    settled: speed < 28 && Math.abs(omega) < 0.01 && (!hasFaceAngle || Math.abs(headingError) < 0.03)
+    settled: speed < 28 && angularSettled
   };
 }
 
 function commandTuning(type) {
   if (type === 'approach') {
-    return { maxSpeed: 720, speedK: 0.55, velocityTau: 0.62, arrivalBrake: 1.05 };
+    return {
+      maxSpeed: 3200,
+      speedK: 1.55,
+      velocityTau: 0.55,
+      arrivalBrake: 1.0,
+      stopAccelScale: 5.6,
+      stopLeadTime: 0.12,
+      stopSpeedScale: 1.0
+    };
   }
   if (type === 'orbit') {
     return { maxSpeed: 520, speedK: 0.7, velocityTau: 0.72, arrivalBrake: 0.85 };
   }
   return { maxSpeed: 940, speedK: 0.72, velocityTau: 0.68, arrivalBrake: 1.0 };
+}
+
+function computeLinearStopAccel(tuning) {
+  return Math.max(140, SHIP_PHYSICS.SPEED * (Number(tuning?.stopAccelScale) || 0.9));
+}
+
+function computeCommandSpeedBudget(cmdType, dist, arrival, tuning) {
+  if (cmdType === 'orbit') return tuning.maxSpeed;
+
+  const remaining = Math.max(0, dist - arrival);
+  let budget = clamp(remaining * tuning.speedK, 0, tuning.maxSpeed);
+  if (cmdType !== 'approach') return budget;
+
+  const stopAccel = computeLinearStopAccel(tuning);
+  const leadTime = Math.max(0, Number(tuning.stopLeadTime) || 0);
+  const stopScale = Math.max(0.1, Number(tuning.stopSpeedScale) || 1);
+  const safeStopSpeed = Math.max(0, Math.sqrt(2 * stopAccel * remaining) - (stopAccel * leadTime)) * stopScale;
+  budget = Math.min(budget, safeStopSpeed);
+  return clamp(budget, 0, tuning.maxSpeed);
 }
 
 function makeControlFromLocalAccel(ship, localAx, localAy, headingError, preferStrafeHeading) {
@@ -107,10 +159,22 @@ function makeControlFromLocalAccel(ship, localAx, localAy, headingError, preferS
   const leftSide = clamp(localAy / sideAccelScale, 0, 1);
   const rightSide = clamp(-localAy / sideAccelScale, 0, 1);
   const omega = Number(ship?.angVel) || 0;
-  const headingKp = preferStrafeHeading ? 0.45 : 2.15;
-  const headingKd = preferStrafeHeading ? 1.15 : 1.1;
+  const maxTurnSpeed = Math.max(0.4, SHIP_PHYSICS.MAX_TURN_SPEED * (preferStrafeHeading ? 0.38 : 0.9));
+  const brakeAccel = resolveShipBrakeAccel(
+    ship,
+    Math.max(0.9, SHIP_PHYSICS.TURN_ACCEL * (preferStrafeHeading ? 0.14 : 0.16))
+  );
   const torqueLimit = preferStrafeHeading ? 0.65 : 1.0;
-  const torque = clamp((headingError * headingKp) - (omega * headingKd), -torqueLimit, torqueLimit);
+  const torque = computePlannedHeadingTorque({
+    headingError,
+    omega,
+    maxTurnSpeed,
+    brakeAccel,
+    torqueLimit,
+    leadTime: preferStrafeHeading ? 0.24 : 0.28,
+    profileScale: preferStrafeHeading ? 0.8 : 0.92,
+    minCounterTorque: preferStrafeHeading ? 0.16 : 0.24
+  }).torque;
   return {
     controller: 'player',
     thrustY: retro > 0.05 ? -retro : main,
@@ -148,13 +212,17 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
   let desiredVecY = targetPos.y - pos.y;
   let dist = Math.hypot(desiredVecX, desiredVecY);
   const arrival = Number(cmd.arrival) || Number(options.defaultArrival) || 90;
+  const arrivalVel = ship.vel || { x: ship.vx || 0, y: ship.vy || 0 };
+  const arrivalSpeed = Math.hypot(Number(arrivalVel.x) || 0, Number(arrivalVel.y) || 0);
+  const arrivalSlack = Math.max(6, Math.min(24, arrival * 0.1));
+  const arrived = dist <= arrival || (dist <= arrival + arrivalSlack && arrivalSpeed < 32);
 
   if (cmd.type === 'orbit') {
     const orbit = computeOrbitSteerVector(ship, targetPos, cmd.orbitRadius, cmd.orbitDir);
     desiredVecX = orbit.dirX;
     desiredVecY = orbit.dirY;
     dist = orbit.dist;
-  } else if (dist <= arrival) {
+  } else if (arrived) {
     const hold = computePlayerHoldControl(ship, options.physics || SHIP_PHYSICS);
     const nextCommand = Number.isFinite(cmd.faceAngle)
       ? { type: 'hold', faceAngle: cmd.faceAngle }
@@ -185,9 +253,7 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
   const dirX = desiredVecX / len;
   const dirY = desiredVecY / len;
   const tuning = commandTuning(cmd.type);
-  const speedBudget = cmd.type === 'orbit'
-    ? tuning.maxSpeed
-    : clamp((dist - arrival) * tuning.speedK, 0, tuning.maxSpeed);
+  const speedBudget = computeCommandSpeedBudget(cmd.type, dist, arrival, tuning);
   const desiredVx = dirX * speedBudget;
   const desiredVy = dirY * speedBudget;
   const tau = Math.max(0.18, tuning.velocityTau);
@@ -196,14 +262,17 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
 
   if (cmd.type !== 'orbit') {
     const toTargetSpeed = (vx * dirX) + (vy * dirY);
+    const stopAccel = computeLinearStopAccel(tuning);
+    const leadTime = Math.max(0, Number(tuning.stopLeadTime) || 0);
     const brakeDistance = arrival + Math.max(
       140,
-      Math.abs(toTargetSpeed) * 0.34 + (toTargetSpeed * toTargetSpeed) / 1150
+      Math.max(0, toTargetSpeed) * leadTime + (toTargetSpeed * toTargetSpeed) / (2 * stopAccel)
     ) * tuning.arrivalBrake;
-    if (toTargetSpeed > 0 && dist < brakeDistance) {
+    const brakeOverspeed = Math.max(45, speedBudget * 0.82);
+    if (toTargetSpeed > brakeOverspeed && dist < brakeDistance) {
       const brakeT = clamp((brakeDistance - dist) / Math.max(brakeDistance - arrival, 1), 0, 1);
-      desiredAx -= dirX * (SHIP_PHYSICS.SPEED * (0.45 + brakeT * 1.1));
-      desiredAy -= dirY * (SHIP_PHYSICS.SPEED * (0.45 + brakeT * 1.1));
+      desiredAx -= dirX * (stopAccel * (0.25 + brakeT * 0.75));
+      desiredAy -= dirY * (stopAccel * (0.25 + brakeT * 0.75));
     }
   }
 
@@ -214,10 +283,9 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
     : Math.atan2(desiredVecY, desiredVecX);
   const headingError = wrapAngle(desiredHeading - angle);
   if (cmd.type === 'approach') {
-    const headingAlignment = Math.max(0, Math.cos(headingError));
-    const forwardGate = smoothstep01((headingAlignment - 0.28) / 0.72);
+    const forwardGate = computeApproachForwardGate(headingError, ship?.angVel);
     const lateralVel = (-vx * sinA) + (vy * cosA);
-    localAx *= forwardGate;
+    if (localAx > 0) localAx *= forwardGate;
     localAy = clamp(-lateralVel / Math.max(0.2, tuning.velocityTau), -SHIP_PHYSICS.SPEED * 0.75, SHIP_PHYSICS.SPEED * 0.75);
   }
 
