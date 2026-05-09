@@ -37,10 +37,20 @@ function entityPoint(entity) {
   return pointFrom(entity.pos || entity);
 }
 
+function addPointOffset(point, offset) {
+  if (!point || !offset) return point;
+  return {
+    x: point.x + (Number(offset.x) || 0),
+    y: point.y + (Number(offset.y) || 0)
+  };
+}
+
 function commandTargetPoint(command) {
   if (!command) return null;
   const ent = command.targetEntity;
-  if (ent && !ent.dead && !ent.destroyed && !ent.removed) return entityPoint(ent);
+  if (ent && !ent.dead && !ent.destroyed && !ent.removed) {
+    return addPointOffset(entityPoint(ent), command.targetOffset);
+  }
   return entityPoint(command.target);
 }
 
@@ -204,6 +214,55 @@ export function computeFormationTargets(units, anchor, faceAngle = 0) {
   return targets;
 }
 
+export function computeApproachFormationTargets(units, targetPoint, {
+  targetRadius = 0,
+  approachAngle = 0,
+  minSpacing = 110,
+  padding = 150
+} = {}) {
+  const list = Array.from(units || []);
+  const targets = new Map();
+  if (!list.length) return targets;
+
+  const sorted = list
+    .map((unit, index) => ({ unit, index, key: unitSortKey(unit, index) }))
+    .sort((a, b) => a.key.localeCompare(b.key) || a.index - b.index);
+
+  const center = pointFrom(targetPoint);
+  const angle = Number.isFinite(Number(approachAngle)) ? Number(approachAngle) : 0;
+  const forwardX = Math.cos(angle);
+  const forwardY = Math.sin(angle);
+  const sideX = -forwardY;
+  const sideY = forwardX;
+  const maxRadius = sorted.reduce((max, item) => Math.max(max, unitRadius(item.unit)), 20);
+  const spacing = Math.max(Number(minSpacing) || 110, maxRadius * 2.8);
+  const rowSpacing = Math.max(spacing * 0.95, maxRadius * 2.4);
+  const cols = sorted.length <= 4 ? sorted.length : Math.ceil(Math.sqrt(sorted.length));
+  const rows = Math.ceil(sorted.length / cols);
+  const baseDistance = Math.max(0, Number(targetRadius) || 0) + maxRadius + Math.max(60, Number(padding) || 150);
+
+  for (let i = 0; i < sorted.length; i++) {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const itemsInRow = row === rows - 1 ? sorted.length - row * cols : cols;
+    const sideOffset = (col - (itemsInRow - 1) / 2) * spacing;
+    const forwardOffset = baseDistance + row * rowSpacing;
+    const slotX = center.x + forwardX * forwardOffset + sideX * sideOffset;
+    const slotY = center.y + forwardY * forwardOffset + sideY * sideOffset;
+    targets.set(sorted[i].unit, {
+      x: slotX,
+      y: slotY,
+      targetOffset: {
+        x: slotX - center.x,
+        y: slotY - center.y
+      },
+      faceAngle: angle + Math.PI
+    });
+  }
+
+  return targets;
+}
+
 export function computeRtsCameraPanDelta(keys = {}, { speed = 1200, zoom = 1, dt = 0 } = {}) {
   const right = (keys.d || keys.arrowright) ? 1 : 0;
   const left = (keys.a || keys.arrowleft) ? 1 : 0;
@@ -333,7 +392,7 @@ export function computeCommandVisual(command, from, unit = null) {
     };
   }
 
-  const showGhost = type === 'move' || type === 'attack-move' || type === 'approach' || type === 'ram';
+  const showGhost = type === 'move' || type === 'approach';
   return {
     type,
     target,

@@ -58,7 +58,10 @@ export const DESTRUCTOR_CONFIG = {
   wreckSplitLinearResponse: 0.23, //
   wreckSplitOutwardKick: 0.010, //
   wreckSplitAngularResponse: 0.030, //
+  wreckSplitSeparationAngularResponse: 0.045, //
   wreckSplitMinAngularKick: 0.012, //
+  wreckSplitFallbackAngularMax: 0.095, //
+  wreckSplitAngularMax: 0.30, //
 
   shieldRestitution: 0.35,
   shieldCollisionDamageScale: 0.8,
@@ -305,6 +308,48 @@ function clampCrushVector(fx, fy, ratio, mag, maxCrushLimit, out) {
     out.x = fx;
     out.y = fy;
   }
+}
+
+export function computeWreckSplitAngularKick({
+  shardTorque = 0,
+  energizedShards = 0,
+  newRadius = 0,
+  relX = 0,
+  relY = 0,
+  avgImpulseX = 0,
+  avgImpulseY = 0,
+  config = DESTRUCTOR_CONFIG
+} = {}) {
+  const radius = Math.max(1, Number(newRadius) || 1);
+  const count = Math.max(0, Number(energizedShards) || 0);
+  const radialLen = Math.hypot(Number(relX) || 0, Number(relY) || 0);
+  let kick = 0;
+
+  if (count > 0) {
+    const angResponse = Math.max(0.004, Number(config?.wreckSplitAngularResponse) || 0.030);
+    const torqueDenom = Math.max(80, count * Math.max(18, radius * radius * 0.08));
+    kick += ((Number(shardTorque) || 0) / torqueDenom) * angResponse;
+
+    const sepMoment = ((Number(relX) || 0) * (Number(avgImpulseY) || 0)) - ((Number(relY) || 0) * (Number(avgImpulseX) || 0));
+    if (Math.abs(sepMoment) > 1e-6 && radialLen > 0.001) {
+      const sepResponse = Math.max(0, Number(config?.wreckSplitSeparationAngularResponse) || 0.045);
+      const sepDenom = Math.max(80, radius * radius * 0.85);
+      kick += (sepMoment / sepDenom) * sepResponse;
+    }
+  }
+
+  if (Math.abs(kick) < 0.003 && radialLen > 0.001) {
+    const dominantAxisSign = Math.abs(relX) >= Math.abs(relY)
+      ? Math.sign(relX || 1)
+      : -Math.sign(relY || 1);
+    const minSpin = Math.max(0.002, Number(config?.wreckSplitMinAngularKick) || 0.012);
+    const fallbackMax = Math.max(minSpin, Number(config?.wreckSplitFallbackAngularMax) || 0.095);
+    kick = dominantAxisSign * Math.min(fallbackMax, Math.max(minSpin, radius / 1600));
+  }
+
+  const maxKick = Math.max(0.04, Number(config?.wreckSplitAngularMax) || 0.30);
+  if (Math.abs(kick) > maxKick) kick = Math.sign(kick) * maxKick;
+  return kick;
 }
 
 let HEX_SHIPS_3D_ACTIVE = false;
@@ -3129,6 +3174,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     let shardImpulseY = 0;
     let shardTorque = 0;
     let energizedShards = 0;
+    let avgImpulseX = 0;
+    let avgImpulseY = 0;
     for (const shard of shards) {
       const localVx = (Number(shard?.__velX) || 0) + (Number(shard?.__collVelX) || 0);
       const localVy = (Number(shard?.__velY) || 0) + (Number(shard?.__collVelY) || 0);
@@ -3145,8 +3192,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
     if (energizedShards > 0) {
       const invEnergized = 1 / energizedShards;
-      const avgImpulseX = shardImpulseX * invEnergized;
-      const avgImpulseY = shardImpulseY * invEnergized;
+      avgImpulseX = shardImpulseX * invEnergized;
+      avgImpulseY = shardImpulseY * invEnergized;
       const splitLinearResponse = Math.max(0.05, Number(DESTRUCTOR_CONFIG.wreckSplitLinearResponse) || 0.20);
       wreckVx += localToWorldX(avgImpulseX, avgImpulseY) * splitLinearResponse;
       wreckVy += localToWorldY(avgImpulseX, avgImpulseY) * splitLinearResponse;
@@ -3162,20 +3209,15 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       wreckVy += (radialWorldY / radialLen) * outwardKick;
     }
 
-    let splitAngKick = 0;
-    if (energizedShards > 0) {
-      const angResponse = Math.max(0.004, Number(DESTRUCTOR_CONFIG.wreckSplitAngularResponse) || 0.030);
-      const torqueDenom = Math.max(80, energizedShards * Math.max(18, newRadius * newRadius * 0.08));
-      splitAngKick = (shardTorque / torqueDenom) * angResponse;
-    }
-
-    if (Math.abs(splitAngKick) < 0.003 && radialLen > 0.001) {
-      const dominantAxisSign = Math.abs(relX) >= Math.abs(relY)
-        ? Math.sign(relX || 1)
-        : -Math.sign(relY || 1);
-      const minSpin = Math.max(0.002, Number(DESTRUCTOR_CONFIG.wreckSplitMinAngularKick) || 0.012);
-      splitAngKick = dominantAxisSign * Math.min(0.035, Math.max(minSpin, newRadius / 2200));
-    }
+    const splitAngKick = computeWreckSplitAngularKick({
+      shardTorque,
+      energizedShards,
+      newRadius,
+      relX,
+      relY,
+      avgImpulseX,
+      avgImpulseY
+    });
 
     const cols = parent.hexGrid.cols || Math.ceil(parent.hexGrid.srcWidth / HEX_SPACING);
     const rows = parent.hexGrid.rows || Math.ceil(parent.hexGrid.srcHeight / HEX_HEIGHT);

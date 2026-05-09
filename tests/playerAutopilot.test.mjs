@@ -215,6 +215,21 @@ test('approach order turns the bow before translating sideways', () => {
   assert.ok(result.control.rightSide < 0.12, 'approach should not strafe away from a far side target');
 });
 
+test('approach command follows live target formation offset instead of target center', () => {
+  const ship = makeShip({ angle: 0, vel: { x: 0, y: 0 } });
+  const target = { x: 1000, y: 0, radius: 160 };
+
+  const result = computePlayerCommandControl(ship, {
+    type: 'approach',
+    target: { x: 1000, y: 500 },
+    targetEntity: target,
+    targetOffset: { x: 0, y: 500 },
+    arrival: 120
+  });
+
+  assert.ok(result.control.torque > 0.35, 'approach should aim toward the assigned formation slot, not the target center');
+});
+
 test('approach order holds main thrust while first turn is still overspeed', () => {
   const ship = makeShip({
     pos: { x: 37, y: -108 },
@@ -256,7 +271,7 @@ test('ram order keeps driving through the target instead of braking', () => {
   assert.ok(result.ramImpulse?.power >= 3200, 'ram should request the forward gravity/agility impulse near target');
 });
 
-test('orbit order expands outward hard when requested radius is outside current range', () => {
+test('orbit order expands outward while preserving tangential lead-in', () => {
   const ship = makeAtlasShip({
     pos: { x: 5000, y: 0 },
     vel: { x: 0, y: 0 },
@@ -271,8 +286,27 @@ test('orbit order expands outward hard when requested radius is outside current 
     orbitDir: 1
   });
 
-  assert.ok(result.control.main > 0.75, 'orbit should use main thrust to escape to a larger orbit radius');
-  assert.ok(result.control.main > result.control.leftSide, 'outward radius correction should dominate tangent strafing while far inside the orbit');
+  assert.ok(result.control.main > 0.55, 'orbit should use engine power while escaping to a larger orbit radius');
+  assert.ok(result.control.leftSide > result.control.main, 'tangential acceleration should lead the radius change into a broad arc');
+});
+
+test('orbit order joins the target radius on a smooth tangential arc', () => {
+  const ship = makeAtlasShip({
+    pos: { x: 5000, y: 0 },
+    vel: { x: 0, y: 0 },
+    angle: Math.PI / 2,
+    angVel: 0
+  });
+
+  const result = computePlayerCommandControl(ship, {
+    type: 'orbit',
+    target: { x: 0, y: 0 },
+    orbitRadius: 10000,
+    orbitDir: 1
+  });
+
+  assert.ok(result.control.main > 0.55, 'orbit should keep accelerating along the tangent while joining the circle');
+  assert.ok(result.control.main > result.control.rightSide, 'radial correction should not overpower the tangent and cut sharply across the orbit');
 });
 
 test('large orbit keeps accelerating beyond the old low orbit speed cap', () => {

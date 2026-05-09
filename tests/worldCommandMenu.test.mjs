@@ -11,6 +11,7 @@ import {
   buildOrbitRangeMenuItems,
   resolveOrbitRadiusForUnit,
   computeFormationTargets,
+  computeApproachFormationTargets,
   computeRtsCameraPanDelta,
   computeCommandMenuOpenAnimation,
   computeAttackAutopilotState,
@@ -92,6 +93,27 @@ test('formation targets are stable and centered', () => {
   assert.equal(targets.size, 2);
   assert.ok(Math.abs(targets.get(units[0]).y - 50) > 1);
   assert.ok(Math.abs(targets.get(units[1]).y - 50) > 1);
+});
+
+test('approach formation assigns distinct slots outside the target radius', () => {
+  const units = [
+    { id: 'a', radius: 60 },
+    { id: 'b', radius: 60 },
+    { id: 'c', radius: 60 }
+  ];
+  const target = { x: 1000, y: 1000 };
+  const slots = computeApproachFormationTargets(units, target, {
+    targetRadius: 220,
+    approachAngle: 0
+  });
+
+  assert.equal(slots.size, 3);
+  for (const unit of units) {
+    const slot = slots.get(unit);
+    assert.ok(slot.x > target.x + 220, 'slot should sit outside the target hull on the approach side');
+  }
+  assert.notEqual(slots.get(units[0]).y, slots.get(units[1]).y);
+  assert.notEqual(slots.get(units[1]).y, slots.get(units[2]).y);
 });
 
 test('menu hit testing returns the expected action', () => {
@@ -181,6 +203,36 @@ test('move command visual keeps a destination ghost and arrow line', () => {
   assert.deepEqual(visual.ghost.pos, { x: 800, y: 200 });
   assert.equal(visual.ghost.angle, Math.PI / 2);
   assert.ok(visual.arrow);
+});
+
+test('attack move visual does not draw a destination ghost', () => {
+  const command = createMoveCommand({
+    point: { x: 800, y: 200 },
+    arrival: 120
+  });
+  command.type = 'attack-move';
+
+  const visual = computeCommandVisual(command, { x: 100, y: 50 }, { radius: 60 });
+
+  assert.equal(visual.type, 'attack-move');
+  assert.equal(visual.ghost, null);
+});
+
+test('approach visual follows a live target with a formation offset', () => {
+  const target = { x: 1000, y: 1000, radius: 200 };
+  const command = createApproachCommand({
+    point: { x: 0, y: 0 },
+    targetEntity: target,
+    arrival: 120
+  });
+  command.targetOffset = { x: 350, y: -140 };
+
+  target.x = 1200;
+
+  const visual = computeCommandVisual(command, { x: 100, y: 50 }, { radius: 60 });
+
+  assert.deepEqual(visual.target, { x: 1550, y: 860 });
+  assert.deepEqual(visual.ghost.pos, { x: 1550, y: 860 });
 });
 
 test('orbit command visual exposes orbit circle and tangent arrow', () => {
