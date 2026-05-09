@@ -1156,6 +1156,7 @@
       buildOrbitRangeMenuItems,
       resolveOrbitRadiusForUnit,
       computeFormationTargets as computeCommandFormationTargets,
+      computeApproachFormationTargets as computeCommandApproachFormationTargets,
       computeRtsCameraPanDelta,
       computeCommandMenuOpenAnimation,
       computeAttackAutopilotState,
@@ -1191,6 +1192,13 @@
     import { initRadarTargetingUI } from "./src/ui/radarTargetingUI.js";
     import { SpotterDroneSystem } from "./src/game/spotterDrone.js";
     import { WeaponController } from "./src/game/weaponController.js";
+    import {
+      PROJECTILE_VELOCITY_INHERIT,
+      computeBallisticLead,
+      computeProjectileVelocity,
+      computeSegmentCircleHit,
+      scaleVelocity
+    } from "./src/game/weaponBallistics.js";
     import { MASTER_WEAPONS, WEAPON_ICON_PATHS } from "./src/data/weapons.js";
 
     // Alias dla kompatybilności starego ekwipunku gracza, dopóki go nie zaktualizujemy
@@ -2998,6 +3006,8 @@
       const spread = (weapon.spread || 0) * (Math.PI / 180);
       const a = ang + (Math.random() * 2 - 1) * spread;
       const speed = weapon.speed || 500;
+      const inheritedVx = (from.vel?.x ?? from.vx ?? 0) * PROJECTILE_VELOCITY_INHERIT;
+      const inheritedVy = (from.vel?.y ?? from.vy ?? 0) * PROJECTILE_VELOCITY_INHERIT;
 
       // Mapowanie wyglądu pocisku
       let bType = 'plasma';
@@ -3007,8 +3017,8 @@
       window.bullets.push({
         x: from.x,
         y: from.y,
-        vx: Math.cos(a) * speed + (from.vx || 0) * 0.2,
-        vy: Math.sin(a) * speed + (from.vy || 0) * 0.2,
+        vx: Math.cos(a) * speed + inheritedVx,
+        vy: Math.sin(a) * speed + inheritedVy,
         life: (weapon.range || 1000) / speed,
         r: (bType === 'rail') ? 4 : 3,
         owner: from.friendly ? 'player' : 'npc',
@@ -3557,10 +3567,15 @@
       if (!cmd) return null;
       const ent = cmd.targetEntity;
       if (ent && !ent.dead && !ent.destroyed && !ent.removed) {
-        return {
+        const pos = {
           x: Number(ent.x ?? ent.pos?.x) || 0,
           y: Number(ent.y ?? ent.pos?.y) || 0
         };
+        if (cmd.targetOffset) {
+          pos.x += Number(cmd.targetOffset.x) || 0;
+          pos.y += Number(cmd.targetOffset.y) || 0;
+        }
+        return pos;
       }
       if (cmd.target && Number.isFinite(cmd.target.x) && Number.isFinite(cmd.target.y)) {
         return cmd.target;
@@ -3581,10 +3596,10 @@
       const radius = Math.max(80, orbitRadius || RTS_DEFAULT_ORBIT_RADIUS);
       const radialError = dist - radius;
       const absError = Math.abs(radialError);
-      const radialCorrection = clamp(-radialError / Math.max(radius * 0.12, 220), -1.35, 1.35);
-      const tangentT = Math.max(0, Math.min(1, absError / Math.max(radius * 0.45, 700)));
+      const radialCorrection = clamp(-radialError / Math.max(radius * 0.55, 800), -0.38, 0.38);
+      const tangentT = Math.max(0, Math.min(1, absError / Math.max(radius * 0.6, 900)));
       const smoothT = tangentT * tangentT * (3 - 2 * tangentT);
-      const tangentWeight = 1.0 + (0.12 - 1.0) * smoothT;
+      const tangentWeight = 1.0 + (0.92 - 1.0) * smoothT;
       const desiredX = tangentX * tangentWeight + radialX * radialCorrection;
       const desiredY = tangentY * tangentWeight + radialY * radialCorrection;
       const len = Math.max(1e-6, Math.hypot(desiredX, desiredY));
@@ -3594,7 +3609,11 @@
         dist,
         radius,
         radialError,
-        absError
+        absError,
+        radialX,
+        radialY,
+        tangentX,
+        tangentY
       };
     }
 
@@ -3663,20 +3682,22 @@
       if (cmd.type === 'orbit') {
         const orbit = computeOrbitSteerVector(npc, targetPos, cmd.orbitRadius, cmd.orbitDir);
         const orbitSpeedMax = Math.max(npc.maxSpeed || npc.speed || 240, 900);
-        const radialError = Math.abs(orbit.radialError);
         const radius = Math.max(80, cmd.orbitRadius || RTS_DEFAULT_ORBIT_RADIUS);
         const tangentSpeed = clamp(Math.sqrt(radius * 600 * 0.62), 360, orbitSpeedMax);
-        const radialSpeed = clamp(radialError * 1.2, 0, orbitSpeedMax);
-        const radialT = clamp(radialError / Math.max(radius * 0.18, 450), 0, 1);
-        const radialSmooth = radialT * radialT * (3 - 2 * radialT);
-        const wantSpeed = Math.min(
-          orbitSpeedMax,
-          Math.max(tangentSpeed, tangentSpeed + (Math.max(tangentSpeed, radialSpeed) - tangentSpeed) * radialSmooth)
-        );
-        const turned = window.clampTurnVec(npc.vx || 0, npc.vy || 0, orbit.dirX * wantSpeed, orbit.dirY * wantSpeed, dt, 420);
+        const radialLimit = clamp(radius * 0.022, 140, 260);
+        const radialSpeed = clamp(-(orbit.radialError || 0) * 0.18, -radialLimit, radialLimit);
+        let desiredVx = orbit.tangentX * tangentSpeed + orbit.radialX * radialSpeed;
+        let desiredVy = orbit.tangentY * tangentSpeed + orbit.radialY * radialSpeed;
+        const desiredSpeed = Math.hypot(desiredVx, desiredVy);
+        if (desiredSpeed > orbitSpeedMax && desiredSpeed > 1e-6) {
+          const speedScale = orbitSpeedMax / desiredSpeed;
+          desiredVx *= speedScale;
+          desiredVy *= speedScale;
+        }
+        const turned = window.clampTurnVec(npc.vx || 0, npc.vy || 0, desiredVx, desiredVy, dt, 420);
         npc.vx = turned.vx;
         npc.vy = turned.vy;
-        if (radialError < 30) softBrakeNpc(npc, dt, 0.24);
+        if (orbit.absError < 30) softBrakeNpc(npc, dt, 0.24);
         if (npc.vx * npc.vx + npc.vy * npc.vy > 25) {
           npc.desiredAngle = Math.atan2(npc.vy || 0, npc.vx || 0);
         }
@@ -5524,29 +5545,10 @@
     window.wrapAngle = wrapAngle;
     function interpAngleShort(prev, curr, t) { const d = wrapAngle(curr - prev); return wrapAngle(prev + d * t); }
     function shuffleArray(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; } }
-    function leadTarget(shooter, shooterVel, target, speed) {
-      const tx = target.x, ty = target.y;
-      const tvx = target.vx || 0, tvy = target.vy || 0;
-      const rx = tx - shooter.x, ry = ty - shooter.y;
-      const rvx = tvx - shooterVel.x, rvy = tvy - shooterVel.y;
-      const a = rvx * rvx + rvy * rvy - speed * speed;
-      const b = 2 * (rx * rvx + ry * rvy);
-      const c = rx * rx + ry * ry;
-      let t = 0;
-      if (Math.abs(a) < 1e-6) {
-        if (Math.abs(b) > 1e-6) t = -c / b;
-      } else {
-        const disc = b * b - 4 * a * c;
-        if (disc >= 0) {
-          const sqrtDisc = Math.sqrt(disc);
-          const t1 = (-b - sqrtDisc) / (2 * a);
-          const t2 = (-b + sqrtDisc) / (2 * a);
-          t = Math.min(t1, t2);
-          if (t < 0) t = Math.max(t1, t2);
-        }
-      }
-      if (!isFinite(t) || t < 0) t = 0;
-      return { x: tx + tvx * t, y: ty + tvy * t };
+    const _leadTargetOut = { x: 0, y: 0 };
+    const _turretLeadInheritedVel = { x: 0, y: 0 };
+    function leadTarget(shooter, inheritedVel, target, speed) {
+      return computeBallisticLead(shooter, inheritedVel, target, speed, _leadTargetOut);
     }
 
     // =============== World / camera ===============
@@ -8022,6 +8024,10 @@
     // ============================================================================
     // NOWY RDZEŃ STRZELANIA (Obsługuje Gracza i NPC)
     // ============================================================================
+    const _fireWeaponBaseVel = { x: 0, y: 0 };
+    const _fireWeaponInheritedVel = { x: 0, y: 0 };
+    const _fireWeaponLeadAim = { x: 0, y: 0 };
+    const _fireWeaponShotVel = { x: 0, y: 0 };
     window.fireWeaponCore = function (shooter, target, weaponId, muzzleData) {
       const weapon = MASTER_WEAPONS[weaponId];
       if (!weapon) return null;
@@ -8036,6 +8042,13 @@
       const damage = (weapon.baseDamage || 10) * (mods.damage || 1.0);
       const speed = (weapon.baseSpeed || 1000) * (mods.projectileSpeed || 1.0);
       const cd = (weapon.cooldown || 1.0) * (mods.fireRate || 1.0) * fmMods.cdMul;
+      const projectileInherit = Number.isFinite(Number(weapon.projectileVelocityInherit))
+        ? Number(weapon.projectileVelocityInherit)
+        : PROJECTILE_VELOCITY_INHERIT;
+      const muzzleBaseVel = muzzleData.baseVel || shooter?.vel || shooter || {};
+      _fireWeaponBaseVel.x = Number(muzzleBaseVel.x) || 0;
+      _fireWeaponBaseVel.y = Number(muzzleBaseVel.y) || 0;
+      scaleVelocity(_fireWeaponBaseVel, projectileInherit, _fireWeaponInheritedVel);
 
       const shooterIsFriendly = shooter === window.ship || shooter?.friendly === true;
       const burstCount = weapon.burstCount || 1;
@@ -8054,7 +8067,7 @@
       if (effectiveTarget && !effectiveTarget.dead) {
         aimPoint = (weapon.category === 'beam')
           ? { x: effectiveTarget.x, y: effectiveTarget.y }
-          : window.getLeadAim(muzzleData.pos, effectiveTarget, speed);
+          : computeBallisticLead(muzzleData.pos, _fireWeaponInheritedVel, effectiveTarget, speed, _fireWeaponLeadAim);
       } else if (isPlayerShip && !firingMode.wheelOpen) {
         // Gracz — strzela w obszar celownika z rozrzutem
         const _mouseRef = isP2Ship ? window.mouse2 : mouse;
@@ -8461,11 +8474,18 @@
               rocketTarget, damage, weapon, colorTheme
             );
           } else {
+            const shotVel = computeProjectileVelocity(
+              { x: dirX, y: dirY },
+              speed,
+              _fireWeaponBaseVel,
+              projectileInherit,
+              _fireWeaponShotVel
+            );
             window.bullets.push({
               x: muzzleData.pos.x,
               y: muzzleData.pos.y,
-              vx: dirX * speed + (muzzleData.baseVel?.x || 0) * 0.2,
-              vy: dirY * speed + (muzzleData.baseVel?.y || 0) * 0.2,
+              vx: shotVel.x,
+              vy: shotVel.y,
               life: life,
               // weapon.bulletRadius opt-in override (e.g. osa_micro_missile sets r=8 to widen fuse for fast-mover)
               r: weapon.bulletRadius || (weapon.category === 'torpedo' ? 10 : (weapon.size === 'L' ? 6 : (weapon.size === 'M' ? 4 : 2))),
@@ -13127,16 +13147,38 @@
       const anchor = targetEntity
         ? { x: Number(targetEntity.x) || 0, y: Number(targetEntity.y) || 0 }
         : point;
-      const targets = formationTargets(units, anchor);
+      const groupCenter = units.reduce((acc, unit) => {
+        const pos = selectablePointOf(unit);
+        acc.x += Number(pos.x) || 0;
+        acc.y += Number(pos.y) || 0;
+        return acc;
+      }, { x: 0, y: 0 });
+      groupCenter.x /= units.length;
+      groupCenter.y /= units.length;
+      const approachAngle = targetEntity
+        ? Math.atan2(groupCenter.y - anchor.y, groupCenter.x - anchor.x)
+        : (Number.isFinite(ship?.angle) ? ship.angle : 0);
+      const targets = targetEntity
+        ? computeCommandApproachFormationTargets(units, anchor, {
+          targetRadius: commandEntityRadius(targetEntity),
+          approachAngle
+        })
+        : formationTargets(units, anchor);
       for (const unit of units) {
         const t = targets.get(unit) || anchor;
-        const arrival = (unit.radius || unit.w || 30) + (targetEntity ? (targetEntity.radius || targetEntity.r || 40) : 110);
-        issueUnitCommand(unit, {
+        const arrival = targetEntity
+          ? Math.max(90, (unit.radius || unit.w || 30) + 45)
+          : (unit.radius || unit.w || 30) + 110;
+        const command = {
           type: 'approach',
           target: { x: t.x, y: t.y },
           targetEntity,
           arrival
-        });
+        };
+        if (targetEntity && t.targetOffset) {
+          command.targetOffset = { x: t.targetOffset.x, y: t.targetOffset.y };
+        }
+        issueUnitCommand(unit, command);
       }
     }
 
@@ -16243,6 +16285,29 @@
 
         if (this._resultBuffer.length > this._resultCount) this._resultBuffer.length = this._resultCount;
         return this._resultCount;
+      },
+
+      getPotentialTargetsForSegment(x0, y0, x1, y1) {
+        const minCx = Math.floor(Math.min(x0, x1) * this.cellInv) - 1;
+        const maxCx = Math.floor(Math.max(x0, x1) * this.cellInv) + 1;
+        const minCy = Math.floor(Math.min(y0, y1) * this.cellInv) - 1;
+        const maxCy = Math.floor(Math.max(y0, y1) * this.cellInv) + 1;
+        this._resultCount = 0;
+
+        for (let cx = minCx; cx <= maxCx; cx++) {
+          for (let cy = minCy; cy <= maxCy; cy++) {
+            const key = this._hash(cx, cy);
+            const cell = this.cells.get(key);
+            if (!cell) continue;
+            const len = cell.length;
+            for (let k = 0; k < len; k++) {
+              this._resultBuffer[this._resultCount++] = cell[k];
+            }
+          }
+        }
+
+        if (this._resultBuffer.length > this._resultCount) this._resultBuffer.length = this._resultCount;
+        return this._resultCount;
       }
     };
 
@@ -16257,6 +16322,41 @@
     const _mergedSeen = new Set();
     const _combinedRingDestructibles = [];
     const _combinedRingSeen = new Set();
+    const _bulletSweepStart = { x: 0, y: 0 };
+    const _bulletSweepEnd = { x: 0, y: 0 };
+    const _bulletSweepCircle = { x: 0, y: 0 };
+    const _bulletSweepHit = { hit: false, x: 0, y: 0, t: 0, tEnter: 0, tExit: 0, distSq: 0 };
+    const _bulletHexImpact = { x: 0, y: 0 };
+
+    function findSweptHexImpact(entity, x0, y0, x1, y1, tEnter, tExit, tClosest, closestX, closestY, out) {
+      const probe = window.DestructorSystem?.probeImpact || DestructorSystem?.probeImpact;
+      if (typeof probe !== 'function') return false;
+
+      const dx = x1 - x0;
+      const dy = y1 - y0;
+      const len = Math.hypot(dx, dy);
+      const startT = Math.max(0, Math.min(1, Number(tEnter) || 0));
+      const endT = Math.max(startT, Math.min(1, Number(tExit) || Number(tClosest) || 1));
+      const stepT = len > 1e-6 ? Math.max(1 / 96, Math.min(1, 10 / len)) : 1;
+
+      for (let t = startT; t <= endT + 1e-6; t += stepT) {
+        const tx = x0 + dx * Math.min(t, endT);
+        const ty = y0 + dy * Math.min(t, endT);
+        if (probe.call(DestructorSystem, entity, tx, ty)) {
+          out.x = tx;
+          out.y = ty;
+          return true;
+        }
+      }
+
+      if (probe.call(DestructorSystem, entity, closestX, closestY)) {
+        out.x = closestX;
+        out.y = closestY;
+        return true;
+      }
+
+      return false;
+    }
     const _playerRepairBuffer = [];
 
     function buildDynamicDestructibles(shipEntity, npcList, wreckList, p2Entity = null) {
@@ -16464,6 +16564,16 @@
         b.x += b.vx * dt; b.y += b.vy * dt;
         b.life -= dt;
         b.age = (b.age || 0) + dt;
+        const bulletSegX0 = Number.isFinite(b.px) ? b.px : b.x;
+        const bulletSegY0 = Number.isFinite(b.py) ? b.py : b.y;
+        const bulletSegX1 = b.x;
+        const bulletSegY1 = b.y;
+        const bulletSegDx = bulletSegX1 - bulletSegX0;
+        const bulletSegDy = bulletSegY1 - bulletSegY0;
+        _bulletSweepStart.x = bulletSegX0;
+        _bulletSweepStart.y = bulletSegY0;
+        _bulletSweepEnd.x = bulletSegX1;
+        _bulletSweepEnd.y = bulletSegY1;
 
         // --- RUCH I EFEKTY WIZUALNE POCISKÓW ---
         const threeVisual = b.__renderedByThree === true;
@@ -16537,8 +16647,13 @@
         // --- GLOWNA PETLA KOLIZJI ---
         let hitNPC = null;
         let didHitShield = false;
+        let bulletHitX = b.x;
+        let bulletHitY = b.y;
+        let bulletHitT = 1;
+        let bulletHitEnter = 1;
+        let bulletHitExit = 1;
 
-        const targetsCount = SpatialGrid.getPotentialTargets(b.x, b.y);
+        const targetsCount = SpatialGrid.getPotentialTargetsForSegment(bulletSegX0, bulletSegY0, bulletSegX1, bulletSegY1);
         const targetsBuffer = SpatialGrid._resultBuffer;
 
         for (let k = 0; k < targetsCount; k++) {
@@ -16574,24 +16689,36 @@
             // Okrągła tarcza: promień = maxDim/2 * 1.15 (margines) — identycznie jak shield3D.js
             const shieldRadius = Math.max(w, h) * 0.5 * 1.15;
 
-            const dx = b.x - npc.x;
-            const dy = b.y - npc.y;
-            const distSq = dx * dx + dy * dy;
+            _bulletSweepCircle.x = npc.x;
+            _bulletSweepCircle.y = npc.y;
 
             // Hitbox tarczy + promień pocisku
             const hitThreshold = shieldRadius + b.r;
+            const sweep = computeSegmentCircleHit(_bulletSweepStart, _bulletSweepEnd, _bulletSweepCircle, hitThreshold, _bulletSweepHit);
 
-            if (distSq <= hitThreshold * hitThreshold) {
+            if (sweep.hit) {
               isHit = true;
               didHitShield = true;
+              bulletHitX = bulletSegX0 + bulletSegDx * sweep.tEnter;
+              bulletHitY = bulletSegY0 + bulletSegDy * sweep.tEnter;
+              bulletHitT = sweep.t;
+              bulletHitEnter = sweep.tEnter;
+              bulletHitExit = sweep.tExit;
             }
           } else {
             // Brak tarczy -> zwykła kolizja kołowa
-            const dx = b.x - npc.x;
-            const dy = b.y - npc.y;
-            if ((dx * dx + dy * dy) <= (npc.radius + b.r) ** 2) {
+            _bulletSweepCircle.x = npc.x;
+            _bulletSweepCircle.y = npc.y;
+            const sweep = computeSegmentCircleHit(_bulletSweepStart, _bulletSweepEnd, _bulletSweepCircle, (npc.radius + b.r), _bulletSweepHit);
+
+            if (sweep.hit) {
               isHit = true;
               didHitShield = false;
+              bulletHitX = bulletSegX0 + bulletSegDx * sweep.tEnter;
+              bulletHitY = bulletSegY0 + bulletSegDy * sweep.tEnter;
+              bulletHitT = sweep.t;
+              bulletHitEnter = sweep.tEnter;
+              bulletHitExit = sweep.tExit;
             }
           }
 
@@ -16615,9 +16742,27 @@
           if (hitNPC.hexGrid) {
             // Sprawdzamy kolizję z heksem, ale na razie bez zadawania obrażeń (damage=0),
             // żeby nie zranić statku pod tarczą.
-            hexHit = (typeof DestructorSystem.probeImpact === 'function')
-              ? DestructorSystem.probeImpact(hitNPC, b.x, b.y)
-              : DestructorSystem.applyImpact(hitNPC, b.x, b.y, 0, { x: 0, y: 0 });
+            if (shieldActive && didHitShield) {
+              hexHit = false;
+            } else {
+              hexHit = findSweptHexImpact(
+                hitNPC,
+                bulletSegX0,
+                bulletSegY0,
+                bulletSegX1,
+                bulletSegY1,
+                bulletHitEnter,
+                bulletHitExit,
+                bulletHitT,
+                bulletHitX,
+                bulletHitY,
+                _bulletHexImpact
+              );
+              if (hexHit) {
+                bulletHitX = _bulletHexImpact.x;
+                bulletHitY = _bulletHexImpact.y;
+              }
+            }
           } else {
             // Dla małych statków bez heksów, uznajemy że trafienie w ogóle (isHit) to trafienie w kadłub
             hexHit = true;
@@ -16627,7 +16772,7 @@
           if (shieldActive && (didHitShield || hexHit)) {
             // Jeśli tarcza działa ORAZ (trafiono w elipsę LUB trafiono w kadłub) -> TARCZA BLOKUJE
 
-            registerShieldImpact(hitNPC, b.x, b.y, npcDamage);
+            registerShieldImpact(hitNPC, bulletHitX, bulletHitY, npcDamage);
             if (window.AudioSys) AudioSys.playSound('shieldHit');
 
             // Odejmij HP tarczy
@@ -16644,7 +16789,7 @@
 
             // Ponów sprawdzenie heksa, tym razem z prawdziwym DMG (żeby odpadł kawałek)
             if (hitNPC.hexGrid) {
-              DestructorSystem.applyImpact(hitNPC, b.x, b.y, npcDamage, { x: b.vx, y: b.vy });
+              DestructorSystem.applyImpact(hitNPC, bulletHitX, bulletHitY, npcDamage, { x: b.vx, y: b.vy });
             }
 
             // Routing obrażeń: gracz vs NPC
@@ -16654,7 +16799,7 @@
               applyDamageToNPC(hitNPC, npcDamage, b.type);
             }
 
-            spawnBulletImpactEffect(b, b.x, b.y, 1.0);
+            spawnBulletImpactEffect(b, bulletHitX, bulletHitY, 1.0);
 
             if (b.type === 'rail') {
               b.penetration = (b.penetration || 1) - 1;
@@ -17141,7 +17286,8 @@
           const muzzle = muzzlePosFor(platform, dir, 14);
           window.bullets.push({
             x: muzzle.x, y: muzzle.y,
-            vx: dir.x * (RAIL_SPEED * 0.9), vy: dir.y * (RAIL_SPEED * 0.9),
+            vx: dir.x * (RAIL_SPEED * 0.9) + tangentialVel.x,
+            vy: dir.y * (RAIL_SPEED * 0.9) + tangentialVel.y,
             life: 2.0, r: 4, owner: 'npc', damage: platform.rail.damage, type: 'rail', penetration: 2,
             source: platform, spawnGrace: 0.08
           });
@@ -17156,7 +17302,8 @@
           const muzzleR = muzzlePosFor(platform, dir, 16);
           window.bullets.push({
             x: muzzleR.x, y: muzzleR.y, px: muzzleR.x, py: muzzleR.y,
-            vx: dir.x * SIDE_BULLET_SPEED, vy: dir.y * SIDE_BULLET_SPEED,
+            vx: dir.x * SIDE_BULLET_SPEED + tangentialVel.x,
+            vy: dir.y * SIDE_BULLET_SPEED + tangentialVel.y,
             life: 2.6, r: 5, owner: 'npc', damage: platform.missile.damage,
             type: 'rocket', explodeRadius: SIDE_PLASMA_EXPLODE_RADIUS,
             homingDelay: SIDE_ROCKET_HOMING_DELAY,
@@ -17714,7 +17861,7 @@
           const off = rotate(t.offset, ship.angle);
           const base = { x: ship.pos.x + off.x, y: ship.pos.y + off.y };
           const aimPos = (lockedTarget && !lockedTarget.dead)
-            ? leadTarget(base, ship.vel, lockedTarget, RAIL_SPEED)
+            ? leadTarget(base, scaleVelocity(ship.vel, PROJECTILE_VELOCITY_INHERIT, _turretLeadInheritedVel), lockedTarget, RAIL_SPEED)
             : mouseWorld;
           let diffT = wrapAngle(Math.atan2(aimPos.y - base.y, aimPos.x - base.x) - t.angle);
           let desiredVel = clamp(diffT * 6.5, -t.maxSpeed, t.maxSpeed);
@@ -17743,7 +17890,7 @@
           const off = rotate(t.offset, player2Ship.angle);
           const base = { x: player2Ship.pos.x + off.x, y: player2Ship.pos.y + off.y };
           const aimPos = (lockedTarget2 && !lockedTarget2.dead)
-            ? leadTarget(base, player2Ship.vel, lockedTarget2, RAIL_SPEED)
+            ? leadTarget(base, scaleVelocity(player2Ship.vel, PROJECTILE_VELOCITY_INHERIT, _turretLeadInheritedVel), lockedTarget2, RAIL_SPEED)
             : mouse2World;
           let diffT = wrapAngle(Math.atan2(aimPos.y - base.y, aimPos.x - base.x) - t.angle);
           let desiredVel = clamp(diffT * 6.5, -t.maxSpeed, t.maxSpeed);

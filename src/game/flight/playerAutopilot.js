@@ -41,7 +41,15 @@ function getEntityPos(entity) {
 function getCommandTargetPos(cmd) {
   if (!cmd) return null;
   const ent = cmd.targetEntity;
-  if (ent && !ent.dead && !ent.destroyed && !ent.removed) return getEntityPos(ent);
+  if (ent && !ent.dead && !ent.destroyed && !ent.removed) {
+    const pos = getEntityPos(ent);
+    const offset = cmd.targetOffset;
+    if (offset) {
+      pos.x += Number(offset.x) || 0;
+      pos.y += Number(offset.y) || 0;
+    }
+    return pos;
+  }
   if (cmd.target && Number.isFinite(cmd.target.x) && Number.isFinite(cmd.target.y)) {
     return cmd.target;
   }
@@ -61,12 +69,8 @@ function computeOrbitSteerVector(ship, center, orbitRadius, orbitDir = 1) {
   const radius = Math.max(80, Number(orbitRadius) || 900);
   const radialError = dist - radius;
   const absError = Math.abs(radialError);
-  const radialCorrection = clamp(-radialError / Math.max(radius * 0.12, 220), -1.35, 1.35);
-  const tangentWeight = lerp(
-    1.0,
-    0.12,
-    smoothstep01(absError / Math.max(radius * 0.45, 700))
-  );
+  const radialCorrection = clamp(-radialError / Math.max(radius * 0.55, 800), -0.38, 0.38);
+  const tangentWeight = lerp(1.0, 0.92, smoothstep01(absError / Math.max(radius * 0.6, 900)));
   const desiredX = tangentX * tangentWeight + radialX * radialCorrection;
   const desiredY = tangentY * tangentWeight + radialY * radialCorrection;
   const len = Math.max(1e-6, Math.hypot(desiredX, desiredY));
@@ -76,7 +80,11 @@ function computeOrbitSteerVector(ship, center, orbitRadius, orbitDir = 1) {
     dist,
     radius,
     radialError,
-    absError
+    absError,
+    radialX,
+    radialY,
+    tangentX,
+    tangentY
   };
 }
 
@@ -178,19 +186,29 @@ function computeCommandSpeedBudget(cmdType, dist, arrival, tuning) {
   return clamp(budget, 0, tuning.maxSpeed);
 }
 
-function computeOrbitSpeedBudget(orbit, tuning) {
+function computeOrbitVelocityTarget(orbit, tuning) {
   const radius = Math.max(80, Number(orbit?.radius) || 900);
-  const absError = Math.max(0, Number(orbit?.absError) || 0);
   const maxSpeed = Math.max(720, Number(tuning?.maxSpeed) || 2600);
-  const minTangentSpeed = Math.max(360, Number(tuning?.minTangentSpeed) || 720);
-  const sustainableTangent = clamp(
+  const tangentSpeed = clamp(
     Math.sqrt(radius * SHIP_PHYSICS.SPEED * 0.62),
-    minTangentSpeed,
+    Math.max(360, Number(tuning?.minTangentSpeed) || 720),
     maxSpeed
   );
-  const radialRunSpeed = clamp(absError * (Number(tuning?.speedK) || 1.2), 0, maxSpeed);
-  const radialT = smoothstep01(absError / Math.max(radius * 0.18, 450));
-  return clamp(lerp(sustainableTangent, Math.max(sustainableTangent, radialRunSpeed), radialT), minTangentSpeed, maxSpeed);
+  const radialLimit = clamp(radius * 0.022, 140, 260);
+  const radialSpeed = clamp(
+    -(Number(orbit?.radialError) || 0) * 0.18,
+    -radialLimit,
+    radialLimit
+  );
+  let vx = (Number(orbit?.tangentX) || 0) * tangentSpeed + (Number(orbit?.radialX) || 0) * radialSpeed;
+  let vy = (Number(orbit?.tangentY) || 0) * tangentSpeed + (Number(orbit?.radialY) || 0) * radialSpeed;
+  const speed = Math.hypot(vx, vy);
+  if (speed > maxSpeed && speed > 1e-6) {
+    const scale = maxSpeed / speed;
+    vx *= scale;
+    vy *= scale;
+  }
+  return { vx, vy, speed: Math.min(speed, maxSpeed), tangentSpeed, radialSpeed };
 }
 
 function makeControlFromLocalAccel(ship, localAx, localAy, headingError, preferStrafeHeading) {
@@ -298,11 +316,17 @@ export function computePlayerCommandControl(ship, cmd, options = {}) {
   const dirX = desiredVecX / len;
   const dirY = desiredVecY / len;
   const tuning = commandTuning(cmd.type);
-  const speedBudget = cmd.type === 'orbit'
-    ? computeOrbitSpeedBudget(orbitNav, tuning)
+  let speedBudget = cmd.type === 'orbit'
+    ? 0
     : computeCommandSpeedBudget(cmd.type, dist, arrival, tuning);
-  const desiredVx = dirX * speedBudget;
-  const desiredVy = dirY * speedBudget;
+  let desiredVx = dirX * speedBudget;
+  let desiredVy = dirY * speedBudget;
+  if (cmd.type === 'orbit') {
+    const orbitVelocity = computeOrbitVelocityTarget(orbitNav, tuning);
+    desiredVx = orbitVelocity.vx;
+    desiredVy = orbitVelocity.vy;
+    speedBudget = orbitVelocity.speed;
+  }
   const tau = Math.max(0.18, tuning.velocityTau);
   let desiredAx = (desiredVx - vx) / tau;
   let desiredAy = (desiredVy - vy) / tau;
