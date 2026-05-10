@@ -670,7 +670,22 @@ export const ATLAS_EDITOR_DEFAULTS = {
       "rot": 90
     }
   ],
-  "cores": [],
+  "cores": [
+    {
+      "id": "m_tu1ttof",
+      "x": -1395.99,
+      "y": -11.07,
+      "type": "core"
+    }
+  ],
+  "bridges": [
+    {
+      "id": "m_cj05w0n",
+      "x": -673.57,
+      "y": -7.5,
+      "type": "bridge"
+    }
+  ],
   "engines": {
     "main": [
       {

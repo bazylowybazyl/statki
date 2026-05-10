@@ -1,3 +1,5 @@
+import { normalizeCriticalMarker } from './criticalModules.js';
+
 const DEFAULT_HP = Object.freeze({
   MAIN: 'main',
   MISSILE: 'missile',
@@ -124,14 +126,11 @@ function normalizeEditorHardpoint(marker, idx, hpEnum, validTypes) {
 }
 
 function normalizeEditorCore(marker, idx) {
-  const x = Number(marker?.x);
-  const y = Number(marker?.y);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  return {
-    id: marker?.id || `core_${idx}`,
-    x,
-    y
-  };
+  return normalizeCriticalMarker(marker, idx, 'core');
+}
+
+function normalizeEditorBridge(marker, idx) {
+  return normalizeCriticalMarker(marker, idx, 'bridge');
 }
 
 function normalizeEditorEngine(marker, idx, kind = 'main') {
@@ -197,6 +196,7 @@ function mergeShipsDefaults(defaultShips, loadedShips) {
       ...shipCfg,
       hardpoints: Array.isArray(shipCfg.hardpoints) ? shipCfg.hardpoints : (Array.isArray(base.hardpoints) ? base.hardpoints : []),
       cores: Array.isArray(shipCfg.cores) ? shipCfg.cores : (Array.isArray(base.cores) ? base.cores : []),
+      bridges: Array.isArray(shipCfg.bridges) ? shipCfg.bridges : (Array.isArray(base.bridges) ? base.bridges : []),
       engines: {
         ...(base.engines && typeof base.engines === 'object' ? base.engines : {}),
         ...(shipCfg.engines && typeof shipCfg.engines === 'object' ? shipCfg.engines : {})
@@ -317,6 +317,13 @@ export function createNpcHardpointRuntime({
       if (core) cores.push(core);
     }
     npc.editorCores = cores;
+    const bridgesRaw = Array.isArray(cfg.bridges) ? cfg.bridges : [];
+    const bridges = [];
+    for (let i = 0; i < bridgesRaw.length; i++) {
+      const bridge = normalizeEditorBridge(bridgesRaw[i], i);
+      if (bridge) bridges.push(bridge);
+    }
+    npc.editorBridges = bridges;
     npc.editorHardpointCursor = {};
 
     const enginesMainRaw = Array.isArray(cfg?.engines?.main) ? cfg.engines.main : [];
