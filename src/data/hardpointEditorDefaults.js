@@ -214,9 +214,36 @@ export const SHIP_EDITOR_DEFAULTS = {
             "type": "hangar",
             "x": -243.77,
             "y": -166.79
+        },
+        {
+            "id": "m_gh0qju1",
+            "type": "special",
+            "x": -378.44,
+            "y": -2.92
+        },
+        {
+            "id": "m_2qhdwsk",
+            "type": "special",
+            "x": -11.27,
+            "y": -2.92
         }
     ],
-    "cores": [],
+    "cores": [
+        {
+            "id": "m_96zlho9",
+            "x": 203.87,
+            "y": -1.33,
+            "type": "core"
+        }
+    ],
+    "bridges": [
+        {
+            "id": "m_kqzfs4y",
+            "x": 429.21,
+            "y": -3.54,
+            "type": "bridge"
+        }
+    ],
     "engines": {
         "main": [],
         "side": []
@@ -377,18 +404,6 @@ export const SHIP_EDITOR_DEFAULTS = {
             "y": 83.09
         },
         {
-            "id": "m_dg1aaif",
-            "type": "missile",
-            "x": -190.29,
-            "y": -110.17
-        },
-        {
-            "id": "m_4tql3dt",
-            "type": "missile",
-            "x": -190.29,
-            "y": 105.16
-        },
-        {
             "id": "m_u2f102y",
             "type": "aux",
             "x": -234.11,
@@ -411,9 +426,48 @@ export const SHIP_EDITOR_DEFAULTS = {
             "type": "aux",
             "x": 38.81,
             "y": -325.5
+        },
+        {
+            "id": "m_ary5h8q",
+            "type": "special",
+            "x": -191.61,
+            "y": -108.17
+        },
+        {
+            "id": "m_s6fjaq6",
+            "type": "special",
+            "x": -192.35,
+            "y": 107.43
+        },
+        {
+            "id": "m_m0yjrki",
+            "type": "aux",
+            "x": 218.24,
+            "y": -99.85
+        },
+        {
+            "id": "m_7qszf05",
+            "type": "main",
+            "x": -55.39,
+            "y": 220.2
         }
     ],
-    "cores": [],
+    "cores": [
+        {
+            "id": "m_u55gg37",
+            "x": -45.32,
+            "y": -0.46,
+            "type": "core"
+        }
+    ],
+    "bridges": [
+        {
+            "id": "m_svnh5ji",
+            "x": -334.65,
+            "y": -2.29,
+            "type": "bridge"
+        }
+    ],
     "engines": {
         "main": [
             {
@@ -457,186 +511,251 @@ export const SHIP_EDITOR_DEFAULTS = {
     "frontAxis": "+X",
     "hardpoints": [
         {
-            "id": "m_cm9slek",
+            "id": "m_8tmolwi",
             "type": "main",
-            "x": -199.77,
-            "y": -117.03
-        },
-        {
-            "id": "m_cdv35bw",
-            "type": "main",
-            "x": -203.5,
-            "y": 116.28
-        },
-        {
-            "id": "m_1ctgrjc",
-            "type": "main",
-            "x": 213.93,
-            "y": 38.02
-        },
-        {
-            "id": "m_0t1kcnn",
-            "type": "main",
-            "x": 175.92,
-            "y": 62.61
-        },
-        {
-            "id": "m_ubpz3e8",
-            "type": "main",
-            "x": 207.97,
-            "y": -46.22
-        },
-        {
-            "id": "m_ocyvyxn",
-            "type": "main",
-            "x": 163.25,
-            "y": -66.34
-        },
-        {
-            "id": "m_aj7fahy",
-            "type": "main",
-            "x": 130,
+            "x": -72,
             "y": 0
         },
         {
-            "id": "m_bm97ty7",
+            "id": "m_jmpm0j1",
             "type": "main",
-            "x": 110,
+            "x": 24,
             "y": 0
         },
         {
-            "id": "m_9c1y8z7",
+            "id": "m_ce3tghi",
             "type": "main",
-            "x": 90,
+            "x": 72,
             "y": 0
         },
         {
-            "id": "m_rrxhmfp",
-            "type": "aux",
-            "x": 240,
-            "y": -40
-        },
-        {
-            "id": "m_f35yql6",
-            "type": "aux",
-            "x": 240,
-            "y": 40
-        },
-        {
-            "id": "m_f2gzefh",
-            "type": "aux",
+            "id": "m_e2xjoug",
+            "type": "main",
             "x": 120,
-            "y": -70
-        },
-        {
-            "id": "m_rzualys",
-            "type": "aux",
-            "x": 120,
-            "y": 70
-        },
-        {
-            "id": "m_8u2yku9",
-            "type": "aux",
-            "x": 20,
-            "y": -60
-        },
-        {
-            "id": "m_9nlh23f",
-            "type": "aux",
-            "x": 20,
-            "y": 60
-        },
-        {
-            "id": "m_48y9rcu",
-            "type": "aux",
-            "x": -20,
-            "y": -60
-        },
-        {
-            "id": "m_kb19ule",
-            "type": "aux",
-            "x": -20,
-            "y": 60
-        },
-        {
-            "id": "m_hr1jm4g",
-            "type": "aux",
-            "x": -50,
-            "y": -60
-        },
-        {
-            "id": "m_g7bm07q",
-            "type": "aux",
-            "x": -50,
-            "y": 60
-        },
-        {
-            "id": "m_10gcian",
-            "type": "aux",
-            "x": -80,
-            "y": -60
-        },
-        {
-            "id": "m_7wdnb37",
-            "type": "aux",
-            "x": -80,
-            "y": 60
-        },
-        {
-            "id": "m_qjca9g4",
-            "type": "aux",
-            "x": -260,
-            "y": -130
-        },
-        {
-            "id": "m_eajaage",
-            "type": "aux",
-            "x": -260,
-            "y": 130
-        },
-        {
-            "id": "m_nlq7ld0",
-            "type": "aux",
-            "x": -310,
             "y": 0
+        },
+        {
+            "id": "m_48n08vv",
+            "type": "main",
+            "x": 209.78,
+            "y": -48.86
+        },
+        {
+            "id": "m_h5s6zbl",
+            "type": "main",
+            "x": 209.78,
+            "y": 48.86
+        },
+        {
+            "id": "m_6hsjkvx",
+            "type": "main",
+            "x": 170.1,
+            "y": -70.17
+        },
+        {
+            "id": "m_joaxj0t",
+            "type": "main",
+            "x": 170.1,
+            "y": 70.17
+        },
+        {
+            "id": "m_968kch9",
+            "type": "main",
+            "x": -219.33,
+            "y": -132.63
+        },
+        {
+            "id": "m_561qyq9",
+            "type": "main",
+            "x": -219.33,
+            "y": 132.63
+        },
+        {
+            "id": "m_cnz2dkk",
+            "type": "aux",
+            "x": 54.01,
+            "y": -62.82
+        },
+        {
+            "id": "m_d0nuu7t",
+            "type": "aux",
+            "x": 54.01,
+            "y": 62.82
+        },
+        {
+            "id": "m_2jkl9k3",
+            "type": "aux",
+            "x": -9.92,
+            "y": -64.29
+        },
+        {
+            "id": "m_fx19i40",
+            "type": "aux",
+            "x": -9.92,
+            "y": 64.29
+        },
+        {
+            "id": "m_dcmocll",
+            "type": "aux",
+            "x": -73.85,
+            "y": -65.03
+        },
+        {
+            "id": "m_i0mo0bt",
+            "type": "aux",
+            "x": -73.85,
+            "y": 65.03
+        },
+        {
+            "id": "m_pt9im4a",
+            "type": "aux",
+            "x": 239.91,
+            "y": -40.05
+        },
+        {
+            "id": "m_s9mnwpa",
+            "type": "aux",
+            "x": 239.91,
+            "y": 40.05
+        },
+        {
+            "id": "m_qklgylk",
+            "type": "aux",
+            "x": 282.52,
+            "y": -33.43
+        },
+        {
+            "id": "m_mxjvtil",
+            "type": "aux",
+            "x": 282.52,
+            "y": 33.43
+        },
+        {
+            "id": "m_q26e5fg",
+            "type": "aux",
+            "x": -189.94,
+            "y": -164.96
+        },
+        {
+            "id": "m_qgwm63i",
+            "type": "aux",
+            "x": -189.94,
+            "y": 164.96
+        },
+        {
+            "id": "m_yia8ss1",
+            "type": "aux",
+            "x": -250.19,
+            "y": -165.69
+        },
+        {
+            "id": "m_xt1y5p3",
+            "type": "aux",
+            "x": -250.19,
+            "y": 165.69
         }
     ],
-    "cores": [],
+    "cores": [
+        {
+            "id": "m_df32rmj",
+            "x": -207.58,
+            "y": -0.37,
+            "type": "core"
+        }
+    ],
+    "bridges": [
+        {
+            "id": "m_xy7diev",
+            "x": -134.1,
+            "y": -1.84,
+            "type": "bridge"
+        }
+    ],
     "engines": {
         "main": [
             {
-                "id": "m_y4mc84p",
-                "x": -990,
-                "y": -350,
+                "id": "m_lh0syhx",
+                "x": -283.99,
+                "y": -128.95,
                 "deg": 90,
                 "offsetX": 0,
-                "offsetY": 0
+                "offsetY": 0,
+                "mount": "rear_left",
+                "gimbalMinDeg": -45,
+                "gimbalMaxDeg": 45,
+                "vfxLengthMin": 10,
+                "vfxLengthMax": 179
             },
             {
-                "id": "m_jred6j8",
-                "x": -990,
-                "y": 360,
+                "id": "m_vip1ske",
+                "x": -287.67,
+                "y": -72.38,
                 "deg": 90,
                 "offsetX": 0,
-                "offsetY": 0
+                "offsetY": 0,
+                "mount": "rear_left",
+                "gimbalMinDeg": -45,
+                "gimbalMaxDeg": 45,
+                "vfxLengthMin": 10,
+                "vfxLengthMax": 179
+            },
+            {
+                "id": "m_zxbc4q9",
+                "x": -287.67,
+                "y": 70.17,
+                "deg": 90,
+                "offsetX": 0,
+                "offsetY": 0,
+                "mount": "rear_right",
+                "gimbalMinDeg": -45,
+                "gimbalMaxDeg": 45,
+                "vfxLengthMin": 10,
+                "vfxLengthMax": 179
+            },
+            {
+                "id": "m_adz80t3",
+                "x": -278.12,
+                "y": 130.42,
+                "deg": 90,
+                "offsetX": 0,
+                "offsetY": 0,
+                "mount": "rear_right",
+                "gimbalMinDeg": -45,
+                "gimbalMaxDeg": 45,
+                "vfxLengthMin": 10,
+                "vfxLengthMax": 179
             }
         ],
         "side": [
             {
-                "id": "m_9x86ohy",
-                "x": 440,
-                "y": -300,
-                "deg": 180,
-                "offsetX": 90,
-                "offsetY": 0
+                "id": "m_w3ccjzv",
+                "x": 134.1,
+                "y": 73.85,
+                "deg": 0,
+                "offsetX": 0,
+                "offsetY": 0,
+                "mount": "upper_right",
+                "gimbalMinDeg": -90,
+                "gimbalMaxDeg": 90,
+                "vfxWidthMin": 25,
+                "vfxWidthMax": 227,
+                "vfxLengthMin": 49,
+                "vfxLengthMax": 354
             },
             {
-                "id": "m_u59faf5",
-                "x": 440,
-                "y": 300,
-                "deg": 0,
-                "offsetX": 90,
-                "offsetY": 0
+                "id": "m_j4fzky6",
+                "x": 132.63,
+                "y": -78.99,
+                "deg": 180,
+                "offsetX": 0,
+                "offsetY": 0,
+                "mount": "upper_left",
+                "gimbalMinDeg": -90,
+                "gimbalMaxDeg": 90,
+                "vfxWidthMin": 25,
+                "vfxWidthMax": 227,
+                "vfxLengthMin": 49,
+                "vfxLengthMax": 354
             }
         ]
     }
@@ -782,15 +901,24 @@ export const SHIP_EDITOR_DEFAULTS = {
             "type": "aux",
             "x": -680,
             "y": 400
-        },
-        {
-            "id": "m_hgurjs5",
-            "type": "aux",
-            "x": -430,
-            "y": 0
         }
     ],
-    "cores": [],
+    "cores": [
+        {
+            "id": "m_2m1ecvu",
+            "x": -645.84,
+            "y": -0.93,
+            "type": "core"
+        }
+    ],
+    "bridges": [
+        {
+            "id": "m_8ilkhej",
+            "x": -429.02,
+            "y": 0.93,
+            "type": "bridge"
+        }
+    ],
     "engines": {
         "main": [
             {

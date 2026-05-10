@@ -6,6 +6,7 @@ import pirateDestroyerImg from '../assets/ships/piratedestroyer.png';
 import pirateBattleshipImg from '../assets/ships/piratebattleship.png';
 import { composeShipThrusterCommand, updateShipThrusterState } from '../game/shipEntity.js';
 import { SHIP_EDITOR_DEFAULTS } from '../data/hardpointEditorDefaults.js';
+import { resolveHardpointEditorPaletteId } from './hardpointEditorModel.js';
 
 const STYLE_ID = 'hp-editor-style';
 const ROOT_ID = 'hp-editor-root';
@@ -33,6 +34,7 @@ function shipDataHasContent(data) {
   return !!(
     (Array.isArray(data?.hardpoints) && data.hardpoints.length) ||
     (Array.isArray(data?.cores) && data.cores.length) ||
+    (Array.isArray(data?.bridges) && data.bridges.length) ||
     (Array.isArray(data?.engines?.main) && data.engines.main.length) ||
     (Array.isArray(data?.engines?.side) && data.engines.side.length)
   );
@@ -110,6 +112,7 @@ const COLORS = {
   special_missile: '#ff7ae6',
   builtin: '#7ee7ff',
   core: '#ff3c3c',
+  bridge: '#f97316',
   engineMain: '#7ae4ff',
   engineSide: '#ffd46a'
 };
@@ -124,6 +127,7 @@ const PALETTE_ITEMS = [
   { id: 'hp_special_missile', label: 'Hardpoint SPECIAL MISSILE', tool: 'hardpoint', hardpointType: 'special_missile', color: COLORS.special_missile },
   { id: 'hp_builtin', label: 'Hardpoint BUILT-IN', tool: 'hardpoint', hardpointType: 'builtin', color: COLORS.builtin },
   { id: 'core', label: 'Rdzeń', tool: 'core', hardpointType: null, color: COLORS.core },
+  { id: 'bridge', label: 'Mostek', tool: 'bridge', hardpointType: null, color: COLORS.bridge },
   { id: 'engine_main', label: 'Dysza MAIN', tool: 'engine_main', hardpointType: null, color: COLORS.engineMain },
   { id: 'engine_side', label: 'Dysza SIDE AUTO', tool: 'engine_side', hardpointType: null, color: COLORS.engineSide, engineMount: 'auto' },
   { id: 'engine_side_u', label: 'Dysza SIDE Upper', tool: 'engine_side', hardpointType: null, color: COLORS.engineSide, engineMount: 'upper_auto' },
@@ -523,17 +527,11 @@ function refreshEngineMountSelect() {
 }
 
 function activePaletteId() {
-  if (state.tool === 'erase') return 'erase';
-  if (state.tool === 'hardpoint') return `hp_${state.hardpointType}`;
-  if (state.tool === 'engine_main') return 'engine_main';
-  if (state.tool === 'engine_side') {
-    const mount = collapseSideMountForUi(state.engineMount);
-    if (mount === 'upper_auto') return 'engine_side_u';
-    if (mount === 'center_auto') return 'engine_side_c';
-    if (mount === 'lower_auto') return 'engine_side_l';
-    return 'engine_side';
-  }
-  return 'hp_main';
+  return resolveHardpointEditorPaletteId({
+    tool: state.tool,
+    hardpointType: state.hardpointType,
+    engineMount: state.engineMount
+  });
 }
 
 function setBrushFromPalette(itemId) {
@@ -599,6 +597,7 @@ function defaultShipData() {
   return {
     hardpoints: [],
     cores: [],
+    bridges: [],
     engines: { main: [], side: [] }
   };
 }
@@ -648,6 +647,7 @@ function ensureShipData(shipId) {
   const data = state.ships[shipId];
   if (!Array.isArray(data.hardpoints)) data.hardpoints = [];
   if (!Array.isArray(data.cores)) data.cores = [];
+  if (!Array.isArray(data.bridges)) data.bridges = [];
   if (!data.engines || typeof data.engines !== 'object') data.engines = { main: [], side: [] };
   if (!Array.isArray(data.engines.main)) data.engines.main = [];
   if (!Array.isArray(data.engines.side)) data.engines.side = [];
@@ -747,6 +747,7 @@ function collectMarkerExtents(shipData) {
   };
   for (const hp of Array.isArray(shipData?.hardpoints) ? shipData.hardpoints : []) push(hp?.x, hp?.y);
   for (const core of Array.isArray(shipData?.cores) ? shipData.cores : []) push(core?.x, core?.y);
+  for (const bridge of Array.isArray(shipData?.bridges) ? shipData.bridges : []) push(bridge?.x, bridge?.y);
   for (const eng of Array.isArray(shipData?.engines?.main) ? shipData.engines.main : []) push(eng?.x, eng?.y);
   for (const eng of Array.isArray(shipData?.engines?.side) ? shipData.engines.side : []) push(eng?.x, eng?.y);
   return maxAbs;
@@ -955,6 +956,7 @@ function bindControls() {
     const data = ensureShipData(state.shipId);
     data.hardpoints = [];
     data.cores = [];
+    data.bridges = [];
     data.engines = { main: [], side: [] };
     persist();
     scheduleDraw();
@@ -1289,7 +1291,7 @@ function bindCanvas() {
 }
 
 function normalizeBrushState() {
-  if (!['erase', 'hardpoint', 'core', 'engine_main', 'engine_side'].includes(state.tool)) {
+  if (!['erase', 'hardpoint', 'core', 'bridge', 'engine_main', 'engine_side'].includes(state.tool)) {
     state.tool = 'hardpoint';
   }
   if (!HARDPOINT_TYPES.includes(state.hardpointType)) {
@@ -1306,12 +1308,13 @@ function removeMarkersNearPoint(x, y, radiusLocal) {
     const dy = (Number(marker?.y) || 0) - y;
     return ((dx * dx) + (dy * dy)) > radiusSq;
   };
-  const before = data.hardpoints.length + data.cores.length + data.engines.main.length + data.engines.side.length;
+  const before = data.hardpoints.length + data.cores.length + data.bridges.length + data.engines.main.length + data.engines.side.length;
   data.hardpoints = data.hardpoints.filter(keepOutside);
   data.cores = data.cores.filter(keepOutside);
+  data.bridges = data.bridges.filter(keepOutside);
   data.engines.main = data.engines.main.filter(keepOutside);
   data.engines.side = data.engines.side.filter(keepOutside);
-  const after = data.hardpoints.length + data.cores.length + data.engines.main.length + data.engines.side.length;
+  const after = data.hardpoints.length + data.cores.length + data.bridges.length + data.engines.main.length + data.engines.side.length;
   return before - after;
 }
 
@@ -1498,6 +1501,7 @@ function addMarker(target, marker) {
   const data = ensureShipData(state.shipId);
   if (target === 'hardpoint') data.hardpoints.push(marker);
   else if (target === 'core') data.cores.push(marker);
+  else if (target === 'bridge') data.bridges.push(marker);
   else if (target === 'engine_main') data.engines.main.push(marker);
   else if (target === 'engine_side') data.engines.side.push(marker);
 }
@@ -1538,6 +1542,10 @@ function placeMarker(x, y) {
       const id = markerId();
       addMarker('core', { id, x: pos.x, y: pos.y, type: 'core' });
       placedIds.push(id);
+    } else if (state.tool === 'bridge') {
+      const id = markerId();
+      addMarker('bridge', { id, x: pos.x, y: pos.y, type: 'bridge' });
+      placedIds.push(id);
     } else if (state.tool === 'engine_main' || state.tool === 'engine_side') {
       const id = markerId();
       const defaults = getEngineToolDefaults(state.tool);
@@ -1575,6 +1583,7 @@ function getAllMarkers() {
   const out = [];
   for (const m of data.hardpoints) out.push({ marker: m, kind: 'hardpoint' });
   for (const m of data.cores) out.push({ marker: m, kind: 'core' });
+  for (const m of data.bridges) out.push({ marker: m, kind: 'bridge' });
   for (const m of data.engines.main) out.push({ marker: m, kind: 'engine_main' });
   for (const m of data.engines.side) out.push({ marker: m, kind: 'engine_side' });
   return out;
@@ -1601,6 +1610,7 @@ function removeMarkerById(id) {
   const data = ensureShipData(state.shipId);
   data.hardpoints = data.hardpoints.filter((m) => m.id !== id);
   data.cores = data.cores.filter((m) => m.id !== id);
+  data.bridges = data.bridges.filter((m) => m.id !== id);
   data.engines.main = data.engines.main.filter((m) => m.id !== id);
   data.engines.side = data.engines.side.filter((m) => m.id !== id);
 }
@@ -1709,6 +1719,7 @@ function drawFrontArrow(ctx) {
 function markerColor(kind, marker) {
   if (kind === 'hardpoint') return COLORS[marker.type] || '#fff';
   if (kind === 'core') return COLORS.core;
+  if (kind === 'bridge') return COLORS.bridge;
   if (kind === 'engine_main') return COLORS.engineMain;
   if (kind === 'engine_side') return COLORS.engineSide;
   return '#fff';
@@ -2099,7 +2110,7 @@ function compactMarker(marker, kind) {
     if (Number.isFinite(rot) && (marker.type === 'builtin' || Math.abs(rot) > 1e-6)) out.rot = round2(normalizeDeg(rot));
     return out;
   }
-  if (kind === 'core') return { id: marker.id, x: round2(marker.x), y: round2(marker.y) };
+  if (kind === 'core' || kind === 'bridge') return { id: marker.id, x: round2(marker.x), y: round2(marker.y), type: kind };
   const out = {
     id: marker.id,
     x: round2(marker.x),
@@ -2129,6 +2140,7 @@ function buildSingleShipExportData(shipId) {
       frontAxis: '+X',
       hardpoints: data.hardpoints.map((m) => compactMarker(m, 'hardpoint')),
       cores: data.cores.map((m) => compactMarker(m, 'core')),
+      bridges: data.bridges.map((m) => compactMarker(m, 'bridge')),
       engines: {
         main: data.engines.main.map((m) => compactMarker(m, 'engine')),
         side: data.engines.side.map((m) => compactMarker(m, 'engine'))
@@ -2152,6 +2164,7 @@ function buildExportData() {
       frontAxis: '+X',
       hardpoints: data.hardpoints.map((m) => compactMarker(m, 'hardpoint')),
       cores: data.cores.map((m) => compactMarker(m, 'core')),
+      bridges: data.bridges.map((m) => compactMarker(m, 'bridge')),
       engines: {
         main: data.engines.main.map((m) => compactMarker(m, 'engine')),
         side: data.engines.side.map((m) => compactMarker(m, 'engine'))
@@ -2203,6 +2216,7 @@ function normalizeImportedEngine(marker, tool) {
 function normalizeImportedShip(raw) {
   const hardpointsRaw = Array.isArray(raw?.hardpoints) ? raw.hardpoints : [];
   const coresRaw = Array.isArray(raw?.cores) ? raw.cores : [];
+  const bridgesRaw = Array.isArray(raw?.bridges) ? raw.bridges : [];
   const enginesMainRaw = Array.isArray(raw?.engines?.main) ? raw.engines.main : [];
   const enginesSideRaw = Array.isArray(raw?.engines?.side) ? raw.engines.side : [];
 
@@ -2229,7 +2243,15 @@ function normalizeImportedShip(raw) {
     const x = Number(marker?.x);
     const y = Number(marker?.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-    cores.push({ id: marker?.id || markerId(), x: round2(x), y: round2(y) });
+    cores.push({ id: marker?.id || markerId(), x: round2(x), y: round2(y), type: 'core' });
+  }
+
+  const bridges = [];
+  for (const marker of bridgesRaw) {
+    const x = Number(marker?.x);
+    const y = Number(marker?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    bridges.push({ id: marker?.id || markerId(), x: round2(x), y: round2(y), type: 'bridge' });
   }
 
   const engines = { main: [], side: [] };
@@ -2242,7 +2264,7 @@ function normalizeImportedShip(raw) {
     if (normalized) engines.side.push(normalized);
   }
 
-  return { hardpoints, cores, engines, __bootstrapped: true };
+  return { hardpoints, cores, bridges, engines, __bootstrapped: true };
 }
 
 function applyImportedConfigObject(parsed, applyToGame = true) {
@@ -2320,6 +2342,7 @@ function updateStatsAndPreview() {
     <div>Pędzel: ${brush ? brush.label : '-'}</div>
     <div>Hardpointy: ${data.hardpoints.length}</div>
     <div>Rdzenie: ${data.cores.length}</div>
+    <div>Mostki: ${data.bridges.length}</div>
     <div>Silniki MAIN: ${data.engines.main.length}</div>
     <div>Silniki SIDE: ${data.engines.side.length}</div>
     <div>Min/Max: MainL ${state.mainVfxLengthMin}-${state.mainVfxLengthMax}, SideW ${state.sideVfxWidthMin}-${state.sideVfxWidthMax}, SideL ${state.sideVfxLengthMin}-${state.sideVfxLengthMax}</div>
@@ -2421,7 +2444,7 @@ function loadStorage() {
     if (state.shipId !== CURRENT_SHIP_ID && !SHIP_DEFS.some((def) => def.id === state.shipId)) {
       state.shipId = CURRENT_SHIP_ID;
     }
-    if (!['erase', 'hardpoint', 'core', 'engine_main', 'engine_side'].includes(state.tool)) state.tool = 'hardpoint';
+    if (!['erase', 'hardpoint', 'core', 'bridge', 'engine_main', 'engine_side'].includes(state.tool)) state.tool = 'hardpoint';
     if (!HARDPOINT_TYPES.includes(state.hardpointType)) state.hardpointType = 'main';
     if (repairedLegacyAtlas) persist();
   } catch { }

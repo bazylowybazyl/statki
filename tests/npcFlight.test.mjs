@@ -67,6 +67,25 @@ test('npc hardpoint layout exposes main thrusters for physical flight', () => {
   assert.ok(npc.visual.torqueThrusters.length > 0);
 });
 
+test('npc editor layout exposes bridge markers for critical integrity checks', () => {
+  const runtime = createNpcHardpointRuntime({
+    defaultShips: {
+      destroyer: {
+        hardpoints: [],
+        cores: [{ id: 'core_a', x: 0, y: 0 }],
+        bridges: [{ id: 'bridge_a', x: 40, y: -12 }],
+        engines: { main: [], side: [] }
+      }
+    }
+  });
+  runtime.refreshCache(true);
+  const npc = { type: 'destroyer', visual: {}, engines: {} };
+
+  assert.equal(runtime.applyLayoutToNpc(npc), true);
+  assert.deepEqual(npc.editorCores, [{ id: 'core_a', x: 0, y: 0, type: 'core' }]);
+  assert.deepEqual(npc.editorBridges, [{ id: 'bridge_a', x: 40, y: -12, type: 'bridge' }]);
+});
+
 test('npc approach command uses player autopilot and physical thrusters', () => {
   const npc = makeAtlasThrusterNpc();
 

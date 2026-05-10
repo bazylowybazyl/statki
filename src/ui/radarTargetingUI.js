@@ -164,6 +164,21 @@ function drawBlueprintCanvas(canvas, blueprint) {
     ctx.stroke();
   }
 
+  const bridges = Array.isArray(blueprint.bridges) ? blueprint.bridges : [];
+  for (let i = 0; i < bridges.length; i++) {
+    const bridge = bridges[i];
+    if (!bridge) continue;
+    ctx.beginPath();
+    ctx.moveTo(bridge.x, bridge.y - 5);
+    ctx.lineTo(bridge.x + 5, bridge.y);
+    ctx.lineTo(bridge.x, bridge.y + 5);
+    ctx.lineTo(bridge.x - 5, bridge.y);
+    ctx.closePath();
+    ctx.strokeStyle = bridge.destroyed ? '#ef4444' : '#f97316';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
   ctx.restore();
 }
 
