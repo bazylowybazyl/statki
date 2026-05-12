@@ -66,6 +66,15 @@ function loader() {
   return _sharedTextureLoader;
 }
 
+// Pojedyncza PlaneGeometry współdzielona przez wszystkie pule. Bez tego każda
+// pula miała własne VBO geometrii (28 instances) - znikomy zysk per pula
+// ale w sumie ~50µs/klatkę z mniej state changes WebGL.
+let _sharedAsteroidGeometry = null;
+function getSharedAsteroidGeometry() {
+  if (!_sharedAsteroidGeometry) _sharedAsteroidGeometry = new THREE.PlaneGeometry(1, 1);
+  return _sharedAsteroidGeometry;
+}
+
 // Mulberry32 - deterministyczny RNG dla powtarzalnego generowania.
 function makeRng(seed) {
   let s = (seed | 0) >>> 0;
@@ -106,7 +115,7 @@ class AsteroidPool {
       }
     });
 
-    const geom = new THREE.PlaneGeometry(1, 1);
+    const geom = getSharedAsteroidGeometry();
     // KRYTYCZNE dla wydajności przy 500k asteroid: alpha CUTOUT zamiast BLEND.
     //   - transparent:false + alphaTest:0.5 + depthWrite:true = opaque rendering
     //     z odrzucaniem pikseli pod progiem alpha
@@ -177,7 +186,7 @@ class AsteroidPool {
 
   dispose() {
     if (this.mesh.parent) this.mesh.parent.remove(this.mesh);
-    this.mesh.geometry.dispose();
+    // UWAGA: NIE dispose'ujemy geometrii bo jest współdzielona przez wszystkie pule.
     this.mesh.material.dispose();
     if (this.texture) this.texture.dispose();
   }
@@ -498,24 +507,55 @@ export class AsteroidField {
 
   // ---- internal ----
 
+  /**
+   * Adaptywne capacities pul - liczone z faktycznego rozkładu typów w pasach.
+   * Wcześniej była uniformna capacity ~105000 na (typ × rozmiar S), co dawało:
+   *   - silicon-S (~89k aktywnych): tylko 17% margin
+   *   - uran-S (~7.6k aktywnych): 1300% margin = 100k pustych slotów = wasted vertex shader
+   * Adaptywnie: każda pula dostaje tyle ile potrzebuje + 40% margin na splity.
+   * Sumarycznie zmniejsza liczbę "ukrytych" slotów (które i tak idą przez vertex shader)
+   * o ~50% przy 500k asteroid.
+   */
+  _precomputeExpectedCounts() {
+    const counts = new Map();
+    for (const belt of BELT_DEFINITIONS) {
+      const beltCount = belt.count | 0;
+      for (const type of Object.keys(belt.types)) {
+        const typeWeight = belt.types[type];
+        for (const size of Object.keys(belt.sizes)) {
+          const sizeWeight = belt.sizes[size];
+          const expected = beltCount * typeWeight * sizeWeight;
+          const key = `${type}_${size}`;
+          counts.set(key, (counts.get(key) || 0) + expected);
+        }
+      }
+    }
+    return counts;
+  }
+
   _initPools() {
-    // Limit wariantów per (typ, rozmiar) - patrz MAX_VARIANTS_PER_SIZE w asteroidTypes.js.
-    // Po reducji: 7 typów x 4 rozmiary x 1 wariant = 28 pul zamiast 70.
-    // Mniej draw calli + mniej tekstur w VRAM.
+    const expectedCounts = this._precomputeExpectedCounts();
+    const MARGIN = 1.4;        // 40% margin na splity i drobne rozproszenie RNG
+    const MIN_CAP = 200;       // minimum dla rzadkich kombinacji
+    let totalCap = 0;
     for (const type of ASTEROID_TYPES) {
       const tint = ASTEROID_TINT[type] ?? 0xffffff;
       for (const size of ASTEROID_SIZES) {
         const files = ASTEROID_TEXTURE_FILES[type][size];
         const maxV = Math.min(files.length, MAX_VARIANTS_PER_SIZE);
-        // Capacity skaluje się z liczbą wariantów - mniej wariantów = więcej asteroid w 1 puli
-        const cap = (POOL_CAPACITY_PER_VARIANT[size] || 32) * Math.ceil(files.length / maxV);
+        const expected = expectedCounts.get(`${type}_${size}`) || 0;
+        const totalNeeded = Math.max(MIN_CAP, Math.ceil(expected * MARGIN));
+        const capPerVariant = Math.ceil(totalNeeded / maxV);
         for (let v = 0; v < maxV; v++) {
           const key = `${type}_${size}_${v}`;
           const path = `${ASTEROID_TEXTURE_BASE_PATH}${files[v]}.png`;
-          this.pools.set(key, new AsteroidPool(this.scene, key, path, tint, cap));
+          this.pools.set(key, new AsteroidPool(this.scene, key, path, tint, capPerVariant));
+          totalCap += capPerVariant;
         }
       }
     }
+    // eslint-disable-next-line no-console
+    console.log(`[AsteroidField] allocated ${this.pools.size} pools, total capacity ${totalCap} slots`);
   }
 
   _generate() {
