@@ -1031,6 +1031,7 @@
     import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
     import { initWorld3D, attachPirateStation3D, dettachPirateStation3D, updateWorld3D, drawWorld3D } from "./src/3d/world3d.js";
     import { initStations3D, updateStations3D, detachPlanetStations3D, drawStations3D, destroyStation3D } from "./src/3d/stations3D.js";
+    import { AsteroidField } from "./src/3d/asteroidField3D.js";
     import { initHexShips3D, prewarmHexShips3D, updateHexShips3D, resizeHexShips3D, drawHexShips3D, invalidateHexShipEntity3D } from "./src/3d/hexShips3D.js";
     import { updateShields3D } from "./src/3d/shield3D.js";
     import { Core3D } from "./src/3d/core3d.js";
@@ -1060,6 +1061,7 @@
     window.drawWorld3D = drawWorld3D;
     window.initStations3D = initStations3D;
     window.updateStations3D = updateStations3D;
+    window.AsteroidField = AsteroidField;
     window.drawStations3D = drawStations3D;
     window.initHexShips3D = initHexShips3D;
     window.prewarmHexShips3D = prewarmHexShips3D;
@@ -8921,6 +8923,23 @@
           if (ensurePlanetStationsInit(stations) || tries++ > maxTries) return;
           requestAnimationFrame(poll);
         })();
+      }
+
+      // Pole asteroid (InstancedMesh) - 5 pasów: Main Belt, Greeks (L4), Trojans (L5),
+      // Hildas (rezonans 3:2 z Jowiszem), Kuiper Belt. Generowane raz, deterministycznie z seed.
+      if (window.AsteroidField && !window.asteroidField) {
+        try {
+          window.asteroidField = new window.AsteroidField({
+            seed: 0xA57E20,
+            planets,
+            sun: SUN,
+            auToWorld: getAuToWorldUnits(),
+            scene: Core3D.scene,
+          });
+          console.log(`[AsteroidField] spawned ${window.asteroidField.count} asteroids across ${window.asteroidField.pools.size} instanced pools`);
+        } catch (err) {
+          console.error('[AsteroidField] init failed', err);
+        }
       }
     });
 
@@ -19004,6 +19023,10 @@
       if (renderDbgEnabled) tRenderSection = performance.now();
       if (window.updateWorld3D) window.updateWorld3D(frameDt, vfxTime);
       if (renderDbgEnabled) RenderLiveDebug.record('updateWorld3D', performance.now() - tRenderSection);
+
+      if (renderDbgEnabled) tRenderSection = performance.now();
+      if (window.asteroidField) window.asteroidField.update(frameDt);
+      if (renderDbgEnabled) RenderLiveDebug.record('asteroidField.update', performance.now() - tRenderSection);
 
       if (renderDbgEnabled) tRenderSection = performance.now();
       if (window.Destruction3D) window.Destruction3D.update(vfxTime, frameDt);

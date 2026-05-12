@@ -1,4 +1,5 @@
 import { getHullRenderSize, resolveHullRenderProfileId } from '../data/ships.js';
+import { BELT_DEFINITIONS } from '../data/asteroidTypes.js';
 
 // =============================================================================
 // CIC — COMBAT INFORMATION CENTER
@@ -1183,6 +1184,294 @@ const PLANET_COLORS = {
   neptune: '#4466bb',
 };
 
+// Kolory typów asteroid na CIC (NATO-style tactical contacts).
+const ASTEROID_CIC_COLORS = {
+  iron:    '#a87a55',
+  copper:  '#d97742',
+  silicon: '#8aa0b8',
+  titan:   '#c8d0d6',
+  crystal: '#b886d4',
+  ice:     '#9ed2ec',
+  uran:    '#5fc77e',
+};
+
+// Promień kropki na CIC zależnie od klasy rozmiaru asteroidy.
+const ASTEROID_CIC_DOT = {
+  S:   0.7,
+  M:   1.1,
+  L:   1.7,
+  BIG: 2.6,
+};
+
+// =============================================================================
+// ASTEROID RENDERING ON CIC
+// =============================================================================
+
+// Kolory regionów pasów - półprzezroczyste, dominujący skład.
+const BELT_FILL = {
+  main:    'rgba(168, 122, 85, 0.18)',   // brąz (iron/silicon/copper)
+  kuiper:  'rgba(158, 210, 236, 0.18)',  // jasny błękit (ice/crystal/uran)
+  greeks:  'rgba(168, 122, 85, 0.22)',   // brąz, gęściej (klaster)
+  trojans: 'rgba(168, 122, 85, 0.22)',
+  hildas:  'rgba(140, 160, 184, 0.18)',  // szary z błękitem (silicon-heavy)
+};
+const BELT_STROKE = {
+  main:    'rgba(168, 122, 85, 0.50)',
+  kuiper:  'rgba(158, 210, 236, 0.50)',
+  greeks:  'rgba(168, 122, 85, 0.60)',
+  trojans: 'rgba(168, 122, 85, 0.60)',
+  hildas:  'rgba(140, 160, 184, 0.50)',
+};
+const BELT_LABEL = {
+  main:    'MAIN BELT',
+  kuiper:  'KUIPER BELT',
+  greeks:  'GREEKS (L4)',
+  trojans: 'TROJANS (L5)',
+  hildas:  'HILDAS',
+};
+
+/**
+ * Rysuje 5 pasów asteroid jako półprzezroczyste regiony. Geometria z BELT_DEFINITIONS.
+ * Cel: pokazać "tutaj są asteroidy" bez renderowania 500k pojedynczych kropek.
+ */
+function drawAsteroidBeltRegions(ctx, sunScr, zoom, W, H) {
+  if (!sunScr) return;
+  const SUN = window.SUN;
+  if (!SUN) return;
+  // KRYTYCZNE: getAuToWorldUnits() nie jest wystawione na window. Faktyczna skala AU
+  // jest w window.BASE_ORBIT (~40000 dla świata 10M u, nie 3000). Bez tego pasy są
+  // ~13× za małe i wyglądają jak korona Słońca.
+  const auToWorld = (typeof window.BASE_ORBIT === 'number' && window.BASE_ORBIT > 0)
+    ? window.BASE_ORBIT
+    : 3000;
+  const planets = Array.isArray(window.planets) ? window.planets : [];
+  const jupiter = planets.find(p => p && (p.id === 'jupiter' || p.name === 'jupiter'));
+
+  ctx.save();
+  ctx.lineWidth = 0.7;
+
+  for (const belt of BELT_DEFINITIONS) {
+    if (belt.shape === 'ring') {
+      // Pierścień wokół Słońca - annulus przez fill('evenodd') z dwoma osobnymi
+      // sub-paths (explicit moveTo). Wcześniejsza wersja używała thick stroke
+      // z lineWidth = outerR-innerR. Przy default CIC zoom 0.08 to ~35000px
+      // szerokość stroke = catastrophic perf (Canvas próbuje rasteryzować pas
+      // szerszy niż ekran).
+      const innerR = belt.innerAU * auToWorld * zoom;
+      const outerR = belt.outerAU * auToWorld * zoom;
+      if (outerR < 3) continue;
+
+      // Annulus fill: outer disk minus inner disk via evenodd
+      ctx.fillStyle = BELT_FILL[belt.id] || 'rgba(140,140,140,0.18)';
+      ctx.beginPath();
+      ctx.moveTo(sunScr.x + outerR, sunScr.y);
+      ctx.arc(sunScr.x, sunScr.y, outerR, 0, Math.PI * 2);
+      ctx.moveTo(sunScr.x + innerR, sunScr.y);
+      ctx.arc(sunScr.x, sunScr.y, innerR, 0, Math.PI * 2);
+      ctx.fill('evenodd');
+
+      // Granice (cienki dashed stroke na inner i outer)
+      ctx.strokeStyle = BELT_STROKE[belt.id] || 'rgba(140,140,140,0.5)';
+      ctx.lineWidth = 0.8;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.arc(sunScr.x, sunScr.y, innerR, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(sunScr.x, sunScr.y, outerR, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.lineWidth = 0.7;
+
+      // Etykieta przy szerokim widoku
+      if (cicSystemBlend > 0.3 && outerR > 30) {
+        const labelR = (innerR + outerR) / 2;
+        const ly = sunScr.y - labelR;
+        if (ly > 10 && ly < H - 10) {
+          ctx.fillStyle = BELT_STROKE[belt.id];
+          ctx.globalAlpha = 0.7;
+          ctx.font = '9px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(BELT_LABEL[belt.id] || belt.id.toUpperCase(), sunScr.x, ly - 2);
+          ctx.globalAlpha = 1;
+        }
+      }
+    } else if (belt.shape === 'lagrange' && jupiter) {
+      // Łuk wokół L4/L5 Jowisza
+      const dx = jupiter.x - SUN.x;
+      const dy = jupiter.y - SUN.y;
+      const jR = Math.hypot(dx, dy);
+      if (jR < 1) continue;
+      const jAng = Math.atan2(dy, dx);
+      const offset = belt.lagrange === 'L4' ? +Math.PI / 3 : -Math.PI / 3;
+      const lagAng = jAng + offset;
+      const spreadR = (belt.spreadAU || 6) * auToWorld;
+      const innerR = (jR - spreadR / 2) * zoom;
+      const outerR = (jR + spreadR / 2) * zoom;
+      if (outerR < 3) continue;
+      const halfArc = belt.arcSpread || 0.35;
+      const angStart = lagAng - halfArc;
+      const angEnd = lagAng + halfArc;
+
+      ctx.fillStyle = BELT_FILL[belt.id];
+      ctx.beginPath();
+      ctx.arc(sunScr.x, sunScr.y, outerR, angStart, angEnd);
+      ctx.arc(sunScr.x, sunScr.y, innerR, angEnd, angStart, true);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = BELT_STROKE[belt.id];
+      ctx.stroke();
+
+      // Etykieta w środku klastra
+      if (cicSystemBlend > 0.3) {
+        const lx = sunScr.x + Math.cos(lagAng) * jR * zoom;
+        const ly = sunScr.y + Math.sin(lagAng) * jR * zoom;
+        if (lx > -50 && lx < W + 50 && ly > -20 && ly < H + 20) {
+          ctx.fillStyle = BELT_STROKE[belt.id];
+          ctx.globalAlpha = 0.8;
+          ctx.font = '8px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(BELT_LABEL[belt.id], lx, ly - 8);
+          ctx.globalAlpha = 1;
+        }
+      }
+    } else if (belt.shape === 'triangle' && jupiter) {
+      // 3 klastry w trójkącie wokół Słońca z Jowiszem w jednym wierzchołku
+      const dx = jupiter.x - SUN.x;
+      const dy = jupiter.y - SUN.y;
+      const jAng = Math.atan2(dy, dx);
+      const beltR = (belt.radiusAU || 42) * auToWorld;
+      const spreadR = (belt.spreadAU || 3) * auToWorld;
+      const innerR = (beltR - spreadR / 2) * zoom;
+      const outerR = (beltR + spreadR / 2) * zoom;
+      if (outerR < 3) continue;
+      const halfArc = 0.32;
+
+      ctx.fillStyle = BELT_FILL[belt.id];
+      ctx.strokeStyle = BELT_STROKE[belt.id];
+
+      for (let k = 0; k < 3; k++) {
+        const ca = jAng + k * (Math.PI * 2 / 3);
+        const angStart = ca - halfArc;
+        const angEnd = ca + halfArc;
+        ctx.beginPath();
+        ctx.arc(sunScr.x, sunScr.y, outerR, angStart, angEnd);
+        ctx.arc(sunScr.x, sunScr.y, innerR, angEnd, angStart, true);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      if (cicSystemBlend > 0.4) {
+        // Etykieta przy jednym z klastrów (na 120° od Jowisza)
+        const ca = jAng + (Math.PI * 2 / 3);
+        const lx = sunScr.x + Math.cos(ca) * beltR * zoom;
+        const ly = sunScr.y + Math.sin(ca) * beltR * zoom;
+        if (lx > -50 && lx < W + 50 && ly > -20 && ly < H + 20) {
+          ctx.fillStyle = BELT_STROKE[belt.id];
+          ctx.globalAlpha = 0.7;
+          ctx.font = '8px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(BELT_LABEL[belt.id], lx, ly - 6);
+          ctx.globalAlpha = 1;
+        }
+      }
+    }
+  }
+
+  ctx.restore();
+}
+
+/**
+ * Rysuje pojedyncze asteroidy wyłącznie w zasięgu sensorów. Używa SensorSystem.getSensorSources().
+ *
+ * Optymalizacje krytyczne dla wydajności (przy 500k asteroid i 5 sondach):
+ *   - Callback-based iteracja przez spatial.forEachInRadius - ZERO alokacji tablic
+ *   - Dedup przez monotonic frame counter na asteroid._scanFrameId - ZERO alokacji Set
+ *   - Stroke tylko dla BIG - oszczędza ~5µs/asteroidę na canvasie
+ *   - fillRect dla małych kropek (r<2) zamiast ctx.arc - ~3× szybsze
+ *   - Wczesne off-screen cull przed jakąkolwiek pracą canvasową
+ */
+function drawScannedAsteroids(ctx, asteroidField, toScreen, zoom, W, H) {
+  const sources = window.SensorSystem?.getSensorSources?.() || [];
+  if (sources.length === 0 || !asteroidField.spatial) return;
+
+  // Frame counter dla dedup zamiast Set (zero alocation, ~3× szybciej)
+  if (asteroidField._cicScanFrame === undefined) asteroidField._cicScanFrame = 0;
+  const frameId = ++asteroidField._cicScanFrame;
+
+  ctx.save();
+  ctx.lineWidth = 1;
+
+  const cullX0 = -8, cullX1 = W + 8, cullY0 = -8, cullY1 = H + 8;
+  let drawnCount = 0;
+  let lastColor = null;
+  let lastAlpha = -1;
+
+  for (let s = 0; s < sources.length; s++) {
+    const src = sources[s];
+    if (!src || !(src.range > 0)) continue;
+    const sx = src.x, sy = src.y, srange = src.range;
+    const srange2 = srange * srange;
+
+    asteroidField.spatial.forEachInRadius(sx, sy, srange, (a) => {
+      if (!a.alive || a._cicScanFrame === frameId) return;
+      const dx = a.worldX - sx;
+      const dy = a.worldY - sy;
+      if (dx * dx + dy * dy > srange2) return;
+      a._cicScanFrame = frameId;
+
+      const scr = toScreen(a.worldX, a.worldY);
+      if (scr.x < cullX0 || scr.x > cullX1 || scr.y < cullY0 || scr.y > cullY1) return;
+
+      const baseDot = ASTEROID_CIC_DOT[a.size] || 1.0;
+      const physR = (a.scale * 0.5) * zoom;
+      const r = Math.max(baseDot, Math.min(physR, 9));
+      const color = ASTEROID_CIC_COLORS[a.type] || '#8899aa';
+      const alpha = a.hp < a.hpMax ? 0.65 : 0.9;
+
+      // Minimalizuj zmiany stanu canvasu - cache color/alpha między iteracjami
+      if (color !== lastColor) { ctx.fillStyle = color; lastColor = color; }
+      if (alpha !== lastAlpha) { ctx.globalAlpha = alpha; lastAlpha = alpha; }
+
+      // Małe kropki = fillRect (znacznie szybsze niż arc)
+      if (r < 1.5) {
+        const px = scr.x - r;
+        const py = scr.y - r;
+        const sz = r + r;
+        ctx.fillRect(px, py, sz, sz);
+      } else {
+        ctx.beginPath();
+        ctx.arc(scr.x, scr.y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // BIG - NATO crosshair (tylko ten dostaje stroke)
+      if (a.size === 'BIG' && r > 2) {
+        if (color !== lastColor) { ctx.strokeStyle = color; }
+        else ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(scr.x - r - 2, scr.y);
+        ctx.lineTo(scr.x + r + 2, scr.y);
+        ctx.moveTo(scr.x, scr.y - r - 2);
+        ctx.lineTo(scr.x, scr.y + r + 2);
+        ctx.stroke();
+      }
+      drawnCount++;
+    });
+  }
+
+  // Info linijka u dołu
+  ctx.globalAlpha = 0.45;
+  ctx.fillStyle = '#9ed2ec';
+  ctx.font = '8px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(`AST SCAN: ${drawnCount} detected / ${asteroidField.count} total`, 20, H - 32);
+
+  ctx.restore();
+}
+
 function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
   const SUN = window.SUN;
   const planets = window.planets;
@@ -1367,43 +1656,15 @@ function drawSolarSystem(ctx, W, H, toScreen, zoom, gameTime) {
     }
   }
 
-  // === ASTEROID BELT ===
-  if (window.ASTEROID_BELT) {
-    const belt = window.ASTEROID_BELT;
-    const innerR = belt.inner * zoom;
-    const outerR = belt.outer * zoom;
-
-    if (innerR > 8 && innerR < W * 4) {
-      ctx.save();
-      ctx.globalAlpha = 0.08;
-      ctx.strokeStyle = '#8899aa';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 4]);
-      ctx.beginPath();
-      ctx.arc(sunScr.x, sunScr.y, innerR, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(sunScr.x, sunScr.y, outerR, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Fill belt band
-      ctx.globalAlpha = 0.02;
-      ctx.fillStyle = '#8899aa';
-      ctx.beginPath();
-      ctx.arc(sunScr.x, sunScr.y, outerR, 0, Math.PI * 2);
-      ctx.arc(sunScr.x, sunScr.y, innerR, 0, Math.PI * 2, true);
-      ctx.fill();
-
-      // Label
-      ctx.globalAlpha = 0.3;
-      ctx.fillStyle = '#8899aa';
-      ctx.font = '8px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText('ASTEROID BELT', sunScr.x, sunScr.y - (innerR + outerR) / 2 - 6);
-
-      ctx.setLineDash([]);
-      ctx.restore();
-    }
+  // === ASTEROID FIELD ===
+  // Dwie fazy renderowania:
+  //   1. PASY jako półprzezroczyste regiony (zawsze widoczne) - tylko "tutaj są asteroidy"
+  //   2. POJEDYNCZE asteroidy tylko w zasięgu sensorów (statek/sondy/drony/stacje)
+  // Bez tego CIC iterowałby 500k asteroid co klatkę przy widoku systemu.
+  const asteroidField = window.asteroidField;
+  if (asteroidField && asteroidField.count > 0) {
+    drawAsteroidBeltRegions(ctx, sunScr, zoom, W, H);
+    drawScannedAsteroids(ctx, asteroidField, toScreen, zoom, W, H);
   }
 
   // === STATIONS ===
