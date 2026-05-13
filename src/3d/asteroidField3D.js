@@ -105,11 +105,16 @@ class AsteroidPool {
 
     this.texture = loader().load(texturePath, (tex) => {
       if (tex) {
-        // Nie generujemy mipmap - oszczędza pamięć, asteroidy są często blisko swojej naturalnej skali.
-        tex.minFilter = THREE.LinearFilter;
+        // Mipmapy + trilinear filtering KONIECZNE. Bez tego sprite asteroidy renderowany
+        // na np. 30 pikseli ekranu sampluje z pełnej 600x600 PNG - GPU wybiera losowy
+        // texel per pixel = sproszkowane, ziarniste artefakty (aliasing wysokich częstotliwości).
+        // Koszt: +33% VRAM na mipmap chain. Warto.
+        tex.minFilter = THREE.LinearMipmapLinearFilter;  // trilinear
         tex.magFilter = THREE.LinearFilter;
-        tex.generateMipmaps = false;
-        tex.anisotropy = 1;
+        tex.generateMipmaps = true;
+        // Anizotropowe filtrowanie - 4× pomaga gdy asteroida jest mocno nachylona w kadrze
+        // (przy szerokim FOV i bliskim podejściu). Modest cost.
+        tex.anisotropy = 4;
         if (THREE.SRGBColorSpace !== undefined) tex.colorSpace = THREE.SRGBColorSpace;
         tex.needsUpdate = true;
       }
@@ -127,6 +132,12 @@ class AsteroidPool {
       map: this.texture,
       transparent: false,
       alphaTest: 0.5,
+      // alphaToCoverage: używa próbek MSAA do wygładzania krawędzi cutout.
+      // Bez tego krawędzie sprite'a (gdzie alpha przechodzi przez 0.5)
+      // są twarde i schodkowe - wygląda jak pikselowy szum. Z MSAA 4×
+      // dostajemy 4 gradacje przezroczystości na krawędziach = smooth.
+      // Wymaga MSAA w render target (mamy: samples=4 w composer).
+      alphaToCoverage: true,
       depthWrite: true,
       side: THREE.DoubleSide,
       color: new THREE.Color(tint),

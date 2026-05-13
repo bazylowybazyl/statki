@@ -2749,6 +2749,7 @@
       padding: 6px 18px 8px 18px;
       min-width: 520px;
       width: min(620px, calc(100vw - 32px));
+      box-sizing: border-box;
       max-height: 560px;
       overflow: hidden;
       opacity: 1;
@@ -2769,6 +2770,7 @@
 
     #hud-top-dock.expanded.mechanic-expanded {
       width: min(1680px, calc(100vw - 24px));
+      max-height: calc(100vh - 32px);
     }
 
     #hud-top-dock.banner-hidden:not(.expanded) {
@@ -3045,7 +3047,7 @@
     }
 
     .hud-dock.expanded #top-drawer.mechanic-expanded {
-      height: calc(100vh - 44px);
+      height: calc(100vh - 104px);
     }
 
     #bottom-drawer {
