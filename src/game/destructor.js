@@ -241,13 +241,77 @@ function resetGridMeshDirtyRange(grid) {
   grid.meshDirtyEnd = -1;
 }
 
+function resetGridVisualDirtyRange(grid) {
+  if (!grid) return;
+  grid.visualDirtyAll = false;
+  grid.visualDirtyStart = -1;
+  grid.visualDirtyEnd = -1;
+}
+
+function bumpGridMeshRevision(grid) {
+  if (!grid) return;
+  const next = (Number(grid.meshRevision) || 0) + 1;
+  grid.meshRevision = next > 1000000000 ? 1 : next;
+}
+
+function markGridVisualDirtyAll(grid) {
+  if (!grid) return;
+  const count = Array.isArray(grid.shards) ? grid.shards.length : 0;
+  grid.visualDirtyAll = true;
+  grid.visualDirtyStart = 0;
+  grid.visualDirtyEnd = Math.max(0, count - 1);
+}
+
+function markGridVisualDirtyRange(grid, minIndex, maxIndex) {
+  if (!grid) return;
+  const count = Array.isArray(grid.shards) ? grid.shards.length : 0;
+  if (count <= 0) {
+    markGridVisualDirtyAll(grid);
+    return;
+  }
+
+  const a = Number(minIndex);
+  const b = Number(maxIndex);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) {
+    markGridVisualDirtyAll(grid);
+    return;
+  }
+
+  let start = a | 0;
+  let end = b | 0;
+  if (end < start) {
+    const tmp = start;
+    start = end;
+    end = tmp;
+  }
+
+  if (start < 0 || end < 0 || start >= count || end >= count) {
+    markGridVisualDirtyAll(grid);
+    return;
+  }
+
+  if (grid.visualDirtyAll) return;
+  const curStart = Number(grid.visualDirtyStart);
+  const curEnd = Number(grid.visualDirtyEnd);
+  if (!Number.isFinite(curStart) || !Number.isFinite(curEnd) || curStart < 0 || curEnd < curStart) {
+    grid.visualDirtyStart = start;
+    grid.visualDirtyEnd = end;
+    return;
+  }
+
+  if (start < curStart) grid.visualDirtyStart = start;
+  if (end > curEnd) grid.visualDirtyEnd = end;
+}
+
 function markGridMeshDirtyAll(grid) {
   if (!grid) return;
   grid.meshDirty = true;
+  bumpGridMeshRevision(grid);
   const count = Array.isArray(grid.shards) ? grid.shards.length : 0;
   grid.meshDirtyAll = true;
   grid.meshDirtyStart = 0;
   grid.meshDirtyEnd = Math.max(0, count - 1);
+  markGridVisualDirtyAll(grid);
 }
 
 function markGridMeshDirtyRange(grid, minIndex, maxIndex) {
@@ -275,6 +339,8 @@ function markGridMeshDirtyRange(grid, minIndex, maxIndex) {
     return;
   }
   grid.meshDirty = true;
+  bumpGridMeshRevision(grid);
+  markGridVisualDirtyRange(grid, start, end);
   if (grid.meshDirtyAll) return;
   const curStart = Number(grid.meshDirtyStart);
   const curEnd = Number(grid.meshDirtyEnd);
@@ -340,6 +406,138 @@ function isHexEligible(entity) {
   if (entity.fighter) return false;
   if (entity.type && ['fighter', 'interceptor', 'drone'].includes(entity.type)) return false;
   return true;
+}
+
+function isBrittleEntity(entity) {
+  return entity?.destructionMaterial === 'brittle' || entity?.noElasticity === true;
+}
+
+function markBrittleSettleRange(grid, minIndex, maxIndex) {
+  if (!grid) return;
+  const count = Array.isArray(grid.shards) ? grid.shards.length : 0;
+  if (count <= 0) return;
+
+  let start = Number(minIndex);
+  let end = Number(maxIndex);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+
+  start |= 0;
+  end |= 0;
+  if (end < start) {
+    const tmp = start;
+    start = end;
+    end = tmp;
+  }
+
+  if (start < 0 || end < 0 || start >= count || end >= count) {
+    start = 0;
+    end = count - 1;
+  }
+
+  const curStart = Number(grid.__brittleSettleStart);
+  const curEnd = Number(grid.__brittleSettleEnd);
+  if (!Number.isFinite(curStart) || !Number.isFinite(curEnd) || curStart < 0 || curEnd < curStart) {
+    grid.__brittleSettleStart = start;
+    grid.__brittleSettleEnd = end;
+    return;
+  }
+
+  if (start < curStart) grid.__brittleSettleStart = start;
+  if (end > curEnd) grid.__brittleSettleEnd = end;
+}
+
+function markBrittleTransient(entity, frames = 0, minIndex = NaN, maxIndex = NaN) {
+  const grid = entity?.hexGrid;
+  if (!grid || !isBrittleEntity(entity)) return;
+
+  const splitHold = Math.max(2, (DESTRUCTOR_CONFIG.splitCheckInterval | 0) + 2);
+  const requested = Number(frames);
+  const hold = Math.max(splitHold, Number.isFinite(requested) ? (requested | 0) : 0);
+  grid.__brittleTransientFrames = Math.max(Number(grid.__brittleTransientFrames) || 0, hold);
+  grid.__brittleNeedsSettle = true;
+  grid.isSleeping = false;
+  grid.sleepFrames = 0;
+
+  const wakeHold = Number(grid.wakeHoldFrames) || 0;
+  if (wakeHold > hold) grid.wakeHoldFrames = hold;
+  markBrittleSettleRange(grid, minIndex, maxIndex);
+}
+
+function settleBrittleVisualState(grid, sleepFramesLimit) {
+  const transientFrames = Number(grid.__brittleTransientFrames) || 0;
+  if (transientFrames > 0) {
+    grid.__brittleTransientFrames = transientFrames - 1;
+    grid.isSleeping = false;
+    grid.sleepFrames = 0;
+    return;
+  }
+
+  if (grid.__brittleNeedsSettle) {
+    const shards = grid.shards;
+    const rangeStart = Number(grid.__brittleSettleStart);
+    const rangeEnd = Number(grid.__brittleSettleEnd);
+    const hasRange =
+      Number.isFinite(rangeStart) &&
+      Number.isFinite(rangeEnd) &&
+      rangeStart >= 0 &&
+      rangeEnd >= rangeStart &&
+      rangeStart < shards.length;
+    const start = hasRange ? Math.max(0, rangeStart | 0) : 0;
+    const end = hasRange ? Math.min(shards.length - 1, rangeEnd | 0) : (shards.length - 1);
+    let dirtyMin = Number.POSITIVE_INFINITY;
+    let dirtyMax = -1;
+
+    for (let i = start; i <= end; i++) {
+      const s = shards[i];
+      if (!s || !s.active || s.isDebris) continue;
+
+      const def = s.deformation;
+      const target = s.targetDeformation;
+      const hadResidual =
+        Math.abs(Number(def?.x) || 0) > 0.0001 ||
+        Math.abs(Number(def?.y) || 0) > 0.0001 ||
+        Math.abs(Number(target?.x) || 0) > 0.0001 ||
+        Math.abs(Number(target?.y) || 0) > 0.0001 ||
+        Math.abs(Number(s.__velX) || 0) > 0.0001 ||
+        Math.abs(Number(s.__velY) || 0) > 0.0001 ||
+        Math.abs(Number(s.__collVelX) || 0) > 0.0001 ||
+        Math.abs(Number(s.__collVelY) || 0) > 0.0001;
+
+      if (!hadResidual) continue;
+
+      if (def) {
+        def.x = 0;
+        def.y = 0;
+      }
+      if (target) {
+        target.x = 0;
+        target.y = 0;
+      }
+      s.__velX = 0;
+      s.__velY = 0;
+      s.__collVelX = 0;
+      s.__collVelY = 0;
+
+      const idx = Number(s.__meshIndex);
+      if (Number.isFinite(idx)) {
+        if (idx < dirtyMin) dirtyMin = idx;
+        if (idx > dirtyMax) dirtyMax = idx;
+      } else {
+        dirtyMin = 0;
+        dirtyMax = shards.length - 1;
+      }
+    }
+
+    if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) markGridMeshDirtyRange(grid, dirtyMin, dirtyMax);
+    grid.__brittleNeedsSettle = false;
+    grid.__brittleSettleStart = -1;
+    grid.__brittleSettleEnd = -1;
+  }
+
+  grid.__brittleTransientFrames = 0;
+  grid.wakeHoldFrames = 0;
+  grid.sleepFrames = Math.max(Number(grid.sleepFrames) || 0, sleepFramesLimit);
+  grid.isSleeping = true;
 }
 
 function getFinalScaleX(entity) {
@@ -412,8 +610,9 @@ function circleOverlapsEntityRect(worldX, worldY, worldRadius, entity, extraMarg
   const dx = worldX - getEntityPosX(entity);
   const dy = worldY - getEntityPosY(entity);
 
-  const lx = (dx * c + dy * s) / scaleX;
-  const ly = (-dx * s + dy * c) / scaleY;
+  const billboardOrientation = usesBillboardOrientation(entity);
+  const lx = worldDeltaToLocalX(dx, dy, scaleX, scaleY, c, s, billboardOrientation);
+  const ly = worldDeltaToLocalY(dx, dy, scaleX, scaleY, c, s, billboardOrientation);
   const pX = grid.pivot ? grid.pivot.x : 0;
   const pY = grid.pivot ? grid.pivot.y : 0;
   const cx = width * 0.5;
@@ -501,6 +700,34 @@ function getEntityAngle(entity) {
 
 function getEntityHexAngle(entity) {
   return getEntityAngle(entity) + getEntitySpriteRotation(entity) + DESTRUCTOR_CONFIG.visualRotationOffset;
+}
+
+function usesBillboardOrientation(entity) {
+  return entity?.isAsteroidHex === true || entity?.visual?.preserveBillboardOrientation === true;
+}
+
+function localDeltaToWorldX(localX, localY, scaleX, scaleY, c, s, billboardOrientation = false) {
+  return billboardOrientation
+    ? (localX * scaleX) * c + (localY * scaleY) * s
+    : (localX * scaleX) * c - (localY * scaleY) * s;
+}
+
+function localDeltaToWorldY(localX, localY, scaleX, scaleY, c, s, billboardOrientation = false) {
+  return billboardOrientation
+    ? -(localX * scaleX) * s + (localY * scaleY) * c
+    : (localX * scaleX) * s + (localY * scaleY) * c;
+}
+
+function worldDeltaToLocalX(dx, dy, scaleX, _scaleY, c, s, billboardOrientation = false) {
+  return billboardOrientation
+    ? (dx * c - dy * s) / scaleX
+    : (dx * c + dy * s) / scaleX;
+}
+
+function worldDeltaToLocalY(dx, dy, _scaleX, scaleY, c, s, billboardOrientation = false) {
+  return billboardOrientation
+    ? (dx * s + dy * c) / scaleY
+    : (-dx * s + dy * c) / scaleY;
 }
 
 function getEntityAngVel(entity) {
@@ -630,8 +857,9 @@ export function refreshHexBodyCache(entity) {
   const grid = entity.hexGrid;
   const needsMeshRefresh2D = !HEX_SHIPS_3D_ACTIVE && !!grid.meshDirty;
   const needsTextureRebuild = !HEX_SHIPS_3D_ACTIVE && !!grid.textureDirty;
+  const needsCacheRebuild = !!grid.cacheDirty && (!HEX_SHIPS_3D_ACTIVE || !grid.armorImage);
 
-  if (grid.cacheDirty || needsTextureRebuild || needsMeshRefresh2D) updateHexCache(entity);
+  if (needsCacheRebuild || needsTextureRebuild || needsMeshRefresh2D) updateHexCache(entity);
 }
 
 class HexShard {
@@ -800,21 +1028,26 @@ class HexShard {
     const rotation = getEntityHexAngle(parentEntity);
     const c = Math.cos(rotation);
     const s = Math.sin(rotation);
+    const billboardOrientation = usesBillboardOrientation(parentEntity);
     const cx = parentEntity.hexGrid.srcWidth * 0.5;
     const cy = parentEntity.hexGrid.srcHeight * 0.5;
     const pX = parentEntity.hexGrid.pivot ? parentEntity.hexGrid.pivot.x : 0;
     const pY = parentEntity.hexGrid.pivot ? parentEntity.hexGrid.pivot.y : 0;
     const startLx = (this.gridX - cx) + this.deformation.x - pX;
     const startLy = (this.gridY - cy) + this.deformation.y - pY;
+    const scaleX = Math.max(0.0001, getFinalScaleX(parentEntity));
+    const scaleY = Math.max(0.0001, getFinalScaleY(parentEntity));
+    const startWx = localDeltaToWorldX(startLx, startLy, scaleX, scaleY, c, s, billboardOrientation);
+    const startWy = localDeltaToWorldY(startLx, startLy, scaleX, scaleY, c, s, billboardOrientation);
 
-    this.worldX = px + (startLx * scale) * c - (startLy * scale) * s;
-    this.worldY = py + (startLx * scale) * s + (startLy * scale) * c;
+    this.worldX = px + startWx;
+    this.worldY = py + startWy;
 
     let vx = getEntityVelX(parentEntity);
     let vy = getEntityVelY(parentEntity);
     const angVel = getEntityAngVel(parentEntity);
-    const rx = (startLx * scale) * c - (startLy * scale) * s;
-    const ry = (startLx * scale) * s + (startLy * scale) * c;
+    const rx = startWx;
+    const ry = startWy;
 
     vx += -angVel * ry;
     vy += angVel * rx;
@@ -910,7 +1143,7 @@ class HexShard {
   }
 }
 
-const _staticProbeResult = { hitShard: null, localX: 0, localY: 0, scale: 1, c: 1, s: 0, cx: 0, cy: 0, pX: 0, pY: 0 };
+const _staticProbeResult = { hitShard: null, localX: 0, localY: 0, scale: 1, scaleX: 1, scaleY: 1, c: 1, s: 0, cx: 0, cy: 0, pX: 0, pY: 0, billboardOrientation: false };
 
 export const DestructorSystem = {
   debris: [],
@@ -1349,20 +1582,60 @@ export const DestructorSystem = {
     for (const e of entities) {
       const grid = e?.hexGrid;
       if (!grid?.shards) continue;
-      if ((Number(grid.wakeHoldFrames) || 0) > 0) grid.wakeHoldFrames -= 1;
-      if (grid.isSleeping && (Number(grid.wakeHoldFrames) || 0) <= 0) continue;
+      if (isBrittleEntity(e)) {
+        settleBrittleVisualState(grid, sleepFramesLimit);
+        continue;
+      }
+      const shards = grid.shards;
+      const len = shards.length;
+      let wakeHoldFrames = Number(grid.wakeHoldFrames) || 0;
+      if (wakeHoldFrames > 0) {
+        wakeHoldFrames -= 1;
+        grid.wakeHoldFrames = wakeHoldFrames;
+      }
+
+      const gpuAwake = (Number(e._gpuForceAwakeFrames) || 0) > 0;
+      const visualStartRaw = Number(grid.visualDirtyStart);
+      const visualEndRaw = Number(grid.visualDirtyEnd);
+      const hasVisualRange =
+        !!grid.visualDirtyAll ||
+        (
+          Number.isFinite(visualStartRaw) &&
+          Number.isFinite(visualEndRaw) &&
+          visualStartRaw >= 0 &&
+          visualEndRaw >= visualStartRaw &&
+          visualStartRaw < len
+        );
+
+      if (!hasVisualRange) {
+        if (wakeHoldFrames > 0 || gpuAwake) {
+          grid.sleepFrames = 0;
+          grid.isSleeping = false;
+          continue;
+        }
+        if (grid.isSleeping) continue;
+
+        const frames = (Number(grid.sleepFrames) || 0) + 1;
+        grid.sleepFrames = frames;
+        if (frames >= sleepFramesLimit) grid.isSleeping = true;
+        continue;
+      }
+
+      if (grid.isSleeping && wakeHoldFrames <= 0 && !gpuAwake) grid.isSleeping = false;
+
+      const start = grid.visualDirtyAll ? 0 : Math.max(0, visualStartRaw | 0);
+      const end = grid.visualDirtyAll ? (len - 1) : Math.min(len - 1, visualEndRaw | 0);
+      resetGridVisualDirtyRange(grid);
 
       let visualChanged = false;
-      let keepAwake = false;
+      let keepAwake = wakeHoldFrames > 0 || gpuAwake;
       let peakDeformation = 0;
       let dirtyMin = Number.POSITIVE_INFINITY;
       let dirtyMax = -1;
-      const shards = grid.shards;
-      const len = shards.length;
 
-      for (let i = 0; i < len; i++) {
+      for (let i = start; i <= end; i++) {
         const s = shards[i];
-        if (!s.active || s.isDebris) continue;
+        if (!s || !s.active || s.isDebris) continue;
 
         const tdx = s.targetDeformation.x;
         const tdy = s.targetDeformation.y;
@@ -1448,14 +1721,10 @@ export const DestructorSystem = {
         continue;
       }
 
-      const gpuAwake = (Number(e._gpuForceAwakeFrames) || 0) > 0;
-      if (!gpuAwake && peakDeformation <= sleepThreshold && (Number(grid.wakeHoldFrames) || 0) <= 0) {
+      if (!gpuAwake && peakDeformation <= sleepThreshold && wakeHoldFrames <= 0) {
         const frames = (Number(grid.sleepFrames) || 0) + 1;
         grid.sleepFrames = frames;
-        if (frames >= sleepFramesLimit) {
-          if (!grid.isSleeping) markGridMeshDirtyAll(grid);
-          grid.isSleeping = true;
-        }
+        if (frames >= sleepFramesLimit) grid.isSleeping = true;
       } else {
         grid.sleepFrames = 0;
         grid.isSleeping = false;
@@ -1479,6 +1748,7 @@ export const DestructorSystem = {
       for (const e of entities) {
         const grid = e?.hexGrid;
         if (!grid?.shards) continue;
+        if (isBrittleEntity(e)) continue;
         if (grid.isSleeping && (Number(grid.wakeHoldFrames) || 0) <= 0) continue;
 
         // CPU load killer: skip CPU elasticity for ships handled asynchronously by GPU.
@@ -1663,9 +1933,10 @@ export const DestructorSystem = {
     const s = Math.sin(angle);
     const dx = worldX - getEntityPosX(entity);
     const dy = worldY - getEntityPosY(entity);
+    const billboardOrientation = usesBillboardOrientation(entity);
 
-    const localX = (dx * c + dy * s) / scaleX;
-    const localY = (-dx * s + dy * c) / scaleY;
+    const localX = worldDeltaToLocalX(dx, dy, scaleX, scaleY, c, s, billboardOrientation);
+    const localY = worldDeltaToLocalY(dx, dy, scaleX, scaleY, c, s, billboardOrientation);
     const cx = entity.hexGrid.srcWidth * 0.5;
     const cy = entity.hexGrid.srcHeight * 0.5;
     const pX = entity.hexGrid.pivot ? entity.hexGrid.pivot.x : 0;
@@ -1719,6 +1990,7 @@ export const DestructorSystem = {
     _staticProbeResult.cy = cy;
     _staticProbeResult.pX = pX;
     _staticProbeResult.pY = pY;
+    _staticProbeResult.billboardOrientation = billboardOrientation;
 
     return _staticProbeResult;
   },
@@ -1742,8 +2014,24 @@ export const DestructorSystem = {
         return true;
       }
 
-      let forceX = ((bulletVel?.x || 0) * c + (bulletVel?.y || 0) * s) / Math.max(0.0001, scaleX || 1);
-      let forceY = (-(bulletVel?.x || 0) * s + (bulletVel?.y || 0) * c) / Math.max(0.0001, scaleY || 1);
+      let forceX = worldDeltaToLocalX(
+        bulletVel?.x || 0,
+        bulletVel?.y || 0,
+        Math.max(0.0001, scaleX || 1),
+        Math.max(0.0001, scaleY || 1),
+        c,
+        s,
+        probe.billboardOrientation === true
+      );
+      let forceY = worldDeltaToLocalY(
+        bulletVel?.x || 0,
+        bulletVel?.y || 0,
+        Math.max(0.0001, scaleX || 1),
+        Math.max(0.0001, scaleY || 1),
+        c,
+        s,
+        probe.billboardOrientation === true
+      );
 
       if (Math.sqrt(forceX * forceX + forceY * forceY) < 0.001) {
         const fx = (getShardCollisionGridX(hitShard) - cx - pX) - localX;
@@ -1791,12 +2079,95 @@ export const DestructorSystem = {
     }
   },
 
+  distributeBrittleDamage(entity, impactLocalX, impactLocalY, forceX, forceY, damageScale = 1.0, customRadius = null) {
+    if (!entity?.hexGrid?.shards) return;
+    this.wakeHexEntity(entity, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
+
+    const radius = customRadius || DESTRUCTOR_CONFIG.bendingRadius;
+    const invRadius = 1 / Math.max(0.0001, radius);
+    const currentBendingRadSq = radius * radius;
+    const forceMag = Math.hypot(forceX, forceY);
+    const hardness = Math.max(0, Math.min(1, Number(entity?.hardness) || 0));
+    const brittleness = Math.max(0.35, 1.25 - hardness * 0.55);
+
+    const pX = entity.hexGrid.pivot ? entity.hexGrid.pivot.x : 0;
+    const pY = entity.hexGrid.pivot ? entity.hexGrid.pivot.y : 0;
+    const impactX = impactLocalX + pX;
+    const impactY = impactLocalY + pY;
+    const cx = entity.hexGrid.srcWidth * 0.5;
+    const cy = entity.hexGrid.srcHeight * 0.5;
+    const cols = entity.hexGrid.cols;
+    const rows = entity.hexGrid.rows;
+    const grid = entity.hexGrid.grid;
+    if (!grid || !cols || !rows) return;
+
+    const approxC = Math.round((impactX + cx) / HEX_SPACING);
+    const approxR = Math.round((impactY + cy) / HEX_HEIGHT);
+    const cellRadC = Math.ceil(radius / HEX_SPACING) + 2;
+    const cellRadR = Math.ceil(radius / HEX_HEIGHT) + 2;
+    const c0 = Math.max(0, approxC - cellRadC);
+    const c1 = Math.min(cols - 1, approxC + cellRadC);
+    const r0 = Math.max(0, approxR - cellRadR);
+    const r1 = Math.min(rows - 1, approxR + cellRadR);
+
+    let anyDestroyed = false;
+    let dirtyMin = Number.POSITIVE_INFINITY;
+    let dirtyMax = -1;
+    const impactDmgBase = Math.max(1, damageScale * 8 + forceMag * 0.045);
+
+    for (let r = r0; r <= r1; r++) {
+      const rowBase = r * cols;
+      for (let c = c0; c <= c1; c++) {
+        const shard = grid[rowBase + c];
+        if (!shard || !shard.active || shard.isDebris) continue;
+
+        const dx = (getShardCollisionGridX(shard) - cx) - impactX;
+        const dy = (getShardCollisionGridY(shard) - cy) - impactY;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= currentBendingRadSq) continue;
+
+        const factor = 1 - Math.sqrt(d2) * invRadius;
+        if (factor <= 0) continue;
+
+        const influence = factor * factor * (3 - 2 * factor);
+        const shardDamage = impactDmgBase * influence * brittleness;
+        shard.hp -= shardDamage;
+        shard.__collVelX = (Number(shard.__collVelX) || 0) + forceX * influence * 0.04;
+        shard.__collVelY = (Number(shard.__collVelY) || 0) + forceY * influence * 0.04;
+
+        const shardIdx = Number(shard.__meshIndex);
+        if (Number.isFinite(shardIdx)) {
+          if (shardIdx < dirtyMin) dirtyMin = shardIdx;
+          if (shardIdx > dirtyMax) dirtyMax = shardIdx;
+        } else {
+          dirtyMin = 0;
+          dirtyMax = entity.hexGrid.shards.length - 1;
+        }
+
+        if (shard.hp <= 0 && !shard.isDebris) {
+          this.destroyShard(entity, shard, { x: getEntityVelX(entity) + forceX * 0.02, y: getEntityVelY(entity) + forceY * 0.02 });
+          anyDestroyed = true;
+        }
+      }
+    }
+
+    if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) {
+      markBrittleTransient(entity, 0, dirtyMin, dirtyMax);
+      markGridMeshDirtyRange(entity.hexGrid, dirtyMin, dirtyMax);
+    }
+    if (anyDestroyed && !entity.noSplit) this.splitQueue.push(entity);
+  },
+
   distributeStructuralDamage(entity, impactLocalX, impactLocalY, forceX, forceY, damageScale = 1.0, customRadius = null) {
     const dbgEnabled = this._liveCollisionDebug?.enabled === true;
     const tDeform0 = dbgEnabled ? nowMs() : 0;
 
     try {
       if (!entity?.hexGrid?.shards) return;
+      if (isBrittleEntity(entity)) {
+        this.distributeBrittleDamage(entity, impactLocalX, impactLocalY, forceX, forceY, damageScale, customRadius);
+        return;
+      }
       this.wakeHexEntity(entity, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
 
       const radius = customRadius || DESTRUCTOR_CONFIG.bendingRadius;
@@ -2383,6 +2754,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const sinI = Math.sin(angIter);
       const cosG = Math.cos(angGrid);
       const sinG = Math.sin(angGrid);
+      const iterBillboardOrientation = usesBillboardOrientation(iterator);
+      const gridBillboardOrientation = usesBillboardOrientation(gridHolder);
 
       const cxI = iterator.hexGrid.srcWidth * 0.5;
       const cyI = iterator.hexGrid.srcHeight * 0.5;
@@ -2439,13 +2812,13 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
         const relIx = (getShardCollisionGridX(sI) - cxI) - pIx;
         const relIy = (getShardCollisionGridY(sI) - cyI) - pIy;
-        const worldIx = ix + (relIx * scaleIterX) * cosI - (relIy * scaleIterY) * sinI;
-        const worldIy = iy + (relIx * scaleIterX) * sinI + (relIy * scaleIterY) * cosI;
+        const worldIx = ix + localDeltaToWorldX(relIx, relIy, scaleIterX, scaleIterY, cosI, sinI, iterBillboardOrientation);
+        const worldIy = iy + localDeltaToWorldY(relIx, relIy, scaleIterX, scaleIterY, cosI, sinI, iterBillboardOrientation);
 
         const dx = worldIx - gx;
         const dy = worldIy - gy;
-        const localGx = (dx * cosG + dy * sinG) / scaleGridX;
-        const localGy = (-dx * sinG + dy * cosG) / scaleGridY;
+        const localGx = worldDeltaToLocalX(dx, dy, scaleGridX, scaleGridY, cosG, sinG, gridBillboardOrientation);
+        const localGy = worldDeltaToLocalY(dx, dy, scaleGridX, scaleGridY, cosG, sinG, gridBillboardOrientation);
         const gridGx = localGx + cxG + pGx;
         const gridGy = localGy + cyG + pGy;
         const approxC = Math.round(gridGx / HEX_SPACING);
@@ -2724,6 +3097,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const massAdvantageA = massA / (massB + 1);
         const massAdvantageB = massB / (massA + 1);
         const maxDmgPerTick = DESTRUCTOR_CONFIG.shardHP * 0.08;
+        const brittleA = isBrittleEntity(A);
+        const brittleB = isBrittleEntity(B);
 
         let dirtyMinA = Number.POSITIVE_INFINITY;
         let dirtyMaxA = -1;
@@ -2743,16 +3118,21 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             const pushX = clampA.x * pushMult;
             const pushY = clampA.y * pushMult;
 
-            sA.applyDeformation(pushX, pushY, 1.0, true);
+            if (brittleA) {
+              sA.__collVelX = (sA.__collVelX || 0) + (pushX * 0.35);
+              sA.__collVelY = (sA.__collVelY || 0) + (pushY * 0.35);
+            } else {
+              sA.applyDeformation(pushX, pushY, 1.0, true);
 
-            const defSqA = sA.targetDeformation.x * sA.targetDeformation.x + sA.targetDeformation.y * sA.targetDeformation.y;
-            const hardLimitSq = maxCrushLimit * maxCrushLimit * 1.5;
-            if (defSqA > hardLimitSq) {
-              const defScale = Math.sqrt(hardLimitSq / defSqA);
-              sA.targetDeformation.x *= defScale;
-              sA.targetDeformation.y *= defScale;
-              sA.deformation.x *= defScale;
-              sA.deformation.y *= defScale;
+              const defSqA = sA.targetDeformation.x * sA.targetDeformation.x + sA.targetDeformation.y * sA.targetDeformation.y;
+              const hardLimitSq = maxCrushLimit * maxCrushLimit * 1.5;
+              if (defSqA > hardLimitSq) {
+                const defScale = Math.sqrt(hardLimitSq / defSqA);
+                sA.targetDeformation.x *= defScale;
+                sA.targetDeformation.y *= defScale;
+                sA.deformation.x *= defScale;
+                sA.deformation.y *= defScale;
+              }
             }
 
             const idxA = Number(sA.__meshIndex);
@@ -2764,18 +3144,23 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               dirtyMaxA = A.hexGrid.shards.length - 1;
             }
 
-            sA.__collVelX = (sA.__collVelX || 0) + (pushX * 1.2);
-            sA.__collVelY = (sA.__collVelY || 0) + (pushY * 1.2);
+            if (!brittleA) {
+              sA.__collVelX = (sA.__collVelX || 0) + (pushX * 1.2);
+              sA.__collVelY = (sA.__collVelY || 0) + (pushY * 1.2);
+            }
 
             if (doDamage) {
               const kineticDmg = (rawCrushMagA * realRatioA * 0.18 * massAdvantageB) / Math.sqrt(contactsCount);
-              sA.hp -= Math.min(maxDmgPerTick, kineticDmg);
+              const brittleMult = brittleA ? 3.5 : 1.0;
+              const cap = brittleA ? DESTRUCTOR_CONFIG.shardHP * 0.75 : maxDmgPerTick;
+              sA.hp -= Math.min(cap, kineticDmg * brittleMult);
             }
 
             if (sA.hp <= 0) {
               this._destroyVelA.x = getEntityVelX(A);
               this._destroyVelA.y = getEntityVelY(A);
               this.destroyShard(A, sA, this._destroyVelA);
+              if (!A.noSplit && this.splitQueue.indexOf(A) === -1) this.splitQueue.push(A);
             }
           }
 
@@ -2786,16 +3171,21 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             const pushX = clampB.x * pushMult;
             const pushY = clampB.y * pushMult;
 
-            sB.applyDeformation(pushX, pushY, 1.0, true);
+            if (brittleB) {
+              sB.__collVelX = (sB.__collVelX || 0) + (pushX * 0.35);
+              sB.__collVelY = (sB.__collVelY || 0) + (pushY * 0.35);
+            } else {
+              sB.applyDeformation(pushX, pushY, 1.0, true);
 
-            const defSqB = sB.targetDeformation.x * sB.targetDeformation.x + sB.targetDeformation.y * sB.targetDeformation.y;
-            const hardLimitSqB = maxCrushLimit * maxCrushLimit * 1.5;
-            if (defSqB > hardLimitSqB) {
-              const defScaleB = Math.sqrt(hardLimitSqB / defSqB);
-              sB.targetDeformation.x *= defScaleB;
-              sB.targetDeformation.y *= defScaleB;
-              sB.deformation.x *= defScaleB;
-              sB.deformation.y *= defScaleB;
+              const defSqB = sB.targetDeformation.x * sB.targetDeformation.x + sB.targetDeformation.y * sB.targetDeformation.y;
+              const hardLimitSqB = maxCrushLimit * maxCrushLimit * 1.5;
+              if (defSqB > hardLimitSqB) {
+                const defScaleB = Math.sqrt(hardLimitSqB / defSqB);
+                sB.targetDeformation.x *= defScaleB;
+                sB.targetDeformation.y *= defScaleB;
+                sB.deformation.x *= defScaleB;
+                sB.deformation.y *= defScaleB;
+              }
             }
 
             const idxB = Number(sB.__meshIndex);
@@ -2807,28 +3197,35 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               dirtyMaxB = B.hexGrid.shards.length - 1;
             }
 
-            sB.__collVelX = (sB.__collVelX || 0) + (pushX * 1.2);
-            sB.__collVelY = (sB.__collVelY || 0) + (pushY * 1.2);
+            if (!brittleB) {
+              sB.__collVelX = (sB.__collVelX || 0) + (pushX * 1.2);
+              sB.__collVelY = (sB.__collVelY || 0) + (pushY * 1.2);
+            }
 
             if (doDamage) {
               const kineticDmg = (rawCrushMagB * realRatioB * 0.18 * massAdvantageA) / Math.sqrt(contactsCount);
-              sB.hp -= Math.min(maxDmgPerTick, kineticDmg);
+              const brittleMult = brittleB ? 3.5 : 1.0;
+              const cap = brittleB ? DESTRUCTOR_CONFIG.shardHP * 0.75 : maxDmgPerTick;
+              sB.hp -= Math.min(cap, kineticDmg * brittleMult);
             }
 
             if (sB.hp <= 0) {
               this._destroyVelB.x = getEntityVelX(B);
               this._destroyVelB.y = getEntityVelY(B);
               this.destroyShard(B, sB, this._destroyVelB);
+              if (!B.noSplit && this.splitQueue.indexOf(B) === -1) this.splitQueue.push(B);
             }
           }
         }
 
         if (A.hexGrid && dirtyMaxA >= 0 && Number.isFinite(dirtyMinA)) {
+          if (brittleA) markBrittleTransient(A, 0, dirtyMinA, dirtyMaxA);
           markGridMeshDirtyRange(A.hexGrid, dirtyMinA, dirtyMaxA);
           if (!HEX_SHIPS_3D_ACTIVE) A.hexGrid.textureDirty = true;
         }
 
         if (B.hexGrid && dirtyMaxB >= 0 && Number.isFinite(dirtyMinB)) {
+          if (brittleB) markBrittleTransient(B, 0, dirtyMinB, dirtyMaxB);
           markGridMeshDirtyRange(B.hexGrid, dirtyMinB, dirtyMaxB);
           if (!HEX_SHIPS_3D_ACTIVE) B.hexGrid.textureDirty = true;
         }
@@ -2857,14 +3254,16 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
   destroyShard(entity, shard, velVector) {
     if (!entity?.hexGrid || !shard || shard.isDebris) return;
     this.wakeHexEntity(entity, DESTRUCTOR_CONFIG.elasticWakeFrames | 0);
+    markBrittleTransient(entity, 0, Number(shard.__meshIndex), Number(shard.__meshIndex));
     shard.hp = 0;
 
-    const skipCanvasErase = HEX_SHIPS_3D_ACTIVE && entity.isRingSegment;
-    if (!skipCanvasErase) this._queueShardErase(entity, shard);
+    const shouldEraseCache = !(HEX_SHIPS_3D_ACTIVE && (entity.isRingSegment || !!entity.hexGrid.armorImage));
+    const suppressDebris = HEX_SHIPS_3D_ACTIVE && entity.isRingSegment;
+    if (shouldEraseCache) this._queueShardErase(entity, shard);
 
     const scale = getFinalScale(entity);
 
-    if (skipCanvasErase) {
+    if (suppressDebris) {
       shard.isDebris = true;
       shard.active = false;
     } else {
@@ -2882,8 +3281,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
     markGridMeshDirtyByShard(entity.hexGrid, shard);
 
-    if (!skipCanvasErase) entity.hexGrid.gpuTextureNeedsUpdate = true;
-    else entity.hexGrid.gpuTextureNeedsUpdate = false;
+    if (shouldEraseCache) entity.hexGrid.gpuTextureNeedsUpdate = true;
   },
 
   recycleWreck(wreck) {
@@ -3079,7 +3477,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     );
 
     rebuildNeighbors(entity.hexGrid);
-    if (!entity.isPlayer) entity.mass = Math.max(10, sumShardMass(shards));
+    if (!entity.isPlayer && !entity.isAsteroidHex) entity.mass = Math.max(10, sumShardMass(shards));
   },
 
   spawnWreckEntity(parent, shards, entities) {
@@ -3110,9 +3508,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     const ang = getEntityHexAngle(parent);
     const c = Math.cos(ang);
     const s = Math.sin(ang);
+    const billboardOrientation = usesBillboardOrientation(parent);
 
-    const worldX = getEntityPosX(parent) + (relX * scaleX) * c - (relY * scaleY) * s;
-    const worldY = getEntityPosY(parent) + (relX * scaleX) * s + (relY * scaleY) * c;
+    const worldX = getEntityPosX(parent) + localDeltaToWorldX(relX, relY, scaleX, scaleY, c, s, billboardOrientation);
+    const worldY = getEntityPosY(parent) + localDeltaToWorldY(relX, relY, scaleX, scaleY, c, s, billboardOrientation);
 
     const angVel = getEntityAngVel(parent);
     let wreckVx = getEntityVelX(parent);
@@ -3140,8 +3539,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       energizedShards++;
     }
 
-    const localToWorldX = (x, y) => (x * scaleX) * c - (y * scaleY) * s;
-    const localToWorldY = (x, y) => (x * scaleX) * s + (y * scaleY) * c;
+    const localToWorldX = (x, y) => localDeltaToWorldX(x, y, scaleX, scaleY, c, s, billboardOrientation);
+    const localToWorldY = (x, y) => localDeltaToWorldY(x, y, scaleX, scaleY, c, s, billboardOrientation);
 
     if (energizedShards > 0) {
       const invEnergized = 1 / energizedShards;
@@ -3207,10 +3606,22 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     wreck.angle = getEntityAngle(parent);
     wreck.angVel = getEntityAngVel(parent) + splitAngKick;
     wreck.radius = newRadius;
-    wreck.mass = Math.max(10, sumShardMass(shards));
-    wreck.friction = 0.9986;
+    const parentBaseCount = Math.max(
+      1,
+      Number(parent.hexGrid.baseStructuralCount) || Number(parent.hexGrid.shards?.length) || shards.length
+    );
+    const inheritedMass = parent.isAsteroidHex
+      ? Math.max(10, getEntityMass(parent) * (shards.length / parentBaseCount))
+      : Math.max(10, sumShardMass(shards));
+    wreck.mass = inheritedMass;
+    wreck.friction = parent.isAsteroidHex ? 1.0 : 0.9986;
     wreck.dead = false;
     wreck.isWreck = true;
+    wreck.isAsteroidHex = !!parent.isAsteroidHex;
+    wreck.noWreckSleep = !!parent.isAsteroidHex;
+    wreck.destructionMaterial = parent.destructionMaterial;
+    wreck.noElasticity = parent.noElasticity === true;
+    wreck.noGpuSoftBody = parent.noGpuSoftBody === true;
     wreck.isCollidable = true;
     wreck._wreckAge = 0;
     wreck._wreckSleepTimer = 0;
@@ -3220,6 +3631,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       spriteScale: Math.max(scaleX, scaleY),
       spriteScaleX: scaleX,
       spriteScaleY: scaleY,
+      preserveBillboardLighting: parent.visual?.preserveBillboardLighting === true,
+      preserveBillboardOrientation: parent.visual?.preserveBillboardOrientation === true,
       spriteRotation: getEntitySpriteRotation(parent)
     };
 
@@ -3395,6 +3808,10 @@ export function initHexBody(entity, image, damagedImage = null, isProjectile = f
     meshDirtyAll: false,
     meshDirtyStart: -1,
     meshDirtyEnd: -1,
+    meshRevision: 0,
+    visualDirtyAll: false,
+    visualDirtyStart: -1,
+    visualDirtyEnd: -1,
     gpuTextureNeedsUpdate: false,
     isSleeping: false,
     sleepFrames: 0,

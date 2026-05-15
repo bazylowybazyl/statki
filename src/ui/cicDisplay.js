@@ -1270,17 +1270,15 @@ function drawAsteroidBeltRegions(ctx, sunScr, zoom, W, H) {
       ctx.arc(sunScr.x, sunScr.y, innerR, 0, Math.PI * 2);
       ctx.fill('evenodd');
 
-      // Granice (cienki dashed stroke na inner i outer)
+      // Granice (cienki solid stroke - dashed był drogi i powodował dodatkowe state changes).
       ctx.strokeStyle = BELT_STROKE[belt.id] || 'rgba(140,140,140,0.5)';
       ctx.lineWidth = 0.8;
-      ctx.setLineDash([3, 4]);
       ctx.beginPath();
       ctx.arc(sunScr.x, sunScr.y, innerR, 0, Math.PI * 2);
       ctx.stroke();
       ctx.beginPath();
       ctx.arc(sunScr.x, sunScr.y, outerR, 0, Math.PI * 2);
       ctx.stroke();
-      ctx.setLineDash([]);
       ctx.lineWidth = 0.7;
 
       // Etykieta przy szerokim widoku
@@ -1401,6 +1399,14 @@ function drawScannedAsteroids(ctx, asteroidField, toScreen, zoom, W, H) {
   if (asteroidField._cicScanFrame === undefined) asteroidField._cicScanFrame = 0;
   const frameId = ++asteroidField._cicScanFrame;
 
+  // KRYTYCZNE: toScreen() zwraca {x,y} nowy obiekt per call. Przy 5 sondach
+  // w gęstym pasie to ~36k alokacji/klatkę = GC pressure = stutter przy każdym
+  // otwarciu CIC (V8 GC pause). Inlinujemy projekcję - liczymy offsetX/Y raz.
+  const _origin = toScreen(0, 0);
+  const offsetX = _origin.x;
+  const offsetY = _origin.y;
+  // toScreen(wx, wy) = { x: offsetX + wx * zoom, y: offsetY + wy * zoom }
+
   ctx.save();
   ctx.lineWidth = 1;
 
@@ -1409,53 +1415,53 @@ function drawScannedAsteroids(ctx, asteroidField, toScreen, zoom, W, H) {
   let lastColor = null;
   let lastAlpha = -1;
 
-  for (let s = 0; s < sources.length; s++) {
+  // Cap żeby first-frame stutter był bounded. ~2000 kropek wystarczy do wrażenia
+  // "pełnego pola" w zasięgu skanera, więcej i tak nie rozróżnisz wzrokiem.
+  const MAX_DRAWN = 2000;
+
+  for (let s = 0; s < sources.length && drawnCount < MAX_DRAWN; s++) {
     const src = sources[s];
     if (!src || !(src.range > 0)) continue;
     const sx = src.x, sy = src.y, srange = src.range;
     const srange2 = srange * srange;
 
     asteroidField.spatial.forEachInRadius(sx, sy, srange, (a) => {
+      if (drawnCount >= MAX_DRAWN) return;
       if (!a.alive || a._cicScanFrame === frameId) return;
       const dx = a.worldX - sx;
       const dy = a.worldY - sy;
       if (dx * dx + dy * dy > srange2) return;
       a._cicScanFrame = frameId;
 
-      const scr = toScreen(a.worldX, a.worldY);
-      if (scr.x < cullX0 || scr.x > cullX1 || scr.y < cullY0 || scr.y > cullY1) return;
+      // Inline projection - ZERO alokacji obiektu per asteroid
+      const scrX = offsetX + a.worldX * zoom;
+      const scrY = offsetY + a.worldY * zoom;
+      if (scrX < cullX0 || scrX > cullX1 || scrY < cullY0 || scrY > cullY1) return;
 
       const baseDot = ASTEROID_CIC_DOT[a.size] || 1.0;
       const physR = (a.scale * 0.5) * zoom;
-      const r = Math.max(baseDot, Math.min(physR, 9));
+      const r = physR > 9 ? 9 : (physR < baseDot ? baseDot : physR);
       const color = ASTEROID_CIC_COLORS[a.type] || '#8899aa';
       const alpha = a.hp < a.hpMax ? 0.65 : 0.9;
 
-      // Minimalizuj zmiany stanu canvasu - cache color/alpha między iteracjami
       if (color !== lastColor) { ctx.fillStyle = color; lastColor = color; }
       if (alpha !== lastAlpha) { ctx.globalAlpha = alpha; lastAlpha = alpha; }
 
-      // Małe kropki = fillRect (znacznie szybsze niż arc)
       if (r < 1.5) {
-        const px = scr.x - r;
-        const py = scr.y - r;
-        const sz = r + r;
-        ctx.fillRect(px, py, sz, sz);
+        ctx.fillRect(scrX - r, scrY - r, r + r, r + r);
       } else {
         ctx.beginPath();
-        ctx.arc(scr.x, scr.y, r, 0, Math.PI * 2);
+        ctx.arc(scrX, scrY, r, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      // BIG - NATO crosshair (tylko ten dostaje stroke)
       if (a.size === 'BIG' && r > 2) {
-        if (color !== lastColor) { ctx.strokeStyle = color; }
-        else ctx.strokeStyle = color;
+        ctx.strokeStyle = color;
         ctx.beginPath();
-        ctx.moveTo(scr.x - r - 2, scr.y);
-        ctx.lineTo(scr.x + r + 2, scr.y);
-        ctx.moveTo(scr.x, scr.y - r - 2);
-        ctx.lineTo(scr.x, scr.y + r + 2);
+        ctx.moveTo(scrX - r - 2, scrY);
+        ctx.lineTo(scrX + r + 2, scrY);
+        ctx.moveTo(scrX, scrY - r - 2);
+        ctx.lineTo(scrX, scrY + r + 2);
         ctx.stroke();
       }
       drawnCount++;

@@ -23,6 +23,8 @@ export class HexArmorHUD {
         this.shardsRef = null;
         this.shardCount = 0;
         this.lastDrawMs = 0;
+        this.lastMeshRevision = -1;
+        this.lastActiveStructuralCount = -1;
         
         // Możesz teraz spróbować zmienić to na 33 (30 FPS) lub nawet 16 (60 FPS)
         this.minDrawIntervalMs = 80; 
@@ -90,6 +92,8 @@ export class HexArmorHUD {
             this.layoutCells = [];
             this.shardsRef = null;
             this.shardCount = 0;
+            this.lastMeshRevision = -1;
+            this.lastActiveStructuralCount = -1;
             this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
             return;
         }
@@ -103,11 +107,34 @@ export class HexArmorHUD {
             this.rebuildLayout(grid);
         }
 
+        const activeStructuralCount = Number.isFinite(Number(grid.activeStructuralCount))
+            ? Number(grid.activeStructuralCount)
+            : shards.length;
+        const meshRevision = Number.isFinite(Number(grid.meshRevision))
+            ? Number(grid.meshRevision)
+            : 0;
+        const pendingEraseCount = Array.isArray(grid._pendingEraseQueue) ? grid._pendingEraseQueue.length : 0;
+        const hasPendingVisualChange =
+            !!grid.meshDirty ||
+            !!grid.textureDirty ||
+            !!grid.cacheDirty ||
+            !!grid.gpuTextureNeedsUpdate ||
+            pendingEraseCount > 0;
+        const stateChanged =
+            needsRebuild ||
+            hasPendingVisualChange ||
+            meshRevision !== this.lastMeshRevision ||
+            activeStructuralCount !== this.lastActiveStructuralCount;
+
+        if (!stateChanged) return;
+
         const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
         if (!needsRebuild && (now - this.lastDrawMs) < this.minDrawIntervalMs) return;
 
         this.draw();
         this.lastDrawMs = now;
+        this.lastMeshRevision = meshRevision;
+        this.lastActiveStructuralCount = activeStructuralCount;
     }
 
     rebuildLayout(grid) {
