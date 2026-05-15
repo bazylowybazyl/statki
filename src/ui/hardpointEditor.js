@@ -6,6 +6,15 @@ import pirateDestroyerImg from '../assets/ships/piratedestroyer.png';
 import pirateBattleshipImg from '../assets/ships/piratebattleship.png';
 import { composeShipThrusterCommand, updateShipThrusterState } from '../game/shipEntity.js';
 import { SHIP_EDITOR_DEFAULTS } from '../data/hardpointEditorDefaults.js';
+import {
+  LIGHT_DEFAULTS,
+  LIGHT_KINDS,
+  compactLightMarker,
+  createEmptyLights,
+  hasLightsContent,
+  normalizeLightMarker,
+  normalizeLightsBlock
+} from './shipLightEditorModel.js';
 
 const STYLE_ID = 'hp-editor-style';
 const ROOT_ID = 'hp-editor-root';
@@ -34,7 +43,8 @@ function shipDataHasContent(data) {
     (Array.isArray(data?.hardpoints) && data.hardpoints.length) ||
     (Array.isArray(data?.cores) && data.cores.length) ||
     (Array.isArray(data?.engines?.main) && data.engines.main.length) ||
-    (Array.isArray(data?.engines?.side) && data.engines.side.length)
+    (Array.isArray(data?.engines?.side) && data.engines.side.length) ||
+    hasLightsContent(data?.lights)
   );
 }
 
@@ -111,7 +121,9 @@ const COLORS = {
   builtin: '#7ee7ff',
   core: '#ff3c3c',
   engineMain: '#7ae4ff',
-  engineSide: '#ffd46a'
+  engineSide: '#ffd46a',
+  lightPosition: LIGHT_DEFAULTS[LIGHT_KINDS.POSITION].color,
+  lightRoad: LIGHT_DEFAULTS[LIGHT_KINDS.ROAD].color
 };
 
 const PALETTE_ITEMS = [
@@ -128,7 +140,9 @@ const PALETTE_ITEMS = [
   { id: 'engine_side', label: 'Dysza SIDE AUTO', tool: 'engine_side', hardpointType: null, color: COLORS.engineSide, engineMount: 'auto' },
   { id: 'engine_side_u', label: 'Dysza SIDE Upper', tool: 'engine_side', hardpointType: null, color: COLORS.engineSide, engineMount: 'upper_auto' },
   { id: 'engine_side_c', label: 'Dysza SIDE Center', tool: 'engine_side', hardpointType: null, color: COLORS.engineSide, engineMount: 'center_auto' },
-  { id: 'engine_side_l', label: 'Dysza SIDE Lower', tool: 'engine_side', hardpointType: null, color: COLORS.engineSide, engineMount: 'lower_auto' }
+  { id: 'engine_side_l', label: 'Dysza SIDE Lower', tool: 'engine_side', hardpointType: null, color: COLORS.engineSide, engineMount: 'lower_auto' },
+  { id: 'light_position', label: 'Swiatlo pozycyjne', tool: 'light_position', hardpointType: null, color: COLORS.lightPosition },
+  { id: 'light_road', label: 'Swiatlo drogowe', tool: 'light_road', hardpointType: null, color: COLORS.lightRoad }
 ];
 
 const state = {
@@ -148,6 +162,15 @@ const state = {
   sideVfxWidthMax: 227,
   sideVfxLengthMin: 49,
   sideVfxLengthMax: 354,
+  positionLightColor: LIGHT_DEFAULTS[LIGHT_KINDS.POSITION].color,
+  positionLightPower: LIGHT_DEFAULTS[LIGHT_KINDS.POSITION].power,
+  positionLightRadius: LIGHT_DEFAULTS[LIGHT_KINDS.POSITION].radius,
+  roadLightColor: LIGHT_DEFAULTS[LIGHT_KINDS.ROAD].color,
+  roadLightPower: LIGHT_DEFAULTS[LIGHT_KINDS.ROAD].power,
+  roadLightRadius: LIGHT_DEFAULTS[LIGHT_KINDS.ROAD].radius,
+  roadLightRange: LIGHT_DEFAULTS[LIGHT_KINDS.ROAD].range,
+  roadLightConeDeg: LIGHT_DEFAULTS[LIGHT_KINDS.ROAD].coneDeg,
+  roadLightDeg: LIGHT_DEFAULTS[LIGHT_KINDS.ROAD].deg,
   mirrorLR: true,
   mirrorUD: false,
   snap: true,
@@ -224,6 +247,77 @@ function normalizeGimbalRange(minDeg, maxDeg, fallback) {
 
 function getEngineToolDefaults(tool) {
   return tool === 'engine_side' ? ENGINE_SIDE_GIMBAL_DEFAULT : ENGINE_MAIN_GIMBAL_DEFAULT;
+}
+
+function getLightKindForTool(tool = state.tool) {
+  if (tool === 'light_position') return LIGHT_KINDS.POSITION;
+  if (tool === 'light_road') return LIGHT_KINDS.ROAD;
+  return null;
+}
+
+function isLightTool(tool = state.tool) {
+  return !!getLightKindForTool(tool);
+}
+
+function normalizeColorInput(value, fallback) {
+  const raw = String(value || '').trim();
+  return (/^#[0-9a-f]{6}$/i.test(raw) || /^#[0-9a-f]{3}$/i.test(raw))
+    ? raw.toLowerCase()
+    : fallback;
+}
+
+function clampNumber(value, min, max, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.max(min, Math.min(max, num));
+}
+
+function getLightBrushState(kind = getLightKindForTool()) {
+  if (kind === LIGHT_KINDS.ROAD) {
+    return {
+      color: state.roadLightColor,
+      power: state.roadLightPower,
+      radius: state.roadLightRadius,
+      range: state.roadLightRange,
+      coneDeg: state.roadLightConeDeg,
+      deg: state.roadLightDeg
+    };
+  }
+  return {
+    color: state.positionLightColor,
+    power: state.positionLightPower,
+    radius: state.positionLightRadius
+  };
+}
+
+function setLightBrushState(kind, patch = {}) {
+  if (kind === LIGHT_KINDS.ROAD) {
+    const defaults = LIGHT_DEFAULTS[LIGHT_KINDS.ROAD];
+    if (patch.color !== undefined) state.roadLightColor = normalizeColorInput(patch.color, defaults.color);
+    if (patch.power !== undefined) state.roadLightPower = round2(clampNumber(patch.power, 0.05, 20, defaults.power));
+    if (patch.radius !== undefined) state.roadLightRadius = round2(clampNumber(patch.radius, 1, 48, defaults.radius));
+    if (patch.range !== undefined) state.roadLightRange = round2(clampNumber(patch.range, 50, 4000, defaults.range));
+    if (patch.coneDeg !== undefined) state.roadLightConeDeg = round2(clampNumber(patch.coneDeg, 8, 160, defaults.coneDeg));
+    if (patch.deg !== undefined) state.roadLightDeg = round2(normalizeDeg(patch.deg));
+    return;
+  }
+  const defaults = LIGHT_DEFAULTS[LIGHT_KINDS.POSITION];
+  if (patch.color !== undefined) state.positionLightColor = normalizeColorInput(patch.color, defaults.color);
+  if (patch.power !== undefined) state.positionLightPower = round2(clampNumber(patch.power, 0.05, 4, defaults.power));
+  if (patch.radius !== undefined) state.positionLightRadius = round2(clampNumber(patch.radius, 1, 12, defaults.radius));
+}
+
+function syncLightControls() {
+  const c = runtime.controls;
+  if (!c?.lightColor) return;
+  const kind = getLightKindForTool() || LIGHT_KINDS.POSITION;
+  const brush = getLightBrushState(kind);
+  c.lightColor.value = brush.color;
+  c.lightPower.value = String(brush.power);
+  c.lightRadius.value = String(brush.radius);
+  c.lightDeg.value = String(kind === LIGHT_KINDS.ROAD ? brush.deg : state.roadLightDeg);
+  c.lightRange.value = String(kind === LIGHT_KINDS.ROAD ? brush.range : state.roadLightRange);
+  c.lightCone.value = String(kind === LIGHT_KINDS.ROAD ? brush.coneDeg : state.roadLightConeDeg);
 }
 
 function inferEngineMount(tool, x, y) {
@@ -348,6 +442,7 @@ function ensureStyle() {
   #${ROOT_ID} .hp-c{display:flex;gap:6px;align-items:center;background:#0a1222;border:1px solid #243654;border-radius:8px;padding:6px 8px}
   #${ROOT_ID} .hp-c label{font-size:12px;opacity:.9}
   #${ROOT_ID} .hp-c input[type=number],#${ROOT_ID} .hp-c select{background:#091122;color:#fff;border:1px solid #2d4264;border-radius:6px;padding:3px 6px}
+  #${ROOT_ID} .hp-c input[type=color]{width:38px;height:28px;background:#091122;border:1px solid #2d4264;border-radius:6px;padding:2px}
   #${ROOT_ID} .hp-c input[type=checkbox]{transform:translateY(1px)}
   #${ROOT_ID} .hp-editor-top button{background:#102244;border:1px solid #35588b;color:#fff;border-radius:7px;padding:6px 10px;cursor:pointer}
   #${ROOT_ID} .hp-editor-top button:hover{background:#1a3159}
@@ -387,6 +482,12 @@ function createRoot() {
         <div class="hp-c"><label>Statek</label><select id="hp-ship"></select></div>
         <div class="hp-c"><label>Built-In deg</label><input id="hp-hardpoint-deg" type="number" step="1" min="-180" max="180" value="90" style="width:72px;"></div>
         <div class="hp-c"><label>Silnik deg</label><input id="hp-engine-deg" type="number" step="1" min="-180" max="180" value="90" style="width:70px;"></div>
+        <div class="hp-c"><label>Light color</label><input id="hp-light-color" type="color" value="#ff2b2b"></div>
+        <div class="hp-c"><label>Light moc</label><input id="hp-light-power" type="number" min="0.05" max="20" step="0.05" value="0.8" style="width:64px;"></div>
+        <div class="hp-c"><label>Light radius</label><input id="hp-light-radius" type="number" min="1" max="48" step="1" value="4" style="width:64px;"></div>
+        <div class="hp-c"><label>Light deg</label><input id="hp-light-deg" type="number" step="1" min="-180" max="180" value="90" style="width:70px;"></div>
+        <div class="hp-c"><label>Road range</label><input id="hp-light-range" type="number" min="50" max="4000" step="25" value="800" style="width:76px;"></div>
+        <div class="hp-c"><label>Road cone</label><input id="hp-light-cone" type="number" min="8" max="160" step="1" value="40" style="width:68px;"></div>
       <div class="hp-c"><label>Offset X</label><input id="hp-engine-offx" type="number" step="1" value="0" style="width:70px;"></div>
       <div class="hp-c"><label>Offset Y</label><input id="hp-engine-offy" type="number" step="1" value="0" style="width:70px;"></div>
       <div class="hp-c"><label>Kategoria dyszy</label><select id="hp-engine-mount" style="width:150px;"></select></div>
@@ -442,6 +543,12 @@ function createRoot() {
     palette: root.querySelector('#hp-palette'),
     hardpointDeg: root.querySelector('#hp-hardpoint-deg'),
     engineDeg: root.querySelector('#hp-engine-deg'),
+    lightColor: root.querySelector('#hp-light-color'),
+    lightPower: root.querySelector('#hp-light-power'),
+    lightRadius: root.querySelector('#hp-light-radius'),
+    lightDeg: root.querySelector('#hp-light-deg'),
+    lightRange: root.querySelector('#hp-light-range'),
+    lightCone: root.querySelector('#hp-light-cone'),
     engineOffX: root.querySelector('#hp-engine-offx'),
     engineOffY: root.querySelector('#hp-engine-offy'),
     engineMount: root.querySelector('#hp-engine-mount'),
@@ -533,6 +640,8 @@ function activePaletteId() {
     if (mount === 'lower_auto') return 'engine_side_l';
     return 'engine_side';
   }
+  if (state.tool === 'light_position') return 'light_position';
+  if (state.tool === 'light_road') return 'light_road';
   return 'hp_main';
 }
 
@@ -562,6 +671,9 @@ function setBrushFromPalette(itemId) {
     if (runtime.controls?.engineGimbalMin) runtime.controls.engineGimbalMin.value = String(state.engineGimbalMinDeg);
     if (runtime.controls?.engineGimbalMax) runtime.controls.engineGimbalMax.value = String(state.engineGimbalMaxDeg);
   }
+  if (isLightTool(state.tool)) {
+    syncLightControls();
+  }
   const previewActive = isEnginePreviewActive();
   if (!previewActive) {
     state.vfxKeys = {};
@@ -584,7 +696,7 @@ function buildPaletteUI() {
   const activeId = activePaletteId();
   root.innerHTML = PALETTE_ITEMS.map((item) => `
     <div class="hp-item ${item.id === activeId ? 'active' : ''}" data-palette-id="${item.id}">
-      <span class="hp-dot" style="background:${item.color}"></span>
+      <span class="hp-dot" style="background:${isLightTool(item.tool) ? getLightBrushState(getLightKindForTool(item.tool)).color : item.color}"></span>
       <span>${item.label}</span>
     </div>
   `).join('');
@@ -599,7 +711,8 @@ function defaultShipData() {
   return {
     hardpoints: [],
     cores: [],
-    engines: { main: [], side: [] }
+    engines: { main: [], side: [] },
+    lights: createEmptyLights()
   };
 }
 
@@ -651,6 +764,7 @@ function ensureShipData(shipId) {
   if (!data.engines || typeof data.engines !== 'object') data.engines = { main: [], side: [] };
   if (!Array.isArray(data.engines.main)) data.engines.main = [];
   if (!Array.isArray(data.engines.side)) data.engines.side = [];
+  data.lights = normalizeLightsBlock(data.lights, markerId);
   upgradeBuiltInHardpoints(shipId, data);
   bootstrapIfNeeded(shipId);
   return state.ships[shipId];
@@ -749,6 +863,8 @@ function collectMarkerExtents(shipData) {
   for (const core of Array.isArray(shipData?.cores) ? shipData.cores : []) push(core?.x, core?.y);
   for (const eng of Array.isArray(shipData?.engines?.main) ? shipData.engines.main : []) push(eng?.x, eng?.y);
   for (const eng of Array.isArray(shipData?.engines?.side) ? shipData.engines.side : []) push(eng?.x, eng?.y);
+  for (const light of Array.isArray(shipData?.lights?.position) ? shipData.lights.position : []) push(light?.x, light?.y);
+  for (const light of Array.isArray(shipData?.lights?.road) ? shipData.lights.road : []) push(light?.x, light?.y);
   return maxAbs;
 }
 
@@ -825,6 +941,43 @@ function bindControls() {
   });
   c.engineDeg.addEventListener('input', () => {
     state.engineDeg = normalizeDeg(c.engineDeg.value);
+    persist();
+    scheduleDraw();
+  });
+  c.lightColor.addEventListener('input', () => {
+    setLightBrushState(getLightKindForTool() || LIGHT_KINDS.POSITION, { color: c.lightColor.value });
+    syncLightControls();
+    buildPaletteUI();
+    persist();
+    scheduleDraw();
+  });
+  c.lightPower.addEventListener('input', () => {
+    setLightBrushState(getLightKindForTool() || LIGHT_KINDS.POSITION, { power: c.lightPower.value });
+    syncLightControls();
+    persist();
+    scheduleDraw();
+  });
+  c.lightRadius.addEventListener('input', () => {
+    setLightBrushState(getLightKindForTool() || LIGHT_KINDS.POSITION, { radius: c.lightRadius.value });
+    syncLightControls();
+    persist();
+    scheduleDraw();
+  });
+  c.lightDeg.addEventListener('input', () => {
+    setLightBrushState(LIGHT_KINDS.ROAD, { deg: c.lightDeg.value });
+    syncLightControls();
+    persist();
+    scheduleDraw();
+  });
+  c.lightRange.addEventListener('input', () => {
+    setLightBrushState(LIGHT_KINDS.ROAD, { range: c.lightRange.value });
+    syncLightControls();
+    persist();
+    scheduleDraw();
+  });
+  c.lightCone.addEventListener('input', () => {
+    setLightBrushState(LIGHT_KINDS.ROAD, { coneDeg: c.lightCone.value });
+    syncLightControls();
     persist();
     scheduleDraw();
   });
@@ -956,6 +1109,7 @@ function bindControls() {
     data.hardpoints = [];
     data.cores = [];
     data.engines = { main: [], side: [] };
+    data.lights = createEmptyLights();
     persist();
     scheduleDraw();
   });
@@ -1014,7 +1168,8 @@ function updateCursorBadge(clientX, clientY) {
   const rootRect = runtime.root.getBoundingClientRect();
   let x = clientX - rootRect.left + 14;
   let y = clientY - rootRect.top - 14;
-  badge.innerHTML = `<span class="dot" style="background:${item.color}"></span><span>${item.label}</span>`;
+  const color = isLightTool(item.tool) ? getLightBrushState(getLightKindForTool(item.tool)).color : item.color;
+  badge.innerHTML = `<span class="dot" style="background:${color}"></span><span>${item.label}</span>`;
   badge.style.display = 'block';
   const bw = badge.offsetWidth || 120;
   const bh = badge.offsetHeight || 24;
@@ -1289,7 +1444,7 @@ function bindCanvas() {
 }
 
 function normalizeBrushState() {
-  if (!['erase', 'hardpoint', 'core', 'engine_main', 'engine_side'].includes(state.tool)) {
+  if (!['erase', 'hardpoint', 'core', 'engine_main', 'engine_side', 'light_position', 'light_road'].includes(state.tool)) {
     state.tool = 'hardpoint';
   }
   if (!HARDPOINT_TYPES.includes(state.hardpointType)) {
@@ -1306,12 +1461,16 @@ function removeMarkersNearPoint(x, y, radiusLocal) {
     const dy = (Number(marker?.y) || 0) - y;
     return ((dx * dx) + (dy * dy)) > radiusSq;
   };
-  const before = data.hardpoints.length + data.cores.length + data.engines.main.length + data.engines.side.length;
+  const before = data.hardpoints.length + data.cores.length + data.engines.main.length + data.engines.side.length +
+    data.lights.position.length + data.lights.road.length;
   data.hardpoints = data.hardpoints.filter(keepOutside);
   data.cores = data.cores.filter(keepOutside);
   data.engines.main = data.engines.main.filter(keepOutside);
   data.engines.side = data.engines.side.filter(keepOutside);
-  const after = data.hardpoints.length + data.cores.length + data.engines.main.length + data.engines.side.length;
+  data.lights.position = data.lights.position.filter(keepOutside);
+  data.lights.road = data.lights.road.filter(keepOutside);
+  const after = data.hardpoints.length + data.cores.length + data.engines.main.length + data.engines.side.length +
+    data.lights.position.length + data.lights.road.length;
   return before - after;
 }
 
@@ -1500,6 +1659,8 @@ function addMarker(target, marker) {
   else if (target === 'core') data.cores.push(marker);
   else if (target === 'engine_main') data.engines.main.push(marker);
   else if (target === 'engine_side') data.engines.side.push(marker);
+  else if (target === 'light_position') data.lights.position.push(marker);
+  else if (target === 'light_road') data.lights.road.push(marker);
 }
 
 function mirrorDeg(deg, mirrorX, mirrorY) {
@@ -1565,6 +1726,30 @@ function placeMarker(x, y) {
       }
       addMarker(state.tool, marker);
       placedIds.push(id);
+    } else if (isLightTool(state.tool)) {
+      const kind = getLightKindForTool(state.tool);
+      const id = markerId();
+      const brush = getLightBrushState(kind);
+      const marker = {
+        id,
+        x: pos.x,
+        y: pos.y,
+        color: brush.color,
+        power: brush.power,
+        radius: brush.radius
+      };
+      if (kind === LIGHT_KINDS.ROAD) {
+        marker.deg = round2(mirrorDeg(brush.deg, !!pos.mirrorX, !!pos.mirrorY));
+        marker.range = round2(brush.range);
+        marker.coneDeg = round2(brush.coneDeg);
+      } else {
+        marker.sequenceGroup = LIGHT_DEFAULTS[LIGHT_KINDS.POSITION].sequenceGroup;
+      }
+      const normalized = normalizeLightMarker(marker, kind, () => id);
+      if (normalized) {
+        addMarker(state.tool, normalized);
+        placedIds.push(id);
+      }
     }
   }
   return placedIds;
@@ -1577,6 +1762,8 @@ function getAllMarkers() {
   for (const m of data.cores) out.push({ marker: m, kind: 'core' });
   for (const m of data.engines.main) out.push({ marker: m, kind: 'engine_main' });
   for (const m of data.engines.side) out.push({ marker: m, kind: 'engine_side' });
+  for (const m of data.lights.position) out.push({ marker: m, kind: 'light_position' });
+  for (const m of data.lights.road) out.push({ marker: m, kind: 'light_road' });
   return out;
 }
 
@@ -1603,6 +1790,8 @@ function removeMarkerById(id) {
   data.cores = data.cores.filter((m) => m.id !== id);
   data.engines.main = data.engines.main.filter((m) => m.id !== id);
   data.engines.side = data.engines.side.filter((m) => m.id !== id);
+  data.lights.position = data.lights.position.filter((m) => m.id !== id);
+  data.lights.road = data.lights.road.filter((m) => m.id !== id);
 }
 
 function draw() {
@@ -1711,6 +1900,7 @@ function markerColor(kind, marker) {
   if (kind === 'core') return COLORS.core;
   if (kind === 'engine_main') return COLORS.engineMain;
   if (kind === 'engine_side') return COLORS.engineSide;
+  if (kind === 'light_position' || kind === 'light_road') return marker.color || '#ffffff';
   return '#fff';
 }
 
@@ -1736,6 +1926,8 @@ function withAlpha(color, alpha) {
 }
 
 function brushColor() {
+  const lightKind = getLightKindForTool();
+  if (lightKind) return getLightBrushState(lightKind).color;
   const id = activePaletteId();
   return PALETTE_ITEMS.find((p) => p.id === id)?.color || '#ffffff';
 }
@@ -1926,7 +2118,11 @@ function drawBrushPreview(ctx) {
   if (!state.mouseLocal) return;
   const sym = buildSymmetryPositions(state.mouseLocal.x, state.mouseLocal.y);
   const scale = getDrawScale();
-  const radius = Math.max(4, Math.min(10, 6 + scale * 0.02));
+  const lightKind = getLightKindForTool();
+  const lightBrush = lightKind ? getLightBrushState(lightKind) : null;
+  const radius = lightBrush
+    ? Math.max(4, Math.min(18, (Number(lightBrush.radius) || 4) * scale + 4))
+    : Math.max(4, Math.min(10, 6 + scale * 0.02));
   const color = brushColor();
   ctx.save();
   ctx.globalAlpha = 0.55;
@@ -1944,10 +2140,10 @@ function drawBrushPreview(ctx) {
       ctx.moveTo(p.x + radius * 0.8, p.y - radius * 0.8);
       ctx.lineTo(p.x - radius * 0.8, p.y + radius * 0.8);
       ctx.stroke();
-    } else if (state.tool === 'engine_main' || state.tool === 'engine_side' || (state.tool === 'hardpoint' && state.hardpointType === 'builtin')) {
+    } else if (state.tool === 'engine_main' || state.tool === 'engine_side' || state.tool === 'light_road' || (state.tool === 'hardpoint' && state.hardpointType === 'builtin')) {
       const deg = (state.tool === 'hardpoint')
         ? mirrorDeg(state.hardpointDeg, !!pos.mirrorX, !!pos.mirrorY)
-        : mirrorDeg(state.engineDeg, !!pos.mirrorX, !!pos.mirrorY);
+        : mirrorDeg(state.tool === 'light_road' ? state.roadLightDeg : state.engineDeg, !!pos.mirrorX, !!pos.mirrorY);
       const rad = deg * Math.PI / 180;
       const dx = Math.sin(rad) * radius * 2.2;
       const dy = -Math.cos(rad) * radius * 2.2;
@@ -1966,6 +2162,7 @@ function drawCursorBrushBadge(ctx) {
   if (!item) return;
 
   const label = item.label;
+  const itemColor = isLightTool(item.tool) ? getLightBrushState(getLightKindForTool(item.tool)).color : item.color;
   const padX = 8;
   const boxH = 24;
   const iconR = 5;
@@ -2001,7 +2198,7 @@ function drawCursorBrushBadge(ctx) {
 
   const iconX = rx + padX + iconR;
   const iconY = ry + boxH * 0.5;
-  ctx.fillStyle = item.color;
+  ctx.fillStyle = itemColor;
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 1.2;
   ctx.beginPath();
@@ -2010,7 +2207,7 @@ function drawCursorBrushBadge(ctx) {
   ctx.stroke();
 
   if (item.tool === 'erase') {
-    ctx.strokeStyle = item.color;
+    ctx.strokeStyle = itemColor;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(iconX - 6, iconY - 6);
@@ -2018,19 +2215,19 @@ function drawCursorBrushBadge(ctx) {
     ctx.moveTo(iconX + 6, iconY - 6);
     ctx.lineTo(iconX - 6, iconY + 6);
     ctx.stroke();
-    } else if (item.tool === 'engine_main' || item.tool === 'engine_side' || (item.tool === 'hardpoint' && item.hardpointType === 'builtin')) {
-      const sourceDeg = (item.tool === 'hardpoint') ? state.hardpointDeg : state.engineDeg;
+    } else if (item.tool === 'engine_main' || item.tool === 'engine_side' || item.tool === 'light_road' || (item.tool === 'hardpoint' && item.hardpointType === 'builtin')) {
+      const sourceDeg = (item.tool === 'hardpoint') ? state.hardpointDeg : (item.tool === 'light_road' ? state.roadLightDeg : state.engineDeg);
       const rad = (Number(sourceDeg) || 0) * Math.PI / 180;
     const dx = Math.sin(rad) * 11;
     const dy = -Math.cos(rad) * 11;
-    ctx.strokeStyle = item.color;
+    ctx.strokeStyle = itemColor;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(iconX, iconY);
     ctx.lineTo(iconX + dx, iconY + dy);
     ctx.stroke();
   } else {
-    ctx.strokeStyle = item.color;
+    ctx.strokeStyle = itemColor;
     ctx.lineWidth = 1.8;
     ctx.beginPath();
     ctx.moveTo(iconX - 6, iconY);
@@ -2053,6 +2250,54 @@ function drawMarkers(ctx) {
     const marker = item.marker;
     const p = localToScreen(marker.x || 0, marker.y || 0);
     const color = markerColor(item.kind, marker);
+    if (item.kind === 'light_position' || item.kind === 'light_road') {
+      const markerRadius = Math.max(
+        item.kind === 'light_position' ? 3 : 6,
+        Math.min(item.kind === 'light_position' ? 10 : 18, (Number(marker.radius) || 4) * scale + 3)
+      );
+      const power = Math.max(0.05, Number(marker.power) || 1);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const glowRadius = markerRadius * (item.kind === 'light_road' ? 4.2 : 2.8) * Math.min(2.4, 0.7 + power * 0.4);
+      const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowRadius);
+      glow.addColorStop(0, withAlpha('#ffffff', item.kind === 'light_road' ? 0.95 : 0.75));
+      glow.addColorStop(0.22, withAlpha(color, item.kind === 'light_road' ? 0.72 : 0.62));
+      glow.addColorStop(1, withAlpha(color, 0));
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, glowRadius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = color;
+      ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+      ctx.lineWidth = item.kind === 'light_road' ? 1.8 : 1.2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, markerRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      if (item.kind === 'light_road') {
+        const deg = Number.isFinite(Number(marker.deg)) ? Number(marker.deg) : LIGHT_DEFAULTS[LIGHT_KINDS.ROAD].deg;
+        const cone = Math.max(8, Math.min(160, Number(marker.coneDeg) || LIGHT_DEFAULTS[LIGHT_KINDS.ROAD].coneDeg));
+        const rad = deg * Math.PI / 180;
+        const beamLen = Math.max(26, Math.min(100, (Number(marker.range) || 800) * scale * 0.1));
+        const drawRay = (angle, alpha) => {
+          const dx = Math.sin(angle) * beamLen;
+          const dy = -Math.cos(angle) * beamLen;
+          ctx.strokeStyle = withAlpha(color, alpha);
+          ctx.lineWidth = Math.max(1, markerRadius * 0.22);
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(p.x + dx, p.y + dy);
+          ctx.stroke();
+        };
+        drawRay(rad, 0.78);
+        drawRay(rad - cone * Math.PI / 360, 0.34);
+        drawRay(rad + cone * Math.PI / 360, 0.34);
+      }
+      ctx.restore();
+      continue;
+    }
     ctx.save();
     ctx.fillStyle = withAlpha(color, 0.34);
     ctx.strokeStyle = 'rgba(255,255,255,0.95)';
@@ -2118,6 +2363,14 @@ function compactMarker(marker, kind) {
   return out;
 }
 
+function compactLights(lights) {
+  const normalized = normalizeLightsBlock(lights);
+  return {
+    position: normalized.position.map((m) => compactLightMarker(m, LIGHT_KINDS.POSITION)).filter(Boolean),
+    road: normalized.road.map((m) => compactLightMarker(m, LIGHT_KINDS.ROAD)).filter(Boolean)
+  };
+}
+
 function buildSingleShipExportData(shipId) {
   shipId = normalizeEditorShipId(shipId);
   const resolvedShipId = resolveEditorShipId(shipId);
@@ -2132,7 +2385,8 @@ function buildSingleShipExportData(shipId) {
       engines: {
         main: data.engines.main.map((m) => compactMarker(m, 'engine')),
         side: data.engines.side.map((m) => compactMarker(m, 'engine'))
-      }
+      },
+      lights: compactLights(data.lights)
     }
   };
   return {
@@ -2155,7 +2409,8 @@ function buildExportData() {
       engines: {
         main: data.engines.main.map((m) => compactMarker(m, 'engine')),
         side: data.engines.side.map((m) => compactMarker(m, 'engine'))
-      }
+      },
+      lights: compactLights(data.lights)
     };
   }
   return {
@@ -2242,7 +2497,9 @@ function normalizeImportedShip(raw) {
     if (normalized) engines.side.push(normalized);
   }
 
-  return { hardpoints, cores, engines, __bootstrapped: true };
+  const lights = normalizeLightsBlock(raw?.lights, markerId);
+
+  return { hardpoints, cores, engines, lights, __bootstrapped: true };
 }
 
 function applyImportedConfigObject(parsed, applyToGame = true) {
@@ -2322,6 +2579,8 @@ function updateStatsAndPreview() {
     <div>Rdzenie: ${data.cores.length}</div>
     <div>Silniki MAIN: ${data.engines.main.length}</div>
     <div>Silniki SIDE: ${data.engines.side.length}</div>
+    <div>Swiatla pozycyjne: ${data.lights.position.length}</div>
+    <div>Swiatla drogowe: ${data.lights.road.length}</div>
     <div>Min/Max: MainL ${state.mainVfxLengthMin}-${state.mainVfxLengthMax}, SideW ${state.sideVfxWidthMin}-${state.sideVfxWidthMax}, SideL ${state.sideVfxLengthMin}-${state.sideVfxLengthMax}</div>
     <div>Canvas: ${Math.round(runtime.cssW)} x ${Math.round(runtime.cssH)}</div>
     <div>Mysz local: ${mouseLabel}</div>
@@ -2369,6 +2628,15 @@ function persist() {
     sideVfxWidthMax: state.sideVfxWidthMax,
     sideVfxLengthMin: state.sideVfxLengthMin,
     sideVfxLengthMax: state.sideVfxLengthMax,
+    positionLightColor: state.positionLightColor,
+    positionLightPower: state.positionLightPower,
+    positionLightRadius: state.positionLightRadius,
+    roadLightColor: state.roadLightColor,
+    roadLightPower: state.roadLightPower,
+    roadLightRadius: state.roadLightRadius,
+    roadLightRange: state.roadLightRange,
+    roadLightConeDeg: state.roadLightConeDeg,
+    roadLightDeg: state.roadLightDeg,
     ships: migrateEditorShipsMap(state.ships)
   };
   try {
@@ -2413,6 +2681,19 @@ function loadStorage() {
     state.sideVfxWidthMax = Math.max(state.sideVfxWidthMin, Math.round(Number(data.sideVfxWidthMax) || state.sideVfxWidthMax));
     state.sideVfxLengthMin = Math.max(1, Math.round(Number(data.sideVfxLengthMin) || state.sideVfxLengthMin));
     state.sideVfxLengthMax = Math.max(state.sideVfxLengthMin, Math.round(Number(data.sideVfxLengthMax) || state.sideVfxLengthMax));
+    setLightBrushState(LIGHT_KINDS.POSITION, {
+      color: data.positionLightColor,
+      power: data.positionLightPower,
+      radius: data.positionLightRadius
+    });
+    setLightBrushState(LIGHT_KINDS.ROAD, {
+      color: data.roadLightColor,
+      power: data.roadLightPower,
+      radius: data.roadLightRadius,
+      range: data.roadLightRange,
+      coneDeg: data.roadLightConeDeg,
+      deg: data.roadLightDeg
+    });
     state.ships = migrateEditorShipsMap(data.ships && typeof data.ships === 'object' ? data.ships : {});
     const repairedLegacyAtlas = repairLegacyAtlasStorageIfNeeded();
     if (state.shipId === 'atlas' && getCurrentRuntimeShipId() !== 'atlas' && !shipDataHasContent(state.ships?.atlas)) {
@@ -2421,7 +2702,7 @@ function loadStorage() {
     if (state.shipId !== CURRENT_SHIP_ID && !SHIP_DEFS.some((def) => def.id === state.shipId)) {
       state.shipId = CURRENT_SHIP_ID;
     }
-    if (!['erase', 'hardpoint', 'core', 'engine_main', 'engine_side'].includes(state.tool)) state.tool = 'hardpoint';
+    if (!['erase', 'hardpoint', 'core', 'engine_main', 'engine_side', 'light_position', 'light_road'].includes(state.tool)) state.tool = 'hardpoint';
     if (!HARDPOINT_TYPES.includes(state.hardpointType)) state.hardpointType = 'main';
     if (repairedLegacyAtlas) persist();
   } catch { }
@@ -2463,6 +2744,7 @@ function syncControlsFromState() {
   c.sideWMax.value = String(state.sideVfxWidthMax);
   c.sideLMin.value = String(state.sideVfxLengthMin);
   c.sideLMax.value = String(state.sideVfxLengthMax);
+  syncLightControls();
   applyVfxTuneToGame(false);
   updateEditorBackdrop();
   buildPaletteUI();

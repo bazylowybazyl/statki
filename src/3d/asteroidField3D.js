@@ -41,14 +41,64 @@ import {
   MAX_VARIANTS_PER_SIZE,
   pickWeighted,
 } from '../data/asteroidTypes.js';
+import { getCollisionMass, getMass, getHardness, getMaxHp } from '../data/asteroidPhysics.js';
+import { COLLISION_CONFIG } from '../data/asteroidPhysics.js';
+import { AsteroidDestructor, resolveShipAsteroidCollision } from '../game/asteroidDestructor.js';
+import { DestructorSystem, getHexStructuralState, initHexBody } from '../game/destructor.js';
+import {
+  buildAsteroidHexEntityModel,
+  integrateAsteroidHexEntityMotion,
+  syncAsteroidFromHexEntity,
+  syncHexEntityFromAsteroid
+} from '../game/asteroidHexAdapter.js';
 
 const Z_BASE = -120;
 const Z_JITTER = 60;        // ±30 wokół Z_BASE
+const ASTEROID_RAYCAST_MAX_RADIUS = 700;
 // Spin wyłączony - przy 500k asteroid każda obracająca się asteroida triggeruje
 // re-upload bufora instanceMatrix pool'a (~600KB/pula). To ~20MB/klatkę przy
 // gęstym pasie, czyli ostry FPS drop. Asteroidy w kosmosie obracają się tak wolno
 // że i tak nie było tego widać przy tej skali (jest milion u-niedaleko od kamery).
 const SPIN_MAX = 0;
+
+export function segmentCircleHitInfo(x0, y0, x1, y1, cx, cy, radius) {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-6) return null;
+
+  const r = Math.max(0, Number(radius) || 0);
+  const ex = cx - x0;
+  const ey = cy - y0;
+  const closestT = Math.max(0, Math.min(1, (ex * dx + ey * dy) / len2));
+  const px = x0 + dx * closestT;
+  const py = y0 + dy * closestT;
+  const ddx = cx - px;
+  const ddy = cy - py;
+  const distSq = ddx * ddx + ddy * ddy;
+  const rSq = r * r;
+  if (distSq > rSq) return null;
+
+  const fx = x0 - cx;
+  const fy = y0 - cy;
+  const b = 2 * (fx * dx + fy * dy);
+  const c = fx * fx + fy * fy - rSq;
+  let entryT = closestT;
+  if (c <= 0) {
+    entryT = 0;
+  } else {
+    const disc = b * b - 4 * len2 * c;
+    if (disc >= 0) {
+      const root = Math.sqrt(disc);
+      const t0 = (-b - root) / (2 * len2);
+      const t1 = (-b + root) / (2 * len2);
+      if (t0 >= 0 && t0 <= 1) entryT = t0;
+      else if (t1 >= 0 && t1 <= 1) entryT = t1;
+    }
+  }
+
+  return { entryT, closestT, distSq };
+}
 
 // Reusable scratchpads
 const _MAT = new THREE.Matrix4();
@@ -176,6 +226,12 @@ class AsteroidPool {
     this.dirty = true;
     this.activeCount--;
     this.free[this.freeTop++] = idx;
+  }
+
+  hide(idx) {
+    if (idx < 0 || idx >= this.capacity) return;
+    this.mesh.setMatrixAt(idx, hideMatrix());
+    this.dirty = true;
   }
 
   writeMatrix(idx, x, y, z, rotZ, scale) {
@@ -327,6 +383,24 @@ class SpatialHash {
   }
   clear() { this.cells.clear(); }
   get cellCount() { return this.cells.size; }
+
+  /** Aktualizuje pozycję itemu w hashu. Re-inserts tylko jeśli zmieniła się komórka. */
+  update(item, newX, newY) {
+    const c = this.cellSize;
+    const newCx = Math.floor(newX / c);
+    const newCy = Math.floor(newY / c);
+    const newKey = this._key(newCx, newCy);
+    if (item._hashKey === newKey) return; // ta sama komórka - nic do roboty
+    this.remove(item);
+    let bucket = this.cells.get(newKey);
+    if (!bucket) {
+      bucket = [];
+      this.cells.set(newKey, bucket);
+    }
+    item._hashKey = newKey;
+    item._hashIdx = bucket.length;
+    bucket.push(item);
+  }
 }
 
 export class AsteroidField {
@@ -348,6 +422,17 @@ export class AsteroidField {
     this.byId = new Map();
     /** Spatial hash do queries (raycast, area, viewport, LOD). */
     this.spatial = new SpatialHash(2000);
+    /** Brittle hex destructor - lazy alokacja per damaged asteroid. */
+    this.destructor = new AsteroidDestructor();
+    this.activeHexAsteroids = new Set();
+    this.activeHexById = new Map();
+    this.maxActiveHexAsteroids = Math.max(8, Number(opts.maxActiveHexAsteroids) || 96);
+    this._activeHexEntityBuffer = [];
+    this._activeHexRemoveBuffer = [];
+    /** Lista zdarzeń debris z ostatniej klatki - do konsumpcji przez systemy VFX. */
+    this.debrisEvents = [];
+    /** Set asteroid z vel != 0 (popchnięte, dryfują). Per-frame update tylko tych. */
+    this.movingAsteroids = new Set();
     this.nextId = 1;
     this._destroyedThisFrame = [];
     this._splitsThisFrame = [];
@@ -398,6 +483,225 @@ export class AsteroidField {
     }));
   }
 
+  _getAsteroidPool(asteroid) {
+    return asteroid?.poolKey ? (this.pools.get(asteroid.poolKey) || null) : null;
+  }
+
+  _getAsteroidImage(asteroid) {
+    const pool = this._getAsteroidPool(asteroid);
+    const image = pool?.texture?.image || null;
+    const width = Number(image?.naturalWidth || image?.width || 0);
+    const height = Number(image?.naturalHeight || image?.height || 0);
+    return (width > 0 && height > 0) ? image : null;
+  }
+
+  _hideAsteroidInstance(asteroid) {
+    if (!asteroid || asteroid._instancedHidden) return;
+    const pool = this._getAsteroidPool(asteroid);
+    if (!pool) return;
+    pool.hide(asteroid.instanceIdx);
+    pool.flush();
+    asteroid._instancedHidden = true;
+  }
+
+  _showAsteroidInstance(asteroid) {
+    if (!asteroid || !asteroid._instancedHidden) return;
+    const pool = this._getAsteroidPool(asteroid);
+    if (!pool) return;
+    pool.writeMatrix(
+      asteroid.instanceIdx,
+      asteroid.position.x,
+      asteroid.position.y,
+      asteroid.position.z,
+      asteroid.rotZ,
+      asteroid.scale
+    );
+    pool.flush();
+    asteroid._instancedHidden = false;
+  }
+
+  _promoteAsteroidToHex(asteroid, reason = 'near') {
+    if (!asteroid || !asteroid.alive) return null;
+    if (asteroid.hexEntity?.hexGrid) return asteroid.hexEntity;
+    if (this.activeHexAsteroids.size >= this.maxActiveHexAsteroids) return null;
+
+    const image = this._getAsteroidImage(asteroid);
+    if (!image) return null;
+
+    const entity = buildAsteroidHexEntityModel(asteroid, image);
+    entity.__promoteReason = reason;
+    entity.owner = entity;
+    entity.pos = null;
+    entity.vel = null;
+    initHexBody(entity, image, null, false, entity.mass, 40);
+    if (!entity.hexGrid) return null;
+
+    entity.radius = Math.max(entity.radius || 0, asteroid.scale * 0.5);
+    entity._bpRadius = entity.radius;
+    entity.hexGrid.meshDirty = true;
+    entity.hexGrid.meshDirtyAll = true;
+    entity.hexGrid.gpuTextureNeedsUpdate = true;
+    entity.hexGrid.wakeHoldFrames = 30;
+    asteroid.hexEntity = entity;
+    asteroid._hexPromoted = true;
+
+    this.activeHexAsteroids.add(entity);
+    this.activeHexById.set(asteroid.id, entity);
+    this.movingAsteroids.delete(asteroid);
+    this._hideAsteroidInstance(asteroid);
+    this.destructor.release(asteroid.id);
+    return entity;
+  }
+
+  getActiveHexEntities(out = null) {
+    const result = out || this._activeHexEntityBuffer;
+    result.length = 0;
+    for (const entity of this.activeHexAsteroids) {
+      if (!entity || entity.dead || entity.isCollidable === false || !entity.hexGrid) continue;
+      result.push(entity);
+    }
+    return result;
+  }
+
+  _syncActiveHexAsteroidsFromEntities() {
+    const remove = this._activeHexRemoveBuffer;
+    remove.length = 0;
+
+    for (const entity of this.activeHexAsteroids) {
+      const asteroid = entity?.asteroidRef;
+      if (!entity || !asteroid) {
+        if (entity) remove.push(entity);
+        continue;
+      }
+      if (!asteroid.alive || entity.dead || !entity.hexGrid) {
+        if (asteroid.alive && entity.dead) this._destroy(asteroid);
+        else remove.push(entity);
+        continue;
+      }
+
+      const structural = getHexStructuralState(entity);
+      if (structural && structural.active <= 0) {
+        entity.dead = true;
+        remove.push(entity);
+        this._destroy(asteroid);
+        continue;
+      }
+
+      syncAsteroidFromHexEntity(asteroid, entity);
+      asteroid.position.x = asteroid.worldX;
+      asteroid.position.y = -asteroid.worldY;
+      this.spatial.update(asteroid, asteroid.worldX, asteroid.worldY);
+
+      if (structural) {
+        asteroid.hp = Math.min(
+          Math.max(0, asteroid.hp),
+          Math.max(0, asteroid.hpMax * structural.ratio)
+        );
+      }
+
+      this.movingAsteroids.delete(asteroid);
+    }
+
+    for (let i = 0; i < remove.length; i++) {
+      const entity = remove[i];
+      const asteroid = entity?.asteroidRef;
+      if (asteroid?.hexEntity === entity) asteroid.hexEntity = null;
+      this.activeHexAsteroids.delete(entity);
+      if (entity?.asteroidId != null) this.activeHexById.delete(entity.asteroidId);
+    }
+  }
+
+  _updateActiveHexAsteroids(dt) {
+    const step = Math.max(0, Math.min(0.1, Number(dt) || 0));
+    if (step <= 0 || this.activeHexAsteroids.size === 0) return;
+
+    for (const entity of this.activeHexAsteroids) {
+      const asteroid = entity?.asteroidRef;
+      if (!entity || !asteroid || !asteroid.alive || entity.dead || !entity.hexGrid) continue;
+      integrateAsteroidHexEntityMotion(asteroid, entity, step, {
+        maxVelocity: COLLISION_CONFIG.asteroidMaxVelocity
+      });
+      asteroid.position.x = asteroid.worldX;
+      asteroid.position.y = -asteroid.worldY;
+      this.spatial.update(asteroid, asteroid.worldX, asteroid.worldY);
+      entity._bpRadius = entity.radius;
+    }
+  }
+
+  _resolveActiveAsteroidImpacts() {
+    if (this.activeHexAsteroids.size === 0) return;
+
+    for (const entity of this.activeHexAsteroids) {
+      const a = entity?.asteroidRef;
+      if (!entity || !a || !a.alive || entity.dead || !entity.hexGrid) continue;
+
+      const avx = Number(entity.vx) || 0;
+      const avy = Number(entity.vy) || 0;
+      const speed = Math.hypot(avx, avy);
+      if (speed < COLLISION_CONFIG.minImpactVelocity) continue;
+
+      const ar = a.scale * COLLISION_CONFIG.collisionRadiusFactor;
+      this.spatial.forEachInRadius(a.worldX, a.worldY, ar + ASTEROID_RAYCAST_MAX_RADIUS, (b) => {
+        if (!b || b === a || !b.alive || b.hexEntity?.hexGrid) return;
+
+        const br = b.scale * COLLISION_CONFIG.collisionRadiusFactor;
+        const dx = b.worldX - a.worldX;
+        const dy = b.worldY - a.worldY;
+        const distSq = dx * dx + dy * dy;
+        const hitR = ar + br;
+        if (distSq <= 0.0001 || distSq >= hitR * hitR) return;
+
+        const dist = Math.sqrt(distSq);
+        const nx = dx / dist;
+        const ny = dy / dist;
+        const bvx = Number(b.vx) || 0;
+        const bvy = Number(b.vy) || 0;
+        const relVx = avx - bvx;
+        const relVy = avy - bvy;
+        const closing = relVx * nx + relVy * ny;
+        if (closing <= 0) return;
+
+        const massA = Math.max(1, Number(entity.mass) || getCollisionMass(a.type, a.size));
+        const massB = Math.max(1, getCollisionMass(b.type, b.size));
+        const invA = 1 / massA;
+        const invB = 1 / massB;
+        const restitution = Math.max(0, Math.min(1, Number(COLLISION_CONFIG.bounceCoeff) || 0.45));
+        const impulse = ((1 + restitution) * closing) / (invA + invB);
+
+        entity.vx = avx - impulse * invA * nx;
+        entity.vy = avy - impulse * invA * ny;
+        b.vx = bvx + impulse * invB * nx;
+        b.vy = bvy + impulse * invB * ny;
+
+        const penetration = hitR - dist;
+        const sepDenom = invA + invB;
+        const sepA = sepDenom > 0 ? (invA / sepDenom) * penetration : penetration * 0.5;
+        const sepB = penetration - sepA;
+        entity.x -= nx * sepA;
+        entity.y -= ny * sepA;
+        b.worldX += nx * sepB;
+        b.worldY += ny * sepB;
+        b.position.x = b.worldX;
+        b.position.y = -b.worldY;
+
+        const damage = Math.max(8, (closing - COLLISION_CONFIG.minImpactVelocity) * 1.8);
+        const hitAx = a.worldX + nx * ar;
+        const hitAy = a.worldY + ny * ar;
+        const hitBx = b.worldX - nx * br;
+        const hitBy = b.worldY - ny * br;
+        DestructorSystem.applyImpact(entity, hitAx, hitAy, damage, { x: relVx, y: relVy }, {
+          radius: Math.max(60, Math.min(260, Math.min(a.scale, b.scale) * 0.18))
+        });
+        this.applyDamageAt(b, hitBx, hitBy, damage, { x: relVx, y: relVy });
+      });
+
+      syncAsteroidFromHexEntity(a, entity);
+      a.position.x = a.worldX;
+      a.position.y = -a.worldY;
+      this.spatial.update(a, a.worldX, a.worldY);
+    }
+  }
+
   // ---- public API ----
 
   /**
@@ -406,9 +710,26 @@ export class AsteroidField {
    * w komórkach pokrywających okrąg LOD (~9x9 cell = 81 cells przy LOD 8000 / cell 2000).
    */
   update(dt) {
+    this._syncActiveHexAsteroidsFromEntities();
+    this._updateActiveHexAsteroids(dt);
+    this._resolveActiveAsteroidImpacts();
+    // Destruktor zawsze updateuje (przewija burstFramesLeft aktywnych hex bodies).
+    // Koszt: O(N) gdzie N = liczba uszkodzonych asteroid (zwykle <50).
+    this.destructor.update(dt);
+
+    // Update pozycji popchniętych asteroid. Working set typowo <100.
+    let needsFlush = false;
+    if (this.movingAsteroids.size > 0) {
+      this._updateMovingAsteroids(dt);
+      needsFlush = true;
+    }
+
     // Spin jest globalnie wyłączony (SPIN_MAX=0) - update() jest no-op przy
     // 500k asteroid. Splity/destroyacje robią flush bezpośrednio w _spawn/_destroy.
-    if (SPIN_MAX === 0) return;
+    if (SPIN_MAX === 0) {
+      if (needsFlush) this._flushAll();
+      return;
+    }
 
     const dtClamped = Math.max(0, Math.min(0.1, dt || 0));
     const ship = (typeof window !== 'undefined') ? window.ship : null;
@@ -454,14 +775,14 @@ export class AsteroidField {
    */
   queryRadius(cx, cy, radius) {
     const result = [];
-    // Spatial hash używa worldX/worldY (2D). Rozszerzamy promień o max scale asteroidy
-    // (BIG=1500), żeby uniknąć missów przy krawędzi.
-    const queryR = radius + 1500;
+    const radiusFactor = COLLISION_CONFIG.collisionRadiusFactor;
+    // Max realny radius: BIG scale 1500 * 0.42 = 630. Margin 700u.
+    const queryR = radius + 700;
     this.spatial.forEachInRadius(cx, cy, queryR, (a) => {
       if (!a.alive) return;
       const dx = a.worldX - cx;
       const dy = a.worldY - cy;
-      const reach = radius + a.scale * 0.5;
+      const reach = radius + a.scale * radiusFactor;
       if (dx * dx + dy * dy <= reach * reach) result.push(a);
     });
     return result;
@@ -482,28 +803,32 @@ export class AsteroidField {
    * Najbliższe trafienie linii (x0,y0)->(x1,y1). DDA walk po komórkach spatial hash.
    * Pierwszy trafiony asteroida w kierunku ruchu wygrywa - można early-exit.
    */
-  raycast(x0, y0, x1, y1) {
+  raycast(x0, y0, x1, y1, extraRadius = 0) {
     const dx = x1 - x0, dy = y1 - y0;
     const len2 = dx * dx + dy * dy;
     if (len2 < 1e-6) return null;
     let bestT = Infinity;
+    let bestHitT = Infinity;
     let best = null;
     // DDA: dla każdej komórki przeciętej przez linię testujemy asteroidy w niej.
-    this.spatial.forEachOnLine(x0, y0, x1, y1, (a) => {
+    const radiusFactor = COLLISION_CONFIG.collisionRadiusFactor;
+    const extra = Math.max(0, Number(extraRadius) || 0);
+    const midX = (x0 + x1) * 0.5;
+    const midY = (y0 + y1) * 0.5;
+    const halfLen = Math.sqrt(len2) * 0.5;
+    const queryR = halfLen + ASTEROID_RAYCAST_MAX_RADIUS + extra;
+
+    this.spatial.forEachInRadius(midX, midY, queryR, (a) => {
       if (!a.alive) return;
-      const ax = a.worldX, ay = a.worldY;
-      const r = a.scale * 0.45;
-      const ex = ax - x0, ey = ay - y0;
-      const t = (ex * dx + ey * dy) / len2;
-      if (t < 0 || t > 1) return;
-      const px = x0 + dx * t, py = y0 + dy * t;
-      const ddx = ax - px, ddy = ay - py;
-      if (ddx * ddx + ddy * ddy <= r * r && t < bestT) {
-        bestT = t;
+      const r = a.scale * radiusFactor + extra;
+      const hit = segmentCircleHitInfo(x0, y0, x1, y1, a.worldX, a.worldY, r);
+      if (hit && hit.entryT < bestT) {
+        bestT = hit.entryT;
+        bestHitT = hit.closestT;
         best = a;
       }
     });
-    return best ? { asteroid: best, t: bestT } : null;
+    return best ? { asteroid: best, t: bestT, hitT: bestHitT } : null;
   }
 
   /** Liczba aktywnych asteroid. */
@@ -514,6 +839,10 @@ export class AsteroidField {
     this.pools.clear();
     this.byId.clear();
     this.spatial.clear();
+    this.activeHexAsteroids.clear();
+    this.activeHexById.clear();
+    this._activeHexEntityBuffer.length = 0;
+    this._activeHexRemoveBuffer.length = 0;
   }
 
   // ---- internal ----
@@ -661,6 +990,11 @@ export class AsteroidField {
       return null;
     }
     const sc = SIZE_CLASS[size];
+    // Fizyka z asteroidPhysics: mass, hardness, hpMax zależne od typu i rozmiaru
+    // (kruchy ice ma mało HP, twardy titan dużo).
+    const mass = getMass(type, size);
+    const hardness = getHardness(type);
+    const hpMax = getMaxHp(type, size);
     const asteroid = {
       id: this.nextId++,
       type, size, variant,
@@ -672,8 +1006,15 @@ export class AsteroidField {
       worldX, worldY,
       rotZ, spin,
       scale,
-      hp: sc.hp,
-      hpMax: sc.hp,
+      baseScale: scale,         // do shrink wizualnego gdy cells odpadają
+      hp: hpMax,
+      hpMax,
+      mass,
+      hardness,
+      // Velocity - większość asteroid statyczna (vel=0). Po pchnięciu trafia
+      // do this.movingAsteroids dla per-frame update pozycji.
+      vx: 0,
+      vy: 0,
       yield: sc.yield,
       resource: ASTEROID_RESOURCE[type],
       beltId,
@@ -688,6 +1029,14 @@ export class AsteroidField {
 
   _destroy(asteroid) {
     asteroid.alive = false;
+    const hexEntity = asteroid.hexEntity;
+    if (hexEntity) {
+      hexEntity.dead = true;
+      hexEntity.isCollidable = false;
+      this.activeHexAsteroids.delete(hexEntity);
+      this.activeHexById.delete(asteroid.id);
+      asteroid.hexEntity = null;
+    }
     const sc = SIZE_CLASS[asteroid.size];
     const drops = { resource: asteroid.resource, amount: asteroid.yield };
     const splits = [];
@@ -721,13 +1070,321 @@ export class AsteroidField {
     const pool = this.pools.get(asteroid.poolKey);
     if (pool) pool.release(asteroid.instanceIdx);
     this.spatial.remove(asteroid);
+    // Zwolnij hex destructor jeśli istniał
+    this.destructor.release(asteroid.id);
+    // Usuń z movingAsteroids (jeśli była popchnięta)
+    this.movingAsteroids.delete(asteroid);
     this.byId.delete(asteroid.id);
+    this._flushAll();
 
     return { destroyed: true, asteroid, drops, splits, remainingHp: 0 };
   }
 
   _flushAll() {
     for (const pool of this.pools.values()) pool.flush();
+  }
+
+  // ===========================================================================
+  // PUBLIC: damage / collision API
+  // ===========================================================================
+
+  /**
+   * Aplikuje damage w punkcie (worldX, worldY) na asteroidę. Lazy-spawnuje hex
+   * destruktor jeśli to pierwsze trafienie. Zwraca opis efektu.
+   *
+   * @returns {{ destroyed: boolean, ejectedCells: number, drops?: object, splits?: Array, hexBody?: object }}
+   */
+  applyDamageAt(asteroid, worldX, worldY, damage, impactVel = null) {
+    if (!asteroid || !asteroid.alive) return { destroyed: false, ejectedCells: 0 };
+
+    const hexEntity = this._promoteAsteroidToHex(asteroid, 'damage');
+    if (hexEntity?.hexGrid) {
+      const dmg = Math.max(0, Number(damage) || 0);
+      const hit = DestructorSystem.applyImpact(
+        hexEntity,
+        worldX,
+        worldY,
+        dmg,
+        impactVel || { x: asteroid.vx || 0, y: asteroid.vy || 0 },
+        { radius: Math.max(48, Math.min(260, asteroid.scale * 0.18)) }
+      );
+
+      if (!hit) {
+        return {
+          destroyed: false,
+          ejectedCells: 0,
+          remainingHp: asteroid.hp,
+          hexBody: hexEntity.hexGrid,
+          hexEntity,
+          hit: false,
+        };
+      }
+
+      const structural = getHexStructuralState(hexEntity);
+      if (structural) {
+        asteroid.hp = Math.min(
+          Math.max(0, asteroid.hp - dmg),
+          Math.max(0, asteroid.hpMax * structural.ratio)
+        );
+      } else {
+        asteroid.hp = Math.max(0, asteroid.hp - dmg);
+      }
+      syncAsteroidFromHexEntity(asteroid, hexEntity);
+      asteroid.position.x = asteroid.worldX;
+      asteroid.position.y = -asteroid.worldY;
+      this.spatial.update(asteroid, asteroid.worldX, asteroid.worldY);
+
+      if ((structural && structural.active <= 0) || asteroid.hp <= 0) {
+        const destroyResult = this._destroy(asteroid);
+        return { ...destroyResult, ejectedCells: 0, hexEntity };
+      }
+
+      return {
+        destroyed: false,
+        ejectedCells: hit ? 1 : 0,
+        remainingHp: asteroid.hp,
+        hexBody: hexEntity.hexGrid,
+        hexEntity,
+        hit: true,
+      };
+    }
+
+    const result = this.destructor.applyDamage(asteroid, worldX, worldY, damage);
+    const hex = result.hexBody;
+    if (!hex) return { destroyed: false, ejectedCells: 0 };
+
+    // Wizualnie: shrink asteroidy proporcjonalnie do żywych cells
+    const liveness = hex.livenessFraction();
+    // Min 0.45 baseScale - asteroida nie zniknie do zera dopóki rdzeń żyje
+    const visualScale = asteroid.baseScale * Math.max(0.45, Math.pow(liveness, 0.6));
+    asteroid.scale = visualScale;
+    asteroid._dirty = true;
+    // Push immediate visual update
+    const pool = this.pools.get(asteroid.poolKey);
+    if (pool) pool.writeMatrix(asteroid.instanceIdx, asteroid.position.x, asteroid.position.y, asteroid.position.z, asteroid.rotZ, visualScale);
+
+    // Konsumuj listę cells odłamanych w tym hicie - debris event
+    const ejections = hex.consumeEjections();
+    if (ejections && ejections.length > 0) {
+      this.debrisEvents.push({
+        asteroidId: asteroid.id,
+        worldX, worldY,
+        type: asteroid.type,
+        size: asteroid.size,
+        cells: ejections.length,
+      });
+    }
+
+    asteroid.hp = Math.max(0, asteroid.hp - damage);
+
+    if (result.destroyed) {
+      const destroyResult = this._destroy(asteroid);
+      return { ...destroyResult, ejectedCells: result.ejectedCells };
+    }
+
+    return {
+      destroyed: false,
+      ejectedCells: result.ejectedCells,
+      remainingHp: asteroid.hp,
+      hexBody: hex,
+      hit: true,
+    };
+  }
+
+  /**
+   * Sprawdza kolizje statku z pobliskimi asteroidami. Aplikuje damage do obu,
+   * wypycha statek z asteroidy i ustawia bounce velocity.
+   *
+   * @param {object} ship - { pos, vel, mass?, radius?, hp? }
+   * @returns {Array} lista kolizji rozstrzygniętych w tej klatce
+   */
+  checkShipCollisions(ship) {
+    if (!ship || !ship.pos) return null;
+    const sx = ship.pos.x;
+    const sy = ship.pos.y;
+    const shipR = ship.radius || 30;
+    // Promień zapytania: statek + max scale (BIG=1500u)
+    const queryR = shipR + 1500;
+
+    let collisions = null;
+    this.spatial.forEachInRadius(sx, sy, queryR, (asteroid) => {
+      if (!asteroid.alive) return;
+      if (asteroid.hexEntity?.hexGrid) return;
+
+      const dxNear = sx - asteroid.worldX;
+      const dyNear = sy - asteroid.worldY;
+      const asteroidR = asteroid.scale * COLLISION_CONFIG.collisionRadiusFactor;
+      const promoteR = shipR + asteroidR + 180;
+      if (dxNear * dxNear + dyNear * dyNear <= promoteR * promoteR) {
+        if (this._promoteAsteroidToHex(asteroid, 'ship-near')) return;
+      }
+
+      const result = resolveShipAsteroidCollision(ship, asteroid);
+      if (!result || !result.collided) return;
+      const contactLen = Math.hypot(dxNear, dyNear) || 1;
+      const contactX = asteroid.worldX + (dxNear / contactLen) * asteroidR;
+      const contactY = asteroid.worldY + (dyNear / contactLen) * asteroidR;
+
+      // Separuj statek z asteroidy (wypchnięcie)
+      if (result.separationDx !== 0 || result.separationDy !== 0) {
+        ship.pos.x += result.separationDx;
+        ship.pos.y += result.separationDy;
+      }
+      // Nowa velocity statku (post-collision)
+      if (ship.vel) {
+        ship.vel.x = result.shipVx;
+        ship.vel.y = result.shipVy;
+      }
+      // Impuls do asteroidy - dodaje delta vel, oznacza jako moving
+      if (result.asteroidDvx !== 0 || result.asteroidDvy !== 0) {
+        this._applyImpulseToAsteroid(asteroid, result.asteroidDvx, result.asteroidDvy);
+      }
+
+      // Damage do statku - prawidłowe ship damage API (shield → hull) z window.applyDamageToPlayer/NPC.
+      // Statek ma ship.hull.val + ship.shield.val, NIE ship.hp.
+      if (result.shipDamage > 0) {
+        const isPlayer = ship.controller === 'player' || ship === window.ship;
+        if (isPlayer && typeof window.applyDamageToPlayer === 'function') {
+          window.applyDamageToPlayer(result.shipDamage);
+        } else if (typeof window.applyDamageToNPC === 'function') {
+          window.applyDamageToNPC(ship, result.shipDamage, 'asteroid');
+        } else {
+          // Fallback - bezpośrednio na shield/hull
+          let dmg = result.shipDamage;
+          if (ship.shield?.val > 0) {
+            const taken = Math.min(ship.shield.val, dmg);
+            ship.shield.val -= taken;
+            dmg -= taken;
+            ship.shield.regenTimer = ship.shield.regenDelay || 2.5;
+          }
+          if (dmg > 0 && ship.hull) {
+            ship.hull.val = Math.max(0, ship.hull.val - dmg);
+          }
+        }
+      }
+
+      // Damage do asteroidy (przez destruktor)
+      if (result.asteroidDamage > 0) {
+        this.applyDamageAt(asteroid, contactX, contactY, result.asteroidDamage, ship.vel || null);
+      }
+
+      if (!collisions) collisions = [];
+      collisions.push({ asteroid, ...result });
+    });
+
+    // Flush GPU update jeśli któraś asteroida ucierpiała (scale shrink przez applyDamageAt
+    // ustawia pool.dirty, ale bez flush ramka nie zobaczy zmiany do następnego update).
+    if (collisions) this._flushAll();
+
+    return collisions;
+  }
+
+  /**
+   * Dodaje delta-velocity do asteroidy i wpisuje ją do movingAsteroids dla per-frame
+   * aktualizacji pozycji. Auto-clamp do COLLISION_CONFIG.asteroidMaxVelocity.
+   */
+  _applyImpulseToAsteroid(asteroid, dvx, dvy) {
+    asteroid.vx = (asteroid.vx || 0) + dvx;
+    asteroid.vy = (asteroid.vy || 0) + dvy;
+    const speed2 = asteroid.vx * asteroid.vx + asteroid.vy * asteroid.vy;
+    const maxV = COLLISION_CONFIG.asteroidMaxVelocity;
+    if (speed2 > maxV * maxV) {
+      const sp = Math.sqrt(speed2);
+      const k = maxV / sp;
+      asteroid.vx *= k;
+      asteroid.vy *= k;
+    }
+    // Mała losowa rotacja przy pchnięciu - off-center hit naturalnie obraca skałę.
+    // Bez tego asteroidy lecą bez spinu = sztucznie. Skala proporcjonalna do prędkości.
+    const speed = Math.sqrt(speed2);
+    if (speed > 5) {
+      const spinKick = (this.rng() - 0.5) * 0.6 * Math.min(1, speed / 200);
+      asteroid.spin = (asteroid.spin || 0) + spinKick;
+    }
+    if (asteroid.hexEntity) syncHexEntityFromAsteroid(asteroid, asteroid.hexEntity);
+    this.movingAsteroids.add(asteroid);
+  }
+
+  /**
+   * Per-frame: przesuwa wszystkie ruchome asteroidy, aplikuje drag, sleep gdy
+   * prędkość bardzo mała. Re-hashuje w spatial gdy przekroczyły komórkę.
+   * Typowo working set <100 więc per-frame koszt <0.5ms.
+   */
+  _updateMovingAsteroids(dt) {
+    const drag = Math.pow(COLLISION_CONFIG.asteroidDrag, dt * 60); // znormalizowane do dt
+    const sleepV2 = COLLISION_CONFIG.asteroidSleepVelocity * COLLISION_CONFIG.asteroidSleepVelocity;
+    const toRemove = [];
+
+    for (const a of this.movingAsteroids) {
+      if (a.hexEntity) {
+        syncAsteroidFromHexEntity(a, a.hexEntity);
+        a.position.x = a.worldX;
+        a.position.y = -a.worldY;
+        this.spatial.update(a, a.worldX, a.worldY);
+        toRemove.push(a);
+        continue;
+      }
+      if (!a.alive) {
+        toRemove.push(a);
+        continue;
+      }
+      // Drag - prędkość liniowa i kątowa
+      a.vx *= drag;
+      a.vy *= drag;
+      if (a.spin) a.spin *= drag;
+      // Sleep test
+      const sp2 = a.vx * a.vx + a.vy * a.vy;
+      if (sp2 < sleepV2 && Math.abs(a.spin || 0) < 0.02) {
+        a.vx = 0;
+        a.vy = 0;
+        a.spin = 0;
+        toRemove.push(a);
+        continue;
+      }
+      // Przesunięcie + rotacja
+      a.worldX += a.vx * dt;
+      a.worldY += a.vy * dt;
+      if (a.spin) a.rotZ += a.spin * dt;
+      // 3D position (3D.y = -2D.y)
+      a.position.x = a.worldX;
+      a.position.y = -a.worldY;
+      // Re-hash w spatial jeśli przekroczyła komórkę
+      this.spatial.update(a, a.worldX, a.worldY);
+      if (a.hexEntity) {
+        syncHexEntityFromAsteroid(a, a.hexEntity);
+        continue;
+      }
+      // Push do GPU
+      const pool = this.pools.get(a.poolKey);
+      if (pool) {
+        pool.writeMatrix(a.instanceIdx, a.position.x, a.position.y, a.position.z, a.rotZ, a.scale);
+      }
+    }
+
+    for (const a of toRemove) this.movingAsteroids.delete(a);
+  }
+
+  /**
+   * Per-frame update destruktora - przewija burst frames aktywnych hex bodies.
+   * Wywoływany razem z głównym update().
+   */
+  updateDestructor(dt) {
+    this.destructor.update(dt);
+  }
+
+  /**
+   * Pobierz i wyczyść listę debris events z ostatniej klatki (do VFX).
+   */
+  consumeDebrisEvents() {
+    if (this.debrisEvents.length === 0) return null;
+    const list = this.debrisEvents.slice();
+    this.debrisEvents.length = 0;
+    return list;
+  }
+
+  /** Debug: statystyki destruktora. */
+  destructorStats() {
+    return this.destructor.stats();
   }
 }
 

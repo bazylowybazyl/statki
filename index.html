@@ -3949,7 +3949,9 @@
         (Array.isArray(cfg?.hardpoints) && cfg.hardpoints.length) ||
         (Array.isArray(cfg?.cores) && cfg.cores.length) ||
         (Array.isArray(cfg?.engines?.main) && cfg.engines.main.length) ||
-        (Array.isArray(cfg?.engines?.side) && cfg.engines.side.length)
+        (Array.isArray(cfg?.engines?.side) && cfg.engines.side.length) ||
+        (Array.isArray(cfg?.lights?.position) && cfg.lights.position.length) ||
+        (Array.isArray(cfg?.lights?.road) && cfg.lights.road.length)
       );
     }
 
@@ -4019,6 +4021,14 @@
           side: (Array.isArray(cfg?.engines?.side) && cfg.engines.side.length)
             ? cfg.engines.side
             : (Array.isArray(base?.engines?.side) ? base.engines.side : [])
+        },
+        lights: {
+          position: Array.isArray(cfg?.lights?.position)
+            ? cfg.lights.position
+            : (Array.isArray(base?.lights?.position) ? base.lights.position : []),
+          road: Array.isArray(cfg?.lights?.road)
+            ? cfg.lights.road
+            : (Array.isArray(base?.lights?.road) ? base.lights.road : [])
         }
       };
       return merged;
@@ -16276,6 +16286,7 @@
     const _ringHotSeen = new Set();
     const _activeWrecksBuffer = [];
     const _sleepingWrecksBuffer = [];
+    const _activeAsteroidHexBuffer = [];
     const _dynamicDestructibles = [];
     const _mergedDestructibles = [];
     const _mergedSeen = new Set();
@@ -16289,6 +16300,10 @@
       for (let i = 0; i < npcList.length; i++) _dynamicDestructibles.push(npcList[i]);
       for (let i = 0; i < wreckList.length; i++) _dynamicDestructibles.push(wreckList[i]);
       if (p2Entity) _dynamicDestructibles.push(p2Entity);
+      if (window.asteroidField?.getActiveHexEntities) {
+        const asteroidHexes = window.asteroidField.getActiveHexEntities(_activeAsteroidHexBuffer);
+        for (let i = 0; i < asteroidHexes.length; i++) _dynamicDestructibles.push(asteroidHexes[i]);
+      }
       return _dynamicDestructibles;
     }
 
@@ -16691,6 +16706,35 @@
             // Pocisk minął wszystko (np. dziura we wraku, albo minął tarczę gdy była wyłączona)
             hitNPC = null;
             continue;
+          }
+        }
+
+        // --- KOLIZJE Z ASTEROIDAMI (swept hit -> lazy hex promotion) ---
+        if (!hitNPC && window.asteroidField?.raycast && window.asteroidField?.applyDamageAt) {
+          const segX0 = Number.isFinite(b.px) ? b.px : b.x;
+          const segY0 = Number.isFinite(b.py) ? b.py : b.y;
+          const segX1 = b.x;
+          const segY1 = b.y;
+          const astHit = window.asteroidField.raycast(segX0, segY0, segX1, segY1, b.r || 0);
+
+          if (astHit?.asteroid?.alive) {
+            const tAst = Math.max(0, Math.min(1, Number(astHit.hitT ?? astHit.t) || 0));
+            const hitX = segX0 + (segX1 - segX0) * tAst;
+            const hitY = segY0 + (segY1 - segY0) * tAst;
+            const astDamage = Number.isFinite(b.damage) ? b.damage : 0;
+            const astResult = window.asteroidField.applyDamageAt(astHit.asteroid, hitX, hitY, astDamage, { x: b.vx, y: b.vy });
+
+            if (astResult?.hit || astResult?.destroyed) {
+              spawnBulletImpactEffect(b, hitX, hitY, 0.9);
+
+              if (b.type === 'rail') {
+                b.penetration = (b.penetration || 1) - 1;
+                if (b.penetration <= 0) bullets.splice(i, 1);
+              } else {
+                bullets.splice(i, 1);
+              }
+              continue;
+            }
           }
         }
 
@@ -18162,7 +18206,7 @@
         w._wreckAge = (Number(w._wreckAge) || 0) + dt;
         const wreckSpeedSq = (w.vx * w.vx) + (w.vy * w.vy);
         const wreckSlowEnough = wreckSpeedSq < (wreckSleepSpeed * wreckSleepSpeed) && Math.abs(w.angVel) < wreckSleepAngVel;
-        if ((Number(w._wreckAge) || 0) > wreckFreshTime && wreckSlowEnough) {
+        if (!w.noWreckSleep && (Number(w._wreckAge) || 0) > wreckFreshTime && wreckSlowEnough) {
           w._wreckSleepTimer = (Number(w._wreckSleepTimer) || 0) + dt;
           if ((Number(w._wreckSleepTimer) || 0) >= wreckSleepDelay) {
             w._wreckSleeping = true;
@@ -19025,7 +19069,17 @@
       if (renderDbgEnabled) RenderLiveDebug.record('updateWorld3D', performance.now() - tRenderSection);
 
       if (renderDbgEnabled) tRenderSection = performance.now();
-      if (window.asteroidField) window.asteroidField.update(frameDt);
+      if (window.asteroidField) {
+        window.asteroidField.update(frameDt);
+        // Kolizje statków z asteroidami. Player + NPCs. Spatial hash zapewnia
+        // że per ship sprawdzamy tylko ~5-50 kandydatów w pobliżu.
+        if (ship && !ship.dead) window.asteroidField.checkShipCollisions(ship);
+        if (player2Ship && !player2Ship.dead) window.asteroidField.checkShipCollisions(player2Ship);
+        for (let i = 0; i < npcs.length; i++) {
+          const npc = npcs[i];
+          if (npc && !npc.dead && npc.pos) window.asteroidField.checkShipCollisions(npc);
+        }
+      }
       if (renderDbgEnabled) RenderLiveDebug.record('asteroidField.update', performance.now() - tRenderSection);
 
       if (renderDbgEnabled) tRenderSection = performance.now();
@@ -19042,6 +19096,10 @@
       const ringEnts = getPlanetaryRingEntities();
       for (const re of ringEnts) {
         if (re && !re.dead) renderEntities.push(re);
+      }
+      if (window.asteroidField?.getActiveHexEntities) {
+        const asteroidHexes = window.asteroidField.getActiveHexEntities(_activeAsteroidHexBuffer);
+        for (let i = 0; i < asteroidHexes.length; i++) renderEntities.push(asteroidHexes[i]);
       }
 
       if (renderDbgEnabled) tRenderSection = performance.now();

@@ -44,6 +44,7 @@ uniform float uDayDiffuseMul;
 uniform float uSpecularMul;
 uniform int uIsDebris;
 uniform int uIsOcclusion;
+uniform int uBillboardLighting;
 
 varying vec2 vSpriteUV;
 varying float vStress;
@@ -79,6 +80,11 @@ void main() {
   // --- MASKA OKLUZJI: Sylwetki zgĹ‚aszajÄ… siÄ™ jako BIAĹE (1.0), czyli blokery Ĺ›wiatĹ‚a ---
   if (uIsOcclusion == 1) {
       gl_FragColor = vec4(1.0, 1.0, 1.0, alpha);
+      return;
+  }
+
+  if (uBillboardLighting == 1) {
+      gl_FragColor = vec4(color, alpha);
       return;
   }
 
@@ -307,6 +313,14 @@ function getEntityScaleY(entity) {
 
 function getEntityScale(entity) {
   return Math.max(getEntityScaleX(entity), getEntityScaleY(entity));
+}
+
+function usesBillboardLighting(entity) {
+  return entity?.isAsteroidHex === true || entity?.visual?.preserveBillboardLighting === true;
+}
+
+function usesBillboardOrientation(entity) {
+  return entity?.isAsteroidHex === true || entity?.visual?.preserveBillboardOrientation === true;
 }
 
 function isEntityInCull(entity, cull) {
@@ -587,7 +601,7 @@ function createEntityMesh(entity) {
   if (count <= 0) return null;
 
   const baseRadius = Math.max(2, Number(shards[0]?.radius) || 20);
-  const geometry = new THREE.CircleGeometry(baseRadius * 1.08, 6);
+  const geometry = new THREE.CircleGeometry(baseRadius * 1.04, 6);
 
   const armorSource = grid.armorImage || grid.cacheCanvas;
   const texture = createManagedTexture(armorSource);
@@ -621,7 +635,8 @@ function createEntityMesh(entity) {
       uDayDiffuseMul: { value: SHIP_LIGHT_DEFAULTS.dayDiffuseMul },
       uSpecularMul: { value: SHIP_LIGHT_DEFAULTS.specularMul },
       uIsDebris: { value: 0 },
-      uIsOcclusion: { value: 0 }
+      uIsOcclusion: { value: 0 },
+      uBillboardLighting: { value: usesBillboardLighting(entity) ? 1 : 0 }
     },
     vertexShader: HEX_VERTEX_SHADER,
     fragmentShader: HEX_FRAGMENT_SHADER,
@@ -868,10 +883,14 @@ function updateEntityMesh(entity, data, camX, camY) {
   }
 
   mesh.material.uniforms.uStressTint.value = state.damageTintEnabled ? 0.30 : 0.0;
-  mesh.material.uniforms.uRotation.value = -entityAngle;
+  if (mesh.material.uniforms.uBillboardLighting) {
+    mesh.material.uniforms.uBillboardLighting.value = usesBillboardLighting(entity) ? 1 : 0;
+  }
+  const renderRotation = usesBillboardOrientation(entity) ? entityAngle : -entityAngle;
+  mesh.material.uniforms.uRotation.value = renderRotation;
 
   mesh.position.set(ex, -ey, 0);
-  mesh.rotation.set(0, 0, -entityAngle);
+  mesh.rotation.set(0, 0, renderRotation);
   const scaleX = getEntityScaleX(entity);
   const scaleY = getEntityScaleY(entity);
   mesh.scale.set(scaleX, -scaleY, 1);

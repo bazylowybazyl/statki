@@ -15,12 +15,32 @@ function safeUnmap(buffer) {
 
 function markGridMeshDirtyRange(grid, minIndex, maxIndex) {
   if (!grid) return;
+  const bumpRevision = () => {
+    const next = (Number(grid.meshRevision) || 0) + 1;
+    grid.meshRevision = next > 1000000000 ? 1 : next;
+  };
+  const markVisualRange = (start, end) => {
+    if (grid.visualDirtyAll) return;
+    const curStart = Number(grid.visualDirtyStart);
+    const curEnd = Number(grid.visualDirtyEnd);
+    if (!Number.isFinite(curStart) || !Number.isFinite(curEnd) || curStart < 0 || curEnd < curStart) {
+      grid.visualDirtyStart = start;
+      grid.visualDirtyEnd = end;
+      return;
+    }
+    if (start < curStart) grid.visualDirtyStart = start;
+    if (end > curEnd) grid.visualDirtyEnd = end;
+  };
   const count = Array.isArray(grid.shards) ? grid.shards.length : 0;
   if (count <= 0) {
     grid.meshDirty = true;
+    bumpRevision();
     grid.meshDirtyAll = true;
     grid.meshDirtyStart = 0;
     grid.meshDirtyEnd = 0;
+    grid.visualDirtyAll = true;
+    grid.visualDirtyStart = 0;
+    grid.visualDirtyEnd = 0;
     return;
   }
   let start = Number(minIndex);
@@ -42,6 +62,8 @@ function markGridMeshDirtyRange(grid, minIndex, maxIndex) {
     }
   }
   grid.meshDirty = true;
+  bumpRevision();
+  markVisualRange(start, end);
   if (grid.meshDirtyAll) return;
   const curStart = Number(grid.meshDirtyStart);
   const curEnd = Number(grid.meshDirtyEnd);
@@ -665,6 +687,7 @@ export const DestructorGpuSoftBody = {
       if (this._resultsQueue.length >= queueBackpressureLimit) break;
       if (!entity?.hexGrid?.shards || entity.dead) continue;
       if (entity?.isRingSegment) continue;
+      if (entity?.noGpuSoftBody === true || entity?.destructionMaterial === 'brittle') continue;
       const count = entity.hexGrid.shards.length;
       if (count < minShards) continue;
 
