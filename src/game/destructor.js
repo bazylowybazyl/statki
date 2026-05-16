@@ -31,6 +31,12 @@ export const DESTRUCTOR_CONFIG = {
   restitution: 0.05, //
   crashApproachSpeedThreshold: 200.0, //
   crushPenetrationMin: 0.30,          // Min. penetracja do startu crush
+  rammingCrushSpeedThreshold: 35.0,   // Low-speed heavy ramming can crush on direct impact
+  rammingCrushMassRatio: 2.5,         // Mass dominance needed for penetration-based crush
+  rammingCrushScale: 0.70,            // Softer than crash crush, but not harmless
+  rammingDamageCapMin: 0.08,          // Base per-shard HP cap for steel
+  rammingDamageCapMax: 0.90,          // Heavy ram upper cap for steel
+  rammingDamageCapLogScale: 0.11,     // Cap growth per log2(mass advantage)
   crushImpulseScale: 0.90, //
   shearK: 0.06, //
   friction: 0.99, //
@@ -65,6 +71,10 @@ export const DESTRUCTOR_CONFIG = {
   shieldSeparationPercent: 0.6,
   shieldSeparationSlop: 2.0,
   shieldCollisionCooldown: 0.16,
+  shieldCollisionDamageStepOffset: 1.5,
+  shieldRammingDamageStepOffset: 0.45,
+  shieldRammingDamageBoostMax: 4.0,
+  shieldRammingDamageBoostExp: 0.45,
   shieldActivationDamageMult: 0.18,
   shieldCapitalDominanceRatio: 3.0,
   shieldCapitalDominanceHeavyDamageMult: 0.3,
@@ -371,6 +381,16 @@ function clampCrushVector(fx, fy, ratio, mag, maxCrushLimit, out) {
     out.x = fx;
     out.y = fy;
   }
+}
+
+function getRammingDamageCap(shardHp, attackerMassAdvantage) {
+  const hp = Math.max(1, Number(shardHp) || 1);
+  const minFrac = Math.max(0.01, Number(DESTRUCTOR_CONFIG.rammingDamageCapMin) || 0.08);
+  const maxFrac = Math.max(minFrac, Number(DESTRUCTOR_CONFIG.rammingDamageCapMax) || 0.90);
+  const logScale = Math.max(0, Number(DESTRUCTOR_CONFIG.rammingDamageCapLogScale) || 0.11);
+  const advantage = Math.max(1, Number(attackerMassAdvantage) || 1);
+  const frac = Math.min(maxFrac, minFrac + Math.log2(advantage) * logScale);
+  return hp * frac;
 }
 
 let HEX_SHIPS_3D_ACTIVE = false;
@@ -743,6 +763,15 @@ function getEntityMass(entity) {
   const m = Number(entity?.mass);
   if (Number.isFinite(m) && m > 0) return m;
   return 100;
+}
+
+function getEntityRammingMass(entity) {
+  const baseMass = getEntityMass(entity);
+  const rammingMass = Number(entity?.rammingMass);
+  if (Number.isFinite(rammingMass) && rammingMass > 0) {
+    return Math.max(baseMass, rammingMass);
+  }
+  return baseMass;
 }
 
 function getShieldAuthorityKey(entity) {
@@ -2596,8 +2625,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     const vBx = getEntityVelX(B), vBy = getEntityVelY(B);
     const velAlongNormal = (vAx - vBx) * nx + (vAy - vBy) * ny;
 
-    const massA = getEntityMass(A) || 100;
-    const massB = getEntityMass(B) || 100;
+    const massA = getEntityRammingMass(A) || 100;
+    const massB = getEntityRammingMass(B) || 100;
     const authorityA = srA > 0 ? getShieldAuthority(A) : 1.0;
     const authorityB = srB > 0 ? getShieldAuthority(B) : 1.0;
     const effectiveMassA = Math.max(1, massA * authorityA);
@@ -2656,7 +2685,12 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     // This avoids giant damage spikes from tiny touches and from already-separating overlaps.
     const impactSpeed = Math.max(0, -velAlongNormal);
     const impactStep = impactSpeed * Math.max(1 / 240, Number(dt) || 0);
-    const damageStep = Math.max(0, impactStep - 1.5);
+    const dominance = Math.max(effectiveRatioA, effectiveRatioB);
+    const dominantRammingShieldHit = dominance > dominanceRatio;
+    const baseStepOffset = Math.max(0, Number(DESTRUCTOR_CONFIG.shieldCollisionDamageStepOffset) || 1.5);
+    const ramStepOffset = Math.max(0, Number(DESTRUCTOR_CONFIG.shieldRammingDamageStepOffset) || 0.45);
+    const damageStepOffset = dominantRammingShieldHit ? Math.min(baseStepOffset, ramStepOffset) : baseStepOffset;
+    const damageStep = Math.max(0, impactStep - damageStepOffset);
 
     if (damageStep > 0) {
       if (!A._shieldPairId) A._shieldPairId = this._shieldPairIdCounter++;
@@ -2671,7 +2705,12 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       
       if ((nowSec - lastHitSec) < pairCooldown) return 1;
 
-      const totalDamage = damageStep * damageStep * DESTRUCTOR_CONFIG.shieldCollisionDamageScale * 120;
+      const boostExp = Math.max(0, Number(DESTRUCTOR_CONFIG.shieldRammingDamageBoostExp) || 0.45);
+      const boostMax = Math.max(1, Number(DESTRUCTOR_CONFIG.shieldRammingDamageBoostMax) || 4.0);
+      const dominanceBoost = dominantRammingShieldHit
+        ? Math.min(boostMax, Math.pow(dominance / dominanceRatio, boostExp))
+        : 1;
+      const totalDamage = damageStep * damageStep * DESTRUCTOR_CONFIG.shieldCollisionDamageScale * 120 * dominanceBoost;
       const totalEffectiveMass = effectiveMassA + effectiveMassB;
       let dmgA = srB > 0 ? totalDamage * (effectiveMassB / totalEffectiveMass) : totalDamage;
       let dmgB = srA > 0 ? totalDamage * (effectiveMassA / totalEffectiveMass) : totalDamage;
@@ -2745,8 +2784,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const scaleIterY = Math.max(0.0001, getFinalScaleY(iterator));
       const scaleGridX = Math.max(0.0001, getFinalScaleX(gridHolder));
       const scaleGridY = Math.max(0.0001, getFinalScaleY(gridHolder));
-      const massA = getEntityMass(A);
-      const massB = getEntityMass(B);
+      const massA = getEntityRammingMass(A);
+      const massB = getEntityRammingMass(B);
       const angIter = getEntityHexAngle(iterator);
       const angGrid = getEntityHexAngle(gridHolder);
 
@@ -2923,6 +2962,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       // Define impactSpeed early so crush logic can use it consistently.
       const impactSpeed = Math.sqrt(dvx * dvx + dvy * dvy);
       const velAlongNormal = dvx * nx + dvy * ny;
+      const approachSpeed = Math.max(0, -velAlongNormal);
       const tx = -ny;
       const ty = nx;
       const velTangent = dvx * tx + dvy * ty;
@@ -2948,7 +2988,6 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
         if (Number.isFinite(denom) && denom > 1e-8) {
           const restBase = DESTRUCTOR_CONFIG.restitution;
-          const approachSpeed = -velAlongNormal;
           const crashApproachSpeedThreshold = Number(DESTRUCTOR_CONFIG.crashApproachSpeedThreshold) || 200.0;
           isDestruction = approachSpeed > crashApproachSpeedThreshold;
           const restitution = isDestruction ? 0.0 : restBase;
@@ -3009,11 +3048,17 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         );
       }
 
-      const penMin = DESTRUCTOR_CONFIG.crushPenetrationMin ?? 0.15;
-      // Enable soft-body crushing only during crash events, and only on the damage pass.
-      const crushActive = isDestruction;
-      const allowCrush = isDestruction;
-      const heavyCrushPass = crushActive && allowCrush && doDamage;
+      const penMin = Math.max(0, Number(DESTRUCTOR_CONFIG.crushPenetrationMin) || 0.15);
+      const massRatio = Math.max(massA, massB) / Math.max(1, Math.min(massA, massB));
+      const rammingMassRatio = Math.max(1, Number(DESTRUCTOR_CONFIG.rammingCrushMassRatio) || 2.5);
+      const rammingSpeed = Math.max(0, Number(DESTRUCTOR_CONFIG.rammingCrushSpeedThreshold) || 35.0);
+      const deepCrushPenetration = penetration > (HIT_RAD * penMin);
+      const dominantMassPair = massRatio >= rammingMassRatio;
+      const directDominantRam = dominantMassPair && approachSpeed > rammingSpeed;
+      const scrapeDominantRam = dominantMassPair && deepCrushPenetration && impactSpeed > rammingSpeed;
+      const dominantRammingCrush = directDominantRam || scrapeDominantRam;
+      const crushActive = isDestruction || dominantRammingCrush;
+      const heavyCrushPass = crushActive && doDamage;
 
       if (heavyCrushPass) {
         const gpuAwakeFrames = heavyPair ? 12 : 16;
@@ -3057,7 +3102,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const forceAy = (-wForceAx * sa + wForceAy * ca) / scaleAY;
         const forceBx = (wForceBx * cb + wForceBy * sb) / scaleBX;
         const forceBy = (-wForceBx * sb + wForceBy * cb) / scaleBY;
-        const crushScale = isDestruction ? 1 : 0.35;
+        const crushScale = isDestruction ? 1 : Math.max(0.1, Number(DESTRUCTOR_CONFIG.rammingCrushScale) || 0.70);
 
         // 2. Nonlinear impact weighting (squared mass ratios)
         const baseRatioA = (invMassB === 0) ? 0.0 : (invMassA === 0 ? 1.0 : massB / totalMass);
@@ -3096,7 +3141,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
         const massAdvantageA = massA / (massB + 1);
         const massAdvantageB = massB / (massA + 1);
-        const maxDmgPerTick = DESTRUCTOR_CONFIG.shardHP * 0.08;
+        const maxDmgPerTickA = getRammingDamageCap(DESTRUCTOR_CONFIG.shardHP, massAdvantageB);
+        const maxDmgPerTickB = getRammingDamageCap(DESTRUCTOR_CONFIG.shardHP, massAdvantageA);
         const brittleA = isBrittleEntity(A);
         const brittleB = isBrittleEntity(B);
 
@@ -3152,7 +3198,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             if (doDamage) {
               const kineticDmg = (rawCrushMagA * realRatioA * 0.18 * massAdvantageB) / Math.sqrt(contactsCount);
               const brittleMult = brittleA ? 3.5 : 1.0;
-              const cap = brittleA ? DESTRUCTOR_CONFIG.shardHP * 0.75 : maxDmgPerTick;
+              const cap = brittleA ? DESTRUCTOR_CONFIG.shardHP * 0.75 : maxDmgPerTickA;
               sA.hp -= Math.min(cap, kineticDmg * brittleMult);
             }
 
@@ -3205,7 +3251,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             if (doDamage) {
               const kineticDmg = (rawCrushMagB * realRatioB * 0.18 * massAdvantageA) / Math.sqrt(contactsCount);
               const brittleMult = brittleB ? 3.5 : 1.0;
-              const cap = brittleB ? DESTRUCTOR_CONFIG.shardHP * 0.75 : maxDmgPerTick;
+              const cap = brittleB ? DESTRUCTOR_CONFIG.shardHP * 0.75 : maxDmgPerTickB;
               sB.hp -= Math.min(cap, kineticDmg * brittleMult);
             }
 
@@ -3231,7 +3277,6 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         }
       }
 
-      const massRatio = Math.max(massA, massB) / Math.max(1, Math.min(massA, massB));
       const deepPenetration = penetration > (HIT_RAD * 0.35);
       let crushSep = 0.82;
       if (massRatio > 5) crushSep = 0.75;
