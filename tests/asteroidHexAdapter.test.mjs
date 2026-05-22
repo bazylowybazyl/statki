@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { COLLISION_CONFIG, getCollisionMass, getMass } from '../src/data/asteroidPhysics.js';
+import { COLLISION_CONFIG, getAsteroidRammingMass, getCollisionMass, getMass } from '../src/data/asteroidPhysics.js';
 import { DestructorSystem } from '../src/game/destructor.js';
 import {
   buildAsteroidHexEntityModel,
@@ -14,6 +14,7 @@ import {
   AsteroidField,
   segmentCircleHitInfo
 } from '../src/3d/asteroidField3D.js';
+import { resolveShipAsteroidCollision } from '../src/game/asteroidDestructor.js';
 
 test('collision mass makes big metal asteroids comparable to capital ships', () => {
   assert.equal(getMass('iron', 'BIG'), 6240);
@@ -25,6 +26,73 @@ test('collision mass makes big metal asteroids comparable to capital ships', () 
     getCollisionMass('iron', 'BIG') > getCollisionMass('iron', 'L') * 4,
     'BIG collision mass should scale strongly above L asteroids'
   );
+});
+
+test('big dense asteroid ramming authority can overrun an atlas while light ice cannot', () => {
+  const atlasRammingMass = 800000;
+
+  assert.ok(
+    getAsteroidRammingMass('iron', 'BIG') >= atlasRammingMass * 8,
+    'BIG iron should be able to enter overrun crush against an Atlas-class ram'
+  );
+  assert.ok(
+    getAsteroidRammingMass('ice', 'BIG') < atlasRammingMass * 2.5,
+    'BIG ice should stay pushable instead of crushing like dense metal'
+  );
+  assert.ok(
+    getAsteroidRammingMass('iron', 'BIG') > getAsteroidRammingMass('iron', 'S') * 1000,
+    'ramming authority should scale strongly with asteroid size'
+  );
+});
+
+test('asteroid hex entity uses size-scaled ramming mass separate from inertial mass', () => {
+  const asteroid = {
+    id: 44,
+    type: 'iron',
+    size: 'BIG',
+    worldX: 0,
+    worldY: 0,
+    rotZ: 0,
+    spin: 0,
+    scale: 1500,
+    hp: 1000,
+    hpMax: 1000,
+    hardness: 0.7
+  };
+
+  const model = buildAsteroidHexEntityModel(asteroid, { width: 600, height: 600 });
+
+  assert.equal(model.mass, getCollisionMass('iron', 'BIG'));
+  assert.equal(model.rammingMass, getAsteroidRammingMass('iron', 'BIG'));
+  assert.ok(model.rammingMass > model.mass);
+});
+
+test('legacy ship asteroid resolver uses collision mass for fallback contacts', () => {
+  const asteroid = {
+    alive: true,
+    type: 'iron',
+    size: 'BIG',
+    worldX: 0,
+    worldY: 0,
+    scale: 1500,
+    vx: 0,
+    vy: 0,
+    hardness: 0.7
+  };
+  const ship = {
+    pos: { x: 600, y: 0 },
+    vel: { x: -200, y: 0 },
+    w: 3000,
+    h: 1000,
+    radius: 500,
+    angle: 0,
+    mass: 800000
+  };
+
+  const result = resolveShipAsteroidCollision(ship, asteroid);
+
+  assert.ok(result?.collided);
+  assert.ok(result.massRatio > 1, 'BIG iron fallback collision should no longer use tiny legacy mass');
 });
 
 test('asteroid hex entity model preserves world-space sprite scale and material flags', () => {

@@ -801,5 +801,33 @@ export const ATLAS_EDITOR_DEFAULTS = {
         "vfxLengthMax": 354
       }
     ]
+  },
+  "lights": {
+    "position": [
+      { "id": "m_tom9flp", "x": 1438.2, "y": 211.16, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_3jz83pv", "x": 1445.81, "y": -211.16, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_kahz8qw", "x": 979.73, "y": -279.65, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_p2fiv0j", "x": 979.73, "y": 264.43, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_mkli3e0", "x": 384.28, "y": -325.31, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_7d685m9", "x": 374.77, "y": 313.89, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_d3h1pzm", "x": -45.66, "y": -395.7, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_3sbo277", "x": -45.66, "y": 395.7, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_7ql8ryp", "x": -277.75, "y": -469.89, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_efptu8o", "x": -277.75, "y": 469.89, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_r5kgtdf", "x": -589.74, "y": -597.35, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_0hd7uou", "x": -589.74, "y": 597.35, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_uxpe7b5", "x": -783.78, "y": -585.93, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_1hvmk68", "x": -783.78, "y": 585.93, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_9tbelyo", "x": -1139.53, "y": -589.74, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_b6pp8aq", "x": -1139.53, "y": 589.74, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_zjoiq9s", "x": -1443.91, "y": -460.38, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_pdlef4g", "x": -1443.91, "y": 460.38, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_08wbv48", "x": -1712.15, "y": -55.17, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" },
+      { "id": "m_klmq7m3", "x": -1712.15, "y": 55.17, "color": "#ff2b2b", "power": 0.8, "radius": 4, "sequenceGroup": "edge" }
+    ],
+    "road": [
+      { "id": "m_vnnz8tv", "x": 1740.68, "y": -79.9, "color": "#ffffff", "power": 3, "radius": 14, "deg": 90, "range": 800, "coneDeg": 40 },
+      { "id": "m_9r7rlb7", "x": 1740.68, "y": 79.9, "color": "#ffffff", "power": 3, "radius": 14, "deg": 90, "range": 800, "coneDeg": 40 }
+    ]
   }
 };

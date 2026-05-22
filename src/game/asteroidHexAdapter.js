@@ -1,4 +1,4 @@
-import { getCollisionMass, getHardness } from '../data/asteroidPhysics.js';
+import { getAsteroidRammingMass, getCollisionMass, getHardness } from '../data/asteroidPhysics.js';
 
 function positiveNumber(value, fallback = 0) {
   const n = Number(value);
@@ -40,6 +40,10 @@ export function buildAsteroidHexEntityModel(asteroid, image, options = {}) {
     options.collisionMass,
     getCollisionMass(asteroid?.type, asteroid?.size)
   );
+  const rammingMass = positiveNumber(
+    options.rammingMass,
+    getAsteroidRammingMass(asteroid?.type, asteroid?.size)
+  );
   const radius = positiveNumber(asteroid?.scale, 1) * 0.5;
 
   return {
@@ -58,7 +62,7 @@ export function buildAsteroidHexEntityModel(asteroid, image, options = {}) {
     angle: finiteNumber(asteroid?.rotZ, 0),
     angVel: finiteNumber(asteroid?.spin, 0),
     mass: collisionMass,
-    rammingMass: collisionMass,
+    rammingMass,
     radius,
     hp: positiveNumber(asteroid?.hp, positiveNumber(asteroid?.hpMax, 1)),
     maxHp: positiveNumber(asteroid?.hpMax, positiveNumber(asteroid?.hp, 1)),
@@ -96,7 +100,7 @@ export function syncHexEntityFromAsteroid(asteroid, entity) {
   entity.angle = finiteNumber(asteroid.rotZ, entity.angle);
   entity.angVel = finiteNumber(asteroid.spin, entity.angVel);
   entity.mass = positiveNumber(entity.mass, getCollisionMass(asteroid.type, asteroid.size));
-  entity.rammingMass = positiveNumber(entity.rammingMass, entity.mass);
+  entity.rammingMass = positiveNumber(entity.rammingMass, getAsteroidRammingMass(asteroid.type, asteroid.size));
   return entity;
 }
 

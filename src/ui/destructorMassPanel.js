@@ -4,9 +4,11 @@ const PANEL_ID = 'destructor-mass-panel';
 const STYLE_ID = 'destructor-mass-panel-style';
 const STORAGE_KEY = 'devDestructorMassConfig';
 const MASS_APPLY_TAG = '__destructorMassStamp';
+const RAMMING_MASS_APPLY_TAG = '__destructorRammingMassStamp';
 
 const CONTROLS = [
   { key: 'playerMass', label: 'Masa gracza', min: 10, max: 20000000, step: 1000 },
+  { key: 'playerRammingMass', label: 'Taran gracza', min: 10, max: 20000000, step: 1000 },
   { key: 'npcBattleshipMass', label: 'NPC battleship', min: 10, max: 20000000, step: 1000 },
   { key: 'npcDestroyerMass', label: 'NPC destroyer', min: 10, max: 20000000, step: 1000 },
   { key: 'npcCapitalMass', label: 'NPC capital', min: 10, max: 20000000, step: 1000 },
@@ -15,6 +17,7 @@ const CONTROLS = [
 
 const SHIP_DEFAULTS = {
   playerMass: Math.round(Number(CAPITAL_SHIP_TEMPLATES?.supercapital?.mass) || 200000),
+  playerRammingMass: Math.round(Number(CAPITAL_SHIP_TEMPLATES?.supercapital?.rammingMass) || 800000),
   npcBattleshipMass: Math.round(Number(SUPPORT_SHIP_TEMPLATES?.battleship?.stats?.mass) || 50000),
   npcDestroyerMass: Math.round(Number(SUPPORT_SHIP_TEMPLATES?.destroyer?.stats?.mass) || 25000),
   npcCapitalMass: Math.round(Number(CAPITAL_SHIP_TEMPLATES?.carrier?.mass) || 100000),
@@ -95,6 +98,12 @@ function pickNpcMassByKey(key) {
 function resolveDefaultsFromRuntime() {
   const next = { ...SHIP_DEFAULTS };
 
+  const player = window.ship;
+  const playerMass = Number(player?.mass);
+  const playerRammingMass = Number(player?.rammingMass);
+  if (Number.isFinite(playerMass) && playerMass > 0) next.playerMass = Math.round(playerMass);
+  if (Number.isFinite(playerRammingMass) && playerRammingMass > 0) next.playerRammingMass = Math.round(playerRammingMass);
+
   const ringMass = Number(getRingEntities().find(e => e && e.isRingSegment && !e.dead)?.mass);
   if (Number.isFinite(ringMass) && ringMass > 0) next.ringMass = Math.round(ringMass);
 
@@ -112,13 +121,22 @@ function applyMassToEntity(entity, mass, stamp, opts = {}) {
   const nextMass = Math.max(1, Number(mass) || 1);
   entity.mass = nextMass;
 
-  if (opts.updateRamming || Number.isFinite(entity.rammingMass)) entity.rammingMass = nextMass;
+  if (opts.updateRamming) entity.rammingMass = nextMass;
 
   if (opts.updateInertia && Number.isFinite(entity.w) && Number.isFinite(entity.h)) {
     entity.inertia = (1 / 12) * nextMass * ((entity.w * entity.w) + (entity.h * entity.h));
   }
 
   entity[MASS_APPLY_TAG] = stamp;
+  return true;
+}
+
+function applyRammingMassToEntity(entity, mass, stamp) {
+  if (!entity || entity.dead) return false;
+  if (entity[RAMMING_MASS_APPLY_TAG] === stamp) return false;
+
+  entity.rammingMass = Math.max(1, Number(mass) || 1);
+  entity[RAMMING_MASS_APPLY_TAG] = stamp;
   return true;
 }
 
@@ -129,7 +147,10 @@ function applyMassOverridesNow() {
 
   const player = window.ship;
   if (player) {
-    if (applyMassToEntity(player, cfg.playerMass, `v${version}:player`, { updateRamming: true, updateInertia: true })) {
+    if (applyMassToEntity(player, cfg.playerMass, `v${version}:player`, { updateInertia: true })) {
+      summary.player++;
+    }
+    if (applyRammingMassToEntity(player, cfg.playerRammingMass, `v${version}:playerRamming`)) {
       summary.player++;
     }
   }

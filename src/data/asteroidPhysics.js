@@ -30,8 +30,8 @@ export const ASTEROID_MATERIAL = {
 };
 
 /**
- * Multiplikatory wielkości - mnożone z bazową masą/HP materiału.
- * BIG ma 64× więcej masy niż S - kollizje z BIG = ścianowanie statku.
+ * Legacy mass for mining/fallback damage curves. Full contact physics uses
+ * SIZE_COLLISION_MASS_MULTIPLIER below.
  */
 export const SIZE_MASS_MULTIPLIER = {
   S:   1,
@@ -50,6 +50,18 @@ export const SIZE_COLLISION_MASS_MULTIPLIER = {
   M:   2600,
   L:   17000,
   BIG: 115000,
+};
+
+/**
+ * Extra contact authority for asteroid ramming. Inertial collision mass stays
+ * material-based, but large rocks should behave more like a wall in ship-hex
+ * contacts. Small rocks keep normal mass so they do not overrun capital ships.
+ */
+export const SIZE_RAMMING_MASS_MULTIPLIER = {
+  S:   0.35,
+  M:   0.85,
+  L:   2.25,
+  BIG: 7.5,
 };
 
 export const SIZE_HP_MULTIPLIER = {
@@ -180,6 +192,11 @@ export function getCollisionMass(type, size) {
   const mat = ASTEROID_MATERIAL[type];
   if (!mat) return 10000;
   return mat.mass * (SIZE_COLLISION_MASS_MULTIPLIER[size] || SIZE_COLLISION_MASS_MULTIPLIER.M);
+}
+
+export function getAsteroidRammingMass(type, size) {
+  const mass = getCollisionMass(type, size);
+  return mass * (SIZE_RAMMING_MASS_MULTIPLIER[size] || 1);
 }
 
 export function getHardness(type) {

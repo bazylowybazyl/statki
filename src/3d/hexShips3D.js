@@ -3,6 +3,12 @@ import { refreshHexBodyCache, DESTRUCTOR_CONFIG, DestructorSystem } from '../gam
 import { Core3D } from './core3d.js';
 import { EngineVfxSystem } from './engineVfxSystem.js';
 import { Weapon3DSystem } from './weapon3DSystem.js';
+import {
+  MAX_SHADER_SHIP_LIGHTS,
+  buildCombinedShipLightShaderPayload,
+  buildRoadLightWorldEmitters,
+  buildShipLightShaderPayload
+} from '../game/shipLightRuntime.js';
 
 const HEX_VERTEX_SHADER = `
 attribute vec2 aGridPos;
@@ -25,6 +31,7 @@ void main() {
 `;
 
 const HEX_FRAGMENT_SHADER = `
+#define MAX_SHIP_LIGHTS ${MAX_SHADER_SHIP_LIGHTS}
 uniform sampler2D uSprite;
 uniform sampler2D uDamagedTex;
 uniform sampler2D uNormalMap;
@@ -45,6 +52,12 @@ uniform float uSpecularMul;
 uniform int uIsDebris;
 uniform int uIsOcclusion;
 uniform int uBillboardLighting;
+uniform vec2 uSpriteSize;
+uniform float uTime;
+uniform int uShipLightCount;
+uniform vec4 uShipLightData[MAX_SHIP_LIGHTS];
+uniform vec4 uShipLightColor[MAX_SHIP_LIGHTS];
+uniform vec4 uShipLightExtra[MAX_SHIP_LIGHTS];
 
 varying vec2 vSpriteUV;
 varying float vStress;
@@ -118,6 +131,45 @@ void main() {
 
   float isGlowing = step(0.6, color.b) * step(color.r, 0.5);
   vec3 finalColor = color + (color * isGlowing * 1.5); 
+
+  vec2 fragPx = vSpriteUV * uSpriteSize;
+  for (int i = 0; i < MAX_SHIP_LIGHTS; i++) {
+    if (i >= uShipLightCount) break;
+    vec4 lightData = uShipLightData[i];
+    vec4 lightColor = uShipLightColor[i];
+    vec4 lightExtra = uShipLightExtra[i];
+
+    vec2 toFrag = fragPx - lightData.xy;
+    float distPx = length(toFrag);
+    float radiusPx = max(0.5, lightData.z);
+    float power = max(0.0, lightData.w);
+    vec3 lampColor = lightColor.rgb;
+    float lightType = lightColor.a;
+
+    float localPhase = clamp(lightData.x / max(1.0, uSpriteSize.x), 0.0, 1.0);
+    float chase = fract(uTime * 0.42 - localPhase * 0.95);
+    float chasePulse = smoothstep(0.0, 0.10, chase) * (1.0 - smoothstep(0.18, 0.42, chase));
+    float sequenceMul = mix(0.62, 1.35, chasePulse);
+    if (lightType > 0.5) sequenceMul = 1.0;
+
+    float core = smoothstep(radiusPx, 0.0, distPx);
+    float glow = smoothstep(radiusPx * 5.0, 0.0, distPx);
+    finalColor += lampColor * power * sequenceMul * (core * 1.55 + glow * 0.42);
+
+    if (lightType > 0.5) {
+      vec2 dir = normalize(lightExtra.xy);
+      float along = dot(toFrag, dir);
+      float coneCos = clamp(lightExtra.w, -0.98, 0.999);
+      float rangePx = max(radiusPx * 2.0, lightExtra.z);
+      float frontMask = step(0.0, along);
+      float rangeMask = 1.0 - smoothstep(rangePx * 0.18, rangePx, along);
+      float angleCos = dot(normalize(toFrag + dir * 0.001), dir);
+      float coneMask = smoothstep(coneCos, min(0.999, coneCos + 0.16), angleCos);
+      float nearMask = 1.0 - smoothstep(radiusPx * 0.8, radiusPx * 2.2, distPx);
+      float beam = frontMask * rangeMask * coneMask * (1.0 - nearMask);
+      finalColor += lampColor * power * beam * 0.16;
+    }
+  }
 
   float stress = clamp(vStress / 20.0, 0.0, 1.0);
   vec3 stressGlow = vec3(1.0, 0.25, 0.05) * stress * uStressTint * 3.5;
@@ -213,6 +265,7 @@ const state = {
   vfxEntities: [],
   visibleHexEntities: [],
   visibleVfxEntities: [],
+  roadLightEmitters: [],
   staleEntities: [],
   validEntitySet: new Set(),
   weaponActiveEntities: new Set(),
@@ -343,6 +396,33 @@ function getInterpolatedRenderPose(entity) {
   return pose;
 }
 
+function getEntityLightPosition(entity) {
+  const interpPose = getInterpolatedRenderPose(entity);
+  return {
+    x: interpPose ? interpPose.x : getEntityPosX(entity),
+    y: interpPose ? interpPose.y : getEntityPosY(entity)
+  };
+}
+
+function getEntityLightAngle(entity) {
+  const interpPose = getInterpolatedRenderPose(entity);
+  const baseAngle = interpPose ? interpPose.angle : (Number(entity?.angle) || 0);
+  return baseAngle + (Number(entity?.capitalProfile?.spriteRotation) || 0);
+}
+
+const SHIP_LIGHT_TRANSFORM_OPTIONS = {
+  getPosition: getEntityLightPosition,
+  getAngle: getEntityLightAngle,
+  getSpriteScaleX: getEntityScaleX,
+  getSpriteScaleY: getEntityScaleY
+};
+
+const SHIP_LIGHT_EMITTER_OPTIONS = {
+  ...SHIP_LIGHT_TRANSFORM_OPTIONS,
+  maxEmitters: 64,
+  out: null
+};
+
 function computeShardStress(shard) {
   if (shard && shard.deformation) {
     const def = shard.deformation;
@@ -398,6 +478,52 @@ function createManagedTexture(source, isLinearData = false) {
   texture.colorSpace = isLinearData ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
   texture.needsUpdate = true;
   return texture;
+}
+
+function createLightUniformArray() {
+  return Array.from({ length: MAX_SHADER_SHIP_LIGHTS }, () => new THREE.Vector4());
+}
+
+function syncEntityLightUniforms(entity, data, grid, externalRoadLights = null) {
+  const uniforms = data?.mesh?.material?.uniforms;
+  if (!uniforms?.uShipLightCount) return;
+
+  const payload = Array.isArray(externalRoadLights) && externalRoadLights.length
+    ? buildCombinedShipLightShaderPayload(entity, grid, externalRoadLights, SHIP_LIGHT_TRANSFORM_OPTIONS)
+    : buildShipLightShaderPayload(entity, grid, MAX_SHADER_SHIP_LIGHTS);
+  uniforms.uTime.value = state.lastTime * 0.001;
+  if (payload.signature === data.lightSignature) return;
+
+  uniforms.uShipLightCount.value = payload.count;
+  const dataUniforms = uniforms.uShipLightData.value;
+  const colorUniforms = uniforms.uShipLightColor.value;
+  const extraUniforms = uniforms.uShipLightExtra.value;
+
+  for (let i = 0; i < MAX_SHADER_SHIP_LIGHTS; i++) {
+    const light = payload.lights[i];
+    if (!light) {
+      dataUniforms[i].set(0, 0, 0, 0);
+      colorUniforms[i].set(0, 0, 0, 0);
+      extraUniforms[i].set(0, -1, 0, 0);
+      continue;
+    }
+    const coneRad = Math.max(1, Math.min(179, Number(light.coneDeg) || 40)) * Math.PI / 360;
+    dataUniforms[i].set(light.pos.x, light.pos.y, light.radiusPx, light.power);
+    colorUniforms[i].set(
+      light.color.r,
+      light.color.g,
+      light.color.b,
+      light.kind === 'road' ? 1 : 0
+    );
+    extraUniforms[i].set(
+      Number(light.dir?.x) || 0,
+      Number(light.dir?.y) || -1,
+      Number(light.rangePx) || 0,
+      Math.cos(coneRad)
+    );
+  }
+
+  data.lightSignature = payload.signature;
 }
 
 function disposeMeshData(data) {
@@ -636,7 +762,12 @@ function createEntityMesh(entity) {
       uSpecularMul: { value: SHIP_LIGHT_DEFAULTS.specularMul },
       uIsDebris: { value: 0 },
       uIsOcclusion: { value: 0 },
-      uBillboardLighting: { value: usesBillboardLighting(entity) ? 1 : 0 }
+      uBillboardLighting: { value: usesBillboardLighting(entity) ? 1 : 0 },
+      uTime: { value: 0 },
+      uShipLightCount: { value: 0 },
+      uShipLightData: { value: createLightUniformArray() },
+      uShipLightColor: { value: createLightUniformArray() },
+      uShipLightExtra: { value: createLightUniformArray() }
     },
     vertexShader: HEX_VERTEX_SHADER,
     fragmentShader: HEX_FRAGMENT_SHADER,
@@ -886,6 +1017,7 @@ function updateEntityMesh(entity, data, camX, camY) {
   if (mesh.material.uniforms.uBillboardLighting) {
     mesh.material.uniforms.uBillboardLighting.value = usesBillboardLighting(entity) ? 1 : 0;
   }
+  syncEntityLightUniforms(entity, data, grid, state.roadLightEmitters);
   const renderRotation = usesBillboardOrientation(entity) ? entityAngle : -entityAngle;
   mesh.material.uniforms.uRotation.value = renderRotation;
 
@@ -980,6 +1112,9 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
     if (!entity.hexGrid) continue;
     visibleHex.push(entity);
   }
+
+  SHIP_LIGHT_EMITTER_OPTIONS.out = state.roadLightEmitters;
+  buildRoadLightWorldEmitters(visibleHex, SHIP_LIGHT_EMITTER_OPTIONS);
 
   let hasRenderable = false;
   for (const entity of visibleHex) {
