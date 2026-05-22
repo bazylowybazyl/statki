@@ -200,6 +200,10 @@ function mergeShipsDefaults(defaultShips, loadedShips) {
       engines: {
         ...(base.engines && typeof base.engines === 'object' ? base.engines : {}),
         ...(shipCfg.engines && typeof shipCfg.engines === 'object' ? shipCfg.engines : {})
+      },
+      lights: {
+        ...(base.lights && typeof base.lights === 'object' ? base.lights : {}),
+        ...(shipCfg.lights && typeof shipCfg.lights === 'object' ? shipCfg.lights : {})
       }
     };
   }
@@ -317,6 +321,12 @@ export function createNpcHardpointRuntime({
       if (core) cores.push(core);
     }
     npc.editorCores = cores;
+    npc.editorLights = cfg.lights && typeof cfg.lights === 'object'
+      ? {
+          position: Array.isArray(cfg.lights.position) ? cfg.lights.position : [],
+          road: Array.isArray(cfg.lights.road) ? cfg.lights.road : []
+        }
+      : null;
     npc.editorHardpointCursor = {};
 
     const enginesMainRaw = Array.isArray(cfg?.engines?.main) ? cfg.engines.main : [];

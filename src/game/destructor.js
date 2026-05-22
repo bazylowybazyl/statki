@@ -35,8 +35,14 @@ export const DESTRUCTOR_CONFIG = {
   rammingCrushMassRatio: 2.5,         // Mass dominance needed for penetration-based crush
   rammingCrushScale: 0.70,            // Softer than crash crush, but not harmless
   rammingDamageCapMin: 0.08,          // Base per-shard HP cap for steel
-  rammingDamageCapMax: 0.90,          // Heavy ram upper cap for steel
-  rammingDamageCapLogScale: 0.11,     // Cap growth per log2(mass advantage)
+  rammingDamageCapMax: 1.40,          // Heavy ram upper cap for steel
+  rammingDamageCapLogScale: 0.16,     // Cap growth per log2(mass advantage)
+  rammingOverrunMassRatio: 8.0,       // At this dominance, small ships get overrun instead of pushed
+  rammingOverrunImpulseScale: 0.18,   // Less bounce/push, more crush
+  rammingOverrunSeparationPercent: 0.16,
+  rammingOverrunDamageMin: 1.05,      // Minimum shardHP fraction on overrun contacts
+  rammingOverrunDamageMult: 1.75,
+  rammingOverrunMaxContacts: 64,
   crushImpulseScale: 0.90, //
   shearK: 0.06, //
   friction: 0.99, //
@@ -386,8 +392,8 @@ function clampCrushVector(fx, fy, ratio, mag, maxCrushLimit, out) {
 function getRammingDamageCap(shardHp, attackerMassAdvantage) {
   const hp = Math.max(1, Number(shardHp) || 1);
   const minFrac = Math.max(0.01, Number(DESTRUCTOR_CONFIG.rammingDamageCapMin) || 0.08);
-  const maxFrac = Math.max(minFrac, Number(DESTRUCTOR_CONFIG.rammingDamageCapMax) || 0.90);
-  const logScale = Math.max(0, Number(DESTRUCTOR_CONFIG.rammingDamageCapLogScale) || 0.11);
+  const maxFrac = Math.max(minFrac, Number(DESTRUCTOR_CONFIG.rammingDamageCapMax) || 1.40);
+  const logScale = Math.max(0, Number(DESTRUCTOR_CONFIG.rammingDamageCapLogScale) || 0.16);
   const advantage = Math.max(1, Number(attackerMassAdvantage) || 1);
   const frac = Math.min(maxFrac, minFrac + Math.log2(advantage) * logScale);
   return hp * frac;
@@ -2832,9 +2838,17 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       searchR = Math.min(searchRCap, searchR + searchBoost);
 
       const contacts = this._contactsBuf;
+      const contactMassRatio = Math.max(massA, massB) / Math.max(1, Math.min(massA, massB));
+      const contactOverrunRatio = Math.max(
+        Number(DESTRUCTOR_CONFIG.rammingCrushMassRatio) || 2.5,
+        Number(DESTRUCTOR_CONFIG.rammingOverrunMassRatio) || 8.0
+      );
+      const contactOverrunSpeed = Math.max(0, Number(DESTRUCTOR_CONFIG.rammingCrushSpeedThreshold) || 35.0);
+      const overrunContactPair = contactMassRatio >= contactOverrunRatio && relSpeed > contactOverrunSpeed;
+      const overrunMaxContacts = Math.max(24, Math.min(96, Number(DESTRUCTOR_CONFIG.rammingOverrunMaxContacts) || 64));
       const maxContacts = isRingCollision
         ? 64
-        : (heavyPair ? 24 : ((shardSum > 1400 || scrapePair) ? 28 : 32));
+        : (overrunContactPair ? overrunMaxContacts : (heavyPair ? 24 : ((shardSum > 1400 || scrapePair) ? 28 : 32)));
       let contactsCount = 0;
       const holderGrid = gridHolder.hexGrid.grid;
       const holderCols = gridHolder.hexGrid.cols || 0;
@@ -2963,6 +2977,18 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const impactSpeed = Math.sqrt(dvx * dvx + dvy * dvy);
       const velAlongNormal = dvx * nx + dvy * ny;
       const approachSpeed = Math.max(0, -velAlongNormal);
+      const centerDx = aX - bX;
+      const centerDy = aY - bY;
+      const centerLenSq = centerDx * centerDx + centerDy * centerDy;
+      let centerNx = nx;
+      let centerNy = ny;
+      if (centerLenSq > 1e-8) {
+        const invCenterLen = 1 / Math.sqrt(centerLenSq);
+        centerNx = centerDx * invCenterLen;
+        centerNy = centerDy * invCenterLen;
+      }
+      const centerApproachSpeed = Math.max(0, -(relVx * centerNx + relVy * centerNy));
+      const effectiveApproachSpeed = Math.max(approachSpeed, centerApproachSpeed);
       const tx = -ny;
       const ty = nx;
       const velTangent = dvx * tx + dvy * ty;
@@ -2971,6 +2997,18 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const invMassB = 1 / massB;
       const slop = 0.01;
       const pen = Math.max(0, penetration - slop);
+      const penMin = Math.max(0, Number(DESTRUCTOR_CONFIG.crushPenetrationMin) || 0.15);
+      const massRatio = Math.max(massA, massB) / Math.max(1, Math.min(massA, massB));
+      const rammingMassRatio = Math.max(1, Number(DESTRUCTOR_CONFIG.rammingCrushMassRatio) || 2.5);
+      const rammingSpeed = Math.max(0, Number(DESTRUCTOR_CONFIG.rammingCrushSpeedThreshold) || 35.0);
+      const deepCrushPenetration = penetration > (HIT_RAD * penMin);
+      const dominantMassPair = massRatio >= rammingMassRatio;
+      const directDominantRam = dominantMassPair && effectiveApproachSpeed > rammingSpeed;
+      const scrapeDominantRam = dominantMassPair && deepCrushPenetration && impactSpeed > rammingSpeed;
+      const overrunMassRatio = Math.max(rammingMassRatio, Number(DESTRUCTOR_CONFIG.rammingOverrunMassRatio) || 8.0);
+      const overrunDominantRam = directDominantRam && massRatio >= overrunMassRatio;
+      const dominantRammingCrush = directDominantRam || scrapeDominantRam;
+      const useCenterOverrunNormal = overrunDominantRam && centerApproachSpeed > approachSpeed;
 
       let isDestruction = false;
       let bounceForce = 0;
@@ -2989,11 +3027,13 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         if (Number.isFinite(denom) && denom > 1e-8) {
           const restBase = DESTRUCTOR_CONFIG.restitution;
           const crashApproachSpeedThreshold = Number(DESTRUCTOR_CONFIG.crashApproachSpeedThreshold) || 200.0;
-          isDestruction = approachSpeed > crashApproachSpeedThreshold;
+          isDestruction = effectiveApproachSpeed > crashApproachSpeedThreshold;
           const restitution = isDestruction ? 0.0 : restBase;
           let j = (-(1 + restitution) * velAlongNormal) / denom;
 
-          if (isDestruction) {
+          if (overrunDominantRam) {
+            j *= Math.max(0.02, Math.min(1, Number(DESTRUCTOR_CONFIG.rammingOverrunImpulseScale) || 0.18));
+          } else if (isDestruction) {
             const hittingWall = (invMassA === 0 || invMassB === 0) || A.isRingSegment || B.isRingSegment;
             j *= hittingWall ? 0.8 : 0.8;
           }
@@ -3016,7 +3056,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           const maxF = Math.abs(j) * mu;
           if (Math.abs(jt) > maxF) jt = -maxF * Math.sign(velTangent || 1);
 
-          jt *= isDestruction ? 0.25 : 0.8;
+          jt *= overrunDominantRam ? 0.12 : (isDestruction ? 0.25 : 0.8);
 
           const fX = jt * tx;
           const fY = jt * ty;
@@ -3048,15 +3088,6 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         );
       }
 
-      const penMin = Math.max(0, Number(DESTRUCTOR_CONFIG.crushPenetrationMin) || 0.15);
-      const massRatio = Math.max(massA, massB) / Math.max(1, Math.min(massA, massB));
-      const rammingMassRatio = Math.max(1, Number(DESTRUCTOR_CONFIG.rammingCrushMassRatio) || 2.5);
-      const rammingSpeed = Math.max(0, Number(DESTRUCTOR_CONFIG.rammingCrushSpeedThreshold) || 35.0);
-      const deepCrushPenetration = penetration > (HIT_RAD * penMin);
-      const dominantMassPair = massRatio >= rammingMassRatio;
-      const directDominantRam = dominantMassPair && approachSpeed > rammingSpeed;
-      const scrapeDominantRam = dominantMassPair && deepCrushPenetration && impactSpeed > rammingSpeed;
-      const dominantRammingCrush = directDominantRam || scrapeDominantRam;
       const crushActive = isDestruction || dominantRammingCrush;
       const heavyCrushPass = crushActive && doDamage;
 
@@ -3069,8 +3100,12 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         if (impactSpeed > splitCrashSpeedThreshold || heavyPair) {
           const deferTicks = Math.max(4, Number(DESTRUCTOR_CONFIG.splitCrashDeferTicks) || 8) + (heavyPair ? 2 : 0);
           const deferUntilTick = this._tick + deferTicks;
-          if (!A.noSplit) A._splitDeferUntilTick = Math.max(Number(A._splitDeferUntilTick) || 0, deferUntilTick);
-          if (!B.noSplit) B._splitDeferUntilTick = Math.max(Number(B._splitDeferUntilTick) || 0, deferUntilTick);
+          if (!A.noSplit && this.splitQueue.indexOf(A) === -1) {
+            A._splitDeferUntilTick = Math.max(Number(A._splitDeferUntilTick) || 0, deferUntilTick);
+          }
+          if (!B.noSplit && this.splitQueue.indexOf(B) === -1) {
+            B._splitDeferUntilTick = Math.max(Number(B._splitDeferUntilTick) || 0, deferUntilTick);
+          }
         }
 
         const angA = getEntityHexAngle(A);
@@ -3083,10 +3118,12 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const impulse = (totalMass > 0) ? (impactSpeed * (massA * massB) / totalMass) : 0;
         const crushEnergy = impulse * (DESTRUCTOR_CONFIG.crushImpulseScale ?? 0.25) * dtScale;
 
-        let wForceAx = nx * crushEnergy;
-        let wForceAy = ny * crushEnergy;
-        let wForceBx = -nx * crushEnergy;
-        let wForceBy = -ny * crushEnergy;
+        const crushNx = useCenterOverrunNormal ? centerNx : nx;
+        const crushNy = useCenterOverrunNormal ? centerNy : ny;
+        let wForceAx = crushNx * crushEnergy;
+        let wForceAy = crushNy * crushEnergy;
+        let wForceBx = -crushNx * crushEnergy;
+        let wForceBy = -crushNy * crushEnergy;
 
         // Note: removed synthetic crush boost from penetration term.
         // Penetration now only handles separation correction at the end of function.
@@ -3145,6 +3182,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const maxDmgPerTickB = getRammingDamageCap(DESTRUCTOR_CONFIG.shardHP, massAdvantageA);
         const brittleA = isBrittleEntity(A);
         const brittleB = isBrittleEntity(B);
+        const overrunDamageMin = DESTRUCTOR_CONFIG.shardHP * Math.max(0, Number(DESTRUCTOR_CONFIG.rammingOverrunDamageMin) || 1.05);
+        const overrunDamageMult = Math.max(1, Number(DESTRUCTOR_CONFIG.rammingOverrunDamageMult) || 1.75);
+        const overrunDamageA = overrunDominantRam && massB > massA;
+        const overrunDamageB = overrunDominantRam && massA > massB;
 
         let dirtyMinA = Number.POSITIVE_INFINITY;
         let dirtyMaxA = -1;
@@ -3198,8 +3239,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             if (doDamage) {
               const kineticDmg = (rawCrushMagA * realRatioA * 0.18 * massAdvantageB) / Math.sqrt(contactsCount);
               const brittleMult = brittleA ? 3.5 : 1.0;
-              const cap = brittleA ? DESTRUCTOR_CONFIG.shardHP * 0.75 : maxDmgPerTickA;
-              sA.hp -= Math.min(cap, kineticDmg * brittleMult);
+              const cap = brittleA ? DESTRUCTOR_CONFIG.shardHP * 0.75 : (overrunDamageA ? Math.max(maxDmgPerTickA, overrunDamageMin) : maxDmgPerTickA);
+              let damage = kineticDmg * brittleMult;
+              if (overrunDamageA && !brittleA) damage = Math.max(damage * overrunDamageMult, overrunDamageMin);
+              sA.hp -= Math.min(cap, damage);
             }
 
             if (sA.hp <= 0) {
@@ -3251,8 +3294,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             if (doDamage) {
               const kineticDmg = (rawCrushMagB * realRatioB * 0.18 * massAdvantageA) / Math.sqrt(contactsCount);
               const brittleMult = brittleB ? 3.5 : 1.0;
-              const cap = brittleB ? DESTRUCTOR_CONFIG.shardHP * 0.75 : maxDmgPerTickB;
-              sB.hp -= Math.min(cap, kineticDmg * brittleMult);
+              const cap = brittleB ? DESTRUCTOR_CONFIG.shardHP * 0.75 : (overrunDamageB ? Math.max(maxDmgPerTickB, overrunDamageMin) : maxDmgPerTickB);
+              let damage = kineticDmg * brittleMult;
+              if (overrunDamageB && !brittleB) damage = Math.max(damage * overrunDamageMult, overrunDamageMin);
+              sB.hp -= Math.min(cap, damage);
             }
 
             if (sB.hp <= 0) {
@@ -3280,16 +3325,19 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const deepPenetration = penetration > (HIT_RAD * 0.35);
       let crushSep = 0.82;
       if (massRatio > 5) crushSep = 0.75;
+      const overrunSep = Math.max(0.02, Math.min(1, Number(DESTRUCTOR_CONFIG.rammingOverrunSeparationPercent) || 0.16));
 
       const isHittingWallSep = (invMassA === 0 || invMassB === 0) || isRingCollision;
       const sepPercent = isHittingWallSep
         ? 1.0
-        : (crushActive ? (deepPenetration ? 1.0 : crushSep) : 0.92);
+        : (overrunDominantRam ? overrunSep : (crushActive ? (deepPenetration ? 1.0 : crushSep) : 0.92));
 
       if (penetration > slop) {
         const corr = Math.max(penetration - slop, 0) / (invMassA + invMassB) * sepPercent;
-        addEntityPosition(A, nx * corr * invMassA, ny * corr * invMassA);
-        addEntityPosition(B, -nx * corr * invMassB, -ny * corr * invMassB);
+        const sepNx = useCenterOverrunNormal ? centerNx : nx;
+        const sepNy = useCenterOverrunNormal ? centerNy : ny;
+        addEntityPosition(A, sepNx * corr * invMassA, sepNy * corr * invMassA);
+        addEntityPosition(B, -sepNx * corr * invMassB, -sepNy * corr * invMassB);
       }
     } finally {
       if (dbgEnabled) this._dbgCollisionRecord('collideEntities', nowMs() - tCollide0);
@@ -3366,8 +3414,6 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
       const splitBudgetMs = Math.max(0.25, Number(DESTRUCTOR_CONFIG.splitTimeBudgetMs) || 1.2);
       const splitMaxPerTick = Math.max(1, DESTRUCTOR_CONFIG.splitMaxPerTick | 0);
-      const splitCrashSpeedThreshold = Math.max(40, Number(DESTRUCTOR_CONFIG.splitCrashSpeedThreshold) || 140);
-      const splitCrashAngThreshold = Math.max(0.02, WRECK_SLEEP_ANGULAR_SPEED * 3.0);
       const startedAt = nowMs();
       let processedCount = 0;
       const deferred = this.splitQueue;
@@ -3377,9 +3423,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
         const splitDeferUntilTick = Number(entity._splitDeferUntilTick) || 0;
         if (splitDeferUntilTick > 0) {
-          const speedNow = Math.hypot(getEntityVelX(entity), getEntityVelY(entity));
-          const angSpeedNow = Math.abs(getEntityAngVel(entity));
-          if (splitDeferUntilTick > this._tick || speedNow > splitCrashSpeedThreshold || angSpeedNow > splitCrashAngThreshold) {
+          if (splitDeferUntilTick > this._tick) {
             deferred.push(entity);
             continue;
           }
@@ -3407,6 +3451,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           }
           this.spawnWreckEntity(entity, group, entities);
         }
+        entity.hexGrid.activeStructuralCount = entity.hexGrid.shards.length;
         processedCount++;
       }
     } finally {

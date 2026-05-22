@@ -41,7 +41,7 @@ import {
   MAX_VARIANTS_PER_SIZE,
   pickWeighted,
 } from '../data/asteroidTypes.js';
-import { getCollisionMass, getMass, getHardness, getMaxHp } from '../data/asteroidPhysics.js';
+import { getAsteroidRammingMass, getCollisionMass, getMass, getHardness, getMaxHp } from '../data/asteroidPhysics.js';
 import { COLLISION_CONFIG } from '../data/asteroidPhysics.js';
 import { AsteroidDestructor, resolveShipAsteroidCollision } from '../game/asteroidDestructor.js';
 import { DestructorSystem, getHexStructuralState, initHexBody } from '../game/destructor.js';
@@ -992,7 +992,9 @@ export class AsteroidField {
     const sc = SIZE_CLASS[size];
     // Fizyka z asteroidPhysics: mass, hardness, hpMax zależne od typu i rozmiaru
     // (kruchy ice ma mało HP, twardy titan dużo).
-    const mass = getMass(type, size);
+    const legacyMass = getMass(type, size);
+    const mass = getCollisionMass(type, size);
+    const rammingMass = getAsteroidRammingMass(type, size);
     const hardness = getHardness(type);
     const hpMax = getMaxHp(type, size);
     const asteroid = {
@@ -1010,6 +1012,8 @@ export class AsteroidField {
       hp: hpMax,
       hpMax,
       mass,
+      legacyMass,
+      rammingMass,
       hardness,
       // Velocity - większość asteroid statyczna (vel=0). Po pchnięciu trafia
       // do this.movingAsteroids dla per-frame update pozycji.

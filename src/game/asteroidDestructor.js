@@ -19,6 +19,8 @@ import {
   HEX_BRITTLE_CONFIG,
   COLLISION_CONFIG,
   getHexGridSize,
+  getAsteroidRammingMass,
+  getCollisionMass,
   getMass,
   getHardness,
 } from '../data/asteroidPhysics.js';
@@ -420,8 +422,16 @@ export function resolveShipAsteroidCollision(ship, asteroid) {
     };
   }
 
-  const aMass = asteroid.mass || getMass(asteroid.type, asteroid.size);
-  const sMass = ship.mass || 800000;
+  const asteroidCollisionMass = Number(asteroid.mass) > 0
+    ? Number(asteroid.mass)
+    : getCollisionMass(asteroid.type, asteroid.size);
+  const asteroidRammingMass = Number(asteroid.rammingMass) > 0
+    ? Number(asteroid.rammingMass)
+    : getAsteroidRammingMass(asteroid.type, asteroid.size);
+  const shipBaseMass = Number(ship.mass) > 0 ? Number(ship.mass) : 800000;
+  const shipRammingMass = Number(ship.rammingMass) > 0 ? Number(ship.rammingMass) : shipBaseMass;
+  const aMass = Math.max(1, asteroidCollisionMass, asteroidRammingMass);
+  const sMass = Math.max(1, shipBaseMass, shipRammingMass);
   const massRatio = aMass / sMass;
   const e = COLLISION_CONFIG.bounceCoeff;
 
@@ -445,9 +455,13 @@ export function resolveShipAsteroidCollision(ship, asteroid) {
   let shipDamage = 0;
   let asteroidDamage = 0;
   if (relSpeed >= COLLISION_CONFIG.minImpactVelocity) {
-    // KE absorbed = (1-e²) × 0.5 × reducedMass × relV² (energia stracona w kolizji).
-    // reducedMass ≈ min(sMass, aMass). Dla ship 800k vs BIG iron 6240, ≈ aMass.
-    const reducedMass = (sMass * aMass) / (sMass + aMass);
+    // KE absorbed = (1-e²) × 0.5 × reducedMass × relV².
+    // Damage keeps the old legacy asteroid mass curve; full collision/ramming
+    // mass is much higher and would make this fallback path one-shot capitals.
+    const damageAsteroidMass = Number(asteroid.legacyMass) > 0
+      ? Number(asteroid.legacyMass)
+      : getMass(asteroid.type, asteroid.size);
+    const reducedMass = (shipBaseMass * damageAsteroidMass) / (shipBaseMass + damageAsteroidMass);
     const ke = 0.5 * reducedMass * relSpeed * relSpeed;
 
     shipDamage = ke * COLLISION_CONFIG.shipDamageScale;

@@ -40,8 +40,14 @@ const CONTROL_SECTIONS = [
       { key: 'rammingCrushSpeedThreshold', label: 'ram crush speed', min: 0, max: 200, step: 1 },
       { key: 'rammingCrushMassRatio', label: 'ram mass ratio', min: 1.0, max: 12.0, step: 0.1 },
       { key: 'rammingCrushScale', label: 'ram crush scale', min: 0.1, max: 2.0, step: 0.01 },
-      { key: 'rammingDamageCapMax', label: 'ram damage cap', min: 0.08, max: 1.0, step: 0.01 },
+      { key: 'rammingDamageCapMax', label: 'ram damage cap', min: 0.08, max: 2.0, step: 0.01 },
       { key: 'rammingDamageCapLogScale', label: 'ram cap log scale', min: 0, max: 0.25, step: 0.005 },
+      { key: 'rammingOverrunMassRatio', label: 'overrun mass ratio', min: 1.0, max: 30.0, step: 0.5 },
+      { key: 'rammingOverrunImpulseScale', label: 'overrun impulse', min: 0.02, max: 1.0, step: 0.01 },
+      { key: 'rammingOverrunSeparationPercent', label: 'overrun separation', min: 0.02, max: 1.0, step: 0.01 },
+      { key: 'rammingOverrunDamageMin', label: 'overrun min dmg', min: 0, max: 2.0, step: 0.01 },
+      { key: 'rammingOverrunDamageMult', label: 'overrun dmg mult', min: 1.0, max: 5.0, step: 0.05 },
+      { key: 'rammingOverrunMaxContacts', label: 'overrun contacts', min: 24, max: 96, step: 1, integer: true },
       { key: 'shearK', label: 'shear k', min: 0, max: 0.25, step: 0.005 },
       { key: 'crashApproachSpeedThreshold', label: 'crash speed', min: 20, max: 400, step: 1 }
     ]

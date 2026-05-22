@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
+import {
+    STAR_PARALLAX_LAYERS,
+    pickStarParallaxLayer
+} from './starParallax.js';
 
 window.Dev = window.Dev || {};
 const PLANET_SIZE_MULTIPLIER = 4.5;
@@ -40,8 +44,106 @@ const STAR_PLANET_MASK_CAP = 12;
 
 const NEBULA_VERTEX = `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 const NEBULA_FRAGMENT = `uniform sampler2D map; uniform float warpFactor; varying vec2 vUv; void main() { vec4 texColor = texture2D(map, vUv); vec3 color = texColor.rgb; float boost = 1.0 + warpFactor * 0.8; gl_FragColor = vec4(color * boost, 1.0); }`;
-const STARS_VERTEX = `uniform vec2 cameraOffset; uniform float containerSize; uniform float perspectiveScale; uniform float warpFactor; uniform float stretchStrength; uniform float baseSizeMul; uniform vec2 moveDir; uniform vec4 planetMasks[${STAR_PLANET_MASK_CAP}]; attribute float size; attribute float brightness; attribute vec3 color; varying float vBrightness; varying float vWarp; varying vec3 vColor; varying float vStretch; varying float vScreenSize; varying float vPlanetMask; void main() { vBrightness = brightness; vWarp = warpFactor; vColor = color; vec3 pos = position; pos.x -= cameraOffset.x; pos.y -= cameraOffset.y; float halfSize = containerSize / 2.0; pos.x = mod(pos.x + halfSize, containerSize) - halfSize; pos.y = mod(pos.y + halfSize, containerSize) - halfSize; vec4 worldPos = modelMatrix * vec4(pos, 1.0); vPlanetMask = 1.0; for (int i = 0; i < ${STAR_PLANET_MASK_CAP}; i++) { vec4 pm = planetMasks[i]; if (pm.z <= 0.0) continue; float distToPlanet = distance(worldPos.xy, pm.xy); vPlanetMask *= step(pm.z, distToPlanet); } vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0); float stretch = 1.0 + (warpFactor * stretchStrength); vStretch = stretch; float finalSize = size * baseSizeMul; float depth = 1000.0; float distFactor = perspectiveScale / depth; float pointSize = (finalSize * stretch) * distFactor; if(warpFactor > 0.001) { float offsetWorld = (finalSize * (stretch - 1.0)) * 0.5; mvPosition.xy += moveDir * offsetWorld; } gl_PointSize = pointSize; gl_Position = projectionMatrix * mvPosition; vScreenSize = pointSize; }`;
-const STARS_FRAGMENT = `uniform sampler2D pointTexture; uniform float time; uniform float globalBrightness; uniform vec2 moveDir; uniform float thinningStrength; varying float vBrightness; varying float vWarp; varying vec3 vColor; varying float vStretch; varying float vScreenSize; varying float vPlanetMask; void main() { vec2 rawUV = gl_PointCoord - 0.5; float distFromCenter = length(rawUV); float mask = 1.0 - smoothstep(0.4, 0.5, distFromCenter); if (mask < 0.01) discard; if (vPlanetMask < 0.5) discard; vec2 uv = rawUV; if (vWarp > 0.01) { float angle = atan(moveDir.y, moveDir.x); float c = cos(angle); float s = sin(angle); mat2 rot = mat2(c, s, -s, c); uv = rot * uv; uv.x *= (1.0 / vStretch); float maxSafeThin = max(1.0, vScreenSize * 0.4); float actualThin = min(thinningStrength, maxSafeThin); uv.y *= (1.0 + vWarp * actualThin); } vec2 texUV = uv + 0.5; if (texUV.x < 0.0 || texUV.x > 1.0 || texUV.y < 0.0 || texUV.y > 1.0) discard; vec4 tex = texture2D(pointTexture, texUV); if (tex.a < 0.05) discard; float twinkle = 0.8 + 0.2 * sin(time * 3.0 + vBrightness * 10.0); vec3 finalColor = mix(vColor, vec3(0.7, 0.85, 1.0), vWarp * 0.8); gl_FragColor = vec4(finalColor * twinkle, tex.a * vBrightness * globalBrightness * mask); }`;
+const STARS_VERTEX = `
+uniform vec2 cameraOffset;
+uniform float containerSize;
+uniform float perspectiveScale;
+uniform float warpFactor;
+uniform float stretchStrength;
+uniform float baseSizeMul;
+uniform vec2 moveDir;
+uniform vec2 viewportSize;
+uniform vec4 planetMasks[${STAR_PLANET_MASK_CAP}];
+attribute float size;
+attribute float brightness;
+attribute vec3 color;
+attribute float parallaxFactor;
+attribute float layerSizeMul;
+attribute float layerBrightnessMul;
+attribute float layerStretchMul;
+varying float vBrightness;
+varying float vWarp;
+varying vec3 vColor;
+varying float vStretch;
+varying float vScreenSize;
+varying float vPlanetMask;
+void main() {
+    vColor = color;
+    vec3 pos = position;
+    vec2 layeredOffset = cameraOffset * parallaxFactor;
+    pos.x -= layeredOffset.x;
+    pos.y -= layeredOffset.y;
+    float halfSize = containerSize / 2.0;
+    pos.x = mod(pos.x + halfSize, containerSize) - halfSize;
+    pos.y = mod(pos.y + halfSize, containerSize) - halfSize;
+    vec4 worldPos = modelMatrix * vec4(pos, 1.0);
+    vPlanetMask = 1.0;
+    for (int i = 0; i < ${STAR_PLANET_MASK_CAP}; i++) {
+        vec4 pm = planetMasks[i];
+        if (pm.z <= 0.0) continue;
+        float distToPlanet = distance(worldPos.xy, pm.xy);
+        vPlanetMask *= step(pm.z, distToPlanet);
+    }
+    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+    float stretch = 1.0 + (warpFactor * stretchStrength * layerStretchMul);
+    vWarp = warpFactor;
+    vStretch = stretch;
+    vBrightness = brightness * layerBrightnessMul;
+    float finalSize = size * baseSizeMul * layerSizeMul;
+    float depth = 1000.0;
+    float distFactor = perspectiveScale / depth;
+    float pointSize = (finalSize * stretch) * distFactor;
+    vec4 clipPosition = projectionMatrix * mvPosition;
+    if (warpFactor > 0.001) {
+        vec2 warpDir = length(moveDir) > 0.001 ? normalize(moveDir) : vec2(0.0, 1.0);
+        vec2 safeViewport = max(viewportSize, vec2(1.0));
+        vec2 screenOffset = warpDir * vec2(pointSize / safeViewport.x, pointSize / safeViewport.y) * clipPosition.w;
+        clipPosition.xy -= screenOffset;
+    }
+    gl_PointSize = pointSize;
+    gl_Position = clipPosition;
+    vScreenSize = pointSize;
+}`;
+const STARS_FRAGMENT = `
+uniform sampler2D pointTexture;
+uniform float time;
+uniform float globalBrightness;
+uniform vec2 moveDir;
+uniform float thinningStrength;
+varying float vBrightness;
+varying float vWarp;
+varying vec3 vColor;
+varying float vStretch;
+varying float vScreenSize;
+varying float vPlanetMask;
+void main() {
+    vec2 rawUV = gl_PointCoord - 0.5;
+    float distFromCenter = length(rawUV);
+    float mask = 1.0 - smoothstep(0.4, 0.5, distFromCenter);
+    if (mask < 0.01) discard;
+    if (vPlanetMask < 0.5) discard;
+    vec2 uv = rawUV;
+    float trailFade = 1.0;
+    if (vWarp > 0.01) {
+        float angle = atan(moveDir.y, moveDir.x);
+        float c = cos(angle);
+        float s = sin(angle);
+        mat2 rot = mat2(c, s, -s, c);
+        uv = rot * uv;
+        trailFade = mix(0.18, 1.0, smoothstep(0.0, 1.0, uv.x + 0.5));
+        uv.x = (uv.x - 0.5) / vStretch;
+        float maxSafeThin = max(1.0, vScreenSize * 0.4);
+        float actualThin = min(thinningStrength, maxSafeThin);
+        uv.y *= (1.0 + min(vWarp, 1.25) * actualThin);
+    }
+    vec2 texUV = uv + 0.5;
+    if (texUV.x < 0.0 || texUV.x > 1.0 || texUV.y < 0.0 || texUV.y > 1.0) discard;
+    vec4 tex = texture2D(pointTexture, texUV);
+    if (tex.a < 0.05) discard;
+    float twinkle = 0.82 + 0.18 * sin(time * 3.0 + vBrightness * 10.0);
+    vec3 finalColor = mix(vColor, vec3(0.7, 0.85, 1.0), clamp(vWarp * 0.75, 0.0, 1.0));
+    gl_FragColor = vec4(finalColor * twinkle, tex.a * vBrightness * globalBrightness * mask * trailFade);
+}`;
 
 function enablePlanetLayer(object3d) {
     if (!object3d) return;
@@ -160,27 +262,39 @@ const NebulaSystem = {
 };
 
 const StarSystem = {
-    mesh: null, uniforms: null, count: 26000, worldScale: 220000, starSpeed: 0.9, layerZ: -250, lastWarpState: 'idle', exitTimer: 0,
+    mesh: null, uniforms: null, count: 26000, worldScale: 220000, layerZ: -250, lastWarpState: 'idle', exitTimer: 0,
     init: function () {
         if (!Core3D.isInitialized) return;
         const geo = new THREE.BufferGeometry();
         const positions = new Float32Array(this.count * 3); const sizes = new Float32Array(this.count);
         const brights = new Float32Array(this.count); const colors = new Float32Array(this.count * 3);
+        const parallaxFactors = new Float32Array(this.count); const layerSizeMuls = new Float32Array(this.count);
+        const layerBrightnessMuls = new Float32Array(this.count); const layerStretchMuls = new Float32Array(this.count);
         const tempColor = new THREE.Color();
         for (let i = 0; i < this.count; i++) {
+            const layer = pickStarParallaxLayer(Math.random());
             positions[i * 3] = (Math.random() - 0.5) * this.worldScale; positions[i * 3 + 1] = (Math.random() - 0.5) * this.worldScale; positions[i * 3 + 2] = 0;
-            sizes[i] = 1.0 + Math.pow(Math.random(), 3.0) * 4.0; brights[i] = 0.4 + Math.random() * 0.6;
+            sizes[i] = 0.75 + Math.pow(Math.random(), 3.0) * 3.2; brights[i] = 0.34 + Math.random() * 0.56;
+            parallaxFactors[i] = layer.parallax;
+            layerSizeMuls[i] = layer.sizeMul;
+            layerBrightnessMuls[i] = layer.brightnessMul;
+            layerStretchMuls[i] = layer.stretchMul;
             const r = Math.random();
-            if (r > 0.85) tempColor.setHex(0x9bb0ff); else if (r > 0.55) tempColor.setHex(0xfff4e8); else if (r > 0.25) tempColor.setHex(0xffd2a1); else tempColor.setHex(0xffcc6f);
+            if (r > 0.82) tempColor.setHex(0x8fb7ff); else if (r > 0.58) tempColor.setHex(0xdbe8ff); else if (r > 0.22) tempColor.setHex(0xffffff); else tempColor.setHex(0xb8d4ff);
             colors[i * 3] = tempColor.r; colors[i * 3 + 1] = tempColor.g; colors[i * 3 + 2] = tempColor.b;
         }
         geo.setAttribute('position', new THREE.BufferAttribute(positions, 3)); geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
         geo.setAttribute('brightness', new THREE.BufferAttribute(brights, 1)); geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        geo.setAttribute('parallaxFactor', new THREE.BufferAttribute(parallaxFactors, 1));
+        geo.setAttribute('layerSizeMul', new THREE.BufferAttribute(layerSizeMuls, 1));
+        geo.setAttribute('layerBrightnessMul', new THREE.BufferAttribute(layerBrightnessMuls, 1));
+        geo.setAttribute('layerStretchMul', new THREE.BufferAttribute(layerStretchMuls, 1));
         this.uniforms = {
             pointTexture: { value: this.createStarTexture() }, time: { value: 0 }, cameraOffset: { value: new THREE.Vector2(0, 0) },
             containerSize: { value: this.worldScale }, perspectiveScale: { value: 800.0 }, globalBrightness: { value: 1.0 },
-            warpFactor: { value: 0.0 }, moveDir: { value: new THREE.Vector2(0, 1) }, stretchStrength: { value: 25.0 },
-            thinningStrength: { value: 45.0 }, baseSizeMul: { value: 1.8 },
+            warpFactor: { value: 0.0 }, moveDir: { value: new THREE.Vector2(0, 1) }, stretchStrength: { value: 20.0 },
+            viewportSize: { value: new THREE.Vector2(window.innerWidth || 1, window.innerHeight || 1) },
+            thinningStrength: { value: 38.0 }, baseSizeMul: { value: 1.65 },
             planetMasks: { value: Array.from({ length: STAR_PLANET_MASK_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) }
         };
         const mat = new THREE.ShaderMaterial({ uniforms: this.uniforms, vertexShader: STARS_VERTEX, fragmentShader: STARS_FRAGMENT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -197,8 +311,8 @@ const StarSystem = {
         const cx = typeof gameCamera.x === 'number' ? gameCamera.x : 0; const cy = typeof gameCamera.y === 'number' ? gameCamera.y : 0;
         this.uniforms.time.value += dt;
         if (this.mesh) this.mesh.position.set(cx, -cy, this.layerZ);
-        const starSpeed = this.starSpeed || 0.9; const wrapSize = this.worldScale || 100000;
-        this.uniforms.cameraOffset.value.set(((cx * starSpeed % wrapSize) + wrapSize) % wrapSize, ((-cy * starSpeed % wrapSize) + wrapSize) % wrapSize);
+        this.uniforms.cameraOffset.value.set(cx, -cy);
+        this.uniforms.viewportSize.value.set(Core3D.width || window.innerWidth || 1, Core3D.height || window.innerHeight || 1);
         const planetMasks = this.uniforms.planetMasks?.value;
         if (Array.isArray(planetMasks) && planetMasks.length && window.planets) {
             for (let i = 0; i < STAR_PLANET_MASK_CAP; i++) if (planetMasks[i]) planetMasks[i].set(0, 0, 0, 0);
