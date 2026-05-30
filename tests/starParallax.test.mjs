@@ -48,7 +48,8 @@ test('normal flight speed does not drive warp stretch in the star shader', () =>
   const source = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
 
   assert.doesNotMatch(source, /max\s*\(\s*warpFactor\s*,\s*speedFactor\s*\*\s*speedResponse\s*\)/);
-  assert.match(source, /float\s+stretch\s*=\s*1\.0\s*\+\s*\(\s*warpFactor\s*\*\s*stretchStrength\s*\*\s*layerStretchMul\s*\)/);
+  assert.match(source, /float\s+stretchDrive\s*=\s*max\s*\(\s*warpFactor\s*,\s*exitWhipFactor\s*\*\s*exitWhipStrength\s*\)\s*;/);
+  assert.match(source, /float\s+stretch\s*=\s*1\.0\s*\+\s*\(\s*stretchDrive\s*\*\s*stretchStrength\s*\*\s*layerStretchMul\s*\)/);
 });
 
 test('warp star streak keeps the star head anchored at the original point', () => {
@@ -62,4 +63,21 @@ test('warp star streak keeps the star head anchored at the original point', () =
   assert.doesNotMatch(source, /\(\s*stretch\s*-\s*1\.0\s*\)\s*\*\s*0\.5/);
   assert.doesNotMatch(source, /mvPosition\.xy\s*-=\s*moveDir/);
   assert.doesNotMatch(source, /uv\.x\s*\*=\s*\(1\.0\s*\/\s*vStretch\)/);
+});
+
+test('warp exit uses a short whip pulse and preserves the last warp direction', () => {
+  const source = readFileSync(new URL('../src/3d/planet3d.assets.js', import.meta.url), 'utf8');
+
+  assert.match(source, /uniform\s+float\s+exitWhipFactor\s*;/);
+  assert.match(source, /uniform\s+float\s+exitWhipStrength\s*;/);
+  assert.match(source, /varying\s+float\s+vExitWhip\s*;/);
+  assert.match(source, /exitWhipTimer:\s*0/);
+  assert.match(source, /exitWhipDuration:\s*0\.34/);
+  assert.match(source, /this\.lastWarpState\s*===\s*'active'\s*&&\s*currentState\s*!==\s*'active'/);
+  assert.match(source, /this\.exitWhipTimer\s*=\s*this\.exitWhipDuration\s*;/);
+  assert.match(source, /Math\.pow\s*\(\s*whipT\s*,\s*2\.6\s*\)/);
+  assert.match(source, /this\.uniforms\.exitWhipFactor\.value\s*=\s*exitWhipFactor\s*;/);
+  assert.match(source, /lastWarpDirX/);
+  assert.match(source, /if\s*\(\s*this\.exitWhipTimer\s*>\s*0\s*\)\s*\{\s*dx\s*=\s*this\.lastWarpDirX\s*;\s*dy\s*=\s*this\.lastWarpDirY\s*;/);
+  assert.doesNotMatch(source, /this\.exitTimer\s*=\s*0\.8/);
 });

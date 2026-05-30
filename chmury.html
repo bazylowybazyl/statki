@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interaktywna Kosmiczna Mgławica</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #030712;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            cursor: crosshair;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            background: rgba(15, 23, 42, 0.75);
+            padding: 20px;
+            border-radius: 12px;
+            pointer-events: none;
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            max-width: 350px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            z-index: 10;
+        }
+        h1 { margin: 0 0 10px 0; font-size: 1.5rem; color: #a78bfa; }
+        p { margin: 0 0 10px 0; font-size: 0.9rem; color: #cbd5e1; line-height: 1.5; }
+        .highlight { color: #38bdf8; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h1>Kosmiczna Mgławica</h1>
+        <p>System obsługuje teraz <span class="highlight">wiele statków</span> wycinających niezależne kaniony świetlne.</p>
+        <p>🚀 <strong>Myszka</strong> = Ty (Błękitny). Inne kolory to AI przelatujące przez gaz w liniach prostych.</p>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://unpkg.com/stats.js@0.17.0/build/stats.min.js"></script>
+
+    <script>
+        const RESOLUTION_SCALE = 0.5;
+
+        // Konfiguracja skali chmury – zmieniaj `cloudConfig.cloudRadius` (i opcjonalnie
+        // renderRadius = cloudRadius + ~5) z konsoli, żeby skalować mgławicę. Step size
+        // w shaderze skaluje się automatycznie, więc koszt FPS jest niezależny od rozmiaru.
+        const cloudConfig = {
+            cloudRadius: 8.5,         // promień bazowy chmury
+            renderRadius: 13.5,       // promień sfery rayMarchingu (musi być >= cloudRadius + ~4)
+            // Activity = czy statek aktualnie się porusza (0..1). Steruje carve'm i zarastaniem.
+            activitySpeedRef: 2.0,    // prędkość przy której activity osiąga 1.0
+            activityRiseRate: 5.0,    // jak szybko activity rośnie (start ruchu)
+            activityFallRate: 0.8,    // jednostek/sekundę spadku activity gdy stoi (1.0 = ~1.25s do zera)
+            stationarySuppress: 5.0   // bias dodawany do shipSDF gdy stoi - kasuje dziurę i wake
+        };
+        window.cloudConfig = cloudConfig;
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 18, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth * RESOLUTION_SCALE, window.innerHeight * RESOLUTION_SCALE, false);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.enableRotate = false; 
+
+        const stats = new Stats();
+        stats.showPanel(0);
+        stats.dom.style.position = 'absolute';
+        stats.dom.style.top = '20px';
+        stats.dom.style.right = '20px';
+        stats.dom.style.left = 'auto';
+        document.body.appendChild(stats.dom);
+
+        // --- 2. MULTI-SHIP SYSTEM ---
+        const MAX_SHIPS = 4;
+        const NUM_TRAILS_PER_SHIP = 60; 
+        const TOTAL_TRAILS = MAX_SHIPS * NUM_TRAILS_PER_SHIP;
+
+        const ships = [];
+        const shipPositions = [];
+        const trailData = [];
+        const trailMins = [];
+        const trailMaxs = [];
+        const shipColors = [
+            new THREE.Vector3(0.2, 1.0, 1.0), // Gracz
+            new THREE.Vector3(1.0, 0.2, 0.4), // AI 1
+            new THREE.Vector3(0.5, 1.0, 0.2), // AI 2
+            new THREE.Vector3(1.0, 0.8, 0.1)  // AI 3
+        ];
+
+        const aiSpeeds = [0, 4.0, 3.2, 5.0];
+        const aiDirs = [
+            new THREE.Vector3(),
+            new THREE.Vector3(1, 0, 0),
+            new THREE.Vector3(0, 0, -1),
+            new THREE.Vector3(-0.7, 0, 0.7)
+        ];
+
+        // Aktywność statku: 1 = porusza się, 0 = stoi (chmura zarasta).
+        // Tuning siedzi w cloudConfig (atak ~0.2s, fall liniowy ~1.25s do zera).
+        const shipActivity = [1.0, 1.0, 1.0, 1.0];
+
+        for(let s = 0; s < MAX_SHIPS; s++) {
+            const isPlayer = s === 0;
+            const geom = new THREE.ConeGeometry(0.25, 0.7, 8);
+            geom.rotateX(-Math.PI / 2); 
+            const mat = new THREE.MeshBasicMaterial({ color: isPlayer ? 0xffffff : 0xaaaaaa }); 
+            const ship = new THREE.Mesh(geom, mat);
+            
+            if (!isPlayer) {
+                ship.position.set((Math.random() - 0.5) * 16, 0, (Math.random() - 0.5) * 16);
+            }
+            
+            scene.add(ship);
+            ships.push(ship);
+            
+            shipPositions.push(ship.position);
+            trailMins.push(new THREE.Vector3());
+            trailMaxs.push(new THREE.Vector3());
+
+            for(let i = 0; i < NUM_TRAILS_PER_SHIP; i++) {
+                trailData.push(new THREE.Vector4(ship.position.x, -999, ship.position.z, 0)); 
+            }
+        }
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        const targetPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); 
+        let targetPosition = new THREE.Vector3();
+        let playerVelocity = new THREE.Vector3();
+        const tempVec = new THREE.Vector3();
+
+        window.addEventListener('mousemove', (event) => {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            raycaster.ray.intersectPlane(targetPlane, targetPosition);
+        });
+
+        // --- 3. SHADER MATERIAŁ ---
+        const shaderMaterial = new THREE.ShaderMaterial({
+            depthWrite: false, 
+            uniforms: {
+                u_time: { value: 0 },
+                u_resolution: { value: new THREE.Vector2(window.innerWidth * RESOLUTION_SCALE, window.innerHeight * RESOLUTION_SCALE) },
+                u_cameraPos: { value: camera.position },
+                u_cameraDir: { value: new THREE.Vector3() },
+                u_cameraUp: { value: new THREE.Vector3() },
+                u_cameraRight: { value: new THREE.Vector3() },
+                u_fov: { value: camera.fov },
+                u_shipPos: { value: shipPositions },
+                u_shipColors: { value: shipColors },
+                u_shipActivity: { value: shipActivity },
+                u_trails: { value: trailData },
+                u_trailMin: { value: trailMins },
+                u_trailMax: { value: trailMaxs },
+                u_cloudRadius: { value: cloudConfig.cloudRadius },
+                u_renderRadius: { value: cloudConfig.renderRadius },
+                u_stationarySuppress: { value: cloudConfig.stationarySuppress }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() { vUv = uv; gl_Position = vec4(position, 1.0); }
+            `,
+            fragmentShader: `
+                uniform float u_time;
+                uniform vec2 u_resolution;
+                uniform vec3 u_cameraPos;
+                uniform vec3 u_cameraDir;
+                uniform vec3 u_cameraUp;
+                uniform vec3 u_cameraRight;
+                uniform float u_fov;
+                
+                uniform vec3 u_shipPos[${MAX_SHIPS}];
+                uniform vec3 u_shipColors[${MAX_SHIPS}];
+                uniform float u_shipActivity[${MAX_SHIPS}];
+                uniform vec4 u_trails[${TOTAL_TRAILS}];
+                uniform vec3 u_trailMin[${MAX_SHIPS}];
+                uniform vec3 u_trailMax[${MAX_SHIPS}];
+                uniform float u_cloudRadius;
+                uniform float u_renderRadius;
+                uniform float u_stationarySuppress;
+
+                varying vec2 vUv;
+
+                float hash(vec3 p) {
+                    p = fract(p * 0.3183099 + .1);
+                    p *= 17.0;
+                    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+                }
+
+                float noise(vec3 x) {
+                    vec3 i = floor(x);
+                    vec3 f = fract(x);
+                    f = f * f * (3.0 - 2.0 * f);
+                    return mix(mix(mix(hash(i + vec3(0,0,0)), hash(i + vec3(1,0,0)), f.x),
+                                   mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+                               mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
+                                   mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+                }
+
+                float fbm(vec3 p) {
+                    float f = 0.0, w = 0.5;
+                    for (int i = 0; i < 5; i++) { f += w * noise(p); p *= 2.03; w *= 0.5; }
+                    return f;
+                }
+
+                float fbm_low(vec3 p) {
+                    float f = 0.0, w = 0.5;
+                    for (int i = 0; i < 2; i++) { f += w * noise(p); p *= 2.03; w *= 0.5; }
+                    return f;
+                }
+
+                vec3 starfield(vec3 dir) {
+                    float n = hash(dir * 200.0);
+                    float stars = pow(n, 150.0) * 1.5;
+                    float n2 = hash(dir * 100.0 + vec3(1.0));
+                    float stars2 = pow(n2, 80.0) * 0.5;
+                    return vec3(stars + stars2);
+                }
+
+                float map(vec3 p, int runMode) {
+                    float finalTunnelSDF = 999.0;
+                    vec3 warp = vec3(0.0);
+                    float bowShock = 0.0;
+
+                    float healingNoise = 0.0;
+                    if (runMode == 0) {
+                        healingNoise = fbm(p * 2.5 + vec3(0.0, 0.0, u_time * -0.3));
+                    }
+
+                    for (int s = 0; s < ${MAX_SHIPS}; s++) {
+                        bool inBounds = p.x >= u_trailMin[s].x && p.x <= u_trailMax[s].x &&
+                                        p.z >= u_trailMin[s].z && p.z <= u_trailMax[s].z;
+
+                        if (inBounds) {
+                            float activity = u_shipActivity[s];
+
+                            // EFEKT FALI DZIOBOWEJ (Bow Shock):
+                            // Statek w swoim otoczeniu sztucznie rozszerza granice chmury na zewnątrz.
+                            // Skalowane przez activity - gdy statek stoi, fala znika i chmura wraca.
+                            float distToShip = length(p - u_shipPos[s]);
+                            bowShock += smoothstep(3.5, 0.0, distToShip) * 2.2 * activity;
+
+                            if (runMode == 0) {
+                                vec3 diffShip = p - u_shipPos[s];
+                                diffShip.y = min(0.0, diffShip.y);
+                                float shipSDF = length(diffShip) - 0.8;
+
+                                int offset = s * ${NUM_TRAILS_PER_SHIP};
+                                
+                                for (int i = 0; i < ${NUM_TRAILS_PER_SHIP} - 1; i++) {
+                                    vec4 tA = u_trails[offset + i];
+                                    vec4 tB = u_trails[offset + i + 1];
+                                    float ageA = tA.w;
+                                    float ageB = tB.w;
+                                    
+                                    if (ageA < 0.001 && ageB < 0.001) continue;
+
+                                    vec3 a = tA.xyz, b = tB.xyz;
+                                    vec3 pa = p - a, ba = b - a;
+                                    float h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.0001), 0.0, 1.0);
+                                    
+                                    vec3 diffTrail = p - (a + ba * h);
+                                    diffTrail.y = min(0.0, diffTrail.y);
+                                    float d = length(diffTrail);
+                                    
+                                    float age = mix(ageA, ageB, h);
+                                    
+                                    float baseErosion = 0.4 * healingNoise;
+                                    float healingErosion = smoothstep(1.0, 0.0, age) * healingNoise * 1.5;
+                                    float erosion = baseErosion + healingErosion;
+                                    
+                                    float radius = 0.8 * smoothstep(-0.2, 0.8, age);
+                                    
+                                    shipSDF = min(shipSDF, d - radius + erosion);
+                                }
+                                
+                                // Gdy statek stoi (activity=0), shipSDF jest przesuwane w "pozytywne"
+                                // tak mocno, że hollowOut się nie odpala i chmura zarasta.
+                                // Suppress dotyczy też trail-headu (slot 0 ma w=activity) i wake'u.
+                                finalTunnelSDF = min(finalTunnelSDF, shipSDF + (1.0 - activity) * u_stationarySuppress);
+
+                                if (shipSDF > 0.0 && shipSDF < 1.0) {
+                                     vec3 dir = normalize(p - u_shipPos[s]);
+                                     dir.y = 0.0;
+                                     warp += dir * smoothstep(1.0, 0.0, shipSDF) * 0.4 * activity;
+                                }
+                            }
+                        }
+                    }
+
+                    vec3 q = p;
+                    q.y *= 1.5; 
+                    
+                    // Rozszerzenie bazy chmury o wyliczony 'bowShock' ciągnący gaz na zewnątrz
+                    float bounds = length(q) - u_cloudRadius - bowShock;
+                    
+                    vec3 noisePos = (p + warp) * 1.3 + vec3(u_time * -0.05, 0.0, 0.0);
+                    
+                    float n = (runMode == 1) ? fbm_low(noisePos) : fbm(noisePos);
+                    
+                    float d = -bounds + (n - 0.45) * 3.5;
+                    
+                    if (runMode == 0) {
+                        float hollowOut = smoothstep(0.8, -0.2, finalTunnelSDF - n * 0.4) * 20.0;
+                        d -= hollowOut;
+                    }
+                    
+                    return max(0.0, d);
+                }
+
+                vec2 intersectSphere(vec3 ro, vec3 rd, float r) {
+                    float b = dot(ro, rd);
+                    float c = dot(ro, ro) - r*r;
+                    float h = b*b - c;
+                    if(h < 0.0) return vec2(-1.0);
+                    h = sqrt(h);
+                    return vec2(-b - h, -b + h);
+                }
+
+                void main() {
+                    vec2 uv = (vUv - 0.5) * 2.0;
+                    uv.x *= u_resolution.x / u_resolution.y;
+
+                    float fovRad = u_fov * 3.14159 / 180.0;
+                    float focalLength = 1.0 / tan(fovRad / 2.0);
+
+                    vec3 rayDir = normalize(uv.x * u_cameraRight + uv.y * u_cameraUp + focalLength * u_cameraDir);
+                    vec3 rayPos = u_cameraPos;
+
+                    vec3 bgColor = vec3(0.02, 0.03, 0.08) + starfield(rayDir);
+                    vec3 lightDir = normalize(vec3(0.8, 0.5, 0.3)); 
+                    vec3 nebulaColor1 = vec3(0.6, 0.2, 0.8); 
+                    vec3 nebulaColor2 = vec3(0.2, 0.6, 0.9); 
+
+                    vec4 color = vec4(0.0);
+
+                    // Sfera ograniczająca - skaluje się razem z chmurą
+                    vec2 hit = intersectSphere(rayPos, rayDir, u_renderRadius);
+
+                    if(hit.y > 0.0) {
+                        // Krok skaluje się z rozmiarem chmury - dzięki temu duża chmura
+                        // używa tej samej liczby iteracji co mała (stały koszt FPS).
+                        float scaleFactor = u_renderRadius / 13.5;
+                        float stepSize = 0.24 * scaleFactor;
+                        float fastStep = stepSize * 3.5;        // szybki przeskok pustki
+                        float emptyStepInside = stepSize * 1.8; // przeskok między kłębami
+
+                        float t = max(0.0, hit.x);
+                        float maxT = hit.y;
+                        float jitter = fract(sin(dot(uv.xy, vec2(12.9898,78.233))) * 43758.5453);
+                        t += stepSize * jitter;
+
+                        // === FAZA 1: szybki search z taniego fbm_low ===
+                        // Skacze grubym krokiem przez pustą przestrzeń. Gdy złapie chmurę,
+                        // cofa się o jeden fastStep i przekazuje do fazy detalu.
+                        bool foundCloud = false;
+                        for(int i = 0; i < 40; i++) {
+                            if(t > maxT) break;
+                            vec3 p = rayPos + rayDir * t;
+                            float dCheap = map(p, 1); // tania wersja (fbm_low, bez śladów)
+                            if (dCheap > 0.02) {
+                                t = max(hit.x, t - fastStep);
+                                foundCloud = true;
+                                break;
+                            }
+                            t += fastStep;
+                        }
+
+                        // === FAZA 2: dokładny ray-march tylko jeśli coś jest ===
+                        if (foundCloud) {
+                            for(int i = 0; i < 70; i++) {
+                                if(t > maxT) break;
+
+                                vec3 p = rayPos + rayDir * t;
+                                float density = map(p, 0);
+
+                                if(density > 0.01) {
+                                    float lightDensity = 0.0;
+                                    vec3 lp = p;
+
+                                    for(int j = 0; j < 2; j++) {
+                                        lp += lightDir * 0.45 * scaleFactor;
+                                        lightDensity += map(lp, 1);
+                                    }
+                                    float transmittance = exp(-lightDensity * 0.4);
+
+                                    vec3 totalShipGlowColor = vec3(0.0);
+                                    for(int s = 0; s < ${MAX_SHIPS}; s++) {
+                                        float distToShip = length(p - u_shipPos[s]);
+                                        float glow = exp(-distToShip * 0.8) * 5.0;
+                                        totalShipGlowColor += u_shipColors[s] * glow;
+                                    }
+
+                                    vec3 localBase = mix(nebulaColor1, nebulaColor2, (p.y + p.x) * 0.2 + 0.5);
+                                    vec3 localColor = localBase * (0.2 + transmittance * 1.2);
+                                    localColor += totalShipGlowColor;
+
+                                    float alpha = (1.0 - exp(-density * stepSize * 3.5));
+                                    color += vec4(localColor * alpha, alpha) * (1.0 - color.a);
+                                    if(color.a > 0.99) break;
+                                    t += stepSize;
+                                } else {
+                                    // pustka między kłębami - szybciej dalej
+                                    t += emptyStepInside;
+                                }
+                            }
+                        }
+                    }
+
+                    vec3 finalColor = mix(bgColor, color.rgb, color.a);
+                    finalColor = vec3(1.0) - exp(-finalColor * 1.2);
+                    finalColor = pow(finalColor, vec3(1.0 / 2.2));
+
+                    gl_FragColor = vec4(finalColor, 1.0);
+                }
+            `
+        });
+
+        const geometry = new THREE.PlaneGeometry(2, 2);
+        const mesh = new THREE.Mesh(geometry, shaderMaterial);
+        mesh.frustumCulled = false; 
+        mesh.renderOrder = -1; 
+        scene.add(mesh);
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth * RESOLUTION_SCALE, window.innerHeight * RESOLUTION_SCALE, false);
+            shaderMaterial.uniforms.u_resolution.value.set(window.innerWidth * RESOLUTION_SCALE, window.innerHeight * RESOLUTION_SCALE);
+        });
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            stats.begin();
+            requestAnimationFrame(animate);
+
+            let dt = clock.getDelta();
+            let time = clock.getElapsedTime();
+
+            for (let s = 0; s < MAX_SHIPS; s++) {
+                let actualSpeed = 0;
+                if (s === 0) {
+                    let dist = targetPosition.distanceTo(ships[0].position);
+                    let maxSpeed = Math.min(dist * 3.0, 10.0);
+
+                    playerVelocity.subVectors(targetPosition, ships[0].position).normalize().multiplyScalar(maxSpeed * dt);
+                    if (dist > 0.1) {
+                        ships[0].position.add(playerVelocity);
+                        actualSpeed = maxSpeed;
+                    }
+
+                    if (playerVelocity.lengthSq() > 0.001) {
+                        ships[0].lookAt(ships[0].position.clone().add(playerVelocity));
+                    }
+                } else {
+                    ships[s].position.addScaledVector(aiDirs[s], aiSpeeds[s] * dt);
+                    ships[s].lookAt(ships[s].position.clone().add(aiDirs[s]));
+                    actualSpeed = aiSpeeds[s];
+
+                    let wrapped = false;
+                    let mapLimit = 16.0;
+                    if (ships[s].position.x > mapLimit) { ships[s].position.x = -mapLimit; wrapped = true; }
+                    if (ships[s].position.x < -mapLimit) { ships[s].position.x = mapLimit; wrapped = true; }
+                    if (ships[s].position.z > mapLimit) { ships[s].position.z = -mapLimit; wrapped = true; }
+                    if (ships[s].position.z < -mapLimit) { ships[s].position.z = mapLimit; wrapped = true; }
+
+                    if (wrapped) {
+                        let offset = s * NUM_TRAILS_PER_SHIP;
+                        for(let i=0; i<NUM_TRAILS_PER_SHIP; i++) trailData[offset + i].w = 0;
+                    }
+                }
+
+                // Activity: szybki wykładniczy atak, liniowe opadanie (osiąga 0 czysto).
+                let targetActivity = Math.min(actualSpeed / cloudConfig.activitySpeedRef, 1.0);
+                if (targetActivity > shipActivity[s]) {
+                    shipActivity[s] += (targetActivity - shipActivity[s]) * Math.min(dt * cloudConfig.activityRiseRate, 1.0);
+                } else {
+                    // liniowe - inaczej asymptota nigdy nie dotyka 0 i carve pozostaje na zawsze
+                    shipActivity[s] = Math.max(targetActivity, shipActivity[s] - dt * cloudConfig.activityFallRate);
+                }
+            }
+
+            for (let s = 0; s < MAX_SHIPS; s++) {
+                let offset = s * NUM_TRAILS_PER_SHIP;
+                
+                // Wiek głowy = activity. Gdy statek stoi, segment "tu i teraz" też gaśnie.
+                trailData[offset].set(ships[s].position.x, ships[s].position.y, ships[s].position.z, shipActivity[s]);
+
+                tempVec.set(trailData[offset+1].x, trailData[offset+1].y, trailData[offset+1].z);
+                let distSq = tempVec.distanceToSquared(ships[s].position);
+                
+                if (distSq > 0.25) { 
+                    for (let i = NUM_TRAILS_PER_SHIP - 1; i > 1; i--) {
+                        trailData[offset+i].copy(trailData[offset+i-1]);
+                    }
+                    trailData[offset+1].copy(trailData[offset]); 
+                }
+
+                for (let i = 1; i < NUM_TRAILS_PER_SHIP; i++) {
+                    trailData[offset+i].w = Math.max(0.0, trailData[offset+i].w - dt * 0.35); 
+                }
+
+                trailMins[s].copy(ships[s].position);
+                trailMaxs[s].copy(ships[s].position);
+                for (let i = 0; i < NUM_TRAILS_PER_SHIP; i++) {
+                    if (trailData[offset+i].w > 0.001) {
+                        tempVec.set(trailData[offset+i].x, trailData[offset+i].y, trailData[offset+i].z);
+                        trailMins[s].min(tempVec);
+                        trailMaxs[s].max(tempVec);
+                    }
+                }
+                trailMins[s].subScalar(3.5);
+                trailMaxs[s].addScalar(3.5);
+            }
+
+            controls.update();
+
+            camera.getWorldDirection(shaderMaterial.uniforms.u_cameraDir.value);
+            shaderMaterial.uniforms.u_cameraUp.value.copy(camera.up).applyQuaternion(camera.quaternion);
+            shaderMaterial.uniforms.u_cameraRight.value.crossVectors(
+                shaderMaterial.uniforms.u_cameraDir.value, 
+                shaderMaterial.uniforms.u_cameraUp.value
+            ).normalize();
+            
+            shaderMaterial.uniforms.u_cameraPos.value.copy(camera.position);
+            shaderMaterial.uniforms.u_time.value = time;
+            shaderMaterial.uniforms.u_cloudRadius.value = cloudConfig.cloudRadius;
+            shaderMaterial.uniforms.u_renderRadius.value = cloudConfig.renderRadius;
+            shaderMaterial.uniforms.u_stationarySuppress.value = cloudConfig.stationarySuppress;
+            
+            shaderMaterial.uniforms.u_shipPos.value = shipPositions;
+            shaderMaterial.uniforms.u_trails.value = trailData;
+            shaderMaterial.uniforms.u_trailMin.value = trailMins;
+            shaderMaterial.uniforms.u_trailMax.value = trailMaxs;
+
+            renderer.render(scene, camera);
+            stats.end();
+        }
+
+        animate();
+    </script>
+</body>
+</html>

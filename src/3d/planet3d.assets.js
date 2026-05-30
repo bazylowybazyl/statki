@@ -49,6 +49,8 @@ uniform vec2 cameraOffset;
 uniform float containerSize;
 uniform float perspectiveScale;
 uniform float warpFactor;
+uniform float exitWhipFactor;
+uniform float exitWhipStrength;
 uniform float stretchStrength;
 uniform float baseSizeMul;
 uniform vec2 moveDir;
@@ -67,6 +69,7 @@ varying vec3 vColor;
 varying float vStretch;
 varying float vScreenSize;
 varying float vPlanetMask;
+varying float vExitWhip;
 void main() {
     vColor = color;
     vec3 pos = position;
@@ -85,8 +88,10 @@ void main() {
         vPlanetMask *= step(pm.z, distToPlanet);
     }
     vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-    float stretch = 1.0 + (warpFactor * stretchStrength * layerStretchMul);
-    vWarp = warpFactor;
+    float stretchDrive = max(warpFactor, exitWhipFactor * exitWhipStrength);
+    float stretch = 1.0 + (stretchDrive * stretchStrength * layerStretchMul);
+    vWarp = max(warpFactor, exitWhipFactor);
+    vExitWhip = exitWhipFactor;
     vStretch = stretch;
     vBrightness = brightness * layerBrightnessMul;
     float finalSize = size * baseSizeMul * layerSizeMul;
@@ -94,7 +99,7 @@ void main() {
     float distFactor = perspectiveScale / depth;
     float pointSize = (finalSize * stretch) * distFactor;
     vec4 clipPosition = projectionMatrix * mvPosition;
-    if (warpFactor > 0.001) {
+    if (stretchDrive > 0.001) {
         vec2 warpDir = length(moveDir) > 0.001 ? normalize(moveDir) : vec2(0.0, 1.0);
         vec2 safeViewport = max(viewportSize, vec2(1.0));
         vec2 screenOffset = warpDir * vec2(pointSize / safeViewport.x, pointSize / safeViewport.y) * clipPosition.w;
@@ -116,6 +121,7 @@ varying vec3 vColor;
 varying float vStretch;
 varying float vScreenSize;
 varying float vPlanetMask;
+varying float vExitWhip;
 void main() {
     vec2 rawUV = gl_PointCoord - 0.5;
     float distFromCenter = length(rawUV);
@@ -130,10 +136,11 @@ void main() {
         float s = sin(angle);
         mat2 rot = mat2(c, s, -s, c);
         uv = rot * uv;
-        trailFade = mix(0.18, 1.0, smoothstep(0.0, 1.0, uv.x + 0.5));
+        float tailFloor = mix(0.18, 0.06, clamp(vExitWhip, 0.0, 1.0));
+        trailFade = mix(tailFloor, 1.0, smoothstep(0.0, 1.0, uv.x + 0.5));
         uv.x = (uv.x - 0.5) / vStretch;
         float maxSafeThin = max(1.0, vScreenSize * 0.4);
-        float actualThin = min(thinningStrength, maxSafeThin);
+        float actualThin = min(thinningStrength * (1.0 + vExitWhip * 0.65), maxSafeThin);
         uv.y *= (1.0 + min(vWarp, 1.25) * actualThin);
     }
     vec2 texUV = uv + 0.5;
@@ -142,7 +149,9 @@ void main() {
     if (tex.a < 0.05) discard;
     float twinkle = 0.82 + 0.18 * sin(time * 3.0 + vBrightness * 10.0);
     vec3 finalColor = mix(vColor, vec3(0.7, 0.85, 1.0), clamp(vWarp * 0.75, 0.0, 1.0));
-    gl_FragColor = vec4(finalColor * twinkle, tex.a * vBrightness * globalBrightness * mask * trailFade);
+    finalColor = mix(finalColor, vec3(0.88, 0.94, 1.0), clamp(vExitWhip * 0.65, 0.0, 1.0));
+    float whipFlash = 1.0 + vExitWhip * 1.25;
+    gl_FragColor = vec4(finalColor * twinkle * whipFlash, tex.a * vBrightness * globalBrightness * mask * trailFade * whipFlash);
 }`;
 
 function enablePlanetLayer(object3d) {
@@ -262,7 +271,8 @@ const NebulaSystem = {
 };
 
 const StarSystem = {
-    mesh: null, uniforms: null, count: 26000, worldScale: 220000, layerZ: -250, lastWarpState: 'idle', exitTimer: 0,
+    mesh: null, uniforms: null, count: 26000, worldScale: 220000, layerZ: -250, lastWarpState: 'idle',
+    exitWhipTimer: 0, exitWhipDuration: 0.34, lastWarpDirX: 0, lastWarpDirY: 1,
     init: function () {
         if (!Core3D.isInitialized) return;
         const geo = new THREE.BufferGeometry();
@@ -293,6 +303,7 @@ const StarSystem = {
             pointTexture: { value: this.createStarTexture() }, time: { value: 0 }, cameraOffset: { value: new THREE.Vector2(0, 0) },
             containerSize: { value: this.worldScale }, perspectiveScale: { value: 800.0 }, globalBrightness: { value: 1.0 },
             warpFactor: { value: 0.0 }, moveDir: { value: new THREE.Vector2(0, 1) }, stretchStrength: { value: 20.0 },
+            exitWhipFactor: { value: 0.0 }, exitWhipStrength: { value: 1.75 },
             viewportSize: { value: new THREE.Vector2(window.innerWidth || 1, window.innerHeight || 1) },
             thinningStrength: { value: 38.0 }, baseSizeMul: { value: 1.65 },
             planetMasks: { value: Array.from({ length: STAR_PLANET_MASK_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) }
@@ -333,21 +344,36 @@ const StarSystem = {
             else if (typeof ship.angle === 'number') { dx = Math.sin(ship.angle); dy = -Math.cos(ship.angle); }
         }
         let targetWarp = 0.0;
+        let exitWhipFactor = 0.0;
         if (window.warp) {
             const currentState = window.warp.state;
-            if (this.lastWarpState === 'active' && currentState !== 'active') this.exitTimer = 0.8;
+            if (this.lastWarpState === 'active' && currentState !== 'active') this.exitWhipTimer = this.exitWhipDuration;
             this.lastWarpState = currentState;
-            if (currentState === 'active') { targetWarp = 1.0; if (window.warp.dir) { dx = window.warp.dir.x; dy = window.warp.dir.y; } }
+            if (currentState === 'active') {
+                targetWarp = 1.0;
+                if (window.warp.dir) { dx = window.warp.dir.x; dy = window.warp.dir.y; }
+                const warpDirLen = Math.hypot(dx, dy);
+                if (warpDirLen > 0.001) { this.lastWarpDirX = dx / warpDirLen; this.lastWarpDirY = dy / warpDirLen; }
+            }
             else if (currentState === 'charging' && window.warp.chargeTime > 0) targetWarp = Math.pow(Math.min(1, window.warp.charge / window.warp.chargeTime), 3.0) * 0.3;
         }
-        if (this.exitTimer > 0) { this.exitTimer -= dt; targetWarp = Math.max(targetWarp, Math.pow(Math.max(0, this.exitTimer / 0.8), 2.0) * 1.5); }
+        if (this.exitWhipTimer > 0) {
+            dx = this.lastWarpDirX;
+            dy = this.lastWarpDirY;
+            this.exitWhipTimer = Math.max(0, this.exitWhipTimer - dt);
+            const whipT = Math.max(0, this.exitWhipTimer / this.exitWhipDuration);
+            const whipSnap = Math.pow(whipT, 2.6);
+            const whipRipple = Math.sin((1.0 - whipT) * Math.PI) * Math.pow(whipT, 1.4) * 0.42;
+            exitWhipFactor = Math.min(1.35, whipSnap + whipRipple);
+        }
         this.uniforms.moveDir.value.set(dx, -dy);
-        const lerpSpeed = (this.exitTimer > 0) ? 8.0 : 4.0;
+        this.uniforms.exitWhipFactor.value = exitWhipFactor;
+        const lerpSpeed = (exitWhipFactor > 0) ? 18.0 : 4.0;
         this.uniforms.warpFactor.value += (targetWarp - this.uniforms.warpFactor.value) * lerpSpeed * dt;
         let targetStarBrightness = 1.0;
         if (window.warp && window.warp.state === 'active') targetStarBrightness = 0.4;
         else if (window.warp && window.warp.state === 'charging' && window.warp.chargeTime > 0) targetStarBrightness = 1.0 - (Math.min(1, window.warp.charge / window.warp.chargeTime) * 0.6);
-        if (this.exitTimer > 0) targetStarBrightness = 1.0;
+        if (exitWhipFactor > 0) targetStarBrightness = 1.0 + exitWhipFactor * 0.75;
         this.uniforms.globalBrightness.value += (targetStarBrightness - this.uniforms.globalBrightness.value) * (lerpSpeed * 1.5) * dt;
     }
 };
