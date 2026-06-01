@@ -251,10 +251,10 @@
 
   <!-- --- LEFT PANELS (Support) --- -->
   <div id="side-panels-container">
-    <div class="side-panel-transparent" id="panel-support">
-      <div class="panel-header" onclick="togglePanel('panel-support')"><span class="panel-title">Wsparcie</span><span
+    <div class="side-panel-transparent support-command-panel" id="panel-support">
+      <div class="panel-header support-command-header" onclick="togglePanel('panel-support')"><span class="support-title-block"><span class="panel-title">Wsparcie</span><span class="support-panel-kicker">FLEET CALL-IN</span></span><span
           class="panel-chevron">&#9662;</span></div>
-      <div class="panel-body">
+      <div class="panel-body support-command-body">
         <div class="support-card" data-support-spawn="supercapital">
           <div class="ship-icon-wrap">
             <div class="icon-supercapital">
@@ -324,7 +324,7 @@
           </div>
           <div class="support-count">x200</div>
         </div>
-        <div class="orders-row">
+        <div class="orders-row support-orders-row">
           <div class="glass-btn active" id="support-guard">Guard</div>
           <div class="glass-btn" id="support-engage">Engage</div>
         </div>
@@ -1191,6 +1191,21 @@
     } from "./src/ui/cicDisplay.js";
     import { ContactMarkers } from "./src/ui/contactMarkers.js";
     import { initRadarTargetingUI } from "./src/ui/radarTargetingUI.js";
+    import {
+      buildAsteroidScanDetails,
+      buildScannerContact,
+      getTargetRadius,
+      getTargetX,
+      getTargetY,
+      isAsteroidTarget,
+      isLockableTarget,
+      isTargetAlive,
+      selectNearestAsteroidTargets,
+      sortScannerContacts,
+      sortScannerSweepContacts,
+      targetPoint as scannerTargetPoint
+    } from "./src/game/scannerTargeting.js";
+    import { initScannerOverviewUI } from "./src/ui/scannerOverviewUI.js";
     import { SpotterDroneSystem } from "./src/game/spotterDrone.js";
     import { WeaponController } from "./src/game/weaponController.js";
     import { MASTER_WEAPONS, WEAPON_ICON_PATHS } from "./src/data/weapons.js";
@@ -5560,7 +5575,7 @@
     function interpAngleShort(prev, curr, t) { const d = wrapAngle(curr - prev); return wrapAngle(prev + d * t); }
     function shuffleArray(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; } }
     function leadTarget(shooter, shooterVel, target, speed) {
-      const tx = target.x, ty = target.y;
+      const tx = getTargetX(target), ty = getTargetY(target);
       const tvx = target.vx || 0, tvy = target.vy || 0;
       const rx = tx - shooter.x, ry = ty - shooter.y;
       const rvx = tvx - shooterVel.x, rvy = tvy - shooterVel.y;
@@ -8090,9 +8105,9 @@
         effectiveTarget = lockedTargets[Math.floor(Math.random() * lockedTargets.length)];
       }
 
-      if (effectiveTarget && !effectiveTarget.dead) {
+      if (isTargetAlive(effectiveTarget)) {
         aimPoint = (weapon.category === 'beam')
-          ? { x: effectiveTarget.x, y: effectiveTarget.y }
+          ? scannerTargetPoint(effectiveTarget)
           : window.getLeadAim(muzzleData.pos, effectiveTarget, speed);
       } else if (isPlayerShip && !firingMode.wheelOpen) {
         // Gracz — strzela w obszar celownika z rozrzutem
@@ -8566,7 +8581,7 @@
       const shipVel = ship.vel || { x: ship.vx || 0, y: ship.vy || 0 };
 
       // Build valid live target list for round-robin distribution
-      const liveTargets = (lockedTargets || []).filter(t => t && !t.dead);
+      const liveTargets = (lockedTargets || []).filter(t => isTargetAlive(t));
 
       for (let i = 0; i < loadouts.length; i++) {
         const loadout = loadouts[i];
@@ -11797,13 +11812,13 @@
 
     // CIC attack orders (called from cicDisplay.js PPM handler)
     function cicAttackOrder(entity) {
-      if (!entity || entity.dead) return;
+      if (!isValidLockedTarget(entity)) return;
       lockedTarget = entity;
       if (!lockedTargets.includes(entity)) lockedTargets.push(entity);
       pushZoneMessage('CEL ZABLOKOWANY', 1.5);
     }
     function cicGroupAttackOrder(targets) {
-      const valid = targets.filter(t => t && !t.dead);
+      const valid = targets.filter(t => isValidLockedTarget(t));
       if (valid.length === 0) return;
       lockedTargets = valid;
       lockedTarget = valid[0];
@@ -12492,8 +12507,9 @@
 
       // Wyznaczanie punktu obrotu (Pivot)
       let currentPivot = null;
-      if (lockedTarget && !lockedTarget.dead) {
-        currentPivot = { x: lockedTarget.x, y: lockedTarget.y, isEntity: true, ref: lockedTarget };
+      if (isTargetAlive(lockedTarget)) {
+        const lockPoint = scannerTargetPoint(lockedTarget);
+        currentPivot = { x: lockPoint.x, y: lockPoint.y, isEntity: true, ref: lockedTarget };
       } else if (mouseWorld) {
         currentPivot = { x: mouseWorld.x, y: mouseWorld.y, isEntity: false, ref: null };
       }
@@ -12503,7 +12519,7 @@
         const m = ag.maneuver;
 
         // Przerwij manewr, jeśli zakotwiczyliśmy go na statku, a ten wybuchł
-        if (m.isEntity && m.target && m.target.dead) {
+        if (m.isEntity && m.target && !isTargetAlive(m.target)) {
           ag.maneuver = null;
           return;
         }
@@ -12601,15 +12617,25 @@
     let p2WeaponCtrl = null;
     const radarPings = [];
     const scanWaves = [];
+    const scannerRevealFx = [];
     const scannerContacts = [];
     const SCANNER_ACTIVE_RANGE = 25000;
-    const SCANNER_REFRESH_INTERVAL = 0.55;
+    const SCANNER_ASTEROID_RANGE = SCAN_RANGE;
+    const SCANNER_SWEEP_DURATION = SCAN_RANGE / SCAN_VFX_SPEED;
+    const SCANNER_REFRESH_INTERVAL = SCANNER_SWEEP_DURATION + 0.35;
+    const SCANNER_ASTEROID_CONTACT_LIMIT = 48;
+    const SCANNER_CONTACT_REVEAL_DELAY = 0.22;
+    const SCANNER_ACQUIRE_LEAD_TIME = 0.42;
+    const SCANNER_REVEAL_FX_LIFE = 1.15;
     const SCANNER_LOCK_PULSE_SPEED = 5.5;
     const scannerState = {
       active: false,
       pulseTimer: 0,
-      lockAnim: 0
+      lockAnim: 0,
+      sweepTargets: new Set(),
+      autoInspectFirst: false
     };
+    let scannerSelectedTarget = null;
     const RADAR_UI_MAX_TARGETS = 8;
     const RADAR_UI_DEEP_SCAN_DURATION = 2.0;
 
@@ -12617,85 +12643,191 @@
       return !!(n && !n.dead && !n.friendly);
     }
     window.isHostileNpc = isHostileNpc;
+    window.isTargetAlive = isTargetAlive;
+    window.isLockableTarget = isLockableTarget;
+    window.getTargetX = getTargetX;
+    window.getTargetY = getTargetY;
+    window.getTargetRadius = getTargetRadius;
 
     function isCommandEntityAlive(entity) {
-      return !!(entity && !entity.dead && !entity.destroyed && !entity.removed);
+      return isTargetAlive(entity);
     }
 
     function isValidLockedTarget(target) {
-      return isCommandEntityAlive(target) && isHostileNpc(target);
+      return isLockableTarget(target);
     }
 
     function isFriendlyScanTarget(n) {
       return !!(n && !n.dead && n.friendly);
     }
     function getScanObjectRadius(obj) {
-      return Math.max(18, Number(obj?.radius || obj?.r || 0) || 18);
+      return Math.max(18, getTargetRadius(obj));
     }
-    function pushScannerContact(target, type, tone, distance) {
-      if (!target || target.dead) return;
-      scannerContacts.push({
+    function pushScannerContact(target, type, tone, distance, out = scannerContacts) {
+      if (!isTargetAlive(target)) return;
+      if (type === 'station' || type === 'platform') target.__scannerContactType = type;
+      out.push(buildScannerContact({
         target,
         type,
         tone,
-        distance: Number.isFinite(distance) ? distance : 0
-      });
+        distance: Number.isFinite(distance) ? distance : 0,
+        label: isAsteroidTarget(target) ? '' : getRadarTargetUnitId(target),
+        classLabel: isAsteroidTarget(target) ? '' : getRadarTargetUnitClass(target)
+      }));
     }
-    function refreshScannerContacts() {
-      scannerContacts.length = 0;
+    function collectScannerContacts() {
+      const contacts = [];
       const range = SCANNER_ACTIVE_RANGE;
-      const inRange = (obj) => Math.hypot((obj.x || 0) - ship.pos.x, (obj.y || 0) - ship.pos.y) <= range;
+      const rangeSq = range * range;
+      const inRange = (obj) => {
+        const dx = getTargetX(obj) - ship.pos.x;
+        const dy = getTargetY(obj) - ship.pos.y;
+        return dx * dx + dy * dy <= rangeSq;
+      };
 
       for (const npc of npcs) {
         if (!npc || npc.dead || !inRange(npc)) continue;
-        const dist = Math.hypot(npc.x - ship.pos.x, npc.y - ship.pos.y);
+        const dist = Math.hypot(getTargetX(npc) - ship.pos.x, getTargetY(npc) - ship.pos.y);
         if (isHostileNpc(npc)) {
-          pushScannerContact(npc, 'ship', 'hostile', dist);
+          pushScannerContact(npc, 'ship', 'hostile', dist, contacts);
         } else if (isFriendlyScanTarget(npc)) {
-          pushScannerContact(npc, 'ship', 'friendly', dist);
+          pushScannerContact(npc, 'ship', 'friendly', dist, contacts);
         } else {
-          pushScannerContact(npc, 'ship', 'neutral', dist);
+          pushScannerContact(npc, 'ship', 'neutral', dist, contacts);
         }
       }
 
       for (const st of stations) {
         if (!st || !inRange(st)) continue;
-        const dist = Math.hypot(st.x - ship.pos.x, st.y - ship.pos.y);
-        pushScannerContact(st, 'station', 'neutral', dist);
+        const dist = Math.hypot(getTargetX(st) - ship.pos.x, getTargetY(st) - ship.pos.y);
+        pushScannerContact(st, 'station', 'station', dist, contacts);
       }
 
       if (mercMission && mercMission.weaponPlatforms) {
         for (const platform of mercMission.weaponPlatforms) {
           if (!platform || platform.destroyed || platform.removed || !inRange(platform)) continue;
-          const dist = Math.hypot(platform.x - ship.pos.x, platform.y - ship.pos.y);
-          pushScannerContact(platform, 'platform', 'hostile', dist);
+          const dist = Math.hypot(getTargetX(platform) - ship.pos.x, getTargetY(platform) - ship.pos.y);
+          pushScannerContact(platform, 'platform', 'hostile', dist, contacts);
         }
       }
+
+      if (window.asteroidField?.queryRadius) {
+        const asteroids = window.asteroidField.queryRadius(ship.pos.x, ship.pos.y, SCANNER_ASTEROID_RANGE) || [];
+        const nearestAsteroids = selectNearestAsteroidTargets(asteroids, {
+          centerX: ship.pos.x,
+          centerY: ship.pos.y,
+          limit: SCANNER_ASTEROID_CONTACT_LIMIT
+        });
+        for (const entry of nearestAsteroids) {
+          pushScannerContact(entry.asteroid, 'asteroid', 'resource', entry.distance, contacts);
+        }
+      }
+
+      return sortScannerSweepContacts(contacts);
+    }
+    function refreshScannerContacts() {
+      const sorted = collectScannerContacts();
+      scannerContacts.length = 0;
+      scannerContacts.push(...sorted);
     }
 
     const NPC_DESPAWN_RADIUS = 20000;
     function spawnRadarPing(x, y) { radarPings.push({ x, y, age: 0, life: 1 }); }
-    function triggerScanWave() {
-      const wave = { x: ship.pos.x, y: ship.pos.y, r: 0, speed: SCAN_VFX_SPEED, max: SCAN_RANGE, hit: new Set() };
-      scanWaves.push(wave);
-      refreshScannerContacts();
-      for (const st of stations) {
-        const dist = Math.hypot(st.x - ship.pos.x, st.y - ship.pos.y);
-        spawnRadarPing(st.x, st.y);
-        if (dist <= SCAN_RANGE) {
-          wave.hit.add(st);
+    function scannerContactRevealTime(contact, wave) {
+      const distance = Math.max(0, Number(contact?.distance) || 0);
+      const speed = Math.max(1, Number(wave?.speed) || SCAN_VFX_SPEED);
+      return Math.max(SCANNER_CONTACT_REVEAL_DELAY, distance / speed);
+    }
+    function scannerToneRgb(tone) {
+      const t = String(tone || '').toLowerCase();
+      if (t === 'hostile') return '110,255,190';
+      if (t === 'resource') return '238,183,99';
+      if (t === 'friendly') return '80,190,255';
+      if (t === 'station') return '249,115,22';
+      return '150,255,220';
+    }
+    function scannerRevealSummary(contact) {
+      const target = contact?.target;
+      const label = String(contact?.label || target?.__radarUnitId || target?.id || 'CONTACT');
+      if (isAsteroidTarget(target)) {
+        const mass = Number(target?.mass);
+        const massLabel = Number.isFinite(mass) ? Math.round(mass).toLocaleString('en-US') : '0';
+        return `${label} / MASS ${massLabel}`;
+      }
+      return label;
+    }
+    function setScannerInspectedTarget(target) {
+      if (!isTargetAlive(target)) return false;
+      scannerSelectedTarget = target;
+      scan.target = target;
+      scan.scanned = target;
+      scan.targetType = isAsteroidTarget(target) ? 'asteroid' : (target?.type || target?.__scannerContactType || 'ship');
+      scannerOverviewUI?.selectTarget?.(target);
+      return true;
+    }
+    function revealScannerContact(contact, wave) {
+      const target = contact?.target;
+      if (!isTargetAlive(target)) return false;
+      if (!scannerContacts.some(c => c.target === target)) {
+        scannerContacts.push(contact);
+        const sorted = sortScannerSweepContacts(scannerContacts);
+        scannerContacts.length = 0;
+        scannerContacts.push(...sorted);
+      }
+      wave?.hit?.add?.(target);
+      spawnRadarPing(getTargetX(target), getTargetY(target));
+      scannerRevealFx.push({ contact, target, age: 0, life: SCANNER_REVEAL_FX_LIFE });
+      if (scannerState.autoInspectFirst && !scannerSelectedTarget) {
+        setScannerInspectedTarget(target);
+        scannerState.autoInspectFirst = false;
+      }
+      return true;
+    }
+    function triggerScanWave(opts = {}) {
+      const reset = opts.reset === true;
+      const contacts = collectScannerContacts();
+      scannerState.sweepTargets = new Set(contacts.map(c => c.target).filter(Boolean));
+      if (reset) {
+        scannerContacts.length = 0;
+        scannerSelectedTarget = null;
+        scan.target = null;
+        scan.scanned = null;
+        scan.targetType = null;
+        scannerState.autoInspectFirst = true;
+      } else {
+        for (let i = scannerContacts.length - 1; i >= 0; i--) {
+          if (!scannerState.sweepTargets.has(scannerContacts[i]?.target)) scannerContacts.splice(i, 1);
         }
       }
+      const wave = {
+        x: ship.pos.x,
+        y: ship.pos.y,
+        r: 0,
+        age: 0,
+        speed: SCAN_VFX_SPEED,
+        max: SCAN_RANGE,
+        hit: new Set(),
+        contacts,
+        nextContact: 0
+      };
+      scanWaves.push(wave);
     }
     function setScannerActive(nextActive) {
       scannerState.active = !!nextActive;
       scannerState.pulseTimer = 0;
       scannerState.lockAnim = 0;
       if (scannerState.active) {
-        triggerScanWave();
+        triggerScanWave({ reset: true });
+        scannerState.pulseTimer = SCANNER_REFRESH_INTERVAL;
         pushZoneMessage('Active Scanner: ONLINE', 1.3);
       } else {
         scannerContacts.length = 0;
+        scanWaves.length = 0;
+        radarPings.length = 0;
+        scannerRevealFx.length = 0;
+        scannerSelectedTarget = null;
+        scannerState.sweepTargets = new Set();
+        scannerState.autoInspectFirst = false;
         pushZoneMessage('Active Scanner: OFFLINE', 1.1);
       }
     }
@@ -12732,21 +12864,30 @@
     }
 
     function lockNearestVisibleContacts(maxTargets = RADAR_UI_MAX_TARGETS) {
-      const hostileContacts = scannerContacts
-        .filter(c => c && c.tone === 'hostile' && c.target && !c.target.dead && c.type !== 'station')
-        .sort((a, b) => (a.distance || 0) - (b.distance || 0))
+      const selected = scannerSelectedTarget;
+      if (isValidLockedTarget(selected)) {
+        toggleLockedTargetUi(selected);
+        return;
+      }
+      const lockableContacts = sortScannerContacts(scannerContacts
+        .filter(c => c && c.target && isValidLockedTarget(c.target)))
         .slice(0, maxTargets)
         .map(c => c.target);
-      if (hostileContacts.length) {
-        setLockedTargetsExact(hostileContacts);
-        pushZoneMessage(`CELE ZABLOKOWANE: ${hostileContacts.length}`, 1.4);
+      if (lockableContacts.length) {
+        setLockedTargetsExact(lockableContacts);
+        pushZoneMessage(`CELE ZABLOKOWANE: ${lockableContacts.length}`, 1.4);
         return;
       }
       clearLockedTargetsUi();
     }
 
     function getRadarTargetUnitClass(target) {
-      const type = String(target?.type || '').toLowerCase();
+      if (isAsteroidTarget(target)) {
+        const size = String(target?.size || '').toUpperCase();
+        const type = String(target?.type || target?.resource || '').toUpperCase();
+        return `ASTEROIDA${type ? ` ${type}` : ''}${size ? ` ${size}` : ''}`.trim();
+      }
+      const type = String(target?.type || target?.__scannerContactType || '').toLowerCase();
       if (type.includes('platform')) return 'PLATFORMA';
       if (type.includes('station')) return 'STACJA';
       if (type.includes('battleship') || type.includes('carrier') || type.includes('supercapital')) return 'KRAZOWNIK';
@@ -12759,8 +12900,8 @@
 
     function getRadarTargetUnitId(target) {
       if (target?.__radarUnitId) return target.__radarUnitId;
-      const prefix = target?.isPirate ? 'PIR' : 'TGT';
-      const raw = Number(target?.id) || Math.floor(Math.abs((target?.x || 0) * 0.13 + (target?.y || 0) * 0.07 + Math.random() * 9000));
+      const prefix = isAsteroidTarget(target) ? 'AST' : (target?.isPirate ? 'PIR' : 'TGT');
+      const raw = Number(target?.id) || Math.floor(Math.abs(getTargetX(target) * 0.13 + getTargetY(target) * 0.07 + Math.random() * 9000));
       target.__radarUnitId = `${prefix}-${String(raw % 10000).padStart(4, '0')}`;
       return target.__radarUnitId;
     }
@@ -12769,7 +12910,7 @@
       const hpScale = getEntityHardpointScale(target);
       const srcW = Number(target?.hexGrid?.srcWidth);
       const srcH = Number(target?.hexGrid?.srcHeight);
-      const radius = Math.max(20, Number(target?.radius) || 20);
+      const radius = Math.max(20, getTargetRadius(target));
       return {
         unitId: getRadarTargetUnitId(target),
         unitClass: getRadarTargetUnitClass(target),
@@ -12798,6 +12939,7 @@
     }
 
     function buildRadarCargoSummary(target) {
+      if (isAsteroidTarget(target)) return buildAsteroidScanDetails(target).rows;
       const rows = [];
       if (Number.isFinite(Number(target?.mass))) rows.push({ name: 'Mass', amount: `${Math.round(Number(target.mass))}` });
       if (target?.shield && Number.isFinite(Number(target.shield?.max))) rows.push({ name: 'Shield', amount: `${Math.round(Number(target.shield.max))}` });
@@ -12845,35 +12987,81 @@
     }
 
     function handleRadarAction(action, target) {
-      if (!target || target.dead) return;
+      if (!isTargetAlive(target)) return;
       clearPlayerAttackState(target);
       const label = getRadarTargetUnitId(target);
+      const point = scannerTargetPoint(target);
+      const radius = getTargetRadius(target);
       if (action === 'approach') {
         ship.command = {
           type: 'approach',
-          target: { x: target.x, y: target.y },
+          target: point,
           targetEntity: target,
-          arrival: Math.max(90, (Number(target.radius) || 40) + 80)
+          arrival: Math.max(90, radius + 80)
         };
         pushZoneMessage(`ROZKAZ: ZBLIZANIE DO ${label}`, 1.5);
       } else if (action === 'orbit') {
         ship.command = {
           type: 'orbit',
-          target: { x: target.x, y: target.y },
+          target: point,
           targetEntity: target,
-          orbitRadius: Math.max(RTS_DEFAULT_ORBIT_RADIUS, (Number(target.radius || target.r) || 60) + 180),
+          orbitRadius: Math.max(RTS_DEFAULT_ORBIT_RADIUS, radius + 180),
           orbitDir: 1,
-          arrival: Math.max(90, (Number(target.radius || target.r) || 60) + 120)
+          arrival: Math.max(90, radius + 120)
         };
         pushZoneMessage(`ROZKAZ: ORBITA WOKOL ${label}`, 1.5);
-      } else if (action === 'warp') {
-        setCruiseTarget(target.x, target.y);
+      } else if (action === 'warp' || action === 'jump') {
+        setCruiseTarget(point.x, point.y);
         pushZoneMessage(`ROZKAZ: JUMP DO ${label}`, 1.6);
+      }
+    }
+
+    function getScannerOverviewDetails(target) {
+      if (!target) return { title: 'CONTACT', rows: [] };
+      if (isAsteroidTarget(target)) return buildAsteroidScanDetails(target);
+      const meta = getRadarTargetMeta(target);
+      const rows = [
+        { name: 'ID', amount: meta.unitId },
+        { name: 'Class', amount: meta.unitClass },
+        { name: 'Distance', amount: `${Math.round(Math.hypot(getTargetX(target) - ship.pos.x, getTargetY(target) - ship.pos.y))}` },
+        { name: 'Radius', amount: `${Math.round(getTargetRadius(target))}` }
+      ];
+      for (const row of buildRadarCargoSummary(target)) rows.push(row);
+      return {
+        title: `${meta.unitId} / ${meta.unitClass}`,
+        rows
+      };
+    }
+
+    function selectScannerTarget(target) {
+      if (!isTargetAlive(target)) return false;
+      scannerState.autoInspectFirst = false;
+      return setScannerInspectedTarget(target);
+    }
+
+    function handleScannerOverviewAction(action, target) {
+      if (!isTargetAlive(target)) return;
+      selectScannerTarget(target);
+      if (action === 'lock') {
+        toggleLockedTargetUi(target);
+      } else if (action === 'scan') {
+        issueDirectScanOrder(target);
+      } else if (action === 'approach' || action === 'orbit' || action === 'jump') {
+        handleRadarAction(action, target);
       }
     }
 
     const radarTargetingUI = initRadarTargetingUI({
       clearLocks: clearLockedTargetsUi
+    });
+    const scannerOverviewUI = initScannerOverviewUI({
+      onSelectTarget: (target) => selectScannerTarget(target),
+      onToggleLock: (target) => toggleLockedTargetUi(target),
+      onAction: handleScannerOverviewAction,
+      getDetails: getScannerOverviewDetails,
+      getTargetLabel: getRadarTargetUnitId,
+      getTargetClass: getRadarTargetUnitClass,
+      isLocked: (target) => lockedTargets.includes(target) || target === lockedTarget
     });
 
     const mouse = { x: W / 2, y: H / 2, left: false, right: false, click: false, overCanvas: false, dx: 0, dy: 0 };
@@ -13132,11 +13320,32 @@
           const dx = platform.x - worldPoint.x;
           const dy = platform.y - worldPoint.y;
           const distSq = dx * dx + dy * dy;
-          const hitR = (platform.radius || 28) + 20;
-          if (distSq <= hitR * hitR && distSq < bestDistSq) {
-            bestDistSq = distSq;
-            best = platform;
-          }
+        const hitR = (platform.radius || 28) + 20;
+        if (distSq <= hitR * hitR && distSq < bestDistSq) {
+          bestDistSq = distSq;
+          platform.__scannerContactType = 'platform';
+          best = platform;
+        }
+        }
+      }
+      return best;
+    }
+
+    function pickAsteroidTargetAtWorld(worldPoint) {
+      if (!worldPoint || !window.asteroidField?.queryRadius) return null;
+      const pickRadius = 900;
+      const asteroids = window.asteroidField.queryRadius(worldPoint.x, worldPoint.y, pickRadius) || [];
+      let best = null;
+      let bestDistSq = Infinity;
+      for (const asteroid of asteroids) {
+        if (!isTargetAlive(asteroid)) continue;
+        const dx = getTargetX(asteroid) - worldPoint.x;
+        const dy = getTargetY(asteroid) - worldPoint.y;
+        const distSq = dx * dx + dy * dy;
+        const hitR = getTargetRadius(asteroid) + 32;
+        if (distSq <= hitR * hitR && distSq < bestDistSq) {
+          bestDistSq = distSq;
+          best = asteroid;
         }
       }
       return best;
@@ -13145,6 +13354,8 @@
     function pickCommandTargetAtWorld(worldPoint) {
       const enemy = pickEnemyTargetAtWorld(worldPoint);
       if (enemy) return enemy;
+      const asteroid = pickAsteroidTargetAtWorld(worldPoint);
+      if (asteroid) return asteroid;
       let best = null;
       let bestDistSq = Infinity;
       for (const st of stations) {
@@ -13155,6 +13366,7 @@
         const hitR = (st.r || st.radius || 80) + 30;
         if (distSq <= hitR * hitR && distSq < bestDistSq) {
           bestDistSq = distSq;
+          st.__scannerContactType = 'station';
           best = st;
         }
       }
@@ -13186,12 +13398,12 @@
       const units = [...Selection.units].filter(u => u && !u.dead);
       if (!units.length) return;
       const anchor = targetEntity
-        ? { x: Number(targetEntity.x) || 0, y: Number(targetEntity.y) || 0 }
+        ? commandEntityPoint(targetEntity, point)
         : point;
       const targets = formationTargets(units, anchor);
       for (const unit of units) {
         const t = targets.get(unit) || anchor;
-        const arrival = (unit.radius || unit.w || 30) + (targetEntity ? (targetEntity.radius || targetEntity.r || 40) : 110);
+        const arrival = (unit.radius || unit.w || 30) + (targetEntity ? commandEntityRadius(targetEntity) : 110);
         issueUnitCommand(unit, {
           type: 'approach',
           target: { x: t.x, y: t.y },
@@ -13240,7 +13452,7 @@
     }
 
     function issueDirectScanOrder(targetEntity) {
-      if (!targetEntity || targetEntity.dead) {
+      if (!isTargetAlive(targetEntity)) {
         pushZoneMessage('RTS: BRAK CELU DO SKANU', 1.2);
         return;
       }
@@ -13249,7 +13461,8 @@
         hudPingNpcStations();
         togglePlanetRadarVisibility(scannerState.active);
       }
-      if (isHostileNpc(targetEntity)) {
+      selectScannerTarget(targetEntity);
+      if (isValidLockedTarget(targetEntity)) {
         setLockedTargetsExact([targetEntity]);
       }
       pushZoneMessage('RTS: DIRECT SCAN', 1.2);
@@ -13257,15 +13470,14 @@
 
     function commandEntityPoint(entity, fallback = null) {
       if (!entity) return fallback ? { x: fallback.x, y: fallback.y } : null;
-      const source = entity.pos || entity;
-      const x = Number(source.x);
-      const y = Number(source.y);
+      const x = getTargetX(entity);
+      const y = getTargetY(entity);
       if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
       return fallback ? { x: fallback.x, y: fallback.y } : null;
     }
 
     function commandEntityRadius(entity) {
-      return Math.max(24, Number(entity?.radius || entity?.r || entity?.baseR || entity?.w || 24) || 24);
+      return Math.max(24, getTargetRadius(entity));
     }
 
     function resetWorldCommandPlacement() {
@@ -13372,7 +13584,7 @@
     function openNormalWorldCommandMenuAt(sx, sy) {
       const rect = canvas.getBoundingClientRect();
       const worldPoint = screenToWorld(sx - rect.left, sy - rect.top);
-      const targetEntity = pickEnemyTargetAtWorld(worldPoint);
+      const targetEntity = pickCommandTargetAtWorld(worldPoint);
       openWorldCommandMenuAt(
         'normal',
         sx,
@@ -13507,7 +13719,7 @@
     }
 
     function issueWorldScan(targetEntity, point) {
-      const target = targetEntity || pickEnemyTargetAtWorld(point);
+      const target = targetEntity || pickCommandTargetAtWorld(point);
       if (target) {
         issueDirectScanOrder(target);
         return;
@@ -13518,6 +13730,7 @@
         togglePlanetRadarVisibility(scannerState.active);
       } else {
         triggerScanWave();
+        scannerState.pulseTimer = SCANNER_REFRESH_INTERVAL;
       }
       pushZoneMessage('SCAN: ACTIVE PING', 1.2);
     }
@@ -14206,7 +14419,7 @@
         return true;
       }
       if (order === 'direct-scan') {
-        issueDirectScanOrder(targetEntity || pickEnemyTargetAtWorld(worldPoint));
+        issueDirectScanOrder(targetEntity || pickCommandTargetAtWorld(worldPoint));
         return true;
       }
       return false;
@@ -14227,7 +14440,8 @@
       const pt = screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
       if (handleRtsAdvancedOrderAtWorld(pt)) return true;
       const clickedEnemy = pickEnemyTargetAtWorld(pt);
-      issueMoveOrder(clickedEnemy ? { x: clickedEnemy.x, y: clickedEnemy.y } : pt, {
+      const clickedPoint = clickedEnemy ? scannerTargetPoint(clickedEnemy) : pt;
+      issueMoveOrder(clickedPoint, {
         attackMove: !!clickedEnemy,
         targetEntity: clickedEnemy || null
       });
@@ -14433,6 +14647,30 @@
         mapView.viewX = clamped.x;
         mapView.viewY = clamped.y;
         return;
+      }
+      if (e.button === 0 && e.ctrlKey && gameStarted && !stationUI.open && !showMap && !CICDisplay.active) {
+        const rect = canvas.getBoundingClientRect();
+        const worldPoint = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+        const targetEntity = pickCommandTargetAtWorld(worldPoint);
+        if (targetEntity && selectScannerTarget(targetEntity)) {
+          toggleLockedTargetUi(targetEntity);
+        }
+        e.preventDefault();
+        mouse.left = false;
+        mouse.click = false;
+        return;
+      }
+      if (e.button === 0 && scannerState.active && gameStarted && !stationUI.open && !showMap && !CICDisplay.active) {
+        const rect = canvas.getBoundingClientRect();
+        const worldPoint = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+        const targetEntity = pickCommandTargetAtWorld(worldPoint);
+        if (targetEntity && selectScannerTarget(targetEntity)) {
+          e.preventDefault();
+          mouse.left = false;
+          mouse.click = false;
+          pushZoneMessage(`SCAN: ${getRadarTargetUnitId(targetEntity)}`, 0.9);
+          return;
+        }
       }
       if (e.button === 0) {
         if (stationUI.open) {
@@ -14874,7 +15112,7 @@
       const idx = side === 'left' ? nextRocketIndexLeft : nextRocketIndexRight;
       const gunOff = guns[idx % guns.length];
       // Round-robin across live locked targets; fallback to null (free-flight)
-      const liveTargets = (lockedTargets || []).filter(t => t && !t.dead);
+      const liveTargets = (lockedTargets || []).filter(t => isTargetAlive(t));
       const target = liveTargets.length > 0 ? liveTargets[rocketTargetIndex % liveTargets.length] : null;
       if (liveTargets.length > 0) rocketTargetIndex = (rocketTargetIndex + 1) % liveTargets.length;
       if (!consumeMissileAmmo(loadout)) return;
@@ -15272,9 +15510,9 @@
           const valid = [];
           for (let j = 0; j < lockedTargets.length; j++) {
             const lt = lockedTargets[j];
-            if (!lt || lt.dead) continue;
-            const dx = (lt.pos ? lt.pos.x : lt.x) - ship.pos.x;
-            const dy = (lt.pos ? lt.pos.y : lt.y) - ship.pos.y;
+            if (!isTargetAlive(lt)) continue;
+            const dx = getTargetX(lt) - ship.pos.x;
+            const dy = getTargetY(lt) - ship.pos.y;
             if (dx * dx + dy * dy <= actualRng * actualRng) valid.push(lt);
           }
           if (valid.length > 0) {
@@ -16551,12 +16789,11 @@
 
           if ((b.type === 'rocket' || b.type === 'torpedo') && b.homingDelay <= 0) {
             let target = b.target;
-            if ((!target || target.dead) && b.lockOwner === 'player2' && lockedTarget2 && !lockedTarget2.dead) target = lockedTarget2;
-            if ((!target || target.dead) && b.lockOwner === 'player' && lockedTarget && !lockedTarget.dead) target = lockedTarget;
-            if (target) {
-              // Fallback to .pos.x/.pos.y for entities like player ship that store coords there (NPCs use .x/.y directly)
-              const tx = (target.x !== undefined) ? target.x : (target.pos?.x ?? 0);
-              const ty = (target.y !== undefined) ? target.y : (target.pos?.y ?? 0);
+            if (!isTargetAlive(target) && b.lockOwner === 'player2' && isTargetAlive(lockedTarget2)) target = lockedTarget2;
+            if (!isTargetAlive(target) && b.lockOwner === 'player' && isTargetAlive(lockedTarget)) target = lockedTarget;
+            if (isTargetAlive(target)) {
+              const tx = getTargetX(target);
+              const ty = getTargetY(target);
               const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
               const dx = tx - b.x;
               const dy = ty - b.y;
@@ -17709,7 +17946,7 @@
       lockedTargets = lockedTargets.filter(t => {
         if (!isValidLockedTarget(t)) return false;
         if (scannerState.active) {
-          return scannerContacts.some(c => c.target === t);
+          return t === scannerSelectedTarget || scannerState.sweepTargets.has(t) || scannerContacts.some(c => c.target === t);
         }
         return true;
       });
@@ -17719,26 +17956,35 @@
         if (rocketAutoFire) rocketAutoFire = false;
         if (specialMissileAutoFire) specialMissileAutoFire = false;
       }
+      if (scannerSelectedTarget && !isTargetAlive(scannerSelectedTarget)) {
+        scannerSelectedTarget = null;
+      }
       scannerState.lockAnim += dt * SCANNER_LOCK_PULSE_SPEED;
       if (scannerState.active) {
         scannerState.pulseTimer -= dt;
         if (scannerState.pulseTimer <= 0) {
           scannerState.pulseTimer = SCANNER_REFRESH_INTERVAL;
           triggerScanWave();
-        } else {
-          refreshScannerContacts();
         }
       }
-      const radarUiEnabled = (scannerState.active || lockedTargets.length > 0) && !CICDisplay.active && !stationUI.open && !showMap && !splitScreenMode;
+      const scannerUiEnabled = (scannerState.active || lockedTargets.length > 0 || scannerSelectedTarget) && !CICDisplay.active && !stationUI.open && !showMap && !splitScreenMode;
+      const radarUiEnabled = false;
       // Locked targets always shown; scanner contacts shown when scanner active (excluding already-locked)
-      const _radarTargets = lockedTargets.filter(t => t && !t.dead);
+      const _radarTargets = lockedTargets.filter(t => isTargetAlive(t));
       if (scannerState.active) {
         for (const _c of scannerContacts) {
-          if (_c && _c.tone === 'hostile' && _c.target && !_c.target.dead && _c.type !== 'station' && !lockedTargets.includes(_c.target)) {
+          if (_c && _c.target && isTargetAlive(_c.target) && !lockedTargets.includes(_c.target)) {
             _radarTargets.push(_c.target);
           }
         }
       }
+      scannerOverviewUI.update({
+        enabled: scannerUiEnabled,
+        contacts: scannerContacts,
+        selectedTarget: scannerSelectedTarget,
+        lockedTargets,
+        maxRows: 96
+      });
       radarTargetingUI.update({
         enabled: radarUiEnabled,
         dt,
@@ -17750,7 +17996,7 @@
         lockAnim: scannerState.lockAnim,
         ship,
         targets: _radarTargets,
-        distanceTo: (target) => Math.hypot((target?.x || 0) - ship.pos.x, (target?.y || 0) - ship.pos.y),
+        distanceTo: (target) => Math.hypot(getTargetX(target) - ship.pos.x, getTargetY(target) - ship.pos.y),
         getMeta: getRadarTargetMeta,
         getScanData: getRadarTargetScanData,
         isLocked: (target) => lockedTargets.includes(target) || target === lockedTarget,
@@ -17765,27 +18011,43 @@
         const p = radarPings[i];
         p.age += dt; if (p.age > p.life) radarPings.splice(i, 1);
       }
+      for (let i = scannerRevealFx.length - 1; i >= 0; i--) {
+        const fx = scannerRevealFx[i];
+        fx.age += dt;
+        if (fx.age > fx.life || !isTargetAlive(fx.target)) scannerRevealFx.splice(i, 1);
+      }
       // update scan waves
       for (let i = scanWaves.length - 1; i >= 0; i--) {
         const w = scanWaves[i];
+        w.age += dt;
         w.r += w.speed * dt;
+        while (w.nextContact < w.contacts.length) {
+          const contact = w.contacts[w.nextContact];
+          if (!contact || !isTargetAlive(contact.target)) {
+            w.nextContact++;
+            continue;
+          }
+          if (w.age < scannerContactRevealTime(contact, w)) break;
+          revealScannerContact(contact, w);
+          w.nextContact++;
+        }
         for (const npc of npcs) {
           if (npc.dead) continue;
           // Myśliwce całkowicie pomijamy — brak hypot, brak alokacji w hit-set
           const _t = String(npc.type || '').toLowerCase();
           if (!npc.isCapitalShip && (_t === 'fighter' || _t === 'interceptor' || _t === 'drone')) continue;
-          if (!w.hit.has(npc) && Math.hypot(npc.x - w.x, npc.y - w.y) <= w.r) {
+          if (!scannerState.sweepTargets.has(npc) && !w.hit.has(npc) && Math.hypot(npc.x - w.x, npc.y - w.y) <= w.r) {
             w.hit.add(npc);
             spawnRadarPing(npc.x, npc.y);
           }
         }
         for (const st of stations) {
-          if (!w.hit.has(st) && Math.hypot(st.x - w.x, st.y - w.y) <= w.r) { w.hit.add(st); spawnRadarPing(st.x, st.y); }
+          if (!scannerState.sweepTargets.has(st) && !w.hit.has(st) && Math.hypot(st.x - w.x, st.y - w.y) <= w.r) { w.hit.add(st); spawnRadarPing(st.x, st.y); }
         }
         if (mercMission && mercMission.weaponPlatforms) {
           for (const platform of mercMission.weaponPlatforms) {
             if (!platform || platform.destroyed || platform.removed) continue;
-            if (!w.hit.has(platform) && Math.hypot(platform.x - w.x, platform.y - w.y) <= w.r) {
+            if (!scannerState.sweepTargets.has(platform) && !w.hit.has(platform) && Math.hypot(platform.x - w.x, platform.y - w.y) <= w.r) {
               w.hit.add(platform);
               spawnRadarPing(platform.x, platform.y);
             }
@@ -17808,7 +18070,7 @@
         for (const t of [ship.turret, ship.turret2, ship.turret3, ship.turret4]) {
           const off = rotate(t.offset, ship.angle);
           const base = { x: ship.pos.x + off.x, y: ship.pos.y + off.y };
-          const aimPos = (lockedTarget && !lockedTarget.dead)
+          const aimPos = isTargetAlive(lockedTarget)
             ? leadTarget(base, ship.vel, lockedTarget, RAIL_SPEED)
             : mouseWorld;
           let diffT = wrapAngle(Math.atan2(aimPos.y - base.y, aimPos.x - base.x) - t.angle);
@@ -19661,17 +19923,122 @@
           drawStabilizerHeadingMarker(ship, cam, interpPos, interpAngle);
         }
 
+        if (scannerState.active && scanWaves.length) {
+          for (const w of scanWaves) {
+            const center = worldToScreen(w.x, w.y, cam);
+            const radius = Math.max(1, w.r * cam.zoom);
+            const fade = clamp(1 - (w.r / Math.max(1, w.max)), 0, 1);
+            ctx.save();
+            ctx.globalAlpha = 0.18 + 0.42 * fade;
+            ctx.strokeStyle = 'rgba(110,217,255,0.9)';
+            ctx.lineWidth = Math.max(1.5, 2.5 * Math.sqrt(cam.zoom));
+            ctx.shadowBlur = 18 * cam.zoom;
+            ctx.shadowColor = 'rgba(110,217,255,0.45)';
+            ctx.setLineDash([18 * cam.zoom, 12 * cam.zoom]);
+            ctx.beginPath();
+            ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 0.22 + 0.35 * fade;
+            ctx.beginPath();
+            ctx.arc(center.x, center.y, Math.max(6, radius * 0.14), 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+
+            for (let j = w.nextContact; j < w.contacts.length; j++) {
+              const contact = w.contacts[j];
+              if (!contact || !isTargetAlive(contact.target)) continue;
+              const revealIn = scannerContactRevealTime(contact, w) - w.age;
+              if (revealIn > SCANNER_ACQUIRE_LEAD_TIME) break;
+              const acquire = clamp(1 - (revealIn / SCANNER_ACQUIRE_LEAD_TIME), 0, 1);
+              if (acquire <= 0) continue;
+              const obj = contact.target;
+              const s = worldToScreen(getTargetX(obj), getTargetY(obj), cam);
+              const baseRad = (getScanObjectRadius(obj) + 16) * cam.zoom;
+              const rad = baseRad * (1.25 - 0.22 * acquire);
+              const tone = scannerToneRgb(contact.tone);
+              ctx.save();
+              ctx.globalAlpha = 0.25 + 0.55 * acquire;
+              ctx.strokeStyle = `rgba(${tone},0.95)`;
+              ctx.lineWidth = Math.max(1.5, 2.5 * Math.sqrt(cam.zoom));
+              ctx.shadowBlur = 16 * cam.zoom * acquire;
+              ctx.shadowColor = `rgba(${tone},0.45)`;
+              ctx.beginPath();
+              ctx.arc(s.x, s.y, rad, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * acquire);
+              ctx.stroke();
+              const tick = Math.max(8, rad * 0.3);
+              const gap = Math.max(6, rad * 0.5);
+              ctx.globalAlpha *= 0.9;
+              ctx.beginPath();
+              ctx.moveTo(s.x - gap - tick, s.y - gap); ctx.lineTo(s.x - gap, s.y - gap);
+              ctx.moveTo(s.x - gap, s.y - gap - tick); ctx.lineTo(s.x - gap, s.y - gap);
+              ctx.moveTo(s.x + gap, s.y - gap - tick); ctx.lineTo(s.x + gap, s.y - gap);
+              ctx.lineTo(s.x + gap + tick, s.y - gap);
+              ctx.moveTo(s.x - gap - tick, s.y + gap); ctx.lineTo(s.x - gap, s.y + gap);
+              ctx.lineTo(s.x - gap, s.y + gap + tick);
+              ctx.moveTo(s.x + gap, s.y + gap + tick); ctx.lineTo(s.x + gap, s.y + gap);
+              ctx.lineTo(s.x + gap + tick, s.y + gap);
+              ctx.stroke();
+              ctx.restore();
+            }
+          }
+        }
+
+        if (radarPings.length || scannerRevealFx.length) {
+          for (const p of radarPings) {
+            const s = worldToScreen(p.x, p.y, cam);
+            const t = clamp(p.age / Math.max(0.001, p.life), 0, 1);
+            const rad = (24 + 44 * t) * cam.zoom;
+            ctx.save();
+            ctx.globalAlpha = 0.55 * (1 - t);
+            ctx.strokeStyle = 'rgba(110,217,255,0.9)';
+            ctx.lineWidth = Math.max(1, 2 * Math.sqrt(cam.zoom));
+            ctx.shadowBlur = 12 * cam.zoom;
+            ctx.shadowColor = 'rgba(110,217,255,0.45)';
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, rad, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+          }
+          for (const fx of scannerRevealFx) {
+            const obj = fx.target;
+            if (!isTargetAlive(obj)) continue;
+            const s = worldToScreen(getTargetX(obj), getTargetY(obj), cam);
+            const t = clamp(fx.age / Math.max(0.001, fx.life), 0, 1);
+            const tone = scannerToneRgb(fx.contact?.tone);
+            const baseRad = (getScanObjectRadius(obj) + 18) * cam.zoom;
+            const rad = baseRad + (22 * t * cam.zoom);
+            ctx.save();
+            ctx.globalAlpha = 0.85 * (1 - t);
+            ctx.strokeStyle = `rgba(${tone},0.95)`;
+            ctx.fillStyle = `rgba(${tone},0.95)`;
+            ctx.lineWidth = Math.max(1.5, 2.4 * Math.sqrt(cam.zoom));
+            ctx.shadowBlur = 18 * cam.zoom;
+            ctx.shadowColor = `rgba(${tone},0.45)`;
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, rad, 0, Math.PI * 2);
+            ctx.stroke();
+            if (t < 0.78) {
+              ctx.shadowBlur = 10 * cam.zoom;
+              ctx.font = `${Math.max(10, 11 * Math.sqrt(cam.zoom)).toFixed(0)}px Consolas, monospace`;
+              ctx.textBaseline = 'middle';
+              ctx.fillText(scannerRevealSummary(fx.contact), s.x + rad + 10, s.y - Math.max(12, rad * 0.25));
+            }
+            ctx.restore();
+          }
+        }
+
         if (scan.target && scan.targetType && mouse.overCanvas) {
           const obj = scan.target;
-          const s = worldToScreen(obj.x, obj.y, cam);
-          const base = (obj.radius || obj.r || 60);
+          const s = worldToScreen(getTargetX(obj), getTargetY(obj), cam);
+          const base = getTargetRadius(obj);
           const outerExtra = scan.targetType === 'station' ? 28 : 14;
           const innerExtra = scan.targetType === 'station' ? 12 : 8;
           const outerR = (base + outerExtra) * cam.zoom;
           const innerR = Math.max(2, (base + innerExtra) * cam.zoom);
           const color = scan.targetType === 'station'
             ? 'rgba(143,181,255,0.95)'
-            : (obj.friendly ? 'rgba(96,192,255,0.95)' : 'rgba(255,160,122,0.95)');
+            : (isAsteroidTarget(obj) ? 'rgba(238,183,99,0.95)' : (obj.friendly ? 'rgba(96,192,255,0.95)' : 'rgba(255,160,122,0.95)'));
 
           ctx.save();
           ctx.strokeStyle = color;
@@ -19691,7 +20058,7 @@
             canvas.style.cursor = 'pointer';
           }
         }
-        const radarUiActive = scannerState.active && !CICDisplay.active && !stationUI.open && !showMap && !splitScreenMode;
+        const radarUiActive = false;
         if (radarUiActive) {
           radarTargetingUI.draw(ctx, {
             width: W,
@@ -19700,7 +20067,7 @@
             worldToScreen,
             lockAnim: scannerState.lockAnim,
             targets: scannerContacts
-              .filter(c => c && c.tone === 'hostile' && c.target && !c.target.dead && c.type !== 'station')
+              .filter(c => c && c.target && isTargetAlive(c.target))
               .map(c => c.target),
             isLocked: (target) => lockedTargets.includes(target) || target === lockedTarget
           });
@@ -19708,12 +20075,12 @@
         if (!radarUiActive && scannerState.active && scannerContacts.length) {
           for (const contact of scannerContacts) {
             const obj = contact.target;
-            if (!obj || obj.dead) continue;
-            const s = worldToScreen(obj.x, obj.y, cam);
+            if (!isTargetAlive(obj)) continue;
+            const s = worldToScreen(getTargetX(obj), getTargetY(obj), cam);
             const baseRad = (getScanObjectRadius(obj) + (contact.type === 'station' ? 20 : 12)) * cam.zoom;
             const tone =
               contact.tone === 'hostile' ? '110,255,190' :
-                (contact.tone === 'friendly' ? '80,190,255' : '150,255,220');
+                (contact.tone === 'resource' ? '238,183,99' : (contact.tone === 'friendly' ? '80,190,255' : '150,255,220'));
             ctx.save();
             ctx.strokeStyle = `rgba(${tone},0.88)`;
             ctx.lineWidth = Math.max(1.5, 2.5 * Math.sqrt(cam.zoom));
@@ -19743,8 +20110,8 @@
         const lockRenderList = lockedTargets.length ? lockedTargets : (lockedTarget ? [lockedTarget] : []);
         if (!radarUiActive && lockRenderList.length) {
           for (const obj of lockRenderList) {
-            if (!obj || obj.dead) continue;
-            const s = worldToScreen(obj.x, obj.y, cam);
+            if (!isTargetAlive(obj)) continue;
+            const s = worldToScreen(getTargetX(obj), getTargetY(obj), cam);
             const rad = (getScanObjectRadius(obj) + 18) * cam.zoom;
             const pulse = 0.82 + 0.18 * Math.sin(scannerState.lockAnim);
             const sweep = scannerState.lockAnim % (Math.PI * 2);
