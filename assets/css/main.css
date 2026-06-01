@@ -2639,6 +2639,208 @@
       box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
     }
 
+    #panel-support.support-command-panel {
+      --support-bg: rgba(3, 9, 12, 0.9);
+      --support-bg-strong: rgba(7, 18, 22, 0.95);
+      --support-line: rgba(115, 235, 214, 0.32);
+      --support-text: #d9fbf3;
+      --support-muted: #89aaa4;
+      --support-green: #63f0b7;
+      --support-amber: #eeb763;
+      --support-cyan: #6ed9ff;
+      width: 310px;
+      background: var(--support-bg);
+      border: 1px solid var(--support-line);
+      border-radius: 0;
+      box-shadow: 0 14px 42px rgba(0, 0, 0, 0.46);
+      font-family: "Consolas", "Courier New", monospace;
+    }
+
+    #side-panels-container #panel-support.support-command-panel.collapsed {
+      width: 44px;
+    }
+
+    #panel-support.support-command-panel .support-command-header {
+      min-height: 34px;
+      height: auto;
+      padding: 7px 10px;
+      background: var(--support-bg-strong);
+      border-bottom: 1px solid rgba(115, 235, 214, 0.2);
+    }
+
+    #panel-support.support-command-panel .support-title-block {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    #panel-support.support-command-panel .panel-title {
+      color: #eafff9;
+      font-size: 12px;
+      letter-spacing: 0;
+      text-shadow: none;
+    }
+
+    #panel-support.support-command-panel .support-panel-kicker {
+      color: var(--support-muted);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+
+    #panel-support.support-command-panel.collapsed .support-panel-kicker {
+      display: none;
+    }
+
+    #panel-support.support-command-panel.collapsed .support-title-block {
+      align-items: center;
+    }
+
+    #panel-support.support-command-panel .support-command-body {
+      padding: 7px;
+      gap: 6px;
+      scrollbar-width: thin;
+    }
+
+    #panel-support.support-command-panel .support-card {
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr) 38px;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+      padding: 6px 8px;
+      background: rgba(0, 0, 0, 0.18);
+      border: 1px solid rgba(115, 235, 214, 0.16);
+      border-radius: 4px;
+      color: var(--support-text);
+      transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+    }
+
+    #panel-support.support-command-panel .support-card:hover {
+      background: rgba(115, 235, 214, 0.08);
+      border-color: rgba(115, 235, 214, 0.42);
+      box-shadow: inset 3px 0 0 rgba(115, 235, 214, 0.52);
+    }
+
+    #panel-support.support-command-panel .support-card:active {
+      background: rgba(238, 183, 99, 0.12);
+      border-color: rgba(238, 183, 99, 0.5);
+      cursor: grabbing;
+    }
+
+    #panel-support.support-command-panel .ship-icon-wrap {
+      width: 32px;
+      height: 30px;
+      margin-right: 0;
+      border-radius: 3px;
+      border: 1px solid rgba(115, 235, 214, 0.22);
+      background: rgba(0, 0, 0, 0.24);
+      box-shadow: inset 0 0 14px rgba(110, 217, 255, 0.07);
+    }
+
+    #panel-support.support-command-panel .support-details {
+      min-width: 0;
+      gap: 2px;
+    }
+
+    #panel-support.support-command-panel .ship-name {
+      overflow: hidden;
+      color: #eafff9;
+      font-size: 12px;
+      letter-spacing: 0;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #panel-support.support-command-panel .ship-role {
+      overflow: hidden;
+      color: var(--support-muted);
+      font-size: 9px;
+      letter-spacing: 0;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #panel-support.support-command-panel .support-count {
+      justify-self: end;
+      min-width: 34px;
+      padding: 2px 5px;
+      color: var(--support-amber);
+      background: rgba(238, 183, 99, 0.1);
+      border-color: rgba(238, 183, 99, 0.28);
+      border-radius: 3px;
+      font-size: 12px;
+      text-align: center;
+      text-shadow: none;
+    }
+
+    #panel-support.support-command-panel .support-orders-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-top: 2px;
+      padding: 0;
+      border-top: none;
+    }
+
+    #panel-support.support-command-panel .glass-btn {
+      min-height: 28px;
+      padding: 6px 8px;
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid rgba(115, 235, 214, 0.22);
+      box-shadow: none;
+      color: var(--support-muted);
+      font-size: 10px;
+      letter-spacing: 0;
+      line-height: 1.2;
+    }
+
+    #panel-support.support-command-panel .glass-btn:hover {
+      background: rgba(115, 235, 214, 0.08);
+      border-color: rgba(115, 235, 214, 0.54);
+      color: var(--support-text);
+      transform: none;
+    }
+
+    #panel-support.support-command-panel .glass-btn.active {
+      background: rgba(99, 240, 183, 0.12);
+      border-color: rgba(99, 240, 183, 0.58);
+      color: var(--support-green);
+      box-shadow: none;
+    }
+
+    #panel-support.support-command-panel .icon-sc-hull,
+    #panel-support.support-command-panel .icon-cap-center,
+    #panel-support.support-command-panel .icon-bs-rect,
+    #panel-support.support-command-panel .icon-destroyer {
+      background: var(--support-cyan);
+      border-color: rgba(110, 217, 255, 0.72);
+    }
+
+    #panel-support.support-command-panel .icon-sc-wing,
+    #panel-support.support-command-panel .icon-cap-side {
+      background: rgba(110, 217, 255, 0.55);
+      border-color: rgba(110, 217, 255, 0.55);
+    }
+
+    #panel-support.support-command-panel .icon-bs-chevron {
+      background: transparent;
+      border-top-color: transparent;
+      border-bottom-color: transparent;
+      border-left-color: var(--support-cyan);
+    }
+
+    #panel-support.support-command-panel .icon-frigate {
+      background: var(--support-amber);
+      border-color: rgba(238, 183, 99, 0.72);
+    }
+
+    #panel-support.support-command-panel .icon-fighter {
+      border-bottom-color: var(--support-green);
+    }
+
     /* Fleet List */
     .fleet-list {
       display: flex;
