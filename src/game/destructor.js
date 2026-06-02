@@ -43,6 +43,23 @@ export const DESTRUCTOR_CONFIG = {
   rammingOverrunDamageMin: 1.05,      // Minimum shardHP fraction on overrun contacts
   rammingOverrunDamageMult: 1.75,
   rammingOverrunMaxContacts: 64,
+  hardWallCrashSpeedThreshold: 150.0, // Fast impact vs ring/mass wall absorbs velocity into crush
+  hardWallCrashMassRatio: 2.5,
+  hardWallCrashImpulseScale: 0.08,
+  hardWallCrashNormalKeep: 0.04,
+  hardWallCrashTangentKeep: 0.55,
+  hardWallCrashCrushMult: 1.35,
+  hardWallCrashDamageMin: 1.15,
+  hardWallCrashDamageMult: 2.35,
+  crashStampRadiusMin: 72,
+  crashStampRadiusMax: 320,
+  crashStampFrameSpeedScale: 0.36,
+  crashStampMaxShards: 384,
+  crashStampDamageMult: 1.20,
+  crashStampSteelDamageFrac: 0.18,
+  crashStampSteelDeformScale: 0.32,
+  crashContactSteelDamageFrac: 0.28,
+  overrunTargetVelocityKeep: 0.12,
   crushImpulseScale: 0.90, //
   shearK: 0.06, //
   friction: 0.99, //
@@ -399,6 +416,130 @@ function getRammingDamageCap(shardHp, attackerMassAdvantage) {
   return hp * frac;
 }
 
+function applyCrashStampDamage(system, entity, worldX, worldY, radiusWorld, damagePerShard, maxShards, forceWorldX = 0, forceWorldY = 0) {
+  const grid = entity?.hexGrid;
+  if (!system || !grid?.grid || !Array.isArray(grid.shards)) return 0;
+
+  const radius = Math.max(1, Number(radiusWorld) || 1);
+  const damage = Math.max(0, Number(damagePerShard) || 0);
+  const maxCount = Math.max(1, Number(maxShards) | 0);
+  if (damage <= 0 || maxCount <= 0) return 0;
+
+  const scaleX = Math.max(0.0001, getFinalScaleX(entity));
+  const scaleY = Math.max(0.0001, getFinalScaleY(entity));
+  const angle = getEntityHexAngle(entity);
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const dx = worldX - getEntityPosX(entity);
+  const dy = worldY - getEntityPosY(entity);
+  const billboardOrientation = usesBillboardOrientation(entity);
+  const cx = grid.srcWidth * 0.5;
+  const cy = grid.srcHeight * 0.5;
+  const pX = grid.pivot ? grid.pivot.x : 0;
+  const pY = grid.pivot ? grid.pivot.y : 0;
+  const localX = worldDeltaToLocalX(dx, dy, scaleX, scaleY, c, s, billboardOrientation) + cx + pX;
+  const localY = worldDeltaToLocalY(dx, dy, scaleX, scaleY, c, s, billboardOrientation) + cy + pY;
+  const localRadius = radius / Math.min(scaleX, scaleY);
+  const cols = grid.cols | 0;
+  const rows = grid.rows | 0;
+  if (cols <= 0 || rows <= 0) return 0;
+
+  const c0 = Math.max(0, Math.floor((localX - localRadius) / HEX_SPACING) - 2);
+  const c1 = Math.min(cols - 1, Math.ceil((localX + localRadius) / HEX_SPACING) + 2);
+  const r0 = Math.max(0, Math.floor((localY - localRadius) / HEX_HEIGHT) - 2);
+  const r1 = Math.min(rows - 1, Math.ceil((localY + localRadius) / HEX_HEIGHT) + 2);
+  const radiusSq = radius * radius;
+  const invRadius = 1 / radius;
+  const brittle = isBrittleEntity(entity);
+  const forceLen = Math.hypot(forceWorldX, forceWorldY) || 1;
+  const dirX = forceWorldX / forceLen;
+  const dirY = forceWorldY / forceLen;
+  const deformScale = Math.max(0.02, Number(DESTRUCTOR_CONFIG.crashStampSteelDeformScale) || 0.32);
+  const deformBase = Math.min(
+    (DESTRUCTOR_CONFIG.maxDeform || 100) * 0.85,
+    Math.max(10, radius * deformScale)
+  );
+  const steelDamageFrac = Math.max(0, Number(DESTRUCTOR_CONFIG.crashStampSteelDamageFrac) || 0.18);
+  let destroyed = 0;
+  let dirtyMin = Number.POSITIVE_INFINITY;
+  let dirtyMax = -1;
+  const vel = system._crashStampVel || (system._crashStampVel = { x: 0, y: 0 });
+  vel.x = getEntityVelX(entity);
+  vel.y = getEntityVelY(entity);
+
+  let stamp = (system._crashStampCounter + 1) | 0;
+  if (stamp <= 0) stamp = 1;
+  system._crashStampCounter = stamp;
+
+  for (let rr = r0; rr <= r1; rr++) {
+    const rowBase = rr * cols;
+    for (let cc = c0; cc <= c1; cc++) {
+      const shard = grid.grid[rowBase + cc];
+      if (!shard || !shard.active || shard.isDebris || shard._crashStamp === stamp) continue;
+      shard._crashStamp = stamp;
+
+      const sx = getShardCollisionGridX(shard);
+      const sy = getShardCollisionGridY(shard);
+      const wx = (sx - localX) * scaleX;
+      const wy = (sy - localY) * scaleY;
+      const d2 = wx * wx + wy * wy;
+      if (d2 > radiusSq) continue;
+
+      const dist = Math.sqrt(d2);
+      const factor = Math.max(0, 1 - dist * invRadius);
+      const influence = 0.35 + factor * 0.65;
+
+      if (brittle) {
+        shard.hp -= damage * (0.85 + factor * 0.30);
+      } else {
+        const pushWorldX = dirX * deformBase * influence;
+        const pushWorldY = dirY * deformBase * influence;
+        const pushLocalX = (pushWorldX * c + pushWorldY * s) / scaleX;
+        const pushLocalY = (-pushWorldX * s + pushWorldY * c) / scaleY;
+        shard.applyDeformation(pushLocalX, pushLocalY, 1.0, true);
+
+        const maxCrushLimit = DESTRUCTOR_CONFIG.maxDeform || 100;
+        const hardLimitSq = maxCrushLimit * maxCrushLimit * 1.5;
+        const defSq = shard.targetDeformation.x * shard.targetDeformation.x + shard.targetDeformation.y * shard.targetDeformation.y;
+        if (defSq > hardLimitSq) {
+          const defScale = Math.sqrt(hardLimitSq / defSq);
+          shard.targetDeformation.x *= defScale;
+          shard.targetDeformation.y *= defScale;
+          shard.deformation.x *= defScale;
+          shard.deformation.y *= defScale;
+        }
+
+        const shardHp = Math.max(1, Number(shard.maxHp) || DESTRUCTOR_CONFIG.shardHP);
+        const steelDamageCap = shardHp * Math.max(0.02, steelDamageFrac);
+        shard.hp -= Math.min(steelDamageCap, damage * steelDamageFrac * (0.55 + factor * 0.45));
+      }
+
+      const idx = Number(shard.__meshIndex);
+      if (Number.isFinite(idx)) {
+        if (idx < dirtyMin) dirtyMin = idx;
+        if (idx > dirtyMax) dirtyMax = idx;
+      } else {
+        dirtyMin = 0;
+        dirtyMax = grid.shards.length - 1;
+      }
+
+      if (shard.hp <= 0) {
+        system.destroyShard(entity, shard, vel);
+        destroyed++;
+        if (destroyed >= maxCount) {
+          if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) markGridMeshDirtyRange(grid, dirtyMin, dirtyMax);
+          if (!entity.noSplit && system.splitQueue.indexOf(entity) === -1) system.splitQueue.push(entity);
+          return destroyed;
+        }
+      }
+    }
+  }
+
+  if (dirtyMax >= 0 && Number.isFinite(dirtyMin)) markGridMeshDirtyRange(grid, dirtyMin, dirtyMax);
+  if (destroyed > 0 && !entity.noSplit && system.splitQueue.indexOf(entity) === -1) system.splitQueue.push(entity);
+  return destroyed;
+}
+
 let HEX_SHIPS_3D_ACTIVE = false;
 
 export function setHexShips3DActive(active) {
@@ -718,6 +859,54 @@ function setEntityVelocity(entity, vx, vy) {
 
 function addEntityVelocity(entity, dvx, dvy) {
   setEntityVelocity(entity, getEntityVelX(entity) + dvx, getEntityVelY(entity) + dvy);
+}
+
+function dampEntityAgainstHardWall(entity, wallEntity, nx, ny, tx, ty, normalKeep, tangentKeep, movingSign) {
+  if (!entity || !wallEntity) return;
+
+  const evx = getEntityVelX(entity);
+  const evy = getEntityVelY(entity);
+  const wvx = getEntityVelX(wallEntity);
+  const wvy = getEntityVelY(wallEntity);
+  const relN = (evx - wvx) * nx + (evy - wvy) * ny;
+  const movingIntoWall = movingSign < 0 ? relN < 0 : relN > 0;
+  if (!movingIntoWall) return;
+
+  const keepN = Math.max(0, Math.min(1, Number(normalKeep) || 0));
+  const deltaN = (relN * keepN) - relN;
+  if (Math.abs(deltaN) > 1e-6) {
+    addEntityVelocity(entity, deltaN * nx, deltaN * ny);
+  }
+
+  const keepT = Math.max(0, Math.min(1, Number(tangentKeep) || 0));
+  if (keepT >= 1) return;
+
+  const nextRelT = (getEntityVelX(entity) - wvx) * tx + (getEntityVelY(entity) - wvy) * ty;
+  const deltaT = -nextRelT * (1 - keepT);
+  if (Math.abs(deltaT) > 1e-6) {
+    addEntityVelocity(entity, deltaT * tx, deltaT * ty);
+  }
+}
+
+function dampOverrunTargetVelocity(target, rammer, dirX, dirY, keep) {
+  if (!target || !rammer) return;
+
+  const lenSq = dirX * dirX + dirY * dirY;
+  if (lenSq < 1e-10) return;
+
+  const invLen = 1 / Math.sqrt(lenSq);
+  const nx = dirX * invLen;
+  const ny = dirY * invLen;
+  const carryKeep = Math.max(0, Math.min(1, Number(keep) || 0));
+  const rammerN = getEntityVelX(rammer) * nx + getEntityVelY(rammer) * ny;
+  if (rammerN <= 0) return;
+
+  const targetN = getEntityVelX(target) * nx + getEntityVelY(target) * ny;
+  const maxTargetN = rammerN * carryKeep;
+  if (targetN <= maxTargetN) return;
+
+  const deltaN = maxTargetN - targetN;
+  addEntityVelocity(target, deltaN * nx, deltaN * ny);
 }
 
 function getEntityAngle(entity) {
@@ -3008,6 +3197,14 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const overrunMassRatio = Math.max(rammingMassRatio, Number(DESTRUCTOR_CONFIG.rammingOverrunMassRatio) || 8.0);
       const overrunDominantRam = directDominantRam && massRatio >= overrunMassRatio;
       const dominantRammingCrush = directDominantRam || scrapeDominantRam;
+      const hardWallSpeed = Math.max(40, Number(DESTRUCTOR_CONFIG.hardWallCrashSpeedThreshold) || 150.0);
+      const hardWallMassRatio = Math.max(1.25, Number(DESTRUCTOR_CONFIG.hardWallCrashMassRatio) || rammingMassRatio);
+      const hardWallCandidate = effectiveApproachSpeed > hardWallSpeed;
+      const hardWallCrushA = hardWallCandidate && !A.isRingSegment && (B.isRingSegment || massB >= massA * hardWallMassRatio);
+      const hardWallCrushB = hardWallCandidate && !B.isRingSegment && (A.isRingSegment || massA >= massB * hardWallMassRatio);
+      const hardWallCrash = hardWallCrushA || hardWallCrushB;
+      const overrunDamageA = overrunDominantRam && massB > massA;
+      const overrunDamageB = overrunDominantRam && massA > massB;
       const useCenterOverrunNormal = overrunDominantRam && centerApproachSpeed > approachSpeed;
 
       let isDestruction = false;
@@ -3031,7 +3228,9 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           const restitution = isDestruction ? 0.0 : restBase;
           let j = (-(1 + restitution) * velAlongNormal) / denom;
 
-          if (overrunDominantRam) {
+          if (hardWallCrash) {
+            j *= Math.max(0.01, Math.min(1, Number(DESTRUCTOR_CONFIG.hardWallCrashImpulseScale) || 0.08));
+          } else if (overrunDominantRam) {
             j *= Math.max(0.02, Math.min(1, Number(DESTRUCTOR_CONFIG.rammingOverrunImpulseScale) || 0.18));
           } else if (isDestruction) {
             const hittingWall = (invMassA === 0 || invMassB === 0) || A.isRingSegment || B.isRingSegment;
@@ -3070,6 +3269,18 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         }
       }
 
+      if (hardWallCrash) {
+        const normalKeep = Math.max(0, Math.min(1, Number(DESTRUCTOR_CONFIG.hardWallCrashNormalKeep) || 0.04));
+        const tangentKeep = Math.max(0, Math.min(1, Number(DESTRUCTOR_CONFIG.hardWallCrashTangentKeep) || 0.55));
+        if (hardWallCrushA) dampEntityAgainstHardWall(A, B, nx, ny, tx, ty, normalKeep, tangentKeep, -1);
+        if (hardWallCrushB) dampEntityAgainstHardWall(B, A, nx, ny, tx, ty, normalKeep, tangentKeep, 1);
+      }
+      if (overrunDominantRam) {
+        const targetKeep = Math.max(0, Math.min(1, Number(DESTRUCTOR_CONFIG.overrunTargetVelocityKeep) || 0.12));
+        if (overrunDamageA) dampOverrunTargetVelocity(A, B, nx, ny, targetKeep);
+        if (overrunDamageB) dampOverrunTargetVelocity(B, A, -nx, -ny, targetKeep);
+      }
+
       // === ISKRY PRZENIESIONE NA ZEWNATRZ ===
       // Teraz zawsze sprawdzamy obcierki, niezaleznie od tego czy uderzenie bylo czolowe!
       const slideSpeed = velTangent;
@@ -3088,7 +3299,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         );
       }
 
-      const crushActive = isDestruction || dominantRammingCrush;
+      const crushActive = isDestruction || dominantRammingCrush || hardWallCrash;
       const heavyCrushPass = crushActive && doDamage;
 
       if (heavyCrushPass) {
@@ -3116,7 +3327,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const cb = Math.cos(angB), sb = Math.sin(angB);
         const shearK = DESTRUCTOR_CONFIG.shearK ?? 0.06;
         const impulse = (totalMass > 0) ? (impactSpeed * (massA * massB) / totalMass) : 0;
-        const crushEnergy = impulse * (DESTRUCTOR_CONFIG.crushImpulseScale ?? 0.25) * dtScale;
+        const hardWallCrushMult = hardWallCrash
+          ? Math.max(1, Number(DESTRUCTOR_CONFIG.hardWallCrashCrushMult) || 1.35)
+          : 1;
+        const crushEnergy = impulse * (DESTRUCTOR_CONFIG.crushImpulseScale ?? 0.25) * dtScale * hardWallCrushMult;
 
         const crushNx = useCenterOverrunNormal ? centerNx : nx;
         const crushNy = useCenterOverrunNormal ? centerNy : ny;
@@ -3139,7 +3353,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const forceAy = (-wForceAx * sa + wForceAy * ca) / scaleAY;
         const forceBx = (wForceBx * cb + wForceBy * sb) / scaleBX;
         const forceBy = (-wForceBx * sb + wForceBy * cb) / scaleBY;
-        const crushScale = isDestruction ? 1 : Math.max(0.1, Number(DESTRUCTOR_CONFIG.rammingCrushScale) || 0.70);
+        const crushScale = (isDestruction || hardWallCrash) ? 1 : Math.max(0.1, Number(DESTRUCTOR_CONFIG.rammingCrushScale) || 0.70);
 
         // 2. Nonlinear impact weighting (squared mass ratios)
         const baseRatioA = (invMassB === 0) ? 0.0 : (invMassA === 0 ? 1.0 : massB / totalMass);
@@ -3184,8 +3398,9 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const brittleB = isBrittleEntity(B);
         const overrunDamageMin = DESTRUCTOR_CONFIG.shardHP * Math.max(0, Number(DESTRUCTOR_CONFIG.rammingOverrunDamageMin) || 1.05);
         const overrunDamageMult = Math.max(1, Number(DESTRUCTOR_CONFIG.rammingOverrunDamageMult) || 1.75);
-        const overrunDamageA = overrunDominantRam && massB > massA;
-        const overrunDamageB = overrunDominantRam && massA > massB;
+        const hardWallDamageMin = DESTRUCTOR_CONFIG.shardHP * Math.max(0, Number(DESTRUCTOR_CONFIG.hardWallCrashDamageMin) || 1.15);
+        const hardWallDamageMult = Math.max(1, Number(DESTRUCTOR_CONFIG.hardWallCrashDamageMult) || 2.35);
+        const steelContactDamageFrac = Math.max(0.02, Number(DESTRUCTOR_CONFIG.crashContactSteelDamageFrac) || 0.28);
 
         let dirtyMinA = Number.POSITIVE_INFINITY;
         let dirtyMaxA = -1;
@@ -3239,9 +3454,20 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             if (doDamage) {
               const kineticDmg = (rawCrushMagA * realRatioA * 0.18 * massAdvantageB) / Math.sqrt(contactsCount);
               const brittleMult = brittleA ? 3.5 : 1.0;
-              const cap = brittleA ? DESTRUCTOR_CONFIG.shardHP * 0.75 : (overrunDamageA ? Math.max(maxDmgPerTickA, overrunDamageMin) : maxDmgPerTickA);
+              const steelCrashA = !brittleA && (hardWallCrushA || overrunDamageA);
+              const shardHpA = Math.max(1, Number(sA.maxHp) || DESTRUCTOR_CONFIG.shardHP);
+              const cap = steelCrashA
+                ? shardHpA * steelContactDamageFrac
+                : (hardWallCrushA
+                  ? Math.max(maxDmgPerTickA, hardWallDamageMin)
+                  : (brittleA ? DESTRUCTOR_CONFIG.shardHP * 0.75 : (overrunDamageA ? Math.max(maxDmgPerTickA, overrunDamageMin) : maxDmgPerTickA)));
               let damage = kineticDmg * brittleMult;
-              if (overrunDamageA && !brittleA) damage = Math.max(damage * overrunDamageMult, overrunDamageMin);
+              if (steelCrashA) {
+                damage = Math.max(damage * 0.35, shardHpA * steelContactDamageFrac * 0.45);
+              } else {
+                if (hardWallCrushA) damage = Math.max(damage * hardWallDamageMult, hardWallDamageMin);
+                if (overrunDamageA && !brittleA) damage = Math.max(damage * overrunDamageMult, overrunDamageMin);
+              }
               sA.hp -= Math.min(cap, damage);
             }
 
@@ -3294,9 +3520,20 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             if (doDamage) {
               const kineticDmg = (rawCrushMagB * realRatioB * 0.18 * massAdvantageA) / Math.sqrt(contactsCount);
               const brittleMult = brittleB ? 3.5 : 1.0;
-              const cap = brittleB ? DESTRUCTOR_CONFIG.shardHP * 0.75 : (overrunDamageB ? Math.max(maxDmgPerTickB, overrunDamageMin) : maxDmgPerTickB);
+              const steelCrashB = !brittleB && (hardWallCrushB || overrunDamageB);
+              const shardHpB = Math.max(1, Number(sB.maxHp) || DESTRUCTOR_CONFIG.shardHP);
+              const cap = steelCrashB
+                ? shardHpB * steelContactDamageFrac
+                : (hardWallCrushB
+                  ? Math.max(maxDmgPerTickB, hardWallDamageMin)
+                  : (brittleB ? DESTRUCTOR_CONFIG.shardHP * 0.75 : (overrunDamageB ? Math.max(maxDmgPerTickB, overrunDamageMin) : maxDmgPerTickB)));
               let damage = kineticDmg * brittleMult;
-              if (overrunDamageB && !brittleB) damage = Math.max(damage * overrunDamageMult, overrunDamageMin);
+              if (steelCrashB) {
+                damage = Math.max(damage * 0.35, shardHpB * steelContactDamageFrac * 0.45);
+              } else {
+                if (hardWallCrushB) damage = Math.max(damage * hardWallDamageMult, hardWallDamageMin);
+                if (overrunDamageB && !brittleB) damage = Math.max(damage * overrunDamageMult, overrunDamageMin);
+              }
               sB.hp -= Math.min(cap, damage);
             }
 
@@ -3306,6 +3543,23 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
               this.destroyShard(B, sB, this._destroyVelB);
               if (!B.noSplit && this.splitQueue.indexOf(B) === -1) this.splitQueue.push(B);
             }
+          }
+        }
+
+        if (doDamage && (hardWallCrushA || hardWallCrushB || overrunDamageA || overrunDamageB)) {
+          const frameTravel = Math.max(0, effectiveApproachSpeed * Math.max(1 / 240, Number(dt) || 0));
+          const stampRadiusMin = Math.max(12, Number(DESTRUCTOR_CONFIG.crashStampRadiusMin) || 72);
+          const stampRadiusMax = Math.max(stampRadiusMin, Number(DESTRUCTOR_CONFIG.crashStampRadiusMax) || 320);
+          const stampScale = Math.max(0, Number(DESTRUCTOR_CONFIG.crashStampFrameSpeedScale) || 0.36);
+          const stampRadius = Math.min(stampRadiusMax, stampRadiusMin + frameTravel * stampScale);
+          const stampDamage = DESTRUCTOR_CONFIG.shardHP * Math.max(0.1, Number(DESTRUCTOR_CONFIG.crashStampDamageMult) || 1.20);
+          const stampMax = Math.max(32, Number(DESTRUCTOR_CONFIG.crashStampMaxShards) || 384);
+
+          if (hardWallCrushA || overrunDamageA) {
+            applyCrashStampDamage(this, A, worldHitX, worldHitY, stampRadius, stampDamage, stampMax, crushNx, crushNy);
+          }
+          if (hardWallCrushB || overrunDamageB) {
+            applyCrashStampDamage(this, B, worldHitX, worldHitY, stampRadius, stampDamage, stampMax, -crushNx, -crushNy);
           }
         }
 

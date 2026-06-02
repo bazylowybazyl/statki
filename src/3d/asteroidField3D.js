@@ -1220,7 +1220,10 @@ export class AsteroidField {
       const asteroidR = asteroid.scale * COLLISION_CONFIG.collisionRadiusFactor;
       const promoteR = shipR + asteroidR + 180;
       if (dxNear * dxNear + dyNear * dyNear <= promoteR * promoteR) {
-        if (this._promoteAsteroidToHex(asteroid, 'ship-near')) return;
+        const promotedEntity = this._promoteAsteroidToHex(asteroid, 'ship-near');
+        if (promotedEntity?.hexGrid && ship?.hexGrid) {
+          DestructorSystem.collideEntities(ship, promotedEntity, 1 / 60, true);
+        }
       }
 
       const result = resolveShipAsteroidCollision(ship, asteroid);

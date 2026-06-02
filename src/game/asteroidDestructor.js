@@ -433,7 +433,12 @@ export function resolveShipAsteroidCollision(ship, asteroid) {
   const aMass = Math.max(1, asteroidCollisionMass, asteroidRammingMass);
   const sMass = Math.max(1, shipBaseMass, shipRammingMass);
   const massRatio = aMass / sMass;
-  const e = COLLISION_CONFIG.bounceCoeff;
+  const closingSpeed = -relVAlongN;
+  const hardWallCrash = (
+    massRatio >= Math.max(1, Number(COLLISION_CONFIG.heavyRatio) || 5.0) &&
+    closingSpeed >= Math.max(120, (Number(COLLISION_CONFIG.minImpactVelocity) || 30) * 4)
+  );
+  const e = hardWallCrash ? 0 : COLLISION_CONFIG.bounceCoeff;
 
   // Impulse magnitude wzdłuż normalnej (proper 2-body collision).
   // n = (ship - asteroid) / dist, czyli WSKAZUJE OD ASTEROIDY NA STATEK.
@@ -444,12 +449,24 @@ export function resolveShipAsteroidCollision(ship, asteroid) {
   const impulseY = j * ny;
 
   // Nowe prędkości - SHIP dostaje +impulse (odpychany OD asteroidy w kierunku n).
-  const newShipVx = sv.x + impulseX / sMass;
-  const newShipVy = sv.y + impulseY / sMass;
+  let newShipVx = sv.x + impulseX / sMass;
+  let newShipVy = sv.y + impulseY / sMass;
   // Asteroid dostaje -impulse (Newton 3rd - reakcja przeciwna, w kierunku -n,
   // czyli w stronę ruchu statku - jest pchana przez statek).
   const asteroidDvx = -impulseX / aMass;
   const asteroidDvy = -impulseY / aMass;
+
+  if (hardWallCrash) {
+    const shipNormalAfter = newShipVx * nx + newShipVy * ny;
+    const asteroidNormal = avx * nx + avy * ny;
+    const relNormalAfter = shipNormalAfter - asteroidNormal;
+    if (relNormalAfter < 0) {
+      const keep = 0.04;
+      const deltaN = (relNormalAfter * keep) - relNormalAfter;
+      newShipVx += deltaN * nx;
+      newShipVy += deltaN * ny;
+    }
+  }
 
   // Damage - jeśli kolizja była dostatecznie szybka
   let shipDamage = 0;
@@ -471,6 +488,9 @@ export function resolveShipAsteroidCollision(ship, asteroid) {
     const hardness = asteroid.hardness ?? getHardness(asteroid.type);
     asteroidDamage *= (1.0 - hardness * 0.7);
     shipDamage *= (1.0 + hardness * 0.5);
+    if (hardWallCrash) {
+      shipDamage *= Math.max(1, Number(COLLISION_CONFIG.crushDamageMultiplier) || 3.0);
+    }
 
     // UWAGA: Mass-ratio modifiers wyłączone. Z ship_mass=800k każda asteroida
     // ma ratio <0.01 więc zawsze trafiałaby w "light" - statek nie dostawał damage.
