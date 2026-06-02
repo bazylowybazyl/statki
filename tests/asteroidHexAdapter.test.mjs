@@ -95,6 +95,63 @@ test('legacy ship asteroid resolver uses collision mass for fallback contacts', 
   assert.ok(result.massRatio > 1, 'BIG iron fallback collision should no longer use tiny legacy mass');
 });
 
+test('ship-near asteroid promotion still resolves the same-frame collision fallback', () => {
+  const asteroid = {
+    alive: true,
+    type: 'iron',
+    size: 'BIG',
+    worldX: 0,
+    worldY: 0,
+    scale: 1500,
+    vx: 0,
+    vy: 0,
+    hardness: 0.7
+  };
+  const ship = {
+    pos: { x: 600, y: 0 },
+    vel: { x: -500, y: 0 },
+    w: 3000,
+    h: 1000,
+    radius: 500,
+    angle: 0,
+    mass: 800000,
+    hull: { val: 85000 },
+    shield: { val: 0, max: 0, regenDelay: 1 }
+  };
+  const oldWindow = globalThis.window;
+  const field = Object.create(AsteroidField.prototype);
+  let promoted = false;
+
+  try {
+    globalThis.window = {};
+    field.spatial = {
+      forEachInRadius(_x, _y, _radius, cb) {
+        cb(asteroid);
+      }
+    };
+    field._promoteAsteroidToHex = () => {
+      promoted = true;
+      asteroid.hexEntity = { hexGrid: {} };
+      return asteroid.hexEntity;
+    };
+    field._applyImpulseToAsteroid = (a, dvx, dvy) => {
+      a.vx = (a.vx || 0) + dvx;
+      a.vy = (a.vy || 0) + dvy;
+    };
+    field.applyDamageAt = () => {};
+    field._flushAll = () => {};
+
+    const collisions = field.checkShipCollisions(ship);
+
+    assert.equal(promoted, true);
+    assert.ok(Array.isArray(collisions), 'same-frame fallback should still report the collision after promotion');
+    assert.ok(Math.abs(ship.vel.x) < 80, `ship should be stopped by the promoted BIG asteroid, got vx=${ship.vel.x}`);
+  } finally {
+    if (oldWindow === undefined) delete globalThis.window;
+    else globalThis.window = oldWindow;
+  }
+});
+
 test('asteroid hex entity model preserves world-space sprite scale and material flags', () => {
   const asteroid = {
     id: 42,
