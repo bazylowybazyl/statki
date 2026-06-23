@@ -37,17 +37,27 @@ const STOREFRONT_PROMENADE_WIDTH = 34;
 const STOREFRONT_PROMENADE_HEIGHT = 10;
 const STOREFRONT_BRIDGE_DOCK_INSET_RATIO = 0.18;
 const STOREFRONT_BRIDGE_MAX_DOCK_INSET = 42;
+// Bridge-network tuning (sky-bridge connectors between tall towers).
 const STOREFRONT_RADIAL_COL_STRIDE = 2;
 const STOREFRONT_TANGENTIAL_COL_STRIDE = 4;
 const STOREFRONT_MAX_RADIAL_DISTANCE = 760;
 const STOREFRONT_MAX_TANGENTIAL_DISTANCE = 360;
 const STOREFRONT_MAX_HEIGHT_DELTA = 190;
+// storefronts.obj footprint (square, ~2×2 city blocks in the SynthCity prototype).
 const STOREFRONT_MODEL_WIDTH = 304.86;
 const STOREFRONT_MODEL_DEPTH = 304.86;
-const STOREFRONT_SYNTH_PITCH = 304;
-const STOREFRONT_LANE_RADIAL_FILL = 0.42;
-const STOREFRONT_LANE_ARC_SCALE = 1.0;
-const STOREFRONT_LANE_BASE_Z = 2;
+// Rigid storefront instances. storefronts.obj is a rigid shopfront+skybridge
+// structure designed for a straight street; like the SynthCity buildings it is
+// placed as a discrete instance — translated + rotated into the cell's tangent
+// frame with a UNIFORM scale — rather than bent around the ring arc. At the ring
+// radius the per-instance curvature error (sagitta) is only a few units, so a
+// rigid instance is visually indistinguishable from a perfectly-fitted one.
+// Instances are TILED edge-to-edge across the whole inner-ring floor so the ground
+// reads as a dense shop/skybridge carpet (towers rise out of it), exactly like the
+// SynthCity prototype laid 2×2-block storefront tiles contiguously.
+const STOREFRONT_ROW_FILL = 1.06;  // model footprint vs a row's radial depth (>1 = slight overlap, no seams)
+const STOREFRONT_MIN_SCALE = 0.5;
+const STOREFRONT_MAX_SCALE = 4.0;
 
 function clampNumber(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -504,52 +514,46 @@ function buildCellToWorldMatrix(cellCenterAngle, cellCenterRadius) {
     );
 }
 
-function normalizePositiveAngle(angle) {
-    const full = Math.PI * 2;
-    let next = angle % full;
-    if (next < 0) next += full;
-    return next;
-}
-
-export function createPolarWrappedStorefrontGeometry(sourceGeometry, centerAngle, centerRadius, options = {}) {
-    if (!sourceGeometry || !Number.isFinite(centerAngle) || !Number.isFinite(centerRadius)) return null;
-
-    const geo = sourceGeometry.index ? sourceGeometry.toNonIndexed() : sourceGeometry.clone();
-    if (!geo.hasAttribute('position')) {
-        geo.dispose?.();
+// Build one rigid storefront instance, placed (not bent) into the cell's tangent
+// frame — the same translate+rotate+uniform-scale pipeline the SynthCity buildings
+// use. Returns geometry already in ringFloor world space, ready to merge.
+export function createStorefrontInstanceGeometry(centerAngle, centerRadius, scale, faceRotation = 0) {
+    if (!Number.isFinite(centerAngle) || !Number.isFinite(centerRadius)) return null;
+    const geo = cloneSynthCityGeometry('storefronts');
+    if (!geo || !geo.hasAttribute('position')) {
+        geo?.dispose?.();
         return null;
     }
 
+    // Recenter the footprint on the origin and drop the base to Y=0 (model is Y-up
+    // at this stage) so the instance lands exactly on the cell center / ring floor.
     geo.computeBoundingBox();
     const box = geo.boundingBox;
-    if (!box) return geo;
-
-    const scaleU = Number.isFinite(options.scaleU) ? options.scaleU : 1;
-    const scaleR = Number.isFinite(options.scaleR) ? options.scaleR : 1;
-    const scaleH = Number.isFinite(options.scaleH) ? options.scaleH : 1;
-    const baseZ = Number.isFinite(options.baseZ) ? options.baseZ : STOREFRONT_LANE_BASE_Z;
-    const originX = (box.min.x + box.max.x) * 0.5;
-    const originZ = (box.min.z + box.max.z) * 0.5;
-    const originY = box.min.y;
-    const angleRadius = Math.max(1, centerRadius);
-    const pos = geo.attributes.position;
-
-    for (let i = 0; i < pos.count; i++) {
-        const localU = (pos.getX(i) - originX) * scaleU;
-        const localR = (pos.getZ(i) - originZ) * scaleR;
-        const localH = (pos.getY(i) - originY) * scaleH;
-        const radius = Math.max(1, centerRadius + localR);
-        const angle = centerAngle + (localU / angleRadius);
-        pos.setXYZ(
-            i,
-            Math.cos(angle) * radius,
-            Math.sin(angle) * radius,
-            baseZ + localH
+    if (box) {
+        geo.translate(
+            -(box.min.x + box.max.x) * 0.5,
+            -box.min.y,
+            -(box.min.z + box.max.z) * 0.5
         );
     }
 
-    pos.needsUpdate = true;
-    geo.computeVertexNormals();
+    const s = Number.isFinite(scale) ? scale : 1;
+    geo.rotateX(Math.PI / 2);   // Y-up model → Z-up ring space (height along +Z)
+    geo.scale(s, s, s);         // UNIFORM scale → no aspect distortion (unlike the old wrap)
+    if (faceRotation) geo.rotateZ(faceRotation);
+
+    // Translate + rotate into the cell's tangent frame (identical to the buildings).
+    geo.applyMatrix4(buildCellToWorldMatrix(centerAngle, centerRadius));
+
+    // Normalize attributes so this merges cleanly with the other storefront geos.
+    const posCount = geo.attributes.position.count;
+    if (!geo.hasAttribute('normal')) {
+        geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(posCount * 3), 3));
+    }
+    if (!geo.hasAttribute('uv')) {
+        geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(posCount * 2), 2));
+    }
+    geo.groups = [];
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
     return geo;
@@ -564,36 +568,41 @@ function getCellByRowCol(cells) {
     return map;
 }
 
-function appendPolarStorefrontLanesToChunks(chunks, cells) {
+function appendStorefrontInstancesToChunks(chunks, cells) {
     if (!chunks?.length || !cells?.length) return;
-    const source = synthCityAssets.models.storefronts;
-    if (!source) return;
+    if (!synthCityAssets.models.storefronts) return;
 
     const byRowCol = getCellByRowCol(cells);
-    for (let lane = 0; lane < INNER_RING_ROWS - 1; lane++) {
-        const sample = byRowCol.get(`${lane}:0`) || cells.find(c => c.row === lane);
-        const nextSample = byRowCol.get(`${lane + 1}:0`) || cells.find(c => c.row === lane + 1);
-        if (!sample || !nextSample) continue;
+    // Tile every inner-ring row with storefront structures, edge-to-edge, so the
+    // floor becomes a dense shop/skybridge carpet. Each instance is rigid
+    // (translate + rotate + uniform-scale into the cell frame) — never a bent ribbon.
+    for (let row = 0; row < INNER_RING_ROWS; row++) {
+        let sample = byRowCol.get(`${row}:0`);
+        if (!sample) {
+            for (const c of cells) { if (c.row === row) { sample = c; break; } }
+        }
+        if (!sample) continue;
 
         const rowDepth = Math.max(1, sample.outerRadius - sample.innerRadius);
-        const laneRadius = (sample.outerRadius + nextSample.innerRadius) * 0.5;
-        const cellAngleSpan = Math.max(0.0001, sample.angleEnd - sample.angleStart);
-        const arcPerCol = Math.max(1, laneRadius * cellAngleSpan);
-        const colStep = Math.max(1, Math.round(STOREFRONT_SYNTH_PITCH / arcPerCol));
-        const scaleU = STOREFRONT_LANE_ARC_SCALE;
-        const scaleR = clampNumber((rowDepth * STOREFRONT_LANE_RADIAL_FILL) / STOREFRONT_MODEL_DEPTH, 0.38, 0.78);
+        const midRadius = (sample.innerRadius + sample.outerRadius) * 0.5;
+        const scale = clampNumber(
+            (rowDepth * STOREFRONT_ROW_FILL) / STOREFRONT_MODEL_DEPTH,
+            STOREFRONT_MIN_SCALE,
+            STOREFRONT_MAX_SCALE
+        );
+        // Column step that lays tiles edge-to-edge tangentially (floor → slight overlap, no gaps).
+        const arcPerCol = Math.max(1, (sample.angleEnd - sample.angleStart) * midRadius);
+        const colStride = Math.max(1, Math.floor((STOREFRONT_MODEL_WIDTH * scale) / arcPerCol));
 
-        for (let col = lane % colStep; col < ZONE_COLS; col += colStep) {
-            const aCell = byRowCol.get(`${lane}:${wrapBridgeCol(col)}`);
-            const bCell = byRowCol.get(`${lane + 1}:${wrapBridgeCol(col)}`);
-            if (!aCell?.zone || !bCell?.zone) continue;
+        for (let col = row % colStride; col < ZONE_COLS; col += colStride) {
+            const cell = byRowCol.get(`${row}:${wrapBridgeCol(col)}`);
+            if (!cell?.zone) continue;
+            const family = getZoneFamily(cell.zone);
+            if (family !== 'residential' && family !== 'commercial') continue;
 
-            const centerAngle = normalizePositiveAngle(aCell.angleStart + cellAngleSpan * colStep * 0.5);
-            const geo = createPolarWrappedStorefrontGeometry(source, centerAngle, laneRadius, {
-                scaleU,
-                scaleR,
-                baseZ: STOREFRONT_LANE_BASE_Z
-            });
+            const centerAngle = (cell.angleStart + cell.angleEnd) * 0.5;
+            const centerRadius = (cell.innerRadius + cell.outerRadius) * 0.5;
+            const geo = createStorefrontInstanceGeometry(centerAngle, centerRadius, scale);
             if (!geo) continue;
 
             const chunkIdx = chunks.length === NUM_CHUNKS ? getChunkIndex(centerAngle) : 0;
@@ -604,7 +613,7 @@ function appendPolarStorefrontLanesToChunks(chunks, cells) {
             }
             if (!chunk.geoByMat.storefronts) chunk.geoByMat.storefronts = [];
             chunk.geoByMat.storefronts.push(geo);
-            chunk.zones.add(aCell.zone || bCell.zone || 'commercial');
+            chunk.zones.add(cell.zone);
         }
     }
 }
@@ -1307,7 +1316,7 @@ function buildChunksForRing(cells, ringId, ring) {
     }
 
     if (ringId === RING_INNER) {
-        appendPolarStorefrontLanesToChunks(chunks, cells);
+        appendStorefrontInstancesToChunks(chunks, cells);
     }
 
     // Build merged meshes per chunk
@@ -1551,7 +1560,7 @@ export function rebuildDistrictForCell(cell, ring) {
     }
 
     if (targetRingId === RING_INNER) {
-        appendPolarStorefrontLanesToChunks([chunk], chunkCells);
+        appendStorefrontInstancesToChunks([chunk], chunkCells);
     }
 
     const chunkGroup = new THREE.Group();
