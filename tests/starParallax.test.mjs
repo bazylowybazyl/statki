@@ -10,17 +10,21 @@ async function loadStarParallax() {
   }
 }
 
-test('star parallax layers move slower than world-space asteroids', async () => {
+test('star parallax layers keep distant depth while one speed layer outruns the ship', async () => {
   const {
     STAR_PARALLAX_LAYERS,
     computeStarCameraOffset,
   } = await loadStarParallax();
 
   assert.equal(STAR_PARALLAX_LAYERS.length, 3);
-  assert.ok(
-    Math.max(...STAR_PARALLAX_LAYERS.map((layer) => layer.parallax)) <= 0.3,
-    'even the speed layer should stay visually behind world-space asteroid motion'
-  );
+  const deepLayers = STAR_PARALLAX_LAYERS.filter((layer) => layer.name !== 'speed');
+  const speedLayer = STAR_PARALLAX_LAYERS.find((layer) => layer.name === 'speed');
+
+  assert.ok(deepLayers.every((layer) => layer.parallax <= 0.3));
+  assert.ok(speedLayer, 'expected a dedicated speed layer');
+  assert.ok(speedLayer.parallax > 1.0, 'speed layer should move faster than the ship/world camera');
+  assert.ok(speedLayer.share <= 0.16, 'speed layer should stay sparse so it reads as velocity streaks');
+  assert.ok(speedLayer.stretchMul >= 1.6, 'speed layer should stretch harder during warp');
 
   const cameraTravel = 10000;
   const offsets = STAR_PARALLAX_LAYERS.map((layer) =>
@@ -29,8 +33,33 @@ test('star parallax layers move slower than world-space asteroids', async () => 
 
   assert.ok(offsets[0].x < offsets[1].x);
   assert.ok(offsets[1].x < offsets[2].x);
-  assert.ok(offsets[2].x <= cameraTravel * 0.3);
-  assert.ok(offsets[2].y <= cameraTravel * 0.3);
+  assert.ok(offsets[0].x <= cameraTravel * 0.03);
+  assert.ok(offsets[1].x <= cameraTravel * 0.3);
+  assert.ok(offsets[2].x > cameraTravel);
+  assert.ok(offsets[2].y > cameraTravel);
+});
+
+test('individual stars vary speed inside their parallax layer', async () => {
+  const {
+    STAR_PARALLAX_LAYERS,
+    computeStarParallaxFactor,
+  } = await loadStarParallax();
+
+  for (const layer of STAR_PARALLAX_LAYERS) {
+    assert.ok(layer.parallaxMin < layer.parallax);
+    assert.ok(layer.parallaxMax > layer.parallax);
+    assert.equal(computeStarParallaxFactor(layer, 0), layer.parallaxMin);
+    assert.equal(computeStarParallaxFactor(layer, 1), layer.parallaxMax);
+  }
+
+  const deep = STAR_PARALLAX_LAYERS.find((layer) => layer.name === 'deep');
+  const mid = STAR_PARALLAX_LAYERS.find((layer) => layer.name === 'mid');
+  const speed = STAR_PARALLAX_LAYERS.find((layer) => layer.name === 'speed');
+
+  assert.ok(deep.parallaxMax < mid.parallaxMin);
+  assert.ok(mid.parallaxMax < 0.3);
+  assert.ok(speed.parallaxMin > 1.0);
+  assert.ok(speed.parallaxMax - speed.parallaxMin >= 0.6);
 });
 
 test('planet star shader uses per-star parallax and warp stretch attributes', () => {
@@ -42,6 +71,9 @@ test('planet star shader uses per-star parallax and warp stretch attributes', ()
   assert.doesNotMatch(source, /attribute\s+float\s+speedResponse\s*;/);
   assert.doesNotMatch(source, /uniform\s+float\s+speedFactor\s*;/);
   assert.match(source, /geo\.setAttribute\('parallaxFactor'/);
+  assert.match(source, /computeStarParallaxFactor/);
+  assert.match(source, /parallaxFactors\[i\]\s*=\s*computeStarParallaxFactor\(layer,\s*Math\.random\(\)\)/);
+  assert.doesNotMatch(source, /parallaxFactors\[i\]\s*=\s*layer\.parallax/);
 });
 
 test('normal flight speed does not drive warp stretch in the star shader', () => {

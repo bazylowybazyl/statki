@@ -5,13 +5,22 @@
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
 import { isGateAngle, createSeededRandom } from './ringCityZoneGrid.js';
+import { HULL_RENDER_WORLD_SCALE } from '../data/ships.js';
 
 // Placeholder ship dimensions (length along radial axis, width tangential, height vertical)
+const PARKED_SHIP_SCALE = HULL_RENDER_WORLD_SCALE;
+const scaleShipDims = (dims) => ({
+    ...dims,
+    length: Math.round(dims.length * PARKED_SHIP_SCALE),
+    width: Math.round(dims.width * PARKED_SHIP_SCALE),
+    height: Math.round(dims.height * PARKED_SHIP_SCALE)
+});
+
 export const SHIP_DIMS = {
-    battleship: { length: 1040, width: 440, height: 180, color: 0x3a4a66 },
-    cruiser:    { length: 720,  width: 300, height: 140, color: 0x4a5575 },
-    destroyer:  { length: 480,  width: 200, height: 100, color: 0x556070 },
-    frigate:    { length: 320,  width: 140, height: 80,  color: 0x606a7a }
+    battleship: scaleShipDims({ length: 1040, width: 440, height: 180, color: 0x3a4a66 }),
+    cruiser:    scaleShipDims({ length: 720,  width: 300, height: 140, color: 0x4a5575 }),
+    destroyer:  scaleShipDims({ length: 480,  width: 200, height: 100, color: 0x556070 }),
+    frigate:    scaleShipDims({ length: 320,  width: 140, height: 80,  color: 0x606a7a })
 };
 
 // Weighted pool for random ship type selection

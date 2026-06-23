@@ -744,6 +744,10 @@ export class HUDSystem {
         }
         if (action === 'terminal-connect') {
             if (this.menuState !== 'SCAN') return;
+            if (this.terminalState.bootTimer) {
+                clearTimeout(this.terminalState.bootTimer);
+                this.terminalState.bootTimer = null;
+            }
             this.terminalState.step = 'CONNECTING';
             this.terminalState.targetStation = payload || null;
             this.refreshOpenMenu();

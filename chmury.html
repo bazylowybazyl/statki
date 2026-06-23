@@ -61,7 +61,28 @@
             activitySpeedRef: 2.0,    // prędkość przy której activity osiąga 1.0
             activityRiseRate: 5.0,    // jak szybko activity rośnie (start ruchu)
             activityFallRate: 0.8,    // jednostek/sekundę spadku activity gdy stoi (1.0 = ~1.25s do zera)
-            stationarySuppress: 5.0   // bias dodawany do shipSDF gdy stoi - kasuje dziurę i wake
+            stationarySuppress: 5.0,  // bias dodawany do shipSDF gdy stoi - kasuje dziurę i wake
+
+            // === ŚWIATŁA ===
+            // Model jak w referencji: chmura ma NEUTRALNY albedo (własna "tekstura"),
+            // a kolor nadają jej dopiero światła statków padające na gaz.
+            ambientColor: [0.16, 0.19, 0.26], // neutralne wypełnienie "nieba" (kolor nieoświetlonej chmury)
+            cloudAlbedo:  [0.72, 0.76, 0.84], // bazowy kolor/tekstura chmury (neutralny, lekko chłodny)
+            ambientStrength: 1.0,    // ogólna jasność nieoświetlonej chmury
+            lightOmni: 3.5,          // siła punktowego blasku statku (kadłub/silnik)
+            lightFalloff: 0.85,      // zanik blasku omni z odległością (większe = krótszy zasięg)
+            lightSpot: 7.0,          // siła reflektora (stożek w kierunku ruchu)
+            coneFalloff: 0.42,       // zanik reflektora z odległością (mniejsze = dłuższy zasięg)
+            coneInner: 0.92,         // cos kąta wewnętrznego stożka (ostry rdzeń, ~23°)
+            coneOuter: 0.70,         // cos kąta zewnętrznego stożka (miękka krawędź, ~45°)
+
+            // === SKALA 1:1 Z GRĄ ===
+            // Długości statków (SHIP_TYPES.length) są w jednostkach świata gry (z HULL_RENDER_PROFILES).
+            // Dzielone przez tę wartość dają rozmiar w jednostkach symulacji. Proporcje między
+            // statkami są wtedy DOKŁADNIE jak w grze (Atlas 3000 vs fregata 320 itd.).
+            // Mniejsza wartość = większe statki względem chmury.
+            gameUnitsPerSimUnit: 1200,
+            shipCarveFactor: 0.5     // promień żłobionego tunelu względem rozmiaru statku (0.5 = pół długości)
         };
         window.cloudConfig = cloudConfig;
 
@@ -116,28 +137,74 @@
         // Tuning siedzi w cloudConfig (atak ~0.2s, fall liniowy ~1.25s do zera).
         const shipActivity = [1.0, 1.0, 1.0, 1.0];
 
+        // Kierunek "do przodu" każdego statku - kierunek reflektora (stożka światła).
+        // Aktualizowany co klatkę z prędkości/kierunku AI; trzyma ostatnią wartość gdy statek stoi.
+        const shipDirs = [
+            new THREE.Vector3(0, 0, -1),
+            new THREE.Vector3(1, 0, 0),
+            new THREE.Vector3(0, 0, -1),
+            new THREE.Vector3(-0.7, 0, 0.7).normalize()
+        ];
+
+        // Typy statków = prawdziwe sprite'y z gry. `length` to długość w jednostkach świata gry
+        // (z HULL_RENDER_PROFILES w src/data/ships.js). Gracz = Atlas, reszta = statki wsparcia.
+        // Wszystkie sprite'y w grze są szersze niż wyższe -> dziób wzdłuż osi X obrazka.
+        const SHIP_TYPES = [
+            { id: 'atlas',      sprite: '/assets/capital_ship_rect_v1.png',       length: 3000 }, // Gracz
+            { id: 'battleship', sprite: '/src/assets/ships/terranbattleship.png', length: 1040 },
+            { id: 'destroyer',  sprite: '/src/assets/ships/terrandestroyer.png',  length: 480  },
+            { id: 'frigate',    sprite: '/src/assets/ships/terranfrigate.png',    length: 320  }
+        ];
+        const shipRadii = [0.8, 0.8, 0.8, 0.8]; // sim-promień żłobienia/światła per statek (liczony z rozmiaru)
+        const texLoader = new THREE.TextureLoader();
+
         for(let s = 0; s < MAX_SHIPS; s++) {
             const isPlayer = s === 0;
-            const geom = new THREE.ConeGeometry(0.25, 0.7, 8);
-            geom.rotateX(-Math.PI / 2); 
-            const mat = new THREE.MeshBasicMaterial({ color: isPlayer ? 0xffffff : 0xaaaaaa }); 
+            const def = SHIP_TYPES[s];
+
+            // Płaski quad leżący w płaszczyźnie XZ (rotateX -90) - sprite widoczny z góry.
+            // Obraz: +X = długość/dziób, +Y(obrazu) -> -Z świata. Orientacja przez ship.rotation.y.
+            const geom = new THREE.PlaneGeometry(1, 1);
+            geom.rotateX(-Math.PI / 2);
+            const mat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, depthTest: false });
             const ship = new THREE.Mesh(geom, mat);
-            
+            ship.renderOrder = isPlayer ? 3 : 2; // statki nad mgłą (mgła ma renderOrder -1)
+            ship.userData.aspect = 1.6; // domyślny aspect zanim załaduje się tekstura
+
+            // Ładowanie prawdziwego sprite'a z gry; po wczytaniu zapamiętujemy proporcje obrazka.
+            texLoader.load(def.sprite, (tex) => {
+                if ('colorSpace' in tex && THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+                else if ('encoding' in tex && THREE.sRGBEncoding) tex.encoding = THREE.sRGBEncoding;
+                tex.minFilter = THREE.LinearFilter;
+                tex.magFilter = THREE.LinearFilter;
+                mat.map = tex;
+                mat.needsUpdate = true;
+                if (tex.image && tex.image.width && tex.image.height) {
+                    ship.userData.aspect = tex.image.width / tex.image.height;
+                }
+            });
+
             if (!isPlayer) {
                 ship.position.set((Math.random() - 0.5) * 16, 0, (Math.random() - 0.5) * 16);
             }
-            
+
             scene.add(ship);
             ships.push(ship);
-            
+
             shipPositions.push(ship.position);
             trailMins.push(new THREE.Vector3());
             trailMaxs.push(new THREE.Vector3());
 
             for(let i = 0; i < NUM_TRAILS_PER_SHIP; i++) {
-                trailData.push(new THREE.Vector4(ship.position.x, -999, ship.position.z, 0)); 
+                trailData.push(new THREE.Vector4(ship.position.x, -999, ship.position.z, 0));
             }
         }
+
+        // Ekspozycja do tuningu/debugu z konsoli (klasyczny skrypt nie wystawia const na window).
+        window.ships = ships;
+        window.SHIP_TYPES = SHIP_TYPES;
+        window.shipRadii = shipRadii;
+        window.shipColors = shipColors;
 
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
@@ -167,12 +234,24 @@
                 u_shipPos: { value: shipPositions },
                 u_shipColors: { value: shipColors },
                 u_shipActivity: { value: shipActivity },
+                u_shipDir: { value: shipDirs },
+                u_shipRadius: { value: shipRadii },
                 u_trails: { value: trailData },
                 u_trailMin: { value: trailMins },
                 u_trailMax: { value: trailMaxs },
                 u_cloudRadius: { value: cloudConfig.cloudRadius },
                 u_renderRadius: { value: cloudConfig.renderRadius },
-                u_stationarySuppress: { value: cloudConfig.stationarySuppress }
+                u_stationarySuppress: { value: cloudConfig.stationarySuppress },
+                // Światła
+                u_ambientColor: { value: new THREE.Vector3().fromArray(cloudConfig.ambientColor) },
+                u_cloudAlbedo: { value: new THREE.Vector3().fromArray(cloudConfig.cloudAlbedo) },
+                u_ambientStrength: { value: cloudConfig.ambientStrength },
+                u_lightOmni: { value: cloudConfig.lightOmni },
+                u_lightFalloff: { value: cloudConfig.lightFalloff },
+                u_lightSpot: { value: cloudConfig.lightSpot },
+                u_coneFalloff: { value: cloudConfig.coneFalloff },
+                u_coneInner: { value: cloudConfig.coneInner },
+                u_coneOuter: { value: cloudConfig.coneOuter }
             },
             vertexShader: `
                 varying vec2 vUv;
@@ -190,12 +269,23 @@
                 uniform vec3 u_shipPos[${MAX_SHIPS}];
                 uniform vec3 u_shipColors[${MAX_SHIPS}];
                 uniform float u_shipActivity[${MAX_SHIPS}];
+                uniform vec3 u_shipDir[${MAX_SHIPS}];
+                uniform float u_shipRadius[${MAX_SHIPS}];
                 uniform vec4 u_trails[${TOTAL_TRAILS}];
                 uniform vec3 u_trailMin[${MAX_SHIPS}];
                 uniform vec3 u_trailMax[${MAX_SHIPS}];
                 uniform float u_cloudRadius;
                 uniform float u_renderRadius;
                 uniform float u_stationarySuppress;
+                uniform vec3 u_ambientColor;
+                uniform vec3 u_cloudAlbedo;
+                uniform float u_ambientStrength;
+                uniform float u_lightOmni;
+                uniform float u_lightFalloff;
+                uniform float u_lightSpot;
+                uniform float u_coneFalloff;
+                uniform float u_coneInner;
+                uniform float u_coneOuter;
 
                 varying vec2 vUv;
 
@@ -251,17 +341,18 @@
 
                         if (inBounds) {
                             float activity = u_shipActivity[s];
+                            float r = u_shipRadius[s]; // promień statku (sim) - skaluje cały wake/falę
 
                             // EFEKT FALI DZIOBOWEJ (Bow Shock):
                             // Statek w swoim otoczeniu sztucznie rozszerza granice chmury na zewnątrz.
-                            // Skalowane przez activity - gdy statek stoi, fala znika i chmura wraca.
+                            // Reach i siła skalowane rozmiarem statku; activity wygasza gdy stoi.
                             float distToShip = length(p - u_shipPos[s]);
-                            bowShock += smoothstep(3.5, 0.0, distToShip) * 2.2 * activity;
+                            bowShock += smoothstep(r * 3.0 + 1.0, 0.0, distToShip) * (1.4 * r + 0.3) * activity;
 
                             if (runMode == 0) {
                                 vec3 diffShip = p - u_shipPos[s];
                                 diffShip.y = min(0.0, diffShip.y);
-                                float shipSDF = length(diffShip) - 0.8;
+                                float shipSDF = length(diffShip) - r;
 
                                 int offset = s * ${NUM_TRAILS_PER_SHIP};
                                 
@@ -283,12 +374,13 @@
                                     
                                     float age = mix(ageA, ageB, h);
                                     
-                                    float baseErosion = 0.4 * healingNoise;
-                                    float healingErosion = smoothstep(1.0, 0.0, age) * healingNoise * 1.5;
+                                    float erosionScale = r / 0.8; // proporcja erozji do promienia (0.8 = bazowy)
+                                    float baseErosion = 0.4 * healingNoise * erosionScale;
+                                    float healingErosion = smoothstep(1.0, 0.0, age) * healingNoise * 1.5 * erosionScale;
                                     float erosion = baseErosion + healingErosion;
-                                    
-                                    float radius = 0.8 * smoothstep(-0.2, 0.8, age);
-                                    
+
+                                    float radius = r * smoothstep(-0.2, 0.8, age);
+
                                     shipSDF = min(shipSDF, d - radius + erosion);
                                 }
                                 
@@ -346,9 +438,7 @@
                     vec3 rayPos = u_cameraPos;
 
                     vec3 bgColor = vec3(0.02, 0.03, 0.08) + starfield(rayDir);
-                    vec3 lightDir = normalize(vec3(0.8, 0.5, 0.3)); 
-                    vec3 nebulaColor1 = vec3(0.6, 0.2, 0.8); 
-                    vec3 nebulaColor2 = vec3(0.2, 0.6, 0.9); 
+                    vec3 lightDir = normalize(vec3(0.8, 0.5, 0.3)); // kierunek "nieba" do samocieniowania (głębia)
 
                     vec4 color = vec4(0.0);
 
@@ -402,16 +492,34 @@
                                     }
                                     float transmittance = exp(-lightDensity * 0.4);
 
-                                    vec3 totalShipGlowColor = vec3(0.0);
+                                    // === ŚWIATŁA ===
+                                    // Każdy statek to kolorowe źródło: omni (blask kadłuba/silnika)
+                                    // + stożek reflektora w kierunku ruchu. Liczone tylko w gazie
+                                    // (próbka ma density>0), więc światło "koloruje chmurę" tam gdzie pada.
+                                    vec3 lightAccum = vec3(0.0);
                                     for(int s = 0; s < ${MAX_SHIPS}; s++) {
-                                        float distToShip = length(p - u_shipPos[s]);
-                                        float glow = exp(-distToShip * 0.8) * 5.0;
-                                        totalShipGlowColor += u_shipColors[s] * glow;
+                                        vec3 toShip = u_shipPos[s] - p;
+                                        float dist = length(toShip);
+                                        vec3 L = toShip / max(dist, 0.0001);
+
+                                        // Większy statek = światło sięga dalej (skala rozmiarem)
+                                        float sizeF = 0.5 + u_shipRadius[s];
+
+                                        // Omni: punktowy blask gasnący z odległością
+                                        float omni = exp(-dist * u_lightFalloff / sizeF) * u_lightOmni;
+
+                                        // Stożek reflektora: jasny tam, gdzie próbka leży przed statkiem
+                                        float coneDot = dot(-L, u_shipDir[s]); // 1 = dokładnie na wprost
+                                        float cone = smoothstep(u_coneOuter, u_coneInner, coneDot);
+                                        float spot = cone * exp(-dist * u_coneFalloff / sizeF) * u_lightSpot;
+
+                                        lightAccum += u_shipColors[s] * (omni + spot);
                                     }
 
-                                    vec3 localBase = mix(nebulaColor1, nebulaColor2, (p.y + p.x) * 0.2 + 0.5);
-                                    vec3 localColor = localBase * (0.2 + transmittance * 1.2);
-                                    localColor += totalShipGlowColor;
+                                    // Neutralna baza: albedo chmury oświetlone "niebem" (ambient).
+                                    // Bez świateł chmura jest stonowana/szara; kolor dodają reflektory.
+                                    vec3 ambient = u_ambientColor * u_ambientStrength * (0.4 + transmittance * 1.1);
+                                    vec3 localColor = u_cloudAlbedo * ambient + lightAccum;
 
                                     float alpha = (1.0 - exp(-density * stepSize * 3.5));
                                     color += vec4(localColor * alpha, alpha) * (1.0 - color.a);
@@ -469,11 +577,12 @@
                     }
 
                     if (playerVelocity.lengthSq() > 0.001) {
-                        ships[0].lookAt(ships[0].position.clone().add(playerVelocity));
+                        // Reflektor i dziób podążają za kierunkiem ruchu; gdy stoi, trzymają ostatni kierunek.
+                        shipDirs[0].copy(playerVelocity).normalize();
                     }
                 } else {
                     ships[s].position.addScaledVector(aiDirs[s], aiSpeeds[s] * dt);
-                    ships[s].lookAt(ships[s].position.clone().add(aiDirs[s]));
+                    shipDirs[s].copy(aiDirs[s]).normalize();
                     actualSpeed = aiSpeeds[s];
 
                     let wrapped = false;
@@ -499,9 +608,21 @@
                 }
             }
 
+            // Rozmiar 1:1 z grą + orientacja sprite'ów. Liczone co klatkę, więc gameUnitsPerSimUnit
+            // jest tunowalne live. simLen = długość gry / przelicznik. Sprite'y są szersze niż wyższe,
+            // więc długość = oś X (scale.x), a scale.z = simLen/aspect. Dziób (+X) celuje wzdłuż shipDir.
+            for (let s = 0; s < MAX_SHIPS; s++) {
+                const simLen = SHIP_TYPES[s].length / cloudConfig.gameUnitsPerSimUnit;
+                const aspect = ships[s].userData.aspect || 1.6;
+                ships[s].scale.set(simLen, 1, simLen / aspect);
+                ships[s].rotation.set(0, Math.atan2(-shipDirs[s].z, shipDirs[s].x), 0);
+                // promień żłobienia/światła ~ pół długości statku (skalowane shipCarveFactor)
+                shipRadii[s] = simLen * cloudConfig.shipCarveFactor;
+            }
+
             for (let s = 0; s < MAX_SHIPS; s++) {
                 let offset = s * NUM_TRAILS_PER_SHIP;
-                
+
                 // Wiek głowy = activity. Gdy statek stoi, segment "tu i teraz" też gaśnie.
                 trailData[offset].set(ships[s].position.x, ships[s].position.y, ships[s].position.z, shipActivity[s]);
 
@@ -528,8 +649,10 @@
                         trailMaxs[s].max(tempVec);
                     }
                 }
-                trailMins[s].subScalar(3.5);
-                trailMaxs[s].addScalar(3.5);
+                // Padding bounding-boxa musi pokryć zasięg fali dziobowej (r*3+1) większych statków.
+                const pad = Math.max(3.5, shipRadii[s] * 3.0 + 1.5);
+                trailMins[s].subScalar(pad);
+                trailMaxs[s].addScalar(pad);
             }
 
             controls.update();
@@ -546,8 +669,21 @@
             shaderMaterial.uniforms.u_cloudRadius.value = cloudConfig.cloudRadius;
             shaderMaterial.uniforms.u_renderRadius.value = cloudConfig.renderRadius;
             shaderMaterial.uniforms.u_stationarySuppress.value = cloudConfig.stationarySuppress;
-            
+
+            // Światła (tunowalne live z konsoli przez cloudConfig)
+            shaderMaterial.uniforms.u_ambientColor.value.fromArray(cloudConfig.ambientColor);
+            shaderMaterial.uniforms.u_cloudAlbedo.value.fromArray(cloudConfig.cloudAlbedo);
+            shaderMaterial.uniforms.u_ambientStrength.value = cloudConfig.ambientStrength;
+            shaderMaterial.uniforms.u_lightOmni.value = cloudConfig.lightOmni;
+            shaderMaterial.uniforms.u_lightFalloff.value = cloudConfig.lightFalloff;
+            shaderMaterial.uniforms.u_lightSpot.value = cloudConfig.lightSpot;
+            shaderMaterial.uniforms.u_coneFalloff.value = cloudConfig.coneFalloff;
+            shaderMaterial.uniforms.u_coneInner.value = cloudConfig.coneInner;
+            shaderMaterial.uniforms.u_coneOuter.value = cloudConfig.coneOuter;
+
             shaderMaterial.uniforms.u_shipPos.value = shipPositions;
+            shaderMaterial.uniforms.u_shipDir.value = shipDirs;
+            shaderMaterial.uniforms.u_shipRadius.value = shipRadii;
             shaderMaterial.uniforms.u_trails.value = trailData;
             shaderMaterial.uniforms.u_trailMin.value = trailMins;
             shaderMaterial.uniforms.u_trailMax.value = trailMaxs;
