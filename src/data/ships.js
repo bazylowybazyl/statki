@@ -1,7 +1,18 @@
+export const SHIP_SENSOR_PROFILES = {
+  fighter_combat: { passiveRange: 8000, activeRange: 10000, lockRange: 8000, asteroidScanRange: 8000, scanWaveSpeed: 12000, role: 'combat' },
+  frigate_combat: { passiveRange: 18000, activeRange: 24000, lockRange: 20000, asteroidScanRange: 10000, scanWaveSpeed: 18000, role: 'combat' },
+  destroyer_combat: { passiveRange: 30000, activeRange: 38000, lockRange: 34000, asteroidScanRange: 12000, scanWaveSpeed: 26000, role: 'combat' },
+  battleship_combat: { passiveRange: 45000, activeRange: 55000, lockRange: 50000, asteroidScanRange: 14000, scanWaveSpeed: 36000, role: 'combat' },
+  capital_combat: { passiveRange: 60000, activeRange: 70000, lockRange: 62000, asteroidScanRange: 16000, scanWaveSpeed: 46000, role: 'combat' },
+  atlas_combat: { passiveRange: 80000, activeRange: 90000, lockRange: 75000, asteroidScanRange: 18000, scanWaveSpeed: 60000, role: 'combat' },
+  frigate_radar: { passiveRange: 42000, activeRange: 52000, lockRange: 28000, asteroidScanRange: 18000, scanWaveSpeed: 34000, role: 'radar' }
+};
+
 export const SHIPS = {
   atlas: {
     id: 'atlas',
     name: 'Atlas-class',
+    sensors: { ...SHIP_SENSOR_PROFILES.atlas_combat },
     spec: { main: 24, missile: 8, aux: 8, hangar: 4, special: 1 },
     hardpointLayout: {
       type: 'atlas_broadside',
@@ -18,6 +29,7 @@ export const SHIPS = {
   corvus: {
     id: 'corvus',
     name: 'Corvus-class',
+    sensors: { ...SHIP_SENSOR_PROFILES.frigate_radar },
     spec: { main: 2, missile: 12, aux: 4, hangar: 2, special: 1 },
     hardpointLayout: {
       type: 'lines',
@@ -35,6 +47,7 @@ export const SHIPS = {
   terran_frigate: {
     id: 'terran_frigate',
     name: 'Terranova Frigate',
+    sensors: { ...SHIP_SENSOR_PROFILES.frigate_combat },
     spec: { main: 4, missile: 2, aux: 2, hangar: 1, special: 1 },
     hardpointLayout: {
       type: 'lines',
@@ -51,6 +64,7 @@ export const SHIPS = {
   terran_destroyer: {
     id: 'terran_destroyer',
     name: 'Terranova Destroyer',
+    sensors: { ...SHIP_SENSOR_PROFILES.destroyer_combat },
     spec: { main: 10, missile: 4, aux: 4, hangar: 1, special: 1 },
     hardpointLayout: {
       type: 'lines',
@@ -69,6 +83,7 @@ export const SHIPS = {
   terran_battleship: {
     id: 'terran_battleship',
     name: 'Terranova Battleship',
+    sensors: { ...SHIP_SENSOR_PROFILES.battleship_combat },
     spec: { main: 12, missile: 6, aux: 6, hangar: 2, special: 1 },
     hardpointLayout: {
       type: 'lines',
@@ -88,6 +103,7 @@ export const SHIPS = {
 
 const DEFAULT_RENDER_ASPECT = 1.6;
 const MIN_RENDER_SIZE = 64;
+export const HULL_RENDER_WORLD_SCALE = 0.6;
 
 export const HULL_RENDER_PROFILES = {
   atlas: { id: 'atlas', length: 3000, radius: 500 },
@@ -123,7 +139,8 @@ export function getHullRenderProfile(hullId) {
 
 export function getHullRenderSize(hullId, sourceWidth = 0, sourceHeight = 0) {
   const profile = getHullRenderProfile(hullId);
-  const targetLength = Math.max(MIN_RENDER_SIZE, Number(profile?.length) || 0 || MIN_RENDER_SIZE);
+  const baseLength = Math.max(MIN_RENDER_SIZE, Number(profile?.length) || 0 || MIN_RENDER_SIZE);
+  const targetLength = Math.max(MIN_RENDER_SIZE, Math.round(baseLength * HULL_RENDER_WORLD_SCALE));
   const srcW = Math.max(0, Number(sourceWidth) || 0);
   const srcH = Math.max(0, Number(sourceHeight) || 0);
 
@@ -143,7 +160,7 @@ export function getHullRenderSize(hullId, sourceWidth = 0, sourceHeight = 0) {
   return {
     id: profile.id,
     length: targetLength,
-    radius: Math.max(20, Number(profile?.radius) || 20),
+    radius: Math.max(20, Math.round((Number(profile?.radius) || 20) * HULL_RENDER_WORLD_SCALE)),
     w: Math.max(MIN_RENDER_SIZE, Math.round(width)),
     h: Math.max(MIN_RENDER_SIZE, Math.round(height))
   };
@@ -153,6 +170,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
   fighter: {
     color: '#7cff91',
     count: 9,
+    sensors: { ...SHIP_SENSOR_PROFILES.fighter_combat },
     stats: {
       hp: 120,
       accel: 350,
@@ -166,6 +184,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
     configureId: 'fighter'
   },
   interceptor: {
+    sensors: { ...SHIP_SENSOR_PROFILES.fighter_combat },
     stats: {
       hp: 80,
       accel: 350,
@@ -179,6 +198,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
   },
   frigate_pd: {
     shield: { max: 650, val: 650, regenRate: 130, regenDelay: 3.6, impacts: [], state: 'activating' },
+    sensors: { ...SHIP_SENSOR_PROFILES.frigate_combat },
     stats: {
       hp: 1200,
       accel: 200,
@@ -194,6 +214,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
   },
   frigate_laser: {
     shield: { max: 900, val: 900, regenRate: 140, regenDelay: 3.8, impacts: [], state: 'activating' },
+    sensors: { ...SHIP_SENSOR_PROFILES.frigate_combat },
     stats: {
       hp: 1800,
       accel: 150,
@@ -209,6 +230,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
   },
   destroyer: {
     shield: { max: 2200, val: 2200, regenRate: 200, regenDelay: 4.5, impacts: [], state: 'activating' },
+    sensors: { ...SHIP_SENSOR_PROFILES.destroyer_combat },
     stats: {
       hp: 4200,
       accel: 140,
@@ -224,6 +246,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
   },
   battleship: {
     shield: { max: 7200, val: 7200, regenRate: 320, regenDelay: 5.2, impacts: [], state: 'activating' },
+    sensors: { ...SHIP_SENSOR_PROFILES.battleship_combat },
     stats: {
       hp: 12000,
       accel: 91,
@@ -239,6 +262,7 @@ export const SUPPORT_SHIP_TEMPLATES = {
   },
   pirate_battleship: {
     shield: { max: 7200, val: 7200, regenRate: 320, regenDelay: 5.2, impacts: [], state: 'activating' },
+    sensors: { ...SHIP_SENSOR_PROFILES.battleship_combat },
     stats: {
       hp: 12000,
       accel: 91,
@@ -260,6 +284,7 @@ export const CAPITAL_SHIP_TEMPLATES = {
   carrier: {
     id: 'capital_carrier',
     displayName: 'CSV Aegis',
+    sensors: { ...SHIP_SENSOR_PROFILES.capital_combat },
     roleText: 'Carrier · Capital',
     hull: 42000,
     mass: 100000,
@@ -310,6 +335,7 @@ export const CAPITAL_SHIP_TEMPLATES = {
   supercapital: {
     id: 'supercapital',
     displayName: 'Atlas II',
+    sensors: { ...SHIP_SENSOR_PROFILES.atlas_combat },
     roleText: 'Supercapital',
     hull: 85000,
     mass: 200000,

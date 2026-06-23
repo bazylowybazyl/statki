@@ -10,6 +10,7 @@ import {
   computeShipThrusterForces as computeFlightThrusterForces,
   updateShipThrusterState as updateFlightThrusterState
 } from './flight/thrusterModel.js';
+import { CAPITAL_SHIP_TEMPLATES } from '../data/ships.js';
 
 export { SHIP_PHYSICS };
 
@@ -41,6 +42,10 @@ const DEFAULT_ENGINE_VFX = {
     { offset: { x: 348, y: 384 }, forward: { x: 0, y: -1 }, side: 'right', mount: 'upper_right', baseDeg: 0, nozzleDeg: 0, gimbalMinDeg: -90, gimbalMaxDeg: 90, yNudge: 0, vfxWidthMin: 25, vfxWidthMax: 227, vfxLengthMin: 49, vfxLengthMax: 354 }
   ]
 };
+
+function cloneSensorProfile(profile) {
+  return profile ? { ...profile } : undefined;
+}
 
 
 export function composeShipThrusterCommand(ship, assist = null) {
@@ -183,7 +188,8 @@ export function createShipEntity(options = {}) {
     input: { thrustX: 0, thrustY: 0, aimX: 0, aimY: 0 },
     thrusterInput: { main: 0, leftSide: 0, rightSide: 0, retro: 0, torque: 0 },
     controller: 'player',
-    aiController: null
+    aiController: null,
+    sensors: cloneSensorProfile(CAPITAL_SHIP_TEMPLATES.supercapital?.sensors)
   };
 
   if (overrides) {

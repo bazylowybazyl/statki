@@ -22,8 +22,13 @@ export function clampTurnVec(vx, vy, wantVx, wantVy, dt, maxDeg, out = _clampTur
 
 const _leadAimOut = { x: 0, y: 0 };
 export function getLeadAim(shooter, target, projSpeed, out = _leadAimOut) {
-  const targetX = target.pos ? target.pos.x : target.x;
-  const targetY = target.pos ? target.pos.y : target.y;
+  const helperWindow = typeof window !== 'undefined' ? window : null;
+  const targetX = typeof helperWindow?.getTargetX === 'function'
+    ? helperWindow.getTargetX(target)
+    : (target?.pos ? target.pos.x : (target?.worldX ?? target?.x));
+  const targetY = typeof helperWindow?.getTargetY === 'function'
+    ? helperWindow.getTargetY(target)
+    : (target?.pos ? target.pos.y : (target?.worldY ?? target?.y));
   // ?? only catches null/undefined, NOT NaN — guard explicitly
   let vx = target.vx ?? target.vel?.x ?? 0;
   let vy = target.vy ?? target.vel?.y ?? 0;

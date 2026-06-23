@@ -91,12 +91,12 @@ const RING_SEGMENT_MASS = 2500000;
 // ============================================================
 const RING_LAYOUT = Object.freeze({
   station:    { innerMul: 0.0, outerMul: 1.0 },  // central station + infra
-  gapInner:   { innerMul: 1.0, outerMul: 1.2 },  // buffer before inner ring
-  inner:      { innerMul: 1.2, outerMul: 1.8 },  // residential + commercial
-  gapSmall:   { innerMul: 1.8, outerMul: 1.9 },  // thin visual gap
-  industrial: { innerMul: 1.9, outerMul: 2.4 },  // industrial zones
-  gapParking: { innerMul: 2.4, outerMul: 3.3 },  // ship parking (~0.9R)
-  military:   { innerMul: 3.3, outerMul: 3.8 }   // military zones (outer)
+  gapInner:   { innerMul: 1.0, outerMul: 1.15 }, // buffer before inner ring
+  inner:      { innerMul: 1.15, outerMul: 1.55 }, // residential + commercial
+  gapSmall:   { innerMul: 1.55, outerMul: 1.62 }, // thin visual gap
+  industrial: { innerMul: 1.62, outerMul: 1.95 }, // industrial zones
+  gapParking: { innerMul: 1.95, outerMul: 2.55 }, // ship parking
+  military:   { innerMul: 2.55, outerMul: 2.95 }  // military zones (outer)
 });
 
 const RING_SEGMENT_BANDS = Object.freeze(['inner', 'industrial', 'military']);
@@ -120,7 +120,7 @@ const COLLISION_FLOOR_LAYOUT = Object.freeze((() => {
   };
 })());
 
-function computeRingLayout(planetR) {
+export function computePlanetaryRingLayout(planetR) {
   const R = Math.max(2000, planetR || 2800);
   const band = (cfg) => ({ innerR: R * cfg.innerMul, outerR: R * cfg.outerMul });
   return {
@@ -1081,7 +1081,7 @@ class PlanetaryRing {
   constructor(planet, key) {
     this.key = key;
     // NEW: compute multi-ring layout (3 narrower rings with gaps)
-    this.layout = computeRingLayout(Number(planet?.r) || 2800);
+    this.layout = computePlanetaryRingLayout(Number(planet?.r) || 2800);
     this.buildableLayout = createBuildableRingLayout(this.layout);
     // Outer radius of the whole populated city ring.
     this.ringRadius = this.layout.outerRadius;

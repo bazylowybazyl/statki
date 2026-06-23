@@ -11,6 +11,29 @@ const _muzzleScratch = {
   emitterUid: ''
 };
 
+function targetIsAlive(target) {
+  if (typeof window !== 'undefined' && typeof window.isTargetAlive === 'function') return window.isTargetAlive(target);
+  return !!(target && !target.dead && !target.destroyed && !target.removed);
+}
+
+function targetIsLockable(target) {
+  if (typeof window !== 'undefined' && typeof window.isLockableTarget === 'function') return window.isLockableTarget(target);
+  if (typeof window !== 'undefined' && typeof window.isHostileNpc === 'function') return window.isHostileNpc(target);
+  return targetIsAlive(target);
+}
+
+function targetX(target) {
+  if (typeof window !== 'undefined' && typeof window.getTargetX === 'function') return window.getTargetX(target);
+  if (Number.isFinite(Number(target?.pos?.x))) return Number(target.pos.x);
+  return Number(target?.worldX ?? target?.x) || 0;
+}
+
+function targetY(target) {
+  if (typeof window !== 'undefined' && typeof window.getTargetY === 'function') return window.getTargetY(target);
+  if (Number.isFinite(Number(target?.pos?.y))) return Number(target.pos.y);
+  return Number(target?.worldY ?? target?.y) || 0;
+}
+
 export class WeaponController {
   constructor({ ship, getMouseRef, getLockedTarget, setLockedTarget, getLockedTargets, owner, screenToWorldFn }) {
     this.ship = ship;
@@ -155,7 +178,8 @@ export class WeaponController {
         let validTargets = [];
         for(let j=0; j<this.lockedTargets.length; j++) {
            const ltar = this.lockedTargets[j];
-           if (Math.hypot(ltar.x - ship.pos.x, ltar.y - ship.pos.y) <= actualRng) validTargets.push(ltar);
+           if (!targetIsLockable(ltar)) continue;
+           if (Math.hypot(targetX(ltar) - ship.pos.x, targetY(ltar) - ship.pos.y) <= actualRng) validTargets.push(ltar);
         }
         if (validTargets.length > 0) {
             targetToPass = validTargets[Math.floor(Math.random() * validTargets.length)];
@@ -210,7 +234,7 @@ export class WeaponController {
     if (!loadout) return;
 
     const ship = this.ship;
-    const target = (this.lockedTarget && !this.lockedTarget.dead) ? this.lockedTarget : null;
+    const target = targetIsLockable(this.lockedTarget) ? this.lockedTarget : null;
     const weapon = loadout?.weapon;
     const hp = loadout?.hp;
     if (!weapon || !hp) return false;
@@ -236,7 +260,7 @@ export class WeaponController {
     const ship = this.ship;
     let fired = false;
 
-    const target = (this.lockedTarget && !this.lockedTarget.dead) ? this.lockedTarget : null;
+    const target = targetIsLockable(this.lockedTarget) ? this.lockedTarget : null;
     const mouseRef = this.getMouseRef();
     const mouseWorld = this.screenToWorldFn(mouseRef.x, mouseRef.y);
     const c = Math.cos(ship.angle);
@@ -383,15 +407,14 @@ export class WeaponController {
     }
 
     // Validate locked targets
-    const isHostile = window.isHostileNpc || (() => true);
     const lt = this.lockedTarget;
-    if (lt && (!isHostile(lt) || lt.dead)) this.lockedTarget = null;
+    if (lt && !targetIsLockable(lt)) this.lockedTarget = null;
     
     // OPTYMALIZACJA: In-place filtering dla locked targets (bez alokacji)
     let validCount = 0;
     for (let i = 0; i < this._lockedTargets.length; i++) {
         const t = this._lockedTargets[i];
-        if (isHostile(t) && !t.dead) {
+        if (targetIsLockable(t)) {
             this._lockedTargets[validCount++] = t;
         }
     }
@@ -410,7 +433,8 @@ export class WeaponController {
     }
     const ship = this.ship;
     for (const t of this.lockedTargets) {
-        if (Math.hypot(t.x - ship.pos.x, t.y - ship.pos.y) <= maxRng) return true;
+        if (!targetIsLockable(t)) continue;
+        if (Math.hypot(targetX(t) - ship.pos.x, targetY(t) - ship.pos.y) <= maxRng) return true;
     }
     return false;
   }

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Core3D } from './core3d.js';
 import {
     STAR_PARALLAX_LAYERS,
+    computeStarParallaxFactor,
     pickStarParallaxLayer
 } from './starParallax.js';
 
@@ -285,7 +286,7 @@ const StarSystem = {
             const layer = pickStarParallaxLayer(Math.random());
             positions[i * 3] = (Math.random() - 0.5) * this.worldScale; positions[i * 3 + 1] = (Math.random() - 0.5) * this.worldScale; positions[i * 3 + 2] = 0;
             sizes[i] = 0.75 + Math.pow(Math.random(), 3.0) * 3.2; brights[i] = 0.34 + Math.random() * 0.56;
-            parallaxFactors[i] = layer.parallax;
+            parallaxFactors[i] = computeStarParallaxFactor(layer, Math.random());
             layerSizeMuls[i] = layer.sizeMul;
             layerBrightnessMuls[i] = layer.brightnessMul;
             layerStretchMuls[i] = layer.stretchMul;
