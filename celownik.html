@@ -1,0 +1,1293 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CELOWNIK — System Namierzania Celów</title>
+<style>
+  :root{
+    --bg:#04060c;
+    --grid:#0d2436;
+    --cyan:#34e7ff;
+    --cyan-dim:#1a6b7a;
+    --amber:#ffb648;
+    --red:#ff4d5e;
+    --green:#52ff9a;
+    --ally:#8fd6ff;
+    --txt:#bfe9f5;
+    --panel:rgba(6,16,26,0.78);
+    --panel-bd:rgba(52,231,255,0.35);
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);}
+  body{
+    font-family:"Consolas","Segoe UI",monospace;
+    color:var(--txt);
+    cursor:none;
+    user-select:none;
+  }
+  #game{display:block;position:absolute;inset:0;}
+
+  /* ---- HUD ---- */
+  .hud{position:absolute;pointer-events:none;text-shadow:0 0 6px rgba(52,231,255,.4);}
+
+  #topbar{top:14px;left:14px;font-size:12px;line-height:1.5;
+    background:var(--panel);border:1px solid var(--panel-bd);
+    border-radius:6px;padding:10px 14px;max-width:340px;
+    box-shadow:0 0 24px rgba(0,0,0,.5), inset 0 0 30px rgba(52,231,255,.04);}
+  #topbar b{color:var(--cyan);}
+  #topbar .mode{color:var(--amber);font-weight:bold;letter-spacing:1px;}
+  #topbar .hint{color:#5e8aa0;font-size:11px;margin-top:6px;display:block;}
+  kbd{background:rgba(52,231,255,.12);border:1px solid var(--cyan-dim);
+    border-radius:3px;padding:0 5px;color:var(--cyan);font-size:11px;}
+
+  /* weapon bank */
+  #weapons{bottom:18px;left:50%;transform:translateX(-50%);
+    display:flex;gap:12px;}
+  .wbank{width:118px;background:var(--panel);border:1px solid var(--panel-bd);
+    border-radius:6px;padding:8px 10px;font-size:11px;position:relative;overflow:hidden;}
+  .wbank .key{position:absolute;top:6px;right:8px;color:var(--cyan);font-weight:bold;font-size:13px;}
+  .wbank .nm{color:#dff4fb;font-weight:bold;font-size:12px;}
+  .wbank .ds{color:#5e8aa0;font-size:10px;margin-top:2px;}
+  .wbank .cd{height:4px;background:rgba(52,231,255,.12);border-radius:3px;margin-top:7px;overflow:hidden;}
+  .wbank .cd i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),#7af9ff);width:100%;}
+  .wbank.firing{box-shadow:0 0 18px rgba(52,231,255,.5);border-color:var(--cyan);}
+  .wbank.empty .nm{color:#506b78;}
+
+  /* locked-targets panel */
+  #targets{top:14px;right:14px;width:270px;display:flex;flex-direction:column;gap:8px;align-items:flex-end;}
+  .tcard{width:100%;background:var(--panel);border:1px solid var(--panel-bd);
+    border-radius:6px;padding:8px 10px;font-size:11px;animation:slidein .18s ease;}
+  .tcard.primary{border-color:var(--red);box-shadow:0 0 16px rgba(255,77,94,.28);}
+  .tcard .hd{display:flex;justify-content:space-between;align-items:baseline;}
+  .tcard .nm{color:#fff;font-weight:bold;font-size:12px;}
+  .tcard .cl{color:var(--red);font-size:10px;letter-spacing:.5px;}
+  .tcard .dist{color:#5e8aa0;font-size:10px;}
+  .bar{height:5px;border-radius:3px;background:rgba(255,255,255,.08);margin-top:5px;overflow:hidden;position:relative;}
+  .bar i{display:block;height:100%;transition:width .12s linear;}
+  .bar.sh i{background:linear-gradient(90deg,#2a9bff,#7ad0ff);}
+  .bar.hp i{background:linear-gradient(90deg,#ff5a5a,#ffb648);}
+  .tcard .sub{margin-top:6px;font-size:10px;color:#7fb6c9;border-top:1px solid rgba(52,231,255,.12);padding-top:5px;}
+  .tcard .sub b{color:var(--red);}
+  #grpcount{font-size:10px;color:var(--cyan);background:var(--panel);
+    border:1px solid var(--panel-bd);border-radius:6px;padding:4px 9px;}
+  @keyframes slidein{from{opacity:0;transform:translateX(14px);}to{opacity:1;transform:none;}}
+
+  #help{position:absolute;bottom:18px;right:18px;font-size:10px;color:#456;
+    text-align:right;line-height:1.6;pointer-events:none;}
+  #help b{color:#5e8aa0;}
+
+  #intro{position:absolute;inset:0;background:rgba(2,6,12,.82);
+    display:flex;align-items:center;justify-content:center;flex-direction:column;
+    z-index:50;cursor:none;transition:opacity .5s;}
+  #intro h1{color:var(--cyan);font-size:32px;letter-spacing:8px;
+    text-shadow:0 0 24px rgba(52,231,255,.6);}
+  #intro .sub{color:var(--amber);letter-spacing:3px;margin-top:4px;font-size:13px;}
+  #intro .lst{margin-top:24px;font-size:13px;line-height:1.9;color:var(--txt);max-width:520px;}
+  #intro .go{margin-top:26px;color:#fff;font-size:14px;animation:blink 1.1s infinite;}
+  @keyframes blink{50%{opacity:.25;}}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="topbar" class="hud">
+  TRYB NAMIERZANIA: <span class="mode" id="modeName">POJEDYNCZY</span>
+  <span class="hint">
+    <kbd>ŚPM</kbd> koło trybów &nbsp; <kbd>LPM</kbd> zatwierdź LOCK &nbsp; <kbd>WASD</kbd> lot<br>
+    <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> broń &nbsp; <kbd>Q</kbd> tryb &nbsp; <kbd>C</kbd> wyczyść &nbsp; <kbd>M</kbd> dźwięk
+  </span>
+</div>
+
+<div id="targets" class="hud"></div>
+
+<div id="weapons" class="hud"></div>
+
+<div id="help" class="hud">
+  <b>GRUPA:</b> najedź na skupisko → klamry <b>{ }</b> obejmą cele<br>
+  <b>SUB:</b> celuj w moduł dużej jednostki<br>
+  <b>LPM</b> zatwierdza namierzanie · cele odnawiają się
+</div>
+
+<div id="intro">
+  <h1>CELOWNIK</h1>
+  <div class="sub">FLEET COMBAT · TARGETING SYSTEM</div>
+  <div class="lst">
+    ▸ <b style="color:var(--cyan)">WASD</b> — sterowanie statkiem &nbsp;·&nbsp; <b style="color:var(--cyan)">MYSZ</b> — celownik / kierunek ognia<br>
+    ▸ <b style="color:var(--cyan)">LPM</b> — zatwierdź namierzanie (LOCK); w trybie GRUPA klamry <b>{ }</b> obejmują skupisko<br>
+    ▸ <b style="color:var(--cyan)">ŚPM</b> — otwórz koło wyboru trybu: POJEDYNCZY / GRUPA / SUBSYSTEMY<br>
+    ▸ <b style="color:var(--cyan)">1 2 3 4</b> — ostrzał namierzonych celów<br>
+    ▸ klasy wrogów: myśliwce · fregaty · krążowniki · battleshipy · capitale · super-capitale
+  </div>
+  <div class="go">— KLIKNIJ, ABY ROZPOCZĄĆ —</div>
+</div>
+
+<script>
+"use strict";
+/* =========================================================================
+   CELOWNIK — samodzielny prototyp systemu namierzania (top-down)
+   Canvas 2D, bez zależności.
+   ========================================================================= */
+
+const cv = document.getElementById('game');
+const ctx = cv.getContext('2d');
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = W*DPR; cv.height = H*DPR;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize',resize); resize();
+
+/* ---------------------------------------------------------------- helpers */
+const rand=(a,b)=>a+Math.random()*(b-a);
+const rint=(a,b)=>Math.floor(rand(a,b+1));
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const dist2=(x1,y1,x2,y2)=>{const dx=x2-x1,dy=y2-y1;return dx*dx+dy*dy;};
+const lerp=(a,b,t)=>a+(b-a)*t;
+const now=()=>performance.now()/1000;
+const TAU=Math.PI*2;
+
+/* ---------------------------------------------------------------- audio */
+let AC=null, muted=false, lastAcq=0;
+function initAudio(){ try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} }
+function blip(freq,dur,type,vol){
+  if(!AC||muted) return;
+  const t=AC.currentTime, o=AC.createOscillator(), g=AC.createGain();
+  o.type=type||'sine'; o.frequency.setValueAtTime(freq,t);
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(vol||0.05,t+0.006);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  o.connect(g).connect(AC.destination); o.start(t); o.stop(t+dur);
+}
+function sfxAcquire(){ const t=now(); if(t-lastAcq<0.05)return; lastAcq=t; blip(1080,0.05,'square',0.025); }
+function sfxLock(){ blip(520,0.05,'sawtooth',0.05); setTimeout(()=>blip(1040,0.08,'sawtooth',0.045),45); }
+
+/* ---------------------------------------------------------------- classes */
+// Definicje 6 klas jednostek floty
+const CLASSES = {
+  fighter:{
+    name:'Myśliwiec', tag:'FTR', r:7, hp:28, shield:0, speed:62,
+    color:'#ff9d6b', squad:[5,8], detRange:560, drift:1, sub:null
+  },
+  frigate:{
+    name:'Fregata', tag:'FRG', r:16, hp:160, shield:90, speed:30,
+    color:'#ff7d8a', squad:[1,2], detRange:720, drift:.6,
+    sub:[ {n:'Silniki',t:'eng',a:Math.PI,d:.85},{n:'Działa',t:'wpn',a:0,d:.7} ]
+  },
+  cruiser:{
+    name:'Krążownik', tag:'CRU', r:26, hp:420, shield:260, speed:20,
+    color:'#ff6f9e', squad:[1,1], detRange:880, drift:.45,
+    sub:[ {n:'Mostek',t:'cmd',a:-Math.PI/2,d:.5},{n:'Silniki',t:'eng',a:Math.PI,d:.85},
+          {n:'Wieża A',t:'wpn',a:-.5,d:.7},{n:'Wieża B',t:'wpn',a:.5,d:.7} ]
+  },
+  battleship:{
+    name:'Battleship', tag:'BB', r:40, hp:1100, shield:650, speed:13,
+    color:'#e06bff', squad:[1,1], detRange:1050, drift:.3,
+    sub:[ {n:'Mostek',t:'cmd',a:-Math.PI/2,d:.45},{n:'Gen. Tarcz',t:'shd',a:Math.PI/2,d:.5},
+          {n:'Silniki',t:'eng',a:Math.PI,d:.9},{n:'Bateria A',t:'wpn',a:-.4,d:.78},
+          {n:'Bateria B',t:'wpn',a:.4,d:.78} ]
+  },
+  capital:{
+    name:'Capital', tag:'CAP', r:64, hp:3200, shield:1800, speed:8,
+    color:'#9d7bff', squad:[1,1], detRange:1300, drift:.18,
+    sub:[ {n:'Mostek',t:'cmd',a:-Math.PI/2,d:.42},{n:'Gen. Tarcz',t:'shd',a:Math.PI/2,d:.55},
+          {n:'Silnik L',t:'eng',a:Math.PI-.25,d:.92},{n:'Silnik P',t:'eng',a:Math.PI+.25,d:.92},
+          {n:'Reaktor',t:'rea',a:0,d:0},{n:'Bateria A',t:'wpn',a:-.55,d:.8},
+          {n:'Bateria B',t:'wpn',a:.55,d:.8},{n:'Hangar',t:'hgr',a:.95,d:.6} ]
+  },
+  supercapital:{
+    name:'Super Capital', tag:'SCP', r:98, hp:9000, shield:5200, speed:5,
+    color:'#7b9bff', squad:[1,1], detRange:1600, drift:.1,
+    sub:[ {n:'Mostek',t:'cmd',a:-Math.PI/2,d:.4},{n:'Gen. Tarcz I',t:'shd',a:Math.PI/2-.2,d:.55},
+          {n:'Gen. Tarcz II',t:'shd',a:Math.PI/2+.2,d:.55},{n:'Silnik L',t:'eng',a:Math.PI-.2,d:.94},
+          {n:'Silnik P',t:'eng',a:Math.PI+.2,d:.94},{n:'Rdzeń',t:'rea',a:0,d:0},
+          {n:'Działo Główne',t:'wpn',a:0,d:.95},{n:'Bateria A',t:'wpn',a:-.6,d:.82},
+          {n:'Bateria B',t:'wpn',a:.6,d:.82},{n:'Hangar L',t:'hgr',a:-1.0,d:.6},
+          {n:'Hangar P',t:'hgr',a:1.0,d:.6} ]
+  }
+};
+const SUB_LABEL={eng:'SILNIK',wpn:'BROŃ',cmd:'MOSTEK',shd:'TARCZE',rea:'REAKTOR',hgr:'HANGAR'};
+
+// Czas namierzenia (sekundy) zależny od klasy celu — małe/zwrotne cele trudniej namierzyć.
+// Gracz to ciężki capital, więc myśliwce namierza wolno, a duże okręty szybko.
+const LOCK_TIME={fighter:2.6, frigate:1.6, cruiser:1.2, battleship:0.9, capital:0.7, supercapital:0.6};
+function lockTime(e){ return (e&&LOCK_TIME[e.cls])||1.2; }
+
+/* ---------------------------------------------------------------- weapons */
+const WEAPONS=[
+  {key:'1',name:'Lasery',desc:'szybkie · anty-myśl.',type:'beam',
+   dmg:9, cd:0.09, range:560, speed:0, shieldMul:.7, color:'#7af9ff'},
+  {key:'2',name:'Railgun',desc:'celne · vs tarcze',type:'slug',
+   dmg:46, cd:0.55, range:820, speed:1400, shieldMul:1.6, color:'#9fffe0'},
+  {key:'3',name:'Rakiety',desc:'naprowadzane',type:'missile',
+   dmg:34, cd:0.30, range:900, speed:520, shieldMul:1.0, color:'#ffd27a'},
+  {key:'4',name:'Torpedy',desc:'ciężkie · vs kadłub',type:'torp',
+   dmg:140, cd:1.6, range:760, speed:300, shieldMul:.5, hullMul:1.8, color:'#ff8a5a'}
+];
+WEAPONS.forEach(w=>w.lastFire=-99);
+
+/* ---------------------------------------------------------------- modes */
+const MODES=[
+  {id:'single',name:'POJEDYNCZY', short:'cel',  icon:'single'},
+  {id:'group', name:'GRUPA',      short:'grupa',icon:'group'},
+  {id:'sub',   name:'SUBSYSTEMY', short:'sub',  icon:'sub'}
+];
+let modeIndex=0;
+const mode=()=>MODES[modeIndex];
+
+/* ---------------------------------------------------------------- state */
+const cam={x:0,y:0};
+const player={x:0,y:0,vx:0,vy:0,angle:0,r:18,thrust:520,maxv:330,drag:1.6};
+
+let entities=[];     // wrogie jednostki
+let projectiles=[];  // pociski w locie
+let beams=[];        // chwilowe wiązki (hitscan)
+let particles=[];    // efekty
+
+// namierzanie
+let locked=[];       // zablokowane encje (single/group)
+let lockedSub=null;  // {ent, sub} w trybie sub
+let hovered=null;    // encja pod kursorem
+let hoveredSub=null; // {ent,sub}
+let primary=null;    // główny cel
+
+// animowany celownik — stan wygładzany co klatkę
+const reticle={
+  x:0,y:0,                 // pozycja w świecie (podąża za kursorem)
+  size:16, tSize:16,       // rozmiar narożników single/sub — lerp do celu
+  spin:0, pulse:0,         // fazy animacji
+  acq:0, acqRef:null,      // postęp akwizycji celu pod kursorem 0..1 + referencja
+  gx:0,gy:0,gw:160,gh:190, // wygładzony prostokąt klamer { } (grupa)
+  captured:[]              // encje objęte klamrami
+};
+let lockFx=[];             // efekty potwierdzenia namierzania (LOCK)
+const ACQ_TIME=0.26, ACQ_GROUP=0.85, GROUP_CAP_R=300, GROUP_PAD=44;
+
+// input
+const keys={};
+const mouse={sx:W/2,sy:H/2,wx:0,wy:0,down:false};
+
+// koło wyboru trybu
+const wheel={open:false,cx:0,cy:0,hold:false,sector:-1,t0:0};
+
+/* ---------------------------------------------------------------- spawn */
+let entId=0;
+function spawnEntity(cls,x,y,squadId){
+  const C=CLASSES[cls];
+  const e={
+    id:++entId, cls, def:C, x,y,
+    vx:rand(-1,1)*C.drift*8, vy:rand(-1,1)*C.drift*8,
+    angle:rand(0,TAU), r:C.r,
+    hp:C.hp,maxHp:C.hp, shield:C.shield,maxShield:C.shield,
+    dead:false, hitFlash:0, squadId:squadId||0, acqT:0,
+    wander:rand(0,TAU), subs:null
+  };
+  if(C.sub){
+    e.subs=C.sub.map(s=>({n:s.n,t:s.t,a:s.a,d:s.d,
+      hp:Math.round(C.hp*0.22),maxHp:Math.round(C.hp*0.22),dead:false,r:Math.max(5,C.r*0.18)}));
+  }
+  entities.push(e);
+  return e;
+}
+function spawnSquadron(cls){
+  const ang=rand(0,TAU), R=rand(900,1500);
+  const cx=player.x+Math.cos(ang)*R, cy=player.y+Math.sin(ang)*R;
+  const C=CLASSES[cls];
+  const n=rint(C.squad[0],C.squad[1]);
+  const sid=++entId;
+  for(let i=0;i<n;i++){
+    spawnEntity(cls, cx+rand(-70,70)*(C.r/10), cy+rand(-70,70)*(C.r/10), sid);
+  }
+}
+// początkowa flota wroga
+function seedFleet(){
+  spawnSquadron('fighter'); spawnSquadron('fighter');
+  spawnSquadron('frigate'); spawnSquadron('frigate');
+  spawnSquadron('cruiser');
+  spawnSquadron('battleship');
+  spawnSquadron('capital');
+  spawnSquadron('supercapital');
+}
+const SPAWN_TABLE=['fighter','fighter','fighter','frigate','frigate','cruiser','cruiser','battleship','capital','supercapital'];
+function maintainFleet(){
+  if(entities.length<14){
+    spawnSquadron(SPAWN_TABLE[rint(0,SPAWN_TABLE.length-1)]);
+  }
+}
+
+/* ---------------------------------------------------------------- input */
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+window.addEventListener('mousemove',e=>{
+  mouse.sx=e.clientX; mouse.sy=e.clientY;
+  mouse.wx=cam.x+(e.clientX-W/2);
+  mouse.wy=cam.y+(e.clientY-H/2);
+});
+window.addEventListener('mousedown',e=>{
+  if(introUp){dismissIntro();return;}
+  if(e.button===1){ // ŚPM — koło trybów
+    e.preventDefault();
+    openWheel(e.clientX,e.clientY);
+    return;
+  }
+  if(e.button===0){
+    if(wheel.open){ selectWheelSector(); return; }
+    mouse.down=true;
+    confirmLock();                 // LPM = zatwierdź namierzanie (LOCK)
+  }
+  if(e.button===2){ // PPM — wyczyść namierzanie
+    clearLocks();
+  }
+});
+window.addEventListener('mouseup',e=>{
+  if(e.button===1){ if(wheel.hold) commitWheelOnRelease(); return; }
+  if(e.button===0) mouse.down=false;
+});
+window.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  keys[k]=true;
+  if(k==='q'){ modeIndex=(modeIndex+1)%MODES.length; onModeChange(); }
+  if(k==='c'){ clearLocks(); }
+  if(k==='m'){ muted=!muted; }
+  if(['1','2','3','4'].includes(k)) e.preventDefault();
+});
+window.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+window.addEventListener('blur',()=>{for(const k in keys)keys[k]=false;});
+
+let introUp=true;
+function dismissIntro(){
+  const el=document.getElementById('intro');
+  el.style.opacity='0'; setTimeout(()=>el.style.display='none',500);
+  introUp=false;
+  initAudio(); // gest użytkownika → można uruchomić dźwięk
+}
+
+/* ---------------------------------------------------------------- wheel */
+function openWheel(sx,sy){ wheel.open=true; wheel.hold=true; wheel.cx=sx; wheel.cy=sy; wheel.sector=-1; wheel.t0=now(); }
+function updateWheelSector(){
+  if(!wheel.open) return;
+  const dx=mouse.sx-wheel.cx, dy=mouse.sy-wheel.cy;
+  const d=Math.hypot(dx,dy);
+  if(d<26){ wheel.sector=-1; return; }
+  let a=Math.atan2(dy,dx)+Math.PI/2; // 0 = góra
+  if(a<0)a+=TAU; if(a>=TAU)a-=TAU;
+  wheel.sector=Math.floor(a/(TAU/MODES.length))%MODES.length;
+}
+function selectWheelSector(){ // klik LPM gdy koło otwarte (tryb klik)
+  if(wheel.sector>=0){ modeIndex=wheel.sector; onModeChange(); }
+  wheel.open=false; wheel.hold=false;
+}
+function commitWheelOnRelease(){ // zwolnienie ŚPM
+  const held=now()-wheel.t0;
+  const moved=Math.hypot(mouse.sx-wheel.cx,mouse.sy-wheel.cy)>26;
+  if(moved || held>0.28){ // gest pie-menu
+    if(wheel.sector>=0){ modeIndex=wheel.sector; onModeChange(); }
+    wheel.open=false; wheel.hold=false;
+  } else {
+    wheel.hold=false; // szybki klik → zostaw otwarte, wybór LPM
+  }
+}
+function onModeChange(){
+  document.getElementById('modeName').textContent=mode().name;
+  // przy zmianie trybu czyścimy niezgodne zaznaczenia
+  if(mode().id==='sub'){ locked=[]; }
+  else { lockedSub=null; }
+  syncPrimary();
+}
+
+/* ---------------------------------------------------------------- locking */
+function clearLocks(){ locked=[]; lockedSub=null; primary=null; }
+function syncPrimary(){
+  locked=locked.filter(e=>!e.dead);
+  if(mode().id==='sub'){ primary=lockedSub&&!lockedSub.ent.dead?lockedSub.ent:null; }
+  else { primary=locked[0]||null; }
+}
+function entityAt(wx,wy){
+  let best=null,bd=Infinity;
+  for(const e of entities){
+    if(e.dead) continue;
+    const rr=(e.r+8)*(e.r+8);
+    const d=dist2(wx,wy,e.x,e.y);
+    if(d<rr && d<bd){bd=d;best=e;}
+  }
+  return best;
+}
+function subAt(wx,wy){
+  // znajdź subsystem pod kursorem (na statkach z subsystemami)
+  let best=null,bd=Infinity;
+  for(const e of entities){
+    if(e.dead||!e.subs) continue;
+    if(dist2(wx,wy,e.x,e.y)>(e.r+30)*(e.r+30)) continue;
+    for(const s of e.subs){
+      if(s.dead) continue;
+      const p=subWorldPos(e,s);
+      const rr=(s.r+9)*(s.r+9);
+      const d=dist2(wx,wy,p.x,p.y);
+      if(d<rr && d<bd){bd=d;best={ent:e,sub:s};}
+    }
+  }
+  return best;
+}
+function subWorldPos(e,s){
+  const a=e.angle+s.a;
+  const dd=e.r*s.d;
+  return {x:e.x+Math.cos(a)*dd, y:e.y+Math.sin(a)*dd};
+}
+function confirmLock(){ // LPM — zatwierdź to, co aktualnie akwirujemy
+  const m=mode().id;
+  if(m==='single'){
+    if(hovered && reticle.acq>=1){ locked=[hovered]; confirmFx(hovered.x,hovered.y,hovered.r+14,'#ff4d5e'); sfxLock(); }
+  } else if(m==='group'){
+    // lock tylko celów w pełni namierzonych (READY) — reszta niech się dociąga
+    const ready=reticle.captured.filter(e=>!e.dead && (e.acqT||0)>=1);
+    if(ready.length){
+      locked=ready.slice();
+      for(const e of ready) confirmFx(e.x,e.y,e.r+10,'#ff4d5e',true);
+      sfxLock();
+    }
+  } else if(m==='sub'){
+    // lock modułu dopiero po pełnym namierzeniu (READY)
+    if(hoveredSub && reticle.acq>=1){
+      lockedSub={ent:hoveredSub.ent,sub:hoveredSub.sub};
+      const p=subWorldPos(hoveredSub.ent,hoveredSub.sub);
+      confirmFx(p.x,p.y,hoveredSub.sub.r+10,'#ff4d5e'); sfxLock();
+    }
+  }
+  syncPrimary();
+}
+function confirmFx(x,y,size,color,small){ lockFx.push({x,y,size,color,t:0,dur:small?0.4:0.55,small:!!small}); }
+
+/* ---------------------------------------------------------------- damage */
+function applyDamage(e,wpn,sub){
+  let dmg=wpn.dmg;
+  // tarcze najpierw
+  if(e.shield>0){
+    let sd=dmg*(wpn.shieldMul||1);
+    if(sd>=e.shield){ const overflow=(sd-e.shield)/(wpn.shieldMul||1); e.shield=0; dmg=overflow; }
+    else { e.shield-=sd; dmg=0; }
+  }
+  if(dmg>0){
+    const hm=wpn.hullMul||1;
+    e.hp-=dmg*hm;
+    if(sub && !sub.dead){
+      sub.hp-=dmg*hm*1.4;
+      if(sub.hp<=0){ sub.dead=true; onSubDestroyed(e,sub); }
+    }
+  }
+  e.hitFlash=0.12;
+  if(e.hp<=0) destroyEntity(e);
+}
+function onSubDestroyed(e,sub){
+  spawnExplosion(subWorldPos(e,sub).x, subWorldPos(e,sub).y, e.def.color, 18, 1.4);
+  if(sub.t==='eng'){ e.def_engKill=(e.def_engKill||0)+1; } // spowolnienie liczone w update
+  if(sub.t==='shd'){ e.maxShield*=0.45; if(e.shield>e.maxShield)e.shield=e.maxShield; }
+}
+function destroyEntity(e){
+  if(e.dead) return;
+  e.dead=true;
+  spawnExplosion(e.x,e.y,e.def.color, Math.round(20+e.r), 1+e.r/40);
+  // usuń z zaznaczeń
+  const i=locked.indexOf(e); if(i>=0) locked.splice(i,1);
+  if(lockedSub&&lockedSub.ent===e) lockedSub=null;
+  syncPrimary();
+}
+
+/* ---------------------------------------------------------------- firing */
+function fireWeapon(w){
+  const tnow=now();
+  if(tnow-w.lastFire < w.cd) return;
+  // lista celów
+  let tgts=[];
+  if(mode().id==='sub'){ if(lockedSub&&!lockedSub.ent.dead) tgts=[lockedSub]; }
+  else { tgts=locked.filter(e=>!e.dead).map(e=>({ent:e,sub:null})); }
+  if(!tgts.length) return;
+
+  // dla ognia masowego (grupa) ogranicz liczbę jednoczesnych strzałów
+  const maxShots = w.type==='beam'?tgts.length: Math.min(tgts.length, w.type==='torp'?1:3);
+  let fired=false;
+  for(let i=0;i<maxShots;i++){
+    const tg=tgts[i % tgts.length];
+    const e=tg.ent;
+    const aim = tg.sub? subWorldPos(e,tg.sub) : {x:e.x,y:e.y};
+    if(dist2(player.x,player.y,aim.x,aim.y) > w.range*w.range) continue;
+    spawnShot(w, aim, e, tg.sub);
+    fired=true;
+  }
+  if(fired){ w.lastFire=tnow; flashWeaponUI(w); }
+}
+function spawnShot(w,aim,ent,sub){
+  const mx=player.x+Math.cos(player.angle)*player.r;
+  const my=player.y+Math.sin(player.angle)*player.r;
+  if(w.type==='beam'){
+    // hitscan z drobnym rozrzutem
+    const a=Math.atan2(aim.y-my,aim.x-mx)+rand(-.04,.04);
+    const ex=mx+Math.cos(a)*w.range, ey=my+Math.sin(a)*w.range;
+    // trafienie jeśli kierunek ~ cel
+    beams.push({x1:mx,y1:my,x2:aim.x,y2:aim.y,color:w.color,t:0.07});
+    if(Math.random()<0.93) applyDamage(ent,w,sub);
+    spawnHit(aim.x,aim.y,w.color);
+  } else {
+    const a=Math.atan2(aim.y-my,aim.x-mx);
+    projectiles.push({
+      x:mx,y:my,
+      vx:Math.cos(a)*w.speed, vy:Math.sin(a)*w.speed,
+      w, ent, sub, life:2.6, homing:(w.type==='missile'||w.type==='torp'),
+      turn:(w.type==='missile'?5.5:1.6), color:w.color,
+      r:(w.type==='torp'?5:3)
+    });
+  }
+}
+
+/* ---------------------------------------------------------------- particles */
+function spawnExplosion(x,y,color,count,scale){
+  for(let i=0;i<count;i++){
+    const a=rand(0,TAU),sp=rand(40,260)*scale;
+    particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,
+      life:rand(.3,.9),max:.9,color,r:rand(1.5,4)*scale,kind:'spark'});
+  }
+  particles.push({x,y,vx:0,vy:0,life:.35,max:.35,color:'#fff',r:6*scale,kind:'flash'});
+  particles.push({x,y,vx:0,vy:0,life:.6,max:.6,color,r:10*scale,kind:'ring'});
+}
+function spawnHit(x,y,color){
+  for(let i=0;i<4;i++){const a=rand(0,TAU),sp=rand(30,120);
+    particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:rand(.15,.35),max:.35,color,r:rand(1,2.5),kind:'spark'});}
+}
+function thrustParticle(){
+  const a=player.angle+Math.PI+rand(-.3,.3);
+  const sx=player.x+Math.cos(player.angle+Math.PI)*player.r;
+  const sy=player.y+Math.sin(player.angle+Math.PI)*player.r;
+  particles.push({x:sx,y:sy,vx:Math.cos(a)*rand(60,150)+player.vx*.3,vy:Math.sin(a)*rand(60,150)+player.vy*.3,
+    life:.4,max:.4,color:'#7af9ff',r:rand(1.5,3),kind:'spark'});
+}
+
+/* ---------------------------------------------------------------- update */
+let last=now();
+function update(dt){
+  // --- gracz ---
+  let ax=0,ay=0;
+  if(keys['w']||keys['arrowup'])ay-=1;
+  if(keys['s']||keys['arrowdown'])ay+=1;
+  if(keys['a']||keys['arrowleft'])ax-=1;
+  if(keys['d']||keys['arrowright'])ax+=1;
+  const al=Math.hypot(ax,ay);
+  if(al>0){ ax/=al;ay/=al;
+    player.vx+=ax*player.thrust*dt; player.vy+=ay*player.thrust*dt;
+    if(Math.random()<0.6) thrustParticle();
+  }
+  // drag
+  player.vx-=player.vx*player.drag*dt; player.vy-=player.vy*player.drag*dt;
+  const sp=Math.hypot(player.vx,player.vy);
+  if(sp>player.maxv){player.vx=player.vx/sp*player.maxv;player.vy=player.vy/sp*player.maxv;}
+  player.x+=player.vx*dt; player.y+=player.vy*dt;
+  player.angle=Math.atan2(mouse.wy-player.y, mouse.wx-player.x);
+
+  // kamera
+  cam.x=lerp(cam.x,player.x,clamp(dt*6,0,1));
+  cam.y=lerp(cam.y,player.y,clamp(dt*6,0,1));
+  // odśwież świat-pozycję myszy względem kamery
+  mouse.wx=cam.x+(mouse.sx-W/2);
+  mouse.wy=cam.y+(mouse.sy-H/2);
+
+  // --- broń (przytrzymanie 1-4) ---
+  WEAPONS.forEach(w=>{ if(keys[w.key]) fireWeapon(w); });
+
+  // --- wrogowie ---
+  for(const e of entities){
+    if(e.dead) continue;
+    // łagodny dryf / wędrówka
+    e.wander+=rand(-1,1)*dt;
+    const tw=e.def.drift*10;
+    e.vx+=Math.cos(e.wander)*tw*dt; e.vy+=Math.sin(e.wander)*tw*dt;
+    // myśliwce krążą wokół gracza z dystansu
+    if(e.cls==='fighter'){
+      const dx=player.x-e.x,dy=player.y-e.y,d=Math.hypot(dx,dy)||1;
+      const desired= d>400? 1: -.4;
+      e.vx+=(dx/d)*desired*40*dt; e.vy+=(dy/d)*desired*40*dt;
+    }
+    let maxsp=e.def.speed*(e.def_engKill?0.25:1);
+    const es=Math.hypot(e.vx,e.vy);
+    if(es>maxsp){e.vx=e.vx/es*maxsp;e.vy=e.vy/es*maxsp;}
+    e.x+=e.vx*dt; e.y+=e.vy*dt;
+    e.angle+=( ( (e.cls==='fighter')? Math.atan2(e.vy,e.vx):e.angle ) - e.angle)*0; // myśliwce orientują się ruchem
+    if(e.cls==='fighter'&&es>1) e.angle=Math.atan2(e.vy,e.vx);
+    // regen tarcz powoli gdy nieostrzeliwane
+    if(e.hitFlash<=0 && e.shield<e.maxShield) e.shield=Math.min(e.maxShield,e.shield+e.maxShield*0.04*dt);
+    if(e.hitFlash>0) e.hitFlash-=dt;
+  }
+  entities=entities.filter(e=>!e.dead);
+
+  // --- pociski ---
+  for(const p of projectiles){
+    if(p.homing && p.ent && !p.ent.dead){
+      const aim=p.sub&&!p.sub.dead?subWorldPos(p.ent,p.sub):{x:p.ent.x,y:p.ent.y};
+      const desired=Math.atan2(aim.y-p.y,aim.x-p.x);
+      const cur=Math.atan2(p.vy,p.vx);
+      let da=desired-cur; while(da>Math.PI)da-=TAU; while(da<-Math.PI)da+=TAU;
+      const na=cur+clamp(da,-p.turn*dt,p.turn*dt);
+      const sp=Math.hypot(p.vx,p.vy);
+      p.vx=Math.cos(na)*sp; p.vy=Math.sin(na)*sp;
+      if(Math.random()<0.7) particles.push({x:p.x,y:p.y,vx:0,vy:0,life:.3,max:.3,color:p.color,r:p.r*.8,kind:'spark'});
+    }
+    p.x+=p.vx*dt; p.y+=p.vy*dt; p.life-=dt;
+    // trafienie
+    if(p.ent && !p.ent.dead){
+      const aim=p.sub&&!p.sub.dead?subWorldPos(p.ent,p.sub):{x:p.ent.x,y:p.ent.y};
+      const rr=(p.ent.r+p.r);
+      if(dist2(p.x,p.y,aim.x,aim.y) < rr*rr || dist2(p.x,p.y,p.ent.x,p.ent.y)<(p.ent.r)*(p.ent.r)){
+        applyDamage(p.ent,p.w,p.sub&&!p.sub.dead?p.sub:null);
+        spawnHit(p.x,p.y,p.color);
+        if(p.w.type==='torp') spawnExplosion(p.x,p.y,p.color,12,1);
+        p.life=0;
+      }
+    }
+  }
+  projectiles=projectiles.filter(p=>p.life>0);
+
+  // --- beams ---
+  for(const b of beams) b.t-=dt;
+  beams=beams.filter(b=>b.t>0);
+
+  // --- particles ---
+  for(const pt of particles){
+    pt.x+=pt.vx*dt; pt.y+=pt.vy*dt; pt.life-=dt;
+    pt.vx-=pt.vx*2*dt; pt.vy-=pt.vy*2*dt;
+  }
+  particles=particles.filter(p=>p.life>0);
+
+  // --- hover / namierzanie ---
+  if(mode().id==='sub'){ hoveredSub=subAt(mouse.wx,mouse.wy); hovered=hoveredSub?hoveredSub.ent:entityAt(mouse.wx,mouse.wy); }
+  else { hovered=entityAt(mouse.wx,mouse.wy); hoveredSub=null; }
+
+  updateReticle(dt);
+  for(const f of lockFx) f.t+=dt;
+  lockFx=lockFx.filter(f=>f.t<f.dur);
+
+  updateWheelSector();
+  syncPrimary();
+  maintainFleet();
+}
+
+/* Aktualizacja animowanego celownika — wygładza rozmiar/klamry do tego, co pod kursorem */
+function updateReticle(dt){
+  const k=1-Math.exp(-dt*16);
+  reticle.x=mouse.wx; reticle.y=mouse.wy;
+  reticle.spin+=dt; reticle.pulse+=dt;
+  const m=mode().id;
+  if(m==='single'){
+    reticle.tSize = hovered ? hovered.r+14 : 15;
+    if(hovered && hovered===reticle.acqRef){ reticle.acq=Math.min(1,reticle.acq+dt/lockTime(hovered)); }
+    else { if(hovered) sfxAcquire(); reticle.acqRef=hovered; reticle.acq=0; }
+  } else if(m==='sub'){
+    const cur=hoveredSub?hoveredSub.sub:null;
+    reticle.tSize = cur ? cur.r+8 : 13;
+    if(cur && cur===reticle.acqRef){ reticle.acq=Math.min(1,reticle.acq+dt/lockTime(hoveredSub.ent)); }
+    else { if(cur) sfxAcquire(); reticle.acqRef=cur; reticle.acq=0; }
+  } else { // group — klamry obejmujące skupisko wokół kursora
+    const cand=entities.filter(e=>!e.dead && dist2(mouse.wx,mouse.wy,e.x,e.y)<GROUP_CAP_R*GROUP_CAP_R);
+    reticle.captured=cand;
+    let tx,ty,tw,th;
+    if(cand.length){
+      let a=Infinity,b=Infinity,c=-Infinity,d=-Infinity;
+      for(const e of cand){ a=Math.min(a,e.x-e.r);c=Math.max(c,e.x+e.r);b=Math.min(b,e.y-e.r);d=Math.max(d,e.y+e.r);}
+      tx=(a+c)/2;ty=(b+d)/2;tw=(c-a)+GROUP_PAD*2;th=(d-b)+GROUP_PAD*2;
+    } else { tx=mouse.wx;ty=mouse.wy;tw=160;th=190; }
+    reticle.gx=lerp(reticle.gx,tx,k); reticle.gy=lerp(reticle.gy,ty,k);
+    reticle.gw=lerp(reticle.gw,tw,k); reticle.gh=lerp(reticle.gh,th,k);
+    const inside=new Set(cand);
+    for(const e of entities){
+      if(inside.has(e)) e.acqT=Math.min(1,(e.acqT||0)+dt/lockTime(e)); // tempo zależne od klasy celu
+      else if(e.acqT) e.acqT=Math.max(0,e.acqT-dt/0.35);              // po zjechaniu namiar powoli spada
+    }
+  }
+  reticle.size += (reticle.tSize-reticle.size)*k;
+}
+
+/* =========================================================================
+   RENDER
+   ========================================================================= */
+function w2s(x,y){ return {x:x-cam.x+W/2, y:y-cam.y+H/2}; }
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  drawBackground();
+
+  // świat
+  ctx.save();
+  ctx.translate(W/2-cam.x, H/2-cam.y);
+
+  drawRangeRings();
+  for(const e of entities) drawEntity(e);
+  drawProjectiles();
+  drawBeams();
+  drawParticles();
+  drawPlayer();
+  drawTargetingOverlays();
+  drawLockFx();
+
+  ctx.restore();
+
+  // ekran
+  drawWheel();
+  updateHUD();
+}
+
+/* --------------------------------------------------------- background */
+const stars=[];
+for(let i=0;i<260;i++) stars.push({x:rand(-4000,4000),y:rand(-4000,4000),z:rand(.2,1),r:rand(.4,1.6)});
+function drawBackground(){
+  ctx.fillStyle='#04060c'; ctx.fillRect(0,0,W,H);
+  // gwiazdy z paralaksą
+  for(const s of stars){
+    const px=((s.x-cam.x*s.z)%4000+4000)%4000 - 2000 + W/2;
+    const py=((s.y-cam.y*s.z)%4000+4000)%4000 - 2000 + H/2;
+    if(px<-10||px>W+10||py<-10||py>H+10) continue;
+    ctx.globalAlpha=0.3+s.z*0.6;
+    ctx.fillStyle='#bfe9f5';
+    ctx.fillRect(px,py,s.r,s.r);
+  }
+  ctx.globalAlpha=1;
+  // siatka taktyczna
+  ctx.save();
+  ctx.translate(W/2-cam.x,H/2-cam.y);
+  const G=160;
+  const x0=Math.floor((cam.x-W/2)/G)*G, x1=cam.x+W/2;
+  const y0=Math.floor((cam.y-H/2)/G)*G, y1=cam.y+H/2;
+  ctx.strokeStyle='rgba(52,231,255,0.05)'; ctx.lineWidth=1;
+  ctx.beginPath();
+  for(let x=x0;x<=x1;x+=G){ctx.moveTo(x,y0);ctx.lineTo(x,y1);}
+  for(let y=y0;y<=y1;y+=G){ctx.moveTo(x0,y);ctx.lineTo(x1,y);}
+  ctx.stroke();
+  ctx.restore();
+}
+function drawRangeRings(){
+  // pierścienie zasięgu broni wokół gracza
+  ctx.save();
+  ctx.translate(player.x,player.y);
+  const rings=[{r:560,c:'rgba(122,249,255,0.10)'},{r:820,c:'rgba(159,255,224,0.07)'},{r:900,c:'rgba(255,210,122,0.05)'}];
+  for(const rg of rings){
+    ctx.beginPath(); ctx.arc(0,0,rg.r,0,TAU);
+    ctx.strokeStyle=rg.c; ctx.lineWidth=1; ctx.setLineDash([4,10]); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+/* --------------------------------------------------------- entities */
+function factionColor(e){ return e.def.color; }
+function drawEntity(e){
+  ctx.save();
+  ctx.translate(e.x,e.y);
+  ctx.rotate(e.angle);
+  const C=e.def, col=factionColor(e);
+  const flash=e.hitFlash>0;
+
+  // tarcza (jeśli aktywna)
+  if(e.shield>0){
+    ctx.beginPath(); ctx.arc(0,0,e.r+5,0,TAU);
+    ctx.strokeStyle='rgba(80,180,255,'+(0.12+0.25*(e.shield/e.maxShield))+')';
+    ctx.lineWidth=2; ctx.stroke();
+  }
+
+  ctx.fillStyle=flash?'#ffffff':col;
+  ctx.strokeStyle=flash?'#fff':'rgba(0,0,0,.5)';
+  ctx.lineWidth=1.5;
+  ctx.shadowColor=col; ctx.shadowBlur=flash?16:6;
+
+  // sylwetki wg klasy
+  const r=e.r;
+  ctx.beginPath();
+  switch(e.cls){
+    case 'fighter':
+      ctx.moveTo(r,0); ctx.lineTo(-r*.7,r*.8); ctx.lineTo(-r*.3,0); ctx.lineTo(-r*.7,-r*.8);
+      ctx.closePath(); break;
+    case 'frigate':
+      ctx.moveTo(r,0); ctx.lineTo(r*.1,r*.55); ctx.lineTo(-r,r*.5); ctx.lineTo(-r*.8,0);
+      ctx.lineTo(-r,-r*.5); ctx.lineTo(r*.1,-r*.55); ctx.closePath(); break;
+    case 'cruiser':
+      ctx.moveTo(r,0); ctx.lineTo(r*.4,r*.45); ctx.lineTo(-r,r*.6); ctx.lineTo(-r*1.1,0);
+      ctx.lineTo(-r,-r*.6); ctx.lineTo(r*.4,-r*.45); ctx.closePath(); break;
+    default: // duże okręty — wydłużony kadłub
+      ctx.moveTo(r,0); ctx.lineTo(r*.55,r*.4); ctx.lineTo(-r*.9,r*.5);
+      ctx.lineTo(-r*1.05,r*.25); ctx.lineTo(-r*1.05,-r*.25); ctx.lineTo(-r*.9,-r*.5);
+      ctx.lineTo(r*.55,-r*.4); ctx.closePath();
+  }
+  ctx.fill(); ctx.stroke();
+  ctx.shadowBlur=0;
+
+  // detale dużych jednostek + subsystemy
+  if(e.subs){
+    ctx.fillStyle='rgba(255,255,255,.10)';
+    ctx.fillRect(-r*.6,-r*.18,r*1.2,r*.36);
+    for(const s of e.subs){
+      const a=s.a, dd=r*s.d;
+      const sx=Math.cos(a)*dd, sy=Math.sin(a)*dd;
+      ctx.beginPath(); ctx.arc(sx,sy,s.r,0,TAU);
+      ctx.fillStyle = s.dead? 'rgba(80,80,90,.6)':'rgba(20,40,55,.85)';
+      ctx.fill();
+      ctx.strokeStyle = s.dead? '#555': (s.t==='eng'?'#7af9ff':s.t==='wpn'?'#ffb648':s.t==='cmd'?'#52ff9a':s.t==='shd'?'#7ad0ff':s.t==='rea'?'#ff5a5a':'#bbb');
+      ctx.lineWidth=1.4; ctx.stroke();
+      if(s.dead){ ctx.strokeStyle='#ff5a5a'; ctx.beginPath();
+        ctx.moveTo(sx-s.r,sy-s.r);ctx.lineTo(sx+s.r,sy+s.r);
+        ctx.moveTo(sx+s.r,sy-s.r);ctx.lineTo(sx-s.r,sy+s.r); ctx.stroke(); }
+    }
+  }
+  ctx.restore();
+
+  // znacznik kontaktu + pasek HP gdy hover/locked
+  const isHover=(hovered===e);
+  const isLocked=locked.includes(e)||(lockedSub&&lockedSub.ent===e);
+  if(isHover||isLocked) drawEntityBars(e,isLocked);
+}
+function drawEntityBars(e,locked){
+  const y=e.y-e.r-16;
+  const wbar=Math.max(34,e.r*1.6);
+  ctx.save();
+  // nazwa/klasa
+  ctx.font='10px Consolas'; ctx.textAlign='center';
+  ctx.fillStyle=locked?'#ff4d5e':'#9fd6e6';
+  ctx.fillText(e.def.tag, e.x, y-4);
+  // hp
+  ctx.fillStyle='rgba(0,0,0,.5)'; ctx.fillRect(e.x-wbar/2,y,wbar,3);
+  ctx.fillStyle='#ff6a5a'; ctx.fillRect(e.x-wbar/2,y,wbar*(e.hp/e.maxHp),3);
+  if(e.maxShield>0){
+    ctx.fillStyle='rgba(0,0,0,.5)'; ctx.fillRect(e.x-wbar/2,y+4,wbar,2);
+    ctx.fillStyle='#5ab6ff'; ctx.fillRect(e.x-wbar/2,y+4,wbar*(e.shield/e.maxShield),2);
+  }
+  ctx.restore();
+}
+
+/* --------------------------------------------------------- player */
+function drawPlayer(){
+  ctx.save();
+  ctx.translate(player.x,player.y);
+  ctx.rotate(player.angle);
+  ctx.shadowColor='#7af9ff'; ctx.shadowBlur=14;
+  ctx.fillStyle='#cfeeff'; ctx.strokeStyle='#34e7ff'; ctx.lineWidth=2;
+  const r=player.r;
+  ctx.beginPath();
+  ctx.moveTo(r*1.2,0); ctx.lineTo(-r*.6,r*.8); ctx.lineTo(-r*.2,0); ctx.lineTo(-r*.6,-r*.8);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.shadowBlur=0;
+  // kokpit
+  ctx.fillStyle='#0a2a38'; ctx.beginPath(); ctx.arc(r*.3,0,r*.25,0,TAU); ctx.fill();
+  ctx.restore();
+}
+
+/* --------------------------------------------------------- shots / fx */
+function drawProjectiles(){
+  for(const p of projectiles){
+    ctx.save();
+    ctx.translate(p.x,p.y);
+    ctx.rotate(Math.atan2(p.vy,p.vx));
+    ctx.shadowColor=p.color; ctx.shadowBlur=10; ctx.fillStyle=p.color;
+    if(p.w.type==='slug'){ ctx.fillRect(-7,-1,14,2); }
+    else { // rakieta/torpeda
+      ctx.beginPath(); ctx.moveTo(p.r*2,0); ctx.lineTo(-p.r,p.r); ctx.lineTo(-p.r,-p.r); ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+function drawBeams(){
+  for(const b of beams){
+    ctx.save();
+    ctx.globalAlpha=clamp(b.t/0.07,0,1);
+    ctx.strokeStyle=b.color; ctx.lineWidth=2.2; ctx.shadowColor=b.color; ctx.shadowBlur=12;
+    ctx.beginPath(); ctx.moveTo(b.x1,b.y1); ctx.lineTo(b.x2,b.y2); ctx.stroke();
+    ctx.restore();
+  }
+}
+function drawParticles(){
+  for(const p of particles){
+    const a=clamp(p.life/p.max,0,1);
+    ctx.globalAlpha=a;
+    if(p.kind==='ring'){
+      ctx.strokeStyle=p.color; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r*(1+(1-a)*3),0,TAU); ctx.stroke();
+    } else {
+      ctx.fillStyle=p.kind==='flash'?'#fff':p.color;
+      ctx.shadowColor=p.color; ctx.shadowBlur=8;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,TAU); ctx.fill();
+    }
+  }
+  ctx.globalAlpha=1; ctx.shadowBlur=0;
+}
+
+/* --------------------------------------------------------- targeting overlays (world) */
+const T=()=>now();
+/* ---- pomocnicze rysowanie celownika ---- */
+function drawCorners(x,y,r,color,thick){
+  const len=r*0.42;
+  ctx.strokeStyle=color; ctx.lineWidth=thick; ctx.shadowColor=color; ctx.shadowBlur=8;
+  for(const [sx,sy] of [[-1,-1],[1,-1],[1,1],[-1,1]]){
+    ctx.beginPath();
+    ctx.moveTo(x+sx*r, y+sy*r-sy*len);
+    ctx.lineTo(x+sx*r, y+sy*r);
+    ctx.lineTo(x+sx*r-sx*len, y+sy*r);
+    ctx.stroke();
+  }
+  ctx.shadowBlur=0;
+}
+function drawCornersLocal(r,color,thick){ // narożniki wokół (0,0) — do obracania
+  const len=r*0.5;
+  ctx.strokeStyle=color; ctx.lineWidth=thick; ctx.shadowColor=color; ctx.shadowBlur=6;
+  for(const [sx,sy] of [[-1,-1],[1,-1],[1,1],[-1,1]]){
+    ctx.beginPath();
+    ctx.moveTo(sx*r,sy*r-sy*len); ctx.lineTo(sx*r,sy*r); ctx.lineTo(sx*r-sx*len,sy*r); ctx.stroke();
+  }
+  ctx.shadowBlur=0;
+}
+// Efekt namierzania: natychmiastowe koło + 4 rozsunięte narożniki, które
+// POWOLI składają się w kwadrat (zjeżdżają do środka, nogi rosną). Zwraca true gdy złożony.
+function drawAssemblingSquare(x,y,r,p,base,accent){
+  base=base||'#ffb648'; accent=accent||'#ffd27a';
+  const ready=p>=1;
+  // 1) koło zaznaczenia (od razu)
+  ctx.strokeStyle='rgba(255,182,72,'+(0.3+0.45*p)+')';
+  ctx.lineWidth=1.3; ctx.shadowColor=base; ctx.shadowBlur=5;
+  ctx.beginPath(); ctx.arc(x,y,r*(ready?1: (1.04-0.04*p)),0,TAU); ctx.stroke(); ctx.shadowBlur=0;
+  // 2) cztery narożniki: off = rozsunięcie (maleje), len = długość nóg (rośnie do pełnego kwadratu)
+  const off=26*(1-p);
+  const len=lerp(r*0.34, r, p);
+  ctx.strokeStyle=ready?accent:base;
+  ctx.lineWidth=ready?2.4:1.8;
+  ctx.shadowColor=base; ctx.shadowBlur=ready?11:5;
+  ctx.globalAlpha=0.45+0.55*p;
+  for(const [sx,sy] of [[-1,-1],[1,-1],[1,1],[-1,1]]){
+    const cx=x+sx*(r+off), cy=y+sy*(r+off);
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - sy*len);   // noga pionowa
+    ctx.lineTo(cx, cy);
+    ctx.lineTo(cx - sx*len, cy);   // noga pozioma
+    ctx.stroke();
+  }
+  ctx.globalAlpha=1; ctx.shadowBlur=0;
+  return ready;
+}
+// Mały celownik krzyżykowy w miejscu kursora
+function drawCursor(col){
+  const x=reticle.x,y=reticle.y;
+  ctx.strokeStyle=col; ctx.lineWidth=1.4; ctx.shadowColor=col; ctx.shadowBlur=6;
+  ctx.beginPath();
+  ctx.moveTo(x-10,y);ctx.lineTo(x-4,y); ctx.moveTo(x+4,y);ctx.lineTo(x+10,y);
+  ctx.moveTo(x,y-10);ctx.lineTo(x,y-4); ctx.moveTo(x,y+4);ctx.lineTo(x,y+10);
+  ctx.stroke();
+  ctx.fillStyle=col; ctx.beginPath(); ctx.arc(x,y,1.5,0,TAU); ctx.fill();
+  ctx.shadowBlur=0;
+}
+function drawArcP(x,y,r,p,color,width){ // łuk postępu akwizycji
+  if(p<=0)return;
+  ctx.strokeStyle=color; ctx.lineWidth=width||2; ctx.shadowColor=color; ctx.shadowBlur=6;
+  ctx.beginPath(); ctx.arc(x,y,r,-Math.PI/2,-Math.PI/2+TAU*clamp(p,0,1)); ctx.stroke(); ctx.shadowBlur=0;
+}
+function drawTicks(x,y,r,color){
+  ctx.strokeStyle=color; ctx.lineWidth=1.4;
+  ctx.beginPath();
+  ctx.moveTo(x,y-r-5);ctx.lineTo(x,y-r+3); ctx.moveTo(x,y+r-3);ctx.lineTo(x,y+r+5);
+  ctx.moveTo(x-r-5,y);ctx.lineTo(x-r+3,y); ctx.moveTo(x+r-3,y);ctx.lineTo(x+r+5,y);
+  ctx.stroke();
+}
+function labelWorld(x,y,txt,color,align){
+  ctx.font='10px Consolas'; ctx.textAlign=align||'center';
+  ctx.fillStyle=color; ctx.shadowColor=color; ctx.shadowBlur=6;
+  ctx.fillText(txt,x,y); ctx.shadowBlur=0; ctx.textAlign='left';
+}
+// klamra { lub } — sign=-1 rozciąga w lewo ('{'), +1 w prawo ('}'); czubki na tipX
+function drawBrace(tipX,cy,h,depth,sign,color,thick,alpha){
+  const spineX=tipX+sign*depth*0.5, cuspX=tipX+sign*depth;
+  const top=cy-h/2, bot=cy+h/2, mid=cy, r=Math.min(h*0.16, h*0.4);
+  ctx.save(); ctx.globalAlpha=alpha==null?1:alpha; ctx.lineCap='round';
+  ctx.strokeStyle=color; ctx.lineWidth=thick; ctx.shadowColor=color; ctx.shadowBlur=10;
+  ctx.beginPath();
+  ctx.moveTo(tipX, top);
+  ctx.quadraticCurveTo(spineX, top, spineX, mid-r);
+  ctx.quadraticCurveTo(spineX, mid, cuspX, mid);
+  ctx.quadraticCurveTo(spineX, mid, spineX, mid+r);
+  ctx.quadraticCurveTo(spineX, bot, tipX, bot);
+  ctx.stroke();
+  ctx.restore(); ctx.shadowBlur=0;
+}
+function braces(cx,cy,w,h,color,thick,alpha,breath){
+  const depth=Math.min(36,h*0.22)+(breath||0);
+  drawBrace(cx-w/2,cy,h,depth,-1,color,thick,alpha);
+  drawBrace(cx+w/2,cy,h,depth,+1,color,thick,alpha);
+  ctx.save(); ctx.globalAlpha=(alpha==null?1:alpha)*0.45; ctx.strokeStyle=color; ctx.lineWidth=1;
+  ctx.setLineDash([3,7]); ctx.strokeRect(cx-w/2,cy-h/2,w,h); ctx.setLineDash([]); ctx.restore();
+}
+
+function drawTargetingOverlays(){
+  const m=mode().id;
+  // --- ZABLOKOWANE (potwierdzone przez LPM) ---
+  if(m==='sub'){
+    if(lockedSub && !lockedSub.ent.dead && !lockedSub.sub.dead) lockedSubsystem(lockedSub.ent,lockedSub.sub);
+  } else if(locked.length===1){ lockedSingle(locked[0]); }
+  else if(locked.length>1){ lockedGroup(locked); }
+  // --- AKWIZYCJA (żywy, animowany celownik pod kursorem) ---
+  if(m==='single') acqSingle();
+  else if(m==='sub') acqSub();
+  else acqGroup();
+}
+
+/* ---- markery zablokowanych celów (bursztyn) ---- */
+function lockedSingle(e){
+  if(e.dead)return; const t=T(); const r=e.r+16+Math.sin(t*5)*1.5;
+  drawCorners(e.x,e.y,r,'#ff4d5e',2.4);
+  ctx.save(); ctx.translate(e.x,e.y); ctx.rotate(-t*1.1);
+  ctx.strokeStyle='rgba(255,77,94,.55)'; ctx.lineWidth=1; ctx.setLineDash([4,10]);
+  ctx.beginPath(); ctx.arc(0,0,r+9,0,TAU); ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+  drawTicks(e.x,e.y,r+4,'#ff4d5e');
+  drawLeadIndicator(e);
+  labelWorld(e.x,e.y-r-13,e.def.tag+' • LOCK','#ff4d5e');
+}
+function lockedGroup(list){
+  const alive=list.filter(e=>!e.dead); if(!alive.length)return;
+  // BEZ klamer { } — po zatwierdzeniu zostają tylko CZERWONE narożniki na celach
+  const t=T();
+  for(const e of alive){
+    drawCorners(e.x,e.y, e.r+9+Math.sin(t*4)*1, '#ff4d5e', 1.9);
+  }
+  // dyskretna etykieta liczności nad centroidem (bez ramki)
+  let cx=0,my=Infinity,r0=0;
+  for(const e of alive){ cx+=e.x; if(e.y-e.r<my){my=e.y-e.r; r0=e.r;} }
+  cx/=alive.length;
+  labelWorld(cx,my-12,'GRUPA • '+alive.length+' • LOCK','#ff4d5e');
+}
+function lockedSubsystem(e,s){
+  drawCorners(e.x,e.y,e.r+14,'rgba(255,77,94,.55)',1.5);
+  const p=subWorldPos(e,s),t=T(),r=s.r+9+Math.sin(t*6)*1.5;
+  ctx.save(); ctx.translate(p.x,p.y);
+  ctx.strokeStyle='#ff4d5e'; ctx.lineWidth=2; ctx.shadowColor='#ff4d5e'; ctx.shadowBlur=10;
+  ctx.beginPath(); ctx.arc(0,0,r,0,TAU); ctx.stroke();
+  ctx.rotate(t*1.4);
+  ctx.beginPath(); for(let i=0;i<4;i++){ ctx.moveTo(0,-r-4); ctx.lineTo(0,-r+3); ctx.rotate(TAU/4); } ctx.stroke();
+  ctx.restore(); ctx.shadowBlur=0;
+  labelWorld(p.x+r+6,p.y+3,'▸ '+s.n.toUpperCase(),'#ff4d5e','left');
+  drawLeadIndicator(e);
+}
+
+/* ---- żywy celownik / akwizycja (cyjan/czerwony, dopasowuje się do celu) ---- */
+function acqSingle(){
+  drawCursor('#ffb648');
+  if(hovered && locked.indexOf(hovered)<0){
+    const r=hovered.r+12;
+    const ready=drawAssemblingSquare(hovered.x,hovered.y,r,reticle.acq);
+    labelWorld(hovered.x,hovered.y-r-12, hovered.def.tag+'  '+Math.round(Math.hypot(hovered.x-player.x,hovered.y-player.y))+'u', '#ffb648');
+    labelWorld(hovered.x,hovered.y+r+16, ready?'◂ LPM: LOCK ▸':'składanie namiaru…', ready?'#ffd27a':'rgba(255,182,72,.8)');
+  }
+}
+function acqSub(){
+  const x=reticle.x,y=reticle.y,s=reticle.size,col='#ff4d5e';
+  const hasT = hoveredSub && !(lockedSub && lockedSub.sub===hoveredSub.sub);
+  ctx.strokeStyle=col; ctx.lineWidth=1.6; ctx.shadowColor=col; ctx.shadowBlur=8;
+  ctx.beginPath();
+  ctx.moveTo(x-s-6,y);ctx.lineTo(x-4,y); ctx.moveTo(x+4,y);ctx.lineTo(x+s+6,y);
+  ctx.moveTo(x,y-s-6);ctx.lineTo(x,y-4); ctx.moveTo(x,y+4);ctx.lineTo(x,y+s+6);
+  ctx.stroke();
+  ctx.beginPath(); ctx.arc(x,y,s,0,TAU); ctx.stroke(); ctx.shadowBlur=0;
+  if(hasT){
+    drawArcP(x,y,s+4,reticle.acq,col,2);
+    labelWorld(x,y-s-12,hoveredSub.sub.n.toUpperCase(),col);
+    labelWorld(x,y+s+16, reticle.acq>=1?'◂ LPM: LOCK ▸':'CELOWANIE…',col);
+  }
+}
+function acqGroup(){
+  const t=T(), aim='#34e7ff', paint='#ffb648';
+  const cx=reticle.gx,cy=reticle.gy,w=reticle.gw,h=reticle.gh;
+  const cap=reticle.captured;
+  const unlocked=cap.filter(e=>!e.dead && locked.indexOf(e)<0);
+  // Klamry { } pokazujemy TYLKO gdy jest jeszcze coś do namierzenia (lub pole puste).
+  // Po zlockowaniu całego skupiska klamry znikają — zostają same narożniki.
+  const showFrame = unlocked.length>0 || cap.length===0;
+
+  if(showFrame){
+    braces(cx,cy,w,h,aim,2,0.95,Math.sin(t*4)*2.5);          // cyjanowa ramka celowania
+    const sx=cx-w/2 + ((t*150)%w);                            // pionowa linia skanująca
+    ctx.strokeStyle='rgba(52,231,255,.22)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(sx,cy-h/2); ctx.lineTo(sx,cy+h/2); ctx.stroke();
+  }
+
+  drawCursor(aim);
+
+  // Każda niezablokowana jednostka w klamrach: koło + składający się kwadrat (tempo wg klasy)
+  let ready=0;
+  for(const e of unlocked){
+    const p=e.acqT||0;
+    if(drawAssemblingSquare(e.x,e.y, e.r+9, p)) ready++;
+  }
+
+  if(showFrame){
+    const n=unlocked.length; let txt,col=aim;
+    if(cap.length===0){ txt='PRZESUŃ NAD SKUPISKO CELÓW'; col='rgba(120,150,165,.85)'; }
+    else if(ready===n){ txt='GRUPA • '+n+' GOTOWYCH • ◂ LPM: LOCK ▸'; col='#ffd27a'; }
+    else txt='GRUPA • składanie namiaru… '+ready+'/'+n;
+    labelWorld(cx,cy-h/2-12, txt, col);
+  }
+  ctx.shadowBlur=0;
+}
+function drawLeadIndicator(e){
+  // wskaźnik wyprzedzenia dla railguna (broń 2)
+  const w=WEAPONS[1];
+  const d=Math.hypot(e.x-player.x,e.y-player.y);
+  const t=d/w.speed;
+  const lx=e.x+e.vx*t, ly=e.y+e.vy*t;
+  if(Math.hypot(e.vx,e.vy)<5) return;
+  ctx.save();
+  ctx.strokeStyle='rgba(159,255,224,.8)'; ctx.lineWidth=1.4;
+  ctx.beginPath(); ctx.arc(lx,ly,7,0,TAU); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(lx-10,ly);ctx.lineTo(lx+10,ly);ctx.moveTo(lx,ly-10);ctx.lineTo(lx,ly+10); ctx.stroke();
+  ctx.setLineDash([2,4]); ctx.strokeStyle='rgba(159,255,224,.3)';
+  ctx.beginPath(); ctx.moveTo(e.x,e.y); ctx.lineTo(lx,ly); ctx.stroke(); ctx.setLineDash([]);
+  ctx.restore();
+}
+/* --------------------------------------------------------- efekt potwierdzenia LOCK */
+function drawLockFx(){
+  for(const f of lockFx){
+    const p=f.t/f.dur, e=1-Math.pow(1-p,3);
+    ctx.save();
+    ctx.globalAlpha=1-p;
+    // zbiegające się narożniki
+    drawCorners(f.x,f.y, f.size*(2.4-1.4*e), f.color, 2.4);
+    // rozszerzający się pierścień uderzeniowy
+    ctx.strokeStyle=f.color; ctx.lineWidth=2*(1-p); ctx.shadowColor=f.color; ctx.shadowBlur=12;
+    ctx.beginPath(); ctx.arc(f.x,f.y, f.size*(1+e*1.6), 0, TAU); ctx.stroke();
+    // błysk w środku
+    if(p<0.3){ ctx.globalAlpha=(0.3-p)/0.3; ctx.fillStyle='#fff';
+      ctx.beginPath(); ctx.arc(f.x,f.y,f.size*0.5,0,TAU); ctx.fill(); }
+    // napis LOCK z „popem"
+    if(!f.small && p<0.85){ ctx.globalAlpha=(0.85-p)/0.85;
+      ctx.font='bold '+(11+e*4)+'px Consolas'; ctx.textAlign='center'; ctx.fillStyle=f.color;
+      ctx.shadowColor=f.color; ctx.shadowBlur=8; ctx.fillText('◤ LOCK ◥', f.x, f.y-f.size-10); }
+    ctx.restore();
+  }
+  ctx.globalAlpha=1; ctx.shadowBlur=0;
+}
+
+/* --------------------------------------------------------- radial wheel */
+function drawWheel(){
+  if(!wheel.open) return;
+  const cx=wheel.cx, cy=wheel.cy, R=92, rin=30;
+  ctx.save();
+  // przyciemnienie
+  ctx.fillStyle='rgba(2,6,12,.35)'; ctx.fillRect(0,0,W,H);
+  const n=MODES.length, step=TAU/n;
+  for(let i=0;i<n;i++){
+    const a0=-Math.PI/2+i*step - step/2;
+    const a1=a0+step;
+    const sel=(i===wheel.sector);
+    ctx.beginPath();
+    ctx.arc(cx,cy,R,a0,a1);
+    ctx.arc(cx,cy,rin,a1,a0,true);
+    ctx.closePath();
+    ctx.fillStyle= sel? 'rgba(52,231,255,.28)':'rgba(10,26,38,.85)';
+    ctx.fill();
+    ctx.strokeStyle= sel? '#34e7ff':'rgba(52,231,255,.35)';
+    ctx.lineWidth= sel?2:1; ctx.stroke();
+    // ikona + tekst
+    const am=-Math.PI/2+i*step;
+    const tx=cx+Math.cos(am)*(R+rin)/2, ty=cy+Math.sin(am)*(R+rin)/2;
+    drawWheelIcon(MODES[i].icon, tx, ty-6, sel);
+    ctx.fillStyle= sel?'#fff':'#9fd6e6'; ctx.font=(sel?'bold ':'')+'11px Consolas'; ctx.textAlign='center';
+    ctx.fillText(MODES[i].name, tx, ty+16);
+  }
+  // środek
+  ctx.beginPath(); ctx.arc(cx,cy,rin-4,0,TAU);
+  ctx.fillStyle='rgba(6,16,26,.95)'; ctx.fill();
+  ctx.strokeStyle='rgba(52,231,255,.4)'; ctx.stroke();
+  ctx.fillStyle='#5e8aa0'; ctx.font='9px Consolas'; ctx.textAlign='center';
+  ctx.fillText('TRYB', cx, cy+3);
+  ctx.restore();
+}
+function drawWheelIcon(kind,x,y,sel){
+  ctx.save(); ctx.translate(x,y);
+  ctx.strokeStyle=sel?'#34e7ff':'#7fb6c9'; ctx.fillStyle=sel?'#34e7ff':'#7fb6c9'; ctx.lineWidth=1.6;
+  if(kind==='single'){
+    ctx.beginPath(); ctx.arc(0,0,7,0,TAU); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0,0,1.6,0,TAU); ctx.fill();
+  } else if(kind==='group'){
+    ctx.strokeRect(-8,-8,16,16); ctx.setLineDash([2,2]); ctx.strokeRect(-8,-8,16,16); ctx.setLineDash([]);
+    for(const [a,b] of [[-4,-4],[4,-4],[-4,4],[4,4]]){ctx.beginPath();ctx.arc(a,b,1.4,0,TAU);ctx.fill();}
+  } else { // sub
+    ctx.beginPath(); ctx.arc(0,0,7,0,TAU); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-9,0);ctx.lineTo(-3,0);ctx.moveTo(3,0);ctx.lineTo(9,0);
+    ctx.moveTo(0,-9);ctx.lineTo(0,-3);ctx.moveTo(0,3);ctx.lineTo(0,9); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* =========================================================================
+   HUD (DOM)
+   ========================================================================= */
+const elTargets=document.getElementById('targets');
+const elWeapons=document.getElementById('weapons');
+// budowa banków broni raz
+WEAPONS.forEach((w,i)=>{
+  const d=document.createElement('div'); d.className='wbank'; d.id='wb'+i;
+  d.innerHTML=`<div class="key">${w.key}</div><div class="nm">${w.name}</div>
+    <div class="ds">${w.desc}</div><div class="cd"><i></i></div>`;
+  elWeapons.appendChild(d);
+});
+function flashWeaponUI(w){
+  const i=WEAPONS.indexOf(w); const el=document.getElementById('wb'+i);
+  if(el){ el.classList.add('firing'); setTimeout(()=>el.classList.remove('firing'),90); }
+}
+function updateHUD(){
+  // broń — pasek cooldownu
+  const tnow=now();
+  WEAPONS.forEach((w,i)=>{
+    const el=document.getElementById('wb'+i); if(!el)return;
+    const cdEl=el.querySelector('.cd i');
+    const ready=clamp((tnow-w.lastFire)/w.cd,0,1);
+    cdEl.style.width=(ready*100)+'%';
+  });
+
+  // panel celów
+  let html='';
+  if(mode().id==='sub'){
+    if(lockedSub && !lockedSub.ent.dead){
+      html+=targetCard(lockedSub.ent,true,lockedSub.sub);
+    }
+  } else {
+    const list=locked.filter(e=>!e.dead);
+    if(list.length>1){
+      html+=`<div id="grpcount">⊞ GRUPA — ${list.length} celów namierzonych</div>`;
+    }
+    list.slice(0,5).forEach((e,i)=>{ html+=targetCard(e,i===0,null); });
+    if(list.length>5) html+=`<div id="grpcount">+ ${list.length-5} więcej…</div>`;
+  }
+  elTargets.innerHTML=html;
+}
+function targetCard(e,primary,sub){
+  const d=Math.round(Math.hypot(e.x-player.x,e.y-player.y));
+  const hp=Math.max(0,Math.round(e.hp)), sh=Math.max(0,Math.round(e.shield));
+  let subHtml='';
+  if(sub){
+    subHtml=`<div class="sub">CEL MODUŁU: <b>${sub.n}</b> [${SUB_LABEL[sub.t]||''}]
+      <div class="bar hp"><i style="width:${clamp(sub.hp/sub.maxHp*100,0,100)}%;background:linear-gradient(90deg,#ff4d5e,#ff8a5a)"></i></div></div>`;
+  } else if(e.subs){
+    const alive=e.subs.filter(s=>!s.dead).length;
+    subHtml=`<div class="sub">moduły: ${alive}/${e.subs.length} sprawnych</div>`;
+  }
+  return `<div class="tcard ${primary?'primary':''}">
+    <div class="hd"><span class="nm">${e.def.name}</span><span class="cl">${e.def.tag}</span></div>
+    <div class="hd"><span class="dist">▸ ${d} u</span><span class="dist">HP ${hp} · SH ${sh}</span></div>
+    <div class="bar sh"><i style="width:${e.maxShield?sh/e.maxShield*100:0}%"></i></div>
+    <div class="bar hp"><i style="width:${hp/e.maxHp*100}%"></i></div>
+    ${subHtml}</div>`;
+}
+
+/* =========================================================================
+   LOOP
+   ========================================================================= */
+seedFleet();
+function loop(){
+  const t=now(); let dt=t-last; last=t;
+  if(dt>0.05) dt=0.05;
+  if(!introUp) update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>

@@ -6,6 +6,8 @@ import pirateDestroyerImg from '../assets/ships/piratedestroyer.png';
 import pirateBattleshipImg from '../assets/ships/piratebattleship.png';
 import { composeShipThrusterCommand, updateShipThrusterState } from '../game/shipEntity.js';
 import { SHIP_EDITOR_DEFAULTS } from '../data/hardpointEditorDefaults.js';
+import { WEAPON_SIZES, WEAPON_SIZE_LABEL } from '../data/weapons.js';
+import { getWeaponTierForHull, resolveHullRenderProfileId } from '../data/ships.js';
 import {
   LIGHT_DEFAULTS,
   LIGHT_KINDS,
@@ -149,6 +151,7 @@ const state = {
   shipId: CURRENT_SHIP_ID,
   tool: 'hardpoint',
   hardpointType: HARDPOINT_TYPES[0],
+  hardpointSize: 'auto',
   hardpointDeg: 90,
   engineDeg: 90,
   engineOffsetX: 0,
@@ -480,6 +483,7 @@ function createRoot() {
     <div class="hp-editor-shell">
       <div class="hp-editor-top">
         <div class="hp-c"><label>Statek</label><select id="hp-ship"></select></div>
+        <div class="hp-c"><label>Rozmiar HP</label><select id="hp-hardpoint-size" style="width:96px;"></select></div>
         <div class="hp-c"><label>Built-In deg</label><input id="hp-hardpoint-deg" type="number" step="1" min="-180" max="180" value="90" style="width:72px;"></div>
         <div class="hp-c"><label>Silnik deg</label><input id="hp-engine-deg" type="number" step="1" min="-180" max="180" value="90" style="width:70px;"></div>
         <div class="hp-c"><label>Light color</label><input id="hp-light-color" type="color" value="#ff2b2b"></div>
@@ -541,6 +545,7 @@ function createRoot() {
   runtime.controls = {
     ship: root.querySelector('#hp-ship'),
     palette: root.querySelector('#hp-palette'),
+    hardpointSize: root.querySelector('#hp-hardpoint-size'),
     hardpointDeg: root.querySelector('#hp-hardpoint-deg'),
     engineDeg: root.querySelector('#hp-engine-deg'),
     lightColor: root.querySelector('#hp-light-color'),
@@ -594,9 +599,19 @@ function createRoot() {
 }
 
 function fillSelects() {
-  const { ship } = runtime.controls;
+  const { ship, hardpointSize } = runtime.controls;
   ship.innerHTML = getShipSelectDefs().map((s) => `<option value="${s.id}">${s.label}</option>`).join('');
+  if (hardpointSize) {
+    const opts = ['<option value="auto">Auto (klasa)</option>']
+      .concat(WEAPON_SIZES.map((s) => `<option value="${s}">${s}</option>`));
+    hardpointSize.innerHTML = opts.join('');
+  }
   refreshEngineMountSelect();
+}
+
+// Default slot size for the ship currently open in the editor (frigate=S … atlas=Capital).
+function editorDefaultHardpointSize() {
+  return getWeaponTierForHull(resolveHullRenderProfileId(resolveEditorShipId(state.shipId)));
 }
 
 function refreshEngineMountSelect() {
@@ -939,6 +954,13 @@ function bindControls() {
     persist();
     scheduleDraw();
   });
+  if (c.hardpointSize) {
+    c.hardpointSize.addEventListener('change', () => {
+      state.hardpointSize = c.hardpointSize.value || 'auto';
+      persist();
+      scheduleDraw();
+    });
+  }
   c.engineDeg.addEventListener('input', () => {
     state.engineDeg = normalizeDeg(c.engineDeg.value);
     persist();
@@ -1693,6 +1715,11 @@ function placeMarker(x, y) {
       if (state.hardpointType === 'builtin') {
         marker.rot = round2(mirrorDeg(state.hardpointDeg, !!pos.mirrorX, !!pos.mirrorY));
       }
+      // Explicit size class for weapon slots (skip 'auto' = inherit ship-class default).
+      if (state.hardpointSize && state.hardpointSize !== 'auto'
+        && state.hardpointType !== 'builtin' && state.hardpointType !== 'hangar') {
+        marker.size = state.hardpointSize;
+      }
       addMarker('hardpoint', marker);
       placedIds.push(id);
     } else if (state.tool === 'core') {
@@ -2333,6 +2360,15 @@ function drawMarkers(ctx) {
       ctx.arc(p.x + dx, p.y + dy, Math.max(2, radius * 0.28), 0, Math.PI * 2);
       ctx.fill();
     }
+    // Klasa rozmiaru (S/M/L/C) na slotach uzbrojenia
+    if (item.kind === 'hardpoint' && marker.type !== 'builtin' && marker.type !== 'hangar') {
+      const sz = marker.size || editorDefaultHardpointSize();
+      ctx.fillStyle = 'rgba(255,255,255,0.96)';
+      ctx.font = `bold ${Math.max(8, radius * 0.95)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(WEAPON_SIZE_LABEL[sz] || sz, p.x, p.y);
+    }
     ctx.restore();
   }
 }
@@ -2342,6 +2378,7 @@ function compactMarker(marker, kind) {
     const out = { id: marker.id, type: marker.type, x: round2(marker.x), y: round2(marker.y) };
     const rot = Number(marker?.rot);
     if (Number.isFinite(rot) && (marker.type === 'builtin' || Math.abs(rot) > 1e-6)) out.rot = round2(normalizeDeg(rot));
+    if (marker.size) out.size = marker.size;
     return out;
   }
   if (kind === 'core') return { id: marker.id, x: round2(marker.x), y: round2(marker.y) };
@@ -2606,6 +2643,7 @@ function persist() {
     shipId: state.shipId,
     tool: state.tool,
     hardpointType: state.hardpointType,
+    hardpointSize: state.hardpointSize,
     hardpointDeg: state.hardpointDeg,
     engineDeg: state.engineDeg,
     engineOffsetX: state.engineOffsetX,
@@ -2655,6 +2693,7 @@ function loadStorage() {
     if (!data || typeof data !== 'object') return;
     state.shipId = normalizeEditorShipId(data.shipId || state.shipId);
     state.tool = data.tool || state.tool;
+    state.hardpointSize = data.hardpointSize || state.hardpointSize;
     state.hardpointType = data.hardpointType || state.hardpointType;
     state.hardpointDeg = Number.isFinite(Number(data.hardpointDeg)) ? clampDeg(data.hardpointDeg) : state.hardpointDeg;
     state.engineDeg = Number.isFinite(data.engineDeg) ? data.engineDeg : state.engineDeg;
@@ -2718,6 +2757,7 @@ function syncControlsFromState() {
   state.engineGimbalMinDeg = round2(gimbal.min);
   state.engineGimbalMaxDeg = round2(gimbal.max);
   c.ship.value = state.shipId;
+  if (c.hardpointSize) c.hardpointSize.value = state.hardpointSize || 'auto';
   c.hardpointDeg.value = String(state.hardpointDeg);
   c.engineDeg.value = String(state.engineDeg);
   c.engineOffX.value = String(state.engineOffsetX);

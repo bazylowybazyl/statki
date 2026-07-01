@@ -297,7 +297,7 @@
               <div class="icon-bs-chevron"></div>
             </div>
           </div>
-          <div class="support-details"><span class="ship-name">Pirate Battleship</span><span class="ship-role">Target Dummy</span></div>
+          <div class="support-details"><span class="ship-name">Pirate Battleship</span><span class="ship-role">Raider Hull</span></div>
           <div class="support-count">x1</div>
         </div>
         <div class="support-card" data-support-spawn="destroyer">
@@ -323,6 +323,11 @@
           <div class="support-details"><span class="ship-name">Fighter</span><span class="ship-role">Interceptor</span>
           </div>
           <div class="support-count">x200</div>
+        </div>
+        <div class="orders-row support-mode-row">
+          <div class="glass-btn active" id="support-mode-friendly">Friendly</div>
+          <div class="glass-btn" id="support-mode-pirate">Pirate</div>
+          <div class="glass-btn" id="support-mode-dummy">Dummy</div>
         </div>
         <div class="orders-row support-orders-row">
           <div class="glass-btn active" id="support-guard">Guard</div>
@@ -1212,7 +1217,7 @@
     import { initScannerOverviewUI } from "./src/ui/scannerOverviewUI.js";
     import { SpotterDroneSystem } from "./src/game/spotterDrone.js";
     import { WeaponController } from "./src/game/weaponController.js";
-    import { MASTER_WEAPONS, WEAPON_ICON_PATHS } from "./src/data/weapons.js";
+    import { MASTER_WEAPONS, WEAPON_ICON_PATHS, WEAPON_SIZE_LABEL, getWeaponSizeRank, weaponFitsHardpointSize } from "./src/data/weapons.js";
 
     // Alias dla kompatybilności starego ekwipunku gracza, dopóki go nie zaktualizujemy
     const WEAPONS = MASTER_WEAPONS;
@@ -1224,8 +1229,14 @@
       CAPITAL_SHIP_TEMPLATES as CAPITAL_SHIP_TEMPLATES_DATA,
       resolveHullRenderProfileId,
       getHullRenderProfile,
-      getHullRenderSize
+      getHullRenderSize,
+      getWeaponTierForHull
     } from "./src/data/ships.js";
+    import {
+      getCallInHullFrame,
+      getCallInSpawnPolicy,
+      normalizeCallInSpawnMode
+    } from "./src/game/callInSpawnPolicy.js";
     import { PLAYER_EDITOR_DEFAULTS, SHIP_EDITOR_DEFAULTS } from "./src/data/hardpointEditorDefaults.js";
     import { createNpcHardpointRuntime } from "./src/game/npcHardpointRuntime.js";
     import {
@@ -1911,6 +1922,9 @@
     const supportUIRoot = document.getElementById('panel-support');
     const supportGuardBtn = document.getElementById('support-guard');
     const supportEngageBtn = document.getElementById('support-engage');
+    const supportModeFriendlyBtn = document.getElementById('support-mode-friendly');
+    const supportModePirateBtn = document.getElementById('support-mode-pirate');
+    const supportModeDummyBtn = document.getElementById('support-mode-dummy');
     const supportSpawnButtons = document.querySelectorAll('[data-support-spawn]');
     const carrierSpawnBtn = document.querySelector('[data-support-spawn="carrier_capital"]');
     const shieldControlsRoot = document.getElementById('panel-shield');
@@ -1959,14 +1973,9 @@
       const overCanvas = x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
       if (overCanvas) {
         const world = screenToWorld(x - rect.left, y - rect.top);
-        if (key === 'carrier_capital') {
-          spawnFriendlyCarrier({ pos: world });
-        } else if (key === 'supercapital') {
-          spawnFriendlySupercapital({ pos: world });
-        } else {
-          spawnSupportShip(key, { spawnPos: world });
-        }
-        setSupportOrder('guard', { force: true });
+        const mode = getSupportSpawnMode();
+        spawnCallInShip(key, { spawnPos: world, pos: world, mode });
+        if (mode === 'friendly') setSupportOrder('guard', { force: true });
       }
       mouse.left = false;
       mouse.click = false;
@@ -2020,15 +2029,23 @@
     const SupportWing = window.SupportWing || (window.SupportWing = {
       units: [],
       order: 'guard',
+      spawnMode: 'friendly',
       ui: {
         root: supportUIRoot || null,
         guardBtn: supportGuardBtn || null,
-        engageBtn: supportEngageBtn || null
+        engageBtn: supportEngageBtn || null,
+        modeFriendlyBtn: supportModeFriendlyBtn || null,
+        modePirateBtn: supportModePirateBtn || null,
+        modeDummyBtn: supportModeDummyBtn || null
       }
     });
+    SupportWing.spawnMode = normalizeCallInSpawnMode(SupportWing.spawnMode || 'friendly');
     if (!SupportWing.ui.root && supportUIRoot) SupportWing.ui.root = supportUIRoot;
     if (!SupportWing.ui.guardBtn && supportGuardBtn) SupportWing.ui.guardBtn = supportGuardBtn;
     if (!SupportWing.ui.engageBtn && supportEngageBtn) SupportWing.ui.engageBtn = supportEngageBtn;
+    if (!SupportWing.ui.modeFriendlyBtn && supportModeFriendlyBtn) SupportWing.ui.modeFriendlyBtn = supportModeFriendlyBtn;
+    if (!SupportWing.ui.modePirateBtn && supportModePirateBtn) SupportWing.ui.modePirateBtn = supportModePirateBtn;
+    if (!SupportWing.ui.modeDummyBtn && supportModeDummyBtn) SupportWing.ui.modeDummyBtn = supportModeDummyBtn;
 
     const OPTIONS = {
       vfx: { colorTempK: 8000, bloomGain: 1.1, engineGain: 1.0 },
@@ -3266,6 +3283,22 @@
       }
     }
 
+    function getSupportSpawnMode() {
+      return normalizeCallInSpawnMode(SupportWing?.spawnMode || 'friendly');
+    }
+
+    function setSupportSpawnMode(mode, opts = {}) {
+      const normalized = normalizeCallInSpawnMode(mode);
+      if (SupportWing.spawnMode === normalized && !opts.force) return;
+      SupportWing.spawnMode = normalized;
+
+      const ui = SupportWing.ui || {};
+      if (ui.modeFriendlyBtn) ui.modeFriendlyBtn.classList.toggle('active', normalized === 'friendly');
+      if (ui.modePirateBtn) ui.modePirateBtn.classList.toggle('active', normalized === 'pirate');
+      if (ui.modeDummyBtn) ui.modeDummyBtn.classList.toggle('active', normalized === 'dummy');
+    }
+    setSupportSpawnMode(SupportWing.spawnMode, { force: true });
+
     function cleanupSupportWing() {
       SupportWing.units = SupportWing.units.filter(data => data?.npc && !data.npc.dead);
       SupportWing.units.forEach((data, idx) => { data.slotIndex = idx; });
@@ -3282,7 +3315,7 @@
         SupportWing.ui.root.classList.remove('hidden');
       }
       if (carrierSpawnBtn) {
-        const hasCarrier = !!getFriendlyCarrierEntity();
+        const hasCarrier = getSupportSpawnMode() === 'friendly' && !!getFriendlyCarrierEntity();
         carrierSpawnBtn.classList.toggle('disabled', hasCarrier);
         carrierSpawnBtn.setAttribute('aria-disabled', hasCarrier ? 'true' : 'false');
       }
@@ -3872,6 +3905,25 @@
     };
     window.HP = HP;
 
+    // --- Hardpoint SIZE class (S / M / L / Capital) ------------------------
+    // Each hardpoint carries a size; a weapon fits only when weapon.size <=
+    // hardpoint.size. When a hardpoint has no explicit size we fall back to the
+    // owning ship's class default (frigate=S, destroyer=M, battleship=L,
+    // atlas/capital=Capital), so legacy layouts still gate sensibly.
+    function getDefaultHardpointSize(shipFrameOrId) {
+      return getWeaponTierForHull(resolveHullRenderProfileId(shipFrameOrId || 'atlas'));
+    }
+    function getHardpointSize(hp, ship = Game.player) {
+      if (hp && hp.size) return hp.size;
+      return getDefaultHardpointSize(ship?.shipFrame || ship?.activeHullId || 'atlas');
+    }
+    function canMountWeaponOnHardpoint(weapon, hp, ship = Game.player) {
+      if (!weapon || !hp || hp.destroyed) return false;
+      if (weapon.mountType !== hp.type) return false;
+      return weaponFitsHardpointSize(weapon.size, getHardpointSize(hp, ship));
+    }
+    window.getHardpointSize = getHardpointSize;
+
     const npcHardpointRuntime = createNpcHardpointRuntime({
       hardpointEnum: HP,
       storageKey: 'hpEditor.v1',
@@ -4164,6 +4216,7 @@
         out.push({
           id: marker?.id || uid(),
           type,
+          size: marker?.size || getDefaultHardpointSize(resolvedKey),
           pos: {
             x: x * scaleX,
             y: y * scaleY,
@@ -4411,9 +4464,16 @@
       'beam_continuous',
       'beam_pulse',
       'heavy_autocannon',
+      'tempest_ion_s',
+      'tempest_ion_l',
+      'helios_laser_s',
+      'helios_lance_l',
+      'gatling_s',
+      'heavy_autocannon_l',
       'missile_rack',
       'fast_missile_rack',
       'ciws_mk1',
+      'ciws_mk2',
       'laser_pd_mk1',
       'fighter_bay',
       'special_goliath_autocannon',
@@ -5040,12 +5100,21 @@
       const screenX = (worldPos.x - camera.x) * camera.zoom + W / 2;
       const screenY = (worldPos.y - camera.y) * camera.zoom + H / 2;
       ctx.translate(screenX, screenY);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
       for (const h of Game.player.hardpoints) {
+        const hx = h.pos.x * camera.zoom;
+        const hy = h.pos.y * camera.zoom;
         ctx.beginPath();
-        ctx.arc(h.pos.x * camera.zoom, h.pos.y * camera.zoom, 6, 0, Math.PI * 2);
+        ctx.arc(hx, hy, 6, 0, Math.PI * 2);
         ctx.strokeStyle = ({ main: '#3b82f6', missile: '#10b981', aux: '#f59e0b', hangar: '#a78bfa', special: '#ef4444' })[h.type] || '#fff';
         ctx.lineWidth = 2;
         ctx.stroke();
+        // Klasa rozmiaru slotu (S/M/L/C) widoczna na hardpoincie
+        const sz = getHardpointSize(h);
+        ctx.fillStyle = '#e6f4ff';
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText(WEAPON_SIZE_LABEL[sz] || sz, hx, hy);
       }
       ctx.restore();
     }
@@ -7414,9 +7483,43 @@
       }
       return result;
     }
+
+    function resolveCallInTypeKey(templateKey, template) {
+      return template?.supportType || templateKey;
+    }
+
+    function applyCallInIdentity(npc, typeKey, template, policy) {
+      npc.friendly = policy.friendly;
+      npc.isPirate = policy.isPirate;
+      npc.callInMode = policy.mode;
+      npc.callInFaction = policy.weaponFaction;
+      npc.mission = true;
+      npc.color = policy.color || (policy.friendly ? '#7cff91' : '#ff5c7c');
+      const hullFrame = getCallInHullFrame(typeKey, policy, template);
+      if (hullFrame) npc.shipFrame = hullFrame;
+    }
+
+    function runCallInCombatAI(npc, typeKey, dt) {
+      const kind = String(typeKey || npc?.type || '').toLowerCase();
+      if (kind === 'fighter' || kind === 'interceptor') {
+        if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt);
+      } else if (kind === 'frigate_laser') {
+        if (window.aiLaserFrigate) window.aiLaserFrigate(null, npc, dt);
+        else if (window.aiFrigate) window.aiFrigate(null, npc, dt);
+      } else if (kind.includes('frigate')) {
+        if (window.aiFrigate) window.aiFrigate(null, npc, dt);
+      } else if (kind === 'destroyer') {
+        if (window.aiDestroyer) window.aiDestroyer(null, npc, dt);
+      } else if (window.aiBattleship) {
+        window.aiBattleship(null, npc, dt);
+      }
+    }
+
     function spawnSupportShip(templateKey, opts = {}) {
       const template = SUPPORT_SHIP_TEMPLATES[templateKey];
       if (!template) return [];
+      const policy = getCallInSpawnPolicy(opts.mode ?? getSupportSpawnMode(), template);
+      const typeKey = resolveCallInTypeKey(templateKey, template);
       const anchor = (opts.anchor && !opts.anchor.dead) ? opts.anchor : ship;
       const anchorPos = anchor.pos || { x: anchor.x ?? ship.pos.x, y: anchor.y ?? ship.pos.y };
       const anchorVel = anchor.vel || { x: anchor.vx ?? 0, y: anchor.vy ?? 0 };
@@ -7429,7 +7532,6 @@
       const created = [];
       const count = Math.max(1, template.count || 1);
       const spawnFormation = SUPPORT_FORMATION.spawn || { perRow: 4, rowGap: 70 };
-      const isEnemyDummy = template.pirate === true;
       for (let i = 0; i < count; i++) {
         const jitter = (Math.random() * 12 - 6);
         const offset = {
@@ -7439,25 +7541,24 @@
         const rotated = rotate(offset, baseAngle);
         const spawnPos = { x: basePos.x + rotated.x, y: basePos.y + rotated.y };
         const npc = makeNPCBase(spawnPos, { ...template.stats, shield: template.shield });
-        npc.friendly = !isEnemyDummy;
-        npc.mission = true;
-        npc.color = template.color || (isEnemyDummy ? '#ff5c7c' : '#7cff91');
-        npc.type = template.supportType || templateKey;
+        npc.type = typeKey;
+        npc.callInTemplateKey = templateKey;
         npc.sensors = template.sensors ? { ...template.sensors } : undefined;
-        if (template.pirate) npc.isPirate = true;
+        applyCallInIdentity(npc, typeKey, template, policy);
         assignNpcShipFrame(npc);
+        applyCallInIdentity(npc, typeKey, template, policy);
         npc.vx = anchorVel.x ?? npc.vx;
         npc.vy = anchorVel.y ?? npc.vy;
         template.configure?.(npc, i);
         applyEditorLayoutToNpc(npc);
-        equipNpcWeapons(npc, template.pirate ? 'pirate' : 'terran');
-        if (isEnemyDummy) {
-          npc.ai = null;
-          npc.supportData = null;
-        } else {
-          npc.supportData = { npc, type: template.supportType || templateKey, slotIndex: SupportWing.units.length + created.length, leader: anchor };
+        equipNpcWeapons(npc, policy.weaponFaction);
+        if (policy.joinSupportWing) {
+          npc.supportData = { npc, type: typeKey, slotIndex: SupportWing.units.length + created.length, leader: anchor };
           npc.ai = dt => runSupportAI(npc, dt);
           SupportWing.units.push(npc.supportData);
+        } else {
+          npc.supportData = null;
+          npc.ai = policy.aiEnabled ? (dt => runCallInCombatAI(npc, typeKey, dt)) : null;
         }
         npcs.push(npc);
         created.push(npc);
@@ -7481,6 +7582,7 @@
     function createCapitalShipEntry(templateKey, overrides = {}) {
       const template = CAPITAL_SHIP_TEMPLATES[templateKey];
       if (!template) return null;
+      const policy = getCallInSpawnPolicy(overrides.mode ?? getSupportSpawnMode(), template);
       const offset = overrides.formationOffset || template.formationOffset || { x: -820, y: 420 };
       const basePos = overrides.pos || { x: ship.pos.x + offset.x, y: ship.pos.y + offset.y };
 
@@ -7498,12 +7600,13 @@
       npc.radius = template.radius;
       if (Number.isFinite(template.mass)) npc.mass = template.mass;
       if (Number.isFinite(template.rammingMass)) npc.rammingMass = template.rammingMass;
-      npc.friendly = true;
-      npc.mission = true;
       npc.type = template.id;
+      npc.callInTemplateKey = templateKey;
       npc.sensors = template.sensors ? { ...template.sensors } : undefined;
+      applyCallInIdentity(npc, templateKey, template, policy);
       assignNpcShipFrame(npc);
-      npc.color = template.profile?.accentColor || '#9ccfff';
+      applyCallInIdentity(npc, templateKey, template, policy);
+      if (policy.friendly && template.profile?.accentColor) npc.color = template.profile.accentColor;
       npc.isCapitalShip = true;
       npc.capitalProfile = Object.assign({
         lengthScale: 3.4,
@@ -7521,6 +7624,10 @@
       };
       npc.hardpoints = { large: template.hardpoints.large, medium: template.hardpoints.medium };
       npc.fleetFormationOffset = offset;
+      if (Number.isFinite(Number(template.weaponRange)) && Number(template.weaponRange) > 0) {
+        npc.weaponRange = Number(template.weaponRange);
+        npc.preferredRange = Number(template.weaponRange);
+      }
       npc.vx = 0;
       npc.vy = 0;
       npc.angle = Math.atan2(ship.pos.y - npc.y, ship.pos.x - npc.x);
@@ -7541,23 +7648,29 @@
           shield: template.shield,
           shieldMax: template.shield
         },
-        template
+        template,
+        spawnPolicy: policy
       };
 
-      npc.fleetEntry = entry;
+      if (policy.registerFleet) npc.fleetEntry = entry;
       applyEditorLayoutToNpc(npc);
 
       const supportLeader = (overrides.anchor && !overrides.anchor.dead) ? overrides.anchor : ship;
       const supportType = (templateKey === 'carrier' || template.id === 'capital_carrier') ? 'carrier' : templateKey;
-      npc.supportData = {
-        npc,
-        type: supportType,
-        slotIndex: SupportWing.units.length,
-        leader: supportLeader
-      };
-      SupportWing.units.push(npc.supportData);
-      equipNpcWeapons(npc, 'terran');
-      npc.ai = dt => runSupportAI(npc, dt);
+      equipNpcWeapons(npc, policy.weaponFaction);
+      if (policy.joinSupportWing) {
+        npc.supportData = {
+          npc,
+          type: supportType,
+          slotIndex: SupportWing.units.length,
+          leader: supportLeader
+        };
+        SupportWing.units.push(npc.supportData);
+        npc.ai = dt => runSupportAI(npc, dt);
+      } else {
+        npc.supportData = null;
+        npc.ai = policy.aiEnabled ? (dt => runCallInCombatAI(npc, supportType, dt)) : null;
+      }
 
       return entry;
     }
@@ -7570,51 +7683,58 @@
       return { x: nx * dims.halfL, y: ny * dims.halfW };
     }
 
-    function spawnFriendlyCarrier(opts = {}) {
-      const existing = getFriendlyCarrierEntity();
-      if (existing) return existing;
-
+    function resolveCapitalSpawnPos(opts = {}) {
       const au = getAuToWorldUnits();
       const angle = Number.isFinite(ship?.angle) ? ship.angle : Math.random() * Math.PI * 2;
-      const spawnPos = (opts.pos && Number.isFinite(opts.pos.x) && Number.isFinite(opts.pos.y))
+      return (opts.pos && Number.isFinite(opts.pos.x) && Number.isFinite(opts.pos.y))
         ? opts.pos
         : {
           x: ship.pos.x + Math.cos(angle) * au,
           y: ship.pos.y + Math.sin(angle) * au
         };
-
-      const carrier = createCapitalShipEntry('carrier', {
-        pos: spawnPos,
-        formationOffset: { x: 0, y: 0 },
-        anchor: ship
-      });
-      if (!carrier) return null;
-
-      addFleetShip(carrier);
-      return carrier.entity;
     }
-    function spawnFriendlySupercapital(opts = {}) {
-      const au = getAuToWorldUnits();
-      const angle = Number.isFinite(ship?.angle) ? ship.angle : Math.random() * Math.PI * 2;
-      const spawnPos = (opts.pos && Number.isFinite(opts.pos.x) && Number.isFinite(opts.pos.y))
-        ? opts.pos
-        : {
-          x: ship.pos.x + Math.cos(angle) * au,
-          y: ship.pos.y + Math.sin(angle) * au
-        };
 
-      const entry = createCapitalShipEntry('supercapital', {
-        pos: spawnPos,
+    function spawnCapitalCallIn(templateKey, opts = {}) {
+      const mode = normalizeCallInSpawnMode(opts.mode ?? getSupportSpawnMode());
+      if (templateKey === 'carrier' && mode === 'friendly') {
+        const existing = getFriendlyCarrierEntity();
+        if (existing) return existing;
+      }
+
+      const entry = createCapitalShipEntry(templateKey, {
+        pos: resolveCapitalSpawnPos(opts),
         formationOffset: { x: 0, y: 0 },
-        anchor: ship
+        anchor: (opts.anchor && !opts.anchor.dead) ? opts.anchor : ship,
+        mode
       });
       if (!entry) return null;
 
-      addFleetShip(entry);
+      if (entry.spawnPolicy?.registerFleet) addFleetShip(entry);
+      else npcs.push(entry.entity);
       return entry.entity;
     }
 
+    function spawnCallInShip(templateKey, opts = {}) {
+      const mode = normalizeCallInSpawnMode(opts.mode ?? getSupportSpawnMode());
+      if (templateKey === 'carrier_capital' || templateKey === 'carrier') {
+        return spawnCapitalCallIn('carrier', { ...opts, mode });
+      }
+      if (templateKey === 'supercapital') {
+        return spawnCapitalCallIn('supercapital', { ...opts, mode });
+      }
+      return spawnSupportShip(templateKey, { ...opts, mode });
+    }
+
+    function spawnFriendlyCarrier(opts = {}) {
+      return spawnCapitalCallIn('carrier', { ...opts, mode: 'friendly' });
+    }
+
+    function spawnFriendlySupercapital(opts = {}) {
+      return spawnCapitalCallIn('supercapital', { ...opts, mode: 'friendly' });
+    }
+
     window.spawnSupportShip = spawnSupportShip;
+    window.spawnCallInShip = spawnCallInShip;
     window.spawnFriendlyCarrier = spawnFriendlyCarrier;
     window.spawnFriendlySupercapital = spawnFriendlySupercapital;
 
@@ -9548,18 +9668,21 @@
     }
 
     function applyWeaponToHardpoint(hp, weaponId, options = null) {
-      if (!hp) return;
-      if (hp.destroyed) return;
+      if (!hp) return false;
+      if (hp.destroyed) return false;
       const weapon = weaponId ? WEAPONS[weaponId] : null;
+      // Size/type gate — a weapon may only sit in a hardpoint of equal or larger size.
+      if (weapon && !options?.force && !canMountWeaponOnHardpoint(weapon, hp)) return false;
       setHardpointMount(hp, weaponId);
       if (weapon && weapon.ammo != null) {
         hp.ammo = weapon.ammo;
         hp.maxAmmo = weapon.ammo;
       }
-      if (options?.deferFinalize) return;
+      if (options?.deferFinalize) return true;
       syncWeaponSystems();
       renderMechanic();
       saveLoadout();
+      return true;
     }
 
     function applyWeaponBatchToHardpoints(startHp, weaponId) {
@@ -9567,6 +9690,10 @@
       if (startHp.destroyed) return;
       const weapon = WEAPONS[weaponId];
       if (!weapon || weapon.mountType !== startHp.type) return;
+      if (!canMountWeaponOnHardpoint(weapon, startHp)) {
+        toast(`${weapon.name} (${weapon.size}) nie mieści się w slocie ${getHardpointSize(startHp)}`);
+        return;
+      }
       const typeHardpoints = Game.player.hardpoints.filter(h => h.type === startHp.type && !h.destroyed);
       const startIdx = typeHardpoints.indexOf(startHp);
       if (startIdx < 0) return;
@@ -9588,8 +9715,8 @@
       let assignedExtra = 0;
       for (let i = startIdx + 1; i < typeHardpoints.length; i++) {
         if (assignedExtra >= extraSlots) break;
-        applyWeaponToHardpoint(typeHardpoints[i], weaponId, { deferFinalize: true });
-        assignedExtra++;
+        // Only counts when the weapon actually fits this slot's size.
+        if (applyWeaponToHardpoint(typeHardpoints[i], weaponId, { deferFinalize: true })) assignedExtra++;
       }
 
       syncWeaponSystems();
@@ -9602,18 +9729,21 @@
         if (hp?.destroyed) return;
         const weaponId = mechanicDragWeaponId || e.dataTransfer?.getData('text/plain');
         const weapon = weaponId ? WEAPONS[weaponId] : null;
-        // POPRAWKA: weapon.mountType
-        if (!weapon || weapon.mountType !== hp.type) return;
+        // Type + size gate — incompatible slots won't accept the drop.
+        if (!canMountWeaponOnHardpoint(weapon, hp)) {
+          if (weapon && weapon.mountType === hp.type) slot.classList.add('size-reject');
+          return;
+        }
         e.preventDefault();
         slot.classList.add('drag-over');
       });
-      slot.addEventListener('dragleave', () => { slot.classList.remove('drag-over'); });
+      slot.addEventListener('dragleave', () => { slot.classList.remove('drag-over'); slot.classList.remove('size-reject'); });
       slot.addEventListener('drop', (e) => {
         if (hp?.destroyed) return;
         const weaponId = e.dataTransfer?.getData('text/plain') || mechanicDragWeaponId;
         const weapon = weaponId ? WEAPONS[weaponId] : null;
         slot.classList.remove('drag-over');
-        // POPRAWKA: weapon.mountType
+        slot.classList.remove('size-reject');
         if (!weapon || weapon.mountType !== hp.type) return;
         e.preventDefault();
         applyWeaponBatchToHardpoints(hp, weapon.id);
@@ -9622,10 +9752,12 @@
 
     function quickMountWeapon(weapon) {
       if (!weapon) return;
-      // POPRAWKA: szukamy po mountType i upewniamy się, że slot jest pusty (!h.mount)
-      const targetHp = Game.player.hardpoints.find(h => h.type === weapon.mountType && !h.mount && !h.destroyed);
+      // First free slot whose type AND size accept this weapon.
+      const targetHp = Game.player.hardpoints.find(h => !h.mount && canMountWeaponOnHardpoint(weapon, h));
       if (targetHp) {
         applyWeaponToHardpoint(targetHp, weapon.id);
+      } else {
+        toast(`Brak wolnego slotu ${weapon.size}+ dla: ${weapon.name}`);
       }
     }
 
@@ -9649,6 +9781,14 @@
         iconWrap.textContent = 'IMG';
       }
       row.appendChild(iconWrap);
+
+      // 1b. Plakietka rozmiaru (S/M/L/C)
+      const sizeBadge = document.createElement('div');
+      const wSize = weapon.size || 'M';
+      sizeBadge.className = 'weapon-size-badge size-' + wSize;
+      sizeBadge.textContent = WEAPON_SIZE_LABEL[wSize] || wSize;
+      sizeBadge.title = `Rozmiar broni: ${wSize}`;
+      row.appendChild(sizeBadge);
 
       // 2. Nazwa
       const nameEl = document.createElement('div');
@@ -9800,6 +9940,14 @@
         iconWrap.textContent = weapon ? '?' : '-';
       }
       row.appendChild(iconWrap);
+
+      // 1b. Plakietka rozmiaru slotu (S/M/L/C)
+      const hpSize = getHardpointSize(hp);
+      const slotBadge = document.createElement('div');
+      slotBadge.className = 'weapon-size-badge slot size-' + hpSize;
+      slotBadge.textContent = WEAPON_SIZE_LABEL[hpSize] || hpSize;
+      slotBadge.title = `Rozmiar slotu: ${hpSize}`;
+      row.appendChild(slotBadge);
 
       // 2. Typ slotu (np. MAIN #1) - mała etykieta
       const label = document.createElement('div');
@@ -10072,6 +10220,9 @@
       cargo: {},
       shipId: normalizePlayerHullId(persistedActiveHull),
       activeHullId: normalizePlayerHullId(persistedActiveHull),
+      // Per-hull weapon loadouts: { [hullId]: [{ id, type, mount, ammo, maxAmmo }] }.
+      // Each owned ship remembers its own fitting across hull switches.
+      hullLoadouts: {},
       ownedHulls: new Set([
         DEFAULT_PLAYER_HULL_ID,
         normalizePlayerHullId(persistedActiveHull),
@@ -22571,20 +22722,30 @@
     if (supportEngageBtn) {
       supportEngageBtn.addEventListener('click', () => setSupportOrder('engage', { force: true }));
     }
+    if (supportModeFriendlyBtn) {
+      supportModeFriendlyBtn.addEventListener('click', () => setSupportSpawnMode('friendly', { force: true }));
+    }
+    if (supportModePirateBtn) {
+      supportModePirateBtn.addEventListener('click', () => setSupportSpawnMode('pirate', { force: true }));
+    }
+    if (supportModeDummyBtn) {
+      supportModeDummyBtn.addEventListener('click', () => setSupportSpawnMode('dummy', { force: true }));
+    }
     if (supportSpawnButtons && supportSpawnButtons.forEach) {
       supportSpawnButtons.forEach(btn => {
         const key = btn.dataset.supportSpawn;
         if (SUPPORT_CLICK_TYPES.has(key)) {
           btn.addEventListener('click', () => {
             if (btn.getAttribute('aria-disabled') === 'true') return;
+            const mode = getSupportSpawnMode();
             if (key === 'carrier_fighter') {
               const carrier = getFriendlyCarrierEntity();
               if (!carrier) return;
-              spawnSupportShip('fighter', { anchor: carrier });
+              spawnCallInShip('fighter', { anchor: carrier, mode });
             } else {
-              spawnSupportShip(key);
+              spawnCallInShip(key, { mode });
             }
-            setSupportOrder('guard', { force: true });
+            if (mode === 'friendly') setSupportOrder('guard', { force: true });
           });
         } else if (isSupportDragKey(key)) {
           btn.addEventListener('mousedown', (event) => {

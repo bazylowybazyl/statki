@@ -587,16 +587,17 @@ export const CanvasVFX = {
 
     if (b.type === 'rail') {
       ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(angle);
-      const coreGrad = ctx.createLinearGradient(-lenPx / 2, 0, lenPx / 2, 0);
-      coreGrad.addColorStop(0, 'rgba(255, 255, 255, 0.6)'); coreGrad.addColorStop(1, 'rgba(255, 255, 255, 1.0)');
-      ctx.fillStyle = coreGrad;
+      // Clean straight bolt: soft outer glow + bright core, no round head blob.
       const width = (vfx.widthInner || 3) * cam.zoom;
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = this.resolveAlphaColor(vfx.trailColor || vfx.color, 0.5, vfx.color);
+      ctx.lineWidth = width * 2.2;
+      ctx.beginPath(); ctx.moveTo(-lenPx / 2, 0); ctx.lineTo(lenPx / 2, 0); ctx.stroke();
+      const coreGrad = ctx.createLinearGradient(-lenPx / 2, 0, lenPx / 2, 0);
+      coreGrad.addColorStop(0, 'rgba(255, 255, 255, 0.55)'); coreGrad.addColorStop(1, 'rgba(255, 255, 255, 1.0)');
+      ctx.fillStyle = coreGrad;
       ctx.beginPath(); ctx.roundRect(-lenPx / 2, -width / 2, lenPx, width, width / 2); ctx.fill();
-      const headSize = width * 6;
-      const headGrad = ctx.createRadialGradient(lenPx / 2, 0, 0, lenPx / 2, 0, headSize);
-      headGrad.addColorStop(0, 'rgba(255, 255, 255, 1)'); headGrad.addColorStop(0.3, 'rgba(200, 230, 255, 0.5)'); headGrad.addColorStop(1, 'rgba(100, 100, 255, 0)');
-      ctx.fillStyle = headGrad; ctx.globalCompositeOperation = 'lighter';
-      ctx.beginPath(); ctx.arc(lenPx / 2, 0, headSize, 0, Math.PI * 2); ctx.fill();
       if (Math.random() < 0.3) this.spawnLightningSpark({ x: rx + (Math.random()-0.5)*10, y: ry + (Math.random()-0.5)*10 }, 0.3, 18, Math.random() * Math.PI * 2);
       ctx.restore();
       return;

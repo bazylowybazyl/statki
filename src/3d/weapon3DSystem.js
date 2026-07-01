@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Core3D } from './core3d.js';
 import { CICDisplay } from '../ui/cicDisplay.js';
+import { getEntityWeaponTier, WEAPON_TIER_SCALE } from '../data/ships.js';
 
 const WEP_RESOURCES = {
   mats: null,
@@ -1164,9 +1165,12 @@ function createFallbackWeaponMesh(category, sizeMult) {
   return group;
 }
 
-function createWeapon3DMesh(weaponId, category, size) {
+function createWeapon3DMesh(weaponId, category, size, tierScale = 1) {
   ensureWeaponResources();
-  const scaleMult = getWeapon3DScale(size, category);
+  const safeTier = Number.isFinite(tierScale) && tierScale > 0 ? tierScale : 1;
+  // Ship-class tier shrinks the whole turret (and its child muzzle flash) so the
+  // same weapon looks small on a frigate and full-size on a capital ship.
+  const scaleMult = getWeapon3DScale(size, category) * safeTier;
   const key = String(weaponId || '').toLowerCase();
 
   let mesh;
@@ -1190,6 +1194,13 @@ function createWeapon3DMesh(weaponId, category, size) {
   else if (key === 'torpedo_salvo') mesh = buildMissileRackTurret(scaleMult);
   else if (key === 'hexlance_siege') mesh = buildHexlanceTurret(scaleMult);
   else if (key === 'siege_railgun') mesh = buildSiegeRailgunTurret(scaleMult);
+  // S/M/L family variants (e.g. tempest_ion_s, helios_lance_l, gatling_s) reuse the family turret.
+  else if (key.includes('tempest') || key.includes('railgun')) mesh = buildTempestTurret(scaleMult, key.includes('mk2') ? 2 : 1);
+  else if (key.includes('helios')) mesh = buildHeliosTurret(scaleMult);
+  else if (key.includes('vulcan') || key.includes('gatling')) mesh = buildVulcanTurret(scaleMult);
+  else if (key.includes('autocannon')) mesh = buildHeavyAutocannonTurret(scaleMult);
+  else if (key.includes('armata')) mesh = buildArmataTurret(scaleMult);
+  else if (key.includes('ciws')) mesh = buildCIWSTurret(scaleMult);
   else mesh = createFallbackWeaponMesh(category, scaleMult);
   if (!mesh.userData.weaponFx) {
     attachWeaponFxData(mesh, {
@@ -2200,12 +2211,21 @@ export const Weapon3DSystem = {
     const currentMeshes = container.userData.meshes;
     const usedUids = new Set();
     const weaponLocalScale = getEntityWeaponLocalScale(entity);
+    const weaponTier = getEntityWeaponTier(entity);
+    const tierScale = (WEAPON_TIER_SCALE[weaponTier] || WEAPON_TIER_SCALE.Capital).turret;
 
     for (const wData of wepDataList) {
       usedUids.add(wData.uid);
       let mesh = currentMeshes.get(wData.uid);
+      // Rebuild if missing or if the ship class (and thus weapon tier) changed.
+      if (mesh && mesh.userData.__weaponTier !== weaponTier) {
+        container.remove(mesh);
+        currentMeshes.delete(wData.uid);
+        mesh = null;
+      }
       if (!mesh) {
-        mesh = createWeapon3DMesh(wData.weaponId, wData.category, wData.size);
+        mesh = createWeapon3DMesh(wData.weaponId, wData.category, wData.size, tierScale);
+        mesh.userData.__weaponTier = weaponTier;
         container.add(mesh);
         Core3D.enableForeground3D(mesh);
         currentMeshes.set(wData.uid, mesh);
@@ -2290,25 +2310,34 @@ export const Weapon3DSystem = {
 
       const cx = (x + px) * 0.5;
       const cy = (y + py) * 0.5;
-      const trailLen = Math.max(style.minLen, segLen * style.stretch);
-      const coreLen = Math.max(style.minLen * 0.55, segLen * 0.7);
+      // Ship-class tier scales projectile thickness (S smaller, L/Capital larger).
+      // Resolved from the firing entity and cached per bullet.
+      let wScale = bullet.__wScale;
+      if (wScale === undefined) {
+        const tier = bullet.source ? getEntityWeaponTier(bullet.source) : 'Capital';
+        wScale = (WEAPON_TIER_SCALE[tier] || WEAPON_TIER_SCALE.Capital).bullet;
+        bullet.__wScale = wScale;
+      }
 
-      setMatrix(cx, -cy, style.z, angle, trailLen, style.trailWidth);
+      const minLen = style.minLen * wScale;
+      const trailLen = Math.max(minLen, segLen * style.stretch);
+      const coreLen = Math.max(minLen * 0.55, segLen * 0.7);
+
+      setMatrix(cx, -cy, style.z, angle, trailLen, style.trailWidth * wScale);
       bulletInstances.trails.setMatrixAt(instanceCount, dummy.matrix);
       bulletInstances.trails.setColorAt(instanceCount, colorObj.set(style.trailColor));
 
-      setMatrix(x, -y, style.z + 0.01, angle, coreLen, style.coreWidth);
+      setMatrix(x, -y, style.z + 0.01, angle, coreLen, style.coreWidth * wScale);
       bulletInstances.cores.setMatrixAt(instanceCount, dummy.matrix);
       bulletInstances.cores.setColorAt(instanceCount, colorObj.set(style.color));
 
-      setMatrix(x, -y, style.z + 0.02, 0, style.headScale, style.headScale);
-      bulletInstances.heads.setMatrixAt(instanceCount, dummy.matrix);
-      bulletInstances.heads.setColorAt(instanceCount, colorObj.set(style.color));
+      // No round "head" blob — projectiles render as a clean straight line
+      // (soft trail glow + bright core). The head instance buffer stays empty.
 
       if (style.ionArcs && arcInstanceCount + 1 < BULLET_MAX_INSTANCES * 2) {
         const pulse = 0.55 + Math.sin(timeSec * 36.0 + x * 0.02 + y * 0.01) * 0.25;
-        const arcLen = 5.5 + pulse * 3.5;
-        const arcWidth = 0.6 + pulse * 0.8;
+        const arcLen = (5.5 + pulse * 3.5) * wScale;
+        const arcWidth = (0.6 + pulse * 0.8) * wScale;
         const jitterX = Math.sin(timeSec * 41.0 + x * 0.03) * 0.6;
         const jitterY = Math.cos(timeSec * 38.0 + y * 0.03) * 0.6;
 
@@ -2329,7 +2358,7 @@ export const Weapon3DSystem = {
     const prevCount = bulletInstances.trails.count || 0;
     bulletInstances.trails.count = instanceCount;
     bulletInstances.cores.count = instanceCount;
-    bulletInstances.heads.count = instanceCount;
+    bulletInstances.heads.count = 0; // head blob removed — clean-line projectiles
     bulletInstances.arcs.count = arcInstanceCount;
 
     // Skip GPU buffer upload when nothing to render
