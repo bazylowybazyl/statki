@@ -1,5 +1,7 @@
 // src/ai/capitalAI.js
 
+import { resolveCapitalIdealRange, resolveCapitalOrbitStrafe } from './capitalAiTuning.js';
+
 // ============================================================================
 // 1. SYSTEM AUTOPILOTA (Ruch i fizyka - KIEROWCA)
 // ============================================================================
@@ -637,7 +639,7 @@ export function aiBattleship(sim, npc, dt) {
     const dist = Math.hypot(dx, dy);
     const toAng = Math.atan2(dy, dx);
 
-    const idealRange = 1200;
+    const idealRange = resolveCapitalIdealRange(npc, target);
 
     if (npc._orbitDir == null) {
       const rightAng = toAng + Math.PI / 2;
@@ -663,12 +665,7 @@ export function aiBattleship(sim, npc, dt) {
     } else {
       targetAng = toAng + (Math.PI / 2) * orbitDir;
       thrustNorm = 0.4;
-
-      if (dist < idealRange * 0.85) {
-        strafeNorm = -0.4 * orbitDir; 
-      } else if (dist > idealRange * 1.15) {
-        strafeNorm = 0.4 * orbitDir; 
-      }
+      strafeNorm = resolveCapitalOrbitStrafe({ distance: dist, idealRange, orbitDir });
     }
   }
 

@@ -52,25 +52,25 @@ const FLOOR_THEME = Object.freeze({
 });
 
 const RING_EDGE = Object.freeze({
-  railLaneWidth: 220,
+  railLaneWidth: 150,        // narrower, tidier crane lane (was 220)
   railWallGap: 24,
-  railReserve: 380,
+  railReserve: 320,          // walls are thinner now → reserve less of the band edge (was 380)
   railOuterMargin: 20,
   wallSetback: 28,
   gateGapPadRatio: 0.18,
-  gateReturnWallWidth: 128,
+  gateReturnWallWidth: 96,   // slimmer gate-end return walls (was 128)
   gateReturnWallSetback: 96,
   gateRailTurnLength: 460,
   gateRailSideWidth: 150,
-  wallThickness: 88,
-  railBeamWidth: 24,
-  railBeamHeight: 34,
-  wallHeight: 420,
-  innerWallHeight: 180,
-  innerWallThickness: 54,
-  billboardWidth: 620,
-  billboardHeight: 170,
-  billboardBottom: 92
+  wallThickness: 34,         // thin rim wall (was 88)
+  railBeamWidth: 20,
+  railBeamHeight: 14,        // low rail beams (was 34)
+  wallHeight: 110,           // low rim, proportional to ~150-tall buildings (was 420)
+  innerWallHeight: 48,       // low inner kerb (was 180)
+  innerWallThickness: 26,    // (was 54)
+  billboardWidth: 480,       // proportional to the low rim wall (was 620)
+  billboardHeight: 104,      // (was 170)
+  billboardBottom: 40        // sit just above the 110 rim, not floating (was 92)
 });
 
 const BUILD_GRID = Object.freeze({
@@ -146,9 +146,12 @@ function createBuildableRingLayout(layout) {
     if (!band) return band;
     const depth = Math.max(1, band.outerR - band.innerR);
     const reserve = Math.min(RING_EDGE.railReserve, depth * 0.42);
+    // Reserve a thin strip at the inner edge too, so the inner kerb wall doesn't sit
+    // inside the first row of buildings.
+    const innerReserve = Math.min(depth * 0.06, RING_EDGE.innerWallThickness + 16);
     return {
-      innerR: band.innerR,
-      outerR: Math.max(band.innerR + depth * 0.35, band.outerR - reserve)
+      innerR: band.innerR + innerReserve,
+      outerR: Math.max(band.innerR + innerReserve + depth * 0.3, band.outerR - reserve)
     };
   };
   const inner = cloneBand(layout.inner);
@@ -1415,9 +1418,9 @@ class PlanetaryRing {
       );
       const returnWallRepeatX = Math.max(4, Math.round((Math.max(1, gateReturnWallOuter - innerWallInner) / 900) * 6));
       const hasDockRails = shouldBuildDockRailsForBand(bandId);
-      const railTurnAngle = hasDockRails
-        ? Math.min(this.angleStep * 1.35, RING_EDGE.gateRailTurnLength / Math.max(1, railOuter))
-        : 0;
+      // Crane rails run as a clean continuous track along the solid arcs; no gate-end
+      // turn-backs — those radial capsule protrusions read as broken/ugly.
+      const railTurnAngle = 0;
       const railTurnArcRanges = buildGateRailTurnArcRanges(arcRanges, railTurnAngle);
       const railRanges = hasDockRails ? arcRanges.concat(railTurnArcRanges) : [];
       const railSideAngles = buildGateRailSideAngles(arcRanges, railTurnAngle);

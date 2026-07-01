@@ -66,6 +66,51 @@ export const MASTER_WEAPONS = {
   },
 
   // ==========================================================================
+  // WARIANTY ROZMIAROWE BRONI GŁÓWNEJ (S / M / L)
+  // Te same rodziny broni w trzech klasach hardpointu. S mieści się na fregacie,
+  // M od niszczyciela, L od pancernika. Renderer dobiera model/pocisk po nazwie.
+  // ==========================================================================
+  // --- Tempest Ion (rail) ---  (M = railgun_mk1 / railgun_mk2)
+  tempest_ion_s: {
+    id: 'tempest_ion_s', name: 'Tempest Ion — Lekki', mountType: 'main', category: 'rail', size: 'S',
+    baseDamage: 5, baseRange: 8000, baseSpeed: 7500, cooldown: 0.7, spread: 0.024,
+    penetration: 1, energyCost: 4, vfxColor: '#7fe8ff',
+    barrelsPerShot: 1, model3D: 'tempest_ion', render3dOnly: true
+  },
+  tempest_ion_l: {
+    id: 'tempest_ion_l', name: 'Tempest Ion — Ciężki', mountType: 'main', category: 'rail', size: 'L',
+    baseDamage: 24, baseRange: 16000, baseSpeed: 9000, cooldown: 1.4, spread: 0.011,
+    penetration: 3, energyCost: 14, vfxColor: '#33b5ff',
+    barrelsPerShot: 1, model3D: 'tempest_ion', render3dOnly: true
+  },
+  // --- Helios (plasma / laser) ---  (M = helios_laser)
+  helios_laser_s: {
+    id: 'helios_laser_s', name: 'Helios Laser — Lekki', mountType: 'main', category: 'plasma', size: 'S',
+    baseDamage: 7, baseRange: 10000, baseSpeed: 11000, cooldown: 0.45, spread: 0.012,
+    penetration: 1, energyCost: 5, vfxColor: '#ff5a7a',
+    model3D: 'helios_laser', render3dOnly: true
+  },
+  helios_lance_l: {
+    id: 'helios_lance_l', name: 'Helios Lance — Ciężki', mountType: 'main', category: 'plasma', size: 'L',
+    baseDamage: 30, baseRange: 18000, baseSpeed: 10000, cooldown: 0.8, spread: 0.008,
+    penetration: 2, energyCost: 12, vfxColor: '#ff2a52',
+    model3D: 'helios_laser', render3dOnly: true
+  },
+  // --- Autocannon (Vulcan / Heavy) ---  (M = vulcan_minigun / heavy_autocannon)
+  gatling_s: {
+    id: 'gatling_s', name: 'Gatling — Lekki', mountType: 'main', category: 'autocannon', size: 'S',
+    baseDamage: 3, baseRange: 4500, baseSpeed: 4200, cooldown: 0.06, spread: 0.05,
+    penetration: 0, energyCost: 3, vfxColor: '#ffcf99',
+    model3D: 'vulcan_minigun', render3dOnly: true
+  },
+  heavy_autocannon_l: {
+    id: 'heavy_autocannon_l', name: 'Heavy Autocannon — Oblężniczy', mountType: 'main', category: 'autocannon', size: 'L',
+    baseDamage: 60, baseRange: 9000, baseSpeed: 3200, cooldown: 0.7, spread: 0.03,
+    penetration: 2, energyCost: 9, vfxColor: '#ffb066',
+    model3D: 'heavy_autocannon', render3dOnly: true
+  },
+
+  // ==========================================================================
   // OBRONA PUNKTOWA GRACZA (Aux)
   // ==========================================================================
   ciws_mk1: { 
@@ -73,10 +118,15 @@ export const MASTER_WEAPONS = {
     baseDamage: 12, baseRange: 1500, baseSpeed: 2000, cooldown: 0.06, spread: 0.10,
     energyCost: 2, vfxColor: '#8cffd0'
   },
-  laser_pd_mk1: { 
+  laser_pd_mk1: {
     id: 'laser_pd_mk1', name: 'Helios PD Laser', mountType: 'aux', category: 'beam', size: 'S',
     baseDamage: 16, baseRange: 1000, baseSpeed: Infinity, cooldown: 0.18, duration: 0.09, spread: 0.0,
     energyCost: 3, vfxColor: 'rgba(110,200,255,0.9)'
+  },
+  ciws_mk2: {
+    id: 'ciws_mk2', name: 'CIWS Mk II', mountType: 'aux', category: 'ciws', size: 'M',
+    baseDamage: 18, baseRange: 2200, baseSpeed: 2400, cooldown: 0.05, spread: 0.09,
+    energyCost: 3, vfxColor: '#8cffd0'
   },
 
   // ==========================================================================
@@ -225,7 +275,37 @@ export const WEAPON_ICON_PATHS = {
   torpedo_salvo: 'assets/weapons/torpedo.svg',
   siege_railgun: 'assets/weapons/railgun.svg',
   ciws_mk1: 'assets/weapons/ciws.svg',
+  ciws_mk2: 'assets/weapons/ciws.svg',
   laser_pd_mk1: 'assets/weapons/laser_pd.svg',
   missile_rack: 'assets/weapons/missile_rack.svg',
-  fast_missile_rack: 'assets/weapons/missile_rack.svg'
+  fast_missile_rack: 'assets/weapons/missile_rack.svg',
+  // S/M/L variants reuse the family icons
+  tempest_ion_s: 'assets/weapons/railgun.svg',
+  tempest_ion_l: 'assets/weapons/railgun.svg',
+  helios_laser_s: 'assets/weapons/railgun.svg',
+  helios_lance_l: 'assets/weapons/railgun.svg',
+  gatling_s: 'assets/weapons/heavy_autocannon.svg',
+  heavy_autocannon_l: 'assets/weapons/heavy_autocannon.svg'
 };
+
+// ===========================================================================
+// WEAPON SIZE CLASS (S / M / L / Capital)
+// ---------------------------------------------------------------------------
+// Used by the workshop / hardpoint editor to gate fitting: a weapon fits a
+// hardpoint when the weapon's size rank is <= the hardpoint's size rank
+// (a smaller weapon can sit in a bigger slot, never the other way round).
+// ===========================================================================
+export const WEAPON_SIZES = ['S', 'M', 'L', 'Capital'];
+
+export const WEAPON_SIZE_RANK = Object.freeze({ S: 1, M: 2, L: 3, Capital: 4 });
+
+export const WEAPON_SIZE_LABEL = Object.freeze({ S: 'S', M: 'M', L: 'L', Capital: 'C' });
+
+export function getWeaponSizeRank(size) {
+  return WEAPON_SIZE_RANK[String(size || 'M').trim()] || WEAPON_SIZE_RANK.M;
+}
+
+// True when a weapon of `weaponSize` may be mounted in a hardpoint of `hpSize`.
+export function weaponFitsHardpointSize(weaponSize, hpSize) {
+  return getWeaponSizeRank(weaponSize) <= getWeaponSizeRank(hpSize);
+}

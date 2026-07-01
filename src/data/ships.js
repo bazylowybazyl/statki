@@ -137,6 +137,66 @@ export function getHullRenderProfile(hullId) {
   return HULL_RENDER_PROFILES[resolveHullRenderProfileId(hullId)] || HULL_RENDER_PROFILES.atlas;
 }
 
+// ===========================================================================
+// WEAPON SIZE TIERS (S / M / L / Capital)
+// ---------------------------------------------------------------------------
+// The same weapon can be mounted on any hull, but its turret, muzzle flash and
+// projectile scale with the SHIP CLASS that carries it. A Tempest Ion looks
+// full-size on the Atlas ("as now") and much smaller on a frigate.
+//   Frigate              -> S
+//   Destroyer            -> M
+//   Battleship / Carrier -> L
+//   Atlas / Supercapital -> Capital (reference size, unchanged)
+// `turret` multiplies the 3D turret mesh (and its attached muzzle flash) scale.
+// `bullet` multiplies the projectile trail / core / spark thickness.
+// ===========================================================================
+export const WEAPON_TIER_SCALE = Object.freeze({
+  S:       { turret: 0.50, bullet: 0.55 },
+  M:       { turret: 0.70, bullet: 0.74 },
+  L:       { turret: 0.88, bullet: 0.90 },
+  Capital: { turret: 1.00, bullet: 1.00 }
+});
+
+export const WEAPON_TIER_BY_HULL = Object.freeze({
+  terran_frigate: 'S',
+  pirate_frigate: 'S',
+  terran_destroyer: 'M',
+  pirate_destroyer: 'M',
+  terran_battleship: 'L',
+  pirate_battleship: 'L',
+  capital_carrier: 'L',
+  supercapital: 'Capital',
+  atlas: 'Capital'
+});
+
+export function getWeaponTierForHull(hullProfileId) {
+  return WEAPON_TIER_BY_HULL[resolveHullRenderProfileId(hullProfileId)] || 'Capital';
+}
+
+// Classify an in-game entity (player ship or NPC) to its hull profile id.
+// Mirrors getNpcHullRenderProfileId() in index.html so weapon tiers stay in
+// sync with the rendered hull. Fighters/interceptors have no dedicated hull
+// profile, so they fall back to the smallest (frigate) tier.
+export function resolveEntityHullProfileId(entity) {
+  if (!entity) return 'atlas';
+  const type = String(entity.type || '').toLowerCase();
+  if (type.includes('fighter') || type.includes('interceptor')) return 'terran_frigate';
+  // Explicit ship frame — set on both player ships and classified NPCs.
+  if (entity.shipFrame) return resolveHullRenderProfileId(entity.shipFrame);
+  if (entity.activeHullId) return resolveHullRenderProfileId(entity.activeHullId);
+  const pirate = !!entity.isPirate;
+  if (type === 'battleship') return pirate ? 'pirate_battleship' : 'terran_battleship';
+  if (type === 'destroyer') return pirate ? 'pirate_destroyer' : 'terran_destroyer';
+  if (type.includes('frigate')) return pirate ? 'pirate_frigate' : 'terran_frigate';
+  if (type === 'supercapital') return 'supercapital';
+  if (type === 'carrier' || type === 'capital_carrier' || entity.isCapitalShip) return 'capital_carrier';
+  return 'atlas';
+}
+
+export function getEntityWeaponTier(entity) {
+  return getWeaponTierForHull(resolveEntityHullProfileId(entity));
+}
+
 export function getHullRenderSize(hullId, sourceWidth = 0, sourceHeight = 0) {
   const profile = getHullRenderProfile(hullId);
   const baseLength = Math.max(MIN_RENDER_SIZE, Number(profile?.length) || 0 || MIN_RENDER_SIZE);

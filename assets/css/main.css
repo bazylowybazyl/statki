@@ -1986,8 +1986,8 @@
     /* Wiersz z bronią (do przeciągania) */
     .weapon-row {
       display: grid;
-      grid-template-columns: 28px 2fr 1fr;
-      /* Ikona | Nazwa | Statystyki */
+      grid-template-columns: 28px 22px 2fr 1fr;
+      /* Ikona | Rozmiar | Nazwa | Statystyki */
       align-items: center;
       gap: 8px;
       padding: 4px 8px;
@@ -2045,6 +2045,43 @@
       color: #94a9d6;
       font-size: 11px;
       text-align: right;
+    }
+
+    /* Plakietka klasy rozmiaru broni / slotu (S / M / L / C) */
+    .weapon-size-badge {
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      font-weight: 800;
+      font-size: 11px;
+      line-height: 1;
+      color: #06121f;
+      border: 1px solid rgba(0, 0, 0, 0.35);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+    }
+    .weapon-size-badge.slot {
+      color: #cfe6ff;
+      background: transparent;
+      border: 1px solid currentColor;
+      box-shadow: none;
+    }
+    .weapon-size-badge.size-S { background: #6ee7a8; }
+    .weapon-size-badge.size-M { background: #6ec8ff; }
+    .weapon-size-badge.size-L { background: #ffb066; }
+    .weapon-size-badge.size-Capital { background: #ff6ea0; }
+    .weapon-size-badge.slot.size-S { color: #6ee7a8; }
+    .weapon-size-badge.slot.size-M { color: #6ec8ff; }
+    .weapon-size-badge.slot.size-L { color: #ffb066; }
+    .weapon-size-badge.slot.size-Capital { color: #ff6ea0; }
+
+    /* Slot odrzuca broń za dużą na jego rozmiar podczas przeciągania */
+    .hp-row.size-reject {
+      background: rgba(200, 60, 60, 0.18);
+      border-color: #ef4444;
+      cursor: not-allowed;
     }
 
     .hangar-hull-entry {
@@ -2137,8 +2174,8 @@
     /* Wiersz Hardpointu (Slot) */
     .hp-row {
       display: grid;
-      grid-template-columns: 28px 80px 1fr 24px;
-      /* Ikona | Typ slotu | Zamontowane | Przycisk X */
+      grid-template-columns: 28px 22px 80px 1fr 24px;
+      /* Ikona | Rozmiar | Typ slotu | Zamontowane | Przycisk X */
       align-items: center;
       gap: 8px;
       padding: 4px 8px;
@@ -2778,6 +2815,15 @@
     #panel-support.support-command-panel .support-orders-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-top: 2px;
+      padding: 0;
+      border-top: none;
+    }
+
+    #panel-support.support-command-panel .support-mode-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 6px;
       margin-top: 2px;
       padding: 0;

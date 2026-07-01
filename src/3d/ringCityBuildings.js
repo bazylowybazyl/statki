@@ -11,7 +11,7 @@ import {
     AUTOSTRADA_WIDTH,
     RING_INNER, RING_INDUSTRIAL, RING_MILITARY,
     COLORS, createSeededRandom, hashZoneSeed,
-    getZoneFamily, isMegaZone, getZoneTargetBuildingCount,
+    getZoneFamily, isMegaZone,
     pickArrayEntry
 } from './ringCityZoneGrid.js';
 import {
@@ -29,6 +29,16 @@ const WINDOW_SCALE = 500;
 const NUM_CHUNKS = 16;
 const CHUNK_ARC = (Math.PI * 2) / NUM_CHUNKS;
 const BUILDING_FLOOR_CLEARANCE = 56;
+// --- Inner-city building clusters (synthcity-style dense 2×N packing) ---
+const BUILD_SCALE = 1.0;            // base inner-city building size (replaces the old inline GLOBAL_SCALE = 3.0)
+const BUILD_HEIGHT_BIAS = 0.42;     // height multiplier on top of BUILD_SCALE (low-rise city)
+const BUILD_BIG_FOOTPRINT = 1.45;   // s_04/s_05 footprint multiplier (chunkier landmarks)
+const BUILD_BIG_HEIGHT = 1.6;       // s_04/s_05 height multiplier (taller tower accents)
+const BUILD_BIG_FIT = 2.0;          // s_04/s_05 footprint allowance vs a sub-cell (~1 cell wide tower)
+const BUILD_CLUSTER_FOOT = 40;      // target building footprint (world units) — sizes the per-cell cluster grid
+const BUILD_CLUSTER_PACK = 0.98;    // how much of a sub-cell a building fills (→ tight clusters)
+const BUILD_CLUSTER_FILL = { residential: 0.9, commercial: 0.82, mega: 0.7 }; // slot fill ratio per family
+const BUILD_AD_CHANCE = 0.16;       // fraction of clustered city buildings that carry an animated billboard
 const STOREFRONT_BRIDGE_MIN_BUILDING_H = 70;
 const STOREFRONT_BRIDGE_MIN_LENGTH = 38;
 const STOREFRONT_BRIDGE_WIDTH = 24;
@@ -341,15 +351,15 @@ function createBuilding(zone, geoMap, rnd, skipDetails = false) {
 
         const geo = cloneSynthCityGeometry(modelId);
         if (geo) {
-            const GLOBAL_SCALE = 3.0;
-            scaleXY = GLOBAL_SCALE;
-            scaleZ = GLOBAL_SCALE * (0.75 + rnd() * 0.45);
             const isBig = modelId.startsWith('s_04') || modelId.startsWith('s_05');
-            if (isBig) {
-                const uniformScale = (1.0 + rotateNoise * 0.5) * GLOBAL_SCALE;
-                scaleXY = uniformScale;
-                scaleZ = uniformScale;
-            }
+            // Small footprint so many buildings pack into a cell as synthcity-style
+            // clusters; height kept modest (low-rise city) with s_04/s_05 as taller accents.
+            // The final XY footprint is shrunk again per-cell in generateCellBuildingData
+            // to fit the cluster grid; height (scaleZ) is preserved through that fit.
+            scaleXY = BUILD_SCALE * (isBig ? BUILD_BIG_FOOTPRINT : 1.0);
+            scaleZ = BUILD_SCALE * BUILD_HEIGHT_BIAS * (isBig
+                ? (BUILD_BIG_HEIGHT + rotateNoise * 0.8)
+                : (0.75 + rnd() * 0.45));
 
             geo.rotateX(Math.PI / 2);
             geo.scale(scaleXY, scaleXY, scaleZ);
@@ -842,17 +852,36 @@ function generateCellBuildingData(cell, ring) {
     const zone = cell.zone;
     const zoneFamily = getZoneFamily(zone);
     const rand = createSeededRandom(hashZoneSeed(cell, zone));
-    const buildCount = getZoneTargetBuildingCount(zone, rand);
-
     const cellCenterAngle = (cell.angleStart + cell.angleEnd) * 0.5;
     const cellCenterRadius = (cell.innerRadius + cell.outerRadius) * 0.5;
+    const isCityFamily = (zoneFamily === 'residential' || zoneFamily === 'commercial');
 
-    const gridCols = 4;
-    const gridRows = 3;
     const buildStartAngle = cell.angleStart + ZONE_PAD_ANGLE;
     const buildEndAngle = cell.angleEnd - ZONE_PAD_ANGLE;
     const buildInnerRadi = cell.innerRadius + ZONE_PAD_RADIUS;
     const buildOuterRadi = cell.outerRadius - ZONE_PAD_RADIUS;
+
+    // Both rings size a building grid to the cell so structures TILE instead of piling
+    // up: the inner city packs small buildings several-across; industrial/military fit
+    // one large structure across the cell width, stacked radially.
+    const cellTangWidth = Math.max(1, (buildEndAngle - buildStartAngle) * cellCenterRadius);
+    const cellRadialDepth = Math.max(1, buildOuterRadi - buildInnerRadi);
+    let gridCols, gridRows, buildCount, subCellRadius;
+    if (isCityFamily) {
+        gridCols = Math.max(1, Math.min(3, Math.round(cellTangWidth / BUILD_CLUSTER_FOOT)));
+        gridRows = Math.max(2, Math.min(6, Math.round(cellRadialDepth / BUILD_CLUSTER_FOOT)));
+        subCellRadius = Math.min(cellTangWidth / gridCols, cellRadialDepth / gridRows) * 0.5 * BUILD_CLUSTER_PACK;
+        const fillRatio = BUILD_CLUSTER_FILL[isMegaZone(zone) ? 'mega' : zoneFamily] ?? 0.75;
+        buildCount = Math.max(1, Math.round(gridCols * gridRows * fillRatio * (0.85 + rand() * 0.3)));
+    } else {
+        // Industrial/military: one large structure across the cell width, stacked
+        // radially. Sizing the grid to the cell stops several oversized boxes from
+        // landing on the same spot (which read as "doubled" / overlapping).
+        gridCols = 1;
+        gridRows = Math.max(1, Math.min(3, Math.round(cellRadialDepth / Math.max(1, cellTangWidth))));
+        subCellRadius = Math.min(cellTangWidth, cellRadialDepth / gridRows) * 0.5 * 0.9;
+        buildCount = Math.max(1, Math.round(gridRows * 0.85));
+    }
 
     const angleStep = (buildEndAngle - buildStartAngle) / gridCols;
     const radiusStep = (buildOuterRadi - buildInnerRadi) / gridRows;
@@ -888,8 +917,13 @@ function generateCellBuildingData(cell, ring) {
 
         const buildResult = createBuilding(zone, localGeoMap, rand);
         const rawFootprintRadius = Math.max(1, Number(buildResult.footprintRadius) || 80);
-        const radialRoom = Math.max(1, (cell.outerRadius - cell.innerRadius) * 0.5 - BUILDING_FLOOR_CLEARANCE);
-        const footprintFitScale = Math.min(1, radialRoom / rawFootprintRadius);
+        const isBigBuilding = !!(buildResult.modelId && (buildResult.modelId.startsWith('s_04') || buildResult.modelId.startsWith('s_05')));
+        // Shrink the footprint (XY only — height is kept) so the structure fits its
+        // sub-cell and tiles cleanly; landmark s_04/s_05 are allowed to stay chunkier.
+        const footprintFitScale = Math.min(
+            1,
+            (subCellRadius * (isBigBuilding ? BUILD_BIG_FIT : 1.0)) / rawFootprintRadius
+        );
         const footprintRadius = rawFootprintRadius * footprintFitScale;
         const minRadius = cell.innerRadius + footprintRadius + BUILDING_FLOOR_CLEARANCE;
         const maxRadius = cell.outerRadius - footprintRadius - BUILDING_FLOOR_CLEARANCE;
@@ -926,7 +960,7 @@ function generateCellBuildingData(cell, ring) {
             });
         }
 
-        if (buildResult.adsType) {
+        if (buildResult.adsType && (!isCityFamily || rand() < BUILD_AD_CHANCE)) {
             const isBig = buildResult.modelId && (buildResult.modelId.startsWith('s_04') || buildResult.modelId.startsWith('s_05'));
             const materialKeys = isBig
                 ? ['ads_large_01', 'ads_large_02', 'ads_large_03', 'ads_large_04', 'ads_large_05']
