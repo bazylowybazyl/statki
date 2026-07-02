@@ -22,6 +22,9 @@
       font-size: 12px;
       color: #aab;
       min-width: 240px;
+      max-height: calc(100vh - 40px);
+      overflow-y: auto;
+      scrollbar-width: thin;
       transition: opacity 0.25s ease;
     }
 
@@ -63,6 +66,28 @@
       align-items: center;
       gap: 12px;
       padding: 1px 0;
+    }
+
+    #perfPanel .perf-section-toggle {
+      cursor: pointer;
+      pointer-events: auto;
+      border-radius: 4px;
+    }
+
+    #perfPanel .perf-section-toggle:hover .perf-label,
+    #perfPanel .perf-section-toggle:focus .perf-label {
+      color: #b9c6e8;
+    }
+
+    #perfPanel .perf-caret {
+      display: inline-block;
+      width: 10px;
+      color: #8fb5ff;
+      font-weight: 700;
+    }
+
+    #perfPanel .perf-collapsed {
+      display: none !important;
     }
 
     #perfPanel .perf-label {
@@ -939,6 +964,10 @@
     <div class="perf-title">WYDAJNOSC <span style="float:right;color:#556">[P] toggle</span></div>
     <div class="perf-fps good" id="perfFps">--</div>
     <div style="color:#556;font-size:10px;margin-bottom:6px" id="perfFrameTime">-- ms/frame</div>
+    <div class="perf-row"><span class="perf-label">Untracked</span><span class="perf-val" id="perfFrameUntracked">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barFrameUntracked" style="width:0%;background:#64748b"></div>
+    </div>
     <div class="perf-controls">
       <button class="perf-btn" id="perfColStart" type="button">COL Start</button>
       <button class="perf-btn stop" id="perfColStop" type="button">COL Stop</button>
@@ -949,7 +978,7 @@
     </div>
     <div class="perf-sep"></div>
 
-    <div class="perf-row"><span class="perf-label">Fizyka</span><span class="perf-val" id="perfPhysics">--</span></div>
+    <div class="perf-row perf-section-toggle" data-perf-toggle="physics" role="button" tabindex="0"><span class="perf-label"><span class="perf-caret" data-perf-caret="physics">+</span>Fizyka</span><span class="perf-val" id="perfPhysics">--</span></div>
     <div class="perf-bar-bg">
       <div class="perf-bar" id="barPhysics" style="width:0%;background:#4af"></div>
     </div>
@@ -972,22 +1001,322 @@
       <div class="perf-bar" id="barDeform" style="width:0%;background:#8f4"></div>
     </div>
 
-    <div class="perf-row"><span class="perf-label"> |- AI</span><span class="perf-val" id="perfAi">--</span></div>
+    <div class="perf-row perf-section-toggle" data-perf-toggle="ai" role="button" tabindex="0"><span class="perf-label"> |- <span class="perf-caret" data-perf-caret="ai">+</span>AI</span><span class="perf-val" id="perfAi">--</span></div>
     <div class="perf-bar-bg">
       <div class="perf-bar" id="barAi" style="width:0%;background:#c084fc"></div>
     </div>
 
-    <div class="perf-row"><span class="perf-label">Rysowanie</span><span class="perf-val" id="perfDraw">--</span></div>
+    <div class="perf-row"><span class="perf-label">   |- AI squads</span><span class="perf-val" id="perfAiSquads">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barAiSquads" style="width:0%;background:#a78bfa"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- AI support</span><span class="perf-val" id="perfAiSupportWing">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barAiSupportWing" style="width:0%;background:#c084fc"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- AI npcStep</span><span class="perf-val" id="perfAiNpcStep">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barAiNpcStep" style="width:0%;background:#d8b4fe"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- AI grid</span><span class="perf-val" id="perfAiNpcGrid">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barAiNpcGrid" style="width:0%;background:#7dd3fc"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- AI enemy</span><span class="perf-val" id="perfAiNpcEnemyBrain">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barAiNpcEnemyBrain" style="width:0%;background:#fb7185"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- AI ally</span><span class="perf-val" id="perfAiNpcFriendlyBrain">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barAiNpcFriendlyBrain" style="width:0%;background:#38bdf8"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- AI other</span><span class="perf-val" id="perfAiNpcOther">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barAiNpcOther" style="width:0%;background:#a3a3a3"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- AI mission</span><span class="perf-val" id="perfAiPirateMission">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barAiPirateMission" style="width:0%;background:#e879f9"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- AI sep</span><span class="perf-val" id="perfAiSeparation">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barAiSeparation" style="width:0%;background:#f0abfc"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- AI scan</span><span class="perf-val" id="perfAiWeaponScan">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barAiWeaponScan" style="width:0%;background:#f5d0fe"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- AI target</span><span class="perf-val" id="perfAiTargetPick">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barAiTargetPick" style="width:0%;background:#f472b6"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label"> |- Pre-AI</span><span class="perf-val" id="perfPreAi">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barPreAi" style="width:0%;background:#60a5fa"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- World/zone</span><span class="perf-val" id="perfWorldZone">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barWorldZone" style="width:0%;background:#38bdf8"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- Player sys</span><span class="perf-val" id="perfPlayerSystems">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barPlayerSystems" style="width:0%;background:#22c55e"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- Scan/UI</span><span class="perf-val" id="perfScanUi">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barScanUi" style="width:0%;background:#818cf8"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- Player fly</span><span class="perf-val" id="perfPlayerFlight">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barPlayerFlight" style="width:0%;background:#14b8a6"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- Wrecks</span><span class="perf-val" id="perfWreckPrep">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barWreckPrep" style="width:0%;background:#84cc16"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label"> |- Pociski</span><span class="perf-val" id="perfProjectiles">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barProjectiles" style="width:0%;background:#fb7185"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- CIWS</span><span class="perf-val" id="perfCiws">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barCiws" style="width:0%;background:#f59e0b"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- B grid</span><span class="perf-val" id="perfBulletGrid">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barBulletGrid" style="width:0%;background:#f97316"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- B VFX</span><span class="perf-val" id="perfBulletMoveVfx">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barBulletMoveVfx" style="width:0%;background:#eab308"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- B CIWS hit</span><span class="perf-val" id="perfBulletIntercept">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barBulletIntercept" style="width:0%;background:#ec4899"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- B NPC hit</span><span class="perf-val" id="perfBulletNpcHit">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barBulletNpcHit" style="width:0%;background:#ef4444"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- B ast</span><span class="perf-val" id="perfBulletAsteroids">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barBulletAsteroids" style="width:0%;background:#a855f7"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- B ring</span><span class="perf-val" id="perfBulletRing">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barBulletRing" style="width:0%;background:#06b6d4"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- B misc</span><span class="perf-val" id="perfBulletMiscHits">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barBulletMiscHits" style="width:0%;background:#f43f5e"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- NPC fire</span><span class="perf-val" id="perfNpcFire">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barNpcFire" style="width:0%;background:#fb923c"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">     |- NPC scan</span><span class="perf-val" id="perfNpcFireScan">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barNpcFireScan" style="width:0%;background:#fdba74"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">     |- NPC spawn</span><span class="perf-val" id="perfNpcFireSpawn">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barNpcFireSpawn" style="width:0%;background:#f97316"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label"> |- Destr prep</span><span class="perf-val" id="perfDestructiblePrep">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barDestructiblePrep" style="width:0%;background:#facc15"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label"> |- Hardpointy</span><span class="perf-val" id="perfHardpoints">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barHardpoints" style="width:0%;background:#34d399"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label"> |- HUD/nav</span><span class="perf-val" id="perfHudNav">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barHudNav" style="width:0%;background:#a3e635"></div>
+    </div>
+
+    <div class="perf-row perf-section-toggle" data-perf-toggle="render" role="button" tabindex="0"><span class="perf-label"><span class="perf-caret" data-perf-caret="render">-</span>Rysowanie</span><span class="perf-val" id="perfDraw">--</span></div>
     <div class="perf-bar-bg">
       <div class="perf-bar" id="barDraw" style="width:0%;background:#f4f"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label"> |- R prep</span><span class="perf-val" id="perfRenderPrep">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRenderPrep" style="width:0%;background:#f0abfc"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label"> |- R 3D upd</span><span class="perf-val" id="perfRender3dUpdate">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender3dUpdate" style="width:0%;background:#c084fc"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- U planets</span><span class="perf-val" id="perfRender3dPlanetsUpdate">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender3dPlanetsUpdate" style="width:0%;background:#38bdf8"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- U rings</span><span class="perf-val" id="perfRender3dRingsUpdate">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender3dRingsUpdate" style="width:0%;background:#22d3ee"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- U stations</span><span class="perf-val" id="perfRender3dStationsUpdate">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender3dStationsUpdate" style="width:0%;background:#14b8a6"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- U world</span><span class="perf-val" id="perfRender3dWorldUpdate">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender3dWorldUpdate" style="width:0%;background:#84cc16"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- U ast</span><span class="perf-val" id="perfRender3dAsteroidsUpdate">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender3dAsteroidsUpdate" style="width:0%;background:#f59e0b"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- U destr3D</span><span class="perf-val" id="perfRender3dDestructionUpdate">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender3dDestructionUpdate" style="width:0%;background:#fb7185"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- U hex</span><span class="perf-val" id="perfRender3dHexUpdate">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender3dHexUpdate" style="width:0%;background:#a78bfa"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- U shields</span><span class="perf-val" id="perfRender3dShieldsUpdate">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender3dShieldsUpdate" style="width:0%;background:#f472b6"></div>
+    </div>
+
+    <div class="perf-row perf-section-toggle" data-perf-toggle="render3dDraw" role="button" tabindex="0"><span class="perf-label"> |- <span class="perf-caret" data-perf-caret="render3dDraw">-</span>R 3D draw</span><span class="perf-val" id="perfRender3dDraw">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender3dDraw" style="width:0%;background:#a855f7"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- Core call</span><span class="perf-val" id="perfRender3dCoreCall">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender3dCoreCall" style="width:0%;background:#9333ea"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- Core render</span><span class="perf-val" id="perfRender3dCoreRender">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender3dCoreRender" style="width:0%;background:#7e22ce"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- Composer</span><span class="perf-val" id="perfRender3dComposer">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender3dComposer" style="width:0%;background:#c026d3"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label">   |- Blit2D</span><span class="perf-val" id="perfRender3dBlit">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender3dBlit" style="width:0%;background:#d946ef"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label"> |- R world2D</span><span class="perf-val" id="perfRender2dWorld">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender2dWorld" style="width:0%;background:#22d3ee"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label"> |- R NPC</span><span class="perf-val" id="perfRender2dNpc">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender2dNpc" style="width:0%;background:#38bdf8"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label"> |- R player</span><span class="perf-val" id="perfRender2dPlayer">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender2dPlayer" style="width:0%;background:#2dd4bf"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label"> |- R bullets</span><span class="perf-val" id="perfRender2dProjectiles">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender2dProjectiles" style="width:0%;background:#fb7185"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label"> |- R VFX</span><span class="perf-val" id="perfRender2dVfx">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRender2dVfx" style="width:0%;background:#fbbf24"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label"> |- R HUD</span><span class="perf-val" id="perfRenderHud">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRenderHud" style="width:0%;background:#84cc16"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label"> |- R UI/end</span><span class="perf-val" id="perfRenderUi">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barRenderUi" style="width:0%;background:#e879f9"></div>
+    </div>
+
+    <div class="perf-row"><span class="perf-label"> |- Overlay FX 3D</span><span class="perf-val" id="perfOverlayFx">--</span></div>
+    <div class="perf-bar-bg">
+      <div class="perf-bar" id="barOverlayFx" style="width:0%;background:#fb923c"></div>
     </div>
 
     <div class="perf-sep"></div>
     <div class="perf-row"><span class="perf-label">Shardy (aktywne)</span><span class="perf-val"
         id="perfShards">--</span></div>
-    <div class="perf-row"><span class="perf-label">Debris</span><span class="perf-val" id="perfDebris">--</span></div>
     <div class="perf-row"><span class="perf-label">Kontakty/klatka</span><span class="perf-val"
         id="perfContacts">--</span></div>
+    <div class="perf-row"><span class="perf-label">Draw calls / Tris</span><span class="perf-val"
+        id="perfDrawCalls">--</span></div>
+    <div class="perf-row"><span class="perf-label"> |- Refraction</span><span class="perf-val"
+        id="perfDrawCallsRefraction">--</span></div>
+    <div class="perf-row"><span class="perf-label"> |- BG</span><span class="perf-val"
+        id="perfDrawCallsBg">--</span></div>
+    <div class="perf-row"><span class="perf-label"> |- Planets</span><span class="perf-val"
+        id="perfDrawCallsPlanets">--</span></div>
+    <div class="perf-row"><span class="perf-label"> |- Shafts</span><span class="perf-val"
+        id="perfDrawCallsShafts">--</span></div>
+    <div class="perf-row"><span class="perf-label"> |- Ortho</span><span class="perf-val"
+        id="perfDrawCallsOrtho">--</span></div>
+    <div class="perf-row"><span class="perf-label"> |- FG</span><span class="perf-val"
+        id="perfDrawCallsFg">--</span></div>
+    <div class="perf-row"><span class="perf-label"> |- Bloom</span><span class="perf-val"
+        id="perfDrawCallsBloom">--</span></div>
+    <div class="perf-row"><span class="perf-label"> |- Post</span><span class="perf-val"
+        id="perfDrawCallsPost">--</span></div>
+    <div class="perf-row"><span class="perf-label"> |- Other</span><span class="perf-val"
+        id="perfDrawCallsOther">--</span></div>
+    <div class="perf-row"><span class="perf-label">Pociski / NPC</span><span class="perf-val"
+        id="perfCounts">--</span></div>
+    <div class="perf-row"><span class="perf-label">Enemy / Ally</span><span class="perf-val"
+        id="perfNpcTeams">--</span></div>
+    <div class="perf-row"><span class="perf-label">PointLighty</span><span class="perf-val"
+        id="perfPointLights">--</span></div>
     <canvas id="perfGraph" width="240" height="44"></canvas>
     <div class="perf-sep"></div>
     <div class="perf-row"><strong style="color:#8fb5ff;font-size:10px;letter-spacing:.04em">RENDER</strong></div>
@@ -998,6 +1327,7 @@
       <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#9fb0d8;cursor:pointer"><input id="perfToggleOrtho" type="checkbox" style="margin:0"> Ortho</label>
       <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#9fb0d8;cursor:pointer"><input id="perfToggleFg" type="checkbox" style="margin:0"> FG</label>
       <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#9fb0d8;cursor:pointer"><input id="perfToggleMsaa" type="checkbox" style="margin:0"> MSAA</label>
+      <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#9fb0d8;cursor:pointer"><input id="perfToggleEngineLights" type="checkbox" style="margin:0"> EngLight</label>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:4px 8px;margin:2px 0;pointer-events:auto">
       <label style="display:flex;gap:3px;align-items:center;font-size:10px;color:#7a9bbf;cursor:pointer"><input id="perfToggleFgBldg" type="checkbox" style="margin:0"> Bldg</label>
@@ -1008,7 +1338,7 @@
     <div class="perf-controls" style="grid-template-columns:repeat(3,1fr)">
       <button class="perf-btn" id="perfPresetBase" type="button">Base</button>
       <button class="perf-btn" id="perfPresetFast" type="button">Fast</button>
-      <button class="perf-btn" id="perfPresetUltra" type="button">Ultra</button>
+      <button class="perf-btn" id="perfPresetUltra" type="button" title="Najniższa jakość — wszystkie efekty OFF">UltraFast</button>
     </div>
     <div style="color:#556;font-size:9px;margin-top:2px;pointer-events:none" id="perfRenderStatus"></div>
   </div>
@@ -1083,7 +1413,7 @@
       if (!window.Core3D) return null;
       const key = String(name || '').toLowerCase();
       if (key === 'base' || key === 'default') {
-        window.Core3D.setPerfToggles?.({ bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true });
+        window.Core3D.setPerfToggles?.({ bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, enginePointLights: true });
         window.Core3D.setMsaaEnabled?.(true, 4);
       } else if (key === 'nobloom') {
         window.Core3D.setPerfToggles?.({ bloom: false });
@@ -1092,10 +1422,10 @@
       } else if (key === 'nofg') {
         window.Core3D.setPerfToggles?.({ fgPass: false });
       } else if (key === 'fast') {
-        window.Core3D.setPerfToggles?.({ bloom: false, heatHaze: false, fgPass: true, bgPass: true, orthoPass: true });
+        window.Core3D.setPerfToggles?.({ bloom: false, heatHaze: false, fgPass: true, bgPass: true, orthoPass: true, enginePointLights: false });
         window.Core3D.setMsaaEnabled?.(false);
       } else if (key === 'ultrafast') {
-        window.Core3D.setPerfToggles?.({ bloom: false, heatHaze: false, shadowShafts: false, threeShadows: false, fgPass: false, planetPass: false, bgPass: true, orthoPass: true });
+        window.Core3D.setPerfToggles?.({ bloom: false, heatHaze: false, shadowShafts: false, threeShadows: false, fgPass: false, planetPass: false, bgPass: true, orthoPass: true, enginePointLights: false });
         window.Core3D.setMsaaEnabled?.(false);
       }
       const status = window.Core3D.getPerfStatus?.();
@@ -1143,7 +1473,7 @@
     
     import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
     import { WORLD, setWorldSize } from './src/world/world.js';
-    import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff } from './shieldSystem.js';
+    import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff, getEntityShieldBaseRadius } from './shieldSystem.js';
     // DODANO IMPORT SHIP_PHYSICS
     import { createShipEntity, applyPlayerInput, refreshShipGeometry, composeShipThrusterCommand, updateShipThrusterState, computeShipThrusterForces, SHIP_PHYSICS } from "./src/game/shipEntity.js";
     import { computePlayerCommandControl, computePlayerHoldControl as computePlayerHoldControlFromFlight } from "./src/game/flight/playerAutopilot.js";
@@ -1338,18 +1668,74 @@
           collisionTime: 0,
           deformTime: 0,
           aiTime: 0,
+          aiSquadsTime: 0,
+          aiSupportWingTime: 0,
+          aiNpcStepTime: 0,
+          aiNpcGridTime: 0,
+          aiNpcEnemyBrainTime: 0,
+          aiNpcFriendlyBrainTime: 0,
+          aiNpcOtherTime: 0,
+          aiPirateMissionTime: 0,
+          aiSeparationTime: 0,
+          aiWeaponScanTime: 0,
+          aiTargetPickTime: 0,
+          preAiTime: 0,
+          projectileTime: 0,
+          destructiblePrepTime: 0,
+          hardpointTime: 0,
+          hudNavTime: 0,
+          worldZoneTime: 0,
+          playerSystemsTime: 0,
+          scanUiTime: 0,
+          playerFlightTime: 0,
+          wreckPrepTime: 0,
+          ciwsTime: 0,
+          bulletGridTime: 0,
+          bulletMoveVfxTime: 0,
+          bulletInterceptTime: 0,
+          bulletNpcHitTime: 0,
+          bulletAsteroidTime: 0,
+          bulletRingTime: 0,
+          bulletMiscHitTime: 0,
+          npcFireTime: 0,
+          npcFireScanTime: 0,
+          npcFireSpawnTime: 0,
           drawTime: 0,
+          renderPrepTime: 0,
+          render3dUpdateTime: 0,
+          render3dPlanetsUpdateTime: 0,
+          render3dRingsUpdateTime: 0,
+          render3dStationsUpdateTime: 0,
+          render3dWorldUpdateTime: 0,
+          render3dAsteroidsUpdateTime: 0,
+          render3dDestructionUpdateTime: 0,
+          render3dHexUpdateTime: 0,
+          render3dShieldsUpdateTime: 0,
+          render3dDrawTime: 0,
+          render3dCoreCallTime: 0,
+          render3dCoreRenderTime: 0,
+          render3dComposerTime: 0,
+          render3dBlitTime: 0,
+          render2dWorldTime: 0,
+          render2dNpcTime: 0,
+          render2dPlayerTime: 0,
+          render2dProjectilesTime: 0,
+          render2dVfxTime: 0,
+          renderHudTime: 0,
+          renderUiTime: 0,
           planetsTime: 0,
         stationsTime: 0,
         world3dTime: 0,
         hex3dTime: 0,
         vfxUpdateTime: 0,
+        overlayFxTime: 0,
         contacts: 0,
         physicsSteps: 0
       },
       display: {
         fps: 0,
         frameMs: 0,
+          frameUntrackedTime: 0,
           physicsTime: 0,
           physicsPerStep: 0,
           destructorTime: 0,
@@ -1357,20 +1743,153 @@
           deformTime: 0,
           aiTime: 0,
           aiPerStep: 0,
+          aiSquadsTime: 0,
+          aiSquadsPerStep: 0,
+          aiSupportWingTime: 0,
+          aiSupportWingPerStep: 0,
+          aiNpcStepTime: 0,
+          aiNpcStepPerStep: 0,
+          aiNpcGridTime: 0,
+          aiNpcGridPerStep: 0,
+          aiNpcEnemyBrainTime: 0,
+          aiNpcEnemyBrainPerStep: 0,
+          aiNpcFriendlyBrainTime: 0,
+          aiNpcFriendlyBrainPerStep: 0,
+          aiNpcOtherTime: 0,
+          aiNpcOtherPerStep: 0,
+          aiPirateMissionTime: 0,
+          aiPirateMissionPerStep: 0,
+          aiSeparationTime: 0,
+          aiSeparationPerStep: 0,
+          aiWeaponScanTime: 0,
+          aiWeaponScanPerStep: 0,
+          aiTargetPickTime: 0,
+          aiTargetPickPerStep: 0,
+          preAiTime: 0,
+          preAiPerStep: 0,
+          projectileTime: 0,
+          projectilePerStep: 0,
+          destructiblePrepTime: 0,
+          destructiblePrepPerStep: 0,
+          hardpointTime: 0,
+          hardpointPerStep: 0,
+          hudNavTime: 0,
+          hudNavPerStep: 0,
+          worldZoneTime: 0,
+          worldZonePerStep: 0,
+          playerSystemsTime: 0,
+          playerSystemsPerStep: 0,
+          scanUiTime: 0,
+          scanUiPerStep: 0,
+          playerFlightTime: 0,
+          playerFlightPerStep: 0,
+          wreckPrepTime: 0,
+          wreckPrepPerStep: 0,
+          ciwsTime: 0,
+          ciwsPerStep: 0,
+          bulletGridTime: 0,
+          bulletGridPerStep: 0,
+          bulletMoveVfxTime: 0,
+          bulletMoveVfxPerStep: 0,
+          bulletInterceptTime: 0,
+          bulletInterceptPerStep: 0,
+          bulletNpcHitTime: 0,
+          bulletNpcHitPerStep: 0,
+          bulletAsteroidTime: 0,
+          bulletAsteroidPerStep: 0,
+          bulletRingTime: 0,
+          bulletRingPerStep: 0,
+          bulletMiscHitTime: 0,
+          bulletMiscHitPerStep: 0,
+          npcFireTime: 0,
+          npcFirePerStep: 0,
+          npcFireScanTime: 0,
+          npcFireScanPerStep: 0,
+          npcFireSpawnTime: 0,
+          npcFireSpawnPerStep: 0,
           drawTime: 0,
+          renderPrepTime: 0,
+          render3dUpdateTime: 0,
+          render3dPlanetsUpdateTime: 0,
+          render3dRingsUpdateTime: 0,
+          render3dStationsUpdateTime: 0,
+          render3dWorldUpdateTime: 0,
+          render3dAsteroidsUpdateTime: 0,
+          render3dDestructionUpdateTime: 0,
+          render3dHexUpdateTime: 0,
+          render3dShieldsUpdateTime: 0,
+          render3dDrawTime: 0,
+          render3dCoreCallTime: 0,
+          render3dCoreRenderTime: 0,
+          render3dComposerTime: 0,
+          render3dBlitTime: 0,
+          render2dWorldTime: 0,
+          render2dNpcTime: 0,
+          render2dPlayerTime: 0,
+          render2dProjectilesTime: 0,
+          render2dVfxTime: 0,
+          renderHudTime: 0,
+          renderUiTime: 0,
         planetsTime: 0,
         stationsTime: 0,
         world3dTime: 0,
         hex3dTime: 0,
         vfxUpdateTime: 0,
+        overlayFxTime: 0,
         contacts: 0,
         physicsSteps: 0,
         entities: 0,
         shards: 0,
-        debris: 0
+        bulletsCount: 0,
+        npcCount: 0,
+        fighterCount: 0,
+        enemyNpcCount: 0,
+        friendlyNpcCount: 0,
+        enemyFighterCount: 0,
+        friendlyFighterCount: 0,
+        pointLightCount: 0,
+        visiblePointLightCount: 0,
+        enginePointLightCount: 0,
+        visibleEnginePointLightCount: 0
       },
       els: null,
       graphCtx: null,
+      collapsedSections: { physics: true, ai: true, render: false, render3dDraw: false },
+      _sectionToggleBound: false,
+      sectionRows: {
+        physics: [
+          'perfDestructor', 'perfCollisions', 'perfDeform', 'perfAi',
+          'perfPreAi', 'perfWorldZone', 'perfPlayerSystems', 'perfScanUi',
+          'perfPlayerFlight', 'perfWreckPrep', 'perfProjectiles', 'perfCiws',
+          'perfBulletGrid', 'perfBulletMoveVfx', 'perfBulletIntercept',
+          'perfBulletNpcHit', 'perfBulletAsteroids', 'perfBulletRing',
+          'perfBulletMiscHits', 'perfNpcFire', 'perfNpcFireScan',
+          'perfNpcFireSpawn', 'perfDestructiblePrep',
+          'perfHardpoints', 'perfHudNav'
+        ],
+        ai: [
+          'perfAiSquads', 'perfAiSupportWing', 'perfAiNpcStep',
+          'perfAiNpcGrid', 'perfAiNpcEnemyBrain', 'perfAiNpcFriendlyBrain',
+          'perfAiNpcOther',
+          'perfAiPirateMission', 'perfAiSeparation', 'perfAiWeaponScan',
+          'perfAiTargetPick'
+        ],
+        render: [
+          'perfRenderPrep', 'perfRender3dUpdate',
+          'perfRender3dPlanetsUpdate', 'perfRender3dRingsUpdate',
+          'perfRender3dStationsUpdate', 'perfRender3dWorldUpdate',
+          'perfRender3dAsteroidsUpdate', 'perfRender3dDestructionUpdate',
+          'perfRender3dHexUpdate', 'perfRender3dShieldsUpdate',
+          'perfRender3dDraw',
+          'perfRender2dWorld', 'perfRender2dNpc', 'perfRender2dPlayer',
+          'perfRender2dProjectiles', 'perfRender2dVfx', 'perfRenderHud',
+          'perfRenderUi', 'perfOverlayFx'
+        ],
+        render3dDraw: [
+          'perfRender3dCoreCall', 'perfRender3dCoreRender',
+          'perfRender3dComposer', 'perfRender3dBlit'
+        ]
+      },
 
       init() {
         const panel = document.getElementById('perfPanel');
@@ -1379,21 +1898,145 @@
           panel,
           fps: document.getElementById('perfFps'),
           frameMs: document.getElementById('perfFrameTime'),
+          frameUntracked: document.getElementById('perfFrameUntracked'),
           physics: document.getElementById('perfPhysics'),
           destructor: document.getElementById('perfDestructor'),
           collisions: document.getElementById('perfCollisions'),
           deform: document.getElementById('perfDeform'),
           ai: document.getElementById('perfAi'),
+          aiSquads: document.getElementById('perfAiSquads'),
+          aiSupportWing: document.getElementById('perfAiSupportWing'),
+          aiNpcStep: document.getElementById('perfAiNpcStep'),
+          aiNpcGrid: document.getElementById('perfAiNpcGrid'),
+          aiNpcEnemyBrain: document.getElementById('perfAiNpcEnemyBrain'),
+          aiNpcFriendlyBrain: document.getElementById('perfAiNpcFriendlyBrain'),
+          aiNpcOther: document.getElementById('perfAiNpcOther'),
+          aiPirateMission: document.getElementById('perfAiPirateMission'),
+          aiSeparation: document.getElementById('perfAiSeparation'),
+          aiWeaponScan: document.getElementById('perfAiWeaponScan'),
+          aiTargetPick: document.getElementById('perfAiTargetPick'),
+          preAi: document.getElementById('perfPreAi'),
+          projectiles: document.getElementById('perfProjectiles'),
+          destructiblePrep: document.getElementById('perfDestructiblePrep'),
+          hardpoints: document.getElementById('perfHardpoints'),
+          hudNav: document.getElementById('perfHudNav'),
+          worldZone: document.getElementById('perfWorldZone'),
+          playerSystems: document.getElementById('perfPlayerSystems'),
+          scanUi: document.getElementById('perfScanUi'),
+          playerFlight: document.getElementById('perfPlayerFlight'),
+          wreckPrep: document.getElementById('perfWreckPrep'),
+          ciws: document.getElementById('perfCiws'),
+          bulletGrid: document.getElementById('perfBulletGrid'),
+          bulletMoveVfx: document.getElementById('perfBulletMoveVfx'),
+          bulletIntercept: document.getElementById('perfBulletIntercept'),
+          bulletNpcHit: document.getElementById('perfBulletNpcHit'),
+          bulletAsteroids: document.getElementById('perfBulletAsteroids'),
+          bulletRing: document.getElementById('perfBulletRing'),
+          bulletMiscHits: document.getElementById('perfBulletMiscHits'),
+          npcFire: document.getElementById('perfNpcFire'),
+          npcFireScan: document.getElementById('perfNpcFireScan'),
+          npcFireSpawn: document.getElementById('perfNpcFireSpawn'),
           draw: document.getElementById('perfDraw'),
+          renderPrep: document.getElementById('perfRenderPrep'),
+          render3dUpdate: document.getElementById('perfRender3dUpdate'),
+          render3dPlanetsUpdate: document.getElementById('perfRender3dPlanetsUpdate'),
+          render3dRingsUpdate: document.getElementById('perfRender3dRingsUpdate'),
+          render3dStationsUpdate: document.getElementById('perfRender3dStationsUpdate'),
+          render3dWorldUpdate: document.getElementById('perfRender3dWorldUpdate'),
+          render3dAsteroidsUpdate: document.getElementById('perfRender3dAsteroidsUpdate'),
+          render3dDestructionUpdate: document.getElementById('perfRender3dDestructionUpdate'),
+          render3dHexUpdate: document.getElementById('perfRender3dHexUpdate'),
+          render3dShieldsUpdate: document.getElementById('perfRender3dShieldsUpdate'),
+          render3dDraw: document.getElementById('perfRender3dDraw'),
+          render3dCoreCall: document.getElementById('perfRender3dCoreCall'),
+          render3dCoreRender: document.getElementById('perfRender3dCoreRender'),
+          render3dComposer: document.getElementById('perfRender3dComposer'),
+          render3dBlit: document.getElementById('perfRender3dBlit'),
+          render2dWorld: document.getElementById('perfRender2dWorld'),
+          render2dNpc: document.getElementById('perfRender2dNpc'),
+          render2dPlayer: document.getElementById('perfRender2dPlayer'),
+          render2dProjectiles: document.getElementById('perfRender2dProjectiles'),
+          render2dVfx: document.getElementById('perfRender2dVfx'),
+          renderHud: document.getElementById('perfRenderHud'),
+          renderUi: document.getElementById('perfRenderUi'),
+          overlayFx: document.getElementById('perfOverlayFx'),
           shards: document.getElementById('perfShards'),
-          debris: document.getElementById('perfDebris'),
           contacts: document.getElementById('perfContacts'),
+          drawCalls: document.getElementById('perfDrawCalls'),
+          drawCallsRefraction: document.getElementById('perfDrawCallsRefraction'),
+          drawCallsBg: document.getElementById('perfDrawCallsBg'),
+          drawCallsPlanets: document.getElementById('perfDrawCallsPlanets'),
+          drawCallsShafts: document.getElementById('perfDrawCallsShafts'),
+          drawCallsOrtho: document.getElementById('perfDrawCallsOrtho'),
+          drawCallsFg: document.getElementById('perfDrawCallsFg'),
+          drawCallsBloom: document.getElementById('perfDrawCallsBloom'),
+          drawCallsPost: document.getElementById('perfDrawCallsPost'),
+          drawCallsOther: document.getElementById('perfDrawCallsOther'),
+          counts: document.getElementById('perfCounts'),
+          npcTeams: document.getElementById('perfNpcTeams'),
+          pointLights: document.getElementById('perfPointLights'),
+          barFrameUntracked: document.getElementById('barFrameUntracked'),
           barPhysics: document.getElementById('barPhysics'),
           barDestructor: document.getElementById('barDestructor'),
           barCollisions: document.getElementById('barCollisions'),
           barDeform: document.getElementById('barDeform'),
           barAi: document.getElementById('barAi'),
+          barAiSquads: document.getElementById('barAiSquads'),
+          barAiSupportWing: document.getElementById('barAiSupportWing'),
+          barAiNpcStep: document.getElementById('barAiNpcStep'),
+          barAiNpcGrid: document.getElementById('barAiNpcGrid'),
+          barAiNpcEnemyBrain: document.getElementById('barAiNpcEnemyBrain'),
+          barAiNpcFriendlyBrain: document.getElementById('barAiNpcFriendlyBrain'),
+          barAiNpcOther: document.getElementById('barAiNpcOther'),
+          barAiPirateMission: document.getElementById('barAiPirateMission'),
+          barAiSeparation: document.getElementById('barAiSeparation'),
+          barAiWeaponScan: document.getElementById('barAiWeaponScan'),
+          barAiTargetPick: document.getElementById('barAiTargetPick'),
+          barPreAi: document.getElementById('barPreAi'),
+          barProjectiles: document.getElementById('barProjectiles'),
+          barDestructiblePrep: document.getElementById('barDestructiblePrep'),
+          barHardpoints: document.getElementById('barHardpoints'),
+          barHudNav: document.getElementById('barHudNav'),
+          barWorldZone: document.getElementById('barWorldZone'),
+          barPlayerSystems: document.getElementById('barPlayerSystems'),
+          barScanUi: document.getElementById('barScanUi'),
+          barPlayerFlight: document.getElementById('barPlayerFlight'),
+          barWreckPrep: document.getElementById('barWreckPrep'),
+          barCiws: document.getElementById('barCiws'),
+          barBulletGrid: document.getElementById('barBulletGrid'),
+          barBulletMoveVfx: document.getElementById('barBulletMoveVfx'),
+          barBulletIntercept: document.getElementById('barBulletIntercept'),
+          barBulletNpcHit: document.getElementById('barBulletNpcHit'),
+          barBulletAsteroids: document.getElementById('barBulletAsteroids'),
+          barBulletRing: document.getElementById('barBulletRing'),
+          barBulletMiscHits: document.getElementById('barBulletMiscHits'),
+          barNpcFire: document.getElementById('barNpcFire'),
+          barNpcFireScan: document.getElementById('barNpcFireScan'),
+          barNpcFireSpawn: document.getElementById('barNpcFireSpawn'),
           barDraw: document.getElementById('barDraw'),
+          barRenderPrep: document.getElementById('barRenderPrep'),
+          barRender3dUpdate: document.getElementById('barRender3dUpdate'),
+          barRender3dPlanetsUpdate: document.getElementById('barRender3dPlanetsUpdate'),
+          barRender3dRingsUpdate: document.getElementById('barRender3dRingsUpdate'),
+          barRender3dStationsUpdate: document.getElementById('barRender3dStationsUpdate'),
+          barRender3dWorldUpdate: document.getElementById('barRender3dWorldUpdate'),
+          barRender3dAsteroidsUpdate: document.getElementById('barRender3dAsteroidsUpdate'),
+          barRender3dDestructionUpdate: document.getElementById('barRender3dDestructionUpdate'),
+          barRender3dHexUpdate: document.getElementById('barRender3dHexUpdate'),
+          barRender3dShieldsUpdate: document.getElementById('barRender3dShieldsUpdate'),
+          barRender3dDraw: document.getElementById('barRender3dDraw'),
+          barRender3dCoreCall: document.getElementById('barRender3dCoreCall'),
+          barRender3dCoreRender: document.getElementById('barRender3dCoreRender'),
+          barRender3dComposer: document.getElementById('barRender3dComposer'),
+          barRender3dBlit: document.getElementById('barRender3dBlit'),
+          barRender2dWorld: document.getElementById('barRender2dWorld'),
+          barRender2dNpc: document.getElementById('barRender2dNpc'),
+          barRender2dPlayer: document.getElementById('barRender2dPlayer'),
+          barRender2dProjectiles: document.getElementById('barRender2dProjectiles'),
+          barRender2dVfx: document.getElementById('barRender2dVfx'),
+          barRenderHud: document.getElementById('barRenderHud'),
+          barRenderUi: document.getElementById('barRenderUi'),
+          barOverlayFx: document.getElementById('barOverlayFx'),
           colStart: document.getElementById('perfColStart'),
           colStop: document.getElementById('perfColStop'),
           renderStart: document.getElementById('perfRenderStart'),
@@ -1406,6 +2049,7 @@
           toggleOrtho: document.getElementById('perfToggleOrtho'),
           toggleFg: document.getElementById('perfToggleFg'),
           toggleMsaa: document.getElementById('perfToggleMsaa'),
+          toggleEngineLights: document.getElementById('perfToggleEngineLights'),
           toggleFgBldg: document.getElementById('perfToggleFgBldg'),
           toggleFgStations: document.getElementById('perfToggleFgStations'),
           toggleFgWeapons: document.getElementById('perfToggleFgWeapons'),
@@ -1417,6 +2061,7 @@
         };
         this.graphCtx = graph ? graph.getContext('2d') : null;
         this.history.fill(16.67);
+        this.loadCollapsedSections();
         this.lastFlush = performance.now();
         if (!this._debugButtonsBound) {
           const bind = (el, fn) => {
@@ -1443,6 +2088,7 @@
                 bgPass: !!this.els.toggleBg?.checked,
                 orthoPass: !!this.els.toggleOrtho?.checked,
                 fgPass: !!this.els.toggleFg?.checked,
+                enginePointLights: !!this.els.toggleEngineLights?.checked,
                 fgBuildings: !!this.els.toggleFgBldg?.checked,
                 fgStations: !!this.els.toggleFgStations?.checked,
                 fgWeapons: !!this.els.toggleFgWeapons?.checked,
@@ -1455,6 +2101,7 @@
             this.syncRenderToggles();
           };
           [this.els.toggleBloom, this.els.toggleHeat, this.els.toggleBg, this.els.toggleOrtho, this.els.toggleFg, this.els.toggleMsaa,
+           this.els.toggleEngineLights,
            this.els.toggleFgBldg, this.els.toggleFgStations, this.els.toggleFgWeapons, this.els.toggleFgShadows].forEach(el => {
             if (el) el.addEventListener('change', applyRenderToggles);
           });
@@ -1464,8 +2111,89 @@
 
           this._debugButtonsBound = true;
         }
+        this.bindSectionToggles();
+        this.applySectionCollapse();
         this.refreshDebugButtons();
         this.syncRenderToggles();
+      },
+
+      loadCollapsedSections() {
+        if (typeof localStorage === 'undefined') return;
+        try {
+          const raw = localStorage.getItem('perfHudCollapsedSections');
+          if (!raw) return;
+          const saved = JSON.parse(raw);
+          for (const key of Object.keys(this.collapsedSections)) {
+            if (typeof saved?.[key] === 'boolean') this.collapsedSections[key] = saved[key];
+          }
+        } catch {}
+      },
+
+      saveCollapsedSections() {
+        if (typeof localStorage === 'undefined') return;
+        try {
+          localStorage.setItem('perfHudCollapsedSections', JSON.stringify(this.collapsedSections));
+        } catch {}
+      },
+
+      getPerfRowForValueId(id) {
+        const el = document.getElementById(id);
+        return el ? el.closest('.perf-row') : null;
+      },
+
+      setPerfMetricHidden(id, hidden) {
+        const row = this.getPerfRowForValueId(id);
+        if (!row) return;
+        row.classList.toggle('perf-collapsed', !!hidden);
+        const bar = row.nextElementSibling;
+        if (bar?.classList?.contains('perf-bar-bg')) {
+          bar.classList.toggle('perf-collapsed', !!hidden);
+        }
+      },
+
+      setSectionRows(ids, hidden) {
+        for (const id of ids) this.setPerfMetricHidden(id, hidden);
+      },
+
+      applySectionCollapse() {
+        const physicsHidden = !!this.collapsedSections.physics;
+        const renderHidden = !!this.collapsedSections.render;
+        this.setSectionRows(this.sectionRows.physics, physicsHidden);
+        this.setSectionRows(this.sectionRows.ai, physicsHidden || !!this.collapsedSections.ai);
+        this.setSectionRows(this.sectionRows.render, renderHidden);
+        this.setSectionRows(this.sectionRows.render3dDraw, renderHidden || !!this.collapsedSections.render3dDraw);
+
+        const panel = this.els?.panel;
+        for (const key of Object.keys(this.collapsedSections)) {
+          const caret = panel?.querySelector(`[data-perf-caret="${key}"]`);
+          if (caret) caret.textContent = this.collapsedSections[key] ? '+' : '-';
+        }
+      },
+
+      toggleSection(key) {
+        if (!(key in this.collapsedSections)) return;
+        this.collapsedSections[key] = !this.collapsedSections[key];
+        this.saveCollapsedSections();
+        this.applySectionCollapse();
+      },
+
+      bindSectionToggles() {
+        if (this._sectionToggleBound || !this.els?.panel) return;
+        const toggles = this.els.panel.querySelectorAll('[data-perf-toggle]');
+        for (const row of toggles) {
+          const key = row.getAttribute('data-perf-toggle');
+          const handler = (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            this.toggleSection(key);
+          };
+          row.addEventListener('click', handler);
+          row.addEventListener('keydown', (ev) => {
+            if (ev.key !== 'Enter' && ev.key !== ' ') return;
+            handler(ev);
+          });
+        }
+        this._sectionToggleBound = true;
       },
 
       toggle() {
@@ -1511,12 +2239,107 @@
         this.display.deformTime = this.accum.deformTime / frames;
         this.display.aiTime = this.accum.aiTime / frames;
         this.display.aiPerStep = this.accum.aiTime / Math.max(1, this.accum.physicsSteps);
+        this.display.aiSquadsTime = this.accum.aiSquadsTime / frames;
+        this.display.aiSquadsPerStep = this.accum.aiSquadsTime / Math.max(1, this.accum.physicsSteps);
+        this.display.aiSupportWingTime = this.accum.aiSupportWingTime / frames;
+        this.display.aiSupportWingPerStep = this.accum.aiSupportWingTime / Math.max(1, this.accum.physicsSteps);
+        this.display.aiNpcStepTime = this.accum.aiNpcStepTime / frames;
+        this.display.aiNpcStepPerStep = this.accum.aiNpcStepTime / Math.max(1, this.accum.physicsSteps);
+        this.display.aiNpcGridTime = this.accum.aiNpcGridTime / frames;
+        this.display.aiNpcGridPerStep = this.accum.aiNpcGridTime / Math.max(1, this.accum.physicsSteps);
+        this.display.aiNpcEnemyBrainTime = this.accum.aiNpcEnemyBrainTime / frames;
+        this.display.aiNpcEnemyBrainPerStep = this.accum.aiNpcEnemyBrainTime / Math.max(1, this.accum.physicsSteps);
+        this.display.aiNpcFriendlyBrainTime = this.accum.aiNpcFriendlyBrainTime / frames;
+        this.display.aiNpcFriendlyBrainPerStep = this.accum.aiNpcFriendlyBrainTime / Math.max(1, this.accum.physicsSteps);
+        this.display.aiNpcOtherTime = this.accum.aiNpcOtherTime / frames;
+        this.display.aiNpcOtherPerStep = this.accum.aiNpcOtherTime / Math.max(1, this.accum.physicsSteps);
+        this.display.aiPirateMissionTime = this.accum.aiPirateMissionTime / frames;
+        this.display.aiPirateMissionPerStep = this.accum.aiPirateMissionTime / Math.max(1, this.accum.physicsSteps);
+        this.display.aiSeparationTime = this.accum.aiSeparationTime / frames;
+        this.display.aiSeparationPerStep = this.accum.aiSeparationTime / Math.max(1, this.accum.physicsSteps);
+        this.display.aiWeaponScanTime = this.accum.aiWeaponScanTime / frames;
+        this.display.aiWeaponScanPerStep = this.accum.aiWeaponScanTime / Math.max(1, this.accum.physicsSteps);
+        this.display.aiTargetPickTime = this.accum.aiTargetPickTime / frames;
+        this.display.aiTargetPickPerStep = this.accum.aiTargetPickTime / Math.max(1, this.accum.physicsSteps);
+        this.display.preAiTime = this.accum.preAiTime / frames;
+        this.display.preAiPerStep = this.accum.preAiTime / Math.max(1, this.accum.physicsSteps);
+        this.display.projectileTime = this.accum.projectileTime / frames;
+        this.display.projectilePerStep = this.accum.projectileTime / Math.max(1, this.accum.physicsSteps);
+        this.display.destructiblePrepTime = this.accum.destructiblePrepTime / frames;
+        this.display.destructiblePrepPerStep = this.accum.destructiblePrepTime / Math.max(1, this.accum.physicsSteps);
+        this.display.hardpointTime = this.accum.hardpointTime / frames;
+        this.display.hardpointPerStep = this.accum.hardpointTime / Math.max(1, this.accum.physicsSteps);
+        this.display.hudNavTime = this.accum.hudNavTime / frames;
+        this.display.hudNavPerStep = this.accum.hudNavTime / Math.max(1, this.accum.physicsSteps);
+        this.display.worldZoneTime = this.accum.worldZoneTime / frames;
+        this.display.worldZonePerStep = this.accum.worldZoneTime / Math.max(1, this.accum.physicsSteps);
+        this.display.playerSystemsTime = this.accum.playerSystemsTime / frames;
+        this.display.playerSystemsPerStep = this.accum.playerSystemsTime / Math.max(1, this.accum.physicsSteps);
+        this.display.scanUiTime = this.accum.scanUiTime / frames;
+        this.display.scanUiPerStep = this.accum.scanUiTime / Math.max(1, this.accum.physicsSteps);
+        this.display.playerFlightTime = this.accum.playerFlightTime / frames;
+        this.display.playerFlightPerStep = this.accum.playerFlightTime / Math.max(1, this.accum.physicsSteps);
+        this.display.wreckPrepTime = this.accum.wreckPrepTime / frames;
+        this.display.wreckPrepPerStep = this.accum.wreckPrepTime / Math.max(1, this.accum.physicsSteps);
+        this.display.ciwsTime = this.accum.ciwsTime / frames;
+        this.display.ciwsPerStep = this.accum.ciwsTime / Math.max(1, this.accum.physicsSteps);
+        this.display.bulletGridTime = this.accum.bulletGridTime / frames;
+        this.display.bulletGridPerStep = this.accum.bulletGridTime / Math.max(1, this.accum.physicsSteps);
+        this.display.bulletMoveVfxTime = this.accum.bulletMoveVfxTime / frames;
+        this.display.bulletMoveVfxPerStep = this.accum.bulletMoveVfxTime / Math.max(1, this.accum.physicsSteps);
+        this.display.bulletInterceptTime = this.accum.bulletInterceptTime / frames;
+        this.display.bulletInterceptPerStep = this.accum.bulletInterceptTime / Math.max(1, this.accum.physicsSteps);
+        this.display.bulletNpcHitTime = this.accum.bulletNpcHitTime / frames;
+        this.display.bulletNpcHitPerStep = this.accum.bulletNpcHitTime / Math.max(1, this.accum.physicsSteps);
+        this.display.bulletAsteroidTime = this.accum.bulletAsteroidTime / frames;
+        this.display.bulletAsteroidPerStep = this.accum.bulletAsteroidTime / Math.max(1, this.accum.physicsSteps);
+        this.display.bulletRingTime = this.accum.bulletRingTime / frames;
+        this.display.bulletRingPerStep = this.accum.bulletRingTime / Math.max(1, this.accum.physicsSteps);
+        this.display.bulletMiscHitTime = this.accum.bulletMiscHitTime / frames;
+        this.display.bulletMiscHitPerStep = this.accum.bulletMiscHitTime / Math.max(1, this.accum.physicsSteps);
+        this.display.npcFireTime = this.accum.npcFireTime / frames;
+        this.display.npcFirePerStep = this.accum.npcFireTime / Math.max(1, this.accum.physicsSteps);
+        this.display.npcFireScanTime = this.accum.npcFireScanTime / frames;
+        this.display.npcFireScanPerStep = this.accum.npcFireScanTime / Math.max(1, this.accum.physicsSteps);
+        this.display.npcFireSpawnTime = this.accum.npcFireSpawnTime / frames;
+        this.display.npcFireSpawnPerStep = this.accum.npcFireSpawnTime / Math.max(1, this.accum.physicsSteps);
         this.display.drawTime = this.accum.drawTime / frames;
+        // Untracked = klatka minus WSZYSTKIE mierzone buckety najwyższego poziomu
+        // (fizyka, rysowanie, deformacje destruktora, CanvasVFX update, overlay FX 3D).
+        this.display.frameUntrackedTime = Math.max(0, this.display.frameMs
+          - this.display.physicsTime
+          - this.display.drawTime
+          - this.display.deformTime
+          - this.display.vfxUpdateTime
+          - this.display.overlayFxTime);
+        this.display.renderPrepTime = this.accum.renderPrepTime / frames;
+        this.display.render3dUpdateTime = this.accum.render3dUpdateTime / frames;
+        this.display.render3dPlanetsUpdateTime = this.accum.render3dPlanetsUpdateTime / frames;
+        this.display.render3dRingsUpdateTime = this.accum.render3dRingsUpdateTime / frames;
+        this.display.render3dStationsUpdateTime = this.accum.render3dStationsUpdateTime / frames;
+        this.display.render3dWorldUpdateTime = this.accum.render3dWorldUpdateTime / frames;
+        this.display.render3dAsteroidsUpdateTime = this.accum.render3dAsteroidsUpdateTime / frames;
+        this.display.render3dDestructionUpdateTime = this.accum.render3dDestructionUpdateTime / frames;
+        this.display.render3dHexUpdateTime = this.accum.render3dHexUpdateTime / frames;
+        this.display.render3dShieldsUpdateTime = this.accum.render3dShieldsUpdateTime / frames;
+        this.display.render3dDrawTime = this.accum.render3dDrawTime / frames;
+        this.display.render3dCoreCallTime = this.accum.render3dCoreCallTime / frames;
+        this.display.render3dCoreRenderTime = this.accum.render3dCoreRenderTime / frames;
+        this.display.render3dComposerTime = this.accum.render3dComposerTime / frames;
+        this.display.render3dBlitTime = this.accum.render3dBlitTime / frames;
+        this.display.render2dWorldTime = this.accum.render2dWorldTime / frames;
+        this.display.render2dNpcTime = this.accum.render2dNpcTime / frames;
+        this.display.render2dPlayerTime = this.accum.render2dPlayerTime / frames;
+        this.display.render2dProjectilesTime = this.accum.render2dProjectilesTime / frames;
+        this.display.render2dVfxTime = this.accum.render2dVfxTime / frames;
+        this.display.renderHudTime = this.accum.renderHudTime / frames;
+        this.display.renderUiTime = this.accum.renderUiTime / frames;
         this.display.planetsTime = this.accum.planetsTime / frames;
         this.display.stationsTime = this.accum.stationsTime / frames;
         this.display.world3dTime = this.accum.world3dTime / frames;
         this.display.hex3dTime = this.accum.hex3dTime / frames;
         this.display.vfxUpdateTime = this.accum.vfxUpdateTime / frames;
+        this.display.overlayFxTime = this.accum.overlayFxTime / frames;
         this.display.contacts = this.accum.contacts / frames;
         this.display.physicsSteps = this.accum.physicsSteps / frames;
 
@@ -1524,7 +2347,17 @@
         this.display.entities = counts.entities;
         this.display.shards = counts.shards;
         this.display.sleepingShards = counts.sleepingShards;
-        this.display.debris = counts.debris;
+        this.display.bulletsCount = counts.bulletsCount;
+        this.display.npcCount = counts.npcCount;
+        this.display.fighterCount = counts.fighterCount;
+        this.display.enemyNpcCount = counts.enemyNpcCount;
+        this.display.friendlyNpcCount = counts.friendlyNpcCount;
+        this.display.enemyFighterCount = counts.enemyFighterCount;
+        this.display.friendlyFighterCount = counts.friendlyFighterCount;
+        this.display.pointLightCount = counts.pointLightCount;
+        this.display.visiblePointLightCount = counts.visiblePointLightCount;
+        this.display.enginePointLightCount = counts.enginePointLightCount;
+        this.display.visibleEnginePointLightCount = counts.visibleEnginePointLightCount;
 
         this.updateDOM();
         this.syncRenderToggles();
@@ -1557,8 +2390,57 @@
             else activeShards++;
           }
         }
-        const debris = Array.isArray(DestructorSystem?.debris) ? DestructorSystem.debris.length : 0;
-        return { entities: entitiesCount, shards: activeShards, sleepingShards, debris };
+        let npcCount = 0;
+        let fighterCount = 0;
+        let enemyNpcCount = 0;
+        let friendlyNpcCount = 0;
+        let enemyFighterCount = 0;
+        let friendlyFighterCount = 0;
+        for (const npc of npcs) {
+          if (!npc || npc.dead) continue;
+          const isFighter = !!(npc.fighter || npc.type === 'fighter');
+          npcCount++;
+          if (isFighter) fighterCount++;
+          if (npc.friendly) {
+            friendlyNpcCount++;
+            if (isFighter) friendlyFighterCount++;
+          } else {
+            enemyNpcCount++;
+            if (isFighter) enemyFighterCount++;
+          }
+        }
+        let pointLightCount = 0;
+        let visiblePointLightCount = 0;
+        let enginePointLightCount = 0;
+        let visibleEnginePointLightCount = 0;
+        const scene = window.Core3D?.scene;
+        if (scene?.traverse) {
+          scene.traverse((obj) => {
+            if (!obj?.isPointLight) return;
+            pointLightCount++;
+            if (obj.visible !== false) visiblePointLightCount++;
+            if (obj.userData?.enginePointLight) {
+              enginePointLightCount++;
+              if (obj.visible !== false) visibleEnginePointLightCount++;
+            }
+          });
+        }
+        return {
+          entities: entitiesCount,
+          shards: activeShards,
+          sleepingShards,
+          bulletsCount: Array.isArray(bullets) ? bullets.length : 0,
+          npcCount,
+          fighterCount,
+          enemyNpcCount,
+          friendlyNpcCount,
+          enemyFighterCount,
+          friendlyFighterCount,
+          pointLightCount,
+          visiblePointLightCount,
+          enginePointLightCount,
+          visibleEnginePointLightCount
+        };
       },
 
       updateDOM() {
@@ -1576,6 +2458,13 @@
           const width = Math.min(100, (valueMs / 16.67) * 100);
           el.style.width = `${Math.max(0, width).toFixed(0)}%`;
         };
+        const formatDrawInfo = (bucket) => {
+          if (!bucket) return '--';
+          const calls = Math.round(Number(bucket.calls) || 0);
+          const triangles = Math.round(Number(bucket.triangles) || 0);
+          const triText = triangles >= 10000 ? `${Math.round(triangles / 1000)}k` : `${triangles}`;
+          return `${calls} / ${triText}`;
+        };
 
         if (e.fps) {
           e.fps.textContent = `${d.fps}`;
@@ -1583,21 +2472,150 @@
         }
         if (e.frameMs) e.frameMs.textContent = `${d.frameMs.toFixed(1)} ms/frame`;
 
+        setMs(e.frameUntracked, d.frameUntrackedTime);
         setMsWithStep(e.physics, d.physicsTime, d.physicsPerStep);
         setMs(e.destructor, d.destructorTime);
         setMs(e.collisions, d.collisionTime);
         setMs(e.deform, d.deformTime);
         setMsWithStep(e.ai, d.aiTime, d.aiPerStep);
+        setMsWithStep(e.aiSquads, d.aiSquadsTime, d.aiSquadsPerStep);
+        setMsWithStep(e.aiSupportWing, d.aiSupportWingTime, d.aiSupportWingPerStep);
+        setMsWithStep(e.aiNpcStep, d.aiNpcStepTime, d.aiNpcStepPerStep);
+        setMsWithStep(e.aiNpcGrid, d.aiNpcGridTime, d.aiNpcGridPerStep);
+        setMsWithStep(e.aiNpcEnemyBrain, d.aiNpcEnemyBrainTime, d.aiNpcEnemyBrainPerStep);
+        setMsWithStep(e.aiNpcFriendlyBrain, d.aiNpcFriendlyBrainTime, d.aiNpcFriendlyBrainPerStep);
+        setMsWithStep(e.aiNpcOther, d.aiNpcOtherTime, d.aiNpcOtherPerStep);
+        setMsWithStep(e.aiPirateMission, d.aiPirateMissionTime, d.aiPirateMissionPerStep);
+        setMsWithStep(e.aiSeparation, d.aiSeparationTime, d.aiSeparationPerStep);
+        setMsWithStep(e.aiWeaponScan, d.aiWeaponScanTime, d.aiWeaponScanPerStep);
+        setMsWithStep(e.aiTargetPick, d.aiTargetPickTime, d.aiTargetPickPerStep);
+        setMsWithStep(e.preAi, d.preAiTime, d.preAiPerStep);
+        setMsWithStep(e.worldZone, d.worldZoneTime, d.worldZonePerStep);
+        setMsWithStep(e.playerSystems, d.playerSystemsTime, d.playerSystemsPerStep);
+        setMsWithStep(e.scanUi, d.scanUiTime, d.scanUiPerStep);
+        setMsWithStep(e.playerFlight, d.playerFlightTime, d.playerFlightPerStep);
+        setMsWithStep(e.wreckPrep, d.wreckPrepTime, d.wreckPrepPerStep);
+        setMsWithStep(e.projectiles, d.projectileTime, d.projectilePerStep);
+        setMsWithStep(e.ciws, d.ciwsTime, d.ciwsPerStep);
+        setMsWithStep(e.bulletGrid, d.bulletGridTime, d.bulletGridPerStep);
+        setMsWithStep(e.bulletMoveVfx, d.bulletMoveVfxTime, d.bulletMoveVfxPerStep);
+        setMsWithStep(e.bulletIntercept, d.bulletInterceptTime, d.bulletInterceptPerStep);
+        setMsWithStep(e.bulletNpcHit, d.bulletNpcHitTime, d.bulletNpcHitPerStep);
+        setMsWithStep(e.bulletAsteroids, d.bulletAsteroidTime, d.bulletAsteroidPerStep);
+        setMsWithStep(e.bulletRing, d.bulletRingTime, d.bulletRingPerStep);
+        setMsWithStep(e.bulletMiscHits, d.bulletMiscHitTime, d.bulletMiscHitPerStep);
+        setMsWithStep(e.npcFire, d.npcFireTime, d.npcFirePerStep);
+        setMsWithStep(e.npcFireScan, d.npcFireScanTime, d.npcFireScanPerStep);
+        setMsWithStep(e.npcFireSpawn, d.npcFireSpawnTime, d.npcFireSpawnPerStep);
+        setMsWithStep(e.destructiblePrep, d.destructiblePrepTime, d.destructiblePrepPerStep);
+        setMsWithStep(e.hardpoints, d.hardpointTime, d.hardpointPerStep);
+        setMsWithStep(e.hudNav, d.hudNavTime, d.hudNavPerStep);
         setMs(e.draw, d.drawTime);
+        setMs(e.renderPrep, d.renderPrepTime);
+        setMs(e.render3dUpdate, d.render3dUpdateTime);
+        setMs(e.render3dPlanetsUpdate, d.render3dPlanetsUpdateTime);
+        setMs(e.render3dRingsUpdate, d.render3dRingsUpdateTime);
+        setMs(e.render3dStationsUpdate, d.render3dStationsUpdateTime);
+        setMs(e.render3dWorldUpdate, d.render3dWorldUpdateTime);
+        setMs(e.render3dAsteroidsUpdate, d.render3dAsteroidsUpdateTime);
+        setMs(e.render3dDestructionUpdate, d.render3dDestructionUpdateTime);
+        setMs(e.render3dHexUpdate, d.render3dHexUpdateTime);
+        setMs(e.render3dShieldsUpdate, d.render3dShieldsUpdateTime);
+        setMs(e.render3dDraw, d.render3dDrawTime);
+        setMs(e.render3dCoreCall, d.render3dCoreCallTime);
+        setMs(e.render3dCoreRender, d.render3dCoreRenderTime);
+        setMs(e.render3dComposer, d.render3dComposerTime);
+        setMs(e.render3dBlit, d.render3dBlitTime);
+        setMs(e.render2dWorld, d.render2dWorldTime);
+        setMs(e.render2dNpc, d.render2dNpcTime);
+        setMs(e.render2dPlayer, d.render2dPlayerTime);
+        setMs(e.render2dProjectiles, d.render2dProjectilesTime);
+        setMs(e.render2dVfx, d.render2dVfxTime);
+        setMs(e.renderHud, d.renderHudTime);
+        setMs(e.renderUi, d.renderUiTime);
+        setMs(e.overlayFx, d.overlayFxTime);
+        setBar(e.barFrameUntracked, d.frameUntrackedTime);
         setBar(e.barPhysics, d.physicsTime);
         setBar(e.barDestructor, d.destructorTime);
         setBar(e.barCollisions, d.collisionTime);
         setBar(e.barDeform, d.deformTime);
         setBar(e.barAi, d.aiTime);
+        setBar(e.barAiSquads, d.aiSquadsTime);
+        setBar(e.barAiSupportWing, d.aiSupportWingTime);
+        setBar(e.barAiNpcStep, d.aiNpcStepTime);
+        setBar(e.barAiNpcGrid, d.aiNpcGridTime);
+        setBar(e.barAiNpcEnemyBrain, d.aiNpcEnemyBrainTime);
+        setBar(e.barAiNpcFriendlyBrain, d.aiNpcFriendlyBrainTime);
+        setBar(e.barAiNpcOther, d.aiNpcOtherTime);
+        setBar(e.barAiPirateMission, d.aiPirateMissionTime);
+        setBar(e.barAiSeparation, d.aiSeparationTime);
+        setBar(e.barAiWeaponScan, d.aiWeaponScanTime);
+        setBar(e.barAiTargetPick, d.aiTargetPickTime);
+        setBar(e.barPreAi, d.preAiTime);
+        setBar(e.barWorldZone, d.worldZoneTime);
+        setBar(e.barPlayerSystems, d.playerSystemsTime);
+        setBar(e.barScanUi, d.scanUiTime);
+        setBar(e.barPlayerFlight, d.playerFlightTime);
+        setBar(e.barWreckPrep, d.wreckPrepTime);
+        setBar(e.barProjectiles, d.projectileTime);
+        setBar(e.barCiws, d.ciwsTime);
+        setBar(e.barBulletGrid, d.bulletGridTime);
+        setBar(e.barBulletMoveVfx, d.bulletMoveVfxTime);
+        setBar(e.barBulletIntercept, d.bulletInterceptTime);
+        setBar(e.barBulletNpcHit, d.bulletNpcHitTime);
+        setBar(e.barBulletAsteroids, d.bulletAsteroidTime);
+        setBar(e.barBulletRing, d.bulletRingTime);
+        setBar(e.barBulletMiscHits, d.bulletMiscHitTime);
+        setBar(e.barNpcFire, d.npcFireTime);
+        setBar(e.barNpcFireScan, d.npcFireScanTime);
+        setBar(e.barNpcFireSpawn, d.npcFireSpawnTime);
+        setBar(e.barDestructiblePrep, d.destructiblePrepTime);
+        setBar(e.barHardpoints, d.hardpointTime);
+        setBar(e.barHudNav, d.hudNavTime);
         setBar(e.barDraw, d.drawTime);
+        setBar(e.barRenderPrep, d.renderPrepTime);
+        setBar(e.barRender3dUpdate, d.render3dUpdateTime);
+        setBar(e.barRender3dPlanetsUpdate, d.render3dPlanetsUpdateTime);
+        setBar(e.barRender3dRingsUpdate, d.render3dRingsUpdateTime);
+        setBar(e.barRender3dStationsUpdate, d.render3dStationsUpdateTime);
+        setBar(e.barRender3dWorldUpdate, d.render3dWorldUpdateTime);
+        setBar(e.barRender3dAsteroidsUpdate, d.render3dAsteroidsUpdateTime);
+        setBar(e.barRender3dDestructionUpdate, d.render3dDestructionUpdateTime);
+        setBar(e.barRender3dHexUpdate, d.render3dHexUpdateTime);
+        setBar(e.barRender3dShieldsUpdate, d.render3dShieldsUpdateTime);
+        setBar(e.barRender3dDraw, d.render3dDrawTime);
+        setBar(e.barRender3dCoreCall, d.render3dCoreCallTime);
+        setBar(e.barRender3dCoreRender, d.render3dCoreRenderTime);
+        setBar(e.barRender3dComposer, d.render3dComposerTime);
+        setBar(e.barRender3dBlit, d.render3dBlitTime);
+        setBar(e.barRender2dWorld, d.render2dWorldTime);
+        setBar(e.barRender2dNpc, d.render2dNpcTime);
+        setBar(e.barRender2dPlayer, d.render2dPlayerTime);
+        setBar(e.barRender2dProjectiles, d.render2dProjectilesTime);
+        setBar(e.barRender2dVfx, d.render2dVfxTime);
+        setBar(e.barRenderHud, d.renderHudTime);
+        setBar(e.barRenderUi, d.renderUiTime);
+        setBar(e.barOverlayFx, d.overlayFxTime);
         if (e.shards) e.shards.textContent = d.sleepingShards > 0 ? `${d.shards} (${d.sleepingShards} zz)` : `${d.shards}`;
-        if (e.debris) e.debris.textContent = `${d.debris}`;
         if (e.contacts) e.contacts.textContent = `${Math.round(d.contacts)}`;
+        if (e.drawCalls) {
+          const ri = window.__rendererInfo;
+          e.drawCalls.textContent = ri ? formatDrawInfo(ri) : '--';
+          const passes = ri ? ri.passes : null;
+          if (e.drawCallsRefraction) e.drawCallsRefraction.textContent = formatDrawInfo(passes?.refraction);
+          if (e.drawCallsBg) e.drawCallsBg.textContent = formatDrawInfo(passes?.bg);
+          if (e.drawCallsPlanets) e.drawCallsPlanets.textContent = formatDrawInfo(passes?.planets);
+          if (e.drawCallsShafts) e.drawCallsShafts.textContent = formatDrawInfo(passes?.shafts);
+          if (e.drawCallsOrtho) e.drawCallsOrtho.textContent = formatDrawInfo(passes?.ortho);
+          if (e.drawCallsFg) e.drawCallsFg.textContent = formatDrawInfo(passes?.fg);
+          if (e.drawCallsBloom) e.drawCallsBloom.textContent = formatDrawInfo(passes?.bloom);
+          if (e.drawCallsPost) e.drawCallsPost.textContent = formatDrawInfo(passes?.post);
+          if (e.drawCallsOther) e.drawCallsOther.textContent = formatDrawInfo(passes?.other);
+        }
+        if (e.npcTeams) e.npcTeams.textContent = `${d.enemyNpcCount} / ${d.friendlyNpcCount} (F ${d.enemyFighterCount}/${d.friendlyFighterCount})`;
+        if (e.pointLights) e.pointLights.textContent = `${d.visiblePointLightCount}/${d.pointLightCount} (eng ${d.visibleEnginePointLightCount}/${d.enginePointLightCount})`;
+        if (e.counts) e.counts.textContent = `${d.bulletsCount} / ${d.npcCount} (${d.fighterCount} myśl.)`;
+        this.applySectionCollapse();
       },
 
       drawGraph() {
@@ -1647,12 +2665,67 @@
         this.accum.collisionTime = 0;
         this.accum.deformTime = 0;
         this.accum.aiTime = 0;
+        this.accum.aiSquadsTime = 0;
+        this.accum.aiSupportWingTime = 0;
+        this.accum.aiNpcStepTime = 0;
+        this.accum.aiNpcGridTime = 0;
+        this.accum.aiNpcEnemyBrainTime = 0;
+        this.accum.aiNpcFriendlyBrainTime = 0;
+        this.accum.aiNpcOtherTime = 0;
+        this.accum.aiPirateMissionTime = 0;
+        this.accum.aiSeparationTime = 0;
+        this.accum.aiWeaponScanTime = 0;
+        this.accum.aiTargetPickTime = 0;
+        this.accum.preAiTime = 0;
+        this.accum.projectileTime = 0;
+        this.accum.destructiblePrepTime = 0;
+        this.accum.hardpointTime = 0;
+        this.accum.hudNavTime = 0;
+        this.accum.worldZoneTime = 0;
+        this.accum.playerSystemsTime = 0;
+        this.accum.scanUiTime = 0;
+        this.accum.playerFlightTime = 0;
+        this.accum.wreckPrepTime = 0;
+        this.accum.ciwsTime = 0;
+        this.accum.bulletGridTime = 0;
+        this.accum.bulletMoveVfxTime = 0;
+        this.accum.bulletInterceptTime = 0;
+        this.accum.bulletNpcHitTime = 0;
+        this.accum.bulletAsteroidTime = 0;
+        this.accum.bulletRingTime = 0;
+        this.accum.bulletMiscHitTime = 0;
+        this.accum.npcFireTime = 0;
+        this.accum.npcFireScanTime = 0;
+        this.accum.npcFireSpawnTime = 0;
         this.accum.drawTime = 0;
+        this.accum.renderPrepTime = 0;
+        this.accum.render3dUpdateTime = 0;
+        this.accum.render3dPlanetsUpdateTime = 0;
+        this.accum.render3dRingsUpdateTime = 0;
+        this.accum.render3dStationsUpdateTime = 0;
+        this.accum.render3dWorldUpdateTime = 0;
+        this.accum.render3dAsteroidsUpdateTime = 0;
+        this.accum.render3dDestructionUpdateTime = 0;
+        this.accum.render3dHexUpdateTime = 0;
+        this.accum.render3dShieldsUpdateTime = 0;
+        this.accum.render3dDrawTime = 0;
+        this.accum.render3dCoreCallTime = 0;
+        this.accum.render3dCoreRenderTime = 0;
+        this.accum.render3dComposerTime = 0;
+        this.accum.render3dBlitTime = 0;
+        this.accum.render2dWorldTime = 0;
+        this.accum.render2dNpcTime = 0;
+        this.accum.render2dPlayerTime = 0;
+        this.accum.render2dProjectilesTime = 0;
+        this.accum.render2dVfxTime = 0;
+        this.accum.renderHudTime = 0;
+        this.accum.renderUiTime = 0;
         this.accum.planetsTime = 0;
         this.accum.stationsTime = 0;
         this.accum.world3dTime = 0;
         this.accum.hex3dTime = 0;
         this.accum.vfxUpdateTime = 0;
+        this.accum.overlayFxTime = 0;
         this.accum.contacts = 0;
         this.accum.physicsSteps = 0;
       },
@@ -1687,12 +2760,13 @@
         if (this.els.toggleOrtho) this.els.toggleOrtho.checked = !!status.orthoPass;
         if (this.els.toggleFg) this.els.toggleFg.checked = !!status.fgPass;
         if (this.els.toggleMsaa) this.els.toggleMsaa.checked = Number(status.msaaSamples) > 0;
+        if (this.els.toggleEngineLights) this.els.toggleEngineLights.checked = !!status.enginePointLights;
         if (this.els.toggleFgBldg) this.els.toggleFgBldg.checked = !!status.fgBuildings;
         if (this.els.toggleFgStations) this.els.toggleFgStations.checked = !!status.fgStations;
         if (this.els.toggleFgWeapons) this.els.toggleFgWeapons.checked = !!status.fgWeapons;
         if (this.els.toggleFgShadows) this.els.toggleFgShadows.checked = !!status.fgShadows;
         if (this.els.renderStatus) {
-          this.els.renderStatus.textContent = `MSAA=${Number(status.msaaSamples) || 0} | bloom=${status.bloom ? 'on' : 'off'} | heat=${status.heatHaze ? 'on' : 'off'}`;
+          this.els.renderStatus.textContent = `MSAA=${Number(status.msaaSamples) || 0} | bloom=${status.bloom ? 'on' : 'off'} | heat=${status.heatHaze ? 'on' : 'off'} | engL=${status.enginePointLights ? 'on' : 'off'}`;
         }
       }
     };
@@ -4213,10 +5287,13 @@
         }
         const rotRaw = Number(marker?.rot);
         const fallbackRot = type === HP.BUILTIN ? 90 : 0;
+        const hpSize = resolvedKey === 'atlas'
+          ? getDefaultHardpointSize(resolvedKey)
+          : (marker?.size || getDefaultHardpointSize(resolvedKey));
         out.push({
           id: marker?.id || uid(),
           type,
-          size: marker?.size || getDefaultHardpointSize(resolvedKey),
+          size: hpSize,
           pos: {
             x: x * scaleX,
             y: y * scaleY,
@@ -9667,6 +10744,28 @@
       return parts.join(' | ');
     }
 
+    function mechanicCompactWeaponStats(weapon) {
+      if (!weapon) return '';
+      const parts = [];
+      if (weapon.baseDamage != null) parts.push(`${weapon.baseDamage}dmg`);
+      if (weapon.cooldown != null) parts.push(`${weapon.cooldown}s`);
+      if (weapon.ammo != null) parts.push(`${weapon.ammo} ammo`);
+      return parts.length ? parts.join(' / ') : weaponMetaText(weapon);
+    }
+
+    function mechanicHardpointGlyph(hp) {
+      switch (hp?.type) {
+        case HP.MAIN: return 'MN';
+        case HP.MISSILE: return 'MS';
+        case HP.AUX: return 'AX';
+        case HP.HANGAR: return 'HG';
+        case HP.SPECIAL: return 'SP';
+        case HP.SPECIAL_MISSILE: return 'SM';
+        case HP.BUILTIN: return 'BI';
+        default: return 'HP';
+      }
+    }
+
     function applyWeaponToHardpoint(hp, weaponId, options = null) {
       if (!hp) return false;
       if (hp.destroyed) return false;
@@ -9799,11 +10898,7 @@
       // 3. Statystyki (Dmg/Cd) - kompatybilne z nowym słownikiem
       const metaEl = document.createElement('div');
       metaEl.className = 'weapon-row-meta';
-      let stats = '';
-      if (weapon.baseDamage) stats = `${weapon.baseDamage}dmg`;
-      if (weapon.cooldown) stats += ` / ${weapon.cooldown}s`;
-      if (weapon.ammo) stats += ` [${weapon.ammo}]`;
-      metaEl.textContent = stats || weaponMetaText(weapon);
+      metaEl.textContent = mechanicCompactWeaponStats(weapon);
       row.appendChild(metaEl);
 
       // Obsługa przeciągania (Drag & Drop)
@@ -9935,9 +11030,9 @@
         iconWrap.className = 'weapon-row-icon';
         iconWrap.innerHTML = `<img src="${iconPath}">`;
       } else {
-        // Pusty kwadracik lub znak zapytania
-        iconWrap.className = 'weapon-row-icon placeholder';
-        iconWrap.textContent = weapon ? '?' : '-';
+        iconWrap.className = 'weapon-row-icon hardpoint-glyph';
+        iconWrap.textContent = mechanicHardpointGlyph(hp);
+        iconWrap.title = weapon ? `Brak ikony: ${weapon.name}` : `Pusty hardpoint: ${hp.type}`;
       }
       row.appendChild(iconWrap);
 
@@ -9971,7 +11066,13 @@
       }
       row.appendChild(mountInfo);
 
-      // 4. Przycisk "X" do odczepiania
+      // 4. Statystyki zamontowanej broni
+      const metaEl = document.createElement('div');
+      metaEl.className = 'hp-row-meta';
+      metaEl.textContent = (!hp.destroyed && weapon) ? mechanicCompactWeaponStats(weapon) : '-';
+      row.appendChild(metaEl);
+
+      // 5. Przycisk "X" do odczepiania
       const clearBtn = document.createElement('button');
       clearBtn.className = 'hp-row-clear';
       clearBtn.textContent = '×';
@@ -15825,7 +16926,20 @@
     const LASER_PD_RANGE = 620;
     const LASER_PD_BEAM_WIDTH = 6;
 
+    // Wspólny bufor wrogich rakiet/torped na bieżący krok fizyki. Budowany raz
+    // w ciwsStep, używany przez działka PD oraz przez intercept CIWS w
+    // bulletsAndCollisionsStep (zamiast skanowania całej tablicy bullets per pocisk).
+    const _pdEnemyRocketBuffer = [];
+
     function ciwsStep(dt) {
+      _pdEnemyRocketBuffer.length = 0;
+      for (let bi = 0; bi < bullets.length; bi++) {
+        const rb = bullets[bi];
+        if (!rb || rb.life <= 0) continue;
+        if (rb.owner === 'player' || rb.owner === 'player2') continue;
+        if (rb.type !== 'rocket' && rb.type !== 'torpedo') continue;
+        _pdEnemyRocketBuffer.push(rb);
+      }
       const auxWeapons = Game.player.weapons?.[HP.AUX] || [];
       for (let i = 0; i < ship.ciws.length; i++) {
         if (i >= auxWeapons.length) break;
@@ -15847,27 +16961,30 @@
         const range = stats?.range || wDef.baseRange || (isLaser ? LASER_PD_RANGE : CIWS_RANGE);
         const bulletSpeed = stats?.speed || wDef.baseSpeed || CIWS_BULLET_SPEED;
 
-        let target = null; let dist = range;
+        let target = null;
+        let bestDistSq = range * range;
 
-        // Priorytet 1: rakiety/torpedy wroga w zasięgu (intercept)
-        for (let bi = 0; bi < bullets.length; bi++) {
-          const rb = bullets[bi];
-          if (!rb || rb.life <= 0) continue;
-          if (rb.owner === 'player' || rb.owner === 'player2') continue;
-          if (rb.type !== 'rocket' && rb.type !== 'torpedo') continue;
-          const d = Math.hypot(rb.x - base.x, rb.y - base.y);
-          if (d < dist) { dist = d; target = rb; }
+        // Priorytet 1: rakiety/torpedy wroga w zasięgu (intercept) — z bufora,
+        // porównania na kwadratach dystansu (bez Math.hypot per pocisk).
+        for (let bi = 0; bi < _pdEnemyRocketBuffer.length; bi++) {
+          const rb = _pdEnemyRocketBuffer[bi];
+          if (rb.life <= 0) continue;
+          const ddx = rb.x - base.x, ddy = rb.y - base.y;
+          const d2 = ddx * ddx + ddy * ddy;
+          if (d2 < bestDistSq) { bestDistSq = d2; target = rb; }
         }
 
         // Priorytet 2: myśliwce i statki NPC
         if (!target) {
           for (const npc of npcs) {
             if (npc.dead || npc.friendly || !npc.isPirate) continue;
-            const d = Math.hypot(npc.x - base.x, npc.y - base.y);
-            if (d < dist) { dist = d; target = npc; }
+            const ddx = npc.x - base.x, ddy = npc.y - base.y;
+            const d2 = ddx * ddx + ddy * ddy;
+            if (d2 < bestDistSq) { bestDistSq = d2; target = npc; }
           }
         }
         if (!target) continue;
+        const dist = Math.sqrt(bestDistSq);
 
         const isRocketTarget = target.type === 'rocket' || target.type === 'torpedo';
 
@@ -15917,6 +17034,7 @@
                 glowBlur: 22, outerWidthMul: 1.05, innerWidthMul: 0.45
               });
               spawnPointDefenseLaserMuzzle(lMuz, lDir, baseVel);
+              target.life = -1; // znika też z _pdEnemyRocketBuffer (checki life<=0)
               bullets.splice(rIdx, 1);
             }
             gun.cd = fireInterval;
@@ -16803,6 +17921,14 @@
     const _activeWrecksBuffer = [];
     const _sleepingWrecksBuffer = [];
     const _activeAsteroidHexBuffer = [];
+    // Cache list destruktora — budowane raz na klatkę renderu (rAF), współdzielone
+    // przez wszystkie substepy fizyki tej klatki (patrz physicsStep).
+    let _destrPrepFrameId = -1;
+    let _cachedDynamicDestructibles = null;
+    let _cachedAllDestructibles = null;
+    // Throttling integralności hardpointów/heksów (co 3. substep, z akumulacją dt).
+    let _integrityDtAcc = 0;
+    let _integrityTick = 0;
     const _dynamicDestructibles = [];
     const _mergedDestructibles = [];
     const _mergedSeen = new Set();
@@ -16954,16 +18080,39 @@
       return _ringHotEntitiesBuffer;
     }
 
+    // Cache promieni kolizji pociskow per encja per krok: stan tarczy liczony RAZ
+    // przy wstawianiu do SpatialGrid, a nie per pocisk x per kandydat (dziesiatki
+    // tysiecy wywolan isEntityShieldBlocking na klatke w duzej bitwie).
+    function stampBulletCollisionRadii(e) {
+      const shieldR = isEntityShieldBlocking(e) ? getEntityShieldBaseRadius(e) : 0;
+      e._blkShieldR = shieldR;
+      const hullR = Number(e.radius) || 0;
+      e._blkMaxR = shieldR > hullR ? shieldR : hullR;
+    }
+
+    // Swap-pop zamiast splice O(n) — kolejnosc pociskow nie ma znaczenia dla logiki
+    // ani renderu. W petli malejacej element podmieniony z konca byl juz przetworzony.
+    function removeBulletAt(index) {
+      const last = bullets.length - 1;
+      if (index !== last) bullets[index] = bullets[last];
+      bullets.pop();
+    }
+
     function bulletsAndCollisionsStep(dt) {
+      const tBulletGrid0 = performance.now();
       // 1. Budowa SpatialGrid
       SpatialGrid.clear();
       for (let i = 0; i < npcs.length; i++) {
         const t = npcs[i];
-        if (!t.dead) SpatialGrid.insert(t);
+        if (t.dead) continue;
+        stampBulletCollisionRadii(t);
+        SpatialGrid.insert(t);
       }
       for (let i = 0; i < wrecks.length; i++) {
         const t = wrecks[i];
-        if (t.isWreck) SpatialGrid.insert(t);
+        if (!t.isWreck) continue;
+        stampBulletCollisionRadii(t);
+        SpatialGrid.insert(t);
       }
       // Gracz: wstaw do SpatialGrid żeby pociski NPC mogły go trafić
       if (ship && !ship.dead && !ship.destroyed) {
@@ -16986,6 +18135,7 @@
             get isWreck() { return false; }
           };
         }
+        stampBulletCollisionRadii(ship._spatialProxy);
         SpatialGrid.insert(ship._spatialProxy);
       }
       // Player 2 into SpatialGrid
@@ -17010,10 +18160,18 @@
             get isWreck() { return false; }
           };
         }
+        stampBulletCollisionRadii(player2Ship._spatialProxy);
         SpatialGrid.insert(player2Ship._spatialProxy);
       }
+      PerfHUD.addTiming('bulletGridTime', performance.now() - tBulletGrid0);
+
+      // Sekcje mierzone lokalnymi akumulatorami i raportowane RAZ po pętli.
+      // Wcześniej addTiming + performance.now() leciały per pocisk per sekcja —
+      // przy setkach pocisków sam pomiar kosztował ~1 ms/klatkę.
+      let secMoveVfx = 0, secIntercept = 0, secNpcHit = 0, secAst = 0, secRing = 0, secMisc = 0;
 
       for (let i = bullets.length - 1; i >= 0; i--) {
+        let tBulletSection0 = performance.now();
         const b = bullets[i];
         b.px = b.x; b.py = b.y;
         b.x += b.vx * dt; b.y += b.vy * dt;
@@ -17061,33 +18219,39 @@
           const trailVel = { x: -b.vx * 0.015, y: -b.vy * 0.015 };
           spawnParticle({ x: b.x, y: b.y }, trailVel, 0.18, '#ffdca8', 1.1, true);
         }
+        secMoveVfx += performance.now() - tBulletSection0;
 
-        if (b.life <= 0) { bullets.splice(i, 1); continue; }
+        if (b.life <= 0) { removeBulletAt(i); continue; }
 
+        tBulletSection0 = performance.now();
         // --- CIWS INTERCEPT RAKIET ---
-        // Pocisk CIWS gracza vs rakiety/torpedy wroga (bullet-on-bullet)
+        // Pocisk CIWS gracza vs rakiety/torpedy wroga — tylko z bufora rakiet
+        // zbudowanego w ciwsStep (wcześniej O(pociski²): pełny skan bullets per CIWS).
         if (b.type === 'ciws' && b.owner === 'player') {
           let intercepted = false;
-          for (let j = bullets.length - 1; j >= 0; j--) {
-            if (j === i) continue;
-            const rb = bullets[j];
-            if (!rb || rb.life <= 0) continue;
+          for (let j = 0; j < _pdEnemyRocketBuffer.length; j++) {
+            const rb = _pdEnemyRocketBuffer[j];
+            if (!rb || rb === b || rb.life <= 0) continue;
             if (rb.owner !== 'npc') continue;
-            if (rb.type !== 'rocket' && rb.type !== 'torpedo') continue;
             const dx = b.x - rb.x, dy = b.y - rb.y;
             const hitR = (b.r || 2) + (rb.r || 5);
             if (dx * dx + dy * dy > hitR * hitR) continue;
-            // Trafiono rakietę!
+            // Trafiono rakietę! Oznaczamy do usunięcia — zniknie w swojej iteracji
+            // pętli na checku life<=0 (bez żonglowania indeksami przy splice).
             spawnBulletImpactEffect(rb, rb.x, rb.y, 1.3);
-            bullets.splice(j, 1);
-            if (j < i) i--;      // rakieta była przed CIWS — indeks przesuwa się
-            bullets.splice(i, 1); // usuń pocisk CIWS
+            rb.life = -1;
+            removeBulletAt(i); // usuń pocisk CIWS
             intercepted = true;
             break;
           }
-          if (intercepted) continue;
+          if (intercepted) {
+            secIntercept += performance.now() - tBulletSection0;
+            continue;
+          }
         }
+        secIntercept += performance.now() - tBulletSection0;
 
+        tBulletSection0 = performance.now();
         // --- GLOWNA PETLA KOLIZJI ---
         let hitNPC = null;
         let didHitShield = false;
@@ -17107,49 +18271,32 @@
           // if (!npc._isPlayerShip && npc.friendly === true && isPlayerBullet) continue;
           // if (!npc._isPlayerShip && npc.isPirate === true && b.owner === 'npc') continue;
 
-          let isHit = false;
-          const shieldActive = isEntityShieldBlocking(npc);
+          // Najtańszy test pierwszy: kwadrat dystansu vs maksymalny możliwy promień
+          // (tarcza/kadłub, ostemplowane raz na krok w stampBulletCollisionRadii).
+          const dx = b.x - npc.x;
+          const dy = b.y - npc.y;
+          const distSq = dx * dx + dy * dy;
+          const maxR = (npc._blkMaxR || Number(npc.radius) || 0) + b.r;
+          if (distSq > maxR * maxR) continue;
 
-          // 1. SPRAWDZENIE TARCZY (okrągła — dopasowana do 3D renderingu)
-          if (shieldActive) {
-            // Wymiary bazowe — identyczne jak w shield3D.js
-            let w = npc.w || (npc.radius * 2) || 40;
-            let h = npc.h || (npc.radius * 2) || 40;
-
-            if (npc.capitalProfile) {
-              const baseR = npc.radius || 20;
-              w = Math.max(w, baseR * (npc.capitalProfile.lengthScale || 3.2));
-              h = Math.max(h, baseR * (npc.capitalProfile.widthScale || 1.2));
-            } else if (npc.fighter || npc.type === 'fighter') {
-              const size = Math.max(w, h);
-              w = size; h = size;
-            }
-
-            // Okrągła tarcza: promień = maxDim/2 * 1.15 (margines) — identycznie jak shield3D.js
-            const shieldRadius = Math.max(w, h) * 0.5 * 1.15;
-
-            const dx = b.x - npc.x;
-            const dy = b.y - npc.y;
-            const distSq = dx * dx + dy * dy;
-
-            // Hitbox tarczy + promień pocisku
-            const hitThreshold = shieldRadius + b.r;
-
+          const shieldR = npc._blkShieldR || 0;
+          if (shieldR > 0) {
+            // 1. SPRAWDZENIE TARCZY (okrągła — dopasowana do 3D renderingu)
+            const hitThreshold = shieldR + b.r;
             if (distSq <= hitThreshold * hitThreshold) {
-              isHit = true;
+              hitNPC = npc;
               didHitShield = true;
+              break;
             }
           } else {
             // Brak tarczy -> zwykła kolizja kołowa
-            const dx = b.x - npc.x;
-            const dy = b.y - npc.y;
-            if ((dx * dx + dy * dy) <= (npc.radius + b.r) ** 2) {
-              isHit = true;
+            const hullThreshold = (Number(npc.radius) || 0) + b.r;
+            if (distSq <= hullThreshold * hullThreshold) {
+              hitNPC = npc;
               didHitShield = false;
+              break;
             }
           }
-
-          if (isHit) { hitNPC = npc; break; }
         }
 
         if (hitNPC) {
@@ -17190,7 +18337,8 @@
             hitNPC.shield.regenTimer = hitNPC.shield.regenDelay || 3.0;
 
             // ZATRZYMAJ I USUN POCISK
-            bullets.splice(i, 1);
+            removeBulletAt(i);
+            secNpcHit += performance.now() - tBulletSection0;
             continue;
 
           } else if (!shieldActive && hexHit) {
@@ -17212,18 +18360,22 @@
 
             if (b.type === 'rail') {
               b.penetration = (b.penetration || 1) - 1;
-              if (b.penetration <= 0) bullets.splice(i, 1);
+              if (b.penetration <= 0) removeBulletAt(i);
             } else {
-              bullets.splice(i, 1);
+              removeBulletAt(i);
             }
+            secNpcHit += performance.now() - tBulletSection0;
             continue;
           } else {
             // Pocisk minął wszystko (np. dziura we wraku, albo minął tarczę gdy była wyłączona)
             hitNPC = null;
+            secNpcHit += performance.now() - tBulletSection0;
             continue;
           }
         }
+        secNpcHit += performance.now() - tBulletSection0;
 
+        tBulletSection0 = performance.now();
         // --- KOLIZJE Z ASTEROIDAMI (swept hit -> lazy hex promotion) ---
         if (!hitNPC && window.asteroidField?.raycast && window.asteroidField?.applyDamageAt) {
           const segX0 = Number.isFinite(b.px) ? b.px : b.x;
@@ -17244,15 +18396,18 @@
 
               if (b.type === 'rail') {
                 b.penetration = (b.penetration || 1) - 1;
-                if (b.penetration <= 0) bullets.splice(i, 1);
+                if (b.penetration <= 0) removeBulletAt(i);
               } else {
-                bullets.splice(i, 1);
+                removeBulletAt(i);
               }
+              secAst += performance.now() - tBulletSection0;
               continue;
             }
           }
         }
+        secAst += performance.now() - tBulletSection0;
 
+        tBulletSection0 = performance.now();
         // --- KOLIZJE Z RINGIEM PLANETARNYM (swept hit, bez wrzucania ringu do glownego SpatialGrid) ---
         if (!hitNPC) {
           const segX0 = Number.isFinite(b.px) ? b.px : b.x;
@@ -17310,16 +18465,20 @@
 
             if (b.type === 'rail') {
               b.penetration = (b.penetration || 1) - 1;
-              if (b.penetration <= 0) bullets.splice(i, 1);
+              if (b.penetration <= 0) removeBulletAt(i);
             } else {
-              bullets.splice(i, 1);
+              removeBulletAt(i);
             }
+            secRing += performance.now() - tBulletSection0;
             continue;
           }
         }
+        secRing += performance.now() - tBulletSection0;
 
-        // --- KOLIZJE Z INNYMI OBIEKTAMI (BEZ ZMIAN) ---
+        tBulletSection0 = performance.now();
+        // --- KOLIZJE Z INNYMI OBIEKTAMI ---
         if (mercMission?.weaponPlatforms) {
+          let hitPlatform = false;
           for (const p of mercMission.weaponPlatforms) {
             if (p && !p.destroyed && b.source !== p) {
               const pdx = p.x - b.x;
@@ -17329,9 +18488,15 @@
               applyDamageToPlatform(p, b.damage || 0);
               triggerMercAggro('platform_hit');
               spawnBulletImpactEffect(b, b.x, b.y, 1.0);
-              bullets.splice(i, 1);
+              removeBulletAt(i);
+              hitPlatform = true;
               break;
             }
+          }
+          // Pocisk zdjęty — nie sprawdzaj stacji tym samym (usuniętym) pociskiem.
+          if (hitPlatform) {
+            secMisc += performance.now() - tBulletSection0;
+            continue;
           }
         }
         for (const st of stations) {
@@ -17343,20 +18508,31 @@
             applyDamageToStation(st, b.damage || 0);
             if (mercMission?.station === st) triggerMercAggro('station_hit');
             spawnBulletImpactEffect(b, b.x, b.y, 1.0);
-            bullets.splice(i, 1);
+            removeBulletAt(i);
             break;
           }
         }
+        secMisc += performance.now() - tBulletSection0;
       }
+
+      PerfHUD.addTiming('bulletMoveVfxTime', secMoveVfx);
+      PerfHUD.addTiming('bulletInterceptTime', secIntercept);
+      PerfHUD.addTiming('bulletNpcHitTime', secNpcHit);
+      PerfHUD.addTiming('bulletAsteroidTime', secAst);
+      PerfHUD.addTiming('bulletRingTime', secRing);
+      PerfHUD.addTiming('bulletMiscHitTime', secMisc);
     }
     // =============== NPC movement/shooting ===============
     let npcFireTimer = 0;
     function npcShootingStep(dt) {
+      let npcFireScanMs = 0;
+      let npcFireSpawnMs = 0;
       npcFireTimer -= dt;
       if (npcFireTimer <= 0) {
         npcFireTimer = 0.45 + Math.random() * 0.8;
         let shooter = null;
         let seen = 0;
+        const tNpcFireScan0 = performance.now();
         for (let i = 0; i < npcs.length; i++) {
           const n = npcs[i];
           if (!n || n.dead || !n.weapon || n.friendly) continue;
@@ -17366,7 +18542,9 @@
           seen++;
           if (Math.random() * seen < 1) shooter = n;
         }
+        npcFireScanMs = performance.now() - tNpcFireScan0;
         if (shooter) {
+          const tNpcFireSpawn0 = performance.now();
           const dx = ship.pos.x - shooter.x;
           const dy = ship.pos.y - shooter.y;
           const len = Math.hypot(dx, dy) || 1;
@@ -17378,8 +18556,11 @@
           } else {
             window.bullets.push({ x: bx, y: by, vx: dirX * 220 + shooter.vx, vy: dirY * 220 + shooter.vy, life: 4, r: 3, owner: 'npc', damage: 12, source: shooter });
           }
+          npcFireSpawnMs = performance.now() - tNpcFireSpawn0;
         }
       }
+      window.__npcFireScanMs = (window.__npcFireScanMs || 0) + npcFireScanMs;
+      window.__npcFireSpawnMs = (window.__npcFireSpawnMs || 0) + npcFireSpawnMs;
     }
     function npcStep(dt, aiDbg = null) {
       const DESPAWN_RADIUS_SQ = NPC_DESPAWN_RADIUS * NPC_DESPAWN_RADIUS;
@@ -17388,7 +18569,9 @@
       // Build AI spatial grid ONCE per frame for all subsequent AI queries
       // (separation, weapon scan, target pick, dogfight neighbors).
       // Cost: ~0.05ms for 200 entities. Saves 50-90ms in O(N²) hot loops.
+      const tAiGrid0 = performance.now();
       if (window.rebuildAIGrid) window.rebuildAIGrid(npcs, true);
+      window.__aiGridMs = (window.__aiGridMs || 0) + (performance.now() - tAiGrid0);
       let measuredAiMs = 0;
       for (const npc of npcs) {
         if (layoutChanged || npc.__editorLayoutVersion !== npcHardpointRuntime.version) {
@@ -17486,11 +18669,13 @@
 
           // 2. AI
           if (npc.ai) {
+            const tAi0 = performance.now();
+            npc.ai(dt);
+            const aiMs = performance.now() - tAi0;
+            measuredAiMs += aiMs;
+            if (npc.friendly) window.__aiNpcFriendlyBrainMs = (window.__aiNpcFriendlyBrainMs || 0) + aiMs;
+            else window.__aiNpcEnemyBrainMs = (window.__aiNpcEnemyBrainMs || 0) + aiMs;
             if (aiDbg?.enabled) {
-              const tAi0 = performance.now();
-              npc.ai(dt);
-              const aiMs = performance.now() - tAi0;
-              measuredAiMs += aiMs;
               aiDbg.record('npcBrain', aiMs);
               const role = npc.isPirate
                 ? `pirate:${npc.type || 'npc'}`
@@ -17498,8 +18683,6 @@
                   ? `friendly:${npc.type || 'npc'}`
                   : `npc:${npc.type || 'npc'}`;
               aiDbg.record(role, aiMs);
-            } else {
-              npc.ai(dt);
             }
           }
 
@@ -17964,6 +19147,9 @@
     function physicsStep(dt) {
       const tPhysics0 = performance.now();
       PerfHUD.markPhysicsStep();
+      let tPhysSection0 = performance.now();
+      const tPreAiTotal0 = tPhysSection0;
+      let tPreSection0 = tPhysSection0;
       updateCameraTarget(dt);
       updateStationUIState(dt);
       InfrastructureUI.updateEditorState(dt);
@@ -18068,6 +19254,9 @@
       }
       if (!boostActive && boost.effectTime > 0) boost.effectTime = Math.max(0, boost.effectTime - dt);
 
+      PerfHUD.addTiming('worldZoneTime', performance.now() - tPreSection0);
+      tPreSection0 = performance.now();
+
       updatePlayerAttackCommand(dt);
 
       // rail queue/cd
@@ -18128,6 +19317,9 @@
       const mouseWorld = screenToWorld(mouse.x, mouse.y);
       updateAgilityLogic(dt, mouseWorld);
       const hasMissilesEquipped = (Game.player.weapons?.[HP.MISSILE]?.length || 0) > 0;
+
+      PerfHUD.addTiming('playerSystemsTime', performance.now() - tPreSection0);
+      tPreSection0 = performance.now();
 
       // hover scanning
       let hover = null;
@@ -18316,6 +19508,9 @@
 
       // === CIC UPDATE ===
       CICDisplay.update(dt, ship, npcs, stations, SensorSystem);
+
+      PerfHUD.addTiming('scanUiTime', performance.now() - tPreSection0);
+      tPreSection0 = performance.now();
 
       // turret aim (poza warp active)
       if (warp.state !== 'active') {
@@ -18721,6 +19916,9 @@
       ship.angle += ship.angVel * dt;
       */
       // ship.angle = wrapAngle(ship.angle);
+      PerfHUD.addTiming('playerFlightTime', performance.now() - tPreSection0);
+      tPreSection0 = performance.now();
+
       updateFlyingHexDebris(dt);
 
       // Aktualizacja wraków — podział na aktywne i śpiące
@@ -18798,45 +19996,61 @@
           _activeWrecksBuffer.push(w);
         }
       }
+      PerfHUD.addTiming('wreckPrepTime', performance.now() - tPreSection0);
+      PerfHUD.addTiming('preAiTime', performance.now() - tPreAiTotal0);
+
       const aiDbgEnabled = AILiveDebug.enabled;
       const tAiTotal0 = performance.now();
-      if (aiDbgEnabled) {
-        const tAiSection0 = performance.now();
-        SQUADS.forEach(s => s.update());
-        AILiveDebug.record('squads', performance.now() - tAiSection0);
-      } else {
-        SQUADS.forEach(s => s.update());
-      }
-      if (aiDbgEnabled) {
-        const tAiSection0 = performance.now();
-        updateSupportWing(dt);
-        AILiveDebug.record('supportWing', performance.now() - tAiSection0);
-      } else {
-        updateSupportWing(dt);
-      }
+      let tAiSection0 = performance.now();
+      SQUADS.forEach(s => s.update());
+      const aiSquadsMs = performance.now() - tAiSection0;
+      PerfHUD.addTiming('aiSquadsTime', aiSquadsMs);
+      if (aiDbgEnabled) AILiveDebug.record('squads', aiSquadsMs);
+
+      tAiSection0 = performance.now();
+      updateSupportWing(dt);
+      const aiSupportWingMs = performance.now() - tAiSection0;
+      PerfHUD.addTiming('aiSupportWingTime', aiSupportWingMs);
+      if (aiDbgEnabled) AILiveDebug.record('supportWing', aiSupportWingMs);
+
       const tNpcStep0 = performance.now();
       // Reset per-frame AI subsection counters before npcStep populates them.
       window.__aiSepMs = 0;
       window.__aiWeaponScanMs = 0;
       window.__aiTargetPickMs = 0;
+      window.__aiGridMs = 0;
+      window.__aiNpcEnemyBrainMs = 0;
+      window.__aiNpcFriendlyBrainMs = 0;
       npcStep(dt, aiDbgEnabled ? AILiveDebug : null);
       const npcStepMs = performance.now() - tNpcStep0;
+      const aiNpcMeasuredMs = (window.__aiGridMs || 0) + (window.__aiNpcEnemyBrainMs || 0) + (window.__aiNpcFriendlyBrainMs || 0)
+        + (window.__aiSepMs || 0) + (window.__aiWeaponScanMs || 0) + (window.__aiTargetPickMs || 0);
+      PerfHUD.addTiming('aiNpcStepTime', npcStepMs);
+      PerfHUD.addTiming('aiNpcGridTime', window.__aiGridMs || 0);
+      PerfHUD.addTiming('aiNpcEnemyBrainTime', window.__aiNpcEnemyBrainMs || 0);
+      PerfHUD.addTiming('aiNpcFriendlyBrainTime', window.__aiNpcFriendlyBrainMs || 0);
+      PerfHUD.addTiming('aiNpcOtherTime', Math.max(0, npcStepMs - aiNpcMeasuredMs));
+      PerfHUD.addTiming('aiSeparationTime', window.__aiSepMs || 0);
+      PerfHUD.addTiming('aiWeaponScanTime', window.__aiWeaponScanMs || 0);
+      PerfHUD.addTiming('aiTargetPickTime', window.__aiTargetPickMs || 0);
       if (aiDbgEnabled) {
         AILiveDebug.record('npcStep', npcStepMs);
         // Drain spatial-grid hot-path subtimings (set by applySeparationForces,
         // processAutonomousWeapons, aiPickBestTarget). Lets us see exactly where
         // AI time is going after the spatial grid optimization.
+        AILiveDebug.record('aiGrid', window.__aiGridMs || 0);
+        AILiveDebug.record('enemyBrain', window.__aiNpcEnemyBrainMs || 0);
+        AILiveDebug.record('friendlyBrain', window.__aiNpcFriendlyBrainMs || 0);
         AILiveDebug.record('separationForces', window.__aiSepMs || 0);
         AILiveDebug.record('weaponTargetScan', window.__aiWeaponScanMs || 0);
         AILiveDebug.record('targetPick', window.__aiTargetPickMs || 0);
       }
-      if (aiDbgEnabled) {
-        const tAiSection0 = performance.now();
-        pirateMissionStep(dt);
-        AILiveDebug.record('pirateMission', performance.now() - tAiSection0);
-      } else {
-        pirateMissionStep(dt);
-      }
+      tAiSection0 = performance.now();
+      pirateMissionStep(dt);
+      const aiPirateMissionMs = performance.now() - tAiSection0;
+      PerfHUD.addTiming('aiPirateMissionTime', aiPirateMissionMs);
+      if (aiDbgEnabled) AILiveDebug.record('pirateMission', aiPirateMissionMs);
+
       const aiStepMs = performance.now() - tAiTotal0;
       PerfHUD.addTiming('aiTime', aiStepMs);
       if (aiDbgEnabled) {
@@ -18844,10 +20058,34 @@
         AILiveDebug.recordFrame(aiStepMs);
         AILiveDebug.flush(aiNow, false);
       }
+      tPhysSection0 = performance.now();
+      const tProjectilesTotal0 = tPhysSection0;
       ciwsStep(dt);
+      PerfHUD.addTiming('ciwsTime', performance.now() - tPhysSection0);
+      tPhysSection0 = performance.now();
       bulletsAndCollisionsStep(dt);
+      tPhysSection0 = performance.now();
+      window.__npcFireScanMs = 0;
+      window.__npcFireSpawnMs = 0;
       npcShootingStep(dt);
-      const dynamicDestructibles = buildDynamicDestructibles(
+      PerfHUD.addTiming('npcFireTime', performance.now() - tPhysSection0);
+      PerfHUD.addTiming('npcFireScanTime', window.__npcFireScanMs || 0);
+      PerfHUD.addTiming('npcFireSpawnTime', window.__npcFireSpawnMs || 0);
+      PerfHUD.addTiming('projectileTime', performance.now() - tProjectilesTotal0);
+
+      tPhysSection0 = performance.now();
+      // Listy destruktora budujemy RAZ na klatkę renderu — między substepami tej
+      // samej klatki zmieniają się pomijalnie, a collectNearbyRingDestructibles robi
+      // zapytanie przestrzenne per encja (drogie w dużych bitwach). Nowe wraki ze
+      // splitów dopisują się do allDestructibles w DestructorSystem.spawnWreckEntity,
+      // a martwe encje odfiltrowuje sam destruktor.
+      let dynamicDestructibles;
+      let allDestructibles;
+      if (_destrPrepFrameId === renderFrameId && _cachedDynamicDestructibles) {
+        dynamicDestructibles = _cachedDynamicDestructibles;
+        allDestructibles = _cachedAllDestructibles || dynamicDestructibles;
+      } else {
+      dynamicDestructibles = buildDynamicDestructibles(
         ship,
         npcs,
         _activeWrecksBuffer,
@@ -18922,9 +20160,16 @@
         shipPy,
         11000
       );
-      const allDestructibles = (_combinedRingDestructibles.length || hotRingDestructibles.length)
+      allDestructibles = (_combinedRingDestructibles.length || hotRingDestructibles.length)
         ? mergeDestructibles(dynamicDestructibles, _combinedRingDestructibles, hotRingDestructibles)
         : dynamicDestructibles;
+
+      _destrPrepFrameId = renderFrameId;
+      _cachedDynamicDestructibles = dynamicDestructibles;
+      _cachedAllDestructibles = allDestructibles;
+      }
+      PerfHUD.addTiming('destructiblePrepTime', performance.now() - tPhysSection0);
+
       const tDestructor0 = performance.now();
       if (playerRepairActive && (!ship.hexGrid || ship.destroyed || stationUI.open)) {
         playerRepairActive = false;
@@ -18939,18 +20184,32 @@
         }
       }
       DestructorSystem.update(dt, allDestructibles);
-      updateHardpointIntegrity(dt, dynamicDestructibles);
-      enforceNpcHexIntegrityBalance();
       const destructorMs = performance.now() - tDestructor0;
       PerfHUD.addTiming('destructorTime', destructorMs);
       if (DestructorSystem.perf) {
         PerfHUD.addTiming('collisionTime', DestructorSystem.perf.lastCollisionMs || 0);
-        PerfHUD.addTiming('deformTime', DestructorSystem.perf.lastDeformMs || 0);
         PerfHUD.addContacts(DestructorSystem.perf.lastContacts || 0);
       }
+
+      tPhysSection0 = performance.now();
+      // Stany integralności zmieniają się wolno — nie muszą chodzić w 120 Hz.
+      // Co 3. substep z zakumulowanym dt (opóźnienie detekcji ≤ ~25 ms).
+      _integrityDtAcc += dt;
+      _integrityTick++;
+      if (_integrityTick % 3 === 0) {
+        updateHardpointIntegrity(_integrityDtAcc, dynamicDestructibles);
+        enforceNpcHexIntegrityBalance();
+        _integrityDtAcc = 0;
+      }
+      PerfHUD.addTiming('hardpointTime', performance.now() - tPhysSection0);
+
+      tPhysSection0 = performance.now();
       hudUpdateNav(dt);
+      PerfHUD.addTiming('hudNavTime', performance.now() - tPhysSection0);
       PerfHUD.addTiming('physicsTime', performance.now() - tPhysics0);
     }
+    // Debug/profiling: pojedynczy krok fizyki z konsoli (działa też przy wstrzymanym rAF).
+    window.__physicsStepOnce = (dt = 1 / 120) => physicsStep(dt);
 
     // ======= Efekty VFX =======
     function drawWarpChargeEffectLocal(progress, radius, spriteScale) {
@@ -18998,6 +20257,7 @@
     // =============== Main loop ===============
     let lastTime = performance.now();
     const PHYS_DT = 1 / 120;
+    let renderFrameId = 0; // id klatki rAF — używane przez cache prep destruktora
     let acc = 0;
     let vfxTime = 0;
     let prevState = null;
@@ -19034,6 +20294,7 @@
       }
       acc += frame;
       vfxTime += frame;
+      renderFrameId++;
       let steps = 0;
       while (acc >= PHYS_DT && steps < 10) {
         prevCameraState.x = camera.x;
@@ -19043,6 +20304,12 @@
         physicsStep(PHYS_DT);
         acc -= PHYS_DT; steps++;
       }
+
+      // Deformacje wizualne destruktora (lerp, GPU soft body, elastyczność, erase cache)
+      // raz na klatkę renderu zamiast w każdym kroku fizyki 120 Hz.
+      const tDestrVis0 = performance.now();
+      DestructorSystem.updateVisuals(frame);
+      PerfHUD.addTiming('deformTime', performance.now() - tDestrVis0);
 
       const mWorld = screenToWorld(mouse.x, mouse.y);
       Superweapon.updateSuperweapon(frame, ship, mWorld);
@@ -19092,6 +20359,9 @@
       window.spawnShockwave = spawnShockwave;
       window.worldToScreen = worldToScreen;
 
+      // Efektowe renderery 3D (eksplozje/rakiety) — osobne konteksty WebGL poza
+      // Core3D. Mierzone do własnego bucketu, żeby nie ginęły w "Untracked".
+      const tOverlayFx0 = performance.now();
       if (window.rocketSystem3D) window.rocketSystem3D.update(frame);
       if (overlay3D) {
         overlay3D.tick(frame);
@@ -19099,6 +20369,7 @@
       if (rocketOverlay3D) {
         rocketOverlay3D.tick(frame);
       }
+      PerfHUD.addTiming('overlayFxTime', performance.now() - tOverlayFx0);
       if (firstFrameResolver) {
         firstFrameResolver();
         firstFrameResolver = null;
@@ -19379,6 +20650,8 @@
     // ============== END SPLIT SCREEN RENDER ==============
 
     function render(alpha, frameDt) {
+      const tRenderProfile0 = performance.now();
+      let tRenderProfileSection = tRenderProfile0;
       canvas.style.cursor = keys['alt'] ? 'auto' : 'default';
       ctx.clearRect(0, 0, W, H);
       const renderDbgEnabled = RenderLiveDebug.enabled;
@@ -19498,6 +20771,8 @@
         RenderLiveDebug.record('cameraPrep', tRenderSection > 0 ? (performance.now() - tRenderSection) : 0);
         tRenderSection = performance.now();
       }
+      PerfHUD.addTiming('renderPrepTime', performance.now() - tRenderProfileSection);
+      tRenderProfileSection = performance.now();
 
       // === Warp Lens Pass (rysowany pod warstwą 3D i statkiem) ===
       if (false && warpBlackHoleFX) {
@@ -19593,23 +20868,36 @@
       // ==========================================
 
       // 1. Zaktualizuj wszystkie obiekty 3D na podstawie logiki gry
-      if (renderDbgEnabled) tRenderSection = performance.now();
+      let tRender3dSub = performance.now();
+      if (renderDbgEnabled) tRenderSection = tRender3dSub;
       if (window.updatePlanets3D) window.updatePlanets3D(frameDt, camNoShake);
-      if (renderDbgEnabled) RenderLiveDebug.record('updatePlanets3D', performance.now() - tRenderSection);
+      const render3dPlanetsMs = performance.now() - tRender3dSub;
+      PerfHUD.addTiming('render3dPlanetsUpdateTime', render3dPlanetsMs);
+      if (renderDbgEnabled) RenderLiveDebug.record('updatePlanets3D', render3dPlanetsMs);
 
-      if (renderDbgEnabled) tRenderSection = performance.now();
+      tRender3dSub = performance.now();
+      if (renderDbgEnabled) tRenderSection = tRender3dSub;
       updatePlanetaryRings3D(frameDt, planets, camNoShake);
-      if (renderDbgEnabled) RenderLiveDebug.record('updatePlanetaryRings3D', performance.now() - tRenderSection);
+      const render3dRingsMs = performance.now() - tRender3dSub;
+      PerfHUD.addTiming('render3dRingsUpdateTime', render3dRingsMs);
+      if (renderDbgEnabled) RenderLiveDebug.record('updatePlanetaryRings3D', render3dRingsMs);
 
-      if (renderDbgEnabled) tRenderSection = performance.now();
+      tRender3dSub = performance.now();
+      if (renderDbgEnabled) tRenderSection = tRender3dSub;
       if (window.updateStations3D) window.updateStations3D(stations);
-      if (renderDbgEnabled) RenderLiveDebug.record('updateStations3D', performance.now() - tRenderSection);
+      const render3dStationsMs = performance.now() - tRender3dSub;
+      PerfHUD.addTiming('render3dStationsUpdateTime', render3dStationsMs);
+      if (renderDbgEnabled) RenderLiveDebug.record('updateStations3D', render3dStationsMs);
 
-      if (renderDbgEnabled) tRenderSection = performance.now();
+      tRender3dSub = performance.now();
+      if (renderDbgEnabled) tRenderSection = tRender3dSub;
       if (window.updateWorld3D) window.updateWorld3D(frameDt, vfxTime);
-      if (renderDbgEnabled) RenderLiveDebug.record('updateWorld3D', performance.now() - tRenderSection);
+      const render3dWorldMs = performance.now() - tRender3dSub;
+      PerfHUD.addTiming('render3dWorldUpdateTime', render3dWorldMs);
+      if (renderDbgEnabled) RenderLiveDebug.record('updateWorld3D', render3dWorldMs);
 
-      if (renderDbgEnabled) tRenderSection = performance.now();
+      tRender3dSub = performance.now();
+      if (renderDbgEnabled) tRenderSection = tRender3dSub;
       if (window.asteroidField) {
         window.asteroidField.update(frameDt);
         // Kolizje statków z asteroidami. Player + NPCs. Spatial hash zapewnia
@@ -19621,11 +20909,16 @@
           if (npc && !npc.dead && npc.pos) window.asteroidField.checkShipCollisions(npc);
         }
       }
-      if (renderDbgEnabled) RenderLiveDebug.record('asteroidField.update', performance.now() - tRenderSection);
+      const render3dAsteroidsMs = performance.now() - tRender3dSub;
+      PerfHUD.addTiming('render3dAsteroidsUpdateTime', render3dAsteroidsMs);
+      if (renderDbgEnabled) RenderLiveDebug.record('asteroidField.update', render3dAsteroidsMs);
 
-      if (renderDbgEnabled) tRenderSection = performance.now();
+      tRender3dSub = performance.now();
+      if (renderDbgEnabled) tRenderSection = tRender3dSub;
       if (window.Destruction3D) window.Destruction3D.update(vfxTime, frameDt);
-      if (renderDbgEnabled) RenderLiveDebug.record('Destruction3D.update', performance.now() - tRenderSection);
+      const render3dDestructionMs = performance.now() - tRender3dSub;
+      PerfHUD.addTiming('render3dDestructionUpdateTime', render3dDestructionMs);
+      if (renderDbgEnabled) RenderLiveDebug.record('Destruction3D.update', render3dDestructionMs);
 
       // 2. Statek gracza i system zniszczen (oraz VFX silnikow wewnatrz)
       const renderEntities = [];
@@ -19643,7 +20936,8 @@
         for (let i = 0; i < asteroidHexes.length; i++) renderEntities.push(asteroidHexes[i]);
       }
 
-      if (renderDbgEnabled) tRenderSection = performance.now();
+      tRender3dSub = performance.now();
+      if (renderDbgEnabled) tRenderSection = tRender3dSub;
       if (window.updateHexShips3D) {
         const zoomNow = Math.max(0.0001, Number(cam?.zoom) || 1);
         const camX = Number(cam?.x) || 0;
@@ -19672,21 +20966,35 @@
           halfH: cullHalfH
         });
       }
-      if (renderDbgEnabled) RenderLiveDebug.record('updateHexShips3D', performance.now() - tRenderSection);
+      const render3dHexMs = performance.now() - tRender3dSub;
+      PerfHUD.addTiming('render3dHexUpdateTime', render3dHexMs);
+      if (renderDbgEnabled) RenderLiveDebug.record('updateHexShips3D', render3dHexMs);
 
       // NOWOSC: TARCZA 3D
-      if (renderDbgEnabled) tRenderSection = performance.now();
+      tRender3dSub = performance.now();
+      if (renderDbgEnabled) tRenderSection = tRender3dSub;
       if (window.updateShields3D) {
         window.updateShields3D(frameDt, renderEntities, window.__interpShipPose);
       } else {
         updateShields3D(frameDt, renderEntities, window.__interpShipPose);
       }
-      if (renderDbgEnabled) RenderLiveDebug.record('updateShields3D', performance.now() - tRenderSection);
+      const render3dShieldsMs = performance.now() - tRender3dSub;
+      PerfHUD.addTiming('render3dShieldsUpdateTime', render3dShieldsMs);
+      if (renderDbgEnabled) RenderLiveDebug.record('updateShields3D', render3dShieldsMs);
+      PerfHUD.addTiming('render3dUpdateTime', performance.now() - tRenderProfileSection);
+      tRenderProfileSection = performance.now();
 
       // 3. Rysujemy gotowa klatke z WebGL na glowny Canvas 2D
       if (renderDbgEnabled) tRenderSection = performance.now();
       if (window.drawHexShips3D) {
         window.drawHexShips3D(ctx, W, H);
+      }
+      const hexDrawPerf = window.__hexShips3DLastDrawPerf;
+      if (hexDrawPerf) {
+        PerfHUD.addTiming('render3dCoreCallTime', hexDrawPerf.coreCallMs || 0);
+        PerfHUD.addTiming('render3dCoreRenderTime', hexDrawPerf.coreRenderMs || 0);
+        PerfHUD.addTiming('render3dComposerTime', hexDrawPerf.composerMs || 0);
+        PerfHUD.addTiming('render3dBlitTime', hexDrawPerf.blitMs || 0);
       }
       if (renderDbgEnabled) RenderLiveDebug.record('drawHexShips3D', performance.now() - tRenderSection);
       if (renderDbgEnabled) tRenderSection = performance.now();
@@ -19695,6 +21003,8 @@
         RenderLiveDebug.record('warpLens', tRenderSection > 0 ? (performance.now() - tRenderSection) : 0);
         tPost3DStart = performance.now();
       }
+      PerfHUD.addTiming('render3dDrawTime', performance.now() - tRenderProfileSection);
+      tRenderProfileSection = performance.now();
 
       // ==========================================
       // SPLIT-SCREEN 2D OVERLAY LOOP
@@ -19756,6 +21066,7 @@
 
         // Set active camera for draw helpers that use _currentCam instead of parameter
         _currentCam = cam;
+        let tRender2dSection = performance.now();
 
         // ==========================================
         if (stationUI.editorMode && stationUI.station) {
@@ -19841,6 +21152,9 @@
           }
         }
 
+        PerfHUD.addTiming('render2dWorldTime', performance.now() - tRender2dSection);
+        tRender2dSection = performance.now();
+
         // Wraki renderowane przez hexShips3D
 
         // NPC (filtered by sensor visibility)
@@ -19856,6 +21170,8 @@
           npc.shadowFactor = 0;
           drawNPCPretty(ctx, npc, s);
         }
+        PerfHUD.addTiming('render2dNpcTime', performance.now() - tRender2dSection);
+        tRender2dSection = performance.now();
 
         drawActiveCommandMarkers(ctx, cam, interpPos);
 
@@ -20149,6 +21465,9 @@
         }
         // ======= END PLAYER 2 =======
 
+        PerfHUD.addTiming('render2dPlayerTime', performance.now() - tRender2dSection);
+        tRender2dSection = performance.now();
+
         // === Projectile Pass ===
         for (const b of bullets) {
           if (b.__renderedByThree === true) continue;
@@ -20160,11 +21479,17 @@
         // FIX: Przekazujemy interpolowaną pozycję i kąt
         Superweapon.drawSuperweapon(ctx, cam, ship, worldToScreen, mWorldRender, { pos: interpPos, angle: interpAngle });
 
+        PerfHUD.addTiming('render2dProjectilesTime', performance.now() - tRender2dSection);
+        tRender2dSection = performance.now();
+
         CanvasVFX.drawLightnings(ctx, cam);
 
         // === VFX Pass ===
         CanvasVFX.drawBeams(ctx, cam);
         CanvasVFX.drawParticles(ctx, cam);
+
+        PerfHUD.addTiming('render2dVfxTime', performance.now() - tRender2dSection);
+        tRender2dSection = performance.now();
 
         // === FOG OF WAR === (disabled — will be reimplemented later)
 
@@ -20392,6 +21717,7 @@
             ctx.restore();
           }
         }
+        PerfHUD.addTiming('renderHudTime', performance.now() - tRender2dSection);
         // ==========================================
         // END SPLIT-SCREEN 2D OVERLAY LOOP
         // ==========================================
@@ -20421,6 +21747,8 @@
         ctx.stroke();
         ctx.restore();
       }
+
+      const tRenderUi0 = performance.now();
 
       // --- Flash rendering (handled by CanvasVFX) ---
       CanvasVFX.drawFlashes?.(ctx, cam);
@@ -20964,6 +22292,7 @@
         ctx.fillText(label, rx + px, ry + py + 6);
         ctx.restore();
       }
+      PerfHUD.addTiming('renderUiTime', performance.now() - tRenderUi0);
       if (renderDbgEnabled) {
         const tRenderEnd = performance.now();
         if (tPost3DStart > 0) {

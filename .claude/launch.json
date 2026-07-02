@@ -7,6 +7,13 @@
       "runtimeArgs": ["vite", "--port", "5199", "--strictPort"],
       "port": 5199,
       "autoPort": false
+    },
+    {
+      "name": "Vite Dev Server Alt",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--port", "5198", "--strictPort"],
+      "port": 5198,
+      "autoPort": false
     }
   ]
 }

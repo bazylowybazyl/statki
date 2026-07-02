@@ -272,6 +272,13 @@ const state = {
   damageTintEnabled: true
 };
 
+const drawPerfScratch = {
+  coreCallMs: 0,
+  coreRenderMs: 0,
+  composerMs: 0,
+  blitMs: 0
+};
+
 const SHIP_LIGHT_DEFAULTS = Object.freeze({
   terminatorStart: -0.08,
   terminatorEnd: 0.20,
@@ -1156,10 +1163,38 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   state.hadRenderableLastFrame = hasRenderable || visibleHex.length > 0;
 }
 
+function resetDrawPerfScratch() {
+  drawPerfScratch.coreCallMs = 0;
+  drawPerfScratch.coreRenderMs = 0;
+  drawPerfScratch.composerMs = 0;
+  drawPerfScratch.blitMs = 0;
+}
+
+function addCoreDrawPerf(coreCallMs) {
+  drawPerfScratch.coreCallMs += coreCallMs;
+  const corePerf = Core3D.lastFramePerf;
+  if (!corePerf) return;
+  drawPerfScratch.coreRenderMs += Number(corePerf.renderTotalMs) || 0;
+  drawPerfScratch.composerMs += Number(corePerf.composerMs) || 0;
+}
+
+function publishDrawPerfScratch() {
+  if (typeof window !== 'undefined') {
+    window.__hexShips3DLastDrawPerf = drawPerfScratch;
+  }
+}
+
 export function drawHexShips3D(ctx, width, height) {
-  if (!ctx || !Core3D.isInitialized) return;
+  resetDrawPerfScratch();
+  if (!ctx || !Core3D.isInitialized) {
+    publishDrawPerfScratch();
+    return;
+  }
   const src = Core3D.canvas;
-  if (!src) return;
+  if (!src) {
+    publishDrawPerfScratch();
+    return;
+  }
 
   const w = Math.max(1, Number(width) || ctx.canvas?.width || 1);
   const h = Math.max(1, Number(height) || ctx.canvas?.height || 1);
@@ -1180,18 +1215,31 @@ export function drawHexShips3D(ctx, width, height) {
     const srcCropW = Math.floor(srcW / 2);
 
     // P1 (left half)
+    let tDrawPerf0 = performance.now();
     Core3D.renderSingle(Core3D.activeCam1);
+    addCoreDrawPerf(performance.now() - tDrawPerf0);
+    tDrawPerf0 = performance.now();
     ctx.drawImage(src, srcCropX, 0, srcCropW, srcH, 0, 0, halfW, h);
+    drawPerfScratch.blitMs += performance.now() - tDrawPerf0;
 
     // P2 (right half)
+    tDrawPerf0 = performance.now();
     Core3D.renderSingle(Core3D.activeCam2);
+    addCoreDrawPerf(performance.now() - tDrawPerf0);
+    tDrawPerf0 = performance.now();
     ctx.drawImage(src, srcCropX, 0, srcCropW, srcH, halfW, 0, w - halfW, h);
+    drawPerfScratch.blitMs += performance.now() - tDrawPerf0;
   } else {
+    const tDrawPerf0 = performance.now();
     Core3D.renderSingle(Core3D.activeCam1);
+    addCoreDrawPerf(performance.now() - tDrawPerf0);
+    const tBlit0 = performance.now();
     ctx.drawImage(src, 0, 0, w, h);
+    drawPerfScratch.blitMs += performance.now() - tBlit0;
   }
 
   ctx.restore();
+  publishDrawPerfScratch();
 }
 
 export function invalidateHexShipEntity3D(entity) {

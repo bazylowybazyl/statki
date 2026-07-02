@@ -104,7 +104,7 @@
 <div id="weapons" class="hud"></div>
 
 <div id="help" class="hud">
-  <b>GRUPA:</b> najedź na skupisko → klamry <b>{ }</b> obejmą cele<br>
+  <b>GRUPA:</b> najedź na skupisko → nawiasy <b>[ ]</b> obejmą cele<br>
   <b>SUB:</b> celuj w moduł dużej jednostki<br>
   <b>LPM</b> zatwierdza namierzanie · cele odnawiają się
 </div>
@@ -114,7 +114,7 @@
   <div class="sub">FLEET COMBAT · TARGETING SYSTEM</div>
   <div class="lst">
     ▸ <b style="color:var(--cyan)">WASD</b> — sterowanie statkiem &nbsp;·&nbsp; <b style="color:var(--cyan)">MYSZ</b> — celownik / kierunek ognia<br>
-    ▸ <b style="color:var(--cyan)">LPM</b> — zatwierdź namierzanie (LOCK); w trybie GRUPA klamry <b>{ }</b> obejmują skupisko<br>
+    ▸ <b style="color:var(--cyan)">LPM</b> — zatwierdź namierzanie (LOCK); w trybie GRUPA nawiasy <b>[ ]</b> obejmują skupisko<br>
     ▸ <b style="color:var(--cyan)">ŚPM</b> — otwórz koło wyboru trybu: POJEDYNCZY / GRUPA / SUBSYSTEMY<br>
     ▸ <b style="color:var(--cyan)">1 2 3 4</b> — ostrzał namierzonych celów<br>
     ▸ klasy wrogów: myśliwce · fregaty · krążowniki · battleshipy · capitale · super-capitale
@@ -164,6 +164,7 @@ function blip(freq,dur,type,vol){
 }
 function sfxAcquire(){ const t=now(); if(t-lastAcq<0.05)return; lastAcq=t; blip(1080,0.05,'square',0.025); }
 function sfxLock(){ blip(520,0.05,'sawtooth',0.05); setTimeout(()=>blip(1040,0.08,'sawtooth',0.045),45); }
+function sfxReady(){ blip(1500,0.06,'triangle',0.035); } // „snap" po złożeniu kwadratu
 
 /* ---------------------------------------------------------------- classes */
 // Definicje 6 klas jednostek floty
@@ -259,12 +260,12 @@ const reticle={
   x:0,y:0,                 // pozycja w świecie (podąża za kursorem)
   size:16, tSize:16,       // rozmiar narożników single/sub — lerp do celu
   spin:0, pulse:0,         // fazy animacji
-  acq:0, acqRef:null,      // postęp akwizycji celu pod kursorem 0..1 + referencja
+  acq:0, acqRef:null, readyFx:0, // postęp akwizycji 0..1 + referencja + błysk „snap"
   gx:0,gy:0,gw:160,gh:190, // wygładzony prostokąt klamer { } (grupa)
   captured:[]              // encje objęte klamrami
 };
 let lockFx=[];             // efekty potwierdzenia namierzania (LOCK)
-const ACQ_TIME=0.26, ACQ_GROUP=0.85, GROUP_CAP_R=300, GROUP_PAD=44;
+const GROUP_CAP_R=300, GROUP_PAD=44;
 
 // input
 const keys={};
@@ -672,6 +673,7 @@ function update(dt){
 /* Aktualizacja animowanego celownika — wygładza rozmiar/klamry do tego, co pod kursorem */
 function updateReticle(dt){
   const k=1-Math.exp(-dt*16);
+  const prevAcq=reticle.acq;
   reticle.x=mouse.wx; reticle.y=mouse.wy;
   reticle.spin+=dt; reticle.pulse+=dt;
   const m=mode().id;
@@ -697,10 +699,15 @@ function updateReticle(dt){
     reticle.gw=lerp(reticle.gw,tw,k); reticle.gh=lerp(reticle.gh,th,k);
     const inside=new Set(cand);
     for(const e of entities){
-      if(inside.has(e)) e.acqT=Math.min(1,(e.acqT||0)+dt/lockTime(e)); // tempo zależne od klasy celu
-      else if(e.acqT) e.acqT=Math.max(0,e.acqT-dt/0.35);              // po zjechaniu namiar powoli spada
+      const was=e.acqT||0;
+      if(inside.has(e)) e.acqT=Math.min(1,was+dt/lockTime(e)); // tempo zależne od klasy celu
+      else if(was) e.acqT=Math.max(0,was-dt/0.35);             // po zjechaniu namiar powoli spada
+      if(was<1 && e.acqT>=1){ e.readyFx=0.35; sfxReady(); }    // „snap" po złożeniu kwadratu
+      if(e.readyFx>0) e.readyFx-=dt;
     }
   }
+  if(prevAcq<1 && reticle.acq>=1){ reticle.readyFx=0.35; sfxReady(); } // „snap" (single/sub)
+  if(reticle.readyFx>0) reticle.readyFx-=dt;
   reticle.size += (reticle.tSize-reticle.size)*k;
 }
 
@@ -735,15 +742,34 @@ function render(){
 
 /* --------------------------------------------------------- background */
 const stars=[];
-for(let i=0;i<260;i++) stars.push({x:rand(-4000,4000),y:rand(-4000,4000),z:rand(.2,1),r:rand(.4,1.6)});
+for(let i=0;i<260;i++) stars.push({x:rand(-4000,4000),y:rand(-4000,4000),z:rand(.2,1),r:rand(.4,1.6),ph:rand(0,TAU),tw:rand(0.6,2.2)});
+// mgławica + winieta — statyczna warstwa cache'owana do offscreen canvas
+let nebCv=null,nebW=0,nebH=0;
+function buildNebula(){
+  nebCv=document.createElement('canvas'); nebCv.width=W; nebCv.height=H; nebW=W; nebH=H;
+  const c=nebCv.getContext('2d'), R=Math.max(W,H);
+  const blobs=[[0.22,0.28,0.55,'rgba(28,64,118,0.10)'],[0.78,0.18,0.48,'rgba(88,34,96,0.09)'],
+               [0.62,0.78,0.55,'rgba(18,96,104,0.09)'],[0.12,0.82,0.42,'rgba(64,44,120,0.08)']];
+  for(const [fx,fy,fr,col] of blobs){
+    const g=c.createRadialGradient(W*fx,H*fy,0,W*fx,H*fy,R*fr);
+    g.addColorStop(0,col); g.addColorStop(1,'rgba(0,0,0,0)');
+    c.fillStyle=g; c.fillRect(0,0,W,H);
+  }
+  const v=c.createRadialGradient(W/2,H/2,Math.min(W,H)*0.35,W/2,H/2,R*0.72);
+  v.addColorStop(0,'rgba(0,0,0,0)'); v.addColorStop(1,'rgba(0,0,0,0.5)');
+  c.fillStyle=v; c.fillRect(0,0,W,H);
+}
 function drawBackground(){
+  const t=T();
   ctx.fillStyle='#04060c'; ctx.fillRect(0,0,W,H);
-  // gwiazdy z paralaksą
+  if(!nebCv||nebW!==W||nebH!==H) buildNebula();
+  ctx.drawImage(nebCv,0,0);
+  // gwiazdy z paralaksą i migotaniem
   for(const s of stars){
     const px=((s.x-cam.x*s.z)%4000+4000)%4000 - 2000 + W/2;
     const py=((s.y-cam.y*s.z)%4000+4000)%4000 - 2000 + H/2;
     if(px<-10||px>W+10||py<-10||py>H+10) continue;
-    ctx.globalAlpha=0.3+s.z*0.6;
+    ctx.globalAlpha=(0.28+s.z*0.55)*(0.72+0.28*Math.sin(t*s.tw+s.ph));
     ctx.fillStyle='#bfe9f5';
     ctx.fillRect(px,py,s.r,s.r);
   }
@@ -758,6 +784,14 @@ function drawBackground(){
   ctx.beginPath();
   for(let x=x0;x<=x1;x+=G){ctx.moveTo(x,y0);ctx.lineTo(x,y1);}
   for(let y=y0;y<=y1;y+=G){ctx.moveTo(x0,y);ctx.lineTo(x1,y);}
+  ctx.stroke();
+  // linie główne co 4 pola — subtelna hierarchia siatki
+  const G2=G*4;
+  const mx0=Math.floor((cam.x-W/2)/G2)*G2, my0=Math.floor((cam.y-H/2)/G2)*G2;
+  ctx.strokeStyle='rgba(52,231,255,0.09)';
+  ctx.beginPath();
+  for(let x=mx0;x<=x1;x+=G2){ctx.moveTo(x,y0);ctx.lineTo(x,y1);}
+  for(let y=my0;y<=y1;y+=G2){ctx.moveTo(x0,y);ctx.lineTo(x1,y);}
   ctx.stroke();
   ctx.restore();
 }
@@ -783,11 +817,14 @@ function drawEntity(e){
   const C=e.def, col=factionColor(e);
   const flash=e.hitFlash>0;
 
-  // tarcza (jeśli aktywna)
+  // tarcza — słaby pełny okrąg + wolno wędrujący jaśniejszy łuk
   if(e.shield>0){
+    const sf=e.shield/e.maxShield, sa=T()*0.5+e.id*1.7;
     ctx.beginPath(); ctx.arc(0,0,e.r+5,0,TAU);
-    ctx.strokeStyle='rgba(80,180,255,'+(0.12+0.25*(e.shield/e.maxShield))+')';
+    ctx.strokeStyle='rgba(80,180,255,'+(0.10+0.20*sf)+')';
     ctx.lineWidth=2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(0,0,e.r+5,sa,sa+1.2);
+    ctx.strokeStyle='rgba(140,215,255,'+(0.22+0.30*sf)+')'; ctx.stroke();
   }
 
   ctx.fillStyle=flash?'#ffffff':col;
@@ -815,6 +852,20 @@ function drawEntity(e){
   }
   ctx.fill(); ctx.stroke();
   ctx.shadowBlur=0;
+
+  // poświata silników — skaluje się z prędkością
+  const spd=Math.hypot(e.vx,e.vy);
+  if(spd>e.def.speed*0.15){
+    const fl=0.45+0.55*clamp(spd/e.def.speed,0,1); // podłoga jasności — glow czytelny też przy wolnym locie
+    const rear=-(e.cls==='fighter'?r*0.75:r*1.06);
+    const fr=r*(0.16+0.10*fl)*(0.85+0.15*Math.sin(T()*22+e.id));
+    ctx.globalAlpha=0.55*fl;
+    ctx.fillStyle='#ffcf9a'; ctx.shadowColor='#ff9a5a'; ctx.shadowBlur=10;
+    ctx.beginPath(); ctx.ellipse(rear-fr*1.2,0,fr*2.1,fr*0.75,0,0,TAU); ctx.fill();
+    ctx.globalAlpha=0.9*fl; ctx.fillStyle='#fff';
+    ctx.beginPath(); ctx.ellipse(rear-fr*0.5,0,fr*0.8,fr*0.4,0,0,TAU); ctx.fill();
+    ctx.globalAlpha=1; ctx.shadowBlur=0;
+  }
 
   // detale dużych jednostek + subsystemy
   if(e.subs){
@@ -870,6 +921,16 @@ function drawPlayer(){
   ctx.moveTo(r*1.2,0); ctx.lineTo(-r*.6,r*.8); ctx.lineTo(-r*.2,0); ctx.lineTo(-r*.6,-r*.8);
   ctx.closePath(); ctx.fill(); ctx.stroke();
   ctx.shadowBlur=0;
+  // poświata silnika przy ciągu
+  const thrusting=keys['w']||keys['a']||keys['s']||keys['d']||keys['arrowup']||keys['arrowdown']||keys['arrowleft']||keys['arrowright'];
+  if(thrusting){
+    const fr=r*0.28*(0.8+0.2*Math.sin(T()*24));
+    ctx.globalAlpha=0.7; ctx.fillStyle='#9af4ff'; ctx.shadowColor='#34e7ff'; ctx.shadowBlur=12;
+    ctx.beginPath(); ctx.ellipse(-r*0.55-fr,0,fr*2.0,fr*0.7,0,0,TAU); ctx.fill();
+    ctx.globalAlpha=1; ctx.fillStyle='#fff';
+    ctx.beginPath(); ctx.ellipse(-r*0.5,0,fr*0.7,fr*0.35,0,0,TAU); ctx.fill();
+    ctx.shadowBlur=0;
+  }
   // kokpit
   ctx.fillStyle='#0a2a38'; ctx.beginPath(); ctx.arc(r*.3,0,r*.25,0,TAU); ctx.fill();
   ctx.restore();
@@ -929,31 +990,25 @@ function drawCorners(x,y,r,color,thick){
   }
   ctx.shadowBlur=0;
 }
-function drawCornersLocal(r,color,thick){ // narożniki wokół (0,0) — do obracania
-  const len=r*0.5;
-  ctx.strokeStyle=color; ctx.lineWidth=thick; ctx.shadowColor=color; ctx.shadowBlur=6;
-  for(const [sx,sy] of [[-1,-1],[1,-1],[1,1],[-1,1]]){
-    ctx.beginPath();
-    ctx.moveTo(sx*r,sy*r-sy*len); ctx.lineTo(sx*r,sy*r); ctx.lineTo(sx*r-sx*len,sy*r); ctx.stroke();
-  }
-  ctx.shadowBlur=0;
-}
 // Efekt namierzania: natychmiastowe koło + 4 rozsunięte narożniki, które
 // POWOLI składają się w kwadrat (zjeżdżają do środka, nogi rosną). Zwraca true gdy złożony.
 function drawAssemblingSquare(x,y,r,p,base,accent){
   base=base||'#ffb648'; accent=accent||'#ffd27a';
+  p=clamp(p,0,1);
   const ready=p>=1;
-  // 1) koło zaznaczenia (od razu)
-  ctx.strokeStyle='rgba(255,182,72,'+(0.3+0.45*p)+')';
+  const q=1-Math.pow(1-p,2.4); // ease-out — elementy miękko dojeżdżają na miejsce
+  // 1) koło zaznaczenia (od razu, lekko zaciska się na celu)
+  ctx.strokeStyle='rgba(255,182,72,'+(0.28+0.45*q)+')';
   ctx.lineWidth=1.3; ctx.shadowColor=base; ctx.shadowBlur=5;
-  ctx.beginPath(); ctx.arc(x,y,r*(ready?1: (1.04-0.04*p)),0,TAU); ctx.stroke(); ctx.shadowBlur=0;
-  // 2) cztery narożniki: off = rozsunięcie (maleje), len = długość nóg (rośnie do pełnego kwadratu)
-  const off=26*(1-p);
-  const len=lerp(r*0.34, r, p);
+  ctx.beginPath(); ctx.arc(x,y,r*(1.05-0.05*q),0,TAU); ctx.stroke(); ctx.shadowBlur=0;
+  // 2) cztery narożniki _| : zjeżdżają do środka, nogi rosną aż zamkną kwadrat
+  const off=30*(1-q);
+  const len=lerp(r*0.30, r, q);
+  const puls=ready? (0.8+0.2*Math.sin(T()*6)) : 1; // delikatny oddech w stanie READY
   ctx.strokeStyle=ready?accent:base;
   ctx.lineWidth=ready?2.4:1.8;
-  ctx.shadowColor=base; ctx.shadowBlur=ready?11:5;
-  ctx.globalAlpha=0.45+0.55*p;
+  ctx.shadowColor=base; ctx.shadowBlur=ready?12*puls:5;
+  ctx.globalAlpha=(0.45+0.55*q)*(ready?puls:1);
   for(const [sx,sy] of [[-1,-1],[1,-1],[1,1],[-1,1]]){
     const cx=x+sx*(r+off), cy=y+sy*(r+off);
     ctx.beginPath();
@@ -965,14 +1020,21 @@ function drawAssemblingSquare(x,y,r,p,base,accent){
   ctx.globalAlpha=1; ctx.shadowBlur=0;
   return ready;
 }
-// Mały celownik krzyżykowy w miejscu kursora
+// Mały celownik krzyżykowy w miejscu kursora + oddychające mikro-łuki
 function drawCursor(col){
   const x=reticle.x,y=reticle.y;
+  const g=3+Math.sin(T()*2.6)*1.6; // oddech
   ctx.strokeStyle=col; ctx.lineWidth=1.4; ctx.shadowColor=col; ctx.shadowBlur=6;
   ctx.beginPath();
-  ctx.moveTo(x-10,y);ctx.lineTo(x-4,y); ctx.moveTo(x+4,y);ctx.lineTo(x+10,y);
-  ctx.moveTo(x,y-10);ctx.lineTo(x,y-4); ctx.moveTo(x,y+4);ctx.lineTo(x,y+10);
+  ctx.moveTo(x-11,y);ctx.lineTo(x-4,y); ctx.moveTo(x+4,y);ctx.lineTo(x+11,y);
+  ctx.moveTo(x,y-11);ctx.lineTo(x,y-4); ctx.moveTo(x,y+4);ctx.lineTo(x,y+11);
   ctx.stroke();
+  ctx.globalAlpha=0.6;
+  for(let i=0;i<4;i++){
+    const a=i*TAU/4+TAU/8;
+    ctx.beginPath(); ctx.arc(x,y,15+g,a-0.32,a+0.32); ctx.stroke();
+  }
+  ctx.globalAlpha=1;
   ctx.fillStyle=col; ctx.beginPath(); ctx.arc(x,y,1.5,0,TAU); ctx.fill();
   ctx.shadowBlur=0;
 }
@@ -993,27 +1055,35 @@ function labelWorld(x,y,txt,color,align){
   ctx.fillStyle=color; ctx.shadowColor=color; ctx.shadowBlur=6;
   ctx.fillText(txt,x,y); ctx.shadowBlur=0; ctx.textAlign='left';
 }
-// klamra { lub } — sign=-1 rozciąga w lewo ('{'), +1 w prawo ('}'); czubki na tipX
-function drawBrace(tipX,cy,h,depth,sign,color,thick,alpha){
-  const spineX=tipX+sign*depth*0.5, cuspX=tipX+sign*depth;
-  const top=cy-h/2, bot=cy+h/2, mid=cy, r=Math.min(h*0.16, h*0.4);
-  ctx.save(); ctx.globalAlpha=alpha==null?1:alpha; ctx.lineCap='round';
-  ctx.strokeStyle=color; ctx.lineWidth=thick; ctx.shadowColor=color; ctx.shadowBlur=10;
-  ctx.beginPath();
-  ctx.moveTo(tipX, top);
-  ctx.quadraticCurveTo(spineX, top, spineX, mid-r);
-  ctx.quadraticCurveTo(spineX, mid, cuspX, mid);
-  ctx.quadraticCurveTo(spineX, mid, spineX, mid+r);
-  ctx.quadraticCurveTo(spineX, bot, tipX, bot);
+// Nawiasy [ ] obejmujące grupę: pionowe ramiona ze stopkami + strzałki do wewnątrz
+// + cienka ramka z animowanym („maszerującym") dashem
+function drawGroupBrackets(cx,cy,w,h,color,thick,alpha,breath){
+  const ext=breath||0;
+  const x1=cx-w/2-ext, x2=cx+w/2+ext;
+  const top=cy-h/2-ext*0.5, bot=cy+h/2+ext*0.5;
+  const foot=clamp(w*0.16,14,40);
+  ctx.save();
+  ctx.globalAlpha=alpha==null?1:alpha;
+  ctx.lineCap='round';
+  ctx.strokeStyle=color; ctx.lineWidth=thick;
+  ctx.shadowColor=color; ctx.shadowBlur=10;
+  ctx.beginPath(); // lewy [
+  ctx.moveTo(x1+foot,top); ctx.lineTo(x1,top); ctx.lineTo(x1,bot); ctx.lineTo(x1+foot,bot);
   ctx.stroke();
+  ctx.beginPath(); // prawy ]
+  ctx.moveTo(x2-foot,top); ctx.lineTo(x2,top); ctx.lineTo(x2,bot); ctx.lineTo(x2-foot,bot);
+  ctx.stroke();
+  // strzałki środkowe wskazujące do wewnątrz
+  ctx.beginPath();
+  ctx.moveTo(x1,cy-7); ctx.lineTo(x1+6,cy); ctx.lineTo(x1,cy+7);
+  ctx.moveTo(x2,cy-7); ctx.lineTo(x2-6,cy); ctx.lineTo(x2,cy+7);
+  ctx.stroke();
+  // maszerująca ramka pomocnicza
+  ctx.globalAlpha*=0.4; ctx.lineWidth=1;
+  ctx.setLineDash([4,8]); ctx.lineDashOffset=-T()*24;
+  ctx.strokeRect(cx-w/2,cy-h/2,w,h);
+  ctx.setLineDash([]); ctx.lineDashOffset=0;
   ctx.restore(); ctx.shadowBlur=0;
-}
-function braces(cx,cy,w,h,color,thick,alpha,breath){
-  const depth=Math.min(36,h*0.22)+(breath||0);
-  drawBrace(cx-w/2,cy,h,depth,-1,color,thick,alpha);
-  drawBrace(cx+w/2,cy,h,depth,+1,color,thick,alpha);
-  ctx.save(); ctx.globalAlpha=(alpha==null?1:alpha)*0.45; ctx.strokeStyle=color; ctx.lineWidth=1;
-  ctx.setLineDash([3,7]); ctx.strokeRect(cx-w/2,cy-h/2,w,h); ctx.setLineDash([]); ctx.restore();
 }
 
 function drawTargetingOverlays(){
@@ -1072,6 +1142,12 @@ function acqSingle(){
   if(hovered && locked.indexOf(hovered)<0){
     const r=hovered.r+12;
     const ready=drawAssemblingSquare(hovered.x,hovered.y,r,reticle.acq);
+    if(reticle.readyFx>0){ // „snap" po złożeniu
+      const k=reticle.readyFx/0.35, rr=r*(1+(1-k)*0.6);
+      ctx.save(); ctx.globalAlpha=k*0.9; ctx.strokeStyle='#ffd27a'; ctx.lineWidth=2;
+      ctx.shadowColor='#ffd27a'; ctx.shadowBlur=8;
+      ctx.strokeRect(hovered.x-rr,hovered.y-rr,rr*2,rr*2); ctx.restore();
+    }
     labelWorld(hovered.x,hovered.y-r-12, hovered.def.tag+'  '+Math.round(Math.hypot(hovered.x-player.x,hovered.y-player.y))+'u', '#ffb648');
     labelWorld(hovered.x,hovered.y+r+16, ready?'◂ LPM: LOCK ▸':'składanie namiaru…', ready?'#ffd27a':'rgba(255,182,72,.8)');
   }
@@ -1087,41 +1163,60 @@ function acqSub(){
   ctx.beginPath(); ctx.arc(x,y,s,0,TAU); ctx.stroke(); ctx.shadowBlur=0;
   if(hasT){
     drawArcP(x,y,s+4,reticle.acq,col,2);
+    if(reticle.readyFx>0){ // „snap" — echo pierścienia po domierzeniu modułu
+      const k=reticle.readyFx/0.35;
+      ctx.save(); ctx.globalAlpha=k*0.9; ctx.strokeStyle='#ff8a94'; ctx.lineWidth=2;
+      ctx.shadowColor='#ff8a94'; ctx.shadowBlur=8;
+      ctx.beginPath(); ctx.arc(x,y,(s+4)*(1+(1-k)*0.8),0,TAU); ctx.stroke(); ctx.restore();
+    }
     labelWorld(x,y-s-12,hoveredSub.sub.n.toUpperCase(),col);
     labelWorld(x,y+s+16, reticle.acq>=1?'◂ LPM: LOCK ▸':'CELOWANIE…',col);
   }
 }
 function acqGroup(){
-  const t=T(), aim='#34e7ff', paint='#ffb648';
+  const t=T(), aim='#34e7ff';
   const cx=reticle.gx,cy=reticle.gy,w=reticle.gw,h=reticle.gh;
   const cap=reticle.captured;
   const unlocked=cap.filter(e=>!e.dead && locked.indexOf(e)<0);
-  // Klamry { } pokazujemy TYLKO gdy jest jeszcze coś do namierzenia (lub pole puste).
-  // Po zlockowaniu całego skupiska klamry znikają — zostają same narożniki.
+  // Nawiasy [ ] pokazujemy TYLKO gdy jest jeszcze coś do namierzenia (lub pole puste).
   const showFrame = unlocked.length>0 || cap.length===0;
 
+  // policz gotowych PRZED rysowaniem ramki — jej kolor sygnalizuje stan
+  let ready=0;
+  for(const e of unlocked) if((e.acqT||0)>=1) ready++;
+  const allReady = unlocked.length>0 && ready===unlocked.length;
+  const frameCol = allReady ? '#ffd27a' : aim;
+
   if(showFrame){
-    braces(cx,cy,w,h,aim,2,0.95,Math.sin(t*4)*2.5);          // cyjanowa ramka celowania
-    const sx=cx-w/2 + ((t*150)%w);                            // pionowa linia skanująca
-    ctx.strokeStyle='rgba(52,231,255,.22)'; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(sx,cy-h/2); ctx.lineTo(sx,cy+h/2); ctx.stroke();
+    drawGroupBrackets(cx,cy,w,h,frameCol,2.2,0.95,Math.sin(t*3)*3);
+    // miękkie pasmo skanujące przesuwające się w poziomie
+    const sx=cx-w/2+((t*130)%w);
+    const g=ctx.createLinearGradient(sx-20,0,sx+20,0);
+    g.addColorStop(0,'rgba(52,231,255,0)');
+    g.addColorStop(0.5, allReady?'rgba(255,210,122,0.10)':'rgba(52,231,255,0.14)');
+    g.addColorStop(1,'rgba(52,231,255,0)');
+    ctx.fillStyle=g; ctx.fillRect(sx-20,cy-h/2,40,h);
   }
 
   drawCursor(aim);
 
-  // Każda niezablokowana jednostka w klamrach: koło + składający się kwadrat (tempo wg klasy)
-  let ready=0;
+  // Każda niezablokowana jednostka: koło + składający się kwadrat (tempo wg klasy)
   for(const e of unlocked){
-    const p=e.acqT||0;
-    if(drawAssemblingSquare(e.x,e.y, e.r+9, p)) ready++;
+    drawAssemblingSquare(e.x,e.y, e.r+9, e.acqT||0);
+    if(e.readyFx>0){ // „snap" — echo kwadratu rozchodzące się po złożeniu
+      const k=e.readyFx/0.35, rr=(e.r+9)*(1+(1-k)*0.6);
+      ctx.save(); ctx.globalAlpha=k*0.9; ctx.strokeStyle='#ffd27a'; ctx.lineWidth=2;
+      ctx.shadowColor='#ffd27a'; ctx.shadowBlur=8;
+      ctx.strokeRect(e.x-rr,e.y-rr,rr*2,rr*2); ctx.restore();
+    }
   }
 
   if(showFrame){
-    const n=unlocked.length; let txt,col=aim;
+    const n=unlocked.length; let txt,col=frameCol;
     if(cap.length===0){ txt='PRZESUŃ NAD SKUPISKO CELÓW'; col='rgba(120,150,165,.85)'; }
-    else if(ready===n){ txt='GRUPA • '+n+' GOTOWYCH • ◂ LPM: LOCK ▸'; col='#ffd27a'; }
+    else if(allReady){ txt='GRUPA • '+n+' GOTOWYCH • ◂ LPM: LOCK ▸'; }
     else txt='GRUPA • składanie namiaru… '+ready+'/'+n;
-    labelWorld(cx,cy-h/2-12, txt, col);
+    labelWorld(cx,cy-h/2-14, txt, col);
   }
   ctx.shadowBlur=0;
 }
@@ -1151,6 +1246,19 @@ function drawLockFx(){
     // rozszerzający się pierścień uderzeniowy
     ctx.strokeStyle=f.color; ctx.lineWidth=2*(1-p); ctx.shadowColor=f.color; ctx.shadowBlur=12;
     ctx.beginPath(); ctx.arc(f.x,f.y, f.size*(1+e*1.6), 0, TAU); ctx.stroke();
+    if(!f.small){
+      // promieniste odpryski + drugi, wolniejszy pierścień
+      ctx.lineWidth=1.6;
+      for(let i=0;i<8;i++){
+        const a=i*TAU/8+0.39;
+        const r1=f.size*(1.05+e*1.9), r2=r1+5+12*(1-p);
+        ctx.beginPath(); ctx.moveTo(f.x+Math.cos(a)*r1,f.y+Math.sin(a)*r1);
+        ctx.lineTo(f.x+Math.cos(a)*r2,f.y+Math.sin(a)*r2); ctx.stroke();
+      }
+      ctx.globalAlpha=(1-p)*0.5;
+      ctx.beginPath(); ctx.arc(f.x,f.y,f.size*(1+e*0.8),0,TAU); ctx.stroke();
+      ctx.globalAlpha=1-p;
+    }
     // błysk w środku
     if(p<0.3){ ctx.globalAlpha=(0.3-p)/0.3; ctx.fillStyle='#fff';
       ctx.beginPath(); ctx.arc(f.x,f.y,f.size*0.5,0,TAU); ctx.fill(); }
