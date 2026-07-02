@@ -1,8 +1,17 @@
+import {
+  HULL_RENDER_PROFILE_ALIASES,
+  HULL_RENDER_PROFILES,
+  getHullRenderSize,
+  resolveHullRenderProfileId
+} from './src/data/ships.js';
+
 const MAX_IMPACTS = 16;
 const DEFAULT_ENERGY_SHOT_DURATION = 0.5;
 const ACTIVATION_SPEED = 1.8;
 const BREAK_DURATION = 0.28;
 const IMPACT_DECAY = 2.4;
+const DEFAULT_SHIELD_DIMENSION = 40;
+export const SHIELD_RADIUS_MARGIN = 1.15;
 export const SHIELD_BLOCKING_ACTIVATION_THRESHOLD = 0.2;
 export const SHIELD_REACTIVATION_HP_THRESHOLD = 0.2;
 
@@ -27,6 +36,143 @@ function ensureShield(shield) {
   if (!Number.isFinite(shield.activationProgress)) shield.activationProgress = shield.state === 'off' ? 0 : 1;
   if (!Number.isFinite(shield.currentAlpha)) shield.currentAlpha = shield.activationProgress;
   return shield;
+}
+
+function readPositiveNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function resolveKnownHullProfileId(rawHullId) {
+  const raw = String(rawHullId || '').trim().toLowerCase();
+  if (!raw) return null;
+  if (!HULL_RENDER_PROFILES[raw] && !HULL_RENDER_PROFILE_ALIASES[raw]) return null;
+  return resolveHullRenderProfileId(raw);
+}
+
+function resolveShieldHullProfileId(entity) {
+  if (!entity) return null;
+  const type = String(entity.type || '').trim().toLowerCase();
+  if (entity.fighter || type.includes('fighter') || type.includes('interceptor')) return null;
+
+  const explicit =
+    resolveKnownHullProfileId(entity.shipFrame) ||
+    resolveKnownHullProfileId(entity.activeHullId) ||
+    resolveKnownHullProfileId(entity.shipId);
+  if (explicit) return explicit;
+
+  const pirate = !!entity.isPirate;
+  if (type === 'battleship') return pirate ? 'pirate_battleship' : 'terran_battleship';
+  if (type === 'destroyer') return pirate ? 'pirate_destroyer' : 'terran_destroyer';
+  if (type.includes('frigate')) return pirate ? 'pirate_frigate' : 'terran_frigate';
+  if (type === 'supercapital') return 'supercapital';
+  if (type === 'carrier' || type === 'capital_carrier' || entity.isCapitalShip) return 'capital_carrier';
+  return null;
+}
+
+function getEntityScaleX(entity) {
+  const visual = entity?.visual;
+  return (
+    readPositiveNumber(visual?.spriteScaleX) ||
+    readPositiveNumber(visual?.spriteScale) ||
+    1
+  );
+}
+
+function getEntityScaleY(entity) {
+  const visual = entity?.visual;
+  return (
+    readPositiveNumber(visual?.spriteScaleY) ||
+    readPositiveNumber(visual?.spriteScale) ||
+    1
+  );
+}
+
+function getExplicitShieldMaxDimension(entity) {
+  const w = readPositiveNumber(entity?.w);
+  const h = readPositiveNumber(entity?.h);
+  if (w > 0 || h > 0) {
+    const radiusDim = readPositiveNumber(entity?.radius) * 2 || DEFAULT_SHIELD_DIMENSION;
+    return Math.max(w || radiusDim, h || radiusDim);
+  }
+
+  const spriteW = readPositiveNumber(entity?.spriteW) ||
+    readPositiveNumber(entity?.renderSpriteImage?.width) ||
+    readPositiveNumber(entity?.renderSpriteImage?.naturalWidth);
+  const spriteH = readPositiveNumber(entity?.spriteH) ||
+    readPositiveNumber(entity?.renderSpriteImage?.height) ||
+    readPositiveNumber(entity?.renderSpriteImage?.naturalHeight);
+  if (spriteW > 0 || spriteH > 0) {
+    return Math.max(
+      (spriteW || DEFAULT_SHIELD_DIMENSION) * getEntityScaleX(entity),
+      (spriteH || DEFAULT_SHIELD_DIMENSION) * getEntityScaleY(entity)
+    );
+  }
+
+  return 0;
+}
+
+function getHexGridShieldMaxDimension(entity) {
+  const grid = entity?.hexGrid;
+  const w = readPositiveNumber(grid?.srcWidth);
+  const h = readPositiveNumber(grid?.srcHeight);
+  if (w <= 0 && h <= 0) return 0;
+  return Math.max(
+    (w || DEFAULT_SHIELD_DIMENSION) * getEntityScaleX(entity),
+    (h || DEFAULT_SHIELD_DIMENSION) * getEntityScaleY(entity)
+  );
+}
+
+function getHullProfileShieldMaxDimension(entity) {
+  const hullProfileId = resolveShieldHullProfileId(entity);
+  if (!hullProfileId) return 0;
+  const size = getHullRenderSize(hullProfileId);
+  return Math.max(
+    readPositiveNumber(size?.w),
+    readPositiveNumber(size?.h),
+    readPositiveNumber(size?.length)
+  );
+}
+
+function getCapitalProfileShieldMaxDimension(entity) {
+  const profile = entity?.capitalProfile;
+  if (!profile) return 0;
+  const baseR = readPositiveNumber(entity?.radius) || 20;
+  const lengthScale = readPositiveNumber(profile.lengthScale) || 3.2;
+  const widthScale = readPositiveNumber(profile.widthScale) || 1.2;
+  return Math.max(baseR * lengthScale, baseR * widthScale);
+}
+
+export function getEntityShieldMaxDimension(entity) {
+  const fromHexGrid = getHexGridShieldMaxDimension(entity);
+  if (fromHexGrid > 0) return fromHexGrid;
+
+  const explicit = getExplicitShieldMaxDimension(entity);
+  if (explicit > 0) {
+    if (entity?.fighter || entity?.type === 'fighter') return explicit;
+    return Math.max(explicit, getCapitalProfileShieldMaxDimension(entity));
+  }
+
+  const fromHullProfile = getHullProfileShieldMaxDimension(entity);
+  if (fromHullProfile > 0) return fromHullProfile;
+
+  const fromCapitalProfile = getCapitalProfileShieldMaxDimension(entity);
+  if (fromCapitalProfile > 0) return fromCapitalProfile;
+
+  const radiusDim = readPositiveNumber(entity?.radius) * 2;
+  if (radiusDim > 0) return radiusDim;
+  return DEFAULT_SHIELD_DIMENSION;
+}
+
+export function getEntityShieldBaseRadius(entity) {
+  if (!entity?.shield) return 0;
+  return getEntityShieldMaxDimension(entity) * 0.5 * SHIELD_RADIUS_MARGIN;
+}
+
+export function getEntityShieldBlockingRadius(entity) {
+  const progress = getEntityShieldBlockingProgress(entity);
+  if (progress <= 0) return 0;
+  return getEntityShieldBaseRadius(entity) * progress;
 }
 
 export function isShieldChargedEnoughToActivate(shield) {

@@ -163,6 +163,12 @@ function makeRingTexture() {
 
 // ================== GŁÓWNA FUNKCJA KREACJI (SCENA) ==================
 
+function areEnginePointLightsEnabled() {
+    if (typeof window === 'undefined') return true;
+    if (window.ENGINE_POINT_LIGHTS_ENABLED === false) return false;
+    return window.Core3D?.perfToggles?.enginePointLights !== false;
+}
+
 export function createShortNeedleExhaust(opts = {}) {
     const group = new THREE.Group();
     group.name = "ExhaustGroup";
@@ -201,6 +207,8 @@ export function createShortNeedleExhaust(opts = {}) {
 
     // 2. DYNAMICZNE ŚWIATŁO
     const light = new THREE.PointLight(0x4aaeff, 2.0, 150);
+    light.name = "EnginePointLight";
+    light.userData.enginePointLight = true;
     // Pozycja światła względem silnika (lekko w górę/stronę statku i w Z)
     light.position.set(0, 10, 20);
     group.add(light);
@@ -322,14 +330,20 @@ export function createShortNeedleExhaust(opts = {}) {
         uniforms.uColorEdge.value.copy(finalCol).multiplyScalar(bloomGain);
 
         // --- 1. AKTUALIZACJA ŚWIATŁA ---
-        light.color.copy(finalCol);
+        const enginePointLightsEnabled = areEnginePointLightsEnabled();
+        light.visible = enginePointLightsEnabled;
+        if (enginePointLightsEnabled) {
+            light.color.copy(finalCol);
         // Intensywność: Idle=2, Thrust=8, Warp=20
-        const targetLight = 2.0 + (currentThrottle * 6.0) + (currentWarpBoost * 18.0);
-        light.intensity = THREE.MathUtils.lerp(light.intensity, targetLight, 0.2);
+            const targetLight = 2.0 + (currentThrottle * 6.0) + (currentWarpBoost * 18.0);
+            light.intensity = THREE.MathUtils.lerp(light.intensity, targetLight, 0.2);
 
         // Zasięg: Idle=150, Thrust=300, Warp=800
-        const targetDistance = 150 + (currentThrottle * 150) + (currentWarpBoost * 650);
-        light.distance = THREE.MathUtils.lerp(light.distance, targetDistance, 0.1);
+            const targetDistance = 150 + (currentThrottle * 150) + (currentWarpBoost * 650);
+            light.distance = THREE.MathUtils.lerp(light.distance, targetDistance, 0.1);
+        } else {
+            light.intensity = 0;
+        }
 
         // --- 2. AKTUALIZACJA FLARY ---
         // Flara widoczna przy gazie i bardzo przy warpie

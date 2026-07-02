@@ -4,7 +4,7 @@
  */
 
 import { DestructorGpuSoftBody } from './destructorGpuSoftBody.js';
-import { getEntityShieldBlockingProgress } from '../../shieldSystem.js';
+import { getEntityShieldBlockingRadius } from '../../shieldSystem.js';
 
 export const DESTRUCTOR_CONFIG = {
   gridDivisions: 9, //
@@ -62,14 +62,12 @@ export const DESTRUCTOR_CONFIG = {
   overrunTargetVelocityKeep: 0.12,
   crushImpulseScale: 0.90, //
   shearK: 0.06, //
-  friction: 0.99, //
 
   collisionDeformScale: 1.15, //
   collisionSearchRadius: 5, //
   collisionIterations: 2, //
   broadphaseCellSize: 1200, //
   broadphaseMaxCandidates: 128, //
-  ringBroadphaseRadiusCap: 1400, //
 
   splitForceThreshold: 50, //
   splitDamageThreshold: 200, //
@@ -630,10 +628,10 @@ function markBrittleTransient(entity, frames = 0, minIndex = NaN, maxIndex = NaN
   markBrittleSettleRange(grid, minIndex, maxIndex);
 }
 
-function settleBrittleVisualState(grid, sleepFramesLimit) {
+function settleBrittleVisualState(grid, sleepFramesLimit, framesPerTick = 1) {
   const transientFrames = Number(grid.__brittleTransientFrames) || 0;
   if (transientFrames > 0) {
-    grid.__brittleTransientFrames = transientFrames - 1;
+    grid.__brittleTransientFrames = Math.max(0, transientFrames - framesPerTick);
     grid.isSleeping = false;
     grid.sleepFrames = 0;
     return;
@@ -746,20 +744,7 @@ function getBroadphaseRadius(entity) {
 }
 
 function getShieldRadius(entity) {
-  if (!entity?.shield) return 0;
-  let w = entity.w || (entity.radius * 2) || 40;
-  let h = entity.h || (entity.radius * 2) || 40;
-  if (entity.capitalProfile) {
-    const baseR = entity.radius || 20;
-    w = Math.max(w, baseR * (entity.capitalProfile.lengthScale || 3.2));
-    h = Math.max(h, baseR * (entity.capitalProfile.widthScale || 1.2));
-  } else if (entity.fighter || entity.type === 'fighter') {
-    w = Math.max(w, h); h = w;
-  }
-  const fullRadius = Math.max(w, h) * 0.5 * 1.15;
-  const progress = getEntityShieldBlockingProgress(entity);
-  if (progress <= 0) return 0;
-  return fullRadius * progress;
+  return getEntityShieldBlockingRadius(entity);
 }
 
 function circleOverlapsEntityRect(worldX, worldY, worldRadius, entity, extraMargin = 0) {
@@ -797,6 +782,74 @@ function circleOverlapsEntityRect(worldX, worldY, worldRadius, entity, extraMarg
     ly >= (minY - marginY) &&
     ly <= (maxY + marginY)
   );
+}
+
+// OBB (obrócony prostokąt kadłuba) w przestrzeni świata, cache'owany per tick fizyki.
+// Osie ux/vy są jednostkowe; skala siedzi w ekstentach eu/ev.
+function refreshEntityObb(entity, tick) {
+  let obb = entity._destrObb;
+  if (!obb) {
+    obb = entity._destrObb = { cx: 0, cy: 0, ux: 1, uy: 0, vx: 0, vy: 1, eu: 0, ev: 0, valid: false };
+  }
+  if (entity._destrObbTick === tick) return obb;
+  entity._destrObbTick = tick;
+
+  const grid = entity.hexGrid;
+  const w = Number(grid?.srcWidth) || 0;
+  const h = Number(grid?.srcHeight) || 0;
+  if (w <= 0 || h <= 0) {
+    obb.valid = false;
+    return obb;
+  }
+
+  const scaleX = Math.max(0.0001, getFinalScaleX(entity));
+  const scaleY = Math.max(0.0001, getFinalScaleY(entity));
+  const angle = getEntityHexAngle(entity);
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const billboardOrientation = usesBillboardOrientation(entity);
+  const pX = grid.pivot ? grid.pivot.x : 0;
+  const pY = grid.pivot ? grid.pivot.y : 0;
+
+  obb.cx = getEntityPosX(entity) + localDeltaToWorldX(-pX, -pY, scaleX, scaleY, c, s, billboardOrientation);
+  obb.cy = getEntityPosY(entity) + localDeltaToWorldY(-pX, -pY, scaleX, scaleY, c, s, billboardOrientation);
+  obb.ux = localDeltaToWorldX(1, 0, scaleX, scaleY, c, s, billboardOrientation) / scaleX;
+  obb.uy = localDeltaToWorldY(1, 0, scaleX, scaleY, c, s, billboardOrientation) / scaleX;
+  obb.vx = localDeltaToWorldX(0, 1, scaleX, scaleY, c, s, billboardOrientation) / scaleY;
+  obb.vy = localDeltaToWorldY(0, 1, scaleX, scaleY, c, s, billboardOrientation) / scaleY;
+
+  // Zapas na deformacje shardów (collision pos = gridX + deformation*cds) i hitRadius.
+  const pad = ((Number(DESTRUCTOR_CONFIG.maxDeform) || 100) * Math.max(1, Number(DESTRUCTOR_CONFIG.collisionDeformScale) || 1)) + HEX_SPACING * 4;
+  obb.eu = (w * 0.5 + pad) * scaleX;
+  obb.ev = (h * 0.5 + pad) * scaleY;
+  obb.valid = true;
+  return obb;
+}
+
+function obbsSeparatedOnAxis(nx, ny, dx, dy, a, b, margin) {
+  const dist = Math.abs(dx * nx + dy * ny);
+  const ra = a.eu * Math.abs(a.ux * nx + a.uy * ny) + a.ev * Math.abs(a.vx * nx + a.vy * ny);
+  const rb = b.eu * Math.abs(b.ux * nx + b.uy * ny) + b.ev * Math.abs(b.vx * nx + b.vy * ny);
+  return dist > ra + rb + margin;
+}
+
+// SAT dla pary OBB (4 osie). Zwraca true, gdy prostokąty (z marginesem) się przecinają.
+// Konserwatywnie true, gdy któraś encja nie ma wymiarów gridu.
+export function entityObbsOverlap(A, B, tick, margin = 0) {
+  const a = refreshEntityObb(A, tick);
+  if (!a.valid) return true;
+  const b = refreshEntityObb(B, tick);
+  if (!b.valid) return true;
+
+  const dx = b.cx - a.cx;
+  const dy = b.cy - a.cy;
+  const m = Math.max(0, Number(margin) || 0);
+
+  if (obbsSeparatedOnAxis(a.ux, a.uy, dx, dy, a, b, m)) return false;
+  if (obbsSeparatedOnAxis(a.vx, a.vy, dx, dy, a, b, m)) return false;
+  if (obbsSeparatedOnAxis(b.ux, b.uy, dx, dy, a, b, m)) return false;
+  if (obbsSeparatedOnAxis(b.vx, b.vy, dx, dy, a, b, m)) return false;
+  return true;
 }
 
 function getEntitySpriteRotation(entity) {
@@ -1202,18 +1255,6 @@ class HexShard {
     return changed;
   }
 
-  updateAnimation(dt) {
-    const spd = DESTRUCTOR_CONFIG.visualLerpSpeed;
-    const dx = this.targetDeformation.x - this.deformation.x;
-    const dy = this.targetDeformation.y - this.deformation.y;
-    if (Math.abs(dx) > 0.05 || Math.abs(dy) > 0.05) {
-      this.deformation.x += dx * spd * dt;
-      this.deformation.y += dy * spd * dt;
-      return true;
-    }
-    return false;
-  }
-
   applyDeformation(vecX, vecY, waveMult = 1.0, bypassLimit = false) {
     const MAX_INSTANT = 8.0;
     const magSq = vecX * vecX + vecY * vecY;
@@ -1294,16 +1335,6 @@ class HexShard {
     }
   }
 
-  updateDebris(dt) {
-    this.worldX += this.dvx * dt;
-    this.worldY += this.dvy * dt;
-    this.angle += this.drot * dt;
-    this.dvx *= DESTRUCTOR_CONFIG.friction;
-    this.dvy *= DESTRUCTOR_CONFIG.friction;
-    this.alpha -= dt * 0.2;
-    if (this.alpha <= 0) this.active = false;
-  }
-
   drawShape(ctx) {
     ctx.save();
     ctx.translate(this.gridX + this.deformation.x, this.gridY + this.deformation.y);
@@ -1370,10 +1401,12 @@ class HexShard {
 const _staticProbeResult = { hitShard: null, localX: 0, localY: 0, scale: 1, scaleX: 1, scaleY: 1, c: 1, s: 0, cx: 0, cy: 0, pX: 0, pY: 0, billboardOrientation: false };
 
 export const DestructorSystem = {
-  debris: [],
   splitQueue: [],
   _tick: 0,
   _frameContacts: 0,
+  // Lista encji z ostatniego kroku fizyki — updateVisuals() (render rate) korzysta z niej,
+  // gdy wywołanie nie dostarcza własnej listy.
+  _visualEntities: null,
 
   // Limit removed: 1024 contacts to handle very large hull surfaces in one pass.
   _contactsBuf: Array.from({ length: 1024 }, () => ({
@@ -1740,14 +1773,10 @@ export const DestructorSystem = {
     const list = Array.isArray(entities) ? entities : [];
     const step = Number.isFinite(dt) ? Math.max(0.0001, dt) : (1 / 120);
 
+    // Praca wizualna (lerp deformacji, GPU soft body, elastyczność, erase cache)
+    // wykonuje się raz na klatkę renderu w updateVisuals() — tu zostaje sama fizyka.
+    this._visualEntities = list;
     this._tick++;
-    const tDeform0 = nowMs();
-    this.updateVisualDeformation(list, step);
-    const tAfterVisualDeform = nowMs();
-    DestructorGpuSoftBody.tick(list, DESTRUCTOR_CONFIG, step);
-    const tAfterGpuSoftBody = nowMs();
-    this.simulateElasticity(list, step);
-    const tAfterDeform = nowMs();
 
     this._frameContacts = 0;
     const tCollision0 = nowMs();
@@ -1761,30 +1790,16 @@ export const DestructorSystem = {
     }
 
     const tAfterCollision = nowMs();
-    const tSplit0 = nowMs();
     const splitInterval = Math.max(1, DESTRUCTOR_CONFIG.splitCheckInterval | 0);
-
     if (this._tick % splitInterval === 0 && this.splitQueue.length > 0) this.processSplits(list);
+    const tUpdateEnd = nowMs();
 
-    const tErase0 = nowMs();
-    this._flushPendingShardErases(list);
-    const tAfterErase = nowMs();
-
-    const tUpdateEnd = tAfterErase;
     this.perf.lastUpdateMs = tUpdateEnd - tUpdate0;
-    this.perf.lastDeformMs = tAfterDeform - tDeform0;
-    this.perf.lastVisualDeformMs = tAfterVisualDeform - tDeform0;
-    this.perf.lastGpuSoftBodyMs = tAfterGpuSoftBody - tAfterVisualDeform;
-    this.perf.lastElasticityMs = tAfterDeform - tAfterGpuSoftBody;
     this.perf.lastCollisionMs = tAfterCollision - tCollision0;
-    this.perf.lastSplitMs = tAfterErase - tSplit0;
-    this.perf.lastEraseMs = tAfterErase - tErase0;
+    this.perf.lastSplitMs = tUpdateEnd - tAfterCollision;
     this.perf.lastContacts = this._frameContacts;
 
     if (dbgEnabled) {
-      this._dbgCollisionRecord('updateVisualDeformation', tAfterVisualDeform - tDeform0);
-      this._dbgCollisionRecord('gpuSoftBodyTick', tAfterGpuSoftBody - tAfterVisualDeform);
-      this._dbgCollisionRecord('flushPendingShardErases', tAfterErase - tErase0);
       const frameMs = tUpdateEnd - tUpdate0;
       const dbg = this._liveCollisionDebug;
       dbg.frames++;
@@ -1795,6 +1810,39 @@ export const DestructorSystem = {
     }
   },
 
+  // Wywoływane raz na klatkę renderu (rAF), NIE w pętli fizyki 120 Hz.
+  // dt = czas realnej klatki; lerp/sprężyny są skalowane dt, więc wynik wizualny
+  // jest ten sam, a koszt spada z (kroki fizyki × praca) do (1 × praca) na klatkę.
+  updateVisuals(dt, entities = null) {
+    const dbgEnabled = this._liveCollisionDebug?.enabled === true;
+    const list = Array.isArray(entities)
+      ? entities
+      : (Array.isArray(this._visualEntities) ? this._visualEntities : []);
+    const step = Number.isFinite(dt) ? Math.min(0.1, Math.max(0.0001, dt)) : (1 / 60);
+
+    const tDeform0 = nowMs();
+    this.updateVisualDeformation(list, step);
+    const tAfterVisualDeform = nowMs();
+    DestructorGpuSoftBody.tick(list, DESTRUCTOR_CONFIG, step);
+    const tAfterGpuSoftBody = nowMs();
+    this.simulateElasticity(list, step);
+    const tAfterDeform = nowMs();
+    this._flushPendingShardErases(list);
+    const tAfterErase = nowMs();
+
+    this.perf.lastDeformMs = tAfterDeform - tDeform0;
+    this.perf.lastVisualDeformMs = tAfterVisualDeform - tDeform0;
+    this.perf.lastGpuSoftBodyMs = tAfterGpuSoftBody - tAfterVisualDeform;
+    this.perf.lastElasticityMs = tAfterDeform - tAfterGpuSoftBody;
+    this.perf.lastEraseMs = tAfterErase - tAfterDeform;
+
+    if (dbgEnabled) {
+      this._dbgCollisionRecord('updateVisualDeformation', tAfterVisualDeform - tDeform0);
+      this._dbgCollisionRecord('gpuSoftBodyTick', tAfterGpuSoftBody - tAfterVisualDeform);
+      this._dbgCollisionRecord('flushPendingShardErases', tAfterErase - tAfterDeform);
+    }
+  },
+
   updateVisualDeformation(entities, dt) {
     const sleepFramesLimit = Math.max(1, DESTRUCTOR_CONFIG.elasticSleepFrames | 0);
     const sleepThreshold = Math.max(0.0001, Number(DESTRUCTOR_CONFIG.elasticSleepThreshold) || 0.08);
@@ -1802,19 +1850,23 @@ export const DestructorSystem = {
     const snapThreshold = Math.max(0.0001, Number(DESTRUCTOR_CONFIG.elasticSleepSnapThreshold) || 0.04);
     const visThreshold = 0.05;
     const lerpK = Math.min(1, Math.max(0, DESTRUCTOR_CONFIG.visualLerpSpeed * dt));
+    // Liczniki sleep/wake są skalibrowane w tickach fizyki (1/120 s). Ta metoda działa
+    // teraz w rytmie renderu, więc przeliczamy dt na ekwiwalent ticków — czas realny
+    // usypiania/budzenia nie zależy od fps.
+    const framesPerTick = Math.max(1, Math.round(dt * 120));
 
     for (const e of entities) {
       const grid = e?.hexGrid;
       if (!grid?.shards) continue;
       if (isBrittleEntity(e)) {
-        settleBrittleVisualState(grid, sleepFramesLimit);
+        settleBrittleVisualState(grid, sleepFramesLimit, framesPerTick);
         continue;
       }
       const shards = grid.shards;
       const len = shards.length;
       let wakeHoldFrames = Number(grid.wakeHoldFrames) || 0;
       if (wakeHoldFrames > 0) {
-        wakeHoldFrames -= 1;
+        wakeHoldFrames = Math.max(0, wakeHoldFrames - framesPerTick);
         grid.wakeHoldFrames = wakeHoldFrames;
       }
 
@@ -1839,7 +1891,7 @@ export const DestructorSystem = {
         }
         if (grid.isSleeping) continue;
 
-        const frames = (Number(grid.sleepFrames) || 0) + 1;
+        const frames = (Number(grid.sleepFrames) || 0) + framesPerTick;
         grid.sleepFrames = frames;
         if (frames >= sleepFramesLimit) grid.isSleeping = true;
         continue;
@@ -1946,7 +1998,7 @@ export const DestructorSystem = {
       }
 
       if (!gpuAwake && peakDeformation <= sleepThreshold && wakeHoldFrames <= 0) {
-        const frames = (Number(grid.sleepFrames) || 0) + 1;
+        const frames = (Number(grid.sleepFrames) || 0) + framesPerTick;
         grid.sleepFrames = frames;
         if (frames >= sleepFramesLimit) grid.isSleeping = true;
       } else {
@@ -2595,8 +2647,16 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
           if (dbgEnabled) this._liveCollisionDebug.pairCandidates++;
 
+          // Najtańszy test (dystans) idzie pierwszy. Prędkość B bierzemy z cache
+          // broadphase (_frameSpeed z początku kroku) — bez sqrt per kandydat.
           const dx = ax - getEntityPosX(B);
           const dy = ay - getEntityPosY(B);
+          const br = Number(B?._bpRadius) || 100;
+          const cappedSpeedB = Math.min(Number(B._frameSpeed) || 0, br * 2);
+          const rs = ar + br + querySpeedA + cappedSpeedB;
+
+          if (dx * dx + dy * dy > rs * rs) continue;
+
           const velBx = getEntityVelX(B);
           const velBy = getEntityVelY(B);
           const speedBMag = Math.sqrt(velBx * velBx + velBy * velBy);
@@ -2609,13 +2669,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           const isCrashFrame = relSpeedSq > (crashApproachSpeedThreshold * crashApproachSpeedThreshold);
           const aIsWreck = !!A.isWreck;
           const bIsWreck = !!B.isWreck;
-          const speedB = speedBMag * (1 / 60);
-          const br = Number(B?._bpRadius) || 100;
-          const cappedSpeedA = Math.min(speedA, ar * 2);
-          const cappedSpeedB = Math.min(speedB, br * 2);
-          const rs = ar + br + cappedSpeedA + cappedSpeedB;
 
-          if (dx * dx + dy * dy > rs * rs) continue;
           if (iterIndex > 0 && (heavyPair || isCrashFrame)) continue;
 
           // Shield collision: check before hull narrowphase
@@ -2661,10 +2715,15 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           if (B.isRingSegment && !circleOverlapsEntityRect(
             ax,
             ay,
-            ar + cappedSpeedA + cappedSpeedB,
+            ar + querySpeedA + cappedSpeedB,
             B,
             HEX_SPACING * 6.0
           )) continue;
+
+          // Pary statek–statek: bramka OBB vs OBB. Odrzuca mijanki burta w burtę,
+          // które przechodzą test okręgów (długi kadłub -> duży okrąg otaczający),
+          // zanim zapłacimy pełną pętlę narrowphase po shardach.
+          if (!B.isRingSegment && !entityObbsOverlap(A, B, this._tick, querySpeedA + cappedSpeedB)) continue;
 
           if (dbgEnabled) {
             this._liveCollisionDebug.pairNarrow++;
@@ -2748,6 +2807,10 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
         // Sample points along trajectory
         const steps = Math.min(8, Math.ceil(frameSpeed / ar));
+        // Korekty separacji nałożone przez collideEntities muszą przetrwać
+        // przywrócenie pozycji końca klatki (jak w głównym torze swept powyżej).
+        let corrAx = 0;
+        let corrAy = 0;
         for (let s = 1; s <= steps; s++) {
           const t = s / steps;
           const sampleX = ax - velAx * dt * t;
@@ -2779,9 +2842,13 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
             if (sdx * sdx + sdy * sdy < (ar + br) * (ar + br)) {
               // Temporarily position A at sample point for collision
-              setEntityPos(A, sampleX, sampleY);
+              setEntityPos(A, sampleX + corrAx, sampleY + corrAy);
               this.collideEntities(A, B, dt / steps, doDamage);
-              setEntityPos(A, ax, ay);
+              // Zachowaj separację, którą collideEntities nałożyło na A,
+              // przywracając pozycję końca klatki.
+              corrAx = getEntityPosX(A) - sampleX;
+              corrAy = getEntityPosY(A) - sampleY;
+              setEntityPos(A, ax + corrAx, ay + corrAy);
               break; // one hit per sweep pass is enough
             }
           }

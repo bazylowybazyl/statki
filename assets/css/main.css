@@ -1986,7 +1986,7 @@
     /* Wiersz z bronią (do przeciągania) */
     .weapon-row {
       display: grid;
-      grid-template-columns: 28px 22px 2fr 1fr;
+      grid-template-columns: 28px 22px minmax(0, 1.35fr) minmax(92px, 0.75fr);
       /* Ikona | Rozmiar | Nazwa | Statystyki */
       align-items: center;
       gap: 8px;
@@ -2033,9 +2033,19 @@
       border: 1px dashed #444;
     }
 
+    .weapon-row-icon.hardpoint-glyph {
+      color: #8fb5ff;
+      border: 1px solid rgba(109, 220, 255, 0.36);
+      background: rgba(12, 28, 48, 0.82);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
     .weapon-row-name {
       font-weight: 600;
       color: #e6f8ff;
+      min-width: 0;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -2044,7 +2054,11 @@
     .weapon-row-meta {
       color: #94a9d6;
       font-size: 11px;
+      min-width: 0;
       text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     /* Plakietka klasy rozmiaru broni / slotu (S / M / L / C) */
@@ -2174,7 +2188,7 @@
     /* Wiersz Hardpointu (Slot) */
     .hp-row {
       display: grid;
-      grid-template-columns: 28px 22px 80px 1fr 24px;
+      grid-template-columns: 28px 22px minmax(88px, 0.75fr) minmax(140px, 1.35fr) minmax(92px, 0.75fr) 24px;
       /* Ikona | Rozmiar | Typ slotu | Zamontowane | Przycisk X */
       align-items: center;
       gap: 8px;
@@ -2194,18 +2208,36 @@
     .hp-row-label {
       color: #6b7da8;
       font-size: 11px;
+      min-width: 0;
       text-transform: uppercase;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .hp-row-mount {
       color: #8fb5ff;
       font-weight: 600;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .hp-row-mount.empty {
       color: #4b5563;
       font-style: italic;
       font-weight: 400;
+    }
+
+    .hp-row-meta {
+      color: #94a9d6;
+      font-size: 11px;
+      min-width: 0;
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .hp-row-clear {

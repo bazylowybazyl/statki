@@ -581,40 +581,49 @@ class RocketSystem3D {
             }
 
             /* ── Physics ── */
-            const weight = r.mass * PHYSICS.gravity;
-            _force.set(0, -weight, 0);
-
             _forward.set(0, 1, 0).applyQuaternion(r.quaternion).normalize();
-            if (r.currentThrust > 0) {
-                _force.addScaledVector(_forward, r.currentThrust);
+
+            if (r.state === "POWERED") {
+                // Kinematic flight: velocity follows the nose. The quaternion above is
+                // turn-rate-capped, so weaponDef.turnRate governs the actual flight path,
+                // not just the visual heading. Free-force integration couldn't turn the
+                // velocity vector (lateral authority = thrust/mass ≈ 175 u/s² at cruise
+                // throttle → 18 500u turn radius at 1800 u/s vs ~65u fuse), so missiles
+                // sailed past targets. Speed tracks guidanceDesiredSpeed with a real
+                // decel limit, making terminal/reacquire speed factors actually brake.
+                const speed = r.velocity.length();
+                const desiredSpeed = Math.max(220, guidanceDesiredSpeed);
+                const accelLimit = r.maxThrust / r.mass;
+                const newSpeed = speed < desiredSpeed
+                    ? Math.min(desiredSpeed, speed + accelLimit * dt)
+                    : Math.max(desiredSpeed, speed - accelLimit * 0.8 * dt);
+                r.velocity.copy(_forward).multiplyScalar(newSpeed);
+                // currentThrust only drives exhaust VFX intensity now.
+                const throttleNorm = THREE.MathUtils.clamp(((desiredSpeed - speed) / desiredSpeed) * 1.4 + 0.25, 0.12, 1.0);
+                r.currentThrust = r.maxThrust * throttleNorm;
+            } else {
+                // EJECTED: ballistic cold-launch arc (gravity + drag), motor not lit.
+                const weight = r.mass * PHYSICS.gravity;
+                _force.set(0, -weight, 0);
+                const speedSq = r.velocity.lengthSq();
+                if (speedSq > 1) {
+                    _drag.copy(r.velocity).normalize().negate();
+                    _force.addScaledVector(_drag, speedSq * PHYSICS.airDrag);
+                }
+                r.velocity.addScaledVector(_force.divideScalar(r.mass), dt);
             }
 
-            const speedSq = r.velocity.lengthSq();
-            if (speedSq > 1) {
-                _drag.copy(r.velocity).normalize().negate();
-                _force.addScaledVector(_drag, speedSq * PHYSICS.airDrag);
-            }
-
-            r.velocity.addScaledVector(
-                _force.divideScalar(r.mass), dt
-            );
             r.position.addScaledVector(r.velocity, dt);
             r.travelDistance += Math.hypot(
                 r.position.x - r.prevTravelPos.x,
                 r.position.z - r.prevTravelPos.z
             );
-            r.prevTravelPos.copy(r.position);
+            // prevTravelPos still holds the pre-step position; the fuse check below
+            // sweeps the full segment traveled this frame. Synced after hit detection.
 
             if (r.position.y > R.maxAltitude) {
                 r.position.y = R.maxAltitude;
                 if (r.velocity.y > 0) r.velocity.y *= 0.2;
-            }
-
-            if (r.state === "POWERED") {
-                const speed = r.velocity.length();
-                const desiredSpeed = Math.max(220, guidanceDesiredSpeed);
-                const throttleNorm = THREE.MathUtils.clamp(((desiredSpeed - speed) / desiredSpeed) * 1.4 + 0.25, 0.12, 1.0);
-                r.currentThrust = r.maxThrust * throttleNorm;
             }
 
             /* ── Instance matrix ── */
@@ -690,12 +699,22 @@ class RocketSystem3D {
 
             const traveled = r.travelDistance;
 
-            /* ── Hit detection ── */
+            /* ── Hit detection (swept: closest approach over this frame's segment) ── */
             if (r.target && !r.target.dead) {
                 const tx = Number(r.target.x ?? r.target.pos?.x) || 0;
                 const ty = Number(r.target.y ?? r.target.pos?.y) || 0;
-                const dx = tx - r.position.x;
-                const dz = ty - r.position.z;
+                // Endpoint-only distance tunnels through the fuse sphere at high speed
+                // (supernova at 30 fps steps 120u/frame against a 98u fuse).
+                const x1 = r.prevTravelPos.x, z1 = r.prevTravelPos.z;
+                const segX = r.position.x - x1;
+                const segZ = r.position.z - z1;
+                const segLenSq = segX * segX + segZ * segZ;
+                let tSeg = segLenSq > 1e-9 ? ((tx - x1) * segX + (ty - z1) * segZ) / segLenSq : 1;
+                tSeg = THREE.MathUtils.clamp(tSeg, 0, 1);
+                const cx = x1 + segX * tSeg;
+                const cz = z1 + segZ * tSeg;
+                const dx = tx - cx;
+                const dz = ty - cz;
                 const dist2D = Math.sqrt(dx * dx + dz * dz);
                 const isPointTarget = !!r.target._isPositionTarget;
                 const targetRadius = isPointTarget ? 0 : Math.max(
@@ -711,11 +730,15 @@ class RocketSystem3D {
                 const isArmed = (r.timeSinceLaunch >= minArmTime) && (traveled >= minArmDistance);
                 const shouldDetonate = isArmed && dist2D <= fuseRadius;
                 if (shouldDetonate) {
+                    // Detonate at the closest-approach point, not wherever the step ended.
+                    r.position.x = cx;
+                    r.position.z = cz;
                     this._onHit(r);
                     this._explode(r);
                     continue;
                 }
             }
+            r.prevTravelPos.copy(r.position);
 
             /* ── Ground / range expiry ── */
             if (r.position.y <= 0 && r.velocity.y < 0 && r.timeSinceLaunch > 0.5) {

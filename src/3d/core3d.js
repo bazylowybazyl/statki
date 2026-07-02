@@ -307,9 +307,13 @@ export const Core3D = {
   uberPass: null,
   bloomPass: null, bloomResolutionScale: 0.75, bloomBaseStrength: 1.0, bloomBaseThreshold: 0.0,
   msaaSamples: 0,
-  perfToggles: { bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, fgBuildings: true, fgStations: true, fgWeapons: true, fgShadows: true },
+  perfToggles: { bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, fgBuildings: true, fgStations: true, fgWeapons: true, fgShadows: true, enginePointLights: true },
   pixelRatio: 1, width: 0, height: 0, isInitialized: false,
   _clearColorScratch: new THREE.Color(),
+  lastFramePerf: null,
+  lastFrameRenderInfo: null,
+  _renderInfoBefore: { calls: 0, triangles: 0, points: 0, lines: 0 },
+  _renderInfoBucketNames: ['refraction', 'bg', 'planets', 'shafts', 'ortho', 'fg', 'bloom', 'post', 'other'],
 
   _getBloomConfig() {
     const bloom = (typeof window !== 'undefined' && window.DevVFX?.bloom) ? window.DevVFX.bloom : null;
@@ -325,6 +329,102 @@ export const Core3D = {
       threshold: Math.max(0, threshold),
       resolutionScale: Math.max(0.1, Math.min(1, resolutionScale))
     };
+  },
+
+  _makeRenderInfoBucket() {
+    return { calls: 0, triangles: 0, points: 0, lines: 0 };
+  },
+
+  _ensureRenderInfoBuckets() {
+    if (!this.lastFrameRenderInfo) {
+      this.lastFrameRenderInfo = { total: this._makeRenderInfoBucket() };
+      for (const name of this._renderInfoBucketNames) {
+        this.lastFrameRenderInfo[name] = this._makeRenderInfoBucket();
+      }
+    }
+    return this.lastFrameRenderInfo;
+  },
+
+  _zeroRenderInfoBucket(bucket) {
+    if (!bucket) return;
+    bucket.calls = 0;
+    bucket.triangles = 0;
+    bucket.points = 0;
+    bucket.lines = 0;
+  },
+
+  _resetRenderInfoBuckets() {
+    const info = this._ensureRenderInfoBuckets();
+    this._zeroRenderInfoBucket(info.total);
+    for (const name of this._renderInfoBucketNames) this._zeroRenderInfoBucket(info[name]);
+  },
+
+  _readRenderInfoInto(target) {
+    const src = this.renderer?.info?.render;
+    target.calls = Number(src?.calls) || 0;
+    target.triangles = Number(src?.triangles) || 0;
+    target.points = Number(src?.points) || 0;
+    target.lines = Number(src?.lines) || 0;
+    return target;
+  },
+
+  _addRenderInfoDelta(bucketName, before = this._renderInfoBefore) {
+    const info = this._ensureRenderInfoBuckets();
+    const safeBucketName = (bucketName === 'fg' || bucketName === 'bloom' || bucketName === 'refraction' || info[bucketName])
+      ? bucketName
+      : 'other';
+    const bucket = info[safeBucketName] || info.other;
+    const current = this.renderer?.info?.render;
+    bucket.calls += Math.max(0, (Number(current?.calls) || 0) - before.calls);
+    bucket.triangles += Math.max(0, (Number(current?.triangles) || 0) - before.triangles);
+    bucket.points += Math.max(0, (Number(current?.points) || 0) - before.points);
+    bucket.lines += Math.max(0, (Number(current?.lines) || 0) - before.lines);
+  },
+
+  _finalizeRenderInfoBuckets() {
+    const info = this._ensureRenderInfoBuckets();
+    this._readRenderInfoInto(info.total);
+    let knownCalls = 0;
+    let knownTriangles = 0;
+    let knownPoints = 0;
+    let knownLines = 0;
+    for (const name of this._renderInfoBucketNames) {
+      if (name === 'other') continue;
+      const bucket = info[name];
+      knownCalls += bucket.calls;
+      knownTriangles += bucket.triangles;
+      knownPoints += bucket.points;
+      knownLines += bucket.lines;
+    }
+    info.other.calls = Math.max(0, info.total.calls - knownCalls);
+    info.other.triangles = Math.max(0, info.total.triangles - knownTriangles);
+    info.other.points = Math.max(0, info.total.points - knownPoints);
+    info.other.lines = Math.max(0, info.total.lines - knownLines);
+  },
+
+  _wrapRenderInfoPass(pass, bucketName) {
+    if (!pass || pass.__core3dRenderInfoWrapped) return;
+    const originalRender = pass.render;
+    const core = this;
+    pass.render = function (...args) {
+      core._readRenderInfoInto(core._renderInfoBefore);
+      const result = originalRender.apply(this, args);
+      core._addRenderInfoDelta(bucketName);
+      return result;
+    };
+    pass.__core3dRenderInfoWrapped = true;
+    pass.__core3dRenderInfoBucket = bucketName;
+  },
+
+  _instrumentComposerPasses() {
+    this._wrapRenderInfoPass(this.renderPassBg, 'bg');
+    this._wrapRenderInfoPass(this.renderPassPlanets, 'planets');
+    this._wrapRenderInfoPass(this.planetHaloPass, 'planets');
+    this._wrapRenderInfoPass(this.shadowShaftsPass, 'shafts');
+    this._wrapRenderInfoPass(this.renderPassOrtho, 'ortho');
+    this._wrapRenderInfoPass(this.renderPassFg, 'fg');
+    this._wrapRenderInfoPass(this.bloomPass, 'bloom');
+    this._wrapRenderInfoPass(this.uberPass, 'post');
   },
 
   _applyBloomPassConfig() {
@@ -497,6 +597,7 @@ export const Core3D = {
     }
 
     this._applyPassToggles();
+    this._instrumentComposerPasses();
     this.isInitialized = true;
     this.resize(window.innerWidth, window.innerHeight);
 
@@ -550,11 +651,17 @@ export const Core3D = {
       const fgB = t.fgBuildings !== false;
       const fgS = t.fgStations !== false;
       const fgW = t.fgWeapons !== false;
+      const engineLights = t.enginePointLights !== false;
       for (const child of this.scene.children) {
         const cat = child.userData?.fgCategory;
         if (cat === 'buildings') { if (!fgB) child.visible = false; }
         else if (cat === 'stations') { if (!fgS) child.visible = false; }
         else if (cat === 'weapons') { if (!fgW) child.visible = false; }
+        child.traverse?.((node) => {
+          if (!node?.userData?.enginePointLight) return;
+          node.visible = engineLights;
+          if (!engineLights && node.isLight) node.intensity = 0;
+        });
       }
     }
   },
@@ -620,6 +727,7 @@ export const Core3D = {
       fgStations: t.fgStations !== false,
       fgWeapons: t.fgWeapons !== false,
       fgShadows: t.fgShadows !== false,
+      enginePointLights: t.enginePointLights !== false,
       msaaSamples: Number(this.msaaSamples) || 0
     };
   },
@@ -712,7 +820,7 @@ export const Core3D = {
   render() {
     if (!this.isInitialized) return;
     const dbgEnabled = typeof globalThis !== 'undefined' && typeof globalThis.__renderDbgRecord === 'function';
-    const tRenderTotal0 = dbgEnabled ? performance.now() : 0;
+    const tRenderTotal0 = performance.now();
 
     this._applyPassToggles();
 
@@ -959,9 +1067,11 @@ export const Core3D = {
     }
     if (dbgEnabled) recordRenderDbg('coreUberSetup', performance.now() - tPost0);
 
-    const tComposer0 = dbgEnabled ? performance.now() : 0;
+    const tComposer0 = performance.now();
     // Reset renderer info once per frame; it will accumulate across all passes.
     this.renderer.info.reset();
+    this._resetRenderInfoBuckets();
+    this._instrumentComposerPasses();
 
     if (this.shockwave3DManager) {
       const shockDt = this._shockwavePrevTime > 0
@@ -1002,6 +1112,7 @@ export const Core3D = {
         this.renderer.autoClear = false;
         this.renderer.setRenderTarget(this.refractionTarget);
         this.renderer.setClearColor(0x000000, 0.0);
+        this._readRenderInfoInto(this._renderInfoBefore);
 
         if (isSplit) {
           const rtW = this.refractionTarget.width;
@@ -1012,6 +1123,7 @@ export const Core3D = {
         } else {
           renderRefractionViewport(this.activeCam1, 0, 0, this.refractionTarget.width, this.refractionTarget.height);
         }
+        this._addRenderInfoDelta('refraction');
 
         this.shockwave3DManager.showAll();
         this.renderer.setScissorTest(false);
@@ -1025,18 +1137,25 @@ export const Core3D = {
     }
 
     this.composer.render();
+    this._finalizeRenderInfoBuckets();
+    const composerMs = performance.now() - tComposer0;
+    this.lastFramePerf = {
+      renderTotalMs: performance.now() - tRenderTotal0,
+      composerMs
+    };
     if (dbgEnabled) {
-      recordRenderDbg('coreComposerRender', performance.now() - tComposer0);
-      recordRenderDbg('core3dRenderTotal', performance.now() - tRenderTotal0);
+      recordRenderDbg('coreComposerRender', composerMs);
+      recordRenderDbg('core3dRenderTotal', this.lastFramePerf.renderTotalMs);
     }
     // Expose renderer info for perf debugging — read with window.__rendererInfo
     if (typeof window !== 'undefined') {
-      const info = this.renderer.info.render;
+      const info = this.lastFrameRenderInfo?.total || this.renderer.info.render;
       window.__rendererInfo = {
         calls: info.calls,
         triangles: info.triangles,
         points: info.points,
-        lines: info.lines
+        lines: info.lines,
+        passes: this.lastFrameRenderInfo
       };
     }
   },
@@ -1088,9 +1207,13 @@ export const Core3D = {
     renderer.setViewport(0, 0, w, h);
     renderer.autoClear = true;
 
+    this.lastFramePerf = {
+      renderTotalMs: performance.now() - tRenderTotal0,
+      composerMs: 0
+    };
     if (dbgEnabled) {
       recordRenderDbg('coreComposerRender', 0);
-      recordRenderDbg('core3dRenderTotal', performance.now() - tRenderTotal0);
+      recordRenderDbg('core3dRenderTotal', this.lastFramePerf.renderTotalMs);
     }
   },
 

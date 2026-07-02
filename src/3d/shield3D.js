@@ -5,7 +5,7 @@
 // ============================================================
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
-import { isShieldSuppressed } from '../../shieldSystem.js';
+import { getEntityShieldBaseRadius, isShieldSuppressed } from '../../shieldSystem.js';
 
 const MAX_HITS = 24;
 
@@ -382,20 +382,8 @@ export function updateShields3D(dt, entities, interpPoseOverride = null) {
         if (!mesh) mesh = createShieldMesh(entity);
         activeEntities.add(entity);
 
-        // --- Shield scale (uniform circle from max dimension) ---
-        let w = entity.w || (entity.radius * 2) || 40;
-        let h = entity.h || (entity.radius * 2) || 40;
-        if (entity.capitalProfile) {
-            const baseR = entity.radius || 20;
-            w = Math.max(w, baseR * (entity.capitalProfile.lengthScale || 3.2));
-            h = Math.max(h, baseR * (entity.capitalProfile.widthScale || 1.2));
-        } else if (entity.fighter || entity.type === 'fighter') {
-            w = Math.max(w, h); h = w;
-        }
-
-        // Uniform scale: sphere radius=1.8, shield covers half the longest dimension + 15% margin
-        const maxDim = Math.max(w, h);
-        const s = (maxDim * 0.5 * 1.15) / 1.8;
+        // Uniform scale: sphere radius=1.8, shield covers the shared gameplay radius.
+        const s = getEntityShieldBaseRadius(entity) / 1.8;
         // During activation, shield grows from center; during breaking, stays full size
         const ap = Math.max(0, Math.min(1, shield.activationProgress || 0));
         const scaleProgress = shield.state === 'breaking' ? 1 : Math.max(0.02, ap);

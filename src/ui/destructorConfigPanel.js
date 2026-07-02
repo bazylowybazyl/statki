@@ -25,8 +25,7 @@ const CONTROL_SECTIONS = [
       { key: 'gpuPropagationDamping', label: 'gpu damping', min: 0.7, max: 0.999, step: 0.001 },
       { key: 'recoverSpeed', label: 'recover speed', min: 0, max: 8.0, step: 0.05 },
       { key: 'repairRate', label: 'repair rate', min: 0, max: 800, step: 5 },
-      { key: 'visualLerpSpeed', label: 'visual lerp', min: 0.1, max: 40, step: 0.1 },
-      { key: 'friction', label: 'shard friction', min: 0.7, max: 1.0, step: 0.001 }
+      { key: 'visualLerpSpeed', label: 'visual lerp', min: 0.1, max: 40, step: 0.1 }
     ]
   },
   {
@@ -64,8 +63,7 @@ const CONTROL_SECTIONS = [
     title: 'Broadphase',
     controls: [
       { key: 'broadphaseCellSize', label: 'cell size', min: 200, max: 5000, step: 50, integer: true },
-      { key: 'broadphaseMaxCandidates', label: 'max candidates', min: 16, max: 512, step: 8, integer: true },
-      { key: 'ringBroadphaseRadiusCap', label: 'ring radius cap', min: 200, max: 5000, step: 50, integer: true }
+      { key: 'broadphaseMaxCandidates', label: 'max candidates', min: 16, max: 512, step: 8, integer: true }
     ]
   },
   {
