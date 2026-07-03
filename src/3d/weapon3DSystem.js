@@ -68,6 +68,15 @@ const WEAPON_3D_CATEGORY_TRIM = Object.freeze({
   default: 1.0
 });
 
+// LOD broni 3D: poniżej tego zooma wieżyczki mają po kilka pikseli, a w bitwie
+// potrafią nieść setki oświetlanych draw calli w passie FG. Chowamy całe
+// kontenery i pomijamy ich sync. Tuning: window.__weaponLodMinZoom.
+const WEAPON_LOD_MIN_ZOOM = 0.28;
+function getWeaponLodMinZoom() {
+  const z = (typeof window !== 'undefined') ? Number(window.__weaponLodMinZoom) : NaN;
+  return (Number.isFinite(z) && z >= 0) ? z : WEAPON_LOD_MIN_ZOOM;
+}
+
 function normalizeWeaponFxKey(weaponId) {
   const id = String(weaponId || '').toLowerCase();
   if (!id) return '';
@@ -162,9 +171,12 @@ function ensureWeaponResources() {
     });
 
     WEP_RESOURCES.mats = {
-      base: new THREE.MeshStandardMaterial({ color: 0x3a465b, roughness: 0.72, metalness: 0.62 }),
-      barrel: new THREE.MeshStandardMaterial({ color: 0x5a6982, roughness: 0.42, metalness: 0.82 }),
-      armor: new THREE.MeshStandardMaterial({ color: 0x647596, roughness: 0.48, metalness: 0.74 }),
+      // Lambert zamiast Standard: przy dziesiątkach świateł punktowych w scenie
+      // PBR płaci pełny GGX per światło per fragment; na wieżyczkach wielkości
+      // kilkudziesięciu pikseli różnica jest niewidoczna, a koszt ~5× mniejszy.
+      base: new THREE.MeshLambertMaterial({ color: 0x3a465b }),
+      barrel: new THREE.MeshLambertMaterial({ color: 0x5a6982 }),
+      armor: new THREE.MeshLambertMaterial({ color: 0x647596 }),
       glowBlue: makeGlowMaterial(0x8ad9ff, 0.96),
       glowCyan: makeGlowMaterial(0x86f4ff, 0.98),
       glowRed: makeGlowMaterial(0xff7b93, 0.96),
@@ -1951,6 +1963,8 @@ export const Weapon3DSystem = {
     shotPos.set(shotX, -shotY, 0);
 
     for (const [, container] of this.containers) {
+      // Ukryte kontenery (LOD/CIC) — recoil/flash i tak niewidoczne; nie skanuj.
+      if (!container?.visible) continue;
       const meshes = container?.userData?.meshes;
       if (!meshes || meshes.size === 0) continue;
       if (container.userData._lastMatrixFrame !== this._matrixWorldFrame) {
@@ -2033,6 +2047,16 @@ export const Weapon3DSystem = {
 
     // Hide weapons when CIC (tactical overlay) is active
     if (CICDisplay.active) {
+      const container = this.containers.get(entity);
+      if (container) container.visible = false;
+      return;
+    }
+
+    // LOD: przy oddalonej kamerze chowamy wieżyczki (subpikselowy detal) i
+    // pomijamy cały per-broniowy sync CPU. Nowe kontenery nie powstają, dopóki
+    // gracz nie przybliży kamery.
+    const camZoom = Number(Core3D.activeCam1?.zoom) || 1;
+    if (camZoom < getWeaponLodMinZoom()) {
       const container = this.containers.get(entity);
       if (container) container.visible = false;
       return;

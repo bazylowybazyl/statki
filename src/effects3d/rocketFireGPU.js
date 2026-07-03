@@ -37,6 +37,20 @@ export const FlameSettings = {
 const OVERLAY_HDR_COMP = 0.24;
 const OVERLAY_ALPHA_COMP = 0.82;
 
+/** Ustaw zakres uploadu atrybutu (nowe i stare API three). */
+function applyAttrRange(attr, start, count) {
+    if (!attr) return;
+    if (typeof attr.clearUpdateRanges === 'function') {
+        attr.clearUpdateRanges();
+        attr.addUpdateRange(start, count);
+    } else {
+        if (!attr.updateRange) attr.updateRange = { offset: 0, count: -1 };
+        attr.updateRange.offset = start;
+        attr.updateRange.count = count;
+    }
+    attr.needsUpdate = true;
+}
+
 export class RocketFireGPU {
     /**
      * @param {THREE.Scene} scene  — overlay scene to add mesh to
@@ -46,6 +60,13 @@ export class RocketFireGPU {
         this.maxParticles = maxParticles;
         this.activeIndex = 0;
         this._time = 0;
+        // Dirty-span spawnów między commitami + znak wodny żywych instancji.
+        this._dirtyMin = Infinity;
+        this._dirtyMax = -1;
+        this._dirtyWrapped = false;
+        this.highWater = 0;
+        this._lastSpawnTime = -Infinity;
+        this._maxLifeSeen = 0;
 
         /* ── Geometry: instanced quads ── */
         const baseGeo = new THREE.PlaneGeometry(1, 1);
@@ -314,6 +335,9 @@ export class RocketFireGPU {
             transparent: true
         });
 
+        // Rysuj tylko użyty fragment ring-buffera (0 na starcie), nie całe 300k instancji.
+        geo.instanceCount = 0;
+
         this.mesh = new THREE.Mesh(geo, this.material);
         this.mesh.frustumCulled = false;
         this.mesh.renderOrder = 1000;
@@ -337,16 +361,44 @@ export class RocketFireGPU {
         this.dataInfo[i4+2] = size;
         this.dataInfo[i4+3] = type;
 
+        // NIE ustawiamy tu needsUpdate na całych buforach (300k cząstek ≈ 12 MB —
+        // jedna paląca się rakieta wysyłała to CO KLATKĘ). Zbieramy dirty-span,
+        // a upload zakresu robi commit() raz na klatkę.
+        if (i < this._dirtyMin) this._dirtyMin = i;
+        if (i > this._dirtyMax) this._dirtyMax = i;
+        if (this.activeIndex === 0) this._dirtyWrapped = true;
+        if (i + 1 > this.highWater) this.highWater = i + 1;
+        this._lastSpawnTime = this._time;
+        if (life > this._maxLifeSeen) this._maxLifeSeen = life;
+    }
+
+    /** Wyślij na GPU zakres zespawnowany od ostatniego commit(). Raz na klatkę. */
+    commit() {
+        if (this._dirtyMax < this._dirtyMin && !this._dirtyWrapped) return;
         const geo = this.mesh.geometry;
-        geo.attributes.aStartPos.needsUpdate = true;
-        geo.attributes.aStartVel.needsUpdate = true;
-        geo.attributes.aData.needsUpdate     = true;
+        const start = this._dirtyWrapped ? 0 : this._dirtyMin;
+        const count = this._dirtyWrapped ? this.maxParticles : (this._dirtyMax - this._dirtyMin + 1);
+        applyAttrRange(geo.attributes.aStartPos, start * 3, count * 3);
+        applyAttrRange(geo.attributes.aStartVel, start * 3, count * 3);
+        applyAttrRange(geo.attributes.aData, start * 4, count * 4);
+        geo.instanceCount = this.highWater;
+        this._dirtyMin = Infinity;
+        this._dirtyMax = -1;
+        this._dirtyWrapped = false;
     }
 
     /** Update shader time uniform. Call once per frame BEFORE any spawn() calls. */
     update(globalTime) {
         this._time = globalTime;
         this.material.uniforms.uTime.value = globalTime;
+        // Wszystkie cząstki wygasły → zeruj licznik instancji; vertex shader
+        // przestaje mielić martwy ring-buffer, a zapis rusza od początku.
+        if (this.highWater > 0 && (globalTime - this._lastSpawnTime) > (this._maxLifeSeen + 0.5)) {
+            this.highWater = 0;
+            this.activeIndex = 0;
+            this._maxLifeSeen = 0;
+            this.mesh.geometry.instanceCount = 0;
+        }
     }
 
     dispose() {
