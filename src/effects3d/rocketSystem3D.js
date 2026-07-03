@@ -61,6 +61,7 @@ const _VISUAL_FWD = new THREE.Vector3(0, 0, 1);
 const _renderDir = new THREE.Vector3();
 const _renderQuat = new THREE.Quaternion();
 const _leadAim2D = { x: 0, y: 0 };
+const _colorScratch = new THREE.Color();
 
 function getTargetVelocity2D(target) {
     if (!target) return { x: 0, y: 0 };
@@ -216,6 +217,7 @@ class RocketSystem3D {
         this.fireGPU  = new RocketFireGPU(overlayScene, 300000);
         this.smokeGPU = new RocketSmokeGPU(overlayScene, 200000);
         this.heatHazeBursts = [];
+        this.activeRockets = 0;
 
         /* ── Rocket body InstancedMesh ── */
         const geo = new THREE.CylinderGeometry(
@@ -323,6 +325,7 @@ class RocketSystem3D {
         if (!r) return;
 
         r.active = true;
+        this.activeRockets++;
         // Game coords → overlay: X stays, game-Y → overlay-Z, height=0
         r.position.set(gameX, 0, gameY);
 
@@ -405,11 +408,12 @@ class RocketSystem3D {
             }
         }
 
-        // Color per-instance
+        // Color per-instance (scratch — bez alokacji per strzał)
         const col = Number.isFinite(r.bodyColorHex)
             ? r.bodyColorHex
             : (colorTheme === "red" ? 0xff3333 : 0x3377ff);
-        this.mesh.setColorAt(r.index, new THREE.Color(col));
+        _colorScratch.setHex(col);
+        this.mesh.setColorAt(r.index, _colorScratch);
         if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
     }
 
@@ -435,7 +439,8 @@ class RocketSystem3D {
         const R  = ROCKET;
         const FS = FlameSettings;
 
-        for (let i = 0; i < R.maxRockets; i++) {
+        // Pusta pula → nie iteruj 2000 slotów (commit i tak domknie ogony poniżej).
+        for (let i = 0; this.activeRockets > 0 && i < R.maxRockets; i++) {
             const r = this.rockets[i];
             if (!r.active) continue;
             matricesUpdated = true;
@@ -753,6 +758,10 @@ class RocketSystem3D {
         }
 
         if (matricesUpdated) this.mesh.instanceMatrix.needsUpdate = true;
+
+        // Jeden upload zakresów na klatkę zamiast pełnych buforów per spawn.
+        this.fireGPU.commit();
+        this.smokeGPU.commit();
     }
 
     /* ─────────────────── DAMAGE ─────────────────── */
@@ -873,6 +882,7 @@ class RocketSystem3D {
     /* ─────────────────── EXPLOSION ─────────────────── */
 
     _explode(r) {
+        if (r.active) this.activeRockets = Math.max(0, this.activeRockets - 1);
         r.active = false;
         _dummy.position.set(0, -999999, 0);
         _dummy.updateMatrix();

@@ -15,6 +15,20 @@ import * as THREE from "three";
 /* ── World scale (must match rocketFireGPU.js) ── */
 const WS = 0.1;
 
+/** Ustaw zakres uploadu atrybutu (nowe i stare API three). */
+function applyAttrRange(attr, start, count) {
+    if (!attr) return;
+    if (typeof attr.clearUpdateRanges === 'function') {
+        attr.clearUpdateRanges();
+        attr.addUpdateRange(start, count);
+    } else {
+        if (!attr.updateRange) attr.updateRange = { offset: 0, count: -1 };
+        attr.updateRange.offset = start;
+        attr.updateRange.count = count;
+    }
+    attr.needsUpdate = true;
+}
+
 export class RocketSmokeGPU {
     /**
      * @param {THREE.Scene} scene  — overlay scene
@@ -24,6 +38,13 @@ export class RocketSmokeGPU {
         this.maxParticles = maxParticles;
         this.activeIndex = 0;
         this._time = 0;
+        // Dirty-span spawnów między commitami + znak wodny żywych cząstek.
+        this._dirtyMin = Infinity;
+        this._dirtyMax = -1;
+        this._dirtyWrapped = false;
+        this.highWater = 0;
+        this._lastSpawnTime = -Infinity;
+        this._maxLifeSeen = 0;
 
         /* ── Points geometry ── */
         const geo = new THREE.BufferGeometry();
@@ -144,6 +165,9 @@ export class RocketSmokeGPU {
             transparent: true
         });
 
+        // Rysuj tylko użyty fragment ring-buffera (0 na starcie), nie całe 200k punktów.
+        geo.setDrawRange(0, 0);
+
         this.points = new THREE.Points(geo, this.material);
         this.points.frustumCulled = false;
         this.points.renderOrder = 999;
@@ -164,16 +188,42 @@ export class RocketSmokeGPU {
         this.dataInfo[i4+2] = size;
         this.dataInfo[i4+3] = type;
 
+        // NIE ustawiamy tu needsUpdate na całych buforach (200k cząstek ≈ 8 MB
+        // na klatkę przy dymiącej rakiecie). Dirty-span + commit() raz na klatkę.
+        if (i < this._dirtyMin) this._dirtyMin = i;
+        if (i > this._dirtyMax) this._dirtyMax = i;
+        if (this.activeIndex === 0) this._dirtyWrapped = true;
+        if (i + 1 > this.highWater) this.highWater = i + 1;
+        this._lastSpawnTime = this._time;
+        if (life > this._maxLifeSeen) this._maxLifeSeen = life;
+    }
+
+    /** Wyślij na GPU zakres zespawnowany od ostatniego commit(). Raz na klatkę. */
+    commit() {
+        if (this._dirtyMax < this._dirtyMin && !this._dirtyWrapped) return;
         const geo = this.points.geometry;
-        geo.attributes.aStartPos.needsUpdate = true;
-        geo.attributes.aStartVel.needsUpdate = true;
-        geo.attributes.aData.needsUpdate     = true;
+        const start = this._dirtyWrapped ? 0 : this._dirtyMin;
+        const count = this._dirtyWrapped ? this.maxParticles : (this._dirtyMax - this._dirtyMin + 1);
+        applyAttrRange(geo.attributes.aStartPos, start * 3, count * 3);
+        applyAttrRange(geo.attributes.aStartVel, start * 3, count * 3);
+        applyAttrRange(geo.attributes.aData, start * 4, count * 4);
+        geo.setDrawRange(0, this.highWater);
+        this._dirtyMin = Infinity;
+        this._dirtyMax = -1;
+        this._dirtyWrapped = false;
     }
 
     /** Update shader time uniform. Call once per frame BEFORE spawn(). */
     update(globalTime) {
         this._time = globalTime;
         this.material.uniforms.uTime.value = globalTime;
+        // Wszystkie cząstki wygasły → zeruj draw range i zacznij bufor od zera.
+        if (this.highWater > 0 && (globalTime - this._lastSpawnTime) > (this._maxLifeSeen + 0.5)) {
+            this.highWater = 0;
+            this.activeIndex = 0;
+            this._maxLifeSeen = 0;
+            this.points.geometry.setDrawRange(0, 0);
+        }
     }
 
     dispose() {

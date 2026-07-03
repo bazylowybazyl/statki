@@ -294,6 +294,7 @@ export const Core3D = {
   shadowCatcher: null, shadowCatcherFg: null, shadowCatchersDebug: false,
   composer: null, composerTarget: null,
   refractionTarget: null, shockwave3DManager: null, _shockwavePrevTime: 0,
+  _refractionValid: false, _refractionFlip: false,
   planetHaloTarget: null, haloDepthMaskMaterial: null,
 
   occlusionTarget: null, occlusionWhiteMaterial: null,
@@ -308,6 +309,7 @@ export const Core3D = {
   bloomPass: null, bloomResolutionScale: 0.75, bloomBaseStrength: 1.0, bloomBaseThreshold: 0.0,
   msaaSamples: 0,
   perfToggles: { bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, fgBuildings: true, fgStations: true, fgWeapons: true, fgShadows: true, enginePointLights: true },
+  _passTogglesDirty: true,
   pixelRatio: 1, width: 0, height: 0, isInitialized: false,
   _clearColorScratch: new THREE.Color(),
   lastFramePerf: null,
@@ -473,9 +475,11 @@ export const Core3D = {
     this.cameraOrtho = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 400000);
     this.cameraPersp = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 100, 500000);
 
+    // Refrakcja w połowie rozdzielczości — to tylko źródło zniekształcenia
+    // dla shockwave; half-res jest niezauważalny, a tnie fill-rate 4×.
     this.refractionTarget = new THREE.WebGLRenderTarget(
-      Math.max(1, Math.floor(window.innerWidth * this.pixelRatio)),
-      Math.max(1, Math.floor(window.innerHeight * this.pixelRatio)),
+      Math.max(1, Math.floor(window.innerWidth * this.pixelRatio * 0.5)),
+      Math.max(1, Math.floor(window.innerHeight * this.pixelRatio * 0.5)),
       {
         minFilter: THREE.LinearFilter,
         magFilter: THREE.LinearFilter,
@@ -672,6 +676,7 @@ export const Core3D = {
     if ('godRays' in next) t.shadowShafts = !!next.godRays;
     if ('shadows' in next) t.threeShadows = !!next.shadows;
     Object.assign(t, next);
+    this._passTogglesDirty = true;
     if (this.uberPass) {
       const hasHeatHaze = t.heatHaze !== false;
       const defines = { ...(this.uberPass.material.defines || {}) };
@@ -750,8 +755,8 @@ export const Core3D = {
 
     if (this.refractionTarget) {
       this.refractionTarget.setSize(
-        Math.max(1, Math.floor(width * this.pixelRatio)),
-        Math.max(1, Math.floor(height * this.pixelRatio))
+        Math.max(1, Math.floor(width * this.pixelRatio * 0.5)),
+        Math.max(1, Math.floor(height * this.pixelRatio * 0.5))
       );
     }
     if (this.occlusionTarget) {
@@ -822,7 +827,12 @@ export const Core3D = {
     const dbgEnabled = typeof globalThis !== 'undefined' && typeof globalThis.__renderDbgRecord === 'function';
     const tRenderTotal0 = performance.now();
 
-    this._applyPassToggles();
+    // Toggles zmieniają się tylko z panelu/presetu — aplikuj przy zmianie,
+    // nie co klatkę (w środku jest m.in. traverse całej sceny po światłach).
+    if (this._passTogglesDirty) {
+      this._applyPassToggles();
+      this._passTogglesDirty = false;
+    }
 
     const t = this.perfToggles || {};
     const bloomOn = t.bloom !== false;
@@ -834,7 +844,9 @@ export const Core3D = {
     let origTop = this.cameraOrtho.top;
     let origBottom = this.cameraOrtho.bottom;
 
-    if (this.planetHaloTarget && this.planetHaloPass && this.haloDepthMaskMaterial) {
+    // Pre-pass halo tylko gdy planety są w ogóle renderowane — wcześniej te
+    // 2 przejścia sceny wykonywały się ZAWSZE, nawet na ultrafast bez planet.
+    if (t.planetPass !== false && this.planetHaloTarget && this.planetHaloPass && this.haloDepthMaskMaterial) {
       const prevAutoClear = this.renderer.autoClear;
       const prevTarget = this.renderer.getRenderTarget();
       const prevClearAlpha = this.renderer.getClearAlpha();
@@ -1080,7 +1092,14 @@ export const Core3D = {
       this._shockwavePrevTime = nowSec;
       this.shockwave3DManager.update(shockDt);
 
-      if (this.refractionTarget && this.shockwave3DManager.hasActive()) {
+      const hasActiveShockwaves = this.refractionTarget && this.shockwave3DManager.hasActive();
+      if (!hasActiveShockwaves) this._refractionValid = false;
+      this._refractionFlip = !this._refractionFlip;
+      // Snapshot refrakcji odświeżany co drugą klatkę (pierwsza fala wymusza świeży)
+      // — źródło szybkiego zniekształcenia nie potrzebuje 60 Hz, a każdy render
+      // to pełne przejścia sceny.
+      if (hasActiveShockwaves && (!this._refractionValid || this._refractionFlip)) {
+        this._refractionValid = true;
         const prevAutoClear = this.renderer.autoClear;
         const prevTarget = this.renderer.getRenderTarget();
         const prevClearAlpha = this.renderer.getClearAlpha();
@@ -1089,11 +1108,12 @@ export const Core3D = {
         const prevPerspLayerMask = this.cameraPersp.layers.mask;
         const prevOrthoLayerMask = this.cameraOrtho.layers.mask;
 
+        // Snapshot tylko tła + świata ortho. Warstwy planet/FG pomijamy — wewnątrz
+        // zniekształcenia shockwave ich brak jest niezauważalny, a FG potrafi nieść
+        // ~1000 draw calli (bronie/budynki), które tu dublowaliśmy przy każdej fali.
         const layers = [];
         if (t.bgPass !== false) layers.push({ layer: 1, ortho: false });
-        if (t.planetPass !== false) layers.push({ layer: PLANET_RENDER_LAYER, ortho: false });
         if (t.orthoPass !== false) layers.push({ layer: 0, ortho: true });
-        if (t.fgPass !== false) layers.push({ layer: 2, ortho: false });
 
         const renderRefractionViewport = (camData, vpX, vpY, vpW, vpH) => {
           this.renderer.setViewport(vpX, vpY, vpW, vpH);

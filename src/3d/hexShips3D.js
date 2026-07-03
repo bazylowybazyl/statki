@@ -551,6 +551,13 @@ class GpuDebrisPool {
   constructor(gridRef) {
     this.textureKey = gridRef.armorImage;
     this.currentIndex = 0;
+    // Dirty-span spawnów między klatkami. Poprzednio każdy spawn robił
+    // clearUpdateRanges() — przy wielu odłamkach w jednej klatce na GPU
+    // trafiał tylko zakres OSTATNIEGO spawnu (reszta miała stare atrybuty).
+    this._dirtyMin = Infinity;
+    this._dirtyMax = -1;
+    this._dirtyWrapped = false;
+    this.lastSpawnTime = -Infinity;
     this.geometry = new THREE.CircleGeometry(25, 6);
 
     this.startPosArray = new Float32Array(GPU_DEBRIS_MAX * 2);
@@ -606,20 +613,33 @@ class GpuDebrisPool {
     this.gridPosArray[i * 2] = shard.gridX || shard.origGridX || 0;
     this.gridPosArray[i * 2 + 1] = shard.gridY || shard.origGridY || 0;
 
-    const updateAttr = (name, stride) => {
-      const attr = this.geometry.getAttribute(name);
-      setAttrUpdateRange(attr, i * stride, stride);
-      attr.needsUpdate = true;
-    };
-
-    updateAttr('aStartPos', 2);
-    updateAttr('aStartVel', 2);
-    updateAttr('aRotationData', 3);
-    updateAttr('aTimeData', 2);
-    updateAttr('aGridPos', 2);
+    if (i < this._dirtyMin) this._dirtyMin = i;
+    if (i > this._dirtyMax) this._dirtyMax = i;
+    this.lastSpawnTime = globalTime;
 
     this.currentIndex = (this.currentIndex + 1) % GPU_DEBRIS_MAX;
+    if (this.currentIndex === 0) this._dirtyWrapped = true;
     if (this.mesh.count < GPU_DEBRIS_MAX) this.mesh.count++;
+  }
+
+  // Jeden upload zakresu na klatkę (wołany z GpuDebrisManager.updateTime).
+  commit() {
+    if (this._dirtyMax < this._dirtyMin && !this._dirtyWrapped) return;
+    const start = this._dirtyWrapped ? 0 : this._dirtyMin;
+    const count = this._dirtyWrapped ? GPU_DEBRIS_MAX : (this._dirtyMax - this._dirtyMin + 1);
+    const apply = (name, stride) => {
+      const attr = this.geometry.getAttribute(name);
+      setAttrUpdateRange(attr, start * stride, count * stride);
+      attr.needsUpdate = true;
+    };
+    apply('aStartPos', 2);
+    apply('aStartVel', 2);
+    apply('aRotationData', 3);
+    apply('aTimeData', 2);
+    apply('aGridPos', 2);
+    this._dirtyMin = Infinity;
+    this._dirtyMax = -1;
+    this._dirtyWrapped = false;
   }
 
   dispose() {
@@ -656,6 +676,13 @@ const GpuDebrisManager = {
     const sun = typeof window !== 'undefined' ? window.SUN : null;
     const camera = typeof window !== 'undefined' ? window.camera : null;
     for (const pool of this.pools.values()) {
+      pool.commit();
+      // Wszystkie odłamki wygasły (życie ≤ 5 s) → zeruj licznik instancji,
+      // żeby pula po długiej bitwie nie mieliła na stałe 10k martwych slotów.
+      if (pool.mesh.count > 0 && (time - pool.lastSpawnTime) > 5.5) {
+        pool.mesh.count = 0;
+        pool.currentIndex = 0;
+      }
       pool.material.uniforms.uTime.value = time;
       if (sun && camera && pool.mesh.count > 0) {
         const dx = sun.x - camera.x;
@@ -897,16 +924,21 @@ function updateEntityMesh(entity, data, camX, camY) {
   const ey = interpPose ? interpPose.y : getEntityPosY(entity);
   const entityAngle = interpPose ? interpPose.angle : (entity.angle || 0);
 
-  if (!!grid.cacheDirty) {
-    refreshHexBodyCache(entity);
-    data.texture.needsUpdate = true;
-    grid.textureDirty = false;
-    grid.cacheDirty = false;
-    grid.gpuTextureNeedsUpdate = false;
-  } else if (!!grid.textureDirty || !!grid.gpuTextureNeedsUpdate) {
-    data.texture.needsUpdate = true;
-    grid.textureDirty = false;
-    grid.gpuTextureNeedsUpdate = false;
+  // Upload tekstury pancerza = pełny texImage2D + regeneracja mipmap. W ostrzale
+  // destroyShard ustawiał gpuTextureNeedsUpdate przy KAŻDYM heksie → kilka pełnych
+  // uploadów na klatkę. Throttle per statek; flagi zostają ustawione, więc upload
+  // dogania w pierwszej klatce po oknie (przy 100 ms wizualnie niezauważalne).
+  const TEX_UPLOAD_MIN_MS = 100;
+  if (!!grid.cacheDirty || !!grid.textureDirty || !!grid.gpuTextureNeedsUpdate) {
+    const lastUpload = Number(data._lastTexUploadMs) || 0;
+    if (lastUpload === 0 || (state.lastTime - lastUpload) >= TEX_UPLOAD_MIN_MS) {
+      if (grid.cacheDirty) refreshHexBodyCache(entity);
+      data.texture.needsUpdate = true;
+      grid.textureDirty = false;
+      grid.cacheDirty = false;
+      grid.gpuTextureNeedsUpdate = false;
+      data._lastTexUploadMs = state.lastTime;
+    }
   }
 
   if (!!grid.meshDirty || data.needsInstanceRefresh) {
