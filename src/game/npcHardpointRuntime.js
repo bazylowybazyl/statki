@@ -293,6 +293,21 @@ export function createNpcHardpointRuntime({
 
   function applyLayoutToNpc(npc) {
     if (!npc || npc.dead) return false;
+    if (npc.disableEditorLayout) {
+      npc.editorHardpoints = [];
+      npc.editorCores = [];
+      npc.editorLights = null;
+      npc.editorHardpointCursor = {};
+      if (npc.visual) {
+        delete npc.visual.mainThrusters;
+        delete npc.visual.torqueThrusters;
+      }
+      npc.__editorEngineScaleX = 1;
+      npc.__editorEngineScaleY = 1;
+      npc.__editorLayoutShipId = 'disabled';
+      npc.__editorLayoutVersion = state.version;
+      return true;
+    }
     const editorShipId = getEditorShipIdForNpc(npc);
     if (!editorShipId) return false;
 

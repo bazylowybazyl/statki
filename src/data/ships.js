@@ -107,6 +107,7 @@ export const HULL_RENDER_WORLD_SCALE = 0.6;
 
 export const HULL_RENDER_PROFILES = {
   atlas: { id: 'atlas', length: 3000, radius: 500 },
+  megafreighter: { id: 'megafreighter', length: 4600, radius: 760 },
   supercapital: { id: 'supercapital', length: 2000, radius: 500 },
   terran_frigate: { id: 'terran_frigate', length: 320, radius: 120 },
   terran_destroyer: { id: 'terran_destroyer', length: 480, radius: 170 },
@@ -165,6 +166,7 @@ export const WEAPON_TIER_BY_HULL = Object.freeze({
   terran_battleship: 'L',
   pirate_battleship: 'L',
   capital_carrier: 'L',
+  megafreighter: 'Capital',
   supercapital: 'Capital',
   atlas: 'Capital'
 });
@@ -188,6 +190,7 @@ export function resolveEntityHullProfileId(entity) {
   if (type === 'battleship') return pirate ? 'pirate_battleship' : 'terran_battleship';
   if (type === 'destroyer') return pirate ? 'pirate_destroyer' : 'terran_destroyer';
   if (type.includes('frigate')) return pirate ? 'pirate_frigate' : 'terran_frigate';
+  if (type === 'megafreighter') return 'megafreighter';
   if (type === 'supercapital') return 'supercapital';
   if (type === 'carrier' || type === 'capital_carrier' || entity.isCapitalShip) return 'capital_carrier';
   return 'atlas';
@@ -430,6 +433,45 @@ export const CAPITAL_SHIP_TEMPLATES = {
         { x: -0.45, y: 0 }
       ],
       engineGlowSize: 0.35,
+      engineOffsetMode: 'relative'
+    }
+  },
+  megafreighter: {
+    id: 'megafreighter',
+    displayName: 'Megafreighter',
+    sensors: { ...SHIP_SENSOR_PROFILES.capital_combat },
+    roleText: 'Mega Freighter - Dummy',
+    hull: 160000,
+    mass: 900000,
+    rammingMass: 0,
+    shield: 0,
+    shieldRegen: 0,
+    shieldDelay: 0,
+    accel: 0,
+    maxSpeed: 0,
+    turn: 0,
+    radius: 760,
+    hardpoints: { large: 0, medium: 0 },
+    formationOffset: { x: -2200, y: 900 },
+    weaponRange: 0,
+    weapons: {},
+    staticDummy: true,
+    disableEditorLayout: true,
+    disableSupportWing: true,
+    profile: {
+      lengthScale: 4.8,
+      widthScale: 1.65,
+      hullColor: '#4f6573',
+      deckColor: '#1c2b32',
+      accentColor: '#b8c5bd',
+      spriteSrc: 'assets/megafreighter.png',
+      spriteScale: 1.0,
+      spriteRotation: 0,
+      spriteOffset: { x: 0, y: 0 },
+      spriteLayer: 2,
+      spriteEngineGlow: false,
+      engineOffsets: [],
+      engineGlowSize: 0,
       engineOffsetMode: 'relative'
     }
   }
