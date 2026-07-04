@@ -292,6 +292,18 @@
           </div>
           <div class="support-count">x1</div>
         </div>
+        <div class="support-card" data-support-spawn="megafreighter">
+          <div class="ship-icon-wrap">
+            <div class="icon-supercapital">
+              <div class="icon-sc-wing"></div>
+              <div class="icon-sc-hull"></div>
+              <div class="icon-sc-wing"></div>
+            </div>
+          </div>
+          <div class="support-details"><span class="ship-name">Megafreighter</span><span class="ship-role">Giant Dummy</span>
+          </div>
+          <div class="support-count">x1</div>
+        </div>
         <div class="support-card" data-support-spawn="carrier_capital">
           <div class="ship-icon-wrap">
             <div class="icon-capital">
@@ -3013,6 +3025,7 @@
     const SUPPORT_DRAG_TYPES = new Set([
       'carrier_capital',
       'supercapital',
+      'megafreighter',
       'frigate_pd',
       'frigate_laser',
       'destroyer',
@@ -7271,6 +7284,7 @@
       if (type === 'battleship') return npc?.isPirate ? 'pirate_battleship' : 'terran_battleship';
       if (type === 'destroyer') return npc?.isPirate ? 'pirate_destroyer' : 'terran_destroyer';
       if (type.includes('frigate')) return npc?.isPirate ? 'pirate_frigate' : 'terran_frigate';
+      if (type === 'megafreighter') return 'megafreighter';
       if (type === 'supercapital') return 'supercapital';
       if (type === 'carrier' || type === 'capital_carrier' || npc?.isCapitalShip) return 'capital_carrier';
       return null;
@@ -8660,6 +8674,11 @@
       const template = CAPITAL_SHIP_TEMPLATES[templateKey];
       if (!template) return null;
       const policy = getCallInSpawnPolicy(overrides.mode ?? getSupportSpawnMode(), template);
+      const staticDummy = template.staticDummy === true;
+      const hardpointCounts = {
+        large: staticDummy ? 0 : Math.max(0, Number(template.hardpoints?.large) || 0),
+        medium: staticDummy ? 0 : Math.max(0, Number(template.hardpoints?.medium) || 0)
+      };
       const offset = overrides.formationOffset || template.formationOffset || { x: -820, y: 420 };
       const basePos = overrides.pos || { x: ship.pos.x + offset.x, y: ship.pos.y + offset.y };
 
@@ -8678,6 +8697,9 @@
       if (Number.isFinite(template.mass)) npc.mass = template.mass;
       if (Number.isFinite(template.rammingMass)) npc.rammingMass = template.rammingMass;
       npc.type = template.id;
+      npc.staticDummy = staticDummy;
+      npc.disableEditorLayout = staticDummy || template.disableEditorLayout === true;
+      npc.combatDisabled = staticDummy;
       npc.callInTemplateKey = templateKey;
       npc.sensors = template.sensors ? { ...template.sensors } : undefined;
       applyCallInIdentity(npc, templateKey, template, policy);
@@ -8689,6 +8711,10 @@
         lengthScale: 3.4,
         widthScale: 1.4
       }, template.profile || {});
+      if (Number.isFinite(Number(npc.capitalProfile.spriteScale)) && Number(npc.capitalProfile.spriteScale) > 0) {
+        npc.visual = npc.visual || {};
+        npc.visual.spriteScale = Number(npc.capitalProfile.spriteScale);
+      }
       if (npc.capitalProfile.spriteSrc) {
         npc.capitalSprite = getCapitalShipSprite(npc.capitalProfile.spriteSrc);
       }
@@ -8699,7 +8725,7 @@
         regenDelay: template.shieldDelay,
         regenTimer: 0
       };
-      npc.hardpoints = { large: template.hardpoints.large, medium: template.hardpoints.medium };
+      npc.hardpoints = hardpointCounts;
       npc.fleetFormationOffset = offset;
       if (Number.isFinite(Number(template.weaponRange)) && Number(template.weaponRange) > 0) {
         npc.weaponRange = Number(template.weaponRange);
@@ -8718,7 +8744,7 @@
         displayName: overrides.displayName || template.displayName,
         roleText: overrides.roleText || template.roleText,
         entity: npc,
-        hardpoints: { large: template.hardpoints.large, medium: template.hardpoints.medium },
+        hardpoints: hardpointCounts,
         status: {
           hull: template.hull,
           hullMax: template.hull,
@@ -8734,8 +8760,13 @@
 
       const supportLeader = (overrides.anchor && !overrides.anchor.dead) ? overrides.anchor : ship;
       const supportType = (templateKey === 'carrier' || template.id === 'capital_carrier') ? 'carrier' : templateKey;
-      equipNpcWeapons(npc, policy.weaponFaction);
-      if (policy.joinSupportWing) {
+      if (staticDummy) {
+        npc.weapons = { main: [], aux: [], missile: [], hangar: [], special: [], special_missile: [], builtin: [] };
+      } else {
+        equipNpcWeapons(npc, policy.weaponFaction);
+      }
+      const joinSupportWing = policy.joinSupportWing && !staticDummy && template.disableSupportWing !== true;
+      if (joinSupportWing) {
         npc.supportData = {
           npc,
           type: supportType,
@@ -8746,7 +8777,7 @@
         npc.ai = dt => runSupportAI(npc, dt);
       } else {
         npc.supportData = null;
-        npc.ai = policy.aiEnabled ? (dt => runCallInCombatAI(npc, supportType, dt)) : null;
+        npc.ai = (!staticDummy && policy.aiEnabled) ? (dt => runCallInCombatAI(npc, supportType, dt)) : null;
       }
 
       return entry;
@@ -8798,6 +8829,9 @@
       }
       if (templateKey === 'supercapital') {
         return spawnCapitalCallIn('supercapital', { ...opts, mode });
+      }
+      if (templateKey === 'megafreighter') {
+        return spawnCapitalCallIn('megafreighter', { ...opts, mode });
       }
       return spawnSupportShip(templateKey, { ...opts, mode });
     }
