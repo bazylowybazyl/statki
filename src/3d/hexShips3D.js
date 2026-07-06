@@ -610,8 +610,9 @@ class GpuDebrisPool {
     this.timeArray[i * 2] = globalTime;
     this.timeArray[i * 2 + 1] = 1.0;
 
-    this.gridPosArray[i * 2] = shard.gridX || shard.origGridX || 0;
-    this.gridPosArray[i * 2 + 1] = shard.gridY || shard.origGridY || 0;
+    // UV debrisa z bazy sprzed gięcia — zgięte gridX poza spritem = niewidzialny odłamek.
+    this.gridPosArray[i * 2] = (shard._bendBaseX !== undefined ? shard._bendBaseX : shard.gridX) || shard.origGridX || 0;
+    this.gridPosArray[i * 2 + 1] = (shard._bendBaseY !== undefined ? shard._bendBaseY : shard.gridY) || shard.origGridY || 0;
 
     if (i < this._dirtyMin) this._dirtyMin = i;
     if (i > this._dirtyMax) this._dirtyMax = i;
@@ -835,8 +836,12 @@ function createEntityMesh(entity) {
   for (let i = 0; i < count; i++) {
     const shard = shards[i];
     if (typeof shard?.gridX === 'number' && typeof shard?.gridY === 'number') {
-      gridPosArray[i * 2] = shard.gridX;
-      gridPosArray[i * 2 + 1] = shard.gridY;
+      // UV pancerza MUSI iść z pozycji sprzed gięcia kadłuba (_bendBaseX) — zgięte
+      // gridX wychodzi poza sprite → shader robi discard i heksy ZNIKAJĄ (wraki po
+      // przecięciu banana, statek po splicie). Pozycję na ekranie dalej daje instance
+      // matrix liczony ze zgiętego gridX w updateEntityMesh.
+      gridPosArray[i * 2] = (shard._bendBaseX !== undefined) ? shard._bendBaseX : shard.gridX;
+      gridPosArray[i * 2 + 1] = (shard._bendBaseY !== undefined) ? shard._bendBaseY : shard.gridY;
     } else {
       const cx = (grid.srcWidth || 0) * 0.5;
       const cy = (grid.srcHeight || 0) * 0.5;
@@ -905,8 +910,11 @@ function updateEntityMesh(entity, data, camX, camY) {
 
     for (let i = 0; i < shards.length; i++) {
       const shard = shards[i];
-      gridPosAttr.array[i * 2] = (typeof shard.gridX === 'number') ? shard.gridX : ((shard.lx || 0) + cx);
-      gridPosAttr.array[i * 2 + 1] = (typeof shard.gridY === 'number') ? shard.gridY : ((shard.ly || 0) + cy);
+      // UV z bazy sprzed gięcia — patrz komentarz w createEntityMesh (znikanie heksów).
+      const baseX = (shard._bendBaseX !== undefined) ? shard._bendBaseX : shard.gridX;
+      const baseY = (shard._bendBaseY !== undefined) ? shard._bendBaseY : shard.gridY;
+      gridPosAttr.array[i * 2] = (typeof baseX === 'number') ? baseX : ((shard.lx || 0) + cx);
+      gridPosAttr.array[i * 2 + 1] = (typeof baseY === 'number') ? baseY : ((shard.ly || 0) + cy);
     }
     gridPosAttr.needsUpdate = true;
     data.shardsRef = shards;
