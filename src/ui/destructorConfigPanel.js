@@ -52,6 +52,23 @@ const CONTROL_SECTIONS = [
     ]
   },
   {
+    title: 'Hull Bend (banan)',
+    controls: [
+      { key: 'hullBendEnabled', label: 'bend enabled', min: 0, max: 1, step: 1, integer: true },
+      { key: 'hullBendGain', label: 'bend gain', min: 0, max: 0.01, step: 0.0001 },
+      { key: 'hullBendMax', label: 'bend max curv', min: 0.05, max: 1.5, step: 0.01 },
+      { key: 'hullBendRate', label: 'bend rate rad/s', min: 0.01, max: 1.5, step: 0.01 },
+      { key: 'hullBendExp', label: 'bend ramp exp', min: 0.3, max: 3.0, step: 0.05 },
+      { key: 'hullBendMinShards', label: 'bend min shards', min: 1, max: 2000, step: 1, integer: true },
+      { key: 'hullBendMinPenetration', label: 'bend min penetr', min: 0.05, max: 1.0, step: 0.01 },
+      { key: 'hullBendSplitCurvature', label: 'bend split curv', min: 0.05, max: 1.5, step: 0.01 },
+      { key: 'hullBendWreckSpin', label: 'bend wreck spin', min: 0, max: 2.0, step: 0.05 },
+      { key: 'hullBendDirSign', label: 'bend direction ±', min: -1, max: 1, step: 2, integer: true },
+      { key: 'sectionCoupleEnabled', label: 'section couple', min: 0, max: 1, step: 1, integer: true },
+      { key: 'sectionCoupleGain', label: 'section gain (α)', min: 0, max: 1.5, step: 0.01 }
+    ]
+  },
+  {
     title: 'Sleep / Wake',
     controls: [
       { key: 'elasticSleepFrames', label: 'sleep frames', min: 1, max: 120, step: 1, integer: true },
