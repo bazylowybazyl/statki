@@ -2592,6 +2592,26 @@
       border: 1px solid #94a3b8;
     }
 
+    .icon-carrier {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .icon-carrier-core {
+      width: 13px;
+      height: 22px;
+      background: #d9fbf3;
+      border: 1px solid #73ebd6;
+    }
+
+    .icon-carrier-bay {
+      width: 6px;
+      height: 18px;
+      background: #8fc7d5;
+      border: 1px solid #5da8bb;
+    }
+
     .icon-battleship {
       display: flex;
       align-items: center;
@@ -2772,6 +2792,11 @@
       scrollbar-width: thin;
     }
 
+    #panel-support.support-command-panel .support-roster {
+      display: grid;
+      gap: 6px;
+    }
+
     #panel-support.support-command-panel .support-card {
       display: grid;
       grid-template-columns: 38px minmax(0, 1fr) 38px;
@@ -2853,11 +2878,11 @@
       border-top: none;
     }
 
-    #panel-support.support-command-panel .support-mode-row {
+    #panel-support.support-command-panel .support-faction-row {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 6px;
-      margin-top: 2px;
+      margin-top: 0;
       padding: 0;
       border-top: none;
     }

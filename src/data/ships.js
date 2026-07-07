@@ -1,3 +1,5 @@
+import { FIGHTER_SQUADRON_DEFS } from './fighterSquadrons.js';
+
 export const SHIP_SENSOR_PROFILES = {
   fighter_combat: { passiveRange: 8000, activeRange: 10000, lockRange: 8000, asteroidScanRange: 8000, scanWaveSpeed: 12000, role: 'combat' },
   frigate_combat: { passiveRange: 18000, activeRange: 24000, lockRange: 20000, asteroidScanRange: 10000, scanWaveSpeed: 18000, role: 'combat' },
@@ -7,6 +9,18 @@ export const SHIP_SENSOR_PROFILES = {
   atlas_combat: { passiveRange: 80000, activeRange: 90000, lockRange: 75000, asteroidScanRange: 18000, scanWaveSpeed: 60000, role: 'combat' },
   frigate_radar: { passiveRange: 42000, activeRange: 52000, lockRange: 28000, asteroidScanRange: 18000, scanWaveSpeed: 34000, role: 'radar' }
 };
+
+function fighterStatsFromSquadron(def) {
+  return {
+    hp: def.hp,
+    accel: def.accel,
+    maxSpeed: def.maxSpeed,
+    turn: def.turn,
+    radius: def.radius,
+    mass: def.mass,
+    separationRange: def.separationRange
+  };
+}
 
 export const SHIPS = {
   atlas: {
@@ -46,7 +60,7 @@ export const SHIPS = {
   },
   terran_frigate: {
     id: 'terran_frigate',
-    name: 'Terranova Frigate',
+    name: 'Custos-class',
     sensors: { ...SHIP_SENSOR_PROFILES.frigate_combat },
     spec: { main: 4, missile: 2, aux: 2, hangar: 1, special: 1 },
     hardpointLayout: {
@@ -63,7 +77,7 @@ export const SHIPS = {
   },
   terran_destroyer: {
     id: 'terran_destroyer',
-    name: 'Terranova Destroyer',
+    name: 'Hasta-class',
     sensors: { ...SHIP_SENSOR_PROFILES.destroyer_combat },
     spec: { main: 10, missile: 4, aux: 4, hangar: 1, special: 1 },
     hardpointLayout: {
@@ -82,7 +96,7 @@ export const SHIPS = {
   },
   terran_battleship: {
     id: 'terran_battleship',
-    name: 'Terranova Battleship',
+    name: 'Bellator-class',
     sensors: { ...SHIP_SENSOR_PROFILES.battleship_combat },
     spec: { main: 12, missile: 6, aux: 6, hangar: 2, special: 1 },
     hardpointLayout: {
@@ -98,6 +112,42 @@ export const SHIPS = {
       ],
       specials: [{ type: 'special', pos: { x: 0, y: -0.12 } }]
     }
+  },
+  terran_carrier: {
+    id: 'terran_carrier',
+    name: 'Citadella-class',
+    sensors: { ...SHIP_SENSOR_PROFILES.capital_combat },
+    spec: { main: 8, missile: 4, aux: 8, hangar: 4, special: 1 },
+    hardpointLayout: {
+      type: 'lines',
+      rotate: 'cw',
+      lines: [
+        { type: 'main', count: 4, start: { x: 0.34, y: -0.34 }, end: { x: 0.34, y: 0.34 } },
+        { type: 'main', count: 4, start: { x: -0.18, y: -0.42 }, end: { x: -0.18, y: 0.42 } },
+        { type: 'missile', count: 4, start: { x: 0.02, y: -0.28 }, end: { x: 0.02, y: 0.28 } },
+        { type: 'aux', count: 8, start: { x: -0.42, y: -0.36 }, end: { x: -0.42, y: 0.36 } },
+        { type: 'hangar', count: 4, start: { x: -0.08, y: -0.35 }, end: { x: -0.08, y: 0.35 } }
+      ],
+      specials: [{ type: 'special', pos: { x: 0.38, y: 0 } }]
+    }
+  },
+  terran_supercapital: {
+    id: 'terran_supercapital',
+    name: 'Colossus-class',
+    sensors: { ...SHIP_SENSOR_PROFILES.atlas_combat },
+    spec: { main: 16, missile: 8, aux: 10, hangar: 2, special: 1 },
+    hardpointLayout: {
+      type: 'lines',
+      rotate: 'cw',
+      lines: [
+        { type: 'main', count: 8, start: { x: 0.38, y: -0.42 }, end: { x: 0.38, y: 0.42 } },
+        { type: 'main', count: 8, start: { x: 0.08, y: -0.46 }, end: { x: 0.08, y: 0.46 } },
+        { type: 'missile', count: 8, start: { x: -0.14, y: -0.44 }, end: { x: -0.14, y: 0.44 } },
+        { type: 'aux', count: 10, start: { x: -0.42, y: -0.38 }, end: { x: -0.42, y: 0.38 } },
+        { type: 'hangar', count: 2, start: { x: -0.24, y: -0.20 }, end: { x: -0.24, y: 0.20 } }
+      ],
+      specials: [{ type: 'special', pos: { x: 0.46, y: 0 } }]
+    }
   }
 };
 
@@ -112,6 +162,8 @@ export const HULL_RENDER_PROFILES = {
   terran_frigate: { id: 'terran_frigate', length: 320, radius: 120 },
   terran_destroyer: { id: 'terran_destroyer', length: 480, radius: 170 },
   terran_battleship: { id: 'terran_battleship', length: 1040, radius: 220 },
+  terran_carrier: { id: 'terran_carrier', length: 1800, radius: 320 },
+  terran_supercapital: { id: 'terran_supercapital', length: 2600, radius: 500 },
   pirate_frigate: { id: 'pirate_frigate', length: 320, radius: 120 },
   pirate_destroyer: { id: 'pirate_destroyer', length: 600, radius: 170 },
   pirate_battleship: { id: 'pirate_battleship', length: 1200, radius: 220 },
@@ -123,7 +175,7 @@ export const HULL_RENDER_PROFILE_ALIASES = {
   frigate: 'terran_frigate',
   destroyer: 'terran_destroyer',
   battleship: 'terran_battleship',
-  carrier: 'capital_carrier'
+  carrier: 'terran_carrier'
 };
 
 export function resolveHullRenderProfileId(hullId) {
@@ -164,6 +216,8 @@ export const WEAPON_TIER_BY_HULL = Object.freeze({
   terran_destroyer: 'M',
   pirate_destroyer: 'M',
   terran_battleship: 'L',
+  terran_carrier: 'L',
+  terran_supercapital: 'Capital',
   pirate_battleship: 'L',
   capital_carrier: 'L',
   megafreighter: 'Capital',
@@ -191,8 +245,10 @@ export function resolveEntityHullProfileId(entity) {
   if (type === 'destroyer') return pirate ? 'pirate_destroyer' : 'terran_destroyer';
   if (type.includes('frigate')) return pirate ? 'pirate_frigate' : 'terran_frigate';
   if (type === 'megafreighter') return 'megafreighter';
-  if (type === 'supercapital') return 'supercapital';
-  if (type === 'carrier' || type === 'capital_carrier' || entity.isCapitalShip) return 'capital_carrier';
+  if (type === 'supercapital') return 'terran_supercapital';
+  if (type === 'carrier') return 'terran_carrier';
+  if (type === 'capital_carrier') return 'capital_carrier';
+  if (entity.isCapitalShip) return 'terran_carrier';
   return 'atlas';
 }
 
@@ -231,32 +287,20 @@ export function getHullRenderSize(hullId, sourceWidth = 0, sourceHeight = 0) {
 
 export const SUPPORT_SHIP_TEMPLATES = {
   fighter: {
-    color: '#7cff91',
-    count: 9,
+    color: FIGHTER_SQUADRON_DEFS.multirole.color,
+    count: FIGHTER_SQUADRON_DEFS.multirole.squadSize,
     sensors: { ...SHIP_SENSOR_PROFILES.fighter_combat },
-    stats: {
-      hp: 120,
-      accel: 350,
-      maxSpeed: 650,
-      turn: 7.0,
-      radius: 12,
-      mass: 0.8,
-      separationRange: 30
-    },
+    squadronId: 'multirole',
+    stats: fighterStatsFromSquadron(FIGHTER_SQUADRON_DEFS.multirole),
     spawnOffset: { x: -60, y: 0 },
     configureId: 'fighter'
   },
   interceptor: {
+    color: FIGHTER_SQUADRON_DEFS.interceptor.color,
+    count: FIGHTER_SQUADRON_DEFS.interceptor.squadSize,
     sensors: { ...SHIP_SENSOR_PROFILES.fighter_combat },
-    stats: {
-      hp: 80,
-      accel: 350,
-      maxSpeed: 650,
-      turn: 7.0,
-      radius: 12,
-      mass: 0.8,
-      separationRange: 30
-    },
+    squadronId: 'interceptor',
+    stats: fighterStatsFromSquadron(FIGHTER_SQUADRON_DEFS.interceptor),
     configureId: 'interceptor'
   },
   frigate_pd: {
@@ -345,10 +389,13 @@ export const SUPPORT_SHIP_TEMPLATES = {
 
 export const CAPITAL_SHIP_TEMPLATES = {
   carrier: {
-    id: 'capital_carrier',
-    displayName: 'CSV Aegis',
+    id: 'carrier',
+    faction: 'terran',
+    shipName: 'Citadella',
+    classId: 'carrier',
+    displayName: 'Citadella',
     sensors: { ...SHIP_SENSOR_PROFILES.capital_combat },
-    roleText: 'Carrier · Capital',
+    roleText: 'Carrier - Terra Nova',
     hull: 42000,
     mass: 100000,
     rammingMass: 15000,
@@ -358,7 +405,7 @@ export const CAPITAL_SHIP_TEMPLATES = {
     accel: 32,
     maxSpeed: 220,
     turn: 0.9,
-    radius: 150,
+    radius: 192,
     hardpoints: { large: 2, medium: 2 },
     formationOffset: { x: -820, y: 380 },
     weaponRange: 2300,
@@ -379,17 +426,17 @@ export const CAPITAL_SHIP_TEMPLATES = {
       accentColor: '#9dc5ff',
       engineColor: 'rgba(130,200,255,0.9)',
       hangarGlow: 'rgba(160,200,255,0.45)',
-      spriteSrc: 'assets/carrier.png',
-      spriteScale: 5.0,
+      spriteSrc: 'src/assets/ships/terrancarrier.png',
+      spriteScale: 1.0,
       spriteRotation: 0,
       shieldRotation: Math.PI / 2,
       spriteOffset: { x: 0, y: 0 },
       spriteLayer: 2,
       spriteEngineGlow: false,
       engineOffsets: [
-        { x: -0.38, y: 0.92 },
-        { x: 0, y: 0.95 },
-        { x: 0.38, y: 0.92 }
+        { x: -0.44, y: -0.18 },
+        { x: -0.44, y: 0.18 },
+        { x: -0.48, y: 0 }
       ],
       engineGlowSize: 0.28,
       engineOffsetMode: 'relative'
@@ -397,9 +444,12 @@ export const CAPITAL_SHIP_TEMPLATES = {
   },
   supercapital: {
     id: 'supercapital',
-    displayName: 'Atlas II',
+    faction: 'terran',
+    shipName: 'Colossus',
+    classId: 'supercapital',
+    displayName: 'Colossus',
     sensors: { ...SHIP_SENSOR_PROFILES.atlas_combat },
-    roleText: 'Supercapital',
+    roleText: 'Supercapital - Terra Nova',
     hull: 85000,
     mass: 200000,
     rammingMass: 800000,
@@ -409,7 +459,7 @@ export const CAPITAL_SHIP_TEMPLATES = {
     accel: 120,
     maxSpeed: 500,
     turn: 1.2,
-    radius: 220,
+    radius: 300,
     hardpoints: { large: 4, medium: 4 },
     formationOffset: { x: -1200, y: -500 },
     weaponRange: 3200,
@@ -421,6 +471,51 @@ export const CAPITAL_SHIP_TEMPLATES = {
       deckColor: '#1a2940',
       accentColor: '#7ab5ff',
       engineColor: 'rgba(100, 200, 255, 0.85)',
+      spriteSrc: 'src/assets/ships/terransupercapital.png',
+      spriteScale: 1.0,
+      spriteRotation: 0,
+      spriteOffset: { x: 0, y: 0 },
+      spriteLayer: 2,
+      spriteEngineGlow: false,
+      engineOffsets: [
+        { x: -0.42, y: -0.15 },
+        { x: -0.42, y: 0.15 },
+        { x: -0.45, y: 0 }
+      ],
+      engineGlowSize: 0.35,
+      engineOffsetMode: 'relative'
+    }
+  },
+  atlas: {
+    id: 'atlas',
+    faction: 'independent',
+    shipName: 'Atlas',
+    classId: 'supercapital',
+    displayName: 'Atlas',
+    sensors: { ...SHIP_SENSOR_PROFILES.atlas_combat },
+    roleText: 'Independent Supercapital',
+    hull: 85000,
+    mass: 200000,
+    rammingMass: 800000,
+    shield: 52000,
+    shieldRegen: 400,
+    shieldDelay: 8,
+    accel: 120,
+    maxSpeed: 500,
+    turn: 1.2,
+    radius: 300,
+    hardpoints: { large: 4, medium: 4 },
+    formationOffset: { x: -1200, y: -500 },
+    weaponRange: 3200,
+    weapons: {},
+    disableSupportWing: true,
+    profile: {
+      lengthScale: 2.1,
+      widthScale: 1.2,
+      hullColor: '#3d5a8a',
+      deckColor: '#1a2940',
+      accentColor: '#eeb763',
+      engineColor: 'rgba(238, 183, 99, 0.85)',
       spriteSrc: 'assets/capital_ship_rect_v1.png',
       spriteScale: 1.0,
       spriteRotation: 0,
@@ -438,6 +533,7 @@ export const CAPITAL_SHIP_TEMPLATES = {
   },
   megafreighter: {
     id: 'megafreighter',
+    faction: 'independent',
     displayName: 'Megafreighter',
     sensors: { ...SHIP_SENSOR_PROFILES.capital_combat },
     roleText: 'Mega Freighter - Dummy',

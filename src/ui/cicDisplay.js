@@ -82,8 +82,9 @@ function getEntityHullProfileId(entity) {
   if (type.includes('battleship')) return resolveHullRenderProfileId(entity?.isPirate ? 'pirate_battleship' : 'terran_battleship');
   if (type.includes('destroyer')) return resolveHullRenderProfileId(entity?.isPirate ? 'pirate_destroyer' : 'terran_destroyer');
   if (type.includes('frigate')) return resolveHullRenderProfileId(entity?.isPirate ? 'pirate_frigate' : 'terran_frigate');
-  if (type === 'supercapital') return resolveHullRenderProfileId('supercapital');
-  if (type === 'carrier' || type === 'capital_carrier') return resolveHullRenderProfileId('capital_carrier');
+  if (type === 'supercapital') return resolveHullRenderProfileId('terran_supercapital');
+  if (type === 'carrier') return resolveHullRenderProfileId('terran_carrier');
+  if (type === 'capital_carrier') return resolveHullRenderProfileId('capital_carrier');
   return null;
 }
 

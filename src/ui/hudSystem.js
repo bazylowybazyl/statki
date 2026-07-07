@@ -428,7 +428,7 @@ export class HUDSystem {
         if (!supportPanel) return;
 
         const cards = supportPanel.querySelectorAll('.support-card');
-        const spawnTypes = ['carrier_capital', 'battleship', 'pirate_battleship', 'destroyer', 'frigate_pd', 'fighter'];
+        const spawnTypes = ['carrier', 'battleship', 'pirate_battleship', 'destroyer', 'frigate_pd', 'fighter'];
 
         cards.forEach((card, index) => {
             const spawnKey = card.dataset.supportSpawn || card.dataset.spawnType || spawnTypes[index];

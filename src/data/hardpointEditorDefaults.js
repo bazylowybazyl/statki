@@ -8,7 +8,7 @@ export const SHIP_EDITOR_DEFAULTS = {
   ships: {
     atlas: PLAYER_EDITOR_DEFAULTS,
     "capital_carrier": {
-    "label": "Capital Carrier",
+    "label": "Legacy Capital Carrier",
     "frontAxis": "+X",
     "hardpoints": [
         {
@@ -222,8 +222,628 @@ export const SHIP_EDITOR_DEFAULTS = {
         "side": []
     }
 },
+        "terran_carrier": {
+            "label": "Citadella",
+            "frontAxis": "+X",
+            "hardpoints": [
+                {
+                    "id": "m_0tgieb3",
+                    "type": "aux",
+                    "x": 696,
+                    "y": -96
+                },
+                {
+                    "id": "m_1oz93al",
+                    "type": "aux",
+                    "x": 624,
+                    "y": -144
+                },
+                {
+                    "id": "m_1he6u3x",
+                    "type": "aux",
+                    "x": 624,
+                    "y": -72
+                },
+                {
+                    "id": "m_bgegva3",
+                    "type": "aux",
+                    "x": 696,
+                    "y": 48
+                },
+                {
+                    "id": "m_j2rhi3d",
+                    "type": "aux",
+                    "x": 648,
+                    "y": 120
+                },
+                {
+                    "id": "m_1bm4ez5",
+                    "type": "aux",
+                    "x": 624,
+                    "y": 48
+                },
+                {
+                    "id": "m_qdl8qq0",
+                    "type": "aux",
+                    "x": 456,
+                    "y": 168
+                },
+                {
+                    "id": "m_d971p6e",
+                    "type": "aux",
+                    "x": 456,
+                    "y": -192
+                },
+                {
+                    "id": "m_rf6o3z2",
+                    "type": "aux",
+                    "x": 368.56,
+                    "y": -12.32
+                },
+                {
+                    "id": "m_8hciqz9",
+                    "type": "aux",
+                    "x": -576.96,
+                    "y": -238.18
+                },
+                {
+                    "id": "m_6udwo78",
+                    "type": "aux",
+                    "x": -573.88,
+                    "y": 199.16
+                },
+                {
+                    "id": "m_u8s12jj",
+                    "type": "aux",
+                    "x": -632.4,
+                    "y": -53.38
+                },
+                {
+                    "id": "m_363wy6y",
+                    "type": "aux",
+                    "x": -635.48,
+                    "y": 21.56
+                },
+                {
+                    "id": "m_io4pewz",
+                    "type": "aux",
+                    "x": -634.45,
+                    "y": 21.56
+                },
+                {
+                    "id": "m_5wurzhz",
+                    "type": "aux",
+                    "x": -317.23,
+                    "y": -280.27
+                },
+                {
+                    "id": "m_sd85zbw",
+                    "type": "aux",
+                    "x": -316.2,
+                    "y": -280.27
+                },
+                {
+                    "id": "m_tbxmcd1",
+                    "type": "aux",
+                    "x": -309.01,
+                    "y": 249.47
+                },
+                {
+                    "id": "m_7lpt07z",
+                    "type": "special",
+                    "x": -207.38,
+                    "y": -13.35
+                },
+                {
+                    "id": "m_q6iv3qy",
+                    "type": "special",
+                    "x": 195.06,
+                    "y": -13.35
+                },
+                {
+                    "id": "m_gsoz5jl",
+                    "type": "main",
+                    "x": 562.59,
+                    "y": 117.04
+                },
+                {
+                    "id": "m_5z8xpsf",
+                    "type": "main",
+                    "x": 353.16,
+                    "y": 221.75
+                },
+                {
+                    "id": "m_mx5zkgn",
+                    "type": "main",
+                    "x": 0,
+                    "y": -267.95
+                },
+                {
+                    "id": "m_iupuljz",
+                    "type": "main",
+                    "x": 1.03,
+                    "y": -267.95
+                },
+                {
+                    "id": "m_5e37tzh",
+                    "type": "main",
+                    "x": -9.24,
+                    "y": 251.52
+                },
+                {
+                    "id": "m_v9px5nk",
+                    "type": "main",
+                    "x": 571.83,
+                    "y": -135.51
+                },
+                {
+                    "id": "m_vdxmiki",
+                    "type": "main",
+                    "x": 365.48,
+                    "y": -243.31
+                },
+                {
+                    "id": "m_xfeq7m9",
+                    "type": "main",
+                    "x": -476.35,
+                    "y": -120.11
+                },
+                {
+                    "id": "m_185axo3",
+                    "type": "main",
+                    "x": -481.49,
+                    "y": 74.94
+                },
+                {
+                    "id": "m_j2mzo8k",
+                    "type": "main",
+                    "x": -480.46,
+                    "y": 74.94
+                },
+                {
+                    "id": "m_4qb7znj",
+                    "type": "hangar",
+                    "x": -177.61,
+                    "y": -149.89
+                },
+                {
+                    "id": "m_3cnc6r5",
+                    "type": "hangar",
+                    "x": -58.52,
+                    "y": -149.89
+                },
+                {
+                    "id": "m_le7vtir",
+                    "type": "hangar",
+                    "x": 56.46,
+                    "y": -150.91
+                },
+                {
+                    "id": "m_iovk5z7",
+                    "type": "hangar",
+                    "x": 177.61,
+                    "y": -150.91
+                },
+                {
+                    "id": "m_o0so0q1",
+                    "type": "hangar",
+                    "x": 294.64,
+                    "y": -150.91
+                },
+                {
+                    "id": "m_7wc7c1x",
+                    "type": "hangar",
+                    "x": 293.61,
+                    "y": 124.22
+                },
+                {
+                    "id": "m_5gzktay",
+                    "type": "hangar",
+                    "x": 294.64,
+                    "y": 124.22
+                },
+                {
+                    "id": "m_0rtzuhr",
+                    "type": "hangar",
+                    "x": 177.61,
+                    "y": 127.3
+                },
+                {
+                    "id": "m_edn7mm9",
+                    "type": "hangar",
+                    "x": 56.46,
+                    "y": 124.22
+                },
+                {
+                    "id": "m_x9og2ar",
+                    "type": "hangar",
+                    "x": -62.62,
+                    "y": 126.27
+                },
+                {
+                    "id": "m_fuqtgoa",
+                    "type": "hangar",
+                    "x": -185.82,
+                    "y": 127.3
+                }
+            ],
+            "cores": [],
+            "engines": {
+                "main": [
+                    {
+                        "id": "m_dqyb8h8",
+                        "x": -805.9,
+                        "y": -14.37,
+                        "deg": 90,
+                        "offsetX": 0,
+                        "offsetY": 0,
+                        "mount": "rear_left",
+                        "gimbalMinDeg": -45,
+                        "gimbalMaxDeg": 45,
+                        "vfxLengthMin": 10,
+                        "vfxLengthMax": 179
+                    },
+                    {
+                        "id": "m_an2y3he",
+                        "x": -783.31,
+                        "y": -137.57,
+                        "deg": 90,
+                        "offsetX": 0,
+                        "offsetY": 0,
+                        "mount": "rear_left",
+                        "gimbalMinDeg": -45,
+                        "gimbalMaxDeg": 45,
+                        "vfxLengthMin": 10,
+                        "vfxLengthMax": 179
+                    },
+                    {
+                        "id": "m_zkiwere",
+                        "x": -763.81,
+                        "y": -221.75,
+                        "deg": 90,
+                        "offsetX": 0,
+                        "offsetY": 0,
+                        "mount": "rear_left",
+                        "gimbalMinDeg": -45,
+                        "gimbalMaxDeg": 45,
+                        "vfxLengthMin": 10,
+                        "vfxLengthMax": 179
+                    },
+                    {
+                        "id": "m_kblay2p",
+                        "x": -764.83,
+                        "y": -221.75,
+                        "deg": 90,
+                        "offsetX": 0,
+                        "offsetY": 0,
+                        "mount": "rear_left",
+                        "gimbalMinDeg": -45,
+                        "gimbalMaxDeg": 45,
+                        "vfxLengthMin": 10,
+                        "vfxLengthMax": 179
+                    },
+                    {
+                        "id": "m_ou2nnd8",
+                        "x": -783.31,
+                        "y": 111.9,
+                        "deg": 90,
+                        "offsetX": 0,
+                        "offsetY": 0,
+                        "mount": "rear_right",
+                        "gimbalMinDeg": -45,
+                        "gimbalMaxDeg": 45,
+                        "vfxLengthMin": 10,
+                        "vfxLengthMax": 179
+                    },
+                    {
+                        "id": "m_2yqjefg",
+                        "x": -761.75,
+                        "y": 197.11,
+                        "deg": 90,
+                        "offsetX": 0,
+                        "offsetY": 0,
+                        "mount": "rear_right",
+                        "gimbalMinDeg": -45,
+                        "gimbalMaxDeg": 45,
+                        "vfxLengthMin": 10,
+                        "vfxLengthMax": 179
+                    }
+                ],
+                "side": [
+                    {
+                        "id": "m_k4mvnfi",
+                        "x": -254.6,
+                        "y": 272.06,
+                        "deg": 0,
+                        "offsetX": 0,
+                        "offsetY": 0,
+                        "mount": "lower_right",
+                        "gimbalMinDeg": -90,
+                        "gimbalMaxDeg": 90,
+                        "vfxWidthMin": 25,
+                        "vfxWidthMax": 227,
+                        "vfxLengthMin": 49,
+                        "vfxLengthMax": 354
+                    },
+                    {
+                        "id": "m_23ae6r0",
+                        "x": 302.85,
+                        "y": 267.95,
+                        "deg": 0,
+                        "offsetX": 0,
+                        "offsetY": 0,
+                        "mount": "upper_right",
+                        "gimbalMinDeg": -90,
+                        "gimbalMaxDeg": 90,
+                        "vfxWidthMin": 25,
+                        "vfxWidthMax": 227,
+                        "vfxLengthMin": 49,
+                        "vfxLengthMax": 354
+                    },
+                    {
+                        "id": "m_62yn4kw",
+                        "x": -260.76,
+                        "y": -292.59,
+                        "deg": 180,
+                        "offsetX": 0,
+                        "offsetY": 0,
+                        "mount": "lower_left",
+                        "gimbalMinDeg": -90,
+                        "gimbalMaxDeg": 90,
+                        "vfxWidthMin": 25,
+                        "vfxWidthMax": 227,
+                        "vfxLengthMin": 49,
+                        "vfxLengthMax": 354
+                    },
+                    {
+                        "id": "m_dmlbakg",
+                        "x": 310.04,
+                        "y": -280.27,
+                        "deg": 180,
+                        "offsetX": 0,
+                        "offsetY": 0,
+                        "mount": "upper_left",
+                        "gimbalMinDeg": -90,
+                        "gimbalMaxDeg": 90,
+                        "vfxWidthMin": 25,
+                        "vfxWidthMax": 227,
+                        "vfxLengthMin": 49,
+                        "vfxLengthMax": 354
+                    }
+                ]
+            },
+            "lights": {
+                "position": [
+                    {
+                        "id": "m_7fdca91",
+                        "x": 739.17,
+                        "y": -78.02,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_l724j73",
+                        "x": 737.12,
+                        "y": 54.41,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_v739zf9",
+                        "x": 544.11,
+                        "y": -178.63,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_ha9rmn6",
+                        "x": 532.82,
+                        "y": 157.07,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_kget8w6",
+                        "x": 344.95,
+                        "y": 263.84,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_y3khhcp",
+                        "x": 347,
+                        "y": -286.43,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_brr8mwk",
+                        "x": 169.39,
+                        "y": -241.26,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_nl0cwpl",
+                        "x": 189.93,
+                        "y": 217.64,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_d5ueyjn",
+                        "x": 21.56,
+                        "y": -242.28,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_g7v3cj6",
+                        "x": 37.99,
+                        "y": 222.78,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_8ueb4x9",
+                        "x": -136.54,
+                        "y": -241.26,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_s74si1h",
+                        "x": -135.51,
+                        "y": -241.26,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_qnqdwe0",
+                        "x": -120.11,
+                        "y": 219.7,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_tj7lz06",
+                        "x": -342.89,
+                        "y": 181.71,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_grzfci4",
+                        "x": -341.87,
+                        "y": 181.71,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_pas2e2h",
+                        "x": -352.13,
+                        "y": -211.48,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_y8wpxwf",
+                        "x": -588.26,
+                        "y": -113.96,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_kyqeh5p",
+                        "x": -587.23,
+                        "y": -113.96,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_7tre6wf",
+                        "x": -589.28,
+                        "y": 98.56,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_jsz3c5p",
+                        "x": -588.26,
+                        "y": 98.56,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_kbqbh9k",
+                        "x": -669.36,
+                        "y": 227.91,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_tr86xny",
+                        "x": -668.33,
+                        "y": 227.91,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    },
+                    {
+                        "id": "m_6d234n2",
+                        "x": -673.46,
+                        "y": -251.52,
+                        "color": "#ff2b2b",
+                        "power": 0.8,
+                        "radius": 4,
+                        "sequenceGroup": "edge"
+                    }
+                ],
+                "road": []
+            }
+        },
+    "terran_supercapital": {
+      "label": "Colossus",
+      "frontAxis": "+X",
+      "hardpoints": [
+        { "id": "col_main_1", "type": "main", "x": 620, "y": -260 },
+        { "id": "col_main_2", "type": "main", "x": 620, "y": 260 },
+        { "id": "col_main_3", "type": "main", "x": 320, "y": -340 },
+        { "id": "col_main_4", "type": "main", "x": 320, "y": 340 },
+        { "id": "col_missile_1", "type": "missile", "x": 60, "y": -360 },
+        { "id": "col_missile_2", "type": "missile", "x": 60, "y": 360 },
+        { "id": "col_aux_1", "type": "aux", "x": -360, "y": -240 },
+        { "id": "col_aux_2", "type": "aux", "x": -360, "y": 240 },
+        { "id": "col_special_1", "type": "special", "x": 500, "y": 0 }
+      ],
+      "cores": [],
+      "engines": { "main": [], "side": [] }
+    },
     "battleship": {
-    "label": "Battleship",
+    "label": "Bellator",
     "frontAxis": "+X",
     "hardpoints": [
         {
@@ -453,7 +1073,7 @@ export const SHIP_EDITOR_DEFAULTS = {
     }
 },
     "destroyer": {
-    "label": "Destroyer",
+    "label": "Hasta",
     "frontAxis": "+X",
     "hardpoints": [
         {
@@ -642,7 +1262,7 @@ export const SHIP_EDITOR_DEFAULTS = {
     }
 },
     "frigate": {
-    "label": "Fregata",
+    "label": "Custos",
     "frontAxis": "+X",
     "hardpoints": [
         {

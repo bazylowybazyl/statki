@@ -1,6 +1,8 @@
 import terranFrigateImg from '../assets/ships/terranfrigate.png';
 import terranDestroyerImg from '../assets/ships/terrandestroyer.png';
 import terranBattleshipImg from '../assets/ships/terranbattleship.png';
+import terranCarrierImg from '../assets/ships/terrancarrier.png';
+import terranSupercapitalImg from '../assets/ships/terransupercapital.png';
 import pirateFrigateImg from '../assets/ships/piratefrigate.png';
 import pirateDestroyerImg from '../assets/ships/piratedestroyer.png';
 import pirateBattleshipImg from '../assets/ships/piratebattleship.png';
@@ -36,6 +38,7 @@ function normalizeEditorShipId(shipId) {
   if (!id) return CURRENT_SHIP_ID;
   if (id === CURRENT_SHIP_ID) return CURRENT_SHIP_ID;
   if (id === 'player') return 'atlas';
+  if (id === 'terran_carrier' || id === 'terran_supercapital') return id;
   if (id.startsWith('terran_')) return id.slice('terran_'.length);
   return id;
 }
@@ -65,10 +68,12 @@ function migrateEditorShipsMap(input) {
 
 const SHIP_DEFS = [
   { id: 'atlas', label: 'Atlas', sprite: 'assets/capital_ship_rect_v1.png' },
-  { id: 'capital_carrier', label: 'Capital Carrier', sprite: 'assets/carrier.png' },
-  { id: 'battleship', label: 'Battleship', sprite: terranBattleshipImg },
-  { id: 'destroyer', label: 'Destroyer', sprite: terranDestroyerImg },
-  { id: 'frigate', label: 'Fregata', sprite: terranFrigateImg },
+  { id: 'terran_carrier', label: 'Citadella', sprite: terranCarrierImg },
+  { id: 'terran_supercapital', label: 'Colossus', sprite: terranSupercapitalImg },
+  { id: 'capital_carrier', label: 'Legacy Capital Carrier', sprite: 'assets/carrier.png' },
+  { id: 'battleship', label: 'Bellator', sprite: terranBattleshipImg },
+  { id: 'destroyer', label: 'Hasta', sprite: terranDestroyerImg },
+  { id: 'frigate', label: 'Custos', sprite: terranFrigateImg },
   { id: 'pirate_battleship', label: 'Piraci: Battleship', sprite: pirateBattleshipImg },
   { id: 'pirate_destroyer', label: 'Piraci: Destroyer', sprite: pirateDestroyerImg },
   { id: 'pirate_frigate', label: 'Piraci: Fregata', sprite: pirateFrigateImg }

@@ -280,92 +280,12 @@
       <div class="panel-header support-command-header" onclick="togglePanel('panel-support')"><span class="support-title-block"><span class="panel-title">Wsparcie</span><span class="support-panel-kicker">FLEET CALL-IN</span></span><span
           class="panel-chevron">&#9662;</span></div>
       <div class="panel-body support-command-body">
-        <div class="support-card" data-support-spawn="supercapital">
-          <div class="ship-icon-wrap">
-            <div class="icon-supercapital">
-              <div class="icon-sc-wing"></div>
-              <div class="icon-sc-hull"></div>
-              <div class="icon-sc-wing"></div>
-            </div>
-          </div>
-          <div class="support-details"><span class="ship-name">Supercapital</span><span class="ship-role">Dreadnought</span>
-          </div>
-          <div class="support-count">x1</div>
+        <div class="orders-row support-faction-row">
+          <div class="glass-btn active" id="support-faction-terran">Terra Nova</div>
+          <div class="glass-btn" id="support-faction-pirate">Pirates</div>
+          <div class="glass-btn" id="support-faction-independent">Independent</div>
         </div>
-        <div class="support-card" data-support-spawn="megafreighter">
-          <div class="ship-icon-wrap">
-            <div class="icon-supercapital">
-              <div class="icon-sc-wing"></div>
-              <div class="icon-sc-hull"></div>
-              <div class="icon-sc-wing"></div>
-            </div>
-          </div>
-          <div class="support-details"><span class="ship-name">Megafreighter</span><span class="ship-role">Giant Dummy</span>
-          </div>
-          <div class="support-count">x1</div>
-        </div>
-        <div class="support-card" data-support-spawn="carrier_capital">
-          <div class="ship-icon-wrap">
-            <div class="icon-capital">
-              <div class="icon-cap-side"></div>
-              <div class="icon-cap-center"></div>
-              <div class="icon-cap-side"></div>
-            </div>
-          </div>
-          <div class="support-details"><span class="ship-name">Capital</span><span class="ship-role">Flagship</span>
-          </div>
-          <div class="support-count">x1</div>
-        </div>
-        <div class="support-card" data-support-spawn="battleship">
-          <div class="ship-icon-wrap">
-            <div class="icon-battleship">
-              <div class="icon-bs-rect"></div>
-              <div class="icon-bs-chevron"></div>
-            </div>
-          </div>
-          <div class="support-details"><span class="ship-name">Battleship</span><span class="ship-role">Heavy
-              Capital</span></div>
-          <div class="support-count">x5</div>
-        </div>
-        <div class="support-card" data-support-spawn="pirate_battleship">
-          <div class="ship-icon-wrap">
-            <div class="icon-battleship">
-              <div class="icon-bs-rect"></div>
-              <div class="icon-bs-chevron"></div>
-            </div>
-          </div>
-          <div class="support-details"><span class="ship-name">Pirate Battleship</span><span class="ship-role">Raider Hull</span></div>
-          <div class="support-count">x1</div>
-        </div>
-        <div class="support-card" data-support-spawn="destroyer">
-          <div class="ship-icon-wrap">
-            <div class="icon-destroyer"></div>
-          </div>
-          <div class="support-details"><span class="ship-name">Destroyer</span><span class="ship-role">Escort
-              Class</span></div>
-          <div class="support-count">x5</div>
-        </div>
-        <div class="support-card" data-support-spawn="frigate_pd">
-          <div class="ship-icon-wrap">
-            <div class="icon-frigate"></div>
-          </div>
-          <div class="support-details"><span class="ship-name">Frigate</span><span class="ship-role">Patrol Unit</span>
-          </div>
-          <div class="support-count">x50</div>
-        </div>
-        <div class="support-card" data-support-spawn="fighter">
-          <div class="ship-icon-wrap">
-            <div class="icon-fighter"></div>
-          </div>
-          <div class="support-details"><span class="ship-name">Fighter</span><span class="ship-role">Interceptor</span>
-          </div>
-          <div class="support-count">x200</div>
-        </div>
-        <div class="orders-row support-mode-row">
-          <div class="glass-btn active" id="support-mode-friendly">Friendly</div>
-          <div class="glass-btn" id="support-mode-pirate">Pirate</div>
-          <div class="glass-btn" id="support-mode-dummy">Dummy</div>
-        </div>
+        <div class="support-roster" id="support-roster"></div>
         <div class="orders-row support-orders-row">
           <div class="glass-btn active" id="support-guard">Guard</div>
           <div class="glass-btn" id="support-engage">Engage</div>
@@ -1365,6 +1285,7 @@
   <script type="module" src="./src/config/constants.js"></script>
   <script type="module" src="./src/ai/aiSpatialGrid.js"></script>
   <script type="module" src="./src/ai/aiUtils.js"></script>
+  <script type="module" src="./src/ai/fleetCoordinator.js"></script>
   <script type="module" src="./src/ai/capitalAI.js"></script>
   <script type="module" src="./src/ai/fighterAI.js"></script>
   <script src="https://unpkg.com/regl/dist/regl.min.js"></script>
@@ -1560,6 +1481,14 @@
     import { SpotterDroneSystem } from "./src/game/spotterDrone.js";
     import { WeaponController } from "./src/game/weaponController.js";
     import { MASTER_WEAPONS, WEAPON_ICON_PATHS, WEAPON_SIZE_LABEL, getWeaponSizeRank, weaponFitsHardpointSize } from "./src/data/weapons.js";
+    import {
+      addHangarSquadronMount,
+      getFighterSquadronDef,
+      getHangarModuleIdForSquadron,
+      getHangarSquadronCapacity,
+      getSquadronIdForHangarModule,
+      normalizeHangarSquadronMounts
+    } from "./src/data/fighterSquadrons.js";
 
     // Alias dla kompatybilności starego ekwipunku gracza, dopóki go nie zaktualizujemy
     const WEAPONS = MASTER_WEAPONS;
@@ -1592,11 +1521,20 @@
     import terranFrigateImg from "./src/assets/ships/terranfrigate.png";
     import terranDestroyerImg from "./src/assets/ships/terrandestroyer.png";
     import terranBattleshipImg from "./src/assets/ships/terranbattleship.png";
+    import terranCarrierImg from "./src/assets/ships/terrancarrier.png";
+    import terranSupercapitalImg from "./src/assets/ships/terransupercapital.png";
 
     // Statki Piratów
     import pirateFrigateImg from "./src/assets/ships/piratefrigate.png";
     import pirateDestroyerImg from "./src/assets/ships/piratedestroyer.png";
     import pirateBattleshipImg from "./src/assets/ships/piratebattleship.png";
+
+    if (CAPITAL_SHIP_TEMPLATES_DATA?.carrier?.profile) {
+      CAPITAL_SHIP_TEMPLATES_DATA.carrier.profile.spriteSrc = terranCarrierImg;
+    }
+    if (CAPITAL_SHIP_TEMPLATES_DATA?.supercapital?.profile) {
+      CAPITAL_SHIP_TEMPLATES_DATA.supercapital.profile.spriteSrc = terranSupercapitalImg;
+    }
 
     window.bullets = [];
     window.DESTRUCTOR_CONFIG = DESTRUCTOR_CONFIG;
@@ -3008,11 +2946,11 @@
     const supportUIRoot = document.getElementById('panel-support');
     const supportGuardBtn = document.getElementById('support-guard');
     const supportEngageBtn = document.getElementById('support-engage');
-    const supportModeFriendlyBtn = document.getElementById('support-mode-friendly');
-    const supportModePirateBtn = document.getElementById('support-mode-pirate');
-    const supportModeDummyBtn = document.getElementById('support-mode-dummy');
-    const supportSpawnButtons = document.querySelectorAll('[data-support-spawn]');
-    const carrierSpawnBtn = document.querySelector('[data-support-spawn="carrier_capital"]');
+    const supportFactionTerranBtn = document.getElementById('support-faction-terran');
+    const supportFactionPirateBtn = document.getElementById('support-faction-pirate');
+    const supportFactionIndependentBtn = document.getElementById('support-faction-independent');
+    const supportRosterRoot = document.getElementById('support-roster');
+    let carrierSpawnBtn = null;
     const shieldControlsRoot = document.getElementById('panel-shield');
     const energyShotBtn = document.getElementById('btn-energy-shot');
     const shieldToggleBtn = document.getElementById('btn-shield-toggle');
@@ -3023,8 +2961,9 @@
       sourceBtn: null
     };
     const SUPPORT_DRAG_TYPES = new Set([
-      'carrier_capital',
+      'carrier',
       'supercapital',
+      'atlas',
       'megafreighter',
       'frigate_pd',
       'frigate_laser',
@@ -3037,8 +2976,110 @@
       'carrier_fighter'
     ]);
 
+    const SUPPORT_FACTION_MODES = Object.freeze({
+      terran: 'friendly',
+      pirate: 'pirate',
+      independent: 'dummy'
+    });
+
+    const SUPPORT_FACTION_ROSTERS = Object.freeze({
+      terran: [
+        { key: 'frigate_pd', name: 'Custos', role: 'Frigate', count: 'x50', icon: 'frigate', drag: true },
+        { key: 'destroyer', name: 'Hasta', role: 'Destroyer', count: 'x5', icon: 'destroyer', drag: true },
+        { key: 'battleship', name: 'Bellator', role: 'Battleship', count: 'x5', icon: 'battleship', drag: true },
+        { key: 'carrier', name: 'Citadella', role: 'Carrier', count: 'x1', icon: 'carrier', drag: true },
+        { key: 'supercapital', name: 'Colossus', role: 'Supercapital', count: 'x1', icon: 'supercapital', drag: true },
+        { key: 'fighter', name: 'Fighter Wing', role: 'Hangar squadron', count: 'x200', icon: 'fighter', click: true }
+      ],
+      pirate: [
+        { key: 'frigate_pd', name: 'Pirate Frigate', role: 'Raider frigate', count: 'x50', icon: 'frigate', drag: true },
+        { key: 'destroyer', name: 'Pirate Destroyer', role: 'Raider destroyer', count: 'x5', icon: 'destroyer', drag: true },
+        { key: 'pirate_battleship', name: 'Pirate Battleship', role: 'Raider battleship', count: 'x1', icon: 'battleship', drag: true }
+      ],
+      independent: [
+        { key: 'atlas', name: 'Atlas', role: 'Independent supercapital', count: 'x1', icon: 'supercapital', drag: true },
+        { key: 'megafreighter', name: 'Megafreighter', role: 'Utility dummy', count: 'x1', icon: 'supercapital', drag: true }
+      ]
+    });
+
     function isSupportDragKey(key) {
       return SUPPORT_DRAG_TYPES.has(key);
+    }
+
+    function normalizeSupportFaction(faction) {
+      const key = String(faction || '').trim().toLowerCase();
+      return SUPPORT_FACTION_ROSTERS[key] ? key : 'terran';
+    }
+
+    function getSupportModeForFaction(faction) {
+      return SUPPORT_FACTION_MODES[normalizeSupportFaction(faction)] || 'friendly';
+    }
+
+    function supportIconMarkup(icon) {
+      if (icon === 'supercapital') {
+        return '<div class="icon-supercapital"><div class="icon-sc-wing"></div><div class="icon-sc-hull"></div><div class="icon-sc-wing"></div></div>';
+      }
+      if (icon === 'carrier') {
+        return '<div class="icon-carrier"><div class="icon-carrier-bay"></div><div class="icon-carrier-core"></div><div class="icon-carrier-bay"></div></div>';
+      }
+      if (icon === 'battleship') {
+        return '<div class="icon-battleship"><div class="icon-bs-rect"></div><div class="icon-bs-chevron"></div></div>';
+      }
+      if (icon === 'destroyer') return '<div class="icon-destroyer"></div>';
+      if (icon === 'fighter') return '<div class="icon-fighter"></div>';
+      return '<div class="icon-frigate"></div>';
+    }
+
+    function bindSupportSpawnButton(btn) {
+      if (!btn) return;
+      const key = btn.dataset.supportSpawn;
+      if (SUPPORT_CLICK_TYPES.has(key)) {
+        btn.addEventListener('click', () => {
+          if (btn.getAttribute('aria-disabled') === 'true') return;
+          const mode = getSupportSpawnMode();
+          if (key === 'carrier_fighter') {
+            const carrier = getFriendlyCarrierEntity();
+            if (!carrier) return;
+            spawnCallInShip('fighter', { anchor: carrier, mode });
+          } else {
+            spawnCallInShip(key, { mode });
+          }
+          if (mode === 'friendly') setSupportOrder('guard', { force: true });
+        });
+      } else if (isSupportDragKey(key)) {
+        btn.addEventListener('mousedown', (event) => {
+          if (event.button !== 0) return;
+          if (btn.getAttribute('aria-disabled') === 'true') return;
+          beginSupportDrag(key, btn);
+        });
+        btn.addEventListener('click', (event) => {
+          event.preventDefault();
+        });
+      }
+    }
+
+    function renderSupportRoster() {
+      if (!supportRosterRoot) return;
+      const faction = normalizeSupportFaction(SupportWing?.faction || 'terran');
+      const roster = SUPPORT_FACTION_ROSTERS[faction] || SUPPORT_FACTION_ROSTERS.terran;
+      const frag = document.createDocumentFragment();
+      supportRosterRoot.textContent = '';
+      carrierSpawnBtn = null;
+      for (const item of roster) {
+        const card = document.createElement('div');
+        card.className = 'support-card';
+        card.dataset.supportSpawn = item.key;
+        card.dataset.supportFaction = faction;
+        card.innerHTML = `
+          <div class="ship-icon-wrap">${supportIconMarkup(item.icon)}</div>
+          <div class="support-details"><span class="ship-name">${item.name}</span><span class="ship-role">${item.role}</span></div>
+          <div class="support-count">${item.count}</div>
+        `;
+        if (item.key === 'carrier') carrierSpawnBtn = card;
+        bindSupportSpawnButton(card);
+        frag.appendChild(card);
+      }
+      supportRosterRoot.appendChild(frag);
     }
 
     function beginSupportDrag(key, btn) {
@@ -3116,23 +3157,25 @@
     const SupportWing = window.SupportWing || (window.SupportWing = {
       units: [],
       order: 'guard',
+      faction: 'terran',
       spawnMode: 'friendly',
       ui: {
         root: supportUIRoot || null,
         guardBtn: supportGuardBtn || null,
         engageBtn: supportEngageBtn || null,
-        modeFriendlyBtn: supportModeFriendlyBtn || null,
-        modePirateBtn: supportModePirateBtn || null,
-        modeDummyBtn: supportModeDummyBtn || null
+        factionTerranBtn: supportFactionTerranBtn || null,
+        factionPirateBtn: supportFactionPirateBtn || null,
+        factionIndependentBtn: supportFactionIndependentBtn || null
       }
     });
+    SupportWing.faction = normalizeSupportFaction(SupportWing.faction || 'terran');
     SupportWing.spawnMode = normalizeCallInSpawnMode(SupportWing.spawnMode || 'friendly');
     if (!SupportWing.ui.root && supportUIRoot) SupportWing.ui.root = supportUIRoot;
     if (!SupportWing.ui.guardBtn && supportGuardBtn) SupportWing.ui.guardBtn = supportGuardBtn;
     if (!SupportWing.ui.engageBtn && supportEngageBtn) SupportWing.ui.engageBtn = supportEngageBtn;
-    if (!SupportWing.ui.modeFriendlyBtn && supportModeFriendlyBtn) SupportWing.ui.modeFriendlyBtn = supportModeFriendlyBtn;
-    if (!SupportWing.ui.modePirateBtn && supportModePirateBtn) SupportWing.ui.modePirateBtn = supportModePirateBtn;
-    if (!SupportWing.ui.modeDummyBtn && supportModeDummyBtn) SupportWing.ui.modeDummyBtn = supportModeDummyBtn;
+    if (!SupportWing.ui.factionTerranBtn && supportFactionTerranBtn) SupportWing.ui.factionTerranBtn = supportFactionTerranBtn;
+    if (!SupportWing.ui.factionPirateBtn && supportFactionPirateBtn) SupportWing.ui.factionPirateBtn = supportFactionPirateBtn;
+    if (!SupportWing.ui.factionIndependentBtn && supportFactionIndependentBtn) SupportWing.ui.factionIndependentBtn = supportFactionIndependentBtn;
 
     const OPTIONS = {
       vfx: { colorTempK: 8000, bloomGain: 1.1, engineGain: 1.0 },
@@ -4108,16 +4151,16 @@
     const FLEET_UI_REFRESH_MS = 1000;
     const SUPPORT_TYPE_LABELS = {
       fighter: 'Mysliwiec',
-      frigate_pd: 'Fregata PD',
-      frigate_laser: 'Fregata Laserowa',
-      destroyer: 'Destroyer',
-      battleship: 'Battleship',
+      frigate_pd: 'Custos',
+      frigate_laser: 'Custos Laser',
+      destroyer: 'Hasta',
+      battleship: 'Bellator',
       pirate_battleship: 'Pirate Battleship',
-      carrier: 'Capital',
-      capital: 'Capital',
-      supercapital: 'Supercapital'
+      carrier: 'Citadella',
+      atlas: 'Atlas',
+      supercapital: 'Colossus'
     };
-    const UNIMPLEMENTED_FLEET_TYPES = new Set(['capital']);
+    const UNIMPLEMENTED_FLEET_TYPES = new Set();
     window.aiSpawnBullet = function (sim, from, to, weapon) {
       const ang = Math.atan2(to.y - from.y, to.x - from.x);
       const spread = (weapon.spread || 0) * (Math.PI / 180);
@@ -4371,20 +4414,32 @@
     }
 
     function getSupportSpawnMode() {
-      return normalizeCallInSpawnMode(SupportWing?.spawnMode || 'friendly');
+      return normalizeCallInSpawnMode(SupportWing?.spawnMode || getSupportModeForFaction(SupportWing?.faction));
+    }
+
+    function getSupportFaction() {
+      return normalizeSupportFaction(SupportWing?.faction || 'terran');
+    }
+
+    function setSupportFaction(faction, opts = {}) {
+      const normalized = normalizeSupportFaction(faction);
+      if (SupportWing.faction === normalized && !opts.force) return;
+      SupportWing.faction = normalized;
+      SupportWing.spawnMode = getSupportModeForFaction(normalized);
+
+      const ui = SupportWing.ui || {};
+      if (ui.factionTerranBtn) ui.factionTerranBtn.classList.toggle('active', normalized === 'terran');
+      if (ui.factionPirateBtn) ui.factionPirateBtn.classList.toggle('active', normalized === 'pirate');
+      if (ui.factionIndependentBtn) ui.factionIndependentBtn.classList.toggle('active', normalized === 'independent');
+      renderSupportRoster();
     }
 
     function setSupportSpawnMode(mode, opts = {}) {
       const normalized = normalizeCallInSpawnMode(mode);
-      if (SupportWing.spawnMode === normalized && !opts.force) return;
-      SupportWing.spawnMode = normalized;
-
-      const ui = SupportWing.ui || {};
-      if (ui.modeFriendlyBtn) ui.modeFriendlyBtn.classList.toggle('active', normalized === 'friendly');
-      if (ui.modePirateBtn) ui.modePirateBtn.classList.toggle('active', normalized === 'pirate');
-      if (ui.modeDummyBtn) ui.modeDummyBtn.classList.toggle('active', normalized === 'dummy');
+      const faction = normalized === 'pirate' ? 'pirate' : (normalized === 'dummy' ? 'independent' : 'terran');
+      setSupportFaction(faction, opts);
     }
-    setSupportSpawnMode(SupportWing.spawnMode, { force: true });
+    setSupportFaction(SupportWing.faction, { force: true });
 
     function cleanupSupportWing() {
       SupportWing.units = SupportWing.units.filter(data => data?.npc && !data.npc.dead);
@@ -4559,12 +4614,23 @@
       const myFighter = !!npc.fighter;
       const myCapital = !!npc.isCapitalShip || !myFighter;
 
+      // Siła separacji jako AKCELERACJA. Dawny podział przez pełną masę zerował
+      // separację capitali (masa 10k-50k → ~0 u/s² — stąd taranowanie).
+      // Fighterów (masa <=2) nie ruszamy — zachowują dokładnie stare siły.
+      const myGain = myMass <= 2 ? (1 / myMass) : (1 / Math.pow(myMass, 0.25));
+
+      // Predykcja zbliżenia dla dużych: pchamy zanim strefy się nałożą,
+      // proporcjonalnie do prędkości zbliżania (max wydłużenie strefy 420u).
+      const LOOKAHEAD_T = 0.85;
+      const LOOKAHEAD_MAX = 420;
+
       let sumAx = ax || 0;
       let sumAy = ay || 0;
 
       // Spatial grid query — typical 5-15 candidates vs 200 in old O(N) scan.
-      // Query radius 450 covers worst-case safeDistance (myRadius + otherRadius~250 + margin 140).
-      const QUERY_RADIUS = 450;
+      // Fighters: 450 covers worst-case safeDistance (myRadius + otherRadius~250 + margin 140).
+      // Capitals: 900, bo strefa + look-ahead sięga ~880u.
+      const QUERY_RADIUS = myCapital ? 900 : 450;
       let __sepCandidates = null;
       let __sepCandCount = 0;
       if (window.queryAIGrid) {
@@ -4601,7 +4667,7 @@
           if (distSq < safeDistance * safeDistance) {
             const dist = Math.sqrt(distSq) || 1;
             const overlap = safeDistance - dist;
-            const force = (overlap * 6.0) / myMass;
+            const force = overlap * 6.0 * myGain;
             sumAx += (dx / dist) * force;
             sumAy += (dy / dist) * force;
           }
@@ -4630,12 +4696,28 @@
           continue;
         }
 
-        if (distSq < safeDistance * safeDistance) {
+        const bigPair = myCapital || otherCapital;
+        const reach = bigPair ? (safeDistance + LOOKAHEAD_MAX) : safeDistance;
+        if (distSq < reach * reach) {
           const dist = Math.sqrt(distSq) || 1;
-          const overlap = safeDistance - dist;
-          const force = (overlap * strength) / myMass;
-          sumAx += (dx / dist) * force;
-          sumAy += (dy / dist) * force;
+          let overlap = safeDistance - dist;
+          if (overlap <= 0 && bigPair) {
+            // Poza strefą, ale na kursie kolizyjnym? Licz prędkość zbliżania.
+            const relVx = (npc.vx || 0) - (other.vx || 0);
+            const relVy = (npc.vy || 0) - (other.vy || 0);
+            const closing = -(relVx * dx + relVy * dy) / dist;
+            if (closing > 40) {
+              const predicted = dist - Math.min(closing * LOOKAHEAD_T, LOOKAHEAD_MAX);
+              if (predicted < safeDistance) {
+                overlap = (safeDistance - predicted) * 0.6;
+              }
+            }
+          }
+          if (overlap > 0) {
+            const force = overlap * strength * myGain;
+            sumAx += (dx / dist) * force;
+            sumAy += (dy / dist) * force;
+          }
         }
       }
 
@@ -4658,23 +4740,27 @@
           strength = 12.0;
         }
 
-        if (distSq < safeDistance * safeDistance) {
+        // Look-ahead względem gracza (jego prędkość też się liczy —
+        // NPC schodzi z kursu zanim gracz w niego wjedzie).
+        const reach = safeDistance + LOOKAHEAD_MAX;
+        if (distSq < reach * reach) {
           const dist = Math.sqrt(distSq) || 1;
-          const overlap = safeDistance - dist;
-          const force = (overlap * strength) / myMass;
-
-          sumAx += (dx / dist) * force;
-          sumAy += (dy / dist) * force;
-
-          // Awaryjny hamulec tylko poza walką — jako dodatkowa siła separacji, bez mutacji vx/vy.
-          if (!inCombat) {
-            const dot = (npc.vx || 0) * (-dx) + (npc.vy || 0) * (-dy);
-            if (dot > 0) {
-              // Zamiast npc.vx *= 0.92, dodaj silną siłę odpychania
-              const brakeFactor = 0.08 * dot / (Math.sqrt(distSq) || 1);
-              sumAx += (dx / (Math.sqrt(distSq) || 1)) * brakeFactor;
-              sumAy += (dy / (Math.sqrt(distSq) || 1)) * brakeFactor;
+          let overlap = safeDistance - dist;
+          if (overlap <= 0) {
+            const relVx = (npc.vx || 0) - (Number(player.vel?.x) || 0);
+            const relVy = (npc.vy || 0) - (Number(player.vel?.y) || 0);
+            const closing = -(relVx * dx + relVy * dy) / dist;
+            if (closing > 40) {
+              const predicted = dist - Math.min(closing * LOOKAHEAD_T, LOOKAHEAD_MAX);
+              if (predicted < safeDistance) {
+                overlap = (safeDistance - predicted) * 0.6;
+              }
             }
+          }
+          if (overlap > 0) {
+            const force = overlap * strength * myGain;
+            sumAx += (dx / dist) * force;
+            sumAy += (dy / dist) * force;
           }
         }
       }
@@ -5010,6 +5096,40 @@
       return weaponFitsHardpointSize(weapon.size, getHardpointSize(hp, ship));
     }
     window.getHardpointSize = getHardpointSize;
+
+    function isHangarSquadronWeapon(weapon) {
+      return !!(weapon && weapon.mountType === HP.HANGAR && getSquadronIdForHangarModule(weapon.id));
+    }
+
+    function getHardpointHangarCapacity(hp, shipRef = Game.player) {
+      return getHangarSquadronCapacity(getHardpointSize(hp, shipRef));
+    }
+
+    function getHardpointHangarSquadrons(hp, shipRef = Game.player) {
+      if (!hp || hp.type !== HP.HANGAR) return [];
+      const capacity = getHardpointHangarCapacity(hp, shipRef);
+      const raw = Array.isArray(hp.hangarSquadrons) && hp.hangarSquadrons.length
+        ? hp.hangarSquadrons
+        : (hp.mount ? [hp.mount] : []);
+      return normalizeHangarSquadronMounts(raw, capacity);
+    }
+
+    function setHardpointHangarSquadrons(hp, moduleIds) {
+      if (!hp || hp.type !== HP.HANGAR) return [];
+      const next = normalizeHangarSquadronMounts(moduleIds, getHardpointHangarCapacity(hp));
+      hp.hangarSquadrons = next;
+      hp.mount = next[0] || null;
+      hp.ammo = null;
+      hp.maxAmmo = null;
+      hp.missileCd = 0;
+      return next;
+    }
+
+    function canAcceptWeaponOnHardpoint(weapon, hp) {
+      if (!canMountWeaponOnHardpoint(weapon, hp)) return false;
+      if (hp?.type !== HP.HANGAR || !isHangarSquadronWeapon(weapon)) return true;
+      return getHardpointHangarSquadrons(hp).length < getHardpointHangarCapacity(hp);
+    }
 
     const npcHardpointRuntime = createNpcHardpointRuntime({
       hardpointEnum: HP,
@@ -5566,6 +5686,9 @@
       'ciws_mk2',
       'laser_pd_mk1',
       'fighter_bay',
+      'fighter_squad_interceptor',
+      'fighter_squad_multirole',
+      'fighter_squad_strike',
       'special_goliath_autocannon',
       'special_plasma_gatling',
       'special_valkyrie_railgun',
@@ -5688,6 +5811,7 @@
       if (!hp) return;
       if (hp.destroyed) {
         hp.mount = null;
+        if (hp.type === HP.HANGAR) hp.hangarSquadrons = [];
         hp.ammo = null;
         hp.maxAmmo = null;
         hp.missileCd = 0;
@@ -5698,12 +5822,18 @@
       // POPRAWKA: Używamy weapon.mountType zamiast weapon.type
       if (!weapon || (inventory && weaponId && !inventory.has(weaponId)) || weapon.mountType !== hp.type) {
         hp.mount = null;
+        if (hp.type === HP.HANGAR) hp.hangarSquadrons = [];
         hp.ammo = null;
         hp.maxAmmo = null;
         hp.missileCd = 0;
         return;
       }
+      if (hp.type === HP.HANGAR && isHangarSquadronWeapon(weapon)) {
+        setHardpointHangarSquadrons(hp, [weaponId]);
+        return;
+      }
       hp.mount = weaponId;
+      if (hp.type === HP.HANGAR) hp.hangarSquadrons = [];
       const baseMax = weapon.ammo != null ? weapon.ammo : null;
       hp.maxAmmo = opts.hasOwnProperty('maxAmmo') ? opts.maxAmmo : baseMax;
       hp.missileCd = 0;
@@ -5730,7 +5860,7 @@
       mountFirstFree(HP.MAIN, 'railgun_mk2', 24);
       mountFirstFree(HP.MISSILE, 'missile_rack', 8);
       mountFirstFree(HP.AUX, 'ciws_mk1', 8);
-      mountFirstFree(HP.HANGAR, 'fighter_bay', 4);
+      mountFirstFree(HP.HANGAR, 'fighter_squad_multirole', 4);
       mountFirstFree(HP.BUILTIN, 'hexlance_siege', 1);
       mountFirstFree(HP.SPECIAL_MISSILE, 'supernova_missile', 4);
     }
@@ -5750,7 +5880,22 @@
       const byType = {};
       for (const type of Object.values(HP)) byType[type] = [];
       for (const hp of Game.player.hardpoints) {
-        if (hp.destroyed || !hp.mount) continue;
+        if (hp.destroyed) continue;
+        if (hp.type === HP.HANGAR) {
+          const squadronMounts = getHardpointHangarSquadrons(hp);
+          for (const mountId of squadronMounts) {
+            const weapon = WEAPONS[mountId];
+            if (!weapon) continue;
+            byType[hp.type].push({
+              hp,
+              weapon,
+              mountId,
+              squadron: getFighterSquadronDef(weapon.squadronId)
+            });
+          }
+          continue;
+        }
+        if (!hp.mount) continue;
         const weapon = WEAPONS[hp.mount];
         if (weapon) byType[hp.type].push({ hp, weapon });
       }
@@ -6081,12 +6226,25 @@
       return total;
     }
 
+    function restoreHardpointMountEntry(hp, entry) {
+      if (!hp || !entry) return;
+      if (hp.type === HP.HANGAR) {
+        const squadronMounts = Array.isArray(entry.hangarSquadrons) && entry.hangarSquadrons.length
+          ? entry.hangarSquadrons
+          : (entry.weaponId ? [entry.weaponId] : []);
+        setHardpointHangarSquadrons(hp, squadronMounts);
+        return;
+      }
+      setHardpointMount(hp, entry.weaponId, { ammo: entry.ammo, maxAmmo: entry.maxAmmo });
+    }
+
     function tryPreserveMounts(previous) {
       if (!previous) return;
       const byType = new Map();
       for (const hp of previous) {
-        if (!hp.mount) continue;
-        const entry = { weaponId: hp.mount, ammo: hp.ammo, maxAmmo: hp.maxAmmo };
+        const hangarSquadrons = hp.type === HP.HANGAR ? getHardpointHangarSquadrons(hp) : [];
+        if (!hp.mount && hangarSquadrons.length === 0) continue;
+        const entry = { weaponId: hp.mount, ammo: hp.ammo, maxAmmo: hp.maxAmmo, hangarSquadrons };
         if (!byType.has(hp.type)) byType.set(hp.type, []);
         byType.get(hp.type).push(entry);
       }
@@ -6094,7 +6252,7 @@
         const arr = byType.get(hp.type);
         if (arr && arr.length) {
           const entry = arr.shift();
-          setHardpointMount(hp, entry.weaponId, { ammo: entry.ammo, maxAmmo: entry.maxAmmo });
+          restoreHardpointMountEntry(hp, entry);
         }
       }
     }
@@ -6108,7 +6266,14 @@
           activeHullId,
           ownedHullIds: [...getPlayerOwnedHullIds()],
           shipFrame: activeHullDef?.shipFrame || Game.player.shipFrame || DEFAULT_PLAYER_HULL_ID,
-          hardpoints: Game.player.hardpoints.map(h => ({ id: h.id, type: h.type, mount: h.mount, ammo: h.ammo, maxAmmo: h.maxAmmo }))
+          hardpoints: Game.player.hardpoints.map(h => ({
+            id: h.id,
+            type: h.type,
+            mount: h.mount,
+            ammo: h.ammo,
+            maxAmmo: h.maxAmmo,
+            hangarSquadrons: h.type === HP.HANGAR ? getHardpointHangarSquadrons(h) : undefined
+          }))
         }));
       } catch (e) { console.warn('Loadout save error', e); }
     }
@@ -6132,15 +6297,28 @@
           const savedByType = new Map();
           for (const saved of (data.hardpoints || [])) {
             // BEZPIECZEŃSTWO: Jeśli broń nie istnieje w nowym systemie, omiń ją (zapobiegnie znikaniu i crashom)
-            if (!saved.mount || !WEAPONS[saved.mount]) continue;
+            const hangarSquadrons = saved.type === HP.HANGAR
+              ? normalizeHangarSquadronMounts(
+                Array.isArray(saved.hangarSquadrons) && saved.hangarSquadrons.length
+                  ? saved.hangarSquadrons
+                  : (saved.mount ? [saved.mount] : []),
+                99
+              )
+              : [];
+            if ((!saved.mount || !WEAPONS[saved.mount]) && hangarSquadrons.length === 0) continue;
             if (!savedByType.has(saved.type)) savedByType.set(saved.type, []);
-            savedByType.get(saved.type).push(saved);
+            savedByType.get(saved.type).push({ ...saved, hangarSquadrons });
           }
           for (const hp of fresh) {
             const arr = savedByType.get(hp.type);
             if (arr && arr.length) {
               const saved = arr.shift();
-              setHardpointMount(hp, saved.mount, { ammo: saved.ammo, maxAmmo: saved.maxAmmo });
+              restoreHardpointMountEntry(hp, {
+                weaponId: saved.mount,
+                ammo: saved.ammo,
+                maxAmmo: saved.maxAmmo,
+                hangarSquadrons: saved.hangarSquadrons
+              });
             }
           }
           Game.player.hardpoints = fresh;
@@ -6159,7 +6337,13 @@
       } catch { }
 
       const prev = Array.isArray(Game.player?.hardpoints)
-        ? Game.player.hardpoints.map(h => ({ type: h.type, mount: h.mount, ammo: h.ammo, maxAmmo: h.maxAmmo }))
+        ? Game.player.hardpoints.map(h => ({
+          type: h.type,
+          mount: h.mount,
+          ammo: h.ammo,
+          maxAmmo: h.maxAmmo,
+          hangarSquadrons: h.type === HP.HANGAR ? getHardpointHangarSquadrons(h) : undefined
+        }))
         : [];
 
       applyPlayerEditorEngineLayoutFromStorage();
@@ -7267,6 +7451,8 @@
       terran_frigate: terranFrigateImg,
       terran_destroyer: terranDestroyerImg,
       terran_battleship: terranBattleshipImg,
+      terran_carrier: terranCarrierImg,
+      terran_supercapital: terranSupercapitalImg,
       pirate_frigate: pirateFrigateImg,
       pirate_destroyer: pirateDestroyerImg,
       pirate_battleship: pirateBattleshipImg
@@ -7285,8 +7471,11 @@
       if (type === 'destroyer') return npc?.isPirate ? 'pirate_destroyer' : 'terran_destroyer';
       if (type.includes('frigate')) return npc?.isPirate ? 'pirate_frigate' : 'terran_frigate';
       if (type === 'megafreighter') return 'megafreighter';
-      if (type === 'supercapital') return 'supercapital';
-      if (type === 'carrier' || type === 'capital_carrier' || npc?.isCapitalShip) return 'capital_carrier';
+      if (type === 'atlas') return 'atlas';
+      if (type === 'supercapital') return 'terran_supercapital';
+      if (type === 'carrier') return 'terran_carrier';
+      if (type === 'capital_carrier') return 'capital_carrier';
+      if (npc?.isCapitalShip) return 'terran_carrier';
       return null;
     }
 
@@ -7299,7 +7488,7 @@
 
     function getHullSpriteForNpc(npc) {
       const hullProfileId = getNpcHullRenderProfileId(npc);
-      if (!hullProfileId || hullProfileId === 'capital_carrier') return null;
+      if (!hullProfileId) return null;
       const src = HULL_SPRITE_PATHS_BY_ID[hullProfileId] || null;
       if (!src) return null;
       const sprite = loadHullSprite(src);
@@ -7489,7 +7678,13 @@
       ship.spriteH = Math.max(1, Number(renderImage.height) || Number(shipSprite.naturalHeight) || 1);
       Game.player.spriteW = ship.spriteW;
       Game.player.spriteH = ship.spriteH;
-      const prev = Game.player.hardpoints.map(h => ({ type: h.type, mount: h.mount, ammo: h.ammo, maxAmmo: h.maxAmmo }));
+      const prev = Game.player.hardpoints.map(h => ({
+        type: h.type,
+        mount: h.mount,
+        ammo: h.ammo,
+        maxAmmo: h.maxAmmo,
+        hangarSquadrons: h.type === HP.HANGAR ? getHardpointHangarSquadrons(h) : undefined
+      }));
       rebuildHardpointsForFrame();
       applyHullThrusterLayout(activeHullKey);
       tryPreserveMounts(prev);
@@ -8484,21 +8679,25 @@
       return { type, pos: { x: 0, y }, mount: weaponId };
     }
 
+    function applyFighterSquadronLoadout(npc, squadronId) {
+      const squadron = getFighterSquadronDef(squadronId);
+      npc.fighter = true;
+      npc.squadronId = squadron.id;
+      npc.squadronName = squadron.name;
+      npc.gun = squadron.weaponId;
+      npc.msl = squadron.missileId;
+      npc.mslAmmo = squadron.missileAmmo;
+      npc.gunCD = 0;
+      npc.ai = (dt) => { if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
+      return squadron;
+    }
+
     const SUPPORT_SHIP_CONFIGURERS = {
       fighter(npc) {
-        npc.fighter = true;
-        npc.gun = 'ciws_mk1';
-        npc.msl = 'osa_micro_missile';
-        npc.mslAmmo = 8;
-        npc.gunCD = 0;
-        npc.ai = (dt) => { if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
+        applyFighterSquadronLoadout(npc, 'multirole');
       },
       interceptor(npc) {
-        npc.fighter = true;
-        npc.gun = 'laser_pd_mk1';
-        npc.msl = 'osa_micro_missile';
-        npc.mslAmmo = 6;
-        npc.ai = (dt) => { if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(npc, dt); };
+        applyFighterSquadronLoadout(npc, 'interceptor');
       },
       frigate_pd(npc) {
         const mWpn = 'heavy_autocannon';
@@ -8583,7 +8782,7 @@
       npc.friendly = policy.friendly;
       npc.isPirate = policy.isPirate;
       npc.callInMode = policy.mode;
-      npc.callInFaction = policy.weaponFaction;
+      npc.callInFaction = policy.faction;
       npc.mission = true;
       npc.color = policy.color || (policy.friendly ? '#7cff91' : '#ff5c7c');
       const hullFrame = getCallInHullFrame(typeKey, policy, template);
@@ -8674,6 +8873,8 @@
       const template = CAPITAL_SHIP_TEMPLATES[templateKey];
       if (!template) return null;
       const policy = getCallInSpawnPolicy(overrides.mode ?? getSupportSpawnMode(), template);
+      const hullFrame = getCallInHullFrame(templateKey, policy, template);
+      if ((templateKey === 'carrier' || templateKey === 'supercapital') && !hullFrame) return null;
       const staticDummy = template.staticDummy === true;
       const hardpointCounts = {
         large: staticDummy ? 0 : Math.max(0, Number(template.hardpoints?.large) || 0),
@@ -8759,7 +8960,7 @@
       applyEditorLayoutToNpc(npc);
 
       const supportLeader = (overrides.anchor && !overrides.anchor.dead) ? overrides.anchor : ship;
-      const supportType = (templateKey === 'carrier' || template.id === 'capital_carrier') ? 'carrier' : templateKey;
+      const supportType = templateKey === 'carrier' ? 'carrier' : templateKey;
       if (staticDummy) {
         npc.weapons = { main: [], aux: [], missile: [], hangar: [], special: [], special_missile: [], builtin: [] };
       } else {
@@ -8824,11 +9025,14 @@
 
     function spawnCallInShip(templateKey, opts = {}) {
       const mode = normalizeCallInSpawnMode(opts.mode ?? getSupportSpawnMode());
-      if (templateKey === 'carrier_capital' || templateKey === 'carrier') {
+      if (templateKey === 'carrier') {
         return spawnCapitalCallIn('carrier', { ...opts, mode });
       }
       if (templateKey === 'supercapital') {
         return spawnCapitalCallIn('supercapital', { ...opts, mode });
+      }
+      if (templateKey === 'atlas') {
+        return spawnCapitalCallIn('atlas', { ...opts, mode });
       }
       if (templateKey === 'megafreighter') {
         return spawnCapitalCallIn('megafreighter', { ...opts, mode });
@@ -10780,6 +10984,10 @@
 
     function mechanicCompactWeaponStats(weapon) {
       if (!weapon) return '';
+      if (weapon.mountType === HP.HANGAR && weapon.squadronId) {
+        const squadron = getFighterSquadronDef(weapon.squadronId);
+        return `${squadron.squadSize} fighters / v${squadron.maxSpeed} / turn ${squadron.turn}`;
+      }
       const parts = [];
       if (weapon.baseDamage != null) parts.push(`${weapon.baseDamage}dmg`);
       if (weapon.cooldown != null) parts.push(`${weapon.cooldown}s`);
@@ -10800,12 +11008,35 @@
       }
     }
 
+    function addHangarSquadronToHardpoint(hp, weaponId) {
+      if (!hp || hp.destroyed) return false;
+      const weapon = weaponId ? WEAPONS[weaponId] : null;
+      if (!isHangarSquadronWeapon(weapon) || !canMountWeaponOnHardpoint(weapon, hp)) return false;
+      const current = getHardpointHangarSquadrons(hp);
+      const next = addHangarSquadronMount(current, weaponId, getHardpointHangarCapacity(hp));
+      if (next.length === current.length) return false;
+      setHardpointHangarSquadrons(hp, next);
+      return true;
+    }
+
     function applyWeaponToHardpoint(hp, weaponId, options = null) {
       if (!hp) return false;
       if (hp.destroyed) return false;
       const weapon = weaponId ? WEAPONS[weaponId] : null;
       // Size/type gate — a weapon may only sit in a hardpoint of equal or larger size.
       if (weapon && !options?.force && !canMountWeaponOnHardpoint(weapon, hp)) return false;
+      if (hp.type === HP.HANGAR) {
+        if (!weaponId) {
+          setHardpointMount(hp, null);
+        } else if (!addHangarSquadronToHardpoint(hp, weaponId)) {
+          return false;
+        }
+        if (options?.deferFinalize) return true;
+        syncWeaponSystems();
+        renderMechanic();
+        saveLoadout();
+        return true;
+      }
       setHardpointMount(hp, weaponId);
       if (weapon && weapon.ammo != null) {
         hp.ammo = weapon.ammo;
@@ -10863,7 +11094,7 @@
         const weaponId = mechanicDragWeaponId || e.dataTransfer?.getData('text/plain');
         const weapon = weaponId ? WEAPONS[weaponId] : null;
         // Type + size gate — incompatible slots won't accept the drop.
-        if (!canMountWeaponOnHardpoint(weapon, hp)) {
+        if (!canAcceptWeaponOnHardpoint(weapon, hp)) {
           if (weapon && weapon.mountType === hp.type) slot.classList.add('size-reject');
           return;
         }
@@ -10886,7 +11117,10 @@
     function quickMountWeapon(weapon) {
       if (!weapon) return;
       // First free slot whose type AND size accept this weapon.
-      const targetHp = Game.player.hardpoints.find(h => !h.mount && canMountWeaponOnHardpoint(weapon, h));
+      const targetHp = Game.player.hardpoints.find(h => {
+        if (!canAcceptWeaponOnHardpoint(weapon, h)) return false;
+        return h.type === HP.HANGAR ? true : !h.mount;
+      });
       if (targetHp) {
         applyWeaponToHardpoint(targetHp, weapon.id);
       } else {
@@ -11048,6 +11282,23 @@
       }
     }
 
+    function mechanicHangarMountNames(hp) {
+      return getHardpointHangarSquadrons(hp)
+        .map(id => WEAPONS[id]?.name)
+        .filter(Boolean);
+    }
+
+    function mechanicHangarMetaText(hp) {
+      const mounts = getHardpointHangarSquadrons(hp);
+      const capacity = getHardpointHangarCapacity(hp);
+      let fighters = 0;
+      for (const mountId of mounts) {
+        const squadron = getFighterSquadronDef(WEAPONS[mountId]?.squadronId);
+        fighters += Number(squadron.squadSize) || 0;
+      }
+      return `${mounts.length}/${capacity} esk. | ${fighters} fighters`;
+    }
+
     function createHpRow(hp, idx) {
       const row = document.createElement('div');
       row.className = 'hp-row'; // Nowa klasa CSS
@@ -11056,7 +11307,8 @@
       if (hp.destroyed) row.classList.add('destroyed');
 
       // 1. Ikona zamontowanej broni (lub puste miejsce)
-      const weapon = hp.mount ? WEAPONS[hp.mount] : null;
+      const hangarMounts = hp.type === HP.HANGAR ? getHardpointHangarSquadrons(hp) : [];
+      const weapon = hp.mount ? WEAPONS[hp.mount] : (hangarMounts[0] ? WEAPONS[hangarMounts[0]] : null);
       const iconWrap = document.createElement('div');
       const iconPath = weapon ? WEAPON_ICON_PATHS[weapon.id] : null;
 
@@ -11091,6 +11343,9 @@
       if (hp.destroyed) {
         mountInfo.textContent = 'Zniszczony';
         mountInfo.classList.add('empty');
+      } else if (hp.type === HP.HANGAR && hangarMounts.length) {
+        mountInfo.textContent = mechanicHangarMountNames(hp).join(', ');
+        mountInfo.classList.remove('empty');
       } else if (weapon) {
         mountInfo.textContent = weapon.name;
         mountInfo.classList.remove('empty');
@@ -11103,7 +11358,9 @@
       // 4. Statystyki zamontowanej broni
       const metaEl = document.createElement('div');
       metaEl.className = 'hp-row-meta';
-      metaEl.textContent = (!hp.destroyed && weapon) ? mechanicCompactWeaponStats(weapon) : '-';
+      metaEl.textContent = (!hp.destroyed && hp.type === HP.HANGAR)
+        ? mechanicHangarMetaText(hp)
+        : ((!hp.destroyed && weapon) ? mechanicCompactWeaponStats(weapon) : '-');
       row.appendChild(metaEl);
 
       // 5. Przycisk "X" do odczepiania
@@ -11111,7 +11368,7 @@
       clearBtn.className = 'hp-row-clear';
       clearBtn.textContent = '×';
       clearBtn.title = "Odczep broń";
-      clearBtn.disabled = !hp.mount || !!hp.destroyed;
+      clearBtn.disabled = (!(hp.mount || hangarMounts.length)) || !!hp.destroyed;
       clearBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         applyWeaponToHardpoint(hp, null);
@@ -11207,7 +11464,7 @@
         atlas: {
           id: 'atlas',
           name: 'Atlas',
-          role: 'Capital / Uniwersalny',
+          role: 'Independent supercapital',
           cost: 0,
           shipFrame: 'atlas',
           spriteSrc: "assets/capital_ship_rect_v1.png",
@@ -11228,8 +11485,8 @@
         },
         frigate: {
           id: 'frigate',
-          name: 'Terranova Frigate',
-          role: 'Szybki support',
+          name: 'Custos',
+          role: 'Terra Nova frigate',
           cost: 4200,
           shipFrame: 'terran_frigate',
           spriteSrc: terranFrigateImg,
@@ -11258,8 +11515,8 @@
         },
         destroyer: {
           id: 'destroyer',
-          name: 'Terranova Destroyer',
-          role: 'Szturmowy',
+          name: 'Hasta',
+          role: 'Terra Nova destroyer',
           cost: 7600,
           shipFrame: 'terran_destroyer',
           spriteSrc: terranDestroyerImg,
@@ -11288,8 +11545,8 @@
         },
         battleship: {
           id: 'battleship',
-          name: 'Terranova Battleship',
-          role: 'Ciezki kapital',
+          name: 'Bellator',
+          role: 'Terra Nova battleship',
           cost: 12400,
           shipFrame: 'terran_battleship',
           spriteSrc: terranBattleshipImg,
@@ -12058,6 +12315,7 @@
           <button class="mechanic-tab-btn" data-filter="main">Bron glowna</button>
           <button class="mechanic-tab-btn" data-filter="missile">Rakiety</button>
           <button class="mechanic-tab-btn" data-filter="aux">Bron dodatkowa</button>
+          <button class="mechanic-tab-btn" data-filter="hangar">Hangary</button>
           <button class="mechanic-tab-btn" data-filter="special">Bron specjalna</button>
         </div>
         <div id="mechanic-available" class="weapon-pool mechanic-list-scroll"></div>
@@ -12074,6 +12332,7 @@
           <button class="mechanic-tab-btn" data-filter="main">Bron glowna</button>
           <button class="mechanic-tab-btn" data-filter="missile">Rakiety</button>
           <button class="mechanic-tab-btn" data-filter="aux">Bron dodatkowa</button>
+          <button class="mechanic-tab-btn" data-filter="hangar">Hangary</button>
           <button class="mechanic-tab-btn" data-filter="special">Bron specjalna</button>
         </div>
         <div class="mechanic-batch-row">
@@ -13487,16 +13746,9 @@
       if (k === 'z') {
         if (!(Game.player.weapons?.[HP.HANGAR]?.length)) { toast('Brak dostępnych hangarów.'); return; }
         if (SQUAD.order === 'idle' || SQUAD.list.length === 0) {
-          // start + ESKORTA
-          SQUAD.list = [];
-          for (let i = 0; i < FIGHTERS_PER_LAUNCH; i++) {
-            const f = spawnFighter();
-            f.formIndex = i;              // <- indeks w formacji
-            SQUAD.list.push(f);
-          }
-          SQUAD.order = 'escort';
-          SQUAD.targets = [];
-          toast('Myśliwce: ESKORTA');
+          const launched = launchMountedFighterSquadrons();
+          if (!launched.length) return;
+          toast(`Myśliwce: ESKORTA (${launched.length})`);
         } else if (SQUAD.order === 'escort') {
           SQUAD.targets = pickSquadTargets();
           SQUAD.order = 'attack';
@@ -16545,7 +16797,6 @@
     const FIGHTER_ORBIT_RADIUS = 200;  // były zbyt blisko
     const FIGHTER_ORBIT_SPEED = 1.8;
     const FIGHTER_ATTACK_RANGE = 1000;
-    const FIGHTERS_PER_LAUNCH = 10;
     const FIGHTER_ACCEL = 880;
     const FIGHTER_MAX_SPEED = 1180;
     const FIGHTER_TURN_RATE = 9.6;
@@ -16672,6 +16923,100 @@
 
       return createdFighters;
     };
+
+    function getMountedFighterSquadrons() {
+      return (Game.player.weapons?.[HP.HANGAR] || [])
+        .map(entry => entry?.squadron || (entry?.weapon?.squadronId ? getFighterSquadronDef(entry.weapon.squadronId) : null))
+        .filter(Boolean);
+    }
+
+    function spawnFighterFromSquadron(squadron, squadronIndex = 0, fighterIndex = 0, globalIndex = 0, totalSquadrons = 1) {
+      if (!window.ship) return null;
+      const halfW = (ship.w || 60) * 0.5;
+      const halfH = (ship.h || 120) * 0.1;
+      const side = (fighterIndex % 2 === 0) ? -1 : 1;
+      const lane = Math.floor(fighterIndex / 2);
+      const slot = { x: halfW * side, y: halfH + (lane - 2) * 18, side };
+      const c = Math.cos(ship.angle);
+      const s = Math.sin(ship.angle);
+      const spawnX = ship.pos.x + (slot.x * c - slot.y * s);
+      const spawnY = ship.pos.y + (slot.x * s + slot.y * c);
+      const f = makeNPCBase({ x: spawnX, y: spawnY }, {
+        hp: squadron.hp,
+        accel: squadron.accel,
+        maxSpeed: squadron.maxSpeed,
+        turn: squadron.turn,
+        radius: squadron.radius,
+        mass: squadron.mass,
+        separationRange: squadron.separationRange
+      });
+
+      f.friendly = true;
+      f.mission = true;
+      f.fighter = true;
+      f.type = 'fighter';
+      f.squadronId = squadron.id;
+      f.squadronName = squadron.name;
+      f.squadronIndex = squadronIndex;
+      f.color = squadron.color || '#7cff91';
+      f.vx = ship.vel.x + (c * 180 * slot.side);
+      f.vy = ship.vel.y + (s * 180 * slot.side);
+      f.angle = ship.angle;
+      f.gun = squadron.weaponId;
+      f.msl = squadron.missileId;
+      f.mslAmmo = squadron.missileAmmo;
+      f.gunCD = 0.5;
+
+      if (!window.SQUAD) window.SQUAD = { list: [], order: 'idle', targets: [] };
+      f.formIndex = globalIndex;
+      const row = Math.floor((fighterIndex + 1) / 2);
+      const formSide = (fighterIndex % 2 === 0) ? 1 : -1;
+      const squadLane = (squadronIndex - (Math.max(1, totalSquadrons) - 1) * 0.5) * 130;
+      f.formationOffset = { x: -140 - (row * 50), y: squadLane + formSide * (60 + row * 30) };
+      f.squad = { leader: ship, type: 'fighter', squadronId: squadron.id };
+      f.ai = (dt) => { if (window.runAdvancedFighterAI) window.runAdvancedFighterAI(f, dt); };
+
+      window.SQUAD.list.push(f);
+      npcs.push(f);
+
+      if (window.spawnParticle) {
+        for (let i = 0; i < 4; i++) {
+          window.spawnParticle(
+            { x: spawnX, y: spawnY },
+            { x: ship.vel.x + (Math.random() - 0.5) * 40, y: ship.vel.y + (Math.random() - 0.5) * 40 },
+            0.3, '#ffffff', 2 + Math.random() * 2, false
+          );
+        }
+      }
+      return f;
+    }
+
+    function launchMountedFighterSquadrons() {
+      const squadrons = getMountedFighterSquadrons();
+      if (!squadrons.length) {
+        if (typeof toast === 'function') toast('Brak modułu hangaru!');
+        return [];
+      }
+      SQUAD.list = [];
+      SQUAD.order = 'escort';
+      SQUAD.targets = [];
+      const created = [];
+      let globalIndex = 0;
+      for (let si = 0; si < squadrons.length; si++) {
+        const squadron = squadrons[si];
+        const count = Math.max(1, Number(squadron.squadSize) || 1);
+        for (let fi = 0; fi < count; fi++) {
+          const f = spawnFighterFromSquadron(squadron, si, fi, globalIndex++, squadrons.length);
+          if (f) created.push(f);
+        }
+      }
+      return created;
+    }
+
+    window.spawnFighter = function (squadronId = 'multirole') {
+      return spawnFighterFromSquadron(getFighterSquadronDef(squadronId), 0, 0, window.SQUAD?.list?.length || 0, 1);
+    };
+    window.launchMountedFighterSquadrons = launchMountedFighterSquadrons;
 
 
 
@@ -18606,6 +18951,13 @@
       const tAiGrid0 = performance.now();
       if (window.rebuildAIGrid) window.rebuildAIGrid(npcs, true);
       window.__aiGridMs = (window.__aiGridMs || 0) + (performance.now() - tAiGrid0);
+      // Koordynator bitewny: sloty linii walki + flankowania dla capitali
+      // (throttling wewnątrz — pełny rebuild co ~0.45s).
+      if (window.updateFleetCoordinator) {
+        const tCoord0 = performance.now();
+        window.updateFleetCoordinator(npcs, ship, dt);
+        window.__aiCoordMs = (window.__aiCoordMs || 0) + (performance.now() - tCoord0);
+      }
       let measuredAiMs = 0;
       for (const npc of npcs) {
         if (layoutChanged || npc.__editorLayoutVersion !== npcHardpointRuntime.version) {
@@ -23073,7 +23425,13 @@
 
       const activeHullId = normalizePlayerHullId(hull.id);
       const previousHardpoints = Array.isArray(Game.player?.hardpoints)
-        ? Game.player.hardpoints.map(h => ({ type: h.type, mount: h.mount, ammo: h.ammo, maxAmmo: h.maxAmmo }))
+        ? Game.player.hardpoints.map(h => ({
+          type: h.type,
+          mount: h.mount,
+          ammo: h.ammo,
+          maxAmmo: h.maxAmmo,
+          hangarSquadrons: h.type === HP.HANGAR ? getHardpointHangarSquadrons(h) : undefined
+        }))
         : [];
 
       ensurePlayerOwnsHull(activeHullId);
@@ -24085,42 +24443,14 @@
     if (supportEngageBtn) {
       supportEngageBtn.addEventListener('click', () => setSupportOrder('engage', { force: true }));
     }
-    if (supportModeFriendlyBtn) {
-      supportModeFriendlyBtn.addEventListener('click', () => setSupportSpawnMode('friendly', { force: true }));
+    if (supportFactionTerranBtn) {
+      supportFactionTerranBtn.addEventListener('click', () => setSupportFaction('terran', { force: true }));
     }
-    if (supportModePirateBtn) {
-      supportModePirateBtn.addEventListener('click', () => setSupportSpawnMode('pirate', { force: true }));
+    if (supportFactionPirateBtn) {
+      supportFactionPirateBtn.addEventListener('click', () => setSupportFaction('pirate', { force: true }));
     }
-    if (supportModeDummyBtn) {
-      supportModeDummyBtn.addEventListener('click', () => setSupportSpawnMode('dummy', { force: true }));
-    }
-    if (supportSpawnButtons && supportSpawnButtons.forEach) {
-      supportSpawnButtons.forEach(btn => {
-        const key = btn.dataset.supportSpawn;
-        if (SUPPORT_CLICK_TYPES.has(key)) {
-          btn.addEventListener('click', () => {
-            if (btn.getAttribute('aria-disabled') === 'true') return;
-            const mode = getSupportSpawnMode();
-            if (key === 'carrier_fighter') {
-              const carrier = getFriendlyCarrierEntity();
-              if (!carrier) return;
-              spawnCallInShip('fighter', { anchor: carrier, mode });
-            } else {
-              spawnCallInShip(key, { mode });
-            }
-            if (mode === 'friendly') setSupportOrder('guard', { force: true });
-          });
-        } else if (isSupportDragKey(key)) {
-          btn.addEventListener('mousedown', (event) => {
-            if (event.button !== 0) return;
-            if (btn.getAttribute('aria-disabled') === 'true') return;
-            beginSupportDrag(key, btn);
-          });
-          btn.addEventListener('click', (event) => {
-            event.preventDefault();
-          });
-        }
-      });
+    if (supportFactionIndependentBtn) {
+      supportFactionIndependentBtn.addEventListener('click', () => setSupportFaction('independent', { force: true }));
     }
     window.addEventListener('mouseup', (event) => {
       if (endSupportDrag(event)) {
