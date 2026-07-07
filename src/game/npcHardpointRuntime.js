@@ -168,9 +168,15 @@ function normalizeEditorEngine(marker, idx, kind = 'main') {
 
 function getEditorShipIdForNpc(npc) {
   if (!npc) return null;
+  const shipFrame = String(npc.shipFrame || '').toLowerCase();
+  if (shipFrame === 'atlas') return 'atlas';
+  if (shipFrame === 'terran_carrier') return 'terran_carrier';
+  if (shipFrame === 'terran_supercapital') return 'terran_supercapital';
   const type = String(npc.type || '').toLowerCase();
-  if (type === 'supercapital') return 'atlas';
-  if (type === 'capital_carrier' || type === 'carrier') return 'capital_carrier';
+  if (type === 'atlas') return 'atlas';
+  if (type === 'supercapital') return 'terran_supercapital';
+  if (type === 'carrier') return 'terran_carrier';
+  if (type === 'capital_carrier') return 'capital_carrier';
   if (type === 'battleship') return npc.isPirate ? 'pirate_battleship' : 'battleship';
   if (type === 'destroyer') return npc.isPirate ? 'pirate_destroyer' : 'destroyer';
   if (type.includes('frigate')) return npc.isPirate ? 'pirate_frigate' : 'frigate';

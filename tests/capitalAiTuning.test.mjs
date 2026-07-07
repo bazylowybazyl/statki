@@ -19,7 +19,7 @@ test('capital ideal range preserves existing battleship broadside behavior', () 
 
 test('capital ideal range uses carrier and supercapital weapon range instead of battleship fallback', () => {
   assert.equal(resolveCapitalIdealRange({
-    type: 'capital_carrier',
+    type: 'carrier',
     radius: 150,
     weaponRange: 2300
   }, { radius: 220 }), 2300);

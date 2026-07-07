@@ -6,7 +6,9 @@ import * as planetaryRing from '../src/3d/planetaryRing3D.js';
 
 const IMAGE_SIZES = Object.freeze({
   atlas: [3747, 1677],
-  terran_battleship: [1158, 714]
+  terran_battleship: [1158, 714],
+  terran_carrier: [1672, 941],
+  terran_supercapital: [1672, 941]
 });
 
 const whole = (value) => Math.round(value);
@@ -16,6 +18,8 @@ test('hull render sizes use the shared world-scale tuning', () => {
 
   const atlas = ships.getHullRenderSize('atlas', ...IMAGE_SIZES.atlas);
   const battleship = ships.getHullRenderSize('terran_battleship', ...IMAGE_SIZES.terran_battleship);
+  const carrier = ships.getHullRenderSize('terran_carrier', ...IMAGE_SIZES.terran_carrier);
+  const supercapital = ships.getHullRenderSize('terran_supercapital', ...IMAGE_SIZES.terran_supercapital);
 
   assert.equal(atlas.length, 1800);
   assert.equal(atlas.w, 1800);
@@ -26,6 +30,16 @@ test('hull render sizes use the shared world-scale tuning', () => {
   assert.equal(battleship.w, 624);
   assert.equal(battleship.h, 385);
   assert.equal(battleship.radius, 132);
+
+  assert.equal(carrier.length, 1080);
+  assert.equal(carrier.w, 1080);
+  assert.equal(carrier.h, 608);
+  assert.equal(carrier.radius, 192);
+
+  assert.equal(supercapital.length, 1560);
+  assert.equal(supercapital.w, 1560);
+  assert.equal(supercapital.h, 878);
+  assert.equal(supercapital.radius, 300);
 });
 
 test('planetary ring layout stays compact while preserving a parking band', () => {

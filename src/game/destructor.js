@@ -130,8 +130,10 @@ const STRESS_COLORS = Array.from({ length: 32 }, (_, i) => {
 const SHIELD_AUTHORITY_BY_CLASS = Object.freeze({
   atlas: 3.8,
   supercapital: 3.8,
+  terran_supercapital: 3.8,
   capital_carrier: 3.2,
   carrier: 3.2,
+  terran_carrier: 3.2,
   terran_battleship: 2.35,
   pirate_battleship: 2.2,
   battleship: 2.25,
@@ -1289,16 +1291,22 @@ function getShieldAuthorityKey(entity) {
 
   if (!rawKey) return 'default';
   if (rawKey === 'frigate_pd' || rawKey === 'frigate_laser') return 'frigate';
-  if (rawKey === 'carrier') return 'capital_carrier';
+  if (rawKey === 'carrier') return 'terran_carrier';
   if (rawKey === 'atlas_ii') return 'atlas';
-  if (rawKey === 'atlas' || rawKey === 'supercapital') return 'supercapital';
+  if (rawKey === 'atlas') return 'atlas';
+  if (rawKey === 'supercapital') return 'terran_supercapital';
 
   return rawKey;
 }
 
-function getShieldAuthority(entity) {
+export function getShieldAuthorityDebugInfo(entity) {
   const key = getShieldAuthorityKey(entity);
   const classMult = Number(SHIELD_AUTHORITY_BY_CLASS[key] ?? SHIELD_AUTHORITY_BY_CLASS.default) || 1.0;
+  return { key, classMult };
+}
+
+function getShieldAuthority(entity) {
+  const { classMult } = getShieldAuthorityDebugInfo(entity);
   const shieldMax = Math.max(0, Number(entity?.shield?.max) || Number(entity?.shieldMax) || 0);
   const mass = Math.max(1, getEntityMass(entity));
   const shieldExp = Math.max(0, Number(DESTRUCTOR_CONFIG.shieldAuthorityShieldMaxExp) || 0);
