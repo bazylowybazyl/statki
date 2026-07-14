@@ -333,7 +333,11 @@ export function computeCommandVisual(command, from, unit = null) {
     };
   }
 
-  const showGhost = type === 'move' || type === 'attack-move' || type === 'approach' || type === 'ram';
+  // Ghost (sylwetka statku w miejscu docelowym) TYLKO dla czystego ruchu do
+  // punktu. Rozkaz ATTACK to 'attack-move' z targetEntity — wtedy ghost ląduje
+  // NA sprite'cie wroga i go zasłania, więc go pomijamy. Approach/ram/orbit też
+  // celują w jednostkę, więc bez ghosta.
+  const showGhost = (type === 'move' || type === 'attack-move') && !command.targetEntity;
   return {
     type,
     target,

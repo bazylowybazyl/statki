@@ -23,21 +23,24 @@ import {
     getZoneMaterials,
     extractFacesFromNonIndexed
 } from './ringCityAssets.js';
+import { SYNTHCITY_PITCH, composeInwardCityMatrix } from './ringCitySurface.js';
+import { buildOutwardBatchedCity } from './ringCityBatchedBuildings.js';
 
 // --- Constants ---
 const WINDOW_SCALE = 500;
-const NUM_CHUNKS = 16;
+// Smaller angular chunks keep their bounding volumes tight on the giant
+// Earth/Mars rings. This lets Three.js reject off-screen city arcs early.
+const NUM_CHUNKS = 64;
 const CHUNK_ARC = (Math.PI * 2) / NUM_CHUNKS;
-const BUILDING_FLOOR_CLEARANCE = 56;
+const BUILDING_FLOOR_CLEARANCE = 2;
 // --- Inner-city building clusters (synthcity-style dense 2×N packing) ---
 const BUILD_SCALE = 1.0;            // base inner-city building size (replaces the old inline GLOBAL_SCALE = 3.0)
-const BUILD_HEIGHT_BIAS = 0.42;     // height multiplier on top of BUILD_SCALE (low-rise city)
-const BUILD_BIG_FOOTPRINT = 1.45;   // s_04/s_05 footprint multiplier (chunkier landmarks)
-const BUILD_BIG_HEIGHT = 1.6;       // s_04/s_05 height multiplier (taller tower accents)
-const BUILD_BIG_FIT = 2.0;          // s_04/s_05 footprint allowance vs a sub-cell (~1 cell wide tower)
-const BUILD_CLUSTER_FOOT = 40;      // target building footprint (world units) — sizes the per-cell cluster grid
-const BUILD_CLUSTER_PACK = 0.98;    // how much of a sub-cell a building fills (→ tight clusters)
-const BUILD_CLUSTER_FILL = { residential: 0.9, commercial: 0.82, mega: 0.7 }; // slot fill ratio per family
+const BUILD_HEIGHT_BIAS = 1.0;
+const BUILD_BIG_FOOTPRINT = 1.0;
+const BUILD_BIG_HEIGHT = 1.0;
+const BUILD_BIG_FIT = 1.12;
+const BUILD_CLUSTER_PACK = 0.94;
+const BUILD_CLUSTER_FILL = { residential: 0.78, commercial: 0.74, mega: 0.66 };
 const BUILD_AD_CHANCE = 0.16;       // fraction of clustered city buildings that carry an animated billboard
 const STOREFRONT_BRIDGE_MIN_BUILDING_H = 70;
 const STOREFRONT_BRIDGE_MIN_LENGTH = 38;
@@ -92,6 +95,7 @@ const LOD_LEVEL_BY_MAT = {
 // --- Material dict cache per zone ---
 const matDictCache = {};
 const farMaterialCache = new WeakMap();
+const farProxyMaterialCache = new Map();
 
 // ============================================================
 // DYNAMICZNE HOLOGRAMY I REKLAMY
@@ -369,12 +373,16 @@ function createBuilding(zone, geoMap, rnd, skipDetails = false) {
             geoMap[matKey] = geoMap[matKey] || [];
             geoMap[matKey].push(geo);
 
-            totalH = modelId.startsWith('s_05')
-                ? 240 * scaleZ
-                : modelId.startsWith('s_04')
-                    ? 210 * scaleZ
-                    : 190 * scaleZ;
-            footprintRadius = Math.max(footprintRadius, 85 * scaleXY);
+            geo.computeBoundingBox();
+            const bounds = geo.boundingBox;
+            if (bounds && !bounds.isEmpty()) {
+                totalH = Math.max(1, bounds.max.z - bounds.min.z);
+                footprintRadius = Math.max(
+                    1,
+                    (bounds.max.x - bounds.min.x) * 0.5,
+                    (bounds.max.y - bounds.min.y) * 0.5
+                );
+            }
         } else {
             const podiumH = 14 + rnd() * 16;
             const towerW = 50 + rnd() * 40;
@@ -512,7 +520,10 @@ function getChunkIndex(angle) {
 // ringFloor:  XY = ring plane, Z = height
 // Transform: Translate(cos(a)*R, sin(a)*R, 0) × RotateZ(a)
 // ============================================================
-function buildCellToWorldMatrix(cellCenterAngle, cellCenterRadius) {
+export function buildCellToWorldMatrix(cellCenterAngle, cellCenterRadius, ring = null) {
+    if (ring?.citySurfaceMode === 'inward') {
+        return composeInwardCityMatrix(cellCenterAngle, cellCenterRadius, ring.layout);
+    }
     const cosA = Math.cos(cellCenterAngle);
     const sinA = Math.sin(cellCenterAngle);
     // Combined: RotateZ(a) then Translate to cell center
@@ -527,7 +538,7 @@ function buildCellToWorldMatrix(cellCenterAngle, cellCenterRadius) {
 // Build one rigid storefront instance, placed (not bent) into the cell's tangent
 // frame — the same translate+rotate+uniform-scale pipeline the SynthCity buildings
 // use. Returns geometry already in ringFloor world space, ready to merge.
-export function createStorefrontInstanceGeometry(centerAngle, centerRadius, scale, faceRotation = 0) {
+export function createStorefrontInstanceGeometry(centerAngle, centerRadius, scale, faceRotation = 0, ring = null) {
     if (!Number.isFinite(centerAngle) || !Number.isFinite(centerRadius)) return null;
     const geo = cloneSynthCityGeometry('storefronts');
     if (!geo || !geo.hasAttribute('position')) {
@@ -553,7 +564,7 @@ export function createStorefrontInstanceGeometry(centerAngle, centerRadius, scal
     if (faceRotation) geo.rotateZ(faceRotation);
 
     // Translate + rotate into the cell's tangent frame (identical to the buildings).
-    geo.applyMatrix4(buildCellToWorldMatrix(centerAngle, centerRadius));
+    geo.applyMatrix4(buildCellToWorldMatrix(centerAngle, centerRadius, ring));
 
     // Normalize attributes so this merges cleanly with the other storefront geos.
     const posCount = geo.attributes.position.count;
@@ -578,7 +589,7 @@ function getCellByRowCol(cells) {
     return map;
 }
 
-function appendStorefrontInstancesToChunks(chunks, cells) {
+function appendStorefrontInstancesToChunks(chunks, cells, ring) {
     if (!chunks?.length || !cells?.length) return;
     if (!synthCityAssets.models.storefronts) return;
 
@@ -612,7 +623,7 @@ function appendStorefrontInstancesToChunks(chunks, cells) {
 
             const centerAngle = (cell.angleStart + cell.angleEnd) * 0.5;
             const centerRadius = (cell.innerRadius + cell.outerRadius) * 0.5;
-            const geo = createStorefrontInstanceGeometry(centerAngle, centerRadius, scale);
+            const geo = createStorefrontInstanceGeometry(centerAngle, centerRadius, scale, 0, ring);
             if (!geo) continue;
 
             const chunkIdx = chunks.length === NUM_CHUNKS ? getChunkIndex(centerAngle) : 0;
@@ -868,8 +879,10 @@ function generateCellBuildingData(cell, ring) {
     const cellRadialDepth = Math.max(1, buildOuterRadi - buildInnerRadi);
     let gridCols, gridRows, buildCount, subCellRadius;
     if (isCityFamily) {
-        gridCols = Math.max(1, Math.min(3, Math.round(cellTangWidth / BUILD_CLUSTER_FOOT)));
-        gridRows = Math.max(2, Math.min(6, Math.round(cellRadialDepth / BUILD_CLUSTER_FOOT)));
+        const synthBlocksTangential = Math.max(1, Math.round(cellTangWidth / SYNTHCITY_PITCH));
+        const synthBlocksAcross = Math.max(1, Math.round(cellRadialDepth / SYNTHCITY_PITCH));
+        gridCols = synthBlocksTangential * 2;
+        gridRows = synthBlocksAcross * 2;
         subCellRadius = Math.min(cellTangWidth / gridCols, cellRadialDepth / gridRows) * 0.5 * BUILD_CLUSTER_PACK;
         const fillRatio = BUILD_CLUSTER_FILL[isMegaZone(zone) ? 'mega' : zoneFamily] ?? 0.75;
         buildCount = Math.max(1, Math.round(gridCols * gridRows * fillRatio * (0.85 + rand() * 0.3)));
@@ -1068,13 +1081,16 @@ function getFarMaterial(sourceMaterial, matKey) {
     const baseEmissiveIntensity = Number.isFinite(sourceMaterial.emissiveIntensity)
         ? sourceMaterial.emissiveIntensity
         : (sourceMaterial.emissiveMap ? 1 : 0);
+    // Emisja okien trzymana <=1.5: w hierarchii jasności HDR budynki mają
+    // świecić subtelnie, wyraźnie poniżej pocisków i dysz (bloomConfig.js).
+    // Wcześniejsze 2.15x/3.0 bloomowało miasto mocniej niż ogień z dział.
     const emissiveBoost = matKey.startsWith('building_')
-        ? 2.15
-        : (matKey === 'wall' ? 1.55 : 1.0);
+        ? 1.35
+        : (matKey === 'wall' ? 1.25 : 1.0);
     const emissiveIntensity = sourceMaterial.emissiveMap
         ? Math.max(
             baseEmissiveIntensity * emissiveBoost,
-            matKey.startsWith('building_') ? 3.0 : (matKey === 'wall' ? 2.1 : baseEmissiveIntensity)
+            matKey.startsWith('building_') ? 1.5 : (matKey === 'wall' ? 1.4 : baseEmissiveIntensity)
         )
         : baseEmissiveIntensity;
 
@@ -1106,7 +1122,7 @@ function getFarMaterial(sourceMaterial, matKey) {
 function createChunkMesh(geometry, material, matKey) {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData.lodLevel = matKey.startsWith('building_')
-        ? 'CORE'
+        ? 'BUILDING'
         : (LOD_LEVEL_BY_MAT[matKey] || 'MEDIUM');
 
     const farMaterial = getFarMaterial(material, matKey);
@@ -1115,6 +1131,74 @@ function createChunkMesh(geometry, material, matKey) {
         mesh.userData.farMaterial = farMaterial;
         mesh.userData.usingFarMaterial = false;
     }
+    return mesh;
+}
+
+function orientDecorationMesh(mesh, decoration, ring, localRotation = 0) {
+    if (ring?.citySurfaceMode !== 'inward') {
+        mesh.rotation.z = localRotation + (Number(decoration?.cellAngle) || 0);
+        return false;
+    }
+    const frame = composeInwardCityMatrix(
+        Number(decoration?.cellAngle) || 0,
+        ring.layout?.inner?.innerR || 0,
+        ring.layout
+    );
+    frame.setPosition(0, 0, 0);
+    mesh.quaternion.setFromRotationMatrix(frame);
+    if (localRotation) mesh.rotateZ(localRotation);
+    return true;
+}
+
+export function createBuildingProxyGeometry(sourceGeometry) {
+    if (!sourceGeometry) return null;
+    if (!sourceGeometry.boundingBox) sourceGeometry.computeBoundingBox();
+    const box = sourceGeometry.boundingBox;
+    if (!box || box.isEmpty()) return null;
+    const sx = Math.max(2, box.max.x - box.min.x);
+    const sy = Math.max(2, box.max.y - box.min.y);
+    const sz = Math.max(2, box.max.z - box.min.z);
+    const geometry = new THREE.BoxGeometry(sx, sy, sz, 1, 1, 1);
+    geometry.translate(
+        (box.min.x + box.max.x) * 0.5,
+        (box.min.y + box.max.y) * 0.5,
+        (box.min.z + box.max.z) * 0.5
+    );
+    return geometry;
+}
+
+function getFarProxyMaterial(zone) {
+    const family = getZoneFamily(zone || 'residential');
+    let material = farProxyMaterialCache.get(family);
+    if (material) return material;
+    const color = family === 'industrial'
+        ? 0x514a28
+        : family === 'commercial' ? 0x3a2948 : 0x263d49;
+    material = new THREE.MeshBasicMaterial({ color, fog: true });
+    material.name = `RingBuildingProxy:${family}`;
+    material.userData = { ...(material.userData || {}), shared: true };
+    farProxyMaterialCache.set(family, material);
+    return material;
+}
+
+function addFarBuildingProxy(chunkGroup, proxyGeometries, zone) {
+    if (!proxyGeometries?.length) return null;
+    let merged = null;
+    try {
+        merged = BufferGeometryUtils.mergeGeometries(proxyGeometries, false);
+    } catch (_error) {
+        merged = null;
+    }
+    for (const geometry of proxyGeometries) geometry.dispose?.();
+    proxyGeometries.length = 0;
+    if (!merged) return null;
+    merged.computeBoundingSphere();
+    merged.computeBoundingBox();
+    const mesh = new THREE.Mesh(merged, getFarProxyMaterial(zone));
+    mesh.name = 'RingFarBuildingProxy';
+    mesh.userData.lodLevel = 'FAR_PROXY';
+    mesh.visible = false;
+    chunkGroup.add(mesh);
     return mesh;
 }
 
@@ -1162,11 +1246,7 @@ export function createDistrictForCell(cell, ring) {
         try {
             mergedGeo = BufferGeometryUtils.mergeGeometries(cellGeoMap[matKey], false);
         } catch (e) {
-            try {
-                mergedGeo = BufferGeometryUtils.mergeBufferGeometries(cellGeoMap[matKey], false);
-            } catch (e2) {
-                continue;
-            }
+            continue;
         }
         if (!mergedGeo) continue;
 
@@ -1272,11 +1352,17 @@ export function createDistrictForCell(cell, ring) {
 // ============================================================
 export function buildAllDistricts(zoneGrid, ring) {
     if (!zoneGrid || !ring) return [];
+    if (ring.citySurfaceMode === 'inward') {
+        return buildOutwardBatchedCity(zoneGrid, ring);
+    }
 
     // Process each ring separately so chunks carry a ringId and zone types
     // never bleed across rings.
     const results = [];
-    for (const ringId of [RING_INNER, RING_INDUSTRIAL, RING_MILITARY]) {
+    // Factory districts and the outer logistics band deliberately have no
+    // procedural buildings. The baked mode owns the complete city surface.
+    for (const ringId of [RING_INNER]) {
+        if (ring.cityRenderMode === 'baked') continue;
         const ringCells = zoneGrid.getCellsForRing
             ? zoneGrid.getCellsForRing(ringId).filter(c => c.zone)
             : zoneGrid.getPopulatedCells().filter(c => c.ring === ringId);
@@ -1296,6 +1382,7 @@ function buildChunksForRing(cells, ringId, ring) {
     for (let i = 0; i < NUM_CHUNKS; i++) {
         chunks.push({
             geoByMat: {},
+            farBuildingProxyGeos: [],
             neonEdgeGeos: [],
             decorationData: [],
             zones: new Set(),
@@ -1317,12 +1404,17 @@ function buildChunksForRing(cells, ringId, ring) {
         chunk.cellKeys.push(cell.key);
 
         // Build cell-to-world matrix
-        const cellToWorld = buildCellToWorldMatrix(cellCenterAngle, cellCenterRadius);
+        const cellToWorld = buildCellToWorldMatrix(cellCenterAngle, cellCenterRadius, ring);
 
         // Transform all geometries to world coords and bucket by material
         for (const matKey in cellGeoMap) {
             for (const geo of cellGeoMap[matKey]) {
                 geo.applyMatrix4(cellToWorld);
+
+                if (matKey.startsWith('building_')) {
+                    const proxy = createBuildingProxyGeometry(geo);
+                    if (proxy) chunk.farBuildingProxyGeos.push(proxy);
+                }
 
                 if (matKey === 'neonEdges') {
                     chunk.neonEdgeGeos.push(geo);
@@ -1350,7 +1442,7 @@ function buildChunksForRing(cells, ringId, ring) {
     }
 
     if (ringId === RING_INNER) {
-        appendStorefrontInstancesToChunks(chunks, cells);
+        appendStorefrontInstancesToChunks(chunks, cells, ring);
     }
 
     // Build merged meshes per chunk
@@ -1376,9 +1468,7 @@ function buildChunksForRing(cells, ringId, ring) {
             try {
                 mergedGeo = BufferGeometryUtils.mergeGeometries(geos, false);
             } catch (e) {
-                try {
-                    mergedGeo = BufferGeometryUtils.mergeBufferGeometries(geos, false);
-                } catch (e2) { continue; }
+                continue;
             }
             if (!mergedGeo) continue;
 
@@ -1403,14 +1493,15 @@ function buildChunksForRing(cells, ringId, ring) {
             chunkGroup.add(mesh);
         }
 
+        addFarBuildingProxy(chunkGroup, chunk.farBuildingProxyGeos, primaryZone);
+
         // Merge neon edges
         if (chunk.neonEdgeGeos.length > 0) {
             let mergedEdges;
             try {
                 mergedEdges = BufferGeometryUtils.mergeGeometries(chunk.neonEdgeGeos, false);
             } catch (e) {
-                try { mergedEdges = BufferGeometryUtils.mergeBufferGeometries(chunk.neonEdgeGeos, false); }
-                catch (e2) { mergedEdges = null; }
+                mergedEdges = null;
             }
             if (mergedEdges) {
                 // Same rationale as merged building geos: pre-compute bounds
@@ -1437,11 +1528,12 @@ function buildChunksForRing(cells, ringId, ring) {
                     geo.scale(dd.scale, dd.scale, dd.scale);
                     const mesh = new THREE.Mesh(geo, material);
                     mesh.position.set(dd.worldX, dd.worldY, dd.worldZ);
-                    mesh.rotation.z = Math.random() * Math.PI * 2;
+                    const outwardRotation = orientDecorationMesh(mesh, dd, ring, Math.random() * Math.PI * 2);
                     chunkGroup.add(mesh);
                     dynamicDecorations.push({
                         mesh,
-                        rotationSpeed: (Math.random() - 0.5) * 0.02
+                        rotationSpeed: (Math.random() - 0.5) * 0.02,
+                        localAxisRotation: outwardRotation
                     });
                 }
             } else if (dd.type === 'advert') {
@@ -1453,7 +1545,7 @@ function buildChunksForRing(cells, ringId, ring) {
                     geo.scale(dd.scaleX, dd.scaleX, dd.scaleZ);
                     const mesh = new THREE.Mesh(geo, material);
                     mesh.position.set(dd.worldX, dd.worldY, dd.worldZ);
-                    mesh.rotation.z = dd.rotationZ + dd.cellAngle;
+                    orientDecorationMesh(mesh, dd, ring, dd.rotationZ);
                     chunkGroup.add(mesh);
                     dynamicDecorations.push({
                         mesh,
@@ -1511,7 +1603,20 @@ function buildChunksForRing(cells, ringId, ring) {
 // Finds the chunk containing this cell and rebuilds the entire chunk.
 // ============================================================
 export function rebuildDistrictForCell(cell, ring) {
-    if (!ring) return;
+    if (!ring || !cell) return;
+
+    if (ring.citySurfaceMode === 'inward') {
+        if (cell.ring && cell.ring !== RING_INNER) return;
+        for (let i = ring.visualMeshes.length - 1; i >= 0; i--) {
+            const vm = ring.visualMeshes[i];
+            if (!vm?.isOutwardBatchedCity) continue;
+            vm.dispose?.();
+            ring.visualMeshes.splice(i, 1);
+        }
+        const results = buildOutwardBatchedCity(ring.zoneGrid, ring);
+        ring.visualMeshes.push(...results);
+        return results[0] || null;
+    }
 
     const cellCenterAngle = (cell.angleStart + cell.angleEnd) * 0.5;
     const chunkIdx = getChunkIndex(cellCenterAngle);
@@ -1533,6 +1638,11 @@ export function rebuildDistrictForCell(cell, ring) {
         }
     }
 
+    // Also clears any stale military chunk created by older saves/builds, but
+    // never rebuilds red procedural structures on the logistics band.
+    if (targetRingId === RING_INDUSTRIAL || targetRingId === RING_MILITARY ||
+        (ring.cityRenderMode === 'baked' && targetRingId === RING_INNER)) return;
+
     // Get all cells in this chunk from the zone grid (restricted to the same ring)
     const zoneGrid = ring.zoneGrid;
     if (!zoneGrid) return;
@@ -1550,6 +1660,7 @@ export function rebuildDistrictForCell(cell, ring) {
     // Build this chunk using the same logic as buildAllDistricts
     const chunk = {
         geoByMat: {},
+        farBuildingProxyGeos: [],
         neonEdgeGeos: [],
         decorationData: [],
         zones: new Set(),
@@ -1564,11 +1675,15 @@ export function rebuildDistrictForCell(cell, ring) {
         chunk.zones.add(zone);
         chunk.cellKeys.push(c.key);
 
-        const cellToWorld = buildCellToWorldMatrix(ccAngle, cellCenterRadius);
+        const cellToWorld = buildCellToWorldMatrix(ccAngle, cellCenterRadius, ring);
 
         for (const matKey in cellGeoMap) {
             for (const geo of cellGeoMap[matKey]) {
                 geo.applyMatrix4(cellToWorld);
+                if (matKey.startsWith('building_')) {
+                    const proxy = createBuildingProxyGeometry(geo);
+                    if (proxy) chunk.farBuildingProxyGeos.push(proxy);
+                }
                 if (matKey === 'neonEdges') {
                     chunk.neonEdgeGeos.push(geo);
                     chunk.hasNeonEdges = true;
@@ -1594,7 +1709,7 @@ export function rebuildDistrictForCell(cell, ring) {
     }
 
     if (targetRingId === RING_INNER) {
-        appendStorefrontInstancesToChunks([chunk], chunkCells);
+        appendStorefrontInstancesToChunks([chunk], chunkCells, ring);
     }
 
     const chunkGroup = new THREE.Group();
@@ -1608,8 +1723,7 @@ export function rebuildDistrictForCell(cell, ring) {
         try {
             mergedGeo = BufferGeometryUtils.mergeGeometries(geos, false);
         } catch (e) {
-            try { mergedGeo = BufferGeometryUtils.mergeBufferGeometries(geos, false); }
-            catch (e2) { continue; }
+            continue;
         }
         if (!mergedGeo) continue;
 
@@ -1623,12 +1737,13 @@ export function rebuildDistrictForCell(cell, ring) {
         chunkGroup.add(mesh);
     }
 
+    addFarBuildingProxy(chunkGroup, chunk.farBuildingProxyGeos, primaryZone);
+
     if (chunk.neonEdgeGeos.length > 0) {
         let mergedEdges;
         try { mergedEdges = BufferGeometryUtils.mergeGeometries(chunk.neonEdgeGeos, false); }
         catch (e) {
-            try { mergedEdges = BufferGeometryUtils.mergeBufferGeometries(chunk.neonEdgeGeos, false); }
-            catch (e2) { mergedEdges = null; }
+            mergedEdges = null;
         }
         if (mergedEdges) {
             mergedEdges.computeBoundingSphere();
@@ -1652,9 +1767,13 @@ export function rebuildDistrictForCell(cell, ring) {
                 geo.scale(dd.scale, dd.scale, dd.scale);
                 const mesh = new THREE.Mesh(geo, material);
                 mesh.position.set(dd.worldX, dd.worldY, dd.worldZ);
-                mesh.rotation.z = Math.random() * Math.PI * 2;
+                const outwardRotation = orientDecorationMesh(mesh, dd, ring, Math.random() * Math.PI * 2);
                 chunkGroup.add(mesh);
-                dynamicDecorations.push({ mesh, rotationSpeed: (Math.random() - 0.5) * 0.02 });
+                dynamicDecorations.push({
+                    mesh,
+                    rotationSpeed: (Math.random() - 0.5) * 0.02,
+                    localAxisRotation: outwardRotation
+                });
             }
         } else if (dd.type === 'advert') {
             const geo = cloneSynthCityGeometry(dd.modelId);
@@ -1665,7 +1784,7 @@ export function rebuildDistrictForCell(cell, ring) {
                 geo.scale(dd.scaleX, dd.scaleX, dd.scaleZ);
                 const mesh = new THREE.Mesh(geo, material);
                 mesh.position.set(dd.worldX, dd.worldY, dd.worldZ);
-                mesh.rotation.z = dd.rotationZ + dd.cellAngle;
+                orientDecorationMesh(mesh, dd, ring, dd.rotationZ);
                 chunkGroup.add(mesh);
                 dynamicDecorations.push({
                     mesh,

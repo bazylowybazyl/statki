@@ -67,47 +67,164 @@ function resolveAccelRef(npc) {
   return Math.max(60, Number(npc.accel) || 150);
 }
 
-// Zamienia punkt docelowy w świecie na thrust/strafe w osiach kadłuba.
+// Predykcyjny ogranicznik prędkości: maksymalna prędkość w danym KIERUNKU taka,
+// by zdążyć wyhamować przed przeszkodą (gracz / inny duży okręt) leżącą na
+// kursie. Zwraca Infinity, gdy nic nie blokuje. To lekarstwo na "wlatywanie z
+// rozpędu w Atlasa i wzajemne taranowanie": ciężki okręt zaczyna zwalniać z
+// wyprzedzeniem, zamiast liczyć na słabą, ograniczoną accelem separację.
+const OBSTACLE_LOOK = 1500;
+const OBSTACLE_BRAKE = 420;
+// Ogranicznik prędkości względem przeszkód. Sprawdza DWA kierunki (do celu i pędu)
+// w JEDNYM zapytaniu do grida i cache'uje wynik per klatkę (window.__frameId) —
+// bo liczone jest per capital w każdym substepie (~3×/klatkę), a pozycje między
+// substepami zmieniają się pomijalnie.
+function capitalObstacleSpeedCap(npc, d1x, d1y, d2x, d2y) {
+  const fid = window.__frameId;
+  if (fid && npc.__obsCapFid === fid && npc.__obsCapVal !== undefined) return npc.__obsCapVal;
+
+  const myR = npc.radius || 100;
+  const has2 = Number.isFinite(d2x) && (d2x !== 0 || d2y !== 0);
+  let cap = Infinity;
+  const consider = (ox, oy, oR) => {
+    const rx = ox - npc.x;
+    const ry = oy - npc.y;
+    const clearance = myR + oR + 150;
+    let along = rx * d1x + ry * d1y;
+    if (along > 0 && along <= OBSTACLE_LOOK) {
+      const perp = Math.abs(-rx * d1y + ry * d1x);
+      if (perp <= clearance) {
+        const v = Math.sqrt(2 * OBSTACLE_BRAKE * Math.max(0, along - clearance));
+        if (v < cap) cap = v;
+      }
+    }
+    if (has2) {
+      along = rx * d2x + ry * d2y;
+      if (along > 0 && along <= OBSTACLE_LOOK) {
+        const perp = Math.abs(-rx * d2y + ry * d2x);
+        if (perp <= clearance) {
+          const v = Math.sqrt(2 * OBSTACLE_BRAKE * Math.max(0, along - clearance));
+          if (v < cap) cap = v;
+        }
+      }
+    }
+  };
+  const ship = window.ship;
+  if (ship && !ship.destroyed && ship.pos) consider(ship.pos.x, ship.pos.y, ship.radius || 220);
+  if (window.queryAIGrid) {
+    const q = window.queryAIGrid(npc.x, npc.y, OBSTACLE_LOOK);
+    const buf = q.buffer;
+    const n = q.count;
+    for (let i = 0; i < n; i++) {
+      const o = buf[i];
+      if (!o || o === npc || o.dead || o === ship || o.fighter) continue;
+      consider(o.x, o.y, o.radius || 100);
+    }
+  }
+  if (fid) { npc.__obsCapFid = fid; npc.__obsCapVal = cap; }
+  return cap;
+}
+
+// Płynna interpolacja kąta po najkrótszej drodze (t: 0→a, 1→b).
+function angleLerp(a, b, t) {
+  const wrap = window.wrapAngle || ((x) => Math.atan2(Math.sin(x), Math.cos(x)));
+  return a + wrap(b - a) * clampNum(t, 0, 1);
+}
+
+// Zamienia punkt docelowy w świecie na thrust/strafe + zalecany kąt kadłuba.
 // Budżet prędkości: blisko celu ogranicza go droga hamowania sqrt(2·a·d)
 // (statek dohamowuje zamiast przestrzelić), daleko — cruise cap. Dzięki pętli
 // sprzężenia (desiredV - v) prędkość jest ograniczana także na ścieżce
 // fizycznych thrusterów, która ignoruje npc.maxSpeed.
+//
+// TURN-TO-BURN: terrańskie kadłuby nie mają silników bocznych (engines.side),
+// więc strafeNorm nie wytwarza siły. Dlatego gdy trzeba PRZEBYĆ dystans,
+// zwracamy facing = kierunek ruchu (dziób jedzie tam, gdzie leci statek, a
+// główny silnik go pcha — dokładnie jak działająca ścieżka komend RTS). Dopiero
+// na pozycji przechodzimy na opts.combatFacing (burta/działa na wroga). Bez tego
+// statek facił wroga i stał, bo lateralnie nie miał czym dojechać.
 function capitalArriveControls(npc, tx, ty, opts = {}) {
   const dx = tx - npc.x;
   const dy = ty - npc.y;
   const dist = Math.hypot(dx, dy);
   const maxSpeed = Math.max(40, Number(opts.maxSpeed) || npc.maxSpeed || 200);
-  const cruiseCap = Math.max(maxSpeed, Math.min(Number(opts.cruiseSpeed) || maxSpeed * 3, 1150));
+  // Bazowe maxSpeed capitali (105-280 u/s) jest zbyt niskie na dynamiczną
+  // bitwę, a arrive i tak hamuje przy celu (sqrt(2·a·d)) — dlatego realny pułap
+  // ruchu podnosimy z PODŁOGĄ.
+  const combatSpeed = Math.max(maxSpeed * (Number(opts.combatSpeedMul) || 1.05), 300);
+  const cruiseCap = Math.max(combatSpeed, Math.min(Number(opts.cruiseSpeed) || maxSpeed * 5, 1300));
   const combatRadius = Number(opts.combatRadius) || 2600;
   const arrival = Math.max(0, Number(opts.arrival) || 50);
-  const brakeAccel = Math.max(60, Number(opts.brakeAccel) || resolveAccelRef(npc) * 0.5);
+  const brakeAccel = Math.max(150, Number(opts.brakeAccel) || resolveAccelRef(npc) * 0.6);
   const remaining = Math.max(0, dist - arrival);
 
-  let budget = Math.min(remaining * 1.5, Math.sqrt(2 * brakeAccel * remaining) * 0.92);
-  budget = Math.min(budget, dist > combatRadius
-    ? cruiseCap
-    : maxSpeed * (Number(opts.combatSpeedMul) || 1.05));
+  let budget = Math.min(remaining * 1.6, Math.sqrt(2 * brakeAccel * remaining) * 0.95);
+  budget = Math.min(budget, dist > combatRadius ? cruiseCap : combatSpeed);
 
   const invD = dist > 1e-4 ? 1 / dist : 0;
-  const desiredVx = dx * invD * budget + (Number(opts.matchVx) || 0);
-  const desiredVy = dy * invD * budget + (Number(opts.matchVy) || 0);
+  const destDirX = dx * invD;
+  const destDirY = dy * invD;
+
+  // Predykcyjne omijanie: nie rozpędzaj się w stronę przeszkody szybciej, niż
+  // zdążysz wyhamować. Sprawdzamy kierunek do celu ORAZ kierunek aktualnego
+  // pędu (żeby skasować rozpęd, który niesie prosto w gracza/sojusznika).
+  if (!opts.noObstacleCap) {
+    const vlen = Math.hypot(npc.vx || 0, npc.vy || 0);
+    const useVel = vlen > 40;
+    const obsCap = capitalObstacleSpeedCap(
+      npc, destDirX, destDirY,
+      useVel ? (npc.vx || 0) / vlen : 0,
+      useVel ? (npc.vy || 0) / vlen : 0
+    );
+    if (obsCap < budget) budget = obsCap;
+  }
+
+  const desiredVx = destDirX * budget + (Number(opts.matchVx) || 0);
+  const desiredVy = destDirY * budget + (Number(opts.matchVy) || 0);
 
   const tau = Math.max(0.25, Number(opts.tau) || 0.55);
   const ax = (desiredVx - (npc.vx || 0)) / tau;
   const ay = (desiredVy - (npc.vy || 0)) / tau;
 
+  // Thrust/strafe liczymy w osiach BIEŻĄCEGO kąta (poprawne dla przyłożenia
+  // siły); dziób obracamy osobno przez zwracany `facing`.
   const c = Math.cos(npc.angle || 0);
   const s = Math.sin(npc.angle || 0);
   const accelRef = resolveAccelRef(npc);
 
-  npc.__speedCapHint = Math.max(budget, Math.hypot(desiredVx, desiredVy));
+  const moveSpeed = Math.hypot(desiredVx, desiredVy);
+  const combatFacing = Number.isFinite(opts.combatFacing) ? opts.combatFacing : null;
+  const moveHeading = moveSpeed > 30
+    ? Math.atan2(desiredVy, desiredVx)
+    : (combatFacing != null ? combatFacing : (npc.angle || 0));
+  const faceThreshold = Number.isFinite(opts.faceThreshold) ? opts.faceThreshold : (arrival + 550);
+  let facing;
+  if (combatFacing == null) {
+    facing = moveHeading;
+  } else {
+    // Daleko (t→1) kierunek ruchu; na pozycji (t→0) combat facing; płynnie.
+    const t = clampNum((dist - arrival) / Math.max(1, faceThreshold - arrival), 0, 1);
+    facing = angleLerp(combatFacing, moveHeading, t);
+  }
+
+  npc.__speedCapHint = Math.max(budget, moveSpeed);
 
   return {
     thrustNorm: clampNum((ax * c + ay * s) / accelRef, -1, 1),
     strafeNorm: clampNum((-ax * s + ay * c) / accelRef, -1, 1),
+    facing,
     dist,
     budget
   };
+}
+
+// Wygodny wrapper: policz sterowanie arrive (turn-to-burn + omijanie) i od razu
+// je zastosuj (autopilot dokłada separację). Używany m.in. przez formację guard
+// w index.html, żeby capitale wsparcia poruszały się tym samym mózgiem co w walce.
+function capitalArriveTo(npc, tx, ty, opts = {}) {
+  const dt = Number(opts.dt) || (1 / 60);
+  const ctl = capitalArriveControls(npc, tx, ty, opts);
+  applyCapitalAutopilot(npc, ctl.thrustNorm, ctl.strafeNorm, ctl.facing, 0, dt);
+  return ctl;
 }
 
 // Średni kąt montażu broni głównych względem dziobu. Statek z działami
@@ -171,7 +288,7 @@ function capitalIdleControls(npc) {
       return {
         thrustNorm: ctl.thrustNorm,
         strafeNorm: ctl.strafeNorm,
-        faceAngle: Math.atan2(home.y - npc.y, home.x - npc.x)
+        faceAngle: ctl.facing
       };
     }
   }
@@ -215,16 +332,17 @@ function computeFlankControls(npc, slot, opts = {}) {
   const ang = (Number(vt.angle) || 0) + slot.bearing;
   const fx = tk.x + Math.cos(ang) * slot.dist;
   const fy = tk.y + Math.sin(ang) * slot.dist;
+  const combatFacing = resolveCombatFacing(npc, Math.atan2(tk.y - npc.y, tk.x - npc.x));
   const ctl = capitalArriveControls(npc, fx, fy, {
     arrival: 40,
     matchVx: tk.vx,
     matchVy: tk.vy,
     combatSpeedMul: opts.combatSpeedMul || 1.35,
-    cruiseSpeed: opts.cruiseSpeed
+    cruiseSpeed: opts.cruiseSpeed,
+    combatFacing
   });
-  const faceAngle = resolveCombatFacing(npc, Math.atan2(tk.y - npc.y, tk.x - npc.x));
   const distToVictim = Math.hypot(tk.x - npc.x, tk.y - npc.y);
-  return { ctl, faceAngle, distToVictim };
+  return { ctl, faceAngle: ctl.facing, distToVictim };
 }
 
 // ============================================================================
@@ -474,6 +592,8 @@ const _leadAimScratch = { x: 0, y: 0 };
 
 function processAutonomousWeapons(npc, dt) {
   if (!npc) return;
+  // Carrier: wypuszczanie eskadr z hangarów (early-return wewnątrz dla nie-carrierów).
+  if (window.updateNpcHangars) window.updateNpcHangars(npc, dt);
   initAutonomousWeapons(npc);
   if (!npc.autoWeapons || npc.autoWeapons.length === 0) return;
 
@@ -688,7 +808,6 @@ export function aiFrigate(sim, npc, dt) {
   } else if (target && !target.dead) {
     const tk = readTargetKinematics(target);
     const toAng = Math.atan2(tk.y - npc.y, tk.x - npc.x);
-    targetAng = resolveCombatFacing(npc, toAng);
     const idealRange = Math.max(420, Number(npc.preferredRange) || 700);
     updateOrbitDirTimers(npc, dt, 10);
     const hold = computeHoldPoint(npc, tk, idealRange, 0.4);
@@ -696,15 +815,21 @@ export function aiFrigate(sim, npc, dt) {
       arrival: 30,
       matchVx: tk.vx,
       matchVy: tk.vy,
-      combatSpeedMul: 1.3
+      combatSpeedMul: 1.3,
+      combatFacing: resolveCombatFacing(npc, toAng)
     });
     thrustNorm = ctl.thrustNorm;
     strafeNorm = ctl.strafeNorm;
+    targetAng = ctl.facing;
   } else if (slot && slot.kind === 'line') {
-    const ctl = capitalArriveControls(npc, slot.x, slot.y, { arrival: 60, combatSpeedMul: 1.2 });
+    const ctl = capitalArriveControls(npc, slot.x, slot.y, {
+      arrival: 60,
+      combatSpeedMul: 1.2,
+      combatFacing: resolveCombatFacing(npc, slot.facing)
+    });
     thrustNorm = ctl.thrustNorm;
     strafeNorm = ctl.strafeNorm;
-    targetAng = resolveCombatFacing(npc, slot.facing);
+    targetAng = ctl.facing;
   } else if (guardian) {
     // Eskorta: trzymaj się w pobliżu lidera, z hamowaniem zamiast taranowania.
     const escortDist = Math.max(380, (guardian.radius || 220) + (npc.radius || 45) + 160);
@@ -716,7 +841,7 @@ export function aiFrigate(sim, npc, dt) {
       });
       thrustNorm = ctl.thrustNorm;
       strafeNorm = ctl.strafeNorm;
-      targetAng = Math.atan2(guardY - npc.y, guardX - npc.x);
+      targetAng = ctl.facing;
     } else {
       const idle = capitalIdleControls(npc);
       thrustNorm = idle.thrustNorm;
@@ -805,7 +930,7 @@ export function aiDestroyer(sim, npc, dt) {
   } else if (target && !target.dead) {
     const tk = readTargetKinematics(target);
     const toAng = Math.atan2(tk.y - npc.y, tk.x - npc.x);
-    targetAng = resolveCombatFacing(npc, toAng);
+    const combatFacing = resolveCombatFacing(npc, toAng);
     const idealRange = resolveCapitalIdealRange(npc, target);
     const dist = Math.hypot(tk.x - npc.x, tk.y - npc.y);
 
@@ -818,10 +943,12 @@ export function aiDestroyer(sim, npc, dt) {
       const ctl = capitalArriveControls(npc, slot.x, slot.y, {
         arrival: 50,
         combatSpeedMul: 1.25,
-        cruiseSpeed: (npc.maxSpeed || 200) * (npc.boostT > 0 ? 4.6 : 3.0)
+        cruiseSpeed: (npc.maxSpeed || 200) * (npc.boostT > 0 ? 4.6 : 3.0),
+        combatFacing
       });
       thrustNorm = ctl.thrustNorm;
       strafeNorm = ctl.strafeNorm;
+      targetAng = ctl.facing;
     } else {
       updateOrbitDirTimers(npc, dt, 12);
       const hold = computeHoldPoint(npc, tk, idealRange, 0.5);
@@ -830,16 +957,22 @@ export function aiDestroyer(sim, npc, dt) {
         matchVx: tk.vx,
         matchVy: tk.vy,
         combatSpeedMul: 1.35,
-        cruiseSpeed: (npc.maxSpeed || 200) * (npc.boostT > 0 ? 4.6 : 3.0)
+        cruiseSpeed: (npc.maxSpeed || 200) * (npc.boostT > 0 ? 4.6 : 3.0),
+        combatFacing
       });
       thrustNorm = ctl.thrustNorm;
       strafeNorm = ctl.strafeNorm;
+      targetAng = ctl.facing;
     }
   } else if (slot && slot.kind === 'line') {
-    const ctl = capitalArriveControls(npc, slot.x, slot.y, { arrival: 60, combatSpeedMul: 1.25 });
+    const ctl = capitalArriveControls(npc, slot.x, slot.y, {
+      arrival: 60,
+      combatSpeedMul: 1.25,
+      combatFacing: resolveCombatFacing(npc, slot.facing)
+    });
     thrustNorm = ctl.thrustNorm;
     strafeNorm = ctl.strafeNorm;
-    targetAng = resolveCombatFacing(npc, slot.facing);
+    targetAng = ctl.facing;
   } else {
     const idle = capitalIdleControls(npc);
     thrustNorm = idle.thrustNorm;
@@ -878,17 +1011,19 @@ export function aiBattleship(sim, npc, dt) {
     const toAng = Math.atan2(tk.y - npc.y, tk.x - npc.x);
     const dist = Math.hypot(tk.x - npc.x, tk.y - npc.y);
     const idealRange = resolveCapitalIdealRange(npc, target);
-    targetAng = resolveCombatFacing(npc, toAng);
+    const combatFacing = resolveCombatFacing(npc, toAng);
 
     const tooClose = dist < idealRange * 0.6;
     if (slot && slot.kind === 'line' && !tooClose) {
       // Trzymaj slot w linii bitewnej — flota walczy jako front, nie karuzela.
       const ctl = capitalArriveControls(npc, slot.x, slot.y, {
         arrival: Math.max(50, (npc.radius || 100) * 0.4),
-        combatSpeedMul: 1.1
+        combatSpeedMul: 1.1,
+        combatFacing
       });
       thrustNorm = ctl.thrustNorm;
       strafeNorm = ctl.strafeNorm;
+      targetAng = ctl.facing;
     } else {
       // Samotny okręt (lub wróg podszedł za blisko): trzymaj dystans idealRange
       // z lekkim dryfem stycznym.
@@ -898,16 +1033,22 @@ export function aiBattleship(sim, npc, dt) {
         arrival: 40,
         matchVx: tk.vx,
         matchVy: tk.vy,
-        combatSpeedMul: 1.15
+        combatSpeedMul: 1.15,
+        combatFacing
       });
       thrustNorm = ctl.thrustNorm;
       strafeNorm = ctl.strafeNorm;
+      targetAng = ctl.facing;
     }
   } else if (slot && slot.kind === 'line') {
-    const ctl = capitalArriveControls(npc, slot.x, slot.y, { arrival: 80, combatSpeedMul: 1.2 });
+    const ctl = capitalArriveControls(npc, slot.x, slot.y, {
+      arrival: 80,
+      combatSpeedMul: 1.2,
+      combatFacing: resolveCombatFacing(npc, slot.facing)
+    });
     thrustNorm = ctl.thrustNorm;
     strafeNorm = ctl.strafeNorm;
-    targetAng = resolveCombatFacing(npc, slot.facing);
+    targetAng = ctl.facing;
   } else {
     const idle = capitalIdleControls(npc);
     thrustNorm = idle.thrustNorm;
@@ -922,3 +1063,4 @@ export function aiBattleship(sim, npc, dt) {
 window.aiFrigate = aiFrigate;
 window.aiDestroyer = aiDestroyer;
 window.aiBattleship = aiBattleship;
+window.capitalArriveTo = capitalArriveTo;

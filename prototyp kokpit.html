@@ -1,0 +1,4370 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<title>STATKI — Prototyp UI: Kokpit v2</title>
+<style>
+/* ============================================================
+   PROTOTYP KOKPITU v2 — mój układ + radar, belka/panele/skalowanie
+   zapożyczone z wersji referencyjnej (cockpit-ui-prototype.html)
+   ============================================================ */
+:root {
+  --panel: rgba(4, 12, 16, 0.94);
+  --panel-strong: rgba(16, 16, 16, 0.98);
+  --line: rgba(255, 255, 255, 0.12);
+  --line-soft: rgba(255, 255, 255, 0.06);
+  --text: #dddddd;
+  --muted: #888888;
+  --green: #ff6600;
+  --cyan: #0088ff;
+  --blue: #0088ff;
+  --amber: #ffaa33;
+  --orange: #ff6600;
+  --red: #e60000;
+  --violet: #b58cff;
+  --mode-accent: #ff6600;
+  --top-h: 0px;
+  --cockpit-h: clamp(224px, 26vh, 296px);
+  --radar-d: clamp(224px, 34vh, 300px);
+  --radar-half: calc(var(--radar-d) / 2);
+  --ck-max-half: 960px; /* maks. połowa szerokości dolnego UI (ultrawide) */
+  --mono: Consolas, "Courier New", monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #000;
+}
+
+body {
+  color: var(--text);
+  font-family: var(--mono);
+  letter-spacing: 0.03em;
+  user-select: none;
+}
+
+button { color: inherit; font: inherit; }
+button:focus-visible { outline: 1px solid var(--green); outline-offset: 2px; }
+
+.app {
+  position: relative;
+  width: 100%; height: 100%;
+  overflow: hidden;
+  isolation: isolate;
+}
+.app[data-mode="combat"]  { --mode-accent: #e60000; }
+.app[data-mode="agility"] { --mode-accent: #ff6600; }
+.app[data-mode="travel"]  { --mode-accent: #0088ff; }
+
+/* ============================================================
+   ŚWIAT + SZKŁO KABINY
+   ============================================================ */
+#world {
+  position: absolute; inset: 0;
+  display: block;
+  cursor: crosshair;
+}
+
+.glass-vignette, .glass-scanlines {
+  position: absolute; inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+.glass-vignette {
+  background:
+    linear-gradient(90deg, rgba(0,0,0,0.42), transparent 12%, transparent 88%, rgba(0,0,0,0.42)),
+    linear-gradient(180deg, rgba(0,0,0,0.3), transparent 16%, transparent 66%, rgba(0,0,0,0.7));
+  box-shadow: inset 0 0 110px rgba(0, 0, 0, 0.7);
+}
+.glass-scanlines {
+  opacity: 0.14;
+  background: repeating-linear-gradient(180deg, transparent 0 3px, rgba(255, 170, 90, 0.045) 3px 4px);
+  mix-blend-mode: screen;
+}
+
+/* ============================================================
+   WIDŻET "INFORMACJE" W TERMINALU — zegar, pogoda, pozycja
+   (1:1 z ekran_multimedialny.html, bez odtwarzacza)
+   ============================================================ */
+.term-widget {
+  flex: 0 0 clamp(118px, 12vw, 168px);
+  display: flex;
+  flex-direction: column;
+  margin: 6px;
+  overflow: hidden;
+  background: rgba(25, 25, 25, 0.7);
+  border: 1px solid #2a2a2a;
+  border-radius: 10px;
+}
+.widget-header {
+  padding: 6px 8px 4px;
+  color: #888;
+  font-size: 7px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.clock-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 3px;
+  padding: 0 8px 8px;
+  text-align: center;
+}
+.clock-time {
+  color: #fff;
+  font-size: clamp(18px, 2vw, 26px);
+  font-weight: 300;
+  letter-spacing: 1px;
+  text-shadow: 0 0 20px rgba(255, 255, 255, 0.2);
+  font-variant-numeric: tabular-nums;
+}
+.clock-date {
+  color: #0088ff;
+  font-size: 7px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.clock-weather {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  color: #ccc;
+  font-size: 10px;
+}
+.clock-weather svg { width: 12px; height: 12px; fill: #0088ff; }
+.clock-loc {
+  width: 100%;
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  color: #ff6600;
+  font-size: 7px;
+  letter-spacing: 0.8px;
+  line-height: 1.6;
+  text-transform: uppercase;
+}
+.clock-loc small {
+  display: block;
+  color: #666;
+  font-size: 6px;
+  letter-spacing: 1px;
+}
+
+/* baner podczas przeciągania rezerwy */
+.deploy-banner {
+  position: absolute; left: 50%; top: calc(var(--top-h) + 12px);
+  z-index: 60;
+  translate: -50% 0;
+  display: none;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 102, 0, 0.34);
+  color: var(--green);
+  background: rgba(10, 8, 6, 0.78);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  pointer-events: none;
+}
+.app.dragging .deploy-banner { display: block; }
+
+/* nakładka mapy taktycznej */
+.map-overlay {
+  position: absolute;
+  top: var(--top-h); left: 0; right: 0; bottom: var(--cockpit-h);
+  z-index: 8;
+  display: none;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 54%, rgba(120, 70, 20, 0.16), transparent 30%),
+    rgba(5, 5, 5, 0.55);
+}
+.app.map-active .map-overlay { display: block; }
+.map-overlay::before, .map-overlay::after {
+  content: "";
+  position: absolute; left: 50%; top: 50%;
+  translate: -50% -50%;
+  border: 1px solid rgba(255, 102, 0, 0.18);
+  border-radius: 50%;
+}
+.map-overlay::before {
+  width: min(56vw, 700px); aspect-ratio: 1;
+  box-shadow:
+    0 0 0 75px rgba(255, 102, 0, 0.025),
+    0 0 0 76px rgba(255, 102, 0, 0.1),
+    0 0 0 155px rgba(255, 102, 0, 0.02),
+    0 0 0 156px rgba(255, 102, 0, 0.08);
+}
+.map-overlay::after { width: min(21vw, 260px); aspect-ratio: 1; }
+.map-caption {
+  position: absolute; left: 50%; top: 16px;
+  translate: -50% 0;
+  color: rgba(255, 102, 0, 0.75);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+/* ============================================================
+   PANELE BOCZNE — hud-panel + side-stack (skalowalne)
+   ============================================================ */
+.side-stack {
+  position: absolute;
+  z-index: 30;
+  top: calc(var(--top-h) + 12px);
+  bottom: calc(var(--cockpit-h) + 14px);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  pointer-events: none;
+}
+.left-stack  { left: 14px;  width: clamp(250px, 19vw, 296px); }
+.right-stack { right: 14px; width: clamp(292px, 22vw, 348px); }
+
+.hud-panel {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  background: linear-gradient(180deg, rgba(26, 26, 26, 0.94), rgba(10, 10, 10, 0.94));
+  box-shadow: 0 14px 42px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  pointer-events: auto;
+}
+.hud-panel::after {
+  content: "";
+  position: absolute; right: -24px; bottom: -24px;
+  width: 54px; height: 54px;
+  rotate: 45deg;
+  border-left: 1px solid rgba(255, 102, 0, 0.18);
+  background: rgba(255, 102, 0, 0.025);
+  pointer-events: none;
+}
+
+.active-panel   { flex: 1 1 46%; min-height: 180px; grid-template-rows: auto minmax(0, 1fr) auto; }
+.reserve-panel  { flex: 1 1 54%; min-height: 216px; grid-template-rows: auto auto minmax(0, 1fr); }
+.overview-panel { flex: 1 1 52%; min-height: 170px; grid-template-rows: auto auto minmax(0, 1fr); }
+.selected-panel { flex: 0 0 auto; }
+
+.panel-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  min-height: 35px;
+  padding: 6px 9px 6px 11px;
+  border-bottom: 1px solid rgba(255, 102, 0, 0.18);
+  background: rgba(16, 16, 16, 0.96);
+  text-transform: uppercase;
+}
+.panel-title { display: grid; gap: 1px; min-width: 0; }
+.panel-title strong {
+  overflow: hidden;
+  color: #eeeeee;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.panel-title small, .panel-count { color: var(--muted); font-size: 9px; letter-spacing: 0.1em; }
+
+.panel-body {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-color: rgba(255, 102, 0, 0.35) transparent;
+  scrollbar-width: thin;
+}
+.panel-body::-webkit-scrollbar { width: 4px; }
+.panel-body::-webkit-scrollbar-thumb { background: rgba(255, 102, 0, 0.34); }
+
+.tech-button, .filter-button, .range-button {
+  border: 1px solid rgba(255, 102, 0, 0.22);
+  border-radius: 1px;
+  color: #8aaba5;
+  background: rgba(0, 0, 0, 0.28);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.tech-button:hover, .filter-button:hover, .range-button:hover {
+  border-color: rgba(255, 102, 0, 0.58);
+  color: #eeeeee;
+  background: rgba(255, 102, 0, 0.08);
+}
+.tech-button.active, .filter-button.active, .range-button.active {
+  border-color: rgba(255, 102, 0, 0.6);
+  color: var(--green);
+  background: rgba(255, 102, 0, 0.12);
+  box-shadow: inset 0 -2px 0 rgba(255, 102, 0, 0.4);
+}
+
+/* ---------- AKTYWNE SKRZYDŁO ---------- */
+.unit-list { display: grid; gap: 1px; padding: 5px; align-content: start; }
+.unit-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 52px;
+  padding: 5px 7px;
+  border: 1px solid transparent;
+  border-bottom-color: rgba(255, 102, 0, 0.08);
+  color: #cccccc;
+  background: rgba(0, 0, 0, 0.08);
+  text-align: left;
+  cursor: pointer;
+}
+.unit-card:hover { border-color: rgba(255, 102, 0, 0.25); background: rgba(255, 102, 0, 0.06); }
+.unit-card.selected {
+  border-color: rgba(255, 102, 0, 0.46);
+  background: rgba(255, 102, 0, 0.09);
+  box-shadow: inset 3px 0 0 var(--green);
+}
+.unit-portrait, .reserve-portrait {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(0, 136, 255, 0.2);
+  background:
+    linear-gradient(rgba(0, 136, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 136, 255, 0.055) 1px, transparent 1px),
+    rgba(0, 0, 0, 0.28);
+  background-size: 8px 8px;
+}
+.unit-portrait { width: 40px; height: 38px; }
+.unit-info { min-width: 0; }
+.unit-name, .reserve-name {
+  overflow: hidden;
+  color: #eeeeee;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.unit-meta, .reserve-role {
+  margin-top: 3px;
+  overflow: hidden;
+  color: #8a8a8a;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.unit-meta .st-atk { color: var(--red); }
+.unit-meta .st-wrp { color: var(--cyan); }
+.unit-bars { display: grid; gap: 2px; margin-top: 6px; }
+.micro-bar { position: relative; height: 2px; overflow: hidden; background: rgba(255, 255, 255, 0.08); }
+.micro-bar > span {
+  display: block;
+  width: var(--value, 50%);
+  height: 100%;
+  background: var(--bar-color, var(--green));
+  box-shadow: 0 0 6px var(--bar-color, var(--green));
+}
+.unit-distance {
+  align-self: start;
+  padding-top: 2px;
+  color: var(--cyan);
+  font-size: 8px;
+  white-space: nowrap;
+}
+.unit-empty { padding: 14px 10px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+
+.panel-orders {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 6px;
+  border-top: 1px solid var(--line-soft);
+  background: rgba(0, 0, 0, 0.18);
+}
+.tech-button { min-height: 25px; padding: 4px; }
+
+/* ---------- STOCZNIA PIERŚCIENIA / MAGAZYN ---------- */
+.reserve-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  color: #888888;
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 8px;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+.reserve-intro strong { color: var(--green); white-space: nowrap; }
+.reserve-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  padding: 6px;
+}
+.reserve-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  min-height: 62px;
+  padding: 5px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 136, 255, 0.22);
+  color: var(--text);
+  background: linear-gradient(135deg, rgba(0, 136, 255, 0.07), rgba(0, 0, 0, 0.26));
+  text-align: left;
+  cursor: grab;
+  touch-action: none;
+}
+.reserve-card::before {
+  content: "DRAG";
+  position: absolute; right: 3px; bottom: 2px;
+  color: rgba(0, 136, 255, 0.34);
+  font-size: 6px;
+  letter-spacing: 0.12em;
+}
+.reserve-card:hover {
+  border-color: rgba(0, 136, 255, 0.62);
+  background: linear-gradient(135deg, rgba(0, 136, 255, 0.14), rgba(0, 0, 0, 0.2));
+  box-shadow: inset 3px 0 0 rgba(0, 136, 255, 0.5), 0 0 14px rgba(0, 136, 255, 0.08);
+}
+.reserve-card:active { cursor: grabbing; }
+.reserve-card.empty { opacity: 0.42; cursor: not-allowed; filter: grayscale(0.7); }
+.reserve-card.cooldown { opacity: 0.55; cursor: wait; }
+.reserve-card.cooldown::after {
+  content: "PRZYGOTOWANIE…";
+  position: absolute; inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--cyan);
+  background: rgba(8, 8, 8, 0.55);
+  font-size: 7px;
+  letter-spacing: 0.14em;
+}
+.reserve-portrait { width: 46px; height: 46px; }
+.reserve-count { margin-top: 4px; color: var(--amber); font-size: 13px; font-weight: 700; }
+.reserve-count small { color: #718a86; font-size: 7px; font-weight: 400; }
+
+.production-queue {
+  margin: 0 6px 6px;
+  padding: 6px 7px;
+  border: 1px solid rgba(255, 102, 0, 0.2);
+  background: rgba(255, 102, 0, 0.045);
+}
+.queue-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  color: #ccb98e;
+  font-size: 7px;
+  text-transform: uppercase;
+}
+.queue-track { height: 3px; margin-top: 5px; overflow: hidden; background: rgba(255, 255, 255, 0.08); }
+.queue-fill {
+  width: 0%;
+  height: 100%;
+  background: var(--amber);
+  box-shadow: 0 0 8px rgba(255, 102, 0, 0.55);
+  animation: queue-pulse 1.8s ease-in-out infinite;
+}
+
+/* sylwetki okrętów (CSS clip-path, profil boczny) */
+.ship-silhouette {
+  --ship-color: var(--cyan);
+  position: relative;
+  display: block;
+  width: 36px; height: 24px;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--ship-color) 55%, transparent));
+}
+.ship-silhouette::before, .ship-silhouette::after {
+  content: "";
+  position: absolute;
+  display: block;
+  background: var(--ship-color);
+}
+.ship-silhouette::after {
+  left: 18%; right: 18%; top: 45%;
+  height: 2px;
+  opacity: 0.45;
+  background: #001116;
+}
+.ship-silhouette.fighter::before   { inset: 2px 0; clip-path: polygon(0 50%, 28% 15%, 39% 35%, 77% 3%, 100% 50%, 77% 97%, 39% 65%, 28% 85%); }
+.ship-silhouette.corvus::before    { inset: 4px 0; clip-path: polygon(0 50%, 16% 15%, 72% 4%, 100% 50%, 72% 96%, 16% 85%); }
+.ship-silhouette.custos::before    { inset: 3px 0; clip-path: polygon(0 34%, 12% 12%, 68% 12%, 100% 50%, 68% 88%, 12% 88%, 0 66%, 10% 50%); }
+.ship-silhouette.hasta::before     { inset: 1px 0; clip-path: polygon(0 28%, 10% 8%, 68% 8%, 100% 50%, 68% 92%, 10% 92%, 0 72%, 12% 50%); }
+.ship-silhouette.bellator::before  { inset: 1px 0; clip-path: polygon(0 24%, 7% 6%, 40% 6%, 46% 18%, 74% 18%, 100% 50%, 74% 82%, 46% 82%, 40% 94%, 7% 94%, 0 76%, 10% 50%); }
+.ship-silhouette.citadella::before { inset: 2px 0; clip-path: polygon(0 16%, 70% 16%, 78% 30%, 100% 44%, 100% 56%, 78% 70%, 70% 84%, 0 84%, 7% 50%); }
+.ship-silhouette.fighter   { --ship-color: #00cc44; }
+.ship-silhouette.corvus    { --ship-color: var(--cyan); }
+.ship-silhouette.custos    { --ship-color: var(--amber); }
+.ship-silhouette.hasta     { --ship-color: var(--orange); }
+.ship-silhouette.bellator  { --ship-color: var(--violet); }
+.ship-silhouette.citadella { --ship-color: #cfe8ff; }
+
+/* ---------- OVERVIEW / SCANNER ---------- */
+.scanner-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.filter-button { min-height: 23px; padding: 3px 6px; }
+.contact-table-head, .contact-row {
+  display: grid;
+  grid-template-columns: 37px minmax(0, 1fr) 46px 28px;
+  gap: 6px;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 7px;
+}
+.contact-table-head {
+  color: #666666;
+  background: rgba(0, 0, 0, 0.22);
+  font-size: 8px;
+  position: sticky; top: 0; z-index: 1;
+}
+.contact-row {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 102, 0, 0.07);
+  color: #bbbbbb;
+  background: transparent;
+  font-size: 9px;
+  text-align: left;
+  cursor: pointer;
+}
+.contact-row:hover { background: rgba(255, 102, 0, 0.07); }
+.contact-row.selected {
+  color: #eeeeee;
+  background: rgba(255, 102, 0, 0.1);
+  box-shadow: inset 3px 0 0 var(--green);
+}
+.contact-row span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contact-row .dist-cell { text-align: right; color: var(--muted); }
+.tone-hostile  { color: var(--red); }
+.tone-asteroid { color: var(--amber); }
+.tone-station  { color: #f97316; }
+.tone-friendly { color: var(--cyan); }
+.contact-row .lock-cell { color: var(--red); text-align: right; }
+
+/* ---------- SELECTED OBJECT ---------- */
+.sel-body { padding: 9px 10px; display: flex; flex-direction: column; gap: 7px; }
+.sel-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 0 10px rgba(255, 102, 0, 0.25);
+}
+.sel-sub { font-size: 9px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+.sel-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 14px;
+  font-size: 9px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.sel-grid b { color: var(--text); font-weight: 400; }
+.sel-bar { height: 5px; background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 102, 0, 0.18); }
+.sel-bar i { display: block; height: 100%; background: var(--green); transition: width 0.2s; }
+.sel-actions { display: flex; gap: 6px; margin-top: 2px; }
+.sel-actions button { min-height: 24px; padding: 4px 8px; }
+.sel-empty { padding: 13px 10px; color: var(--muted); font-size: 10px; }
+
+/* ============================================================
+   KOKPIT — belka deski rozdzielczej
+   ============================================================ */
+#cockpit {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  z-index: 50;
+  height: var(--cockpit-h);
+}
+.cockpit-shell {
+  position: absolute; inset: 0 8px 0;
+  background:
+    linear-gradient(90deg, transparent 0 1.6%, rgba(70, 79, 78, 0.96) 1.6% 1.9%, transparent 1.9% 98.1%, rgba(70, 79, 78, 0.96) 98.1% 98.4%, transparent 98.4%),
+    linear-gradient(180deg, #3b4444 0 3px, #171d20 3px 12px, #070a0c 12px 100%);
+  clip-path: polygon(
+    0 100%,
+    0 56px,
+    1.3% 42px,
+    calc(50% - var(--radar-half) - 48px) 42px,
+    calc(50% - var(--radar-half) + 10px) 0,
+    calc(50% + var(--radar-half) - 10px) 0,
+    calc(50% + var(--radar-half) + 48px) 42px,
+    98.7% 42px,
+    100% 56px,
+    100% 100%
+  );
+  filter: drop-shadow(0 -10px 20px rgba(0, 0, 0, 0.72));
+}
+.cockpit-shell::after {
+  content: "";
+  position: absolute; inset: 48px 10px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background:
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 6px),
+    #0b0f11;
+}
+/* linia akcentu trybu wzdłuż deski (dwa segmenty wokół radaru) */
+.shell-accent {
+  position: absolute; top: 40px;
+  z-index: 2;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--mode-accent) 50%, transparent) 22%, var(--mode-accent) 60%, var(--mode-accent));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--mode-accent) 55%, transparent);
+  pointer-events: none;
+}
+.shell-accent.l { left: 1.6%; right: calc(50% + var(--radar-half) + 44px); }
+.shell-accent.r {
+  right: 1.6%; left: calc(50% + var(--radar-half) + 44px);
+  background: linear-gradient(270deg, transparent, color-mix(in srgb, var(--mode-accent) 50%, transparent) 22%, var(--mode-accent) 60%, var(--mode-accent));
+}
+
+/* strefy modułów po bokach radaru */
+.ck-left, .ck-right {
+  position: absolute;
+  top: 50px; bottom: 9px;
+  display: grid;
+  gap: 7px;
+  z-index: 3;
+}
+.ck-left {
+  left: max(15px, calc(50% - var(--ck-max-half)));
+  right: calc(50% + var(--radar-half) + 16px);
+  grid-template-columns: minmax(96px, 118px) minmax(0, 1fr);
+}
+.ck-right {
+  left: calc(50% + var(--radar-half) + 16px);
+  right: max(15px, calc(50% - var(--ck-max-half)));
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+}
+
+.cockpit-module {
+  position: relative;
+  min-width: 0; min-height: 0;
+  overflow: hidden;
+  border: 1px solid #222;
+  border-radius: 9px;
+  background: linear-gradient(180deg, rgba(32, 32, 32, 0.9), rgba(12, 12, 12, 0.96) 18%, rgba(6, 6, 6, 0.98));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 0 22px rgba(0, 0, 0, 0.72),
+    0 3px 8px rgba(0, 0, 0, 0.55);
+}
+.cockpit-module::before {
+  content: "";
+  position: absolute; top: 0; right: 15%; left: 15%;
+  z-index: 3;
+  height: 1px;
+  background: rgba(255, 102, 0, 0.35);
+  pointer-events: none;
+}
+.module-label {
+  position: absolute; top: 5px; left: 7px;
+  z-index: 4;
+  color: #777777;
+  font-size: 7px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+.systems-module { padding: 19px 7px 7px; }
+.primary-module { padding: 18px 8px 7px; }
+.speed-module   { padding: 18px 6px 6px; }
+.control-module { padding: 18px 7px 7px; }
+
+/* ---------- VITALS: pionowe słupki ---------- */
+.vertical-bars {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  height: 100%;
+}
+.vital-column {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 4px;
+  min-width: 0;
+  text-align: center;
+}
+.vital-value {
+  color: var(--bar-color);
+  font-size: 10px;
+  font-weight: 700;
+  text-shadow: 0 0 8px color-mix(in srgb, var(--bar-color) 60%, transparent);
+}
+.vital-track {
+  position: relative;
+  min-height: 88px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background:
+    repeating-linear-gradient(180deg, transparent 0 9%, rgba(0, 0, 0, 0.66) 9% 11%),
+    rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 0 10px #000;
+}
+.vital-fill, .vital-ghost {
+  position: absolute; right: 2px; bottom: 2px; left: 2px;
+  height: var(--value, 50%);
+  transition: height 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.vital-ghost { opacity: 0.25; background: var(--bar-color); filter: blur(4px); }
+.vital-fill {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bar-color) 76%, white), var(--bar-color) 26%, color-mix(in srgb, var(--bar-color) 55%, black));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--bar-color) 48%, transparent);
+}
+.vital-fill::after {
+  content: "";
+  position: absolute; top: 0; right: 0; left: 0;
+  height: 2px;
+  background: #fff;
+  box-shadow: 0 0 8px var(--bar-color);
+}
+.vital-label { overflow: hidden; color: #888888; font-size: 7px; text-transform: uppercase; }
+.vital-column.hp     { --bar-color: var(--orange); }
+.vital-column.shield { --bar-color: var(--blue); }
+.vital-column.core   { --bar-color: #00cc44; }
+.vital-column.crit .vital-fill { background: var(--red); animation: vital-blink 0.5s steps(2) infinite; }
+@keyframes vital-blink { 50% { opacity: 0.4; } }
+
+/* ---------- DOWODZENIE / hotkeye + cel ---------- */
+.primary-layout {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 6px;
+  height: 100%;
+}
+/* terminal pokładowy — ekran z ramką 1:1 z ekran_multimedialny.html */
+.screen-bezel {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+  background: #000;
+  border-radius: 10px;
+  border: 4px solid #0a0a0a;
+  box-shadow: 0 0 14px rgba(0, 0, 0, 0.8) inset, 0 0 0 1px #222;
+}
+.screen-glare {
+  position: absolute;
+  top: 0; left: 0;
+  width: 150%; height: 100%;
+  background: linear-gradient(105deg, rgba(255,255,255,0) 30%, rgba(255,255,255,0.03) 45%, rgba(255,255,255,0) 60%);
+  pointer-events: none;
+  z-index: 10;
+}
+.term-sidebar {
+  flex: 0 0 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  background: rgba(20, 20, 20, 0.9);
+  border-right: 1px solid #222;
+}
+.nav-icon {
+  width: 22px; height: 22px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #777;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.nav-icon svg { width: 13px; height: 13px; fill: currentColor; }
+.nav-icon:hover { color: #fff; }
+.nav-icon.active {
+  color: #ff6600;
+  background: rgba(255, 102, 0, 0.1);
+  box-shadow: inset 2px 0 0 #ff6600;
+}
+.term-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 3px;
+  padding: 5px 8px;
+}
+.console-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid rgba(255, 102, 0, 0.14);
+  color: #7a7a7a;
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.console-status b { color: var(--mode-accent); font-weight: 400; }
+.console-status .on  { color: var(--green); }
+.console-status .off { color: #666666; }
+.console-log {
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 8px;
+  line-height: 1.55;
+  color: #9a9a9a;
+  scrollbar-color: rgba(255, 102, 0, 0.35) transparent;
+  scrollbar-width: thin;
+}
+.console-log::-webkit-scrollbar { width: 3px; }
+.console-log::-webkit-scrollbar-thumb { background: rgba(255, 102, 0, 0.34); }
+.console-line { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.console-line .ts { margin-right: 5px; color: #666666; }
+.console-line.ok   { color: #00cc44; }
+.console-line.warn { color: var(--amber); }
+.console-line.bad  { color: var(--red); }
+
+/* płyta z fizycznymi przyciskami 1-9 — 1:1 z ekran_multimedialny.html */
+.hardware-panel {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  height: clamp(54px, 7.5vh, 72px);
+  padding: 0 14px;
+  background: linear-gradient(180deg, #1c1c1c 0%, #0a0a0a 100%);
+  border-radius: 10px;
+  border: 1px solid #000;
+  border-top: 1px solid #333;
+  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.7), inset 0 1px 2px rgba(255, 255, 255, 0.1);
+}
+.hardware-panel::after {
+  content: "";
+  position: absolute;
+  top: 7px; bottom: 7px; left: 8px; right: 8px;
+  background: #030303;
+  border-radius: 6px;
+  box-shadow: inset 0 3px 10px rgba(0, 0, 0, 1), 0 1px 0 rgba(255, 255, 255, 0.08);
+  z-index: 1;
+}
+.phys-btn {
+  position: relative;
+  z-index: 2;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 64px;
+  height: calc(100% - 16px);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 0 4px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #2b2b2b 0%, #151515 100%);
+  border: 1px solid #000;
+  border-top: 1px solid #3a3a3a;
+  border-radius: 7px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.8), inset 0 1px 1px rgba(255, 255, 255, 0.15), inset 0 -1px 2px rgba(0, 0, 0, 0.6);
+  color: #a0a0a0;
+  text-shadow: 0 -1px 0 #000;
+  cursor: pointer;
+  transition: all 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.phys-btn::before {
+  content: "";
+  position: absolute;
+  top: 3px; left: 50%;
+  translate: -50% 0;
+  width: 14px; height: 2px;
+  background: #111;
+  border-radius: 1px;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.9), 0 1px 0 rgba(255, 255, 255, 0.1);
+  transition: all 0.15s;
+}
+.phys-btn:hover {
+  color: #fff;
+  background: linear-gradient(180deg, #333 0%, #1a1a1a 100%);
+  border-top: 1px solid #4a4a4a;
+}
+.phys-btn:active {
+  background: linear-gradient(180deg, #0f0f0f 0%, #050505 100%);
+  border-top: 1px solid #000;
+  box-shadow: 0 1px 1px rgba(255, 255, 255, 0.05), inset 0 3px 8px rgba(0, 0, 0, 0.9);
+  transform: translateY(2px);
+}
+.phys-btn:active::before, .phys-btn.cooling::before {
+  background: #ff6600;
+  box-shadow: 0 0 6px #ff6600, 0 0 2px #fff;
+}
+.phys-btn .hk-key {
+  position: absolute;
+  top: 4px; right: 5px;
+  z-index: 3;
+  font-size: 6px;
+  color: #666;
+}
+.phys-btn .hk-ico {
+  position: relative;
+  z-index: 2;
+  font-size: 15px;
+  line-height: 1;
+  opacity: 0.7;
+  transition: all 0.2s;
+}
+.phys-btn:hover .hk-ico { opacity: 1; transform: scale(1.1); }
+.phys-btn:active .hk-ico, .phys-btn.cooling .hk-ico {
+  color: #ff6600;
+  filter: drop-shadow(0 0 5px rgba(255, 102, 0, 0.5));
+  opacity: 1;
+}
+.phys-btn .hk-label {
+  position: relative;
+  z-index: 2;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 6px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #777;
+  white-space: nowrap;
+  transition: color 0.1s;
+}
+.phys-btn:hover .hk-label { color: #aaa; }
+.phys-btn:active .hk-label, .phys-btn.cooling .hk-label {
+  color: #ff6600;
+  text-shadow: 0 0 8px rgba(255, 102, 0, 0.5);
+}
+.phys-btn.unavailable { opacity: 0.35; filter: grayscale(1); pointer-events: none; }
+.cooldown-mask {
+  position: absolute; right: 0; bottom: 0; left: 0;
+  z-index: 1;
+  height: 0;
+  background: rgba(0, 0, 0, 0.72);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+}
+.cooldown-time {
+  position: absolute; top: 3px; left: 5px;
+  z-index: 3;
+  color: #ffaa33;
+  font-size: 6px;
+}
+
+/* ---------- RADAR — centralny pod ---------- */
+#radarPod {
+  position: absolute;
+  left: 50%; bottom: 6px;
+  z-index: 4;
+  width: var(--radar-d);
+  height: var(--radar-d);
+  translate: -50% 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 40%, #171006 0%, #0a0705 70%);
+  border: 2px solid color-mix(in srgb, var(--mode-accent) 30%, rgba(255, 102, 0, 0.35));
+  box-shadow:
+    0 0 0 6px rgba(6, 12, 15, 0.95),
+    0 0 0 7px rgba(255, 102, 0, 0.18),
+    0 -6px 30px rgba(0, 0, 0, 0.7),
+    inset 0 0 34px rgba(0, 0, 0, 0.8);
+}
+#radarCanvas {
+  position: absolute; inset: 9px;
+  width: calc(100% - 18px);
+  height: calc(100% - 18px);
+  border-radius: 50%;
+  cursor: crosshair;
+  touch-action: none;
+}
+#radarPod .rp-readout {
+  position: absolute; left: 0; right: 0; top: 13%;
+  display: flex;
+  justify-content: center;
+  gap: 9px;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  color: rgba(190, 190, 190, 0.72);
+  pointer-events: none;
+}
+#radarPod .rp-readout .h { color: var(--red); }
+#radarPod .rp-readout .r { color: var(--cyan); }
+#radarPod .rp-ranges {
+  position: absolute; left: 50%; bottom: 9%;
+  translate: -50% 0;
+  display: flex;
+  gap: 3px;
+}
+.range-button { min-width: 27px; height: 20px; padding: 0 4px; font-size: 7px; }
+
+/* ---------- PRĘDKOŚCIOMIERZ ---------- */
+/* prędkościomierz 1:1 z deski referencyjnej (deska_rozdzielcza.html) */
+.speed-layout {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  gap: 2px;
+  height: 100%;
+  text-align: center;
+}
+.speed-stage {
+  position: relative;
+  min-height: 76px;
+  background: radial-gradient(circle at center, rgba(17, 17, 17, 0.9) 0%, transparent 72%);
+  border-radius: 10px;
+}
+#speedCanvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.speed-center {
+  position: absolute;
+  left: 50%; top: 50%;
+  translate: -50% -50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+.speed-value {
+  display: flex;
+  align-items: baseline;
+  color: #fff;
+  font-size: clamp(17px, 2vw, 30px);
+  font-weight: 700;
+  letter-spacing: -1px;
+  line-height: 1;
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+  font-variant-numeric: tabular-nums;
+}
+.speed-unit { margin-left: 4px; color: #aaa; font-size: 7px; font-weight: 400; letter-spacing: 1px; }
+.speed-divider {
+  width: 120%;
+  height: 2px;
+  margin: 3px 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+}
+.speed-mode {
+  color: #fff;
+  font-size: clamp(10px, 1.1vw, 16px);
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+}
+.speed-trip {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1px 10px;
+  margin-top: 5px;
+  color: #aaa;
+  font-size: 6px;
+  letter-spacing: 0.5px;
+  text-align: left;
+}
+.speed-trip .trip-value { color: #fff; font-size: 7px; text-align: right; font-variant-numeric: tabular-nums; }
+.speed-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px;
+  color: #aaa;
+  font-size: 7px;
+  text-transform: uppercase;
+}
+.speed-bottom b { color: #fff; font-weight: 400; }
+.speed-pedals {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding-bottom: 2px;
+}
+.pedal {
+  padding: 3px 10px;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #666;
+  background: transparent;
+  font-size: 7px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.pedal:hover { color: #aaa; border-color: #555; }
+.pedal.active-w {
+  background: rgba(0, 255, 0, 0.2);
+  border-color: #0f0;
+  color: #fff;
+  box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+}
+.pedal.active-s {
+  background: rgba(255, 0, 0, 0.2);
+  border-color: #f00;
+  color: #fff;
+  box-shadow: 0 0 10px rgba(255, 0, 0, 0.5);
+}
+
+/* ---------- PANEL CENTRALNY — 1:1 z panel_centralny.html ---------- */
+.console-layout {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 6px;
+  height: 100%;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+.infotainment-screen {
+  position: relative;
+  height: 30px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid #1a1a1a;
+  border-radius: 8px;
+  box-shadow: inset 0 0 16px rgba(255, 102, 0, 0.1);
+}
+.screen-content {
+  position: relative; /* track = offsetParent — stabilne liczenie wyśrodkowania */
+  display: flex;
+  gap: 18px;
+  transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.menu-item {
+  font-size: 10px;
+  color: #555;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  transition: all 0.3s;
+  opacity: 0.5;
+  transform: scale(0.8);
+  white-space: nowrap;
+}
+.menu-item.active {
+  color: #ddd;
+  opacity: 1;
+  transform: scale(1.2);
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+}
+.selection-indicator {
+  position: absolute;
+  bottom: 3px; left: 50%;
+  translate: -50% 0;
+  width: 26px; height: 3px;
+  border-radius: 2px;
+  background: #ff6600;
+  box-shadow: 0 0 8px #ff6600;
+}
+.controls-area {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 6px;
+  align-items: center;
+  min-height: 0;
+}
+.btn-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.controls-area .btn-group:first-of-type { align-items: flex-end; }
+.controls-area .btn-group:last-of-type  { align-items: flex-start; }
+.physical-btn {
+  width: min(100%, 132px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  border: none;
+  border-radius: 7px;
+  padding: 6px 7px;
+  background: linear-gradient(145deg, #1e1e1e, #141414);
+  box-shadow: 3px 3px 6px #030303, -3px -3px 6px #252525;
+  color: #ddd;
+  font-family: inherit;
+  font-size: 7px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.physical-btn:active {
+  box-shadow: inset 3px 3px 6px #030303, inset -3px -3px 6px #252525;
+  transform: translateY(1px);
+}
+.led-indicator {
+  flex: 0 0 auto;
+  width: 16px; height: 3px;
+  border-radius: 2px;
+  background: #333;
+  transition: all 0.3s;
+}
+.physical-btn.active .led-indicator.red    { background: #e60000; box-shadow: 0 0 8px #e60000; }
+.physical-btn.active .led-indicator.blue   { background: #0088ff; box-shadow: 0 0 8px #0088ff; }
+.physical-btn.active .led-indicator.green  { background: #00cc44; box-shadow: 0 0 8px #00cc44; }
+.physical-btn.active .led-indicator.orange { background: #ff6600; box-shadow: 0 0 8px #ff6600; }
+.center-console {
+  --cc-size: clamp(104px, 16vh, 148px);
+  position: relative;
+  width: var(--cc-size);
+  height: var(--cc-size);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  justify-self: center;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #121212, #0d0d0d);
+  box-shadow: inset 5px 5px 10px #040404, inset -5px -5px 10px #1a1a1a;
+  border: 1px solid #222;
+}
+.shortcut-btn {
+  position: absolute;
+  padding: 2px 3px;
+  background: transparent;
+  border: none;
+  color: #777;
+  font-family: inherit;
+  font-size: 6px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+.shortcut-btn:hover { color: #fff; text-shadow: 0 0 6px rgba(255, 255, 255, 0.5); }
+.shortcut-btn.on { color: #ff6600; text-shadow: 0 0 6px rgba(255, 102, 0, 0.6); }
+.shortcut-btn.pos-t { top: 3px; left: 50%; transform: translateX(-50%); }
+.shortcut-btn.pos-b { bottom: 3px; left: 50%; transform: translateX(-50%); }
+.shortcut-btn.pos-l { top: 50%; left: 3px; transform: translateY(-50%); }
+.shortcut-btn.pos-r { top: 50%; right: 3px; transform: translateY(-50%); }
+.rotary-knob {
+  position: relative;
+  z-index: 5;
+  width: 56%; height: 56%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #2a2a2a, #1a1a1a);
+  box-shadow: 7px 7px 14px #030303, -7px -7px 14px #1f1f1f, inset 0 0 0 3px #111;
+  cursor: grab;
+  transition: transform 0.1s ease-out;
+}
+.rotary-knob:active { cursor: grabbing; }
+.knob-touchpad {
+  width: 68%; height: 68%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border-radius: 50%;
+  background: #0f0f0f;
+  box-shadow: inset 2px 2px 4px rgba(0, 0, 0, 0.8), inset -2px -2px 4px rgba(255, 255, 255, 0.05);
+}
+.knob-indicator {
+  position: absolute;
+  top: -7px; left: 50%;
+  transform: translateX(-50%);
+  width: 4px; height: 11px;
+  border-radius: 2px;
+  background: #ff6600;
+  box-shadow: 0 0 8px #ff6600;
+  pointer-events: none;
+}
+.knob-center-logo {
+  font-size: 11px;
+  font-weight: 900;
+  color: #333;
+  letter-spacing: -1px;
+  pointer-events: none;
+}
+
+/* ============================================================
+   DRAG & DROP + EFEKTY
+   ============================================================ */
+.drag-ghost {
+  position: fixed; left: 0; top: 0;
+  z-index: 100;
+  display: none;
+  width: 108px;
+  padding: 7px;
+  translate: 14px 14px;
+  border: 1px solid var(--cyan);
+  color: #eeeeee;
+  background: rgba(10, 10, 10, 0.92);
+  box-shadow: 0 0 20px rgba(0, 136, 255, 0.22);
+  font-size: 8px;
+  pointer-events: none;
+}
+.drag-ghost.visible {
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  gap: 7px;
+  align-items: center;
+}
+.drag-ghost.invalid { border-color: var(--red); color: var(--red); box-shadow: 0 0 20px rgba(230, 0, 0, 0.2); }
+.drag-ghost small { color: #999999; }
+
+.deployment-reticle {
+  position: fixed; left: 0; top: 0;
+  z-index: 99;
+  display: none;
+  width: 86px; height: 86px;
+  margin: -43px 0 0 -43px;
+  border: 1px solid var(--green);
+  border-radius: 50%;
+  box-shadow: 0 0 18px rgba(255, 102, 0, 0.22), inset 0 0 18px rgba(255, 102, 0, 0.08);
+  pointer-events: none;
+}
+.deployment-reticle::before {
+  content: "";
+  position: absolute; inset: 9px;
+  border: 1px dashed rgba(255, 102, 0, 0.55);
+  border-radius: 50%;
+}
+.deployment-reticle::after {
+  content: "";
+  position: absolute; inset: 50% 7px auto;
+  height: 1px;
+  background: rgba(255, 102, 0, 0.5);
+}
+.deployment-reticle.visible { display: block; animation: reticle-spin 4s linear infinite; }
+.deployment-reticle.invalid { border-color: var(--red); box-shadow: 0 0 18px rgba(230, 0, 0, 0.2); }
+.deployment-reticle.invalid::before { border-color: rgba(230, 0, 0, 0.65); }
+
+/* ---------- TOASTY ---------- */
+.toast-stack {
+  position: fixed;
+  left: 50%; bottom: calc(var(--cockpit-h) + 14px);
+  z-index: 110;
+  translate: -50% 0;
+  display: grid;
+  gap: 5px;
+  width: min(440px, calc(100vw - 30px));
+  pointer-events: none;
+}
+.toast {
+  justify-self: center;
+  padding: 7px 16px;
+  border: 1px solid #ff6600;
+  border-radius: 16px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.85);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5), 0 0 15px rgba(255, 102, 0, 0.2);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  animation: toast-in 0.22s ease-out, toast-out 0.3s ease-in 2.6s forwards;
+}
+.toast.warn { border-color: #ffaa33; box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5), 0 0 15px rgba(255, 170, 51, 0.2); }
+.toast.bad  { border-color: #e60000; box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5), 0 0 15px rgba(230, 0, 0, 0.25); }
+
+/* ---------- szuflady mobilne ---------- */
+.mobile-tabs {
+  position: absolute;
+  top: calc(var(--top-h) + 8px); right: 8px;
+  z-index: 45;
+  display: none;
+  gap: 4px;
+}
+.mobile-tabs button {
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  color: var(--cyan);
+  background: rgba(12, 12, 12, 0.94);
+  font-size: 8px;
+  cursor: pointer;
+}
+
+@keyframes queue-pulse { 0%, 100% { opacity: 0.65; } 50% { opacity: 1; } }
+@keyframes reticle-spin { to { rotate: 360deg; } }
+@keyframes toast-in  { from { translate: 0 10px; opacity: 0; } }
+@keyframes toast-out { to   { translate: 0 -6px; opacity: 0; } }
+
+/* ============================================================
+   TERMINAL — TRYB KOMUNIKACJI (UPLINK, jak CapsLock w grze)
+   ============================================================ */
+.term-comm {
+  flex: 1;
+  min-width: 0;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px 8px;
+}
+.screen-bezel.comm-active .term-main,
+.screen-bezel.comm-active .term-widget { display: none; }
+.screen-bezel.comm-active .term-comm { display: flex; }
+.screen-bezel.comm-active { box-shadow: 0 0 14px rgba(0, 0, 0, 0.8) inset, 0 0 0 1px #1d3a4d; }
+
+.comm-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(0, 136, 255, 0.28);
+  color: #66bbff;
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.comm-head .comm-title { font-weight: 700; text-shadow: 0 0 8px rgba(0, 136, 255, 0.4); white-space: nowrap; }
+.comm-head .comm-net {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: #4b7ea6;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.comm-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-color: rgba(0, 136, 255, 0.35) transparent;
+  scrollbar-width: thin;
+}
+.comm-body::-webkit-scrollbar { width: 3px; }
+.comm-body::-webkit-scrollbar-thumb { background: rgba(0, 136, 255, 0.35); }
+.comm-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 3px;
+  border-top: 1px solid rgba(0, 136, 255, 0.14);
+  color: #41607a;
+  font-size: 6px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.term-text { color: #9fd8ff; font-size: 9px; line-height: 1.7; }
+.term-text.blink { animation: term-blink 0.9s steps(2, start) infinite; }
+.term-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0 3px 2px;
+  border-bottom: 1px solid rgba(0, 136, 255, 0.12);
+}
+.term-row:hover { background: rgba(0, 136, 255, 0.05); }
+.term-target {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: #cfe8ff;
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.term-target i { font-style: normal; color: #7ba7c9; }
+.term-btn {
+  min-height: 18px;
+  padding: 2px 9px;
+  border: 1px solid rgba(0, 136, 255, 0.45);
+  border-radius: 1px;
+  color: #66bbff;
+  background: rgba(0, 136, 255, 0.07);
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.term-btn:hover {
+  border-color: rgba(0, 136, 255, 0.9);
+  color: #eaf6ff;
+  background: rgba(0, 136, 255, 0.16);
+  box-shadow: 0 0 10px rgba(0, 136, 255, 0.18);
+}
+.term-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-top: 6px; }
+.term-btn.large { min-height: 26px; }
+@keyframes term-blink { 50% { opacity: 0.35; } }
+
+/* ============================================================
+   TABLET STACJI — wysuwany z dolnego UI (menu stacji z gry)
+   ============================================================ */
+.station-tablet {
+  position: absolute;
+  z-index: 40;
+  top: calc(var(--top-h) + 16px);
+  bottom: calc(var(--cockpit-h) - 28px);
+  left: calc(14px + clamp(250px, 19vw, 296px) + 12px);
+  right: calc(14px + clamp(292px, 22vw, 348px) + 12px);
+  max-width: 1560px;
+  margin: 0 auto;
+  display: flex;
+  visibility: hidden;
+  transform: translateY(calc(100% + var(--cockpit-h) + 60px));
+  transition: transform 0.55s cubic-bezier(0.18, 1.05, 0.28, 1), visibility 0s linear 0.55s;
+  pointer-events: none;
+}
+.station-tablet.open {
+  visibility: visible;
+  transform: translateY(0);
+  transition: transform 0.55s cubic-bezier(0.18, 1.05, 0.28, 1);
+  pointer-events: auto;
+}
+.tablet-frame {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 7px;
+  padding: 16px 12px 8px;
+  border: 1px solid #000;
+  border-top: 1px solid #3a3a3a;
+  border-radius: 16px 16px 10px 10px;
+  background: linear-gradient(180deg, #232323 0%, #121212 12%, #0a0a0a 100%);
+  box-shadow:
+    0 -12px 30px rgba(0, 0, 0, 0.6),
+    0 22px 50px rgba(0, 0, 0, 0.65),
+    inset 0 1px 1px rgba(255, 255, 255, 0.1),
+    inset 0 0 30px rgba(0, 0, 0, 0.6);
+}
+.tablet-frame::before {
+  content: "";
+  position: absolute;
+  top: 6px; left: 50%;
+  translate: -50% 0;
+  width: 64px; height: 3px;
+  border-radius: 2px;
+  background: #060606;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.9), 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.tablet-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+}
+.tablet-id { display: grid; gap: 2px; min-width: 0; }
+.tablet-id .tl-label { color: #777; font-size: 7px; letter-spacing: 0.14em; text-transform: uppercase; }
+.tablet-id strong {
+  overflow: hidden;
+  color: #eeeeee;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-shadow: 0 0 12px rgba(255, 102, 0, 0.25);
+}
+.tablet-id small { color: var(--green); font-size: 7px; letter-spacing: 0.1em; text-transform: uppercase; }
+.tablet-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid #222;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #9fd8ff;
+  font-size: 7px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.link-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: #00cc44;
+  box-shadow: 0 0 6px #00cc44;
+  animation: link-pulse 1.6s ease-in-out infinite;
+}
+.tablet-close { width: auto; }
+@keyframes link-pulse { 50% { opacity: 0.4; } }
+
+/* pasek zakładek — ekran infotainment jak w panelu centralnym */
+.tablet-tabsbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: center;
+}
+.tab-arrow {
+  width: 34px; height: 34px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(145deg, #1e1e1e, #141414);
+  box-shadow: 3px 3px 6px #030303, -3px -3px 6px #252525;
+  color: #999999;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tab-arrow:hover { color: #ffffff; }
+.tab-arrow:active {
+  box-shadow: inset 3px 3px 6px #030303, inset -3px -3px 6px #252525;
+  transform: translateY(1px);
+}
+.tablet-tabs {
+  position: relative;
+  height: 36px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid #1a1a1a;
+  border-radius: 8px;
+  box-shadow: inset 0 0 16px rgba(255, 102, 0, 0.1);
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+.tablet-tabs .screen-content { gap: 26px; }
+.tablet-tabs .menu-item { font-size: 12px; cursor: pointer; }
+.tablet-tabs .selection-indicator { width: 34px; }
+
+/* ekran tabletu + panele usług */
+.tablet-screen {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: #000;
+  border: 4px solid #0a0a0a;
+  border-radius: 10px;
+  box-shadow: 0 0 14px rgba(0, 0, 0, 0.8) inset, 0 0 0 1px #222;
+}
+.tablet-pane {
+  position: absolute;
+  inset: 0;
+  display: none;
+  padding: 10px;
+  overflow-y: auto;
+  scrollbar-color: rgba(255, 102, 0, 0.35) transparent;
+  scrollbar-width: thin;
+}
+.tablet-pane::-webkit-scrollbar { width: 4px; }
+.tablet-pane::-webkit-scrollbar-thumb { background: rgba(255, 102, 0, 0.34); }
+.tablet-pane.active {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  align-content: start;
+}
+.dock-span { grid-column: 1 / -1; }
+
+/* karty usług — stylistyka modułów kokpitu */
+.dock-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  padding: 9px;
+  overflow: hidden;
+  border: 1px solid #222;
+  border-radius: 9px;
+  background: linear-gradient(180deg, rgba(32, 32, 32, 0.9), rgba(12, 12, 12, 0.96) 24%, rgba(6, 6, 6, 0.98));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 18px rgba(0, 0, 0, 0.55);
+}
+.dock-card::before {
+  content: "";
+  position: absolute;
+  top: 0; right: 14%; left: 14%;
+  height: 1px;
+  background: rgba(255, 102, 0, 0.35);
+}
+.dock-card.no-portrait { grid-template-columns: minmax(0, 1fr); }
+.dock-portrait {
+  width: 52px; height: 52px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(0, 136, 255, 0.2);
+  background:
+    linear-gradient(rgba(0, 136, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 136, 255, 0.055) 1px, transparent 1px),
+    rgba(0, 0, 0, 0.3);
+  background-size: 8px 8px;
+}
+.dock-main { min-width: 0; display: grid; gap: 4px; align-content: start; }
+.dock-title { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.dock-title strong {
+  overflow: hidden;
+  color: #eeeeee;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.dock-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid rgba(255, 102, 0, 0.4);
+  border-radius: 8px;
+  color: var(--green);
+  background: rgba(255, 102, 0, 0.08);
+  font-size: 6px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.dock-desc { color: #8a8a8a; font-size: 8px; line-height: 1.5; }
+.dock-meta { display: grid; gap: 1px; color: #9a9a9a; font-size: 8px; text-transform: uppercase; }
+.dock-meta b { color: #dddddd; font-weight: 400; }
+.dock-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.dock-actions .physical-btn { width: auto; min-width: 92px; }
+.dock-actions .physical-btn[disabled] { opacity: 0.4; pointer-events: none; }
+
+/* zegar diagnostyczny — 1:1 stylistyka modułu PRĘDKOŚĆ */
+.dock-gauge {
+  position: relative;
+  min-height: clamp(120px, 20vh, 170px);
+  border-radius: 10px;
+  background: radial-gradient(circle at center, rgba(17, 17, 17, 0.9) 0%, transparent 72%);
+}
+#tabletGauge { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* tabela handlu + wiersze infrastruktury */
+.trade-table { width: 100%; border-collapse: collapse; font-size: 9px; }
+.trade-table td { padding: 3px 2px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); color: #bbbbbb; }
+.trade-table td:last-child { color: #eeeeee; text-align: right; font-variant-numeric: tabular-nums; }
+.res-dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  margin-right: 6px;
+  border-radius: 2px;
+  vertical-align: middle;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+.infra-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px auto;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 2px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  color: #bbbbbb;
+  font-size: 8px;
+  text-transform: uppercase;
+}
+.infra-row .micro-bar { height: 3px; }
+.infra-row .physical-btn { width: auto; padding: 4px 8px; }
+.infra-row.infra-off { opacity: 0.45; }
+
+.tablet-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 4px 0;
+  color: #aaaaaa;
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.tablet-foot b { color: #ffffff; font-weight: 400; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 1180px) {
+  .station-tablet { left: 260px; right: 308px; }
+}
+@media (max-width: 980px) {
+  .station-tablet {
+    z-index: 55;
+    top: calc(var(--top-h) + 46px);
+    bottom: calc(var(--cockpit-h) - 12px);
+    left: 8px;
+    right: 8px;
+  }
+  .tablet-id strong { font-size: 12px; }
+  .tablet-tabs .screen-content { gap: 16px; }
+  .tablet-tabs .menu-item { font-size: 10px; }
+}
+
+/* ============================================================
+   SKALOWANIE
+   ============================================================ */
+@media (max-width: 1400px) {
+  :root { --radar-d: clamp(200px, 30vh, 260px); }
+  .phys-btn .hk-label { display: none; }
+}
+
+@media (max-width: 1180px) {
+  :root { --radar-d: 196px; --cockpit-h: clamp(216px, 25vh, 260px); }
+  .left-stack  { width: 238px; }
+  .right-stack { width: 286px; }
+  .term-widget { flex-basis: 110px; }
+  .reserve-grid { grid-template-columns: 1fr; }
+  .ck-left  { grid-template-columns: 92px minmax(0, 1fr); }
+  .center-console { --cc-size: 96px; }
+  .physical-btn { padding: 5px 6px; font-size: 6px; }
+}
+
+@media (max-width: 980px) {
+  :root { --cockpit-h: 430px; --radar-d: 176px; }
+
+  .side-stack {
+    top: calc(var(--top-h) + 48px);
+    bottom: 8px;
+    z-index: 60;
+    display: none;
+    width: min(330px, calc(100vw - 16px));
+    overflow: auto;
+  }
+  .side-stack.open { display: flex; }
+  .left-stack { left: 8px; }
+  .right-stack { right: 8px; }
+  .mobile-tabs { display: flex; }
+
+  /* kokpit przechodzi w układ blokowy — radar wchodzi w siatkę */
+  .cockpit-shell {
+    clip-path: polygon(1.6% 0, 98.4% 0, 100% 12px, 100% 100%, 0 100%, 0 12px);
+  }
+  .cockpit-shell::after { inset: 10px 8px 6px; }
+  .shell-accent.l { right: 55%; }
+  .shell-accent.r { left: 55%; }
+  #cockpit {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    grid-template-rows: minmax(0, 1.05fr) minmax(0, 1fr);
+    gap: 7px;
+    padding: 16px 14px 10px;
+  }
+  .cockpit-shell, .shell-accent { z-index: 0; }
+  .ck-left, .ck-right, #radarPod { position: static; translate: none; z-index: 3; }
+  .ck-left { grid-column: 1 / -1; grid-row: 1; grid-template-columns: 96px minmax(0, 1fr); }
+  #radarPod { grid-column: 1; grid-row: 2; width: var(--radar-d); height: var(--radar-d); margin: 0 auto; align-self: center; }
+  .ck-right { grid-column: 2; grid-row: 2; grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+  .center-console { --cc-size: 90px; }
+  .speed-stage { min-height: 56px; }
+  .hardware-panel { height: 48px; }
+}
+
+@media (max-height: 780px) and (min-width: 981px) {
+  :root { --cockpit-h: 208px; --radar-d: clamp(190px, 30vh, 232px); }
+  .vital-track { min-height: 70px; }
+  .hardware-panel { height: 48px; }
+  .phys-btn .hk-label { display: none; }
+  .primary-layout { gap: 4px; }
+  .term-main { padding: 3px 6px; }
+  .center-console { --cc-size: 94px; }
+  .infotainment-screen { height: 24px; }
+  .speed-stage { min-height: 62px; }
+  .speed-trip { display: none; }
+  .active-panel { min-height: 150px; }
+  .reserve-panel { min-height: 176px; }
+  .reserve-card { min-height: 54px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .glass-scanlines { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="app" id="app" data-mode="agility">
+  <canvas id="world"></canvas>
+  <div class="glass-vignette"></div>
+  <div class="glass-scanlines"></div>
+  <div class="map-overlay"><span class="map-caption">Mapa taktyczna / pole warp</span></div>
+
+  <div class="deploy-banner">WEKTOR ROZMIESZCZENIA — UPUŚĆ NA MAPĘ LUB RADAR, ABY ROZPOCZĄĆ WARP</div>
+
+  <div class="mobile-tabs">
+    <button type="button" data-drawer="left">SKRZYDŁO / STOCZNIA</button>
+    <button type="button" data-drawer="right">SCANNER</button>
+  </div>
+
+  <!-- ===== LEWA KOLUMNA: aktywne skrzydło + stocznia ===== -->
+  <aside class="side-stack left-stack" id="leftStack">
+    <section class="hud-panel active-panel">
+      <header class="panel-head">
+        <div class="panel-title">
+          <strong>Aktywne skrzydło</strong>
+          <small>PRZYZWANE / W POLU WALKI</small>
+        </div>
+        <span class="panel-count" id="activeCount">0 JEDN.</span>
+      </header>
+      <div class="panel-body unit-list" id="unitList"></div>
+      <footer class="panel-orders">
+        <button class="tech-button active" type="button" data-order="escort">ESKORTA</button>
+        <button class="tech-button" type="button" data-order="engage">ATAK</button>
+        <button class="tech-button" type="button" data-order="hold">STÓJ</button>
+      </footer>
+    </section>
+
+    <section class="hud-panel reserve-panel">
+      <header class="panel-head">
+        <div class="panel-title">
+          <strong>Stocznia Pierścienia</strong>
+          <small>MAGAZYN / REZERWA FLOTY</small>
+        </div>
+        <span class="panel-count" id="reserveCount"></span>
+      </header>
+      <div class="reserve-intro"><span>Przeciągnij jednostkę na mapę lub radar</span><strong>GOTOWOŚĆ WARP</strong></div>
+      <div class="panel-body">
+        <div class="reserve-grid" id="reserveGrid"></div>
+        <div class="production-queue">
+          <div class="queue-head"><span id="queueLabel">BUDOWA: —</span><strong id="queueProgress">0%</strong></div>
+          <div class="queue-track"><div class="queue-fill" id="queueFill"></div></div>
+        </div>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ===== PRAWA KOLUMNA: overview scanner + selected object ===== -->
+  <aside class="side-stack right-stack" id="rightStack">
+    <section class="hud-panel overview-panel">
+      <header class="panel-head">
+        <div class="panel-title">
+          <strong>Overview / Scanner</strong>
+          <small>KONTAKTY PASYWNE + AKTYWNE</small>
+        </div>
+        <span class="panel-count" id="contactCount">0 KONTAKTÓW</span>
+      </header>
+      <div class="scanner-filters" id="scannerFilters">
+        <button type="button" class="filter-button active" data-filter="all">WSZYSTKO</button>
+        <button type="button" class="filter-button" data-filter="hostile">WRÓG</button>
+        <button type="button" class="filter-button" data-filter="asteroid">ZASOBY</button>
+        <button type="button" class="filter-button" data-filter="station">STACJE</button>
+        <button type="button" class="filter-button" data-filter="friendly">SOJUSZ</button>
+      </div>
+      <div class="panel-body">
+        <div class="contact-table-head"><span>TYP</span><span>NAZWA</span><span class="dist-cell">DYST</span><span>LCK</span></div>
+        <div id="contactRows"></div>
+      </div>
+    </section>
+
+    <section class="hud-panel selected-panel">
+      <header class="panel-head">
+        <div class="panel-title">
+          <strong>Selected object</strong>
+          <small id="selKind">—</small>
+        </div>
+      </header>
+      <div id="selBody"><div class="sel-empty">Brak wybranego obiektu.</div></div>
+    </section>
+  </aside>
+
+  <!-- ===== KOKPIT ===== -->
+  <section id="cockpit">
+    <div class="cockpit-shell"></div>
+    <div class="shell-accent l"></div>
+    <div class="shell-accent r"></div>
+
+    <div class="ck-left">
+      <section class="cockpit-module systems-module">
+        <span class="module-label">SYSTEMY</span>
+        <div class="vertical-bars">
+          <div class="vital-column hp" id="vitalHp">
+            <span class="vital-value">100</span>
+            <div class="vital-track"><div class="vital-ghost"></div><div class="vital-fill"></div></div>
+            <span class="vital-label">HP</span>
+          </div>
+          <div class="vital-column shield" id="vitalShield">
+            <span class="vital-value">82</span>
+            <div class="vital-track"><div class="vital-ghost"></div><div class="vital-fill"></div></div>
+            <span class="vital-label">TARCZA</span>
+          </div>
+          <div class="vital-column core" id="vitalCore">
+            <span class="vital-value">40</span>
+            <div class="vital-track"><div class="vital-ghost"></div><div class="vital-fill"></div></div>
+            <span class="vital-label">RDZEŃ</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="cockpit-module primary-module">
+        <span class="module-label">TERMINAL POKŁADOWY / UZBROJENIE</span>
+        <div class="primary-layout">
+          <div class="screen-bezel">
+            <div class="screen-glare"></div>
+            <div class="term-sidebar">
+              <button type="button" class="nav-icon active" title="Dziennik pokładowy">
+                <svg viewBox="0 0 24 24"><path d="M3 5h18v2H3zm0 6h18v2H3zm0 6h12v2H3z"/></svg>
+              </button>
+              <button type="button" class="nav-icon" title="Uzbrojenie">
+                <svg viewBox="0 0 24 24"><path d="M12 2l2.4 5.6L20 8l-4 3.9.9 6.1-4.9-2.8L7.1 18l.9-6.1L4 8l5.6-.4z"/></svg>
+              </button>
+              <button type="button" class="nav-icon" title="Systemy">
+                <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm9 4c0 .5-.05 1-.14 1.5l2.11 1.65-2 3.46-2.49-1a8 8 0 01-2.6 1.5L15.5 22h-4l-.38-2.89a8 8 0 01-2.6-1.5l-2.49 1-2-3.46 2.11-1.65A8 8 0 016 12c0-.5.05-1 .14-1.5L4.03 8.85l2-3.46 2.49 1a8 8 0 012.6-1.5L11.5 2h4l.38 2.89a8 8 0 012.6 1.5l2.49-1 2 3.46-2.11 1.65c.09.5.14 1 .14 1.5z"/></svg>
+              </button>
+              <button type="button" class="nav-icon" id="navComm" title="Uplink — łączność ze stacjami (Caps Lock)">
+                <svg viewBox="0 0 24 24"><path d="M1 9l2 2c4.97-4.97 13.03-4.97 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3c-1.65-1.66-4.34-1.66-6 0zm-4-4l2 2c2.76-2.76 7.24-2.76 10 0l2-2C15.14 9.14 8.87 9.14 5 13z"/></svg>
+              </button>
+            </div>
+            <div class="term-main">
+              <div class="console-status" id="consoleStatus"></div>
+              <div class="console-log" id="consoleLog"></div>
+            </div>
+            <div class="term-widget">
+              <div class="widget-header">Informacje</div>
+              <div class="clock-content">
+                <div class="clock-time" id="termClock">00:00</div>
+                <div class="clock-date" id="termDate">—</div>
+                <div class="clock-weather">
+                  <svg viewBox="0 0 24 24"><path d="M17.5 11c0 2.76-2.24 5-5 5-2.58 0-4.71-1.95-4.96-4.46C7.36 11.83 7.18 12 7 12c-1.66 0-3-1.34-3-3s1.34-3 3-3c.4 0 .78.08 1.13.22.42-1.7 1.83-3.05 3.59-3.2A5.006 5.006 0 0 1 17.5 11z"/></svg>
+                  <span>22°C</span>
+                </div>
+                <div class="clock-loc" id="termLoc"><small>Pozycja</small>SATURN — PIERŚCIEŃ<br>WĘZEŁ 04</div>
+              </div>
+            </div>
+            <div class="term-comm" id="termComm">
+              <div class="comm-head">
+                <span class="comm-title">UPLINK TERMINAL v1.0</span>
+                <span class="comm-net" id="commNet">SKAN SIECI…</span>
+                <button type="button" class="term-btn" id="commClose">0 · ROZŁĄCZ</button>
+              </div>
+              <div class="comm-body" id="commBody"></div>
+              <div class="comm-foot"><span>CAPS / ESC — zamknij terminal</span><span>Łącze Pierścienia 96%</span></div>
+            </div>
+          </div>
+          <div class="hardware-panel" id="hotkeyGrid"></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- radar centralny (mój) -->
+    <div id="radarPod">
+      <canvas id="radarCanvas"></canvas>
+      <div class="rp-readout"><span id="rdTotal">C:00</span><span class="h" id="rdHostile">H:00</span><span id="rdAst">A:00</span><span class="r" id="rdRange">20K</span></div>
+      <div class="rp-ranges" id="radarRanges"></div>
+    </div>
+
+    <div class="ck-right">
+      <section class="cockpit-module speed-module">
+        <span class="module-label">PRĘDKOŚĆ</span>
+        <div class="speed-layout">
+          <div class="speed-stage">
+            <canvas id="speedCanvas"></canvas>
+            <div class="speed-center">
+              <div class="speed-value"><span id="spValue">0</span><span class="speed-unit">U/S</span></div>
+              <div class="speed-divider"></div>
+              <div class="speed-mode" id="spMode">M</div>
+              <div class="speed-trip">
+                <span>ODO</span><span class="trip-value" id="spOdo">633 390 u</span>
+                <span>TRIP</span><span class="trip-value" id="spTrip">0 u</span>
+              </div>
+            </div>
+          </div>
+          <div class="speed-bottom">
+            <span>CIĄG <b id="thrPct">35%</b></span>
+            <span id="spState">REJS</span>
+            <span>LIMIT <b id="spLimit">640</b></span>
+          </div>
+          <div class="speed-pedals">
+            <button type="button" class="pedal" id="thrPlus">W · Gaz</button>
+            <button type="button" class="pedal" id="thrMinus">S · Hamulec</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="cockpit-module control-module">
+        <span class="module-label">PANEL CENTRALNY / MODE</span>
+        <div class="console-layout">
+          <div class="infotainment-screen">
+            <div class="screen-content" id="modeTrack">
+              <div class="menu-item" data-mode="combat">BOJOWY</div>
+              <div class="menu-item active" data-mode="agility">MANEWROWY</div>
+              <div class="menu-item" data-mode="travel">PODRÓŻ</div>
+            </div>
+            <div class="selection-indicator"></div>
+          </div>
+          <div class="controls-area">
+            <div class="btn-group">
+              <button type="button" class="physical-btn" id="pbComm">
+                <span>Komunikacja</span>
+                <div class="led-indicator blue"></div>
+              </button>
+              <button type="button" class="physical-btn" id="pbMissions">
+                <span>Misje</span>
+                <div class="led-indicator orange"></div>
+              </button>
+            </div>
+            <div class="center-console">
+              <button type="button" class="shortcut-btn pos-t" id="scScan" title="[X]">Skan</button>
+              <button type="button" class="shortcut-btn pos-b" id="scLock" title="[T]">Cel</button>
+              <button type="button" class="shortcut-btn pos-l" id="scAuto" title="[P]">Auto</button>
+              <button type="button" class="shortcut-btn pos-r" id="scEcm" title="[E]">Ecm</button>
+              <div class="rotary-knob" id="rotaryKnob" title="Obracaj pokrętłem (przeciągnij) lub przewijaj kółkiem myszy">
+                <div class="knob-indicator"></div>
+                <div class="knob-touchpad"><div class="knob-center-logo">///</div></div>
+              </div>
+            </div>
+            <div class="btn-group">
+              <button type="button" class="physical-btn" id="pbShip">
+                <span>Statek</span>
+                <div class="led-indicator green"></div>
+              </button>
+              <button type="button" class="physical-btn" id="pbMap">
+                <span>Mapa</span>
+                <div class="led-indicator red"></div>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <!-- ===== TABLET STACJI — wysuwany z dolnego UI ===== -->
+  <section class="station-tablet" id="stationTablet" aria-hidden="true">
+    <div class="tablet-frame">
+      <header class="tablet-head">
+        <div class="tablet-id">
+          <span class="tl-label">Terminal stacji / usługi dokowe</span>
+          <strong id="tabletStation">—</strong>
+          <small id="tabletStationSub">BRAK POŁĄCZENIA</small>
+        </div>
+        <div class="tablet-link"><span class="link-dot"></span>ŁĄCZE 96% · PING 12 ms</div>
+        <button type="button" class="physical-btn tablet-close active" id="tabletClose">
+          <span>Zamknij</span>
+          <div class="led-indicator red"></div>
+        </button>
+      </header>
+      <nav class="tablet-tabsbar">
+        <button type="button" class="tab-arrow" id="tabPrev" title="Poprzednia zakładka">‹</button>
+        <div class="tablet-tabs" id="tabletTabs" title="Kliknij zakładkę lub przewiń kółkiem">
+          <div class="screen-content" id="tabletTabTrack">
+            <div class="menu-item" data-tab="hangar">HANGAR</div>
+            <div class="menu-item" data-tab="trade">HANDEL</div>
+            <div class="menu-item" data-tab="cantina">KANTYNA</div>
+            <div class="menu-item" data-tab="mechanic">MECHANIK</div>
+            <div class="menu-item" data-tab="infrastructure">INFRASTRUKTURA</div>
+          </div>
+          <div class="selection-indicator"></div>
+        </div>
+        <button type="button" class="tab-arrow" id="tabNext" title="Następna zakładka">›</button>
+      </nav>
+      <div class="tablet-screen">
+        <div class="screen-glare"></div>
+        <div class="tablet-pane" data-pane="hangar"></div>
+        <div class="tablet-pane" data-pane="trade"></div>
+        <div class="tablet-pane" data-pane="cantina"></div>
+        <div class="tablet-pane" data-pane="mechanic"></div>
+        <div class="tablet-pane" data-pane="infrastructure"></div>
+      </div>
+      <footer class="tablet-foot">
+        <span>KREDYTY <b id="tabletCredits">12 450 cr</b></span>
+        <span id="tabletDock">DOK 2 — ZACISK AKTYWNY</span>
+        <span>ŁADOWNIA <b id="tabletCargo">18 / 40</b></span>
+      </footer>
+    </div>
+  </section>
+
+  <div class="drag-ghost" id="dragGhost"></div>
+  <div class="deployment-reticle" id="deployReticle"></div>
+  <div class="toast-stack" id="toastStack"></div>
+</div>
+
+<script>
+'use strict';
+/* ==============================================================
+   STATKI — prototyp kokpitu v2
+   Moja symulacja świata + elementy UI zapożyczone z wersji ref.
+   ============================================================== */
+
+const $  = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const rand = (a, b) => a + Math.random() * (b - a);
+
+const PX_PER_UNIT = 0.02;                 // 1 px = 50 u
+const RADAR_RANGES = [5000, 10000, 20000, 40000, 60000];
+
+const MODES = {
+  combat:  { label: 'BOJOWY',  gear: 'B', maxSpeed: 420,  accel: 200, angle: -48, shieldCap: 1.0,  coreBias: 0.18, weapons: 'AKTYWNE' },
+  agility: { label: 'MANEWROWY', gear: 'M', maxSpeed: 640,  accel: 380, angle: 0,   shieldCap: 0.75, coreBias: 0.08, weapons: 'ASYSTA' },
+  travel:  { label: 'PODRÓŻ',  gear: 'P', maxSpeed: 4200, accel: 950, angle: 48,  shieldCap: 0.35, coreBias: 0.30, weapons: 'ZABEZP.' }
+};
+const MODE_ORDER = ['combat', 'agility', 'travel'];
+
+const HOTKEYS = [
+  { key: '1', ico: '▲', label: 'DZIAŁA',   color: '#ff6600', cd: 1.2,  weapon: true },
+  { key: '2', ico: '◆', label: 'RAKIETY',  color: '#ffaa33', cd: 3.0,  weapon: true },
+  { key: '3', ico: '≡', label: 'HEXLANCE', color: '#e60000', cd: 5.0,  weapon: true },
+  { key: '4', ico: '●', label: 'TORPEDY',  color: '#b58cff', cd: 8.0,  weapon: true },
+  { key: '5', ico: '◎', label: 'SONDA',    color: '#ff6600', cd: 6.0,  weapon: false },
+  { key: '6', ico: '▣', label: 'DRON',     color: '#b58cff', cd: 6.0,  weapon: false },
+  { key: '7', ico: '✚', label: 'SKAN',     color: '#0088ff', cd: 4.0,  weapon: false },
+  { key: '8', ico: '▤', label: 'NAPRAWA',  color: '#ff6600', cd: 12.0, weapon: false },
+  { key: '9', ico: '»', label: 'DOPALACZ', color: '#0088ff', cd: 10.0, weapon: false }
+];
+
+/* klasy okrętów wsparcia — rezerwa stoczni Pierścienia */
+const SHIP_CLASSES = {
+  fighter:   { name: 'Sparrow',   role: 'Skrzydło myśliwców', count: 6, max: 6, prod: 16,  speed: 900, size: 7,  hp: 0.6 },
+  corvus:    { name: 'Corvus',    role: 'Fregata rakietowa',  count: 3, max: 4, prod: 34,  speed: 520, size: 11, hp: 0.9 },
+  custos:    { name: 'Custos',    role: 'Fregata liniowa',    count: 4, max: 5, prod: 28,  speed: 540, size: 11, hp: 1.0 },
+  hasta:     { name: 'Hasta',     role: 'Niszczyciel',        count: 2, max: 3, prod: 52,  speed: 430, size: 14, hp: 1.4 },
+  bellator:  { name: 'Bellator',  role: 'Pancernik',          count: 1, max: 2, prod: 90,  speed: 300, size: 18, hp: 2.2 },
+  citadella: { name: 'Citadella', role: 'Lotniskowiec',       count: 1, max: 1, prod: 120, speed: 260, size: 20, hp: 2.0 }
+};
+
+const TONE = { hostile: 'tone-hostile', asteroid: 'tone-asteroid', station: 'tone-station', friendly: 'tone-friendly' };
+const TYPE_CODE = { hostile: 'WRG', asteroid: 'AST', station: 'STA', friendly: 'SOJ' };
+
+function silhouette(cls) {
+  return `<span class="ship-silhouette ${cls}"></span>`;
+}
+
+/* ---------- stan globalny ---------- */
+const state = {
+  t: 0,
+  startedAt: performance.now(),
+  mode: 'agility',
+  throttle: 0.35,
+  speed: 0,
+  hp: 1.0,
+  shield: 0.82,
+  core: 0.4,
+  boostUntil: -1,
+  scanUntil: -1,
+  odo: 633390,
+  trip: 0,
+  credits: 12450,
+  cargo: { tytan: 6, krzem: 8, ogniwa: 4 },
+  autopilot: false,
+  ecm: false,
+  pointDefense: true,
+  mapOpen: false,
+  radarRange: 20000,
+  scannerFilter: 'all',
+  contacts: [],
+  fleet: [],
+  effects: [],
+  pendingSpawns: [],
+  selected: null,              // { kind: 'contact' | 'fleet', id }
+  selectedUnitIds: new Set(),
+  wingOrder: 'escort',
+  fleetDirty: true,
+  fleetCounter: {},
+  drag: null,
+  queue: { cls: null, progress: 0 }
+};
+
+/* ==============================================================
+   KONTAKTY — symulacja
+   ============================================================== */
+let nextId = 1;
+function addContact(c) {
+  c.id = nextId++;
+  c.vx = c.vx || 0; c.vy = c.vy || 0;
+  c.hp = c.hp == null ? 1 : c.hp;
+  c.locked = false;
+  state.contacts.push(c);
+  return c;
+}
+
+function seedContacts() {
+  const pirates = ['Sęp', 'Kruk', 'Szakal', 'Żmija', 'Hiena'];
+  pirates.forEach((n, i) => {
+    const a = rand(0, Math.PI * 2), d = rand(7000, 26000);
+    addContact({
+      type: 'hostile', name: `${n} (pirat)`,
+      sub: i % 2 ? 'NISZCZYCIEL PIRACKI' : 'FREGATA PIRACKA',
+      x: Math.cos(a) * d, y: Math.sin(a) * d,
+      orbitA: a, orbitD: d, orbitW: rand(0.008, 0.02) * (i % 2 ? -1 : 1),
+      spd: rand(120, 300), threat: 'WYSOKIE'
+    });
+  });
+  for (let i = 0; i < 6; i++) {
+    const a = rand(0, Math.PI * 2), d = rand(5000, 30000);
+    addContact({
+      type: 'asteroid', name: `Asteroida C-${100 + Math.floor(rand(0, 800))}`,
+      sub: 'SKAŁA • Fe', threat: 'BRAK',
+      x: Math.cos(a) * d, y: Math.sin(a) * d,
+      vx: rand(-14, 14), vy: rand(-14, 14), spd: 0
+    });
+  }
+  addContact({ type: 'station', code: 'RING-04', name: 'Pierścień — Stocznia', sub: 'STACJA / WĘZEŁ 04', threat: 'BRAK', x: -14000, y: -9500, spd: 0 });
+  addContact({ type: 'station', code: 'RELAY-3', name: 'Sensor Relay-3', sub: 'STACJA SENSORYCZNA', threat: 'BRAK', x: 19000, y: 6000, spd: 0 });
+  addContact({ type: 'station', code: 'PORTUS', name: 'Portus — Doki cywilne', sub: 'STACJA / DOKI HANDLOWE', threat: 'BRAK', x: 24000, y: 15500, spd: 0 });
+  addContact({
+    type: 'friendly', name: 'Patrol • Custos-7', sub: 'SOJUSZ / PATROL', threat: 'BRAK',
+    x: 8000, y: -12000, orbitA: 0.4, orbitD: 14000, orbitW: 0.012, spd: 240
+  });
+}
+seedContacts();
+
+/* ==============================================================
+   CANVAS: fitCanvas + świat
+   ============================================================== */
+function fitCanvas(canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round(rect.width * ratio));
+  const h = Math.max(1, Math.round(rect.height * ratio));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  return { ctx, width: rect.width, height: rect.height };
+}
+
+const world = $('#world');
+const cockpitEl = $('#cockpit');
+let stars = [];
+
+function rebuildStars() {
+  stars = [];
+  const n = Math.round(innerWidth * innerHeight / 4200);
+  for (let i = 0; i < n; i++) {
+    stars.push({ x: rand(0, 1), y: rand(0, 1), z: rand(0.25, 1), p: rand(0, Math.PI * 2) });
+  }
+}
+rebuildStars();
+addEventListener('resize', rebuildStars);
+
+function flightHeight() {
+  return cockpitEl.getBoundingClientRect().top;
+}
+function worldCenter() {
+  return { x: innerWidth / 2, y: flightHeight() / 2 };
+}
+function w2s(x, y) { const c = worldCenter(); return { x: c.x + x * PX_PER_UNIT, y: c.y + y * PX_PER_UNIT }; }
+function s2w(x, y) { const c = worldCenter(); return { x: (x - c.x) / PX_PER_UNIT, y: (y - c.y) / PX_PER_UNIT }; }
+
+function drawShipMarker(ctx, sx, sy, size, color, filled) {
+  ctx.beginPath();
+  ctx.moveTo(sx, sy - size);
+  ctx.lineTo(sx + size * 0.72, sy + size * 0.8);
+  ctx.lineTo(sx, sy + size * 0.4);
+  ctx.lineTo(sx - size * 0.72, sy + size * 0.8);
+  ctx.closePath();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+  if (filled) { ctx.globalAlpha = 0.25; ctx.fillStyle = color; ctx.fill(); ctx.globalAlpha = 1; }
+}
+
+function drawWorld() {
+  const { ctx } = fitCanvas(world);
+  const W = innerWidth, H = innerHeight;
+  const fH = flightHeight();
+  ctx.clearRect(0, 0, W, H);
+
+  // tło + mgławica
+  const bg = ctx.createLinearGradient(0, 0, 0, fH);
+  bg.addColorStop(0, '#02070d');
+  bg.addColorStop(0.55, '#061018');
+  bg.addColorStop(1, '#010305');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+  const neb = ctx.createRadialGradient(W * 0.56, fH * 0.28, 0, W * 0.56, fH * 0.28, W * 0.36);
+  neb.addColorStop(0, 'rgba(90, 60, 25, 0.13)');
+  neb.addColorStop(0.45, 'rgba(50, 35, 18, 0.07)');
+  neb.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = neb;
+  ctx.fillRect(0, 0, W, fH);
+
+  // gwiazdy ze smugami zależnymi od prędkości (zapożyczone)
+  const mode = MODES[state.mode];
+  const speedRatio = clamp(state.speed / mode.maxSpeed, 0, 1);
+  const stretch = state.mode === 'travel' ? 10 + speedRatio * 26 : (state.boostUntil > state.t ? 12 : 1.5);
+  for (const s of stars) {
+    const drift = (state.t * 14 * s.z * (0.3 + speedRatio)) % W;
+    const x = (s.x * W + drift) % W;
+    const y = s.y * fH;
+    const alpha = 0.22 + s.z * 0.55 + Math.sin(state.t * 1.2 + s.p) * 0.08;
+    ctx.strokeStyle = `rgba(${150 + Math.round(s.z * 90)}, ${190 + Math.round(s.z * 55)}, 255, ${alpha})`;
+    ctx.lineWidth = Math.max(0.5, s.z * 1.25);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - stretch * s.z, y);
+    ctx.stroke();
+  }
+
+  // planeta z pierścieniem (dekoracja)
+  const pX = W * 0.68, pY = fH * 0.24, pR = clamp(W * 0.03, 26, 58);
+  ctx.save();
+  ctx.translate(pX, pY);
+  ctx.rotate(-0.18);
+  ctx.strokeStyle = 'rgba(176, 207, 211, 0.16)';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, pR * 2.2, pR * 0.46, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  const pg = ctx.createRadialGradient(-pR * 0.35, -pR * 0.36, pR * 0.1, 0, 0, pR);
+  pg.addColorStop(0, '#adb8a0');
+  pg.addColorStop(0.38, '#56676e');
+  pg.addColorStop(1, '#090d13');
+  ctx.fillStyle = pg;
+  ctx.beginPath();
+  ctx.arc(0, 0, pR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // impuls skanu
+  if (state.scanUntil > state.t) {
+    const c = worldCenter();
+    const k = 1 - (state.scanUntil - state.t) / 1.25;
+    ctx.strokeStyle = `rgba(255, 102, 0, ${0.72 * (1 - k)})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, k * Math.min(W, fH) * 0.65, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // kontakty
+  for (const c of state.contacts) {
+    const p = w2s(c.x, c.y);
+    if (p.x < -40 || p.y < -40 || p.x > W + 40 || p.y > H + 40) continue;
+    if (c.type === 'hostile') {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(Math.PI / 4);
+      ctx.strokeStyle = '#e60000';
+      ctx.lineWidth = 1.4;
+      ctx.strokeRect(-5, -5, 10, 10);
+      ctx.restore();
+      if (c.hp < 1) {
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(p.x - 9, p.y - 13, 18, 3);
+        ctx.fillStyle = '#e60000';
+        ctx.fillRect(p.x - 9, p.y - 13, 18 * Math.max(0, c.hp), 3);
+      }
+    } else if (c.type === 'asteroid') {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffaa33';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    } else if (c.type === 'station') {
+      ctx.strokeStyle = '#f97316';
+      ctx.lineWidth = 1.4;
+      ctx.strokeRect(p.x - 6, p.y - 6, 12, 12);
+      ctx.beginPath();
+      ctx.moveTo(p.x - 9, p.y); ctx.lineTo(p.x + 9, p.y);
+      ctx.moveTo(p.x, p.y - 9); ctx.lineTo(p.x, p.y + 9);
+      ctx.globalAlpha = 0.5; ctx.stroke(); ctx.globalAlpha = 1;
+    } else {
+      drawShipMarker(ctx, p.x, p.y, 6, '#0088ff', false);
+    }
+    if (c.locked) {
+      ctx.strokeStyle = 'rgba(255,104,104,0.85)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(p.x - 11, p.y - 11, 22, 22);
+      ctx.setLineDash([]);
+    }
+  }
+
+  // skrzydło wsparcia
+  for (const f of state.fleet) {
+    const p = w2s(f.x, f.y);
+    const col = '#ff6600';
+    if (f.cls === 'fighter') {
+      drawShipMarker(ctx, p.x - 6, p.y + 3, 4, col, true);
+      drawShipMarker(ctx, p.x + 6, p.y + 3, 4, col, true);
+      drawShipMarker(ctx, p.x, p.y - 4, 4, col, true);
+    } else {
+      drawShipMarker(ctx, p.x, p.y, SHIP_CLASSES[f.cls].size * 0.7, col, true);
+    }
+    ctx.fillStyle = 'rgba(255,102,0,0.75)';
+    ctx.font = '9px Consolas, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(f.name, p.x, p.y + 20);
+  }
+
+  // gracz — Atlas
+  const c0 = worldCenter();
+  ctx.save();
+  ctx.translate(c0.x, c0.y);
+  ctx.strokeStyle = '#dddddd';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(0, -15);
+  ctx.lineTo(9, 10); ctx.lineTo(4, 7); ctx.lineTo(4, 14);
+  ctx.lineTo(-4, 14); ctx.lineTo(-4, 7); ctx.lineTo(-9, 10);
+  ctx.closePath();
+  ctx.stroke();
+  if (speedRatio > 0.03) {
+    ctx.globalAlpha = 0.35 + 0.4 * speedRatio;
+    ctx.fillStyle = '#0088ff';
+    ctx.beginPath();
+    ctx.moveTo(-3, 15); ctx.lineTo(3, 15);
+    ctx.lineTo(0, 25 + speedRatio * 22 + Math.sin(state.t * 30) * 3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+
+  // zaznaczenie
+  const sel = getSelectedEntity();
+  if (sel) {
+    const p = w2s(sel.x, sel.y);
+    ctx.strokeStyle = '#ffaa33';
+    ctx.lineWidth = 1.4;
+    ctx.setLineDash([6, 5]);
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(state.t * 0.8);
+    ctx.beginPath();
+    ctx.arc(0, 0, 17, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+    ctx.setLineDash([]);
+  }
+
+  // efekty (warp / eksplozje)
+  for (const e of state.effects) {
+    const p = w2s(e.x, e.y);
+    const age = state.t - e.t0;
+    if (e.kind === 'warp') {
+      // trzy pierścienie z opóźnieniem
+      for (let i = 0; i < 3; i++) {
+        const k = clamp((age - i * 0.12) / 0.9, 0, 1);
+        if (k <= 0 || k >= 1) continue;
+        ctx.globalAlpha = (1 - k) * 0.7;
+        ctx.strokeStyle = '#0088ff';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 6 + k * 46, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      // pionowy rdzeń światła → poziome rozciągnięcie
+      if (age < 0.55) {
+        const k = age / 0.55;
+        ctx.globalAlpha = 1 - k * 0.4;
+        ctx.strokeStyle = '#eeeeee';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y - 34 * k);
+        ctx.lineTo(p.x, p.y + 34 * k);
+        ctx.stroke();
+      } else if (age < 1.0) {
+        const k = (age - 0.55) / 0.45;
+        ctx.globalAlpha = (1 - k) * 0.9;
+        ctx.strokeStyle = '#66bbff';
+        ctx.lineWidth = 2 + (1 - k) * 3;
+        ctx.beginPath();
+        ctx.moveTo(p.x - 52 * k - 6, p.y);
+        ctx.lineTo(p.x + 52 * k + 6, p.y);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    } else if (e.kind === 'boom') {
+      const k = clamp(age / 1.0, 0, 1);
+      ctx.globalAlpha = 1 - k;
+      ctx.strokeStyle = '#e60000';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4 + k * 34, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = '#ffd9a0';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2 + k * 18, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }
+  state.effects = state.effects.filter(e => state.t - e.t0 < 1.35);
+}
+
+/* ==============================================================
+   RADAR (mój, w podzie)
+   ============================================================== */
+const radarCanvas = $('#radarCanvas');
+let sweepAngle = 0;
+
+function drawRadar() {
+  const { ctx, width, height } = fitCanvas(radarCanvas);
+  const cx = width / 2, cy = height / 2;
+  const R = Math.min(width, height) / 2 - 2;
+  ctx.clearRect(0, 0, width, height);
+
+  const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+  bg.addColorStop(0, 'rgba(26, 16, 8, 0.9)');
+  bg.addColorStop(1, 'rgba(8, 5, 3, 0.95)');
+  ctx.fillStyle = bg;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+
+  ctx.strokeStyle = 'rgba(255, 102, 0, 0.22)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 3; i++) {
+    ctx.beginPath(); ctx.arc(cx, cy, R * i / 3, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy);
+  ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R);
+  ctx.globalAlpha = 0.5; ctx.stroke(); ctx.globalAlpha = 1;
+
+  // omiatanie
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.clip();
+  if (typeof ctx.createConicGradient === 'function') {
+    const g = ctx.createConicGradient(sweepAngle, cx, cy);
+    g.addColorStop(0, 'rgba(255, 102, 0, 0.28)');
+    g.addColorStop(0.12, 'rgba(255, 102, 0, 0)');
+    g.addColorStop(1, 'rgba(255, 102, 0, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, width, height);
+  }
+  ctx.strokeStyle = 'rgba(255, 102, 0, 0.8)';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + Math.cos(sweepAngle) * R, cy + Math.sin(sweepAngle) * R);
+  ctx.stroke();
+  ctx.restore();
+
+  // blipy
+  const scale = R / state.radarRange;
+  const drawBlip = (x, y, color, size, square) => {
+    if (Math.hypot(x, y) > state.radarRange) return;
+    const bx = cx + x * scale, by = cy + y * scale;
+    ctx.fillStyle = color;
+    if (square) {
+      ctx.save(); ctx.translate(bx, by); ctx.rotate(Math.PI / 4);
+      ctx.fillRect(-size, -size, size * 2, size * 2);
+      ctx.restore();
+    } else {
+      ctx.beginPath(); ctx.arc(bx, by, size, 0, Math.PI * 2); ctx.fill();
+    }
+  };
+  for (const c of state.contacts) {
+    const pulse = 0.6 + 0.4 * Math.sin(state.t * 3 + c.id);
+    ctx.globalAlpha = pulse;
+    if (c.type === 'hostile') drawBlip(c.x, c.y, '#e60000', 3, true);
+    else if (c.type === 'asteroid') drawBlip(c.x, c.y, '#ffaa33', 2, false);
+    else if (c.type === 'station') drawBlip(c.x, c.y, '#f97316', 3, true);
+    else drawBlip(c.x, c.y, '#0088ff', 2.5, false);
+    ctx.globalAlpha = 1;
+    const inR = Math.hypot(c.x, c.y) <= state.radarRange;
+    if (inR && c.locked) {
+      ctx.strokeStyle = 'rgba(255,104,104,0.8)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(cx + c.x * scale, cy + c.y * scale, 6, 0, Math.PI * 2); ctx.stroke();
+    }
+    if (inR && state.selected && state.selected.kind === 'contact' && state.selected.id === c.id) {
+      ctx.strokeStyle = '#ff6600';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(cx + c.x * scale - 6, cy + c.y * scale - 6, 12, 12);
+    }
+  }
+  for (const f of state.fleet) drawBlip(f.x, f.y, '#ff6600', 2.5, false);
+
+  // gracz + północ
+  ctx.fillStyle = '#eeeeee';
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 5);
+  ctx.lineTo(cx + 4, cy + 4);
+  ctx.lineTo(cx - 4, cy + 4);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(255, 102, 0, 0.7)';
+  ctx.font = '9px Consolas, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('N', cx, cy - R + 11);
+}
+
+/* zasięgi radaru */
+const radarRangesEl = $('#radarRanges');
+RADAR_RANGES.forEach(r => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'range-button' + (r === state.radarRange ? ' active' : '');
+  b.textContent = (r / 1000) + 'K';
+  b.dataset.range = r;
+  b.addEventListener('click', () => {
+    state.radarRange = r;
+    $$('.range-button', radarRangesEl).forEach(x => x.classList.toggle('active', Number(x.dataset.range) === r));
+    $('#rdRange').textContent = Math.round(r / 1000) + 'K';
+  });
+  radarRangesEl.appendChild(b);
+});
+
+function updateRadarReadout() {
+  const inRange = state.contacts.filter(c => Math.hypot(c.x, c.y) <= state.radarRange);
+  const h = inRange.filter(c => c.type === 'hostile').length;
+  const a = inRange.filter(c => c.type === 'asteroid').length;
+  $('#rdTotal').textContent = 'C:' + String(inRange.length).padStart(2, '0');
+  $('#rdHostile').textContent = 'H:' + String(h).padStart(2, '0');
+  $('#rdAst').textContent = 'A:' + String(a).padStart(2, '0');
+}
+
+/* klik w radar — wybór kontaktu (zapożyczone) */
+radarCanvas.addEventListener('click', (e) => {
+  const rect = radarCanvas.getBoundingClientRect();
+  const R = Math.min(rect.width, rect.height) / 2 - 2;
+  const scale = R / state.radarRange;
+  const lx = e.clientX - rect.left - rect.width / 2;
+  const ly = e.clientY - rect.top - rect.height / 2;
+  let best = null, bestD = 12;
+  const consider = (x, y, kind, id) => {
+    if (Math.hypot(x, y) > state.radarRange) return;
+    const d = Math.hypot(lx - x * scale, ly - y * scale);
+    if (d < bestD) { bestD = d; best = { kind, id }; }
+  };
+  for (const c of state.contacts) consider(c.x, c.y, 'contact', c.id);
+  for (const f of state.fleet) consider(f.x, f.y, 'fleet', f.id);
+  if (best) selectEntity(best.kind, best.id);
+});
+
+/* ==============================================================
+   PRĘDKOŚCIOMIERZ (łuk 260°, akcent trybu)
+   ============================================================== */
+const speedCanvas = $('#speedCanvas');
+const appEl = $('#app');
+
+/* prędkościomierz 1:1 z deski referencyjnej — zegar "C" (drawCStyleGauge) */
+function drawCStyleGauge(ctx, x, y, scale, isFlipped, value, maxValue, isRpm) {
+  ctx.save();
+  ctx.translate(x, y);
+  if (isFlipped) ctx.scale(-1, 1);
+
+  const radius = 250 * scale;
+  const startAngle = Math.PI * 0.75; // zaczyna od dołu z boku
+  const endAngle = Math.PI * 1.55;   // kończy u góry
+
+  // tło wskaźnika (szare, nieaktywne)
+  ctx.beginPath();
+  ctx.arc(0, 0, radius, startAngle, endAngle);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+  ctx.lineWidth = 15 * scale;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // kreski skali i numery
+  ctx.textAlign = isFlipped ? 'left' : 'right';
+  ctx.textBaseline = 'middle';
+  ctx.font = `bold ${24 * scale}px Arial`;
+  ctx.fillStyle = '#fff';
+
+  const numTics = isRpm ? 8 : 6;
+  const angleRange = endAngle - startAngle;
+
+  for (let i = 0; i <= numTics; i++) {
+    const angle = startAngle + (i / numTics) * angleRange;
+    const rInner = radius - 15 * scale;
+    const rOuter = radius + 5 * scale;
+
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(angle) * rInner, Math.sin(angle) * rInner);
+    ctx.lineTo(Math.cos(angle) * rOuter, Math.sin(angle) * rOuter);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.lineWidth = 3 * scale;
+    ctx.stroke();
+
+    // numery tylko dla obrotomierza — max na dole, 0 u góry (jak w referencji)
+    if (isRpm) {
+      const rText = radius - 35 * scale;
+      ctx.save();
+      ctx.translate(Math.cos(angle) * rText, Math.sin(angle) * rText);
+      ctx.scale(-1, 1); // zdejmij lustro, żeby tekst był czytelny
+      ctx.fillText(String(numTics - i), 0, 0);
+      ctx.restore();
+    }
+  }
+
+  // wypełnienie: pasek rośnie od góry w dół wzdłuż krzywej
+  const valFraction = Math.max(0, Math.min(1, value / maxValue));
+  const currentAngle = endAngle - valFraction * angleRange;
+
+  if (valFraction > 0.002) {
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, currentAngle, endAngle);
+    const gradient = ctx.createLinearGradient(0, -radius, 0, radius);
+    if (isRpm && valFraction > 0.8) {
+      gradient.addColorStop(0, '#ff3300'); // czerwone pole
+      gradient.addColorStop(1, '#ff8800');
+    } else {
+      gradient.addColorStop(0, '#ff6600'); // pomarańcz referencji
+      gradient.addColorStop(1, '#ff3300');
+    }
+    ctx.strokeStyle = gradient;
+    ctx.lineWidth = 15 * scale;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    // efekt świecenia
+    ctx.strokeStyle = 'rgba(255, 100, 0, 0.5)';
+    ctx.lineWidth = 25 * scale;
+    ctx.filter = 'blur(5px)';
+    ctx.stroke();
+    ctx.filter = 'none';
+
+    // wskaźnik "grot" na końcu paska
+    const ptrX = Math.cos(currentAngle) * radius;
+    const ptrY = Math.sin(currentAngle) * radius;
+    ctx.beginPath();
+    ctx.arc(ptrX, ptrY, 12 * scale, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.shadowColor = '#ff6600';
+    ctx.shadowBlur = 10;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // dolny, mały wskaźnik zintegrowany w łuk
+  ctx.beginPath();
+  ctx.arc(0, 0, radius * 0.9, Math.PI * 0.6, Math.PI * 0.7);
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 5 * scale;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+/* ozdobne ramki i ikonki między zegarami (1:1 z referencji) */
+function drawDecorativeLines(ctx, cx, cy, scale) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+
+  // górna "półka"
+  ctx.beginPath();
+  ctx.moveTo(cx - 120 * scale, cy - 150 * scale);
+  ctx.lineTo(cx - 80 * scale, cy - 170 * scale);
+  ctx.lineTo(cx + 80 * scale, cy - 170 * scale);
+  ctx.lineTo(cx + 120 * scale, cy - 150 * scale);
+  ctx.stroke();
+
+  // linia pozioma pod zegarami
+  ctx.beginPath();
+  ctx.moveTo(cx - 160 * scale, cy + 180 * scale);
+  ctx.lineTo(cx - 140 * scale, cy + 190 * scale);
+  ctx.lineTo(cx + 140 * scale, cy + 190 * scale);
+  ctx.lineTo(cx + 160 * scale, cy + 180 * scale);
+  ctx.stroke();
+
+  // ikonki na górnej półce
+  const iconY = cy - 160 * scale;
+  ctx.fillStyle = '#555';
+  ctx.beginPath(); ctx.arc(cx - 40 * scale, iconY, 8 * scale, 0, Math.PI * 2); ctx.fill();
+  ctx.fillRect(cx - 10 * scale, iconY - 5 * scale, 20 * scale, 10 * scale);
+  ctx.beginPath(); ctx.arc(cx + 40 * scale, iconY, 7 * scale, 0, Math.PI * 2);
+  ctx.strokeStyle = '#555';
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawSpeedo() {
+  const { ctx, width, height } = fitCanvas(speedCanvas);
+  ctx.clearRect(0, 0, width, height);
+  const mode = MODES[state.mode];
+  const scale = Math.min(height / 600, width / 1000);
+  const cx = width / 2, cy = height / 2;
+
+  // lewy zegar: prędkość (skala = limit trybu)
+  drawCStyleGauge(ctx, cx - 240 * scale, cy, scale, false, state.speed, mode.maxSpeed, false);
+  // prawy zegar (lustrzany): obciążenie rdzenia jako obrotomierz 0-8
+  drawCStyleGauge(ctx, cx + 240 * scale, cy, scale, true, state.core, 1, true);
+  drawDecorativeLines(ctx, cx, cy, scale);
+
+  if (state.boostUntil > state.t) {
+    ctx.fillStyle = 'rgba(255,255,255,0.82)';
+    ctx.font = '7px Consolas';
+    ctx.textAlign = 'center';
+    ctx.fillText(state.mode === 'travel' ? 'ŁADOWANIE WARP' : 'DOPALACZ', cx, 10);
+  }
+}
+
+function setThrottle(v) {
+  state.throttle = clamp(v, 0, 1);
+  $('#thrPct').textContent = Math.round(state.throttle * 100) + '%';
+}
+$('#thrPlus').addEventListener('click', () => { setThrottle(state.throttle + 0.1); flashThr($('#thrPlus'), 'active-w'); });
+$('#thrMinus').addEventListener('click', () => { setThrottle(state.throttle - 0.1); flashThr($('#thrMinus'), 'active-s'); });
+
+/* podświetlenie pedałów W/S jak w desce referencyjnej */
+function flashThr(el, cls) {
+  el.classList.add(cls);
+  setTimeout(() => el.classList.remove(cls), 180);
+}
+
+/* ==============================================================
+   VITALS
+   ============================================================== */
+const vitals = {
+  hp:     { el: $('#vitalHp'),     val: $('#vitalHp .vital-value'),     fill: $('#vitalHp .vital-fill'),     ghost: $('#vitalHp .vital-ghost') },
+  shield: { el: $('#vitalShield'), val: $('#vitalShield .vital-value'), fill: $('#vitalShield .vital-fill'), ghost: $('#vitalShield .vital-ghost') },
+  core:   { el: $('#vitalCore'),   val: $('#vitalCore .vital-value'),   fill: $('#vitalCore .vital-fill'),   ghost: $('#vitalCore .vital-ghost') }
+};
+function updateVitals() {
+  const set = (v, frac, critBelow, critAbove) => {
+    const pct = Math.round(clamp(frac, 0, 1) * 100);
+    v.val.textContent = String(pct).padStart(2, '0');
+    v.fill.style.setProperty('--value', pct + '%');
+    v.ghost.style.setProperty('--value', pct + '%');
+    const crit = (critBelow != null && pct < critBelow) || (critAbove != null && pct > critAbove);
+    v.el.classList.toggle('crit', crit);
+  };
+  set(vitals.hp, state.hp, 25, null);
+  set(vitals.shield, state.shield, 20, null);
+  set(vitals.core, state.core, null, 92);
+}
+
+/* ==============================================================
+   HOTKEYE 1-9 (maska cooldownu sterowana z JS)
+   ============================================================== */
+const hotkeyGrid = $('#hotkeyGrid');
+const hkEls = [];
+HOTKEYS.forEach((h, i) => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'phys-btn';
+  b.innerHTML = `
+    <span class="hk-key">${h.key}</span>
+    <span class="cooldown-time"></span>
+    <span class="hk-ico">${h.ico}</span>
+    <span class="hk-label">${h.label}</span>
+    <span class="cooldown-mask"></span>`;
+  b.addEventListener('click', () => fireHotkey(i));
+  hotkeyGrid.appendChild(b);
+  hkEls.push({ btn: b, mask: $('.cooldown-mask', b), time: $('.cooldown-time', b), readyAt: 0 });
+});
+
+function fireHotkey(i) {
+  const def = HOTKEYS[i], el = hkEls[i];
+  if (state.t < el.readyAt) return;
+  if (def.weapon && state.mode === 'travel') {
+    toast('Uzbrojenie zablokowane w trybie PODRÓŻ', 'warn');
+    return;
+  }
+  el.readyAt = state.t + def.cd;
+  if (def.label === 'DOPALACZ') { state.boostUntil = state.t + 2.6; toast(state.mode === 'travel' ? 'Ładowanie korytarza warp' : 'Dopalacz aktywny'); }
+  else if (def.label === 'NAPRAWA') { state.hp = clamp(state.hp + 0.12, 0, 1); state.shield = clamp(state.shield + 0.1, 0, 1); toast('Nanity naprawcze aktywne'); }
+  else if (def.label === 'SKAN') { state.scanUntil = state.t + 1.25; toast('Impuls skanera wyemitowany'); }
+  else toast(`${def.label} — aktywacja`, def.weapon ? 'bad' : '');
+}
+
+function updateHotkeyCooldowns() {
+  const travel = state.mode === 'travel';
+  HOTKEYS.forEach((h, i) => {
+    const el = hkEls[i];
+    el.btn.classList.toggle('unavailable', h.weapon && travel);
+    const remaining = Math.max(0, el.readyAt - state.t);
+    const ratio = remaining / h.cd;
+    el.mask.style.height = (ratio * 100) + '%';
+    el.time.textContent = remaining > 0 ? remaining.toFixed(1) : '';
+    el.btn.classList.toggle('cooling', remaining > 0);
+  });
+}
+
+/* ==============================================================
+   PANEL CENTRALNY — pokrętło MODE + ekran (logika 1:1 z referencji)
+   ============================================================== */
+const rotaryKnob = $('#rotaryKnob');
+const modeTrack = $('#modeTrack');
+const modeItems = $$('#modeTrack .menu-item');
+
+let knobAngle = 0;                   // kąt rolki — tylko 3 pozycje: -48 / 0 / +48
+const KNOB_MIN = -48, KNOB_MAX = 48;
+
+function setKnobAngle(a) {
+  knobAngle = clamp(a, KNOB_MIN, KNOB_MAX);
+  rotaryKnob.style.transform = `rotate(${knobAngle}deg)`;
+}
+
+function updateModeScreen() {
+  const idx = MODE_ORDER.indexOf(state.mode);
+  modeItems.forEach((item, i) => item.classList.toggle('active', i === idx));
+  const item = modeItems[idx];
+  if (item) {
+    // aktywna pozycja zawsze na środku (współrzędne względem tracka,
+    // bo track z transformem jest offsetParentem swoich dzieci)
+    const offset = modeTrack.offsetWidth / 2 - (item.offsetLeft + item.offsetWidth / 2);
+    modeTrack.style.transform = `translateX(${offset}px)`;
+  }
+}
+
+function setMode(m, silent = false) {
+  if (!MODES[m]) return;
+  state.mode = m;
+  appEl.dataset.mode = m;
+  $('#spLimit').textContent = MODES[m].maxSpeed;
+  $('#spMode').textContent = MODES[m].gear;
+  if (!knobDragging) setKnobAngle(MODES[m].angle); // rolka wskakuje na pozycję trybu
+  updateModeScreen();
+  if (!silent) toast(`Tryb statku: ${MODES[m].label}`);
+}
+function cycleMode(dir) { // klawiatura V — z zawijaniem
+  const i = MODE_ORDER.indexOf(state.mode);
+  setMode(MODE_ORDER[(i + dir + MODE_ORDER.length) % MODE_ORDER.length]);
+}
+function knobStep(dir) { // fizyczna rolka — bez zawijania (3 pozycje)
+  const ni = clamp(MODE_ORDER.indexOf(state.mode) + dir, 0, MODE_ORDER.length - 1);
+  if (MODE_ORDER[ni] !== state.mode) setMode(MODE_ORDER[ni]);
+}
+
+/* obrót rolki — zakres ograniczony do trzech pozycji trybów */
+function handleKnobRotation(deltaDeg) {
+  setKnobAngle(knobAngle + deltaDeg);
+  const m = knobAngle < -16 ? 'combat' : knobAngle > 16 ? 'travel' : 'agility';
+  if (m !== state.mode) setMode(m);
+}
+
+/* 1. drag myszką — kąt atan2 względem środka, z przejściem przez ±180° */
+let knobDragging = false;
+let knobStartAngle = 0;
+rotaryKnob.addEventListener('mousedown', (e) => {
+  knobDragging = true;
+  const r = rotaryKnob.getBoundingClientRect();
+  knobStartAngle = Math.atan2(e.clientY - (r.top + r.height / 2), e.clientX - (r.left + r.width / 2)) * 180 / Math.PI;
+  e.preventDefault();
+});
+addEventListener('mousemove', (e) => {
+  if (!knobDragging) return;
+  const r = rotaryKnob.getBoundingClientRect();
+  const a = Math.atan2(e.clientY - (r.top + r.height / 2), e.clientX - (r.left + r.width / 2)) * 180 / Math.PI;
+  let d = a - knobStartAngle;
+  if (d > 180) d -= 360;
+  if (d < -180) d += 360;
+  knobStartAngle = a;
+  handleKnobRotation(d);
+});
+addEventListener('mouseup', () => {
+  if (!knobDragging) return;
+  knobDragging = false;
+  setKnobAngle(MODES[state.mode].angle); // dociągnij rolkę do pozycji trybu
+});
+
+/* 2. kółko myszy — jeden ząbek = jedna pozycja (bez zawijania) */
+rotaryKnob.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  knobStep(Math.sign(e.deltaY));
+}, { passive: false });
+
+/* przyciski panelu centralnego */
+function toggleMap() {
+  state.mapOpen = !state.mapOpen;
+  appEl.classList.toggle('map-active', state.mapOpen);
+  $('#pbMap').classList.toggle('active', state.mapOpen);
+  toast(state.mapOpen ? 'Mapa taktyczna aktywna' : 'Widok lotu przywrócony');
+}
+function toggleAuto() {
+  state.autopilot = !state.autopilot;
+  $('#scAuto').classList.toggle('on', state.autopilot);
+  toast(`Autopilot: ${state.autopilot ? 'WŁ' : 'WYŁ'}`);
+}
+function toggleEcm() {
+  state.ecm = !state.ecm;
+  $('#scEcm').classList.toggle('on', state.ecm);
+  toast(`ECM: ${state.ecm ? 'WŁ' : 'WYŁ'}`);
+}
+function togglePd() {
+  state.pointDefense = !state.pointDefense;
+  toast(`Obrona punktowa: ${state.pointDefense ? 'WŁ' : 'WYŁ'}`);
+}
+function toggleLock() {
+  const e = getSelectedEntity();
+  if (!e || state.selected.kind !== 'contact') { toast('Brak wybranego celu', 'warn'); return; }
+  e.locked = !e.locked;
+  toast(e.locked ? `Namierzono: ${e.name}` : `Zwolniono cel: ${e.name}`, e.locked ? 'bad' : '');
+  rebuildOverview();
+  renderSelected();
+}
+$('#scScan').addEventListener('click', () => fireHotkey(6));
+$('#scLock').addEventListener('click', toggleLock);
+$('#scAuto').addEventListener('click', toggleAuto);
+$('#scEcm').addEventListener('click', toggleEcm);
+$('#pbMap').addEventListener('click', toggleMap);
+
+/* przyciski informacyjne — błysk LED + wpis w konsoli pokładowej */
+function pressInfoBtn(sel, msg) {
+  const b = $(sel);
+  b.classList.add('active');
+  setTimeout(() => b.classList.remove('active'), 900);
+  logMsg(msg);
+}
+/* KOMUNIKACJA — przełącza terminal pokładowy w tryb UPLINK (łączenie ze stacjami) */
+$('#pbComm').addEventListener('click', () => toggleComm());
+$('#pbMissions').addEventListener('click', () => pressInfoBtn('#pbMissions',
+  'MISJE — dziennik pusty, oczekiwanie na zlecenia Pierścienia'));
+$('#pbShip').addEventListener('click', () => pressInfoBtn('#pbShip',
+  `STATEK — HP ${Math.round(state.hp * 100)}% · TARCZA ${Math.round(state.shield * 100)}% · RDZEŃ ${Math.round(state.core * 100)}%`));
+
+/* ==============================================================
+   STOCZNIA — rezerwa + produkcja + drag & drop
+   ============================================================== */
+const reserveGrid = $('#reserveGrid');
+const dragGhost = $('#dragGhost');
+const deployReticle = $('#deployReticle');
+const rsEls = {};
+
+function buildReserveCards() {
+  reserveGrid.innerHTML = '';
+  for (const [cls, def] of Object.entries(SHIP_CLASSES)) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'reserve-card';
+    card.dataset.cls = cls;
+    card.innerHTML = `
+      <span class="reserve-portrait">${silhouette(cls)}</span>
+      <span>
+        <span class="reserve-name">${def.name}</span>
+        <span class="reserve-role">${def.role}</span>
+        <span class="reserve-count">×${def.count} <small>GOTOWE</small></span>
+      </span>`;
+    reserveGrid.appendChild(card);
+    rsEls[cls] = { card, count: $('.reserve-count', card), cooldownUntil: 0 };
+    card.addEventListener('pointerdown', (e) => beginReserveDrag(e, cls));
+    card.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const c = worldCenter();
+      deployShipAtScreen(cls, c.x + 120, c.y - 60);
+    });
+  }
+}
+buildReserveCards();
+
+function updateReserveUI() {
+  let total = 0;
+  for (const [cls, def] of Object.entries(SHIP_CLASSES)) {
+    total += def.count;
+    const el = rsEls[cls];
+    el.count.innerHTML = `×${def.count} <small>GOTOWE</small>`;
+    el.card.classList.toggle('empty', def.count <= 0);
+    el.card.classList.toggle('cooldown', state.t < el.cooldownUntil && def.count > 0);
+  }
+  $('#reserveCount').textContent = `REZERWA: ${total}`;
+}
+
+/* produkcja: stocznia buduje klasę o najniższym stanie */
+function pickQueueTarget() {
+  let best = null, bestRatio = 1;
+  for (const [cls, def] of Object.entries(SHIP_CLASSES)) {
+    if (def.count >= def.max) continue;
+    const ratio = def.count / def.max;
+    if (ratio < bestRatio) { bestRatio = ratio; best = cls; }
+  }
+  return best;
+}
+function updateProduction(dt) {
+  const q = state.queue;
+  if (q.cls == null || SHIP_CLASSES[q.cls].count >= SHIP_CLASSES[q.cls].max) {
+    q.cls = pickQueueTarget();
+    q.progress = 0;
+  }
+  if (q.cls == null) {
+    $('#queueLabel').textContent = 'STOCZNIA — PEŁNE STANY';
+    $('#queueProgress').textContent = '—';
+    $('#queueFill').style.width = '0%';
+    return;
+  }
+  const def = SHIP_CLASSES[q.cls];
+  q.progress += dt / def.prod * 100;
+  if (q.progress >= 100) {
+    def.count++;
+    toast(`Pierścień ukończył produkcję: ${def.name}`, 'warn');
+    q.cls = pickQueueTarget();
+    q.progress = 0;
+    updateReserveUI();
+  }
+  $('#queueLabel').textContent = q.cls ? `BUDOWA: ${SHIP_CLASSES[q.cls].name.toUpperCase()}` : 'STOCZNIA — PEŁNE STANY';
+  $('#queueProgress').textContent = Math.floor(clamp(q.progress, 0, 100)) + '%';
+  $('#queueFill').style.width = clamp(q.progress, 0, 100) + '%';
+}
+
+/* ---------- drag & drop (duszek + celownik + radar-drop) ---------- */
+function pointInRect(x, y, r) { return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; }
+
+function deploymentPoint(x, y) {
+  // zrzut na radar → mapowanie pozycji radarowej na świat
+  const rr = radarCanvas.getBoundingClientRect();
+  if (pointInRect(x, y, rr)) {
+    const nx = (x - rr.left) / rr.width - 0.5;
+    const ny = (y - rr.top) / rr.height - 0.5;
+    const wx = nx * 2 * state.radarRange;
+    const wy = ny * 2 * state.radarRange;
+    return { valid: true, viaRadar: true, wx, wy };
+  }
+  const el = document.elementFromPoint(x, y);
+  if (el && el.id === 'world') {
+    const w = s2w(x, y);
+    return { valid: true, viaRadar: false, wx: w.x, wy: w.y };
+  }
+  return { valid: false, wx: 0, wy: 0, viaRadar: false };
+}
+
+function beginReserveDrag(e, cls) {
+  if (e.button !== 0 && e.pointerType !== 'touch') return;
+  const def = SHIP_CLASSES[cls];
+  const el = rsEls[cls];
+  if (def.count <= 0 || state.t < el.cooldownUntil) return;
+  e.preventDefault();
+  state.drag = { cls, pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, moved: false, point: null };
+  e.currentTarget.setPointerCapture?.(e.pointerId);
+  dragGhost.innerHTML = `${silhouette(cls)}<span>${def.name}<br><small>ROZMIESZCZENIE WARP</small></span>`;
+  dragGhost.classList.add('visible');
+  deployReticle.classList.add('visible');
+  appEl.classList.add('dragging');
+  updateReserveDrag(e.clientX, e.clientY);
+}
+function updateReserveDrag(x, y) {
+  if (!state.drag) return;
+  if (Math.hypot(x - state.drag.x0, y - state.drag.y0) > 5) state.drag.moved = true;
+  const point = deploymentPoint(x, y);
+  state.drag.point = point;
+  dragGhost.style.transform = `translate(${x}px, ${y}px)`;
+  deployReticle.style.transform = `translate(${x}px, ${y}px)`;
+  dragGhost.classList.toggle('invalid', !point.valid);
+  deployReticle.classList.toggle('invalid', !point.valid);
+}
+function endReserveDrag(e) {
+  if (!state.drag || e.pointerId !== state.drag.pointerId) return;
+  const drag = state.drag;
+  state.drag = null;
+  dragGhost.classList.remove('visible', 'invalid');
+  deployReticle.classList.remove('visible', 'invalid');
+  appEl.classList.remove('dragging');
+  if (!drag.moved) {
+    toast('Przeciągnij okręt na mapę lub radar (Enter = środek)', 'warn');
+    return;
+  }
+  if (!drag.point || !drag.point.valid) {
+    toast('Nieprawidłowy wektor warp', 'bad');
+    return;
+  }
+  deployShip(drag.cls, drag.point.wx, drag.point.wy);
+}
+function cancelReserveDrag() {
+  if (!state.drag) return;
+  state.drag = null;
+  dragGhost.classList.remove('visible', 'invalid');
+  deployReticle.classList.remove('visible', 'invalid');
+  appEl.classList.remove('dragging');
+  toast('Rozmieszczenie anulowane', 'warn');
+}
+addEventListener('pointermove', (e) => { if (state.drag) updateReserveDrag(e.clientX, e.clientY); });
+addEventListener('pointerup', endReserveDrag);
+addEventListener('pointercancel', cancelReserveDrag);
+
+function deployShipAtScreen(cls, sx, sy) {
+  const w = s2w(sx, sy);
+  deployShip(cls, w.x, w.y);
+}
+
+function deployShip(cls, wx, wy) {
+  const def = SHIP_CLASSES[cls];
+  if (def.count <= 0) { toast('Brak jednostek w rezerwie', 'bad'); return; }
+  // ogranicz do widocznego obszaru
+  const c = worldCenter();
+  const halfW = (innerWidth / 2 - 50) / PX_PER_UNIT;
+  const halfHtop = (c.y - 60) / PX_PER_UNIT;
+  const halfHbot = (flightHeight() - c.y - 40) / PX_PER_UNIT;
+  wx = clamp(wx, -halfW, halfW);
+  wy = clamp(wy, -halfHtop, halfHbot);
+
+  def.count--;
+  rsEls[cls].cooldownUntil = state.t + 4;
+  updateReserveUI();
+  state.effects.push({ kind: 'warp', x: wx, y: wy, t0: state.t });
+  toast(`${def.name} — skok warp w toku…`);
+  const n = (state.fleetCounter[cls] = (state.fleetCounter[cls] || 0) + 1);
+  state.pendingSpawns.push({ atT: state.t + 0.75, cls, wx, wy, n });
+}
+
+function flushPendingSpawns() {
+  for (const s of state.pendingSpawns) {
+    if (state.t < s.atT) continue;
+    const def = SHIP_CLASSES[s.cls];
+    const unit = {
+      id: nextId++,
+      cls: s.cls,
+      name: s.cls === 'fighter' ? `Skrzydło ${def.name}-${s.n}` : `${def.name}-${s.n}`,
+      x: s.wx, y: s.wy,
+      hp: 1, shield: 1,
+      status: state.wingOrder === 'hold' ? 'STÓJ' : (state.wingOrder === 'engage' ? 'ATAK' : 'ESKORTA'),
+      targetId: null,
+      holdX: s.wx, holdY: s.wy,
+      spd: 0
+    };
+    if (unit.status === 'ATAK') unit.targetId = resolveEngageTargetId();
+    if (unit.status === 'ATAK' && unit.targetId == null) unit.status = 'ESKORTA';
+    state.fleet.push(unit);
+    state.fleetDirty = true;
+    toast(`${unit.name} dołącza do skrzydła`);
+  }
+  state.pendingSpawns = state.pendingSpawns.filter(s => state.t < s.atT);
+}
+
+/* ==============================================================
+   AKTYWNE SKRZYDŁO — karty + rozkazy
+   ============================================================== */
+const unitList = $('#unitList');
+const unitRefs = new Map();
+
+function statusClass(st) {
+  if (st === 'ATAK') return 'st-atk';
+  if (st === 'WARP') return 'st-wrp';
+  return '';
+}
+
+function renderFleetList() {
+  if (!state.fleetDirty) return;
+  state.fleetDirty = false;
+  $('#activeCount').textContent = `${state.fleet.length} JEDN.`;
+  unitRefs.clear();
+  if (!state.fleet.length) {
+    unitList.innerHTML = '<div class="unit-empty">Brak przyzwanych jednostek.<br>Przeciągnij okręt ze stoczni na mapę lub radar.</div>';
+    return;
+  }
+  unitList.innerHTML = '';
+  for (const f of state.fleet) {
+    const def = SHIP_CLASSES[f.cls];
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'unit-card' + (state.selectedUnitIds.has(f.id) ? ' selected' : '');
+    card.innerHTML = `
+      <span class="unit-portrait">${silhouette(f.cls)}</span>
+      <span class="unit-info">
+        <span class="unit-name">${f.name}</span>
+        <span class="unit-meta">${def.role} · <span class="${statusClass(f.status)}">${f.status}</span></span>
+        <span class="unit-bars">
+          <span class="micro-bar"><span class="ub-hp" style="--value:${Math.round(f.hp * 100)}%;--bar-color:#ff6600"></span></span>
+          <span class="micro-bar"><span class="ub-sh" style="--value:${Math.round(f.shield * 100)}%;--bar-color:#0088ff"></span></span>
+        </span>
+      </span>
+      <span class="unit-distance">—</span>`;
+    card.addEventListener('click', (e) => {
+      if (!e.ctrlKey && !e.shiftKey) state.selectedUnitIds.clear();
+      if ((e.ctrlKey || e.shiftKey) && state.selectedUnitIds.has(f.id)) state.selectedUnitIds.delete(f.id);
+      else state.selectedUnitIds.add(f.id);
+      selectEntity('fleet', f.id);
+    });
+    unitList.appendChild(card);
+    unitRefs.set(f.id, {
+      card,
+      dist: $('.unit-distance', card),
+      hp: $('.ub-hp', card),
+      sh: $('.ub-sh', card)
+    });
+  }
+}
+
+function patchFleetList() {
+  for (const f of state.fleet) {
+    const ref = unitRefs.get(f.id);
+    if (!ref) continue;
+    ref.dist.textContent = fmtDist(Math.hypot(f.x, f.y)) + ' u';
+    ref.hp.style.setProperty('--value', Math.round(f.hp * 100) + '%');
+    ref.sh.style.setProperty('--value', Math.round(f.shield * 100) + '%');
+  }
+}
+
+function resolveEngageTargetId() {
+  const sel = getSelectedEntity();
+  if (sel && state.selected.kind === 'contact' && sel.type === 'hostile') return sel.id;
+  const locked = state.contacts.find(c => c.type === 'hostile' && c.locked);
+  if (locked) return locked.id;
+  let best = null, bestD = Infinity;
+  for (const c of state.contacts) {
+    if (c.type !== 'hostile') continue;
+    const d = Math.hypot(c.x, c.y);
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  return best ? best.id : null;
+}
+
+function issueWingOrder(order) {
+  state.wingOrder = order;
+  $$('.tech-button[data-order]').forEach(b => b.classList.toggle('active', b.dataset.order === order));
+  const targets = state.fleet.filter(f => state.selectedUnitIds.size === 0 || state.selectedUnitIds.has(f.id));
+  if (!targets.length) { toast('Brak jednostek w polu', 'warn'); return; }
+  if (order === 'escort') {
+    for (const f of targets) { f.status = 'ESKORTA'; f.targetId = null; }
+    toast(`ESKORTA — ${targets.length} jedn.`);
+  } else if (order === 'hold') {
+    for (const f of targets) { f.status = 'STÓJ'; f.targetId = null; f.holdX = f.x; f.holdY = f.y; }
+    toast(`STÓJ — ${targets.length} jedn.`);
+  } else if (order === 'engage') {
+    const tid = resolveEngageTargetId();
+    if (tid == null) { toast('Brak wrogich celów', 'warn'); return; }
+    for (const f of targets) { f.status = 'ATAK'; f.targetId = tid; }
+    const tgt = state.contacts.find(c => c.id === tid);
+    toast(`ATAK: ${tgt ? tgt.name : '?'} — ${targets.length} jedn.`, 'bad');
+  }
+  state.fleetDirty = true;
+}
+$$('.tech-button[data-order]').forEach(b => b.addEventListener('click', () => issueWingOrder(b.dataset.order)));
+
+/* ==============================================================
+   OVERVIEW SCANNER + SELECTED OBJECT
+   ============================================================== */
+const contactRows = $('#contactRows');
+
+$('#scannerFilters').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-filter]');
+  if (!b) return;
+  state.scannerFilter = b.dataset.filter;
+  $$('#scannerFilters [data-filter]').forEach(x => x.classList.toggle('active', x === b));
+  rebuildOverview();
+});
+
+function fmtDist(d) {
+  return d >= 1000 ? (d / 1000).toFixed(1) + 'K' : String(Math.round(d));
+}
+
+function rebuildOverview() {
+  const rows = state.contacts
+    .filter(c => state.scannerFilter === 'all' || c.type === state.scannerFilter)
+    .sort((a, b) => Math.hypot(a.x, a.y) - Math.hypot(b.x, b.y));
+  $('#contactCount').textContent = `${rows.length} KONTAKTÓW`;
+  contactRows.innerHTML = '';
+  for (const c of rows) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'contact-row';
+    if (state.selected && state.selected.kind === 'contact' && state.selected.id === c.id) row.classList.add('selected');
+    row.innerHTML = `
+      <span class="${TONE[c.type]}">${TYPE_CODE[c.type]}</span>
+      <span>${c.name}</span>
+      <span class="dist-cell">${fmtDist(Math.hypot(c.x, c.y))}</span>
+      <span class="lock-cell">${c.locked ? 'LCK' : '–'}</span>`;
+    row.addEventListener('click', () => selectEntity('contact', c.id));
+    contactRows.appendChild(row);
+  }
+}
+
+/* ---------- selekcja + panel celu ---------- */
+function getSelectedEntity() {
+  if (!state.selected) return null;
+  if (state.selected.kind === 'contact') return state.contacts.find(c => c.id === state.selected.id) || null;
+  return state.fleet.find(f => f.id === state.selected.id) || null;
+}
+function selectEntity(kind, id) {
+  const same = state.selected && state.selected.kind === kind && state.selected.id === id;
+  state.selected = { kind, id };
+  state.fleetDirty = true;
+  rebuildOverview();
+  renderFleetList();
+  renderSelected();
+  if (!same) {
+    const e = getSelectedEntity();
+    if (e) logMsg(`Namiar ${kind === 'fleet' ? 'sojuszniczy' : 'pasywny'}: ${e.name} · ${fmtDist(Math.hypot(e.x, e.y))} u`);
+  }
+}
+function clearSelection() {
+  state.selected = null;
+  state.selectedUnitIds.clear();
+  state.fleetDirty = true;
+  rebuildOverview();
+  renderSelected();
+}
+
+function bearingTo(e) {
+  return Math.round((Math.atan2(e.x, -e.y) * 180 / Math.PI + 360) % 360);
+}
+
+function renderSelected() {
+  const e = getSelectedEntity();
+  const selBody = $('#selBody');
+
+  if (!e) {
+    $('#selKind').textContent = '—';
+    selBody.innerHTML = '<div class="sel-empty">Brak wybranego obiektu. Kliknij kontakt na mapie, radarze lub liście.</div>';
+    $('#scLock').classList.remove('on');
+    return;
+  }
+
+  const isFleet = state.selected.kind === 'fleet';
+  const d = Math.hypot(e.x, e.y);
+  const tone = isFleet ? 'tone-friendly' : TONE[e.type];
+  const sub = isFleet ? SHIP_CLASSES[e.cls].role.toUpperCase() : (e.sub || '');
+  $('#selKind').textContent = isFleet ? 'SKRZYDŁO' : TYPE_CODE[e.type];
+  $('#scLock').classList.toggle('on', !isFleet && !!e.locked);
+
+  // panel boczny
+  const actions = [];
+  if (!isFleet && e.type === 'hostile') {
+    actions.push(`<button class="tech-button ${e.locked ? 'active' : ''}" data-act="lock">${e.locked ? 'NAMIERZONO' : 'NAMIERZ'}</button>`);
+    actions.push('<button class="tech-button" data-act="engage">ATAK SKRZYDŁEM</button>');
+  }
+  if (!isFleet && e.type === 'station') {
+    actions.push('<button class="tech-button" data-act="uplink">POŁĄCZ · UPLINK</button>');
+  }
+  if (isFleet) {
+    actions.push('<button class="tech-button" data-act="recall">DO ESKORTY</button>');
+  }
+  selBody.innerHTML = `
+    <div class="sel-body">
+      <div>
+        <div class="sel-name ${tone}">${e.name}</div>
+        <div class="sel-sub">${sub}</div>
+      </div>
+      <div class="sel-grid">
+        <span>DYSTANS <b>${fmtDist(d)} u</b></span>
+        <span>PRĘDKOŚĆ <b>${Math.round(e.spd || 0)} u/s</b></span>
+        <span>WEKTOR <b>${String(bearingTo(e)).padStart(3, '0')}°</b></span>
+        <span>STATUS <b>${isFleet ? e.status : (e.locked ? 'NAMIERZONY' : 'PASYWNY')}</b></span>
+      </div>
+      <div class="sel-bar" title="HP"><i style="width:${Math.round(clamp(e.hp, 0, 1) * 100)}%"></i></div>
+      ${actions.length ? `<div class="sel-actions">${actions.join('')}</div>` : ''}
+    </div>`;
+  $$('[data-act]', selBody).forEach(b => {
+    b.addEventListener('click', () => {
+      const act = b.dataset.act;
+      if (act === 'lock') toggleLock();
+      else if (act === 'engage') {
+        for (const f of state.fleet) { f.status = 'ATAK'; f.targetId = e.id; }
+        state.fleetDirty = true;
+        toast(`Skrzydło atakuje: ${e.name}`, 'bad');
+      } else if (act === 'uplink') {
+        openCommTo(e.id);
+      } else if (act === 'recall') {
+        for (const f of state.fleet) { f.status = 'ESKORTA'; f.targetId = null; }
+        state.fleetDirty = true;
+        toast('Skrzydło wraca do eskorty');
+      }
+    });
+  });
+}
+
+/* klik w świat — wybór najbliższego obiektu */
+world.addEventListener('click', (e) => {
+  const pick = (list, kind) => {
+    let best = null, bestD = 20;
+    for (const o of list) {
+      const p = w2s(o.x, o.y);
+      const d = Math.hypot(p.x - e.clientX, p.y - e.clientY);
+      if (d < bestD) { bestD = d; best = o; }
+    }
+    return best ? { kind, id: best.id, d: bestD } : null;
+  };
+  const a = pick(state.fleet, 'fleet');
+  const b = pick(state.contacts, 'contact');
+  const hit = (a && b) ? (a.d <= b.d ? a : b) : (a || b);
+  if (hit) selectEntity(hit.kind, hit.id);
+  else clearSelection();
+});
+
+/* ==============================================================
+   TOASTY + SZUFLADY + KLAWIATURA
+   ============================================================== */
+/* ---------- konsola pokładowa: log + statusy ---------- */
+const consoleLogEl = $('#consoleLog');
+const consoleStatusEl = $('#consoleStatus');
+let consoleStatusCache = '';
+
+function missionTs() {
+  const total = Math.floor((performance.now() - state.startedAt) / 1000);
+  const mm = String(Math.floor(total / 60)).padStart(2, '0');
+  const ss = String(total % 60).padStart(2, '0');
+  return `${mm}:${ss}`;
+}
+function logMsg(msg, cls = '') {
+  const line = document.createElement('span');
+  line.className = 'console-line' + (cls ? ' ' + cls : '');
+  line.innerHTML = `<span class="ts">[${missionTs()}]</span>${msg}`;
+  consoleLogEl.appendChild(line);
+  while (consoleLogEl.children.length > 80) consoleLogEl.firstChild.remove();
+  consoleLogEl.scrollTop = consoleLogEl.scrollHeight;
+}
+function updateConsoleStatus() {
+  const onOff = (v) => v ? '<span class="on">WŁ</span>' : '<span class="off">WYŁ</span>';
+  const html =
+    `<span>TRYB <b>${MODES[state.mode].label}</b></span>` +
+    `<span>UZBR <b>${MODES[state.mode].weapons}</b></span>` +
+    `<span>CIĄG <b>${Math.round(state.throttle * 100)}%</b></span>` +
+    `<span>AP ${onOff(state.autopilot)}</span>` +
+    `<span>ECM ${onOff(state.ecm)}</span>` +
+    `<span>OBR.PKT ${onOff(state.pointDefense)}</span>` +
+    `<span>ŁĄCZE <b>${tablet.open ? 'DOK' : (comm.open ? (comm.step === 'CONNECTED' ? 'AKT' : 'SKAN') : '—')}</b></span>` +
+    `<span>REZERWA <b>${Object.values(SHIP_CLASSES).reduce((s, d) => s + d.count, 0)}</b></span>`;
+  if (html !== consoleStatusCache) {
+    consoleStatusCache = html;
+    consoleStatusEl.innerHTML = html;
+  }
+}
+
+/* zegar + data widżetu INFORMACJE (logika 1:1 z referencji) */
+function updateTermClock() {
+  const now = new Date();
+  $('#termClock').textContent = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const days = ['ND.', 'PON.', 'WT.', 'ŚR.', 'CZW.', 'PT.', 'SOB.'];
+  const months = ['STYCZNIA', 'LUTEGO', 'MARCA', 'KWIETNIA', 'MAJA', 'CZERWCA', 'LIPCA', 'SIERPNIA', 'WRZEŚNIA', 'PAŹDZIERNIKA', 'LISTOPADA', 'GRUDNIA'];
+  $('#termDate').textContent = `${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]}`;
+}
+
+/* zakładki terminala (wizualne, jak w referencji) — ikona wifi przełącza tryb UPLINK */
+$$('.term-sidebar .nav-icon').forEach(ic => ic.addEventListener('click', () => {
+  if (ic.id === 'navComm') { toggleComm(); return; }
+  if (comm.open) setCommOpen(false);
+  $$('.term-sidebar .nav-icon').forEach(x => x.classList.remove('active'));
+  ic.classList.add('active');
+}));
+
+const toastStack = $('#toastStack');
+function toast(msg, cls = '') {
+  logMsg(msg, cls);
+  const t = document.createElement('div');
+  t.className = 'toast' + (cls ? ' ' + cls : '');
+  t.textContent = msg;
+  toastStack.appendChild(t);
+  while (toastStack.children.length > 4) toastStack.firstChild.remove();
+  setTimeout(() => t.remove(), 3100);
+}
+
+$$('.mobile-tabs [data-drawer]').forEach(b => b.addEventListener('click', () => {
+  const target = b.dataset.drawer === 'left' ? $('#leftStack') : $('#rightStack');
+  const other = b.dataset.drawer === 'left' ? $('#rightStack') : $('#leftStack');
+  other.classList.remove('open');
+  target.classList.toggle('open');
+}));
+
+addEventListener('keydown', (e) => {
+  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  /* CapsLock — łączenie ze stacjami, jak w grze (ignorowane przy otwartym tablecie) */
+  if (e.code === 'CapsLock') {
+    if (!tablet.open) toggleComm();
+    return;
+  }
+  const k = e.key;
+  if (k >= '1' && k <= '9') fireHotkey(Number(k) - 1);
+  else if (k === '0') { if (comm.open) setCommOpen(false); }
+  else if (k === 'w' || k === 'W') { setThrottle(state.throttle + 0.1); flashThr($('#thrPlus'), 'active-w'); }
+  else if (k === 's' || k === 'S') { setThrottle(state.throttle - 0.1); flashThr($('#thrMinus'), 'active-s'); }
+  else if (k === 'v' || k === 'V') cycleMode(1);
+  else if (k === 'm' || k === 'M') toggleMap();
+  else if (k === 'x' || k === 'X') fireHotkey(6);
+  else if (k === 't' || k === 'T') toggleLock();
+  else if (k === 'r' || k === 'R') fireHotkey(7);
+  else if (k === 'p' || k === 'P') toggleAuto();
+  else if (k === 'e' || k === 'E') toggleEcm();
+  else if (k === 'o' || k === 'O') togglePd();
+  else if (k === 'Escape') {
+    if (state.drag) cancelReserveDrag();
+    else if (tablet.open) closeTablet();
+    else if (comm.open) setCommOpen(false);
+    else if (state.mapOpen) toggleMap();
+    else clearSelection();
+  }
+});
+
+/* ==============================================================
+   UPLINK — tryb komunikacji terminala (CapsLock w grze)
+   Sekwencja 1:1 z hudSystem: BOOTING → LIST → CONNECTING → CONNECTED
+   ============================================================== */
+const TABLET_TABS = [
+  { id: 'hangar', label: 'HANGAR' },
+  { id: 'trade', label: 'HANDEL' },
+  { id: 'cantina', label: 'KANTYNA' },
+  { id: 'mechanic', label: 'MECHANIK' },
+  { id: 'infrastructure', label: 'INFRASTRUKTURA' }
+];
+const TAB_IDS = TABLET_TABS.map(t => t.id);
+const CARGO_MAX = 40;
+
+const termBezel = $('.screen-bezel');
+const navCommEl = $('#navComm');
+const commBodyEl = $('#commBody');
+const comm = { open: false, step: 'OFF', targetId: null, bootTimer: null, connectTimer: null };
+
+function tabLabel(id) { return (TABLET_TABS.find(t => t.id === id) || {}).label || String(id).toUpperCase(); }
+function fmtCr(n) { return n.toLocaleString('pl-PL') + ' cr'; }
+function fmtAU(c) { return (Math.hypot(c.x, c.y) / 3000).toFixed(2) + ' AU'; }
+function cargoTotal() { return Object.values(state.cargo).reduce((s, n) => s + n, 0); }
+
+function stationNodes() {
+  return state.contacts
+    .filter(c => c.type === 'station')
+    .sort((a, b) => Math.hypot(a.x, a.y) - Math.hypot(b.x, b.y))
+    .slice(0, 3);
+}
+function getCommStation() {
+  return state.contacts.find(c => c.id === comm.targetId && c.type === 'station') || null;
+}
+function nearestStationNode() {
+  return stationNodes()[0] || null;
+}
+
+function renderComm() {
+  if (!commBodyEl) return;
+  const station = getCommStation();
+  const code = station ? (station.code || station.id) : 'N/A';
+  let html = '';
+  let net = 'SKAN SIECI…';
+
+  if (comm.step === 'BOOTING') {
+    html = `<div class="term-text blink">&gt; sys.init()...<br>&gt; uplink.establish()... PENDING<br>&gt; scanning local space...</div>`;
+  } else if (comm.step === 'LIST') {
+    const nodes = stationNodes();
+    net = `WĘZŁY: ${nodes.length}`;
+    const rows = nodes.map(s => `
+      <div class="term-row">
+        <span class="term-target">[${s.code || s.id}] ${s.name} — <i data-dist-for="${s.id}">${fmtAU(s)}</i></span>
+        <button type="button" class="term-btn" data-connect="${s.id}">CONNECT</button>
+      </div>`).join('');
+    html = `<div class="term-text">&gt; LOCAL NETWORK NODES FOUND:</div>`
+      + (rows || `<div class="term-text" style="color:#e60000">NO SIGNAL DETECTED</div>`);
+  } else if (comm.step === 'CONNECTING') {
+    net = `WĘZEŁ [${code}]`;
+    html = `<div class="term-text blink">&gt; Handshake with node [${code}]...<br>&gt; Exchanging encryption keys...<br>&gt; Please wait.</div>`;
+  } else if (comm.step === 'CONNECTED') {
+    net = `WĘZEŁ [${code}] · ONLINE`;
+    html = `
+      <div class="term-text" style="color:#00cc44">&gt; CONNECTION ESTABLISHED. AVAILABLE SERVICES:</div>
+      <div class="term-grid">
+        ${TABLET_TABS.map(t => `<button type="button" class="term-btn large" data-service="${t.id}">${t.label}</button>`).join('')}
+      </div>
+      <div class="term-text" style="color:#41607a">&gt; wybierz usługę — moduł zostanie załadowany na tablet doków</div>`;
+  } else {
+    html = `<div class="term-text">&gt; TERMINAL OFFLINE</div>`;
+  }
+  commBodyEl.innerHTML = html;
+  $('#commNet').textContent = net;
+}
+
+function setCommOpen(open, opts = {}) {
+  if (comm.open === open) return;
+  comm.open = open;
+  clearTimeout(comm.bootTimer); comm.bootTimer = null;
+  clearTimeout(comm.connectTimer); comm.connectTimer = null;
+  termBezel.classList.toggle('comm-active', open);
+  navCommEl.classList.toggle('active', open);
+  $('#pbComm').classList.toggle('active', open);
+
+  if (open) {
+    $$('.term-sidebar .nav-icon').forEach(x => { if (x !== navCommEl) x.classList.remove('active'); });
+    comm.step = 'BOOTING';
+    comm.targetId = null;
+    renderComm();
+    comm.bootTimer = setTimeout(() => {
+      if (!comm.open || comm.step !== 'BOOTING') return;
+      comm.step = 'LIST';
+      renderComm();
+    }, 1200);
+    if (!opts.silent) logMsg('Terminal UPLINK aktywny — skanowanie sieci lokalnej');
+  } else {
+    comm.step = 'OFF';
+    comm.targetId = null;
+    const firstIcon = $('.term-sidebar .nav-icon');
+    $$('.term-sidebar .nav-icon').forEach(x => x.classList.toggle('active', x === firstIcon));
+    if (!opts.silent) logMsg('Terminal UPLINK rozłączony', 'warn');
+  }
+}
+function toggleComm() { setCommOpen(!comm.open); }
+
+function commConnect(id) {
+  const station = state.contacts.find(c => c.id === id && c.type === 'station');
+  if (!station || !comm.open) return;
+  clearTimeout(comm.bootTimer); comm.bootTimer = null;
+  clearTimeout(comm.connectTimer);
+  comm.targetId = id;
+  comm.step = 'CONNECTING';
+  renderComm();
+  logMsg(`Handshake z węzłem [${station.code || station.id}]…`);
+  comm.connectTimer = setTimeout(() => {
+    if (!comm.open || comm.step !== 'CONNECTING' || comm.targetId !== id) return;
+    comm.step = 'CONNECTED';
+    renderComm();
+    toast(`Połączono: ${station.name}`);
+    logMsg(`Uplink [${station.code || station.id}] — połączenie ustanowione`, 'ok');
+  }, 1500);
+}
+
+/* bezpośrednie połączenie z wybraną stacją (panel Selected object) */
+function openCommTo(id) {
+  if (tablet.open) closeTablet();
+  if (!comm.open) setCommOpen(true);
+  commConnect(id);
+}
+
+function commOpenService(tabId) {
+  if (comm.step !== 'CONNECTED') return;
+  const station = getCommStation();
+  logMsg(`Ładowanie modułu ${tabLabel(tabId)}…`);
+  setCommOpen(false, { silent: true });
+  openTablet(tabId, station);
+}
+
+function refreshCommDistances() {
+  if (!comm.open || comm.step !== 'LIST') return;
+  $$('#commBody [data-dist-for]').forEach(el => {
+    const c = state.contacts.find(x => x.id === Number(el.dataset.distFor));
+    if (c) el.textContent = fmtAU(c);
+  });
+}
+
+commBodyEl.addEventListener('click', (e) => {
+  const conn = e.target.closest('[data-connect]');
+  if (conn) { commConnect(Number(conn.dataset.connect)); return; }
+  const srv = e.target.closest('[data-service]');
+  if (srv) commOpenService(srv.dataset.service);
+});
+$('#commClose').addEventListener('click', () => setCommOpen(false));
+
+/* ==============================================================
+   TABLET STACJI — wysuwane menu usług (stationUI z gry)
+   ============================================================== */
+const tabletEl = $('#stationTablet');
+const tabletTabTrack = $('#tabletTabTrack');
+const tablet = { open: false, tab: 'hangar', station: null };
+
+function paneEl(id) { return tabletEl.querySelector(`.tablet-pane[data-pane="${id}"]`); }
+
+function centerTabletTab() {
+  const item = tabletTabTrack.querySelector(`.menu-item[data-tab="${tablet.tab}"]`);
+  if (!item) return;
+  const offset = tabletTabTrack.offsetWidth / 2 - (item.offsetLeft + item.offsetWidth / 2);
+  tabletTabTrack.style.transform = `translateX(${offset}px)`;
+}
+
+function setTabletTab(tab, silent = false) {
+  if (!TAB_IDS.includes(tab)) tab = 'hangar';
+  tablet.tab = tab;
+  $$('.tablet-pane', tabletEl).forEach(p => p.classList.toggle('active', p.dataset.pane === tab));
+  $$('.menu-item', tabletTabTrack).forEach(i => i.classList.toggle('active', i.dataset.tab === tab));
+  centerTabletTab();
+  if (!silent && tablet.open) logMsg(`Moduł stacji: ${tabLabel(tab)}`);
+}
+function stepTabletTab(dir) {
+  const i = TAB_IDS.indexOf(tablet.tab);
+  setTabletTab(TAB_IDS[(i + dir + TAB_IDS.length) % TAB_IDS.length]);
+}
+
+function openTablet(tab = 'hangar', stationRef = null) {
+  const station = stationRef || getCommStation() || nearestStationNode();
+  tablet.station = station || null;
+  tablet.open = true;
+  tabletEl.classList.add('open');
+  tabletEl.setAttribute('aria-hidden', 'false');
+  $('#tabletStation').textContent = station ? station.name : 'WĘZEŁ NIEZNANY';
+  $('#tabletStationSub').textContent = station
+    ? `[${station.code || station.id}] ${station.sub || 'STACJA'} · POŁĄCZONO`
+    : 'BRAK POŁĄCZENIA';
+  buildHangarPane();
+  buildTradePane();
+  setTabletTab(tab, true);
+  updateTabletTicker();
+  toast(`Terminal stacji: ${station ? station.name : '—'}`);
+  logMsg(`Załadowano moduł ${tabLabel(tablet.tab)} — węzeł [${station ? (station.code || station.id) : '—'}]`, 'ok');
+}
+
+function closeTablet() {
+  if (!tablet.open) return;
+  tablet.open = false;
+  tabletEl.classList.remove('open');
+  tabletEl.setAttribute('aria-hidden', 'true');
+  toast('Połączenie ze stacją zakończone', 'warn');
+  logMsg(`Rozłączono z węzłem [${tablet.station ? (tablet.station.code || tablet.station.id) : '—'}]`, 'warn');
+}
+
+$('#tabletClose').addEventListener('click', closeTablet);
+$('#tabPrev').addEventListener('click', () => stepTabletTab(-1));
+$('#tabNext').addEventListener('click', () => stepTabletTab(1));
+tabletTabTrack.addEventListener('click', (e) => {
+  const item = e.target.closest('.menu-item');
+  if (item) setTabletTab(item.dataset.tab);
+});
+$('#tabletTabs').addEventListener('wheel', (e) => {
+  e.preventDefault();
+  stepTabletTab(Math.sign(e.deltaY));
+}, { passive: false });
+addEventListener('resize', centerTabletTab);
+
+/* ---------- karty usług (stylistyka modułów kokpitu) ---------- */
+function dockCard(opts) {
+  const card = document.createElement('article');
+  card.className = 'dock-card' + (opts.portrait ? '' : ' no-portrait') + (opts.span ? ' dock-span' : '');
+  if (opts.portrait) {
+    const p = document.createElement('span');
+    p.className = 'dock-portrait';
+    p.innerHTML = opts.portrait;
+    card.appendChild(p);
+  }
+  const main = document.createElement('div');
+  main.className = 'dock-main';
+  main.innerHTML = `
+    <div class="dock-title"><strong>${opts.title}</strong>${opts.badge ? `<span class="dock-badge">${opts.badge}</span>` : ''}</div>
+    ${opts.desc ? `<p class="dock-desc">${opts.desc}</p>` : ''}
+    ${opts.meta && opts.meta.length ? `<div class="dock-meta">${opts.meta.map(m => `<span>${m}</span>`).join('')}</div>` : ''}
+    ${opts.html || ''}`;
+  if (opts.actions && opts.actions.length) {
+    const acts = document.createElement('div');
+    acts.className = 'dock-actions';
+    for (const a of opts.actions) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'physical-btn' + (a.active ? ' active' : '');
+      b.innerHTML = `<span>${a.label}</span><div class="led-indicator ${a.led || 'orange'}"></div>`;
+      if (a.disabled) b.disabled = true;
+      if (a.onClick) b.addEventListener('click', a.onClick);
+      acts.appendChild(b);
+    }
+    main.appendChild(acts);
+  }
+  card.appendChild(main);
+  return card;
+}
+
+function spendCredits(n) {
+  if (state.credits < n) { toast('Brak środków', 'bad'); return false; }
+  state.credits -= n;
+  updateTabletTicker();
+  return true;
+}
+
+/* ---------- HANGAR ---------- */
+const FRAME_SHOP = ['corvus', 'custos', 'hasta', 'bellator'];
+function frameCost(cls) { return SHIP_CLASSES[cls].prod * 25; }
+
+function buildHangarPane() {
+  const pane = paneEl('hangar');
+  pane.innerHTML = '';
+  const dmg = Math.round((1 - state.hp) * 100);
+  const repairCost = Math.max(0, Math.round((1 - state.hp) * 900));
+  pane.appendChild(dockCard({
+    title: 'Naprawy kadłuba',
+    badge: 'Serwis',
+    desc: 'Doki Pierścienia przywracają kadłub Atlasa do pełnej sprawności.',
+    meta: [`Uszkodzenia: <b>${dmg}%</b>`, `Koszt: <b>${fmtCr(repairCost)}</b>`],
+    actions: [{
+      label: 'Napraw', led: 'green', disabled: dmg <= 0,
+      onClick: () => {
+        if (!spendCredits(repairCost)) return;
+        state.hp = 1;
+        toast('Kadłub naprawiony — 100%');
+        logMsg('Serwis doku: kadłub przywrócony do 100%', 'ok');
+        buildHangarPane();
+      }
+    }]
+  }));
+  for (const cls of FRAME_SHOP) {
+    const def = SHIP_CLASSES[cls];
+    const full = def.count >= def.max;
+    pane.appendChild(dockCard({
+      title: `Rama: ${def.name}`,
+      badge: 'Hangar',
+      portrait: silhouette(cls),
+      desc: `${def.role} — nowa rama trafia do rezerwy stoczni.`,
+      meta: [`Koszt: <b>${fmtCr(frameCost(cls))}</b>`, `Rezerwa: <b>${def.count}/${def.max}</b>`],
+      actions: [{ label: full ? 'Magazyn pełny' : 'Zamów', led: 'blue', disabled: full, onClick: () => buyFrame(cls) }]
+    }));
+  }
+}
+function buyFrame(cls) {
+  const def = SHIP_CLASSES[cls];
+  if (def.count >= def.max) { toast('Magazyn rezerwy pełny', 'warn'); return; }
+  if (!spendCredits(frameCost(cls))) return;
+  def.count++;
+  updateReserveUI();
+  toast(`Rama ${def.name} dodana do rezerwy stoczni`);
+  logMsg(`Hangar: rama ${def.name} przekazana do rezerwy (${def.count}/${def.max})`, 'ok');
+  buildHangarPane();
+}
+
+/* ---------- HANDEL ---------- */
+const MARKET_GOODS = {
+  tytan:  { label: 'Tytan',       buy: 120, sell: 96,  color: '#ffaa33' },
+  krzem:  { label: 'Krzem',       buy: 80,  sell: 64,  color: '#0088ff' },
+  ogniwa: { label: 'Ogniwa mocy', buy: 420, sell: 360, color: '#b58cff' }
+};
+const STATION_STOCK = [
+  { label: 'TYTAN',       val: '1 240 / 2 000', color: '#ffaa33' },
+  { label: 'KRZEM',       val: '860 / 1 500',   color: '#0088ff' },
+  { label: 'LÓD (H₂O)',   val: '3 400 / 4 000', color: '#cfe8ff' },
+  { label: 'ANTYMATERIA', val: '12 / 40',       color: '#b58cff' }
+];
+
+function buildTradePane() {
+  const pane = paneEl('trade');
+  pane.innerHTML = '';
+  pane.appendChild(dockCard({
+    span: true,
+    title: 'Magazyny i produkcja',
+    badge: 'Trade',
+    desc: 'Aktualny stan surowców w dokach orbitalnych stacji.',
+    html: `<table class="trade-table">${STATION_STOCK.map(r =>
+      `<tr><td><span class="res-dot" style="color:${r.color}"></span>${r.label}</td><td>${r.val}</td></tr>`).join('')}</table>`
+  }));
+  for (const [key, g] of Object.entries(MARKET_GOODS)) {
+    pane.appendChild(dockCard({
+      title: g.label,
+      badge: 'Rynek',
+      desc: 'Handel surowcami z dokami stacji.',
+      meta: [
+        `Kupno: <b>${fmtCr(g.buy)}</b>`,
+        `Sprzedaż: <b>${fmtCr(g.sell)}</b>`,
+        `Ładownia: <b>${state.cargo[key] || 0}</b>`
+      ],
+      actions: [
+        { label: 'Kup', led: 'blue', onClick: () => handleTrade('buy', key) },
+        { label: 'Sprzedaj', led: 'orange', disabled: !(state.cargo[key] > 0), onClick: () => handleTrade('sell', key) }
+      ]
+    }));
+  }
+}
+function handleTrade(type, key) {
+  const g = MARKET_GOODS[key];
+  if (type === 'buy') {
+    if (cargoTotal() >= CARGO_MAX) { toast('Ładownia pełna', 'warn'); return; }
+    if (!spendCredits(g.buy)) return;
+    state.cargo[key] = (state.cargo[key] || 0) + 1;
+    toast(`Kupiono: ${g.label} (+1)`);
+  } else {
+    if (!(state.cargo[key] > 0)) { toast('Brak towaru w ładowni', 'warn'); return; }
+    state.cargo[key]--;
+    state.credits += g.sell;
+    toast(`Sprzedano: ${g.label} (+${g.sell} cr)`);
+  }
+  updateTabletTicker();
+  buildTradePane();
+}
+
+/* ---------- KANTYNA ---------- */
+function buildCantinaPane() {
+  const pane = paneEl('cantina');
+  pane.innerHTML = '';
+  pane.appendChild(dockCard({
+    title: 'Najemnik: piracka stacja',
+    badge: 'Misja',
+    desc: 'Odbierz kontrakt na zniszczenie pirackiej placówki w pobliskim sektorze.',
+    meta: ['Nagrody za eliminację wrogów'],
+    actions: [{ label: 'Przyjmij', led: 'green', onClick: (e) => acceptMission(e, 'Kontrakt najemnika przyjęty — cele oznaczone na skanerze') }]
+  }));
+  pane.appendChild(dockCard({
+    title: 'Wojna o terytorium',
+    badge: 'Misja',
+    desc: 'Dołącz do sił sojuszniczych i odbij punkt kontrolny z rąk piratów.',
+    meta: ['Aktywuje wrogie fale w sektorze'],
+    actions: [{
+      label: 'Dołącz', led: 'red',
+      onClick: (e) => { acceptMission(e, 'Dołączono do operacji — wykryto wrogie fale', 'bad'); spawnWarWave(); }
+    }]
+  }));
+  pane.appendChild(dockCard({
+    title: 'Plotki z doków',
+    badge: 'Kantyna',
+    desc: 'Przemytnicy widzieli konwój piratów przy polu asteroid C-311. Stocznia podobno szykuje nową ramę klasy Citadella.',
+    meta: ['Morale załogi: <b>WYSOKIE</b>'],
+    actions: [{ label: 'Postaw kolejkę', led: 'orange', onClick: () => { if (spendCredits(20)) toast('Załoga zadowolona — morale rośnie'); } }]
+  }));
+}
+function acceptMission(e, msg, cls = 'warn') {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  btn.querySelector('span').textContent = 'PRZYJĘTO';
+  toast(msg, cls);
+  logMsg(`Kantyna: ${msg}`, cls === 'bad' ? 'bad' : 'warn');
+}
+function spawnWarWave() {
+  for (let i = 0; i < 2; i++) {
+    const a = rand(0, Math.PI * 2), d = rand(14000, 24000);
+    addContact({
+      type: 'hostile', name: `Rajder ${100 + Math.floor(rand(0, 99))}`,
+      sub: 'FALA WOJENNA', threat: 'WYSOKIE',
+      x: Math.cos(a) * d, y: Math.sin(a) * d,
+      orbitA: a, orbitD: d, orbitW: rand(0.01, 0.02) * (i ? -1 : 1),
+      spd: rand(160, 320)
+    });
+  }
+  rebuildOverview();
+}
+
+/* ---------- MECHANIK (zegary jak moduł PRĘDKOŚĆ) ---------- */
+function buildMechanicPane() {
+  const pane = paneEl('mechanic');
+  pane.innerHTML = '';
+  pane.appendChild(dockCard({
+    span: true,
+    title: 'Diagnostyka Atlasa',
+    badge: 'Warsztat',
+    html: `
+      <div class="dock-gauge">
+        <canvas id="tabletGauge"></canvas>
+        <div class="speed-center">
+          <div class="speed-value"><span id="tgHull">100</span><span class="speed-unit">% KADŁUB</span></div>
+          <div class="speed-divider"></div>
+          <div class="speed-mode" id="tgShield">TARCZA 82%</div>
+        </div>
+      </div>`
+  }));
+  pane.appendChild(dockCard({
+    title: 'Kalibracja tarcz',
+    badge: 'Serwis',
+    desc: 'Pełne ładowanie emiterów do limitu bieżącego trybu.',
+    meta: [`Koszt: <b>${fmtCr(250)}</b>`],
+    actions: [{
+      label: 'Kalibruj', led: 'blue',
+      onClick: () => { if (!spendCredits(250)) return; state.shield = MODES[state.mode].shieldCap; toast('Tarcze skalibrowane'); }
+    }]
+  }));
+  pane.appendChild(dockCard({
+    title: 'Chłodzenie rdzenia',
+    badge: 'Serwis',
+    desc: 'Wymiana chłodziwa obniża obciążenie rdzenia reaktora.',
+    meta: [`Koszt: <b>${fmtCr(150)}</b>`],
+    actions: [{
+      label: 'Schłodź', led: 'green',
+      onClick: () => { if (!spendCredits(150)) return; state.core = Math.max(0.18, state.core - 0.25); toast('Rdzeń schłodzony'); }
+    }]
+  }));
+  pane.appendChild(dockCard({
+    title: 'Raport techniczny',
+    badge: 'Darmowe',
+    desc: 'Pełny przegląd systemów zapisany w dzienniku pokładowym.',
+    actions: [{
+      label: 'Diagnozuj', led: 'orange',
+      onClick: () => {
+        logMsg(`Diagnostyka: HP ${Math.round(state.hp * 100)}% · TARCZA ${Math.round(state.shield * 100)}% · RDZEŃ ${Math.round(state.core * 100)}%`, 'ok');
+        toast('Raport zapisany w dzienniku');
+      }
+    }]
+  }));
+}
+
+function drawTabletGauge() {
+  if (!tablet.open || tablet.tab !== 'mechanic') return;
+  const cv = document.getElementById('tabletGauge');
+  if (!cv) return;
+  const { ctx, width, height } = fitCanvas(cv);
+  ctx.clearRect(0, 0, width, height);
+  const scale = Math.min(height / 520, width / 1100);
+  const cx = width / 2, cy = height / 2;
+  drawCStyleGauge(ctx, cx - 240 * scale, cy, scale, false, state.hp, 1, false);
+  drawCStyleGauge(ctx, cx + 240 * scale, cy, scale, true, state.shield, 1, false);
+  drawDecorativeLines(ctx, cx, cy, scale);
+}
+
+/* ---------- INFRASTRUKTURA ---------- */
+const INFRA_MODULES = [
+  { name: 'Stocznia — dok 2', load: 76, on: true },
+  { name: 'Rafineria helu-3', load: 62, on: true },
+  { name: 'Habitat pierścienia', load: 88, on: true },
+  { name: 'Przekaźnik sensorów', load: 41, on: true }
+];
+function buildInfraPane() {
+  const pane = paneEl('infrastructure');
+  pane.innerHTML = '';
+  const card = dockCard({
+    span: true,
+    title: 'Infrastruktura węzła',
+    badge: 'Sieć',
+    desc: 'Zarządzanie modułami stacji. Wyłączone moduły zwalniają moc dla doków.',
+    meta: ['Energia: <b>3.2 GW</b>', 'Stabilność sieci: <b>96%</b>']
+  });
+  const list = document.createElement('div');
+  INFRA_MODULES.forEach(m => {
+    const row = document.createElement('div');
+    row.className = 'infra-row' + (m.on ? '' : ' infra-off');
+    row.innerHTML = `
+      <span>${m.name}</span>
+      <span class="micro-bar"><span style="--value:${m.load}%;--bar-color:${m.on ? '#ff6600' : '#555555'}"></span></span>
+      <button type="button" class="physical-btn${m.on ? ' active' : ''}"><span>${m.on ? 'WŁ' : 'WYŁ'}</span><div class="led-indicator green"></div></button>`;
+    row.querySelector('button').addEventListener('click', () => {
+      m.on = !m.on;
+      toast(`${m.name}: ${m.on ? 'WŁĄCZONO' : 'WYŁĄCZONO'}`, m.on ? '' : 'warn');
+      buildInfraPane();
+    });
+    list.appendChild(row);
+  });
+  card.querySelector('.dock-main').appendChild(list);
+  pane.appendChild(card);
+}
+
+function updateTabletTicker() {
+  if (!tablet.open) return;
+  $('#tabletCredits').textContent = fmtCr(state.credits);
+  $('#tabletCargo').textContent = `${cargoTotal()} / ${CARGO_MAX}`;
+  const h = document.getElementById('tgHull');
+  const s = document.getElementById('tgShield');
+  if (h) h.textContent = String(Math.round(state.hp * 100));
+  if (s) s.textContent = `TARCZA ${Math.round(state.shield * 100)}%`;
+}
+
+function buildTabletPanes() {
+  buildHangarPane();
+  buildTradePane();
+  buildCantinaPane();
+  buildMechanicPane();
+  buildInfraPane();
+}
+buildTabletPanes();
+setTabletTab('hangar', true);
+
+/* ==============================================================
+   SYMULACJA
+   ============================================================== */
+let lastHitAt = 0;
+
+function simStep(dt) {
+  state.t += dt;
+  const mode = MODES[state.mode];
+
+  // prędkość — dąży do throttle * max (+dopalacz)
+  const boost = state.boostUntil > state.t ? 1.35 : 1;
+  const target = clamp(state.throttle * boost, 0, 1) * mode.maxSpeed;
+  const diff = target - state.speed;
+  const step = mode.accel * dt * boost;
+  state.speed += clamp(diff, -step * 1.6, step);
+  state.speed = Math.max(0, state.speed);
+
+  // licznik przebiegu (ODO/TRIP)
+  const dTravel = state.speed * dt;
+  state.odo += dTravel;
+  state.trip += dTravel;
+
+  // rdzeń
+  const coreTarget = clamp(0.22 + 0.55 * state.throttle + mode.coreBias + (boost > 1 ? 0.15 : 0) + Math.sin(state.t * 0.7) * 0.03, 0, 1);
+  state.core = lerp(state.core, coreTarget, dt * 2);
+
+  // tarcza — regeneracja do limitu trybu + ostrzał
+  const cap = mode.shieldCap;
+  if (state.shield < cap) state.shield = Math.min(cap, state.shield + dt * 0.02);
+  if (state.shield > cap) state.shield = Math.max(cap, state.shield - dt * 0.25);
+  const nearHostile = state.contacts.some(c => c.type === 'hostile' && Math.hypot(c.x, c.y) < 9000);
+  if (nearHostile && state.t - lastHitAt > rand(2.5, 5)) {
+    lastHitAt = state.t;
+    const dmgMul = state.ecm ? 0.55 : 1;
+    if (state.shield > 0.02) {
+      state.shield = Math.max(0, state.shield - rand(0.05, 0.12) * dmgMul);
+      logMsg(`Ostrzał wroga — tarcza ${Math.round(state.shield * 100)}%`, 'warn');
+    } else {
+      state.hp = Math.max(0.05, state.hp - rand(0.02, 0.05) * dmgMul);
+      logMsg(`TRAFIENIE W KADŁUB — HP ${Math.round(state.hp * 100)}%`, 'bad');
+    }
+  }
+
+  // kontakty
+  for (const c of state.contacts) {
+    if (c.orbitW) {
+      c.orbitA += c.orbitW * dt * (c.type === 'hostile' ? 6 : 3);
+      c.x = Math.cos(c.orbitA) * c.orbitD;
+      c.y = Math.sin(c.orbitA) * c.orbitD;
+    } else {
+      c.x += (c.vx || 0) * dt;
+      c.y += (c.vy || 0) * dt;
+    }
+  }
+
+  // skrzydło — eskorta / atak / stój
+  state.fleet.forEach((f, i) => {
+    const def = SHIP_CLASSES[f.cls];
+    let tx = null, ty = null;
+    if (f.status === 'ATAK' && f.targetId != null) {
+      const tgt = state.contacts.find(c => c.id === f.targetId);
+      if (!tgt) {
+        f.status = 'ESKORTA'; f.targetId = null; state.fleetDirty = true;
+      } else {
+        const orbA = state.t * 0.6 + i * 2.1;
+        tx = tgt.x + Math.cos(orbA) * 900;
+        ty = tgt.y + Math.sin(orbA) * 900;
+        if (Math.hypot(f.x - tgt.x, f.y - tgt.y) < 1600) {
+          tgt.hp -= dt * 0.05;
+          f.shield = Math.max(0.1, f.shield - dt * 0.015);
+          if (tgt.hp <= 0) {
+            state.effects.push({ kind: 'boom', x: tgt.x, y: tgt.y, t0: state.t });
+            state.contacts = state.contacts.filter(c => c !== tgt);
+            if (state.selected && state.selected.kind === 'contact' && state.selected.id === tgt.id) clearSelection();
+            for (const ff of state.fleet) if (ff.targetId === tgt.id) { ff.status = 'ESKORTA'; ff.targetId = null; }
+            state.fleetDirty = true;
+            toast(`Cel zniszczony: ${tgt.name}`, 'bad');
+            rebuildOverview();
+          }
+        }
+      }
+    } else if (f.status === 'STÓJ') {
+      tx = f.holdX; ty = f.holdY;
+    }
+    if (tx == null) {
+      const a = (i / Math.max(1, state.fleet.length)) * Math.PI * 2 + Math.PI / 6;
+      tx = Math.cos(a) * 2400;
+      ty = Math.sin(a) * 2400;
+      if (f.shield < 1) f.shield = Math.min(1, f.shield + dt * 0.01);
+    }
+    const dx = tx - f.x, dy = ty - f.y;
+    const d = Math.hypot(dx, dy);
+    f.spd = clamp(d * 0.7, 0, def.speed);
+    if (d > 8) {
+      f.x += dx / d * f.spd * dt;
+      f.y += dy / d * f.spd * dt;
+    }
+  });
+
+  flushPendingSpawns();
+  sweepAngle = (sweepAngle + dt * 1.5) % (Math.PI * 2);
+}
+
+/* ==============================================================
+   PĘTLA GŁÓWNA
+   ============================================================== */
+let lastMs = performance.now();
+let uiAccum = 0, ovAccum = 0, clockAccum = 0;
+
+function frame(nowMs) {
+  const dt = Math.min(0.05, (nowMs - lastMs) / 1000);
+  lastMs = nowMs;
+
+  simStep(dt);
+  drawWorld();
+  drawRadar();
+  drawSpeedo();
+  drawTabletGauge();
+  updateHotkeyCooldowns();
+
+  uiAccum += dt;
+  if (uiAccum >= 0.1) {
+    uiAccum = 0;
+    $('#spValue').textContent = String(Math.round(state.speed));
+    $('#spState').textContent = state.boostUntil > state.t
+      ? (state.mode === 'travel' ? 'WARP' : 'DOPALACZ')
+      : (state.autopilot ? 'AUTO' : 'REJS');
+    $('#spOdo').textContent = Math.floor(state.odo).toLocaleString('pl-PL') + ' u';
+    $('#spTrip').textContent = state.trip >= 1000
+      ? (state.trip / 1000).toFixed(1) + 'K u'
+      : Math.floor(state.trip) + ' u';
+    updateVitals();
+    updateRadarReadout();
+    updateConsoleStatus();
+    updateProduction(0.1);
+    updateReserveUI();
+    renderFleetList();
+    patchFleetList();
+    updateTabletTicker();
+  }
+
+  ovAccum += dt;
+  if (ovAccum >= 0.6) {
+    ovAccum = 0;
+    rebuildOverview();
+    if (state.selected) renderSelected();
+    refreshCommDistances();
+  }
+
+  clockAccum += dt;
+  if (clockAccum >= 1) {
+    clockAccum = 0;
+    updateTermClock();
+  }
+
+  requestAnimationFrame(frame);
+}
+
+setThrottle(state.throttle);
+setMode(state.mode, true);
+rebuildOverview();
+renderFleetList();
+renderSelected();
+updateReserveUI();
+updateRadarReadout();
+updateConsoleStatus();
+updateTermClock();
+addEventListener('resize', updateModeScreen);
+logMsg('Inicjalizacja systemów kokpitu — <span class="ok">OK</span>');
+logMsg('Łącze Pierścienia: ONLINE / 96%', 'ok');
+logMsg('Kalibracja sensorów: zasięg pasywny 18 000 u');
+logMsg('Uplink gotowy — CAPS LOCK / przycisk KOMUNIKACJA / ikona sieci na terminalu');
+requestAnimationFrame(frame);
+setTimeout(() => toast('Kokpit v2 online — przeciągnij rezerwę na mapę lub radar'), 450);
+</script>
+</body>
+</html>

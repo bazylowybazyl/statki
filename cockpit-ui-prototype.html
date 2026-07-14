@@ -1,0 +1,2996 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>Super Capital — Cockpit UI Prototype</title>
+  <style>
+    :root {
+      --void: #020508;
+      --panel: rgba(4, 12, 16, 0.94);
+      --panel-strong: rgba(7, 18, 22, 0.98);
+      --steel-0: #090d10;
+      --steel-1: #171d20;
+      --steel-2: #2b3335;
+      --steel-3: #4a5352;
+      --line: rgba(115, 235, 214, 0.3);
+      --line-soft: rgba(115, 235, 214, 0.12);
+      --text: #d9fbf3;
+      --muted: #7f9e99;
+      --green: #63f0b7;
+      --green-dim: #1d7458;
+      --cyan: #6ed9ff;
+      --blue: #4ba8ff;
+      --amber: #eeb763;
+      --orange: #ff8a4c;
+      --red: #ff6868;
+      --violet: #b58cff;
+      --mode-accent: #ffb15a;
+      --cockpit-h: clamp(232px, 27.5vh, 302px);
+      --top-h: 48px;
+      --ui-font: "Bahnschrift", "Segoe UI", Arial, sans-serif;
+      --mono: Consolas, "Courier New", monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+    }
+
+    body {
+      color: var(--text);
+      font-family: var(--ui-font);
+      letter-spacing: 0.04em;
+    }
+
+    button {
+      color: inherit;
+      font: inherit;
+    }
+
+    button:focus-visible,
+    [tabindex]:focus-visible {
+      outline: 1px solid var(--green);
+      outline-offset: 2px;
+    }
+
+    .app {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      isolation: isolate;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 54% 20%, rgba(23, 67, 84, 0.2), transparent 30%),
+        linear-gradient(180deg, #02070c, #010204 68%, #000);
+      --mode-accent: #ffb15a;
+    }
+
+    .app[data-mode="agility"] {
+      --mode-accent: #63f0b7;
+    }
+
+    .app[data-mode="travel"] {
+      --mode-accent: #6ed9ff;
+    }
+
+    #space-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: -3;
+    }
+
+    .glass-vignette,
+    .glass-scanlines {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+    }
+
+    .glass-vignette {
+      background:
+        linear-gradient(90deg, rgba(0, 0, 0, 0.45), transparent 13%, transparent 87%, rgba(0, 0, 0, 0.45)),
+        linear-gradient(180deg, rgba(0, 0, 0, 0.35), transparent 18%, transparent 68%, rgba(0, 0, 0, 0.82));
+      box-shadow: inset 0 0 110px rgba(0, 0, 0, 0.75);
+    }
+
+    .glass-scanlines {
+      opacity: 0.15;
+      background: repeating-linear-gradient(180deg, transparent 0 3px, rgba(126, 228, 255, 0.045) 3px 4px);
+      mix-blend-mode: screen;
+    }
+
+    .top-telemetry {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 35;
+      height: var(--top-h);
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 18px;
+      padding: 0 18px;
+      border-bottom: 1px solid rgba(110, 217, 255, 0.16);
+      background: linear-gradient(180deg, rgba(3, 9, 14, 0.97), rgba(3, 9, 14, 0.68));
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.36);
+      font-family: var(--mono);
+      text-transform: uppercase;
+    }
+
+    .telemetry-cluster {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      min-width: 0;
+    }
+
+    .telemetry-cluster.right {
+      justify-content: flex-end;
+    }
+
+    .telemetry-item {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .telemetry-label {
+      color: #57726f;
+      font-size: 8px;
+      letter-spacing: 0.16em;
+    }
+
+    .telemetry-value {
+      overflow: hidden;
+      color: #c9e8e3;
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .brand-lockup {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      color: #e8ffff;
+      white-space: nowrap;
+    }
+
+    .brand-lockup strong {
+      font-size: 13px;
+      letter-spacing: 0.24em;
+    }
+
+    .brand-lockup span {
+      color: var(--cyan);
+      font-size: 8px;
+      letter-spacing: 0.18em;
+    }
+
+    .status-dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-right: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 9px var(--green);
+    }
+
+    .battlefield {
+      position: absolute;
+      top: var(--top-h);
+      right: 0;
+      bottom: calc(var(--cockpit-h) - 3px);
+      left: 0;
+      z-index: 1;
+      overflow: hidden;
+    }
+
+    .world-grid {
+      position: absolute;
+      inset: 0;
+      opacity: 0.11;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(110, 217, 255, 0.18) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(110, 217, 255, 0.18) 1px, transparent 1px);
+      background-size: 92px 92px;
+      mask-image: radial-gradient(circle at center, black 12%, transparent 72%);
+    }
+
+    .flight-reticle {
+      position: absolute;
+      left: 50%;
+      top: 54%;
+      width: 88px;
+      height: 88px;
+      translate: -50% -50%;
+      opacity: 0.34;
+      pointer-events: none;
+      border: 1px solid rgba(110, 217, 255, 0.18);
+      border-radius: 50%;
+    }
+
+    .flight-reticle::before,
+    .flight-reticle::after {
+      content: "";
+      position: absolute;
+      background: rgba(110, 217, 255, 0.38);
+    }
+
+    .flight-reticle::before {
+      top: 50%;
+      left: -16px;
+      width: 120px;
+      height: 1px;
+    }
+
+    .flight-reticle::after {
+      top: -16px;
+      left: 50%;
+      width: 1px;
+      height: 120px;
+    }
+
+    .map-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      display: none;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 54%, rgba(27, 102, 118, 0.18), transparent 29%),
+        rgba(1, 7, 11, 0.86);
+      backdrop-filter: blur(4px);
+      pointer-events: none;
+    }
+
+    .map-active .map-overlay {
+      display: block;
+    }
+
+    .map-overlay::before,
+    .map-overlay::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 52%;
+      translate: -50% -50%;
+      border: 1px solid rgba(99, 240, 183, 0.17);
+      border-radius: 50%;
+    }
+
+    .map-overlay::before {
+      width: min(58vw, 720px);
+      aspect-ratio: 1;
+      box-shadow:
+        0 0 0 75px rgba(99, 240, 183, 0.025),
+        0 0 0 76px rgba(99, 240, 183, 0.1),
+        0 0 0 155px rgba(99, 240, 183, 0.02),
+        0 0 0 156px rgba(99, 240, 183, 0.08);
+    }
+
+    .map-overlay::after {
+      width: min(22vw, 270px);
+      aspect-ratio: 1;
+      box-shadow: 0 0 45px rgba(99, 240, 183, 0.07);
+    }
+
+    .map-caption {
+      position: absolute;
+      left: 50%;
+      top: 18px;
+      translate: -50% 0;
+      color: rgba(99, 240, 183, 0.75);
+      font: 10px var(--mono);
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+
+    #contact-layer,
+    #warp-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 4;
+      pointer-events: none;
+    }
+
+    .world-contact {
+      --tone: var(--green);
+      position: absolute;
+      width: 34px;
+      height: 34px;
+      translate: -50% -50%;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+
+    .world-contact.hostile { --tone: var(--red); }
+    .world-contact.resource { --tone: var(--amber); }
+    .world-contact.friendly { --tone: var(--cyan); }
+    .world-contact.signal { --tone: var(--green); }
+
+    .contact-pip {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 7px;
+      height: 7px;
+      translate: -50% -50%;
+      rotate: 45deg;
+      border: 1px solid var(--tone);
+      background: color-mix(in srgb, var(--tone) 48%, transparent);
+      box-shadow: 0 0 9px color-mix(in srgb, var(--tone) 75%, transparent);
+    }
+
+    .world-contact.friendly .contact-pip {
+      border-radius: 50%;
+      rotate: 0deg;
+    }
+
+    .contact-brackets {
+      position: absolute;
+      inset: 1px;
+      opacity: 0;
+      filter: drop-shadow(0 0 4px rgba(99, 240, 183, 0.65));
+    }
+
+    .contact-brackets::before,
+    .contact-brackets::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(var(--green), var(--green)) left top / 9px 1px no-repeat,
+        linear-gradient(var(--green), var(--green)) left top / 1px 9px no-repeat,
+        linear-gradient(var(--green), var(--green)) right top / 9px 1px no-repeat,
+        linear-gradient(var(--green), var(--green)) right top / 1px 9px no-repeat,
+        linear-gradient(var(--green), var(--green)) left bottom / 9px 1px no-repeat,
+        linear-gradient(var(--green), var(--green)) left bottom / 1px 9px no-repeat,
+        linear-gradient(var(--green), var(--green)) right bottom / 9px 1px no-repeat,
+        linear-gradient(var(--green), var(--green)) right bottom / 1px 9px no-repeat;
+    }
+
+    .contact-brackets::after {
+      inset: -6px;
+      opacity: 0.3;
+    }
+
+    .world-contact.selected .contact-brackets,
+    .world-contact:hover .contact-brackets {
+      opacity: 1;
+    }
+
+    .world-contact.locked .contact-brackets::after {
+      background:
+        linear-gradient(var(--red), var(--red)) left top / 8px 1px no-repeat,
+        linear-gradient(var(--red), var(--red)) right top / 8px 1px no-repeat,
+        linear-gradient(var(--red), var(--red)) left bottom / 8px 1px no-repeat,
+        linear-gradient(var(--red), var(--red)) right bottom / 8px 1px no-repeat;
+      opacity: 0.9;
+    }
+
+    .contact-tag {
+      position: absolute;
+      left: 50%;
+      top: calc(100% + 5px);
+      min-width: 108px;
+      translate: -50% 0;
+      display: none;
+      padding: 3px 5px;
+      border-left: 1px solid var(--green);
+      color: var(--green);
+      background: rgba(1, 9, 10, 0.78);
+      font: 8px var(--mono);
+      letter-spacing: 0.08em;
+      text-align: left;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .contact-tag small {
+      display: block;
+      margin-top: 2px;
+      color: #789f94;
+      font-size: 7px;
+    }
+
+    .world-contact.selected .contact-tag {
+      display: block;
+    }
+
+    .side-stack {
+      position: absolute;
+      z-index: 22;
+      top: calc(var(--top-h) + 13px);
+      bottom: calc(var(--cockpit-h) + 15px);
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      pointer-events: none;
+    }
+
+    .left-stack {
+      left: 14px;
+      width: clamp(248px, 19vw, 292px);
+    }
+
+    .right-stack {
+      right: 14px;
+      width: clamp(290px, 22vw, 344px);
+    }
+
+    .hud-panel {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      color: var(--text);
+      background: linear-gradient(180deg, rgba(7, 18, 22, 0.95), rgba(3, 9, 12, 0.9));
+      box-shadow: 0 14px 42px rgba(0, 0, 0, 0.38), inset 3px 0 0 rgba(110, 217, 255, 0.06);
+      pointer-events: auto;
+    }
+
+    .hud-panel::after {
+      content: "";
+      position: absolute;
+      right: -24px;
+      bottom: -24px;
+      width: 54px;
+      height: 54px;
+      rotate: 45deg;
+      border-left: 1px solid rgba(115, 235, 214, 0.18);
+      background: rgba(115, 235, 214, 0.025);
+      pointer-events: none;
+    }
+
+    .active-panel {
+      min-height: 0;
+      max-height: 100%;
+    }
+
+    .overview-panel {
+      flex: 0 1 47%;
+      min-height: 170px;
+    }
+
+    .reserve-panel {
+      flex: 1 1 53%;
+      min-height: 210px;
+    }
+
+    .panel-head {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      min-height: 36px;
+      padding: 7px 9px 6px 11px;
+      border-bottom: 1px solid rgba(115, 235, 214, 0.18);
+      background: rgba(7, 18, 22, 0.96);
+      text-transform: uppercase;
+    }
+
+    .panel-title {
+      display: grid;
+      gap: 1px;
+      min-width: 0;
+    }
+
+    .panel-title strong {
+      overflow: hidden;
+      color: #effffb;
+      font: 700 11px var(--mono);
+      letter-spacing: 0.08em;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .panel-title small,
+    .panel-count {
+      color: var(--muted);
+      font: 9px var(--mono);
+      letter-spacing: 0.1em;
+    }
+
+    .panel-body {
+      min-height: 0;
+      overflow: auto;
+      scrollbar-color: rgba(99, 240, 183, 0.35) transparent;
+      scrollbar-width: thin;
+    }
+
+    .panel-body::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .panel-body::-webkit-scrollbar-thumb {
+      background: rgba(99, 240, 183, 0.34);
+    }
+
+    .active-panel {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+    }
+
+    .unit-list {
+      display: grid;
+      gap: 1px;
+      padding: 5px;
+    }
+
+    .unit-card {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      width: 100%;
+      min-height: 52px;
+      padding: 5px 7px;
+      border: 1px solid transparent;
+      border-bottom-color: rgba(115, 235, 214, 0.08);
+      color: #cfe6e2;
+      background: rgba(0, 0, 0, 0.08);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .unit-card:hover {
+      border-color: rgba(115, 235, 214, 0.25);
+      background: rgba(115, 235, 214, 0.06);
+    }
+
+    .unit-card.selected {
+      border-color: rgba(99, 240, 183, 0.46);
+      background: rgba(99, 240, 183, 0.09);
+      box-shadow: inset 3px 0 0 var(--green);
+    }
+
+    .unit-portrait,
+    .reserve-portrait {
+      position: relative;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      border: 1px solid rgba(110, 217, 255, 0.2);
+      background:
+        linear-gradient(rgba(110, 217, 255, 0.055) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(110, 217, 255, 0.055) 1px, transparent 1px),
+        rgba(0, 0, 0, 0.28);
+      background-size: 8px 8px;
+    }
+
+    .unit-portrait {
+      width: 40px;
+      height: 38px;
+    }
+
+    .unit-info {
+      min-width: 0;
+    }
+
+    .unit-name,
+    .reserve-name {
+      overflow: hidden;
+      color: #effffb;
+      font: 10px var(--mono);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .unit-meta,
+    .reserve-role {
+      margin-top: 3px;
+      overflow: hidden;
+      color: #76958f;
+      font: 8px var(--mono);
+      text-overflow: ellipsis;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .unit-bars {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 2px;
+      margin-top: 6px;
+    }
+
+    .micro-bar {
+      position: relative;
+      height: 2px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .micro-bar > span {
+      display: block;
+      width: var(--value, 50%);
+      height: 100%;
+      background: var(--bar-color, var(--green));
+      box-shadow: 0 0 6px var(--bar-color, var(--green));
+    }
+
+    .unit-distance {
+      align-self: start;
+      padding-top: 2px;
+      color: var(--cyan);
+      font: 8px var(--mono);
+      white-space: nowrap;
+    }
+
+    .panel-orders {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px;
+      padding: 6px;
+      border-top: 1px solid var(--line-soft);
+      background: rgba(0, 0, 0, 0.18);
+    }
+
+    .tech-button,
+    .filter-button,
+    .range-button,
+    .game-button {
+      border: 1px solid rgba(115, 235, 214, 0.22);
+      border-radius: 1px;
+      color: #8aaba5;
+      background: rgba(0, 0, 0, 0.28);
+      font: 8px var(--mono);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    .tech-button {
+      min-height: 25px;
+      padding: 4px;
+    }
+
+    .tech-button:hover,
+    .filter-button:hover,
+    .range-button:hover,
+    .game-button:hover {
+      border-color: rgba(115, 235, 214, 0.58);
+      color: #eafff9;
+      background: rgba(115, 235, 214, 0.08);
+    }
+
+    .tech-button.active,
+    .filter-button.active,
+    .range-button.active,
+    .game-button.active {
+      border-color: rgba(99, 240, 183, 0.6);
+      color: var(--green);
+      background: rgba(99, 240, 183, 0.12);
+      box-shadow: inset 0 -2px 0 rgba(99, 240, 183, 0.4);
+    }
+
+    .scanner-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 6px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+
+    .filter-button {
+      min-height: 23px;
+      padding: 3px 6px;
+    }
+
+    .contact-table {
+      display: grid;
+    }
+
+    .contact-table-head,
+    .contact-row {
+      display: grid;
+      grid-template-columns: 37px minmax(0, 1fr) 44px 28px;
+      gap: 6px;
+      align-items: center;
+      min-height: 26px;
+      padding: 0 7px;
+      font-family: var(--mono);
+    }
+
+    .contact-table-head {
+      color: #55716c;
+      background: rgba(0, 0, 0, 0.22);
+      font-size: 8px;
+    }
+
+    .contact-row {
+      width: 100%;
+      border: 0;
+      border-bottom: 1px solid rgba(115, 235, 214, 0.07);
+      color: #b6d2cd;
+      background: transparent;
+      font-size: 9px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .contact-row:hover {
+      background: rgba(115, 235, 214, 0.07);
+    }
+
+    .contact-row.selected {
+      color: #eafff9;
+      background: rgba(99, 240, 183, 0.1);
+      box-shadow: inset 3px 0 0 var(--green);
+    }
+
+    .contact-row .tone-hostile { color: var(--red); }
+    .contact-row .tone-resource { color: var(--amber); }
+    .contact-row .tone-friendly { color: var(--cyan); }
+    .contact-row .tone-signal { color: var(--green); }
+    .contact-row .lock-cell { color: var(--red); text-align: right; }
+
+    .reserve-intro {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 8px;
+      color: #7c9b96;
+      background: rgba(0, 0, 0, 0.18);
+      font: 8px var(--mono);
+      line-height: 1.35;
+      text-transform: uppercase;
+    }
+
+    .reserve-intro strong {
+      color: var(--green);
+      white-space: nowrap;
+    }
+
+    .reserve-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 5px;
+      padding: 6px;
+    }
+
+    .reserve-card {
+      position: relative;
+      display: grid;
+      grid-template-columns: 46px minmax(0, 1fr);
+      gap: 6px;
+      align-items: center;
+      min-height: 64px;
+      padding: 5px;
+      overflow: hidden;
+      border: 1px solid rgba(110, 217, 255, 0.22);
+      color: var(--text);
+      background: linear-gradient(135deg, rgba(110, 217, 255, 0.07), rgba(0, 0, 0, 0.26));
+      text-align: left;
+      cursor: grab;
+      touch-action: none;
+    }
+
+    .reserve-card::before {
+      content: "DRAG";
+      position: absolute;
+      right: 3px;
+      bottom: 2px;
+      color: rgba(110, 217, 255, 0.34);
+      font: 6px var(--mono);
+      letter-spacing: 0.12em;
+    }
+
+    .reserve-card:hover {
+      border-color: rgba(110, 217, 255, 0.62);
+      background: linear-gradient(135deg, rgba(110, 217, 255, 0.14), rgba(0, 0, 0, 0.2));
+      box-shadow: inset 3px 0 0 rgba(110, 217, 255, 0.5), 0 0 14px rgba(110, 217, 255, 0.08);
+    }
+
+    .reserve-card:active {
+      cursor: grabbing;
+    }
+
+    .reserve-card.empty {
+      opacity: 0.42;
+      cursor: not-allowed;
+      filter: grayscale(0.7);
+    }
+
+    .reserve-portrait {
+      width: 46px;
+      height: 48px;
+    }
+
+    .reserve-count {
+      margin-top: 4px;
+      color: var(--amber);
+      font: 700 14px var(--mono);
+    }
+
+    .reserve-count small {
+      color: #718a86;
+      font-size: 7px;
+      font-weight: 400;
+    }
+
+    .production-queue {
+      margin: 0 6px 6px;
+      padding: 6px 7px;
+      border: 1px solid rgba(238, 183, 99, 0.2);
+      background: rgba(238, 183, 99, 0.045);
+    }
+
+    .queue-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      color: #ccb98e;
+      font: 7px var(--mono);
+      text-transform: uppercase;
+    }
+
+    .queue-track {
+      height: 3px;
+      margin-top: 5px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .queue-fill {
+      width: 72%;
+      height: 100%;
+      background: var(--amber);
+      box-shadow: 0 0 8px rgba(238, 183, 99, 0.55);
+      animation: queue-pulse 1.8s ease-in-out infinite;
+    }
+
+    .ship-silhouette {
+      --ship-color: var(--cyan);
+      position: relative;
+      display: block;
+      width: 36px;
+      height: 24px;
+      filter: drop-shadow(0 0 5px color-mix(in srgb, var(--ship-color) 55%, transparent));
+    }
+
+    .ship-silhouette::before,
+    .ship-silhouette::after {
+      content: "";
+      position: absolute;
+      display: block;
+      background: var(--ship-color);
+    }
+
+    .ship-silhouette::after {
+      left: 18%;
+      right: 18%;
+      top: 45%;
+      height: 2px;
+      opacity: 0.45;
+      background: #001116;
+    }
+
+    .ship-silhouette.fighter::before {
+      inset: 2px 0;
+      clip-path: polygon(0 50%, 28% 15%, 39% 35%, 77% 3%, 100% 50%, 77% 97%, 39% 65%, 28% 85%);
+    }
+
+    .ship-silhouette.corvette::before {
+      inset: 4px 0;
+      clip-path: polygon(0 50%, 16% 15%, 72% 4%, 100% 50%, 72% 96%, 16% 85%);
+    }
+
+    .ship-silhouette.frigate::before {
+      inset: 3px 0;
+      clip-path: polygon(0 34%, 12% 12%, 68% 12%, 100% 50%, 68% 88%, 12% 88%, 0 66%, 10% 50%);
+    }
+
+    .ship-silhouette.bomber::before {
+      inset: 2px 0;
+      clip-path: polygon(0 20%, 20% 8%, 38% 34%, 78% 16%, 100% 50%, 78% 84%, 38% 66%, 20% 92%, 0 80%, 14% 50%);
+    }
+
+    .ship-silhouette.destroyer::before {
+      inset: 1px 0;
+      clip-path: polygon(0 28%, 10% 8%, 68% 8%, 100% 50%, 68% 92%, 10% 92%, 0 72%, 12% 50%);
+    }
+
+    .ship-silhouette.fighter { --ship-color: var(--green); }
+    .ship-silhouette.corvette { --ship-color: var(--cyan); }
+    .ship-silhouette.frigate { --ship-color: var(--amber); }
+    .ship-silhouette.bomber { --ship-color: var(--violet); }
+    .ship-silhouette.destroyer { --ship-color: var(--orange); }
+
+    .cockpit-shell {
+      position: absolute;
+      right: 9px;
+      bottom: 0;
+      left: 9px;
+      z-index: 30;
+      height: var(--cockpit-h);
+      padding: 12px 13px 11px;
+      background:
+        linear-gradient(90deg, transparent 0 1.8%, rgba(70, 79, 78, 0.96) 1.8% 2.1%, transparent 2.1% 97.9%, rgba(70, 79, 78, 0.96) 97.9% 98.2%, transparent 98.2%),
+        linear-gradient(180deg, #3b4444 0 4px, #171d20 4px 12px, #070a0c 12px 100%);
+      clip-path: polygon(1.7% 0, 98.3% 0, 100% 14%, 100% 100%, 0 100%, 0 14%);
+      filter: drop-shadow(0 -10px 20px rgba(0, 0, 0, 0.72));
+    }
+
+    .cockpit-shell::before {
+      content: "";
+      position: absolute;
+      top: 3px;
+      right: 4%;
+      left: 4%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(110, 217, 255, 0.55) 18%, var(--mode-accent) 50%, rgba(110, 217, 255, 0.55) 82%, transparent);
+      box-shadow: 0 0 12px color-mix(in srgb, var(--mode-accent) 55%, transparent);
+    }
+
+    .cockpit-shell::after {
+      content: "";
+      position: absolute;
+      inset: 8px 10px 6px;
+      z-index: -1;
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      background:
+        repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 6px),
+        #0b0f11;
+      clip-path: polygon(1.2% 0, 98.8% 0, 100% 12%, 100% 100%, 0 100%, 0 12%);
+    }
+
+    .cockpit-grid {
+      display: grid;
+      grid-template-columns: 110px minmax(172px, 0.78fr) minmax(338px, 1.75fr) minmax(145px, 0.68fr) minmax(192px, 0.82fr);
+      grid-template-areas: "systems radar primary speed controls";
+      gap: 7px;
+      height: 100%;
+    }
+
+    .cockpit-module {
+      position: relative;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      border: 1px solid rgba(92, 112, 113, 0.46);
+      background:
+        linear-gradient(180deg, rgba(28, 36, 39, 0.86), rgba(5, 10, 13, 0.96) 18%, rgba(2, 7, 10, 0.98));
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.08),
+        inset 0 0 22px rgba(0, 0, 0, 0.72),
+        0 3px 8px rgba(0, 0, 0, 0.55);
+    }
+
+    .cockpit-module::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      right: 15%;
+      left: 15%;
+      z-index: 3;
+      height: 1px;
+      background: rgba(110, 217, 255, 0.34);
+      pointer-events: none;
+    }
+
+    .module-label {
+      position: absolute;
+      top: 5px;
+      left: 7px;
+      z-index: 4;
+      color: #607c78;
+      font: 7px var(--mono);
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+
+    .systems-module { grid-area: systems; padding: 20px 7px 7px; }
+    .radar-module { grid-area: radar; padding: 18px 6px 6px; }
+    .primary-module { grid-area: primary; padding: 18px 8px 7px; }
+    .speed-module { grid-area: speed; padding: 18px 6px 6px; }
+    .control-module { grid-area: controls; padding: 18px 7px 7px; }
+
+    .vertical-bars {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5px;
+      height: 100%;
+    }
+
+    .vital-column {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 4px;
+      min-width: 0;
+      text-align: center;
+    }
+
+    .vital-value {
+      color: var(--bar-color);
+      font: 700 10px var(--mono);
+      text-shadow: 0 0 8px color-mix(in srgb, var(--bar-color) 60%, transparent);
+    }
+
+    .vital-track {
+      position: relative;
+      min-height: 90px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background:
+        repeating-linear-gradient(180deg, transparent 0 9%, rgba(0, 0, 0, 0.66) 9% 11%),
+        rgba(0, 0, 0, 0.45);
+      box-shadow: inset 0 0 10px #000;
+    }
+
+    .vital-fill,
+    .vital-ghost {
+      position: absolute;
+      right: 2px;
+      bottom: 2px;
+      left: 2px;
+      height: var(--value, 50%);
+      transition: height 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .vital-ghost {
+      opacity: 0.25;
+      background: var(--bar-color);
+      filter: blur(4px);
+    }
+
+    .vital-fill {
+      background: linear-gradient(180deg, color-mix(in srgb, var(--bar-color) 76%, white), var(--bar-color) 26%, color-mix(in srgb, var(--bar-color) 55%, black));
+      box-shadow: 0 0 12px color-mix(in srgb, var(--bar-color) 48%, transparent);
+    }
+
+    .vital-fill::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      right: 0;
+      left: 0;
+      height: 2px;
+      background: #fff;
+      box-shadow: 0 0 8px var(--bar-color);
+    }
+
+    .vital-label {
+      overflow: hidden;
+      color: #76908c;
+      font: 7px var(--mono);
+      text-overflow: clip;
+      text-transform: uppercase;
+    }
+
+    .vital-column.hp { --bar-color: var(--orange); }
+    .vital-column.shield { --bar-color: var(--blue); }
+    .vital-column.core { --bar-color: #b9e75b; }
+
+    .radar-layout {
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) auto;
+      gap: 4px;
+      height: 100%;
+    }
+
+    .radar-screen {
+      position: relative;
+      width: min(100%, 190px);
+      max-height: 100%;
+      aspect-ratio: 1;
+      justify-self: center;
+      overflow: hidden;
+      border: 1px solid rgba(110, 217, 255, 0.33);
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(13, 47, 54, 0.55), rgba(1, 9, 13, 0.96) 69%);
+      box-shadow: inset 0 0 28px rgba(74, 207, 222, 0.09), 0 0 14px rgba(0, 0, 0, 0.8);
+    }
+
+    #radar-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: crosshair;
+      touch-action: none;
+    }
+
+    .radar-readout {
+      position: absolute;
+      top: 8px;
+      right: 12px;
+      left: 12px;
+      display: flex;
+      justify-content: space-between;
+      color: rgba(184, 232, 239, 0.72);
+      font: 7px var(--mono);
+      pointer-events: none;
+    }
+
+    .radar-readout .hostiles { color: var(--red); }
+    .radar-readout .range { color: var(--cyan); }
+
+    .radar-ranges {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 3px;
+    }
+
+    .range-button {
+      min-width: 0;
+      height: 24px;
+      padding: 0;
+    }
+
+    .primary-layout {
+      display: grid;
+      grid-template-rows: minmax(64px, 0.9fr) auto auto;
+      gap: 6px;
+      height: 100%;
+    }
+
+    .target-display {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(150px, 1fr);
+      gap: 8px;
+      min-height: 0;
+      padding: 7px 8px;
+      border: 1px solid rgba(99, 240, 183, 0.2);
+      background:
+        linear-gradient(90deg, rgba(99, 240, 183, 0.06), transparent 42%),
+        rgba(0, 0, 0, 0.24);
+    }
+
+    .target-display::before,
+    .target-display::after {
+      content: "";
+      position: absolute;
+      width: 14px;
+      height: 8px;
+      border-color: var(--green);
+      pointer-events: none;
+    }
+
+    .target-display::before {
+      top: -1px;
+      left: -1px;
+      border-top: 1px solid;
+      border-left: 1px solid;
+    }
+
+    .target-display::after {
+      right: -1px;
+      bottom: -1px;
+      border-right: 1px solid;
+      border-bottom: 1px solid;
+    }
+
+    .target-ident {
+      min-width: 0;
+    }
+
+    .target-kicker {
+      color: #6e8b86;
+      font: 7px var(--mono);
+      text-transform: uppercase;
+    }
+
+    .target-name {
+      margin-top: 3px;
+      overflow: hidden;
+      color: var(--green);
+      font: 700 clamp(12px, 1.1vw, 17px) var(--mono);
+      letter-spacing: 0.09em;
+      text-overflow: ellipsis;
+      text-shadow: 0 0 10px rgba(99, 240, 183, 0.28);
+      white-space: nowrap;
+    }
+
+    .target-sub {
+      margin-top: 4px;
+      color: #8ba7a2;
+      font: 8px var(--mono);
+      text-transform: uppercase;
+    }
+
+    .target-stats {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 5px 10px;
+      align-content: center;
+    }
+
+    .target-stat {
+      display: grid;
+      gap: 2px;
+    }
+
+    .target-stat small {
+      color: #55736d;
+      font: 7px var(--mono);
+      text-transform: uppercase;
+    }
+
+    .target-stat strong {
+      color: #d8eee9;
+      font: 9px var(--mono);
+    }
+
+    .target-stat.threat strong { color: var(--red); }
+    .target-stat.lock strong { color: var(--amber); }
+
+    .hotkey-header {
+      display: flex;
+      justify-content: space-between;
+      color: #607b76;
+      font: 7px var(--mono);
+      text-transform: uppercase;
+    }
+
+    .hotkey-grid {
+      display: grid;
+      grid-template-columns: repeat(9, minmax(0, 1fr));
+      gap: 4px;
+    }
+
+    .hotkey {
+      position: relative;
+      min-width: 0;
+      height: clamp(43px, 5.5vh, 58px);
+      padding: 4px 2px 3px;
+      overflow: hidden;
+      border: 1px solid rgba(110, 217, 255, 0.2);
+      color: #a9c6c1;
+      background: linear-gradient(180deg, rgba(20, 39, 44, 0.8), rgba(3, 10, 13, 0.96));
+      cursor: pointer;
+    }
+
+    .hotkey::before {
+      content: "";
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      height: 2px;
+      background: var(--slot-color, var(--cyan));
+      box-shadow: 0 0 7px var(--slot-color, var(--cyan));
+      opacity: 0.45;
+    }
+
+    .hotkey:hover,
+    .hotkey.active {
+      border-color: var(--slot-color, var(--cyan));
+      color: #fff;
+      box-shadow: inset 0 0 15px color-mix(in srgb, var(--slot-color, var(--cyan)) 12%, transparent);
+    }
+
+    .hotkey.unavailable {
+      opacity: 0.35;
+      filter: grayscale(1);
+    }
+
+    .hotkey-key {
+      position: absolute;
+      top: 2px;
+      left: 3px;
+      z-index: 3;
+      color: var(--slot-color, var(--cyan));
+      font: 700 8px var(--mono);
+    }
+
+    .hotkey-glyph {
+      position: relative;
+      z-index: 2;
+      display: block;
+      margin-top: 6px;
+      color: #d7efea;
+      font: 700 clamp(8px, 0.7vw, 11px) var(--mono);
+      letter-spacing: 0;
+    }
+
+    .hotkey-name {
+      position: relative;
+      z-index: 2;
+      display: block;
+      margin-top: 3px;
+      overflow: hidden;
+      color: #6f8c87;
+      font: 7px var(--mono);
+      text-overflow: clip;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .cooldown-mask {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 1;
+      height: 0;
+      background: rgba(0, 0, 0, 0.72);
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      pointer-events: none;
+    }
+
+    .cooldown-time {
+      position: absolute;
+      right: 3px;
+      top: 2px;
+      z-index: 3;
+      color: var(--amber);
+      font: 6px var(--mono);
+    }
+
+    .speed-layout {
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) auto auto;
+      gap: 1px;
+      height: 100%;
+      text-align: center;
+    }
+
+    #speed-canvas {
+      width: 100%;
+      height: 100%;
+      min-height: 82px;
+    }
+
+    .speed-value {
+      margin-top: -8px;
+      color: #efffff;
+      font: 700 clamp(19px, 2vw, 28px) var(--mono);
+      letter-spacing: -0.06em;
+      text-shadow: 0 0 12px color-mix(in srgb, var(--mode-accent) 48%, transparent);
+    }
+
+    .speed-value small {
+      margin-left: 4px;
+      color: #6b8883;
+      font-size: 7px;
+      letter-spacing: 0.1em;
+    }
+
+    .speed-meta {
+      display: flex;
+      justify-content: space-between;
+      padding: 0 6px;
+      color: #68847f;
+      font: 7px var(--mono);
+      text-transform: uppercase;
+    }
+
+    .speed-meta strong {
+      color: var(--mode-accent);
+      font-weight: 400;
+    }
+
+    .control-layout {
+      display: grid;
+      grid-template-rows: minmax(96px, 1fr) auto;
+      gap: 5px;
+      height: 100%;
+    }
+
+    .mode-selector {
+      position: relative;
+      min-height: 104px;
+      overflow: hidden;
+    }
+
+    .mode-choice {
+      position: absolute;
+      z-index: 4;
+      min-width: 50px;
+      padding: 3px 4px;
+      border: 1px solid transparent;
+      color: #637d78;
+      background: transparent;
+      font: 7px var(--mono);
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    .mode-choice[data-mode="combat"] { left: 0; top: 8px; text-align: left; }
+    .mode-choice[data-mode="agility"] { left: 50%; top: 0; translate: -50% 0; }
+    .mode-choice[data-mode="travel"] { right: 0; top: 8px; text-align: right; }
+
+    .mode-choice.active {
+      border-color: color-mix(in srgb, var(--mode-accent) 48%, transparent);
+      color: var(--mode-accent);
+      background: color-mix(in srgb, var(--mode-accent) 9%, transparent);
+      text-shadow: 0 0 7px color-mix(in srgb, var(--mode-accent) 60%, transparent);
+    }
+
+    .dial-arc {
+      position: absolute;
+      left: 50%;
+      top: 25px;
+      width: 112px;
+      height: 112px;
+      translate: -50% 0;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle, #11181a 0 35%, #05090b 36% 45%, transparent 46%),
+        conic-gradient(from 225deg, var(--orange) 0 30deg, transparent 30deg 60deg, var(--green) 60deg 90deg, transparent 90deg 120deg, var(--cyan) 120deg 150deg, transparent 150deg);
+      box-shadow: inset 0 0 18px #000, 0 3px 9px #000;
+      cursor: ew-resize;
+      touch-action: none;
+    }
+
+    .dial-face {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 56px;
+      height: 56px;
+      translate: -50% -50%;
+      border: 2px solid #364143;
+      border-radius: 50%;
+      background: radial-gradient(circle at 38% 32%, #4b5657, #161d1f 50%, #06090a 72%);
+      box-shadow: inset 0 2px 3px rgba(255, 255, 255, 0.15), 0 5px 9px #000;
+    }
+
+    .dial-face::before {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 4px;
+      width: 3px;
+      height: 19px;
+      translate: -50% 0;
+      border-radius: 1px;
+      background: var(--mode-accent);
+      box-shadow: 0 0 8px var(--mode-accent);
+    }
+
+    .dial-knob {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 56px;
+      height: 56px;
+      translate: -50% -50%;
+      rotate: -48deg;
+      transition: rotate 0.24s cubic-bezier(0.2, 0.9, 0.25, 1.35);
+    }
+
+    .game-buttons {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px;
+    }
+
+    .game-button {
+      position: relative;
+      min-width: 0;
+      min-height: 30px;
+      padding: 3px 2px;
+    }
+
+    .game-button b {
+      display: block;
+      color: #d6ebe7;
+      font-size: 8px;
+      font-weight: 400;
+    }
+
+    .game-button small {
+      display: block;
+      margin-top: 2px;
+      color: #55716c;
+      font-size: 7px;
+    }
+
+    .game-button.danger {
+      border-color: rgba(255, 104, 104, 0.28);
+    }
+
+    .game-button.danger.active {
+      border-color: var(--red);
+      color: var(--red);
+      background: rgba(255, 104, 104, 0.12);
+    }
+
+    .drag-ghost {
+      position: fixed;
+      left: 0;
+      top: 0;
+      z-index: 100;
+      display: none;
+      width: 104px;
+      padding: 7px;
+      translate: 14px 14px;
+      border: 1px solid var(--cyan);
+      color: #eaffff;
+      background: rgba(2, 13, 18, 0.92);
+      box-shadow: 0 0 20px rgba(110, 217, 255, 0.22);
+      font: 8px var(--mono);
+      pointer-events: none;
+    }
+
+    .drag-ghost.visible {
+      display: grid;
+      grid-template-columns: 38px 1fr;
+      gap: 7px;
+      align-items: center;
+    }
+
+    .drag-ghost.invalid {
+      border-color: var(--red);
+      color: var(--red);
+      box-shadow: 0 0 20px rgba(255, 104, 104, 0.2);
+    }
+
+    .deployment-reticle {
+      position: fixed;
+      left: 0;
+      top: 0;
+      z-index: 99;
+      display: none;
+      width: 86px;
+      height: 86px;
+      translate: -50% -50%;
+      border: 1px solid var(--green);
+      border-radius: 50%;
+      box-shadow: 0 0 18px rgba(99, 240, 183, 0.22), inset 0 0 18px rgba(99, 240, 183, 0.08);
+      pointer-events: none;
+    }
+
+    .deployment-reticle::before,
+    .deployment-reticle::after {
+      content: "";
+      position: absolute;
+      inset: 9px;
+      border: 1px dashed rgba(99, 240, 183, 0.55);
+      border-radius: 50%;
+    }
+
+    .deployment-reticle::after {
+      inset: 50% 7px auto;
+      height: 1px;
+      border: 0;
+      border-radius: 0;
+      background: rgba(99, 240, 183, 0.5);
+    }
+
+    .deployment-reticle.visible {
+      display: block;
+      animation: reticle-spin 4s linear infinite;
+    }
+
+    .deployment-reticle.invalid {
+      border-color: var(--red);
+      box-shadow: 0 0 18px rgba(255, 104, 104, 0.2);
+    }
+
+    .deployment-reticle.invalid::before {
+      border-color: rgba(255, 104, 104, 0.65);
+    }
+
+    .dragging .battlefield::after {
+      content: "DEPLOYMENT VECTOR — DROP TO INITIATE WARP-IN";
+      position: absolute;
+      left: 50%;
+      top: 14px;
+      z-index: 7;
+      translate: -50% 0;
+      padding: 6px 10px;
+      border: 1px solid rgba(99, 240, 183, 0.34);
+      color: var(--green);
+      background: rgba(1, 12, 13, 0.76);
+      font: 8px var(--mono);
+      letter-spacing: 0.12em;
+      pointer-events: none;
+    }
+
+    .warp-event {
+      position: absolute;
+      width: 110px;
+      height: 110px;
+      translate: -50% -50%;
+      pointer-events: none;
+    }
+
+    .warp-ring,
+    .warp-ring::before,
+    .warp-ring::after {
+      position: absolute;
+      inset: 0;
+      border: 1px solid var(--cyan);
+      border-radius: 50%;
+      content: "";
+      opacity: 0;
+      animation: warp-ring 1.35s cubic-bezier(0.18, 0.8, 0.2, 1) forwards;
+    }
+
+    .warp-ring::before {
+      animation-delay: 0.12s;
+    }
+
+    .warp-ring::after {
+      animation-delay: 0.24s;
+    }
+
+    .warp-core {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 3px;
+      height: 70px;
+      translate: -50% -50%;
+      scale: 1 0;
+      background: #eaffff;
+      box-shadow: 0 0 10px 3px var(--cyan), 0 0 28px 7px rgba(110, 217, 255, 0.52);
+      animation: warp-core 1.1s ease-out 0.16s forwards;
+    }
+
+    .warp-ship {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      translate: -50% -50%;
+      scale: 0;
+      opacity: 0;
+      animation: warp-ship 0.55s ease-out 0.72s forwards;
+    }
+
+    .toast-stack {
+      position: fixed;
+      left: 50%;
+      bottom: calc(var(--cockpit-h) + 14px);
+      z-index: 110;
+      translate: -50% 0;
+      display: grid;
+      gap: 5px;
+      width: min(440px, calc(100vw - 30px));
+      pointer-events: none;
+    }
+
+    .toast {
+      justify-self: center;
+      padding: 7px 11px;
+      border: 1px solid rgba(99, 240, 183, 0.36);
+      color: #dffff5;
+      background: rgba(3, 14, 16, 0.94);
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5), inset 3px 0 0 var(--green);
+      font: 8px var(--mono);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      animation: toast-in 0.22s ease-out, toast-out 0.3s ease-in 2.35s forwards;
+    }
+
+    .toast.warning {
+      border-color: rgba(255, 104, 104, 0.4);
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5), inset 3px 0 0 var(--red);
+    }
+
+    .mobile-tabs {
+      position: absolute;
+      top: calc(var(--top-h) + 8px);
+      right: 8px;
+      z-index: 45;
+      display: none;
+      gap: 4px;
+    }
+
+    .mobile-tabs button {
+      min-height: 36px;
+      padding: 6px 8px;
+      border: 1px solid var(--line);
+      color: var(--cyan);
+      background: rgba(3, 12, 16, 0.94);
+      font: 8px var(--mono);
+    }
+
+    .sr-only {
+      position: absolute !important;
+      width: 1px !important;
+      height: 1px !important;
+      padding: 0 !important;
+      overflow: hidden !important;
+      clip: rect(0, 0, 0, 0) !important;
+      white-space: nowrap !important;
+      border: 0 !important;
+    }
+
+    @keyframes queue-pulse {
+      0%, 100% { opacity: 0.65; }
+      50% { opacity: 1; }
+    }
+
+    @keyframes reticle-spin {
+      to { rotate: 360deg; }
+    }
+
+    @keyframes warp-ring {
+      0% { scale: 0.12; opacity: 0; }
+      24% { opacity: 1; }
+      100% { scale: 1.42; opacity: 0; }
+    }
+
+    @keyframes warp-core {
+      0% { scale: 1 0; opacity: 0; }
+      35% { scale: 1 1; opacity: 1; }
+      75% { scale: 10 0.18; opacity: 0.9; }
+      100% { scale: 16 0; opacity: 0; }
+    }
+
+    @keyframes warp-ship {
+      0% { scale: 0 1.8; opacity: 0; filter: blur(5px); }
+      50% { opacity: 1; }
+      100% { scale: 1; opacity: 1; filter: blur(0); }
+    }
+
+    @keyframes toast-in {
+      from { translate: 0 10px; opacity: 0; }
+    }
+
+    @keyframes toast-out {
+      to { translate: 0 -6px; opacity: 0; }
+    }
+
+    @media (max-width: 1220px) {
+      .cockpit-grid {
+        grid-template-columns: 96px 160px minmax(290px, 1.7fr) 132px 176px;
+      }
+
+      .left-stack { width: 238px; }
+      .right-stack { width: 284px; }
+      .target-display { grid-template-columns: 1fr 140px; }
+      .hotkey-name { display: none; }
+      .hotkey-glyph { margin-top: 9px; }
+      .telemetry-item.optional { display: none; }
+    }
+
+    @media (max-width: 980px) {
+      :root { --cockpit-h: 348px; }
+
+      .side-stack {
+        top: calc(var(--top-h) + 51px);
+        bottom: 8px;
+        z-index: 60;
+        display: none;
+        width: min(330px, calc(100vw - 16px));
+        max-height: calc(100vh - var(--top-h) - 59px);
+        overflow: auto;
+      }
+
+      .side-stack.open { display: flex; }
+      .left-stack { left: 8px; }
+      .right-stack { right: 8px; }
+      .mobile-tabs { display: flex; }
+
+      .cockpit-grid {
+        grid-template-columns: 96px 150px minmax(290px, 1fr);
+        grid-template-rows: 1fr 1fr;
+        grid-template-areas:
+          "systems radar primary"
+          "speed controls primary";
+      }
+
+      .radar-screen { width: min(100%, 135px); }
+      .target-display { grid-template-columns: 1fr; }
+      .target-stats { grid-template-columns: repeat(4, 1fr); }
+      .hotkey-grid { grid-template-columns: repeat(3, 1fr); }
+      .hotkey { height: 44px; }
+      .hotkey-name { display: block; }
+      .filter-button { min-height: 30px; }
+      .range-button { height: 28px; }
+      .game-button { min-height: 36px; }
+      .mode-selector { min-height: 86px; }
+      .dial-arc { top: 18px; width: 92px; height: 92px; }
+      .dial-face, .dial-knob { width: 47px; height: 47px; }
+      .dial-face::before { height: 15px; }
+      .game-button small { display: none; }
+    }
+
+    @media (max-height: 780px) and (min-width: 981px) {
+      :root { --cockpit-h: 224px; }
+      .side-stack { bottom: calc(var(--cockpit-h) + 11px); }
+      .cockpit-shell { padding-top: 10px; }
+      .cockpit-grid { gap: 5px; }
+      .primary-layout { grid-template-rows: minmax(58px, 0.85fr) auto auto; gap: 4px; }
+      .target-display { padding-block: 5px; }
+      .hotkey { height: 42px; }
+      .vital-track { min-height: 74px; }
+      .control-layout { grid-template-rows: minmax(82px, 1fr) auto; }
+      .mode-selector { min-height: 84px; }
+      .dial-arc { top: 21px; width: 94px; height: 94px; }
+      .dial-face, .dial-knob { width: 48px; height: 48px; }
+      .dial-face::before { height: 15px; }
+      .game-button { min-height: 27px; }
+      .game-button small { display: none; }
+      #speed-canvas { min-height: 68px; }
+      .overview-panel { flex-basis: 42%; min-height: 150px; }
+      .reserve-panel { flex-basis: 58%; min-height: 180px; }
+      .reserve-card { min-height: 56px; }
+      .reserve-portrait { width: 42px; height: 40px; }
+    }
+
+    @media (max-width: 680px) {
+      :root { --cockpit-h: 520px; }
+      .cockpit-shell { right: 3px; left: 3px; min-width: 0; }
+      .top-telemetry { grid-template-columns: 1fr auto; padding-inline: 9px; }
+      .telemetry-cluster.right, .brand-lockup span { display: none; }
+      .brand-lockup strong { font-size: 10px; letter-spacing: 0.1em; }
+      .cockpit-grid {
+        grid-template-columns: 92px minmax(145px, 1fr);
+        grid-template-rows: 125px 160px minmax(198px, 1fr);
+        grid-template-areas:
+          "systems radar"
+          "speed controls"
+          "primary primary";
+      }
+      .vital-track { min-height: 64px; }
+      .range-button { height: 24px; font-size: 7px; }
+      .hotkey { height: 32px; }
+      .hotkey-glyph { margin-top: 5px; }
+      .hotkey-name { display: none; }
+      .primary-layout { grid-template-rows: minmax(58px, 0.8fr) auto auto; }
+      .target-display { padding-block: 4px; }
+      .target-sub { display: none; }
+      .mode-selector { min-height: 65px; }
+      .dial-arc { top: 14px; width: 70px; height: 70px; }
+      .dial-face, .dial-knob { width: 38px; height: 38px; }
+      .dial-face::before { height: 12px; }
+      .mode-choice { min-width: 42px; padding-inline: 2px; font-size: 6px; }
+      .game-button { min-height: 30px; }
+      .mobile-tabs { max-width: calc(100vw - 16px); }
+      body { overflow: hidden; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+      }
+
+      .glass-scanlines { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="app" data-mode="combat">
+    <canvas id="space-canvas" aria-hidden="true"></canvas>
+    <div class="glass-vignette" aria-hidden="true"></div>
+    <div class="glass-scanlines" aria-hidden="true"></div>
+
+    <header class="top-telemetry">
+      <div class="telemetry-cluster">
+        <div class="telemetry-item">
+          <span class="telemetry-label">Current sector</span>
+          <span class="telemetry-value">SATURN / RING NODE 04</span>
+        </div>
+        <div class="telemetry-item optional">
+          <span class="telemetry-label">Mission clock</span>
+          <span class="telemetry-value" id="mission-clock">00:00:00</span>
+        </div>
+      </div>
+      <div class="brand-lockup"><strong>SUPER CAPITAL</strong><span>BATTLE FOR SOLAR SYSTEM</span></div>
+      <div class="telemetry-cluster right">
+        <div class="telemetry-item optional">
+          <span class="telemetry-label">Ring uplink</span>
+          <span class="telemetry-value"><i class="status-dot"></i>ONLINE / 96%</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="telemetry-label">Command vessel</span>
+          <span class="telemetry-value">TNV RESOLUTE</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="battlefield" id="battlefield" aria-label="Przestrzeń gry i strefa rozmieszczania floty">
+      <div class="world-grid" aria-hidden="true"></div>
+      <div class="flight-reticle" aria-hidden="true"></div>
+      <div class="map-overlay" id="map-overlay" aria-hidden="true"><span class="map-caption">Tactical orbital map / valid warp field</span></div>
+      <div id="contact-layer"></div>
+      <div id="warp-layer"></div>
+    </main>
+
+    <div class="mobile-tabs" aria-label="Panele boczne">
+      <button type="button" data-drawer="left">ACTIVE WING</button>
+      <button type="button" data-drawer="right">SCANNER / RING</button>
+    </div>
+
+    <aside class="side-stack left-stack" id="left-stack">
+      <section class="hud-panel active-panel" aria-labelledby="active-units-title">
+        <header class="panel-head">
+          <div class="panel-title">
+            <strong id="active-units-title">Active wing</strong>
+            <small>SUMMONED / IN THEATER</small>
+          </div>
+          <span class="panel-count" id="active-count">0 UNITS</span>
+        </header>
+        <div class="panel-body unit-list" id="active-unit-list"></div>
+        <footer class="panel-orders" aria-label="Rozkazy skrzydła">
+          <button class="tech-button active" type="button" data-order="escort">ESCORT</button>
+          <button class="tech-button" type="button" data-order="engage">ENGAGE</button>
+          <button class="tech-button" type="button" data-order="hold">HOLD</button>
+        </footer>
+      </section>
+    </aside>
+
+    <aside class="side-stack right-stack" id="right-stack">
+      <section class="hud-panel overview-panel" aria-labelledby="overview-title">
+        <header class="panel-head">
+          <div class="panel-title">
+            <strong id="overview-title">Overview / Scanner</strong>
+            <small>PASSIVE + ACTIVE CONTACTS</small>
+          </div>
+          <span class="panel-count" id="contact-count">0 CONTACTS</span>
+        </header>
+        <div class="scanner-filters" id="scanner-filters" aria-label="Filtry skanera">
+          <button type="button" class="filter-button active" data-filter="all">ALL</button>
+          <button type="button" class="filter-button" data-filter="hostile">HOSTILE</button>
+          <button type="button" class="filter-button" data-filter="resource">RESOURCE</button>
+          <button type="button" class="filter-button" data-filter="signal">SIGNAL</button>
+        </div>
+        <div class="panel-body contact-table">
+          <div class="contact-table-head"><span>TYPE</span><span>NAME</span><span>DIST</span><span>LCK</span></div>
+          <div id="contact-rows"></div>
+        </div>
+      </section>
+
+      <section class="hud-panel reserve-panel" aria-labelledby="reserve-title">
+        <header class="panel-head">
+          <div class="panel-title">
+            <strong id="reserve-title">Ring shipyard / Inventory</strong>
+            <small>FLEET RESERVES</small>
+          </div>
+          <span class="panel-count">NODE 04</span>
+        </header>
+        <div class="reserve-intro"><span>Przeciągnij jednostkę na przestrzeń lub radar</span><strong>WARP READY</strong></div>
+        <div class="panel-body">
+          <div class="reserve-grid" id="reserve-grid"></div>
+          <div class="production-queue">
+            <div class="queue-head"><span id="queue-label">BUILDING: AEGIS CORVETTE</span><strong id="queue-progress">72%</strong></div>
+            <div class="queue-track"><div class="queue-fill" id="queue-fill"></div></div>
+          </div>
+        </div>
+      </section>
+    </aside>
+
+    <section class="cockpit-shell" id="cockpit" aria-label="Dolny kokpit statku">
+      <div class="cockpit-grid">
+        <section class="cockpit-module systems-module" aria-label="Integralność statku">
+          <span class="module-label">VITALS</span>
+          <div class="vertical-bars">
+            <div class="vital-column hp">
+              <span class="vital-value" id="hp-value">82</span>
+              <div class="vital-track"><div class="vital-ghost" id="hp-ghost"></div><div class="vital-fill" id="hp-fill"></div></div>
+              <span class="vital-label">HP</span>
+            </div>
+            <div class="vital-column shield">
+              <span class="vital-value" id="shield-value">64</span>
+              <div class="vital-track"><div class="vital-ghost" id="shield-ghost"></div><div class="vital-fill" id="shield-fill"></div></div>
+              <span class="vital-label">SHLD</span>
+            </div>
+            <div class="vital-column core">
+              <span class="vital-value" id="core-value">91</span>
+              <div class="vital-track"><div class="vital-ghost" id="core-ghost"></div><div class="vital-fill" id="core-fill"></div></div>
+              <span class="vital-label">CORE</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="cockpit-module radar-module" aria-label="Radar taktyczny">
+          <span class="module-label">CIC RADAR</span>
+          <div class="radar-layout">
+            <div class="radar-screen" id="radar-screen">
+              <canvas id="radar-canvas" aria-label="Radar; kliknij kontakt, aby go wybrać"></canvas>
+              <div class="radar-readout"><span id="radar-total">C:06</span><span class="hostiles" id="radar-hostiles">H:01</span><span class="range" id="radar-range">20K</span></div>
+            </div>
+            <div class="radar-ranges" id="radar-ranges" role="group" aria-label="Zasięg radaru">
+              <button type="button" class="range-button" data-range="5000">5K</button>
+              <button type="button" class="range-button" data-range="10000">10K</button>
+              <button type="button" class="range-button active" data-range="20000">20K</button>
+              <button type="button" class="range-button" data-range="40000">40K</button>
+              <button type="button" class="range-button" data-range="60000">60K</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="cockpit-module primary-module" aria-label="Cel i skróty bojowe">
+          <span class="module-label">COMMAND / WEAPONS</span>
+          <div class="primary-layout">
+            <div class="target-display">
+              <div class="target-ident">
+                <div class="target-kicker">Selected object</div>
+                <div class="target-name" id="target-name">PRT MARAUDER</div>
+                <div class="target-sub" id="target-sub">DESTROYER · HOSTILE TRANSPONDER</div>
+              </div>
+              <div class="target-stats">
+                <div class="target-stat"><small>Distance</small><strong id="target-distance">2.8 KM</strong></div>
+                <div class="target-stat"><small>Vector</small><strong id="target-vector">047°</strong></div>
+                <div class="target-stat threat"><small>Threat</small><strong id="target-threat">HIGH</strong></div>
+                <div class="target-stat lock"><small>Track</small><strong id="target-lock">LOCKED</strong></div>
+              </div>
+            </div>
+            <div class="hotkey-header"><span>Action bank / 1–9</span><span id="weapon-state">WEAPONS HOT</span></div>
+            <div class="hotkey-grid" id="hotkey-grid" aria-label="Hotkeye od 1 do 9"></div>
+          </div>
+        </section>
+
+        <section class="cockpit-module speed-module" aria-label="Prędkościomierz">
+          <span class="module-label">VELOCITY</span>
+          <div class="speed-layout">
+            <canvas id="speed-canvas" aria-hidden="true"></canvas>
+            <div class="speed-value"><span id="speed-value">540</span><small>M/S</small></div>
+            <div class="speed-meta"><span>LIMIT <strong id="speed-limit">820</strong></span><span id="boost-state">CRUISE</span></div>
+          </div>
+        </section>
+
+        <section class="cockpit-module control-module" aria-label="Tryb i sterowanie statkiem">
+          <span class="module-label">FLIGHT CONTROL</span>
+          <div class="control-layout">
+            <div class="mode-selector" id="mode-selector" role="group" aria-label="Tryb statku">
+              <button type="button" class="mode-choice active" data-mode="combat">Combat</button>
+              <button type="button" class="mode-choice" data-mode="agility">Agility</button>
+              <button type="button" class="mode-choice" data-mode="travel">Travel</button>
+              <div class="dial-arc" id="dial-arc" tabindex="0" role="slider" aria-valuemin="1" aria-valuemax="3" aria-valuenow="1" aria-valuetext="Combat" aria-label="Pokrętło trybu statku">
+                <div class="dial-knob" id="dial-knob"><div class="dial-face"></div></div>
+              </div>
+            </div>
+            <div class="game-buttons">
+              <button type="button" class="game-button" id="scan-button"><b>SCAN</b><small>[X]</small></button>
+              <button type="button" class="game-button danger" id="lock-button"><b>LOCK</b><small>[T]</small></button>
+              <button type="button" class="game-button" id="map-button"><b>MAP</b><small>[M]</small></button>
+              <button type="button" class="game-button" id="auto-button"><b>AUTO</b><small>[8]</small></button>
+              <button type="button" class="game-button" id="repair-button"><b>REPAIR</b><small>[R]</small></button>
+              <button type="button" class="game-button" id="boost-button"><b>BOOST</b><small>[9]</small></button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <div class="drag-ghost" id="drag-ghost" aria-hidden="true"></div>
+    <div class="deployment-reticle" id="deployment-reticle" aria-hidden="true"></div>
+    <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+    <div class="sr-only" id="live-region" aria-live="polite"></div>
+  </div>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const $ = (selector, root = document) => root.querySelector(selector);
+      const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+      const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+      const MODE_DATA = {
+        combat: { label: "COMBAT", angle: -48, maxSpeed: 820, targetSpeed: 540, weapons: "WEAPONS HOT" },
+        agility: { label: "AGILITY", angle: 0, maxSpeed: 1280, targetSpeed: 860, weapons: "VECTOR ASSIST" },
+        travel: { label: "TRAVEL", angle: 48, maxSpeed: 5600, targetSpeed: 3750, weapons: "WEAPONS SAFE" }
+      };
+
+      const state = {
+        startedAt: performance.now(),
+        mode: "combat",
+        radarRange: 20000,
+        scannerFilter: "all",
+        selectedContactId: "marauder",
+        selectedUnitIds: new Set(["unit-aegis"]),
+        nextUnitSerial: 1,
+        wingOrder: "escort",
+        mapOpen: false,
+        autopilot: false,
+        boostUntil: 0,
+        scanStarted: -Infinity,
+        player: { hp: 82, shield: 64, core: 91, speed: 540 },
+        drag: null,
+        contacts: [
+          { id: "marauder", name: "PRT MARAUDER", type: "DESTROYER", code: "HST", tone: "hostile", x: 0.68, y: 0.43, distance: 2840, vector: 47, threat: "HIGH", locked: true },
+          { id: "ice-47", name: "ICE-47 CLUSTER", type: "ASTEROID", code: "RES", tone: "resource", x: 0.43, y: 0.31, distance: 4120, vector: 318, threat: "NONE", locked: false },
+          { id: "ceres-relay", name: "CERES RELAY", type: "STATION", code: "FRN", tone: "friendly", x: 0.57, y: 0.21, distance: 6320, vector: 12, threat: "NONE", locked: false },
+          { id: "echo-signal", name: "ECHO / 09", type: "UNKNOWN SIGNAL", code: "SIG", tone: "signal", x: 0.36, y: 0.53, distance: 8950, vector: 259, threat: "UNKNOWN", locked: false },
+          { id: "ring-node", name: "RING NODE 04", type: "SHIPYARD", code: "FRN", tone: "friendly", x: 0.79, y: 0.23, distance: 10800, vector: 71, threat: "NONE", locked: false },
+          { id: "freighter", name: "TN MERIDIAN", type: "FREIGHTER", code: "FRN", tone: "friendly", x: 0.29, y: 0.24, distance: 7420, vector: 302, threat: "NONE", locked: false },
+          { id: "wing-aegis", name: "TNV AEGIS", type: "CORVETTE / ESCORT", code: "FRN", tone: "friendly", x: 0.47, y: 0.61, distance: 620, vector: 194, threat: "NONE", locked: false },
+          { id: "wing-lynx", name: "LYNX SQUADRON ×6", type: "INTERCEPTOR WING", code: "FRN", tone: "friendly", x: 0.53, y: 0.66, distance: 840, vector: 166, threat: "NONE", locked: false },
+          { id: "wing-valkyrie", name: "VALKYRIE ×3", type: "STRIKE WING", code: "FRN", tone: "friendly", x: 0.42, y: 0.68, distance: 1180, vector: 217, threat: "NONE", locked: false }
+        ],
+        activeUnits: [
+          { id: "unit-aegis", name: "TNV AEGIS", type: "corvette", role: "CORVETTE / ESCORT", hp: 96, shield: 84, distance: 620, order: "ESCORT", contactId: "wing-aegis" },
+          { id: "unit-lynx", name: "LYNX SQUADRON ×6", type: "fighter", role: "INTERCEPTOR WING", hp: 78, shield: 62, distance: 840, order: "FORMATION", contactId: "wing-lynx" },
+          { id: "unit-valkyrie", name: "VALKYRIE ×3", type: "bomber", role: "STRIKE WING", hp: 88, shield: 49, distance: 1180, order: "ESCORT", contactId: "wing-valkyrie" }
+        ],
+        reserves: [
+          { id: "fighter", name: "T-9 INTERCEPTOR", role: "SPACE SUPERIORITY", type: "fighter", count: 6 },
+          { id: "corvette", name: "AEGIS CORVETTE", role: "SCREEN / ESCORT", type: "corvette", count: 2 },
+          { id: "frigate", name: "LANCER FRIGATE", role: "LINE SUPPORT", type: "frigate", count: 1 },
+          { id: "bomber", name: "V-4 VALKYRIE", role: "STRIKE BOMBER", type: "bomber", count: 3 }
+        ],
+        production: { targetId: "corvette", progress: 72, cycleMs: 45000, lastAt: performance.now() },
+        hotkeys: [
+          { key: 1, glyph: "RG", name: "RAIL", color: "#ff8a4c", cooldown: 2200, readyAt: 0, weapon: true },
+          { key: 2, glyph: "MSL", name: "MISSILE", color: "#eeb763", cooldown: 4200, readyAt: 0, weapon: true },
+          { key: 3, glyph: "BRD", name: "BROADSIDE", color: "#ff6868", cooldown: 6500, readyAt: 0, weapon: true },
+          { key: 4, glyph: "PD", name: "POINT DEF", color: "#6ed9ff", cooldown: 3600, readyAt: 0, weapon: true },
+          { key: 5, glyph: "REP", name: "REPAIR", color: "#63f0b7", cooldown: 8000, readyAt: 0 },
+          { key: 6, glyph: "DRN", name: "DRONES", color: "#b58cff", cooldown: 5200, readyAt: 0 },
+          { key: 7, glyph: "SCN", name: "SCAN", color: "#63f0b7", cooldown: 2800, readyAt: 0 },
+          { key: 8, glyph: "AP", name: "AUTOPILOT", color: "#6ed9ff", cooldown: 800, readyAt: 0 },
+          { key: 9, glyph: "WRP", name: "BOOST", color: "#6ed9ff", cooldown: 5200, readyAt: 0 }
+        ]
+      };
+
+      const app = $("#app");
+      const battlefield = $("#battlefield");
+      const cockpit = $("#cockpit");
+      const radarCanvas = $("#radar-canvas");
+      const speedCanvas = $("#speed-canvas");
+      const spaceCanvas = $("#space-canvas");
+      const dragGhost = $("#drag-ghost");
+      const deploymentReticle = $("#deployment-reticle");
+      const stars = Array.from({ length: 190 }, (_, index) => ({
+        x: ((index * 73.63) % 100) / 100,
+        y: ((index * 37.17 + 11) % 100) / 100,
+        z: 0.25 + ((index * 19) % 75) / 100,
+        phase: (index * 0.73) % (Math.PI * 2)
+      }));
+
+      function silhouette(type, extraClass = "") {
+        return `<span class="ship-silhouette ${type} ${extraClass}" aria-hidden="true"></span>`;
+      }
+
+      function formatDistance(distance) {
+        if (distance >= 1000) return `${(distance / 1000).toFixed(distance >= 10000 ? 0 : 1)} KM`;
+        return `${Math.round(distance)} M`;
+      }
+
+      function announce(message) {
+        $("#live-region").textContent = message;
+      }
+
+      function toast(message, warning = false) {
+        const element = document.createElement("div");
+        element.className = `toast${warning ? " warning" : ""}`;
+        element.textContent = message;
+        $("#toast-stack").appendChild(element);
+        announce(message);
+        window.setTimeout(() => element.remove(), 2750);
+      }
+
+      function renderVitals() {
+        for (const key of ["hp", "shield", "core"]) {
+          const value = Math.round(state.player[key]);
+          $(`#${key}-value`).textContent = String(value).padStart(2, "0");
+          $(`#${key}-fill`).style.setProperty("--value", `${value}%`);
+          $(`#${key}-ghost`).style.setProperty("--value", `${value}%`);
+        }
+      }
+
+      function renderActiveUnits() {
+        const root = $("#active-unit-list");
+        root.innerHTML = state.activeUnits.map((unit) => {
+          const selected = state.selectedUnitIds.has(unit.id);
+          return `
+            <button type="button" class="unit-card${selected ? " selected" : ""}" data-unit-id="${unit.id}" aria-pressed="${selected}">
+              <span class="unit-portrait">${silhouette(unit.type)}</span>
+              <span class="unit-info">
+                <span class="unit-name">${unit.name}</span>
+                <span class="unit-meta">${unit.role} · ${unit.order}</span>
+                <span class="unit-bars">
+                  <span class="micro-bar"><span style="--value:${unit.hp}%;--bar-color:#ff8a4c"></span></span>
+                  <span class="micro-bar"><span style="--value:${unit.shield}%;--bar-color:#4ba8ff"></span></span>
+                </span>
+              </span>
+              <span class="unit-distance">${formatDistance(unit.distance)}</span>
+            </button>`;
+        }).join("");
+        $("#active-count").textContent = `${state.activeUnits.length} UNITS`;
+
+        $$("[data-unit-id]", root).forEach((button) => {
+          button.addEventListener("click", (event) => {
+            const id = button.dataset.unitId;
+            if (!event.ctrlKey && !event.shiftKey) state.selectedUnitIds.clear();
+            if ((event.ctrlKey || event.shiftKey) && state.selectedUnitIds.has(id)) state.selectedUnitIds.delete(id);
+            else state.selectedUnitIds.add(id);
+            const unit = state.activeUnits.find((item) => item.id === id);
+            if (unit?.contactId) selectContact(unit.contactId);
+            renderActiveUnits();
+          });
+        });
+      }
+
+      function renderReserves() {
+        const root = $("#reserve-grid");
+        root.innerHTML = state.reserves.map((item) => `
+          <button type="button" class="reserve-card${item.count < 1 ? " empty" : ""}" data-reserve-id="${item.id}"
+            aria-label="${item.name}, ${item.count} dostępnych. Przeciągnij na mapę lub naciśnij Enter, aby rozmieścić centralnie."
+            ${item.count < 1 ? "disabled" : ""}>
+            <span class="reserve-portrait">${silhouette(item.type)}</span>
+            <span>
+              <span class="reserve-name">${item.name}</span>
+              <span class="reserve-role">${item.role}</span>
+              <span class="reserve-count">×${item.count} <small>READY</small></span>
+            </span>
+          </button>`).join("");
+
+        $$("[data-reserve-id]", root).forEach((button) => {
+          button.addEventListener("pointerdown", (event) => beginReserveDrag(event, button.dataset.reserveId));
+          button.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            const rect = battlefield.getBoundingClientRect();
+            deployReserve(button.dataset.reserveId, rect.left + rect.width * 0.53, rect.top + rect.height * 0.5);
+          });
+        });
+      }
+
+      function contactMatchesFilter(contact) {
+        return state.scannerFilter === "all" || contact.tone === state.scannerFilter;
+      }
+
+      function updateRadarReadout() {
+        const contactsInRange = state.contacts.filter((contact) => contact.distance <= state.radarRange);
+        $("#radar-total").textContent = `C:${String(contactsInRange.length).padStart(2, "0")}`;
+        $("#radar-hostiles").textContent = `H:${String(contactsInRange.filter((contact) => contact.tone === "hostile").length).padStart(2, "0")}`;
+      }
+
+      function renderContacts() {
+        const visible = state.contacts.filter(contactMatchesFilter);
+        const root = $("#contact-rows");
+        root.innerHTML = visible.map((contact) => `
+          <button type="button" class="contact-row${contact.id === state.selectedContactId ? " selected" : ""}" data-contact-id="${contact.id}">
+            <span class="tone-${contact.tone}">${contact.code}</span>
+            <span>${contact.name}</span>
+            <span>${formatDistance(contact.distance).replace(" ", "")}</span>
+            <span class="lock-cell">${contact.locked ? "LCK" : "–"}</span>
+          </button>`).join("");
+        $("#contact-count").textContent = `${visible.length} CONTACTS`;
+        updateRadarReadout();
+        $$("[data-contact-id]", root).forEach((button) => button.addEventListener("click", () => selectContact(button.dataset.contactId)));
+      }
+
+      function renderWorldContacts() {
+        const root = $("#contact-layer");
+        root.innerHTML = state.contacts.map((contact) => `
+          <button type="button" class="world-contact ${contact.tone}${contact.id === state.selectedContactId ? " selected" : ""}${contact.locked ? " locked" : ""}"
+            data-world-contact="${contact.id}" style="left:${contact.x * 100}%;top:${contact.y * 100}%" aria-label="${contact.name}, ${formatDistance(contact.distance)}">
+            <span class="contact-pip"></span>
+            <span class="contact-brackets"></span>
+            <span class="contact-tag">${contact.name}<small>${contact.type} · ${formatDistance(contact.distance)}</small></span>
+          </button>`).join("");
+        $$("[data-world-contact]", root).forEach((button) => button.addEventListener("click", () => selectContact(button.dataset.worldContact)));
+      }
+
+      function renderTarget() {
+        const contact = state.contacts.find((item) => item.id === state.selectedContactId);
+        if (!contact) {
+          $("#target-name").textContent = "NO TARGET";
+          $("#target-sub").textContent = "SCANNER STANDBY";
+          $("#target-distance").textContent = "—";
+          $("#target-vector").textContent = "—";
+          $("#target-threat").textContent = "NONE";
+          $("#target-lock").textContent = "OPEN";
+          $("#lock-button").classList.remove("active");
+          return;
+        }
+        $("#target-name").textContent = contact.name;
+        $("#target-sub").textContent = `${contact.type} · ${contact.tone.toUpperCase()} TRANSPONDER`;
+        $("#target-distance").textContent = formatDistance(contact.distance);
+        $("#target-vector").textContent = `${String(contact.vector).padStart(3, "0")}°`;
+        $("#target-threat").textContent = contact.threat;
+        $("#target-lock").textContent = contact.locked ? "LOCKED" : "TRACK";
+        $("#lock-button").classList.toggle("active", contact.locked);
+      }
+
+      function selectContact(id) {
+        if (!state.contacts.some((contact) => contact.id === id)) return;
+        state.selectedContactId = id;
+        renderContacts();
+        renderWorldContacts();
+        renderTarget();
+      }
+
+      function toggleLock() {
+        const contact = state.contacts.find((item) => item.id === state.selectedContactId);
+        if (!contact) {
+          toast("NO TARGET SELECTED", true);
+          return;
+        }
+        contact.locked = !contact.locked;
+        renderContacts();
+        renderWorldContacts();
+        renderTarget();
+        toast(`${contact.locked ? "TARGET LOCKED" : "LOCK RELEASED"}: ${contact.name}`);
+      }
+
+      function renderHotkeys() {
+        const root = $("#hotkey-grid");
+        root.innerHTML = state.hotkeys.map((item) => {
+          const unavailable = state.mode === "travel" && item.weapon;
+          return `
+            <button type="button" class="hotkey${unavailable ? " unavailable" : ""}" data-hotkey="${item.key}" style="--slot-color:${item.color}" aria-label="${item.key}: ${item.name}">
+              <span class="hotkey-key">${item.key}</span>
+              <span class="cooldown-time"></span>
+              <span class="hotkey-glyph">${item.glyph}</span>
+              <span class="hotkey-name">${item.name}</span>
+              <span class="cooldown-mask"></span>
+            </button>`;
+        }).join("");
+        $$("[data-hotkey]", root).forEach((button) => button.addEventListener("click", () => triggerHotkey(Number(button.dataset.hotkey))));
+      }
+
+      function updateHotkeyCooldowns(now) {
+        state.hotkeys.forEach((item) => {
+          const button = $(`[data-hotkey="${item.key}"]`, $("#hotkey-grid"));
+          if (!button) return;
+          const remaining = Math.max(0, item.readyAt - now);
+          const ratio = remaining / item.cooldown;
+          $(".cooldown-mask", button).style.height = `${ratio * 100}%`;
+          $(".cooldown-time", button).textContent = remaining > 0 ? (remaining / 1000).toFixed(1) : "";
+          button.classList.toggle("active", remaining > 0 && ratio > 0.7);
+        });
+      }
+
+      function updateProduction(now) {
+        const production = state.production;
+        const elapsed = Math.max(0, now - production.lastAt);
+        production.lastAt = now;
+        production.progress += (elapsed / production.cycleMs) * 100;
+        if (production.progress >= 100) {
+          production.progress -= 100;
+          const reserve = state.reserves.find((item) => item.id === production.targetId);
+          if (reserve) {
+            reserve.count += 1;
+            renderReserves();
+            toast(`${reserve.name} / PRODUCTION COMPLETE / RESERVE +1`);
+          }
+        }
+        const progress = clamp(production.progress, 0, 100);
+        $("#queue-progress").textContent = `${Math.floor(progress)}%`;
+        $("#queue-fill").style.width = `${progress}%`;
+      }
+
+      function triggerHotkey(key) {
+        const item = state.hotkeys.find((entry) => entry.key === key);
+        const now = performance.now();
+        if (!item || item.readyAt > now) return;
+        if (state.mode === "travel" && item.weapon) {
+          toast("WEAPONS INTERLOCKED IN TRAVEL MODE", true);
+          return;
+        }
+        item.readyAt = now + item.cooldown;
+
+        if (key === 5) repairShip();
+        else if (key === 7) activateScan();
+        else if (key === 8) toggleAutopilot();
+        else if (key === 9) activateBoost();
+        else toast(`${item.name} / COMMAND ACCEPTED`);
+      }
+
+      function repairShip() {
+        state.player.hp = clamp(state.player.hp + 7, 0, 100);
+        state.player.shield = clamp(state.player.shield + 12, 0, 100);
+        state.player.core = clamp(state.player.core + 3, 0, 100);
+        renderVitals();
+        toast("REPAIR NANITES DEPLOYED");
+      }
+
+      function activateScan() {
+        state.scanStarted = performance.now();
+        $("#scan-button").classList.add("active");
+        window.setTimeout(() => $("#scan-button").classList.remove("active"), 1250);
+        toast("ACTIVE SCAN PULSE EMITTED");
+      }
+
+      function toggleMap() {
+        state.mapOpen = !state.mapOpen;
+        app.classList.toggle("map-active", state.mapOpen);
+        $("#map-button").classList.toggle("active", state.mapOpen);
+        toast(state.mapOpen ? "TACTICAL MAP ONLINE" : "FLIGHT VIEW RESTORED");
+      }
+
+      function toggleAutopilot() {
+        state.autopilot = !state.autopilot;
+        $("#auto-button").classList.toggle("active", state.autopilot);
+        toast(`AUTOPILOT ${state.autopilot ? "ENGAGED" : "RELEASED"}`);
+      }
+
+      function activateBoost() {
+        state.boostUntil = performance.now() + 2600;
+        $("#boost-button").classList.add("active");
+        toast(state.mode === "travel" ? "WARP CORRIDOR CHARGING" : "ENGINE BOOST ENGAGED");
+      }
+
+      function setMode(mode, silent = false) {
+        if (!MODE_DATA[mode]) return;
+        state.mode = mode;
+        app.dataset.mode = mode;
+        const data = MODE_DATA[mode];
+        $("#dial-knob").style.rotate = `${data.angle}deg`;
+        $("#dial-arc").setAttribute("aria-valuenow", String(["combat", "agility", "travel"].indexOf(mode) + 1));
+        $("#dial-arc").setAttribute("aria-valuetext", data.label);
+        $("#speed-limit").textContent = data.maxSpeed;
+        $("#weapon-state").textContent = data.weapons;
+        $$("[data-mode]", $("#mode-selector")).forEach((button) => button.classList.toggle("active", button.dataset.mode === mode));
+        renderHotkeys();
+        if (!silent) toast(`SHIP MODE: ${data.label}`);
+      }
+
+      function cycleMode(direction) {
+        const modes = ["combat", "agility", "travel"];
+        const index = modes.indexOf(state.mode);
+        setMode(modes[(index + direction + modes.length) % modes.length]);
+      }
+
+      function issueWingOrder(order) {
+        state.wingOrder = order;
+        const selected = state.activeUnits.filter((unit) => state.selectedUnitIds.has(unit.id));
+        const targets = selected.length ? selected : state.activeUnits;
+        targets.forEach((unit) => { unit.order = order.toUpperCase(); });
+        $$("[data-order]").forEach((button) => button.classList.toggle("active", button.dataset.order === order));
+        renderActiveUnits();
+        toast(`${order.toUpperCase()} ORDER / ${targets.length} UNIT${targets.length === 1 ? "" : "S"}`);
+      }
+
+      function pointInRect(x, y, rect) {
+        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+      }
+
+      function deploymentPoint(x, y) {
+        const radarRect = radarCanvas.getBoundingClientRect();
+        if (pointInRect(x, y, radarRect)) {
+          const battleRect = battlefield.getBoundingClientRect();
+          const nx = (x - radarRect.left) / radarRect.width - 0.5;
+          const ny = (y - radarRect.top) / radarRect.height - 0.5;
+          return {
+            valid: true,
+            viaRadar: true,
+            x: battleRect.left + battleRect.width * (0.5 + nx * 0.78),
+            y: battleRect.top + battleRect.height * (0.5 + ny * 0.72)
+          };
+        }
+        const battleRect = battlefield.getBoundingClientRect();
+        if (!pointInRect(x, y, battleRect)) return { valid: false, x, y, viaRadar: false };
+        const element = document.elementFromPoint(x, y);
+        const blocked = element?.closest?.(".hud-panel, .top-telemetry, .mobile-tabs");
+        return { valid: !blocked, x, y, viaRadar: false };
+      }
+
+      function beginReserveDrag(event, reserveId) {
+        if (event.button !== 0 && event.pointerType !== "touch") return;
+        const reserve = state.reserves.find((item) => item.id === reserveId);
+        if (!reserve || reserve.count < 1) return;
+        event.preventDefault();
+        state.drag = { reserveId, pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        dragGhost.innerHTML = `${silhouette(reserve.type)}<span>${reserve.name}<br><small>WARP DEPLOY</small></span>`;
+        dragGhost.classList.add("visible");
+        deploymentReticle.classList.add("visible");
+        app.classList.add("dragging");
+        updateReserveDrag(event.clientX, event.clientY);
+      }
+
+      function updateReserveDrag(x, y) {
+        if (!state.drag) return;
+        if (Math.hypot(x - state.drag.x, y - state.drag.y) > 5) state.drag.moved = true;
+        state.drag.lastX = x;
+        state.drag.lastY = y;
+        const point = deploymentPoint(x, y);
+        state.drag.point = point;
+        dragGhost.style.transform = `translate(${x}px, ${y}px)`;
+        deploymentReticle.style.transform = `translate(${point.x}px, ${point.y}px)`;
+        dragGhost.classList.toggle("invalid", !point.valid);
+        deploymentReticle.classList.toggle("invalid", !point.valid);
+      }
+
+      function endReserveDrag(event) {
+        if (!state.drag || event.pointerId !== state.drag.pointerId) return;
+        const drag = state.drag;
+        state.drag = null;
+        dragGhost.classList.remove("visible", "invalid");
+        deploymentReticle.classList.remove("visible", "invalid");
+        app.classList.remove("dragging");
+        if (!drag.moved) {
+          toast("DRAG SHIP TO SPACE OR RADAR / ENTER: CENTER DEPLOY");
+          return;
+        }
+        if (!drag.point?.valid) {
+          toast("INVALID WARP VECTOR", true);
+          return;
+        }
+        deployReserve(drag.reserveId, drag.point.x, drag.point.y);
+      }
+
+      function cancelReserveDrag() {
+        if (!state.drag) return;
+        state.drag = null;
+        dragGhost.classList.remove("visible", "invalid");
+        deploymentReticle.classList.remove("visible", "invalid");
+        app.classList.remove("dragging");
+        toast("DEPLOYMENT CANCELLED", true);
+      }
+
+      function deployReserve(reserveId, screenX, screenY) {
+        const reserve = state.reserves.find((item) => item.id === reserveId);
+        if (!reserve || reserve.count < 1) {
+          toast("NO SHIPS AVAILABLE", true);
+          return;
+        }
+        reserve.count -= 1;
+        renderReserves();
+        createWarpEvent(reserve, screenX, screenY);
+        toast(`${reserve.name} / WARP-IN COMMITTED`);
+      }
+
+      function createWarpEvent(reserve, screenX, screenY) {
+        const battleRect = battlefield.getBoundingClientRect();
+        const localX = clamp(screenX - battleRect.left, 34, battleRect.width - 34);
+        const localY = clamp(screenY - battleRect.top, 34, battleRect.height - 34);
+        const warp = document.createElement("div");
+        warp.className = "warp-event";
+        warp.style.left = `${localX}px`;
+        warp.style.top = `${localY}px`;
+        warp.innerHTML = `<span class="warp-ring"></span><span class="warp-core"></span><span class="warp-ship">${silhouette(reserve.type)}</span>`;
+        $("#warp-layer").appendChild(warp);
+
+        window.setTimeout(() => {
+          const serial = state.nextUnitSerial++;
+          const unitId = `unit-${reserve.id}-${serial}`;
+          const contactId = `friendly-${serial}`;
+          const x = clamp(localX / Math.max(1, battleRect.width), 0.08, 0.92);
+          const y = clamp(localY / Math.max(1, battleRect.height), 0.1, 0.88);
+          state.activeUnits.push({
+            id: unitId,
+            name: reserve.name,
+            type: reserve.type,
+            role: reserve.role,
+            hp: 100,
+            shield: 100,
+            distance: 480 + Math.round(Math.random() * 840),
+            order: state.wingOrder.toUpperCase(),
+            contactId
+          });
+          state.contacts.push({
+            id: contactId,
+            name: reserve.name,
+            type: reserve.role,
+            code: "FRN",
+            tone: "friendly",
+            x,
+            y,
+            distance: 900 + Math.round(Math.random() * 1500),
+            vector: Math.round(Math.random() * 359),
+            threat: "NONE",
+            locked: false
+          });
+          state.selectedUnitIds.clear();
+          state.selectedUnitIds.add(unitId);
+          state.selectedContactId = contactId;
+          renderActiveUnits();
+          renderContacts();
+          renderWorldContacts();
+          renderTarget();
+          warp.remove();
+          toast(`${reserve.name} / IN THEATER`);
+        }, 1280);
+      }
+
+      function fitCanvas(canvas) {
+        const rect = canvas.getBoundingClientRect();
+        const ratio = Math.min(window.devicePixelRatio || 1, 2);
+        const width = Math.max(1, Math.round(rect.width * ratio));
+        const height = Math.max(1, Math.round(rect.height * ratio));
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+        }
+        const context = canvas.getContext("2d");
+        context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        return { context, width: rect.width, height: rect.height, ratio };
+      }
+
+      function drawSpace(now) {
+        const { context: ctx, width, height } = fitCanvas(spaceCanvas);
+        const flightHeight = cockpit.getBoundingClientRect().top;
+        ctx.clearRect(0, 0, width, height);
+
+        const bg = ctx.createLinearGradient(0, 0, 0, flightHeight);
+        bg.addColorStop(0, "#02070d");
+        bg.addColorStop(0.55, "#061018");
+        bg.addColorStop(1, "#010305");
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, width, flightHeight);
+
+        const nebula = ctx.createRadialGradient(width * 0.55, flightHeight * 0.28, 0, width * 0.55, flightHeight * 0.28, width * 0.36);
+        nebula.addColorStop(0, "rgba(34, 112, 128, 0.13)");
+        nebula.addColorStop(0.45, "rgba(21, 58, 94, 0.07)");
+        nebula.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = nebula;
+        ctx.fillRect(0, 0, width, flightHeight);
+
+        const speedRatio = state.player.speed / MODE_DATA[state.mode].maxSpeed;
+        const travelStretch = state.mode === "travel" ? 10 + speedRatio * 26 : (state.boostUntil > now ? 12 : 1.5);
+        for (const star of stars) {
+          const drift = (now * 0.002 * star.z * (0.3 + speedRatio)) % width;
+          const x = (star.x * width + drift) % width;
+          const y = star.y * flightHeight;
+          const alpha = 0.22 + star.z * 0.64 + Math.sin(now * 0.001 + star.phase) * 0.08;
+          ctx.strokeStyle = `rgba(${150 + Math.round(star.z * 90)}, ${190 + Math.round(star.z * 55)}, 255, ${alpha})`;
+          ctx.lineWidth = Math.max(0.5, star.z * 1.25);
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x - travelStretch * star.z, y);
+          ctx.stroke();
+        }
+
+        const planetX = width * 0.535;
+        const planetY = flightHeight * 0.26;
+        const planetR = clamp(width * 0.032, 30, 62);
+        ctx.save();
+        ctx.translate(planetX, planetY);
+        ctx.rotate(-0.18);
+        ctx.strokeStyle = "rgba(176, 207, 211, 0.18)";
+        ctx.lineWidth = 7;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, planetR * 2.2, planetR * 0.46, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        const planet = ctx.createRadialGradient(-planetR * 0.35, -planetR * 0.36, planetR * 0.1, 0, 0, planetR);
+        planet.addColorStop(0, "#adb8a0");
+        planet.addColorStop(0.38, "#56676e");
+        planet.addColorStop(1, "#090d13");
+        ctx.fillStyle = planet;
+        ctx.beginPath();
+        ctx.arc(0, 0, planetR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        const scanAge = now - state.scanStarted;
+        if (scanAge >= 0 && scanAge < 1250) {
+          const progress = scanAge / 1250;
+          const radius = progress * Math.min(width, flightHeight) * 0.65;
+          ctx.strokeStyle = `rgba(99, 240, 183, ${0.72 * (1 - progress)})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(width * 0.5, flightHeight * 0.55, radius, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+
+      function drawRadar(now) {
+        const { context: ctx, width, height } = fitCanvas(radarCanvas);
+        const size = Math.min(width, height);
+        const cx = width / 2;
+        const cy = height / 2;
+        const radius = size * 0.45;
+        ctx.clearRect(0, 0, width, height);
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.strokeStyle = "rgba(110, 217, 255, 0.18)";
+        ctx.lineWidth = 1;
+        for (const scale of [0.25, 0.5, 0.75, 1]) {
+          ctx.beginPath();
+          ctx.arc(0, 0, radius * scale, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        for (let i = 0; i < 8; i += 1) {
+          const angle = i * Math.PI / 4;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(angle) * radius * 0.08, Math.sin(angle) * radius * 0.08);
+          ctx.lineTo(Math.cos(angle) * radius, Math.sin(angle) * radius);
+          ctx.stroke();
+        }
+
+        const sweep = (now * 0.00055) % (Math.PI * 2) - Math.PI / 2;
+        const gradient = ctx.createConicGradient(sweep, 0, 0);
+        gradient.addColorStop(0, "rgba(99,240,183,0.42)");
+        gradient.addColorStop(0.08, "rgba(99,240,183,0.02)");
+        gradient.addColorStop(1, "rgba(99,240,183,0)");
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.arc(0, 0, radius, sweep, sweep + Math.PI * 0.42);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = "rgba(99,240,183,0.7)";
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(sweep) * radius, Math.sin(sweep) * radius);
+        ctx.stroke();
+
+        state.contacts.forEach((contact) => {
+          const point = radarContactPoint(contact, radius);
+          if (!point.inRange) return;
+          const { x, y } = point;
+          const colors = { hostile: "#ff6868", resource: "#eeb763", friendly: "#6ed9ff", signal: "#63f0b7" };
+          const color = colors[contact.tone] || "#d9fbf3";
+          ctx.save();
+          ctx.translate(x, y);
+          ctx.rotate(contact.tone === "hostile" ? Math.PI / 4 : 0);
+          ctx.fillStyle = color;
+          ctx.strokeStyle = color;
+          ctx.shadowBlur = 7;
+          ctx.shadowColor = color;
+          if (contact.tone === "friendly") {
+            ctx.beginPath();
+            ctx.arc(0, 0, 2.8, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            ctx.fillRect(-2.6, -2.6, 5.2, 5.2);
+          }
+          if (contact.id === state.selectedContactId) {
+            ctx.rotate(contact.tone === "hostile" ? -Math.PI / 4 : 0);
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = "#63f0b7";
+            ctx.strokeRect(-7, -7, 14, 14);
+          }
+          if (contact.locked) {
+            ctx.rotate(contact.tone === "hostile" ? -Math.PI / 4 : 0);
+            ctx.strokeStyle = "#ff6868";
+            ctx.beginPath();
+            ctx.arc(0, 0, 10, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          ctx.restore();
+        });
+
+        ctx.fillStyle = "#eaffff";
+        ctx.shadowBlur = 7;
+        ctx.shadowColor = "#6ed9ff";
+        ctx.beginPath();
+        ctx.moveTo(0, -8);
+        ctx.lineTo(5, 6);
+        ctx.lineTo(0, 3);
+        ctx.lineTo(-5, 6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+
+      function radarContactPoint(contact, radius) {
+        const angle = (Number(contact.vector) - 90) * Math.PI / 180;
+        const distanceRatio = clamp(Number(contact.distance) / state.radarRange, 0, 1);
+        return {
+          x: Math.cos(angle) * radius * distanceRatio,
+          y: Math.sin(angle) * radius * distanceRatio,
+          inRange: Number(contact.distance) <= state.radarRange
+        };
+      }
+
+      function drawSpeedometer(now) {
+        const { context: ctx, width, height } = fitCanvas(speedCanvas);
+        ctx.clearRect(0, 0, width, height);
+        const cx = width / 2;
+        const cy = height * 0.67;
+        const radius = Math.min(width * 0.42, height * 0.68);
+        const start = Math.PI * 0.78;
+        const end = Math.PI * 2.22;
+        const data = MODE_DATA[state.mode];
+        const ratio = clamp(state.player.speed / data.maxSpeed, 0, 1);
+        const accent = getComputedStyle(app).getPropertyValue("--mode-accent").trim() || "#6ed9ff";
+
+        ctx.lineCap = "butt";
+        ctx.lineWidth = 7;
+        ctx.strokeStyle = "rgba(255,255,255,0.08)";
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, start, end);
+        ctx.stroke();
+        ctx.strokeStyle = accent;
+        ctx.shadowBlur = 9;
+        ctx.shadowColor = accent;
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, start, start + (end - start) * ratio);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        for (let index = 0; index <= 16; index += 1) {
+          const angle = start + (end - start) * (index / 16);
+          const inner = radius - (index % 4 === 0 ? 12 : 7);
+          ctx.strokeStyle = index / 16 <= ratio ? accent : "rgba(160,190,190,0.24)";
+          ctx.lineWidth = index % 4 === 0 ? 1.5 : 1;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(angle) * inner, cy + Math.sin(angle) * inner);
+          ctx.lineTo(cx + Math.cos(angle) * (radius - 2), cy + Math.sin(angle) * (radius - 2));
+          ctx.stroke();
+        }
+
+        const needleAngle = start + (end - start) * ratio;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(needleAngle);
+        ctx.fillStyle = "#eaffff";
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = accent;
+        ctx.beginPath();
+        ctx.moveTo(-4, -2);
+        ctx.lineTo(radius - 13, 0);
+        ctx.lineTo(-4, 2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+        ctx.fillStyle = accent;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (state.boostUntil > now) {
+          ctx.fillStyle = "rgba(255,255,255,0.82)";
+          ctx.font = "7px Consolas";
+          ctx.textAlign = "center";
+          ctx.fillText(state.mode === "travel" ? "WARP CHARGE" : "BOOST", cx, cy - radius * 0.43);
+        }
+      }
+
+      function updateFlight(now) {
+        const data = MODE_DATA[state.mode];
+        const boosted = state.boostUntil > now;
+        const target = data.targetSpeed * (boosted ? (state.mode === "travel" ? 1.22 : 1.38) : 1);
+        state.player.speed += (target - state.player.speed) * 0.025;
+        state.player.core = clamp(91 - (state.player.speed / data.maxSpeed) * 8 + Math.sin(now * 0.0012) * 1.4, 0, 100);
+        $("#speed-value").textContent = Math.round(state.player.speed).toLocaleString("pl-PL");
+        $("#boost-state").textContent = boosted ? (state.mode === "travel" ? "WARP" : "BOOST") : (state.autopilot ? "AUTO" : "CRUISE");
+        $("#boost-button").classList.toggle("active", boosted);
+        $("#core-value").textContent = String(Math.round(state.player.core)).padStart(2, "0");
+        $("#core-fill").style.setProperty("--value", `${state.player.core}%`);
+        $("#core-ghost").style.setProperty("--value", `${state.player.core}%`);
+      }
+
+      function handleRadarPointer(event) {
+        const rect = radarCanvas.getBoundingClientRect();
+        const cx = rect.width / 2;
+        const cy = rect.height / 2;
+        const radius = Math.min(rect.width, rect.height) * 0.45;
+        const x = event.clientX - rect.left - cx;
+        const y = event.clientY - rect.top - cy;
+        let nearest = null;
+        let nearestDistance = 14;
+        state.contacts.forEach((contact) => {
+          const point = radarContactPoint(contact, radius);
+          if (!point.inRange) return;
+          const px = point.x;
+          const py = point.y;
+          const distance = Math.hypot(x - px, y - py);
+          if (distance < nearestDistance) {
+            nearest = contact;
+            nearestDistance = distance;
+          }
+        });
+        if (nearest) selectContact(nearest.id);
+      }
+
+      function updateMissionClock(now) {
+        const total = Math.floor((now - state.startedAt) / 1000);
+        const hours = Math.floor(total / 3600);
+        const minutes = Math.floor((total % 3600) / 60);
+        const seconds = total % 60;
+        $("#mission-clock").textContent = [hours, minutes, seconds].map((part) => String(part).padStart(2, "0")).join(":");
+      }
+
+      function animate(now) {
+        updateFlight(now);
+        updateHotkeyCooldowns(now);
+        updateProduction(now);
+        drawSpace(now);
+        drawRadar(now);
+        drawSpeedometer(now);
+        updateMissionClock(now);
+        requestAnimationFrame(animate);
+      }
+
+      function bindEvents() {
+        $("#scanner-filters").addEventListener("click", (event) => {
+          const button = event.target.closest("[data-filter]");
+          if (!button) return;
+          state.scannerFilter = button.dataset.filter;
+          $$("[data-filter]").forEach((item) => item.classList.toggle("active", item === button));
+          renderContacts();
+        });
+
+        $("#radar-ranges").addEventListener("click", (event) => {
+          const button = event.target.closest("[data-range]");
+          if (!button) return;
+          state.radarRange = Number(button.dataset.range);
+          $$("[data-range]").forEach((item) => item.classList.toggle("active", item === button));
+          $("#radar-range").textContent = `${Math.round(state.radarRange / 1000)}K`;
+          updateRadarReadout();
+        });
+
+        $("#mode-selector").addEventListener("click", (event) => {
+          const button = event.target.closest(".mode-choice");
+          if (button) setMode(button.dataset.mode);
+        });
+
+        const dial = $("#dial-arc");
+        const setModeFromPointer = (event) => {
+          const rect = dial.getBoundingClientRect();
+          const normalized = (event.clientX - (rect.left + rect.width / 2)) / (rect.width / 2);
+          setMode(normalized < -0.25 ? "combat" : normalized > 0.25 ? "travel" : "agility", true);
+        };
+        dial.addEventListener("pointerdown", (event) => {
+          event.preventDefault();
+          dial.setPointerCapture(event.pointerId);
+          setModeFromPointer(event);
+        });
+        dial.addEventListener("pointermove", (event) => {
+          if (dial.hasPointerCapture(event.pointerId)) setModeFromPointer(event);
+        });
+        dial.addEventListener("pointerup", (event) => {
+          if (dial.hasPointerCapture(event.pointerId)) dial.releasePointerCapture(event.pointerId);
+          toast(`SHIP MODE: ${MODE_DATA[state.mode].label}`);
+        });
+        dial.addEventListener("wheel", (event) => {
+          event.preventDefault();
+          cycleMode(event.deltaY > 0 ? 1 : -1);
+        }, { passive: false });
+        dial.addEventListener("keydown", (event) => {
+          if (["ArrowLeft", "ArrowDown"].includes(event.key)) { event.preventDefault(); cycleMode(-1); }
+          if (["ArrowRight", "ArrowUp"].includes(event.key)) { event.preventDefault(); cycleMode(1); }
+        });
+
+        $("#scan-button").addEventListener("click", () => triggerHotkey(7));
+        $("#lock-button").addEventListener("click", toggleLock);
+        $("#map-button").addEventListener("click", toggleMap);
+        $("#auto-button").addEventListener("click", () => triggerHotkey(8));
+        $("#repair-button").addEventListener("click", () => triggerHotkey(5));
+        $("#boost-button").addEventListener("click", () => triggerHotkey(9));
+        radarCanvas.addEventListener("click", handleRadarPointer);
+
+        $$("[data-order]").forEach((button) => button.addEventListener("click", () => issueWingOrder(button.dataset.order)));
+
+        window.addEventListener("pointermove", (event) => updateReserveDrag(event.clientX, event.clientY));
+        window.addEventListener("pointerup", endReserveDrag);
+        window.addEventListener("pointercancel", cancelReserveDrag);
+
+        $$("[data-drawer]").forEach((button) => button.addEventListener("click", () => {
+          const target = button.dataset.drawer === "left" ? $("#left-stack") : $("#right-stack");
+          const other = button.dataset.drawer === "left" ? $("#right-stack") : $("#left-stack");
+          other.classList.remove("open");
+          target.classList.toggle("open");
+        }));
+
+        window.addEventListener("keydown", (event) => {
+          if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
+          if (/^[1-9]$/.test(event.key)) triggerHotkey(Number(event.key));
+          else if (event.key.toLowerCase() === "x") triggerHotkey(7);
+          else if (event.key.toLowerCase() === "t") toggleLock();
+          else if (event.key.toLowerCase() === "m") toggleMap();
+          else if (event.key.toLowerCase() === "r") triggerHotkey(5);
+          else if (event.key.toLowerCase() === "v") cycleMode(1);
+          else if (event.key === "Escape") {
+            if (state.drag) cancelReserveDrag();
+            else if (state.mapOpen) toggleMap();
+          }
+        });
+      }
+
+      renderVitals();
+      renderActiveUnits();
+      renderReserves();
+      renderContacts();
+      renderWorldContacts();
+      renderTarget();
+      renderHotkeys();
+      setMode("combat", true);
+      bindEvents();
+      requestAnimationFrame(animate);
+      window.setTimeout(() => toast("COCKPIT PROTOTYPE ONLINE / DRAG RESERVES TO DEPLOY"), 450);
+    })();
+  </script>
+</body>
+</html>

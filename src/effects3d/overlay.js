@@ -3,6 +3,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+import { BLOOM_DEFAULTS } from "../3d/bloomConfig.js";
 
 const RestoreAlphaShader = {
   uniforms: {
@@ -64,9 +65,9 @@ export function initOverlay({
   function getOverlayBloomConfig() {
     const bloom = (typeof window !== 'undefined' && window.DevVFX?.bloom) ? window.DevVFX.bloom : null;
     return {
-      strength: Math.max(0, Number.isFinite(Number(bloom?.overlayStrength)) ? Number(bloom.overlayStrength) : 1.0),
-      radius: Math.max(0, Number.isFinite(Number(bloom?.overlayRadius)) ? Number(bloom.overlayRadius) : 0.5),
-      threshold: Math.max(0, Number.isFinite(Number(bloom?.overlayThreshold)) ? Number(bloom.overlayThreshold) : 0.3)
+      strength: Math.max(0, Number.isFinite(Number(bloom?.overlayStrength)) ? Number(bloom.overlayStrength) : BLOOM_DEFAULTS.overlayStrength),
+      radius: Math.max(0, Number.isFinite(Number(bloom?.overlayRadius)) ? Number(bloom.overlayRadius) : BLOOM_DEFAULTS.overlayRadius),
+      threshold: Math.max(0, Number.isFinite(Number(bloom?.overlayThreshold)) ? Number(bloom.overlayThreshold) : BLOOM_DEFAULTS.overlayThreshold)
     };
   }
 

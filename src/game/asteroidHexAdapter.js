@@ -18,6 +18,10 @@ function getImageHeight(image) {
   return Math.max(1, positiveNumber(image?.naturalHeight, positiveNumber(image?.height, 1)));
 }
 
+const ASTEROID_CORE_RADIUS_FRACTION = 0.16;
+const ASTEROID_CORE_MIN_RADIUS = 36;
+const ASTEROID_CORE_MAX_ACTIVE_FRACTION = 0.45;
+
 export function getImageMaxSide(image) {
   return Math.max(
     1,
@@ -76,6 +80,72 @@ export function buildAsteroidHexEntityModel(asteroid, image, options = {}) {
       spriteRotation: 0
     }
   };
+}
+
+/**
+ * Oznacza centralne heksy asteroidy. Liczniki są aktualizowane przez
+ * DestructorSystem.destroyShard(), więc sprawdzenie integralności podczas klatki
+ * jest O(1), bez skanowania całej siatki.
+ */
+export function initializeAsteroidHexIntegrity(entity) {
+  const grid = entity?.hexGrid;
+  const shards = grid?.shards;
+  if (!entity?.isAsteroidHex || !Array.isArray(shards) || shards.length === 0) return null;
+
+  const cx = positiveNumber(grid.srcWidth, 1) * 0.5;
+  const cy = positiveNumber(grid.srcHeight, 1) * 0.5;
+  const minSide = Math.min(positiveNumber(grid.srcWidth, 1), positiveNumber(grid.srcHeight, 1));
+  const coreRadius = Math.max(ASTEROID_CORE_MIN_RADIUS, minSide * ASTEROID_CORE_RADIUS_FRACTION);
+  const coreRadiusSq = coreRadius * coreRadius;
+  let total = 0;
+  let active = 0;
+
+  for (let i = 0; i < shards.length; i++) {
+    const shard = shards[i];
+    if (!shard) continue;
+    const x = finiteNumber(shard.gridX, cx) - cx;
+    const y = finiteNumber(shard.gridY, cy) - cy;
+    const isCore = x * x + y * y <= coreRadiusSq;
+    shard.__asteroidCore = isCore;
+    if (!isCore) continue;
+    total++;
+    if (shard.active !== false && !shard.isDebris && finiteNumber(shard.hp, 1) > 0) active++;
+  }
+
+  // Bardzo małe/niestandardowe maski mogą nie mieć środka dokładnie na węźle.
+  // Wtedy najbliższy aktywny heks zostaje minimalnym rdzeniem zamiast wyłączać test.
+  if (total === 0) {
+    let nearest = null;
+    let nearestDistSq = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < shards.length; i++) {
+      const shard = shards[i];
+      if (!shard) continue;
+      const x = finiteNumber(shard.gridX, cx) - cx;
+      const y = finiteNumber(shard.gridY, cy) - cy;
+      const d2 = x * x + y * y;
+      if (d2 < nearestDistSq) {
+        nearest = shard;
+        nearestDistSq = d2;
+      }
+    }
+    if (nearest) {
+      nearest.__asteroidCore = true;
+      total = 1;
+      active = nearest.active !== false && !nearest.isDebris && finiteNumber(nearest.hp, 1) > 0 ? 1 : 0;
+    }
+  }
+
+  grid.asteroidCoreTotal = total;
+  grid.asteroidCoreActive = active;
+  return { total, active };
+}
+
+export function isAsteroidHexCoreDestroyed(entity) {
+  const grid = entity?.hexGrid;
+  const total = Number(grid?.asteroidCoreTotal);
+  const active = Number(grid?.asteroidCoreActive);
+  if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(active)) return false;
+  return active / total <= ASTEROID_CORE_MAX_ACTIVE_FRACTION;
 }
 
 export function syncAsteroidFromHexEntity(asteroid, entity) {

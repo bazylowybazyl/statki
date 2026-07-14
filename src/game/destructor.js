@@ -11,7 +11,6 @@ export const DESTRUCTOR_CONFIG = {
   shardMass: 10.0, //
   visualRotationOffset: 0, //
   shardHP: 80, //
-  armorThreshold: 0.8, //
   inflictedDamageMult: 1.0, //
   maxDeform: 100.0,            // Max deformacja (px)
   tearThreshold: 34.0, //
@@ -76,6 +75,9 @@ export const DESTRUCTOR_CONFIG = {
   hullBendSplitCurvature: 0.34,  // powyżej tej krzywizny pozwól na rozłam na wraki
   hullBendWreckSpin: 0.6,        // ile krzywizny dziedziczą połówki jako rotacja
   hullBendDirSign: 1,            // +1/-1 — strona wyginania (odwróć, gdy gnie w złą stronę)
+  hullRecoverEnabled: 1,         // NPC bez rozłamu (nie-locked) same prostują banan po walce
+  hullRecoverDelay: 2.5,         // s od ostatniej deformacji, zanim NPC zacznie się prostować
+  hullRecoverRate: 0.22,         // rad/s — tempo prostowania (osobne od tempa wyginania)
 
   // Sprzężenie przekroju — wciśnięcie jednej ściany wypycha przeciwległą (dół→góra)
   sectionCoupleEnabled: 1,
@@ -1403,9 +1405,8 @@ export function refreshHexBodyCache(entity) {
 }
 
 class HexShard {
-  constructor(img, damagedImg, gridX, gridY, radius, c, r, color = null) {
+  constructor(img, gridX, gridY, radius, c, r, color = null) {
     this.img = img;
-    this.damagedImg = damagedImg;
     this.gridX = gridX;
     this.gridY = gridY;
     this.origGridX = gridX;
@@ -1607,26 +1608,11 @@ class HexShard {
     if (this.color) {
       ctx.fillStyle = this.color;
       ctx.fill();
+    } else if (this.img) {
+      ctx.drawImage(this.img, -this.origGridX, -this.origGridY);
     } else {
-      if (this.damagedImg) ctx.drawImage(this.damagedImg, -this.origGridX, -this.origGridY);
-      else {
-        ctx.fillStyle = '#222';
-        ctx.fill();
-      }
-
-      if (this.img) {
-        const hpRatio = this.maxHp > 0 ? this.hp / this.maxHp : 0;
-        const threshold = DESTRUCTOR_CONFIG.armorThreshold;
-        let armorAlpha = 0;
-
-        if (hpRatio > threshold) armorAlpha = (hpRatio - threshold) / Math.max(0.0001, 1 - threshold);
-
-        if (armorAlpha > 0.01) {
-          ctx.globalAlpha = armorAlpha;
-          ctx.drawImage(this.img, -this.origGridX, -this.origGridY);
-          ctx.globalAlpha = 1;
-        }
-      }
+      ctx.fillStyle = '#222';
+      ctx.fill();
     }
 
     const stressSq = this.deformation.x * this.deformation.x + this.deformation.y * this.deformation.y;
@@ -2056,6 +2042,7 @@ export const DestructorSystem = {
       this.resolveCollisions(list, step, doDamage, skipRingPairs, true, i);
     }
 
+    this.updateHullRecovery(list, step);
     this.updateHullBends(list, step);
 
     const tAfterCollision = nowMs();
@@ -2417,9 +2404,9 @@ export const DestructorSystem = {
     if ((DESTRUCTOR_CONFIG.hullBendEnabled | 0) !== 1) return;
     const list = Array.isArray(entities) ? entities : [];
     // Limit prędkości krzywizny (rad/s) — banan rośnie wolno i płynnie, niezależnie od fps.
-    const rate = Math.max(0.005, Number(DESTRUCTOR_CONFIG.hullBendRate) || 0.15);
     const step = Number.isFinite(dt) ? Math.max(1 / 1000, dt) : (1 / 120);
-    const maxDelta = rate * step;
+    const bendMaxDelta = Math.max(0.005, Number(DESTRUCTOR_CONFIG.hullBendRate) || 0.15) * step;
+    const recoverMaxDelta = Math.max(0.005, Number(DESTRUCTOR_CONFIG.hullRecoverRate) || 0.22) * step;
     const splitCurv = Math.max(0.05, Number(DESTRUCTOR_CONFIG.hullBendSplitCurvature) || 0.34);
     const holdTicks = Math.max(4, Number(DESTRUCTOR_CONFIG.splitCrashDeferTicks) || 8);
 
@@ -2430,11 +2417,32 @@ export const DestructorSystem = {
 
       const diff = bend.targetCurvature - bend.curvature;
       const stillRamping = Math.abs(diff) >= 0.0005;
+      // Prostowanie (cel≈0) idzie OSOBNYM tempem — hullRecoverRate, nie hullBendRate.
+      const recovering = Math.abs(bend.targetCurvature) < 1e-4 && Math.abs(bend.curvature) > 1e-4;
+      const maxDelta = recovering ? recoverMaxDelta : bendMaxDelta;
+
       if (stillRamping) {
         bend.curvature += Math.max(-maxDelta, Math.min(maxDelta, diff));
         applyHullBendField(e);
       } else if (Math.abs(bend.curvature - (Number(bend.appliedCurvature) || 0)) >= 0.0005) {
         applyHullBendField(e);
+      }
+
+      // FINALIZACJA: kadłub sprawny (nie-locked) i wyprostowany → zdejmij deskryptor
+      // banana i przywróć promień. Snap dokładnie do prostej (curvature=0 → origGridX=_bendBaseX).
+      if (!bend.locked &&
+        Math.abs(bend.targetCurvature) < 1e-4 &&
+        Math.abs(bend.curvature) < 5e-4 &&
+        Math.abs(Number(bend.appliedCurvature) || 0) < 5e-4) {
+        bend.curvature = 0;
+        applyHullBendField(e);
+        e._hullBend = null;
+        if (e._bendRadiusBase !== undefined) {
+          e.radius = e._bendRadiusBase;
+          e._bendRadiusBase = undefined;
+        }
+        e._bendStampCurv = 0;
+        continue;
       }
 
       // Trzymaj rozłam odroczony, dopóki banan jeszcze rośnie i nie doszedł do progu —
@@ -2445,6 +2453,26 @@ export const DestructorSystem = {
     }
   },
 
+  // NPC bez rozłamu (nie-locked) same prostują banan, gdy walka ucichła. Ustawia tylko
+  // CEL (=0); faktyczny ramp i finalizacja dzieją się w updateHullBends. Gracz prostuje
+  // ręcznie (klawisz R → DestructorSystem.repair).
+  updateHullRecovery(entities, dt) {
+    if ((DESTRUCTOR_CONFIG.hullBendEnabled | 0) !== 1) return;
+    if ((DESTRUCTOR_CONFIG.hullRecoverEnabled | 0) !== 1) return;
+    const list = Array.isArray(entities) ? entities : [];
+    const delayTicks = Math.max(0, (Number(DESTRUCTOR_CONFIG.hullRecoverDelay) || 2.5) * 120);
+    const tick = this._tick;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
+      const bend = e?._hullBend;
+      if (!bend || bend.locked || e.dead) continue;
+      if (e.isPlayer || e._isPlayerShip || e.isWreck) continue;
+      if (Math.abs(bend.targetCurvature) < 1e-4) continue; // już się prostuje
+      if ((tick - (Number(bend._lastDeformTick) || 0)) < delayTicks) continue; // za świeże
+      bend.targetCurvature = 0;
+    }
+  },
+
   repair(entities, dt) {
     const list = Array.isArray(entities) ? entities : [];
     const step = Number.isFinite(dt) ? Math.max(0.0001, dt) : 0.1;
@@ -2452,6 +2480,15 @@ export const DestructorSystem = {
 
     for (const e of list) {
       if (!e?.hexGrid?.shards) continue;
+
+      // Naprawa prostuje też banan (nie-locked): ustaw cel na 0 — ramp i finalizacja
+      // w updateHullBends. repairedAny trzyma naprawę aktywną, aż kadłub się wyprostuje.
+      const bend = e._hullBend;
+      if (bend && !bend.locked && Math.abs(Number(bend.curvature) || 0) > 5e-4) {
+        bend.targetCurvature = 0;
+        repairedAny = true;
+      }
+
       let anyFix = false;
       let dirtyMin = Number.POSITIVE_INFINITY;
       let dirtyMax = -1;
@@ -3369,6 +3406,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const scaleIterY = Math.max(0.0001, getFinalScaleY(iterator));
       const scaleGridX = Math.max(0.0001, getFinalScaleX(gridHolder));
       const scaleGridY = Math.max(0.0001, getFinalScaleY(gridHolder));
+      const collisionScaleIter = Math.max(scaleIterX, scaleIterY);
+      const collisionScaleGrid = Math.max(scaleGridX, scaleGridY);
       const massA = getEntityRammingMass(A);
       const massB = getEntityRammingMass(B);
       const angIter = getEntityHexAngle(iterator);
@@ -3442,6 +3481,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       for (let i = 0; i < lenIter; i++) {
         const sI = shardsIter[i];
         if (!sI || !sI.active || sI.isDebris) continue;
+        const hitRadI = getShardHitRadius(sI) * collisionScaleIter;
 
         const relIx = (getShardCollisionGridX(sI) - cxI) - pIx;
         const relIy = (getShardCollisionGridY(sI) - cyI) - pIy;
@@ -3476,13 +3516,17 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
           const relGx = (getShardCollisionGridX(sG) - cxG) - pGx;
           const relGy = (getShardCollisionGridY(sG) - cyG) - pGy;
-          const worldGx = gx + (relGx * scaleGridX) * cosG - (relGy * scaleGridY) * sinG;
-          const worldGy = gy + (relGx * scaleGridX) * sinG + (relGy * scaleGridY) * cosG;
+          const worldGx = gx + localDeltaToWorldX(relGx, relGy, scaleGridX, scaleGridY, cosG, sinG, gridBillboardOrientation);
+          const worldGy = gy + localDeltaToWorldY(relGx, relGy, scaleGridX, scaleGridY, cosG, sinG, gridBillboardOrientation);
 
           const normalX = worldIx - worldGx;
           const normalY = worldIy - worldGy;
           const distSq = normalX * normalX + normalY * normalY;
-          const hitRad = (getShardHitRadius(sI) + getShardHitRadius(sG)) * 0.78;
+          // Pozycje shardów są już przeskalowane do świata, więc ich promienie też
+          // muszą być w world units. Brak tej skali zostawiał szerokie szczeliny w
+          // dużych asteroidach (np. spriteScale=3), przez które statek przelatywał.
+          const hitRadG = getShardHitRadius(sG) * collisionScaleGrid;
+          const hitRad = (hitRadI + hitRadG) * 0.78;
 
           if (distSq >= hitRad * hitRad) continue;
 
@@ -4044,6 +4088,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           if (bendVictim && bendPenOk && !bendVictim.isRingSegment && !bendVictim.isWreck) {
             const gain = Math.max(0, Number(DESTRUCTOR_CONFIG.hullBendGain) || 0.0006);
             accumulateHullBend(bendVictim, worldHitX, worldHitY, bvDirX, bvDirY, effectiveApproachSpeed * gain);
+            // Znacznik świeżej deformacji — auto-prostowanie NPC czeka aż walka ucichnie.
+            if (bendVictim._hullBend) bendVictim._hullBend._lastDeformTick = this._tick;
 
             // Trzymaj rozłam w ryzach, dopóki banan nie wygnie się do progu krzywizny.
             const splitCurv = Math.max(0.05, Number(DESTRUCTOR_CONFIG.hullBendSplitCurvature) || 0.34);
@@ -4117,6 +4163,9 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     if (Number.isFinite(entity.hexGrid.activeStructuralCount)) {
       entity.hexGrid.activeStructuralCount = Math.max(0, entity.hexGrid.activeStructuralCount - 1);
     }
+    if (shard.__asteroidCore === true && Number.isFinite(entity.hexGrid.asteroidCoreActive)) {
+      entity.hexGrid.asteroidCoreActive = Math.max(0, entity.hexGrid.asteroidCoreActive - 1);
+    }
 
     markGridMeshDirtyByShard(entity.hexGrid, shard);
 
@@ -4184,7 +4233,32 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const groups = this.findIslands(entity.hexGrid);
         if (groups.length <= 1) continue;
 
-        groups.sort((a, b) => b.length - a.length);
+        if (entity.isAsteroidHex) {
+          // Asteroida zostaje przy fragmencie zawierającym rdzeń, nie przy
+          // największym pustym pierścieniu. O(shards), tylko przy faktycznym splicie.
+          let mainIndex = 0;
+          let bestCoreCount = -1;
+          let bestLength = -1;
+          for (let gi = 0; gi < groups.length; gi++) {
+            const group = groups[gi];
+            let coreCount = 0;
+            for (let si = 0; si < group.length; si++) {
+              if (group[si]?.__asteroidCore === true) coreCount++;
+            }
+            if (coreCount > bestCoreCount || (coreCount === bestCoreCount && group.length > bestLength)) {
+              mainIndex = gi;
+              bestCoreCount = coreCount;
+              bestLength = group.length;
+            }
+          }
+          if (mainIndex !== 0) {
+            const tmp = groups[0];
+            groups[0] = groups[mainIndex];
+            groups[mainIndex] = tmp;
+          }
+        } else {
+          groups.sort((a, b) => b.length - a.length);
+        }
         const main = groups[0];
         const loose = groups.slice(1);
 
@@ -4201,6 +4275,13 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         }
 
         for (const group of loose) {
+          // Asteroidy mają własny split rozmiarów w AsteroidField._destroy().
+          // Nie twórz z odłączonych rogów trwałych wraków statkowych; zamień je
+          // w debris i usuń z fizycznej siatki rodzica.
+          if (entity.isAsteroidHex) {
+            for (const s of group) this.destroyShard(entity, s, { x: getEntityVelX(entity), y: getEntityVelY(entity) });
+            continue;
+          }
           if (group.length < 3) {
             for (const s of group) this.destroyShard(entity, s, { x: getEntityVelX(entity), y: getEntityVelY(entity) });
             continue;
@@ -4523,7 +4604,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     wGrid.srcWidth = parent.hexGrid.srcWidth;
     wGrid.srcHeight = parent.hexGrid.srcHeight;
     wGrid.armorImage = parent.hexGrid.armorImage || null;
-    wGrid.damagedImage = parent.hexGrid.damagedImage || null;
+    wGrid.visualImage = parent.hexGrid.visualImage || null;
 
     if (!HEX_SHIPS_3D_ACTIVE) {
       wGrid.cacheDirty = true;
@@ -4573,7 +4654,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
   }
 };
 
-export function initHexBody(entity, image, damagedImage = null, isProjectile = false, massOverride = null, alphaCutoff = 40) {
+export function initHexBody(entity, image, isProjectile = false, massOverride = null, alphaCutoff = 40) {
   if (!entity || !image?.width || !isHexEligible(entity)) return;
 
   const w = Math.ceil(image.width / 2) * 2;
@@ -4592,15 +4673,6 @@ export function initHexBody(entity, image, damagedImage = null, isProjectile = f
     data = srcCtx.getImageData(0, 0, w, h).data;
   } catch {
     return;
-  }
-
-  let damaged = null;
-  if (damagedImage?.width) {
-    damaged = document.createElement('canvas');
-    damaged.width = w;
-    damaged.height = h;
-    const dctx = damaged.getContext('2d');
-    dctx.drawImage(damagedImage, 0, 0, w, h);
   }
 
   const shards = [];
@@ -4628,7 +4700,7 @@ export function initHexBody(entity, image, damagedImage = null, isProjectile = f
       const maskProfile = sampleHexMaskProfile(data, w, h, x, y, r, alphaThreshold, alphaSampleThreshold);
       if (!maskProfile.keep) continue;
 
-      const shard = new HexShard(isProjectile ? null : src, damaged, x, y, r, c, ro, isProjectile ? '#ffcc00' : null);
+      const shard = new HexShard(isProjectile ? null : src, x, y, r, c, ro, isProjectile ? '#ffcc00' : null);
       const coverage = Math.max(0.18, Math.min(1, Number(maskProfile.coverage) || 1));
       const radialCoverage = Math.max(0.22, Math.min(1, Number(maskProfile.radialCoverage) || coverage));
       const physicalScale = Math.max(0.30, Math.min(1, coverage * 0.82 + radialCoverage * 0.18));
@@ -4673,7 +4745,6 @@ export function initHexBody(entity, image, damagedImage = null, isProjectile = f
     srcWidth: w,
     srcHeight: h,
     armorImage: src,
-    damagedImage: damaged,
     rawRadius: Math.sqrt(rawRadiusSq) + r,
     cacheCanvas,
     cacheCtx,

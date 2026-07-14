@@ -7,12 +7,15 @@ import * as THREE from 'three';
 import { Core3D } from './core3d.js';
 import { createSectorGeometry, COLORS, RING_INNER, INNER_RING_ROWS, getZoneFamily } from './ringCityZoneGrid.js';
 import { getDistrictInfrastructureMaterials, BufferGeometryUtils, synthCityAssets } from './ringCityAssets.js';
+import { createInwardRibbonGeometry } from './ringCitySurface.js';
 
 // --- Z offsets for infrastructure layers ---
-const FLOOR_Z = 0.18;
-const OVERLAY_Z = 0.22;
-const PATH_Z = 0.26;
-const TRACE_Z = 0.34;
+// Keep several world units between layers. Sub-unit offsets collapse to the
+// same depth value with Core3D's 100..500000 perspective range and flicker.
+const FLOOR_Z = 3.0;
+const OVERLAY_Z = 4.0;
+const PATH_Z = 5.0;
+const TRACE_Z = 6.5;
 
 // --- Zone overlay material cache ---
 const overlayMatCache = {};
@@ -105,8 +108,7 @@ function mergeAndCreateMesh(geos, material) {
     try {
         mergedGeo = BufferGeometryUtils.mergeGeometries(geos, false);
     } catch (e) {
-        try { mergedGeo = BufferGeometryUtils.mergeBufferGeometries(geos, false); }
-        catch (e2) { return null; }
+        return null;
     }
     if (!mergedGeo) return null;
 
@@ -163,13 +165,31 @@ export function createDistrictInfrastructure(cell, ring) {
 export function buildAllInfrastructure(zoneGrid, ring) {
     if (!zoneGrid || !ring?.ringFloor) return [];
 
-    const sourceCells = zoneGrid.getCellsForRing
-        ? zoneGrid.getCellsForRing(RING_INNER)
-        : zoneGrid.getPopulatedCells().filter(c => c.ring === RING_INNER);
-    const cells = sourceCells.filter(cell => {
+    if (ring.citySurfaceMode === 'inward') {
+        const geometry = createInwardRibbonGeometry(ring.layout, 0, 1536);
+        const material = synthCityAssets.materials.ground || getDistrictInfrastructureMaterials('residential').floor;
+        if (!geometry || !material) return [];
+        material.depthWrite = true;
+        material.polygonOffset = true;
+        material.polygonOffsetFactor = 1;
+        material.polygonOffsetUnits = 1;
+        const results = [];
+        addInfraResult(
+            results,
+            ring,
+            new THREE.Mesh(geometry, material),
+            `RingSynthCityRibbon:${ring.key || 'ring'}`,
+            -3
+        );
+        return results;
+    }
+
+    const populated = zoneGrid.getPopulatedCells();
+    const cells = populated.filter(cell => {
         if (!cell?.zone) return false;
         const family = getZoneFamily(cell.zone);
-        return family === 'residential' || family === 'commercial';
+        return ring.cityRenderMode !== 'baked' && cell.ring === RING_INNER &&
+            (family === 'residential' || family === 'commercial');
     });
     if (!cells.length) return [];
 
@@ -178,7 +198,9 @@ export function buildAllInfrastructure(zoneGrid, ring) {
     const traceGeos = [];
 
     for (const cell of cells) {
-        floorGeos.push(createSectorGeometry(cell.innerRadius, cell.outerRadius, cell.angleStart, cell.angleEnd, FLOOR_Z));
+        floorGeos.push(
+            createSectorGeometry(cell.innerRadius, cell.outerRadius, cell.angleStart, cell.angleEnd, FLOOR_Z)
+        );
 
         if ((cell.col % ROAD_COL_STRIDE) === 0) {
             pushRadialRoad(pathGeos, cell, cell.angleStart, ROAD_WIDTH, PATH_Z);
@@ -195,10 +217,21 @@ export function buildAllInfrastructure(zoneGrid, ring) {
         }
     }
 
-    const materials = getDistrictInfrastructureMaterials('commercial');
+    // Neutral/cyan fallback; the former commercial fallback made the whole
+    // deck flash purple while SynthCity ground textures were loading.
+    const materials = getDistrictInfrastructureMaterials('residential');
     const floorMat = synthCityAssets.materials.ground || materials.floor;
     const pathMat = materials.path;
     const traceMat = materials.trace;
+    floorMat.depthWrite = true;
+    floorMat.polygonOffset = true;
+    floorMat.polygonOffsetFactor = -1;
+    floorMat.polygonOffsetUnits = -1;
+    pathMat.depthWrite = true;
+    pathMat.polygonOffset = true;
+    pathMat.polygonOffsetFactor = -2;
+    pathMat.polygonOffsetUnits = -2;
+    traceMat.depthWrite = false;
     const results = [];
 
     addInfraResult(

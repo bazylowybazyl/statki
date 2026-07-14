@@ -16,9 +16,9 @@ import { MASTER_WEAPONS } from '../src/data/weapons.js';
 
 test('hangar size maps to squadron capacity', () => {
   assert.equal(getHangarSquadronCapacity('S'), 1);
-  assert.equal(getHangarSquadronCapacity('M'), 3);
-  assert.equal(getHangarSquadronCapacity('L'), 9);
-  assert.equal(getHangarSquadronCapacity('Capital'), 9);
+  assert.equal(getHangarSquadronCapacity('M'), 1);
+  assert.equal(getHangarSquadronCapacity('L'), 2);
+  assert.equal(getHangarSquadronCapacity('Capital'), 2);
   assert.equal(getHangarSquadronCapacity('unknown'), 1);
 });
 

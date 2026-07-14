@@ -1,0 +1,2443 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>Super Capital — Targeting System Prototype</title>
+  <style>
+    :root {
+      --void: #020509;
+      --panel: rgba(4, 12, 17, 0.9);
+      --panel-strong: rgba(5, 15, 21, 0.97);
+      --line: rgba(91, 209, 235, 0.25);
+      --line-soft: rgba(91, 209, 235, 0.1);
+      --text: #d9eff3;
+      --muted: #66858d;
+      --cyan: #62d9ee;
+      --orange: #ff9f2e;
+      --ready: #ff9f2e;
+      --red: #ff3f55;
+      --green: #64e8b4;
+      --mono: Consolas, "Courier New", monospace;
+      --ui: "Bahnschrift", "Segoe UI", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+      cursor: none;
+      user-select: none;
+    }
+
+    body {
+      color: var(--text);
+      font-family: var(--ui);
+    }
+
+    button {
+      color: inherit;
+      font: inherit;
+      cursor: none;
+    }
+
+    button:focus-visible {
+      outline: 1px solid var(--orange);
+      outline-offset: 2px;
+    }
+
+    .app {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      isolation: isolate;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 68% 38%, rgba(28, 70, 91, 0.18), transparent 32%),
+        linear-gradient(180deg, #030a11, #010306 70%, #000);
+    }
+
+    #scene {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .screen-vignette,
+    .screen-lines {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    .screen-vignette {
+      background:
+        radial-gradient(circle at center, transparent 42%, rgba(0, 0, 0, 0.34) 76%, rgba(0, 0, 0, 0.78) 100%),
+        linear-gradient(180deg, rgba(0, 0, 0, 0.22), transparent 18%, transparent 77%, rgba(0, 0, 0, 0.64));
+      box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.7);
+    }
+
+    .screen-lines {
+      opacity: 0.13;
+      background: repeating-linear-gradient(180deg, transparent 0 3px, rgba(98, 217, 238, 0.05) 3px 4px);
+      mix-blend-mode: screen;
+    }
+
+    .hud-panel {
+      position: absolute;
+      z-index: 20;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      color: var(--text);
+      background: linear-gradient(180deg, var(--panel-strong), var(--panel));
+      box-shadow: 0 14px 35px rgba(0, 0, 0, 0.42), inset 3px 0 0 rgba(98, 217, 238, 0.05);
+      pointer-events: none;
+    }
+
+    .hud-panel::before,
+    .hud-panel::after {
+      content: "";
+      position: absolute;
+      width: 18px;
+      height: 8px;
+      border-color: rgba(98, 217, 238, 0.4);
+      pointer-events: none;
+    }
+
+    .hud-panel::before {
+      top: -1px;
+      left: -1px;
+      border-top: 1px solid;
+      border-left: 1px solid;
+    }
+
+    .hud-panel::after {
+      right: -1px;
+      bottom: -1px;
+      border-right: 1px solid;
+      border-bottom: 1px solid;
+    }
+
+    .mode-panel {
+      top: 16px;
+      left: 16px;
+      width: 344px;
+      min-height: 118px;
+      padding: 12px 14px;
+    }
+
+    .panel-kicker {
+      color: #5d7b82;
+      font: 8px var(--mono);
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    .mode-head {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr);
+      gap: 12px;
+      align-items: center;
+      margin-top: 8px;
+    }
+
+    .mode-symbol {
+      position: relative;
+      display: grid;
+      place-items: center;
+      width: 50px;
+      height: 50px;
+      border: 1px solid rgba(255, 159, 46, 0.34);
+      color: var(--orange);
+      background: rgba(255, 159, 46, 0.05);
+      box-shadow: inset 0 0 18px rgba(255, 159, 46, 0.05);
+      font: 26px var(--mono);
+      text-shadow: 0 0 10px rgba(255, 159, 46, 0.55);
+    }
+
+    .mode-title {
+      color: #effcff;
+      font: 700 17px var(--mono);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .mode-description {
+      margin-top: 4px;
+      color: #7b9ba2;
+      font: 9px/1.4 var(--mono);
+      text-transform: uppercase;
+    }
+
+    .mode-shortcuts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 13px;
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid var(--line-soft);
+      color: #6b8990;
+      font: 8px var(--mono);
+      text-transform: uppercase;
+    }
+
+    .key {
+      display: inline-block;
+      min-width: 24px;
+      margin-right: 4px;
+      padding: 2px 4px;
+      border: 1px solid rgba(98, 217, 238, 0.3);
+      color: var(--cyan);
+      background: rgba(98, 217, 238, 0.07);
+      text-align: center;
+    }
+
+    .system-banner {
+      position: absolute;
+      top: 17px;
+      left: 50%;
+      z-index: 18;
+      translate: -50% 0;
+      display: grid;
+      gap: 3px;
+      min-width: 280px;
+      padding: 7px 18px 8px;
+      border-top: 1px solid rgba(98, 217, 238, 0.25);
+      border-bottom: 1px solid rgba(98, 217, 238, 0.12);
+      color: #a9c8ce;
+      background: linear-gradient(90deg, transparent, rgba(2, 10, 14, 0.84) 18%, rgba(2, 10, 14, 0.84) 82%, transparent);
+      font: 9px var(--mono);
+      letter-spacing: 0.17em;
+      text-align: center;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+
+    .system-banner strong {
+      color: var(--cyan);
+      font-size: 10px;
+      font-weight: 400;
+    }
+
+    .lock-panel {
+      top: 16px;
+      right: 16px;
+      width: 320px;
+      max-height: calc(100vh - 180px);
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .lock-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 39px;
+      padding: 8px 11px;
+      border-bottom: 1px solid var(--line-soft);
+      background: rgba(5, 15, 21, 0.94);
+      font-family: var(--mono);
+      text-transform: uppercase;
+    }
+
+    .lock-head strong {
+      color: #e8f9fb;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+    }
+
+    .lock-count {
+      color: var(--red);
+      font-size: 8px;
+    }
+
+    .lock-list {
+      min-height: 54px;
+      overflow: auto;
+      scrollbar-color: rgba(255, 63, 85, 0.35) transparent;
+      scrollbar-width: thin;
+    }
+
+    .lock-empty {
+      padding: 16px 12px;
+      color: #526d74;
+      font: 8px/1.5 var(--mono);
+      text-align: center;
+      text-transform: uppercase;
+    }
+
+    .lock-card {
+      position: relative;
+      display: grid;
+      grid-template-columns: 35px minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      min-height: 47px;
+      padding: 6px 9px;
+      border-bottom: 1px solid rgba(255, 63, 85, 0.1);
+      background: rgba(255, 63, 85, 0.025);
+      font-family: var(--mono);
+      animation: lock-card-in 0.2s ease-out;
+    }
+
+    .lock-card::before {
+      content: "";
+      position: absolute;
+      top: 6px;
+      bottom: 6px;
+      left: 0;
+      width: 2px;
+      background: var(--red);
+      box-shadow: 0 0 8px var(--red);
+    }
+
+    .lock-index {
+      color: var(--red);
+      font-size: 11px;
+      text-align: center;
+    }
+
+    .lock-info {
+      min-width: 0;
+    }
+
+    .lock-name {
+      overflow: hidden;
+      color: #ffe7e9;
+      font-size: 9px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .lock-meta {
+      margin-top: 3px;
+      overflow: hidden;
+      color: #8f6c72;
+      font-size: 7px;
+      text-overflow: ellipsis;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .lock-type {
+      color: #c94557;
+      font-size: 7px;
+      text-transform: uppercase;
+    }
+
+    .acquisition-panel {
+      left: 50%;
+      bottom: 18px;
+      translate: -50% 0;
+      width: min(660px, calc(100vw - 370px));
+      min-width: 430px;
+      padding: 10px 13px 11px;
+    }
+
+    .acquisition-head {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      font-family: var(--mono);
+      text-transform: uppercase;
+    }
+
+    .phase-chip {
+      min-width: 76px;
+      padding: 4px 6px;
+      border: 1px solid rgba(98, 217, 238, 0.22);
+      color: #73959c;
+      background: rgba(0, 0, 0, 0.25);
+      font-size: 8px;
+      text-align: center;
+      letter-spacing: 0.08em;
+    }
+
+    .acquisition-panel[data-phase="acquiring"] .phase-chip {
+      border-color: rgba(255, 159, 46, 0.55);
+      color: var(--orange);
+      background: rgba(255, 159, 46, 0.08);
+    }
+
+    .acquisition-panel[data-phase="ready"] .phase-chip {
+      border-color: rgba(255, 208, 120, 0.7);
+      color: var(--ready);
+      background: rgba(255, 208, 120, 0.1);
+      box-shadow: 0 0 14px rgba(255, 159, 46, 0.11);
+      animation: ready-chip 0.85s ease-in-out infinite alternate;
+    }
+
+    .acq-target {
+      min-width: 0;
+      overflow: hidden;
+      color: #e5f5f7;
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .acq-percent {
+      min-width: 45px;
+      color: var(--orange);
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .acq-track {
+      position: relative;
+      height: 7px;
+      margin-top: 8px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 159, 46, 0.18);
+      background: rgba(0, 0, 0, 0.5);
+    }
+
+    .acq-track::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(90deg, transparent 0 9%, rgba(0, 0, 0, 0.42) 9% 10%);
+      pointer-events: none;
+    }
+
+    .acq-fill {
+      width: 0;
+      height: 100%;
+      background: linear-gradient(90deg, #b45c12, var(--orange));
+      box-shadow: 0 0 10px rgba(255, 159, 46, 0.55);
+      transition: width 0.08s linear;
+    }
+
+    .acquisition-panel[data-phase="ready"] .acq-fill {
+      background: linear-gradient(90deg, var(--orange), var(--ready));
+      box-shadow: 0 0 12px rgba(255, 208, 120, 0.68);
+    }
+
+    .acq-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+      font-family: var(--mono);
+    }
+
+    .metric {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .metric span {
+      color: #526e75;
+      font-size: 6px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .metric strong {
+      overflow: hidden;
+      color: #9bb9bf;
+      font-size: 8px;
+      font-weight: 400;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .metric strong.accent {
+      color: var(--orange);
+    }
+
+    .training-card {
+      position: absolute;
+      z-index: 16;
+      left: 17px;
+      bottom: 18px;
+      width: 320px;
+      padding: 9px 11px;
+      border-left: 2px solid rgba(98, 217, 238, 0.36);
+      color: #638087;
+      background: linear-gradient(90deg, rgba(3, 12, 17, 0.82), transparent);
+      font: 8px/1.55 var(--mono);
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+
+    .training-card strong {
+      color: var(--cyan);
+      font-weight: 400;
+    }
+
+    .state-legend {
+      position: absolute;
+      right: 17px;
+      bottom: 18px;
+      z-index: 16;
+      display: grid;
+      gap: 6px;
+      width: 300px;
+      padding: 8px 10px;
+      border-right: 2px solid rgba(98, 217, 238, 0.3);
+      color: #5e7b82;
+      background: linear-gradient(270deg, rgba(3, 12, 17, 0.82), transparent);
+      font: 8px var(--mono);
+      text-align: right;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+
+    .legend-row {
+      display: flex;
+      justify-content: flex-end;
+      gap: 15px;
+    }
+
+    .legend-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      margin-right: 5px;
+      border: 1px solid currentColor;
+      box-shadow: 0 0 6px currentColor;
+    }
+
+    .legend-acquire { color: var(--orange); }
+    .legend-lock { color: var(--red); }
+
+    .mode-wheel {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      z-index: 100;
+      width: 260px;
+      height: 260px;
+      translate: -50% -50%;
+      scale: 0.72;
+      opacity: 0;
+      border: 1px solid rgba(98, 217, 238, 0.25);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle, rgba(3, 11, 15, 0.96) 0 22%, transparent 23%),
+        conic-gradient(from -60deg,
+          rgba(98, 217, 238, 0.045) 0 118deg,
+          rgba(98, 217, 238, 0.13) 118deg 120deg,
+          rgba(98, 217, 238, 0.045) 120deg 238deg,
+          rgba(98, 217, 238, 0.13) 238deg 240deg,
+          rgba(98, 217, 238, 0.045) 240deg 358deg,
+          rgba(98, 217, 238, 0.13) 358deg 360deg);
+      box-shadow: 0 0 0 8px rgba(3, 10, 14, 0.38), 0 0 42px rgba(0, 0, 0, 0.8), inset 0 0 44px rgba(98, 217, 238, 0.05);
+      pointer-events: none;
+      transition: scale 0.14s ease-out, opacity 0.12s ease-out;
+    }
+
+    .mode-wheel.open {
+      scale: 1;
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .mode-wheel::before,
+    .mode-wheel::after {
+      content: "";
+      position: absolute;
+      inset: 15px;
+      border: 1px dashed rgba(98, 217, 238, 0.18);
+      border-radius: 50%;
+      animation: wheel-rotate 18s linear infinite;
+      pointer-events: none;
+    }
+
+    .mode-wheel::after {
+      inset: 57px;
+      border-style: solid;
+      animation-direction: reverse;
+      animation-duration: 12s;
+    }
+
+    .wheel-center {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      z-index: 3;
+      translate: -50% -50%;
+      display: grid;
+      place-items: center;
+      width: 54px;
+      height: 54px;
+      border: 1px solid rgba(98, 217, 238, 0.28);
+      border-radius: 50%;
+      color: #66868d;
+      background: rgba(1, 7, 10, 0.95);
+      font: 8px var(--mono);
+      letter-spacing: 0.08em;
+      text-align: center;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+
+    .wheel-item {
+      position: absolute;
+      z-index: 4;
+      display: grid;
+      grid-template-columns: 42px auto;
+      gap: 7px;
+      align-items: center;
+      min-width: 108px;
+      min-height: 48px;
+      padding: 4px 7px;
+      border: 1px solid rgba(98, 217, 238, 0.16);
+      color: #78969d;
+      background: rgba(2, 10, 14, 0.88);
+      font-family: var(--mono);
+      text-align: left;
+      text-transform: uppercase;
+      pointer-events: auto;
+    }
+
+    .wheel-item[data-wheel-mode="single"] {
+      top: 18px;
+      left: 50%;
+      translate: -50% 0;
+    }
+
+    .wheel-item[data-wheel-mode="group"] {
+      bottom: 30px;
+      left: 8px;
+    }
+
+    .wheel-item[data-wheel-mode="subsystems"] {
+      right: 8px;
+      bottom: 30px;
+    }
+
+    .wheel-item.current {
+      border-color: rgba(98, 217, 238, 0.42);
+      color: var(--cyan);
+    }
+
+    .wheel-item.hovered {
+      border-color: var(--orange);
+      color: #fff1df;
+      background: rgba(255, 159, 46, 0.13);
+      box-shadow: inset 3px 0 0 var(--orange), 0 0 16px rgba(255, 159, 46, 0.14);
+    }
+
+    .wheel-item strong {
+      display: block;
+      font-size: 9px;
+      font-weight: 400;
+    }
+
+    .wheel-item small {
+      display: block;
+      margin-top: 3px;
+      color: #557178;
+      font-size: 6px;
+    }
+
+    .wheel-glyph {
+      display: grid;
+      place-items: center;
+      width: 40px;
+      height: 36px;
+      color: currentColor;
+      font-size: 23px;
+      text-shadow: 0 0 8px currentColor;
+    }
+
+    .toast-stack {
+      position: fixed;
+      left: 50%;
+      top: 150px;
+      z-index: 120;
+      translate: -50% 0;
+      display: grid;
+      gap: 5px;
+      width: min(460px, calc(100vw - 30px));
+      pointer-events: none;
+    }
+
+    .toast {
+      justify-self: center;
+      padding: 7px 12px;
+      border: 1px solid rgba(255, 159, 46, 0.42);
+      color: #ffe8ca;
+      background: rgba(9, 13, 14, 0.94);
+      box-shadow: 0 9px 26px rgba(0, 0, 0, 0.55), inset 3px 0 0 var(--orange);
+      font: 8px var(--mono);
+      letter-spacing: 0.08em;
+      text-align: center;
+      text-transform: uppercase;
+      animation: toast-in 0.18s ease-out, toast-out 0.28s ease-in 2.18s forwards;
+    }
+
+    .toast.locked {
+      border-color: rgba(255, 63, 85, 0.52);
+      color: #ffe4e8;
+      box-shadow: 0 9px 26px rgba(0, 0, 0, 0.55), inset 3px 0 0 var(--red);
+    }
+
+    .sr-only {
+      position: absolute !important;
+      width: 1px !important;
+      height: 1px !important;
+      padding: 0 !important;
+      overflow: hidden !important;
+      clip: rect(0, 0, 0, 0) !important;
+      white-space: nowrap !important;
+      border: 0 !important;
+    }
+
+    @keyframes wheel-rotate {
+      to { rotate: 360deg; }
+    }
+
+    @keyframes ready-chip {
+      to { box-shadow: 0 0 18px rgba(255, 208, 120, 0.24); }
+    }
+
+    @keyframes lock-card-in {
+      from { translate: 12px 0; opacity: 0; }
+    }
+
+    @keyframes toast-in {
+      from { translate: 0 -8px; opacity: 0; }
+    }
+
+    @keyframes toast-out {
+      to { translate: 0 -7px; opacity: 0; }
+    }
+
+    @media (max-width: 1120px) {
+      .mode-panel { width: 286px; }
+      .mode-description { display: none; }
+      .lock-panel { width: 270px; }
+      .acquisition-panel { width: calc(100vw - 590px); min-width: 390px; }
+      .training-card, .state-legend { width: 275px; }
+    }
+
+    @media (max-width: 900px) {
+      .system-banner { display: none; }
+      .mode-panel { width: 260px; min-height: 102px; }
+      .lock-panel { width: 245px; max-height: 36vh; }
+      .mode-shortcuts span:nth-child(n+3) { display: none; }
+      .acquisition-panel { width: calc(100vw - 32px); min-width: 0; }
+      .training-card, .state-legend { display: none; }
+    }
+
+    @media (max-width: 620px) {
+      .mode-panel { right: 10px; left: 10px; width: auto; }
+      .lock-panel { display: none; }
+      .mode-head { grid-template-columns: 42px 1fr; }
+      .mode-symbol { width: 40px; height: 40px; font-size: 21px; }
+      .mode-title { font-size: 13px; }
+      .acq-metrics { grid-template-columns: repeat(2, 1fr); }
+      .toast-stack { top: 138px; }
+    }
+
+    @media (max-height: 680px) {
+      .mode-panel { min-height: 96px; padding-block: 9px; }
+      .mode-shortcuts { margin-top: 7px; padding-top: 6px; }
+      .lock-panel { max-height: 42vh; }
+      .training-card, .state-legend { font-size: 7px; }
+      .acquisition-panel { bottom: 10px; padding-block: 8px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+      }
+
+      .screen-lines { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <canvas id="scene" aria-label="Interaktywny prototyp systemu namierzania"></canvas>
+    <div class="screen-vignette" aria-hidden="true"></div>
+    <div class="screen-lines" aria-hidden="true"></div>
+
+    <section class="hud-panel mode-panel" aria-labelledby="mode-title-label">
+      <div class="panel-kicker">Atlas / Fire-control computer</div>
+      <div class="mode-head">
+        <div class="mode-symbol" id="mode-symbol" aria-hidden="true">◎</div>
+        <div>
+          <div class="mode-title" id="mode-title-label">Pojedynczy</div>
+          <div class="mode-description" id="mode-description">S/01 Punkt / jeden statek lub budowla / precyzyjna akwizycja</div>
+        </div>
+      </div>
+      <div class="mode-shortcuts">
+        <span><b class="key">ŚPM</b>koło trybów</span>
+        <span><b class="key">LPM</b>zatwierdź</span>
+        <span><b class="key">C</b>wyczyść locki</span>
+        <span><b class="key">Q</b>następny tryb</span>
+      </div>
+    </section>
+
+    <div class="system-banner"><strong>Targeting link / Atlas-01</strong><span>orange: acquiring · red: locked</span></div>
+
+    <aside class="hud-panel lock-panel" aria-labelledby="lock-panel-title">
+      <header class="lock-head">
+        <strong id="lock-panel-title">Committed targets</strong>
+        <span class="lock-count" id="lock-count">0 LOCKS</span>
+      </header>
+      <div class="lock-list" id="lock-list">
+        <div class="lock-empty">Brak potwierdzonych celów<br>utrzymaj celownik i zatwierdź LPM</div>
+      </div>
+    </aside>
+
+    <section class="hud-panel acquisition-panel" id="acquisition-panel" data-phase="idle" aria-label="Postęp namierzania">
+      <div class="acquisition-head">
+        <span class="phase-chip" id="phase-chip">SEARCH</span>
+        <span class="acq-target" id="acq-target">NO VALID TARGET</span>
+        <span class="acq-percent" id="acq-percent">0%</span>
+      </div>
+      <div class="acq-track"><div class="acq-fill" id="acq-fill"></div></div>
+      <div class="acq-metrics">
+        <div class="metric"><span>Cursor profile</span><strong class="accent" id="cursor-profile">S/01 PINPOINT</strong></div>
+        <div class="metric"><span>Signature</span><strong id="signature-value">—</strong></div>
+        <div class="metric"><span>Time to ready</span><strong id="time-value">—</strong></div>
+        <div class="metric"><span>Targets</span><strong id="target-value">0</strong></div>
+      </div>
+    </section>
+
+    <div class="training-card">
+      <strong>Scenario / Atlas vs assault wing</strong><br>
+      Chmara Viper: tryb GRUPA → nawiasy rozszerzą się automatycznie.<br>
+      Capital Ravager: tryb PODSYSTEMY → ustaw kolejność baterii.<br>
+      <span class="key">F</span> symuluje zniszczenie pierwszego podsystemu w kolejce.
+    </div>
+
+    <div class="state-legend">
+      <div>Target state language</div>
+      <div class="legend-row">
+        <span class="legend-acquire"><i class="legend-dot"></i>acquiring / ready</span>
+        <span class="legend-lock"><i class="legend-dot"></i>locked</span>
+      </div>
+    </div>
+
+    <div class="mode-wheel" id="mode-wheel" role="menu" aria-label="Wybór trybu namierzania">
+      <button type="button" class="wheel-item current" data-wheel-mode="single" role="menuitem">
+        <span class="wheel-glyph">◎</span><span><strong>Pojedynczy</strong><small>S/01</small></span>
+      </button>
+      <button type="button" class="wheel-item" data-wheel-mode="group" role="menuitem">
+        <span class="wheel-glyph">⊞</span><span><strong>Grupa</strong><small>G/02</small></span>
+      </button>
+      <button type="button" class="wheel-item" data-wheel-mode="subsystems" role="menuitem">
+        <span class="wheel-glyph">□</span><span><strong>Podsystemy</strong><small>kolejka</small></span>
+      </button>
+      <div class="wheel-center">ŚPM<br>hold</div>
+    </div>
+
+    <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+    <div class="sr-only" id="live-region" aria-live="polite"></div>
+  </div>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const $ = (selector, root = document) => root.querySelector(selector);
+      const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+      const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+      const lerp = (a, b, amount) => a + (b - a) * amount;
+      const damp = (current, target, speed, dt) => lerp(current, target, 1 - Math.exp(-speed * dt));
+      const distance = (ax, ay, bx, by) => Math.hypot(bx - ax, by - ay);
+      const TAU = Math.PI * 2;
+
+      const MODE_INFO = {
+        single: {
+          name: "POJEDYNCZY",
+          symbol: "◎",
+          profile: "S/01 PINPOINT",
+          description: "S/01 Punkt / jeden statek lub budowla / precyzyjna akwizycja"
+        },
+        group: {
+          name: "GRUPA",
+          symbol: "⊞",
+          profile: "G/02 MATRIX",
+          description: "G/02 Matryca / chmara małych jednostek / pełna grupa"
+        },
+        subsystems: {
+          name: "PODSYSTEMY",
+          symbol: "□",
+          profile: "□ SUBSYSTEM",
+          description: "Hardpointy dużej jednostki / numerowana kolejka ostrzału"
+        }
+      };
+
+      const app = $("#app");
+      const canvas = $("#scene");
+      const context = canvas.getContext("2d");
+      const modeWheel = $("#mode-wheel");
+      const acquisitionPanel = $("#acquisition-panel");
+
+      let width = window.innerWidth;
+      let height = window.innerHeight;
+      let dpr = 1;
+      let lastFrame = performance.now();
+      let audioContext = null;
+
+      const pointer = { x: width * 0.5, y: height * 0.5 };
+      const stars = Array.from({ length: 220 }, (_, index) => ({
+        x: ((index * 71.37 + 9) % 100) / 100,
+        y: ((index * 43.11 + 17) % 100) / 100,
+        z: 0.25 + ((index * 29) % 72) / 100,
+        phase: (index * 0.71) % TAU
+      }));
+
+      const fighters = [
+        [-72, -34], [-32, -49], [16, -43], [62, -23],
+        [-58, 14], [-12, 2], [39, 15], [-25, 46], [55, 48]
+      ].map((offset, index) => ({
+        id: `viper-${index + 1}`,
+        name: `VIPER ${String(index + 1).padStart(2, "0")}`,
+        kind: "fighter",
+        groupId: "viper-cloud",
+        radius: 8,
+        signatureRadius: 9,
+        offsetX: offset[0],
+        offsetY: offset[1],
+        phase: index * 0.73,
+        x: 0,
+        y: 0,
+        angle: 0,
+        destroyed: false
+      }));
+
+      const station = {
+        id: "relay-7",
+        name: "DEFENSE RELAY 7",
+        kind: "building",
+        radius: 46,
+        signatureRadius: 76,
+        x: 0,
+        y: 0,
+        angle: 0,
+        destroyed: false
+      };
+
+      const capital = {
+        id: "ravager",
+        name: "RAVAGER-CLASS CAPITAL",
+        kind: "capital",
+        radius: 92,
+        signatureRadius: 120,
+        x: 0,
+        y: 0,
+        angle: 0,
+        destroyed: false,
+        subsystems: [
+          { id: "main-battery", name: "MAIN BATTERY", type: "WEAPON", x: 58, y: 0, radius: 12, signatureRadius: 15, destroyed: false },
+          { id: "port-battery", name: "PORT BATTERY", type: "WEAPON", x: 9, y: -27, radius: 9, signatureRadius: 10, destroyed: false },
+          { id: "starboard-battery", name: "STARBOARD BATTERY", type: "WEAPON", x: 9, y: 27, radius: 9, signatureRadius: 10, destroyed: false },
+          { id: "shield-array", name: "SHIELD ARRAY", type: "SHIELD", x: -19, y: 0, radius: 13, signatureRadius: 18, destroyed: false },
+          { id: "engine-port", name: "ENGINE PORT", type: "ENGINE", x: -68, y: -18, radius: 11, signatureRadius: 16, destroyed: false },
+          { id: "engine-starboard", name: "ENGINE STARBOARD", type: "ENGINE", x: -68, y: 18, radius: 11, signatureRadius: 16, destroyed: false },
+          { id: "bridge", name: "COMMAND BRIDGE", type: "COMMAND", x: 27, y: 0, radius: 9, signatureRadius: 11, destroyed: false }
+        ]
+      };
+
+      const state = {
+        mode: "single",
+        wheel: {
+          open: false,
+          held: false,
+          sticky: false,
+          x: 0,
+          y: 0,
+          gestureX: 0,
+          gestureY: 0,
+          pointerId: null,
+          captureElement: null,
+          openedAt: 0,
+          hoverMode: null
+        },
+        single: {
+          candidate: null,
+          dwell: 0,
+          progress: new Map(),
+          readyNotified: false,
+          displayRadius: 17
+        },
+        group: {
+          active: false,
+          stableFor: 0,
+          members: fighters,
+          progress: new Map(),
+          readyNotified: false,
+          envelope: { x: pointer.x, y: pointer.y, w: 68, h: 46 },
+          targetEnvelope: { x: pointer.x, y: pointer.y, w: 68, h: 46 }
+        },
+        subsystems: {
+          candidate: null,
+          dwell: 0,
+          progress: new Map(),
+          revealUntil: 0,
+          readyNotified: false,
+          queue: []
+        },
+        locks: {
+          single: null,
+          group: new Set()
+        },
+        effects: [],
+        mute: false
+      };
+
+      function resize() {
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        width = window.innerWidth;
+        height = window.innerHeight;
+        canvas.width = Math.max(1, Math.round(width * dpr));
+        canvas.height = Math.max(1, Math.round(height * dpr));
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+        context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+
+      function acquireTime(signatureRadius) {
+        return clamp(0.7 + 2.4 * Math.exp(-signatureRadius / 40), 0.75, 2.85);
+      }
+
+      function subsystemAcquireTime(signatureRadius) {
+        return clamp(0.9 + 1.5 * Math.exp(-signatureRadius / 12), 0.95, 2.15);
+      }
+
+      function ensureAudio() {
+        if (state.mute || audioContext) return;
+        try {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        } catch {
+          audioContext = null;
+        }
+      }
+
+      function tone(frequency, duration = 0.06, type = "sine", volume = 0.025, delay = 0) {
+        if (state.mute || !audioContext) return;
+        const start = audioContext.currentTime + delay;
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        oscillator.type = type;
+        oscillator.frequency.setValueAtTime(frequency, start);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(volume, start + 0.008);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+        oscillator.connect(gain).connect(audioContext.destination);
+        oscillator.start(start);
+        oscillator.stop(start + duration + 0.01);
+      }
+
+      function readySound() {
+        tone(1120, 0.06, "triangle", 0.025);
+        tone(1560, 0.07, "triangle", 0.02, 0.055);
+      }
+
+      function lockSound() {
+        tone(430, 0.07, "sawtooth", 0.032);
+        tone(880, 0.09, "square", 0.024, 0.065);
+      }
+
+      function announce(message) {
+        $("#live-region").textContent = message;
+      }
+
+      function toast(message, locked = false) {
+        const element = document.createElement("div");
+        element.className = `toast${locked ? " locked" : ""}`;
+        element.textContent = message;
+        $("#toast-stack").appendChild(element);
+        announce(message);
+        window.setTimeout(() => element.remove(), 2550);
+      }
+
+      function updatePositions(time) {
+        const groupLane = width < 1100 ? 0.32 : 0.39;
+        const groupX = width * groupLane + Math.sin(time * 0.22) * 35;
+        const groupY = height * 0.45 + Math.sin(time * 0.31) * 18;
+        const groupAngle = Math.sin(time * 0.16) * 0.1;
+        const cos = Math.cos(groupAngle);
+        const sin = Math.sin(groupAngle);
+        for (const fighter of fighters) {
+          const wobbleX = Math.sin(time * 1.7 + fighter.phase) * 7;
+          const wobbleY = Math.cos(time * 1.35 + fighter.phase * 1.2) * 5;
+          fighter.x = groupX + fighter.offsetX * cos - fighter.offsetY * sin + wobbleX;
+          fighter.y = groupY + fighter.offsetX * sin + fighter.offsetY * cos + wobbleY;
+          fighter.angle = -0.12 + Math.sin(time * 0.7 + fighter.phase) * 0.15;
+        }
+        station.x = width * 0.18;
+        station.y = height * 0.34 + Math.sin(time * 0.18) * 5;
+        station.angle = time * 0.04;
+        const rightHudGuard = width > 1120 ? 356 : width > 620 ? 286 : 18;
+        const capitalLaneX = Math.min(width * 0.7, width - rightHudGuard - capital.radius - 22);
+        capital.x = Math.max(width * 0.54, capitalLaneX) + Math.sin(time * 0.13) * 18;
+        capital.y = height * 0.46 + Math.cos(time * 0.19) * 10;
+        capital.angle = Math.sin(time * 0.11) * 0.045;
+      }
+
+      function allTargets() {
+        return [station, capital, ...fighters];
+      }
+
+      function hitTarget(x, y) {
+        let best = null;
+        let bestScore = Infinity;
+        for (const target of allTargets()) {
+          if (target.destroyed) continue;
+          const score = distance(x, y, target.x, target.y) / (target.radius + 15);
+          if (score <= 1 && score < bestScore) {
+            best = target;
+            bestScore = score;
+          }
+        }
+        return best;
+      }
+
+      function entityIsLocked(target) {
+        return !!target && (state.locks.single?.id === target.id || state.locks.group.has(target.id));
+      }
+
+      function subsystemWorldPosition(subsystem) {
+        const cos = Math.cos(capital.angle);
+        const sin = Math.sin(capital.angle);
+        return {
+          x: capital.x + subsystem.x * cos - subsystem.y * sin,
+          y: capital.y + subsystem.x * sin + subsystem.y * cos
+        };
+      }
+
+      function queuedSubsystem(id) {
+        return state.subsystems.queue.some((subsystem) => subsystem.id === id);
+      }
+
+      function hitSubsystem(x, y) {
+        if (distance(x, y, capital.x, capital.y) > capital.radius + 38) return null;
+        let best = null;
+        let bestDistance = Infinity;
+        for (const subsystem of capital.subsystems) {
+          if (subsystem.destroyed || queuedSubsystem(subsystem.id)) continue;
+          const point = subsystemWorldPosition(subsystem);
+          const currentDistance = distance(x, y, point.x, point.y);
+          if (currentDistance <= subsystem.radius + 16 && currentDistance < bestDistance) {
+            best = subsystem;
+            bestDistance = currentDistance;
+          }
+        }
+        return best;
+      }
+
+      function decayMap(map, activeIds, dt, duration = 0.9) {
+        for (const [id, value] of map) {
+          if (activeIds.has(id)) continue;
+          const next = Math.max(0, value - dt / duration);
+          if (next <= 0) map.delete(id);
+          else map.set(id, next);
+        }
+      }
+
+      function updateSingle(dt) {
+        const single = state.single;
+        const hoveredTarget = hitTarget(pointer.x, pointer.y);
+        const candidate = entityIsLocked(hoveredTarget) ? null : hoveredTarget;
+        if (candidate !== single.candidate) {
+          single.candidate = candidate;
+          single.dwell = 0;
+          single.readyNotified = false;
+        }
+        const activeIds = new Set();
+        if (candidate) {
+          activeIds.add(candidate.id);
+          single.dwell += dt;
+          const previous = single.progress.get(candidate.id) || 0;
+          if (single.dwell >= 0.12) {
+            const next = Math.min(1, previous + dt / acquireTime(candidate.signatureRadius));
+            single.progress.set(candidate.id, next);
+            if (previous < 1 && next >= 1 && !single.readyNotified) {
+              single.readyNotified = true;
+              addEffect(candidate.x, candidate.y, candidate.radius + 14, "#ff9f2e", "s01-ready");
+              readySound();
+              toast(`${candidate.name} / READY / LPM TO LOCK`);
+            }
+          }
+          single.displayRadius = damp(single.displayRadius, candidate.radius + 13, 15, dt);
+        } else {
+          single.displayRadius = damp(single.displayRadius, 17, 12, dt);
+        }
+        decayMap(single.progress, activeIds, dt, 0.9);
+      }
+
+      function fighterBounds() {
+        let left = Infinity;
+        let top = Infinity;
+        let right = -Infinity;
+        let bottom = -Infinity;
+        for (const fighter of fighters) {
+          if (fighter.destroyed) continue;
+          left = Math.min(left, fighter.x - fighter.radius);
+          top = Math.min(top, fighter.y - fighter.radius);
+          right = Math.max(right, fighter.x + fighter.radius);
+          bottom = Math.max(bottom, fighter.y + fighter.radius);
+        }
+        return { left, top, right, bottom, x: (left + right) / 2, y: (top + bottom) / 2, w: right - left, h: bottom - top };
+      }
+
+      function pointerNearFighterGroup(bounds) {
+        let nearest = Infinity;
+        for (const fighter of fighters) {
+          if (fighter.destroyed) continue;
+          nearest = Math.min(nearest, distance(pointer.x, pointer.y, fighter.x, fighter.y));
+        }
+        const insideEnvelope = pointer.x >= bounds.left - 36 && pointer.x <= bounds.right + 36
+          && pointer.y >= bounds.top - 36 && pointer.y <= bounds.bottom + 36;
+        return nearest <= 60 || (state.group.active && insideEnvelope);
+      }
+
+      function updateGroup(dt) {
+        const group = state.group;
+        const bounds = fighterBounds();
+        const living = fighters.filter((fighter) => !fighter.destroyed);
+        const fullyLocked = living.length > 0 && living.every((fighter) => state.locks.group.has(fighter.id));
+        const active = !fullyLocked && pointerNearFighterGroup(bounds);
+        group.active = active;
+        group.stableFor = active ? group.stableFor + dt : 0;
+        if (active) {
+          group.targetEnvelope.x = bounds.x;
+          group.targetEnvelope.y = bounds.y;
+          group.targetEnvelope.w = clamp(bounds.w + 46, 88, 310);
+          group.targetEnvelope.h = clamp(bounds.h + 42, 68, 230);
+        } else {
+          group.targetEnvelope.x = pointer.x;
+          group.targetEnvelope.y = pointer.y;
+          group.targetEnvelope.w = 68;
+          group.targetEnvelope.h = 46;
+        }
+        const expanding = group.targetEnvelope.w > group.envelope.w || group.targetEnvelope.h > group.envelope.h;
+        const smoothing = expanding ? 10 : 4;
+        group.envelope.x = damp(group.envelope.x, group.targetEnvelope.x, smoothing, dt);
+        group.envelope.y = damp(group.envelope.y, group.targetEnvelope.y, smoothing, dt);
+        group.envelope.w = damp(group.envelope.w, group.targetEnvelope.w, smoothing, dt);
+        group.envelope.h = damp(group.envelope.h, group.targetEnvelope.h, smoothing, dt);
+
+        const activeIds = new Set();
+        if (active && group.stableFor >= 0.18) {
+          const groupFactor = Math.min(1.5, 1 + 0.06 * Math.max(0, living.length - 1));
+          for (const fighter of living) {
+            activeIds.add(fighter.id);
+            const previous = group.progress.get(fighter.id) || 0;
+            const next = Math.min(1, previous + dt / (acquireTime(fighter.signatureRadius) * groupFactor));
+            group.progress.set(fighter.id, next);
+          }
+          const allReady = living.length > 0 && living.every((fighter) => (group.progress.get(fighter.id) || 0) >= 1);
+          if (allReady && !group.readyNotified) {
+            group.readyNotified = true;
+              addEffect(bounds.x, bounds.y, Math.max(bounds.w, bounds.h) * 0.6, "#ff9f2e", "g02-ready");
+            readySound();
+            toast(`VIPER CLOUD / ${living.length} TARGETS READY / LPM TO LOCK`);
+          }
+          if (!allReady) group.readyNotified = false;
+        } else {
+          group.readyNotified = false;
+        }
+        decayMap(group.progress, activeIds, dt, 1.25);
+      }
+
+      function updateSubsystems(dt, now) {
+        const subsystems = state.subsystems;
+        if (distance(pointer.x, pointer.y, capital.x, capital.y) <= capital.radius + 40) {
+          subsystems.revealUntil = now + 3000;
+        }
+        const candidate = hitSubsystem(pointer.x, pointer.y);
+        if (candidate !== subsystems.candidate) {
+          subsystems.candidate = candidate;
+          subsystems.dwell = 0;
+          subsystems.readyNotified = false;
+        }
+        const activeIds = new Set();
+        if (candidate) {
+          activeIds.add(candidate.id);
+          subsystems.dwell += dt;
+          const previous = subsystems.progress.get(candidate.id) || 0;
+          if (subsystems.dwell >= 0.12) {
+            const next = Math.min(1, previous + dt / subsystemAcquireTime(candidate.signatureRadius));
+            subsystems.progress.set(candidate.id, next);
+            if (previous < 1 && next >= 1 && !subsystems.readyNotified) {
+              subsystems.readyNotified = true;
+              const point = subsystemWorldPosition(candidate);
+              addEffect(point.x, point.y, candidate.radius + 10, "#ff9f2e", "sub-ready");
+              readySound();
+              toast(`${candidate.name} / READY / LPM TO QUEUE`);
+            }
+          }
+        }
+        decayMap(subsystems.progress, activeIds, dt, 1.0);
+      }
+
+      function updateTargeting(dt, now) {
+        if (state.wheel.open) return;
+        if (state.mode === "single") updateSingle(dt);
+        else if (state.mode === "group") updateGroup(dt);
+        else updateSubsystems(dt, now);
+      }
+
+      function currentProgress(map, id) {
+        return id ? map.get(id) || 0 : 0;
+      }
+
+      function commitCurrentTarget() {
+        if (state.mode === "single") {
+          const target = state.single.candidate;
+          const progress = target ? currentProgress(state.single.progress, target.id) : 0;
+          if (!target) {
+            toast("NO VALID SINGLE TARGET");
+            return;
+          }
+          if (progress < 1) {
+            toast(`${target.name} / ACQUIRING ${Math.round(progress * 100)}%`);
+            return;
+          }
+          state.locks.single = target;
+          addEffect(target.x, target.y, target.radius + 16, "#ff3f55", "s01-lock");
+          lockSound();
+          toast(`${target.name} / LOCKED`, true);
+        } else if (state.mode === "group") {
+          const living = fighters.filter((fighter) => !fighter.destroyed);
+          const fullyLocked = living.length > 0 && living.every((fighter) => state.locks.group.has(fighter.id));
+          if (fullyLocked) {
+            toast("VIPER CLOUD / GROUP ALREADY LOCKED", true);
+            return;
+          }
+          const ready = state.group.active && living.length > 0
+            && living.every((fighter) => currentProgress(state.group.progress, fighter.id) >= 1);
+          if (!state.group.active) {
+            toast("MOVE GROUP RETICLE OVER VIPER CLOUD");
+            return;
+          }
+          if (!ready) {
+            const readyCount = living.filter((fighter) => currentProgress(state.group.progress, fighter.id) >= 1).length;
+            toast(`GROUP ACQUIRING / ${readyCount} OF ${living.length} READY`);
+            return;
+          }
+          state.locks.group = new Set(living.map((fighter) => fighter.id));
+          state.group.progress.clear();
+          state.group.active = false;
+          state.group.stableFor = 0;
+          state.group.readyNotified = false;
+          const bounds = fighterBounds();
+          for (const fighter of living) addEffect(fighter.x, fighter.y, fighter.radius + 10, "#ff3f55", "g02-lock-small");
+          addEffect(bounds.x, bounds.y, Math.max(bounds.w, bounds.h) * 0.55, "#ff3f55", "g02-lock");
+          lockSound();
+          toast(`VIPER CLOUD / ${living.length} TARGETS LOCKED`, true);
+        } else {
+          const subsystem = state.subsystems.candidate;
+          const progress = subsystem ? currentProgress(state.subsystems.progress, subsystem.id) : 0;
+          if (!subsystem) {
+            toast("SELECT A CAPITAL HARDPOINT");
+            return;
+          }
+          if (progress < 1) {
+            toast(`${subsystem.name} / ACQUIRING ${Math.round(progress * 100)}%`);
+            return;
+          }
+          if (!queuedSubsystem(subsystem.id)) state.subsystems.queue.push(subsystem);
+          const point = subsystemWorldPosition(subsystem);
+          addEffect(point.x, point.y, subsystem.radius + 11, "#ff3f55", "sub-lock");
+          lockSound();
+          toast(`${subsystem.name} / QUEUE ${state.subsystems.queue.length} / LOCKED`, true);
+          state.subsystems.candidate = null;
+          state.subsystems.dwell = 0;
+        }
+        renderLocks();
+      }
+
+      function clearPendingAcquisition() {
+        state.single.candidate = null;
+        state.single.dwell = 0;
+        state.single.progress.clear();
+        state.group.active = false;
+        state.group.stableFor = 0;
+        state.group.progress.clear();
+        state.subsystems.candidate = null;
+        state.subsystems.dwell = 0;
+        state.subsystems.progress.clear();
+      }
+
+      function clearLocks() {
+        state.locks.single = null;
+        state.locks.group.clear();
+        state.subsystems.queue.length = 0;
+        clearPendingAcquisition();
+        renderLocks();
+        toast("ALL TARGET LOCKS CLEARED");
+      }
+
+      function simulateDestroyNextSubsystem() {
+        const subsystem = state.subsystems.queue.shift();
+        if (!subsystem) {
+          toast("SUBSYSTEM QUEUE EMPTY");
+          return;
+        }
+        subsystem.destroyed = true;
+        const point = subsystemWorldPosition(subsystem);
+        addEffect(point.x, point.y, subsystem.radius + 18, "#ff9f2e", "destroy");
+        renderLocks();
+        const next = state.subsystems.queue[0];
+        toast(`${subsystem.name} DESTROYED${next ? ` / NEXT: ${next.name}` : " / QUEUE COMPLETE"}`, true);
+      }
+
+      function addEffect(x, y, radius, color, type) {
+        state.effects.push({ x, y, radius, color, type, startedAt: performance.now(), duration: type === "destroy" ? 700 : 520 });
+      }
+
+      function setMode(mode, silent = false) {
+        if (!MODE_INFO[mode] || state.mode === mode) {
+          closeWheel();
+          return;
+        }
+        state.mode = mode;
+        clearPendingAcquisition();
+        const info = MODE_INFO[mode];
+        $("#mode-title-label").textContent = info.name;
+        $("#mode-symbol").textContent = info.symbol;
+        $("#mode-description").textContent = info.description;
+        $("#cursor-profile").textContent = info.profile;
+        $$("[data-wheel-mode]").forEach((button) => button.classList.toggle("current", button.dataset.wheelMode === mode));
+        closeWheel();
+        if (!silent) toast(`TARGETING MODE / ${info.name}`);
+      }
+
+      function cycleMode() {
+        const modes = ["single", "group", "subsystems"];
+        setMode(modes[(modes.indexOf(state.mode) + 1) % modes.length]);
+      }
+
+      function openWheel(x, y, pointerId, captureElement) {
+        state.wheel.open = true;
+        state.wheel.held = true;
+        state.wheel.sticky = false;
+        state.wheel.gestureX = x;
+        state.wheel.gestureY = y;
+        state.wheel.pointerId = pointerId;
+        state.wheel.captureElement = captureElement || null;
+        try {
+          state.wheel.captureElement?.setPointerCapture?.(pointerId);
+        } catch {
+          state.wheel.captureElement = null;
+        }
+        state.wheel.x = clamp(x, 132, Math.max(132, width - 132));
+        state.wheel.y = clamp(y, 132, Math.max(132, height - 132));
+        state.wheel.openedAt = performance.now();
+        state.wheel.hoverMode = null;
+        modeWheel.style.left = `${x}px`;
+        modeWheel.style.top = `${y}px`;
+        modeWheel.classList.add("open");
+        updateWheelSelection();
+      }
+
+      function closeWheel() {
+        releaseWheelCapture();
+        state.wheel.open = false;
+        state.wheel.held = false;
+        state.wheel.sticky = false;
+        state.wheel.hoverMode = null;
+        modeWheel.classList.remove("open");
+        updateWheelSelection();
+      }
+
+      function releaseWheelCapture() {
+        const { captureElement, pointerId } = state.wheel;
+        try {
+          if (captureElement?.hasPointerCapture?.(pointerId)) captureElement.releasePointerCapture(pointerId);
+        } catch {
+          // Capture can already be released by the browser after pointerup.
+        }
+        state.wheel.pointerId = null;
+        state.wheel.captureElement = null;
+      }
+
+      function updateWheelHover() {
+        if (!state.wheel.open) return;
+        const dx = pointer.x - state.wheel.gestureX;
+        const dy = pointer.y - state.wheel.gestureY;
+        const length = Math.hypot(dx, dy);
+        if (length < 34) {
+          state.wheel.hoverMode = null;
+          updateWheelSelection();
+          return;
+        }
+        const nx = dx / length;
+        const ny = dy / length;
+        const directions = [
+          { mode: "single", x: 0, y: -1 },
+          { mode: "group", x: -0.866, y: 0.5 },
+          { mode: "subsystems", x: 0.866, y: 0.5 }
+        ];
+        let best = directions[0];
+        let bestDot = -Infinity;
+        for (const direction of directions) {
+          const dot = nx * direction.x + ny * direction.y;
+          if (dot > bestDot) {
+            best = direction;
+            bestDot = dot;
+          }
+        }
+        state.wheel.hoverMode = best.mode;
+        updateWheelSelection();
+      }
+
+      function updateWheelSelection() {
+        $$("[data-wheel-mode]").forEach((button) => {
+          button.classList.toggle("hovered", button.dataset.wheelMode === state.wheel.hoverMode);
+          button.classList.toggle("current", button.dataset.wheelMode === state.mode);
+        });
+      }
+
+      function finishWheelGesture() {
+        if (!state.wheel.open) return;
+        releaseWheelCapture();
+        const heldFor = performance.now() - state.wheel.openedAt;
+        const moved = distance(pointer.x, pointer.y, state.wheel.gestureX, state.wheel.gestureY) > 34;
+        state.wheel.held = false;
+        if ((moved || heldFor > 280) && state.wheel.hoverMode) {
+          setMode(state.wheel.hoverMode);
+        } else {
+          state.wheel.sticky = true;
+        }
+      }
+
+      function renderLocks() {
+        const entries = [];
+        if (state.locks.single && !state.locks.single.destroyed) {
+          entries.push({ index: "S", name: state.locks.single.name, meta: state.locks.single.kind, type: "SINGLE" });
+        }
+        const groupCount = Array.from(state.locks.group).filter((id) => fighters.some((fighter) => fighter.id === id && !fighter.destroyed)).length;
+        if (groupCount) entries.push({ index: "G", name: "VIPER CLOUD", meta: `${groupCount} fighter contacts`, type: "GROUP" });
+        state.subsystems.queue.forEach((subsystem, index) => {
+          entries.push({ index: String(index + 1).padStart(2, "0"), name: subsystem.name, meta: `RAVAGER / ${subsystem.type}`, type: "SUB" });
+        });
+        $("#lock-count").textContent = `${entries.length} LOCK${entries.length === 1 ? "" : "S"}`;
+        $("#lock-list").innerHTML = entries.length ? entries.map((entry) => `
+          <div class="lock-card">
+            <span class="lock-index">${entry.index}</span>
+            <span class="lock-info"><span class="lock-name">${entry.name}</span><span class="lock-meta">${entry.meta}</span></span>
+            <span class="lock-type">${entry.type}</span>
+          </div>`).join("") : '<div class="lock-empty">Brak potwierdzonych celów<br>utrzymaj celownik i zatwierdź LPM</div>';
+      }
+
+      function getAcquisitionStatus() {
+        if (state.mode === "single") {
+          const target = state.single.candidate;
+          if (!target) return { phase: "idle", label: "NO VALID SINGLE TARGET", progress: 0, signature: "—", time: "—", targets: 0 };
+          const progress = currentProgress(state.single.progress, target.id);
+          const totalTime = acquireTime(target.signatureRadius);
+          return {
+            phase: progress >= 1 ? "ready" : "acquiring",
+            label: target.name,
+            progress,
+            signature: `${target.kind.toUpperCase()} / R${target.signatureRadius}`,
+            time: progress >= 1 ? "LPM TO LOCK" : `${Math.max(0, totalTime * (1 - progress)).toFixed(1)} S`,
+            targets: 1
+          };
+        }
+        if (state.mode === "group") {
+          const living = fighters.filter((fighter) => !fighter.destroyed);
+          const fullyLocked = living.length > 0 && living.every((fighter) => state.locks.group.has(fighter.id));
+          if (fullyLocked) return { phase: "idle", label: "VIPER CLOUD / GROUP LOCKED", progress: 0, signature: `GROUP ×${living.length}`, time: "C TO CLEAR", targets: living.length };
+          if (!state.group.active) return { phase: "idle", label: "MOVE G/02 MATRIX OVER VIPER CLOUD", progress: 0, signature: "FIGHTER SWARM", time: "—", targets: 0 };
+          const values = living.map((fighter) => currentProgress(state.group.progress, fighter.id));
+          const progress = values.length ? Math.min(...values) : 0;
+          const readyCount = values.filter((value) => value >= 1).length;
+          const groupFactor = Math.min(1.5, 1 + 0.06 * Math.max(0, living.length - 1));
+          const totalTime = acquireTime(9) * groupFactor;
+          return {
+            phase: progress >= 1 ? "ready" : "acquiring",
+            label: `VIPER CLOUD / ${readyCount} OF ${living.length} READY`,
+            progress,
+            signature: `GROUP ×${living.length}`,
+            time: progress >= 1 ? "LPM TO LOCK" : `${Math.max(0, totalTime * (1 - progress)).toFixed(1)} S`,
+            targets: living.length
+          };
+        }
+        const subsystem = state.subsystems.candidate;
+        if (!subsystem) return { phase: "idle", label: "SELECT RAVAGER HARDPOINT", progress: 0, signature: "SUBSYSTEM", time: "—", targets: state.subsystems.queue.length };
+        const progress = currentProgress(state.subsystems.progress, subsystem.id);
+        const totalTime = subsystemAcquireTime(subsystem.signatureRadius);
+        return {
+          phase: progress >= 1 ? "ready" : "acquiring",
+          label: `${subsystem.name} / ${subsystem.type}`,
+          progress,
+          signature: `HARDPOINT / R${subsystem.signatureRadius}`,
+          time: progress >= 1 ? "LPM TO QUEUE" : `${Math.max(0, totalTime * (1 - progress)).toFixed(1)} S`,
+          targets: state.subsystems.queue.length + 1
+        };
+      }
+
+      function updateHud() {
+        const status = getAcquisitionStatus();
+        acquisitionPanel.dataset.phase = status.phase;
+        $("#phase-chip").textContent = status.phase === "ready" ? "READY" : status.phase === "acquiring" ? "ACQUIRING" : "SEARCH";
+        $("#acq-target").textContent = status.label;
+        $("#acq-percent").textContent = `${Math.round(status.progress * 100)}%`;
+        $("#acq-fill").style.width = `${status.progress * 100}%`;
+        $("#signature-value").textContent = status.signature;
+        $("#time-value").textContent = status.time;
+        $("#target-value").textContent = String(status.targets);
+      }
+
+      function drawBackground(time) {
+        context.clearRect(0, 0, width, height);
+        const background = context.createLinearGradient(0, 0, 0, height);
+        background.addColorStop(0, "#02070d");
+        background.addColorStop(0.62, "#061018");
+        background.addColorStop(1, "#010204");
+        context.fillStyle = background;
+        context.fillRect(0, 0, width, height);
+
+        const nebula = context.createRadialGradient(width * 0.67, height * 0.42, 0, width * 0.67, height * 0.42, width * 0.42);
+        nebula.addColorStop(0, "rgba(33, 91, 113, 0.14)");
+        nebula.addColorStop(0.45, "rgba(19, 47, 82, 0.07)");
+        nebula.addColorStop(1, "rgba(0, 0, 0, 0)");
+        context.fillStyle = nebula;
+        context.fillRect(0, 0, width, height);
+
+        for (const star of stars) {
+          const twinkle = 0.42 + star.z * 0.48 + Math.sin(time * 1.1 + star.phase) * 0.08;
+          context.fillStyle = `rgba(${150 + Math.round(star.z * 90)}, ${180 + Math.round(star.z * 65)}, 255, ${twinkle})`;
+          context.fillRect(star.x * width, star.y * height, Math.max(0.6, star.z * 1.45), Math.max(0.6, star.z * 1.45));
+        }
+
+        context.save();
+        context.strokeStyle = "rgba(98, 217, 238, 0.055)";
+        context.lineWidth = 1;
+        const grid = 82;
+        for (let x = (time * 4) % grid; x < width; x += grid) {
+          context.beginPath();
+          context.moveTo(x, 0);
+          context.lineTo(x, height);
+          context.stroke();
+        }
+        for (let y = 0; y < height; y += grid) {
+          context.beginPath();
+          context.moveTo(0, y);
+          context.lineTo(width, y);
+          context.stroke();
+        }
+        context.restore();
+      }
+
+      function drawScenarioGuides(time) {
+        context.save();
+        context.setLineDash([4, 10]);
+        context.lineDashOffset = -time * 12;
+        context.lineWidth = 1;
+        context.strokeStyle = "rgba(98, 217, 238, 0.09)";
+        const bounds = fighterBounds();
+        context.beginPath();
+        context.ellipse(bounds.x, bounds.y, bounds.w * 0.72, bounds.h * 0.82, -0.08, 0, TAU);
+        context.stroke();
+        context.beginPath();
+        context.arc(capital.x, capital.y, capital.radius + 28, 0, TAU);
+        context.stroke();
+        context.setLineDash([]);
+        context.restore();
+      }
+
+      function drawStation(time) {
+        context.save();
+        context.translate(station.x, station.y);
+        context.rotate(station.angle);
+        context.strokeStyle = "rgba(128, 177, 190, 0.66)";
+        context.fillStyle = "rgba(15, 35, 43, 0.92)";
+        context.lineWidth = 2;
+        context.shadowColor = "rgba(98, 217, 238, 0.22)";
+        context.shadowBlur = 9;
+        context.beginPath();
+        context.arc(0, 0, 30, 0, TAU);
+        context.fill();
+        context.stroke();
+        context.beginPath();
+        context.rect(-11, -11, 22, 22);
+        context.fill();
+        context.stroke();
+        for (let index = 0; index < 4; index += 1) {
+          context.rotate(Math.PI / 2);
+          context.fillRect(26, -4, 22, 8);
+          context.strokeRect(26, -4, 22, 8);
+        }
+        context.shadowBlur = 0;
+        context.restore();
+        drawTag(station.x, station.y - station.radius - 15, "DEFENSE RELAY 7", "BUILDING / LARGE SIGNATURE", "rgba(125, 176, 188, 0.75)");
+      }
+
+      function drawFighter(fighter, time) {
+        if (fighter.destroyed) return;
+        context.save();
+        context.translate(fighter.x, fighter.y);
+        context.rotate(fighter.angle);
+        context.fillStyle = "rgba(150, 176, 184, 0.82)";
+        context.strokeStyle = "rgba(196, 224, 230, 0.52)";
+        context.lineWidth = 1;
+        context.shadowColor = "rgba(98, 217, 238, 0.24)";
+        context.shadowBlur = 5;
+        context.beginPath();
+        context.moveTo(11, 0);
+        context.lineTo(-7, -6);
+        context.lineTo(-3, 0);
+        context.lineTo(-7, 6);
+        context.closePath();
+        context.fill();
+        context.stroke();
+        context.strokeStyle = `rgba(98, 217, 238, ${0.25 + Math.sin(time * 8 + fighter.phase) * 0.08})`;
+        context.beginPath();
+        context.moveTo(-6, -2);
+        context.lineTo(-12, -2);
+        context.moveTo(-6, 2);
+        context.lineTo(-12, 2);
+        context.stroke();
+        context.restore();
+      }
+
+      function drawCapital(time) {
+        context.save();
+        context.translate(capital.x, capital.y);
+        context.rotate(capital.angle);
+        context.fillStyle = "rgba(24, 40, 48, 0.96)";
+        context.strokeStyle = "rgba(133, 174, 185, 0.7)";
+        context.lineWidth = 2;
+        context.shadowColor = "rgba(98, 217, 238, 0.18)";
+        context.shadowBlur = 12;
+        context.beginPath();
+        context.moveTo(98, 0);
+        context.lineTo(67, -20);
+        context.lineTo(26, -38);
+        context.lineTo(-52, -33);
+        context.lineTo(-87, -20);
+        context.lineTo(-97, -7);
+        context.lineTo(-76, 0);
+        context.lineTo(-97, 7);
+        context.lineTo(-87, 20);
+        context.lineTo(-52, 33);
+        context.lineTo(26, 38);
+        context.lineTo(67, 20);
+        context.closePath();
+        context.fill();
+        context.stroke();
+        context.shadowBlur = 0;
+
+        context.strokeStyle = "rgba(98, 217, 238, 0.18)";
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(-72, 0);
+        context.lineTo(76, 0);
+        context.moveTo(-45, -26);
+        context.lineTo(30, -30);
+        context.moveTo(-45, 26);
+        context.lineTo(30, 30);
+        context.stroke();
+        context.fillStyle = "rgba(98, 217, 238, 0.12)";
+        context.fillRect(-30, -12, 70, 24);
+        context.fillStyle = "rgba(255, 159, 46, 0.12)";
+        context.fillRect(40, -5, 35, 10);
+
+        for (const engineY of [-18, 18]) {
+          const glow = context.createLinearGradient(-103, engineY, -74, engineY);
+          glow.addColorStop(0, "rgba(98, 217, 238, 0)");
+          glow.addColorStop(1, `rgba(98, 217, 238, ${0.38 + Math.sin(time * 7 + engineY) * 0.08})`);
+          context.fillStyle = glow;
+          context.fillRect(-116, engineY - 4, 38, 8);
+        }
+        context.restore();
+        drawTag(capital.x, capital.y - capital.radius * 0.58, "RAVAGER-CLASS CAPITAL", "CAPITAL / 7 HARDPOINTS", "rgba(125, 176, 188, 0.76)");
+      }
+
+      function drawTag(x, y, title, subtitle, color) {
+        context.save();
+        context.font = "9px Consolas";
+        context.textAlign = "center";
+        context.fillStyle = color;
+        context.fillText(title, x, y);
+        context.font = "7px Consolas";
+        context.fillStyle = "rgba(91, 126, 134, 0.72)";
+        context.fillText(subtitle, x, y + 11);
+        context.restore();
+      }
+
+      function drawFighterGroupTag() {
+        const bounds = fighterBounds();
+        drawTag(bounds.x, bounds.top - 20, "VIPER CLOUD", `${fighters.filter((fighter) => !fighter.destroyed).length} FIGHTER CONTACTS`, "rgba(125, 176, 188, 0.74)");
+      }
+
+      function drawSubsystemMarkers(now, time) {
+        const visible = state.mode === "subsystems" && (now <= state.subsystems.revealUntil || distance(pointer.x, pointer.y, capital.x, capital.y) < capital.radius + 42);
+        if (!visible && state.subsystems.queue.length === 0) return;
+        for (const subsystem of capital.subsystems) {
+          const point = subsystemWorldPosition(subsystem);
+          const queuedIndex = state.subsystems.queue.findIndex((item) => item.id === subsystem.id);
+          const candidate = state.subsystems.candidate?.id === subsystem.id;
+          if (!visible && queuedIndex < 0 && !subsystem.destroyed) continue;
+          if (subsystem.destroyed) {
+            context.save();
+            context.strokeStyle = "rgba(255, 99, 70, 0.42)";
+            context.lineWidth = 2;
+            context.beginPath();
+            context.moveTo(point.x - 6, point.y - 6);
+            context.lineTo(point.x + 6, point.y + 6);
+            context.moveTo(point.x + 6, point.y - 6);
+            context.lineTo(point.x - 6, point.y + 6);
+            context.stroke();
+            context.restore();
+            continue;
+          }
+          const color = queuedIndex >= 0 ? "#ff3f55" : candidate ? "#ff9f2e" : "rgba(98, 217, 238, 0.58)";
+          context.save();
+          context.strokeStyle = color;
+          context.fillStyle = queuedIndex >= 0 ? "rgba(255, 63, 85, 0.18)" : "rgba(2, 10, 14, 0.7)";
+          context.lineWidth = queuedIndex >= 0 || candidate ? 1.8 : 1;
+          context.shadowColor = color;
+          context.shadowBlur = candidate || queuedIndex >= 0 ? 8 : 3;
+          context.beginPath();
+          context.rect(point.x - 4, point.y - 4, 8, 8);
+          context.fill();
+          context.stroke();
+          context.shadowBlur = 0;
+          if (queuedIndex >= 0) {
+            context.fillStyle = "#ff8592";
+            context.font = "8px Consolas";
+            context.textAlign = "center";
+            context.fillText(String(queuedIndex + 1), point.x, point.y - 10);
+          }
+          if (candidate) {
+            context.font = "8px Consolas";
+            context.textAlign = "left";
+            context.fillStyle = "#ffb65c";
+            context.fillText(`${subsystem.name} / ${subsystem.type}`, point.x + 13, point.y + 3);
+          }
+          context.restore();
+        }
+      }
+
+      function drawPinpointS01(x, y, baseRadius, color, progress, locked, time, compact = false) {
+        const p = clamp(progress, 0, 1);
+        const settle = 1 - Math.pow(1 - p, 3);
+        const pulse = 1 + Math.sin(time * (locked ? 4.2 : 3.1)) * (locked ? 0.018 : 0.026);
+        const radius = Math.max(12, baseRadius) * pulse;
+        const frameX = radius * (compact ? 2.35 : 1.8) + (1 - settle) * (compact ? 5 : 22);
+        const frameY = radius * (compact ? 2.05 : 1.52) + (1 - settle) * (compact ? 4 : 18);
+        const cornerX = clamp(radius * 0.62, 9, 32);
+        const cornerY = clamp(radius * 0.55, 8, 28);
+        const cardinalGap = radius + clamp(radius * 0.18, 4, 13);
+
+        context.save();
+        context.strokeStyle = color;
+        context.fillStyle = color;
+        context.shadowColor = color;
+        context.shadowBlur = locked || p >= 1 ? 11 : 7;
+        context.lineCap = "round";
+        context.lineJoin = "round";
+
+        // S/01 outer acquisition brackets — wide at first, then settle on target.
+        context.lineWidth = locked || p >= 1 ? 2.25 : 1.75;
+        for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+          const cx = x + sx * frameX;
+          const cy = y + sy * frameY;
+          context.beginPath();
+          context.moveTo(cx, cy + sy * cornerY);
+          context.lineTo(cx, cy);
+          context.lineTo(cx + sx * cornerX, cy);
+          context.stroke();
+        }
+
+        // Long cardinal rails with a clean central gap.
+        context.lineWidth = 1.25;
+        context.beginPath();
+        context.moveTo(x, y - frameY - 14);
+        context.lineTo(x, y - cardinalGap);
+        context.moveTo(x, y + cardinalGap);
+        context.lineTo(x, y + frameY + 14);
+        context.moveTo(x - frameX - 14, y);
+        context.lineTo(x - cardinalGap, y);
+        context.moveTo(x + cardinalGap, y);
+        context.lineTo(x + frameX + 14, y);
+        context.stroke();
+
+        context.save();
+        context.globalAlpha = 0.38 + p * 0.25;
+        context.setLineDash([4, 7]);
+        context.lineDashOffset = -time * 17;
+        context.beginPath();
+        context.moveTo(x, y - frameY + 8);
+        context.lineTo(x, y - cardinalGap - 3);
+        context.moveTo(x, y + cardinalGap + 3);
+        context.lineTo(x, y + frameY - 8);
+        context.moveTo(x - frameX + 8, y);
+        context.lineTo(x - cardinalGap - 3, y);
+        context.moveTo(x + cardinalGap + 3, y);
+        context.lineTo(x + frameX - 8, y);
+        context.stroke();
+        context.restore();
+
+        // Main pulsing ring and the dotted rotating orbit from S/01.
+        context.lineWidth = locked ? 2.2 : 1.7;
+        context.globalAlpha = 0.72 + Math.sin(time * 3.1) * 0.12;
+        context.beginPath();
+        context.arc(x, y, radius, 0, TAU);
+        context.stroke();
+        context.globalAlpha = 0.42;
+        context.setLineDash([1, 7]);
+        context.lineDashOffset = -time * (locked ? 10 : 18);
+        context.beginPath();
+        context.arc(x, y, radius + clamp(radius * 0.4, 10, 34), 0, TAU);
+        context.stroke();
+        context.setLineDash([]);
+
+        // Orange/red progress ring. READY stays orange; confirmed lock stays red.
+        if (p > 0) {
+          context.globalAlpha = 1;
+          context.lineWidth = locked ? 2.8 : 2.4;
+          context.beginPath();
+          context.arc(x, y, radius + 5, -Math.PI / 2, -Math.PI / 2 + TAU * p);
+          context.stroke();
+        }
+
+        // Pinpoint core, inner brackets and animated horizontal sweep.
+        context.globalAlpha = 0.12 + Math.sin(time * 4.4) * 0.025;
+        context.beginPath();
+        context.arc(x, y, clamp(radius * 0.27, 4, 18), 0, TAU);
+        context.fill();
+        context.globalAlpha = 0.9;
+        const inner = clamp(radius * 0.5, 7, 32);
+        const innerArm = clamp(radius * 0.2, 4, 13);
+        context.lineWidth = 1.15;
+        for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+          const ix = x + sx * inner;
+          const iy = y + sy * inner;
+          context.beginPath();
+          context.moveTo(ix, iy + sy * innerArm);
+          context.lineTo(ix, iy);
+          context.lineTo(ix + sx * innerArm, iy);
+          context.stroke();
+        }
+        const sweepY = y + Math.sin(time * 2.55) * radius * 0.82;
+        const sweepGradient = context.createLinearGradient(x - radius * 1.2, 0, x + radius * 1.2, 0);
+        sweepGradient.addColorStop(0, "rgba(0,0,0,0)");
+        sweepGradient.addColorStop(0.5, color);
+        sweepGradient.addColorStop(1, "rgba(0,0,0,0)");
+        context.strokeStyle = sweepGradient;
+        context.globalAlpha = locked ? 0.34 : 0.72;
+        context.beginPath();
+        context.moveTo(x - radius * 1.18, sweepY);
+        context.lineTo(x + radius * 1.18, sweepY);
+        context.stroke();
+        context.strokeStyle = color;
+        context.globalAlpha = 1;
+        context.beginPath();
+        context.arc(x, y, locked ? 2.3 : 1.8 + Math.sin(time * 5) * 0.35, 0, TAU);
+        context.fill();
+
+        if (!compact) {
+          // Top/bottom calibration bars and the S/01 status footer.
+          context.lineWidth = 1;
+          context.globalAlpha = 0.65;
+          for (const sy of [-1, 1]) {
+            const ty = y + sy * (frameY + 17);
+            for (let index = -2; index <= 2; index += 1) {
+              const length = index % 2 === 0 ? 13 : 8;
+              const tx = x + index * 10;
+              context.beginPath();
+              context.moveTo(tx - length / 2, ty);
+              context.lineTo(tx + length / 2, ty);
+              context.stroke();
+            }
+          }
+          context.shadowBlur = 5;
+          context.font = "7px Consolas";
+          context.textAlign = "left";
+          context.fillText("S/01 PINPOINT", x - frameX, y + frameY + 30);
+          context.textAlign = "right";
+          context.fillText(locked ? "LOCKED" : `CONF ${Math.round(p * 100)}`, x + frameX, y + frameY + 30);
+        }
+        context.restore();
+      }
+
+      function drawAssemblingCorners(x, y, half, progress, color, alpha = 1) {
+        const p = clamp(progress, 0, 1);
+        const eased = 1 - Math.pow(1 - p, 3);
+        const extent = lerp(half + 25, half, eased);
+        const arm = lerp(4, half, p * p);
+        context.save();
+        context.globalAlpha = alpha * (0.42 + p * 0.58);
+        context.strokeStyle = color;
+        context.lineWidth = p >= 1 ? 2.2 : 1.7;
+        context.shadowColor = color;
+        context.shadowBlur = p >= 1 ? 11 : 6;
+        for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+          const cornerX = x + sx * extent;
+          const cornerY = y + sy * extent;
+          context.beginPath();
+          context.moveTo(cornerX, cornerY - sy * arm);
+          context.lineTo(cornerX, cornerY);
+          context.lineTo(cornerX - sx * arm, cornerY);
+          context.stroke();
+        }
+        context.restore();
+      }
+
+      function drawMatrixTargetBox(target, index, color, progress, locked, time) {
+        const p = locked ? 1 : clamp(progress, 0, 1);
+        const settle = 1 - Math.pow(1 - p, 3);
+        const halfX = target.radius + lerp(19, 9, settle);
+        const halfY = target.radius + lerp(15, 8, settle);
+        const armX = lerp(4, halfX * 0.48, p * p);
+        const armY = lerp(4, halfY * 0.48, p * p);
+        context.save();
+        context.strokeStyle = color;
+        context.fillStyle = locked ? "rgba(255,63,85,0.08)" : "rgba(255,159,46,0.07)";
+        context.shadowColor = color;
+        context.shadowBlur = locked || p >= 1 ? 9 : 5;
+        context.lineWidth = locked || p >= 1 ? 1.8 : 1.25;
+        context.globalAlpha = 0.42 + p * 0.58;
+        context.fillRect(target.x - halfX, target.y - halfY, halfX * 2, halfY * 2);
+        for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+          const cx = target.x + sx * halfX;
+          const cy = target.y + sy * halfY;
+          context.beginPath();
+          context.moveTo(cx, cy + sy * armY);
+          context.lineTo(cx, cy);
+          context.lineTo(cx + sx * armX, cy);
+          context.stroke();
+        }
+        context.globalAlpha = 0.78 + Math.sin(time * 4.3 + index) * 0.16;
+        context.beginPath();
+        context.arc(target.x, target.y, 1.8, 0, TAU);
+        context.fill();
+        context.globalAlpha = 0.78;
+        context.shadowBlur = 4;
+        context.font = "7px Consolas";
+        context.textAlign = "left";
+        context.fillText(String(index + 1).padStart(2, "0"), target.x - halfX + 2, target.y - halfY - 5);
+        if (!locked && p > 0) {
+          context.lineWidth = 1.4;
+          context.beginPath();
+          context.moveTo(target.x - halfX, target.y + halfY + 3);
+          context.lineTo(target.x - halfX + halfX * 2 * p, target.y + halfY + 3);
+          context.stroke();
+        }
+        context.restore();
+      }
+
+      function drawGroupMatrixG02(cx, cy, fullWidth, fullHeight, color, progress, locked, time, members, progressMap = null) {
+        const p = locked ? 1 : clamp(progress, 0, 1);
+        const settle = 1 - Math.pow(1 - p, 3);
+        const compact = members.length === 0;
+        const widthScale = 1 + (1 - settle) * (compact ? 0.03 : 0.08);
+        const heightScale = 1 + (1 - settle) * (compact ? 0.03 : 0.1);
+        const matrixW = Math.max(compact ? 70 : 104, fullWidth * widthScale);
+        const matrixH = Math.max(compact ? 50 : 76, fullHeight * heightScale);
+        const left = cx - matrixW / 2;
+        const right = cx + matrixW / 2;
+        const top = cy - matrixH / 2;
+        const bottom = cy + matrixH / 2;
+        const cornerX = clamp(matrixW * 0.14, 12, 42);
+        const cornerY = clamp(matrixH * 0.18, 11, 34);
+        const orbitOuter = Math.max(12, Math.min(matrixW, matrixH) * 0.33);
+        const orbitInner = orbitOuter * 0.76;
+
+        context.save();
+        context.strokeStyle = color;
+        context.fillStyle = color;
+        context.shadowColor = color;
+        context.shadowBlur = locked || p >= 1 ? 11 : 7;
+        context.lineJoin = "round";
+        context.lineCap = "round";
+
+        // G/02 four large matrix corners.
+        context.lineWidth = locked || p >= 1 ? 2.35 : 1.75;
+        context.beginPath();
+        context.moveTo(left, top + cornerY);
+        context.lineTo(left, top);
+        context.lineTo(left + cornerX, top);
+        context.moveTo(right - cornerX, top);
+        context.lineTo(right, top);
+        context.lineTo(right, top + cornerY);
+        context.moveTo(left, bottom - cornerY);
+        context.lineTo(left, bottom);
+        context.lineTo(left + cornerX, bottom);
+        context.moveTo(right - cornerX, bottom);
+        context.lineTo(right, bottom);
+        context.lineTo(right, bottom - cornerY);
+        context.stroke();
+
+        // Dashed matrix boundary and central axes.
+        context.save();
+        context.globalAlpha = 0.3 + p * 0.38;
+        context.lineWidth = 1;
+        context.setLineDash([5, 7]);
+        context.lineDashOffset = -time * (locked ? 10 : 21);
+        context.strokeRect(left + 9, top + 9, matrixW - 18, matrixH - 18);
+        context.restore();
+        context.globalAlpha = 0.5;
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(left + 18, cy);
+        context.lineTo(right - 18, cy);
+        context.moveTo(cx, top + 16);
+        context.lineTo(cx, bottom - 16);
+        context.stroke();
+
+        // Two counter-running matrix orbits.
+        context.save();
+        context.globalAlpha = 0.28 + p * 0.18;
+        context.lineWidth = 1;
+        context.setLineDash([1, 7]);
+        context.lineDashOffset = -time * 9;
+        context.beginPath();
+        context.arc(cx, cy, orbitOuter, 0, TAU);
+        context.stroke();
+        context.setLineDash([5, 8]);
+        context.lineDashOffset = time * 12;
+        context.beginPath();
+        context.arc(cx, cy, orbitInner, 0, TAU);
+        context.stroke();
+        context.restore();
+
+        if (!compact) {
+          // Matrix scale marks on both sides.
+          context.globalAlpha = 0.5;
+          context.lineWidth = 1;
+          const tickCount = 7;
+          for (let index = 0; index < tickCount; index += 1) {
+            const ty = top + 20 + (matrixH - 40) * (index / (tickCount - 1));
+            const tick = index % 2 === 0 ? 14 : 8;
+            context.beginPath();
+            context.moveTo(left - 9, ty);
+            context.lineTo(left - 9 + tick, ty);
+            context.moveTo(right + 9, ty);
+            context.lineTo(right + 9 - tick, ty);
+            context.stroke();
+          }
+
+          members.forEach((target, index) => {
+            const targetProgress = locked ? 1 : progressMap ? currentProgress(progressMap, target.id) : p;
+            drawMatrixTargetBox(target, index, color, targetProgress, locked, time);
+          });
+
+          context.globalAlpha = 0.7;
+          context.shadowBlur = 5;
+          context.font = "7px Consolas";
+          context.textAlign = "left";
+          context.fillText("G/02 MATRIX / CLOUD", left, bottom + 22);
+          context.textAlign = "right";
+          context.fillText(locked ? `TRACKS ${members.length} / LOCKED` : `TRACKS ${members.length} / CONF ${Math.round(p * 100)}`, right, bottom + 22);
+        }
+        context.restore();
+      }
+
+      function drawSquareCursor(x, y, half, color, progress = 0) {
+        context.save();
+        context.strokeStyle = color;
+        context.lineWidth = 1.8;
+        context.shadowColor = color;
+        context.shadowBlur = 7;
+        const arm = Math.max(5, half * 0.48);
+        for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+          const cx = x + sx * half;
+          const cy = y + sy * half;
+          context.beginPath();
+          context.moveTo(cx, cy - sy * arm);
+          context.lineTo(cx, cy);
+          context.lineTo(cx - sx * arm, cy);
+          context.stroke();
+        }
+        if (progress > 0) {
+          context.strokeStyle = color;
+          context.lineWidth = 2.5;
+          context.beginPath();
+          context.rect(x - half - 5, y - half - 5, (half + 5) * 2 * progress, (half + 5) * 2);
+          context.stroke();
+        }
+        context.restore();
+      }
+
+      function drawLockedOverlays(time) {
+        if (state.locks.single && !state.locks.single.destroyed) {
+          const target = state.locks.single;
+          drawPinpointS01(target.x, target.y, target.radius + 13, "#ff3f55", 1, true, time, false);
+        }
+        if (state.locks.group.size) {
+          const bounds = fighterBounds();
+          const members = fighters.filter((fighter) => !fighter.destroyed && state.locks.group.has(fighter.id));
+          drawGroupMatrixG02(bounds.x, bounds.y, bounds.w + 46, bounds.h + 42, "#ff3f55", 1, true, time, members);
+        }
+        state.subsystems.queue.forEach((subsystem, index) => {
+          if (subsystem.destroyed) return;
+          const point = subsystemWorldPosition(subsystem);
+          drawSquareCursor(point.x, point.y, subsystem.radius + 7 + Math.sin(time * 6 + index), "#ff3f55", 0);
+        });
+      }
+
+      function labelAt(x, y, text, color) {
+        context.save();
+        context.font = "8px Consolas";
+        context.textAlign = "center";
+        context.fillStyle = color;
+        context.shadowColor = color;
+        context.shadowBlur = 6;
+        context.fillText(text, x, y);
+        context.restore();
+      }
+
+      function drawAcquisition(time) {
+        if (state.wheel.open) return;
+        if (state.mode === "single") {
+          const target = state.single.candidate;
+          if (target) {
+            const progress = currentProgress(state.single.progress, target.id);
+            drawPinpointS01(target.x, target.y, state.single.displayRadius, "#ff9f2e", progress, false, time, false);
+            const labelOffset = state.single.displayRadius * 1.55 + 42;
+            labelAt(target.x, target.y + labelOffset, progress >= 1 ? "READY / LPM" : `ACQUIRING ${Math.round(progress * 100)}%`, "#ff9f2e");
+          } else {
+            drawPinpointS01(pointer.x, pointer.y, state.single.displayRadius, "#ff9f2e", 0, false, time, true);
+          }
+        } else if (state.mode === "group") {
+          const group = state.group;
+          const color = "#ff9f2e";
+          const members = group.active ? fighters.filter((fighter) => !fighter.destroyed && !state.locks.group.has(fighter.id)) : [];
+          const values = members.map((fighter) => currentProgress(group.progress, fighter.id));
+          const matrixProgress = values.length ? Math.min(...values) : 0;
+          drawGroupMatrixG02(group.envelope.x, group.envelope.y, group.envelope.w, group.envelope.h, color, matrixProgress, false, time, members, group.progress);
+        } else {
+          const subsystem = state.subsystems.candidate;
+          if (subsystem) {
+            const point = subsystemWorldPosition(subsystem);
+            const progress = currentProgress(state.subsystems.progress, subsystem.id);
+            drawAssemblingCorners(point.x, point.y, subsystem.radius + 7, progress, "#ff9f2e", 1);
+            drawSquareCursor(point.x, point.y, subsystem.radius + 7, "#ff9f2e", progress);
+            labelAt(point.x, point.y + subsystem.radius + 25, progress >= 1 ? "READY / LPM TO QUEUE" : `ACQUIRING ${Math.round(progress * 100)}%`, "#ff9f2e");
+          } else {
+            drawSquareCursor(pointer.x, pointer.y, 14, "#ff9f2e", 0);
+          }
+        }
+      }
+
+      function drawEffects(now) {
+        state.effects = state.effects.filter((effect) => now - effect.startedAt < effect.duration);
+        for (const effect of state.effects) {
+          const progress = clamp((now - effect.startedAt) / effect.duration, 0, 1);
+          const eased = 1 - Math.pow(1 - progress, 3);
+          const alpha = 1 - progress;
+          context.save();
+          context.globalAlpha = alpha;
+          context.strokeStyle = effect.color;
+          context.lineWidth = 2;
+          context.shadowColor = effect.color;
+          context.shadowBlur = 12;
+          if (effect.type === "destroy") {
+            context.beginPath();
+            context.arc(effect.x, effect.y, effect.radius * (0.7 + eased * 1.7), 0, TAU);
+            context.stroke();
+            for (let index = 0; index < 8; index += 1) {
+              const angle = index * TAU / 8;
+              context.beginPath();
+              context.moveTo(effect.x + Math.cos(angle) * effect.radius * 0.5, effect.y + Math.sin(angle) * effect.radius * 0.5);
+              context.lineTo(effect.x + Math.cos(angle) * effect.radius * (0.7 + eased * 1.5), effect.y + Math.sin(angle) * effect.radius * (0.7 + eased * 1.5));
+              context.stroke();
+            }
+          } else if (effect.type.startsWith("s01-")) {
+            // S/01 confirmation echo: concentric pinpoint rings and cardinal rails.
+            const ring = effect.radius * (0.75 + eased * 1.35);
+            context.beginPath();
+            context.arc(effect.x, effect.y, ring, 0, TAU);
+            context.stroke();
+            context.globalAlpha = alpha * 0.55;
+            context.setLineDash([1, 7]);
+            context.lineDashOffset = -progress * 30;
+            context.beginPath();
+            context.arc(effect.x, effect.y, ring * 1.28, 0, TAU);
+            context.stroke();
+            context.setLineDash([]);
+            context.globalAlpha = alpha;
+            const inner = ring * 0.72;
+            const outer = ring * 1.55;
+            for (let index = 0; index < 4; index += 1) {
+              const angle = index * Math.PI / 2;
+              context.beginPath();
+              context.moveTo(effect.x + Math.cos(angle) * inner, effect.y + Math.sin(angle) * inner);
+              context.lineTo(effect.x + Math.cos(angle) * outer, effect.y + Math.sin(angle) * outer);
+              context.stroke();
+            }
+          } else if (effect.type.startsWith("g02-")) {
+            // G/02 confirmation echo: expanding matrix frame, never a circular pulse.
+            const halfX = effect.radius * (1.25 - eased * 0.22);
+            const halfY = halfX * 0.64;
+            const armX = halfX * 0.28;
+            const armY = halfY * 0.34;
+            for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+              const cx = effect.x + sx * halfX;
+              const cy = effect.y + sy * halfY;
+              context.beginPath();
+              context.moveTo(cx, cy + sy * armY);
+              context.lineTo(cx, cy);
+              context.lineTo(cx + sx * armX, cy);
+              context.stroke();
+            }
+            context.globalAlpha = alpha * 0.45;
+            context.setLineDash([4, 7]);
+            context.lineDashOffset = -progress * 28;
+            context.strokeRect(effect.x - halfX * 0.82, effect.y - halfY * 0.82, halfX * 1.64, halfY * 1.64);
+            context.setLineDash([]);
+            context.beginPath();
+            context.moveTo(effect.x - halfX * 0.72, effect.y);
+            context.lineTo(effect.x + halfX * 0.72, effect.y);
+            context.moveTo(effect.x, effect.y - halfY * 0.72);
+            context.lineTo(effect.x, effect.y + halfY * 0.72);
+            context.stroke();
+          } else {
+            context.beginPath();
+            context.arc(effect.x, effect.y, effect.radius * (0.7 + eased * 1.7), 0, TAU);
+            context.stroke();
+            drawAssemblingCorners(effect.x, effect.y, effect.radius * (1.8 - eased * 0.8), 1, effect.color, 1 - progress);
+          }
+          context.restore();
+        }
+      }
+
+      function drawPlayerFrame(time) {
+        const centerX = width * 0.5;
+        const bottom = height + 2;
+        context.save();
+        context.globalAlpha = 0.5;
+        context.strokeStyle = "rgba(98, 217, 238, 0.18)";
+        context.fillStyle = "rgba(5, 13, 18, 0.8)";
+        context.lineWidth = 1.5;
+        context.beginPath();
+        context.moveTo(centerX - 105, bottom);
+        context.lineTo(centerX - 54, bottom - 43);
+        context.lineTo(centerX - 18, bottom - 58);
+        context.lineTo(centerX, bottom - 72);
+        context.lineTo(centerX + 18, bottom - 58);
+        context.lineTo(centerX + 54, bottom - 43);
+        context.lineTo(centerX + 105, bottom);
+        context.closePath();
+        context.fill();
+        context.stroke();
+        context.strokeStyle = `rgba(98, 217, 238, ${0.22 + Math.sin(time * 3) * 0.04})`;
+        context.beginPath();
+        context.moveTo(centerX, bottom - 72);
+        context.lineTo(centerX, bottom - 48);
+        context.stroke();
+        context.restore();
+      }
+
+      function render(now) {
+        const time = now / 1000;
+        drawBackground(time);
+        drawScenarioGuides(time);
+        drawStation(time);
+        for (const fighter of fighters) drawFighter(fighter, time);
+        drawCapital(time);
+        drawFighterGroupTag();
+        drawSubsystemMarkers(now, time);
+        drawLockedOverlays(time);
+        drawAcquisition(time);
+        drawEffects(now);
+        drawPlayerFrame(time);
+      }
+
+      function frame(now) {
+        const dt = Math.min(0.033, Math.max(0, (now - lastFrame) / 1000));
+        lastFrame = now;
+        updatePositions(now / 1000);
+        updateTargeting(dt, now);
+        updateHud();
+        render(now);
+        requestAnimationFrame(frame);
+      }
+
+      function bindEvents() {
+        window.addEventListener("resize", resize);
+        window.addEventListener("contextmenu", (event) => event.preventDefault());
+        window.addEventListener("auxclick", (event) => {
+          if (event.button === 1) event.preventDefault();
+        });
+        window.addEventListener("pointermove", (event) => {
+          pointer.x = event.clientX;
+          pointer.y = event.clientY;
+          if (state.wheel.open) updateWheelHover();
+        });
+        window.addEventListener("pointerdown", (event) => {
+          ensureAudio();
+          if (event.button === 1) {
+            event.preventDefault();
+            pointer.x = event.clientX;
+            pointer.y = event.clientY;
+            openWheel(event.clientX, event.clientY, event.pointerId, event.target);
+            return;
+          }
+          if (event.button !== 0) return;
+          if (state.wheel.open) {
+            const button = event.target.closest?.("[data-wheel-mode]");
+            const mode = button?.dataset.wheelMode || state.wheel.hoverMode;
+            if (mode) setMode(mode);
+            return;
+          }
+          commitCurrentTarget();
+        });
+        window.addEventListener("pointerup", (event) => {
+          if (event.button === 1) {
+            event.preventDefault();
+            pointer.x = event.clientX;
+            pointer.y = event.clientY;
+            updateWheelHover();
+            finishWheelGesture();
+          }
+        });
+        window.addEventListener("pointercancel", closeWheel);
+        window.addEventListener("blur", closeWheel);
+        window.addEventListener("keydown", (event) => {
+          if (event.repeat) return;
+          const key = event.key.toLowerCase();
+          if (key === "q") cycleMode();
+          else if (key === "1") setMode("single");
+          else if (key === "2") setMode("group");
+          else if (key === "3") setMode("subsystems");
+          else if (key === "c") clearLocks();
+          else if (key === "f") simulateDestroyNextSubsystem();
+          else if (key === "m") {
+            state.mute = !state.mute;
+            toast(`TARGETING SFX ${state.mute ? "OFF" : "ON"}`);
+          } else if (event.key === "Escape") {
+            if (state.wheel.open) closeWheel();
+            else {
+              clearPendingAcquisition();
+              toast("PENDING ACQUISITION CANCELLED");
+            }
+          }
+        });
+      }
+
+      resize();
+      updatePositions(performance.now() / 1000);
+      bindEvents();
+      renderLocks();
+      updateHud();
+      requestAnimationFrame(frame);
+      window.setTimeout(() => toast("ŚPM / HOLD AND MOVE / SELECT TARGETING MODE"), 500);
+    })();
+  </script>
+</body>
+</html>

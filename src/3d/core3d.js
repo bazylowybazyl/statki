@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { BLOOM_DEFAULTS } from './bloomConfig.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { Shockwave3DManager } from '../effects3d/shockwave3D.js';
 
@@ -10,6 +11,7 @@ const MAX_HEAT_HAZE_SOURCES = 24;
 const PLANET_RENDER_LAYER = 3;
 const OCCLUSION_RENDER_LAYER = 4;
 const PLANET_HALO_RENDER_LAYER = 5;
+const RING_PLANET_RENDER_LAYER = 6;
 
 function createShadowShaftsShader() {
   return {
@@ -127,7 +129,9 @@ const UberPostShader = {
     uTime: { value: 0 },
     uSourceCount: { value: 0 },
     uGlobalStrength: { value: 1.0 },
-    uHeatSources: { value: Array.from({ length: MAX_HEAT_HAZE_SOURCES }, () => new THREE.Vector4(2, 2, 0, 0)) }
+    uAspect: { value: 1.0 },
+    uHeatSources: { value: Array.from({ length: MAX_HEAT_HAZE_SOURCES }, () => new THREE.Vector4(2, 2, 0, 0)) },
+    uHeatDirs: { value: Array.from({ length: MAX_HEAT_HAZE_SOURCES }, () => new THREE.Vector2(0, 0)) }
   },
   vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: `
@@ -146,8 +150,10 @@ const UberPostShader = {
     uniform float uTime;
     uniform int uSourceCount;
     uniform float uGlobalStrength;
+    uniform float uAspect;
     uniform vec4 uHeatSources[${MAX_HEAT_HAZE_SOURCES}];
-    
+    uniform vec2 uHeatDirs[${MAX_HEAT_HAZE_SOURCES}];
+
     float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
     float noise(vec2 p) { vec2 i = floor(p); vec2 f = fract(p); float a = hash12(i); float b = hash12(i + vec2(1.0, 0.0)); float c = hash12(i + vec2(0.0, 1.0)); float d = hash12(i + vec2(1.0, 1.0)); vec2 u = f * f * (3.0 - 2.0 * f); return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y; }
     #endif
@@ -155,34 +161,58 @@ const UberPostShader = {
     void main() {
       vec2 uv = vUv;
       vec2 distortion = vec2(0.0);
-      
+
       #ifdef HEAT_HAZE
-      float globalNoise = noise(vec2(uv.x * 150.0 + uTime * 4.0, uv.y * 120.0 - uTime * 3.0));
+      // Przestrzen skorygowana aspektem: dystanse izotropowe na ekranie
+      // (radius zrodla jest w jednostkach osi v).
+      vec2 asp = vec2(uAspect, 1.0);
 
       for (int i = 0; i < ${MAX_HEAT_HAZE_SOURCES}; i++) {
         if (i >= uSourceCount) break;
         vec4 src = uHeatSources[i];
-        vec2 toUv = uv - src.xy;
-        float dist = length(toUv);
         float radius = max(0.0001, src.z);
-        
-        if (dist >= radius) continue;
-        
-        float t = clamp(dist / radius, 0.0, 1.0);
-        float rim = smoothstep(1.0, 0.15, t);
-        float centerSuppress = smoothstep(0.03, 0.22, t);
-        float amp = src.w * rim * centerSuppress * uGlobalStrength;
-        
-        vec2 dir = (dist > 0.00001) ? (toUv / dist) : vec2(0.0, 1.0);
-        vec2 perp = vec2(-dir.y, dir.x);
-        
-        float n = fract(globalNoise + float(i) * 0.618);
-        float wave = sin((t * 18.0) - (uTime * 10.0) + float(i) * 1.31);
-        
-        vec2 local = dir * ((n - 0.5) * 0.0018) + perp * (wave * 0.0012);
-        distortion += local * amp;
+        vec2 p = (uv - src.xy) * asp;
+
+        float maxExt = radius * 3.4;
+        if (abs(p.x) > maxExt || abs(p.y) > maxExt) continue;
+
+        // dir = kierunek wydechu w przestrzeni ekranu; (0,0) => zrodlo izotropowe
+        // (eksplozje). Dla dyszy haze wydluza sie w stozek wzdluz osi.
+        vec2 dir = uHeatDirs[i];
+        float hasDir = step(0.25, dot(dir, dir));
+        vec2 axis = mix(vec2(0.0, 1.0), dir, hasDir);
+        vec2 perpAxis = vec2(-axis.y, axis.x);
+
+        float along = dot(p, axis);
+        float across = dot(p, perpAxis);
+
+        float downLen = radius * mix(1.0, 3.2, hasDir);
+        float upLen = radius * mix(1.0, 0.55, hasDir);
+        float tAlong = clamp(along / downLen, 0.0, 1.0);
+        float halfWidth = radius * mix(1.0, mix(0.55, 1.25, tAlong), hasDir);
+
+        vec2 q = vec2(along / (along >= 0.0 ? downLen : upLen), across / max(0.0001, halfWidth));
+        float t = length(q);
+        if (t >= 1.0) continue;
+
+        // Drobny szum adwektowany w dol smugi (uklad lokalny dyszy),
+        // dwie niezalezne skladowe zamiast pierscieni sin() i szwow fract().
+        vec2 nc = vec2(across, along) * (3.0 / radius);
+        nc.y -= uTime * mix(2.2, 9.5, hasDir);
+        nc.x += float(i) * 5.19;
+        float n1 = noise(nc) * 0.65 + noise(nc * 2.17 + 11.3) * 0.35;
+        float n2 = noise(nc * 1.31 + vec2(5.2, 8.7)) * 0.65 + noise(nc * 2.9 + vec2(1.7, 9.2)) * 0.35;
+        vec2 wob = vec2(n1, n2) - 0.5;
+
+        float fall = smoothstep(1.0, 0.15, t) * smoothstep(0.0, 0.1, t);
+        float ampl = src.w * fall * uGlobalStrength;
+
+        // "Kop" tylko dla dysz; izotropowe eksplozje zostaja przy bazowej sile.
+        float punch = mix(1.0, 3.0, hasDir);
+        vec2 disp = (perpAxis * (wob.x * 1.4) + axis * (wob.y * 0.6)) * (0.0035 * punch * ampl);
+        distortion += disp / asp;
       }
-      distortion = clamp(distortion, vec2(-0.008), vec2(0.008));
+      distortion = clamp(distortion, vec2(-0.022), vec2(0.022));
       #endif
       
       vec4 sceneColor = texture2D(tDiffuse, uv + distortion);
@@ -302,13 +332,13 @@ export const Core3D = {
   occlusionBlurScene: null, occlusionBlurCamera: null, occlusionBlurQuad: null,
   occlusionBlurMatH: null, occlusionBlurMatV: null,
 
-  renderPassBg: null, renderPassPlanets: null, planetHaloPass: null, renderPassOrtho: null, renderPassFg: null,
-  heatHazeSources: null, heatHazeCount: 0, heatHazeMaxSources: MAX_HEAT_HAZE_SOURCES, _heatHazeWorldScratch: new THREE.Vector3(),
+  renderPassBg: null, renderPassPlanets: null, planetHaloPass: null, renderPassRingPlanets: null, renderPassOrtho: null, renderPassFg: null,
+  heatHazeSources: null, heatHazeDirs: null, heatHazeCount: 0, heatHazeMaxSources: MAX_HEAT_HAZE_SOURCES, _heatHazeWorldScratch: new THREE.Vector3(),
   shadowShaftsPass: null,
   uberPass: null,
-  bloomPass: null, bloomResolutionScale: 0.75, bloomBaseStrength: 1.0, bloomBaseThreshold: 0.0,
+  bloomPass: null, bloomResolutionScale: BLOOM_DEFAULTS.resolutionScale, bloomBaseStrength: BLOOM_DEFAULTS.strength, bloomBaseThreshold: BLOOM_DEFAULTS.threshold,
   msaaSamples: 0,
-  perfToggles: { bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, fgBuildings: true, fgStations: true, fgWeapons: true, fgShadows: true, enginePointLights: true },
+  perfToggles: { bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, fgBuildings: true, fgStations: true, fgWeapons: true, fgShadows: true, enginePointLights: false },
   _passTogglesDirty: true,
   pixelRatio: 1, width: 0, height: 0, isInitialized: false,
   _clearColorScratch: new THREE.Color(),
@@ -320,7 +350,7 @@ export const Core3D = {
   _getBloomConfig() {
     const bloom = (typeof window !== 'undefined' && window.DevVFX?.bloom) ? window.DevVFX.bloom : null;
     const strength = Number.isFinite(Number(bloom?.strength)) ? Number(bloom.strength) : this.bloomBaseStrength;
-    const radius = Number.isFinite(Number(bloom?.radius)) ? Number(bloom.radius) : 0.18;
+    const radius = Number.isFinite(Number(bloom?.radius)) ? Number(bloom.radius) : BLOOM_DEFAULTS.radius;
     const threshold = Number.isFinite(Number(bloom?.threshold)) ? Number(bloom.threshold) : this.bloomBaseThreshold;
     const resolutionScale = Number.isFinite(Number(bloom?.resolutionScale))
       ? Number(bloom.resolutionScale)
@@ -422,6 +452,7 @@ export const Core3D = {
     this._wrapRenderInfoPass(this.renderPassBg, 'bg');
     this._wrapRenderInfoPass(this.renderPassPlanets, 'planets');
     this._wrapRenderInfoPass(this.planetHaloPass, 'planets');
+    this._wrapRenderInfoPass(this.renderPassRingPlanets, 'planets');
     this._wrapRenderInfoPass(this.shadowShaftsPass, 'shafts');
     this._wrapRenderInfoPass(this.renderPassOrtho, 'ortho');
     this._wrapRenderInfoPass(this.renderPassFg, 'fg');
@@ -564,12 +595,15 @@ export const Core3D = {
     this.renderPassPlanets = new RenderPass(this.scene, this.cameraPersp);
     makeSplitScreenRenderPass(this.renderPassPlanets, PLANET_RENDER_LAYER, false, false);
     this.planetHaloPass = new ShaderPass(createPlanetHaloCompositeShader());
+    this.renderPassRingPlanets = new RenderPass(this.scene, this.cameraOrtho);
+    makeSplitScreenRenderPass(this.renderPassRingPlanets, RING_PLANET_RENDER_LAYER, true, false);
     this.renderPassOrtho = new RenderPass(this.scene, this.cameraOrtho);
     makeSplitScreenRenderPass(this.renderPassOrtho, 0, true, false);
     this.renderPassFg = new RenderPass(this.scene, this.cameraPersp);
     makeSplitScreenRenderPass(this.renderPassFg, 2, false, false);
 
     this.heatHazeSources = new Float32Array(this.heatHazeMaxSources * 4);
+    this.heatHazeDirs = new Float32Array(this.heatHazeMaxSources * 2);
     this.composer.addPass(this.renderPassBg);
     this.composer.addPass(this.renderPassPlanets);
     this.composer.addPass(this.planetHaloPass);
@@ -577,6 +611,11 @@ export const Core3D = {
     this.shadowShaftsPass = new ShaderPass(createShadowShaftsShader());
     this.composer.addPass(this.shadowShaftsPass);
 
+    // Earth and Mars use an orthographic planet pass so their projected centre
+    // and radius stay locked to the gameplay ring at every zoom level. The pass
+    // still renders the real sphere/cloud/atmosphere meshes; only parallax is
+    // removed. Later world/foreground passes clear depth and draw over the globe.
+    this.composer.addPass(this.renderPassRingPlanets);
     this.composer.addPass(this.renderPassOrtho);
     this.composer.addPass(this.renderPassFg);
 
@@ -635,6 +674,7 @@ export const Core3D = {
     if (this.renderPassBg) this.renderPassBg.enabled = t.bgPass !== false;
     if (this.renderPassPlanets) this.renderPassPlanets.enabled = t.planetPass !== false;
     if (this.planetHaloPass) this.planetHaloPass.enabled = t.planetPass !== false;
+    if (this.renderPassRingPlanets) this.renderPassRingPlanets.enabled = t.planetPass !== false;
     if (this.renderPassOrtho) this.renderPassOrtho.enabled = t.orthoPass !== false;
     if (this.renderPassFg) this.renderPassFg.enabled = t.fgPass !== false;
     if (this.bloomPass) this.bloomPass.enabled = t.bloom !== false;
@@ -739,6 +779,7 @@ export const Core3D = {
   enableBackground3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(1); }); },
   enablePlanet3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(PLANET_RENDER_LAYER); }); },
   enablePlanetHalo3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(PLANET_HALO_RENDER_LAYER); }); },
+  enableRingPlanet3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(RING_PLANET_RENDER_LAYER); }); },
   enablePlanetOccluder3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.enable(OCCLUSION_RENDER_LAYER); }); },
   enableForeground3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(2); }); },
 
@@ -1067,13 +1108,17 @@ export const Core3D = {
       uPost.uSourceCount.value = heatCount;
       uPost.uGlobalStrength.value = 1.0;
       uPost.uTime.value = nowSec;
+      if (uPost.uAspect) uPost.uAspect.value = this.width / Math.max(1, this.height);
 
       if (heatCount > 0) {
         const dst = uPost.uHeatSources.value;
+        const dstDirs = uPost.uHeatDirs ? uPost.uHeatDirs.value : null;
         const src = this.heatHazeSources;
+        const srcDirs = this.heatHazeDirs;
         for (let i = 0; i < heatCount; i++) {
           const base = i * 4;
           dst[i].set(src[base], src[base + 1], src[base + 2], src[base + 3]);
+          if (dstDirs && srcDirs) dstDirs[i].set(srcDirs[i * 2], srcDirs[i * 2 + 1]);
         }
       }
     }
@@ -1194,6 +1239,7 @@ export const Core3D = {
     const layers = [];
     if (t.bgPass !== false) layers.push({ layer: 1, ortho: false });
     if (t.planetPass !== false) layers.push({ layer: PLANET_RENDER_LAYER, ortho: false });
+    if (t.planetPass !== false) layers.push({ layer: RING_PLANET_RENDER_LAYER, ortho: true });
     layers.push({ layer: 0, ortho: true }); // ortho always
     if (t.fgPass !== false) layers.push({ layer: 2, ortho: false });
 
@@ -1267,12 +1313,20 @@ export const Core3D = {
 
   beginHeatHazeFrame() { this.heatHazeCount = 0; },
   
-  pushHeatHazeWorld(worldX, worldY, worldZ = -4, radiusWorld = 80, strength = 1.0) {
+  pushHeatHazeWorld(worldX, worldY, worldZ = -4, radiusWorld = 80, strength = 1.0, dirWorldX = 0, dirWorldY = 0) {
     if (!this.isInitialized || !this.heatHazeSources || !this.cameraOrtho) return false;
     if ((this.perfToggles?.heatHaze) === false) return false;
 
+    // Kierunek wydechu w przestrzeni sceny; (0,0) => zrodlo izotropowe (eksplozje).
+    let dirX = Number(dirWorldX) || 0;
+    let dirY = Number(dirWorldY) || 0;
+    const dirLen = Math.sqrt(dirX * dirX + dirY * dirY);
+    if (dirLen > 0.0001) { dirX /= dirLen; dirY /= dirLen; } else { dirX = 0; dirY = 0; }
+
     const doPush = (u, v, rUv, amp) => {
-        if (u < -rUv || u > 1.0 + rUv || v < -rUv || v > 1.0 + rUv) return;
+        // Smuga siega ~3.2 * rUv w dol wydechu — cullujemy z zapasem.
+        const reach = rUv * 3.4;
+        if (u < -reach || u > 1.0 + reach || v < -reach || v > 1.0 + reach) return;
         const maxSources = this.heatHazeMaxSources | 0;
         if (this.heatHazeCount >= maxSources) return;
         const outBase = this.heatHazeCount * 4;
@@ -1280,6 +1334,11 @@ export const Core3D = {
         this.heatHazeSources[outBase + 1] = v;
         this.heatHazeSources[outBase + 2] = rUv;
         this.heatHazeSources[outBase + 3] = amp;
+        if (this.heatHazeDirs) {
+            const dirBase = this.heatHazeCount * 2;
+            this.heatHazeDirs[dirBase + 0] = dirX;
+            this.heatHazeDirs[dirBase + 1] = dirY;
+        }
         this.heatHazeCount++;
     };
 
@@ -1289,27 +1348,27 @@ export const Core3D = {
         const camH = this.height;
         const halfW = camW / 2 / zoom;
         const halfH = camH / 2 / zoom;
-        
+
         const left = camData.x - halfW;
         const bottom = -(camData.y) - halfH;
-        
+
         const worldW = halfW * 2;
         const worldH = halfH * 2;
-        
+
         let u = (worldX - left) / worldW;
         const v = (worldY - bottom) / worldH;
-        const rUv = radiusWorld / Math.min(worldW, worldH);
-        
+        // Promien w jednostkach osi v: shader koryguje os u przez uAspect,
+        // wiec mapowanie swiat->ekran jest izotropowe (takze w split-screen).
+        const rUv = radiusWorld / worldH;
+
         const zoomNow = Math.max(0.0001, camW / worldW);
         const ampZoomScale = Math.max(0.22, Math.min(1.0, zoomNow));
         const ampScaled = strength * ampZoomScale;
-        
+
         if (isSplit) {
             u = isRightSide ? (u * 0.5 + 0.5) : (u * 0.5);
-            doPush(u, v, rUv * 0.5, ampScaled); 
-        } else {
-            doPush(u, v, rUv, ampScaled);
         }
+        doPush(u, v, rUv, ampScaled);
     };
 
     const isSplit = typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2;

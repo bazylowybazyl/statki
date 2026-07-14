@@ -1,10 +1,13 @@
 export const DEFAULT_FIGHTER_SQUADRON_ID = 'multirole';
 
+// Ile ESKADR mieści JEDEN hangar danego rozmiaru. Eskadra = squadSize myśliwców
+// (9), więc pojemność 9 dawała absurdalne ~81 myśliwców na hangar. Zredukowane:
+// hangar to zwykle 1 eskadra, duże/capital 2. (Tuning tutaj.)
 export const HANGAR_SQUADRON_CAPACITY = Object.freeze({
   S: 1,
-  M: 3,
-  L: 9,
-  Capital: 9
+  M: 1,
+  L: 2,
+  Capital: 2
 });
 
 export const FIGHTER_SQUADRON_DEFS = Object.freeze({
