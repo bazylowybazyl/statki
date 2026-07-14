@@ -1,4 +1,8 @@
 // src/data/weapons.js
+import {
+  FIGHTER_SQUADRON_DEFS,
+  getDefaultFighterSquadronId
+} from './fighterSquadrons.js';
 
 /**
  * MASTER_WEAPONS - Ustandaryzowana baza uzbrojenia Super Capital
@@ -179,7 +183,26 @@ export const MASTER_WEAPONS = {
   // ==========================================================================
   fighter_bay: { 
     id: 'fighter_bay', name: 'Fighter Bay', mountType: 'hangar', category: 'hangar', size: 'L',
-    baseDamage: 0, baseRange: 0, baseSpeed: 0, cooldown: 30.0, energyCost: 5 
+    baseDamage: 0, baseRange: 0, baseSpeed: 0, cooldown: 30.0, energyCost: 5,
+    squadronId: getDefaultFighterSquadronId(), legacyHangarBay: true
+  },
+  fighter_squad_interceptor: {
+    id: 'fighter_squad_interceptor', name: FIGHTER_SQUADRON_DEFS.interceptor.name,
+    mountType: 'hangar', category: 'hangar', size: 'S',
+    baseDamage: 0, baseRange: 0, baseSpeed: 0, cooldown: 30.0, energyCost: 5,
+    squadronId: 'interceptor', description: FIGHTER_SQUADRON_DEFS.interceptor.role
+  },
+  fighter_squad_multirole: {
+    id: 'fighter_squad_multirole', name: FIGHTER_SQUADRON_DEFS.multirole.name,
+    mountType: 'hangar', category: 'hangar', size: 'S',
+    baseDamage: 0, baseRange: 0, baseSpeed: 0, cooldown: 30.0, energyCost: 5,
+    squadronId: 'multirole', description: FIGHTER_SQUADRON_DEFS.multirole.role
+  },
+  fighter_squad_strike: {
+    id: 'fighter_squad_strike', name: FIGHTER_SQUADRON_DEFS.strike.name,
+    mountType: 'hangar', category: 'hangar', size: 'S',
+    baseDamage: 0, baseRange: 0, baseSpeed: 0, cooldown: 30.0, energyCost: 5,
+    squadronId: 'strike', description: FIGHTER_SQUADRON_DEFS.strike.role
   },
 
   // ==========================================================================

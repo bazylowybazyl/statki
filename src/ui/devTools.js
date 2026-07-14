@@ -77,6 +77,7 @@ const HTML = `
   <div class="row"><label><input id="toggleRuler" type="checkbox"> Miarka (okregi dystansu)</label></div>
   <div class="row"><label><input id="togglePlanetOrbits" type="checkbox"> Miarki planet (inner/outer/gravity)</label></div>
   <div class="row"><label><input id="toggleUnlimitedWarp" type="checkbox"> Nielimitowany warp <span class="pill">F9</span></label></div>
+  <div class="row"><label><input id="dt-global-shields" type="checkbox"> Global shields</label></div>
   <div class="row"><label><input id="dt-show-sundir" type="checkbox"> Pokaz kierunek slonca</label></div>
   <div class="row"><label><input id="dt-disable-shake" type="checkbox"> Wylacz wstrzasy kamery</label></div>
 </div>
@@ -87,12 +88,6 @@ const HTML = `
     <input id="dt-hud-center-y" type="range" min="-250" max="250" step="1" value="0">
     <input id="dt-hud-center-y-num" type="number" min="-250" max="250" step="1" value="0" style="width:72px;">
     <div class="val" id="dt-hud-center-y-val">0px</div>
-  </div>
-  <div class="row">
-    <label>Heksy (prawy panel)</label>
-    <input id="dt-hud-hex-y" type="range" min="-250" max="250" step="1" value="0">
-    <input id="dt-hud-hex-y-num" type="number" min="-250" max="250" step="1" value="0" style="width:72px;">
-    <div class="val" id="dt-hud-hex-y-val">0px</div>
   </div>
   <div class="row">
     <label>Shield bar</label>
@@ -208,7 +203,7 @@ const HTML = `
   <div class="row"><textarea id="cfgOut" readonly></textarea></div>
   <div class="small muted">Skopiuj JSON i wklej do kodu.</div>
 </div>
-<div class="small muted">F10 - pokaz/ukryj panel</div>
+<div class="small muted">F12 - pokaz/ukryj panel</div>
 `;
 
 export function initDevTools() {
@@ -221,9 +216,9 @@ export function initDevTools() {
   container.innerHTML = HTML;
   document.body.appendChild(container);
 
-  // Obsługa F10
+  // Obsługa F12
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'F10') {
+    if (e.code === 'F12') {
       e.preventDefault();
       const el = document.getElementById('devtools');
       if (el) {
@@ -249,6 +244,7 @@ function wireDevToolsLogic() {
     stationSpritePx: 'stationSpritePx',
     stationsFramesGroup: 'stationsFramesGroup', planetsGroup: 'planetsGroup', distancesGroup: 'distancesGroup',
     cbRuler: 'toggleRuler', cbPlanetOrbits: 'togglePlanetOrbits', cbUnlimited: 'toggleUnlimitedWarp',
+    cbGlobalShields: 'dt-global-shields',
     cbSunDir: 'dt-show-sundir', cbShake: 'dt-disable-shake', cbPlanetStations3D: 'dt-use-planet-stations',
     cbPirate3D: 'dt-use-3d-pirate', btnCopy: 'btnCopy', btnReset: 'btnReset', cfgOut: 'cfgOut',
     fileGlb: 'dt-file-glb', btnLoadGlb: 'btn-load-glb', glbRot: 'dt-glb-rot', glbZoom: 'dt-glb-zoom', glbScale: 'dt-glb-scale',
@@ -264,7 +260,6 @@ function wireDevToolsLogic() {
     spawnEnemyFightersBtn: 'dt-spawn-enemy-fighters-btn',
     spawnSupportFleetBtn: 'dt-spawn-support-fleet-btn',
     hudCenterY: 'dt-hud-center-y', hudCenterYNum: 'dt-hud-center-y-num', hudCenterYVal: 'dt-hud-center-y-val',
-    hudHexY: 'dt-hud-hex-y', hudHexYNum: 'dt-hud-hex-y-num', hudHexYVal: 'dt-hud-hex-y-val',
     hudShieldY: 'dt-hud-shield-y', hudShieldYNum: 'dt-hud-shield-y-num', hudShieldYVal: 'dt-hud-shield-y-val',
     hudHpY: 'dt-hud-hp-y', hudHpYNum: 'dt-hud-hp-y-num', hudHpYVal: 'dt-hud-hp-y-val',
     earthAmbient: 'dt-earth-ambient', earthAmbientNum: 'dt-earth-ambient-num', earthAmbientVal: 'dt-earth-ambient-val',
@@ -299,7 +294,7 @@ function wireDevToolsLogic() {
     sunR2D: 823, sunR3D: 399, planetRById: {}, planetOrbitAUById: {},
     planetScaleAll: 1, pirateScale: DEFAULT_PIRATE_SCALE, station3DScale: DEFAULT_STATION3D_SCALE, stationSpriteSize: 1024,
     stationSpriteFrame: 3.00, stationSpriteFrameById: {}, stationScaleById: {},
-    hudOffsets: { centerY: 0, hexY: 0, shieldY: 0, hpY: 0 },
+    hudOffsets: { centerY: 0, shieldY: 0, hpY: 0 },
     earthLight: { ...DEFAULT_EARTH_LIGHT }
   };
   window.DevConfig = DevConfig;
@@ -313,7 +308,7 @@ function wireDevToolsLogic() {
   DevVFX.warpLens = Object.assign({}, WarpLensDefaults, DevVFX.warpLens || {});
 
   const DevTuning = window.DevTuning = window.DevTuning || {};
-  const DEFAULT_HUD_OFFSETS = { centerY: 0, hexY: 0, shieldY: 0, hpY: 0 };
+  const DEFAULT_HUD_OFFSETS = { centerY: 0, shieldY: 0, hpY: 0 };
 
   function ensureHudOffsetsShape() {
     if (!DevConfig.hudOffsets || typeof DevConfig.hudOffsets !== 'object') {
@@ -356,7 +351,6 @@ function wireDevToolsLogic() {
   function applyHudOffsetsToDom() {
     ensureHudOffsetsShape();
     setHudYOffset('hud-center-dock', DevConfig.hudOffsets.centerY);
-    setHudYOffset('hex-armor-container', DevConfig.hudOffsets.hexY);
     setHudYOffset('shield-unit', DevConfig.hudOffsets.shieldY);
     setHudYOffset('hp-unit', DevConfig.hudOffsets.hpY);
   }
@@ -700,7 +694,6 @@ function wireDevToolsLogic() {
 
     const links = [
       { key: 'centerY', range: ui.hudCenterY, num: ui.hudCenterYNum, val: ui.hudCenterYVal },
-      { key: 'hexY', range: ui.hudHexY, num: ui.hudHexYNum, val: ui.hudHexYVal },
       { key: 'shieldY', range: ui.hudShieldY, num: ui.hudShieldYNum, val: ui.hudShieldYVal },
       { key: 'hpY', range: ui.hudHpY, num: ui.hudHpYNum, val: ui.hudHpYVal }
     ];
@@ -793,6 +786,20 @@ function wireDevToolsLogic() {
       });
     }
 
+    if (ui.cbGlobalShields) {
+      ui.cbGlobalShields.checked = !(window.DevFlags && window.DevFlags.globalShieldsOff);
+      ui.cbGlobalShields.addEventListener('change', (e) => {
+        const enabled = !!e.target.checked;
+        if (typeof window.toggleGlobalShields === 'function') {
+          window.toggleGlobalShields(!enabled);
+        } else {
+          if (!window.DevFlags) window.DevFlags = {};
+          window.DevFlags.globalShieldsOff = !enabled;
+        }
+        saveLS();
+      });
+    }
+
     if (ui.cbRuler) {
       ui.cbRuler.checked = !!(window.DevFlags && window.DevFlags.showRuler);
       ui.cbRuler.addEventListener('change', (e) => {
@@ -863,8 +870,7 @@ function wireDevToolsLogic() {
               window.ship.visual.spriteScale = shipScale;
 
               // 1. Aplikujemy obrazek kolorowy do destrukcji
-              const damagedSprite = (window.__damagedSprite && window.__damagedSprite.width) ? window.__damagedSprite : null;
-              window.initHexBody(window.ship, bakedData.albedo, damagedSprite);
+              window.initHexBody(window.ship, bakedData.albedo);
               
               // 2. Aplikujemy Normal Mapę do pamięci obiektu statku
               window.ship.hexGrid.normalMapImage = bakedData.normal;

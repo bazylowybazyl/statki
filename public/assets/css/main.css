@@ -2088,10 +2088,10 @@
     .weapon-size-badge.size-M { background: #6ec8ff; }
     .weapon-size-badge.size-L { background: #ffb066; }
     .weapon-size-badge.size-Capital { background: #ff6ea0; }
-    .weapon-size-badge.slot.size-S { color: #6ee7a8; }
-    .weapon-size-badge.slot.size-M { color: #6ec8ff; }
-    .weapon-size-badge.slot.size-L { color: #ffb066; }
-    .weapon-size-badge.slot.size-Capital { color: #ff6ea0; }
+    .weapon-size-badge.slot.size-S { color: #6ee7a8; background: transparent; }
+    .weapon-size-badge.slot.size-M { color: #6ec8ff; background: transparent; }
+    .weapon-size-badge.slot.size-L { color: #ffb066; background: transparent; }
+    .weapon-size-badge.slot.size-Capital { color: #ff6ea0; background: transparent; }
 
     /* Slot odrzuca bron za duza na jego rozmiar podczas przeciagania */
     .hp-row.size-reject {
@@ -2190,7 +2190,7 @@
     /* Wiersz Hardpointu (Slot) */
     .hp-row {
       display: grid;
-      grid-template-columns: 28px 22px minmax(88px, 0.75fr) minmax(140px, 1.35fr) minmax(92px, 0.75fr) 24px;
+      grid-template-columns: 28px 22px 22px minmax(88px, 0.75fr) minmax(140px, 1.35fr) minmax(92px, 0.75fr) 24px;
       /* Ikona | Typ slotu | Zamontowane | Przycisk X */
       align-items: center;
       gap: 8px;
@@ -2205,6 +2205,20 @@
     .hp-row.drag-over {
       background: rgba(50, 120, 200, 0.25);
       border-color: #60a5fa;
+    }
+
+    .weapon-size-badge.mounted {
+      color: #062115;
+      background: #6ee7a8;
+      border-color: rgba(110, 231, 168, 0.85);
+      box-shadow: 0 0 8px rgba(110, 231, 168, 0.22), inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+    }
+
+    .weapon-size-badge.mounted.empty {
+      color: #536178;
+      background: transparent;
+      border: 1px dashed rgba(83, 97, 120, 0.65);
+      box-shadow: none;
     }
 
     .hp-row-label {

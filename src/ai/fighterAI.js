@@ -133,38 +133,38 @@ export function runAdvancedFighterAI(npc, dt) {
   if (target && target.dead) target = null;
 
   const inheritedWingTarget = getInheritedWingmanTarget(npc, SEARCH_RANGE_SQ);
-  if (target && npc.retargetTimer <= 0 && inheritedWingTarget && inheritedWingTarget !== target) {
-    target = inheritedWingTarget;
-    npc.target = inheritedWingTarget;
-    npc.retargetTimer = FIGHTER_RETARGET_MIN + Math.random() * FIGHTER_RETARGET_SPREAD;
-  }
 
-  if (!target && npc.retargetTimer <= 0) {
+  // Okresowa RE-EWALUACJA celu (nie tylko gdy brak celu). Dawniej blok
+  // wyszukiwania odpalał się wyłącznie przy braku celu, więc myśliwiec raz
+  // przypięty do gracza (fallback poniżej) trzymał się go aż do śmierci.
+  // Teraz co ~2s wybieramy najlepszy cel wg scoringu — który preferuje wrogie
+  // myśliwce i okręty nad gracza — więc pociski się rozkładają na cały wróg.
+  if (npc.retargetTimer <= 0) {
+    let best = null;
     if (inheritedWingTarget) {
-      target = inheritedWingTarget;
+      best = inheritedWingTarget;
     } else if (window.aiPickBestTarget) {
-      target = window.aiPickBestTarget(npc, SEARCH_RANGE);
+      best = window.aiPickBestTarget(npc, SEARCH_RANGE);
     } else if (window.aiPickTarget) {
-      target = window.aiPickTarget(npc);
-      if (target) {
-        const tx = (target.pos && target.pos.x !== undefined) ? target.pos.x : target.x;
-        const ty = (target.pos && target.pos.y !== undefined) ? target.pos.y : target.y;
-        const dx = tx - npc.x;
-        const dy = ty - npc.y;
-        if (dx * dx + dy * dy > SEARCH_RANGE_SQ) {
-          target = null;
-        }
+      best = window.aiPickTarget(npc);
+      if (best) {
+        const bx = (best.pos && best.pos.x !== undefined) ? best.pos.x : best.x;
+        const by = (best.pos && best.pos.y !== undefined) ? best.pos.y : best.y;
+        if ((bx - npc.x) ** 2 + (by - npc.y) ** 2 > SEARCH_RANGE_SQ) best = null;
       }
     }
 
-    if (!target && npc.friendly && window.pickSquadTargets) {
+    if (!best && npc.friendly && window.pickSquadTargets) {
       const squadTargets = window.pickSquadTargets();
       if (Array.isArray(squadTargets) && squadTargets.length > 0) {
-        target = squadTargets[0];
+        best = squadTargets[0];
       }
     }
 
-    npc.target = target || null;
+    if (best) {
+      target = best;
+      npc.target = best;
+    }
     npc.retargetTimer = FIGHTER_RETARGET_MIN + Math.random() * FIGHTER_RETARGET_SPREAD;
   }
 

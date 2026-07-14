@@ -45,15 +45,21 @@ export function loadSynthCityAssets() {
             // Przywracamy MeshPhongMaterial dla budynków - gwarantuje piękne kolory i ostre światła z prototypu!
             for (let i = 1; i <= 10; i++) {
                 const id = String(i).padStart(2, '0');
+                const windowTint = new THREE.Color().setHSL((0.52 + i * 0.071) % 1, 0.78, 0.62);
                 synthCityAssets.materials['building_' + id] = new THREE.MeshPhongMaterial({
                     map: synthCityAssets.textures['building_' + id],
                     specular: 0xffffff,
                     specularMap: synthCityAssets.textures['building_' + id + '_spec'] || synthCityAssets.textures['building_' + id + '_rough'],
                     emissiveMap: synthCityAssets.textures['building_' + id + '_em'],
-                    emissive: new THREE.Color().setHSL(Math.random(), 1.0, 0.95),
-                    emissiveIntensity: 1.5,
+                    // Deterministic, HDR-capable window colour. The previous
+                    // near-white random emissive flattened whole towers into
+                    // bloom silhouettes under the transparent canopy.
+                    emissive: windowTint,
+                    // HDR only on lit pixels: bright windows cross the shared
+                    // bloom threshold without washing out the building shell.
+                    emissiveIntensity: 1.45,
                     bumpMap: synthCityAssets.textures['building_' + id],
-                    bumpScale: 5
+                    bumpScale: 1.4
                 });
                 synthCityAssets.materials['building_' + id].userData.shared = true;
             }
@@ -94,13 +100,31 @@ export function loadSynthCityAssets() {
 
             synthCityAssets.materials.storefronts = new THREE.MeshPhongMaterial({
                 map: synthCityAssets.textures.storefronts,
-                emissive: 0xffffff,
+                emissive: 0xb9e8ff,
                 emissiveMap: synthCityAssets.textures.storefronts_em,
-                emissiveIntensity: 1.5,
+                emissiveIntensity: 1.24,
                 shininess: 0,
                 side: THREE.DoubleSide
             });
             synthCityAssets.materials.storefronts.userData.shared = true;
+
+            synthCityAssets.materials.cars = new THREE.MeshPhongMaterial({
+                map: synthCityAssets.textures.cars,
+                emissive: 0xffffff,
+                emissiveMap: synthCityAssets.textures.cars_em,
+                emissiveIntensity: 1.35,
+                side: THREE.DoubleSide
+            });
+            synthCityAssets.materials.cars.userData.shared = true;
+
+            synthCityAssets.materials.mega_building_01 = new THREE.MeshPhongMaterial({
+                map: synthCityAssets.textures.mega_building_01,
+                emissive: 0xb9d7ff,
+                emissiveMap: synthCityAssets.textures.mega_building_01_em,
+                emissiveIntensity: 1.32,
+                shininess: 0
+            });
+            synthCityAssets.materials.mega_building_01.userData.shared = true;
 
             synthCityAssets.materials.storefrontBridge = new THREE.MeshStandardMaterial({
                 color: 0x101722,
@@ -140,7 +164,10 @@ export function loadSynthCityAssets() {
                 t.wrapS = t.wrapT = THREE.RepeatWrapping;
                 t.colorSpace = THREE.SRGBColorSpace;
             });
-            synthCityAssets.textures['building_' + id + '_em'] = texLoader.load(basePath + 'textures/building_' + id + '_em.jpg', t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; });
+            synthCityAssets.textures['building_' + id + '_em'] = texLoader.load(basePath + 'textures/building_' + id + '_em.jpg', t => {
+                t.wrapS = t.wrapT = THREE.RepeatWrapping;
+                t.colorSpace = THREE.SRGBColorSpace;
+            });
             texLoader.load(basePath + 'textures/building_' + id + '_spec.jpg',
                 t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; synthCityAssets.textures['building_' + id + '_spec'] = t; },
                 undefined,
@@ -167,6 +194,7 @@ export function loadSynthCityAssets() {
         synthCityAssets.textures.ground_em = texLoader.load(basePath + 'textures/ground_em.jpg', t => {
             t.wrapS = t.wrapT = THREE.RepeatWrapping;
             t.anisotropy = 8;
+            t.colorSpace = THREE.SRGBColorSpace;
         });
         synthCityAssets.textures.storefronts = texLoader.load(basePath + 'textures/storefronts_01.jpg', t => {
             t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -176,6 +204,21 @@ export function loadSynthCityAssets() {
         synthCityAssets.textures.storefronts_em = texLoader.load(basePath + 'textures/storefronts_01_em.jpg', t => {
             t.wrapS = t.wrapT = THREE.RepeatWrapping;
             t.anisotropy = 8;
+            t.colorSpace = THREE.SRGBColorSpace;
+        });
+        synthCityAssets.textures.cars = texLoader.load(basePath + 'textures/cars.jpg', t => {
+            t.colorSpace = THREE.SRGBColorSpace;
+        });
+        synthCityAssets.textures.cars_em = texLoader.load(basePath + 'textures/cars_em.jpg', t => {
+            t.colorSpace = THREE.SRGBColorSpace;
+        });
+        synthCityAssets.textures.mega_building_01 = texLoader.load(basePath + 'textures/mega_building_01.jpg', t => {
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+            t.colorSpace = THREE.SRGBColorSpace;
+        });
+        synthCityAssets.textures.mega_building_01_em = texLoader.load(basePath + 'textures/mega_building_01_em.jpg', t => {
+            t.wrapS = t.wrapT = THREE.RepeatWrapping;
+            t.colorSpace = THREE.SRGBColorSpace;
         });
 
         // Building models
@@ -187,6 +230,24 @@ export function loadSynthCityAssets() {
             's_05_01', 's_05_02', 's_05_03'
         ];
         for (const modelId of buildingModels) {
+            objLoader.load(basePath + 'models/' + modelId + '.obj',
+                obj => { synthCityAssets.models[modelId] = obj.children[0]?.geometry || null; },
+                undefined,
+                () => console.warn('[RingCityAssets] Missing model:', modelId)
+            );
+        }
+
+        for (let i = 1; i <= 8; i++) {
+            const modelId = `car_${String(i).padStart(2, '0')}`;
+            objLoader.load(basePath + 'models/' + modelId + '.obj',
+                obj => { synthCityAssets.models[modelId] = obj.children[0]?.geometry || null; },
+                undefined,
+                () => console.warn('[RingCityAssets] Missing model:', modelId)
+            );
+        }
+
+        for (let i = 1; i <= 6; i++) {
+            const modelId = `mega_${String(i).padStart(2, '0')}`;
             objLoader.load(basePath + 'models/' + modelId + '.obj',
                 obj => { synthCityAssets.models[modelId] = obj.children[0]?.geometry || null; },
                 undefined,
@@ -249,10 +310,9 @@ export function cloneSynthCityGeometry(modelId) {
     const original = synthCityAssets.models[modelId];
     if (!original) return null;
     const cloned = original.clone();
-    for (const key in original.attributes) {
-        cloned.setAttribute(key, original.attributes[key].clone());
-    }
-    if (original.index) cloned.setIndex(original.index.clone());
+    // BufferGeometry.clone() already deep-clones its BufferAttributes and
+    // index.  Cloning them a second time doubled the peak allocation during
+    // city/traffic construction for no visual benefit.
     return cloned.index ? cloned.toNonIndexed() : cloned;
 }
 

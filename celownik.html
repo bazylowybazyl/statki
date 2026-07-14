@@ -92,10 +92,11 @@
 <canvas id="game"></canvas>
 
 <div id="topbar" class="hud">
-  TRYB NAMIERZANIA: <span class="mode" id="modeName">POJEDYNCZY</span>
+  TRYB NAMIERZANIA: <span class="mode" id="modeName">POJEDYNCZY</span><br>
+  CELOWNIK: <span class="mode" id="retName" style="color:var(--cyan)">KWADRAT</span>
   <span class="hint">
-    <kbd>ŚPM</kbd> koło trybów &nbsp; <kbd>LPM</kbd> zatwierdź LOCK &nbsp; <kbd>WASD</kbd> lot<br>
-    <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> broń &nbsp; <kbd>Q</kbd> tryb &nbsp; <kbd>C</kbd> wyczyść &nbsp; <kbd>M</kbd> dźwięk
+    <kbd>ŚPM</kbd> koło trybów + celowników &nbsp; <kbd>LPM</kbd> zatwierdź LOCK &nbsp; <kbd>WASD</kbd> lot<br>
+    <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> broń &nbsp; <kbd>Q</kbd> tryb &nbsp; <kbd>R</kbd> celownik &nbsp; <kbd>C</kbd> wyczyść &nbsp; <kbd>M</kbd> dźwięk
   </span>
 </div>
 
@@ -115,7 +116,8 @@
   <div class="lst">
     ▸ <b style="color:var(--cyan)">WASD</b> — sterowanie statkiem &nbsp;·&nbsp; <b style="color:var(--cyan)">MYSZ</b> — celownik / kierunek ognia<br>
     ▸ <b style="color:var(--cyan)">LPM</b> — zatwierdź namierzanie (LOCK); w trybie GRUPA nawiasy <b>[ ]</b> obejmują skupisko<br>
-    ▸ <b style="color:var(--cyan)">ŚPM</b> — otwórz koło wyboru trybu: POJEDYNCZY / GRUPA / SUBSYSTEMY<br>
+    ▸ <b style="color:var(--cyan)">ŚPM</b> — koło wyboru: wewnątrz tryb (POJEDYNCZY / GRUPA / SUBSYSTEMY), zewnętrzny pierścień = wariant celownika<br>
+    ▸ <b style="color:var(--cyan)">R</b> — szybkie przełączanie wariantu celownika w bieżącym trybie<br>
     ▸ <b style="color:var(--cyan)">1 2 3 4</b> — ostrzał namierzonych celów<br>
     ▸ klasy wrogów: myśliwce · fregaty · krążowniki · battleshipy · capitale · super-capitale
   </div>
@@ -239,6 +241,47 @@ const MODES=[
 let modeIndex=0;
 const mode=()=>MODES[modeIndex];
 
+/* ---------------------------------------------------------------- reticle variants */
+// Warianty celowników — wybierane na zewnętrznym pierścieniu koła (ŚPM) lub klawiszem R.
+// single: obecny + S1/S2/S3 z „HUD Celowniki — iteracja 2" + 2 własne (SZPON, IRYS)
+// group:  obecny + G1/G2/G3 z „iteracji 2" + 2 własne (HEKS, SZYNY)
+// sub:    obecny + kwadratowy kursor z prototypu FCS + 2 własne (X-ROMB, FURTA)
+const RETICLES={
+  single:[
+    {id:'sq',  name:'KWADRAT'},
+    {id:'dia', name:'DIAMENT'},
+    {id:'arc', name:'ŁUKI'},
+    {id:'ring',name:'PIERŚCIEŃ'},
+    {id:'claw',name:'SZPON'},
+    {id:'iris',name:'IRYS'}
+  ],
+  group:[
+    {id:'brk', name:'KLAMRY'},
+    {id:'soft',name:'MIĘKKIE'},
+    {id:'gate',name:'BRAMA'},
+    {id:'caps',name:'KAPSUŁA'},
+    {id:'hex', name:'HEKS'},
+    {id:'rail',name:'SZYNY'}
+  ],
+  sub:[
+    {id:'cross',name:'KRZYŻ'},
+    {id:'sqr',  name:'KWADRAT'},
+    {id:'xdia', name:'X-ROMB'},
+    {id:'gate', name:'FURTA'}
+  ]
+};
+const reticleSel={single:0,group:0,sub:0};
+const curReticle=m=>RETICLES[m][reticleSel[m]||0];
+function cycleReticle(){
+  const m=mode().id;
+  reticleSel[m]=(reticleSel[m]+1)%RETICLES[m].length;
+  refreshHudNames();
+}
+function refreshHudNames(){
+  document.getElementById('modeName').textContent=mode().name;
+  document.getElementById('retName').textContent=curReticle(mode().id).name;
+}
+
 /* ---------------------------------------------------------------- state */
 const cam={x:0,y:0};
 const player={x:0,y:0,vx:0,vy:0,angle:0,r:18,thrust:520,maxv:330,drag:1.6};
@@ -262,6 +305,7 @@ const reticle={
   spin:0, pulse:0,         // fazy animacji
   acq:0, acqRef:null, readyFx:0, // postęp akwizycji 0..1 + referencja + błysk „snap"
   gx:0,gy:0,gw:160,gh:190, // wygładzony prostokąt klamer { } (grupa)
+  stable:0,                // jak długo ramka grupy „siedzi" na skupisku (opóźnia start akwizycji)
   captured:[]              // encje objęte klamrami
 };
 let lockFx=[];             // efekty potwierdzenia namierzania (LOCK)
@@ -272,7 +316,7 @@ const keys={};
 const mouse={sx:W/2,sy:H/2,wx:0,wy:0,down:false};
 
 // koło wyboru trybu
-const wheel={open:false,cx:0,cy:0,hold:false,sector:-1,t0:0};
+const wheel={open:false,cx:0,cy:0,hold:false,sector:-1,vsector:-1,t0:0};
 
 /* ---------------------------------------------------------------- spawn */
 let entId=0;
@@ -350,6 +394,7 @@ window.addEventListener('keydown',e=>{
   const k=e.key.toLowerCase();
   keys[k]=true;
   if(k==='q'){ modeIndex=(modeIndex+1)%MODES.length; onModeChange(); }
+  if(k==='r'){ cycleReticle(); }
   if(k==='c'){ clearLocks(); }
   if(k==='m'){ muted=!muted; }
   if(['1','2','3','4'].includes(k)) e.preventDefault();
@@ -366,32 +411,53 @@ function dismissIntro(){
 }
 
 /* ---------------------------------------------------------------- wheel */
-function openWheel(sx,sy){ wheel.open=true; wheel.hold=true; wheel.cx=sx; wheel.cy=sy; wheel.sector=-1; wheel.t0=now(); }
+// Koło wyboru ma dwa pierścienie: wewnętrzny = tryb namierzania,
+// zewnętrzny = wariant celownika danego trybu (sektor trybu dzielony na podsektory).
+const WHEEL_R1=92, WHEEL_R2=172, WHEEL_GAP=6;
+function openWheel(sx,sy){
+  // trzymaj koło w ekranie — zewnętrzny pierścień jest szeroki
+  wheel.cx=clamp(sx,WHEEL_R2+10,W-WHEEL_R2-10);
+  wheel.cy=clamp(sy,WHEEL_R2+10,H-WHEEL_R2-30);
+  wheel.open=true; wheel.hold=true; wheel.sector=-1; wheel.vsector=-1; wheel.t0=now();
+}
 function updateWheelSector(){
   if(!wheel.open) return;
   const dx=mouse.sx-wheel.cx, dy=mouse.sy-wheel.cy;
   const d=Math.hypot(dx,dy);
-  if(d<26){ wheel.sector=-1; return; }
-  let a=Math.atan2(dy,dx)+Math.PI/2; // 0 = góra
-  if(a<0)a+=TAU; if(a>=TAU)a-=TAU;
-  wheel.sector=Math.floor(a/(TAU/MODES.length))%MODES.length;
+  if(d<26){ wheel.sector=-1; wheel.vsector=-1; return; }
+  const step=TAU/MODES.length;
+  let a=Math.atan2(dy,dx)+Math.PI/2+step/2; // 0 = początek górnego sektora
+  while(a<0)a+=TAU; while(a>=TAU)a-=TAU;
+  wheel.sector=Math.floor(a/step)%MODES.length;
+  if(d>WHEEL_R1+WHEEL_GAP/2){ // zewnętrzny pierścień — wybór wariantu celownika
+    const list=RETICLES[MODES[wheel.sector].id];
+    const rel=(a-wheel.sector*step)/step;
+    wheel.vsector=clamp(Math.floor(rel*list.length),0,list.length-1);
+  } else wheel.vsector=-1;
+}
+function applyWheelSelection(){
+  if(wheel.sector>=0){
+    modeIndex=wheel.sector;
+    if(wheel.vsector>=0) reticleSel[mode().id]=wheel.vsector;
+    onModeChange();
+  }
 }
 function selectWheelSector(){ // klik LPM gdy koło otwarte (tryb klik)
-  if(wheel.sector>=0){ modeIndex=wheel.sector; onModeChange(); }
+  applyWheelSelection();
   wheel.open=false; wheel.hold=false;
 }
 function commitWheelOnRelease(){ // zwolnienie ŚPM
   const held=now()-wheel.t0;
   const moved=Math.hypot(mouse.sx-wheel.cx,mouse.sy-wheel.cy)>26;
   if(moved || held>0.28){ // gest pie-menu
-    if(wheel.sector>=0){ modeIndex=wheel.sector; onModeChange(); }
+    applyWheelSelection();
     wheel.open=false; wheel.hold=false;
   } else {
     wheel.hold=false; // szybki klik → zostaw otwarte, wybór LPM
   }
 }
 function onModeChange(){
-  document.getElementById('modeName').textContent=mode().name;
+  refreshHudNames();
   // przy zmianie trybu czyścimy niezgodne zaznaczenia
   if(mode().id==='sub'){ locked=[]; }
   else { lockedSub=null; }
@@ -695,12 +761,19 @@ function updateReticle(dt){
       for(const e of cand){ a=Math.min(a,e.x-e.r);c=Math.max(c,e.x+e.r);b=Math.min(b,e.y-e.r);d=Math.max(d,e.y+e.r);}
       tx=(a+c)/2;ty=(b+d)/2;tw=(c-a)+GROUP_PAD*2;th=(d-b)+GROUP_PAD*2;
     } else { tx=mouse.wx;ty=mouse.wy;tw=160;th=190; }
-    reticle.gx=lerp(reticle.gx,tx,k); reticle.gy=lerp(reticle.gy,ty,k);
-    reticle.gw=lerp(reticle.gw,tw,k); reticle.gh=lerp(reticle.gh,th,k);
+    // „opóźnienie" z prototypu FCS: ramka szybko się rozszerza, ale kurczy leniwie —
+    // klamry wyraźnie „doganiają" skupisko zamiast skakać
+    const expanding = tw>reticle.gw+1 || th>reticle.gh+1;
+    const ks=1-Math.exp(-dt*(expanding?10:4));
+    reticle.gx=lerp(reticle.gx,tx,ks); reticle.gy=lerp(reticle.gy,ty,ks);
+    reticle.gw=lerp(reticle.gw,tw,ks); reticle.gh=lerp(reticle.gh,th,ks);
+    // akwizycja rusza dopiero, gdy ramka chwilę „usiądzie" na skupisku
+    reticle.stable = cand.length ? reticle.stable+dt : 0;
+    const canAcq=reticle.stable>=0.18;
     const inside=new Set(cand);
     for(const e of entities){
       const was=e.acqT||0;
-      if(inside.has(e)) e.acqT=Math.min(1,was+dt/lockTime(e)); // tempo zależne od klasy celu
+      if(inside.has(e)){ if(canAcq) e.acqT=Math.min(1,was+dt/lockTime(e)); } // tempo zależne od klasy celu
       else if(was) e.acqT=Math.max(0,was-dt/0.35);             // po zjechaniu namiar powoli spada
       if(was<1 && e.acqT>=1){ e.readyFx=0.35; sfxReady(); }    // „snap" po złożeniu kwadratu
       if(e.readyFx>0) e.readyFx-=dt;
@@ -1086,6 +1159,227 @@ function drawGroupBrackets(cx,cy,w,h,color,thick,alpha,breath){
   ctx.restore(); ctx.shadowBlur=0;
 }
 
+/* =========================================================================
+   BIBLIOTEKA WARIANTÓW CELOWNIKÓW
+   Każdy wariant rysuje się wg postępu akwizycji p (0..1) i w stanie READY.
+   base = kolor akwizycji, accent = kolor po złożeniu (READY / LOCK).
+   ========================================================================= */
+const RET_CORNERS=[[-1,-1],[1,-1],[1,1],[-1,1]];
+// wspólne echo „snap" (pierścień) po domierzeniu single/sub
+function snapEcho(x,y,r,fx,color){
+  if(fx<=0) return;
+  const k=fx/0.35, rr=r*(1+(1-k)*0.7);
+  ctx.save(); ctx.globalAlpha=k*0.9; ctx.strokeStyle=color; ctx.lineWidth=2;
+  ctx.shadowColor=color; ctx.shadowBlur=8;
+  ctx.beginPath(); ctx.arc(x,y,rr,0,TAU); ctx.stroke(); ctx.restore();
+}
+
+// --- pojedynczy cel: 6 wariantów -----------------------------------------
+function drawSingleVariant(id,x,y,r,p,base,accent){
+  p=clamp(p,0,1); const ready=p>=1;
+  if(id==='sq') return drawAssemblingSquare(x,y,r,p,base,accent);
+  const q=1-Math.pow(1-p,2.4), col=ready?accent:base;
+  const breath=ready?(0.8+0.2*Math.sin(T()*6)):1;
+  ctx.save();
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.strokeStyle=col; ctx.shadowColor=base; ctx.shadowBlur=ready?12:6;
+  ctx.lineWidth=ready?2.4:1.8;
+  ctx.globalAlpha=(0.5+0.5*q)*(ready?breath:1);
+  if(id==='dia'){                    // DIAMENT — boczne wskaźniki + centralny romb
+    const off=r*0.9*(1-q);
+    ctx.beginPath();
+    ctx.moveTo(x-r-off-12,y); ctx.lineTo(x-r-off,y);
+    ctx.moveTo(x+r+off,y);    ctx.lineTo(x+r+off+12,y);
+    ctx.stroke();
+    const ds=lerp(r*0.34,r*0.6,q);
+    ctx.beginPath(); ctx.moveTo(x,y-ds);ctx.lineTo(x+ds,y);ctx.lineTo(x,y+ds);ctx.lineTo(x-ds,y);ctx.closePath(); ctx.stroke();
+  } else if(id==='arc'){             // ŁUKI — cztery narożne łuki domykające pierścień
+    const off=r*0.7*(1-q), R=r+off+4;
+    for(let i=0;i<4;i++){ const a=i*TAU/4+TAU/8; ctx.beginPath(); ctx.arc(x,y,R,a-0.55,a+0.55); ctx.stroke(); }
+  } else if(id==='ring'){            // PIERŚCIEŃ — otwarte półpierścienie góra/dół + boki
+    const off=r*0.6*(1-q), R=r+6+off;
+    ctx.beginPath(); ctx.arc(x,y,R,Math.PI*1.14,Math.PI*1.86); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x,y,R,Math.PI*0.14,Math.PI*0.86); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x-R-7,y-6);ctx.lineTo(x-R-7,y+6);
+    ctx.moveTo(x+R+7,y-6);ctx.lineTo(x+R+7,y+6);
+    ctx.stroke();
+  } else if(id==='claw'){            // SZPON — cztery zakrzywione „pazury" (własny)
+    const off=r*0.95*(1-q), R=r+off, leg=r*0.7;
+    for(const [sx,sy] of RET_CORNERS){
+      const cx=x+sx*R, cy=y+sy*R;
+      ctx.beginPath();
+      ctx.moveTo(cx-sx*leg, cy);
+      ctx.quadraticCurveTo(cx, cy, cx, cy-sy*leg);
+      ctx.stroke();
+    }
+  } else if(id==='iris'){            // IRYS — przysłona zamykająca się na celu (własny)
+    const n=6, outR=r+16, inR=lerp(r+12,r*0.5,q);
+    const tw=lerp(0.95,0.28,q)+(ready?Math.sin(T()*3)*0.05:0);
+    ctx.beginPath();
+    for(let i=0;i<n;i++){ const a=i*TAU/n;
+      ctx.moveTo(x+Math.cos(a)*outR,y+Math.sin(a)*outR);
+      ctx.lineTo(x+Math.cos(a+tw)*inR,y+Math.sin(a+tw)*inR); }
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(x,y,inR,0,TAU); ctx.stroke();
+  }
+  ctx.restore();
+  if(id!=='iris') drawArcP(x,y, r+(id==='ring'?12:8), p, col, ready?2.2:1.6);
+  return ready;
+}
+
+// --- podsystem: 4 warianty -----------------------------------------------
+function drawSubVariant(id,x,y,r,p,base,accent){
+  p=clamp(p,0,1); const ready=p>=1; const q=1-Math.pow(1-p,2.4), col=ready?accent:base;
+  const breath=ready?(0.85+0.15*Math.sin(T()*6)):1;
+  ctx.save(); ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.strokeStyle=col; ctx.shadowColor=base; ctx.shadowBlur=ready?10:6; ctx.lineWidth=ready?2.2:1.6;
+  ctx.globalAlpha=(0.55+0.45*q)*(ready?breath:1);
+  if(id==='cross'){                  // KRZYŻ — krzyżyk + okrąg (oryginał)
+    ctx.beginPath();
+    ctx.moveTo(x-r-6,y);ctx.lineTo(x-4,y); ctx.moveTo(x+4,y);ctx.lineTo(x+r+6,y);
+    ctx.moveTo(x,y-r-6);ctx.lineTo(x,y-4); ctx.moveTo(x,y+4);ctx.lineTo(x,y+r+6);
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(x,y,r,0,TAU); ctx.stroke();
+  } else if(id==='sqr'){             // KWADRAT — narożniki (kursor z prototypu FCS)
+    const off=r*0.8*(1-q), half=r+off, arm=Math.max(5,r*0.5);
+    for(const [sx,sy] of RET_CORNERS){ const cx=x+sx*half, cy=y+sy*half;
+      ctx.beginPath(); ctx.moveTo(cx,cy-sy*arm); ctx.lineTo(cx,cy); ctx.lineTo(cx-sx*arm,cy); ctx.stroke(); }
+  } else if(id==='xdia'){            // X-ROMB — ukośne ramiona + romb (własny)
+    const off=r*0.8*(1-q), R=r+off;
+    ctx.beginPath();
+    for(const [sx,sy] of RET_CORNERS){ ctx.moveTo(x+sx*R,y+sy*R); ctx.lineTo(x+sx*r*0.45,y+sy*r*0.45); }
+    ctx.stroke();
+    const ds=r*0.5; ctx.beginPath(); ctx.moveTo(x,y-ds);ctx.lineTo(x+ds,y);ctx.lineTo(x,y+ds);ctx.lineTo(x-ds,y);ctx.closePath(); ctx.stroke();
+  } else if(id==='gate'){            // FURTA — małe bramkowe nawiasy (własny)
+    const off=r*0.7*(1-q), hw=r+off, hh=r+2, foot=Math.max(5,r*0.5);
+    ctx.beginPath();
+    ctx.moveTo(x-hw+foot,y-hh);ctx.lineTo(x-hw,y-hh);ctx.lineTo(x-hw,y+hh);ctx.lineTo(x-hw+foot,y+hh);
+    ctx.moveTo(x+hw-foot,y-hh);ctx.lineTo(x+hw,y-hh);ctx.lineTo(x+hw,y+hh);ctx.lineTo(x+hw-foot,y+hh);
+    ctx.stroke();
+  }
+  ctx.restore();
+  drawArcP(x,y, r+((id==='cross'||id==='sqr')?4:6), p, col, ready?2:1.5);
+  return ready;
+}
+
+// --- grupa: 6 wariantów ramki obejmującej skupisko ------------------------
+function drawGroupFrame(id,cx,cy,w,h,color,thick,alpha,breath){
+  if(id==='brk') return drawGroupBrackets(cx,cy,w,h,color,thick,alpha,breath);
+  const ext=breath||0;
+  const x1=cx-w/2-ext, x2=cx+w/2+ext, top=cy-h/2-ext*0.5, bot=cy+h/2+ext*0.5, midY=cy;
+  ctx.save();
+  ctx.globalAlpha=alpha==null?1:alpha; ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.strokeStyle=color; ctx.lineWidth=thick; ctx.shadowColor=color; ctx.shadowBlur=10;
+  let dashShape='rect';
+  if(id==='soft'){                   // MIĘKKIE — pionowe nawiasy z „talią" + boczne kreski
+    const bow=Math.min(18,h*0.12);
+    for(const sx of [-1,1]){ const xx=sx<0?x1:x2, k=sx;
+      ctx.beginPath();
+      ctx.moveTo(xx+k*bow, top); ctx.quadraticCurveTo(xx,top, xx,top+bow);
+      ctx.lineTo(xx, midY-14); ctx.quadraticCurveTo(xx-k*8,midY, xx,midY+14);
+      ctx.lineTo(xx, bot-bow); ctx.quadraticCurveTo(xx,bot, xx+k*bow,bot);
+      ctx.stroke();
+    }
+    ctx.save(); ctx.globalAlpha*=0.8; ctx.lineWidth=Math.max(1,thick-0.8);
+    for(const yy of [-0.5,-0.25,0.25,0.5]){ const py=cy+h*yy;
+      ctx.beginPath(); ctx.moveTo(x1+8,py);ctx.lineTo(x1+16,py); ctx.moveTo(x2-8,py);ctx.lineTo(x2-16,py); ctx.stroke(); }
+    ctx.restore();
+  } else if(id==='gate'){            // BRAMA — nawiasy z akcentem w osi środkowej
+    for(const sx of [-1,1]){ const xx=sx<0?x1:x2, k=sx;
+      ctx.beginPath();
+      ctx.moveTo(xx, top+12); ctx.lineTo(xx, midY-12); ctx.quadraticCurveTo(xx-k*7,midY, xx,midY+12); ctx.lineTo(xx, bot-12);
+      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(xx,top+12); ctx.lineTo(xx+k*14,top+12); ctx.moveTo(xx,bot-12); ctx.lineTo(xx+k*14,bot-12); ctx.stroke();
+    }
+    ctx.save(); ctx.globalAlpha*=0.85;
+    ctx.beginPath(); ctx.moveTo(x1+14,midY);ctx.lineTo(x1+30,midY); ctx.moveTo(x2-14,midY);ctx.lineTo(x2-30,midY); ctx.stroke();
+    ctx.restore();
+  } else if(id==='caps'){            // KAPSUŁA — zaokrąglone pionowe ramy (otwarte)
+    const cr=Math.min(22,h*0.2);
+    for(const sx of [-1,1]){ const xx=sx<0?x1:x2, k=sx;
+      ctx.beginPath();
+      ctx.moveTo(xx+k*cr, top);
+      ctx.arcTo(xx,top, xx,top+cr, cr);
+      ctx.lineTo(xx, bot-cr);
+      ctx.arcTo(xx,bot, xx+k*cr,bot, cr);
+      ctx.stroke();
+    }
+  } else if(id==='hex'){             // HEKS — sześciokątna ramka (własny)
+    const rx=w/2+ext, ry=h/2+ext*0.5;
+    ctx.beginPath();
+    for(let i=0;i<6;i++){ const a=-Math.PI/2+i*TAU/6; const px=cx+Math.cos(a)*rx, py=cy+Math.sin(a)*ry; i?ctx.lineTo(px,py):ctx.moveTo(px,py); }
+    ctx.closePath(); ctx.stroke();
+    dashShape='hex';
+  } else if(id==='rail'){            // SZYNY — cztery narożne kątowniki (własny)
+    const rx=w/2+ext, ry=h/2+ext*0.5, len=clamp(Math.min(w,h)*0.22,14,46);
+    for(const [sx,sy] of RET_CORNERS){ const px=cx+sx*rx, py=cy+sy*ry;
+      ctx.beginPath(); ctx.moveTo(px,py-sy*len); ctx.lineTo(px,py); ctx.lineTo(px-sx*len,py); ctx.stroke(); }
+  }
+  // maszerująca ramka pomocnicza
+  ctx.save(); ctx.globalAlpha=(alpha==null?1:alpha)*0.4; ctx.lineWidth=1;
+  ctx.setLineDash([4,8]); ctx.lineDashOffset=-T()*24;
+  if(dashShape==='hex'){
+    const rx=(w/2)*0.82, ry=(h/2)*0.82;
+    ctx.beginPath();
+    for(let i=0;i<6;i++){ const a=-Math.PI/2+i*TAU/6; const px=cx+Math.cos(a)*rx, py=cy+Math.sin(a)*ry; i?ctx.lineTo(px,py):ctx.moveTo(px,py); }
+    ctx.closePath(); ctx.stroke();
+  } else {
+    ctx.strokeRect(cx-w/2,cy-h/2,w,h);
+  }
+  ctx.restore();
+  ctx.restore(); ctx.shadowBlur=0;
+}
+
+// --- mini-ikony wariantów do koła wyboru ----------------------------------
+function drawReticleGlyph(m,id,x,y,rr,sel){
+  ctx.save(); ctx.translate(x,y);
+  const c=sel?'#ffd27a':'#7fb6c9';
+  ctx.strokeStyle=c; ctx.fillStyle=c; ctx.lineWidth=sel?1.8:1.3; ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.shadowColor=sel?'#ffb648':'rgba(0,0,0,0)'; ctx.shadowBlur=sel?6:0;
+  const R=rr, arm=R*0.5;
+  const cornersL=(hx,hy)=>{ for(const [sx,sy] of RET_CORNERS){ const cx=sx*hx, cy=sy*hy;
+    ctx.beginPath(); ctx.moveTo(cx,cy-sy*arm); ctx.lineTo(cx,cy); ctx.lineTo(cx-sx*arm,cy); ctx.stroke(); } };
+  if(m==='single'){
+    if(id==='sq'){ cornersL(R,R); }
+    else if(id==='dia'){ const d=R*0.6; ctx.beginPath(); ctx.moveTo(0,-d);ctx.lineTo(d,0);ctx.lineTo(0,d);ctx.lineTo(-d,0);ctx.closePath(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-R-3,0);ctx.lineTo(-R+2,0); ctx.moveTo(R-2,0);ctx.lineTo(R+3,0); ctx.stroke(); }
+    else if(id==='arc'){ for(let i=0;i<4;i++){ const a=i*TAU/4+TAU/8; ctx.beginPath(); ctx.arc(0,0,R,a-0.55,a+0.55); ctx.stroke(); } }
+    else if(id==='ring'){ ctx.beginPath(); ctx.arc(0,0,R,Math.PI*1.14,Math.PI*1.86); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0,0,R,Math.PI*0.14,Math.PI*0.86); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-R-4,-4);ctx.lineTo(-R-4,4); ctx.moveTo(R+4,-4);ctx.lineTo(R+4,4); ctx.stroke(); }
+    else if(id==='claw'){ const leg=R*0.7; for(const [sx,sy] of RET_CORNERS){ ctx.beginPath();
+      ctx.moveTo(sx*R-sx*leg, sy*R); ctx.quadraticCurveTo(sx*R,sy*R, sx*R, sy*R-sy*leg); ctx.stroke(); } }
+    else if(id==='iris'){ const n=6, inR=R*0.5; ctx.beginPath();
+      for(let i=0;i<n;i++){ const a=i*TAU/n; ctx.moveTo(Math.cos(a)*R,Math.sin(a)*R); ctx.lineTo(Math.cos(a+0.5)*inR,Math.sin(a+0.5)*inR); } ctx.stroke();
+      ctx.beginPath(); ctx.arc(0,0,inR,0,TAU); ctx.stroke(); }
+  } else if(m==='group'){
+    const hx=R*1.05, hy=R*0.85, foot=R*0.5;
+    if(id==='brk'){ for(const sx of [-1,1]){ const xx=sx*hx,k=sx;
+      ctx.beginPath(); ctx.moveTo(xx+k*foot,-hy);ctx.lineTo(xx,-hy);ctx.lineTo(xx,hy);ctx.lineTo(xx+k*foot,hy); ctx.stroke(); } }
+    else if(id==='soft'){ for(const sx of [-1,1]){ const xx=sx*hx,k=sx;
+      ctx.beginPath(); ctx.moveTo(xx+k*4,-hy); ctx.lineTo(xx,-hy*0.5); ctx.quadraticCurveTo(xx-k*4,0,xx,hy*0.5); ctx.lineTo(xx+k*4,hy); ctx.stroke(); } }
+    else if(id==='gate'){ for(const sx of [-1,1]){ const xx=sx*hx,k=sx;
+      ctx.beginPath(); ctx.moveTo(xx,-hy);ctx.lineTo(xx,hy); ctx.moveTo(xx,-hy);ctx.lineTo(xx+k*5,-hy); ctx.moveTo(xx,hy);ctx.lineTo(xx+k*5,hy); ctx.moveTo(xx,0);ctx.lineTo(xx+k*6,0); ctx.stroke(); } }
+    else if(id==='caps'){ const cr=hy*0.5; for(const sx of [-1,1]){ const xx=sx*hx,k=sx;
+      ctx.beginPath(); ctx.moveTo(xx+k*cr,-hy); ctx.arcTo(xx,-hy,xx,-hy+cr,cr); ctx.lineTo(xx,hy-cr); ctx.arcTo(xx,hy,xx+k*cr,hy,cr); ctx.stroke(); } }
+    else if(id==='hex'){ ctx.beginPath();
+      for(let i=0;i<6;i++){ const a=-Math.PI/2+i*TAU/6; const px=Math.cos(a)*hx, py=Math.sin(a)*hy; i?ctx.lineTo(px,py):ctx.moveTo(px,py); } ctx.closePath(); ctx.stroke(); }
+    else if(id==='rail'){ for(const [sx,sy] of RET_CORNERS){ ctx.beginPath();
+      ctx.moveTo(sx*hx,sy*hy-sy*foot); ctx.lineTo(sx*hx,sy*hy); ctx.lineTo(sx*hx-sx*foot,sy*hy); ctx.stroke(); } }
+  } else {
+    if(id==='cross'){ const s=R*0.72; ctx.beginPath(); ctx.arc(0,0,s,0,TAU); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-R-2,0);ctx.lineTo(-3,0);ctx.moveTo(3,0);ctx.lineTo(R+2,0);ctx.moveTo(0,-R-2);ctx.lineTo(0,-3);ctx.moveTo(0,3);ctx.lineTo(0,R+2); ctx.stroke(); }
+    else if(id==='sqr'){ cornersL(R,R); }
+    else if(id==='xdia'){ ctx.beginPath();
+      for(const [sx,sy] of RET_CORNERS){ ctx.moveTo(sx*R,sy*R); ctx.lineTo(sx*R*0.45,sy*R*0.45); } ctx.stroke();
+      const d=R*0.5; ctx.beginPath(); ctx.moveTo(0,-d);ctx.lineTo(d,0);ctx.lineTo(0,d);ctx.lineTo(-d,0);ctx.closePath(); ctx.stroke(); }
+    else if(id==='gate'){ const foot=R*0.5; for(const sx of [-1,1]){ const xx=sx*R,k=sx;
+      ctx.beginPath(); ctx.moveTo(xx+k*foot,-R);ctx.lineTo(xx,-R);ctx.lineTo(xx,R);ctx.lineTo(xx+k*foot,R); ctx.stroke(); } }
+  }
+  ctx.restore();
+}
+
 function drawTargetingOverlays(){
   const m=mode().id;
   // --- ZABLOKOWANE (potwierdzone przez LPM) ---
@@ -1102,7 +1396,7 @@ function drawTargetingOverlays(){
 /* ---- markery zablokowanych celów (bursztyn) ---- */
 function lockedSingle(e){
   if(e.dead)return; const t=T(); const r=e.r+16+Math.sin(t*5)*1.5;
-  drawCorners(e.x,e.y,r,'#ff4d5e',2.4);
+  drawSingleVariant(curReticle('single').id, e.x,e.y,r,1,'#ff4d5e','#ff8a94');
   ctx.save(); ctx.translate(e.x,e.y); ctx.rotate(-t*1.1);
   ctx.strokeStyle='rgba(255,77,94,.55)'; ctx.lineWidth=1; ctx.setLineDash([4,10]);
   ctx.beginPath(); ctx.arc(0,0,r+9,0,TAU); ctx.stroke(); ctx.setLineDash([]); ctx.restore();
@@ -1126,11 +1420,10 @@ function lockedGroup(list){
 function lockedSubsystem(e,s){
   drawCorners(e.x,e.y,e.r+14,'rgba(255,77,94,.55)',1.5);
   const p=subWorldPos(e,s),t=T(),r=s.r+9+Math.sin(t*6)*1.5;
-  ctx.save(); ctx.translate(p.x,p.y);
-  ctx.strokeStyle='#ff4d5e'; ctx.lineWidth=2; ctx.shadowColor='#ff4d5e'; ctx.shadowBlur=10;
-  ctx.beginPath(); ctx.arc(0,0,r,0,TAU); ctx.stroke();
-  ctx.rotate(t*1.4);
-  ctx.beginPath(); for(let i=0;i<4;i++){ ctx.moveTo(0,-r-4); ctx.lineTo(0,-r+3); ctx.rotate(TAU/4); } ctx.stroke();
+  drawSubVariant(curReticle('sub').id, p.x,p.y,r,1,'#ff4d5e','#ff8a94');
+  ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(t*1.4);
+  ctx.strokeStyle='#ff4d5e'; ctx.lineWidth=1.4; ctx.shadowColor='#ff4d5e'; ctx.shadowBlur=8;
+  ctx.beginPath(); for(let i=0;i<4;i++){ ctx.moveTo(0,-r-5); ctx.lineTo(0,-r+2); ctx.rotate(TAU/4); } ctx.stroke();
   ctx.restore(); ctx.shadowBlur=0;
   labelWorld(p.x+r+6,p.y+3,'▸ '+s.n.toUpperCase(),'#ff4d5e','left');
   drawLeadIndicator(e);
@@ -1141,36 +1434,24 @@ function acqSingle(){
   drawCursor('#ffb648');
   if(hovered && locked.indexOf(hovered)<0){
     const r=hovered.r+12;
-    const ready=drawAssemblingSquare(hovered.x,hovered.y,r,reticle.acq);
-    if(reticle.readyFx>0){ // „snap" po złożeniu
-      const k=reticle.readyFx/0.35, rr=r*(1+(1-k)*0.6);
-      ctx.save(); ctx.globalAlpha=k*0.9; ctx.strokeStyle='#ffd27a'; ctx.lineWidth=2;
-      ctx.shadowColor='#ffd27a'; ctx.shadowBlur=8;
-      ctx.strokeRect(hovered.x-rr,hovered.y-rr,rr*2,rr*2); ctx.restore();
-    }
+    const ready=drawSingleVariant(curReticle('single').id, hovered.x,hovered.y,r,reticle.acq,'#ffb648','#ffd27a');
+    snapEcho(hovered.x,hovered.y,r,reticle.readyFx,'#ffd27a');
     labelWorld(hovered.x,hovered.y-r-12, hovered.def.tag+'  '+Math.round(Math.hypot(hovered.x-player.x,hovered.y-player.y))+'u', '#ffb648');
     labelWorld(hovered.x,hovered.y+r+16, ready?'◂ LPM: LOCK ▸':'składanie namiaru…', ready?'#ffd27a':'rgba(255,182,72,.8)');
   }
 }
 function acqSub(){
-  const x=reticle.x,y=reticle.y,s=reticle.size,col='#ff4d5e';
   const hasT = hoveredSub && !(lockedSub && lockedSub.sub===hoveredSub.sub);
-  ctx.strokeStyle=col; ctx.lineWidth=1.6; ctx.shadowColor=col; ctx.shadowBlur=8;
-  ctx.beginPath();
-  ctx.moveTo(x-s-6,y);ctx.lineTo(x-4,y); ctx.moveTo(x+4,y);ctx.lineTo(x+s+6,y);
-  ctx.moveTo(x,y-s-6);ctx.lineTo(x,y-4); ctx.moveTo(x,y+4);ctx.lineTo(x,y+s+6);
-  ctx.stroke();
-  ctx.beginPath(); ctx.arc(x,y,s,0,TAU); ctx.stroke(); ctx.shadowBlur=0;
   if(hasT){
-    drawArcP(x,y,s+4,reticle.acq,col,2);
-    if(reticle.readyFx>0){ // „snap" — echo pierścienia po domierzeniu modułu
-      const k=reticle.readyFx/0.35;
-      ctx.save(); ctx.globalAlpha=k*0.9; ctx.strokeStyle='#ff8a94'; ctx.lineWidth=2;
-      ctx.shadowColor='#ff8a94'; ctx.shadowBlur=8;
-      ctx.beginPath(); ctx.arc(x,y,(s+4)*(1+(1-k)*0.8),0,TAU); ctx.stroke(); ctx.restore();
-    }
-    labelWorld(x,y-s-12,hoveredSub.sub.n.toUpperCase(),col);
-    labelWorld(x,y+s+16, reticle.acq>=1?'◂ LPM: LOCK ▸':'CELOWANIE…',col);
+    const p=subWorldPos(hoveredSub.ent,hoveredSub.sub), r=hoveredSub.sub.r+8;
+    drawCursor('#ffb648'); // krzyżyk pod myszą; celownik siada na module
+    const ready=drawSubVariant(curReticle('sub').id, p.x,p.y,r,reticle.acq,'#ffb648','#ffd27a');
+    snapEcho(p.x,p.y,r+4,reticle.readyFx,'#ff8a94');
+    labelWorld(p.x,p.y-r-12,hoveredSub.sub.n.toUpperCase(), ready?'#ffd27a':'#ffb648');
+    labelWorld(p.x,p.y+r+16, ready?'◂ LPM: LOCK ▸':'CELOWANIE…', ready?'#ffd27a':'#ffb648');
+  } else {
+    // brak modułu pod kursorem — pokaż sam wariant celownika przy myszy
+    drawSubVariant(curReticle('sub').id, reticle.x,reticle.y,13,0,'#ffb648','#ffd27a');
   }
 }
 function acqGroup(){
@@ -1188,7 +1469,7 @@ function acqGroup(){
   const frameCol = allReady ? '#ffd27a' : aim;
 
   if(showFrame){
-    drawGroupBrackets(cx,cy,w,h,frameCol,2.2,0.95,Math.sin(t*3)*3);
+    drawGroupFrame(curReticle('group').id,cx,cy,w,h,frameCol,2.2,0.95,Math.sin(t*3)*3);
     // miękkie pasmo skanujące przesuwające się w poziomie
     const sx=cx-w/2+((t*130)%w);
     const g=ctx.createLinearGradient(sx-20,0,sx+20,0);
@@ -1274,36 +1555,61 @@ function drawLockFx(){
 /* --------------------------------------------------------- radial wheel */
 function drawWheel(){
   if(!wheel.open) return;
-  const cx=wheel.cx, cy=wheel.cy, R=92, rin=30;
+  const cx=wheel.cx, cy=wheel.cy, rin=30, R1=WHEEL_R1, R2=WHEEL_R2, gap=WHEEL_GAP;
   ctx.save();
   // przyciemnienie
-  ctx.fillStyle='rgba(2,6,12,.35)'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(2,6,12,.45)'; ctx.fillRect(0,0,W,H);
   const n=MODES.length, step=TAU/n;
+  ctx.textAlign='center';
   for(let i=0;i<n;i++){
-    const a0=-Math.PI/2+i*step - step/2;
+    const a0=-Math.PI/2 - step/2 + i*step;
     const a1=a0+step;
-    const sel=(i===wheel.sector);
+    const selMode=(i===wheel.sector);
+    const isCurMode=(i===modeIndex);
+    // --- wewnętrzny pierścień: TRYB ---
     ctx.beginPath();
-    ctx.arc(cx,cy,R,a0,a1);
+    ctx.arc(cx,cy,R1,a0,a1);
     ctx.arc(cx,cy,rin,a1,a0,true);
     ctx.closePath();
-    ctx.fillStyle= sel? 'rgba(52,231,255,.28)':'rgba(10,26,38,.85)';
+    ctx.fillStyle= selMode? 'rgba(52,231,255,.26)': isCurMode? 'rgba(52,231,255,.12)':'rgba(10,26,38,.85)';
     ctx.fill();
-    ctx.strokeStyle= sel? '#34e7ff':'rgba(52,231,255,.35)';
-    ctx.lineWidth= sel?2:1; ctx.stroke();
-    // ikona + tekst
+    ctx.strokeStyle= selMode? '#34e7ff':'rgba(52,231,255,.32)';
+    ctx.lineWidth= selMode?2:1; ctx.stroke();
     const am=-Math.PI/2+i*step;
-    const tx=cx+Math.cos(am)*(R+rin)/2, ty=cy+Math.sin(am)*(R+rin)/2;
-    drawWheelIcon(MODES[i].icon, tx, ty-6, sel);
-    ctx.fillStyle= sel?'#fff':'#9fd6e6'; ctx.font=(sel?'bold ':'')+'11px Consolas'; ctx.textAlign='center';
-    ctx.fillText(MODES[i].name, tx, ty+16);
+    const mr=(rin+R1)/2;
+    const tx=cx+Math.cos(am)*mr, ty=cy+Math.sin(am)*mr;
+    drawWheelIcon(MODES[i].icon, tx, ty-8, selMode||isCurMode);
+    ctx.fillStyle=(selMode||isCurMode)?'#fff':'#9fd6e6'; ctx.font=(selMode?'bold ':'')+'11px Consolas';
+    ctx.fillText(MODES[i].name, tx, ty+15);
+    // --- zewnętrzny pierścień: WARIANTY CELOWNIKA danego trybu ---
+    const list=RETICLES[MODES[i].id];
+    const rMid=(R1+gap+R2)/2;
+    for(let j=0;j<list.length;j++){
+      const b0=a0+(j/list.length)*step+0.012;
+      const b1=a0+((j+1)/list.length)*step-0.012;
+      const selVar= selMode && wheel.vsector===j;
+      const isCurVar= isCurMode && (reticleSel[MODES[i].id]||0)===j;
+      ctx.beginPath();
+      ctx.arc(cx,cy,R2,b0,b1);
+      ctx.arc(cx,cy,R1+gap,b1,b0,true);
+      ctx.closePath();
+      ctx.fillStyle= selVar? 'rgba(255,182,72,.30)': isCurVar? 'rgba(52,231,255,.14)':'rgba(8,20,30,.82)';
+      ctx.fill();
+      ctx.strokeStyle= selVar? '#ffd27a': isCurVar? 'rgba(52,231,255,.4)':'rgba(52,231,255,.18)';
+      ctx.lineWidth= selVar?2:1; ctx.stroke();
+      const bm=(b0+b1)/2;
+      const gx=cx+Math.cos(bm)*rMid, gy=cy+Math.sin(bm)*rMid;
+      drawReticleGlyph(MODES[i].id, list[j].id, gx, gy, 11, selVar||isCurVar);
+    }
   }
-  // środek
-  ctx.beginPath(); ctx.arc(cx,cy,rin-4,0,TAU);
-  ctx.fillStyle='rgba(6,16,26,.95)'; ctx.fill();
-  ctx.strokeStyle='rgba(52,231,255,.4)'; ctx.stroke();
-  ctx.fillStyle='#5e8aa0'; ctx.font='9px Consolas'; ctx.textAlign='center';
-  ctx.fillText('TRYB', cx, cy+3);
+  // środek — czytnik aktualnego wskazania
+  ctx.beginPath(); ctx.arc(cx,cy,rin-3,0,TAU);
+  ctx.fillStyle='rgba(6,16,26,.96)'; ctx.fill();
+  ctx.strokeStyle='rgba(52,231,255,.4)'; ctx.lineWidth=1; ctx.stroke();
+  const mi=wheel.sector>=0?wheel.sector:modeIndex;
+  const vi=(wheel.sector>=0 && wheel.vsector>=0)? wheel.vsector : (reticleSel[MODES[mi].id]||0);
+  ctx.fillStyle='#9fd6e6'; ctx.font='bold 9px Consolas'; ctx.fillText(MODES[mi].name, cx, cy-1);
+  ctx.fillStyle='#ffd27a'; ctx.font='8px Consolas'; ctx.fillText(RETICLES[MODES[mi].id][vi].name, cx, cy+9);
   ctx.restore();
 }
 function drawWheelIcon(kind,x,y,sel){

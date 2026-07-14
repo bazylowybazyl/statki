@@ -1,17 +1,20 @@
+import { BLOOM_DEFAULTS } from '../3d/bloomConfig.js';
+
 const PANEL_ID = 'bloom-f12-panel';
 const STYLE_ID = 'bloom-f12-panel-style';
 const STORAGE_KEY = 'devBloomPanel';
 
-const BLOOM_DEFAULTS = Object.freeze({
-  strength: 0.35,
-  radius: 0.18,
-  threshold: 0.95,
-  resolutionScale: 1.0,
-  overlayStrength: 2.5,
-  overlayRadius: 0.5,
-  overlayThreshold: 0.1,
-  planetBloomMultiplier: 1.0
-});
+// Stan z localStorage jest honorowany tylko w trybie dev (?dev w URL).
+// Bez tego zapisane eksperymenty suwakami po cichu nadpisywałyby
+// kanoniczną konfigurację z bloomConfig.js na zawsze.
+function isDevPersistEnabled() {
+  try {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).has('dev');
+  } catch {
+    return false;
+  }
+}
 
 const CONTROL_SECTIONS = Object.freeze([
   {
@@ -50,7 +53,18 @@ function toNumber(value, fallback) {
 
 function ensureBloomState() {
   const devVfx = (window.DevVFX = window.DevVFX || {});
-  const saved = loadSavedBloom();
+  let saved = null;
+  if (isDevPersistEnabled()) {
+    saved = loadSavedBloom();
+  } else {
+    try {
+      if (localStorage.getItem(STORAGE_KEY)) {
+        console.info('[bloomTuner] Pominięto zapisany stan bloomu z localStorage — obowiązuje src/3d/bloomConfig.js (tryb dev: dodaj ?dev do URL).');
+      }
+    } catch {
+      // ignore localStorage errors
+    }
+  }
   const bloom = (devVfx.bloom = Object.assign({}, BLOOM_DEFAULTS, devVfx.bloom || {}, saved || {}));
 
   bloom.strength = clamp(toNumber(bloom.strength, BLOOM_DEFAULTS.strength), 0, 5);
@@ -79,6 +93,7 @@ function loadSavedBloom() {
 }
 
 function saveBloomState(bloom) {
+  if (!isDevPersistEnabled()) return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       strength: bloom.strength,
@@ -229,8 +244,9 @@ function createPanel(state) {
       <div class="buttons">
         <button type="button" data-action="copy">Copy JSON</button>
         <button type="button" data-action="reset">Reset</button>
+        <button type="button" data-action="clear">Wyczyść zapis</button>
       </div>
-      <div class="hint">Otworz/zamknij z panelu DevTools</div>
+      <div class="hint">Suwaki działają na żywo. Zapis w localStorage tylko z ?dev w URL; docelowe wartości wklej do src/3d/bloomConfig.js (Copy JSON).</div>
     </div>
   `;
 
@@ -264,6 +280,20 @@ function createPanel(state) {
       state[key] = value;
     }
     saveBloomState(state);
+    applyBloomState(state);
+    const controlsRoot = panel.querySelector('.controls');
+    if (controlsRoot) buildControls(controlsRoot, state);
+  });
+
+  panel.querySelector('button[data-action="clear"]')?.addEventListener('click', () => {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // ignore localStorage errors
+    }
+    for (const [key, value] of Object.entries(BLOOM_DEFAULTS)) {
+      state[key] = value;
+    }
     applyBloomState(state);
     const controlsRoot = panel.querySelector('.controls');
     if (controlsRoot) buildControls(controlsRoot, state);
