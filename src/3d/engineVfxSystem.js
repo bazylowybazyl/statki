@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
 import { createShortNeedleExhaust } from '../../Engineeffects.js';
+import { getEngineVfxClassScale } from './engineVfxScale.js';
 
 function getEntityScale(entity) {
   if (entity?.visual && typeof entity.visual.spriteScale === 'number') return entity.visual.spriteScale;
@@ -257,6 +258,7 @@ function updateEffects(entity, fxData, time) {
   const ey = interpPose ? interpPose.y : (entity?.pos ? entity.pos.y : (entity?.y || 0));
   const angle = interpPose ? interpPose.angle : (entity?.angle || 0);
   const scale = getEntityScale(entity);
+  const classScale = getEngineVfxClassScale(entity);
 
   fxData.group.position.set(ex, -ey, 0);
   fxData.group.rotation.z = -angle;
@@ -327,11 +329,20 @@ function updateEffects(entity, fxData, time) {
     const curve = Number.isFinite(curveVal) ? Math.max(0.2, Math.min(4.0, curveVal)) : 1.8;
 
     item.instance.group.position.set(lx, ly, -5);
-    item.instance.group.scale.set(widthMul, lengthMul, 1);
+    // Pozycje dysz pozostają w przestrzeni kadłuba. Tylko sam płomień skaluje
+    // się z klasą statku, a globalny tuner jest końcowym mnożnikiem.
+    const slotScaleRaw = Number(slot?.source?.vfxScale);
+    const slotScale = Number.isFinite(slotScaleRaw) && slotScaleRaw > 0 ? slotScaleRaw : 1;
+    const effectScale = classScale * slotScale;
+    item.instance.group.scale.set(widthMul * effectScale, lengthMul * effectScale, 1);
     if (item.instance.setCurve) item.instance.setCurve(curve);
     if (item.instance.setThrottle) item.instance.setThrottle(slotThrottle);
     if (entity.isPlayer && typeof window !== 'undefined' && window.OPTIONS?.vfx) {
-      if (item.instance.setColorTemp) item.instance.setColorTemp(window.OPTIONS.vfx.colorTempK);
+      const driveColorTemp = Number(window.shipDriveState?.engineColorTempK);
+      const colorTemp = Number.isFinite(driveColorTemp)
+        ? driveColorTemp
+        : window.OPTIONS.vfx.colorTempK;
+      if (item.instance.setColorTemp) item.instance.setColorTemp(colorTemp);
       if (item.instance.setBloomGain) item.instance.setBloomGain(window.OPTIONS.vfx.bloomGain);
     }
     if (item.instance.update) item.instance.update(time);
@@ -342,23 +353,19 @@ function updateEffects(entity, fxData, time) {
       const worldX = ex + localX * cA - localY * sA;
       const worldY = sceneOriginY + localX * sA + localY * cA;
       const baseRadius = slot.kind === 'side' ? 78 : 110;
-      const radiusWorld = baseRadius * scale * widthMul * (0.55 + slotThrottle * 0.9);
+      const radiusWorld = baseRadius * scale * classScale * slotScale * widthMul * (0.55 + slotThrottle * 0.9);
       const warpState = (typeof window !== 'undefined' && window.warp?.state === 'active') ? 1 : 0;
-      const strength = slotThrottle * (0.7 + moveGlow * 0.5 + warpState * 0.35);
+      const strength = slotThrottle * (1.0 + moveGlow * 0.6 + warpState * 0.5);
 
-      // Dysza -> kosmos: rdzeń + ogon heat haze, zamiast pojedynczej "bańki" nad silnikiem.
-      const fromCenterX = worldX - ex;
-      const fromCenterY = worldY - sceneOriginY;
-      let dirX = fromCenterX;
-      let dirY = fromCenterY;
-      let dirLen = Math.sqrt(dirX * dirX + dirY * dirY);
-      if (dirLen < 0.0001) {
-        const localDirX = Number(slotForward.x) || 0;
-        const localDirY = -(Number(slotForward.y) || 1);
-        dirX = localDirX * cA - localDirY * sA;
-        dirY = localDirX * sA + localDirY * cA;
-        dirLen = Math.sqrt(dirX * dirX + dirY * dirY);
-      }
+      // Kierunek wydechu = os dyszy (slotForward) obrocona do sceny,
+      // spojnie z meshem plomienia — nie wektor srodek statku -> dysza.
+      const fwdX = Number(slotForward.x);
+      const fwdY = Number(slotForward.y);
+      const localDirX = Number.isFinite(fwdX) ? -fwdX : 0;
+      const localDirY = Number.isFinite(fwdY) ? fwdY : 1;
+      let dirX = localDirX * cA - localDirY * sA;
+      let dirY = localDirX * sA + localDirY * cA;
+      const dirLen = Math.sqrt(dirX * dirX + dirY * dirY);
       if (dirLen > 0.0001) {
         dirX /= dirLen;
         dirY /= dirLen;
@@ -367,20 +374,9 @@ function updateEffects(entity, fxData, time) {
         dirY = -1;
       }
 
-      const plumeLen = radiusWorld * (1.3 + slotThrottle * 2.4 + warpState * 0.9);
-      const plumeSteps = slot.kind === 'side'
-        ? (entity.isPlayer ? 2 : 1)
-        : (entity.isPlayer ? 4 : 2);
-
-      Core3D.pushHeatHazeWorld(worldX, worldY, -4, radiusWorld * 0.72, strength * 0.95, false);
-      for (let step = 0; step < plumeSteps; step++) {
-        const t = (step + 1) / plumeSteps;
-        const px = worldX + dirX * plumeLen * t;
-        const py = worldY + dirY * plumeLen * t;
-        const pRadius = radiusWorld * (1.0 - t * 0.55);
-        const pStrength = strength * (1.0 - t * 0.35);
-        Core3D.pushHeatHazeWorld(px, py, -4, pRadius, pStrength, false);
-      }
+      // Jedno zrodlo na dysze: shader sam wydluza haze w stozek wzdluz kierunku.
+      const plumeBoost = 0.9 + slotThrottle * 0.35 + warpState * 0.3;
+      Core3D.pushHeatHazeWorld(worldX, worldY, -4, radiusWorld * plumeBoost, strength, dirX, dirY);
     }
   }
 }

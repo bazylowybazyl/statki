@@ -1,0 +1,1140 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STATKI — Prototyp: Dysze i ślad gazu (top-down)</title>
+<style>
+    html, body { margin: 0; padding: 0; overflow: hidden; background: #05080d; }
+    body { font-family: 'Consolas', 'JetBrains Mono', 'Courier New', monospace; color: #bfe2ff; font-size: 12px; }
+    canvas { display: block; }
+
+    .panel {
+        position: absolute;
+        background: rgba(7, 14, 22, 0.85);
+        border: 1px solid rgba(90, 180, 255, 0.22);
+        border-radius: 6px;
+        padding: 10px 12px;
+        backdrop-filter: blur(4px);
+        z-index: 10;
+    }
+
+    #hdr { top: 12px; left: 12px; max-width: 440px; }
+    #hdr h1 { margin: 0 0 2px 0; font-size: 14px; letter-spacing: 2px; color: #eaf6ff; }
+    #hdr .sub { font-size: 10px; color: #6fa8d8; letter-spacing: 1px; margin-bottom: 9px; }
+
+    .tab {
+        display: inline-block; padding: 6px 10px; margin: 0 6px 6px 0;
+        border: 1px solid rgba(90, 180, 255, 0.3); border-radius: 4px;
+        cursor: pointer; font-size: 11px; letter-spacing: 0.5px;
+        color: #9fd2ff; user-select: none; transition: all 0.15s;
+    }
+    .tab:hover { border-color: rgba(120, 200, 255, 0.6); }
+    .tab.on {
+        background: rgba(64, 160, 255, 0.18); color: #eaf6ff;
+        border-color: rgba(120, 200, 255, 0.7);
+        box-shadow: 0 0 12px rgba(80, 170, 255, 0.25);
+    }
+    .tab .key { color: #57b6ff; margin-right: 5px; }
+
+    #desc { font-size: 11px; line-height: 1.5; color: #a9cdea; border-top: 1px solid rgba(90,180,255,0.15); padding-top: 8px; }
+    #desc b { color: #e8f4ff; }
+
+    #ctrl { top: 12px; right: 12px; width: 235px; }
+    #ctrl h2 { margin: 0 0 8px 0; font-size: 11px; letter-spacing: 2px; color: #7fc4ff; }
+    .row { display: flex; justify-content: space-between; align-items: center; margin: 8px 0; gap: 10px; font-size: 11px; }
+    .row label { color: #8fb8d8; letter-spacing: 0.5px; }
+    .row .val { color: #eaf6ff; min-width: 34px; text-align: right; }
+    input[type="range"] { width: 110px; accent-color: #57b6ff; }
+    input[type="checkbox"] { accent-color: #57b6ff; }
+
+    #boostBtn {
+        width: 100%; padding: 7px 0; margin-top: 4px; text-align: center;
+        border: 1px solid rgba(255, 150, 60, 0.45); border-radius: 4px;
+        color: #ffc890; cursor: pointer; letter-spacing: 2px; font-size: 11px; user-select: none;
+        box-sizing: border-box;
+    }
+    #boostBtn:active, #boostBtn.on {
+        background: rgba(255, 140, 40, 0.25); color: #fff;
+        box-shadow: 0 0 14px rgba(255, 140, 40, 0.35);
+    }
+
+    #help { bottom: 12px; left: 12px; font-size: 10px; color: #7fa8cc; letter-spacing: 0.5px; }
+    #help kbd {
+        background: rgba(90, 180, 255, 0.12); border: 1px solid rgba(90, 180, 255, 0.3);
+        border-radius: 3px; padding: 1px 5px; font-size: 10px; color: #cfe8ff;
+    }
+
+    #stats { bottom: 12px; right: 12px; text-align: right; font-size: 11px; line-height: 1.7; }
+    #stats .lbl { color: #6fa0c8; margin-right: 8px; }
+    #stats .v { color: #eaf6ff; }
+    #stats #sBoost.on { color: #ffb060; text-shadow: 0 0 8px rgba(255,140,40,0.6); }
+
+    #vig {
+        position: fixed; inset: 0; pointer-events: none; z-index: 5;
+        background: radial-gradient(ellipse at center, transparent 58%, rgba(0, 2, 10, 0.5) 100%);
+    }
+</style>
+</head>
+<body>
+
+<canvas id="view"></canvas>
+<div id="vig"></div>
+
+<div id="hdr" class="panel">
+    <h1>DYSZE — ŚLAD GAZU (TOP-DOWN)</h1>
+    <div class="sub">GAZ DZIEDZICZY PĘD STATKU I HAMUJE W PRÓŻNI → ŚLAD ZAGINA SIĘ ŁAGODNIE</div>
+    <div>
+        <span class="tab on" id="tab0"><span class="key">[1]</span>SILNIK RAKIETOWY</span>
+        <span class="tab" id="tab1"><span class="key">[2]</span>STRUMIEŃ JONOWY</span>
+        <span class="tab" id="tab2"><span class="key">[3]</span>WELON GAZOWY</span>
+    </div>
+    <div id="desc"></div>
+</div>
+
+<div id="ctrl" class="panel">
+    <h2>PARAMETRY</h2>
+    <div class="row"><label>CIĄG (ręczny)</label><input type="range" id="thrRange" min="0" max="100" value="70"><span class="val" id="thrVal">70%</span></div>
+    <div class="row"><label>DŁUGOŚĆ ŚLADU</label><input type="range" id="lenRange" min="0" max="100" value="60"><span class="val" id="lenVal">60%</span></div>
+    <div class="row"><label>POŚWIATA</label><input type="range" id="glowRange" min="0" max="200" value="100"><span class="val" id="glowVal">1.00</span></div>
+    <div class="row"><label>AUTOPILOT <kbd>P</kbd></label><input type="checkbox" id="chkAuto" checked></div>
+    <div class="row"><label>SIATKA SEKTORA</label><input type="checkbox" id="chkGrid" checked></div>
+    <div id="boostBtn">⯈ DOPALACZ (SHIFT)</div>
+</div>
+
+<div id="help" class="panel">
+    <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> efekt · <kbd>A</kbd><kbd>D</kbd> skręt · <kbd>W</kbd><kbd>S</kbd> ciąg ·
+    <kbd>SHIFT</kbd> dopalacz · <kbd>P</kbd> autopilot · kółko: zoom
+</div>
+
+<div id="stats" class="panel">
+    <div><span class="lbl">EFEKT</span><span class="v" id="sFx">SILNIK RAKIETOWY</span></div>
+    <div><span class="lbl">CIĄG</span><span class="v" id="sThr">0%</span> <span class="v" id="sBoost">BOOST</span></div>
+    <div><span class="lbl">PRĘDKOŚĆ</span><span class="v" id="sSpd">0 u/s</span></div>
+    <div><span class="lbl">FPS</span><span class="v" id="sFps">—</span></div>
+</div>
+
+<script type="module">
+// ============================================================
+//  STATKI — prototyp dysz + śladu gazu. TOP-DOWN 2D (Canvas).
+//
+//  Zasada śladu (wspólna dla wszystkich propozycji):
+//  dysza emituje "porcje gazu" (streakline). Każda porcja dostaje
+//  prędkość = pęd statku + wyrzut z dyszy (z gimbalem), po czym
+//  wyhamowuje w przestrzeni. Do tego lekkie wygładzanie łańcucha.
+//  Efekt: przy skręcie ślad zawsze układa się w łagodny łuk,
+//  jak gaz wydmuchiwany z węża — zero ostrych załamań.
+//
+//  3 propozycje różnią się dyszą i sposobem rysowania gazu:
+//   [1] SILNIK RAKIETOWY — diamenty uderzeniowe, gaz stygnie w dym
+//   [2] STRUMIEŃ JONOWY  — igła plazmy, fale prędkości biegnące w tył
+//   [3] WELON GAZOWY     — rozprężające się, stygnące kłęby gazu
+// ============================================================
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const TAU = Math.PI * 2;
+
+function noise1(t) {
+    return Math.sin(t * 13.7) * 0.5 + Math.sin(t * 7.3 + 2.1) * 0.35 + Math.sin(t * 29.7 + 4.2) * 0.15;
+}
+const smoothstep = (a, b, x) => {
+    const k = clamp((x - a) / (b - a), 0, 1);
+    return k * k * (3 - 2 * k);
+};
+
+// Kontur pióropusza: przewężenie za wylotem, "brzuch" ekspansji, zbieg do
+// szpica; krawędź lekko faluje (turbulencja). Rysuje path, nie wypełnia.
+function plumePath(c, x0, L, wExit, sMul, time, seed) {
+    const n1 = noise1(time * 9 + seed);
+    const n2 = noise1(time * 13 + seed * 2.3);
+    const wE = wExit * sMul;
+    const xNeck = x0 + L * 0.16, wNeck = wE * (0.8 + 0.05 * n1);
+    const xBelly = x0 + L * 0.5, wBelly = wE * (1.12 + 0.08 * n2);
+    const xTip = x0 + L;
+    c.beginPath();
+    c.moveTo(x0, -wE);
+    c.quadraticCurveTo(xNeck, -wNeck, xBelly, -wBelly);
+    c.quadraticCurveTo(x0 + L * 0.85, -wBelly * 0.55, xTip, 0);
+    c.quadraticCurveTo(x0 + L * 0.85, wBelly * 0.55, xBelly, wBelly);
+    c.quadraticCurveTo(xNeck, wNeck, x0, wE);
+    c.closePath();
+}
+
+// ---------------- CANVAS / WARSTWY ----------------
+const canvas = document.getElementById('view');
+const ctx = canvas.getContext('2d');
+const fx = document.createElement('canvas');      // warstwa emisyjna (płomienie + gaz)
+const fctx = fx.getContext('2d');
+const blurA = document.createElement('canvas');   // bloom 1/4
+const bctxA = blurA.getContext('2d');
+const blurB = document.createElement('canvas');   // bloom 1/8
+const bctxB = blurB.getContext('2d');
+
+let W = 0, H = 0, dpr = 1;
+function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 1.75);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    fx.width = canvas.width;
+    fx.height = canvas.height;
+    blurA.width = Math.max(2, canvas.width >> 2);
+    blurA.height = Math.max(2, canvas.height >> 2);
+    blurB.width = Math.max(2, canvas.width >> 3);
+    blurB.height = Math.max(2, canvas.height >> 3);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------------- KAMERA ----------------
+const cam = { x: 0, y: 0, zoom: 1.0 };
+window.addEventListener('wheel', (e) => {
+    cam.zoom = clamp(cam.zoom * Math.exp(-e.deltaY * 0.001), 0.45, 2.4);
+}, { passive: true });
+
+function setWorldTransform(c) {
+    c.setTransform(
+        cam.zoom * dpr, 0, 0, cam.zoom * dpr,
+        dpr * (W / 2 - cam.x * cam.zoom),
+        dpr * (H / 2 - cam.y * cam.zoom)
+    );
+}
+function setScreenTransform(c) {
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+// ---------------- TŁO: GWIAZDY (2 warstwy) + SIATKA ----------------
+function makeStarLayer(count, T, rMin, rMax) {
+    const arr = [];
+    for (let i = 0; i < count; i++) {
+        arr.push({
+            x: Math.random() * T,
+            y: Math.random() * T,
+            r: rMin + Math.random() * (rMax - rMin),
+            a: 0.25 + Math.random() * 0.75
+        });
+    }
+    return { stars: arr, T };
+}
+const starFar = makeStarLayer(140, 1100, 0.5, 1.1);
+const starNear = makeStarLayer(90, 1100, 0.8, 1.7);
+
+function drawStarLayer(layer, par, alphaMul) {
+    setScreenTransform(ctx);
+    const Tz = layer.T * cam.zoom * lerp(1, 0.4, 1 - par); // dalsze gwiazdy mniej zoomują
+    const ox = ((-cam.x * par * cam.zoom) % Tz + Tz) % Tz;
+    const oy = ((-cam.y * par * cam.zoom) % Tz + Tz) % Tz;
+    const cols = Math.ceil(W / Tz) + 1;
+    const rows = Math.ceil(H / Tz) + 1;
+    ctx.fillStyle = '#cfe0f2';
+    for (const s of layer.stars) {
+        const bx = (s.x / layer.T) * Tz;
+        const by = (s.y / layer.T) * Tz;
+        for (let cxi = -1; cxi < cols; cxi++) {
+            const px = bx + ox + cxi * Tz;
+            if (px < -4 || px > W + 4) continue;
+            for (let ryi = -1; ryi < rows; ryi++) {
+                const py = by + oy + ryi * Tz;
+                if (py < -4 || py > H + 4) continue;
+                ctx.globalAlpha = s.a * alphaMul;
+                ctx.fillRect(px, py, s.r, s.r);
+            }
+        }
+    }
+    ctx.globalAlpha = 1;
+}
+
+function drawGrid() {
+    setWorldTransform(ctx);
+    const G = 140;
+    const halfW = W / 2 / cam.zoom, halfH = H / 2 / cam.zoom;
+    const x0 = Math.floor((cam.x - halfW) / G) * G;
+    const x1 = cam.x + halfW;
+    const y0 = Math.floor((cam.y - halfH) / G) * G;
+    const y1 = cam.y + halfH;
+    ctx.strokeStyle = 'rgba(90, 170, 230, 0.06)';
+    ctx.lineWidth = 1 / cam.zoom;
+    ctx.beginPath();
+    for (let x = x0; x <= x1; x += G) { ctx.moveTo(x, cam.y - halfH); ctx.lineTo(x, cam.y + halfH); }
+    for (let y = y0; y <= y1; y += G) { ctx.moveTo(cam.x - halfW, y); ctx.lineTo(cam.x + halfW, y); }
+    ctx.stroke();
+}
+
+// ---------------- SPRITE'Y (miękkie kule gazu) ----------------
+function makePuffSprite(rgb, size = 64) {
+    const c = document.createElement('canvas');
+    c.width = size; c.height = size;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, `rgba(${rgb},0.9)`);
+    grad.addColorStop(0.35, `rgba(${rgb},0.42)`);
+    grad.addColorStop(0.75, `rgba(${rgb},0.1)`);
+    grad.addColorStop(1, `rgba(${rgb},0)`);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, size, size);
+    return c;
+}
+// rampa stygnięcia dla WELONU i dymu rakiety (od gorąca do zaniku)
+const veilSprites = [
+    '255,255,255', '210,232,255', '160,190,240', '120,140,205', '85,95,150', '58,60,95'
+].map(c => makePuffSprite(c));
+const smokeSprites = [
+    '255,236,200', '255,180,110', '200,120,80', '140,110,110', '95,92,105', '62,62,74'
+].map(c => makePuffSprite(c));
+const glowSprite = makePuffSprite('255,255,255');
+const warmGlowSprite = makePuffSprite('255,190,130');
+const coolGlowSprite = makePuffSprite('150,205,255');
+
+// ---------------- RAMPY KOLORÓW (LUT dla wstęgi gazu) ----------------
+function hexToRgb(h) {
+    return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+}
+function makeLUT(stops, n = 32, whiteMix = 0) {
+    const out = [];
+    for (let i = 0; i < n; i++) {
+        const t = i / (n - 1);
+        let j = 0;
+        while (j < stops.length - 2 && stops[j + 1][0] < t) j++;
+        const [t0, c0] = stops[j], [t1, c1] = stops[j + 1];
+        const k = clamp((t - t0) / Math.max(1e-6, t1 - t0), 0, 1);
+        const a = hexToRgb(c0), b = hexToRgb(c1);
+        let r = lerp(a[0], b[0], k), g = lerp(a[1], b[1], k), bl = lerp(a[2], b[2], k);
+        r = lerp(r, 255, whiteMix); g = lerp(g, 255, whiteMix); bl = lerp(bl, 255, whiteMix);
+        out.push(`rgb(${r | 0},${g | 0},${bl | 0})`);
+    }
+    return out;
+}
+const lutRocket = makeLUT([[0, '#ffffff'], [0.1, '#ffe9c4'], [0.25, '#ffb05a'], [0.45, '#ff7a2e'], [0.62, '#8a5a4a'], [0.82, '#565060'], [1, '#3a3a44']]);
+const lutIon = makeLUT([[0, '#ffffff'], [0.18, '#bfeaff'], [0.45, '#5fb8ff'], [0.75, '#2a5db0'], [1, '#12234d']]);
+const lutVeilCore = makeLUT([[0, '#ffffff'], [0.3, '#cfe4ff'], [0.7, '#8fa8e0'], [1, '#4a5588']]);
+
+// rampy sprite'ów: miękka kula w kolorach kolejnych faz stygnięcia
+function lutToSprites(lut, n = 8) {
+    const out = [];
+    for (let i = 0; i < n; i++) {
+        const css = lut[Math.min(lut.length - 1, ((i / (n - 1)) * (lut.length - 1)) | 0)];
+        const m = css.match(/rgb\((\d+),(\d+),(\d+)\)/);
+        out.push(makePuffSprite(`${m[1]},${m[2]},${m[3]}`));
+    }
+    return out;
+}
+const spritesRocket = lutToSprites(lutRocket);
+const spritesIon = lutToSprites(lutIon);
+const spritesVeilCore = lutToSprites(lutVeilCore);
+
+// ============================================================
+//  ŁAŃCUCH GAZU (streakline) — wspólna fizyka śladu
+// ============================================================
+class GasChain {
+    constructor(maxN = 200) {
+        this.maxN = maxN;
+        this.p = []; // {x,y,vx,vy,age,int,seed}
+    }
+    reset() { this.p.length = 0; }
+    emit(x, y, vx, vy, intensity, seed) {
+        this.p.push({ x, y, vx, vy, age: 0, int: intensity, seed });
+        if (this.p.length > this.maxN) this.p.shift();
+    }
+    update(dt, drag, life) {
+        const dec = Math.exp(-drag * dt);
+        const arr = this.p;
+        for (let i = 0; i < arr.length; i++) {
+            const q = arr[i];
+            q.vx *= dec; q.vy *= dec;
+            q.x += q.vx * dt; q.y += q.vy * dt;
+            q.age += dt;
+        }
+        while (arr.length && arr[0].age > life) arr.shift();
+        // Wygładzanie ważone wiekiem: świeży gaz NIE jest ruszany — leci
+        // prosto wzdłuż osi dyszy (wyrzut), łuk powstaje dalej sam z tego,
+        // że statek zdążył się obrócić. Dyfunduje dopiero starszy gaz.
+        for (let i = 1; i < arr.length - 1; i++) {
+            const b = arr[i];
+            const s = 0.14 * smoothstep(0.07, 0.3, b.age / life);
+            if (s <= 0.001) continue;
+            const a = arr[i - 1], c = arr[i + 1];
+            b.x += (a.x + c.x - 2 * b.x) * s;
+            b.y += (a.y + c.y - 2 * b.y) * s;
+        }
+    }
+}
+
+// Scratch: przeliczone punkty łańcucha do rysowania (od dyszy w tył)
+const SCR_MAX = 280;
+const scr = {
+    x: new Float32Array(SCR_MAX), y: new Float32Array(SCR_MAX),
+    t: new Float32Array(SCR_MAX), int: new Float32Array(SCR_MAX),
+    arc: new Float32Array(SCR_MAX), seed: new Float32Array(SCR_MAX),
+    px: new Float32Array(SCR_MAX), py: new Float32Array(SCR_MAX), // perpendykularna
+    n: 0
+};
+function buildScratch(chain, life, headX, headY) {
+    const arr = chain.p;
+    let n = 0;
+    // od najnowszej (przy dyszy) do najstarszej
+    for (let i = arr.length - 1; i >= 0 && n < SCR_MAX; i--, n++) {
+        const q = arr[i];
+        scr.x[n] = q.x; scr.y[n] = q.y;
+        scr.t[n] = clamp(q.age / life, 0, 1);
+        scr.int[n] = q.int;
+        scr.seed[n] = q.seed;
+    }
+    if (n > 0 && headX !== undefined) { // przyklej głowę do wylotu dyszy
+        scr.x[0] = headX; scr.y[0] = headY;
+    }
+    let arc = 0;
+    for (let i = 0; i < n; i++) {
+        if (i > 0) {
+            const dx = scr.x[i] - scr.x[i - 1], dy = scr.y[i] - scr.y[i - 1];
+            arc += Math.hypot(dx, dy);
+        }
+        scr.arc[i] = arc;
+        const i0 = Math.max(0, i - 1), i1 = Math.min(n - 1, i + 1);
+        let dx = scr.x[i1] - scr.x[i0], dy = scr.y[i1] - scr.y[i0];
+        const L = Math.hypot(dx, dy) || 1;
+        scr.px[i] = -dy / L; scr.py[i] = dx / L;
+    }
+    scr.n = n;
+    return n;
+}
+
+// Uniwersalny renderer smugi gazu: GĘSTE STEMPLOWANIE miękkich sprite'ów
+// (jak systemy dymu w grach 2D). Nakładki radialnych gradientów zlewają się
+// gładko — zero segmentowych szwów, "drabinki" ani twardych końcówek.
+// Zagęszczenie porcji (hamujący gaz) kompensowane alfą, więc ogon nie
+// prążkuje i nie jaśnieje. Jasny młody strumień = ciasny przebieg tych
+// samych stempli (biały początek rampy), wygasa płynnie razem z gazem.
+function drawGasPlume(c, opts) {
+    const n = scr.n;
+    if (n < 2) return;
+    const {
+        w0, grow = 1.6, sprites,
+        passes = [[8.0, 0.03], [4.0, 0.09]], // [średnica względem w0, alfa]
+        wobble = null, bright = null, fadePow = 1.4, time = 0,
+        spacing = 3.8
+    } = opts;
+    const nRamp = sprites.length;
+    for (let p = 0; p < passes.length; p++) {
+        const [sm, am] = passes[p];
+        for (let i = 1; i < n; i++) {
+            const t = scr.t[i];
+            const seg = scr.arc[i] - scr.arc[i - 1];
+            let a = Math.pow(1 - t, fadePow) * am * scr.int[i];
+            a *= clamp(seg / spacing, 0.15, 1.4); // kompensacja zagęszczenia
+            if (bright) a *= bright(i, t, time);
+            if (a < 0.004) continue;
+            let x = scr.x[i], y = scr.y[i];
+            if (wobble) {
+                const o = wobble(i, t, time);
+                x += scr.px[i] * o; y += scr.py[i] * o;
+            }
+            const size = Math.max(1.5, w0 * (1 + grow * t) * sm);
+            c.globalAlpha = clamp(a, 0, 1);
+            c.drawImage(sprites[Math.min(nRamp - 1, (t * nRamp) | 0)],
+                x - size / 2, y - size / 2, size, size);
+        }
+    }
+    c.globalAlpha = 1;
+}
+
+// ============================================================
+//  STATEK — prostokąt + trójkąty, top-down. Nacisk na dysze.
+// ============================================================
+const ship = {
+    x: 0, y: 0, h: 0,          // pozycja, kurs (rad)
+    vx: 0, vy: 0,
+    thrSm: 0, boostSm: 0, turnSm: 0
+};
+const MAIN_ACCEL = 150;
+const BOOST_MUL = 2.1;
+const DRAG_K = 0.5;
+const TURN_RATE = 1.15;
+
+// dysze: pozycja lokalna (x wzdłuż kadłuba, +x = dziób; y w prawo), szerokość
+const NOZZLES = [
+    { lx: -31, ly: 0, w: 11, gimbalMax: 0.3 },
+    { lx: -30, ly: -13, w: 6.5, gimbalMax: 0.22 },
+    { lx: -30, ly: 13, w: 6.5, gimbalMax: 0.22 }
+];
+// stan wyliczany co klatkę: pozycje świata, kąt wyrzutu
+const nozzleState = NOZZLES.map(() => ({ x: 0, y: 0, exAngle: 0, exX: 0, exY: 0 }));
+
+function localToWorld(lx, ly) {
+    const ch = Math.cos(ship.h), sh = Math.sin(ship.h);
+    return [ship.x + lx * ch - ly * sh, ship.y + lx * sh + ly * ch];
+}
+
+function updateNozzles() {
+    for (let i = 0; i < NOZZLES.length; i++) {
+        const nz = NOZZLES[i];
+        const st = nozzleState[i];
+        const [wx, wy] = localToWorld(nz.lx, nz.ly);
+        st.x = wx; st.y = wy;
+        // gimbal: wektorowanie ciągu przeciwnie do skrętu
+        const gim = -ship.turnSm * nz.gimbalMax;
+        st.exAngle = ship.h + Math.PI + gim;
+        st.exX = Math.cos(st.exAngle);
+        st.exY = Math.sin(st.exAngle);
+    }
+}
+
+function drawShip() {
+    setWorldTransform(ctx);
+    ctx.save();
+    ctx.translate(ship.x, ship.y);
+    ctx.rotate(ship.h);
+
+    // pod-kadłuby silników (prostokąty)
+    ctx.fillStyle = '#161c23';
+    ctx.strokeStyle = '#39444f';
+    ctx.lineWidth = 1;
+    ctx.fillRect(-34, -17.5, 16, 9);
+    ctx.strokeRect(-34, -17.5, 16, 9);
+    ctx.fillRect(-34, 8.5, 16, 9);
+    ctx.strokeRect(-34, 8.5, 16, 9);
+
+    // kadłub główny (prostokąt)
+    ctx.fillStyle = '#212933';
+    ctx.fillRect(-32, -9.5, 54, 19);
+    ctx.strokeStyle = '#4a5866';
+    ctx.strokeRect(-32, -9.5, 54, 19);
+
+    // dziób (trójkąt)
+    ctx.beginPath();
+    ctx.moveTo(22, -9.5);
+    ctx.lineTo(40, 0);
+    ctx.lineTo(22, 9.5);
+    ctx.closePath();
+    ctx.fillStyle = '#28313c';
+    ctx.fill();
+    ctx.stroke();
+
+    // skrzydła (trójkąty)
+    ctx.beginPath();
+    ctx.moveTo(2, -9.5); ctx.lineTo(-14, -20); ctx.lineTo(-18, -9.5);
+    ctx.closePath();
+    ctx.fillStyle = '#1c232b';
+    ctx.fill(); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(2, 9.5); ctx.lineTo(-14, 20); ctx.lineTo(-18, 9.5);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // mostek (trójkąt)
+    ctx.beginPath();
+    ctx.moveTo(14, -4); ctx.lineTo(14, 4); ctx.lineTo(2, 0);
+    ctx.closePath();
+    ctx.fillStyle = '#3d4a58';
+    ctx.fill(); ctx.stroke();
+
+    // DYSZE — trapezoidy z gimbalem (obracają się przy skręcie)
+    for (const nz of NOZZLES) {
+        ctx.save();
+        ctx.translate(nz.lx, nz.ly);
+        ctx.rotate(-ship.turnSm * nz.gimbalMax);
+        const w = nz.w;
+        ctx.beginPath();
+        ctx.moveTo(2, -w * 0.42);
+        ctx.lineTo(-6, -w * 0.62);
+        ctx.lineTo(-6, w * 0.62);
+        ctx.lineTo(2, w * 0.42);
+        ctx.closePath();
+        ctx.fillStyle = '#10141a';
+        ctx.fill();
+        ctx.strokeStyle = '#525f6d';
+        ctx.stroke();
+        ctx.restore();
+    }
+    ctx.restore();
+}
+
+// ============================================================
+//  EFEKTY — 3 propozycje. Wspólny interfejs:
+//  { name, reset(), tick(dt, env), draw(fctx, env) }
+//  env = { time, thr, boost, int, lifeMul, exSpeed }
+// ============================================================
+function emitFromNozzles(chains, env, opts = {}) {
+    const { jitter = 8, speedMul = 1, sideNozzles = true, offsetFn = null } = opts;
+    for (let i = 0; i < NOZZLES.length; i++) {
+        if (!sideNozzles && i > 0) continue;
+        const st = nozzleState[i];
+        const off = offsetFn ? offsetFn(NOZZLES[i].w) : 9;
+        const ex = env.exSpeed * speedMul * (0.9 + Math.random() * 0.2);
+        const jx = (Math.random() - 0.5) * jitter;
+        const px = -st.exY, py = st.exX;
+        chains[i].emit(
+            st.x + st.exX * off, st.y + st.exY * off,
+            ship.vx + st.exX * ex + px * jx,
+            ship.vy + st.exY * ex + py * jx,
+            env.int,
+            Math.random() * 100
+        );
+    }
+}
+
+function drawNozzleGlow(c, mul, sprite = glowSprite, sizeK = 1, alphaK = 1) {
+    for (let i = 0; i < NOZZLES.length; i++) {
+        const st = nozzleState[i];
+        const w = NOZZLES[i].w;
+        const s = w * (2.4 + mul * 1.4) * sizeK;
+        c.globalAlpha = clamp((0.25 + mul * 0.55) * alphaK, 0, 1);
+        c.drawImage(sprite, st.x + st.exX * 5 - s / 2, st.y + st.exY * 5 - s / 2, s, s);
+    }
+    c.globalAlpha = 1;
+}
+
+// --------- [1] SILNIK RAKIETOWY ---------
+function createRocketEffect() {
+    const chains = NOZZLES.map(() => new GasChain(260));
+    let emitAcc = 0;
+    // ślad rodzi się na końcu płomienia (ta sama formuła długości co w drawRocketFlame)
+    const tipOff = (w, env) => 5.5 + w * (1.0 + 4.8 * env.thr + 3.6 * env.boost) * 0.8;
+    return {
+        name: 'SILNIK RAKIETOWY',
+        reset() { chains.forEach(ch => ch.reset()); emitAcc = 0; },
+        tick(dt, env) {
+            const life = env.life;
+            emitAcc += dt;
+            const step = env.int > 0.12 ? 0.016 : 0.05;
+            while (emitAcc >= step) {
+                emitAcc -= step;
+                emitFromNozzles(chains, env, { jitter: 10, offsetFn: (w) => tipOff(w, env) });
+            }
+            for (const ch of chains) ch.update(dt, 1.15, life);
+        },
+        draw(c, env) {
+            const t = env.time;
+            for (let i = 0; i < NOZZLES.length; i++) {
+                const st = nozzleState[i];
+                const w0 = NOZZLES[i].w * 0.5;
+                const off = tipOff(NOZZLES[i].w, env);
+                buildScratch(chains[i], env.life, st.x + st.exX * off, st.y + st.exY * off);
+                drawGasPlume(c, {
+                    w0, grow: 2.8,
+                    sprites: spritesRocket,
+                    passes: [[8.5, 0.028], [4.2, 0.085], [1.9, 0.18]],
+                    fadePow: 1.35, time: t,
+                    wobble: (idx, tt, tm) => Math.sin(scr.seed[idx] * 9 + tm * 2.0 + scr.arc[idx] * 0.05) * (7 * Math.pow(tt, 1.6)),
+                    bright: (idx, tt) => 1 - 0.2 * tt
+                });
+                // dym: stare porcje jako kłęby
+                for (let k = 0; k < scr.n; k += 2) {
+                    const tt = scr.t[k];
+                    if (tt < 0.45) continue;
+                    const a = Math.pow(1 - tt, 1.9) * 0.34 * scr.int[k];
+                    if (a < 0.01) continue;
+                    const idx = Math.min(5, ((tt - 0.2) * 6) | 0);
+                    const wob = Math.sin(scr.seed[k] * 9 + t * 1.6) * 6 * tt;
+                    const size = w0 * (2.2 + 7 * tt);
+                    c.globalAlpha = a;
+                    c.drawImage(smokeSprites[idx],
+                        scr.x[k] + scr.px[k] * wob - size / 2,
+                        scr.y[k] + scr.py[k] * wob - size / 2, size, size);
+                }
+                c.globalAlpha = 1;
+                // PŁOMIEŃ: stożek + diamenty uderzeniowe
+                drawRocketFlame(c, st, NOZZLES[i].w, env, i);
+            }
+            drawNozzleGlow(c, env.thr + env.boost, warmGlowSprite, 0.65, 0.6);
+        }
+    };
+
+    function drawRocketFlame(c, st, w, env, idx) {
+        const thr = env.thr, boost = env.boost;
+        const vis = Math.min(1, thr + boost);
+        if (vis < 0.03) return;
+        const t = env.time;
+        const seed = idx * 7.31;
+        const f1 = noise1(t * 23 + seed);
+        const f2 = noise1(t * 37 + seed * 1.7);
+        const L = w * (1.0 + 4.8 * thr + 3.6 * boost) * (1 + 0.06 * f1);
+        const wE = w * 0.5 * (1 + 0.12 * boost); // półszerokość na wylocie
+        const x0 = 5.5; // krawędź wylotu dyszy (trapez sięga 6u za mocowanie)
+
+        c.save();
+        c.translate(st.x, st.y);
+        c.rotate(st.exAngle);
+
+        // A) zewnętrzna otoczka spalin (chłodniejszy pomarańcz, szeroka)
+        let g = c.createLinearGradient(x0, 0, x0 + L, 0);
+        g.addColorStop(0, `rgba(255,150,70,${0.22 * vis})`);
+        g.addColorStop(0.45, `rgba(255,100,35,${0.1 * vis})`);
+        g.addColorStop(1, 'rgba(255,70,20,0)');
+        c.fillStyle = g;
+        plumePath(c, x0, L, wE, 1.28, t, seed);
+        c.fill();
+
+        // B) płomień właściwy
+        g = c.createLinearGradient(x0, 0, x0 + L * 0.92, 0);
+        g.addColorStop(0, `rgba(255,215,150,${0.5 * vis})`);
+        g.addColorStop(0.4, `rgba(255,150,70,${0.3 * vis})`);
+        g.addColorStop(1, 'rgba(255,110,40,0)');
+        c.fillStyle = g;
+        plumePath(c, x0, L * 0.92, wE, 0.92, t, seed + 3);
+        c.fill();
+
+        // C) rdzeń — biało-żółta igła z turbulentnym końcem
+        const Lc = L * (0.6 + 0.1 * boost) * (1 + 0.09 * f2);
+        g = c.createLinearGradient(x0, 0, x0 + Lc, 0);
+        g.addColorStop(0, `rgba(255,255,255,${0.92 * vis})`);
+        g.addColorStop(0.5, `rgba(255,235,185,${0.55 * vis})`);
+        g.addColorStop(1, 'rgba(255,200,120,0)');
+        c.fillStyle = g;
+        plumePath(c, x0, Lc, wE * 0.55, 1.0, t, seed + 7);
+        c.fill();
+
+        // D) niebieskawa strefa tuż za wylotem — najgorętszy gaz
+        g = c.createLinearGradient(x0, 0, x0 + L * 0.22, 0);
+        g.addColorStop(0, `rgba(175,205,255,${0.4 * vis})`);
+        g.addColorStop(1, 'rgba(150,180,255,0)');
+        c.fillStyle = g;
+        plumePath(c, x0, L * 0.22, wE * 0.72, 1.0, t, seed + 11);
+        c.fill();
+
+        // E) diamenty uderzeniowe — ostre soczewki na osi strumienia
+        const dStr = smoothstep(0.25, 0.6, thr) * (1 - boost * 0.35);
+        if (dStr > 0.03) {
+            const nD = w > 8 ? 4 : 3;
+            c.fillStyle = '#ffffff';
+            for (let d = 0; d < nD; d++) {
+                const xd = x0 + L * (0.16 + d * 0.14) * (1 + 0.02 * Math.sin(t * 34 + d * 1.9 + seed));
+                const ld = L * 0.055 * (1 - d * 0.13);
+                const wd = wE * 0.5 * (1 - d * 0.16);
+                if (ld < 0.6 || wd < 0.4) break;
+                c.globalAlpha = clamp(dStr * (0.6 - d * 0.11) * vis, 0, 1);
+                c.beginPath();
+                c.moveTo(xd - ld, 0);
+                c.quadraticCurveTo(xd, -wd * 1.35, xd + ld, 0);
+                c.quadraticCurveTo(xd, wd * 1.35, xd - ld, 0);
+                c.closePath();
+                c.fill();
+            }
+            c.globalAlpha = 1;
+        }
+
+        // F) błysk na płaszczyźnie wylotu (wąska pionowa banda)
+        c.globalAlpha = clamp(0.35 + 0.5 * vis, 0, 1);
+        c.drawImage(glowSprite, x0 - 2.2, -wE * 1.15, 4.4, wE * 2.3);
+        c.globalAlpha = 1;
+
+        c.restore();
+    }
+}
+
+// --------- [2] STRUMIEŃ JONOWY ---------
+function createIonEffect() {
+    const chains = NOZZLES.map(() => new GasChain(260));
+    let emitAcc = 0;
+    // ślad zaczyna się za igłą plazmy (formuła długości z drawIonFlame)
+    const tipOff = (w, env) => 5.5 + w * (1.6 + 6.2 * env.thr + 4.5 * env.boost) * 0.85;
+    return {
+        name: 'STRUMIEŃ JONOWY',
+        reset() { chains.forEach(ch => ch.reset()); emitAcc = 0; },
+        tick(dt, env) {
+            emitAcc += dt;
+            const step = env.int > 0.12 ? 0.016 : 0.05;
+            while (emitAcc >= step) {
+                emitAcc -= step;
+                emitFromNozzles(chains, env, { jitter: 3.5, speedMul: 1.25, offsetFn: (w) => tipOff(w, env) });
+            }
+            for (const ch of chains) ch.update(dt, 0.9, env.life);
+        },
+        draw(c, env) {
+            const t = env.time;
+            for (let i = 0; i < NOZZLES.length; i++) {
+                const st = nozzleState[i];
+                const w0 = NOZZLES[i].w * 0.32;
+                const phase = i * 2.7; // stała faza per dysza — fale nie migoczą
+                const off = tipOff(NOZZLES[i].w, env);
+                buildScratch(chains[i], env.life, st.x + st.exX * off, st.y + st.exY * off);
+                drawGasPlume(c, {
+                    w0, grow: 1.0,
+                    sprites: spritesIon,
+                    passes: [[7.5, 0.03], [3.4, 0.1], [1.6, 0.24]],
+                    fadePow: 1.5, time: t,
+                    // fale prędkości: impulsy jasności biegnące wzdłuż strumienia
+                    bright: (idx, tt, tm) => {
+                        const wave = 0.7 + 0.3 * Math.sin(scr.arc[idx] * 0.09 - tm * (26 + env.boost * 18) + phase);
+                        const packet = 0.85 + 0.15 * Math.sin(scr.arc[idx] * 0.018 - tm * 5.0 + phase);
+                        return wave * packet;
+                    }
+                });
+                drawIonFlame(c, st, NOZZLES[i].w, env, i);
+            }
+            drawNozzleGlow(c, (env.thr + env.boost) * 0.9, coolGlowSprite, 0.75, 0.7);
+        }
+    };
+
+    function drawIonFlame(c, st, w, env, idx) {
+        const thr = env.thr, boost = env.boost;
+        const vis = Math.min(1, thr + boost);
+        const seed = idx * 5.13;
+        const flick = 1 + 0.04 * noise1(env.time * 30 + seed);
+        const L = w * (1.6 + 6.2 * thr + 4.5 * boost) * flick;
+        const Wd = w * (0.34 + 0.2 * thr);
+        const x0 = 5.5; // krawędź wylotu dyszy
+        c.save();
+        c.translate(st.x, st.y);
+        c.rotate(st.exAngle);
+        // halo
+        let g = c.createLinearGradient(x0, 0, x0 + L, 0);
+        g.addColorStop(0, `rgba(120,200,255,${0.4 * (0.3 + vis)})`);
+        g.addColorStop(1, 'rgba(60,120,255,0)');
+        c.fillStyle = g;
+        c.beginPath();
+        c.moveTo(x0, -Wd * 1.6);
+        c.lineTo(x0 + L, -Wd * 0.25);
+        c.lineTo(x0 + L, Wd * 0.25);
+        c.lineTo(x0, Wd * 1.6);
+        c.closePath();
+        c.fill();
+        // igła rdzenia (końcówka drga niezależnie)
+        const Ln = L * 0.9 * (1 + 0.05 * noise1(env.time * 44 + seed * 2));
+        g = c.createLinearGradient(x0, 0, x0 + Ln, 0);
+        g.addColorStop(0, 'rgba(255,255,255,0.95)');
+        g.addColorStop(0.6, 'rgba(190,235,255,0.55)');
+        g.addColorStop(1, 'rgba(140,200,255,0)');
+        c.fillStyle = g;
+        c.beginPath();
+        c.moveTo(x0, -Wd * 0.4);
+        c.lineTo(x0 + Ln, -Wd * 0.06);
+        c.lineTo(x0 + Ln, Wd * 0.06);
+        c.lineTo(x0, Wd * 0.4);
+        c.closePath();
+        c.fill();
+        // flara anamorficzna w poprzek wylotu
+        const fl = (0.25 + vis) * 0.8;
+        c.globalAlpha = clamp(fl, 0, 1);
+        c.drawImage(glowSprite, x0 - w * 0.3, -w * 1.7, w * 0.6, w * 3.4);
+        c.globalAlpha = 1;
+        c.restore();
+    }
+}
+
+// --------- [3] WELON GAZOWY ---------
+function createVeilEffect() {
+    const chains = NOZZLES.map(() => new GasChain(220));
+    let emitAcc = 0;
+    // kłęby rodzą się za pióropuszem dyszy (formuła długości z drawVeilFlame)
+    const tipOff = (w, env) => 5.5 + w * (0.9 + 2.6 * env.thr + 2.0 * env.boost) * 0.8;
+    return {
+        name: 'WELON GAZOWY',
+        reset() { chains.forEach(ch => ch.reset()); emitAcc = 0; },
+        tick(dt, env) {
+            emitAcc += dt;
+            const step = env.int > 0.12 ? 0.02 : 0.06;
+            while (emitAcc >= step) {
+                emitAcc -= step;
+                emitFromNozzles(chains, env, { jitter: 12, offsetFn: (w) => tipOff(w, env) });
+            }
+            for (const ch of chains) ch.update(dt, 1.35, env.life);
+        },
+        draw(c, env) {
+            const t = env.time;
+            for (let i = 0; i < NOZZLES.length; i++) {
+                const st = nozzleState[i];
+                const w0 = NOZZLES[i].w * 0.5;
+                const off = tipOff(NOZZLES[i].w, env);
+                buildScratch(chains[i], env.life, st.x + st.exX * off, st.y + st.exY * off);
+                // młody gaz: świecący rdzeń łączący dyszę z welonem
+                drawGasPlume(c, {
+                    w0: w0 * 0.7, grow: 1.4,
+                    sprites: spritesVeilCore,
+                    passes: [[3.4, 0.07], [1.9, 0.13], [1.0, 0.2]],
+                    fadePow: 3.0, time: t
+                });
+                // kłęby: rozprężający się, stygnący gaz
+                for (let k = 0; k < scr.n; k++) {
+                    const tt = scr.t[k];
+                    const a = Math.pow(1 - tt, 1.7) * 0.4 * scr.int[k];
+                    if (a < 0.008) continue;
+                    const idx = Math.min(5, (tt * 6) | 0);
+                    const wob = Math.sin(scr.seed[k] * 7 + tt * 5 + t * 0.7) * 5 * tt;
+                    const size = w0 * (1.5 + 9.5 * tt);
+                    c.globalAlpha = a;
+                    c.drawImage(veilSprites[idx],
+                        scr.x[k] + scr.px[k] * wob - size / 2,
+                        scr.y[k] + scr.py[k] * wob - size / 2, size, size);
+                }
+                c.globalAlpha = 1;
+                drawVeilFlame(c, st, NOZZLES[i].w, env, i);
+            }
+            drawNozzleGlow(c, (env.thr + env.boost) * 1.1, glowSprite, 0.8, 0.7);
+        }
+    };
+
+    function drawVeilFlame(c, st, w, env, idx) {
+        const vis = Math.min(1, env.thr + env.boost);
+        if (vis < 0.02) return;
+        const seed = idx * 6.47;
+        const t = env.time;
+        const flick = 1 + 0.09 * noise1(t * 17 + seed);
+        const L = w * (0.9 + 2.6 * env.thr + 2.0 * env.boost) * flick;
+        const wE = w * 0.46;
+        const x0 = 5.5; // krawędź wylotu dyszy
+        c.save();
+        c.translate(st.x, st.y);
+        c.rotate(st.exAngle);
+        // miękki, krótki pióropusz zimnego gazu
+        let g = c.createLinearGradient(x0, 0, x0 + L, 0);
+        g.addColorStop(0, `rgba(220,235,255,${0.35 * vis})`);
+        g.addColorStop(1, 'rgba(150,180,255,0)');
+        c.fillStyle = g;
+        plumePath(c, x0, L, wE, 1.15, t, seed);
+        c.fill();
+        // jasny rdzeń przy samym wylocie
+        g = c.createLinearGradient(x0, 0, x0 + L * 0.55, 0);
+        g.addColorStop(0, `rgba(255,255,255,${0.85 * vis})`);
+        g.addColorStop(1, 'rgba(210,230,255,0)');
+        c.fillStyle = g;
+        plumePath(c, x0, L * 0.55, wE * 0.6, 1.0, t, seed + 4);
+        c.fill();
+        c.restore();
+    }
+}
+
+// ---------------- MANAGER EFEKTÓW ----------------
+const effects = [createRocketEffect(), createIonEffect(), createVeilEffect()];
+let activeFx = effects[0];
+
+const DESCRIPTIONS = [
+    '<b>Dysza chemiczna:</b> jasny rdzeń z <b>diamentami uderzeniowymi</b>, gaz stygnie ' +
+    'od bieli przez pomarańcz do dymu, który rozpręża się i faluje. Spaliny dziedziczą ' +
+    'pęd statku i wyhamowują w próżni — ślad zagina się w łagodne łuki, nigdy w kanty.',
+    '<b>Napęd jonowy:</b> igła białej plazmy w błękitnym halo + flara na wylocie. ' +
+    'Wzdłuż strumienia biegną w tył <b>fale prędkości</b> (impulsy jasności), całość ' +
+    'gaśnie czysto, bez dymu. Dopalacz wydłuża igłę i przyspiesza fale.',
+    '<b>Zrzut masy:</b> dysza zostawia <b>rozprężające się, stygnące kłęby gazu</b>, ' +
+    'które wiszą w przestrzeni i rozmywają się jak oddech na mrozie. Młody gaz świeci ' +
+    'na biało, stary opalizuje błękitem i znika. Ślad = fizyczna chmura, nie linia.'
+];
+
+const ui = {
+    thrRange: document.getElementById('thrRange'),
+    thrVal: document.getElementById('thrVal'),
+    lenRange: document.getElementById('lenRange'),
+    lenVal: document.getElementById('lenVal'),
+    glowRange: document.getElementById('glowRange'),
+    glowVal: document.getElementById('glowVal'),
+    chkAuto: document.getElementById('chkAuto'),
+    chkGrid: document.getElementById('chkGrid'),
+    boostBtn: document.getElementById('boostBtn'),
+    desc: document.getElementById('desc'),
+    sThr: document.getElementById('sThr'),
+    sSpd: document.getElementById('sSpd'),
+    sFps: document.getElementById('sFps'),
+    sFx: document.getElementById('sFx'),
+    sBoost: document.getElementById('sBoost'),
+    tabs: [document.getElementById('tab0'), document.getElementById('tab1'), document.getElementById('tab2')]
+};
+
+function setEffect(i) {
+    activeFx = effects[i];
+    activeFx.reset();
+    ui.tabs.forEach((tb, j) => tb.classList.toggle('on', j === i));
+    ui.desc.innerHTML = DESCRIPTIONS[i];
+    ui.sFx.textContent = activeFx.name;
+}
+
+ui.tabs.forEach((tb, i) => tb.addEventListener('click', () => setEffect(i)));
+ui.thrRange.addEventListener('input', () => { ui.thrVal.textContent = ui.thrRange.value + '%'; });
+ui.lenRange.addEventListener('input', () => { ui.lenVal.textContent = ui.lenRange.value + '%'; });
+ui.glowRange.addEventListener('input', () => { ui.glowVal.textContent = (ui.glowRange.value / 100).toFixed(2); });
+
+let boostBtnHeld = false;
+ui.boostBtn.addEventListener('pointerdown', () => { boostBtnHeld = true; ui.boostBtn.classList.add('on'); });
+window.addEventListener('pointerup', () => { boostBtnHeld = false; ui.boostBtn.classList.remove('on'); });
+
+const keys = { a: false, d: false, w: false, s: false, shift: false };
+window.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    if (k === 'a' || k === 'arrowleft') keys.a = true;
+    if (k === 'd' || k === 'arrowright') keys.d = true;
+    if (k === 'w' || k === 'arrowup') keys.w = true;
+    if (k === 's' || k === 'arrowdown') keys.s = true;
+    if (k === 'shift') keys.shift = true;
+    if (k === '1') setEffect(0);
+    if (k === '2') setEffect(1);
+    if (k === '3') setEffect(2);
+    if (k === 'p') ui.chkAuto.checked = !ui.chkAuto.checked;
+});
+window.addEventListener('keyup', (e) => {
+    const k = e.key.toLowerCase();
+    if (k === 'a' || k === 'arrowleft') keys.a = false;
+    if (k === 'd' || k === 'arrowright') keys.d = false;
+    if (k === 'w' || k === 'arrowup') keys.w = false;
+    if (k === 's' || k === 'arrowdown') keys.s = false;
+    if (k === 'shift') keys.shift = false;
+});
+
+// ---------------- RCS (manewrowe na dziobie przy skręcie) ----------------
+function drawRcs(c) {
+    const turn = ship.turnSm;
+    if (Math.abs(turn) < 0.12) return;
+    const side = turn > 0 ? -1 : 1; // dysza po stronie przeciwnej do skrętu
+    const [wx, wy] = localToWorld(26, side * 9);
+    const jetAngle = ship.h + side * Math.PI / 2; // wyrzut na zewnątrz burty
+    const L = 10 * Math.abs(turn) * (1 + 0.3 * noise1(perfTime * 40));
+    c.save();
+    c.translate(wx, wy);
+    c.rotate(jetAngle);
+    const g = c.createLinearGradient(0, 0, L, 0);
+    g.addColorStop(0, 'rgba(255,255,255,0.8)');
+    g.addColorStop(1, 'rgba(200,220,255,0)');
+    c.fillStyle = g;
+    c.globalAlpha = clamp(Math.abs(turn), 0, 1) * 0.8;
+    c.beginPath();
+    c.moveTo(0, -1.6);
+    c.lineTo(L, 0);
+    c.lineTo(0, 1.6);
+    c.closePath();
+    c.fill();
+    c.globalAlpha = 1;
+    c.restore();
+}
+
+// ---------------- PĘTLA GŁÓWNA ----------------
+let time = 0;
+let perfTime = 0;
+let last = performance.now();
+let fpsEma = 1 / 60;
+let hudTimer = 0;
+
+setEffect(0);
+
+function tick() {
+    requestAnimationFrame(tick);
+    const now = performance.now();
+    let dt = (now - last) / 1000;
+    last = now;
+    dt = clamp(dt, 0.001, 0.05);
+    time += dt;
+    perfTime = time;
+    fpsEma = lerp(fpsEma, dt, 0.06);
+
+    // --- wejście ---
+    let thrTarget, turnN, boostTarget;
+    const auto = ui.chkAuto.checked;
+    if (auto) {
+        turnN = 0.55 * Math.sin(time * 0.19) + 0.35 * Math.sin(time * 0.083 + 2.1);
+        thrTarget = clamp(0.62 + 0.38 * Math.sin(time * 0.11 + 0.5) + 0.04 * Math.sin(time * 1.9), 0.14, 1);
+        boostTarget = Math.sin(time * 0.17) > 0.965 ? 1 : 0;
+    } else {
+        turnN = (keys.a ? -1 : 0) + (keys.d ? 1 : 0);
+        let base = ui.thrRange.value / 100;
+        if (keys.w) base = clamp(base + 0.8 * dt, 0, 1);
+        if (keys.s) base = clamp(base - 0.8 * dt, 0, 1);
+        if (keys.w || keys.s) {
+            ui.thrRange.value = Math.round(base * 100);
+            ui.thrVal.textContent = ui.thrRange.value + '%';
+        }
+        thrTarget = base;
+        boostTarget = 0;
+    }
+    if (keys.shift || boostBtnHeld) boostTarget = 1;
+
+    ship.thrSm = lerp(ship.thrSm, thrTarget, clamp(dt * 5, 0, 1));
+    ship.boostSm = lerp(ship.boostSm, boostTarget, clamp(dt * 3.5, 0, 1));
+    ship.turnSm = lerp(ship.turnSm, clamp(turnN, -1, 1), clamp(dt * 6, 0, 1));
+
+    // --- fizyka ---
+    ship.h += ship.turnSm * TURN_RATE * dt;
+    const fx_ = Math.cos(ship.h), fy_ = Math.sin(ship.h);
+    const acc = MAIN_ACCEL * ship.thrSm * (1 + ship.boostSm * (BOOST_MUL - 1));
+    ship.vx += fx_ * acc * dt;
+    ship.vy += fy_ * acc * dt;
+    const dec = Math.exp(-DRAG_K * dt);
+    ship.vx *= dec; ship.vy *= dec;
+    ship.x += ship.vx * dt;
+    ship.y += ship.vy * dt;
+
+    updateNozzles();
+
+    // --- kamera: statek + lekkie wyprzedzenie ---
+    const lead = 0.32;
+    cam.x = lerp(cam.x, ship.x + ship.vx * lead, clamp(dt * 4, 0, 1));
+    cam.y = lerp(cam.y, ship.y + ship.vy * lead, clamp(dt * 4, 0, 1));
+
+    // --- symulacja gazu ---
+    const env = {
+        time,
+        thr: ship.thrSm,
+        boost: ship.boostSm,
+        int: clamp(0.15 + 0.85 * ship.thrSm + 0.4 * ship.boostSm, 0, 1.25),
+        life: lerp(1.1, 4.2, ui.lenRange.value / 100),
+        exSpeed: 250 + 90 * ship.boostSm
+    };
+    activeFx.tick(dt, env);
+
+    // ================= RENDER =================
+    // tło
+    setScreenTransform(ctx);
+    const bg = ctx.createRadialGradient(W * 0.5, H * 0.45, 0, W * 0.5, H * 0.5, Math.max(W, H) * 0.7);
+    bg.addColorStop(0, '#0a1220');
+    bg.addColorStop(1, '#04070d');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+    drawStarLayer(starFar, 0.25, 0.55);
+    drawStarLayer(starNear, 0.55, 0.9);
+    if (ui.chkGrid.checked) drawGrid();
+
+    // warstwa emisyjna
+    fctx.setTransform(1, 0, 0, 1, 0, 0);
+    fctx.clearRect(0, 0, fx.width, fx.height);
+    setWorldTransform(fctx);
+    fctx.globalCompositeOperation = 'lighter';
+    activeFx.draw(fctx, env);
+    drawRcs(fctx);
+    fctx.globalCompositeOperation = 'source-over';
+
+    // kompozycja: gaz -> statek -> bloom
+    setScreenTransform(ctx);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.drawImage(fx, 0, 0, W, H);
+    ctx.globalCompositeOperation = 'source-over';
+
+    drawShip();
+
+    // bloom (dwie oktawy downsample)
+    const glowK = ui.glowRange.value / 100;
+    if (glowK > 0.01) {
+        bctxA.setTransform(1, 0, 0, 1, 0, 0);
+        bctxA.clearRect(0, 0, blurA.width, blurA.height);
+        bctxA.drawImage(fx, 0, 0, blurA.width, blurA.height);
+        bctxB.setTransform(1, 0, 0, 1, 0, 0);
+        bctxB.clearRect(0, 0, blurB.width, blurB.height);
+        bctxB.drawImage(blurA, 0, 0, blurB.width, blurB.height);
+
+        setScreenTransform(ctx);
+        ctx.globalCompositeOperation = 'lighter';
+        try { ctx.filter = 'blur(3px)'; } catch (e) {}
+        ctx.globalAlpha = clamp(0.5 * glowK, 0, 1);
+        ctx.drawImage(blurA, 0, 0, W, H);
+        try { ctx.filter = 'blur(6px)'; } catch (e) {}
+        ctx.globalAlpha = clamp(0.4 * glowK, 0, 1);
+        ctx.drawImage(blurB, 0, 0, W, H);
+        try { ctx.filter = 'none'; } catch (e) {}
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // --- HUD ---
+    hudTimer += dt;
+    if (hudTimer > 0.2) {
+        hudTimer = 0;
+        ui.sThr.textContent = Math.round(ship.thrSm * 100) + '%';
+        ui.sSpd.textContent = Math.hypot(ship.vx, ship.vy).toFixed(0) + ' u/s';
+        ui.sFps.textContent = (1 / fpsEma).toFixed(0);
+        const bOn = ship.boostSm > 0.35;
+        ui.sBoost.classList.toggle('on', bOn);
+        ui.sBoost.style.opacity = bOn ? 1 : 0.25;
+    }
+}
+tick();
+</script>
+</body>
+</html>

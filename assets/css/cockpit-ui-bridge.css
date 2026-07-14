@@ -1,0 +1,237 @@
+/* Light-DOM bridge for the existing, gameplay-backed station services.
+   The tablet shell itself lives in CockpitUI's ShadowRoot. */
+#side-panels-container,
+#right-panels-container,
+#hud-bottom-container,
+#hud-topbar,
+#planet-radar,
+#hover-info,
+#scanner-overview-ui-root,
+#radar-targeting-labels {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+#cockpit-ui-host > #hud-top-container.cockpit-station-slot {
+  position: static !important;
+  inset: auto !important;
+  z-index: auto !important;
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  transform: none !important;
+  pointer-events: auto !important;
+}
+
+#cockpit-ui-host .cockpit-station-slot #hud-top-dock,
+#cockpit-ui-host .cockpit-station-slot #hud-top-dock.expanded,
+#cockpit-ui-host .cockpit-station-slot #hud-top-dock.expanded.mechanic-expanded {
+  position: static !important;
+  inset: auto !important;
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+#cockpit-ui-host .cockpit-station-slot .location-display,
+#cockpit-ui-host .cockpit-station-slot .station-header,
+#cockpit-ui-host .cockpit-station-slot .station-nav {
+  display: none !important;
+}
+
+#cockpit-ui-host .cockpit-station-slot #top-drawer,
+#cockpit-ui-host .cockpit-station-slot #top-drawer.mechanic-expanded,
+#cockpit-ui-host .cockpit-station-slot .hud-dock.expanded #top-drawer,
+#cockpit-ui-host .cockpit-station-slot .hud-dock.expanded #top-drawer.mechanic-expanded {
+  position: static !important;
+  inset: auto !important;
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+
+#cockpit-ui-host .cockpit-station-slot #station-content-area,
+#cockpit-ui-host .cockpit-station-slot #station-content-area.mechanic-layout {
+  position: static !important;
+  display: block !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  padding: clamp(10px, 1.2vw, 18px) !important;
+  overflow: auto !important;
+  background: transparent !important;
+  pointer-events: auto !important;
+}
+
+#cockpit-ui-host .cockpit-station-slot .station-tab.active {
+  display: grid !important;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  grid-auto-flow: row;
+  grid-auto-rows: max-content;
+  gap: 12px;
+  align-content: start;
+  align-items: start;
+}
+
+#cockpit-ui-host .cockpit-station-slot .station-tab.hidden {
+  display: none !important;
+}
+
+#cockpit-ui-host .cockpit-station-slot .station-card-aero,
+#cockpit-ui-host .cockpit-station-slot .mechanic-column,
+#cockpit-ui-host .cockpit-station-slot .mechanic-list-panel,
+#cockpit-ui-host .cockpit-station-slot .weapon-pool,
+#cockpit-ui-host .cockpit-station-slot .hp-groups {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+}
+
+#cockpit-ui-host .cockpit-station-slot #tab-hangar > .mechanic-body {
+  grid-column: 1 / -1;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  margin-top: 0 !important;
+}
+
+#cockpit-ui-host .cockpit-station-slot #tab-mechanic-html.active {
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+}
+
+#cockpit-ui-host .cockpit-station-slot #tab-mechanic-html .mechanic-list-panel {
+  width: 100%;
+  height: 100%;
+  min-height: 0 !important;
+  overflow: hidden;
+}
+
+#cockpit-ui-host .cockpit-station-slot #tab-mechanic-html .mechanic-list-scroll {
+  flex: 1;
+  min-height: 0 !important;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-color: rgba(255, 102, 0, 0.35) transparent;
+  scrollbar-width: thin;
+}
+
+#cockpit-ui-host .cockpit-station-slot .card-header {
+  position: relative;
+  min-width: 0;
+  gap: 10px;
+  padding: 2px 2px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+#cockpit-ui-host .cockpit-station-slot .card-header::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 34px;
+  height: 2px;
+  background: #ff6600;
+  box-shadow: 0 0 8px rgba(255, 102, 0, 0.7);
+}
+
+#cockpit-ui-host .cockpit-station-slot .card-title,
+#cockpit-ui-host .cockpit-station-slot .card-desc,
+#cockpit-ui-host .cockpit-station-slot .weapon-row-name,
+#cockpit-ui-host .cockpit-station-slot .hangar-hull-role {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#cockpit-ui-host .cockpit-station-slot .mechanic-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px;
+  overflow-x: auto;
+  border: 1px solid #1a1a1a;
+  border-radius: 7px;
+  background: #000;
+  box-shadow: inset 0 0 14px rgba(255, 102, 0, 0.08);
+  scrollbar-width: none;
+}
+
+#cockpit-ui-host .cockpit-station-slot .mechanic-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+#cockpit-ui-host .cockpit-station-slot .mechanic-tab-btn {
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 27px;
+  padding: 0 8px !important;
+  border: 0 !important;
+  border-bottom: 2px solid transparent !important;
+  border-radius: 0 !important;
+  color: #666 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 9px !important;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  white-space: nowrap;
+}
+
+#cockpit-ui-host .cockpit-station-slot .mechanic-tab-btn:hover {
+  color: #bbb !important;
+}
+
+#cockpit-ui-host .cockpit-station-slot .mechanic-tab-btn.active {
+  border-bottom-color: #ff6600 !important;
+  color: #eee !important;
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.35);
+}
+
+@media (max-width: 900px) {
+  #cockpit-ui-host .cockpit-station-slot .station-tab.active,
+  #cockpit-ui-host .cockpit-station-slot #tab-mechanic-html.active,
+  #cockpit-ui-host .cockpit-station-slot #tab-hangar > .mechanic-body {
+    grid-template-columns: 1fr;
+  }
+}

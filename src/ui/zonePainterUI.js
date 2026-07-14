@@ -2,7 +2,7 @@
 // Zone Painter UI — paint zone districts on planetary rings
 // Ported from ringprocedural.html prototype
 // ============================================================
-import { ZONE_COLS, ZONE_ROWS, ZONE_CELL_ARC, COLORS, isGateAngle } from '../3d/ringCityZoneGrid.js';
+import { ZONE_COLS, ZONE_ROWS, ZONE_CELL_ARC, COLORS } from '../3d/ringCityZoneGrid.js';
 import { getPlanetaryRing, rebuildRingCityCell } from '../3d/planetaryRing3D.js';
 import { buildAllDistricts } from '../3d/ringCityBuildings.js';
 import { buildAllInfrastructure } from '../3d/ringCityInfrastructure.js';
@@ -86,8 +86,7 @@ function initFillButton() {
 
   const weightBindings = [
     ['zp-fillWeightResidential', 'zp-fillWeightResidentialValue'],
-    ['zp-fillWeightIndustrial', 'zp-fillWeightIndustrialValue'],
-    ['zp-fillWeightMilitary', 'zp-fillWeightMilitaryValue']
+    ['zp-fillWeightCommercial', 'zp-fillWeightCommercialValue']
   ];
   for (const [inputId, valueId] of weightBindings) {
     const input = document.getElementById(inputId);
@@ -106,8 +105,7 @@ function updateFillWeightValue(inputId, valueId) {
 function getFillWeightsFromUI() {
   return {
     residential: Number(document.getElementById('zp-fillWeightResidential')?.value) || 0,
-    industrial: Number(document.getElementById('zp-fillWeightIndustrial')?.value) || 0,
-    military: Number(document.getElementById('zp-fillWeightMilitary')?.value) || 0
+    commercial: Number(document.getElementById('zp-fillWeightCommercial')?.value) || 0
   };
 }
 
@@ -207,7 +205,6 @@ function getCellFromScreenPos(screenX, screenY) {
   // Bounds check
   const grid = ring.zoneGrid;
   if (radius < grid.paintInner || radius > grid.paintOuter) return null;
-  if (isGateAngle(angle)) return null;
 
   // Map to cell — uwzględniamy szczelinę autostrady
   const col = Math.floor(angle / ZONE_CELL_ARC);
@@ -246,9 +243,6 @@ function paintZoneAtCell(cell) {
     for (let colOff = -brushRadius + 1; colOff <= brushRadius - 1; colOff++) {
       const targetCell = ring.zoneGrid.getCell(cell.col + colOff, cell.row + rowOff);
       if (!targetCell) continue;
-      const centerAngle = targetCell.angleStart + ZONE_CELL_ARC * 0.5;
-      if (isGateAngle(centerAngle)) continue;
-
       if (ring.zoneGrid.setCell(targetCell.col, targetCell.row, nextZone)) {
         rebuildRingCityCell(activePlanetKey, targetCell);
       }

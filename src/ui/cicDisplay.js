@@ -82,8 +82,9 @@ function getEntityHullProfileId(entity) {
   if (type.includes('battleship')) return resolveHullRenderProfileId(entity?.isPirate ? 'pirate_battleship' : 'terran_battleship');
   if (type.includes('destroyer')) return resolveHullRenderProfileId(entity?.isPirate ? 'pirate_destroyer' : 'terran_destroyer');
   if (type.includes('frigate')) return resolveHullRenderProfileId(entity?.isPirate ? 'pirate_frigate' : 'terran_frigate');
-  if (type === 'supercapital') return resolveHullRenderProfileId('supercapital');
-  if (type === 'carrier' || type === 'capital_carrier') return resolveHullRenderProfileId('capital_carrier');
+  if (type === 'supercapital') return resolveHullRenderProfileId('terran_supercapital');
+  if (type === 'carrier') return resolveHullRenderProfileId('terran_carrier');
+  if (type === 'capital_carrier') return resolveHullRenderProfileId('capital_carrier');
   return null;
 }
 
@@ -227,6 +228,396 @@ function getContactPalette(isSelected, friendly, hostile) {
     body: 'rgba(36, 30, 12, 0.96)',
     accent: 'rgba(251, 191, 36, 0.68)',
     glow: 'rgba(251, 191, 36, 0.34)'
+  };
+}
+
+function finiteNumber(value, fallback = 0) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function clampUnit(value) {
+  return Math.max(-1, Math.min(1, value));
+}
+
+export function projectCicHudRadarContact(contact, {
+  width = 176,
+  height = 176,
+  range = 20000,
+  panWorldX = 0,
+  panWorldY = 0
+} = {}) {
+  const safeRange = Math.max(1, finiteNumber(range, 20000));
+  const scale = Math.max(1, Math.min(width, height) * 0.475) / safeRange;
+  return {
+    x: width * 0.5 + (finiteNumber(contact?.dx, 0) - finiteNumber(panWorldX, 0)) * scale,
+    y: height * 0.5 + (finiteNumber(contact?.dy, 0) - finiteNumber(panWorldY, 0)) * scale
+  };
+}
+
+export function drawCicHudRadarSurface(ctx, width, height, model, view = {}) {
+  if (!ctx || width <= 0 || height <= 0) return;
+
+  const range = Math.max(1, finiteNumber(view.range, finiteNumber(model?.range, 20000)));
+  const panWorldX = finiteNumber(view.panWorldX, 0);
+  const panWorldY = finiteNumber(view.panWorldY, 0);
+  const radius = Math.max(1, Math.min(width, height) * 0.475);
+  const worldScale = radius / range;
+  const uiScale = Math.max(0.75, Math.min(width, height) / 176);
+  const shipPoint = projectCicHudRadarContact({ dx: 0, dy: 0 }, {
+    width,
+    height,
+    range,
+    panWorldX,
+    panWorldY
+  });
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, width, height);
+  ctx.clip();
+
+  ctx.fillStyle = CIC_CONFIG.colors.bg;
+  ctx.fillRect(0, 0, width, height);
+
+  const gridSpacing = 5000;
+  const gridStartX = Math.floor((panWorldX - range) / gridSpacing) * gridSpacing;
+  const gridEndX = panWorldX + range;
+  const gridStartY = Math.floor((panWorldY - range) / gridSpacing) * gridSpacing;
+  const gridEndY = panWorldY + range;
+  for (let gx = gridStartX; gx <= gridEndX; gx += gridSpacing) {
+    const x = width * 0.5 + (gx - panWorldX) * worldScale;
+    const major = Math.abs(gx % 10000) < 1;
+    ctx.strokeStyle = major ? CIC_CONFIG.colors.gridMajor : CIC_CONFIG.colors.grid;
+    ctx.lineWidth = (major ? 0.8 : 0.45) * uiScale;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
+    ctx.stroke();
+  }
+  for (let gy = gridStartY; gy <= gridEndY; gy += gridSpacing) {
+    const y = height * 0.5 + (gy - panWorldY) * worldScale;
+    const major = Math.abs(gy % 10000) < 1;
+    ctx.strokeStyle = major ? CIC_CONFIG.colors.gridMajor : CIC_CONFIG.colors.grid;
+    ctx.lineWidth = (major ? 0.8 : 0.45) * uiScale;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = CIC_CONFIG.colors.rangeRing;
+  ctx.lineWidth = uiScale;
+  ctx.setLineDash([3 * uiScale, 5 * uiScale]);
+  ctx.font = `${7 * uiScale}px monospace`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'bottom';
+  for (const ringDistance of [5000, 10000, 20000, 50000]) {
+    const ringRadius = ringDistance * worldScale;
+    if (ringRadius < 8 * uiScale || ringRadius > Math.max(width, height) * 1.5) continue;
+    ctx.beginPath();
+    ctx.arc(shipPoint.x, shipPoint.y, ringRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    const labelX = shipPoint.x + ringRadius + 3 * uiScale;
+    if (labelX < width - 14 * uiScale) {
+      ctx.fillStyle = CIC_CONFIG.colors.text;
+      ctx.fillText(`${ringDistance / 1000}k`, labelX, shipPoint.y - 2 * uiScale);
+    }
+  }
+  ctx.setLineDash([]);
+
+  const sweepAngle = finiteNumber(model?.sweepAngle, 0);
+  const sweepRadius = Math.max(radius, finiteNumber(model?.range, range) * worldScale);
+  ctx.save();
+  ctx.globalAlpha = 0.12;
+  ctx.fillStyle = CIC_CONFIG.colors.sweep;
+  ctx.beginPath();
+  ctx.moveTo(shipPoint.x, shipPoint.y);
+  ctx.arc(shipPoint.x, shipPoint.y, sweepRadius, sweepAngle - 0.5, sweepAngle, false);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle = CIC_CONFIG.colors.sweepLine;
+  ctx.globalAlpha = 0.58;
+  ctx.lineWidth = uiScale;
+  ctx.beginPath();
+  ctx.moveTo(shipPoint.x, shipPoint.y);
+  ctx.lineTo(
+    shipPoint.x + Math.cos(sweepAngle) * sweepRadius,
+    shipPoint.y + Math.sin(sweepAngle) * sweepRadius
+  );
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  const contacts = Array.isArray(model?.contacts) ? model.contacts : [];
+  for (let i = contacts.length - 1; i >= 0; i--) {
+    const contact = contacts[i];
+    if (!contact) continue;
+    const point = projectCicHudRadarContact(contact, {
+      width,
+      height,
+      range,
+      panWorldX,
+      panWorldY
+    });
+    if (point.x < -8 || point.x > width + 8 || point.y < -8 || point.y > height + 8) continue;
+
+    const locked = !!contact.locked;
+    const selected = !!contact.selected;
+    const ghost = !!contact.isGhost;
+    const asteroid = !!contact.isAsteroid;
+    const color = asteroid
+      ? (ASTEROID_CIC_COLORS[contact.subType] || '#8aa0b8')
+      : locked
+        ? '#ff6e6e'
+        : selected
+          ? CIC_CONFIG.colors.selected
+          : contact.friendly
+            ? CIC_CONFIG.colors.friendly
+            : contact.hostile
+              ? CIC_CONFIG.colors.hostile
+              : CIC_CONFIG.colors.unknown;
+    const size = asteroid
+      ? (ASTEROID_CIC_DOT[contact.sizeClass] || 0.9) * uiScale
+      : (contact.isCapital ? 3.8 : (locked || selected ? 3.3 : 2.5)) * uiScale;
+
+    ctx.save();
+    ctx.translate(point.x, point.y);
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = Math.max(0.8, uiScale);
+    ctx.globalAlpha = ghost ? 0.48 : (asteroid ? 0.72 : 0.92);
+    if (ghost) ctx.setLineDash([2 * uiScale, 2 * uiScale]);
+
+    if (asteroid) {
+      ctx.beginPath();
+      ctx.arc(0, 0, size, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (contact.hostile || locked || ghost) {
+      ctx.beginPath();
+      ctx.moveTo(0, -size);
+      ctx.lineTo(size, 0);
+      ctx.lineTo(0, size);
+      ctx.lineTo(-size, 0);
+      ctx.closePath();
+      if (!ghost) ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.arc(0, 0, size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    if (locked || selected) {
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 0.72;
+      ctx.beginPath();
+      ctx.arc(0, 0, size + 3.5 * uiScale, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  ctx.save();
+  ctx.translate(shipPoint.x, shipPoint.y);
+  ctx.rotate(finiteNumber(model?.heading, 0));
+  ctx.fillStyle = '#7dd3fc';
+  ctx.strokeStyle = '#38bdf8';
+  ctx.lineWidth = uiScale;
+  ctx.beginPath();
+  ctx.moveTo(5.5 * uiScale, 0);
+  ctx.lineTo(-3.5 * uiScale, 3.4 * uiScale);
+  ctx.lineTo(-2 * uiScale, 0);
+  ctx.lineTo(-3.5 * uiScale, -3.4 * uiScale);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.restore();
+}
+
+export function createCicHudRadarModel({
+  ship = null,
+  npcs = [],
+  SensorSystem = null,
+  asteroidField = null,
+  asteroids = null,
+  lockedTargets = [],
+  selectedTarget = null,
+  range = CIC_CONFIG.sweepRange,
+  asteroidRange = range,
+  maxContacts = 64,
+  maxAsteroidContacts = 24,
+  sweepAngle = 0
+} = {}) {
+  const shipPos = ship?.pos || ship || { x: 0, y: 0 };
+  const shipX = finiteNumber(shipPos.x, 0);
+  const shipY = finiteNumber(shipPos.y, 0);
+  const safeRange = Math.max(1, finiteNumber(range, CIC_CONFIG.sweepRange));
+  const safeAsteroidRange = Math.min(
+    safeRange,
+    Math.max(0, finiteNumber(asteroidRange, safeRange))
+  );
+  const contactLimit = Math.max(0, Math.floor(finiteNumber(maxContacts, 64)));
+  const asteroidLimit = Math.max(0, Math.floor(finiteNumber(maxAsteroidContacts, 24)));
+  const awareness = SensorSystem?.AWARENESS || CIC_CONFIG.AWARENESS || { HIDDEN: 0, GHOST: 1, DETECTED: 2, TRACKED: 3 };
+  const detected = Number.isFinite(Number(awareness.DETECTED)) ? Number(awareness.DETECTED) : 2;
+  const locks = new Set(Array.isArray(lockedTargets) ? lockedTargets : []);
+  const contacts = [];
+
+  function pushContact(contact) {
+    const x = finiteNumber(contact.x, shipX);
+    const y = finiteNumber(contact.y, shipY);
+    const dx = x - shipX;
+    const dy = y - shipY;
+    const distance = Math.hypot(dx, dy);
+    if (distance > safeRange) return;
+    contacts.push({
+      ...contact,
+      x,
+      y,
+      dx,
+      dy,
+      distance,
+      nx: clampUnit(dx / safeRange),
+      ny: clampUnit(dy / safeRange),
+      screenX: 0,
+      screenY: 0,
+      hitRadius: 16
+    });
+  }
+
+  const list = Array.isArray(npcs) ? npcs : [];
+  for (let i = 0; i < list.length; i++) {
+    const npc = list[i];
+    if (!npc || npc.dead) continue;
+    const vis = SensorSystem?.getVisibility ? SensorSystem.getVisibility(npc) : { awareness: npc._sensorAwareness || 0 };
+    const contactAwareness = finiteNumber(vis?.awareness, 0);
+    const isLocked = locks.has(npc);
+    const isSelected = selectedTarget === npc;
+    if (contactAwareness < detected && !isLocked && !isSelected) continue;
+
+    pushContact({
+      entity: npc,
+      type: npc.type || 'unknown',
+      subType: npc.subType || '',
+      friendly: !!npc.friendly,
+      hostile: !npc.friendly,
+      isCapital: !!npc.isCapitalShip,
+      radius: npc.radius || npc.r || 14,
+      hp: npc.hp,
+      maxHp: npc.maxHp,
+      shield: npc.shield,
+      awareness: contactAwareness,
+      locked: isLocked,
+      selected: isSelected,
+      isGhost: false,
+      x: npc.x,
+      y: npc.y
+    });
+  }
+
+  let asteroidList = Array.isArray(asteroids) ? asteroids : null;
+  if (!asteroidList && asteroidLimit > 0 && safeAsteroidRange > 0 && asteroidField?.queryRadius) {
+    asteroidList = asteroidField.queryRadius(shipX, shipY, safeAsteroidRange) || [];
+  }
+  if (Array.isArray(asteroidList) && asteroidLimit > 0) {
+    const nearbyAsteroids = [];
+    for (let i = 0; i < asteroidList.length; i++) {
+      const asteroid = asteroidList[i];
+      if (!asteroid || asteroid.alive === false || asteroid.dead) continue;
+      const x = finiteNumber(asteroid.worldX ?? asteroid.x, shipX);
+      const y = finiteNumber(asteroid.worldY ?? asteroid.y, shipY);
+      const distance = Math.hypot(x - shipX, y - shipY);
+      if (distance > safeAsteroidRange) continue;
+      nearbyAsteroids.push({ asteroid, x, y, distance });
+    }
+    nearbyAsteroids.sort((a, b) => a.distance - b.distance);
+
+    const limit = Math.min(asteroidLimit, nearbyAsteroids.length);
+    for (let i = 0; i < limit; i++) {
+      const entry = nearbyAsteroids[i];
+      const asteroid = entry.asteroid;
+      pushContact({
+        entity: asteroid,
+        type: 'asteroid',
+        subType: asteroid.type || '',
+        sizeClass: asteroid.size || '',
+        friendly: false,
+        hostile: false,
+        isCapital: false,
+        isAsteroid: true,
+        radius: asteroid.scale || asteroid.radius || asteroid.r || 14,
+        hp: asteroid.hp,
+        maxHp: asteroid.hpMax,
+        awareness: detected,
+        locked: locks.has(asteroid),
+        selected: selectedTarget === asteroid,
+        isGhost: false,
+        x: entry.x,
+        y: entry.y
+      });
+    }
+  }
+
+  const ghosts = SensorSystem?.getGhosts ? SensorSystem.getGhosts() : null;
+  if (ghosts?.forEach) {
+    ghosts.forEach((ghost) => {
+      if (!ghost) return;
+      pushContact({
+        entity: null,
+        type: ghost.type || 'unknown',
+        subType: ghost.subType || '',
+        friendly: false,
+        hostile: true,
+        isCapital: !!ghost.isCapital,
+        radius: ghost.radius || 14,
+        awareness: awareness.GHOST || 1,
+        locked: false,
+        selected: false,
+        isGhost: true,
+        x: ghost.x,
+        y: ghost.y
+      });
+    });
+  }
+
+  contacts.sort((a, b) => {
+    const ap = (a.locked || a.selected) ? 0 : (a.isAsteroid ? 2 : (a.isGhost ? 3 : 1));
+    const bp = (b.locked || b.selected) ? 0 : (b.isAsteroid ? 2 : (b.isGhost ? 3 : 1));
+    if (ap !== bp) return ap - bp;
+    return a.distance - b.distance;
+  });
+
+  if (contacts.length > contactLimit) contacts.length = contactLimit;
+
+  let hostile = 0;
+  let friendly = 0;
+  let ghost = 0;
+  let asteroid = 0;
+  for (let i = 0; i < contacts.length; i++) {
+    const c = contacts[i];
+    if (c.isAsteroid) asteroid++;
+    else if (c.isGhost) ghost++;
+    else if (c.friendly) friendly++;
+    else if (c.hostile) hostile++;
+  }
+
+  return {
+    range: safeRange,
+    sweepAngle: finiteNumber(sweepAngle, 0),
+    heading: finiteNumber(ship?.angle ?? ship?.a, 0),
+    contacts,
+    counts: {
+      total: contacts.length,
+      hostile,
+      friendly,
+      ghost,
+      asteroid
+    }
   };
 }
 
@@ -378,6 +769,12 @@ export const CICDisplay = {
 
   getSelectedTarget()  { return cicSelectedContacts[0]?.entity || cicSelectedTarget || null; },
   getSelectedTargets() { return cicSelectedContacts.map(c => c.entity).filter(Boolean); },
+  getHudRadarSnapshot(options = {}) {
+    return createCicHudRadarModel({
+      ...options,
+      sweepAngle: cicSweepAngle
+    });
+  },
 
   /** Jump to system view (V key) — sets target zoom to system level */
   toggleSystemView() {
@@ -620,9 +1017,24 @@ export const CICDisplay = {
    * Update CIC state.
    */
   update(dt, ship, npcs, stations, SensorSystem) {
-    if (!cicActive) return;
-
     cicSweepAngle = (cicSweepAngle + CIC_CONFIG.sweepSpeed * dt) % (Math.PI * 2);
+
+    if (!cicActive) {
+      return;
+    }
+
+    cicContacts.length = 0;
+    if (ship && npcs) {
+      const model = createCicHudRadarModel({
+        ship,
+        npcs,
+        SensorSystem,
+        range: CIC_CONFIG.sweepRange,
+        maxContacts: 2048,
+        sweepAngle: cicSweepAngle
+      });
+      cicContacts.push(...model.contacts);
+    }
 
     // WSAD camera pan — speed scales with visible area so it feels consistent at any zoom
     if (cicKeys.size > 0) {
@@ -633,54 +1045,6 @@ export const CICDisplay = {
       if (cicKeys.has('KeyS')) cicTargetPanY += panSpeed * dt;
     }
 
-    // Build contact list from sensor-visible entities
-    cicContacts.length = 0;
-    if (!ship || !npcs) return;
-
-    for (const npc of npcs) {
-      if (!npc || npc.dead) continue;
-      const vis = SensorSystem.getVisibility(npc);
-      if (vis.awareness < SensorSystem.AWARENESS.DETECTED) continue;
-
-      cicContacts.push({
-        entity: npc,
-        x: npc.x,
-        y: npc.y,
-        type: npc.type || 'unknown',
-        subType: npc.subType || '',
-        friendly: !!npc.friendly,
-        hostile: !npc.friendly,
-        isCapital: !!npc.isCapitalShip,
-        radius: npc.radius || npc.r || 14,
-        hp: npc.hp,
-        maxHp: npc.maxHp,
-        shield: npc.shield,
-        awareness: vis.awareness,
-        distance: Math.hypot(npc.x - ship.pos.x, npc.y - ship.pos.y),
-        screenX: 0, screenY: 0, // filled during draw
-        hitRadius: 16,
-      });
-    }
-
-    // Add ghost contacts
-    for (const [, ghost] of SensorSystem.getGhosts()) {
-      cicContacts.push({
-        entity: null,
-        x: ghost.x, y: ghost.y,
-        type: ghost.type || 'unknown',
-        friendly: false, hostile: true,
-        isCapital: ghost.isCapital,
-        radius: ghost.radius || 14,
-        awareness: SensorSystem.AWARENESS.GHOST,
-        distance: Math.hypot(ghost.x - ship.pos.x, ghost.y - ship.pos.y),
-        isGhost: true,
-        screenX: 0, screenY: 0,
-        hitRadius: 16,
-      });
-    }
-
-    // Sort by distance
-    cicContacts.sort((a, b) => a.distance - b.distance);
   },
 
   /**
