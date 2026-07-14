@@ -4,220 +4,111 @@
  * Zoptymalizowana wersja z DOM Caching i Zero-GC Batching.
  */
 
-export class HexArmorHUD {
-    constructor(containerId, width, height) {
+import { drawCicHudRadarSurface } from './cicDisplay.js';
+import { CockpitUI } from './cockpitUI.js';
+
+const CIC_MINI_RADAR_RANGES = Object.freeze([5000, 10000, 20000, 40000, 60000]);
+
+class CicMiniRadarHUD {
+    constructor(containerId) {
         this.container = document.getElementById(containerId);
-        if (!this.container) return;
-
-        this.container.innerHTML = '';
-
-        this.canvas = document.createElement('canvas');
-        this.canvas.className = 'hex-armor-canvas';
-        this.canvas.width = width;
-        this.canvas.height = height;
-        this.ctx = this.canvas.getContext('2d');
-        this.container.appendChild(this.canvas);
-
-        this.gridRef = null;
-        this.layoutCells = [];
-        this.shardsRef = null;
-        this.shardCount = 0;
+        this.canvas = this.container?.querySelector?.('.hud-radar-canvas') || null;
+        this.ctx = this.canvas?.getContext?.('2d') || null;
+        this.totalEl = this.container?.querySelector?.('.hud-radar-readout .total') || null;
+        this.hostileEl = this.container?.querySelector?.('.hud-radar-readout .hostile') || null;
+        this.asteroidEl = this.container?.querySelector?.('.hud-radar-readout .asteroid') || null;
+        this.rangeEl = this.container?.querySelector?.('.hud-radar-readout .range') || null;
+        this.rangeButtons = Array.from(this.container?.querySelectorAll?.('[data-radar-range]') || []);
         this.lastDrawMs = 0;
-        this.lastMeshRevision = -1;
-        this.lastActiveStructuralCount = -1;
-        
-        // Możesz teraz spróbować zmienić to na 33 (30 FPS) lub nawet 16 (60 FPS)
-        this.minDrawIntervalMs = 80; 
-        
-        this.fillMissing = 'rgba(10, 10, 10, 0.95)';
-        this.strokeMissing = 'rgba(55, 55, 55, 0.85)';
-        this.strokeAlive = 'rgba(15, 20, 10, 0.85)';
-        
-        // Generujemy zestaw pre-renderowanych obrazków (Sprite'ów) dla maksymalnej wydajności
-        this.hexSprites = new Array(102);
-        this.generateHexSprites();
+        this.minDrawIntervalMs = 66;
+        this.viewRange = 20000;
+        this.model = null;
+        this.cache = {};
+        this.bindRangeControls();
+        this.updateRangeControls();
     }
 
-    // TA FUNKCJA WYKONA SIĘ TYLKO RAZ - RYSUJE SPRITE'Y DO PAMIĘCI
-    generateHexSprites() {
-        const size = 32;     // Rozmiar wirtualnego płótna dla 1 heksa
-        const r = 14;        // Promień heksa (zostawia 2px marginesu na ramkę)
-        const cx = size / 2;
-        const cy = size / 2;
-
-        for (let i = 0; i < 102; i++) {
-            const offscreenCanvas = document.createElement('canvas');
-            offscreenCanvas.width = size;
-            offscreenCanvas.height = size;
-            const oCtx = offscreenCanvas.getContext('2d');
-
-            let fill = this.fillMissing;
-            let stroke = this.strokeMissing;
-
-            if (i <= 100) {
-                const t = i / 100;
-                const red = Math.round(255 * (1 - t));
-                const green = Math.round(255 * t);
-                fill = `rgba(${red}, ${green}, 40, 0.95)`;
-                stroke = this.strokeAlive;
-            }
-
-            oCtx.beginPath();
-            for (let k = 0; k < 6; k++) {
-                const angle = (Math.PI / 3) * k + Math.PI / 6;
-                const px = cx + r * Math.cos(angle);
-                const py = cy + r * Math.sin(angle);
-                if (k === 0) oCtx.moveTo(px, py);
-                else oCtx.lineTo(px, py);
-            }
-            oCtx.closePath();
-            
-            oCtx.fillStyle = fill;
-            oCtx.fill();
-            oCtx.lineWidth = 1.5; // Lekko pogrubiona, by ładnie wyglądała po zmniejszeniu
-            oCtx.strokeStyle = stroke;
-            oCtx.stroke();
-
-            // Zapisujemy gotowy stempel
-            this.hexSprites[i] = offscreenCanvas;
-        }
-    }
-
-    updateFromShip(ship) {
-        if (!this.ctx) return;
-
-        const grid = ship?.hexGrid;
-        if (!grid?.shards?.length) {
-            this.gridRef = null;
-            this.layoutCells = [];
-            this.shardsRef = null;
-            this.shardCount = 0;
-            this.lastMeshRevision = -1;
-            this.lastActiveStructuralCount = -1;
-            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-            return;
-        }
-
-        const shards = grid.shards;
-        const needsRebuild = this.gridRef !== grid || this.shardsRef !== shards || this.shardCount !== shards.length;
-        if (needsRebuild) {
-            this.gridRef = grid;
-            this.shardsRef = shards;
-            this.shardCount = shards.length;
-            this.rebuildLayout(grid);
-        }
-
-        const activeStructuralCount = Number.isFinite(Number(grid.activeStructuralCount))
-            ? Number(grid.activeStructuralCount)
-            : shards.length;
-        const meshRevision = Number.isFinite(Number(grid.meshRevision))
-            ? Number(grid.meshRevision)
-            : 0;
-        const pendingEraseCount = Array.isArray(grid._pendingEraseQueue) ? grid._pendingEraseQueue.length : 0;
-        const hasPendingVisualChange =
-            !!grid.meshDirty ||
-            !!grid.textureDirty ||
-            !!grid.cacheDirty ||
-            !!grid.gpuTextureNeedsUpdate ||
-            pendingEraseCount > 0;
-        const stateChanged =
-            needsRebuild ||
-            hasPendingVisualChange ||
-            meshRevision !== this.lastMeshRevision ||
-            activeStructuralCount !== this.lastActiveStructuralCount;
-
-        if (!stateChanged) return;
-
+    update(model) {
+        if (!this.ctx || !this.canvas) return;
+        this.model = model;
         const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-        if (!needsRebuild && (now - this.lastDrawMs) < this.minDrawIntervalMs) return;
-
-        this.draw();
+        if ((now - this.lastDrawMs) < this.minDrawIntervalMs) return;
         this.lastDrawMs = now;
-        this.lastMeshRevision = meshRevision;
-        this.lastActiveStructuralCount = activeStructuralCount;
+        this.draw(model);
+        this.updateReadout(model);
     }
 
-    rebuildLayout(grid) {
-        const width = this.canvas.width || 1;
-        const height = this.canvas.height || 1;
-        const srcW = Number(grid.srcWidth) || 1;
-        const srcH = Number(grid.srcHeight) || 1;
-        const cx = srcW * 0.5;
-        const cy = srcH * 0.5;
-        const pX = Number(grid?.pivot?.x) || 0;
-        const pY = Number(grid?.pivot?.y) || 0;
-        const shards = grid.shards || [];
-
-        if (!shards.length) {
-            this.layoutCells = [];
-            return;
+    bindRangeControls() {
+        for (const button of this.rangeButtons) {
+            button.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.setViewRange(Number(button.dataset.radarRange));
+            });
         }
-
-        let minX = Infinity, maxX = -Infinity;
-        let minY = Infinity, maxY = -Infinity;
-
-        const transformed = new Array(shards.length);
-        for (let i = 0; i < shards.length; i++) {
-            const shard = shards[i];
-            if (!shard) continue;
-            const localX = (Number(shard.gridX) || 0) - cx - pX;
-            const localY = (Number(shard.gridY) || 0) - cy - pY;
-            const radius = Math.max(1, Number(shard.radius) || 1);
-
-            const rotX = localY;
-            const rotY = -localX;
-
-            transformed[i] = { shard, x: rotX, y: rotY, radius };
-            minX = Math.min(minX, rotX - radius);
-            maxX = Math.max(maxX, rotX + radius);
-            minY = Math.min(minY, rotY - radius);
-            maxY = Math.max(maxY, rotY + radius);
-        }
-
-        const spanX = Math.max(1, maxX - minX);
-        const spanY = Math.max(1, maxY - minY);
-        const padding = 8;
-        const usableW = Math.max(1, width - padding * 2);
-        const usableH = Math.max(1, height - padding * 2);
-        const scale = Math.max(0.1, Math.min(usableW / spanX, usableH / spanY));
-        const midX = (minX + maxX) * 0.5;
-        const midY = (minY + maxY) * 0.5;
-
-        this.layoutCells = transformed.filter(Boolean).map(cell => ({
-            shard: cell.shard,
-            x: (cell.x - midX) * scale + width * 0.5,
-            y: (cell.y - midY) * scale + height * 0.5,
-            radius: Math.max(1.2, cell.radius * scale * 0.95)
-        }));
     }
 
-    draw() {
-        const ctx = this.ctx;
-        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    setViewRange(range) {
+        const nextRange = Number(range);
+        if (!CIC_MINI_RADAR_RANGES.includes(nextRange)) return;
+        this.viewRange = nextRange;
+        this.lastDrawMs = 0;
+        this.updateRangeControls();
+        this.updateReadout(this.model);
+        if (this.ctx && this.canvas) this.draw(this.model);
+    }
 
-        // Wyłączamy wygładzanie obrazu dla ostrych krawędzi (opcjonalne, dodaje ostrości miniaturom)
-        ctx.imageSmoothingEnabled = false;
-
-        for (let i = 0; i < this.layoutCells.length; i++) {
-            const cell = this.layoutCells[i];
-            const shard = cell.shard;
-            
-            let spriteIdx = 101; // Domyślnie zniszczony heks
-            
-            if (shard && shard.active && !shard.isDebris && shard.hp > 0) {
-                const maxHp = Math.max(1, Number(shard.maxHp) || 1);
-                const hpRatio = Math.max(0, Math.min(1, (Number(shard.hp) || 0) / maxHp));
-                spriteIdx = Math.max(0, Math.min(100, Math.round(hpRatio * 100)));
-            }
-            
-            const r = cell.radius;
-            // Skalujemy oryginalny sprite 32x32 (z narysowanym heksem o promieniu 14) do potrzebnego rozmiaru
-            const drawSize = 32 * (r / 14);
-            const halfSize = drawSize * 0.5;
-            
-            // JEDYNA OPERACJA RYSOWANIA - Używa sprzętowego przyspieszenia GPU!
-            ctx.drawImage(this.hexSprites[spriteIdx], cell.x - halfSize, cell.y - halfSize, drawSize, drawSize);
+    updateRangeControls() {
+        for (const button of this.rangeButtons) {
+            const active = Number(button.dataset.radarRange) === this.viewRange;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-pressed', active ? 'true' : 'false');
         }
+    }
+
+    ensureCanvasSize() {
+        const rect = this.canvas.getBoundingClientRect?.();
+        const cssW = Math.max(1, Math.round(rect?.width || this.canvas.width || 176));
+        const cssH = Math.max(1, Math.round(rect?.height || this.canvas.height || 176));
+        const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+        const targetW = Math.round(cssW * dpr);
+        const targetH = Math.round(cssH * dpr);
+        if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
+            this.canvas.width = targetW;
+            this.canvas.height = targetH;
+        }
+        return { width: targetW, height: targetH };
+    }
+
+    updateReadout(model) {
+        const counts = model?.counts || {};
+        const total = Math.max(0, Number(counts.total) || 0);
+        const hostile = Math.max(0, Number(counts.hostile) || 0);
+        const asteroid = Math.max(0, Number(counts.asteroid) || 0);
+        const rangeK = Math.max(1, Math.round(this.viewRange / 1000));
+        if (this.cache.total !== total && this.totalEl) {
+            this.totalEl.textContent = `C:${total}`;
+            this.cache.total = total;
+        }
+        if (this.cache.hostile !== hostile && this.hostileEl) {
+            this.hostileEl.textContent = `H:${hostile}`;
+            this.cache.hostile = hostile;
+        }
+        if (this.cache.asteroid !== asteroid && this.asteroidEl) {
+            this.asteroidEl.textContent = `A:${asteroid}`;
+            this.cache.asteroid = asteroid;
+        }
+        if (this.cache.rangeK !== rangeK && this.rangeEl) {
+            this.rangeEl.textContent = `${rangeK}K`;
+            this.cache.rangeK = rangeK;
+        }
+    }
+
+    draw(model) {
+        const { width, height } = this.ensureCanvasSize();
+        drawCicHudRadarSurface(this.ctx, width, height, model, {
+            range: this.viewRange
+        });
     }
 }
 
@@ -226,7 +117,6 @@ export class HUDSystem {
         this.menuState = 'IDLE';
         this.menuClearTimer = null;
         this.stationTerminalLastRefreshMs = 0;
-        this.hexHud = null;
         this.terminalState = {
             step: 'OFF',
             targetStation: null,
@@ -237,6 +127,8 @@ export class HUDSystem {
             hover: false,
             pointerDown: false
         };
+        this.radarHud = null;
+        this.cockpit = null;
         
         // Obiekt do Caching'u DOM - zapobiega DOM Thrashing
         this.cache = {};
@@ -248,9 +140,10 @@ export class HUDSystem {
             { key: '4', label: 'B-IN', weaponType: 'builtin' },
             { key: '5', label: 'SP.MISS', weaponType: 'special_missile' },
             { key: 'CAPS', label: 'SCAN', menuState: 'SCAN' },
-            { key: '6', label: 'MAP' },
+            { key: '6', label: 'ENERGY' },
             { key: '7', label: 'AUTO' },
-            { key: '8', label: 'MODE', menuState: 'MODE' }
+            { key: '8', label: 'MODE', menuState: 'MODE' },
+            { key: '9', label: 'WARP' }
         ];
         
         this.dom = {
@@ -270,6 +163,11 @@ export class HUDSystem {
             warpText: document.getElementById('warp-text'),
             
             speedVal: document.getElementById('val-speed'),
+            driveReadout: document.getElementById('drive-readout'),
+            driveMode: document.getElementById('drive-mode'),
+            driveGear: document.getElementById('drive-gear'),
+            driveRpm: document.getElementById('drive-rpm'),
+            driveRpmFill: document.getElementById('drive-rpm-fill'),
             locDisplay: document.getElementById('location-display'),
             locLabel: document.getElementById('loc-label'),
             locText: document.getElementById('loc-text'),
@@ -295,10 +193,8 @@ export class HUDSystem {
     }
 
     init() {
-        this.hexHud = new HexArmorHUD('hex-armor-container', 160, 200);
-        this.renderSkillKeys();
-        this.setupSupportDrag();
-        this.createAgilityUI();
+        this.cockpit = new CockpitUI().init();
+        this.radarHud = null;
 
         window.togglePanel = (id) => {
             const panel = document.getElementById(id);
@@ -312,6 +208,12 @@ export class HUDSystem {
 
         const btn3 = this.dom.skillRow?.querySelector('.glass-key[data-menu-state="SCAN"]');
         if(btn3) btn3.addEventListener('click', () => this.setBottomMenuState('SCAN'));
+
+        const autoButton = this.dom.skillRow?.querySelector('.glass-key[data-key="7"]');
+        if (autoButton) autoButton.addEventListener('click', () => window.shipDriveControls?.toggleAuto?.());
+
+        const warpButton = this.dom.skillRow?.querySelector('.glass-key[data-key="9"]');
+        if (warpButton) warpButton.addEventListener('click', () => window.shipDriveControls?.toggleWarp?.());
 
         const terminalHost = this.dom.drawerContent;
         if (terminalHost) {
@@ -336,6 +238,12 @@ export class HUDSystem {
         window.addEventListener('keydown', (e) => {
             if (e.repeat) return;
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            if (e.code === 'Escape' && this.cockpit?.missionOpen) {
+                this.cockpit.closeMissionJournal();
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                return;
+            }
             if (typeof window.isStationUIOpen === 'function' && window.isStationUIOpen()) return;
             const digitKey = (e.code && e.code.startsWith('Digit')) ? e.code.slice(5)
                 : (e.code && e.code.startsWith('Numpad')) ? e.code.slice(6)
@@ -352,9 +260,17 @@ export class HUDSystem {
                 if (digitKey === '8' || e.key === '8') this.handleMenuAction('close');
             } else if (this.menuState === 'SCAN' || this.menuState === 'STATION') {
                 if (digitKey === '8' || e.key === '8') this.handleMenuAction('close');
-                if (e.key === '0' || e.key === 'Escape' || e.code === 'CapsLock') this.handleMenuAction('close');
+                if (e.key === '0' || e.key === 'Escape' || e.code === 'CapsLock') {
+                    this.handleMenuAction('close');
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                }
             }
         });
+    }
+
+    getRadarRange() {
+        return this.cockpit?.getRadarRange?.() || this.radarHud?.viewRange || 20000;
     }
 
     createAgilityUI() {
@@ -446,6 +362,7 @@ export class HUDSystem {
     }
 
     update(ship, sys, env) {
+        this.cockpit?.update?.(ship, sys, env);
         if (this.dom.centerDock && this.dom.centerDock.offsetParent === null) return;
         if (!ship || !this.dom.hpFill) return;
         this.updateWeaponSlots(env?.weaponHud);
@@ -544,6 +461,44 @@ export class HUDSystem {
             this.dom.speedVal.textContent = speed;
             this.cache.speed = speed;
         }
+
+        const driveModeLabel = String(sys.driveModeLabel || sys.driveMode || 'BOJOWY').toUpperCase();
+        if (this.cache.driveModeLabel !== driveModeLabel && this.dom.driveMode) {
+            this.dom.driveMode.textContent = driveModeLabel;
+            this.cache.driveModeLabel = driveModeLabel;
+        }
+        const driveGear = Math.max(1, Number(sys.driveGear) || 1);
+        const driveGearCount = Math.max(driveGear, Number(sys.driveGearCount) || 1);
+        const driveGearText = `G ${driveGear}/${driveGearCount}`;
+        if (this.cache.driveGearText !== driveGearText && this.dom.driveGear) {
+            this.dom.driveGear.textContent = driveGearText;
+            this.cache.driveGearText = driveGearText;
+        }
+        const driveRpm = Math.max(0, Math.min(100, Math.round((Number(sys.driveRpm) || 0) * 100)));
+        if (this.cache.driveRpm !== driveRpm) {
+            if (this.dom.driveRpm) this.dom.driveRpm.textContent = `RPM ${driveRpm}%`;
+            if (this.dom.driveRpmFill) this.dom.driveRpmFill.style.width = `${driveRpm}%`;
+            this.cache.driveRpm = driveRpm;
+        }
+        const driveShiftBoost = !!sys.driveShiftBoost;
+        if (this.cache.driveShiftBoost !== driveShiftBoost && this.dom.driveReadout) {
+            this.dom.driveReadout.classList.toggle('shift-boost', driveShiftBoost);
+            this.cache.driveShiftBoost = driveShiftBoost;
+        }
+        const driveAuto = !!sys.driveAuto;
+        if (this.cache.driveAuto !== driveAuto) {
+            const autoButton = this.dom.skillRow?.querySelector('.glass-key[data-key="7"]');
+            if (autoButton) autoButton.classList.toggle('active', driveAuto);
+            this.cache.driveAuto = driveAuto;
+        }
+        const driveMenuKey = `${sys.driveMode || ''}:${driveAuto ? 1 : 0}`;
+        if (this.cache.driveMenuKey !== driveMenuKey) {
+            this.cache.driveMenuKey = driveMenuKey;
+            if (this.menuState === 'MODE') {
+                this.cache.lastMenuHTML = null;
+                this.refreshOpenMenu();
+            }
+        }
         
         if (this.dom.locDisplay && this.dom.locText && this.dom.locLabel) {
             const banner = env?.bannerMessage || null;
@@ -628,8 +583,10 @@ export class HUDSystem {
             }
         }
 
-        // To zostaje, HexArmorHUD samo zarządza swoimi interwałami 
-        if (this.hexHud) this.hexHud.updateFromShip(ship);
+        if (this.radarHud) {
+            this.radarHud.update(env?.radar);
+        }
+
     }
 
     toggleTopPanel() {
@@ -637,6 +594,18 @@ export class HUDSystem {
     }
 
     setBottomMenuState(state) {
+        if (this.cockpit) {
+            if (state === 'SCAN' || state === 'STATION') {
+                const opened = this.cockpit.toggleComm();
+                this.menuState = opened ? 'SCAN' : 'IDLE';
+            } else if (state === 'IDLE') {
+                this.cockpit.closeComm();
+                this.menuState = 'IDLE';
+            } else {
+                this.menuState = 'IDLE';
+            }
+            return;
+        }
         if (state === 'STATION') state = 'SCAN';
         if (this.menuState === 'STATION') this.menuState = 'SCAN';
 
@@ -716,6 +685,9 @@ export class HUDSystem {
         if (!this.dom.skillRow) return;
         const btns = this.dom.skillRow.querySelectorAll('.glass-key');
         btns.forEach(b => b.classList.remove('active'));
+
+        const autoButton = this.dom.skillRow.querySelector('.glass-key[data-key="7"]');
+        if (autoButton) autoButton.classList.toggle('active', !!window.shipDriveControls?.getState?.()?.auto);
         
         if (this.menuState === 'MODE') {
             const btn = this.dom.skillRow.querySelector('.glass-key[data-menu-state="MODE"]'); 
@@ -731,8 +703,44 @@ export class HUDSystem {
 
     handleMenuAction(action, payload) {
         console.log("HUD Action:", action, payload);
+        if (this.cockpit) {
+            if (action === 'close') {
+                this.setBottomMenuState('IDLE');
+                return;
+            }
+            if (action === 'terminal-connect') {
+                if (!this.cockpit.commOpen) this.cockpit.toggleComm(true);
+                this.menuState = 'SCAN';
+                this.cockpit.commBootUntil = 0;
+                this.cockpit.connectStationById(payload);
+                return;
+            }
+            if (action === 'terminal-open-service') {
+                this.cockpit.openStationService(payload);
+                return;
+            }
+            if (action === 'drive-combat' || action === 'drive-maneuver' || action === 'drive-travel') {
+                window.shipDriveControls?.setMode?.(action.slice(6));
+                return;
+            }
+            if (action === 'drive-auto') {
+                window.shipDriveControls?.toggleAuto?.();
+                return;
+            }
+        }
         if (action === 'close') {
             this.setBottomMenuState('IDLE');
+            return;
+        }
+        if (action === 'drive-combat' || action === 'drive-maneuver' || action === 'drive-travel') {
+            window.shipDriveControls?.setMode?.(action.slice(6));
+            this.setBottomMenuState('IDLE');
+            return;
+        }
+        if (action === 'drive-auto') {
+            window.shipDriveControls?.toggleAuto?.();
+            this.cache.lastMenuHTML = null;
+            this.refreshOpenMenu();
             return;
         }
         if (action === 'terminal-boot-done') {
@@ -800,6 +808,10 @@ export class HUDSystem {
     }
 
     refreshOpenMenu() {
+        if (this.cockpit) {
+            if (this.cockpit.commOpen) this.cockpit.renderComm();
+            return;
+        }
         if (this.menuState === 'IDLE') return;
         if (!this.dom.drawerContent) return;
         const nextHTML = this.getMenuHTML(this.menuState);
@@ -809,6 +821,22 @@ export class HUDSystem {
         if (this.dom.bottomDrawer) {
             this.dom.bottomDrawer.style.height = `${this.dom.drawerContent.scrollHeight}px`;
         }
+    }
+
+    toggleMissionJournal(force = null) {
+        return this.cockpit?.toggleMissionJournal?.(force) || false;
+    }
+
+    logEvent(message, tone = '') {
+        this.cockpit?.log?.(message, tone);
+    }
+
+    logZone(label, zoneId = '') {
+        this.cockpit?.logZone?.(label, zoneId);
+    }
+
+    onMissionUpdated(mission, event = 'updated') {
+        this.cockpit?.onMissionUpdated?.(mission, event);
     }
 
     renderSkillKeys() {
@@ -910,15 +938,16 @@ export class HUDSystem {
 
     getMenuHTML(state) {
         if (state === 'MODE') {
+            const drive = window.shipDriveControls?.getState?.() || {};
+            const activeClass = (mode) => drive.mode === mode ? ' active' : '';
             return `
-                <div class="menu-header">SHIP OPERATION MODES</div>
+                <div class="menu-header">DRIVE MODE / TRANSMISSION</div>
                 <div class="menu-grid">
                     <div class="menu-btn" onclick="hudSystem.handleMenuAction('close')"><div class="key-hint">8</div><div class="label">BACK</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('battle')" data-mode="battle"><div class="key-hint">—</div><div class="label">BATTLE</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('hypercruise')" data-mode="hypercruise"><div class="key-hint">—</div><div class="label">HC</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('cruise')" data-mode="cruise"><div class="key-hint">—</div><div class="label">CRUISE</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('mining')" data-mode="mining"><div class="key-hint">—</div><div class="label">MINING</div></div>
-                    <div class="menu-btn" onclick="hudSystem.handleMenuAction('intel')" data-mode="intel"><div class="key-hint">—</div><div class="label">INTEL</div></div>
+                    <div class="menu-btn${activeClass('combat')}" onclick="hudSystem.handleMenuAction('drive-combat')" data-mode="combat"><div class="key-hint">5K</div><div class="label">BOJOWY</div></div>
+                    <div class="menu-btn${activeClass('maneuver')}" onclick="hudSystem.handleMenuAction('drive-maneuver')" data-mode="maneuver"><div class="key-hint">2K</div><div class="label">MANEWROWY</div></div>
+                    <div class="menu-btn${activeClass('travel')}" onclick="hudSystem.handleMenuAction('drive-travel')" data-mode="travel"><div class="key-hint">20K</div><div class="label">PODRÓŻ</div></div>
+                    <div class="menu-btn${drive.auto ? ' active' : ''}" onclick="hudSystem.handleMenuAction('drive-auto')" data-mode="auto"><div class="key-hint">7</div><div class="label">AUTO ${drive.auto ? 'ON' : 'OFF'}</div></div>
                 </div>
             `;
         } else if (state === 'COMM') {

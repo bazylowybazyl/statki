@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 
 import {
   buildRingGateReturnEndpointAngles,
+  buildRingGateDescriptors,
   buildGateRailTurnArcRanges,
   buildRingSolidArcRanges,
   computeGateReturnWallOuterRadius,
   shouldBuildDockRailsForBand
 } from '../src/3d/planetaryRing3D.js';
+import { isAngleInsideGateDescriptors } from '../src/3d/ringCityZoneGrid.js';
 
 test('buildRingSolidArcRanges returns contiguous non-hole arcs with padding', () => {
   const angleStep = Math.PI / 4;
@@ -58,8 +60,43 @@ test('computeGateReturnWallOuterRadius recesses gate wall but keeps a usable wal
 
 test('shouldBuildDockRailsForBand disables rails on residential-commercial ring', () => {
   assert.equal(shouldBuildDockRailsForBand('inner'), false);
-  assert.equal(shouldBuildDockRailsForBand('industrial'), true);
+  assert.equal(shouldBuildDockRailsForBand('industrial'), false);
   assert.equal(shouldBuildDockRailsForBand('military'), true);
+});
+
+test('gate descriptors quantize four equal defense openings to segment boundaries', () => {
+  const count = 60;
+  const angleStep = Math.PI * 2 / count;
+  const gates = buildRingGateDescriptors(count, angleStep);
+
+  assert.equal(gates.length, 4);
+  assert.deepEqual(gates.map(gate => gate.segmentIndices.length), [2, 2, 2, 2]);
+  assert.deepEqual(
+    gates.map(gate => Number(gate.centerAngle.toFixed(6))),
+    [0, Math.PI / 2, Math.PI, Math.PI * 1.5].map(value => Number(value.toFixed(6)))
+  );
+  assert.deepEqual(gates[0].segmentIndices, [59, 0]);
+  assert.equal(isAngleInsideGateDescriptors(Math.PI * 2 - angleStep * 0.25, gates), true);
+  assert.equal(isAngleInsideGateDescriptors(Math.PI * 0.25, gates), false);
+});
+
+test('band-aware solid arcs keep city continuous and cut only the defense line', () => {
+  const count = 16;
+  const angleStep = Math.PI * 2 / count;
+  const gates = buildRingGateDescriptors(count, angleStep);
+  const defenseHoles = new Set(gates.flatMap(gate => gate.segmentIndices));
+  const segments = Array.from({ length: count }, (_, index) => ({
+    index,
+    baseAngle: (index + 0.5) * angleStep,
+    type: 'WALL',
+    typeByBand: {
+      city: 'WALL',
+      military: defenseHoles.has(index) ? 'HOLE' : 'WALL'
+    }
+  }));
+
+  assert.deepEqual(buildRingSolidArcRanges(segments, angleStep, 0, 'city'), [{ start: 0, end: Math.PI * 2 }]);
+  assert.equal(buildRingSolidArcRanges(segments, angleStep, 0, 'military').length, 4);
 });
 
 test('buildGateRailTurnArcRanges extends rail arcs into gate openings', () => {

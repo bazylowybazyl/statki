@@ -14,7 +14,6 @@ const CONTROL_SECTIONS = [
       { key: 'deformMul', label: 'impact deform mul', min: 0.1, max: 2.5, step: 0.01 },
       { key: 'bendingRadius', label: 'bending radius', min: 4, max: 120, step: 1 },
       { key: 'collisionDeformScale', label: 'collision deform', min: 0.2, max: 2.0, step: 0.01 },
-      { key: 'armorThreshold', label: 'armor threshold', min: 0.05, max: 4.0, step: 0.01 },
       { key: 'inflictedDamageMult', label: 'damage multiplier', min: 0.05, max: 4.0, step: 0.01 }
     ]
   },
@@ -64,6 +63,9 @@ const CONTROL_SECTIONS = [
       { key: 'hullBendSplitCurvature', label: 'bend split curv', min: 0.05, max: 1.5, step: 0.01 },
       { key: 'hullBendWreckSpin', label: 'bend wreck spin', min: 0, max: 2.0, step: 0.05 },
       { key: 'hullBendDirSign', label: 'bend direction ±', min: -1, max: 1, step: 2, integer: true },
+      { key: 'hullRecoverEnabled', label: 'npc auto-straighten', min: 0, max: 1, step: 1, integer: true },
+      { key: 'hullRecoverDelay', label: 'recover delay s', min: 0, max: 15, step: 0.5 },
+      { key: 'hullRecoverRate', label: 'recover rate rad/s', min: 0.01, max: 1.5, step: 0.01 },
       { key: 'sectionCoupleEnabled', label: 'section couple', min: 0, max: 1, step: 1, integer: true },
       { key: 'sectionCoupleGain', label: 'section gain (α)', min: 0, max: 1.5, step: 0.01 }
     ]

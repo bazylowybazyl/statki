@@ -6,7 +6,9 @@ import { DestructorSystem } from '../src/game/destructor.js';
 import {
   buildAsteroidHexEntityModel,
   computeAsteroidSpriteScale,
+  initializeAsteroidHexIntegrity,
   integrateAsteroidHexEntityMotion,
+  isAsteroidHexCoreDestroyed,
   syncAsteroidFromHexEntity,
   syncHexEntityFromAsteroid
 } from '../src/game/asteroidHexAdapter.js';
@@ -205,6 +207,103 @@ test('asteroid hex entity model preserves the billboard sprite footprint', () =>
 
   assert.equal(model.visual.spriteScaleX, 680 / 600);
   assert.equal(model.visual.spriteScaleY, 680 / 500);
+});
+
+test('scaled asteroid hex contacts cover the same world-space footprint as the rendered sprite', () => {
+  const makeEntity = ({ x, vx, scale, asteroid = false, mass = 100 }) => {
+    const shard = {
+      active: true,
+      isDebris: false,
+      gridX: 50,
+      gridY: 50,
+      deformation: { x: 0, y: 0 },
+      hitRadius: 24,
+      hp: 80,
+      maxHp: 80
+    };
+    const cells = new Array(16);
+    cells[1 + 1 * 4] = shard;
+    return {
+      x,
+      y: 0,
+      vx,
+      vy: 0,
+      angle: 0,
+      angVel: 0,
+      radius: 100 * scale,
+      mass,
+      rammingMass: mass,
+      isAsteroidHex: asteroid,
+      visual: { spriteScaleX: scale, spriteScaleY: scale, preserveBillboardOrientation: asteroid },
+      hexGrid: {
+        shards: [shard],
+        grid: cells,
+        cols: 4,
+        rows: 4,
+        srcWidth: 100,
+        srcHeight: 100,
+        pivot: null,
+        activeStructuralCount: 1,
+        baseStructuralCount: 1
+      }
+    };
+  };
+
+  const ship = makeEntity({ x: 0, vx: 100, scale: 1, mass: 100 });
+  const asteroid = makeEntity({ x: 60, vx: 0, scale: 3, asteroid: true, mass: 1000 });
+
+  DestructorSystem.collideEntities(ship, asteroid, 1 / 60, false);
+
+  assert.ok(ship.vx < 100, 'contact must happen at the scaled outer asteroid hex, not only in its inner radius');
+});
+
+test('asteroid core integrity is cached and trips after most central hexes are destroyed', () => {
+  const makeShard = (gridX, gridY) => ({
+    gridX,
+    gridY,
+    active: true,
+    isDebris: false,
+    hp: 80,
+    maxHp: 80,
+    deformation: { x: 0, y: 0 },
+    targetDeformation: { x: 0, y: 0 },
+    becomeDebris() {
+      this.active = false;
+      this.isDebris = true;
+    }
+  });
+  const shards = [
+    makeShard(50, 50),
+    makeShard(70, 50),
+    makeShard(30, 50),
+    makeShard(50, 70),
+    makeShard(50, 30),
+    makeShard(96, 96)
+  ];
+  const entity = {
+    isAsteroidHex: true,
+    destructionMaterial: 'brittle',
+    hexGrid: {
+      shards,
+      srcWidth: 100,
+      srcHeight: 100,
+      activeStructuralCount: shards.length,
+      baseStructuralCount: shards.length,
+      _pendingEraseQueue: []
+    }
+  };
+
+  const integrity = initializeAsteroidHexIntegrity(entity);
+  assert.equal(integrity.total, 5);
+  assert.equal(isAsteroidHexCoreDestroyed(entity), false);
+
+  const core = shards.filter((shard) => shard.__asteroidCore === true);
+  DestructorSystem.destroyShard(entity, core[0], { x: 0, y: 0 });
+  DestructorSystem.destroyShard(entity, core[1], { x: 0, y: 0 });
+  DestructorSystem.destroyShard(entity, core[2], { x: 0, y: 0 });
+
+  assert.equal(entity.hexGrid.asteroidCoreActive, 2);
+  assert.equal(isAsteroidHexCoreDestroyed(entity), true);
 });
 
 test('billboard-oriented asteroid impacts map to the visible local side', () => {

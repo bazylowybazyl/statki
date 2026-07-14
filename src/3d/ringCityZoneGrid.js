@@ -3,13 +3,14 @@
 // Ported from ringprocedural.html prototype
 // ============================================================
 import * as THREE from 'three';
+import { SYNTHCITY_RIBBON_ROWS } from './ringCitySurface.js';
 
 // --- Constants ---
 export const ZONE_COLS = 192;
 
-// Per-ring row counts (inner = residential+commercial, middle = industrial, outer = military)
-export const INNER_RING_ROWS = 3;
-export const INDUSTRIAL_RING_ROWS = 2;
+// The retired factory band is now part of one 8-row SynthCity rectangle.
+export const INNER_RING_ROWS = SYNTHCITY_RIBBON_ROWS;
+export const INDUSTRIAL_RING_ROWS = 0;
 export const MILITARY_RING_ROWS = 2;
 export const ZONE_ROWS = INNER_RING_ROWS + INDUSTRIAL_RING_ROWS + MILITARY_RING_ROWS; // 7
 
@@ -28,28 +29,31 @@ export function getRingForRow(row) {
 // Which zone types are allowed per ring
 export const RING_ZONE_POOLS = {
     [RING_INNER]: ['residential', 'commercial'],
-    [RING_INDUSTRIAL]: ['industrial'],
-    [RING_MILITARY]: ['military']
+    // Factory districts were retired. This legacy band is rendered as part of
+    // the continuous baked city and must not receive procedural zones.
+    [RING_INDUSTRIAL]: [],
+    // The outer band is intentionally not a zoned district. Cranes, trains,
+    // gates and future infrastructure are built by dedicated systems.
+    [RING_MILITARY]: []
 };
 
 export const ZONE_CELL_ARC = (Math.PI * 2) / ZONE_COLS;
 
-let HOLE_ANGLES = [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2]; // updated by ring at init
+let HOLE_ANGLES = [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2]; // legacy fallback
 const GATE_CLEARANCE = 0.14;
 
-export const ZONE_PAD_ANGLE = ZONE_CELL_ARC * 0.14;
-export const ZONE_PAD_RADIUS = 70;
+export const ZONE_PAD_ANGLE = 0;
+export const ZONE_PAD_RADIUS = 0;
 
 // Legacy (kept for decorative lane markers on pedestals)
 export const AUTOSTRADA_WIDTH = 180;
 export const AUTOSTRADA_LANE_OFFSET = 34;
 
-export const ZONE_TYPES = ['residential', 'residential_mega', 'commercial', 'commercial_mega', 'industrial', 'military'];
+export const ZONE_TYPES = ['residential', 'residential_mega', 'commercial', 'commercial_mega'];
 
 export const COLORS = {
     residential:      { num: 0x00f3ff, css: '#00f3ff' },
     residential_mega: { num: 0x37a8ff, css: '#37a8ff' },
-    industrial:       { num: 0xfcee0a, css: '#fcee0a' },
     military:         { num: 0xff003c, css: '#ff003c' },
     commercial:       { num: 0xb800ff, css: '#b800ff' },
     commercial_mega:  { num: 0xff4cf4, css: '#ff4cf4' },
@@ -78,6 +82,18 @@ export function isGateAngle(angle) {
     const normalized = normalizeAngle(angle);
     for (const holeAngle of HOLE_ANGLES) {
         if (angleDistance(normalized, holeAngle) < GATE_CLEARANCE) return true;
+    }
+    return false;
+}
+
+export function isAngleInsideGateDescriptors(angle, gateDescriptors, margin = 0) {
+    if (!Array.isArray(gateDescriptors) || gateDescriptors.length === 0) return false;
+    const normalized = normalizeAngle(angle);
+    const safeMargin = Math.max(0, Number(margin) || 0);
+    for (const gate of gateDescriptors) {
+        const center = normalizeAngle(Number(gate?.centerAngle) || 0);
+        const halfAngle = Math.max(0, Number(gate?.halfAngle) || 0) + safeMargin;
+        if (halfAngle > 0 && angleDistance(normalized, center) <= halfAngle) return true;
     }
     return false;
 }
@@ -119,7 +135,6 @@ export function getZoneTargetBuildingCount(zone, rnd = Math.random) {
     if (zone === 'commercial_mega') return 1 + Math.floor(rnd() * 3);
     if (zone === 'residential') return 1 + Math.floor(rnd() * 4);
     if (zone === 'commercial') return 1 + Math.floor(rnd() * 4);
-    if (zone === 'industrial') return 1 + Math.floor(rnd() * 3);
     if (zone === 'military') return 1 + Math.floor(rnd() * 3);
     return 6;
 }
@@ -131,7 +146,7 @@ export function pickArrayEntry(rand, items) {
 
 // --- Zone Grid Class ---
 export class RingCityZoneGrid {
-    constructor(layout) {
+    constructor(layout, options = {}) {
         // layout = { inner: {innerR, outerR}, industrial: {innerR, outerR}, military: {innerR, outerR}, outerRadius, innerRadius }
         this.layout = layout;
         // Backwards-compat references (some callsites still read these)
@@ -140,8 +155,18 @@ export class RingCityZoneGrid {
 
         this.cells = [];
         this.cellMeshes = new Map(); // key -> visual data
+        this.gateDescriptors = Array.isArray(options.gateDescriptors) ? options.gateDescriptors : [];
 
         this.reset();
+    }
+
+    setGateDescriptors(gateDescriptors) {
+        this.gateDescriptors = Array.isArray(gateDescriptors) ? gateDescriptors : [];
+        return this;
+    }
+
+    isDefenseGateAngle(angle, margin = 0) {
+        return isAngleInsideGateDescriptors(angle, this.gateDescriptors, margin);
     }
 
     reset() {
@@ -150,8 +175,15 @@ export class RingCityZoneGrid {
         if (!L) return;
 
         const rings = [
-            { id: RING_INNER,      rows: INNER_RING_ROWS,      band: L.inner,      rowOffset: 0 },
-            { id: RING_INDUSTRIAL, rows: INDUSTRIAL_RING_ROWS, band: L.industrial, rowOffset: INNER_RING_ROWS },
+            {
+                id: RING_INNER,
+                rows: INNER_RING_ROWS,
+                band: {
+                    innerR: L.inner?.innerR,
+                    outerR: L.industrial?.outerR ?? L.inner?.outerR
+                },
+                rowOffset: 0
+            },
             { id: RING_MILITARY,   rows: MILITARY_RING_ROWS,   band: L.military,   rowOffset: INNER_RING_ROWS + INDUSTRIAL_RING_ROWS }
         ];
 
@@ -194,6 +226,8 @@ export class RingCityZoneGrid {
 
     setCell(col, row, zone) {
         const cell = this.getCell(col, row);
+        if ((cell?.ring === RING_INDUSTRIAL || cell?.ring === RING_MILITARY) && zone !== null) return false;
+        if (zone !== null && !ZONE_TYPES.includes(zone)) return false;
         if (!cell || cell.zone === zone) return false;
         cell.zone = zone;
         return true;
@@ -211,11 +245,9 @@ export class RingCityZoneGrid {
     }
 
     // Weighted fill — each ring is filled independently from its own zone pool.
-    fillWithZones(weights = { residential: 60, commercial: 40, industrial: 100, military: 100 }) {
+    fillWithZones(weights = { residential: 60, commercial: 40 }) {
         const wSum = ((weights.residential || 0) * 31 +
-                      (weights.commercial || 0) * 23 +
-                      (weights.industrial || 0) * 17 +
-                      (weights.military || 0) * 13) >>> 0;
+                      (weights.commercial || 0) * 23) >>> 0;
         const seed = ((Date.now() >>> 0) ^ wSum) >>> 0;
         const rand = createSeededRandom(seed || 1);
         const assignments = new Array(this.cells.length).fill(null);
@@ -224,7 +256,7 @@ export class RingCityZoneGrid {
         for (const cell of this.cells) cell.zone = null;
 
         // Per-ring fill — pool limited to that ring's allowed types
-        for (const ringId of [RING_INNER, RING_INDUSTRIAL, RING_MILITARY]) {
+        for (const ringId of [RING_INNER]) {
             const pool = RING_ZONE_POOLS[ringId];
             if (!pool || pool.length === 0) continue;
 
@@ -234,10 +266,6 @@ export class RingCityZoneGrid {
                     const cell = this.getCell(col, row);
                     if (!cell) continue;
                     const centerAngle = cell.angleStart + ZONE_CELL_ARC * 0.5;
-                    if (isGateAngle(centerAngle)) {
-                        assignments[this.cellIndex(col, row)] = null;
-                        continue;
-                    }
                     const zone = this._chooseFillZoneForRing(rand, col, row, pool, weights, assignments);
                     assignments[this.cellIndex(col, row)] = zone;
                     cell.zone = zone;
@@ -249,7 +277,7 @@ export class RingCityZoneGrid {
     }
 
     _chooseFillZoneForRing(rand, col, row, pool, weights, assignments) {
-        // If pool has only one zone type, return it directly (common for industrial/military)
+        // If a ring ever exposes one zone type, return it directly.
         if (pool.length === 1) return pool[0];
 
         const weighted = {};
@@ -316,7 +344,11 @@ export class RingCityZoneGrid {
 // --- Polar sector geometry (used for infrastructure floors/streets) ---
 export function createSectorGeometry(innerRadius, outerRadius, startAngle, endAngle, y = 0) {
     const span = Math.max(0.0001, endAngle - startAngle);
-    const steps = Math.max(2, Math.ceil(span / (Math.PI / 48)));
+    const steps = Math.max(
+        2,
+        Math.ceil(span / (Math.PI / 48)),
+        Math.ceil((span * Math.max(innerRadius, outerRadius)) / 360)
+    );
     const positions = [];
     const uvs = [];
     const uvScale = 320;

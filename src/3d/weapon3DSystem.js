@@ -157,10 +157,19 @@ function makeHeadTexture() {
   return tex;
 }
 
+// HDR: mnożniki luminancji emiterów broni. Kolory stylów są LDR (<=1.0) i bez
+// podbicia nigdy nie przekraczają progu bloomu (src/3d/bloomConfig.js), a przy
+// dalekim zoomie subpikselowe rozcieńczenie MSAA gasiło poświatę skokowo.
+// Zapas ~5x na rdzeniu utrzymuje bloom nawet przy ~20% pokrycia piksela.
+const BULLET_HDR = Object.freeze({ trail: 2.6, core: 5.0, arc: 3.2 });
+const MUZZLE_HDR = Object.freeze({ outer: 2.5, inner: 4.0 });
+const BEAM_HDR = Object.freeze({ core: 4.0, glow: 2.4, spiral: 3.0 });
+const TURRET_GLOW_HDR = 1.8;
+
 function ensureWeaponResources() {
   if (!WEP_RESOURCES.mats || !WEP_RESOURCES.geos || !WEP_RESOURCES.bulletStyles) {
     const makeGlowMaterial = (color, opacity = 0.98) => new THREE.MeshBasicMaterial({
-      color,
+      color: new THREE.Color(color).multiplyScalar(TURRET_GLOW_HDR),
       transparent: true,
       opacity,
       blending: THREE.AdditiveBlending,
@@ -403,7 +412,7 @@ function getMuzzleFlashMats(colorHex) {
 
   const base = new THREE.Color(key);
   const outer = new THREE.MeshBasicMaterial({
-    color: base,
+    color: base.multiplyScalar(MUZZLE_HDR.outer),
     transparent: true,
     opacity: 0.8,
     blending: THREE.AdditiveBlending,
@@ -413,7 +422,7 @@ function getMuzzleFlashMats(colorHex) {
     toneMapped: false
   });
   const inner = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
+    color: new THREE.Color(0xffffff).multiplyScalar(MUZZLE_HDR.inner),
     transparent: true,
     opacity: 1.0,
     blending: THREE.AdditiveBlending,
@@ -1372,8 +1381,8 @@ function createContinuousBeamVisual() {
     spiral.renderOrder = 58;
     spiral.count = 0;
 
-    const cA = new THREE.Color(0xffffff);
-    const cB = new THREE.Color(0xaaffff);
+    const cA = new THREE.Color(0xffffff).multiplyScalar(BEAM_HDR.spiral);
+    const cB = new THREE.Color(0xaaffff).multiplyScalar(BEAM_HDR.spiral);
     for (let i = 0; i < BEAM_SPIRAL_SEGMENTS * 2; i++) {
       spiral.setColorAt(i, i < BEAM_SPIRAL_SEGMENTS ? cA : cB);
     }
@@ -1871,15 +1880,17 @@ export const Weapon3DSystem = {
       c.lastEventTime = now;
       c.active = true;
       const color = this._tmpBeamColor.set(colorHex);
-      c.glow.material.color.copy(color);
-      c.core.material.color.set(0xffffff);
+      c.glow.material.color.copy(color).multiplyScalar(BEAM_HDR.glow);
+      c.core.material.color.set(0xffffff).multiplyScalar(BEAM_HDR.core);
       if (Array.isArray(c.bodyPlanes)) {
         for (let i = 0; i < c.bodyPlanes.length; i++) {
           const body = c.bodyPlanes[i];
           if (!body?.material?.color) continue;
-          body.material.color.copy(color);
+          body.material.color.copy(color).multiplyScalar(BEAM_HDR.glow);
         }
       }
+      // Światło punktowe zostaje na LDR — HDR na kolorze światła mnożyłby
+      // intensywność, a bloomem steruje sam materiał beamu.
       if (c.impactLight?.color) c.impactLight.color.copy(color);
       return;
     }
@@ -1893,8 +1904,8 @@ export const Weapon3DSystem = {
     pulse.maxLife = 0.15;
     pulse.life = pulse.maxLife;
     pulse.width = Math.max(2.4, Number(beam.width) || 5);
-    pulse.core.material.color.set(0xffffff);
-    pulse.glow.material.color.set(colorHex);
+    pulse.core.material.color.set(0xffffff).multiplyScalar(BEAM_HDR.core);
+    pulse.glow.material.color.set(colorHex).multiplyScalar(BEAM_HDR.glow);
   },
 
   _updateBeamFx(dt, timeSec) {
@@ -2349,11 +2360,11 @@ export const Weapon3DSystem = {
 
       setMatrix(cx, -cy, style.z, angle, trailLen, style.trailWidth * wScale);
       bulletInstances.trails.setMatrixAt(instanceCount, dummy.matrix);
-      bulletInstances.trails.setColorAt(instanceCount, colorObj.set(style.trailColor));
+      bulletInstances.trails.setColorAt(instanceCount, colorObj.set(style.trailColor).multiplyScalar(BULLET_HDR.trail));
 
       setMatrix(x, -y, style.z + 0.01, angle, coreLen, style.coreWidth * wScale);
       bulletInstances.cores.setMatrixAt(instanceCount, dummy.matrix);
-      bulletInstances.cores.setColorAt(instanceCount, colorObj.set(style.color));
+      bulletInstances.cores.setColorAt(instanceCount, colorObj.set(style.color).multiplyScalar(BULLET_HDR.core));
 
       // No round "head" blob — projectiles render as a clean straight line
       // (soft trail glow + bright core). The head instance buffer stays empty.
@@ -2367,12 +2378,12 @@ export const Weapon3DSystem = {
 
         setMatrix(x + jitterX, -y + jitterY, style.z + 0.04, angle + Math.PI * 0.5, arcLen, arcWidth);
         bulletInstances.arcs.setMatrixAt(arcInstanceCount, dummy.matrix);
-        bulletInstances.arcs.setColorAt(arcInstanceCount, colorObj.set(0x9bf5ff));
+        bulletInstances.arcs.setColorAt(arcInstanceCount, colorObj.set(0x9bf5ff).multiplyScalar(BULLET_HDR.arc));
         arcInstanceCount++;
 
         setMatrix(x - jitterX, -y - jitterY, style.z + 0.04, angle - Math.PI * 0.5, arcLen * 0.75, arcWidth * 0.75);
         bulletInstances.arcs.setMatrixAt(arcInstanceCount, dummy.matrix);
-        bulletInstances.arcs.setColorAt(arcInstanceCount, colorObj.set(0x9bf5ff));
+        bulletInstances.arcs.setColorAt(arcInstanceCount, colorObj.set(0x9bf5ff).multiplyScalar(BULLET_HDR.arc));
         arcInstanceCount++;
       }
 

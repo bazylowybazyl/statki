@@ -47,7 +47,9 @@ import { AsteroidDestructor, resolveShipAsteroidCollision } from '../game/astero
 import { DestructorSystem, getHexStructuralState, initHexBody } from '../game/destructor.js';
 import {
   buildAsteroidHexEntityModel,
+  initializeAsteroidHexIntegrity,
   integrateAsteroidHexEntityMotion,
+  isAsteroidHexCoreDestroyed,
   syncAsteroidFromHexEntity,
   syncHexEntityFromAsteroid
 } from '../game/asteroidHexAdapter.js';
@@ -210,6 +212,10 @@ class AsteroidPool {
     for (let i = 0; i < capacity; i++) this.mesh.setMatrixAt(i, hidden);
     this.mesh.instanceMatrix.needsUpdate = true;
     this.dirty = false;
+    // GPU rysuje tylko sloty [0, watermark) - nieużyty margines pojemności
+    // nie przechodzi przez vertex shader. Watermark rośnie w allocate().
+    this.watermark = 0;
+    this.mesh.count = 0;
 
     scene.add(this.mesh);
   }
@@ -217,7 +223,12 @@ class AsteroidPool {
   allocate() {
     if (this.freeTop <= 0) return -1;
     this.activeCount++;
-    return this.free[--this.freeTop];
+    const idx = this.free[--this.freeTop];
+    if (idx >= this.watermark) {
+      this.watermark = idx + 1;
+      this.mesh.count = this.watermark;
+    }
+    return idx;
   }
 
   release(idx) {
@@ -436,6 +447,9 @@ export class AsteroidField {
     this.nextId = 1;
     this._destroyedThisFrame = [];
     this._splitsThisFrame = [];
+    /** Radialne pasma pasów (minR/maxR od Słońca) mierzone przy spawnie. */
+    this._beltRadialBounds = new Map();
+    this._poolsVisible = true;
 
     this._initPools();
     this._generate();
@@ -533,8 +547,9 @@ export class AsteroidField {
     entity.owner = entity;
     entity.pos = null;
     entity.vel = null;
-    initHexBody(entity, image, null, false, entity.mass, 40);
+    initHexBody(entity, image, false, entity.mass, 40);
     if (!entity.hexGrid) return null;
+    initializeAsteroidHexIntegrity(entity);
 
     entity.radius = Math.max(entity.radius || 0, asteroid.scale * 0.5);
     entity._bpRadius = entity.radius;
@@ -580,7 +595,7 @@ export class AsteroidField {
       }
 
       const structural = getHexStructuralState(entity);
-      if (structural && structural.active <= 0) {
+      if ((structural && structural.active <= 0) || isAsteroidHexCoreDestroyed(entity)) {
         entity.dead = true;
         remove.push(entity);
         this._destroy(asteroid);
@@ -702,6 +717,49 @@ export class AsteroidField {
     }
   }
 
+  _trackBeltRadialBounds(beltId, worldX, worldY) {
+    const r = Math.hypot(worldX - this.sunX, worldY - this.sunY);
+    const key = beltId || 'belt';
+    const band = this._beltRadialBounds.get(key);
+    if (!band) {
+      this._beltRadialBounds.set(key, { minR: r, maxR: r });
+    } else {
+      if (r < band.minR) band.minR = r;
+      if (r > band.maxR) band.maxR = r;
+    }
+  }
+
+  /**
+   * Pule asteroid mają frustumCulled=false, więc bez tego CAŁA pojemność
+   * (~700k slotów = ~1.4M tris, głównie ukryte zero-scale quady) idzie przez
+   * vertex shader co klatkę z dowolnego miejsca świata. Chowamy meshe pul,
+   * gdy ani kamera, ani statek gracza nie sięgają radialnego pasma żadnego
+   * pasa. Fizyka, spatial hash i hex-adapter działają dalej - to tylko render.
+   */
+  _updatePoolRenderVisibility() {
+    if (this._beltRadialBounds.size === 0 || typeof window === 'undefined') return;
+    const vw = Math.max(1, Number(window.innerWidth) || 1920);
+    const vh = Math.max(1, Number(window.innerHeight) || 1080);
+    let visible = false;
+    const probes = [window.camera, window.ship?.pos || window.ship];
+    for (const probe of probes) {
+      const px = Number(probe?.x);
+      const py = Number(probe?.y);
+      if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+      const zoom = Math.max(0.0001, Number(probe?.zoom) || 1);
+      // Zasięg widoku + margines na dryf popchniętych asteroid i BIG splity.
+      const reach = (Math.max(vw, vh) * 0.5) / zoom + 9000;
+      const dist = Math.hypot(px - this.sunX, py - this.sunY);
+      for (const band of this._beltRadialBounds.values()) {
+        if (dist >= band.minR - reach && dist <= band.maxR + reach) { visible = true; break; }
+      }
+      if (visible) break;
+    }
+    if (visible === this._poolsVisible) return;
+    this._poolsVisible = visible;
+    for (const pool of this.pools.values()) pool.mesh.visible = visible;
+  }
+
   // ---- public API ----
 
   /**
@@ -710,6 +768,7 @@ export class AsteroidField {
    * w komórkach pokrywających okrąg LOD (~9x9 cell = 81 cells przy LOD 8000 / cell 2000).
    */
   update(dt) {
+    this._updatePoolRenderVisibility();
     this._syncActiveHexAsteroidsFromEntities();
     this._updateActiveHexAsteroids(dt);
     this._resolveActiveAsteroidImpacts();
@@ -989,6 +1048,7 @@ export class AsteroidField {
       console.warn(`[AsteroidField] pool full: ${key} (cap=${pool.capacity})`);
       return null;
     }
+    this._trackBeltRadialBounds(beltId, worldX, worldY);
     const sc = SIZE_CLASS[size];
     // Fizyka z asteroidPhysics: mass, hardness, hpMax zależne od typu i rozmiaru
     // (kruchy ice ma mało HP, twardy titan dużo).
@@ -1138,7 +1198,7 @@ export class AsteroidField {
       asteroid.position.y = -asteroid.worldY;
       this.spatial.update(asteroid, asteroid.worldX, asteroid.worldY);
 
-      if ((structural && structural.active <= 0) || asteroid.hp <= 0) {
+      if ((structural && structural.active <= 0) || isAsteroidHexCoreDestroyed(hexEntity) || asteroid.hp <= 0) {
         const destroyResult = this._destroy(asteroid);
         return { ...destroyResult, ejectedCells: 0, hexEntity };
       }

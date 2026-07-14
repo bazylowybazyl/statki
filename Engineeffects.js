@@ -164,9 +164,13 @@ function makeRingTexture() {
 // ================== GŁÓWNA FUNKCJA KREACJI (SCENA) ==================
 
 function areEnginePointLightsEnabled() {
-    if (typeof window === 'undefined') return true;
-    if (window.ENGINE_POINT_LIGHTS_ENABLED === false) return false;
-    return window.Core3D?.perfToggles?.enginePointLights !== false;
+    // Domyślnie WYŁĄCZONE (opt-in). Point lighty silników wywalone dla wydajności —
+    // w bitwie ~215 dynamicznych świateł mocno obciążało Composer/Core render.
+    // Poświata dyszy zostaje na sprite'ach (flara/heat glow). Włączenie:
+    // window.ENGINE_POINT_LIGHTS_ENABLED = true LUB perfToggle „enginePointLights”.
+    if (typeof window === 'undefined') return false;
+    if (window.ENGINE_POINT_LIGHTS_ENABLED === true) return true;
+    return window.Core3D?.perfToggles?.enginePointLights === true;
 }
 
 export function createShortNeedleExhaust(opts = {}) {
@@ -205,13 +209,17 @@ export function createShortNeedleExhaust(opts = {}) {
     mesh.scale.set(48, 20, 1);
     group.add(mesh);
 
-    // 2. DYNAMICZNE ŚWIATŁO
-    const light = new THREE.PointLight(0x4aaeff, 2.0, 150);
-    light.name = "EnginePointLight";
-    light.userData.enginePointLight = true;
-    // Pozycja światła względem silnika (lekko w górę/stronę statku i w Z)
-    light.position.set(0, 10, 20);
-    group.add(light);
+    // 2. DYNAMICZNE ŚWIATŁO — tworzone TYLKO gdy jawnie włączone (domyślnie OFF,
+    // patrz areEnginePointLightsEnabled). Domyślnie brak point lightów silników.
+    let light = null;
+    if (areEnginePointLightsEnabled()) {
+        light = new THREE.PointLight(0x4aaeff, 2.0, 150);
+        light.name = "EnginePointLight";
+        light.userData.enginePointLight = true;
+        // Pozycja światła względem silnika (lekko w górę/stronę statku i w Z)
+        light.position.set(0, 10, 20);
+        group.add(light);
+    }
 
     // 3. LENS FLARE (Anamorficzna)
     const flareMat = new THREE.SpriteMaterial({
@@ -261,6 +269,10 @@ export function createShortNeedleExhaust(opts = {}) {
     let warpBoostTarget = 0;
     let currentWarpBoost = 0;
     let bloomGain = opts.bloomGain || 1.0;
+    // HDR: plazma dyszy musi przekraczać próg bloomu (src/3d/bloomConfig.js);
+    // bez podbicia kolor termiczny (<=1.0) nie łapał poświaty. Światło
+    // punktowe i heat glow zostają na LDR.
+    const ENGINE_HDR = 2.4;
     let baseColorTemp = opts.colorTempK || 8000;
     let shapeCurve = Number.isFinite(opts.curve) ? Number(opts.curve) : 1.8;
     let heatAccumulator = 0;
@@ -326,13 +338,11 @@ export function createShortNeedleExhaust(opts = {}) {
         const thermalCol = kelvinToRGB(activeTemp);
         const finalCol = thermalCol.clone().lerp(warpBlue, currentWarpBoost);
 
-        uniforms.uColorCore.value.setHex(0xffffff);
-        uniforms.uColorEdge.value.copy(finalCol).multiplyScalar(bloomGain);
+        uniforms.uColorCore.value.setHex(0xffffff).multiplyScalar(ENGINE_HDR);
+        uniforms.uColorEdge.value.copy(finalCol).multiplyScalar(bloomGain * ENGINE_HDR);
 
-        // --- 1. AKTUALIZACJA ŚWIATŁA ---
-        const enginePointLightsEnabled = areEnginePointLightsEnabled();
-        light.visible = enginePointLightsEnabled;
-        if (enginePointLightsEnabled) {
+        // --- 1. AKTUALIZACJA ŚWIATŁA (tylko jeśli światło w ogóle istnieje) ---
+        if (light) {
             light.color.copy(finalCol);
         // Intensywność: Idle=2, Thrust=8, Warp=20
             const targetLight = 2.0 + (currentThrottle * 6.0) + (currentWarpBoost * 18.0);
@@ -341,15 +351,13 @@ export function createShortNeedleExhaust(opts = {}) {
         // Zasięg: Idle=150, Thrust=300, Warp=800
             const targetDistance = 150 + (currentThrottle * 150) + (currentWarpBoost * 650);
             light.distance = THREE.MathUtils.lerp(light.distance, targetDistance, 0.1);
-        } else {
-            light.intensity = 0;
         }
 
         // --- 2. AKTUALIZACJA FLARY ---
         // Flara widoczna przy gazie i bardzo przy warpie
         const flareOp = (currentThrottle * 0.5 + currentWarpBoost * 1.5) * bloomGain;
         flare.material.opacity = THREE.MathUtils.lerp(flare.material.opacity, flareOp, 0.1);
-        flare.material.color.copy(finalCol);
+        flare.material.color.copy(finalCol).multiplyScalar(ENGINE_HDR);
 
         // Flara skaluje się głównie na szerokość (oraz gaz)
         const flareWidth = (100 + currentWarpBoost * 150) * throttleWidthFactor;

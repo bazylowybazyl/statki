@@ -1,16 +1,30 @@
 import * as THREE from 'three';
 import { Core3D } from './core3d.js';
 import { initHexBody, getHexStructuralState } from '../game/destructor.js';
-import { RingCityZoneGrid, setHoleAngles, isGateAngle } from './ringCityZoneGrid.js';
+import { RingCityZoneGrid } from './ringCityZoneGrid.js';
 import { loadSynthCityAssets } from './ringCityAssets.js';
 import { buildAllDistricts, rebuildDistrictForCell } from './ringCityBuildings.js';
-import { buildAllInfrastructure, createDistrictInfrastructure, rebuildAllInfrastructure } from './ringCityInfrastructure.js';
-import { RingShipParking } from './ringShipParking.js';
+import { buildAllInfrastructure, createDistrictInfrastructure, rebuildAllInfrastructure } from './ringCityInfrastructure.js';import { RingCityTraffic } from './ringCityTraffic.js';
+import { RingCityMood } from './ringCityMood.js';
+import { RingMegastructureVisuals } from './ringMegastructureVisuals.js';
+import {
+  RING_CITY_RENDER_MODE,
+  RingCityBakedSurface,
+  resolveRingCityRenderMode
+} from './ringCityBakedSurface.js';
+import {
+  RING_INFRASTRUCTURE_SIZE,
+  computeRingAtmosphereGap,
+  resolveRingPlanetWorldRadius
+} from './ringScale.js';
+
+export { resolveRingPlanetWorldRadius } from './ringScale.js';
 
 const RING_PLANETS = new Set(['earth', 'mars']);
+export const RING_VISUAL_ONLY = true;
 
 const CONFIG = Object.freeze({
-  segmentWorldWidth: 800,
+  segmentWorldWidth: 1600,
   segmentWorldHeight: 2400,
   overlap: 2,
   ringRadiusMul: 5.2,
@@ -23,9 +37,6 @@ const CONFIG = Object.freeze({
   collisionAlphaCutoff: 64,
   ringRotationSpeed: 0.00,
   queryCellSize: 3000,
-  forceFieldOpenRadius: 3000,
-  forceFieldCloseRadius: 3800,
-  forceFieldAnimSpeed: 1.2,
   visualCullMargin: 900,
   segmentActiveMargin: 3200
 });
@@ -48,7 +59,7 @@ const FLOOR_DAMAGE = Object.freeze({
 const FLOOR_THEME = Object.freeze({
   inner:      { color: 0x111923, emissive: 0x0b5f7a, line: '#27d7ff' },
   industrial: { color: 0x151610, emissive: 0x665400, line: '#fcee0a' },
-  military:   { color: 0x130f15, emissive: 0x6a001d, line: '#ff2b55' }
+  military:   { color: 0x10151b, emissive: 0x27313a, line: '#d99a35' }
 });
 
 const RING_EDGE = Object.freeze({
@@ -86,66 +97,109 @@ const RING_FULL_ARC = Math.PI * 2;
 const RING_SEGMENT_MASS = 2500000;
 
 // ============================================================
-// NEW RING LAYOUT — 3 separate rings with gaps
-// Multipliers are relative to planet radius (planet.r)
-// ============================================================
-const RING_LAYOUT = Object.freeze({
-  station:    { innerMul: 0.0, outerMul: 1.0 },  // central station + infra
-  gapInner:   { innerMul: 1.0, outerMul: 1.15 }, // buffer before inner ring
-  inner:      { innerMul: 1.15, outerMul: 1.55 }, // residential + commercial
-  gapSmall:   { innerMul: 1.55, outerMul: 1.62 }, // thin visual gap
-  industrial: { innerMul: 1.62, outerMul: 1.95 }, // industrial zones
-  gapParking: { innerMul: 1.95, outerMul: 2.55 }, // ship parking
-  military:   { innerMul: 2.55, outerMul: 2.95 }  // military zones (outer)
-});
-
-const RING_SEGMENT_BANDS = Object.freeze(['inner', 'industrial', 'military']);
+const RING_VISUAL_BANDS = Object.freeze(['inner', 'industrial', 'military']);
+const RING_GATE_SEGMENTS = 2;
 
 const COLLISION_FLOOR_LAYOUT = Object.freeze((() => {
-  const floorStartMul = RING_LAYOUT.inner.innerMul;
-  const floorEndMul = RING_LAYOUT.military.outerMul;
-  const totalMul = Math.max(0.0001, floorEndMul - floorStartMul);
-  const mapBand = (cfg) => ({
-    start: (cfg.innerMul - floorStartMul) / totalMul,
-    end: (cfg.outerMul - floorStartMul) / totalMul
-  });
+  const residential = RING_INFRASTRUCTURE_SIZE.residentialDepth;
+  const industrial = RING_INFRASTRUCTURE_SIZE.industrialDepth;
+  const parking = RING_INFRASTRUCTURE_SIZE.parkingDepth;
+  const defense = RING_INFRASTRUCTURE_SIZE.defenseDepth;
+  const total = Math.max(1, residential + industrial + parking + defense);
   return {
-    floorStartMul,
-    floorEndMul,
-    inner: mapBand(RING_LAYOUT.inner),
-    gapSmall: mapBand(RING_LAYOUT.gapSmall),
-    industrial: mapBand(RING_LAYOUT.industrial),
-    gapParking: mapBand(RING_LAYOUT.gapParking),
-    military: mapBand(RING_LAYOUT.military)
+    city: { start: 0, end: (residential + industrial) / total },
+    inner: { start: 0, end: residential / total },
+    industrial: { start: residential / total, end: (residential + industrial) / total },
+    gapParking: { start: (residential + industrial) / total, end: (residential + industrial + parking) / total },
+    military: { start: (residential + industrial + parking) / total, end: 1 }
   };
 })());
 
-export function computePlanetaryRingLayout(planetR) {
-  const R = Math.max(2000, planetR || 2800);
-  const band = (cfg) => ({ innerR: R * cfg.innerMul, outerR: R * cfg.outerMul });
+export function computePlanetaryRingLayout(planetOrRadius) {
+  const R = resolveRingPlanetWorldRadius(planetOrRadius);
+  const atmosphereGap = computeRingAtmosphereGap(R);
+  const innerStart = R + atmosphereGap;
+  const innerEnd = innerStart + RING_INFRASTRUCTURE_SIZE.residentialDepth;
+  const industrialEnd = innerEnd + RING_INFRASTRUCTURE_SIZE.industrialDepth;
+  const parkingEnd = industrialEnd + RING_INFRASTRUCTURE_SIZE.parkingDepth;
+  const defenseEnd = parkingEnd + RING_INFRASTRUCTURE_SIZE.defenseDepth;
+  const makeBand = (innerR, outerR) => ({ innerR, outerR });
   return {
     planetR: R,
-    station:    band(RING_LAYOUT.station),
-    inner:      band(RING_LAYOUT.inner),
-    industrial: band(RING_LAYOUT.industrial),
-    parking:    band(RING_LAYOUT.gapParking),
-    military:   band(RING_LAYOUT.military),
-    innerRadius:  R * RING_LAYOUT.inner.innerMul,     // innermost edge (for station proximity)
-    outerRadius:  R * RING_LAYOUT.military.outerMul,  // outermost edge (for forceFields, LOD)
-    // Center radii per-ring — handy for autostrada lane markers, parking center
-    innerCenter:      R * (RING_LAYOUT.inner.innerMul      + RING_LAYOUT.inner.outerMul)      * 0.5,
-    industrialCenter: R * (RING_LAYOUT.industrial.innerMul + RING_LAYOUT.industrial.outerMul) * 0.5,
-    parkingCenter:    R * (RING_LAYOUT.gapParking.innerMul + RING_LAYOUT.gapParking.outerMul) * 0.5,
-    militaryCenter:   R * (RING_LAYOUT.military.innerMul   + RING_LAYOUT.military.outerMul)   * 0.5
+    station: makeBand(0, R), // legacy API key: planet footprint, no station mesh
+    inner: makeBand(innerStart, innerEnd),
+    industrial: makeBand(innerEnd, industrialEnd),
+    parking: makeBand(industrialEnd, parkingEnd),
+    military: makeBand(parkingEnd, defenseEnd),
+    innerRadius: innerStart,
+    outerRadius: defenseEnd,
+    innerCenter: (innerStart + innerEnd) * 0.5,
+    industrialCenter: (innerEnd + industrialEnd) * 0.5,
+    parkingCenter: (industrialEnd + parkingEnd) * 0.5,
+    militaryCenter: (parkingEnd + defenseEnd) * 0.5
   };
+}
+
+export function computeRingStationOrbitRadius(planetOrRadius) {
+  const layout = computePlanetaryRingLayout(planetOrRadius);
+  const padding = Math.max(1800, Math.min(3200, layout.planetR * 0.06));
+  return layout.outerRadius + padding;
+}
+
+export function computeRingCityLodLevel(cameraZoom) {
+  const detailPixelSize = 180 * Math.max(0.0001, Number(cameraZoom) || 0.0001);
+  if (detailPixelSize < 14) return 3;
+  if (detailPixelSize < 42) return 2;
+  if (detailPixelSize < 80) return 1;
+  return 0;
+}
+
+export function resolveRingCityQuality(value) {
+  const quality = String(value || 'medium').trim().toLowerCase();
+  if (quality === 'low') return 'low';
+  if (quality === 'high' || quality === 'ultra') return 'high';
+  return 'medium';
+}
+
+export function computeRingCityLodForQuality(cameraZoom, quality) {
+  const resolvedQuality = resolveRingCityQuality(quality);
+  if (resolvedQuality === 'low') return 2;
+  if (resolvedQuality === 'high') return 0;
+  return computeRingCityLodLevel(cameraZoom);
+}
+
+function getConfiguredRingCityQuality() {
+  if (typeof window === 'undefined') return 'medium';
+  return resolveRingCityQuality(window.OPTIONS?.planetQuality);
+}
+
+export function computeRingPhysicsBands(layoutOrPlanetR) {
+  const layout = layoutOrPlanetR?.inner && layoutOrPlanetR?.military
+    ? layoutOrPlanetR
+    : computePlanetaryRingLayout(layoutOrPlanetR);
+  if (!layout?.inner || !layout?.industrial || !layout?.military) return [];
+  return [
+    {
+      id: 'city',
+      innerR: layout.inner.innerR,
+      outerR: layout.industrial.outerR
+    },
+    {
+      id: 'military',
+      innerR: layout.military.innerR,
+      outerR: layout.military.outerR
+    }
+  ];
 }
 
 function createBuildableRingLayout(layout) {
   if (!layout) return layout;
-  const cloneBand = (band) => {
+  const cloneBand = (band, bandId) => {
     if (!band) return band;
     const depth = Math.max(1, band.outerR - band.innerR);
-    const reserve = Math.min(RING_EDGE.railReserve, depth * 0.42);
+    const reserve = bandId === 'military'
+      ? Math.min(RING_EDGE.railReserve, depth * 0.42)
+      : Math.min(72, depth * 0.09);
     // Reserve a thin strip at the inner edge too, so the inner kerb wall doesn't sit
     // inside the first row of buildings.
     const innerReserve = Math.min(depth * 0.06, RING_EDGE.innerWallThickness + 16);
@@ -154,9 +208,9 @@ function createBuildableRingLayout(layout) {
       outerR: Math.max(band.innerR + innerReserve + depth * 0.3, band.outerR - reserve)
     };
   };
-  const inner = cloneBand(layout.inner);
-  const industrial = cloneBand(layout.industrial);
-  const military = cloneBand(layout.military);
+  const inner = cloneBand(layout.inner, 'inner');
+  const industrial = cloneBand(layout.industrial, 'industrial');
+  const military = cloneBand(layout.military, 'military');
   return {
     ...layout,
     inner,
@@ -179,7 +233,7 @@ function getRingBandLayout() {
   const [innerBandTopPx, innerBandBottomPx] = toPxRange(COLLISION_FLOOR_LAYOUT.inner);
   const [industrialBandTopPx, industrialBandBottomPx] = toPxRange(COLLISION_FLOOR_LAYOUT.industrial);
   const [militaryBandTopPx, militaryBandBottomPx] = toPxRange(COLLISION_FLOOR_LAYOUT.military);
-  const [gapSmallTopPx, gapSmallBottomPx] = toPxRange(COLLISION_FLOOR_LAYOUT.gapSmall);
+  const [cityBandTopPx, cityBandBottomPx] = toPxRange(COLLISION_FLOOR_LAYOUT.city);
   const [gapParkingTopPx, gapParkingBottomPx] = toPxRange(COLLISION_FLOOR_LAYOUT.gapParking);
   return {
     innerBandTopPx,
@@ -188,8 +242,8 @@ function getRingBandLayout() {
     industrialBandBottomPx,
     militaryBandTopPx,
     militaryBandBottomPx,
-    gapSmallTopPx,
-    gapSmallBottomPx,
+    cityBandTopPx,
+    cityBandBottomPx,
     gapParkingTopPx,
     gapParkingBottomPx
   };
@@ -197,6 +251,7 @@ function getRingBandLayout() {
 
 function getBandTextureRangePx(bandId) {
   const layout = getRingBandLayout();
+  if (bandId === 'city') return [layout.cityBandTopPx, layout.cityBandBottomPx];
   if (bandId === 'inner') return [layout.innerBandTopPx, layout.innerBandBottomPx];
   if (bandId === 'industrial') return [layout.industrialBandTopPx, layout.industrialBandBottomPx];
   if (bandId === 'military') return [layout.militaryBandTopPx, layout.militaryBandBottomPx];
@@ -248,13 +303,17 @@ function getArcStepCount(innerRadius, outerRadius, startAngle, endAngle) {
   return Math.max(1, Math.min(512, Math.max(byAngle, byLength)));
 }
 
-export function buildRingSolidArcRanges(segmentData, angleStep, gapPadAngle = 0) {
+export function buildRingSolidArcRanges(segmentData, angleStep, gapPadAngle = 0, bandId = null) {
   const segments = Array.isArray(segmentData) ? segmentData : [];
   const count = segments.length;
   const step = Number(angleStep) || 0;
   if (!count || step <= 0) return [];
 
-  const isSolid = (seg) => seg && seg.type !== 'HOLE';
+  const isSolid = (seg) => {
+    if (!seg) return false;
+    const type = bandId ? seg.typeByBand?.[bandId] : seg.type;
+    return type !== 'HOLE';
+  };
   const hasSolid = segments.some(isSolid);
   if (!hasSolid) return [];
   if (segments.every(isSolid)) return [{ start: 0, end: RING_FULL_ARC }];
@@ -330,7 +389,7 @@ export function computeGateReturnWallOuterRadius(wallInner, wallOuter, innerWall
 }
 
 export function shouldBuildDockRailsForBand(bandId) {
-  return bandId === 'industrial' || bandId === 'military';
+  return bandId === 'military';
 }
 
 export function buildGateRailTurnArcRanges(ranges, turnAngle) {
@@ -359,7 +418,7 @@ function buildGateRailSideAngles(ranges, turnAngle) {
 }
 
 function createRingBandGeometry(innerRadius, outerRadius, z = 0) {
-  const steps = 384;
+  const steps = 768;
   const positions = [];
   const uvs = [];
   for (let i = 0; i < steps; i++) {
@@ -1023,7 +1082,7 @@ function drawWallTexture(ctx) {
   paintBand(layout.industrialBandTopPx, layout.industrialBandBottomPx, ['#030403', '#0b0c0a', '#020302'], {
     grid: 'rgba(255,255,255,0.045)'
   });
-  paintBand(layout.militaryBandTopPx, layout.militaryBandBottomPx, ['#040303', '#0d090a', '#030202'], {
+  paintBand(layout.militaryBandTopPx, layout.militaryBandBottomPx, ['#030405', '#0a0d11', '#020304'], {
     bulkheads: true
   });
 }
@@ -1055,18 +1114,32 @@ function getSegmentTextures() {
   return textureCache;
 }
 
-function buildSegmentTypes(segmentCount) {
-  const types = new Array(segmentCount).fill('WALL');
-  const quarter = Math.floor(segmentCount / 4);
-  const holeIndices = [0, quarter, quarter * 2, quarter * 3];
-  for (const idx of holeIndices) {
-    if (idx + 3 >= segmentCount) continue;
-    types[idx] = 'HOLE';
-    types[idx + 1] = 'HOLE';
-    types[idx + 2] = 'HOLE';
-    types[idx + 3] = 'HOLE';
+export function buildRingGateDescriptors(segmentCount, angleStep, gateSegmentCount = RING_GATE_SEGMENTS) {
+  const count = Math.max(4, Math.floor(Number(segmentCount) || 0));
+  const step = Math.max(0.000001, Number(angleStep) || (RING_FULL_ARC / count));
+  const gateCount = Math.max(2, Math.floor(Number(gateSegmentCount) || 2));
+  const evenGateCount = gateCount % 2 === 0 ? gateCount : gateCount + 1;
+  const halfSegments = evenGateCount / 2;
+  const descriptors = [];
+
+  for (let gateIndex = 0; gateIndex < 4; gateIndex++) {
+    const boundaryIndex = Math.round((gateIndex * count) / 4) % count;
+    const segmentIndices = [];
+    for (let offset = -halfSegments; offset < halfSegments; offset++) {
+      segmentIndices.push((boundaryIndex + offset + count) % count);
+    }
+    const centerAngle = gateIndex * Math.PI * 0.5;
+    const halfAngle = evenGateCount * step * 0.5;
+    descriptors.push({
+      index: gateIndex,
+      centerAngle,
+      halfAngle,
+      startAngle: centerAngle - halfAngle,
+      endAngle: centerAngle + halfAngle,
+      segmentIndices
+    });
   }
-  return types;
+  return descriptors;
 }
 
 function segmentHasLiveEntity(seg) {
@@ -1084,7 +1157,7 @@ class PlanetaryRing {
   constructor(planet, key) {
     this.key = key;
     // NEW: compute multi-ring layout (3 narrower rings with gaps)
-    this.layout = computePlanetaryRingLayout(Number(planet?.r) || 2800);
+    this.layout = computePlanetaryRingLayout(planet);
     this.buildableLayout = createBuildableRingLayout(this.layout);
     // Outer radius of the whole populated city ring.
     this.ringRadius = this.layout.outerRadius;
@@ -1098,8 +1171,8 @@ class PlanetaryRing {
     this.rotationSpeed = CONFIG.ringRotationSpeed;
     this.segmentData = [];
     this.segmentTypes = [];
+    this.gateDescriptors = [];
     this.constructionSlots = [];
-    this.forceFields = [];
     this.angleStep = 0;
     this.lastPlanetX = 0;
     this.lastPlanetY = 0;
@@ -1109,6 +1182,11 @@ class PlanetaryRing {
     this._ringHidden = false;
     this._ringEntitiesActive = false;
     this._rootAttached = false;
+    this._lodLevel = 3;
+    this._detailPixelSize = 0;
+    this._cityQuality = 'medium';
+    this.cityRenderMode = resolveRingCityRenderMode();
+    this.citySurfaceMode = 'inward';
 
     // --- BUDYNKI 3D NA WARSTWIE 2 (FOREGROUND) ---
     this.buildings3D = new THREE.Group();
@@ -1121,6 +1199,10 @@ class PlanetaryRing {
     this.ringFloor = null; // 3D ring pedestal mesh group
     this.floorDamageBands = [];
     this.wallRailMeshes = [];
+    this.megastructureVisuals = null;
+    this.cityTraffic = null;
+    this.cityMood = null;
+    this.bakedCitySurface = null;
 
     this.build();
     this.updateFromPlanet(planet, 0);
@@ -1151,10 +1233,15 @@ class PlanetaryRing {
     const effectiveWidth = CONFIG.segmentWorldWidth - CONFIG.overlap;
     const outerCoverageRadius = this.floorOuterRadius;
     const circumference = Math.PI * 2 * outerCoverageRadius;
-    const segmentCount = Math.max(24, Math.ceil(circumference / effectiveWidth));
+    let segmentCount = Math.max(24, Math.ceil(circumference / effectiveWidth));
+    segmentCount += (4 - (segmentCount % 4)) % 4;
     this.angleStep = (Math.PI * 2) / segmentCount;
-    this.segmentTypes = buildSegmentTypes(segmentCount);
-    const bandTextures = this.createSegmentBandTextures(textures);
+    // The rebuilt two-sided ribbon is continuous. Quarter-ring gate holes
+    // belonged to the retired annular layout and must not leak into visuals.
+    this.gateDescriptors = [];
+    this.segmentTypes = new Array(segmentCount).fill('WALL');
+    this.zoneGrid?.setGateDescriptors?.(this.gateDescriptors);
+    const bandTextures = RING_VISUAL_ONLY ? [] : this.createSegmentBandTextures(textures);
     this.segmentData.length = 0;
 
     for (let i = 0; i < segmentCount; i++) {
@@ -1162,7 +1249,11 @@ class PlanetaryRing {
       const baseAngle = (i + 0.5) * this.angleStep;
       const segment = {
         index: i,
-        type,
+        type: 'WALL',
+        typeByBand: {
+          city: 'WALL',
+          military: type
+        },
         baseAngle,
         worldAngle: baseAngle,
         entity: null,
@@ -1170,12 +1261,13 @@ class PlanetaryRing {
         entityByBand: Object.create(null)
       };
 
-      if (type !== 'HOLE') {
-        for (let b = 0; b < bandTextures.length; b++) {
+      for (let b = 0; b < bandTextures.length; b++) {
           const bandTex = bandTextures[b];
+          const bandType = segment.typeByBand[bandTex.id] || 'WALL';
+          if (bandType === 'HOLE') continue;
           const entity = this.createSegmentEntity(
             i,
-            type,
+            bandType,
             bandTex.id,
             bandTex.display,
             bandTex.collision,
@@ -1185,27 +1277,18 @@ class PlanetaryRing {
           segment.entities.push(entity);
           segment.entityByBand[bandTex.id] = entity;
           if (!segment.entity) segment.entity = entity;
-        }
       }
 
       this.segmentData.push(segment);
     }
 
-    // Sync hole center angles with zone grid so buildings avoid holes precisely
-    const quarter = Math.floor(segmentCount / 4);
-    const holeIndices = [0, quarter, quarter * 2, quarter * 3];
-    const holeCenterAngles = holeIndices.map(idx => {
-      // Center angle of the 4-segment hole group
-      return (idx + 2) * this.angleStep;
-    });
-    setHoleAngles(holeCenterAngles);
-
-    this.buildForceFields();
     this.buildConstructionSlots(segmentCount);
     this.buildRingPedestal();
     this.buildVisualFloor();
-    this.buildRingWallsAndRails();
-    this.buildShipParking();
+    this.buildBakedCitySurface();
+    this.buildMegastructureVisuals();
+    this.buildCityTraffic();
+    this.buildCityMood();
   }
 
   createSegmentBandTextures(textures) {
@@ -1214,8 +1297,9 @@ class PlanetaryRing {
     const sourceCollision = textures.WALL_COLLISION || sourceDisplay;
     if (!sourceDisplay) return result;
 
-    for (const id of RING_SEGMENT_BANDS) {
-      const band = this.layout?.[id];
+    const physicsBands = computeRingPhysicsBands(this.layout);
+    for (const band of physicsBands) {
+      const id = band.id;
       if (!band) continue;
       const radius = (band.innerR + band.outerR) * 0.5;
       const coverageRadius = Math.max(radius, Number(band.outerR) || radius);
@@ -1255,13 +1339,101 @@ class PlanetaryRing {
     return result;
   }
 
-  buildShipParking() {
+  buildBakedCitySurface() {
+    if (this.cityRenderMode !== RING_CITY_RENDER_MODE.BAKED || !this.ringFloor) return;
+    const cityBand = {
+      innerR: this.layout.inner.innerR,
+      outerR: this.layout.industrial?.outerR || this.layout.inner.outerR
+    };
+    const damageEntry = this.createFloorDamageEntry('city', 'city', cityBand, cityBand);
+    this.bakedCitySurface = new RingCityBakedSurface(this.layout, this.key);
+    const mesh = this.bakedCitySurface.build(damageEntry?.damageTexture || null);
+    if (mesh) {
+      this.ringFloor.add(mesh);
+      return;
+    }
+    if (damageEntry) {
+      const index = this.floorDamageBands.indexOf(damageEntry);
+      if (index >= 0) this.floorDamageBands.splice(index, 1);
+      damageEntry.damageTexture?.dispose?.();
+    }
+  }
+
+  createFloorDamageEntry(id, physicalBandId, visualBand, physicalBand) {
+    const damageCanvas = createCanvas(
+      Math.max(1, this.segmentData.length * FLOOR_DAMAGE.pxPerSegment),
+      FLOOR_DAMAGE.height
+    );
+    if (!damageCanvas) return null;
+
+    const damageCtx = damageCanvas.getContext('2d');
+    const damageTexture = new THREE.CanvasTexture(damageCanvas);
+    damageTexture.wrapS = THREE.RepeatWrapping;
+    damageTexture.wrapT = THREE.ClampToEdgeWrapping;
+    damageTexture.minFilter = THREE.LinearFilter;
+    damageTexture.magFilter = THREE.LinearFilter;
+
+    const physicalDepth = Math.max(1, physicalBand.outerR - physicalBand.innerR);
+    const entry = {
+      id,
+      physicalBandId,
+      physicalVStart: Math.max(0, Math.min(1, (visualBand.innerR - physicalBand.innerR) / physicalDepth)),
+      physicalVEnd: Math.max(0, Math.min(1, (visualBand.outerR - physicalBand.innerR) / physicalDepth)),
+      mesh: null,
+      damageCanvas,
+      damageCtx,
+      damageTexture,
+      pxPerSegment: FLOOR_DAMAGE.pxPerSegment,
+      lastRatios: new Float32Array(this.segmentData.length),
+      lastActiveCounts: new Int32Array(this.segmentData.length)
+    };
+    entry.lastRatios.fill(-1);
+    entry.lastActiveCounts.fill(-1);
+
+    for (let i = 0; i < this.segmentData.length; i++) {
+      const seg = this.segmentData[i];
+      const ratio = seg?.entityByBand?.[physicalBandId] ? 1 : 0;
+      this.paintFloorDamageStripe(entry, i, ratio);
+      entry.lastRatios[i] = ratio;
+    }
+    damageTexture.needsUpdate = true;
+    this.floorDamageBands.push(entry);
+    return entry;
+  }
+
+  buildCityTraffic() {
+    if (!this.ringFloor || this.cityRenderMode !== RING_CITY_RENDER_MODE.THREE_D) return;
+    const seed = ((this.layout.planetR || 1) * 104729 + (this.key?.length || 1) * 313) >>> 0;
+    this.cityTraffic = new RingCityTraffic(this.layout, this.key, { seed, count: 320, scale: 1 });
+    const group = this.cityTraffic.build();
+    if (group) this.ringFloor.add(group);
+  }
+
+  buildCityMood() {
+    if (!this.ringFloor || this.cityRenderMode !== RING_CITY_RENDER_MODE.THREE_D) return;
+    const seed = ((this.layout.planetR || 1) * 130363 + (this.key?.length || 1) * 977) >>> 0;
+    this.cityMood = new RingCityMood(this.layout, this.key, { seed });
+    const group = this.cityMood.build();
+    if (group) this.ringFloor.add(group);
+  }
+
+  buildMegastructureVisuals() {
     if (!this.ringFloor || !this.layout) return;
-    const parkingSeed = ((this.layout.planetR || 1) * 7919 + (this.key?.length || 1) * 31) >>> 0;
-    this.shipParking = new RingShipParking(this.layout);
-    this.shipParking.generate({ seed: parkingSeed });
-    if (Core3D?.enableForeground3D) Core3D.enableForeground3D(this.shipParking.group);
-    this.ringFloor.add(this.shipParking.group);
+    const defenseArcRanges = buildRingSolidArcRanges(
+      this.segmentData,
+      this.angleStep,
+      this.angleStep * RING_EDGE.gateGapPadRatio,
+      'military'
+    );
+    if (!defenseArcRanges.length) return;
+    this.megastructureVisuals = new RingMegastructureVisuals(this.layout, this.key, {
+      citySurfaceMode: this.citySurfaceMode
+    });
+    const group = this.megastructureVisuals.build({
+      defenseArcRanges,
+      gateDescriptors: this.gateDescriptors
+    });
+    this.ringFloor.add(group);
   }
 
   // ── Damage alpha map — links visual floor to destructor ──────────────
@@ -1305,376 +1477,47 @@ class PlanetaryRing {
   buildVisualFloor() {
     if (!this.ringFloor || !this.segmentData.length) return;
     this.floorDamageBands.length = 0;
+    if (RING_VISUAL_ONLY && this.cityRenderMode === RING_CITY_RENDER_MODE.THREE_D) return;
 
-    for (const bandId of RING_SEGMENT_BANDS) {
+    for (const bandId of RING_VISUAL_BANDS) {
       const band = this.layout?.[bandId];
       if (!band) continue;
 
-      const geometry = createRingBandGeometry(band.innerR, band.outerR, 0.15);
-      const damageCanvas = createCanvas(
-        Math.max(1, this.segmentData.length * FLOOR_DAMAGE.pxPerSegment),
-        FLOOR_DAMAGE.height
-      );
-      if (!damageCanvas) {
-        geometry.dispose();
-        continue;
-      }
+      const physicalBandId = bandId === 'military' ? 'military' : 'city';
+      if (this.cityRenderMode === RING_CITY_RENDER_MODE.BAKED && physicalBandId === 'city') continue;
 
-      const damageCtx = damageCanvas.getContext('2d');
-      const damageTexture = new THREE.CanvasTexture(damageCanvas);
-      damageTexture.wrapS = THREE.RepeatWrapping;
-      damageTexture.wrapT = THREE.ClampToEdgeWrapping;
-      damageTexture.minFilter = THREE.LinearFilter;
-      damageTexture.magFilter = THREE.LinearFilter;
+      const physicalBand = physicalBandId === 'city'
+        ? { innerR: this.layout.inner.innerR, outerR: this.layout.industrial.outerR }
+        : this.layout.military;
+      const entry = this.createFloorDamageEntry(bandId, physicalBandId, band, physicalBand);
+      if (!entry) continue;
+
+      const geometry = createRingBandGeometry(band.innerR, band.outerR, 0.25);
 
       const material = new THREE.MeshStandardMaterial({
         color: 0x000000,
         emissive: 0x000000,
         emissiveIntensity: 0,
-        alphaMap: damageTexture,
+        alphaMap: entry.damageTexture,
         transparent: true,
-        depthWrite: false,
+        depthWrite: true,
+        alphaTest: 0.015,
         roughness: 0.92,
         metalness: 0.18,
-        side: THREE.DoubleSide
+        side: THREE.FrontSide,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1
       });
 
       const mesh = new THREE.Mesh(geometry, material);
       mesh.name = `PlanetaryRingFloorBand:${this.key}:${bandId}`;
-      mesh.renderOrder = -4;
+      mesh.renderOrder = -10;
       mesh.userData.fgCategory = 'buildings';
       mesh.userData.isRingFloorBand = true;
       if (Core3D?.enableForeground3D) Core3D.enableForeground3D(mesh);
       this.ringFloor.add(mesh);
-
-      const entry = {
-        id: bandId,
-        mesh,
-        damageCanvas,
-        damageCtx,
-        damageTexture,
-        pxPerSegment: FLOOR_DAMAGE.pxPerSegment,
-        lastRatios: new Float32Array(this.segmentData.length),
-        lastActiveCounts: new Int32Array(this.segmentData.length)
-      };
-      entry.lastRatios.fill(-1);
-      entry.lastActiveCounts.fill(-1);
-
-      for (let i = 0; i < this.segmentData.length; i++) {
-        const seg = this.segmentData[i];
-        const ratio = seg?.type === 'HOLE' ? 0 : 1;
-        this.paintFloorDamageStripe(entry, i, ratio);
-        entry.lastRatios[i] = ratio;
-      }
-      damageTexture.needsUpdate = true;
-      this.floorDamageBands.push(entry);
-    }
-  }
-
-  buildRingWallsAndRails() {
-    if (!this.ringFloor || !this.layout) return;
-    this.wallRailMeshes.length = 0;
-    const arcRanges = buildRingSolidArcRanges(
-      this.segmentData,
-      this.angleStep,
-      this.angleStep * RING_EDGE.gateGapPadRatio
-    );
-    if (!arcRanges.length) return;
-    const gateReturnAngles = buildRingGateReturnEndpointAngles(arcRanges);
-
-    for (const bandId of RING_SEGMENT_BANDS) {
-      const band = this.layout?.[bandId];
-      if (!band) continue;
-
-      const theme = FLOOR_THEME[bandId] || FLOOR_THEME.inner;
-      const buildBand = this.buildableLayout?.[bandId] || band;
-      const maxWallInner = band.outerR
-        - RING_EDGE.railOuterMargin
-        - RING_EDGE.railLaneWidth
-        - RING_EDGE.railWallGap
-        - RING_EDGE.wallThickness;
-      const wallInner = Math.max(
-        band.innerR + 20,
-        Math.min(buildBand.outerR + RING_EDGE.wallSetback, maxWallInner)
-      );
-      const wallOuter = Math.min(
-        band.outerR - RING_EDGE.railOuterMargin - RING_EDGE.railLaneWidth - RING_EDGE.railWallGap,
-        wallInner + RING_EDGE.wallThickness
-      );
-      const railInner = Math.min(
-        band.outerR - RING_EDGE.railOuterMargin - 10,
-        wallOuter + RING_EDGE.railWallGap
-      );
-      const railOuter = Math.min(band.outerR - RING_EDGE.railOuterMargin, railInner + RING_EDGE.railLaneWidth);
-      const railWidth = Math.max(1, railOuter - railInner);
-      const repeatX = Math.max(12, Math.round((Math.PI * 2 * wallInner) / 900));
-      const innerWallInner = band.innerR + 8;
-      const innerWallOuter = Math.min(band.outerR - 20, innerWallInner + RING_EDGE.innerWallThickness);
-      const gateReturnWallOuter = computeGateReturnWallOuterRadius(
-        wallInner,
-        wallOuter,
-        innerWallOuter,
-        RING_EDGE.gateReturnWallSetback
-      );
-      const returnWallRepeatX = Math.max(4, Math.round((Math.max(1, gateReturnWallOuter - innerWallInner) / 900) * 6));
-      const hasDockRails = shouldBuildDockRailsForBand(bandId);
-      // Crane rails run as a clean continuous track along the solid arcs; no gate-end
-      // turn-backs — those radial capsule protrusions read as broken/ugly.
-      const railTurnAngle = 0;
-      const railTurnArcRanges = buildGateRailTurnArcRanges(arcRanges, railTurnAngle);
-      const railRanges = hasDockRails ? arcRanges.concat(railTurnArcRanges) : [];
-      const railSideAngles = buildGateRailSideAngles(arcRanges, railTurnAngle);
-      const railSideInner = Math.min(
-        railInner,
-        Math.max(innerWallOuter + RING_EDGE.railWallGap, band.innerR + 24)
-      );
-
-      if (hasDockRails) {
-        const railGeometry = createRingBandRangesGeometry(railInner, railOuter, railRanges, 0.42);
-        if (railGeometry) {
-          const railMesh = new THREE.Mesh(
-            railGeometry,
-            new THREE.MeshStandardMaterial({
-              color: 0x040506,
-              emissive: 0x000000,
-              emissiveIntensity: 0,
-              map: createRailTexture(null),
-              transparent: true,
-              opacity: 0.92,
-              roughness: 0.58,
-              metalness: 0.62,
-              depthWrite: false,
-              side: THREE.DoubleSide
-            })
-          );
-          railMesh.name = `PlanetaryRingDockRail:${this.key}:${bandId}`;
-          railMesh.renderOrder = -2;
-          railMesh.userData.fgCategory = 'buildings';
-          this.ringFloor.add(railMesh);
-          if (Core3D?.enableForeground3D) Core3D.enableForeground3D(railMesh);
-          this.wallRailMeshes.push(railMesh);
-        }
-
-        const railReturnGeometry = createRadialCapsuleBoxesGeometry(
-          railSideAngles,
-          railSideInner,
-          railOuter,
-          RING_EDGE.gateRailSideWidth,
-          3,
-          0.41,
-          14
-        );
-        if (railReturnGeometry) {
-          const railReturn = new THREE.Mesh(
-            railReturnGeometry,
-            new THREE.MeshStandardMaterial({
-              color: 0x040506,
-              emissive: 0x000000,
-              emissiveIntensity: 0,
-              map: createRailTexture(null),
-              transparent: true,
-              opacity: 0.92,
-              roughness: 0.58,
-              metalness: 0.62,
-              depthWrite: false,
-              side: THREE.DoubleSide
-            })
-          );
-          railReturn.name = `PlanetaryRingDockRailTurn:${this.key}:${bandId}`;
-          railReturn.renderOrder = -2;
-          railReturn.userData.fgCategory = 'buildings';
-          this.ringFloor.add(railReturn);
-          if (Core3D?.enableForeground3D) Core3D.enableForeground3D(railReturn);
-          this.wallRailMeshes.push(railReturn);
-        }
-      }
-
-      const beamCenters = [
-        railInner + railWidth * 0.32,
-        railInner + railWidth * 0.68
-      ];
-      if (hasDockRails) {
-        for (let i = 0; i < beamCenters.length; i++) {
-          const center = beamCenters[i];
-          const halfBeam = Math.min(RING_EDGE.railBeamWidth, railWidth * 0.18) * 0.5;
-          const beamGeometry = createRingAnnularBoxRangesGeometry(
-            center - halfBeam,
-            center + halfBeam,
-            RING_EDGE.railBeamHeight,
-            0.45,
-            railRanges
-          );
-          if (!beamGeometry) continue;
-          const railBeam = new THREE.Mesh(
-            beamGeometry,
-            new THREE.MeshStandardMaterial({
-              color: 0x161d24,
-              emissive: 0x000000,
-              emissiveIntensity: 0,
-              roughness: 0.48,
-              metalness: 0.78,
-              side: THREE.DoubleSide
-            })
-          );
-          railBeam.name = `PlanetaryRingDockRailBeam:${this.key}:${bandId}:${i}`;
-          railBeam.renderOrder = -1;
-          railBeam.userData.fgCategory = 'buildings';
-          this.ringFloor.add(railBeam);
-          if (Core3D?.enableForeground3D) Core3D.enableForeground3D(railBeam);
-          this.wallRailMeshes.push(railBeam);
-        }
-
-        const railBeamTurnGeometry = createRadialCapsuleBoxesGeometry(
-          railSideAngles,
-          railSideInner,
-          railOuter,
-          Math.max(RING_EDGE.railBeamWidth * 1.6, 34),
-          RING_EDGE.railBeamHeight,
-          0.45,
-          12
-        );
-        if (railBeamTurnGeometry) {
-          const railBeamTurn = new THREE.Mesh(
-            railBeamTurnGeometry,
-            new THREE.MeshStandardMaterial({
-              color: 0x161d24,
-              emissive: 0x000000,
-              emissiveIntensity: 0,
-              roughness: 0.48,
-              metalness: 0.78,
-              side: THREE.DoubleSide
-            })
-          );
-          railBeamTurn.name = `PlanetaryRingDockRailBeamTurn:${this.key}:${bandId}`;
-          railBeamTurn.renderOrder = -1;
-          railBeamTurn.userData.fgCategory = 'buildings';
-          this.ringFloor.add(railBeamTurn);
-          if (Core3D?.enableForeground3D) Core3D.enableForeground3D(railBeamTurn);
-          this.wallRailMeshes.push(railBeamTurn);
-        }
-      }
-
-      const outerWallGeometry = createRingAnnularBoxRangesGeometry(
-        wallInner,
-        wallOuter,
-        RING_EDGE.wallHeight,
-        0.2,
-        arcRanges
-      );
-      if (outerWallGeometry) {
-        const outerWall = new THREE.Mesh(
-          outerWallGeometry,
-          new THREE.MeshStandardMaterial({
-            color: 0x0b0f16,
-            emissive: 0x020304,
-            emissiveIntensity: 0.04,
-            map: createWallTexture(theme, repeatX),
-            roughness: 0.78,
-            metalness: 0.45,
-            side: THREE.DoubleSide
-          })
-        );
-        outerWall.name = `PlanetaryRingOuterWall:${this.key}:${bandId}`;
-        outerWall.userData.fgCategory = 'buildings';
-        this.ringFloor.add(outerWall);
-        if (Core3D?.enableForeground3D) Core3D.enableForeground3D(outerWall);
-        this.wallRailMeshes.push(outerWall);
-      }
-
-      const returnWallGeometry = createRadialCapsuleBoxesGeometry(
-        gateReturnAngles,
-        innerWallInner,
-        gateReturnWallOuter,
-        RING_EDGE.gateReturnWallWidth,
-        RING_EDGE.wallHeight,
-        0.22,
-        14
-      );
-      if (returnWallGeometry) {
-        const returnWall = new THREE.Mesh(
-          returnWallGeometry,
-          new THREE.MeshStandardMaterial({
-            color: 0x0b0f16,
-            emissive: 0x020304,
-            emissiveIntensity: 0.04,
-            map: createWallTexture(theme, returnWallRepeatX),
-            roughness: 0.78,
-            metalness: 0.45,
-            side: THREE.DoubleSide
-          })
-        );
-        returnWall.name = `PlanetaryRingGateReturnWall:${this.key}:${bandId}`;
-        returnWall.userData.fgCategory = 'buildings';
-        this.ringFloor.add(returnWall);
-        if (Core3D?.enableForeground3D) Core3D.enableForeground3D(returnWall);
-        this.wallRailMeshes.push(returnWall);
-      }
-
-      const innerWallGeometry = createRingAnnularBoxRangesGeometry(
-        innerWallInner,
-        innerWallOuter,
-        RING_EDGE.innerWallHeight,
-        0.18,
-        arcRanges
-      );
-      if (innerWallGeometry) {
-        const innerWall = new THREE.Mesh(
-          innerWallGeometry,
-          new THREE.MeshStandardMaterial({
-            color: 0x080b11,
-            emissive: 0x010203,
-            emissiveIntensity: 0.03,
-            map: createWallTexture(theme, Math.max(8, Math.round(repeatX * 0.72))),
-            roughness: 0.82,
-            metalness: 0.38,
-            side: THREE.DoubleSide
-          })
-        );
-        innerWall.name = `PlanetaryRingInnerWall:${this.key}:${bandId}`;
-        innerWall.userData.fgCategory = 'buildings';
-        this.ringFloor.add(innerWall);
-        if (Core3D?.enableForeground3D) Core3D.enableForeground3D(innerWall);
-        this.wallRailMeshes.push(innerWall);
-      }
-
-      const billboardLabels = bandId === 'military'
-        ? ['MIL DOCK', 'ARMORY', 'DRY BAY']
-        : bandId === 'industrial'
-          ? ['CARGO', 'REFIT', 'FREIGHT']
-          : ['PORT', 'TRANSIT', 'MARKET'];
-      const billboardCount = Math.max(8, Math.round((Math.PI * 2 * band.outerR) / 3600));
-      const billboardOffset = bandId === 'inner' ? 0.08 : bandId === 'industrial' ? 0.18 : 0.28;
-      const billboardRadius = wallInner - 6;
-
-      for (let i = 0; i < billboardCount; i++) {
-        const angle = ((i + 0.5) / billboardCount) * Math.PI * 2 + billboardOffset;
-        const billboardMargin = Math.max(this.angleStep * 0.25, (RING_EDGE.billboardWidth * 0.5) / Math.max(1, billboardRadius));
-        if (isGateAngle(angle) || !angleInArcRanges(angle, arcRanges, billboardMargin)) continue;
-        const texture = createBillboardTexture(theme, billboardLabels[i % billboardLabels.length], i);
-        if (!texture) continue;
-        const billboard = new THREE.Mesh(
-          createBillboardPanelGeometry(
-            billboardRadius,
-            angle,
-            RING_EDGE.billboardWidth,
-            RING_EDGE.billboardHeight,
-            RING_EDGE.billboardBottom,
-            0
-          ),
-          new THREE.MeshBasicMaterial({
-            map: texture,
-            transparent: true,
-            side: THREE.DoubleSide,
-            depthWrite: false
-          })
-        );
-        billboard.name = `PlanetaryRingBillboard:${this.key}:${bandId}:${i}`;
-        billboard.renderOrder = 4;
-        billboard.userData.fgCategory = 'buildings';
-        this.ringFloor.add(billboard);
-        if (Core3D?.enableForeground3D) Core3D.enableForeground3D(billboard);
-        this.wallRailMeshes.push(billboard);
-      }
+      entry.mesh = mesh;
     }
   }
 
@@ -1757,7 +1600,11 @@ class PlanetaryRing {
       if (!Number.isFinite(gx) || !Number.isFinite(gy)) continue;
 
       const u = Math.max(0, Math.min(1, gx / srcW));
-      const v = Math.max(0, Math.min(1, gy / srcH));
+      const physicalV = Math.max(0, Math.min(1, gy / srcH));
+      const vStart = Math.max(0, Math.min(1, Number(entry.physicalVStart) || 0));
+      const vEnd = Math.max(vStart + 0.0001, Math.min(1, Number(entry.physicalVEnd) || 1));
+      if (physicalV < vStart || physicalV > vEnd) continue;
+      const v = Math.max(0, Math.min(1, (physicalV - vStart) / (vEnd - vStart)));
       const cx = x + u * px;
       const cy = v * h;
       const hitRadius = Math.max(1, Number(shard.hitRadius) || 1);
@@ -1788,7 +1635,7 @@ class PlanetaryRing {
       let dirty = false;
       for (let i = 0; i < this.segmentData.length; i++) {
         const seg = this.segmentData[i];
-        const entity = seg?.entityByBand?.[band.id] || null;
+        const entity = seg?.entityByBand?.[band.physicalBandId || band.id] || null;
         let ratio = 0;
         let activeCount = 0;
         if (entity && !entity.dead && entity.hexGrid) {
@@ -1929,7 +1776,7 @@ class PlanetaryRing {
       maxHp: 1
     };
 
-    initHexBody(entity, collisionImage, null, false, null, CONFIG.collisionAlphaCutoff);
+    initHexBody(entity, collisionImage, false, null, CONFIG.collisionAlphaCutoff);
     if (!entity.hexGrid) {
       entity.dead = true;
       return entity;
@@ -1958,179 +1805,6 @@ class PlanetaryRing {
     entity.hexGrid.sleepFrames = 9999;
     entity.hexGrid.wakeHoldFrames = 0;
     return entity;
-  }
-
-  // ── Force fields — indestructible energy barriers at ring holes ──────────────
-  buildForceFields() {
-    this.forceFields.length = 0;
-    const quarter = Math.floor(this.segmentData.length / 4);
-    const holeStarts = [0, quarter, quarter * 2, quarter * 3];
-    const holeSize = 4; // 4 consecutive HOLE segments per opening
-
-    for (const startIdx of holeStarts) {
-      if (startIdx + holeSize - 1 >= this.segmentData.length) continue;
-      // Verify all segments are holes
-      let allHoles = true;
-      for (let k = 0; k < holeSize; k++) {
-        if (this.segmentTypes[startIdx + k] !== 'HOLE') { allHoles = false; break; }
-      }
-      if (!allHoles) continue;
-
-      const rawStart = this.segmentData[startIdx].baseAngle - this.angleStep * 0.5;
-      const rawEnd = this.segmentData[startIdx + holeSize - 1].baseAngle + this.angleStep * 0.5;
-      // Extend arc by half a segment on each side for seamless overlap with wall edges
-      const overlap = this.angleStep * 0.5;
-      const startAngle = rawStart - overlap;
-      const endAngle = rawEnd + overlap;
-      const arcAngle = endAngle - startAngle;
-      const centerAngle = startAngle + arcAngle * 0.5;
-
-      // Gate shields belong to the outer military ring only.
-      // The city floor/destructor spans multiple bands, but the entry barrier
-      // should only close the actual outer gate band instead of cutting through
-      // inner/industrial slices.
-      const innerR = this.layout.military.innerR;
-      const outerR = this.layout.military.outerR;
-      const gateRadius = (innerR + outerR) * 0.5;
-      const segs = 32;
-
-      const shape = new THREE.Shape();
-      for (let i = 0; i <= segs; i++) {
-        const a = startAngle + (arcAngle * i) / segs;
-        const px = Math.cos(a) * outerR, py = Math.sin(a) * outerR;
-        i === 0 ? shape.moveTo(px, py) : shape.lineTo(px, py);
-      }
-      for (let i = segs; i >= 0; i--) {
-        const a = startAngle + (arcAngle * i) / segs;
-        shape.lineTo(Math.cos(a) * innerR, Math.sin(a) * innerR);
-      }
-      shape.closePath();
-
-      const geo = new THREE.ShapeGeometry(shape);
-
-      // Remap UVs: U = normalized angle along arc, V = normalized radius (inner→outer)
-      const posAttr = geo.getAttribute('position');
-      const uvAttr = geo.getAttribute('uv');
-      for (let vi = 0; vi < posAttr.count; vi++) {
-        const px = posAttr.getX(vi);
-        const py = posAttr.getY(vi);
-        let angle = Math.atan2(py, px);
-        if (angle < 0) angle += Math.PI * 2;
-        const u = Math.max(0, Math.min(1, (angle - startAngle) / arcAngle));
-        const r = Math.hypot(px, py);
-        const v = Math.max(0, Math.min(1, (r - innerR) / (outerR - innerR)));
-        uvAttr.setXY(vi, u, v);
-      }
-      uvAttr.needsUpdate = true;
-
-      const mat = new THREE.ShaderMaterial({
-        uniforms: {
-          uOpacity: { value: 0.6 },
-          uTime: { value: 0 }
-        },
-        vertexShader: `
-          varying vec2 vUv;
-          void main() {
-            vUv = uv;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-          }
-        `,
-        fragmentShader: `
-          uniform float uOpacity;
-          uniform float uTime;
-          varying vec2 vUv;
-          void main() {
-            float scanLine = sin(vUv.y * 30.0 + uTime * 2.0) * 0.5 + 0.5;
-            float scanLine2 = sin(vUv.x * 80.0 - uTime * 1.5) * 0.3 + 0.7;
-            float edge = smoothstep(0.0, 0.06, vUv.x) * smoothstep(1.0, 0.94, vUv.x);
-            float edgeY = smoothstep(0.0, 0.06, vUv.y) * smoothstep(1.0, 0.94, vUv.y);
-            float alpha = uOpacity * (0.35 + scanLine * 0.3) * edge * edgeY * scanLine2;
-            vec3 col = mix(vec3(0.1, 0.4, 1.0), vec3(0.2, 0.7, 1.0), scanLine);
-            gl_FragColor = vec4(col, alpha);
-          }
-        `,
-        transparent: true,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending
-      });
-
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.name = `PlanetaryRingForceField:${this.key}:${startIdx}`;
-      mesh.position.z = 3;
-      mesh.scale.set(1, -1, 1);
-      mesh.frustumCulled = false;
-
-      this.buildings3D.add(mesh);
-      if (Core3D?.enableForeground3D) Core3D.enableForeground3D(mesh);
-
-      this.forceFields.push({
-        startIndex: startIdx,
-        centerAngle,
-        radius: gateRadius,
-        mesh,
-        targetOpacity: 0.6,
-        currentOpacity: 0.6,
-        isOpen: false
-      });
-    }
-  }
-
-  updateForceFields(dt) {
-    if (!this.forceFields.length) return;
-
-    // Defensive: if root group is hidden, force fields are invisible too.
-    // Force field meshes have frustumCulled = false (line 740), so without
-    // explicitly hiding them they'd still get submitted to the renderer.
-    if (this.buildings3D && !this.buildings3D.visible) {
-      for (const ff of this.forceFields) {
-        if (ff?.mesh) ff.mesh.visible = false;
-      }
-      return;
-    }
-
-    const ship = (typeof window !== 'undefined') ? window.ship : null;
-    const shipX = Number(ship?.pos?.x ?? ship?.x);
-    const shipY = Number(ship?.pos?.y ?? ship?.y);
-    const hasShip = Number.isFinite(shipX) && Number.isFinite(shipY);
-    const dtClamped = Math.max(0, Number(dt) || 0);
-    const animSpeed = CONFIG.forceFieldAnimSpeed;
-    const now = performance.now() * 0.001;
-
-    for (const ff of this.forceFields) {
-      if (!ff?.mesh) continue;
-
-      // Position at planet center (same as ringFloor)
-      ff.mesh.position.set(this.lastPlanetX, -this.lastPlanetY, 3);
-      ff.mesh.rotation.z = -this.currentRotation;
-
-      // Distance check
-      const worldAngle = ff.centerAngle + this.currentRotation;
-      const ffRadius = Number(ff.radius) || this.layout.militaryCenter || this.wallRadius;
-      const ffX = this.lastPlanetX + Math.cos(worldAngle) * ffRadius;
-      const ffY = this.lastPlanetY + Math.sin(worldAngle) * ffRadius;
-      const dist = hasShip ? Math.hypot(shipX - ffX, shipY - ffY) : Infinity;
-
-      // Hysteresis open/close
-      if (ff.isOpen) {
-        ff.isOpen = dist < CONFIG.forceFieldCloseRadius;
-      } else {
-        ff.isOpen = dist < CONFIG.forceFieldOpenRadius;
-      }
-
-      ff.targetOpacity = ff.isOpen ? 0 : 0.6;
-
-      // Smooth transition
-      if (ff.currentOpacity < ff.targetOpacity) {
-        ff.currentOpacity = Math.min(ff.targetOpacity, ff.currentOpacity + dtClamped * animSpeed);
-      } else if (ff.currentOpacity > ff.targetOpacity) {
-        ff.currentOpacity = Math.max(ff.targetOpacity, ff.currentOpacity - dtClamped * animSpeed);
-      }
-
-      ff.mesh.material.uniforms.uOpacity.value = ff.currentOpacity;
-      ff.mesh.material.uniforms.uTime.value = now;
-      ff.mesh.visible = ff.currentOpacity > 0.005;
-    }
   }
 
   buildConstructionSlots(segmentCount) {
@@ -2311,8 +1985,6 @@ class PlanetaryRing {
       }
     }
 
-    this.updateForceFields(dt);
-
     // Update damage alpha texture — structural damage every 20 ticks
     // (updateDamageAlpha has internal dirty-check so frequent calls are cheap)
     this.updateDamageAlpha();
@@ -2344,16 +2016,21 @@ class PlanetaryRing {
     };
     const fallbackArcHalf = computeArcHalf(this.wallRadius);
 
-    // LOD: dystans kamery od ringu → poziomy szczegółowości
+    // LOD uses projected building-detail size, not the radius of the whole
+    // ring. The giant Earth/Mars scale otherwise forces full city geometry
+    // while an individual building occupies only a few screen pixels.
     const safeCamZoom = Math.max(0.0001, Number(camZoom) || 0.0001);
-    const ringPixelRadius = this.ringRadius * safeCamZoom;
+    const detailPixelSize = 180 * safeCamZoom;
 
     // Determine current LOD level for chunk children from on-screen size.
-    // 0 = full detail, 1 = hide DETAIL, 2 = hide DETAIL+MEDIUM, 3 = max cheap
-    let lodLevel = 0;
-    if (ringPixelRadius < 380) lodLevel = 3;
-    else if (ringPixelRadius < 700) lodLevel = 2;
-    else if (ringPixelRadius < 1200) lodLevel = 1;
+    // 0 = full, 1 = cheap materials/no decorations, 2/3 = box proxies.
+    const cityQuality = getConfiguredRingCityQuality();
+    const lodLevel = computeRingCityLodForQuality(safeCamZoom, cityQuality);
+    this._lodLevel = lodLevel;
+    this._detailPixelSize = detailPixelSize;
+    this._cityQuality = cityQuality;
+    this.cityTraffic?.update?.(dt, lodLevel);
+    this.cityMood?.update?.(dt, lodLevel, cityQuality);
     const skipAnimations = lodLevel >= 1;
     const hideAllDistricts = false;
     const useFarChunkMaterials = lodLevel >= 1;
@@ -2406,6 +2083,8 @@ class PlanetaryRing {
             if (!lod) { child.visible = true; continue; }
             if (lod === 'DETAIL') child.visible = lodLevel < 1;
             else if (lod === 'MEDIUM') child.visible = lodLevel < 2;
+            else if (lod === 'BUILDING') child.visible = lodLevel < 2;
+            else if (lod === 'FAR_PROXY') child.visible = lodLevel >= 2;
             else child.visible = true; // CORE always visible
             const farMaterial = child.userData?.farMaterial;
             if (farMaterial) {
@@ -2418,7 +2097,7 @@ class PlanetaryRing {
           }
         } else if (b.isChunk && b.mesh.children) {
           for (const child of b.mesh.children) {
-            child.visible = true;
+            child.visible = child.userData?.lodLevel !== 'FAR_PROXY';
             const nearMaterial = child.userData?.nearMaterial;
             if (nearMaterial && child.userData.usingFarMaterial) {
               child.material = nearMaterial;
@@ -2433,7 +2112,8 @@ class PlanetaryRing {
             if (dd.mesh) dd.mesh.visible = !skipAnimations;
             if (!skipAnimations) {
               if (dd.mesh && dd.rotationSpeed) {
-                dd.mesh.rotation.z += dd.rotationSpeed * dt * 60;
+                if (dd.localAxisRotation) dd.mesh.rotateZ(dd.rotationSpeed * dt * 60);
+                else dd.mesh.rotation.z += dd.rotationSpeed * dt * 60;
               }
               if (dd.update) {
                 dd.update(dt);
@@ -2462,14 +2142,14 @@ class PlanetaryRing {
 
     this.segmentData.length = 0;
     this.segmentTypes.length = 0;
-    // Cleanup force field meshes
-    for (const ff of this.forceFields) {
-      if (!ff?.mesh) continue;
-      if (ff.mesh.parent) ff.mesh.parent.remove(ff.mesh);
-      if (ff.mesh.geometry) ff.mesh.geometry.dispose();
-      if (ff.mesh.material) ff.mesh.material.dispose();
-    }
-    this.forceFields.length = 0;
+    this.cityTraffic?.dispose?.();
+    this.cityTraffic = null;
+    this.cityMood?.dispose?.();
+    this.cityMood = null;
+    this.megastructureVisuals?.dispose?.();
+    this.megastructureVisuals = null;
+    this.bakedCitySurface?.dispose?.();
+    this.bakedCitySurface = null;
     for (const mesh of this.wallRailMeshes) {
       if (mesh?.parent) mesh.parent.remove(mesh);
       mesh?.geometry?.dispose?.();
@@ -2499,6 +2179,11 @@ class PlanetaryRing {
     }
     this.floorDamageBands.length = 0;
     this.constructionSlots.length = 0;
+    for (const visual of this.visualMeshes) {
+      if (visual?.isDistrict || visual?.isInfrastructure) {
+        disposeRingCityVisualEntry(visual);
+      }
+    }
     this.visualMeshes.length = 0;
     this.zoneGrid = null;
     this.ringFloor = null;
@@ -2647,7 +2332,7 @@ function appendOnDemandRingTargets(x, y, radius = 0) {
     for (let offset = -spanSegments; offset <= spanSegments; offset++) {
       const idx = (centerIndex + offset + segmentCount) % segmentCount;
       const seg = ring.segmentData[idx];
-      if (!seg || seg.type === 'HOLE') continue;
+      if (!seg) continue;
 
       const entities = Array.isArray(seg.entities) ? seg.entities : null;
       const count = entities ? entities.length : (seg.entity ? 1 : 0);
@@ -2692,19 +2377,37 @@ function queryPotentialTargets(x, y, radius = 0) {
   return { buffer: state.queryResult, count: state.queryCount };
 }
 
+function disposeRingCityVisualEntry(entry) {
+  if (!entry || entry._ringCityDisposed) return;
+  entry._ringCityDisposed = true;
+  if (typeof entry.dispose === 'function') {
+    entry.dispose();
+    return;
+  }
+  if (entry.mesh?.parent) entry.mesh.parent.remove(entry.mesh);
+  const disposedMaterials = new Set();
+  const disposeObject = (object) => {
+    if (object?.isBatchedMesh) object.dispose?.();
+    else object?.geometry?.dispose?.();
+    const materials = Array.isArray(object?.material)
+      ? object.material
+      : object?.material ? [object.material] : [];
+    for (const material of materials) {
+      if (!material || material.userData?.shared || disposedMaterials.has(material)) continue;
+      disposedMaterials.add(material);
+      material.dispose?.();
+    }
+  };
+  if (entry.mesh?.traverse) entry.mesh.traverse(disposeObject);
+  else disposeObject(entry.mesh);
+}
+
 function clearRingCityVisuals(ring) {
   if (!ring?.visualMeshes?.length || !ring.ringFloor) return;
   for (let i = ring.visualMeshes.length - 1; i >= 0; i--) {
     const vm = ring.visualMeshes[i];
     if (!vm?.isDistrict && !vm?.isInfrastructure) continue;
-    if (vm.mesh?.parent) vm.mesh.parent.remove(vm.mesh);
-    if (vm.mesh?.traverse) {
-      vm.mesh.traverse((obj) => {
-        obj.geometry?.dispose?.();
-      });
-    } else {
-      vm.mesh?.geometry?.dispose?.();
-    }
+    disposeRingCityVisualEntry(vm);
     ring.visualMeshes.splice(i, 1);
   }
 }
@@ -2727,12 +2430,19 @@ export function initPlanetaryRings3D(planets = []) {
   // 1. Inicjujemy pierścienie od razu (nawet jako płaskie bryły zapasowe)
   disposePlanetaryRings3D();
   const planetMap = syncRingSystems(planets);
+  let needsSynthCityAssets = false;
   for (const [key, ring] of state.rings) {
     const planet = planetMap.get(key);
     if (planet) ring.updateFromPlanet(planet, 0, null);
+    if (ring.cityRenderMode === RING_CITY_RENDER_MODE.BAKED) autoFillRingCity(ring);
+    else needsSynthCityAssets = true;
   }
   rebuildEntityList();
   rebuildSpatialIndex(true);
+
+  // The baked residential city is self-contained. Avoid downloading and
+  // parsing the full SynthCity OBJ/texture pack and avoid a second hard reset.
+  if (!needsSynthCityAssets) return state.rings;
 
   // 2. Kiedy modele z SynthCity się pobiorą, robimy bezpieczny TWARDY RESET
   loadSynthCityAssets().then(() => {
@@ -2787,14 +2497,6 @@ export function getPlanetaryRingEntities() {
   return state.entities;
 }
 
-/**
- * Ring barrier enforcement — pushes dynamic entities out of the ring wall.
- * Force fields at HOLE positions open when the player approaches.
- */
-export function enforceRingBarrier(entity) {
-  return false;
-}
-
 export function getPotentialPlanetaryRingTargets(x, y, radius = 0) {
   return queryPotentialTargets(x, y, radius);
 }
@@ -2823,12 +2525,14 @@ export function getPlanetaryRingDebug() {
     let drawCalls = 0;
     let chunkCount = 0;
     let globalInfraCount = 0;
+    let cityStats = null;
     for (const vm of ring.visualMeshes) {
       if (vm.isChunk) chunkCount++;
       if (vm.isGlobalInfra) globalInfraCount++;
+      if (vm.isOutwardBatchedCity && vm.stats) cityStats = { ...vm.stats };
       if (vm.mesh.visible) {
         visibleEntries++;
-        vm.mesh.traverse(c => { if (c.isMesh || c.isLineSegments) drawCalls++; });
+        vm.mesh.traverse(c => { if (c.visible && (c.isMesh || c.isLineSegments)) drawCalls++; });
       } else {
         hiddenEntries++;
       }
@@ -2839,7 +2543,8 @@ export function getPlanetaryRingDebug() {
       segmentCount: ring.segmentData.length,
       aliveSegments,
       aliveSegmentLayers,
-      forceFieldCount: ring.forceFields.length,
+      forceFieldCount: 0,
+      gateCount: 0,
       hidden: ring._ringHidden === true,
       entitiesActive: ring._ringEntitiesActive === true,
       rootAttached: ring._rootAttached === true,
@@ -2856,6 +2561,13 @@ export function getPlanetaryRingDebug() {
       culledPercent: ring.visualMeshes.length > 0 ? Math.round(hiddenEntries / ring.visualMeshes.length * 100) : 0,
       estimatedDrawCalls: drawCalls,
       totalDecorations,
+      lodLevel: ring._lodLevel,
+      detailPixelSize: ring._detailPixelSize,
+      cityQuality: ring._cityQuality,
+      cityRenderMode: ring.cityRenderMode,
+      city: cityStats,
+      traffic: ring.cityTraffic?.getState?.() || null,
+      mood: ring.cityMood?.getState?.() || null,
       visualZ: getRingVisualZ(key)
     };
   }
@@ -2908,10 +2620,10 @@ export function getPlanetaryRingObjects(planetKey) {
     ring,
     buildings3D: ring.buildings3D || null,
     ringFloor: ring.ringFloor || null,
-    forceFields: ring.forceFields.map((ff, index) => ({
-      index,
-      mesh: ff?.mesh || null
-    }))
+    megastructure: ring.megastructureVisuals?.group || null,
+    traffic: ring.cityTraffic?.group || null,
+    mood: ring.cityMood?.group || null,
+    forceFields: []
   };
 }
 
@@ -2921,8 +2633,7 @@ if (typeof window !== 'undefined') {
     slots: (planetKey) => getPlanetaryRingSlots(planetKey),
     entities: () => getPlanetaryRingEntities(),
     ring: (planetKey) => getPlanetaryRing(planetKey),
-    objects: (planetKey) => getPlanetaryRingObjects(planetKey),
-    visualZ: (planetKey) => getPlanetaryRingVisualZ(planetKey),
+    objects: (planetKey) => getPlanetaryRingObjects(planetKey),    visualZ: (planetKey) => getPlanetaryRingVisualZ(planetKey),
     setVisualZ: (planetKey, patch) => setPlanetaryRingVisualZ(planetKey, patch),
     resetVisualZ: (planetKey) => resetPlanetaryRingVisualZ(planetKey)
   };

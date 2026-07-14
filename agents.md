@@ -81,6 +81,8 @@
 
 1. **Core3D (`src/3d/core3d.js`)**
    - Modyfikacje renderera/composera/blooma/alpha-pass rób wyłącznie tutaj.
+   - Parametry bloomu (strength/radius/threshold, także dla overlay3D) żyją w `src/3d/bloomConfig.js` — jedyne źródło prawdy; tuner (panel Bloom) nadpisuje je trwale tylko z `?dev` w URL.
+   - Pipeline jest HDR-first: emitery (pociski, beamy, dysze) mnożą kolory >1.0, próg bloomu ~0.9 odcina zwykłe powierzchnie. Nowe efekty, które mają świecić, muszą wypychać luminancję >1.
    - Nie duplikuj postprocessingu w innych modułach.
 
 2. **Moduły 3D (`world3d.js`, `stations3D.js`, `hexShips3D.js`)**
@@ -107,7 +109,7 @@
 - Trzymaj zmiany małe i izolowane.
 - Nie zmieniaj API bez potrzeby i opisu skutków.
 - Zachowuj kompatybilność warstwy grywalnej 2D.
-- Nie rób screenshotów z gry w ramach pracy agenta (za ciężki runtime / duży kontekst).
+
 
 ### Lista kontrolna PR
 - [ ] Brak nowych rendererów WebGL poza `Core3D`.
@@ -120,8 +122,6 @@
 
 ## FAQ
 
-**Czy można przepisać gameplay do Three.js?**
-Nie. Gameplay pozostaje w 2D Canvas.
 
 **Gdzie dodawać nowe efekty 3D?**
 W `src/3d/*`, z wykorzystaniem `Core3D`.
