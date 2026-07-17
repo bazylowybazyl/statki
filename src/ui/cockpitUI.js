@@ -104,6 +104,11 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, Number(value) || 0));
 }
 
+function mixRgb(from, to, amount) {
+  const t = clamp(amount, 0, 1);
+  return `rgb(${Math.round(from[0] + (to[0] - from[0]) * t)}, ${Math.round(from[1] + (to[1] - from[1]) * t)}, ${Math.round(from[2] + (to[2] - from[2]) * t)})`;
+}
+
 function formatDistance(value) {
   const d = Math.max(0, Number(value) || 0);
   if (d >= 1000000) return `${(d / 1000000).toFixed(1)}M`;
@@ -654,21 +659,37 @@ export class CockpitUI {
   updateSpeed(ship, systems, dt) {
     const speed = Math.hypot(Number(ship?.vel?.x) || 0, Number(ship?.vel?.y) || 0);
     const rpm = clamp(systems.driveRpm, 0, 1);
+    const shiftCueIntensity = clamp(systems.driveShiftCueIntensity, 0, 1);
+    const shiftCueDanger = clamp(systems.driveShiftCueDanger, 0, 1);
     this.odometer += speed * dt;
     this.trip += speed * dt;
     this.lastSpeed = speed;
     if (this.els.spValue) this.els.spValue.textContent = String(Math.round(speed));
-    if (this.els.spRpm) this.els.spRpm.textContent = (rpm * 8).toFixed(1);
+    if (this.els.spRpm) {
+      this.els.spRpm.textContent = (rpm * 8).toFixed(1);
+      const cueColor = [
+        52 + (239 - 52) * shiftCueDanger,
+        211 + (68 - 211) * shiftCueDanger,
+        153 + (68 - 153) * shiftCueDanger
+      ];
+      this.els.spRpm.style.color = mixRgb([255, 255, 255], cueColor, shiftCueIntensity * 0.9);
+    }
     if (this.els.spOdo) this.els.spOdo.textContent = `${Math.round(this.odometer).toLocaleString('pl-PL')} u`;
     if (this.els.spTrip) this.els.spTrip.textContent = `${Math.round(this.trip).toLocaleString('pl-PL')} u`;
     if (this.els.thrPct) this.els.thrPct.textContent = `${Math.round(clamp(systems.power, 0, 100))}%`;
     if (this.els.spLimit) this.els.spLimit.textContent = String(Math.round(Number(systems.driveSpeedLimit) || 0));
     if (this.els.spState) this.els.spState.textContent = systems.driveAuto ? 'AUTO' : systems.warpState === 'active' ? 'WARP' : 'REJS';
     this.els.scAuto?.classList.toggle('on', !!systems.driveAuto);
-    this.drawSpeedGauge(speed, Number(systems.driveSpeedLimit) || Math.max(1, speed), rpm);
+    this.drawSpeedGauge(
+      speed,
+      Number(systems.driveSpeedLimit) || Math.max(1, speed),
+      rpm,
+      shiftCueIntensity,
+      shiftCueDanger
+    );
   }
 
-  drawSpeedGauge(speed, limit, rpm) {
+  drawSpeedGauge(speed, limit, rpm, shiftCueIntensity = 0, shiftCueDanger = 0) {
     const canvas = this.els.speedCanvas;
     const ctx = this.speedCtx;
     if (!canvas || !ctx) return;
@@ -681,8 +702,8 @@ export class CockpitUI {
     const scale = Math.max(0.08, Math.min(height / 600, width / 1000));
     const cx = width / 2;
     const cy = height / 2;
-    this.drawDriveGaugeArc(ctx, cx - 240 * scale, cy, scale, false, speed, limit, false);
-    this.drawDriveGaugeArc(ctx, cx + 240 * scale, cy, scale, true, rpm, 1, true);
+    this.drawDriveGaugeArc(ctx, cx - 240 * scale, cy, scale, false, speed, limit, false, 0);
+    this.drawDriveGaugeArc(ctx, cx + 240 * scale, cy, scale, true, rpm, 1, true, shiftCueIntensity, shiftCueDanger);
 
     ctx.save();
     ctx.strokeStyle = 'rgba(255,255,255,.14)';
@@ -696,7 +717,7 @@ export class CockpitUI {
     ctx.restore();
   }
 
-  drawDriveGaugeArc(ctx, x, y, scale, flipped, value, maxValue, rpmGauge) {
+  drawDriveGaugeArc(ctx, x, y, scale, flipped, value, maxValue, rpmGauge, shiftCueIntensity = 0, shiftCueDanger = 0) {
     ctx.save();
     ctx.translate(x, y);
     if (flipped) ctx.scale(-1, 1);
@@ -730,13 +751,23 @@ export class CockpitUI {
 
     if (progress > 0.002) {
       const hot = rpmGauge && progress > 0.82;
+      const cueAmount = rpmGauge ? clamp(shiftCueIntensity, 0, 1) : 0;
+      const cueDanger = clamp(shiftCueDanger, 0, 1);
+      const cueColor = [
+        52 + (239 - 52) * cueDanger,
+        211 + (68 - 211) * cueDanger,
+        153 + (68 - 153) * cueDanger
+      ];
+      const topColor = mixRgb(hot ? [255, 34, 0] : [255, 119, 0], cueColor, cueAmount);
+      const bottomColor = mixRgb(hot ? [255, 119, 0] : [255, 51, 0], cueColor, cueAmount);
+      const glowColor = mixRgb(hot ? [255, 34, 0] : [255, 102, 0], cueColor, cueAmount);
       const gradient = ctx.createLinearGradient(0, -radius, 0, radius);
-      gradient.addColorStop(0, hot ? '#ff2200' : '#ff7700');
-      gradient.addColorStop(1, hot ? '#ff7700' : '#ff3300');
+      gradient.addColorStop(0, topColor);
+      gradient.addColorStop(1, bottomColor);
       ctx.lineCap = 'round';
       ctx.lineWidth = lineWidth;
       ctx.strokeStyle = gradient;
-      ctx.shadowColor = hot ? '#ff2200' : '#ff6600';
+      ctx.shadowColor = glowColor;
       ctx.shadowBlur = Math.max(3, 18 * scale);
       ctx.beginPath();
       ctx.arc(0, 0, radius, currentAngle, endAngle);
@@ -746,7 +777,7 @@ export class CockpitUI {
       ctx.beginPath();
       ctx.arc(Math.cos(currentAngle) * radius, Math.sin(currentAngle) * radius, Math.max(2, 9 * scale), 0, Math.PI * 2);
       ctx.fillStyle = '#fff';
-      ctx.shadowColor = '#ff6600';
+      ctx.shadowColor = glowColor;
       ctx.shadowBlur = Math.max(3, 12 * scale);
       ctx.fill();
       ctx.shadowBlur = 0;
@@ -785,7 +816,8 @@ export class CockpitUI {
   }
 
   updateRadar(now) {
-    if (!this.radarCtx || !this.els.radarCanvas || now - this.lastRadarDraw < 66) return;
+    const drawIntervalMs = this.viewRange >= 60000 ? 100 : this.viewRange >= 40000 ? 80 : 66;
+    if (!this.radarCtx || !this.els.radarCanvas || now - this.lastRadarDraw < drawIntervalMs) return;
     this.lastRadarDraw = now;
     const canvas = this.els.radarCanvas;
     const rect = canvas.getBoundingClientRect();

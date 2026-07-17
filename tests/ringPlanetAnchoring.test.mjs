@@ -11,10 +11,12 @@ test('ring planets render through their own orthographic pass before world and f
   assert.match(coreSource, /renderPassRingPlanets\s*=\s*new\s+RenderPass\(this\.scene,\s*this\.cameraOrtho\)/);
   assert.match(coreSource, /makeSplitScreenRenderPass\(this\.renderPassRingPlanets,\s*RING_PLANET_RENDER_LAYER,\s*true,\s*false\)/);
 
-  const ringPassIndex = coreSource.indexOf('this.composer.addPass(this.renderPassRingPlanets)');
-  const worldPassIndex = coreSource.indexOf('this.composer.addPass(this.renderPassOrtho)');
-  const foregroundPassIndex = coreSource.indexOf('this.composer.addPass(this.renderPassFg)');
-  assert.ok(ringPassIndex >= 0, 'ring-planet pass is not added to the composer');
+  const scenePassList = coreSource.match(/_scenePasses\s*=\s*\[([\s\S]*?)\]/)?.[1] || '';
+  const ringPassIndex = scenePassList.indexOf('this.renderPassRingPlanets');
+  const worldPassIndex = scenePassList.indexOf('this.renderPassOrtho');
+  const foregroundPassIndex = scenePassList.indexOf('this.renderPassFg');
+  assert.ok(ringPassIndex >= 0, 'ring-planet pass is not part of the scene pass chain');
+  assert.ok(worldPassIndex >= 0 && foregroundPassIndex >= 0, 'scene pass chain is missing world/foreground passes');
   assert.ok(ringPassIndex < worldPassIndex, 'ring planets must render below the orthographic world');
   assert.ok(ringPassIndex < foregroundPassIndex, 'ring planets must render below the foreground ring');
 });

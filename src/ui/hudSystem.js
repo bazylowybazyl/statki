@@ -9,6 +9,11 @@ import { CockpitUI } from './cockpitUI.js';
 
 const CIC_MINI_RADAR_RANGES = Object.freeze([5000, 10000, 20000, 40000, 60000]);
 
+function mixRgb(from, to, amount) {
+    const t = Math.max(0, Math.min(1, Number(amount) || 0));
+    return `rgb(${Math.round(from[0] + (to[0] - from[0]) * t)}, ${Math.round(from[1] + (to[1] - from[1]) * t)}, ${Math.round(from[2] + (to[2] - from[2]) * t)})`;
+}
+
 class CicMiniRadarHUD {
     constructor(containerId) {
         this.container = document.getElementById(containerId);
@@ -32,7 +37,10 @@ class CicMiniRadarHUD {
         if (!this.ctx || !this.canvas) return;
         this.model = model;
         const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-        if ((now - this.lastDrawMs) < this.minDrawIntervalMs) return;
+        const drawIntervalMs = this.viewRange >= 60000
+            ? 100
+            : this.viewRange >= 40000 ? 80 : this.minDrawIntervalMs;
+        if ((now - this.lastDrawMs) < drawIntervalMs) return;
         this.lastDrawMs = now;
         this.draw(model);
         this.updateReadout(model);
@@ -479,6 +487,27 @@ export class HUDSystem {
             if (this.dom.driveRpm) this.dom.driveRpm.textContent = `RPM ${driveRpm}%`;
             if (this.dom.driveRpmFill) this.dom.driveRpmFill.style.width = `${driveRpm}%`;
             this.cache.driveRpm = driveRpm;
+        }
+        const shiftCueIntensity = Math.max(0, Math.min(1, Number(sys.driveShiftCueIntensity) || 0));
+        const shiftCueDanger = Math.max(0, Math.min(1, Number(sys.driveShiftCueDanger) || 0));
+        const shiftCueKey = `${Math.round(shiftCueIntensity * 100)}:${Math.round(shiftCueDanger * 100)}`;
+        if (this.cache.shiftCueKey !== shiftCueKey) {
+            const cueColor = [
+                52 + (239 - 52) * shiftCueDanger,
+                211 + (68 - 211) * shiftCueDanger,
+                153 + (68 - 153) * shiftCueDanger
+            ];
+            if (this.dom.driveRpmFill) {
+                const start = mixRgb([56, 189, 248], cueColor, shiftCueIntensity);
+                const middle = mixRgb([167, 243, 208], cueColor, shiftCueIntensity);
+                const end = mixRgb([251, 146, 60], cueColor, shiftCueIntensity);
+                this.dom.driveRpmFill.style.background = `linear-gradient(90deg, ${start} 0%, ${middle} 80%, ${end} 100%)`;
+                this.dom.driveRpmFill.style.boxShadow = `0 0 ${7 + shiftCueIntensity * 6}px ${mixRgb([56, 189, 248], cueColor, shiftCueIntensity)}`;
+            }
+            if (this.dom.driveRpm) {
+                this.dom.driveRpm.style.color = mixRgb([231, 244, 255], cueColor, shiftCueIntensity * 0.9);
+            }
+            this.cache.shiftCueKey = shiftCueKey;
         }
         const driveShiftBoost = !!sys.driveShiftBoost;
         if (this.cache.driveShiftBoost !== driveShiftBoost && this.dom.driveReadout) {

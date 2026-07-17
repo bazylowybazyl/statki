@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "benchmark:100k": "node scripts/benchmark100k.mjs",
     "preview": "vite preview",
     "electron": "electron .",
     "package": "vite build && electron-builder"

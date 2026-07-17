@@ -381,7 +381,7 @@
       height: 100%;
       background: linear-gradient(90deg, #38bdf8 0%, #a7f3d0 80%, #fb923c 100%);
       box-shadow: 0 0 7px rgba(56, 189, 248, .7);
-      transition: width .08s linear;
+      transition: width .08s linear, background .12s linear, box-shadow .12s linear;
     }
 
     .drive-readout.shift-boost .drive-gear {
@@ -630,6 +630,16 @@
               </div>
               <div style="margin-top:7px; font-size:10px; line-height:1.45; color:#6f8fb8;">
                 Ring: Low = tylko LOD, Med = SynthCity blisko, High/Ultra = pelne SynthCity.
+              </div>
+              <div style="margin-top:12px; margin-bottom:8px; font-size:12px; color:#a2d9ff;">Smugi cieni (god rays)</div>
+              <div class="menu-chip-group" id="shaft-quality-group" aria-label="Smugi cieni">
+                <button class="menu-chip" data-shaft-q="off">Off</button>
+                <button class="menu-chip" data-shaft-q="low">Low</button>
+                <button class="menu-chip" data-shaft-q="medium">Med</button>
+                <button class="menu-chip" data-shaft-q="high">High</button>
+              </div>
+              <div style="margin-top:7px; font-size:10px; line-height:1.45; color:#6f8fb8;">
+                Cienie rzucane pod slonce przez planety, ksiezyce, ring i statki. High = dluzsze smugi + overscan poza ekran.
               </div>
             </div>
 
@@ -1073,6 +1083,10 @@
     <div class="perf-title">WYDAJNOSC <span style="float:right;color:#556">[P] toggle</span></div>
     <div class="perf-fps good" id="perfFps">--</div>
     <div style="color:#556;font-size:10px;margin-bottom:6px" id="perfFrameTime">-- ms/frame</div>
+    <div class="perf-row"><span class="perf-label">Frame p50 / p95</span><span class="perf-val" id="perfFramePercentiles">--</span></div>
+    <div class="perf-row"><span class="perf-label">HexArena</span><span class="perf-val" id="perfHexArena">--</span></div>
+    <div class="perf-row"><span class="perf-label">Hex LOD full/hybrid/far</span><span class="perf-val" id="perfHexLod">--</span></div>
+    <div class="perf-row"><span class="perf-label">Physics worker</span><span class="perf-val" id="perfPhysicsWorker">--</span></div>
     <div class="perf-row"><span class="perf-label">Untracked</span><span class="perf-val" id="perfFrameUntracked">--</span></div>
     <div class="perf-bar-bg">
       <div class="perf-bar" id="barFrameUntracked" style="width:0%;background:#64748b"></div>
@@ -1477,6 +1491,7 @@
     import { initWorld3D, attachPirateStation3D, dettachPirateStation3D, updateWorld3D, drawWorld3D } from "./src/3d/world3d.js";
     import { initStations3D, updateStations3D, detachPlanetStations3D, drawStations3D, destroyStation3D } from "./src/3d/stations3D.js";
     import { AsteroidField } from "./src/3d/asteroidField3D.js";
+    import { AsteroidBeltBackdrop } from "./src/3d/asteroidBeltBackdrop3D.js";
     import { initHexShips3D, prewarmHexShips3D, updateHexShips3D, resizeHexShips3D, drawHexShips3D, invalidateHexShipEntity3D } from "./src/3d/hexShips3D.js";
     import { updateShields3D } from "./src/3d/shield3D.js";
     import { Core3D } from "./src/3d/core3d.js";
@@ -1507,6 +1522,7 @@
     window.initStations3D = initStations3D;
     window.updateStations3D = updateStations3D;
     window.AsteroidField = AsteroidField;
+    window.AsteroidBeltBackdrop = AsteroidBeltBackdrop;
     window.drawStations3D = drawStations3D;
     window.initHexShips3D = initHexShips3D;
     window.prewarmHexShips3D = prewarmHexShips3D;
@@ -1519,11 +1535,13 @@
     window.Core3DPerfStatus = () => (window.Core3D?.getPerfStatus ? window.Core3D.getPerfStatus() : null);
     window.Core3DPerf = (opts = {}) => (window.Core3D?.setPerfToggles ? window.Core3D.setPerfToggles(opts) : null);
     window.Core3DMsaa = (enabled = true, samples = 4) => (window.Core3D?.setMsaaEnabled ? window.Core3D.setMsaaEnabled(enabled, samples) : null);
+    window.Core3DShaftQuality = (quality = 'medium') => (window.Core3D?.setShadowShaftsQuality ? window.Core3D.setShadowShaftsQuality(quality) : null);
     window.Core3DPreset = (name = 'base') => {
       if (!window.Core3D) return null;
       const key = String(name || '').toLowerCase();
       if (key === 'base' || key === 'default') {
-        window.Core3D.setPerfToggles?.({ bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, enginePointLights: true });
+        window.Core3D.setPerfToggles?.({ bloom: true, heatHaze: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, enginePointLights: true });
+        window.Core3D.setShadowShaftsQuality?.(window.OPTIONS?.shadowShafts || 'medium');
         window.Core3D.setMsaaEnabled?.(true, 4);
       } else if (key === 'nobloom') {
         window.Core3D.setPerfToggles?.({ bloom: false });
@@ -1533,9 +1551,11 @@
         window.Core3D.setPerfToggles?.({ fgPass: false });
       } else if (key === 'fast') {
         window.Core3D.setPerfToggles?.({ bloom: false, heatHaze: false, fgPass: true, bgPass: true, orthoPass: true, enginePointLights: false });
+        window.Core3D.setShadowShaftsQuality?.('low');
         window.Core3D.setMsaaEnabled?.(false);
       } else if (key === 'ultrafast') {
-        window.Core3D.setPerfToggles?.({ bloom: false, heatHaze: false, shadowShafts: false, threeShadows: false, fgPass: false, planetPass: false, bgPass: true, orthoPass: true, enginePointLights: false });
+        window.Core3D.setPerfToggles?.({ bloom: false, heatHaze: false, threeShadows: false, fgPass: false, planetPass: false, bgPass: true, orthoPass: true, enginePointLights: false });
+        window.Core3D.setShadowShaftsQuality?.('off');
         window.Core3D.setMsaaEnabled?.(false);
       }
       const status = window.Core3D.getPerfStatus?.();
@@ -1582,6 +1602,7 @@
   <script type="module">
     
     import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
+    import { BELT_DEFINITIONS } from './src/data/asteroidTypes.js';
     import { WORLD, setWorldSize } from './src/world/world.js';
     import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff, getEntityShieldBaseRadius } from './shieldSystem.js';
     // DODANO IMPORT SHIP_PHYSICS
@@ -1592,6 +1613,7 @@
       cycleDriveMode,
       getDriveMode,
       setDriveAuto,
+      setDriveHullClass,
       setDriveMode,
       shiftDriveDown,
       shiftDriveUp,
@@ -1630,7 +1652,8 @@
       rollingCells
     } from "./src/game/fighterClouds.js";
     import { shouldZeroStabilizedAngularVelocity, updateHeadingStabilizer } from "./src/game/flight/stabilizer.js";
-    import { DestructorSystem, initHexBody, isHexShips3DActive, getHexStructuralState, DESTRUCTOR_CONFIG } from "./src/game/destructor.js";
+    import { DestructorSystem, initHexBody, isHexShips3DActive, getHexStructuralState, getHexArenaStats, disposeHexBody, DESTRUCTOR_CONFIG } from "./src/game/destructor.js";
+    import { PhysicsBridge } from "./src/physics/physicsBridge.js";
     import { updateShields3D } from "./src/3d/shield3D.js";
     // IMPORTUJEMY NOWY MODUL SUPERBRONI
     import * as Superweapon from "./src/game/superweapon.js";
@@ -1805,6 +1828,7 @@
 
     const PerfHUD = {
       history: new Float32Array(120),
+      percentileScratch: new Float32Array(120),
       histIdx: 0,
       visible: false,
       lastFlush: 0,
@@ -1884,6 +1908,8 @@
       display: {
         fps: 0,
         frameMs: 0,
+        frameP50: 0,
+        frameP95: 0,
           frameUntrackedTime: 0,
           physicsTime: 0,
           physicsPerStep: 0,
@@ -2048,6 +2074,10 @@
           panel,
           fps: document.getElementById('perfFps'),
           frameMs: document.getElementById('perfFrameTime'),
+          framePercentiles: document.getElementById('perfFramePercentiles'),
+          hexArena: document.getElementById('perfHexArena'),
+          hexLod: document.getElementById('perfHexLod'),
+          physicsWorker: document.getElementById('perfPhysicsWorker'),
           frameUntracked: document.getElementById('perfFrameUntracked'),
           physics: document.getElementById('perfPhysics'),
           destructor: document.getElementById('perfDestructor'),
@@ -2382,6 +2412,15 @@
         const avgFrame = this.accum.frameMs / frames;
         this.display.fps = Math.round(1000 / Math.max(0.001, avgFrame));
         this.display.frameMs = avgFrame;
+        const percentileCount = Math.min(this.history.length, this.histIdx);
+        for (let i = 0; i < percentileCount; i++) this.percentileScratch[i] = this.history[i];
+        this.percentileScratch.subarray(0, percentileCount).sort();
+        this.display.frameP50 = percentileCount > 0
+          ? this.percentileScratch[Math.min(percentileCount - 1, Math.floor((percentileCount - 1) * 0.50))]
+          : 0;
+        this.display.frameP95 = percentileCount > 0
+          ? this.percentileScratch[Math.min(percentileCount - 1, Math.ceil((percentileCount - 1) * 0.95))]
+          : 0;
         this.display.physicsTime = this.accum.physicsTime / frames;
         this.display.physicsPerStep = this.accum.physicsTime / Math.max(1, this.accum.physicsSteps);
         this.display.destructorTime = this.accum.destructorTime / frames;
@@ -2621,6 +2660,23 @@
           e.fps.className = `perf-fps ${d.fps >= 55 ? 'good' : d.fps >= 30 ? 'ok' : 'bad'}`;
         }
         if (e.frameMs) e.frameMs.textContent = `${d.frameMs.toFixed(1)} ms/frame`;
+        if (e.framePercentiles) e.framePercentiles.textContent = `${d.frameP50.toFixed(1)} / ${d.frameP95.toFixed(1)} ms`;
+        if (e.hexArena) {
+          const arenaStats = getHexArenaStats();
+          e.hexArena.textContent = `${arenaStats.allocated}/${arenaStats.capacity} | ${(arenaStats.bytes / 1048576).toFixed(1)} MB${arenaStats.shared ? ' SAB' : ''}`;
+        }
+        if (e.hexLod) {
+          const lod = window.__hexLodStats;
+          e.hexLod.textContent = lod
+            ? `${lod.fullBodies}/${lod.hybridBodies}/${lod.impostorBodies} | ${lod.fullHexes + lod.hybridHexes}/${lod.totalStructuralHexes}`
+            : '--';
+        }
+        if (e.physicsWorker) {
+          const workerStats = physicsBridgeV2?.getStats?.();
+          e.physicsWorker.textContent = workerStats
+            ? `${workerStats.mode} q=${workerStats.commandBacklog}/${workerStats.aiCommandBacklog}/${workerStats.eventBacklog} drop=${workerStats.commandDropped + workerStats.aiCommandDropped + workerStats.eventDropped}`
+            : 'disabled';
+        }
 
         setMs(e.frameUntracked, d.frameUntrackedTime);
         setMsWithStep(e.physics, d.physicsTime, d.physicsPerStep);
@@ -3381,7 +3437,8 @@
       vfx: { colorTempK: 8000, bloomGain: 1.1, engineGain: 1.0 },
       audio: { master: 0.8, sfx: 1.0, music: 0.7 },
       controls: { mouseSensitivity: 1.0 }, // bez odwracania osi
-      planetQuality: 'medium'
+      planetQuality: 'medium',
+      shadowShafts: 'medium'
     };
     window.OPTIONS = OPTIONS;
     const VFX_TUNE_DEFAULTS = {
@@ -4188,7 +4245,8 @@
       use3DPirateStation: true,
       usePlanetStations3D: true,
       disableCameraShake: false,
-      globalShieldsOff: false
+      globalShieldsOff: false,
+      workerPhysicsV2: new URLSearchParams(location.search).has('workerPhysicsV2')
     }, window.DevFlags || {});
     const DEFAULT_PIRATE_STATION_SCALE = 6;
     const DEFAULT_STATION_3D_SCALE = 2.70;
@@ -4202,6 +4260,11 @@
     const DevFlags = window.DevFlags;
     const DevTuning = window.DevTuning;
     const Dev = window.Dev = window.Dev || {};
+    const physicsBridgeV2 = DevFlags.workerPhysicsV2
+      ? new PhysicsBridge({ maxBodies: 4096, maxProjectiles: 65536, hexCapacity: 131072 })
+      : null;
+    window.PhysicsBridgeV2 = physicsBridgeV2;
+    window.PhysicsBridgeV2Stats = () => physicsBridgeV2?.getStats?.() || { mode: 'disabled' };
     if (!Number.isFinite(Dev.station3DScale) || Dev.station3DScale <= 0) {
       Dev.station3DScale = DEFAULT_STATION_3D_SCALE;
     }
@@ -7062,9 +7125,18 @@
     }
 
     const HUD_RADAR_REFRESH_MS = 80;
+    const HUD_RADAR_FAR_REFRESH_MS = 120;
     const HUD_RADAR_RANGE = 20000;
     let hudRadarSnapshot = null;
     let hudRadarLastRefreshMs = 0;
+    let hudRadarWorldFeatures = [];
+
+    function getHudRadarRefreshMs(range) {
+      const safeRange = Math.max(1, Number(range) || HUD_RADAR_RANGE);
+      if (safeRange >= 60000) return HUD_RADAR_FAR_REFRESH_MS;
+      if (safeRange >= 40000) return 90;
+      return HUD_RADAR_REFRESH_MS;
+    }
 
     function updatePlayerStatusUI() {
       // --- POPRAWKA: Jeśli menu jest otwarte, przerywamy ---
@@ -7086,15 +7158,18 @@
         driveGear: driveState.gear,
         driveGearCount: driveState.gearCount,
         driveRpm: driveState.rpm,
+        driveShiftCueIntensity: driveState.shiftCueIntensity,
+        driveShiftCueDanger: driveState.shiftCueDanger,
         driveAuto: driveState.auto,
         driveShiftBoost: driveState.shiftBoostTimer > 0,
         driveSpeedLimit: driveState.speedLimit
       };
       const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
       const hudRadarRange = window.hudSystem?.getRadarRange?.() || HUD_RADAR_RANGE;
+      const hudRadarRefreshMs = getHudRadarRefreshMs(hudRadarRange);
       if (!hudRadarSnapshot
         || Number(hudRadarSnapshot?.range) !== hudRadarRange
-        || (nowMs - hudRadarLastRefreshMs) >= HUD_RADAR_REFRESH_MS) {
+        || (nowMs - hudRadarLastRefreshMs) >= hudRadarRefreshMs) {
         hudRadarSnapshot = CICDisplay.getHudRadarSnapshot({
           ship,
           npcs,
@@ -7103,6 +7178,7 @@
           asteroidRange: typeof getScannerAsteroidRange === 'function' ? getScannerAsteroidRange() : 60000,
           lockedTargets,
           selectedTarget: scannerSelectedTarget || lockedTarget,
+          worldFeatures: hudRadarWorldFeatures,
           range: hudRadarRange,
           maxContacts: 48,
           maxAsteroidContacts: 24
@@ -8058,18 +8134,32 @@
     const solarParams = new URLSearchParams(location.search);
     const USE_SOLAR = solarParams.has('solar') ? solarParams.get('solar') !== '0' : true; // można też sterować paramem URL ?solar=1
     window.USE_SOLAR = USE_SOLAR;
-    const WORLD_TARGET_DIAMETER = 10000000;
-    const WORLD_BELT_WIDTH_AU = 2;
+    const WORLD_TARGET_DIAMETER = 12000000;
     const WORLD_SAFETY_MARGIN_AU = 2;
     const WORLD_EDGE_MARGIN_AU = WORLD_SAFETY_MARGIN_AU;
-    const SOLAR_RING_CENTER_OFFSET_AU = 3;
+    const PLANET_3D_SIZE_MULTIPLIER = 4.5;
+
+    function getRingBeltDefinition(id) {
+      return BELT_DEFINITIONS.find(belt => belt.id === id && belt.shape === 'ring') || null;
+    }
+
+    function getOuterAsteroidEdgeAU() {
+      return BELT_DEFINITIONS.reduce((maxEdge, belt) => {
+        if (belt.shape === 'ring' && Number.isFinite(belt.outerAU)) {
+          return Math.max(maxEdge, belt.outerAU);
+        }
+        if (belt.shape === 'triangle' && Number.isFinite(belt.radiusAU)) {
+          return Math.max(maxEdge, belt.radiusAU + Math.max(0, Number(belt.spreadAU) || 0) * 0.5);
+        }
+        return maxEdge;
+      }, 0);
+    }
 
     function makeSolarPlanets() {
-      // Skala: 1 AU ~= 3000 jednostek swiata (Neptun ~ 90k)
-      // Uwaga: powiększamy AU tak, aby rozmiary planet w 3D (×4.5) nie powodowały
-      // nachodzenia Ziemi i Marsa przy zbieżnych kątach orbitalnych.
+      // Skala AU dopasowuje cały układ do świata, łącznie z pasem Kuipera.
+      // orbitAU jest jedynym źródłem promienia orbity, dzięki czemu planety nie
+      // wpadają w pasy asteroid przez dodatkowe, ukryte offsety.
       const BASE_AU = 3000;
-      const PLANET_3D_SIZE_MULTIPLIER = 4.5;
       const EARTH_BASE_R = 2800;
       const MARS_BASE_R = 3000;
       const EARTH_ORBIT_AU = 25.0;
@@ -8100,34 +8190,27 @@
         { id: 'neptune', name: 'neptune', baseR: 2000, orbitAU: 120.00, type: 'gas' },
         // { id:'pluto',   name:'pluto',   baseR:  30, orbitAU:39.50 },
       ];
-      const neptuneOrbitAU = (() => {
-        const n = defs.find(def => def.id === 'neptune');
-        return Number.isFinite(n?.orbitAU) ? n.orbitAU : 120.0;
-      })();
-      const beltHalfWidthAU = WORLD_BELT_WIDTH_AU * 0.5;
-      const outerRadiusAU = neptuneOrbitAU + SOLAR_RING_CENTER_OFFSET_AU + beltHalfWidthAU + WORLD_SAFETY_MARGIN_AU;
+      const outerPlanetOrbitAU = defs.reduce(
+        (maxOrbit, def) => Number.isFinite(def.orbitAU) ? Math.max(maxOrbit, def.orbitAU) : maxOrbit,
+        0
+      );
+      const outerRadiusAU = Math.max(outerPlanetOrbitAU, getOuterAsteroidEdgeAU()) + WORLD_SAFETY_MARGIN_AU;
       const minAuForWorldTarget = WORLD_TARGET_DIAMETER / Math.max(1, outerRadiusAU * 2);
       const AU = Math.max(BASE_AU, minAuForNoOverlap, minAuForWorldTarget);
       window.BASE_ORBIT = AU;
 
       const MIN_SUN_GAP = 600;
       const MIN_PLANET_GAP = 800;
-      const INNER_PLANET_COUNT = 4;
-      const INNER_EXTRA_ORBIT_STEP = Math.max(600, AU * 2.2);
-      const INNER_EXTRA_SUN_GAP = Math.max(600, AU * 0.35);
-      const INNER_EXTRA_PLANET_GAP = Math.max(600, AU * 0.45);
       const rand = () => Math.random() * Math.PI * 2;
 
       let minOrbitEdge = SUN.r;
       return defs.map((def, index) => {
         const effectiveR = def.baseR * PLANET_SCALE;
         const baseOrbit = def.orbitAU * AU;
-        const isInner = index < INNER_PLANET_COUNT;
-        const extraOrbit = isInner ? INNER_EXTRA_ORBIT_STEP * (index + 1) : 0;
-        const sunGap = SUN.r + effectiveR + MIN_SUN_GAP + (isInner ? INNER_EXTRA_SUN_GAP : 0);
-        const neighborGap = minOrbitEdge + effectiveR + MIN_PLANET_GAP + (isInner ? INNER_EXTRA_PLANET_GAP : 0);
+        const sunGap = SUN.r + effectiveR + MIN_SUN_GAP;
+        const neighborGap = minOrbitEdge + effectiveR + MIN_PLANET_GAP;
         const orbitRadius = Math.max(
-          baseOrbit + extraOrbit,
+          baseOrbit,
           sunGap,
           neighborGap
         );
@@ -8152,29 +8235,13 @@
 
     function computeWorldDiameter(planets) {
       const auToWorld = getAuToWorldUnits();
-      const beltWidthAU = WORLD_BELT_WIDTH_AU;
-      const beltHalfWidthAU = beltWidthAU / 2;
       const safetyMarginAU = WORLD_SAFETY_MARGIN_AU;
-      const beltCenterAU = (() => {
-        const neptune = planets.find(p => p.id === 'neptune' || p.name === 'neptune');
-        if (neptune && Number.isFinite(neptune.orbitAU)) return neptune.orbitAU + SOLAR_RING_CENTER_OFFSET_AU;
-
-        const maxOrbitAU = planets
-          .map(p => p.orbitAU)
-          .filter(Number.isFinite)
-          .reduce((max, v) => Math.max(max, v), -Infinity);
-        if (Number.isFinite(maxOrbitAU)) return maxOrbitAU + SOLAR_RING_CENTER_OFFSET_AU;
-
-        const maxOrbitRadius = planets
-          .map(p => p.orbitRadius)
-          .filter(Number.isFinite)
-          .reduce((max, v) => Math.max(max, v), -Infinity);
-        if (Number.isFinite(maxOrbitRadius)) return (maxOrbitRadius / auToWorld) + SOLAR_RING_CENTER_OFFSET_AU;
-
-        return 60;
-      })();
-
-      const outerRadiusWorld = (beltCenterAU + beltHalfWidthAU + safetyMarginAU) * auToWorld;
+      const maxPlanetOrbitAU = planets
+        .map(p => p.orbitAU)
+        .filter(Number.isFinite)
+        .reduce((max, value) => Math.max(max, value), 0);
+      const outerRadiusAU = Math.max(maxPlanetOrbitAU, getOuterAsteroidEdgeAU()) + safetyMarginAU;
+      const outerRadiusWorld = outerRadiusAU * auToWorld;
       return outerRadiusWorld * 2;
     }
 
@@ -8271,6 +8338,62 @@
       return p;
     });
     window.planets = planets;
+
+    function buildHudRadarWorldFeatures(planetList, sun) {
+      const features = [];
+      if (sun) {
+        features.push({
+          id: 'sun',
+          type: 'sun',
+          label: 'SOL',
+          entity: sun,
+          radius: Math.max(100, Number(sun.r) || 0) * 6,
+          outerRadius: Math.max(100, Number(sun.r) || 0) * 6,
+          color: '#ffb347'
+        });
+      }
+
+      for (let i = 0; i < planetList.length; i++) {
+        const planet = planetList[i];
+        if (!planet) continue;
+        const id = String(planet.id || planet.name || `planet-${i}`).toLowerCase();
+        const hasMegaring = id === 'earth' || id === 'mars';
+        if (hasMegaring) {
+          const layout = computePlanetaryRingLayout(planet);
+          features.push({
+            id,
+            type: 'planet',
+            label: planet.label || id,
+            entity: planet,
+            radius: layout.planetR,
+            outerRadius: layout.outerRadius,
+            ring: {
+              innerRadius: layout.innerRadius,
+              outerRadius: layout.outerRadius,
+              boundaries: [
+                layout.inner.outerR,
+                layout.industrial.outerR,
+                layout.parking.outerR
+              ]
+            }
+          });
+          continue;
+        }
+
+        const visualRadius = Math.max(100, Number(planet.r) || 0) * PLANET_3D_SIZE_MULTIPLIER;
+        features.push({
+          id,
+          type: 'planet',
+          label: planet.label || id,
+          entity: planet,
+          radius: visualRadius,
+          outerRadius: visualRadius
+        });
+      }
+      return features;
+    }
+
+    hudRadarWorldFeatures = buildHudRadarWorldFeatures(planets, SUN);
 
     // =============== Strefy (planety/słońce/pas asteroid) ===============
     const AU_IN_WORLD_UNITS = getAuToWorldUnits();
@@ -8628,17 +8751,12 @@
 
     const ASTEROID_BELT = (() => {
       const AU_TO_WORLD = getAuToWorldUnits();
-      const neptuneBelt = (() => {
-        const neptune = planets.find(p => p.id === 'neptune' || p.name === 'neptune');
-        if (!neptune || !Number.isFinite(neptune.orbitAU)) return null;
-        const beltAU = neptune.orbitAU + 3;
-        const beltWidthAU = WORLD_BELT_WIDTH_AU;
-        const mid = beltAU * AU_TO_WORLD;
-        const inner = Math.max(50, mid - (beltWidthAU * AU_TO_WORLD) / 2);
-        const outer = mid + (beltWidthAU * AU_TO_WORLD) / 2;
-        return { inner, outer, mid };
-      })();
-      if (neptuneBelt) return neptuneBelt;
+      const mainBelt = getRingBeltDefinition('main');
+      if (mainBelt && Number.isFinite(mainBelt.innerAU) && Number.isFinite(mainBelt.outerAU)) {
+        const inner = Math.max(50, mainBelt.innerAU * AU_TO_WORLD);
+        const outer = mainBelt.outerAU * AU_TO_WORLD;
+        return { inner, outer, mid: (inner + outer) / 2 };
+      }
 
       const innerPlanet = planets[3];
       const outerPlanet = planets[4];
@@ -10849,11 +10967,57 @@
           console.error('[AsteroidField] init failed', err);
         }
       }
+
+      // Tło 3D pasów asteroid — proceduralne skały na warstwie tła (layer 1),
+      // pod sprite'owym polem gameplayu. Regiony liczone z tych samych
+      // BELT_DEFINITIONS i pozycji planet co AsteroidField wyżej.
+      if (window.AsteroidBeltBackdrop && !window.beltBackdrop) {
+        try {
+          window.beltBackdrop = new window.AsteroidBeltBackdrop({
+            seed: 0xB4CD07,
+            planets,
+            sun: SUN,
+            auToWorld: getAuToWorldUnits(),
+            scene: Core3D.scene,
+            fovDeg: Core3D.cameraPersp ? Core3D.cameraPersp.fov : 35,
+          });
+          console.log(`[BeltBackdrop] ready: ${window.beltBackdrop.regions.length} belt regions`);
+        } catch (err) {
+          console.error('[BeltBackdrop] init failed', err);
+        }
+      }
     });
 
     function waitForPlanetsReady() {
       if (planetScene3D || planetStationsReady) return Promise.resolve();
       return waitForCondition(() => planetScene3D || planetStationsReady, 2500);
+    }
+
+    // Mgła pasa w bezpiecznej warstwie Canvas 2D. Gradient jest cache'owany po
+    // rozmiarze viewportu, więc nie tworzymy obiektów w gorącej pętli renderu.
+    const beltFog2DCache = { width: 0, height: 0, gradient: null };
+    function drawBeltFog2D(context, width, height, intensity) {
+      const amount = clamp(Number(intensity) || 0, 0, 1);
+      if (amount <= 0.004) return;
+      if (!beltFog2DCache.gradient || beltFog2DCache.width !== width || beltFog2DCache.height !== height) {
+        const radius = Math.max(width, height) * 0.9;
+        const gradient = context.createRadialGradient(
+          width * 0.32, height * 0.38, 0,
+          width * 0.32, height * 0.38, radius
+        );
+        gradient.addColorStop(0, 'rgba(92, 116, 154, 0.72)');
+        gradient.addColorStop(0.42, 'rgba(54, 75, 112, 0.30)');
+        gradient.addColorStop(1, 'rgba(20, 30, 52, 0)');
+        beltFog2DCache.width = width;
+        beltFog2DCache.height = height;
+        beltFog2DCache.gradient = gradient;
+      }
+      context.save();
+      context.globalCompositeOperation = 'screen';
+      context.globalAlpha = amount * 0.15;
+      context.fillStyle = beltFog2DCache.gradient;
+      context.fillRect(0, 0, width, height);
+      context.restore();
     }
 
 
@@ -13491,7 +13655,11 @@
 
     // =============== Input ===============
     const input = { main: 0, leftSide: 0, rightSide: 0, retro: 0, torque: 0 };
-    const driveState = createDriveTransmission({ mode: 'combat', auto: false });
+    const driveState = createDriveTransmission({
+      mode: 'combat',
+      auto: false,
+      hullClass: PLAYER.activeHullId
+    });
     window.shipDriveState = driveState;
     const flightAssist = {
       damper: false,
@@ -14278,23 +14446,18 @@
         return;
       }
       if (k === 'x') {
+        if (e.repeat) return;
         if (inRtsMode) {
           e.preventDefault();
-          const scannerWasActive = !!scannerState.active;
-          if (!scannerWasActive) {
-            setScannerActive(true);
-            hudPingNpcStations();
-            togglePlanetRadarVisibility(scannerState.active);
-            pushZoneMessage('RTS: SKANER AKTYWNY', 1.1);
-            return;
-          }
-          const menuTarget = radarTargetingUI?.togglePrimaryActionMenu?.();
-          if (!menuTarget) pushZoneMessage('RTS: BRAK WIDOCZNEGO CELU', 1.1);
+          setScannerActive(true);
+          hudPingNpcStations();
+          togglePlanetRadarVisibility(true);
+          pushZoneMessage('RTS: POJEDYNCZY IMPULS SKANERA', 1.1);
           return;
         } else {
-          setScannerActive(!scannerState.active);
+          setScannerActive(true);
           hudPingNpcStations();
-          togglePlanetRadarVisibility(scannerState.active);
+          togglePlanetRadarVisibility(true);
         }
       }
       if (e.code === 'Tab' && !stationUI.open) {
@@ -14654,7 +14817,6 @@
     const SCANNER_LOCK_PULSE_SPEED = 5.5;
     const scannerState = {
       active: false,
-      pulseTimer: 0,
       lockAnim: 0,
       sweepTargets: new Set(),
       autoInspectFirst: false
@@ -14686,10 +14848,6 @@
 
     function getScannerWaveSpeed() {
       return getScannerSensors().scanWaveSpeed;
-    }
-
-    function getScannerRefreshInterval() {
-      return Math.max(0.45, getScannerActiveRange() / Math.max(1, getScannerWaveSpeed()) + 0.35);
     }
 
     function isHostileNpc(n) {
@@ -14945,14 +15103,14 @@
     }
     function setScannerActive(nextActive) {
       scannerState.active = !!nextActive;
-      scannerState.pulseTimer = 0;
       scannerState.lockAnim = 0;
       invalidateScannerPassiveContacts();
       if (scannerState.active) {
         refreshScannerPassiveContacts(true);
+        scanWaves.length = 0;
         triggerScanWave({ reset: true });
-        scannerState.pulseTimer = getScannerRefreshInterval();
-        pushZoneMessage('Active Scanner: ONLINE', 1.3);
+        CICDisplay.triggerHudRadarBurst?.();
+        pushZoneMessage('Active Scanner: SINGLE BURST', 1.3);
       } else {
         scannerContacts.length = 0;
         scanWaves.length = 0;
@@ -15897,8 +16055,9 @@
         hudPingNpcStations();
         togglePlanetRadarVisibility(scannerState.active);
       } else {
+        scanWaves.length = 0;
         triggerScanWave();
-        scannerState.pulseTimer = getScannerRefreshInterval();
+        CICDisplay.triggerHudRadarBurst?.();
       }
       pushZoneMessage('SCAN: ACTIVE PING', 1.2);
     }
@@ -18673,6 +18832,7 @@
       if (window.invalidateHexShipEntity3D) {
         try { window.invalidateHexShipEntity3D(npc); } catch (_) {}
       }
+      disposeHexBody(npc);
       npc.hexGrid = null;
     }
 
@@ -20565,13 +20725,6 @@
         scannerSelectedTarget = null;
       }
       scannerState.lockAnim += dt * SCANNER_LOCK_PULSE_SPEED;
-      if (scannerState.active) {
-        scannerState.pulseTimer -= dt;
-        if (scannerState.pulseTimer <= 0) {
-          scannerState.pulseTimer = getScannerRefreshInterval();
-          triggerScanWave();
-        }
-      }
       const scannerUiEnabled = (scannerState.active || lockedTargets.length > 0 || scannerSelectedTarget) && !CICDisplay.active && !stationUI.open && !showMap && !splitScreenMode;
       const radarUiEnabled = false;
       const scannerOverviewContacts = scannerUiEnabled ? getScannerOverviewContacts() : scannerContacts;
@@ -21430,6 +21583,7 @@
     // =============== Main loop ===============
     let lastTime = performance.now();
     const PHYS_DT = 1 / 120;
+    let physicsTickId = 0;
     let renderFrameId = 0; // id klatki rAF — używane przez cache prep destruktora
     let acc = 0;
     let vfxTime = 0;
@@ -21470,13 +21624,19 @@
       renderFrameId++;
       window.__frameId = renderFrameId; // stempel klatki dla cache AI (separacja/omijanie)
       let steps = 0;
+      const bridgeStartTick = physicsTickId + 1;
       while (acc >= PHYS_DT && steps < 10) {
         prevCameraState.x = camera.x;
         prevCameraState.y = camera.y;
         prevCameraState.zoom = camera.zoom;
         saveState();
         physicsStep(PHYS_DT);
+        physicsTickId++;
         acc -= PHYS_DT; steps++;
+      }
+      if (steps > 0 && physicsBridgeV2) {
+        const pressure = Math.max(0, (PerfHUD.display?.frameP95 || 0) / 16.67 - 1);
+        physicsBridgeV2.step(bridgeStartTick, steps, pressure, PHYS_DT);
       }
 
       // Deformacje wizualne destruktora (lerp, GPU soft body, elastyczność, erase cache)
@@ -22088,6 +22248,11 @@
           if (npc && !npc.dead && npc.pos) window.asteroidField.checkShipCollisions(npc);
         }
       }
+      // Tło 3D pasów: streaming chunków wokół kamery + immersja (ciemniej w głębi pasa).
+      // camNoShake — shake kamery nie powinien triggerować streamingu.
+      if (window.beltBackdrop) {
+        window.beltBackdrop.update(frameDt, camNoShake, ship && ship.pos ? ship.pos : null, W, H);
+      }
       const render3dAsteroidsMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dAsteroidsUpdateTime', render3dAsteroidsMs);
       if (renderDbgEnabled) RenderLiveDebug.record('asteroidField.update', render3dAsteroidsMs);
@@ -22675,6 +22840,20 @@
         tRender2dSection = performance.now();
 
         // === FOG OF WAR === (disabled — will be reimplemented later)
+
+        // === BELT AMBIENT DIM === Głębiej w pasie asteroid = ciemniejsza scena.
+        // Overlay leży nad światem (2D + WebGL pod spodem), ale pod HUD/celownikami.
+        {
+          const beltDim = window.beltBackdrop ? window.beltBackdrop.getAmbientDim() : 0;
+          if (beltDim > 0.004) {
+            ctx.save();
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = `rgba(3, 5, 10, ${(beltDim * 0.12).toFixed(3)})`;
+            ctx.fillRect(0, 0, W, H);
+            ctx.restore();
+            drawBeltFog2D(ctx, W, H, beltDim);
+          }
+        }
 
         // === UI / HUD Pass ===
         // Rysuj HUD na Canvasie TYLKO jeśli nie jesteśmy w menu
@@ -24234,6 +24413,9 @@
       PLAYER.activeHullId = activeHullId;
       PLAYER.shipId = activeHullId;
       ship.activeHullId = activeHullId;
+      if (window.shipDriveState) {
+        setDriveHullClass(window.shipDriveState, activeHullId, getPlayerSpeed());
+      }
 
       const physics = hull.physics || BASE_PLAYER_PHYSICS;
       SHIP_PHYSICS.PLAYER_MASS = Math.max(1, Number(hull.mass) || BASE_PLAYER_PROFILE.mass);
@@ -24301,6 +24483,7 @@
           try { return new URL(desiredSprite, window.location.href).href; } catch { return desiredSprite; }
         })();
         if (window.invalidateHexShipEntity3D) window.invalidateHexShipEntity3D(ship);
+        disposeHexBody(ship);
         ship.hexGrid = null;
         if (shipSprite.src !== desiredResolved) {
           ship.spriteReady = false;
@@ -25293,6 +25476,38 @@
         window.OPTIONS.planetQuality = saved;
       }
       updatePlanetQualityUI();
+    });
+
+    // --- OBSLUGA JAKOSCI SMUG CIENI (shadow shafts) ---
+
+    function updateShaftQualityUI() {
+      const current = (window.OPTIONS && window.OPTIONS.shadowShafts) || 'medium';
+      document.querySelectorAll('[data-shaft-q]').forEach(btn => {
+        const isActive = (btn.dataset.shaftQ === current);
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive);
+      });
+    }
+
+    function applyShaftQuality(quality) {
+      if (window.OPTIONS) window.OPTIONS.shadowShafts = quality;
+      if (typeof window.Core3DShaftQuality === 'function') window.Core3DShaftQuality(quality);
+    }
+
+    document.querySelectorAll('[data-shaft-q]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const quality = e.target.dataset.shaftQ;
+        applyShaftQuality(quality);
+        localStorage.setItem('sc_shadow_shafts', quality);
+        updateShaftQualityUI();
+        console.log(`Zmieniono jakość smug cieni na: ${quality}`);
+      });
+    });
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const saved = localStorage.getItem('sc_shadow_shafts');
+      if (saved) applyShaftQuality(saved);
+      updateShaftQualityUI();
     });
 
   </script>

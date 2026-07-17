@@ -1,5 +1,5 @@
 ﻿import * as THREE from 'three';
-import { refreshHexBodyCache, DestructorSystem } from '../game/destructor.js';
+import { refreshHexBodyCache, DestructorSystem, isPackedShardBoundary } from '../game/destructor.js';
 import { Core3D } from './core3d.js';
 import { EngineVfxSystem } from './engineVfxSystem.js';
 import { Weapon3DSystem } from './weapon3DSystem.js';
@@ -9,6 +9,7 @@ import {
   buildRoadLightWorldEmitters,
   buildShipLightShaderPayload
 } from '../game/shipLightRuntime.js';
+import { allowsSolidArmorLod } from './hexLodPolicy.js';
 
 const HEX_VERTEX_SHADER = `
 attribute vec2 aGridPos;
@@ -24,6 +25,17 @@ void main() {
   vSpriteUV = (aGridPos + position.xy) / uSpriteSize;
   vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position.xy, 0.0, 1.0);
   gl_Position = projectionMatrix * mvPosition;
+}
+`;
+
+const ARMOR_VERTEX_SHADER = `
+varying vec2 vSpriteUV;
+varying float vStress;
+
+void main() {
+  vStress = 0.0;
+  vSpriteUV = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
 
@@ -46,6 +58,7 @@ uniform float uDayDiffuseMul;
 uniform float uSpecularMul;
 uniform int uIsOcclusion;
 uniform int uBillboardLighting;
+uniform float uLodOpacity;
 uniform vec2 uSpriteSize;
 uniform float uTime;
 uniform int uShipLightCount;
@@ -62,7 +75,7 @@ void main() {
 
   vec4 armor = texture2D(uSprite, vSpriteUV);
   vec3 color = armor.rgb;
-  float alpha = armor.a;
+  float alpha = armor.a * uLodOpacity;
 
   if (alpha < 0.01) discard;
 
@@ -248,6 +261,21 @@ const state = {
   damageTintEnabled: true
 };
 
+const HEX_LOD = Object.freeze({ FULL: 0, HYBRID: 1, IMPOSTOR: 2 });
+const HEX_LOD_FULL_PX = 1.25;
+const HEX_LOD_IMPOSTOR_PX = 0.45;
+const HEX_LOD_HYSTERESIS = 0.20;
+const HEX_LOD_FADE_MS = 150;
+
+const lodFrameStats = {
+  fullBodies: 0,
+  hybridBodies: 0,
+  impostorBodies: 0,
+  fullHexes: 0,
+  hybridHexes: 0,
+  totalStructuralHexes: 0
+};
+
 const drawPerfScratch = {
   coreCallMs: 0,
   coreRenderMs: 0,
@@ -423,6 +451,94 @@ function computeShardStress(shard) {
   return 0;
 }
 
+function isLegacyBoundaryShard(shard) {
+  const neighbors = shard?.neighbors;
+  if (!Array.isArray(neighbors) || neighbors.length < 6) return true;
+  for (let index = 0; index < 6; index++) {
+    const neighbor = neighbors[index];
+    if (!neighbor || !neighbor.active || neighbor.isDebris || neighbor.hp <= 0) return true;
+  }
+  return false;
+}
+
+function shouldRenderHybridShard(shard) {
+  if (!shard?.active || shard.isDebris || shard.hp <= 0) return false;
+  if (isPackedShardBoundary(shard) || isLegacyBoundaryShard(shard)) return true;
+  if (Number(shard.hp) < (Number(shard.maxHp) || Number(shard.hp)) * 0.995) return true;
+  const deform = shard.deformation;
+  const target = shard.targetDeformation;
+  if (Math.abs(Number(deform?.x) || 0) + Math.abs(Number(deform?.y) || 0) > 0.08) return true;
+  if (Math.abs(Number(target?.x) || 0) + Math.abs(Number(target?.y) || 0) > 0.08) return true;
+  return computeShardStress(shard) > 0.08;
+}
+
+function resolveHexLod(data, screenRadiusPx, now, solidArmorAllowed = true) {
+  // A split body still samples the original sprite in each individual hex.
+  // Its solid armor plane, however, contains the entire parent sprite. Never
+  // let that plane fade in for wrecks/fragments: it produced the visible loop
+  // "whole ship -> fragments -> whole ship" around the LOD thresholds.
+  if (!solidArmorAllowed) {
+    if (data.lodMode !== HEX_LOD.FULL || data.instanceLodMode !== HEX_LOD.FULL) {
+      data.needsInstanceRefresh = true;
+    }
+    data.lodMode = HEX_LOD.FULL;
+    data.instanceLodMode = HEX_LOD.FULL;
+    data.lodFadeStart = now;
+    data.lodFromHexOpacity = 1;
+    data.lodFromArmorOpacity = 0;
+    data.hexOpacity = 1;
+    data.armorOpacity = 0;
+    data.mesh.material.uniforms.uLodOpacity.value = 1;
+    data.armorMesh.material.uniforms.uLodOpacity.value = 0;
+    data.mesh.visible = true;
+    data.armorMesh.visible = false;
+    return;
+  }
+
+  const current = data.lodMode;
+  let desired = current;
+  const h = HEX_LOD_HYSTERESIS;
+
+  if (current === HEX_LOD.FULL) {
+    if (screenRadiusPx < HEX_LOD_FULL_PX * (1 - h)) desired = HEX_LOD.HYBRID;
+  } else if (current === HEX_LOD.HYBRID) {
+    if (screenRadiusPx > HEX_LOD_FULL_PX * (1 + h)) desired = HEX_LOD.FULL;
+    else if (screenRadiusPx < HEX_LOD_IMPOSTOR_PX * (1 - h)) desired = HEX_LOD.IMPOSTOR;
+  } else if (screenRadiusPx > HEX_LOD_IMPOSTOR_PX * (1 + h)) {
+    desired = HEX_LOD.HYBRID;
+  }
+
+  if (desired !== current) {
+    data.lodMode = desired;
+    data.lodFadeStart = now;
+    data.lodFromHexOpacity = data.hexOpacity;
+    data.lodFromArmorOpacity = data.armorOpacity;
+    // Upgrades may reveal detailed geometry immediately at zero opacity.  During
+    // downgrades keep the old geometry until the armor has faded in, avoiding a
+    // one-frame hole where the interior disappears.
+    if (desired < current || current === HEX_LOD.IMPOSTOR) {
+      data.instanceLodMode = desired;
+      data.needsInstanceRefresh = true;
+    }
+  }
+
+  const elapsed = Math.max(0, now - data.lodFadeStart);
+  const t = Math.min(1, elapsed / HEX_LOD_FADE_MS);
+  const smooth = t * t * (3 - 2 * t);
+  const targetHex = data.lodMode === HEX_LOD.IMPOSTOR ? 0 : 1;
+  const targetArmor = data.lodMode === HEX_LOD.FULL ? 0 : 1;
+  data.hexOpacity = data.lodFromHexOpacity + (targetHex - data.lodFromHexOpacity) * smooth;
+  data.armorOpacity = data.lodFromArmorOpacity + (targetArmor - data.lodFromArmorOpacity) * smooth;
+  if (t >= 1 && data.instanceLodMode !== data.lodMode) {
+    data.instanceLodMode = data.lodMode;
+    data.needsInstanceRefresh = true;
+  }
+  data.mesh.material.uniforms.uLodOpacity.value = data.hexOpacity;
+  data.armorMesh.material.uniforms.uLodOpacity.value = data.armorOpacity;
+  data.mesh.visible = data.lodMode !== HEX_LOD.IMPOSTOR || data.hexOpacity > 0.001;
+  data.armorMesh.visible = data.armorOpacity > 0.001;
+}
+
 function setAttrUpdateRange(attr, start, count) {
   if (!attr) return;
   if (typeof attr.clearUpdateRanges === 'function') {
@@ -537,8 +653,15 @@ function disposeMeshData(data) {
   if (Core3D.scene && data.mesh) {
     Core3D.scene.remove(data.mesh);
   }
+  if (Core3D.scene && data.armorMesh) {
+    Core3D.scene.remove(data.armorMesh);
+  }
   data.mesh?.geometry?.dispose?.();
   data.mesh?.material?.dispose?.();
+  data.armorMesh?.geometry?.dispose?.();
+  data.armorMesh?.material?.dispose?.();
+  // Geometrię i teksturę okluder dzieli z armorMesh — dispose tylko materiału.
+  data.armorOccluder?.material?.dispose?.();
   if (data.visualImageRef) releaseSharedVisualTexture(data.visualImageRef);
   else data.texture?.dispose?.();
   data.normalTexture?.dispose?.();
@@ -754,6 +877,7 @@ function createEntityMesh(entity) {
       uSpecularMul: { value: SHIP_LIGHT_DEFAULTS.specularMul },
       uIsOcclusion: { value: 0 },
       uBillboardLighting: { value: usesBillboardLighting(entity) ? 1 : 0 },
+      uLodOpacity: { value: 1 },
       uTime: { value: 0 },
       uShipLightCount: { value: 0 },
       uShipLightData: { value: createLightUniformArray() },
@@ -810,14 +934,67 @@ function createEntityMesh(entity) {
   mesh.geometry.setAttribute('aStress', new THREE.InstancedBufferAttribute(stressArray, 1));
   mesh.geometry.getAttribute('aStress').setUsage(THREE.DynamicDrawUsage);
 
+  // The armor layer reuses the exact same texture and lighting uniforms.  At
+  // distance it replaces thousands of interior hex instances, while boundary,
+  // damaged and deforming hexes remain individually rendered above it.
+  const armorGeometry = new THREE.PlaneGeometry(grid.srcWidth || 1, grid.srcHeight || 1);
+  armorGeometry.translate(-(Number(grid?.pivot?.x) || 0), -(Number(grid?.pivot?.y) || 0), 0);
+  const armorUniforms = { ...material.uniforms, uLodOpacity: { value: 0 } };
+  const armorMaterial = new THREE.ShaderMaterial({
+    uniforms: armorUniforms,
+    vertexShader: ARMOR_VERTEX_SHADER,
+    fragmentShader: HEX_FRAGMENT_SHADER,
+    transparent: true,
+    depthWrite: true,
+    depthTest: true,
+    side: THREE.FrontSide
+  });
+  const armorMesh = new THREE.Mesh(armorGeometry, armorMaterial);
+  armorMesh.frustumCulled = false;
+  armorMesh.renderOrder = entity?.isRingSegment ? -1 : 9;
+  armorMesh.visible = false;
+  armorMesh.position.z = -0.25;
+
+  Core3D.scene.add(armorMesh);
   Core3D.scene.add(mesh);
+  // Kadłub rzuca shadow shafts (maska okluzji renderowana kamerą ortho z białym
+  // override'em). Tylko instanced heksy — realna sylwetka; armorMesh celowo NIE:
+  // to pełny prostokąt sprite'a (kontur robi alpha-discard w shaderze), więc
+  // z override'em rzucałby prostokątny cień.
+  if (typeof Core3D.enableOrthoOccluder3D === 'function') Core3D.enableOrthoOccluder3D(mesh);
+
+  // Okluder sylwetki dla LOD HYBRID/IMPOSTOR: gdy armor-quad zastępuje heksy
+  // wnętrza, w masce shaftów zostawał sam obrys kadłuba (blur go zjadał) i cień
+  // statku znikał tuż po oddaleniu kamery. Bliźniaczy quad — biały, z alfą
+  // sprite'a (alphaTest wycina sylwetkę) — jest dzieckiem armorMesh, więc
+  // dziedziczy transform i widoczność LOD, a renderuje się wyłącznie
+  // w przejściu maski BEZ override'u (warstwa sprite-okluderów).
+  let armorOccluder = null;
+  if (typeof Core3D.enableSpriteOccluder3D === 'function') {
+    const armorOccluderMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      map: texture,
+      alphaTest: 0.35,
+      transparent: false,
+      depthWrite: false,
+      depthTest: false,
+      side: THREE.DoubleSide
+    });
+    armorOccluder = new THREE.Mesh(armorGeometry, armorOccluderMaterial);
+    armorOccluder.frustumCulled = false;
+    armorMesh.add(armorOccluder);
+    Core3D.enableSpriteOccluder3D(armorOccluder);
+  }
 
   const data = {
     mesh,
+    armorMesh,
+    armorOccluder,
     texture,
     visualImageRef: visualImage,
     normalTexture,
     normalMapRef: grid.normalMapImage || null,
+    gridPosAttr: mesh.geometry.getAttribute('aGridPos'),
     stressAttr: mesh.geometry.getAttribute('aStress'),
     shardsRef: shards,
     shardCount: count,
@@ -825,13 +1002,22 @@ function createEntityMesh(entity) {
     srcHeight: grid.srcHeight || 1,
     pivotX: Number(grid?.pivot?.x) || 0,
     pivotY: Number(grid?.pivot?.y) || 0,
+    baseRadius,
+    lodMode: HEX_LOD.FULL,
+    instanceLodMode: HEX_LOD.FULL,
+    lodFadeStart: state.lastTime,
+    lodFromHexOpacity: 1,
+    lodFromArmorOpacity: 0,
+    hexOpacity: 1,
+    armorOpacity: 0,
+    renderedHexCount: count,
     needsInstanceRefresh: true
   };
   state.entityMeshes.set(entity, data);
   return data;
 }
 
-function updateEntityMesh(entity, data, camX, camY) {
+function updateEntityMesh(entity, data, camX, camY, cameraZoom) {
   if (!entity?.hexGrid || !data?.mesh) return;
   const grid = entity.hexGrid;
   const shards = grid.shards;
@@ -870,6 +1056,7 @@ function updateEntityMesh(entity, data, camX, camY) {
   }
 
   if (pivotX !== data.pivotX || pivotY !== data.pivotY) {
+    data.armorMesh.geometry.translate(data.pivotX - pivotX, data.pivotY - pivotY, 0);
     data.pivotX = pivotX;
     data.pivotY = pivotY;
     data.needsInstanceRefresh = true;
@@ -879,6 +1066,8 @@ function updateEntityMesh(entity, data, camX, camY) {
   const ex = interpPose ? interpPose.x : getEntityPosX(entity);
   const ey = interpPose ? interpPose.y : getEntityPosY(entity);
   const entityAngle = interpPose ? interpPose.angle : (entity.angle || 0);
+  const screenRadiusPx = data.baseRadius * getEntityScale(entity) * Math.max(0.0001, cameraZoom) * (Core3D.pixelRatio || 1);
+  resolveHexLod(data, screenRadiusPx, state.lastTime, allowsSolidArmorLod(entity));
 
   // Upload tekstury pancerza = pełny texImage2D + regeneracja mipmap. W ostrzale
   // destroyShard ustawiał gpuTextureNeedsUpdate przy KAŻDYM heksie → kilka pełnych
@@ -899,11 +1088,11 @@ function updateEntityMesh(entity, data, camX, camY) {
 
   if (!!grid.meshDirty || data.needsInstanceRefresh) {
     const stressAttr = data.stressAttr;
+    const gridPosAttr = data.gridPosAttr;
 
     const instanceArray = mesh.instanceMatrix.array;
     const cx = (grid.srcWidth || 0) * 0.5;
     const cy = (grid.srcHeight || 0) * 0.5;
-    mesh.count = shards.length;
 
     const hasRange =
       Number.isFinite(grid.meshDirtyStart) &&
@@ -911,7 +1100,8 @@ function updateEntityMesh(entity, data, camX, camY) {
       grid.meshDirtyStart >= 0 &&
       grid.meshDirtyEnd >= grid.meshDirtyStart;
 
-    const fullRefresh = data.needsInstanceRefresh || !!grid.meshDirtyAll || !hasRange;
+    const fullLod = data.instanceLodMode === HEX_LOD.FULL;
+    const fullRefresh = !fullLod || data.needsInstanceRefresh || !!grid.meshDirtyAll || !hasRange;
 
     let start = 0;
     let end = shards.length - 1;
@@ -925,46 +1115,81 @@ function updateEntityMesh(entity, data, camX, camY) {
       }
     }
 
-    for (let i = start; i <= end; i++) {
-      const shard = shards[i];
-      const offset = i * 16;
+    if (fullLod) {
+      mesh.count = shards.length;
+      for (let i = start; i <= end; i++) {
+        const shard = shards[i];
+        const offset = i * 16;
 
-      if (shard && shard.active && !shard.isDebris) {
-        const deform = shard.deformation;
-        const gx = shard.gridX + (deform ? deform.x : 0);
-        const gy = shard.gridY + (deform ? deform.y : 0);
+        if (shard && shard.active && !shard.isDebris) {
+          const deform = shard.deformation;
+          const gx = shard.gridX + (deform ? deform.x : 0);
+          const gy = shard.gridY + (deform ? deform.y : 0);
 
-        const localX = gx - cx - data.pivotX;
-        const localY = gy - cy - data.pivotY;
+          instanceArray[offset + 12] = gx - cx - data.pivotX;
+          instanceArray[offset + 13] = gy - cy - data.pivotY;
+          instanceArray[offset + 0] = 1.0;
+          instanceArray[offset + 5] = 1.0;
 
-        instanceArray[offset + 12] = localX;
-        instanceArray[offset + 13] = localY;
-
-        instanceArray[offset + 0] = 1.0;
-        instanceArray[offset + 5] = 1.0;
-
-        stressAttr.array[i] = computeShardStress(shard);
-      } else {
-        instanceArray[offset + 0] = 0.0;
-        instanceArray[offset + 5] = 0.0;
-        instanceArray[offset + 12] = 0.0;
-        instanceArray[offset + 13] = 0.0;
-
-        stressAttr.array[i] = 0;
+          const baseX = shard._bendBaseX !== undefined ? shard._bendBaseX : shard.gridX;
+          const baseY = shard._bendBaseY !== undefined ? shard._bendBaseY : shard.gridY;
+          gridPosAttr.array[i * 2] = Number(baseX) || 0;
+          gridPosAttr.array[i * 2 + 1] = Number(baseY) || 0;
+          stressAttr.array[i] = computeShardStress(shard);
+        } else {
+          instanceArray[offset + 0] = 0.0;
+          instanceArray[offset + 5] = 0.0;
+          instanceArray[offset + 12] = 0.0;
+          instanceArray[offset + 13] = 0.0;
+          stressAttr.array[i] = 0;
+        }
       }
+    } else {
+      // Compact selected instances into the leading span.  InstancedMesh.count
+      // then actually lowers GPU vertex work; merely setting scale to zero would
+      // still submit every interior hex.
+      let writeIndex = 0;
+      if (data.instanceLodMode === HEX_LOD.HYBRID) {
+        for (let shardIndex = 0; shardIndex < shards.length; shardIndex++) {
+          const shard = shards[shardIndex];
+          if (!shouldRenderHybridShard(shard)) continue;
+          const offset = writeIndex * 16;
+          const deform = shard.deformation;
+          const gx = shard.gridX + (deform ? deform.x : 0);
+          const gy = shard.gridY + (deform ? deform.y : 0);
+          instanceArray[offset + 0] = 1.0;
+          instanceArray[offset + 5] = 1.0;
+          instanceArray[offset + 10] = 1.0;
+          instanceArray[offset + 15] = 1.0;
+          instanceArray[offset + 12] = gx - cx - data.pivotX;
+          instanceArray[offset + 13] = gy - cy - data.pivotY;
+          const baseX = shard._bendBaseX !== undefined ? shard._bendBaseX : shard.gridX;
+          const baseY = shard._bendBaseY !== undefined ? shard._bendBaseY : shard.gridY;
+          gridPosAttr.array[writeIndex * 2] = Number(baseX) || 0;
+          gridPosAttr.array[writeIndex * 2 + 1] = Number(baseY) || 0;
+          stressAttr.array[writeIndex] = computeShardStress(shard);
+          writeIndex++;
+        }
+      }
+      mesh.count = writeIndex;
+      data.renderedHexCount = writeIndex;
     }
 
     if (fullRefresh) {
       setAttrUpdateRange(mesh.instanceMatrix, 0, -1);
       setAttrUpdateRange(stressAttr, 0, -1);
+      setAttrUpdateRange(gridPosAttr, 0, -1);
     } else {
       const count = Math.max(0, end - start + 1);
       setAttrUpdateRange(mesh.instanceMatrix, start * 16, count * 16);
       setAttrUpdateRange(stressAttr, start, count);
+      setAttrUpdateRange(gridPosAttr, start * 2, count * 2);
     }
 
     mesh.instanceMatrix.needsUpdate = true;
     stressAttr.needsUpdate = true;
+    gridPosAttr.needsUpdate = true;
+    if (fullLod) data.renderedHexCount = mesh.count;
     data.needsInstanceRefresh = false;
     grid.meshDirty = false;
     grid.meshDirtyAll = false;
@@ -1013,6 +1238,20 @@ function updateEntityMesh(entity, data, camX, camY) {
   const scaleX = getEntityScaleX(entity);
   const scaleY = getEntityScaleY(entity);
   mesh.scale.set(scaleX, -scaleY, 1);
+  data.armorMesh.position.set(ex, -ey, -0.25);
+  data.armorMesh.rotation.set(0, 0, renderRotation);
+  data.armorMesh.scale.set(scaleX, -scaleY, 1);
+
+  lodFrameStats.totalStructuralHexes += shards.length;
+  if (data.lodMode === HEX_LOD.FULL) {
+    lodFrameStats.fullBodies++;
+    lodFrameStats.fullHexes += data.renderedHexCount;
+  } else if (data.lodMode === HEX_LOD.HYBRID) {
+    lodFrameStats.hybridBodies++;
+    lodFrameStats.hybridHexes += data.renderedHexCount;
+  } else {
+    lodFrameStats.impostorBodies++;
+  }
 }
 
 export function initHexShips3D({ canvas = null } = {}) {
@@ -1061,6 +1300,13 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
 
   const camX = Number(viewCamera?.x) || 0;
   const camY = Number(viewCamera?.y) || 0;
+  const cameraZoom = Math.max(0.0001, Number(viewCamera?.zoom) || 1);
+  lodFrameStats.fullBodies = 0;
+  lodFrameStats.hybridBodies = 0;
+  lodFrameStats.impostorBodies = 0;
+  lodFrameStats.fullHexes = 0;
+  lodFrameStats.hybridHexes = 0;
+  lodFrameStats.totalStructuralHexes = 0;
 
   const valid = state.validEntities;
   const vfxEntities = state.vfxEntities;
@@ -1083,6 +1329,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
     if (hideHexVisual) {
       const data = state.entityMeshes.get(entity);
       if (data?.mesh) data.mesh.visible = false;
+      if (data?.armorMesh) data.armorMesh.visible = false;
       continue;
     }
     if (entity.hexGrid) validSet.add(entity);
@@ -1092,6 +1339,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
     if (!visible) {
       const data = state.entityMeshes.get(entity);
       if (data?.mesh) data.mesh.visible = false;
+      if (data?.armorMesh) data.armorMesh.visible = false;
       continue;
     }
 
@@ -1109,8 +1357,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
     if (!data) data = createEntityMesh(entity);
     if (!data) continue;
 
-    data.mesh.visible = true;
-    updateEntityMesh(entity, data, camX, camY);
+    updateEntityMesh(entity, data, camX, camY, cameraZoom);
     hasRenderable = true;
   }
 
@@ -1141,6 +1388,7 @@ export function updateHexShips3D(viewCamera, entities = [], cullInfo = null) {
   EngineVfxSystem.update(visibleVfx);
 
   state.hadRenderableLastFrame = hasRenderable || visibleHex.length > 0;
+  if (typeof window !== 'undefined') window.__hexLodStats = lodFrameStats;
 }
 
 function resetDrawPerfScratch() {

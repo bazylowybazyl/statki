@@ -1,142 +1,145 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { DestructorSystem, DESTRUCTOR_CONFIG } from '../src/game/destructor.js';
+import {
+  HexArena,
+  createHexBodyRecord,
+  rebuildHexBodyTopology
+} from '../src/physics/hexArena.js';
+import {
+  createPlasticityScratch,
+  stepHexPlasticity
+} from '../src/physics/hexPlasticity.js';
 
-// Solver plastyczny ("prawdziwa harmonijka"): pchamy lewą kolumnę paska heksów,
-// oczekujemy linii zgniotu z propagacją w głąb (gradient przesunięć po kolumnach),
-// emergentnego wybrzuszenia na froncie oraz zachowania inwariantu gridX-origGridX.
-
-const SPACING = 13.5;      // gridDivisions(9) * 1.5
-const ROWH = Math.sqrt(3) * 9;
+const SPACING = 13.5;
+const ROW_HEIGHT = Math.sqrt(3) * 9;
 
 function buildStrip(cols, rows) {
-  const shards = [];
-  const byCR = new Map();
+  const count = cols * rows;
+  const arena = new HexArena({ capacity: count, shared: false });
+  const members = new Uint32Array(count);
+  let slot = 0;
   for (let c = 0; c < cols; c++) {
     for (let r = 0; r < rows; r++) {
-      const x = c * SPACING;
-      const y = r * ROWH + (c % 2 ? ROWH * 0.5 : 0);
-      const s = {
-        gridX: x, gridY: y,
-        origGridX: x, origGridY: y,
-        _uvBaseX: x, _uvBaseY: y,
-        _pristineX: x, _pristineY: y,
-        active: true, isDebris: false,
-        c, r, hp: 80, maxHp: 80,
-        neighbors: [],
-        __meshIndex: shards.length,
-        deformation: { x: 0, y: 0 },
-        targetDeformation: { x: 0, y: 0 },
-        becomeDebris() { this.active = false; this.isDebris = true; },
-        _traceHexPath() {}
-      };
-      shards.push(s);
-      byCR.set(c + ',' + r, s);
+      const index = arena.allocate(1, {
+        gridX: c * SPACING,
+        gridY: r * ROW_HEIGHT + (c & 1 ? ROW_HEIGHT * 0.5 : 0),
+        c,
+        r,
+        hp: 80,
+        maxHp: 80,
+        hitRadius: 7
+      });
+      members[slot++] = index;
     }
   }
-  for (const s of shards) {
-    const odd = (s.c % 2 !== 0);
-    const offs = odd
-      ? [[0, -1], [0, 1], [-1, 0], [-1, 1], [1, 0], [1, 1]]
-      : [[0, -1], [0, 1], [-1, -1], [-1, 0], [1, -1], [1, 0]];
-    for (const [dc, dr] of offs) {
-      const n = byCR.get((s.c + dc) + ',' + (s.r + dr));
-      if (n) s.neighbors.push(n);
-    }
-  }
-  return shards;
+  const body = createHexBodyRecord({ bodyId: 1, cols, rows, memberIndices: members });
+  rebuildHexBodyTopology(arena, body);
+  return { arena, body };
 }
 
-function makeGrid(cols, rows) {
-  const shards = buildStrip(cols, rows);
-  return {
-    shards,
-    grid: [],
-    cols, rows,
-    srcWidth: cols * SPACING, srcHeight: rows * ROWH,
-    _plasticSeeds: [],
-    isSleeping: false, sleepFrames: 0, wakeHoldFrames: 0,
-    meshDirty: false, meshDirtyAll: false, meshDirtyStart: -1, meshDirtyEnd: -1,
-    visualDirtyAll: false, visualDirtyStart: -1, visualDirtyEnd: -1,
-    activeStructuralCount: shards.length
-  };
+function makeColumnSeeds(arena, body, maxColumn, x, y = 0) {
+  let count = 0;
+  for (let slot = 0; slot < body.memberCount; slot++) {
+    const index = body.memberIndices[slot];
+    if (arena.cellC[index] <= maxColumn) count++;
+  }
+  const indices = new Uint32Array(count);
+  const forceX = new Float32Array(count);
+  const forceY = new Float32Array(count);
+  let cursor = 0;
+  for (let slot = 0; slot < body.memberCount; slot++) {
+    const index = body.memberIndices[slot];
+    if (arena.cellC[index] > maxColumn) continue;
+    indices[cursor] = index;
+    forceX[cursor] = x;
+    forceY[cursor] = y;
+    cursor++;
+  }
+  return { count, indices, forceX, forceY };
 }
 
-test('plastic solver: linia zgniotu propaguje, front nie przenika, bulge emergentny', () => {
-  const prevSolver = DESTRUCTOR_CONFIG.crumpleSolver;
-  const prevCompact = DESTRUCTOR_CONFIG.plasticCompactDestroy;
-  DESTRUCTOR_CONFIG.crumpleSolver = 1;
-  DESTRUCTOR_CONFIG.plasticCompactDestroy = 0.3; // bez destrukcji w tym teście
-
-  try {
-    const cols = 30, rows = 7;
-    const grid = makeGrid(cols, rows);
-    const shards = grid.shards;
-    const entity = { hexGrid: grid, dead: false, noSplit: true, vx: 0, vy: 0, mass: 1000 };
-
-    const leftCol = shards.filter(s => s.c === 0);
-    for (let t = 0; t < 60; t++) {
-      for (const s of leftCol) {
-        if (!s.active) continue;
-        grid._plasticSeeds.push(s, 5, 0);
-      }
-      DestructorSystem.updatePlasticCrush([entity], 1 / 120);
-    }
-
-    const colPush = (c) => {
-      const cs = shards.filter(s => s.c === c && s.active);
-      return cs.reduce((a, s) => a + (s.gridX - s._uvBaseX), 0) / Math.max(1, cs.length);
-    };
-    const spreadY = (c) => {
-      const ys = shards.filter(s => s.c === c && s.active).map(s => s.gridY);
-      return Math.max(...ys) - Math.min(...ys);
-    };
-    const baseSpread = (rows - 1) * ROWH;
-
-    // brak NaN
-    assert.equal(shards.some(s => !Number.isFinite(s.gridX) || !Number.isFinite(s.gridY)), false);
-    // inwariant: origGridX śledzi gridX (GPU pristine lazy-init liczy z różnicy)
-    for (const s of shards) {
-      assert.ok(Math.abs((s.gridX - s.origGridX)) < 0.001, 'gridX == origGridX (baked=0)');
-    }
-    // front stawia opór (nie przenika swobodnie) — 60 ticków × 5px = 300 nakazu,
-    // materiał ma trzymać front poniżej połowy tego
-    assert.ok(colPush(0) < 150, `front ${colPush(0).toFixed(1)} < 150`);
-    // propagacja w głąb: gradient kolumn
-    assert.ok(colPush(3) > 5, `col3 ${colPush(3).toFixed(1)} > 5`);
-    assert.ok(colPush(8) > 0.5, `col8 ${colPush(8).toFixed(1)} > 0.5`);
-    assert.ok(colPush(0) > colPush(3) && colPush(3) > colPush(8), 'monotoniczny gradient zgniotu');
-    // wybrzuszenie emergentne na froncie, cisza w głębi
-    assert.ok(spreadY(2) - baseSpread > 1, `bulge front ${(spreadY(2) - baseSpread).toFixed(1)} > 1`);
-    assert.ok(spreadY(20) - baseSpread < 0.5, 'spokojna strefa bez bulge');
-  } finally {
-    DESTRUCTOR_CONFIG.crumpleSolver = prevSolver;
-    DESTRUCTOR_CONFIG.plasticCompactDestroy = prevCompact;
+function averageColumnOffset(arena, body, column) {
+  let sum = 0;
+  let count = 0;
+  for (let slot = 0; slot < body.memberCount; slot++) {
+    const index = body.memberIndices[slot];
+    if (arena.cellC[index] !== column || !arena.isActive(index)) continue;
+    sum += arena.baseX[index] - arena.restX[index];
+    count++;
   }
+  return count > 0 ? sum / count : 0;
+}
+
+function columnSpread(arena, body, column) {
+  let min = Infinity;
+  let max = -Infinity;
+  for (let slot = 0; slot < body.memberCount; slot++) {
+    const index = body.memberIndices[slot];
+    if (arena.cellC[index] !== column || !arena.isActive(index)) continue;
+    const y = arena.baseY[index];
+    if (y < min) min = y;
+    if (y > max) max = y;
+  }
+  return max - min;
+}
+
+test('typed plastic solver propagates a crush gradient without corrupting rest positions', () => {
+  const { arena, body } = buildStrip(30, 7);
+  const seeds = makeColumnSeeds(arena, body, 0, 5);
+  let scratch = createPlasticityScratch(arena.capacity);
+
+  for (let tick = 0; tick < 60; tick++) {
+    scratch = stepHexPlasticity(arena, body, seeds, 1 / 120, {
+      diffusionIterations: 20,
+      yieldPoint: 0,
+      tearThreshold: 1000
+    }, scratch).scratch;
+  }
+
+  for (let slot = 0; slot < body.memberCount; slot++) {
+    const index = body.memberIndices[slot];
+    assert.ok(Number.isFinite(arena.baseX[index]) && Number.isFinite(arena.baseY[index]));
+    assert.equal(arena.restX[index], arena.cellC[index] * SPACING);
+  }
+
+  const front = averageColumnOffset(arena, body, 0);
+  const middle = averageColumnOffset(arena, body, 3);
+  const deep = averageColumnOffset(arena, body, 8);
+  assert.ok(front > 5 && front < 150, `front offset ${front}`);
+  assert.ok(middle > 1, `column 3 offset ${middle}`);
+  assert.ok(deep > 0.1, `column 8 offset ${deep}`);
+  assert.ok(front > middle && middle > deep, `${front} > ${middle} > ${deep}`);
+
+  const baseSpread = (body.rows - 1) * ROW_HEIGHT;
+  assert.ok(columnSpread(arena, body, 2) > baseSpread, 'crush should produce a transverse bulge');
+  assert.ok(columnSpread(arena, body, 20) - baseSpread < 0.5, 'far hull should remain stable');
 });
 
-test('plastic solver: rozciąganie ponad próg zrywa wiązania', () => {
-  const prevSolver = DESTRUCTOR_CONFIG.crumpleSolver;
-  DESTRUCTOR_CONFIG.crumpleSolver = 1;
-  try {
-    const grid = makeGrid(10, 5);
-    const shards = grid.shards;
-    const entity = { hexGrid: grid, dead: false, noSplit: true, vx: 0, vy: 0, mass: 1000 };
-
-    // rozerwij: kolumny 0-1 ciągnij w lewo mocno, wielokrotnie
-    const left = shards.filter(s => s.c <= 1);
-    const bondsBefore = shards.reduce((a, s) => a + s.neighbors.length, 0);
-    for (let t = 0; t < 40; t++) {
-      for (const s of left) {
-        if (!s.active) continue;
-        grid._plasticSeeds.push(s, -8, 0);
-      }
-      DestructorSystem.updatePlasticCrush([entity], 1 / 120);
+test('typed plastic solver tears overstretched neighbor bonds', () => {
+  const { arena, body } = buildStrip(10, 5);
+  const seeds = makeColumnSeeds(arena, body, 1, -8);
+  const countBonds = () => {
+    let count = 0;
+    for (let slot = 0; slot < body.memberCount; slot++) {
+      const index = body.memberIndices[slot];
+      const base = index * 6;
+      for (let n = 0; n < 6; n++) if (arena.neighbors[base + n] >= 0) count++;
     }
-    const bondsAfter = shards.reduce((a, s) => a + s.neighbors.length, 0);
-    assert.ok(bondsAfter < bondsBefore, `wiązania zerwane (${bondsBefore} -> ${bondsAfter})`);
-  } finally {
-    DESTRUCTOR_CONFIG.crumpleSolver = prevSolver;
+    return count;
+  };
+
+  const before = countBonds();
+  let scratch = createPlasticityScratch(arena.capacity);
+  let tears = 0;
+  for (let tick = 0; tick < 40; tick++) {
+    const result = stepHexPlasticity(arena, body, seeds, 1 / 120, {
+      tearThreshold: 4.5
+    }, scratch);
+    scratch = result.scratch;
+    tears += result.tears;
   }
+  const after = countBonds();
+  assert.ok(tears > 0, 'solver should report torn bonds');
+  assert.ok(after < before, `bond count ${before} -> ${after}`);
 });
