@@ -44,4 +44,21 @@ test('HUD radar refresh follows the selected view range', () => {
   assert.match(html, /hudRadarRange\s*=\s*window\.hudSystem\?\.getRadarRange\?\.\(\)/);
   assert.match(html, /hudRadarSnapshot\?\.range\)\s*!==\s*hudRadarRange/);
   assert.match(html, /range:\s*hudRadarRange/);
+  assert.match(html, /worldFeatures:\s*hudRadarWorldFeatures/);
+  assert.match(html, /function getHudRadarRefreshMs\(range\)/);
+  assert.match(html, /safeRange\s*>=\s*60000/);
+});
+
+test('HUD radar builds planet and megaring outlines from shared world geometry', () => {
+  const html = readFileSync('index.html', 'utf8');
+  const cicDisplay = readFileSync('src/ui/cicDisplay.js', 'utf8');
+
+  assert.match(html, /function buildHudRadarWorldFeatures\(planetList, sun\)/);
+  assert.match(html, /computePlanetaryRingLayout\(planet\)/);
+  assert.match(html, /innerRadius:\s*layout\.innerRadius/);
+  assert.match(html, /outerRadius:\s*layout\.outerRadius/);
+  assert.match(cicDisplay, /drawCicHudRadarWorldFeatures/);
+  assert.match(cicDisplay, /drawCicHudRadarShipFootprint/);
+  assert.match(cicDisplay, /hullWorldW/);
+  assert.match(cicDisplay, /hullWorldH/);
 });

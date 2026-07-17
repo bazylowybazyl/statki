@@ -115,6 +115,8 @@ export function applyNpcFlightControl(npc, control = {}, dt = BASE_FRAME_DT, opt
   const mass = Math.max(1, Number(npc.mass) || SHIP_PHYSICS.PLAYER_MASS || 1);
   const inertia = resolveNpcInertia(npc);
   const invMass = 1 / mass;
+  const npcAccel = Math.max(1, Number(npc.accel) || SHIP_PHYSICS.SPEED);
+  const accelScale = npcAccel / Math.max(1, SHIP_PHYSICS.SPEED);
   const angle = Number(npc.angle) || 0;
   const sin = Math.sin(angle);
   const cos = Math.cos(angle);
@@ -126,9 +128,15 @@ export function applyNpcFlightControl(npc, control = {}, dt = BASE_FRAME_DT, opt
     ? clamp((-velAlongForward) / Math.max(600, SHIP_PHYSICS.SPEED * 4.0), 0, 1)
     : 0;
   const boostMul = Math.max(1, Number(options.boostMul) || 1);
+  const mainForceScale = Number.isFinite(Number(options.mainForceMul))
+    ? Math.max(0, Number(options.mainForceMul))
+    : accelScale;
+  const sideForceScale = Number.isFinite(Number(options.sideForceMul))
+    ? Math.max(0.1, Number(options.sideForceMul))
+    : Math.max(0.1, accelScale * 1.15);
   const forces = computeShipThrusterForces(npc, {
-    mainForceMul: boostMul * (1.0 + counterThrustNorm * 1.75),
-    sideForceMul: Math.max(0.1, Number(options.sideForceMul) || 1.6),
+    mainForceMul: mainForceScale * boostMul * (1.0 + counterThrustNorm * 1.75),
+    sideForceMul: sideForceScale,
     reverseInput: reverseThrustInput
   }, npc.__npcForceScratch || (npc.__npcForceScratch = { localFx: 0, localFy: 0, localTorque: 0 }));
 
@@ -137,10 +145,32 @@ export function applyNpcFlightControl(npc, control = {}, dt = BASE_FRAME_DT, opt
   npc.vel.x += (worldFx * invMass + (Number(options.externalAx) || 0)) * stepDt;
   npc.vel.y += (worldFy * invMass + (Number(options.externalAy) || 0)) * stepDt;
 
-  const linearFriction = clamp(Number(options.linearFriction) || SHIP_PHYSICS.LINEAR_FRICTION, 0.9, 0.9999);
+  const linearFriction = clamp(
+    Number.isFinite(Number(options.linearFriction))
+      ? Number(options.linearFriction)
+      : (Number(npc.friction) || SHIP_PHYSICS.LINEAR_FRICTION),
+    0.9,
+    0.9999
+  );
   const drag = Math.pow(linearFriction, frameNorm);
   npc.vel.x *= drag;
   npc.vel.y *= drag;
+
+  // Fizyczne dysze wcześniej omijały npc.maxSpeed. Kontroler arrive może
+  // podnieść limit przez __speedCapHint (cruise / dopasowanie prędkości), ale
+  // sama integracja nigdy nie rozpędza już kadłuba ponad aktywną obwiednię.
+  const hintedSpeedLimit = Math.max(0, Number(npc.__speedCapHint) || 0);
+  const configuredSpeedLimit = Math.max(1, Number(npc.maxSpeed) || 1);
+  const speedLimit = Math.max(
+    configuredSpeedLimit,
+    Number.isFinite(Number(options.speedLimit)) ? Number(options.speedLimit) : hintedSpeedLimit
+  );
+  const speedAfterDrag = Math.hypot(npc.vel.x, npc.vel.y);
+  if (speedAfterDrag > speedLimit && speedAfterDrag > 1e-6) {
+    const speedScale = speedLimit / speedAfterDrag;
+    npc.vel.x *= speedScale;
+    npc.vel.y *= speedScale;
+  }
 
   const damperState = npc.__damperState || (npc.__damperState = { power: 0 });
   const speed = Math.hypot(npc.vel.x, npc.vel.y);
@@ -166,11 +196,23 @@ export function applyNpcFlightControl(npc, control = {}, dt = BASE_FRAME_DT, opt
     npc.vel.y -= npc.vel.y * invSpeed * brakeDelta;
   }
 
-  const angularFriction = clamp(Number(options.angularFriction) || SHIP_PHYSICS.ANGULAR_FRICTION, 0.85, 0.9999);
+  const angularFriction = clamp(
+    Number.isFinite(Number(options.angularFriction))
+      ? Number(options.angularFriction)
+      : (Number(npc.angularFriction) || SHIP_PHYSICS.ANGULAR_FRICTION),
+    0.85,
+    0.9999
+  );
+  const maxTurnSpeed = Math.max(
+    0.02,
+    Number.isFinite(Number(options.maxTurnSpeed))
+      ? Number(options.maxTurnSpeed)
+      : (Number(npc.turn) || SHIP_PHYSICS.MAX_TURN_SPEED)
+  );
   npc.angVel = Number(npc.angVel) || 0;
   npc.angVel += (forces.localTorque / inertia) * stepDt;
   npc.angVel *= Math.pow(angularFriction, frameNorm);
-  npc.angVel = clamp(npc.angVel, -SHIP_PHYSICS.MAX_TURN_SPEED, SHIP_PHYSICS.MAX_TURN_SPEED);
+  npc.angVel = clamp(npc.angVel, -maxTurnSpeed, maxTurnSpeed);
   npc.angle = wrapAngle(angle + npc.angVel * stepDt);
 
   npc.x += npc.vel.x * stepDt;

@@ -5,9 +5,21 @@
 
 import { DestructorGpuSoftBody } from './destructorGpuSoftBody.js';
 import { getEntityShieldBlockingRadius } from '../../shieldSystem.js';
+import {
+  attachHexGridToArena,
+  getHexArenaStats as getPackedHexArenaStats,
+  getPackedCollisionBody,
+  getPackedShardRef,
+  isPackedShardBoundary,
+  rebuildHexGridArena,
+  releaseHexGridArena,
+  setPackedShardActive
+} from './hexArenaBridge.js';
 
 export const DESTRUCTOR_CONFIG = {
   gridDivisions: 9, //
+  packedHexArena: 1,
+  edgeCollision: 1,
   shardMass: 10.0, //
   visualRotationOffset: 0, //
   shardHP: 80, //
@@ -3472,14 +3484,22 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
       const holderCols = gridHolder.hexGrid.cols || 0;
       const holderRows = gridHolder.hexGrid.rows || 0;
       const shardsIter = iterator.hexGrid.shards;
-      const lenIter = shardsIter.length;
+      const packedIteratorBody = (DESTRUCTOR_CONFIG.packedHexArena | 0) === 1 &&
+        (DESTRUCTOR_CONFIG.edgeCollision | 0) === 1
+        ? getPackedCollisionBody(iterator)
+        : null;
+      const lenIter = packedIteratorBody?.boundaryCount > 0
+        ? packedIteratorBody.boundaryCount
+        : shardsIter.length;
       const offsets = getSearchOffsets(searchR);
       const holderBent = entityHasActiveBend(gridHolder);
 
       if (!holderGrid || holderCols <= 0 || holderRows <= 0 || lenIter <= 0) return;
 
       for (let i = 0; i < lenIter; i++) {
-        const sI = shardsIter[i];
+        const sI = packedIteratorBody?.boundaryCount > 0
+          ? getPackedShardRef(packedIteratorBody.boundaryIndices[i])
+          : shardsIter[i];
         if (!sI || !sI.active || sI.isDebris) continue;
         const hitRadI = getShardHitRadius(sI) * collisionScaleIter;
 
@@ -4163,6 +4183,9 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     if (Number.isFinite(entity.hexGrid.activeStructuralCount)) {
       entity.hexGrid.activeStructuralCount = Math.max(0, entity.hexGrid.activeStructuralCount - 1);
     }
+    if ((DESTRUCTOR_CONFIG.packedHexArena | 0) === 1) {
+      setPackedShardActive(entity, shard, false, true);
+    }
     if (shard.__asteroidCore === true && Number.isFinite(entity.hexGrid.asteroidCoreActive)) {
       entity.hexGrid.asteroidCoreActive = Math.max(0, entity.hexGrid.asteroidCoreActive - 1);
     }
@@ -4179,6 +4202,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     wreck._wreckAge = 0;
     wreck._wreckSleepTimer = 0;
     wreck._wreckSleeping = false;
+    if ((DESTRUCTOR_CONFIG.packedHexArena | 0) === 1) releaseHexGridArena(wreck);
     wreck._inPool = true;
     this._wreckPool.push(wreck);
   },
@@ -4374,6 +4398,11 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     }
 
     entity.hexGrid.shards = shards;
+    // The grid now represents only one island of the original sprite. Its
+    // source texture remains shared for sharp per-hex UVs, but it must never
+    // use the full-sprite armor impostor in the renderer.
+    entity.hexGrid.isFragment = true;
+    entity.hexGrid.disableSolidArmorLod = true;
 
     if (!Array.isArray(entity.hexGrid._pendingEraseQueue)) entity.hexGrid._pendingEraseQueue = [];
     else entity.hexGrid._pendingEraseQueue.length = 0;
@@ -4404,6 +4433,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     );
 
     rebuildNeighbors(entity.hexGrid);
+    if ((DESTRUCTOR_CONFIG.packedHexArena | 0) === 1) rebuildHexGridArena(entity, shards);
     if (!entity.isPlayer && !entity.isAsteroidHex) entity.mass = Math.max(10, sumShardMass(shards));
   },
 
@@ -4595,6 +4625,8 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
 
     const wGrid = wreck.hexGrid;
     wGrid.shards = shards;
+    wGrid.isFragment = true;
+    wGrid.disableSolidArmorLod = true;
 
     if (!Array.isArray(wGrid._pendingEraseQueue)) wGrid._pendingEraseQueue = [];
     else wGrid._pendingEraseQueue.length = 0;
@@ -4645,6 +4677,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     }
 
     rebuildNeighbors(wGrid);
+    if ((DESTRUCTOR_CONFIG.packedHexArena | 0) === 1) rebuildHexGridArena(wreck, shards);
 
     if (Array.isArray(entities) && !entities.includes(wreck)) entities.push(wreck);
 
@@ -4760,6 +4793,8 @@ export function initHexBody(entity, image, isProjectile = false, massOverride = 
     visualDirtyStart: -1,
     visualDirtyEnd: -1,
     gpuTextureNeedsUpdate: false,
+    isFragment: false,
+    disableSolidArmorLod: false,
     isSleeping: false,
     sleepFrames: 0,
     wakeHoldFrames: DESTRUCTOR_CONFIG.elasticWakeFrames | 0,
@@ -4769,6 +4804,7 @@ export function initHexBody(entity, image, isProjectile = false, massOverride = 
   };
 
   rebuildNeighbors(entity.hexGrid);
+  if ((DESTRUCTOR_CONFIG.packedHexArena | 0) === 1) attachHexGridToArena(entity, shards);
 
   entity.radius = entity.hexGrid.rawRadius * Math.max(getFinalScaleX(entity), getFinalScaleY(entity));
   entity.isProjectile = !!isProjectile;
@@ -4805,6 +4841,16 @@ export function getHexStructuralState(entity) {
   const ratio = total > 0 ? Math.max(0, Math.min(1, active / total)) : 0;
   return { active, total, ratio };
 }
+
+export function getHexArenaStats() {
+  return getPackedHexArenaStats();
+}
+
+export function disposeHexBody(entity) {
+  return releaseHexGridArena(entity);
+}
+
+export { isPackedShardBoundary };
 
 if (typeof window !== 'undefined') {
   window.ColFuncDbgStart = (intervalMs = 1000) => DestructorSystem.setCollisionLiveDebug(true, intervalMs);

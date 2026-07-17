@@ -40,7 +40,11 @@ const CIC_CONFIG = {
 const CIC_FIGHTER_TYPES = new Set(['fighter', 'interceptor', 'drone']);
 const CIC_SILHOUETTE_CACHE = new Map();
 const CIC_SOURCE_IDS = new WeakMap();
+const EMPTY_CIC_WORLD_FEATURES = Object.freeze([]);
+const CIC_HUD_RADAR_TRACKS = new WeakMap();
 let cicSourceIdSeq = 1;
+let cicHudRadarPreviousSweepAngle = null;
+let cicHudRadarBurstPending = false;
 
 function readPositiveNumber(value, fallback = 0) {
   const num = Number(value);
@@ -240,6 +244,95 @@ function clampUnit(value) {
   return Math.max(-1, Math.min(1, value));
 }
 
+function normalizeCicRadarAngle(angle) {
+  const tau = Math.PI * 2;
+  const normalized = finiteNumber(angle, 0) % tau;
+  return normalized < 0 ? normalized + tau : normalized;
+}
+
+export function didCicRadarSweepCrossAngle(previousAngle, currentAngle, targetAngle) {
+  const previous = normalizeCicRadarAngle(previousAngle);
+  const current = normalizeCicRadarAngle(currentAngle);
+  const target = normalizeCicRadarAngle(targetAngle);
+  const travel = normalizeCicRadarAngle(current - previous);
+  if (travel <= 1e-7) return false;
+  return normalizeCicRadarAngle(target - previous) <= travel + 1e-7;
+}
+
+function recountCicRadarContacts(model) {
+  const contacts = Array.isArray(model?.contacts) ? model.contacts : [];
+  let hostile = 0;
+  let friendly = 0;
+  let ghost = 0;
+  let asteroid = 0;
+  for (let i = 0; i < contacts.length; i++) {
+    const contact = contacts[i];
+    if (contact?.isAsteroid) asteroid++;
+    else if (contact?.isGhost) ghost++;
+    else if (contact?.friendly) friendly++;
+    else if (contact?.hostile) hostile++;
+  }
+  model.counts = { total: contacts.length, hostile, friendly, ghost, asteroid };
+}
+
+export function applyCicHudRadarSweepTracking(model, {
+  previousSweepAngle = model?.sweepAngle,
+  forceReveal = false,
+  trackStore = CIC_HUD_RADAR_TRACKS
+} = {}) {
+  const contacts = Array.isArray(model?.contacts) ? model.contacts : [];
+  const sweepAngle = normalizeCicRadarAngle(model?.sweepAngle);
+  const previous = normalizeCicRadarAngle(previousSweepAngle);
+  const originX = finiteNumber(model?.originX, 0);
+  const originY = finiteNumber(model?.originY, 0);
+  const range = Math.max(1, finiteNumber(model?.range, CIC_CONFIG.sweepRange));
+  let writeIndex = 0;
+
+  for (let i = 0; i < contacts.length; i++) {
+    const contact = contacts[i];
+    const source = contact?.entity || contact?.radarTrackSource;
+    if (!contact || (!source || (typeof source !== 'object' && typeof source !== 'function'))) continue;
+
+    let track = trackStore.get(source);
+    if (!track) {
+      track = { visible: false, x: 0, y: 0, angle: 0, spriteRotation: 0, hitAngle: sweepAngle };
+      trackStore.set(source, track);
+    }
+
+    const liveDx = finiteNumber(contact.x, originX) - originX;
+    const liveDy = finiteNumber(contact.y, originY) - originY;
+    const bearing = Math.atan2(liveDy, liveDx);
+    const swept = forceReveal || didCicRadarSweepCrossAngle(previous, sweepAngle, bearing);
+    if (swept) {
+      track.visible = true;
+      track.x = finiteNumber(contact.x, originX);
+      track.y = finiteNumber(contact.y, originY);
+      track.angle = finiteNumber(contact.angle, 0);
+      track.spriteRotation = finiteNumber(contact.spriteRotation, 0);
+      track.hitAngle = sweepAngle;
+    }
+    if (!track.visible) continue;
+
+    contact.x = track.x;
+    contact.y = track.y;
+    contact.dx = track.x - originX;
+    contact.dy = track.y - originY;
+    contact.distance = Math.hypot(contact.dx, contact.dy);
+    if (contact.distance > range) continue;
+    contact.nx = clampUnit(contact.dx / range);
+    contact.ny = clampUnit(contact.dy / range);
+    contact.angle = track.angle;
+    contact.spriteRotation = track.spriteRotation;
+    const revolutionAge = normalizeCicRadarAngle(sweepAngle - track.hitAngle) / (Math.PI * 2);
+    contact.radarEchoStrength = 0.25 + 0.75 * Math.pow(1 - revolutionAge, 2);
+    contacts[writeIndex++] = contact;
+  }
+
+  contacts.length = writeIndex;
+  recountCicRadarContacts(model);
+  return model;
+}
+
 export function projectCicHudRadarContact(contact, {
   width = 176,
   height = 176,
@@ -253,6 +346,128 @@ export function projectCicHudRadarContact(contact, {
     x: width * 0.5 + (finiteNumber(contact?.dx, 0) - finiteNumber(panWorldX, 0)) * scale,
     y: height * 0.5 + (finiteNumber(contact?.dy, 0) - finiteNumber(panWorldY, 0)) * scale
   };
+}
+
+function drawCicHudRadarWorldFeatures(
+  ctx,
+  width,
+  height,
+  model,
+  range,
+  worldScale,
+  uiScale,
+  panWorldX,
+  panWorldY
+) {
+  const features = Array.isArray(model?.worldFeatures) ? model.worldFeatures : [];
+  if (features.length === 0) return;
+
+  const originX = finiteNumber(model?.originX, 0);
+  const originY = finiteNumber(model?.originY, 0);
+
+  for (let i = 0; i < features.length; i++) {
+    const feature = features[i];
+    if (!feature) continue;
+    const entity = feature.entity || feature;
+    const dx = finiteNumber(entity?.x, finiteNumber(feature.x, originX)) - originX - panWorldX;
+    const dy = finiteNumber(entity?.y, finiteNumber(feature.y, originY)) - originY - panWorldY;
+    const planetRadius = Math.max(0, finiteNumber(feature.radius, 0));
+    const ring = feature.ring || null;
+    const ringOuterRadius = Math.max(0, finiteNumber(ring?.outerRadius, 0));
+    const outerWorldRadius = Math.max(planetRadius, ringOuterRadius);
+    if (Math.hypot(dx, dy) > range + outerWorldRadius) continue;
+
+    const x = width * 0.5 + dx * worldScale;
+    const y = height * 0.5 + dy * worldScale;
+    const id = String(feature.id || entity?.id || entity?.name || '').toLowerCase();
+    const color = feature.color || PLANET_COLORS[id] || (id === 'sun' ? '#ffb347' : '#8db8d8');
+
+    if (ringOuterRadius > 0) {
+      const innerRadius = Math.max(0, finiteNumber(ring?.innerRadius, 0)) * worldScale;
+      const outerRadius = ringOuterRadius * worldScale;
+      if (outerRadius >= 0.45 * uiScale) {
+        ctx.save();
+        ctx.fillStyle = color;
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = 0.1;
+        ctx.beginPath();
+        ctx.arc(x, y, outerRadius, 0, Math.PI * 2);
+        if (innerRadius > 0) {
+          ctx.moveTo(x + innerRadius, y);
+          ctx.arc(x, y, innerRadius, 0, Math.PI * 2, true);
+        }
+        ctx.fill('evenodd');
+        ctx.globalAlpha = 0.74;
+        ctx.lineWidth = Math.max(0.65, 0.8 * uiScale);
+        ctx.setLineDash([2 * uiScale, 2 * uiScale]);
+        ctx.beginPath();
+        ctx.arc(x, y, outerRadius, 0, Math.PI * 2);
+        ctx.stroke();
+        if (innerRadius > 0) {
+          ctx.beginPath();
+          ctx.arc(x, y, innerRadius, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        const boundaries = ring.boundaries;
+        if (Array.isArray(boundaries)) {
+          ctx.globalAlpha = 0.32;
+          ctx.lineWidth = Math.max(0.45, 0.5 * uiScale);
+          for (let boundaryIndex = 0; boundaryIndex < boundaries.length; boundaryIndex++) {
+            const boundaryRadius = Math.max(0, finiteNumber(boundaries[boundaryIndex], 0)) * worldScale;
+            if (boundaryRadius <= innerRadius || boundaryRadius >= outerRadius) continue;
+            ctx.beginPath();
+            ctx.arc(x, y, boundaryRadius, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+    }
+
+    const screenRadius = planetRadius * worldScale;
+    if (screenRadius < 0.35 * uiScale) continue;
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = id === 'sun' ? 0.22 : 0.13;
+    ctx.beginPath();
+    ctx.arc(x, y, screenRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.86;
+    ctx.lineWidth = Math.max(0.8, uiScale);
+    ctx.beginPath();
+    ctx.arc(x, y, screenRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawCicHudRadarShipFootprint(ctx, contact, x, y, worldScale, color, alpha = 0.86) {
+  const worldW = Math.max(0, finiteNumber(contact?.hullWorldW, 0));
+  const worldH = Math.max(0, finiteNumber(contact?.hullWorldH, 0));
+  const drawW = worldW * worldScale;
+  const drawH = worldH * worldScale;
+  const extent = Math.max(drawW, drawH);
+  if (extent < 1.2) return 0;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(finiteNumber(contact?.angle, 0) + finiteNumber(contact?.spriteRotation, 0));
+  ctx.globalAlpha = alpha;
+  const source = getEntitySpriteSource(contact?.entity);
+  const silhouette = source
+    ? getCicTintedSilhouette(source, Math.max(2, drawW), Math.max(2, drawH), color)
+    : null;
+  if (silhouette) {
+    ctx.drawImage(silhouette, -drawW * 0.5, -drawH * 0.5, drawW, drawH);
+  } else {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 0.8;
+    ctx.strokeRect(-drawW * 0.5, -drawH * 0.5, drawW, drawH);
+  }
+  ctx.restore();
+  return extent * 0.5;
 }
 
 export function drawCicHudRadarSurface(ctx, width, height, model, view = {}) {
@@ -327,6 +542,18 @@ export function drawCicHudRadarSurface(ctx, width, height, model, view = {}) {
   }
   ctx.setLineDash([]);
 
+  drawCicHudRadarWorldFeatures(
+    ctx,
+    width,
+    height,
+    model,
+    range,
+    worldScale,
+    uiScale,
+    panWorldX,
+    panWorldY
+  );
+
   const sweepAngle = finiteNumber(model?.sweepAngle, 0);
   const sweepRadius = Math.max(radius, finiteNumber(model?.range, range) * worldScale);
   ctx.save();
@@ -381,18 +608,35 @@ export function drawCicHudRadarSurface(ctx, width, height, model, view = {}) {
     const size = asteroid
       ? (ASTEROID_CIC_DOT[contact.sizeClass] || 0.9) * uiScale
       : (contact.isCapital ? 3.8 : (locked || selected ? 3.3 : 2.5)) * uiScale;
+    const hullExtent = asteroid || ghost
+      ? 0
+      : drawCicHudRadarShipFootprint(
+        ctx,
+        contact,
+        point.x,
+        point.y,
+        worldScale,
+        color,
+        0.84 * Math.max(0.2, finiteNumber(contact.radarEchoStrength, 1))
+      );
 
     ctx.save();
     ctx.translate(point.x, point.y);
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     ctx.lineWidth = Math.max(0.8, uiScale);
-    ctx.globalAlpha = ghost ? 0.48 : (asteroid ? 0.72 : 0.92);
+    const echoStrength = Math.max(0.2, finiteNumber(contact.radarEchoStrength, 1));
+    ctx.globalAlpha = (ghost ? 0.48 : (asteroid ? 0.72 : 0.92)) * echoStrength;
     if (ghost) ctx.setLineDash([2 * uiScale, 2 * uiScale]);
 
     if (asteroid) {
       ctx.beginPath();
       ctx.arc(0, 0, size, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (hullExtent > 0) {
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.arc(0, 0, Math.max(0.8 * uiScale, Math.min(2 * uiScale, hullExtent * 0.22)), 0, Math.PI * 2);
       ctx.fill();
     } else if (contact.hostile || locked || ghost) {
       ctx.beginPath();
@@ -414,27 +658,38 @@ export function drawCicHudRadarSurface(ctx, width, height, model, view = {}) {
       ctx.setLineDash([]);
       ctx.globalAlpha = 0.72;
       ctx.beginPath();
-      ctx.arc(0, 0, size + 3.5 * uiScale, 0, Math.PI * 2);
+      ctx.arc(0, 0, Math.max(size, hullExtent) + 3.5 * uiScale, 0, Math.PI * 2);
       ctx.stroke();
     }
     ctx.restore();
   }
 
-  ctx.save();
-  ctx.translate(shipPoint.x, shipPoint.y);
-  ctx.rotate(finiteNumber(model?.heading, 0));
-  ctx.fillStyle = '#7dd3fc';
-  ctx.strokeStyle = '#38bdf8';
-  ctx.lineWidth = uiScale;
-  ctx.beginPath();
-  ctx.moveTo(5.5 * uiScale, 0);
-  ctx.lineTo(-3.5 * uiScale, 3.4 * uiScale);
-  ctx.lineTo(-2 * uiScale, 0);
-  ctx.lineTo(-3.5 * uiScale, -3.4 * uiScale);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
+  const playerHullExtent = drawCicHudRadarShipFootprint(
+    ctx,
+    model?.playerHull,
+    shipPoint.x,
+    shipPoint.y,
+    worldScale,
+    '#7dd3fc',
+    0.94
+  );
+  if (playerHullExtent <= 0) {
+    ctx.save();
+    ctx.translate(shipPoint.x, shipPoint.y);
+    ctx.rotate(finiteNumber(model?.heading, 0));
+    ctx.fillStyle = '#7dd3fc';
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = uiScale;
+    ctx.beginPath();
+    ctx.moveTo(5.5 * uiScale, 0);
+    ctx.lineTo(-3.5 * uiScale, 3.4 * uiScale);
+    ctx.lineTo(-2 * uiScale, 0);
+    ctx.lineTo(-3.5 * uiScale, -3.4 * uiScale);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
 
   ctx.restore();
 }
@@ -447,6 +702,7 @@ export function createCicHudRadarModel({
   asteroids = null,
   lockedTargets = [],
   selectedTarget = null,
+  worldFeatures = null,
   range = CIC_CONFIG.sweepRange,
   asteroidRange = range,
   maxContacts = 64,
@@ -569,6 +825,7 @@ export function createCicHudRadarModel({
       if (!ghost) return;
       pushContact({
         entity: null,
+        radarTrackSource: ghost,
         type: ghost.type || 'unknown',
         subType: ghost.subType || '',
         friendly: false,
@@ -594,6 +851,25 @@ export function createCicHudRadarModel({
 
   if (contacts.length > contactLimit) contacts.length = contactLimit;
 
+  for (let i = 0; i < contacts.length; i++) {
+    const contact = contacts[i];
+    if (!contact?.entity || contact.isAsteroid || contact.isGhost) continue;
+    const metrics = getEntityHullMetrics(contact.entity, 1);
+    contact.hullWorldW = metrics.worldW;
+    contact.hullWorldH = metrics.worldH;
+    contact.angle = finiteNumber(contact.entity.angle ?? contact.entity.a, 0);
+    contact.spriteRotation = getEntitySpriteRotation(contact.entity);
+  }
+
+  const playerMetrics = ship ? getEntityHullMetrics(ship, 1) : null;
+  const playerHull = ship && playerMetrics ? {
+    entity: ship,
+    hullWorldW: playerMetrics.worldW,
+    hullWorldH: playerMetrics.worldH,
+    angle: finiteNumber(ship.angle ?? ship.a, 0),
+    spriteRotation: getEntitySpriteRotation(ship)
+  } : null;
+
   let hostile = 0;
   let friendly = 0;
   let ghost = 0;
@@ -609,7 +885,11 @@ export function createCicHudRadarModel({
   return {
     range: safeRange,
     sweepAngle: finiteNumber(sweepAngle, 0),
+    originX: shipX,
+    originY: shipY,
     heading: finiteNumber(ship?.angle ?? ship?.a, 0),
+    playerHull,
+    worldFeatures: Array.isArray(worldFeatures) ? worldFeatures : EMPTY_CIC_WORLD_FEATURES,
     contacts,
     counts: {
       total: contacts.length,
@@ -770,10 +1050,18 @@ export const CICDisplay = {
   getSelectedTarget()  { return cicSelectedContacts[0]?.entity || cicSelectedTarget || null; },
   getSelectedTargets() { return cicSelectedContacts.map(c => c.entity).filter(Boolean); },
   getHudRadarSnapshot(options = {}) {
-    return createCicHudRadarModel({
+    const model = createCicHudRadarModel({
       ...options,
       sweepAngle: cicSweepAngle
     });
+    const previousSweepAngle = cicHudRadarPreviousSweepAngle ?? cicSweepAngle;
+    cicHudRadarPreviousSweepAngle = cicSweepAngle;
+    const forceReveal = cicHudRadarBurstPending;
+    cicHudRadarBurstPending = false;
+    return applyCicHudRadarSweepTracking(model, { previousSweepAngle, forceReveal });
+  },
+  triggerHudRadarBurst() {
+    cicHudRadarBurstPending = true;
   },
 
   /** Jump to system view (V key) — sets target zoom to system level */

@@ -60,11 +60,10 @@ function applyCapitalAutopilot(npc, thrustNorm, strafeNorm, desiredAngle, boostT
 // 1a. KONTROLER PRĘDKOŚCI (arrive) — wspólne sterowanie dla mózgów kapitalnych
 // ============================================================================
 
-// Ścieżka fizycznych thrusterów przyspiesza ~SHIP_PHYSICS.SPEED niezależnie od
-// npc.accel i NIE egzekwuje npc.maxSpeed — stąd osobny referencyjny accel.
+// Ścieżka fizycznych thrusterów skaluje teraz siłę z npc.accel, więc kontroler
+// używa tej samej wartości co faktyczna integracja ruchu.
 function resolveAccelRef(npc) {
-  if (window.npcHasPhysicalThrusters?.(npc)) return 380;
-  return Math.max(60, Number(npc.accel) || 150);
+  return Math.max(12, Number(npc.accel) || 150);
 }
 
 // Predykcyjny ogranicznik prędkości: maksymalna prędkość w danym KIERUNKU taka,
@@ -147,14 +146,13 @@ function capitalArriveControls(npc, tx, ty, opts = {}) {
   const dy = ty - npc.y;
   const dist = Math.hypot(dx, dy);
   const maxSpeed = Math.max(40, Number(opts.maxSpeed) || npc.maxSpeed || 200);
-  // Bazowe maxSpeed capitali (105-280 u/s) jest zbyt niskie na dynamiczną
-  // bitwę, a arrive i tak hamuje przy celu (sqrt(2·a·d)) — dlatego realny pułap
-  // ruchu podnosimy z PODŁOGĄ.
-  const combatSpeed = Math.max(maxSpeed * (Number(opts.combatSpeedMul) || 1.05), 300);
+  // Zachowaj hierarchię klas także w walce. Dawna podłoga 300 u/s zrównywała
+  // battleshipy, carriery i supercapitale niezależnie od ich parametrów.
+  const combatSpeed = Math.max(maxSpeed * (Number(opts.combatSpeedMul) || 1.05), 40);
   const cruiseCap = Math.max(combatSpeed, Math.min(Number(opts.cruiseSpeed) || maxSpeed * 5, 1300));
   const combatRadius = Number(opts.combatRadius) || 2600;
   const arrival = Math.max(0, Number(opts.arrival) || 50);
-  const brakeAccel = Math.max(150, Number(opts.brakeAccel) || resolveAccelRef(npc) * 0.6);
+  const brakeAccel = Math.max(12, Number(opts.brakeAccel) || resolveAccelRef(npc) * 0.8);
   const remaining = Math.max(0, dist - arrival);
 
   let budget = Math.min(remaining * 1.6, Math.sqrt(2 * brakeAccel * remaining) * 0.95);

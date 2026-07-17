@@ -1,6 +1,6 @@
 ﻿// src/3d/core3d.js
 import * as THREE from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { BLOOM_DEFAULTS } from './bloomConfig.js';
@@ -12,12 +12,47 @@ const PLANET_RENDER_LAYER = 3;
 const OCCLUSION_RENDER_LAYER = 4;
 const PLANET_HALO_RENDER_LAYER = 5;
 const RING_PLANET_RENDER_LAYER = 6;
+// Okludery rysowane kamerą ORTHO do maski shaftów (pasmo ringu, kadłuby
+// statków) — layer 4 renderuje się kamerą persp, więc obiekty ekranowo-ortho
+// muszą mieć własną warstwę, inaczej maska rozjeżdża się z tym, co widać na
+// ekranie. Planety/księżyce NIE idą do maski: są liczone analitycznie jako
+// dyski (uDiscs) — maska screen-space nie obejmuje okluderów poza kadrem
+// i gubi cień planety przy przybliżeniu kamery.
+const OCCLUSION_ORTHO_RENDER_LAYER = 7;
+// Okludery-sprite'y (quad z alfą sylwetki, np. armor-LOD statku): renderowane
+// do maski WŁASNYM materiałem (bez białego override'u), bo override zamieniłby
+// quad w pełny prostokąt. Obiekty na tej warstwie NIE renderują się nigdzie
+// indziej (layers.set, nie enable).
+const OCCLUSION_SPRITE_RENDER_LAYER = 8;
+// Maks. liczba tarcz (planety + księżyce) zgłaszanych per klatkę przez
+// pushShaftDiscWorld do analitycznych cieni w shaderze shaftów.
+const SHAFT_DISC_CAP = 16;
+
+// Poziomy jakości shadow shafts. `high` = parametry sprzed nerfa
+// wydajnościowego z 2026-03 (50 sampli, maska /2, overscan 3.0) + dłuższe
+// smugi. `off` trzyma parametry low, żeby ręczne włączenie passa booleanem
+// (Core3DPerf/godRays) miało sensowną konfigurację.
+// lengthWorld dotyczy TYLKO marszu po masce (statki + ring) — planety maja
+// wlasne analityczne dyski (discLenMul). Krotszy marsz = gestsze kroki =
+// wieksza szansa trafienia malego kadluba przy oddalonej kamerze.
+export const SHADOW_SHAFTS_QUALITY = {
+  off: { enabled: false, samples: 10, resDiv: 8, overscan: 1.2, lengthWorld: 12000, maxLenUv: 0.8, blurRadius: 3.5, discLenMul: 10 },
+  low: { enabled: true, samples: 10, resDiv: 8, overscan: 1.2, lengthWorld: 12000, maxLenUv: 0.8, blurRadius: 3.5, discLenMul: 10 },
+  medium: { enabled: true, samples: 24, resDiv: 4, overscan: 1.8, lengthWorld: 24000, maxLenUv: 1.0, blurRadius: 3.0, discLenMul: 18 },
+  high: { enabled: true, samples: 50, resDiv: 2, overscan: 3.0, lengthWorld: 60000, maxLenUv: 1.5, blurRadius: 2.5, discLenMul: 30 }
+};
+
+export function resolveShadowShaftsQuality(level) {
+  const key = String(level || '').toLowerCase();
+  const norm = key === 'med' ? 'medium' : key;
+  const cfg = SHADOW_SHAFTS_QUALITY[norm] || SHADOW_SHAFTS_QUALITY.medium;
+  return { level: SHADOW_SHAFTS_QUALITY[norm] ? norm : 'medium', ...cfg };
+}
 
 function createShadowShaftsShader() {
   return {
     name: 'ShadowShaftsCompositeShader',
     uniforms: {
-      tDiffuse: { value: null },
       uOcclusionMap: { value: null },
       uTime: { value: 0 },
       uSplitScreen: { value: 0 },
@@ -29,12 +64,19 @@ function createShadowShaftsShader() {
       uShadowDecay: { value: 0.935 },
       uShadowJitter: { value: 0.4 },
       uAspectRatio: { value: 1.0 },
-      uOverscan: { value: 1.2 }
+      uOverscan: { value: 1.2 },
+      uSunWorld: { value: new THREE.Vector2(0, 0) },
+      uCamCenter: { value: new THREE.Vector2(0, 0) },
+      uCamCenter2: { value: new THREE.Vector2(0, 0) },
+      uViewWorldSize: { value: new THREE.Vector2(1, 1) },
+      uViewWorldSize2: { value: new THREE.Vector2(1, 1) },
+      uDiscLenMul: { value: 18.0 },
+      uDiscCount: { value: 0 },
+      uDiscs: { value: Array.from({ length: SHAFT_DISC_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) }
     },
     vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
     fragmentShader: `
       precision highp float;
-      uniform sampler2D tDiffuse;
       uniform sampler2D uOcclusionMap;
       uniform float uTime;
       uniform int uSplitScreen;
@@ -47,18 +89,26 @@ function createShadowShaftsShader() {
       uniform float uShadowJitter;
       uniform float uAspectRatio;
       uniform float uOverscan;
+      uniform vec2 uSunWorld;
+      uniform vec2 uCamCenter;
+      uniform vec2 uCamCenter2;
+      uniform vec2 uViewWorldSize;
+      uniform vec2 uViewWorldSize2;
+      uniform float uDiscLenMul;
+      uniform int uDiscCount;
+      uniform vec4 uDiscs[${SHAFT_DISC_CAP}];
       varying vec2 vUv;
 
-      const int NUM_SAMPLES = 10;
+      #ifndef NUM_SAMPLES
+      #define NUM_SAMPLES 10
+      #endif
 
       float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 
       void main() {
-        vec4 sceneColor = texture2D(tDiffuse, vUv);
-
         vec2 dirVec = (uSplitScreen == 1 && vUv.x > 0.5) ? uSunDirection2 : uSunDirection;
         if(length(dirVec) < 0.001) {
-          gl_FragColor = sceneColor;
+          gl_FragColor = vec4(1.0);
           return;
         }
 
@@ -78,48 +128,146 @@ function createShadowShaftsShader() {
 
         vec2 stepVec = dir * (((uShadowLength * uLengthMul) / uOverscan) / float(NUM_SAMPLES));
         float jitter = (hash12(vUv * vec2(191.13, 137.71) + uTime) - 0.5) * uShadowJitter;
-        vec2 sampleUv = occUv + stepVec * (jitter - 0.35);
+        // Start POL KROKU W STRONE SLONCA (dawniej -0.35 wstecz): piksel nie
+        // sampluje wlasnego okludera, wiec naslonecznina strona statku zostaje
+        // jasna, a cien zaczyna sie od srodka/tylu kadluba ("pol na pol").
+        vec2 sampleUv = occUv + stepVec * (jitter + 0.5);
 
+        // Akumulacja MAX zamiast sredniej wazonej: srednia po calym marszu
+        // karala okludery mniejsze niz krok (statek = ulamek kroku przy
+        // oddalonej kamerze -> cien znikal). Jedno trafienie w kadlub daje
+        // pelny cien; o dlugosci smugi decyduje falloff od odleglosci,
+        // znormalizowany do 24 krokow referencyjnych (ta sama krzywa na
+        // kazdym poziomie jakosci NUM_SAMPLES).
         float shadowAccum = 0.0;
-        float currentWeight = 1.0;
-        float totalWeight = 0.0;
+        float falloff = 1.0;
+        float stepFalloff = pow(uShadowDecay, 24.0 / float(NUM_SAMPLES));
 
         for(int i = 0; i < NUM_SAMPLES; i++) {
           if(sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) break;
-          shadowAccum += texture2D(uOcclusionMap, sampleUv).r * currentWeight;
-          totalWeight += currentWeight;
-          currentWeight *= uShadowDecay;
+          shadowAccum = max(shadowAccum, texture2D(uOcclusionMap, sampleUv).r * falloff);
+          falloff *= stepFalloff;
           sampleUv += stepVec;
         }
 
-        float rawShadow = totalWeight > 0.0 ? clamp((shadowAccum / min(totalWeight, 4.0)) * uShadowDarkness, 0.0, 1.0) : 0.0;
-        vec3 finalColor = mix(sceneColor.rgb, sceneColor.rgb * vec3(0.06, 0.10, 0.16), rawShadow);
-        gl_FragColor = vec4(finalColor, sceneColor.a);
+        float marchShadow = clamp(shadowAccum * uShadowDarkness, 0.0, 1.0);
+
+        // Analityczne cienie tarcz planet/ksiezycow w world-space: dzialaja na
+        // kazdym zoomie i dla okluderow daleko poza kadrem (maska screen-space
+        // nie ma szans ich objac). Wnetrze tarczy pomijane (along <= exitDist),
+        // wiec dzienna strona planety zostaje przy wlasnym oswietleniu.
+        bool rightHalf = (uSplitScreen == 1 && vUv.x > 0.5);
+        vec2 localUv = (uSplitScreen == 1)
+          ? (rightHalf ? vec2((vUv.x - 0.5) * 2.0, vUv.y) : vec2(vUv.x * 2.0, vUv.y))
+          : vUv;
+        vec2 camC = rightHalf ? uCamCenter2 : uCamCenter;
+        vec2 viewWS = rightHalf ? uViewWorldSize2 : uViewWorldSize;
+        vec2 worldP = camC + (localUv - 0.5) * viewWS;
+
+        float discShadow = 0.0;
+        for (int i = 0; i < ${SHAFT_DISC_CAP}; i++) {
+          if (i >= uDiscCount) break;
+          vec4 disc = uDiscs[i];
+          float discR = disc.z;
+          if (discR <= 0.0) continue;
+          vec2 axis = disc.xy - uSunWorld;
+          float axisLen = length(axis);
+          if (axisLen < 1.0) continue;
+          axis /= axisLen;
+          vec2 rel = worldP - disc.xy;
+          float along = dot(rel, axis);
+          if (along <= 0.0) continue;
+          float perp = abs(dot(rel, vec2(-axis.y, axis.x)));
+          float exitDist = sqrt(max(discR * discR - perp * perp, 0.0));
+          if (along <= exitDist) continue;
+          float fallT = clamp((along - exitDist) / max(discR * uDiscLenMul, 1.0), 0.0, 1.0);
+          float fall = 1.0 - smoothstep(0.55, 1.0, fallT);
+          float soft = discR * (0.04 + 0.30 * fallT);
+          float edge = 1.0 - smoothstep(discR - soft, discR + soft, perp);
+          discShadow = max(discShadow, edge * fall);
+        }
+
+        float rawShadow = clamp(max(marchShadow, discShadow), 0.0, 1.0);
+        // Wynik = mnożnik sceny (BLEND_MULTIPLY_SCENE robi dst×src,
+        // czyli dokładnie dawne mix(scena, scena*ciemny, rawShadow)).
+        gl_FragColor = vec4(mix(vec3(1.0), vec3(0.06, 0.10, 0.16), rawShadow), 1.0);
       }
     `
   };
 }
 
-function createPlanetHaloCompositeShader() {
-  return {
-    name: 'PlanetHaloCompositeShader',
-    uniforms: {
-      tDiffuse: { value: null },
-      tPlanetHalo: { value: null }
-    },
-    vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-    fragmentShader: `
-      precision highp float;
-      uniform sampler2D tDiffuse;
-      uniform sampler2D tPlanetHalo;
-      varying vec2 vUv;
-      void main() {
-        vec4 sceneColor = texture2D(tDiffuse, vUv);
-        vec4 haloColor = texture2D(tPlanetHalo, vUv);
-        gl_FragColor = vec4(sceneColor.rgb + haloColor.rgb, max(sceneColor.a, haloColor.a));
-      }
-    `
-  };
+const BLEND_ADD_ONE_ONE = {
+  blending: THREE.CustomBlending,
+  blendEquation: THREE.AddEquation,
+  blendSrc: THREE.OneFactor,
+  blendDst: THREE.OneFactor,
+  blendEquationAlpha: THREE.AddEquation,
+  blendSrcAlpha: THREE.OneFactor,
+  blendDstAlpha: THREE.OneFactor
+};
+
+// dst.rgb = dst.rgb × src.rgb, alpha bez zmian. NIE używać THREE.MultiplyBlending:
+// w three r183 daje efekt addytywny (zweryfikowane odczytem pikseli) — stąd jawne
+// faktory ZERO/SRC_COLOR przez CustomBlending.
+const BLEND_MULTIPLY_SCENE = {
+  blending: THREE.CustomBlending,
+  blendEquation: THREE.AddEquation,
+  blendSrc: THREE.ZeroFactor,
+  blendDst: THREE.SrcColorFactor,
+  blendEquationAlpha: THREE.AddEquation,
+  blendSrcAlpha: THREE.ZeroFactor,
+  blendDstAlpha: THREE.OneFactor
+};
+
+const PLANET_HALO_BLEND_SHADER = {
+  name: 'PlanetHaloBlendShader',
+  uniforms: { tPlanetHalo: { value: null } },
+  vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `precision highp float; uniform sampler2D tPlanetHalo; varying vec2 vUv; void main() { gl_FragColor = texture2D(tPlanetHalo, vUv); }`
+};
+
+const SCENE_RESOLVE_SHADER = {
+  name: 'SceneResolveShader',
+  uniforms: { tDiffuse: { value: null } },
+  vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `precision highp float; uniform sampler2D tDiffuse; varying vec2 vUv; void main() { gl_FragColor = texture2D(tDiffuse, vUv); }`
+};
+
+// Pełnoekranowy quad blendowany sprzętowo w bufor docelowy — zamiennik
+// ShaderPassa czytającego tDiffuse w środku łańcucha scen. ShaderPass wymuszał
+// tam resolve MSAA, a three po resolve INWALIDUJE renderbuffer multisample —
+// kolejne passy blendowały w niezdefiniowaną pamięć (czarne kafle przy
+// obciążeniu). Quad z blendingiem pisze wprost do bufora MSAA bez resolve.
+class FullScreenBlendPass extends Pass {
+  constructor(shader, blendConfig = {}) {
+    super();
+    this.needsSwap = false;
+    this.material = new THREE.ShaderMaterial({
+      name: shader.name || 'FullScreenBlendPass',
+      uniforms: THREE.UniformsUtils.clone(shader.uniforms),
+      vertexShader: shader.vertexShader,
+      fragmentShader: shader.fragmentShader,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true
+    });
+    Object.assign(this.material, blendConfig);
+    this.uniforms = this.material.uniforms;
+    this.fsQuad = new FullScreenQuad(this.material);
+  }
+
+  render(renderer, writeBuffer, readBuffer) {
+    const oldAutoClear = renderer.autoClear;
+    renderer.autoClear = false;
+    renderer.setRenderTarget(this.renderToScreen ? null : readBuffer);
+    this.fsQuad.render(renderer);
+    renderer.autoClear = oldAutoClear;
+  }
+
+  dispose() {
+    this.material.dispose();
+    this.fsQuad.dispose();
+  }
 }
 
 const UberPostShader = {
@@ -322,7 +470,7 @@ export const Core3D = {
 
   canvas: null, renderer: null, scene: null, cameraOrtho: null, cameraPersp: null,
   shadowCatcher: null, shadowCatcherFg: null, shadowCatchersDebug: false,
-  composer: null, composerTarget: null,
+  composerTarget: null, postTarget: null, sceneResolvePass: null, _scenePasses: null, _postPasses: null,
   refractionTarget: null, shockwave3DManager: null, _shockwavePrevTime: 0,
   _refractionValid: false, _refractionFlip: false,
   planetHaloTarget: null, haloDepthMaskMaterial: null,
@@ -335,10 +483,13 @@ export const Core3D = {
   renderPassBg: null, renderPassPlanets: null, planetHaloPass: null, renderPassRingPlanets: null, renderPassOrtho: null, renderPassFg: null,
   heatHazeSources: null, heatHazeDirs: null, heatHazeCount: 0, heatHazeMaxSources: MAX_HEAT_HAZE_SOURCES, _heatHazeWorldScratch: new THREE.Vector3(),
   shadowShaftsPass: null,
+  shaftDiscs: new Float32Array(SHAFT_DISC_CAP * 3), shaftDiscCount: 0,
   uberPass: null,
   bloomPass: null, bloomResolutionScale: BLOOM_DEFAULTS.resolutionScale, bloomBaseStrength: BLOOM_DEFAULTS.strength, bloomBaseThreshold: BLOOM_DEFAULTS.threshold,
   msaaSamples: 0,
   perfToggles: { bloom: true, heatHaze: true, shadowShafts: true, threeShadows: true, bgPass: true, planetPass: true, orthoPass: true, fgPass: true, fgBuildings: true, fgStations: true, fgWeapons: true, fgShadows: true, enginePointLights: false },
+  shadowShaftsQuality: 'medium',
+  _shaftCfg: resolveShadowShaftsQuality('medium'),
   _passTogglesDirty: true,
   pixelRatio: 1, width: 0, height: 0, isInitialized: false,
   _clearColorScratch: new THREE.Color(),
@@ -485,7 +636,7 @@ export const Core3D = {
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.setClearColor(0x000000, 0);
     // Disable per-render auto-reset so renderer.info accumulates across all
-    // composer passes — we manually reset once per frame before composer.render().
+    // passes — we manually reset once per frame at the start of the pass chain.
     this.renderer.info.autoReset = false;
 
     this.scene = new THREE.Scene();
@@ -576,10 +727,23 @@ export const Core3D = {
     });
     this.composerTarget = rt;
     this.msaaSamples = Number(rt.samples) || 0;
+    // Te same próbki co scena: przy samples=0 krawędź maski halo ząbkowała
+    // inaczej niż wygładzona MSAA krawędź planety = przerywana obwódka na limbie.
     this.planetHaloTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
       format: THREE.RGBAFormat,
       type: this.renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType,
       depthBuffer: true,
+      stencilBuffer: false,
+      samples: rt.samples
+    });
+    // Post-łańcuch (bloom + uber) działa na buforze BEZ MSAA: bloom domalowuje
+    // się addytywnie do bufora, z którego przed chwilą czytał — na buforze MSAA
+    // three po resolve inwaliduje renderbuffer i blend trafiał w niezdefiniowane
+    // kafle (czarne prostokąty przy szybkim ruchu kamery).
+    this.postTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
+      format: THREE.RGBAFormat,
+      type: this.renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType,
+      depthBuffer: false,
       stencilBuffer: false,
       samples: 0
     });
@@ -587,14 +751,12 @@ export const Core3D = {
     this.haloDepthMaskMaterial.colorWrite = false;
     this.haloDepthMaskMaterial.depthWrite = true;
     this.haloDepthMaskMaterial.depthTest = true;
-    this.composer = new EffectComposer(this.renderer, rt);
-    this.composer.setPixelRatio(this.pixelRatio);
 
     this.renderPassBg = new RenderPass(this.scene, this.cameraPersp);
     makeSplitScreenRenderPass(this.renderPassBg, 1, false, true);
     this.renderPassPlanets = new RenderPass(this.scene, this.cameraPersp);
     makeSplitScreenRenderPass(this.renderPassPlanets, PLANET_RENDER_LAYER, false, false);
-    this.planetHaloPass = new ShaderPass(createPlanetHaloCompositeShader());
+    this.planetHaloPass = new FullScreenBlendPass(PLANET_HALO_BLEND_SHADER, BLEND_ADD_ONE_ONE);
     this.renderPassRingPlanets = new RenderPass(this.scene, this.cameraOrtho);
     makeSplitScreenRenderPass(this.renderPassRingPlanets, RING_PLANET_RENDER_LAYER, true, false);
     this.renderPassOrtho = new RenderPass(this.scene, this.cameraOrtho);
@@ -604,20 +766,31 @@ export const Core3D = {
 
     this.heatHazeSources = new Float32Array(this.heatHazeMaxSources * 4);
     this.heatHazeDirs = new Float32Array(this.heatHazeMaxSources * 2);
-    this.composer.addPass(this.renderPassBg);
-    this.composer.addPass(this.renderPassPlanets);
-    this.composer.addPass(this.planetHaloPass);
 
-    this.shadowShaftsPass = new ShaderPass(createShadowShaftsShader());
-    this.composer.addPass(this.shadowShaftsPass);
+    this.shadowShaftsPass = new FullScreenBlendPass(createShadowShaftsShader(), BLEND_MULTIPLY_SCENE);
 
     // Earth and Mars use an orthographic planet pass so their projected centre
     // and radius stay locked to the gameplay ring at every zoom level. The pass
     // still renders the real sphere/cloud/atmosphere meshes; only parallax is
     // removed. Later world/foreground passes clear depth and draw over the globe.
-    this.composer.addPass(this.renderPassRingPlanets);
-    this.composer.addPass(this.renderPassOrtho);
-    this.composer.addPass(this.renderPassFg);
+    //
+    // Wszystkie passy sceny piszą do JEDNEGO targetu MSAA, a halo i shafts to
+    // quady blendowane sprzętowo (nie ShaderPassy czytające tDiffuse) — w całej
+    // klatce jest więc dokładnie jeden resolve MSAA: composerTarget → postTarget.
+    //
+    // shadowShaftsPass NA KOŃCU łańcucha: multiply-cień oblewa całą scenę
+    // (tło, planety, ring-planety, statki ortho i FG). Wcześniej stał przed
+    // ring/ortho/fg i przyciemniał tylko nebulę + planety persp — smugi były
+    // praktycznie niewidoczne.
+    this._scenePasses = [
+      this.renderPassBg,
+      this.renderPassPlanets,
+      this.planetHaloPass,
+      this.renderPassRingPlanets,
+      this.renderPassOrtho,
+      this.renderPassFg,
+      this.shadowShaftsPass
+    ];
 
     const bloomCfg = this._getBloomConfig();
     this.bloomResolutionScale = bloomCfg.resolutionScale;
@@ -628,20 +801,23 @@ export const Core3D = {
       bloomCfg.radius,
       bloomCfg.threshold
     );
-    this.composer.addPass(this.bloomPass);
 
     this.uberPass = new ShaderPass(UberPostShader);
     this.uberPass.material.defines = { HEAT_HAZE: 1 };
     this.uberPass.material.needsUpdate = true;
     this.uberPass.renderToScreen = true;
-    this.composer.addPass(this.uberPass);
-    if (this.planetHaloPass?.uniforms) {
-      this.planetHaloPass.uniforms.tPlanetHalo.value = this.planetHaloTarget.texture;
-    }
+
+    this.sceneResolvePass = new FullScreenBlendPass(SCENE_RESOLVE_SHADER, { blending: THREE.NoBlending });
+    this.sceneResolvePass.uniforms.tDiffuse.value = rt.texture;
+    this._postPasses = [this.sceneResolvePass, this.bloomPass, this.uberPass];
+    this.planetHaloPass.uniforms.tPlanetHalo.value = this.planetHaloTarget.texture;
 
     this._applyPassToggles();
     this._instrumentComposerPasses();
     this.isInitialized = true;
+    // Poziom mógł zostać ustawiony (menu/localStorage) zanim init się wykonał
+    // — dociśnij defines/rozmiary targetów do zapamiętanej jakości.
+    this._applyShadowShaftsQuality();
     this.resize(window.innerWidth, window.innerHeight);
 
     return this;
@@ -649,9 +825,9 @@ export const Core3D = {
 
   _disposeComposerChain() {
     try {
-      if (this.composer?.passes) for (const pass of this.composer.passes) try { pass?.dispose?.(); } catch { }
-      try { this.composer?.dispose?.(); } catch { }
+      for (const pass of [...(this._scenePasses || []), ...(this._postPasses || [])]) try { pass?.dispose?.(); } catch { }
       try { this.composerTarget?.dispose?.(); } catch { }
+      try { this.postTarget?.dispose?.(); } catch { }
       try { this.refractionTarget?.dispose?.(); } catch { }
       try { this.shockwave3DManager?.dispose?.(); } catch { }
       try { this.planetHaloTarget?.dispose?.(); } catch { }
@@ -748,12 +924,52 @@ export const Core3D = {
     };
 
     applySamples(this.composerTarget);
-    if (this.composer) {
-      applySamples(this.composer.renderTarget1);
-      applySamples(this.composer.renderTarget2);
-    }
+    // Halo musi śledzić próbki sceny — rozjazd daje przerywaną obwódkę na limbie.
+    applySamples(this.planetHaloTarget);
 
     return this.getPerfStatus();
+  },
+
+  setShadowShaftsQuality(level = 'medium') {
+    const cfg = resolveShadowShaftsQuality(level);
+    this.shadowShaftsQuality = cfg.level;
+    this._shaftCfg = cfg;
+    const t = this.perfToggles || (this.perfToggles = {});
+    t.shadowShafts = cfg.enabled;
+    this._passTogglesDirty = true;
+    if (this.isInitialized) this._applyShadowShaftsQuality();
+    return this.getPerfStatus();
+  },
+
+  _applyShadowShaftsQuality() {
+    const cfg = this._shaftCfg || resolveShadowShaftsQuality(this.shadowShaftsQuality);
+    this._shaftCfg = cfg;
+    const mat = this.shadowShaftsPass?.material;
+    if (mat) {
+      const defines = { ...(mat.defines || {}) };
+      if (defines.NUM_SAMPLES !== cfg.samples) {
+        defines.NUM_SAMPLES = cfg.samples;
+        mat.defines = defines;
+        mat.needsUpdate = true;
+      }
+    }
+    this._resizeOcclusionTargets(this.width || (typeof window !== 'undefined' ? window.innerWidth : 1), this.height || (typeof window !== 'undefined' ? window.innerHeight : 1));
+    const blurR = Math.max(0.5, Number(cfg.blurRadius) || 3.5);
+    if (this.occlusionBlurMatH?.uniforms?.uRadius) this.occlusionBlurMatH.uniforms.uRadius.value = blurR;
+    if (this.occlusionBlurMatV?.uniforms?.uRadius) this.occlusionBlurMatV.uniforms.uRadius.value = blurR;
+  },
+
+  _resizeOcclusionTargets(width, height) {
+    const div = Math.max(1, Number(this._shaftCfg?.resDiv) || 8);
+    const w = Math.max(1, Math.floor(width / div));
+    const h = Math.max(1, Math.floor(height / div));
+    if (this.occlusionTarget) this.occlusionTarget.setSize(w, h);
+    if (this.occlusionBlurTargetA && this.occlusionBlurTargetB) {
+      this.occlusionBlurTargetA.setSize(w, h);
+      this.occlusionBlurTargetB.setSize(w, h);
+      if (this.occlusionBlurMatH?.uniforms?.uResolution) this.occlusionBlurMatH.uniforms.uResolution.value.set(w, h);
+      if (this.occlusionBlurMatV?.uniforms?.uResolution) this.occlusionBlurMatV.uniforms.uResolution.value.set(w, h);
+    }
   },
   getPerfStatus() {
     const t = this.perfToggles || {};
@@ -763,6 +979,7 @@ export const Core3D = {
       heatHaze: t.heatHaze !== false,
       shadowShafts: t.shadowShafts !== false,
       godRays: t.shadowShafts !== false,
+      shadowShaftsQuality: this.shadowShaftsQuality || 'medium',
       threeShadows: t.threeShadows !== false,
       bgPass: t.bgPass !== false,
       planetPass: t.planetPass !== false,
@@ -781,6 +998,13 @@ export const Core3D = {
   enablePlanetHalo3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(PLANET_HALO_RENDER_LAYER); }); },
   enableRingPlanet3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(RING_PLANET_RENDER_LAYER); }); },
   enablePlanetOccluder3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.enable(OCCLUSION_RENDER_LAYER); }); },
+  // Okluder rysowany kamerą ortho (ring-planety, pasmo ringu, kadłuby statków).
+  // UWAGA: wołać PO enableRingPlanet3D/enableForeground3D — tamte robią
+  // layers.set() i skasowałyby tę warstwę.
+  enableOrthoOccluder3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.enable(OCCLUSION_ORTHO_RENDER_LAYER); }); },
+  // Okluder-sprite (quad z alfą sylwetki, własny biały materiał) — renderuje
+  // się WYŁĄCZNIE w przejściu maski bez override'u (layers.set, nie enable).
+  enableSpriteOccluder3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(OCCLUSION_SPRITE_RENDER_LAYER); }); },
   enableForeground3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(2); }); },
 
   resize(w, h) {
@@ -789,10 +1013,12 @@ export const Core3D = {
     const height = Math.max(1, h | 0);
     this.pixelRatio = Math.min(1.5, Math.max(1, (typeof window !== 'undefined' ? window.devicePixelRatio : 1)));
     this.renderer.setPixelRatio(this.pixelRatio);
-    this.composer.setPixelRatio(this.pixelRatio);
     this.width = width; this.height = height;
     this.renderer.setSize(width, height, false);
-    this.composer.setSize(width, height);
+    const bufW = Math.max(1, Math.floor(width * this.pixelRatio));
+    const bufH = Math.max(1, Math.floor(height * this.pixelRatio));
+    if (this.composerTarget) this.composerTarget.setSize(bufW, bufH);
+    if (this.postTarget) this.postTarget.setSize(bufW, bufH);
 
     if (this.refractionTarget) {
       this.refractionTarget.setSize(
@@ -800,20 +1026,10 @@ export const Core3D = {
         Math.max(1, Math.floor(height * this.pixelRatio * 0.5))
       );
     }
-    if (this.occlusionTarget) {
-      this.occlusionTarget.setSize(Math.max(1, Math.floor(width / 8)), Math.max(1, Math.floor(height / 8)));
-    }
     if (this.planetHaloTarget) {
-      this.planetHaloTarget.setSize(width, height);
+      this.planetHaloTarget.setSize(bufW, bufH);
     }
-    if (this.occlusionBlurTargetA && this.occlusionBlurTargetB) {
-      const blurW = Math.max(1, Math.floor(width / 8));
-      const blurH = Math.max(1, Math.floor(height / 8));
-      this.occlusionBlurTargetA.setSize(blurW, blurH);
-      this.occlusionBlurTargetB.setSize(blurW, blurH);
-      if (this.occlusionBlurMatH?.uniforms?.uResolution) this.occlusionBlurMatH.uniforms.uResolution.value.set(blurW, blurH);
-      if (this.occlusionBlurMatV?.uniforms?.uResolution) this.occlusionBlurMatV.uniforms.uResolution.value.set(blurW, blurH);
-    }
+    this._resizeOcclusionTargets(width, height);
     if (this.bloomPass && typeof this.bloomPass.setSize === 'function') {
       const bScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || 1));
       this.bloomPass.setSize(Math.floor(width * this.pixelRatio * bScale), Math.floor(height * this.pixelRatio * bScale));
@@ -880,7 +1096,8 @@ export const Core3D = {
     const raysEnabled = t.shadowShafts !== false;
     const heatEnabled = t.heatHaze !== false;
     let occlusionTexture = this.occlusionTarget?.texture || null;
-    const OVERSCAN = 1.2;
+    const shaftCfg = this._shaftCfg || resolveShadowShaftsQuality(this.shadowShaftsQuality);
+    const OVERSCAN = Math.max(1.0, Number(shaftCfg.overscan) || 1.2);
     let isSplit = false;
     let origTop = this.cameraOrtho.top;
     let origBottom = this.cameraOrtho.bottom;
@@ -951,6 +1168,7 @@ export const Core3D = {
       const prevClearColor = this._clearColorScratch;
       this.renderer.getClearColor(prevClearColor);
       const prevLayerMask = this.cameraPersp.layers.mask;
+      const prevOrthoLayerMask = this.cameraOrtho.layers.mask;
       const prevOverrideMaterial = this.scene.overrideMaterial;
 
       const origLeft = this.cameraOrtho.left;
@@ -983,8 +1201,14 @@ export const Core3D = {
           this.cameraOrtho.updateProjectionMatrix();
           this.cameraPersp.zoom /= OVERSCAN; this.cameraPersp.updateProjectionMatrix();
           this.cameraPersp.layers.set(OCCLUSION_RENDER_LAYER);
-          
+
           this.renderer.render(this.scene, this.cameraPersp);
+          this.cameraOrtho.layers.set(OCCLUSION_ORTHO_RENDER_LAYER);
+          this.renderer.render(this.scene, this.cameraOrtho);
+          this.scene.overrideMaterial = null;
+          this.cameraOrtho.layers.set(OCCLUSION_SPRITE_RENDER_LAYER);
+          this.renderer.render(this.scene, this.cameraOrtho);
+          this.scene.overrideMaterial = this.occlusionWhiteMaterial;
 
           // --- Prawa Okluzja ---
           this.renderer.setViewport(halfW, 0, tw - halfW, th);
@@ -992,14 +1216,20 @@ export const Core3D = {
           this.renderer.setClearColor(0x000000, 0.0);
           this.renderer.clear(true, true, true);
           
-          this.syncCamera(this.activeCam2, this.width / 2, this.height, this.width / 2); 
+          this.syncCamera(this.activeCam2, this.width / 2, this.height, this.width / 2);
           this.cameraOrtho.left *= OVERSCAN; this.cameraOrtho.right *= OVERSCAN;
           this.cameraOrtho.top *= OVERSCAN; this.cameraOrtho.bottom *= OVERSCAN;
           this.cameraOrtho.updateProjectionMatrix();
           this.cameraPersp.zoom /= OVERSCAN; this.cameraPersp.updateProjectionMatrix();
           this.cameraPersp.layers.set(OCCLUSION_RENDER_LAYER);
-          
+
           this.renderer.render(this.scene, this.cameraPersp);
+          this.cameraOrtho.layers.set(OCCLUSION_ORTHO_RENDER_LAYER);
+          this.renderer.render(this.scene, this.cameraOrtho);
+          this.scene.overrideMaterial = null;
+          this.cameraOrtho.layers.set(OCCLUSION_SPRITE_RENDER_LAYER);
+          this.renderer.render(this.scene, this.cameraOrtho);
+          this.scene.overrideMaterial = this.occlusionWhiteMaterial;
 
           this.renderer.setScissorTest(false);
       } else {
@@ -1016,12 +1246,19 @@ export const Core3D = {
           this.cameraOrtho.updateProjectionMatrix();
           this.cameraPersp.zoom /= OVERSCAN; this.cameraPersp.updateProjectionMatrix();
           this.cameraPersp.layers.set(OCCLUSION_RENDER_LAYER);
-          
+
           this.renderer.render(this.scene, this.cameraPersp);
+          this.cameraOrtho.layers.set(OCCLUSION_ORTHO_RENDER_LAYER);
+          this.renderer.render(this.scene, this.cameraOrtho);
+          this.scene.overrideMaterial = null;
+          this.cameraOrtho.layers.set(OCCLUSION_SPRITE_RENDER_LAYER);
+          this.renderer.render(this.scene, this.cameraOrtho);
+          this.scene.overrideMaterial = this.occlusionWhiteMaterial;
       }
 
       this.scene.overrideMaterial = prevOverrideMaterial;
       this.cameraPersp.layers.mask = prevLayerMask;
+      this.cameraOrtho.layers.mask = prevOrthoLayerMask;
 
       this.cameraOrtho.left = origLeft;
       this.cameraOrtho.right = origRight;
@@ -1074,31 +1311,53 @@ export const Core3D = {
         uShafts.uOverscan.value = OVERSCAN;
 
         const worldHeight = Math.abs(origTop - origBottom);
-        uShafts.uShadowLength.value = worldHeight > 0 ? Math.max(0.15, Math.min(20000.0 / worldHeight, 0.8)) : 0.0;
+        const shaftLenWorld = Math.max(1, Number(shaftCfg.lengthWorld) || 20000);
+        const shaftMaxLenUv = Math.max(0.2, Number(shaftCfg.maxLenUv) || 0.8);
+        uShafts.uShadowLength.value = worldHeight > 0 ? Math.max(0.15, Math.min(shaftLenWorld / worldHeight, shaftMaxLenUv)) : 0.0;
         uShafts.uTime.value = nowSec;
+        uShafts.uDiscLenMul.value = Math.max(1, Number(shaftCfg.discLenMul) || 18);
 
         if (sun) {
           const cam1 = this.activeCam1 || { x: 0, y: 0 };
           const cam2 = this.activeCam2 || cam1;
+          const zoom1 = Math.max(0.0001, Number(cam1.zoom) || 1);
+          const zoom2 = Math.max(0.0001, Number(cam2.zoom) || 1);
+          const viewW = isSplit ? this.width / 2 : this.width;
+          uShafts.uSunWorld.value.set(sun.x, -sun.y);
+          uShafts.uCamCenter.value.set(Number(cam1.x) || 0, -(Number(cam1.y) || 0));
+          uShafts.uViewWorldSize.value.set(viewW / zoom1, this.height / zoom1);
           if (isSplit) {
             uShafts.uSplitScreen.value = 1;
             uShafts.uSunDirection.value.set(sun.x - cam1.x, (-sun.y) - (-cam1.y));
             uShafts.uSunDirection2.value.set(sun.x - cam2.x, (-sun.y) - (-cam2.y));
+            uShafts.uCamCenter2.value.set(Number(cam2.x) || 0, -(Number(cam2.y) || 0));
+            uShafts.uViewWorldSize2.value.set(viewW / zoom2, this.height / zoom2);
           } else {
             uShafts.uSplitScreen.value = 0;
             uShafts.uSunDirection.value.set(sun.x - cam1.x, (-sun.y) - (-cam1.y));
             uShafts.uSunDirection2.value.set(0, 0);
+            uShafts.uCamCenter2.value.copy(uShafts.uCamCenter.value);
+            uShafts.uViewWorldSize2.value.copy(uShafts.uViewWorldSize.value);
+          }
+          const discCount = Math.min(this.shaftDiscCount | 0, SHAFT_DISC_CAP);
+          uShafts.uDiscCount.value = discCount;
+          const discVals = uShafts.uDiscs.value;
+          for (let i = 0; i < discCount; i++) {
+            const base = i * 3;
+            discVals[i].set(this.shaftDiscs[base], this.shaftDiscs[base + 1], this.shaftDiscs[base + 2], 0);
           }
         } else {
           uShafts.uSplitScreen.value = 0;
           uShafts.uSunDirection.value.set(0, 0);
           uShafts.uSunDirection2.value.set(0, 0);
+          uShafts.uDiscCount.value = 0;
         }
       } else {
         uShafts.uSplitScreen.value = 0;
         uShafts.uSunDirection.value.set(0, 0);
         uShafts.uSunDirection2.value.set(0, 0);
         uShafts.uShadowLength.value = 0.0;
+        uShafts.uDiscCount.value = 0;
       }
     }
 
@@ -1201,7 +1460,15 @@ export const Core3D = {
       }
     }
 
-    this.composer.render();
+    // Scena → composerTarget (MSAA, bez pośrednich resolve), potem jedyny
+    // resolve klatki (sceneResolvePass sampluje composerTarget) i post bez MSAA.
+    for (const pass of this._scenePasses) {
+      if (pass && pass.enabled !== false) pass.render(this.renderer, null, this.composerTarget);
+    }
+    for (const pass of this._postPasses) {
+      if (pass && pass.enabled !== false) pass.render(this.renderer, null, this.postTarget);
+    }
+    this.renderer.setRenderTarget(null);
     this._finalizeRenderInfoBuckets();
     const composerMs = performance.now() - tComposer0;
     this.lastFramePerf = {
@@ -1309,6 +1576,24 @@ export const Core3D = {
     this.activeCam1 = prevCam1;
     this.activeCam2 = prevCam2;
     if (dbgEnabled) recordRenderDbg('coreRenderCall', performance.now() - tCall0);
+  },
+
+  beginShaftDiscFrame() { this.shaftDiscCount = 0; },
+
+  // Tarcza planety/księżyca (współrzędne GRY, y w dół) jako analityczny
+  // okluder shaftów — zgłaszana co klatkę, także gdy ciało jest poza ekranem
+  // (cień musi istnieć niezależnie od kadru i zoomu).
+  pushShaftDiscWorld(worldX, worldY, radius) {
+    const r = Number(radius) || 0;
+    if (!(r > 0) || !this.shaftDiscs) return false;
+    const i = this.shaftDiscCount | 0;
+    if (i >= SHAFT_DISC_CAP) return false;
+    const base = i * 3;
+    this.shaftDiscs[base] = Number(worldX) || 0;
+    this.shaftDiscs[base + 1] = -(Number(worldY) || 0);
+    this.shaftDiscs[base + 2] = r;
+    this.shaftDiscCount = i + 1;
+    return true;
   },
 
   beginHeatHazeFrame() { this.heatHazeCount = 0; },
