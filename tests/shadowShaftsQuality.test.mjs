@@ -23,15 +23,43 @@ test('shadow shafts quality levels expose the pre-nerf high preset', () => {
   assert.doesNotMatch(coreSource, /const int NUM_SAMPLES/);
 });
 
-test('shadow shafts multiply pass runs after every scene pass', () => {
+test('shadow shafts pass shades the ortho world but not FG emissives', () => {
   const scenePassList = coreSource.match(/_scenePasses\s*=\s*\[([\s\S]*?)\]/)?.[1] || '';
   const shaftsIndex = scenePassList.indexOf('this.shadowShaftsPass');
   const fgIndex = scenePassList.indexOf('this.renderPassFg');
   const ringIndex = scenePassList.indexOf('this.renderPassRingPlanets');
   const orthoIndex = scenePassList.indexOf('this.renderPassOrtho');
   assert.ok(shaftsIndex >= 0, 'shadow shafts pass missing from scene chain');
-  assert.ok(shaftsIndex > fgIndex && shaftsIndex > ringIndex && shaftsIndex > orthoIndex,
-    'shadow shafts must multiply the whole scene (last pass), not only bg+planets');
+  // Statki/ring (ortho) PRZYJMUJA cien, ale FG (bronie, muzzle flashe)
+  // rysuje sie PO passie — emisje swieca w cieniu i bloom przebija.
+  assert.ok(shaftsIndex > ringIndex && shaftsIndex > orthoIndex,
+    'shadow shafts must run after ring-planet and ortho world passes');
+  assert.ok(shaftsIndex < fgIndex,
+    'shadow shafts must run BEFORE the FG pass so weapon emissives stay lit in shadow');
+});
+
+test('shafts pass only multiplies shadows and cannot add full-screen haze', () => {
+  assert.match(coreSource, /new FullScreenBlendPass\(createShadowShaftsShader\(\), BLEND_MULTIPLY_SCENE\)/);
+  assert.match(coreSource, /blendDst: THREE\.SrcColorFactor/);
+  assert.match(coreSource, /gl_FragColor = vec4\(mix\(vec3\(1\.0\), vec3\(0\.06, 0\.10, 0\.16\), rawShadow\), 1\.0\);/);
+  assert.match(coreSource, /if\(length\(dirVec\) < 0\.001\) \{\s*gl_FragColor = vec4\(1\.0\);/);
+  for (const removedName of ['BLEND_SHAFTS_COMPOSE', 'uSunHazeColor', 'uSunHazeStrength', 'uShadowFill']) {
+    assert.ok(!coreSource.includes(removedName), `shafts pass must not contain global haze source ${removedName}`);
+  }
+  const cfgBlock = coreSource.match(/export const SHADOW_SHAFTS_QUALITY = \{([\s\S]*?)\n\};/)?.[1] || '';
+  assert.doesNotMatch(cfgBlock, /haze\s*:/);
+});
+
+test('asteroids cast via persp sprite occluder twins', () => {
+  assert.match(coreSource, /const OCCLUSION_SPRITE_PERSP_RENDER_LAYER = 9;/);
+  assert.match(coreSource, /enableSpriteOccluderPersp3D\(object3d\)/);
+  const perspSpriteRenders = coreSource.match(/cameraPersp\.layers\.set\(OCCLUSION_SPRITE_PERSP_RENDER_LAYER\);\s*\n\s*this\.renderer\.render\(this\.scene, this\.cameraPersp\);/g) || [];
+  assert.ok(perspSpriteRenders.length >= 3,
+    `expected persp sprite-occluder render per viewport (got ${perspSpriteRenders.length})`);
+  const asteroidSource = readFileSync(new URL('../src/3d/asteroidField3D.js', import.meta.url), 'utf8');
+  assert.match(asteroidSource, /this\.occluderMesh\.instanceMatrix = this\.mesh\.instanceMatrix;/);
+  assert.match(asteroidSource, /Core3D\.enableSpriteOccluderPersp3D\(this\.occluderMesh\);/);
+  assert.match(asteroidSource, /if \(this\.occluderMesh\) this\.occluderMesh\.count = this\.watermark;/);
 });
 
 test('occlusion pre-pass renders ortho occluders (ships, ring floor)', () => {
@@ -57,7 +85,7 @@ test('armor-LOD ships keep casting via sprite occluder pass', () => {
   // do maski daje quad z alfa sprite'a, renderowany BEZ bialego override'u.
   assert.match(coreSource, /const OCCLUSION_SPRITE_RENDER_LAYER = 8;/);
   assert.match(coreSource, /enableSpriteOccluder3D\(object3d\)/);
-  const spritePassRenders = coreSource.match(/overrideMaterial = null;\s*\n\s*this\.cameraOrtho\.layers\.set\(OCCLUSION_SPRITE_RENDER_LAYER\);\s*\n\s*this\.renderer\.render\(this\.scene, this\.cameraOrtho\);\s*\n\s*this\.scene\.overrideMaterial = this\.occlusionWhiteMaterial;/g) || [];
+  const spritePassRenders = coreSource.match(/overrideMaterial = null;\s*\n\s*this\.cameraOrtho\.layers\.set\(OCCLUSION_SPRITE_RENDER_LAYER\);\s*\n\s*this\.renderer\.render\(this\.scene, this\.cameraOrtho\);/g) || [];
   assert.ok(spritePassRenders.length >= 3,
     `expected sprite-occluder render in split-left, split-right and single viewport (got ${spritePassRenders.length})`);
   assert.match(shipsSource, /armorMesh\.add\(armorOccluder\);/);

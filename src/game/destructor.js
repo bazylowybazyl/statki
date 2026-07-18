@@ -4,7 +4,7 @@
  */
 
 import { DestructorGpuSoftBody } from './destructorGpuSoftBody.js';
-import { getEntityShieldBlockingRadius } from '../../shieldSystem.js';
+import { getEntityShieldBlockingRadius, getEntityShieldBlockingRadiusTowards } from '../../shieldSystem.js';
 import {
   attachHexGridToArena,
   getHexArenaStats as getPackedHexArenaStats,
@@ -3240,9 +3240,15 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
     const dx = ax - bx, dy = ay - by;
     const distSq = dx * dx + dy * dy;
 
-    // Effective collision radii: shield radius if shielded, hull radius otherwise
-    const radiusA = srA > 0 ? srA : (Number(A._bpRadius) || 100);
-    const radiusB = srB > 0 ? srB : (Number(B._bpRadius) || 100);
+    // Effective collision radii: shield radius if shielded, hull radius otherwise.
+    // Tarcza-obrys: promień próbkowany kierunkowo wzdłuż linii środków
+    // (srA/srB to promienie obwiedni z broadphase — zostają jako fallback).
+    const dirA = srA > 0 ? getEntityShieldBlockingRadiusTowards(A, bx, by) : 0;
+    const dirB = srB > 0 ? getEntityShieldBlockingRadiusTowards(B, ax, ay) : 0;
+    const effSrA = srA > 0 ? (dirA > 0 ? dirA : srA) : 0;
+    const effSrB = srB > 0 ? (dirB > 0 ? dirB : srB) : 0;
+    const radiusA = effSrA > 0 ? effSrA : (Number(A._bpRadius) || 100);
+    const radiusB = effSrB > 0 ? effSrB : (Number(B._bpRadius) || 100);
     const combined = radiusA + radiusB;
 
     if (distSq >= combined * combined) return 0; // no overlap
@@ -3358,9 +3364,9 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         const dmg = dmgA;
         A.shield.val = Math.max(0, A.shield.val - dmg);
         A.shield.regenTimer = A.shield.regenDelay || 3.0;
-        // Visual impact on A's shield surface
+        // Visual impact on A's shield surface (punkt na obrysie tarczy)
         if (typeof window !== 'undefined' && window.registerShieldImpact) {
-          window.registerShieldImpact(A, ax - nx * srA, ay - ny * srA, dmg);
+          window.registerShieldImpact(A, ax - nx * radiusA, ay - ny * radiusA, dmg);
         }
       }
 
@@ -3369,7 +3375,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
         B.shield.val = Math.max(0, B.shield.val - dmg);
         B.shield.regenTimer = B.shield.regenDelay || 3.0;
         if (typeof window !== 'undefined' && window.registerShieldImpact) {
-          window.registerShieldImpact(B, bx + nx * srB, by + ny * srB, dmg);
+          window.registerShieldImpact(B, bx + nx * radiusB, by + ny * radiusB, dmg);
         }
       }
 

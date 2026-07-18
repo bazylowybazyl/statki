@@ -1604,7 +1604,7 @@
     import { DEFAULT_PLANET_SCALE, TIME_SCALE } from './src/config/constants.js';
     import { BELT_DEFINITIONS } from './src/data/asteroidTypes.js';
     import { WORLD, setWorldSize } from './src/world/world.js';
-    import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff, getEntityShieldBaseRadius } from './shieldSystem.js';
+    import { initShieldSystem, updateShieldFx, registerShieldImpact, resizeShieldSystem, triggerEnergyShot as applyEnergyShot, isEntityShieldBlocking, isShieldChargedEnoughToActivate, setEntityShieldForcedOff, getEntityShieldBaseRadius, getEntityShieldBlockingProgress, getEntityShieldRadiusTowards } from './shieldSystem.js';
     // DODANO IMPORT SHIP_PHYSICS
     import { createShipEntity, applyPlayerInput, refreshShipGeometry, composeShipThrusterCommand, updateShipThrusterState, computeShipThrusterForces, SHIP_PHYSICS } from "./src/game/shipEntity.js";
     import {
@@ -10993,32 +10993,10 @@
       return waitForCondition(() => planetScene3D || planetStationsReady, 2500);
     }
 
-    // Mgła pasa w bezpiecznej warstwie Canvas 2D. Gradient jest cache'owany po
-    // rozmiarze viewportu, więc nie tworzymy obiektów w gorącej pętli renderu.
-    const beltFog2DCache = { width: 0, height: 0, gradient: null };
-    function drawBeltFog2D(context, width, height, intensity) {
-      const amount = clamp(Number(intensity) || 0, 0, 1);
-      if (amount <= 0.004) return;
-      if (!beltFog2DCache.gradient || beltFog2DCache.width !== width || beltFog2DCache.height !== height) {
-        const radius = Math.max(width, height) * 0.9;
-        const gradient = context.createRadialGradient(
-          width * 0.32, height * 0.38, 0,
-          width * 0.32, height * 0.38, radius
-        );
-        gradient.addColorStop(0, 'rgba(92, 116, 154, 0.72)');
-        gradient.addColorStop(0.42, 'rgba(54, 75, 112, 0.30)');
-        gradient.addColorStop(1, 'rgba(20, 30, 52, 0)');
-        beltFog2DCache.width = width;
-        beltFog2DCache.height = height;
-        beltFog2DCache.gradient = gradient;
-      }
-      context.save();
-      context.globalCompositeOperation = 'screen';
-      context.globalAlpha = amount * 0.15;
-      context.fillStyle = beltFog2DCache.gradient;
-      context.fillRect(0, 0, width, height);
-      context.restore();
-    }
+    // Mgła pasa jest w całości PRZESTRZENNA (addytywne płaty pyłu w WebGL,
+    // asteroidBeltBackdrop3D) — pełnoekranowy wash 2D usunięty: gradient 'screen'
+    // szarzył cały kadr (łącznie z planetami w tle), a 8-bitowa kwantyzacja
+    // radialnego gradientu robiła koncentryczne prążki na ekranie.
 
 
     // =============== Bullets & effects ===============
@@ -19396,8 +19374,10 @@
     // przy wstawianiu do SpatialGrid, a nie per pocisk x per kandydat (dziesiatki
     // tysiecy wywolan isEntityShieldBlocking na klatke w duzej bitwie).
     function stampBulletCollisionRadii(e) {
-      const shieldR = isEntityShieldBlocking(e) ? getEntityShieldBaseRadius(e) : 0;
+      const shieldProg = getEntityShieldBlockingProgress(e);
+      const shieldR = shieldProg > 0 ? getEntityShieldBaseRadius(e) : 0;
       e._blkShieldR = shieldR;
+      e._blkShieldProg = shieldProg;
       const hullR = Number(e.radius) || 0;
       e._blkMaxR = shieldR > hullR ? shieldR : hullR;
     }
@@ -19593,11 +19573,22 @@
 
           const shieldR = npc._blkShieldR || 0;
           if (shieldR > 0) {
-            // 1. SPRAWDZENIE TARCZY (okrągła — dopasowana do 3D renderingu)
-            const hitThreshold = shieldR + b.r;
-            if (distSq <= hitThreshold * hitThreshold) {
+            // 1. SPRAWDZENIE TARCZY — kierunkowy promień profilu (tarcza-obrys
+            // dopasowana do kadłuba; dla encji bez profilu wraca do koła).
+            // Progres aktywacji ostemplowany raz na krok (stampBulletCollisionRadii).
+            const dirShieldR = getEntityShieldRadiusTowards(npc._realEntity || npc, b.x, b.y) * (npc._blkShieldProg || 0);
+            const hitThreshold = dirShieldR + b.r;
+            if (dirShieldR > 0 && distSq <= hitThreshold * hitThreshold) {
               hitNPC = npc;
               didHitShield = true;
+              break;
+            }
+            // Pocisk w obwiedni kadłuba, ale poza obrysem tarczy (np. tunelowanie
+            // szybkiego pocisku) -> kandydat na failsafe hexHit niżej.
+            const hullThreshold = (Number(npc.radius) || 0) + b.r;
+            if (distSq <= hullThreshold * hullThreshold) {
+              hitNPC = npc;
+              didHitShield = false;
               break;
             }
           } else {
@@ -22851,7 +22842,6 @@
             ctx.fillStyle = `rgba(3, 5, 10, ${(beltDim * 0.12).toFixed(3)})`;
             ctx.fillRect(0, 0, W, H);
             ctx.restore();
-            drawBeltFog2D(ctx, W, H, beltDim);
           }
         }
 

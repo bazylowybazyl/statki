@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gigantyczny Dok Kosmiczny</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #050510;
+            color: #4ade80;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: grab;
+        }
+        canvas:active {
+            cursor: grabbing;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            box-sizing: border-box;
+            z-index: 10;
+        }
+        .ui-panel {
+            background: rgba(5, 5, 16, 0.7);
+            border: 1px solid #1e3a8a;
+            border-radius: 8px;
+            padding: 15px;
+            backdrop-filter: blur(4px);
+            box-shadow: 0 0 15px rgba(30, 58, 138, 0.5);
+            pointer-events: auto;
+        }
+        .scan-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: rgba(74, 222, 128, 0.2);
+            box-shadow: 0 0 10px rgba(74, 222, 128, 0.5);
+            animation: scan 4s linear infinite;
+            pointer-events: none;
+            z-index: 20;
+        }
+        @keyframes scan {
+            0% { top: -10%; }
+            100% { top: 110%; }
+        }
+        .stat-bar {
+            width: 100%;
+            height: 8px;
+            background-color: #1e293b;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+        .stat-fill {
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+        #toast {
+            transition: opacity 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="scan-line"></div>
+    
+    <div id="ui-layer">
+        <div class="flex justify-between items-start">
+            <div class="ui-panel w-64">
+                <h1 class="text-xl font-bold mb-2 text-blue-400">DOK OMEGA-7</h1>
+                <p class="text-xs text-gray-400 mb-4">Węzeł Pierścienia Orbitalnego</p>
+                
+                <div class="mb-3">
+                    <div class="flex justify-between text-xs mb-1">
+                        <span>Zasilanie (Rdzeń)</span>
+                        <span class="text-blue-300">Optymalne</span>
+                    </div>
+                    <div class="stat-bar">
+                        <div class="stat-fill bg-blue-500" style="width: 92%;"></div>
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <div class="flex justify-between text-xs mb-1">
+                        <span>Pojemność Doków</span>
+                        <span id="capacity-text">0%</span>
+                    </div>
+                    <div class="stat-bar">
+                        <div class="stat-fill bg-green-500" id="capacity-bar" style="width: 0%;"></div>
+                    </div>
+                </div>
+                
+                <button onclick="exportDockLayout()" class="mt-4 w-full bg-blue-800 hover:bg-blue-600 text-white text-xs py-2 px-4 rounded border border-blue-400 transition-colors">
+                    Eksportuj Layout (JSON)
+                </button>
+                <button onclick="window.toggleArms()" class="mt-2 w-full bg-purple-800 hover:bg-purple-600 text-white text-xs py-2 px-4 rounded border border-purple-400 transition-colors shadow-[0_0_10px_rgba(168,85,247,0.5)]">
+                    Przełącz Ramiona (Tryb Obrony)
+                </button>
+                <button onclick="window.undock()" class="mt-2 w-full bg-orange-700 hover:bg-orange-500 text-white text-xs py-2 px-4 rounded border border-orange-400 transition-colors shadow-[0_0_10px_rgba(249,115,22,0.5)]">
+                    Oddokuj (Niezależny Statek)
+                </button>
+            </div>
+
+            <div class="ui-panel w-64 text-right">
+                <h2 class="text-sm font-bold mb-2 text-yellow-400">RUCH ORBITALNY</h2>
+                <div class="text-xs space-y-1 text-left" id="traffic-log">
+                    <p class="text-gray-400">... nasłuchiwanie ...</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex flex-col items-center">
+            <div class="ui-panel text-center text-xs space-x-4 mb-2">
+                <span class="text-gray-400">LEGENDARIUM:</span>
+                <span class="text-red-400"><span class="inline-block w-2 h-2 rounded-full bg-red-500 mr-1"></span>Megafreighter</span>
+                <span class="text-pink-400"><span class="inline-block w-2 h-2 rounded-full bg-pink-500 mr-1"></span>Klasa L</span>
+                <span class="text-white"><span class="inline-block w-2 h-2 rounded-full bg-white mr-1"></span>Klasa M</span>
+                <span class="text-green-400"><span class="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span>Klasa S</span>
+            </div>
+            <div class="ui-panel text-center text-xs text-gray-400">
+                KONTROLA: Przeciągnij (Pan) | Scroll (Zoom)
+            </div>
+        </div>
+    </div>
+
+    <!-- Ukryty Toast dla powiadomień -->
+    <div id="toast" class="absolute bottom-24 left-1/2 transform -translate-x-1/2 bg-blue-700 text-white px-6 py-2 rounded-full shadow-lg opacity-0 pointer-events-none z-50">
+        Wyeksportowano do konsoli!
+    </div>
+
+    <canvas id="dockCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('dockCanvas');
+        const ctx = canvas.getContext('2d');
+        let width, height;
+        
+        // Zmienne kamery
+        let camX = 0, camY = 0;
+        let targetCamX = 0, targetCamY = 0;
+        let zoom = 0.15, targetZoom = 0.15; // Domyślne oddalenie, by widzieć gigantyczny dok
+
+        // Resize handler
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            
+            if (camX === 0 && camY === 0) {
+                targetCamX = camX = width * 0.35; 
+                targetCamY = camY = height / 2;
+            }
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Sterowanie kamerą
+        let isDragging = false;
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+        });
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                targetCamX += e.movementX;
+                targetCamY += e.movementY;
+                camX += e.movementX; 
+                camY += e.movementY;
+            }
+        });
+        canvas.addEventListener('wheel', (e) => {
+            const zoomFactor = e.deltaY > 0 ? 0.85 : 1.15;
+            const newTargetZoom = Math.max(0.02, Math.min(targetZoom * zoomFactor, 2.5));
+            
+            const mouseX = e.clientX;
+            const mouseY = e.clientY;
+            
+            const worldX = (mouseX - targetCamX) / targetZoom;
+            const worldY = (mouseY - targetCamY) / targetZoom;
+            
+            targetZoom = newTargetZoom;
+            targetCamX = mouseX - worldX * targetZoom;
+            targetCamY = mouseY - worldY * targetZoom;
+        });
+
+        let time = 0;
+
+        class DockStructure {
+            constructor() {
+                this.rotation = 0; 
+                
+                this.rings = [
+                    { radius: 600, width: 80, speed: 0.002, dir: 1 },
+                    { radius: 900, width: 30, speed: -0.003, dir: -1 },
+                    { radius: 1200, width: 100, speed: 0.001, dir: 1 }
+                ];
+                
+                this.roofProgress = 0; // 0 = otwarty, 1 = zamknięty
+                this.isUndocked = false;
+                this.undockProgress = 0;
+                this.distanceFromRing = 0;
+                
+                // Masywne ramiona chwytające ring (pod kątem)
+                this.defenseMode = false;
+                this.supports = [
+                    // Wewnętrzne (bardziej poziome, krótsze) - w trybie obrony równolegle do głównego łącznika (Math.PI)
+                    { originX: 0, originY: -700, angle: -Math.PI/1.2, defaultAngle: -Math.PI/1.2, defenseAngle: -Math.PI, length: 2800, width: 250 },
+                    { originX: 0, originY: 700, angle: Math.PI/1.2, defaultAngle: Math.PI/1.2, defenseAngle: Math.PI, length: 2800, width: 250 },
+                    // Zewnętrzne (bardziej pionowe, dłuższe) - w trybie obrony składają się idealnie wzdłuż krawędzi parkingu (0)
+                    { originX: 0, originY: -700, angle: -Math.PI/1.4, defaultAngle: -Math.PI/1.4, defenseAngle: 0, length: 4050, width: 200 },
+                    { originX: 0, originY: 700, angle: Math.PI/1.4, defaultAngle: Math.PI/1.4, defenseAngle: 0, length: 4050, width: 200 },
+                    // Centralne ramiona zamykające (krzyżowe) - startują ze środka doku (0,0)
+                    // Domyślnie na ukos (Math.PI/4), w obronie pionowo (Math.PI/2)
+                    { originX: 0, originY: 0, angle: -Math.PI/4, defaultAngle: -Math.PI/4, defenseAngle: -Math.PI/2, length: 3000, width: 200 },
+                    { originX: 0, originY: 0, angle: Math.PI/4, defaultAngle: Math.PI/4, defenseAngle: Math.PI/2, length: 3000, width: 200 }
+                ];
+
+                // Inicjalizacja tablic dla architektury
+                this.arms = []; // Zostawiamy puste dla zachowania kompatybilności struktury
+                this.workerBays = [];
+                this.cargoZones = [];
+                this.workerLanes = [];
+                
+                // MAIN FLIGHT DECK (Ogromna platforma lotnicza)
+                this.flightDeck = {
+                    length: 4500,
+                    width: 1400,
+                    bays: []
+                };
+
+                // Pozycja startowa pokładu daleko w prawo od terminala (0,0)
+                const startX = 800; 
+
+                // 1. MEGAFREIGHTER (Centralnie)
+                this.flightDeck.bays.push({
+                    id: 'megafreighter_01',
+                    type: 'Megafreighter',
+                    x: startX + 2250,
+                    y: 0,
+                    angle: Math.PI,
+                    width: 2800,
+                    height: 250,
+                    occupied: false,
+                    approachPoints: [{x: startX + 6000, y: 0}, {x: startX + 4000, y: 0}],
+                    dockPose: {x: startX + 2250, y: 0, angle: Math.PI},
+                    exitPoints: [{x: startX + 4000, y: 0}, {x: startX + 6000, y: 0}]
+                });
+
+                // 2. KLASA L (Różowe - prostopadłe)
+                // Górny rząd
+                for (let i = 0; i < 3; i++) {
+                    let bx = startX + 900 + (i * 600);
+                    let by = -400;
+                    this.flightDeck.bays.push({
+                        id: `L_top_${i}`, type: 'L',
+                        x: bx, y: by, angle: Math.PI/2, width: 450, height: 250, occupied: false,
+                        approachPoints: [{x: bx + 2500, y: by - 2000}, {x: bx, y: by - 1200}],
+                        dockPose: {x: bx, y: by, angle: Math.PI/2},
+                        exitPoints: [{x: bx, y: by - 1200}, {x: bx + 2500, y: by - 2000}]
+                    });
+                }
+                // Dolny rząd
+                for (let i = 0; i < 3; i++) {
+                    let bx = startX + 900 + (i * 600);
+                    let by = 400;
+                    this.flightDeck.bays.push({
+                        id: `L_bot_${i}`, type: 'L',
+                        x: bx, y: by, angle: -Math.PI/2, width: 450, height: 250, occupied: false,
+                        approachPoints: [{x: bx + 2500, y: by + 2000}, {x: bx, y: by + 1200}],
+                        dockPose: {x: bx, y: by, angle: -Math.PI/2},
+                        exitPoints: [{x: bx, y: by + 1200}, {x: bx + 2500, y: by + 2000}]
+                    });
+                }
+
+                // 3. KLASA M (Białe - równoległe)
+                // Górne skupisko (2 rzędy po 3)
+                for (let r = 0; r < 2; r++) {
+                    for (let c = 0; c < 3; c++) {
+                        let bx = startX + 2700 + (c * 350);
+                        let by = -500 + (r * 220);
+                        this.flightDeck.bays.push({
+                            id: `M_top_${r}_${c}`, type: 'M',
+                            x: bx, y: by, angle: Math.PI, width: 280, height: 140, occupied: false,
+                            approachPoints: [{x: bx + 3000, y: by}],
+                            dockPose: {x: bx, y: by, angle: Math.PI},
+                            exitPoints: [{x: bx + 3000, y: by}]
+                        });
+                    }
+                }
+                // Dolne skupisko
+                for (let r = 0; r < 2; r++) {
+                    for (let c = 0; c < 3; c++) {
+                        let bx = startX + 2700 + (c * 350);
+                        let by = 500 - (r * 220); // Odbicie lustrzane
+                        this.flightDeck.bays.push({
+                            id: `M_bot_${r}_${c}`, type: 'M',
+                            x: bx, y: by, angle: Math.PI, width: 280, height: 140, occupied: false,
+                            approachPoints: [{x: bx + 3000, y: by}],
+                            dockPose: {x: bx, y: by, angle: Math.PI},
+                            exitPoints: [{x: bx + 3000, y: by}]
+                        });
+                    }
+                }
+
+                // 4. KLASA S (Zielone - równoległe)
+                // Górne skupisko
+                for (let r = 0; r < 3; r++) {
+                    for (let c = 0; c < 4; c++) {
+                        let bx = startX + 3800 + (c * 150);
+                        let by = -550 + (r * 120);
+                        this.flightDeck.bays.push({
+                            id: `S_top_${r}_${c}`, type: 'S',
+                            x: bx, y: by, angle: Math.PI, width: 100, height: 70, occupied: false,
+                            approachPoints: [{x: bx + 2000, y: by}],
+                            dockPose: {x: bx, y: by, angle: Math.PI},
+                            exitPoints: [{x: bx + 2000, y: by}]
+                        });
+                    }
+                }
+                // Dolne skupisko
+                for (let r = 0; r < 3; r++) {
+                    for (let c = 0; c < 4; c++) {
+                        let bx = startX + 3800 + (c * 150);
+                        let by = 550 - (r * 120);
+                        this.flightDeck.bays.push({
+                            id: `S_bot_${r}_${c}`, type: 'S',
+                            x: bx, y: by, angle: Math.PI, width: 100, height: 70, occupied: false,
+                            approachPoints: [{x: bx + 2000, y: by}],
+                            dockPose: {x: bx, y: by, angle: Math.PI},
+                            exitPoints: [{x: bx + 2000, y: by}]
+                        });
+                    }
+                }
+            }
+
+            update() {
+                // Płynna animacja ramion
+                this.supports.forEach(supp => {
+                    const target = this.defenseMode ? supp.defenseAngle : supp.defaultAngle;
+                    supp.angle += (target - supp.angle) * 0.02; // easing
+                });
+
+                // Płynna animacja dachu
+                const targetRoof = this.defenseMode ? 1.0 : 0.0;
+                this.roofProgress += (targetRoof - this.roofProgress) * 0.015;
+
+                // Animacja oddokowania i odlotu
+                const targetUndock = this.isUndocked ? 1.0 : 0.0;
+                this.undockProgress += (targetUndock - this.undockProgress) * 0.01;
+                
+                if (this.isUndocked) {
+                    this.distanceFromRing += 15 + (this.undockProgress * 30);
+                } else {
+                    if (this.distanceFromRing > 0) {
+                        this.distanceFromRing -= 15 + ((1-this.undockProgress) * 30);
+                    }
+                    if (this.distanceFromRing < 0) this.distanceFromRing = 0;
+                }
+            }
+
+            drawUnderlay(ctx) {
+                ctx.save();
+                
+                // 1. Ściana Pierścienia (Bardzo odległa i płaska)
+                const wallRadius = 250000; 
+                // Krawędź ściany cofa się w lewo przy oddokowaniu
+                const wallCenterX = -252500 - this.distanceFromRing; 
+                
+                ctx.fillStyle = '#0a0f1d';
+                ctx.beginPath();
+                ctx.arc(wallCenterX, 0, wallRadius, -Math.PI/64, Math.PI/64);
+                ctx.lineTo(wallCenterX, 0);
+                ctx.fill();
+
+                // Krawędź pierścienia
+                ctx.strokeStyle = '#38bdf8';
+                ctx.lineWidth = 20;
+                ctx.beginPath();
+                ctx.arc(wallCenterX, 0, wallRadius, -Math.PI/64, Math.PI/64);
+                ctx.stroke();
+
+                // 2. GŁÓWNY WĘZEŁ CUMOWNICZY (Łącznik do bazy)
+                // Przy oddokowaniu łącznik chowa się w stronę terminala (od -2500 docelowo do -1200)
+                const connectorLeft = -2500 + (1300 * this.undockProgress);
+                const connectorWidth = Math.abs(connectorLeft); // Pociągnięte do 0 (centrum)
+                
+                ctx.fillStyle = '#1a1a2e';
+                ctx.fillRect(connectorLeft, -500, connectorWidth, 1000); 
+                
+                ctx.fillStyle = '#16213e';
+                ctx.fillRect(connectorLeft, -250, connectorWidth, 500); // Wypukłość środkowa
+                
+                // Wcięcia i dociski mocowania przy samej krawędzi łącznika
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(connectorLeft, -600, 300, 1200); 
+                ctx.fillStyle = '#38bdf8';
+                ctx.fillRect(connectorLeft, -150, 80, 300); // Styki energetyczne
+
+                // SILNIKI KOSMICZNE (Widoczne po oddokowaniu na końcu łącznika)
+                if (this.undockProgress > 0.05) {
+                    const thrust = this.undockProgress;
+                    const flicker = Math.random() * 60;
+                    
+                    ctx.save();
+                    ctx.globalCompositeOperation = 'lighter';
+                    
+                    // Środkowy gigantyczny płomień
+                    ctx.fillStyle = 'rgba(59, 130, 246, 0.8)'; // Niebieski rdzeń zewnętrzny
+                    ctx.beginPath();
+                    ctx.moveTo(connectorLeft, 0);
+                    ctx.lineTo(connectorLeft - 800 * thrust - flicker, -120);
+                    ctx.lineTo(connectorLeft - 2500 * thrust - flicker*2, 0);
+                    ctx.lineTo(connectorLeft - 800 * thrust - flicker, 120);
+                    ctx.fill();
+                    
+                    // Rdzeń głównego silnika (bardzo jasny)
+                    ctx.fillStyle = 'rgba(219, 234, 254, 0.9)'; // Niemal biały
+                    ctx.beginPath();
+                    ctx.moveTo(connectorLeft, 0);
+                    ctx.lineTo(connectorLeft - 500 * thrust - flicker, -50);
+                    ctx.lineTo(connectorLeft - 1400 * thrust - flicker*2, 0);
+                    ctx.lineTo(connectorLeft - 500 * thrust - flicker, 50);
+                    ctx.fill();
+
+                    // Boczne dysze stabilizujące
+                    ctx.fillStyle = 'rgba(147, 197, 253, 0.8)';
+                    // Górna
+                    ctx.beginPath();
+                    ctx.moveTo(connectorLeft + 100, -350);
+                    ctx.lineTo(connectorLeft - 400 * thrust - flicker, -400);
+                    ctx.lineTo(connectorLeft - 1000 * thrust - flicker*2, -350);
+                    ctx.lineTo(connectorLeft - 400 * thrust - flicker, -300);
+                    ctx.fill();
+                    // Dolna
+                    ctx.beginPath();
+                    ctx.moveTo(connectorLeft + 100, 350);
+                    ctx.lineTo(connectorLeft - 400 * thrust - flicker, 300);
+                    ctx.lineTo(connectorLeft - 1000 * thrust - flicker*2, 350);
+                    ctx.lineTo(connectorLeft - 400 * thrust - flicker, 400);
+                    ctx.fill();
+                    
+                    ctx.restore();
+                }
+
+                // 3. Ramiona wsporcze 
+                this.supports.forEach(supp => {
+                    ctx.save();
+                    // Zmiana środka obrotu na zadeklarowane krawędzie (originX, originY)
+                    if(supp.originX !== undefined && supp.originY !== undefined) {
+                        ctx.translate(supp.originX, supp.originY);
+                    }
+                    ctx.rotate(supp.angle);
+                    // Ramię
+                    ctx.fillStyle = '#1a1a2e';
+                    ctx.fillRect(0, -supp.width/2, supp.length, supp.width);
+                    // Detal
+                    ctx.fillStyle = '#16213e';
+                    ctx.fillRect(200, -supp.width/4, supp.length-400, supp.width/2);
+                    ctx.restore();
+                });
+
+                // Ambient glow centrum
+                let gradient = ctx.createRadialGradient(0, 0, 200, 0, 0, 1500);
+                gradient.addColorStop(0, 'rgba(56, 189, 248, 0.15)');
+                gradient.addColorStop(1, 'transparent');
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(0, 0, 1500, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 3.5 ŁĄCZNIK (Most transportowy między rdzeniem a parkingiem)
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(150, -150, 650, 300); // Główna bryła
+                
+                // Żebra wzmacniające
+                ctx.fillStyle = '#1e293b';
+                for (let x = 200; x < 800; x += 120) {
+                    ctx.fillRect(x, -180, 50, 360);
+                }
+                
+                // Ścieżka tranzytowa
+                ctx.fillStyle = '#050510';
+                ctx.fillRect(150, -60, 650, 120);
+                ctx.strokeStyle = '#38bdf8';
+                ctx.lineWidth = 4;
+                ctx.setLineDash([15, 15]);
+                ctx.beginPath();
+                ctx.moveTo(150, -30); ctx.lineTo(800, -30);
+                ctx.moveTo(150, 30); ctx.lineTo(800, 30);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // 4. MAIN FLIGHT DECK 
+                const deck = this.flightDeck;
+                const startX = 800; // Pas odsunięty mocno w prawo
+                const endX = startX + deck.length;
+                const halfW = deck.width / 2;
+
+                ctx.fillStyle = '#0f172a';
+                ctx.beginPath();
+                ctx.moveTo(startX, -halfW * 0.4); 
+                ctx.lineTo(startX + 400, -halfW); 
+                ctx.lineTo(endX, -halfW); 
+                ctx.lineTo(endX + 300, -halfW * 0.7);
+                ctx.lineTo(endX + 300, halfW * 0.7);
+                ctx.lineTo(endX, halfW);
+                ctx.lineTo(startX + 400, halfW);
+                ctx.lineTo(startX, halfW * 0.4);
+                ctx.fill();
+
+                ctx.strokeStyle = '#1e293b';
+                ctx.lineWidth = 15;
+                ctx.stroke();
+
+                // Korytarz centralny
+                ctx.fillStyle = '#050510';
+                ctx.fillRect(startX, -180, endX - startX, 360);
+                
+                // Torowisko Megafreightera
+                ctx.strokeStyle = '#38bdf8';
+                ctx.lineWidth = 6;
+                ctx.setLineDash([30, 30]);
+                ctx.beginPath();
+                ctx.moveTo(startX, -90); ctx.lineTo(endX, -90);
+                ctx.moveTo(startX, 90); ctx.lineTo(endX, 90);
+                ctx.stroke();
+                ctx.setLineDash([]); 
+
+                ctx.restore();
+            }
+
+            drawRoof(ctx) {
+                if (this.roofProgress <= 0.01) return;
+
+                const startX = 800; 
+                const length = this.flightDeck.length; 
+                const halfW = this.flightDeck.width / 2;
+                const currentCoverage = halfW * this.roofProgress;
+                const endX = startX + length;
+                const totalRoofLength = length + 300;
+
+                ctx.save();
+                
+                // Maska obrysu (aby dach przyciął się do skosów parkingu)
+                ctx.beginPath();
+                ctx.moveTo(startX, -halfW * 0.4); 
+                ctx.lineTo(startX + 400, -halfW); 
+                ctx.lineTo(endX, -halfW); 
+                ctx.lineTo(endX + 300, -halfW * 0.7);
+                ctx.lineTo(endX + 300, halfW * 0.7);
+                ctx.lineTo(endX, halfW);
+                ctx.lineTo(startX + 400, halfW);
+                ctx.lineTo(startX, halfW * 0.4);
+                ctx.closePath();
+                ctx.clip(); 
+
+                ctx.globalAlpha = 0.95;
+
+                const numSlats = 12; // Liczba szarych żaluzji
+                const slatOverlap = 15; // Zakładka dla efektu 3D
+                const baseSlatHeight = halfW / numSlats;
+                const slatHeight = baseSlatHeight + slatOverlap;
+
+                // --- GÓRNA POKRYWA (Żaluzje poziome szare) ---
+                for (let i = 0; i < numSlats; i++) {
+                    const y_i = -halfW + i * (currentCoverage / numSlats);
+                    
+                    // Gradient metaliczny dla szarej żaluzji
+                    let grad = ctx.createLinearGradient(startX, y_i, startX, y_i + slatHeight);
+                    grad.addColorStop(0, '#cbd5e1'); // Jasny błysk u góry
+                    grad.addColorStop(0.15, '#94a3b8'); // Szary bazowy
+                    grad.addColorStop(0.5, '#475569');  // Średnio-ciemny szary
+                    grad.addColorStop(1.0, '#1e293b');  // Cień u dołu
+
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(startX, y_i, totalRoofLength, slatHeight);
+
+                    // Obramowanie żaluzji
+                    ctx.strokeStyle = '#334155';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(startX, y_i, totalRoofLength, slatHeight);
+
+                    // Pionowe linie sekcji
+                    ctx.strokeStyle = 'rgba(15, 23, 42, 0.3)';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    for (let x = startX + 300; x < startX + totalRoofLength; x += 400) {
+                        ctx.moveTo(x, y_i);
+                        ctx.lineTo(x, y_i + slatHeight);
+                    }
+                    ctx.stroke();
+                    
+                    // Dodatkowy refleks świetlny na krawędzi natarcia
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+                    ctx.beginPath();
+                    ctx.moveTo(startX, y_i + 1);
+                    ctx.lineTo(startX + totalRoofLength, y_i + 1);
+                    ctx.stroke();
+                }
+
+                // --- DOLNA POKRYWA (Żaluzje poziome szare) ---
+                for (let i = 0; i < numSlats; i++) {
+                    const y_i = halfW - i * (currentCoverage / numSlats) - slatHeight;
+
+                    // Gradient metaliczny
+                    let grad = ctx.createLinearGradient(startX, y_i, startX, y_i + slatHeight);
+                    grad.addColorStop(0, '#cbd5e1');
+                    grad.addColorStop(0.15, '#94a3b8');
+                    grad.addColorStop(0.5, '#475569');
+                    grad.addColorStop(1.0, '#1e293b');
+
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(startX, y_i, totalRoofLength, slatHeight);
+
+                    // Obramowanie
+                    ctx.strokeStyle = '#334155';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(startX, y_i, totalRoofLength, slatHeight);
+
+                    // Pionowe linie sekcji
+                    ctx.strokeStyle = 'rgba(15, 23, 42, 0.3)';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    for (let x = startX + 300; x < startX + totalRoofLength; x += 400) {
+                        ctx.moveTo(x, y_i);
+                        ctx.lineTo(x, y_i + slatHeight);
+                    }
+                    ctx.stroke();
+
+                    // Refleks świetlny
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+                    ctx.beginPath();
+                    ctx.moveTo(startX, y_i + 1);
+                    ctx.lineTo(startX + totalRoofLength, y_i + 1);
+                    ctx.stroke();
+                }
+
+                // Krawędzie czołowe obu pokryw ze świetlną linią sygnalizacyjną
+                const leadingEdgeTopY = -halfW + currentCoverage;
+                const leadingEdgeBotY = halfW - currentCoverage;
+
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = '#38bdf8';
+                ctx.shadowColor = '#38bdf8';
+                ctx.shadowBlur = 10;
+                
+                ctx.beginPath();
+                ctx.moveTo(startX, leadingEdgeTopY);
+                ctx.lineTo(startX + totalRoofLength, leadingEdgeTopY);
+                ctx.moveTo(startX, leadingEdgeBotY);
+                ctx.lineTo(startX + totalRoofLength, leadingEdgeBotY);
+                ctx.stroke();
+                
+                ctx.shadowBlur = 0; // Reset cieni
+
+                // Zamknięty zamek świetlny
+                if (this.roofProgress > 0.98) {
+                    ctx.beginPath();
+                    ctx.moveTo(startX, 0);
+                    ctx.lineTo(startX + totalRoofLength, 0);
+                    ctx.lineWidth = 8;
+                    ctx.strokeStyle = '#60a5fa';
+                    ctx.shadowColor = '#60a5fa';
+                    ctx.shadowBlur = 15;
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+                }
+
+                ctx.restore();
+            }
+
+            drawForeground(ctx) {
+                // Pierścienie wirujące
+                this.rings.forEach(ring => {
+                    ctx.save();
+                    ctx.rotate(time * ring.speed);
+                    
+                    ctx.beginPath();
+                    ctx.arc(0, 0, ring.radius, 0, Math.PI * 2);
+                    ctx.strokeStyle = '#1a1a2e';
+                    ctx.lineWidth = ring.width;
+                    ctx.stroke();
+
+                    ctx.strokeStyle = '#16213e';
+                    ctx.lineWidth = ring.width * 0.4;
+                    ctx.setLineDash([40, 20]);
+                    ctx.beginPath();
+                    ctx.arc(0, 0, ring.radius, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    
+                    ctx.restore();
+                });
+
+                // Central Hub (Rdzeń Terminala)
+                ctx.fillStyle = '#0f3460';
+                ctx.beginPath();
+                ctx.arc(0, 0, 700, 0, Math.PI * 2); // Promień 700 = średnica 1400 (szerokość parkingu)
+                ctx.fill();
+
+                // Core glow
+                ctx.fillStyle = '#60a5fa';
+                ctx.beginPath();
+                ctx.arc(0, 0, 350, 0, Math.PI * 2);
+                ctx.fill();
+                
+                const pulse = Math.sin(time * 0.05) * 40;
+                ctx.fillStyle = '#bfdbfe';
+                ctx.beginPath();
+                ctx.arc(0, 0, 180 + pulse, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = '#38bdf8';
+                ctx.lineWidth = 6;
+                for(let i=0; i<6; i++) {
+                    ctx.beginPath();
+                    const a1 = (Math.PI / 3) * i;
+                    const a2 = (Math.PI / 3) * (i+1);
+                    ctx.moveTo(Math.cos(a1) * 500, Math.sin(a1) * 500);
+                    ctx.lineTo(Math.cos(a2) * 500, Math.sin(a2) * 500);
+                    ctx.stroke();
+                }
+            }
+
+            drawLights(ctx) {
+                ctx.save();
+                this.flightDeck.bays.forEach(bay => {
+                    let typeColor = '#334155';
+                    if (bay.type === 'Megafreighter') typeColor = '#ef4444'; 
+                    else if (bay.type === 'L') typeColor = '#ec4899'; 
+                    else if (bay.type === 'M') typeColor = '#f8fafc'; 
+                    else if (bay.type === 'S') typeColor = '#22c55e'; 
+                    
+                    ctx.save();
+                    ctx.translate(bay.x, bay.y);
+                    ctx.rotate(bay.angle); 
+                    
+                    if (bay.occupied) {
+                        ctx.fillStyle = typeColor;
+                        ctx.globalAlpha = 0.15;
+                        ctx.fillRect(-bay.width/2, -bay.height/2, bay.width, bay.height);
+                        ctx.globalAlpha = 1.0;
+                    }
+
+                    ctx.strokeStyle = typeColor;
+                    ctx.lineWidth = 6;
+                    ctx.setLineDash([20, 20]);
+                    ctx.strokeRect(-bay.width/2, -bay.height/2, bay.width, bay.height);
+                    ctx.setLineDash([]);
+                    
+                    // Narożniki świetlne
+                    const corners = [
+                        [-bay.width/2, -bay.height/2], [bay.width/2, -bay.height/2],
+                        [-bay.width/2, bay.height/2], [bay.width/2, bay.height/2]
+                    ];
+                    ctx.fillStyle = bay.occupied ? '#ef4444' : typeColor;
+                    corners.forEach(c => {
+                        ctx.beginPath();
+                        ctx.arc(c[0], c[1], 10, 0, Math.PI*2);
+                        ctx.fill();
+                    });
+                    ctx.restore();
+                });
+                ctx.restore();
+            }
+        }
+
+        class Ship {
+            constructor(type, dock) {
+                this.type = type;
+                this.dock = dock; 
+                this.state = 'approaching'; 
+                this.waypointIndex = 0;
+                
+                this.targetBay = this.findEmptyBay();
+                if(!this.targetBay) {
+                    this.state = 'waiting'; 
+                } else {
+                    this.targetBay.occupied = true;
+                    // Start na pierwszym approach point
+                    this.x = this.targetBay.approachPoints[0].x;
+                    this.y = this.targetBay.approachPoints[0].y;
+                    this.rotation = Math.PI; // Twarzą w lewo (do doku)
+                }
+
+                switch(type) {
+                    case 'S': this.size = {w: 80, h: 50}; this.color = '#22c55e'; this.speed = 12; break;
+                    case 'M': this.size = {w: 240, h: 100}; this.color = '#f8fafc'; this.speed = 8; break;
+                    case 'L': this.size = {w: 400, h: 180}; this.color = '#ec4899'; this.speed = 5; break;
+                    case 'Megafreighter': this.size = {w: 2200, h: 200}; this.color = '#ef4444'; this.speed = 2.5; break;
+                }
+                
+                this.dockTime = 300 + Math.random() * 800; 
+            }
+
+            findEmptyBay() {
+                let available = this.dock.flightDeck.bays.filter(b => b.type === this.type && !b.occupied);
+                if (available.length > 0) {
+                    return available[Math.floor(Math.random() * available.length)];
+                }
+                return null;
+            }
+
+            update() {
+                if (this.state === 'waiting') {
+                    this.targetBay = this.findEmptyBay();
+                    if(this.targetBay) {
+                        this.targetBay.occupied = true;
+                        this.state = 'approaching';
+                        this.waypointIndex = 0;
+                        logTraffic(`Statek ${this.type} otrzymał wektor podejścia do ${this.targetBay.id}.`);
+                    }
+                    this.rotation += 0.01;
+                    return;
+                }
+
+                if (!this.targetBay) return; 
+
+                let targetPoint;
+                let targetRot;
+
+                if (this.state === 'approaching') {
+                    if (this.waypointIndex < this.targetBay.approachPoints.length) {
+                        targetPoint = this.targetBay.approachPoints[this.waypointIndex];
+                        // Oblicz kąt patrzenia w stronę następnego waypointa
+                        targetRot = Math.atan2(targetPoint.y - this.y, targetPoint.x - this.x);
+                    } else {
+                        targetPoint = this.targetBay.dockPose;
+                        targetRot = this.targetBay.dockPose.angle;
+                    }
+                } else if (this.state === 'docked') {
+                    targetPoint = this.targetBay.dockPose;
+                    targetRot = this.targetBay.dockPose.angle;
+                } else if (this.state === 'leaving') {
+                    if (this.waypointIndex < this.targetBay.exitPoints.length) {
+                        targetPoint = this.targetBay.exitPoints[this.waypointIndex];
+                        targetRot = Math.atan2(targetPoint.y - this.y, targetPoint.x - this.x);
+                    } else {
+                        this.state = 'done';
+                        return;
+                    }
+                }
+
+                // Ruch fizyczny (Interpolacja)
+                if (this.state !== 'docked') {
+                    let dx = targetPoint.x - this.x;
+                    let dy = targetPoint.y - this.y;
+                    let dist = Math.hypot(dx, dy);
+                    
+                    if (dist > this.speed) {
+                        this.x += (dx / dist) * this.speed;
+                        this.y += (dy / dist) * this.speed;
+                    } else {
+                        this.x = targetPoint.x;
+                        this.y = targetPoint.y;
+                        
+                        // Zmiana waypointu
+                        if (this.state === 'approaching') {
+                            this.waypointIndex++;
+                            if (this.waypointIndex > this.targetBay.approachPoints.length) {
+                                this.state = 'docked';
+                                logTraffic(`Statek ${this.type} pomyślnie zadokował w ${this.targetBay.id}.`);
+                            }
+                        } else if (this.state === 'leaving') {
+                            this.waypointIndex++;
+                        }
+                    }
+                } else {
+                    // Czas dokowania
+                    this.dockTime--;
+                    if (this.dockTime <= 0) {
+                        this.state = 'leaving';
+                        this.waypointIndex = 0;
+                        this.targetBay.occupied = false;
+                        logTraffic(`Statek ${this.type} opuszcza ${this.targetBay.id}.`);
+                    }
+                }
+
+                // Smooth Rotation
+                let rotDiff = targetRot - this.rotation;
+                while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
+                while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
+                this.rotation += rotDiff * 0.05;
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+
+                if (this.type === 'Megafreighter') {
+                    // Kosmiczna Ciuchcia - wielomodułowa
+                    ctx.fillStyle = this.color;
+                    // Lokomotywa
+                    ctx.fillRect(this.size.w/2 - 300, -this.size.h/2, 300, this.size.h);
+                    ctx.beginPath(); ctx.moveTo(this.size.w/2, 0); ctx.lineTo(this.size.w/2 - 100, -this.size.h/2); ctx.lineTo(this.size.w/2 - 100, this.size.h/2); ctx.fill();
+                    
+                    // Wagony
+                    ctx.fillStyle = '#94a3b8'; // Szare kontenery
+                    for(let w=1; w<=6; w++) {
+                        let wagonX = (this.size.w/2 - 300) - (w * 280);
+                        ctx.fillRect(wagonX, -this.size.h/2 + 20, 240, this.size.h - 40);
+                        // Łącznik
+                        ctx.fillStyle = '#334155';
+                        ctx.fillRect(wagonX + 240, -20, 40, 40);
+                        ctx.fillStyle = '#94a3b8';
+                    }
+                } else {
+                    // Standardowy statek (Kształt grotu)
+                    ctx.fillStyle = this.color;
+                    ctx.beginPath();
+                    ctx.moveTo(this.size.w / 2, 0);
+                    ctx.lineTo(-this.size.w / 2, -this.size.h / 2);
+                    ctx.lineTo(-this.size.w / 3, 0);
+                    ctx.lineTo(-this.size.w / 2, this.size.h / 2);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Silniki
+                    if (this.state !== 'docked') {
+                        ctx.fillStyle = '#60a5fa';
+                        ctx.beginPath();
+                        ctx.arc(-this.size.w / 2 - 20, 0, 15, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+
+                ctx.restore();
+            }
+        }
+
+        const dock = new DockStructure();
+        let ships = [];
+        
+        window.toggleArms = function() {
+            if (dock.isUndocked) {
+                logTraffic("BŁĄD: Nie można otworzyć ramion w locie! Najpierw zadokuj.");
+                return;
+            }
+            dock.defenseMode = !dock.defenseMode;
+            logTraffic(dock.defenseMode ? "UWAGA: Aktywowano tryb obronny! Ramiona zamykają strefę parkingu." : "Ramiona wracają do pozycji domyślnej.");
+        };
+        
+        window.undock = function() {
+            if (!dock.defenseMode) {
+                logTraffic("BŁĄD: Ramiona muszą być zwinięte (Tryb Obrony) przed oddokowaniem!");
+                return;
+            }
+            dock.isUndocked = !dock.isUndocked;
+            logTraffic(dock.isUndocked ? "SEKWENCJA ODDOKOWANIA: Dok staje się niezależnym statkiem!" : "CUMOWANIE: Powrót do pierścienia orbitalnego...");
+        };
+        
+        const trafficLog = document.getElementById('traffic-log');
+        let logs = [];
+        function logTraffic(msg) {
+            logs.push(msg);
+            if(logs.length > 5) logs.shift();
+            trafficLog.innerHTML = logs.map(l => `<p class="text-gray-300 border-l-2 border-blue-600 pl-2 mb-1">${l}</p>`).join('');
+        }
+
+        function updateUI() {
+            let totalBays = dock.flightDeck.bays.length;
+            let occupiedBays = dock.flightDeck.bays.filter(b => b.occupied).length;
+            
+            const percent = Math.round((occupiedBays / totalBays) * 100);
+            document.getElementById('capacity-text').innerText = `${percent}%`;
+            
+            const bar = document.getElementById('capacity-bar');
+            bar.style.width = `${percent}%`;
+            
+            if(percent > 80) bar.className = 'stat-fill bg-red-500';
+            else if(percent > 50) bar.className = 'stat-fill bg-yellow-500';
+            else bar.className = 'stat-fill bg-green-500';
+        }
+
+        function spawnShip() {
+            if (ships.length < 25) {
+                const rand = Math.random();
+                let type = 'S';
+                if (rand > 0.95) type = 'Megafreighter';
+                else if (rand > 0.8) type = 'L';
+                else if (rand > 0.4) type = 'M';
+                
+                ships.push(new Ship(type, dock));
+                logTraffic(`Nowy kontakt radarowy: Klasa ${type}`);
+            }
+            setTimeout(spawnShip, 1500 + Math.random() * 3000);
+        }
+
+        function drawDockedShips(ctx) {
+            ships.forEach(s => s.draw(ctx));
+        }
+        function drawContainers(ctx) {} // Placeholder na przyszłość
+        function drawWorkers(ctx) {} // Placeholder na przyszłość
+
+        // Funkcja Eksportu Layoutu
+        window.exportDockLayout = function() {
+            const data = {
+                version: 1,
+                flightDeck: dock.flightDeck,
+                arms: dock.arms,
+                supports: dock.supports,
+                workerBays: dock.workerBays,
+                cargoZones: dock.cargoZones,
+                workerLanes: dock.workerLanes
+            };
+            console.log("=== EXPORTED DOCK LAYOUT ===");
+            console.log(JSON.stringify(data, null, 2));
+            
+            // Pokaż Toast bez użycia alert()
+            const toast = document.getElementById('toast');
+            toast.style.opacity = '1';
+            setTimeout(() => { toast.style.opacity = '0'; }, 3000);
+        };
+
+        function animate() {
+            time++;
+            
+            // Płynna interpolacja kamery
+            camX += (targetCamX - camX) * 0.15;
+            camY += (targetCamY - camY) * 0.15;
+            zoom += (targetZoom - zoom) * 0.15;
+
+            // Czyszczenie tła kosmosu
+            ctx.fillStyle = '#050510';
+            ctx.fillRect(0, 0, width, height);
+
+            ctx.save();
+            ctx.translate(camX, camY);
+            ctx.scale(zoom, zoom);
+
+            // Nowa, warstwowa kolejność rysowania
+            dock.update(); // Aktualizacja animacji (np. ramion)
+            dock.drawUnderlay(ctx);
+            dock.drawLights(ctx); // Rysujemy światła parkingowe na podłodze
+            
+            drawContainers(ctx);
+            drawWorkers(ctx);
+            
+            // Logika i rysowanie statków
+            for (let i = ships.length - 1; i >= 0; i--) {
+                let ship = ships[i];
+                ship.update();
+                if (ship.state === 'done') {
+                    ships.splice(i, 1);
+                } else {
+                    ship.draw(ctx);
+                }
+            }
+
+            dock.drawRoof(ctx); // Rysujemy zamykany dach tuż nad statkami
+            dock.drawForeground(ctx); // Pierścienie i hub przykrywają statki u dołu
+            
+            ctx.restore(); 
+            
+            if (time % 30 === 0) updateUI();
+
+            requestAnimationFrame(animate);
+        }
+
+        window.onload = () => {
+            logTraffic("Inicjalizacja systemów doku...");
+            setTimeout(spawnShip, 1000);
+            animate();
+        };
+
+    </script>
+</body>
+</html>
