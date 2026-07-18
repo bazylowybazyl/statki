@@ -24,6 +24,9 @@ const OCCLUSION_ORTHO_RENDER_LAYER = 7;
 // quad w pełny prostokąt. Obiekty na tej warstwie NIE renderują się nigdzie
 // indziej (layers.set, nie enable).
 const OCCLUSION_SPRITE_RENDER_LAYER = 8;
+// Jak wyżej, ale renderowane kamerą PERSP (np. asteroidy, które żyją
+// w passie FG na layer 2 — ich sylwetka musi być rzutowana tą samą kamerą).
+const OCCLUSION_SPRITE_PERSP_RENDER_LAYER = 9;
 // Maks. liczba tarcz (planety + księżyce) zgłaszanych per klatkę przez
 // pushShaftDiscWorld do analitycznych cieni w shaderze shaftów.
 const SHAFT_DISC_CAP = 16;
@@ -188,8 +191,8 @@ function createShadowShaftsShader() {
         }
 
         float rawShadow = clamp(max(marchShadow, discShadow), 0.0, 1.0);
-        // Wynik = mnożnik sceny (BLEND_MULTIPLY_SCENE robi dst×src,
-        // czyli dokładnie dawne mix(scena, scena*ciemny, rawShadow)).
+        // Pass może wyłącznie przyciemniać piksele pod smugą. Dodawanie stałej
+        // poświaty tutaj robiło pełnoekranową szarą mgłę niezależną od pozycji.
         gl_FragColor = vec4(mix(vec3(1.0), vec3(0.06, 0.10, 0.16), rawShadow), 1.0);
       }
     `
@@ -778,18 +781,18 @@ export const Core3D = {
     // quady blendowane sprzętowo (nie ShaderPassy czytające tDiffuse) — w całej
     // klatce jest więc dokładnie jeden resolve MSAA: composerTarget → postTarget.
     //
-    // shadowShaftsPass NA KOŃCU łańcucha: multiply-cień oblewa całą scenę
-    // (tło, planety, ring-planety, statki ortho i FG). Wcześniej stał przed
-    // ring/ortho/fg i przyciemniał tylko nebulę + planety persp — smugi były
-    // praktycznie niewidoczne.
+    // shadowShaftsPass PO świecie ortho (statki/ring PRZYJMUJĄ cień),
+    // ale PRZED FG: bronie, muzzle flashe i inne emisje rysują się już na
+    // ocienionej scenie, więc świecą też W cieniu i bloom przez niego przebija.
+    // (Na samym końcu pass gasił wszystko, łącznie z laserami.)
     this._scenePasses = [
       this.renderPassBg,
       this.renderPassPlanets,
       this.planetHaloPass,
       this.renderPassRingPlanets,
       this.renderPassOrtho,
-      this.renderPassFg,
-      this.shadowShaftsPass
+      this.shadowShaftsPass,
+      this.renderPassFg
     ];
 
     const bloomCfg = this._getBloomConfig();
@@ -1005,6 +1008,9 @@ export const Core3D = {
   // Okluder-sprite (quad z alfą sylwetki, własny biały materiał) — renderuje
   // się WYŁĄCZNIE w przejściu maski bez override'u (layers.set, nie enable).
   enableSpriteOccluder3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(OCCLUSION_SPRITE_RENDER_LAYER); }); },
+  // Wariant persp (np. asteroidy z passa FG) — rzutowanie tą samą kamerą,
+  // którą obiekt jest rysowany na ekranie.
+  enableSpriteOccluderPersp3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(OCCLUSION_SPRITE_PERSP_RENDER_LAYER); }); },
   enableForeground3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(2); }); },
 
   resize(w, h) {
@@ -1208,6 +1214,8 @@ export const Core3D = {
           this.scene.overrideMaterial = null;
           this.cameraOrtho.layers.set(OCCLUSION_SPRITE_RENDER_LAYER);
           this.renderer.render(this.scene, this.cameraOrtho);
+          this.cameraPersp.layers.set(OCCLUSION_SPRITE_PERSP_RENDER_LAYER);
+          this.renderer.render(this.scene, this.cameraPersp);
           this.scene.overrideMaterial = this.occlusionWhiteMaterial;
 
           // --- Prawa Okluzja ---
@@ -1229,6 +1237,8 @@ export const Core3D = {
           this.scene.overrideMaterial = null;
           this.cameraOrtho.layers.set(OCCLUSION_SPRITE_RENDER_LAYER);
           this.renderer.render(this.scene, this.cameraOrtho);
+          this.cameraPersp.layers.set(OCCLUSION_SPRITE_PERSP_RENDER_LAYER);
+          this.renderer.render(this.scene, this.cameraPersp);
           this.scene.overrideMaterial = this.occlusionWhiteMaterial;
 
           this.renderer.setScissorTest(false);
@@ -1253,6 +1263,8 @@ export const Core3D = {
           this.scene.overrideMaterial = null;
           this.cameraOrtho.layers.set(OCCLUSION_SPRITE_RENDER_LAYER);
           this.renderer.render(this.scene, this.cameraOrtho);
+          this.cameraPersp.layers.set(OCCLUSION_SPRITE_PERSP_RENDER_LAYER);
+          this.renderer.render(this.scene, this.cameraPersp);
           this.scene.overrideMaterial = this.occlusionWhiteMaterial;
       }
 

@@ -38,7 +38,10 @@ export const CHUNK_SIZE = 9000;
 export const BACKDROP_Z_NEAR = 3000;  // dodatnie głębokości (świat: z = -3000)
 export const BACKDROP_Z_FAR = 10000;
 export const ROCK_VARIANTS = 6;
-export const MAX_ACTIVE_CHUNKS = 48;
+// Cap dobrany pod pełne oddalenie gameplayowe (widok ~140k world units) —
+// chunki ładują się od najbliższych, więc przy ekstremalnym zoomie rzednie
+// tylko obrzeże kadru.
+export const MAX_ACTIVE_CHUNKS = 220;
 // Chunk ma 9000u i jest oglądany perspektywicznie przez kilka warstw głębokości.
 // Gęstość dobrana wizualnie: pole ma czytać się jako "jesteś w pasie", ale tło
 // nie może konkurować z warstwą grywalną o uwagę.
@@ -54,22 +57,23 @@ export const GIANT_RADIUS_MIN = 1500;
 export const GIANT_RADIUS_MAX = 4500;
 export const GIANT_Z_NEAR = 9000;
 export const GIANT_Z_FAR = 16000;
-export const DUST_Z_NEAR = 3200;
-export const DUST_Z_FAR = 7400;
-export const DUST_SIZE_MIN = 1400;
-export const DUST_SIZE_MAX = 4200;
+export const DUST_Z_NEAR = 2600;
+export const DUST_Z_FAR = 8800;
+export const DUST_SIZE_MIN = 3000;
+export const DUST_SIZE_MAX = 9000;
 // Pył WebGL: addytywne billboardy (świecą, nie zaciemniają). Wcześniejsze
 // wyłączenie było mylną diagnozą — "czarna zasłona" pochodziła z NaN w vertex
 // colors skał (patrz makeRockGeometry), co potwierdziła bisekcja na żywo.
 export const WEBGL_DUST_ENABLED = true;
-// Fade całej warstwy po szerokości widoku w world units (zoom-out => tło znika,
-// bo skały i tak byłyby subpikselowe, a streaming musiałby pokryć ogromny obszar).
-export const ZOOM_FADE_START_WORLD_W = 60000;
-export const ZOOM_FADE_END_WORLD_W = 110000;
+// Fade całej warstwy po szerokości widoku w world units. Progi leżą DALEKO za
+// normalnym oddaleniem gameplayu (~40-110k) — tło znika dopiero przy zoomie
+// bliskim mapie sektora, gdzie skały i tak są subpikselowe.
+export const ZOOM_FADE_START_WORLD_W = 140000;
+export const ZOOM_FADE_END_WORLD_W = 240000;
 
-const DUST_CAPACITY = 96;
-const ROCK_POOL_CAPACITY = [1300, 1300, 1300, 1300, 420, 420]; // 4-5 = duże bryły (gęstsza siatka)
-export const BIG_ROCK_RADIUS = 140;
+const DUST_CAPACITY = 260;
+const ROCK_POOL_CAPACITY = [1300, 1300, 1300, 1300, 700, 700]; // 4-5 = duże bryły (gęstsza siatka)
+export const BIG_ROCK_RADIUS = 300;
 
 // ================= Deterministyczny RNG =================
 
@@ -100,14 +104,15 @@ const BELT_PALETTES = {
     tintA: [0.70, 0.60, 0.50],
     tintB: [1.00, 0.92, 0.82],
     // Pył renderowany ADDYTYWNIE (świeci, nigdy nie zaciemnia) — wartości to
-    // delikatna luminancja mgławicowa, nie albedo.
-    dust: [0.085, 0.066, 0.048],
+    // luminancja mgławicowa, nie albedo. Gęsta mgła = dużo nakładających się
+    // płatów o umiarkowanej jasności.
+    dust: [0.17, 0.132, 0.096],
   },
   // lodowy Kuiper
   ice: {
     tintA: [0.58, 0.66, 0.78],
     tintB: [0.84, 0.93, 1.04],
-    dust: [0.050, 0.068, 0.095],
+    dust: [0.10, 0.136, 0.19],
   },
 };
 
@@ -452,8 +457,14 @@ export function planChunkContent(cx, cy, regions, seed, opts = {}) {
     }
   }
 
-  // 0-2 płaty pyłu per chunk.
-  const dustCount = rng() < 0.45 ? 2 : (rng() < 0.8 ? 1 : 0);
+  // Ławice mgły: niskoczęstotliwościowy szum na siatce chunków — część pasa
+  // jest czysta, część tonie w gęstym pyle (zamiast jednolitej zawiesiny
+  // wszędzie). W ławicy do 4 nakładających się płatów.
+  const bank = valueNoise3(cx * 0.13 + 11.3, cy * 0.13 + 5.9, 0.5, seed);
+  const bankFactor = Math.min(1.3, Math.max(0, (bank - 0.34) * 3.2));
+  const dExtra1 = rng();
+  const dExtra2 = rng();
+  const dustCount = Math.min(4, Math.round((3 + (dExtra1 < 0.5 ? 1 : 0)) * bankFactor));
   for (let i = 0; i < dustCount; i++) {
     const x = x0 + rng() * chunk;
     const y = y0 + rng() * chunk;
@@ -591,17 +602,35 @@ function makeRockTexture(seed) {
 
 function makeDustTexture() {
   if (typeof document === 'undefined') return null;
-  const size = 128;
+  // Analityczny falloff (gauss) liczony per piksel + dithering szumem.
+  // createRadialGradient przy dużym powiększeniu (płat pyłu potrafi wypełnić
+  // ekran) kwantyzował się w 8 bitach do widocznych koncentrycznych prążków.
+  const size = 256;
   const canvas = document.createElement('canvas');
   canvas.width = size; canvas.height = size;
   const g = canvas.getContext('2d');
-  const grad = g.createRadialGradient(size / 2, size / 2, 4, size / 2, size / 2, size / 2);
-  grad.addColorStop(0, 'rgba(255,255,255,0.55)');
-  grad.addColorStop(0.35, 'rgba(255,255,255,0.28)');
-  grad.addColorStop(0.7, 'rgba(255,255,255,0.09)');
-  grad.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = grad;
-  g.fillRect(0, 0, size, size);
+  const img = g.createImageData(size, size);
+  const half = size / 2;
+  let noiseState = 0x9E3779B9;
+  const noise = () => {
+    noiseState = (Math.imul(noiseState, 1664525) + 1013904223) >>> 0;
+    return noiseState / 4294967296;
+  };
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const nx = (x - half + 0.5) / half;
+      const ny = (y - half + 0.5) / half;
+      const r2 = nx * nx + ny * ny;
+      // gauss ~exp(-4.5 r^2), przycięty do zera na krawędzi quada
+      let a = Math.exp(-4.5 * r2) * 0.55;
+      a *= Math.max(0, Math.min(1, (1 - Math.sqrt(r2)) * 6));
+      // dither: +-1.5/255 rozbija pasma kwantyzacji
+      const v = Math.max(0, Math.min(255, Math.round(a * 255 + (noise() - 0.5) * 3)));
+      const i = (y * size + x) * 4;
+      img.data[i] = 255; img.data[i + 1] = 255; img.data[i + 2] = 255; img.data[i + 3] = v;
+    }
+  }
+  g.putImageData(img, 0, 0);
   const tex = new THREE.CanvasTexture(canvas);
   tex.minFilter = THREE.LinearMipmapLinearFilter;
   tex.magFilter = THREE.LinearFilter;
@@ -659,20 +688,19 @@ const ROCK_FRAGMENT = /* glsl */`
             + texture2D(uTex, vObjPos.xy * k).r * bw.z;
     vec3 nrm = normalize(vNormalW);
     float lam = max(dot(nrm, uSunDir), 0.0);
-    vec3 albedo = vTint * (0.55 + 0.65 * t);
+    // Jasność strojona na żywo pod pipeline HDR+bloom: skały mają być matowym
+    // szaro-brązowym TŁEM — powyżej tych wartości łapią bloom i świecą na biało.
+    vec3 albedo = vTint * (0.40 + 0.48 * t);
     vec3 col = albedo * (uAmbient + uSunColor * lam);
-    // Depth cueing: im głębiej pod płaszczyzną gry, tym ciemniej i bardziej we mgle
-    // — ale nigdy do czerni: sylwetka musi czytać się na tle kosmosu.
+    // Depth cueing: im głębiej pod płaszczyzną gry, tym ciemniej i bardziej we
+    // mgle — ale giganty na dnie pasma mają zostać czytelnymi sylwetkami.
     float fogT = smoothstep(uFogRange.x, uFogRange.y, vDepth);
-    col = mix(col, uFogColor, fogT * 0.55);
-    col *= mix(1.0, 0.80, fogT);
-    // Opaque screen-door fade: nie wpuszczamy częściowej alfy do wspólnego
-    // render targetu Core3D. Stabilny dithering daje płynne wejście bez czarnej
-    // pełnoekranowej alfy przy późniejszym blitowaniu na Canvas 2D.
-    float fade = clamp(uFade, 0.0, 1.0);
-    float dither = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-    if (fade <= 0.0 || dither > fade) discard;
-    gl_FragColor = vec4(col, 1.0);
+    col = mix(col, uFogColor, fogT * 0.42);
+    col *= mix(1.0, 0.68, fogT);
+    // Płynny fade alfą (screen-door dither dawał widoczną szachownicę na
+    // każdej skale podczas wygaszania). Alfa w composerze jest bezpieczna —
+    // "czarna zasłona" była NaN-em w vertex colors, nie alfą.
+    gl_FragColor = vec4(col, clamp(uFade, 0.0, 1.0));
   }
 `;
 
@@ -753,19 +781,19 @@ export class AsteroidBeltBackdrop {
       uniforms: {
         uTex: { value: this.rockTexture },
         uSunDir: { value: new THREE.Vector3(30000, 20000, 45000).normalize() },
-        uSunColor: { value: new THREE.Vector3(1.55, 1.45, 1.30) },
-        uAmbient: { value: new THREE.Vector3(0.42, 0.45, 0.52) },
+        uSunColor: { value: new THREE.Vector3(0.78, 0.73, 0.66) },
+        uAmbient: { value: new THREE.Vector3(0.20, 0.22, 0.27) },
         uFogColor: { value: new THREE.Vector3(0.12, 0.16, 0.24) },
         // Mgła głębi rozciągnięta aż po pasmo gigantów — giganty mają czytać
         // się jako zamglone sylwetki, nie ostre bryły.
         uFogRange: { value: new THREE.Vector2(BACKDROP_Z_NEAR - 20, GIANT_Z_FAR + 400) },
         uFade: { value: 0 },
       },
-      transparent: false,
-      // Background nie może zostawiać depth dla żadnej alternatywnej ścieżki
-      // Core3D (direct/refraction). Główny composer czyści depth między passami,
-      // ale ten belt-only bezpiecznik gwarantuje, że skały nigdy nie wytną gameplayu.
-      depthWrite: false,
+      // Transparent dla płynnego fade'u całej warstwy. depthWrite sterowane
+      // dynamicznie w update(): przy pełnej widoczności skały piszą depth
+      // (poprawne przesłanianie brył między sobą), podczas fade'u nie.
+      transparent: true,
+      depthWrite: true,
       depthTest: true,
     });
 
@@ -851,11 +879,19 @@ export class AsteroidBeltBackdrop {
     const zoom = Math.max(1e-4, cam.zoom || 1);
     const w = Math.max(1, viewW || 1920);
     const h = Math.max(1, viewH || 1080);
-    this.zoomFade = computeBackdropZoomFade(w / zoom);
+    const viewWorldW = w / zoom;
+    this.zoomFade = computeBackdropZoomFade(viewWorldW);
 
     this.visibility = computeBackdropVisibility(this.zoomFade, this.immersion);
     this.rockMaterial.uniforms.uFade.value = this.visibility;
-    this.dustMaterial.opacity = WEBGL_DUST_ENABLED ? this.visibility * 0.5 : 0;
+    // depthWrite tylko przy pełnej widoczności — częściowo przezroczyste skały
+    // nie mogą wycinać depth-testem tego, co rysuje się za nimi w tym passie.
+    this.rockMaterial.depthWrite = this.visibility > 0.995;
+    // Pył gaśnie przy bliskim zoomie: pojedynczy płat (3-9k jednostek) wypełniłby
+    // cały kadr jednolitą szarą zasłoną, gdy widok jest węższy niż ~24k jednostek.
+    const nearT = Math.min(1, Math.max(0, (viewWorldW - 9000) / 15000));
+    this.dustNearFade = nearT * nearT * (3 - 2 * nearT);
+    this.dustMaterial.opacity = WEBGL_DUST_ENABLED ? this.visibility * this.dustNearFade * 0.85 : 0;
     const anythingVisible = this.visibility > 0.002;
     this.group.visible = anythingVisible;
     if (!anythingVisible) return;

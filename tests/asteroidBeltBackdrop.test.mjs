@@ -202,7 +202,7 @@ test('computeBackdropZoomFade: 1 przy gameplayowym zoomie, 0 przy sector-map', (
   assert.equal(computeBackdropZoomFade(10000), 1);
   assert.equal(computeBackdropZoomFade(ZOOM_FADE_START_WORLD_W), 1);
   assert.equal(computeBackdropZoomFade(ZOOM_FADE_END_WORLD_W), 0);
-  assert.equal(computeBackdropZoomFade(200000), 0);
+  assert.equal(computeBackdropZoomFade(ZOOM_FADE_END_WORLD_W + 50000), 0);
   const mid = computeBackdropZoomFade((ZOOM_FADE_START_WORLD_W + ZOOM_FADE_END_WORLD_W) / 2);
   assert.ok(Math.abs(mid - 0.5) < 1e-9);
 });

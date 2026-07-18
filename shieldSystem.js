@@ -143,6 +143,189 @@ function getCapitalProfileShieldMaxDimension(entity) {
   return Math.max(baseR * lengthScale, baseR * widthScale);
 }
 
+// ============================================================
+// Radialny profil tarczy (obrys kadłuba)
+// Statki z hexGrid dostają tarczę-obramówkę dopasowaną do sylwetki:
+// r(θ) w binach kątowych w klatce statku (przestrzeń "grid-local" po skali,
+// y w dół jak w świecie). Encje bez hexGrid (stacje, budowle, myśliwce,
+// przyszłe generatory osłon) zostają na klasycznej kolistej bańce.
+// ============================================================
+const SHIELD_PROFILE_BINS = 96;
+const TWO_PI = Math.PI * 2;
+
+// SpatialGrid trzyma proxy gracza (_realEntity) — profil i kąty liczymy
+// zawsze na prawdziwej encji (flagi isPlayer/visual + cache profilu).
+function unwrapShieldEntity(entity) {
+  return entity?._realEntity || entity;
+}
+
+export function entityUsesHullShield(rawEntity) {
+  const entity = unwrapShieldEntity(rawEntity);
+  if (!entity?.shield || !entity?.hexGrid) return false;
+  if (!Array.isArray(entity.hexGrid.shards) || entity.hexGrid.shards.length === 0) return false;
+  if (entity.isRingSegment || entity.isAsteroidHex || entity.isWreck) return false;
+  if (entity.visual?.preserveBillboardOrientation === true) return false;
+  return true;
+}
+
+// Kąt wizualny kadłuba — lustrzane odbicie destructorowego getEntityHexAngle
+// (visualRotationOffset ma domyślnie 0 i nie jest tu dostępny bez cyklu importów).
+export function getShieldHullAngle(rawEntity) {
+  const entity = unwrapShieldEntity(rawEntity);
+  const base = Number(entity?.angle) || 0;
+  if (entity?.isPlayer) return base;
+  const r =
+    (entity?.visual && typeof entity.visual.spriteRotation === 'number') ? entity.visual.spriteRotation
+      : (entity?.capitalProfile && typeof entity.capitalProfile.spriteRotation === 'number') ? entity.capitalProfile.spriteRotation
+        : (entity?.profile && typeof entity.profile.spriteRotation === 'number') ? entity.profile.spriteRotation
+          : 0;
+  return base + (Number.isFinite(r) ? r : 0);
+}
+
+function buildShieldProfile(entity) {
+  const grid = entity.hexGrid;
+  const shards = grid.shards;
+  const sx = getEntityScaleX(entity);
+  const sy = getEntityScaleY(entity);
+  const n = SHIELD_PROFILE_BINS;
+  const bins = new Float32Array(n);
+
+  const shardLx = (s) => (Number.isFinite(s.origLx) ? s.origLx : (Number(s.lx) || 0));
+  const shardLy = (s) => (Number.isFinite(s.origLy) ? s.origLy : (Number(s.ly) || 0));
+
+  let maxRawR = 0;
+  for (let i = 0; i < shards.length; i++) {
+    const s = shards[i];
+    const x = shardLx(s) * sx;
+    const y = shardLy(s) * sy;
+    const r = Math.sqrt(x * x + y * y);
+    if (r > maxRawR) maxRawR = r;
+  }
+  if (maxRawR <= 0) return null;
+
+  // Odstęp pola od pancerza: promień heksa + składnik proporcjonalny do rozmiaru.
+  const hexR = (Number(shards[0]?.radius) || 6) * Math.max(sx, sy);
+  const pad = hexR * 1.6 + clamp(maxRawR * 0.06, 6, 42);
+
+  for (let i = 0; i < shards.length; i++) {
+    const s = shards[i];
+    const x = shardLx(s) * sx;
+    const y = shardLy(s) * sy;
+    const r = Math.sqrt(x * x + y * y);
+    const outer = r + pad;
+    const theta = Math.atan2(y, x);
+    // Kątowe pokrycie sharda: tarcza ma być ciągła, więc shard "maluje"
+    // wszystkie biny w swoim stożku kątowym.
+    const half = Math.min(Math.PI * 0.5, Math.atan2(hexR * 1.35 + pad * 0.35, Math.max(r, 1)));
+    const c0 = Math.floor(((theta - half) / TWO_PI) * n);
+    const c1 = Math.ceil(((theta + half) / TWO_PI) * n);
+    for (let b = c0; b <= c1; b++) {
+      const idx = ((b % n) + n) % n;
+      if (outer > bins[idx]) bins[idx] = outer;
+    }
+  }
+
+  // Puste biny (teoretycznie niemożliwe dla spójnego kadłuba) — wypełnij sąsiadami.
+  for (let i = 0; i < n; i++) {
+    if (bins[i] > 0) continue;
+    const prev = bins[(i - 1 + n) % n];
+    const next = bins[(i + 1) % n];
+    bins[i] = Math.max(prev, next, pad);
+  }
+
+  // Dylatacja (max z sąsiadów) usuwa pojedyncze wcięcia między binami,
+  // potem lekkie wygładzenie krzywej.
+  const tmp = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    tmp[i] = Math.max(bins[(i - 1 + n) % n], bins[i], bins[(i + 1) % n]);
+  }
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < n; i++) {
+      bins[i] = tmp[(i - 1 + n) % n] * 0.25 + tmp[i] * 0.5 + tmp[(i + 1) % n] * 0.25;
+    }
+    tmp.set(bins);
+  }
+
+  // maxR/minR skanem po gładkiej krzywej (Catmull-Rom może minimalnie
+  // przestrzelić wartości binów) — maxR musi zostać twardą obwiednią.
+  const profile = { bins, binCount: n, maxR: 0, minR: Infinity, pad };
+  const samples = n * 4;
+  for (let i = 0; i < samples; i++) {
+    const r = sampleShieldProfileRadius(profile, (i / samples) * TWO_PI);
+    if (r > profile.maxR) profile.maxR = r;
+    if (r < profile.minR) profile.minR = r;
+  }
+  return profile;
+}
+
+export function getEntityShieldProfile(rawEntity) {
+  const entity = unwrapShieldEntity(rawEntity);
+  if (!entityUsesHullShield(entity)) return null;
+  const grid = entity.hexGrid;
+  const sx = getEntityScaleX(entity);
+  const sy = getEntityScaleY(entity);
+  const cache = entity._shieldProfileCache;
+  if (cache && cache.grid === grid && cache.sx === sx && cache.sy === sy) {
+    return cache.profile;
+  }
+  const profile = buildShieldProfile(entity);
+  entity._shieldProfileCache = { grid, sx, sy, profile };
+  return profile;
+}
+
+// Gładka interpolacja Catmull-Rom po binach (domknięta krzywa) — ta sama
+// funkcja obsługuje wizual (geometrię tarczy) i gameplay (blokowanie),
+// żeby obrys nigdy się nie rozjechał.
+export function sampleShieldProfileRadius(profile, gridAngle) {
+  if (!profile) return 0;
+  const n = profile.binCount;
+  const bins = profile.bins;
+  let t = gridAngle % TWO_PI;
+  if (t < 0) t += TWO_PI;
+  const f = (t / TWO_PI) * n;
+  const fi = Math.floor(f);
+  const u = f - fi;
+  const i1 = fi % n;
+  const i0 = (i1 - 1 + n) % n;
+  const i2 = (i1 + 1) % n;
+  const i3 = (i1 + 2) % n;
+  const p0 = bins[i0], p1 = bins[i1], p2 = bins[i2], p3 = bins[i3];
+  const u2 = u * u;
+  const u3 = u2 * u;
+  return 0.5 * (
+    (2 * p1) +
+    (-p0 + p2) * u +
+    (2 * p0 - 5 * p1 + 4 * p2 - p3) * u2 +
+    (-p0 + 3 * p1 - 3 * p2 + p3) * u3
+  );
+}
+
+// Kierunek świata (dx, dy — y w dół) -> kąt w klatce profilu.
+export function shieldGridAngleTowards(rawEntity, worldX, worldY) {
+  const entity = unwrapShieldEntity(rawEntity);
+  const pos = getEntityPos(entity);
+  const dx = (Number(worldX) || 0) - pos.x;
+  const dy = (Number(worldY) || 0) - pos.y;
+  const a = getShieldHullAngle(entity);
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return Math.atan2(-dx * s + dy * c, dx * c + dy * s);
+}
+
+// Promień tarczy w kierunku punktu świata (bez progresu aktywacji).
+export function getEntityShieldRadiusTowards(entity, worldX, worldY) {
+  const profile = getEntityShieldProfile(entity);
+  if (!profile) return getEntityShieldBaseRadius(entity);
+  return sampleShieldProfileRadius(profile, shieldGridAngleTowards(entity, worldX, worldY));
+}
+
+// Promień blokujący (z progresem aktywacji) w kierunku punktu świata.
+export function getEntityShieldBlockingRadiusTowards(entity, worldX, worldY) {
+  const progress = getEntityShieldBlockingProgress(entity);
+  if (progress <= 0) return 0;
+  return getEntityShieldRadiusTowards(entity, worldX, worldY) * progress;
+}
+
 export function getEntityShieldMaxDimension(entity) {
   const fromHexGrid = getHexGridShieldMaxDimension(entity);
   if (fromHexGrid > 0) return fromHexGrid;
@@ -166,6 +349,9 @@ export function getEntityShieldMaxDimension(entity) {
 
 export function getEntityShieldBaseRadius(entity) {
   if (!entity?.shield) return 0;
+  // Tarcza-obrys: promień obwiedni = maksimum profilu (dla bramek zgrubnych).
+  const profile = getEntityShieldProfile(entity);
+  if (profile) return profile.maxR;
   return getEntityShieldMaxDimension(entity) * 0.5 * SHIELD_RADIUS_MARGIN;
 }
 
@@ -241,7 +427,8 @@ export function resizeShieldSystem() {
   return true;
 }
 
-export function registerShieldImpact(entity, worldX, worldY, damage = 0) {
+export function registerShieldImpact(rawEntity, worldX, worldY, damage = 0) {
+  const entity = unwrapShieldEntity(rawEntity);
   const shield = ensureShield(entity?.shield);
   if (!shield) return false;
 
@@ -250,6 +437,12 @@ export function registerShieldImpact(entity, worldX, worldY, damage = 0) {
   const dy = (Number(worldY) || 0) - pos.y;
   const localAngle = Math.atan2(-dy, dx);
 
+  // Kąt w klatce profilu (dla tarczy-obrysu w 3D).
+  const hullAngle = getShieldHullAngle(entity);
+  const ca = Math.cos(hullAngle);
+  const sa = Math.sin(hullAngle);
+  const gridAngle = Math.atan2(-dx * sa + dy * ca, dx * ca + dy * sa);
+
   const dmg = Math.max(0, Number(damage) || 0);
   const intensity = clamp(0.25 + dmg / 260, 0.2, 2.0);
   const deformation = clamp(2.5 + dmg / 120, 1.5, 8.0);
@@ -257,6 +450,7 @@ export function registerShieldImpact(entity, worldX, worldY, damage = 0) {
   shield.impacts.unshift({
     id: ++shield._impactSeq,
     localAngle,
+    gridAngle,
     intensity,
     life: 1.0,
     deformation,

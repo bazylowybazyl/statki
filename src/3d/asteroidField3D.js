@@ -218,6 +218,31 @@ class AsteroidPool {
     this.mesh.count = 0;
 
     scene.add(this.mesh);
+
+    // Okluder shadow shafts: asteroida to sprite z alpha-cutout — z białym
+    // override'em maski rzucałaby PROSTOKĄT. Bliźniak instanced dzieli
+    // geometrię i TEN SAM atrybut instanceMatrix (zero dodatkowych uploadów),
+    // rysuje białą sylwetkę przez alphaTest w przejściu maski bez override'u
+    // (warstwa persp sprite-okluderów — asteroidy żyją w passie FG).
+    this.occluderMesh = null;
+    if (typeof Core3D.enableSpriteOccluderPersp3D === 'function') {
+      const occluderMat = new THREE.MeshBasicMaterial({
+        map: this.texture,
+        color: 0xffffff,
+        transparent: false,
+        alphaTest: 0.5,
+        depthWrite: false,
+        depthTest: false,
+        side: THREE.DoubleSide
+      });
+      this.occluderMesh = new THREE.InstancedMesh(geom, occluderMat, capacity);
+      this.occluderMesh.name = `asteroid_pool_occluder_${key}`;
+      this.occluderMesh.instanceMatrix = this.mesh.instanceMatrix;
+      this.occluderMesh.frustumCulled = false;
+      this.occluderMesh.count = 0;
+      Core3D.enableSpriteOccluderPersp3D(this.occluderMesh);
+      scene.add(this.occluderMesh);
+    }
   }
 
   allocate() {
@@ -227,6 +252,7 @@ class AsteroidPool {
     if (idx >= this.watermark) {
       this.watermark = idx + 1;
       this.mesh.count = this.watermark;
+      if (this.occluderMesh) this.occluderMesh.count = this.watermark;
     }
     return idx;
   }
@@ -266,6 +292,12 @@ class AsteroidPool {
     if (this.mesh.parent) this.mesh.parent.remove(this.mesh);
     // UWAGA: NIE dispose'ujemy geometrii bo jest współdzielona przez wszystkie pule.
     this.mesh.material.dispose();
+    if (this.occluderMesh) {
+      if (this.occluderMesh.parent) this.occluderMesh.parent.remove(this.occluderMesh);
+      // Geometria i instanceMatrix współdzielone z this.mesh — tylko materiał.
+      this.occluderMesh.material.dispose();
+      this.occluderMesh = null;
+    }
     if (this.texture) this.texture.dispose();
   }
 }
