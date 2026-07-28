@@ -536,7 +536,7 @@ function createRoot() {
       <div class="hp-canvas-wrap"><canvas id="hp-canvas"></canvas></div>
       <div class="hp-side">
         <div class="hp-front">Przód statku: <strong>→ (w prawo)</strong></div>
-        <div class="hp-help">LPM: maluj marker (także po przeciągnięciu) • PPM: usuń najbliższy • Alt+LPM: bez snap • MMB drag: pan • Kółko myszy: zoom • Test VFX: WSAD + Q/E + Shift</div>
+        <div class="hp-help">LPM: maluj marker (także po przeciągnięciu) • PPM: usuń najbliższy • Alt+LPM: bez snap • Ctrl+LPM (światła): przemaluj najbliższe światło pędzlem • MMB drag: pan • Kółko myszy: zoom • Test VFX: WSAD + Q/E + Shift</div>
         <div id="hp-stats" class="hp-stats"></div>
         <textarea id="hp-json-preview" readonly></textarea>
       </div>
@@ -1558,6 +1558,12 @@ function onCanvasDown(event) {
     return;
   }
   if (event.button !== 0 && event.button !== undefined) return;
+  if (event.ctrlKey && isLightTool(state.tool)) {
+    const precise = screenToLocal(event.clientX, event.clientY, true);
+    if (precise && restampNearestLights(precise.x, precise.y)) persist();
+    scheduleDraw();
+    return;
+  }
   const changed = applyPrimaryBrushAction(local.x, local.y);
   const key = `${local.x}|${local.y}|${activePaletteId()}`;
   runtime.dragPaint = { lastKey: key };
@@ -1814,6 +1820,40 @@ function removeNearestMarker(x, y) {
   const nearest = findNearestMarker(x, y);
   if (!nearest || nearest.distance > (10 / getDrawScale())) return;
   removeMarkerById(nearest.marker.id);
+}
+
+// Ctrl+LPM z narzędziem światła: nadpisuje właściwości najbliższego markera
+// (i jego lustrzanych odpowiedników przy włączonej symetrii) aktualnym
+// pędzlem — pozwala przemalować kolor/moc istniejących świateł bez
+// usuwania i stawiania ich od nowa.
+function restampNearestLights(x, y) {
+  const kind = getLightKindForTool(state.tool);
+  if (!kind) return false;
+  normalizeBrushState();
+  const brush = getLightBrushState(kind);
+  const data = ensureShipData(state.shipId);
+  const list = kind === LIGHT_KINDS.ROAD ? data.lights.road : data.lights.position;
+  if (!Array.isArray(list) || !list.length) return false;
+  const threshold = 12 / getDrawScale();
+  let changed = 0;
+  for (const pos of buildSymmetryPositions(x, y)) {
+    let best = null;
+    for (const marker of list) {
+      const d = Math.hypot((marker.x || 0) - pos.x, (marker.y || 0) - pos.y);
+      if (!best || d < best.d) best = { marker, d };
+    }
+    if (!best || best.d > threshold) continue;
+    best.marker.color = brush.color;
+    best.marker.power = round2(brush.power);
+    best.marker.radius = round2(brush.radius);
+    if (kind === LIGHT_KINDS.ROAD) {
+      best.marker.deg = round2(mirrorDeg(brush.deg, !!pos.mirrorX, !!pos.mirrorY));
+      best.marker.range = round2(brush.range);
+      best.marker.coneDeg = round2(brush.coneDeg);
+    }
+    changed++;
+  }
+  return changed > 0;
 }
 
 function removeMarkerById(id) {

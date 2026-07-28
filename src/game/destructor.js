@@ -4,6 +4,7 @@
  */
 
 import { DestructorGpuSoftBody } from './destructorGpuSoftBody.js';
+import { areTowBodiesCollisionDisabled } from './towSystem.js';
 import { getEntityShieldBlockingRadius, getEntityShieldBlockingRadiusTowards } from '../../shieldSystem.js';
 import {
   attachHexGridToArena,
@@ -3016,6 +3017,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
           const rootA = A.owner || A;
           const rootB = B.owner || B;
           if (rootA === rootB || rootA === B || rootB === A) continue;
+          if (areTowBodiesCollisionDisabled(rootA, rootB)) continue;
 
           if (dbgEnabled) this._liveCollisionDebug.pairCandidates++;
 
@@ -3198,6 +3200,7 @@ if (forceMag > 0.35 && factor > 0.18 && factor < 0.72 && dist > 0.001) {
             const rootA = A.owner || A;
             const rootB = B.owner || B;
             if (rootA === rootB || rootA === B || rootB === A) continue;
+            if (areTowBodiesCollisionDisabled(rootA, rootB)) continue;
             const relVx = velAx - getEntityVelX(B);
             const relVy = velAy - getEntityVelY(B);
             const shardSum = (A.hexGrid?.shards?.length || 0) + (B.hexGrid?.shards?.length || 0);

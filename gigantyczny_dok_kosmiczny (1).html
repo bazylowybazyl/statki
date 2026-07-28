@@ -226,16 +226,32 @@
                 this.defenseMode = false;
                 this.supports = [
                     // Wewnętrzne (bardziej poziome, krótsze) - w trybie obrony równolegle do głównego łącznika (Math.PI)
-                    { originX: 0, originY: -700, angle: -Math.PI/1.2, defaultAngle: -Math.PI/1.2, defenseAngle: -Math.PI, length: 2800, width: 250 },
-                    { originX: 0, originY: 700, angle: Math.PI/1.2, defaultAngle: Math.PI/1.2, defenseAngle: Math.PI, length: 2800, width: 250 },
+                    // grab: ramię kończy się chwytakiem zaciskanym na krawędzi pierścienia
+                    // foldShrink: teleskopowe skrócenie przy składaniu, żeby złożone ramię nie wbijało się w ścianę
+                    { originX: 0, originY: -700, angle: -Math.PI/1.2, defaultAngle: -Math.PI/1.2, defenseAngle: -Math.PI, length: 2695, width: 250, grab: true, grip: 1, foldShrink: 0.24 },
+                    { originX: 0, originY: 700, angle: Math.PI/1.2, defaultAngle: Math.PI/1.2, defenseAngle: Math.PI, length: 2695, width: 250, grab: true, grip: 1, foldShrink: 0.24 },
                     // Zewnętrzne (bardziej pionowe, dłuższe) - w trybie obrony składają się idealnie wzdłuż krawędzi parkingu (0)
-                    { originX: 0, originY: -700, angle: -Math.PI/1.4, defaultAngle: -Math.PI/1.4, defenseAngle: 0, length: 4050, width: 200 },
-                    { originX: 0, originY: 700, angle: Math.PI/1.4, defaultAngle: Math.PI/1.4, defenseAngle: 0, length: 4050, width: 200 },
+                    { originX: 0, originY: -700, angle: -Math.PI/1.4, defaultAngle: -Math.PI/1.4, defenseAngle: 0, length: 3855, width: 200, grab: true, grip: 1 },
+                    { originX: 0, originY: 700, angle: Math.PI/1.4, defaultAngle: Math.PI/1.4, defenseAngle: 0, length: 3855, width: 200, grab: true, grip: 1 },
                     // Centralne ramiona zamykające (krzyżowe) - startują ze środka doku (0,0)
                     // Domyślnie na ukos (Math.PI/4), w obronie pionowo (Math.PI/2)
                     { originX: 0, originY: 0, angle: -Math.PI/4, defaultAngle: -Math.PI/4, defenseAngle: -Math.PI/2, length: 3000, width: 200 },
                     { originX: 0, originY: 0, angle: Math.PI/4, defaultAngle: Math.PI/4, defenseAngle: Math.PI/2, length: 3000, width: 200 }
                 ];
+
+                // Postęp trybu obrony (0 = domyślny/rozłożony, 1 = złożony) — używany do skracania ramion (foldShrink)
+                this.defenseProgress = 0;
+
+                // WĘŻE PALIWOWE (umbilical) — łączą ścianę pierścienia z rdzeniem doku.
+                // Odłączają się efektownie przy oddokowaniu (jak węże paliwowe rakiety przy starcie).
+                this.fuelHoses = [
+                    { dockY: -430, portX: -680, hue: '#38bdf8', sag: 300, phase: 0.0 },
+                    { dockY: -150, portX: -730, hue: '#22d3ee', sag: 210, phase: 1.3 },
+                    { dockY:  150, portX: -730, hue: '#22d3ee', sag: 210, phase: 2.6 },
+                    { dockY:  430, portX: -680, hue: '#38bdf8', sag: 300, phase: 3.9 }
+                ];
+                this.vents = [];          // kłęby pary/upustu ciśnienia przy rozłączeniu
+                this._hoseDetached = false;
 
                 // Inicjalizacja tablic dla architektury
                 this.arms = []; // Zostawiamy puste dla zachowania kompatybilności struktury
@@ -356,10 +372,19 @@
             }
 
             update() {
-                // Płynna animacja ramion
+                // Postęp trybu obrony (do skracania teleskopowego ramion)
+                const targetDef = this.defenseMode ? 1.0 : 0.0;
+                this.defenseProgress += (targetDef - this.defenseProgress) * 0.02;
+
+                // Płynna animacja ramion + chwytaków
                 this.supports.forEach(supp => {
                     const target = this.defenseMode ? supp.defenseAngle : supp.defaultAngle;
                     supp.angle += (target - supp.angle) * 0.02; // easing
+                    if (supp.grab) {
+                        // Chwytak zaciska się tylko, gdy dok jest w pełni zadokowany przy ścianie
+                        const gripTarget = (!this.defenseMode && !this.isUndocked && this.distanceFromRing < 60) ? 1 : 0;
+                        supp.grip += (gripTarget - (supp.grip || 0)) * 0.08;
+                    }
                 });
 
                 // Płynna animacja dachu
@@ -369,7 +394,7 @@
                 // Animacja oddokowania i odlotu
                 const targetUndock = this.isUndocked ? 1.0 : 0.0;
                 this.undockProgress += (targetUndock - this.undockProgress) * 0.01;
-                
+
                 if (this.isUndocked) {
                     this.distanceFromRing += 15 + (this.undockProgress * 30);
                 } else {
@@ -377,6 +402,32 @@
                         this.distanceFromRing -= 15 + ((1-this.undockProgress) * 30);
                     }
                     if (this.distanceFromRing < 0) this.distanceFromRing = 0;
+                }
+
+                // WĘŻE PALIWOWE — moment rozłączenia (upust ciśnienia)
+                const detach = Math.max(0, Math.min(1, (this.undockProgress - 0.02) / 0.18));
+                if (detach > 0.02 && !this._hoseDetached) {
+                    this._hoseDetached = true;
+                    this.fuelHoses.forEach(h => {
+                        for (let k = 0; k < 16; k++) {
+                            this.vents.push({
+                                x: h.portX, y: h.dockY,
+                                vx: -3 - Math.random() * 5, vy: (Math.random() - 0.5) * 6,
+                                life: 1, r: 24 + Math.random() * 46
+                            });
+                        }
+                    });
+                    logTraffic("Odłączanie węży paliwowych — upust ciśnienia.");
+                }
+                if (!this.isUndocked && this.undockProgress < 0.02) this._hoseDetached = false;
+
+                // Aktualizacja cząstek pary
+                for (let i = this.vents.length - 1; i >= 0; i--) {
+                    const v = this.vents[i];
+                    v.x += v.vx; v.y += v.vy;
+                    v.vx *= 0.95; v.vy *= 0.95;
+                    v.r += 3.2; v.life -= 0.02;
+                    if (v.life <= 0) this.vents.splice(i, 1);
                 }
             }
 
@@ -464,7 +515,7 @@
                     ctx.restore();
                 }
 
-                // 3. Ramiona wsporcze 
+                // 3. Ramiona wsporcze (z chwytakami na ramionach cumujących do ściany)
                 this.supports.forEach(supp => {
                     ctx.save();
                     // Zmiana środka obrotu na zadeklarowane krawędzie (originX, originY)
@@ -472,12 +523,31 @@
                         ctx.translate(supp.originX, supp.originY);
                     }
                     ctx.rotate(supp.angle);
+
+                    // Teleskopowe skrócenie ramienia przy składaniu (żeby nie wbijało się w ścianę)
+                    const effLen = supp.length * (1 - (supp.foldShrink || 0) * this.defenseProgress);
+
                     // Ramię
                     ctx.fillStyle = '#1a1a2e';
-                    ctx.fillRect(0, -supp.width/2, supp.length, supp.width);
-                    // Detal
+                    ctx.fillRect(0, -supp.width/2, effLen, supp.width);
+                    // Detal wewnętrzny
                     ctx.fillStyle = '#16213e';
-                    ctx.fillRect(200, -supp.width/4, supp.length-400, supp.width/2);
+                    ctx.fillRect(200, -supp.width/4, effLen-400, supp.width/2);
+                    // Prążki segmentów hydraulicznych
+                    ctx.fillStyle = 'rgba(56,189,248,0.06)';
+                    for (let x = 260; x < effLen - 260; x += 240) {
+                        ctx.fillRect(x, -supp.width/2, 26, supp.width);
+                    }
+                    // Krawędziowe światełka nawigacyjne
+                    ctx.fillStyle = 'rgba(56,189,248,0.22)';
+                    ctx.fillRect(0, -supp.width/2, effLen, 6);
+                    ctx.fillRect(0, supp.width/2 - 6, effLen, 6);
+
+                    // Chwytak na końcu ramienia cumującego
+                    if (supp.grab) {
+                        this.drawGripper(ctx, effLen, supp.width, supp.grip || 0);
+                    }
+
                     ctx.restore();
                 });
 
@@ -489,6 +559,9 @@
                 ctx.beginPath();
                 ctx.arc(0, 0, 1500, 0, Math.PI * 2);
                 ctx.fill();
+
+                // 3.1 WĘŻE PALIWOWE (umbilical do ściany pierścienia)
+                this.drawFuelHoses(ctx);
 
                 // 3.5 ŁĄCZNIK (Most transportowy między rdzeniem a parkingiem)
                 ctx.fillStyle = '#0f172a';
@@ -546,9 +619,208 @@
                 ctx.moveTo(startX, -90); ctx.lineTo(endX, -90);
                 ctx.moveTo(startX, 90); ctx.lineTo(endX, 90);
                 ctx.stroke();
-                ctx.setLineDash([]); 
+                ctx.setLineDash([]);
 
                 ctx.restore();
+            }
+
+            // Chwytak montowany na końcu ramienia cumującego (rysowany w lokalnym układzie ramienia)
+            drawGripper(ctx, len, width, grip) {
+                // grip: 0 = otwarty, 1 = zaciśnięty na krawędzi ściany
+                ctx.save();
+                ctx.translate(len, 0);
+                const w = width;
+
+                // Nadgarstek / obudowa siłownika
+                ctx.fillStyle = '#243044';
+                ctx.fillRect(-40, -w*0.62, 150, w*1.24);
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(-40, -w*0.36, 84, w*0.72);
+                // śruby montażowe
+                ctx.fillStyle = '#475569';
+                for (const by of [-w*0.5, w*0.5]) { ctx.beginPath(); ctx.arc(-18, by, 11, 0, 7); ctx.fill(); }
+
+                // Siłowniki hydrauliczne (wysuwają się przy zaciskaniu)
+                const ext = 40 + grip*46;
+                ctx.strokeStyle = '#334155';
+                ctx.lineWidth = 18;
+                ctx.beginPath();
+                ctx.moveTo(30, -w*0.28); ctx.lineTo(30+ext, -w*0.10);
+                ctx.moveTo(30,  w*0.28); ctx.lineTo(30+ext,  w*0.10);
+                ctx.stroke();
+                ctx.strokeStyle = '#64748b';
+                ctx.lineWidth = 7;
+                ctx.beginPath();
+                ctx.moveTo(30, -w*0.28); ctx.lineTo(30+ext, -w*0.10);
+                ctx.moveTo(30,  w*0.28); ctx.lineTo(30+ext,  w*0.10);
+                ctx.stroke();
+
+                // Dwa szczękowe palce (góra s=-1, dół s=+1)
+                for (const s of [-1, 1]) {
+                    ctx.save();
+                    ctx.translate(96, s * w*0.32);
+                    // otwarty -> rozłożony na zewnątrz, zaciśnięty -> ku osi
+                    const fa = s * (0.12 + (1-grip) * 0.64);
+                    ctx.rotate(fa);
+                    // segment bliższy (przegub)
+                    ctx.fillStyle = '#3a4a68';
+                    ctx.beginPath();
+                    ctx.moveTo(0, -30); ctx.lineTo(150, -22);
+                    ctx.lineTo(150, 22); ctx.lineTo(0, 30);
+                    ctx.closePath(); ctx.fill();
+                    ctx.fillStyle = '#4a5c80';
+                    ctx.fillRect(20, -12, 110, 10);
+                    // kostka przegubu
+                    ctx.fillStyle = '#1e293b';
+                    ctx.beginPath(); ctx.arc(150, 0, 26, 0, 7); ctx.fill();
+                    // segment dalszy — hak zaginający się do środka (mocniej przy zacisku)
+                    ctx.save();
+                    ctx.translate(150, 0);
+                    ctx.rotate(-s * (0.5 + grip*0.9));
+                    ctx.fillStyle = '#4a5a7a';
+                    ctx.beginPath();
+                    ctx.moveTo(0, -22); ctx.lineTo(115, -16);
+                    ctx.lineTo(150, s*12); ctx.lineTo(115, 22); ctx.lineTo(0, 22);
+                    ctx.closePath(); ctx.fill();
+                    // ostrze/ząb chwytaka
+                    ctx.fillStyle = '#94a3b8';
+                    ctx.beginPath();
+                    ctx.moveTo(96, -10); ctx.lineTo(150, s*12); ctx.lineTo(96, 8);
+                    ctx.closePath(); ctx.fill();
+                    ctx.restore();
+                    ctx.restore();
+                }
+
+                // Lampka statusu (zielona = zaciśnięty, bursztyn = zwolniony)
+                ctx.fillStyle = grip > 0.55 ? '#22c55e' : '#f59e0b';
+                ctx.shadowColor = ctx.fillStyle;
+                ctx.shadowBlur = 22;
+                ctx.beginPath(); ctx.arc(-12, 0, 15, 0, 7); ctx.fill();
+                ctx.shadowBlur = 0;
+
+                ctx.restore();
+            }
+
+            // Węże paliwowe łączące ścianę pierścienia z rdzeniem doku
+            drawFuelHoses(ctx) {
+                const wallEdge = -2500 - this.distanceFromRing;   // wewnętrzna krawędź ściany
+                const t = time;
+                const detach = Math.max(0, Math.min(1, (this.undockProgress - 0.02) / 0.18)); // 0=podłączony, 1=odłączony
+
+                // Punkt na krzywej Béziera + normalna (do prążków)
+                const bez = (A, c1, c2, B, p) => {
+                    const u = 1 - p;
+                    const x = u*u*u*A.x + 3*u*u*p*c1.x + 3*u*p*p*c2.x + p*p*p*B.x;
+                    const y = u*u*u*A.y + 3*u*u*p*c1.y + 3*u*p*p*c2.y + p*p*p*B.y;
+                    const dx = 3*u*u*(c1.x-A.x) + 6*u*p*(c2.x-c1.x) + 3*p*p*(B.x-c2.x);
+                    const dy = 3*u*u*(c1.y-A.y) + 6*u*p*(c2.y-c1.y) + 3*p*p*(B.y-c2.y);
+                    const m = Math.hypot(dx, dy) || 1;
+                    return { x, y, nx: -dy/m, ny: dx/m };
+                };
+
+                this.fuelHoses.forEach(h => {
+                    // Kotwica na ścianie (podąża za cofającą się ścianą)
+                    const A = { x: wallEdge + 40, y: h.dockY * 1.15 + Math.sin(t*0.02 + h.phase) * 10 };
+                    const port = { x: h.portX, y: h.dockY };
+
+                    // Wolny koniec od strony doku
+                    let B;
+                    if (detach <= 0) {
+                        B = { x: port.x, y: port.y };
+                    } else {
+                        const retract = {
+                            x: A.x + 170 + Math.sin(t*0.05 + h.phase) * 40 * detach,
+                            y: A.y + 240 + 380 * detach + Math.sin(t*0.07 + h.phase) * 70 * detach
+                        };
+                        B = { x: port.x + (retract.x - port.x) * detach, y: port.y + (retract.y - port.y) * detach };
+                    }
+
+                    const sway = Math.sin(t*0.03 + h.phase) * 30 * (1 - detach);
+                    const belly = h.sag + 140 * detach + sway;
+                    const baseY = Math.max(A.y, B.y);
+                    const c1 = { x: A.x + (B.x - A.x) * 0.30, y: baseY + belly };
+                    const c2 = { x: A.x + (B.x - A.x) * 0.70, y: baseY + belly * 0.9 };
+
+                    // Korpus węża (ciemny obrys)
+                    ctx.lineCap = 'round';
+                    ctx.strokeStyle = '#0b1220';
+                    ctx.lineWidth = 56;
+                    ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, B.x, B.y); ctx.stroke();
+                    // Środkowy ton
+                    ctx.strokeStyle = '#233047';
+                    ctx.lineWidth = 42;
+                    ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, B.x, B.y); ctx.stroke();
+                    // Podłużny refleks
+                    ctx.strokeStyle = 'rgba(148,163,184,0.25)';
+                    ctx.lineWidth = 10;
+                    ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.bezierCurveTo(c1.x, c1.y-8, c2.x, c2.y-8, B.x, B.y); ctx.stroke();
+
+                    // Prążki (karbowanie węża)
+                    ctx.strokeStyle = '#0b1220';
+                    ctx.lineWidth = 4;
+                    for (let s = 0; s <= 26; s++) {
+                        const p = bez(A, c1, c2, B, s/26);
+                        ctx.beginPath();
+                        ctx.moveTo(p.x + p.nx*21, p.y + p.ny*21);
+                        ctx.lineTo(p.x - p.nx*21, p.y - p.ny*21);
+                        ctx.stroke();
+                    }
+
+                    // Wewnętrzna linia przepływu paliwa + impulsy (gdy podłączony)
+                    if (detach < 0.5) {
+                        const flowA = Math.max(0, 1 - detach*2);
+                        ctx.strokeStyle = h.hue;
+                        ctx.globalAlpha = 0.4 * flowA;
+                        ctx.lineWidth = 8;
+                        ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, B.x, B.y); ctx.stroke();
+                        ctx.globalAlpha = 1;
+                        for (let k = 0; k < 3; k++) {
+                            const pp = ((t*0.006) + (k/3)) % 1;
+                            const p = bez(A, c1, c2, B, pp);
+                            ctx.fillStyle = h.hue; ctx.shadowColor = h.hue; ctx.shadowBlur = 18;
+                            ctx.globalAlpha = flowA;
+                            ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, 7); ctx.fill();
+                            ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+                        }
+                    }
+
+                    // Sprzęgło przy ścianie
+                    ctx.fillStyle = '#334155';
+                    ctx.beginPath(); ctx.arc(A.x, A.y, 36, 0, 7); ctx.fill();
+                    ctx.fillStyle = '#0f172a';
+                    ctx.beginPath(); ctx.arc(A.x, A.y, 18, 0, 7); ctx.fill();
+
+                    // Port na doku (pozostaje na doku)
+                    ctx.save();
+                    ctx.translate(port.x, port.y);
+                    ctx.fillStyle = '#1e293b'; ctx.fillRect(-30, -48, 62, 96);
+                    ctx.fillStyle = '#334155'; ctx.fillRect(-14, -48, 30, 96);
+                    const connected = detach < 0.05;
+                    ctx.fillStyle = connected ? '#22c55e' : (Math.floor(t/18) % 2 ? '#ef4444' : '#7f1d1d');
+                    ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 16;
+                    ctx.beginPath(); ctx.arc(0, 0, 12, 0, 7); ctx.fill();
+                    ctx.shadowBlur = 0;
+                    ctx.restore();
+
+                    // Zaślepka na końcu odłączonego węża
+                    if (detach > 0.1) {
+                        ctx.fillStyle = '#475569';
+                        ctx.beginPath(); ctx.arc(B.x, B.y, 28, 0, 7); ctx.fill();
+                        ctx.fillStyle = '#94a3b8';
+                        ctx.beginPath(); ctx.arc(B.x, B.y, 13, 0, 7); ctx.fill();
+                    }
+                });
+
+                // Kłęby pary / upust ciśnienia
+                this.vents.forEach(v => {
+                    ctx.globalAlpha = Math.max(0, v.life) * 0.45;
+                    const g = ctx.createRadialGradient(v.x, v.y, 0, v.x, v.y, v.r);
+                    g.addColorStop(0, 'rgba(226,232,240,0.9)');
+                    g.addColorStop(1, 'rgba(148,163,184,0)');
+                    ctx.fillStyle = g;
+                    ctx.beginPath(); ctx.arc(v.x, v.y, v.r, 0, 7); ctx.fill();
+                });
+                ctx.globalAlpha = 1;
             }
 
             drawRoof(ctx) {
@@ -576,114 +848,111 @@
                 ctx.closePath();
                 ctx.clip(); 
 
-                ctx.globalAlpha = 0.95;
+                const numSlats = 10;
+                const slatOverlap = 20;             // zakładka listew (głębia 3D)
+                const step = currentCoverage / numSlats;
+                const slatHeight = step + slatOverlap;
 
-                const numSlats = 12; // Liczba szarych żaluzji
-                const slatOverlap = 15; // Zakładka dla efektu 3D
-                const baseSlatHeight = halfW / numSlats;
-                const slatHeight = baseSlatHeight + slatOverlap;
-
-                // --- GÓRNA POKRYWA (Żaluzje poziome szare) ---
-                for (let i = 0; i < numSlats; i++) {
-                    const y_i = -halfW + i * (currentCoverage / numSlats);
-                    
-                    // Gradient metaliczny dla szarej żaluzji
-                    let grad = ctx.createLinearGradient(startX, y_i, startX, y_i + slatHeight);
-                    grad.addColorStop(0, '#cbd5e1'); // Jasny błysk u góry
-                    grad.addColorStop(0.15, '#94a3b8'); // Szary bazowy
-                    grad.addColorStop(0.5, '#475569');  // Średnio-ciemny szary
-                    grad.addColorStop(1.0, '#1e293b');  // Cień u dołu
-
+                // Rysuje pojedynczą listwę żaluzji
+                const paintSlat = (y_i, fromTop) => {
+                    // Metaliczny gradient (kierunek zależny od strony pokrywy)
+                    const grad = ctx.createLinearGradient(0, y_i, 0, y_i + slatHeight);
+                    if (fromTop) {
+                        grad.addColorStop(0.00, '#e8eef6');
+                        grad.addColorStop(0.12, '#aeb9c9');
+                        grad.addColorStop(0.50, '#5c6b82');
+                        grad.addColorStop(0.85, '#323f58');
+                        grad.addColorStop(1.00, '#141d2e');
+                    } else {
+                        grad.addColorStop(0.00, '#141d2e');
+                        grad.addColorStop(0.15, '#323f58');
+                        grad.addColorStop(0.50, '#5c6b82');
+                        grad.addColorStop(0.88, '#aeb9c9');
+                        grad.addColorStop(1.00, '#e8eef6');
+                    }
                     ctx.fillStyle = grad;
                     ctx.fillRect(startX, y_i, totalRoofLength, slatHeight);
 
-                    // Obramowanie żaluzji
-                    ctx.strokeStyle = '#334155';
+                    // Cień zakładki między listwami (głębia)
+                    ctx.fillStyle = 'rgba(2,6,16,0.55)';
+                    ctx.fillRect(startX, fromTop ? y_i + slatHeight - slatOverlap*0.7 : y_i, totalRoofLength, slatOverlap*0.7);
+
+                    // Podłużne wytłoczenia (rowki wzdłuż listwy)
+                    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(startX, y_i + slatHeight*0.30); ctx.lineTo(startX + totalRoofLength, y_i + slatHeight*0.30);
+                    ctx.stroke();
+                    ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+                    ctx.beginPath();
+                    ctx.moveTo(startX, y_i + slatHeight*0.66); ctx.lineTo(startX + totalRoofLength, y_i + slatHeight*0.66);
+                    ctx.stroke();
+
+                    // Segmenty poprzeczne + nity
+                    ctx.strokeStyle = 'rgba(10,15,26,0.55)';
+                    ctx.lineWidth = 3;
+                    ctx.fillStyle = 'rgba(210,220,235,0.45)';
+                    for (let x = startX + 240; x < startX + totalRoofLength; x += 470) {
+                        ctx.beginPath(); ctx.moveTo(x, y_i); ctx.lineTo(x, y_i + slatHeight); ctx.stroke();
+                        ctx.beginPath(); ctx.arc(x - 26, y_i + slatHeight*0.26, 5, 0, 7); ctx.fill();
+                        ctx.beginPath(); ctx.arc(x - 26, y_i + slatHeight*0.74, 5, 0, 7); ctx.fill();
+                    }
+
+                    // Obrys listwy
+                    ctx.strokeStyle = '#0b1220';
                     ctx.lineWidth = 2;
                     ctx.strokeRect(startX, y_i, totalRoofLength, slatHeight);
+                };
 
-                    // Pionowe linie sekcji
-                    ctx.strokeStyle = 'rgba(15, 23, 42, 0.3)';
-                    ctx.lineWidth = 1;
-                    ctx.beginPath();
-                    for (let x = startX + 300; x < startX + totalRoofLength; x += 400) {
-                        ctx.moveTo(x, y_i);
-                        ctx.lineTo(x, y_i + slatHeight);
+                ctx.globalAlpha = 0.97;
+                for (let i = 0; i < numSlats; i++) paintSlat(-halfW + i * step, true);           // górna pokrywa
+                for (let i = 0; i < numSlats; i++) paintSlat(halfW - i * step - slatHeight, false); // dolna pokrywa
+                ctx.globalAlpha = 1;
+
+                // Krawędzie natarcia z ruchomymi pasami ostrzegawczymi (chevrony)
+                const leadTop = -halfW + currentCoverage;
+                const leadBot = halfW - currentCoverage;
+                const drawLeadingEdge = (edgeY, dir) => { // dir: +1 górna (metal powyżej), -1 dolna
+                    const bandTop = dir > 0 ? edgeY - 30 : edgeY;
+                    ctx.save();
+                    ctx.beginPath(); ctx.rect(startX, bandTop, totalRoofLength, 30); ctx.clip();
+                    const cw = 48;
+                    const shift = (time * 1.2) % (cw * 2);
+                    for (let x = startX - cw*2; x < startX + totalRoofLength + cw; x += cw) {
+                        ctx.fillStyle = (Math.floor((x - startX) / cw) % 2) ? '#f5c518' : '#12161c';
+                        ctx.beginPath();
+                        ctx.moveTo(x - shift, edgeY - dir*30);
+                        ctx.lineTo(x - shift + cw, edgeY - dir*30);
+                        ctx.lineTo(x - shift + cw + 22, edgeY);
+                        ctx.lineTo(x - shift + 22, edgeY);
+                        ctx.closePath(); ctx.fill();
                     }
-                    ctx.stroke();
-                    
-                    // Dodatkowy refleks świetlny na krawędzi natarcia
-                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-                    ctx.beginPath();
-                    ctx.moveTo(startX, y_i + 1);
-                    ctx.lineTo(startX + totalRoofLength, y_i + 1);
-                    ctx.stroke();
-                }
+                    ctx.restore();
+                    // Świetlna listwa sygnalizacyjna
+                    ctx.strokeStyle = '#38bdf8';
+                    ctx.shadowColor = '#38bdf8'; ctx.shadowBlur = 12; ctx.lineWidth = 4;
+                    ctx.beginPath(); ctx.moveTo(startX, edgeY); ctx.lineTo(startX + totalRoofLength, edgeY); ctx.stroke();
+                    ctx.shadowBlur = 0;
+                };
+                drawLeadingEdge(leadTop, 1);
+                drawLeadingEdge(leadBot, -1);
 
-                // --- DOLNA POKRYWA (Żaluzje poziome szare) ---
-                for (let i = 0; i < numSlats; i++) {
-                    const y_i = halfW - i * (currentCoverage / numSlats) - slatHeight;
-
-                    // Gradient metaliczny
-                    let grad = ctx.createLinearGradient(startX, y_i, startX, y_i + slatHeight);
-                    grad.addColorStop(0, '#cbd5e1');
-                    grad.addColorStop(0.15, '#94a3b8');
-                    grad.addColorStop(0.5, '#475569');
-                    grad.addColorStop(1.0, '#1e293b');
-
-                    ctx.fillStyle = grad;
-                    ctx.fillRect(startX, y_i, totalRoofLength, slatHeight);
-
-                    // Obramowanie
-                    ctx.strokeStyle = '#334155';
-                    ctx.lineWidth = 2;
-                    ctx.strokeRect(startX, y_i, totalRoofLength, slatHeight);
-
-                    // Pionowe linie sekcji
-                    ctx.strokeStyle = 'rgba(15, 23, 42, 0.3)';
-                    ctx.lineWidth = 1;
-                    ctx.beginPath();
-                    for (let x = startX + 300; x < startX + totalRoofLength; x += 400) {
-                        ctx.moveTo(x, y_i);
-                        ctx.lineTo(x, y_i + slatHeight);
+                // Zazębienie na styku pokryw (gdy prawie zamknięte)
+                if (this.roofProgress > 0.9) {
+                    const meshAlpha = (this.roofProgress - 0.9) / 0.1;
+                    ctx.globalAlpha = meshAlpha;
+                    ctx.fillStyle = '#3a4a64';
+                    const toothW = 64;
+                    for (let x = startX; x < startX + totalRoofLength; x += toothW) {
+                        const up = (Math.floor((x - startX) / toothW) % 2) === 0;
+                        ctx.fillRect(x, up ? -42 : 2, toothW * 0.84, 40);
                     }
-                    ctx.stroke();
-
-                    // Refleks świetlny
-                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+                    ctx.globalAlpha = 1;
+                    // Zamek świetlny na osi
                     ctx.beginPath();
-                    ctx.moveTo(startX, y_i + 1);
-                    ctx.lineTo(startX + totalRoofLength, y_i + 1);
-                    ctx.stroke();
-                }
-
-                // Krawędzie czołowe obu pokryw ze świetlną linią sygnalizacyjną
-                const leadingEdgeTopY = -halfW + currentCoverage;
-                const leadingEdgeBotY = halfW - currentCoverage;
-
-                ctx.lineWidth = 4;
-                ctx.strokeStyle = '#38bdf8';
-                ctx.shadowColor = '#38bdf8';
-                ctx.shadowBlur = 10;
-                
-                ctx.beginPath();
-                ctx.moveTo(startX, leadingEdgeTopY);
-                ctx.lineTo(startX + totalRoofLength, leadingEdgeTopY);
-                ctx.moveTo(startX, leadingEdgeBotY);
-                ctx.lineTo(startX + totalRoofLength, leadingEdgeBotY);
-                ctx.stroke();
-                
-                ctx.shadowBlur = 0; // Reset cieni
-
-                // Zamknięty zamek świetlny
-                if (this.roofProgress > 0.98) {
-                    ctx.beginPath();
-                    ctx.moveTo(startX, 0);
-                    ctx.lineTo(startX + totalRoofLength, 0);
-                    ctx.lineWidth = 8;
-                    ctx.strokeStyle = '#60a5fa';
-                    ctx.shadowColor = '#60a5fa';
-                    ctx.shadowBlur = 15;
+                    ctx.moveTo(startX, 0); ctx.lineTo(startX + totalRoofLength, 0);
+                    ctx.lineWidth = 6; ctx.strokeStyle = '#60a5fa';
+                    ctx.shadowColor = '#60a5fa'; ctx.shadowBlur = 16 * meshAlpha;
                     ctx.stroke();
                     ctx.shadowBlur = 0;
                 }

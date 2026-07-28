@@ -9,40 +9,26 @@ import { Shockwave3DManager } from '../effects3d/shockwave3D.js';
 
 const MAX_HEAT_HAZE_SOURCES = 24;
 const PLANET_RENDER_LAYER = 3;
-const OCCLUSION_RENDER_LAYER = 4;
 const PLANET_HALO_RENDER_LAYER = 5;
 const RING_PLANET_RENDER_LAYER = 6;
-// Okludery rysowane kamerą ORTHO do maski shaftów (pasmo ringu, kadłuby
-// statków) — layer 4 renderuje się kamerą persp, więc obiekty ekranowo-ortho
-// muszą mieć własną warstwę, inaczej maska rozjeżdża się z tym, co widać na
-// ekranie. Planety/księżyce NIE idą do maski: są liczone analitycznie jako
-// dyski (uDiscs) — maska screen-space nie obejmuje okluderów poza kadrem
-// i gubi cień planety przy przybliżeniu kamery.
-const OCCLUSION_ORTHO_RENDER_LAYER = 7;
-// Okludery-sprite'y (quad z alfą sylwetki, np. armor-LOD statku): renderowane
-// do maski WŁASNYM materiałem (bez białego override'u), bo override zamieniłby
-// quad w pełny prostokąt. Obiekty na tej warstwie NIE renderują się nigdzie
-// indziej (layers.set, nie enable).
-const OCCLUSION_SPRITE_RENDER_LAYER = 8;
-// Jak wyżej, ale renderowane kamerą PERSP (np. asteroidy, które żyją
-// w passie FG na layer 2 — ich sylwetka musi być rzutowana tą samą kamerą).
-const OCCLUSION_SPRITE_PERSP_RENDER_LAYER = 9;
-// Maks. liczba tarcz (planety + księżyce) zgłaszanych per klatkę przez
-// pushShaftDiscWorld do analitycznych cieni w shaderze shaftów.
-const SHAFT_DISC_CAP = 16;
+// Shadow shafts: WSZYSTKIE okludery są analityczne (dyski / kapsuły /
+// pierścienie w world-space, liczone per piksel w shaderze passa). Maska
+// screen-space odeszła w całości: nie obejmowała okluderów poza kadrem
+// (cień planety znikał przy przybliżeniu), gubiła małe kadłuby po
+// downresie+blurze (cień statku znikał z oddaleniem) i kosztowała
+// 4 dodatkowe przejścia sceny na viewport + 2 blury.
+const SHAFT_DISC_CAP = 48;      // planety + księżyce + największe asteroidy
+const SHAFT_CAPSULE_CAP = 32;   // kadłuby statków (segment + promień)
+const SHAFT_RING_CAP = 2;       // ring city (Ziemia, Mars)
 
-// Poziomy jakości shadow shafts. `high` = parametry sprzed nerfa
-// wydajnościowego z 2026-03 (50 sampli, maska /2, overscan 3.0) + dłuższe
-// smugi. `off` trzyma parametry low, żeby ręczne włączenie passa booleanem
-// (Core3DPerf/godRays) miało sensowną konfigurację.
-// lengthWorld dotyczy TYLKO marszu po masce (statki + ring) — planety maja
-// wlasne analityczne dyski (discLenMul). Krotszy marsz = gestsze kroki =
-// wieksza szansa trafienia malego kadluba przy oddalonej kamerze.
+// Poziomy jakości shadow shafts — po przejściu na pełną analitykę jedyne
+// różnice to długość smug i budżet kapsuł statków (koszt = ALU w jednym
+// fullscreen passie, więc nawet Low wygląda poprawnie na każdym zoomie).
 export const SHADOW_SHAFTS_QUALITY = {
-  off: { enabled: false, samples: 10, resDiv: 8, overscan: 1.2, lengthWorld: 12000, maxLenUv: 0.8, blurRadius: 3.5, discLenMul: 10 },
-  low: { enabled: true, samples: 10, resDiv: 8, overscan: 1.2, lengthWorld: 12000, maxLenUv: 0.8, blurRadius: 3.5, discLenMul: 10 },
-  medium: { enabled: true, samples: 24, resDiv: 4, overscan: 1.8, lengthWorld: 24000, maxLenUv: 1.0, blurRadius: 3.0, discLenMul: 18 },
-  high: { enabled: true, samples: 50, resDiv: 2, overscan: 3.0, lengthWorld: 60000, maxLenUv: 1.5, blurRadius: 2.5, discLenMul: 30 }
+  off: { enabled: false, discLenMul: 10, capsuleLenMul: 6, capsuleBudget: 12 },
+  low: { enabled: true, discLenMul: 10, capsuleLenMul: 6, capsuleBudget: 12 },
+  medium: { enabled: true, discLenMul: 18, capsuleLenMul: 10, capsuleBudget: 24 },
+  high: { enabled: true, discLenMul: 30, capsuleLenMul: 16, capsuleBudget: 32 }
 };
 
 export function resolveShadowShaftsQuality(level) {
@@ -56,18 +42,8 @@ function createShadowShaftsShader() {
   return {
     name: 'ShadowShaftsCompositeShader',
     uniforms: {
-      uOcclusionMap: { value: null },
-      uTime: { value: 0 },
+      uSunActive: { value: 0 },
       uSplitScreen: { value: 0 },
-      uSunDirection: { value: new THREE.Vector2(1.0, 0.0) },
-      uSunDirection2: { value: new THREE.Vector2(1.0, 0.0) },
-      uShadowLength: { value: 1.0 },
-      uShadowDarkness: { value: 1.8 },
-      uLengthMul: { value: 1.2 },
-      uShadowDecay: { value: 0.935 },
-      uShadowJitter: { value: 0.4 },
-      uAspectRatio: { value: 1.0 },
-      uOverscan: { value: 1.2 },
       uSunWorld: { value: new THREE.Vector2(0, 0) },
       uCamCenter: { value: new THREE.Vector2(0, 0) },
       uCamCenter2: { value: new THREE.Vector2(0, 0) },
@@ -75,23 +51,20 @@ function createShadowShaftsShader() {
       uViewWorldSize2: { value: new THREE.Vector2(1, 1) },
       uDiscLenMul: { value: 18.0 },
       uDiscCount: { value: 0 },
-      uDiscs: { value: Array.from({ length: SHAFT_DISC_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) }
+      uDiscs: { value: Array.from({ length: SHAFT_DISC_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
+      uCapsuleLenMul: { value: 10.0 },
+      uCapsuleCount: { value: 0 },
+      uCapsuleSeg: { value: Array.from({ length: SHAFT_CAPSULE_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) },
+      uCapsuleR: { value: new Float32Array(SHAFT_CAPSULE_CAP) },
+      uRingCount: { value: 0 },
+      // uRings[i]: xy = środek (three-space), z = promień pasma, w = zasięg cienia
+      uRings: { value: Array.from({ length: SHAFT_RING_CAP }, () => new THREE.Vector4(0, 0, 0, 0)) }
     },
     vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
     fragmentShader: `
       precision highp float;
-      uniform sampler2D uOcclusionMap;
-      uniform float uTime;
+      uniform int uSunActive;
       uniform int uSplitScreen;
-      uniform vec2 uSunDirection;
-      uniform vec2 uSunDirection2;
-      uniform float uShadowLength;
-      uniform float uShadowDarkness;
-      uniform float uLengthMul;
-      uniform float uShadowDecay;
-      uniform float uShadowJitter;
-      uniform float uAspectRatio;
-      uniform float uOverscan;
       uniform vec2 uSunWorld;
       uniform vec2 uCamCenter;
       uniform vec2 uCamCenter2;
@@ -100,65 +73,20 @@ function createShadowShaftsShader() {
       uniform float uDiscLenMul;
       uniform int uDiscCount;
       uniform vec4 uDiscs[${SHAFT_DISC_CAP}];
+      uniform float uCapsuleLenMul;
+      uniform int uCapsuleCount;
+      uniform vec4 uCapsuleSeg[${SHAFT_CAPSULE_CAP}];
+      uniform float uCapsuleR[${SHAFT_CAPSULE_CAP}];
+      uniform int uRingCount;
+      uniform vec4 uRings[${SHAFT_RING_CAP}];
       varying vec2 vUv;
 
-      #ifndef NUM_SAMPLES
-      #define NUM_SAMPLES 10
-      #endif
-
-      float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
-
       void main() {
-        vec2 dirVec = (uSplitScreen == 1 && vUv.x > 0.5) ? uSunDirection2 : uSunDirection;
-        if(length(dirVec) < 0.001) {
+        if (uSunActive == 0) {
           gl_FragColor = vec4(1.0);
           return;
         }
 
-        vec2 dir = normalize(vec2(dirVec.x, dirVec.y * uAspectRatio));
-        vec2 occUv;
-        if (uSplitScreen == 1) {
-          if (vUv.x < 0.5) {
-            vec2 localOcc = (vec2(vUv.x * 2.0, vUv.y) - 0.5) / uOverscan + 0.5;
-            occUv = vec2(localOcc.x * 0.5, localOcc.y);
-          } else {
-            vec2 localOcc = (vec2((vUv.x - 0.5) * 2.0, vUv.y) - 0.5) / uOverscan + 0.5;
-            occUv = vec2(localOcc.x * 0.5 + 0.5, localOcc.y);
-          }
-        } else {
-          occUv = (vUv - 0.5) / uOverscan + 0.5;
-        }
-
-        vec2 stepVec = dir * (((uShadowLength * uLengthMul) / uOverscan) / float(NUM_SAMPLES));
-        float jitter = (hash12(vUv * vec2(191.13, 137.71) + uTime) - 0.5) * uShadowJitter;
-        // Start POL KROKU W STRONE SLONCA (dawniej -0.35 wstecz): piksel nie
-        // sampluje wlasnego okludera, wiec naslonecznina strona statku zostaje
-        // jasna, a cien zaczyna sie od srodka/tylu kadluba ("pol na pol").
-        vec2 sampleUv = occUv + stepVec * (jitter + 0.5);
-
-        // Akumulacja MAX zamiast sredniej wazonej: srednia po calym marszu
-        // karala okludery mniejsze niz krok (statek = ulamek kroku przy
-        // oddalonej kamerze -> cien znikal). Jedno trafienie w kadlub daje
-        // pelny cien; o dlugosci smugi decyduje falloff od odleglosci,
-        // znormalizowany do 24 krokow referencyjnych (ta sama krzywa na
-        // kazdym poziomie jakosci NUM_SAMPLES).
-        float shadowAccum = 0.0;
-        float falloff = 1.0;
-        float stepFalloff = pow(uShadowDecay, 24.0 / float(NUM_SAMPLES));
-
-        for(int i = 0; i < NUM_SAMPLES; i++) {
-          if(sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) break;
-          shadowAccum = max(shadowAccum, texture2D(uOcclusionMap, sampleUv).r * falloff);
-          falloff *= stepFalloff;
-          sampleUv += stepVec;
-        }
-
-        float marchShadow = clamp(shadowAccum * uShadowDarkness, 0.0, 1.0);
-
-        // Analityczne cienie tarcz planet/ksiezycow w world-space: dzialaja na
-        // kazdym zoomie i dla okluderow daleko poza kadrem (maska screen-space
-        // nie ma szans ich objac). Wnetrze tarczy pomijane (along <= exitDist),
-        // wiec dzienna strona planety zostaje przy wlasnym oswietleniu.
         bool rightHalf = (uSplitScreen == 1 && vUv.x > 0.5);
         vec2 localUv = (uSplitScreen == 1)
           ? (rightHalf ? vec2((vUv.x - 0.5) * 2.0, vUv.y) : vec2(vUv.x * 2.0, vUv.y))
@@ -167,7 +95,22 @@ function createShadowShaftsShader() {
         vec2 viewWS = rightHalf ? uViewWorldSize2 : uViewWorldSize;
         vec2 worldP = camC + (localUv - 0.5) * viewWS;
 
-        float discShadow = 0.0;
+        // Kierunek do slonca liczony PER PIKSEL (nie per kamera) — poprawna
+        // paralaksa smug przy okluderach blisko slonca.
+        vec2 toSun = uSunWorld - worldP;
+        float sunDist = length(toSun);
+        if (sunDist < 1.0) {
+          gl_FragColor = vec4(1.0);
+          return;
+        }
+        vec2 d = toSun / sunDist;
+
+        float shadow = 0.0;
+        bool insideDisc = false;
+
+        // ── Dyski: planety, ksiezyce, najwieksze asteroidy ───────────────
+        // Wnetrze tarczy pomijane (along <= exitDist) — dzienna strona
+        // planety zostaje przy wlasnym oswietleniu z jej shadera.
         for (int i = 0; i < ${SHAFT_DISC_CAP}; i++) {
           if (i >= uDiscCount) break;
           vec4 disc = uDiscs[i];
@@ -178,6 +121,7 @@ function createShadowShaftsShader() {
           if (axisLen < 1.0) continue;
           axis /= axisLen;
           vec2 rel = worldP - disc.xy;
+          if (dot(rel, rel) < discR * discR) insideDisc = true;
           float along = dot(rel, axis);
           if (along <= 0.0) continue;
           float perp = abs(dot(rel, vec2(-axis.y, axis.x)));
@@ -187,10 +131,77 @@ function createShadowShaftsShader() {
           float fall = 1.0 - smoothstep(0.55, 1.0, fallT);
           float soft = discR * (0.04 + 0.30 * fallT);
           float edge = 1.0 - smoothstep(discR - soft, discR + soft, perp);
-          discShadow = max(discShadow, edge * fall);
+          shadow = max(shadow, edge * fall);
         }
 
-        float rawShadow = clamp(max(marchShadow, discShadow), 0.0, 1.0);
+        // ── Kapsuly: kadluby statkow (segment [a,b] + promien) ───────────
+        // Wnetrze kadluba pomijane — terminator w shaderze heksow robi
+        // wlasne dzien/noc; smuga zaczyna sie ZA statkiem.
+        for (int i = 0; i < ${SHAFT_CAPSULE_CAP}; i++) {
+          if (i >= uCapsuleCount) break;
+          vec4 seg = uCapsuleSeg[i];
+          float capR = uCapsuleR[i];
+          if (capR <= 0.0) continue;
+          vec2 pa = seg.xy - worldP;
+          vec2 pb = seg.zw - worldP;
+          float alongA = dot(pa, d);
+          float alongB = dot(pb, d);
+          if (alongA <= 0.0 && alongB <= 0.0) continue;
+          vec2 ab = seg.zw - seg.xy;
+          float segLen2 = max(dot(ab, ab), 0.0001);
+          float h = clamp(dot(worldP - seg.xy, ab) / segLen2, 0.0, 1.0);
+          vec2 fromHull = worldP - (seg.xy + ab * h);
+          if (dot(fromHull, fromHull) <= capR * capR) continue;
+          // najblizsze podejscie promienia (worldP -> slonce) do segmentu
+          float perpA = d.x * pa.y - d.y * pa.x;
+          float perpB = d.x * pb.y - d.y * pb.x;
+          float perpMin;
+          float alongHit;
+          if (perpA * perpB < 0.0) {
+            float s = perpA / (perpA - perpB);
+            perpMin = 0.0;
+            alongHit = mix(alongA, alongB, s);
+          } else if (abs(perpA) < abs(perpB)) {
+            perpMin = abs(perpA);
+            alongHit = alongA;
+          } else {
+            perpMin = abs(perpB);
+            alongHit = alongB;
+          }
+          if (alongHit <= 0.0 || alongHit >= sunDist) continue;
+          float capLen = sqrt(segLen2) + 2.0 * capR;
+          float fallT = clamp(alongHit / max(capLen * uCapsuleLenMul, 1.0), 0.0, 1.0);
+          float fall = 1.0 - smoothstep(0.35, 1.0, fallT);
+          float soft = capR * (0.25 + 1.6 * fallT);
+          float edge = 1.0 - smoothstep(max(capR - soft * 0.5, 0.0), capR + soft, perpMin);
+          shadow = max(shadow, edge * fall);
+        }
+
+        // ── Pierscienie (ring city wokol planety) ────────────────────────
+        // Piksele wewnatrz tarczy planety pomijamy: pas cienia ringu na
+        // POWIERZCHNI rysuje analityczny term w shaderze planety (uRingShadow*)
+        // — bez tego pas bylby liczony podwojnie.
+        if (!insideDisc) {
+          for (int i = 0; i < ${SHAFT_RING_CAP}; i++) {
+            if (i >= uRingCount) break;
+            vec4 ring = uRings[i];
+            float ringR = ring.z;
+            if (ringR <= 0.0) continue;
+            vec2 rel = worldP - ring.xy;
+            float b_ = dot(rel, d);
+            float c2 = dot(rel, rel) - ringR * ringR;
+            float disc_ = b_ * b_ - c2;
+            if (disc_ <= 0.0) continue;
+            float sq = sqrt(disc_);
+            // wewnatrz okregu: wyjscie w strone slonca; na zewnatrz: wejscie
+            float tHit = (c2 < 0.0) ? (-b_ + sq) : (-b_ - sq);
+            if (tHit <= 0.0 || tHit >= sunDist) continue;
+            float ringShade = (1.0 - smoothstep(0.0, max(ring.w, 1.0), tHit)) * 0.85;
+            shadow = max(shadow, ringShade);
+          }
+        }
+
+        float rawShadow = clamp(shadow, 0.0, 1.0);
         // Pass może wyłącznie przyciemniać piksele pod smugą. Dodawanie stałej
         // poświaty tutaj robiło pełnoekranową szarą mgłę niezależną od pozycji.
         gl_FragColor = vec4(mix(vec3(1.0), vec3(0.06, 0.10, 0.16), rawShadow), 1.0);
@@ -412,7 +423,7 @@ function makeSplitScreenRenderPass(pass, layerId, isOrtho, doClearColor) {
 
           // KLUCZ: Przekazujemy halfW, aby aspekt kamery wynosiĹ‚ (halfW / th)
           Core3D.syncCamera(Core3D.activeCam1, halfW, th, 0);
-          this.camera = isOrtho ? Core3D.cameraOrtho : Core3D.cameraPersp;
+          this.camera = Core3D.getPassCamera(isOrtho);
           this.camera.layers.set(layerId);
           renderer.render(this.scene, this.camera);
 
@@ -427,7 +438,7 @@ function makeSplitScreenRenderPass(pass, layerId, isOrtho, doClearColor) {
           }
 
           Core3D.syncCamera(Core3D.activeCam2, halfW, th, halfW);
-          this.camera = isOrtho ? Core3D.cameraOrtho : Core3D.cameraPersp;
+          this.camera = Core3D.getPassCamera(isOrtho);
           this.camera.layers.set(layerId);
           renderer.render(this.scene, this.camera);
 
@@ -444,27 +455,13 @@ function makeSplitScreenRenderPass(pass, layerId, isOrtho, doClearColor) {
               renderer.clear(false, true, false);
           }
           Core3D.syncCamera(Core3D.activeCam1, tw, th, 0);
-          this.camera = isOrtho ? Core3D.cameraOrtho : Core3D.cameraPersp;
+          this.camera = Core3D.getPassCamera(isOrtho);
           this.camera.layers.set(layerId);
           renderer.render(this.scene, this.camera);
       }
       renderer.setClearColor(oldCol, oldAlpha);
       renderer.autoClear = oldAutoClear;
   };
-}
-
-function createSeparableBlurMaterial(direction = new THREE.Vector2(1, 0)) {
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      tDiffuse: { value: null },
-      uResolution: { value: new THREE.Vector2(1, 1) },
-      uDirection: { value: direction.clone() },
-      uRadius: { value: 4.0 }
-    },
-    vertexShader: `precision highp float; varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position, 1.0); }`,
-    fragmentShader: `precision highp float; varying vec2 vUv; uniform sampler2D tDiffuse; uniform vec2 uResolution; uniform vec2 uDirection; uniform float uRadius; void main() { vec2 off = (uDirection * uRadius) / max(vec2(1.0), uResolution); vec4 sum = vec4(0.0); sum += texture2D(tDiffuse, vUv - off * 4.0) * 0.05; sum += texture2D(tDiffuse, vUv - off * 3.0) * 0.09; sum += texture2D(tDiffuse, vUv - off * 2.0) * 0.12; sum += texture2D(tDiffuse, vUv - off * 1.0) * 0.15; sum += texture2D(tDiffuse, vUv) * 0.18; sum += texture2D(tDiffuse, vUv + off * 1.0) * 0.15; sum += texture2D(tDiffuse, vUv + off * 2.0) * 0.12; sum += texture2D(tDiffuse, vUv + off * 3.0) * 0.09; sum += texture2D(tDiffuse, vUv + off * 4.0) * 0.05; gl_FragColor = sum; }`,
-    blending: THREE.NoBlending, transparent: false, depthTest: false, depthWrite: false
-  });
 }
 
 export const Core3D = {
@@ -478,15 +475,15 @@ export const Core3D = {
   _refractionValid: false, _refractionFlip: false,
   planetHaloTarget: null, haloDepthMaskMaterial: null,
 
-  occlusionTarget: null, occlusionWhiteMaterial: null,
-  occlusionBlurTargetA: null, occlusionBlurTargetB: null,
-  occlusionBlurScene: null, occlusionBlurCamera: null, occlusionBlurQuad: null,
-  occlusionBlurMatH: null, occlusionBlurMatV: null,
-
   renderPassBg: null, renderPassPlanets: null, planetHaloPass: null, renderPassRingPlanets: null, renderPassOrtho: null, renderPassFg: null,
   heatHazeSources: null, heatHazeDirs: null, heatHazeCount: 0, heatHazeMaxSources: MAX_HEAT_HAZE_SOURCES, _heatHazeWorldScratch: new THREE.Vector3(),
   shadowShaftsPass: null,
+  // Analityczne okludery shaftów, zgłaszane co klatkę przez systemy gry:
+  // dyski (planet3d.assets + asteroidField3D), kapsuły (hexShips3D),
+  // pierścienie (planetaryRing3D — Map po kluczu ringu, bez begin/reset).
   shaftDiscs: new Float32Array(SHAFT_DISC_CAP * 3), shaftDiscCount: 0,
+  shaftCapsules: new Float32Array(SHAFT_CAPSULE_CAP * 5), shaftCapsuleCount: 0,
+  shaftRings: new Map(),
   uberPass: null,
   bloomPass: null, bloomResolutionScale: BLOOM_DEFAULTS.resolutionScale, bloomBaseStrength: BLOOM_DEFAULTS.strength, bloomBaseThreshold: BLOOM_DEFAULTS.threshold,
   msaaSamples: 0,
@@ -696,34 +693,6 @@ export const Core3D = {
     this.shadowCatcherFg.receiveShadow = true; this.shadowCatcherFg.renderOrder = 5; this.shadowCatcherFg.frustumCulled = false; this.shadowCatcherFg.layers.set(2);
     this.scene.add(this.shadowCatcherFg);
 
-    this.occlusionTarget = new THREE.WebGLRenderTarget(
-      Math.max(1, Math.floor(window.innerWidth / 8)),
-      Math.max(1, Math.floor(window.innerHeight / 8)),
-      {
-        format: THREE.RGBAFormat,
-        type: this.renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType,
-        depthBuffer: true
-      }
-    );
-    this.occlusionWhiteMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff, side: THREE.DoubleSide, transparent: true, depthWrite: false, blending: THREE.CustomBlending,
-      blendEquation: THREE.MaxEquation, blendEquationAlpha: THREE.MaxEquation, blendSrc: THREE.OneFactor,
-      blendDst: THREE.OneFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneFactor
-    });
-    const blurRtOptions = { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat, type: this.renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType, depthBuffer: false, stencilBuffer: false };
-    const blurW = Math.max(1, Math.floor(window.innerWidth / 8));
-    const blurH = Math.max(1, Math.floor(window.innerHeight / 8));
-    this.occlusionBlurTargetA = new THREE.WebGLRenderTarget(blurW, blurH, blurRtOptions);
-    this.occlusionBlurTargetB = new THREE.WebGLRenderTarget(blurW, blurH, blurRtOptions);
-    this.occlusionBlurScene = new THREE.Scene();
-    this.occlusionBlurCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    this.occlusionBlurMatH = createSeparableBlurMaterial(new THREE.Vector2(1, 0));
-    this.occlusionBlurMatV = createSeparableBlurMaterial(new THREE.Vector2(0, 1));
-    this.occlusionBlurMatH.uniforms.uResolution.value.set(blurW, blurH);
-    this.occlusionBlurMatV.uniforms.uResolution.value.set(blurW, blurH);
-    this.occlusionBlurQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.occlusionBlurMatH);
-    this.occlusionBlurScene.add(this.occlusionBlurQuad);
-
     const rt = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
       format: THREE.RGBAFormat, type: this.renderer.capabilities.isWebGL2 ? THREE.HalfFloatType : THREE.UnsignedByteType,
       depthBuffer: true, samples: this.renderer.capabilities.isWebGL2 ? 4 : 0
@@ -818,9 +787,6 @@ export const Core3D = {
     this._applyPassToggles();
     this._instrumentComposerPasses();
     this.isInitialized = true;
-    // Poziom mógł zostać ustawiony (menu/localStorage) zanim init się wykonał
-    // — dociśnij defines/rozmiary targetów do zapamiętanej jakości.
-    this._applyShadowShaftsQuality();
     this.resize(window.innerWidth, window.innerHeight);
 
     return this;
@@ -835,12 +801,6 @@ export const Core3D = {
       try { this.shockwave3DManager?.dispose?.(); } catch { }
       try { this.planetHaloTarget?.dispose?.(); } catch { }
       try { this.haloDepthMaskMaterial?.dispose?.(); } catch { }
-      try { this.occlusionTarget?.dispose?.(); } catch { }
-      try { this.occlusionBlurTargetA?.dispose?.(); } catch { }
-      try { this.occlusionBlurTargetB?.dispose?.(); } catch { }
-      try { this.occlusionBlurQuad?.geometry?.dispose?.(); } catch { }
-      try { this.occlusionBlurMatH?.dispose?.(); } catch { }
-      try { this.occlusionBlurMatV?.dispose?.(); } catch { }
     } catch { }
     this.isInitialized = false;
     this.refractionTarget = null;
@@ -933,6 +893,9 @@ export const Core3D = {
     return this.getPerfStatus();
   },
 
+  // Po przejściu shaftów na pełną analitykę poziom jakości nie wymaga
+  // rekompilacji shadera ani resizingu targetów — parametry (długości smug,
+  // budżet kapsuł) idą co klatkę jako uniformy z _shaftCfg.
   setShadowShaftsQuality(level = 'medium') {
     const cfg = resolveShadowShaftsQuality(level);
     this.shadowShaftsQuality = cfg.level;
@@ -940,39 +903,7 @@ export const Core3D = {
     const t = this.perfToggles || (this.perfToggles = {});
     t.shadowShafts = cfg.enabled;
     this._passTogglesDirty = true;
-    if (this.isInitialized) this._applyShadowShaftsQuality();
     return this.getPerfStatus();
-  },
-
-  _applyShadowShaftsQuality() {
-    const cfg = this._shaftCfg || resolveShadowShaftsQuality(this.shadowShaftsQuality);
-    this._shaftCfg = cfg;
-    const mat = this.shadowShaftsPass?.material;
-    if (mat) {
-      const defines = { ...(mat.defines || {}) };
-      if (defines.NUM_SAMPLES !== cfg.samples) {
-        defines.NUM_SAMPLES = cfg.samples;
-        mat.defines = defines;
-        mat.needsUpdate = true;
-      }
-    }
-    this._resizeOcclusionTargets(this.width || (typeof window !== 'undefined' ? window.innerWidth : 1), this.height || (typeof window !== 'undefined' ? window.innerHeight : 1));
-    const blurR = Math.max(0.5, Number(cfg.blurRadius) || 3.5);
-    if (this.occlusionBlurMatH?.uniforms?.uRadius) this.occlusionBlurMatH.uniforms.uRadius.value = blurR;
-    if (this.occlusionBlurMatV?.uniforms?.uRadius) this.occlusionBlurMatV.uniforms.uRadius.value = blurR;
-  },
-
-  _resizeOcclusionTargets(width, height) {
-    const div = Math.max(1, Number(this._shaftCfg?.resDiv) || 8);
-    const w = Math.max(1, Math.floor(width / div));
-    const h = Math.max(1, Math.floor(height / div));
-    if (this.occlusionTarget) this.occlusionTarget.setSize(w, h);
-    if (this.occlusionBlurTargetA && this.occlusionBlurTargetB) {
-      this.occlusionBlurTargetA.setSize(w, h);
-      this.occlusionBlurTargetB.setSize(w, h);
-      if (this.occlusionBlurMatH?.uniforms?.uResolution) this.occlusionBlurMatH.uniforms.uResolution.value.set(w, h);
-      if (this.occlusionBlurMatV?.uniforms?.uResolution) this.occlusionBlurMatV.uniforms.uResolution.value.set(w, h);
-    }
   },
   getPerfStatus() {
     const t = this.perfToggles || {};
@@ -1000,18 +931,19 @@ export const Core3D = {
   enablePlanet3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(PLANET_RENDER_LAYER); }); },
   enablePlanetHalo3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(PLANET_HALO_RENDER_LAYER); }); },
   enableRingPlanet3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(RING_PLANET_RENDER_LAYER); }); },
-  enablePlanetOccluder3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.enable(OCCLUSION_RENDER_LAYER); }); },
-  // Okluder rysowany kamerą ortho (ring-planety, pasmo ringu, kadłuby statków).
-  // UWAGA: wołać PO enableRingPlanet3D/enableForeground3D — tamte robią
-  // layers.set() i skasowałyby tę warstwę.
-  enableOrthoOccluder3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.enable(OCCLUSION_ORTHO_RENDER_LAYER); }); },
-  // Okluder-sprite (quad z alfą sylwetki, własny biały materiał) — renderuje
-  // się WYŁĄCZNIE w przejściu maski bez override'u (layers.set, nie enable).
-  enableSpriteOccluder3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(OCCLUSION_SPRITE_RENDER_LAYER); }); },
-  // Wariant persp (np. asteroidy z passa FG) — rzutowanie tą samą kamerą,
-  // którą obiekt jest rysowany na ekranie.
-  enableSpriteOccluderPersp3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(OCCLUSION_SPRITE_PERSP_RENDER_LAYER); }); },
   enableForeground3D(object3d) { if (object3d) object3d.traverse((child) => { child.layers.set(2); }); },
+
+  isFreePerspectiveCamera(cameraData = this.activeCam1) {
+    return cameraData?.mode === 'free3d' && cameraData?.position && cameraData?.quaternion;
+  },
+
+  getPassCamera(isOrtho = false) {
+    // Ring City flight is a real perspective view through the same shared
+    // scene/composer. In that mode even legacy layer-0 world objects must use
+    // the perspective camera; no extra renderer or parallel scene is created.
+    if (this.isFreePerspectiveCamera()) return this.cameraPersp;
+    return isOrtho ? this.cameraOrtho : this.cameraPersp;
+  },
 
   resize(w, h) {
     if (!this.isInitialized) return;
@@ -1035,7 +967,6 @@ export const Core3D = {
     if (this.planetHaloTarget) {
       this.planetHaloTarget.setSize(bufW, bufH);
     }
-    this._resizeOcclusionTargets(width, height);
     if (this.bloomPass && typeof this.bloomPass.setSize === 'function') {
       const bScale = Math.max(0.1, Math.min(1, Number(this.bloomResolutionScale) || 1));
       this.bloomPass.setSize(Math.floor(width * this.pixelRatio * bScale), Math.floor(height * this.pixelRatio * bScale));
@@ -1056,6 +987,20 @@ export const Core3D = {
 
     const w = viewWidth || this.width;
     const h = viewHeight || this.height;
+
+    if (this.isFreePerspectiveCamera(gameCamera)) {
+      const fov = Math.max(30, Math.min(90, Number(gameCamera.fov) || 58));
+      this.cameraPersp.fov = fov;
+      this.cameraPersp.aspect = w / Math.max(1, h);
+      this.cameraPersp.near = Math.max(0.1, Number(gameCamera.near) || 0.5);
+      this.cameraPersp.far = Math.max(this.cameraPersp.near + 1000, Number(gameCamera.far) || 500000);
+      this.cameraPersp.position.copy(gameCamera.position);
+      this.cameraPersp.quaternion.copy(gameCamera.quaternion);
+      this.cameraPersp.updateProjectionMatrix();
+      this.cameraPersp.updateMatrixWorld(true);
+      return;
+    }
+
     const zoom = Math.max(0.0001, gameCamera.zoom || 1);
     
     const halfW = (w / 2) / zoom;
@@ -1099,14 +1044,14 @@ export const Core3D = {
 
     const t = this.perfToggles || {};
     const bloomOn = t.bloom !== false;
-    const raysEnabled = t.shadowShafts !== false;
-    const heatEnabled = t.heatHaze !== false;
-    let occlusionTexture = this.occlusionTarget?.texture || null;
+    const freePerspective = this.isFreePerspectiveCamera();
+    // Both effects below map 2D gameplay-space coordinates to screen UVs.
+    // Disable them only for the experimental free 3D camera; bloom and the
+    // shared ACES resolve remain fully active.
+    const raysEnabled = t.shadowShafts !== false && !freePerspective;
+    const heatEnabled = t.heatHaze !== false && !freePerspective;
     const shaftCfg = this._shaftCfg || resolveShadowShaftsQuality(this.shadowShaftsQuality);
-    const OVERSCAN = Math.max(1.0, Number(shaftCfg.overscan) || 1.2);
     let isSplit = false;
-    let origTop = this.cameraOrtho.top;
-    let origBottom = this.cameraOrtho.bottom;
 
     // Pre-pass halo tylko gdy planety są w ogóle renderowane — wcześniej te
     // 2 przejścia sceny wykonywały się ZAWSZE, nawet na ultrafast bez planet.
@@ -1165,148 +1110,6 @@ export const Core3D = {
     // Composer dziala nawet gdy bloom/heatHaze/shadowShafts sa off (passes disabled).
     this.renderer.toneMapping = THREE.NoToneMapping;
 
-    if (raysEnabled && this.shadowShaftsPass) {
-      const prevAutoClear = this.renderer.autoClear;
-      this.renderer.autoClear = false;
-
-      const prevTarget = this.renderer.getRenderTarget();
-      const prevClearAlpha = this.renderer.getClearAlpha();
-      const prevClearColor = this._clearColorScratch;
-      this.renderer.getClearColor(prevClearColor);
-      const prevLayerMask = this.cameraPersp.layers.mask;
-      const prevOrthoLayerMask = this.cameraOrtho.layers.mask;
-      const prevOverrideMaterial = this.scene.overrideMaterial;
-
-      const origLeft = this.cameraOrtho.left;
-      const origRight = this.cameraOrtho.right;
-      origTop = this.cameraOrtho.top;
-      origBottom = this.cameraOrtho.bottom;
-      const origPerspZoom = this.cameraPersp.zoom;
-
-      this.renderer.setRenderTarget(this.occlusionTarget);
-      this.scene.overrideMaterial = this.occlusionWhiteMaterial;
-
-      isSplit = typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2;
-
-      if (isSplit) {
-          const tw = this.occlusionTarget.width;
-          const th = this.occlusionTarget.height;
-          const halfW = Math.floor(tw / 2);
-
-          this.renderer.setScissorTest(true);
-          
-          // --- Lewa Okluzja ---
-          this.renderer.setViewport(0, 0, halfW, th);
-          this.renderer.setScissor(0, 0, halfW, th);
-          this.renderer.setClearColor(0x000000, 0.0);
-          this.renderer.clear(true, true, true);
-          
-          this.syncCamera(this.activeCam1, this.width / 2, this.height, 0);
-          this.cameraOrtho.left *= OVERSCAN; this.cameraOrtho.right *= OVERSCAN;
-          this.cameraOrtho.top *= OVERSCAN; this.cameraOrtho.bottom *= OVERSCAN;
-          this.cameraOrtho.updateProjectionMatrix();
-          this.cameraPersp.zoom /= OVERSCAN; this.cameraPersp.updateProjectionMatrix();
-          this.cameraPersp.layers.set(OCCLUSION_RENDER_LAYER);
-
-          this.renderer.render(this.scene, this.cameraPersp);
-          this.cameraOrtho.layers.set(OCCLUSION_ORTHO_RENDER_LAYER);
-          this.renderer.render(this.scene, this.cameraOrtho);
-          this.scene.overrideMaterial = null;
-          this.cameraOrtho.layers.set(OCCLUSION_SPRITE_RENDER_LAYER);
-          this.renderer.render(this.scene, this.cameraOrtho);
-          this.cameraPersp.layers.set(OCCLUSION_SPRITE_PERSP_RENDER_LAYER);
-          this.renderer.render(this.scene, this.cameraPersp);
-          this.scene.overrideMaterial = this.occlusionWhiteMaterial;
-
-          // --- Prawa Okluzja ---
-          this.renderer.setViewport(halfW, 0, tw - halfW, th);
-          this.renderer.setScissor(halfW, 0, tw - halfW, th);
-          this.renderer.setClearColor(0x000000, 0.0);
-          this.renderer.clear(true, true, true);
-          
-          this.syncCamera(this.activeCam2, this.width / 2, this.height, this.width / 2);
-          this.cameraOrtho.left *= OVERSCAN; this.cameraOrtho.right *= OVERSCAN;
-          this.cameraOrtho.top *= OVERSCAN; this.cameraOrtho.bottom *= OVERSCAN;
-          this.cameraOrtho.updateProjectionMatrix();
-          this.cameraPersp.zoom /= OVERSCAN; this.cameraPersp.updateProjectionMatrix();
-          this.cameraPersp.layers.set(OCCLUSION_RENDER_LAYER);
-
-          this.renderer.render(this.scene, this.cameraPersp);
-          this.cameraOrtho.layers.set(OCCLUSION_ORTHO_RENDER_LAYER);
-          this.renderer.render(this.scene, this.cameraOrtho);
-          this.scene.overrideMaterial = null;
-          this.cameraOrtho.layers.set(OCCLUSION_SPRITE_RENDER_LAYER);
-          this.renderer.render(this.scene, this.cameraOrtho);
-          this.cameraPersp.layers.set(OCCLUSION_SPRITE_PERSP_RENDER_LAYER);
-          this.renderer.render(this.scene, this.cameraPersp);
-          this.scene.overrideMaterial = this.occlusionWhiteMaterial;
-
-          this.renderer.setScissorTest(false);
-      } else {
-          const tw = this.occlusionTarget.width;
-          const th = this.occlusionTarget.height;
-          this.renderer.setViewport(0, 0, tw, th);
-          this.renderer.setScissorTest(false);
-          this.renderer.setClearColor(0x000000, 0.0);
-          this.renderer.clear(true, true, true);
-          
-          this.syncCamera(this.activeCam1, this.width, this.height, 0);
-          this.cameraOrtho.left *= OVERSCAN; this.cameraOrtho.right *= OVERSCAN;
-          this.cameraOrtho.top *= OVERSCAN; this.cameraOrtho.bottom *= OVERSCAN;
-          this.cameraOrtho.updateProjectionMatrix();
-          this.cameraPersp.zoom /= OVERSCAN; this.cameraPersp.updateProjectionMatrix();
-          this.cameraPersp.layers.set(OCCLUSION_RENDER_LAYER);
-
-          this.renderer.render(this.scene, this.cameraPersp);
-          this.cameraOrtho.layers.set(OCCLUSION_ORTHO_RENDER_LAYER);
-          this.renderer.render(this.scene, this.cameraOrtho);
-          this.scene.overrideMaterial = null;
-          this.cameraOrtho.layers.set(OCCLUSION_SPRITE_RENDER_LAYER);
-          this.renderer.render(this.scene, this.cameraOrtho);
-          this.cameraPersp.layers.set(OCCLUSION_SPRITE_PERSP_RENDER_LAYER);
-          this.renderer.render(this.scene, this.cameraPersp);
-          this.scene.overrideMaterial = this.occlusionWhiteMaterial;
-      }
-
-      this.scene.overrideMaterial = prevOverrideMaterial;
-      this.cameraPersp.layers.mask = prevLayerMask;
-      this.cameraOrtho.layers.mask = prevOrthoLayerMask;
-
-      this.cameraOrtho.left = origLeft;
-      this.cameraOrtho.right = origRight;
-      this.cameraOrtho.top = origTop;
-      this.cameraOrtho.bottom = origBottom;
-      this.cameraOrtho.updateProjectionMatrix();
-
-      this.cameraPersp.zoom = origPerspZoom;
-      this.cameraPersp.updateProjectionMatrix();
-
-      occlusionTexture = this.occlusionTarget.texture;
-      if (
-        this.occlusionBlurTargetA && this.occlusionBlurTargetB &&
-        this.occlusionBlurScene && this.occlusionBlurCamera &&
-        this.occlusionBlurQuad && this.occlusionBlurMatH && this.occlusionBlurMatV
-      ) {
-        this.occlusionBlurMatH.uniforms.tDiffuse.value = this.occlusionTarget.texture;
-        this.occlusionBlurQuad.material = this.occlusionBlurMatH;
-        this.renderer.setRenderTarget(this.occlusionBlurTargetA);
-        this.renderer.clear();
-        this.renderer.render(this.occlusionBlurScene, this.occlusionBlurCamera);
-
-        this.occlusionBlurMatV.uniforms.tDiffuse.value = this.occlusionBlurTargetA.texture;
-        this.occlusionBlurQuad.material = this.occlusionBlurMatV;
-        this.renderer.setRenderTarget(this.occlusionBlurTargetB);
-        this.renderer.clear();
-        this.renderer.render(this.occlusionBlurScene, this.occlusionBlurCamera);
-        occlusionTexture = this.occlusionBlurTargetB.texture;
-      }
-
-      this.renderer.setRenderTarget(prevTarget);
-      this.renderer.setClearColor(prevClearColor, prevClearAlpha);
-      this.renderer.autoClear = prevAutoClear;
-
-    }
-
     const tBloom0 = dbgEnabled ? performance.now() : 0;
     if (this.bloomPass && bloomOn) this._applyBloomPassConfig();
     if (dbgEnabled) recordRenderDbg('coreBloomConfig', performance.now() - tBloom0);
@@ -1317,59 +1120,60 @@ export const Core3D = {
 
     if (this.shadowShaftsPass) {
       const uShafts = this.shadowShaftsPass.material.uniforms;
-      if (raysEnabled) {
-        uShafts.uOcclusionMap.value = occlusionTexture;
-        uShafts.uAspectRatio.value = this.width / this.height;
-        uShafts.uOverscan.value = OVERSCAN;
-
-        const worldHeight = Math.abs(origTop - origBottom);
-        const shaftLenWorld = Math.max(1, Number(shaftCfg.lengthWorld) || 20000);
-        const shaftMaxLenUv = Math.max(0.2, Number(shaftCfg.maxLenUv) || 0.8);
-        uShafts.uShadowLength.value = worldHeight > 0 ? Math.max(0.15, Math.min(shaftLenWorld / worldHeight, shaftMaxLenUv)) : 0.0;
-        uShafts.uTime.value = nowSec;
-        uShafts.uDiscLenMul.value = Math.max(1, Number(shaftCfg.discLenMul) || 18);
-
-        if (sun) {
-          const cam1 = this.activeCam1 || { x: 0, y: 0 };
-          const cam2 = this.activeCam2 || cam1;
-          const zoom1 = Math.max(0.0001, Number(cam1.zoom) || 1);
-          const zoom2 = Math.max(0.0001, Number(cam2.zoom) || 1);
-          const viewW = isSplit ? this.width / 2 : this.width;
-          uShafts.uSunWorld.value.set(sun.x, -sun.y);
-          uShafts.uCamCenter.value.set(Number(cam1.x) || 0, -(Number(cam1.y) || 0));
-          uShafts.uViewWorldSize.value.set(viewW / zoom1, this.height / zoom1);
-          if (isSplit) {
-            uShafts.uSplitScreen.value = 1;
-            uShafts.uSunDirection.value.set(sun.x - cam1.x, (-sun.y) - (-cam1.y));
-            uShafts.uSunDirection2.value.set(sun.x - cam2.x, (-sun.y) - (-cam2.y));
-            uShafts.uCamCenter2.value.set(Number(cam2.x) || 0, -(Number(cam2.y) || 0));
-            uShafts.uViewWorldSize2.value.set(viewW / zoom2, this.height / zoom2);
-          } else {
-            uShafts.uSplitScreen.value = 0;
-            uShafts.uSunDirection.value.set(sun.x - cam1.x, (-sun.y) - (-cam1.y));
-            uShafts.uSunDirection2.value.set(0, 0);
-            uShafts.uCamCenter2.value.copy(uShafts.uCamCenter.value);
-            uShafts.uViewWorldSize2.value.copy(uShafts.uViewWorldSize.value);
-          }
-          const discCount = Math.min(this.shaftDiscCount | 0, SHAFT_DISC_CAP);
-          uShafts.uDiscCount.value = discCount;
-          const discVals = uShafts.uDiscs.value;
-          for (let i = 0; i < discCount; i++) {
-            const base = i * 3;
-            discVals[i].set(this.shaftDiscs[base], this.shaftDiscs[base + 1], this.shaftDiscs[base + 2], 0);
-          }
+      isSplit = typeof window !== 'undefined' && window.splitScreenMode && this.activeCam2;
+      if (raysEnabled && sun) {
+        const cam1 = this.activeCam1 || { x: 0, y: 0 };
+        const cam2 = this.activeCam2 || cam1;
+        const zoom1 = Math.max(0.0001, Number(cam1.zoom) || 1);
+        const zoom2 = Math.max(0.0001, Number(cam2.zoom) || 1);
+        const viewW = isSplit ? this.width / 2 : this.width;
+        uShafts.uSunActive.value = 1;
+        uShafts.uSplitScreen.value = isSplit ? 1 : 0;
+        uShafts.uSunWorld.value.set(sun.x, -sun.y);
+        uShafts.uCamCenter.value.set(Number(cam1.x) || 0, -(Number(cam1.y) || 0));
+        uShafts.uViewWorldSize.value.set(viewW / zoom1, this.height / zoom1);
+        if (isSplit) {
+          uShafts.uCamCenter2.value.set(Number(cam2.x) || 0, -(Number(cam2.y) || 0));
+          uShafts.uViewWorldSize2.value.set(viewW / zoom2, this.height / zoom2);
         } else {
-          uShafts.uSplitScreen.value = 0;
-          uShafts.uSunDirection.value.set(0, 0);
-          uShafts.uSunDirection2.value.set(0, 0);
-          uShafts.uDiscCount.value = 0;
+          uShafts.uCamCenter2.value.copy(uShafts.uCamCenter.value);
+          uShafts.uViewWorldSize2.value.copy(uShafts.uViewWorldSize.value);
         }
+        uShafts.uDiscLenMul.value = Math.max(1, Number(shaftCfg.discLenMul) || 18);
+        uShafts.uCapsuleLenMul.value = Math.max(1, Number(shaftCfg.capsuleLenMul) || 10);
+
+        const discCount = Math.min(this.shaftDiscCount | 0, SHAFT_DISC_CAP);
+        uShafts.uDiscCount.value = discCount;
+        const discVals = uShafts.uDiscs.value;
+        for (let i = 0; i < discCount; i++) {
+          const base = i * 3;
+          discVals[i].set(this.shaftDiscs[base], this.shaftDiscs[base + 1], this.shaftDiscs[base + 2], 0);
+        }
+
+        // Budżet kapsuł wg jakości — hexShips3D pushuje od największych
+        // kadłubów, więc obcięcie zostawia najistotniejsze cienie.
+        const capsuleBudget = Math.max(0, Math.min(Number(shaftCfg.capsuleBudget) || SHAFT_CAPSULE_CAP, SHAFT_CAPSULE_CAP));
+        const capsuleCount = Math.min(this.shaftCapsuleCount | 0, capsuleBudget);
+        uShafts.uCapsuleCount.value = capsuleCount;
+        const capSegs = uShafts.uCapsuleSeg.value;
+        const capRs = uShafts.uCapsuleR.value;
+        for (let i = 0; i < capsuleCount; i++) {
+          const base = i * 5;
+          capSegs[i].set(this.shaftCapsules[base], this.shaftCapsules[base + 1], this.shaftCapsules[base + 2], this.shaftCapsules[base + 3]);
+          capRs[i] = this.shaftCapsules[base + 4];
+        }
+
+        let ringCount = 0;
+        const ringVals = uShafts.uRings.value;
+        for (const rec of this.shaftRings.values()) {
+          if (ringCount >= SHAFT_RING_CAP) break;
+          if (!(rec.r > 0)) continue;
+          ringVals[ringCount].set(rec.x, rec.y, rec.r, rec.reach);
+          ringCount++;
+        }
+        uShafts.uRingCount.value = ringCount;
       } else {
-        uShafts.uSplitScreen.value = 0;
-        uShafts.uSunDirection.value.set(0, 0);
-        uShafts.uSunDirection2.value.set(0, 0);
-        uShafts.uShadowLength.value = 0.0;
-        uShafts.uDiscCount.value = 0;
+        uShafts.uSunActive.value = 0;
       }
     }
 
@@ -1591,6 +1395,42 @@ export const Core3D = {
   },
 
   beginShaftDiscFrame() { this.shaftDiscCount = 0; },
+
+  beginShaftCapsuleFrame() { this.shaftCapsuleCount = 0; },
+
+  // Kadłub statku jako analityczna kapsuła (odcinek [x1,y1]-[x2,y2] + promień,
+  // współrzędne GRY, y w dół). Zgłaszane co klatkę z hexShips3D — selekcja
+  // największych kadłubów, budżet tnie render() wg jakości.
+  pushShaftCapsuleWorld(x1, y1, x2, y2, radius) {
+    const r = Number(radius) || 0;
+    if (!(r > 0) || !this.shaftCapsules) return false;
+    const i = this.shaftCapsuleCount | 0;
+    if (i >= SHAFT_CAPSULE_CAP) return false;
+    const base = i * 5;
+    this.shaftCapsules[base] = Number(x1) || 0;
+    this.shaftCapsules[base + 1] = -(Number(y1) || 0);
+    this.shaftCapsules[base + 2] = Number(x2) || 0;
+    this.shaftCapsules[base + 3] = -(Number(y2) || 0);
+    this.shaftCapsules[base + 4] = r;
+    this.shaftCapsuleCount = i + 1;
+    return true;
+  },
+
+  // Pierścień (ring city) jako analityczny okrąg-okluder. Rejestrowany po
+  // kluczu ringu (bez begin/reset — ring aktualizuje swój wpis co klatkę,
+  // a przy dispose go zdejmuje), więc cień działa też przy ukrytych
+  // wizualiach ringu (dystansowy gate).
+  setShaftRingOccluder(key, cx, cy, radius, reach) {
+    if (!key || !(Number(radius) > 0)) return;
+    let rec = this.shaftRings.get(key);
+    if (!rec) { rec = { x: 0, y: 0, r: 0, reach: 1 }; this.shaftRings.set(key, rec); }
+    rec.x = Number(cx) || 0;
+    rec.y = -(Number(cy) || 0);
+    rec.r = Number(radius) || 0;
+    rec.reach = Math.max(1, Number(reach) || 1);
+  },
+
+  removeShaftRingOccluder(key) { if (key) this.shaftRings.delete(key); },
 
   // Tarcza planety/księżyca (współrzędne GRY, y w dół) jako analityczny
   // okluder shaftów — zgłaszana co klatkę, także gdy ciało jest poza ekranem

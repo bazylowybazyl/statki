@@ -18,6 +18,8 @@ export const synthCityAssets = {
     loading: false
 };
 
+let synthCityFlightAssetsPromise = null;
+
 // --- Material cache for procedural textures ---
 const matCache = {};
 
@@ -188,12 +190,18 @@ export function loadSynthCityAssets() {
         // Ground/storefront textures from SynthCity.
         synthCityAssets.textures.ground = texLoader.load(basePath + 'textures/ground.jpg', t => {
             t.wrapS = t.wrapT = THREE.RepeatWrapping;
-            t.anisotropy = 8;
+            t.anisotropy = 16;
+            t.minFilter = THREE.LinearMipmapLinearFilter;
+            t.magFilter = THREE.LinearFilter;
+            t.generateMipmaps = true;
             t.colorSpace = THREE.SRGBColorSpace;
         });
         synthCityAssets.textures.ground_em = texLoader.load(basePath + 'textures/ground_em.jpg', t => {
             t.wrapS = t.wrapT = THREE.RepeatWrapping;
-            t.anisotropy = 8;
+            t.anisotropy = 16;
+            t.minFilter = THREE.LinearMipmapLinearFilter;
+            t.magFilter = THREE.LinearFilter;
+            t.generateMipmaps = true;
             t.colorSpace = THREE.SRGBColorSpace;
         });
         synthCityAssets.textures.storefronts = texLoader.load(basePath + 'textures/storefronts_01.jpg', t => {
@@ -303,6 +311,106 @@ export function loadSynthCityAssets() {
             () => console.warn('[RingCityAssets] Missing model: storefronts')
         );
     });
+}
+
+// The player spinner is intentionally lazy. Loading its high-resolution
+// textures with the city would add several megabytes to every Ring City visit,
+// including sessions which never enter the experimental flight mode.
+export function loadSynthCityFlightAssets() {
+    if (
+        synthCityAssets.models.spinner &&
+        synthCityAssets.models.spinner_windows &&
+        synthCityAssets.materials.spinner_interior &&
+        synthCityAssets.materials.spinner_exterior &&
+        synthCityAssets.materials.spinner_windows
+    ) {
+        return Promise.resolve(synthCityAssets);
+    }
+    if (synthCityFlightAssetsPromise) return synthCityFlightAssetsPromise;
+
+    const textureLoader = new THREE.TextureLoader();
+    const objLoader = new OBJLoader();
+    const spinnerModelUrl = new URL('../../assets/synthcity/models/spinner.obj', import.meta.url).href;
+    const spinnerWindowsUrl = new URL('../../assets/synthcity/models/spinner_windows.obj', import.meta.url).href;
+    const spinnerInteriorUrl = new URL('../../assets/synthcity/textures/0QuazDeckardCarLowpoly_interior_BaseColor.png', import.meta.url).href;
+    const spinnerInteriorEmissiveUrl = new URL('../../assets/synthcity/textures/0QuazDeckardCarLowpoly_interior_Emissive.png', import.meta.url).href;
+    const spinnerExteriorUrl = new URL('../../assets/synthcity/textures/0QuazDeckardCarLowpoly_car_BaseColor.png', import.meta.url).href;
+    const loadWithTimeout = (label, promise) => {
+        let timeoutId = null;
+        const timeout = new Promise((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error(`Timed out loading ${label}`)), 15000);
+        });
+        return Promise.race([promise, timeout]).then(value => {
+            clearTimeout(timeoutId);
+            return value;
+        }, error => {
+            clearTimeout(timeoutId);
+            throw error;
+        });
+    };
+    const loadTexture = async (url, colorSpace = false) => {
+        const texture = await textureLoader.loadAsync(url);
+        if (colorSpace) texture.colorSpace = THREE.SRGBColorSpace;
+        texture.anisotropy = 8;
+        return texture;
+    };
+
+    synthCityFlightAssetsPromise = Promise.all([
+        loadWithTimeout('spinner.obj', objLoader.loadAsync(spinnerModelUrl)),
+        loadWithTimeout('spinner_windows.obj', objLoader.loadAsync(spinnerWindowsUrl)),
+        loadWithTimeout('spinner interior', loadTexture(spinnerInteriorUrl, true)),
+        loadWithTimeout('spinner emissive', loadTexture(spinnerInteriorEmissiveUrl, true)),
+        loadWithTimeout('spinner exterior', loadTexture(spinnerExteriorUrl, true))
+    ]).then(([spinnerObj, windowsObj, interiorMap, interiorEmissive, exteriorMap]) => {
+        const spinnerGeometry = spinnerObj.children[0]?.geometry || null;
+        const windowsGeometry = windowsObj.children[0]?.geometry || null;
+        if (!spinnerGeometry || !windowsGeometry) {
+            throw new Error('SynthCity spinner geometry is incomplete');
+        }
+
+        spinnerGeometry.rotateY(-Math.PI / 2);
+        windowsGeometry.rotateY(-Math.PI / 2);
+        synthCityAssets.models.spinner = spinnerGeometry;
+        synthCityAssets.models.spinner_windows = windowsGeometry;
+        synthCityAssets.textures.spinner_interior = interiorMap;
+        synthCityAssets.textures.spinner_interior_em = interiorEmissive;
+        synthCityAssets.textures.spinner_exterior = exteriorMap;
+
+        synthCityAssets.materials.spinner_interior = new THREE.MeshStandardMaterial({
+            map: interiorMap,
+            emissive: 0x9cecff,
+            emissiveMap: interiorEmissive,
+            emissiveIntensity: 2.1,
+            roughness: 0.42,
+            metalness: 0.34
+        });
+        synthCityAssets.materials.spinner_exterior = new THREE.MeshStandardMaterial({
+            map: exteriorMap,
+            color: 0xffffff,
+            roughness: 0.28,
+            metalness: 0.68
+        });
+        synthCityAssets.materials.spinner_windows = new THREE.MeshPhysicalMaterial({
+            color: 0x83dfff,
+            emissive: 0x063d66,
+            emissiveIntensity: 1.5,
+            transparent: true,
+            opacity: 0.34,
+            roughness: 0.08,
+            metalness: 0.18,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        });
+        for (const key of ['spinner_interior', 'spinner_exterior', 'spinner_windows']) {
+            synthCityAssets.materials[key].userData.shared = true;
+        }
+        return synthCityAssets;
+    }).catch(error => {
+        synthCityFlightAssetsPromise = null;
+        throw error;
+    });
+
+    return synthCityFlightAssetsPromise;
 }
 
 // --- Geometry helpers ---

@@ -7,6 +7,7 @@
   <title>Super Capital: Battle for Solar System - Aero HUD</title>
   <link rel="stylesheet" href="assets/css/main.css">
   <link rel="stylesheet" href="assets/css/cockpit-ui-bridge.css">
+  <link rel="stylesheet" href="assets/css/ring-city-flight.css">
   <style>
     #perfPanel {
       position: fixed;
@@ -639,7 +640,7 @@
                 <button class="menu-chip" data-shaft-q="high">High</button>
               </div>
               <div style="margin-top:7px; font-size:10px; line-height:1.45; color:#6f8fb8;">
-                Cienie rzucane pod slonce przez planety, ksiezyce, ring i statki. High = dluzsze smugi + overscan poza ekran.
+                Cienie rzucane pod slonce przez planety, ksiezyce, ring, statki i asteroidy. High = najdluzsze smugi + wiecej statkow.
               </div>
             </div>
 
@@ -1653,6 +1654,13 @@
     } from "./src/game/fighterClouds.js";
     import { shouldZeroStabilizedAngularVelocity, updateHeadingStabilizer } from "./src/game/flight/stabilizer.js";
     import { DestructorSystem, initHexBody, isHexShips3DActive, getHexStructuralState, getHexArenaStats, disposeHexBody, DESTRUCTOR_CONFIG } from "./src/game/destructor.js";
+    import { TowConstraintSystem } from "./src/game/towSystem.js";
+    import {
+      buildMegafreighterTrainLayout,
+      stepMegafreighterTrainKinematics,
+      MEGAFREIGHTER_TRAIN_MODULES,
+      MEGAFREIGHTER_YAW_ASSIST
+    } from "./src/game/megafreighterTrain.js";
     import { PhysicsBridge } from "./src/physics/physicsBridge.js";
     import { updateShields3D } from "./src/3d/shield3D.js";
     // IMPORTUJEMY NOWY MODUL SUPERBRONI
@@ -1723,6 +1731,10 @@
       getWeaponTierForHull
     } from "./src/data/ships.js";
     import {
+      PLAYER_HULL_MARKET,
+      PLAYER_HULL_MARKET_ORDER
+    } from "./src/data/playerHullMarket.js";
+    import {
       getCallInHullFrame,
       getCallInSpawnPolicy,
       normalizeCallInSpawnMode
@@ -1739,6 +1751,7 @@
       computePlanetaryRingLayout,
       resolveRingPlanetWorldRadius
     } from "./src/3d/planetaryRing3D.js";
+    import { RingCityFlight } from "./src/3d/ringCityFlight.js";
     // Statki Terran (Wsparcie)
     import terranFrigateImg from "./src/assets/ships/terranfrigate.png";
     import terranDestroyerImg from "./src/assets/ships/terrandestroyer.png";
@@ -1766,6 +1779,17 @@
     window.DEFAULT_PLANET_SCALE ??= DEFAULT_PLANET_SCALE;
     window.TIME_SCALE ??= TIME_SCALE;
     window.WORLD ??= WORLD;
+    const TowSystem = new TowConstraintSystem({
+      iterations: 8,
+      onWake: (body) => {
+        if (body?.asteroidRef || Number.isFinite(Number(body?.worldX))) {
+          window.asteroidField?.wakeTowBody?.(body);
+        }
+      }
+    });
+    window.TowSystem = TowSystem;
+    window.attachTowRope = (bodyA, bodyB, options = {}) => TowSystem.attach(bodyA, bodyB, options);
+    window.detachTowRope = (handleOrId) => TowSystem.detach(handleOrId);
     const hud = new HUDSystem();
     hud.init();
     window.hudSystem = hud;
@@ -3254,7 +3278,7 @@
       ],
       independent: [
         { key: 'atlas', name: 'Atlas', role: 'Independent supercapital', count: 'x1', icon: 'supercapital', drag: true },
-        { key: 'megafreighter', name: 'Megafreighter', role: 'Utility dummy', count: 'x1', icon: 'supercapital', drag: true }
+        { key: 'megafreighter', name: 'Megafreighter', role: 'Freight train', count: 'x1', icon: 'supercapital', drag: true }
       ]
     });
 
@@ -7857,7 +7881,7 @@
       if (type === 'battleship') return npc?.isPirate ? 'pirate_battleship' : 'terran_battleship';
       if (type === 'destroyer') return npc?.isPirate ? 'pirate_destroyer' : 'terran_destroyer';
       if (type.includes('frigate')) return npc?.isPirate ? 'pirate_frigate' : 'terran_frigate';
-      if (type === 'megafreighter') return 'megafreighter';
+      if (type === 'megafreighter' || type.startsWith('megafreighter_')) return 'megafreighter';
       if (type === 'atlas') return 'atlas';
       if (type === 'supercapital') return 'terran_supercapital';
       if (type === 'carrier') return 'terran_carrier';
@@ -8820,6 +8844,10 @@
       };
     });
     window.stations = stations;
+    RingCityFlight.configure({
+      inputCanvas: canvas,
+      setUiVisible: visible => toggleGameUI(!!visible && !isMainMenuVisible())
+    });
     window.USE_STATION_3D = true;
     if (window.__setStation3DScale) {
       window.__lastStationScale = 1;
@@ -9590,8 +9618,230 @@
         };
     }
 
+    const _megafreighterTrainLayout = [];
+    // Wszystkie żywe składy (gracza i NPC) prowadzone sztywną kinematyką =o=.
+    const megafreighterTrains = [];
+
+    function updateMegafreighterTrains(dt) {
+      for (let i = megafreighterTrains.length - 1; i >= 0; i--) {
+        const train = megafreighterTrains[i];
+        const head = train?.head;
+        const headGone = !head || head.dead === true || head.removed === true
+          || (train.playerControlled && playerMegafreighterTrain !== train);
+        if (headGone) {
+          megafreighterTrains.splice(i, 1);
+          continue;
+        }
+        stepMegafreighterTrainKinematics(train.modules, dt);
+      }
+    }
+
+    function configureMegafreighterModule(entry, moduleDef, trainId, moduleIndex, pose, opts = {}) {
+      const npc = entry.entity;
+      npc.type = moduleDef.type;
+      npc.shipFrame = 'megafreighter';
+      npc.callInTemplateKey = 'megafreighter';
+      npc.hp = moduleDef.hull;
+      npc.maxHp = moduleDef.hull;
+      npc.mass = moduleDef.mass;
+      npc.rammingMass = moduleDef.mass;
+      npc.radius = moduleDef.radius;
+      npc.w = moduleDef.renderWidth;
+      npc.h = moduleDef.renderHeight;
+      npc.angle = pose.angle;
+      npc.desiredAngle = pose.angle;
+      npc.vx = Number(opts.velocity?.x) || 0;
+      npc.vy = Number(opts.velocity?.y) || 0;
+      npc.angVel = Number(opts.angularVelocity) || 0;
+      npc.ai = null;
+      npc.combatDisabled = true;
+      npc.staticDummy = true;
+      // Independent call-ins use the generic "dummy" mode, which normally
+      // marks them hostile. The freight train must remain commandable/towable.
+      if (!npc.isPirate) npc.friendly = true;
+      npc.towTrainId = trainId;
+      npc.towTrainRole = moduleDef.role;
+      npc.towTrainIndex = moduleIndex;
+      npc.towTrainChild = moduleIndex > 0;
+      if (moduleIndex > 0) {
+        npc.accel = 0;
+        npc.maxSpeed = 0;
+        npc.turn = 0;
+        npc.turnAccel = 0;
+        // Wagon nie ma własnego autopilota obrotu. Jego kąt i angVel wynikają
+        // wyłącznie z sił przekazywanych przez sztywny, przegubowy sprzęg.
+        npc.desiredAngle = Number.NaN;
+        npc.keepAngle = true;
+      }
+      npc.capitalProfile = {
+        ...(entry.template?.profile || {}),
+        spriteSrc: moduleDef.spriteSrc,
+        spriteEngineGlow: false,
+        engineOffsets: []
+      };
+      npc.capitalSprite = getCapitalShipSprite(moduleDef.spriteSrc);
+      npc.visual = npc.visual || {};
+      npc.visual.spriteScale = Number(npc.capitalProfile.spriteScale) || 1;
+      entry.displayName = moduleDef.displayName;
+      entry.roleText = moduleDef.role === 'front' ? 'Locomotive / tow controller' : 'Rigid cargo module';
+      entry.status.hull = moduleDef.hull;
+      entry.status.hullMax = moduleDef.hull;
+      return npc;
+    }
+
+    function spawnMegafreighterTrain(opts = {}) {
+      const mode = normalizeCallInSpawnMode(opts.mode ?? getSupportSpawnMode());
+      const origin = resolveCapitalSpawnPos(opts);
+      const heading = Number.isFinite(Number(opts.angle))
+        ? Number(opts.angle)
+        : Math.atan2(ship.pos.y - origin.y, ship.pos.x - origin.x);
+      const layout = buildMegafreighterTrainLayout(origin, heading, _megafreighterTrainLayout);
+      const trainId = opts.trainId || `megatrain_${Math.random().toString(36).slice(2, 9)}`;
+      const train = {
+        id: trainId,
+        head: null,
+        modules: [],
+        couplers: []
+      };
+
+      for (let i = 0; i < layout.length; i++) {
+        const pose = layout[i];
+        const entry = createCapitalShipEntry('megafreighter', {
+          pos: { x: pose.x, y: pose.y },
+          formationOffset: { x: 0, y: 0 },
+          anchor: (opts.anchor && !opts.anchor.dead) ? opts.anchor : ship,
+          mode,
+          displayName: pose.module.displayName
+        });
+        if (!entry) continue;
+        const npc = configureMegafreighterModule(entry, pose.module, trainId, i, pose, opts);
+        npc.towTrain = train;
+        train.modules.push(npc);
+
+        if (i === 0 && entry.spawnPolicy?.registerFleet) addFleetShip(entry);
+        else npcs.push(npc);
+      }
+
+      train.head = train.modules[0] || null;
+      if (!train.head) return null;
+      train.head.towLocomotive = true;
+      train.head.towTrainModules = train.modules;
+
+      // Wagony prowadzi sztywna kinematyka =o= (updateMegafreighterTrains),
+      // nie sprzęgi impulsowe TowSystem.
+      megafreighterTrains.push(train);
+
+      markFleetDirty();
+      window.lastMegafreighterTrain = train;
+      return train.head;
+    }
+
+    let playerMegafreighterTrain = null;
+
+    function removePlayerMegafreighterTrain(reason = 'player-hull-changed') {
+      const train = playerMegafreighterTrain;
+      if (!train) return;
+
+      const trainIndex = megafreighterTrains.indexOf(train);
+      if (trainIndex >= 0) megafreighterTrains.splice(trainIndex, 1);
+      for (const coupler of train.couplers) TowSystem.detach(coupler, reason);
+      for (let i = 1; i < train.modules.length; i++) {
+        const module = train.modules[i];
+        if (!module) continue;
+        TowSystem.detachBody(module, reason);
+        releaseNpcHexBody(module);
+        module.dead = true;
+        module.removed = true;
+        const npcIndex = npcs.indexOf(module);
+        if (npcIndex >= 0) npcs.splice(npcIndex, 1);
+      }
+
+      delete ship.towTrain;
+      delete ship.towTrainId;
+      delete ship.towTrainRole;
+      delete ship.towTrainIndex;
+      delete ship.towTrainModules;
+      delete ship.towLocomotive;
+      playerMegafreighterTrain = null;
+      window.playerMegafreighterTrain = null;
+      markFleetDirty();
+    }
+
+    function spawnPlayerMegafreighterTrain() {
+      removePlayerMegafreighterTrain('player-train-respawn');
+      const layout = buildMegafreighterTrainLayout(ship.pos, ship.angle, _megafreighterTrainLayout);
+      const trainId = `player_megatrain_${Math.random().toString(36).slice(2, 9)}`;
+      const train = {
+        id: trainId,
+        head: ship,
+        playerControlled: true,
+        modules: [ship],
+        couplers: []
+      };
+
+      ship.towTrain = train;
+      ship.towTrainId = trainId;
+      ship.towTrainRole = 'front';
+      ship.towTrainIndex = 0;
+      ship.towLocomotive = true;
+
+      for (let i = 1; i < layout.length; i++) {
+        const pose = layout[i];
+        const entry = createCapitalShipEntry('megafreighter', {
+          pos: { x: pose.x, y: pose.y },
+          formationOffset: { x: 0, y: 0 },
+          anchor: ship,
+          mode: 'dummy',
+          displayName: pose.module.displayName
+        });
+        if (!entry) continue;
+        const module = configureMegafreighterModule(entry, pose.module, trainId, i, pose, {
+          velocity: ship.vel,
+          angularVelocity: ship.angVel
+        });
+        module.friendly = true;
+        module.isPirate = false;
+        module.mission = true;
+        module.towTrain = train;
+        module.playerTrainModule = true;
+        npcs.push(module);
+        train.modules.push(module);
+      }
+
+      ship.towTrainModules = train.modules;
+      // Wagony prowadzi sztywna kinematyka =o= (updateMegafreighterTrains),
+      // nie sprzęgi impulsowe TowSystem.
+      megafreighterTrains.push(train);
+
+      playerMegafreighterTrain = train;
+      window.playerMegafreighterTrain = train;
+      markFleetDirty();
+      return train;
+    }
+
+    function syncPlayerMegafreighterTrain(hullId = null) {
+      const isMegafreighter = String(hullId || ship?.activeHullId || '').toLowerCase() === 'megafreighter';
+      if (!isMegafreighter) {
+        removePlayerMegafreighterTrain();
+        return null;
+      }
+      if (!gameStarted) return null;
+
+      const current = playerMegafreighterTrain;
+      const isCurrentValid = current
+        && current.head === ship
+        && current.modules.length === MEGAFREIGHTER_TRAIN_MODULES.length
+        && current.modules.slice(1).every(module => module && !module.dead && npcs.includes(module));
+      return isCurrentValid ? current : spawnPlayerMegafreighterTrain();
+    }
+
+    window.syncPlayerMegafreighterTrain = syncPlayerMegafreighterTrain;
+
     function spawnCapitalCallIn(templateKey, opts = {}) {
       const mode = normalizeCallInSpawnMode(opts.mode ?? getSupportSpawnMode());
+      if (templateKey === 'megafreighter' && opts.singleModule !== true) {
+        return spawnMegafreighterTrain({ ...opts, mode });
+      }
       if (templateKey === 'carrier' && mode === 'friendly') {
         const existing = getFriendlyCarrierEntity();
         if (existing) return existing;
@@ -9637,6 +9887,7 @@
 
     window.spawnSupportShip = spawnSupportShip;
     window.spawnCallInShip = spawnCallInShip;
+    window.spawnMegafreighterTrain = spawnMegafreighterTrain;
     window.spawnFriendlyCarrier = spawnFriendlyCarrier;
     window.spawnFriendlySupercapital = spawnFriendlySupercapital;
 
@@ -10909,7 +11160,29 @@
     }
     window.aiPickTarget = aiPickTarget;
 
+    function applyRingFlightDevSpawn() {
+      const params = new URLSearchParams(location.search);
+      const targetKey = String(params.get('ringFlightTest') || '').toLowerCase();
+      if (!params.has('dev') || !['earth', 'mars'].includes(targetKey)) return;
+      const ring = getPlanetaryRing(targetKey);
+      const planet = planets.find(p => String(p?.id || p?.name || '').toLowerCase() === targetKey);
+      if (!ring?.layout || !planet) return;
+      const radius = ring.layout.outerRadius + 1200;
+      ship.pos.x = planet.x + radius;
+      ship.pos.y = planet.y;
+      ship.vel.x = 0;
+      ship.vel.y = 0;
+      ship.angle = Math.PI;
+      camera.x = ship.pos.x;
+      camera.y = ship.pos.y;
+      camera.targetX = ship.pos.x;
+      camera.targetY = ship.pos.y;
+      overlayView.center.x = ship.pos.x;
+      overlayView.center.y = ship.pos.y;
+    }
+
     function initNPCs() {
+      TowSystem.clear('world-reset');
       npcs = [];
       window.npcs = npcs;
       SQUADS.length = 0; // Reset eskadr
@@ -10918,6 +11191,7 @@
     window.addEventListener('DOMContentLoaded', () => {
       const planetInitResult = initPlanets3D(planets, SUN);
       initPlanetaryRings3D(planets);
+      applyRingFlightDevSpawn();
       const sceneFromInit = asThreeScene(planetInitResult);
       if (sceneFromInit) {
         planetScene3D = sceneFromInit;
@@ -12098,20 +12372,28 @@
     };
 
     function createPlayerHullCatalog() {
+      const marketCost = (id) => Math.max(0, Number(PLAYER_HULL_MARKET[id]?.cost) || 0);
       const atlas = CAPITAL_SHIP_TEMPLATES_DATA?.supercapital || {};
       const frigate = SUPPORT_SHIP_TEMPLATES_DATA?.frigate_pd || {};
       const destroyer = SUPPORT_SHIP_TEMPLATES_DATA?.destroyer || {};
       const battleship = SUPPORT_SHIP_TEMPLATES_DATA?.battleship || {};
+      const carrier = CAPITAL_SHIP_TEMPLATES_DATA?.carrier || {};
+      const supercapital = CAPITAL_SHIP_TEMPLATES_DATA?.supercapital || {};
+      const megafreighter = CAPITAL_SHIP_TEMPLATES_DATA?.megafreighter || {};
       const atlasSize = getHullRenderSize('atlas');
+      const corvusSize = getHullRenderSize('corvus');
       const frigateSize = getHullRenderSize('terran_frigate');
       const destroyerSize = getHullRenderSize('terran_destroyer');
       const battleshipSize = getHullRenderSize('terran_battleship');
+      const carrierSize = getHullRenderSize('terran_carrier');
+      const supercapitalSize = getHullRenderSize('terran_supercapital');
+      const megafreighterSize = getHullRenderSize('megafreighter');
       return {
         atlas: {
           id: 'atlas',
           name: 'Atlas',
           role: 'Independent supercapital',
-          cost: 0,
+          cost: marketCost('atlas'),
           shipFrame: 'atlas',
           spriteSrc: "assets/capital_ship_rect_v1.png",
           size: { w: atlasSize.w, h: atlasSize.h },
@@ -12133,7 +12415,7 @@
           id: 'frigate',
           name: 'Custos',
           role: 'Terra Nova frigate',
-          cost: 4200,
+          cost: marketCost('frigate'),
           shipFrame: 'terran_frigate',
           spriteSrc: terranFrigateImg,
           size: { w: frigateSize.w, h: frigateSize.h },
@@ -12159,11 +12441,63 @@
             boostMult: 2.5
           }
         },
+        corvus: {
+          id: 'corvus',
+          name: 'Corvus',
+          role: 'Independent missile frigate',
+          cost: marketCost('corvus'),
+          shipFrame: 'corvus',
+          spriteSrc: terranFrigateImg,
+          size: { w: corvusSize.w, h: corvusSize.h },
+          spriteScale: 1.0,
+          cargoCap: 24,
+          hullMax: 3000,
+          shield: { max: 1600, regenRate: 145, regenDelay: 3.0 },
+          mass: 12000,
+          rammingMass: 1600,
+          radius: corvusSize.radius,
+          sensors: SHIPS.corvus?.sensors ? { ...SHIPS.corvus.sensors } : undefined,
+          physics: {
+            speed: 650,
+            reverseMult: 0.64,
+            turnAccel: 14.5,
+            maxTurnSpeed: 2.9,
+            linearFriction: 0.997,
+            angularFriction: 0.88,
+            boostMult: 2.35
+          }
+        },
+        pirate_frigate: {
+          id: 'pirate_frigate',
+          name: 'Marauder',
+          role: 'Captured pirate frigate',
+          cost: marketCost('pirate_frigate'),
+          shipFrame: 'pirate_frigate',
+          spriteSrc: pirateFrigateImg,
+          size: { w: frigateSize.w, h: frigateSize.h },
+          spriteScale: 1.0,
+          cargoCap: 12,
+          hullMax: 2600,
+          shield: { max: 700, regenRate: 95, regenDelay: 3.4 },
+          mass: 9500,
+          rammingMass: 1200,
+          radius: frigateSize.radius,
+          sensors: SHIPS.pirate_frigate?.sensors ? { ...SHIPS.pirate_frigate.sensors } : undefined,
+          physics: {
+            speed: 760,
+            reverseMult: 0.72,
+            turnAccel: 17.0,
+            maxTurnSpeed: 3.35,
+            linearFriction: 0.9968,
+            angularFriction: 0.865,
+            boostMult: 2.65
+          }
+        },
         destroyer: {
           id: 'destroyer',
           name: 'Hasta',
           role: 'Terra Nova destroyer',
-          cost: 7600,
+          cost: marketCost('destroyer'),
           shipFrame: 'terran_destroyer',
           spriteSrc: terranDestroyerImg,
           size: { w: destroyerSize.w, h: destroyerSize.h },
@@ -12189,11 +12523,37 @@
             boostMult: 2.2
           }
         },
+        pirate_destroyer: {
+          id: 'pirate_destroyer',
+          name: 'Reaver',
+          role: 'Captured pirate destroyer',
+          cost: marketCost('pirate_destroyer'),
+          shipFrame: 'pirate_destroyer',
+          spriteSrc: pirateDestroyerImg,
+          size: { w: destroyerSize.w, h: destroyerSize.h },
+          spriteScale: 1.0,
+          cargoCap: 22,
+          hullMax: 6500,
+          shield: { max: 1600, regenRate: 150, regenDelay: 4.0 },
+          mass: 23000,
+          rammingMass: 4600,
+          radius: destroyerSize.radius,
+          sensors: SHIPS.pirate_destroyer?.sensors ? { ...SHIPS.pirate_destroyer.sensors } : undefined,
+          physics: {
+            speed: 570,
+            reverseMult: 0.62,
+            turnAccel: 11.3,
+            maxTurnSpeed: 2.5,
+            linearFriction: 0.9971,
+            angularFriction: 0.885,
+            boostMult: 2.3
+          }
+        },
         battleship: {
           id: 'battleship',
           name: 'Bellator',
           role: 'Terra Nova battleship',
-          cost: 12400,
+          cost: marketCost('battleship'),
           shipFrame: 'terran_battleship',
           spriteSrc: terranBattleshipImg,
           size: { w: battleshipSize.w, h: battleshipSize.h },
@@ -12218,16 +12578,132 @@
             angularFriction: 0.92,
             boostMult: 1.85
           }
+        },
+        pirate_battleship: {
+          id: 'pirate_battleship',
+          name: 'Iron Skull',
+          role: 'Captured pirate battleship',
+          cost: marketCost('pirate_battleship'),
+          shipFrame: 'pirate_battleship',
+          spriteSrc: pirateBattleshipImg,
+          size: { w: battleshipSize.w, h: battleshipSize.h },
+          spriteScale: 1.0,
+          cargoCap: 32,
+          hullMax: 15000,
+          shield: { max: 5200, regenRate: 230, regenDelay: 4.8 },
+          mass: 48000,
+          rammingMass: 7600,
+          radius: battleshipSize.radius,
+          sensors: SHIPS.pirate_battleship?.sensors ? { ...SHIPS.pirate_battleship.sensors } : undefined,
+          physics: {
+            speed: 375,
+            reverseMult: 0.56,
+            turnAccel: 7.4,
+            maxTurnSpeed: 1.72,
+            linearFriction: 0.9967,
+            angularFriction: 0.915,
+            boostMult: 1.95
+          }
+        },
+        carrier: {
+          id: 'carrier',
+          name: 'Citadella',
+          role: 'Terra Nova fleet carrier',
+          cost: marketCost('carrier'),
+          shipFrame: 'terran_carrier',
+          spriteSrc: terranCarrierImg,
+          size: { w: carrierSize.w, h: carrierSize.h },
+          spriteScale: 1.0,
+          cargoCap: 80,
+          hullMax: Math.max(42000, Number(carrier?.hull) || 42000),
+          shield: {
+            max: Math.max(28000, Number(carrier?.shield) || 28000),
+            regenRate: Math.max(260, Number(carrier?.shieldRegen) || 260),
+            regenDelay: Math.max(6, Number(carrier?.shieldDelay) || 6)
+          },
+          mass: Math.max(100000, Number(carrier?.mass) || 100000),
+          rammingMass: Math.max(15000, Number(carrier?.rammingMass) || 15000),
+          radius: carrierSize.radius,
+          sensors: carrier?.sensors ? { ...carrier.sensors } : undefined,
+          physics: {
+            speed: 270,
+            reverseMult: 0.46,
+            turnAccel: 4.4,
+            maxTurnSpeed: 1.05,
+            linearFriction: 0.9972,
+            angularFriction: 0.94,
+            boostMult: 1.6
+          }
+        },
+        supercapital: {
+          id: 'supercapital',
+          name: 'Colossus',
+          role: 'Terra Nova supercapital',
+          cost: marketCost('supercapital'),
+          shipFrame: 'terran_supercapital',
+          spriteSrc: terranSupercapitalImg,
+          size: { w: supercapitalSize.w, h: supercapitalSize.h },
+          spriteScale: 1.0,
+          cargoCap: 120,
+          hullMax: Math.max(85000, Number(supercapital?.hull) || 85000),
+          shield: {
+            max: Math.max(52000, Number(supercapital?.shield) || 52000),
+            regenRate: Math.max(400, Number(supercapital?.shieldRegen) || 400),
+            regenDelay: Math.max(8, Number(supercapital?.shieldDelay) || 8)
+          },
+          mass: Math.max(200000, Number(supercapital?.mass) || 200000),
+          rammingMass: Math.max(800000, Number(supercapital?.rammingMass) || 800000),
+          radius: supercapitalSize.radius,
+          sensors: supercapital?.sensors ? { ...supercapital.sensors } : undefined,
+          physics: {
+            speed: 205,
+            reverseMult: 0.42,
+            turnAccel: 3.0,
+            maxTurnSpeed: 0.72,
+            linearFriction: 0.9976,
+            angularFriction: 0.952,
+            boostMult: 1.45
+          }
+        },
+        megafreighter: {
+          id: 'megafreighter',
+          name: 'Megafreighter',
+          role: 'Three-section rigid freight train',
+          cost: marketCost('megafreighter'),
+          shipFrame: 'megafreighter',
+          spriteSrc: MEGAFREIGHTER_TRAIN_MODULES[0]?.spriteSrc || megafreighter?.profile?.spriteSrc,
+          size: { w: megafreighterSize.w, h: megafreighterSize.h },
+          spriteScale: 1.0,
+          cargoCap: 600,
+          hullMax: Math.max(160000, Number(megafreighter?.hull) || 160000),
+          shield: { max: 0, regenRate: 0, regenDelay: 1 },
+          mass: Math.max(900000, Number(megafreighter?.mass) || 900000),
+          rammingMass: Math.max(900000, Number(megafreighter?.rammingMass) || 900000),
+          radius: megafreighterSize.radius,
+          sensors: megafreighter?.sensors ? { ...megafreighter.sensors } : undefined,
+          physics: {
+            speed: 230,
+            reverseMult: 0.36,
+            turnAccel: 3.2,
+            maxTurnSpeed: 0.65,
+            linearFriction: 0.998,
+            angularFriction: 0.97,
+            boostMult: 1.25
+          }
         }
       };
     }
 
     const PLAYER_HULL_CATALOG = createPlayerHullCatalog();
-    const PLAYER_HULL_ORDER = ['atlas', 'frigate', 'destroyer', 'battleship'];
+    const PLAYER_HULL_ORDER = [...PLAYER_HULL_MARKET_ORDER];
     const HANGAR_UI_STATE = {
       marketExpanded: new Set(),
       ownedExpanded: new Set()
     };
+
+    function formatHangarCredits(value) {
+      return Math.max(0, Math.round(Number(value) || 0)).toLocaleString('pl-PL');
+    }
 
     function normalizePlayerHullId(hullId) {
       const key = String(hullId || '').toLowerCase();
@@ -12784,7 +13260,7 @@
         meta.className = 'weapon-row-meta hangar-hull-meta';
 
         if (isOwned) meta.textContent = isActive ? 'ACTIVE' : 'OWNED';
-        else meta.textContent = `${Math.round(def.cost || 0)} CR`;
+        else meta.textContent = `${formatHangarCredits(def.cost)} CR`;
 
         const exp = document.createElement('span');
         exp.className = 'hangar-hull-expand';
@@ -15461,7 +15937,8 @@
       if (!additive) Selection.units.clear();
       for (const unit of units || []) {
         if (!unit || unit.dead) continue;
-        Selection.units.add(unit);
+        const selected = unit.towTrain?.head && !unit.towTrain.head.dead ? unit.towTrain.head : unit;
+        Selection.units.add(selected);
       }
     }
 
@@ -16966,7 +17443,8 @@
     }
 
     function handleSingleSelectionClick(worldPoint, additive = false) {
-      const picked = pickSelectableAllyAtWorld(worldPoint);
+      const hit = pickSelectableAllyAtWorld(worldPoint);
+      const picked = hit?.towTrain?.head && !hit.towTrain.head.dead ? hit.towTrain.head : hit;
       if (!additive) Selection.units.clear();
       if (picked) {
         if (additive && Selection.units.has(picked)) Selection.units.delete(picked);
@@ -21063,7 +21541,12 @@
           ship.vel.y *= _drag;
         }
 
-        let angularAcc = (thrusterForces.localTorque / inertiaSafe) * driveState.turnAccelerationScale;
+        const trainYawAssist = playerMegafreighterTrain?.head === ship
+          ? MEGAFREIGHTER_YAW_ASSIST
+          : 1;
+        let angularAcc = (thrusterForces.localTorque / inertiaSafe)
+          * driveState.turnAccelerationScale
+          * trainYawAssist;
         ship.angVel += angularAcc * dt;
 
         const damperState = ship.__damperState || (ship.__damperState = { power: 0 });
@@ -21340,6 +21823,13 @@
       window.__aiNpcFriendlyBrainMs = 0;
       npcStep(dt, aiDbgEnabled ? AILiveDebug : null);
       const npcStepMs = performance.now() - tNpcStep0;
+      // Ograniczenia holownicze rozwiązujemy po integracji wszystkich ruchomych
+      // ciał, ale przed pociskami i destruktorem. Dzięki temu kontakt i damage
+      // widzą już końcowe pozycje wagonów z bieżącego substepu.
+      TowSystem.update(dt);
+      // Sztywna kinematyka =o= składów megafreightera — po ruchu głowy
+      // (statek gracza zintegrowany wyżej, NPC w npcStep), przed destruktorem.
+      updateMegafreighterTrains(dt);
       const aiNpcMeasuredMs = (window.__aiGridMs || 0) + (window.__aiNpcEnemyBrainMs || 0) + (window.__aiNpcFriendlyBrainMs || 0)
         + (window.__aiSepMs || 0) + (window.__aiWeaponScanMs || 0) + (window.__aiTargetPickMs || 0);
       PerfHUD.addTiming('aiNpcStepTime', npcStepMs);
@@ -21587,6 +22077,21 @@
       const frameStartMs = performance.now();
       const frame = Math.min(0.033, (now - lastTime) / 1000);
       lastTime = now;
+      if (RingCityFlight.isActive()) {
+        // Eksperymentalny lot po mieście ma własny stan i kamerę. Zatrzymujemy
+        // źródło prawdy 2D bez zmiany PAUSED, żeby powrót od razu wznowił grę.
+        acc = 0;
+        vfxTime += frame;
+        renderFrameId++;
+        window.__frameId = renderFrameId;
+        RingCityFlight.update(frame);
+        render(0, frame);
+        const frameEndMs = performance.now();
+        PerfHUD.recordFrameTime(frameEndMs - frameStartMs);
+        PerfHUD.flush(frameEndMs);
+        requestAnimationFrame(loop);
+        return;
+      }
       applyGamepad();
       if (PAUSED) {
         saveState();
@@ -21734,6 +22239,63 @@
       };
     }
     window.worldToScreen = worldToScreen;
+
+    function drawTowRopes(ctx, cam) {
+      if (TowSystem.size === 0) return;
+      const zoom = Math.max(0.0001, Number(cam?.zoom) || 1);
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.005);
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      TowSystem.forEach((rope) => {
+        const a = worldToScreen(rope.worldAx, rope.worldAy, cam);
+        const b = worldToScreen(rope.worldBx, rope.worldBy, cam);
+        const tensionRatio = Number.isFinite(rope.breakForce) && rope.breakForce > 0
+          ? clamp(rope.lastTension / rope.breakForce, 0, 1)
+          : 0;
+        const outerWidth = clamp(7 * Math.sqrt(zoom), 2.4, 10);
+
+        ctx.globalAlpha = 0.92;
+        ctx.strokeStyle = tensionRatio > 0.72 ? '#8b2f25' : '#17242b';
+        ctx.lineWidth = outerWidth;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+
+        ctx.globalAlpha = 0.86;
+        ctx.strokeStyle = tensionRatio > 0.72
+          ? `rgba(255, ${Math.round(105 + pulse * 65)}, 72, 0.95)`
+          : 'rgba(133, 196, 211, 0.9)';
+        ctx.lineWidth = Math.max(1, outerWidth * 0.32);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const distance = Math.hypot(dx, dy);
+        if (distance > 10) {
+          const invDistance = 1 / distance;
+          const nx = dx * invDistance;
+          const ny = dy * invDistance;
+          const px = -ny;
+          const py = nx;
+          const markerHalf = Math.min(5, distance * 0.08);
+          const mx = (a.x + b.x) * 0.5;
+          const my = (a.y + b.y) * 0.5;
+          ctx.globalAlpha = 0.72 + pulse * 0.2;
+          ctx.strokeStyle = '#e2fbff';
+          ctx.lineWidth = Math.max(1, outerWidth * 0.22);
+          ctx.beginPath();
+          ctx.moveTo(mx - nx * markerHalf + px * 2, my - ny * markerHalf + py * 2);
+          ctx.lineTo(mx + nx * markerHalf - px * 2, my + ny * markerHalf - py * 2);
+          ctx.stroke();
+        }
+      });
+      ctx.restore();
+    }
 
     function stationPortWorld(st, idx) {
       const off = st.ports[idx % st.ports.length];
@@ -21991,6 +22553,31 @@
       //  cheats (np. nielimitowany warp)
       if (window.ApplyCheats) ApplyCheats();
 
+      if (RingCityFlight.isActive()) {
+        const flightCamera = RingCityFlight.getCamera();
+        if (window.updatePlanets3D) window.updatePlanets3D(frameDt, flightCamera);
+        updatePlanetaryRings3D(frameDt, planets, flightCamera);
+        // updatePlanetaryRings3D ustawia transform rodzica ringu; dopiero po
+        // nim przeliczamy pozycję bolidu i kamery na bieżący world-space.
+        RingCityFlight.updateWorld(0);
+        if (window.updateStations3D) window.updateStations3D(stations);
+        if (window.updateWorld3D) window.updateWorld3D(frameDt, vfxTime);
+
+        const flightEntities = [];
+        if (ship && !ship.dead) flightEntities.push(ship);
+        if (window.updateHexShips3D) {
+          window.updateHexShips3D(
+            flightCamera,
+            flightEntities,
+            RingCityFlight.getCullInfo(W, H)
+          );
+        }
+        if (window.updateShields3D) window.updateShields3D(frameDt, flightEntities, window.__interpShipPose);
+        if (window.drawHexShips3D) window.drawHexShips3D(ctx, W, H);
+        PerfHUD.addTiming('render3dDrawTime', performance.now() - tRenderProfileSection);
+        return;
+      }
+
       // Interpolacja stanu
       const interpPos = {
         x: prevState.pos.x + (ship.pos.x - prevState.pos.x) * alpha,
@@ -22208,6 +22795,7 @@
       tRender3dSub = performance.now();
       if (renderDbgEnabled) tRenderSection = tRender3dSub;
       updatePlanetaryRings3D(frameDt, planets, camNoShake);
+      RingCityFlight.updateIdle(frameDt);
       const render3dRingsMs = performance.now() - tRender3dSub;
       PerfHUD.addTiming('render3dRingsUpdateTime', render3dRingsMs);
       if (renderDbgEnabled) RenderLiveDebug.record('updatePlanetaryRings3D', render3dRingsMs);
@@ -22435,6 +23023,7 @@
 
         CanvasVFX.drawShockwaves(ctx, cam);
         drawFlyingHexDebris(ctx, cam);
+        drawTowRopes(ctx, cam);
 
         if (!window.USE_STATION_3D) {
           for (const st of stations) {
@@ -24347,6 +24936,23 @@
           makeSide(w * 0.24, -h * 0.36),
           makeSide(w * 0.24, h * 0.36)
         ];
+      } else if (id === 'megafreighter') {
+        // The old Atlas fallback kept the maneuvering jets near the centre of
+        // this 2.7k-unit hull, giving them almost no useful lever arm. Place
+        // the locomotive's jets at its physical corners so it can turn the
+        // complete articulated train through the hard couplers.
+        mainThrusters = [
+          makeMain(aftX, -h * 0.32),
+          makeMain(aftX, -h * 0.1),
+          makeMain(aftX, h * 0.1),
+          makeMain(aftX, h * 0.32)
+        ];
+        sideThrusters = [
+          makeSide(-w * 0.4, -h * 0.48),
+          makeSide(-w * 0.4, h * 0.48),
+          makeSide(w * 0.4, -h * 0.42),
+          makeSide(w * 0.4, h * 0.42)
+        ];
       } else {
         applyPlayerEditorEngineLayoutFromStorage(id);
         return;
@@ -24514,6 +25120,7 @@
       }
 
       syncPlayerHullSnapshot();
+      syncPlayerMegafreighterTrain(activeHullId);
       if (typeof renderMechanic === 'function') renderMechanic();
       if (opts.persist !== false && typeof saveLoadout === 'function') saveLoadout();
       return true;
@@ -24620,6 +25227,7 @@
       await nextFrame();
 
       initFleet();
+      syncPlayerMegafreighterTrain(PLAYER.activeHullId);
       setLoadingProgress(60, 'Kalibracja floty');
       await nextFrame();
       setLoadingProgress(70, 'Kompilacja shaderów broni');

@@ -5,7 +5,29 @@ import {
 
 export const MAX_SHADER_SHIP_LIGHTS = 32;
 export const MAX_EXTERNAL_ROAD_SHADER_LIGHTS = 8;
+export const MAX_NAV_LIGHT_SPRITES = 512;
 const EPSILON = 1e-6;
+
+// Wspólne parametry sekwencji świateł pozycyjnych ("pas startowy").
+// Z tych wartości korzystają DWA shadery: pętla lamp w kadłubie (hexShips3D)
+// i billboardy blasku (shipLights3D) — muszą pulsować w idealnej synchronizacji,
+// więc stałe wolno zmieniać wyłącznie tutaj. Faza świateł rośnie w stronę
+// dziobu (+X sprite'a), a chase = fract(t*speed + phase*gain) przesuwa aktywny
+// błysk od dziobu ku rufie (dziób w prawo => "od prawej do lewej").
+export const NAV_LIGHT_CHASE = Object.freeze({
+  speed: 0.42,      // pełne przebiegi sekwencji na sekundę
+  phaseGain: 0.95,  // jaka część cyklu rozciąga się wzdłuż kadłuba
+  attack: 0.10,     // narastanie błysku (fraction cyklu)
+  hold: 0.18,       // początek wygaszania
+  release: 0.42,    // koniec wygaszania
+  rest: 0.25        // poświata lampy pomiędzy błyskami (mnożnik)
+});
+
+// Literał GLSL z gwarantowaną kropką dziesiętną (1 -> "1.0000").
+export function glslFloat(value, fallback = 0) {
+  const num = Number(value);
+  return (Number.isFinite(num) ? num : fallback).toFixed(4);
+}
 
 function round2(value) {
   const num = Number(value) || 0;
@@ -328,6 +350,80 @@ export function buildRoadLightWorldEmitters(entities, options = {}) {
         power: round2(clamp(marker?.power, 0.05, 20, 3)),
         rangeWorld: round2(rangePx * spriteDirectionalScale),
         coneDeg: round2(clamp(marker?.coneDeg, 8, 160, 40))
+      });
+    }
+  }
+
+  return out;
+}
+
+function smoothstep01(edge0, edge1, value) {
+  const span = edge1 - edge0;
+  if (!(span > 0)) return value >= edge1 ? 1 : 0;
+  const t = Math.max(0, Math.min(1, (value - edge0) / span));
+  return t * t * (3 - 2 * t);
+}
+
+// Światła pozycyjne jako sprite'y w koordach świata — źródło danych dla
+// addytywnych billboardów blasku (shipLights3D, warstwa FG po shadow-passie).
+// phase liczymy IDENTYCZNIE jak pętla lamp w shaderze kadłuba
+// (sprite-px X / szerokość sprite'a), żeby błysk billboardu i rozświetlenie
+// kadłuba były tym samym momentem sekwencji.
+export function buildPositionLightWorldSprites(entities, options = {}) {
+  const out = Array.isArray(options.out) ? options.out : [];
+  if (options.clear !== false) out.length = 0;
+  const list = Array.isArray(entities) ? entities : [];
+  const maxSprites = Math.max(0, Math.min(MAX_NAV_LIGHT_SPRITES, Math.floor(Number(options.maxSprites) || MAX_NAV_LIGHT_SPRITES)));
+  const haloScale = Number(options.haloScale) > 0 ? Number(options.haloScale) : 16;
+  const minHaloWorld = Math.max(0, Number(options.minHaloWorld) || 0);
+  const zoom = Number(options.zoom);
+  const hasZoom = Number.isFinite(zoom) && zoom > 0;
+
+  for (let entityIndex = 0; entityIndex < list.length && out.length < maxSprites; entityIndex++) {
+    const entity = list[entityIndex];
+    if (!entity || entity.dead) continue;
+    const lights = getEntityLights(entity);
+    const markers = Array.isArray(lights?.position) ? lights.position : [];
+    if (!markers.length) continue;
+
+    const grid = typeof options.getGrid === 'function' ? options.getGrid(entity) : entity?.hexGrid;
+    const hardpointScale = getEntityLightScale(entity);
+    const spriteScale = getEntitySpriteScale(entity, options);
+    const pos = getEntityPosition(entity, options);
+    const angle = getEntityAngle(entity, options);
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const width = Math.max(1, Number(grid?.srcWidth) || 1);
+    const pivotX = Number(grid?.pivot?.x) || 0;
+
+    // Daleki zoom: statek ma pojedyncze piksele — wygaszamy lampy zamiast
+    // malować czerwoną plamę większą od kadłuba.
+    let fade = 1;
+    if (hasZoom) {
+      const radiusWorld = getEntityRadiusWorld(entity, grid, spriteScale, options);
+      const screenRadiusPx = radiusWorld * zoom;
+      if (screenRadiusPx < 2.5) continue;
+      fade = smoothstep01(2.5, 9, screenRadiusPx);
+    }
+
+    for (let i = 0; i < markers.length && out.length < maxSprites; i++) {
+      const marker = markers[i];
+      const local = getScaledLightLocal(marker, hardpointScale);
+      const phase = Math.max(0, Math.min(1, (local.x + width * 0.5 + pivotX) / width));
+      const scaledLocalX = local.x * spriteScale.x;
+      const scaledLocalY = local.y * spriteScale.y;
+      const radiusPx = clamp(marker?.radius, 1, 48, 4) * (Number(hardpointScale?.uniform) || 1);
+      const coreWorld = Math.max(0.25, radiusPx * (Number(spriteScale?.uniform) || 1));
+      const haloWorld = Math.max(coreWorld * haloScale, minHaloWorld);
+
+      out.push({
+        x: round2(pos.x + scaledLocalX * c - scaledLocalY * s),
+        y: round2(pos.y + scaledLocalX * s + scaledLocalY * c),
+        phase: round2(phase),
+        color: hexToRgb01(marker?.color, '#ff2b2b'),
+        coreWorld: round2(coreWorld),
+        haloWorld: round2(haloWorld),
+        intensity: round2(clamp(marker?.power, 0.05, 20, 0.8) * fade)
       });
     }
   }

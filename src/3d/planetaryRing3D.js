@@ -1287,29 +1287,8 @@ class PlanetaryRing {
     this.buildVisualFloor();
     this.buildBakedCitySurface();
     this.buildMegastructureVisuals();
-    this.enableRingShaftOccluders();
     this.buildCityTraffic();
     this.buildCityMood();
-  }
-
-  // ── Shadow shafts: pasmo ringu jako okluder ──────────────────────────
-  // Po zbudowaniu całej podłogi (bandy, baked surface, megastruktura)
-  // dopisz meshom warstwę okluzji dobraną do kamery, którą się renderują:
-  // layer 2 (FG, persp) → okluzja persp (4); reszta (ortho, layer 0) →
-  // okluzja ortho (7). Traffic/mood celowo poza tym — świecidełka nie
-  // powinny rzucać cienia.
-  enableRingShaftOccluders() {
-    if (!this.ringFloor || !Core3D) return;
-    const fgLayers = new THREE.Layers();
-    fgLayers.set(2);
-    this.ringFloor.traverse((child) => {
-      if (!child.isMesh && !child.isInstancedMesh) return;
-      if (child.layers.test(fgLayers)) {
-        if (typeof Core3D.enablePlanetOccluder3D === 'function') Core3D.enablePlanetOccluder3D(child);
-      } else if (typeof Core3D.enableOrthoOccluder3D === 'function') {
-        Core3D.enableOrthoOccluder3D(child);
-      }
-    });
   }
 
   createSegmentBandTextures(textures) {
@@ -1864,6 +1843,13 @@ class PlanetaryRing {
     this.lastPlanetX = Number(planet.x) || 0;
     this.lastPlanetY = Number(planet.y) || 0;
     this.updateTick++;
+    // Analityczny okluder shadow shafts: pasmo ringu jako okrąg w shaderze
+    // passa. Rejestrowane PRZED dystansowym gate'em — cień pierścienia
+    // istnieje także, gdy jego wizualia są schowane przy dalekim zoomie.
+    if (typeof Core3D.setShaftRingOccluder === 'function') {
+      const ringMid = (this.floorInnerRadius + this.floorOuterRadius) * 0.5;
+      Core3D.setShaftRingOccluder(this.key, this.lastPlanetX, this.lastPlanetY, ringMid, ringMid * 1.15);
+    }
     const camX = Number(viewCamera?.x);
     const camY = Number(viewCamera?.y);
     const camZoom = Math.max(0.01, Number(viewCamera?.zoom) || 1);
@@ -2208,6 +2194,7 @@ class PlanetaryRing {
     this.visualMeshes.length = 0;
     this.zoneGrid = null;
     this.ringFloor = null;
+    if (typeof Core3D.removeShaftRingOccluder === 'function') Core3D.removeShaftRingOccluder(this.key);
     // Cleanup damage alpha map
     if (this._damageTexture) {
       this._damageTexture.dispose();

@@ -1,0 +1,49 @@
+#ring-city-flight-ui {
+  position: fixed;
+  right: clamp(18px, 2.2vw, 42px);
+  bottom: clamp(18px, 2.4vh, 34px);
+  z-index: 10040;
+  pointer-events: none;
+}
+
+#ring-city-flight-ui.hidden {
+  display: none;
+}
+
+#ring-city-flight-ui .ring-flight-return {
+  pointer-events: auto;
+  min-width: 210px;
+  padding: 13px 20px 12px;
+  border: 1px solid rgba(91, 221, 255, 0.78);
+  border-radius: 3px;
+  color: #ddf9ff;
+  background:
+    linear-gradient(135deg, rgba(30, 207, 255, 0.16), transparent 42%),
+    rgba(3, 11, 20, 0.9);
+  box-shadow:
+    0 0 22px rgba(31, 201, 255, 0.2),
+    inset 0 0 18px rgba(44, 201, 255, 0.08);
+  font: 700 12px/1.2 "Rajdhani", "Segoe UI", sans-serif;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+#ring-city-flight-ui .ring-flight-return:hover:not(:disabled) {
+  color: #fff;
+  border-color: #b9f4ff;
+  box-shadow:
+    0 0 30px rgba(31, 201, 255, 0.35),
+    inset 0 0 22px rgba(44, 201, 255, 0.13);
+}
+
+#ring-city-flight-ui .ring-flight-return:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+body.ring-city-flight-active #c {
+  cursor: crosshair;
+}
+

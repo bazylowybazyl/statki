@@ -151,12 +151,54 @@ export const SHIPS = {
   }
 };
 
+function cloneFactionFrame(baseFrameId, id, name) {
+  const base = SHIPS[baseFrameId];
+  const layout = base?.hardpointLayout || {};
+  return {
+    ...base,
+    id,
+    name,
+    sensors: base?.sensors ? { ...base.sensors } : undefined,
+    spec: base?.spec ? { ...base.spec } : {},
+    hardpointLayout: {
+      ...layout,
+      lines: Array.isArray(layout.lines)
+        ? layout.lines.map(line => ({
+          ...line,
+          start: line.start ? { ...line.start } : undefined,
+          end: line.end ? { ...line.end } : undefined
+        }))
+        : [],
+      specials: Array.isArray(layout.specials)
+        ? layout.specials.map(entry => ({ ...entry, pos: entry.pos ? { ...entry.pos } : undefined }))
+        : []
+    }
+  };
+}
+
+// Playable captured hulls use the same hardpoint standard as their Terran
+// weight class. Keeping them in SHIPS makes the hangar, mechanic and saved
+// per-hull loadouts use one authoritative frame catalog.
+Object.assign(SHIPS, {
+  pirate_frigate: cloneFactionFrame('terran_frigate', 'pirate_frigate', 'Marauder-class'),
+  pirate_destroyer: cloneFactionFrame('terran_destroyer', 'pirate_destroyer', 'Reaver-class'),
+  pirate_battleship: cloneFactionFrame('terran_battleship', 'pirate_battleship', 'Iron Skull-class'),
+  megafreighter: {
+    id: 'megafreighter',
+    name: 'Megafreighter-class',
+    sensors: { ...SHIP_SENSOR_PROFILES.capital_combat },
+    spec: { main: 0, missile: 0, aux: 0, hangar: 0, special: 0 },
+    hardpointLayout: { type: 'lines', rotate: 'cw', lines: [], specials: [] }
+  }
+});
+
 const DEFAULT_RENDER_ASPECT = 1.6;
 const MIN_RENDER_SIZE = 64;
 export const HULL_RENDER_WORLD_SCALE = 0.6;
 
 export const HULL_RENDER_PROFILES = {
   atlas: { id: 'atlas', length: 3000, radius: 500 },
+  corvus: { id: 'corvus', length: 360, radius: 130 },
   megafreighter: { id: 'megafreighter', length: 4600, radius: 760 },
   supercapital: { id: 'supercapital', length: 2000, radius: 500 },
   terran_frigate: { id: 'terran_frigate', length: 320, radius: 120 },
@@ -211,6 +253,7 @@ export const WEAPON_TIER_SCALE = Object.freeze({
 });
 
 export const WEAPON_TIER_BY_HULL = Object.freeze({
+  corvus: 'S',
   terran_frigate: 'S',
   pirate_frigate: 'S',
   terran_destroyer: 'M',
@@ -244,7 +287,7 @@ export function resolveEntityHullProfileId(entity) {
   if (type === 'battleship') return pirate ? 'pirate_battleship' : 'terran_battleship';
   if (type === 'destroyer') return pirate ? 'pirate_destroyer' : 'terran_destroyer';
   if (type.includes('frigate')) return pirate ? 'pirate_frigate' : 'terran_frigate';
-  if (type === 'megafreighter') return 'megafreighter';
+  if (type === 'megafreighter' || type.startsWith('megafreighter_')) return 'megafreighter';
   if (type === 'supercapital') return 'terran_supercapital';
   if (type === 'carrier') return 'terran_carrier';
   if (type === 'capital_carrier') return 'capital_carrier';
@@ -536,16 +579,18 @@ export const CAPITAL_SHIP_TEMPLATES = {
     faction: 'independent',
     displayName: 'Megafreighter',
     sensors: { ...SHIP_SENSOR_PROFILES.capital_combat },
-    roleText: 'Mega Freighter - Dummy',
+    roleText: 'Megafreighter train',
     hull: 160000,
     mass: 900000,
-    rammingMass: 0,
+    rammingMass: 900000,
     shield: 0,
     shieldRegen: 0,
     shieldDelay: 0,
-    accel: 0,
-    maxSpeed: 0,
-    turn: 0,
+    // Bez autonomicznego AI i uzbrojenia, ale z napędem dla komend RTS.
+    // Wagony dostają ruch wyłącznie przez fizyczne sprzęgi.
+    accel: 38,
+    maxSpeed: 165,
+    turn: 0.075,
     radius: 760,
     hardpoints: { large: 0, medium: 0 },
     formationOffset: { x: -2200, y: 900 },
@@ -560,7 +605,7 @@ export const CAPITAL_SHIP_TEMPLATES = {
       hullColor: '#4f6573',
       deckColor: '#1c2b32',
       accentColor: '#b8c5bd',
-      spriteSrc: 'assets/megafreighter.png',
+      spriteSrc: new URL('../../assets/megafreighterfront.png', import.meta.url).href,
       spriteScale: 1.0,
       spriteRotation: 0,
       spriteOffset: { x: 0, y: 0 },

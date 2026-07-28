@@ -170,9 +170,11 @@ export function buildAllInfrastructure(zoneGrid, ring) {
         const material = synthCityAssets.materials.ground || getDistrictInfrastructureMaterials('residential').floor;
         if (!geometry || !material) return [];
         material.depthWrite = true;
-        material.polygonOffset = true;
-        material.polygonOffsetFactor = 1;
-        material.polygonOffsetUnits = 1;
+        // The inward city is one continuous ribbon with no coplanar base floor.
+        // Polygon offset makes the textured surface shimmer at a grazing 3D angle.
+        material.polygonOffset = false;
+        material.polygonOffsetFactor = 0;
+        material.polygonOffsetUnits = 0;
         const results = [];
         addInfraResult(
             results,
